@@ -19,7 +19,7 @@ import {
   AlertDialogCancel,
 } from "@/components/ui/alert-dialog";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { ArrowLeft, Paperclip, Trash2, RotateCcw, Save, FileText, Package, DollarSign, Tag, Image as ImageIcon, FileSpreadsheet, File as FileIcon, Check, X, PenLine, ClipboardCheck, Banknote, Upload, AlertTriangle, Users, ExternalLink } from "lucide-react";
+import { ArrowLeft, Paperclip, Trash2, RotateCcw, Save, FileText, Package, DollarSign, Tag, Image as ImageIcon, FileSpreadsheet, File as FileIcon, Check, X, PenLine, ClipboardCheck, Banknote, Upload, AlertTriangle, Users, ExternalLink, Copy } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { cn } from "@/lib/utils";
@@ -1955,7 +1955,12 @@ export default function DespesaVisualizar() {
       <Card>
         <CardContent className="p-4 space-y-3">
           <p className="text-sm font-semibold">Dados da Aprovação e Pagamento</p>
-          <div className={cn("grid grid-cols-1 sm:grid-cols-3 gap-4", !dadosDespesaPagamentoEditaveis && !podeEditarJustificativaAprovacao && "opacity-60")}>
+          {/* SIS-2026-0447: opacidade movida do grid pra cada campo
+              individualmente — o botão de copiar de "Dados de pagamento"
+              precisa continuar 100% visível mesmo com o resto apagado
+              (opacity de um ancestral composita a subárvore inteira, não dá
+              pra "desfazer" num filho). */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <div className={cn(!dadosDespesaPagamentoEditaveis && "opacity-60")}>
               {/* SIS-2026-0292 (Iury): renomeado de "Valor aprovado" — o
                   campo já era só o solicitante quem editava (nunca o
@@ -1966,7 +1971,7 @@ export default function DespesaVisualizar() {
               <Label>Valor Total</Label>
               <Input type="number" step="0.01" value={valorAprovado} onChange={(e) => handleValorTotalChange(e.target.value)} disabled={!dadosDespesaPagamentoEditaveis} />
             </div>
-            <div>
+            <div className={cn(!podeEditarJustificativaAprovacao && "opacity-60")}>
               <Label>
                 Justificativa da aprovação
                 {souAprovadorNivelAtual && despesa.nivel_aprovacao_atual === 1 && (
@@ -1982,7 +1987,7 @@ export default function DespesaVisualizar() {
               <Input value={justificativa} onChange={(e) => setJustificativa(e.target.value)} disabled={!podeEditarJustificativaAprovacao} />
             </div>
             {formaPagamentoEspecial && (
-              <div>
+              <div className={cn(!podeEditarJustificativaAprovacao && "opacity-60")}>
                 <Label>
                   Quem autorizou esta compra? *
                   <span className="text-xs text-muted-foreground font-normal">
@@ -2014,9 +2019,57 @@ export default function DespesaVisualizar() {
                 </SelectContent>
               </Select>
             </div>
-            <div className={cn(!dadosDespesaPagamentoEditaveis && "opacity-60")}>
+            <div>
               <Label>Dados de pagamento</Label>
-              <Input value={informacoesPagamento} onChange={(e) => setInformacoesPagamento(e.target.value)} disabled={!dadosDespesaPagamentoEditaveis} />
+              {/* SIS-2026-0447 (Iury): campo fica disabled fora da edição
+                  (aguardando_pagamento em diante, quando o Financeiro
+                  precisa colar o PIX/código de barras) — Input disabled não
+                  deixa selecionar texto pra copiar em vários navegadores.
+                  Botão fica FORA do wrapper de opacidade do campo — precisa
+                  continuar bem visível mesmo com o Input apagado, é ele quem
+                  resolve o problema justamente quando o campo está travado. */}
+              <div className="flex gap-2">
+                <Input
+                  value={informacoesPagamento}
+                  onChange={(e) => setInformacoesPagamento(e.target.value)}
+                  disabled={!dadosDespesaPagamentoEditaveis}
+                  className={cn(!dadosDespesaPagamentoEditaveis && "opacity-60")}
+                />
+                <Button
+                  type="button"
+                  variant="default"
+                  size="icon"
+                  className="shrink-0"
+                  disabled={!informacoesPagamento.trim()}
+                  onClick={async () => {
+                    try {
+                      await navigator.clipboard.writeText(informacoesPagamento);
+                      toast.success("Dados de pagamento copiados.");
+                    } catch {
+                      // Fallback (Clipboard API indisponível — ex. contexto
+                      // não-seguro/iframe): mesmo padrão de Recrutamento.tsx.
+                      const ta = document.createElement("textarea");
+                      ta.value = informacoesPagamento;
+                      ta.style.position = "fixed";
+                      ta.style.opacity = "0";
+                      document.body.appendChild(ta);
+                      ta.focus();
+                      ta.select();
+                      let copiou = false;
+                      try {
+                        copiou = document.execCommand("copy");
+                      } catch {
+                        copiou = false;
+                      }
+                      document.body.removeChild(ta);
+                      if (copiou) toast.success("Dados de pagamento copiados.");
+                      else toast.error("Não foi possível copiar. Selecione o texto e copie na mão.");
+                    }
+                  }}
+                >
+                  <Copy className="h-4 w-4" />
+                </Button>
+              </div>
             </div>
             <div className={cn(!dataPagamentoEditavel && "opacity-60")}>
               <Label>
