@@ -44,7 +44,7 @@ ganho tem de vir de *consumir menos*, e não de *ter mais*.
 |---|---|---|
 | PostgREST | 21 | ❌ **Não.** Pool FIXO, definido pela Supabase conforme o tamanho da máquina |
 | Storage | **15** ← o gatilho | ❌ Não (a fase 6 ajuda um pouco) |
-| Realtime | 7 | ❌ Não — mas **dá para eliminar** |
+| Realtime | 7 | ✅ **ELIMINADO** — commit `9c9f6b63`, fora do escopo das fases 1–5 |
 | Encanamento interno | 18 | ❌ Não. Fora do nosso controle |
 
 **Medição que prova o ponto principal:** às 19:22, com o sistema praticamente
@@ -93,12 +93,21 @@ só mudam com o tamanho da instância.
 
 ### A resposta honesta, em uma frase
 
-> Com as fases 1–6 o sistema fica mais rápido, mais leve e **muito menos
-> propenso a transformar um pico em reinício**. Mas se o Storage voltar a
-> saltar para 15 conexões num momento de pico, **o teto de 57 pode estourar de
-> novo** — e nenhuma das mudanças feitas até aqui impede isso.
-> Quem quiser reduzir esse risco de verdade escolhe entre **desligar o
-> Realtime** ou **subir a máquina**. Não há terceira opção no frontend.
+> Com as fases 1–6 **mais o desligamento do Realtime**, o sistema fica mais
+> rápido, mais leve, com **~50% mais folga de conexão** (de ~14 para ~21 vagas
+> livres em dia normal) e **muito menos propenso a transformar um pico em
+> reinício** — este último graças à Fase 6, que tirou o efeito de bola de neve
+> das repetições automáticas.
+>
+> Mesmo assim: **o teto de 57 continua existindo.** Se o Storage voltar a
+> saltar para 15 num momento de pico, ainda pode estourar — só que agora
+> precisa de um pico **maior** para isso, e o estouro tende a virar lentidão
+> passageira em vez de reinício.
+>
+> **Não há mais nada relevante a fazer no frontend.** A folga restante é
+> estrutural: 21 conexões do PostgREST e ~18 de encanamento interno só mudam
+> **subindo a máquina**. Se a direção quiser eliminar o risco em vez de
+> reduzi-lo, essa é a única saída que sobrou.
 
 ---
 
