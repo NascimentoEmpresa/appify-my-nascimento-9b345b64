@@ -38,7 +38,7 @@ vi.mock("@/hooks/useMaloteConfig", () => ({
 }));
 
 vi.mock("@/hooks/useMaloteFormaPagamento", () => ({
-  useTiposFormaPagamento: () => ({ data: [] }),
+  useFormasPagamento: () => ({ data: [] }),
 }));
 
 vi.mock("@/hooks/useUtilizadoOrcamento", () => ({

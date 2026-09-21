@@ -28,7 +28,7 @@ import {
   uploadAnexosMalote,
 } from "@/hooks/useMaloteDespesa";
 import { useMaloteConfig, usePrazoNormalInclusao, horaAtualPassouDe } from "@/hooks/useMaloteConfig";
-import { useTiposFormaPagamento } from "@/hooks/useMaloteFormaPagamento";
+import { useFormasPagamento } from "@/hooks/useMaloteFormaPagamento";
 import { TipoClassificacaoOrcamento } from "@/hooks/usePlanejamentoOrcamentario";
 import { cn } from "@/lib/utils";
 import { vincularContaAoMalote, PARAM_ORIGEM } from "@/pages/juridico/patrimonio/vinculoMalote";
@@ -230,8 +230,13 @@ export function PainelDespesaMalote({
     })();
   }, [reembolsoOrigem]);
   const { data: maloteConfig } = useMaloteConfig();
-  const { data: tiposFormaPagamento = [] } = useTiposFormaPagamento();
-  const tiposFormaPagamentoAtivos = useMemo(() => tiposFormaPagamento.filter((t) => t.ativo), [tiposFormaPagamento]);
+  // SIS-2026-0439: trocado do catálogo genérico de Tipo ("Cartão", "PIX"...)
+  // pro catálogo nomeado de Forma de Pagamento ("Cartão Sicredi 119 - Final
+  // 2719"...) — o Fluxo Especial (aprovador único, pula N1→N2→N3) é
+  // configurado por forma nomeada, não por tipo, então o solicitante
+  // precisa conseguir escolher a forma específica na hora de lançar.
+  const { data: formasPagamento = [] } = useFormasPagamento();
+  const formasPagamentoAtivas = useMemo(() => formasPagamento.filter((f) => f.ativo), [formasPagamento]);
 
   const totalRateado = useMemo(() => linhasRateio.reduce((s, l) => s + (Number(l.valor) || 0), 0), [linhasRateio]);
   const { data: prazoNormal } = usePrazoNormalInclusao();
@@ -540,7 +545,7 @@ export function PainelDespesaMalote({
               <Select value={formaPagamento} onValueChange={setFormaPagamento} disabled={!ativo}>
                 <SelectTrigger><SelectValue placeholder="Selecione a forma" /></SelectTrigger>
                 <SelectContent>
-                  {tiposFormaPagamentoAtivos.map((t) => <SelectItem key={t.nome} value={t.nome}>{t.nome}</SelectItem>)}
+                  {formasPagamentoAtivas.map((f) => <SelectItem key={f.id} value={f.nome}>{f.nome}</SelectItem>)}
                 </SelectContent>
               </Select>
             </div>

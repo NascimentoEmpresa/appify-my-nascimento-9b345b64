@@ -195,6 +195,10 @@ export interface MaloteDespesaRow {
   valor_aprovado: number | null;
   justificativa_aprovacao: string | null;
   motivo_ajuste: string | null;
+  // SIS-2026-0439: quem de fato autorizou a compra (não necessariamente
+  // quem clica em Aprovar no fluxo especial — ver aprovador_especial em
+  // malote_forma_pagamento) — texto livre, a pessoa pode não ter conta no ERP.
+  autorizador_nome: string | null;
   excecao: boolean;
   justificativa_excecao: string | null;
   // SIS-2026-0334: checkbox em Criar Despesa/Ratear Classificação que
@@ -348,7 +352,7 @@ async function buscarParcelasPorDespesa(despesas: MaloteDespesaRow[]): Promise<M
 const DESPESA_COLUMNS =
   "id, numero, empresa_id, classificacao_id, origem, status, nome, valor_total, motivo, descricao, links, tipo_movimento, tipo, contrato_id, " +
   "data_pagamento, competencia, forma_pagamento, banco_id, informacoes_pagamento, parcelado, numero_parcelas, dia_desconto, " +
-  "nivel_aprovacao_atual, valor_aprovado_cotacao, valor_aprovado, justificativa_aprovacao, motivo_ajuste, excecao, justificativa_excecao, " +
+  "nivel_aprovacao_atual, valor_aprovado_cotacao, valor_aprovado, justificativa_aprovacao, motivo_ajuste, autorizador_nome, excecao, justificativa_excecao, " +
   "solicitacao_dispensada_manualmente, " +
   "cot1_fornecedor, cot1_valor, cot1_prazo, cot1_link, cot1_anexo_path, cot1_anexo_nome, " +
   "cot2_fornecedor, cot2_valor, cot2_prazo, cot2_link, cot2_anexo_path, cot2_anexo_nome, " +
@@ -1192,8 +1196,20 @@ export function nomesAprovadoresDoNivel(despesa: MaloteDespesaRow, nivel: 1 | 2 
   return c.aprovador3_nomes ?? [];
 }
 
-export function souAprovadorDoNivel(despesa: MaloteDespesaRow, nivel: 1 | 2 | 3, userId: string | null | undefined): boolean {
+// SIS-2026-0439: `formaEspecial` é a linha de malote_forma_pagamento
+// correspondente a despesa.forma_pagamento, só quando fluxo_aprovacao é
+// 'especial' — quem chama resolve isso em lote (useFormasPagamento) e passa
+// aqui; sem ela, a checagem cai no aprovador1/2/3 da Classificação de sempre.
+// Fluxo Especial substitui, não soma: com aprovador especial definido, quem
+// está nos arrays da Classificação NÃO conta mais.
+export function souAprovadorDoNivel(
+  despesa: MaloteDespesaRow,
+  nivel: 1 | 2 | 3,
+  userId: string | null | undefined,
+  formaEspecial?: { fluxo_aprovacao: string; aprovador_especial_user_id: string | null } | null
+): boolean {
   if (!userId) return false;
+  if (formaEspecial?.fluxo_aprovacao === "especial") return formaEspecial.aprovador_especial_user_id === userId;
   return aprovadoresDoNivel(despesa, nivel).includes(userId);
 }
 
@@ -1266,6 +1282,11 @@ export interface AprovarDespesaInput {
   // momento da aprovação — o RPC só congela quando a despesa realmente sai
   // do fluxo (não escala pro próximo nível).
   rateio_snapshot?: { linha_id: string; orcado: number | null; utilizado_com_lancamento: number | null }[];
+  // SIS-2026-0439: só preenchido/exigido quando a forma de pagamento da
+  // despesa é "Fluxo Especial" — quem clica Aprovar (aprovador único fixo,
+  // ex. Calita) muitas vezes só repassa uma autorização que já veio de
+  // outra pessoa por fora do sistema.
+  autorizador_nome?: string | null;
 }
 
 // Todas as mutations abaixo (aprovar/ajustar/reprovar despesa, aprovação
@@ -1290,6 +1311,7 @@ export function useAprovarDespesa() {
         _data_pagamento: input.data_pagamento,
         _competencia: input.competencia + "-01",
         _rateio_snapshot: input.rateio_snapshot ?? [],
+        _autorizador_nome: input.autorizador_nome ?? null,
       });
       if (error) throw error;
     },

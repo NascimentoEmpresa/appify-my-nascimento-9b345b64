@@ -22,6 +22,7 @@ import { useTiposFormaPagamento } from "@/hooks/useMaloteFormaPagamento";
 import { useExcluirDespesaSoft, useRestaurarDespesa, useDespesasLixeira, useEditarPagamentoDespesa } from "@/hooks/useMaloteDespesa";
 import { useExcluirDebito, useRestaurarDebito, useDebitoAutomaticoLixeira } from "@/hooks/useDebitoAutomatico";
 import { useExcluirItemFatura, useRestaurarItemFatura, useCartaoFaturaLixeira, useEditarDataItemFatura } from "@/hooks/useCartaoFatura";
+import { ExcluirPermanentementeButton } from "@/pages/malote/ExcluirPermanentementeButton";
 import { KpiTile } from "@/components/financeiro/KpiTile";
 import { BancoBadge } from "@/components/financeiro/BancoBadge";
 import { urlLogoCartao, useCartaoBancos } from "@/hooks/useMaloteCartaoCredito";
@@ -653,6 +654,16 @@ export default function FluxoCaixaGestao() {
                           <RotateCcw className="h-3.5 w-3.5" /> Restaurar
                         </Button>
                       </AcessoGate>
+                      {/* [SEM-CHAMADO] (achado do usuário): faltava excluir
+                          permanentemente de dentro da própria Lixeira — só
+                          dava pra excluir de dentro da despesa, mas ao mover
+                          pra lixeira ela some de Meus Itens/Aprovações, sem
+                          jeito de voltar lá pra terminar de excluir. */}
+                      <ExcluirPermanentementeButton
+                        despesaId={d.id}
+                        numero={d.numero}
+                        menu={d.origem === "solicitacao" ? "malote_solicitacao_visualizar" : "malote_despesa_visualizar"}
+                      />
                     </div>
                   </div>
                 ))}
