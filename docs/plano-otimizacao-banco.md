@@ -3,14 +3,14 @@
 > **Documento de trabalho e de passagem de bastão.**
 > Se a sessão do Claude acabar, entregue este arquivo ao Codex e peça para
 > continuar a partir da primeira fase com status `PENDENTE`.
-> Atualizado a cada etapa concluída. Última atualização: **21/09/2026 18:40**.
+> Atualizado a cada etapa concluída. Última atualização: **21/09/2026 19:05**.
 >
-> **Estado atual: Fases 1, 2, 3 e 4 concluídas e commitadas. Falta só a Fase 5.**
+> **Estado atual: Fases 1 a 4 concluídas. Fase 5 parcial — o escopo dela estava ERRADO e foi corrigido com medição do banco; leia o aviso na seção 4 antes de continuá-la.**
 > Nada foi mergeado na `main` — portanto **nada disto está em produção ainda**.
 >
-> **Para o Codex:** comece pela seção 2 (restrições), depois seção 6 (progresso),
-> e execute a **Fase 5**, que é a única pendente. Ela é a maior e a mais
-> arriscada — leia o aviso de "uma tela por commit" antes de começar.
+> **Para o Codex:** leia a seção 2 (restrições) e o AVISO DE CORREÇÃO DE ESCOPO
+> no início da Fase 5. O único item claramente pendente está BLOQUEADO pela
+> regra R1 (exige migration) — não o execute sem autorização do gerente.
 
 ---
 
@@ -240,9 +240,89 @@ As duas telas já calculam `despesaIdsTodos` (`MeusItens.tsx:173`,
 
 ---
 
-### FASE 5 — Paginação e colunas — `STATUS: PENDENTE` (maior, deixar por último)
+### FASE 5 — Consultas sobre tabelas grandes — `STATUS: PARCIAL`
 
-**Problema:** 264 `select` sem `limit`/`range` e 95 `select('*')`.
+> ## ⚠️ CORREÇÃO DE ESCOPO — leia antes de trabalhar nesta fase
+>
+> **A premissa original desta fase estava errada e foi corrigida em 21/09/2026.**
+>
+> Eu havia dimensionado a fase por "264 `select` sem `limit`/`range`". Esse
+> número é um **proxy ruim** e levaria a semanas de trabalho inútil. Ao medir o
+> banco de verdade, duas coisas apareceram:
+>
+> **1. Quase toda consulta "sem limite" tem filtro por chave.** Exemplos que eu
+> ia "otimizar" e que já estão certos:
+> - `screen_permission_user` (14.555 linhas) → `.eq("user_id", user.id)`, devolve
+>   um punhado de linhas.
+> - `sup_estoque_tag` (13.408 linhas) → `.eq("item_estoque_id", ...)`.
+>
+> **2. Quase todo `.limit()` alto é defensivo sobre tabela pequena:**
+>
+> | Tabela | Linhas REAIS | Limite no código |
+> |---|---|---|
+> | `JUR_DUVIDAS_COMPLEMENTOS` | **2** | `.limit(5000)` |
+> | `conta_contabil` | 1.194 | `.limit(5000)` |
+> | `orcamento_contrato_linha` | 8.308 (todas empresas/anos) | `.limit(50000)` |
+>
+> Eu estava prestes a "consertar" o `useJuridicoNotif`, que busca **2 linhas**.
+>
+> **O critério certo não é "tem `limit`?" — é "a tabela é grande E a consulta
+> não tem filtro por chave?"**. Meça antes de mexer:
+> ```sql
+> SELECT c.relname, c.reltuples::bigint AS linhas
+>   FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+>  WHERE n.nspname='public' AND c.relkind='r' AND c.reltuples > 5000
+>  ORDER BY c.reltuples DESC;
+> ```
+> (Não use `pg_stat_user_tables.n_live_tup`: foi zerado no reinício de 14:01:59
+> e só volta após o próximo ANALYZE. `pg_class.reltuples` sobrevive.)
+>
+> As tabelas realmente grandes são quase todas `mz_*` (staging de contabilidade,
+> alimentadas por ETL) e **o frontend não as consulta**. A única tabela grande
+> que o frontend lê de forma ampla é **`EMPREGADOS` (13.279 linhas, 46 MB)**.
+
+#### ✅ Feito: `FormularioEditor` — commit `12f2a6e1`
+
+Puxava 20.000 linhas de `EMPREGADOS` só pra calcular os setores distintos no
+navegador. Trocado pela RPC `listar_setores_empregados`, que já existia e faz o
+mesmo `SELECT DISTINCT` no banco.
+
+Medido contra produção: **13.279 linhas → 14**, mesmo conjunto exato (`EXCEPT`
+nos dois sentidos deu 0). **949× menos dados.**
+
+#### ⬜ Pendente e BLOQUEADO: `ExportarDados.tsx:168`
+
+```ts
+(supabase as any).from("EMPREGADOS").select('"Situação"').limit(20000)
+```
+
+Mesmo anti-padrão: **13.279 linhas para obter 9 valores distintos**.
+
+**Está bloqueado pela regra R1 deste trabalho** (sem migration/DDL). O PostgREST
+não faz `SELECT DISTINCT`, e não existe RPC de situações — conferi todas as 39
+funções com nome parecido. O conserto é uma migration de ~5 linhas, no mesmo
+molde da `listar_setores_empregados`:
+
+```sql
+CREATE OR REPLACE FUNCTION public.listar_situacoes_empregados()
+RETURNS TABLE(situacao text) LANGUAGE sql STABLE SECURITY DEFINER
+SET search_path TO 'public','pg_temp' AS $$
+  SELECT DISTINCT btrim("Situação") FROM public."EMPREGADOS"
+   WHERE btrim(COALESCE("Situação",'')) <> '';
+$$;
+NOTIFY pgrst, 'reload schema';
+```
+
+**Não execute isso sem autorização** — decisão do gerente, porque sai do combinado
+de "nenhuma alteração no banco". Guardado aqui só para quando houver janela.
+
+#### Sobre `select('*')` (95 ocorrências)
+
+Vale trocar pelas colunas usadas **quando a tabela for larga** (`EMPREGADOS` tem
+46 MB para 13 mil linhas — as colunas pesam). Em tabela pequena o ganho é
+irrelevante e o risco de quebrar uma tela não compensa. Não faça em lote.
+
+#### Telas lentas que sobraram (medidas no banco)
 
 Telas mais lentas medidas no banco:
 
@@ -254,13 +334,13 @@ Telas mais lentas medidas no banco:
 | Despesas do Malote | 0,7 s | 7,5 s |
 | Planilha de custo | 0,3 s | 3,5 s |
 
-**O que fazer, uma tela por vez** (nunca em lote):
-1. `.range(de, ate)` com paginação de verdade na tela;
-2. trocar `select('*')` pelas colunas realmente usadas;
-3. conferir se a tela precisa mesmo de todas as linhas (muitas só mostram as 50 primeiras).
+Essas continuam lentas e **não foram investigadas a fundo**. Atenção: a lentidão
+delas não vem de "falta de `limit`" — vem do custo da própria consulta (joins,
+RLS, agregação). Antes de mexer, rode `EXPLAIN ANALYZE` na consulta real em vez
+de presumir.
 
-**Esta fase não deve ser feita às pressas.** Cada tela é um commit separado, com
-teste manual. É a fase com maior chance de mudar comportamento visível.
+**Uma tela por commit, com teste manual.** É a parte com maior chance de mudar
+comportamento visível, e `Aprovações`/`Pedidos` envolvem pagamento.
 
 ---
 
@@ -297,7 +377,7 @@ Resposta à segunda pergunta do gerente. Sugestão de inclusão no `CLAUDE.md` e
 | 2 — pollings | ✅ **CONCLUÍDA** | `77b4e880` | 21/09 17:2x | 3 arquivos, 3 linhas de código (60s → 180s) |
 | 3 — debounce | ✅ **CONCLUÍDA** | `e069f86a` | 21/09 18:0x | novo `useDebounce` + 4 hooks de busca |
 | 4 — N+1 Malote | ✅ **CONCLUÍDA** | `f36c6832` | 21/09 18:3x | `useRateioLinhasEParcelasEmLote`, mudança aditiva |
-| 5 — paginação | ⬜ **PENDENTE — COMECE AQUI** | — | — | a maior e a mais arriscada; ver seção 4 |
+| 5 — tabelas grandes | 🟡 **PARCIAL** | `12f2a6e1` | 21/09 19:0x | escopo CORRIGIDO na seção 4 — leia o aviso; resta 1 item, bloqueado por R1 |
 
 ### O que as 4 fases concluídas atacam
 
