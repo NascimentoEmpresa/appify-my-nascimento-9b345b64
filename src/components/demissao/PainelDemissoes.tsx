@@ -759,7 +759,9 @@ function DetalheSolicitacao({ solicitacao, etapa, quemSou, onFechar, onDecidir, 
         {/* CANCELAR | RECONSIDERAÇÃO (18/09/2026): só em Pendente RH. Motivo
             obrigatório, anexo opcional, duas confirmações — o bloco decide
             sozinho se aparece (podeCancelarDemissaoRH). */}
-        {podeAgir && etapa === "rh" && (
+        {/* Não depende de podeAgir (só Pendente RH): o RH também cancela com a
+            solicitação no SST (21/09/2026) — o bloco decide pelo status. */}
+        {etapa === "rh" && (
           <BlocoCancelarReconsideracaoRH solicitacao={s} onCancelada={onCancelada}
             avisar={(msg, tipo) => (tipo === "err" ? toast.error(msg) : tipo === "ok" ? toast.success(msg) : toast.info(msg))} />
         )}

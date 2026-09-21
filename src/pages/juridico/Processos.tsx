@@ -6,6 +6,9 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { useAuth } from "@/hooks/useAuth";
 import { useVinculoEmpregado } from "@/hooks/useVinculoEmpregado";
 import { sugerirContrato, cidadeDoContrato } from "./processos/contratoMunicipio";
+import { ModalExportarDados } from "@/components/exportar/ModalExportarDados";
+import { baixar } from "@/lib/exportarRelatorio";
+import { carregarExtras, gerarExcel, gerarHtml, nomeArquivo, type ProcessoExp } from "./processos/exportar";
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, Cell, PieChart, Pie, Legend, CartesianGrid } from "recharts";
 
 // JUR_PROCESSOS, EMPREGADOS, CONTRATOS e SISTEMA_COMENTARIOS não estão no
@@ -390,6 +393,12 @@ const parseSalario = (v: unknown): number | null => {
 };
 const MOTIVO_RESET = (): MotivoItem => ({ ordem: 1, motivo: "", valor_pedidos: 0, valor_acordo: 0, valor_sentenca: 0, valor_final: 0, valor_outros_custos: 0, valor_deposito_recursal: 0, valor_custas_processuais: 0 });
 
+/** O processo + os totais que a tela calcula — é o que o Exportar dados recebe. */
+const paraExportar = (p: Processo): ProcessoExp => ({
+  ...(p as unknown as ProcessoExp),
+  totais: { pedidos: pedidosTotal(p), acordo: acordoTotal(p), sentenca: sentencaTotal(p), custoFinal: custoTotal(p), aParte: valoresAParteTotal(p) },
+});
+
 const TITULOS: Record<string, string> = { dashboard: "📊 Dashboard - Processos", processos: "📁 Processos", audiencias: "📅 Audiências" };
 
 export default function Processos({ view = "processos" }: { view?: "dashboard" | "processos" | "audiencias" }) {
@@ -421,6 +430,8 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
   const [sel, setSel] = useState<Processo | null>(null);
   const [coments, setComents] = useState<Comentario[]>([]);
   const [novoComent, setNovoComent] = useState("");
+  // "Exportar dados": null = fechado; id = abre já com "apenas um" nesse processo.
+  const [exportando, setExportando] = useState<{ id: number | null } | null>(null);
 
   const [modal, setModal] = useState(false);
   const [editNumero, setEditNumero] = useState<string | null>(null);
@@ -920,7 +931,10 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
               <h1>⚖️ Processos trabalhistas</h1>
               <p>Cadastro consolidado por número do processo: partes, motivos e valores, audiências, perícia e os comprovantes de pagamento que vêm do Malote.</p>
             </div>
-            <button className="jpr-btn" onClick={abrirNovo}>+ Novo Processo</button>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <button className="jpr-btn" onClick={() => setExportando({ id: null })} style={{ background: "rgba(255,255,255,.14)", color: "#fff", border: "1px solid rgba(255,255,255,.35)", boxShadow: "none" }}>⬇ Exportar dados</button>
+              <button className="jpr-btn" onClick={abrirNovo}>+ Novo Processo</button>
+            </div>
           </div>
           <div className="jpr-hero-pills">
             <span>📁 <b>{processos.length}</b> cadastrados</span>
@@ -1217,6 +1231,32 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
         </>)}
       </div>
 
+      {exportando && (
+        <ModalExportarDados
+          nome={{ um: "processo", varios: "processos" }}
+          conteudo="Sai a ficha do processo e tudo o que o detalhe mostra: motivos e valores, valores à parte, audiências, propostas de acordo, pagamentos do Malote, comprovantes anexados e comentários."
+          registros={processos.map(p => ({
+            id: String(p.id),
+            titulo: `${p.id_sequencial ? `#${p.id_sequencial} · ` : ""}${p.numero_processo}`,
+            detalhe: p.reclamante,
+            busca: `${p.reclamada} ${p.comarca}`,
+          }))}
+          inicialId={exportando.id != null ? String(exportando.id) : null}
+          onFechar={() => setExportando(null)}
+          onErro={msg => toast(msg, "err")}
+          onExportar={async (formato, id, progresso) => {
+            const alvo = (id == null ? processos : processos.filter(p => String(p.id) === id)).map(paraExportar);
+            if (!alvo.length) throw new Error("nenhum processo para exportar.");
+            const extras = await carregarExtras(db, alvo, progresso);
+            progresso("Montando o arquivo…");
+            const nome = nomeArquivo(alvo);
+            if (formato === "excel") baixar(gerarExcel(alvo, extras, autor), `${nome}.xlsx`);
+            else baixar(gerarHtml(alvo, extras, autor), `${nome}.html`);
+            toast("Exportação gerada — confira os downloads.", "ok");
+          }}
+        />
+      )}
+
       {/* ── Detalhe ──
           Fecha SÓ no ✕. O clique no fundo saiu de propósito: com ele, um
           clique que caísse fora do cartão derrubava o processo aberto — e
@@ -1230,6 +1270,7 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
         <div className="jpr-ov">
           <div className="jpr-modal">
             <button onClick={() => setSel(null)} style={{ position: "absolute", top: 14, right: 16, border: "none", background: "none", fontSize: 20, color: "#94a3b8", cursor: "pointer" }}>✕</button>
+            <button className="jpr-btn" onClick={() => setExportando({ id: sel.id })} style={{ position: "absolute", top: 14, right: 50, background: "#eef4ff", color: "#0f3171", border: "1px solid #dbe4f0" }}>⬇ Exportar</button>
             <div style={{ fontSize: 12, color: "#94a3b8", fontWeight: 700 }}>{sel.id_sequencial ? `#${sel.id_sequencial} · ` : ""}{sel.numero_processo}</div>
             <div style={{ fontSize: 18, fontWeight: 800, color: "#0f172a" }}>{sel.reclamante || "—"}</div>
             <div style={{ fontSize: 12.5, color: "#475569", marginTop: 2 }}>Reclamada: <b>{sel.reclamada || "—"}</b>{sel.comarca ? ` · ${sel.comarca}` : ""}{sel.ano_processo ? ` · ${sel.ano_processo}` : ""}</div>
