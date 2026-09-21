@@ -63,6 +63,11 @@ const FASES: GradeFase[] = [
   "Revogado",
 ];
 
+// SIS-2026-0463: empresa é neutra nos primeiros status; obrigatória a partir de
+// "Em Andamento" (a Capa/Contrato nascem daí pra frente e exigem empresa).
+const FASES_EXIGEM_EMPRESA = new Set<GradeFase>(["Em Andamento", "Finalizada"]);
+const SEM_EMPRESA = "__sem_empresa__";
+
 const FASE_COLOR: Record<GradeFase, string> = {
   "À Iniciar":       "bg-blue-500/15 text-blue-700 border-blue-300/50",
   "Iniciado":        "bg-sky-500/15 text-sky-700 border-sky-300/50",
@@ -101,11 +106,12 @@ export default function Pipeline() {
   const canAlterar = can("alterar", "licitacoes", "pipeline");
   const canExcluir = can("excluir", "licitacoes", "pipeline");
 
-  // SIS-2026-0359: modo "todas as empresas" — leitura consolidada das ganhas do
-  // grupo (Lucas/gerente). Escrita continua por empresa ativa, então nesse modo
-  // a tela fica read-only (ver escritaBloqueada abaixo).
-  const [todasEmpresas, setTodasEmpresas] = useState(false);
-  const escritaBloqueada = todasEmpresas;
+  // SIS-2026-0359/0463: a Grade lista TODAS as empresas do grupo por padrão
+  // (o seletor global foi removido; somos responsáveis por todo o grupo). Como
+  // a empresa virou campo explícito de cada item (SIS-2026-0309), editar
+  // cross-empresa é seguro — não há mais o read-only do modo consolidado.
+  // O toggle permite estreitar a visão para a empresa ativa, se quiser.
+  const [todasEmpresas, setTodasEmpresas] = useState(true);
 
   const { data: items = [], isLoading, error } = useGrade(empresaAtivaId ?? null, { todasEmpresas });
   // SIS-2026-0309: empresa é campo explícito no formulário (GradeSheet),
@@ -249,7 +255,7 @@ export default function Pipeline() {
         breadcrumb={["Licitações", "Grade de Licitações"]}
         subtitle="Pré-análise de editais — acompanhe cada oportunidade antes da Capa de Edital."
         actions={
-          canIncluir && !escritaBloqueada ? (
+          canIncluir ? (
             <div className="flex gap-2">
               <Button size="sm" variant="outline" onClick={() => setImportOpen(true)} className="gap-2">
                 <Upload className="h-4 w-4" /> Importar Excel
@@ -304,7 +310,7 @@ export default function Pipeline() {
           </button>
         )}
 
-        {/* SIS-2026-0359: toggle "Todas as empresas" (leitura consolidada do grupo) */}
+        {/* SIS-2026-0359/0463: toggle de visão — todas as empresas (padrão) ou só a ativa */}
         <button
           onClick={() => setTodasEmpresas((v) => !v)}
           className={cn(
@@ -313,18 +319,18 @@ export default function Pipeline() {
               ? "border-primary bg-primary/10 text-primary"
               : "border-border bg-card text-muted-foreground hover:bg-secondary"
           )}
-          title="Ver licitações de todas as empresas do grupo (somente leitura)"
+          title="Alternar entre ver todas as empresas do grupo ou só a empresa ativa"
         >
           <Building2 className="h-3.5 w-3.5" />
           {todasEmpresas ? "Todas as empresas" : "Só empresa ativa"}
         </button>
       </div>
 
-      {/* Aviso do modo consolidado + totais das ganhas do grupo */}
+      {/* Totais das ganhas do grupo */}
       {todasEmpresas && (
         <div className="flex flex-wrap items-center gap-x-6 gap-y-2 rounded-lg border border-primary/30 bg-primary/5 px-4 py-2.5 text-xs">
           <span className="inline-flex items-center gap-1.5 font-medium text-primary">
-            <Building2 className="h-3.5 w-3.5" /> Grupo (todas as empresas) · somente leitura
+            <Building2 className="h-3.5 w-3.5" /> Grupo (todas as empresas)
           </span>
           <span className="text-muted-foreground">
             Ganhas: <strong className="tabular-nums text-foreground">{totaisGanhos.qtd}</strong>
@@ -461,9 +467,9 @@ export default function Pipeline() {
             <GradeCard
               key={item.id}
               item={item}
-              empresaLabel={todasEmpresas ? empresaNome.get(item.empresa_id) : undefined}
-              canAlterar={canAlterar && !escritaBloqueada}
-              canExcluir={canExcluir && !escritaBloqueada}
+              empresaLabel={item.empresa_id ? (empresaNome.get(item.empresa_id) ?? "Empresa") : "Sem empresa"}
+              canAlterar={canAlterar}
+              canExcluir={canExcluir}
               onEdit={() => openEdit(item)}
               onView={() => setViewItem(item)}
               onDelete={() => setDeleteTarget(item)}
@@ -984,7 +990,7 @@ function GradeSheet({
     if (!open) return;
     if (editing) {
       setF({
-        empresa_id: editing.empresa_id,
+        empresa_id: editing.empresa_id ?? "",
         edital: editing.edital ?? "",
         fase: editing.fase,
         responsavel: editing.responsavel ?? "",
@@ -1015,12 +1021,12 @@ function GradeSheet({
       alert("Qtd. Pessoas é obrigatório.");
       return;
     }
-    if (!f.empresa_id) {
-      alert("Selecione a empresa.");
+    if (FASES_EXIGEM_EMPRESA.has(f.fase) && !f.empresa_id) {
+      alert(`Defina a empresa para a fase "${f.fase}".`);
       return;
     }
     onSave({
-      empresa_id: f.empresa_id,
+      empresa_id: f.empresa_id || null,
       edital: f.edital || null,
       fase: f.fase,
       responsavel: f.responsavel || null,
@@ -1064,14 +1070,19 @@ function GradeSheet({
               Contrato); acertar aqui evita a classe inteira de erro do bug
               real do contrato CEITEC. */}
           <div className="space-y-1">
-            <Label className="text-xs">Empresa <span className="text-destructive">*</span></Label>
+            <Label className="text-xs">
+              Empresa
+              {FASES_EXIGEM_EMPRESA.has(f.fase)
+                ? <span className="text-destructive"> *</span>
+                : <span className="text-muted-foreground"> — opcional até "Em Andamento"</span>}
+            </Label>
             <Select
-              value={f.empresa_id}
-              onValueChange={(v) => setF((p) => ({ ...p, empresa_id: v }))}
-              disabled={!!editing}
+              value={f.empresa_id || SEM_EMPRESA}
+              onValueChange={(v) => setF((p) => ({ ...p, empresa_id: v === SEM_EMPRESA ? "" : v }))}
             >
               <SelectTrigger className="h-9"><SelectValue placeholder="Selecione a empresa..." /></SelectTrigger>
               <SelectContent>
+                <SelectItem value={SEM_EMPRESA}>— Sem empresa (neutro) —</SelectItem>
                 {empresas.map((e) => <SelectItem key={e.id} value={e.id}>{e.razao}</SelectItem>)}
               </SelectContent>
             </Select>
