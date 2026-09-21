@@ -6,6 +6,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ErroDeTela } from "@/components/layout/ErroDeTela";
 import { isAuthExpiredError } from "@/lib/authErrors";
+import { isSobrecargaError, atrasoSobrecargaMs } from "@/lib/erroSobrecarga";
 import NotFound from "./pages/NotFound.tsx";
 import Login from "./pages/Login.tsx";
 import TrocarSenha from "./pages/TrocarSenha.tsx";
@@ -309,12 +310,23 @@ const queryClient = new QueryClient({
     queries: {
       staleTime: 30_000,
       gcTime: 300_000,
-      retry: (failureCount, error) =>
-        isAuthExpiredError(error) ? failureCount < 5 : failureCount < 3,
-      retryDelay: (failureCount, error) =>
-        isAuthExpiredError(error)
-          ? 2_000
-          : Math.min(1_000 * 2 ** failureCount, 30_000),
+      // A ordem das checagens importa: auth PRIMEIRO. 401/403 é token vencido
+      // (transitório, local, merece insistência), não sobrecarga.
+      retry: (failureCount, error) => {
+        if (isAuthExpiredError(error)) return failureCount < 5;
+        // 21/09/2026: banco afogado NÃO se resolve insistindo. Ver o porquê
+        // em ./lib/erroSobrecarga — este retry foi agravante do incidente que
+        // reiniciou o Postgres, não vítima dele. Uma única nova tentativa.
+        if (isSobrecargaError(error)) return failureCount < 1;
+        return failureCount < 3;
+      },
+      retryDelay: (failureCount, error) => {
+        if (isAuthExpiredError(error)) return 2_000;
+        // Atraso sorteado de propósito: sem o sorteio, todos os navegadores
+        // voltam no mesmo instante e batem no banco em bloco outra vez.
+        if (isSobrecargaError(error)) return atrasoSobrecargaMs();
+        return Math.min(1_000 * 2 ** failureCount, 30_000);
+      },
     },
   },
 });

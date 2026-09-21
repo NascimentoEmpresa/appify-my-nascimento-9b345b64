@@ -41,13 +41,28 @@ export function ModalFotosComprovacao({ pedidoId, onFechar }: { pedidoId: string
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         .sort((a: any, b: any) => a.ordem - b.ordem);
 
+      // 21/09/2026: isto assinava as fotos UMA A UMA, em sequência — uma
+      // entrega com 15 fotos virava 15 idas ao Storage, uma esperando a outra.
+      //
+      // Importa mais do que parece: cada chamada ao Storage consome uma
+      // conexão do pool que ele mantém com o Postgres, e foi justamente o
+      // Storage saltando de 1 para 15 conexões que estourou o teto de 57 e
+      // reiniciou o banco às 14:01:59. `createSignedUrls` (plural) resolve
+      // tudo numa chamada só — o mesmo padrão já usado em ConversaSolicitacao,
+      // ChatChamado e useSupPatrimonio.
+      const caminhos = registros.map((r: any) => r.storage_path as string);
       const fotos: FotoComprovacao[] = [];
-      for (const registro of registros) {
-        const { data: assinada, error: erroUrl } = await supabase.storage
+      if (caminhos.length) {
+        const { data: assinadas, error: erroUrl } = await supabase.storage
           .from(BUCKET)
-          .createSignedUrl(registro.storage_path, 3600);
+          .createSignedUrls(caminhos, 3600);
         if (erroUrl) throw erroUrl;
-        fotos.push({ url: assinada.signedUrl, colaborador_nome: registro.colaborador_nome });
+        // createSignedUrls devolve na MESMA ordem dos caminhos enviados, e traz
+        // `error` por item — uma foto que falhe não pode derrubar as outras.
+        (assinadas ?? []).forEach((assinada, i) => {
+          if (!assinada?.signedUrl) return;
+          fotos.push({ url: assinada.signedUrl, colaborador_nome: registros[i].colaborador_nome });
+        });
       }
       return { protocolo: pedido.pedido_id as string, fotos };
     },
