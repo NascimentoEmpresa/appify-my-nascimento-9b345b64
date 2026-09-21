@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import * as XLSX from "xlsx";
 import { Download, Filter, MoreVertical, Search, Sliders, UserPlus, Users } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
+const sb = supabase as any;
 import { AcessoGate } from "@/components/auth/AcessoGate";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -15,7 +16,7 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useQuery } from "@tanstack/react-query";
-import { rpcTodasAsLinhas, useTrnAcaoMassa, useTrnAlunos, useTrnCursos, useTrnExcluirAluno, useTrnTags } from "@/hooks/useTreinamentosPlataforma";
+import { useTrnAcaoMassa, useTrnAlunos, useTrnCursos, useTrnExcluirAluno, useTrnTags } from "@/hooks/useTreinamentosPlataforma";
 import { MENU, ROTULO_STATUS_ALUNO, type AlunoLista, type StatusAluno } from "./tipos";
 import { Paginacao, StatusAlunoBadge, TagChips, TrnCarregando, TrnEstilo, TrnHero, TrnVazio, fmtData, fmtDataHora, usePaginacao } from "./ui";
 
@@ -129,7 +130,7 @@ export default function AlunosLista() {
   // mundo) e por status de aluno — "cadastrar um contrato inteiro em alguns
   // cursos". E as ações de curso aceitam VÁRIOS cursos de uma vez (a RPC
   // roda uma vez por curso). O contrato/status de cada aluno vem da
-  // trn_alunos_gerenciar (espelho do cadastro), lida só quando o modal abre.
+  // trn_alunos_recorte (id/contrato/status, um jsonb só), lida só quando o modal abre.
   const [massaAberta, setMassaAberta] = useState(false);
   const [mFiltro, setMFiltro] = useState<"tag" | "selecionados" | "todos" | "contrato" | "status">("tag");
   const [mTag, setMTag] = useState("");
@@ -143,9 +144,14 @@ export default function AlunosLista() {
   const acaoDef = ACOES_MASSA.find((a) => a.v === mAcao);
 
   const { data: cadastro = [] } = useQuery({
-    queryKey: ["trn-alunos-gerenciar"],
+    queryKey: ["trn-alunos-recorte"],
     enabled: massaAberta,
-    queryFn: () => rpcTodasAsLinhas<{ id: string; contrato: string | null; status: string; situacao: string | null }>("trn_alunos_gerenciar"),
+    // Um jsonb só (id/contrato/status de todos): sem o corte de 1000 linhas.
+    queryFn: async () => {
+      const { data, error } = await sb.rpc("trn_alunos_recorte");
+      if (error) throw error;
+      return (data ?? []) as { id: string; contrato: string | null; status: string }[];
+    },
   });
   const contratosDoCadastro = useMemo(() => {
     const m = new Map<string, { total: number; ativos: number }>();

@@ -1,27 +1,29 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { toast } from "sonner";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Building2, Mail, RefreshCw, Search, UserCheck, UserX, Users } from "lucide-react";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import { Building2, Mail, Search, UserCheck, UserX, Users } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
-import { rpcTodasAsLinhas } from "@/hooks/useTreinamentosPlataforma";
 import { AcessoGate } from "@/components/auth/AcessoGate";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { FiltroContratos, passaNoFiltroContratos } from "@/components/solicitacoes/FiltroContratos";
+import { FiltroContratos } from "@/components/solicitacoes/FiltroContratos";
 import { MENU, type StatusAluno } from "./tipos";
-import { Paginacao, StatusAlunoBadge, TrnCarregando, TrnEstilo, TrnHero, TrnKpi, TrnVazio, fmtData, fmtDataHora, usePaginacao } from "./ui";
+import { Paginacao, StatusAlunoBadge, TrnCarregando, TrnEstilo, TrnHero, TrnKpi, TrnVazio, fmtData, fmtDataHora } from "./ui";
 
 // =====================================================================
 // TREINAMENTOS — Alunos › Gerenciar (21/09/2026).
 //
 // Substitui o "Adicionar novo" do membox. Aqui aluno É colaborador: a
 // lista vem do cadastro da Senior (EMPREGADOS) e entra sozinha na admissão
-// (trigger trg_trn_aluno_do_empregado, migration 20260930000193). Quem está
+// (trigger trg_trn_aluno_do_empregado, migrations 193/194). Quem está
 // "Trabalhando" é ativo; afastado ou demitido é inativo. Não se cadastra
-// aluno à mão — o botão "Sincronizar" refaz a leitura do cadastro inteiro
-// pra quem quiser conferir agora, sem esperar o gatilho.
+// aluno à mão nem se sincroniza à mão: o gatilho em EMPREGADOS faz tudo
+// (a RPC trn_sincronizar_alunos fica pra uso interno/manutenção).
+//
+// São 13 mil alunos: os números do topo vêm de uma chamada (resumo) e a
+// lista é PAGINADA NO BANCO com os filtros (mig 195) — puxar tudo pra
+// filtrar aqui levava mais de 10 s.
 //
 // A rota (/app/treinamentos/alunos/novo) e o menu (treinamentos_alunos_novo)
 // ficaram os mesmos de propósito: é o código que carrega a permissão de quem
@@ -33,6 +35,12 @@ interface AlunoGerenciar {
   situacao: string | null; contrato: string | null; cargo: string | null; empregado_id: number | null;
   origem: string; acesso_completo: boolean; cursos: number; ultimo_acesso_em: string | null;
   sincronizado_em: string | null; admissao: string | null; afastamento: string | null; email_sintetico: boolean;
+  total: number;
+}
+interface Resumo {
+  ativos: number; inativos: number; afastados: number; demitidos: number; bloqueados: number;
+  sem_email_ativos: number; ultima_sync: string | null;
+  contratos: { nome: string; n: number; ativos: number }[]; situacoes: string[];
 }
 
 const fmtCpf = (v: string | null) => {
@@ -40,52 +48,55 @@ const fmtCpf = (v: string | null) => {
   return d.length === 11 ? d.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, "$1.$2.$3-$4") : (v ?? "—");
 };
 
+/** Espera a pessoa parar de digitar antes de ir ao banco. */
+function useDebounce<T>(valor: T, ms = 350): T {
+  const [v, setV] = useState(valor);
+  useEffect(() => { const t = setTimeout(() => setV(valor), ms); return () => clearTimeout(t); }, [valor, ms]);
+  return v;
+}
+
 export default function AlunosGerenciar() {
-  const qc = useQueryClient();
-  const { data: alunos = [], isLoading } = useQuery({
-    queryKey: ["trn-alunos-gerenciar"],
-    // Em páginas de 1000: o PostgREST corta a resposta nesse tamanho.
-    queryFn: () => rpcTodasAsLinhas<AlunoGerenciar>("trn_alunos_gerenciar"),
-  });
-  const sincronizar = useMutation({
-    mutationFn: async () => {
-      const { data, error } = await (supabase as any).rpc("trn_sincronizar_alunos");
+  const { data: resumo } = useQuery({
+    queryKey: ["trn-alunos-resumo"],
+    queryFn: async (): Promise<Resumo> => {
+      const { data, error } = await (supabase as any).rpc("trn_alunos_gerenciar_resumo");
       if (error) throw error;
-      return data as { percorridos: number; novos: number; ativos: number; inativos: number };
+      return data as Resumo;
     },
-    onSuccess: (r) => {
-      toast.success(`Cadastro lido: ${r.percorridos} colaborador(es), ${r.novos} aluno(s) novo(s). Ativos: ${r.ativos} · Inativos: ${r.inativos}.`);
-      qc.invalidateQueries({ queryKey: ["trn-alunos-gerenciar"] });
-      qc.invalidateQueries({ queryKey: ["trn-alunos"] });
-      qc.invalidateQueries({ queryKey: ["trn-dashboard"] });
-    },
-    onError: (e: Error) => toast.error("Não deu para sincronizar: " + e.message),
   });
 
   const [busca, setBusca] = useState("");
+  const buscaLenta = useDebounce(busca);
   const [fStatus, setFStatus] = useState<"" | "ativo" | "inativo" | "bloqueado" | "pendente">("");
   const [fSituacao, setFSituacao] = useState("");
   const [fContratos, setFContratos] = useState<string[]>([]);
+  const [pagina, setPagina] = useState(1);
+  const [porPagina, setPorPagina] = useState(25);
+  useEffect(() => { setPagina(1); }, [buscaLenta, fStatus, fSituacao, fContratos, porPagina]);
 
-  const situacoes = useMemo(() => [...new Set(alunos.map((a) => a.situacao).filter(Boolean) as string[])].sort(), [alunos]);
-  const filtrados = useMemo(() => {
-    const b = busca.trim().toLowerCase();
-    return alunos.filter((a) => {
-      if (fStatus && a.status !== fStatus) return false;
-      if (fSituacao && a.situacao !== fSituacao) return false;
-      if (!passaNoFiltroContratos(a, "contrato", fContratos)) return false;
-      if (b && !`${a.nome} ${a.email} ${a.documento ?? ""} ${a.cargo ?? ""} ${a.contrato ?? ""}`.toLowerCase().includes(b)) return false;
-      return true;
-    });
-  }, [alunos, busca, fStatus, fSituacao, fContratos]);
-  const pag = usePaginacao(filtrados, 25);
+  const { data: paginaDados, isLoading, isFetching } = useQuery({
+    queryKey: ["trn-alunos-gerenciar", buscaLenta, fStatus, fSituacao, fContratos, pagina, porPagina],
+    placeholderData: keepPreviousData,
+    queryFn: async (): Promise<AlunoGerenciar[]> => {
+      const { data, error } = await (supabase as any).rpc("trn_alunos_gerenciar", {
+        _busca: buscaLenta || null, _status: fStatus || null, _situacao: fSituacao || null,
+        _contratos: fContratos.length ? fContratos : null, _offset: (pagina - 1) * porPagina, _limite: porPagina,
+      });
+      if (error) throw error;
+      return (data ?? []) as AlunoGerenciar[];
+    },
+  });
+  const itens = paginaDados ?? [];
+  const totalFiltrado = itens[0]?.total ?? 0;
+  const totalPaginas = Math.max(1, Math.ceil(totalFiltrado / porPagina));
 
-  const ativos = alunos.filter((a) => a.status === "ativo").length;
-  const inativos = alunos.filter((a) => a.status === "inativo").length;
-  const afastados = alunos.filter((a) => a.status === "inativo" && a.situacao !== "Demitido").length;
-  const demitidos = alunos.filter((a) => a.situacao === "Demitido").length;
-  const semEmail = alunos.filter((a) => a.email_sintetico).length;
-  const ultimaSync = alunos.reduce<string | null>((m, a) => (a.sincronizado_em && (!m || a.sincronizado_em > m) ? a.sincronizado_em : m), null);
+  // O dropdown de contratos conta por linha; aqui as "linhas" são o resumo
+  // (uma por aluno, só com o contrato) — barato e não puxa a lista inteira.
+  const linhasContrato = useMemo(
+    () => (resumo?.contratos ?? []).flatMap((c) => Array.from({ length: c.n }, () => ({ contrato: c.nome }))),
+    [resumo],
+  );
+
 
   return (
     <div className="trn mx-auto max-w-7xl">
@@ -94,23 +105,16 @@ export default function AlunosGerenciar() {
         <TrnHero
           eyebrow="Treinamentos › Alunos"
           titulo="Gerenciar alunos"
-          texto="Aluno é colaborador: a lista vem do cadastro da Senior e entra sozinha na admissão. Quem está Trabalhando é ativo; afastado ou demitido fica inativo."
-          pilulas={[`${ativos} ativo(s)`, `${inativos} inativo(s)`, ultimaSync ? `Última leitura do cadastro: ${fmtDataHora(ultimaSync)}` : "Cadastro ainda não lido"]}
-          acoes={<>
-            <AcessoGate menu={MENU.alunosNovo} acao="alterar">
-              <button onClick={() => sincronizar.mutate()} disabled={sincronizar.isPending}>
-                <RefreshCw className={`h-4 w-4 ${sincronizar.isPending ? "animate-spin" : ""}`} /> {sincronizar.isPending ? "Lendo o cadastro…" : "Sincronizar com o cadastro"}
-              </button>
-            </AcessoGate>
-            <Link to="/app/treinamentos/alunos" className="sec"><Users className="h-4 w-4" /> Todos os alunos</Link>
-          </>}
+          texto="Aluno é colaborador: a lista vem do cadastro da Senior e acompanha sozinha a admissão, o afastamento e a demissão. Quem está Trabalhando é ativo; afastado ou demitido fica inativo."
+          pilulas={resumo ? [`${resumo.ativos} ativo(s)`, `${resumo.inativos} inativo(s)`, resumo.ultima_sync ? `Cadastro atualizado em ${fmtDataHora(resumo.ultima_sync)}` : "Cadastro ainda não lido"] : undefined}
+          acoes={<Link to="/app/treinamentos/alunos"><Users className="h-4 w-4" /> Todos os alunos</Link>}
         />
 
         <div className="trn-kpis">
-          <TrnKpi rotulo="Ativos" valor={ativos} sub="Situação Trabalhando" icone={<UserCheck className="h-5 w-5" />} />
-          <TrnKpi rotulo="Inativos" valor={inativos} sub={`${afastados} afastado(s) · ${demitidos} demitido(s)`} icone={<UserX className="h-5 w-5" />} />
-          <TrnKpi rotulo="Contratos" valor={new Set(alunos.map((a) => a.contrato).filter(Boolean)).size} sub="com colaborador na plataforma" icone={<Building2 className="h-5 w-5" />} />
-          <TrnKpi rotulo="Sem e-mail no cadastro" valor={semEmail} sub="usam o e-mail gerado pelo ERP" icone={<Mail className="h-5 w-5" />} />
+          <TrnKpi rotulo="Ativos" valor={resumo?.ativos ?? "…"} sub="Situação Trabalhando" icone={<UserCheck className="h-5 w-5" />} />
+          <TrnKpi rotulo="Inativos" valor={resumo?.inativos ?? "…"} sub={resumo ? `${resumo.afastados} afastado(s) · ${resumo.demitidos} demitido(s)` : undefined} icone={<UserX className="h-5 w-5" />} />
+          <TrnKpi rotulo="Contratos" valor={resumo?.contratos.length ?? "…"} sub="com colaborador na plataforma" icone={<Building2 className="h-5 w-5" />} />
+          <TrnKpi rotulo="Sem e-mail no cadastro" valor={resumo?.sem_email_ativos ?? "…"} sub="só entre os ativos (Trabalhando)" icone={<Mail className="h-5 w-5" />} />
         </div>
 
         <div className="trn-card mb-3">
@@ -119,7 +123,7 @@ export default function AlunosGerenciar() {
               <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
               <Input className="pl-9" placeholder="Pesquisar por nome, CPF, e-mail, cargo ou contrato" value={busca} onChange={(e) => setBusca(e.target.value)} />
             </div>
-            <FiltroContratos linhas={alunos} campo="contrato" selecionados={fContratos} onChange={setFContratos} />
+            <FiltroContratos linhas={linhasContrato} campo="contrato" selecionados={fContratos} onChange={setFContratos} />
             <Select value={fStatus || "__"} onValueChange={(v) => setFStatus(v === "__" ? "" : (v as typeof fStatus))}>
               <SelectTrigger className="w-44"><SelectValue placeholder="Status" /></SelectTrigger>
               <SelectContent>
@@ -134,16 +138,16 @@ export default function AlunosGerenciar() {
               <SelectTrigger className="w-52"><SelectValue placeholder="Situação (Senior)" /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="__">Todas as situações</SelectItem>
-                {situacoes.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}
+                {(resumo?.situacoes ?? []).map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}
               </SelectContent>
             </Select>
           </div>
         </div>
 
-        {isLoading ? <TrnCarregando texto="Carregando alunos…" /> : alunos.length === 0 ? (
-          <TrnVazio titulo="Nenhum aluno ainda" texto="Clique em “Sincronizar com o cadastro” para trazer os colaboradores da Senior." />
+        {isLoading ? <TrnCarregando texto="Carregando alunos…" /> : totalFiltrado === 0 && !busca && !fStatus && !fSituacao && !fContratos.length ? (
+          <TrnVazio titulo="Nenhum aluno ainda" texto="Os colaboradores entram sozinhos a partir do cadastro da Senior." />
         ) : (
-          <div className="trn-card overflow-hidden p-0">
+          <div className={`trn-card overflow-hidden p-0 ${isFetching ? "opacity-70" : ""}`}>
             <div className="overflow-x-auto">
               <table className="trn-tab">
                 <thead>
@@ -161,7 +165,7 @@ export default function AlunosGerenciar() {
                   </tr>
                 </thead>
                 <tbody>
-                  {pag.itens.map((a) => (
+                  {itens.map((a) => (
                     <tr key={a.id}>
                       <td>
                         <div className="font-semibold">{a.nome}</div>
@@ -185,13 +189,13 @@ export default function AlunosGerenciar() {
                       </td>
                     </tr>
                   ))}
-                  {pag.itens.length === 0 && (
+                  {itens.length === 0 && (
                     <tr><td colSpan={10} className="py-8 text-center text-sm text-muted-foreground">Nada bate com o filtro atual.</td></tr>
                   )}
                 </tbody>
               </table>
             </div>
-            <Paginacao pagina={pag.pagina} total={pag.total} porPagina={pag.porPagina} setPorPagina={pag.setPorPagina} setPagina={pag.setPagina} quantidade={filtrados.length} rotulo="alunos" />
+            <Paginacao pagina={pagina} total={totalPaginas} porPagina={porPagina} setPorPagina={setPorPagina} setPagina={setPagina} quantidade={totalFiltrado} rotulo="alunos" />
           </div>
         )}
       </AcessoGate>
