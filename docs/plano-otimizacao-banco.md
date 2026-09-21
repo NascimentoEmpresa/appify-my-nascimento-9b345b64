@@ -117,7 +117,7 @@ que a anterior. Pare em qualquer ponto e o que já foi feito continua valendo.
 
 ---
 
-### FASE 1 — `staleTime` global — `STATUS: PENDENTE`
+### FASE 1 — `staleTime` global — ✅ `CONCLUÍDA` (commit `94fb7709`)
 
 **Ganho estimado: o maior de todos.** Um arquivo, ~404 queries afetadas.
 
@@ -154,7 +154,7 @@ e voltar não deve mais disparar rajada de requests na aba Network.
 
 ---
 
-### FASE 2 — Aliviar os pollings globais — `STATUS: PENDENTE`
+### FASE 2 — Aliviar os pollings globais — ✅ `CONCLUÍDA` (commit `77b4e880`)
 
 **Ganho: carga constante por usuário conectado, o dia inteiro.**
 
@@ -186,7 +186,7 @@ nas notificações, pular esta fase não invalida as outras.
 
 ---
 
-### FASE 3 — `debounce` nas buscas por digitação — `STATUS: PENDENTE`
+### FASE 3 — `debounce` nas buscas por digitação — ✅ `CONCLUÍDA` (commit `e069f86a`)
 
 **Ganho: elimina N consultas por palavra digitada.** É exatamente o exemplo que
 o gerente deu.
@@ -212,7 +212,7 @@ não duplicar padrão. Usar o padrão que já existir, se houver.
 
 ---
 
-### FASE 4 — Corrigir o N+1 do Malote — `STATUS: PENDENTE`
+### FASE 4 — Corrigir o N+1 do Malote — ✅ `CONCLUÍDA` (commit `f36c6832`)
 
 **Ganho: remove ~13 consultas por segundo, constantes.**
 
