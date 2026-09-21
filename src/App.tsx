@@ -282,9 +282,33 @@ import DesignacoesOperacao from "./pages/central-servicos/espaco-colaborador/Des
 // era isso que deixava a Grade presa em "Erro ao carregar: JWT expired" até o
 // usuário dar F5. Para esse caso, mais tentativas e mais espaçadas, dando tempo
 // do supabase-js concluir a renovação.
+//
+// ── staleTime/gcTime (21/09/2026) ────────────────────────────────────────
+// A "rajada de requests" descrita no parágrafo acima nunca tinha sido tratada
+// na origem: o retry cuidava do ERRO que ela provocava, não da rajada em si.
+// Em 21/09/2026 às 14:01:59 o Postgres de produção reiniciou sozinho por
+// esgotamento de conexões (61 em uso para 57 utilizáveis na instância Micro),
+// e o upgrade de máquina foi vetado — o alívio tem que vir de consultar menos.
+//
+// Sem `staleTime`, o React Query assume 0: TODO dado nasce velho, então cada
+// remontagem de componente e cada volta para a aba refazia a consulta. São 513
+// pontos de `useQuery` no projeto e só 109 declaravam `staleTime` próprio —
+// ou seja, ~404 consultas rebuscavam à toa.
+//
+// 30s é conservador de propósito. Isto NÃO atrasa dado após ação do usuário:
+// as 586 chamadas de `invalidateQueries` do projeto continuam invalidando o
+// cache a cada escrita, então aprovar/pagar/salvar segue atualizando na hora.
+// `staleTime` corta só a busca PASSIVA, que é a que gerava a rajada.
+//
+// `refetchOnWindowFocus` fica no padrão (true) de propósito: com staleTime de
+// 30s ele deixa de disparar a rajada, mas quem ficou horas fora da aba ainda
+// recebe dado fresco ao voltar — que é o comportamento certo para um sistema
+// com pagamento e aprovação.
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
+      staleTime: 30_000,
+      gcTime: 300_000,
       retry: (failureCount, error) =>
         isAuthExpiredError(error) ? failureCount < 5 : failureCount < 3,
       retryDelay: (failureCount, error) =>
