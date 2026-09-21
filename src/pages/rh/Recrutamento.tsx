@@ -1655,7 +1655,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
           {di("Salário", s.salario)}
           {di("Benefícios", s.beneficios, true)}
           {di("Insalubridade", s.insalubridade_recebe + (s.insalubridade_quanto ? " — " + s.insalubridade_quanto : ""))}
-          {di("Local Exato", s.local_exato)}
+          {di("Posto de Trabalho", s.local_exato)}
           {di("Data Início Prevista", fmtBr(s.data_inicio_prevista))}
           {di("Solicitado por", quemSolicitou(s))}
           {di("Data Solicitação", fmtDt(s.created_at))}
