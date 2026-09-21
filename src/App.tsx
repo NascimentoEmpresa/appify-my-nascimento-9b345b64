@@ -1,3 +1,4 @@
+import { Suspense, lazy } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { Toaster as Sonner } from "@/components/ui/sonner";
@@ -86,6 +87,9 @@ import CatalogoAprovacoes from "./pages/suprimentos/CatalogoAprovacoes";
 import PedidosMateriais from "./pages/suprimentos/PedidosMateriais";
 import RetiradaPedido from "./pages/suprimentos/RetiradaPedido";
 import EstoqueEtiquetas from "./pages/suprimentos/EstoqueEtiquetas";
+// Única tela carregada sob demanda: ela arrasta o three.js junto, e não faz
+// sentido pesar no carregamento de quem nunca abre o mapa 3D.
+const EstoqueMapa = lazy(() => import("./pages/suprimentos/EstoqueMapa"));
 import SeparacaoMateriais from "./pages/suprimentos/SeparacaoMateriais";
 import Patrimonio from "./pages/suprimentos/Patrimonio";
 import PainelManutencoes from "./pages/suprimentos/PainelManutencoes";
@@ -153,6 +157,7 @@ import Contabilidade from "./pages/Contabilidade";
 import Colaboradores from "./pages/rh/Colaboradores";
 import Recrutamento from "./pages/rh/Recrutamento";
 import Patrimonios from "./pages/juridico/Patrimonios";
+import JuridicoNotificacoes from "./pages/juridico/Notificacoes";
 import CentralDuvidas from "./pages/juridico/CentralDuvidas";
 import Processos from "./pages/juridico/Processos";
 import Advertencias from "./pages/juridico/Advertencias";
@@ -584,6 +589,7 @@ const App = () => (
             <Route path="suprimentos/retirada/:ref" element={<RetiradaPedido />} />
             <Route path="suprimentos/separacao" element={<SeparacaoMateriais />} />
             <Route path="suprimentos/estoque-etiquetas" element={<EstoqueEtiquetas />} />
+            <Route path="suprimentos/estoque-mapa" element={<Suspense fallback={null}><EstoqueMapa /></Suspense>} />
             <Route path="suprimentos/patrimonio" element={<Patrimonio />} />
             <Route path="suprimentos/manutencao" element={<PainelManutencoes />} />
             <Route path="suprimentos/epis-admissoes" element={<EpisAdmissoes />} />
@@ -663,6 +669,8 @@ const App = () => (
             {/* Jurídico — Gestão Patrimonial */}
             <Route path="juridico" element={<Navigate to="/app/juridico/patrimonios" replace />} />
             <Route path="juridico/patrimonios" element={<Patrimonios />} />
+            {/* Controle de Notificações (21/09/2026): multas, glosas, notificações e defesas. */}
+            <Route path="juridico/notificacoes" element={<JuridicoNotificacoes />} />
             <Route path="juridico/processos/dashboard" element={<Processos view="dashboard" />} />
             <Route path="juridico/processos" element={<Processos view="processos" />} />
             <Route path="juridico/processos/audiencias" element={<Processos view="audiencias" />} />

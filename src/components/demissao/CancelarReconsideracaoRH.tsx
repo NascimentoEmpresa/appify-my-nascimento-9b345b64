@@ -2,17 +2,18 @@ import { useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { BUCKET, MOTIVO_CANCELAMENTO_MIN, caminhoAnexoCancelamento, podeCancelarDemissaoRH } from "@/lib/demissao/solicitacao";
+import { BUCKET, MOTIVO_CANCELAMENTO_MIN, STATUS_SST_AGENDADO, caminhoAnexoCancelamento, cancelarAvisaSST, podeCancelarDemissaoRH } from "@/lib/demissao/solicitacao";
 import { fmtTamanho } from "@/lib/solicitacoes/anexos";
 
 // =====================================================================
 // CANCELAR | RECONSIDERAÇÃO — pelo RH, no card de "Pendente RH"
-// (18/09/2026). Diferente do botão do encarregado (CancelarDemissao.tsx):
+// (18/09/2026) e, desde 21/09/2026, também com a solicitação no SST (aí o
+// SST é avisado no sino para desmarcar o ASO — mig 198). Diferente do botão do encarregado (CancelarDemissao.tsx):
 //   • explica (motivo obrigatório) e pode ANEXAR arquivo (o pedido de
 //     reconsideração assinado, o e-mail do gestor…);
 //   • confirma DUAS vezes antes de executar — cancelar aqui encerra o
 //     pedido de outra pessoa;
-//   • só enquanto está Pendente RH (podeCancelarDemissaoRH; o banco repete
+//   • de Pendente RH até o ASO agendado (podeCancelarDemissaoRH; o banco repete
 //     com has_screen_access('rh_demissoes','aprovar') na mig 186).
 // Os arquivos sobem no bucket demissoes-docs ANTES da RPC; ela grava as
 // linhas em Documentos com o prefixo "Cancelamento —", escreve no fio da
@@ -84,15 +85,19 @@ export function BlocoCancelarReconsideracaoRH({ solicitacao, onCancelada, avisar
     setSalvando(false);
     if (error) { await desfazer(); avisar(error.message, "err"); return; }
     const vaga = (data as { vaga?: string | null } | null)?.vaga;
+    const nSST = Number((data as { sst_avisados?: number } | null)?.sst_avisados ?? 0);
+    const sobreSST = noSST ? (nSST > 0 ? ` O SST foi avisado (${nSST} pessoa(s)) para cancelar o agendamento do ASO.` : " Ninguém tem a tela ASO Demissional liberada — avise o SST diretamente.") : "";
     const sobreVaga = vaga === "cancelada"
       ? " A vaga de Substituição que ainda não tinha aberto foi cancelada junto."
       : vaga === "mantida" ? " A vaga de Substituição já está em seleção — avise o Recrutamento se ela não for mais necessária." : "";
-    avisar(`Solicitação #${solicitacao.id} cancelada (reconsideração). O solicitante foi avisado.${sobreVaga}`, "ok");
+    avisar(`Solicitação #${solicitacao.id} cancelada (reconsideração). O solicitante foi avisado.${sobreSST}${sobreVaga}`, "ok");
     setPasso(0); setMotivo(""); setArquivos([]);
     onCancelada();
   };
 
   const nome = solicitacao.colaborador_nome ?? "—";
+  const noSST = cancelarAvisaSST(solicitacao.status);
+  const agendado = solicitacao.status === STATUS_SST_AGENDADO;
   const solicitante = solicitacao.solicitante_nome;
 
   return (
@@ -103,6 +108,12 @@ export function BlocoCancelarReconsideracaoRH({ solicitacao, onCancelada, avisar
         <b>CANCELADA</b>, o motivo vai pro fio da conversa e {solicitante ? <b>{solicitante}</b> : "quem solicitou"} recebe um aviso.
         Não é devolver: não volta pra ninguém corrigir.
       </div>
+      {noSST && (
+        <div style={{ fontSize: 13.5, fontWeight: 700, color: "#92400e", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 8, padding: "8px 10px" }}>
+          A solicitação já está no SST ({solicitacao.status}). Ao cancelar, o SST recebe um aviso para{" "}
+          {agendado ? "desmarcar o ASO demissional que já foi agendado" : "não agendar o ASO demissional"}.
+        </div>
+      )}
 
       {passo === 0 && (
         <>
@@ -140,7 +151,9 @@ export function BlocoCancelarReconsideracaoRH({ solicitacao, onCancelada, avisar
         <div style={{ background: "#fff", border: "1.5px solid #dc2626", borderRadius: 10, padding: 14, display: "grid", gap: 10 }}>
           <div style={{ fontSize: 15, fontWeight: 900, color: "#0f172a" }}>Tem certeza que deseja cancelar a demissão de {nome}?</div>
           <div style={{ fontSize: 13.5, color: "#475569" }}>
-            A solicitação #{solicitacao.id} não segue pro SST e não pode ser reaberta — se a demissão voltar a acontecer, o encarregado abre um pedido novo.
+            {noSST
+              ? <>A solicitação #{solicitacao.id} sai da fila do SST{agendado ? ", o ASO agendado precisa ser desmarcado" : ""} e não pode ser reaberta — se a demissão voltar a acontecer, o encarregado abre um pedido novo.</>
+              : <>A solicitação #{solicitacao.id} não segue pro SST e não pode ser reaberta — se a demissão voltar a acontecer, o encarregado abre um pedido novo.</>}
           </div>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             <button type="button" onClick={() => setPasso(0)} style={btn("#fff", "#475569", "1px solid #e2e8f0")}>Voltar</button>
@@ -154,7 +167,8 @@ export function BlocoCancelarReconsideracaoRH({ solicitacao, onCancelada, avisar
           <div style={{ fontSize: 13, fontWeight: 900, color: "#b91c1c", textTransform: "uppercase", letterSpacing: ".4px" }}>Última confirmação</div>
           <div style={{ fontSize: 14, color: "#0f172a" }}>
             A solicitação <b>#{solicitacao.id}</b> ficará <b style={{ color: "#dc2626" }}>CANCELADA</b>
-            {solicitante ? <> e <b>{solicitante}</b> será avisado</> : null}.
+            {solicitante ? <> e <b>{solicitante}</b> será avisado</> : null}
+            {noSST ? <>; o <b>SST</b> recebe o aviso para {agendado ? "desmarcar" : "não agendar"} o ASO</> : null}.
           </div>
           <div style={{ fontSize: 13.5, color: "#475569", background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 8, padding: "8px 10px", whiteSpace: "pre-wrap" }}>
             <b>Motivo:</b> {motivo.trim()}
