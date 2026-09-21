@@ -7,9 +7,11 @@
 // isso o hook usa `supabase as any` — o mesmo que os módulos recentes fazem.
 // =====================================================================
 
-export type StatusAluno = "pendente" | "ativo" | "bloqueado";
+// "inativo" (21/09/2026): colaborador afastado ou demitido no cadastro — vem
+// da sincronização com EMPREGADOS, não de decisão de alguém (isso é bloqueado).
+export type StatusAluno = "pendente" | "ativo" | "bloqueado" | "inativo";
 export const ROTULO_STATUS_ALUNO: Record<StatusAluno, string> = {
-  pendente: "Pendente", ativo: "Ativo", bloqueado: "Bloqueado",
+  pendente: "Pendente", ativo: "Ativo", bloqueado: "Bloqueado", inativo: "Inativo",
 };
 
 export interface Tag { id: string; nome: string; cor: string | null; created_at: string; alunos?: number }
