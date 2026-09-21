@@ -177,8 +177,13 @@ export function useNotificacoes() {
         expira_em: f.expira_em ? f.expira_em : null,
         // Sem imagem é NULL, não string vazia: a tela testa a coluna para
         // decidir se desenha o bloco, e "" é um valor que passa no if.
-        anexo_url: f.anexo_url.trim() || null,
-        anexo_nome: f.anexo_nome.trim() || null,
+        // A PRIMEIRA imagem continua em anexo_url/anexo_nome (capa: lista do
+        // Início, miniatura); todas vão em imagens (21/09/2026).
+        anexo_url: (f.imagens[0]?.url ?? f.anexo_url).trim() || null,
+        anexo_nome: (f.imagens[0]?.nome ?? f.anexo_nome).trim() || null,
+        imagens: f.imagens.filter((i) => i.url.trim()).map((i) => ({ url: i.url.trim(), nome: i.nome ?? "" })),
+        imagens_layout: f.imagens_layout === "grade" ? "grade" : "carrossel",
+        links: f.links.filter((l) => l.url.trim()).map((l) => ({ rotulo: l.rotulo.trim() || "Link", url: l.url.trim() })),
         exigir_ciencia: f.exigir_ciencia,
         // publico_alvo saiu na 081: a verdade é a tabela de alvos, e ter as
         // duas era duas fontes para a mesma pergunta.
