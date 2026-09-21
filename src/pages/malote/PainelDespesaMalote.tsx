@@ -368,10 +368,13 @@ export function PainelDespesaMalote({
       }
 
       let despesaId: string;
+      let aprovadoAutomaticamente = false;
       const payloadComId = { ...payloadBase, id: despesaIdExistente };
       const { arquivosNovos: _arquivosNovos, ...payloadPersistido } = payloadComId;
       if (paraEnviar && despesaIdExistente) {
-        despesaId = await converter.mutateAsync({ ...payloadPersistido, status: "pendente_aprovacao" });
+        const resultado = await converter.mutateAsync({ ...payloadPersistido, status: "pendente_aprovacao" });
+        despesaId = resultado.despesaId;
+        aprovadoAutomaticamente = resultado.aprovadoAutomaticamente;
       } else if (paraEnviar) {
         despesaId = await salvar.mutateAsync({ ...payloadPersistido, status: "pendente_aprovacao", nivel_aprovacao_atual: 1 });
       } else {
@@ -426,7 +429,9 @@ export function PainelDespesaMalote({
       if (paraEnviar && despesaIdExistente) {
         setConfirmacao({
           titulo: "Despesa enviada ao Malote",
-          subtitulo: "Criada a partir da solicitação e já na fila de aprovação.",
+          subtitulo: aprovadoAutomaticamente
+            ? "Dentro da tolerância de variação da cotação — aprovada automaticamente, já aguardando pagamento."
+            : "Criada a partir da solicitação e já na fila de aprovação.",
           numero: await buscarNumeroDespesa(despesaId),
         });
         onConvertida?.();

@@ -206,6 +206,7 @@ const EVENTO_LABEL: Record<TipoEvento, string> = {
   exclusao: "Movida para a lixeira",
   restauracao: "Restaurada da lixeira",
   ajuste_administrativo: "Ajuste administrativo (movida manualmente via banco)",
+  aprovacao_automatica_cotacao: "Aprovada automaticamente (dentro da tolerância da cotação)",
 };
 
 function LinhaHistorico({ evento, criadoPor }: { evento: DespesaEvento; criadoPor: string }) {

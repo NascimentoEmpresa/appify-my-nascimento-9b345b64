@@ -10,7 +10,7 @@ const CLASSIFICACAO_COLUMNS =
   "aprovador1_user_ids, aprovador1_nomes, aprovador1_limite_pct, aprovador1_sem_limite, " +
   "aprovador2_user_ids, aprovador2_nomes, aprovador2_limite_pct, aprovador2_sem_limite, " +
   "aprovador3_user_ids, aprovador3_nomes, aprovador3_limite_pct, aprovador3_sem_limite, " +
-  "limite_justificativa_pct";
+  "limite_justificativa_pct, tolerancia_variacao_cotacao_pct";
 
 export interface ClassificacaoOrcamento {
   id: string;
@@ -49,6 +49,12 @@ export interface ClassificacaoOrcamento {
   aprovador3_limite_pct: number | null;
   aprovador3_sem_limite: boolean;
   limite_justificativa_pct: number | null;
+  // SIS-2026-0443 (Iury): "% de tolerância" entre o valor lançado na
+  // despesa e o valor_aprovado_cotacao da mesma linha (só existe/faz
+  // sentido junto de requer_solicitacao=true) — dentro do limite E sem
+  // troca de contrato no Rateio, a despesa pula N1/N2 e nasce direto em
+  // aguardando_pagamento (malote_finalizar_conversao_solicitacao).
+  tolerancia_variacao_cotacao_pct: number | null;
 }
 
 export interface AprovadorDisponivel {
@@ -194,6 +200,7 @@ interface SalvarClassificacaoInput {
   aprovador3_limite_pct: number | null;
   aprovador3_sem_limite: boolean;
   limite_justificativa_pct: number | null;
+  tolerancia_variacao_cotacao_pct: number | null;
 }
 
 export function useSalvarClassificacaoOrcamento() {
