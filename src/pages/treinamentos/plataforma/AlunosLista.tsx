@@ -59,7 +59,6 @@ const ACOES_MASSA: { v: string; rotulo: string; param?: "curso" | "tag" | "texto
 export default function AlunosLista() {
   const navigate = useNavigate();
   const [params] = useSearchParams();
-  const { data: alunos = [], isLoading } = useTrnAlunos();
   const { data: tags = [] } = useTrnTags();
   const { data: cursos = [] } = useTrnCursos();
   const excluir = useTrnExcluirAluno();
@@ -70,7 +69,12 @@ export default function AlunosLista() {
   const [mostrarFiltros, setMostrarFiltros] = useState(!!params.get("tag"));
   const [fTag, setFTag] = useState(params.get("tag") ?? "");
   const [fCurso, setFCurso] = useState("");
-  const [fStatus, setFStatus] = useState<"" | StatusAluno>("");
+  // "" = padrão: sem os inativos (demitido/afastado). "todos" e "inativo"
+  // são os únicos que fazem o banco mandar os inativos (22/09/2026 — a
+  // lista com os 13 mil levava ~10 s).
+  const [fStatus, setFStatus] = useState<"" | "todos" | StatusAluno>("");
+  const incluirInativos = fStatus === "todos" || fStatus === "inativo";
+  const { data: alunos = [], isLoading } = useTrnAlunos(incluirInativos);
   const [fExpira, setFExpira] = useState<"" | "vitalicio" | "expira" | "expirado">("");
   const [colunas, setColunas] = useState<Set<ColunaOpcional>>(new Set(COLUNAS.filter((c) => c.padrao).map((c) => c.k)));
   const [selecionados, setSelecionados] = useState<Set<string>>(new Set());
@@ -93,7 +97,7 @@ export default function AlunosLista() {
     return alunos.filter((a) => {
       if (b && !`${a.nome} ${a.email} ${a.telefone ?? ""} ${a.documento ?? ""}`.toLowerCase().includes(b)) return false;
       if (fTag && !a.tag_ids.includes(fTag)) return false;
-      if (fStatus && a.status !== fStatus) return false;
+      if (fStatus && fStatus !== "todos" && a.status !== fStatus) return false;
       if (fExpira === "vitalicio" && a.expira_em) return false;
       if (fExpira === "expira" && (!a.expira_em || a.expira_em < hoje)) return false;
       if (fExpira === "expirado" && (!a.expira_em || a.expira_em >= hoje)) return false;
@@ -221,7 +225,7 @@ export default function AlunosLista() {
       <AcessoGate menu={MENU.alunos} acao="visualizar" fallback={<Card className="p-6 text-sm text-muted-foreground">Você não tem liberação para ver os alunos.</Card>}>
         <TrnHero
           titulo="Todos os alunos"
-          texto={`${alunos.length} aluno(s) na plataforma. Busque, filtre por tag/curso/status e aplique ações em massa.`}
+          texto={`${alunos.length} aluno(s) ${incluirInativos ? "na plataforma, com os inativos" : "sem os inativos (demitidos/afastados só aparecem pelo filtro de status)"}. Busque, filtre por tag/curso/status e aplique ações em massa.`}
           acoes={<>
             <button className="sec" onClick={exportar}><Download className="h-4 w-4" /> Exportar lista</button>
             <AcessoGate menu={MENU.alunos} acao="alterar">
@@ -261,9 +265,13 @@ export default function AlunosLista() {
                 <SelectTrigger><SelectValue placeholder="Todos os cursos" /></SelectTrigger>
                 <SelectContent><SelectItem value="__">Todos os cursos</SelectItem>{cursos.map((c) => <SelectItem key={c.id} value={c.id}>{c.nome}{c.publicado ? "" : " (rascunho)"}</SelectItem>)}</SelectContent>
               </Select>
-              <Select value={fStatus || "__"} onValueChange={(v) => setFStatus(v === "__" ? "" : (v as StatusAluno))}>
+              <Select value={fStatus || "__"} onValueChange={(v) => setFStatus(v === "__" ? "" : (v as "todos" | StatusAluno))}>
                 <SelectTrigger><SelectValue placeholder="Status" /></SelectTrigger>
-                <SelectContent><SelectItem value="__">Todos os status</SelectItem>{(Object.keys(ROTULO_STATUS_ALUNO) as StatusAluno[]).map((s) => <SelectItem key={s} value={s}>{ROTULO_STATUS_ALUNO[s]}</SelectItem>)}</SelectContent>
+                <SelectContent>
+                  <SelectItem value="__">Sem inativos (padrão)</SelectItem>
+                  <SelectItem value="todos">Todos, com inativos/demitidos</SelectItem>
+                  {(Object.keys(ROTULO_STATUS_ALUNO) as StatusAluno[]).map((s) => <SelectItem key={s} value={s}>{ROTULO_STATUS_ALUNO[s]}{s === "inativo" ? " (demitidos/afastados)" : ""}</SelectItem>)}
+                </SelectContent>
               </Select>
               <Select value={fExpira || "__"} onValueChange={(v) => setFExpira(v === "__" ? "" : (v as typeof fExpira))}>
                 <SelectTrigger><SelectValue placeholder="Expiração" /></SelectTrigger>

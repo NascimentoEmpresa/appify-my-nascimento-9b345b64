@@ -116,10 +116,15 @@ export async function rpcTodasAsLinhas<T>(fn: string, args?: Record<string, unkn
   return tudo;
 }
 
-export function useTrnAlunos() {
+/**
+ * Sem `incluirInativos` vêm só os não-inativos (Trabalhando + pendentes/
+ * bloqueados) — ~2,2 mil em vez de 13 mil; a lista levava ~10 s (22/09/2026).
+ * Demitido/afastado só carrega quando o filtro de status pede.
+ */
+export function useTrnAlunos(incluirInativos = false) {
   return useQuery({
-    queryKey: [K.alunos],
-    queryFn: () => rpcTodasAsLinhas<AlunoLista>("trn_alunos_lista"),
+    queryKey: [K.alunos, incluirInativos],
+    queryFn: () => rpcTodasAsLinhas<AlunoLista>("trn_alunos_lista", { _incluir_inativos: incluirInativos }),
   });
 }
 
