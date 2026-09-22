@@ -1,11 +1,9 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
-import { Check, ChevronDown, Loader2, X } from "lucide-react";
+import { Loader2 } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { useTrnTags } from "@/hooks/useTreinamentosPlataforma";
 import { ROTULO_STATUS_ALUNO, type StatusAluno } from "./tipos";
 
 // =====================================================================
@@ -132,90 +130,22 @@ export function StatusAlunoBadge({ status }: { status: StatusAluno }) {
   return <span className={`trn-badge ${cls}`}>{ROTULO_STATUS_ALUNO[status]}</span>;
 }
 
-export function TagChips({ nomes, max = 3 }: { nomes: string[]; max?: number }) {
-  if (!nomes.length) return <span className="text-xs text-muted-foreground">—</span>;
-  const visiveis = nomes.slice(0, max);
-  const resto = nomes.length - visiveis.length;
-  return (
-    <span title={nomes.join(", ")}>
-      {visiveis.map((n) => <span key={n} className="trn-tagchip">{n}</span>)}
-      {resto > 0 && <span className="trn-tagchip" style={{ background: "#f1f5f9", color: "#475569" }}>+{resto}</span>}
-    </span>
-  );
-}
-
-/** Seletor múltiplo de tags (o "Vincule tags a este aluno" do membox). */
-export function TagPicker({ value, onChange, placeholder = "Selecionar tags…" }: {
-  value: string[]; onChange: (ids: string[]) => void; placeholder?: string;
-}) {
-  const { data: tags = [] } = useTrnTags();
-  const [busca, setBusca] = useState("");
-  const selecionadas = useMemo(() => tags.filter((t) => value.includes(t.id)), [tags, value]);
-  const filtradas = useMemo(() => {
-    const b = busca.trim().toLowerCase();
-    return b ? tags.filter((t) => t.nome.toLowerCase().includes(b)) : tags;
-  }, [tags, busca]);
-  const alternar = (id: string) => onChange(value.includes(id) ? value.filter((v) => v !== id) : [...value, id]);
-
-  return (
-    <Popover>
-      <PopoverTrigger asChild>
-        <button type="button" className="flex min-h-10 w-full flex-wrap items-center gap-1 rounded-md border bg-white px-3 py-1.5 text-left text-sm">
-          {selecionadas.length === 0 && <span className="text-muted-foreground">{placeholder}</span>}
-          {selecionadas.map((t) => (
-            <span key={t.id} className="trn-tagchip" onClick={(e) => { e.stopPropagation(); alternar(t.id); }}>
-              {t.nome} <X className="ml-0.5 inline h-3 w-3" />
-            </span>
-          ))}
-          <ChevronDown className="ml-auto h-4 w-4 text-muted-foreground" />
-        </button>
-      </PopoverTrigger>
-      <PopoverContent className="w-72 p-2" align="start">
-        <input value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Buscar tag…"
-               className="mb-2 w-full rounded-md border px-2 py-1.5 text-sm" />
-        <div className="max-h-64 overflow-y-auto">
-          {filtradas.length === 0 && <p className="p-2 text-xs text-muted-foreground">Nenhuma tag. Cadastre em Alunos › Tags.</p>}
-          {filtradas.map((t) => {
-            const on = value.includes(t.id);
-            return (
-              <button key={t.id} type="button" onClick={() => alternar(t.id)}
-                      className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-muted">
-                <span className={`grid h-4 w-4 place-items-center rounded border ${on ? "border-primary bg-primary text-white" : ""}`}>
-                  {on && <Check className="h-3 w-3" />}
-                </span>
-                <span className="flex-1 truncate">{t.nome}</span>
-                <span className="text-[10px] text-muted-foreground">{t.alunos ?? 0}</span>
-              </button>
-            );
-          })}
-        </div>
-        {value.length > 0 && (
-          <Button variant="ghost" size="sm" className="mt-1 w-full" onClick={() => onChange([])}>Limpar</Button>
-        )}
-      </PopoverContent>
-    </Popover>
-  );
-}
-
-/** Público "Todos os alunos" × "Alunos com tags específicas" — usado em aviso, notificação e evento. */
-export function PublicoPicker({ publico, tagIds, onPublico, onTags, verboTodos = "Exibir", verboTags = "Exibir apenas" }: {
-  publico: "todos" | "tags"; tagIds: string[];
-  onPublico: (p: "todos" | "tags") => void; onTags: (ids: string[]) => void;
+/**
+ * Público de aviso, notificação e evento. Era "Todos os alunos" × "Alunos com
+ * tags específicas"; as tags saíram em 22/09/2026 ("tira as tags, não vai
+ * precisar" — Pablo), então sobra Todos. A assinatura ficou igual pras três
+ * telas não mudarem; registro antigo marcado "tags" volta pra "todos".
+ */
+export function PublicoPicker({ publico, onPublico, verboTodos = "Exibir" }: {
+  publico: "todos" | "tags"; tagIds?: string[];
+  onPublico: (p: "todos" | "tags") => void; onTags?: (ids: string[]) => void;
   verboTodos?: string; verboTags?: string;
 }) {
+  useEffect(() => { if (publico !== "todos") onPublico("todos"); }, [publico, onPublico]);
   return (
-    <div className="grid gap-3 sm:grid-cols-2">
-      <div className={`trn-opcao ${publico === "todos" ? "on" : ""}`} onClick={() => onPublico("todos")}>
-        <input type="radio" checked={publico === "todos"} readOnly className="mt-1" />
-        <div><b>Todos os alunos</b><span>{verboTodos} para todos os alunos da plataforma.</span></div>
-      </div>
-      <div className={`trn-opcao ${publico === "tags" ? "on" : ""}`} onClick={() => onPublico("tags")}>
-        <input type="radio" checked={publico === "tags"} readOnly className="mt-1" />
-        <div><b>Alunos com tags específicas</b><span>{verboTags} para alunos que possuem as tags selecionadas.</span></div>
-      </div>
-      {publico === "tags" && (
-        <div className="sm:col-span-2"><TagPicker value={tagIds} onChange={onTags} placeholder="Escolha as tags…" /></div>
-      )}
+    <div className="trn-opcao on">
+      <input type="radio" checked readOnly className="mt-1" />
+      <div><b>Todos os alunos</b><span>{verboTodos} para todos os alunos da plataforma.</span></div>
     </div>
   );
 }

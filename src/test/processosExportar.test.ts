@@ -15,7 +15,8 @@ const proc = (over: Partial<ProcessoExp> = {}): ProcessoExp => ({
 });
 const extras = (ps: ProcessoExp[]): ExtrasProcesso => ({
   comentarios: new Map([[ps[0].numero_processo, [{ texto: "ok", autor_nome: "Ana", created_at: "2026-09-01T10:00:00Z" }]]]),
-  pagamentos: new Map([[ps[0].id, {
+  // Chave = número do processo (22/09/2026): o id da linha muda a cada "Salvar".
+  pagamentos: new Map([[ps[0].numero_processo, {
     malote: [{ numero: "DM-2026-0921", nome: "Acordo", status: "Pago", valor_total: 800, origem: "malote_auto", parcelas: [{ pago_em: "2026-09-01" }, {}] }],
     anexos: [],
   }]]),

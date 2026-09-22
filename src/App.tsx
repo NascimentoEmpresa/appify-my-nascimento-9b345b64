@@ -170,7 +170,6 @@ import TreinamentosDashboard from "./pages/treinamentos/plataforma/Dashboard";
 import TrnAlunosLista from "./pages/treinamentos/plataforma/AlunosLista";
 import TrnAlunoForm from "./pages/treinamentos/plataforma/AlunoForm";
 import TrnAlunosGerenciar from "./pages/treinamentos/plataforma/AlunosGerenciar";
-import TrnAlunosTags from "./pages/treinamentos/plataforma/AlunosTags";
 import TrnCursosLista from "./pages/treinamentos/plataforma/CursosLista";
 import TrnCursoForm from "./pages/treinamentos/plataforma/CursoForm";
 import TrnCursoDetalhe from "./pages/treinamentos/plataforma/CursoDetalhe";
@@ -263,6 +262,7 @@ import PainelDistribuicaoChamados from "./pages/chamados/PainelDistribuicao";
 import DashboardChamados from "./pages/chamados/DashboardChamados";
 import CoordenarChamado from "./pages/chamados/CoordenarChamado";
 import PainelDesenvolvedorChamados from "./pages/chamados/PainelDesenvolvedor";
+import DashboardDesenvolvedorChamados from "./pages/chamados/DashboardDesenvolvedor";
 import ExecutarChamado from "./pages/chamados/ExecutarChamado";
 import AcompanharChamado from "./pages/chamados/AcompanharChamado";
 import WhatsAppInbox from "./pages/whatsapp/WhatsAppInbox";
@@ -451,6 +451,11 @@ const App = () => (
             <Route path="sistemas/chamados/painel" element={<PainelDistribuicaoChamados />} />
             <Route path="sistemas/chamados/dashboard-tv" element={<DashboardChamados />} />
             <Route path="sistemas/chamados/dev" element={<PainelDesenvolvedorChamados />} />
+            {/* Sub-rota do Painel do Dev, sem app_menu próprio de propósito (mesmo
+                padrão de :id/coordenar e :id/acompanhar): só é alcançada pelo botão
+                dentro do Painel, que já é gateado; dados vêm filtrados por
+                responsavel_id = auth.uid(), então não vaza chamado de outro dev. */}
+            <Route path="sistemas/chamados/dev/dashboard" element={<DashboardDesenvolvedorChamados />} />
             <Route path="sistemas/chamados/:id/coordenar" element={<CoordenarChamado />} />
             {/* Não vira redirect por causa do :id, que o Navigate não interpola.
                 Renderiza a mesma tela, mas com o "voltar" apontando para a
@@ -754,7 +759,6 @@ const App = () => (
             {/* "Adicionar novo" virou "Gerenciar" (21/09/2026): aluno é colaborador
                 e entra pela admissão. A rota ficou pra não zerar a permissão. */}
             <Route path="treinamentos/alunos/novo" element={<TrnAlunosGerenciar />} />
-            <Route path="treinamentos/alunos/tags" element={<TrnAlunosTags />} />
             <Route path="treinamentos/alunos/:id" element={<TrnAlunoForm />} />
             <Route path="treinamentos/cursos" element={<TrnCursosLista />} />
             <Route path="treinamentos/cursos/novo" element={<TrnCursoForm />} />

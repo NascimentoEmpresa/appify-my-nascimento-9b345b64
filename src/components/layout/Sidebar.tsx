@@ -82,7 +82,7 @@ import { MessageSquare } from "lucide-react";
 import { Banknote } from "lucide-react";
 import { TrendingDown } from "lucide-react";
 import { Megaphone, ExternalLink } from "lucide-react";
-import { Award, CalendarDays, FolderTree, Tags, Users } from "lucide-react";
+import { Award, CalendarDays, FolderTree, Users } from "lucide-react";
 import { CreditCard } from "lucide-react";
 import { Network } from "lucide-react";
 import { useNovidades } from "@/hooks/useNovidades";
@@ -594,7 +594,7 @@ const encarregadosModule: ModuleDef = {
       label: "Jurídico",
       defaultOpen: true,
       items: [
-        { label: "Solicitar Advertência", to: "/app/encarregados/advertencia", icon: ShieldAlert },
+        { label: "Solicitar Medida Disciplinar", to: "/app/encarregados/advertencia", icon: ShieldAlert },
         // A mesma tela da Central de Serviços, com menu próprio
         // (`encarregados_orientacoes`): o encarregado vê todas as respostas do
         // Jurídico e as próprias perguntas sem sair do módulo dele (17/09/2026).
@@ -666,7 +666,6 @@ const treinamentosModule: ModuleDef = {
       items: [
         { label: "Visualizar alunos", to: "/app/treinamentos/alunos", icon: Users },
         { label: "Gerenciar alunos", to: "/app/treinamentos/alunos/novo", icon: UserCog },
-        { label: "Tags", to: "/app/treinamentos/alunos/tags", icon: Tags },
       ],
     },
     {
@@ -792,7 +791,7 @@ const centralServicosModule: ModuleDef = {
         { label: "Solicitar Férias", to: "/app/central-servicos/solicitacoes/ferias", icon: CalendarRange },
         { label: "Solicitar Demissão", to: "/app/central-servicos/solicitacoes/demissao", icon: UserMinus },
         { label: "Mudança de Função", to: "/app/central-servicos/solicitacoes/mudanca-funcao", icon: ArrowLeftRight, notif: "troca_funcao" },
-        { label: "Solicitar Advertência", to: "/app/central-servicos/solicitacoes/advertencia", icon: ShieldAlert },
+        { label: "Solicitar Medida Disciplinar", to: "/app/central-servicos/solicitacoes/advertencia", icon: ShieldAlert },
       ],
     },
   ],
