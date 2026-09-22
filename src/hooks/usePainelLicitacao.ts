@@ -27,6 +27,11 @@ export function aberturaUrgencia(d: string | null): "critica" | "proxima" | "nor
 
 const STATUS_NAO_PARTICIPADO = new Set(["Não Participado", "Suspenso", "Revogado"]);
 
+// Normaliza nome de responsável (MAIÚSCULAS, sem acento) para agrupar o mesmo
+// nome digitado com caixa/acentuação diferente — senão o filtro lista a mesma
+// pessoa duas vezes ("AMALIA MAIA DA SILVA" e "Amalia Maia da Silva").
+const normResp = (s: string) => s.trim().toUpperCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
+
 export interface PainelFilters {
   dateFrom: string | null;
   dateTo: string | null;
@@ -49,7 +54,8 @@ export function usePainelLicitacao(filters?: PainelFilters, opts?: { todasEmpres
       items = items.filter((i) => i.data && i.data <= filters.dateTo!);
     }
     if (filters?.responsavel) {
-      items = items.filter((i) => i.responsavel === filters.responsavel);
+      const alvo = normResp(filters.responsavel);
+      items = items.filter((i) => i.responsavel && normResp(i.responsavel) === alvo);
     }
 
     const editaisLidos = items.length;
@@ -181,8 +187,15 @@ export function usePainelLicitacao(filters?: PainelFilters, opts?: { todasEmpres
       };
     });
 
-    // Responsáveis únicos (para filtro)
-    const responsaveis = [...new Set(allItems.map((i) => i.responsavel).filter(Boolean) as string[])].sort();
+    // Responsáveis únicos (para filtro) — deduplicados por nome normalizado,
+    // exibindo em MAIÚSCULAS (1ª grafia vista) pra casar com o resto do painel.
+    const respDisplay = new Map<string, string>();
+    for (const i of allItems) {
+      if (!i.responsavel) continue;
+      const key = normResp(i.responsavel);
+      if (!respDisplay.has(key)) respDisplay.set(key, i.responsavel.trim().toUpperCase());
+    }
+    const responsaveis = Array.from(respDisplay.values()).sort();
 
     return {
       editaisLidos,
