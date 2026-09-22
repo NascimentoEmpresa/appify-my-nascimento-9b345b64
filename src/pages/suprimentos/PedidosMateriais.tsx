@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
@@ -12,6 +12,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { useEmpresaId } from "@/hooks/useEmpresaId";
+import { useDebounce } from "@/hooks/useDebounce";
 import {
   ESTILO_STATUS, fmtDataBR,
   ESTILO_STATUS_ITEM, STATUS_ITEM, derivarStatusItem,
@@ -230,6 +231,10 @@ export default function PedidosMateriais() {
     proximos.delete("fotos");
     setSearchParams(proximos, { replace: true });
   };
+  // 21/09/2026: o campo continua respondendo na hora (é `busca` que o input
+  // usa), mas o FILTRO só roda quando a digitação para. Sem isso, cada tecla
+  // varria os 2.105 pedidos e a tela engasgava enquanto se digitava.
+  const buscaAtrasada = useDebounce(busca, 250);
   const [filtroStatus, setFiltroStatus] = useState("TODOS");
   const [filtroItem, setFiltroItem] = useState("TODOS");
   const [exportando, setExportando] = useState(false);
@@ -256,21 +261,40 @@ export default function PedidosMateriais() {
        * (REPLICAR-MODULO-COMPRAS.md §5.3) — trazer tudo aqui devolve esse
        * comportamento com uma consulta só.
        */
+      /**
+       * 21/09/2026: as páginas eram buscadas EM SEQUÊNCIA, cada uma esperando
+       * a anterior. Com 2.105 pedidos isso são 3 idas ao servidor enfileiradas
+       * só para montar a lista, e o usuário espera a soma de todas.
+       *
+       * Agora a primeira página já traz a contagem total (`count: "exact"`), e
+       * as demais saem TODAS DE UMA VEZ. O tempo passa a ser o da página mais
+       * lenta, não o da soma. Nada muda no resultado: continua trazendo a fila
+       * inteira, que é o que os cards de KPI e o Excel precisam.
+       */
       const PAGINA = 1000;
-      const todos: Pedido[] = [];
-      for (let de = 0; ; de += PAGINA) {
-        const { data, error } = await sb
+      const COLUNAS =
+        // item_id vem junto porque a baixa confere se a etiqueta é do material certo.
+        "*, sup_pedido_item(id, item_id, nome_item, tipo_item, tamanho, quantidade, litros, ordem), sup_pedido_comprovacao(id, status, respondido_em)";
+
+      const buscarPagina = async (de: number, comContagem = false) => {
+        const q = sb
           .from("sup_pedido")
-          // item_id vem junto porque a baixa confere se a etiqueta é do material certo.
-          .select("*, sup_pedido_item(id, item_id, nome_item, tipo_item, tamanho, quantidade, litros, ordem), sup_pedido_comprovacao(id, status, respondido_em)")
+          .select(COLUNAS, comContagem ? { count: "exact" } : undefined)
           .order("created_at", { ascending: false })
           .range(de, de + PAGINA - 1);
+        const { data, error, count } = await q;
         if (error) throw error;
-        const lote = data ?? [];
-        todos.push(...lote);
-        if (lote.length < PAGINA) break;
-      }
-      return todos;
+        return { lote: (data ?? []) as Pedido[], total: count ?? null };
+      };
+
+      const primeira = await buscarPagina(0, true);
+      const total = primeira.total ?? primeira.lote.length;
+      if (total <= PAGINA) return primeira.lote;
+
+      const restantes = await Promise.all(
+        Array.from({ length: Math.ceil(total / PAGINA) - 1 }, (_, i) => buscarPagina((i + 1) * PAGINA)),
+      );
+      return [...primeira.lote, ...restantes.flatMap((r) => r.lote)];
     },
   });
 
@@ -296,27 +320,48 @@ export default function PedidosMateriais() {
     return base;
   }, [pedidos, situacoes]);
 
+  /**
+   * Texto pesquisável de cada pedido, montado UMA VEZ.
+   *
+   * 21/09/2026: esta concatenação de ~18 campos (mais o nome e o tamanho de
+   * todos os itens do pedido) ficava dentro do filtro, ou seja, era refeita
+   * para os 2.105 pedidos A CADA TECLA DIGITADA. Digitar "jaqueta" reconstruía
+   * mais de 14 mil strings, sete vezes seguidas, travando o campo de busca.
+   *
+   * Agora é um índice memorizado que só se refaz quando os pedidos ou as
+   * situações mudam. O conteúdo indexado é exatamente o mesmo de antes —
+   * "digite qualquer coisa que aparece na tela", incluindo data já formatada
+   * em dd/mm/aaaa e nome de material (REPLICAR §5.4).
+   */
+  const textoBusca = useMemo(() => {
+    const indice = new Map<string, string>();
+    for (const p of pedidos) {
+      indice.set(
+        p.id,
+        [
+          p.pedido_id, apresentacaoStatusPedido(p, situacoes?.get(p.id) ?? null).rotulo,
+          p.contrato_nome, p.posto_nome, p.funcao_nome,
+          p.solicitante_login, p.solicitante_nome, p.nome_colaborador, p.matricula_colaborador,
+          p.tipo_pedido, p.observacoes_solicitante, p.observacao, p.envio_rastreio,
+          p.retirado_por_nome,
+          fmtDataBR(p.data_solicitacao), fmtDataBR(p.data_despachado),
+          p.admissao ? "admissao admissão" : "",
+          ...(p.sup_pedido_item ?? []).flatMap((i) => [i.nome_item, i.tamanho ?? ""]),
+        ].filter(Boolean).join(" ").toLowerCase(),
+      );
+    }
+    return indice;
+  }, [pedidos, situacoes]);
+
   const porBusca = useMemo(() => {
-    const t = busca.trim().toLowerCase();
+    const t = buscaAtrasada.trim().toLowerCase();
     return pedidos.filter((p) => {
       const statusVisivel = statusVisivelPedido(p, situacoes?.get(p.id) ?? null);
       if (filtroStatus !== "TODOS" && statusVisivel !== filtroStatus) return false;
       if (!t) return true;
-      // "Digite qualquer coisa que aparece na tela" — inclui data já
-      // formatada em dd/mm/aaaa e nome de material (REPLICAR §5.4).
-      const alvo = [
-        p.pedido_id, apresentacaoStatusPedido(p, situacoes?.get(p.id) ?? null).rotulo,
-        p.contrato_nome, p.posto_nome, p.funcao_nome,
-        p.solicitante_login, p.solicitante_nome, p.nome_colaborador, p.matricula_colaborador,
-        p.tipo_pedido, p.observacoes_solicitante, p.observacao, p.envio_rastreio,
-        p.retirado_por_nome,
-        fmtDataBR(p.data_solicitacao), fmtDataBR(p.data_despachado),
-        p.admissao ? "admissao admissão" : "",
-        ...(p.sup_pedido_item ?? []).flatMap((i) => [i.nome_item, i.tamanho ?? ""]),
-      ].filter(Boolean).join(" ").toLowerCase();
-      return alvo.includes(t);
+      return (textoBusca.get(p.id) ?? "").includes(t);
     });
-  }, [pedidos, busca, filtroStatus, situacoes]);
+  }, [pedidos, buscaAtrasada, filtroStatus, situacoes, textoBusca]);
 
   /**
    * Filtro por status de ITEM (SIS-2026-0201). Só busca as etiquetas quando o
@@ -341,6 +386,27 @@ export default function PedidosMateriais() {
   }, [porBusca, filtrandoPorItem, tagsFiltro, filtroItem]);
 
   /**
+   * Quantos cards são DESENHADOS. 21/09/2026.
+   *
+   * A tela montava um `CardPedido` para cada pedido filtrado — com a fila
+   * atual e o filtro padrão ("TODOS", busca vazia), isso são 2.105 componentes
+   * de uma vez, cada um com estado próprio e vários `useMemo`. Era o que
+   * travava o navegador ao abrir, mais do que a espera do banco.
+   *
+   * ATENÇÃO — o que NÃO pode mudar junto: os cards de KPI (`contagens`) somam
+   * `pedidos`, e o Excel exporta `filtrados`. Os dois continuam vendo a fila
+   * inteira. Limitar aqui é só o que o olho alcança: o usuário vê ~6 cards por
+   * vez, não 2.105. Mexer no `contagens` ou no Excel devolveria o bug do
+   * SIS-2026-0201, em que os totais mostravam 1.000 de 1.448.
+   */
+  const PAGINA_CARDS = 24;
+  const [cardsVisiveis, setCardsVisiveis] = useState(PAGINA_CARDS);
+  // Filtro novo, contagem zerada — senão o usuário filtra e continua vendo a
+  // rolagem antiga já expandida.
+  useEffect(() => { setCardsVisiveis(PAGINA_CARDS); }, [buscaAtrasada, filtroStatus, filtroItem]);
+  const naTela = useMemo(() => filtrados.slice(0, cardsVisiveis), [filtrados, cardsVisiveis]);
+
+  /**
    * Situação dos objetos nos Correios, para os pedidos que estão na tela.
    *
    * Consulta só o que está FILTRADO, não a fila inteira: a API aceita 50
@@ -350,11 +416,16 @@ export default function PedidosMateriais() {
    * Falha aqui não quebra a tela — o hook não faz retry e os cards
    * simplesmente ficam sem o badge de rastreio.
    */
+  // 21/09/2026: era `filtrados`, a fila filtrada inteira. Sem filtro nenhum
+  // isso são 2.105 pedidos, e a API dos Correios aceita 50 códigos por
+  // chamada — dezenas de chamadas para pintar badge em card que ninguém
+  // rolou até ver. Passou a seguir `naTela`, que é exatamente o que o
+  // comentário acima sempre quis dizer: só o que está à vista.
   const codigosRastreio = useMemo(
-    () => filtrados
+    () => naTela
       .filter((p) => p.envio_tipo === "CORREIO" && p.envio_rastreio)
       .map((p) => p.envio_rastreio!.trim().toUpperCase()),
-    [filtrados],
+    [naTela],
   );
   // `situacoesCorreio`, e não `situacoes`: logo acima já existe um `situacoes`
   // que é a situação de ATENDIMENTO do pedido (quanto já foi separado). São
@@ -540,7 +611,7 @@ export default function PedidosMateriais() {
         </div>
       ) : (
         <div className="grid gap-4 lg:grid-cols-2 2xl:grid-cols-3">
-          {filtrados.map((p) => (
+          {naTela.map((p) => (
             <CardPedido
               key={p.id}
               pedido={p}
@@ -556,6 +627,23 @@ export default function PedidosMateriais() {
               rastreioCarregando={carregandoRastreio}
             />
           ))}
+        </div>
+      )}
+
+      {/* Rolagem por demanda (21/09/2026). Os números do rodapé falam da fila
+          FILTRADA inteira, não do que está desenhado — quem exporta o Excel
+          leva tudo, não só estes cards. */}
+      {filtrados.length > naTela.length && (
+        <div className="flex flex-col items-center gap-2 py-6">
+          <p className="text-sm text-muted-foreground">
+            Mostrando <strong>{naTela.length}</strong> de <strong>{filtrados.length}</strong> pedidos
+          </p>
+          <Button
+            variant="outline"
+            onClick={() => setCardsVisiveis((n) => n + PAGINA_CARDS)}
+          >
+            Carregar mais {Math.min(PAGINA_CARDS, filtrados.length - naTela.length)}
+          </Button>
         </div>
       )}
 
