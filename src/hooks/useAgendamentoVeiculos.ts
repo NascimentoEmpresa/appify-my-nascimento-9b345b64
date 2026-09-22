@@ -543,9 +543,11 @@ function useInvalidarViagem() {
 export function useFecharKm() {
   const invalidar = useInvalidarViagem();
   return useMutation({
-    mutationFn: async (v: { id: string; km: number; foto: File }) => {
-      const arq = await subirArquivoVeiculo(v.foto, `km/${v.id}`);
-      const { error } = await sb.rpc("cs_veiculo_km_final", { p_agendamento: v.id, p_km: v.km, p_foto: arq.path });
+    // km/foto são opcionais para viagem LEGADO (a que nasceu sem km_inicial —
+    // a RPC decide o que é obrigatório; ver cs_veiculo_km_final).
+    mutationFn: async (v: { id: string; km: number | null; foto: File | null }) => {
+      const path = v.foto ? (await subirArquivoVeiculo(v.foto, `km/${v.id}`)).path : null;
+      const { error } = await sb.rpc("cs_veiculo_km_final", { p_agendamento: v.id, p_km: v.km, p_foto: path });
       if (error) throw error;
     },
     onSuccess: (_d, v) => { invalidar(v.id); toast.success("KM final registrado. Viagem fechada."); },
