@@ -21,10 +21,6 @@ import {
   useContratosAtivos,
   useClassificacaoIdsPorDespesaRateio,
   useEmpresaPrimeiraLinhaRateio,
-  useRateioLinhasEParcelasEmLote,
-  RATEIO_E_PARCELAS_VAZIO,
-  RateioLinha,
-  Parcela,
   useContratoPrimeiraLinhaRateio,
   nomesAprovadorNivel,
   souAprovadorDoNivel,
@@ -43,14 +39,13 @@ import { useMinhasDespesasComJustificativaPendente } from "@/hooks/useMaloteJust
 import { useEstadoPersistido } from "@/hooks/useEstadoPersistido";
 import { useOrdenacaoTabela } from "@/hooks/useOrdenacaoTabela";
 import { ordenarPor } from "@/lib/ordenarTabela";
-import { JustificativaPendenteBadge, abreviarNome } from "./JustificativaPendenteBadge";
+import { abreviarNome } from "./JustificativaPendenteBadge";
 import { EmpresaContratoBadge } from "./EmpresaContratoBadge";
 
 // SIS-2026-0316: colunas ordenáveis. Fora: Empresa/Contrato (fica só como
 // Empresa pra ordenar, o badge continua mostrando os dois), Parcela
-// (composto X/Y), Solicitante (nome resolvido por hook próprio dentro de
-// cada linha, não dá pra acessar de forma síncrona aqui) e o sino de
-// Justificativa (não é dado ordenável).
+// (composto X/Y) e Solicitante (nome resolvido por hook próprio dentro de
+// cada linha, não dá pra acessar de forma síncrona aqui).
 type ColunaAprovacoes = "tipo" | "numero" | "empresa" | "nome" | "classificacao" | "valor" | "data_pagamento" | "status" | "excecao" | "atualizacao";
 
 function dataPagamentoDeItem(item: ItemLinhaMalote): string | null {
@@ -539,23 +534,6 @@ export default function Aprovacoes({ base = "/app/malote" }: { base?: string } =
   const paginaAtual = Math.min(pagina, totalPaginas);
   const visiveis = ordenados.slice((paginaAtual - 1) * PAGE_SIZE, paginaAtual * PAGE_SIZE);
 
-  // 21/09/2026: o JustificativaPendenteBadge dentro de cada LinhaItem fazia a
-  // própria consulta de rateio — uma por linha renderizada. Busca em lote, e o
-  // pedaço de cada despesa desce por prop até o badge.
-  //
-  // O lote é só sobre `visiveis` (a página atual), não sobre a lista inteira:
-  // não adianta buscar rateio de despesa que não está na tela.
-  const despesasVisiveisParaRateio = useMemo(
-    () =>
-      Array.from(
-        new Map(
-          visiveis.map((i) => [i.despesa.id, { id: i.despesa.id, parcelado: !!i.despesa.parcelado }]),
-        ).values(),
-      ),
-    [visiveis],
-  );
-  const { data: rateioPorDespesa } = useRateioLinhasEParcelasEmLote(despesasVisiveisParaRateio);
-
   function contar(s: StatusDespesa) {
     return itensComFiltrosDoPainel.filter((item) => statusEfetivo(item) === s).length;
   }
@@ -883,21 +861,17 @@ export default function Aprovacoes({ base = "/app/malote" }: { base?: string } =
                   <TableHeadOrdenavel coluna="status" ordenacao={ordenacao} className="text-center">Status</TableHeadOrdenavel>
                   <TableHeadOrdenavel coluna="excecao" ordenacao={ordenacao}>Exceção</TableHeadOrdenavel>
                   <TableHeadOrdenavel coluna="atualizacao" ordenacao={ordenacao}>Última atualização</TableHeadOrdenavel>
-                  {/* SIS-2026-0288-ajuste (Iury/usuário): "Justificativa"
-                      virou sino — pedido pra ficar bem evidente e como
-                      última coisa da linha, não mais coladinho no Nº. */}
-                  <TableHead className="w-10 px-2 text-center" />
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {isLoading && (
                   <TableRow>
-                    <TableCell colSpan={13} className="text-center text-muted-foreground py-10">Carregando...</TableCell>
+                    <TableCell colSpan={12} className="text-center text-muted-foreground py-10">Carregando...</TableCell>
                   </TableRow>
                 )}
                 {!isLoading && visiveis.length === 0 && (
                   <TableRow>
-                    <TableCell colSpan={13} className="text-center text-muted-foreground py-10">
+                    <TableCell colSpan={12} className="text-center text-muted-foreground py-10">
                       <div className="flex flex-col items-center gap-2">
                         <CheckCircle2 className="h-8 w-8 text-muted-foreground/50" />
                         Nenhum item encontrado com os filtros atuais.
@@ -915,7 +889,6 @@ export default function Aprovacoes({ base = "/app/malote" }: { base?: string } =
                     aprovadorNomes={aprovadorNomes}
                     formaEspecialPorNome={formaEspecialPorNome}
                     onAbrir={() => abrirItem(item.despesa)}
-                    rateioEParcelas={rateioPorDespesa?.get(item.despesa.id) ?? RATEIO_E_PARCELAS_VAZIO}
                   />
                 ))}
               </TableBody>
@@ -951,7 +924,6 @@ function LinhaItem({
   aprovadorNomes,
   formaEspecialPorNome,
   onAbrir,
-  rateioEParcelas,
 }: {
   item: ItemLinhaMalote;
   empresaId?: string | null;
@@ -960,9 +932,6 @@ function LinhaItem({
   aprovadorNomes: (despesa: MaloteDespesaRow, nivel: 1 | 2 | 3) => string[];
   formaEspecialPorNome: Map<string, MaloteFormaPagamento>;
   onAbrir: () => void;
-  // 21/09/2026: vem do lote da tela (useRateioLinhasEParcelasEmLote) e é só
-  // repassado ao badge, pra ele não consultar o banco por conta própria.
-  rateioEParcelas?: { linhas: RateioLinha[]; parcelas: Parcela[] };
 }) {
   const { despesa, parcela } = item;
   const { data: solicitanteNome } = useNomeUsuario(despesa.created_by);
@@ -1049,13 +1018,6 @@ function LinhaItem({
       </TableCell>
       <TableCell className="text-sm">{despesa.excecao ? <Badge variant="destructive">Sim</Badge> : "Não"}</TableCell>
       <TableCell className="text-xs text-muted-foreground">{new Date(despesa.updated_at).toLocaleString("pt-BR")}</TableCell>
-      {/* SIS-2026-0288-ajuste (Iury/usuário): sino da Justificativa como
-          última coisa da linha, bem mais evidente que o ícone solto de
-          antes — círculo cheio com fundo âmbar, chama a atenção sem
-          precisar de coluna de texto (só aparece quando há pendência). */}
-      <TableCell className="px-2 text-center">
-        <JustificativaPendenteBadge despesa={despesa} parcela={parcela} variant="icon" rateioEParcelas={rateioEParcelas} />
-      </TableCell>
     </TableRow>
   );
 }
