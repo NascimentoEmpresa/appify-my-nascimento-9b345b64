@@ -262,6 +262,7 @@ import PainelDistribuicaoChamados from "./pages/chamados/PainelDistribuicao";
 import DashboardChamados from "./pages/chamados/DashboardChamados";
 import CoordenarChamado from "./pages/chamados/CoordenarChamado";
 import PainelDesenvolvedorChamados from "./pages/chamados/PainelDesenvolvedor";
+import DashboardDesenvolvedorChamados from "./pages/chamados/DashboardDesenvolvedor";
 import ExecutarChamado from "./pages/chamados/ExecutarChamado";
 import AcompanharChamado from "./pages/chamados/AcompanharChamado";
 import WhatsAppInbox from "./pages/whatsapp/WhatsAppInbox";
@@ -450,6 +451,11 @@ const App = () => (
             <Route path="sistemas/chamados/painel" element={<PainelDistribuicaoChamados />} />
             <Route path="sistemas/chamados/dashboard-tv" element={<DashboardChamados />} />
             <Route path="sistemas/chamados/dev" element={<PainelDesenvolvedorChamados />} />
+            {/* Sub-rota do Painel do Dev, sem app_menu próprio de propósito (mesmo
+                padrão de :id/coordenar e :id/acompanhar): só é alcançada pelo botão
+                dentro do Painel, que já é gateado; dados vêm filtrados por
+                responsavel_id = auth.uid(), então não vaza chamado de outro dev. */}
+            <Route path="sistemas/chamados/dev/dashboard" element={<DashboardDesenvolvedorChamados />} />
             <Route path="sistemas/chamados/:id/coordenar" element={<CoordenarChamado />} />
             {/* Não vira redirect por causa do :id, que o Navigate não interpola.
                 Renderiza a mesma tela, mas com o "voltar" apontando para a
