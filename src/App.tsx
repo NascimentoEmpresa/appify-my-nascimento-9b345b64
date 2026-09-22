@@ -6,6 +6,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ErroDeTela } from "@/components/layout/ErroDeTela";
 import { isAuthExpiredError } from "@/lib/authErrors";
+import { isSobrecargaError, atrasoSobrecargaMs } from "@/lib/erroSobrecarga";
 import NotFound from "./pages/NotFound.tsx";
 import Login from "./pages/Login.tsx";
 import TrocarSenha from "./pages/TrocarSenha.tsx";
@@ -215,6 +216,17 @@ import FormularioPublico from "./pages/publico/FormularioPublico";
 import Denuncia from "./pages/publico/Denuncia";
 import FornecedorCadastro from "./pages/publico/FornecedorCadastro";
 import PedidoConfirmar from "./pages/publico/PedidoConfirmar";
+// Portal do Colaborador (/colaborador) — login por CPF, sessão própria, fora do Auth.
+import ColaboradorShell from "./pages/colaborador/ColaboradorShell";
+import EntrarColaborador from "./pages/colaborador/EntrarColaborador";
+import InicioColaborador from "./pages/colaborador/InicioColaborador";
+import PerfilColaborador from "./pages/colaborador/PerfilColaborador";
+import SalarioColaborador from "./pages/colaborador/SalarioColaborador";
+import PontoColaborador from "./pages/colaborador/PontoColaborador";
+import TreinamentosColaborador from "./pages/colaborador/TreinamentosColaborador";
+import CursoColaborador from "./pages/colaborador/CursoColaborador";
+import CertificadoColaborador from "./pages/colaborador/CertificadoColaborador";
+import HistoricoColaborador from "./pages/colaborador/HistoricoColaborador";
 import FornecedoresPendentes from "./pages/suprimentos/FornecedoresPendentes";
 import DenunciasComiteEtica from "./pages/comite-etica/Denuncias";
 import ConfiguracaoComiteEtica from "./pages/comite-etica/Configuracao";
@@ -282,15 +294,50 @@ import DesignacoesOperacao from "./pages/central-servicos/espaco-colaborador/Des
 // era isso que deixava a Grade presa em "Erro ao carregar: JWT expired" até o
 // usuário dar F5. Para esse caso, mais tentativas e mais espaçadas, dando tempo
 // do supabase-js concluir a renovação.
+//
+// ── staleTime/gcTime (21/09/2026) ────────────────────────────────────────
+// A "rajada de requests" descrita no parágrafo acima nunca tinha sido tratada
+// na origem: o retry cuidava do ERRO que ela provocava, não da rajada em si.
+// Em 21/09/2026 às 14:01:59 o Postgres de produção reiniciou sozinho por
+// esgotamento de conexões (61 em uso para 57 utilizáveis na instância Micro),
+// e o upgrade de máquina foi vetado — o alívio tem que vir de consultar menos.
+//
+// Sem `staleTime`, o React Query assume 0: TODO dado nasce velho, então cada
+// remontagem de componente e cada volta para a aba refazia a consulta. São 513
+// pontos de `useQuery` no projeto e só 109 declaravam `staleTime` próprio —
+// ou seja, ~404 consultas rebuscavam à toa.
+//
+// 30s é conservador de propósito. Isto NÃO atrasa dado após ação do usuário:
+// as 586 chamadas de `invalidateQueries` do projeto continuam invalidando o
+// cache a cada escrita, então aprovar/pagar/salvar segue atualizando na hora.
+// `staleTime` corta só a busca PASSIVA, que é a que gerava a rajada.
+//
+// `refetchOnWindowFocus` fica no padrão (true) de propósito: com staleTime de
+// 30s ele deixa de disparar a rajada, mas quem ficou horas fora da aba ainda
+// recebe dado fresco ao voltar — que é o comportamento certo para um sistema
+// com pagamento e aprovação.
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
-      retry: (failureCount, error) =>
-        isAuthExpiredError(error) ? failureCount < 5 : failureCount < 3,
-      retryDelay: (failureCount, error) =>
-        isAuthExpiredError(error)
-          ? 2_000
-          : Math.min(1_000 * 2 ** failureCount, 30_000),
+      staleTime: 30_000,
+      gcTime: 300_000,
+      // A ordem das checagens importa: auth PRIMEIRO. 401/403 é token vencido
+      // (transitório, local, merece insistência), não sobrecarga.
+      retry: (failureCount, error) => {
+        if (isAuthExpiredError(error)) return failureCount < 5;
+        // 21/09/2026: banco afogado NÃO se resolve insistindo. Ver o porquê
+        // em ./lib/erroSobrecarga — este retry foi agravante do incidente que
+        // reiniciou o Postgres, não vítima dele. Uma única nova tentativa.
+        if (isSobrecargaError(error)) return failureCount < 1;
+        return failureCount < 3;
+      },
+      retryDelay: (failureCount, error) => {
+        if (isAuthExpiredError(error)) return 2_000;
+        // Atraso sorteado de propósito: sem o sorteio, todos os navegadores
+        // voltam no mesmo instante e batem no banco em bloco outra vez.
+        if (isSobrecargaError(error)) return atrasoSobrecargaMs();
+        return Math.min(1_000 * 2 ** failureCount, 30_000);
+      },
     },
   },
 });
@@ -334,6 +381,22 @@ const App = () => (
           {/* Canal de Ética — registro e acompanhamento de denúncia, sem login */}
           <Route path="/denuncia" element={<Denuncia />} />
           <Route path="/denuncia/acompanhar" element={<Navigate to="/denuncia?acompanhar" replace />} />
+          {/* Portal do Colaborador — o colaborador de campo entra com o CPF,
+              sem conta no Supabase Auth: fora do ProtectedRoute e do AppShell
+              de propósito. A guarda é o token do portal (ColaboradorShell), e
+              os dados vêm só da Edge Function colaborador-portal. Ver
+              20260930000196_portal_colaborador.sql. */}
+          <Route path="/colaborador/entrar" element={<EntrarColaborador />} />
+          <Route path="/colaborador" element={<ColaboradorShell />}>
+            <Route index element={<InicioColaborador />} />
+            <Route path="perfil" element={<PerfilColaborador />} />
+            <Route path="salario" element={<SalarioColaborador />} />
+            <Route path="ponto" element={<PontoColaborador />} />
+            <Route path="treinamentos" element={<TreinamentosColaborador />} />
+            <Route path="treinamentos/:cursoId" element={<CursoColaborador />} />
+            <Route path="treinamentos/:cursoId/certificado" element={<CertificadoColaborador />} />
+            <Route path="historico" element={<HistoricoColaborador />} />
+          </Route>
           <Route path="/app" element={<ProtectedRoute><AppShell /></ProtectedRoute>}>
             <Route index element={<Inicio />} />
             {/* Fora de app_menu de propósito: ler novidade é para todo mundo. */}

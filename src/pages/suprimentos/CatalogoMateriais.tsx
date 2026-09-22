@@ -10,7 +10,7 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "
 import { PageHeader } from "@/components/layout/PageHeader";
 import { useEmpresaId } from "@/hooks/useEmpresaId";
 import {
-  useContratosCatalogo, useContratosCatalogoRealtime,
+  useContratosCatalogo,
   usePostos, useFuncoes, useFuncaoItens, useItens, useItemOpcoes,
   useRascunhos, useCatalogoMutations, OPCOES_PREDEFINIDAS, LABEL_TIPO_ITEM,
   type TipoItem, type Item,
@@ -220,7 +220,27 @@ export default function CatalogoMateriais() {
   const [funcaoId, setFuncaoId] = useState<string | null>(null);
 
   const { data: contratos = [] } = useContratosCatalogo();
-  useContratosCatalogoRealtime();
+  // ── Realtime DESLIGADO em 21/09/2026 (autorizado por Eduardo) ────────────
+  // Aqui rodava `useContratosCatalogoRealtime()`, o único uso de Realtime em
+  // todo o projeto. Ele mandava esta lista se atualizar sozinha quando alguém
+  // cadastrava um contrato no Licitações.
+  //
+  // Foi desligado porque o serviço de Realtime segurava até 7 das 57 conexões
+  // que o banco aceita, e o estouro dessas 57 foi o que reiniciou o Postgres
+  // de produção às 14:01:59 daquele dia. A folga em dia normal era de ~14
+  // conexões; sem o Realtime passa a ~21.
+  //
+  // O que se perde: um contrato recém-criado no Licitações não aparece mais
+  // sozinho nesta lista. Aparece ao voltar o foco para a aba (o
+  // refetchOnWindowFocus continua ligado, com staleTime de 30s), ao trocar de
+  // tela ou ao dar F5. Medido antes de decidir: 74 contratos no total, 11
+  // alterados em 30 dias — o evento é raro e a espera máxima é de 30s.
+  //
+  // PARA RELIGAR: `git revert` do commit que trouxe este comentário. O hook
+  // `useContratosCatalogoRealtime` continua existindo e funcionando em
+  // useSupCatalogo.ts, e a tabela `contratos` segue publicada em
+  // supabase_realtime — nada no banco foi alterado.
+  // ─────────────────────────────────────────────────────────────────────────
   const { data: postos = [] } = usePostos(contratoId);
   const { data: funcoes = [] } = useFuncoes(postoId);
   const { data: enxoval = [] } = useFuncaoItens(funcaoId);

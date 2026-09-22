@@ -21,6 +21,10 @@ import {
   useContratosAtivos,
   useClassificacaoIdsPorDespesaRateio,
   useEmpresaPrimeiraLinhaRateio,
+  useRateioLinhasEParcelasEmLote,
+  RATEIO_E_PARCELAS_VAZIO,
+  RateioLinha,
+  Parcela,
   useContratoPrimeiraLinhaRateio,
   nomesAprovadorNivel,
   souAprovadorDoNivel,
@@ -33,7 +37,7 @@ import {
   MaloteDespesaRow,
   TipoSolicitacao,
 } from "@/hooks/useMaloteDespesa";
-import { useFormasPagamento } from "@/hooks/useMaloteFormaPagamento";
+import { useFormasPagamento, MaloteFormaPagamento } from "@/hooks/useMaloteFormaPagamento";
 import { useClassificacoesOrcamentoAdmin } from "@/hooks/usePlanejamentoOrcamentario";
 import { useMinhasDespesasComJustificativaPendente } from "@/hooks/useMaloteJustificativaAnalista";
 import { useEstadoPersistido } from "@/hooks/useEstadoPersistido";
@@ -535,6 +539,23 @@ export default function Aprovacoes({ base = "/app/malote" }: { base?: string } =
   const paginaAtual = Math.min(pagina, totalPaginas);
   const visiveis = ordenados.slice((paginaAtual - 1) * PAGE_SIZE, paginaAtual * PAGE_SIZE);
 
+  // 21/09/2026: o JustificativaPendenteBadge dentro de cada LinhaItem fazia a
+  // própria consulta de rateio — uma por linha renderizada. Busca em lote, e o
+  // pedaço de cada despesa desce por prop até o badge.
+  //
+  // O lote é só sobre `visiveis` (a página atual), não sobre a lista inteira:
+  // não adianta buscar rateio de despesa que não está na tela.
+  const despesasVisiveisParaRateio = useMemo(
+    () =>
+      Array.from(
+        new Map(
+          visiveis.map((i) => [i.despesa.id, { id: i.despesa.id, parcelado: !!i.despesa.parcelado }]),
+        ).values(),
+      ),
+    [visiveis],
+  );
+  const { data: rateioPorDespesa } = useRateioLinhasEParcelasEmLote(despesasVisiveisParaRateio);
+
   function contar(s: StatusDespesa) {
     return itensComFiltrosDoPainel.filter((item) => statusEfetivo(item) === s).length;
   }
@@ -892,7 +913,9 @@ export default function Aprovacoes({ base = "/app/malote" }: { base?: string } =
                     nomeEmpresa={empresasMap.get(empresaIdResolvida(item.despesa) ?? "")}
                     nomeContrato={contratosMap.get(contratoIdResolvido(item.despesa) ?? "")}
                     aprovadorNomes={aprovadorNomes}
+                    formaEspecialPorNome={formaEspecialPorNome}
                     onAbrir={() => abrirItem(item.despesa)}
+                    rateioEParcelas={rateioPorDespesa?.get(item.despesa.id) ?? RATEIO_E_PARCELAS_VAZIO}
                   />
                 ))}
               </TableBody>
@@ -926,17 +949,31 @@ function LinhaItem({
   nomeEmpresa,
   nomeContrato,
   aprovadorNomes,
+  formaEspecialPorNome,
   onAbrir,
+  rateioEParcelas,
 }: {
   item: ItemLinhaMalote;
   empresaId?: string | null;
   nomeEmpresa?: string;
   nomeContrato?: string;
   aprovadorNomes: (despesa: MaloteDespesaRow, nivel: 1 | 2 | 3) => string[];
+  formaEspecialPorNome: Map<string, MaloteFormaPagamento>;
   onAbrir: () => void;
+  // 21/09/2026: vem do lote da tela (useRateioLinhasEParcelasEmLote) e é só
+  // repassado ao badge, pra ele não consultar o banco por conta própria.
+  rateioEParcelas?: { linhas: RateioLinha[]; parcelas: Parcela[] };
 }) {
   const { despesa, parcela } = item;
   const { data: solicitanteNome } = useNomeUsuario(despesa.created_by);
+  // SIS-2026-0439 (achado do usuário, SD-2026-0042): este badge sempre
+  // mostrava o aprovador da Classificação (ex. Cassio), mesmo em Fluxo
+  // Especial (forma de pagamento com aprovador fixo, ex. Calita) — mesmo
+  // bug de exibição já corrigido em DespesaVisualizar.tsx/MeusItens.tsx,
+  // faltava aqui (a filtragem de "minhas pendentes" já sabia disso via
+  // souAprovadorPendente, só a exibição do nome no badge não).
+  const formaEspecial = formaEspecialPorNome.get(despesa.forma_pagamento ?? "");
+  const { data: nomeEspecial } = useNomeUsuario(formaEspecial?.aprovador_especial_user_id ?? undefined);
   const isSolicitacao = STATUS_FASE_SOLICITACAO.includes(despesa.status);
   const status = statusEfetivo(item);
   const valor = parcela ? parcela.valor : despesa.valor_total;
@@ -989,6 +1026,7 @@ function LinhaItem({
             <span className="flex items-center gap-1 text-xs font-bold">
               <User className="h-3 w-3" />
               {(() => {
+                if (formaEspecial) return nomeEspecial ? abreviarNome(nomeEspecial) : "Fluxo Especial";
                 // SIS-2026-0464 (pedido da Fernanda): no N2, mostrar só o
                 // titular (1º nome) no badge da linha — mesma regra do
                 // filtro (ver comentário em `filtrados`). Antes juntava
@@ -1016,7 +1054,7 @@ function LinhaItem({
           antes — círculo cheio com fundo âmbar, chama a atenção sem
           precisar de coluna de texto (só aparece quando há pendência). */}
       <TableCell className="px-2 text-center">
-        <JustificativaPendenteBadge despesa={despesa} parcela={parcela} variant="icon" />
+        <JustificativaPendenteBadge despesa={despesa} parcela={parcela} variant="icon" rateioEParcelas={rateioEParcelas} />
       </TableCell>
     </TableRow>
   );

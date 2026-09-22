@@ -44,7 +44,12 @@ export type TipoEvento =
   // via banco (ajuste administrativo pontual, fora do fluxo normal de
   // aprovação) — distinto de 'aprovacao_nivel' pra deixar rastro de que
   // não foi um clique real de aprovar.
-  | "ajuste_administrativo";
+  | "ajuste_administrativo"
+  // SIS-2026-0443: despesa pulou N1/N2 na conversão da solicitação por
+  // estar dentro da tolerância de variação da cotação (e sem troca de
+  // contrato no Rateio) — distinto de 'aprovacao_nivel' pelo mesmo motivo
+  // de 'ajuste_administrativo': não foi um clique real de aprovar.
+  | "aprovacao_automatica_cotacao";
 
 // Status ainda dentro da fase "Solicitação" — item abre em modal.
 // A partir daqui em diante (pendente_aprovacao em diante) o item já é
@@ -1074,6 +1079,12 @@ export function useSalvarEdicaoPosAprovacao() {
 // de verdade: preenche os campos de despesa (pagamento/rateio/parcelas) na
 // MESMA linha (origem continua 'solicitacao') e entra no fluxo de
 // aprovação N1/N2/N3, que é 100% nosso a partir daqui — SIS-2026-0104.
+// SIS-2026-0443: depois de gravada em pendente_aprovacao/nível 1 (igual
+// sempre foi), tenta a aprovação automática por tolerância de cotação —
+// RPC decide server-side (lê Classificação.tolerancia_variacao_cotacao_pct
+// e compara com valor_aprovado_cotacao/contrato do Rateio) se promove
+// direto pra aguardando_pagamento. `aprovadoAutomaticamente` deixa o
+// chamador (PainelDespesaMalote) mostrar a mensagem certa.
 export function useConverterSolicitacaoEmDespesa() {
   const qc = useQueryClient();
   const salvar = useSalvarDespesa();
@@ -1085,7 +1096,12 @@ export function useConverterSolicitacaoEmDespesa() {
       });
       await (supabase as any).from("malote_despesa").update({ nivel_aprovacao_atual: 1 }).eq("id", despesaId);
       await registrarEventoDespesa(despesaId, "despesa_criada", "Despesa criada a partir da solicitação aprovada.");
-      return despesaId;
+      const { data: aprovadoAutomaticamente, error } = await (supabase as any).rpc(
+        "malote_finalizar_conversao_solicitacao",
+        { _despesa_id: despesaId },
+      );
+      if (error) throw error;
+      return { despesaId, aprovadoAutomaticamente: !!aprovadoAutomaticamente };
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: [DESPESA_KEY] }),
   });
@@ -1358,10 +1374,14 @@ export function useJustificarRateioLinha() {
 // pra decidir se ela tem alguma justificativa pendente (analista/solicitante)
 // fora da tela de detalhe — usado no indicador de Aprovações do Malote e no
 // aviso do próprio analista/solicitante em Meus Itens.
-export function useRateioLinhasEParcelas(despesaId: string, parcelado: boolean) {
+// 21/09/2026: ganhou o 3º parâmetro `jaVeioEmLote`. Quando a lista já buscou
+// tudo de uma vez por useRateioLinhasEParcelasEmLote, esta consulta individual
+// é desligada em vez de repetir o trabalho — ver o comentário daquele hook.
+// Sem o parâmetro, o comportamento é exatamente o de antes.
+export function useRateioLinhasEParcelas(despesaId: string, parcelado: boolean, jaVeioEmLote = false) {
   return useQuery({
     queryKey: [DESPESA_KEY, "rateio_e_parcelas", despesaId],
-    enabled: !!despesaId,
+    enabled: !!despesaId && !jaVeioEmLote,
     queryFn: async () => {
       const [linhasRes, parcelasRes] = await Promise.all([
         (supabase as any).from("malote_despesa_rateio_linha").select("*").eq("despesa_id", despesaId).order("ordem"),
@@ -1372,6 +1392,83 @@ export function useRateioLinhasEParcelas(despesaId: string, parcelado: boolean) 
       if (linhasRes.error) throw linhasRes.error;
       if (parcelasRes.error) throw parcelasRes.error;
       return { linhas: (linhasRes.data ?? []) as RateioLinha[], parcelas: (parcelasRes.data ?? []) as Parcela[] };
+    },
+  });
+}
+
+// Identidade estável de propósito: um objeto literal novo a cada render faria
+// o JustificativaPendenteBadge recalcular à toa enquanto o lote ainda carrega.
+export const RATEIO_E_PARCELAS_VAZIO: { linhas: RateioLinha[]; parcelas: Parcela[] } = {
+  linhas: [],
+  parcelas: [],
+};
+
+// `.in(...)` vira querystring na URL do PostgREST, e um UUID ocupa ~37
+// caracteres com a vírgula. Uma lista de 300 despesas passaria do limite de
+// URL e a requisição falharia INTEIRA — por isso os ids vão em blocos.
+const BLOCO_IN = 100;
+
+// O retorno é marcado com `despesa_id` porque é por ele que o agrupamento é
+// feito. A coluna existe nas duas tabelas, mas a interface RateioLinha não a
+// declara — e acrescentá-la lá quebraria os pontos que montam linhas novas
+// antes de a despesa existir (o insert preenche despesa_id depois).
+async function buscarPorDespesaEmBlocos<T>(
+  tabela: string,
+  ids: string[],
+  ordenarPor: string,
+): Promise<Array<T & { despesa_id: string }>> {
+  const fora: Array<T & { despesa_id: string }> = [];
+  for (let i = 0; i < ids.length; i += BLOCO_IN) {
+    const { data, error } = await (supabase as any)
+      .from(tabela)
+      .select("*")
+      .in("despesa_id", ids.slice(i, i + BLOCO_IN))
+      .order(ordenarPor);
+    if (error) throw error;
+    fora.push(...((data ?? []) as Array<T & { despesa_id: string }>));
+  }
+  return fora;
+}
+
+// 21/09/2026 — versão em LOTE do useRateioLinhasEParcelas acima.
+//
+// O hook individual roda dentro do JustificativaPendenteBadge, que por sua vez
+// é renderizado dentro do `.map()` das listas de Meus Itens e Aprovações do
+// Malote. Resultado: UMA CONSULTA POR LINHA DA TELA. Uma lista de 100 despesas
+// disparava 100 consultas (200 quando havia parceladas).
+//
+// Medido no dia do incidente: `malote_despesa_rateio_linha` foi chamada
+// 25.894 vezes em 33 minutos — ~13 por segundo, ininterrupto, o maior volume
+// isolado do banco inteiro. Cada uma é rápida (~5 ms), mas todas ocupam uma
+// das 57 conexões utilizáveis da instância, e foi o esgotamento dessas
+// conexões que reiniciou o Postgres às 14:01:59.
+//
+// Aqui as linhas de TODAS as despesas da lista vêm de uma vez, agrupadas num
+// Map por despesa_id. Duas consultas no total, em vez de uma por linha.
+//
+// As parcelas são buscadas só para as despesas realmente parceladas, pra
+// manter a mesma semântica do hook individual (despesa não parcelada devolve
+// `parcelas: []`).
+export function useRateioLinhasEParcelasEmLote(itens: Array<{ id: string; parcelado: boolean }>) {
+  const ids = Array.from(new Set(itens.map((i) => i.id).filter(Boolean))).sort();
+  const idsParcelados = Array.from(
+    new Set(itens.filter((i) => i.parcelado).map((i) => i.id).filter(Boolean)),
+  ).sort();
+
+  return useQuery({
+    queryKey: [DESPESA_KEY, "rateio_e_parcelas_lote", ids],
+    enabled: ids.length > 0,
+    queryFn: async () => {
+      const linhas = await buscarPorDespesaEmBlocos<RateioLinha>("malote_despesa_rateio_linha", ids, "ordem");
+      const parcelas = idsParcelados.length
+        ? await buscarPorDespesaEmBlocos<Parcela>("malote_despesa_parcela", idsParcelados, "numero_parcela")
+        : [];
+
+      const mapa = new Map<string, { linhas: RateioLinha[]; parcelas: Parcela[] }>();
+      for (const id of ids) mapa.set(id, { linhas: [], parcelas: [] });
+      for (const l of linhas) mapa.get(l.despesa_id)?.linhas.push(l);
+      for (const p of parcelas) mapa.get(p.despesa_id)?.parcelas.push(p);
+      return mapa;
     },
   });
 }

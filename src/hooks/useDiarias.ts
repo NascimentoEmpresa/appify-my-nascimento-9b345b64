@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useDebounce } from "@/hooks/useDebounce";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
@@ -267,7 +268,10 @@ export const MIN_BUSCA_EMPREGADO_DIARIA = 3;
  * EMPREGADOS a cada tecla.
  */
 export function useBuscaEmpregadosDiaria(termo: string) {
-  const busca = termo.trim();
+  // 21/09/2026: o piso de 3 caracteres já existia, mas a partir do 3º caractere
+  // cada tecla ainda virava uma consulta. O debounce faz só o texto final
+  // chegar na queryKey — uma consulta por palavra, não por tecla.
+  const busca = useDebounce(termo.trim());
   return useQuery({
     queryKey: ["diaria_empregados", busca],
     enabled: busca.length >= MIN_BUSCA_EMPREGADO_DIARIA,

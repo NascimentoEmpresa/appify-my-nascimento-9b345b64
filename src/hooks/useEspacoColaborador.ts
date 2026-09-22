@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useDebounce } from "@/hooks/useDebounce";
 import { supabase } from "@/integrations/supabase/client";
 
 // =====================================================================
@@ -273,7 +274,10 @@ export function useColaboradoresSemContrato(ativo: boolean) {
  * o limite inteiro de linhas e nenhuma delas útil.
  */
 export function useBuscaColaboradores(termo: string) {
-  const limpo = termo.trim();
+  // 21/09/2026: busca global sobre a base inteira de colaboradores — é das
+  // mais caras do sistema. Com debounce, digitar um nome vira uma consulta,
+  // não uma por tecla a partir do 2º caractere.
+  const limpo = useDebounce(termo.trim());
   return useQuery({
     queryKey: ["esp-col", "busca", limpo],
     enabled: limpo.length >= 2,

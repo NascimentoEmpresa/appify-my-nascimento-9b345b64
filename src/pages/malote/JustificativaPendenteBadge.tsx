@@ -46,6 +46,7 @@ export function JustificativaPendenteBadge({
   despesa,
   parcela,
   variant = "full",
+  rateioEParcelas,
 }: {
   despesa: MaloteDespesaRow;
   parcela?: Parcela | null;
@@ -55,9 +56,19 @@ export function JustificativaPendenteBadge({
   // pra virar um indicador inline em vez de coluna própria. "full" (default)
   // mantém o comportamento original (ícone + nomes), usado em Meus Itens.
   variant?: "full" | "icon";
+  // 21/09/2026: este componente é renderizado dentro do `.map()` das listas de
+  // Meus Itens e Aprovações, e cada instância fazia a PRÓPRIA consulta de
+  // rateio — 25.894 chamadas em 33 minutos, ~13 por segundo. Quando a lista já
+  // buscou tudo de uma vez (useRateioLinhasEParcelasEmLote), ela passa o
+  // pedaço desta despesa por aqui e a consulta individual não roda.
+  //
+  // Prop OPCIONAL de propósito: sem ela o componente continua se virando
+  // sozinho, exatamente como antes, e nenhum outro uso quebra.
+  rateioEParcelas?: { linhas: RateioLinha[]; parcelas: Parcela[] };
 }) {
   const limitePct = despesa.classificacao?.limite_justificativa_pct ?? null;
-  const { data } = useRateioLinhasEParcelas(despesa.id, !!despesa.parcelado);
+  const consultaIndividual = useRateioLinhasEParcelas(despesa.id, !!despesa.parcelado, !!rateioEParcelas);
+  const data = rateioEParcelas ?? consultaIndividual.data;
   const { resolver: resolverOrcadoMultiMes } = useOrcadoClassificacaoMultiMes(despesa.empresa_id);
   const { data: utilizadoLinhasGlobal = [] } = useUtilizadoOrcamento();
   const { data: ligacoesClassMalote = [] } = useLigacoesClassificacaoMalote();
