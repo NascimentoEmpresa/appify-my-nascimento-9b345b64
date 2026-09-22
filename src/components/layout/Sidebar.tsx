@@ -594,7 +594,7 @@ const encarregadosModule: ModuleDef = {
       label: "Jurídico",
       defaultOpen: true,
       items: [
-        { label: "Solicitar Advertência", to: "/app/encarregados/advertencia", icon: ShieldAlert },
+        { label: "Solicitar Medida Disciplinar", to: "/app/encarregados/advertencia", icon: ShieldAlert },
         // A mesma tela da Central de Serviços, com menu próprio
         // (`encarregados_orientacoes`): o encarregado vê todas as respostas do
         // Jurídico e as próprias perguntas sem sair do módulo dele (17/09/2026).
@@ -791,7 +791,7 @@ const centralServicosModule: ModuleDef = {
         { label: "Solicitar Férias", to: "/app/central-servicos/solicitacoes/ferias", icon: CalendarRange },
         { label: "Solicitar Demissão", to: "/app/central-servicos/solicitacoes/demissao", icon: UserMinus },
         { label: "Mudança de Função", to: "/app/central-servicos/solicitacoes/mudanca-funcao", icon: ArrowLeftRight, notif: "troca_funcao" },
-        { label: "Solicitar Advertência", to: "/app/central-servicos/solicitacoes/advertencia", icon: ShieldAlert },
+        { label: "Solicitar Medida Disciplinar", to: "/app/central-servicos/solicitacoes/advertencia", icon: ShieldAlert },
       ],
     },
   ],
