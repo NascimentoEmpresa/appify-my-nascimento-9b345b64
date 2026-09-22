@@ -11,6 +11,7 @@ import {
   PenLine,
   RotateCcw,
   Search,
+  Tags,
   Wallet,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -54,18 +55,21 @@ import {
   useLotacoesUfrgs,
   usePostosUfrgs,
   useRegistrarVisualizacaoUfrgs,
+  useRemoverTarifaUfrgs,
+  useSalvarTarifaUfrgs,
   useSolicitarAjusteUfrgs,
   useTarifasUfrgs,
   useVisualizacoesUfrgs,
 } from "@/hooks/useDiariasUfrgs";
 import { DiariaUfrgsModal, ModoModalUfrgs, PermissoesDiaria } from "./DiariaUfrgsModal";
+import { TarifasUfrgsModal } from "./TarifasUfrgsModal";
 import {
   DiariaUfrgs,
-  SINDICATOS_UFRGS,
   STATUS_SOLICITACAO,
   StatusSolicitacao,
   brlDeCentavos,
   fmtData,
+  sindicatosUfrgs,
   tituloColuna,
   visivelNaLista,
 } from "./diariasUfrgs";
@@ -161,6 +165,8 @@ export function DiariasUfrgsPainel({
 
   const criar = useCriarDiariaUfrgs();
   const editar = useEditarDiariaUfrgs();
+  const salvarTarifa = useSalvarTarifaUfrgs();
+  const removerTarifa = useRemoverTarifaUfrgs();
   const decidir = useDecidirDiariaUfrgs();
   const enviarMalote = useEnviarMaloteUfrgs();
   const pedirAjuste = useSolicitarAjusteUfrgs();
@@ -180,6 +186,14 @@ export function DiariasUfrgsPainel({
   const [porPagina, setPorPagina] = useState(25);
 
   const [modal, setModal] = useState<{ modo: ModoModalUfrgs; d: DiariaUfrgs | null } | null>(null);
+  // A tabela de tarifas é um modal IRMÃO do da diária, não um aninhado: os
+  // dois podem ficar abertos ao mesmo tempo (abrir as tarifas de dentro de
+  // uma diária não faz perder o que já estava preenchido nela), e quem tem as
+  // mutações e a lista de diárias do aviso de impacto é o painel.
+  const [tarifasAbertas, setTarifasAbertas] = useState(false);
+
+  /** Os sindicatos do filtro saem da TABELA, não de uma constante — ver sindicatosUfrgs(). */
+  const sindicatosDisponiveis = useMemo(() => sindicatosUfrgs(tarifas), [tarifas]);
 
   const limparFiltros = () => {
     setBusca("");
@@ -392,7 +406,7 @@ export function DiariasUfrgsPainel({
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="todos">Todos</SelectItem>
-                {SINDICATOS_UFRGS.map((s) => (
+                {sindicatosDisponiveis.map((s) => (
                   <SelectItem key={s} value={s}>
                     {s}
                   </SelectItem>
@@ -506,6 +520,15 @@ export function DiariasUfrgsPainel({
             <Button variant="outline" onClick={limparFiltros}>
               <RotateCcw className="mr-2 h-4 w-4" /> Limpar filtros
             </Button>
+            {/* O mesmo modal que o botão do bloco 1 da diária abre. Existe
+                também aqui porque atualizar a tabela de um sindicato é uma
+                tarefa por si — quem faz isso não precisa abrir uma diária
+                qualquer antes só para chegar no botão. */}
+            {permissoes.editarTarifas && (
+              <Button variant="outline" onClick={() => setTarifasAbertas(true)}>
+                <Tags className="mr-2 h-4 w-4" /> Tarifas dos sindicatos
+              </Button>
+            )}
             {podeExportar && (
               <>
                 <Button variant="outline" onClick={() => exportar(diarias, "completo")}>
@@ -754,6 +777,7 @@ export function DiariasUfrgsPainel({
           eventos={eventos}
           permissoes={permissoes}
           souOSolicitante={!!modal.d && modal.d.solicitanteId === user?.id}
+          onEditarTarifas={() => setTarifasAbertas(true)}
           onFechar={() => setModal(null)}
           onPedirEdicao={(d) => setModal({ modo: "editar", d })}
           onSalvar={async (nova) => {
@@ -868,6 +892,63 @@ export function DiariasUfrgsPainel({
           }}
         />
       )}
+
+      {/* Tarifas dos sindicatos — o pedido de 22/09/2026. A RPC é quem valida
+          e quem recalcula as diárias em aberto; aqui só se conta o resultado,
+          porque "mudei e não sei o que aconteceu" é o que faz a pessoa
+          desconfiar da tela e voltar a pedir por chamado. */}
+      <TarifasUfrgsModal
+        aberto={tarifasAbertas}
+        tarifas={tarifas}
+        diarias={diarias}
+        sindicatoFoco={modal?.d?.sindicato}
+        salvando={salvarTarifa.isPending || removerTarifa.isPending}
+        onFechar={() => setTarifasAbertas(false)}
+        onSalvar={async (r) => {
+          try {
+            const res = await salvarTarifa.mutateAsync(r);
+            toast({
+              title: res.criada
+                ? `Tarifa de ${r.sindicato} criada`
+                : `Tarifa de ${r.sindicato} corrigida`,
+              description:
+                (res.criada
+                  ? `Vale a partir de ${fmtData(r.vigenciaInicio)}. `
+                  : `A tabela de ${fmtData(r.vigenciaInicio)} foi atualizada. `) +
+                (res.recalculadas > 0
+                  ? `${res.recalculadas} ${res.recalculadas === 1 ? "diária em aberto foi recalculada" : "diárias em aberto foram recalculadas"}.`
+                  : "Nenhuma diária em aberto precisou ser recalculada.") +
+                (res.congeladas > 0
+                  ? ` ${res.congeladas} já aprovada(s) ou paga(s) continuam com o valor faturado.`
+                  : ""),
+            });
+          } catch (e: unknown) {
+            toast({
+              title: "Não foi possível salvar a tarifa",
+              description: mensagemErroDiaria(e, "Erro ao gravar a tarifa."),
+              variant: "destructive",
+            });
+          }
+        }}
+        onRemover={async (id) => {
+          try {
+            const recalculadas = await removerTarifa.mutateAsync(id);
+            toast({
+              title: "Vigência removida",
+              description:
+                recalculadas > 0
+                  ? `${recalculadas} ${recalculadas === 1 ? "diária em aberto voltou" : "diárias em aberto voltaram"} para a tabela anterior.`
+                  : "Nenhuma diária em aberto usava esta tabela.",
+            });
+          } catch (e: unknown) {
+            toast({
+              title: "Não foi possível remover",
+              description: mensagemErroDiaria(e, "Erro ao remover a vigência."),
+              variant: "destructive",
+            });
+          }
+        }}
+      />
     </>
   );
 }

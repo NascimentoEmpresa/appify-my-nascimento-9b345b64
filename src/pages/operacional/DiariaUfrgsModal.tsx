@@ -92,13 +92,25 @@ import {
  */
 export type ModoModalUfrgs = "nova" | "editar" | "visualizar";
 
-/** Os quatro flags de acesso da tela, já resolvidos pela rota que abriu o modal. */
+/** Os flags de acesso da tela, já resolvidos pela rota que abriu o modal. */
 export interface PermissoesDiaria {
   /** 'incluir' — o flag "incluir/editar" do Gerenciamento de Acesso. */
   incluir: boolean;
   excluir: boolean;
   aprovar: boolean;
   enviarMalote: boolean;
+  /**
+   * Editar a TABELA DE VALORES dos sindicatos (22/09/2026).
+   *
+   * Chave própria — 'alterar' no menu fantasma 'financeiro_diarias_tarifas'
+   * (20260930000212) —, e não um dos flags acima, por duas razões. A de
+   * permissão: 'alterar' vem de brinde com o switch da tela, e quem recebe
+   * Diárias para CONFERIR não pode ganhar junto o poder de mudar o valor de
+   * todas as diárias futuras daquele sindicato. A de rota: o pedido é
+   * explícito em "somente na rota /app/financeiro/diarias", então quem
+   * resolve este flag (ControleDiarias) também exige a porta do Financeiro.
+   */
+  editarTarifas: boolean;
 }
 
 type DecisaoNegativa = "reprovar" | "ajuste" | "excluir";
@@ -124,6 +136,13 @@ interface Props {
   onExcluir: (uuid: string, motivo: string) => void;
   /** Pedido de "quero editar esta" — a tela reabre o modal em modo "editar". */
   onPedirEdicao: (d: DiariaUfrgs) => void;
+  /**
+   * Abrir a tabela de tarifas dos sindicatos. Quem RENDERIZA aquele modal é o
+   * painel, não este componente: dois Dialog aninhados brigam por foco, e o
+   * painel é quem já tem as mutações e a lista de diárias que o aviso de
+   * impacto consulta.
+   */
+  onEditarTarifas?: () => void;
 }
 
 /** Situações do cadastro que significam que a pessoa não está mais na empresa. */
@@ -288,6 +307,7 @@ export function DiariaUfrgsModal({
   visualizacoes = [],
   eventos = [],
   permissoes,
+  onEditarTarifas,
   souOSolicitante = false,
   onFechar,
   onSalvar,
@@ -615,7 +635,28 @@ export function DiariaUfrgsModal({
           )}
 
           {/* 1. Identificação */}
-          <Secao numero={1} titulo="Identificação">
+          <Secao
+            numero={1}
+            titulo="Identificação"
+            acao={
+              // O botão fica AQUI, colado no campo Sindicato, porque é aqui
+              // que a pessoa descobre que a tarifa está errada: ela escolhe o
+              // sindicato, olha o bloco 4 e vê um valor que não é mais o do
+              // contrato. Aparece nos três modos (inclusive em leitura) —
+              // conferir uma diária aprovada é justamente quando se percebe
+              // que a tabela mudou.
+              permissoes.editarTarifas && onEditarTarifas ? (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-7 px-2 text-xs"
+                  onClick={onEditarTarifas}
+                >
+                  <PenLine className="mr-1.5 h-3 w-3" /> Editar tarifas
+                </Button>
+              ) : undefined
+            }
+          >
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
               {somenteLeitura ? (
                 <Leitura label="Contrato" valor={d?.contratoNome} />

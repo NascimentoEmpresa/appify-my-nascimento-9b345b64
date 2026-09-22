@@ -1,11 +1,17 @@
 import { describe, expect, it } from "vitest";
 import {
   DiariaUfrgs,
+  RascunhoTarifaUfrgs,
   TarifaUfrgs,
   calcularValoresUfrgs,
+  impactoDaTarifa,
   mesDaCompetencia,
+  proximaVigencia,
+  sindicatosUfrgs,
   sobreposicaoUfrgs,
   tarifaVigente,
+  validarTarifaUfrgs,
+  vigenciasDoSindicato,
 } from "@/pages/operacional/diariasUfrgs";
 
 /**
@@ -330,5 +336,143 @@ describe("cabeçalho do relatório", () => {
     expect(mesDaCompetencia("2026-01-01")).toBe("JANEIRO");
     expect(mesDaCompetencia("2026-09-01")).toBe("SETEMBRO");
     expect(mesDaCompetencia("2026-03-01")).toBe("MARÇO");
+  });
+});
+
+
+// ---------------------------------------------------------------------------
+// EDIÇÃO DA TARIFA PELA TELA (22/09/2026)
+//
+// A tabela de valores dos sindicatos deixou de ser coisa de migration e
+// passou a ser editável em /app/financeiro/diarias?tipo=ufrgs. O que os
+// testes abaixo protegem é o que muda de valor no bolso de alguém: quem
+// aparece no dropdown, qual vigência manda, o que uma alteração recalcula — e
+// o que ela NÃO pode recalcular.
+
+const TABELA_COMPLETA: TarifaUfrgs[] = [SINDIRODOSUL, SINDIRODOSUL_ANTIGA, SINECARGA];
+
+describe("sindicatosUfrgs — o dropdown sai da tabela, não de uma constante", () => {
+  it("lista os sindicatos que têm tarifa, em ordem", () => {
+    expect(sindicatosUfrgs(TABELA_COMPLETA)).toEqual(["SINDIRODOSUL/RS", "SINECARGA/RS"].sort());
+  });
+
+  it("inclui um sindicato cadastrado pela tela, sem passar por código", () => {
+    const novo: TarifaUfrgs = { ...SINECARGA, id: "t-novo", sindicato: "SETCERGS/RS" };
+    expect(sindicatosUfrgs([...TABELA_COMPLETA, novo])).toContain("SETCERGS/RS");
+  });
+
+  it("não oferece sindicato cuja única vigência foi removida", () => {
+    const removido: TarifaUfrgs = { ...SINECARGA, id: "t-x", sindicato: "ANTIGO/RS", ativo: false };
+    expect(sindicatosUfrgs([...TABELA_COMPLETA, removido])).not.toContain("ANTIGO/RS");
+  });
+
+  it("cai na constante enquanto a consulta não respondeu — o campo nunca abre vazio", () => {
+    expect(sindicatosUfrgs([])).toEqual(["SINDIRODOSUL/RS", "SINECARGA/RS"]);
+  });
+});
+
+describe("vigências", () => {
+  it("vêm da mais nova para a mais antiga", () => {
+    expect(vigenciasDoSindicato(TABELA_COMPLETA, "SINDIRODOSUL/RS").map((t) => t.vigenciaInicio)).toEqual([
+      "2026-01-01",
+      "2025-01-01",
+    ]);
+  });
+
+  it("a próxima vigência fecha a janela da anterior", () => {
+    expect(proximaVigencia(TABELA_COMPLETA, "SINDIRODOSUL/RS", "2025-01-01")).toBe("2026-01-01");
+    expect(proximaVigencia(TABELA_COMPLETA, "SINDIRODOSUL/RS", "2026-01-01")).toBeNull();
+  });
+
+  it("vigência removida não fecha janela nenhuma nem entra no cálculo", () => {
+    const tabela = TABELA_COMPLETA.map((t) =>
+      t.id === "t-rodosul-2026" ? { ...t, ativo: false } : t,
+    );
+    expect(proximaVigencia(tabela, "SINDIRODOSUL/RS", "2025-01-01")).toBeNull();
+    // e a diária de 2026 volta a ser calculada pela tabela de 2025
+    expect(tarifaVigente(tabela, "SINDIRODOSUL/RS", "2026-03-10")?.id).toBe("t-rodosul-2025");
+  });
+});
+
+describe("validarTarifaUfrgs — as mesmas recusas da RPC", () => {
+  const ok: RascunhoTarifaUfrgs = {
+    sindicato: "SINDIRODOSUL/RS",
+    vigenciaInicio: "2026-09-01",
+    hospedagemCentavos: 17377,
+    cafeCentavos: 2075,
+    almocoCentavos: 3077,
+    jantaCentavos: 3077,
+    vaCentavos: 3169,
+    ...ALIQUOTAS,
+  };
+
+  it("aceita a tabela do contrato", () => {
+    expect(validarTarifaUfrgs(ok)).toBeNull();
+  });
+
+  it("recusa alíquotas que somam 100% — o gross-up dividiria por zero no banco", () => {
+    expect(
+      validarTarifaUfrgs({ ...ok, aliquotaPis: 0.5, aliquotaCofins: 0.5, aliquotaIss: 0 }),
+    ).toMatch(/menor que 100%/);
+  });
+
+  it("recusa valor negativo, tabela toda zerada, sindicato em branco e data faltando", () => {
+    expect(validarTarifaUfrgs({ ...ok, hospedagemCentavos: -1 })).toMatch(/negativos/);
+    expect(
+      validarTarifaUfrgs({
+        ...ok,
+        hospedagemCentavos: 0,
+        cafeCentavos: 0,
+        almocoCentavos: 0,
+        jantaCentavos: 0,
+        vaCentavos: 0,
+      }),
+    ).toMatch(/ao menos um valor/);
+    expect(validarTarifaUfrgs({ ...ok, sindicato: "   " })).toMatch(/Informe o sindicato/);
+    expect(validarTarifaUfrgs({ ...ok, vigenciaInicio: "" })).toMatch(/a partir da qual/);
+  });
+
+  it("aceita VA zerado — há contrato sem desconto de vale", () => {
+    expect(validarTarifaUfrgs({ ...ok, vaCentavos: 0 })).toBeNull();
+  });
+});
+
+describe("impactoDaTarifa — o aviso que aparece antes de salvar", () => {
+  // Três diárias do mesmo sindicato: uma em aberto e uma aprovada dentro da
+  // janela da tarifa de 2026, e uma em aberto na janela de 2025.
+  const emAberto = diaria({ uuid: "aberta", status: "solicitada", saida: "2026-03-10" });
+  const aprovada = diaria({ uuid: "aprovada", status: "aprovada", saida: "2026-04-10" });
+  const paga = diaria({ uuid: "paga", status: "paga", saida: "2026-05-10" });
+  const antiga = diaria({ uuid: "antiga", status: "em_ajuste", saida: "2025-06-10" });
+  const lista = [emAberto, aprovada, paga, antiga];
+
+  it("recalcula só o que ainda não foi decidido", () => {
+    const r = impactoDaTarifa(lista, TABELA_COMPLETA, "SINDIRODOSUL/RS", "2026-01-01");
+    expect(r.recalculadas.map((d) => d.uuid)).toEqual(["aberta"]);
+    expect(r.congeladas.map((d) => d.uuid).sort()).toEqual(["aprovada", "paga"]);
+  });
+
+  it("não atravessa a vigência seguinte — a de 2025 para onde a de 2026 começa", () => {
+    const r = impactoDaTarifa(lista, TABELA_COMPLETA, "SINDIRODOSUL/RS", "2025-01-01");
+    expect(r.recalculadas.map((d) => d.uuid)).toEqual(["antiga"]);
+    expect(r.congeladas).toHaveLength(0);
+  });
+
+  it("ignora diária de outro sindicato", () => {
+    const outra = diaria({ uuid: "outro", sindicato: "SINECARGA/RS", saida: "2026-03-10" });
+    const r = impactoDaTarifa([...lista, outra], TABELA_COMPLETA, "SINDIRODOSUL/RS", "2026-01-01");
+    expect(r.recalculadas.map((d) => d.uuid)).not.toContain("outro");
+  });
+
+  it("excluída não entra em contagem nenhuma", () => {
+    const morta = diaria({ uuid: "morta", status: "excluida", saida: "2026-03-10" });
+    const r = impactoDaTarifa([...lista, morta], TABELA_COMPLETA, "SINDIRODOSUL/RS", "2026-01-01");
+    expect([...r.recalculadas, ...r.congeladas].map((d) => d.uuid)).not.toContain("morta");
+  });
+
+  it("uma vigência criada hoje, com a lista vazia de diárias, não assusta ninguém", () => {
+    const r = impactoDaTarifa([], TABELA_COMPLETA, "SINDIRODOSUL/RS", "2026-09-22");
+    expect(r.recalculadas).toHaveLength(0);
+    expect(r.congeladas).toHaveLength(0);
   });
 });
