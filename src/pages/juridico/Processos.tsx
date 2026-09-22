@@ -1957,7 +1957,7 @@ function TotalProposta({ pr }: { pr: Proposta }) {
   return (
     <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "baseline", gap: 8, flexWrap: "wrap", fontSize: 12, color: "#64748b", marginTop: 6 }}>
       <span>{money(pr.valor)}{pct ? " + " + String(pct).replace(".", ",") + "% de honorários (" + money(honorariosEmReais(pr.valor, pct)) + ")" : " · sem honorários"}</span>
-      <span style={{ fontWeight: 800, color: "#0f172a" }}>Valor total da proposta: <span style={{ color: "#15803d" }}>{money(totalDaProposta(pr.valor, pct))}</span></span>
+      <span style={{ fontWeight: 800, color: "#0f172a" }}>Valor total: <span style={{ color: "#15803d" }}>{money(totalDaProposta(pr.valor, pct))}</span></span>
     </div>
   );
 }
