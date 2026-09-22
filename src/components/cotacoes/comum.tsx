@@ -1,6 +1,6 @@
 import { useRef, useState } from "react";
 import { cn } from "@/lib/utils";
-import { Clock, Eye, CheckCircle2, Paperclip, Download, Loader2, X, Plus } from "lucide-react";
+import { Clock, Eye, CheckCircle2, Paperclip, Download, Loader2, X, Plus, FileSignature } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
@@ -196,6 +196,113 @@ export function SeletorArquivos({
       )}
     </div>
   );
+}
+
+// ── Contrato cotado (SIS-2026-0487) ──────────────────────────────────────────
+//
+// O chamado veio de Compras: o relatório já dizia mês, quem pediu e quando,
+// mas não QUAL CONTRATO estava sendo cotado — para saber, era preciso abrir
+// cotação por cotação. O campo mora nas duas telas pelo mesmo motivo que a
+// paleta mora: é a mesma linha do banco vista dos dois lados, e o setor que
+// digita precisa ver exatamente o que o setor que busca vai ler.
+
+/** Rótulo do histórico anterior à coluna `contrato`. */
+export const SEM_CONTRATO = "Sem contrato informado";
+
+/** Nome do contrato já aparado, ou `null` quando a cotação é anterior à coluna. */
+export function nomeContrato(c: Pick<CotacaoLicitacao, "contrato">): string | null {
+  const nome = (c.contrato ?? "").trim();
+  return nome || null;
+}
+
+/**
+ * O contrato no card, nas duas telas.
+ *
+ * Fica no cabeçalho, ao lado do nome de quem pediu, e NÃO é truncado: nome de
+ * contrato é longo por natureza ("CT 2024/0012 — Conservação Viária Lote 3") e
+ * cortar esconde justamente o número que distingue um do outro. Sem contrato
+ * (histórico) o selo continua aparecendo, em cinza — é o que deixa visível que
+ * a informação falta naquela linha, em vez de simplesmente sumir.
+ */
+export function SeloContrato({ contrato }: { contrato: string | null }) {
+  return (
+    <span
+      title={contrato ?? SEM_CONTRATO}
+      className={cn(
+        "inline-flex max-w-full items-start gap-1 rounded-md border px-1.5 py-0.5 text-[11px] font-medium",
+        contrato
+          ? "border-primary/30 bg-primary/10 text-primary"
+          : "border-border bg-muted/60 text-muted-foreground italic",
+      )}
+    >
+      <FileSignature className="mt-[1px] h-3 w-3 shrink-0 opacity-80" />
+      <span className="break-words">{contrato ?? SEM_CONTRATO}</span>
+    </span>
+  );
+}
+
+/** Uma cotação daquele contrato, com o endereço dela no acordeão ano → mês. */
+export interface OcorrenciaContrato {
+  id: string;
+  year: number;
+  month: number;
+  created_at: string;
+}
+
+export interface ContratoCotado {
+  nome: string;
+  ocorrencias: OcorrenciaContrato[];
+  /** `created_at` da cotação mais recente — o que o dropdown leva o usuário a ver. */
+  maisRecente: string;
+}
+
+/**
+ * Os contratos distintos que já foram cotados, em ordem alfabética (pt-BR,
+ * ignorando acento e caixa).
+ *
+ * Alfabética e não cronológica de propósito: quem abre este dropdown já sabe o
+ * nome do contrato que procura — o que ele não sabe é em que mês a cotação
+ * caiu, que é justamente o que a lista resolve.
+ *
+ * Contratos que só diferem por caixa/espaço ("CT 01" e "ct 01") entram como UM
+ * item — o banco apara o espaço, mas não a caixa, e dois itens visualmente
+ * iguais no dropdown seriam indistinguíveis. O nome exibido é o da grafia mais
+ * recente, que é a que o pessoal está usando hoje.
+ *
+ * Cotação sem contrato (histórico) fica FORA: o dropdown é um índice de
+ * contratos, e "Sem contrato informado" não é um contrato que alguém procure.
+ */
+export function contratosCotados(cotacoes: CotacaoLicitacao[]): ContratoCotado[] {
+  const porChave = new Map<string, ContratoCotado>();
+
+  for (const c of cotacoes) {
+    const nome = nomeContrato(c);
+    if (!nome) continue;
+
+    const chave = nome.toLocaleLowerCase("pt-BR");
+    const d = new Date(c.created_at);
+    const ocorrencia: OcorrenciaContrato = {
+      id: c.id, year: d.getFullYear(), month: d.getMonth(), created_at: c.created_at,
+    };
+
+    const atual = porChave.get(chave);
+    if (!atual) {
+      porChave.set(chave, { nome, ocorrencias: [ocorrencia], maisRecente: c.created_at });
+      continue;
+    }
+    atual.ocorrencias.push(ocorrencia);
+    if (c.created_at > atual.maisRecente) {
+      atual.maisRecente = c.created_at;
+      atual.nome = nome;  // grafia da mais recente
+    }
+  }
+
+  for (const item of porChave.values()) {
+    item.ocorrencias.sort((a, b) => b.created_at.localeCompare(a.created_at));
+  }
+
+  return Array.from(porChave.values()).sort((a, b) =>
+    a.nome.localeCompare(b.nome, "pt-BR", { sensitivity: "base", numeric: true }));
 }
 
 export interface GrupoAno {
