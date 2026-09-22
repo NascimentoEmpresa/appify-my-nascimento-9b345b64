@@ -97,14 +97,29 @@ export function useTrnExcluirTag() {
 }
 
 // ── Alunos ───────────────────────────────────────────────────────────
+/**
+ * RPC que devolve SETOF em páginas de 1000: o PostgREST corta em 1000 linhas
+ * por resposta (max-rows), e com 13 mil alunos (21/09/2026, todo colaborador
+ * é aluno) a lista parava em "1000 ativos, 0 inativos". Vai buscando até a
+ * página vir menor que o passo.
+ */
+export async function rpcTodasAsLinhas<T>(fn: string, args?: Record<string, unknown>): Promise<T[]> {
+  const PASSO = 1000;
+  const tudo: T[] = [];
+  for (let de = 0; ; de += PASSO) {
+    const { data, error } = await sb.rpc(fn, args ?? {}).range(de, de + PASSO - 1);
+    if (error) throw error;
+    const pagina = (data ?? []) as T[];
+    tudo.push(...pagina);
+    if (pagina.length < PASSO) break;
+  }
+  return tudo;
+}
+
 export function useTrnAlunos() {
   return useQuery({
     queryKey: [K.alunos],
-    queryFn: async (): Promise<AlunoLista[]> => {
-      const { data, error } = await sb.rpc("trn_alunos_lista");
-      if (error) throw error;
-      return (data ?? []) as AlunoLista[];
-    },
+    queryFn: () => rpcTodasAsLinhas<AlunoLista>("trn_alunos_lista"),
   });
 }
 

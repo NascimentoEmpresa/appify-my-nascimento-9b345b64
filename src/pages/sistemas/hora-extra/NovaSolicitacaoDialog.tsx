@@ -21,9 +21,12 @@ import {
   formatarData,
   formatarDuracao,
   JORNADA_PADRAO_MIN,
+  jornadaParaCalculoHoraExtra,
   limitarPercentual,
   mediaConclusao,
   mensagemErro,
+  normalizarPontoSemIntervalo,
+  podeIgnorarEscalaNoFimDeSemana,
   validarSolicitacao,
 } from "./horaExtraUtils";
 import { Campo, DropzoneAnexos, SecaoForm, TotalHoras } from "./HoraExtraUI";
@@ -45,6 +48,8 @@ const estadoInicial = {
   ponto_saida_intervalo: "12:00",
   ponto_retorno_intervalo: "13:00",
   ponto_saida: "17:18",
+  seguir_escala: true,
+  sem_intervalo: false,
   justificativa: "",
 };
 
@@ -97,6 +102,8 @@ export default function NovaSolicitacaoDialog({
         ponto_saida_intervalo: solicitacao.ponto_saida_intervalo.slice(0, 5),
         ponto_retorno_intervalo: solicitacao.ponto_retorno_intervalo.slice(0, 5),
         ponto_saida: solicitacao.ponto_saida.slice(0, 5),
+        seguir_escala: solicitacao.seguir_escala ?? true,
+        sem_intervalo: solicitacao.sem_intervalo ?? false,
         justificativa: solicitacao.justificativa,
       });
       setChamados(
@@ -155,14 +162,34 @@ export default function NovaSolicitacaoDialog({
   );
   const escala = escalas.find((e) => e.id === form.escala_id);
   const jornada = escala?.minutos_jornada ?? solicitacao?.jornada_minutos ?? JORNADA_PADRAO_MIN;
-  const calculo = calcularHoraExtra(
+  const opcaoFimDeSemana = podeIgnorarEscalaNoFimDeSemana(form.data_he, escala);
+  useEffect(() => {
+    if (!aberto) return;
+    setForm((atual) => {
+      if (!opcaoFimDeSemana && (!atual.seguir_escala || atual.sem_intervalo)) {
+        return { ...atual, seguir_escala: true, sem_intervalo: false };
+      }
+      // A escolha padrão em fim de semana é não usar a jornada da escala. A
+      // pessoa marca explicitamente caso queira aplicar a escala nesse dia.
+      if (!solicitacao && opcaoFimDeSemana && atual.seguir_escala) {
+        return { ...atual, seguir_escala: false };
+      }
+      return atual;
+    });
+  }, [aberto, opcaoFimDeSemana, solicitacao]);
+  const ponto = normalizarPontoSemIntervalo(
     {
       entrada: form.ponto_entrada,
       saida_intervalo: form.ponto_saida_intervalo,
       retorno_intervalo: form.ponto_retorno_intervalo,
       saida: form.ponto_saida,
     },
-    jornada,
+    opcaoFimDeSemana && form.sem_intervalo,
+  );
+  const jornadaCalculo = jornadaParaCalculoHoraExtra(jornada, !opcaoFimDeSemana || form.seguir_escala);
+  const calculo = calcularHoraExtra(
+    ponto,
+    jornadaCalculo,
   );
   const minutos = calculo.excedente;
   const media = mediaConclusao(chamados.map((c) => c.percentual_previsto));
@@ -170,19 +197,15 @@ export default function NovaSolicitacaoDialog({
   // HE reprovada sendo corrigida: o banco devolve a solicitação para a fila
   // de liberação ao salvar, então a tela fala de reenvio, não de edição.
   const reenvio = solicitacao?.status === "reprovada";
-  const alterar = (campo: keyof typeof form, valor: string) => setForm((atual) => ({ ...atual, [campo]: valor }));
+  const alterar = (campo: keyof typeof form, valor: string | boolean) =>
+    setForm((atual) => ({ ...atual, [campo]: valor }));
   const adicionar = (item: ChamadoDisponivel) =>
     setChamados((atual) => [...atual, { ...item, percentual_previsto: 100, prioridade_he: item.prioridade }]);
   const enviar = async () => {
     const erros = validarSolicitacao({
       chamados,
-      jornadaMinutos: jornada,
-      ponto: {
-        entrada: form.ponto_entrada,
-        saida_intervalo: form.ponto_saida_intervalo,
-        retorno_intervalo: form.ponto_retorno_intervalo,
-        saida: form.ponto_saida,
-      },
+      jornadaMinutos: jornadaCalculo,
+      ponto,
     });
     if (!form.setor.trim()) erros.push("Informe o setor.");
     if (!form.justificativa.trim()) erros.push("Informe a justificativa.");
@@ -195,6 +218,12 @@ export default function NovaSolicitacaoDialog({
         p: {
           ...form,
           id: solicitacao?.id,
+          ponto_entrada: ponto.entrada,
+          ponto_saida_intervalo: ponto.saida_intervalo,
+          ponto_retorno_intervalo: ponto.retorno_intervalo,
+          ponto_saida: ponto.saida,
+          seguir_escala: !opcaoFimDeSemana || form.seguir_escala,
+          sem_intervalo: opcaoFimDeSemana && form.sem_intervalo,
           he_inicio_previsto: calculo.inicio,
           he_fim_previsto: calculo.fim,
           chamados: chamados.map((c) => ({
@@ -220,9 +249,13 @@ export default function NovaSolicitacaoDialog({
       toast.error(mensagemErro(erro, "Não foi possível salvar a solicitação."));
     }
   };
-  const campoHora = (rotulo: string, campo: keyof typeof form) => (
+  const campoHora = (
+    rotulo: string,
+    campo: "ponto_entrada" | "ponto_saida_intervalo" | "ponto_retorno_intervalo" | "ponto_saida",
+    desabilitado = false,
+  ) => (
     <Campo rotulo={rotulo}>
-      <Input type="time" value={form[campo]} onChange={(e) => alterar(campo, e.target.value)} />
+      <Input type="time" disabled={desabilitado} value={form[campo]} onChange={(e) => alterar(campo, e.target.value)} />
     </Campo>
   );
   return (
@@ -314,8 +347,9 @@ export default function NovaSolicitacaoDialog({
               <SecaoForm
                 titulo="2. Horário de ponto do dia"
                 subtitulo={
-                  "A hora extra é calculada sozinha: conta só o tempo que passar " +
-                  "da jornada da escala de trabalho."
+                  opcaoFimDeSemana
+                    ? "No fim de semana, você pode considerar todo o período trabalhado como hora extra."
+                    : "A hora extra é calculada sozinha: conta só o tempo que passar da jornada da escala de trabalho."
                 }
                 icone={<Clock3 className="h-5 w-5" />}
               >
@@ -337,18 +371,57 @@ export default function NovaSolicitacaoDialog({
                   <div className="pb-2 text-xs text-slate-500">
                     Jornada: <strong className="text-[#07194b]">{formatarDuracao(jornada, true)}</strong> por dia
                   </div>
+                  {opcaoFimDeSemana && (
+                    <label className="flex cursor-pointer items-center gap-2 pb-2 text-sm font-medium text-[#07194b]">
+                      <input
+                        type="checkbox"
+                        checked={form.seguir_escala}
+                        onChange={(e) => alterar("seguir_escala", e.target.checked)}
+                      />
+                      Seguir jornada da escala
+                    </label>
+                  )}
                 </div>
+                {opcaoFimDeSemana && !form.seguir_escala && (
+                  <p className="-mt-1 mb-3 text-xs font-medium text-blue-700">
+                    Todo o tempo trabalhado será considerado hora extra.
+                  </p>
+                )}
                 <div className="grid gap-3 lg:grid-cols-[1.45fr_.85fr_.55fr]">
                   <div className="grid grid-cols-2 gap-3 rounded-lg bg-slate-50 p-3 md:grid-cols-4">
                     {campoHora("Entrada", "ponto_entrada")}
-                    {campoHora("Saída (intervalo)", "ponto_saida_intervalo")}
-                    {campoHora("Retorno (intervalo)", "ponto_retorno_intervalo")}
+                    <div>
+                      {campoHora("Saída (intervalo)", "ponto_saida_intervalo", opcaoFimDeSemana && form.sem_intervalo)}
+                      {opcaoFimDeSemana && (
+                        <label className="mt-1 flex cursor-pointer items-center gap-1 text-[11px] text-slate-600">
+                          <input
+                            type="checkbox"
+                            checked={form.sem_intervalo}
+                            onChange={(e) => alterar("sem_intervalo", e.target.checked)}
+                          />
+                          Não se aplica
+                        </label>
+                      )}
+                    </div>
+                    <div>
+                      {campoHora("Retorno (intervalo)", "ponto_retorno_intervalo", opcaoFimDeSemana && form.sem_intervalo)}
+                      {opcaoFimDeSemana && (
+                        <label className="mt-1 flex cursor-pointer items-center gap-1 text-[11px] text-slate-600">
+                          <input
+                            type="checkbox"
+                            checked={form.sem_intervalo}
+                            onChange={(e) => alterar("sem_intervalo", e.target.checked)}
+                          />
+                          Não se aplica
+                        </label>
+                      )}
+                    </div>
                     {campoHora("Saída", "ponto_saida")}
                   </div>
                   <div className="grid grid-cols-2 gap-3 rounded-lg bg-blue-50 p-3">
                     <div className="col-span-2 flex items-center gap-1 text-xs font-semibold text-blue-700">
                       <Clock3 className="h-4 w-4" />
-                      Horário da HE (calculado)
+                      {jornadaCalculo ? "Horário da HE (calculado)" : "Horário da HE (todo o período)"}
                     </div>
                     <Campo rotulo="Início da HE">
                       <Input readOnly value={calculo.excedente ? calculo.inicio : "—"} className="bg-white" />
@@ -521,7 +594,11 @@ export default function NovaSolicitacaoDialog({
                     A expectativa de cada chamado vai de <strong>0 a 100%</strong>; o total é a média entre eles.
                   </li>
                   <li>
-                    Só conta como hora extra o tempo que passar da <strong>jornada da escala</strong>.
+                    {opcaoFimDeSemana && !form.seguir_escala ? (
+                      <>Neste fim de semana, <strong>todo o período trabalhado</strong> conta como hora extra.</>
+                    ) : (
+                      <>Só conta como hora extra o tempo que passar da <strong>jornada da escala</strong>.</>
+                    )}
                   </li>
                   <li>Em caso de alteração nos horários, comunique o gestor.</li>
                 </ul>

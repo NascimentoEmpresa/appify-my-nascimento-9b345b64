@@ -62,6 +62,15 @@ export default function Configuracoes() {
     if (config) setForm(config);
   }, [config]);
 
+  // [SEM-CHAMADO] (Ruan, financeiro): quem só exporta Relatório (sem
+  // "Alterar" em malote_configuracoes) não vê mais as 4 abas gerais —
+  // corrige a aba selecionada pra "relatorios" nesse caso, senão a Tabs
+  // fica sem nenhum TabsTrigger ativo (o padrão "config" não existe pra
+  // esse usuário).
+  useEffect(() => {
+    if (!podeEditar && podeExportarRelatorio) setAba("relatorios");
+  }, [podeEditar, podeExportarRelatorio]);
+
   async function handleSalvar() {
     if (!form) return;
     try {
@@ -92,13 +101,19 @@ export default function Configuracoes() {
 
       <Tabs value={aba} onValueChange={setAba}>
         <TabsList>
-          <TabsTrigger value="config">Configurações do Malote</TabsTrigger>
-          <TabsTrigger value="ligacoes">Ligação de Licitações e Classificações</TabsTrigger>
-          <TabsTrigger value="analistas">Analistas de Contratos</TabsTrigger>
-          <TabsTrigger value="formas-pagamento">Formas de Pagamento</TabsTrigger>
+          {podeEditar && (
+            <>
+              <TabsTrigger value="config">Configurações do Malote</TabsTrigger>
+              <TabsTrigger value="ligacoes">Ligação de Licitações e Classificações</TabsTrigger>
+              <TabsTrigger value="analistas">Analistas de Contratos</TabsTrigger>
+              <TabsTrigger value="formas-pagamento">Formas de Pagamento</TabsTrigger>
+            </>
+          )}
           {podeExportarRelatorio && <TabsTrigger value="relatorios">Relatórios</TabsTrigger>}
         </TabsList>
 
+        {podeEditar && (
+        <>
         <TabsContent value="config" className="space-y-6 mt-4">
           {isLoading && <p className="text-sm text-muted-foreground">Carregando configurações...</p>}
 
@@ -380,6 +395,8 @@ export default function Configuracoes() {
         <TabsContent value="formas-pagamento" className="mt-4">
           <FormasPagamento podeEditar={podeEditar} />
         </TabsContent>
+        </>
+        )}
 
         {podeExportarRelatorio && (
           <TabsContent value="relatorios" className="mt-4">

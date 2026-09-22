@@ -16,6 +16,7 @@ import {
   PATRIM_RESET, soCamposDoForm,
 } from "./patrimonio/carteira";
 import { coordenadaValida } from "./patrimonio/geo";
+import { ExportarPatrimonios } from "./patrimonio/ExportarPatrimonios";
 import {
   PARAM_ORIGEM, despesaEstaPaga, statusDaConta, corDaConta, podeEnviarAoMalote,
   podeBaixarManualmente, entraNoAlerta, STATUS_SUSPENSA, type StatusConta,
@@ -169,6 +170,8 @@ export default function Patrimonios() {
   const [malotePago, setMalotePago] = useState<Map<string, boolean>>(new Map());
   const [pagarAlvo, setPagarAlvo] = useState<Obrigacao | null>(null);
   const [pagarFile, setPagarFile] = useState<File | null>(null);
+  // "Exportar dados": null = fechado; id = abre já com "apenas um" nesse patrimônio.
+  const [exportando, setExportando] = useState<{ id: number | null } | null>(null);
 
   const toast = (msg: string, t = "info") => { const id = Date.now() + Math.random(); setToasts(x => [...x, { id, msg, t }]); setTimeout(() => setToasts(x => x.filter(i => i.id !== id)), 3200); };
 
@@ -761,7 +764,10 @@ export default function Patrimonios() {
       {/* Topbar */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "16px 22px", margin: "18px 24px 0", border: "1px solid #e2e8f0", borderRadius: 16, background: "linear-gradient(135deg,#fff,#f8fbff)", boxShadow: "0 8px 24px rgba(15,23,42,.06)", gap: 12, flexWrap: "wrap" }}>
         <div style={{ fontSize: 18, fontWeight: 800, color: "#0f3171" }}>⚖️ Gestão Patrimonial e Obrigações</div>
-        <button className="jp-btn" onClick={abrirNovoPat} style={{ background: "#0f3171", color: "#fff", boxShadow: "0 10px 22px rgba(15,49,113,.18)" }}>+ Novo Patrimônio</button>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <button className="jp-btn" onClick={() => setExportando({ id: null })} style={{ background: "#fff", color: "#0f3171", border: "1px solid #c7d7f5" }}>⬇ Exportar dados</button>
+          <button className="jp-btn" onClick={abrirNovoPat} style={{ background: "#0f3171", color: "#fff", boxShadow: "0 10px 22px rgba(15,49,113,.18)" }}>+ Novo Patrimônio</button>
+        </div>
       </div>
 
       <div style={{ flex: 1, overflowY: "auto", padding: "18px 24px 28px" }}>
@@ -1206,6 +1212,18 @@ export default function Patrimonios() {
         </div>
       )}
 
+      {exportando && (
+        <ExportarPatrimonios
+          db={db}
+          patrimonios={pats}
+          inicialId={exportando.id}
+          seloDaConta={o => seloDaConta(o as unknown as Obrigacao)}
+          autor={autor}
+          onFechar={() => setExportando(null)}
+          onAviso={(msg, t) => toast(msg, t)}
+        />
+      )}
+
       {/* ── Drawer do patrimônio ── */}
       {sel && (
         <div className="jp-drawer-ov" onClick={e => { if (e.target === e.currentTarget) setSel(null); }}>
@@ -1216,6 +1234,7 @@ export default function Patrimonios() {
                 <div style={{ fontSize: 12, color: "#64748b", marginTop: 2 }}>{[sel.tipo, sel.codigo, [sel.localizacao, sel.cidade].filter(Boolean).join(" · ") || sel.placa, sel.empresa].filter(Boolean).join(" · ")}</div>
               </div>
               <div style={{ display: "flex", gap: 6 }}>
+                <button className="jp-btn" onClick={() => setExportando({ id: sel.id })} style={{ background: "#fff", color: "#0f3171", border: "1px solid #dbe4f0" }}>⬇ Exportar</button>
                 <button className="jp-btn" onClick={() => abrirEditarPat(sel)} style={{ background: "#eef4ff", color: "#0f3171", border: "1px solid #dbe4f0" }}>Editar</button>
                 <button onClick={() => setSel(null)} style={{ border: "none", background: "none", fontSize: 22, color: "#94a3b8", cursor: "pointer" }}>✕</button>
               </div>

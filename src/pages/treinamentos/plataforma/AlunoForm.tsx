@@ -59,6 +59,8 @@ export default function AlunoForm() {
   const salvar = useTrnSalvarAluno();
   const excluir = useTrnExcluirAluno();
   const [f, setF] = useState<Form>(VAZIO);
+  // Veio do cadastro (origem integracao, vinculado a EMPREGADOS)?
+  const daSenior = !!data && data.aluno.origem === "integracao" && data.aluno.empregado_id != null;
   const [config, setConfig] = useState(false);
   const [buscaCurso, setBuscaCurso] = useState("");
 
@@ -145,15 +147,24 @@ export default function AlunoForm() {
                 <div className="trn-form">
                   <div className="grupo">
                     <h4>{editando ? "Editar informações" : "Adicionar informações"}</h4>
+                    {/* Aluno que veio do cadastro (21/09/2026): nome, telefone, e-mail
+                        e CPF são da Senior/EMPREGADOS e a sincronização sobrescreveria
+                        o que fosse editado aqui — ficam travados, e o "Vincular"
+                        some (já está vinculado). */}
+                    {daSenior && (
+                      <div className="mb-3 rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-900">
+                        Colaborador do cadastro da Senior (nº {f.empregado_id}). Nome, telefone, e-mail e CPF vêm de lá e acompanham o cadastro — não se editam aqui.
+                      </div>
+                    )}
                     <div className="grid gap-4 sm:grid-cols-2">
-                      <div className="campo sm:col-span-2"><label>Nome do aluno *</label><Input value={f.nome} onChange={(e) => set({ nome: e.target.value })} /></div>
-                      <div className="campo"><label>Telefone do aluno</label><Input placeholder="+55 (54) 9 9999-9999" value={f.telefone} onChange={(e) => set({ telefone: e.target.value })} /></div>
+                      <div className="campo sm:col-span-2"><label>Nome do aluno *</label><Input value={f.nome} disabled={daSenior} onChange={(e) => set({ nome: e.target.value })} /></div>
+                      <div className="campo"><label>Telefone do aluno</label><Input placeholder="+55 (54) 9 9999-9999" value={f.telefone} disabled={daSenior} onChange={(e) => set({ telefone: e.target.value })} /></div>
                       <div className="campo">
                         <label>E-mail do aluno *</label>
                         <Input type="email" value={f.email} disabled={editando} onChange={(e) => set({ email: e.target.value })} />
-                        <div className="ajuda">{editando ? "O e-mail do aluno não pode ser alterado." : "O aluno usa este e-mail para acessar a plataforma."}</div>
+                        <div className="ajuda">{daSenior ? "Vem do cadastro da Senior (EMPREGADOS)." : editando ? "O e-mail do aluno não pode ser alterado." : "O aluno usa este e-mail para acessar a plataforma."}</div>
                       </div>
-                      <div className="campo"><label>Documento do aluno</label><Input placeholder="CPF" value={f.documento} onChange={(e) => set({ documento: e.target.value })} /></div>
+                      <div className="campo"><label>Documento do aluno</label><Input placeholder="CPF" value={f.documento} disabled={daSenior} onChange={(e) => set({ documento: e.target.value })} /></div>
                       <div className="campo">
                         <label>Preferência de idioma (opcional)</label>
                         <Select value={f.idioma} onValueChange={(v) => set({ idioma: v })}>
@@ -167,7 +178,9 @@ export default function AlunoForm() {
                         <TagPicker value={f.tagIds} onChange={(ids) => set({ tagIds: ids })} />
                         <div className="ajuda">Tags segmentam avisos, notificações e ações em massa — no membox são os postos/contratos.</div>
                       </div>
-                      <VinculoEmpregado empregadoId={f.empregado_id} onChange={(emp) => set({ empregado_id: emp?.id ?? null, ...(emp && !f.nome ? { nome: emp.nome } : {}), ...(emp && !f.documento ? { documento: emp.cpf } : {}), ...(emp && !f.email && emp.email ? { email: emp.email } : {}) })} />
+                      {!daSenior && (
+                        <VinculoEmpregado empregadoId={f.empregado_id} onChange={(emp) => set({ empregado_id: emp?.id ?? null, ...(emp && !f.nome ? { nome: emp.nome } : {}), ...(emp && !f.documento ? { documento: emp.cpf } : {}), ...(emp && !f.email && emp.email ? { email: emp.email } : {}) })} />
+                      )}
                     </div>
                   </div>
 

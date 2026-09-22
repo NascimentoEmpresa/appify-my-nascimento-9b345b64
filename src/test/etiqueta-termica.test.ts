@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
-  MEDIDAS, htmlEtiqueta, linhaItem, textoItens, urlRetirada, type DadosEtiqueta,
+  MEDIDAS, TITULO_ENVIADOS, TITULO_PENDENTES, htmlEtiqueta, linhaItem, textoItens, urlRetirada,
+  type DadosEtiqueta,
 } from "@/lib/suprimentos/etiquetaTermica";
 
 /**
@@ -22,8 +23,8 @@ const dados: DadosEtiqueta = {
   contrato_nome: "TRIUNFO COLETA DE LIXO - 89.2026",
   posto_nome: "COLETOR/GARI",
   itens: [
-    { nome_item: "BABUCHE - PRETO", tamanho: "40", quantidade: 2, litros: null },
-    { nome_item: "DETERGENTE", tamanho: null, quantidade: 1, litros: "5" },
+    { id: "i1", ordem: 1, nome_item: "BABUCHE - PRETO", tamanho: "40", quantidade: 2, litros: null },
+    { id: "i2", ordem: 2, nome_item: "DETERGENTE", tamanho: null, quantidade: 1, litros: "5" },
   ],
 };
 
@@ -139,5 +140,62 @@ describe("linha de item", () => {
 
   it("pedido sem item não gera cabeçalho de itens vazio", () => {
     expect(textoItens({ ...dados, itens: [] })).toBe("");
+  });
+});
+
+/**
+ * A etiqueta saía com uma categoria só, e quem conferia o volume não
+ * distinguia o que já tinha ido do que ainda faltava sem voltar ao sistema.
+ * O que se garante aqui é que o pedido INTEIRO sai, nas duas seções, e que
+ * seção vazia não vira título sozinho.
+ */
+describe("texto dos itens — enviados x pendentes", () => {
+  it("sem etiqueta baixada, o pedido inteiro é pendente e sai uma seção só", () => {
+    const texto = textoItens(dados);
+    expect(texto).toBe(
+      "ITENS PENDENTES DE ENVIO:\n" +
+      "• BABUCHE - PRETO — Tam. 40 — Qtd. 2\n" +
+      "• DETERGENTE — 5 L — Qtd. 1",
+    );
+    expect(texto).not.toContain(TITULO_ENVIADOS);
+  });
+
+  it("pedido todo despachado sai só como enviado", () => {
+    const texto = textoItens(dados, [
+      { pedido_item_id: "i1", quantidade: 2 },
+      { pedido_item_id: "i2", quantidade: 1 },
+    ]);
+    expect(texto).toContain(TITULO_ENVIADOS);
+    expect(texto).not.toContain(TITULO_PENDENTES);
+    expect(texto).toContain("• BABUCHE - PRETO — Tam. 40 — Qtd. 2");
+    expect(texto).toContain("• DETERGENTE — 5 L — Qtd. 1");
+  });
+
+  it("despacho parcial imprime as duas seções, sem misturar categorias", () => {
+    const texto = textoItens(dados, [{ pedido_item_id: "i1", quantidade: 1 }]);
+    const [secaoEnviados, secaoPendentes] = texto.split("\n\n");
+
+    expect(secaoEnviados).toBe("ITENS ENVIADOS:\n• BABUCHE - PRETO — Tam. 40 — Qtd. 1");
+    expect(secaoPendentes).toBe(
+      "ITENS PENDENTES DE ENVIO:\n" +
+      "• BABUCHE - PRETO — Tam. 40 — Qtd. 1\n" +
+      "• DETERGENTE — 5 L — Qtd. 1",
+    );
+    // O item só do pendente não pode aparecer na seção de enviados.
+    expect(secaoEnviados).not.toContain("DETERGENTE");
+  });
+
+  it("nenhuma linha do pedido some da etiqueta impressa", () => {
+    const html = htmlEtiqueta(dados, "PADRAO", textoItens(dados, [{ pedido_item_id: "i2", quantidade: 1 }]));
+    expect(html).toContain("BABUCHE - PRETO");
+    expect(html).toContain("DETERGENTE");
+    expect(html).toContain("ITENS ENVIADOS:");
+    expect(html).toContain("ITENS PENDENTES DE ENVIO:");
+  });
+
+  it("item pedido a mais do que saiu não gera linha pendente negativa", () => {
+    const texto = textoItens(dados, [{ pedido_item_id: "i1", quantidade: 5 }]);
+    expect(texto).toContain("ITENS ENVIADOS:\n• BABUCHE - PRETO — Tam. 40 — Qtd. 5");
+    expect(texto).not.toContain("Qtd. -");
   });
 });

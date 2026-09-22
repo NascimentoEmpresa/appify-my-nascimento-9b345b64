@@ -6,6 +6,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { ESTILO_STATUS } from "@/hooks/useSupPedidos";
+import { useTagsDoPedido } from "@/hooks/useSupEstoque";
 import {
   MEDIDAS, cssEtiqueta, htmlEtiqueta, imprimirEtiqueta, textoItens, urlRetirada,
   type DadosEtiqueta, type TamanhoEtiqueta,
@@ -21,6 +22,10 @@ import QRCode from "qrcode";
  * A caixa de texto continua existindo, mas mudou de papel: ela não é mais a
  * etiqueta inteira em texto corrido — é a área livre no rodapé, que já vem
  * com os itens e aceita qualquer acréscimo.
+ *
+ * Os itens vêm SEMPRE completos, em duas seções (enviados / pendentes de
+ * envio). A versão anterior imprimia uma lista só e o conferente não
+ * distinguia, pela caixa, o que já tinha saído do que ainda faltava.
  *
  * O cabeçalho da etiqueta (protocolo, status, colaborador, contrato…) NÃO passa
  * pela caixa de texto de propósito: vem sempre dos campos do pedido, para não
@@ -40,10 +45,12 @@ export interface PedidoEtiqueta {
   posto_nome: string;
   funcao_nome: string;
   sup_pedido_item: Array<{
+    id: string;
     nome_item: string;
     tamanho: string | null;
     quantidade: number;
     litros: string | null;
+    ordem: number;
   }>;
 }
 
@@ -78,16 +85,36 @@ export function ModalEtiquetaTermica({
   const [preview, setPreview] = useState<string | null>(null);
   const [qr, setQr] = useState<string | null>(null);
   const [gerandoQr, setGerandoQr] = useState(false);
+  // Enquanto o usuário não mexe na caixa, ela é um reflexo do pedido — as
+  // etiquetas chegam depois do modal abrir e reescrevem o texto. Depois da
+  // primeira digitação o texto é dele: recarregar por cima apagaria o
+  // acréscimo que ele acabou de escrever.
+  const [editado, setEditado] = useState(false);
 
   const dados = useMemo(() => (pedido ? paraDados(pedido, qr) : null), [pedido, qr]);
+
+  // As etiquetas já baixadas no pedido são o que separa ENVIADOS de
+  // PENDENTES DE ENVIO — a mesma fonte dos botões do card.
+  const { data: tags, isLoading: carregandoTags } = useTagsDoPedido(pedido?.id ?? null);
+  const etiquetas = useMemo(() => tags ?? [], [tags]);
 
   useEffect(() => {
     if (!pedido) return;
     setTamanho("PADRAO");
     setCopias(1);
-    setConteudo(textoItens(paraDados(pedido, null)));
+    setConteudo("");
     setPreview(null);
+    setEditado(false);
   }, [pedido]);
+
+  // Semeado só depois das etiquetas chegarem: semear antes mostraria o pedido
+  // inteiro como pendente por um instante, e quem imprime rápido levaria
+  // etiqueta errada.
+  useEffect(() => {
+    if (!pedido || carregandoTags || editado) return;
+    setConteudo(textoItens(paraDados(pedido, null), etiquetas));
+    setPreview(null);
+  }, [pedido, carregandoTags, etiquetas, editado]);
 
   // O QR é gerado aqui, e não em htmlEtiqueta, porque a geração é
   // assíncrona. Se falhar, a etiqueta ainda sai — sem QR e com aviso: travar
@@ -142,13 +169,16 @@ export function ModalEtiquetaTermica({
             <div>
               <Label htmlFor="etiqueta-conteudo">Texto livre da etiqueta</Label>
               <p className="mb-1.5 text-xs text-muted-foreground">
-                Já vem com os itens do pedido. Protocolo, colaborador, contrato e posto
-                são impressos a partir do pedido e não dependem deste campo.
+                Já vem com todos os itens do pedido, separados em enviados e pendentes de
+                envio. Protocolo, colaborador, contrato e posto são impressos a partir do
+                pedido e não dependem deste campo.
               </p>
               <Textarea
                 id="etiqueta-conteudo" rows={10}
                 value={conteudo}
-                onChange={(e) => { setConteudo(e.target.value); setPreview(null); }}
+                placeholder={carregandoTags ? "Conferindo o que já foi enviado…" : undefined}
+                disabled={carregandoTags}
+                onChange={(e) => { setConteudo(e.target.value); setEditado(true); setPreview(null); }}
                 className="font-mono text-sm"
               />
               {tamanho === "COMPACTO" && (
@@ -159,7 +189,7 @@ export function ModalEtiquetaTermica({
               )}
             </div>
 
-            <Button type="button" variant="secondary" onClick={() => setPreview(conteudo)}>
+            <Button type="button" variant="secondary" disabled={carregandoTags} onClick={() => setPreview(conteudo)}>
               <Eye className="mr-2 h-4 w-4" /> Gerar preview da etiqueta
             </Button>
           </div>

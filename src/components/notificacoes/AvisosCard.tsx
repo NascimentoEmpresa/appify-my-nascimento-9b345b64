@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import { AlertTriangle, ArrowRight, GraduationCap, Info, Megaphone, Settings } from "lucide-react";
 import { useNotificacoes } from "@/hooks/useNotificacoes";
 import { estaVigente, fmtDataHora, type Notificacao } from "@/lib/notificacoes";
-import { ImagemAviso } from "@/components/notificacoes/ImagemAviso";
+import { ConteudoAviso } from "@/components/notificacoes/ConteudoAviso";
 import {
   Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
@@ -132,17 +132,7 @@ export function AvisosCard({ limite = 4 }: { limite?: number }) {
             </DialogDescription>
           </DialogHeader>
           {aberto && (
-            <div className="space-y-3">
-              {aberto.anexo_url && (
-                <ImagemAviso
-                  url={aberto.anexo_url}
-                  nome={aberto.anexo_nome}
-                  prioridade
-                  className="aspect-video w-full"
-                />
-              )}
-              <p className="whitespace-pre-wrap text-sm leading-relaxed">{aberto.mensagem}</p>
-            </div>
+            <ConteudoAviso aviso={aberto} prioridade />
           )}
         </DialogContent>
       </Dialog>

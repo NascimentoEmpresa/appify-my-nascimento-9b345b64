@@ -628,6 +628,8 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
       substituido_id: ehSubstituicao(vaga.motivo_vaga) ? substituidoId : null,
       demissao_id: ehSubstituicao(vaga.motivo_vaga) ? demissaoId : null,
       contrato_id: vaga.contrato_id || null, posto_id: vaga.posto_id || null, funcao_id: vaga.funcao_id || null,
+      // O posto escolhido vira o "Posto de Trabalho" do card (coluna local_exato).
+      local_exato: postoNomeEscolhido || null,
       administrativa: ehAdministrativa,
       setor: vaga.setor || null,
       // Administrativa ou com setor → Diretoria (16/09/2026); o resto → analista.
@@ -1382,7 +1384,13 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
               <PrazoAviso prazo={prazo} />
               {/* Horário saiu: a escala do cadastro já traz a jornada dentro
                   ("07:30-17:18 (1H)(08:48)"). */}
-              <div className="ini-fg"><label>Escala</label><input className="ini-fi" placeholder="Ex: 12x36, 5x2..." value={vaga.escala} onChange={e => setVaga(v => ({ ...v, escala: e.target.value }))} /></div>
+              {/* Escala só leitura (21/09/2026): vem do cadastro do colaborador
+                  escolhido na etapa 1 e não se altera aqui. */}
+              <div className="ini-fg">
+                <label>Escala <span style={{ color: "#64748b", fontWeight: 600 }}>— do colaborador escolhido</span></label>
+                <input className="ini-fi" readOnly value={vaga.escala} placeholder="Escolha o colaborador na etapa 1"
+                  style={{ background: "#f1f5f9", color: "#475569", cursor: "not-allowed" }} />
+              </div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
                 {/* Salário: quem abre a vaga não vê o valor. Ele vem do cadastro
                     do colaborador escolhido e segue na solicitação — só o
@@ -1404,18 +1412,17 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
                     style={{ background: "#f1f5f9", color: "#475569", cursor: "not-allowed" }} />
                 </div>
               </div>
+              {/* Posto de Trabalho no lugar de Benefícios (21/09/2026): o campo
+                  de V.A/V.T aparecia vazio pra quem abre a vaga. Mostra o posto
+                  escolhido no catálogo (etapa 1), que vai gravado em
+                  local_exato — é o "Posto de Trabalho" do card no Recrutamento.
+                  Os benefícios continuam puxados da planilha e gravados. */}
               <div className="ini-fg">
-                <label>Benefícios <span style={{ color: "#64748b", fontWeight: 600 }}>— VT e VA do contrato</span></label>
-                <input className="ini-fi" readOnly
-                  value={custoBuscando ? "Consultando a planilha…" : vaga.beneficios}
-                  placeholder={!substituidoId ? "Escolha o colaborador na etapa 1" : !vaga.posto_id ? "Selecione o posto no catálogo (etapa 1) para puxar o V.A e o V.T" : "Posto sem Planilha de Custo — o Recrutamento completa"}
+                <label>Posto de Trabalho <span style={{ color: "#64748b", fontWeight: 600 }}>— do catálogo (etapa 1)</span></label>
+                <input className="ini-fi" readOnly value={postoNomeEscolhido}
+                  placeholder="Selecione o posto no catálogo (etapa 1)"
                   style={{ background: "#f1f5f9", color: "#475569", cursor: "not-allowed" }} />
-                {custoNota && (
-                  <div style={{ marginTop: 4, fontSize: 14.5, fontWeight: custoPosto ? 400 : 600, color: custoPosto && !custoPosto.ambiguo ? "#64748b" : "#92400e" }}>{custoNota}</div>
-                )}
               </div>
-              {/* Local Exato / Posto saiu: o posto já vem do colaborador
-                  escolhido na etapa 1. */}
               <div className="ini-fg">
                 <label>Essa é uma Vaga de Reserva Técnica (RT)?</label>
                 <select className="ini-fi" value={vaga.reserva_tecnica}

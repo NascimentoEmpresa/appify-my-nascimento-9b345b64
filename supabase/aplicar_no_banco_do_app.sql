@@ -25062,3 +25062,594 @@ NOTIFY pgrst, 'reload schema';
 -- DELETE FROM public.perfil_acesso_permissao pp USING public.perfil_acesso p
 --  WHERE p.id = pp.perfil_id AND p.nome = 'Diretoria'
 --    AND pp.menu_codigo IN ('diretoria_solicitacoes_demissao', 'diretoria_recrutamento', 'diretoria_troca_funcao');
+
+
+-- =========================================================================
+-- Treinamentos: o módulo volta (a plataforma precisa dele) e os 13 menus
+-- da 190 entram de fato
+--
+-- A 20260930000190 inseriu os menus com JOIN em app_modulo.codigo =
+-- 'treinamentos' — mas esse módulo foi REMOVIDO pela 20260930000022
+-- (Treinamentos virou grupo dentro de Encarregados enquanto só tinha o
+-- "Treinamentos ERP"). Resultado ao aplicar a 190 em 21/09/2026: 20 tabelas,
+-- 28 funções, bucket e RLS entraram; os menus, zero — e sem linha em
+-- app_menu o RouteGuard nega todas as telas novas (/app/treinamentos/...).
+--
+-- O assunto cresceu (é o caso previsto no rollback da 022): o módulo
+-- volta, com o Sidebar já esperando `treinamentosModule` (basePath
+-- /app/treinamentos). O que fica em Encarregados continua lá: "Treinamentos
+-- ERP" (treinamentos_erp / treinamentos_gerenciar / encarregados_treinamentos)
+-- — o link no Sidebar de Encarregados não mudou.
+--
+-- `treinamentos_dashboard` JÁ EXISTE (063: menu fantasma do Dashboard de
+-- vídeos, rota NULL, em Encarregados) e a plataforma usa o MESMO código pro
+-- Dashboard dela (tipos.ts). Código de menu é único no ERP (J1.D), então a
+-- linha é MOVIDA pro módulo e ganha a rota — quem já tinha o toggle
+-- continua com ele; o gate do Dashboard de vídeos (AcessoGate pelo código)
+-- segue funcionando.
+--
+-- Idempotente. Aplicar no banco do app.
+-- =========================================================================
+
+-- 0) O perfil de módulo "Treinamentos" sobrou da 022 com modulo_codigo NULL
+--    (a 022 apagou o módulo, não o perfil): 0 permissões, 0 usuários em
+--    21/09/2026. O trigger criar_perfil_acesso_do_modulo insere um perfil
+--    com o nome do módulo e só trata conflito por modulo_codigo — bateria
+--    em perfil_acesso_nome_key. Não dá pra reatar antes (FK pro módulo que
+--    ainda não existe), então o órfão vazio sai e o trigger cria o novo.
+DELETE FROM public.perfil_acesso p
+ WHERE p.nome = 'Treinamentos' AND p.modulo_codigo IS NULL
+   AND NOT EXISTS (SELECT 1 FROM public.perfil_acesso_permissao pp WHERE pp.perfil_id = p.id)
+   AND NOT EXISTS (SELECT 1 FROM public.usuario_perfil_acesso u WHERE u.perfil_id = p.id);
+
+-- 1) O módulo volta
+INSERT INTO public.app_modulo (codigo, nome, ordem, ativo)
+VALUES ('treinamentos', 'Treinamentos', 76, true)
+ON CONFLICT (codigo) DO NOTHING;
+UPDATE public.app_modulo SET ativo = true WHERE codigo = 'treinamentos';
+
+-- 2) O Dashboard (código já existente) muda de módulo e ganha a rota
+UPDATE public.app_menu
+   SET modulo_id = (SELECT id FROM public.app_modulo WHERE codigo = 'treinamentos'),
+       rota = '/app/treinamentos', nome = 'Dashboard', ordem = 20, ativo = true
+ WHERE codigo = 'treinamentos_dashboard';
+
+-- 3) Os outros 12 menus da plataforma (mesma lista da 190)
+INSERT INTO public.app_menu (modulo_id, codigo, nome, rota, ordem, ativo)
+SELECT m.id, x.codigo, x.nome, x.rota, x.ordem, true
+  FROM (VALUES
+    ('treinamentos_alunos',           'Alunos — Visualizar',    '/app/treinamentos/alunos',                 30),
+    ('treinamentos_alunos_novo',      'Alunos — Adicionar novo','/app/treinamentos/alunos/novo',            31),
+    ('treinamentos_alunos_importar',  'Alunos — Importar',      '/app/treinamentos/alunos/importar',        32),
+    ('treinamentos_alunos_tags',      'Alunos — Tags',          '/app/treinamentos/alunos/tags',            33),
+    ('treinamentos_cursos',           'Cursos — Visualizar',    '/app/treinamentos/cursos',                 40),
+    ('treinamentos_cursos_novo',      'Cursos — Adicionar novo','/app/treinamentos/cursos/novo',            41),
+    ('treinamentos_comentarios',      'Cursos — Comentários',   '/app/treinamentos/cursos/comentarios',     42),
+    ('treinamentos_categorias',       'Cursos — Categorias',    '/app/treinamentos/cursos/categorias',      43),
+    ('treinamentos_certificados',     'Cursos — Certificados',  '/app/treinamentos/cursos/certificados',    44),
+    ('treinamentos_avisos',           'Comunicação — Avisos',   '/app/treinamentos/comunicacao/avisos',     50),
+    ('treinamentos_notificacoes',     'Comunicação — Notificações', '/app/treinamentos/comunicacao/notificacoes', 51),
+    ('treinamentos_calendario',       'Comunicação — Calendário','/app/treinamentos/comunicacao/calendario', 52)
+  ) AS x(codigo, nome, rota, ordem)
+  JOIN public.app_modulo m ON m.codigo = 'treinamentos'
+ WHERE NOT EXISTS (SELECT 1 FROM public.app_menu am WHERE am.codigo = x.codigo);
+
+NOTIFY pgrst, 'reload schema';
+
+-- Conferência
+-- SELECT mo.codigo AS modulo, m.codigo, m.rota, m.ativo FROM public.app_menu m
+--   JOIN public.app_modulo mo ON mo.id = m.modulo_id WHERE m.codigo LIKE 'treinamentos%' ORDER BY mo.codigo, m.ordem;
+
+-- ROLLBACK
+-- DELETE FROM public.app_menu WHERE codigo IN ('treinamentos_alunos','treinamentos_alunos_novo','treinamentos_alunos_importar','treinamentos_alunos_tags','treinamentos_cursos','treinamentos_cursos_novo','treinamentos_comentarios','treinamentos_categorias','treinamentos_certificados','treinamentos_avisos','treinamentos_notificacoes','treinamentos_calendario');
+-- UPDATE public.app_menu SET modulo_id = (SELECT id FROM public.app_modulo WHERE codigo = 'encarregados'), rota = NULL, ordem = 30 WHERE codigo = 'treinamentos_dashboard';
+-- DELETE FROM public.app_modulo WHERE codigo = 'treinamentos';
+
+
+-- =========================================================================
+-- Quadro de Avisos: várias imagens (carrossel ou grade) e links com nome
+--
+-- Pedido do Pablo em 21/09/2026: "opção de colocar mais imagens, ir
+-- passando pro lado ou aparecer ao mesmo tempo; e ao adicionar um link tem
+-- que ser CLICÁVEL, com o nome LINK ou eu escolher o nome".
+--
+--   imagens        jsonb  [{ "url": "...", "nome": "cartaz.png" }, ...]
+--                         Todas as imagens do aviso, na ordem. anexo_url /
+--                         anexo_nome continuam sendo a PRIMEIRA (capa) — é o
+--                         que a lista do Início, o gate e a miniatura leem;
+--                         a tela grava os dois juntos.
+--   imagens_layout text   'carrossel' (passa pro lado, padrão) | 'grade'
+--                         (todas de uma vez).
+--   links          jsonb  [{ "rotulo": "Abrir formulário", "url": "https://..." }]
+--                         Botões clicáveis abaixo do texto. Além disso, URL
+--                         colada no meio do texto vira link na tela.
+--
+-- Estoque: quem já tem anexo_url ganha imagens = [{url, nome}] pra não ter
+-- dois formatos convivendo.
+--
+-- Idempotente. Aplicar no banco do app.
+-- =========================================================================
+
+ALTER TABLE public."SISTEMA_NOTIFICACOES"
+  ADD COLUMN IF NOT EXISTS imagens        jsonb NOT NULL DEFAULT '[]'::jsonb,
+  ADD COLUMN IF NOT EXISTS imagens_layout text  NOT NULL DEFAULT 'carrossel',
+  ADD COLUMN IF NOT EXISTS links          jsonb NOT NULL DEFAULT '[]'::jsonb;
+
+ALTER TABLE public."SISTEMA_NOTIFICACOES" DROP CONSTRAINT IF EXISTS sistema_notificacoes_imagens_layout_chk;
+ALTER TABLE public."SISTEMA_NOTIFICACOES"
+  ADD CONSTRAINT sistema_notificacoes_imagens_layout_chk CHECK (imagens_layout IN ('carrossel', 'grade'));
+
+COMMENT ON COLUMN public."SISTEMA_NOTIFICACOES".imagens IS
+  'Todas as imagens do aviso, na ordem: [{url, nome}]. anexo_url/anexo_nome = a primeira (capa). Migration 20260930000192.';
+COMMENT ON COLUMN public."SISTEMA_NOTIFICACOES".imagens_layout IS
+  'carrossel (passa pro lado) | grade (todas de uma vez).';
+COMMENT ON COLUMN public."SISTEMA_NOTIFICACOES".links IS
+  'Links clicáveis do aviso: [{rotulo, url}].';
+
+-- Estoque: a imagem que já existia vira a primeira da lista.
+UPDATE public."SISTEMA_NOTIFICACOES"
+   SET imagens = jsonb_build_array(jsonb_build_object('url', anexo_url, 'nome', coalesce(anexo_nome, '')))
+ WHERE anexo_url IS NOT NULL AND btrim(anexo_url) <> '' AND imagens = '[]'::jsonb;
+
+NOTIFY pgrst, 'reload schema';
+
+-- ROLLBACK
+-- ALTER TABLE public."SISTEMA_NOTIFICACOES" DROP COLUMN IF EXISTS imagens, DROP COLUMN IF EXISTS imagens_layout, DROP COLUMN IF EXISTS links;
+
+
+-- =========================================================================
+-- Treinamentos: aluno é colaborador — vem do cadastro (EMPREGADOS), não se
+-- cadastra à mão
+--
+-- Pedido do Pablo em 21/09/2026: "pra ser nosso aluno tem que ser nosso
+-- colaborador; os alunos vão entrar direto com a admissão. Troca o
+-- 'Adicionar novo' por um painel de gerenciar alunos: quem está
+-- Trabalhando é ativo; afastado ou demitido é inativo".
+--
+-- O QUE MUDA
+--   • TRN_ALUNO ganha status 'inativo' (afastado/demitido — diferente de
+--     'bloqueado', que é decisão de alguém) e as colunas situacao / contrato
+--     / cargo espelhadas do cadastro, pro painel filtrar sem join.
+--   • trn_sync_aluno_do_empregado(_id): cria/atualiza o aluno de UM
+--     colaborador. Chave = empregado_id (único). E-mail: o do cadastro se
+--     houver e estiver livre; senão um sintético <ID>@colaborador.nascimento.local
+--     (só 158 dos 2.465 não demitidos têm e-mail; a coluna é NOT NULL/única).
+--     Colaborador nasce com acesso_completo (a trilha de NRs é de todos).
+--   • trg_trn_aluno_do_empregado em EMPREGADOS: admissão vira aluno na hora;
+--     mudou Situação/Nome/CPF/e-mail/posto/cargo, o aluno acompanha.
+--   • trn_sincronizar_alunos(): a RPC do botão "Sincronizar com o cadastro"
+--     — percorre todos os não demitidos + os alunos já vinculados (pra
+--     marcar quem foi demitido depois). Demitido antigo que nunca foi aluno
+--     não entra: seriam 10.800 linhas mortas.
+--   • trn_alunos_gerenciar(): a lista do painel.
+--   • Menu treinamentos_alunos_novo vira "Alunos — Gerenciar" (o código
+--     fica: é ele que carrega a permissão de quem já tinha).
+--   • Carga inicial no fim.
+--
+-- Idempotente. Aplicar no banco do app.
+-- =========================================================================
+
+-- ── 1) Colunas e status ──────────────────────────────────────────────────
+ALTER TABLE public."TRN_ALUNO" DROP CONSTRAINT IF EXISTS "TRN_ALUNO_status_check";
+ALTER TABLE public."TRN_ALUNO"
+  ADD CONSTRAINT "TRN_ALUNO_status_check" CHECK (status IN ('pendente','ativo','bloqueado','inativo'));
+
+ALTER TABLE public."TRN_ALUNO"
+  ADD COLUMN IF NOT EXISTS situacao text,
+  ADD COLUMN IF NOT EXISTS contrato text,
+  ADD COLUMN IF NOT EXISTS cargo    text,
+  ADD COLUMN IF NOT EXISTS sincronizado_em timestamptz;
+COMMENT ON COLUMN public."TRN_ALUNO".situacao IS 'EMPREGADOS."Situação" na última sincronização (Trabalhando → ativo; o resto → inativo).';
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_trn_aluno_empregado ON public."TRN_ALUNO"(empregado_id) WHERE empregado_id IS NOT NULL;
+
+-- ── 2) Sincroniza UM colaborador ─────────────────────────────────────────
+CREATE OR REPLACE FUNCTION public.trn_sync_aluno_do_empregado(_id bigint)
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $fn$
+DECLARE
+  e          record;
+  v_email    text;
+  v_status   text;
+  v_aluno    uuid;
+BEGIN
+  SELECT "ID", btrim("Nome") AS nome, regexp_replace(coalesce("CPF", ''), '\D', '', 'g') AS cpf,
+         lower(btrim(coalesce(email, ''))) AS email_cad, "Situação" AS situacao,
+         btrim(coalesce("Nome Filial", "Descrição do Local", '')) AS contrato,
+         btrim(coalesce("Título do Cargo", '')) AS cargo
+    INTO e
+    FROM public."EMPREGADOS" WHERE "ID" = _id;
+  IF e."ID" IS NULL OR e.nome IS NULL OR e.nome = '' THEN RETURN; END IF;
+
+  v_status := CASE WHEN e.situacao = 'Trabalhando' THEN 'ativo' ELSE 'inativo' END;
+
+  SELECT id INTO v_aluno FROM public."TRN_ALUNO" WHERE empregado_id = _id;
+
+  -- E-mail do cadastro, se válido e livre; senão o sintético (estável por ID).
+  v_email := CASE
+    WHEN e.email_cad ~ '^[^@\s]+@[^@\s]+\.[^@\s]+$'
+     AND NOT EXISTS (SELECT 1 FROM public."TRN_ALUNO" a WHERE lower(btrim(a.email)) = e.email_cad AND a.empregado_id IS DISTINCT FROM _id)
+      THEN e.email_cad
+    ELSE _id::text || '@colaborador.nascimento.local'
+  END;
+
+  IF v_aluno IS NULL THEN
+    -- Demitido que nunca foi aluno não entra.
+    IF e.situacao = 'Demitido' THEN RETURN; END IF;
+    INSERT INTO public."TRN_ALUNO"(nome, email, documento, status, acesso_completo, empregado_id, origem,
+                                   situacao, contrato, cargo, sincronizado_em)
+    VALUES (e.nome, v_email, nullif(e.cpf, ''), v_status, true, _id, 'integracao',
+            e.situacao, nullif(e.contrato, ''), nullif(e.cargo, ''), now());
+  ELSE
+    UPDATE public."TRN_ALUNO"
+       SET nome = e.nome,
+           email = v_email,
+           documento = coalesce(nullif(e.cpf, ''), documento),
+           -- Bloqueio é decisão de alguém: não é desfeito pelo cadastro.
+           status = CASE WHEN status = 'bloqueado' THEN 'bloqueado' ELSE v_status END,
+           situacao = e.situacao, contrato = nullif(e.contrato, ''), cargo = nullif(e.cargo, ''),
+           sincronizado_em = now(), updated_at = now()
+     WHERE id = v_aluno
+       AND (nome IS DISTINCT FROM e.nome OR email IS DISTINCT FROM v_email
+            OR situacao IS DISTINCT FROM e.situacao OR contrato IS DISTINCT FROM nullif(e.contrato, '')
+            OR cargo IS DISTINCT FROM nullif(e.cargo, '')
+            OR (status <> 'bloqueado' AND status IS DISTINCT FROM v_status));
+  END IF;
+END $fn$;
+REVOKE ALL ON FUNCTION public.trn_sync_aluno_do_empregado(bigint) FROM PUBLIC, anon, authenticated;
+
+-- ── 3) Trigger: admissão vira aluno; situação acompanha ─────────────────
+CREATE OR REPLACE FUNCTION public.trn_aluno_do_empregado_trg()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $fn$
+BEGIN
+  PERFORM public.trn_sync_aluno_do_empregado(NEW."ID");
+  RETURN NEW;
+END $fn$;
+DROP TRIGGER IF EXISTS trg_trn_aluno_do_empregado ON public."EMPREGADOS";
+CREATE TRIGGER trg_trn_aluno_do_empregado
+  AFTER INSERT OR UPDATE OF "Situação", "Nome", "CPF", email, "Nome Filial", "Descrição do Local", "Título do Cargo"
+  ON public."EMPREGADOS"
+  FOR EACH ROW EXECUTE FUNCTION public.trn_aluno_do_empregado_trg();
+
+-- ── 4) RPC do botão "Sincronizar com o cadastro" ─────────────────────────
+CREATE OR REPLACE FUNCTION public.trn_sincronizar_alunos()
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $fn$
+DECLARE
+  r     record;
+  n     int := 0;
+  antes int;
+BEGIN
+  IF NOT (public.trn_acesso('treinamentos_alunos_novo', 'alterar') OR public.trn_acesso('treinamentos_alunos_novo', 'incluir')) THEN
+    RAISE EXCEPTION 'Sem permissão para sincronizar alunos.' USING ERRCODE = '42501';
+  END IF;
+  SELECT count(*) INTO antes FROM public."TRN_ALUNO" WHERE empregado_id IS NOT NULL;
+  FOR r IN
+    SELECT e."ID" FROM public."EMPREGADOS" e
+     WHERE e."Situação" IS DISTINCT FROM 'Demitido'
+        OR EXISTS (SELECT 1 FROM public."TRN_ALUNO" a WHERE a.empregado_id = e."ID")
+  LOOP
+    PERFORM public.trn_sync_aluno_do_empregado(r."ID");
+    n := n + 1;
+  END LOOP;
+  RETURN jsonb_build_object(
+    'percorridos', n,
+    'novos', (SELECT count(*) FROM public."TRN_ALUNO" WHERE empregado_id IS NOT NULL) - antes,
+    'ativos', (SELECT count(*) FROM public."TRN_ALUNO" WHERE status = 'ativo'),
+    'inativos', (SELECT count(*) FROM public."TRN_ALUNO" WHERE status = 'inativo'));
+END $fn$;
+REVOKE ALL ON FUNCTION public.trn_sincronizar_alunos() FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.trn_sincronizar_alunos() TO authenticated;
+
+-- ── 5) Lista do painel ───────────────────────────────────────────────────
+CREATE OR REPLACE FUNCTION public.trn_alunos_gerenciar()
+RETURNS TABLE (
+  id uuid, nome text, email text, documento text, status text, situacao text, contrato text, cargo text,
+  empregado_id bigint, origem text, acesso_completo boolean, cursos int, ultimo_acesso_em timestamptz,
+  sincronizado_em timestamptz, admissao text, afastamento text, email_sintetico boolean
+)
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, pg_temp AS $fn$
+  SELECT a.id, a.nome, a.email, a.documento, a.status, a.situacao, a.contrato, a.cargo,
+         a.empregado_id, a.origem, a.acesso_completo,
+         (SELECT count(*)::int FROM public."TRN_MATRICULA" m WHERE m.aluno_id = a.id),
+         a.ultimo_acesso_em, a.sincronizado_em,
+         e."Admissão", e."Data Afastamento",
+         a.email LIKE '%@colaborador.nascimento.local'
+    FROM public."TRN_ALUNO" a
+    LEFT JOIN public."EMPREGADOS" e ON e."ID" = a.empregado_id
+   WHERE public.trn_acesso('treinamentos_alunos_novo') OR public.trn_acesso('treinamentos_alunos')
+   ORDER BY (a.status = 'ativo') DESC, a.nome;
+$fn$;
+REVOKE ALL ON FUNCTION public.trn_alunos_gerenciar() FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.trn_alunos_gerenciar() TO authenticated;
+
+-- ── 6) Menu ──────────────────────────────────────────────────────────────
+UPDATE public.app_menu SET nome = 'Alunos — Gerenciar' WHERE codigo = 'treinamentos_alunos_novo';
+
+-- ── 7) Carga inicial ─────────────────────────────────────────────────────
+DO $$
+DECLARE r record;
+BEGIN
+  FOR r IN SELECT "ID" FROM public."EMPREGADOS" WHERE "Situação" IS DISTINCT FROM 'Demitido' LOOP
+    PERFORM public.trn_sync_aluno_do_empregado(r."ID");
+  END LOOP;
+END $$;
+
+NOTIFY pgrst, 'reload schema';
+
+-- ROLLBACK
+-- DROP TRIGGER IF EXISTS trg_trn_aluno_do_empregado ON public."EMPREGADOS";
+-- DROP FUNCTION IF EXISTS public.trn_aluno_do_empregado_trg(), public.trn_sincronizar_alunos(), public.trn_alunos_gerenciar(), public.trn_sync_aluno_do_empregado(bigint);
+-- DELETE FROM public."TRN_ALUNO" WHERE origem = 'integracao';
+-- ALTER TABLE public."TRN_ALUNO" DROP COLUMN IF EXISTS situacao, DROP COLUMN IF EXISTS contrato, DROP COLUMN IF EXISTS cargo, DROP COLUMN IF EXISTS sincronizado_em;
+-- UPDATE public.app_menu SET nome = 'Alunos — Adicionar novo' WHERE codigo = 'treinamentos_alunos_novo';
+
+
+-- =========================================================================
+-- Treinamentos: todo colaborador é aluno (demitido = inativo) e o cadastro
+-- ganha telefone
+--
+-- Pedido do Pablo em 21/09/2026: "ativos deveria ser ~2.300 (todos
+-- Trabalhando); inativos são ~10 mil; bate os nomes da planilha do membox e
+-- preenche e-mail e telefone em EMPREGADOS".
+--
+--   • EMPREGADOS.telefone — coluna do ERP (como email/auth_user_id), não vem
+--     da Senior. Preenchida junto com email pela planilha do membox
+--     (membox-export-alunos.xlsx, 1.368 alunos): casamento por nome completo
+--     normalizado; homônimo resolvido pelo que está Trabalhando; 23 nomes
+--     ambíguos e 178 sem cadastro ficaram de fora. Carga feita por script em
+--     21/09/2026 (dados, não schema — não cabem numa migration); e-mail já
+--     preenchido no cadastro NÃO foi sobrescrito.
+--   • trn_sync_aluno_do_empregado: TODO colaborador entra (a 193 deixava o
+--     demitido antigo de fora) — Trabalhando = ativo, o resto = inativo; leva
+--     o telefone; e-mail real do cadastro tem prioridade sobre o sintético.
+--   • trn_sincronizar_alunos percorre EMPREGADOS inteiro.
+--   • Carga no fim (o painel passa a mostrar ~2.200 ativos / ~10.800 inativos).
+--
+-- Idempotente. Aplicar no banco do app.
+-- =========================================================================
+
+ALTER TABLE public."EMPREGADOS" ADD COLUMN IF NOT EXISTS telefone text;
+COMMENT ON COLUMN public."EMPREGADOS".telefone IS 'Telefone/WhatsApp do colaborador — coluna do ERP (não vem da Senior). Alimenta TRN_ALUNO.telefone.';
+
+CREATE OR REPLACE FUNCTION public.trn_sync_aluno_do_empregado(_id bigint)
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $fn$
+DECLARE
+  e          record;
+  v_email    text;
+  v_status   text;
+  v_aluno    uuid;
+BEGIN
+  SELECT "ID", btrim("Nome") AS nome, regexp_replace(coalesce("CPF", ''), '\D', '', 'g') AS cpf,
+         lower(btrim(coalesce(email, ''))) AS email_cad, nullif(btrim(coalesce(telefone, '')), '') AS telefone,
+         "Situação" AS situacao,
+         btrim(coalesce("Nome Filial", "Descrição do Local", '')) AS contrato,
+         btrim(coalesce("Título do Cargo", '')) AS cargo
+    INTO e
+    FROM public."EMPREGADOS" WHERE "ID" = _id;
+  IF e."ID" IS NULL OR e.nome IS NULL OR e.nome = '' THEN RETURN; END IF;
+
+  v_status := CASE WHEN e.situacao = 'Trabalhando' THEN 'ativo' ELSE 'inativo' END;
+  SELECT id INTO v_aluno FROM public."TRN_ALUNO" WHERE empregado_id = _id;
+
+  -- E-mail do cadastro, se válido e livre; senão o sintético (estável por ID).
+  v_email := CASE
+    WHEN e.email_cad ~ '^[^@\s]+@[^@\s]+\.[^@\s]+$'
+     AND NOT EXISTS (SELECT 1 FROM public."TRN_ALUNO" a WHERE lower(btrim(a.email)) = e.email_cad AND a.empregado_id IS DISTINCT FROM _id)
+      THEN e.email_cad
+    ELSE _id::text || '@colaborador.nascimento.local'
+  END;
+
+  IF v_aluno IS NULL THEN
+    INSERT INTO public."TRN_ALUNO"(nome, email, telefone, documento, status, acesso_completo, empregado_id, origem,
+                                   situacao, contrato, cargo, sincronizado_em)
+    VALUES (e.nome, v_email, e.telefone, nullif(e.cpf, ''), v_status, true, _id, 'integracao',
+            e.situacao, nullif(e.contrato, ''), nullif(e.cargo, ''), now());
+  ELSE
+    UPDATE public."TRN_ALUNO"
+       SET nome = e.nome,
+           email = v_email,
+           telefone = coalesce(e.telefone, telefone),
+           documento = coalesce(nullif(e.cpf, ''), documento),
+           -- Bloqueio é decisão de alguém: não é desfeito pelo cadastro.
+           status = CASE WHEN status = 'bloqueado' THEN 'bloqueado' ELSE v_status END,
+           situacao = e.situacao, contrato = nullif(e.contrato, ''), cargo = nullif(e.cargo, ''),
+           sincronizado_em = now(), updated_at = now()
+     WHERE id = v_aluno
+       AND (nome IS DISTINCT FROM e.nome OR email IS DISTINCT FROM v_email
+            OR (e.telefone IS NOT NULL AND telefone IS DISTINCT FROM e.telefone)
+            OR situacao IS DISTINCT FROM e.situacao OR contrato IS DISTINCT FROM nullif(e.contrato, '')
+            OR cargo IS DISTINCT FROM nullif(e.cargo, '')
+            OR (status <> 'bloqueado' AND status IS DISTINCT FROM v_status));
+  END IF;
+END $fn$;
+REVOKE ALL ON FUNCTION public.trn_sync_aluno_do_empregado(bigint) FROM PUBLIC, anon, authenticated;
+
+-- O trigger também acorda quando o telefone muda.
+DROP TRIGGER IF EXISTS trg_trn_aluno_do_empregado ON public."EMPREGADOS";
+CREATE TRIGGER trg_trn_aluno_do_empregado
+  AFTER INSERT OR UPDATE OF "Situação", "Nome", "CPF", email, telefone, "Nome Filial", "Descrição do Local", "Título do Cargo"
+  ON public."EMPREGADOS"
+  FOR EACH ROW EXECUTE FUNCTION public.trn_aluno_do_empregado_trg();
+
+CREATE OR REPLACE FUNCTION public.trn_sincronizar_alunos()
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $fn$
+DECLARE
+  r     record;
+  n     int := 0;
+  antes int;
+BEGIN
+  IF NOT (public.trn_acesso('treinamentos_alunos_novo', 'alterar') OR public.trn_acesso('treinamentos_alunos_novo', 'incluir')) THEN
+    RAISE EXCEPTION 'Sem permissão para sincronizar alunos.' USING ERRCODE = '42501';
+  END IF;
+  SELECT count(*) INTO antes FROM public."TRN_ALUNO" WHERE empregado_id IS NOT NULL;
+  FOR r IN SELECT e."ID" FROM public."EMPREGADOS" e LOOP
+    PERFORM public.trn_sync_aluno_do_empregado(r."ID");
+    n := n + 1;
+  END LOOP;
+  RETURN jsonb_build_object(
+    'percorridos', n,
+    'novos', (SELECT count(*) FROM public."TRN_ALUNO" WHERE empregado_id IS NOT NULL) - antes,
+    'ativos', (SELECT count(*) FROM public."TRN_ALUNO" WHERE status = 'ativo'),
+    'inativos', (SELECT count(*) FROM public."TRN_ALUNO" WHERE status = 'inativo'));
+END $fn$;
+
+-- Carga: todo mundo.
+DO $$
+DECLARE r record;
+BEGIN
+  FOR r IN SELECT "ID" FROM public."EMPREGADOS" LOOP
+    PERFORM public.trn_sync_aluno_do_empregado(r."ID");
+  END LOOP;
+END $$;
+
+NOTIFY pgrst, 'reload schema';
+
+-- ROLLBACK
+-- DELETE FROM public."TRN_ALUNO" WHERE origem = 'integracao' AND situacao = 'Demitido';
+-- Reaplicar trn_sync_aluno_do_empregado / trn_sincronizar_alunos / trigger da 20260930000193;
+-- ALTER TABLE public."EMPREGADOS" DROP COLUMN IF EXISTS telefone;
+
+
+-- =========================================================================
+-- Treinamentos › Gerenciar alunos: lista paginada no servidor + resumo
+--
+-- "Tá demorando demais pra carregar" (Pablo, 21/09/2026). Com 13 mil alunos
+-- a tela puxava TUDO em 14 requisições de 1000 linhas largas, cada linha
+-- com subquery de matrícula e o gate de acesso avaliado linha a linha. Agora:
+--
+--   trn_alunos_gerenciar_resumo()  → uma chamada com os números do topo,
+--                                    a lista de contratos (com contagem) e
+--                                    as situações — o que a tela precisa
+--                                    antes de listar. "Sem e-mail no
+--                                    cadastro" conta SÓ quem está
+--                                    Trabalhando (pedido do Pablo).
+--   trn_alunos_gerenciar(...)      → página de 25/50 com busca, status,
+--                                    situação e contratos filtrados no banco;
+--                                    devolve o total junto (count over()).
+--                                    Gate avaliado uma vez (plpgsql).
+--   trn_alunos_recorte()           → id/contrato/status de todos, num jsonb
+--                                    só (sem o corte de 1000 linhas) — é o
+--                                    que as Ações em massa usam pra montar o
+--                                    recorte por contrato/status.
+--
+-- Assinatura da trn_alunos_gerenciar mudou: a antiga (sem parâmetros) cai.
+-- Idempotente. Aplicar no banco do app.
+-- =========================================================================
+
+DROP FUNCTION IF EXISTS public.trn_alunos_gerenciar();
+
+CREATE INDEX IF NOT EXISTS idx_trn_aluno_status_nome ON public."TRN_ALUNO"(status, nome);
+CREATE INDEX IF NOT EXISTS idx_trn_aluno_contrato    ON public."TRN_ALUNO"(contrato);
+CREATE INDEX IF NOT EXISTS idx_trn_matricula_aluno   ON public."TRN_MATRICULA"(aluno_id);
+
+CREATE OR REPLACE FUNCTION public.trn_alunos_gerenciar_resumo()
+RETURNS jsonb
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public, pg_temp AS $fn$
+BEGIN
+  IF NOT (public.trn_acesso('treinamentos_alunos_novo') OR public.trn_acesso('treinamentos_alunos')) THEN
+    RAISE EXCEPTION 'Sem permissão.' USING ERRCODE = '42501';
+  END IF;
+  RETURN jsonb_build_object(
+    'ativos',     (SELECT count(*) FROM public."TRN_ALUNO" WHERE status = 'ativo'),
+    'inativos',   (SELECT count(*) FROM public."TRN_ALUNO" WHERE status = 'inativo'),
+    'afastados',  (SELECT count(*) FROM public."TRN_ALUNO" WHERE status = 'inativo' AND situacao IS DISTINCT FROM 'Demitido'),
+    'demitidos',  (SELECT count(*) FROM public."TRN_ALUNO" WHERE situacao = 'Demitido'),
+    'bloqueados', (SELECT count(*) FROM public."TRN_ALUNO" WHERE status = 'bloqueado'),
+    -- Só quem está Trabalhando: demitido sem e-mail não é pendência de ninguém.
+    'sem_email_ativos', (SELECT count(*) FROM public."TRN_ALUNO" WHERE status = 'ativo' AND email LIKE '%@colaborador.nascimento.local'),
+    'ultima_sync', (SELECT max(sincronizado_em) FROM public."TRN_ALUNO"),
+    'contratos', (SELECT coalesce(jsonb_agg(jsonb_build_object('nome', contrato, 'n', n, 'ativos', ativos) ORDER BY contrato), '[]'::jsonb)
+                    FROM (SELECT contrato, count(*) n, count(*) FILTER (WHERE status = 'ativo') ativos
+                            FROM public."TRN_ALUNO" WHERE contrato IS NOT NULL GROUP BY contrato) c),
+    'situacoes', (SELECT coalesce(jsonb_agg(DISTINCT situacao ORDER BY situacao), '[]'::jsonb) FROM public."TRN_ALUNO" WHERE situacao IS NOT NULL)
+  );
+END $fn$;
+REVOKE ALL ON FUNCTION public.trn_alunos_gerenciar_resumo() FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.trn_alunos_gerenciar_resumo() TO authenticated;
+
+CREATE OR REPLACE FUNCTION public.trn_alunos_gerenciar(
+  _busca text DEFAULT NULL, _status text DEFAULT NULL, _situacao text DEFAULT NULL,
+  _contratos text[] DEFAULT NULL, _offset int DEFAULT 0, _limite int DEFAULT 25)
+RETURNS TABLE (
+  id uuid, nome text, email text, documento text, status text, situacao text, contrato text, cargo text,
+  empregado_id bigint, origem text, acesso_completo boolean, cursos int, ultimo_acesso_em timestamptz,
+  sincronizado_em timestamptz, admissao text, afastamento text, email_sintetico boolean, total bigint
+)
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public, pg_temp AS $fn$
+DECLARE v_busca text := nullif(btrim(coalesce(_busca, '')), '');
+BEGIN
+  IF NOT (public.trn_acesso('treinamentos_alunos_novo') OR public.trn_acesso('treinamentos_alunos')) THEN
+    RAISE EXCEPTION 'Sem permissão.' USING ERRCODE = '42501';
+  END IF;
+  RETURN QUERY
+  WITH base AS (
+    SELECT a.*
+      FROM public."TRN_ALUNO" a
+     WHERE (_status IS NULL OR a.status = _status)
+       AND (_situacao IS NULL OR a.situacao = _situacao)
+       AND (_contratos IS NULL OR array_length(_contratos, 1) IS NULL OR a.contrato = ANY(_contratos))
+       AND (v_busca IS NULL
+            OR a.nome ILIKE '%' || v_busca || '%'
+            OR a.email ILIKE '%' || v_busca || '%'
+            OR coalesce(a.documento, '') LIKE '%' || regexp_replace(v_busca, '\D', '', 'g') || '%' AND regexp_replace(v_busca, '\D', '', 'g') <> ''
+            OR coalesce(a.cargo, '') ILIKE '%' || v_busca || '%'
+            OR coalesce(a.contrato, '') ILIKE '%' || v_busca || '%')
+  ), pagina AS (
+    SELECT b.*, count(*) OVER () AS total
+      FROM base b
+     ORDER BY (b.status = 'ativo') DESC, b.nome
+     OFFSET greatest(_offset, 0) LIMIT least(greatest(_limite, 1), 200)
+  )
+  SELECT p.id, p.nome, p.email, p.documento, p.status, p.situacao, p.contrato, p.cargo,
+         p.empregado_id, p.origem, p.acesso_completo,
+         coalesce(m.n, 0)::int,
+         p.ultimo_acesso_em, p.sincronizado_em,
+         e."Admissão", e."Data Afastamento",
+         p.email LIKE '%@colaborador.nascimento.local',
+         p.total
+    FROM pagina p
+    LEFT JOIN LATERAL (SELECT count(*) n FROM public."TRN_MATRICULA" x WHERE x.aluno_id = p.id) m ON true
+    LEFT JOIN public."EMPREGADOS" e ON e."ID" = p.empregado_id
+   ORDER BY (p.status = 'ativo') DESC, p.nome;
+END $fn$;
+REVOKE ALL ON FUNCTION public.trn_alunos_gerenciar(text, text, text, text[], int, int) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.trn_alunos_gerenciar(text, text, text, text[], int, int) TO authenticated;
+
+CREATE OR REPLACE FUNCTION public.trn_alunos_recorte()
+RETURNS jsonb
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public, pg_temp AS $fn$
+BEGIN
+  IF NOT public.trn_acesso('treinamentos_alunos', 'alterar') THEN
+    RAISE EXCEPTION 'Sem permissão.' USING ERRCODE = '42501';
+  END IF;
+  RETURN (SELECT coalesce(jsonb_agg(jsonb_build_object('id', id, 'contrato', contrato, 'status', status)), '[]'::jsonb)
+            FROM public."TRN_ALUNO");
+END $fn$;
+REVOKE ALL ON FUNCTION public.trn_alunos_recorte() FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.trn_alunos_recorte() TO authenticated;
+
+NOTIFY pgrst, 'reload schema';
+
+-- ROLLBACK
+-- DROP FUNCTION IF EXISTS public.trn_alunos_recorte(), public.trn_alunos_gerenciar_resumo(),
+--   public.trn_alunos_gerenciar(text, text, text, text[], int, int);
+-- e reaplicar trn_alunos_gerenciar() da 20260930000193.

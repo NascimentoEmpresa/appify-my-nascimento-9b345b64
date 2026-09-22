@@ -21,7 +21,9 @@ export interface HistoricoEntry {
 
 export interface GradeItem {
   id: string;
-  empresa_id: string;
+  // SIS-2026-0463: empresa é opcional nos primeiros status (À Iniciar/Iniciado);
+  // vira obrigatória a partir de "Em Andamento" (validado no GradeSheet).
+  empresa_id: string | null;
   edital: string | null;
   fase: GradeFase;
   responsavel: string | null;
@@ -42,7 +44,9 @@ export interface GradeItem {
 }
 
 export type GradeInsert = Omit<GradeItem, "id" | "created_at" | "updated_at" | "historico" | "capa_id">;
-export type GradeUpdate = Partial<Omit<GradeItem, "id" | "empresa_id" | "created_at">>;
+// SIS-2026-0463: empresa_id agora É editável (atribuída quando o edital sai do
+// status neutro), então deixou de ser omitida do update.
+export type GradeUpdate = Partial<Omit<GradeItem, "id" | "created_at">>;
 
 const QK = (empresaId: string) => ["grade", empresaId];
 
@@ -183,6 +187,10 @@ export function useGradePromover() {
   return useMutation({
     mutationFn: async (item: GradeItem) => {
       if (item.capa_id) throw new Error("Já possui capa vinculada.");
+      // SIS-2026-0463: a Capa (public.capa_edital) exige empresa NOT NULL — não dá
+      // pra promover um edital ainda neutro. Por construção, ao chegar em
+      // "Finalizada" a empresa já é obrigatória, mas guardamos aqui também.
+      if (!item.empresa_id) throw new Error("Defina a empresa antes de criar a Capa de Edital.");
 
       const abertura = [item.data, item.horario].filter(Boolean).join(" ").trim();
 

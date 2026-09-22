@@ -242,13 +242,18 @@ describe("podeCancelarDemissaoRH", () => {
   it("Pendente RH: cancela", () => {
     expect(podeCancelarDemissaoRH({ status: "Pendente RH" })).toEqual({ ok: true });
   });
-  it("fora da etapa do RH (antes ou depois): não cancela e diz em que etapa está", () => {
-    for (const status of ["Pendente Operacional", "Pendente Diretoria", "Pendente SST", STATUS_SST_RECEBIDA]) {
+  it("nas etapas do SST também cancela — até com o ASO agendado (o SST é avisado)", () => {
+    for (const status of ["Pendente SST", STATUS_SST_RECEBIDA, STATUS_SST_AGENDADO]) {
+      expect(podeCancelarDemissaoRH({ status })).toEqual({ ok: true });
+    }
+  });
+  it("antes do RH não cancela e diz em que etapa está", () => {
+    for (const status of ["Pendente Operacional", "Pendente Diretoria"]) {
       expect(podeCancelarDemissaoRH({ status })).toMatchObject({ ok: false, motivo: expect.stringContaining(status) });
     }
   });
-  it("ASO agendado / já encerrada: a mesma resposta da regra geral", () => {
-    expect(podeCancelarDemissaoRH({ status: STATUS_SST_AGENDADO }).motivo).toBe(podeCancelarDemissao({ status: STATUS_SST_AGENDADO }).motivo);
+  it("ASO válido (verde) também cancela; já encerrada, não", () => {
+    expect(podeCancelarDemissaoRH({ status: STATUS_SST_ASO_VALIDO })).toEqual({ ok: true });
     expect(podeCancelarDemissaoRH({ status: "Cancelada" }).motivo).toBe(podeCancelarDemissao({ status: "Cancelada" }).motivo);
   });
   it("o anexo do cancelamento vai na pasta da solicitação, com nome seguro e marcado", () => {
