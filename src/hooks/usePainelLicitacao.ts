@@ -54,6 +54,10 @@ export function usePainelLicitacao(filters?: PainelFilters, opts?: { todasEmpres
 
     const editaisLidos = items.length;
     const editaisParticipados = items.filter((i) => !STATUS_NAO_PARTICIPADO.has(i.fase)).length;
+    // SIS-2026-0448: Senilton quer ver quantos editais foram suspensos/revogados
+    // no painel executivo (respeitando os filtros de período/responsável).
+    const suspensos = items.filter((i) => i.fase === "Suspenso").length;
+    const revogados = items.filter((i) => i.fase === "Revogado").length;
 
     const ativas = items.filter((i) => ["À Iniciar", "Iniciado", "Em Andamento"].includes(i.fase));
     const finalizadas = items.filter((i) => i.fase === "Finalizada");
@@ -121,7 +125,7 @@ export function usePainelLicitacao(filters?: PainelFilters, opts?: { todasEmpres
       const m = new Map<string, number>();
       source.forEach((i) => {
         if (STATUS_NAO_PARTICIPADO.has(i.fase)) return;
-        let label = i.fase;
+        let label: string = i.fase;
         if (i.fase === "Finalizada") label = i.posicao === 1 ? "Finalizada (Ganho)" : "Finalizada (Perdido)";
         m.set(label, (m.get(label) ?? 0) + 1);
       });
@@ -183,6 +187,8 @@ export function usePainelLicitacao(filters?: PainelFilters, opts?: { todasEmpres
     return {
       editaisLidos,
       editaisParticipados,
+      suspensos,
+      revogados,
       total: items.length,
       ativas: ativas.length,
       finalizadas: finalizadas.length,
