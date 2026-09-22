@@ -47,8 +47,8 @@ export type ProcessoExp = Linha & {
 export interface ExtrasProcesso {
   /** numero_processo → comentários */
   comentarios: Map<string, Linha[]>;
-  /** id do processo → retorno da jur_processo_pagamentos (malote + anexos) */
-  pagamentos: Map<number, { malote: Linha[]; anexos: Linha[] }>;
+  /** numero_processo → retorno da jur_processo_pagamentos (malote + anexos) */
+  pagamentos: Map<string, { malote: Linha[]; anexos: Linha[] }>;
 }
 
 // ── Leitura do que a tela não tem em memória ────────────────────────
@@ -73,21 +73,26 @@ async function comentariosDe(db: SupabaseClient, numeros: string[] | null): Prom
  * (jur_processo_pagamentos) — é ela que acha a despesa pelo número CNJ no
  * texto do Malote. Uma chamada por processo, 8 de cada vez: os 407 levam uns
  * poucos segundos, com o progresso na tela.
+ *
+ * Vai pelo NÚMERO, não pelo id (22/09/2026): o "Salvar processo" apaga e
+ * recria as linhas do número, e o id que a lista tem em memória pode já não
+ * existir — a exportação inteira morria com "Processo #2830 não existe".
+ * Falha em um processo também não derruba mais o resto: sai sem os
+ * pagamentos dele.
  */
-async function pagamentosDe(db: SupabaseClient, ids: number[], progresso?: (feitos: number, total: number) => void) {
-  const m = new Map<number, { malote: Linha[]; anexos: Linha[] }>();
+async function pagamentosDe(db: SupabaseClient, numeros: string[], progresso?: (feitos: number, total: number) => void) {
+  const m = new Map<string, { malote: Linha[]; anexos: Linha[] }>();
   let i = 0, feitos = 0;
   const trabalhador = async () => {
-    while (i < ids.length) {
-      const id = ids[i++];
-      const { data, error } = await db.rpc("jur_processo_pagamentos", { _processo_id: id });
-      if (error) throw new Error(`pagamentos do processo #${id}: ${error.message}`);
-      const d = (data ?? {}) as { malote?: Linha[]; anexos?: Linha[] };
-      m.set(id, { malote: d.malote ?? [], anexos: d.anexos ?? [] });
-      progresso?.(++feitos, ids.length);
+    while (i < numeros.length) {
+      const numero = numeros[i++];
+      const { data, error } = await db.rpc("jur_processo_pagamentos", { _numero: numero });
+      const d = (error ? {} : (data ?? {})) as { malote?: Linha[]; anexos?: Linha[] };
+      m.set(numero, { malote: d.malote ?? [], anexos: d.anexos ?? [] });
+      progresso?.(++feitos, numeros.length);
     }
   };
-  await Promise.all(Array.from({ length: Math.min(8, ids.length) }, trabalhador));
+  await Promise.all(Array.from({ length: Math.min(8, numeros.length) }, trabalhador));
   return m;
 }
 
@@ -95,7 +100,7 @@ export async function carregarExtras(db: SupabaseClient, processos: ProcessoExp[
   const umSo = processos.length === 1;
   const [comentarios, pagamentos] = await Promise.all([
     comentariosDe(db, umSo ? [processos[0].numero_processo] : null),
-    pagamentosDe(db, processos.map(p => p.id), (f, t) => progresso?.(`Pagamentos do Malote ${f}/${t}…`)),
+    pagamentosDe(db, processos.map(p => p.numero_processo), (f, t) => progresso?.(`Pagamentos do Malote ${f}/${t}…`)),
   ]);
   return { comentarios, pagamentos };
 }
@@ -251,9 +256,9 @@ function blocos(extras: ExtrasProcesso): Bloco<ProcessoExp>[] {
       ...p.propostas.map(pr => ({ ...pr, onde: "No decorrer do processo" })),
     ] },
     { titulo: "Pagamentos do Malote", aba: "Pagamentos (Malote)", colunas: COLUNAS_MALOTE,
-      linhas: p => extras.pagamentos.get(p.id)?.malote ?? [], resumoHtml: somaHtml("Total das despesas", "valor_total") },
+      linhas: p => extras.pagamentos.get(p.numero_processo)?.malote ?? [], resumoHtml: somaHtml("Total das despesas", "valor_total") },
     { titulo: "Comprovantes anexados", aba: "Comprovantes anexados", colunas: COLUNAS_ANEXOS,
-      linhas: p => extras.pagamentos.get(p.id)?.anexos ?? [] },
+      linhas: p => extras.pagamentos.get(p.numero_processo)?.anexos ?? [] },
     { titulo: "Comentários", aba: "Comentários", colunas: COLUNAS_COMENTARIOS,
       linhas: p => [...(extras.comentarios.get(p.numero_processo) ?? [])].sort(recentes) },
   ];
