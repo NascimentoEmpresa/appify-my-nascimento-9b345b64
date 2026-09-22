@@ -9,6 +9,7 @@ import { sugerirContrato, cidadeDoContrato } from "./processos/contratoMunicipio
 import { ModalExportarDados } from "@/components/exportar/ModalExportarDados";
 import { baixar } from "@/lib/exportarRelatorio";
 import { carregarExtras, gerarExcel, gerarHtml, nomeArquivo, type ProcessoExp } from "./processos/exportar";
+import { honorariosEmReais, pctHonorarios, totalDaProposta } from "@/lib/juridico/proposta";
 import {
   NATUREZAS_ACAO, PARTE_VAZIA, ROTULO_TIPO_PARTE, empresaDoGrupo, erroDasPartes, formatarDocumento, partes, seloOutros,
   type Parte, type TipoParte, type TipoProcesso,
@@ -45,7 +46,10 @@ interface MotivoItem { ordem: number; motivo: string; valor_pedidos: number; val
 // audiência) ou do decorrer do processo (lista à parte, com data própria).
 const PROPOSTA_TIPOS = ["Judicial", "Extrajudicial"] as const;
 const PROPOSTA_QUEM = ["Juiz", "Reclamante", "Reclamada"] as const;
-interface Proposta { valor: number; descricao: string; tipo: string; quem: string; data?: string }
+// honorarios_pct (22/09/2026): honorários advocatícios por cima do valor
+// proposto. O TOTAL (valor + honorários) é sempre calculado — ver
+// lib/juridico/proposta.ts —, nunca gravado, pra não haver duas verdades.
+interface Proposta { valor: number; descricao: string; tipo: string; quem: string; data?: string; honorarios_pct?: number }
 // Valor à parte (15/09/2026): lançamento que não pertence a nenhum motivo do
 // processo — honorários periciais, custas avulsas… Tem motivo próprio
 // (obrigatório) e não se mistura com os valores POR MOTIVO acima.
@@ -255,6 +259,7 @@ const parsePropostas = (raw: unknown): Proposta[] =>
     ? raw.filter(p => p && (p.descricao || p.valor)).map(p => ({
         valor: toFloat(p.valor), descricao: String(p.descricao ?? ""),
         tipo: String(p.tipo ?? "Judicial"), quem: String(p.quem ?? "Juiz"),
+        honorarios_pct: pctHonorarios(p.honorarios_pct),
         ...(p.data ? { data: String(p.data).slice(0, 10) } : {}),
       }))
     : [];
@@ -309,6 +314,11 @@ function LinhaProposta({ pr, comData }: { pr: Proposta; comData?: boolean }) {
         {String(pr.quem || "Juiz").toUpperCase()} · {String(pr.tipo || "Judicial").toUpperCase()}
       </span>
       {pr.valor > 0 && <b style={{ color: "#0f172a", whiteSpace: "nowrap" }}>{money(pr.valor)}</b>}
+      {pr.valor > 0 && !!pctHonorarios(pr.honorarios_pct) && (
+        <span style={{ whiteSpace: "nowrap", color: "#64748b" }}>
+          + {pctHonorarios(pr.honorarios_pct)}% de honorários ({money(honorariosEmReais(pr.valor, pr.honorarios_pct))}) = <b style={{ color: "#15803d" }}>{money(totalDaProposta(pr.valor, pr.honorarios_pct))}</b>
+        </span>
+      )}
       <span>{pr.descricao || "—"}</span>
     </div>
   );
@@ -714,7 +724,11 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
     const ano = (dataEntrada ? Number(dataEntrada.slice(0, 4)) : null) || anoDoNumero(numero) || null;
     const limparPropostas = (lista: Proposta[]) => lista
       .filter(pr => pr.descricao.trim() || pr.valor)
-      .map(pr => ({ valor: pr.valor || 0, descricao: pr.descricao.trim(), tipo: pr.tipo || "Judicial", quem: pr.quem || "Juiz", ...(pr.data ? { data: pr.data } : {}) }));
+      .map(pr => ({
+        valor: pr.valor || 0, descricao: pr.descricao.trim(), tipo: pr.tipo || "Judicial", quem: pr.quem || "Juiz",
+        ...(pctHonorarios(pr.honorarios_pct) ? { honorarios_pct: pctHonorarios(pr.honorarios_pct) } : {}),
+        ...(pr.data ? { data: pr.data } : {}),
+      }));
     const audsJson = auds.length ? JSON.stringify(auds.map((a, i) => ({ ordem: i + 1, data: a.data, tipo_audiencia: a.tipo_audiencia || "Instrução", modalidade_audiencia: a.modalidade_audiencia, horario: a.horario || null, propostas: limparPropostas(a.propostas || []) }))) : null;
     const propostasJson = (() => { const l = limparPropostas(propostas); return l.length ? JSON.stringify(l) : null; })();
     // Valor à parte sem motivo não passa: o motivo é o que diz do que se trata.
@@ -1766,16 +1780,20 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
                   {(a.propostas || []).length === 0
                     ? <div style={{ fontSize: 12, color: "#94a3b8" }}>Nenhuma proposta registrada para esta data.</div>
                     : (a.propostas || []).map((pr, j) => (
-                      <div key={j} className="jpr-linha" style={{ gridTemplateColumns: "150px 160px 170px 1fr auto", marginTop: j ? 10 : 0 }}>
-                        <div><label className="jpr-lbl">Quem</label><select className="jpr-fi" value={pr.quem} onChange={e => setProposta(i, j, { quem: e.target.value })}>
-                          {PROPOSTA_QUEM.map(o => <option key={o}>{o}</option>)}
-                        </select></div>
-                        <div><label className="jpr-lbl">Tipo</label><select className="jpr-fi" value={pr.tipo} onChange={e => setProposta(i, j, { tipo: e.target.value })}>
-                          {PROPOSTA_TIPOS.map(o => <option key={o}>{o}</option>)}
-                        </select></div>
-                        <div><label className="jpr-lbl">Valor (R$)</label><MoedaInput value={pr.valor} onChange={n => setProposta(i, j, { valor: n })} /></div>
-                        <div><label className="jpr-lbl">Descrição</label><input className="jpr-fi" placeholder="O que foi proposto nesta data" value={pr.descricao} onChange={e => setProposta(i, j, { descricao: e.target.value })} /></div>
-                        <button className="jpr-x" onClick={() => delProposta(i, j)} title="Remover proposta">✕</button>
+                      <div key={j} style={{ marginTop: j ? 10 : 0 }}>
+                        <div className="jpr-linha" style={{ gridTemplateColumns: "150px 160px 170px 120px 1fr auto" }}>
+                          <div><label className="jpr-lbl">Quem</label><select className="jpr-fi" value={pr.quem} onChange={e => setProposta(i, j, { quem: e.target.value })}>
+                            {PROPOSTA_QUEM.map(o => <option key={o}>{o}</option>)}
+                          </select></div>
+                          <div><label className="jpr-lbl">Tipo</label><select className="jpr-fi" value={pr.tipo} onChange={e => setProposta(i, j, { tipo: e.target.value })}>
+                            {PROPOSTA_TIPOS.map(o => <option key={o}>{o}</option>)}
+                          </select></div>
+                          <div><label className="jpr-lbl">Valor (R$)</label><MoedaInput value={pr.valor} onChange={n => setProposta(i, j, { valor: n })} /></div>
+                          <div><label className="jpr-lbl">Honorários (%)</label><PctInput value={pr.honorarios_pct} onChange={n => setProposta(i, j, { honorarios_pct: n })} /></div>
+                          <div><label className="jpr-lbl">Descrição</label><input className="jpr-fi" placeholder="O que foi proposto nesta data" value={pr.descricao} onChange={e => setProposta(i, j, { descricao: e.target.value })} /></div>
+                          <button className="jpr-x" onClick={() => delProposta(i, j)} title="Remover proposta">✕</button>
+                        </div>
+                        <TotalProposta pr={pr} />
                       </div>
                     ))}
                 </div>
@@ -1794,7 +1812,7 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
               ? <div className="jpr-vazio">Nenhuma proposta fora de audiência. As feitas em audiência ficam na audiência correspondente, acima.</div>
               : propostas.map((pr, j) => (
                 <div key={j} className="jpr-item">
-                  <div className="jpr-linha" style={{ gridTemplateColumns: "150px 150px 160px 170px 1fr auto" }}>
+                  <div className="jpr-linha" style={{ gridTemplateColumns: "150px 150px 160px 170px 120px 1fr auto" }}>
                     <div><label className="jpr-lbl">Data</label><input className="jpr-fi" type="date" value={pr.data || ""} onChange={e => setPropostaProc(j, { data: e.target.value })} /></div>
                     <div><label className="jpr-lbl">Quem</label><select className="jpr-fi" value={pr.quem} onChange={e => setPropostaProc(j, { quem: e.target.value })}>
                       {PROPOSTA_QUEM.map(o => <option key={o}>{o}</option>)}
@@ -1803,9 +1821,11 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
                       {PROPOSTA_TIPOS.map(o => <option key={o}>{o}</option>)}
                     </select></div>
                     <div><label className="jpr-lbl">Valor (R$)</label><MoedaInput value={pr.valor} onChange={n => setPropostaProc(j, { valor: n })} /></div>
+                    <div><label className="jpr-lbl">Honorários (%)</label><PctInput value={pr.honorarios_pct} onChange={n => setPropostaProc(j, { honorarios_pct: n })} /></div>
                     <div><label className="jpr-lbl">Descrição</label><input className="jpr-fi" placeholder="O que foi proposto" value={pr.descricao} onChange={e => setPropostaProc(j, { descricao: e.target.value })} /></div>
                     <button className="jpr-x" onClick={() => delPropostaProc(j)} title="Remover proposta">✕</button>
                   </div>
+                  <TotalProposta pr={pr} />
                 </div>
               ))}
             </div>
@@ -1897,6 +1917,47 @@ function ParteCampos({ rotulo, parte, onChange, empresas }: {
         </div>
       )}
       {grupo && parte.documento && <div style={{ fontSize: 11, color: "#64748b", marginTop: 4 }}>CNPJ {parte.documento}</div>}
+    </div>
+  );
+}
+
+/**
+ * Campo de porcentagem dos honorários (aceita vírgula, trava em 0–100).
+ *
+ * Guarda o TEXTO enquanto se digita: com o número controlando o campo,
+ * "12," virava "12" no mesmo instante e não havia como escrever "12,5".
+ * O número sai normalizado no onChange; o texto volta ao valor real quando
+ * o campo perde o foco (ou quando o pai muda o valor).
+ */
+function PctInput({ value, onChange }: { value?: number; onChange: (n: number) => void }) {
+  const doPai = value ? String(value).replace(".", ",") : "";
+  const [texto, setTexto] = useState(doPai);
+  const [focado, setFocado] = useState(false);
+  useEffect(() => { if (!focado) setTexto(doPai); }, [doPai, focado]);
+  return (
+    <div style={{ position: "relative" }}>
+      <input className="jpr-fi" inputMode="decimal" placeholder="0" style={{ paddingRight: 24 }}
+        value={texto}
+        onFocus={() => setFocado(true)}
+        onBlur={() => { setFocado(false); setTexto(doPai); }}
+        onChange={e => {
+          const t = e.target.value.replace(/[^\d.,]/g, "");
+          setTexto(t);
+          onChange(pctHonorarios(t));
+        }} />
+      <span style={{ position: "absolute", right: 9, top: "50%", transform: "translateY(-50%)", fontSize: 12, color: "#94a3b8" }}>%</span>
+    </div>
+  );
+}
+
+/** Fechamento da proposta: valor + honorários = total (calculado, nunca digitado). */
+function TotalProposta({ pr }: { pr: Proposta }) {
+  const pct = pctHonorarios(pr.honorarios_pct);
+  if (!pr.valor) return null;
+  return (
+    <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "baseline", gap: 8, flexWrap: "wrap", fontSize: 12, color: "#64748b", marginTop: 6 }}>
+      <span>{money(pr.valor)}{pct ? " + " + String(pct).replace(".", ",") + "% de honorários (" + money(honorariosEmReais(pr.valor, pct)) + ")" : " · sem honorários"}</span>
+      <span style={{ fontWeight: 800, color: "#0f172a" }}>Valor total da proposta: <span style={{ color: "#15803d" }}>{money(totalDaProposta(pr.valor, pct))}</span></span>
     </div>
   );
 }

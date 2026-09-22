@@ -18,6 +18,7 @@ import {
   num, slug, txt, dataBr,
 } from "@/lib/exportarRelatorio";
 import { ROTULO_TIPO_PARTE, partes, type TipoParte } from "@/lib/juridico/tipoProcesso";
+import { honorariosEmReais, pctHonorarios, totalDaProposta } from "@/lib/juridico/proposta";
 
 // Processo "Outros" (SIS-2026-0488): Autor × Réu com tipo e CPF/CNPJ. No
 // trabalhista esses campos saem vazios (a ficha só mostra reclamante/reclamada).
@@ -184,8 +185,15 @@ const COLUNAS_A_PARTE: Coluna[] = [
   { rotulo: "Valor", tipo: "moeda", valor: v => v.valor },
 ];
 
-const resumoProposta = (pr: Linha) =>
-  [`${txt(pr.quem) || "Juiz"} · ${txt(pr.tipo) || "Judicial"}`, num(pr.valor) ? moeda(pr.valor) : "", txt(pr.descricao)].filter(Boolean).join(" — ");
+const resumoProposta = (pr: Linha) => {
+  const pct = pctHonorarios(pr.honorarios_pct);
+  return [
+    `${txt(pr.quem) || "Juiz"} · ${txt(pr.tipo) || "Judicial"}`,
+    num(pr.valor) ? moeda(pr.valor) : "",
+    pct && num(pr.valor) ? `+ ${pct}% honor. = ${moeda(totalDaProposta(num(pr.valor), pct))}` : "",
+    txt(pr.descricao),
+  ].filter(Boolean).join(" — ");
+};
 const COLUNAS_AUDIENCIAS: Coluna[] = [
   { rotulo: "Data", tipo: "data", valor: a => a.data },
   { rotulo: "Horário", valor: a => a.horario },
@@ -200,6 +208,10 @@ const COLUNAS_PROPOSTAS: Coluna[] = [
   { rotulo: "De quem", valor: p => p.quem },
   { rotulo: "Tipo", valor: p => p.tipo },
   { rotulo: "Valor", tipo: "moeda", valor: p => moedaOuVazio(p.valor) },
+  // Honorários advocatícios por cima do valor proposto (22/09/2026).
+  { rotulo: "Honorários (%)", valor: p => (pctHonorarios(p.honorarios_pct) ? pctHonorarios(p.honorarios_pct) : "") },
+  { rotulo: "Honorários (R$)", tipo: "moeda", valor: p => moedaOuVazio(honorariosEmReais(num(p.valor), pctHonorarios(p.honorarios_pct))) },
+  { rotulo: "Valor total da proposta", tipo: "moeda", valor: p => moedaOuVazio(totalDaProposta(num(p.valor), pctHonorarios(p.honorarios_pct))) },
   { rotulo: "Descrição", valor: p => p.descricao },
 ];
 
