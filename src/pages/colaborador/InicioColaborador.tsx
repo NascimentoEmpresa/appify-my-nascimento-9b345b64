@@ -4,7 +4,9 @@ import { useSessaoColaborador } from "./ColaboradorShell";
 import {
   ROTULO_BATIDA, fmtData, fmtHora, fmtMinutos, mesAtualISO, useCursosColaborador, usePontoColaborador,
 } from "@/hooks/useColaboradorPortal";
-import { Chip, Secao, tomStatus } from "./ui";
+import { Chip, EmDesenvolvimento, Secao, tomStatus } from "./ui";
+import { PONTO_LIBERADO } from "./PontoColaborador";
+import { SALARIO_LIBERADO } from "./SalarioColaborador";
 
 // =====================================================================
 // PORTAL DO COLABORADOR — Início
@@ -14,7 +16,8 @@ import { Chip, Secao, tomStatus } from "./ui";
 
 export default function InicioColaborador() {
   const { perfil, primeiroNome } = useSessaoColaborador();
-  const ponto = usePontoColaborador(mesAtualISO());
+  // Ponto em desenvolvimento (22/09/2026): sem chamar col_ponto enquanto não liberar.
+  const ponto = usePontoColaborador(mesAtualISO(), PONTO_LIBERADO);
   const cursos = useCursosColaborador();
   const hoje = ponto.data?.hoje;
   const naoLidas = cursos.data?.notificacoes.filter((n) => !n.lida).length ?? 0;
@@ -32,6 +35,10 @@ export default function InicioColaborador() {
         </div>
       </div>
 
+      {!PONTO_LIBERADO ? (
+        <EmDesenvolvimento compacto icone={<Clock3 className="h-5 w-5" />} titulo="Ponto de hoje"
+          texto="O registro de ponto pelo portal está chegando. Por enquanto, bata do jeito de sempre." />
+      ) : (
       <Secao
         titulo="Ponto de hoje"
         descricao={hoje ? fmtData(hoje.data) : undefined}
@@ -63,6 +70,7 @@ export default function InicioColaborador() {
           </div>
         )}
       </Secao>
+      )}
 
       <Secao
         titulo="Treinamentos"
@@ -112,19 +120,20 @@ export default function InicioColaborador() {
       )}
 
       <div className="grid grid-cols-2 gap-3">
-        <Atalho para="/colaborador/salario" icone={Wallet} titulo="Salário" texto="Valor atual e dados de pagamento" />
+        <Atalho para="/colaborador/salario" icone={Wallet} titulo="Salário" texto="Valor atual e dados de pagamento" emBreve={!SALARIO_LIBERADO} />
         <Atalho para="/colaborador/perfil" icone={UserRound} titulo="Meu perfil" texto="Ficha, cargo, escala e senha" />
         <Atalho para="/colaborador/historico" icone={History} titulo="Histórico" texto="Férias, função e ocorrências" />
-        <Atalho para="/colaborador/ponto" icone={Clock3} titulo="Espelho do mês" texto={ponto.data ? `${fmtMinutos(ponto.data.total_min)} em ${ponto.data.dias_trabalhados} dia(s)` : "Suas batidas do mês"} />
+        <Atalho para="/colaborador/ponto" icone={Clock3} titulo="Espelho do mês" texto={ponto.data ? `${fmtMinutos(ponto.data.total_min)} em ${ponto.data.dias_trabalhados} dia(s)` : "Suas batidas do mês"} emBreve={!PONTO_LIBERADO} />
       </div>
     </div>
   );
 }
 
-function Atalho({ para, icone: Icone, titulo, texto }: { para: string; icone: typeof Wallet; titulo: string; texto: string }) {
+function Atalho({ para, icone: Icone, titulo, texto, emBreve }: { para: string; icone: typeof Wallet; titulo: string; texto: string; emBreve?: boolean }) {
   return (
-    <Link to={para} className="rounded-2xl border border-border bg-card p-4 shadow-sm transition-colors hover:bg-muted/40">
-      <Icone className="h-5 w-5 text-primary" />
+    <Link to={para} className="relative rounded-2xl border border-border bg-card p-4 shadow-sm transition-colors hover:bg-muted/40">
+      {emBreve && <span className="absolute right-3 top-3 rounded-full bg-amber-500 px-2 py-0.5 text-[9px] font-extrabold uppercase tracking-wider text-white">Em desenvolvimento</span>}
+      <Icone className={emBreve ? "h-5 w-5 text-amber-500" : "h-5 w-5 text-primary"} />
       <p className="mt-2 text-sm font-semibold">{titulo}</p>
       <p className="mt-0.5 text-[11px] leading-snug text-muted-foreground">{texto}</p>
     </Link>

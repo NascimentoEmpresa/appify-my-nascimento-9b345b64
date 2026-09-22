@@ -182,10 +182,11 @@ export function useSalarioColaborador() {
   });
 }
 
-export function usePontoColaborador(mes: string) {
+export function usePontoColaborador(mes: string, habilitado = true) {
   return useQuery({
     queryKey: ["colaborador", "ponto", mes],
     queryFn: () => chamarPortal<PontoMes>("ponto", { mes }),
+    enabled: habilitado,
     retry: false,
   });
 }
