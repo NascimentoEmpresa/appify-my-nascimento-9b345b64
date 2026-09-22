@@ -250,6 +250,70 @@ export function useResponderQuiz(cursoId: string | undefined) {
   });
 }
 
+// ── Prova da aula (22/09/2026) ──────────────────────────────────────────
+// Espelha trn_prova_estado / trn_prova_responder (migration 205). A opção
+// carrega o índice ORIGINAL (`i`): é ele que volta na resposta, mesmo com as
+// opções embaralhadas.
+export interface PerguntaProva {
+  id: string; tipo: "unica" | "multipla" | "vf"; enunciado: string; pontos: number;
+  opcoes: { i: number; texto: string }[];
+}
+export interface EstadoProva {
+  tem_prova: boolean;
+  config?: {
+    titulo: string; instrucoes: string | null; tentativas_max: number | null; nota_minima: number;
+    nota_vale: "maior" | "ultima"; tempo_limite_min: number | null; intervalo_min: number | null;
+    gabarito: "nunca" | "resultado" | "ao_final" | "sempre"; perguntas: number;
+  };
+  liberada?: boolean; motivo?: string | null; proxima_em?: string | null; video_assistido?: boolean;
+  usadas?: number; restantes?: number | null; nota?: number | null; aprovado?: boolean;
+  historico?: { numero: number; nota: number; aprovado: boolean; enviada_em: string; encerramento: string }[];
+  aberta?: { id: string; numero: number; iniciada_em: string; expira_em: string | null; perguntas: PerguntaProva[] } | null;
+}
+export interface ItemCorrecao {
+  id: string; ok: boolean; pontos: number; max: number; marcadas: number[];
+  corretas?: number[]; explicacao?: string | null;
+}
+export interface ResultadoProva {
+  nota: number; aprovado: boolean; nota_minima: number; pontos: number; pontos_total: number;
+  acertos: number; total: number; numero: number; restantes: number | null; nota_vigente: number | null;
+  itens: ItemCorrecao[] | null; certificado: string | null;
+}
+
+export function useProvaAula(aulaId: string | null | undefined, habilitado = true) {
+  return useQuery({
+    queryKey: ["colaborador", "prova", aulaId],
+    queryFn: () => chamarPortal<EstadoProva>("prova", { aula_id: aulaId }),
+    enabled: !!aulaId && habilitado,
+    retry: false,
+  });
+}
+
+export function useIniciarProva(aulaId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => chamarPortal<EstadoProva>("prova_iniciar", { aula_id: aulaId }),
+    onSuccess: (dados) => qc.setQueryData(["colaborador", "prova", aulaId], dados),
+  });
+}
+
+export function useResponderProva(aulaId: string, cursoId: string | undefined) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (p: { tentativa_id: string; respostas: Record<string, number[]> }) => chamarPortal<ResultadoProva>("prova_responder", p),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["colaborador", "prova", aulaId] });
+      qc.invalidateQueries({ queryKey: ["colaborador", "curso", cursoId] });
+      qc.invalidateQueries({ queryKey: ["colaborador", "cursos"] });
+    },
+  });
+}
+
+/** O player chegou ao fim (≥ 90%) — libera a prova. Falha em silêncio. */
+export function avisarVideoAssistido(aulaId: string) {
+  return chamarPortal("video_assistido", { aula_id: aulaId }).catch(() => undefined);
+}
+
 /** Tempo assistido, mandado em lotes pelo player. Falha em silêncio. */
 export function registrarTempoAula(aulaId: string, segundos: number) {
   if (segundos <= 0) return;

@@ -17,6 +17,7 @@ import { useEffect, useMemo, useRef } from "react";
 
 import { useContratosCatalogo, usePostos, useFuncoes } from "@/hooks/useSupCatalogo";
 import { semCodigoFilial } from "@/lib/rh/colaboradoresUtils";
+import { chaveContrato } from "@/lib/recrutamento/vagaRegras";
 
 export interface VinculoCatalogo { contrato_id: string; posto_id: string; funcao_id: string }
 export interface OpcaoCatalogo { id: string; nome: string }
@@ -43,10 +44,16 @@ export function VinculoCatalogoVaga({ contratoNome, valor, onChange, onFuncaoNom
 
   const { data: contratos = [] } = useContratosCatalogo();
 
+  // Exato primeiro; senão, normalizado (22/09/2026): o Senior grava
+  // "UFRGS DIGITADORES 014.2026" e o catálogo "UFRGS DIGITADORES - 014/2026"
+  // — a comparação exata dava "fora do catálogo" e travava o posto em 15
+  // contratos que estão, sim, no catálogo.
   const contratoCatalogo = useMemo(() => {
-    const alvo = chaveNome(semCodigoFilial(contratoNome));
-    if (!alvo) return null;
-    return contratos.find(c => chaveNome(c.nome) === alvo) ?? null;
+    const nome = semCodigoFilial(contratoNome);
+    if (!chaveNome(nome)) return null;
+    return contratos.find(c => chaveNome(c.nome) === chaveNome(nome))
+      ?? contratos.find(c => chaveContrato(c.nome) === chaveContrato(nome))
+      ?? null;
   }, [contratos, contratoNome]);
 
   // O contrato do catálogo acompanha o contrato da vaga — sempre. Mudou o

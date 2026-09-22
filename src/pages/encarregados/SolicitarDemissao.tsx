@@ -225,9 +225,12 @@ export default function SolicitarDemissao() {
   }, []);
   const chaveNome = (s: unknown) => String(s ?? "").trim().toUpperCase().replace(/\s+/g, " ");
   const contratoCatalogoId = useMemo(() => {
-    const alvo = chaveNome(semCodigoFilial(nomeContrato));
-    if (!alvo) return null;
-    return contratosCatalogo.find((c) => chaveNome(c.nome) === alvo)?.id ?? null;
+    // Exato primeiro; senão, normalizado (22/09/2026) — "014.2026" do Senior
+    // contra "- 014/2026" do catálogo deixava a lista de postos vazia.
+    const nome = semCodigoFilial(nomeContrato);
+    if (!chaveNome(nome)) return null;
+    return (contratosCatalogo.find((c) => chaveNome(c.nome) === chaveNome(nome))
+      ?? contratosCatalogo.find((c) => chaveContrato(c.nome) === chaveContrato(nome)))?.id ?? null;
   }, [contratosCatalogo, nomeContrato]);
   const { data: postosCatalogo = [] } = usePostos(contratoCatalogoId);
   const [postoNome, setPostoNome] = useState("");

@@ -1,17 +1,19 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type SyntheticEvent } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import {
   ArrowLeft, Award, CheckCircle2, ChevronDown, ChevronRight, Circle, ExternalLink, FileText, Loader2, Lock,
   MessageSquare, Paperclip, Send, Star,
 } from "lucide-react";
 import { toast } from "sonner";
+import { useQueryClient } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
 import { urlMidia } from "@/hooks/useTreinamentosPlataforma";
 import { embedDeVideo } from "@/pages/treinamentos/treinamento/core";
 import {
-  fmtData, fmtDataHora, registrarTempoAula, useComentar, useComentariosAula, useConcluirAula, useCursoColaborador,
-  useResponderQuiz, type AulaAluno, type ResultadoQuiz,
+  avisarVideoAssistido, fmtData, fmtDataHora, registrarTempoAula, useComentar, useComentariosAula, useConcluirAula,
+  useCursoColaborador, type AulaAluno,
 } from "@/hooks/useColaboradorPortal";
+import { ProvaAula } from "./ProvaAula";
 import { Carregando, Chip, Erro, Vazio } from "./ui";
 
 // =====================================================================
@@ -19,9 +21,12 @@ import { Carregando, Chip, Erro, Vazio } from "./ui";
 //
 // Lista de módulos/aulas à esquerda (embaixo, no celular) e a aula aberta em
 // cima: vídeo (YouTube/Vimeo por iframe, arquivo do bucket por <video>),
-// descrição, materiais, CTA, quiz e comentários. Concluir manda
-// col_concluir_aula; se a aula tem quiz, só conclui depois de passar (a
-// RPC cobra). Ao fechar 100% e o curso ter modelo, o certificado sai
+// descrição, materiais, CTA, prova e comentários. Concluir manda
+// col_concluir_aula; se a aula tem prova, só conclui depois de passar (a
+// RPC cobra — e passar na prova já conclui sozinho). A prova (ProvaAula.tsx,
+// 22/09/2026) abre depois do vídeo visto até o fim: o player avisa o banco
+// (video_assistido) ao chegar em 90% — <video> pelo timeupdate, YouTube e
+// Vimeo pela API de postMessage de cada um. Ao fechar 100% e o curso ter modelo, o certificado sai
 // sozinho e o botão aparece.
 //
 // Tempo assistido: um contador local acumula enquanto a aula está aberta e
@@ -152,6 +157,12 @@ function AulaAberta({ aula, cursoId, comentariosHabilitados, anterior, proxima }
   cursoId: string; comentariosHabilitados: boolean; anterior?: () => void; proxima?: () => void;
 }) {
   const concluir = useConcluirAula(cursoId);
+  const qc = useQueryClient();
+  // Vídeo chegou ao fim: grava e recarrega a prova (que pode ter liberado).
+  const videoTerminou = async () => {
+    await avisarVideoAssistido(aula.id);
+    qc.invalidateQueries({ queryKey: ["colaborador", "prova", aula.id] });
+  };
   const [avaliacao, setAvaliacao] = useState<number | null>(aula.avaliacao);
   const travada = aula.bloqueado || aula.moduloBloqueado;
   const temQuiz = !!aula.quiz?.length;
@@ -198,14 +209,14 @@ function AulaAberta({ aula, cursoId, comentariosHabilitados, anterior, proxima }
 
   return (
     <div className="space-y-4">
-      <Player aula={aula} />
+      <Player aula={aula} onFim={videoTerminou} />
 
       <div className="rounded-2xl border border-border bg-card p-4 shadow-sm">
         <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{aula.moduloNome}</p>
         <h2 className="font-display text-lg font-bold leading-tight">{aula.nome}</h2>
         <div className="mt-1 flex flex-wrap gap-1.5">
           {aula.concluida && <Chip tom="ok">Concluída em {fmtData(aula.concluida_em)}</Chip>}
-          {temQuiz && aula.nota_quiz != null && <Chip tom={passouQuiz ? "ok" : "alerta"}>Quiz: {aula.nota_quiz}%</Chip>}
+          {temQuiz && aula.nota_quiz != null && <Chip tom={passouQuiz ? "ok" : "alerta"}>Prova: {aula.nota_quiz}%</Chip>}
         </div>
         {aula.descricao && <p className="mt-3 whitespace-pre-line text-sm leading-relaxed text-foreground">{aula.descricao}</p>}
 
@@ -234,7 +245,7 @@ function AulaAberta({ aula, cursoId, comentariosHabilitados, anterior, proxima }
         )}
       </div>
 
-      {temQuiz && <Quiz aula={aula} cursoId={cursoId} />}
+      {temQuiz && <ProvaAula key={aula.id} aula={aula} cursoId={cursoId} />}
 
       <div className="rounded-2xl border border-border bg-card p-4 shadow-sm">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -253,7 +264,7 @@ function AulaAberta({ aula, cursoId, comentariosHabilitados, anterior, proxima }
               type="button"
               disabled={concluir.isPending || (temQuiz && !passouQuiz)}
               onClick={marcarConcluida}
-              title={temQuiz && !passouQuiz ? `Responda o quiz (mínimo ${aula.nota_minima}%) para concluir` : undefined}
+              title={temQuiz && !passouQuiz ? `Passe na prova (mínimo ${aula.nota_minima}%) para concluir` : undefined}
               className="inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-gradient-accent px-5 text-sm font-semibold text-accent-foreground disabled:opacity-60"
             >
               {concluir.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
@@ -264,7 +275,7 @@ function AulaAberta({ aula, cursoId, comentariosHabilitados, anterior, proxima }
           )}
         </div>
         {temQuiz && !passouQuiz && !aula.concluida && (
-          <p className="mt-2 text-xs text-muted-foreground">Esta aula tem quiz: responda e alcance {aula.nota_minima}% para concluí-la.</p>
+          <p className="mt-2 text-xs text-muted-foreground">Esta aula tem prova: alcance {aula.nota_minima}% para concluí-la.</p>
         )}
         <div className="mt-3 flex justify-between border-t border-border pt-3">
           <button type="button" disabled={!anterior} onClick={anterior} className="inline-flex items-center gap-1 text-sm font-semibold text-primary disabled:opacity-40"><ArrowLeft className="h-4 w-4" /> Anterior</button>
@@ -277,29 +288,70 @@ function AulaAberta({ aula, cursoId, comentariosHabilitados, anterior, proxima }
   );
 }
 
-function Player({ aula }: { aula: AulaAluno }) {
+function Player({ aula, onFim }: { aula: AulaAluno; onFim?: () => void }) {
   const thumb = urlMidia(aula.thumb_path);
+  const avisou = useRef(false);
+  const iframe = useRef<HTMLIFrameElement | null>(null);
+  useEffect(() => { avisou.current = false; }, [aula.id]);
+  const fim = () => { if (!avisou.current) { avisou.current = true; onFim?.(); } };
+  const noTempo = (e: SyntheticEvent<HTMLVideoElement>) => {
+    const v = e.currentTarget;
+    if (v.duration > 0 && v.currentTime / v.duration >= 0.9) fim();
+  };
+  const emb = aula.video_url ? embedDeVideo(aula.video_url) : null;
+
+  // YouTube/Vimeo: escuta os eventos do player embutido (postMessage).
+  useEffect(() => {
+    if (!emb || (emb.tipo !== "youtube" && emb.tipo !== "vimeo")) return;
+    const ouvir = (ev: MessageEvent) => {
+      if (!/^https:\/\/([a-z0-9-]+\.)*(youtube\.com|youtube-nocookie\.com|vimeo\.com)$/.test(ev.origin)) return;
+      let d: any = ev.data;
+      if (typeof d === "string") { try { d = JSON.parse(d); } catch { return; } }
+      if (!d || typeof d !== "object") return;
+      // YouTube: estado 0 = terminou; infoDelivery traz o tempo.
+      if (d.event === "onStateChange" && d.info === 0) fim();
+      if (d.event === "infoDelivery" && d.info) {
+        if (d.info.playerState === 0) fim();
+        if (d.info.duration > 0 && d.info.currentTime / d.info.duration >= 0.9) fim();
+      }
+      // Vimeo: pronto → assina os eventos; timeupdate traz o percentual.
+      if (d.event === "ready") {
+        for (const value of ["timeupdate", "ended"]) iframe.current?.contentWindow?.postMessage(JSON.stringify({ method: "addEventListener", value }), "*");
+      }
+      if (d.event === "ended" || (d.event === "timeupdate" && d.data?.percent >= 0.9)) fim();
+    };
+    window.addEventListener("message", ouvir);
+    return () => window.removeEventListener("message", ouvir);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [aula.id, emb?.src]);
+  const aoCarregarIframe = () => {
+    // YouTube só manda eventos depois de alguém dizer que está ouvindo.
+    if (emb?.tipo === "youtube") iframe.current?.contentWindow?.postMessage(JSON.stringify({ event: "listening", id: aula.id, channel: "widget" }), "*");
+  };
+
   if (aula.video_path) {
     const src = urlMidia(aula.video_path);
     return (
       <div className="overflow-hidden rounded-2xl bg-black">
-        <video src={src ?? undefined} poster={thumb ?? undefined} controls playsInline className="aspect-video w-full" />
+        <video src={src ?? undefined} poster={thumb ?? undefined} controls playsInline className="aspect-video w-full" onTimeUpdate={noTempo} onEnded={fim} />
       </div>
     );
   }
-  if (aula.video_url) {
-    const emb = embedDeVideo(aula.video_url);
+  if (aula.video_url && emb) {
     if (emb.tipo === "youtube" || emb.tipo === "vimeo") {
+      const src = emb.tipo === "youtube"
+        ? `${emb.src}?enablejsapi=1&origin=${encodeURIComponent(window.location.origin)}`
+        : `${emb.src}?api=1`;
       return (
         <div className="overflow-hidden rounded-2xl bg-black">
-          <iframe src={emb.src} title={aula.nome} allow="accelerometer; autoplay; encrypted-media; gyroscope; picture-in-picture; fullscreen" allowFullScreen className="aspect-video w-full" />
+          <iframe ref={iframe} onLoad={aoCarregarIframe} src={src} title={aula.nome} allow="accelerometer; autoplay; encrypted-media; gyroscope; picture-in-picture; fullscreen" allowFullScreen className="aspect-video w-full" />
         </div>
       );
     }
     if (emb.tipo === "arquivo") {
       return (
         <div className="overflow-hidden rounded-2xl bg-black">
-          <video src={emb.src} poster={thumb ?? undefined} controls playsInline className="aspect-video w-full" />
+          <video src={emb.src} poster={thumb ?? undefined} controls playsInline className="aspect-video w-full" onTimeUpdate={noTempo} onEnded={fim} />
         </div>
       );
     }
@@ -324,86 +376,6 @@ function Player({ aula }: { aula: AulaAluno }) {
   return (
     <div className="grid aspect-[3/1] place-items-center rounded-2xl bg-muted text-muted-foreground">
       <FileText className="h-8 w-8" />
-    </div>
-  );
-}
-
-// ── Quiz ─────────────────────────────────────────────────────────────────
-
-function Quiz({ aula, cursoId }: { aula: AulaAluno; cursoId: string }) {
-  const perguntas = aula.quiz ?? [];
-  const [respostas, setRespostas] = useState<(number | null)[]>(() => perguntas.map(() => null));
-  const [resultado, setResultado] = useState<ResultadoQuiz | null>(null);
-  const responder = useResponderQuiz(cursoId);
-  const jaPassou = aula.nota_quiz != null && aula.nota_quiz >= aula.nota_minima;
-  const faltam = respostas.filter((r) => r == null).length;
-
-  const enviar = async () => {
-    try {
-      const r = await responder.mutateAsync({ aula_id: aula.id, respostas });
-      setResultado(r);
-      if (r.aprovado) toast.success(r.certificado ? `Aprovado com ${r.nota}%! Curso concluído e certificado emitido.` : `Aprovado com ${r.nota}%!`);
-      else toast.error(`Você fez ${r.nota}%. Mínimo ${r.nota_minima}% — tente de novo.`);
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Não foi possível enviar.");
-    }
-  };
-
-  return (
-    <div className="rounded-2xl border border-border bg-card p-4 shadow-sm">
-      <div className="flex items-center justify-between">
-        <h3 className="font-display text-base font-bold">Quiz da aula</h3>
-        <span className="text-xs text-muted-foreground">Mínimo {aula.nota_minima}%</span>
-      </div>
-      {jaPassou && !resultado && (
-        <p className="mt-2 rounded-lg bg-success/10 px-3 py-2 text-sm text-success">Você já foi aprovado neste quiz com {aula.nota_quiz}%. Pode refazer se quiser.</p>
-      )}
-      <ol className="mt-3 space-y-4">
-        {perguntas.map((p, i) => {
-          const acertou = resultado?.corretas[i];
-          return (
-            <li key={p.id ?? i}>
-              <p className="text-sm font-semibold">
-                {i + 1}. {p.enunciado}
-                {resultado && (acertou ? <span className="ml-2 text-success">✓</span> : <span className="ml-2 text-destructive">✗</span>)}
-              </p>
-              <div className="mt-1.5 space-y-1">
-                {p.opcoes.map((o, k) => (
-                  <label
-                    key={k}
-                    className={cn("flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 text-sm",
-                      respostas[i] === k ? "border-primary bg-primary/5" : "border-border hover:bg-muted/50")}
-                  >
-                    <input
-                      type="radio"
-                      name={`q-${aula.id}-${i}`}
-                      checked={respostas[i] === k}
-                      onChange={() => { setRespostas((r) => r.map((v, idx) => (idx === i ? k : v))); setResultado(null); }}
-                      className="accent-primary"
-                    />
-                    {o}
-                  </label>
-                ))}
-              </div>
-            </li>
-          );
-        })}
-      </ol>
-      <div className="mt-4 flex items-center justify-between gap-3">
-        {resultado ? (
-          <p className={cn("text-sm font-semibold", resultado.aprovado ? "text-success" : "text-destructive")}>
-            {resultado.acertos} de {resultado.total} · {resultado.nota}% {resultado.aprovado ? "— aprovado" : "— reprovado"}
-          </p>
-        ) : <p className="text-xs text-muted-foreground">{faltam > 0 ? `${faltam} sem resposta` : "Tudo respondido"}</p>}
-        <button
-          type="button"
-          disabled={responder.isPending || faltam > 0}
-          onClick={enviar}
-          className="inline-flex h-10 items-center gap-2 rounded-lg bg-primary px-4 text-sm font-semibold text-primary-foreground disabled:opacity-60"
-        >
-          {responder.isPending && <Loader2 className="h-4 w-4 animate-spin" />} Enviar respostas
-        </button>
-      </div>
     </div>
   );
 }
