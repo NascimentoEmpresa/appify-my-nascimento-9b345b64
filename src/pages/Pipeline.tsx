@@ -930,6 +930,8 @@ function GradeCard({
         </span>
         <span><span className="font-medium text-foreground">Responsável:</span> {item.responsavel || "—"}</span>
         <span><span className="font-medium text-foreground">Posição:</span> {item.posicao != null ? `${item.posicao}º` : "—"}</span>
+        {/* SIS-2026-0445: qtd de pessoas do edital direto no card da grade. */}
+        <span><span className="font-medium text-foreground">Pessoas:</span> {item.qtd_pessoas != null ? item.qtd_pessoas : "—"}</span>
         {item.valor_global ? (
           <span className="col-span-2"><span className="font-medium text-foreground">Valor:</span> {
             Number(item.valor_global)
