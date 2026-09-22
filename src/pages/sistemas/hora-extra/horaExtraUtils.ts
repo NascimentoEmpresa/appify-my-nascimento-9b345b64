@@ -295,6 +295,23 @@ export function podeAlterarHorariosNaLiberacao(entrada: { status: string; podeAl
   return entrada.podeAlterar && ["aguardando_liberacao", "aguardando_validacao"].includes(entrada.status);
 }
 
+/**
+ * A terceira porta do ponto, e a mais estreita (22/09/2026): depois que a
+ * validação fecha a HE em "concluida", o horário virava pedra — cartão de
+ * ponto atrasado e correção do RH só tinham saída por fora do sistema.
+ *
+ * A chave AQUI não é 'alterar': essa ação vem no pacote do toggle da tela
+ * (ACOES_DO_TOGGLE_PADRAO), e mexer em HE fechada é mexer em hora já paga.
+ * Quem libera é 'editar_concluida', com switch próprio no Gerenciamento de
+ * Acesso — a RPC hora_extra_editar_horarios_concluida cobra a mesma ação.
+ */
+export function podeEditarHorariosDaConcluida(entrada: {
+  status: string;
+  podeEditarConcluida: boolean;
+}): boolean {
+  return entrada.podeEditarConcluida && entrada.status === "concluida";
+}
+
 /** Em que etapa o arquivo foi anexado, para a lista de anexos. */
 export function rotuloFaseAnexo(fase: string): string {
   return fase === "conclusao" ? "Conclusão" : "Solicitação";

@@ -74,13 +74,23 @@ describe("Diárias — 'aprovar' e 'enviar_malote' não pegam carona no toggle",
 });
 
 describe("catálogo de exceções", () => {
-  it("Diárias (as três portas) e o Parecer Jurídico são as exceções hoje", () => {
+  it("Diárias, Parecer Jurídico e Hora Extra são as exceções hoje", () => {
     expect(Object.keys(ACOES_FORA_DO_TOGGLE).sort()).toEqual([
       "duvidas",
       "encarregados_diarias",
       "financeiro_diarias",
       "operacional_diarias",
+      "sistemas_hora_extra",
     ]);
+  });
+
+  it("Hora Extra: ligar a tela NÃO concede editar_concluida, desligar revoga", () => {
+    // Corrigir o ponto de uma HE já validada é mexer em hora que virou
+    // pagamento. Ligar a tela para alguém conferir HE não pode dar isso junto.
+    const ligadas = acoesGravadasPeloToggle("sistemas_hora_extra", true);
+    expect(ligadas).not.toContain("editar_concluida");
+    expect(ligadas).toEqual([...ACOES_DO_TOGGLE_PADRAO]);
+    expect(acoesGravadasPeloToggle("sistemas_hora_extra", false)).toContain("editar_concluida");
   });
 
   it("ação fora do pacote (responder) pode estar na exceção: ligar não a concede, DESLIGAR revoga", () => {
