@@ -71,9 +71,15 @@ export function ViagemDialog({ agendamentoId, aberto, onFechar, souDono }: {
     return daViagem ?? { codigo: null, nome, administrativo: false };
   };
 
+  // Viagem legado (anterior ao controle de KM/foto — nasceu sem km_inicial):
+  // fechar é opcional, e não exige os dois campos. Viagem do fluxo novo
+  // continua com os dois obrigatórios (a RPC valida os dois lados).
+  const legado = v?.km_inicial == null;
+  const podeEnviarKm = legado ? !!(kmFinal || fotoFinal) : !!(kmFinal && fotoFinal);
+
   const enviarKmFinal = async () => {
-    if (!agendamentoId || !fotoFinal) return;
-    await fecharKm.mutateAsync({ id: agendamentoId, km: Number(kmFinal), foto: fotoFinal });
+    if (!agendamentoId || !podeEnviarKm) return;
+    await fecharKm.mutateAsync({ id: agendamentoId, km: kmFinal ? Number(kmFinal) : null, foto: fotoFinal });
     setKmFinal(""); setFotoFinal(null);
   };
 
@@ -131,25 +137,32 @@ export function ViagemDialog({ agendamentoId, aberto, onFechar, souDono }: {
               )}
 
               {v.km_final == null && souDono && (
-                <div className="mt-4 space-y-3 rounded-lg border border-amber-300 bg-amber-50/60 p-3 dark:bg-amber-500/10">
-                  <p className="text-sm font-semibold">Fechar a viagem</p>
+                <div className={`mt-4 space-y-3 rounded-lg border p-3 ${legado ? "border-border bg-muted/30" : "border-amber-300 bg-amber-50/60 dark:bg-amber-500/10"}`}>
+                  <div>
+                    <p className="text-sm font-semibold">Fechar a viagem</p>
+                    {legado && (
+                      <p className="text-xs text-muted-foreground">
+                        Viagem anterior ao controle de KM/foto — o registro é opcional, preencha o que tiver.
+                      </p>
+                    )}
+                  </div>
                   <div className="grid gap-3 sm:grid-cols-2">
                     <div className="space-y-1.5">
-                      <Label htmlFor="km-final">KM final (painel) *</Label>
+                      <Label htmlFor="km-final">KM final (painel){!legado && " *"}</Label>
                       <Input id="km-final" inputMode="numeric" value={kmFinal} placeholder={v.km_inicial ? `maior que ${v.km_inicial}` : "Ex.: 84980"}
                              onChange={(e) => setKmFinal(e.target.value.replace(/\D/g, ""))} />
                     </div>
                     <div className="space-y-1.5">
-                      <Label htmlFor="foto-final">Foto do painel *</Label>
+                      <Label htmlFor="foto-final">Foto do painel{legado ? " (opcional)" : " *"}</Label>
                       <label htmlFor="foto-final" className="flex h-10 cursor-pointer items-center gap-2 rounded-md border border-input bg-background px-3 text-sm text-muted-foreground hover:bg-muted/50">
-                        <Camera className="h-4 w-4 shrink-0 text-amber-600" />
+                        <Camera className={`h-4 w-4 shrink-0 ${legado ? "text-muted-foreground" : "text-amber-600"}`} />
                         <span className="truncate">{fotoFinal ? fotoFinal.name : "Tirar foto / escolher"}</span>
                       </label>
                       <input id="foto-final" type="file" accept="image/*" capture="environment" className="hidden"
                              onChange={(e) => setFotoFinal(e.target.files?.[0] ?? null)} />
                     </div>
                   </div>
-                  <Button size="sm" className="gap-1.5" disabled={!kmFinal || !fotoFinal || fecharKm.isPending} onClick={enviarKmFinal}>
+                  <Button size="sm" className="gap-1.5" disabled={!podeEnviarKm || fecharKm.isPending} onClick={enviarKmFinal}>
                     {fecharKm.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
                     Registrar KM final
                   </Button>
