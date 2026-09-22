@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Ban, CalendarRange, Car, CheckCircle2, Clock, FileText, MapPin } from "lucide-react";
+import { Ban, CalendarRange, Car, CheckCircle2, Clock, FileText, Fuel, Gauge, MapPin } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -15,6 +15,7 @@ import {
   useCancelarAgendamento,
   type Agendamento,
 } from "@/hooks/useAgendamentoVeiculos";
+import { ViagemDialog } from "./ViagemDialog";
 
 interface Props {
   agendamentos: Agendamento[];
@@ -31,6 +32,9 @@ const ESTILO_STATUS: Record<string, string> = {
 
 export function MeusAgendamentos({ agendamentos, podeCancelarDeTerceiros, usuarioId }: Props) {
   const [cancelando, setCancelando] = useState<Agendamento | null>(null);
+  // Clicar no card abre A VIAGEM: KM, contratos e notas de abastecimento
+  // (22/09/2026 — chamado dos abastecimentos).
+  const [viagem, setViagem] = useState<Agendamento | null>(null);
   const [motivo, setMotivo] = useState("");
   const cancelar = useCancelarAgendamento();
   const hoje = hojeISO();
@@ -68,7 +72,11 @@ export function MeusAgendamentos({ agendamentos, podeCancelarDeTerceiros, usuari
           return (
             <Card
               key={a.id}
-              className="animate-rise-in p-4 transition-colors hover:border-primary/30"
+              role="button"
+              tabIndex={0}
+              onClick={() => setViagem(a)}
+              onKeyDown={(e) => { if (e.key === "Enter") setViagem(a); }}
+              className="animate-rise-in cursor-pointer p-4 transition-colors hover:border-primary/30"
               style={{ animationDelay: `${Math.min(i, 10) * 40}ms` }}
             >
               <div className="flex flex-wrap items-start justify-between gap-3">
@@ -126,6 +134,11 @@ export function MeusAgendamentos({ agendamentos, podeCancelarDeTerceiros, usuari
                         Cancelado: {a.motivo_cancelamento}
                       </p>
                     )}
+                    {/* KM e notas ficam a um clique: o card inteiro abre a viagem. */}
+                    <p className="mt-2 flex flex-wrap items-center gap-3 text-xs font-semibold text-primary">
+                      <span className="inline-flex items-center gap-1"><Gauge className="h-3.5 w-3.5" /> KM da viagem</span>
+                      <span className="inline-flex items-center gap-1"><Fuel className="h-3.5 w-3.5" /> Anexar nota de gasolina</span>
+                    </p>
                   </div>
                 </div>
 
@@ -145,7 +158,7 @@ export function MeusAgendamentos({ agendamentos, podeCancelarDeTerceiros, usuari
                       variant="outline"
                       size="sm"
                       className="text-destructive hover:bg-destructive/10 hover:text-destructive"
-                      onClick={() => { setCancelando(a); setMotivo(""); }}
+                      onClick={(e) => { e.stopPropagation(); setCancelando(a); setMotivo(""); }}
                     >
                       Cancelar
                     </Button>
@@ -156,6 +169,13 @@ export function MeusAgendamentos({ agendamentos, podeCancelarDeTerceiros, usuari
           );
         })}
       </div>
+
+      <ViagemDialog
+        agendamentoId={viagem?.id ?? null}
+        aberto={!!viagem}
+        onFechar={() => setViagem(null)}
+        souDono={!!viagem && (viagem.solicitante_id === usuarioId || podeCancelarDeTerceiros)}
+      />
 
       <Dialog open={!!cancelando} onOpenChange={(o) => !o && setCancelando(null)}>
         <DialogContent>
