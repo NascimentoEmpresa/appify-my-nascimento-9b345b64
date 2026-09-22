@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { AlertCircle, Loader2 } from "lucide-react";
+import { AlertCircle, Hammer, Loader2, Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 // =====================================================================
@@ -93,4 +93,36 @@ export function tomStatus(status: string | null | undefined): "neutro" | "ok" | 
   if (/reprov|negad|cancel|arquiv|bloque|devolvid|problema/.test(s)) return "erro";
   if (/pendente|aguard|andamento|análise|analise/.test(s)) return "alerta";
   return "neutro";
+}
+
+/**
+ * Tela ainda não liberada pro colaborador (22/09/2026 — Ponto e Salário:
+ * "vamos deixar aparecendo um card assim > EM DESENVOLVIMENTO", Pablo).
+ * `compacto` é a versão de dentro de um bloco (Início); a cheia ocupa a tela.
+ */
+export function EmDesenvolvimento({ titulo, texto, icone, compacto }: {
+  titulo: string; texto: string; icone?: ReactNode; compacto?: boolean;
+}) {
+  return (
+    <div className={cn("relative overflow-hidden rounded-2xl border border-dashed border-amber-300 bg-gradient-to-br from-amber-50 via-white to-orange-50",
+                       compacto ? "p-3" : "p-6 text-center shadow-sm sm:p-8")}>
+      <style>{`@keyframes col-dev-listras { from { background-position: 0 0; } to { background-position: 40px 0; } }`}</style>
+      {/* faixa de "obra" correndo no topo */}
+      <div className="absolute inset-x-0 top-0 h-1.5"
+           style={{ backgroundImage: "repeating-linear-gradient(45deg,#f59e0b 0 10px,#1f2937 10px 20px)", backgroundSize: "40px 100%", animation: "col-dev-listras 1.2s linear infinite" }} />
+      <div className={cn("flex gap-3", compacto ? "items-center" : "flex-col items-center")}>
+        <div className={cn("grid shrink-0 place-items-center rounded-2xl bg-gradient-to-br from-amber-400 to-orange-500 text-white shadow",
+                           compacto ? "h-10 w-10" : "h-16 w-16")}>
+          {icone ?? <Hammer className={compacto ? "h-5 w-5" : "h-8 w-8"} />}
+        </div>
+        <div className="min-w-0">
+          <span className="inline-flex items-center gap-1 rounded-full bg-amber-500 px-2.5 py-0.5 text-[10px] font-extrabold uppercase tracking-widest text-white">
+            <Sparkles className="h-3 w-3" /> Em desenvolvimento
+          </span>
+          <p className={cn("font-display font-bold text-foreground", compacto ? "mt-1 text-sm" : "mt-3 text-xl")}>{titulo}</p>
+          <p className={cn("text-muted-foreground", compacto ? "text-xs" : "mx-auto mt-1 max-w-md text-sm")}>{texto}</p>
+        </div>
+      </div>
+    </div>
+  );
 }

@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Cake, MessageSquarePlus } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
@@ -118,13 +118,37 @@ function PessoaDoDia({
   // três primeiras entram na foto — a partir da quarta a foto some atrás
   // das bolinhas.
   const pilhas = useMemo(() => {
-    const conta = new Map<string, number>();
+    // Guarda também QUEM reagiu: o hover na pilha mostra os nomes
+    // (22/09/2026 — "ao colocar o mouse em cima deixa ver quem reagiu").
+    const conta = new Map<string, { n: number; quem: string[] }>();
     felicitacoes.forEach((f) => {
       if (!f.reacao) return;
-      conta.set(f.reacao, (conta.get(f.reacao) ?? 0) + 1);
+      const atual = conta.get(f.reacao) ?? { n: 0, quem: [] };
+      atual.n += 1;
+      atual.quem.push(f.sou_eu ? "Você" : primeiroESobrenome(f.autor_nome));
+      conta.set(f.reacao, atual);
     });
-    return [...conta.entries()].sort((a, b) => b[1] - a[1]);
+    return [...conta.entries()].sort((a, b) => b[1].n - a[1].n);
   }, [felicitacoes]);
+  const totalReacoes = pilhas.reduce((soma, [, v]) => soma + v.n, 0);
+
+  // ── Festa (22/09/2026): confete quando o cartão abre com alguém do dia e
+  // a cada reação enviada; emoji subindo, como o "curtir" do Facebook.
+  const [confete, setConfete] = useState(0);
+  const [subindo, setSubindo] = useState<{ id: number; emoji: string; esq: number }[]>([]);
+  const proximoId = useRef(1);
+  useEffect(() => { setConfete((c) => c + 1); }, []);
+  const soltarEmoji = (emoji: string) => {
+    const novos = Array.from({ length: 5 }, (_, i) => ({
+      id: proximoId.current++,
+      emoji,
+      esq: 18 + Math.random() * 60,
+      atraso: i * 90,
+    }));
+    setSubindo((l) => [...l, ...novos]);
+    // Limpa depois da animação: sem isso a lista cresce a cada clique.
+    window.setTimeout(() => setSubindo((l) => l.filter((x) => !novos.some((n) => n.id === x.id))), 1800);
+  };
 
   const enviar = (reacao: ReacaoChave | null, mensagem: string | null) => {
     felicitar.mutate(
@@ -138,6 +162,8 @@ function PessoaDoDia({
   const alternarReacao = (chave: ReacaoChave) => {
     const nova = minha?.reacao === chave ? null : chave;
     enviar(nova, minha?.mensagem ?? null);
+    // Tirar a reação não solta festa nenhuma — só mandar.
+    if (nova) { soltarEmoji(EMOJI_REACAO[chave] ?? "🎉"); setConfete((c) => c + 1); }
   };
 
   const salvarRecado = () => {
@@ -150,6 +176,8 @@ function PessoaDoDia({
 
   return (
     <div className={`aniv-pessoa ${souEu ? "aniv-pessoa--eu" : ""}`}>
+      <Festa chave={confete} subindo={subindo} />
+
       <div className="aniv-foto">
         {pessoa.avatar_url
           ? <img src={pessoa.avatar_url} alt="" loading="lazy" />
@@ -157,16 +185,28 @@ function PessoaDoDia({
 
         {pilhas.length > 0 && (
           <div
-            className="aniv-reacoes-foto"
-            aria-label={`${pilhas.reduce((s, [, n]) => s + n, 0)} reações recebidas`}
+            className="aniv-reacoes-foto aniv-reacao-pilha"
+            tabIndex={0}
+            aria-label={`${totalReacoes} reação(ões) recebida(s)`}
           >
-            {pilhas.slice(0, 3).map(([chave, n]) => (
+            {pilhas.slice(0, 3).map(([chave, v]) => (
               <span key={chave} className="aniv-reacao-chip">
                 {EMOJI_REACAO[chave] ?? "🎉"}
-                {n > 1 && <b>{n}</b>}
+                {v.n > 1 && <b>{v.n}</b>}
               </span>
             ))}
             {pilhas.length > 3 && <span className="aniv-reacao-chip"><b>+{pilhas.length - 3}</b></span>}
+
+            {/* Quem reagiu — aparece no hover ou no foco pelo teclado. */}
+            <div className="aniv-tip" role="tooltip">
+              <b>{totalReacoes} {totalReacoes === 1 ? "reação" : "reações"}</b>
+              {pilhas.map(([chave, v]) => (
+                <div key={chave} className="aniv-tip-linha">
+                  <span aria-hidden>{EMOJI_REACAO[chave] ?? "🎉"}</span>
+                  <span>{v.quem.join(", ")}</span>
+                </div>
+              ))}
+            </div>
           </div>
         )}
       </div>
@@ -243,15 +283,20 @@ function PessoaDoDia({
 
         {recados.length > 0 && (
           <div className="aniv-recados">
+            <p className="aniv-recados-tt">{recados.length === 1 ? "1 recado" : `${recados.length} recados`}</p>
             {recados.map((f) => (
-              <p key={f.autor} className="aniv-recado">
-                <span className="aniv-recado-emoji" aria-hidden>
-                  {f.reacao ? (EMOJI_REACAO[f.reacao] ?? "💬") : "💬"}
+              <div key={f.autor} className="aniv-recado">
+                <span className="aniv-recado-av">
+                  {f.autor_avatar
+                    ? <img src={f.autor_avatar} alt="" loading="lazy" />
+                    : <span className="aniv-recado-ini" aria-hidden>{iniciais(f.autor_nome)}</span>}
+                  <span className="aniv-recado-emoji" aria-hidden>{f.reacao ? (EMOJI_REACAO[f.reacao] ?? "💬") : "💬"}</span>
                 </span>
-                <span>
-                  <b>{f.sou_eu ? "Você" : primeiroESobrenome(f.autor_nome)}:</b> {f.mensagem}
-                </span>
-              </p>
+                <div className="aniv-recado-balao">
+                  <p className="aniv-recado-autor">{f.sou_eu ? "Você" : primeiroESobrenome(f.autor_nome)}</p>
+                  <p className="aniv-recado-texto">{f.mensagem}</p>
+                </div>
+              </div>
             ))}
           </div>
         )}
@@ -304,4 +349,36 @@ function iniciais(nome: string) {
   if (!partes.length) return "?";
   if (partes.length === 1) return partes[0].slice(0, 2).toUpperCase();
   return (partes[0][0] + partes[partes.length - 1][0]).toUpperCase();
+}
+
+/* ------------------------------------------------------------------ */
+/* Confete + emoji subindo (22/09/2026). Só enfeite: a camada não      */
+/* recebe clique e some para quem pediu menos movimento no sistema.    */
+/* ------------------------------------------------------------------ */
+const CORES_CONFETE = ["#f59e0b", "#fb923c", "#f472b6", "#34d399", "#60a5fa", "#a78bfa"];
+
+function Festa({ chave, subindo }: { chave: number; subindo: { id: number; emoji: string; esq: number; atraso?: number }[] }) {
+  // Recria os papeizinhos a cada "chave" (abertura do cartão / nova reação).
+  const confetes = useMemo(
+    () => Array.from({ length: 26 }, (_, i) => ({
+      id: `${chave}-${i}`,
+      esq: Math.random() * 100,
+      cor: CORES_CONFETE[i % CORES_CONFETE.length],
+      atraso: Math.random() * 0.5,
+      duracao: 1.5 + Math.random() * 1.1,
+    })),
+    [chave],
+  );
+
+  return (
+    <div className="aniv-festa" aria-hidden>
+      {confetes.map((c) => (
+        <span key={c.id} className="aniv-confete"
+              style={{ left: `${c.esq}%`, background: c.cor, animationDelay: `${c.atraso}s`, animationDuration: `${c.duracao}s` }} />
+      ))}
+      {subindo.map((e) => (
+        <span key={e.id} className="aniv-sobe" style={{ left: `${e.esq}%`, animationDelay: `${e.atraso ?? 0}ms` }}>{e.emoji}</span>
+      ))}
+    </div>
+  );
 }

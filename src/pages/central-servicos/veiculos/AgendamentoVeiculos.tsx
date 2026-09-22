@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState } from "react";
-import { ArrowLeft, ArrowRight, Car } from "lucide-react";
+import { ArrowLeft, ArrowRight, Car, Gauge } from "lucide-react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -10,11 +10,13 @@ import { useAuth } from "@/hooks/useAuth";
 import {
   conflitoNaAgenda,
   disponibilidadeDoVeiculo,
+  formatarData,
   hojeISO,
   useAgendamentos,
   useContratosParaAgendamento,
   useCriarAgendamento,
   useFrota,
+  useKmPendentes,
   type ContratoOpcao,
   type Turno,
   type VeiculoFrota,
@@ -44,6 +46,9 @@ const rascunhoInicial = () => ({
   destino: "",
   motivo: "",
   observacoes: "",
+  // KM do painel na retirada + foto (22/09/2026, chamado dos abastecimentos).
+  kmInicial: "",
+  fotoKm: null as File | null,
 });
 type Rascunho = ReturnType<typeof rascunhoInicial>;
 
@@ -65,6 +70,10 @@ export default function AgendamentoVeiculos() {
   const [incluirInativos, setIncluirInativos] = useState(false);
   const contratos = useContratosParaAgendamento(incluirInativos);
   const criar = useCriarAgendamento();
+  // Viagem anterior sem KM final trava o próximo agendamento (a trava de
+  // verdade é do banco; aqui é para a pessoa saber antes de preencher tudo).
+  const pendentes = useKmPendentes();
+  const pendencia = pendentes.data?.[0] ?? null;
 
   const [passo, setPasso] = useState<IndicePasso>(0);
   const [maximo, setMaximo] = useState<IndicePasso>(0);
@@ -133,6 +142,7 @@ export default function AgendamentoVeiculos() {
       return !conflitoNaAgenda(agendamentos, veiculo.id, dataInicio, dataFim, turno);
     }
     if (passo === 2) return ctr.length > 0;
+    if (passo === 3) return !!rascunho.kmInicial.trim() && !!rascunho.fotoKm && !pendencia;
     return true;
   })();
 
@@ -147,6 +157,8 @@ export default function AgendamentoVeiculos() {
         destino: rascunho.destino,
         motivo: rascunho.motivo,
         observacoes: rascunho.observacoes,
+        km_inicial: Number(rascunho.kmInicial),
+        km_inicial_foto: rascunho.fotoKm!,
         contratos: rascunho.contratos.map((id) => {
           const c = acharContrato(id);
           return {
@@ -192,6 +204,27 @@ export default function AgendamentoVeiculos() {
           </TabsList>
 
           <TabsContent value="novo">
+            {/* Avisa ANTES de começar (pedido do chamado): a foto do painel
+                vai ser pedida agora, e o KM final depois da viagem. */}
+            <div className="mb-4 flex items-start gap-3 rounded-2xl border border-amber-300 bg-amber-50/70 p-4 dark:bg-amber-500/10">
+              <Gauge className="mt-0.5 h-5 w-5 shrink-0 text-amber-600" />
+              <p className="text-sm text-foreground">
+                <b>Será solicitada a imagem do KM inicial do veículo agora.</b> Após finalizar a viagem,
+                insira o valor final do KM e uma imagem do painel — e anexe as notas de abastecimento na
+                própria viagem, em <b>Meus Agendamentos</b>.
+              </p>
+            </div>
+
+            {pendencia && (
+              <div className="mb-4 rounded-2xl border border-destructive/40 bg-destructive/10 p-4 text-sm">
+                <p className="font-semibold text-destructive">Você tem uma viagem sem o KM final</p>
+                <p className="mt-1 text-foreground">
+                  Viagem nº {pendencia.numero} · {pendencia.veiculo_nome} ({formatarData(pendencia.data_inicio)} a {formatarData(pendencia.data_fim)}).
+                  Feche o KM final dela em <b>Meus Agendamentos</b> para agendar outro veículo.
+                </p>
+              </div>
+            )}
+
             <Card className="p-5">
               <Passos atual={passo} maximoAlcancado={maximo} onIr={irPara} />
               <div className="mt-6">
@@ -292,6 +325,8 @@ export default function AgendamentoVeiculos() {
                     destino={rascunho.destino}
                     motivo={rascunho.motivo}
                     observacoes={rascunho.observacoes}
+                    kmInicial={rascunho.kmInicial}
+                    fotoKm={rascunho.fotoKm}
                     onMudar={mudar}
                   />
                 )}

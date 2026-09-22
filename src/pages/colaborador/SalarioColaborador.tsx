@@ -1,7 +1,7 @@
 import { useState } from "react";
-import { Eye, EyeOff, Info } from "lucide-react";
+import { Eye, EyeOff, Info, Wallet } from "lucide-react";
 import { fmtData, fmtMoeda, useSalarioColaborador } from "@/hooks/useColaboradorPortal";
-import { Carregando, Dado, Erro, GradeDados, Secao } from "./ui";
+import { Carregando, Dado, EmDesenvolvimento, Erro, GradeDados, Secao } from "./ui";
 
 // =====================================================================
 // PORTAL DO COLABORADOR — Salário
@@ -11,7 +11,24 @@ import { Carregando, Dado, Erro, GradeDados, Secao } from "./ui";
 // O valor nasce escondido — é a tela mais provável de ser aberta em público.
 // =====================================================================
 
+// Em desenvolvimento (22/09/2026): tela pronta mas desligada — só o aviso,
+// nada chama col_salario. Pra liberar: true.
+export const SALARIO_LIBERADO = false;
+
 export default function SalarioColaborador() {
+  if (!SALARIO_LIBERADO) {
+    return (
+      <EmDesenvolvimento
+        icone={<Wallet className="h-8 w-8" />}
+        titulo="Salário e dados de pagamento"
+        texto="Em breve você vai consultar aqui o seu salário cadastrado e os dados bancários. Qualquer dúvida sobre pagamento, fale com o RH."
+      />
+    );
+  }
+  return <SalarioCompleto />;
+}
+
+function SalarioCompleto() {
   const q = useSalarioColaborador();
   const [mostrar, setMostrar] = useState(false);
   if (q.isLoading) return <Carregando />;

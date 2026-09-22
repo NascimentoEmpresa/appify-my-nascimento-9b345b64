@@ -131,6 +131,10 @@ const VAGA_RESET = {
 import { DetalheSolicitacao, type TipoSolicitacao } from "./encarregados/DetalheSolicitacao";
 import { AVISO_REFAZER, podeRefazerFerias } from "@/lib/solicitacoes/feriasRefazer";
 import { BotaoCancelarDemissao } from "@/components/demissao/CancelarDemissao";
+import {
+  MEDIDAS, erroDaMedida, exigeChecarVerbal, medidaPor, statusDaMedida,
+  type MedidaDisciplinar, type VerbaisDoColaborador,
+} from "@/lib/rh/medidaDisciplinar";
 
 // SISTEMA_SOLICITACOES_*, EMPREGADOS, CONTRATOS... não estão no types.ts
 // gerado; mesmo padrão de comite-etica/db.ts — a exceção fica num lugar só.
@@ -260,6 +264,13 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
 
   // Modal advertência
   const [modalAdv, setModalAdv] = useState(false);
+  // Medida disciplinar (22/09/2026): a tela começa escolhendo O QUE se vai
+  // fazer; o tipo fica travado nessa escolha. "verbal" é registro direto.
+  const [modalMedida, setModalMedida] = useState(false);
+  const [medida, setMedida] = useState<MedidaDisciplinar | "">("");
+  const [verbais, setVerbais] = useState<VerbaisDoColaborador | null>(null);
+  const [semVerbal, setSemVerbal] = useState(false);   // card "não tem verbal, quer mesmo assim?"
+  const [semVerbalOk, setSemVerbalOk] = useState(false); // respondeu "sim, solicitar mesmo assim"
   const [adv, setAdv] = useState({ ...ADV_RESET });
   const [advHistorico, setAdvHistorico] = useState<AdvertenciaAnterior[]>([]);
   const [advExc, setAdvExc] = useState({ open: false, justificativa: "" });
@@ -810,18 +821,53 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
     setEmpSearch(emp.Nome ?? ""); setShowEmpDrop(false);
     // Histórico de advertências do colaborador (2ª advertência reabre o mesmo histórico).
     setAdvHistorico([]);
+    setVerbais(null); setSemVerbal(false); setSemVerbalOk(false);
     if (emp.ID != null) {
       const { data } = await db.from("SISTEMA_SOLICITACOES_ADVERTENCIA")
         .select("id, tipo_advertencia, grau, status, data_ocorrido, created_at")
         .eq("colaborador_id", emp.ID).order("created_at", { ascending: false }).limit(20);
       setAdvHistorico(data ?? []);
+      // Verbais vêm por RPC: quem solicita não enxerga advertência de outro
+      // solicitante pela tabela (RLS), e é justamente isso que precisa saber.
+      if (exigeChecarVerbal(medida)) {
+        const { data: v, error } = await db.rpc("adv_verbais_colaborador", { p_colaborador_id: emp.ID });
+        const achado = (error ? { total: 0, lista: [] } : (v ?? { total: 0, lista: [] })) as VerbaisDoColaborador;
+        setVerbais(achado);
+        if (achado.total > 0) {
+          // Verbal encontrada: já responde a pergunta do formulário.
+          const ultima = achado.lista[0];
+          setAdv(a => ({ ...a, advertencia_verbal_dada: "Sim", data_advertencia_verbal: (ultima?.data_ocorrido || ultima?.created_at || "").slice(0, 10) }));
+        } else {
+          setSemVerbal(true);
+        }
+      }
     }
   };
 
-  const abrirModalAdv = () => {
-    setModalAdv(true); setAdv({ ...ADV_RESET }); setAdvArquivos([]); setEmpSearch(""); setShowEmpDrop(false); setEmpregados([]); setAdvHistorico([]);
+  /** Abre o card de escolha da medida (o formulário vem depois). */
+  const abrirModalMedida = () => {
+    setModalMedida(true); setMedida(""); setModalAdv(false);
     if (!contratosFull.length) carregarContratos();
   };
+
+  const escolherMedida = (chave: MedidaDisciplinar) => {
+    const m = medidaPor(chave);
+    setMedida(chave);
+    setModalMedida(false);
+    setModalAdv(true);
+    setAdv({ ...ADV_RESET, tipo_advertencia: m?.tipoGravado ?? "" });
+    setAdvArquivos([]); setEmpSearch(""); setShowEmpDrop(false); setEmpregados([]); setAdvHistorico([]);
+    setVerbais(null); setSemVerbal(false); setSemVerbalOk(false);
+  };
+
+  /** "Registrar verbal" de dentro do aviso: troca a medida e mantém o colaborador. */
+  const trocarParaVerbal = () => {
+    setMedida("verbal");
+    setSemVerbal(false); setSemVerbalOk(false); setVerbais(null);
+    setAdv(a => ({ ...a, tipo_advertencia: "Verbal", grau: "", advertencia_verbal_dada: "Não", data_advertencia_verbal: "" }));
+  };
+
+  const abrirModalAdv = abrirModalMedida;
 
   // Abre o formulário pedido pela rota. Guarda o último valor atendido em vez
   // de um "já abri": sem isso, ir de Solicitar Vaga para Solicitar Férias pela
@@ -839,8 +885,11 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [abrir]);
 
-  // Trava: grau Baixo exige advertência verbal antes da escrita.
-  const advBloqueada = adv.grau === "Baixo" && adv.advertencia_verbal_dada === "Não";
+  const medidaAtual = medidaPor(medida);
+  const ehRegistroVerbal = !!medidaAtual?.registro;
+  // Trava: grau Baixo exige advertência verbal antes da escrita. Não vale
+  // para o registro verbal (ele É a verbal).
+  const advBloqueada = !ehRegistroVerbal && adv.grau === "Baixo" && adv.advertencia_verbal_dada === "Não";
 
   // Data do ocorrido com mais de 3 dias → fora do prazo (vira EXCEÇÃO com justificativa).
   const advForaDoPrazo = () => {
@@ -850,14 +899,14 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
   };
 
   const submitAdv = async () => {
-    if (!adv.colaborador_id) { toast("Selecione o colaborador.", "err"); return; }
-    if (!adv.tipo_advertencia) { toast("Selecione o tipo de advertência.", "err"); return; }
-    if (!adv.grau) { toast("Selecione o grau da advertência.", "err"); return; }
-    if (!adv.data_ocorrido) { toast("Informe a data do ocorrido.", "err"); return; }
-    if (adv.descricao_ocorrido.trim().length < 50) { toast("A descrição do ocorrido precisa ter pelo menos 50 caracteres.", "err"); return; }
-    if (adv.advertencia_verbal_dada === "Sim" && !adv.data_advertencia_verbal) { toast("Informe a data em que a advertência verbal foi aplicada.", "err"); return; }
+    const erro = erroDaMedida(medida, { colaborador_id: adv.colaborador_id, data_ocorrido: adv.data_ocorrido, descricao_ocorrido: adv.descricao_ocorrido, grau: adv.grau });
+    if (erro) { toast(erro, "err"); return; }
+    if (!ehRegistroVerbal && adv.advertencia_verbal_dada === "Sim" && !adv.data_advertencia_verbal) { toast("Informe a data em que a advertência verbal foi aplicada.", "err"); return; }
     if (advBloqueada) { toast("Primeiro dê a advertência verbal para dar a escrita.", "err"); return; }
-    if (advForaDoPrazo()) { setAdvExc({ open: true, justificativa: "" }); return; }  // pede justificativa de exceção
+    // Sem verbal no histórico: a pergunta tem que ter sido respondida.
+    if (!ehRegistroVerbal && verbais && verbais.total === 0 && !semVerbalOk) { setSemVerbal(true); return; }
+    // Registro verbal não tem prazo de 3 dias (é registro do que já aconteceu).
+    if (!ehRegistroVerbal && advForaDoPrazo()) { setAdvExc({ open: true, justificativa: "" }); return; }
     await doSubmitAdv(false, null);
   };
 
@@ -873,11 +922,12 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
       colaborador_cargo: adv.colaborador_cargo, colaborador_filial: adv.colaborador_filial,
       colaborador_admissao: adv.colaborador_admissao || null, colaborador_posto: adv.colaborador_posto || null, colaborador_escala: adv.colaborador_escala || null,
       contrato: adv.contrato || null, contrato_id: adv.contrato_id,
-      tipo_advertencia: adv.tipo_advertencia, grau: adv.grau, data_ocorrido: adv.data_ocorrido,
+      tipo_advertencia: medidaAtual?.tipoGravado ?? adv.tipo_advertencia, grau: ehRegistroVerbal ? null : adv.grau, data_ocorrido: adv.data_ocorrido,
       descricao_ocorrido: adv.descricao_ocorrido.trim(),
-      advertencia_verbal_dada: adv.advertencia_verbal_dada === "Sim",
-      data_advertencia_verbal: adv.advertencia_verbal_dada === "Sim" ? (adv.data_advertencia_verbal || null) : null,
-      status: "Aguardando Aprovação",
+      advertencia_verbal_dada: ehRegistroVerbal ? false : adv.advertencia_verbal_dada === "Sim",
+      data_advertencia_verbal: (!ehRegistroVerbal && adv.advertencia_verbal_dada === "Sim") ? (adv.data_advertencia_verbal || null) : null,
+      // Verbal entra pronta no histórico ("Registrada"); as outras vão pra fila.
+      status: statusDaMedida((medida || "escrita") as MedidaDisciplinar),
       excecao, justificativa_excecao: justificativa,
     };
     const { error, data } = await db.from("SISTEMA_SOLICITACOES_ADVERTENCIA").insert(payload).select("id").single();
@@ -899,7 +949,9 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
       }
       if (falhas) toast(`${falhas} anexo(s) não subiram — anexe de novo pelo card da solicitação.`, "err");
     }
-    toast(`Advertência solicitada${excecao ? " (EXCEÇÃO)" : ""} para ${adv.colaborador_nome}! (#${data?.id})`, "ok");
+    toast(ehRegistroVerbal
+      ? `Advertência verbal registrada no histórico de ${adv.colaborador_nome}. (#${data?.id})`
+      : `${medidaAtual?.titulo.replace("Solicitar ", "").replace(/^./, c => c.toUpperCase()) ?? "Advertência"} solicitada${excecao ? " (EXCEÇÃO)" : ""} para ${adv.colaborador_nome}! (#${data?.id})`, "ok");
     setAdvExc({ open: false, justificativa: "" });
     setModalAdv(false); setAdv({ ...ADV_RESET }); setAdvArquivos([]); setEmpSearch(""); carregarMinhasSols();
   };
@@ -976,7 +1028,7 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
                 catálogo), não este modal — o card só leva pra lá. */}
             <button onClick={base === "central" ? () => nav(rotas.vaga) : abrirModalVaga} className="ini-sol-create"><span className="icon">🎯</span><span>Solicitar Vaga</span></button>
             <button onClick={abrirModalFerias} className="ini-sol-create"><span className="icon">📅</span><span>Solicitar Férias</span></button>
-            <button onClick={abrirModalAdv} className="ini-sol-create"><span className="icon">⚠️</span><span>Advertência</span></button>
+            <button onClick={abrirModalMedida} className="ini-sol-create"><span className="icon">⚠️</span><span>Medida Disciplinar</span></button>
             {/* Demissão estava como "Em breve" — mas a tela existe e funciona
                 desde sempre, só não estava ligada aqui. Vai para a página
                 dedicada em vez de virar modal: é um formulário de vários
@@ -1554,13 +1606,74 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
         </div>
       )}
 
+      {/* ── Card: qual medida disciplinar (22/09/2026) ── */}
+      {modalMedida && (
+        <div className="ini-modal-ov" onClick={() => setModalMedida(false)}>
+          <div className="ini-modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 620 }}>
+            <button onClick={() => setModalMedida(false)} style={{ position: "absolute", top: 14, right: 14, background: "none", border: "none", color: "#64748b", fontSize: 20, cursor: "pointer" }}>✕</button>
+            <div style={{ fontSize: 20, fontWeight: 800, marginBottom: 4 }}>⚠️ Medida disciplinar</div>
+            <div style={{ fontSize: 14.5, color: "#64748b", marginBottom: 14 }}>O que você precisa fazer? A escolha define o formulário — e o tipo não muda depois.</div>
+            <div style={{ display: "grid", gap: 10 }}>
+              {MEDIDAS.map(m => (
+                <button key={m.chave} type="button" onClick={() => escolherMedida(m.chave)}
+                  style={{ display: "flex", gap: 12, alignItems: "flex-start", textAlign: "left", padding: "12px 14px", borderRadius: 12, border: "1.5px solid #e2e8f0", background: m.registro ? "#f8fafc" : "#fff", cursor: "pointer", fontFamily: "inherit" }}
+                  onMouseEnter={e => { e.currentTarget.style.borderColor = "#0f3171"; e.currentTarget.style.background = "#f0f4ff"; }}
+                  onMouseLeave={e => { e.currentTarget.style.borderColor = "#e2e8f0"; e.currentTarget.style.background = m.registro ? "#f8fafc" : "#fff"; }}>
+                  <span style={{ fontSize: 22, lineHeight: 1.2 }}>{m.icone}</span>
+                  <span style={{ minWidth: 0 }}>
+                    <span style={{ display: "block", fontSize: 15, fontWeight: 800, color: "#0f172a" }}>
+                      {m.titulo}
+                      {m.registro && <span style={{ marginLeft: 8, fontSize: 10.5, fontWeight: 800, color: "#15803d", background: "#dcfce7", borderRadius: 999, padding: "2px 8px", textTransform: "uppercase" }}>sem aprovação</span>}
+                    </span>
+                    <span style={{ display: "block", fontSize: 13.5, color: "#64748b", marginTop: 2 }}>{m.descricao}</span>
+                  </span>
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Card: colaborador sem advertência verbal (22/09/2026) ── */}
+      {semVerbal && modalAdv && (
+        <div className="ini-modal-ov" style={{ zIndex: 800 }} onClick={() => setSemVerbal(false)}>
+          <div className="ini-modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 520, textAlign: "center", padding: "28px 26px 22px" }}>
+            <div style={{ width: 56, height: 56, borderRadius: "50%", background: "#fef3c7", color: "#b45309", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 28, margin: "0 auto 14px" }}>🗣️</div>
+            <div style={{ fontSize: 18, fontWeight: 800, color: "#0f172a", marginBottom: 8 }}>Esse colaborador não tem histórico de advertência verbal</div>
+            <div style={{ fontSize: 14, color: "#475569", lineHeight: 1.55, marginBottom: 18 }}>
+              <b>{adv.colaborador_nome}</b> não tem nenhuma advertência verbal registrada. O Jurídico costuma pedir a verbal antes da {medidaAtual?.tipoGravado.toLowerCase() ?? "escrita"}.
+              <br />Tem certeza que deseja solicitar mesmo assim?
+            </div>
+            <div style={{ display: "flex", justifyContent: "center", gap: 10, flexWrap: "wrap" }}>
+              <button type="button" onClick={() => { setSemVerbal(false); setSemVerbalOk(true); }}
+                style={{ padding: "9px 20px", borderRadius: 10, border: "none", background: "#d97706", color: "#fff", fontSize: 14, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+                Sim, solicitar mesmo assim
+              </button>
+              <button type="button" onClick={() => { setSemVerbal(false); setModalAdv(false); }}
+                style={{ padding: "9px 20px", borderRadius: 10, border: "1px solid #e2e8f0", background: "#fff", color: "#475569", fontSize: 14, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+                Não
+              </button>
+              <button type="button" onClick={trocarParaVerbal}
+                style={{ padding: "9px 20px", borderRadius: 10, border: "none", background: "#16a34a", color: "#fff", fontSize: 14, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+                Registrar verbal
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ── Modal Advertência ── */}
       {modalAdv && (
         <div className="ini-modal-ov">
           <div className="ini-modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 560 }}>
             <button onClick={() => setModalAdv(false)} style={{ position: "absolute", top: 14, right: 14, background: "none", border: "none", color: "#64748b", fontSize: 20, cursor: "pointer" }}>✕</button>
-            <div style={{ fontSize: 20, fontWeight: 800, marginBottom: 4 }}>⚠️ Solicitar Advertência</div>
-            <div style={{ fontSize: 14.5, color: "#64748b", marginBottom: 12 }}>Informe quem recebe a advertência e responda as questões. Vai direto para o <b>Jurídico</b>, que aprova, reprova e dá o parecer.</div>
+            <div style={{ fontSize: 20, fontWeight: 800, marginBottom: 4 }}>{medidaAtual?.icone ?? "⚠️"} {medidaAtual?.titulo ?? "Medida disciplinar"}</div>
+            <div style={{ fontSize: 14.5, color: "#64748b", marginBottom: 12 }}>
+              {ehRegistroVerbal
+                ? <>Fica no <b>histórico do colaborador</b> para o Jurídico consultar e serve de base para uma advertência escrita depois. Não passa por aprovação.</>
+                : <>Informe quem recebe e descreva o ocorrido. Vai para aprovação e depois para o <b>Jurídico</b>, que dá o parecer.</>}
+              <button type="button" onClick={abrirModalMedida} style={{ marginLeft: 8, border: "none", background: "none", color: "#0f3171", fontWeight: 700, cursor: "pointer", fontFamily: "inherit", fontSize: 13.5, textDecoration: "underline" }}>trocar medida</button>
+            </div>
             {/* Quem pede vem do login — não se digita (17/09/2026). */}
             <div style={{ margin: "0 0 14px", padding: "8px 12px", borderRadius: 10, background: "#f8fafc", border: "1px solid #e2e8f0", fontSize: 14.5, color: "#475569" }}>
               <span style={{ fontSize: 14.5, fontWeight: 800, color: "#64748b", textTransform: "uppercase", letterSpacing: ".4px" }}>Solicitante</span><br />
@@ -1604,6 +1717,21 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
               </div>
             )}
 
+            {/* Verbal do colaborador (22/09/2026): encontrada → segue no mesmo
+                card; não encontrada → o aviso com as três saídas, abaixo. */}
+            {adv.colaborador_id && !ehRegistroVerbal && verbais && verbais.total > 0 && (
+              <div style={{ margin: "-6px 0 14px", padding: "10px 12px", borderRadius: 10, background: "#f0fdf4", border: "1px solid #bbf7d0", fontSize: 14.5, color: "#15803d" }}>
+                <div style={{ fontWeight: 800, marginBottom: 4 }}>✓ ADVERTÊNCIA VERBAL ENCONTRADA ({verbais.total})</div>
+                {verbais.lista.slice(0, 3).map(v => (
+                  <div key={v.id} style={{ borderTop: "1px solid #bbf7d0", padding: "4px 0", color: "#166534" }}>
+                    <b>{fmtDt(v.data_ocorrido || v.created_at)}</b>{v.solicitante_nome ? " · registrada por " + v.solicitante_nome : ""}
+                    {v.descricao_ocorrido && <div style={{ color: "#475569", fontSize: 13.5 }}>{v.descricao_ocorrido}</div>}
+                  </div>
+                ))}
+                <div style={{ color: "#475569", fontSize: 13.5, marginTop: 4 }}>Pode seguir com a {medidaAtual?.tipoGravado.toLowerCase()} abaixo.</div>
+              </div>
+            )}
+
             {adv.colaborador_id && advHistorico.length > 0 && (
               <div style={{ margin: "-6px 0 14px", padding: "8px 12px", borderRadius: 10, background: "#fff7ed", border: "1px solid #fed7aa", fontSize: 14.5, color: "#9a3412" }}>
                 <div style={{ fontWeight: 700, marginBottom: 4 }}>⚠️ {advHistorico.length} advertência(s) anterior(es) deste colaborador:</div>
@@ -1621,24 +1749,27 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
               <input className="ini-fi" readOnly value={adv.contrato || "—"} style={{ background: "#f8fafc", color: "#475569", cursor: "not-allowed" }} />
             </div>
 
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-              <div className="ini-fg"><label>Tipo de advertência *</label><select className="ini-fi" value={adv.tipo_advertencia} onChange={e => setAdv(a => ({ ...a, tipo_advertencia: e.target.value }))}><option value="">— Selecione —</option>{["Escrita", "Suspensão", "Justa Causa"].map(o => <option key={o}>{o}</option>)}</select></div>
-              <div className="ini-fg"><label>Grau *</label><select className="ini-fi" value={adv.grau} onChange={e => setAdv(a => ({ ...a, grau: e.target.value }))}><option value="">— Selecione —</option>{["Baixo", "Médio", "Alto"].map(o => <option key={o}>{o}</option>)}</select></div>
+            <div style={{ display: "grid", gridTemplateColumns: ehRegistroVerbal ? "1fr" : "1fr 1fr", gap: 12 }}>
+              {/* O tipo vem da escolha do card e não se troca aqui (22/09/2026). */}
+              <div className="ini-fg"><label>Tipo</label><input className="ini-fi" readOnly value={medidaAtual?.tipoGravado ?? ""} style={{ background: "#f8fafc", color: "#475569", cursor: "not-allowed", fontWeight: 700 }} /></div>
+              {!ehRegistroVerbal && (
+                <div className="ini-fg"><label>Grau *</label><select className="ini-fi" value={adv.grau} onChange={e => setAdv(a => ({ ...a, grau: e.target.value }))}><option value="">— Selecione —</option>{["Baixo", "Médio", "Alto"].map(o => <option key={o}>{o}</option>)}</select></div>
+              )}
             </div>
 
-            <div className="ini-fg"><label>Data do ocorrido *</label><input className="ini-fi" type="date" max={hojeMaisDias(0)} value={adv.data_ocorrido} onChange={e => setAdv(a => ({ ...a, data_ocorrido: e.target.value }))} /><div style={{ fontSize: 14.5, color: advForaDoPrazo() ? "#dc2626" : "#64748b", marginTop: 3, fontWeight: 600 }}>{advForaDoPrazo() ? "⚠️ Mais de 3 dias atrás — será registrada como Exceção (com justificativa)." : "Prazo ideal: até 3 dias atrás."}</div></div>
+            <div className="ini-fg"><label>Data do ocorrido *</label><input className="ini-fi" type="date" max={hojeMaisDias(0)} value={adv.data_ocorrido} onChange={e => setAdv(a => ({ ...a, data_ocorrido: e.target.value }))} /><div style={{ fontSize: 14.5, color: (!ehRegistroVerbal && advForaDoPrazo()) ? "#dc2626" : "#64748b", marginTop: 3, fontWeight: 600 }}>{ehRegistroVerbal ? "Quando a conversa com o colaborador aconteceu." : advForaDoPrazo() ? "⚠️ Mais de 3 dias atrás — será registrada como Exceção (com justificativa)." : "Prazo ideal: até 3 dias atrás."}</div></div>
             <div className="ini-fg">
               <label>Descrição do ocorrido * (mín. 50 caracteres)</label>
               <textarea className="ini-fi" rows={4} placeholder="Descreva o que aconteceu, com detalhes..." value={adv.descricao_ocorrido} onChange={e => setAdv(a => ({ ...a, descricao_ocorrido: e.target.value }))} />
               <div style={{ fontSize: 14.5, color: adv.descricao_ocorrido.trim().length >= 50 ? "#16a34a" : "#64748b", marginTop: 3, fontWeight: 600 }}>{adv.descricao_ocorrido.trim().length}/50 caracteres</div>
             </div>
 
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+            {!ehRegistroVerbal && <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
               <div className="ini-fg"><label>Advertência verbal já foi dada para o mesmo fato?</label><select className="ini-fi" value={adv.advertencia_verbal_dada} onChange={e => setAdv(a => ({ ...a, advertencia_verbal_dada: e.target.value, tipo_advertencia: (e.target.value === "Sim" && !a.tipo_advertencia) ? "Escrita" : a.tipo_advertencia }))}><option>Não</option><option>Sim</option></select></div>
               {adv.advertencia_verbal_dada === "Sim" && (
                 <div className="ini-fg"><label>Data da advertência verbal *</label><input className="ini-fi" type="date" max={hojeMaisDias(0)} value={adv.data_advertencia_verbal} onChange={e => setAdv(a => ({ ...a, data_advertencia_verbal: e.target.value }))} /></div>
               )}
-            </div>
+            </div>}
 
             {advBloqueada && (
               <div style={{ background: "#fef2f2", border: "1px solid #fecaca", color: "#b91c1c", borderRadius: 12, padding: "10px 14px", fontSize: 14.5, marginBottom: 14, fontWeight: 600 }}>
@@ -1671,7 +1802,7 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
 
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 8, paddingTop: 14, borderTop: "1px solid #e2e8f0" }}>
               <button onClick={() => setModalAdv(false)} style={{ padding: "7px 14px", borderRadius: 10, border: "1px solid #e2e8f0", background: "#fff", color: "#475569", fontSize: 14.5, fontWeight: 700, cursor: "pointer" }}>Cancelar</button>
-              <button onClick={submitAdv} disabled={advBloqueada} style={{ padding: "7px 14px", borderRadius: 10, border: "none", background: advBloqueada ? "#cbd5e1" : "#16a34a", color: "#fff", fontSize: 14.5, fontWeight: 700, cursor: advBloqueada ? "not-allowed" : "pointer" }}>✓ Solicitar Advertência</button>
+              <button onClick={submitAdv} disabled={advBloqueada} style={{ padding: "7px 14px", borderRadius: 10, border: "none", background: advBloqueada ? "#cbd5e1" : "#16a34a", color: "#fff", fontSize: 14.5, fontWeight: 700, cursor: advBloqueada ? "not-allowed" : "pointer" }}>{ehRegistroVerbal ? "✓ Registrar advertência verbal" : `✓ Solicitar ${medidaAtual?.tipoGravado.toLowerCase() ?? "advertência"}`}</button>
             </div>
           </div>
         </div>

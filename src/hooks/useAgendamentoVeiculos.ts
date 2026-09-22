@@ -104,6 +104,9 @@ export interface NovoAgendamento {
   observacoes?: string | null;
   /** codigo = id da "CONTRATOS"; null + administrativo = viagem sem contrato. */
   contratos: { codigo: number | null; nome: string; administrativo?: boolean }[];
+  /** KM do painel na retirada + a foto dele (obrigatórios desde 22/09/2026). */
+  km_inicial: number;
+  km_inicial_foto: File;
 }
 
 // ── Foto do veículo ──────────────────────────────────────────────────
@@ -350,6 +353,7 @@ function useInvalidar() {
   return () => {
     qc.invalidateQueries({ queryKey: ["cs_veiculo_agendamento"] });
     qc.invalidateQueries({ queryKey: ["cs_veiculos_frota"] });
+    qc.invalidateQueries({ queryKey: ["cs_veiculo_km_pendentes"] });
   };
 }
 
@@ -375,6 +379,10 @@ export function useCriarAgendamento() {
     mutationFn: async (n: NovoAgendamento): Promise<Agendamento> => {
       if (!user?.id) throw new Error("Sessão expirada. Entre novamente.");
       if (!n.contratos.length) throw new Error("Selecione ao menos um contrato atendido pela viagem.");
+      if (!(n.km_inicial >= 0)) throw new Error("Informe o KM inicial do painel.");
+      if (!n.km_inicial_foto) throw new Error("Anexe a foto do painel com o KM inicial.");
+      // A foto sobe antes: sem ela o banco recusa a reserva (trigger).
+      const fotoKm = await subirArquivoVeiculo(n.km_inicial_foto, "km/novos");
 
       const { data, error } = await sb
         .from("cs_veiculo_agendamento")
@@ -392,6 +400,8 @@ export function useCriarAgendamento() {
           motivo: n.motivo?.trim() || null,
           observacoes: n.observacoes?.trim() || null,
           solicitante_id: user.id,
+          km_inicial: n.km_inicial,
+          km_inicial_foto: fotoKm.path,
         })
         .select("*")
         .single();
@@ -438,6 +448,144 @@ export function useCancelarAgendamento() {
       if (!data?.length) throw new Error("Você só pode cancelar os seus próprios agendamentos.");
     },
     onSuccess: () => { invalidar(); toast.success("Agendamento cancelado."); },
+    onError: (e: any) => toast.error(mensagemDeErro(e)),
+  });
+}
+
+// =====================================================================
+// KM com foto do painel e nota de abastecimento (22/09/2026, mig 211).
+//
+// Chamado: rastrear quem usou o carro, para qual contrato e com qual nota
+// de combustível — o que antes vivia num grupo de WhatsApp. KM inicial +
+// foto na retirada, KM final + foto na devolução (sem fechar, não se agenda
+// outro carro — a trava é do banco), e a nota anexada na viagem com os
+// contratos que ela atende.
+// =====================================================================
+
+/** Bucket das fotos de painel e das notas de abastecimento. */
+export const BUCKET_VEICULOS = "cs-veiculos";
+
+export interface ContratoSimples { codigo: number | null; nome: string; administrativo?: boolean }
+
+export interface Abastecimento {
+  id: string; data: string; descricao: string | null; valor: number | null; litros: number | null; km: number | null;
+  storage_path: string; nome_arquivo: string; criado_por_nome: string | null; created_at: string;
+  contratos: ContratoSimples[];
+}
+
+export interface Viagem {
+  id: string; numero: number; veiculo_nome: string; veiculo_identificador: string | null;
+  data_inicio: string; data_fim: string; turno: Turno; status: StatusAgendamento;
+  solicitante_nome: string | null; solicitante_id: string;
+  destino: string | null; motivo: string | null; observacoes: string | null;
+  km_inicial: number | null; km_inicial_foto: string | null; km_inicial_em: string | null;
+  km_final: number | null; km_final_foto: string | null; km_final_em: string | null;
+  rodados: number | null;
+  contratos: ContratoSimples[];
+  abastecimentos: Abastecimento[];
+}
+
+export interface KmPendente {
+  id: string; numero: number; veiculo_nome: string; data_inicio: string; data_fim: string; km_inicial: number;
+}
+
+/** Sobe foto/nota e devolve o caminho no bucket. */
+export async function subirArquivoVeiculo(file: File, pasta: string): Promise<{ path: string; nome: string; tipo: string; tamanho: number }> {
+  const limpo = file.name.replace(/[^\w.-]+/g, "_");
+  const path = `${pasta}/${Date.now()}-${limpo}`;
+  const { error } = await supabase.storage.from(BUCKET_VEICULOS).upload(path, file, { contentType: file.type || undefined });
+  if (error) throw new Error(`Não deu para enviar "${file.name}": ${error.message}`);
+  return { path, nome: file.name, tipo: file.type || "", tamanho: file.size };
+}
+
+/** Abre foto/nota do bucket privado numa aba. */
+export async function abrirArquivoVeiculo(path: string): Promise<void> {
+  const { data, error } = await supabase.storage.from(BUCKET_VEICULOS).createSignedUrl(path, VALIDADE_LINK_S);
+  if (error || !data?.signedUrl) { toast.error("Não consegui abrir o arquivo."); return; }
+  window.open(data.signedUrl, "_blank", "noopener");
+}
+
+/** Viagens minhas que terminaram e não tiveram o KM final fechado. */
+export function useKmPendentes() {
+  return useQuery({
+    queryKey: ["cs_veiculo_km_pendentes"],
+    queryFn: async (): Promise<KmPendente[]> => {
+      const { data, error } = await sb.rpc("cs_veiculo_km_pendentes");
+      if (error) throw error;
+      return (data ?? []) as KmPendente[];
+    },
+    staleTime: 30_000,
+  });
+}
+
+/** A viagem inteira: KM, contratos e notas de abastecimento. */
+export function useViagem(agendamentoId: string | null) {
+  return useQuery({
+    queryKey: ["cs_veiculo_viagem", agendamentoId],
+    enabled: !!agendamentoId,
+    queryFn: async (): Promise<Viagem> => {
+      const { data, error } = await sb.rpc("cs_veiculo_viagem", { p_agendamento: agendamentoId });
+      if (error) throw error;
+      return data as Viagem;
+    },
+  });
+}
+
+function useInvalidarViagem() {
+  const qc = useQueryClient();
+  return (id?: string) => {
+    qc.invalidateQueries({ queryKey: ["cs_veiculo_viagem", id] });
+    qc.invalidateQueries({ queryKey: ["cs_veiculo_agendamento"] });
+    qc.invalidateQueries({ queryKey: ["cs_veiculo_km_pendentes"] });
+  };
+}
+
+export function useFecharKm() {
+  const invalidar = useInvalidarViagem();
+  return useMutation({
+    mutationFn: async (v: { id: string; km: number; foto: File }) => {
+      const arq = await subirArquivoVeiculo(v.foto, `km/${v.id}`);
+      const { error } = await sb.rpc("cs_veiculo_km_final", { p_agendamento: v.id, p_km: v.km, p_foto: arq.path });
+      if (error) throw error;
+    },
+    onSuccess: (_d, v) => { invalidar(v.id); toast.success("KM final registrado. Viagem fechada."); },
+    onError: (e: any) => toast.error(mensagemDeErro(e)),
+  });
+}
+
+export function useDefinirContratosDaViagem() {
+  const invalidar = useInvalidarViagem();
+  return useMutation({
+    mutationFn: async (v: { id: string; contratos: ContratoSimples[] }) => {
+      const { error } = await sb.rpc("cs_veiculo_contratos_definir", { p_agendamento: v.id, p_contratos: v.contratos });
+      if (error) throw error;
+    },
+    onSuccess: (_d, v) => { invalidar(v.id); toast.success("Contratos da viagem atualizados."); },
+    onError: (e: any) => toast.error(mensagemDeErro(e)),
+  });
+}
+
+export function useRegistrarAbastecimento() {
+  const invalidar = useInvalidarViagem();
+  return useMutation({
+    mutationFn: async (v: {
+      id: string; arquivo: File; contratos: ContratoSimples[];
+      descricao?: string; data?: string; valor?: number | null; litros?: number | null; km?: number | null;
+    }) => {
+      const arq = await subirArquivoVeiculo(v.arquivo, `notas/${v.id}`);
+      const { error } = await sb.rpc("cs_veiculo_abastecimento_registrar", {
+        p_agendamento: v.id,
+        p_arquivo: { path: arq.path, nome: arq.nome, tipo: arq.tipo, tamanho: String(arq.tamanho) },
+        p_contratos: v.contratos,
+        p_descricao: v.descricao ?? null,
+        p_data: v.data || null,
+        p_valor: v.valor ?? null,
+        p_litros: v.litros ?? null,
+        p_km: v.km ?? null,
+      });
+      if (error) throw error;
+    },
+    onSuccess: (_d, v) => { invalidar(v.id); toast.success("Nota de abastecimento anexada."); },
     onError: (e: any) => toast.error(mensagemDeErro(e)),
   });
 }
