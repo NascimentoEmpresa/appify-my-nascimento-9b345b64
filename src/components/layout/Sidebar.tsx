@@ -725,6 +725,7 @@ const sistemasModule: ModuleDef = {
       defaultOpen: true,
       items: [
         { label: "Hora Extra", to: "/app/sistemas/hora-extra", icon: Clock },
+        { label: "Dashboard de HE", to: "/app/sistemas/hora-extra/liberacao/dashboards", icon: LayoutDashboard },
         { label: "Liberação de HE", to: "/app/sistemas/hora-extra/liberacao", icon: CheckCircle2 },
       ],
     },

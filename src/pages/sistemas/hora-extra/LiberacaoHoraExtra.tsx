@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
-import { CheckCircle2, ChevronDown, Clock3, FileText, Hourglass, Search } from "lucide-react";
+import { useNavigate } from "react-router-dom";
+import { CheckCircle2, ChevronDown, Clock3, FileText, Hourglass, LayoutDashboard, Search } from "lucide-react";
 import { AcessoGate } from "@/components/auth/AcessoGate";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -35,6 +36,7 @@ function fimMes() {
 }
 
 export default function LiberacaoHoraExtra() {
+  const navegar = useNavigate();
   const { data: podeAprovar = false } = useScreenAccess("sistemas_hora_extra", "aprovar");
   const [inicio, setInicio] = useState(inicioMes),
     [fim, setFim] = useState(fimMes);
@@ -77,11 +79,26 @@ export default function LiberacaoHoraExtra() {
           <h1 className="text-2xl font-extrabold">Liberação de Hora Extra</h1>
           <p className="text-sm text-slate-500">Analise e aprove as solicitações de horas extras da sua equipe</p>
         </div>
-        <AcessoGate menu="sistemas_hora_extra" acao="aprovar">
-          <Button onClick={() => setNovo(true)} className="bg-orange-500 hover:bg-orange-600">
-            + &nbsp; Nova Solicitação de HE
-          </Button>
-        </AcessoGate>
+        <div className="flex flex-wrap items-center gap-2">
+          {/* O dashboard tem menu próprio: o botão some para quem não foi
+              liberado nele, senão o clique cairia na tela de acesso negado
+              do RouteGuard. */}
+          <AcessoGate menu="sistemas_hora_extra_dashboard" acao="visualizar">
+            <Button
+              variant="outline"
+              className="bg-white"
+              onClick={() => navegar("/app/sistemas/hora-extra/liberacao/dashboards")}
+            >
+              <LayoutDashboard className="mr-2 h-4 w-4" />
+              Dashboard
+            </Button>
+          </AcessoGate>
+          <AcessoGate menu="sistemas_hora_extra" acao="aprovar">
+            <Button onClick={() => setNovo(true)} className="bg-orange-500 hover:bg-orange-600">
+              + &nbsp; Nova Solicitação de HE
+            </Button>
+          </AcessoGate>
+        </div>
       </div>
       <div className="mb-4 grid gap-3 md:grid-cols-4">
         <CartaoMetrica
