@@ -138,6 +138,16 @@ export interface OpcoesExportacaoUfrgs {
  * tarifa antiga saem com valor gravado em vez de fórmula — melhor uma célula
  * sem fórmula do que uma fórmula que devolve outro número.
  */
+// 22/09/2026: a tabela de tarifas virou editável pela tela e um sindicato
+// NOVO pode nascer sem passar por código (ver sindicatosUfrgs). Esta lista
+// continua com dois de propósito: ela não é "os sindicatos do sistema", é o
+// LAYOUT do arquivo — a planilha entregue tem exatamente as linhas 5 e 6
+// reservadas para tarifa, e as fórmulas das colunas R e S apontam para elas.
+// Diária de um terceiro sindicato exporta com o VALOR gravado em vez da
+// fórmula (o mesmo caminho de quem atravessa um dissídio, logo acima): o
+// número sai certo, só não sai clicável. Abrir espaço para o terceiro é
+// mexer em todas as referências absolutas da folha — mudança à parte, com a
+// planilha nova na mão.
 const ORDEM_TARIFA: readonly string[] = ["SINECARGA/RS", "SINDIRODOSUL/RS"];
 
 function tarifasDoCabecalho(diarias: DiariaUfrgs[], opcoes: OpcoesExportacaoUfrgs) {

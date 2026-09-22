@@ -408,10 +408,17 @@ export function useFornecedoresAtivos() {
     queryKey: ["malote_fornecedores_ativos"],
     staleTime: 5 * 60_000,
     queryFn: async () => {
-      const { data, error } = await (supabase as any)
-        .from("fornecedor")
-        .select("id, razao_social, nome_fantasia, cnpj_cpf")
-        .order("razao_social");
+      // SIS-2026-0480: era um SELECT direto em `fornecedor`, e a RLS dessa
+      // tabela (forn_select) exige o menu do CADASTRO de fornecedores,
+      // 'fornecedores' (/app/suprimentos/fornecedores). Quem só lança despesa
+      // no Malote ou aprova diária não tem esse menu — e RLS negada devolve
+      // zero linhas, não erro: o combobox de Fornecedor no Rateio aparecia
+      // simplesmente VAZIO, sem mensagem nenhuma, enquanto o campo era
+      // obrigatório (SIS-2026-0467). Medido em produção: 27 dos 44 usuários
+      // com 'malote_criar_despesa' caíam nisso. A RPC SECURITY DEFINER devolve
+      // só id/nome/CNPJ para quem usa alguma tela que renderiza o Rateio; o
+      // resto do cadastro continua atrás da RLS de sempre.
+      const { data, error } = await (supabase as any).rpc("malote_fornecedores_para_rateio");
       if (error) throw error;
       // SIS-2026-0399: cnpj_cpf exposto pra virar hint de busca no combobox
       // do Rateio — o cadastro é feito pelo próprio fornecedor, então o
@@ -721,6 +728,23 @@ export interface SalvarDespesaInput {
   solicitacao_dispensada_manualmente?: boolean;
 }
 
+// [SEM-CHAMADO] (achado do usuário, 22/09/2026 — mesmo padrão do incidente
+// anterior do João no Jurídico): a malote_despesa é criada antes das tabelas
+// filhas (rateio/itens/links/parcelas). Se uma dessas falhar — por exemplo
+// uma migration esquecida, tabela não existe ainda no schema cache — a
+// despesa já existe, mas quem chamou só via um erro genérico e clicava de
+// novo, duplicando a despesa a cada tentativa. Esse erro carrega o
+// despesaId já criado, pra quem chama poder reenviar como UPDATE (mesmo
+// caminho de despesaIdInput acima) em vez de criar outra.
+export class ErroSalvarDespesaParcial extends Error {
+  despesaId: string;
+  constructor(despesaId: string, message: string) {
+    super(message);
+    this.name = "ErroSalvarDespesaParcial";
+    this.despesaId = despesaId;
+  }
+}
+
 export function useSalvarDespesa() {
   const qc = useQueryClient();
   return useMutation({
@@ -755,44 +779,51 @@ export function useSalvarDespesa() {
         despesaId = despesa.id as string;
       }
 
-      if (rateio) {
-        await (supabase as any).from("malote_despesa_rateio_linha").delete().eq("despesa_id", despesaId);
-        if (rateio.length > 0) {
-          const rows = rateio.map(({ id: _id, ...r }, i) => ({ ...r, despesa_id: despesaId, ordem: i }));
-          const { error: rErr } = await (supabase as any).from("malote_despesa_rateio_linha").insert(rows);
-          if (rErr) throw rErr;
+      // A partir daqui a despesa já existe — qualquer erro precisa levar o
+      // despesaId junto (ver ErroSalvarDespesaParcial acima).
+      try {
+        if (rateio) {
+          await (supabase as any).from("malote_despesa_rateio_linha").delete().eq("despesa_id", despesaId);
+          if (rateio.length > 0) {
+            const rows = rateio.map(({ id: _id, ...r }, i) => ({ ...r, despesa_id: despesaId, ordem: i }));
+            const { error: rErr } = await (supabase as any).from("malote_despesa_rateio_linha").insert(rows);
+            if (rErr) throw rErr;
+          }
         }
-      }
 
-      // Mesma estratégia do rateio: apaga e regrava. A lista é pequena e
-      // pertence inteira à solicitação, então reconciliar linha a linha só
-      // traria complexidade sem ganho (SIS-2026-0207).
-      if (itens) {
-        await (supabase as any).from("malote_despesa_item").delete().eq("despesa_id", despesaId);
-        if (itens.length > 0) {
-          const rows = itens.map(({ id: _id, ...i }, ordem) => ({ ...i, despesa_id: despesaId, ordem }));
-          const { error: iErr } = await (supabase as any).from("malote_despesa_item").insert(rows);
-          if (iErr) throw iErr;
+        // Mesma estratégia do rateio: apaga e regrava. A lista é pequena e
+        // pertence inteira à solicitação, então reconciliar linha a linha só
+        // traria complexidade sem ganho (SIS-2026-0207).
+        if (itens) {
+          await (supabase as any).from("malote_despesa_item").delete().eq("despesa_id", despesaId);
+          if (itens.length > 0) {
+            const rows = itens.map(({ id: _id, ...i }, ordem) => ({ ...i, despesa_id: despesaId, ordem }));
+            const { error: iErr } = await (supabase as any).from("malote_despesa_item").insert(rows);
+            if (iErr) throw iErr;
+          }
         }
-      }
 
-      // SIS-2026-0398: mesma estratégia dos itens acima — apaga e regrava.
-      if (links_estruturados) {
-        await (supabase as any).from("malote_despesa_link").delete().eq("despesa_id", despesaId);
-        if (links_estruturados.length > 0) {
-          const rows = links_estruturados.map(({ id: _id, ...l }, ordem) => ({ ...l, despesa_id: despesaId, ordem }));
-          const { error: lErr } = await (supabase as any).from("malote_despesa_link").insert(rows);
-          if (lErr) throw lErr;
+        // SIS-2026-0398: mesma estratégia dos itens acima — apaga e regrava.
+        if (links_estruturados) {
+          await (supabase as any).from("malote_despesa_link").delete().eq("despesa_id", despesaId);
+          if (links_estruturados.length > 0) {
+            const rows = links_estruturados.map(({ id: _id, ...l }, ordem) => ({ ...l, despesa_id: despesaId, ordem }));
+            const { error: lErr } = await (supabase as any).from("malote_despesa_link").insert(rows);
+            if (lErr) throw lErr;
+          }
         }
-      }
 
-      if (parcelas) {
-        await (supabase as any).from("malote_despesa_parcela").delete().eq("despesa_id", despesaId);
-        if (parcelas.length > 0) {
-          const rows = parcelas.map((p) => ({ ...p, despesa_id: despesaId }));
-          const { error: pErr } = await (supabase as any).from("malote_despesa_parcela").insert(rows);
-          if (pErr) throw pErr;
+        if (parcelas) {
+          await (supabase as any).from("malote_despesa_parcela").delete().eq("despesa_id", despesaId);
+          if (parcelas.length > 0) {
+            const rows = parcelas.map((p) => ({ ...p, despesa_id: despesaId }));
+            const { error: pErr } = await (supabase as any).from("malote_despesa_parcela").insert(rows);
+            if (pErr) throw pErr;
+          }
         }
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : (e as { message?: string })?.message ?? "Erro ao salvar solicitação.";
+        throw new ErroSalvarDespesaParcial(despesaId, msg);
       }
 
       return despesaId;
@@ -1870,6 +1901,51 @@ export function nomesAprovadorNivel(
     for (const n of classificacaoPorId.get(id)?.[campo] ?? []) nomes.add(n);
   }
   return Array.from(nomes);
+}
+
+type ClassificacaoAprovadoresIds = {
+  aprovador1_user_ids?: string[] | null;
+  aprovador2_user_ids?: string[] | null;
+  aprovador3_user_ids?: string[] | null;
+};
+
+// [SEM-CHAMADO] (achado do usuário, 22/09/2026 — DM-2026-0895 travada em
+// "nenhum aprovador configurado"): despesa multi-classificação não tem
+// classificacao_id na própria linha (é por linha do rateio), então
+// souAprovadorDoNivel (que só olha despesa.classificacao) nunca reconhecia
+// ninguém como aprovador dela — mesmo bug do RPC malote_e_aprovador_do_nivel
+// no banco (corrigido junto, mesma migration desta). Decisão do Iury: pra
+// despesa de rateio, vale QUALQUER aprovador de QUALQUER classificação das
+// linhas daquele nível — mesma lógica de união já usada pra exibir nomes em
+// nomesAprovadorNivel acima, agora também pra decidir permissão de fato.
+export function souAprovadorDoNivelComRateio(
+  despesa: MaloteDespesaRow,
+  nivel: 1 | 2 | 3,
+  userId: string | null | undefined,
+  classificacaoIdsRateio: Set<string> | undefined,
+  classificacaoPorId: Map<string, ClassificacaoAprovadoresIds>,
+  formaEspecial?: { fluxo_aprovacao: string; aprovador_especial_user_id: string | null } | null
+): boolean {
+  if (!userId) return false;
+  if (formaEspecial?.fluxo_aprovacao === "especial") return formaEspecial.aprovador_especial_user_id === userId;
+  if (despesa.classificacao_id) return souAprovadorDoNivel(despesa, nivel, userId);
+  const campo = nivel === 1 ? "aprovador1_user_ids" : nivel === 2 ? "aprovador2_user_ids" : "aprovador3_user_ids";
+  for (const id of classificacaoIdsRateio ?? []) {
+    if (classificacaoPorId.get(id)?.[campo]?.includes(userId)) return true;
+  }
+  return false;
+}
+
+export function souAprovadorConfiguradoComRateio(
+  despesa: MaloteDespesaRow,
+  userId: string | null | undefined,
+  classificacaoIdsRateio: Set<string> | undefined,
+  classificacaoPorId: Map<string, ClassificacaoAprovadoresIds>
+): boolean {
+  if (!userId) return false;
+  return ([1, 2, 3] as const).some((n) =>
+    souAprovadorDoNivelComRateio(despesa, n, userId, classificacaoIdsRateio, classificacaoPorId)
+  );
 }
 
 export function useItensAprovacoesMalote() {

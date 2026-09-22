@@ -1,5 +1,4 @@
 import { useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -16,12 +15,18 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { TrendingDown, TrendingUp, Wallet, LineChart, X, Trash2, RotateCcw, Pencil } from "lucide-react";
 import { toast } from "sonner";
 import { AcessoGate } from "@/components/auth/AcessoGate";
-import { useFluxoCaixaCombinado, type FluxoCaixaMaloteLinha } from "@/hooks/useFluxoCaixaMalote";
+import {
+  useFluxoCaixaCombinado,
+  useAjustarLinhaFluxoCaixa,
+  useReverterAjusteFluxoCaixa,
+  type FluxoCaixaMaloteLinha,
+} from "@/hooks/useFluxoCaixaMalote";
 import { formatBRL } from "@/hooks/usePlanilhaCusto";
-import { useTiposFormaPagamento } from "@/hooks/useMaloteFormaPagamento";
-import { useExcluirDespesaSoft, useRestaurarDespesa, useDespesasLixeira, useEditarPagamentoDespesa } from "@/hooks/useMaloteDespesa";
+import { useFormasPagamento } from "@/hooks/useMaloteFormaPagamento";
+import { useExcluirDespesaSoft, useRestaurarDespesa, useDespesasLixeira } from "@/hooks/useMaloteDespesa";
 import { useExcluirDebito, useRestaurarDebito, useDebitoAutomaticoLixeira } from "@/hooks/useDebitoAutomatico";
-import { useExcluirItemFatura, useRestaurarItemFatura, useCartaoFaturaLixeira, useEditarDataItemFatura } from "@/hooks/useCartaoFatura";
+import { useExcluirItemFatura, useRestaurarItemFatura, useCartaoFaturaLixeira } from "@/hooks/useCartaoFatura";
+import { useClassificacoesOrcamentoAdmin } from "@/hooks/usePlanejamentoOrcamentario";
 import { ExcluirPermanentementeButton } from "@/pages/malote/ExcluirPermanentementeButton";
 import { KpiTile } from "@/components/financeiro/KpiTile";
 import { BancoBadge } from "@/components/financeiro/BancoBadge";
@@ -52,7 +57,6 @@ const PAGE_SIZE = 50;
 // fonte — os cards de Entradas/Saldo ainda ficam zerados (nenhuma das duas
 // fontes hoje resolve saldo bancário real).
 export default function FluxoCaixaGestao() {
-  const navigate = useNavigate();
   const { data: linhasBrutas = [], isLoading } = useFluxoCaixaCombinado();
 
   // SIS-2026-0464: a view de origem já entrega 1 linha por linha de RATEIO
@@ -81,10 +85,10 @@ export default function FluxoCaixaGestao() {
       return { ...base, valor };
     });
   }, [linhasBrutas]);
-  // SIS-2026-0221: "Forma de pagamento" vem do catálogo cadastrável em
-  // Configurações do Malote → Formas de Pagamento, não mais de um enum fixo.
-  const { data: tiposFormaPagamento = [] } = useTiposFormaPagamento();
-  const tiposFormaPagamentoAtivos = useMemo(() => tiposFormaPagamento.filter((t) => t.ativo), [tiposFormaPagamento]);
+  // SIS-2026-0221/0439: "Forma de pagamento" vem do catálogo nomeado
+  // cadastrável em Configurações do Malote → Formas de Pagamento.
+  const { data: formasPagamento = [] } = useFormasPagamento();
+  const formasPagamentoAtivas = useMemo(() => formasPagamento.filter((f) => f.ativo), [formasPagamento]);
 
   // SIS-2026-0413: 1 mutation de excluir/restaurar por origem — a linha
   // sabe de qual tabela ela veio (l.origem), o handler escolhe a certa.
@@ -103,44 +107,55 @@ export default function FluxoCaixaGestao() {
   const { data: debitosLixeira = [] } = useDebitoAutomaticoLixeira();
   const { data: itensFaturaLixeira = [] } = useCartaoFaturaLixeira();
 
-  // SIS-2026-0413 (complemento): Editar — só Forma de Pagamento/Banco/Data
-  // de Pagamento (Malote) e Data da Compra (Cartão); Débito Automático já
-  // tem tela própria de edição completa, o botão só leva pra lá.
-  const editarPagamentoDespesa = useEditarPagamentoDespesa();
-  const editarDataItemFatura = useEditarDataItemFatura();
+  // SIS-2026-0489: Editar grava em financeiro_fluxo_caixa_ajuste (ver
+  // useFluxoCaixaMalote.ts) — nunca mais na despesa/débito/fatura de
+  // origem, valendo pras 3 origens (Débito Automático deixou de só
+  // navegar pra tela própria).
+  const ajustarLinha = useAjustarLinhaFluxoCaixa();
+  const reverterAjuste = useReverterAjusteFluxoCaixa();
   const { data: bancosCartao = [] } = useCartaoBancos();
+  const { data: classificacoesCatalogo = [] } = useClassificacoesOrcamentoAdmin();
   const [itemEditar, setItemEditar] = useState<FluxoCaixaMaloteLinha | null>(null);
   const [salvandoEdicao, setSalvandoEdicao] = useState(false);
+  const [editData, setEditData] = useState("");
+  const [editTipo, setEditTipo] = useState<"entrada" | "saida">("saida");
+  const [editClassificacaoId, setEditClassificacaoId] = useState("");
+  const [editDescricao, setEditDescricao] = useState("");
+  const [editCompetencia, setEditCompetencia] = useState("");
+  const [editEmpresaId, setEditEmpresaId] = useState("");
   const [editFormaPagamento, setEditFormaPagamento] = useState("");
   const [editBancoId, setEditBancoId] = useState("");
-  const [editData, setEditData] = useState("");
 
   function abrirEditar(l: FluxoCaixaMaloteLinha) {
-    if (l.origem === "debito_automatico") {
-      navigate(`/app/financeiro/gestao-financeira/debito-automatico?editar=${l.despesa_id}`);
-      return;
-    }
     setItemEditar(l);
+    setEditData(l.data_pagamento ?? "");
+    setEditTipo(l.tipo);
+    setEditClassificacaoId(l.classificacao_id ?? "");
+    setEditDescricao(l.descricao ?? "");
+    setEditCompetencia(l.competencia?.slice(0, 7) ?? "");
+    setEditEmpresaId(l.empresa_id ?? "");
     setEditFormaPagamento(l.forma_pagamento ?? "");
     setEditBancoId(l.banco_id ?? "");
-    setEditData(l.data_pagamento ?? "");
   }
 
   async function confirmarEditar() {
     if (!itemEditar) return;
     setSalvandoEdicao(true);
     try {
-      if (itemEditar.origem === "malote") {
-        await editarPagamentoDespesa.mutateAsync({
-          id: itemEditar.despesa_id,
-          formaPagamento: editFormaPagamento || null,
-          bancoId: editBancoId || null,
-          dataPagamento: editData || null,
-        });
-      } else {
-        await editarDataItemFatura.mutateAsync({ id: itemEditar.despesa_id, dataCompra: editData || null });
-      }
-      toast.success("Atualizado.");
+      await ajustarLinha.mutateAsync({
+        origem: itemEditar.origem,
+        despesaId: itemEditar.despesa_id,
+        numeroParcela: itemEditar.numero_parcela,
+        dataPagamento: editData || null,
+        tipo: editTipo,
+        classificacaoId: editClassificacaoId || null,
+        descricao: editDescricao.trim() || null,
+        competencia: editCompetencia ? `${editCompetencia}-01` : null,
+        empresaId: editEmpresaId || null,
+        formaPagamento: editFormaPagamento || null,
+        bancoId: editBancoId || null,
+      });
+      toast.success("Atualizado só neste Fluxo de Caixa — o lançamento original não muda.");
       setItemEditar(null);
     } catch (e: any) {
       toast.error(e.message ?? "Erro ao salvar.");
@@ -180,7 +195,6 @@ export default function FluxoCaixaGestao() {
   const [dataAte, setDataAte] = useState("");
   const [competencia, setCompetencia] = useState("");
   const [empresaId, setEmpresaId] = useState("");
-  const [contratoId, setContratoId] = useState("");
   const [classificacaoId, setClassificacaoId] = useState("");
   const [formaPagamento, setFormaPagamento] = useState("");
   // SIS-2026-0307: "após o pagamento alimentamos o fluxo de caixa" (usuário)
@@ -191,12 +205,6 @@ export default function FluxoCaixaGestao() {
   const empresasDisponiveis = useMemo(() => {
     const map = new Map<string, string>();
     linhas.forEach((l) => l.empresa_id && l.empresa_nome && map.set(l.empresa_id, l.empresa_nome));
-    return Array.from(map.entries()).sort((a, b) => a[1].localeCompare(b[1], "pt-BR"));
-  }, [linhas]);
-
-  const contratosDisponiveis = useMemo(() => {
-    const map = new Map<string, string>();
-    linhas.forEach((l) => l.contrato_id && l.contrato_nome && map.set(l.contrato_id, l.contrato_nome));
     return Array.from(map.entries()).sort((a, b) => a[1].localeCompare(b[1], "pt-BR"));
   }, [linhas]);
 
@@ -232,7 +240,6 @@ export default function FluxoCaixaGestao() {
     setDataAte("");
     setCompetencia("");
     setEmpresaId("");
-    setContratoId("");
     setClassificacaoId("");
     setFormaPagamento("");
     setBancoId("");
@@ -245,13 +252,12 @@ export default function FluxoCaixaGestao() {
       if (dataAte && (!l.data_pagamento || l.data_pagamento > dataAte)) return false;
       if (competencia && l.competencia?.slice(0, 7) !== competencia) return false;
       if (empresaId && l.empresa_id !== empresaId) return false;
-      if (contratoId && l.contrato_id !== contratoId) return false;
       if (classificacaoId && l.classificacao_id !== classificacaoId) return false;
       if (formaPagamento && l.forma_pagamento !== formaPagamento) return false;
       if (bancoId && l.banco_id !== bancoId) return false;
       return true;
     });
-  }, [linhas, dataDe, dataAte, competencia, empresaId, contratoId, classificacaoId, formaPagamento, bancoId]);
+  }, [linhas, dataDe, dataAte, competencia, empresaId, classificacaoId, formaPagamento, bancoId]);
 
   // SIS-2026-0256: com o Débito Automático somado à fonte, "Saídas" precisa
   // filtrar por tipo — antes só existia saída (Malote), então somar tudo
@@ -335,18 +341,6 @@ export default function FluxoCaixaGestao() {
               </Select>
             </div>
             <div>
-              <Label className="text-xs">Contrato</Label>
-              <Select value={contratoId || "todos"} onValueChange={(v) => setContratoId(v === "todos" ? "" : v)}>
-                <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="todos">Todos</SelectItem>
-                  {contratosDisponiveis.map(([id, nome]) => (
-                    <SelectItem key={id} value={id}>{nome}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div>
               <Label className="text-xs">Classificação</Label>
               <Select value={classificacaoId || "todas"} onValueChange={(v) => setClassificacaoId(v === "todas" ? "" : v)}>
                 <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
@@ -397,8 +391,10 @@ export default function FluxoCaixaGestao() {
               <TableHeader>
                 {/* SIS-2026-0306 (Iury): ordem das colunas ajustada — ID,
                     Data de Pagamento, Tipo, Classificação, Descrição,
-                    Competência, Empresa, Contrato, Banco, Forma de
-                    Pagamento, Valor. */}
+                    Competência, Empresa, Banco, Forma de Pagamento, Valor.
+                    SIS-2026-0489 (Iury): Contrato saiu da tela (a coluna
+                    original continua na view, só CartaoCredito.tsx que
+                    ainda depende dela). */}
                 <TableRow>
                   <TableHead className="text-center">ID</TableHead>
                   <TableHead className="text-center">Data de Pagamento</TableHead>
@@ -407,7 +403,6 @@ export default function FluxoCaixaGestao() {
                   <TableHead className="text-center">Descrição</TableHead>
                   <TableHead className="text-center">Competência</TableHead>
                   <TableHead className="text-center">Empresa</TableHead>
-                  <TableHead className="text-center">Contrato</TableHead>
                   <TableHead className="text-center">Banco</TableHead>
                   <TableHead className="text-center">Forma de Pagamento</TableHead>
                   <TableHead className="text-center">Valor (R$)</TableHead>
@@ -417,12 +412,12 @@ export default function FluxoCaixaGestao() {
               <TableBody>
                 {isLoading && (
                   <TableRow>
-                    <TableCell colSpan={12} className="text-center text-muted-foreground py-10">Carregando...</TableCell>
+                    <TableCell colSpan={11} className="text-center text-muted-foreground py-10">Carregando...</TableCell>
                   </TableRow>
                 )}
                 {!isLoading && filtradas.length === 0 && (
                   <TableRow>
-                    <TableCell colSpan={12} className="text-center text-muted-foreground py-10">
+                    <TableCell colSpan={11} className="text-center text-muted-foreground py-10">
                       <div className="flex flex-col items-center gap-2">
                         <TrendingDown className="h-8 w-8 text-muted-foreground/50" />
                         Nenhuma movimentação encontrada com os filtros atuais.
@@ -445,10 +440,21 @@ export default function FluxoCaixaGestao() {
                       )}
                     </TableCell>
                     <TableCell className="text-center text-sm">{l.classificacao_nome ?? "—"}</TableCell>
-                    <TableCell className="text-center text-sm">{l.descricao}</TableCell>
+                    <TableCell className="text-center text-sm">
+                      <span className="inline-flex items-center gap-1">
+                        {l.descricao}
+                        {l.ajustado && (
+                          <span
+                            title="Editado só no Fluxo de Caixa — o lançamento original não mudou"
+                            className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-800 dark:bg-amber-950/40 dark:text-amber-300"
+                          >
+                            ajustado
+                          </span>
+                        )}
+                      </span>
+                    </TableCell>
                     <TableCell className="text-center text-sm">{l.competencia ? new Date(l.competencia + "T00:00:00").toLocaleDateString("pt-BR", { month: "2-digit", year: "numeric" }) : "—"}</TableCell>
                     <TableCell className="text-center text-sm">{l.empresa_nome ?? "—"}</TableCell>
-                    <TableCell className="text-center text-sm">{l.contrato_nome ?? "—"}</TableCell>
                     <TableCell className="text-center text-sm">
                       {l.banco_nome ? <BancoBadge nome={l.banco_nome} logoUrl={urlLogoCartao(l.banco_logo_path)} /> : "—"}
                     </TableCell>
@@ -456,19 +462,17 @@ export default function FluxoCaixaGestao() {
                     <TableCell className="text-center text-sm font-medium">{formatBRL(l.valor)}</TableCell>
                     <TableCell className="text-center">
                       <div className="flex items-center justify-center gap-0.5">
-                        <AcessoGate menu={MENU_POR_ORIGEM[l.origem]} acao="alterar">
+                        {/* SIS-2026-0489: edição agora é um ajuste isolado do
+                            Fluxo de Caixa (não escreve mais na despesa/débito/
+                            fatura de origem) — permissão própria da tela, não
+                            mais a da tela dona do dado (essa continua valendo
+                            só pro Excluir, que apaga o lançamento de verdade). */}
+                        <AcessoGate menu="financeiro-fluxo-caixa-gestao" acao="alterar">
                           <Button
                             variant="ghost"
                             size="icon"
                             className="h-7 w-7 text-muted-foreground hover:text-foreground"
-                            disabled={l.origem === "malote" && l.numero_parcela != null}
-                            title={
-                              l.origem === "malote" && l.numero_parcela != null
-                                ? "Despesa parcelada — edite pela tela do Malote"
-                                : l.origem === "debito_automatico"
-                                  ? "Editar (abre o Débito Automático)"
-                                  : "Editar"
-                            }
+                            title="Editar (só neste Fluxo de Caixa)"
                             onClick={() => abrirEditar(l)}
                           >
                             <Pencil className="h-3.5 w-3.5" />
@@ -566,63 +570,122 @@ export default function FluxoCaixaGestao() {
         </AlertDialogContent>
       </AlertDialog>
 
-      {/* Editar — Forma de Pagamento/Banco/Data (Malote) ou só Data da
-          Compra (Cartão); Débito Automático nem chega a abrir isso, o
-          clique já navega direto pra tela própria (abrirEditar). */}
+      {/* SIS-2026-0489: edita Data de Pagamento, Tipo, Classificação,
+          Descrição, Competência, Empresa, Banco e Forma de Pagamento —
+          grava em financeiro_fluxo_caixa_ajuste, nunca na despesa/débito/
+          fatura de origem. Vale pras 3 origens (antes Débito Automático só
+          navegava pra tela própria, Cartão só editava a Data da Compra). */}
       <Dialog open={!!itemEditar} onOpenChange={(o) => !o && setItemEditar(null)}>
         <DialogContent className="max-w-md">
           <DialogHeader>
-            <DialogTitle>Editar lançamento</DialogTitle>
+            <DialogTitle>Editar lançamento (só neste Fluxo de Caixa)</DialogTitle>
           </DialogHeader>
           <p className="text-xs text-muted-foreground -mt-2">
-            {itemEditar?.id_malote} — {itemEditar?.descricao}
+            {itemEditar?.id_malote} — {LABEL_ORIGEM[itemEditar?.origem ?? "malote"]}
           </p>
           <div className="space-y-3">
-            {itemEditar?.origem === "malote" && (
-              <>
-                <div>
-                  <Label className="text-xs">Forma de Pagamento</Label>
-                  <Select value={editFormaPagamento || "_"} onValueChange={(v) => setEditFormaPagamento(v === "_" ? "" : v)}>
-                    <SelectTrigger className="h-9"><SelectValue placeholder="Selecione…" /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="_">—</SelectItem>
-                      {tiposFormaPagamentoAtivos.map((t) => (
-                        <SelectItem key={t.nome} value={t.nome}>{t.nome}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div>
-                  <Label className="text-xs">Banco</Label>
-                  <Select value={editBancoId || "_"} onValueChange={(v) => setEditBancoId(v === "_" ? "" : v)}>
-                    <SelectTrigger className="h-9"><SelectValue placeholder="Selecione…" /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="_">—</SelectItem>
-                      {bancosCartao.filter((b) => b.ativo).map((b) => (
-                        <SelectItem key={b.id} value={b.id}>{b.nome}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div>
-                  <Label className="text-xs">Data de Pagamento</Label>
-                  <Input type="date" className="h-9" value={editData} onChange={(e) => setEditData(e.target.value)} />
-                </div>
-              </>
-            )}
-            {itemEditar?.origem === "cartao_fatura" && (
-              <div>
-                <Label className="text-xs">Data da Compra</Label>
-                <Input type="date" className="h-9" value={editData} onChange={(e) => setEditData(e.target.value)} />
-                <p className="text-xs text-muted-foreground mt-1">
-                  Forma de pagamento e banco são do cartão, não do lançamento — edite em Cartão de Crédito.
-                </p>
-              </div>
-            )}
+            <div>
+              <Label className="text-xs">Data de Pagamento</Label>
+              <Input type="date" className="h-9" value={editData} onChange={(e) => setEditData(e.target.value)} />
+            </div>
+            <div>
+              <Label className="text-xs">Tipo</Label>
+              <Select value={editTipo} onValueChange={(v) => setEditTipo(v as "entrada" | "saida")}>
+                <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="entrada">Entrada</SelectItem>
+                  <SelectItem value="saida">Saída</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label className="text-xs">Classificação</Label>
+              <Select value={editClassificacaoId || "_"} onValueChange={(v) => setEditClassificacaoId(v === "_" ? "" : v)}>
+                <SelectTrigger className="h-9"><SelectValue placeholder="Selecione…" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="_">—</SelectItem>
+                  {classificacoesCatalogo.filter((c) => c.ativo).map((c) => (
+                    <SelectItem key={c.id} value={c.id}>{c.nome}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label className="text-xs">Descrição</Label>
+              <Input className="h-9" value={editDescricao} onChange={(e) => setEditDescricao(e.target.value)} />
+            </div>
+            <div>
+              <Label className="text-xs">Competência</Label>
+              <Input type="month" className="h-9" value={editCompetencia} onChange={(e) => setEditCompetencia(e.target.value)} />
+            </div>
+            <div>
+              <Label className="text-xs">Empresa</Label>
+              <Select value={editEmpresaId || "_"} onValueChange={(v) => setEditEmpresaId(v === "_" ? "" : v)}>
+                <SelectTrigger className="h-9"><SelectValue placeholder="Selecione…" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="_">—</SelectItem>
+                  {empresasDisponiveis.map(([id, nome]) => (
+                    <SelectItem key={id} value={id}>{nome}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label className="text-xs">Forma de Pagamento</Label>
+              <Select value={editFormaPagamento || "_"} onValueChange={(v) => setEditFormaPagamento(v === "_" ? "" : v)}>
+                <SelectTrigger className="h-9"><SelectValue placeholder="Selecione…" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="_">—</SelectItem>
+                  {formasPagamentoAtivas.map((f) => (
+                    <SelectItem key={f.id} value={f.nome}>{f.nome}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label className="text-xs">Banco</Label>
+              <Select value={editBancoId || "_"} onValueChange={(v) => setEditBancoId(v === "_" ? "" : v)}>
+                <SelectTrigger className="h-9"><SelectValue placeholder="Selecione…" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="_">—</SelectItem>
+                  {bancosCartao.filter((b) => b.ativo).map((b) => (
+                    <SelectItem key={b.id} value={b.id}>{b.nome}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
           </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setItemEditar(null)} disabled={salvandoEdicao}>Cancelar</Button>
-            <Button onClick={confirmarEditar} disabled={salvandoEdicao}>{salvandoEdicao ? "Salvando…" : "Salvar"}</Button>
+          <DialogFooter className="flex-wrap gap-2 sm:justify-between">
+            {itemEditar?.ajustado && (
+              <Button
+                variant="ghost"
+                className="text-muted-foreground"
+                disabled={salvandoEdicao}
+                onClick={async () => {
+                  if (!itemEditar) return;
+                  setSalvandoEdicao(true);
+                  try {
+                    await reverterAjuste.mutateAsync({
+                      origem: itemEditar.origem,
+                      despesaId: itemEditar.despesa_id,
+                      numeroParcela: itemEditar.numero_parcela,
+                    });
+                    toast.success("Ajuste revertido — voltou ao lançamento original.");
+                    setItemEditar(null);
+                  } catch (e: any) {
+                    toast.error(e.message ?? "Erro ao reverter.");
+                  } finally {
+                    setSalvandoEdicao(false);
+                  }
+                }}
+              >
+                Reverter ajuste
+              </Button>
+            )}
+            <div className="flex gap-2">
+              <Button variant="outline" onClick={() => setItemEditar(null)} disabled={salvandoEdicao}>Cancelar</Button>
+              <Button onClick={confirmarEditar} disabled={salvandoEdicao}>{salvandoEdicao ? "Salvando…" : "Salvar"}</Button>
+            </div>
           </DialogFooter>
         </DialogContent>
       </Dialog>
