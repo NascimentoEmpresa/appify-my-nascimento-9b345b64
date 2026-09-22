@@ -204,6 +204,22 @@ export function useTrnSalvarAluno() {
   });
 }
 
+/**
+ * E-mail/telefone do aluno-colaborador (22/09/2026): grava em EMPREGADOS
+ * (colunas do ERP, a Senior não reescreve) e o trigger leva pro aluno —
+ * editar só o TRN_ALUNO seria desfeito pela sincronização.
+ */
+export function useTrnAtualizarContatoAluno() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (p: { alunoId: string; email: string; telefone: string | null }) => {
+      const { error } = await sb.rpc("trn_aluno_atualizar_contato", { p_aluno_id: p.alunoId, p_email: p.email, p_telefone: p.telefone });
+      if (error) throw error;
+    },
+    onSuccess: () => invalidar(qc, K.alunos, K.aluno, K.historico),
+  });
+}
+
 export function useTrnExcluirAluno() {
   const qc = useQueryClient();
   return useMutation({
