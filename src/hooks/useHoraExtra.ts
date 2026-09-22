@@ -128,6 +128,8 @@ export const useLiberarHoraExtraComHorarios = () => useRpcHoraExtra("hora_extra_
 export const useConcluirHoraExtra = () => useRpcHoraExtra("hora_extra_concluir");
 export const useValidarHoraExtra = () => useRpcHoraExtra("hora_extra_validar");
 export const useValidarHoraExtraComHorarios = () => useRpcHoraExtra("hora_extra_validar_com_horarios");
+/** Correção do ponto DEPOIS da conclusão: exige a ação `editar_concluida`. */
+export const useEditarHorariosConcluida = () => useRpcHoraExtra("hora_extra_editar_horarios_concluida");
 export const useExcluirHoraExtra = () => useRpcHoraExtra("hora_extra_excluir");
 export const useSalvarEscalaHoraExtra = () => useRpcHoraExtra("hora_extra_escala_salvar");
 export const useExcluirEscalaHoraExtra = () => useRpcHoraExtra("hora_extra_escala_excluir");

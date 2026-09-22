@@ -18,6 +18,7 @@ import {
   normalizarPontoSemIntervalo,
   podeAlterarHorariosNaLiberacao,
   podeEditarHoraExtra,
+  podeEditarHorariosDaConcluida,
   podeIgnorarEscalaNoFimDeSemana,
   rotuloFaseAnexo,
   sobrepoe,
@@ -173,6 +174,21 @@ describe("regras de hora extra", () => {
   ])("libera ajuste do ponto na liberação ou validação somente com alterar (%s, %s)", (status, podeAlterar, esperado) =>
     expect(podeAlterarHorariosNaLiberacao({ status, podeAlterar })).toBe(esperado),
   );
+  // A correção depois da conclusão (22/09/2026) tem chave PRÓPRIA. O teste
+  // existe para travar as duas metades: 'alterar' não abre esta porta, e a
+  // porta só abre em "concluida" — as outras etapas já têm as suas RPCs.
+  it.each([
+    ["concluida", true, true],
+    ["concluida", false, false],
+    ["aguardando_validacao", true, false],
+    ["aguardando_liberacao", true, false],
+    ["aprovada", true, false],
+    ["reprovada", true, false],
+  ])("corrige o ponto da HE concluída só com editar_concluida (%s, %s)", (status, podeEditarConcluida, esperado) =>
+    expect(podeEditarHorariosDaConcluida({ status, podeEditarConcluida })).toBe(esperado),
+  );
+  it("quem só tem 'alterar' não corrige HE concluída", () =>
+    expect(podeAlterarHorariosNaLiberacao({ status: "concluida", podeAlterar: true })).toBe(false));
   it("detecta sobreposição", () => expect(sobrepoe("18:00", "21:00", "20:00", "22:00")).toBe(true));
   it("não acusa horários adjacentes", () => expect(sobrepoe("18:00", "20:00", "20:00", "22:00")).toBe(false));
   it("detecta sobreposição cruzando meia-noite", () => expect(sobrepoe("22:00", "02:00", "23:00", "01:00")).toBe(true));
