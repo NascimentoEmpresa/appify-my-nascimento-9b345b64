@@ -314,7 +314,7 @@ export default function AlunoForm() {
                     <h4>{editando ? "Editando alunos" : "Inserindo novos alunos"}</h4>
                     {editando
                       ? <>Todas as informações do aluno podem ser alteradas, exceto o e-mail de acesso. Se o e-mail foi cadastrado errado, exclua o aluno e cadastre de novo com o e-mail correto.<h5>Observação</h5>Aluno com acesso expirado: desbloqueie para renovar a data de matrícula e restabelecer o acesso.</>
-                      : <>Esta área permite adicionar alunos um a um. Para muitos de uma vez, use <Link to="/app/treinamentos/alunos/importar" className="font-semibold text-primary">Importar alunos</Link>.<h5>Observação</h5>Acesso completo libera todos os cursos publicados, atuais e futuros — bom para quem precisa de toda a trilha de NRs.</>}
+                      : <>Esta área permite adicionar alunos um a um. Colaboradores já entram sozinhos, pelo cadastro (EMPREGADOS).<h5>Observação</h5>Acesso completo libera todos os cursos publicados, atuais e futuros — bom para quem precisa de toda a trilha de NRs.</>}
                   </div>
                 </div>
               </div>

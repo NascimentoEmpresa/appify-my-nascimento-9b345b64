@@ -280,7 +280,7 @@ export default function AlunosLista() {
 
         {isLoading ? <TrnCarregando texto="Carregando alunos…" /> : alunos.length === 0 ? (
           <TrnVazio titulo="Nenhum aluno ainda" texto="Os alunos são os colaboradores do cadastro — sincronize em Gerenciar alunos, ou importe a planilha do membox."
-                    acao={<div className="flex gap-2"><Button asChild><Link to="/app/treinamentos/alunos/novo">Gerenciar alunos</Link></Button><Button asChild variant="outline"><Link to="/app/treinamentos/alunos/importar">Importar alunos</Link></Button></div>} />
+                    acao={<div className="flex gap-2"><Button asChild><Link to="/app/treinamentos/alunos/novo">Gerenciar alunos</Link></Button></div>} />
         ) : (
           <div className="trn-card overflow-hidden p-0">
             <div className="overflow-x-auto">

@@ -279,18 +279,6 @@ export function useTrnEmitirCertificado() {
   });
 }
 
-export function useTrnImportarAlunos() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: async (args: { linhas: Record<string, string>[]; substituirTags: boolean }) => {
-      const { data, error } = await sb.rpc("trn_importar_alunos", { _linhas: args.linhas, _substituir_tags: args.substituirTags });
-      if (error) throw error;
-      return data as { criados: number; atualizados: number; erros: { linha: number; erro: string }[] };
-    },
-    onSuccess: () => invalidar(qc, K.alunos, K.tags, K.dashboard, K.cursos),
-  });
-}
-
 export function useTrnAcaoMassa() {
   const qc = useQueryClient();
   return useMutation({
