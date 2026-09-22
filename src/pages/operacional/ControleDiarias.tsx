@@ -206,15 +206,29 @@ export default function ControleDiarias({
   // 'exportar' faz parte do pacote do toggle: quem tem a tela conferindo pode
   // levar o relatório para o Excel.
   const { data: podeExportar = false } = useScreenAccess(menuCodigo, "exportar");
+  // Editar a TABELA DE VALORES dos sindicatos da Diária UFRGS (22/09/2026).
+  //
+  // O código do menu é FIXO, não segue a porta: é um menu fantasma próprio
+  // (20260930000212), criado exatamente para esta permissão não vir de brinde
+  // com a tela. E o pedido é explícito — "somente na rota
+  // /app/financeiro/diarias" —, daí o `menuCodigo === "financeiro_diarias"`
+  // logo abaixo: quem tiver a chave e abrir a mesma tela pela porta do
+  // Operacional ou de Encarregados não vê o botão. Não é confiança no
+  // frontend; diaria_ufrgs_tarifa_salvar() checa a chave de novo no banco.
+  const { data: podeEditarTarifas = false } = useScreenAccess(
+    "financeiro_diarias_tarifas",
+    "alterar",
+  );
   const podeDecidir = podeAprovar && !apenasMinhas;
   const podeExcluirAqui = podeExcluir && !apenasMinhas;
 
-  /** Os quatro flags, como o painel da UFRGS e o modal dele os consomem. */
+  /** Os flags, como o painel da UFRGS e o modal dele os consomem. */
   const permissoes: PermissoesDiaria = {
     incluir: podeIncluir,
     excluir: podeExcluirAqui,
     aprovar: podeDecidir,
     enviarMalote: podeEnviarMalote && !apenasMinhas,
+    editarTarifas: podeEditarTarifas && menuCodigo === "financeiro_diarias",
   };
 
   // Filtros
