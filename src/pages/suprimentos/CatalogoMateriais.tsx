@@ -12,9 +12,11 @@ import { useEmpresaId } from "@/hooks/useEmpresaId";
 import {
   useContratosCatalogo,
   usePostos, useFuncoes, useFuncaoItens, useItens, useItemOpcoes,
-  useRascunhos, useCatalogoMutations, OPCOES_PREDEFINIDAS, LABEL_TIPO_ITEM,
+  useTamanhosDoItem,
+  useRascunhos, useCatalogoMutations, LABEL_TIPO_ITEM,
   type TipoItem, type Item,
 } from "@/hooks/useSupCatalogo";
+import { chipsDeOpcao } from "@/lib/suprimentos/opcoesMaterial";
 import { useEstoqueLista, type LinhaEstoque } from "@/hooks/useSupEstoque";
 import { AutorAlteracao } from "@/components/suprimentos/HistoricoLote";
 import {
@@ -646,14 +648,32 @@ function DialogOpcoes({
   }) => void;
 }) {
   const { data: existentes = [], isLoading } = useItemOpcoes(item?.id ?? null);
+  // Os tamanhos que JÁ viraram item de estoque deste material. A entrada de
+  // estoque aceita tamanho digitado, então é por aqui que aparece um EXG que
+  // a grade não tem — sem isto, o almoxarifado tem a peça e o pedido não tem
+  // como pedi-la (SIS-2026-0482).
+  const { data: tamanhosEmEstoque = [] } = useTamanhosDoItem(item?.id ?? null);
   const [rascunho, setRascunho] = useState<Record<string, string[]> | null>(null);
 
   // Semeia a partir do banco na primeira abertura de cada item.
-  const atual = rascunho ?? {
+  const salvas = useMemo(() => ({
     tamanho: existentes.find((o) => o.tipo === "tamanho")?.opcoes ?? [],
     quantidade: existentes.find((o) => o.tipo === "quantidade")?.opcoes ?? [],
     litros: existentes.find((o) => o.tipo === "litros")?.opcoes ?? [],
-  };
+  }), [existentes]);
+  const atual = rascunho ?? salvas;
+
+  /**
+   * Quais chips desenhar — calculado do que está GRAVADO, nunca do rascunho.
+   * Com o rascunho, desmarcar um chip fora da grade o faria SUMIR da tela em
+   * vez de só apagar, e não haveria como marcar de volta sem fechar o
+   * diálogo.
+   */
+  const chips = useMemo(() => ({
+    tamanho: chipsDeOpcao("tamanho", salvas.tamanho, tamanhosEmEstoque.map((t) => t.tamanho)),
+    quantidade: chipsDeOpcao("quantidade", salvas.quantidade),
+    litros: chipsDeOpcao("litros", salvas.litros),
+  }), [salvas, tamanhosEmEstoque]);
 
   const alternar = (tipo: string, valor: string) => {
     const lista = atual[tipo] ?? [];
@@ -675,6 +695,10 @@ function DialogOpcoes({
             O encarregado só vê os selects que tiverem opção marcada aqui. Sem nenhuma marcada,
             o material é pedido sem escolha.
           </p>
+          <p className="text-xs text-muted-foreground">
+            Tamanho que já existe no estoque deste material aparece no fim da lista, mesmo fora
+            da grade padrão — marque-o para o encarregado poder pedir a peça que está na prateleira.
+          </p>
           {/* Sem este guarda, clicar num chip antes da query voltar semeia o
               rascunho vazio e as opções já salvas somem sem aviso. */}
           {isLoading ? (
@@ -684,7 +708,7 @@ function DialogOpcoes({
             <div key={tipo}>
               <Label className="capitalize">{tipo}</Label>
               <div className="mt-1.5 flex flex-wrap gap-1.5">
-                {OPCOES_PREDEFINIDAS[tipo].map((v) => {
+                {chips[tipo].map((v) => {
                   const marcado = (atual[tipo] ?? []).includes(v);
                   return (
                     <button
