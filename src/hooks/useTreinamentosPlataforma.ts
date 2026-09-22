@@ -1,5 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import * as tus from "tus-js-client";
 import { supabase } from "@/integrations/supabase/client";
+import { SUPABASE_ANON_KEY, SUPABASE_URL } from "@/integrations/supabase/env";
 import {
   BUCKET_TRN, type Aluno, type AlunoLista, type Aula, type Aviso, type Categoria, type Certificado,
   type CertificadoModelo, type Comentario, type Curso, type CursoLista, type Dashboard, type Evento,
@@ -38,13 +40,62 @@ export function urlMidia(path: string | null | undefined): string | null {
   return supabase.storage.from(BUCKET_TRN).getPublicUrl(path).data.publicUrl;
 }
 
-/** Sobe um arquivo para `pasta/` e devolve o path gravado. */
-export async function uploadMidia(file: File, pasta: string): Promise<string> {
+/**
+ * Sobe um arquivo para `pasta/` e devolve o path gravado.
+ *
+ * Acima de 6 MB vai pelo upload RETOMÁVEL (TUS) em pedaços de 6 MB, com
+ * progresso e nova tentativa se a conexão cair (22/09/2026 — "preciso
+ * conseguir anexar vídeos": vídeo de centenas de MB no upload simples
+ * ficava minutos em "Enviando…" sem sinal de vida e morria na primeira
+ * oscilação). Mesmo padrão do MigracaoFcr.tsx.
+ */
+export async function uploadMidia(file: File, pasta: string, onProgresso?: (pct: number) => void): Promise<string> {
   const limpo = file.name.replace(/[^\w.-]+/g, "_");
   const path = `${pasta}/${Date.now()}-${limpo}`;
-  const { error } = await supabase.storage.from(BUCKET_TRN).upload(path, file, { contentType: file.type, upsert: false });
-  if (error) throw error;
+  const tipo = file.type || tipoPelaExtensao(file.name);
+  if (file.size <= 6 * 1024 * 1024) {
+    const { error } = await supabase.storage.from(BUCKET_TRN).upload(path, file, { contentType: tipo, upsert: false });
+    if (error) throw error;
+    onProgresso?.(100);
+    return path;
+  }
+  const { data: sessao } = await supabase.auth.getSession();
+  const token = sessao.session?.access_token;
+  if (!token) throw new Error("Sessão expirada. Entre de novo para enviar o arquivo.");
+  await new Promise<void>((resolve, reject) => {
+    const up = new tus.Upload(file, {
+      endpoint: `${SUPABASE_URL}/storage/v1/upload/resumable`,
+      chunkSize: 6 * 1024 * 1024,
+      retryDelays: [0, 3000, 5000, 10000, 20000],
+      uploadDataDuringCreation: true,
+      removeFingerprintOnSuccess: true,
+      headers: { authorization: `Bearer ${token}`, apikey: SUPABASE_ANON_KEY },
+      metadata: { bucketName: BUCKET_TRN, objectName: path, contentType: tipo, cacheControl: "3600" },
+      onError: (e) => reject(new Error(mensagemTus(e))),
+      onProgress: (enviado, total) => onProgresso?.(Math.round((enviado / total) * 100)),
+      onSuccess: () => resolve(),
+    });
+    up.start();
+  });
   return path;
+}
+
+// Navegador às vezes não dá o tipo de .mkv/.wmv/.avi — o bucket precisa dele pra tocar.
+export function tipoPelaExtensao(nome: string): string {
+  const ext = nome.split(".").pop()?.toLowerCase() ?? "";
+  const tipos: Record<string, string> = {
+    mp4: "video/mp4", m4v: "video/mp4", mov: "video/quicktime", webm: "video/webm", mkv: "video/x-matroska",
+    avi: "video/x-msvideo", wmv: "video/x-ms-wmv", mp3: "audio/mpeg", pdf: "application/pdf",
+    png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg",
+  };
+  return tipos[ext] ?? "application/octet-stream";
+}
+
+function mensagemTus(e: Error): string {
+  const m = e?.message ?? "";
+  if (/413|too large|Payload/i.test(m)) return "Arquivo maior que o limite (500 MB).";
+  if (/401|403|row-level|Unauthorized/i.test(m)) return "Sem permissão para enviar arquivos nos Treinamentos.";
+  return "Não deu para enviar o arquivo: " + m.slice(0, 200);
 }
 
 // ── Dashboard ────────────────────────────────────────────────────────
