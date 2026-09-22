@@ -18,6 +18,10 @@ import {
 //      juridico-comprovantes.
 // O comprovante do Malote é aberto por URL assinada do bucket dele — não
 // se sobe o mesmo arquivo de novo.
+//
+// Tudo vai pelo NÚMERO do processo, não pelo id (22/09/2026, mig 206): o
+// "Salvar processo" apaga e recria as linhas do número (id novo), e o
+// anexo ligado ao id sumia junto no CASCADE. O id só vai de fallback.
 // =====================================================================
 
 const db = supabase as unknown as SupabaseClient;
@@ -45,17 +49,17 @@ export function ComprovantesProcesso({ processoId, numeroProcesso, toast }: {
   const fileRef = useRef<HTMLInputElement>(null);
 
   const carregar = useCallback(async () => {
-    const { data, error } = await db.rpc("jur_processo_pagamentos", { _processo_id: processoId });
+    const { data, error } = await db.rpc("jur_processo_pagamentos", { _processo_id: processoId, _numero: numeroProcesso || null });
     if (error) { setErro(error.message); return; }
     setErro(null); setDados(data as PagamentosDoProcesso);
-  }, [processoId]);
+  }, [processoId, numeroProcesso]);
   useEffect(() => { carregar(); }, [carregar]);
 
   const vincular = async () => {
     const n = vincNum.trim();
     if (!n) { toast("Informe o número da despesa do Malote (ex.: DM-2026-0921).", "err"); return; }
     setVinculando(true);
-    const { data, error } = await db.rpc("jur_processo_vincular_despesa", { _processo_id: processoId, _numero_despesa: n });
+    const { data, error } = await db.rpc("jur_processo_vincular_despesa", { _processo_id: processoId, _numero_despesa: n, _numero: numeroProcesso || null });
     setVinculando(false);
     if (error) { toast(error.message, "err"); return; }
     const d = data as { numero: string; tem_comprovante: boolean };
@@ -72,6 +76,7 @@ export function ComprovantesProcesso({ processoId, numeroProcesso, toast }: {
   const subir = async (files: FileList | null) => {
     if (!files?.length) return;
     setSubindo(true);
+    let enviados = 0;
     for (const f of Array.from(files)) {
       if (f.size > 25 * 1024 * 1024) { toast(`"${f.name}" passa de 25 MB.`, "err"); continue; }
       const caminho = caminhoComprovante(processoId, f.name);
@@ -79,14 +84,17 @@ export function ComprovantesProcesso({ processoId, numeroProcesso, toast }: {
       if (up.error) { toast(`Não consegui enviar "${f.name}": ${up.error.message}`, "err"); continue; }
       const { data: perfil } = await db.from("profiles").select("display_name, email").eq("id", (await supabase.auth.getUser()).data.user?.id ?? "").maybeSingle();
       const { error } = await db.from("JUR_PROCESSO_COMPROVANTE").insert({
-        processo_id: processoId, nome: f.name, storage_path: caminho, tipo: f.type || null, tamanho: f.size,
+        processo_id: processoId, numero_processo: numeroProcesso || null, nome: f.name, storage_path: caminho, tipo: f.type || null, tamanho: f.size,
         descricao: descricao.trim() || null, criado_por_nome: perfil?.display_name ?? perfil?.email ?? null,
       });
-      if (error) { await supabase.storage.from(BUCKET_COMPROVANTES).remove([caminho]); toast(error.message, "err"); continue; }
+      if (error) { await supabase.storage.from(BUCKET_COMPROVANTES).remove([caminho]); toast(`Não consegui registrar "${f.name}": ${error.message}`, "err"); continue; }
+      enviados++;
     }
-    setSubindo(false); setDescricao("");
+    setSubindo(false);
     if (fileRef.current) fileRef.current.value = "";
-    toast("Comprovante anexado ao processo.", "ok"); carregar();
+    // Só confirma o que gravou de fato (antes dizia "anexado" mesmo com erro).
+    if (enviados) { setDescricao(""); toast(enviados > 1 ? `${enviados} comprovantes anexados ao processo.` : "Comprovante anexado ao processo.", "ok"); }
+    carregar();
   };
 
   const apagarAnexo = async (id: number, path: string) => {

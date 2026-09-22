@@ -17,6 +17,20 @@ import {
   excelBlob, htmlBlob, moeda, montarExcel as excelDoModelo, montarHtml as htmlDoModelo,
   num, slug, txt, dataBr,
 } from "@/lib/exportarRelatorio";
+import { ROTULO_TIPO_PARTE, partes, type TipoParte } from "@/lib/juridico/tipoProcesso";
+
+// Processo "Outros" (SIS-2026-0488): Autor × Réu com tipo e CPF/CNPJ. No
+// trabalhista esses campos saem vazios (a ficha só mostra reclamante/reclamada).
+const outros = (p: ProcessoExp) => p.tipo_processo === "outros";
+const partesExp = (p: ProcessoExp) => partes({
+  tipo_processo: txt(p.tipo_processo), reclamante: txt(p.reclamante), reclamada: txt(p.reclamada),
+  autor_nome: txt(p.autor_nome), reu_nome: txt(p.reu_nome),
+});
+const parteTxt = (p: ProcessoExp, lado: "autor" | "reu") => {
+  if (!outros(p)) return "";
+  const tipo = ROTULO_TIPO_PARTE[txt(p[`${lado}_tipo`]) as TipoParte] ?? "";
+  return [txt(p[`${lado}_nome`]), tipo, txt(p[`${lado}_documento`])].filter(Boolean).join(" · ");
+};
 
 /** O processo como a tela monta (agrupar) + os totais que ela calcula. */
 export type ProcessoExp = Linha & {
@@ -96,9 +110,13 @@ const FICHA: GrupoFicha<ProcessoExp>[] = [
     { rotulo: "Entrada da reclamatória", tipo: "data", valor: p => p.data_entrada_reclamatoria },
   ] },
   { grupo: "Partes", campos: [
-    { rotulo: "Reclamante", valor: p => p.reclamante },
+    { rotulo: "Tipo de processo", valor: p => (outros(p) ? "Outros" : "Processo Trabalhista") },
+    { rotulo: "Natureza da ação", valor: p => (outros(p) ? p.natureza_acao : "") },
+    { rotulo: "Autor", valor: p => parteTxt(p, "autor") },
+    { rotulo: "Réu", valor: p => parteTxt(p, "reu") },
+    { rotulo: "Reclamante", valor: p => (outros(p) ? "" : p.reclamante) },
     { rotulo: "CPF do reclamante (vínculo)", valor: p => p.reclamante_vinculado_cpf },
-    { rotulo: "Reclamada", valor: p => p.reclamada },
+    { rotulo: "Reclamada", valor: p => (outros(p) ? "" : p.reclamada) },
     { rotulo: "Contrato", valor: p => p.contrato },
   ] },
   { grupo: "Local", campos: [
@@ -253,8 +271,8 @@ function modelo(processos: ProcessoExp[], extras: ExtrasProcesso, autor: string)
     ancora: p => `proc-${p.id}`,
     cabecalho: p => ({
       eyebrow: titulo(p),
-      titulo: txt(p.reclamante) || "Reclamante não informado",
-      sub: [`Reclamada: ${txt(p.reclamada) || "—"}`, p.comarca, p.ano_processo].map(txt).filter(Boolean).join(" · "),
+      titulo: txt(partesExp(p).nome1) || `${partesExp(p).rotulo1} não informado`,
+      sub: [`${partesExp(p).rotulo2}: ${txt(partesExp(p).nome2) || "—"}`, outros(p) ? txt(p.natureza_acao) : "", p.comarca, p.ano_processo].map(txt).filter(Boolean).join(" · "),
       selos: [p.status, p.status_sentenca ? `Sentença: ${txt(p.status_sentenca)}` : ""],
     }),
     destaques: p => [
@@ -277,8 +295,9 @@ function modelo(processos: ProcessoExp[], extras: ExtrasProcesso, autor: string)
     indice: [
       { rotulo: "ID", valor: p => (p.id_sequencial ? `#${p.id_sequencial}` : "") },
       { rotulo: "Número do processo", valor: p => p.numero_processo },
-      { rotulo: "Reclamante", valor: p => p.reclamante },
-      { rotulo: "Reclamada", valor: p => p.reclamada },
+      { rotulo: "Reclamante / autor", valor: p => p.reclamante },
+      { rotulo: "Reclamada / réu", valor: p => p.reclamada },
+      { rotulo: "Tipo", valor: p => (outros(p) ? "Outros" : "Trabalhista") },
       { rotulo: "Status", valor: p => p.status, selo: true },
       { rotulo: "Custo final", tipo: "moeda", valor: p => p.totais.custoFinal },
     ],

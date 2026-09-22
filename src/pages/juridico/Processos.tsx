@@ -9,6 +9,10 @@ import { sugerirContrato, cidadeDoContrato } from "./processos/contratoMunicipio
 import { ModalExportarDados } from "@/components/exportar/ModalExportarDados";
 import { baixar } from "@/lib/exportarRelatorio";
 import { carregarExtras, gerarExcel, gerarHtml, nomeArquivo, type ProcessoExp } from "./processos/exportar";
+import {
+  NATUREZAS_ACAO, PARTE_VAZIA, ROTULO_TIPO_PARTE, empresaDoGrupo, erroDasPartes, formatarDocumento, partes, seloOutros,
+  type Parte, type TipoParte, type TipoProcesso,
+} from "@/lib/juridico/tipoProcesso";
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, Cell, PieChart, Pie, Legend, CartesianGrid } from "recharts";
 
 // JUR_PROCESSOS, EMPREGADOS, CONTRATOS e SISTEMA_COMENTARIOS não estão no
@@ -79,6 +83,10 @@ interface Processo {
   propostas: Proposta[];
   // Valores à parte (fora dos motivos)
   valores_a_parte: ValorAParte[];
+  // Tipo e partes (SIS-2026-0488): em "outros", reclamante/reclamada espelham autor/réu.
+  tipo_processo: TipoProcesso; natureza_acao: string;
+  autor_tipo: string; autor_nome: string; autor_documento: string;
+  reu_tipo: string; reu_nome: string; reu_documento: string;
 }
 interface Comentario { id: number; entidade_id?: string; autor_nome?: string; texto: string; created_at?: string; }
 
@@ -361,6 +369,9 @@ function agrupar(rows: LinhaProcesso[]): Processo[] {
       status_recursos: first("status_recursos"), havera_pericia: first("havera_pericia"), motivo_acordo: first("motivo_acordo"), motivos_outros_custos: first("motivos_outros_custos"),
       local_pericia: first("local_pericia"), data_pericia: first("data_pericia"), hora_pericia: first("hora_pericia"),
       tipo_audiencia: first("tipo_audiencia"), modalidade_audiencia: first("modalidade_audiencia"), audiencias: parseAudiencias(rs),
+      tipo_processo: first("tipo_processo") === "outros" ? "outros" : "trabalhista", natureza_acao: first("natureza_acao"),
+      autor_tipo: first("autor_tipo"), autor_nome: first("autor_nome"), autor_documento: first("autor_documento"),
+      reu_tipo: first("reu_tipo"), reu_nome: first("reu_nome"), reu_documento: first("reu_documento"),
     });
   }
   // Ordem de chegada: o cadastrado por último (maior nº sequencial) fica no topo.
@@ -379,6 +390,8 @@ const FORM_RESET = () => ({
   vai_recorrer: "Não", valor_custas_recursais: 0, valor_seguro_garantia: 0,
   // Perícia médica
   houve_pericia_medica: "Não", valor_perito_judicial: 0, valor_assistente_tecnico: 0,
+  // Tipo (SIS-2026-0488). As partes de "outros" ficam em autor/reu (estado à parte).
+  tipo_processo: "trabalhista" as TipoProcesso, natureza_acao: "",
 });
 const STATUS_SENTENCA_OPC = ["", "PROCEDENTE", "IMPROCEDENTE", "PARCIALMENTE PROCEDENTE", "EM ANDAMENTO", "ACORDO", "EXTINTO", "ARQUIVADO"];
 const STATUS_RECURSO_OPC = ["", "SEM RECURSO", "EM ANDAMENTO", "PROVIDO", "IMPROVIDO", "ARQUIVADO"];
@@ -417,6 +430,7 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
   const [fReclamante, setFReclamante] = useState("");
   const [fReclamada, setFReclamada] = useState("");
   const [fAno, setFAno] = useState("");
+  const [fTipo, setFTipo] = useState<"" | TipoProcesso>("");
   const [pagina, setPagina] = useState(1);
   // filtros da agenda de Audiências
   const [aStatus, setAStatus] = useState("");
@@ -437,6 +451,17 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
   const [editNumero, setEditNumero] = useState<string | null>(null);
   const [editId, setEditId] = useState<number | null>(null);
   const [form, setForm] = useState(FORM_RESET());
+  // Partes do processo "Outros" (Autor × Réu) e a lista das empresas do grupo.
+  const [parteAutor, setParteAutor] = useState<Parte>(PARTE_VAZIA());
+  const [parteReu, setParteReu] = useState<Parte>(PARTE_VAZIA());
+  const [empresasGrupo, setEmpresasGrupo] = useState<{ codigo: string; razao_social: string; cnpj: string | null }[]>([]);
+  useEffect(() => {
+    (async () => {
+      const { data } = await db.rpc("jur_empresas_grupo");
+      setEmpresasGrupo((data ?? []) as { codigo: string; razao_social: string; cnpj: string | null }[]);
+    })();
+  }, []);
+  const outrosForm = form.tipo_processo === "outros";
   const [motivos, setMotivos] = useState<MotivoItem[]>([MOTIVO_RESET()]);
   const [valoresAParte, setValoresAParte] = useState<ValorAParte[]>([]);
   const [auds, setAuds] = useState<Audiencia[]>([]);
@@ -497,7 +522,7 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
   }, [processos]);
   const porReclamada = useMemo(() => {
     const acc = new Map<string, { empresa: string; num: number; total: number }>();
-    for (const p of processos) { const e = p.reclamada || "Não informado"; const s = acc.get(e) || { empresa: e, num: 0, total: 0 }; s.num++; s.total += custoTotal(p); acc.set(e, s); }
+    for (const p of processos) { const e = empresaDoGrupo(p) || "Não informado"; const s = acc.get(e) || { empresa: e, num: 0, total: 0 }; s.num++; s.total += custoTotal(p); acc.set(e, s); }
     return [...acc.values()].sort((a, b) => b.num - a.num).slice(0, 8);
   }, [processos]);
   const audiencias = useMemo(() => {
@@ -547,13 +572,14 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
     }
     if (fReclamante.trim() && !contem(p.reclamante, fReclamante)) return false;
     if (fReclamada.trim() && !contem(p.reclamada, fReclamada)) return false;
+    if (fTipo && p.tipo_processo !== fTipo) return false;
     if (fAno && String(p.ano_processo || "") !== fAno) return false;
     if (busca) { const q = busca.toLowerCase(); return [p.numero_processo, String(p.id_sequencial), p.reclamante, p.reclamada, p.motivos, p.comarca, String(p.ano_processo)].some(x => String(x || "").toLowerCase().includes(q)); }
     return true;
-  }), [processos, busca, fStatus, fMotivo, fId, fNumero, fReclamante, fReclamada, fAno]);
+  }), [processos, busca, fStatus, fMotivo, fId, fNumero, fReclamante, fReclamada, fAno, fTipo]);
   const anosDisponiveis = useMemo(() => [...new Set(processos.map(p => p.ano_processo).filter(Boolean))].sort((a, b) => b - a), [processos]);
-  const filtrosAtivos = [busca, fStatus, fMotivo, fId, fNumero, fReclamante, fReclamada, fAno].filter(v => String(v).trim()).length;
-  const limparProc = () => { setBusca(""); setFStatus(""); setFMotivo(""); setFId(""); setFNumero(""); setFReclamante(""); setFReclamada(""); setFAno(""); };
+  const filtrosAtivos = [busca, fStatus, fMotivo, fId, fNumero, fReclamante, fReclamada, fAno, fTipo].filter(v => String(v).trim()).length;
+  const limparProc = () => { setBusca(""); setFStatus(""); setFMotivo(""); setFId(""); setFNumero(""); setFReclamante(""); setFReclamada(""); setFAno(""); setFTipo(""); };
   // opções do filtro: motivos predominantes distintos (ordenados por frequência) + "(Sem motivo)"
   const motivosPredominantes = useMemo(() => {
     const c = new Map<string, number>();
@@ -567,7 +593,7 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
   const reclamadasDistintas = useMemo(() => [...new Set(rows.map(r => String(r.reclamada || "").trim()).filter(Boolean))].sort(), [rows]);
   const statusPredominante = useMemo(() => { const c: Record<string, number> = {}; filtrados.forEach(p => c[p.status] = (c[p.status] || 0) + 1); return Object.entries(c).sort((a, b) => b[1] - a[1])[0]?.[0] || "—"; }, [filtrados]);
   // paginação da lista de processos (50 por página)
-  useEffect(() => { setPagina(1); }, [busca, fStatus, fMotivo, fId, fNumero, fReclamante, fReclamada, fAno]);
+  useEffect(() => { setPagina(1); }, [busca, fStatus, fMotivo, fId, fNumero, fReclamante, fReclamada, fAno, fTipo]);
   const totalPaginas = Math.max(1, Math.ceil(filtrados.length / PAGE_SIZE));
   const paginaAtual = Math.min(pagina, totalPaginas);
   const visiveis = useMemo(() => filtrados.slice((paginaAtual - 1) * PAGE_SIZE, paginaAtual * PAGE_SIZE), [filtrados, paginaAtual]);
@@ -650,7 +676,7 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
   };
 
   // ── CRUD ───────────────────────────────────────────────────────
-  const abrirNovo = () => { setEditNumero(null); setEditId(null); contratoManual.current = false; setForm(FORM_RESET()); setMotivos([MOTIVO_RESET()]); setValoresAParte([]); setAuds([]); setPropostas([]); setEmpBusca(""); setEmpResultados([]); setEmpSelKey(null); setModal(true); };
+  const abrirNovo = () => { setEditNumero(null); setEditId(null); contratoManual.current = false; setForm(FORM_RESET()); setParteAutor(PARTE_VAZIA()); setParteReu(PARTE_VAZIA()); setMotivos([MOTIVO_RESET()]); setValoresAParte([]); setAuds([]); setPropostas([]); setEmpBusca(""); setEmpResultados([]); setEmpSelKey(null); setModal(true); };
   const abrirEditar = (p: Processo) => {
     setEditNumero(p.numero_processo); setEditId(p.id);
     // Processo que já tem contrato salvo: a sugestão não pode sobrescrever o
@@ -658,7 +684,10 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
     contratoManual.current = !!String(p.contrato ?? "").trim();
     setForm({ numero_processo: p.numero_processo, reclamante: p.reclamante, reclamada: p.reclamada, status: p.status, comarca: p.comarca, municipio_origem: p.municipio_origem, data_entrada_reclamatoria: (p.data_entrada_reclamatoria || "").slice(0, 10), contrato: p.contrato, reclamante_vinculado_cpf: p.reclamante_vinculado_cpf || "", status_sentenca: p.status_sentenca || "", status_recursos: p.status_recursos || "", houve_acordo: p.houve_acordo || "Não", motivo_acordo: p.motivo_acordo || "", havera_pericia: p.havera_pericia || "Não", local_pericia: p.local_pericia || "", data_pericia: (p.data_pericia || "").slice(0, 10), hora_pericia: (p.hora_pericia || "").slice(0, 5), motivos_outros_custos: p.motivos_outros_custos || "",
       vai_recorrer: p.vai_recorrer || "Não", valor_custas_recursais: p.valor_custas_recursais || 0, valor_seguro_garantia: p.valor_seguro_garantia || 0,
-      houve_pericia_medica: p.houve_pericia_medica || "Não", valor_perito_judicial: p.valor_perito_judicial || 0, valor_assistente_tecnico: p.valor_assistente_tecnico || 0 });
+      houve_pericia_medica: p.houve_pericia_medica || "Não", valor_perito_judicial: p.valor_perito_judicial || 0, valor_assistente_tecnico: p.valor_assistente_tecnico || 0,
+      tipo_processo: p.tipo_processo, natureza_acao: p.natureza_acao || "" });
+    setParteAutor({ tipo: (p.autor_tipo || "") as TipoParte | "", nome: p.autor_nome || "", documento: p.autor_documento || "" });
+    setParteReu({ tipo: (p.reu_tipo || "") as TipoParte | "", nome: p.reu_nome || "", documento: p.reu_documento || "" });
     setMotivos(p.motivo_items.length ? p.motivo_items.map(m => ({ ...m })) : [MOTIVO_RESET()]);
     setAuds(p.audiencias.map(a => ({ ...a, propostas: (a.propostas || []).map(pr => ({ ...pr })) })));
     setPropostas((p.propostas || []).map(pr => ({ ...pr })));
@@ -668,10 +697,19 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
   const salvar = async () => {
     const numero = form.numero_processo.replace(/\s+/g, "").trim();
     if (!numero) { toast("Informe o número do processo.", "err"); return; }
-    if (!form.reclamante.trim()) { toast("Informe o reclamante.", "err"); return; }
-    // Obrigatório: a CONTRATOS não tem a cidade, então quando o nome do contrato
-    // não entrega o município ninguém mais preenche isso depois.
-    if (!form.municipio_origem.trim()) { toast("Informe o município de origem (a cidade do contrato).", "err"); return; }
+    // "Outros" (SIS-2026-0488): as partes são Autor × Réu; reclamante/reclamada
+    // passam a espelhar os dois, pra lista/filtros/agenda/exportação.
+    const outros = form.tipo_processo === "outros";
+    if (outros) {
+      const erroPartes = erroDasPartes(parteAutor, parteReu);
+      if (erroPartes) { toast(erroPartes, "err"); return; }
+    } else if (!form.reclamante.trim()) { toast("Informe o reclamante.", "err"); return; }
+    const reclamanteGravar = outros ? parteAutor.nome.trim() : form.reclamante.trim();
+    const reclamadaGravar = outros ? parteReu.nome.trim() : (form.reclamada.trim() || null);
+    // Obrigatório no trabalhista: a CONTRATOS não tem a cidade, então quando o
+    // nome do contrato não entrega o município ninguém mais preenche isso
+    // depois. Em "Outros" não há contrato de posto por trás — fica opcional.
+    if (!outros && !form.municipio_origem.trim()) { toast("Informe o município de origem (a cidade do contrato).", "err"); return; }
     const dataEntrada = form.data_entrada_reclamatoria || null;
     const ano = (dataEntrada ? Number(dataEntrada.slice(0, 4)) : null) || anoDoNumero(numero) || null;
     const limparPropostas = (lista: Proposta[]) => lista
@@ -697,13 +735,16 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
     const primeira = auds.length ? auds.map(a => a.data).filter(Boolean).sort()[0] || null : null;
     const lista = motivos.length ? motivos : [MOTIVO_RESET()];
     const novas = lista.map((m, idx) => ({
-      numero_processo: numero, reclamante: form.reclamante.trim(), reclamada: form.reclamada.trim() || null, motivos: m.motivo.trim() || "Sem motivo",
+      numero_processo: numero, reclamante: reclamanteGravar, reclamada: reclamadaGravar, motivos: m.motivo.trim() || "Sem motivo",
+      tipo_processo: form.tipo_processo, natureza_acao: outros ? (form.natureza_acao.trim() || null) : null,
+      autor_tipo: outros ? parteAutor.tipo : null, autor_nome: outros ? parteAutor.nome.trim() : null, autor_documento: outros ? (formatarDocumento(parteAutor.documento) || null) : null,
+      reu_tipo: outros ? parteReu.tipo : null, reu_nome: outros ? parteReu.nome.trim() : null, reu_documento: outros ? (formatarDocumento(parteReu.documento) || null) : null,
       status: form.status, ano_processo: ano, motivo_ordem: idx + 1, id_sequencial: idSequencial,
       valor_pedidos: m.valor_pedidos || 0, valor_acordo: m.valor_acordo || 0, valor_sentenca: m.valor_sentenca || 0, valor_final: m.valor_final || 0,
       valor_outros_custos: m.valor_outros_custos || 0, valor_deposito_recursal: m.valor_deposito_recursal || 0, valor_custas_processuais: m.valor_custas_processuais || 0,
       houve_acordo: form.houve_acordo || (m.valor_acordo > 0 ? "Sim" : "Não"), comarca: form.comarca.trim() || null, municipio_origem: form.municipio_origem.trim() || null,
       contrato: form.contrato.trim() || null, data_entrada_reclamatoria: dataEntrada, primeira_audiencia: primeira, data_primeira_audiencia: primeira,
-      reclamante_vinculado_cpf: form.reclamante_vinculado_cpf || null,
+      reclamante_vinculado_cpf: outros ? null : (form.reclamante_vinculado_cpf || null),
       status_sentenca: form.status_sentenca || null, status_recursos: form.status_recursos || null,
       motivo_acordo: form.motivo_acordo.trim() || null, havera_pericia: form.havera_pericia || null, motivos_outros_custos: form.motivos_outros_custos.trim() || null,
       local_pericia: form.local_pericia.trim() || null, data_pericia: form.data_pericia || null, hora_pericia: form.hora_pericia || null,
@@ -988,7 +1029,7 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
                 )}
               </div>
               <div style={card}>
-                <div style={{ fontSize: 13, fontWeight: 800, color: "#0f172a" }}>Por Empresa (Reclamada)</div>
+                <div style={{ fontSize: 13, fontWeight: 800, color: "#0f172a" }}>Por Empresa do grupo</div>
                 <div style={{ fontSize: 11.5, color: "#94a3b8", marginBottom: 10 }}>Quantidade de processos por empresa</div>
                 {porReclamada.length === 0 ? <div style={{ color: "#94a3b8", fontSize: 13, padding: 30, textAlign: "center" }}>Sem dados.</div> : (
                   <ResponsiveContainer width="100%" height={280}>
@@ -1084,8 +1125,15 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
               <div className="jpr-filtros jpr-fg">
                 <div><label>Nº sequencial</label><input className="jpr-fi" inputMode="numeric" placeholder="Ex.: 12" value={fId} onChange={e => setFId(e.target.value.replace(/\D/g, ""))} /></div>
                 <div><label>Nº processo</label><input className="jpr-fi" placeholder="0000000-00.0000.0.00.0000" value={fNumero} onChange={e => setFNumero(e.target.value)} /></div>
-                <div><label>Reclamante</label><input className="jpr-fi" placeholder="Nome do reclamante" value={fReclamante} onChange={e => setFReclamante(e.target.value)} /></div>
-                <div><label>Reclamada</label><input className="jpr-fi" list="jpr-reclamadas" placeholder="Empresa reclamada" value={fReclamada} onChange={e => setFReclamada(e.target.value)} /></div>
+                <div><label>Tipo de processo</label>
+                  <select className="jpr-fi" value={fTipo} onChange={e => setFTipo(e.target.value as "" | TipoProcesso)}>
+                    <option value="">Todos os tipos</option>
+                    <option value="trabalhista">Processo Trabalhista · {processos.filter(p => p.tipo_processo !== "outros").length}</option>
+                    <option value="outros">Outros · {processos.filter(p => p.tipo_processo === "outros").length}</option>
+                  </select>
+                </div>
+                <div><label>Reclamante / autor</label><input className="jpr-fi" placeholder="Nome do reclamante ou autor" value={fReclamante} onChange={e => setFReclamante(e.target.value)} /></div>
+                <div><label>Reclamada / réu</label><input className="jpr-fi" list="jpr-reclamadas" placeholder="Empresa reclamada ou réu" value={fReclamada} onChange={e => setFReclamada(e.target.value)} /></div>
                 <div><label>Motivo</label>
                   <select className="jpr-fi" value={fMotivo} onChange={e => setFMotivo(e.target.value)}>
                     <option value="">Todos os motivos</option>
@@ -1116,14 +1164,16 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
                 <table className="jpr-tab">
                   <thead><tr>
                     <th style={{ width: 58 }}>Nº</th>
-                    <th>Reclamante / Nº do processo</th><th>Reclamada</th><th>Motivos</th>
+                    <th>Reclamante ou autor / Nº do processo</th><th>Reclamada ou réu</th><th>Motivos</th>
                     <th style={{ textAlign: "right" }}>Total pedido</th><th style={{ textAlign: "right" }}>Custo final</th><th>Status</th><th style={{ textAlign: "right" }}>Ações</th>
                   </tr></thead>
                   <tbody>{visiveis.map(p => { const sc = statusCor(p.status); return (
                     <tr key={p.numero_processo}>
                       <td><span className="jpr-num">{p.id_sequencial || "—"}</span></td>
-                      <td><div style={{ fontWeight: 800, color: "#0f172a", fontSize: 13.5 }}>{p.reclamante || "—"}</div><div style={{ fontSize: 11.5, color: "#64748b", fontVariantNumeric: "tabular-nums" }}>{p.numero_processo}{p.ano_processo ? ` · ${p.ano_processo}` : ""}{p.contrato ? <span style={{ color: "#94a3b8" }}> · {p.contrato}</span> : null}</div></td>
-                      <td style={{ color: "#334155", fontWeight: 600 }}>{p.reclamada || "—"}</td>
+                      <td><div style={{ fontWeight: 800, color: "#0f172a", fontSize: 13.5 }}>{partes(p).nome1 || "—"}</div>
+                        {p.tipo_processo === "outros" && <span style={{ display: "inline-block", fontSize: 10.5, fontWeight: 800, color: "#7c3aed", background: "#f5f3ff", borderRadius: 999, padding: "1px 8px", margin: "2px 0" }}>{seloOutros(p)}</span>}
+                        <div style={{ fontSize: 11.5, color: "#64748b", fontVariantNumeric: "tabular-nums" }}>{p.numero_processo}{p.ano_processo ? ` · ${p.ano_processo}` : ""}{p.contrato ? <span style={{ color: "#94a3b8" }}> · {p.contrato}</span> : null}</div></td>
+                      <td style={{ color: "#334155", fontWeight: 600 }}>{partes(p).nome2 || "—"}</td>
                       <td><span style={{ fontSize: 12, color: "#0f172a" }}>{p.motivo_items[0]?.motivo || "—"}</span>{p.motivo_items.length > 1 && <span style={{ marginLeft: 6, fontSize: 10.5, color: "#0f3171", fontWeight: 800, background: "#eef4ff", borderRadius: 999, padding: "1px 7px" }}>+{p.motivo_items.length - 1}</span>}</td>
                       <td style={{ textAlign: "right", color: "#475569", fontVariantNumeric: "tabular-nums" }}>{money(pedidosTotal(p))}</td>
                       <td style={{ textAlign: "right", fontWeight: 800, color: custoTotal(p) > 0 ? "#0f172a" : "#94a3b8", fontVariantNumeric: "tabular-nums" }}>{money(custoTotal(p))}</td>
@@ -1272,15 +1322,29 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
             <button onClick={() => setSel(null)} style={{ position: "absolute", top: 14, right: 16, border: "none", background: "none", fontSize: 20, color: "#94a3b8", cursor: "pointer" }}>✕</button>
             <button className="jpr-btn" onClick={() => setExportando({ id: sel.id })} style={{ position: "absolute", top: 14, right: 50, background: "#eef4ff", color: "#0f3171", border: "1px solid #dbe4f0" }}>⬇ Exportar</button>
             <div style={{ fontSize: 12, color: "#94a3b8", fontWeight: 700 }}>{sel.id_sequencial ? `#${sel.id_sequencial} · ` : ""}{sel.numero_processo}</div>
+            {sel.tipo_processo === "outros" ? (<>
+              {/* "Outros" (SIS-2026-0488): as duas partes com o papel de cada uma. */}
+              <div style={{ fontSize: 11, fontWeight: 800, color: "#7c3aed", marginTop: 2 }}>{seloOutros(sel)}</div>
+              <div style={{ fontSize: 16, fontWeight: 800, color: "#0f172a", marginTop: 2 }}>
+                <span style={{ fontSize: 11, color: "#94a3b8", fontWeight: 700 }}>AUTOR </span>{sel.autor_nome || sel.reclamante || "—"}
+                {sel.autor_documento && <span style={{ fontSize: 11.5, color: "#64748b", fontWeight: 600 }}> · {sel.autor_documento}</span>}
+              </div>
+              <div style={{ fontSize: 14, fontWeight: 700, color: "#334155" }}>
+                <span style={{ fontSize: 11, color: "#94a3b8", fontWeight: 700 }}>RÉU </span>{sel.reu_nome || sel.reclamada || "—"}
+                {sel.reu_documento && <span style={{ fontSize: 11.5, color: "#64748b", fontWeight: 600 }}> · {sel.reu_documento}</span>}
+              </div>
+              <div style={{ fontSize: 12.5, color: "#475569", marginTop: 2 }}>{[sel.comarca, sel.ano_processo || ""].filter(Boolean).join(" · ")}</div>
+            </>) : (<>
             <div style={{ fontSize: 18, fontWeight: 800, color: "#0f172a" }}>{sel.reclamante || "—"}</div>
             <div style={{ fontSize: 12.5, color: "#475569", marginTop: 2 }}>Reclamada: <b>{sel.reclamada || "—"}</b>{sel.comarca ? ` · ${sel.comarca}` : ""}{sel.ano_processo ? ` · ${sel.ano_processo}` : ""}</div>
+            </>)}
             <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center", marginTop: 10 }}>
               <span style={{ fontSize: 10, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase", letterSpacing: ".4px" }}>Status do processo:</span>
               {(() => { const sc = statusCor(sel.status); return <span style={{ fontSize: 12.5, fontWeight: 800, padding: "4px 13px", borderRadius: 20, background: sc.bg, color: sc.c }}>{sel.status}</span>; })()}
               {sel.status_sentenca && <span style={{ fontSize: 11.5, fontWeight: 700, padding: "4px 11px", borderRadius: 20, background: "#eef2ff", color: "#4338ca" }}>Sentença: {sel.status_sentenca}</span>}
               {sel.status_recursos && <span style={{ fontSize: 11.5, fontWeight: 700, padding: "4px 11px", borderRadius: 20, background: "#ecfeff", color: "#0e7490" }}>Recurso: {sel.status_recursos}</span>}
             </div>
-            {sel.reclamante_vinculado_cpf
+            {sel.tipo_processo === "outros" ? null : sel.reclamante_vinculado_cpf
               ? <div style={{ marginTop: 8 }}><button className="jpr-btn" onClick={() => verDetalhesReclamante(sel.reclamante_vinculado_cpf)} style={{ background: "#eef4ff", color: "#0f3171" }}>👤 Todos os detalhes do reclamante</button></div>
               : <div style={{ marginTop: 8, fontSize: 11.5, color: "#94a3b8" }}>Reclamante não vinculado a um cadastro. Use “Editar” para vincular.</div>}
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap", margin: "14px 0" }}>
@@ -1401,14 +1465,47 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
             <div className="jpr-form-b">
             <div className="jpr-sec">
             <div className="jpr-sec-h"><div className="jpr-sec-t">Identificação</div></div>
+            {/* Tipo de processo (SIS-2026-0488). Trabalhista = o cadastro de
+                sempre; Outros = Autor × Réu, com a empresa em qualquer lado. */}
+            <div className="jpr-fg" style={{ marginBottom: 14 }}>
+              <label>Tipo de processo *</label>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(220px,1fr))", gap: 8 }}>
+                {([["trabalhista", "⚖️ Processo Trabalhista", "Reclamatória: reclamante × empresa reclamada."],
+                   ["outros", "📂 Outros", "Cível, cobrança, execução, contratual… A empresa pode ser autora ou ré."]] as const).map(([k, t, d]) => {
+                  const on = form.tipo_processo === k;
+                  return (
+                    <button key={k} type="button" onClick={() => setForm(v => ({ ...v, tipo_processo: k }))}
+                      style={{ textAlign: "left", padding: "10px 12px", borderRadius: 11, cursor: "pointer", fontFamily: "inherit",
+                               border: on ? "2px solid #0f3171" : "1.5px solid #e2e8f0", background: on ? "#eef4ff" : "#fff" }}>
+                      <div style={{ fontSize: 13.5, fontWeight: 800, color: on ? "#0f3171" : "#0f172a" }}>{t}</div>
+                      <div style={{ fontSize: 11.5, color: "#64748b", marginTop: 2 }}>{d}</div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+            {outrosForm && (
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(280px,1fr))", gap: 12, marginBottom: 14 }}>
+                <ParteCampos rotulo="Autor" parte={parteAutor} onChange={setParteAutor} empresas={empresasGrupo} />
+                <ParteCampos rotulo="Réu" parte={parteReu} onChange={setParteReu} empresas={empresasGrupo} />
+              </div>
+            )}
             <div className="jpr-grid2">
-              <div className="jpr-fg"><label>Nº do processo *</label><input className="jpr-fi" value={form.numero_processo} onChange={e => setForm(v => ({ ...v, numero_processo: e.target.value }))} placeholder="0000000-00.0000.5.00.0000" /></div>
+              <div className="jpr-fg"><label>Nº do processo *</label><input className="jpr-fi" value={form.numero_processo} onChange={e => setForm(v => ({ ...v, numero_processo: e.target.value }))} placeholder={outrosForm ? "0000000-00.0000.0.00.0000" : "0000000-00.0000.5.00.0000"} /></div>
               <div className="jpr-fg"><label>Status</label><select className="jpr-fi" value={form.status} onChange={e => setForm(v => ({ ...v, status: e.target.value }))}>{STATUS_OPC.map(s => <option key={s}>{s}</option>)}</select></div>
-              <div className="jpr-fg"><label>Reclamante *</label><input className="jpr-fi" value={form.reclamante} onChange={e => setForm(v => ({ ...v, reclamante: e.target.value }))} /></div>
-              <div className="jpr-fg"><label>Reclamada</label><input className="jpr-fi" list="jpr-reclamadas-form" value={form.reclamada} onChange={e => setForm(v => ({ ...v, reclamada: e.target.value }))} placeholder="Empresa" /><datalist id="jpr-reclamadas-form">{reclamadasDistintas.map(r => <option key={r} value={r} />)}</datalist></div>
-              <div className="jpr-fg"><label>Comarca</label><input className="jpr-fi" value={form.comarca} onChange={e => setForm(v => ({ ...v, comarca: e.target.value }))} /></div>
+              {outrosForm ? (
+                <div className="jpr-fg">
+                  <label>Natureza da ação</label>
+                  <input className="jpr-fi" list="jpr-naturezas" value={form.natureza_acao} onChange={e => setForm(v => ({ ...v, natureza_acao: e.target.value }))} placeholder="Ex.: Cobrança" />
+                  <datalist id="jpr-naturezas">{NATUREZAS_ACAO.map(n => <option key={n} value={n} />)}</datalist>
+                </div>
+              ) : (<>
+                <div className="jpr-fg"><label>Reclamante *</label><input className="jpr-fi" value={form.reclamante} onChange={e => setForm(v => ({ ...v, reclamante: e.target.value }))} /></div>
+                <div className="jpr-fg"><label>Reclamada</label><input className="jpr-fi" list="jpr-reclamadas-form" value={form.reclamada} onChange={e => setForm(v => ({ ...v, reclamada: e.target.value }))} placeholder="Empresa" /><datalist id="jpr-reclamadas-form">{reclamadasDistintas.map(r => <option key={r} value={r} />)}</datalist></div>
+              </>)}
+              <div className="jpr-fg"><label>{outrosForm ? "Comarca / Vara / Tribunal" : "Comarca"}</label><input className="jpr-fi" value={form.comarca} onChange={e => setForm(v => ({ ...v, comarca: e.target.value }))} /></div>
               <div className="jpr-fg">
-                <label>Município de origem *</label>
+                <label>Município de origem{outrosForm ? "" : " *"}</label>
                 {/* A cidade do contrato. Vem preenchida quando dá para tirá-la
                     do nome do contrato; quando não dá, fica em branco e o
                     Salvar cobra — em branco é o estado que ninguém corrige. */}
@@ -1533,8 +1630,9 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
             </>)}
             </div>
 
-            {/* Vínculo do reclamante com EMPREGADOS */}
-            <div className="jpr-sec" style={{ background: "#f8fbff", borderColor: "#dbe6f8" }}>
+            {/* Vínculo do reclamante com EMPREGADOS — só no trabalhista: em
+                "Outros" a parte contrária não é (em regra) colaborador. */}
+            {!outrosForm && <div className="jpr-sec" style={{ background: "#f8fbff", borderColor: "#dbe6f8" }}>
               <div className="jpr-sec-h">
                 <div className="jpr-sec-t">Vincular reclamante ao cadastro (EMPREGADOS)</div>
                 {form.reclamante_vinculado_cpf && <button className="jpr-btn" onClick={() => verDetalhesReclamante(form.reclamante_vinculado_cpf)} style={{ background: "#eef4ff", color: "#0f3171", padding: "5px 10px" }}>👤 Todos os detalhes</button>}
@@ -1572,7 +1670,7 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
                 )}
                 {!empLoading && empBusca && empResultados.length === 0 && <div style={{ fontSize: 12, color: "#94a3b8", padding: "8px 2px" }}>Nenhum colaborador encontrado. Tente outro nome/sobrenome.</div>}
               </>)}
-            </div>
+            </div>}
 
             {editId != null && (
               <div className="jpr-sec">
@@ -1751,6 +1849,54 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
       <div style={{ position: "fixed", bottom: 24, left: "50%", transform: "translateX(-50%)", zIndex: 9999, display: "flex", flexDirection: "column", gap: 6, alignItems: "center" }}>
         {toasts.map(t => (<div key={t.id} style={{ padding: "10px 18px", borderRadius: 9, fontSize: 13, fontWeight: 600, boxShadow: "0 16px 40px rgba(15,23,42,.12)", background: t.t === "ok" ? "#ecfdf3" : t.t === "err" ? "#fef2f2" : "#eff6ff", color: t.t === "ok" ? "#15803d" : t.t === "err" ? "#b91c1c" : "#1d4ed8", border: `1px solid ${t.t === "ok" ? "#86efac" : t.t === "err" ? "#fecaca" : "#bfdbfe"}` }}>{t.msg}</div>))}
       </div>
+    </div>
+  );
+}
+
+/**
+ * Uma parte do processo "Outros" (SIS-2026-0488): pessoa física, pessoa
+ * jurídica ou empresa do grupo. Empresa do grupo é escolhida da lista
+ * (grava o código — HAGG, SN… — e já traz o CNPJ); as outras são digitadas.
+ */
+function ParteCampos({ rotulo, parte, onChange, empresas }: {
+  rotulo: string; parte: Parte; onChange: (p: Parte) => void;
+  empresas: { codigo: string; razao_social: string; cnpj: string | null }[];
+}) {
+  const grupo = parte.tipo === "grupo";
+  return (
+    <div style={{ border: "1.5px solid #dbe4f0", borderRadius: 12, padding: 12, background: grupo ? "#f0fdf4" : "#f8fafc" }}>
+      <div style={{ fontSize: 11, fontWeight: 800, color: "#0f3171", textTransform: "uppercase", letterSpacing: ".4px", marginBottom: 8 }}>
+        {rotulo} *{grupo && <span style={{ marginLeft: 6, color: "#15803d" }}>· empresa do grupo</span>}
+      </div>
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 8 }}>
+        {(Object.keys(ROTULO_TIPO_PARTE) as TipoParte[]).map(t => (
+          <button key={t} type="button" onClick={() => onChange({ tipo: t, nome: t === parte.tipo ? parte.nome : "", documento: t === parte.tipo ? parte.documento : "" })}
+            style={{ padding: "5px 10px", borderRadius: 999, fontSize: 11.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit",
+                     border: parte.tipo === t ? "1.5px solid #0f3171" : "1px solid #cbd5e1", background: parte.tipo === t ? "#0f3171" : "#fff",
+                     color: parte.tipo === t ? "#fff" : "#334155" }}>
+            {ROTULO_TIPO_PARTE[t]}
+          </button>
+        ))}
+      </div>
+      {parte.tipo === "" ? (
+        <div style={{ fontSize: 11.5, color: "#94a3b8" }}>Escolha o tipo do {rotulo.toLowerCase()}.</div>
+      ) : grupo ? (
+        <select className="jpr-fi" value={parte.nome}
+          onChange={e => { const emp = empresas.find(x => x.codigo === e.target.value); onChange({ ...parte, nome: e.target.value, documento: emp?.cnpj ?? "" }); }}>
+          <option value="">— Selecione a empresa —</option>
+          {empresas.map(e => <option key={e.codigo} value={e.codigo}>{e.codigo} — {e.razao_social}</option>)}
+        </select>
+      ) : (
+        <div style={{ display: "grid", gap: 6 }}>
+          <input className="jpr-fi" value={parte.nome} onChange={e => onChange({ ...parte, nome: e.target.value })}
+            placeholder={parte.tipo === "pf" ? "Nome completo" : "Razão social"} />
+          <input className="jpr-fi" value={parte.documento} inputMode="numeric"
+            onChange={e => onChange({ ...parte, documento: e.target.value })}
+            onBlur={e => onChange({ ...parte, documento: formatarDocumento(e.target.value) })}
+            placeholder={parte.tipo === "pf" ? "CPF (opcional)" : "CNPJ (opcional)"} />
+        </div>
+      )}
+      {grupo && parte.documento && <div style={{ fontSize: 11, color: "#64748b", marginTop: 4 }}>CNPJ {parte.documento}</div>}
     </div>
   );
 }

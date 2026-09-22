@@ -1,5 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import * as tus from "tus-js-client";
 import { supabase } from "@/integrations/supabase/client";
+import { SUPABASE_ANON_KEY, SUPABASE_URL } from "@/integrations/supabase/env";
 import {
   BUCKET_TRN, type Aluno, type AlunoLista, type Aula, type Aviso, type Categoria, type Certificado,
   type CertificadoModelo, type Comentario, type Curso, type CursoLista, type Dashboard, type Evento,
@@ -38,13 +40,64 @@ export function urlMidia(path: string | null | undefined): string | null {
   return supabase.storage.from(BUCKET_TRN).getPublicUrl(path).data.publicUrl;
 }
 
-/** Sobe um arquivo para `pasta/` e devolve o path gravado. */
-export async function uploadMidia(file: File, pasta: string): Promise<string> {
+/**
+ * Sobe um arquivo para `pasta/` e devolve o path gravado.
+ *
+ * Acima de 6 MB vai pelo upload RETOMÁVEL (TUS) em pedaços de 6 MB, com
+ * progresso e nova tentativa se a conexão cair (22/09/2026 — "preciso
+ * conseguir anexar vídeos": vídeo de centenas de MB no upload simples
+ * ficava minutos em "Enviando…" sem sinal de vida e morria na primeira
+ * oscilação). Mesmo padrão do MigracaoFcr.tsx.
+ */
+export async function uploadMidia(
+  file: File, pasta: string, onProgresso?: (pct: number, enviado: number, total: number) => void,
+): Promise<string> {
   const limpo = file.name.replace(/[^\w.-]+/g, "_");
   const path = `${pasta}/${Date.now()}-${limpo}`;
-  const { error } = await supabase.storage.from(BUCKET_TRN).upload(path, file, { contentType: file.type, upsert: false });
-  if (error) throw error;
+  const tipo = file.type || tipoPelaExtensao(file.name);
+  if (file.size <= 6 * 1024 * 1024) {
+    const { error } = await supabase.storage.from(BUCKET_TRN).upload(path, file, { contentType: tipo, upsert: false });
+    if (error) throw error;
+    onProgresso?.(100, file.size, file.size);
+    return path;
+  }
+  const { data: sessao } = await supabase.auth.getSession();
+  const token = sessao.session?.access_token;
+  if (!token) throw new Error("Sessão expirada. Entre de novo para enviar o arquivo.");
+  await new Promise<void>((resolve, reject) => {
+    const up = new tus.Upload(file, {
+      endpoint: `${SUPABASE_URL}/storage/v1/upload/resumable`,
+      chunkSize: 6 * 1024 * 1024,
+      retryDelays: [0, 3000, 5000, 10000, 20000],
+      uploadDataDuringCreation: true,
+      removeFingerprintOnSuccess: true,
+      headers: { authorization: `Bearer ${token}`, apikey: SUPABASE_ANON_KEY },
+      metadata: { bucketName: BUCKET_TRN, objectName: path, contentType: tipo, cacheControl: "3600" },
+      onError: (e) => reject(new Error(mensagemTus(e))),
+      onProgress: (enviado, total) => onProgresso?.(Math.round((enviado / total) * 100), enviado, total),
+      onSuccess: () => resolve(),
+    });
+    up.start();
+  });
   return path;
+}
+
+// Navegador às vezes não dá o tipo de .mkv/.wmv/.avi — o bucket precisa dele pra tocar.
+export function tipoPelaExtensao(nome: string): string {
+  const ext = nome.split(".").pop()?.toLowerCase() ?? "";
+  const tipos: Record<string, string> = {
+    mp4: "video/mp4", m4v: "video/mp4", mov: "video/quicktime", webm: "video/webm", mkv: "video/x-matroska",
+    avi: "video/x-msvideo", wmv: "video/x-ms-wmv", mp3: "audio/mpeg", pdf: "application/pdf",
+    png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg",
+  };
+  return tipos[ext] ?? "application/octet-stream";
+}
+
+function mensagemTus(e: Error): string {
+  const m = e?.message ?? "";
+  if (/413|too large|Payload/i.test(m)) return "Arquivo maior que o limite (500 MB).";
+  if (/401|403|row-level|Unauthorized/i.test(m)) return "Sem permissão para enviar arquivos nos Treinamentos.";
+  return "Não deu para enviar o arquivo: " + m.slice(0, 200);
 }
 
 // ── Dashboard ────────────────────────────────────────────────────────
@@ -116,10 +169,15 @@ export async function rpcTodasAsLinhas<T>(fn: string, args?: Record<string, unkn
   return tudo;
 }
 
-export function useTrnAlunos() {
+/**
+ * Sem `incluirInativos` vêm só os não-inativos (Trabalhando + pendentes/
+ * bloqueados) — ~2,2 mil em vez de 13 mil; a lista levava ~10 s (22/09/2026).
+ * Demitido/afastado só carrega quando o filtro de status pede.
+ */
+export function useTrnAlunos(incluirInativos = false) {
   return useQuery({
-    queryKey: [K.alunos],
-    queryFn: () => rpcTodasAsLinhas<AlunoLista>("trn_alunos_lista"),
+    queryKey: [K.alunos, incluirInativos],
+    queryFn: () => rpcTodasAsLinhas<AlunoLista>("trn_alunos_lista", { _incluir_inativos: incluirInativos }),
   });
 }
 
@@ -204,6 +262,22 @@ export function useTrnSalvarAluno() {
   });
 }
 
+/**
+ * E-mail/telefone do aluno-colaborador (22/09/2026): grava em EMPREGADOS
+ * (colunas do ERP, a Senior não reescreve) e o trigger leva pro aluno —
+ * editar só o TRN_ALUNO seria desfeito pela sincronização.
+ */
+export function useTrnAtualizarContatoAluno() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (p: { alunoId: string; email: string; telefone: string | null }) => {
+      const { error } = await sb.rpc("trn_aluno_atualizar_contato", { p_aluno_id: p.alunoId, p_email: p.email, p_telefone: p.telefone });
+      if (error) throw error;
+    },
+    onSuccess: () => invalidar(qc, K.alunos, K.aluno, K.historico),
+  });
+}
+
 export function useTrnExcluirAluno() {
   const qc = useQueryClient();
   return useMutation({
@@ -260,18 +334,6 @@ export function useTrnEmitirCertificado() {
       return data as string;
     },
     onSuccess: () => invalidar(qc, K.certificados, K.historico, K.dashboard),
-  });
-}
-
-export function useTrnImportarAlunos() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: async (args: { linhas: Record<string, string>[]; substituirTags: boolean }) => {
-      const { data, error } = await sb.rpc("trn_importar_alunos", { _linhas: args.linhas, _substituir_tags: args.substituirTags });
-      if (error) throw error;
-      return data as { criados: number; atualizados: number; erros: { linha: number; erro: string }[] };
-    },
-    onSuccess: () => invalidar(qc, K.alunos, K.tags, K.dashboard, K.cursos),
   });
 }
 
@@ -481,6 +543,58 @@ export function useTrnAula(id: string | null | undefined) {
 }
 
 export type AulaInput = Omit<Partial<Aula>, "id"> & { id?: string; modulo_id: string; nome: string };
+
+// ── Provas (22/09/2026) ──────────────────────────────────────────────
+export interface TentativaProva {
+  numero: number; nota: number | null; aprovado: boolean | null; acertos: number | null; total: number | null;
+  pontos: number | null; pontos_total: number | null; iniciada_em: string; enviada_em: string | null;
+  encerramento: "enviada" | "tempo_esgotado" | null;
+}
+export interface ProvaDoAluno {
+  aula_id: string; aula: string; curso: string; nota_minima: number; tentativas_max: number | null; extras: number;
+  nota: number | null; video_assistido: boolean; tentativas: TentativaProva[];
+}
+export interface ResultadosProvaAula {
+  resumo: { alunos: number; aprovados: number; tentativas: number; media: number | null };
+  perguntas: { id: string; respostas: number; acertos: number }[];
+  alunos: { aluno_id: string; nome: string; contrato: string | null; tentativas: number; melhor: number | null; ultima: number | null; aprovado: boolean; em: string | null }[];
+}
+
+export function useTrnProvasAluno(alunoId: string | null | undefined) {
+  return useQuery({
+    queryKey: ["trn-provas-aluno", alunoId ?? ""],
+    enabled: !!alunoId,
+    queryFn: async (): Promise<ProvaDoAluno[]> => {
+      const { data, error } = await sb.rpc("trn_prova_tentativas_aluno", { p_aluno: alunoId });
+      if (error) throw error;
+      return (data ?? []) as ProvaDoAluno[];
+    },
+  });
+}
+
+export function useTrnResultadosProva(aulaId: string | null | undefined) {
+  return useQuery({
+    queryKey: ["trn-provas-aula", aulaId ?? ""],
+    enabled: !!aulaId,
+    queryFn: async (): Promise<ResultadosProvaAula> => {
+      const { data, error } = await sb.rpc("trn_prova_resultados_aula", { p_aula: aulaId });
+      if (error) throw error;
+      return data as ResultadosProvaAula;
+    },
+  });
+}
+
+/** +1 tentativa pra quem esgotou as da prova sem aprovar. */
+export function useTrnLiberarTentativa() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (p: { alunoId: string; aulaId: string }) => {
+      const { error } = await sb.rpc("trn_prova_liberar_tentativa", { p_aluno: p.alunoId, p_aula: p.aulaId });
+      if (error) throw error;
+    },
+    onSuccess: () => { invalidar(qc, K.historico); qc.invalidateQueries({ queryKey: ["trn-provas-aluno"] }); qc.invalidateQueries({ queryKey: ["trn-provas-aula"] }); },
+  });
+}
 
 export function useTrnSalvarAula() {
   const qc = useQueryClient();
