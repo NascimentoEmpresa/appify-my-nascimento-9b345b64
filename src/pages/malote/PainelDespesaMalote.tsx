@@ -39,6 +39,7 @@ import { AnexosField } from "./AnexosField";
 import { DiaPagamentoPicker } from "./DiaPagamentoPicker";
 import { ExcecaoDiaBloqueadoField } from "./ExcecaoDiaBloqueadoField";
 import { DimensoesRateio, RateioGrid } from "./RateioGrid";
+import { erroFornecedorNoRateio } from "./rateioValidacao";
 
 // SIS-2026-0263 (Iury): "colocar a possibilidade de escolher de 1 a 30 para
 // o dia de pagamento e poder escolher parcelar em até 420x" — dia do
@@ -171,7 +172,9 @@ export function PainelDespesaMalote({
   // pagamento. Nesse caso o texto fica opcional e o arquivo, obrigatório.
   const [pagamentoSoAnexo, setPagamentoSoAnexo] = useState(false);
   // SIS-2026-0467: Fornecedor é sempre obrigatório no Rateio desta tela —
-  // já nasce marcado (RateioGrid trava o checkbox pra não deixar desmarcar).
+  // já nasce marcado (RateioGrid trava o checkbox pra não deixar desmarcar),
+  // igual ao Contrato. Vale também para quem embute este painel: as duas
+  // telas de aprovação de diária (SIS-2026-0480).
   const [dimensoes, setDimensoes] = useState<DimensoesRateio>({ empresa: false, contrato: false, fornecedor: true, integrante: false });
   const [ratearPor, setRatearPor] = useState<"percentual" | "valor">("percentual");
   const [linhasRateio, setLinhasRateio] = useState<RateioLinha[]>([]);
@@ -298,16 +301,10 @@ export function PainelDespesaMalote({
     if (paraEnviar) {
       if (linhasRateio.length === 0) return "Adicione ao menos uma linha de rateio.";
       if (Math.abs(totalRateado - Number(totalMes)) > 0.01) return "O total do rateio deve ser igual ao Total do mês.";
-      // SIS-2026-0467 (substitui a regra do SIS-2026-0457): Fornecedor passa
-      // a ser sempre obrigatório em toda linha do rateio — Integrante
-      // continua uma dimensão à parte, opcional, sem relação de "ou" com
-      // Fornecedor (antes bastava um dos dois).
-      if (!dimensoes.fornecedor) {
-        return "Marque \"Fornecedor\" no Rateio e informe-o em cada linha.";
-      }
-      if (linhasRateio.some((l) => !l.fornecedor_id)) {
-        return "Informe o Fornecedor em todas as linhas do rateio.";
-      }
+      // SIS-2026-0467 + SIS-2026-0480 — a regra e o histórico dela estão em
+      // rateioValidacao.ts, com teste próprio.
+      const erroFornecedor = erroFornecedorNoRateio(dimensoes, linhasRateio);
+      if (erroFornecedor) return erroFornecedor;
       if (parcelado === "sim") {
         if (!diaDesconto || !quantidadeParcelas) return "Informe o dia do desconto e a quantidade de parcelas.";
         const n = Number(quantidadeParcelas);

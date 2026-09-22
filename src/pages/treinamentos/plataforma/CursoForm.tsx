@@ -107,7 +107,12 @@ export default function CursoForm() {
       <AcessoGate menu={menuTela} acao="visualizar" fallback={<Card className="p-6 text-sm text-muted-foreground">Você não tem liberação para esta tela.</Card>}>
         <TrnHero eyebrow="Treinamentos › Cursos" titulo={editando ? `Editar: ${data?.curso.nome ?? "curso"}` : "Adicionar curso"}
                  texto="Nome, descrição e capa aparecem na vitrine da área do aluno — capriche."
-                 acoes={<Link to={editando ? `/app/treinamentos/cursos/${id}` : "/app/treinamentos/cursos"} className="sec">← {editando ? "Visualização do curso" : "Todos os cursos"}</Link>} />
+                 acoes={<>
+                   {/* O vídeo mora na AULA, não no curso (22/09/2026: "preciso conseguir
+                       anexar vídeos nos cursos" — o caminho não era óbvio daqui). */}
+                   {editando && <Link to={`/app/treinamentos/cursos/${id}`}>🎬 Módulos, aulas e vídeos →</Link>}
+                   <Link to="/app/treinamentos/cursos" className="sec">← Todos os cursos</Link>
+                 </>} />
 
         {editando && isLoading ? <TrnCarregando /> : (
           <div className="trn-lateral">

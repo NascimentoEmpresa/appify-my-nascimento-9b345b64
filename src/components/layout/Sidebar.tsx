@@ -82,7 +82,7 @@ import { MessageSquare } from "lucide-react";
 import { Banknote } from "lucide-react";
 import { TrendingDown } from "lucide-react";
 import { Megaphone, ExternalLink } from "lucide-react";
-import { Award, CalendarDays, FolderTree, Tags, Upload, Users } from "lucide-react";
+import { Award, CalendarDays, FolderTree, Tags, Users } from "lucide-react";
 import { CreditCard } from "lucide-react";
 import { Network } from "lucide-react";
 import { useNovidades } from "@/hooks/useNovidades";
@@ -666,7 +666,6 @@ const treinamentosModule: ModuleDef = {
       items: [
         { label: "Visualizar alunos", to: "/app/treinamentos/alunos", icon: Users },
         { label: "Gerenciar alunos", to: "/app/treinamentos/alunos/novo", icon: UserCog },
-        { label: "Importar alunos", to: "/app/treinamentos/alunos/importar", icon: Upload },
         { label: "Tags", to: "/app/treinamentos/alunos/tags", icon: Tags },
       ],
     },

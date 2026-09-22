@@ -120,6 +120,26 @@ Deno.serve(async (req) => {
         const respostas = Array.isArray(body.respostas) ? body.respostas.map((r) => int(r)) : [];
         return json(await rpc("col_responder_quiz", { p_emp: emp, p_aula: uuid(body.aula_id), p_respostas: respostas }));
       }
+      // Provas (22/09/2026): estado/início/resposta com tentativas limitadas
+      // e o aviso do player de que o vídeo chegou ao fim (libera a prova).
+      case "prova":
+        return json(await rpc("col_prova", { p_emp: emp, p_aula: uuid(body.aula_id) }));
+      case "prova_iniciar":
+        return json(await rpc("col_prova_iniciar", { p_emp: emp, p_aula: uuid(body.aula_id) }));
+      case "prova_responder": {
+        // {"<id da pergunta>": [índices]} — só números inteiros passam.
+        const bruto = body.respostas && typeof body.respostas === "object" && !Array.isArray(body.respostas)
+          ? body.respostas as Record<string, unknown> : {};
+        const respostas: Record<string, number[]> = {};
+        for (const [k, v] of Object.entries(bruto).slice(0, 500)) {
+          const lista = (Array.isArray(v) ? v : [v]).map((x) => int(x)).filter((x): x is number => x != null);
+          respostas[String(k).slice(0, 100)] = lista.slice(0, 50);
+        }
+        return json(await rpc("col_prova_responder", { p_emp: emp, p_tentativa: uuid(body.tentativa_id), p_respostas: respostas }));
+      }
+      case "video_assistido":
+        await rpc("col_video_assistido", { p_emp: emp, p_aula: uuid(body.aula_id) });
+        return json({ ok: true });
       case "comentarios":
         return json(await rpc("col_comentarios", { p_emp: emp, p_aula: uuid(body.aula_id) }));
       case "comentar":

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
-import { Award, BarChart3, ChevronDown, History, Save, Trash2, UserCog } from "lucide-react";
+import { Award, BarChart3, ChevronDown, ClipboardCheck, History, Save, Trash2, UserCog } from "lucide-react";
 import { AcessoGate } from "@/components/auth/AcessoGate";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -11,12 +11,17 @@ import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
+  AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { supabase } from "@/integrations/supabase/client";
 import {
-  useTrnAluno, useTrnCertificadosAluno, useTrnCursos, useTrnEmitirCertificado, useTrnExcluirAluno,
+  useTrnAluno, useTrnAtualizarContatoAluno, useTrnCertificadosAluno, useTrnCursos, useTrnEmitirCertificado, useTrnExcluirAluno,
   useTrnHistorico, useTrnProgressoAluno, useTrnSalvarAluno, type AlunoInput,
 } from "@/hooks/useTreinamentosPlataforma";
 import { MENU, ROTULO_STATUS_ALUNO, type StatusAluno } from "./tipos";
+import { ProvasDoAluno } from "./ProvaResultados";
 import { StatusAlunoBadge, TagPicker, TrnCarregando, TrnEstilo, TrnHero, fmtData, fmtDataHora, hojeISO } from "./ui";
 
 // =====================================================================
@@ -58,9 +63,16 @@ export default function AlunoForm() {
   const { data: cursos = [] } = useTrnCursos();
   const salvar = useTrnSalvarAluno();
   const excluir = useTrnExcluirAluno();
+  const atualizarContato = useTrnAtualizarContatoAluno();
   const [f, setF] = useState<Form>(VAZIO);
   // Veio do cadastro (origem integracao, vinculado a EMPREGADOS)?
   const daSenior = !!data && data.aluno.origem === "integracao" && data.aluno.empregado_id != null;
+  // E-mail/telefone do colaborador mudados — pedem confirmação, porque
+  // gravam também em EMPREGADOS (22/09/2026).
+  const [confirmarContato, setConfirmarContato] = useState(false);
+  const contatoMudou = daSenior && !!data && (
+    f.email.trim().toLowerCase() !== (data.aluno.email ?? "").trim().toLowerCase()
+    || (f.telefone.trim() || null) !== (data.aluno.telefone?.trim() || null));
   const [config, setConfig] = useState(false);
   const [buscaCurso, setBuscaCurso] = useState("");
 
@@ -83,11 +95,21 @@ export default function AlunoForm() {
     return cursos.filter((c) => !b || c.nome.toLowerCase().includes(b));
   }, [cursos, buscaCurso]);
 
-  const gravar = async () => {
+  const gravar = async (contatoConfirmado = false) => {
     if (!f.nome.trim()) return toast.error("Informe o nome do aluno.");
     if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(f.email.trim())) return toast.error("Informe um e-mail válido.");
     const prazo = f.prazo.trim() ? Number(f.prazo) : null;
     if (prazo !== null && (!Number.isInteger(prazo) || prazo <= 0)) return toast.error("Prazo de acesso inválido.");
+    if (contatoMudou && !contatoConfirmado) { setConfirmarContato(true); return; }
+    if (contatoMudou) {
+      // Primeiro o cadastro do colaborador: se o e-mail for de outro aluno,
+      // para aqui, antes de gravar o resto.
+      try {
+        await atualizarContato.mutateAsync({ alunoId: id!, email: f.email.trim().toLowerCase(), telefone: f.telefone.trim() || null });
+      } catch (e: any) {
+        return toast.error(e?.message ?? "Não deu para alterar o contato no cadastro do colaborador.");
+      }
+    }
     const input: AlunoInput = {
       id: editando ? id : undefined,
       nome: f.nome.trim(), email: f.email.trim().toLowerCase(), telefone: f.telefone.trim() || null,
@@ -137,6 +159,7 @@ export default function AlunoForm() {
               <TabsList className="mb-4">
                 <TabsTrigger value="editar"><UserCog className="mr-1 h-4 w-4" /> Editar</TabsTrigger>
                 <TabsTrigger value="metricas"><BarChart3 className="mr-1 h-4 w-4" /> Métricas</TabsTrigger>
+                <TabsTrigger value="provas"><ClipboardCheck className="mr-1 h-4 w-4" /> Provas</TabsTrigger>
                 <TabsTrigger value="historico"><History className="mr-1 h-4 w-4" /> Histórico</TabsTrigger>
                 <TabsTrigger value="certificados"><Award className="mr-1 h-4 w-4" /> Certificados</TabsTrigger>
               </TabsList>
@@ -147,22 +170,23 @@ export default function AlunoForm() {
                 <div className="trn-form">
                   <div className="grupo">
                     <h4>{editando ? "Editar informações" : "Adicionar informações"}</h4>
-                    {/* Aluno que veio do cadastro (21/09/2026): nome, telefone, e-mail
-                        e CPF são da Senior/EMPREGADOS e a sincronização sobrescreveria
-                        o que fosse editado aqui — ficam travados, e o "Vincular"
-                        some (já está vinculado). */}
+                    {/* Aluno que veio do cadastro (21/09/2026): nome e CPF são da
+                        Senior e a sincronização sobrescreveria o que fosse editado
+                        aqui — ficam travados, e o "Vincular" some (já está vinculado).
+                        E-mail e telefone destravaram em 22/09/2026: são colunas do
+                        ERP em EMPREGADOS, e a edição (com confirmação) grava lá. */}
                     {daSenior && (
                       <div className="mb-3 rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-900">
-                        Colaborador do cadastro da Senior (nº {f.empregado_id}). Nome, telefone, e-mail e CPF vêm de lá e acompanham o cadastro — não se editam aqui.
+                        Colaborador do cadastro da Senior (nº {f.empregado_id}). Nome e CPF vêm de lá e não se editam aqui. E-mail e telefone podem ser alterados — a alteração vale também para o cadastro do colaborador.
                       </div>
                     )}
                     <div className="grid gap-4 sm:grid-cols-2">
                       <div className="campo sm:col-span-2"><label>Nome do aluno *</label><Input value={f.nome} disabled={daSenior} onChange={(e) => set({ nome: e.target.value })} /></div>
-                      <div className="campo"><label>Telefone do aluno</label><Input placeholder="+55 (54) 9 9999-9999" value={f.telefone} disabled={daSenior} onChange={(e) => set({ telefone: e.target.value })} /></div>
+                      <div className="campo"><label>Telefone do aluno</label><Input placeholder="+55 (54) 9 9999-9999" value={f.telefone} onChange={(e) => set({ telefone: e.target.value })} /></div>
                       <div className="campo">
                         <label>E-mail do aluno *</label>
-                        <Input type="email" value={f.email} disabled={editando} onChange={(e) => set({ email: e.target.value })} />
-                        <div className="ajuda">{daSenior ? "Vem do cadastro da Senior (EMPREGADOS)." : editando ? "O e-mail do aluno não pode ser alterado." : "O aluno usa este e-mail para acessar a plataforma."}</div>
+                        <Input type="email" value={f.email} disabled={editando && !daSenior} onChange={(e) => set({ email: e.target.value })} />
+                        <div className="ajuda">{daSenior ? "Do cadastro do colaborador (EMPREGADOS) — alterar aqui altera lá também." : editando ? "O e-mail do aluno não pode ser alterado." : "O aluno usa este e-mail para acessar a plataforma."}</div>
                       </div>
                       <div className="campo"><label>Documento do aluno</label><Input placeholder="CPF" value={f.documento} disabled={daSenior} onChange={(e) => set({ documento: e.target.value })} /></div>
                       <div className="campo">
@@ -274,7 +298,7 @@ export default function AlunoForm() {
                   )}
 
                   <AcessoGate menu={menuTela} acao={acaoTela} fallback={<p className="text-xs text-muted-foreground">Você pode ver, mas não tem a ação de {editando ? "alterar" : "incluir"} aluno.</p>}>
-                    <div><Button disabled={salvar.isPending} onClick={gravar}><Save className="mr-2 h-4 w-4" /> {editando ? "Salvar alterações" : "Criar aluno"}</Button></div>
+                    <div><Button disabled={salvar.isPending || atualizarContato.isPending} onClick={() => gravar()}><Save className="mr-2 h-4 w-4" /> {editando ? "Salvar alterações" : "Criar aluno"}</Button></div>
                   </AcessoGate>
                 </div>
 
@@ -292,13 +316,35 @@ export default function AlunoForm() {
                     <h4>{editando ? "Editando alunos" : "Inserindo novos alunos"}</h4>
                     {editando
                       ? <>Todas as informações do aluno podem ser alteradas, exceto o e-mail de acesso. Se o e-mail foi cadastrado errado, exclua o aluno e cadastre de novo com o e-mail correto.<h5>Observação</h5>Aluno com acesso expirado: desbloqueie para renovar a data de matrícula e restabelecer o acesso.</>
-                      : <>Esta área permite adicionar alunos um a um. Para muitos de uma vez, use <Link to="/app/treinamentos/alunos/importar" className="font-semibold text-primary">Importar alunos</Link>.<h5>Observação</h5>Acesso completo libera todos os cursos publicados, atuais e futuros — bom para quem precisa de toda a trilha de NRs.</>}
+                      : <>Esta área permite adicionar alunos um a um. Colaboradores já entram sozinhos, pelo cadastro (EMPREGADOS).<h5>Observação</h5>Acesso completo libera todos os cursos publicados, atuais e futuros — bom para quem precisa de toda a trilha de NRs.</>}
                   </div>
                 </div>
               </div>
             </TabsContent>
 
+            <AlertDialog open={confirmarContato} onOpenChange={setConfirmarContato}>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Alterar o contato do colaborador?</AlertDialogTitle>
+                  <AlertDialogDescription asChild>
+                    <div className="space-y-2 text-sm">
+                      <p>O e-mail e o telefone de <b>{data?.aluno.nome}</b> vão ser alterados <b>também no cadastro do colaborador (EMPREGADOS)</b>, não só na plataforma de treinamentos.</p>
+                      <ul className="list-disc pl-5">
+                        {f.email.trim().toLowerCase() !== (data?.aluno.email ?? "").trim().toLowerCase() && <li>E-mail: {data?.aluno.email || "(vazio)"} → <b>{f.email.trim().toLowerCase()}</b></li>}
+                        {(f.telefone.trim() || null) !== (data?.aluno.telefone?.trim() || null) && <li>Telefone: {data?.aluno.telefone || "(vazio)"} → <b>{f.telefone.trim() || "(vazio)"}</b></li>}
+                      </ul>
+                    </div>
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                  <AlertDialogAction onClick={() => { setConfirmarContato(false); void gravar(true); }}>Confirmar e salvar</AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+
             {editando && <TabsContent value="metricas"><Metricas alunoId={id!} /></TabsContent>}
+            {editando && <TabsContent value="provas"><ProvasDoAluno alunoId={id!} /></TabsContent>}
             {editando && <TabsContent value="historico"><HistoricoAluno alunoId={id!} /></TabsContent>}
             {editando && <TabsContent value="certificados"><CertificadosAluno alunoId={id!} acessoCompleto={!!data?.aluno.acesso_completo} /></TabsContent>}
           </Tabs>
