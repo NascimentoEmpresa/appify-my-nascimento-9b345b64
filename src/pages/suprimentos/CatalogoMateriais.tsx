@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -10,18 +10,16 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "
 import { PageHeader } from "@/components/layout/PageHeader";
 import { useEmpresaId } from "@/hooks/useEmpresaId";
 import {
-  useContratosCatalogo,
+  useContratosCatalogo, useFuncoesDoContrato,
   usePostos, useFuncoes, useFuncaoItens, useItens, useItemOpcoes,
-  useTamanhosDoItem,
-  useRascunhos, useCatalogoMutations, LABEL_TIPO_ITEM,
-  type TipoItem, type Item,
+  useRascunhos, useCatalogoMutations, OPCOES_PREDEFINIDAS, LABEL_TIPO_ITEM,
+  type TipoItem, type Item, type FuncaoDoContrato,
 } from "@/hooks/useSupCatalogo";
-import { chipsDeOpcao } from "@/lib/suprimentos/opcoesMaterial";
 import { useEstoqueLista, type LinhaEstoque } from "@/hooks/useSupEstoque";
 import { AutorAlteracao } from "@/components/suprimentos/HistoricoLote";
 import {
   Plus, Pencil, Trash2, Settings2, Send, ChevronRight, Building2, MapPin,
-  Briefcase, Shirt, Info, ClipboardCheck,
+  Briefcase, Shirt, Info, ClipboardCheck, Copy,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -266,6 +264,8 @@ export default function CatalogoMateriais() {
 
   const [addItemAberto, setAddItemAberto] = useState(false);
   const [opcoesItem, setOpcoesItem] = useState<Item | null>(null);
+  const [copiarEnxovalAberto, setCopiarEnxovalAberto] = useState(false);
+  const { data: funcoesDoContrato = [] } = useFuncoesDoContrato(copiarEnxovalAberto ? contratoId : null);
 
   const selecionarContrato = (id: string) => { setContratoId(id); setPostoId(null); setFuncaoId(null); };
   const selecionarPosto = (id: string) => { setPostoId(id); setFuncaoId(null); };
@@ -456,6 +456,14 @@ export default function CatalogoMateriais() {
                 >
                   <Plus className="mr-1.5 h-3.5 w-3.5" /> Adicionar material
                 </Button>
+                <Button
+                  variant="ghost" size="sm"
+                  className="h-8 w-full justify-start text-muted-foreground"
+                  disabled={enxoval.length === 0}
+                  onClick={() => setCopiarEnxovalAberto(true)}
+                >
+                  <Copy className="mr-1.5 h-3.5 w-3.5" /> Copiar enxoval
+                </Button>
               </>
             )}
           </CardContent>
@@ -475,8 +483,161 @@ export default function CatalogoMateriais() {
         onCriarMaterial={async (nome, tipo) => await m.criarItem.mutateAsync({ nome, tipo })}
       />
 
+      <DialogCopiarEnxoval
+        aberto={copiarEnxovalAberto}
+        onFechar={() => setCopiarEnxovalAberto(false)}
+        funcaoOrigem={funcao}
+        postoOrigem={posto?.nome ?? ""}
+        quantidadeItensOrigem={enxoval.length}
+        destinos={funcoesDoContrato}
+        copiando={m.copiarEnxoval.isPending}
+        onCopiar={(funcoesDestinoIds) => {
+          if (!funcaoId) return;
+          m.copiarEnxoval.mutate(
+            { funcaoOrigemId: funcaoId, funcoesDestinoIds },
+            { onSuccess: () => setCopiarEnxovalAberto(false) },
+          );
+        }}
+      />
+
       <DialogOpcoes item={opcoesItem} onFechar={() => setOpcoesItem(null)} onSalvar={m.salvarOpcoes.mutate} />
     </div>
+  );
+}
+
+function DialogCopiarEnxoval({
+  aberto, onFechar, funcaoOrigem, postoOrigem, quantidadeItensOrigem,
+  destinos, copiando, onCopiar,
+}: {
+  aberto: boolean;
+  onFechar: () => void;
+  funcaoOrigem: { id: string; nome: string } | null;
+  postoOrigem: string;
+  quantidadeItensOrigem: number;
+  destinos: FuncaoDoContrato[];
+  copiando: boolean;
+  onCopiar: (funcoesDestinoIds: string[]) => void;
+}) {
+  const [busca, setBusca] = useState("");
+  const [selecionados, setSelecionados] = useState<Set<string>>(new Set());
+  const [apenasMesmaFuncao, setApenasMesmaFuncao] = useState(true);
+
+  useEffect(() => {
+    if (aberto) {
+      setBusca("");
+      setSelecionados(new Set());
+      setApenasMesmaFuncao(true);
+    }
+  }, [aberto, funcaoOrigem?.id]);
+
+  const destinosDisponiveis = useMemo(() => {
+    const termo = busca.trim().toLocaleLowerCase("pt-BR");
+    const nomeOrigem = funcaoOrigem?.nome.toLocaleLowerCase("pt-BR");
+    return destinos
+      .filter((f) => f.id !== funcaoOrigem?.id)
+      .filter((f) => !apenasMesmaFuncao || f.nome.toLocaleLowerCase("pt-BR") === nomeOrigem)
+      .filter((f) => !termo
+        || f.nome.toLocaleLowerCase("pt-BR").includes(termo)
+        || f.posto_nome.toLocaleLowerCase("pt-BR").includes(termo))
+      .sort((a, b) => a.posto_nome.localeCompare(b.posto_nome, "pt-BR") || a.nome.localeCompare(b.nome, "pt-BR"));
+  }, [apenasMesmaFuncao, busca, destinos, funcaoOrigem?.id, funcaoOrigem?.nome]);
+
+  const alternar = (id: string) => {
+    setSelecionados((atual) => {
+      const proximo = new Set(atual);
+      if (proximo.has(id)) proximo.delete(id);
+      else proximo.add(id);
+      return proximo;
+    });
+  };
+
+  return (
+    <Dialog open={aberto} onOpenChange={(open) => !open && !copiando && onFechar()}>
+      <DialogContent className="max-h-[85vh] w-[calc(100vw-2rem)] max-w-2xl overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>Copiar enxoval para outras funções</DialogTitle>
+        </DialogHeader>
+
+        <div className="space-y-4 py-2">
+          <div className="rounded-md border bg-muted/30 p-3 text-sm">
+            <p><span className="font-medium">Origem:</span> {postoOrigem} · {funcaoOrigem?.nome ?? "—"}</p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              {quantidadeItensOrigem} material{quantidadeItensOrigem === 1 ? "" : "is"}. Itens que já existirem no destino não serão duplicados.
+            </p>
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="buscar-destino-enxoval">Buscar função ou posto de destino</Label>
+            <Input
+              id="buscar-destino-enxoval"
+              value={busca}
+              onChange={(e) => setBusca(e.target.value)}
+              placeholder="Ex.: limpeza, Porto Alegre..."
+            />
+            <label className="flex cursor-pointer items-center gap-2 text-xs text-muted-foreground">
+              <input
+                type="checkbox"
+                checked={apenasMesmaFuncao}
+                onChange={(e) => setApenasMesmaFuncao(e.target.checked)}
+                className="h-4 w-4 rounded border-input accent-primary"
+              />
+              Mostrar somente funções com o mesmo nome da origem
+            </label>
+            <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground">
+              <span>{selecionados.size} função{selecionados.size === 1 ? "" : "ões"} selecionada{selecionados.size === 1 ? "" : "s"}</span>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  className="text-primary hover:underline"
+                  onClick={() => setSelecionados((atual) => new Set([...atual, ...destinosDisponiveis.map((f) => f.id)]))}
+                >
+                  Selecionar resultados
+                </button>
+                <button
+                  type="button"
+                  className="text-primary hover:underline"
+                  onClick={() => setSelecionados(new Set())}
+                >
+                  Limpar
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div className="max-h-72 space-y-1 overflow-y-auto rounded-md border p-1">
+            {destinosDisponiveis.length === 0 ? (
+              <p className="py-6 text-center text-sm text-muted-foreground">Nenhuma função de destino encontrada neste contrato.</p>
+            ) : destinosDisponiveis.map((f) => (
+              <label key={f.id} className="flex cursor-pointer items-center gap-3 rounded px-2 py-2 text-sm hover:bg-muted">
+                <input
+                  type="checkbox"
+                  checked={selecionados.has(f.id)}
+                  onChange={() => alternar(f.id)}
+                  className="h-4 w-4 rounded border-input accent-primary"
+                />
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate font-medium">{f.posto_nome}</span>
+                  <span className="block truncate text-xs text-muted-foreground">{f.nome}</span>
+                </span>
+                {!f.aprovado && <Badge variant="outline" className="border-amber-400/50 text-[10px] text-amber-600">pendente</Badge>}
+              </label>
+            ))}
+          </div>
+
+          <p className="text-xs leading-relaxed text-muted-foreground">
+            Cada material novo será incluído como rascunho e continuará exigindo o envio e a aprovação do catálogo antes de aparecer para o encarregado.
+          </p>
+        </div>
+
+        <DialogFooter>
+          <Button variant="outline" disabled={copiando} onClick={onFechar}>Cancelar</Button>
+          <Button disabled={copiando || selecionados.size === 0} onClick={() => onCopiar([...selecionados])}>
+            <Copy className="mr-2 h-4 w-4" />
+            {copiando ? "Copiando..." : `Copiar para ${selecionados.size} função${selecionados.size === 1 ? "" : "ões"}`}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -648,32 +809,14 @@ function DialogOpcoes({
   }) => void;
 }) {
   const { data: existentes = [], isLoading } = useItemOpcoes(item?.id ?? null);
-  // Os tamanhos que JÁ viraram item de estoque deste material. A entrada de
-  // estoque aceita tamanho digitado, então é por aqui que aparece um EXG que
-  // a grade não tem — sem isto, o almoxarifado tem a peça e o pedido não tem
-  // como pedi-la (SIS-2026-0482).
-  const { data: tamanhosEmEstoque = [] } = useTamanhosDoItem(item?.id ?? null);
   const [rascunho, setRascunho] = useState<Record<string, string[]> | null>(null);
 
   // Semeia a partir do banco na primeira abertura de cada item.
-  const salvas = useMemo(() => ({
+  const atual = rascunho ?? {
     tamanho: existentes.find((o) => o.tipo === "tamanho")?.opcoes ?? [],
     quantidade: existentes.find((o) => o.tipo === "quantidade")?.opcoes ?? [],
     litros: existentes.find((o) => o.tipo === "litros")?.opcoes ?? [],
-  }), [existentes]);
-  const atual = rascunho ?? salvas;
-
-  /**
-   * Quais chips desenhar — calculado do que está GRAVADO, nunca do rascunho.
-   * Com o rascunho, desmarcar um chip fora da grade o faria SUMIR da tela em
-   * vez de só apagar, e não haveria como marcar de volta sem fechar o
-   * diálogo.
-   */
-  const chips = useMemo(() => ({
-    tamanho: chipsDeOpcao("tamanho", salvas.tamanho, tamanhosEmEstoque.map((t) => t.tamanho)),
-    quantidade: chipsDeOpcao("quantidade", salvas.quantidade),
-    litros: chipsDeOpcao("litros", salvas.litros),
-  }), [salvas, tamanhosEmEstoque]);
+  };
 
   const alternar = (tipo: string, valor: string) => {
     const lista = atual[tipo] ?? [];
@@ -695,10 +838,6 @@ function DialogOpcoes({
             O encarregado só vê os selects que tiverem opção marcada aqui. Sem nenhuma marcada,
             o material é pedido sem escolha.
           </p>
-          <p className="text-xs text-muted-foreground">
-            Tamanho que já existe no estoque deste material aparece no fim da lista, mesmo fora
-            da grade padrão — marque-o para o encarregado poder pedir a peça que está na prateleira.
-          </p>
           {/* Sem este guarda, clicar num chip antes da query voltar semeia o
               rascunho vazio e as opções já salvas somem sem aviso. */}
           {isLoading ? (
@@ -708,7 +847,7 @@ function DialogOpcoes({
             <div key={tipo}>
               <Label className="capitalize">{tipo}</Label>
               <div className="mt-1.5 flex flex-wrap gap-1.5">
-                {chips[tipo].map((v) => {
+                {OPCOES_PREDEFINIDAS[tipo].map((v) => {
                   const marcado = (atual[tipo] ?? []).includes(v);
                   return (
                     <button
