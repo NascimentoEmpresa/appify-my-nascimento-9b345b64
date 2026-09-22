@@ -267,11 +267,12 @@ export default function AlunoForm() {
                     )}
                   </div>
 
-                  <div className="grupo">
-                    <h4>Bloquear pontuação de gamificação</h4>
-                    <label className="flex items-center gap-2 text-sm"><Switch checked={f.bloquear_gamificacao} onCheckedChange={(v) => set({ bloquear_gamificacao: v })} /> Bloquear pontuação de gamificação</label>
-                    <div className="ajuda mt-1 text-xs text-muted-foreground">Quando habilitado, este aluno não receberá pontos de gamificação.</div>
-                  </div>
+                  {/* "Bloquear pontuação de gamificação" saiu da tela em
+                      22/09/2026: veio na cópia do membox e não fazia nada
+                      aqui — a gamificação (pontos, ranking) nunca foi feita,
+                      está anotada como fase 2 desde a migration 190, e
+                      nenhum dos 13 mil alunos tinha a caixa marcada. A
+                      coluna continua no banco, para o dia em que existir. */}
 
                   <button type="button" className="flex items-center gap-1 text-sm font-bold text-orange-600" onClick={() => setConfig((v) => !v)}>
                     Configurações adicionais <ChevronDown className={`h-4 w-4 transition-transform ${config ? "rotate-180" : ""}`} />
