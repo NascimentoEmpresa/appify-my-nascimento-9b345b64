@@ -170,7 +170,6 @@ import TreinamentosDashboard from "./pages/treinamentos/plataforma/Dashboard";
 import TrnAlunosLista from "./pages/treinamentos/plataforma/AlunosLista";
 import TrnAlunoForm from "./pages/treinamentos/plataforma/AlunoForm";
 import TrnAlunosGerenciar from "./pages/treinamentos/plataforma/AlunosGerenciar";
-import TrnAlunosTags from "./pages/treinamentos/plataforma/AlunosTags";
 import TrnCursosLista from "./pages/treinamentos/plataforma/CursosLista";
 import TrnCursoForm from "./pages/treinamentos/plataforma/CursoForm";
 import TrnCursoDetalhe from "./pages/treinamentos/plataforma/CursoDetalhe";
@@ -754,7 +753,6 @@ const App = () => (
             {/* "Adicionar novo" virou "Gerenciar" (21/09/2026): aluno é colaborador
                 e entra pela admissão. A rota ficou pra não zerar a permissão. */}
             <Route path="treinamentos/alunos/novo" element={<TrnAlunosGerenciar />} />
-            <Route path="treinamentos/alunos/tags" element={<TrnAlunosTags />} />
             <Route path="treinamentos/alunos/:id" element={<TrnAlunoForm />} />
             <Route path="treinamentos/cursos" element={<TrnCursosLista />} />
             <Route path="treinamentos/cursos/novo" element={<TrnCursoForm />} />

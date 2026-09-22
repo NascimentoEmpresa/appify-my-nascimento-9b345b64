@@ -22,7 +22,7 @@ import {
 } from "@/hooks/useTreinamentosPlataforma";
 import { MENU, ROTULO_STATUS_ALUNO, type StatusAluno } from "./tipos";
 import { ProvasDoAluno } from "./ProvaResultados";
-import { StatusAlunoBadge, TagPicker, TrnCarregando, TrnEstilo, TrnHero, fmtData, fmtDataHora, hojeISO } from "./ui";
+import { StatusAlunoBadge, TrnCarregando, TrnEstilo, TrnHero, fmtData, fmtDataHora, hojeISO } from "./ui";
 
 // =====================================================================
 // TREINAMENTOS — Alunos › Adicionar novo / Editar (com Métricas, Histórico
@@ -30,7 +30,7 @@ import { StatusAlunoBadge, TagPicker, TrnCarregando, TrnEstilo, TrnHero, fmtData
 //
 // Os campos são os do membox, um a um: nome, telefone, e-mail (não muda
 // depois de criado — é a identidade do aluno), documento, observação,
-// idioma, tags, bloqueio, tipo de acesso (completo × personalizado com a
+// idioma, bloqueio, tipo de acesso (completo × personalizado com a
 // lista de cursos e data de inscrição), bloquear gamificação e, em
 // "Configurações adicionais", o prazo de acesso. "Alterar senha" não
 // existe aqui: o login do aluno é a fase 2 (área do aluno).
@@ -197,11 +197,6 @@ export default function AlunoForm() {
                         </Select>
                       </div>
                       <div className="campo sm:col-span-2"><label>Alguma observação sobre o aluno? (opcional)</label><Textarea rows={2} value={f.observacoes} onChange={(e) => set({ observacoes: e.target.value })} /></div>
-                      <div className="campo sm:col-span-2">
-                        <label>Vincule tags a este aluno (opcional)</label>
-                        <TagPicker value={f.tagIds} onChange={(ids) => set({ tagIds: ids })} />
-                        <div className="ajuda">Tags segmentam avisos, notificações e ações em massa — no membox são os postos/contratos.</div>
-                      </div>
                       {!daSenior && (
                         <VinculoEmpregado empregadoId={f.empregado_id} onChange={(emp) => set({ empregado_id: emp?.id ?? null, ...(emp && !f.nome ? { nome: emp.nome } : {}), ...(emp && !f.documento ? { documento: emp.cpf } : {}), ...(emp && !f.email && emp.email ? { email: emp.email } : {}) })} />
                       )}

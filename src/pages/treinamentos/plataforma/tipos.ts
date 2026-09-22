@@ -188,7 +188,6 @@ export const MENU = {
   dashboard: "treinamentos_dashboard",
   alunos: "treinamentos_alunos",
   alunosNovo: "treinamentos_alunos_novo",
-  alunosTags: "treinamentos_alunos_tags",
   cursos: "treinamentos_cursos",
   cursosNovo: "treinamentos_cursos_novo",
   comentarios: "treinamentos_comentarios",
