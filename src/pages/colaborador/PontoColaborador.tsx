@@ -5,7 +5,7 @@ import {
   ROTULO_BATIDA, fmtData, fmtHora, fmtMinutos, mesAtualISO, rotuloMes, useBaterPonto, usePontoColaborador,
   type DiaPonto, type TipoBatida,
 } from "@/hooks/useColaboradorPortal";
-import { Carregando, Chip, Dado, Erro, GradeDados, Secao, Vazio, tomStatus } from "./ui";
+import { Carregando, Chip, Dado, EmDesenvolvimento, Erro, GradeDados, Secao, Vazio, tomStatus } from "./ui";
 
 // =====================================================================
 // PORTAL DO COLABORADOR — Ponto
@@ -22,7 +22,24 @@ import { Carregando, Chip, Dado, Erro, GradeDados, Secao, Vazio, tomStatus } fro
 
 const ORDEM: TipoBatida[] = ["entrada", "saida_intervalo", "retorno_intervalo", "saida"];
 
+// Em desenvolvimento (22/09/2026): a tela abaixo fica pronta, mas desligada —
+// o colaborador vê só o aviso e nada chama col_ponto. Pra liberar: true.
+export const PONTO_LIBERADO = false;
+
 export default function PontoColaborador() {
+  if (!PONTO_LIBERADO) {
+    return (
+      <EmDesenvolvimento
+        icone={<Clock3 className="h-8 w-8" />}
+        titulo="Ponto pelo portal"
+        texto="Em breve você vai registrar a entrada, o intervalo e a saída por aqui, e acompanhar o espelho do mês. Por enquanto, continue batendo o ponto pela Senior ou no relógio Nexti."
+      />
+    );
+  }
+  return <PontoCompleto />;
+}
+
+function PontoCompleto() {
   const [mes, setMes] = useState(mesAtualISO());
   const ehMesAtual = mes === mesAtualISO();
   const ponto = usePontoColaborador(mes);

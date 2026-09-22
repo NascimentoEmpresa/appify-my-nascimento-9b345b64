@@ -50,13 +50,18 @@ interface Adv {
 // mesmo padrão de comite-etica/db.ts.
 const db = supabase as unknown as SupabaseClient;
 
-const STATUS = ["Aguardando Aprovação", "Aguardando Jurídico", "Concluída", "Reprovada"];
+// "Registrada" (22/09/2026): advertência VERBAL registrada pelo encarregado.
+// Não tem fluxo — é histórico do colaborador, e é o que embasa a escrita.
+const STATUS = ["Aguardando Aprovação", "Aguardando Jurídico", "Concluída", "Reprovada", "Registrada"];
 const statusCor = (s: string): { bg: string; c: string } => ({
   "Aguardando Aprovação": { bg: "#fef3c7", c: "#b45309" },
   "Aguardando Jurídico": { bg: "#ede9fe", c: "#7c3aed" },
   "Concluída": { bg: "#dcfce7", c: "#15803d" },
   "Reprovada": { bg: "#fee2e2", c: "#b91c1c" },
+  "Registrada": { bg: "#e0f2fe", c: "#0369a1" },
 }[s] || { bg: "#e0f2fe", c: "#0369a1" });
+/** Rótulo da aba: "Registrada" é a verbal — o nome sozinho não diz isso. */
+const rotuloStatus = (s: string) => (s === "Registrada" ? "Verbais registradas" : s);
 const grauCor = (g: string): string => ({ "Baixo": "#16a34a", "Médio": "#d97706", "Alto": "#dc2626" }[g] || "#64748b");
 const fmtDt = (s?: string) => { if (!s) return "—"; const d = new Date(String(s).length <= 10 ? s + "T12:00:00" : s); return isNaN(+d) ? String(s) : d.toLocaleDateString("pt-BR"); };
 
@@ -321,14 +326,14 @@ export default function Advertencias() {
         <div style={{ ...card, marginBottom: 16, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
           {STATUS.map(s => (
             <button key={s} onClick={() => setAba(s)} style={{ padding: "6px 12px", borderRadius: 18, fontSize: 12, fontWeight: 700, cursor: "pointer", border: `1px solid ${aba === s ? "#0f3171" : "#e2e8f0"}`, background: aba === s ? "#0f3171" : "#fff", color: aba === s ? "#fff" : "#475569" }}>
-              {s}{counts[s] ? ` (${counts[s]})` : ""}
+              {rotuloStatus(s)}{counts[s] ? ` (${counts[s]})` : ""}
             </button>
           ))}
           <input value={busca} onChange={e => setBusca(e.target.value)} placeholder="Buscar colaborador, contrato, tipo…" style={{ marginLeft: "auto", height: 36, border: "1px solid #cbd5e1", borderRadius: 9, padding: "0 11px", fontSize: 13, minWidth: 220 }} />
         </div>
 
         {loading ? <div style={{ padding: 50, textAlign: "center", color: "#94a3b8" }}>Carregando…</div>
-          : filtradas.length === 0 ? <div style={{ ...card, padding: 46, textAlign: "center", color: "#94a3b8" }}>Nenhuma advertência neste status.</div>
+          : filtradas.length === 0 ? <div style={{ ...card, padding: 46, textAlign: "center", color: "#94a3b8" }}>{aba === "Registrada" ? "Nenhuma advertência verbal registrada." : "Nenhuma advertência neste status."}</div>
             : (
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(340px,1fr))", gap: 14 }}>
                 {filtradas.map(a => { const sc = statusCor(a.status); const mostraAprovar = podeAprovar && a.status === "Aguardando Aprovação"; const mostraConcluir = podeConcluir && a.status === "Aguardando Jurídico"; return (
