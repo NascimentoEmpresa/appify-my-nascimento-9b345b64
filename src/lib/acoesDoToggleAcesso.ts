@@ -23,7 +23,8 @@ export type AppAcao =
   | "exportar"
   | "executar_ia"
   | "alterar_dre"
-  | "responder";
+  | "responder"
+  | "editar_concluida";
 
 /** O pacote de trabalho que ligar uma tela concede, quando não há exceção. */
 export const ACOES_DO_TOGGLE_PADRAO: readonly AppAcao[] = [
@@ -59,6 +60,10 @@ export const ACOES_FORA_DO_TOGGLE: Readonly<Record<string, readonly AppAcao[]>> 
   duvidas: ["responder"],
   encarregados_diarias: ["aprovar", "enviar_malote"],
   financeiro_diarias: ["aprovar", "enviar_malote"],
+  // Hora Extra (22/09/2026): 'editar_concluida' reescreve o ponto de uma HE
+  // que já foi validada — ou seja, hora que já virou pagamento. Ligar a tela
+  // para alguém conferir HE não pode dar junto o poder de mudar o passado.
+  sistemas_hora_extra: ["editar_concluida"],
 };
 
 /**
