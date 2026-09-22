@@ -408,10 +408,17 @@ export function useFornecedoresAtivos() {
     queryKey: ["malote_fornecedores_ativos"],
     staleTime: 5 * 60_000,
     queryFn: async () => {
-      const { data, error } = await (supabase as any)
-        .from("fornecedor")
-        .select("id, razao_social, nome_fantasia, cnpj_cpf")
-        .order("razao_social");
+      // SIS-2026-0480: era um SELECT direto em `fornecedor`, e a RLS dessa
+      // tabela (forn_select) exige o menu do CADASTRO de fornecedores,
+      // 'fornecedores' (/app/suprimentos/fornecedores). Quem só lança despesa
+      // no Malote ou aprova diária não tem esse menu — e RLS negada devolve
+      // zero linhas, não erro: o combobox de Fornecedor no Rateio aparecia
+      // simplesmente VAZIO, sem mensagem nenhuma, enquanto o campo era
+      // obrigatório (SIS-2026-0467). Medido em produção: 27 dos 44 usuários
+      // com 'malote_criar_despesa' caíam nisso. A RPC SECURITY DEFINER devolve
+      // só id/nome/CNPJ para quem usa alguma tela que renderiza o Rateio; o
+      // resto do cadastro continua atrás da RLS de sempre.
+      const { data, error } = await (supabase as any).rpc("malote_fornecedores_para_rateio");
       if (error) throw error;
       // SIS-2026-0399: cnpj_cpf exposto pra virar hint de busca no combobox
       // do Rateio — o cadastro é feito pelo próprio fornecedor, então o
