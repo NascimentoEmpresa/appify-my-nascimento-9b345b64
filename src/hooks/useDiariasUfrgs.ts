@@ -8,6 +8,7 @@ import {
   DiariaUfrgs,
   LotacaoUfrgs,
   PostoUfrgs,
+  RascunhoTarifaUfrgs,
   StatusSolicitacao,
   TarifaUfrgs,
 } from "@/pages/operacional/diariasUfrgs";
@@ -35,6 +36,12 @@ const BUCKET = "diarias";
 const PASTA = "ufrgs";
 
 const paraReais = (centavos: number | string | null | undefined) => (Number(centavos) || 0) / 100;
+
+/** Colunas da tarifa que existem desde a 20260930000155. */
+const COLUNAS_TARIFA =
+  "id, sindicato, vigencia_inicio, hospedagem_centavos, cafe_centavos, almoco_centavos, janta_centavos, va_centavos, aliquota_pis, aliquota_cofins, aliquota_iss, ativo";
+/** As da trilha de edição pela tela, que chegaram na 20260930000212. */
+const COLUNAS_TARIFA_TRILHA = ", motivo, atualizado_em, atualizado_por_nome";
 const numero = (v: number | string | null | undefined) => Number(v) || 0;
 
 export interface NovaDiariaUfrgs {
@@ -182,20 +189,33 @@ const SELECT_UFRGS = `
  * Tarifas por sindicato. É delas que sai o Valor Total enquanto a pessoa
  * digita — o banco recalcula tudo na gravação, mas sem isto o modal não
  * conseguiria mostrar um total antes de salvar.
+ *
+ * Traz as DESATIVADAS junto (o `.eq("ativo", true)` saiu em 22/09/2026):
+ * quem consome para calcular filtra em tarifaVigente(), e o modal de tarifas
+ * precisa delas para mostrar o histórico riscado. Uma consulta só para os
+ * dois usos — duas chaves de cache dariam telas discordando sobre qual
+ * tabela está em vigor logo depois de alguém salvar.
  */
 export function useTarifasUfrgs() {
   return useQuery({
     queryKey: ["diaria_ufrgs_tarifas"],
     staleTime: 30 * 60_000,
     queryFn: async (): Promise<TarifaUfrgs[]> => {
-      const { data, error } = await sb
-        .from("DIARIA_UFRGS_TARIFA")
-        .select(
-          "id, sindicato, vigencia_inicio, hospedagem_centavos, cafe_centavos, almoco_centavos, janta_centavos, va_centavos, aliquota_pis, aliquota_cofins, aliquota_iss",
-        )
-        .eq("ativo", true)
-        .order("sindicato")
-        .order("vigencia_inicio", { ascending: false });
+      const buscar = (colunas: string) =>
+        sb
+          .from("DIARIA_UFRGS_TARIFA")
+          .select(colunas)
+          .order("sindicato")
+          .order("vigencia_inicio", { ascending: false });
+
+      let { data, error } = await buscar(COLUNAS_TARIFA + COLUNAS_TARIFA_TRILHA);
+      // 42703 = "column does not exist". É a JANELA entre subir o front e
+      // rodar a 20260930000212 no SQL Editor — migration neste projeto não se
+      // aplica sozinha ao mergear. Sem este ramo, aquela janela deixaria a
+      // consulta de tarifas em erro, e SEM TARIFA o modal da diária não
+      // calcula nada: o bloco 4 inteiro para para todo mundo por causa de
+      // três colunas que só servem para mostrar quem editou.
+      if (error?.code === "42703") ({ data, error } = await buscar(COLUNAS_TARIFA));
       if (error) throw error;
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       return ((data ?? []) as any[]).map((t) => ({
@@ -210,7 +230,89 @@ export function useTarifasUfrgs() {
         aliquotaPis: numero(t.aliquota_pis),
         aliquotaCofins: numero(t.aliquota_cofins),
         aliquotaIss: numero(t.aliquota_iss),
+        ativo: t.ativo !== false,
+        motivo: t.motivo ?? null,
+        atualizadoEm: t.atualizado_em ? new Date(t.atualizado_em).toLocaleString("pt-BR") : null,
+        atualizadoPorNome: t.atualizado_por_nome ?? null,
       }));
+    },
+  });
+}
+
+/** O que a RPC devolve depois de gravar uma tarifa. */
+export interface ResultadoTarifaUfrgs {
+  /** false quando a data já tinha linha e o que houve foi correção. */
+  criada: boolean;
+  /** Diárias em aberto que o banco recalculou na mesma transação. */
+  recalculadas: number;
+  /** Aprovadas/pagas na mesma janela, que continuam com o valor antigo. */
+  congeladas: number;
+}
+
+/**
+ * Salvar uma tarifa — o pedido de 22/09/2026, "o próprio usuário final com
+ * permissão pode editar os valores dos sindicatos".
+ *
+ * Escrita por RPC, como todo o resto deste módulo: "DIARIA_UFRGS_TARIFA" só
+ * tem GRANT SELECT, e quem autoriza é diaria_ufrgs_tarifa_pode() (a chave
+ * 'financeiro_diarias_tarifas' do Gerenciamento de Acesso), não a tela.
+ *
+ * Invalida as DIÁRIAS junto porque a gravação recalcula as que estão em
+ * aberto: sem isso a lista continuaria mostrando o valor velho até o próximo
+ * F5, que é exatamente a desconfiança que o pedido quer eliminar.
+ */
+export function useSalvarTarifaUfrgs() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: RascunhoTarifaUfrgs & { motivo?: string }): Promise<ResultadoTarifaUfrgs> => {
+      const { data, error } = await sb.rpc("diaria_ufrgs_tarifa_salvar", {
+        p_dados: {
+          sindicato: input.sindicato.trim(),
+          vigencia_inicio: input.vigenciaInicio,
+          hospedagem_centavos: input.hospedagemCentavos,
+          cafe_centavos: input.cafeCentavos,
+          almoco_centavos: input.almocoCentavos,
+          janta_centavos: input.jantaCentavos,
+          va_centavos: input.vaCentavos,
+          aliquota_pis: input.aliquotaPis,
+          aliquota_cofins: input.aliquotaCofins,
+          aliquota_iss: input.aliquotaIss,
+          motivo: input.motivo ?? "",
+        },
+      });
+      if (error) throw error;
+      return {
+        criada: !!data?.criada,
+        recalculadas: numero(data?.recalculadas),
+        congeladas: numero(data?.congeladas),
+      };
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["diaria_ufrgs_tarifas"] });
+      qc.invalidateQueries({ queryKey: ["diarias_ufrgs"] });
+    },
+  });
+}
+
+/**
+ * Remover uma vigência. Desativa, não apaga — a diária lançada nela aponta
+ * para a linha e precisa continuar explicando o valor faturado.
+ *
+ * Existe por causa do erro que só a TELA cria: salvar a tabela certa na data
+ * errada. O banco recusa se for a única tabela do sindicato ou se deixar
+ * diária em aberto sem nenhuma vigência anterior para cair.
+ */
+export function useRemoverTarifaUfrgs() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string): Promise<number> => {
+      const { data, error } = await sb.rpc("diaria_ufrgs_tarifa_remover", { p_id: id });
+      if (error) throw error;
+      return numero(data?.recalculadas);
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["diaria_ufrgs_tarifas"] });
+      qc.invalidateQueries({ queryKey: ["diarias_ufrgs"] });
     },
   });
 }
