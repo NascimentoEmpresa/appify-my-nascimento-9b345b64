@@ -6,6 +6,7 @@ import {
   calcularValoresUfrgs,
   impactoDaTarifa,
   mesDaCompetencia,
+  subtotaisUfrgs,
   proximaVigencia,
   sindicatosUfrgs,
   sobreposicaoUfrgs,
@@ -474,5 +475,49 @@ describe("impactoDaTarifa — o aviso que aparece antes de salvar", () => {
     const r = impactoDaTarifa([], TABELA_COMPLETA, "SINDIRODOSUL/RS", "2026-09-22");
     expect(r.recalculadas).toHaveLength(0);
     expect(r.congeladas).toHaveLength(0);
+  });
+});
+
+
+describe("subtotaisUfrgs — o total embaixo de cada quantidade", () => {
+  it("multiplica a quantidade pela tarifa do sindicato", () => {
+    const s = subtotaisUfrgs(
+      { qtHospedagem: 3, qtCafe: 2, qtAlmoco: 1, qtJanta: 0, qtVa: 2 },
+      SINDIRODOSUL,
+    );
+    expect(s.hospedagemCentavos).toBe(3 * 17377);
+    expect(s.cafeCentavos).toBe(2 * 2075);
+    expect(s.almocoCentavos).toBe(1 * 3077);
+    expect(s.jantaCentavos).toBe(0);
+    expect(s.vaCentavos).toBe(2 * 3169);
+  });
+
+  it("troca de sindicato troca o subtotal — é o ponto do campo existir", () => {
+    const q = { qtHospedagem: 1, qtCafe: 0, qtAlmoco: 0, qtJanta: 0, qtVa: 0 };
+    expect(subtotaisUfrgs(q, SINDIRODOSUL).hospedagemCentavos).toBe(17377);
+    expect(subtotaisUfrgs(q, SINECARGA).hospedagemCentavos).toBe(6607);
+  });
+
+  it("os quatro subtotais somam EXATAMENTE o Valor Total, e o de VA é o Valor VA", () => {
+    // A garantia que faz o campo novo valer alguma coisa: se subtotal e total
+    // pudessem divergir, a tela mostraria duas contas diferentes uma embaixo
+    // da outra. Conferido nas duas tarifas e num caso com tudo preenchido.
+    for (const tarifa of [SINDIRODOSUL, SINECARGA, SINDIRODOSUL_ANTIGA]) {
+      const q = { qtHospedagem: 2, qtCafe: 5, qtAlmoco: 3, qtJanta: 4, qtVa: 7 };
+      const s = subtotaisUfrgs(q, tarifa);
+      const v = calcularValoresUfrgs(q, tarifa);
+      expect(s.hospedagemCentavos + s.cafeCentavos + s.almocoCentavos + s.jantaCentavos).toBe(
+        v.valorTotalCentavos,
+      );
+      expect(s.vaCentavos).toBe(v.valorVaCentavos);
+    }
+  });
+
+  it("quantidade zerada dá subtotal zero, não NaN", () => {
+    const s = subtotaisUfrgs(
+      { qtHospedagem: 0, qtCafe: 0, qtAlmoco: 0, qtJanta: 0, qtVa: 0 },
+      SINDIRODOSUL,
+    );
+    expect(Object.values(s).every((n) => n === 0)).toBe(true);
   });
 });
