@@ -21,7 +21,10 @@ export default function CursosLista() {
   const { data: cursos = [], isLoading } = useTrnCursos();
   const { data: categorias = [] } = useTrnCategorias();
   const [busca, setBusca] = useState("");
-  const [filtro, setFiltro] = useState<string>("publicados");
+  // Abre com TODOS (22/09/2026): é a tela de gestão, e curso em rascunho
+  // (os 14 do membox entraram assim, sem vídeo) sumia atrás do filtro
+  // "publicados" — parecia que não tinha curso nenhum.
+  const [filtro, setFiltro] = useState<string>("todos");
 
   const lista = useMemo(() => {
     const b = busca.trim().toLowerCase();
@@ -48,9 +51,9 @@ export default function CursosLista() {
           <Select value={filtro} onValueChange={setFiltro}>
             <SelectTrigger className="w-64"><SelectValue /></SelectTrigger>
             <SelectContent>
-              <SelectItem value="publicados">Todos os cursos publicados</SelectItem>
-              <SelectItem value="rascunhos">Rascunhos (não publicados)</SelectItem>
-              <SelectItem value="todos">Todos</SelectItem>
+              <SelectItem value="todos">Todos (publicados e rascunhos)</SelectItem>
+              <SelectItem value="publicados">Só publicados</SelectItem>
+              <SelectItem value="rascunhos">Só rascunhos (não publicados)</SelectItem>
               <SelectItem value="semcat">Sem categoria ({semCategoria})</SelectItem>
               {categorias.map((c) => <SelectItem key={c.id} value={`cat:${c.id}`}>{c.nome}</SelectItem>)}
             </SelectContent>
