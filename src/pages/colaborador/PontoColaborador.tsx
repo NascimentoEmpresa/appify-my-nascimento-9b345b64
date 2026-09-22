@@ -32,7 +32,7 @@ export default function PontoColaborador() {
       <EmDesenvolvimento
         icone={<Clock3 className="h-8 w-8" />}
         titulo="Ponto pelo portal"
-        texto="Em breve você vai registrar a entrada, o intervalo e a saída por aqui, e acompanhar o espelho do mês. Por enquanto, continue batendo o ponto do jeito de sempre."
+        texto="Em breve você vai registrar a entrada, o intervalo e a saída por aqui, e acompanhar o espelho do mês. Por enquanto, continue batendo o ponto pela Senior ou no relógio Nexti."
       />
     );
   }

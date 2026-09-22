@@ -37,7 +37,7 @@ export default function InicioColaborador() {
 
       {!PONTO_LIBERADO ? (
         <EmDesenvolvimento compacto icone={<Clock3 className="h-5 w-5" />} titulo="Ponto de hoje"
-          texto="O registro de ponto pelo portal está chegando. Por enquanto, bata do jeito de sempre." />
+          texto="O registro de ponto pelo portal está chegando. Por enquanto, bata pela Senior ou no relógio Nexti." />
       ) : (
       <Secao
         titulo="Ponto de hoje"
