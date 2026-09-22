@@ -491,6 +491,58 @@ export function useTrnAula(id: string | null | undefined) {
 
 export type AulaInput = Omit<Partial<Aula>, "id"> & { id?: string; modulo_id: string; nome: string };
 
+// ── Provas (22/09/2026) ──────────────────────────────────────────────
+export interface TentativaProva {
+  numero: number; nota: number | null; aprovado: boolean | null; acertos: number | null; total: number | null;
+  pontos: number | null; pontos_total: number | null; iniciada_em: string; enviada_em: string | null;
+  encerramento: "enviada" | "tempo_esgotado" | null;
+}
+export interface ProvaDoAluno {
+  aula_id: string; aula: string; curso: string; nota_minima: number; tentativas_max: number | null; extras: number;
+  nota: number | null; video_assistido: boolean; tentativas: TentativaProva[];
+}
+export interface ResultadosProvaAula {
+  resumo: { alunos: number; aprovados: number; tentativas: number; media: number | null };
+  perguntas: { id: string; respostas: number; acertos: number }[];
+  alunos: { aluno_id: string; nome: string; contrato: string | null; tentativas: number; melhor: number | null; ultima: number | null; aprovado: boolean; em: string | null }[];
+}
+
+export function useTrnProvasAluno(alunoId: string | null | undefined) {
+  return useQuery({
+    queryKey: ["trn-provas-aluno", alunoId ?? ""],
+    enabled: !!alunoId,
+    queryFn: async (): Promise<ProvaDoAluno[]> => {
+      const { data, error } = await sb.rpc("trn_prova_tentativas_aluno", { p_aluno: alunoId });
+      if (error) throw error;
+      return (data ?? []) as ProvaDoAluno[];
+    },
+  });
+}
+
+export function useTrnResultadosProva(aulaId: string | null | undefined) {
+  return useQuery({
+    queryKey: ["trn-provas-aula", aulaId ?? ""],
+    enabled: !!aulaId,
+    queryFn: async (): Promise<ResultadosProvaAula> => {
+      const { data, error } = await sb.rpc("trn_prova_resultados_aula", { p_aula: aulaId });
+      if (error) throw error;
+      return data as ResultadosProvaAula;
+    },
+  });
+}
+
+/** +1 tentativa pra quem esgotou as da prova sem aprovar. */
+export function useTrnLiberarTentativa() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (p: { alunoId: string; aulaId: string }) => {
+      const { error } = await sb.rpc("trn_prova_liberar_tentativa", { p_aluno: p.alunoId, p_aula: p.aulaId });
+      if (error) throw error;
+    },
+    onSuccess: () => { invalidar(qc, K.historico); qc.invalidateQueries({ queryKey: ["trn-provas-aluno"] }); qc.invalidateQueries({ queryKey: ["trn-provas-aula"] }); },
+  });
+}
+
 export function useTrnSalvarAula() {
   const qc = useQueryClient();
   return useMutation({

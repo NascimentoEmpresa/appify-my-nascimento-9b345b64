@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
-import { FileUp, ImagePlus, Link2, Plus, Save, Trash2, Video } from "lucide-react";
+import { FileUp, ImagePlus, Link2, Save, Trash2, Video } from "lucide-react";
 import { AcessoGate } from "@/components/auth/AcessoGate";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -10,7 +10,9 @@ import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { uploadMidia, urlMidia, useTrnAula, useTrnCurso, useTrnExcluirAula, useTrnSalvarAula } from "@/hooks/useTreinamentosPlataforma";
-import { MENU, ROTULO_TIPO_CONTEUDO, type Material, type PerguntaQuiz, type TipoConteudo } from "./tipos";
+import { MENU, ROTULO_TIPO_CONTEUDO, type Material, type PerguntaQuiz, type ProvaConfig, type TipoConteudo } from "./tipos";
+import { ProvaEditor, erroDaProva, novaPergunta, quizParaSalvar } from "./ProvaEditor";
+import { ResultadosProva } from "./ProvaResultados";
 import { TrnCarregando, TrnEstilo, TrnHero } from "./ui";
 
 // =====================================================================
@@ -25,21 +27,21 @@ import { TrnCarregando, TrnEstilo, TrnHero } from "./ui";
 //
 // O quiz é o mesmo formato de "TREINAMENTOS".prova (Treinamentos ERP):
 // [{id, enunciado, opcoes, correta}] — o portal do aluno (fase 2) já sabe
-// corrigir esse formato.
+// corrigir esse formato. Desde 22/09/2026 virou PROVA: tipos de pergunta,
+// pontos, explicação e as regras em prova_config (ProvaEditor.tsx).
 // =====================================================================
 
 interface Form {
   nome: string; tipo_conteudo: TipoConteudo; video_url: string; video_path: string | null; thumb_path: string | null;
   descricao: string; posicao: string; publicada: boolean; gratuita: boolean; gratuita_ate: string;
   liberar_em: string; liberar_dias: string; carga_horaria: string; materiais: Material[]; cta_texto: string; cta_url: string;
-  quiz: PerguntaQuiz[]; nota_minima: string; temQuiz: boolean; temMateriais: boolean; temCta: boolean; modoVideo: "link" | "arquivo";
+  quiz: PerguntaQuiz[]; nota_minima: string; prova_cfg: ProvaConfig; temQuiz: boolean; temMateriais: boolean; temCta: boolean; modoVideo: "link" | "arquivo";
 }
 const VAZIO: Form = {
   nome: "", tipo_conteudo: "video", video_url: "", video_path: null, thumb_path: null, descricao: "", posicao: "1",
   publicada: true, gratuita: false, gratuita_ate: "", liberar_em: "", liberar_dias: "", carga_horaria: "", materiais: [],
-  cta_texto: "", cta_url: "", quiz: [], nota_minima: "70", temQuiz: false, temMateriais: false, temCta: false, modoVideo: "link",
+  cta_texto: "", cta_url: "", quiz: [], nota_minima: "70", prova_cfg: {}, temQuiz: false, temMateriais: false, temCta: false, modoVideo: "link",
 };
-const novaPergunta = (): PerguntaQuiz => ({ id: crypto.randomUUID(), enunciado: "", opcoes: ["", ""], correta: 0 });
 
 /** Extrai a src de um <iframe> colado, ou devolve a URL como veio. */
 const normalizaVideo = (v: string) => {
@@ -72,7 +74,7 @@ export default function AulaForm() {
       descricao: aula.descricao ?? "", posicao: String(aula.posicao), publicada: aula.publicada, gratuita: aula.gratuita, gratuita_ate: aula.gratuita_ate ?? "",
       liberar_em: aula.liberar_em ?? "", liberar_dias: aula.liberar_dias == null ? "" : String(aula.liberar_dias),
       carga_horaria: aula.carga_horaria_min == null ? "" : String(aula.carga_horaria_min), materiais: aula.materiais ?? [],
-      cta_texto: aula.cta_texto ?? "", cta_url: aula.cta_url ?? "", quiz: aula.quiz ?? [], nota_minima: String(aula.nota_minima ?? 70),
+      cta_texto: aula.cta_texto ?? "", cta_url: aula.cta_url ?? "", quiz: aula.quiz ?? [], nota_minima: String(aula.nota_minima ?? 70), prova_cfg: aula.prova_config ?? {},
       temQuiz: !!aula.quiz?.length, temMateriais: !!aula.materiais?.length, temCta: !!aula.cta_texto, modoVideo: aula.video_path ? "arquivo" : "link",
     });
   }, [aula]);
@@ -100,11 +102,8 @@ export default function AulaForm() {
     const precisaVideo = ["video", "audio", "link", "embed", "ao_vivo"].includes(f.tipo_conteudo);
     if (precisaVideo && !f.video_url.trim() && !f.video_path) return toast.error(`Informe o ${f.tipo_conteudo === "link" ? "link" : f.tipo_conteudo === "audio" ? "áudio" : "vídeo/embed"} da aula.`);
     if (f.temQuiz) {
-      for (const [i, p] of f.quiz.entries()) {
-        if (!p.enunciado.trim()) return toast.error(`Pergunta ${i + 1} sem enunciado.`);
-        if (p.opcoes.filter((o) => o.trim()).length < 2) return toast.error(`Pergunta ${i + 1} precisa de 2 opções ou mais.`);
-        if (!p.opcoes[p.correta]?.trim()) return toast.error(`Pergunta ${i + 1}: marque a opção correta.`);
-      }
+      const erro = erroDaProva(f.quiz, f.prova_cfg);
+      if (erro) return toast.error(erro);
     }
     try {
       await salvar.mutateAsync({
@@ -116,8 +115,9 @@ export default function AulaForm() {
         liberar_em: f.liberar_em || null, liberar_dias: f.liberar_dias.trim() ? Number(f.liberar_dias) : null,
         carga_horaria_min: f.carga_horaria.trim() ? Number(f.carga_horaria) : null,
         materiais: f.temMateriais ? f.materiais : [], cta_texto: f.temCta ? f.cta_texto.trim() || null : null, cta_url: f.temCta ? f.cta_url.trim() || null : null,
-        quiz: f.temQuiz && f.quiz.length ? f.quiz.map((p) => ({ ...p, opcoes: p.opcoes.map((o) => o.trim()) })) : null,
+        quiz: f.temQuiz && f.quiz.length ? quizParaSalvar(f.quiz) : null,
         nota_minima: Math.min(100, Math.max(0, Number(f.nota_minima) || 70)),
+        prova_config: f.prova_cfg,
       });
       toast.success(editando ? "Aula atualizada." : "Aula criada.");
       navigate(`/app/treinamentos/cursos/${cursoId}`);
@@ -130,7 +130,6 @@ export default function AulaForm() {
     catch (e: any) { toast.error(e?.message ?? "Não deu."); }
   };
 
-  const atualizarPergunta = (i: number, patch: Partial<PerguntaQuiz>) => set({ quiz: f.quiz.map((p, k) => (k === i ? { ...p, ...patch } : p)) });
   const thumb = urlMidia(f.thumb_path);
 
   return (
@@ -257,34 +256,22 @@ export default function AulaForm() {
               </div>
 
               <div className="grupo">
-                <h4>Exibir quiz após a aula</h4>
-                <label className="flex items-center gap-2 text-sm"><Switch checked={f.temQuiz} onCheckedChange={(v) => set({ temQuiz: v, quiz: v && !f.quiz.length ? [novaPergunta()] : f.quiz })} /> {f.temQuiz ? "Exibir quiz" : "Não exibir"}</label>
+                <h4>Prova após a aula</h4>
+                <label className="flex items-center gap-2 text-sm"><Switch checked={f.temQuiz} onCheckedChange={(v) => set({ temQuiz: v, quiz: v && !f.quiz.length ? [novaPergunta()] : f.quiz })} /> {f.temQuiz ? "Aula com prova" : "Sem prova"}</label>
                 {f.temQuiz && (
-                  <div className="mt-3 space-y-3">
-                    <div className="flex items-center gap-2 text-sm"><span>Nota mínima para aprovar:</span><Input className="w-20" inputMode="numeric" value={f.nota_minima} onChange={(e) => set({ nota_minima: e.target.value })} /><span>%</span></div>
-                    {f.quiz.map((p, i) => (
-                      <div key={p.id} className="rounded-xl border p-3">
-                        <div className="mb-2 flex items-center gap-2">
-                          <span className="text-xs font-bold text-slate-500">Pergunta {i + 1}</span>
-                          <Button variant="ghost" size="sm" className="ml-auto text-rose-600" onClick={() => set({ quiz: f.quiz.filter((_, k) => k !== i) })}><Trash2 className="h-4 w-4" /></Button>
-                        </div>
-                        <Input placeholder="Enunciado" value={p.enunciado} onChange={(e) => atualizarPergunta(i, { enunciado: e.target.value })} />
-                        <div className="mt-2 space-y-1.5">
-                          {p.opcoes.map((o, k) => (
-                            <div key={k} className="flex items-center gap-2">
-                              <input type="radio" name={`correta-${p.id}`} checked={p.correta === k} onChange={() => atualizarPergunta(i, { correta: k })} title="Correta" />
-                              <Input placeholder={`Opção ${k + 1}`} value={o} onChange={(e) => atualizarPergunta(i, { opcoes: p.opcoes.map((x, j) => (j === k ? e.target.value : x)) })} />
-                              {p.opcoes.length > 2 && <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => atualizarPergunta(i, { opcoes: p.opcoes.filter((_, j) => j !== k), correta: Math.min(p.correta, p.opcoes.length - 2) })}><Trash2 className="h-3.5 w-3.5" /></Button>}
-                            </div>
-                          ))}
-                          <Button variant="outline" size="sm" onClick={() => atualizarPergunta(i, { opcoes: [...p.opcoes, ""] })}><Plus className="mr-1 h-3.5 w-3.5" /> Opção</Button>
-                        </div>
-                      </div>
-                    ))}
-                    <Button variant="outline" size="sm" onClick={() => set({ quiz: [...f.quiz, novaPergunta()] })}><Plus className="mr-1 h-4 w-4" /> Nova pergunta</Button>
-                  </div>
+                  <ProvaEditor
+                    quiz={f.quiz} notaMinima={f.nota_minima} cfg={f.prova_cfg}
+                    onChange={(p) => set({ ...(p.quiz ? { quiz: p.quiz } : {}), ...(p.notaMinima != null ? { nota_minima: p.notaMinima } : {}), ...(p.cfg ? { prova_cfg: p.cfg } : {}) })}
+                  />
                 )}
               </div>
+
+              {editando && f.temQuiz && aula?.quiz?.length ? (
+                <div className="grupo">
+                  <h4>Resultados da prova</h4>
+                  <ResultadosProva aulaId={aulaId!} perguntas={aula.quiz} />
+                </div>
+              ) : null}
 
               <div className="grupo">
                 <h4>Deseja adicionar materiais complementares à aula?</h4>
@@ -334,8 +321,8 @@ export default function AulaForm() {
               O texto que acompanha o vídeo (ou é a aula inteira, no tipo "Somente texto").
               <h5>Posição</h5>
               Organiza as aulas dentro do módulo. Dá pra reordenar também na visualização do curso.
-              <h5>Quiz</h5>
-              Aparece logo depois da aula. Marque a opção correta com o botão de rádio.
+              <h5>Prova</h5>
+              Aparece depois da aula (por padrão, só depois de assistir ao vídeo até o fim). Escolha única, múltipla escolha ou verdadeiro/falso, cada pergunta com seus pontos. A nota é pontos obtidos ÷ pontos possíveis; aprovou, a aula conclui sozinha. Tentativas, tempo, sorteio, embaralhar e gabarito ficam em "Regras da prova".
             </div>
           </div>
         )}

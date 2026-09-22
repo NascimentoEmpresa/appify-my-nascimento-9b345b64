@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
-import { Award, BarChart3, ChevronDown, History, Save, Trash2, UserCog } from "lucide-react";
+import { Award, BarChart3, ChevronDown, ClipboardCheck, History, Save, Trash2, UserCog } from "lucide-react";
 import { AcessoGate } from "@/components/auth/AcessoGate";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -21,6 +21,7 @@ import {
   useTrnHistorico, useTrnProgressoAluno, useTrnSalvarAluno, type AlunoInput,
 } from "@/hooks/useTreinamentosPlataforma";
 import { MENU, ROTULO_STATUS_ALUNO, type StatusAluno } from "./tipos";
+import { ProvasDoAluno } from "./ProvaResultados";
 import { StatusAlunoBadge, TagPicker, TrnCarregando, TrnEstilo, TrnHero, fmtData, fmtDataHora, hojeISO } from "./ui";
 
 // =====================================================================
@@ -158,6 +159,7 @@ export default function AlunoForm() {
               <TabsList className="mb-4">
                 <TabsTrigger value="editar"><UserCog className="mr-1 h-4 w-4" /> Editar</TabsTrigger>
                 <TabsTrigger value="metricas"><BarChart3 className="mr-1 h-4 w-4" /> Métricas</TabsTrigger>
+                <TabsTrigger value="provas"><ClipboardCheck className="mr-1 h-4 w-4" /> Provas</TabsTrigger>
                 <TabsTrigger value="historico"><History className="mr-1 h-4 w-4" /> Histórico</TabsTrigger>
                 <TabsTrigger value="certificados"><Award className="mr-1 h-4 w-4" /> Certificados</TabsTrigger>
               </TabsList>
@@ -342,6 +344,7 @@ export default function AlunoForm() {
             </AlertDialog>
 
             {editando && <TabsContent value="metricas"><Metricas alunoId={id!} /></TabsContent>}
+            {editando && <TabsContent value="provas"><ProvasDoAluno alunoId={id!} /></TabsContent>}
             {editando && <TabsContent value="historico"><HistoricoAluno alunoId={id!} /></TabsContent>}
             {editando && <TabsContent value="certificados"><CertificadosAluno alunoId={id!} acessoCompleto={!!data?.aluno.acesso_completo} /></TabsContent>}
           </Tabs>

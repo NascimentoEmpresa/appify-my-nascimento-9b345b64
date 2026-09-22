@@ -96,7 +96,38 @@ export const ROTULO_TIPO_CONTEUDO: Record<TipoConteudo, string> = {
 };
 
 export interface Material { nome: string; path?: string | null; url?: string | null }
-export interface PerguntaQuiz { id: string; enunciado: string; opcoes: string[]; correta: number }
+/**
+ * Pergunta da prova (TRN_AULA.quiz). Campos além de id/enunciado/opcoes/correta
+ * são opcionais (22/09/2026) — o quiz antigo continua valendo como "única".
+ */
+export type TipoPergunta = "unica" | "multipla" | "vf";
+export interface PerguntaQuiz {
+  id: string; enunciado: string; opcoes: string[]; correta: number;
+  tipo?: TipoPergunta; corretas?: number[]; pontos?: number; explicacao?: string;
+}
+export const ROTULO_TIPO_PERGUNTA: Record<TipoPergunta, string> = {
+  unica: "Escolha única", multipla: "Múltipla escolha", vf: "Verdadeiro ou falso",
+};
+
+/** TRN_AULA.prova_config — chave ausente = padrão (espelha trn_prova_cfg no banco). */
+export type ModoGabarito = "nunca" | "resultado" | "ao_final" | "sempre";
+export interface ProvaConfig {
+  titulo?: string; instrucoes?: string | null;
+  tentativas_max?: number | null; nota_vale?: "maior" | "ultima"; liberar_apos_video?: boolean;
+  embaralhar_perguntas?: boolean; embaralhar_opcoes?: boolean; sortear?: number | null;
+  tempo_limite_min?: number | null; intervalo_min?: number | null; gabarito?: ModoGabarito; multipla_parcial?: boolean;
+}
+export const PROVA_PADRAO: Required<ProvaConfig> = {
+  titulo: "Prova da aula", instrucoes: null, tentativas_max: 3, nota_vale: "maior", liberar_apos_video: true,
+  embaralhar_perguntas: false, embaralhar_opcoes: false, sortear: null, tempo_limite_min: null, intervalo_min: null,
+  gabarito: "ao_final", multipla_parcial: false,
+};
+export const ROTULO_GABARITO: Record<ModoGabarito, string> = {
+  nunca: "Não mostrar — só a nota",
+  resultado: "Mostrar o que acertou e errou",
+  ao_final: "Mostrar a resposta certa ao aprovar ou quando acabarem as tentativas",
+  sempre: "Mostrar a resposta certa depois de cada tentativa",
+};
 
 export interface Aula {
   id: string; modulo_id: string; nome: string; tipo_conteudo: TipoConteudo;
@@ -104,7 +135,7 @@ export interface Aula {
   posicao: number; publicada: boolean; gratuita: boolean; gratuita_ate: string | null;
   liberar_em: string | null; liberar_dias: number | null; carga_horaria_min: number | null;
   materiais: Material[]; cta_texto: string | null; cta_url: string | null;
-  quiz: PerguntaQuiz[] | null; nota_minima: number; created_at: string; updated_at: string;
+  quiz: PerguntaQuiz[] | null; nota_minima: number; prova_config: ProvaConfig; created_at: string; updated_at: string;
 }
 
 export interface ProgressoLinha {
