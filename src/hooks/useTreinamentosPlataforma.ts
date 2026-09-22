@@ -49,14 +49,16 @@ export function urlMidia(path: string | null | undefined): string | null {
  * ficava minutos em "Enviando…" sem sinal de vida e morria na primeira
  * oscilação). Mesmo padrão do MigracaoFcr.tsx.
  */
-export async function uploadMidia(file: File, pasta: string, onProgresso?: (pct: number) => void): Promise<string> {
+export async function uploadMidia(
+  file: File, pasta: string, onProgresso?: (pct: number, enviado: number, total: number) => void,
+): Promise<string> {
   const limpo = file.name.replace(/[^\w.-]+/g, "_");
   const path = `${pasta}/${Date.now()}-${limpo}`;
   const tipo = file.type || tipoPelaExtensao(file.name);
   if (file.size <= 6 * 1024 * 1024) {
     const { error } = await supabase.storage.from(BUCKET_TRN).upload(path, file, { contentType: tipo, upsert: false });
     if (error) throw error;
-    onProgresso?.(100);
+    onProgresso?.(100, file.size, file.size);
     return path;
   }
   const { data: sessao } = await supabase.auth.getSession();
@@ -72,7 +74,7 @@ export async function uploadMidia(file: File, pasta: string, onProgresso?: (pct:
       headers: { authorization: `Bearer ${token}`, apikey: SUPABASE_ANON_KEY },
       metadata: { bucketName: BUCKET_TRN, objectName: path, contentType: tipo, cacheControl: "3600" },
       onError: (e) => reject(new Error(mensagemTus(e))),
-      onProgress: (enviado, total) => onProgresso?.(Math.round((enviado / total) * 100)),
+      onProgress: (enviado, total) => onProgresso?.(Math.round((enviado / total) * 100), enviado, total),
       onSuccess: () => resolve(),
     });
     up.start();

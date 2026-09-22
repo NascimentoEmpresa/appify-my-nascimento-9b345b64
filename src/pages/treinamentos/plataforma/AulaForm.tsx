@@ -13,6 +13,7 @@ import { tipoPelaExtensao, uploadMidia, urlMidia, useTrnAula, useTrnCurso, useTr
 import { MENU, ROTULO_TIPO_CONTEUDO, type Material, type PerguntaQuiz, type ProvaConfig, type TipoConteudo } from "./tipos";
 import { ProvaEditor, erroDaProva, novaPergunta, quizParaSalvar } from "./ProvaEditor";
 import { ResultadosProva } from "./ProvaResultados";
+import { EnvioProgresso, type EstadoEnvio } from "./EnvioProgresso";
 import { TrnCarregando, TrnEstilo, TrnHero } from "./ui";
 
 // =====================================================================
@@ -61,7 +62,7 @@ export default function AulaForm() {
   const [f, setF] = useState<Form>(VAZIO);
   const [moduloId, setModuloId] = useState(params.get("modulo") ?? "");
   const [subindo, setSubindo] = useState<string | null>(null);
-  const [progresso, setProgresso] = useState(0);
+  const [envio, setEnvio] = useState<EstadoEnvio | null>(null);
   const set = (p: Partial<Form>) => setF((x) => ({ ...x, ...p }));
 
   const modulos = cursoData?.modulos ?? [];
@@ -89,14 +90,14 @@ export default function AulaForm() {
     // O navegador nem sempre dá o tipo (.mkv/.wmv/.avi saem vazios): a extensão resolve.
     if (!aceita.test(file.type || tipoPelaExtensao(file.name))) return toast.error("Tipo de arquivo não permitido.");
     if (file.size > 500 * 1024 * 1024) return toast.error(`O arquivo tem ${(file.size / 1024 / 1024).toFixed(0)} MB — o limite é 500 MB. Comprima o vídeo ou publique no YouTube (não listado) e cole o link.`);
-    setSubindo(campo); setProgresso(0);
+    setSubindo(campo); setEnvio({ nome: file.name, enviado: 0, total: file.size });
     try {
-      const path = await uploadMidia(file, pasta, setProgresso);
+      const path = await uploadMidia(file, pasta, (_pct, enviado, total) => setEnvio({ nome: file.name, enviado, total }));
       if (campo === "material") setF((x) => ({ ...x, materiais: [...x.materiais, { nome: file.name, path }] }));
       else set({ [campo]: path } as Partial<Form>);
       toast.success(campo === "video_path" ? "Vídeo enviado. Clique em “Salvar” para gravar a aula." : "Arquivo enviado.");
     } catch (e: any) { toast.error(e?.message ?? "Não deu para enviar."); }
-    finally { setSubindo(null); }
+    finally { setSubindo(null); setEnvio(null); }
   };
 
   const gravar = async () => {
@@ -183,15 +184,13 @@ export default function AulaForm() {
                       ) : (
                         <>
                         <div className="flex items-center gap-3">
-                          <label className="cursor-pointer rounded-lg border px-3 py-2 text-xs font-semibold hover:bg-muted">
-                            <Video className="mr-1 inline h-4 w-4" /> {subindo === "video_path" ? `Enviando… ${progresso}%` : f.video_path ? "Trocar vídeo" : "Selecionar vídeo"}
+                          <label className={`rounded-lg border px-3 py-2 text-xs font-semibold ${subindo ? "cursor-wait opacity-50" : "cursor-pointer hover:bg-muted"}`}>
+                            <Video className="mr-1 inline h-4 w-4" /> {f.video_path ? "Trocar vídeo" : "Selecionar vídeo"}
                             <input type="file" accept="video/*,.mkv,.wmv,.avi,.mov" className="hidden" disabled={!!subindo} onChange={(e) => { subir(e.target.files?.[0] ?? null, "video_path", /^video\//, "cursos/videos"); e.target.value = ""; }} />
                           </label>
-                          {subindo === "video_path"
-                            ? <div className="h-2 w-40 overflow-hidden rounded bg-slate-200"><div className="h-full bg-orange-500 transition-all" style={{ width: `${progresso}%` }} /></div>
-                            : f.video_path ? <span className="text-xs text-emerald-700">✓ {f.video_path.split("/").pop()}</span> : <span className="text-xs text-muted-foreground">MP4 (recomendado), MOV, WEBM… até 500 MB.</span>}
+                          {subindo !== "video_path" && (f.video_path ? <span className="text-xs text-emerald-700">✓ {f.video_path.split("/").pop()}</span> : <span className="text-xs text-muted-foreground">MP4 (recomendado), MOV, WEBM… até 500 MB.</span>)}
                         </div>
-                        {subindo === "video_path" && <div className="ajuda">Não feche esta página até terminar. Se a internet oscilar, o envio continua de onde parou.</div>}
+                        {subindo === "video_path" && envio && <EnvioProgresso envio={envio} />}
                         {f.video_path && !subindo && <video src={urlMidia(f.video_path) ?? undefined} controls preload="metadata" className="mt-2 aspect-video w-full max-w-md rounded-lg bg-black" />}
                         </>
                       )}
