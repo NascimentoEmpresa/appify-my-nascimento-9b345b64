@@ -163,9 +163,12 @@ export default function ExportarDados() {
     if (contratos.length || situacoesDisponiveis.length) return;
     setCarregandoOpcoes(true);
     try {
+      // listar_situacoes_empregados (20260930000201): RPC com SELECT DISTINCT
+      // no banco — antes buscava 13.279 linhas de EMPREGADOS só pra deduplicar
+      // no navegador (mesmo anti-padrão do listar_setores_empregados).
       const [ct, st] = await Promise.all([
         (supabase as any).from("CONTRATOS").select('"NOME CONTRATO", Filial, Empresa, "NOME EMPRESA"').eq("ATIVO", "SIM").order('"NOME CONTRATO"'),
-        (supabase as any).from("EMPREGADOS").select('"Situação"').limit(20000),
+        (supabase as any).rpc("listar_situacoes_empregados"),
       ]);
       // Mesmo rótulo da coluna exportada — o filtro compara com o que sai lá.
       if (ct.data) {
@@ -181,7 +184,7 @@ export default function ExportarDados() {
         setContratos(lista);
       }
       if (st.data) setSituacoesDisponiveis(
-        [...new Set(st.data.map((r: any) => String(r["Situação"] ?? "").trim()).filter(Boolean))].sort() as string[],
+        [...new Set(st.data.map((r: any) => String(r.situacao ?? "").trim()).filter(Boolean))].sort() as string[],
       );
     } finally {
       setCarregandoOpcoes(false);
