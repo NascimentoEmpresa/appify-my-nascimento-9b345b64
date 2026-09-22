@@ -1062,9 +1062,6 @@ export function DiariaUfrgsModal({
                 rotuloEnviar={
                   d.status === "solicitada" ? "Aprovar e enviar para malote" : "Enviar para malote"
                 }
-                // SIS-2026-0480: diária não tem fornecedor — quem recebe é o
-                // motorista, por PIX. Ver o comentário em PainelDespesaMalote.
-                exigirFornecedorNoRateio={false}
               />
               {!buscandoEmpresa && !buscandoClassificacoes && (!empresaContratoId || !classificacaoDiaria) && (
                 <p className="mt-2 text-xs font-medium text-destructive">

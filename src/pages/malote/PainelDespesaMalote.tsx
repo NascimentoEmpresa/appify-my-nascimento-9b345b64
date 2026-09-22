@@ -133,7 +133,6 @@ export function PainelDespesaMalote({
   aoSalvar,
   rotuloEnviar = "Enviar para aprovação",
   solicitacaoDispensadaManualmente,
-  exigirFornecedorNoRateio = true,
 }: {
   classificacaoId: string;
   classificacaoTipo?: TipoClassificacaoOrcamento | null;
@@ -151,17 +150,6 @@ export function PainelDespesaMalote({
   // "Não necessita solicitação" e a Classificação de fato exigia
   // solicitação — rastro de auditoria, gravado junto com a despesa.
   solicitacaoDispensadaManualmente?: boolean;
-  // SIS-2026-0480: o SIS-2026-0467 fixou Fornecedor como obrigatório aqui
-  // dentro, como se este painel fosse só do Malote. Ele é compartilhado com
-  // as duas telas de aprovação de diária (SolicitacaoDiariaModal e
-  // DiariaUfrgsModal), e diária NÃO tem fornecedor: o PIX sai para o próprio
-  // colaborador. Conferido no banco — todas as despesas de diária já pagas
-  // têm fornecedor_id nulo e integrante_empregado_id preenchido. Com a regra
-  // do 0467 em produção a aprovação de diária ficou impossível de concluir
-  // (SIS-2026-0480, Dickson/Operacional, 13 solicitações represadas).
-  // O default mantém o Malote exatamente como o 0467 deixou; só as diárias
-  // passam false.
-  exigirFornecedorNoRateio?: boolean;
 }) {
   const [paramsUrl] = useSearchParams();
   const obrigacaoPatrimonio = paramsUrl.get(PARAM_ORIGEM);
@@ -184,10 +172,10 @@ export function PainelDespesaMalote({
   // pagamento. Nesse caso o texto fica opcional e o arquivo, obrigatório.
   const [pagamentoSoAnexo, setPagamentoSoAnexo] = useState(false);
   // SIS-2026-0467: Fornecedor é sempre obrigatório no Rateio desta tela —
-  // já nasce marcado (RateioGrid trava o checkbox pra não deixar desmarcar).
-  // SIS-2026-0480: "desta tela" só vale quando quem embute exige fornecedor.
-  // Na diária nasce desmarcado e destravado — ver exigirFornecedorNoRateio.
-  const [dimensoes, setDimensoes] = useState<DimensoesRateio>({ empresa: false, contrato: false, fornecedor: exigirFornecedorNoRateio, integrante: false });
+  // já nasce marcado (RateioGrid trava o checkbox pra não deixar desmarcar),
+  // igual ao Contrato. Vale também para quem embute este painel: as duas
+  // telas de aprovação de diária (SIS-2026-0480).
+  const [dimensoes, setDimensoes] = useState<DimensoesRateio>({ empresa: false, contrato: false, fornecedor: true, integrante: false });
   const [ratearPor, setRatearPor] = useState<"percentual" | "valor">("percentual");
   const [linhasRateio, setLinhasRateio] = useState<RateioLinha[]>([]);
   const [parcelado, setParcelado] = useState<"nao" | "sim">("nao");
@@ -315,7 +303,7 @@ export function PainelDespesaMalote({
       if (Math.abs(totalRateado - Number(totalMes)) > 0.01) return "O total do rateio deve ser igual ao Total do mês.";
       // SIS-2026-0467 + SIS-2026-0480 — a regra e o histórico dela estão em
       // rateioValidacao.ts, com teste próprio.
-      const erroFornecedor = erroFornecedorNoRateio(exigirFornecedorNoRateio, dimensoes, linhasRateio);
+      const erroFornecedor = erroFornecedorNoRateio(dimensoes, linhasRateio);
       if (erroFornecedor) return erroFornecedor;
       if (parcelado === "sim") {
         if (!diaDesconto || !quantidadeParcelas) return "Informe o dia do desconto e a quantidade de parcelas.";
@@ -592,7 +580,7 @@ export function PainelDespesaMalote({
               contratoPorClassificacao
               classificacaoTipoUnica={classificacaoTipo ?? null}
               mostrarResumoValorTotal
-              exigirFornecedor={exigirFornecedorNoRateio}
+              exigirFornecedor
             />
           </div>
 

@@ -1591,9 +1591,6 @@ export function SolicitacaoDiariaModal({
                 }}
                 aoSalvar={async (payload) => onAprovar(s.uuid, payload)}
                 rotuloEnviar="Aprovar e enviar para malote"
-                // SIS-2026-0480: diária não tem fornecedor — quem recebe é o
-                // diarista, por PIX. Ver o comentário em PainelDespesaMalote.
-                exigirFornecedorNoRateio={false}
               />
               {!buscandoEmpresaContrato && !buscandoClassificacoes && (!empresaContratoId || !classificacaoDiaria) && (
                 <p className="mt-2 text-xs font-medium text-destructive">
