@@ -1,10 +1,15 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
-  ChevronDown, ChevronRight, Clock, Eye, CheckCircle2, Send, Inbox, ShieldAlert,
+  Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList,
+} from "@/components/ui/command";
+import {
+  ChevronDown, ChevronRight, ChevronsUpDown, Clock, Eye, CheckCircle2, Send,
+  Inbox, ShieldAlert, FileSignature, X,
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -16,8 +21,9 @@ import {
   type CotacaoLicitacao,
 } from "@/hooks/useCotacoesLicitacao";
 import {
-  MESES, STATUS_CONFIG, StatusBadge, ListaAnexos, SeletorArquivos,
+  MESES, STATUS_CONFIG, StatusBadge, ListaAnexos, SeletorArquivos, SeloContrato,
   fmtDatetime, iniciais, agruparPorAnoMes, aberturaInicial,
+  contratosCotados, nomeContrato, type ContratoCotado,
 } from "@/components/cotacoes/comum";
 
 /**
@@ -41,6 +47,55 @@ export default function CotacoesCompras() {
   const [mesesAbertos, setMesesAbertos] = useState<Set<string>>(inicial.meses);
 
   const grupos = useMemo(() => agruparPorAnoMes(cotacoes), [cotacoes]);
+
+  // ── "Contratos cotados" (SIS-2026-0487) ────────────────────────────────
+  //
+  // O acordeão ano → mês responde "o que chegou em agosto?". Quem trabalha
+  // por contrato tem a pergunta inversa — "onde caiu a cotação do CT tal?" —
+  // e para respondê-la precisava abrir mês por mês. Este seletor é o índice
+  // que faltava: escolher um contrato ABRE o ano e o mês onde a cotação está
+  // e rola até ela. Não filtra a lista de propósito: o pedido foi localizar a
+  // cotação dentro do acordeão, e esconder o resto tiraria justamente o
+  // contexto de "o que mais veio no mesmo mês".
+  const contratos = useMemo(() => contratosCotados(cotacoes), [cotacoes]);
+
+  // `pulso` existe para reescolher o MESMO contrato voltar a rolar até ele —
+  // sem ele o efeito não redispararia, e o segundo clique não faria nada.
+  const [alvo, setAlvo] = useState<{ chave: string; nome: string; id: string; pulso: number } | null>(null);
+  const pulsoRef = useRef(0);
+
+  function localizarContrato(item: ContratoCotado) {
+    // Um contrato pode ter sido cotado em vários meses: abre TODOS, para que
+    // as outras ocorrências fiquem à vista depois do salto.
+    setAnosAbertos((s) => {
+      const novo = new Set(s);
+      for (const o of item.ocorrencias) novo.add(o.year);
+      return novo;
+    });
+    setMesesAbertos((s) => {
+      const novo = new Set(s);
+      for (const o of item.ocorrencias) novo.add(`${o.year}-${o.month}`);
+      return novo;
+    });
+    // ocorrencias já vem da mais recente para a mais antiga.
+    setAlvo({
+      chave: item.nome.toLocaleLowerCase("pt-BR"),
+      nome: item.nome,
+      id: item.ocorrencias[0].id,
+      pulso: ++pulsoRef.current,
+    });
+  }
+
+  // O acordeão expande no mesmo commit que definiu o alvo; o card só existe
+  // no DOM no frame seguinte, então o scroll espera por ele.
+  useEffect(() => {
+    if (!alvo) return;
+    const frame = requestAnimationFrame(() => {
+      document.getElementById(`cotacao-${alvo.id}`)
+        ?.scrollIntoView({ behavior: "smooth", block: "center" });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [alvo?.id, alvo?.pulso]);
 
   // §7.3: o contador de Compras é o inverso do da Licitação — o que ainda não
   // foi lido por nós, não o que ainda não foi respondido.
@@ -89,6 +144,13 @@ export default function CotacoesCompras() {
         </div>
       ) : (
         <div className="space-y-3">
+          <BarraContratosCotados
+            contratos={contratos}
+            alvo={alvo}
+            onLocalizar={localizarContrato}
+            onLimpar={() => setAlvo(null)}
+          />
+
           {grupos.map(({ year, total, months }) => (
             <div key={year} className="overflow-hidden rounded-lg border border-border">
               <button
@@ -133,7 +195,15 @@ export default function CotacoesCompras() {
                         {aberto && (
                           <div className="space-y-2 p-3">
                             {items.map((c) => (
-                              <CardCotacao key={c.id} cotacao={c} podeResponder={podeResponder} />
+                              <CardCotacao
+                                key={c.id}
+                                cotacao={c}
+                                podeResponder={podeResponder}
+                                destacado={
+                                  !!alvo
+                                  && nomeContrato(c)?.toLocaleLowerCase("pt-BR") === alvo.chave
+                                }
+                              />
                             ))}
                           </div>
                         )}
@@ -150,7 +220,107 @@ export default function CotacoesCompras() {
   );
 }
 
-function CardCotacao({ cotacao: c, podeResponder }: { cotacao: CotacaoLicitacao; podeResponder: boolean }) {
+/**
+ * "Contratos cotados" — o índice por contrato, acima do acordeão (SIS-2026-0487).
+ *
+ * Lista EXATAMENTE o que a Licitação digitou no campo Contrato, sem
+ * reescrever nem abreviar: o pessoal de Compras procura pelo nome que
+ * combinou com a Licitação, e qualquer normalização cosmética aqui faria o
+ * item procurado não aparecer com o nome esperado.
+ *
+ * É busca, não filtro — escolher leva até a cotação e deixa o resto do
+ * acordeão como está.
+ */
+function BarraContratosCotados({
+  contratos, alvo, onLocalizar, onLimpar,
+}: {
+  contratos: ContratoCotado[];
+  alvo: { chave: string; nome: string } | null;
+  onLocalizar: (c: ContratoCotado) => void;
+  onLimpar: () => void;
+}) {
+  const [aberto, setAberto] = useState(false);
+
+  return (
+    <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-muted/30 px-3 py-2">
+      <Popover open={aberto} onOpenChange={setAberto}>
+        <PopoverTrigger asChild>
+          <Button
+            variant="outline"
+            role="combobox"
+            size="sm"
+            disabled={contratos.length === 0}
+            className="h-9 gap-2 bg-background"
+          >
+            <FileSignature className="h-4 w-4 opacity-70" />
+            Contratos cotados
+            <span className="rounded-full bg-muted px-1.5 py-0.5 text-[11px] font-semibold text-muted-foreground">
+              {contratos.length}
+            </span>
+            <ChevronsUpDown className="h-4 w-4 shrink-0 opacity-50" />
+          </Button>
+        </PopoverTrigger>
+        <PopoverContent className="w-[min(28rem,calc(100vw-2rem))] p-0" align="start">
+          <Command>
+            <CommandInput placeholder="Digite parte do nome do contrato…" />
+            <CommandList>
+              <CommandEmpty>Nenhum contrato com esse nome.</CommandEmpty>
+              <CommandGroup>
+                {contratos.map((item) => {
+                  const recente = item.ocorrencias[0];
+                  return (
+                    <CommandItem
+                      key={item.nome.toLocaleLowerCase("pt-BR")}
+                      value={item.nome}
+                      // Fecha o closure no próprio item: `onSelect` devolve o
+                      // value já em minúsculas (cmdk), que não serve para
+                      // reencontrar o contrato com a grafia original.
+                      onSelect={() => { onLocalizar(item); setAberto(false); }}
+                      className="flex-col items-start gap-0.5"
+                    >
+                      <span className="break-words font-medium">{item.nome}</span>
+                      <span className="text-xs text-muted-foreground">
+                        {item.ocorrencias.length === 1
+                          ? `1 cotação · ${MESES[recente.month]}/${recente.year}`
+                          : `${item.ocorrencias.length} cotações · última em ${MESES[recente.month]}/${recente.year}`}
+                      </span>
+                    </CommandItem>
+                  );
+                })}
+              </CommandGroup>
+            </CommandList>
+          </Command>
+        </PopoverContent>
+      </Popover>
+
+      {contratos.length === 0 ? (
+        <span className="text-xs text-muted-foreground">
+          Nenhuma cotação com contrato informado ainda — o campo é preenchido pela
+          Licitação ao enviar a solicitação.
+        </span>
+      ) : alvo ? (
+        <span className="inline-flex max-w-full items-center gap-1.5 rounded-full border border-primary/30 bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary">
+          <span className="break-words">Mostrando: {alvo.nome}</span>
+          <button type="button" onClick={onLimpar} title="Tirar o destaque"
+                  className="shrink-0 opacity-70 hover:opacity-100">
+            <X className="h-3 w-3" />
+          </button>
+        </span>
+      ) : (
+        <span className="text-xs text-muted-foreground">
+          Escolha um contrato para abrir o mês em que ele foi cotado.
+        </span>
+      )}
+    </div>
+  );
+}
+
+function CardCotacao({ cotacao: c, podeResponder, destacado = false }: {
+  cotacao: CotacaoLicitacao;
+  podeResponder: boolean;
+  /** Ligado pelo seletor "Contratos cotados": todas as cotações do contrato escolhido. */
+  destacado?: boolean;
+}) {
   const marcarVisualizada = useCotacaoMarcarVisualizada();
   const [aberto, setAberto] = useState(false);
   const cfg = STATUS_CONFIG[c.status];
@@ -164,10 +334,19 @@ function CardCotacao({ cotacao: c, podeResponder }: { cotacao: CotacaoLicitacao;
   }
 
   return (
-    <div className={cn(
-      "overflow-hidden rounded-lg border border-l-4 bg-card transition-shadow",
-      cfg.border, cfg.accent, aberto && "shadow-md",
-    )}>
+    <div
+      // O id é o destino do scroll do seletor de contrato — `scrollIntoView`
+      // precisa de um nó real, e o card é o menor que identifica a cotação.
+      id={`cotacao-${c.id}`}
+      className={cn(
+        "overflow-hidden rounded-lg border border-l-4 bg-card transition-shadow",
+        cfg.border, cfg.accent, aberto && "shadow-md",
+        // O anel marca TODAS as cotações do contrato escolhido, não só aquela
+        // até onde rolou: o mesmo contrato costuma ter ida e volta em meses
+        // diferentes, e ver só uma esconderia o resto.
+        destacado && "ring-2 ring-primary ring-offset-2 ring-offset-background",
+      )}
+    >
       <button
         onClick={alternar}
         className={cn("flex w-full items-center justify-between gap-3 px-4 py-3 text-left", cfg.headerBg)}
@@ -184,7 +363,10 @@ function CardCotacao({ cotacao: c, podeResponder }: { cotacao: CotacaoLicitacao;
                 <span className="rounded-full bg-primary px-2 py-0.5 text-[10px] font-bold text-white">Não lida</span>
               )}
             </div>
-            <p className="text-xs text-muted-foreground">{fmtDatetime(c.created_at)}</p>
+            {/* SIS-2026-0487: o contrato cotado, em linha própria — é o dado
+                que Compras vinha abrindo card por card para descobrir. */}
+            <div className="mt-1"><SeloContrato contrato={nomeContrato(c)} /></div>
+            <p className="mt-1 text-xs text-muted-foreground">{fmtDatetime(c.created_at)}</p>
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-2">
