@@ -130,9 +130,11 @@ export default function AlunosLista() {
   // roda uma vez por curso). O contrato/status de cada aluno vem da
   // trn_alunos_recorte (id/contrato/status, um jsonb só), lida só quando o modal abre.
   const [massaAberta, setMassaAberta] = useState(false);
-  const [mFiltro, setMFiltro] = useState<"selecionados" | "todos" | "contrato" | "status">("contrato");
+  const [mFiltro, setMFiltro] = useState<"selecionados" | "todos" | "contrato" | "cargo" | "status">("contrato");
   const [mContratos, setMContratos] = useState<string[]>([]);
   const [mSoAtivos, setMSoAtivos] = useState(true);
+  const [mCargos, setMCargos] = useState<string[]>([]);
+  const [mBuscaCargo, setMBuscaCargo] = useState("");
   const [mStatus, setMStatus] = useState<"ativo" | "inativo" | "bloqueado" | "pendente">("ativo");
   const [mAcao, setMAcao] = useState("");
   const [mParam, setMParam] = useState("");
@@ -143,11 +145,11 @@ export default function AlunosLista() {
   const { data: cadastro = [] } = useQuery({
     queryKey: ["trn-alunos-recorte"],
     enabled: massaAberta,
-    // Um jsonb só (id/contrato/status de todos): sem o corte de 1000 linhas.
+    // Um jsonb só (id/contrato/cargo/status de todos): sem o corte de 1000 linhas.
     queryFn: async () => {
       const { data, error } = await sb.rpc("trn_alunos_recorte");
       if (error) throw error;
-      return (data ?? []) as { id: string; contrato: string | null; status: string }[];
+      return (data ?? []) as { id: string; contrato: string | null; cargo: string | null; status: string }[];
     },
   });
   const contratosDoCadastro = useMemo(() => {
@@ -160,19 +162,32 @@ export default function AlunosLista() {
     }
     return [...m.entries()].map(([nome, n]) => ({ nome, ...n })).sort((x, y) => x.nome.localeCompare(y.nome, "pt-BR"));
   }, [cadastro]);
+  // Cargo por recorte só olha quem está Trabalhando (ativo) — cargo de quem já
+  // saiu fica gravado no histórico, mas não representa cargo de ninguém hoje
+  // (pedido de 22/09/2026: "pegar somente os cargos dos que estão trabalhando").
+  const cargosDoCadastro = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const a of cadastro) {
+      if (!a.cargo || a.status !== "ativo") continue;
+      m.set(a.cargo, (m.get(a.cargo) ?? 0) + 1);
+    }
+    return [...m.entries()].map(([nome, n]) => ({ nome, n })).sort((x, y) => x.nome.localeCompare(y.nome, "pt-BR"));
+  }, [cadastro]);
   /** Os alunos que o recorte alcança — mostrado antes de aplicar. */
   const alvoRecorte = useMemo<string[] | null>(() => {
     if (mFiltro === "selecionados") return [...selecionados];
     if (mFiltro === "contrato") return cadastro.filter((a) => a.contrato && mContratos.includes(a.contrato) && (!mSoAtivos || a.status === "ativo")).map((a) => a.id);
+    if (mFiltro === "cargo") return cadastro.filter((a) => a.cargo && mCargos.includes(a.cargo) && a.status === "ativo").map((a) => a.id);
     if (mFiltro === "status") return cadastro.filter((a) => a.status === mStatus).map((a) => a.id);
     return null; // todos: a RPC resolve
-  }, [mFiltro, selecionados, cadastro, mContratos, mSoAtivos, mStatus]);
+  }, [mFiltro, selecionados, cadastro, mContratos, mSoAtivos, mCargos, mStatus]);
   const acaoDeCurso = acaoDef?.param === "curso";
 
   const aplicarMassa = async () => {
     if (!mAcao) return toast.error("Escolha a ação.");
     if (mFiltro === "selecionados" && selecionados.size === 0) return toast.error("Selecione alunos na lista.");
     if (mFiltro === "contrato" && mContratos.length === 0) return toast.error("Escolha pelo menos um contrato.");
+    if (mFiltro === "cargo" && mCargos.length === 0) return toast.error("Escolha pelo menos um cargo.");
     if (alvoRecorte && alvoRecorte.length === 0) return toast.error("Nenhum aluno nesse recorte.");
     if (acaoDeCurso && mCursos.length === 0) return toast.error("Escolha pelo menos um curso.");
     if (acaoDef?.param && !acaoDeCurso && !mParam.trim()) return toast.error("Preencha o parâmetro da ação.");
@@ -347,6 +362,7 @@ export default function AlunosLista() {
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="contrato">Contrato (todo o pessoal do contrato)</SelectItem>
+                    <SelectItem value="cargo">Cargo (todo mundo com esse cargo)</SelectItem>
                     <SelectItem value="status">Status do aluno (ativos, inativos…)</SelectItem>
                     <SelectItem value="selecionados">Alunos selecionados na lista ({selecionados.size})</SelectItem>
                     <SelectItem value="todos">Todos os alunos da plataforma</SelectItem>
@@ -373,6 +389,26 @@ export default function AlunosLista() {
                   <label className="mt-2 flex items-center gap-2 text-xs">
                     <Checkbox checked={mSoAtivos} onCheckedChange={(v) => setMSoAtivos(v === true)} /> Só quem está Trabalhando (ativos)
                   </label>
+                </div>
+              )}
+              {mFiltro === "cargo" && (
+                <div>
+                  <Label className="text-xs">Cargos (marque um ou vários)</Label>
+                  <p className="mt-0.5 text-xs text-muted-foreground">Só entra quem está Trabalhando — cargo de quem já saiu não conta.</p>
+                  <Input className="mt-1" placeholder="Buscar cargo…" value={mBuscaCargo} onChange={(e) => setMBuscaCargo(e.target.value)} />
+                  <div className="mt-1 max-h-48 overflow-y-auto rounded-md border p-1">
+                    {cargosDoCadastro.length === 0 && <div className="p-2 text-xs text-muted-foreground">Carregando cargos…</div>}
+                    {cargosDoCadastro.filter((c) => !mBuscaCargo.trim() || c.nome.toLowerCase().includes(mBuscaCargo.trim().toLowerCase())).map((c) => {
+                      const on = mCargos.includes(c.nome);
+                      return (
+                        <label key={c.nome} className={`flex cursor-pointer items-center gap-2 rounded px-2 py-1 text-xs ${on ? "bg-primary/10" : "hover:bg-muted"}`}>
+                          <Checkbox checked={on} onCheckedChange={() => setMCargos((l) => on ? l.filter((x) => x !== c.nome) : [...l, c.nome])} />
+                          <span className="flex-1">{c.nome}</span>
+                          <span className="text-muted-foreground">{c.n} ativo(s)</span>
+                        </label>
+                      );
+                    })}
+                  </div>
                 </div>
               )}
               {mFiltro === "status" && (
