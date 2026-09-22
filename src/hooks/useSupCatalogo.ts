@@ -46,13 +46,15 @@ export interface Alteracao {
 
 const sb = supabase as any;
 
-/** Listas pré-definidas do painel legado (ARQUITETURA-COMPLETA.md §11.2). */
-export const OPCOES_PREDEFINIDAS: Record<string, string[]> = {
-  quantidade: ["1", "2", "3", "4", "5", "6"],
-  tamanho: ["PP", "P", "M", "G", "GG", "EGG", "EXGG",
-    ...Array.from({ length: 17 }, (_, i) => String(33 + i))],
-  litros: Array.from({ length: 19 }, (_, i) => String((i + 1) * 10)),
-};
+/**
+ * Listas pré-definidas do painel legado (ARQUITETURA-COMPLETA.md §11.2).
+ *
+ * Mora em `@/lib/suprimentos/opcoesMaterial` desde SIS-2026-0482 — é regra
+ * testável, e o teste não precisa do cliente do Supabase que este arquivo
+ * importa. Continua reexportada aqui porque é daqui que a tela sempre
+ * importou; não vale quebrar o import por uma mudança de pasta.
+ */
+export { OPCOES_PREDEFINIDAS } from "@/lib/suprimentos/opcoesMaterial";
 
 export const LABEL_TIPO_ITEM: Record<TipoItem, string> = {
   uniforme: "Uniforme",
