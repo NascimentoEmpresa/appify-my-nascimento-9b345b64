@@ -10,8 +10,11 @@ import {
   useGradeUpdate,
   useGradeDelete,
   useGradePromover,
+  uploadAta,
+  urlAssinadaAta,
 } from "@/hooks/useGrade";
 import type { GradeItem, GradeFase, GradeInsert } from "@/hooks/useGrade";
+import { useAuth } from "@/hooks/useAuth";
 import { useUsuariosLicitacao } from "@/hooks/useUsuariosLicitacao";
 import type { UsuarioOption } from "@/hooks/useUsuariosLicitacao";
 import { useIBGEMunicipios, UFS } from "@/hooks/useIBGEMunicipios";
@@ -45,7 +48,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Plus, Pencil, Trash2, FileText, Eye, History, Upload, CheckCircle2, XCircle, Trophy, Building2 } from "lucide-react";
+import { Plus, Pencil, Trash2, FileText, Eye, History, Upload, CheckCircle2, XCircle, Trophy, Building2, Paperclip, Download, X } from "lucide-react";
 import * as XLSX from "xlsx";
 
 const normName = (s: string) =>
@@ -883,6 +886,14 @@ function GradeCard({
               <Building2 className="h-3 w-3" /> {empresaLabel}
             </span>
           )}
+          {item.ata_caminho && (
+            <span
+              className="inline-flex items-center gap-1 rounded-full border border-border bg-muted px-2 py-0.5 text-[10px] font-semibold text-muted-foreground"
+              title="Ata de classificação anexada"
+            >
+              <Paperclip className="h-3 w-3" /> Ata
+            </span>
+          )}
           {isGanho && (
             <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold text-emerald-700">
               <Trophy className="h-3 w-3" /> Ganho
@@ -984,6 +995,8 @@ const EMPTY_FORM = {
   edital: "", fase: "À Iniciar" as GradeFase, responsavel: "", cidade: "",
   uf: "", data: "", horario: "", objeto: "", qtd_pessoas: "",
   valor_global: "", posicao: "", status_obs: "", data_captacao: "",
+  // SIS-2026-0446: ata já anexada (quando editando); arquivo novo vai em ataFile.
+  ata_caminho: "", ata_nome: "",
 };
 
 function GradeSheet({
@@ -998,12 +1011,27 @@ function GradeSheet({
   empresas: EmpresaGrupo[];
 }) {
   const [f, setF] = useState({ ...EMPTY_FORM });
+  const { user } = useAuth();
   const { cidadesPorUF, isLoading: ibgeLoading } = useIBGEMunicipios();
   const cidadesUF = f.uf ? cidadesPorUF(f.uf) : [];
+
+  // SIS-2026-0446: ata de classificação. `ataFile` = arquivo novo escolhido;
+  // `ataRemovida` = usuário tirou a ata que já existia; `enviandoAta` trava o
+  // submit durante o upload.
+  const [ataFile, setAtaFile] = useState<File | null>(null);
+  const [ataRemovida, setAtaRemovida] = useState(false);
+  const [enviandoAta, setEnviandoAta] = useState(false);
+
+  // Ata só é exigida no MOMENTO em que o edital MUDA para "Em Andamento"
+  // (transição), não em toda edição de quem já está lá (SIS-2026-0446).
+  const entrandoEmAndamento = f.fase === "Em Andamento" && editing?.fase !== "Em Andamento";
+  const temAta = (!!f.ata_caminho && !ataRemovida) || !!ataFile;
 
   // Preenche quando abre para edição
   useEffect(() => {
     if (!open) return;
+    setAtaFile(null);
+    setAtaRemovida(false);
     if (editing) {
       setF({
         empresa_id: editing.empresa_id ?? "",
@@ -1020,6 +1048,8 @@ function GradeSheet({
         posicao: editing.posicao !== null ? String(editing.posicao) : "",
         status_obs: editing.status_obs ?? "",
         data_captacao: editing.data_captacao ?? "",
+        ata_caminho: editing.ata_caminho ?? "",
+        ata_nome: editing.ata_nome ?? "",
       });
     } else {
       setF({ ...EMPTY_FORM });
@@ -1027,7 +1057,7 @@ function GradeSheet({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, editing?.id]);
 
-  function handleSubmit(e: React.FormEvent) {
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!f.valor_global) {
       alert("Valor Global é obrigatório.");
@@ -1041,6 +1071,39 @@ function GradeSheet({
       alert(`Defina a empresa para a fase "${f.fase}".`);
       return;
     }
+    // SIS-2026-0446: para colocar em "Em Andamento" precisa da ata anexada.
+    if (entrandoEmAndamento && !temAta) {
+      alert('Anexe a ata de classificação para colocar o edital em "Em Andamento".');
+      return;
+    }
+
+    // Monta as colunas da ata só quando algo mudou, pra não sobrescrever a ata
+    // existente numa edição que não mexeu no anexo.
+    let mudancasAta: Partial<GradeItem> = {};
+    if (ataFile) {
+      try {
+        setEnviandoAta(true);
+        const up = await uploadAta(ataFile, f.empresa_id || null);
+        mudancasAta = {
+          ata_caminho: up.caminho,
+          ata_nome: up.nome,
+          ata_tamanho: up.tamanho,
+          ata_enviado_por: user?.id ?? null,
+          ata_enviado_em: new Date().toISOString(),
+        };
+      } catch (err) {
+        alert("Falha ao enviar a ata: " + (err as Error).message);
+        return;
+      } finally {
+        setEnviandoAta(false);
+      }
+    } else if (ataRemovida) {
+      mudancasAta = {
+        ata_caminho: null, ata_nome: null, ata_tamanho: null,
+        ata_enviado_por: null, ata_enviado_em: null,
+      };
+    }
+
     onSave({
       empresa_id: f.empresa_id || null,
       edital: f.edital || null,
@@ -1056,7 +1119,14 @@ function GradeSheet({
       posicao: f.posicao ? Number(f.posicao) : null,
       status_obs: f.status_obs || null,
       data_captacao: f.data_captacao || null,
+      ...mudancasAta,
     });
+  }
+
+  async function baixarAta() {
+    if (!f.ata_caminho) return;
+    const url = await urlAssinadaAta(f.ata_caminho, f.ata_nome || undefined);
+    if (url) window.open(url, "_blank");
   }
 
   const field = (label: string, key: keyof typeof f, opts?: { type?: string; required?: boolean }) => (
@@ -1105,6 +1175,43 @@ function GradeSheet({
           </div>
 
           {field("Nº do Edital", "edital")}
+
+          {/* SIS-2026-0446: ata de classificação — obrigatória ao entrar em
+              "Em Andamento" (identifica nas reuniões quem participou). */}
+          <div className="space-y-1">
+            <Label className="text-xs">
+              Ata de classificação
+              {entrandoEmAndamento
+                ? <span className="text-destructive"> *</span>
+                : <span className="text-muted-foreground"> — obrigatória ao entrar em "Em Andamento"</span>}
+            </Label>
+            {ataFile ? (
+              <div className="flex items-center gap-2 rounded-md border border-border bg-muted/40 px-2.5 py-1.5 text-xs">
+                <Paperclip className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                <span className="flex-1 truncate">{ataFile.name}</span>
+                <button type="button" onClick={() => setAtaFile(null)} title="Remover" className="text-muted-foreground hover:text-destructive">
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            ) : (f.ata_caminho && !ataRemovida) ? (
+              <div className="flex items-center gap-2 rounded-md border border-border bg-muted/40 px-2.5 py-1.5 text-xs">
+                <Paperclip className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                <button type="button" onClick={baixarAta} className="flex-1 truncate text-left text-primary hover:underline" title="Baixar ata">
+                  {f.ata_nome || "Ata anexada"}
+                </button>
+                <Download className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                <button type="button" onClick={() => setAtaRemovida(true)} title="Substituir / remover" className="text-muted-foreground hover:text-destructive">
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            ) : (
+              <Input
+                type="file"
+                className="h-9 cursor-pointer text-xs file:mr-2 file:text-xs"
+                onChange={(e) => { setAtaFile(e.target.files?.[0] ?? null); }}
+              />
+            )}
+          </div>
 
           <div className="space-y-1">
             <Label className="text-xs">Fase <span className="text-destructive">*</span></Label>
@@ -1211,7 +1318,9 @@ function GradeSheet({
 
           <DialogFooter className="pt-2">
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>Cancelar</Button>
-            <Button type="submit" disabled={isSaving}>{isSaving ? "Salvando…" : editing ? "Salvar" : "Criar"}</Button>
+            <Button type="submit" disabled={isSaving || enviandoAta}>
+              {enviandoAta ? "Enviando ata…" : isSaving ? "Salvando…" : editing ? "Salvar" : "Criar"}
+            </Button>
           </DialogFooter>
         </form>
       </DialogContent>
@@ -1250,6 +1359,24 @@ function ViewModal({ item, onClose }: { item: GradeItem; onClose: () => void }) 
           <Row label="Qtd. Pessoas" value={item.qtd_pessoas !== null ? String(item.qtd_pessoas) : null} />
           <Row label="Valor Global" value={item.valor_global} />
           {item.status_obs && <Row label="Obs." value={item.status_obs} />}
+
+          {item.ata_caminho && (
+            <div className="flex gap-2">
+              <span className="w-28 shrink-0 text-xs font-medium text-muted-foreground">Ata</span>
+              <button
+                type="button"
+                className="inline-flex items-center gap-1.5 text-sm text-primary hover:underline"
+                onClick={async () => {
+                  const url = await urlAssinadaAta(item.ata_caminho!, item.ata_nome || undefined);
+                  if (url) window.open(url, "_blank");
+                }}
+              >
+                <Paperclip className="h-3.5 w-3.5" />
+                {item.ata_nome || "Baixar ata de classificação"}
+                <Download className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          )}
 
           {item.historico.length > 0 && (
             <div className="rounded-lg border border-border bg-muted/30 p-3">

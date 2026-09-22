@@ -53,9 +53,14 @@ export function useReembolsoNotif(): ReembolsoNotif {
       return { pendentes, atrasados, temPendente: pendentes > 0 };
     },
     staleTime: 60_000,
-    // Quem aprova costuma ficar parado numa tela esperando: sonda a cada
-    // minuto, o mesmo ritmo do sininho (Topbar).
-    refetchInterval: 60_000,
+    // Quem aprova costuma ficar parado numa tela esperando: sonda no mesmo
+    // ritmo do sininho (Topbar).
+    //
+    // 21/09/2026: era 60s, junto com a Topbar. Ambos subiram para 180s depois
+    // do reinício do Postgres por esgotamento de conexões — roda na Sidebar,
+    // logo em toda tela de todo usuário logado. Quem aprova continua vendo o
+    // efeito da própria ação na hora, porque a mutation invalida a query.
+    refetchInterval: 180_000,
     refetchOnWindowFocus: true,
   });
 

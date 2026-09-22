@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useDebounce } from "@/hooks/useDebounce";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { NovaParcela, RateioLinha, uploadAnexoMalote } from "@/hooks/useMaloteDespesa";
@@ -265,7 +266,10 @@ export const MIN_BUSCA_MOTORISTA = 3;
  * com a tabela de apoio).
  */
 export function useBuscaMotoristasUfrgs(termo: string) {
-  const busca = termo.trim();
+  // 21/09/2026: debounce pra uma consulta por palavra, não por tecla digitada.
+  // Soma com o piso de caracteres logo abaixo — um corta repetição, o outro
+  // corta busca ampla demais.
+  const busca = useDebounce(termo.trim());
   return useQuery({
     queryKey: ["diaria_ufrgs_motoristas", busca],
     enabled: busca.length >= MIN_BUSCA_MOTORISTA,

@@ -258,14 +258,30 @@ export function useSituacaoPedidos(pedidoIds: string[], enabled = true) {
       const mapa = new Map<string, SituacaoPedido>();
       // O PostgREST corta em 1.000 linhas sem avisar (SIS-2026-0201), e aqui
       // é uma linha por pedido — com ~1.300 pedidos o corte já acontece.
-      for (let i = 0; i < pedidoIds.length; i += 500) {
-        const fatia = pedidoIds.slice(i, i + 500);
-        const { data, error } = await sb
-          .from("sup_pedido_situacao")
-          .select("pedido_id, itens, itens_atendidos, itens_em_separacao, itens_pendentes_compra")
-          .in("pedido_id", fatia);
-        if (error) throw error;
-        for (const r of data ?? []) mapa.set(r.pedido_id, r as SituacaoPedido);
+      //
+      // 21/09/2026: as fatias eram buscadas EM SEQUÊNCIA, uma esperando a
+      // outra. Com 2.105 pedidos são 5 idas ao servidor enfileiradas, e a
+      // tela de Pedidos de Materiais só monta depois da última. Agora saem
+      // todas de uma vez — o tempo vira o da fatia mais lenta, não o da soma.
+      //
+      // Continua buscando a fila INTEIRA de propósito: `situacoes` alimenta os
+      // cards de KPI e o filtro de status, que contam o banco todo. Limitar
+      // aos pedidos visíveis na tela devolveria o bug do SIS-2026-0201.
+      const fatias: string[][] = [];
+      for (let i = 0; i < pedidoIds.length; i += 500) fatias.push(pedidoIds.slice(i, i + 500));
+
+      const respostas = await Promise.all(
+        fatias.map(async (fatia) => {
+          const { data, error } = await sb
+            .from("sup_pedido_situacao")
+            .select("pedido_id, itens, itens_atendidos, itens_em_separacao, itens_pendentes_compra")
+            .in("pedido_id", fatia);
+          if (error) throw error;
+          return data ?? [];
+        }),
+      );
+      for (const linhas of respostas) {
+        for (const r of linhas) mapa.set(r.pedido_id, r as SituacaoPedido);
       }
       return mapa;
     },

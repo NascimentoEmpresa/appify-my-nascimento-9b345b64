@@ -106,6 +106,28 @@ export function useContratosCatalogo(habilitado: string | boolean | null = true)
  * publication supabase_realtime (migration 20260930000031). Se não estiver,
  * o canal simplesmente nunca recebe evento e a tela continua funcionando
  * como antes, atualizando ao voltar o foco.
+ *
+ * ┌─────────────────────────────────────────────────────────────────────────┐
+ * │ ⚠️  NINGUÉM CHAMA ESTE HOOK DESDE 21/09/2026 — E É DE PROPÓSITO.        │
+ * └─────────────────────────────────────────────────────────────────────────┘
+ *
+ * Ele era chamado em CatalogoMateriais.tsx e foi removido de lá (decisão do
+ * Eduardo, 21/09/2026) depois que o Postgres de produção reiniciou sozinho às
+ * 14:01:59 por esgotamento de conexões: 61 em uso para 57 utilizáveis na
+ * instância Micro.
+ *
+ * O serviço de Realtime segurava até 7 dessas 57 enquanto alguém estivesse com
+ * o Catálogo aberto (medido: 7 conexões com a tela em uso, 0 sem ninguém
+ * nela). Como o upgrade de máquina foi vetado pela gerência, essas 7 eram a
+ * maior folga disponível — a margem em dia normal sai de ~14 para ~21.
+ *
+ * ANTES DE RELIGAR, entenda o que você está gastando: cada tela que assinar um
+ * canal traz o serviço de Realtime de volta e com ele o consumo de conexões.
+ * Num banco com 57 vagas e 43 já ocupadas de forma fixa, isso não é detalhe.
+ * Veja `docs/plano-otimizacao-banco.md`, seção 1.1.
+ *
+ * O código abaixo continua correto e funcional — o desligamento foi feito no
+ * ponto de uso, não aqui, justamente para o religamento ser um `git revert`.
  */
 export function useContratosCatalogoRealtime() {
   const qc = useQueryClient();
