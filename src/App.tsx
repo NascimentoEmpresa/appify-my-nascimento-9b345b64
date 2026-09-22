@@ -209,6 +209,17 @@ import FormularioPublico from "./pages/publico/FormularioPublico";
 import Denuncia from "./pages/publico/Denuncia";
 import FornecedorCadastro from "./pages/publico/FornecedorCadastro";
 import PedidoConfirmar from "./pages/publico/PedidoConfirmar";
+// Portal do Colaborador (/colaborador) — login por CPF, sessão própria, fora do Auth.
+import ColaboradorShell from "./pages/colaborador/ColaboradorShell";
+import EntrarColaborador from "./pages/colaborador/EntrarColaborador";
+import InicioColaborador from "./pages/colaborador/InicioColaborador";
+import PerfilColaborador from "./pages/colaborador/PerfilColaborador";
+import SalarioColaborador from "./pages/colaborador/SalarioColaborador";
+import PontoColaborador from "./pages/colaborador/PontoColaborador";
+import TreinamentosColaborador from "./pages/colaborador/TreinamentosColaborador";
+import CursoColaborador from "./pages/colaborador/CursoColaborador";
+import CertificadoColaborador from "./pages/colaborador/CertificadoColaborador";
+import HistoricoColaborador from "./pages/colaborador/HistoricoColaborador";
 import FornecedoresPendentes from "./pages/suprimentos/FornecedoresPendentes";
 import DenunciasComiteEtica from "./pages/comite-etica/Denuncias";
 import ConfiguracaoComiteEtica from "./pages/comite-etica/Configuracao";
@@ -328,6 +339,22 @@ const App = () => (
           {/* Canal de Ética — registro e acompanhamento de denúncia, sem login */}
           <Route path="/denuncia" element={<Denuncia />} />
           <Route path="/denuncia/acompanhar" element={<Navigate to="/denuncia?acompanhar" replace />} />
+          {/* Portal do Colaborador — o colaborador de campo entra com o CPF,
+              sem conta no Supabase Auth: fora do ProtectedRoute e do AppShell
+              de propósito. A guarda é o token do portal (ColaboradorShell), e
+              os dados vêm só da Edge Function colaborador-portal. Ver
+              20260930000196_portal_colaborador.sql. */}
+          <Route path="/colaborador/entrar" element={<EntrarColaborador />} />
+          <Route path="/colaborador" element={<ColaboradorShell />}>
+            <Route index element={<InicioColaborador />} />
+            <Route path="perfil" element={<PerfilColaborador />} />
+            <Route path="salario" element={<SalarioColaborador />} />
+            <Route path="ponto" element={<PontoColaborador />} />
+            <Route path="treinamentos" element={<TreinamentosColaborador />} />
+            <Route path="treinamentos/:cursoId" element={<CursoColaborador />} />
+            <Route path="treinamentos/:cursoId/certificado" element={<CertificadoColaborador />} />
+            <Route path="historico" element={<HistoricoColaborador />} />
+          </Route>
           <Route path="/app" element={<ProtectedRoute><AppShell /></ProtectedRoute>}>
             <Route index element={<Inicio />} />
             {/* Fora de app_menu de propósito: ler novidade é para todo mundo. */}

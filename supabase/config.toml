@@ -60,6 +60,13 @@ verify_jwt = false
 [functions.comite-etica-alertas-tick]
 verify_jwt = true
 
+# Portal do Colaborador (/colaborador) — login por CPF, sem conta no Auth.
+# Público pelo mesmo desenho do Canal de Ética: o navegador manda JSON puro e
+# quem autentica é o token de sessão própria (COL_PORTAL_SESSAO), conferido
+# dentro da função. Ver 20260930000196_portal_colaborador.sql.
+[functions.colaborador-portal]
+verify_jwt = false
+
 # Webhook público da Meta — chamado sem JWT (a validação é pela assinatura
 # X-Hub-Signature-256 com o WHATSAPP_APP_SECRET).
 [functions.whatsapp-webhook]
