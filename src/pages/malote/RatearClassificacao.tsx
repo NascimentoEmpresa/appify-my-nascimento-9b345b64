@@ -14,7 +14,7 @@ import { useEmpresaId } from "@/hooks/useEmpresaId";
 import { useClassificacoesOrcamento } from "@/hooks/usePlanejamentoOrcamentario";
 import { useSalvarDespesa, uploadAnexosMalote, gerarParcelas, mesclarDatasParcelas, mesclarValoresParcelas, validarOrdemParcelas, validarSomaParcelas, ModoValorParcela, RateioLinha } from "@/hooks/useMaloteDespesa";
 import { useMaloteConfig, usePrazoNormalInclusao, horaAtualPassouDe } from "@/hooks/useMaloteConfig";
-import { useTiposFormaPagamento } from "@/hooks/useMaloteFormaPagamento";
+import { useFormasPagamento } from "@/hooks/useMaloteFormaPagamento";
 import { cn } from "@/lib/utils";
 import { RateioGrid, DimensoesRateio } from "./RateioGrid";
 import { AnexosField } from "./AnexosField";
@@ -77,8 +77,16 @@ export default function RatearClassificacao() {
   const { data: maloteConfig } = useMaloteConfig();
   // SIS-2026-0221: "Forma de pagamento" vem do catálogo cadastrável em
   // Configurações do Malote → Formas de Pagamento, não mais de um enum fixo.
-  const { data: tiposFormaPagamento = [] } = useTiposFormaPagamento();
-  const tiposFormaPagamentoAtivos = useMemo(() => tiposFormaPagamento.filter((t) => t.ativo), [tiposFormaPagamento]);
+  // SIS-2026-0439 (achado do usuário, 22/09/2026): esta tela ficou de fora
+  // quando o resto do Malote trocou do catálogo genérico de Tipo ("Boleto",
+  // "PIX"...) pro catálogo nomeado de Forma de Pagamento ("Boleto
+  // Bancário", "Cartão Sicredi 119 - Final 2719"...) — despesa rateada
+  // continuava gravando o valor genérico antigo, que não bate com nenhuma
+  // forma ativa do catálogo novo (aparece "(inativo)" nas telas que já
+  // migraram) e nunca pode entrar no Fluxo Especial (esse é configurado
+  // por forma nomeada).
+  const { data: formasPagamento = [] } = useFormasPagamento();
+  const formasPagamentoAtivas = useMemo(() => formasPagamento.filter((f) => f.ativo), [formasPagamento]);
 
   const totalRateado = useMemo(() => linhasRateio.reduce((s, l) => s + (Number(l.valor) || 0), 0), [linhasRateio]);
   const faltaLancar = Math.max(0, (Number(valorTotal) || 0) - totalRateado);
@@ -300,9 +308,9 @@ export default function RatearClassificacao() {
                   <SelectValue placeholder="Selecione a forma" />
                 </SelectTrigger>
                 <SelectContent>
-                  {tiposFormaPagamentoAtivos.map((t) => (
-                    <SelectItem key={t.nome} value={t.nome}>
-                      {t.nome}
+                  {formasPagamentoAtivas.map((f) => (
+                    <SelectItem key={f.id} value={f.nome}>
+                      {f.nome}
                     </SelectItem>
                   ))}
                 </SelectContent>

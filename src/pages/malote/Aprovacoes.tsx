@@ -22,8 +22,8 @@ import {
   useClassificacaoIdsPorDespesaRateio,
   useEmpresaPrimeiraLinhaRateio,
   useContratoPrimeiraLinhaRateio,
+  souAprovadorDoNivelComRateio,
   nomesAprovadorNivel,
-  souAprovadorDoNivel,
   STATUS_LABEL,
   STATUS_BADGE_CLASS,
   NIVEL_APROVACAO_BADGE_CLASS,
@@ -246,7 +246,8 @@ export default function Aprovacoes({ base = "/app/malote" }: { base?: string } =
 
   // SIS-2026-0439: despesa lançada com forma de pagamento em Fluxo Especial
   // (ex. Cartão Sicredi) tem aprovador fixo definido ali, não na
-  // Classificação — souAprovadorDoNivel precisa dessa linha pra checar certo.
+  // Classificação — souAprovadorDoNivelComRateio precisa dessa linha pra
+  // checar certo.
   const { data: formasPagamentoCatalogo = [] } = useFormasPagamento();
   const formaEspecialPorNome = useMemo(
     () => new Map(formasPagamentoCatalogo.filter((f) => f.fluxo_aprovacao === "especial").map((f) => [f.nome, f])),
@@ -254,7 +255,14 @@ export default function Aprovacoes({ base = "/app/malote" }: { base?: string } =
   );
   function souAprovadorPendente(d: MaloteDespesaRow): boolean {
     if (d.nivel_aprovacao_atual == null) return false;
-    return souAprovadorDoNivel(d, d.nivel_aprovacao_atual, user?.id, formaEspecialPorNome.get(d.forma_pagamento ?? ""));
+    return souAprovadorDoNivelComRateio(
+      d,
+      d.nivel_aprovacao_atual,
+      user?.id,
+      classificacaoIdsRateio?.get(d.id),
+      classificacaoPorId,
+      formaEspecialPorNome.get(d.forma_pagamento ?? ""),
+    );
   }
 
   // SIS-2026-0285 (Iury): filtro de data puxava só de "Última atualização" —
