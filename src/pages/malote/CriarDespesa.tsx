@@ -23,6 +23,7 @@ import {
   useContratosAtivos,
   uploadAnexosMalote,
   buscarNumeroDespesa,
+  ErroSalvarDespesaParcial,
   TipoSolicitacao,
   STATUS_LABEL,
   ItemSolicitacao,
@@ -440,6 +441,18 @@ function PainelSolicitacao({
   const [contratoId, setContratoId] = useState("");
   const [arquivos, setArquivos] = useState<File[]>([]);
   const [salvando, setSalvando] = useState<"rascunho" | "enviar" | null>(null);
+  // [SEM-CHAMADO] (achado do usuário, 22/09/2026): se a despesa já foi
+  // criada numa tentativa anterior e só uma tabela filha (rateio/itens/
+  // links/parcelas) falhou depois — ex. migration esquecida — reenviar
+  // completa essa MESMA despesa (update) em vez de criar outra. Sem isso,
+  // o usuário clicando de novo depois de um erro duplicava a solicitação a
+  // cada tentativa.
+  const [despesaIdParcial, setDespesaIdParcial] = useState<string | null>(null);
+  // Pedido do usuário (22/09/2026): não basta desabilitar só ENQUANTO salva
+  // (isso já existia) — depois de um erro o botão continua desabilitado até
+  // o usuário clicar "Tentar novamente" de propósito, em vez de voltar a
+  // ficar clicável sozinho e convidar a clicar de novo sem pensar.
+  const [erro, setErro] = useState<string | null>(null);
 
   // A Classificação Malote já define se a despesa é de Contrato ou
   // Administrativo — o Tipo aqui só reflete isso e trava, evitando pedir a
@@ -530,10 +543,12 @@ function PainelSolicitacao({
       toast.error("Empresa não identificada.");
       return;
     }
+    setErro(null);
     setSalvando(status === "rascunho" ? "rascunho" : "enviar");
     try {
       const empresaFinal = tipo === "contrato" ? empresaContratoId : empresaId;
       const despesaId = await salvar.mutateAsync({
+        id: despesaIdParcial ?? undefined,
         empresa_id: empresaFinal,
         classificacao_id: classificacaoId,
         origem: "solicitacao",
@@ -571,10 +586,21 @@ function PainelSolicitacao({
       }
       toast.success(status === "rascunho" ? "Rascunho salvo." : "Solicitação enviada para aprovação inicial.");
       setNome(""); setMotivo(""); setDescricao(""); setValorEstimado(""); setLinks([]); setArquivos([]); setItens([]);
-      setEmpresaContratoId(""); setContratoId("");
+      setEmpresaContratoId(""); setContratoId(""); setDespesaIdParcial(null);
       if (!tipoTravado) setTipo("");
     } catch (e: unknown) {
-      toast.error(e instanceof Error ? e.message : "Erro ao salvar solicitação.");
+      if (e instanceof ErroSalvarDespesaParcial) {
+        // A despesa já existe — próximo clique em "Salvar"/"Enviar" completa
+        // ela (update), não cria outra.
+        setDespesaIdParcial(e.despesaId);
+        const msg = `${e.message} A solicitação já foi criada — clique em "Tentar novamente" pra completar, não recomece do zero.`;
+        setErro(msg);
+        toast.error(msg);
+      } else {
+        const msg = e instanceof Error ? e.message : (e as { message?: string })?.message ?? "Erro ao salvar solicitação.";
+        setErro(msg);
+        toast.error(msg);
+      }
     } finally {
       setSalvando(null);
     }
@@ -698,11 +724,19 @@ function PainelSolicitacao({
             <AnexosField arquivos={arquivos} onChange={setArquivos} disabled={!ativo} />
           </div>
 
+          {erro && (
+            <div className="flex items-start justify-between gap-3 rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">
+              <span>{erro}</span>
+              <Button variant="outline" size="sm" className="shrink-0" onClick={() => setErro(null)}>
+                Tentar novamente
+              </Button>
+            </div>
+          )}
           <div className="flex justify-end gap-2 pt-2">
-            <Button variant="outline" onClick={() => handleSalvar("rascunho")} disabled={!ativo || salvando !== null}>
+            <Button variant="outline" onClick={() => handleSalvar("rascunho")} disabled={!ativo || salvando !== null || !!erro}>
               {salvando === "rascunho" ? "Salvando..." : "Salvar rascunho"}
             </Button>
-            <Button onClick={() => handleSalvar("aguardando_aprovacao_inicial")} disabled={!ativo || salvando !== null}>
+            <Button onClick={() => handleSalvar("aguardando_aprovacao_inicial")} disabled={!ativo || salvando !== null || !!erro}>
               {salvando === "enviar" ? "Enviando..." : "Enviar solicitação"}
             </Button>
           </div>

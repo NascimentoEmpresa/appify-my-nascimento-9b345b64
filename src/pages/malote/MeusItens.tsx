@@ -25,8 +25,6 @@ import {
   useContratosAtivos,
   useEmpresasGrupo,
   useEmpresaPrimeiraLinhaRateio,
-  useRateioLinhasEParcelasEmLote,
-  RATEIO_E_PARCELAS_VAZIO,
   useDespesasLixeira,
   useRestaurarDespesa,
   MaloteDespesaRow,
@@ -45,7 +43,6 @@ import { useClassificacoesOrcamento } from "@/hooks/usePlanejamentoOrcamentario"
 import { useOrdenacaoTabela } from "@/hooks/useOrdenacaoTabela";
 import { useEstadoPersistido } from "@/hooks/useEstadoPersistido";
 import { ordenarPor } from "@/lib/ordenarTabela";
-import { JustificativaPendenteBadge } from "./JustificativaPendenteBadge";
 import {
   CABECALHOS_EXCEL_MEUS_ITENS,
   aindaESolicitacao,
@@ -60,8 +57,8 @@ import {
 
 // SIS-2026-0316: colunas ordenáveis (clicar no cabeçalho, mesmo padrão do
 // Windows Explorer). Ficam de fora as que não têm um valor único e
-// comparável de forma útil: Parcela (composto X/Y), Aprovador pendente
-// (lista/tooltip) e Justificativa (badge de estado, não dado ordenável).
+// comparável de forma útil: Parcela (composto X/Y) e Aprovador pendente
+// (lista/tooltip).
 type ColunaMeusItens =
   | "tipo"
   | "numero"
@@ -189,19 +186,6 @@ export default function MeusItens() {
   // Aprovações e Pagamento Malote, pra não voltar a divergir entre telas).
   const despesaIdsTodos = useMemo(() => Array.from(new Set(itens.map((i) => i.despesa.id))), [itens]);
   const { data: empresaPrimeiraLinhaPorDespesa } = useEmpresaPrimeiraLinhaRateio(despesaIdsTodos);
-
-  // 21/09/2026: o JustificativaPendenteBadge de cada linha fazia a própria
-  // consulta de rateio — uma por linha da tabela. Busca em lote, no mesmo
-  // padrão do useEmpresaPrimeiraLinhaRateio logo acima, e o pedaço de cada
-  // despesa desce por prop.
-  const despesasParaRateio = useMemo(
-    () =>
-      Array.from(
-        new Map(itens.map((i) => [i.despesa.id, { id: i.despesa.id, parcelado: !!i.despesa.parcelado }])).values(),
-      ),
-    [itens],
-  );
-  const { data: rateioPorDespesa } = useRateioLinhasEParcelasEmLote(despesasParaRateio);
   function empresaIdResolvida(despesa: MaloteDespesaRow): string | null {
     return empresaPrimeiraLinhaPorDespesa?.get(despesa.id) ?? despesa.empresa_id ?? null;
   }
@@ -548,21 +532,20 @@ export default function MeusItens() {
                 <TableHeadOrdenavel coluna="status" ordenacao={ordenacao}>Status</TableHeadOrdenavel>
                 <TableHead>Aprovador pendente</TableHead>
                 <TableHeadOrdenavel coluna="excecao" ordenacao={ordenacao}>Exceção</TableHeadOrdenavel>
-                <TableHead>Justificativa</TableHead>
                 <TableHeadOrdenavel coluna="atualizacao" ordenacao={ordenacao}>Última atualização</TableHeadOrdenavel>
               </TableRow>
             </TableHeader>
             <TableBody>
               {isLoading && (
                 <TableRow>
-                  <TableCell colSpan={14} className="text-center text-muted-foreground py-8">
+                  <TableCell colSpan={13} className="text-center text-muted-foreground py-8">
                     Carregando...
                   </TableCell>
                 </TableRow>
               )}
               {!isLoading && filtrados.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={14} className="text-center text-muted-foreground py-8">
+                  <TableCell colSpan={13} className="text-center text-muted-foreground py-8">
                     Nenhum item encontrado para os filtros selecionados.
                   </TableCell>
                 </TableRow>
@@ -607,13 +590,6 @@ export default function MeusItens() {
                     </TableCell>
                     <TableCell>
                       {despesa.excecao ? <Badge variant="destructive">Sim</Badge> : <span className="text-muted-foreground text-sm">Não</span>}
-                    </TableCell>
-                    <TableCell>
-                      <JustificativaPendenteBadge
-                        despesa={despesa}
-                        parcela={parcela}
-                        rateioEParcelas={rateioPorDespesa?.get(despesa.id) ?? RATEIO_E_PARCELAS_VAZIO}
-                      />
                     </TableCell>
                     <TableCell className="text-xs text-muted-foreground">{new Date(despesa.updated_at).toLocaleString("pt-BR")}</TableCell>
                   </TableRow>
