@@ -5,7 +5,7 @@
 -- (malote_despesa_evento.tipo_evento = 'ajuste_administrativo', que já
 -- existe desde a 20260930000188).
 --
--- PRÉ-REQUISITO: 20260930000214 ('ajuste_administrativo' no enum
+-- PRÉ-REQUISITO: 20260930000217 ('ajuste_administrativo' no enum
 -- app_acao) tem que estar aplicada ANTES desta — o INSERT em
 -- perfil_acesso_permissao aqui usa o valor.
 --
