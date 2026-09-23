@@ -142,7 +142,9 @@ export default function AgendamentoVeiculos() {
       return !conflitoNaAgenda(agendamentos, veiculo.id, dataInicio, dataFim, turno);
     }
     if (passo === 2) return ctr.length > 0;
-    if (passo === 3) return !!rascunho.kmInicial.trim() && !!rascunho.fotoKm && !pendencia;
+    // KM inicial + foto viraram opcionais aqui (23/09/2026): dá para
+    // registrar depois, na viagem. A pendência de KM final continua travando.
+    if (passo === 3) return !pendencia;
     return true;
   })();
 
@@ -157,8 +159,8 @@ export default function AgendamentoVeiculos() {
         destino: rascunho.destino,
         motivo: rascunho.motivo,
         observacoes: rascunho.observacoes,
-        km_inicial: Number(rascunho.kmInicial),
-        km_inicial_foto: rascunho.fotoKm!,
+        km_inicial: rascunho.kmInicial.trim() ? Number(rascunho.kmInicial) : null,
+        km_inicial_foto: rascunho.fotoKm,
         contratos: rascunho.contratos.map((id) => {
           const c = acharContrato(id);
           return {
@@ -209,9 +211,9 @@ export default function AgendamentoVeiculos() {
             <div className="mb-4 flex items-start gap-3 rounded-2xl border border-amber-300 bg-amber-50/70 p-4 dark:bg-amber-500/10">
               <Gauge className="mt-0.5 h-5 w-5 shrink-0 text-amber-600" />
               <p className="text-sm text-foreground">
-                <b>Será solicitada a imagem do KM inicial do veículo agora.</b> Após finalizar a viagem,
-                insira o valor final do KM e uma imagem do painel — e anexe as notas de abastecimento na
-                própria viagem, em <b>Meus Agendamentos</b>.
+                <b>Registre o KM inicial e a foto do painel</b> — agora, se estiver com o carro, ou depois,
+                na própria viagem em <b>Meus Agendamentos</b>. Após finalizar a viagem, insira o KM final e
+                uma imagem do painel, e anexe as notas de abastecimento.
               </p>
             </div>
 
