@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { lerTodasRespostas } from "@/lib/formularios/respostasTodas";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { Formulario, Pergunta, normalizaPerguntas } from "./Formularios";
@@ -108,7 +109,7 @@ export default function PainelGerencial() {
     setLoading(true);
     const [fRes, rRes] = await Promise.all([
       (supabase as any).from("CS_FORMULARIOS").select("*").is("deleted_at", null).order("created_at", { ascending: false }),
-      (supabase as any).from("CS_FORM_RESPOSTAS").select("id, formulario_id, enviado_em, respondente_nome, criado_por, setor, respondente_cadastro, itens").order("enviado_em", { ascending: false }).limit(10000),
+      lerTodasRespostas("id, formulario_id, enviado_em, respondente_nome, criado_por, setor, respondente_cadastro, itens"),
     ]);
     const fs: Formulario[] = fRes.data ?? [];
     setForms(fs);

@@ -395,10 +395,15 @@ export function DiariaUfrgsModal({
   // No modo "editar" o formulário nasce PREENCHIDO: a pessoa está corrigindo
   // um ponto específico, não redigitando a linha. Redigitar é onde nasce o
   // segundo erro.
+  //
+  // No "visualizar" também: as quantidades (Qt. Hosp., Café...) não têm
+  // `d?.qt...` próprio na tela, leem direto deste estado. Até 23/09/2026 só o
+  // "editar" carregava a linha, e quem abria uma diária para conferir via
+  // tudo zerado com o Valor Total preenchido — parecia dado perdido.
   const chave = `${modo}-${diaria?.uuid ?? "nova"}-${aberto}`;
   const [chaveAtual, setChaveAtual] = useState(chave);
   if (chave !== chaveAtual) {
-    const base = modo === "editar" ? diaria : null;
+    const base = modo === "nova" ? null : diaria;
     setChaveAtual(chave);
     setContratoId(base?.contratoId ?? "");
     setCodFornecedor(base?.codFornecedor ?? "");
