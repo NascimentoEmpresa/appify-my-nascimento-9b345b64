@@ -18,8 +18,10 @@ import {
   normalizarPontoSemIntervalo,
   podeAlterarHorariosNaLiberacao,
   podeEditarHoraExtra,
+  podeEditarHorariosDaConcluida,
   podeIgnorarEscalaNoFimDeSemana,
   rotuloFaseAnexo,
+  resumirLiberacaoHoraExtra,
   sobrepoe,
   statusExecucaoPorPercentual,
   statusExibicao,
@@ -37,6 +39,22 @@ describe("regras de hora extra", () => {
   it("calcula HE que cruza meia-noite", () => expect(totalHe("22:00", "02:00")).toBe(240));
   it("formata a data no fuso local", () => expect(dataLocalISO(new Date(2026, 8, 15, 23, 30))).toBe("2026-09-15"));
   it("formata duração curta", () => expect(formatarDuracao(180, true)).toBe("3h00"));
+  it("resume os cartões da liberação somente com horas aprovadas", () => {
+    expect(
+      resumirLiberacaoHoraExtra([
+        { status: "aguardando_liberacao", total_previsto_min: 60 },
+        { status: "aguardando_validacao", total_previsto_min: 90 },
+        { status: "aprovada", total_previsto_min: 120 },
+        { status: "concluida", total_previsto_min: 150 },
+        { status: "reprovada", total_previsto_min: 180 },
+      ]),
+    ).toEqual({
+      aguardando_liberacao: 1,
+      aguardando_validacao: 1,
+      liberadas: 3,
+      horas_aprovadas_min: 360,
+    });
+  });
   // --- cálculo pela escala de trabalho (16/09/2026) -------------------
   it("a escala padrão dá 8h48 de jornada", () => expect(formatarDuracao(JORNADA, true)).toBe("8h48"));
   it("lê a jornada de uma escala diferente", () =>
@@ -173,6 +191,21 @@ describe("regras de hora extra", () => {
   ])("libera ajuste do ponto na liberação ou validação somente com alterar (%s, %s)", (status, podeAlterar, esperado) =>
     expect(podeAlterarHorariosNaLiberacao({ status, podeAlterar })).toBe(esperado),
   );
+  // A correção depois da conclusão (22/09/2026) tem chave PRÓPRIA. O teste
+  // existe para travar as duas metades: 'alterar' não abre esta porta, e a
+  // porta só abre em "concluida" — as outras etapas já têm as suas RPCs.
+  it.each([
+    ["concluida", true, true],
+    ["concluida", false, false],
+    ["aguardando_validacao", true, false],
+    ["aguardando_liberacao", true, false],
+    ["aprovada", true, false],
+    ["reprovada", true, false],
+  ])("corrige o ponto da HE concluída só com editar_concluida (%s, %s)", (status, podeEditarConcluida, esperado) =>
+    expect(podeEditarHorariosDaConcluida({ status, podeEditarConcluida })).toBe(esperado),
+  );
+  it("quem só tem 'alterar' não corrige HE concluída", () =>
+    expect(podeAlterarHorariosNaLiberacao({ status: "concluida", podeAlterar: true })).toBe(false));
   it("detecta sobreposição", () => expect(sobrepoe("18:00", "21:00", "20:00", "22:00")).toBe(true));
   it("não acusa horários adjacentes", () => expect(sobrepoe("18:00", "20:00", "20:00", "22:00")).toBe(false));
   it("detecta sobreposição cruzando meia-noite", () => expect(sobrepoe("22:00", "02:00", "23:00", "01:00")).toBe(true));

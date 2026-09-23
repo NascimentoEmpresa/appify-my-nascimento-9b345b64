@@ -3,7 +3,9 @@ import { supabase } from "@/integrations/supabase/client";
 import type {
   ChamadoDisponivel,
   ColaboradorHoraExtra,
+  DadosDashboardHoraExtra,
   EscalaHoraExtra,
+  FiltrosDashboardHoraExtra,
   SolicitacaoHoraExtra,
   StatsHoraExtra,
 } from "@/pages/sistemas/hora-extra/types";
@@ -63,6 +65,29 @@ export function useStatsHoraExtra(inicio: string, fim: string) {
       const { data, error } = await db.rpc("hora_extra_stats", { p_inicio: inicio, p_fim: fim });
       if (error) throw error;
       return data as StatsHoraExtra;
+    },
+  });
+}
+
+/**
+ * Dashboard de HE: os oito recortes da tela saem de UMA chamada. São todos
+ * cortes do mesmo conjunto de solicitações, e oito consultas separadas
+ * fariam o banco reavaliar a mesma RLS oito vezes por filtro mexido.
+ */
+export function useDashboardHoraExtra(filtros: FiltrosDashboardHoraExtra) {
+  return useQuery({
+    queryKey: ["hora-extra", "dashboard", filtros],
+    queryFn: async () => {
+      const { data, error } = await db.rpc("hora_extra_dashboard", {
+        p_inicio: filtros.inicio,
+        p_fim: filtros.fim,
+        p_empresa: filtros.empresa === "todos" ? null : filtros.empresa,
+        p_setor: filtros.setor === "todos" ? null : filtros.setor,
+        p_colaborador: filtros.colaborador === "todos" ? null : filtros.colaborador,
+        p_meses: filtros.meses,
+      });
+      if (error) throw error;
+      return data as DadosDashboardHoraExtra;
     },
   });
 }
@@ -128,6 +153,8 @@ export const useLiberarHoraExtraComHorarios = () => useRpcHoraExtra("hora_extra_
 export const useConcluirHoraExtra = () => useRpcHoraExtra("hora_extra_concluir");
 export const useValidarHoraExtra = () => useRpcHoraExtra("hora_extra_validar");
 export const useValidarHoraExtraComHorarios = () => useRpcHoraExtra("hora_extra_validar_com_horarios");
+/** Correção do ponto DEPOIS da conclusão: exige a ação `editar_concluida`. */
+export const useEditarHorariosConcluida = () => useRpcHoraExtra("hora_extra_editar_horarios_concluida");
 export const useExcluirHoraExtra = () => useRpcHoraExtra("hora_extra_excluir");
 export const useSalvarEscalaHoraExtra = () => useRpcHoraExtra("hora_extra_escala_salvar");
 export const useExcluirEscalaHoraExtra = () => useRpcHoraExtra("hora_extra_escala_excluir");

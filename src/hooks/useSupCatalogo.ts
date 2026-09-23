@@ -26,6 +26,13 @@ export interface Posto {
   na_planilha: boolean;
 }
 export interface Funcao { id: string; posto_id: string; nome: string; ativo: boolean; aprovado: boolean }
+/** Função com o posto de origem, para escolher destinos ao copiar um enxoval. */
+export interface FuncaoDoContrato extends Funcao {
+  posto_nome: string;
+}
+type FuncaoComPostoResposta = Funcao & {
+  sup_posto: { contrato_id: string; nome: string } | null;
+};
 export interface Item {
   id: string; nome: string; tipo: TipoItem; ativo: boolean; aprovado: boolean;
   /** Código de 7 dígitos (20260930000018). Só vem de useItens. */
@@ -184,6 +191,34 @@ export function useFuncoes(postoId: string | null) {
         .order("nome");
       if (error) throw error;
       return data ?? [];
+    },
+  });
+}
+
+/**
+ * Funções ativas de todos os postos de um contrato. A cópia de enxoval não
+ * atravessa contratos: uniforme e EPI fazem parte das regras daquela operação.
+ */
+export function useFuncoesDoContrato(contratoId: string | null) {
+  return useQuery({
+    queryKey: ["sup_funcao", "contrato", contratoId],
+    enabled: !!contratoId,
+    queryFn: async (): Promise<FuncaoDoContrato[]> => {
+      const { data, error } = await sb
+        .from("sup_funcao")
+        .select("id, posto_id, nome, ativo, aprovado, sup_posto!inner(contrato_id, nome)")
+        .eq("sup_posto.contrato_id", contratoId)
+        .eq("ativo", true)
+        .order("nome");
+      if (error) throw error;
+      return ((data ?? []) as FuncaoComPostoResposta[]).map((f) => ({
+        id: f.id,
+        posto_id: f.posto_id,
+        nome: f.nome,
+        ativo: f.ativo,
+        aprovado: f.aprovado,
+        posto_nome: f.sup_posto?.nome ?? "Posto não identificado",
+      }));
     },
   });
 }
@@ -527,6 +562,29 @@ export function useCatalogoMutations(empresaId: string | null) {
     onError: onErro,
   });
 
+  /**
+   * A RPC grava todos os vínculos e seus rascunhos na mesma transação. Isso é
+   * importante quando a origem vai para dezenas de postos: uma falha não pode
+   * deixar parte do enxoval sem passar pela Aprovação de Catálogo.
+   */
+  const copiarEnxoval = useMutation({
+    mutationFn: async (v: { funcaoOrigemId: string; funcoesDestinoIds: string[] }) => {
+      const { data, error } = await sb.rpc("sup_cat_copiar_enxoval", {
+        p_funcao_origem_id: v.funcaoOrigemId,
+        p_funcoes_destino_ids: v.funcoesDestinoIds,
+      });
+      if (error) throw error;
+      return data?.[0] ?? data;
+    },
+    onSuccess: (resultado: { funcoes_destino?: number; itens_copiados?: number } | null) => {
+      invalidar();
+      const total = resultado?.itens_copiados ?? 0;
+      if (total === 0) toast.info("Nenhum material novo para copiar: os destinos já têm esse enxoval.");
+      else toast.success(`${total} material${total === 1 ? "" : "is"} copiado${total === 1 ? "" : "s"} para rascunho.`);
+    },
+    onError: onErro,
+  });
+
   // ── Envio do lote ──
   const enviarLote = useMutation({
     mutationFn: async () => {
@@ -545,7 +603,7 @@ export function useCatalogoMutations(empresaId: string | null) {
   return {
     criarFuncao, renomearFuncao, excluirFuncao,
     criarItem, salvarOpcoes,
-    adicionarAoEnxoval, removerDoEnxoval,
+    adicionarAoEnxoval, removerDoEnxoval, copiarEnxoval,
     enviarLote,
   };
 }

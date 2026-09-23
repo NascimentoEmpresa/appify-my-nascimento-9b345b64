@@ -33,8 +33,8 @@ import { useEmpresasGrupo } from "@/hooks/useMaloteDespesa";
 // de Compras (/app/suprimentos/cotacoes) mostram a MESMA linha do banco, e
 // divergir na aparência confundiria os dois setores sobre o mesmo item.
 import {
-  MESES, STATUS_CONFIG, StatusBadge, ListaAnexos, SeletorArquivos,
-  fmtDatetime, iniciais, agruparPorAnoMes,
+  MESES, STATUS_CONFIG, StatusBadge, ListaAnexos, SeletorArquivos, SeloContrato,
+  fmtDatetime, iniciais, agruparPorAnoMes, nomeContrato,
 } from "@/components/cotacoes/comum";
 
 const TIPOS = ["Cotação", "Outro"];
@@ -84,7 +84,11 @@ function CotacaoCard({
                 <span className="rounded-full bg-primary px-2 py-0.5 text-[10px] font-bold text-white">Nova resposta</span>
               )}
             </div>
-            <p className="text-xs text-muted-foreground">{fmtDatetime(cotacao.created_at)}</p>
+            {/* SIS-2026-0487: o contrato em linha própria, não ao lado do nome —
+                "CT 2024/0012 — Conservação Viária Lote 3" espremido entre o
+                remetente e o tipo empurraria os dois para fora do card. */}
+            <div className="mt-1"><SeloContrato contrato={nomeContrato(cotacao)} /></div>
+            <p className="mt-1 text-xs text-muted-foreground">{fmtDatetime(cotacao.created_at)}</p>
           </div>
         </div>
         <div className="flex items-center gap-2 shrink-0">
@@ -193,6 +197,7 @@ function CotacaoModal({
   const { data: empresasGrupo = [] } = useEmpresasGrupo();
   const [tipo, setTipo] = useState(editing?.tipo ?? "Cotação");
   const [empresaId, setEmpresaId] = useState("");
+  const [contrato, setContrato] = useState(editing?.contrato ?? "");
   const [comentario, setComentario] = useState(editing?.comentario ?? "");
   const [arquivos, setArquivos] = useState<File[]>([]);
 
@@ -204,16 +209,20 @@ function CotacaoModal({
   // SIS-2026-0309: empresa é campo explícito só na criação — a tela já lê
   // cross-empresa, então precisa perguntar (não tinha antes: vinha oculto
   // da empresa "ativa" do seletor global).
-  const pronto = !!comentario.trim() && (arquivos.length > 0 || jaTemAnexo) && (!!editing || !!empresaId) && !loading;
+  // SIS-2026-0487: contrato entra como obrigatório junto com comentário e
+  // anexo — inclusive na EDIÇÃO, que é por onde as cotações antigas (criadas
+  // antes da coluna existir) ganham o contrato que lhes falta.
+  const pronto = !!contrato.trim() && !!comentario.trim()
+    && (arquivos.length > 0 || jaTemAnexo) && (!!editing || !!empresaId) && !loading;
 
   async function handleSave() {
     if (!pronto) return;
     try {
       if (editing) {
-        await update.mutateAsync({ id: editing.id, empresa_id: editing.empresa_id, comentario, arquivos, editado_por_nome: remetenteNome, editado_por_id: remetenteId });
+        await update.mutateAsync({ id: editing.id, empresa_id: editing.empresa_id, contrato, comentario, arquivos, editado_por_nome: remetenteNome, editado_por_id: remetenteId });
       } else {
         if (!empresaId) { toast.error("Selecione a empresa."); return; }
-        await insert.mutateAsync({ empresa_id: empresaId, tipo, comentario, arquivos, remetente_nome: remetenteNome });
+        await insert.mutateAsync({ empresa_id: empresaId, tipo, contrato, comentario, arquivos, remetente_nome: remetenteNome });
       }
       onClose();
     } catch (e) {
@@ -250,6 +259,21 @@ function CotacaoModal({
               </div>
             </>
           )}
+          {/* Fora do bloco `!editing`: diferente de empresa e tipo, o contrato
+              continua editável depois — é o que permite completar o histórico. */}
+          <div className="space-y-1.5">
+            <Label>Contrato *</Label>
+            <Input
+              placeholder="Ex.: CT 2024/0012 — Conservação Viária Lote 3"
+              maxLength={200}
+              value={contrato}
+              onChange={(e) => setContrato(e.target.value)}
+            />
+            <p className="text-xs text-muted-foreground">
+              Aparece no card das duas telas e alimenta o "Contratos cotados" de Compras.
+              Escreva sempre do mesmo jeito para as cotações do mesmo contrato ficarem juntas.
+            </p>
+          </div>
           <div className="space-y-1.5">
             <Label>Comentário *</Label>
             <Textarea

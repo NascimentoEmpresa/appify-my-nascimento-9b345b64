@@ -44,6 +44,42 @@ export function formatarQuantidadeChamados(quantidade: number): string {
   return `${quantidade} ${quantidade === 1 ? "chamado" : "chamados"}`;
 }
 
+export interface ResumoLiberacaoHoraExtra {
+  aguardando_liberacao: number;
+  aguardando_validacao: number;
+  liberadas: number;
+  horas_aprovadas_min: number;
+}
+
+/**
+ * Resume os mesmos indicadores exibidos na tela de liberação. Manter o
+ * cálculo no cliente permite que o filtro por solicitante atualize os cartões
+ * junto com a tabela, sem uma nova ida ao banco a cada troca do filtro.
+ */
+export function resumirLiberacaoHoraExtra(
+  solicitacoes: Array<Pick<SolicitacaoHoraExtra, "status" | "total_previsto_min">>,
+): ResumoLiberacaoHoraExtra {
+  const liberados: StatusHoraExtra[] = ["aprovada", "aguardando_validacao", "concluida"];
+
+  return solicitacoes.reduce<ResumoLiberacaoHoraExtra>(
+    (resumo, solicitacao) => {
+      if (solicitacao.status === "aguardando_liberacao") resumo.aguardando_liberacao += 1;
+      if (solicitacao.status === "aguardando_validacao") resumo.aguardando_validacao += 1;
+      if (liberados.includes(solicitacao.status)) {
+        resumo.liberadas += 1;
+        resumo.horas_aprovadas_min += Number(solicitacao.total_previsto_min) || 0;
+      }
+      return resumo;
+    },
+    {
+      aguardando_liberacao: 0,
+      aguardando_validacao: 0,
+      liberadas: 0,
+      horas_aprovadas_min: 0,
+    },
+  );
+}
+
 export function totalHe(inicio?: string | null, fim?: string | null): number {
   if (!inicio || !fim) return 0;
   const a = paraMinutos(inicio);
@@ -293,6 +329,23 @@ export function podeEditarHoraExtra(entrada: {
  */
 export function podeAlterarHorariosNaLiberacao(entrada: { status: string; podeAlterar: boolean }): boolean {
   return entrada.podeAlterar && ["aguardando_liberacao", "aguardando_validacao"].includes(entrada.status);
+}
+
+/**
+ * A terceira porta do ponto, e a mais estreita (22/09/2026): depois que a
+ * validação fecha a HE em "concluida", o horário virava pedra — cartão de
+ * ponto atrasado e correção do RH só tinham saída por fora do sistema.
+ *
+ * A chave AQUI não é 'alterar': essa ação vem no pacote do toggle da tela
+ * (ACOES_DO_TOGGLE_PADRAO), e mexer em HE fechada é mexer em hora já paga.
+ * Quem libera é 'editar_concluida', com switch próprio no Gerenciamento de
+ * Acesso — a RPC hora_extra_editar_horarios_concluida cobra a mesma ação.
+ */
+export function podeEditarHorariosDaConcluida(entrada: {
+  status: string;
+  podeEditarConcluida: boolean;
+}): boolean {
+  return entrada.podeEditarConcluida && entrada.status === "concluida";
 }
 
 /** Em que etapa o arquivo foi anexado, para a lista de anexos. */

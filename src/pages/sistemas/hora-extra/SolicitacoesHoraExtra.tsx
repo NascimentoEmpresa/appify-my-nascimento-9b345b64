@@ -42,7 +42,6 @@ import {
 } from "./horaExtraUtils";
 import { BadgeStatus, BreadcrumbHoraExtra, CartaoMetrica, PaginacaoHoraExtra } from "./HoraExtraUI";
 import ConcluirHoraExtraDialog from "./ConcluirHoraExtraDialog";
-import DecisaoHoraExtraDialog from "./DecisaoHoraExtraDialog";
 import DetalhesHoraExtraDialog from "./DetalhesHoraExtraDialog";
 import EscalasHoraExtraDialog from "./EscalasHoraExtraDialog";
 import NovaSolicitacaoDialog from "./NovaSolicitacaoDialog";
@@ -82,8 +81,7 @@ export default function SolicitacoesHoraExtra() {
   const [novo, setNovo] = useState(false),
     [editar, setEditar] = useState<SolicitacaoHoraExtra | null>(null),
     [detalhes, setDetalhes] = useState<SolicitacaoHoraExtra | null>(null),
-    [concluir, setConcluir] = useState<SolicitacaoHoraExtra | null>(null),
-    [decisao, setDecisao] = useState<SolicitacaoHoraExtra | null>(null);
+    [concluir, setConcluir] = useState<SolicitacaoHoraExtra | null>(null);
   useEffect(() => {
     if (podeAprovar) setAba("todas");
   }, [podeAprovar]);
@@ -381,9 +379,11 @@ export default function SolicitacoesHoraExtra() {
                                     {s.status === "reprovada" ? "Corrigir e reenviar" : "Editar"}
                                   </DropdownMenuItem>
                                 )}
-                                {podeAprovar && ["aguardando_liberacao", "aguardando_validacao"].includes(s.status) && (
-                                  <DropdownMenuItem onClick={() => setDecisao(s)}>Analisar</DropdownMenuItem>
-                                )}
+                                {/* NÃO devolver "Analisar" para cá (22/09/2026). Esta tela é onde a
+                                    pessoa PEDE a HE e cuida da própria solicitação; aprovar, rejeitar e
+                                    validar a conclusão são atos do gestor e vivem só em
+                                    /app/sistemas/hora-extra/liberacao. Ter os dois botões aqui fazia o
+                                    solicitante enxergar "Aprovar Solicitação" na própria HE. */}
                                 {podeApagar && (
                                   <DropdownMenuItem className="text-red-600" onClick={() => apagar(s)}>
                                     <Trash2 className="mr-2 h-4 w-4" />
@@ -510,7 +510,6 @@ export default function SolicitacoesHoraExtra() {
       />
       <DetalhesHoraExtraDialog aberto={!!detalhes} aoFechar={() => setDetalhes(null)} solicitacao={detalhes} />
       <ConcluirHoraExtraDialog aberto={!!concluir} aoFechar={() => setConcluir(null)} solicitacao={concluir} />
-      <DecisaoHoraExtraDialog aberto={!!decisao} aoFechar={() => setDecisao(null)} solicitacao={decisao} />
       <EscalasHoraExtraDialog aberto={escalas} aoFechar={() => setEscalas(false)} />
     </div>
   );

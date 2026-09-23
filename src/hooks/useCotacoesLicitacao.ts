@@ -22,6 +22,12 @@ export type CotacaoLicitacao = {
   id: string;
   empresa_id: string;
   tipo: string;
+  /**
+   * Contrato que está sendo cotado (SIS-2026-0487). Obrigatório em
+   * solicitação nova; `null` só no histórico anterior à coluna — por isso o
+   * tipo é anulável mesmo o campo sendo exigido na tela.
+   */
+  contrato: string | null;
   comentario: string;
   remetente_id: string | null;
   remetente_nome: string | null;
@@ -159,6 +165,7 @@ export function useCotacaoInsert() {
     mutationFn: async (payload: {
       empresa_id: string;
       tipo: string;
+      contrato: string;
       comentario: string;
       arquivos: File[];
       remetente_nome: string;
@@ -167,6 +174,9 @@ export function useCotacaoInsert() {
       const { data, error } = await sb.from("cotacoes_licitacao").insert({
         empresa_id: payload.empresa_id,
         tipo: payload.tipo,
+        // O banco também apara (trg_cotacoes_contrato_obrigatorio); aparar
+        // aqui evita a ida e volta só para descobrir que o campo era espaço.
+        contrato: payload.contrato.trim(),
         comentario: payload.comentario,
         remetente_id: user?.id ?? null,
         remetente_nome: payload.remetente_nome,
@@ -189,6 +199,7 @@ export function useCotacaoUpdate() {
     mutationFn: async (payload: {
       id: string;
       empresa_id: string;
+      contrato: string;
       comentario: string;
       arquivos: File[];
       editado_por_nome: string;
@@ -198,6 +209,7 @@ export function useCotacaoUpdate() {
       const { error } = await sb
         .from("cotacoes_licitacao")
         .update({
+          contrato: payload.contrato.trim(),
           comentario: payload.comentario,
           editado_por_id: payload.editado_por_id,
           editado_por_nome: payload.editado_por_nome,
