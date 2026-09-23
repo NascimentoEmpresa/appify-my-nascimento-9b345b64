@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import { Scale } from "lucide-react";
 
 // "Este candidato já processou a empresa" — o aviso que o Recrutamento vê ao
 // lado do nome (11/09/2026). A resposta vem da RPC rec_processos_do_candidato
@@ -95,14 +96,14 @@ export function AvisoProcessos({ processos, compacto = false }: { processos: Pro
     return (
       <span title={`Já processou a empresa:\n${titulo}`}
         style={{ fontSize: 10, fontWeight: 800, padding: "2px 8px", borderRadius: 20, background: "#fee2e2", color: "#991b1b", border: "1px solid #fca5a5", whiteSpace: "nowrap" }}>
-        ⚖️ {processos.length === 1 ? "já processou a empresa" : `${processos.length} processos`}
+        <Scale size={12} strokeWidth={2} aria-hidden style={{ display: "inline-block", verticalAlign: "-2px", marginRight: 5, flexShrink: 0 }} />{processos.length === 1 ? "já processou a empresa" : `${processos.length} processos`}
       </span>
     );
   }
   const porNome = processos.some(p => p.casou_por === "nome");
   return (
     <div style={{ fontSize: 12, background: "#fef2f2", border: "1px solid #fecaca", color: "#991b1b", borderRadius: 10, padding: "8px 11px", lineHeight: 1.5 }}>
-      <div style={{ fontWeight: 800 }}>⚖️ Este candidato já processou a empresa</div>
+      <div style={{ fontWeight: 800 }}><Scale size={13} strokeWidth={2} aria-hidden style={{ display: "inline-block", verticalAlign: "-2px", marginRight: 5, flexShrink: 0 }} />Este candidato já processou a empresa</div>
       {processos.map(p => (
         <div key={p.id_sequencial} style={{ fontFamily: "ui-monospace, monospace", fontSize: 11.5 }}>
           #{p.id_sequencial} · {p.numero_processo}
