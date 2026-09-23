@@ -1,6 +1,5 @@
 import { useState, useCallback } from "react";
 import * as XLSX from "xlsx";
-import jsPDF from "jspdf";
 import {
   Upload, FileText, X, Play, Download,
   CheckCircle2, Info, ChevronDown, ChevronUp,
@@ -14,83 +13,25 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
+import {
+  type OFXTransaction,
+  type PlanilhaRow,
+  type TipoLancamento,
+  type ReconciliacaoResult,
+  parseOfxAmount,
+  parseOFX,
+  reconciliar,
+  fmt,
+  fmtBRL,
+  exportarExcel,
+  exportarPDF,
+} from "@/lib/conciliacaoBancariaEngine";
 
-// ── Tipos ──────────────────────────────────────────────────────────────────
-
-type TipoLancamento = "ENTRADA" | "SAÍDA" | "INDEFINIDO";
-
-interface OFXTransaction {
-  dia: string;   // YYYY-MM-DD
-  valor: number; // abs
-  tipo: "ENTRADA" | "SAÍDA";
-  memo: string;
-  origem: string;
-}
-
-interface PlanilhaRow {
-  dia: string;
-  valor: number;
-  tipo: TipoLancamento;
-  banco: string;
-}
-
-interface DiaSummary {
-  dia: string;        // dd/mm/yyyy
-  diaISO: string;     // YYYY-MM-DD
-  totalPlanilha: number;
-  totalExtrato: number;
-  diferenca: number;
-  status: "OK" | "DIVERGENTE";
-}
-
-interface AuditRow {
-  dia: string;
-  erro: "⚠️ BANCO - NÃO ENCONTRADO" | "🚨 FLUXO - NÃO ENCONTRADO" | "🔍 VALOR SIMILAR" | "❌ TIPO DIVERGENTE";
-  valor: number;
-  qtd: number;
-  total: number;
-  detalhe: string;
-  origem: string;
-  tipoOFX?: "ENTRADA" | "SAÍDA";
-  tipoPlanilha?: TipoLancamento;
-}
-
-interface Suspeito {
-  planilhaValor: number;
-  bancoValor: number;
-  diferenca: number;
-  bancoHistorico: string;
-  bancoOrigem: string;
-  confianca: "ALTA" | "MEDIA";
-}
-
-interface LancamentoRow {
-  dia: string;
-  erro: AuditRow["erro"];
-  valor: number;
-  detalhe: string;
-  origem: string;
-  tipoOFX?: "ENTRADA" | "SAÍDA";
-  tipoPlanilha?: TipoLancamento;
-}
-
-interface ReconciliacaoResult {
-  resumo: DiaSummary[];
-  auditoria: AuditRow[];
-  lancamentos: LancamentoRow[];
-  suspeitos: Record<string, Suspeito[]>;
-  divergencias: number;
-  totalDias: number;
-  diasOk: number;
-  eficiencia: number;
-  volFluxo: number;
-  volBanco: number;
-  saldoTotal: number;
-}
-
-// ── Constantes ─────────────────────────────────────────────────────────────
-
-const MEMOS_IGNORAR = ["RENDE FACIL", "BB RENDE", "RENDE F"];
+// SIS-2026-0492: motor de comparação (tipos, parseOFX, reconciliar,
+// export) mora em src/lib/conciliacaoBancariaEngine.ts — reaproveitado
+// também pela tela nova (ConciliacaoFluxoCaixa.tsx), que troca só a
+// origem do lado "Fluxo" (aqui é a planilha subida; lá é o Fluxo de Caixa
+// interno). Fica só aqui o que é específico do upload de planilha Excel.
 
 // SIS-2026-0491: "Saldo Anterior" é uma linha só do Fluxo de Caixa (a
 // planilha soma o saldo do mês anterior pra abrir o mês) — nunca aparece
@@ -99,46 +40,6 @@ const MEMOS_IGNORAR = ["RENDE FACIL", "BB RENDE", "RENDE F"];
 // planilha do usuário não tem posição de coluna garantida pra esse texto.
 function linhaEhSaldoAnterior(row: unknown[]): boolean {
   return row.some((cell) => String(cell ?? "").toUpperCase().includes("SALDO ANTERIOR"));
-}
-
-// ── Parser OFX ─────────────────────────────────────────────────────────────
-
-// SIS-2026-0344: o padrão OFX usa "." como separador decimal, mas o Bradesco
-// (achado real, ao testar os .OFX da usuária) exporta em formato BR — vírgula
-// decimal, ponto como separador de milhar ("10000,00", "-7.191,44"). O regex
-// antigo só aceitava dígito/"-"/"." e cortava o valor exatamente na vírgula
-// ("-183,60" virava "-183") — não era arredondamento, era truncamento.
-export function parseOfxAmount(raw: string): number {
-  if (raw.includes(",")) {
-    return parseFloat(raw.replace(/\./g, "").replace(",", "."));
-  }
-  return parseFloat(raw);
-}
-
-export function parseOFX(text: string, origem: string): OFXTransaction[] {
-  const txns: OFXTransaction[] = [];
-  const regex = /<STMTTRN>([\s\S]*?)<\/STMTTRN>/g;
-  let m: RegExpExecArray | null;
-  while ((m = regex.exec(text)) !== null) {
-    const block = m[1];
-    const dt  = block.match(/<DTPOSTED>(\d{8})/)?.[1];
-    const amt = block.match(/<TRNAMT>([-\d.,]+)/)?.[1];
-    const memo = (block.match(/<MEMO>([^\n<\r]*)/)?.[1] ?? "").trim();
-    const name = (block.match(/<NAME>([^\n<\r]*)/)?.[1] ?? "").trim();
-    if (!dt || !amt) continue;
-    const hist = memo || name;
-    const upper = hist.toUpperCase();
-    if (MEMOS_IGNORAR.some((t) => upper.includes(t))) continue;
-    const rawAmt = parseOfxAmount(amt);
-    txns.push({
-      dia: `${dt.slice(0, 4)}-${dt.slice(4, 6)}-${dt.slice(6, 8)}`,
-      valor: Math.abs(rawAmt),
-      tipo: rawAmt >= 0 ? "ENTRADA" : "SAÍDA",
-      memo: hist,
-      origem,
-    });
-  }
-  return txns;
 }
 
 // ── Parser Excel (planilha mestre) ─────────────────────────────────────────
@@ -211,361 +112,6 @@ function parsePlanilha(buffer: ArrayBuffer): PlanilhaRow[] {
     rows.push({ dia, valor: Math.abs(val), tipo, banco });
   }
   return rows;
-}
-
-// ── Motor de conciliação ───────────────────────────────────────────────────
-
-function reconciliar(
-  planRows: PlanilhaRow[],
-  ofxTrns: OFXTransaction[]
-): ReconciliacaoResult {
-  const toFmt = (iso: string) =>
-    `${iso.slice(8, 10)}/${iso.slice(5, 7)}/${iso.slice(0, 4)}`;
-
-  const diasSet = new Set([
-    ...planRows.map((r) => r.dia),
-    ...ofxTrns.map((t) => t.dia),
-  ]);
-  const dias = Array.from(diasSet).sort();
-
-  const planByDay: Record<string, PlanilhaRow[]>  = {};
-  const ofxByDay:  Record<string, OFXTransaction[]> = {};
-  for (const d of dias) {
-    planByDay[d] = planRows.filter((r) => r.dia === d);
-    ofxByDay[d]  = ofxTrns.filter((t) => t.dia === d);
-  }
-
-  const planTotais: Record<string, number> = {};
-  const ofxTotais:  Record<string, number> = {};
-  for (const d of dias) {
-    planTotais[d] = Math.round(planByDay[d].reduce((s, r) => s + r.valor, 0) * 100) / 100;
-    ofxTotais[d]  = Math.round(ofxByDay[d].reduce((s, t) => s + t.valor, 0) * 100) / 100;
-  }
-
-  const resumo: DiaSummary[] = dias.map((d) => {
-    const diff = Math.round((planTotais[d] - ofxTotais[d]) * 100) / 100;
-    return {
-      dia: toFmt(d),
-      diaISO: d,
-      totalPlanilha: planTotais[d],
-      totalExtrato: -ofxTotais[d],
-      diferenca: diff,
-      status: Math.abs(diff) < 0.005 ? "OK" : "DIVERGENTE",
-    };
-  });
-
-  // ── Auditoria item-a-item ──────────────────────────────────────────────
-  const rawAudit: Array<Omit<AuditRow, "qtd" | "total">> = [];
-
-  for (const dia of dias) {
-    const planItens = planByDay[dia].map((r) => ({ ...r }));
-    const ofxItens  = ofxByDay[dia].map((t) => ({ ...t }));
-
-    const ofxSobra  = [...ofxItens];
-    const planSobra: PlanilhaRow[] = [];
-
-    // 1ª passagem — match exato: valor com tolerância float + tipo compatível
-    for (const p of planItens) {
-      const pv = Math.round(p.valor * 100) / 100;
-
-      // Tenta match com valor E tipo corretos
-      const idxExato = ofxSobra.findIndex(
-        (e) => Math.abs(Math.round(e.valor * 100) / 100 - pv) < 0.005 &&
-                (p.tipo === "INDEFINIDO" || e.tipo === p.tipo)
-      );
-      if (idxExato >= 0) { ofxSobra.splice(idxExato, 1); continue; }
-
-      // Valor bate mas tipo está errado → TIPO DIVERGENTE
-      const idxTipoErrado = p.tipo !== "INDEFINIDO"
-        ? ofxSobra.findIndex(
-            (e) => Math.abs(Math.round(e.valor * 100) / 100 - pv) < 0.005 && e.tipo !== p.tipo
-          )
-        : -1;
-      if (idxTipoErrado >= 0) {
-        const e = ofxSobra[idxTipoErrado];
-        rawAudit.push({
-          dia: toFmt(dia),
-          erro: "❌ TIPO DIVERGENTE",
-          valor: pv,
-          detalhe: `Fluxo: ${p.tipo} | Banco: ${e.tipo} | ${e.memo.slice(0, 50)}`,
-          origem: p.banco,
-          tipoOFX: e.tipo,
-          tipoPlanilha: p.tipo,
-        });
-        ofxSobra.splice(idxTipoErrado, 1);
-        continue;
-      }
-
-      planSobra.push(p);
-    }
-
-    // 2ª passagem — near-match (mesmo lançamento, valor ligeiramente diferente)
-    const extSemMatch = [...ofxSobra];
-    const planSemMatch: PlanilhaRow[] = [];
-
-    for (const p of planSobra) {
-      const pv = Math.round(p.valor * 100) / 100;
-      let bestIdx = -1, bestDiff = Infinity;
-
-      extSemMatch.forEach((e, i) => {
-        const ev   = Math.round(e.valor * 100) / 100;
-        const diff = Math.abs(pv - ev);
-        const ref  = Math.max(pv, ev) || 1;
-        if (diff > 0 && diff <= 200 && diff / ref <= 0.05 && diff < bestDiff) {
-          bestDiff = diff; bestIdx = i;
-        }
-      });
-
-      if (bestIdx >= 0) {
-        const ev    = Math.round(extSemMatch[bestIdx].valor * 100) / 100;
-        const eItem = extSemMatch[bestIdx];
-        const sinal = pv > ev ? `+R$ ${(pv - ev).toFixed(2)}` : `-R$ ${(ev - pv).toFixed(2)}`;
-        const tipoInfo = p.tipo !== "INDEFINIDO" ? ` | Fluxo: ${p.tipo} / Banco: ${eItem.tipo}` : "";
-        rawAudit.push({
-          dia: toFmt(dia),
-          erro: "🔍 VALOR SIMILAR",
-          valor: pv,
-          detalhe: `Planilha: R$ ${fmt(pv)} | Banco: R$ ${fmt(ev)} | Diff: ${sinal}${tipoInfo}`,
-          origem: p.banco,
-          tipoOFX: eItem.tipo,
-          tipoPlanilha: p.tipo,
-        });
-        extSemMatch.splice(bestIdx, 1);
-      } else {
-        planSemMatch.push(p);
-      }
-    }
-
-    for (const p of planSemMatch)
-      rawAudit.push({ dia: toFmt(dia), erro: "⚠️ BANCO - NÃO ENCONTRADO", valor: Math.round(p.valor * 100) / 100, detalhe: `Faltou cair na conta`, origem: p.banco, tipoPlanilha: p.tipo });
-    for (const e of extSemMatch)
-      rawAudit.push({ dia: toFmt(dia), erro: "🚨 FLUXO - NÃO ENCONTRADO", valor: Math.round(e.valor * 100) / 100, detalhe: e.memo, origem: e.origem, tipoOFX: e.tipo });
-  }
-
-  // Agrupar linhas idênticas (TIPO DIVERGENTE não agrupa — cada par é único)
-  const aggMap = new Map<string, AuditRow>();
-  for (const r of rawAudit) {
-    if (r.erro === "❌ TIPO DIVERGENTE") {
-      aggMap.set(`${r.dia}||${r.erro}||${r.detalhe}||${Math.random()}`, { ...r, qtd: 1, total: r.valor });
-      continue;
-    }
-    const key = `${r.dia}||${r.erro}||${r.detalhe}||${r.valor}||${r.origem}`;
-    if (aggMap.has(key)) {
-      const existing = aggMap.get(key)!;
-      existing.qtd   += 1;
-      existing.total  = Math.round(existing.valor * existing.qtd * 100) / 100;
-    } else {
-      aggMap.set(key, { ...r, qtd: 1, total: r.valor });
-    }
-  }
-
-  // Remover auditoria de dias OK
-  const diasOkSet = new Set(resumo.filter((r) => r.status === "OK").map((r) => r.dia));
-  const auditoria = Array.from(aggMap.values())
-    .filter((r) => !diasOkSet.has(r.dia))
-    .sort((a, b) => a.dia.localeCompare(b.dia) || b.total - a.total);
-
-  // Lista por lançamento (não agrupada, sem dias OK)
-  const lancamentos: LancamentoRow[] = rawAudit
-    .filter((r) => !diasOkSet.has(r.dia))
-    .sort((a, b) => a.dia.localeCompare(b.dia) || b.valor - a.valor);
-
-  // ── Motor detetive ────────────────────────────────────────────────────
-  const suspeitos: Record<string, Suspeito[]> = {};
-  for (const s of resumo.filter((r) => r.status === "DIVERGENTE")) {
-    const dia = s.diaISO;
-    const divergencia = s.diferenca;
-    const planItens = planByDay[dia].map((r) => ({ ...r }));
-    const ofxItens  = ofxByDay[dia].map((t) => ({ ...t }));
-
-    const ofxSobra  = [...ofxItens];
-    const planSobra: PlanilhaRow[] = [];
-    for (const p of planItens) {
-      const pv  = Math.round(p.valor * 100) / 100;
-      const idx = ofxSobra.findIndex(
-        (e) => Math.abs(Math.round(e.valor * 100) / 100 - pv) < 0.005
-      );
-      if (idx >= 0) ofxSobra.splice(idx, 1);
-      else planSobra.push(p);
-    }
-
-    const lista: Suspeito[] = [];
-    for (const p of planSobra) {
-      for (const e of ofxSobra) {
-        const diff = Math.round((p.valor - e.valor) * 100) / 100;
-        if (Math.abs(diff) <= 2.0) {
-          const alta = Math.abs(Math.abs(diff) - Math.abs(Math.round(divergencia * 100) / 100)) < 0.005;
-          lista.push({
-            planilhaValor: Math.round(p.valor * 100) / 100,
-            bancoValor:    Math.round(e.valor * 100) / 100,
-            diferenca: diff,
-            bancoHistorico: e.memo.slice(0, 60),
-            bancoOrigem: e.origem,
-            confianca: alta ? "ALTA" : "MEDIA",
-          });
-        }
-      }
-    }
-    lista.sort((a, b) => (a.confianca === "ALTA" ? -1 : 1) - (b.confianca === "ALTA" ? -1 : 1));
-    if (lista.length) suspeitos[s.dia] = lista.slice(0, 10);
-  }
-
-  const totalDias = resumo.length;
-  const diasOk    = resumo.filter((r) => r.status === "OK").length;
-
-  return {
-    resumo,
-    auditoria,
-    lancamentos,
-    suspeitos,
-    divergencias: resumo.filter((r) => r.status === "DIVERGENTE").length,
-    totalDias,
-    diasOk,
-    eficiencia: totalDias > 0 ? Math.round((diasOk / totalDias) * 1000) / 10 : 100,
-    volFluxo: resumo.reduce((s, r) => s + r.totalPlanilha, 0),
-    volBanco: resumo.reduce((s, r) => s + Math.abs(r.totalExtrato), 0),
-    saldoTotal: Math.round(resumo.reduce((s, r) => s + r.diferenca, 0) * 100) / 100,
-  };
-}
-
-// ── Helpers de formatação ──────────────────────────────────────────────────
-
-function fmt(v: number) {
-  return v.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-}
-function fmtBRL(v: number) {
-  return `R$ ${fmt(Math.abs(v))}`;
-}
-
-// ── Export Excel ───────────────────────────────────────────────────────────
-
-function exportarExcel(result: ReconciliacaoResult, nomeArquivo: string) {
-  const wb = XLSX.utils.book_new();
-
-  const resumoData = [
-    ["Dia", "Total Planilha", "Total Extrato", "Diferença", "Status"],
-    ...result.resumo.map((r) => [
-      r.dia, r.totalPlanilha, r.totalExtrato, r.diferenca, r.status,
-    ]),
-  ];
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(resumoData), "RESUMO GERAL");
-
-  if (result.auditoria.length) {
-    const audData = [
-      ["Dia", "Tipo", "Qtd", "Valor (R$)", "Total (R$)", "Detalhe", "Origem"],
-      ...result.auditoria.map((r) => [
-        r.dia, r.erro, r.qtd, r.valor, r.total, r.detalhe, r.origem,
-      ]),
-    ];
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(audData), "AUDITORIA");
-  }
-
-  XLSX.writeFile(wb, nomeArquivo);
-}
-
-// ── Export PDF ─────────────────────────────────────────────────────────────
-
-function exportarPDF(result: ReconciliacaoResult, nomeArquivo: string) {
-  const doc  = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
-  const W    = doc.internal.pageSize.getWidth();
-  const C    = { azul: "#0A1E3C", laranja: "#E67300", cinza: "#5A6473", branco: "#FFFFFF", verde: "#1E7B3A", vermelho: "#B91C1C", info: "#0369A1" };
-
-  // Header
-  doc.setFillColor(C.azul);
-  doc.rect(0, 0, W, 22, "F");
-  doc.setTextColor(C.branco);
-  doc.setFontSize(14);
-  doc.setFont("helvetica", "bold");
-  doc.text("GRUPO NASCIMENTO — CONCILIAÇÃO BANCÁRIA", W / 2, 14, { align: "center" });
-
-  // KPIs
-  let y = 30;
-  const kpis = [
-    { label: "Eficiência", value: `${result.eficiencia}%`, cor: result.eficiencia >= 100 ? C.verde : C.laranja },
-    { label: "Divergências", value: String(result.divergencias), cor: result.divergencias === 0 ? C.verde : C.vermelho },
-    { label: "Vol. Planilha", value: fmtBRL(result.volFluxo), cor: C.azul },
-    { label: "Vol. Banco", value: fmtBRL(result.volBanco), cor: C.azul },
-    { label: "Saldo Total", value: fmtBRL(result.saldoTotal), cor: Math.abs(result.saldoTotal) < 0.005 ? C.verde : C.vermelho },
-  ];
-  const kw = W / kpis.length - 4;
-  kpis.forEach((k, i) => {
-    const x = 2 + i * (kw + 4);
-    doc.setFillColor("#F8FAFC");
-    doc.roundedRect(x, y, kw, 18, 2, 2, "F");
-    doc.setFontSize(7);
-    doc.setTextColor(C.cinza);
-    doc.setFont("helvetica", "normal");
-    doc.text(k.label.toUpperCase(), x + kw / 2, y + 6, { align: "center" });
-    doc.setFontSize(11);
-    doc.setTextColor(k.cor);
-    doc.setFont("helvetica", "bold");
-    doc.text(k.value, x + kw / 2, y + 14, { align: "center" });
-  });
-
-  // Tabela resumo
-  y = 54;
-  doc.setFontSize(9);
-  doc.setFont("helvetica", "bold");
-  doc.setFillColor(C.azul);
-  doc.rect(2, y, W - 4, 7, "F");
-  doc.setTextColor(C.branco);
-  const cols = [30, 50, 50, 40, 30];
-  const heads = ["Data", "Total Planilha", "Total Extrato", "Diferença", "Status"];
-  let x = 4;
-  heads.forEach((h, i) => { doc.text(h, x, y + 5); x += cols[i]; });
-
-  y += 8;
-  doc.setFont("helvetica", "normal");
-  result.resumo.forEach((r, idx) => {
-    if (y > 185) { doc.addPage(); y = 10; }
-    const bg = idx % 2 === 0 ? "#F8FAFC" : C.branco;
-    doc.setFillColor(bg);
-    doc.rect(2, y, W - 4, 7, "F");
-    doc.setTextColor(r.status === "OK" ? C.verde : C.vermelho);
-    x = 4;
-    const vals = [r.dia, fmtBRL(r.totalPlanilha), fmtBRL(Math.abs(r.totalExtrato)), fmtBRL(r.diferenca), r.status];
-    vals.forEach((v, i) => { doc.text(v, x, y + 5); x += cols[i]; });
-    y += 8;
-  });
-
-  // Auditoria (nova página)
-  if (result.auditoria.length) {
-    doc.addPage();
-    y = 10;
-    doc.setFillColor(C.azul);
-    doc.rect(0, 0, W, 12, "F");
-    doc.setTextColor(C.branco);
-    doc.setFontSize(11);
-    doc.setFont("helvetica", "bold");
-    doc.text("AUDITORIA DE DIVERGÊNCIAS", W / 2, 8, { align: "center" });
-
-    y = 18;
-    doc.setFontSize(8);
-    doc.setFillColor(C.azul);
-    doc.rect(2, y, W - 4, 7, "F");
-    doc.setTextColor(C.branco);
-    doc.setFont("helvetica", "bold");
-    const aCols = [22, 52, 18, 30, 30, 70, 50];
-    const aHead = ["Data", "Tipo", "Qtd", "Valor Unit.", "Total (R$)", "Detalhe", "Origem"];
-    x = 4;
-    aHead.forEach((h, i) => { doc.text(h, x, y + 5); x += aCols[i]; });
-
-    y += 8;
-    doc.setFont("helvetica", "normal");
-    result.auditoria.forEach((r, idx) => {
-      if (y > 195) { doc.addPage(); y = 10; }
-      doc.setFillColor(idx % 2 === 0 ? "#F8FAFC" : C.branco);
-      doc.rect(2, y, W - 4, 7, "F");
-      const cor = r.erro.includes("SIMILAR") ? C.info : r.erro.includes("BANCO") ? "#92400E" : C.vermelho;
-      doc.setTextColor(cor);
-      x = 4;
-      const vals = [r.dia, r.erro.replace(/[⚠️🚨🔍]/gu, "").trim(), String(r.qtd), fmtBRL(r.valor), fmtBRL(r.total), r.detalhe.slice(0, 45), r.origem.slice(0, 25)];
-      vals.forEach((v, i) => { doc.text(v, x, y + 5); x += aCols[i]; });
-      y += 8;
-    });
-  }
-
-  doc.save(nomeArquivo);
 }
 
 // ── Componente principal ───────────────────────────────────────────────────
@@ -647,10 +193,10 @@ export default function ConciliacaoBancaria() {
   return (
     <div className="space-y-6 p-6">
       <PageHeader
-        title="Conciliação Bancária"
-        subtitle="Cruza o fluxo de caixa com extratos OFX e identifica divergências automaticamente"
+        title="Conciliação Bancária (Planilha Manual)"
+        subtitle="Cruza uma planilha de Fluxo de Caixa exportada manualmente com extratos OFX — para quem ainda controla o fluxo em planilha. Quem usa o Fluxo de Caixa do próprio sistema, veja Conciliação Bancária em Gestão Financeira."
         module="Financeiro"
-        breadcrumb={["Ferramentas", "Conciliação Bancária"]}
+        breadcrumb={["Ferramentas", "Conciliação Bancária (Planilha Manual)"]}
       />
 
       {!resultado ? (
