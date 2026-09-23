@@ -6,6 +6,14 @@ import {
   PASSOS_FLUXO, desfechoDoStatus, estadosDosPassos, progressoDoStatus, resumoHistorico, statusAntesDoFim,
   type EventoHistorico,
 } from "@/lib/recrutamento/fluxoStatus";
+import { Zap, BarChart3, CalendarDays, Timer, History, User, Check, X, Clock, ClipboardCheck, Inbox, Scale, MessagesSquare, FileCheck2, Stethoscope, BadgeCheck, type LucideIcon } from "lucide-react";
+
+/** Ícone de cada passo do fluxo (no lugar dos emojis de PASSOS_FLUXO, 23/09/2026). */
+const ICONE_PASSO: Record<string, LucideIcon> = {
+  aprovacao: Clock, recrutamento: ClipboardCheck, selecao: Inbox, juridico: Scale,
+  entrevistas: MessagesSquare, aprovado: FileCheck2, sst_compras: Stethoscope, contratado: BadgeCheck,
+};
+
 
 // =====================================================================
 // STATUS DA SOLICITAÇÃO — o cartão grande (70% da tela) do botão "Status"
@@ -178,14 +186,14 @@ export function StatusSolicitacao({ sol, onClose }: { sol: SolicitacaoStatus; on
           <div className="sts-up" style={{ animationDelay: ".18s", display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginTop: 14 }}>
             <span className="sts-status" style={{ "--c": corDesfecho } as React.CSSProperties}><i />{sol.status}</span>
             <span style={{ fontSize: 12.5, fontWeight: 800, background: "rgba(255,255,255,.16)", border: "1px solid rgba(255,255,255,.3)", borderRadius: 999, padding: "7px 13px" }}>{rotuloDesfecho}</span>
-            {sol.grau_urgencia?.startsWith("Alta") && <span style={{ fontSize: 12.5, fontWeight: 900, background: "#fff", color: "#b91c1c", borderRadius: 999, padding: "7px 13px" }}>⚡ Urgente</span>}
+            {sol.grau_urgencia?.startsWith("Alta") && <span style={{ fontSize: 12.5, fontWeight: 900, background: "#fff", color: "#b91c1c", borderRadius: 999, padding: "7px 13px" }}><Zap size={12} strokeWidth={2} aria-hidden style={{ display: "inline-block", verticalAlign: "-2px", marginRight: 5, flexShrink: 0 }} />Urgente</span>}
           </div>
           <div className="sts-bar sts-up" style={{ animationDelay: ".25s" }}><i style={{ "--w": `${progresso}%` } as React.CSSProperties} /></div>
           <div className="sts-pills sts-up" style={{ animationDelay: ".32s" }}>
-            <span>📊 <b>{progresso}%</b> do fluxo</span>
-            <span>📅 aberta há <b>{r.diasAberta}</b> dia{r.diasAberta === 1 ? "" : "s"}</span>
-            <span>⏱ <b>{r.diasNoStatus}</b> dia{r.diasNoStatus === 1 ? "" : "s"} no status atual</span>
-            <span>📜 <b>{r.mudancas}</b> mudança{r.mudancas === 1 ? "" : "s"} de status</span>
+            <span><BarChart3 size={13} strokeWidth={2} aria-hidden style={{ display: "inline-block", verticalAlign: "-2px", marginRight: 5, flexShrink: 0 }} /><b>{progresso}%</b> do fluxo</span>
+            <span><CalendarDays size={13} strokeWidth={2} aria-hidden style={{ display: "inline-block", verticalAlign: "-2px", marginRight: 5, flexShrink: 0 }} />aberta há <b>{r.diasAberta}</b> dia{r.diasAberta === 1 ? "" : "s"}</span>
+            <span><Timer size={13} strokeWidth={2} aria-hidden style={{ display: "inline-block", verticalAlign: "-2px", marginRight: 5, flexShrink: 0 }} /><b>{r.diasNoStatus}</b> dia{r.diasNoStatus === 1 ? "" : "s"} no status atual</span>
+            <span><History size={13} strokeWidth={2} aria-hidden style={{ display: "inline-block", verticalAlign: "-2px", marginRight: 5, flexShrink: 0 }} /><b>{r.mudancas}</b> mudança{r.mudancas === 1 ? "" : "s"} de status</span>
           </div>
         </div>
 
@@ -195,7 +203,7 @@ export function StatusSolicitacao({ sol, onClose }: { sol: SolicitacaoStatus; on
             <div className="sts-regua">
               {PASSOS_FLUXO.map((p, i) => (
                 <div key={p.chave} className="sts-passo" data-e={estados[i]} style={{ animationDelay: `${.25 + i * .07}s` }}>
-                  <div className="sts-bola">{estados[i] === "feito" ? "✓" : estados[i] === "parado" ? "✕" : p.icone}</div>
+                  <div className="sts-bola">{(() => { const Icone = estados[i] === "feito" ? Check : estados[i] === "parado" ? X : (ICONE_PASSO[p.chave] ?? Clock); return <Icone size={16} strokeWidth={2.4} aria-hidden />; })()}</div>
                   <div className="sts-passo-t">{p.titulo}</div>
                   <div className="sts-passo-q">{p.quem}</div>
                   {estados[i] === "atual" && <span className="sts-passo-tag" style={{ background: "#0f3171", color: "#fff" }}>agora</span>}
@@ -234,7 +242,7 @@ export function StatusSolicitacao({ sol, onClose }: { sol: SolicitacaoStatus; on
                         </div>
                         <div className="sts-ev-m">
                           {e.papel && <span className="sts-tag" style={{ background: `${cor}18`, color: cor }}>{e.papel}</span>}
-                          <span>👤 {nome(e)}</span>
+                          <span><User size={12} strokeWidth={2} aria-hidden style={{ display: "inline-block", verticalAlign: "-2px", marginRight: 5, flexShrink: 0 }} />{nome(e)}</span>
                           {e.para_status && e.para_status !== e.de_status && (
                             <span style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
                               {e.de_status && <span className="sts-de">{e.de_status}</span>}
@@ -249,7 +257,7 @@ export function StatusSolicitacao({ sol, onClose }: { sol: SolicitacaoStatus; on
                   })}
                   <div className="sts-ev" style={{ "--c": "#94a3b8", animationDelay: `${.55 + Math.min(eventos.length, 12) * .06}s` } as React.CSSProperties}>
                     <div className="sts-ev-h"><div className="sts-ev-t">Solicitação criada</div><div className="sts-ev-d">{fmtDtHora(sol.created_at)}</div></div>
-                    {sol.solicitante_nome && <div className="sts-ev-m"><span>👤 {sol.solicitante_nome}</span></div>}
+                    {sol.solicitante_nome && <div className="sts-ev-m"><span><User size={12} strokeWidth={2} aria-hidden style={{ display: "inline-block", verticalAlign: "-2px", marginRight: 5, flexShrink: 0 }} />{sol.solicitante_nome}</span></div>}
                   </div>
                 </div>
               )}
