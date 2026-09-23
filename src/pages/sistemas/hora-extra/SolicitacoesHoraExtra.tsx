@@ -33,11 +33,12 @@ import {
   formatarData,
   formatarDataHora,
   formatarDuracao,
+  janelaHeEfetiva,
+  minutosHeEfetivos,
   formatarQuantidadeChamados,
   linhasExcel,
   mensagemErro,
   podeEditarHoraExtra,
-  somenteHora,
   statusExibicao,
 } from "./horaExtraUtils";
 import { BadgeStatus, BreadcrumbHoraExtra, CartaoMetrica, PaginacaoHoraExtra } from "./HoraExtraUI";
@@ -335,9 +336,9 @@ export default function SolicitacoesHoraExtra() {
                         <td className="p-3">{s.setor}</td>
                         <td className="p-3">{formatarData(s.data_he)}</td>
                         <td className="p-3">
-                          {somenteHora(s.he_inicio_previsto)} - {somenteHora(s.he_fim_previsto)}
+                          {janelaHeEfetiva(s).inicio} - {janelaHeEfetiva(s).fim}
                         </td>
-                        <td className="p-3 font-bold">{formatarDuracao(s.total_previsto_min, true)}</td>
+                        <td className="p-3 font-bold">{formatarDuracao(minutosHeEfetivos(s), true)}</td>
                         <td className="p-3">
                           <button className="text-blue-600 underline" onClick={() => setDetalhes(s)}>
                             <FileText className="mr-1 inline h-3.5 w-3.5" />
@@ -446,8 +447,8 @@ export default function SolicitacoesHoraExtra() {
                     <strong className="block truncate">{s.colaborador_nome}</strong>
                     <span className="block truncate text-slate-500">{s.setor}</span>
                     <strong>
-                      {somenteHora(s.he_inicio_previsto)} - {somenteHora(s.he_fim_previsto)} (
-                      {formatarDuracao(s.total_previsto_min, true)})
+                      {janelaHeEfetiva(s).inicio} - {janelaHeEfetiva(s).fim} (
+                      {formatarDuracao(minutosHeEfetivos(s), true)})
                     </strong>
                   </span>
                 </button>
