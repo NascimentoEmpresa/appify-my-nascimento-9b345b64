@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 
 // SIS-2026-0160: início do Fluxo de Caixa (Financeiro > Gestão Financeira).
@@ -45,6 +45,12 @@ export interface FluxoCaixaMaloteLinha {
   // SIS-2026-0413: de qual tabela/RPC esta linha vem — usado pra escolher
   // o botão/mutation certos de Excluir na tela de Fluxo de Caixa.
   origem: "malote" | "debito_automatico" | "cartao_fatura";
+  // SIS-2026-0489: true quando existe uma linha em
+  // financeiro_fluxo_caixa_ajuste pra este lançamento — os campos exibidos
+  // já vêm resolvidos pela view (COALESCE(ajuste, original)), este flag é
+  // só pra tela avisar visualmente que aquele valor foi editado só aqui,
+  // sem mudar o lançamento original.
+  ajustado: boolean;
 }
 
 export function useFluxoCaixaMalote() {
@@ -90,5 +96,96 @@ export function useFluxoCaixaCombinado() {
       linhas.sort((a, b) => (b.data_pagamento ?? "").localeCompare(a.data_pagamento ?? ""));
       return linhas;
     },
+  });
+}
+
+// SIS-2026-0489: valores que sobrescrevem a linha SÓ no Fluxo de Caixa
+// (financeiro_fluxo_caixa_ajuste) — a tabela de origem (malote_despesa/
+// "DEBITO_AUTOMATICO"/malote_cartao_fatura_item) nunca é tocada. `undefined`
+// num campo = "não mudar esse campo"; `null` = "apagar o ajuste e voltar
+// pro valor original" (usado pelo botão de reverter, campo a campo).
+export interface AjusteFluxoCaixaInput {
+  origem: FluxoCaixaMaloteLinha["origem"];
+  despesaId: string;
+  numeroParcela: number | null;
+  dataPagamento?: string | null;
+  tipo?: "entrada" | "saida" | null;
+  classificacaoId?: string | null;
+  descricao?: string | null;
+  competencia?: string | null;
+  empresaId?: string | null;
+  bancoId?: string | null;
+  formaPagamento?: string | null;
+}
+
+// Upsert manual (não usa .upsert()/on_conflict do PostgREST): numero_parcela
+// é NULL na maioria dos casos (malote não-parcelado, débito automático), e
+// NULL nunca "conflita" com NULL num ON CONFLICT — o upsert nativo criaria
+// uma linha de ajuste nova a cada edição em vez de atualizar a existente.
+export function useAjustarLinhaFluxoCaixa() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: AjusteFluxoCaixaInput) => {
+      const { origem, despesaId, numeroParcela, ...campos } = input;
+      let q = (supabase as any)
+        .from("financeiro_fluxo_caixa_ajuste")
+        .select("id")
+        .eq("origem", origem)
+        .eq("despesa_id", despesaId);
+      q = numeroParcela == null ? q.is("numero_parcela", null) : q.eq("numero_parcela", numeroParcela);
+      const { data: existente, error: errBusca } = await q.maybeSingle();
+      if (errBusca) throw errBusca;
+
+      const payload = {
+        data_pagamento: campos.dataPagamento,
+        tipo: campos.tipo,
+        classificacao_id: campos.classificacaoId,
+        descricao: campos.descricao,
+        competencia: campos.competencia,
+        empresa_id: campos.empresaId,
+        banco_id: campos.bancoId,
+        forma_pagamento: campos.formaPagamento,
+      };
+      // Só grava os campos que quem chamou de fato passou — os outros
+      // continuam com o que já estava salvo no ajuste (ou null, se for
+      // linha nova).
+      const camposPresentes = Object.fromEntries(
+        Object.entries(payload).filter(([, v]) => v !== undefined),
+      );
+
+      if (existente) {
+        const { error } = await (supabase as any)
+          .from("financeiro_fluxo_caixa_ajuste")
+          .update(camposPresentes)
+          .eq("id", existente.id);
+        if (error) throw error;
+      } else {
+        const { error } = await (supabase as any)
+          .from("financeiro_fluxo_caixa_ajuste")
+          .insert({ origem, despesa_id: despesaId, numero_parcela: numeroParcela, ...camposPresentes });
+        if (error) throw error;
+      }
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["fluxo_caixa_combinado"] }),
+  });
+}
+
+// Apaga a linha de ajuste inteira — a linha volta a mostrar 100% do valor
+// original (não dá pra reverter campo a campo por aqui; quem editou um
+// campo errado edita ele de novo, com o valor certo).
+export function useReverterAjusteFluxoCaixa() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ origem, despesaId, numeroParcela }: Pick<AjusteFluxoCaixaInput, "origem" | "despesaId" | "numeroParcela">) => {
+      let q = (supabase as any)
+        .from("financeiro_fluxo_caixa_ajuste")
+        .delete()
+        .eq("origem", origem)
+        .eq("despesa_id", despesaId);
+      q = numeroParcela == null ? q.is("numero_parcela", null) : q.eq("numero_parcela", numeroParcela);
+      const { error } = await q;
+      if (error) throw error;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["fluxo_caixa_combinado"] }),
   });
 }

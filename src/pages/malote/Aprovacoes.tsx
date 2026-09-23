@@ -22,8 +22,8 @@ import {
   useClassificacaoIdsPorDespesaRateio,
   useEmpresaPrimeiraLinhaRateio,
   useContratoPrimeiraLinhaRateio,
+  souAprovadorDoNivelComRateio,
   nomesAprovadorNivel,
-  souAprovadorDoNivel,
   STATUS_LABEL,
   STATUS_BADGE_CLASS,
   NIVEL_APROVACAO_BADGE_CLASS,
@@ -33,20 +33,19 @@ import {
   MaloteDespesaRow,
   TipoSolicitacao,
 } from "@/hooks/useMaloteDespesa";
-import { useFormasPagamento } from "@/hooks/useMaloteFormaPagamento";
+import { useFormasPagamento, MaloteFormaPagamento } from "@/hooks/useMaloteFormaPagamento";
 import { useClassificacoesOrcamentoAdmin } from "@/hooks/usePlanejamentoOrcamentario";
 import { useMinhasDespesasComJustificativaPendente } from "@/hooks/useMaloteJustificativaAnalista";
 import { useEstadoPersistido } from "@/hooks/useEstadoPersistido";
 import { useOrdenacaoTabela } from "@/hooks/useOrdenacaoTabela";
 import { ordenarPor } from "@/lib/ordenarTabela";
-import { JustificativaPendenteBadge, abreviarNome } from "./JustificativaPendenteBadge";
+import { abreviarNome } from "./JustificativaPendenteBadge";
 import { EmpresaContratoBadge } from "./EmpresaContratoBadge";
 
 // SIS-2026-0316: colunas ordenáveis. Fora: Empresa/Contrato (fica só como
 // Empresa pra ordenar, o badge continua mostrando os dois), Parcela
-// (composto X/Y), Solicitante (nome resolvido por hook próprio dentro de
-// cada linha, não dá pra acessar de forma síncrona aqui) e o sino de
-// Justificativa (não é dado ordenável).
+// (composto X/Y) e Solicitante (nome resolvido por hook próprio dentro de
+// cada linha, não dá pra acessar de forma síncrona aqui).
 type ColunaAprovacoes = "tipo" | "numero" | "empresa" | "nome" | "classificacao" | "valor" | "data_pagamento" | "status" | "excecao" | "atualizacao";
 
 function dataPagamentoDeItem(item: ItemLinhaMalote): string | null {
@@ -247,7 +246,8 @@ export default function Aprovacoes({ base = "/app/malote" }: { base?: string } =
 
   // SIS-2026-0439: despesa lançada com forma de pagamento em Fluxo Especial
   // (ex. Cartão Sicredi) tem aprovador fixo definido ali, não na
-  // Classificação — souAprovadorDoNivel precisa dessa linha pra checar certo.
+  // Classificação — souAprovadorDoNivelComRateio precisa dessa linha pra
+  // checar certo.
   const { data: formasPagamentoCatalogo = [] } = useFormasPagamento();
   const formaEspecialPorNome = useMemo(
     () => new Map(formasPagamentoCatalogo.filter((f) => f.fluxo_aprovacao === "especial").map((f) => [f.nome, f])),
@@ -255,7 +255,14 @@ export default function Aprovacoes({ base = "/app/malote" }: { base?: string } =
   );
   function souAprovadorPendente(d: MaloteDespesaRow): boolean {
     if (d.nivel_aprovacao_atual == null) return false;
-    return souAprovadorDoNivel(d, d.nivel_aprovacao_atual, user?.id, formaEspecialPorNome.get(d.forma_pagamento ?? ""));
+    return souAprovadorDoNivelComRateio(
+      d,
+      d.nivel_aprovacao_atual,
+      user?.id,
+      classificacaoIdsRateio?.get(d.id),
+      classificacaoPorId,
+      formaEspecialPorNome.get(d.forma_pagamento ?? ""),
+    );
   }
 
   // SIS-2026-0285 (Iury): filtro de data puxava só de "Última atualização" —
@@ -862,21 +869,17 @@ export default function Aprovacoes({ base = "/app/malote" }: { base?: string } =
                   <TableHeadOrdenavel coluna="status" ordenacao={ordenacao} className="text-center">Status</TableHeadOrdenavel>
                   <TableHeadOrdenavel coluna="excecao" ordenacao={ordenacao}>Exceção</TableHeadOrdenavel>
                   <TableHeadOrdenavel coluna="atualizacao" ordenacao={ordenacao}>Última atualização</TableHeadOrdenavel>
-                  {/* SIS-2026-0288-ajuste (Iury/usuário): "Justificativa"
-                      virou sino — pedido pra ficar bem evidente e como
-                      última coisa da linha, não mais coladinho no Nº. */}
-                  <TableHead className="w-10 px-2 text-center" />
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {isLoading && (
                   <TableRow>
-                    <TableCell colSpan={13} className="text-center text-muted-foreground py-10">Carregando...</TableCell>
+                    <TableCell colSpan={12} className="text-center text-muted-foreground py-10">Carregando...</TableCell>
                   </TableRow>
                 )}
                 {!isLoading && visiveis.length === 0 && (
                   <TableRow>
-                    <TableCell colSpan={13} className="text-center text-muted-foreground py-10">
+                    <TableCell colSpan={12} className="text-center text-muted-foreground py-10">
                       <div className="flex flex-col items-center gap-2">
                         <CheckCircle2 className="h-8 w-8 text-muted-foreground/50" />
                         Nenhum item encontrado com os filtros atuais.
@@ -892,6 +895,7 @@ export default function Aprovacoes({ base = "/app/malote" }: { base?: string } =
                     nomeEmpresa={empresasMap.get(empresaIdResolvida(item.despesa) ?? "")}
                     nomeContrato={contratosMap.get(contratoIdResolvido(item.despesa) ?? "")}
                     aprovadorNomes={aprovadorNomes}
+                    formaEspecialPorNome={formaEspecialPorNome}
                     onAbrir={() => abrirItem(item.despesa)}
                   />
                 ))}
@@ -926,6 +930,7 @@ function LinhaItem({
   nomeEmpresa,
   nomeContrato,
   aprovadorNomes,
+  formaEspecialPorNome,
   onAbrir,
 }: {
   item: ItemLinhaMalote;
@@ -933,10 +938,19 @@ function LinhaItem({
   nomeEmpresa?: string;
   nomeContrato?: string;
   aprovadorNomes: (despesa: MaloteDespesaRow, nivel: 1 | 2 | 3) => string[];
+  formaEspecialPorNome: Map<string, MaloteFormaPagamento>;
   onAbrir: () => void;
 }) {
   const { despesa, parcela } = item;
   const { data: solicitanteNome } = useNomeUsuario(despesa.created_by);
+  // SIS-2026-0439 (achado do usuário, SD-2026-0042): este badge sempre
+  // mostrava o aprovador da Classificação (ex. Cassio), mesmo em Fluxo
+  // Especial (forma de pagamento com aprovador fixo, ex. Calita) — mesmo
+  // bug de exibição já corrigido em DespesaVisualizar.tsx/MeusItens.tsx,
+  // faltava aqui (a filtragem de "minhas pendentes" já sabia disso via
+  // souAprovadorPendente, só a exibição do nome no badge não).
+  const formaEspecial = formaEspecialPorNome.get(despesa.forma_pagamento ?? "");
+  const { data: nomeEspecial } = useNomeUsuario(formaEspecial?.aprovador_especial_user_id ?? undefined);
   const isSolicitacao = STATUS_FASE_SOLICITACAO.includes(despesa.status);
   const status = statusEfetivo(item);
   const valor = parcela ? parcela.valor : despesa.valor_total;
@@ -989,6 +1003,7 @@ function LinhaItem({
             <span className="flex items-center gap-1 text-xs font-bold">
               <User className="h-3 w-3" />
               {(() => {
+                if (formaEspecial) return nomeEspecial ? abreviarNome(nomeEspecial) : "Fluxo Especial";
                 // SIS-2026-0464 (pedido da Fernanda): no N2, mostrar só o
                 // titular (1º nome) no badge da linha — mesma regra do
                 // filtro (ver comentário em `filtrados`). Antes juntava
@@ -1011,13 +1026,6 @@ function LinhaItem({
       </TableCell>
       <TableCell className="text-sm">{despesa.excecao ? <Badge variant="destructive">Sim</Badge> : "Não"}</TableCell>
       <TableCell className="text-xs text-muted-foreground">{new Date(despesa.updated_at).toLocaleString("pt-BR")}</TableCell>
-      {/* SIS-2026-0288-ajuste (Iury/usuário): sino da Justificativa como
-          última coisa da linha, bem mais evidente que o ícone solto de
-          antes — círculo cheio com fundo âmbar, chama a atenção sem
-          precisar de coluna de texto (só aparece quando há pendência). */}
-      <TableCell className="px-2 text-center">
-        <JustificativaPendenteBadge despesa={despesa} parcela={parcela} variant="icon" />
-      </TableCell>
     </TableRow>
   );
 }

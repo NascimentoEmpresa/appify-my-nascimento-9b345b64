@@ -6,6 +6,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ErroDeTela } from "@/components/layout/ErroDeTela";
 import { isAuthExpiredError } from "@/lib/authErrors";
+import { isSobrecargaError, atrasoSobrecargaMs } from "@/lib/erroSobrecarga";
 import NotFound from "./pages/NotFound.tsx";
 import Login from "./pages/Login.tsx";
 import TrocarSenha from "./pages/TrocarSenha.tsx";
@@ -169,8 +170,6 @@ import TreinamentosDashboard from "./pages/treinamentos/plataforma/Dashboard";
 import TrnAlunosLista from "./pages/treinamentos/plataforma/AlunosLista";
 import TrnAlunoForm from "./pages/treinamentos/plataforma/AlunoForm";
 import TrnAlunosGerenciar from "./pages/treinamentos/plataforma/AlunosGerenciar";
-import TrnAlunosImportar from "./pages/treinamentos/plataforma/AlunosImportar";
-import TrnAlunosTags from "./pages/treinamentos/plataforma/AlunosTags";
 import TrnCursosLista from "./pages/treinamentos/plataforma/CursosLista";
 import TrnCursoForm from "./pages/treinamentos/plataforma/CursoForm";
 import TrnCursoDetalhe from "./pages/treinamentos/plataforma/CursoDetalhe";
@@ -264,6 +263,7 @@ import PainelDistribuicaoChamados from "./pages/chamados/PainelDistribuicao";
 import DashboardChamados from "./pages/chamados/DashboardChamados";
 import CoordenarChamado from "./pages/chamados/CoordenarChamado";
 import PainelDesenvolvedorChamados from "./pages/chamados/PainelDesenvolvedor";
+import DashboardDesenvolvedorChamados from "./pages/chamados/DashboardDesenvolvedor";
 import ExecutarChamado from "./pages/chamados/ExecutarChamado";
 import AcompanharChamado from "./pages/chamados/AcompanharChamado";
 import WhatsAppInbox from "./pages/whatsapp/WhatsAppInbox";
@@ -294,15 +294,50 @@ import DesignacoesOperacao from "./pages/central-servicos/espaco-colaborador/Des
 // era isso que deixava a Grade presa em "Erro ao carregar: JWT expired" até o
 // usuário dar F5. Para esse caso, mais tentativas e mais espaçadas, dando tempo
 // do supabase-js concluir a renovação.
+//
+// ── staleTime/gcTime (21/09/2026) ────────────────────────────────────────
+// A "rajada de requests" descrita no parágrafo acima nunca tinha sido tratada
+// na origem: o retry cuidava do ERRO que ela provocava, não da rajada em si.
+// Em 21/09/2026 às 14:01:59 o Postgres de produção reiniciou sozinho por
+// esgotamento de conexões (61 em uso para 57 utilizáveis na instância Micro),
+// e o upgrade de máquina foi vetado — o alívio tem que vir de consultar menos.
+//
+// Sem `staleTime`, o React Query assume 0: TODO dado nasce velho, então cada
+// remontagem de componente e cada volta para a aba refazia a consulta. São 513
+// pontos de `useQuery` no projeto e só 109 declaravam `staleTime` próprio —
+// ou seja, ~404 consultas rebuscavam à toa.
+//
+// 30s é conservador de propósito. Isto NÃO atrasa dado após ação do usuário:
+// as 586 chamadas de `invalidateQueries` do projeto continuam invalidando o
+// cache a cada escrita, então aprovar/pagar/salvar segue atualizando na hora.
+// `staleTime` corta só a busca PASSIVA, que é a que gerava a rajada.
+//
+// `refetchOnWindowFocus` fica no padrão (true) de propósito: com staleTime de
+// 30s ele deixa de disparar a rajada, mas quem ficou horas fora da aba ainda
+// recebe dado fresco ao voltar — que é o comportamento certo para um sistema
+// com pagamento e aprovação.
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
-      retry: (failureCount, error) =>
-        isAuthExpiredError(error) ? failureCount < 5 : failureCount < 3,
-      retryDelay: (failureCount, error) =>
-        isAuthExpiredError(error)
-          ? 2_000
-          : Math.min(1_000 * 2 ** failureCount, 30_000),
+      staleTime: 30_000,
+      gcTime: 300_000,
+      // A ordem das checagens importa: auth PRIMEIRO. 401/403 é token vencido
+      // (transitório, local, merece insistência), não sobrecarga.
+      retry: (failureCount, error) => {
+        if (isAuthExpiredError(error)) return failureCount < 5;
+        // 21/09/2026: banco afogado NÃO se resolve insistindo. Ver o porquê
+        // em ./lib/erroSobrecarga — este retry foi agravante do incidente que
+        // reiniciou o Postgres, não vítima dele. Uma única nova tentativa.
+        if (isSobrecargaError(error)) return failureCount < 1;
+        return failureCount < 3;
+      },
+      retryDelay: (failureCount, error) => {
+        if (isAuthExpiredError(error)) return 2_000;
+        // Atraso sorteado de propósito: sem o sorteio, todos os navegadores
+        // voltam no mesmo instante e batem no banco em bloco outra vez.
+        if (isSobrecargaError(error)) return atrasoSobrecargaMs();
+        return Math.min(1_000 * 2 ** failureCount, 30_000);
+      },
     },
   },
 });
@@ -417,6 +452,11 @@ const App = () => (
             <Route path="sistemas/chamados/painel" element={<PainelDistribuicaoChamados />} />
             <Route path="sistemas/chamados/dashboard-tv" element={<DashboardChamados />} />
             <Route path="sistemas/chamados/dev" element={<PainelDesenvolvedorChamados />} />
+            {/* Sub-rota do Painel do Dev, sem app_menu próprio de propósito (mesmo
+                padrão de :id/coordenar e :id/acompanhar): só é alcançada pelo botão
+                dentro do Painel, que já é gateado; dados vêm filtrados por
+                responsavel_id = auth.uid(), então não vaza chamado de outro dev. */}
+            <Route path="sistemas/chamados/dev/dashboard" element={<DashboardDesenvolvedorChamados />} />
             <Route path="sistemas/chamados/:id/coordenar" element={<CoordenarChamado />} />
             {/* Não vira redirect por causa do :id, que o Navigate não interpola.
                 Renderiza a mesma tela, mas com o "voltar" apontando para a
@@ -721,8 +761,6 @@ const App = () => (
             {/* "Adicionar novo" virou "Gerenciar" (21/09/2026): aluno é colaborador
                 e entra pela admissão. A rota ficou pra não zerar a permissão. */}
             <Route path="treinamentos/alunos/novo" element={<TrnAlunosGerenciar />} />
-            <Route path="treinamentos/alunos/importar" element={<TrnAlunosImportar />} />
-            <Route path="treinamentos/alunos/tags" element={<TrnAlunosTags />} />
             <Route path="treinamentos/alunos/:id" element={<TrnAlunoForm />} />
             <Route path="treinamentos/cursos" element={<TrnCursosLista />} />
             <Route path="treinamentos/cursos/novo" element={<TrnCursoForm />} />

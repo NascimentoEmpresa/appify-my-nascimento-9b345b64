@@ -290,6 +290,12 @@ describe("contrato do empregado — empresa e nome abreviado (17/09/2026)", () =
     expect(chaveContrato("GUAPORÉ LIMP SMED EMERGENCIAL - 063.2026")).toBe(chaveContrato("Guapore LIMPEZA SMED Emergencial 063/2026"));
     expect(chaveContrato("VERANOPÓLIS RECEP EMERGENCIAL - 151.2026")).toBe(chaveContrato("VERANOPOLIS RECEPCAO EMERGENCIAL - 151/2026"));
   });
+  it("chaveContrato casa o Senior com o catálogo de Suprimentos (hífen, barra, zero à esquerda)", () => {
+    expect(chaveContrato("UFRGS DIGITADORES 014.2026")).toBe(chaveContrato("UFRGS DIGITADORES - 014/2026"));
+    expect(chaveContrato("FURG PORTARIA - 055/2023")).toBe(chaveContrato("FURG - PORTARIA - 55/2023"));
+    expect(chaveContrato("TRIUNFO COLETA DE LIXO 89.2026")).toBe(chaveContrato("TRIUNFO COLETA DE LIXO - 089.2026"));
+    expect(chaveContrato("CHARQUEADAS - 005/2021")).not.toBe(chaveContrato("CHARQUEADAS - 168/2021"));
+  });
 });
 
 describe("vaga administrativa — só a caixa manda pra Diretoria (17/09/2026)", () => {

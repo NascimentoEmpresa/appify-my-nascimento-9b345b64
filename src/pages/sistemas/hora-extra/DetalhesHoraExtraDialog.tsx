@@ -1,11 +1,39 @@
-import { Clock3, FileText, Link2 } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Clock3, FileText, Link2, PencilLine, Save, X } from "lucide-react";
 import { Link } from "react-router-dom";
+import { toast } from "sonner";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { useDetalheHoraExtra } from "@/hooks/useHoraExtra";
-import { formatarData, formatarDuracao, somenteHora } from "./horaExtraUtils";
+import { Input } from "@/components/ui/input";
+import { useDetalheHoraExtra, useEditarHorariosConcluida } from "@/hooks/useHoraExtra";
+import { useScreenAccess } from "@/hooks/useScreenAccess";
+import {
+  calcularHoraExtra,
+  formatarData,
+  formatarDuracao,
+  JORNADA_PADRAO_MIN,
+  jornadaParaCalculoHoraExtra,
+  mensagemErro,
+  podeEditarHorariosDaConcluida,
+  somenteHora,
+} from "./horaExtraUtils";
 import { BadgeExecucao, BadgeStatus, ListaAnexos } from "./HoraExtraUI";
 import type { SolicitacaoHoraExtra } from "./types";
+
+const CAMPOS_PONTO = [
+  ["Entrada", "entrada"],
+  ["Saída", "saida_intervalo"],
+  ["Retorno", "retorno_intervalo"],
+  ["Saída", "saida"],
+] as const;
+
+type CampoPonto = (typeof CAMPOS_PONTO)[number][1];
+type Horarios = Record<CampoPonto, string>;
+
+/** `somenteHora` devolve "—" no vazio, e <input type="time"> recusa esse valor. */
+function valorCampoHora(valor?: string | null): string {
+  return valor ? valor.slice(0, 5) : "";
+}
 
 export default function DetalhesHoraExtraDialog({
   aberto,
@@ -19,8 +47,74 @@ export default function DetalhesHoraExtraDialog({
   // A linha que veio da lista pode ter sido carregada antes de o upload do
   // anexo terminar. Reler o detalhe ao abrir é o que garante os arquivos aqui.
   const { data: atual } = useDetalheHoraExtra(aberto ? solicitacao?.id : null);
-  if (!solicitacao) return null;
+  const { data: podeEditarConcluida = false } = useScreenAccess("sistemas_hora_extra", "editar_concluida");
+  const corrigir = useEditarHorariosConcluida();
+  const [editando, setEditando] = useState(false);
+  const [horarios, setHorarios] = useState<Horarios>({
+    entrada: "",
+    saida_intervalo: "",
+    retorno_intervalo: "",
+    saida: "",
+  });
   const dados = atual ?? solicitacao;
+  const solicitacaoId = dados?.id;
+  // Fechar o modal — ou abrir outra HE — sempre volta ao modo leitura. Sem
+  // isto a solicitação seguinte herdava o formulário aberto da anterior, com
+  // os horários da anterior já digitados dentro.
+  useEffect(() => {
+    setEditando(false);
+  }, [aberto, solicitacaoId]);
+  if (!solicitacao || !dados) return null;
+  const podeCorrigir = podeEditarHorariosDaConcluida({ status: dados.status, podeEditarConcluida });
+  const semIntervalo = Boolean(dados.sem_intervalo);
+  const jornadaCalculo = jornadaParaCalculoHoraExtra(
+    dados.jornada_minutos ?? JORNADA_PADRAO_MIN,
+    dados.seguir_escala ?? true,
+  );
+  // Mesma fórmula da RPC: o que o modal mostra enquanto se digita é o que o
+  // banco vai gravar, não uma prévia aproximada.
+  const calculo = calcularHoraExtra(horarios, jornadaCalculo);
+  const pontoGravado: Horarios = {
+    entrada: valorCampoHora(dados.ponto_entrada_real || dados.ponto_entrada),
+    saida_intervalo: valorCampoHora(dados.ponto_saida_intervalo_real || dados.ponto_saida_intervalo),
+    retorno_intervalo: valorCampoHora(dados.ponto_retorno_intervalo_real || dados.ponto_retorno_intervalo),
+    saida: valorCampoHora(dados.ponto_saida_real || dados.ponto_saida),
+  };
+  const abrirEdicao = () => {
+    setHorarios(pontoGravado);
+    setEditando(true);
+  };
+  const mudarHorario = (campo: CampoPonto, valor: string) =>
+    setHorarios((anterior) =>
+      // Dia sem pausa: os dois registros do meio repetem a entrada, o mesmo
+      // contrato de quatro horários que o banco guarda.
+      semIntervalo && campo === "entrada"
+        ? { ...anterior, entrada: valor, saida_intervalo: valor, retorno_intervalo: valor }
+        : { ...anterior, [campo]: valor },
+    );
+  const salvarCorrecao = async () => {
+    if (CAMPOS_PONTO.some(([, campo]) => !horarios[campo])) {
+      toast.error("Preencha os quatro horários do ponto.");
+      return;
+    }
+    if (calculo.excedente <= 0) {
+      toast.error(
+        `Os horários informados somam ${formatarDuracao(calculo.trabalhado, true)} e não geram hora extra.`,
+      );
+      return;
+    }
+    try {
+      await corrigir.mutateAsync({ p_id: dados.id, p_horarios: horarios });
+      toast.success("Horários da HE corrigidos.");
+      setEditando(false);
+    } catch (erro: unknown) {
+      toast.error(mensagemErro(erro, "Não foi possível corrigir os horários."));
+    }
+  };
+  const totalRealExibido = editando ? calculo.excedente : dados.total_real_min;
+  const trabalhadoExibido = editando
+    ? calculo.trabalhado
+    : (dados.trabalhado_real_min ?? dados.trabalhado_previsto_min ?? 0);
   return (
     <Dialog open={aberto} onOpenChange={(v) => !v && aoFechar()}>
       <DialogContent className="max-h-[92vh] w-[calc(100vw-2rem)] max-w-3xl overflow-x-hidden overflow-y-auto">
@@ -41,7 +135,7 @@ export default function DetalhesHoraExtraDialog({
             rotulo="Jornada / trabalhado no dia"
             valor={
               `${dados.seguir_escala === false ? "Todo o período é HE" : formatarDuracao(dados.jornada_minutos ?? 0, true)} / ` +
-              formatarDuracao(dados.trabalhado_real_min ?? dados.trabalhado_previsto_min ?? 0, true)
+              formatarDuracao(trabalhadoExibido, true)
             }
           />
         </div>
@@ -59,30 +153,82 @@ export default function DetalhesHoraExtraDialog({
               Total real
             </div>
             <div className="mt-2 text-xl font-extrabold">
-              {dados.total_real_min == null ? "—" : formatarDuracao(dados.total_real_min)}
+              {totalRealExibido == null ? "—" : formatarDuracao(totalRealExibido)}
             </div>
           </div>
         </div>
         <section>
-          <h3 className="mb-2 flex items-center gap-2 font-bold text-[#07194b]">
-            <Clock3 className="h-4 w-4" />
-            Horário de ponto
-          </h3>
+          <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+            <h3 className="flex items-center gap-2 font-bold text-[#07194b]">
+              <Clock3 className="h-4 w-4" />
+              Horário de ponto
+            </h3>
+            {podeCorrigir &&
+              (editando ? (
+                <div className="flex gap-2">
+                  <Button size="sm" variant="outline" disabled={corrigir.isPending} onClick={() => setEditando(false)}>
+                    <X className="mr-1 h-3.5 w-3.5" />
+                    Cancelar
+                  </Button>
+                  <Button
+                    size="sm"
+                    className="bg-emerald-600 hover:bg-emerald-700"
+                    disabled={corrigir.isPending}
+                    onClick={salvarCorrecao}
+                  >
+                    <Save className="mr-1 h-3.5 w-3.5" />
+                    Salvar correção
+                  </Button>
+                </div>
+              ) : (
+                <Button size="sm" variant="outline" onClick={abrirEdicao}>
+                  <PencilLine className="mr-1 h-3.5 w-3.5" />
+                  Editar horários
+                </Button>
+              ))}
+          </div>
           <div className="grid grid-cols-4 gap-2 rounded-lg bg-slate-50 p-3 text-center text-xs">
+            {CAMPOS_PONTO.map(([rotulo, campo]) => {
+              const nome = semIntervalo && campo !== "entrada" && campo !== "saida" ? "Sem intervalo" : rotulo;
+              return (
+                <div key={campo}>
+                  <div className="text-slate-500">{nome}</div>
+                  {editando ? (
+                    <Input
+                      type="time"
+                      className="mt-1 h-auto bg-white px-2 py-2 text-center text-xs font-semibold"
+                      disabled={semIntervalo && campo !== "entrada" && campo !== "saida"}
+                      value={horarios[campo]}
+                      onChange={(evento) => mudarHorario(campo, evento.target.value)}
+                    />
+                  ) : (
+                    <div className="mt-1 rounded border bg-white px-2 py-2 font-semibold">
+                      {somenteHora(pontoGravado[campo])}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+            {/* Início e término da HE são derivados do ponto — nunca digitados,
+                nem na leitura nem na correção. */}
             {[
-              ["Entrada", dados.ponto_entrada_real || dados.ponto_entrada],
-              [dados.sem_intervalo ? "Sem intervalo" : "Saída", dados.ponto_saida_intervalo_real || dados.ponto_saida_intervalo],
-              [dados.sem_intervalo ? "Sem intervalo" : "Retorno", dados.ponto_retorno_intervalo_real || dados.ponto_retorno_intervalo],
-              ["Saída", dados.ponto_saida_real || dados.ponto_saida],
-              ["Início da HE", dados.he_inicio_real || dados.he_inicio_previsto],
-              ["Término da HE", dados.he_fim_real || dados.he_fim_previsto],
-            ].map(([r, v], indice) => (
-              <div key={`${r}-${v}-${indice}`}>
-                <div className="text-slate-500">{r}</div>
-                <div className="mt-1 rounded border bg-white px-2 py-2 font-semibold">{somenteHora(v)}</div>
+              ["Início da HE", editando ? calculo.inicio : dados.he_inicio_real || dados.he_inicio_previsto],
+              ["Término da HE", editando ? calculo.fim : dados.he_fim_real || dados.he_fim_previsto],
+            ].map(([rotulo, valor]) => (
+              <div key={rotulo}>
+                <div className="text-slate-500">{rotulo}</div>
+                <div className="mt-1 rounded border bg-white px-2 py-2 font-semibold text-slate-500">
+                  {somenteHora(valor)}
+                </div>
               </div>
             ))}
           </div>
+          {editando && (
+            <p className="mt-2 text-xs text-slate-500">
+              A HE continua concluída: a correção só reescreve o ponto efetivo e o total real, e fica registrada no
+              histórico da solicitação.
+            </p>
+          )}
         </section>
         <section>
           <h3 className="mb-2 flex items-center gap-2 font-bold text-[#07194b]">

@@ -1,4 +1,5 @@
-import { Car, CalendarRange, Clock, FileText, MapPin, MessageSquare } from "lucide-react";
+import { Camera, Car, CalendarRange, Clock, FileText, Gauge, MapPin, MessageSquare } from "lucide-react";
+import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import {
@@ -18,7 +19,9 @@ interface Props {
   destino: string;
   motivo: string;
   observacoes: string;
-  onMudar: (v: { observacoes: string }) => void;
+  kmInicial: string;
+  fotoKm: File | null;
+  onMudar: (v: Partial<{ observacoes: string; kmInicial: string; fotoKm: File | null }>) => void;
 }
 
 /** Passo 4 — a conferida final antes de tomar o carro de alguém. */
@@ -31,6 +34,8 @@ export function PassoConfirmar({
   destino,
   motivo,
   observacoes,
+  kmInicial,
+  fotoKm,
   onMudar,
 }: Props) {
   const periodo =
@@ -65,6 +70,35 @@ export function PassoConfirmar({
           {destino.trim() && <Linha icone={MapPin} rotulo="Destino" valor={destino.trim()} />}
           {motivo.trim() && <Linha icone={MessageSquare} rotulo="Motivo" valor={motivo.trim()} />}
         </dl>
+      </div>
+
+      {/* KM + foto do painel (22/09/2026): é o que permite auditar depois
+          quanto o carro rodou em cada viagem e por qual contrato. */}
+      <div className="space-y-3 rounded-2xl border border-amber-300 bg-amber-50/60 p-4 dark:bg-amber-500/10">
+        <div className="flex items-start gap-2">
+          <Gauge className="mt-0.5 h-5 w-5 shrink-0 text-amber-600" />
+          <p className="text-sm text-foreground">
+            <b>Antes de sair com o carro:</b> registre o KM do painel e anexe a foto.
+            Ao voltar, informe o KM final e outra foto — sem isso não dá para agendar outro veículo.
+          </p>
+        </div>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div className="space-y-1.5">
+            <Label htmlFor="km-inicial">KM inicial (painel) *</Label>
+            <Input id="km-inicial" inputMode="numeric" placeholder="Ex.: 84512" value={kmInicial}
+                   onChange={(e) => onMudar({ kmInicial: e.target.value.replace(/D/g, "") })} />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="foto-km">Foto do painel *</Label>
+            <label htmlFor="foto-km"
+                   className="flex h-10 cursor-pointer items-center gap-2 rounded-md border border-input bg-background px-3 text-sm text-muted-foreground hover:bg-muted/50">
+              <Camera className="h-4 w-4 shrink-0 text-amber-600" />
+              <span className="truncate">{fotoKm ? fotoKm.name : "Tirar foto / escolher imagem"}</span>
+            </label>
+            <input id="foto-km" type="file" accept="image/*" capture="environment" className="hidden"
+                   onChange={(e) => onMudar({ fotoKm: e.target.files?.[0] ?? null })} />
+          </div>
+        </div>
       </div>
 
       <div className="space-y-1.5">

@@ -90,12 +90,26 @@ export const CSS_ANIVERSARIOS = `
 .aniv-contador{font-size:.68rem;color:hsl(var(--muted-foreground));margin-right:auto;}
 
 /* ──────────────────────── recados recebidos ────────────────────────── */
-.aniv-recados{display:flex;flex-direction:column;gap:6px;padding-top:2px;}
-.aniv-recado{display:flex;gap:6px;font-size:.75rem;line-height:1.4;
-  color:hsl(var(--foreground));}
-.aniv-recado-emoji{flex:none;font-size:.85rem;line-height:1.4;}
-.aniv-recado b{font-weight:700;}
-.aniv-recado span{color:hsl(var(--muted-foreground));}
+/* Mural de recados (22/09/2026): era uma linha corrida "emoji Nome: texto",
+   que embolava quando o recado passava de uma linha. Agora cada recado é um
+   balão com o rostinho de quem escreveu — fica claro quem falou o quê. */
+.aniv-recados{display:flex;flex-direction:column;gap:7px;padding-top:4px;
+  border-top:1px dashed hsl(var(--border));margin-top:2px;}
+.aniv-recados-tt{font-size:.62rem;font-weight:700;text-transform:uppercase;letter-spacing:.12em;
+  color:hsl(var(--muted-foreground));padding-top:4px;}
+.aniv-recado{display:flex;gap:8px;align-items:flex-start;}
+.aniv-recado-av{position:relative;flex:none;width:26px;height:26px;}
+.aniv-recado-av img,.aniv-recado-av span.aniv-recado-ini{width:26px;height:26px;border-radius:9999px;
+  display:grid;place-items:center;object-fit:cover;font-size:.6rem;font-weight:800;
+  color:hsl(var(--primary));background:hsl(var(--primary) / .12);border:1px solid hsl(var(--border));}
+.aniv-recado-av .aniv-recado-emoji{position:absolute;right:-4px;bottom:-4px;font-size:.72rem;
+  line-height:1;background:hsl(var(--card));border-radius:9999px;padding:1px;
+  box-shadow:0 1px 4px hsl(218 50% 15% / .2);}
+.aniv-recado-balao{flex:1;min-width:0;background:hsl(var(--muted) / .45);
+  border:1px solid hsl(var(--border));border-radius:4px 12px 12px 12px;padding:6px 10px;}
+.aniv-recado-autor{font-size:.7rem;font-weight:800;color:hsl(var(--foreground));line-height:1.3;}
+.aniv-recado-texto{font-size:.76rem;line-height:1.45;color:hsl(var(--muted-foreground));
+  overflow-wrap:anywhere;}
 
 /* ─────────────────────────── próximos dias ─────────────────────────── */
 .aniv-titulo{font-size:.63rem;font-weight:700;text-transform:uppercase;letter-spacing:.14em;
@@ -119,12 +133,57 @@ export const CSS_ANIVERSARIOS = `
   color:hsl(var(--muted-foreground));}
 .aniv-breve-mais{padding:6px 2px 0;font-size:.7rem;color:hsl(var(--muted-foreground));}
 
+/* ───────────── festa: confete, emoji subindo, quem reagiu ──────────── */
+/* Confete cai UMA vez quando o cartão aparece com aniversariante do dia, e
+   de novo a cada reação enviada. Fica preso ao cartão (overflow:hidden) e
+   não captura clique. */
+.aniv-pessoa{position:relative;}
+.aniv-festa{position:absolute;inset:0;pointer-events:none;z-index:3;
+  overflow:hidden;border-radius:13px;}
+.aniv-confete{position:absolute;top:-12px;width:7px;height:11px;border-radius:2px;opacity:0;
+  animation:aniv-cair linear forwards;}
+@keyframes aniv-cair{
+  0%{opacity:0;transform:translateY(-10px) rotate(0deg);}
+  10%{opacity:1;}
+  100%{opacity:0;transform:translateY(190px) rotate(540deg);}
+}
+/* Emoji que sobe da barra de reações, como o "curtir" do Facebook. */
+.aniv-sobe{position:absolute;bottom:8px;font-size:1.05rem;opacity:0;
+  animation:aniv-subir 1.25s ease-out forwards;}
+@keyframes aniv-subir{
+  0%{opacity:0;transform:translateY(0) scale(.6);}
+  15%{opacity:1;transform:translateY(-10px) scale(1.15);}
+  100%{opacity:0;transform:translateY(-92px) scale(.9);}
+}
+/* Quem reagiu: aparece ao passar o mouse (ou focar) na pilha de reações. */
+.aniv-reacao-pilha{position:relative;display:inline-flex;}
+.aniv-reacao-pilha:focus{outline:none;}
+.aniv-tip{position:absolute;left:0;top:calc(100% + 8px);transform:translateY(3px) scale(.98);
+  z-index:9;min-width:132px;max-width:230px;padding:7px 10px;border-radius:10px;
+  background:hsl(var(--popover, var(--card)));color:hsl(var(--foreground));
+  border:1px solid hsl(var(--border));box-shadow:0 10px 26px -12px hsl(218 50% 15% / .55);
+  font-size:.7rem;line-height:1.45;text-align:left;
+  opacity:0;visibility:hidden;transition:opacity .15s,transform .15s;}
+.aniv-reacao-pilha:hover .aniv-tip,
+.aniv-reacao-pilha:focus-within .aniv-tip{opacity:1;visibility:visible;transform:none;}
+.aniv-tip b{display:block;font-size:.62rem;text-transform:uppercase;letter-spacing:.1em;
+  color:hsl(var(--muted-foreground));margin-bottom:3px;}
+.aniv-tip-linha{display:flex;gap:5px;align-items:baseline;}
+.aniv-tip-linha span:first-child{flex:none;}
+
 @media (max-width:900px){
   .aniv-recado-bt{margin-left:0;}
 }
 @media (prefers-reduced-motion:reduce){
   .aniv-reacao-chip{animation:none;}
   .aniv-bt:hover{transform:none;}
+  /* Movimento reduzido no sistema (Windows › "Mostrar animações" desligado):
+     a festa continua, mas sem nada voando — os papéis e os emojis só
+     aparecem e somem no lugar. Esconder tudo deixava o cartão sem a graça
+     que o pedido tinha. */
+  .aniv-confete{animation:aniv-piscar 1.6s ease-out forwards;}
+  .aniv-sobe{animation:aniv-piscar 1.2s ease-out forwards;}
+  @keyframes aniv-piscar{0%{opacity:0}25%{opacity:.9}100%{opacity:0}}
 }
 `;
 

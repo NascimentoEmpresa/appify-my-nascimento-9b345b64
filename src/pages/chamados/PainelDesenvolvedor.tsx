@@ -9,6 +9,7 @@ import { useChamadoPerms } from "./useChamadoPerms";
 import { useToast } from "@/hooks/use-toast";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Card } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
@@ -17,7 +18,7 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
 import { PieChart, Pie, Cell, ResponsiveContainer } from "recharts";
-import { ListChecks, Clock, MessageSquare, CheckCircle2, AlertTriangle, ShieldAlert, CalendarClock, RotateCw, RotateCcw, ArrowUpRight, Plus, BookOpen, ClipboardCheck, Sparkles, FileText, Zap, Star, Trophy, GitPullRequest } from "lucide-react";
+import { ListChecks, Clock, MessageSquare, CheckCircle2, AlertTriangle, ShieldAlert, CalendarClock, RotateCw, RotateCcw, ArrowUpRight, Plus, BookOpen, ClipboardCheck, Sparkles, FileText, Zap, Star, Trophy, GitPullRequest, LayoutDashboard } from "lucide-react";
 import { HoverCard, HoverCardTrigger, HoverCardContent } from "@/components/ui/hover-card";
 import { FeedAtualizacoes } from "./FeedAtualizacoes";
 import { BotaoChatChamado, useChamadosNaoLidos } from "./BotaoChatChamado";
@@ -287,6 +288,11 @@ export default function PainelDesenvolvedor() {
         subtitle={`Olá${nome ? ", " + nome : ""}! Acompanhe os chamados, prazos e o andamento das solicitações atribuídas a você.`}
         module="Sistemas"
         breadcrumb={["Chamados de Sistemas", "Painel do Desenvolvedor"]}
+        actions={
+          <Button onClick={() => nav("/app/sistemas/chamados/dev/dashboard")} className="gap-1.5">
+            <LayoutDashboard className="h-4 w-4" /> Meu Dashboard
+          </Button>
+        }
       />
 
       <div className="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">

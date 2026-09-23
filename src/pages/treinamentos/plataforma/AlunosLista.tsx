@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { Link, useNavigate, useSearchParams } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import * as XLSX from "xlsx";
 import { Download, Filter, MoreVertical, Search, Sliders, UserPlus, Users } from "lucide-react";
@@ -16,36 +16,35 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useQuery } from "@tanstack/react-query";
-import { useTrnAcaoMassa, useTrnAlunos, useTrnCursos, useTrnExcluirAluno, useTrnTags } from "@/hooks/useTreinamentosPlataforma";
+import { useTrnAcaoMassa, useTrnAlunos, useTrnCursos, useTrnExcluirAluno } from "@/hooks/useTreinamentosPlataforma";
 import { MENU, ROTULO_STATUS_ALUNO, type AlunoLista, type StatusAluno } from "./tipos";
-import { Paginacao, StatusAlunoBadge, TagChips, TrnCarregando, TrnEstilo, TrnHero, TrnVazio, fmtData, fmtDataHora, usePaginacao } from "./ui";
+import { Paginacao, StatusAlunoBadge, TrnCarregando, TrnEstilo, TrnHero, TrnVazio, fmtData, fmtDataHora, usePaginacao } from "./ui";
 
 // =====================================================================
 // TREINAMENTOS — Alunos › Visualizar (a lista "Todos os alunos" do membox).
 //
-// Busca, filtros (tag, curso, status, expiração), colunas opcionais,
-// exportação da lista em .xlsx, ações em massa por recorte (tag ou os
-// selecionados) e o menu de linha (editar, métricas, histórico,
+// Busca, filtros (curso, status, expiração), colunas opcionais,
+// exportação da lista em .xlsx, ações em massa por recorte (contrato,
+// status, selecionados) e o menu de linha (editar, métricas, histórico,
 // certificados, bloquear, excluir). A regra de quem pode o quê está na RLS
 // e na RPC `trn_acao_massa`; aqui só se monta a chamada.
 // =====================================================================
 
-type ColunaOpcional = "telefone" | "documento" | "tags" | "cursos" | "concluidas" | "cadastro" | "ultimo_acesso";
+// Tags saíram em 22/09/2026 ("tira as tags, não vai precisar" — Pablo): a
+// segmentação é por contrato/status, que vêm do cadastro.
+type ColunaOpcional = "telefone" | "documento" | "cursos" | "concluidas" | "cadastro" | "ultimo_acesso";
 const COLUNAS: { k: ColunaOpcional; rotulo: string; padrao: boolean }[] = [
   { k: "telefone", rotulo: "Telefone", padrao: true },
   { k: "documento", rotulo: "Documento", padrao: true },
-  { k: "tags", rotulo: "Tags", padrao: true },
   { k: "cursos", rotulo: "Cursos", padrao: false },
   { k: "concluidas", rotulo: "Aulas concluídas", padrao: false },
   { k: "cadastro", rotulo: "Cadastro", padrao: false },
   { k: "ultimo_acesso", rotulo: "Último acesso", padrao: false },
 ];
 
-const ACOES_MASSA: { v: string; rotulo: string; param?: "curso" | "tag" | "texto" | "data" | "dias"; perigo?: boolean }[] = [
+const ACOES_MASSA: { v: string; rotulo: string; param?: "curso" | "texto" | "data" | "dias"; perigo?: boolean }[] = [
   { v: "adicionar_curso", rotulo: "Adicionar alunos em curso", param: "curso" },
   { v: "remover_curso", rotulo: "Remover alunos de curso", param: "curso" },
-  { v: "adicionar_tag", rotulo: "Adicionar nova tag aos alunos", param: "tag" },
-  { v: "remover_tag", rotulo: "Remover tag", param: "tag" },
   { v: "observacao", rotulo: "Aplicar observação nos alunos", param: "texto" },
   { v: "ativar", rotulo: "Ativar alunos pendentes" },
   { v: "bloquear", rotulo: "Bloquear alunos" },
@@ -58,19 +57,19 @@ const ACOES_MASSA: { v: string; rotulo: string; param?: "curso" | "tag" | "texto
 
 export default function AlunosLista() {
   const navigate = useNavigate();
-  const [params] = useSearchParams();
-  const { data: alunos = [], isLoading } = useTrnAlunos();
-  const { data: tags = [] } = useTrnTags();
   const { data: cursos = [] } = useTrnCursos();
   const excluir = useTrnExcluirAluno();
   const massa = useTrnAcaoMassa();
 
   const [busca, setBusca] = useState("");
-  // `?tag=<id>` vem do cartão em Alunos › Tags: abre já filtrada.
-  const [mostrarFiltros, setMostrarFiltros] = useState(!!params.get("tag"));
-  const [fTag, setFTag] = useState(params.get("tag") ?? "");
+  const [mostrarFiltros, setMostrarFiltros] = useState(false);
   const [fCurso, setFCurso] = useState("");
-  const [fStatus, setFStatus] = useState<"" | StatusAluno>("");
+  // "" = padrão: sem os inativos (demitido/afastado). "todos" e "inativo"
+  // são os únicos que fazem o banco mandar os inativos (22/09/2026 — a
+  // lista com os 13 mil levava ~10 s).
+  const [fStatus, setFStatus] = useState<"" | "todos" | StatusAluno>("");
+  const incluirInativos = fStatus === "todos" || fStatus === "inativo";
+  const { data: alunos = [], isLoading } = useTrnAlunos(incluirInativos);
   const [fExpira, setFExpira] = useState<"" | "vitalicio" | "expira" | "expirado">("");
   const [colunas, setColunas] = useState<Set<ColunaOpcional>>(new Set(COLUNAS.filter((c) => c.padrao).map((c) => c.k)));
   const [selecionados, setSelecionados] = useState<Set<string>>(new Set());
@@ -92,15 +91,14 @@ export default function AlunosLista() {
     const b = busca.trim().toLowerCase();
     return alunos.filter((a) => {
       if (b && !`${a.nome} ${a.email} ${a.telefone ?? ""} ${a.documento ?? ""}`.toLowerCase().includes(b)) return false;
-      if (fTag && !a.tag_ids.includes(fTag)) return false;
-      if (fStatus && a.status !== fStatus) return false;
+      if (fStatus && fStatus !== "todos" && a.status !== fStatus) return false;
       if (fExpira === "vitalicio" && a.expira_em) return false;
       if (fExpira === "expira" && (!a.expira_em || a.expira_em < hoje)) return false;
       if (fExpira === "expirado" && (!a.expira_em || a.expira_em >= hoje)) return false;
       if (alunosDoCurso && !alunosDoCurso.has(a.id)) return false;
       return true;
     });
-  }, [alunos, busca, fTag, fStatus, fExpira, alunosDoCurso, hoje]);
+  }, [alunos, busca, fStatus, fExpira, alunosDoCurso, hoje]);
 
   const pag = usePaginacao(filtrados, 20);
   const todosDaPagina = pag.itens.length > 0 && pag.itens.every((a) => selecionados.has(a.id));
@@ -115,7 +113,7 @@ export default function AlunosLista() {
     const linhas = filtrados.map((a) => ({
       Nome: a.nome, "E-mail": a.email, Telefone: a.telefone ?? "", Documento: a.documento ?? "",
       Status: ROTULO_STATUS_ALUNO[a.status], "Expira em": a.expira_em ? fmtData(a.expira_em) : "Vitalício",
-      Tags: a.tags.join("; "), Cursos: a.cursos, "Aulas concluídas": a.aulas_concluidas,
+      Cursos: a.cursos, "Aulas concluídas": a.aulas_concluidas,
       Cadastro: fmtData(a.created_at), "Último acesso": a.ultimo_acesso_em ? fmtDataHora(a.ultimo_acesso_em) : "",
     }));
     const ws = XLSX.utils.json_to_sheet(linhas);
@@ -125,17 +123,18 @@ export default function AlunosLista() {
   };
 
   // ── Ações em massa ────────────────────────────────────────────────
-  // Recortes (21/09/2026): além de tag / selecionados / todos, dá pra pegar
+  // Recortes (21/09/2026): além de selecionados / todos, dá pra pegar
   // um CONTRATO inteiro (um ou vários, só quem está Trabalhando ou todo
   // mundo) e por status de aluno — "cadastrar um contrato inteiro em alguns
   // cursos". E as ações de curso aceitam VÁRIOS cursos de uma vez (a RPC
   // roda uma vez por curso). O contrato/status de cada aluno vem da
   // trn_alunos_recorte (id/contrato/status, um jsonb só), lida só quando o modal abre.
   const [massaAberta, setMassaAberta] = useState(false);
-  const [mFiltro, setMFiltro] = useState<"tag" | "selecionados" | "todos" | "contrato" | "status">("tag");
-  const [mTag, setMTag] = useState("");
+  const [mFiltro, setMFiltro] = useState<"selecionados" | "todos" | "contrato" | "cargo" | "status">("contrato");
   const [mContratos, setMContratos] = useState<string[]>([]);
   const [mSoAtivos, setMSoAtivos] = useState(true);
+  const [mCargos, setMCargos] = useState<string[]>([]);
+  const [mBuscaCargo, setMBuscaCargo] = useState("");
   const [mStatus, setMStatus] = useState<"ativo" | "inativo" | "bloqueado" | "pendente">("ativo");
   const [mAcao, setMAcao] = useState("");
   const [mParam, setMParam] = useState("");
@@ -146,11 +145,11 @@ export default function AlunosLista() {
   const { data: cadastro = [] } = useQuery({
     queryKey: ["trn-alunos-recorte"],
     enabled: massaAberta,
-    // Um jsonb só (id/contrato/status de todos): sem o corte de 1000 linhas.
+    // Um jsonb só (id/contrato/cargo/status de todos): sem o corte de 1000 linhas.
     queryFn: async () => {
       const { data, error } = await sb.rpc("trn_alunos_recorte");
       if (error) throw error;
-      return (data ?? []) as { id: string; contrato: string | null; status: string }[];
+      return (data ?? []) as { id: string; contrato: string | null; cargo: string | null; status: string }[];
     },
   });
   const contratosDoCadastro = useMemo(() => {
@@ -163,31 +162,42 @@ export default function AlunosLista() {
     }
     return [...m.entries()].map(([nome, n]) => ({ nome, ...n })).sort((x, y) => x.nome.localeCompare(y.nome, "pt-BR"));
   }, [cadastro]);
+  // Cargo por recorte só olha quem está Trabalhando (ativo) — cargo de quem já
+  // saiu fica gravado no histórico, mas não representa cargo de ninguém hoje
+  // (pedido de 22/09/2026: "pegar somente os cargos dos que estão trabalhando").
+  const cargosDoCadastro = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const a of cadastro) {
+      if (!a.cargo || a.status !== "ativo") continue;
+      m.set(a.cargo, (m.get(a.cargo) ?? 0) + 1);
+    }
+    return [...m.entries()].map(([nome, n]) => ({ nome, n })).sort((x, y) => x.nome.localeCompare(y.nome, "pt-BR"));
+  }, [cadastro]);
   /** Os alunos que o recorte alcança — mostrado antes de aplicar. */
   const alvoRecorte = useMemo<string[] | null>(() => {
     if (mFiltro === "selecionados") return [...selecionados];
     if (mFiltro === "contrato") return cadastro.filter((a) => a.contrato && mContratos.includes(a.contrato) && (!mSoAtivos || a.status === "ativo")).map((a) => a.id);
+    if (mFiltro === "cargo") return cadastro.filter((a) => a.cargo && mCargos.includes(a.cargo) && a.status === "ativo").map((a) => a.id);
     if (mFiltro === "status") return cadastro.filter((a) => a.status === mStatus).map((a) => a.id);
-    return null; // tag e todos: a RPC resolve
-  }, [mFiltro, selecionados, cadastro, mContratos, mSoAtivos, mStatus]);
+    return null; // todos: a RPC resolve
+  }, [mFiltro, selecionados, cadastro, mContratos, mSoAtivos, mCargos, mStatus]);
   const acaoDeCurso = acaoDef?.param === "curso";
 
   const aplicarMassa = async () => {
     if (!mAcao) return toast.error("Escolha a ação.");
-    if (mFiltro === "tag" && !mTag) return toast.error("Escolha a tag.");
     if (mFiltro === "selecionados" && selecionados.size === 0) return toast.error("Selecione alunos na lista.");
     if (mFiltro === "contrato" && mContratos.length === 0) return toast.error("Escolha pelo menos um contrato.");
+    if (mFiltro === "cargo" && mCargos.length === 0) return toast.error("Escolha pelo menos um cargo.");
     if (alvoRecorte && alvoRecorte.length === 0) return toast.error("Nenhum aluno nesse recorte.");
     if (acaoDeCurso && mCursos.length === 0) return toast.error("Escolha pelo menos um curso.");
     if (acaoDef?.param && !acaoDeCurso && !mParam.trim()) return toast.error("Preencha o parâmetro da ação.");
     const param: Record<string, unknown> = {};
-    if (acaoDef?.param === "tag") param.tag_id = mParam;
     if (acaoDef?.param === "texto") param.texto = mParam;
     if (acaoDef?.param === "data") param.data = mParam;
     if (acaoDef?.param === "dias") param.dias = Number(mParam);
     if (acaoDef?.perigo && !window.confirm("Excluir DE VEZ os alunos do recorte? Não dá para desfazer.")) return;
     try {
-      const base = { acao: mAcao, alunos: alvoRecorte ?? undefined, tag: mFiltro === "tag" ? mTag : null };
+      const base = { acao: mAcao, alunos: alvoRecorte ?? undefined, tag: null };
       let afetados = 0, alvo = 0;
       if (acaoDeCurso) {
         for (const cursoId of mCursos) {
@@ -221,7 +231,7 @@ export default function AlunosLista() {
       <AcessoGate menu={MENU.alunos} acao="visualizar" fallback={<Card className="p-6 text-sm text-muted-foreground">Você não tem liberação para ver os alunos.</Card>}>
         <TrnHero
           titulo="Todos os alunos"
-          texto={`${alunos.length} aluno(s) na plataforma. Busque, filtre por tag/curso/status e aplique ações em massa.`}
+          texto={`${alunos.length} aluno(s) ${incluirInativos ? "na plataforma, com os inativos" : "sem os inativos (demitidos/afastados só aparecem pelo filtro de status)"}. Busque, filtre por curso/status e aplique ações em massa.`}
           acoes={<>
             <button className="sec" onClick={exportar}><Download className="h-4 w-4" /> Exportar lista</button>
             <AcessoGate menu={MENU.alunos} acao="alterar">
@@ -253,17 +263,17 @@ export default function AlunosLista() {
           </div>
           {mostrarFiltros && (
             <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-              <Select value={fTag || "__"} onValueChange={(v) => setFTag(v === "__" ? "" : v)}>
-                <SelectTrigger><SelectValue placeholder="Tags" /></SelectTrigger>
-                <SelectContent><SelectItem value="__">Todas as tags</SelectItem>{tags.map((t) => <SelectItem key={t.id} value={t.id}>{t.nome}</SelectItem>)}</SelectContent>
-              </Select>
               <Select value={fCurso || "__"} onValueChange={(v) => filtrarCurso(v === "__" ? "" : v)}>
                 <SelectTrigger><SelectValue placeholder="Todos os cursos" /></SelectTrigger>
                 <SelectContent><SelectItem value="__">Todos os cursos</SelectItem>{cursos.map((c) => <SelectItem key={c.id} value={c.id}>{c.nome}{c.publicado ? "" : " (rascunho)"}</SelectItem>)}</SelectContent>
               </Select>
-              <Select value={fStatus || "__"} onValueChange={(v) => setFStatus(v === "__" ? "" : (v as StatusAluno))}>
+              <Select value={fStatus || "__"} onValueChange={(v) => setFStatus(v === "__" ? "" : (v as "todos" | StatusAluno))}>
                 <SelectTrigger><SelectValue placeholder="Status" /></SelectTrigger>
-                <SelectContent><SelectItem value="__">Todos os status</SelectItem>{(Object.keys(ROTULO_STATUS_ALUNO) as StatusAluno[]).map((s) => <SelectItem key={s} value={s}>{ROTULO_STATUS_ALUNO[s]}</SelectItem>)}</SelectContent>
+                <SelectContent>
+                  <SelectItem value="__">Sem inativos (padrão)</SelectItem>
+                  <SelectItem value="todos">Todos, com inativos/demitidos</SelectItem>
+                  {(Object.keys(ROTULO_STATUS_ALUNO) as StatusAluno[]).map((s) => <SelectItem key={s} value={s}>{ROTULO_STATUS_ALUNO[s]}{s === "inativo" ? " (demitidos/afastados)" : ""}</SelectItem>)}
+                </SelectContent>
               </Select>
               <Select value={fExpira || "__"} onValueChange={(v) => setFExpira(v === "__" ? "" : (v as typeof fExpira))}>
                 <SelectTrigger><SelectValue placeholder="Expiração" /></SelectTrigger>
@@ -280,7 +290,7 @@ export default function AlunosLista() {
 
         {isLoading ? <TrnCarregando texto="Carregando alunos…" /> : alunos.length === 0 ? (
           <TrnVazio titulo="Nenhum aluno ainda" texto="Os alunos são os colaboradores do cadastro — sincronize em Gerenciar alunos, ou importe a planilha do membox."
-                    acao={<div className="flex gap-2"><Button asChild><Link to="/app/treinamentos/alunos/novo">Gerenciar alunos</Link></Button><Button asChild variant="outline"><Link to="/app/treinamentos/alunos/importar">Importar alunos</Link></Button></div>} />
+                    acao={<div className="flex gap-2"><Button asChild><Link to="/app/treinamentos/alunos/novo">Gerenciar alunos</Link></Button></div>} />
         ) : (
           <div className="trn-card overflow-hidden p-0">
             <div className="overflow-x-auto">
@@ -292,7 +302,6 @@ export default function AlunosLista() {
                     <th>E-mail</th>
                     {colunas.has("telefone") && <th>Telefone</th>}
                     {colunas.has("documento") && <th>Documento</th>}
-                    {colunas.has("tags") && <th>Tags</th>}
                     {colunas.has("cursos") && <th>Cursos</th>}
                     {colunas.has("concluidas") && <th>Aulas concl.</th>}
                     <th>Status</th>
@@ -310,7 +319,6 @@ export default function AlunosLista() {
                       <td className="text-slate-600">{a.email}</td>
                       {colunas.has("telefone") && <td className="whitespace-nowrap">{a.telefone ?? "—"}</td>}
                       {colunas.has("documento") && <td>{a.documento ?? "—"}</td>}
-                      {colunas.has("tags") && <td><TagChips nomes={a.tags} /></td>}
                       {colunas.has("cursos") && <td>{a.acesso_completo ? <span className="trn-badge info">Acesso completo</span> : a.cursos}</td>}
                       {colunas.has("concluidas") && <td>{a.aulas_concluidas}</td>}
                       <td><StatusAlunoBadge status={a.status} /></td>
@@ -354,8 +362,8 @@ export default function AlunosLista() {
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="contrato">Contrato (todo o pessoal do contrato)</SelectItem>
+                    <SelectItem value="cargo">Cargo (todo mundo com esse cargo)</SelectItem>
                     <SelectItem value="status">Status do aluno (ativos, inativos…)</SelectItem>
-                    <SelectItem value="tag">Tag do aluno</SelectItem>
                     <SelectItem value="selecionados">Alunos selecionados na lista ({selecionados.size})</SelectItem>
                     <SelectItem value="todos">Todos os alunos da plataforma</SelectItem>
                   </SelectContent>
@@ -383,6 +391,26 @@ export default function AlunosLista() {
                   </label>
                 </div>
               )}
+              {mFiltro === "cargo" && (
+                <div>
+                  <Label className="text-xs">Cargos (marque um ou vários)</Label>
+                  <p className="mt-0.5 text-xs text-muted-foreground">Só entra quem está Trabalhando — cargo de quem já saiu não conta.</p>
+                  <Input className="mt-1" placeholder="Buscar cargo…" value={mBuscaCargo} onChange={(e) => setMBuscaCargo(e.target.value)} />
+                  <div className="mt-1 max-h-48 overflow-y-auto rounded-md border p-1">
+                    {cargosDoCadastro.length === 0 && <div className="p-2 text-xs text-muted-foreground">Carregando cargos…</div>}
+                    {cargosDoCadastro.filter((c) => !mBuscaCargo.trim() || c.nome.toLowerCase().includes(mBuscaCargo.trim().toLowerCase())).map((c) => {
+                      const on = mCargos.includes(c.nome);
+                      return (
+                        <label key={c.nome} className={`flex cursor-pointer items-center gap-2 rounded px-2 py-1 text-xs ${on ? "bg-primary/10" : "hover:bg-muted"}`}>
+                          <Checkbox checked={on} onCheckedChange={() => setMCargos((l) => on ? l.filter((x) => x !== c.nome) : [...l, c.nome])} />
+                          <span className="flex-1">{c.nome}</span>
+                          <span className="text-muted-foreground">{c.n} ativo(s)</span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
               {mFiltro === "status" && (
                 <Select value={mStatus} onValueChange={(v) => setMStatus(v as typeof mStatus)}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
@@ -396,15 +424,6 @@ export default function AlunosLista() {
               )}
               {alvoRecorte && (
                 <p className="text-xs text-muted-foreground">Recorte: <b>{alvoRecorte.length}</b> aluno(s).</p>
-              )}
-              {mFiltro === "tag" && (
-                <div>
-                  <Label className="text-xs">Selecione a tag que deseja filtrar os alunos</Label>
-                  <Select value={mTag || "__"} onValueChange={(v) => setMTag(v === "__" ? "" : v)}>
-                    <SelectTrigger><SelectValue placeholder="---" /></SelectTrigger>
-                    <SelectContent><SelectItem value="__">---</SelectItem>{tags.map((t) => <SelectItem key={t.id} value={t.id}>{t.nome} ({t.alunos ?? 0})</SelectItem>)}</SelectContent>
-                  </Select>
-                </div>
               )}
               <div>
                 <Label className="text-xs">Selecione uma ação para aplicar nos alunos do recorte</Label>
@@ -429,12 +448,6 @@ export default function AlunosLista() {
                     })}
                   </div>
                 </div>
-              )}
-              {acaoDef?.param === "tag" && (
-                <Select value={mParam || "__"} onValueChange={(v) => setMParam(v === "__" ? "" : v)}>
-                  <SelectTrigger><SelectValue placeholder="Tag" /></SelectTrigger>
-                  <SelectContent><SelectItem value="__">Escolha a tag</SelectItem>{tags.map((t) => <SelectItem key={t.id} value={t.id}>{t.nome}</SelectItem>)}</SelectContent>
-                </Select>
               )}
               {acaoDef?.param === "texto" && <Textarea rows={3} placeholder="Observação a gravar em cada aluno" value={mParam} onChange={(e) => setMParam(e.target.value)} />}
               {acaoDef?.param === "data" && <Input type="date" value={mParam} onChange={(e) => setMParam(e.target.value)} />}

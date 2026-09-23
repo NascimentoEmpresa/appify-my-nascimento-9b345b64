@@ -6,7 +6,7 @@ import { usePlanilhaPostoLocalizacaoAll, usePostoLocalizacaoCoords } from "@/hoo
 import { useEmpresaAtiva } from "@/context/EmpresaAtivaContext";
 import {
   AlertTriangle, FileText, Trophy, Tv, TrendingUp,
-  Target, ChevronRight, BookOpen, Award,
+  Target, ChevronRight, BookOpen, Award, PauseCircle, Ban,
 } from "lucide-react";
 import {
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
@@ -330,7 +330,7 @@ export default function PainelExecutivo() {
             color="bg-teal-100"
           />
         </div>
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3 xl:items-stretch">
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5 xl:items-stretch">
           <KpiCard
             label="Alertas de abertura (próx. 7 dias)"
             value={String(stats.alertas.length)}
@@ -351,6 +351,21 @@ export default function PainelExecutivo() {
             sub="Excluindo: Não Participado, Suspenso e Revogado"
             icon={<FileText className="text-cyan-300" />}
             color="bg-cyan-100"
+          />
+          {/* SIS-2026-0448: contagem de suspensos e revogados no painel. */}
+          <KpiCard
+            label="Editais suspensos"
+            value={String(stats.suspensos)}
+            sub="No período selecionado"
+            icon={<PauseCircle className="text-violet-300" />}
+            color="bg-violet-100"
+          />
+          <KpiCard
+            label="Editais revogados"
+            value={String(stats.revogados)}
+            sub="No período selecionado"
+            icon={<Ban className="text-slate-300" />}
+            color="bg-slate-100"
           />
         </div>
 

@@ -53,7 +53,11 @@ export function useChamadosNotif() {
   const { data: chamados = [] } = useQuery({
     queryKey: ["chamados-notif", uid],
     enabled: !!uid,
-    refetchInterval: 60_000,
+    // 21/09/2026: era 60s. Roda na Sidebar, ou seja em toda tela de todo
+    // usuário logado — carga fixa o dia inteiro. Afrouxado para 180s junto
+    // com o sininho da Topbar, depois do reinício do Postgres por
+    // esgotamento de conexões. É bolinha de aviso, tolera 3 minutos.
+    refetchInterval: 180_000,
     staleTime: 30_000,
     queryFn: async () => {
       const { data } = await (supabase as any)

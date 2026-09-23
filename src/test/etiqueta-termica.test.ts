@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  MEDIDAS, TITULO_ENVIADOS, TITULO_PENDENTES, htmlEtiqueta, linhaItem, textoItens, urlRetirada,
+  AVISO_ITENS_PENDENTES, MEDIDAS, TITULO_ENVIADOS, TITULO_PENDENTES, htmlEtiqueta, linhaItem, textoItens, urlRetirada,
   type DadosEtiqueta,
 } from "@/lib/suprimentos/etiquetaTermica";
 
@@ -155,7 +155,8 @@ describe("texto dos itens — enviados x pendentes", () => {
     expect(texto).toBe(
       "ITENS PENDENTES DE ENVIO:\n" +
       "• BABUCHE - PRETO — Tam. 40 — Qtd. 2\n" +
-      "• DETERGENTE — 5 L — Qtd. 1",
+      "• DETERGENTE — 5 L — Qtd. 1\n" +
+      AVISO_ITENS_PENDENTES,
     );
     expect(texto).not.toContain(TITULO_ENVIADOS);
   });
@@ -167,6 +168,7 @@ describe("texto dos itens — enviados x pendentes", () => {
     ]);
     expect(texto).toContain(TITULO_ENVIADOS);
     expect(texto).not.toContain(TITULO_PENDENTES);
+    expect(texto).not.toContain(AVISO_ITENS_PENDENTES);
     expect(texto).toContain("• BABUCHE - PRETO — Tam. 40 — Qtd. 2");
     expect(texto).toContain("• DETERGENTE — 5 L — Qtd. 1");
   });
@@ -179,7 +181,8 @@ describe("texto dos itens — enviados x pendentes", () => {
     expect(secaoPendentes).toBe(
       "ITENS PENDENTES DE ENVIO:\n" +
       "• BABUCHE - PRETO — Tam. 40 — Qtd. 1\n" +
-      "• DETERGENTE — 5 L — Qtd. 1",
+      "• DETERGENTE — 5 L — Qtd. 1\n" +
+      AVISO_ITENS_PENDENTES,
     );
     // O item só do pendente não pode aparecer na seção de enviados.
     expect(secaoEnviados).not.toContain("DETERGENTE");

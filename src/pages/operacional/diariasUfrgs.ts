@@ -41,9 +41,10 @@ export const TIPOS_DIARIA: { value: TipoDiaria; label: string; descricao: string
  * hospedagem de R$ 173,77 por R$ 66,07 sem ninguém perceber.
  *
  * A lista de verdade é a tabela "DIARIA_UFRGS_TARIFA" no banco (é dela que
- * sai o valor); esta constante existe para o dropdown não depender de uma
- * consulta para desenhar duas opções, e o back-end recusa sindicato que não
- * tenha tarifa cadastrada.
+ * sai o valor) — e desde 22/09/2026 ela É editável pela tela, então a lista
+ * pode crescer sem passar por migration. Quem monta o dropdown é
+ * sindicatosUfrgs() logo abaixo; esta constante ficou como CHÃO, para o
+ * campo não aparecer vazio enquanto a consulta não voltou.
  */
 export const SINDICATOS_UFRGS = ["SINDIRODOSUL/RS", "SINECARGA/RS"] as const;
 export type SindicatoUfrgs = (typeof SINDICATOS_UFRGS)[number];
@@ -62,10 +63,69 @@ export interface TarifaUfrgs {
   aliquotaPis: number;
   aliquotaCofins: number;
   aliquotaIss: number;
+  /**
+   * Vigência desativada pela tela. Continua no banco porque
+   * "DIARIA_UFRGS".tarifa_id aponta para ela — a diária já lançada precisa
+   * seguir explicando o valor que foi faturado. Campo OPCIONAL de propósito:
+   * ausente significa ativa, que é como a tabela nasceu e como os testes
+   * montam tarifa.
+   */
+  ativo?: boolean;
+  /** Preenchidos quando a linha passou pela tela (diaria_ufrgs_tarifa_salvar). */
+  motivo?: string | null;
+  atualizadoEm?: string | null;
+  atualizadoPorNome?: string | null;
 }
 
 export const aliquotaTotal = (t: TarifaUfrgs) =>
   t.aliquotaPis + t.aliquotaCofins + t.aliquotaIss;
+
+/** Uma vigência desativada não entra em conta nenhuma, nem no dropdown. */
+const ativa = (t: TarifaUfrgs) => t.ativo !== false;
+
+/**
+ * Os sindicatos que o dropdown oferece: os que TÊM tarifa ativa.
+ *
+ * Deixou de ser a constante em 22/09/2026, quando a tabela de tarifas virou
+ * editável pela tela: um sindicato cadastrado ali tem que aparecer no campo
+ * sem ninguém mexer em código. O contrário também importa — oferecer um nome
+ * sem tarifa ativa deixaria a pessoa escolher e só descobrir na hora de
+ * salvar, porque quem recusa é o banco ("Não há tarifa de diária cadastrada
+ * para X"). A constante só volta ao jogo enquanto a consulta não respondeu,
+ * para o campo não piscar vazio.
+ */
+export function sindicatosUfrgs(tarifas: TarifaUfrgs[]): string[] {
+  const nomes = [...new Set(tarifas.filter(ativa).map((t) => t.sindicato))];
+  return nomes.length > 0
+    ? nomes.sort((a, b) => a.localeCompare(b, "pt-BR"))
+    : [...SINDICATOS_UFRGS];
+}
+
+/** As vigências de um sindicato, da mais nova para a mais antiga. */
+export function vigenciasDoSindicato(tarifas: TarifaUfrgs[], sindicato: string): TarifaUfrgs[] {
+  return tarifas
+    .filter((t) => t.sindicato === sindicato)
+    .sort((a, b) => b.vigenciaInicio.localeCompare(a.vigenciaInicio));
+}
+
+/**
+ * A vigência seguinte à de uma data, no mesmo sindicato — o FIM da janela em
+ * que aquela tabela de valores manda. `null` quando é a última.
+ */
+export function proximaVigencia(
+  tarifas: TarifaUfrgs[],
+  sindicato: string,
+  vigenciaInicio: string,
+): string | null {
+  const seguintes = tarifas
+    .filter((t) => ativa(t) && t.sindicato === sindicato && t.vigenciaInicio > vigenciaInicio)
+    .map((t) => t.vigenciaInicio)
+    .sort();
+  return seguintes[0] ?? null;
+}
+
+/** Status em que a diária ainda pode ser recalculada por uma mudança de tarifa. */
+export const STATUS_ABERTOS_UFRGS: StatusSolicitacao[] = ["solicitada", "em_ajuste"];
 
 /** Lotação → Fiscal (a VLOOKUP da coluna "Fiscal"). */
 export interface LotacaoUfrgs {
@@ -168,6 +228,10 @@ export function calcularValoresUfrgs(
  * DATA DA SAÍDA — não na data de hoje. Lançamento retroativo tem que usar a
  * tabela que valia no dia da viagem, e diária de janeiro reexportada depois
  * do dissídio tem que continuar mostrando o valor que foi faturado.
+ *
+ * Desativada não conta: é a mesma regra do `x.ativo = true` da trigger
+ * diaria_ufrgs_calcular(), e é o que faz "remover a vigência errada" na tela
+ * devolver as diárias em aberto para a tabela anterior.
  */
 export function tarifaVigente(
   tarifas: TarifaUfrgs[],
@@ -176,9 +240,95 @@ export function tarifaVigente(
 ): TarifaUfrgs | null {
   if (!sindicato || !saida) return null;
   const candidatas = tarifas
-    .filter((t) => t.sindicato === sindicato && t.vigenciaInicio <= saida)
+    .filter((t) => ativa(t) && t.sindicato === sindicato && t.vigenciaInicio <= saida)
     .sort((a, b) => b.vigenciaInicio.localeCompare(a.vigenciaInicio));
   return candidatas[0] ?? null;
+}
+
+/** O que a pessoa digitou no modal de tarifas, antes de virar linha no banco. */
+export interface RascunhoTarifaUfrgs {
+  sindicato: string;
+  /** yyyy-mm-dd — "vigente a partir de". */
+  vigenciaInicio: string;
+  hospedagemCentavos: number;
+  cafeCentavos: number;
+  almocoCentavos: number;
+  jantaCentavos: number;
+  vaCentavos: number;
+  aliquotaPis: number;
+  aliquotaCofins: number;
+  aliquotaIss: number;
+}
+
+/**
+ * As mesmas recusas de diaria_ufrgs_tarifa_salvar(), do lado de cá.
+ *
+ * Duplicidade deliberada, igual à de calcularValoresUfrgs(): quem MANDA é a
+ * RPC (o front fala direto com o Supabase pela anon key, e validação de tela
+ * não protege nada). Isto aqui existe para a pessoa ler o problema embaixo do
+ * campo enquanto digita, em vez de descobrir num toast depois de salvar.
+ *
+ * A trava da alíquota não é preciosismo: o tributo é um gross-up,
+ * U = T * f / (1 - f). Com f = 1 o banco divide por zero na hora de gravar a
+ * DIÁRIA — longe do campo onde o número errado foi digitado.
+ */
+export function validarTarifaUfrgs(r: RascunhoTarifaUfrgs): string | null {
+  if (!r.sindicato.trim()) return "Informe o sindicato.";
+  if (r.sindicato.trim().length > 60) return "Nome de sindicato longo demais (máximo de 60 caracteres).";
+  if (!r.vigenciaInicio) return "Informe a data a partir da qual esta tabela de valores vale.";
+  if (r.vigenciaInicio < "2000-01-01") return "Data de vigência inválida.";
+  const valores = [
+    r.hospedagemCentavos,
+    r.cafeCentavos,
+    r.almocoCentavos,
+    r.jantaCentavos,
+    r.vaCentavos,
+  ];
+  if (valores.some((v) => !Number.isFinite(v))) return "Há valor em branco na tabela.";
+  if (valores.some((v) => v < 0)) return "Os valores da tarifa não podem ser negativos.";
+  if (valores.every((v) => v === 0)) return "Informe ao menos um valor maior que zero.";
+  const aliquotas = [r.aliquotaPis, r.aliquotaCofins, r.aliquotaIss];
+  if (aliquotas.some((v) => !Number.isFinite(v))) return "Há alíquota em branco.";
+  if (aliquotas.some((v) => v < 0)) return "As alíquotas não podem ser negativas.";
+  const f = aliquotas.reduce((s, v) => s + v, 0);
+  if (f >= 1) return "A soma das alíquotas precisa ser menor que 100%.";
+  return null;
+}
+
+/**
+ * Quem sente uma mudança de tarifa, ANTES de ela ser salva.
+ *
+ * É o aviso que o modal mostra ("isto recalcula N e deixa M como estão") e a
+ * mesma divisão que a RPC faz do lado do banco:
+ *
+ *   recalculadas → 'solicitada' e 'em_ajuste' na janela da vigência. A conta
+ *                  ainda não foi conferida por ninguém, então ela acompanha.
+ *   congeladas   → todo o resto na mesma janela. Aprovada é conta conferida,
+ *                  e paga já virou desembolso no Malote: reescrever qualquer
+ *                  uma mudaria um número que alguém assinou.
+ *
+ * JANELA, não "tudo do sindicato": a vigência manda da data dela até a
+ * PRÓXIMA do mesmo sindicato. Diária fora disso é governada por outra linha
+ * da tabela e não muda um centavo.
+ */
+export function impactoDaTarifa(
+  diarias: DiariaUfrgs[],
+  tarifas: TarifaUfrgs[],
+  sindicato: string,
+  vigenciaInicio: string,
+): { recalculadas: DiariaUfrgs[]; congeladas: DiariaUfrgs[] } {
+  const fim = proximaVigencia(tarifas, sindicato, vigenciaInicio);
+  const naJanela = diarias.filter(
+    (d) =>
+      d.sindicato === sindicato &&
+      d.saida >= vigenciaInicio &&
+      (fim === null || d.saida < fim) &&
+      d.status !== "excluida",
+  );
+  return {
+    recalculadas: naJanela.filter((d) => STATUS_ABERTOS_UFRGS.includes(d.status)),
+    congeladas: naJanela.filter((d) => !STATUS_ABERTOS_UFRGS.includes(d.status)),
+  };
 }
 
 /** Uma diária UFRGS como a tela a consome. */

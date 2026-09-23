@@ -34,14 +34,15 @@ import {
   STATUS_FASE_SOLICITACAO,
   souLancadorDespesa,
   classificacaoTemLancadorConfigurado,
+  useNomeUsuario,
 } from "@/hooks/useMaloteDespesa";
+import { useFormasPagamento, MaloteFormaPagamento } from "@/hooks/useMaloteFormaPagamento";
 import { ExcluirPermanentementeButton } from "./ExcluirPermanentementeButton";
 import { formatBRL } from "@/hooks/usePlanilhaCusto";
 import { useClassificacoesOrcamento } from "@/hooks/usePlanejamentoOrcamentario";
 import { useOrdenacaoTabela } from "@/hooks/useOrdenacaoTabela";
 import { useEstadoPersistido } from "@/hooks/useEstadoPersistido";
 import { ordenarPor } from "@/lib/ordenarTabela";
-import { JustificativaPendenteBadge } from "./JustificativaPendenteBadge";
 import {
   CABECALHOS_EXCEL_MEUS_ITENS,
   aindaESolicitacao,
@@ -56,8 +57,8 @@ import {
 
 // SIS-2026-0316: colunas ordenáveis (clicar no cabeçalho, mesmo padrão do
 // Windows Explorer). Ficam de fora as que não têm um valor único e
-// comparável de forma útil: Parcela (composto X/Y), Aprovador pendente
-// (lista/tooltip) e Justificativa (badge de estado, não dado ordenável).
+// comparável de forma útil: Parcela (composto X/Y) e Aprovador pendente
+// (lista/tooltip).
 type ColunaMeusItens =
   | "tipo"
   | "numero"
@@ -126,7 +127,19 @@ function itemMatchesChip(item: ItemLinhaMalote, chip: ChipKey): boolean {
   }
 }
 
-function AprovadorPendenteCell({ despesa }: { despesa: MaloteDespesaRow }) {
+// SIS-2026-0439 (achado do usuário, SD-2026-0042): esta célula mostrava
+// sempre o aprovador da Classificação (ex. Cassio), mesmo quando a despesa
+// está em Fluxo Especial (forma de pagamento com aprovador fixo, ex.
+// Calita) — mesmo bug de exibição já corrigido em DespesaVisualizar.tsx/
+// Aprovacoes.tsx, faltava aqui.
+function AprovadorPendenteCell({ despesa, formasPagamentoCatalogo }: { despesa: MaloteDespesaRow; formasPagamentoCatalogo: MaloteFormaPagamento[] }) {
+  const formaEspecial = formasPagamentoCatalogo.find(
+    (f) => f.nome === despesa.forma_pagamento && f.fluxo_aprovacao === "especial"
+  );
+  const { data: nomeEspecial } = useNomeUsuario(formaEspecial?.aprovador_especial_user_id ?? undefined);
+  if (despesa.status !== "pendente_aprovacao") return <span className="text-muted-foreground">—</span>;
+  if (formaEspecial) return <span>{nomeEspecial ?? "Aprovador do Fluxo Especial"}</span>;
+
   const nomes = aprovadoresPendentes(despesa);
   if (!nomes) return <span className="text-muted-foreground">—</span>;
   const label = nomes.length > 1 ? `${nomes[0]} +${nomes.length - 1}` : nomes[0];
@@ -146,6 +159,7 @@ export default function MeusItens() {
   const { user } = useAuth();
   const { can } = usePermissoes();
   const { data: itens = [], isLoading } = useMinhasDespesas();
+  const { data: formasPagamentoCatalogo = [] } = useFormasPagamento();
   // [SEM-CHAMADO] (achado do usuário): "Mover para a lixeira" só existia na
   // própria despesa, mas depois disso ela some de Meus Itens/Aprovações e
   // só reaparecia na Lixeira do Fluxo de Caixa (financeiro) — ninguém do
@@ -518,21 +532,20 @@ export default function MeusItens() {
                 <TableHeadOrdenavel coluna="status" ordenacao={ordenacao}>Status</TableHeadOrdenavel>
                 <TableHead>Aprovador pendente</TableHead>
                 <TableHeadOrdenavel coluna="excecao" ordenacao={ordenacao}>Exceção</TableHeadOrdenavel>
-                <TableHead>Justificativa</TableHead>
                 <TableHeadOrdenavel coluna="atualizacao" ordenacao={ordenacao}>Última atualização</TableHeadOrdenavel>
               </TableRow>
             </TableHeader>
             <TableBody>
               {isLoading && (
                 <TableRow>
-                  <TableCell colSpan={14} className="text-center text-muted-foreground py-8">
+                  <TableCell colSpan={13} className="text-center text-muted-foreground py-8">
                     Carregando...
                   </TableCell>
                 </TableRow>
               )}
               {!isLoading && filtrados.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={14} className="text-center text-muted-foreground py-8">
+                  <TableCell colSpan={13} className="text-center text-muted-foreground py-8">
                     Nenhum item encontrado para os filtros selecionados.
                   </TableCell>
                 </TableRow>
@@ -573,13 +586,10 @@ export default function MeusItens() {
                       </Badge>
                     </TableCell>
                     <TableCell className="text-sm">
-                      <AprovadorPendenteCell despesa={despesa} />
+                      <AprovadorPendenteCell despesa={despesa} formasPagamentoCatalogo={formasPagamentoCatalogo} />
                     </TableCell>
                     <TableCell>
                       {despesa.excecao ? <Badge variant="destructive">Sim</Badge> : <span className="text-muted-foreground text-sm">Não</span>}
-                    </TableCell>
-                    <TableCell>
-                      <JustificativaPendenteBadge despesa={despesa} parcela={parcela} />
                     </TableCell>
                     <TableCell className="text-xs text-muted-foreground">{new Date(despesa.updated_at).toLocaleString("pt-BR")}</TableCell>
                   </TableRow>

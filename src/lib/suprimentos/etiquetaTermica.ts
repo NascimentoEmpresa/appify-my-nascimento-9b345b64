@@ -87,6 +87,7 @@ export function linhaItem(i: DadosEtiqueta["itens"][number], quantidade: number 
 
 export const TITULO_ENVIADOS = "ITENS ENVIADOS:";
 export const TITULO_PENDENTES = "ITENS PENDENTES DE ENVIO:";
+export const AVISO_ITENS_PENDENTES = "Itens solicitados ao fornecedor, será despachado assim que chegar.";
 
 /**
  * Texto livre que a tela oferece pronto para edição.
@@ -113,7 +114,7 @@ export function textoItens(dados: DadosEtiqueta, etiquetas: EtiquetaParaEnvio[] 
 
   const secoes = [
     enviados.length ? `${TITULO_ENVIADOS}\n${enviados.join("\n")}` : "",
-    pendentes.length ? `${TITULO_PENDENTES}\n${pendentes.join("\n")}` : "",
+    pendentes.length ? `${TITULO_PENDENTES}\n${pendentes.join("\n")}\n${AVISO_ITENS_PENDENTES}` : "",
   ].filter(Boolean);
 
   return secoes.join("\n\n");

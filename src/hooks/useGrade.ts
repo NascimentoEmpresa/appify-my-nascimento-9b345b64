@@ -37,18 +37,60 @@ export interface GradeItem {
   posicao: number | null;
   status_obs: string | null;
   data_captacao: string | null;
+  // SIS-2026-0446: ata de classificação anexa ao processo (um arquivo). Exigida
+  // na transição para "Em Andamento" (validado no GradeSheet); bucket grade-atas.
+  ata_caminho: string | null;
+  ata_nome: string | null;
+  ata_tamanho: number | null;
+  ata_enviado_por: string | null;
+  ata_enviado_em: string | null;
   capa_id: string | null;
   historico: HistoricoEntry[];
   created_at: string;
   updated_at: string;
 }
 
-export type GradeInsert = Omit<GradeItem, "id" | "created_at" | "updated_at" | "historico" | "capa_id">;
+// SIS-2026-0446: a ata é opcional na criação (só é exigida na transição para
+// "Em Andamento", que é um UPDATE) — por isso os campos ata_* ficam opcionais
+// aqui, senão a importação em massa e o "Nova Entrada" neutro não compilam.
+type GradeAtaCols = "ata_caminho" | "ata_nome" | "ata_tamanho" | "ata_enviado_por" | "ata_enviado_em";
+export type GradeInsert =
+  Omit<GradeItem, "id" | "created_at" | "updated_at" | "historico" | "capa_id" | GradeAtaCols>
+  & Partial<Pick<GradeItem, GradeAtaCols>>;
 // SIS-2026-0463: empresa_id agora É editável (atribuída quando o edital sai do
 // status neutro), então deixou de ser omitida do update.
 export type GradeUpdate = Partial<Omit<GradeItem, "id" | "created_at">>;
 
 const QK = (empresaId: string) => ["grade", empresaId];
+
+// SIS-2026-0446: ata de classificação. Um arquivo por processo, no bucket
+// privado `grade-atas` (migration 20260921000011).
+const BUCKET_ATA = "grade-atas";
+
+/** Sobe a ata e devolve o que gravar nas colunas ata_* da grade. */
+export async function uploadAta(file: File, empresaId: string | null) {
+  const ext = file.name.includes(".") ? "." + file.name.split(".").pop() : "";
+  const prefixo = empresaId || "sem-empresa";
+  const caminho = `${prefixo}/${Date.now()}-${Math.random().toString(36).slice(2)}${ext}`;
+  const { error } = await supabase.storage.from(BUCKET_ATA).upload(caminho, file);
+  if (error) throw error;
+  return { caminho, nome: file.name, tamanho: file.size };
+}
+
+/**
+ * Link temporário de download da ata. Sempre com `download` (nunca abrindo na
+ * aba): o bucket aceita qualquer extensão e um .html/.svg renderizado a partir
+ * do storage executaria script — forçar o download tira isso e ainda entrega o
+ * arquivo com o nome original. Mesma decisão do módulo de cotações.
+ */
+export async function urlAssinadaAta(caminho: string, nome?: string): Promise<string | null> {
+  if (!caminho) return null;
+  const { data, error } = await supabase.storage
+    .from(BUCKET_ATA)
+    .createSignedUrl(caminho, 3600, { download: nome || true });
+  if (error) return null;
+  return data.signedUrl;
+}
 
 // SIS-2026-0359: `todasEmpresas: true` lê a grade de TODAS as empresas do grupo
 // (Lucas/gerente quer as ganhas unificadas). A RLS da grade já é só

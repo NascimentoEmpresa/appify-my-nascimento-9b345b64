@@ -49,10 +49,9 @@ import {
   parcelasSaoValorDaCompra,
   NovaParcela,
   uploadAnexosMalote,
-  aprovadoresDoNivel,
-  nomesAprovadoresDoNivel,
-  souAprovadorDoNivel,
-  souAprovadorConfigurado,
+  nomesAprovadorNivel,
+  souAprovadorDoNivelComRateio,
+  souAprovadorConfiguradoComRateio,
   souLancadorDespesa,
   classificacaoTemLancadorConfigurado,
   STATUS_LABEL,
@@ -467,6 +466,20 @@ export default function DespesaVisualizar() {
   // "corrigir classificação" — a que já vem no join da despesa
   // (despesa.classificacao) só tem a ATUAL, não serve pra listar opções.
   const { data: classificacoesCatalogo = [] } = useClassificacoesOrcamentoAdmin();
+  const classificacaoPorId = useMemo(
+    () => new Map(classificacoesCatalogo.map((c) => [c.id, c])),
+    [classificacoesCatalogo],
+  );
+  // [SEM-CHAMADO] (achado do usuário, 22/09/2026 — DM-2026-0895 travada em
+  // "nenhum aprovador configurado"): despesa multi-classificação não tem
+  // classificacao_id na despesa (é por linha do rateio) — sem isso,
+  // souAprovadorDoNivel/souAprovadorConfigurado nunca reconheciam ninguém
+  // como aprovador dela. Decisão do Iury: vale qualquer aprovador de
+  // qualquer Classificação das linhas do rateio daquele nível.
+  const classificacaoIdsRateioDespesa = useMemo(
+    () => new Set(linhasRateio.map((l) => l.classificacao_id).filter((id): id is string => !!id)),
+    [linhasRateio],
+  );
 
   useEffect(() => {
     if (!despesa) return;
@@ -558,11 +571,21 @@ export default function DespesaVisualizar() {
   const souAprovadorNivelAtual =
     despesa.status === "pendente_aprovacao" &&
     despesa.nivel_aprovacao_atual != null &&
-    (souAprovadorDoNivel(despesa, despesa.nivel_aprovacao_atual, user?.id, formaPagamentoEspecial) || souGerenteFinanceiroDestaExcecao);
-  // SIS-2026-0439: souAprovadorConfigurado (sem nível) ainda não conhece o
-  // Fluxo Especial — checa à parte.
+    (souAprovadorDoNivelComRateio(
+      despesa,
+      despesa.nivel_aprovacao_atual,
+      user?.id,
+      classificacaoIdsRateioDespesa,
+      classificacaoPorId,
+      formaPagamentoEspecial,
+    ) || souGerenteFinanceiroDestaExcecao);
+  // SIS-2026-0439: souAprovadorConfiguradoComRateio (sem nível) ainda não
+  // conhece o Fluxo Especial — checa à parte.
   const souAprovadorEspecial = !!formaPagamentoEspecial && formaPagamentoEspecial.aprovador_especial_user_id === user?.id;
-  const configurado = souAprovadorEspecial || souAprovadorConfigurado(despesa, user?.id) || souGerenteFinanceiroDestaExcecao;
+  const configurado =
+    souAprovadorEspecial ||
+    souAprovadorConfiguradoComRateio(despesa, user?.id, classificacaoIdsRateioDespesa, classificacaoPorId) ||
+    souGerenteFinanceiroDestaExcecao;
   // SIS-2026-0361 (complemento, achado do Iury na prática): despesa com
   // data de pagamento anterior a hoje não pode ser aprovada (nem como
   // exceção) — só resta Solicitar ajuste ou Reprovar. Cobre despesa lançada
@@ -756,7 +779,12 @@ export default function DespesaVisualizar() {
   const souAprovadorVendoAjuste = despesa.status === "necessidade_de_ajuste" && configurado && !podeCorrigirNecessidadeDeAjuste;
   const proximoNivelExiste =
     despesa.nivel_aprovacao_atual != null && despesa.nivel_aprovacao_atual < 3
-      ? aprovadoresDoNivel(despesa, (despesa.nivel_aprovacao_atual + 1) as 1 | 2 | 3).length > 0
+      ? nomesAprovadorNivel(
+          despesa,
+          (despesa.nivel_aprovacao_atual + 1) as 1 | 2 | 3,
+          classificacaoIdsRateioDespesa,
+          classificacaoPorId,
+        ).length > 0
       : false;
 
   // % de alçada (SIS-2026-0132, cadastrado desde sempre mas nunca
@@ -1720,7 +1748,7 @@ export default function DespesaVisualizar() {
                   <span className="font-medium">
                     {formaPagamentoEspecial
                       ? nomeAprovadorEspecial ?? "aprovador do Fluxo Especial"
-                      : nomesAprovadoresDoNivel(despesa, despesa.nivel_aprovacao_atual).join(", ") || "nenhum aprovador configurado"}
+                      : nomesAprovadorNivel(despesa, despesa.nivel_aprovacao_atual, classificacaoIdsRateioDespesa, classificacaoPorId).join(", ") || "nenhum aprovador configurado"}
                   </span>
                   {formaPagamentoEspecial && (
                     <> (Fluxo Especial — {formaPagamentoEspecial.nome})</>

@@ -340,12 +340,15 @@ function porNome<T extends Record<string, unknown>>(lista: T[], emp: Record<stri
  * Nome de contrato reduzido ao que identifica: sem acento, maiúsculo, só
  * letras/dígitos, com as abreviações do Senior desfeitas ("LIMP"→"LIMPEZA",
  * "RECEP"→"RECEPCAO", "AUX"→"AUXILIAR") e o número com "." e "/" iguais.
+ * Zero à esquerda também não conta (22/09/2026): "FURG PORTARIA - 055/2023"
+ * no Senior é "FURG - PORTARIA - 55/2023" no catálogo de Suprimentos.
  */
 export const chaveContrato = (s: unknown): string =>
   String(s ?? "")
     .normalize("NFD").replace(/[̀-ͯ]/g, "").toUpperCase()
     .replace(/\bLIMP\b/g, "LIMPEZA").replace(/\bRECEP\b/g, "RECEPCAO").replace(/\bAUX\b/g, "AUXILIAR")
     .replace(/\bSERV\b/g, "SERVICOS").replace(/\bADM\b/g, "ADMINISTRATIVO")
+    .replace(/\d+/g, n => n.replace(/^0+(?=\d)/, ""))
     .replace(/[^A-Z0-9]+/g, "");
 
 // ── Dias úteis ──────────────────────────────────────────────────────────
