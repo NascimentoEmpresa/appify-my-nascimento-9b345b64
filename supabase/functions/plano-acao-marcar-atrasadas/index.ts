@@ -10,7 +10,11 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
-const STATUS_ISENTOS = "(atrasada,concluida_validada,cancelada,concluida_pendente_evidencia)";
+// aguardando_validacao virou isento em 23/09/2026 (SIS-2026-0506): o
+// responsável já entregou e está esperando o validador — marcar "atrasada"
+// toda manhã desfazia a mudança que ele fez na véspera. Antes (migration
+// 20260729000001) era de propósito NÃO isento; a regra mudou a pedido.
+const STATUS_ISENTOS = "(atrasada,aguardando_validacao,concluida_validada,cancelada,concluida_pendente_evidencia)";
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
