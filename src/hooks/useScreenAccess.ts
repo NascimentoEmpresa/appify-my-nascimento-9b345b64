@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 
-export type AppAcao = "visualizar" | "incluir" | "alterar" | "excluir" | "aprovar" | "enviar_malote" | "exportar" | "executar_ia" | "alterar_dre" | "responder" | "editar_concluida";
+export type AppAcao = "visualizar" | "incluir" | "alterar" | "excluir" | "aprovar" | "enviar_malote" | "exportar" | "executar_ia" | "alterar_dre" | "responder" | "editar_concluida" | "ajuste_administrativo";
 
 export function useScreenAccess(menuCodigo: string | null | undefined, acao: AppAcao, empresaId?: string | null) {
   return useQuery({
@@ -11,7 +11,12 @@ export function useScreenAccess(menuCodigo: string | null | undefined, acao: App
     queryFn: async () => {
       const { data: userData } = await supabase.auth.getUser();
       if (!userData.user) return false;
-      const { data, error } = await supabase.rpc("has_screen_access", {
+      // `as any`: o types.ts gerado não acompanha os valores novos de
+      // app_acao (enviar_malote/alterar_dre/editar_concluida/
+      // ajuste_administrativo...) — mesmo padrão de cast já usado em
+      // outras chamadas .rpc() deste repositório por causa desse
+      // descompasso de geração de tipos.
+      const { data, error } = await (supabase as any).rpc("has_screen_access", {
         _user: userData.user.id,
         _menu: menuCodigo!,
         _acao: acao,
