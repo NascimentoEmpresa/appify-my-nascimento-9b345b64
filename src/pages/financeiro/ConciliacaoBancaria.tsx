@@ -92,6 +92,15 @@ interface ReconciliacaoResult {
 
 const MEMOS_IGNORAR = ["RENDE FACIL", "BB RENDE", "RENDE F"];
 
+// SIS-2026-0491: "Saldo Anterior" é uma linha só do Fluxo de Caixa (a
+// planilha soma o saldo do mês anterior pra abrir o mês) — nunca aparece
+// como lançamento no extrato bancário, então também sempre acusava
+// divergência. Varre a linha inteira (não só uma coluna fixa) porque a
+// planilha do usuário não tem posição de coluna garantida pra esse texto.
+function linhaEhSaldoAnterior(row: unknown[]): boolean {
+  return row.some((cell) => String(cell ?? "").toUpperCase().includes("SALDO ANTERIOR"));
+}
+
 // ── Parser OFX ─────────────────────────────────────────────────────────────
 
 // SIS-2026-0344: o padrão OFX usa "." como separador decimal, mas o Bradesco
@@ -157,6 +166,7 @@ function parsePlanilha(buffer: ArrayBuffer): PlanilhaRow[] {
   const rows: PlanilhaRow[] = [];
   for (let i = startRow; i < raw.length; i++) {
     const row = raw[i] as unknown[];
+    if (linhaEhSaldoAnterior(row)) continue;
     const rawDate = row[colData];
     const rawVal  = row[colValor];
     if (!rawDate || rawVal == null) continue;
