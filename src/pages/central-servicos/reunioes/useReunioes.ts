@@ -19,6 +19,28 @@ export function useReunioes() {
   });
 }
 
+/**
+ * Flag administrativa da Agenda de Reunião.
+ *
+ * Não usa uma ação genérica do módulo: a concessão é individual e explícita
+ * no Gerenciamento de Acesso, para não transformar todo perfil de Central de
+ * Serviços em administrador das reuniões já existentes.
+ */
+export function useAcessoAdminReunioes() {
+  return useQuery({
+    queryKey: ["reuniao-acesso-admin"],
+    staleTime: 5 * 60 * 1000,
+    queryFn: async () => {
+      const { data, error } = await (supabase as any).rpc("pode_administrar_reunioes");
+      if (error) {
+        console.warn("pode_administrar_reunioes error", error);
+        return false;
+      }
+      return !!data;
+    },
+  });
+}
+
 export function useMinhasReunioes() {
   return useQuery({
     queryKey: ["reuniao-minhas"],
