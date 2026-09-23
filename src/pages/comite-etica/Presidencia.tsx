@@ -26,7 +26,7 @@ import FichaPresidencia from "./FichaPresidencia";
 // o Comitê vê o resultado no submódulo Denúncias, que é a mesma tabela.
 //
 // Quem enxerga: quem tem o menu 'comite_etica_presidencia_painel'. O recorte
-// por situação e por empresa é do BANCO (v_canal_denuncia, 20260930000201);
+// por situação e por empresa é do BANCO (v_canal_denuncia, 20260930000217);
 // o `.in("status", …)` abaixo só existe para quem também é do Comitê e, por
 // isso, recebe a fila inteira da visão.
 // =====================================================================

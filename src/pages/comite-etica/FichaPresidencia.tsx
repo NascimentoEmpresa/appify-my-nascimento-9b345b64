@@ -26,7 +26,7 @@ import { fmtData, fmtDataHora } from "./dossie";
 // ficha do Comitê) e a mudança de situação. O banco confere as duas: a
 // decisão exige `comite_etica_presidencia` (canal_denuncia_guard) e quem
 // entra só pelo painel não altera outro campo
-// (canal_denuncia_presidencia_guard, 20260930000201).
+// (canal_denuncia_presidencia_guard, 20260930000217).
 // =====================================================================
 
 /** Situações para onde a Presidência devolve o caso ao Comitê. */

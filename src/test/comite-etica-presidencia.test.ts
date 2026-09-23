@@ -5,7 +5,7 @@ import { SITUACAO, SITUACOES_PRESIDENCIA } from "@/pages/comite-etica/vocabulari
 // Painel da Presidência — a lista de situações tem que existir no fluxo.
 //
 // SITUACOES_PRESIDENCIA é espelho de canal_denuncia_situacao_presidencia()
-// (20260930000201). Um valor digitado errado aqui não dá erro nenhum: o
+// (20260930000217). Um valor digitado errado aqui não dá erro nenhum: o
 // card simplesmente fica zerado para sempre.
 // =====================================================================
 

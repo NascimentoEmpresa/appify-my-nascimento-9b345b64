@@ -89,7 +89,7 @@ export const SITUACOES_CONCLUIDAS = ["concluida", "arquivada"];
 /**
  * O que o painel da Presidência enxerga: o caso já apurado, da decisão em
  * diante. Espelho de `canal_denuncia_situacao_presidencia()` na
- * 20260930000201 — é o banco que recorta; mudar um lado obriga o outro.
+ * 20260930000217 — é o banco que recorta; mudar um lado obriga o outro.
  */
 export const SITUACOES_PRESIDENCIA = [
   "aguardando_presidencia", "aguardando_cumprimento", "concluida", "arquivada", "reaberta",
