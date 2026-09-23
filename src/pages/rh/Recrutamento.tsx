@@ -339,6 +339,12 @@ const sugerirNomeTemplate = (n?: string | null) =>
   String(n ?? "").trim().toLowerCase()
     .normalize("NFD").replace(/[̀-ͯ]/g, "")   // "Aprovação" → "aprovacao"
     .replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+// "Pendente Seleção" (23/09/2026): a vaga cujo candidato mais adiantado está
+// em APROVADO no kanban — o sr_sync_status_solicitacao grava esse status.
+// Tem atalho próprio e sai de "Em Processo".
+const STATUS_PEND_SELECAO = "Aprovado - Aguardando SST";
+const MENU_FILTRO_PEND_RECRUTAMENTO = "recrutamento_filtro_pend_recrutamento";
+const MENU_FILTRO_PEND_SELECAO      = "recrutamento_filtro_pend_selecao";
 // Status da Solicitação dirigidos pelo candidato (etapas 3–10).
 const STATUS_PROCESSO = [
   "Vaga aberta - Seleção de Currículos", "Em análise jurídica", "Entrevista e Avaliação",
@@ -352,6 +358,10 @@ const STATUS_PROCESSO = [
   "Encaminhado para SST (ASO)", "ASO Aprovado - Aguardando Informe de EPIs",
   "Aguardando Confirmação Compras",
 ];
+
+// O atalho/número "Em Processo" não conta o que já tem atalho próprio
+// (Pendente Seleção). O resto da tela (drawer, candidatos) usa STATUS_PROCESSO.
+const STATUS_EM_PROCESSO = STATUS_PROCESSO.filter(s => s !== STATUS_PEND_SELECAO);
 
 // ── Componente Principal ───────────────────────────────────────────
 //
@@ -422,6 +432,9 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
   // sistema_recrutamento_guard já reconhecem como "gestor" — não existe
   // capacidade nova para isso. O Operacional vê as etiquetas, sem botão.
   const podeEtiquetar = podeRecrutar || podeAprovarAnalista;
+  // Atalhos de filtro com acesso próprio (23/09/2026, mig 20260930000225).
+  const verFiltroPendRecrutamento = can("visualizar", undefined, MENU_FILTRO_PEND_RECRUTAMENTO);
+  const verFiltroPendSelecao      = can("visualizar", undefined, MENU_FILTRO_PEND_SELECAO);
   // Quem pode mover o candidato pra fora de cada etapa específica do kanban.
   // Vaga do escritório: só quem tem a capacidade vê, marca e decide.
   const podeAdministrativa = podeVagaAdministrativa(can);
@@ -607,7 +620,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
       total:            rows.length,
       pendentes:        rows.filter(r => r.status === STATUS_ETAPA1).length,
       ag_treinamentos:  rows.filter(r => r.status === "Pendente Recrutamento").length,
-      em_processo:      rows.filter(r => STATUS_PROCESSO.includes(r.status)).length,
+      em_processo:      rows.filter(r => STATUS_EM_PROCESSO.includes(r.status)).length,
       contratados:      rows.filter(r => r.status === "Contratado" || String(r.status ?? "").startsWith("Concluído")).length,
       reprovadas:       rows.filter(r => r.status === "Reprovada").length,
     });
@@ -619,7 +632,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- builder do PostgREST; o tipo exato muda a cada .select()
   const aplicarFiltros = useCallback((q: any) => {
     if (statusFilter === "em_processo") {
-      q = q.in("status", STATUS_PROCESSO);
+      q = q.in("status", STATUS_EM_PROCESSO);
     } else if (statusFilter === "concluido") {
       q = q.like("status", "Concluído%");
     } else if (statusFilter) {
@@ -883,7 +896,6 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
 
     // Analista e Diretoria mandam pro Recrutamento; o Recrutamento abre a vaga.
     const novoStatus = ehAbertura ? "Vaga aberta - Seleção de Currículos" : "Pendente Recrutamento";
-    const papelEtapa1 = escopo === "diretoria" ? "Diretoria" : "Analista";
 
     const { error } = await sb
       .from("SISTEMA_RECRUTAMENTO")
@@ -891,9 +903,10 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
       .eq("id", drawerId);
 
     if (error) { toast("Erro ao aprovar: " + error.message, "err"); return; }
-    await logHistorico(drawerId, ehAbertura ? "Abertura de vaga confirmada" : `Aprovada pel${papelEtapa1 === "Diretoria" ? "a" : "o"} ${papelEtapa1}`, {
-      de: drawerSol.status, para: novoStatus, papel: ehAbertura ? "Recrutamento" : papelEtapa1,
-    });
+    // O evento ("Aprovada pelo Analista", "Abertura de vaga confirmada"...)
+    // é gravado pelo gatilho trg_rec_historico_automatico (mig
+    // 20260930000225) — gravado daqui, batia na RLS na tela do analista e
+    // sumia calado.
     toast(ehAbertura ? "Vaga aberta — já aparece no portal de candidaturas!" : "Aprovado e encaminhado ao Recrutamento!", "ok");
     fecharDrawer();
     loadStats();
@@ -911,8 +924,9 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
       .update({ status: "Concluída" })
       .eq("id", drawerId);
     if (error) { toast("Erro ao concluir: " + error.message, "err"); return; }
-    await logHistorico(drawerId, "Solicitação concluída", {
-      de: "Seleção de Candidato", para: "Concluída", papel: "Recrutamento",
+    // "Solicitação concluída" vem do gatilho; aqui só quem foi admitido.
+    await logHistorico(drawerId, "Candidato admitido na conclusão", {
+      papel: "Recrutamento",
       detalhe: admitido.nome ? `Admitido: ${admitido.nome}` : undefined,
       candidatoId: admitido.id, candidatoNome: admitido.nome,
     });
@@ -930,12 +944,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
       .update({ status: "Reprovada", motivo_reprovacao: reprovarMotivo.trim(), ...carimboAprovador() })
       .eq("id", drawerId);
     if (error) { toast("Erro ao reprovar: " + error.message, "err"); return; }
-    if (drawerId) {
-      const papel = drawerSol?.status === "Pendente Analista" ? "Analista" : "Recrutamento";
-      await logHistorico(drawerId, "Solicitação reprovada", {
-        de: drawerSol?.status, para: "Reprovada", papel, detalhe: reprovarMotivo.trim(),
-      });
-    }
+    // "Solicitação reprovada" (com o motivo) vem do gatilho trg_rec_historico_automatico.
     toast("Solicitação reprovada.", "ok");
     setModalReprovar(false);
     setReprovarMotivo("");
@@ -2341,7 +2350,11 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
               ]
               : [
                 { label: "Todas", val: "" },
-                { label: "Pendente Recrutamento", val: "Pendente Recrutamento" },
+                // Os dois "Pendente" têm acesso próprio em Acesso por Usuário
+                // (menus fantasmas da mig 20260930000225) — só organização:
+                // esconde o atalho, as vagas continuam em "Todas".
+                ...(verFiltroPendRecrutamento ? [{ label: "Pendente Recrutamento", val: "Pendente Recrutamento" }] : []),
+                ...(verFiltroPendSelecao ? [{ label: "Pendente Seleção", val: STATUS_PEND_SELECAO }] : []),
                 { label: "Em Processo", val: "em_processo" },
                 { label: "Concluídas", val: "concluido" },
                 { label: "Reprovados", val: "Reprovada" },
