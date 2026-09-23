@@ -916,6 +916,29 @@ export async function registrarEventoDespesa(despesaId: string, tipo_evento: Tip
   if (error) throw error;
 }
 
+// [SEM-CHAMADO] (Iury): "aprovador master" fantasma — move a despesa direto
+// pra outro status por decisão administrativa, fora do fluxo normal de
+// aprovação (ex. presa em "Pendente aprovação N2"). Substitui o UPDATE
+// manual que já foi feito 2x via SQL Editor; a RPC confere a ação
+// 'ajuste_administrativo' (perfil dedicado, só o Iury tem) e grava o mesmo
+// tipo_evento que os ajustes por SQL já usavam, pra ficar tudo com a mesma
+// cara na timeline.
+export function useAjusteAdministrativoDespesa() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, novoStatus, motivo }: { id: string; novoStatus: StatusDespesa; motivo: string }) => {
+      const descricao = `Movida para "${STATUS_LABEL[novoStatus]}" manualmente via banco (ajuste administrativo), fora do fluxo normal de aprovação. Motivo: ${motivo.trim()}`;
+      const { error } = await (supabase as any).rpc("malote_despesa_ajuste_administrativo", {
+        _id: id,
+        _novo_status: novoStatus,
+        _descricao: descricao,
+      });
+      if (error) throw error;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: [DESPESA_KEY] }),
+  });
+}
+
 // Cancelar despesa/solicitação — disponível em qualquer status ativo,
 // conforme parecer do chefe (SIS-2026-0104).
 export function useCancelarDespesa() {
