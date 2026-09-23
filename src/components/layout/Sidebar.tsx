@@ -817,6 +817,10 @@ const comiteEticaModule: ModuleDef = {
         // diretoria ver o painel sem ver o conteúdo dos relatos.
         { label: "Indicadores", to: "/app/comite-etica/indicadores", icon: BarChart3 },
         { label: "Denúncias", to: "/app/comite-etica/denuncias", icon: ShieldAlert },
+        // Fila da diretoria (22/09/2026): só as denúncias pós-apuração, para
+        // decidir e dar seguimento sem abrir a apuração inteira. Liberação
+        // própria (comite_etica_presidencia_painel) — ver 20260930000217.
+        { label: "Presidência", to: "/app/comite-etica/presidencia", icon: Gavel },
         // "Denúncias (Contato Seguro)" saiu daqui em 21/08/2026: o canal
         // legado foi aposentado, a tela e a função de sync foram removidas e
         // o menu ficou com app_menu.ativo = false (mesmo par que "Pregão &

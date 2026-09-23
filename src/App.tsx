@@ -229,6 +229,7 @@ import FornecedoresPendentes from "./pages/suprimentos/FornecedoresPendentes";
 import DenunciasComiteEtica from "./pages/comite-etica/Denuncias";
 import ConfiguracaoComiteEtica from "./pages/comite-etica/Configuracao";
 import IndicadoresComiteEtica from "./pages/comite-etica/Indicadores";
+import PresidenciaComiteEtica from "./pages/comite-etica/Presidencia";
 import Ferias from "./pages/rh/Ferias";
 import RhSolicitacoesDemissao from "./pages/rh/SolicitacoesDemissao";
 import MinhasSolicitacoes from "./pages/MinhasSolicitacoes";
@@ -516,6 +517,7 @@ const App = () => (
                 pode virar 404. */}
             <Route path="comite-etica/indicadores" element={<IndicadoresComiteEtica />} />
             <Route path="comite-etica/denuncias" element={<DenunciasComiteEtica />} />
+            <Route path="comite-etica/presidencia" element={<PresidenciaComiteEtica />} />
             <Route path="comite-etica/configuracao" element={<ConfiguracaoComiteEtica />} />
             <Route path="central-servicos/denuncias" element={<Navigate to="/app/comite-etica/denuncias" replace />} />
             <Route path="central-servicos/canal-denuncias" element={<Navigate to="/app/comite-etica/denuncias" replace />} />
