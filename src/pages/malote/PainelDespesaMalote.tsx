@@ -368,17 +368,66 @@ export function PainelDespesaMalote({
       let aprovadoAutomaticamente = false;
       const payloadComId = { ...payloadBase, id: despesaIdExistente };
       const { arquivosNovos: _arquivosNovos, ...payloadPersistido } = payloadComId;
+
+      // SIS-2026-0511 (achado real, Juliana): quando a despesa JÁ EXISTE
+      // (despesaIdExistente — conversão de solicitação em despesa), o id
+      // já é conhecido de antemão, então o upload pode subir ANTES do
+      // save e o path de anexo entra no MESMO payload/UPDATE — em vez de
+      // uma segunda UPDATE separada depois. Isso importa porque, no
+      // caminho "paraEnviar", a primeira chamada (converter) já avança
+      // nivel_aprovacao_atual pra 1 (status pendente_aprovacao); um
+      // usuário que só tem a permissão de "lançador" (RLS
+      // malote_despesa_update, escopada a nivel_aprovacao_atual IS NULL)
+      // perde a janela de edição bem nesse instante — a segunda UPDATE
+      // (só pra gravar o anexo novo) não batia em nenhuma condição da
+      // RLS, dava 0 linhas afetadas e o ".single()" estourava "Cannot
+      // coerce the result to a single JSON object". O anexo antigo
+      // (herdado da cotação) ficava, o novo nunca era gravado. Só a
+      // criação NOVA (sem despesaIdExistente) continua no upload-depois:
+      // ali o id não existe até o primeiro save, e quem cria sempre é
+      // created_by nas chamadas seguintes — não sofre esse problema.
+      let arquivosPreUpload: string[] | undefined;
+      let preUploadFalhou = false;
+      if (arquivos.length > 0 && despesaIdExistente) {
+        try {
+          arquivosPreUpload = await uploadAnexosMalote(arquivos, despesaIdExistente, nome.trim());
+        } catch {
+          preUploadFalhou = true;
+        }
+      }
+
       if (paraEnviar && despesaIdExistente) {
-        const resultado = await converter.mutateAsync({ ...payloadPersistido, status: "pendente_aprovacao" });
+        const resultado = await converter.mutateAsync({
+          ...payloadPersistido,
+          status: "pendente_aprovacao",
+          ...(arquivosPreUpload ? { arquivos: arquivosPreUpload } : {}),
+        });
         despesaId = resultado.despesaId;
         aprovadoAutomaticamente = resultado.aprovadoAutomaticamente;
       } else if (paraEnviar) {
         despesaId = await salvar.mutateAsync({ ...payloadPersistido, status: "pendente_aprovacao", nivel_aprovacao_atual: 1 });
       } else {
-        despesaId = await salvar.mutateAsync({ ...payloadPersistido, status: despesaIdExistente ? "cotacao_aprovada" : "rascunho" });
+        despesaId = await salvar.mutateAsync({
+          ...payloadPersistido,
+          status: despesaIdExistente ? "cotacao_aprovada" : "rascunho",
+          ...(arquivosPreUpload ? { arquivos: arquivosPreUpload } : {}),
+        });
       }
 
-      if (arquivos.length > 0) {
+      if (arquivos.length > 0 && despesaIdExistente && preUploadFalhou) {
+        // DM-2026-0446: a despesa JÁ está persistida — não desfaz (mesma
+        // lógica do vínculo de Patrimônio/Reembolso abaixo). O anexo pode
+        // ser reenviado depois pela própria tela da despesa (gate
+        // dadosDespesaPagamentoEditaveis, SIS-2026-0339), sem recriar nada.
+        const num = await buscarNumeroDespesa(despesaId).catch(() => null);
+        toast.warning(
+          `Despesa ${num ?? ""} criada, mas o anexo não subiu (provável falha de rede). ` +
+            `Abra a despesa em Meus Itens e reenvie o anexo — não crie de novo.`,
+        );
+      } else if (arquivos.length > 0 && !despesaIdExistente) {
+        // Criação nova: o id só existe a partir daqui — upload e 2ª UPDATE
+        // continuam depois do save, como sempre (sem o problema acima,
+        // porque quem cria é sempre created_by nas próprias chamadas).
         try {
           const paths = await uploadAnexosMalote(arquivos, despesaId, nome.trim());
           await salvar.mutateAsync({
@@ -386,18 +435,12 @@ export function PainelDespesaMalote({
             empresa_id: empresaId,
             classificacao_id: classificacaoId,
             origem,
-            status: paraEnviar ? "pendente_aprovacao" : despesaIdExistente ? "cotacao_aprovada" : "rascunho",
+            status: paraEnviar ? "pendente_aprovacao" : "rascunho",
             nome: nome.trim(),
             valor_total: Number(totalMes),
             arquivos: paths,
           });
         } catch (erroUpload) {
-          // DM-2026-0446: a despesa JÁ está persistida — não desfaz (mesma
-          // lógica do vínculo de Patrimônio/Reembolso abaixo). O anexo pode
-          // ser reenviado depois pela própria tela da despesa (gate
-          // dadosDespesaPagamentoEditaveis, SIS-2026-0339), sem recriar nada.
-          // Aviso claro em vez do "Failed to fetch" cru, que fazia o usuário
-          // achar que tudo falhou e lançar de novo (duplicando a despesa).
           const num = await buscarNumeroDespesa(despesaId).catch(() => null);
           toast.warning(
             `Despesa ${num ?? ""} criada, mas o anexo não subiu (provável falha de rede). ` +
