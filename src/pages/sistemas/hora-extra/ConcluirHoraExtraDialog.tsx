@@ -1,6 +1,16 @@
 import { useEffect, useState } from "react";
 import { CheckCircle2, Clock3, ExternalLink, FileCheck2, FileText, Info, LoaderCircle, Pencil, Trash2, UsersRound } from "lucide-react";
 import { toast } from "sonner";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -25,7 +35,11 @@ import {
   validarConclusao,
 } from "./horaExtraUtils";
 import { Campo, DropzoneAnexos, SecaoForm, TotalHoras } from "./HoraExtraUI";
-import { normalizarNumeroPr, totalizarLinhasRelatorioPr } from "./prHoraExtraUtils";
+import {
+  normalizarNumeroPr,
+  removerLinhaRelatorioPr,
+  totalizarLinhasRelatorioPr,
+} from "./prHoraExtraUtils";
 import type { ChamadoHoraExtra, SolicitacaoHoraExtra, StatusExecucao } from "./types";
 
 interface LinhaConclusao {
@@ -71,6 +85,7 @@ export default function ConcluirHoraExtraDialog({
   const enviarAnexos = useEnviarAnexosHoraExtra();
   const [prsCarregando, setPrsCarregando] = useState<Record<string, boolean>>({});
   const [prsEmEdicao, setPrsEmEdicao] = useState<Record<string, boolean>>({});
+  const [linhaParaRemover, setLinhaParaRemover] = useState<LinhaConclusao | null>(null);
   const [resumo, setResumo] = useState("");
   const [horarios, setHorarios] = useState({
     ponto_entrada_real: "07:30",
@@ -117,6 +132,7 @@ export default function ConcluirHoraExtraDialog({
     setArquivos([]);
     setPrsCarregando({});
     setPrsEmEdicao({});
+    setLinhaParaRemover(null);
   }, [aberto, solicitacao]);
   const jornada = solicitacao?.jornada_minutos ?? JORNADA_PADRAO_MIN;
   const semIntervalo = Boolean(solicitacao?.sem_intervalo);
@@ -250,6 +266,37 @@ export default function ConcluirHoraExtraDialog({
   const consultarPrPorChave = (chave: string) => {
     const linha = grupoDaLinha(chave);
     if (linha) void consultarPr(linha.grupo, linha.indice);
+  };
+  /**
+   * Tira a linha do relatório. Vale tanto para o chamado adicional quanto
+   * para o que veio na solicitação: o chamado que não foi realizado na HE
+   * sai daqui em vez de travar o envio por falta de PR, continua aberto e
+   * pode entrar em outra hora extra depois.
+   */
+  const removerLinha = (chave: string) => {
+    const resultado = removerLinhaRelatorioPr(linhas, adicionais, chave);
+    if (resultado.erro) {
+      toast.error(resultado.erro);
+      return;
+    }
+    setLinhas(resultado.originais);
+    setAdicionais(resultado.adicionais);
+    const esquecer = (atual: Record<string, boolean>) => {
+      const { [chave]: removida, ...resto } = atual;
+      return resto;
+    };
+    setPrsCarregando(esquecer);
+    setPrsEmEdicao(esquecer);
+  };
+  const pedirRemocaoLinha = (chave: string) => {
+    const linha = [...linhas, ...adicionais].find((atual) => atual.chave === chave);
+    if (!linha) return;
+    // Linha adicional ainda em branco não tem nada a perder: sai direto.
+    if (linha.adicional && !linha.chamado_id && !linha.pr_numero) {
+      removerLinha(chave);
+      return;
+    }
+    setLinhaParaRemover(linha);
   };
   const enviar = async () => {
     const erros = validarConclusao(
@@ -404,7 +451,10 @@ export default function ConcluirHoraExtraDialog({
               </SecaoForm>
               <SecaoForm
                 titulo="3. Chamados da solicitação"
-                subtitulo="Informe a PR de cada chamado. As métricas e o ID do chamado são preenchidos automaticamente pelo GitHub."
+                subtitulo={
+                  "Informe a PR de cada chamado. As métricas e o ID do chamado são preenchidos " +
+                  "automaticamente pelo GitHub. Chamado que não foi realizado pode ser removido da tabela."
+                }
                 icone={<UsersRound className="h-5 w-5" />}
               >
                 <TabelaRelatorioPr
@@ -414,7 +464,7 @@ export default function ConcluirHoraExtraDialog({
                   aoEditarPr={(chave) => setPrsEmEdicao((atual) => ({ ...atual, [chave]: true }))}
                   aoAlterarTextoPr={atualizarTextoPrPorChave}
                   aoConsultarPr={consultarPrPorChave}
-                  aoExcluir={(chave) => setAdicionais((xs) => xs.filter((linha) => linha.chave !== chave))}
+                  aoExcluir={pedirRemocaoLinha}
                 />
                 <div className="mt-3 text-right">
                   <Button type="button" variant="outline" onClick={adicionarChamado}>
@@ -483,6 +533,10 @@ export default function ConcluirHoraExtraDialog({
                   <li>Digite a PR no formato <strong>#624</strong> para preencher suas métricas automaticamente.</li>
                   <li>O título da PR precisa começar pelo ID do chamado, como <strong>SIS-2026-0459:</strong>.</li>
                   <li>É possível incluir PRs de chamados adicionais realizados durante a hora extra.</li>
+                  <li>
+                    Chamado que você <strong>não realizou</strong> pode sair da tabela pela lixeira: ele
+                    continua aberto para entrar em outra HE.
+                  </li>
                   <li>Após concluir, a solicitação será enviada para aprovação do seu gestor.</li>
                 </ul>
               </div>
@@ -499,6 +553,35 @@ export default function ConcluirHoraExtraDialog({
           </div>
         </DialogContent>
       </Dialog>
+      <AlertDialog open={Boolean(linhaParaRemover)} onOpenChange={(v) => !v && setLinhaParaRemover(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {linhaParaRemover?.numero
+                ? `Remover o chamado #${linhaParaRemover.numero} do relatório?`
+                : "Remover esta linha do relatório?"}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {linhaParaRemover?.adicional
+                ? "O chamado sai do relatório desta hora extra. Dá para incluí-lo de novo pelo botão Adicionar Chamado."
+                : "O chamado sai desta hora extra e deixa de exigir PR para concluir a solicitação. " +
+                  "Ele continua aberto e pode ser incluído em outra HE depois."}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Voltar</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={() => {
+                if (linhaParaRemover) removerLinha(linhaParaRemover.chave);
+                setLinhaParaRemover(null);
+              }}
+            >
+              Remover
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </>
   );
 }
@@ -526,12 +609,11 @@ function TabelaRelatorioPr({
   aoEditarPr: (chave: string) => void;
   aoAlterarTextoPr: (chave: string, valor: string) => void;
   aoConsultarPr: (chave: string) => void;
-  aoExcluir?: (chave: string) => void;
+  aoExcluir: (chave: string) => void;
 }) {
   const totais = totalizarLinhasRelatorioPr(linhas);
   const totalChamados = new Set(linhas.filter((linha) => linha.chamado_id).map((linha) => linha.chamado_id)).size;
-  const temChamadosAdicionais = linhas.some((linha) => linha.adicional);
-  const colunas = temChamadosAdicionais ? 6 : 5;
+  const colunas = 6;
   return (
     <div className="overflow-x-auto rounded-lg border">
       <table className="w-full min-w-[860px] text-xs">
@@ -544,7 +626,7 @@ function TabelaRelatorioPr({
             <th className="p-2 text-center" title="Somente arquivos novos adicionados pela PR">
               Arquivos alterados
             </th>
-            {temChamadosAdicionais && <th className="p-2 text-center">Ações</th>}
+            <th className="p-2 text-center">Ações</th>
           </tr>
         </thead>
         <tbody>
@@ -616,20 +698,24 @@ function TabelaRelatorioPr({
               <td className="p-2 text-center font-medium tabular-nums">
                 {l.pr_url ? l.pr_arquivos_adicionados ?? 0 : "—"}
               </td>
-              {temChamadosAdicionais && (
-                <td className="p-2 text-center">
-                  {l.adicional && (
-                    <Button
-                      size="icon"
-                      variant="outline"
-                      onClick={() => aoExcluir?.(l.chave)}
-                      aria-label="Remover chamado adicional"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
-                  )}
-                </td>
-              )}
+              <td className="p-2 text-center">
+                <Button
+                  type="button"
+                  size="icon"
+                  variant="outline"
+                  onClick={() => aoExcluir(l.chave)}
+                  title={
+                    l.adicional
+                      ? "Remover este chamado adicional"
+                      : "Remover este chamado da hora extra"
+                  }
+                  aria-label={
+                    l.numero ? `Remover o chamado ${l.numero} do relatório` : "Remover esta linha do relatório"
+                  }
+                >
+                  <Trash2 className="h-4 w-4" />
+                </Button>
+              </td>
             </tr>
           ))}
           {!linhas.length && (
@@ -647,7 +733,7 @@ function TabelaRelatorioPr({
             <td className="p-2 text-center tabular-nums">{totais.commits.toLocaleString("pt-BR")}</td>
             <td className="p-2">{totalChamados} {totalChamados === 1 ? "chamado" : "chamados"}</td>
             <td className="p-2 text-center tabular-nums">{totais.arquivos_adicionados.toLocaleString("pt-BR")}</td>
-            {temChamadosAdicionais && <td />}
+            <td />
           </tr>
         </tfoot>
       </table>
