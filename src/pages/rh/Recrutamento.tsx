@@ -130,6 +130,32 @@ interface EmpCadastro { cpf_match?: string | null; situacao?: string | null; car
 interface MsgCfg { etapa: string; template_nome?: string | null; template_idioma?: string | null; texto_previa?: string | null; ativo?: boolean | null; texto?: string | null; [k: string]: unknown }
 
 // ── Helpers ────────────────────────────────────────────────────────
+/** "2026-08-31" → "2026-09-01" (fim exclusivo do filtro de período). */
+function diaSeguinte(iso: string): string {
+  const d = new Date(`${iso}T12:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + 1);
+  return d.toISOString().slice(0, 10);
+}
+
+/**
+ * Todas as linhas da consulta, em páginas de 1000. O PostgREST corta
+ * qualquer select em 1000 linhas; com as 984 vagas do sistema antigo
+ * (23/09/2026) a tabela passou disso, e os KPIs e as contagens do filtro,
+ * que baixam a coluna inteira pra contar aqui, ficariam faltando linhas.
+ * `montar` recebe o builder novo a cada página (não dá pra reusar o mesmo).
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- builder do PostgREST; o tipo exato muda a cada .select()
+async function lerTudo<T>(montar: () => any): Promise<{ data: T[] | null; error: { message: string } | null }> {
+  const PAGINA = 1000;
+  const todas: T[] = [];
+  for (let de = 0; ; de += PAGINA) {
+    const { data, error } = await montar().order("id", { ascending: true }).range(de, de + PAGINA - 1);
+    if (error) return { data: null, error };
+    todas.push(...((data ?? []) as T[]));
+    if (!data || data.length < PAGINA) return { data: todas, error: null };
+  }
+}
+
 function esc(s: unknown): string {
   return String(s ?? "")
     .replace(/&/g, "&amp;")
@@ -396,6 +422,12 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
   // "Aguardando você" e os KPIs continuam só com as administrativas.
   const noEscopoLista = useCallback(<T extends { administrativa?: boolean | null; setor?: string | null }>(rows: T[]) =>
     (escopo === "diretoria" && statusFilter === "") ? rows : filtrarPorEscopo(rows, escopo, meusSetores), [escopo, meusSetores, statusFilter]);
+  // Período pela data da solicitação (created_at), 23/09/2026 — veio junto
+  // com a importação das vagas do sistema antigo (Discord), que trouxe todo o
+  // histórico desde jan/2026. "YYYY-MM-DD" do <input type=date>; vazio = sem
+  // limite daquele lado.
+  const [dataDe, setDataDe]   = useState("");
+  const [dataAte, setDataAte] = useState("");
   const [contratoFiltro, setContratoFiltro]         = useState<string[]>([]);
   const [contratoCounts, setContratoCounts]         = useState<{ contrato: string; n: number }[]>([]);
   const [showContratoFiltro, setShowContratoFiltro] = useState(false);
@@ -522,10 +554,15 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
   useEffect(() => { setTab(tabs[0].tab); }, [isRH, podeRecrutar, soEtapa1]);
 
   // ── Carregar Stats ────────────────────────────────────────────
+  // Os KPIs seguem o período escolhido (dataDe/dataAte) — o resto dos filtros
+  // não, como sempre foi.
   const loadStats = useCallback(async () => {
-    const { data, error } = await sb
-      .from("SISTEMA_RECRUTAMENTO")
-      .select("status, administrativa, setor");
+    const { data, error } = await lerTudo<{ status: string; administrativa?: boolean | null; setor?: string | null }>(() => {
+      let q = sb.from("SISTEMA_RECRUTAMENTO").select("id, status, administrativa, setor");
+      if (dataDe)  q = q.gte("created_at", `${dataDe}T00:00:00-03:00`);
+      if (dataAte) q = q.lt("created_at", `${diaSeguinte(dataAte)}T00:00:00-03:00`);
+      return q;
+    });
     if (error || !data) return;
     const rows: { status: string; administrativa?: boolean | null; setor?: string | null }[] = noEscopo(data);
     setStats({
@@ -536,7 +573,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
       contratados:      rows.filter(r => r.status === "Contratado" || String(r.status ?? "").startsWith("Concluído")).length,
       reprovadas:       rows.filter(r => r.status === "Reprovada").length,
     });
-  }, [noEscopo, STATUS_ETAPA1]);
+  }, [noEscopo, STATUS_ETAPA1, dataDe, dataAte]);
 
   // ── Filtros compartilhados ────────────────────────────────────
   // Tabela e Kanban são a MESMA consulta, só muda a apresentação — então os
@@ -560,8 +597,11 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
     if (search) {
       q = q.or(`cargo.ilike.%${search}%,contrato.ilike.%${search}%,cidade.ilike.%${search}%`);
     }
+    // Dia inteiro no horário de Brasília: "até 31/08" inclui o 31 todo.
+    if (dataDe)  q = q.gte("created_at", `${dataDe}T00:00:00-03:00`);
+    if (dataAte) q = q.lt("created_at", `${diaSeguinte(dataAte)}T00:00:00-03:00`);
     return q;
-  }, [statusFilter, tab, search, user]);
+  }, [statusFilter, tab, search, user, dataDe, dataAte]);
 
   // ── Carregar Lista ────────────────────────────────────────────
   const listaReq = useRef(0);
@@ -604,8 +644,8 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
       if (etiquetaFiltro.length) q = q.overlaps("etiquetas", etiquetaFiltro);
       return q.order("created_at", { ascending: false });
     };
-    let { data, error } = await kbQuery("id,cargo,contrato,cidade,status,grau_urgencia,quantidade_vagas,analista_nome,solicitante_nome,created_at,status_changed_at,administrativa,setor");
-    if (error) ({ data, error } = await kbQuery("id,cargo,contrato,cidade,status,grau_urgencia,quantidade_vagas,analista_nome,solicitante_nome,created_at,administrativa,setor"));
+    let { data, error } = await lerTudo<Solicitacao>(() => kbQuery("id,cargo,contrato,cidade,status,grau_urgencia,quantidade_vagas,analista_nome,solicitante_nome,created_at,status_changed_at,administrativa,setor"));
+    if (error) ({ data, error } = await lerTudo<Solicitacao>(() => kbQuery("id,cargo,contrato,cidade,status,grau_urgencia,quantidade_vagas,analista_nome,solicitante_nome,created_at,administrativa,setor")));
     if (myReq !== kanbanReq.current) return;
     if (error || !data) return;
     const linhas = noEscopo(data as unknown as Solicitacao[]);
@@ -621,12 +661,11 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
   // aba/status/busca; ignora os dois filtros de faceta — o menu mostra quanto
   // cada opção traria, não quanto sobrou depois de marcar a outra).
   const loadContratoCounts = useCallback(async () => {
-    let q = sb.from("SISTEMA_RECRUTAMENTO").select("contrato,etiquetas");
-    q = aplicarFiltros(q);
-    let { data, error } = await q;
+    type LinhaContagem = { contrato?: string | null; etiquetas?: unknown };
+    let { data, error } = await lerTudo<LinhaContagem>(() => aplicarFiltros(sb.from("SISTEMA_RECRUTAMENTO").select("id,contrato,etiquetas")));
     // Banco ainda sem a coluna (migration 20260930000090 não aplicada): refaz
     // sem ela para o filtro de contratos continuar funcionando.
-    if (error) ({ data, error } = await aplicarFiltros(sb.from("SISTEMA_RECRUTAMENTO").select("contrato")));
+    if (error) ({ data, error } = await lerTudo<LinhaContagem>(() => aplicarFiltros(sb.from("SISTEMA_RECRUTAMENTO").select("id,contrato"))));
     if (error || !data) return;
     const map = new Map<string, number>();
     const porEtiqueta: Record<string, number> = {};
@@ -2142,6 +2181,34 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
 
         {/* Filtro de Contratos */}
         <div style={{ position: "relative", marginBottom: 12, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          {/* Período pela data da solicitação. O mês preenche De/Até de uma
+              vez (o pedido era ver as vagas "mês a mês"); De/Até ficam
+              livres pra qualquer recorte. */}
+          <div style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "4px 10px", borderRadius: 10, border: "1px solid #e2e8f0", background: (dataDe || dataAte) ? "#eef2fb" : "#fff", boxShadow: "0 8px 24px rgba(15,23,42,.06)", fontSize: 12, color: "#475569", fontWeight: 700 }}>
+            📅 Mês
+            <input type="month" aria-label="Mês da solicitação"
+              value={dataDe && dataAte && dataDe.slice(0, 7) === dataAte.slice(0, 7) && dataDe.endsWith("-01") && diaSeguinte(dataAte).endsWith("-01") ? dataDe.slice(0, 7) : ""}
+              onChange={e => {
+                const m = e.target.value;
+                if (!m) { setDataDe(""); setDataAte(""); setPage(1); return; }
+                const [a, mm] = m.split("-").map(Number);
+                const ultimo = new Date(Date.UTC(a, mm, 0)).getUTCDate();
+                setDataDe(`${m}-01`); setDataAte(`${m}-${String(ultimo).padStart(2, "0")}`); setPage(1);
+              }}
+              style={{ border: "1px solid #e2e8f0", borderRadius: 7, padding: "3px 6px", fontSize: 12, color: "#0f172a" }} />
+            <span style={{ color: "#cbd5e1" }}>|</span>
+            De
+            <input type="date" aria-label="Solicitadas a partir de" value={dataDe} max={dataAte || undefined}
+              onChange={e => { setDataDe(e.target.value); setPage(1); }}
+              style={{ border: "1px solid #e2e8f0", borderRadius: 7, padding: "3px 6px", fontSize: 12, color: "#0f172a" }} />
+            até
+            <input type="date" aria-label="Solicitadas até" value={dataAte} min={dataDe || undefined}
+              onChange={e => { setDataAte(e.target.value); setPage(1); }}
+              style={{ border: "1px solid #e2e8f0", borderRadius: 7, padding: "3px 6px", fontSize: 12, color: "#0f172a" }} />
+            {(dataDe || dataAte) && (
+              <button onClick={() => { setDataDe(""); setDataAte(""); setPage(1); }} style={{ background: "none", border: "none", color: "#94a3b8", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>limpar</button>
+            )}
+          </div>
           <button onClick={() => setShowContratoFiltro(v => !v)} style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "7px 14px", borderRadius: 10, border: "1px solid #e2e8f0", background: contratoFiltro.length ? "#0f3171" : "#fff", color: contratoFiltro.length ? "#fff" : "#475569", fontSize: 12, fontWeight: 700, cursor: "pointer", boxShadow: "0 8px 24px rgba(15,23,42,.06)" }}>
             🗂 Filtros · Contratos{contratoFiltro.length ? ` (${contratoFiltro.length})` : ""} ▾
           </button>
