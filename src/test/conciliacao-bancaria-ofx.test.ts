@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseOfxAmount, parseOFX } from "@/pages/financeiro/ConciliacaoBancaria";
+import { parseOfxAmount, parseOFX } from "@/lib/conciliacaoBancariaEngine";
 
 // SIS-2026-0344 (achado real, usuária testando extratos do Bradesco): o
 // regex antigo do parser só aceitava dígito/"-"/"." em TRNAMT — um valor
