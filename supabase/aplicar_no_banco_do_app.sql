@@ -26051,3 +26051,94 @@ NOTIFY pgrst, 'reload schema';
 -- DROP FUNCTION IF EXISTS public.cs_veiculo_km_inicial(uuid, integer, text);
 -- ALTER TABLE public.cs_veiculo_agendamento DROP COLUMN IF EXISTS controle_km;
 -- NOTIFY pgrst, 'reload schema';
+
+-- ===== 20260930000221_recrutamento_vagas_sistema_antigo =====
+-- =========================================================================
+-- Recrutamento: marca das vagas importadas do sistema antigo (bot do
+-- Discord) na SISTEMA_RECRUTAMENTO.
+--
+-- Pedido do Pablo (23/09/2026): migrar as 984 solicitações de vaga do
+-- sistema antigo (export-vagas-completo.xlsx, jan–set/2026) para a Gestão
+-- Recrutamento, todas encerradas — contratadas/em andamento como
+-- "Concluído", reprovadas como "Reprovada" (a tela conta todo "Concluído…"
+-- como contratação; reprovada virando "Concluído" inflaria esse número).
+--
+-- legado_chave = "<userId do Discord>|<data da solicitação>" — a chave
+-- única do registro no bot. Serve para:
+--   • saber o que veio de lá (e só isso tem a coluna preenchida);
+--   • tornar a carga reexecutável: o INSERT dos arquivos de dados usa
+--     ON CONFLICT (legado_chave) DO NOTHING.
+--
+-- OS DADOS NÃO ESTÃO AQUI. Têm nome e telefone de contratados, e não vão
+-- para o git: são gerados por
+--   migracao-sistema-antigo/vagas-discord/gerar-sql-vagas.mjs
+-- a partir do xlsx, um arquivo por mês, para colar no SQL Editor DEPOIS
+-- desta migration.
+--
+-- Idempotente. Aplicar no banco do app.
+-- =========================================================================
+
+ALTER TABLE public."SISTEMA_RECRUTAMENTO"
+  ADD COLUMN IF NOT EXISTS legado_chave text;
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_sistema_recrutamento_legado_chave
+  ON public."SISTEMA_RECRUTAMENTO" (legado_chave);
+
+COMMENT ON COLUMN public."SISTEMA_RECRUTAMENTO".legado_chave IS
+  'Preenchida só nas vagas importadas do sistema antigo (bot do Discord): "<userId>|<data da solicitação>". Chave da carga reexecutável (mig 20260930000221).';
+
+NOTIFY pgrst, 'reload schema';
+
+-- ROLLBACK
+-- (remove as vagas importadas e a coluna; o histórico delas cai junto pelo ON DELETE CASCADE)
+-- DELETE FROM public."SISTEMA_RECRUTAMENTO" WHERE legado_chave IS NOT NULL;
+-- DROP INDEX IF EXISTS public.uq_sistema_recrutamento_legado_chave;
+-- ALTER TABLE public."SISTEMA_RECRUTAMENTO" DROP COLUMN IF EXISTS legado_chave;
+-- NOTIFY pgrst, 'reload schema';
+
+-- ===== 20260930000223_veiculos_controle_km_backfill_sem_gatilhos (aplicar ANTES da 219) =====
+-- =========================================================================
+-- Central de Serviços › Veículos: coluna controle_km + backfill, com os
+-- gatilhos da tabela desligados. APLICAR ANTES DA 20260930000219.
+--
+-- A 20260930000219 falhou ao ser aplicada (23/09/2026): o backfill
+--   UPDATE cs_veiculo_agendamento SET controle_km = false WHERE km_inicial IS NULL
+-- dispara os gatilhos de UPDATE da tabela, e o trg_cs_veic_checar recusou
+-- uma viagem antiga de um carro hoje em manutenção ("Veículo em manutenção:
+-- previsão de retorno em 20/09/2026"). O backfill só preenche uma coluna
+-- nova — não é agendamento sendo mexido — então nenhum gatilho de regra
+-- (checar disponibilidade, solicitante, log, updated_at) deve rodar nele.
+--
+-- A 219 já está na main (R4: não se edita). Esta aqui faz a parte que
+-- falhou; com a coluna já criada, o bloco DO da 219 pula o backfill e o
+-- resto dela (funções) aplica normalmente. Ordem: 223, depois 219.
+--
+-- DISABLE TRIGGER USER não desliga os gatilhos internos de FK. Tudo na
+-- mesma transação: se algo falhar, os gatilhos voltam ligados.
+-- Idempotente. Aplicar no banco do app.
+-- =========================================================================
+
+BEGIN;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                  WHERE table_schema = 'public' AND table_name = 'cs_veiculo_agendamento'
+                    AND column_name = 'controle_km') THEN
+    ALTER TABLE public.cs_veiculo_agendamento ADD COLUMN controle_km boolean NOT NULL DEFAULT true;
+    ALTER TABLE public.cs_veiculo_agendamento DISABLE TRIGGER USER;
+    UPDATE public.cs_veiculo_agendamento SET controle_km = false WHERE km_inicial IS NULL;
+    ALTER TABLE public.cs_veiculo_agendamento ENABLE TRIGGER USER;
+  END IF;
+END $$;
+
+COMMENT ON COLUMN public.cs_veiculo_agendamento.controle_km IS
+  'false = viagem anterior ao controle de KM (legado): fechar é opcional e não trava agendamento. true = KM final + foto obrigatórios para fechar.';
+
+COMMIT;
+
+NOTIFY pgrst, 'reload schema';
+
+-- ROLLBACK
+-- ALTER TABLE public.cs_veiculo_agendamento DROP COLUMN IF EXISTS controle_km;
+-- NOTIFY pgrst, 'reload schema';
