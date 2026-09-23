@@ -52,3 +52,31 @@ export function totalizarLinhasRelatorioPr(linhas: LinhaRelatorioPrHoraExtra[]) 
     })),
   );
 }
+
+export const ERRO_RELATORIO_SEM_CHAMADO =
+  "A hora extra precisa de pelo menos um chamado no relatório.";
+
+/**
+ * Remove uma linha do relatório de conclusão — inclusive um chamado que veio
+ * da própria solicitação. O que foi planejado nem sempre é o que deu para
+ * fazer: o chamado que não saiu na HE precisa sair da tabela, senão trava o
+ * envio pela regra de "uma PR para cada linha".
+ *
+ * A única linha que não sai é a última: hora extra sem nenhum chamado não tem
+ * o que o gestor validar.
+ */
+export function removerLinhaRelatorioPr<T extends { chave: string }>(
+  originais: T[],
+  adicionais: T[],
+  chave: string,
+): { originais: T[]; adicionais: T[]; erro?: string } {
+  const existe = [...originais, ...adicionais].some((linha) => linha.chave === chave);
+  if (!existe) return { originais, adicionais };
+  if (originais.length + adicionais.length <= 1) {
+    return { originais, adicionais, erro: ERRO_RELATORIO_SEM_CHAMADO };
+  }
+  return {
+    originais: originais.filter((linha) => linha.chave !== chave),
+    adicionais: adicionais.filter((linha) => linha.chave !== chave),
+  };
+}
