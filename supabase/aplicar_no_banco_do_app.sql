@@ -25839,7 +25839,7 @@ NOTIFY pgrst, 'reload schema';
 -- END $fn$;
 -- NOTIFY pgrst, 'reload schema';
 
--- ===== 20260930000217_veiculos_km_inicial_opcional_ao_agendar =====
+-- ===== 20260930000219_veiculos_km_inicial_opcional_ao_agendar =====
 -- =========================================================================
 -- Central de Serviços › Veículos: KM inicial + foto do painel deixam de ser
 -- obrigatórios AO AGENDAR — dá para preencher depois, na própria viagem.

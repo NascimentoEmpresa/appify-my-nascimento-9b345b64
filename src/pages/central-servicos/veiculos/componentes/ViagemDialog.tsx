@@ -80,7 +80,7 @@ export function ViagemDialog({ agendamentoId, aberto, onFechar, souDono }: {
   // obrigatórios (a RPC valida os dois lados). Desde 23/09/2026 o KM inicial
   // é opcional ao agendar, então "sem km_inicial" deixou de significar legado
   // — quem decide é controle_km (fallback no sinal antigo enquanto a
-  // 20260930000217 não estiver aplicada no banco).
+  // 20260930000219 não estiver aplicada no banco).
   const legado = v ? (v.controle_km == null ? v.km_inicial == null : !v.controle_km) : false;
   // Viagem nova sem KM inicial não fecha: primeiro registra o inicial.
   const faltaKmInicial = !legado && v?.km_inicial == null;
