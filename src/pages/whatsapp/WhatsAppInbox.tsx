@@ -106,8 +106,17 @@ export default function WhatsAppInbox() {
       const lista = (convs ?? []) as WaConversa[];
       const ids = [...new Set(lista.map((c) => c.contato_id))];
       const mapa: Record<string, WaContato> = {};
-      if (ids.length) {
-        const { data: cts } = await (supabase as any).from("WA_CONTATO").select("*").in("id", ids);
+      // Em lotes: o .in() vira query string, e com todas as conversas de uma
+      // vez a URL passou do limite (set/2026) — a consulta falhava calada e a
+      // lista inteira ficava "—", sem nome nem número. Lote de 100 uuids
+      // fica em ~4 KB, folgado para qualquer proxy.
+      const LOTE = 100;
+      const lotes = await Promise.all(
+        Array.from({ length: Math.ceil(ids.length / LOTE) }, (_, i) =>
+          (supabase as any).from("WA_CONTATO").select("*").in("id", ids.slice(i * LOTE, (i + 1) * LOTE))),
+      );
+      for (const { data: cts, error } of lotes) {
+        if (error) console.error("[wa-conversas] contatos:", error.message);
         for (const c of cts ?? []) mapa[c.id] = c as WaContato;
       }
       return lista.map((c) => ({ ...c, contato: mapa[c.contato_id] ?? null }));
