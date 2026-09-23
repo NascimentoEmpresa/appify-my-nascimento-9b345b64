@@ -2128,6 +2128,11 @@ function FormDrawer({
     form.inss + form.salario_educacao + form.rat_fap + form.sesi + form.senai +
     form.sebrae + form.incra + form.fgts + form.seguro_acidente_trabalho;
 
+  // SIS-2026-0505: Dedução VT (transporte_desconto) e Desc. Alimentação
+  // (aux_alimentacao_desconto) NÃO entram no total do posto na Planilha de Custo
+  // — estavam inflando o valor (reverte a soma da 20260824000002, validado com o
+  // Iury). Continuam gravadas e exibidas na Seção 4, e o orçamento do Malote as
+  // considera à parte (soma as rubricas direto, não usa este somaBeneficios).
   const somaBeneficios =
     form.transporte + form.aux_alimentacao + form.aux_refeicao + form.aux_lanche +
     form.beneficio_familiar + form.seguro_vida + form.abono_indenizatorio + form.aux_educacao +
@@ -2135,7 +2140,7 @@ function FormDrawer({
     form.manutencao_profissional + form.cafe + form.almoco + form.janta + form.ceia +
     form.funeral + form.assiduidade + form.beneficio_trabalhador + form.patronal +
     form.fundo_assistencial + form.fundo_profissional + form.natalidade +
-    form.outros_1 + form.outros_2 + form.outros_3 + form.aux_alimentacao_desconto + form.transporte_desconto - form.deducoes;
+    form.outros_1 + form.outros_2 + form.outros_3 - form.deducoes;
 
   const somaReposicao =
     form.sub_ferias + form.sub_ausencias_legais + form.sub_paternidade +
@@ -2365,9 +2370,10 @@ function FormDrawer({
             <Section title="4 — Benefícios Mensais e Diários" soma={somaBeneficios}>
               <div className="grid grid-cols-4 gap-4">
                 {numField("transporte", "Transporte")}
-                {numField("transporte_desconto", "Dedução VT")}
+                {/* SIS-2026-0505: não somam no total do posto (vão pro Malote) */}
+                {numField("transporte_desconto", "Dedução VT (Malote — não soma)")}
                 {numField("aux_alimentacao", "Aux. Alimentação")}
-                {numField("aux_alimentacao_desconto", "Desc. Alimentação")}
+                {numField("aux_alimentacao_desconto", "Desc. Alimentação (Malote — não soma)")}
                 {numField("aux_refeicao", "Aux. Refeição")}
                 {numField("aux_lanche", "Aux. Lanche")}
                 {numField("beneficio_familiar", "Ben. Sócio Familiar")}
@@ -3214,13 +3220,15 @@ function ViewModal({
   const somaEncargos = row.decimo_terceiro + row.adicional_ferias + row.incidencia_enc_41 +
     row.inss + row.salario_educacao + row.rat_fap + row.sesi + row.senai +
     row.sebrae + row.incra + row.fgts + row.seguro_acidente_trabalho;
+  // SIS-2026-0505: mesma regra do form — Dedução VT e Desc. Alimentação fora do
+  // total do posto na Planilha (continuam na Seção 4 e no orçamento do Malote).
   const somaBeneficios = row.transporte + row.aux_alimentacao + row.aux_refeicao + row.aux_lanche +
     row.beneficio_familiar + row.seguro_vida + row.abono_indenizatorio + row.aux_educacao +
     row.cesta_basica + row.assistencia_medica + row.hospedagem + row.odontologico +
     row.manutencao_profissional + row.cafe + row.almoco + row.janta + row.ceia +
     row.funeral + row.assiduidade + row.beneficio_trabalhador + row.patronal +
     row.fundo_assistencial + row.fundo_profissional + row.natalidade +
-    row.outros_1 + row.outros_2 + row.outros_3 + row.aux_alimentacao_desconto + row.transporte_desconto - row.deducoes;
+    row.outros_1 + row.outros_2 + row.outros_3 - row.deducoes;
   const somaReposicao = row.sub_ferias + row.sub_ausencias_legais + row.sub_paternidade +
     row.sub_acidente_trabalho + row.sub_maternidade + row.sub_doenca + row.sub_repouso +
     row.incidencia_maternidade + row.incidencia_enc_reposicao + row.incidencia_enc_reposicao_2 +
@@ -3322,9 +3330,10 @@ function ViewModal({
 
             <VSec title="4 — Benefícios Mensais e Diários" soma={somaBeneficios}>
               <VRow label="Transporte" value={row.transporte} />
-              <VRow label="Dedução VT" value={row.transporte_desconto} />
+              {/* SIS-2026-0505: não somam no total do posto (vão pro Malote) */}
+              <VRow label="Dedução VT (Malote — não soma)" value={row.transporte_desconto} />
               <VRow label="Aux. Alimentação" value={row.aux_alimentacao} />
-              <VRow label="Desc. Alimentação" value={row.aux_alimentacao_desconto} />
+              <VRow label="Desc. Alimentação (Malote — não soma)" value={row.aux_alimentacao_desconto} />
               <VRow label="Aux. Refeição" value={row.aux_refeicao} />
               <VRow label="Aux. Lanche" value={row.aux_lanche} />
               <VRow label="Ben. Sócio Familiar" value={row.beneficio_familiar} />
