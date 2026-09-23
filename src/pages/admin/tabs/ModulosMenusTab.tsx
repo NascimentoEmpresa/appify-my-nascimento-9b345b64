@@ -812,7 +812,8 @@ function UserAccessPanel({ podeGerenciar, modulos, menus }: { podeGerenciar: boo
                             </div>
                           )}
                           {isReunioes && podeGerenciar && capsOpen && (
-                            <div className="border-t border-border/60 bg-background px-12 py-2">
+                            <div className="divide-y divide-border/60 border-t border-border/60 bg-background px-12 py-2">
+                              <AcessoAdminReuniao userId={selectedUserId} onToast={(m, t) => toast({ title: m, variant: t === "err" ? "destructive" : "default" })} />
                               <ObservadorAutomaticoReuniao userId={selectedUserId} onToast={(m, t) => toast({ title: m, variant: t === "err" ? "destructive" : "default" })} />
                             </div>
                           )}
@@ -1378,6 +1379,49 @@ function CabecalhoGrupo({ rotulo, quantidade }: { rotulo: string; quantidade: nu
     <div className="sticky top-0 z-10 flex items-center gap-2 bg-muted/80 px-3 py-1.5 backdrop-blur-sm">
       <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{rotulo}</span>
       <span className="text-[10px] tabular-nums text-muted-foreground">({quantidade})</span>
+    </div>
+  );
+}
+
+// ─── Administração de reuniões de outras pessoas (SIS-2026-0470) ────────────
+// Presença de uma linha em reuniao_administrador = acesso administrativo.
+// A RLS usa a mesma flag: este switch não é só apresentação e não depende de
+// o criador original continuar ativo no sistema.
+function AcessoAdminReuniao({ userId, onToast }: { userId: string; onToast: (m: string, t?: string) => void }) {
+  const [ativo, setAtivo] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const erroPerm = (m: string) => /row-level|permission|policy/i.test(m) ? "Só administradores alteram permissões." : "Erro: " + m;
+
+  useEffect(() => {
+    setLoading(true);
+    (supabase as any)
+      .from("reuniao_administrador")
+      .select("user_id")
+      .eq("user_id", userId)
+      .maybeSingle()
+      .then(({ data }: any) => { setAtivo(!!data); setLoading(false); });
+  }, [userId]);
+
+  const toggle = async () => {
+    if (ativo) {
+      const { error } = await (supabase as any).from("reuniao_administrador").delete().eq("user_id", userId);
+      if (error) { onToast(erroPerm(error.message), "err"); return; }
+    } else {
+      const { error } = await (supabase as any).from("reuniao_administrador").insert({ user_id: userId });
+      if (error) { onToast(erroPerm(error.message), "err"); return; }
+    }
+    setAtivo((v) => !v);
+  };
+
+  return (
+    <div className="flex items-center gap-3 py-2.5">
+      <div className="flex-1">
+        <p className="text-sm">Acesso admin</p>
+        <p className="text-[11px] text-muted-foreground">
+          Permite abrir, editar, cancelar e excluir qualquer reunião, mesmo quando foi criada por outra pessoa.
+        </p>
+      </div>
+      <Switch checked={ativo} disabled={loading} onCheckedChange={toggle} aria-label="Acesso admin à Agenda de Reunião" />
     </div>
   );
 }

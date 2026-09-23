@@ -153,3 +153,106 @@ export const STATUS_EXECUCAO: Record<StatusExecucao, AparenciaBadge> = {
   nao_iniciado: { label: "Não iniciado", classe: "bg-red-100 text-red-700", Icone: CircleX },
 };
 export const ICONES_STATUS = { CheckCircle2, CircleX, Clock3, Hourglass };
+
+// ---------------------------------------------------------------------
+// Dashboard de HE (SIS-2026-0474) — o que a RPC `hora_extra_dashboard`
+// devolve. Tudo em minutos: a formatação é da tela, não do banco.
+// ---------------------------------------------------------------------
+
+export interface IndicadoresDashboardHoraExtra {
+  aprovadas_min: number;
+  aprovadas_variacao: number;
+  realizadas_min: number;
+  realizadas_variacao: number;
+  pendentes_conclusao: number;
+  pendentes_variacao: number;
+  custo_estimado: number;
+  custo_variacao: number;
+  colaboradores: number;
+  colaboradores_variacao: number;
+  chamados: number;
+  chamados_variacao: number;
+}
+
+export interface VolumeColaboradorHoraExtra {
+  id: string;
+  nome: string;
+  minutos: number;
+}
+
+export interface MesDashboardHoraExtra {
+  /** `AAAA-MM`. */
+  mes: string;
+  previsto_min: number;
+  realizado_min: number;
+}
+
+export interface MotivoDashboardHoraExtra {
+  /** `tipo_solicitacao` do chamado trabalhado. */
+  motivo: string;
+  minutos: number;
+}
+
+export interface DiaSemanaDashboardHoraExtra {
+  /** `isodow`: 1 = segunda ... 7 = domingo. */
+  dia: number;
+  minutos: number;
+}
+
+export interface StatusDashboardHoraExtra {
+  aprovadas_min: number;
+  concluidas_min: number;
+  pendentes_min: number;
+  total_min: number;
+}
+
+export interface ColaboradorDashboardHoraExtra {
+  id: string;
+  nome: string;
+  qtd: number;
+  aprovadas_min: number;
+  realizadas_min: number;
+  chamados: number;
+  conclusao_media: number;
+}
+
+export interface OpcoesDashboardHoraExtra {
+  empresas: string[];
+  setores: string[];
+  colaboradores: Array<{ id: string; nome: string }>;
+}
+
+export interface DadosDashboardHoraExtra {
+  /** 0 enquanto o RH não define o valor-hora em `HORA_EXTRA_PARAMETRO`. */
+  valor_hora: number;
+  indicadores: IndicadoresDashboardHoraExtra;
+  por_colaborador: VolumeColaboradorHoraExtra[];
+  evolucao: MesDashboardHoraExtra[];
+  por_motivo: MotivoDashboardHoraExtra[];
+  por_dia_semana: DiaSemanaDashboardHoraExtra[];
+  status: StatusDashboardHoraExtra;
+  efetividade: ColaboradorDashboardHoraExtra[];
+  opcoes: OpcoesDashboardHoraExtra;
+}
+
+export interface FiltrosDashboardHoraExtra {
+  inicio: string;
+  fim: string;
+  empresa: string;
+  setor: string;
+  colaborador: string;
+  /** Tamanho da série de "Evolução"/"Previsto x Realizado", em meses. */
+  meses: number;
+}
+
+export interface NivelEfetividade {
+  label: string;
+  classe: string;
+}
+
+export interface InsightDashboardHoraExtra {
+  chave: "volume" | "efetividade" | "dia";
+  titulo: string;
+  destaque: string;
+  detalhe: string;
+}

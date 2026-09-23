@@ -21,6 +21,7 @@ import {
   podeEditarHorariosDaConcluida,
   podeIgnorarEscalaNoFimDeSemana,
   rotuloFaseAnexo,
+  resumirLiberacaoHoraExtra,
   sobrepoe,
   statusExecucaoPorPercentual,
   statusExibicao,
@@ -38,6 +39,22 @@ describe("regras de hora extra", () => {
   it("calcula HE que cruza meia-noite", () => expect(totalHe("22:00", "02:00")).toBe(240));
   it("formata a data no fuso local", () => expect(dataLocalISO(new Date(2026, 8, 15, 23, 30))).toBe("2026-09-15"));
   it("formata duração curta", () => expect(formatarDuracao(180, true)).toBe("3h00"));
+  it("resume os cartões da liberação somente com horas aprovadas", () => {
+    expect(
+      resumirLiberacaoHoraExtra([
+        { status: "aguardando_liberacao", total_previsto_min: 60 },
+        { status: "aguardando_validacao", total_previsto_min: 90 },
+        { status: "aprovada", total_previsto_min: 120 },
+        { status: "concluida", total_previsto_min: 150 },
+        { status: "reprovada", total_previsto_min: 180 },
+      ]),
+    ).toEqual({
+      aguardando_liberacao: 1,
+      aguardando_validacao: 1,
+      liberadas: 3,
+      horas_aprovadas_min: 360,
+    });
+  });
   // --- cálculo pela escala de trabalho (16/09/2026) -------------------
   it("a escala padrão dá 8h48 de jornada", () => expect(formatarDuracao(JORNADA, true)).toBe("8h48"));
   it("lê a jornada de uma escala diferente", () =>
