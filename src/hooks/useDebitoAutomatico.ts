@@ -129,6 +129,13 @@ export interface CriarDebitoInput {
   forma_pagamento: string;
   valor: number;
   banco_id: string;
+  // SIS-2026-0492: omitido = 'pendente' (padrão de sempre). A tela de
+  // Conciliação Bancária (Fluxo de Caixa) passa 'pago' explicitamente ao
+  // criar um lançamento a partir de uma linha do extrato que não tinha
+  // equivalente no Fluxo — já nasce "pago" porque o próprio extrato é a
+  // prova de que o dinheiro já entrou/saiu, e precisa aparecer na view do
+  // Fluxo de Caixa (WHERE status = 'pago') pra conciliação recalcular.
+  status?: StatusDebito;
 }
 
 export function useCriarDebito() {
@@ -146,6 +153,7 @@ export function useCriarDebito() {
         _forma_pagamento: input.forma_pagamento,
         _valor: input.valor,
         _banco_id: input.banco_id,
+        _status: input.status ?? "pendente",
       });
       if (error) throw error;
       return data as string;
