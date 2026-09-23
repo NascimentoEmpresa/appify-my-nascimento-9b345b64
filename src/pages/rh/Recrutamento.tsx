@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback, type MouseEvent as ReactMouseEvent, type CSSProperties, type ReactNode } from "react";
 import {
-  Activity, AlertTriangle, Ban, Building2, CalendarDays, CheckCircle2, ClipboardList, Clock, Eye, FileText,
+  Activity, AlertTriangle, Ban, Building2, CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, ClipboardList, Clock, Eye, FileText,
   FolderOpen, GraduationCap, History, IdCard, Landmark, Link2, LogOut, Mail, MapPin, MessageSquare, Paperclip,
   Pencil, Phone, Search, Settings, Tags, Target, Trash2, UserSearch, Users, XCircle, Zap, type LucideIcon,
 } from "lucide-react";
@@ -140,6 +140,32 @@ function Ic({ i: Icone, s = 14 }: { i: LucideIcon; s?: number }) {
 }
 
 // ── Helpers ────────────────────────────────────────────────────────
+/** Mês mais antigo do seletor: as vagas importadas do sistema antigo começam em jan/2026. */
+const PRIMEIRO_MES = "2026-01";
+const mesAtual = () => new Date().toLocaleDateString("sv-SE", { timeZone: "America/Sao_Paulo" }).slice(0, 7);
+/** "2026-08" + 1 → "2026-09". */
+function mesVizinho(mes: string, delta: number): string {
+  const [a, m] = mes.split("-").map(Number);
+  const d = new Date(Date.UTC(a, m - 1 + delta, 1));
+  return d.toISOString().slice(0, 7);
+}
+/** "2026-08" → "2026-08-31". */
+function ultimoDiaDoMes(mes: string): string {
+  const [a, m] = mes.split("-").map(Number);
+  return `${mes}-${String(new Date(Date.UTC(a, m, 0)).getUTCDate()).padStart(2, "0")}`;
+}
+/** "2026-08" → "agosto de 2026". */
+function nomeDoMes(mes: string): string {
+  const [a, m] = mes.split("-").map(Number);
+  return new Date(Date.UTC(a, m - 1, 15)).toLocaleDateString("pt-BR", { month: "long", year: "numeric", timeZone: "UTC" });
+}
+/** Do mês atual até PRIMEIRO_MES, do mais novo pro mais antigo. */
+function mesesDoSeletor(): string[] {
+  const lista: string[] = [];
+  for (let m = mesAtual(); m >= PRIMEIRO_MES; m = mesVizinho(m, -1)) lista.push(m);
+  return lista;
+}
+
 /** "2026-08-31" → "2026-09-01" (fim exclusivo do filtro de período). */
 function diaSeguinte(iso: string): string {
   const d = new Date(`${iso}T12:00:00Z`);
@@ -432,12 +458,14 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
   // "Aguardando você" e os KPIs continuam só com as administrativas.
   const noEscopoLista = useCallback(<T extends { administrativa?: boolean | null; setor?: string | null }>(rows: T[]) =>
     (escopo === "diretoria" && statusFilter === "") ? rows : filtrarPorEscopo(rows, escopo, meusSetores), [escopo, meusSetores, statusFilter]);
-  // Período pela data da solicitação (created_at), 23/09/2026 — veio junto
-  // com a importação das vagas do sistema antigo (Discord), que trouxe todo o
-  // histórico desde jan/2026. "YYYY-MM-DD" do <input type=date>; vazio = sem
-  // limite daquele lado.
-  const [dataDe, setDataDe]   = useState("");
-  const [dataAte, setDataAte] = useState("");
+  // Mês da solicitação (created_at), 23/09/2026 — veio junto com a
+  // importação das vagas do sistema antigo (Discord), que trouxe todo o
+  // histórico desde jan/2026. "YYYY-MM"; vazio = todos. A primeira versão
+  // tinha também De/Até livres — ficou poluído e saiu no mesmo dia, a
+  // pedido: só o mês, passando pro lado. dataDe/dataAte saem dele.
+  const [mes, setMes] = useState("");
+  const dataDe  = mes ? `${mes}-01` : "";
+  const dataAte = mes ? ultimoDiaDoMes(mes) : "";
   const [contratoFiltro, setContratoFiltro]         = useState<string[]>([]);
   const [contratoCounts, setContratoCounts]         = useState<{ contrato: string; n: number }[]>([]);
   const [showContratoFiltro, setShowContratoFiltro] = useState(false);
@@ -2192,34 +2220,39 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
 
         {/* Filtro de Contratos */}
         <div style={{ position: "relative", marginBottom: 12, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-          {/* Período pela data da solicitação. O mês preenche De/Até de uma
-              vez (o pedido era ver as vagas "mês a mês"); De/Até ficam
-              livres pra qualquer recorte. */}
-          <div style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "4px 10px", borderRadius: 10, border: "1px solid #e2e8f0", background: (dataDe || dataAte) ? "#eef2fb" : "#fff", boxShadow: "0 8px 24px rgba(15,23,42,.06)", fontSize: 12, color: "#475569", fontWeight: 700 }}>
-            <Ic i={CalendarDays} />Mês
-            <input type="month" aria-label="Mês da solicitação"
-              value={dataDe && dataAte && dataDe.slice(0, 7) === dataAte.slice(0, 7) && dataDe.endsWith("-01") && diaSeguinte(dataAte).endsWith("-01") ? dataDe.slice(0, 7) : ""}
-              onChange={e => {
-                const m = e.target.value;
-                if (!m) { setDataDe(""); setDataAte(""); setPage(1); return; }
-                const [a, mm] = m.split("-").map(Number);
-                const ultimo = new Date(Date.UTC(a, mm, 0)).getUTCDate();
-                setDataDe(`${m}-01`); setDataAte(`${m}-${String(ultimo).padStart(2, "0")}`); setPage(1);
-              }}
-              style={{ border: "1px solid #e2e8f0", borderRadius: 7, padding: "3px 6px", fontSize: 12, color: "#0f172a" }} />
-            <span style={{ color: "#cbd5e1" }}>|</span>
-            De
-            <input type="date" aria-label="Solicitadas a partir de" value={dataDe} max={dataAte || undefined}
-              onChange={e => { setDataDe(e.target.value); setPage(1); }}
-              style={{ border: "1px solid #e2e8f0", borderRadius: 7, padding: "3px 6px", fontSize: 12, color: "#0f172a" }} />
-            até
-            <input type="date" aria-label="Solicitadas até" value={dataAte} min={dataDe || undefined}
-              onChange={e => { setDataAte(e.target.value); setPage(1); }}
-              style={{ border: "1px solid #e2e8f0", borderRadius: 7, padding: "3px 6px", fontSize: 12, color: "#0f172a" }} />
-            {(dataDe || dataAte) && (
-              <button onClick={() => { setDataDe(""); setDataAte(""); setPage(1); }} style={{ background: "none", border: "none", color: "#94a3b8", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>limpar</button>
-            )}
-          </div>
+          {/* Mês da solicitação: ‹ Mês ›. As setas passam o mês (de
+              "Todos", a primeira seta abre no mês atual); no meio, a lista
+              com "Todos" e cada mês desde jan/2026. */}
+          {(() => {
+            const meses = mesesDoSeletor();
+            const ir = (m: string) => { setMes(m); setPage(1); };
+            const seta = (desabilitada: boolean): CSSProperties => ({
+              display: "inline-flex", alignItems: "center", justifyContent: "center", width: 28, height: 28, borderRadius: 8,
+              border: "none", background: "transparent", color: desabilitada ? "#cbd5e1" : "#475569",
+              cursor: desabilitada ? "default" : "pointer",
+            });
+            const semAnterior = !!mes && mes <= PRIMEIRO_MES;
+            const semProximo  = !mes || mes >= mesAtual();
+            return (
+              <div style={{ display: "inline-flex", alignItems: "center", gap: 2, padding: "3px 4px 3px 12px", borderRadius: 10, border: "1px solid #e2e8f0", background: mes ? "#eef2fb" : "#fff", boxShadow: "0 8px 24px rgba(15,23,42,.06)", fontSize: 12, color: "#475569", fontWeight: 700 }}>
+                <Ic i={CalendarDays} />
+                <span style={{ marginRight: 4 }}>Mês</span>
+                <button type="button" aria-label="Mês anterior" disabled={semAnterior} style={seta(semAnterior)}
+                  onClick={() => ir(mes ? mesVizinho(mes, -1) : mesAtual())}>
+                  <ChevronLeft size={16} aria-hidden />
+                </button>
+                <select aria-label="Mês da solicitação" value={mes} onChange={e => ir(e.target.value)}
+                  style={{ appearance: "none", border: "none", background: "transparent", fontSize: 12.5, fontWeight: 800, color: mes ? "#0f3171" : "#0f172a", cursor: "pointer", textAlign: "center", minWidth: 128, padding: "4px 2px", textTransform: "capitalize" }}>
+                  <option value="">Todos</option>
+                  {meses.map(m => <option key={m} value={m}>{nomeDoMes(m)}</option>)}
+                </select>
+                <button type="button" aria-label="Próximo mês" disabled={semProximo} style={seta(semProximo)}
+                  onClick={() => ir(mesVizinho(mes, 1))}>
+                  <ChevronRight size={16} aria-hidden />
+                </button>
+              </div>
+            );
+          })()}
           <button onClick={() => setShowContratoFiltro(v => !v)} style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "7px 14px", borderRadius: 10, border: "1px solid #e2e8f0", background: contratoFiltro.length ? "#0f3171" : "#fff", color: contratoFiltro.length ? "#fff" : "#475569", fontSize: 12, fontWeight: 700, cursor: "pointer", boxShadow: "0 8px 24px rgba(15,23,42,.06)" }}>
             <Ic i={Building2} />Filtros · Contratos{contratoFiltro.length ? ` (${contratoFiltro.length})` : ""} ▾
           </button>
