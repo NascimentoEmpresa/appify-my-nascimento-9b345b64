@@ -38,7 +38,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Plus, Pencil, Trash2, Eye, History, FileText, AlertCircle } from "lucide-react";
+import { Plus, Pencil, Trash2, Eye, History, FileText, AlertCircle, Printer } from "lucide-react";
+import { imprimirCapaEdital } from "@/lib/licitacoes/capaEditalPrint";
 import { toast } from "@/hooks/use-toast";
 import { useUsuariosLicitacao } from "@/hooks/useUsuariosLicitacao";
 import { useEmpresasGrupo } from "@/hooks/useMaloteDespesa";
@@ -797,15 +798,30 @@ function CapaSheet({
 // ── Modal de visualização ─────────────────────────────────────────────────
 
 function ViewModal({ capa, onClose }: { capa: CapaEdital; onClose: () => void }) {
+  const { data: empresasGrupo = [] } = useEmpresasGrupo();
+  const empresaNome = empresasGrupo.find((e) => e.id === capa.empresa_id)?.nome;
+
+  function handleImprimir() {
+    try {
+      imprimirCapaEdital(capa, empresaNome);
+    } catch (err) {
+      toast({ title: "Erro ao imprimir", description: (err as Error).message, variant: "destructive" });
+    }
+  }
+
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
+          <DialogTitle className="flex items-center gap-2 pr-8">
             <span className={cn("rounded-full border px-2 py-0.5 text-[11px] font-semibold", STATUS_COLOR[capa.status])}>
               {capa.status}
             </span>
-            {capa.objeto || capa.cidade || "Licitação"}
+            <span className="flex-1 min-w-0 truncate">{capa.objeto || capa.cidade || "Licitação"}</span>
+            {/* SIS-2026-0449: imprimir as informações preenchidas da capa. */}
+            <Button size="sm" variant="outline" className="h-7 shrink-0 gap-1.5" onClick={handleImprimir}>
+              <Printer className="h-3.5 w-3.5" /> Imprimir
+            </Button>
           </DialogTitle>
         </DialogHeader>
 
