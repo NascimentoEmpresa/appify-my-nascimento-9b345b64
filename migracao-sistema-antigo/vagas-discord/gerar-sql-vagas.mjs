@@ -102,7 +102,7 @@ const colunas = [
   "exp_minima", "exp_minima_qual", "motivos_saida", "recomendacao",
   "observacao_importante", "solicitante_nome", "aprovado_por_nome",
   "motivo_reprovacao", "funcionario_selecionado", "contratado_nome",
-  "contratado_contato", "contratado_data_inicio", "reposicao_tecnica",
+  "contratado_contato", "contratado_data_inicio", "reserva_tecnica",
   "status_antigo",
 ];
 
@@ -147,7 +147,7 @@ for (const v of vagas) {
     contratado_nome: txt(v["contratado.nomeCompleto"]),
     contratado_contato: txt(v["contratado.contato"]),
     contratado_data_inicio: dataCampo(v["contratado.dataInicio"]),
-    reposicao_tecnica: motivoAntigo === "Reserva técnica",
+    reserva_tecnica: motivoAntigo === "Reserva técnica",
     status_antigo: txt(v.status) ?? "(sem status)",
     eventos,
   };
@@ -195,7 +195,7 @@ ins AS (
   SELECT ${colunas.filter((c) => c !== "status_antigo").map((c) =>
     c === "created_at" || c === "status_changed_at" ? `${c}::timestamptz`
     : c === "quantidade_vagas" ? `${c}::integer`
-    : c === "reposicao_tecnica" ? `${c}::boolean`
+    : c === "reserva_tecnica" ? `${c}::boolean`
     : c).join(", ")}
     FROM dados
   ON CONFLICT (legado_chave) DO NOTHING
