@@ -104,9 +104,11 @@ export interface NovoAgendamento {
   observacoes?: string | null;
   /** codigo = id da "CONTRATOS"; null + administrativo = viagem sem contrato. */
   contratos: { codigo: number | null; nome: string; administrativo?: boolean }[];
-  /** KM do painel na retirada + a foto dele (obrigatórios desde 22/09/2026). */
-  km_inicial: number;
-  km_inicial_foto: File;
+  /** KM do painel na retirada + a foto dele. Obrigatórios de 22 a 23/09/2026;
+   *  agora opcionais ao agendar — dá para registrar depois, na viagem
+   *  (cs_veiculo_km_inicial). Fechar a viagem ainda exige o KM inicial. */
+  km_inicial: number | null;
+  km_inicial_foto: File | null;
 }
 
 // ── Foto do veículo ──────────────────────────────────────────────────
@@ -379,10 +381,8 @@ export function useCriarAgendamento() {
     mutationFn: async (n: NovoAgendamento): Promise<Agendamento> => {
       if (!user?.id) throw new Error("Sessão expirada. Entre novamente.");
       if (!n.contratos.length) throw new Error("Selecione ao menos um contrato atendido pela viagem.");
-      if (!(n.km_inicial >= 0)) throw new Error("Informe o KM inicial do painel.");
-      if (!n.km_inicial_foto) throw new Error("Anexe a foto do painel com o KM inicial.");
-      // A foto sobe antes: sem ela o banco recusa a reserva (trigger).
-      const fotoKm = await subirArquivoVeiculo(n.km_inicial_foto, "km/novos");
+      if (n.km_inicial != null && !(n.km_inicial >= 0)) throw new Error("KM inicial inválido.");
+      const fotoKm = n.km_inicial_foto ? await subirArquivoVeiculo(n.km_inicial_foto, "km/novos") : null;
 
       const { data, error } = await sb
         .from("cs_veiculo_agendamento")
@@ -401,7 +401,7 @@ export function useCriarAgendamento() {
           observacoes: n.observacoes?.trim() || null,
           solicitante_id: user.id,
           km_inicial: n.km_inicial,
-          km_inicial_foto: fotoKm.path,
+          km_inicial_foto: fotoKm?.path ?? null,
         })
         .select("*")
         .single();
@@ -478,6 +478,8 @@ export interface Viagem {
   data_inicio: string; data_fim: string; turno: Turno; status: StatusAgendamento;
   solicitante_nome: string | null; solicitante_id: string;
   destino: string | null; motivo: string | null; observacoes: string | null;
+  /** false = viagem anterior ao controle de KM (legado): fechar é opcional. */
+  controle_km: boolean;
   km_inicial: number | null; km_inicial_foto: string | null; km_inicial_em: string | null;
   km_final: number | null; km_final_foto: string | null; km_final_em: string | null;
   rodados: number | null;
@@ -486,7 +488,7 @@ export interface Viagem {
 }
 
 export interface KmPendente {
-  id: string; numero: number; veiculo_nome: string; data_inicio: string; data_fim: string; km_inicial: number;
+  id: string; numero: number; veiculo_nome: string; data_inicio: string; data_fim: string; km_inicial: number | null;
 }
 
 /** Sobe foto/nota e devolve o caminho no bucket. */
@@ -540,11 +542,25 @@ function useInvalidarViagem() {
   };
 }
 
+/** KM inicial e/ou foto do painel registrados depois do agendamento. */
+export function useRegistrarKmInicial() {
+  const invalidar = useInvalidarViagem();
+  return useMutation({
+    mutationFn: async (v: { id: string; km: number | null; foto: File | null }) => {
+      const path = v.foto ? (await subirArquivoVeiculo(v.foto, `km/${v.id}`)).path : null;
+      const { error } = await sb.rpc("cs_veiculo_km_inicial", { p_agendamento: v.id, p_km: v.km, p_foto: path });
+      if (error) throw error;
+    },
+    onSuccess: (_d, v) => { invalidar(v.id); toast.success("KM inicial registrado."); },
+    onError: (e: any) => toast.error(mensagemDeErro(e)),
+  });
+}
+
 export function useFecharKm() {
   const invalidar = useInvalidarViagem();
   return useMutation({
-    // km/foto são opcionais para viagem LEGADO (a que nasceu sem km_inicial —
-    // a RPC decide o que é obrigatório; ver cs_veiculo_km_final).
+    // km/foto são opcionais para viagem LEGADO (controle_km = false — a RPC
+    // decide o que é obrigatório; ver cs_veiculo_km_final).
     mutationFn: async (v: { id: string; km: number | null; foto: File | null }) => {
       const path = v.foto ? (await subirArquivoVeiculo(v.foto, `km/${v.id}`)).path : null;
       const { error } = await sb.rpc("cs_veiculo_km_final", { p_agendamento: v.id, p_km: v.km, p_foto: path });

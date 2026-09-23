@@ -11,7 +11,7 @@ import {
 } from "@/components/ui/dialog";
 import {
   LABEL_TURNO, abrirArquivoVeiculo, formatarData, hojeISO,
-  useContratosParaAgendamento, useDefinirContratosDaViagem, useFecharKm, useRegistrarAbastecimento, useViagem,
+  useContratosParaAgendamento, useDefinirContratosDaViagem, useFecharKm, useRegistrarAbastecimento, useRegistrarKmInicial, useViagem,
   type ContratoSimples,
 } from "@/hooks/useAgendamentoVeiculos";
 
@@ -34,11 +34,15 @@ export function ViagemDialog({ agendamentoId, aberto, onFechar, souDono }: {
 }) {
   const q = useViagem(aberto ? agendamentoId : null);
   const fecharKm = useFecharKm();
+  const registrarKmInicial = useRegistrarKmInicial();
   const salvarContratos = useDefinirContratosDaViagem();
   const registrar = useRegistrarAbastecimento();
   const [incluirInativos, setIncluirInativos] = useState(false);
   const contratos = useContratosParaAgendamento(incluirInativos);
 
+  // KM inicial registrado depois do agendamento
+  const [kmInicial, setKmInicial] = useState("");
+  const [fotoInicial, setFotoInicial] = useState<File | null>(null);
   // KM final
   const [kmFinal, setKmFinal] = useState("");
   const [fotoFinal, setFotoFinal] = useState<File | null>(null);
@@ -60,7 +64,7 @@ export function ViagemDialog({ agendamentoId, aberto, onFechar, souDono }: {
     setViagemContratos(nomesDaViagem);
   }, [nomesDaViagem]);
   useEffect(() => {
-    if (!aberto) { setNotaAberta(false); setEditandoContratos(false); setKmFinal(""); setFotoFinal(null); setNota({ descricao: "", data: hojeISO(), valor: "", litros: "", km: "", arquivo: null }); }
+    if (!aberto) { setNotaAberta(false); setEditandoContratos(false); setKmInicial(""); setFotoInicial(null); setKmFinal(""); setFotoFinal(null); setNota({ descricao: "", data: hojeISO(), valor: "", litros: "", km: "", arquivo: null }); }
   }, [aberto]);
 
   /** Nome → {codigo, nome, administrativo} usando a lista do banco, com fallback no que já está na viagem. */
@@ -71,11 +75,22 @@ export function ViagemDialog({ agendamentoId, aberto, onFechar, souDono }: {
     return daViagem ?? { codigo: null, nome, administrativo: false };
   };
 
-  // Viagem legado (anterior ao controle de KM/foto — nasceu sem km_inicial):
-  // fechar é opcional, e não exige os dois campos. Viagem do fluxo novo
-  // continua com os dois obrigatórios (a RPC valida os dois lados).
-  const legado = v?.km_inicial == null;
-  const podeEnviarKm = legado ? !!(kmFinal || fotoFinal) : !!(kmFinal && fotoFinal);
+  // Viagem legado (anterior ao controle de KM/foto): fechar é opcional, e não
+  // exige os dois campos. Viagem do fluxo novo continua com os dois
+  // obrigatórios (a RPC valida os dois lados). Desde 23/09/2026 o KM inicial
+  // é opcional ao agendar, então "sem km_inicial" deixou de significar legado
+  // — quem decide é controle_km (fallback no sinal antigo enquanto a
+  // 20260930000217 não estiver aplicada no banco).
+  const legado = v ? (v.controle_km == null ? v.km_inicial == null : !v.controle_km) : false;
+  // Viagem nova sem KM inicial não fecha: primeiro registra o inicial.
+  const faltaKmInicial = !legado && v?.km_inicial == null;
+  const podeEnviarKm = legado ? !!(kmFinal || fotoFinal) : !!(kmFinal && fotoFinal) && !faltaKmInicial;
+
+  const enviarKmInicial = async () => {
+    if (!agendamentoId || !(kmInicial || fotoInicial)) return;
+    await registrarKmInicial.mutateAsync({ id: agendamentoId, km: kmInicial ? Number(kmInicial) : null, foto: fotoInicial });
+    setKmInicial(""); setFotoInicial(null);
+  };
 
   const enviarKmFinal = async () => {
     if (!agendamentoId || !podeEnviarKm) return;
@@ -136,6 +151,43 @@ export function ViagemDialog({ agendamentoId, aberto, onFechar, souDono }: {
                 <p className="mt-2 text-sm text-muted-foreground">Rodou <b className="text-foreground">{v.rodados.toLocaleString("pt-BR")} km</b> nesta viagem.</p>
               )}
 
+              {/* KM inicial que ficou para depois do agendamento (23/09/2026):
+                  cada campo grava uma vez só — o que já foi registrado some daqui. */}
+              {!legado && v.km_final == null && souDono && (v.km_inicial == null || !v.km_inicial_foto) && (
+                <div className="mt-4 space-y-3 rounded-lg border border-amber-300 bg-amber-50/60 p-3 dark:bg-amber-500/10">
+                  <div>
+                    <p className="text-sm font-semibold">Registrar o KM inicial</p>
+                    <p className="text-xs text-muted-foreground">
+                      Ficou para depois do agendamento. O KM inicial é necessário para fechar a viagem; a foto pode vir quando der.
+                    </p>
+                  </div>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    {v.km_inicial == null && (
+                      <div className="space-y-1.5">
+                        <Label htmlFor="km-inicial-depois">KM inicial (painel)</Label>
+                        <Input id="km-inicial-depois" inputMode="numeric" value={kmInicial} placeholder="Ex.: 84512"
+                               onChange={(e) => setKmInicial(e.target.value.replace(/\D/g, ""))} />
+                      </div>
+                    )}
+                    {!v.km_inicial_foto && (
+                      <div className="space-y-1.5">
+                        <Label htmlFor="foto-inicial-depois">Foto do painel</Label>
+                        <label htmlFor="foto-inicial-depois" className="flex h-10 cursor-pointer items-center gap-2 rounded-md border border-input bg-background px-3 text-sm text-muted-foreground hover:bg-muted/50">
+                          <Camera className="h-4 w-4 shrink-0 text-amber-600" />
+                          <span className="truncate">{fotoInicial ? fotoInicial.name : "Tirar foto / escolher"}</span>
+                        </label>
+                        <input id="foto-inicial-depois" type="file" accept="image/*" capture="environment" className="hidden"
+                               onChange={(e) => setFotoInicial(e.target.files?.[0] ?? null)} />
+                      </div>
+                    )}
+                  </div>
+                  <Button size="sm" className="gap-1.5" disabled={!(kmInicial || fotoInicial) || registrarKmInicial.isPending} onClick={enviarKmInicial}>
+                    {registrarKmInicial.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                    Registrar KM inicial
+                  </Button>
+                </div>
+              )}
+
               {v.km_final == null && souDono && (
                 <div className={`mt-4 space-y-3 rounded-lg border p-3 ${legado ? "border-border bg-muted/30" : "border-amber-300 bg-amber-50/60 dark:bg-amber-500/10"}`}>
                   <div>
@@ -144,6 +196,9 @@ export function ViagemDialog({ agendamentoId, aberto, onFechar, souDono }: {
                       <p className="text-xs text-muted-foreground">
                         Viagem anterior ao controle de KM/foto — o registro é opcional, preencha o que tiver.
                       </p>
+                    )}
+                    {faltaKmInicial && (
+                      <p className="text-xs text-muted-foreground">Registre o KM inicial acima antes de fechar.</p>
                     )}
                   </div>
                   <div className="grid gap-3 sm:grid-cols-2">
