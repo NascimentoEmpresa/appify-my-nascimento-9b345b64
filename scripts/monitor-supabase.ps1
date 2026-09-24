@@ -202,11 +202,23 @@ function Enviar-Alerta {
              "Por SSH:  type """ + $ArqStatus + """" + $NL +
              "Momento: " + $Agora.ToString("dd/MM/yyyy HH:mm:ss")
 
+    # O User-Agent NAO e detalhe. O padrao do PowerShell e
+    # "Mozilla/5.0 ... WindowsPowerShell/5.1", e a Cloudflare que fica na
+    # frente do Discord devolve 403 com corpo VAZIO para ele - so no endpoint
+    # de mensagem; criar o canal de DM passa normalmente, o que torna o
+    # sintoma confuso. Descoberto em 24/09/2026, quando a memoria passou de
+    # 75% e o alerta falhou calado. Formato abaixo e o que o Discord documenta.
+    $UA = "DiscordBot (https://github.com/NascimentoEmpresa/appify-my-nascimento-9b345b64, 1.0)"
+
     try {
-        $H = @{ Authorization = "Bot $DiscordTok"; "Content-Type" = "application/json" }
-        $Canal = Invoke-RestMethod -Method Post -Uri "https://discord.com/api/v10/users/@me/channels" -Headers $H -Body (@{ recipient_id = $DiscordUser } | ConvertTo-Json)
+        $H = @{ Authorization = "Bot $DiscordTok" }
+        $Canal = Invoke-RestMethod -Method Post -Uri "https://discord.com/api/v10/users/@me/channels" `
+                    -Headers $H -ContentType "application/json" -UserAgent $UA `
+                    -Body ([System.Text.Encoding]::UTF8.GetBytes((@{ recipient_id = $DiscordUser } | ConvertTo-Json)))
         $Url = "https://discord.com/api/v10/channels/" + $Canal.id + "/messages"
-        Invoke-RestMethod -Method Post -Uri $Url -Headers $H -Body (@{ content = $Texto } | ConvertTo-Json) | Out-Null
+        # Corpo em bytes UTF-8 para o acento nao chegar torto do outro lado.
+        Invoke-RestMethod -Method Post -Uri $Url -Headers $H -ContentType "application/json" -UserAgent $UA `
+            -Body ([System.Text.Encoding]::UTF8.GetBytes((@{ content = $Texto } | ConvertTo-Json))) | Out-Null
         $UltimoAlerta[$Indicador] = $Agora
         Write-Host ("  -> alerta enviado ({0})" -f $Indicador) -ForegroundColor Magenta
     }
