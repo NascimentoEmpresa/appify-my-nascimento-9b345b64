@@ -33,8 +33,10 @@ import { SistemaIndisponivel } from "./SistemaIndisponivel";
  *
  * 23/09/2026: o visual passou a ser o de "Sistema temporariamente
  * indisponível" (SistemaIndisponivel.tsx), pedido do Pablo para QUALQUER
- * erro. Dentro do AppShell continua ocupando só a área de conteúdo (menu e
- * topo de pé); na rede final do App.tsx (telaCheia) cobre a janela.
+ * erro. 24/09: "sempre que der algum erro vai pra essa tela" — agora cobre a
+ * janela inteira em todos os casos (antes, dentro do AppShell, só a área de
+ * conteúdo), e o botão é "Recarregar" a página que falhou. O detalhe técnico
+ * (rota + mensagem) continua na tela, recolhido, para o chamado.
  *
  * Precisa ser class component: `componentDidCatch`/`getDerivedStateFromError`
  * não têm equivalente em hook.
@@ -43,7 +45,7 @@ interface Props {
   children: ReactNode;
   /** Rota mostrada junto do erro, pra facilitar o relato do usuário. */
   rota?: string;
-  /** Cobre a janela toda (rede final do App.tsx, fora do AppShell). */
+  /** Mantido por compatibilidade (App.tsx): hoje toda falha cobre a janela. */
   telaCheia?: boolean;
 }
 
@@ -52,6 +54,9 @@ interface State {
 }
 
 export class ErroDeTela extends Component<Props, State> {
+  /** Recarregar a página — estático para o teste poder observar sem navegar. */
+  static recarregar = () => window.location.reload();
+
   state: State = { erro: null };
 
   static getDerivedStateFromError(erro: Error): State {
@@ -64,24 +69,17 @@ export class ErroDeTela extends Component<Props, State> {
     console.error("[ErroDeTela] falha ao renderizar a tela:", erro, info.componentStack);
   }
 
-  private tentarDeNovo = () => this.setState({ erro: null });
-
   render() {
     const { erro } = this.state;
     if (!erro) return this.props.children;
 
     return (
       <SistemaIndisponivel
-        modo={this.props.telaCheia ? "tela" : "area"}
-        onTentar={this.tentarDeNovo}
-        rotuloTentar="Tentar de novo"
+        modo="tela"
+        onTentar={() => ErroDeTela.recarregar()}
+        rotuloTentar="Recarregar"
         detalhe={`${this.props.rota ? `Rota: ${this.props.rota}
 ` : ""}${erro.message || String(erro)}`}
-        extra={
-          <button type="button" className="si-btn si-btn-s" onClick={() => window.location.reload()}>
-            Recarregar a página
-          </button>
-        }
       />
     );
   }

@@ -40,6 +40,8 @@ interface Props {
   extra?: ReactNode;
   /** Joguinho no canto (Invasores) — só na queda, onde a espera é de minutos. */
   jogo?: boolean;
+  /** Recado curto embaixo do botão (ex.: "ainda indisponível" depois de Recarregar). */
+  aviso?: string | null;
 }
 
 const CSS = `
@@ -47,34 +49,34 @@ const CSS = `
   position:relative;overflow:hidden;isolation:isolate;color:#fff;font-family:Inter,"Plus Jakarta Sans",system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
   background:radial-gradient(1200px 700px at 78% -10%,#1e4fb3 0%,transparent 60%),radial-gradient(900px 600px at -10% 110%,#12306e 0%,transparent 55%),linear-gradient(160deg,var(--si-azul2) 0%,var(--si-azul) 45%,var(--si-escuro) 100%);
   display:flex;flex-direction:column}
-.si-tela{position:fixed;inset:0;z-index:2147483000;min-height:100vh;overflow-x:hidden;overflow-y:auto}
+.si-tela{position:fixed;inset:0;z-index:2147483000;height:100vh;height:100dvh;overflow-x:hidden;overflow-y:auto}
 .si-area{min-height:calc(100vh - 140px);border-radius:24px;margin:8px 0}
 .si-raiz::after{content:"";position:absolute;inset:0;z-index:-1;opacity:.18;pointer-events:none;
   background-image:radial-gradient(rgba(255,255,255,.35) 1px,transparent 1px);background-size:26px 26px;
   mask-image:radial-gradient(ellipse at 50% 40%,#000 0%,transparent 70%)}
-.si-topo{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:26px clamp(20px,4vw,56px);position:relative;z-index:3}
+.si-topo{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:clamp(12px,2.4vh,26px) clamp(20px,4vw,56px);flex-shrink:0;position:relative;z-index:3}
 .si-marca{display:flex;align-items:center;padding:9px 16px;border-radius:16px;background:#fff;box-shadow:0 14px 34px -14px rgba(3,10,30,.7),inset 0 -2px 0 rgba(15,49,113,.08)}
 .si-marca img{display:block;height:38px;width:auto}
 .si-status{display:inline-flex;align-items:center;gap:10px;padding:8px 16px;border-radius:999px;font-size:12px;font-weight:800;letter-spacing:.3px;
   background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.16);backdrop-filter:blur(10px)}
 .si-ponto{position:relative;width:9px;height:9px;border-radius:50%;background:var(--si-laranja)}
 .si-ponto::after{content:"";position:absolute;inset:-5px;border-radius:50%;border:2px solid var(--si-laranja);animation:si-pulso 1.8s ease-out infinite}
-.si-codigo{position:relative;z-index:3;display:flex;justify-content:center;margin:-6px 0 8px;pointer-events:none;user-select:none;animation:si-entra .7s .05s cubic-bezier(.2,.7,.2,1) both}
-.si-codigo span{font-size:clamp(46px,6.2vw,92px);font-weight:900;line-height:1;letter-spacing:.06em;padding:0 .1em .08em;
+.si-codigo{position:relative;z-index:3;display:flex;justify-content:center;margin:0 0 clamp(2px,1vh,8px);flex-shrink:0;pointer-events:none;user-select:none;animation:si-entra .7s .05s cubic-bezier(.2,.7,.2,1) both}
+.si-codigo span{font-size:clamp(34px,min(6.2vw,8vh),84px);font-weight:900;line-height:1;letter-spacing:.06em;padding:0 .1em .08em;
   background:linear-gradient(180deg,var(--si-laranja2) 0%,var(--si-laranja) 100%);-webkit-background-clip:text;background-clip:text;color:transparent;
   filter:drop-shadow(0 10px 28px rgba(242,107,29,.45))}
 .si-area .si-codigo span{font-size:clamp(38px,4.6vw,66px)}
-.si-palco{position:relative;flex:1;display:flex;align-items:center;justify-content:center;min-height:clamp(300px,50vh,480px)}
+.si-palco{position:relative;flex:1 1 auto;display:flex;align-items:center;justify-content:center;min-height:clamp(180px,36vh,440px)}
 .si-area .si-palco{min-height:clamp(260px,40vh,380px)}
 .si-palavra{position:absolute;left:50%;top:50%;transform:translate(-50%,-40.8%);margin:0;padding:.05em .2em .4em;white-space:nowrap;pointer-events:none;user-select:none;
-  font-size:clamp(88px,19vw,300px);font-weight:900;letter-spacing:-.055em;line-height:.8;
+  font-size:clamp(80px,min(19vw,27vh),300px);font-weight:900;letter-spacing:-.055em;line-height:.8;
   background:linear-gradient(180deg,rgba(255,255,255,.96) 4%,rgba(255,255,255,.78) 39%,rgba(255,255,255,.12) 68%,rgba(255,255,255,.04) 100%);-webkit-background-clip:text;background-clip:text;color:transparent}
 .si-area .si-palavra{font-size:clamp(70px,13vw,210px)}
 .si-camada{position:absolute;inset:0;transition:transform .5s cubic-bezier(.2,.7,.2,1);will-change:transform}
 .si-selo{position:absolute;right:-16px;bottom:-16px;width:54px;height:54px;border-radius:18px;display:grid;place-items:center;
   background:linear-gradient(145deg,var(--si-laranja2),var(--si-laranja));box-shadow:0 14px 30px -8px rgba(242,107,29,.8);color:#fff}
 .si-heroi{display:grid;place-items:center}
-.si-personagem{position:relative;height:clamp(250px,44vh,430px);aspect-ratio:394/900}
+.si-personagem{position:relative;height:clamp(160px,34vh,400px);aspect-ratio:394/900}
 .si-area .si-personagem{height:clamp(220px,34vh,340px)}
 .si-personagem img{position:relative;z-index:2;display:block;width:100%;height:100%;object-fit:contain;user-select:none;
   filter:drop-shadow(0 26px 30px rgba(3,10,30,.55)) drop-shadow(0 0 1px rgba(255,255,255,.6));animation:si-flutua 6s ease-in-out infinite}
@@ -95,20 +97,21 @@ const CSS = `
 .si-o1{width:18px;height:18px;left:34%;top:22%;background:var(--si-laranja2);box-shadow:0 0 30px var(--si-laranja);animation:si-flutua 5s ease-in-out infinite}
 .si-o2{width:12px;height:12px;right:33%;bottom:24%;background:#8fb4ff;box-shadow:0 0 24px #5a8cff;animation:si-flutua 6s ease-in-out infinite -2s}
 .si-o3{width:26px;height:26px;right:28%;top:30%;background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.4);filter:blur(3px);animation:si-flutua 8s ease-in-out infinite -5s}
-.si-texto{position:relative;z-index:3;max-width:780px;margin:0 auto;padding:0 22px 12px;text-align:center}
-.si-titulo{display:block;margin:0 0 14px;text-wrap:balance;font-size:clamp(24px,3.1vw,38px);font-weight:900;letter-spacing:-.02em;line-height:1.12}
+.si-texto{position:relative;z-index:3;max-width:780px;margin:0 auto;padding:0 22px 6px;text-align:center;flex-shrink:0}
+.si-titulo{display:block;margin:0 0 clamp(6px,1.2vh,14px);text-wrap:balance;font-size:clamp(22px,min(3.1vw,4.2vh),38px);font-weight:900;letter-spacing:-.02em;line-height:1.12}
 .si-titulo svg{display:inline-block;vertical-align:-4px;margin-right:12px;color:var(--si-laranja2)}
-.si-texto p{margin:6px 0;font-size:clamp(14px,1.25vw,16.5px);line-height:1.55;color:rgba(255,255,255,.78)}
+.si-texto p{margin:clamp(2px,.5vh,6px) 0;font-size:clamp(13px,min(1.25vw,1.9vh),16.5px);line-height:1.55;color:rgba(255,255,255,.78)}
 .si-texto p b{color:#fff}
-.si-obrigado{margin-top:14px!important;font-weight:700;color:rgba(255,255,255,.92)!important}
+.si-obrigado{margin-top:clamp(6px,1.2vh,14px)!important;font-weight:700;color:rgba(255,255,255,.92)!important}
 .si-offline{display:inline-flex;align-items:center;gap:8px;margin-top:12px;padding:8px 14px;border-radius:12px;font-size:13px;font-weight:700;background:rgba(242,107,29,.16);border:1px solid rgba(255,154,77,.45)}
-.si-acoes{display:flex;flex-wrap:wrap;align-items:center;justify-content:center;gap:12px;margin:22px 0 6px}
-.si-btn{display:inline-flex;align-items:center;gap:9px;height:48px;padding:0 22px;border-radius:14px;font-size:14px;font-weight:800;cursor:pointer;border:none;font-family:inherit;transition:transform .15s ease,box-shadow .2s ease,background .2s ease}
+.si-acoes{display:flex;flex-wrap:wrap;align-items:center;justify-content:center;gap:12px;margin:clamp(10px,2vh,22px) 0 4px}
+.si-btn{display:inline-flex;align-items:center;gap:9px;height:clamp(40px,5.4vh,48px);padding:0 22px;border-radius:14px;font-size:14px;font-weight:800;cursor:pointer;border:none;font-family:inherit;transition:transform .15s ease,box-shadow .2s ease,background .2s ease}
 .si-btn:hover{transform:translateY(-2px)}
 .si-btn:disabled{opacity:.7;cursor:progress;transform:none}
 .si-btn-p{color:#fff;background:linear-gradient(135deg,var(--si-laranja2),var(--si-laranja));box-shadow:0 16px 34px -12px rgba(242,107,29,.9)}
 .si-btn-s{color:#fff;background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.25)}
 .si-btn-s:hover{background:rgba(255,255,255,.16)}
+.si-aviso{margin:2px 0 8px;font-size:12.5px;font-weight:800;color:var(--si-laranja2)}
 .si-relogio{display:inline-flex;align-items:center;gap:10px;font-size:12.5px;font-weight:700;color:rgba(255,255,255,.7)}
 .si-relogio svg{transform:rotate(-90deg)}
 .si-detalhe{max-width:640px;margin:14px auto 0;text-align:left}
@@ -116,7 +119,7 @@ const CSS = `
 .si-detalhe summary::-webkit-details-marker{display:none}
 .si-detalhe pre{margin:10px 0 0;max-height:180px;overflow:auto;padding:12px 14px;border-radius:12px;font-size:12px;line-height:1.5;white-space:pre-wrap;word-break:break-word;
   background:rgba(3,10,30,.45);border:1px solid rgba(255,255,255,.14);color:rgba(255,255,255,.85)}
-.si-rodape{position:relative;z-index:3;display:flex;flex-wrap:wrap;align-items:center;justify-content:center;gap:8px 22px;padding:18px 20px 24px;font-size:11.5px;font-weight:600;color:rgba(255,255,255,.5)}
+.si-rodape{position:relative;z-index:3;display:flex;flex-wrap:wrap;align-items:center;justify-content:center;gap:8px 22px;padding:clamp(8px,1.6vh,18px) 20px clamp(10px,2vh,24px);flex-shrink:0;font-size:11.5px;font-weight:600;color:rgba(255,255,255,.5)}
 .si-rodape span{display:inline-flex;align-items:center;gap:6px}
 @keyframes si-flutua{0%,100%{transform:translateY(0) rotate(0)}50%{transform:translateY(-16px) rotate(1.5deg)}}
 @keyframes si-gira{to{transform:rotate(360deg)}}
@@ -139,7 +142,7 @@ function useSegundosAte(alvo: number | null | undefined) {
   return alvo ? Math.max(0, Math.ceil((alvo - agora) / 1000)) : null;
 }
 
-export function SistemaIndisponivel({ modo = "tela", proximaVerificacaoEm, onTentar, rotuloTentar = "Tentar agora", detalhe, extra, jogo = false }: Props) {
+export function SistemaIndisponivel({ modo = "tela", proximaVerificacaoEm, onTentar, rotuloTentar = "Tentar agora", detalhe, extra, jogo = false, aviso }: Props) {
   const raiz = useRef<HTMLDivElement>(null);
   const [tentando, setTentando] = useState(false);
   const [online, setOnline] = useState(() => (typeof navigator === "undefined" ? true : navigator.onLine));
@@ -232,6 +235,7 @@ export function SistemaIndisponivel({ modo = "tela", proximaVerificacaoEm, onTen
           )}
           {extra}
         </div>
+        {aviso && <div className="si-aviso" role="status">{aviso}</div>}
         {segundos != null && (
           <div className="si-relogio">
             <svg width="22" height="22" viewBox="0 0 22 22" aria-hidden>
