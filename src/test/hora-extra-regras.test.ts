@@ -8,11 +8,13 @@ import {
   formatarData,
   formatarDataHora,
   formatarDuracao,
+  janelaHeEfetiva,
   jornadaParaCalculoHoraExtra,
   limitarPercentual,
   linhasExcel,
   mediaConclusao,
   mensagemErro,
+  minutosHeEfetivos,
   minutosJornada,
   minutosTrabalhados,
   normalizarPontoSemIntervalo,
@@ -54,6 +56,27 @@ describe("regras de hora extra", () => {
       liberadas: 3,
       horas_aprovadas_min: 360,
     });
+  });
+  // --- total corrigido pelo gestor (23/09/2026) -----------------------
+  // Pedido de 4h que o gestor corrigiu para 2h na validação: o real vale.
+  it("a HE vale o total real quando ele existe", () =>
+    expect(minutosHeEfetivos({ total_previsto_min: 240, total_real_min: 120 })).toBe(120));
+  it("sem total real, a HE vale o previsto", () => {
+    expect(minutosHeEfetivos({ total_previsto_min: 240, total_real_min: null })).toBe(240);
+    expect(minutosHeEfetivos({ total_previsto_min: 240 })).toBe(240);
+  });
+  it("os cartões da liberação somam a hora corrigida, não a pedida", () =>
+    expect(
+      resumirLiberacaoHoraExtra([
+        { status: "concluida", total_previsto_min: 240, total_real_min: 120 },
+        { status: "aguardando_validacao", total_previsto_min: 240, total_real_min: 180 },
+        { status: "aprovada", total_previsto_min: 240, total_real_min: null },
+      ]).horas_aprovadas_min,
+    ).toBe(540));
+  it("a janela exibida acompanha o total: real se houver, senão prevista", () => {
+    const base = { he_inicio_previsto: "17:18:00", he_fim_previsto: "21:18:00", he_inicio_real: "17:18:00", he_fim_real: "19:18:00" };
+    expect(janelaHeEfetiva({ ...base, total_real_min: 120 })).toEqual({ inicio: "17:18", fim: "19:18" });
+    expect(janelaHeEfetiva({ ...base, total_real_min: null, he_inicio_real: null, he_fim_real: null })).toEqual({ inicio: "17:18", fim: "21:18" });
   });
   // --- cálculo pela escala de trabalho (16/09/2026) -------------------
   it("a escala padrão dá 8h48 de jornada", () => expect(formatarDuracao(JORNADA, true)).toBe("8h48"));
