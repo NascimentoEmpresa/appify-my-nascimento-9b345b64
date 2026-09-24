@@ -80,7 +80,7 @@ import { Target } from "lucide-react";
 import { GitBranch, GitMerge } from "lucide-react";
 import { MessageSquare } from "lucide-react";
 import { Banknote } from "lucide-react";
-import { Landmark } from "lucide-react";
+import { Crown, Landmark } from "lucide-react";
 import { TrendingDown } from "lucide-react";
 import { Megaphone, ExternalLink } from "lucide-react";
 import { Award, CalendarDays, FolderTree, Users } from "lucide-react";
@@ -820,21 +820,56 @@ const comiteEticaModule: ModuleDef = {
       label: "Comitê de Ética",
       defaultOpen: true,
       items: [
-        // Indicadores vem primeiro: é a leitura gerencial do módulo, e tem
-        // liberação de acesso própria (comite_etica_indicadores) — dá para a
-        // diretoria ver o painel sem ver o conteúdo dos relatos.
-        { label: "Indicadores", to: "/app/comite-etica/indicadores", icon: BarChart3 },
+        // Indicadores e Presidência saíram daqui em 24/09/2026 para o módulo
+        // Presidência (presidenciaModule, abaixo). Rotas e liberações de
+        // acesso continuam as mesmas; só mudou onde aparecem no menu.
         { label: "Denúncias", to: "/app/comite-etica/denuncias", icon: ShieldAlert },
-        // Fila da diretoria (22/09/2026): só as denúncias pós-apuração, para
-        // decidir e dar seguimento sem abrir a apuração inteira. Liberação
-        // própria (comite_etica_presidencia_painel) — ver 20260930000217.
-        { label: "Presidência", to: "/app/comite-etica/presidencia", icon: Gavel },
         // "Denúncias (Contato Seguro)" saiu daqui em 21/08/2026: o canal
         // legado foi aposentado, a tela e a função de sync foram removidas e
         // o menu ficou com app_menu.ativo = false (mesmo par que "Pregão &
         // Lances" usou). As TABELAS do legado continuam no banco, só sem
         // porta de entrada — apagar histórico de canal de ética não se desfaz.
         { label: "Configuração", to: "/app/comite-etica/configuracao", icon: Settings },
+      ],
+    },
+  ],
+};
+
+// Presidência (24/09/2026) — um lugar só com tudo em que a Helena tem ação,
+// venha de que área vier: o Painel da Presidência (/app/presidencia) e as
+// telas das outras áreas. Não tem permissão própria: cada item é a tela com a
+// liberação que ela já tinha (quem não tem
+// acesso a nenhum item não vê o módulo). Cada área de origem vira um grupo,
+// para os próximos itens entrarem sem misturar assuntos.
+const presidenciaModule: ModuleDef = {
+  id: "presidencia",
+  label: "Presidência",
+  description: "Tudo em que a Presidência tem ação, reunido",
+  icon: Crown,
+  basePath: "/app/presidencia",
+  status: "active",
+  groups: [
+    {
+      label: "Presidência",
+      defaultOpen: true,
+      items: [
+        // O painel próprio da Presidência (antes um link solto no topo do menu,
+        // abaixo de Novidades — veio para cá em 24/09/2026). Liberação: código
+        // "presidencia" em app_menu, como já era.
+        { label: "Painel da Presidência", to: "/app/presidencia", icon: LayoutDashboard },
+      ],
+    },
+    {
+      label: "Comitê de Ética",
+      defaultOpen: true,
+      items: [
+        // Fila da Presidência (22/09/2026): só as denúncias pós-apuração, para
+        // decidir e dar seguimento sem abrir a apuração inteira. Liberação
+        // própria (comite_etica_presidencia_painel) — ver 20260930000217.
+        { label: "Presidência", to: "/app/comite-etica/presidencia", icon: Gavel },
+        // Leitura gerencial do Comitê; liberação própria
+        // (comite_etica_indicadores) — vê o painel sem ver o conteúdo dos relatos.
+        { label: "Indicadores", to: "/app/comite-etica/indicadores", icon: BarChart3 },
       ],
     },
   ],
@@ -1099,6 +1134,7 @@ const erpModules: ModuleDef[] = [
   sstModule,
   centralServicosModule,
   comiteEticaModule,
+  presidenciaModule,
   treinamentosModule,
   whatsappModule,
   biModule,
@@ -1348,28 +1384,8 @@ export function Sidebar({ collapsed, mobileOpen = false, onMobileClose }: Sideba
           )}
         </NavLink>
 
-        {canSee("/app/presidencia") && (
-          <NavLink
-            to="/app/presidencia"
-            className={({ isActive }) =>
-              cn(
-                "sb-item mt-1 flex items-center gap-3 rounded-md px-3 py-2 text-sm font-bold",
-                isActive
-                  ? "sb-on bg-sidebar-accent text-white"
-                  : "text-white/85 hover:bg-sidebar-accent/60 hover:text-white",
-                collapsed && "justify-center px-2",
-              )
-            }
-          >
-            {({ isActive }) => (
-              <>
-                {isActive && <span className="sb-bar absolute left-0 top-1.5 bottom-1.5 w-0.5 rounded-r bg-accent" />}
-                <LayoutDashboard className={cn("sb-ic h-4 w-4 shrink-0", isActive && "text-accent")} />
-                {!collapsed && <span>Painel da Presidência</span>}
-              </>
-            )}
-          </NavLink>
-        )}
+        {/* "Painel da Presidência" (/app/presidencia) saiu daqui em 24/09/2026:
+            agora é o primeiro item do módulo Presidência (presidenciaModule). */}
 
         {temAlcada && (
           <NavLink
