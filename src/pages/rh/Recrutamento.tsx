@@ -373,9 +373,22 @@ const STATUS_PROCESSO = [
   "Aguardando Confirmação Compras",
 ];
 
+// "Pendente Seleção" (24/09/2026): do candidato APROVADO até a conclusão.
+// Era só "Aprovado - Aguardando SST"; a vaga que andava para documentação /
+// SST + Compras sumia do filtro da Seleção (#184, "Compras Confirmou -
+// Aguardando Documentação"). Pedido: "os que chegam no status do kanban
+// aprovado ficam até a conclusão no filtro do seleção".
+const STATUS_SELECAO = [
+  STATUS_PEND_SELECAO,
+  "Compras Confirmou - Aguardando Documentação",
+  "Aguardando SST e Compras",
+  "Encaminhado para SST (ASO)", "ASO Aprovado - Aguardando Informe de EPIs", "Aguardando Confirmação Compras",
+];
+const FILTRO_SELECAO = "pend_selecao";
 // O atalho/número "Em Processo" não conta o que já tem atalho próprio
-// (Pendente Seleção). O resto da tela (drawer, candidatos) usa STATUS_PROCESSO.
-const STATUS_EM_PROCESSO = STATUS_PROCESSO.filter(s => s !== STATUS_PEND_SELECAO);
+// (Pendente Seleção) — só para quem VÊ esse atalho; quem não vê continua
+// achando as vagas em "Em Processo". O drawer e os candidatos usam STATUS_PROCESSO.
+const STATUS_EM_PROCESSO_SEM_SELECAO = STATUS_PROCESSO.filter(s => !STATUS_SELECAO.includes(s));
 
 // ── Componente Principal ───────────────────────────────────────────
 //
@@ -449,6 +462,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
   // Atalhos de filtro com acesso próprio (23/09/2026, mig 20260930000225).
   const verFiltroPendRecrutamento = can("visualizar", undefined, MENU_FILTRO_PEND_RECRUTAMENTO);
   const verFiltroPendSelecao      = can("visualizar", undefined, MENU_FILTRO_PEND_SELECAO);
+  const STATUS_EM_PROCESSO = verFiltroPendSelecao ? STATUS_EM_PROCESSO_SEM_SELECAO : STATUS_PROCESSO;
   // Quem pode mover o candidato pra fora de cada etapa específica do kanban.
   // Vaga do escritório: só quem tem a capacidade vê, marca e decide.
   const podeAdministrativa = podeVagaAdministrativa(can);
@@ -638,7 +652,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
       contratados:      rows.filter(r => r.status === "Contratado" || String(r.status ?? "").startsWith("Concluído")).length,
       reprovadas:       rows.filter(r => r.status === "Reprovada").length,
     });
-  }, [noEscopo, STATUS_ETAPA1, dataDe, dataAte]);
+  }, [noEscopo, STATUS_ETAPA1, STATUS_EM_PROCESSO, dataDe, dataAte]);
 
   // ── Filtros compartilhados ────────────────────────────────────
   // Tabela e Kanban são a MESMA consulta, só muda a apresentação — então os
@@ -647,8 +661,12 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
   const aplicarFiltros = useCallback((q: any) => {
     if (statusFilter === "em_processo") {
       q = q.in("status", STATUS_EM_PROCESSO);
+    } else if (statusFilter === FILTRO_SELECAO) {
+      q = q.in("status", STATUS_SELECAO);
     } else if (statusFilter === "concluido") {
-      q = q.like("status", "Concluído%");
+      // "Contratado" também é concluída (o card do topo já contava; o
+      // filtro deixava as 13 de fora).
+      q = q.or("status.eq.Contratado,status.like.Concluído%");
     } else if (statusFilter) {
       q = q.eq("status", statusFilter);
     }
@@ -666,7 +684,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
     if (dataDe)  q = q.gte("created_at", `${dataDe}T00:00:00-03:00`);
     if (dataAte) q = q.lt("created_at", `${diaSeguinte(dataAte)}T00:00:00-03:00`);
     return q;
-  }, [statusFilter, tab, search, user, dataDe, dataAte]);
+  }, [statusFilter, tab, search, user, dataDe, dataAte, STATUS_EM_PROCESSO]);
 
   // ── Carregar Lista ────────────────────────────────────────────
   const listaReq = useRef(0);
@@ -2478,7 +2496,7 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
                 // (menus fantasmas da mig 20260930000225) — só organização:
                 // esconde o atalho, as vagas continuam em "Todas".
                 ...(verFiltroPendRecrutamento ? [{ label: "Pendente Recrutamento", val: "Pendente Recrutamento" }] : []),
-                ...(verFiltroPendSelecao ? [{ label: "Pendente Seleção", val: STATUS_PEND_SELECAO }] : []),
+                ...(verFiltroPendSelecao ? [{ label: "Pendente Seleção", val: FILTRO_SELECAO }] : []),
                 { label: "Em Processo", val: "em_processo" },
                 { label: "Concluídas", val: "concluido" },
                 { label: "Reprovados", val: "Reprovada" },
