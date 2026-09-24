@@ -7,6 +7,11 @@
 // adivinhava por salário/cidade/cargo e errou (ASG recebeu o V.A do
 // supervisor). Sem posto escolhido a tela NÃO consulta: mostra aviso e
 // deixa o V.A/V.T em branco — insalubridade cai no cadastro do colaborador.
+//
+// 24/09/2026 (mig 20260930000230): quando o nome do catálogo não existe na
+// planilha ("1ª DP NOVO HAMBURGO" x "LIMPEZA 20H 5X2 NOVO HAMBURGO"), a RPC
+// não devolve mais NULL — pontua os postos do contrato por cidade + carga
+// semanal tirada da ESCALA + padrão 5X2/6X1/12X36, e marca por_posto=false.
 
 export interface CustoPosto {
   posto: string;
@@ -28,6 +33,8 @@ export interface CustoPosto {
   candidatos: number;
   ambiguo: boolean;
   casou_salario: boolean;
+  /** true = nome exato do catálogo; false = aproximado por cidade/escala. */
+  por_posto?: boolean;
 }
 
 export interface EntradaCusto {
@@ -37,6 +44,8 @@ export interface EntradaCusto {
   cargo?: string | null;
   salario?: number | string | null;
   cidade?: string | null;
+  /** Escala da vaga ("8:00-12:00 (4H) SEG A SEX") — dá a carga semanal (20H) quando o posto não casa pelo nome. */
+  escala?: string | null;
 }
 
 const num = (v: unknown): number => {
@@ -59,7 +68,7 @@ export async function buscarCustoDoPosto(sb: any, e: EntradaCusto): Promise<Cust
   if (!e.contrato?.trim()) return null;
   const { data, error } = await sb.rpc("rec_custo_do_posto", {
     p_contrato: e.contrato, p_cargo: e.cargo ?? null, p_salario: salarioNumero(e.salario), p_cidade: e.cidade ?? null,
-    p_posto: e.posto?.trim() || null,
+    p_posto: e.posto?.trim() || null, p_escala: e.escala?.trim() || null,
   });
   if (error) { console.warn("[rec_custo_do_posto]", error.message); return null; }
   return (data as CustoPosto | null) ?? null;
@@ -109,6 +118,9 @@ export function notaDoCusto(custo: CustoPosto | null, origemInsal: "planilha" | 
   }
   if (custo) {
     const base = `Da Planilha de Custo — posto "${custo.posto}"${custo.vigencia ? `, vigência ${custo.vigencia.split("-").reverse().join("/")}` : ""}.`;
+    if (postoEscolhido && custo.por_posto === false) {
+      return `Da Planilha de Custo — o posto "${postoEscolhido}" não tem esse nome na planilha; usado "${custo.posto}" (mesma cidade e jornada)${custo.ambiguo ? ", mas há postos parecidos com valores diferentes" : ""}. O Recrutamento confere.`;
+    }
     if (custo.ambiguo) return base + " Há mais de um posto parecido no contrato com valores diferentes — o Recrutamento confere.";
     if (!custo.casou_salario) return base + " O salário do colaborador não bateu com nenhum posto; foi pelo cargo.";
     return base;

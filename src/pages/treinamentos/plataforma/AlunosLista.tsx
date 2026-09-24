@@ -79,11 +79,11 @@ export default function AlunosLista() {
   const filtrarCurso = async (cursoId: string) => {
     setFCurso(cursoId);
     if (!cursoId) { setAlunosDoCurso(null); return; }
-    const { data } = await (supabase as any).from("TRN_MATRICULA").select("aluno_id").eq("curso_id", cursoId);
-    const cursoPublicado = cursos.find((c) => c.id === cursoId)?.publicado;
-    const ids = new Set<string>((data ?? []).map((m: any) => m.aluno_id));
-    if (cursoPublicado) alunos.filter((a) => a.acesso_completo).forEach((a) => ids.add(a.id));
-    setAlunosDoCurso(ids);
+    // Quem vê o curso: matrícula, acesso completo, "todos" ou regra de
+    // contrato/cargo (mig 20260930000231) — a regra mora no banco.
+    const { data, error } = await (supabase as any).rpc("trn_alunos_do_curso", { _curso: cursoId });
+    if (error) { toast.error(error.message); return; }
+    setAlunosDoCurso(new Set<string>((data ?? []) as string[]));
   };
 
   const hoje = new Date().toISOString().slice(0, 10);
@@ -365,7 +365,7 @@ export default function AlunosLista() {
                     <SelectItem value="cargo">Cargo (todo mundo com esse cargo)</SelectItem>
                     <SelectItem value="status">Status do aluno (ativos, inativos…)</SelectItem>
                     <SelectItem value="selecionados">Alunos selecionados na lista ({selecionados.size})</SelectItem>
-                    <SelectItem value="todos">Todos os alunos da plataforma</SelectItem>
+                    <SelectItem value="todos">Todos os alunos da plataforma (curso não vai para demitidos)</SelectItem>
                   </SelectContent>
                 </Select>
               </div>

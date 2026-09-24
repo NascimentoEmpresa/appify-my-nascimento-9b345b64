@@ -3,6 +3,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { useMeuNome } from "@/hooks/useMeuNome";
 import { usePermissoes } from "@/context/PermissoesContext";
+import { BotaoProcessosCpf } from "@/components/juridico/ConsultaProcessosCpf";
 import { CandidatoInfo, baixarCurriculoCand, Modal, Campo, Acoes, Toasts, btnStyle, PendToggle, EtapaChip, HistoricoCandidato } from "@/components/recrutamento/CandidatoInfo";
 
 // =====================================================================
@@ -177,7 +178,11 @@ export default function VerificacaoCandidatos() {
           <div style={{ fontSize: 19, fontWeight: 800, color: "#0f3171" }}>⚖️ Verificação de Candidatos</div>
           <div style={{ fontSize: 12, color: "#94a3b8", marginTop: 2 }}>Análise de documentos e requisitos legais. Libere para a Entrevista Comportamental ou registre restrição no CPF.</div>
         </div>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+        {/* Processos de qualquer CPF (candidato ou colaborador) — 24/09/2026. */}
+        <BotaoProcessosCpf rotulo="Consultar CPF" />
         <span style={{ fontSize: 12, fontWeight: 800, background: "#ede9fe", color: "#7c3aed", border: "1px solid #ddd6fe", borderRadius: 20, padding: "4px 12px" }}>{rows.length} pendente(s)</span>
+        </div>
       </div>
 
       <div style={{ flex: 1, overflowY: "auto", padding: "20px 24px 24px" }}>
@@ -201,6 +206,7 @@ export default function VerificacaoCandidatos() {
                   <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 12, alignItems: "center" }}>
                     {c.etapa_processo !== "JURÍDICO" && <span style={{ fontSize: 11, color: "#94a3b8" }}>Situação atual: <EtapaChip etapa={c.etapa_processo} /></span>}
                     <HistoricoCandidato candidatoId={c.candidato_id} nome={c.nome} />
+                    <BotaoProcessosCpf cpf={c.cpf} nome={c.nome} />
                     {podeAgir && c.etapa_processo === "JURÍDICO" && <>
                       <button onClick={() => { setObs(""); setAcao({ cand: c, tipo: "ok" }); }} style={btn("#16a34a", "none", "#fff")}>✓ Liberar → Entrevista</button>
                       <button onClick={() => { setObs(""); setAcao({ cand: c, tipo: "reprovar" }); }} style={btn("rgba(220,38,38,.08)", "1px solid rgba(220,38,38,.25)", "#dc2626")}>Reprovar</button>

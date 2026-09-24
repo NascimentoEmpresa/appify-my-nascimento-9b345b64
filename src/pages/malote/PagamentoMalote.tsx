@@ -10,7 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { TableHeadOrdenavel } from "@/components/ui/table-head-ordenavel";
 import { DateRangeFilter } from "@/components/ui/date-range-filter";
-import { CheckCircle2, ChevronLeft, ChevronRight, Hourglass, AlertTriangle, XCircle, ClipboardCheck, X, Wallet, CheckCircle, Clock3 } from "lucide-react";
+import { CheckCircle2, ChevronLeft, ChevronRight, Hourglass, AlertTriangle, XCircle, ClipboardCheck, X, Wallet, CheckCircle, Clock3, LineChart } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
   useItensAprovacoesMalote,
@@ -551,17 +551,18 @@ export default function PagamentoMalote() {
                   <TableHead className="text-center">Responsável</TableHead>
                   <TableHeadOrdenavel coluna="status" ordenacao={ordenacao} className="text-center">Status</TableHeadOrdenavel>
                   <TableHeadOrdenavel coluna="atualizacao" ordenacao={ordenacao} className="text-center">Atualizado em</TableHeadOrdenavel>
+                  <TableHead className="text-center">Ações</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {isLoading && (
                   <TableRow>
-                    <TableCell colSpan={12} className="text-center text-muted-foreground py-10">Carregando...</TableCell>
+                    <TableCell colSpan={13} className="text-center text-muted-foreground py-10">Carregando...</TableCell>
                   </TableRow>
                 )}
                 {!isLoading && visiveis.length === 0 && (
                   <TableRow>
-                    <TableCell colSpan={12} className="text-center text-muted-foreground py-10">
+                    <TableCell colSpan={13} className="text-center text-muted-foreground py-10">
                       <div className="flex flex-col items-center gap-2">
                         <CheckCircle2 className="h-8 w-8 text-muted-foreground/50" />
                         Nenhum item encontrado com os filtros atuais.
@@ -578,6 +579,7 @@ export default function PagamentoMalote() {
                     contratoNome={contratosMap.get(contratoIdResolvido(item.despesa) ?? "")}
                     setorNome={setoresResolvidos(item.despesa).join(", ") || "—"}
                     onAbrir={() => abrirItem(item.despesa)}
+                    onVerFluxoCaixa={() => navigate(`/app/financeiro/gestao-financeira/fluxo-caixa?busca=${encodeURIComponent(item.despesa.numero)}`)}
                   />
                 ))}
               </TableBody>
@@ -612,6 +614,7 @@ function LinhaItem({
   contratoNome,
   setorNome,
   onAbrir,
+  onVerFluxoCaixa,
 }: {
   item: ItemLinhaMalote;
   empresaId: string | null;
@@ -619,6 +622,7 @@ function LinhaItem({
   contratoNome?: string;
   setorNome: string;
   onAbrir: () => void;
+  onVerFluxoCaixa: () => void;
 }) {
   const { despesa, parcela } = item;
   const { data: solicitanteNome } = useNomeUsuario(despesa.created_by);
@@ -654,6 +658,24 @@ function LinhaItem({
         <Badge className={STATUS_BADGE_CLASS[status]}>{STATUS_LABEL[status]}</Badge>
       </TableCell>
       <TableCell className="text-center text-xs text-muted-foreground">{new Date(despesa.updated_at).toLocaleString("pt-BR")}</TableCell>
+      <TableCell className="text-center">
+        {/* SIS-2026-0038 (achado do usuário): "botão pra verificar no fluxo
+            em malote... clica e vai pro fluxo" — só existe lançamento no
+            Fluxo de Caixa depois que a despesa/parcela foi paga. */}
+        {status === "despesa_paga" ? (
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7 text-muted-foreground hover:text-foreground"
+            title="Ver no Fluxo de Caixa"
+            onClick={(e) => { e.stopPropagation(); onVerFluxoCaixa(); }}
+          >
+            <LineChart className="h-3.5 w-3.5" />
+          </Button>
+        ) : (
+          <span className="text-muted-foreground">—</span>
+        )}
+      </TableCell>
     </TableRow>
   );
 }
