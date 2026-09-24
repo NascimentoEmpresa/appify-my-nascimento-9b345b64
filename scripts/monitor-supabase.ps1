@@ -66,8 +66,30 @@ $Raiz       = Split-Path -Parent $PSScriptRoot
 $EnvFile    = Join-Path $Raiz "worker\.env"
 $ArqStatus  = Join-Path $PSScriptRoot "status-banco.txt"
 
+# Mensagem longa de proposito: quem clona o repositorio NAO recebe o
+# worker\.env (ele e gitignored, e tem segredo dentro). Sem esta explicacao,
+# o dev novo roda, leva um erro seco e desiste.
 if (-not (Test-Path $EnvFile)) {
-    Write-Host "Nao encontrei $EnvFile - sem ele nao da para ler as metricas." -ForegroundColor Red
+    Write-Host ""
+    Write-Host "  Falta configurar o acesso as metricas." -ForegroundColor Yellow
+    Write-Host ""
+    Write-Host "  O arquivo worker\.env nao existe nesta copia do repositorio."
+    Write-Host "  Ele nao vem no git de proposito: tem segredo dentro."
+    Write-Host ""
+    Write-Host "  Para resolver:" -ForegroundColor Cyan
+    Write-Host "    1. copy worker\.env.example worker\.env"
+    Write-Host "    2. abra worker\.env e preencha:"
+    Write-Host "         SUPABASE_URL                (ja vem preenchido no exemplo)"
+    Write-Host "         SUPABASE_SERVICE_ROLE_KEY   (obrigatorio)"
+    Write-Host "         DISCORD_BOT_TOKEN           (so se quiser alerta)"
+    Write-Host "         DISCORD_USER_ID             (so se quiser alerta)"
+    Write-Host ""
+    Write-Host "  A chave service_role esta em:" -ForegroundColor Cyan
+    Write-Host "    Supabase > Project Settings > API Keys > service_role"
+    Write-Host ""
+    Write-Host "  ATENCAO: essa chave ignora toda a RLS. Nunca commite," -ForegroundColor Red
+    Write-Host "  nunca cole em chat e nunca use no frontend." -ForegroundColor Red
+    Write-Host ""
     exit 1
 }
 
@@ -84,8 +106,26 @@ $DiscordTok  = $Cfg["DISCORD_BOT_TOKEN"]
 $DiscordUser = $Cfg["DISCORD_USER_ID"]
 
 if (-not $SupabaseUrl -or -not $ServiceKey) {
-    Write-Host "Faltou SUPABASE_URL ou SUPABASE_SERVICE_ROLE_KEY no worker\.env." -ForegroundColor Red
+    Write-Host ""
+    Write-Host "  O worker\.env existe, mas falta chave nele." -ForegroundColor Yellow
+    Write-Host ""
+    if (-not $SupabaseUrl) { Write-Host "    SUPABASE_URL ................. VAZIO" -ForegroundColor Red }
+    else                   { Write-Host "    SUPABASE_URL ................. ok" -ForegroundColor Green }
+    if (-not $ServiceKey)  { Write-Host "    SUPABASE_SERVICE_ROLE_KEY .... VAZIO" -ForegroundColor Red }
+    else                   { Write-Host "    SUPABASE_SERVICE_ROLE_KEY .... ok" -ForegroundColor Green }
+    Write-Host ""
+    Write-Host "  A chave service_role esta em:" -ForegroundColor Cyan
+    Write-Host "    Supabase > Project Settings > API Keys > service_role"
+    Write-Host ""
     exit 1
+}
+
+# Alerta e opcional: sem Discord configurado o monitor continua mostrando
+# tudo na tela, so nao avisa ninguem. Nao vale travar por isso.
+if (-not $SemAlerta -and (-not $DiscordTok -or -not $DiscordUser)) {
+    Write-Host ""
+    Write-Host "  Aviso: DISCORD_BOT_TOKEN/DISCORD_USER_ID nao configurados." -ForegroundColor DarkYellow
+    Write-Host "  O monitor funciona, mas nao vai alertar ninguem." -ForegroundColor DarkYellow
 }
 
 $Projeto     = ([regex]::Match($SupabaseUrl, 'https://([^.]+)\.supabase\.co')).Groups[1].Value
