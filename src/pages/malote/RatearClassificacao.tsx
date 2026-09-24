@@ -12,7 +12,7 @@ import { ArrowLeft, LayoutGrid, AlertTriangle } from "lucide-react";
 import { toast } from "sonner";
 import { useEmpresaId } from "@/hooks/useEmpresaId";
 import { useClassificacoesOrcamento } from "@/hooks/usePlanejamentoOrcamentario";
-import { useSalvarDespesa, uploadAnexosMalote, gerarParcelas, mesclarDatasParcelas, mesclarValoresParcelas, validarOrdemParcelas, validarSomaParcelas, ModoValorParcela, RateioLinha } from "@/hooks/useMaloteDespesa";
+import { useSalvarDespesa, uploadAnexosMalote, gerarParcelas, mesclarDatasParcelas, mesclarValoresParcelas, validarOrdemParcelas, validarSomaParcelas, ModoValorParcela, RateioLinha, useEmpresasGrupo } from "@/hooks/useMaloteDespesa";
 import { useMaloteConfig, usePrazoNormalInclusao, horaAtualPassouDe } from "@/hooks/useMaloteConfig";
 import { useFormasPagamento } from "@/hooks/useMaloteFormaPagamento";
 import { cn } from "@/lib/utils";
@@ -33,6 +33,18 @@ export default function RatearClassificacao() {
   const { data: empresaId } = useEmpresaId();
   const { data: classificacoes = [] } = useClassificacoesOrcamento();
   const salvar = useSalvarDespesa();
+  // [SEM-CHAMADO] (achado real, Iury — DM-2026-1208 "ADMINISTRATIVO - SN"
+  // gravada com empresa HAGG): esta tela não tinha NENHUM campo pra
+  // escolher a empresa — o empresa_id da despesa vinha só de useEmpresaId()
+  // (profiles.empresa_id, fixo por usuário, sem relação com o conteúdo do
+  // lançamento nem com o seletor de "empresa ativa" do topo). Pré-preenche
+  // com a empresa do perfil (mesmo valor de antes) mas agora dá pra corrigir
+  // antes de salvar.
+  const { data: empresas = [] } = useEmpresasGrupo();
+  const [empresaSelecionadaId, setEmpresaSelecionadaId] = useState("");
+  useEffect(() => {
+    if (empresaId && !empresaSelecionadaId) setEmpresaSelecionadaId(empresaId);
+  }, [empresaId, empresaSelecionadaId]);
 
   // SIS-2026-0334 (Iury): mesmo checkbox de CriarDespesa.tsx — marcado,
   // ignora o requer_solicitacao das classificações só nesta despesa
@@ -173,8 +185,8 @@ export default function RatearClassificacao() {
       toast.error(erro);
       return;
     }
-    if (!empresaId) {
-      toast.error("Empresa não identificada.");
+    if (!empresaSelecionadaId) {
+      toast.error("Selecione a empresa.");
       return;
     }
     setSalvando(status === "rascunho" ? "rascunho" : "enviar");
@@ -188,7 +200,7 @@ export default function RatearClassificacao() {
         pularSolicitacao && linhasRateio.some((l) => classificacaoPorId.get(l.classificacao_id)?.requer_solicitacao);
 
       const despesaId = await salvar.mutateAsync({
-        empresa_id: empresaId,
+        empresa_id: empresaSelecionadaId,
         classificacao_id: null,
         origem: "despesa_multi_classificacao",
         status,
@@ -216,7 +228,7 @@ export default function RatearClassificacao() {
         const paths = await uploadAnexosMalote(arquivos, despesaId, nome.trim());
         await salvar.mutateAsync({
           id: despesaId,
-          empresa_id: empresaId,
+          empresa_id: empresaSelecionadaId,
           classificacao_id: null,
           origem: "despesa_multi_classificacao",
           status,
@@ -273,6 +285,19 @@ export default function RatearClassificacao() {
             <div>
               <Label>Nome da Despesa *</Label>
               <InputMaiusculo value={nome} onChange={(e) => setNome(e.target.value)} placeholder="Ex: Compra de materiais de escritório" />
+            </div>
+            <div>
+              <Label>Empresa *</Label>
+              <Select value={empresaSelecionadaId} onValueChange={setEmpresaSelecionadaId}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Selecione…" />
+                </SelectTrigger>
+                <SelectContent>
+                  {empresas.map((e) => (
+                    <SelectItem key={e.id} value={e.id}>{e.nome}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
             <div>
               {/* SIS-2026-0361: rótulo segue o modo do valor da parcela. */}
