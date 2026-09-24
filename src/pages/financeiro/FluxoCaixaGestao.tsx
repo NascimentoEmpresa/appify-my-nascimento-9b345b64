@@ -36,16 +36,26 @@ import { urlLogoCartao, useCartaoBancos } from "@/hooks/useMaloteCartaoCredito";
 // cada linha (não existe um menu_codigo próprio do Fluxo de Caixa pra
 // "excluir" — a ação é gateada pela tela dona do dado, igual o resto do
 // ERP faz pra qualquer ação em cascata entre telas).
+// SIS-2026-0473: Aplicação Financeira não usa nem Editar (ajuste isolado
+// escreveria origem='aplicacao_financeira' em financeiro_fluxo_caixa_ajuste,
+// que a CHECK da tabela não aceita de propósito) nem Excluir/Restaurar daqui
+// (a RPC de exclusão é hard-delete e bloqueia se já teve resgate, sem
+// suportar lixeira) — as duas linhas (aplicar/resgate) só se gerenciam pela
+// própria tela de Aplicações Financeiras. Os dois botões ficam ocultos pra
+// essa origem (ver render da linha, abaixo); as entradas nos Records abaixo
+// só existem pra satisfazer o tipo exaustivo.
 const MENU_POR_ORIGEM: Record<FluxoCaixaMaloteLinha["origem"], string> = {
   malote: "malote_despesa_visualizar",
   debito_automatico: "financeiro-debito-automatico",
   cartao_fatura: "financeiro-cartao-credito",
+  aplicacao_financeira: "financeiro-aplicacao-financeira",
 };
 
 const LABEL_ORIGEM: Record<FluxoCaixaMaloteLinha["origem"], string> = {
   malote: "Pagamento Malote",
   debito_automatico: "Débito Automático",
   cartao_fatura: "Fatura Cartão de Crédito",
+  aplicacao_financeira: "Aplicação Financeira",
 };
 
 // SIS-2026-0413 (complemento): a tabela renderizava todas as linhas
@@ -461,40 +471,46 @@ export default function FluxoCaixaGestao() {
                     <TableCell className="text-center text-sm">{l.forma_pagamento ?? "—"}</TableCell>
                     <TableCell className="text-center text-sm font-medium">{formatBRL(l.valor)}</TableCell>
                     <TableCell className="text-center">
-                      <div className="flex items-center justify-center gap-0.5">
-                        {/* SIS-2026-0489: edição agora é um ajuste isolado do
-                            Fluxo de Caixa (não escreve mais na despesa/débito/
-                            fatura de origem) — permissão própria da tela, não
-                            mais a da tela dona do dado (essa continua valendo
-                            só pro Excluir, que apaga o lançamento de verdade). */}
-                        <AcessoGate menu="financeiro-fluxo-caixa-gestao" acao="alterar">
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-7 w-7 text-muted-foreground hover:text-foreground"
-                            title="Editar (só neste Fluxo de Caixa)"
-                            onClick={() => abrirEditar(l)}
-                          >
-                            <Pencil className="h-3.5 w-3.5" />
-                          </Button>
-                        </AcessoGate>
-                        <AcessoGate menu={MENU_POR_ORIGEM[l.origem]} acao="excluir">
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-7 w-7 text-muted-foreground hover:text-destructive"
-                            disabled={l.origem === "malote" && l.numero_parcela != null}
-                            title={
-                              l.origem === "malote" && l.numero_parcela != null
-                                ? "Despesa parcelada — exclua a despesa inteira pela tela do Malote"
-                                : "Excluir"
-                            }
-                            onClick={() => setItemExcluir(l)}
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </Button>
-                        </AcessoGate>
-                      </div>
+                      {l.origem === "aplicacao_financeira" ? (
+                        <span className="text-xs text-muted-foreground" title="Gerencie em Aplicações Financeiras">
+                          ver em Aplicações
+                        </span>
+                      ) : (
+                        <div className="flex items-center justify-center gap-0.5">
+                          {/* SIS-2026-0489: edição agora é um ajuste isolado do
+                              Fluxo de Caixa (não escreve mais na despesa/débito/
+                              fatura de origem) — permissão própria da tela, não
+                              mais a da tela dona do dado (essa continua valendo
+                              só pro Excluir, que apaga o lançamento de verdade). */}
+                          <AcessoGate menu="financeiro-fluxo-caixa-gestao" acao="alterar">
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-7 w-7 text-muted-foreground hover:text-foreground"
+                              title="Editar (só neste Fluxo de Caixa)"
+                              onClick={() => abrirEditar(l)}
+                            >
+                              <Pencil className="h-3.5 w-3.5" />
+                            </Button>
+                          </AcessoGate>
+                          <AcessoGate menu={MENU_POR_ORIGEM[l.origem]} acao="excluir">
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-7 w-7 text-muted-foreground hover:text-destructive"
+                              disabled={l.origem === "malote" && l.numero_parcela != null}
+                              title={
+                                l.origem === "malote" && l.numero_parcela != null
+                                  ? "Despesa parcelada — exclua a despesa inteira pela tela do Malote"
+                                  : "Excluir"
+                              }
+                              onClick={() => setItemExcluir(l)}
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </Button>
+                          </AcessoGate>
+                        </div>
+                      )}
                     </TableCell>
                   </TableRow>
                 ))}

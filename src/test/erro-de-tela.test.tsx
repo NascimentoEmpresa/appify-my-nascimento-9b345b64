@@ -39,7 +39,7 @@ describe("ErroDeTela", () => {
         </ErroDeTela>
       )
     ).not.toThrow();
-    expect(screen.getByText("Esta tela não conseguiu abrir")).toBeTruthy();
+    expect(screen.getByText("Sistema temporariamente indisponível")).toBeTruthy();
   });
 
   it("mostra a mensagem técnica e a rota, pro diagnóstico não depender do console", () => {
@@ -52,25 +52,17 @@ describe("ErroDeTela", () => {
     expect(screen.getByText(/\/app\/malote\/orcamento-geral/)).toBeTruthy();
   });
 
-  it("'Tentar de novo' limpa o estado de erro e re-renderiza o conteúdo", () => {
-    // Flag externa em vez de "só na primeira montagem": o React re-tenta o
-    // render ao capturar um erro, então um contador interno tornaria o teste
-    // dependente do número de tentativas.
-    const estado = { falhar: true };
-    function Alternavel() {
-      if (estado.falhar) throw new Error("falha transitória");
-      return <p>conteúdo da tela</p>;
-    }
-
+  it("'Recarregar' recarrega a página que falhou", () => {
+    // 24/09/2026: o botão da tela de erro passou a ser "Recarregar" (pedido
+    // do Pablo). O recarregar é estático no componente justamente para o
+    // teste observar sem navegar de verdade.
+    const recarregar = vi.spyOn(ErroDeTela, "recarregar").mockImplementation(() => {});
     render(
       <ErroDeTela>
-        <Alternavel />
+        <Explode deve />
       </ErroDeTela>
     );
-    expect(screen.getByText("Esta tela não conseguiu abrir")).toBeTruthy();
-
-    estado.falhar = false;
-    fireEvent.click(screen.getByRole("button", { name: /Tentar de novo/i }));
-    expect(screen.getByText("conteúdo da tela")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /Recarregar/i }));
+    expect(recarregar).toHaveBeenCalledTimes(1);
   });
 });

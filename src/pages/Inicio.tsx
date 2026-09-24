@@ -103,6 +103,7 @@ const COR_MODULO: Record<string, string> = {
   sst: "#d97706",
   central_servicos: "#0891b2",
   comite_etica: "#b91c1c",
+  presidencia: "#0b2a63",
   whatsapp: "#22c55e",
   bi: "#0f3171",
   "plano-acoes": "#dc2626",

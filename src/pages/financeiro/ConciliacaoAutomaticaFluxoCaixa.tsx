@@ -496,7 +496,11 @@ function ConciliarTab() {
                     <tbody>
                       {resultado.lancamentos.map((l) => {
                         const resolucao = resolvidos[l.id];
-                        const podeAjustar = !!l.despesaId && !resolucao;
+                        // SIS-2026-0473: Aplicações Financeiras não passa pelo ajuste
+                        // inline daqui — valor_aplicado é imutável por design (RPC
+                        // aplicacao_financeira_editar não deixa mudá-lo); correção é
+                        // excluir + recadastrar na própria tela de Aplicações.
+                        const podeAjustar = !!l.despesaId && l.origemFluxo !== "aplicacao_financeira" && !resolucao;
                         const podeCriar = l.erro === "🚨 FLUXO - NÃO ENCONTRADO" && !resolucao;
                         return (
                           <tr key={l.id} className={cn("border-b", resolucao && "opacity-60")}>
