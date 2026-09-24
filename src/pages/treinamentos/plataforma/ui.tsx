@@ -126,8 +126,8 @@ export function TrnVazio({ titulo, texto, acao }: { titulo: string; texto?: stri
 }
 
 export function StatusAlunoBadge({ status }: { status: StatusAluno }) {
-  const cls = status === "ativo" ? "ok" : status === "bloqueado" ? "err" : status === "inativo" ? "off" : "warn";
-  return <span className={`trn-badge ${cls}`}>{ROTULO_STATUS_ALUNO[status]}</span>;
+  const cls = status === "ativo" ? "ok" : status === "bloqueado" ? "err" : status === "inativo" ? "warn" : "off";
+  return <span className={`trn-badge ${cls}`}>{ROTULO_STATUS_ALUNO[status] ?? status}</span>;
 }
 
 /**

@@ -7,11 +7,21 @@
 // isso o hook usa `supabase as any` — o mesmo que os módulos recentes fazem.
 // =====================================================================
 
-// "inativo" (21/09/2026): colaborador afastado ou demitido no cadastro — vem
-// da sincronização com EMPREGADOS, não de decisão de alguém (isso é bloqueado).
-export type StatusAluno = "pendente" | "ativo" | "bloqueado" | "inativo";
+// Status é DERIVADO no banco (trn_aluno_normaliza, mig 20260930000237 —
+// pedido do Pablo em 24/09/2026), não escolhido na tela:
+//   bloqueado  decisão de alguém; vence tudo
+//   demitido   "Demitido" no cadastro da Senior
+//   ativo      já entrou na área de treinamentos (primeiro_acesso_em)
+//   inativo    ainda não entrou
+// Antes, "ativo" era "Trabalhando" na Senior e todo colaborador aparecia
+// ativo sem nunca ter acessado. "pendente" deixou de existir (era o inativo).
+export type StatusAluno = "ativo" | "inativo" | "bloqueado" | "demitido";
 export const ROTULO_STATUS_ALUNO: Record<StatusAluno, string> = {
-  pendente: "Pendente", ativo: "Ativo", bloqueado: "Bloqueado", inativo: "Inativo",
+  ativo: "Ativo", inativo: "Inativo", bloqueado: "Bloqueado", demitido: "Demitido",
+};
+/** O que cada status quer dizer — para ajuda e filtros. */
+export const DESCRICAO_STATUS_ALUNO: Record<StatusAluno, string> = {
+  ativo: "já acessou", inativo: "nunca acessou", bloqueado: "acesso bloqueado", demitido: "desligado na Senior",
 };
 
 export interface Tag { id: string; nome: string; cor: string | null; created_at: string; alunos?: number }
@@ -175,12 +185,32 @@ export interface Evento {
   tags?: { tag_id: string }[];
 }
 
+/**
+ * trn_dashboard (mig 20260930000237). A base de alunos é quem NÃO é
+ * demitido (com curso filtrado, o alcance do curso); o período filtra
+ * atividade (aulas, avaliações, comentários, primeiros acessos, provas,
+ * certificados), não o tamanho da base.
+ */
+export interface DashboardCurso {
+  id: string; nome: string; publicado: boolean; aulas: number;
+  alcance: number; iniciaram: number; concluiram: number;
+  avaliacao_media: number | null; avaliacoes: number; comentarios: number; certificados: number;
+}
 export interface Dashboard {
-  alunos: number; alunos_ativos: number; alunos_pendentes: number; alunos_bloqueados: number;
+  alunos: number; alunos_ativos: number; alunos_inativos: number; alunos_bloqueados: number;
+  alunos_afastados: number; alunos_demitidos: number;
+  acessaram_7d: number; acessaram_30d: number; primeiros_acessos_periodo: number;
   aulas_concluidas: number; avaliacao_media: number | null; avaliacoes: number;
+  /** Quantidade de avaliações com nota 1..5, nessa ordem. */
+  avaliacoes_por_nota: number[];
   comentarios: number; comentarios_pendentes: number; cursos_publicados: number; cursos_total: number;
-  certificados: number; interacao_real: number; concluidos: number; ano: number;
-  novos_por_mes: number[]; top_cursos: { nome: string; alunos: number }[];
+  certificados: number; provas_enviadas: number; provas_aprovadas: number;
+  interacao_real: number; concluidos: number; ano: number;
+  primeiros_acessos_por_mes: number[]; conclusoes_por_mes: number[];
+  primeiros_acessos_30d: { dia: string; n: number }[];
+  por_curso: DashboardCurso[];
+  por_contrato: { nome: string; alunos: number; ativos: number }[];
+  top_aulas: { nome: string; curso: string; n: number }[];
 }
 
 /** Menus do módulo (app_menu.codigo) — um por tela, como no membox. */
