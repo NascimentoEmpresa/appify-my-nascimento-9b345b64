@@ -1511,6 +1511,7 @@ function ModuleEntry({
   // entrada escalonada correr de cima para baixo de verdade: sem isso cada
   // grupo recomeça do zero e o primeiro item de um grupo aparece antes do
   // título do grupo anterior.
+  const rotasDoModulo = useMemo(() => (mod.groups ?? []).flatMap((g) => g.items.map((i) => i.to)), [mod.groups]);
   const basesDosGrupos = useMemo(() => {
     let cursor = 0;
     return (mod.groups ?? []).map((g) => {
@@ -1575,7 +1576,7 @@ function ModuleEntry({
           <div className="sb-sub-in">
             <div className="sb-rail mt-1 ml-3 pl-2">
               {mod.groups.map((group, gi) => (
-                <SidebarGroup key={group.label} group={group} enabled={aberto} base={basesDosGrupos[gi]} />
+                <SidebarGroup key={group.label} group={group} enabled={aberto} base={basesDosGrupos[gi]} rotasDoModulo={rotasDoModulo} />
               ))}
             </div>
           </div>
@@ -1604,11 +1605,29 @@ const passo = (n: number) => Math.min(n, PASSO_MAX);
  */
 const atraso = (n: number): React.CSSProperties => ({ animationDelay: `${40 + n * 55}ms` });
 
-function SidebarGroup({ group, enabled, base }: { group: NavGroup; enabled: boolean; base: number }) {
+/**
+ * Item aceso = a rota MAIS LONGA do módulo inteiro que casa com a URL.
+ *
+ * 24/09/2026: em /app/treinamentos/cursos/<id> acendia "Dashboard" (grupo
+ * próprio, /app/treinamentos casava por prefixo) e "Visualizar cursos" ficava
+ * apagado (tinha "end" porque "Adicionar novo" mora em /cursos/novo). O
+ * "end" por grupo não enxergava os outros grupos; comparando com todas as
+ * rotas do módulo, só o melhor casamento acende.
+ */
+function rotaMaisProxima(pathname: string, rotas: string[]): string | null {
+  let melhor: string | null = null;
+  for (const to of rotas) {
+    const p = to.split("?")[0];
+    const casa = pathname === p || (p !== "/app" && pathname.startsWith(p + "/"));
+    if (casa && (!melhor || p.length > melhor.length)) melhor = p;
+  }
+  return melhor;
+}
+
+function SidebarGroup({ group, enabled, base, rotasDoModulo }: { group: NavGroup; enabled: boolean; base: number; rotasDoModulo: string[] }) {
   const location = useLocation();
-  const hasActive = group.items.some(
-    (i) => location.pathname === i.to || (i.to !== "/app" && location.pathname.startsWith(i.to)),
-  );
+  const rotaAcesa = rotaMaisProxima(location.pathname, rotasDoModulo);
+  const hasActive = group.items.some((i) => i.to.split("?")[0] === rotaAcesa);
   const [open, setOpen] = useState(group.defaultOpen ?? hasActive ?? false);
 
   return (
@@ -1643,35 +1662,35 @@ function SidebarGroup({ group, enabled, base }: { group: NavGroup; enabled: bool
               // Match exato quando outro item do menu está aninhado sob esta rota
               // (ex.: "Processos" é prefixo de "/processos/dashboard" e "/processos/audiencias");
               // sem isso o item-pai acenderia junto com o filho.
-              const hasNested = group.items.some((o) => o.to !== item.to && o.to.startsWith(item.to + "/"));
+              const acesa = item.to.split("?")[0] === rotaAcesa;
               return (
               // Escalona a entrada de cada link quando o grupo abre,
               // continuando a contagem de onde o cabeçalho do grupo parou.
               <li key={item.to}>
                 <NavLink
                   to={item.to}
-                  end={item.to === "/app" || hasNested}
+                  end
                   tabIndex={enabled && open ? undefined : -1}
                   // O atraso vai NO PRÓPRIO link, não no <li>: quem tem a
                   // animação é o `.sb-link`, e `animation-delay` não herda
                   // do pai (ao contrário da variável CSS que havia antes).
                   style={atraso(passo(base + 1 + i))}
-                  className={({ isActive }) =>
+                  className={() =>
                     cn(
                       // Submódulo fica branco e semibold: um degrau abaixo do
                       // cabeçalho do módulo (bold). Achatar os dois no mesmo
                       // peso apaga a hierarquia e a lista vira um paredão.
                       "sb-item sb-link group flex items-center gap-2.5 rounded-md px-2.5 py-1.5 text-[13px] font-semibold",
-                      isActive
+                      acesa
                         ? "sb-on bg-sidebar-accent text-white"
                         : "text-white/80 hover:bg-sidebar-accent/50 hover:text-white",
                     )
                   }
                 >
-                  {({ isActive }) => (
+                  {() => (
                     <>
-                      {isActive && <span className="sb-bar absolute left-0 top-1.5 bottom-1.5 w-0.5 rounded-r bg-accent" />}
-                      <item.icon className={cn("sb-ic mt-0.5 h-3.5 w-3.5 shrink-0 self-start", isActive ? "text-accent" : "")} />
+                      {acesa && <span className="sb-bar absolute left-0 top-1.5 bottom-1.5 w-0.5 rounded-r bg-accent" />}
+                      <item.icon className={cn("sb-ic mt-0.5 h-3.5 w-3.5 shrink-0 self-start", acesa ? "text-accent" : "")} />
                       {/* Quebra em duas linhas em vez de cortar com reticências:
                           "Minhas Solicitações de Ma…" esconde justamente a
                           palavra que distingue um item do outro. */}

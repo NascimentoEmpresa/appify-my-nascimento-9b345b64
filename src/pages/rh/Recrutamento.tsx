@@ -1,8 +1,8 @@
-import { useState, useEffect, useRef, useCallback, type MouseEvent as ReactMouseEvent, type CSSProperties, type ReactNode } from "react";
+import { useState, useEffect, useMemo, useRef, useCallback, type MouseEvent as ReactMouseEvent, type CSSProperties, type ReactNode } from "react";
 import {
-  Activity, AlertTriangle, Ban, Building2, CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, ClipboardList, Clock, Eye, FileText,
+  Activity, AlertTriangle, Ban, Building2, CalendarDays, Check, CheckCircle2, ChevronLeft, ChevronRight, ClipboardList, Clock, Eye, FileText,
   FolderOpen, GraduationCap, History, IdCard, Landmark, Link2, LogOut, Mail, MapPin, MessageSquare, Paperclip,
-  Pencil, Phone, Search, Settings, Tags, Target, Trash2, UserSearch, Users, XCircle, Zap, type LucideIcon,
+  Pencil, Phone, Search, Settings, Tags, Target, Trash2, UserSearch, Users, X, XCircle, Zap, type LucideIcon,
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
@@ -53,6 +53,11 @@ interface Solicitacao {
   alta_rotatividade?: string;
   motivos_saida?: string;
   recomendacao?: string;
+  /** Recomendação estruturada (17/09/2026): quem indicou alguém para a vaga. */
+  tem_recomendacao?: boolean;
+  recomendacao_nome?: string | null;
+  recomendacao_cpf?: string | null;
+  recomendacao_whatsapp?: string | null;
   observacao_importante?: string;
   observacao_interna?: string;
   motivo_reprovacao?: string;
@@ -199,9 +204,18 @@ function esc(s: unknown): string {
     .replace(/>/g, "&gt;");
 }
 
+/**
+ * Data no padrão do resto da tela: DD/MM/AAAA (24/09/2026 — antes saía
+ * "2026-09-23", cortando o texto ISO). Timestamp vira a data LOCAL (um
+ * created_at de 22h UTC é o mesmo dia em Brasília); "AAAA-MM-DD" puro não
+ * passa pelo Date para o fuso não voltar um dia.
+ */
 function fmtDt(s?: string) {
   if (!s) return "—";
-  return s.replace("T", " ").slice(0, 10);
+  const soData = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
+  if (soData) return `${soData[3]}/${soData[2]}/${soData[1]}`;
+  const d = new Date(s);
+  return isNaN(+d) ? s.replace("T", " ").slice(0, 10) : d.toLocaleDateString("pt-BR");
 }
 
 /**
@@ -853,6 +867,27 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
       if (nm) setMsgs(nm);
     }, 5000);
   }, [loadCandidatos]);
+
+  // ‹ › no topo do detalhe (24/09/2026): passa as vagas uma a uma, na MESMA
+  // ordem da tela aberta (tabela da página atual ou colunas do kanban).
+  const listaNavegavel = useMemo<Solicitacao[]>(
+    () => (view === "tabela" ? items : Object.values(kanbanData).flat()),
+    [view, items, kanbanData],
+  );
+  const posNaLista = drawerId == null ? -1 : listaNavegavel.findIndex((x) => x.id === drawerId);
+  const vagaAnterior = posNaLista > 0 ? listaNavegavel[posNaLista - 1] : null;
+  const vagaSeguinte = posNaLista >= 0 && posNaLista < listaNavegavel.length - 1 ? listaNavegavel[posNaLista + 1] : null;
+  useEffect(() => {
+    if (drawerId == null) return;
+    const tecla = (e: KeyboardEvent) => {
+      const alvo = e.target as HTMLElement | null;
+      if (alvo && (/^(INPUT|TEXTAREA|SELECT)$/.test(alvo.tagName) || alvo.isContentEditable)) return;
+      if (e.key === "ArrowLeft" && vagaAnterior) { e.preventDefault(); verDetalhe(vagaAnterior.id); }
+      if (e.key === "ArrowRight" && vagaSeguinte) { e.preventDefault(); verDetalhe(vagaSeguinte.id); }
+    };
+    window.addEventListener("keydown", tecla);
+    return () => window.removeEventListener("keydown", tecla);
+  }, [drawerId, vagaAnterior, vagaSeguinte, verDetalhe]);
 
   const fecharDrawer = () => {
     setDrawerId(null);
@@ -1736,8 +1771,9 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
           {s.administrativa ? di("Tipo de vaga", "Administrativa (escritório)") : null}
           {/* O setor só existe na vaga administrativa: é o da Diretoria que aprova. */}
           {s.administrativa ? di("Setor", s.setor) : null}
-          {di("Escala", s.escala)}
-          {di("Horário", s.horario)}
+          {/* Horário saiu do formulário em 16/09/2026 (a escala já traz a
+              jornada); vaga antiga ainda tem os dois, e aparecem juntos. */}
+          {di("Escala / horário", [s.escala, s.horario].map((x) => String(x ?? "").trim()).filter(Boolean).join(" · "))}
           {di("Salário", s.salario)}
           {di("Benefícios", s.beneficios, true)}
           {di("Insalubridade", s.insalubridade_recebe + (s.insalubridade_quanto ? " — " + s.insalubridade_quanto : ""))}
@@ -1774,7 +1810,14 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
           {di("Alta Rotatividade", s.alta_rotatividade)}
         </div>
         {dd("Motivos de Saída", s.motivos_saida)}
-        {dd("Recomendação", s.recomendacao)}
+        {s.tem_recomendacao
+          ? dd("Recomendação", [
+              s.recomendacao_nome ? `Indicado(a): ${s.recomendacao_nome}` : "",
+              s.recomendacao_cpf ? `CPF: ${s.recomendacao_cpf}` : "",
+              s.recomendacao_whatsapp ? `WhatsApp: ${s.recomendacao_whatsapp}` : "",
+              String(s.recomendacao ?? "").trim() && !/^(n[aã]o|-|—|\.+)$/i.test(String(s.recomendacao).trim()) ? `Observação: ${s.recomendacao}` : "",
+            ].filter(Boolean).join("\n"))
+          : dd("Recomendação", s.recomendacao)}
         {dd("Observação Importante", s.observacao_importante)}
         {dd("Motivo de Reprovação", s.motivo_reprovacao)}
         {s.status === "Funcionário Selecionado" && dd("Funcionário Selecionado", s.funcionario_selecionado)}
@@ -1874,14 +1917,95 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
         ? (drawerSol.nome_substituido ? `Substituindo: ${drawerSol.nome_substituido}` : "Substituição")
         : (drawerSol.motivo_vaga ? `Aumento de quadro — ${drawerSol.motivo_vaga}` : null),
     }] : [];
-    const eventos = [...criada, ...historico].sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)));
+    // Mesmo evento gravado duas vezes em menos de 10 s (tela antiga + gatilho,
+    // até a main receber o commit de 23/09/2026) aparece uma vez só.
+    const ordenados = [...criada, ...historico].sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)));
+    const eventos = ordenados.filter((e, i) => !ordenados.slice(0, i).some((o) =>
+      o.evento === e.evento && o.de_status === e.de_status && o.para_status === e.para_status && !e.candidato_nome && !e.detalhe
+      && Math.abs(new Date(o.created_at).getTime() - new Date(e.created_at).getTime()) < 10_000));
     if (eventos.length === 0) return <div style={{ textAlign: "center", color: "#94a3b8", padding: "40px 16px", fontSize: 13 }}>Sem movimentações registradas.</div>;
+    const quando = (iso?: string | null) => {
+      if (!iso) return "—";
+      const d = new Date(iso);
+      return isNaN(+d) ? String(iso) : `${d.toLocaleDateString("pt-BR")} ${d.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}`;
+    };
+    const nomeDe = (e: EventoHist) => nomesPorEmailHist[e.usuario_email ?? ""] || e.usuario_nome || "—";
+
+    // ── Etapas (24/09/2026): quem passou cada etapa, lado a lado ──
+    // "aqui não aparece que o analista aprovou... tem que separar deixando bem
+    // intuitivo quem passou cada etapa". Cada etapa procura o evento que a
+    // fechou; etapa vencida sem evento é aprovação de antes do gatilho de
+    // histórico (mig 20260930000225, 23/09/2026) — diz isso em vez de sumir.
+    const st = drawerSol?.status ?? "";
+    const administrativa = !!drawerSol?.administrativa || st === STATUS_VAGA_DIRETORIA
+      || eventos.some((e) => e.de_status === STATUS_VAGA_DIRETORIA || e.para_status === STATUS_VAGA_DIRETORIA);
+    const concluida = st === "Concluída" || st === "Contratado" || st.startsWith("Concluído");
+    const nivel = st === "Pendente Analista" || st === STATUS_VAGA_DIRETORIA || st === "Pendente Operacional" ? 1
+      : st === "Pendente Recrutamento" ? 2
+      : concluida ? 4
+      : STATUS_PROCESSO.includes(st) ? 3 : -1;
+    const reprovadaEm = st === "Reprovada" ? eventos.find((e) => e.para_status === "Reprovada") : undefined;
+    const achar = (f: (e: EventoHist) => boolean) => [...eventos].reverse().find(f);
+    const etapas: { titulo: string; papel: string; ev?: EventoHist; n: number }[] = [
+      { titulo: "Solicitação criada", papel: "Solicitante", n: 0, ev: criada[0] },
+      administrativa
+        ? { titulo: "Aprovação da Diretoria", papel: "Diretoria", n: 1, ev: achar((e) => e.evento === "Aprovada pela Diretoria" || (e.de_status === STATUS_VAGA_DIRETORIA && e.para_status === "Pendente Recrutamento")) }
+        : { titulo: "Aprovação do Analista", papel: "Analista", n: 1, ev: achar((e) => e.evento === "Aprovada pelo Analista" || e.evento === "Aprovada pelo Operacional" || ((e.de_status === "Pendente Analista" || e.de_status === "Pendente Operacional") && e.para_status === "Pendente Recrutamento")) },
+      { titulo: "Abertura da vaga", papel: "Recrutamento", n: 2, ev: achar((e) => e.evento === "Abertura de vaga confirmada" || (e.de_status === "Pendente Recrutamento" && !!e.para_status && e.para_status !== "Reprovada")) },
+      { titulo: "Seleção de candidatos", papel: "Recrutamento", n: 3, ev: achar((e) => !!e.para_status && STATUS_PROCESSO.includes(e.para_status) && e.de_status !== "Pendente Recrutamento") },
+      { titulo: "Conclusão", papel: "Recrutamento", n: 4, ev: achar((e) => e.evento === "Solicitação concluída") },
+    ];
+    const etapaReprovada = reprovadaEm
+      ? (reprovadaEm.de_status === "Pendente Recrutamento" ? 2 : STATUS_PROCESSO.includes(reprovadaEm.de_status ?? "") ? 3 : 1)
+      : -1;
+
+    const blocoEtapas = (
+      <div style={{ display: "grid", gap: 8, marginBottom: 22 }}>
+        {etapas.map((et) => {
+          const reprovou = et.n === etapaReprovada;
+          const feita = !reprovou && (et.n === 0 || (etapaReprovada >= 0 ? et.n < etapaReprovada : et.n < nivel || (et.n === 4 && concluida)));
+          const atual = !reprovou && !feita && et.n === nivel;
+          const cor = reprovou ? "#dc2626" : feita ? "#16a34a" : atual ? "#d97706" : "#cbd5e1";
+          const ev = reprovou ? reprovadaEm : et.ev;
+          // A etapa "Seleção" não tem aprovação: está feita quando a vaga anda.
+          const quem = ev ? nomeDe(ev) : null;
+          return (
+            <div key={et.n} style={{ display: "flex", gap: 10, alignItems: "flex-start", border: `1px solid ${feita || reprovou || atual ? cor + "55" : "#e2e8f0"}`, background: feita ? "#f0fdf4" : reprovou ? "#fef2f2" : atual ? "#fffbeb" : "#f8fafc", borderRadius: 10, padding: "8px 11px" }}>
+              <span style={{ width: 22, height: 22, borderRadius: "50%", background: cor, color: "#fff", display: "grid", placeItems: "center", flexShrink: 0, marginTop: 1 }}>
+                {reprovou ? <X size={13} strokeWidth={3} /> : feita ? <Check size={13} strokeWidth={3} /> : <span style={{ fontSize: 11, fontWeight: 800 }}>{et.n + 1}</span>}
+              </span>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                  <span style={{ fontSize: 13, fontWeight: 800, color: "#0f172a" }}>{et.titulo}</span>
+                  <span style={{ fontSize: 10, fontWeight: 800, padding: "1px 8px", borderRadius: 20, background: `${papelCor(et.papel)}1a`, color: papelCor(et.papel) }}>{et.papel}</span>
+                  <span style={{ fontSize: 10.5, fontWeight: 800, color: cor, marginLeft: "auto" }}>
+                    {reprovou ? "Reprovada" : feita ? "Concluída" : atual ? "Aguardando" : "—"}
+                  </span>
+                </div>
+                <div style={{ fontSize: 12, color: "#475569", marginTop: 2 }}>
+                  {quem
+                    ? <><b style={{ color: "#0f172a" }}>{quem}</b> · {quando(ev?.created_at)}</>
+                    : feita
+                      ? <span style={{ color: "#94a3b8" }}>Sem registro de quem fez — etapa concluída antes de o histórico automático existir (23/09/2026).</span>
+                      : atual ? <span style={{ color: "#b45309" }}>Aguardando {et.papel === "Solicitante" ? "o solicitante" : et.papel === "Analista" ? "o analista" : et.papel === "Diretoria" ? "a Diretoria" : "o Recrutamento"}.</span>
+                      : <span style={{ color: "#94a3b8" }}>Ainda não chegou nesta etapa.</span>}
+                </div>
+                {reprovou && reprovadaEm?.detalhe && <div style={{ fontSize: 12, color: "#991b1b", marginTop: 3 }}>Motivo: {reprovadaEm.detalhe}</div>}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    );
+
     return (
       <div style={{ display: "flex", flexDirection: "column" }}>
+        <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: ".08em", textTransform: "uppercase", color: "#64748b", marginBottom: 8 }}>Etapas</div>
+        {blocoEtapas}
+        <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: ".08em", textTransform: "uppercase", color: "#64748b", marginBottom: 10 }}>Todas as movimentações</div>
         {eventos.map((e, i) => {
           const cor = papelCor(e.papel);
-          const dthora = String(e.created_at ?? "").replace("T", " ").slice(0, 16);
-          const nomeExibido = nomesPorEmailHist[e.usuario_email ?? ""] || e.usuario_nome || "—";
+          const nomeExibido = nomeDe(e);
           return (
             <div key={i} style={{ display: "flex", gap: 12, paddingBottom: i === eventos.length - 1 ? 0 : 18 }}>
               <div style={{ display: "flex", flexDirection: "column", alignItems: "center", flexShrink: 0 }}>
@@ -1896,7 +2020,7 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
                 {(e.de_status || e.para_status) && <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 2 }}>{e.de_status ? `${e.de_status} → ` : ""}{e.para_status || ""}</div>}
                 {e.candidato_nome && <div style={{ fontSize: 12, color: "#475569", marginTop: 2 }}>Candidato: <b>{e.candidato_nome}</b></div>}
                 {e.detalhe && <div style={{ fontSize: 12, color: "#475569", marginTop: 4, background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 8, padding: "6px 9px", whiteSpace: "pre-wrap" }}>{e.detalhe}</div>}
-                <div style={{ fontSize: 12.5, color: "#0f172a", marginTop: 4 }}><span style={{ fontWeight: 800 }}>{nomeExibido}</span><span style={{ color: "#94a3b8", fontWeight: 400 }}> · {dthora || "—"}</span></div>
+                <div style={{ fontSize: 12.5, color: "#0f172a", marginTop: 4 }}><span style={{ fontWeight: 800 }}>{nomeExibido}</span><span style={{ color: "#94a3b8", fontWeight: 400 }}> · {quando(e.created_at)}</span></div>
               </div>
             </div>
           );
@@ -2430,7 +2554,23 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
             {/* Head */}
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 20px", borderBottom: "1px solid #e2e8f0", flexShrink: 0, gap: 10, flexWrap: "wrap", background: "#f8fafc" }}>
               <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                <span style={{ fontSize: 13, color: "#94a3b8", fontWeight: 700 }}>Solicitação #{drawerId}</span>
+                {/* ‹ › — também pelas setas do teclado */}
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 2 }}>
+                  <button type="button" aria-label="Vaga anterior" title="Vaga anterior (←)" disabled={!vagaAnterior}
+                    onClick={() => vagaAnterior && verDetalhe(vagaAnterior.id)}
+                    style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 28, height: 28, borderRadius: 8, border: "1px solid #e2e8f0", background: "#fff", color: vagaAnterior ? "#0f3171" : "#cbd5e1", cursor: vagaAnterior ? "pointer" : "default" }}>
+                    <ChevronLeft size={16} aria-hidden />
+                  </button>
+                  <span style={{ fontSize: 13, color: "#94a3b8", fontWeight: 700, padding: "0 6px", whiteSpace: "nowrap" }}>
+                    Solicitação #{drawerId}
+                    {posNaLista >= 0 && <span style={{ fontWeight: 600, color: "#cbd5e1" }}> · {posNaLista + 1}/{listaNavegavel.length}</span>}
+                  </span>
+                  <button type="button" aria-label="Próxima vaga" title="Próxima vaga (→)" disabled={!vagaSeguinte}
+                    onClick={() => vagaSeguinte && verDetalhe(vagaSeguinte.id)}
+                    style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 28, height: 28, borderRadius: 8, border: "1px solid #e2e8f0", background: "#fff", color: vagaSeguinte ? "#0f3171" : "#cbd5e1", cursor: vagaSeguinte ? "pointer" : "default" }}>
+                    <ChevronRight size={16} aria-hidden />
+                  </button>
+                </span>
                 {drawerSol && <span className={`rec-badge ${badgeStatusCls(drawerSol.status)}`}>{drawerSol.status}</span>}
                 {drawerSol?.grau_urgencia && <span className={`rec-badge ${badgeUrgCls(drawerSol.grau_urgencia)}`}>{drawerSol.grau_urgencia.startsWith("Alta") ? <><Ic i={Zap} />Alta</> : drawerSol.grau_urgencia}</span>}
                 {drawerSol && renderEtiquetas(drawerSol)}
