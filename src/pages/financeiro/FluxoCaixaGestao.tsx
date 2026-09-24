@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -12,7 +13,7 @@ import {
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
-import { TrendingDown, TrendingUp, Wallet, LineChart, X, Trash2, RotateCcw, Pencil } from "lucide-react";
+import { TrendingDown, TrendingUp, Wallet, LineChart, X, Trash2, RotateCcw, Pencil, Eye } from "lucide-react";
 import { toast } from "sonner";
 import { AcessoGate } from "@/components/auth/AcessoGate";
 import {
@@ -67,6 +68,8 @@ const PAGE_SIZE = 50;
 // fonte — os cards de Entradas/Saldo ainda ficam zerados (nenhuma das duas
 // fontes hoje resolve saldo bancário real).
 export default function FluxoCaixaGestao() {
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { data: linhasBrutas = [], isLoading } = useFluxoCaixaCombinado();
 
   // SIS-2026-0464: a view de origem já entrega 1 linha por linha de RATEIO
@@ -210,6 +213,11 @@ export default function FluxoCaixaGestao() {
   // SIS-2026-0307: "após o pagamento alimentamos o fluxo de caixa" (usuário)
   // — Banco entra aqui, não em Pagamento Malote/Meus Itens.
   const [bancoId, setBancoId] = useState("");
+  // SIS-2026-0038 (achado do usuário): vindo do botão "Ver no Fluxo de
+  // Caixa" em Pagamento Malote (?busca=<numero da despesa>), ou digitado
+  // direto aqui — busca por ID (numero) ou descrição, igual ao padrão de
+  // busca livre já usado em PagamentoMalote.tsx.
+  const [busca, setBusca] = useState(searchParams.get("busca") ?? "");
   const [page, setPage] = useState(1);
 
   const empresasDisponiveis = useMemo(() => {
@@ -253,10 +261,12 @@ export default function FluxoCaixaGestao() {
     setClassificacaoId("");
     setFormaPagamento("");
     setBancoId("");
+    setBusca("");
     setPage(1);
   }
 
   const filtradas = useMemo(() => {
+    const buscaNorm = busca.trim().toLowerCase();
     return linhas.filter((l) => {
       if (dataDe && (!l.data_pagamento || l.data_pagamento < dataDe)) return false;
       if (dataAte && (!l.data_pagamento || l.data_pagamento > dataAte)) return false;
@@ -265,9 +275,14 @@ export default function FluxoCaixaGestao() {
       if (classificacaoId && l.classificacao_id !== classificacaoId) return false;
       if (formaPagamento && l.forma_pagamento !== formaPagamento) return false;
       if (bancoId && l.banco_id !== bancoId) return false;
+      if (
+        buscaNorm &&
+        !(l.id_malote ?? "").toLowerCase().includes(buscaNorm) &&
+        !(l.descricao ?? "").toLowerCase().includes(buscaNorm)
+      ) return false;
       return true;
     });
-  }, [linhas, dataDe, dataAte, competencia, empresaId, classificacaoId, formaPagamento, bancoId]);
+  }, [linhas, dataDe, dataAte, competencia, empresaId, classificacaoId, formaPagamento, bancoId, busca]);
 
   // SIS-2026-0256: com o Débito Automático somado à fonte, "Saídas" precisa
   // filtrar por tipo — antes só existia saída (Malote), então somar tudo
@@ -325,7 +340,7 @@ export default function FluxoCaixaGestao() {
               <X className="h-3.5 w-3.5" /> Limpar filtros
             </Button>
           </div>
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             <div>
               <Label className="text-xs">Data de</Label>
               <Input type="date" className="h-8 text-xs" value={dataDe} onChange={(e) => setDataDe(e.target.value)} />
@@ -385,6 +400,15 @@ export default function FluxoCaixaGestao() {
                   ))}
                 </SelectContent>
               </Select>
+            </div>
+            <div>
+              <Label className="text-xs">Buscar por ID ou descrição</Label>
+              <Input
+                className="h-8 text-xs"
+                placeholder="Digite o ID (ex. SD-2026-0038) ou a descrição..."
+                value={busca}
+                onChange={(e) => { setBusca(e.target.value); setPage(1); }}
+              />
             </div>
           </div>
         </CardContent>
@@ -477,6 +501,21 @@ export default function FluxoCaixaGestao() {
                         </span>
                       ) : (
                         <div className="flex items-center justify-center gap-0.5">
+                          {/* SIS-2026-0038 (achado do usuário): "e vice versa,
+                              podendo visualizar a despesa lá em malote,
+                              clicando no fluxo" — só faz sentido pra origem
+                              malote, é a única com tela de despesa própria. */}
+                          {l.origem === "malote" && (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-7 w-7 text-muted-foreground hover:text-foreground"
+                              title="Ver despesa no Malote"
+                              onClick={() => navigate(`/app/malote/despesa/${l.despesa_id}`)}
+                            >
+                              <Eye className="h-3.5 w-3.5" />
+                            </Button>
+                          )}
                           {/* SIS-2026-0489: edição agora é um ajuste isolado do
                               Fluxo de Caixa (não escreve mais na despesa/débito/
                               fatura de origem) — permissão própria da tela, não

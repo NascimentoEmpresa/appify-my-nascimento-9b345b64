@@ -1,6 +1,30 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 
+// SIS-2026-0038 (achado do usuário, DESPESA SD-2026-0038 sumida do Fluxo de
+// Caixa): PostgREST limita todo select("*") sem .range() a 1000 linhas por
+// padrão (db-max-rows do projeto Supabase) — v_malote_pagamento_fluxo_caixa
+// já tinha 1146. As linhas que ficam de fora desse corte não são as mais
+// antigas/recentes, é ordem arbitrária do Postgres — então qualquer
+// lançamento podia sumir do cliente sem erro nenhum. Pagina em blocos de
+// 1000 até a página vir menor que o tamanho pedido.
+const TAMANHO_PAGINA = 1000;
+async function buscarTodasLinhas(tabela: string): Promise<any[]> {
+  const linhas: any[] = [];
+  let pagina = 0;
+  for (;;) {
+    const { data, error } = await (supabase as any)
+      .from(tabela)
+      .select("*")
+      .range(pagina * TAMANHO_PAGINA, pagina * TAMANHO_PAGINA + TAMANHO_PAGINA - 1);
+    if (error) throw error;
+    linhas.push(...(data ?? []));
+    if (!data || data.length < TAMANHO_PAGINA) break;
+    pagina += 1;
+  }
+  return linhas;
+}
+
 // SIS-2026-0160: início do Fluxo de Caixa (Financeiro > Gestão Financeira).
 // Lê direto de v_malote_pagamento_fluxo_caixa (20260907000002), que já
 // resolve os nomes de empresa/contrato/classificação — sem join no
@@ -62,12 +86,9 @@ export function useFluxoCaixaMalote() {
   return useQuery({
     queryKey: ["fluxo_caixa_malote"],
     queryFn: async () => {
-      const { data, error } = await (supabase as any)
-        .from("v_malote_pagamento_fluxo_caixa")
-        .select("*")
-        .order("data_pagamento", { ascending: false });
-      if (error) throw error;
-      return (data ?? []) as FluxoCaixaMaloteLinha[];
+      const linhas = (await buscarTodasLinhas("v_malote_pagamento_fluxo_caixa")) as FluxoCaixaMaloteLinha[];
+      linhas.sort((a, b) => (b.data_pagamento ?? "").localeCompare(a.data_pagamento ?? ""));
+      return linhas;
     },
   });
 }
@@ -91,23 +112,18 @@ export function useFluxoCaixaCombinado() {
       // linha só (datas e tipos diferentes), mesma ideia da Movimentação
       // Financeira do Débito Automático (2 linhas ligadas por par).
       const [malote, debitoAutomatico, cartaoFatura, aplicacaoFinanceira, resgateAplicacao] = await Promise.all([
-        (supabase as any).from("v_malote_pagamento_fluxo_caixa").select("*"),
-        (supabase as any).from("v_debito_automatico_fluxo_caixa").select("*"),
-        (supabase as any).from("v_cartao_fatura_fluxo_caixa").select("*"),
-        (supabase as any).from("v_aplicacao_financeira_fluxo_caixa").select("*"),
-        (supabase as any).from("v_aplicacao_financeira_resgate_fluxo_caixa").select("*"),
+        buscarTodasLinhas("v_malote_pagamento_fluxo_caixa"),
+        buscarTodasLinhas("v_debito_automatico_fluxo_caixa"),
+        buscarTodasLinhas("v_cartao_fatura_fluxo_caixa"),
+        buscarTodasLinhas("v_aplicacao_financeira_fluxo_caixa"),
+        buscarTodasLinhas("v_aplicacao_financeira_resgate_fluxo_caixa"),
       ]);
-      if (malote.error) throw malote.error;
-      if (debitoAutomatico.error) throw debitoAutomatico.error;
-      if (cartaoFatura.error) throw cartaoFatura.error;
-      if (aplicacaoFinanceira.error) throw aplicacaoFinanceira.error;
-      if (resgateAplicacao.error) throw resgateAplicacao.error;
       const linhas = [
-        ...(malote.data ?? []),
-        ...(debitoAutomatico.data ?? []),
-        ...(cartaoFatura.data ?? []),
-        ...(aplicacaoFinanceira.data ?? []),
-        ...(resgateAplicacao.data ?? []),
+        ...malote,
+        ...debitoAutomatico,
+        ...cartaoFatura,
+        ...aplicacaoFinanceira,
+        ...resgateAplicacao,
       ] as FluxoCaixaMaloteLinha[];
       linhas.sort((a, b) => (b.data_pagamento ?? "").localeCompare(a.data_pagamento ?? ""));
       return linhas;

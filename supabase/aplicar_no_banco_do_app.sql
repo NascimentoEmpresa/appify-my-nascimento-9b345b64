@@ -25794,7 +25794,7 @@ NOTIFY pgrst, 'reload schema';
 -- END $fn$;
 -- NOTIFY pgrst, 'reload schema';
 
--- ===== 20260930000216_trn_alunos_recorte_cargo =====
+-- ===== 20260930000216_trn_alunos_recorte_cargo (JA APLICADA 24/09) =====
 -- =========================================================================
 -- Treinamentos › Ações em massa: recorte por CARGO
 --
@@ -26350,4 +26350,1464 @@ NOTIFY pgrst, 'reload schema';
 -- DROP POLICY IF EXISTS recrutamento_historico_select_telas ON public."RECRUTAMENTO_HISTORICO";
 -- DELETE FROM public.screen_permission_user WHERE menu_codigo IN ('recrutamento_filtro_pend_recrutamento', 'recrutamento_filtro_pend_selecao');
 -- DELETE FROM public.app_menu WHERE codigo IN ('recrutamento_filtro_pend_recrutamento', 'recrutamento_filtro_pend_selecao');
+-- NOTIFY pgrst, 'reload schema';
+
+-- ===== 20260930000228_vincular_empregado_nascimento_iso (JA APLICADA 24/09) =====
+-- =========================================================================
+-- Vincular meu cadastro: CPF + nascimento em formato ISO dava
+-- "CPF e data de nascimento não conferem" com os dados certos.
+--
+-- Caso de 24/09/2026: TIANE DA COSTA RODRIGUES (ID 11915) digitou
+-- 17/08/1979 e o cadastro tem "1979-08-17" — a mesma data. A função
+-- comparava só os dígitos ("17081979" x "19790817"). O "Nascimento" do
+-- EMPREGADOS tem dois formatos (ISO: 2.190 ativos; DD/MM/AAAA: 297), então
+-- quase todo mundo que tentasse se vincular sozinho esbarrava nisso — 2.052
+-- cadastros ativos ainda sem vínculo estavam nessa situação.
+--
+-- Correção: a data digitada e a do cadastro viram DATE (a do cadastro por
+-- rh_data_br_para_date, que já entende os dois formatos) e são comparadas
+-- como data. A comparação antiga fica como alternativa. Resto da função
+-- idêntico ao que estava no banco (pg_get_functiondef), mais pg_temp no
+-- search_path.
+--
+-- Idempotente. Aplicar no banco do app.
+-- =========================================================================
+
+CREATE OR REPLACE FUNCTION public.vincular_meu_empregado(p_cpf text, p_nascimento text, p_confirmar boolean DEFAULT false)
+ RETURNS jsonb
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public', 'pg_temp'
+AS $function$
+DECLARE
+  v_uid     uuid := auth.uid();
+  v_cpf     text := regexp_replace(coalesce(p_cpf, ''), '\D', '', 'g');
+  v_nasc    text := regexp_replace(coalesce(p_nascimento, ''), '\D', '', 'g');
+  v_cpf_fmt text;
+  v_emp     public."EMPREGADOS"%ROWTYPE;
+  v_bloq    text[] := ARRAY['DEMITIDO','DEMITIDA','RESCISÃO','DESLIGADO','DESLIGADA'];
+  v_preview jsonb;
+  v_data    date;
+BEGIN
+  IF v_uid IS NULL THEN
+    RETURN jsonb_build_object('ok', false, 'error', 'Não autenticado');
+  END IF;
+  IF length(v_cpf) <> 11 THEN
+    RETURN jsonb_build_object('ok', false, 'error', 'Informe um CPF válido (11 dígitos).');
+  END IF;
+  IF length(v_nasc) <> 8 THEN
+    RETURN jsonb_build_object('ok', false, 'error', 'Informe a data de nascimento (DD/MM/AAAA).');
+  END IF;
+
+  -- Data digitada vira DATA (31/02 e afins caem aqui, com mensagem clara).
+  BEGIN
+    v_data := to_date(v_nasc, 'DDMMYYYY');
+  EXCEPTION WHEN OTHERS THEN
+    RETURN jsonb_build_object('ok', false, 'error', 'Data de nascimento inválida.');
+  END;
+
+  v_cpf_fmt := substr(v_cpf,1,3) || '.' || substr(v_cpf,4,3) || '.' || substr(v_cpf,7,3) || '-' || substr(v_cpf,10,2);
+
+  SELECT * INTO v_emp
+  FROM public."EMPREGADOS" e
+  WHERE e."CPF" IN (v_cpf, v_cpf_fmt)
+  ORDER BY
+    (CASE WHEN upper(coalesce(e."Situação",'')) = ANY (v_bloq) THEN 1 ELSE 0 END) ASC,
+    (CASE WHEN e."Admissão" ~ '^\d{2}/\d{2}/\d{4}$'
+          THEN (substr(e."Admissão",7,4) || substr(e."Admissão",4,2) || substr(e."Admissão",1,2))::bigint
+          ELSE 0 END) DESC
+  LIMIT 1;
+
+  IF NOT FOUND THEN
+    RETURN jsonb_build_object('ok', false, 'error', 'CPF não encontrado.');
+  END IF;
+
+  IF upper(coalesce(v_emp."Situação",'')) = ANY (v_bloq) THEN
+    RETURN jsonb_build_object('ok', false, 'error', 'Cadastro consta como desligado. Procure o RH.');
+  END IF;
+
+  -- 24/09/2026: compara DATAS. O EMPREGADOS guarda "Nascimento" em dois
+  -- formatos (ISO na maioria — 2.190 ativos — e DD/MM/AAAA); comparar só os
+  -- dígitos dava "19790817" ≠ "17081979" e barrava todo cadastro em ISO.
+  -- A comparação antiga fica como alternativa (nada que passava deixa de passar).
+  IF public.rh_data_br_para_date(v_emp."Nascimento") IS DISTINCT FROM v_data
+     AND regexp_replace(coalesce(v_emp."Nascimento",''), '\D', '', 'g') <> v_nasc THEN
+    RETURN jsonb_build_object('ok', false, 'error', 'CPF e data de nascimento não conferem.');
+  END IF;
+
+  IF v_emp.auth_user_id IS NOT NULL AND v_emp.auth_user_id <> v_uid THEN
+    RETURN jsonb_build_object('ok', false, 'error', 'Este cadastro já está vinculado a outro usuário. Procure o RH.');
+  END IF;
+
+  v_preview := jsonb_build_object(
+    'id',       v_emp."ID",
+    'nome',     coalesce(v_emp."Nome", ''),
+    'cargo',    coalesce(v_emp."Título do Cargo", ''),
+    'setor',    coalesce(v_emp."Setor_ERP", ''),
+    'perfil',   coalesce(v_emp."Perfil_ERP", ''),
+    'lider',    coalesce(v_emp."LIDER", ''),
+    'situacao', coalesce(v_emp."Situação", ''),
+    'admissao', coalesce(v_emp."Admissão", ''),
+    'empresa',  coalesce(v_emp."Nome da Empresa", ''),
+    'filial',   coalesce(v_emp."Nome Filial", '')
+  );
+
+  IF NOT p_confirmar THEN
+    RETURN jsonb_build_object('ok', true, 'ja_vinculado', (v_emp.auth_user_id = v_uid), 'empregado', v_preview);
+  END IF;
+
+  UPDATE public."EMPREGADOS"
+     SET auth_user_id = v_uid,
+         "email" = CASE
+                     WHEN coalesce(btrim("email"), '') = ''
+                     THEN (SELECT u.email FROM auth.users u WHERE u.id = v_uid)
+                     ELSE "email"
+                   END
+   WHERE "ID" = v_emp."ID";
+
+  -- Puxa o nome oficial da Senior para o login.
+  UPDATE public.profiles SET display_name = v_emp."Nome" WHERE id = v_uid;
+
+  RETURN jsonb_build_object('ok', true, 'vinculado', true, 'empregado', v_preview);
+
+EXCEPTION
+  WHEN unique_violation THEN
+    RETURN jsonb_build_object('ok', false, 'error', 'Sua conta já está vinculada a outro cadastro.');
+  WHEN OTHERS THEN
+    RETURN jsonb_build_object('ok', false, 'error', SQLERRM);
+END;
+$function$;
+
+REVOKE ALL ON FUNCTION public.vincular_meu_empregado(text, text, boolean) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.vincular_meu_empregado(text, text, boolean) TO authenticated;
+
+NOTIFY pgrst, 'reload schema';
+
+-- ROLLBACK
+-- (volta a comparar só os dígitos — reintroduz o erro com nascimento em ISO)
+-- Reaplicar a versão anterior de public.vincular_meu_empregado: a comparação
+-- regexp_replace(coalesce("Nascimento",''), '\D', '', 'g') <> v_nasc, sem v_data.
+-- NOTIFY pgrst, 'reload schema';
+
+-- ===== 20260930000229_datas_universais_e_modulo_presidencia (JA APLICADA 24/09) =====
+-- =========================================================================
+-- Datas: um conversor universal para o sistema inteiro + módulo Presidência
+-- em Acesso por Usuário.
+--
+-- Pedidos do Pablo (24/09/2026):
+--   1) "o sistema tem que entender todas as datas" — depois do vínculo que
+--      falhava com nascimento em ISO (mig 228). O EMPREGADOS guarda datas
+--      como TEXTO em mais de um formato: DD/MM/AAAA (21.987), ISO (2.457) e
+--      até número serial do Excel ("40581" = 07/02/2011). Havia três
+--      conversores (rh_data_br_para_date, rh_data, sup_norm_data), cada um
+--      entendendo um pedaço.
+--   2) Módulo Presidência (criado no menu em 24/09) aparecer em
+--      Administração › Acesso por Usuário com seus submódulos.
+--
+-- 1) public.data_universal(text) → date. Entende:
+--      17/08/1979 · 17-08-1979 · 17.08.1979 · 1/8/1979 · 17/08/79
+--      1979-08-17 (com ou sem hora) · 1979/08/17 · 17081979 · 19790817
+--      serial do Excel de 5 dígitos (30/12/1899 + n)
+--    Data impossível (31/02, mês 13) → NULL, nunca erro. Ano de 2 dígitos:
+--    00–40 = 20xx, 41–99 = 19xx (virada fixa: a função é IMMUTABLE).
+--    rh_data_br_para_date e rh_data passam a CHAMAR a universal (mesma
+--    assinatura) — vínculo, aniversariantes, portal, ficha do colaborador e
+--    treinamentos ganham todos os formatos de uma vez. Nenhum índice, coluna
+--    gerada ou CHECK usa essas funções (conferido), então trocar o corpo é
+--    seguro. sup_norm_data (Suprimentos) fica como está.
+--    vincular_meu_empregado: a data DIGITADA também passa pela universal.
+--
+-- 2) app_modulo 'presidencia' + os 4 menus movidos para ele. Permissão é
+--    por CÓDIGO de menu (has_screen_access/screen_permission_user), não por
+--    módulo — mover não muda o acesso de ninguém. O trigger
+--    trg_criar_perfil_acesso_do_modulo cria o perfil espelho do módulo novo
+--    (exceção da J2).
+--
+-- Idempotente. Aplicar no banco do app.
+-- =========================================================================
+
+-- ── 1) Conversor universal ───────────────────────────────────────────────
+CREATE OR REPLACE FUNCTION public.data_universal(_v text)
+RETURNS date
+LANGUAGE plpgsql
+IMMUTABLE
+PARALLEL SAFE
+SET search_path = public, pg_temp
+AS $fn$
+DECLARE
+  s  text := btrim(coalesce(_v, ''));
+  m  text[];
+  d  text;
+  a  int; mm int; dd int;
+BEGIN
+  IF s = '' THEN RETURN NULL; END IF;
+
+  -- ISO e variantes: AAAA-MM-DD, AAAA/MM/DD, AAAA.MM.DD (hora depois é ignorada)
+  m := regexp_match(s, '^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})');
+  IF m IS NOT NULL THEN a := m[1]::int; mm := m[2]::int; dd := m[3]::int;
+  ELSE
+    -- BR: DD/MM/AAAA, D/M/AAAA, com / - ou .
+    m := regexp_match(s, '^(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})(\D|$)');
+    IF m IS NOT NULL THEN dd := m[1]::int; mm := m[2]::int; a := m[3]::int;
+    ELSE
+      -- BR com ano de 2 dígitos: DD/MM/AA
+      m := regexp_match(s, '^(\d{1,2})[-/.](\d{1,2})[-/.](\d{2})$');
+      IF m IS NOT NULL THEN
+        dd := m[1]::int; mm := m[2]::int; a := m[3]::int;
+        a := CASE WHEN a <= 40 THEN 2000 + a ELSE 1900 + a END;   -- virada fixa (IMMUTABLE)
+      ELSE
+        d := regexp_replace(s, '\D', '', 'g');
+        IF d <> s THEN RETURN NULL; END IF;              -- sobrou texto que não é data
+        IF length(d) = 8 THEN
+          -- Só dígitos: DDMMAAAA (como se digita) e, se não fechar, AAAAMMDD.
+          dd := substr(d,1,2)::int; mm := substr(d,3,2)::int; a := substr(d,5,4)::int;
+          IF NOT (mm BETWEEN 1 AND 12 AND dd BETWEEN 1 AND 31 AND a BETWEEN 1850 AND 2200) THEN
+            a := substr(d,1,4)::int; mm := substr(d,5,2)::int; dd := substr(d,7,2)::int;
+          END IF;
+        ELSIF length(d) = 5 AND d::int BETWEEN 10000 AND 80000 THEN
+          -- Serial do Excel (base 30/12/1899). Só 5 dígitos (1927–2119): um "1979"
+          -- sozinho é ano, não serial.
+          RETURN date '1899-12-30' + d::int;
+        ELSE
+          RETURN NULL;
+        END IF;
+      END IF;
+    END IF;
+  END IF;
+
+  IF a < 1850 OR a > 2200 THEN RETURN NULL; END IF;
+  BEGIN
+    RETURN make_date(a, mm, dd);
+  EXCEPTION WHEN OTHERS THEN
+    RETURN NULL;                                         -- 31/02, mês 13...
+  END;
+END $fn$;
+
+REVOKE ALL ON FUNCTION public.data_universal(text) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.data_universal(text) TO authenticated, service_role;
+
+-- Os conversores antigos passam a ser a universal (mesma assinatura).
+CREATE OR REPLACE FUNCTION public.rh_data_br_para_date(_txt text)
+RETURNS date LANGUAGE sql IMMUTABLE PARALLEL SAFE
+AS $$ SELECT public.data_universal(_txt) $$;
+
+CREATE OR REPLACE FUNCTION public.rh_data(_v text)
+RETURNS date LANGUAGE sql IMMUTABLE PARALLEL SAFE
+AS $$ SELECT public.data_universal(_v) $$;
+
+-- Vínculo: a data digitada também pela universal.
+CREATE OR REPLACE FUNCTION public.vincular_meu_empregado(p_cpf text, p_nascimento text, p_confirmar boolean DEFAULT false)
+ RETURNS jsonb
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public', 'pg_temp'
+AS $function$
+DECLARE
+  v_uid     uuid := auth.uid();
+  v_cpf     text := regexp_replace(coalesce(p_cpf, ''), '\D', '', 'g');
+  v_nasc    text := regexp_replace(coalesce(p_nascimento, ''), '\D', '', 'g');
+  v_cpf_fmt text;
+  v_emp     public."EMPREGADOS"%ROWTYPE;
+  v_bloq    text[] := ARRAY['DEMITIDO','DEMITIDA','RESCISÃO','DESLIGADO','DESLIGADA'];
+  v_preview jsonb;
+  v_data    date;
+BEGIN
+  IF v_uid IS NULL THEN
+    RETURN jsonb_build_object('ok', false, 'error', 'Não autenticado');
+  END IF;
+  IF length(v_cpf) <> 11 THEN
+    RETURN jsonb_build_object('ok', false, 'error', 'Informe um CPF válido (11 dígitos).');
+  END IF;
+  IF length(v_nasc) < 4 THEN
+    RETURN jsonb_build_object('ok', false, 'error', 'Informe a data de nascimento (DD/MM/AAAA).');
+  END IF;
+
+  -- Data digitada vira DATA pelo conversor universal (mig 229): aceita
+  -- 17/08/1979, 17-08-79, 1979-08-17, 17081979... Impossível → NULL → aviso.
+  v_data := public.data_universal(p_nascimento);
+  IF v_data IS NULL THEN
+    RETURN jsonb_build_object('ok', false, 'error', 'Data de nascimento inválida.');
+  END IF;
+
+  v_cpf_fmt := substr(v_cpf,1,3) || '.' || substr(v_cpf,4,3) || '.' || substr(v_cpf,7,3) || '-' || substr(v_cpf,10,2);
+
+  SELECT * INTO v_emp
+  FROM public."EMPREGADOS" e
+  WHERE e."CPF" IN (v_cpf, v_cpf_fmt)
+  ORDER BY
+    (CASE WHEN upper(coalesce(e."Situação",'')) = ANY (v_bloq) THEN 1 ELSE 0 END) ASC,
+    (CASE WHEN e."Admissão" ~ '^\d{2}/\d{2}/\d{4}$'
+          THEN (substr(e."Admissão",7,4) || substr(e."Admissão",4,2) || substr(e."Admissão",1,2))::bigint
+          ELSE 0 END) DESC
+  LIMIT 1;
+
+  IF NOT FOUND THEN
+    RETURN jsonb_build_object('ok', false, 'error', 'CPF não encontrado.');
+  END IF;
+
+  IF upper(coalesce(v_emp."Situação",'')) = ANY (v_bloq) THEN
+    RETURN jsonb_build_object('ok', false, 'error', 'Cadastro consta como desligado. Procure o RH.');
+  END IF;
+
+  -- 24/09/2026: compara DATAS. O EMPREGADOS guarda "Nascimento" em dois
+  -- formatos (ISO na maioria — 2.190 ativos — e DD/MM/AAAA); comparar só os
+  -- dígitos dava "19790817" ≠ "17081979" e barrava todo cadastro em ISO.
+  -- A comparação antiga fica como alternativa (nada que passava deixa de passar).
+  IF public.data_universal(v_emp."Nascimento") IS DISTINCT FROM v_data
+     AND regexp_replace(coalesce(v_emp."Nascimento",''), '\D', '', 'g') <> v_nasc THEN
+    RETURN jsonb_build_object('ok', false, 'error', 'CPF e data de nascimento não conferem.');
+  END IF;
+
+  IF v_emp.auth_user_id IS NOT NULL AND v_emp.auth_user_id <> v_uid THEN
+    RETURN jsonb_build_object('ok', false, 'error', 'Este cadastro já está vinculado a outro usuário. Procure o RH.');
+  END IF;
+
+  v_preview := jsonb_build_object(
+    'id',       v_emp."ID",
+    'nome',     coalesce(v_emp."Nome", ''),
+    'cargo',    coalesce(v_emp."Título do Cargo", ''),
+    'setor',    coalesce(v_emp."Setor_ERP", ''),
+    'perfil',   coalesce(v_emp."Perfil_ERP", ''),
+    'lider',    coalesce(v_emp."LIDER", ''),
+    'situacao', coalesce(v_emp."Situação", ''),
+    'admissao', coalesce(v_emp."Admissão", ''),
+    'empresa',  coalesce(v_emp."Nome da Empresa", ''),
+    'filial',   coalesce(v_emp."Nome Filial", '')
+  );
+
+  IF NOT p_confirmar THEN
+    RETURN jsonb_build_object('ok', true, 'ja_vinculado', (v_emp.auth_user_id = v_uid), 'empregado', v_preview);
+  END IF;
+
+  UPDATE public."EMPREGADOS"
+     SET auth_user_id = v_uid,
+         "email" = CASE
+                     WHEN coalesce(btrim("email"), '') = ''
+                     THEN (SELECT u.email FROM auth.users u WHERE u.id = v_uid)
+                     ELSE "email"
+                   END
+   WHERE "ID" = v_emp."ID";
+
+  -- Puxa o nome oficial da Senior para o login.
+  UPDATE public.profiles SET display_name = v_emp."Nome" WHERE id = v_uid;
+
+  RETURN jsonb_build_object('ok', true, 'vinculado', true, 'empregado', v_preview);
+
+EXCEPTION
+  WHEN unique_violation THEN
+    RETURN jsonb_build_object('ok', false, 'error', 'Sua conta já está vinculada a outro cadastro.');
+  WHEN OTHERS THEN
+    RETURN jsonb_build_object('ok', false, 'error', SQLERRM);
+END;
+$function$;
+
+REVOKE ALL ON FUNCTION public.vincular_meu_empregado(text, text, boolean) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.vincular_meu_empregado(text, text, boolean) TO authenticated;
+
+-- ── 2) Módulo Presidência em Acesso por Usuário ─────────────────────────
+INSERT INTO public.app_modulo (codigo, nome, descricao, icone, ordem, ativo)
+SELECT 'presidencia', 'Presidência', 'Tudo em que a Presidência tem ação, reunido', 'Crown', 5, true
+ WHERE NOT EXISTS (SELECT 1 FROM public.app_modulo WHERE codigo = 'presidencia');
+
+UPDATE public.app_menu m
+   SET modulo_id = (SELECT id FROM public.app_modulo WHERE codigo = 'presidencia'),
+       nome  = v.nome,
+       ordem = v.ordem
+  FROM (VALUES
+    ('presidencia',                     'Painel da Presidência',                               10),
+    ('comite_etica_presidencia_painel', 'Comitê de Ética · Presidência',                       20),
+    ('comite_etica_presidencia',        'Comitê de Ética · Pode registrar a decisão da Presidência', 21),
+    ('comite_etica_indicadores',        'Comitê de Ética · Indicadores',                       30)
+  ) AS v(codigo, nome, ordem)
+ WHERE m.codigo = v.codigo;
+
+NOTIFY pgrst, 'reload schema';
+
+-- Conferência:
+-- SELECT public.data_universal(x) FROM (VALUES ('17/08/1979'),('1979-08-17'),('17-08-79'),('17081979'),('19790817'),('40581'),('31/02/2020')) t(x);
+-- SELECT m.codigo, m.nome FROM app_menu m JOIN app_modulo mo ON mo.id = m.modulo_id WHERE mo.codigo = 'presidencia' ORDER BY m.ordem;
+
+-- ROLLBACK
+-- UPDATE public.app_menu SET modulo_id = (SELECT id FROM app_modulo WHERE codigo = 'licitacoes'), nome = 'Presidência', ordem = 6 WHERE codigo = 'presidencia';
+-- UPDATE public.app_menu SET modulo_id = (SELECT id FROM app_modulo WHERE codigo = 'comite_etica'), nome = 'Indicadores', ordem = 5 WHERE codigo = 'comite_etica_indicadores';
+-- UPDATE public.app_menu SET modulo_id = (SELECT id FROM app_modulo WHERE codigo = 'comite_etica'), nome = 'Presidência', ordem = 29 WHERE codigo = 'comite_etica_presidencia_painel';
+-- UPDATE public.app_menu SET modulo_id = (SELECT id FROM app_modulo WHERE codigo = 'comite_etica'), nome = 'Pode registrar a decisão da Presidência', ordem = 30 WHERE codigo = 'comite_etica_presidencia';
+-- (o módulo presidencia e o perfil espelho podem ficar; sem menus, somem da tela)
+-- rh_data_br_para_date / rh_data: reaplicar os corpos antigos (ISO + DD/MM/AAAA);
+-- vincular_meu_empregado: reaplicar a 20260930000228.
+-- NOTIFY pgrst, 'reload schema';
+
+
+-- ===== 20260930000230_custo_posto_pela_escala (JA APLICADA 24/09) =====
+-- =========================================================================
+-- Recrutamento: V.A/V.T da vaga não eram puxados quando o posto do
+-- catálogo tem nome diferente do posto da Planilha de Custo.
+--
+-- Caso de 24/09/2026: Solicitação #1252 — contrato POLÍCIA CIVIL RS
+-- LIMPEZA, posto do catálogo "1ª DP NOVO HAMBURGO", escala
+-- "8:00-12:00 (4H) SEG A SEX". A planilha desse contrato chama os postos
+-- por jornada + cidade ("LIMPEZA 20H 5X2 NOVO HAMBURGO"), então a busca
+-- exata (mig 122) não achava nada e devolvia NULL — Benefícios em branco.
+-- 36 das 78 vagas nativas dos últimos 10 dias estavam assim.
+--
+-- Correção: quando o nome exato não existe na planilha, em vez de NULL a
+-- função pontua os postos do MESMO contrato por:
+--   cidade no nome do posto (+100) · carga semanal tirada da escala (+50)
+--   · padrão 5X2/6X1/12X36 (+20) · palavras do cargo (+5 cada)
+--   · palavras do posto do catálogo (+3 cada) · salário igual (+10)
+-- Cidade pesa mais que salário de propósito: #1252 tem R$ 802,66, que é o
+-- valor novo de Porto Alegre/Gravataí — pelo salário ia para outra cidade
+-- (V.T errado). O resultado sai com por_posto=false e ambiguo=true quando
+-- o topo empata com valores diferentes, e a tela avisa para conferir.
+--
+--   rec_horas_semanais(escala) → int[]  cargas possíveis (ex. {20}; {40,48}
+--       quando a escala não diz os dias). 12X36 → NULL (casa pelo padrão).
+--   rec_padrao_escala(escala)  → '5X2' | '6X1' | '12X36' | NULL
+--   rec_custo_do_posto ganha p_escala (6º parâmetro, DEFAULT NULL — chamada
+--       antiga com 5 parâmetros nomeados continua funcionando). A versão de
+--       5 parâmetros é removida para não ficar ambígua.
+--
+-- Idempotente. Aplicar no banco do app.
+-- =========================================================================
+
+CREATE OR REPLACE FUNCTION public.rec_padrao_escala(_escala text)
+RETURNS text
+LANGUAGE sql
+IMMUTABLE
+PARALLEL SAFE
+SET search_path = public, pg_temp
+AS $$
+  SELECT CASE
+    WHEN upper(coalesce(_escala, '')) ~ '12\s*X\s*36' THEN '12X36'
+    WHEN upper(coalesce(_escala, '')) ~ '(6\s*X\s*1|SEG\w*\s*(A|-|À)\s*SAB)' THEN '6X1'
+    WHEN upper(coalesce(_escala, '')) ~ '(5\s*X\s*2|SEG\w*\s*(A|-|À)\s*SEX)' THEN '5X2'
+  END
+$$;
+
+CREATE OR REPLACE FUNCTION public.rec_horas_semanais(_escala text)
+RETURNS int[]
+LANGUAGE plpgsql
+IMMUTABLE
+PARALLEL SAFE
+SET search_path = public, pg_temp
+AS $fn$
+DECLARE
+  s        text := upper(coalesce(_escala, ''));
+  padrao   text := public.rec_padrao_escala(_escala);
+  m        text[];
+  v        numeric;
+  diaria   numeric;
+  maior_p  numeric := 0;   -- maior duração entre parênteses
+  interv   numeric := 0;   -- intervalo (parêntese de até 2h, ou "15MIN")
+  ini      numeric;
+  fim      numeric;
+BEGIN
+  IF padrao = '12X36' OR s = '' THEN RETURN NULL; END IF;
+
+  -- Durações entre parênteses: (8H) (8:48H) (08:48) (1:30H) (00:15) (1H)
+  FOR m IN SELECT regexp_matches(s, '\((\d{1,2})(?::(\d{2}))?\s*H?\s*(?:IND)?\)', 'g') LOOP
+    v := m[1]::numeric + coalesce(m[2]::numeric, 0) / 60;
+    IF v >= 3 THEN maior_p := greatest(maior_p, v);
+    ELSIF v > 0 THEN interv := greatest(interv, v);
+    END IF;
+  END LOOP;
+  m := regexp_match(s, '\((\d{1,3})\s*MIN');
+  IF m IS NOT NULL THEN interv := greatest(interv, m[1]::numeric / 60); END IF;
+
+  IF maior_p > 0 THEN
+    diaria := maior_p;                        -- a escala já diz a jornada do dia
+  ELSE
+    m := regexp_match(s, '(\d{1,2}):(\d{2})\s*(?:-|ÀS|AS|A)\s*(\d{1,2}):(\d{2})');
+    IF m IS NULL THEN diaria := NULL;
+    ELSE
+      ini := m[1]::numeric + m[2]::numeric / 60;
+      fim := m[3]::numeric + m[4]::numeric / 60;
+      IF fim <= ini THEN fim := fim + 24; END IF;
+      diaria := fim - ini;
+      IF diaria > 6 OR interv > 0 THEN diaria := diaria - interv; END IF;
+    END IF;
+  END IF;
+
+  IF diaria IS NULL OR diaria <= 0 THEN
+    RETURN NULL;
+  ELSIF padrao = '5X2' THEN RETURN ARRAY[round(diaria * 5)::int];
+  ELSIF padrao = '6X1' THEN RETURN ARRAY[round(diaria * 6)::int];
+  ELSE RETURN ARRAY[round(diaria * 5)::int, round(diaria * 6)::int];   -- dias não informados
+  END IF;
+END $fn$;
+
+REVOKE ALL ON FUNCTION public.rec_padrao_escala(text) FROM PUBLIC, anon;
+REVOKE ALL ON FUNCTION public.rec_horas_semanais(text) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.rec_padrao_escala(text) TO authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.rec_horas_semanais(text) TO authenticated, service_role;
+
+DROP FUNCTION IF EXISTS public.rec_custo_do_posto(text, text, numeric, text, text);
+
+CREATE OR REPLACE FUNCTION public.rec_custo_do_posto(
+  p_contrato text,
+  p_cargo    text    DEFAULT NULL,
+  p_salario  numeric DEFAULT NULL,
+  p_cidade   text    DEFAULT NULL,
+  p_posto    text    DEFAULT NULL,
+  p_escala   text    DEFAULT NULL
+)
+RETURNS jsonb
+LANGUAGE plpgsql
+STABLE SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $function$
+DECLARE
+  v_contrato text := public.rec_norm_txt(regexp_replace(coalesce(p_contrato, ''), '^\s*\d+\s*-\s*', ''));
+  v_posto    text := public.rec_norm_txt(p_posto);
+  v_cargo    text := public.rec_norm_txt(p_cargo);
+  v_cidade   text := public.rec_norm_txt(p_cidade);
+  v_horas    int[] := public.rec_horas_semanais(p_escala);
+  v_padrao   text := public.rec_padrao_escala(p_escala);
+  v_tokens   text[];
+  v_tk_posto text[];
+  melhor     record;
+BEGIN
+  IF NOT (public.has_screen_access(auth.uid(), 'encarregados_minhas_solicitacoes', 'visualizar'::app_acao)
+          OR public.has_screen_access(auth.uid(), 'central_servicos_solicitar_vaga', 'visualizar'::app_acao)
+          OR public.has_screen_access(auth.uid(), 'central_servicos_solicitacoes', 'visualizar'::app_acao)
+          OR public.has_screen_access(auth.uid(), 'recrutamento_gestao', 'visualizar'::app_acao)
+          OR public.has_screen_access(auth.uid(), 'licitacoes_analistas_recrutamento', 'visualizar'::app_acao)
+          OR public.has_screen_access(auth.uid(), 'operacional_recrutamento', 'visualizar'::app_acao)) THEN
+    RAISE EXCEPTION 'Sem permissão.' USING ERRCODE = '42501';
+  END IF;
+  IF v_contrato = '' THEN RETURN NULL; END IF;
+
+  -- ── Caminho certo (15/09/2026): posto escolhido no catálogo ──────────
+  IF v_posto <> '' THEN
+    SELECT pc.posto, pc.servico, pc.salario, pc.insalubridade, pc.periculosidade, pc.transporte, pc.transporte_desconto,
+           pc.aux_alimentacao, pc.aux_alimentacao_desconto, pc.aux_refeicao, pc.aux_lanche, pc.cesta_basica, pc.assistencia_medica,
+           pc.data_vigencia,
+           (SELECT count(*) FROM public.planilha_custo x
+             WHERE coalesce(x.encerrado, false) = false
+               AND public.rec_norm_txt(x.contrato) = v_contrato
+               AND public.rec_norm_txt(x.posto) = v_posto) AS total
+      INTO melhor
+      FROM public.planilha_custo pc
+     WHERE coalesce(pc.encerrado, false) = false
+       AND public.rec_norm_txt(pc.contrato) = v_contrato
+       AND public.rec_norm_txt(pc.posto) = v_posto
+     ORDER BY pc.data_vigencia DESC NULLS LAST, pc.salario DESC
+     LIMIT 1;
+
+    IF melhor.posto IS NOT NULL THEN
+      RETURN jsonb_build_object(
+        'posto',              melhor.posto,
+        'servico',            melhor.servico,
+        'salario',            melhor.salario,
+        'insalubridade',      melhor.insalubridade,
+        'periculosidade',     melhor.periculosidade,
+        'vt',                 melhor.transporte,
+        'vt_desconto',        melhor.transporte_desconto,
+        'va',                 melhor.aux_alimentacao,
+        'va_desconto',        melhor.aux_alimentacao_desconto,
+        'vr',                 melhor.aux_refeicao,
+        'lanche',             melhor.aux_lanche,
+        'cesta_basica',       melhor.cesta_basica,
+        'assistencia_medica', melhor.assistencia_medica,
+        'vigencia',           melhor.data_vigencia,
+        'score',              1000,
+        'candidatos',         melhor.total,
+        'ambiguo',            false,
+        'casou_salario',      true,
+        'por_posto',          true
+      );
+    END IF;
+    -- 24/09/2026: nome do catálogo ≠ nome da planilha → segue para a
+    -- pontuação abaixo (antes: RETURN NULL e benefícios em branco).
+  END IF;
+
+  -- ── Pontuação: cidade, carga da escala, padrão, cargo, posto, salário ─
+  v_cargo := replace(replace(v_cargo, 'AUXILIAR DE SERVICOS GERAIS', 'ASG'), 'AUX SERVICOS GERAIS', 'ASG');
+  v_tokens := ARRAY(SELECT t FROM unnest(string_to_array(v_cargo, ' ')) t WHERE length(t) >= 3 AND t NOT IN ('DOS','DAS','DE','DA','DO'));
+  v_tk_posto := ARRAY(SELECT t FROM unnest(string_to_array(regexp_replace(v_posto, '[^A-Z0-9 ]', ' ', 'g'), ' ')) t
+                       WHERE length(t) >= 4 AND t !~ '^\d+$');
+
+  WITH base AS (
+    SELECT pc.*, public.rec_norm_txt(pc.posto) AS posto_n
+      FROM public.planilha_custo pc
+     WHERE coalesce(pc.encerrado, false) = false
+       AND public.rec_norm_txt(pc.contrato) = v_contrato
+  ), pontos AS (
+    SELECT b.*,
+           (CASE WHEN v_cidade <> '' AND b.posto_n LIKE '%' || v_cidade || '%' THEN 100 ELSE 0 END)
+         + (CASE WHEN v_horas IS NOT NULL AND EXISTS (
+                   SELECT 1 FROM unnest(v_horas) h WHERE b.posto_n ~ ('(^|[^0-9])' || h || '\s*H')) THEN 50 ELSE 0 END)
+         + (CASE WHEN v_padrao IS NOT NULL AND replace(b.posto_n, ' ', '') LIKE '%' || v_padrao || '%' THEN 20 ELSE 0 END)
+         + 5 * (SELECT count(*) FROM unnest(v_tokens) t WHERE b.posto_n LIKE '%' || t || '%')::int
+         + 3 * (SELECT count(*) FROM unnest(v_tk_posto) t WHERE b.posto_n LIKE '%' || t || '%')::int
+         + (CASE WHEN p_salario IS NOT NULL AND abs(coalesce(b.salario, 0) - p_salario) < 0.01 THEN 10 ELSE 0 END) AS score
+      FROM base b
+  ), topo AS (
+    SELECT * FROM pontos WHERE score = (SELECT max(score) FROM pontos)
+  )
+  SELECT t.posto, t.servico, t.salario, t.insalubridade, t.periculosidade, t.transporte, t.transporte_desconto,
+         t.aux_alimentacao, t.aux_alimentacao_desconto, t.aux_refeicao, t.aux_lanche, t.cesta_basica, t.assistencia_medica,
+         t.data_vigencia, t.score,
+         (SELECT count(*) FROM pontos) AS total,
+         (SELECT count(DISTINCT (x.insalubridade, x.transporte, x.aux_alimentacao)) FROM topo x) AS variantes_no_topo
+    INTO melhor
+    FROM topo t
+   ORDER BY t.data_vigencia DESC NULLS LAST, t.salario DESC
+   LIMIT 1;
+
+  IF melhor.posto IS NULL OR melhor.score = 0 THEN RETURN NULL; END IF;
+
+  RETURN jsonb_build_object(
+    'posto',              melhor.posto,
+    'servico',            melhor.servico,
+    'salario',            melhor.salario,
+    'insalubridade',      melhor.insalubridade,
+    'periculosidade',     melhor.periculosidade,
+    'vt',                 melhor.transporte,
+    'vt_desconto',        melhor.transporte_desconto,
+    'va',                 melhor.aux_alimentacao,
+    'va_desconto',        melhor.aux_alimentacao_desconto,
+    'vr',                 melhor.aux_refeicao,
+    'lanche',             melhor.aux_lanche,
+    'cesta_basica',       melhor.cesta_basica,
+    'assistencia_medica', melhor.assistencia_medica,
+    'vigencia',           melhor.data_vigencia,
+    'score',              melhor.score,
+    'candidatos',         melhor.total,
+    'ambiguo',            coalesce(melhor.variantes_no_topo, 1) > 1,
+    'casou_salario',      p_salario IS NOT NULL AND abs(coalesce(melhor.salario, 0) - p_salario) < 0.01,
+    'por_posto',          false
+  );
+END $function$;
+
+REVOKE ALL ON FUNCTION public.rec_custo_do_posto(text, text, numeric, text, text, text) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.rec_custo_do_posto(text, text, numeric, text, text, text) TO authenticated;
+
+NOTIFY pgrst, 'reload schema';
+
+-- Conferência:
+-- SELECT e, public.rec_horas_semanais(e), public.rec_padrao_escala(e) FROM (VALUES
+--   ('8:00-12:00 (4H) SEG A SEX'), ('07:30-17:18 (1H)(08:48)'), ('07:30-16:20 (1:30H)SEG A SAB'),
+--   ('8:30-14:45 (15MIN)'), ('12X36'), ('5X2')) t(e);
+
+-- ROLLBACK
+-- DROP FUNCTION IF EXISTS public.rec_custo_do_posto(text, text, numeric, text, text, text);
+-- Reaplicar public.rec_custo_do_posto de 5 parâmetros da 20260930000122
+-- (posto sem casamento exato → NULL) e o GRANT para authenticated.
+-- DROP FUNCTION IF EXISTS public.rec_horas_semanais(text);
+-- DROP FUNCTION IF EXISTS public.rec_padrao_escala(text);
+-- NOTIFY pgrst, 'reload schema';
+
+
+-- ===== 20260930000231_treinamentos_curso_publico_por_contrato_cargo (JA APLICADA 24/09) =====
+-- =========================================================================
+-- Treinamentos: quem vê cada curso — por contrato, por cargo, por pessoa
+-- ou todo mundo. Publicar deixa de liberar para todos.
+--
+-- Pedido do Pablo (24/09/2026): "quando o curso tá publicado ele não pode
+-- obrigatoriamente liberar pra todos por padrão, por que é destinado a
+-- pessoas e contratos específicos". Exemplo dado: marco o contrato X no
+-- curso; quem for admitido depois naquele contrato já vê o curso, sem
+-- selecionar a pessoa de novo. Idem para cargo inteiro.
+--
+-- Por que liberava para todos: a sincronização com o EMPREGADOS criava todo
+-- aluno com acesso_completo = true (mig 193: "a trilha de NRs é de todos"),
+-- e acesso_completo abre TODO curso publicado. Os 13.355 alunos estavam
+-- assim — o NR-23 aparecia com "13355 alunos".
+--
+-- O que muda:
+--   1) "TRN_CURSO_LIBERACAO" (curso, contrato?, cargo?): regra DINÂMICA.
+--      Só contrato = o contrato inteiro; só cargo = o cargo inteiro; os
+--      dois = aquele cargo naquele contrato. Casa com TRN_ALUNO.contrato/
+--      cargo, que a sincronização mantém atualizados — admitido amanhã
+--      no contrato já entra; transferido sai.
+--   2) TRN_CURSO.liberado_para_todos (default false): o "todo mundo"
+--      explícito, marcado no curso.
+--   3) Pessoa específica continua sendo a matrícula (TRN_MATRICULA).
+--   4) acesso_completo volta a ser exceção individual: todos os alunos
+--      passam para false e a sincronização cria novos com false. Seguro:
+--      nenhum aluno tinha progresso nem certificado (conferido: 0 e 0).
+--   5) col_cursos / col_trn_exige_curso (portal) e trn_cursos_lista
+--      (contagem "N alunos") usam a mesma regra: matrícula OU acesso
+--      completo OU liberado_para_todos OU regra de contrato/cargo.
+--   6) RPCs para a tela do curso: trn_curso_publico (regras + alcance),
+--      trn_liberacao_opcoes (contratos/cargos de quem está Trabalhando) e
+--      trn_alunos_do_curso (filtro por curso na lista de alunos).
+--
+-- Idempotente. Aplicar no banco do app.
+-- =========================================================================
+
+-- ── 1) Estrutura ─────────────────────────────────────────────────────────
+ALTER TABLE public."TRN_CURSO" ADD COLUMN IF NOT EXISTS liberado_para_todos boolean NOT NULL DEFAULT false;
+
+CREATE TABLE IF NOT EXISTS public."TRN_CURSO_LIBERACAO" (
+  id         uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  curso_id   uuid NOT NULL REFERENCES public."TRN_CURSO"(id) ON DELETE CASCADE,
+  contrato   text,
+  cargo      text,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  created_by uuid DEFAULT auth.uid(),
+  CONSTRAINT trn_curso_liberacao_algum CHECK (nullif(btrim(contrato), '') IS NOT NULL OR nullif(btrim(cargo), '') IS NOT NULL)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_trn_curso_liberacao
+  ON public."TRN_CURSO_LIBERACAO"(curso_id, upper(btrim(coalesce(contrato, ''))), upper(btrim(coalesce(cargo, ''))));
+CREATE INDEX IF NOT EXISTS idx_trn_aluno_contrato_up ON public."TRN_ALUNO"(upper(btrim(contrato)));
+CREATE INDEX IF NOT EXISTS idx_trn_aluno_cargo_up ON public."TRN_ALUNO"(upper(btrim(cargo)));
+
+-- Mesmas policies do resto do módulo: ler = qualquer porta; gravar = Cursos.
+SELECT public.trn_rls('TRN_CURSO_LIBERACAO', 'treinamentos_cursos');
+
+-- ── 2) A regra ───────────────────────────────────────────────────────────
+CREATE OR REPLACE FUNCTION public.trn_regra_libera(_curso uuid, _contrato text, _cargo text)
+RETURNS boolean
+LANGUAGE sql
+STABLE SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $fn$
+  SELECT EXISTS (
+    SELECT 1 FROM public."TRN_CURSO_LIBERACAO" l
+     WHERE l.curso_id = _curso
+       AND (nullif(btrim(l.contrato), '') IS NULL OR upper(btrim(l.contrato)) = upper(btrim(_contrato)))
+       AND (nullif(btrim(l.cargo), '') IS NULL OR upper(btrim(l.cargo)) = upper(btrim(_cargo))));
+$fn$;
+
+-- "N alunos" do curso: matriculados + ativos que veem por regra/todos/completo.
+CREATE OR REPLACE FUNCTION public.trn_curso_alcance(_curso uuid)
+RETURNS integer
+LANGUAGE sql
+STABLE SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $fn$
+  SELECT count(*)::int
+    FROM public."TRN_ALUNO" a
+    JOIN public."TRN_CURSO" c ON c.id = _curso
+   WHERE EXISTS (SELECT 1 FROM public."TRN_MATRICULA" m WHERE m.curso_id = c.id AND m.aluno_id = a.id)
+      OR (a.status = 'ativo' AND (a.acesso_completo OR c.liberado_para_todos
+                                  OR public.trn_regra_libera(c.id, a.contrato, a.cargo)));
+$fn$;
+
+REVOKE ALL ON FUNCTION public.trn_regra_libera(uuid, text, text) FROM PUBLIC, anon;
+REVOKE ALL ON FUNCTION public.trn_curso_alcance(uuid) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.trn_regra_libera(uuid, text, text) TO authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.trn_curso_alcance(uuid) TO authenticated, service_role;
+
+-- ── 3) acesso_completo volta a ser exceção ───────────────────────────────
+UPDATE public."TRN_ALUNO" SET acesso_completo = false WHERE acesso_completo;
+
+CREATE OR REPLACE FUNCTION public.trn_sync_aluno_do_empregado(_id bigint)
+ RETURNS void
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public', 'pg_temp'
+AS $function$
+DECLARE
+  e          record;
+  v_email    text;
+  v_status   text;
+  v_aluno    uuid;
+BEGIN
+  SELECT "ID", btrim("Nome") AS nome, regexp_replace(coalesce("CPF", ''), '\D', '', 'g') AS cpf,
+         lower(btrim(coalesce(email, ''))) AS email_cad, nullif(btrim(coalesce(telefone, '')), '') AS telefone,
+         "Situação" AS situacao,
+         btrim(coalesce("Nome Filial", "Descrição do Local", '')) AS contrato,
+         btrim(coalesce("Título do Cargo", '')) AS cargo
+    INTO e
+    FROM public."EMPREGADOS" WHERE "ID" = _id;
+  IF e."ID" IS NULL OR e.nome IS NULL OR e.nome = '' THEN RETURN; END IF;
+
+  v_status := CASE WHEN e.situacao = 'Trabalhando' THEN 'ativo' ELSE 'inativo' END;
+  SELECT id INTO v_aluno FROM public."TRN_ALUNO" WHERE empregado_id = _id;
+
+  -- E-mail do cadastro, se válido e livre; senão o sintético (estável por ID).
+  v_email := CASE
+    WHEN e.email_cad ~ '^[^@\s]+@[^@\s]+\.[^@\s]+$'
+     AND NOT EXISTS (SELECT 1 FROM public."TRN_ALUNO" a WHERE lower(btrim(a.email)) = e.email_cad AND a.empregado_id IS DISTINCT FROM _id)
+      THEN e.email_cad
+    ELSE _id::text || '@colaborador.nascimento.local'
+  END;
+
+  IF v_aluno IS NULL THEN
+    INSERT INTO public."TRN_ALUNO"(nome, email, telefone, documento, status, acesso_completo, empregado_id, origem,
+                                   situacao, contrato, cargo, sincronizado_em)
+    VALUES (e.nome, v_email, e.telefone, nullif(e.cpf, ''), v_status, false, _id, 'integracao',
+            e.situacao, nullif(e.contrato, ''), nullif(e.cargo, ''), now());
+  ELSE
+    UPDATE public."TRN_ALUNO"
+       SET nome = e.nome,
+           email = v_email,
+           telefone = coalesce(e.telefone, telefone),
+           documento = coalesce(nullif(e.cpf, ''), documento),
+           -- Bloqueio é decisão de alguém: não é desfeito pelo cadastro.
+           status = CASE WHEN status = 'bloqueado' THEN 'bloqueado' ELSE v_status END,
+           situacao = e.situacao, contrato = nullif(e.contrato, ''), cargo = nullif(e.cargo, ''),
+           sincronizado_em = now(), updated_at = now()
+     WHERE id = v_aluno
+       AND (nome IS DISTINCT FROM e.nome OR email IS DISTINCT FROM v_email
+            OR (e.telefone IS NOT NULL AND telefone IS DISTINCT FROM e.telefone)
+            OR situacao IS DISTINCT FROM e.situacao OR contrato IS DISTINCT FROM nullif(e.contrato, '')
+            OR cargo IS DISTINCT FROM nullif(e.cargo, '')
+            OR (status <> 'bloqueado' AND status IS DISTINCT FROM v_status));
+  END IF;
+END $function$;
+
+-- ── 4) Portal e contagem usam a regra ────────────────────────────────────
+CREATE OR REPLACE FUNCTION public.col_cursos(p_emp bigint)
+ RETURNS jsonb
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public', 'pg_temp'
+AS $function$
+DECLARE v_aluno uuid; a record; v_hoje date := public.col_hoje(); v_cursos jsonb; v_avisos jsonb; v_notif jsonb; v_ev jsonb; v_expirado boolean;
+BEGIN
+  v_aluno := public.col_trn_aluno(p_emp);
+  IF v_aluno IS NULL THEN
+    RETURN jsonb_build_object('aluno', NULL, 'cursos', '[]'::jsonb, 'avisos', '[]'::jsonb, 'notificacoes', '[]'::jsonb, 'eventos', '[]'::jsonb);
+  END IF;
+  SELECT * INTO a FROM public."TRN_ALUNO" WHERE id = v_aluno;
+  v_expirado := a.expira_em IS NOT NULL AND a.expira_em < v_hoje;
+
+  WITH meus AS (
+    SELECT c.*, m.inscrito_em
+      FROM public."TRN_CURSO" c
+      LEFT JOIN public."TRN_MATRICULA" m ON m.curso_id = c.id AND m.aluno_id = v_aluno
+     WHERE c.publicado AND (m.id IS NOT NULL OR a.acesso_completo OR c.liberado_para_todos
+                            OR public.trn_regra_libera(c.id, a.contrato, a.cargo))
+  ), aulas AS (
+    SELECT mo.curso_id, count(au.id) total,
+           count(p.id) FILTER (WHERE p.concluida) concluidas
+      FROM public."TRN_MODULO" mo
+      JOIN public."TRN_AULA" au ON au.modulo_id = mo.id AND au.publicada
+      LEFT JOIN public."TRN_PROGRESSO" p ON p.aula_id = au.id AND p.aluno_id = v_aluno
+     GROUP BY mo.curso_id)
+  SELECT coalesce(jsonb_agg(jsonb_build_object(
+           'id', c.id, 'nome', c.nome, 'descricao', c.descricao, 'capa_path', c.capa_path, 'capa_formato', c.capa_formato,
+           'categoria', cat.nome, 'carga_horaria_min', c.carga_horaria_min, 'em_breve', c.em_breve,
+           'inscrito_em', c.inscrito_em,
+           'aulas', coalesce(au.total, 0), 'concluidas', coalesce(au.concluidas, 0),
+           'pct', CASE WHEN coalesce(au.total,0) = 0 THEN 0 ELSE round(100.0 * coalesce(au.concluidas,0) / au.total) END,
+           'certificado', ce.codigo_validacao,
+           'libera_em', greatest(c.liberar_em, CASE WHEN c.inscrito_em IS NOT NULL THEN c.inscrito_em + c.liberar_dias END),
+           'expira_em', CASE WHEN c.prazo_acesso_dias IS NOT NULL AND c.inscrito_em IS NOT NULL THEN c.inscrito_em + c.prazo_acesso_dias END,
+           'bloqueado', a.status = 'bloqueado' OR v_expirado OR c.em_breve
+                        OR coalesce(greatest(c.liberar_em, CASE WHEN c.inscrito_em IS NOT NULL THEN c.inscrito_em + c.liberar_dias END) > v_hoje, false)
+                        OR (c.prazo_acesso_dias IS NOT NULL AND c.inscrito_em IS NOT NULL AND c.inscrito_em + c.prazo_acesso_dias < v_hoje)
+         ) ORDER BY coalesce(c.ordem_vitrine, 9999), c.nome), '[]'::jsonb)
+    INTO v_cursos
+    FROM meus c
+    LEFT JOIN public."TRN_CATEGORIA" cat ON cat.id = c.categoria_id
+    LEFT JOIN aulas au ON au.curso_id = c.id
+    LEFT JOIN public."TRN_CERTIFICADO" ce ON ce.curso_id = c.id AND ce.aluno_id = v_aluno;
+
+  SELECT coalesce(jsonb_agg(jsonb_build_object(
+           'id', v.id, 'titulo', v.titulo, 'url', v.url, 'tipo', v.tipo_conteudo, 'mensagem', v.mensagem,
+           'imagem_path', v.imagem_path, 'video_url', v.video_url, 'criado_em', v.created_at) ORDER BY v.created_at DESC), '[]'::jsonb)
+    INTO v_avisos
+    FROM public."TRN_AVISO" v
+   WHERE v.publicado AND (v.inicio_em IS NULL OR v.inicio_em <= v_hoje) AND (v.fim_em IS NULL OR v.fim_em >= v_hoje)
+     AND public.col_trn_publico_ok(v.publico, ARRAY(SELECT tag_id FROM public."TRN_AVISO_TAG" WHERE aviso_id = v.id), v_aluno);
+
+  SELECT coalesce(jsonb_agg(jsonb_build_object(
+           'id', x.id, 'titulo', x.titulo, 'mensagem', x.mensagem, 'url', x.url,
+           'enviada_em', x.enviada_em, 'lida', x.lida_em IS NOT NULL) ORDER BY x.enviada_em DESC), '[]'::jsonb)
+    INTO v_notif
+    FROM (SELECT n.id, n.titulo, n.mensagem, n.url, n.enviada_em, na.lida_em
+            FROM public."TRN_NOTIFICACAO_ALUNO" na
+            JOIN public."TRN_NOTIFICACAO" n ON n.id = na.notificacao_id
+           WHERE na.aluno_id = v_aluno
+           ORDER BY n.enviada_em DESC LIMIT 30) x;
+
+  SELECT coalesce(jsonb_agg(jsonb_build_object(
+           'id', ev.id, 'titulo', ev.titulo, 'descricao', ev.descricao, 'inicio_em', ev.inicio_em, 'fim_em', ev.fim_em,
+           'dia_inteiro', ev.dia_inteiro, 'local', ev.local, 'url', ev.url, 'cor', ev.cor) ORDER BY ev.inicio_em), '[]'::jsonb)
+    INTO v_ev
+    FROM public."TRN_EVENTO" ev
+   WHERE ev.inicio_em >= v_hoje::timestamptz - interval '1 day' AND ev.inicio_em < v_hoje::timestamptz + interval '60 days'
+     AND public.col_trn_publico_ok(ev.publico, ARRAY(SELECT tag_id FROM public."TRN_EVENTO_TAG" WHERE evento_id = ev.id), v_aluno);
+
+  RETURN jsonb_build_object(
+    'aluno', jsonb_build_object('id', a.id, 'nome', a.nome, 'status', a.status, 'expira_em', a.expira_em,
+                                'acesso_completo', a.acesso_completo, 'expirado', v_expirado),
+    'cursos', v_cursos, 'avisos', v_avisos, 'notificacoes', v_notif, 'eventos', v_ev);
+END $function$;
+
+CREATE OR REPLACE FUNCTION public.col_trn_exige_curso(p_aluno uuid, p_curso uuid)
+ RETURNS void
+ LANGUAGE plpgsql
+ STABLE SECURITY DEFINER
+ SET search_path TO 'public', 'pg_temp'
+AS $function$
+DECLARE a record; c record; v_insc date; v_hoje date := public.col_hoje(); v_lib date;
+BEGIN
+  SELECT * INTO a FROM public."TRN_ALUNO" WHERE id = p_aluno;
+  SELECT * INTO c FROM public."TRN_CURSO" WHERE id = p_curso AND publicado;
+  IF NOT FOUND THEN RAISE EXCEPTION 'Curso não encontrado.'; END IF;
+  IF a.status = 'bloqueado' THEN RAISE EXCEPTION 'Seu acesso aos treinamentos está bloqueado. Procure o RH.'; END IF;
+  IF a.expira_em IS NOT NULL AND a.expira_em < v_hoje THEN RAISE EXCEPTION 'Seu acesso aos treinamentos expirou em %.', to_char(a.expira_em, 'DD/MM/YYYY'); END IF;
+  SELECT inscrito_em INTO v_insc FROM public."TRN_MATRICULA" WHERE aluno_id = p_aluno AND curso_id = p_curso;
+  IF v_insc IS NULL AND NOT a.acesso_completo AND NOT c.liberado_para_todos
+     AND NOT public.trn_regra_libera(p_curso, a.contrato, a.cargo) THEN
+    RAISE EXCEPTION 'Este curso não está liberado para você.';
+  END IF;
+  IF c.em_breve THEN RAISE EXCEPTION 'Este curso ainda não foi liberado.'; END IF;
+  v_lib := greatest(c.liberar_em, CASE WHEN v_insc IS NOT NULL THEN v_insc + c.liberar_dias END);
+  IF v_lib > v_hoje THEN RAISE EXCEPTION 'Este curso será liberado em %.', to_char(v_lib, 'DD/MM/YYYY'); END IF;
+  IF c.prazo_acesso_dias IS NOT NULL AND v_insc IS NOT NULL AND v_insc + c.prazo_acesso_dias < v_hoje THEN
+    RAISE EXCEPTION 'O prazo de acesso a este curso terminou em %.', to_char(v_insc + c.prazo_acesso_dias, 'DD/MM/YYYY');
+  END IF;
+END $function$;
+
+CREATE OR REPLACE FUNCTION public.trn_cursos_lista()
+ RETURNS TABLE(id uuid, nome text, descricao text, slug text, capa_path text, categoria_id uuid, categoria text, publicado boolean, em_breve boolean, comentarios_habilitados boolean, modulos_como_cursos boolean, ordem_vitrine integer, created_at timestamp with time zone, alunos integer, modulos integer, aulas integer, avaliacao numeric, avaliacoes integer)
+ LANGUAGE sql
+ STABLE SECURITY DEFINER
+ SET search_path TO 'public', 'pg_temp'
+AS $function$
+  SELECT c.id, c.nome, c.descricao, c.slug, c.capa_path, c.categoria_id, cat.nome,
+         c.publicado, c.em_breve, c.comentarios_habilitados, c.modulos_como_cursos, c.ordem_vitrine, c.created_at,
+         public.trn_curso_alcance(c.id),
+         (SELECT count(*)::int FROM public."TRN_MODULO" mo WHERE mo.curso_id = c.id),
+         (SELECT count(*)::int FROM public."TRN_AULA" au JOIN public."TRN_MODULO" mo ON mo.id = au.modulo_id WHERE mo.curso_id = c.id),
+         (SELECT round(avg(p.avaliacao)::numeric,1) FROM public."TRN_PROGRESSO" p JOIN public."TRN_AULA" au ON au.id = p.aula_id JOIN public."TRN_MODULO" mo ON mo.id = au.modulo_id WHERE mo.curso_id = c.id AND p.avaliacao IS NOT NULL),
+         (SELECT count(*)::int FROM public."TRN_PROGRESSO" p JOIN public."TRN_AULA" au ON au.id = p.aula_id JOIN public."TRN_MODULO" mo ON mo.id = au.modulo_id WHERE mo.curso_id = c.id AND p.avaliacao IS NOT NULL)
+    FROM public."TRN_CURSO" c LEFT JOIN public."TRN_CATEGORIA" cat ON cat.id = c.categoria_id
+   WHERE public.trn_ve_modulo()
+   ORDER BY coalesce(c.ordem_vitrine, 9999), c.created_at DESC;
+$function$;
+
+-- ── 5) RPCs da tela "Quem vê este curso" ─────────────────────────────────
+CREATE OR REPLACE FUNCTION public.trn_curso_publico(_curso uuid)
+RETURNS jsonb
+LANGUAGE plpgsql
+STABLE SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $fn$
+BEGIN
+  IF NOT public.trn_acesso('treinamentos_cursos') THEN
+    RAISE EXCEPTION 'Sem permissão.' USING ERRCODE = '42501';
+  END IF;
+  RETURN jsonb_build_object(
+    'liberado_para_todos', (SELECT liberado_para_todos FROM public."TRN_CURSO" WHERE id = _curso),
+    'regras', (SELECT coalesce(jsonb_agg(jsonb_build_object(
+                  'id', l.id, 'contrato', l.contrato, 'cargo', l.cargo,
+                  'ativos', (SELECT count(*) FROM public."TRN_ALUNO" a
+                              WHERE a.status = 'ativo'
+                                AND (nullif(btrim(l.contrato), '') IS NULL OR upper(btrim(l.contrato)) = upper(btrim(a.contrato)))
+                                AND (nullif(btrim(l.cargo), '') IS NULL OR upper(btrim(l.cargo)) = upper(btrim(a.cargo))))
+                ) ORDER BY l.contrato NULLS LAST, l.cargo NULLS LAST), '[]'::jsonb)
+                 FROM public."TRN_CURSO_LIBERACAO" l WHERE l.curso_id = _curso),
+    'individuais', (SELECT coalesce(jsonb_agg(jsonb_build_object(
+                  'matricula_id', m.id, 'aluno_id', a.id, 'nome', a.nome, 'contrato', a.contrato, 'cargo', a.cargo,
+                  'status', a.status, 'inscrito_em', m.inscrito_em) ORDER BY a.nome), '[]'::jsonb)
+                 FROM public."TRN_MATRICULA" m JOIN public."TRN_ALUNO" a ON a.id = m.aluno_id WHERE m.curso_id = _curso),
+    'alcance', public.trn_curso_alcance(_curso));
+END $fn$;
+
+CREATE OR REPLACE FUNCTION public.trn_liberacao_opcoes()
+RETURNS jsonb
+LANGUAGE plpgsql
+STABLE SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $fn$
+BEGIN
+  IF NOT public.trn_acesso('treinamentos_cursos') THEN
+    RAISE EXCEPTION 'Sem permissão.' USING ERRCODE = '42501';
+  END IF;
+  -- Só quem está Trabalhando: contrato/cargo de quem saiu não é de ninguém hoje.
+  RETURN jsonb_build_object(
+    'contratos', (SELECT coalesce(jsonb_agg(jsonb_build_object('nome', nome, 'ativos', n) ORDER BY nome), '[]'::jsonb)
+                    FROM (SELECT contrato nome, count(*) n FROM public."TRN_ALUNO"
+                           WHERE status = 'ativo' AND nullif(btrim(contrato), '') IS NOT NULL GROUP BY 1) x),
+    'cargos', (SELECT coalesce(jsonb_agg(jsonb_build_object('nome', nome, 'ativos', n) ORDER BY nome), '[]'::jsonb)
+                 FROM (SELECT cargo nome, count(*) n FROM public."TRN_ALUNO"
+                        WHERE status = 'ativo' AND nullif(btrim(cargo), '') IS NOT NULL GROUP BY 1) y));
+END $fn$;
+
+CREATE OR REPLACE FUNCTION public.trn_alunos_do_curso(_curso uuid)
+RETURNS uuid[]
+LANGUAGE plpgsql
+STABLE SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $fn$
+BEGIN
+  IF NOT public.trn_ve_modulo() THEN
+    RAISE EXCEPTION 'Sem permissão.' USING ERRCODE = '42501';
+  END IF;
+  RETURN ARRAY(
+    SELECT a.id FROM public."TRN_ALUNO" a JOIN public."TRN_CURSO" c ON c.id = _curso
+     WHERE EXISTS (SELECT 1 FROM public."TRN_MATRICULA" m WHERE m.curso_id = c.id AND m.aluno_id = a.id)
+        OR (c.publicado AND (a.acesso_completo OR c.liberado_para_todos OR public.trn_regra_libera(c.id, a.contrato, a.cargo))));
+END $fn$;
+
+REVOKE ALL ON FUNCTION public.trn_curso_publico(uuid) FROM PUBLIC, anon;
+REVOKE ALL ON FUNCTION public.trn_liberacao_opcoes() FROM PUBLIC, anon;
+REVOKE ALL ON FUNCTION public.trn_alunos_do_curso(uuid) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.trn_curso_publico(uuid) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.trn_liberacao_opcoes() TO authenticated;
+GRANT EXECUTE ON FUNCTION public.trn_alunos_do_curso(uuid) TO authenticated;
+
+NOTIFY pgrst, 'reload schema';
+
+-- ROLLBACK
+-- UPDATE public."TRN_ALUNO" SET acesso_completo = true;   -- volta "todo mundo vê tudo"
+-- Reaplicar trn_sync_aluno_do_empregado (mig 194), col_cursos e
+-- col_trn_exige_curso (mig 196) e trn_cursos_lista (mig 190).
+-- DROP FUNCTION IF EXISTS public.trn_curso_publico(uuid);
+-- DROP FUNCTION IF EXISTS public.trn_liberacao_opcoes();
+-- DROP FUNCTION IF EXISTS public.trn_alunos_do_curso(uuid);
+-- DROP TABLE IF EXISTS public."TRN_CURSO_LIBERACAO";
+-- DROP FUNCTION IF EXISTS public.trn_curso_alcance(uuid);
+-- DROP FUNCTION IF EXISTS public.trn_regra_libera(uuid, text, text);
+-- ALTER TABLE public."TRN_CURSO" DROP COLUMN IF EXISTS liberado_para_todos;
+-- NOTIFY pgrst, 'reload schema';
+
+
+-- ===== 20260930000232_rec_pendente_analista_so_analista (JA APLICADA 24/09) =====
+-- =========================================================================
+-- Recrutamento: só o ANALISTA decide o "Pendente Analista".
+--
+-- Pedido do Pablo (24/09/2026): "na tela de gestão recrutamento não pode
+-- aprovar o pendente analista". A tela já não mostra o botão (só os escopos
+-- analista/diretoria têm `podeAprovarAnalista`), mas o banco aceitava a
+-- mudança de status de qualquer "gestor" (sistema_recrutamento_guard), e a
+-- produção roda a main, que ainda não tem todas as travas da tela.
+--
+-- A regra vai no gatilho que já trava a etapa da Diretoria
+-- (rec_guard_aprovador_setor): sair de "Pendente Analista" para aprovação
+-- ou reprovação exige 'aprovar' ou 'alterar' em
+-- licitacoes_analistas_recrutamento (Licitações › Analistas Validações).
+-- Continuam livres: ir para "Pendente Diretoria" (a vaga virou
+-- administrativa na edição) e "Cancelada". Sem usuário (gatilhos/serviço)
+-- não se aplica.
+--
+-- Idempotente. Aplicar no banco do app.
+-- =========================================================================
+
+CREATE OR REPLACE FUNCTION public.rec_guard_aprovador_setor()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $function$
+BEGIN
+  IF auth.uid() IS NULL THEN RETURN NEW; END IF;
+  IF OLD.status = 'Pendente Diretoria'
+     AND NEW.status IS DISTINCT FROM OLD.status
+     AND NOT public.aprova_setor(OLD.setor) THEN
+    RAISE EXCEPTION 'Você não aprova vagas do setor "%". Peça ao administrador para marcar o setor em Acesso por Usuário.', coalesce(OLD.setor, '—')
+      USING ERRCODE = '42501';
+  END IF;
+  -- 24/09/2026: a etapa do analista é só do analista.
+  IF OLD.status = 'Pendente Analista'
+     AND NEW.status IS DISTINCT FROM OLD.status
+     AND NEW.status NOT IN ('Pendente Diretoria', 'Cancelada')
+     AND NOT (public.has_screen_access(auth.uid(), 'licitacoes_analistas_recrutamento', 'aprovar')
+              OR public.has_screen_access(auth.uid(), 'licitacoes_analistas_recrutamento', 'alterar')) THEN
+    RAISE EXCEPTION 'Quem aprova ou reprova o "Pendente Analista" é o analista (Licitações › Analistas Validações).'
+      USING ERRCODE = '42501';
+  END IF;
+  RETURN NEW;
+END $function$;
+
+REVOKE ALL ON FUNCTION public.rec_guard_aprovador_setor() FROM PUBLIC, anon;
+
+NOTIFY pgrst, 'reload schema';
+
+-- ROLLBACK
+-- Reaplicar rec_guard_aprovador_setor sem o bloco "Pendente Analista"
+-- (só a checagem de setor da Diretoria).
+-- NOTIFY pgrst, 'reload schema';
+
+
+-- ===== 20260930000233_veiculos_dashboard_permissao (JA APLICADA 24/09) =====
+-- =========================================================================
+-- Agendamento de Veículos: permissão própria para o Dashboard.
+--
+-- Pedido do Pablo (24/09/2026): "tem que ter nas permissões por usuário ali
+-- no agendamento de veículos quem pode acessar o dashboard".
+--
+-- Até aqui a aba Dashboard (e Toda a Frota) aparecia para quem tinha
+-- Suprimentos › Patrimônio (sup_patrimonio). O Dashboard ganha um menu
+-- fantasma (rota NULL) no módulo Central de Serviços, logo abaixo do
+-- Agendamento de Veículos — aparece em Administração › Acesso por Usuário.
+--
+-- Para ninguém perder o que já via: quem tem visualizar em sup_patrimonio
+-- hoje recebe visualizar no menu novo. Daí em diante é marcar/desmarcar
+-- por usuário.
+--
+-- Idempotente. Aplicar no banco do app.
+-- =========================================================================
+
+INSERT INTO public.app_menu (modulo_id, codigo, nome, rota, ordem, ativo)
+SELECT m.id, 'central_servicos_veiculos_dashboard', 'Agendamento de Veículos · Dashboard', NULL, 41, true
+  FROM public.app_modulo m
+ WHERE m.codigo = 'central_servicos'
+   AND NOT EXISTS (SELECT 1 FROM public.app_menu x WHERE x.codigo = 'central_servicos_veiculos_dashboard');
+
+INSERT INTO public.screen_permission_user (user_id, menu_codigo, acao, allow, motivo)
+SELECT p.id, 'central_servicos_veiculos_dashboard', 'visualizar'::app_acao, true,
+       'Semeado na criação (mig 20260930000233): já via o Dashboard por Patrimônio'
+  FROM public.profiles p
+ WHERE public.has_screen_access(p.id, 'sup_patrimonio', 'visualizar'::app_acao)
+   AND NOT EXISTS (SELECT 1 FROM public.screen_permission_user x
+                    WHERE x.user_id = p.id AND x.menu_codigo = 'central_servicos_veiculos_dashboard'
+                      AND x.acao = 'visualizar'::app_acao);
+
+NOTIFY pgrst, 'reload schema';
+
+-- ROLLBACK
+-- DELETE FROM public.screen_permission_user WHERE menu_codigo = 'central_servicos_veiculos_dashboard';
+-- DELETE FROM public.app_menu WHERE codigo = 'central_servicos_veiculos_dashboard';
+-- NOTIFY pgrst, 'reload schema';
+
+
+-- ===== 20260930000234_jur_consulta_processos_cpf (JA APLICADA 24/09) =====
+-- =========================================================================
+-- Jurídico: consultar processos de uma pessoa pelo CPF.
+--
+-- Pedido do Pablo (24/09/2026): "integrar no sistema uma forma de verificar
+-- se alguém tem processos pelo CPF" — as duas camadas:
+--
+-- 1) CONTRA A EMPRESA (grátis, na hora): jur_processos_por_cpf procura o
+--    CPF em JUR_PROCESSOS. Casa por
+--      · reclamante_vinculado_cpf (591 linhas têm) → "pelo CPF";
+--      · nome do reclamante = nome do EMPREGADOS com esse CPF, ou o nome
+--        informado (candidato) → "pelo nome" (pode ser homônimo; a tela diz).
+--    JUR_PROCESSOS repete o mesmo número em várias linhas (salvar recria as
+--    linhas, mig 206): agrupa por numero_processo.
+--
+-- 2) EM TODOS OS TRIBUNAIS (pago, sob demanda): a Edge Function
+--    consulta-processos-cpf chama a API do fornecedor (Escavador) e grava
+--    o resultado em JUR_CONSULTA_CPF — quem consultou, quando, por quê e
+--    quanto custou. A tela mostra a última consulta salva antes de oferecer
+--    uma nova (não paga duas vezes pela mesma coisa sem querer).
+--
+-- Permissão: menu fantasma juridico_consulta_processos (Jurídico) em
+-- Acesso por Usuário. 'visualizar' = ver processos contra a empresa e as
+-- consultas já feitas; 'incluir' = rodar consulta paga nos tribunais.
+-- Semeado para quem tem Verificação de Candidatos ou Processos Jurídicos
+-- (visualizar) — consulta paga ('incluir') ninguém recebe sozinho.
+--
+-- Uso em contratação: vetar candidato por ter processado ex-empregador é
+-- discriminatório (TST). O motivo da consulta paga é obrigatório e fica
+-- registrado.
+--
+-- Idempotente. Aplicar no banco do app.
+-- =========================================================================
+
+-- ── Permissão ────────────────────────────────────────────────────────────
+INSERT INTO public.app_menu (modulo_id, codigo, nome, rota, ordem, ativo)
+SELECT m.id, 'juridico_consulta_processos', 'Consulta de processos por CPF', NULL, 45, true
+  FROM public.app_modulo m
+ WHERE m.codigo = 'juridico'
+   AND NOT EXISTS (SELECT 1 FROM public.app_menu x WHERE x.codigo = 'juridico_consulta_processos');
+
+INSERT INTO public.screen_permission_user (user_id, menu_codigo, acao, allow, motivo)
+SELECT p.id, 'juridico_consulta_processos', 'visualizar'::app_acao, true,
+       'Semeado na criação (mig 20260930000234): já tinha Verificação de Candidatos ou Processos Jurídicos'
+  FROM public.profiles p
+ WHERE (public.has_screen_access(p.id, 'candidatos', 'visualizar'::app_acao)
+        OR public.has_screen_access(p.id, 'juridico_candidatos', 'visualizar'::app_acao)
+        OR public.has_screen_access(p.id, 'juridico_processos', 'visualizar'::app_acao))
+   AND NOT EXISTS (SELECT 1 FROM public.screen_permission_user x
+                    WHERE x.user_id = p.id AND x.menu_codigo = 'juridico_consulta_processos'
+                      AND x.acao = 'visualizar'::app_acao);
+
+-- ── Registro das consultas pagas ─────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS public."JUR_CONSULTA_CPF" (
+  id                  bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  cpf_digits          text NOT NULL CHECK (cpf_digits ~ '^\d{11}$'),
+  nome                text,
+  fornecedor          text NOT NULL,
+  motivo              text NOT NULL,
+  -- [{numero, tribunal, classe, assunto, polo_ativo, polo_passivo, papel, data_inicio, ultima_movimentacao, status}]
+  processos           jsonb NOT NULL DEFAULT '[]'::jsonb,
+  total               integer NOT NULL DEFAULT 0,
+  mais_paginas        boolean NOT NULL DEFAULT false,
+  custo_centavos      integer,
+  erro                text,
+  consultado_por      uuid DEFAULT auth.uid(),
+  consultado_por_nome text,
+  created_at          timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_jur_consulta_cpf ON public."JUR_CONSULTA_CPF"(cpf_digits, created_at DESC);
+
+ALTER TABLE public."JUR_CONSULTA_CPF" ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON public."JUR_CONSULTA_CPF" FROM PUBLIC, anon;
+GRANT SELECT ON public."JUR_CONSULTA_CPF" TO authenticated;
+-- Só leitura pelo app; quem grava é a Edge Function (service_role).
+DROP POLICY IF EXISTS jur_consulta_cpf_select ON public."JUR_CONSULTA_CPF";
+CREATE POLICY jur_consulta_cpf_select ON public."JUR_CONSULTA_CPF" FOR SELECT TO authenticated
+  USING (public.has_screen_access(auth.uid(), 'juridico_consulta_processos', 'visualizar'::app_acao));
+
+-- ── Processos contra a empresa ───────────────────────────────────────────
+CREATE OR REPLACE FUNCTION public.jur_processos_por_cpf(p_cpf text, p_nome text DEFAULT NULL)
+RETURNS jsonb
+LANGUAGE plpgsql
+STABLE SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $fn$
+DECLARE
+  v_cpf   text := regexp_replace(coalesce(p_cpf, ''), '\D', '', 'g');
+  v_nomes text[];
+BEGIN
+  IF NOT public.has_screen_access(auth.uid(), 'juridico_consulta_processos', 'visualizar'::app_acao) THEN
+    RAISE EXCEPTION 'Sem permissão para consultar processos.' USING ERRCODE = '42501';
+  END IF;
+  IF length(v_cpf) <> 11 THEN
+    RAISE EXCEPTION 'Informe um CPF com 11 dígitos.';
+  END IF;
+
+  -- Nomes que valem para este CPF: cadastros do EMPREGADOS + o nome informado.
+  v_nomes := ARRAY(
+    SELECT DISTINCT upper(btrim(n)) FROM (
+      SELECT e."Nome" AS n FROM public."EMPREGADOS" e
+       WHERE regexp_replace(coalesce(e."CPF", ''), '\D', '', 'g') = v_cpf
+      UNION ALL SELECT p_nome
+    ) x WHERE length(btrim(coalesce(n, ''))) >= 8);
+
+  RETURN (
+    WITH achados AS (
+      SELECT j.*,
+             (regexp_replace(coalesce(j.reclamante_vinculado_cpf, ''), '\D', '', 'g') = v_cpf) AS pelo_cpf
+        FROM public."JUR_PROCESSOS" j
+       WHERE regexp_replace(coalesce(j.reclamante_vinculado_cpf, ''), '\D', '', 'g') = v_cpf
+          OR upper(btrim(coalesce(j.reclamante, ''))) = ANY (v_nomes)
+    ), um_por_numero AS (
+      SELECT DISTINCT ON (coalesce(numero_processo, id::text)) *
+        FROM achados
+       ORDER BY coalesce(numero_processo, id::text), pelo_cpf DESC, updated_at DESC NULLS LAST
+    )
+    SELECT jsonb_build_object(
+      'nomes_usados', to_jsonb(v_nomes),
+      'processos', coalesce(jsonb_agg(jsonb_build_object(
+          'id', id, 'numero', numero_processo, 'reclamante', reclamante, 'reclamada', reclamada,
+          'tipo', tipo_processo, 'status', status, 'comarca', comarca, 'contrato', contrato,
+          'ano', ano_processo, 'data_entrada', data_entrada_reclamatoria, 'encerramento', data_encerramento,
+          'casou_por', CASE WHEN pelo_cpf THEN 'cpf' ELSE 'nome' END
+        ) ORDER BY ano_processo DESC NULLS LAST, numero_processo), '[]'::jsonb))
+      FROM um_por_numero);
+END $fn$;
+
+REVOKE ALL ON FUNCTION public.jur_processos_por_cpf(text, text) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.jur_processos_por_cpf(text, text) TO authenticated;
+
+NOTIFY pgrst, 'reload schema';
+
+-- ROLLBACK
+-- DROP FUNCTION IF EXISTS public.jur_processos_por_cpf(text, text);
+-- DROP TABLE IF EXISTS public."JUR_CONSULTA_CPF";
+-- DELETE FROM public.screen_permission_user WHERE menu_codigo = 'juridico_consulta_processos';
+-- DELETE FROM public.app_menu WHERE codigo = 'juridico_consulta_processos';
+-- NOTIFY pgrst, 'reload schema';
+
+
+-- ===== 20260930000235_trn_sem_demitidos_e_paginado (JA APLICADA 24/09) =====
+-- =========================================================================
+-- Treinamentos: demitido não conta nem aparece em "Quem vê este curso";
+-- lista de pessoas paginada.
+--
+-- Caso de 24/09/2026: a ação em massa "Todos os alunos da plataforma" com
+-- "Adicionar curso" matriculou os 13.355 alunos no NR-23 — 10.857 deles
+-- demitidos — e o bloco "Quem vê este curso" carregou as 13.355 linhas de
+-- uma vez. Pedido do Pablo: só quem NÃO está demitido (situação 7 da Senior,
+-- "Demitido" no TRN_ALUNO.situacao) entra; afastados (atestado, férias,
+-- licença...) entram.
+--
+--   · trn_acao_massa: 'adicionar_curso' pula demitidos (inclusive "todos").
+--   · trn_curso_alcance / trn_alunos_do_curso / trn_liberacao_opcoes:
+--     elegível = situacao <> 'Demitido' (antes: só status 'ativo', que
+--     deixava afastados de fora).
+--   · trn_curso_publico(_curso, _busca, _offset): pessoas específicas sem
+--     demitidos, 50 por página, com busca por nome/CPF e total.
+--   As matrículas já gravadas de demitidos NÃO são apagadas — só deixam de
+--   contar e de aparecer (demitido não entra no portal).
+--
+-- Idempotente. Aplicar no banco do app.
+-- =========================================================================
+
+CREATE OR REPLACE FUNCTION public.trn_acao_massa(_acao text, _alunos uuid[] DEFAULT NULL::uuid[], _tag uuid DEFAULT NULL::uuid, _param jsonb DEFAULT '{}'::jsonb)
+ RETURNS jsonb
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public', 'pg_temp'
+AS $function$
+DECLARE alvo uuid[]; n int := 0; x uuid;
+BEGIN
+  IF NOT public.trn_acesso('treinamentos_alunos','alterar') THEN
+    RAISE EXCEPTION 'Você não tem permissão para alterar alunos.';
+  END IF;
+  IF _alunos IS NOT NULL AND array_length(_alunos,1) > 0 THEN
+    alvo := _alunos;
+  ELSIF _tag IS NOT NULL THEN
+    SELECT array_agg(aluno_id) INTO alvo FROM public."TRN_ALUNO_TAG" WHERE tag_id = _tag;
+  ELSE
+    SELECT array_agg(id) INTO alvo FROM public."TRN_ALUNO";
+  END IF;
+  IF alvo IS NULL THEN RETURN jsonb_build_object('afetados', 0); END IF;
+
+  CASE _acao
+    WHEN 'adicionar_curso' THEN
+      -- 24/09/2026: demitido não recebe curso, nem em "todos os alunos".
+      INSERT INTO public."TRN_MATRICULA"(aluno_id, curso_id, origem)
+      SELECT a, (_param->>'curso_id')::uuid, 'massa'
+        FROM unnest(alvo) a JOIN public."TRN_ALUNO" t ON t.id = a
+       WHERE t.situacao IS DISTINCT FROM 'Demitido'
+      ON CONFLICT DO NOTHING;
+      GET DIAGNOSTICS n = ROW_COUNT;
+    WHEN 'remover_curso' THEN
+      DELETE FROM public."TRN_MATRICULA" WHERE curso_id = (_param->>'curso_id')::uuid AND aluno_id = ANY(alvo);
+      GET DIAGNOSTICS n = ROW_COUNT;
+    WHEN 'adicionar_tag' THEN
+      INSERT INTO public."TRN_ALUNO_TAG"(aluno_id, tag_id)
+      SELECT a, (_param->>'tag_id')::uuid FROM unnest(alvo) a ON CONFLICT DO NOTHING;
+      GET DIAGNOSTICS n = ROW_COUNT;
+    WHEN 'remover_tag' THEN
+      DELETE FROM public."TRN_ALUNO_TAG" WHERE tag_id = (_param->>'tag_id')::uuid AND aluno_id = ANY(alvo);
+      GET DIAGNOSTICS n = ROW_COUNT;
+    WHEN 'observacao' THEN
+      UPDATE public."TRN_ALUNO" SET observacoes = _param->>'texto' WHERE id = ANY(alvo);
+      GET DIAGNOSTICS n = ROW_COUNT;
+    WHEN 'bloquear' THEN
+      UPDATE public."TRN_ALUNO" SET status = 'bloqueado' WHERE id = ANY(alvo) AND status <> 'bloqueado';
+      GET DIAGNOSTICS n = ROW_COUNT;
+    WHEN 'desbloquear' THEN
+      UPDATE public."TRN_ALUNO" SET status = 'ativo', expira_em = CASE WHEN prazo_acesso_dias IS NULL THEN NULL ELSE current_date + prazo_acesso_dias END
+       WHERE id = ANY(alvo) AND status = 'bloqueado';
+      GET DIAGNOSTICS n = ROW_COUNT;
+    WHEN 'ativar' THEN
+      UPDATE public."TRN_ALUNO" SET status = 'ativo' WHERE id = ANY(alvo) AND status = 'pendente';
+      GET DIAGNOSTICS n = ROW_COUNT;
+    WHEN 'data_matricula' THEN
+      UPDATE public."TRN_MATRICULA" SET inscrito_em = (_param->>'data')::date
+       WHERE aluno_id = ANY(alvo) AND (_param->>'curso_id' IS NULL OR curso_id = (_param->>'curso_id')::uuid);
+      GET DIAGNOSTICS n = ROW_COUNT;
+    WHEN 'prazo_acesso' THEN
+      UPDATE public."TRN_ALUNO" SET prazo_acesso_dias = (_param->>'dias')::int,
+             expira_em = current_date + (_param->>'dias')::int WHERE id = ANY(alvo);
+      GET DIAGNOSTICS n = ROW_COUNT;
+    WHEN 'remover_prazo' THEN
+      UPDATE public."TRN_ALUNO" SET prazo_acesso_dias = NULL, expira_em = NULL WHERE id = ANY(alvo);
+      GET DIAGNOSTICS n = ROW_COUNT;
+    WHEN 'excluir' THEN
+      IF NOT public.trn_acesso('treinamentos_alunos','excluir') THEN
+        RAISE EXCEPTION 'Você não tem permissão para excluir alunos.';
+      END IF;
+      DELETE FROM public."TRN_ALUNO" WHERE id = ANY(alvo);
+      GET DIAGNOSTICS n = ROW_COUNT;
+    ELSE
+      RAISE EXCEPTION 'Ação desconhecida: %', _acao;
+  END CASE;
+
+  -- Uma linha de histórico por aluno afetado, para o "Histórico" contar.
+  IF _acao <> 'excluir' THEN
+    FOREACH x IN ARRAY alvo LOOP
+      INSERT INTO public."TRN_ALUNO_HISTORICO"(aluno_id, acao, detalhes, autor_nome)
+      VALUES (x, 'Ação em massa: ' || _acao, _param::text, public.trn_nome_autor());
+    END LOOP;
+  END IF;
+  RETURN jsonb_build_object('afetados', n, 'alvo', array_length(alvo,1));
+END $function$;
+
+CREATE OR REPLACE FUNCTION public.trn_curso_alcance(_curso uuid)
+RETURNS integer
+LANGUAGE sql
+STABLE SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $fn$
+  SELECT count(*)::int
+    FROM public."TRN_ALUNO" a
+    JOIN public."TRN_CURSO" c ON c.id = _curso
+   WHERE a.situacao IS DISTINCT FROM 'Demitido'
+     AND (EXISTS (SELECT 1 FROM public."TRN_MATRICULA" m WHERE m.curso_id = c.id AND m.aluno_id = a.id)
+          OR a.acesso_completo OR c.liberado_para_todos
+          OR public.trn_regra_libera(c.id, a.contrato, a.cargo));
+$fn$;
+
+CREATE OR REPLACE FUNCTION public.trn_alunos_do_curso(_curso uuid)
+RETURNS uuid[]
+LANGUAGE plpgsql
+STABLE SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $fn$
+BEGIN
+  IF NOT public.trn_ve_modulo() THEN
+    RAISE EXCEPTION 'Sem permissão.' USING ERRCODE = '42501';
+  END IF;
+  RETURN ARRAY(
+    SELECT a.id FROM public."TRN_ALUNO" a JOIN public."TRN_CURSO" c ON c.id = _curso
+     WHERE a.situacao IS DISTINCT FROM 'Demitido'
+       AND (EXISTS (SELECT 1 FROM public."TRN_MATRICULA" m WHERE m.curso_id = c.id AND m.aluno_id = a.id)
+            OR (c.publicado AND (a.acesso_completo OR c.liberado_para_todos OR public.trn_regra_libera(c.id, a.contrato, a.cargo)))));
+END $fn$;
+
+CREATE OR REPLACE FUNCTION public.trn_liberacao_opcoes()
+RETURNS jsonb
+LANGUAGE plpgsql
+STABLE SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $fn$
+BEGIN
+  IF NOT public.trn_acesso('treinamentos_cursos') THEN
+    RAISE EXCEPTION 'Sem permissão.' USING ERRCODE = '42501';
+  END IF;
+  -- Quem não está demitido (afastados contam): contrato/cargo de quem saiu não é de ninguém hoje.
+  RETURN jsonb_build_object(
+    'contratos', (SELECT coalesce(jsonb_agg(jsonb_build_object('nome', nome, 'ativos', n) ORDER BY nome), '[]'::jsonb)
+                    FROM (SELECT contrato nome, count(*) n FROM public."TRN_ALUNO"
+                           WHERE situacao IS DISTINCT FROM 'Demitido' AND nullif(btrim(contrato), '') IS NOT NULL GROUP BY 1) x),
+    'cargos', (SELECT coalesce(jsonb_agg(jsonb_build_object('nome', nome, 'ativos', n) ORDER BY nome), '[]'::jsonb)
+                 FROM (SELECT cargo nome, count(*) n FROM public."TRN_ALUNO"
+                        WHERE situacao IS DISTINCT FROM 'Demitido' AND nullif(btrim(cargo), '') IS NOT NULL GROUP BY 1) y));
+END $fn$;
+
+DROP FUNCTION IF EXISTS public.trn_curso_publico(uuid);
+CREATE OR REPLACE FUNCTION public.trn_curso_publico(_curso uuid, _busca text DEFAULT NULL, _offset integer DEFAULT 0)
+RETURNS jsonb
+LANGUAGE plpgsql
+STABLE SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $fn$
+DECLARE
+  v_busca text := nullif(btrim(coalesce(_busca, '')), '');
+  v_dig   text := regexp_replace(coalesce(_busca, ''), '\D', '', 'g');
+BEGIN
+  IF NOT public.trn_acesso('treinamentos_cursos') THEN
+    RAISE EXCEPTION 'Sem permissão.' USING ERRCODE = '42501';
+  END IF;
+  RETURN (
+    WITH ind AS (
+      SELECT m.id AS matricula_id, a.id AS aluno_id, a.nome, a.contrato, a.cargo, a.situacao, m.inscrito_em
+        FROM public."TRN_MATRICULA" m JOIN public."TRN_ALUNO" a ON a.id = m.aluno_id
+       WHERE m.curso_id = _curso
+         AND a.situacao IS DISTINCT FROM 'Demitido'
+         AND (v_busca IS NULL OR a.nome ILIKE '%' || v_busca || '%'
+              OR (length(v_dig) >= 5 AND regexp_replace(coalesce(a.documento, ''), '\D', '', 'g') LIKE '%' || v_dig || '%'))
+    )
+    SELECT jsonb_build_object(
+      'liberado_para_todos', (SELECT liberado_para_todos FROM public."TRN_CURSO" WHERE id = _curso),
+      'regras', (SELECT coalesce(jsonb_agg(jsonb_build_object(
+                    'id', l.id, 'contrato', l.contrato, 'cargo', l.cargo,
+                    'ativos', (SELECT count(*) FROM public."TRN_ALUNO" a
+                                WHERE a.situacao IS DISTINCT FROM 'Demitido'
+                                  AND (nullif(btrim(l.contrato), '') IS NULL OR upper(btrim(l.contrato)) = upper(btrim(a.contrato)))
+                                  AND (nullif(btrim(l.cargo), '') IS NULL OR upper(btrim(l.cargo)) = upper(btrim(a.cargo))))
+                  ) ORDER BY l.contrato NULLS LAST, l.cargo NULLS LAST), '[]'::jsonb)
+                   FROM public."TRN_CURSO_LIBERACAO" l WHERE l.curso_id = _curso),
+      'total_individuais', (SELECT count(*) FROM ind),
+      'individuais', (SELECT coalesce(jsonb_agg(to_jsonb(p) ORDER BY p.nome), '[]'::jsonb)
+                        FROM (SELECT * FROM ind ORDER BY nome LIMIT 50 OFFSET greatest(coalesce(_offset, 0), 0)) p),
+      'alcance', public.trn_curso_alcance(_curso)));
+END $fn$;
+
+REVOKE ALL ON FUNCTION public.trn_curso_publico(uuid, text, integer) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.trn_curso_publico(uuid, text, integer) TO authenticated;
+
+NOTIFY pgrst, 'reload schema';
+
+-- Conferência:
+-- SELECT public.trn_curso_alcance(id), nome FROM "TRN_CURSO" WHERE publicado;
+
+-- ROLLBACK
+-- Reaplicar trn_acao_massa (mig 190), trn_curso_alcance / trn_alunos_do_curso /
+-- trn_liberacao_opcoes / trn_curso_publico(uuid) da mig 20260930000231.
 -- NOTIFY pgrst, 'reload schema';

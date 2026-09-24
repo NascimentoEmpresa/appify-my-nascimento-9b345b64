@@ -94,7 +94,7 @@ export default function CursoColaborador() {
         <p className="rounded-xl bg-success/10 px-3 py-2 text-sm text-success">Curso concluído! Seu certificado está sendo emitido.</p>
       )}
 
-      <div className="grid gap-4 lg:grid-cols-[1fr_320px]">
+      <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_340px]">
         <div className="min-w-0">
           {aulaAtual ? (
             <AulaAberta
@@ -211,14 +211,20 @@ function AulaAberta({ aula, cursoId, comentariosHabilitados, anterior, proxima }
     <div className="space-y-4">
       <Player aula={aula} onFim={videoTerminou} />
 
-      <div className="rounded-2xl border border-border bg-card p-4 shadow-sm">
+      <div className="rounded-2xl border border-border bg-card p-5 shadow-sm md:p-6">
         <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{aula.moduloNome}</p>
-        <h2 className="font-display text-lg font-bold leading-tight">{aula.nome}</h2>
+        <h2 className="mt-0.5 font-display text-xl font-bold leading-tight md:text-2xl">{aula.nome}</h2>
         <div className="mt-1 flex flex-wrap gap-1.5">
           {aula.concluida && <Chip tom="ok">Concluída em {fmtData(aula.concluida_em)}</Chip>}
           {temQuiz && aula.nota_quiz != null && <Chip tom={passouQuiz ? "ok" : "alerta"}>Prova: {aula.nota_quiz}%</Chip>}
         </div>
-        {aula.descricao && <p className="mt-3 whitespace-pre-line text-sm leading-relaxed text-foreground">{aula.descricao}</p>}
+        {/* Descrição (24/09/2026): parágrafos separados, texto maior e com
+            largura de leitura — antes era um bloco só, apertado ao lado do vídeo. */}
+        {aula.descricao && (
+          <div className="mt-4 max-w-prose space-y-3 border-t border-border pt-4 text-[15px] leading-7 text-foreground/90">
+            {aula.descricao.split(/\n\s*\n/).map((par, i) => <p key={i} className="whitespace-pre-line">{par.trim()}</p>)}
+          </div>
+        )}
 
         {aula.materiais.length > 0 && (
           <div className="mt-4">
