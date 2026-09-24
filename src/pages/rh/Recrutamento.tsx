@@ -1,8 +1,8 @@
 import { useState, useEffect, useMemo, useRef, useCallback, type MouseEvent as ReactMouseEvent, type CSSProperties, type ReactNode } from "react";
 import {
-  Activity, AlertTriangle, Ban, Building2, CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, ClipboardList, Clock, Eye, FileText,
+  Activity, AlertTriangle, Ban, Building2, CalendarDays, Check, CheckCircle2, ChevronLeft, ChevronRight, ClipboardList, Clock, Eye, FileText,
   FolderOpen, GraduationCap, History, IdCard, Landmark, Link2, LogOut, Mail, MapPin, MessageSquare, Paperclip,
-  Pencil, Phone, Search, Settings, Tags, Target, Trash2, UserSearch, Users, XCircle, Zap, type LucideIcon,
+  Pencil, Phone, Search, Settings, Tags, Target, Trash2, UserSearch, Users, X, XCircle, Zap, type LucideIcon,
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
@@ -1917,14 +1917,95 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
         ? (drawerSol.nome_substituido ? `Substituindo: ${drawerSol.nome_substituido}` : "Substituição")
         : (drawerSol.motivo_vaga ? `Aumento de quadro — ${drawerSol.motivo_vaga}` : null),
     }] : [];
-    const eventos = [...criada, ...historico].sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)));
+    // Mesmo evento gravado duas vezes em menos de 10 s (tela antiga + gatilho,
+    // até a main receber o commit de 23/09/2026) aparece uma vez só.
+    const ordenados = [...criada, ...historico].sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)));
+    const eventos = ordenados.filter((e, i) => !ordenados.slice(0, i).some((o) =>
+      o.evento === e.evento && o.de_status === e.de_status && o.para_status === e.para_status && !e.candidato_nome && !e.detalhe
+      && Math.abs(new Date(o.created_at).getTime() - new Date(e.created_at).getTime()) < 10_000));
     if (eventos.length === 0) return <div style={{ textAlign: "center", color: "#94a3b8", padding: "40px 16px", fontSize: 13 }}>Sem movimentações registradas.</div>;
+    const quando = (iso?: string | null) => {
+      if (!iso) return "—";
+      const d = new Date(iso);
+      return isNaN(+d) ? String(iso) : `${d.toLocaleDateString("pt-BR")} ${d.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}`;
+    };
+    const nomeDe = (e: EventoHist) => nomesPorEmailHist[e.usuario_email ?? ""] || e.usuario_nome || "—";
+
+    // ── Etapas (24/09/2026): quem passou cada etapa, lado a lado ──
+    // "aqui não aparece que o analista aprovou... tem que separar deixando bem
+    // intuitivo quem passou cada etapa". Cada etapa procura o evento que a
+    // fechou; etapa vencida sem evento é aprovação de antes do gatilho de
+    // histórico (mig 20260930000225, 23/09/2026) — diz isso em vez de sumir.
+    const st = drawerSol?.status ?? "";
+    const administrativa = !!drawerSol?.administrativa || st === STATUS_VAGA_DIRETORIA
+      || eventos.some((e) => e.de_status === STATUS_VAGA_DIRETORIA || e.para_status === STATUS_VAGA_DIRETORIA);
+    const concluida = st === "Concluída" || st === "Contratado" || st.startsWith("Concluído");
+    const nivel = st === "Pendente Analista" || st === STATUS_VAGA_DIRETORIA || st === "Pendente Operacional" ? 1
+      : st === "Pendente Recrutamento" ? 2
+      : concluida ? 4
+      : STATUS_PROCESSO.includes(st) ? 3 : -1;
+    const reprovadaEm = st === "Reprovada" ? eventos.find((e) => e.para_status === "Reprovada") : undefined;
+    const achar = (f: (e: EventoHist) => boolean) => [...eventos].reverse().find(f);
+    const etapas: { titulo: string; papel: string; ev?: EventoHist; n: number }[] = [
+      { titulo: "Solicitação criada", papel: "Solicitante", n: 0, ev: criada[0] },
+      administrativa
+        ? { titulo: "Aprovação da Diretoria", papel: "Diretoria", n: 1, ev: achar((e) => e.evento === "Aprovada pela Diretoria" || (e.de_status === STATUS_VAGA_DIRETORIA && e.para_status === "Pendente Recrutamento")) }
+        : { titulo: "Aprovação do Analista", papel: "Analista", n: 1, ev: achar((e) => e.evento === "Aprovada pelo Analista" || e.evento === "Aprovada pelo Operacional" || ((e.de_status === "Pendente Analista" || e.de_status === "Pendente Operacional") && e.para_status === "Pendente Recrutamento")) },
+      { titulo: "Abertura da vaga", papel: "Recrutamento", n: 2, ev: achar((e) => e.evento === "Abertura de vaga confirmada" || (e.de_status === "Pendente Recrutamento" && !!e.para_status && e.para_status !== "Reprovada")) },
+      { titulo: "Seleção de candidatos", papel: "Recrutamento", n: 3, ev: achar((e) => !!e.para_status && STATUS_PROCESSO.includes(e.para_status) && e.de_status !== "Pendente Recrutamento") },
+      { titulo: "Conclusão", papel: "Recrutamento", n: 4, ev: achar((e) => e.evento === "Solicitação concluída") },
+    ];
+    const etapaReprovada = reprovadaEm
+      ? (reprovadaEm.de_status === "Pendente Recrutamento" ? 2 : STATUS_PROCESSO.includes(reprovadaEm.de_status ?? "") ? 3 : 1)
+      : -1;
+
+    const blocoEtapas = (
+      <div style={{ display: "grid", gap: 8, marginBottom: 22 }}>
+        {etapas.map((et) => {
+          const reprovou = et.n === etapaReprovada;
+          const feita = !reprovou && (et.n === 0 || (etapaReprovada >= 0 ? et.n < etapaReprovada : et.n < nivel || (et.n === 4 && concluida)));
+          const atual = !reprovou && !feita && et.n === nivel;
+          const cor = reprovou ? "#dc2626" : feita ? "#16a34a" : atual ? "#d97706" : "#cbd5e1";
+          const ev = reprovou ? reprovadaEm : et.ev;
+          // A etapa "Seleção" não tem aprovação: está feita quando a vaga anda.
+          const quem = ev ? nomeDe(ev) : null;
+          return (
+            <div key={et.n} style={{ display: "flex", gap: 10, alignItems: "flex-start", border: `1px solid ${feita || reprovou || atual ? cor + "55" : "#e2e8f0"}`, background: feita ? "#f0fdf4" : reprovou ? "#fef2f2" : atual ? "#fffbeb" : "#f8fafc", borderRadius: 10, padding: "8px 11px" }}>
+              <span style={{ width: 22, height: 22, borderRadius: "50%", background: cor, color: "#fff", display: "grid", placeItems: "center", flexShrink: 0, marginTop: 1 }}>
+                {reprovou ? <X size={13} strokeWidth={3} /> : feita ? <Check size={13} strokeWidth={3} /> : <span style={{ fontSize: 11, fontWeight: 800 }}>{et.n + 1}</span>}
+              </span>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                  <span style={{ fontSize: 13, fontWeight: 800, color: "#0f172a" }}>{et.titulo}</span>
+                  <span style={{ fontSize: 10, fontWeight: 800, padding: "1px 8px", borderRadius: 20, background: `${papelCor(et.papel)}1a`, color: papelCor(et.papel) }}>{et.papel}</span>
+                  <span style={{ fontSize: 10.5, fontWeight: 800, color: cor, marginLeft: "auto" }}>
+                    {reprovou ? "Reprovada" : feita ? "Concluída" : atual ? "Aguardando" : "—"}
+                  </span>
+                </div>
+                <div style={{ fontSize: 12, color: "#475569", marginTop: 2 }}>
+                  {quem
+                    ? <><b style={{ color: "#0f172a" }}>{quem}</b> · {quando(ev?.created_at)}</>
+                    : feita
+                      ? <span style={{ color: "#94a3b8" }}>Sem registro de quem fez — etapa concluída antes de o histórico automático existir (23/09/2026).</span>
+                      : atual ? <span style={{ color: "#b45309" }}>Aguardando {et.papel === "Solicitante" ? "o solicitante" : et.papel === "Analista" ? "o analista" : et.papel === "Diretoria" ? "a Diretoria" : "o Recrutamento"}.</span>
+                      : <span style={{ color: "#94a3b8" }}>Ainda não chegou nesta etapa.</span>}
+                </div>
+                {reprovou && reprovadaEm?.detalhe && <div style={{ fontSize: 12, color: "#991b1b", marginTop: 3 }}>Motivo: {reprovadaEm.detalhe}</div>}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    );
+
     return (
       <div style={{ display: "flex", flexDirection: "column" }}>
+        <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: ".08em", textTransform: "uppercase", color: "#64748b", marginBottom: 8 }}>Etapas</div>
+        {blocoEtapas}
+        <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: ".08em", textTransform: "uppercase", color: "#64748b", marginBottom: 10 }}>Todas as movimentações</div>
         {eventos.map((e, i) => {
           const cor = papelCor(e.papel);
-          const dthora = String(e.created_at ?? "").replace("T", " ").slice(0, 16);
-          const nomeExibido = nomesPorEmailHist[e.usuario_email ?? ""] || e.usuario_nome || "—";
+          const nomeExibido = nomeDe(e);
           return (
             <div key={i} style={{ display: "flex", gap: 12, paddingBottom: i === eventos.length - 1 ? 0 : 18 }}>
               <div style={{ display: "flex", flexDirection: "column", alignItems: "center", flexShrink: 0 }}>
@@ -1939,7 +2020,7 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
                 {(e.de_status || e.para_status) && <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 2 }}>{e.de_status ? `${e.de_status} → ` : ""}{e.para_status || ""}</div>}
                 {e.candidato_nome && <div style={{ fontSize: 12, color: "#475569", marginTop: 2 }}>Candidato: <b>{e.candidato_nome}</b></div>}
                 {e.detalhe && <div style={{ fontSize: 12, color: "#475569", marginTop: 4, background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 8, padding: "6px 9px", whiteSpace: "pre-wrap" }}>{e.detalhe}</div>}
-                <div style={{ fontSize: 12.5, color: "#0f172a", marginTop: 4 }}><span style={{ fontWeight: 800 }}>{nomeExibido}</span><span style={{ color: "#94a3b8", fontWeight: 400 }}> · {dthora || "—"}</span></div>
+                <div style={{ fontSize: 12.5, color: "#0f172a", marginTop: 4 }}><span style={{ fontWeight: 800 }}>{nomeExibido}</span><span style={{ color: "#94a3b8", fontWeight: 400 }}> · {quando(e.created_at)}</span></div>
               </div>
             </div>
           );
