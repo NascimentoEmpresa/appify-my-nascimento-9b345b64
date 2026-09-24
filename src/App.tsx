@@ -5,9 +5,11 @@ import { Toaster as Sonner } from "@/components/ui/sonner";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ErroDeTela } from "@/components/layout/ErroDeTela";
+import { MonitorDeQueda } from "@/components/layout/MonitorDeQueda";
 import { isAuthExpiredError } from "@/lib/authErrors";
 import { isSobrecargaError, atrasoSobrecargaMs } from "@/lib/erroSobrecarga";
 import NotFound from "./pages/NotFound.tsx";
+import Pagina404 from "./pages/Pagina404.tsx";
 import Login from "./pages/Login.tsx";
 import TrocarSenha from "./pages/TrocarSenha.tsx";
 import EsqueciSenha from "./pages/EsqueciSenha.tsx";
@@ -111,6 +113,7 @@ import FluxoCaixaGestao from "./pages/financeiro/FluxoCaixaGestao";
 import ConciliacaoAutomaticaFluxoCaixa from "./pages/financeiro/ConciliacaoAutomaticaFluxoCaixa";
 import CartaoCredito from "./pages/financeiro/CartaoCredito";
 import DebitoAutomatico from "./pages/financeiro/DebitoAutomatico";
+import AplicacoesFinanceiras from "./pages/financeiro/AplicacoesFinanceiras";
 import ExtratorBeneficios from "./pages/financeiro/ExtratorBeneficios";
 import ChecklistFaturamento from "./pages/financeiro/ChecklistFaturamento";
 import SolicitacoesAjuste from "./pages/financeiro/SolicitacoesAjuste";
@@ -349,6 +352,8 @@ const App = () => (
     <TooltipProvider>
       <Toaster />
       <Sonner />
+      {/* Queda do banco: cobre tudo com "Sistema temporariamente indisponível" (ver lib/monitorDeQueda.ts). */}
+      <MonitorDeQueda />
       <BrowserRouter>
         {/* Rede final: o ErroDeTela do AppShell cobre as telas de /app
             mantendo menu e topbar de pé, mas não cobre o que está FORA dele
@@ -356,7 +361,7 @@ const App = () => (
             providers). Sem este segundo boundary, um erro nesses pontos
             voltaria a produzir página branca sem mensagem — que foi
             exatamente o apagão de 08/09/2026 (ver ErroDeTela.tsx). */}
-        <ErroDeTela>
+        <ErroDeTela telaCheia>
         <AuthProvider>
         <DemoModeProvider>
         <PermissoesProvider>
@@ -364,6 +369,8 @@ const App = () => (
         <Routes>
           <Route path="/" element={<Navigate to="/login" replace />} />
           <Route path="/login" element={<Login />} />
+          {/* Tela "Sistema temporariamente indisponível" num endereço próprio (pública). */}
+          <Route path="/404" element={<Pagina404 />} />
           <Route path="/trocar-senha" element={<TrocarSenha />} />
           <Route path="/esqueci-senha" element={<EsqueciSenha />} />
           <Route path="/redefinir-senha" element={<RedefinirSenha />} />
@@ -686,6 +693,7 @@ const App = () => (
             <Route path="financeiro/gestao-financeira/fluxo-caixa" element={<FluxoCaixaGestao />} />
             <Route path="financeiro/gestao-financeira/conciliacao-fluxo-caixa" element={<ConciliacaoAutomaticaFluxoCaixa />} />
             <Route path="financeiro/gestao-financeira/debito-automatico" element={<DebitoAutomatico />} />
+            <Route path="financeiro/gestao-financeira/aplicacoes-financeiras" element={<AplicacoesFinanceiras />} />
             <Route path="financeiro/gestao-financeira/extrator-beneficios" element={<ExtratorBeneficios />} />
             <Route path="financeiro/checklist-faturamento" element={<ChecklistFaturamento />} />
             <Route path="financeiro/solicitacoes-ajuste" element={<SolicitacoesAjuste />} />

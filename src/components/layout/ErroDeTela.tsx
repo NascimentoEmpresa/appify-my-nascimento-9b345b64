@@ -1,6 +1,5 @@
 import { Component, ReactNode } from "react";
-import { AlertTriangle, RotateCcw } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { SistemaIndisponivel } from "./SistemaIndisponivel";
 
 /**
  * APAGÃO 08/09/2026 — três telas do Malote (Orçamento Administrativo,
@@ -32,6 +31,13 @@ import { Button } from "@/components/ui/button";
  *   - a montagem no AppShell usa `key={pathname}`, então trocar de rota já
  *     limpa o estado de erro — ninguém fica preso.
  *
+ * 23/09/2026: o visual passou a ser o de "Sistema temporariamente
+ * indisponível" (SistemaIndisponivel.tsx), pedido do Pablo para QUALQUER
+ * erro. 24/09: "sempre que der algum erro vai pra essa tela" — agora cobre a
+ * janela inteira em todos os casos (antes, dentro do AppShell, só a área de
+ * conteúdo), e o botão é "Recarregar" a página que falhou. O detalhe técnico
+ * (rota + mensagem) continua na tela, recolhido, para o chamado.
+ *
  * Precisa ser class component: `componentDidCatch`/`getDerivedStateFromError`
  * não têm equivalente em hook.
  */
@@ -39,6 +45,8 @@ interface Props {
   children: ReactNode;
   /** Rota mostrada junto do erro, pra facilitar o relato do usuário. */
   rota?: string;
+  /** Mantido por compatibilidade (App.tsx): hoje toda falha cobre a janela. */
+  telaCheia?: boolean;
 }
 
 interface State {
@@ -46,6 +54,9 @@ interface State {
 }
 
 export class ErroDeTela extends Component<Props, State> {
+  /** Recarregar a página — estático para o teste poder observar sem navegar. */
+  static recarregar = () => window.location.reload();
+
   state: State = { erro: null };
 
   static getDerivedStateFromError(erro: Error): State {
@@ -58,42 +69,18 @@ export class ErroDeTela extends Component<Props, State> {
     console.error("[ErroDeTela] falha ao renderizar a tela:", erro, info.componentStack);
   }
 
-  private tentarDeNovo = () => this.setState({ erro: null });
-
   render() {
     const { erro } = this.state;
     if (!erro) return this.props.children;
 
     return (
-      <div className="flex min-h-[60vh] flex-col items-center justify-center gap-4 px-6 text-center">
-        <div className="flex h-16 w-16 items-center justify-center rounded-full bg-destructive/10">
-          <AlertTriangle className="h-8 w-8 text-destructive" />
-        </div>
-        <h1 className="text-2xl font-semibold">Esta tela não conseguiu abrir</h1>
-        <p className="max-w-md text-sm text-muted-foreground">
-          O erro é desta tela, não do sistema todo — o menu ao lado continua funcionando e você pode
-          seguir para outra área normalmente. Se o problema se repetir, abra um chamado e cole a
-          mensagem abaixo.
-        </p>
-
-        <details className="w-full max-w-xl text-left">
-          <summary className="cursor-pointer text-xs text-muted-foreground">Detalhes técnicos</summary>
-          <pre className="mt-2 max-h-48 overflow-auto rounded-md border border-border bg-muted/40 p-3 text-left text-xs whitespace-pre-wrap break-words">
-            {this.props.rota ? `Rota: ${this.props.rota}\n` : ""}
-            {erro.message || String(erro)}
-          </pre>
-        </details>
-
-        <div className="flex flex-wrap items-center justify-center gap-2">
-          <Button onClick={this.tentarDeNovo}>
-            <RotateCcw className="mr-2 h-4 w-4" />
-            Tentar de novo
-          </Button>
-          <Button variant="outline" onClick={() => window.location.reload()}>
-            Recarregar a página
-          </Button>
-        </div>
-      </div>
+      <SistemaIndisponivel
+        modo="tela"
+        onTentar={() => ErroDeTela.recarregar()}
+        rotuloTentar="Recarregar"
+        detalhe={`${this.props.rota ? `Rota: ${this.props.rota}
+` : ""}${erro.message || String(erro)}`}
+      />
     );
   }
 }
