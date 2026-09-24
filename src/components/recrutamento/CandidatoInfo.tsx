@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { AvisoProcessos, processosDe, useProcessosDosCandidatos } from "@/components/recrutamento/AvisoProcessos";
+import { AlertTriangle, Search, CalendarDays, MapPin, History } from "lucide-react";
 
 // Bloco compartilhado: mostra TODAS as informações do candidato + da vaga +
 // restrição do CPF + perfil e anexos (CV/CTPS). Usado nas filas de Jurídico,
@@ -55,7 +56,7 @@ export function CandidatoInfo({ cand, hideCurriculo }: { cand: any; hideCurricul
       <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
         <div style={{ fontSize: 15, fontWeight: 800, color: "#0f172a" }}>{cand.nome || "Sem nome"}</div>
         {cand.possui_restricao && (
-          <span title={cand.restricao_motivo || ""} style={{ fontSize: 10, fontWeight: 800, padding: "2px 9px", borderRadius: 20, background: "#fef3c7", color: "#92400e", border: "1px solid #fde68a" }}>⚠️ Possui restrições</span>
+          <span title={cand.restricao_motivo || ""} style={{ fontSize: 10, fontWeight: 800, padding: "2px 9px", borderRadius: 20, background: "#fef3c7", color: "#92400e", border: "1px solid #fde68a" }}><AlertTriangle size={11} strokeWidth={2} aria-hidden style={{ display: "inline-block", verticalAlign: "-2px", marginRight: 5, flexShrink: 0 }} />Possui restrições</span>
         )}
         <AvisoProcessos processos={processos} compacto />
       </div>
@@ -74,7 +75,7 @@ export function CandidatoInfo({ cand, hideCurriculo }: { cand: any; hideCurricul
 
       {/* Ver detalhes do candidato → modal grande */}
       <button onClick={() => setAberto(true)} style={{ alignSelf: "flex-start", padding: "6px 12px", borderRadius: 8, background: "rgba(15,49,113,.08)", border: "1px solid rgba(15,49,113,.2)", color: "#0f3171", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
-        🔍 Ver detalhes do candidato
+        <Search size={13} strokeWidth={2} aria-hidden style={{ display: "inline-block", verticalAlign: "-2px", marginRight: 5, flexShrink: 0 }} />Ver detalhes do candidato
       </button>
 
       {aberto && (
@@ -83,7 +84,7 @@ export function CandidatoInfo({ cand, hideCurriculo }: { cand: any; hideCurricul
             <button onClick={() => setAberto(false)} style={{ position: "absolute", top: 14, right: 14, background: "none", border: "none", color: "#94a3b8", fontSize: 22, cursor: "pointer" }}>✕</button>
             <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", paddingRight: 24 }}>
               <div style={{ fontSize: 18, fontWeight: 800, color: "#0f172a" }}>{cand.nome || "Sem nome"}</div>
-              {cand.possui_restricao && <span style={{ fontSize: 10, fontWeight: 800, padding: "2px 9px", borderRadius: 20, background: "#fef3c7", color: "#92400e", border: "1px solid #fde68a" }}>⚠️ Possui restrições</span>}
+              {cand.possui_restricao && <span style={{ fontSize: 10, fontWeight: 800, padding: "2px 9px", borderRadius: 20, background: "#fef3c7", color: "#92400e", border: "1px solid #fde68a" }}><AlertTriangle size={11} strokeWidth={2} aria-hidden style={{ display: "inline-block", verticalAlign: "-2px", marginRight: 5, flexShrink: 0 }} />Possui restrições</span>}
             </div>
             <AvisoProcessos processos={processos} />
             <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
@@ -159,8 +160,8 @@ export function CandidatoInfo({ cand, hideCurriculo }: { cand: any; hideCurricul
       {/* Agendamento do exame (SST) */}
       {perfil?.sst_data_exame && (
         <div style={{ fontSize: 12, background: "#ecfdf5", border: "1px solid #a7f3d0", borderRadius: 8, padding: "8px 10px", color: "#15803d" }}>
-          🗓 <b>Exame agendado:</b> {fmtD(perfil.sst_data_exame)}{perfil.sst_hora_exame ? ` às ${perfil.sst_hora_exame}` : ""}{perfil.sst_local_exame ? ` · ${perfil.sst_local_exame}` : ""}
-          {(perfil.sst_maps_url || perfil.sst_local_exame) && <> · <a href={perfil.sst_maps_url || `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(perfil.sst_local_exame)}`} target="_blank" rel="noopener noreferrer" style={{ color: "#0369a1", fontWeight: 700 }}>📍 Ver no mapa</a></>}
+          <CalendarDays size={13} strokeWidth={2} aria-hidden style={{ display: "inline-block", verticalAlign: "-2px", marginRight: 5, flexShrink: 0 }} /><b>Exame agendado:</b> {fmtD(perfil.sst_data_exame)}{perfil.sst_hora_exame ? ` às ${perfil.sst_hora_exame}` : ""}{perfil.sst_local_exame ? ` · ${perfil.sst_local_exame}` : ""}
+          {(perfil.sst_maps_url || perfil.sst_local_exame) && <> · <a href={perfil.sst_maps_url || `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(perfil.sst_local_exame)}`} target="_blank" rel="noopener noreferrer" style={{ color: "#0369a1", fontWeight: 700 }}><MapPin size={12} strokeWidth={2} aria-hidden style={{ display: "inline-block", verticalAlign: "-2px", marginRight: 5, flexShrink: 0 }} />Ver no mapa</a></>}
         </div>
       )}
 
@@ -270,12 +271,12 @@ export function HistoricoCandidato({ candidatoId, nome }: { candidatoId: number;
   };
   return (
     <>
-      <button onClick={abrir} style={{ padding: "6px 11px", borderRadius: 8, background: "#fff", border: "1px solid #e2e8f0", color: "#475569", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>📜 Histórico</button>
+      <button onClick={abrir} style={{ padding: "6px 11px", borderRadius: 8, background: "#fff", border: "1px solid #e2e8f0", color: "#475569", fontSize: 12, fontWeight: 700, cursor: "pointer" }}><History size={13} strokeWidth={2} aria-hidden style={{ display: "inline-block", verticalAlign: "-2px", marginRight: 5, flexShrink: 0 }} />Histórico</button>
       {open && (
         <div style={{ position: "fixed", inset: 0, zIndex: 750, background: "rgba(15,23,42,.42)", backdropFilter: "blur(4px)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={e => { if (e.target === e.currentTarget) setOpen(false); }}>
           <div style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 18, padding: 24, width: "100%", maxWidth: 600, maxHeight: "85vh", overflowY: "auto", position: "relative", boxShadow: "0 16px 40px rgba(15,23,42,.1)" }}>
             <button onClick={() => setOpen(false)} style={{ position: "absolute", top: 14, right: 14, background: "none", border: "none", color: "#94a3b8", fontSize: 20, cursor: "pointer" }}>✕</button>
-            <div style={{ fontSize: 17, fontWeight: 800, marginBottom: 2 }}>📜 Histórico do candidato</div>
+            <div style={{ fontSize: 17, fontWeight: 800, marginBottom: 2 }}><History size={16} strokeWidth={2} aria-hidden style={{ display: "inline-block", verticalAlign: "-2px", marginRight: 5, flexShrink: 0 }} />Histórico do candidato</div>
             <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 16 }}>{nome || ""}</div>
             {loading ? <div style={{ padding: 30, textAlign: "center", color: "#94a3b8" }}>Carregando...</div>
               : rows.length === 0 ? <div style={{ padding: 30, textAlign: "center", color: "#94a3b8" }}>Sem movimentações registradas.</div>

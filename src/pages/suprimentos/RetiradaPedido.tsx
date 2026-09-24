@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ESTILO_STATUS } from "@/hooks/useSupPedidos";
 import { AlertTriangle, CheckCircle2, Loader2, PackageSearch, Search, ShieldAlert, Truck } from "lucide-react";
 import { toast } from "sonner";
@@ -121,6 +122,11 @@ function BuscaManual() {
 function ConfirmarRetirada({ referencia }: { referencia: string }) {
   const qc = useQueryClient();
   const [resultado, setResultado] = useState<ResultadoRetirada | null>(null);
+  // A resposta precisa ser deliberada: assumir "N\u00e3o" quando a pessoa s\u00f3
+  // leu o QR code apagaria justamente a evid\u00eancia que esta etapa existe para
+  // guardar. As duas respostas seguem junto na mesma transa\u00e7\u00e3o da retirada.
+  const [fichaEpiFisica, setFichaEpiFisica] = useState<"SIM" | "NAO" | "">("");
+  const [crachaFisico, setCrachaFisico] = useState<"SIM" | "NAO" | "">("");
 
   const { data: pedido, isLoading, error } = useQuery({
     queryKey: ["sup_retirada", referencia],
@@ -133,7 +139,11 @@ function ConfirmarRetirada({ referencia }: { referencia: string }) {
 
   const confirmar = useMutation({
     mutationFn: async (): Promise<ResultadoRetirada> => {
-      const { data, error } = await sb.rpc("sup_retirada_confirmar", { p_ref: referencia });
+      const { data, error } = await sb.rpc("sup_retirada_confirmar_com_documentos", {
+        p_ref: referencia,
+        p_possui_ficha_epi_fisica: fichaEpiFisica === "SIM",
+        p_possui_cracha_fisico: crachaFisico === "SIM",
+      });
       if (error) throw error;
       return data;
     },
@@ -237,11 +247,36 @@ function ConfirmarRetirada({ referencia }: { referencia: string }) {
           Peça a liberação de "Retirada para Entrega" em Acesso por Usuário.
         </Aviso>
       ) : (
-        <div className="space-y-2">
+        <div className="space-y-3">
+          <Card>
+            <CardContent className="space-y-3 pt-5">
+              <p className="text-sm font-medium">Documentos físicos que acompanham o pedido</p>
+              <div className="space-y-1.5">
+                <Label htmlFor="retirada-ficha-epi">O pedido possui Ficha de EPI física?</Label>
+                <Select value={fichaEpiFisica} onValueChange={(valor: "SIM" | "NAO") => setFichaEpiFisica(valor)}>
+                  <SelectTrigger id="retirada-ficha-epi"><SelectValue placeholder="Selecione" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="SIM">Sim</SelectItem>
+                    <SelectItem value="NAO">Não</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="retirada-cracha">O pedido possui Crachá físico?</Label>
+                <Select value={crachaFisico} onValueChange={(valor: "SIM" | "NAO") => setCrachaFisico(valor)}>
+                  <SelectTrigger id="retirada-cracha"><SelectValue placeholder="Selecione" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="SIM">Sim</SelectItem>
+                    <SelectItem value="NAO">Não</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </CardContent>
+          </Card>
           <Button
             size="lg"
             className="h-14 w-full text-base"
-            disabled={confirmar.isPending}
+            disabled={confirmar.isPending || !fichaEpiFisica || !crachaFisico}
             onClick={() => confirmar.mutate()}
           >
             {confirmar.isPending

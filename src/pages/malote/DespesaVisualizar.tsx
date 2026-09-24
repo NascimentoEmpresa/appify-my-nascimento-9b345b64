@@ -5,6 +5,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { SearchableSelect } from "@/components/ui/searchable-select";
@@ -24,6 +25,7 @@ import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/hooks/useAuth";
+import { AcessoGate } from "@/components/auth/AcessoGate";
 import {
   useDespesa,
   useDespesaEventos,
@@ -54,6 +56,7 @@ import {
   souAprovadorConfiguradoComRateio,
   souLancadorDespesa,
   classificacaoTemLancadorConfigurado,
+  useAjusteAdministrativoDespesa,
   STATUS_LABEL,
   STATUS_BADGE_CLASS,
   STATUS_TERMINAIS,
@@ -63,6 +66,7 @@ import {
   TipoSolicitacao,
   DespesaEvento,
   TipoEvento,
+  StatusDespesa,
 } from "@/hooks/useMaloteDespesa";
 import { useOrcadoClassificacao, useOrcadoClassificacaoMultiMes } from "@/hooks/useOrcadoClassificacao";
 import { useMaloteConfig, usePrazoNormalInclusao, useSouGerenteFinanceiroMalote, exigeJustificativaPorConferenciaAtrasada } from "@/hooks/useMaloteConfig";
@@ -322,6 +326,10 @@ export default function DespesaVisualizar() {
   // linha do Rateio em ajuste_pagamento.
   const { data: empresas = [] } = useEmpresasGrupo();
   const cancelar = useCancelarDespesa();
+  const ajusteAdministrativo = useAjusteAdministrativoDespesa();
+  const [ajusteAdminAberto, setAjusteAdminAberto] = useState(false);
+  const [ajusteAdminNovoStatus, setAjusteAdminNovoStatus] = useState<StatusDespesa | "">("");
+  const [ajusteAdminMotivo, setAjusteAdminMotivo] = useState("");
   const reenviar = useMandarParaAprovacaoNovamente();
   const salvarEdicaoPosAprovacao = useSalvarEdicaoPosAprovacao();
   const atualizarDatasParcelas = useAtualizarDatasParcelas();
@@ -558,8 +566,14 @@ export default function DespesaVisualizar() {
   // SIS-2026-0340 (uma vez configurado, só o lançador age — não os dois):
   // em necessidade_de_ajuste, se a Classificação tem lançador configurado,
   // é ele (não o solicitante) quem edita. Fora desse status, nada muda.
+  // SIS-2026-0511 (Juliana): mesma extensão pro irmão do lado do pagamento
+  // — "ajuste_pagamento" (devolvida pela Conferência de Pagamento) tinha
+  // ficado de fora do SIS-2026-0378 por esquecimento, deixando quem paga
+  // sem o botão de corrigir quando a Classificação tem lançador configurado
+  // (o pedido caía só no solicitante da cotação).
   const podeCorrigirNecessidadeDeAjuste =
-    despesa.status === "necessidade_de_ajuste" && classificacaoTemLancadorConfigurado(despesa)
+    (despesa.status === "necessidade_de_ajuste" || despesa.status === "ajuste_pagamento") &&
+    classificacaoTemLancadorConfigurado(despesa)
       ? souLancadorDespesa(despesa, user?.id)
       : souSolicitante;
   // SIS-2026-0250: Carol age em exceção como reforço a partir do Nível 2
@@ -651,7 +665,9 @@ export default function DespesaVisualizar() {
   // CHECK só bloqueia rateio de despesa PARCELADA num status de pagamento —
   // não-parcelada sempre passou, então nenhuma migration nova foi
   // necessária, só liberar aqui na UI.
-  const rateioRestritoEditavel = souSolicitante && despesa.status === "ajuste_pagamento" && !despesa.parcelado;
+  // SIS-2026-0511: acompanha a mesma extensão de podeCorrigirNecessidadeDeAjuste
+  // acima — antes só o solicitante, agora o lançador configurado também.
+  const rateioRestritoEditavel = podeCorrigirNecessidadeDeAjuste && despesa.status === "ajuste_pagamento" && !despesa.parcelado;
   // SIS-2026-0223 (complemento 3, pedido do usuário): pra despesa
   // parcelada, o Rateio só é editável na fase de lançamento — depois que
   // entra em fase de pagamento (mesma fronteira de
@@ -1466,6 +1482,27 @@ export default function DespesaVisualizar() {
         breadcrumb={["Malote", "Despesa", "Visualizar"]}
         actions={
           <div className="flex items-center gap-2">
+            {/* [SEM-CHAMADO] (Iury): "aprovador master" fantasma — só quem
+                tem a ação 'ajuste_administrativo' (hoje só o Iury) vê este
+                botão. Uso raro e atípico, por isso um AcessoGate próprio em
+                vez do `can()` do contexto geral — essa ação não faz parte
+                do conjunto pré-carregado ali. */}
+            {!despesa.deleted_at && (
+              <AcessoGate menu="malote_despesa_visualizar" acao="ajuste_administrativo">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="gap-1.5"
+                  onClick={() => {
+                    setAjusteAdminNovoStatus("");
+                    setAjusteAdminMotivo("");
+                    setAjusteAdminAberto(true);
+                  }}
+                >
+                  <AlertTriangle className="h-3.5 w-3.5" /> Ajuste administrativo
+                </Button>
+              </AcessoGate>
+            )}
             {!despesa.deleted_at && can("excluir", "malote", "malote_despesa_visualizar") && (
               <Button
                 variant="outline"
@@ -2490,6 +2527,75 @@ export default function DespesaVisualizar() {
             </Button>
             <Button size="sm" onClick={handleConfirmarPagamento} disabled={pagando}>
               {pagando ? "Confirmando..." : "Confirmar pagamento"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* [SEM-CHAMADO]: "aprovador master" — move a despesa direto pro
+          status escolhido, fora do fluxo normal de aprovação. Fica
+          registrado na timeline com o mesmo tipo_evento que os ajustes
+          feitos por SQL já usavam (ver useAjusteAdministrativoDespesa). */}
+      <Dialog open={ajusteAdminAberto} onOpenChange={setAjusteAdminAberto}>
+        <DialogContent className="sm:max-w-sm p-5">
+          <DialogHeader>
+            <DialogTitle>Ajuste administrativo</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <p className="text-xs text-muted-foreground">
+              Move a despesa direto para o status escolhido, sem passar pelo fluxo normal de aprovação. Use só em
+              caso atípico — fica registrado no histórico com o motivo abaixo.
+            </p>
+            <div>
+              <Label className="text-xs">Status atual</Label>
+              <p className="text-sm font-medium">{STATUS_LABEL[despesa.status]}</p>
+            </div>
+            <div>
+              <Label className="text-xs">Novo status</Label>
+              <Select value={ajusteAdminNovoStatus} onValueChange={(v) => setAjusteAdminNovoStatus(v as StatusDespesa)}>
+                <SelectTrigger className="h-9"><SelectValue placeholder="Selecione…" /></SelectTrigger>
+                <SelectContent>
+                  {(Object.keys(STATUS_LABEL) as StatusDespesa[])
+                    .filter((s) => s !== despesa.status)
+                    .map((s) => (
+                      <SelectItem key={s} value={s}>{STATUS_LABEL[s]}</SelectItem>
+                    ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label className="text-xs">Motivo</Label>
+              <Textarea
+                value={ajusteAdminMotivo}
+                onChange={(e) => setAjusteAdminMotivo(e.target.value.slice(0, 300))}
+                placeholder="Por que essa despesa está sendo movida fora do fluxo normal..."
+                maxLength={300}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" size="sm" onClick={() => setAjusteAdminAberto(false)} disabled={ajusteAdministrativo.isPending}>
+              Cancelar
+            </Button>
+            <Button
+              size="sm"
+              disabled={ajusteAdministrativo.isPending || !ajusteAdminNovoStatus || !ajusteAdminMotivo.trim()}
+              onClick={async () => {
+                if (!ajusteAdminNovoStatus) return;
+                try {
+                  await ajusteAdministrativo.mutateAsync({
+                    id: despesa.id,
+                    novoStatus: ajusteAdminNovoStatus,
+                    motivo: ajusteAdminMotivo,
+                  });
+                  toast.success("Despesa movida por ajuste administrativo.");
+                  setAjusteAdminAberto(false);
+                } catch (e: any) {
+                  toast.error(e.message ?? "Erro ao aplicar o ajuste administrativo.");
+                }
+              }}
+            >
+              {ajusteAdministrativo.isPending ? "Aplicando..." : "Confirmar ajuste"}
             </Button>
           </DialogFooter>
         </DialogContent>

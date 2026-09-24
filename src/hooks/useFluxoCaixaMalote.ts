@@ -116,6 +116,11 @@ export interface AjusteFluxoCaixaInput {
   empresaId?: string | null;
   bancoId?: string | null;
   formaPagamento?: string | null;
+  // SIS-2026-0492: adicionado depois do SIS-2026-0489 original — a
+  // conciliação com o Fluxo de Caixa interno precisa poder corrigir o
+  // valor de um lançamento (divergência de "VALOR SIMILAR"), coisa que o
+  // pedido original de edição de linha não previa.
+  valor?: number | null;
 }
 
 // Upsert manual (não usa .upsert()/on_conflict do PostgREST): numero_parcela
@@ -145,6 +150,7 @@ export function useAjustarLinhaFluxoCaixa() {
         empresa_id: campos.empresaId,
         banco_id: campos.bancoId,
         forma_pagamento: campos.formaPagamento,
+        valor: campos.valor,
       };
       // Só grava os campos que quem chamou de fato passou — os outros
       // continuam com o que já estava salvo no ajuste (ou null, se for

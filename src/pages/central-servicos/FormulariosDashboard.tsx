@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
+import { lerTodasRespostas } from "@/lib/formularios/respostasTodas";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import type { SupabaseClient } from "@supabase/supabase-js";
@@ -112,7 +113,7 @@ export default function FormulariosDashboard() {
     setLoading(true);
     const [fRes, rRes, dRes] = await Promise.all([
       db.from("CS_FORMULARIOS").select("*").is("deleted_at", null).order("created_at", { ascending: false }),
-      db.from("CS_FORM_RESPOSTAS").select("id, formulario_id, enviado_em, respondente_nome, itens").order("enviado_em", { ascending: false }).limit(5000),
+      lerTodasRespostas<any>("id, formulario_id, enviado_em, respondente_nome, itens"),
       db.from("CS_FORM_ACESSOS").select("config").eq("papel", "dashboard").maybeSingle(),  // RLS: só a linha do próprio usuário
     ]);
     const fs: Formulario[] = fRes.data ?? [];

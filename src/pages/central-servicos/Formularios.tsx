@@ -98,6 +98,17 @@ export function situacao(f: Formulario, respostas?: number) {
 const btn = (bg: string, c = "#fff", border = "none"): React.CSSProperties =>
   ({ padding: "6px 12px", borderRadius: 9, border, background: bg, color: c, fontSize: 12, fontWeight: 700, cursor: "pointer" });
 
+/** Respostas por formulário, contadas no banco (ver o comentário no load). */
+async function contarRespostas(): Promise<Record<string, number>> {
+  const { data: ids } = await (supabase as any).from("CS_FORMULARIOS").select("id").is("deleted_at", null);
+  const pares = await Promise.all((ids ?? []).map(async ({ id }: { id: string }) => {
+    const { count } = await (supabase as any).from("CS_FORM_RESPOSTAS")
+      .select("id", { count: "exact", head: true }).eq("formulario_id", id);
+    return [id, count ?? 0] as const;
+  }));
+  return Object.fromEntries(pares);
+}
+
 export default function Formularios() {
   const nav = useNavigate();
   const { user } = useAuth();
@@ -138,7 +149,12 @@ export default function Formularios() {
     setLoading(true);
     const [fRes, rRes, aRes] = await Promise.all([
       (supabase as any).from("CS_FORMULARIOS").select("*").is("deleted_at", null).order("created_at", { ascending: false }),
-      (supabase as any).from("CS_FORM_RESPOSTAS").select("formulario_id"),
+      // Contagem feita no banco, um HEAD por formulário. Antes baixava
+      // formulario_id de TODAS as respostas e contava aqui — só que o
+      // PostgREST corta em 1000 linhas, e com mais que isso somando todos os
+      // formulários cada card perdia algumas, sem aviso (set/2026: 13
+      // respostas aparecendo como 11).
+      contarRespostas(),
       // Lista de acesso POR formulário (migration 20260906000004). Uma
       // consulta só para todos os cards: quantas pessoas cada formulário tem
       // e qual é o MEU papel nele. A RLS de CS_FORM_ACESSOS já libera a
@@ -154,9 +170,7 @@ export default function Formularios() {
     setLoading(false);
     if (fRes.error) { toast("Erro ao carregar: " + fRes.error.message, "err"); return; }
     setForms(fRes.data ?? []);
-    const cont: Record<string, number> = {};
-    (rRes.data ?? []).forEach((r: any) => { cont[r.formulario_id] = (cont[r.formulario_id] || 0) + 1; });
-    setContagens(cont);
+    setContagens(rRes);
     const mapa: Record<string, { pessoas: number; meuPapel: string | null }> = {};
     (aRes.data ?? []).forEach((r: any) => {
       const e = (mapa[r.formulario_id] ??= { pessoas: 0, meuPapel: null });

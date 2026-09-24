@@ -62,6 +62,7 @@ import {
   brlDeCentavos,
   calcularValoresUfrgs,
   fmtData,
+  subtotaisUfrgs,
   sobreposicaoUfrgs,
   tarifaVigente,
   tituloColuna,
@@ -245,14 +246,26 @@ function CampoQt({
   valor,
   set,
   travado,
+  unitarioCentavos = null,
+  subtotalCentavos = null,
+  descontado = false,
 }: {
   chave: string;
   valor: number;
   set: (n: number) => void;
   travado: boolean;
+  /** Quanto UMA unidade vale na tarifa do sindicato. Null = ainda não há tarifa. */
+  unitarioCentavos?: number | null;
+  /** quantidade × unitário — o "total de cada um" pedido em 22/09/2026. */
+  subtotalCentavos?: number | null;
+  /** O VA não soma no Valor Total: ele é descontado do que a viagem gerou. */
+  descontado?: boolean;
 }) {
   return (
-    <Campo label={tituloColuna(chave)}>
+    <Campo
+      label={tituloColuna(chave)}
+      dica={unitarioCentavos === null ? undefined : `R$ ${brlDeCentavos(unitarioCentavos)} cada`}
+    >
       {travado ? (
         <div className="flex h-9 items-center rounded-md border border-border bg-muted/40 px-3 text-sm">
           {valor}
@@ -265,6 +278,28 @@ function CampoQt({
           onChange={(e) => set(Math.max(0, Number(e.target.value) || 0))}
           className="h-9"
         />
+      )}
+
+      {/* O total do item, logo embaixo da quantidade dele.
+          Some junto com a tarifa: sem sindicato ou sem data de saída não há
+          conta nenhuma para mostrar, e uma caixa com "R$ 0,00" ali pareceria
+          resultado — não "ainda falta escolher o sindicato". */}
+      {subtotalCentavos !== null && (
+        <div className="space-y-1">
+          <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+            Total {descontado ? "(R$, descontado)" : "(R$)"}
+          </p>
+          <div
+            className={cn(
+              "flex h-9 items-center justify-end rounded-md border px-3 text-sm font-medium tabular-nums",
+              descontado
+                ? "border-border bg-muted/40 text-muted-foreground"
+                : "border-primary/30 bg-primary/5",
+            )}
+          >
+            {brlDeCentavos(subtotalCentavos)}
+          </div>
+        </div>
       )}
     </Campo>
   );
@@ -360,10 +395,15 @@ export function DiariaUfrgsModal({
   // No modo "editar" o formulário nasce PREENCHIDO: a pessoa está corrigindo
   // um ponto específico, não redigitando a linha. Redigitar é onde nasce o
   // segundo erro.
+  //
+  // No "visualizar" também: as quantidades (Qt. Hosp., Café...) não têm
+  // `d?.qt...` próprio na tela, leem direto deste estado. Até 23/09/2026 só o
+  // "editar" carregava a linha, e quem abria uma diária para conferir via
+  // tudo zerado com o Valor Total preenchido — parecia dado perdido.
   const chave = `${modo}-${diaria?.uuid ?? "nova"}-${aberto}`;
   const [chaveAtual, setChaveAtual] = useState(chave);
   if (chave !== chaveAtual) {
-    const base = modo === "editar" ? diaria : null;
+    const base = modo === "nova" ? null : diaria;
     setChaveAtual(chave);
     setContratoId(base?.contratoId ?? "");
     setCodFornecedor(base?.codFornecedor ?? "");
@@ -428,6 +468,32 @@ export function DiariaUfrgsModal({
         ? calcularValoresUfrgs({ qtHospedagem, qtCafe, qtAlmoco, qtJanta, qtVa }, tarifa)
         : null,
     [tarifa, qtHospedagem, qtCafe, qtAlmoco, qtJanta, qtVa],
+  );
+
+  /**
+   * A tarifa que EXPLICA esta linha — não é sempre a mesma que a de cima.
+   *
+   * Enquanto se digita, vale a vigente na data de saída (é ela que o banco vai
+   * usar ao gravar). Numa diária já lançada, vale a que ficou CONGELADA nela
+   * (tarifa_id): depois de um dissídio as duas divergem, e o subtotal embaixo
+   * de "Qt. Hosp." tem que explicar o Valor Total que foi faturado, não o que
+   * a viagem custaria se acontecesse hoje.
+   */
+  const tarifaDaLinha = useMemo(
+    () =>
+      somenteLeitura && d?.tarifaId
+        ? (tarifas.find((t) => t.id === d.tarifaId) ?? tarifa)
+        : tarifa,
+    [somenteLeitura, d?.tarifaId, tarifas, tarifa],
+  );
+
+  /** O total de cada quantidade, item a item (pedido de 22/09/2026). */
+  const subtotais = useMemo(
+    () =>
+      tarifaDaLinha
+        ? subtotaisUfrgs({ qtHospedagem, qtCafe, qtAlmoco, qtJanta, qtVa }, tarifaDaLinha)
+        : null,
+    [tarifaDaLinha, qtHospedagem, qtCafe, qtAlmoco, qtJanta, qtVa],
   );
 
   const anexosMantidos = (d?.anexos ?? []).filter((a) => !anexosRemovidos.includes(a.storagePath));
@@ -921,18 +987,25 @@ export function DiariaUfrgsModal({
 
           {/* 4. Quantidades e valores */}
           <Secao numero={4} titulo="Quantidades e valores">
-            {tarifa ? (
+            {tarifaDaLinha ? (
               <div className="mb-3 flex flex-wrap items-center gap-x-4 gap-y-1 rounded-md border border-border bg-muted/30 px-3 py-2 text-[11px] text-muted-foreground">
                 <span className="font-medium text-foreground">
-                  Tarifa {tarifa.sindicato} (desde {fmtData(tarifa.vigenciaInicio)})
+                  Tarifa {tarifaDaLinha.sindicato} (desde {fmtData(tarifaDaLinha.vigenciaInicio)})
                 </span>
-                <span>Hosp. R$ {brlDeCentavos(tarifa.hospedagemCentavos)}</span>
-                <span>Café R$ {brlDeCentavos(tarifa.cafeCentavos)}</span>
-                <span>Alm. R$ {brlDeCentavos(tarifa.almocoCentavos)}</span>
-                <span>Janta R$ {brlDeCentavos(tarifa.jantaCentavos)}</span>
-                <span>VA R$ {brlDeCentavos(tarifa.vaCentavos)}</span>
+                <span>Hosp. R$ {brlDeCentavos(tarifaDaLinha.hospedagemCentavos)}</span>
+                <span>Café R$ {brlDeCentavos(tarifaDaLinha.cafeCentavos)}</span>
+                <span>Alm. R$ {brlDeCentavos(tarifaDaLinha.almocoCentavos)}</span>
+                <span>Janta R$ {brlDeCentavos(tarifaDaLinha.jantaCentavos)}</span>
+                <span>VA R$ {brlDeCentavos(tarifaDaLinha.vaCentavos)}</span>
                 <span>
-                  Tributos {((tarifa.aliquotaPis + tarifa.aliquotaCofins + tarifa.aliquotaIss) * 100).toFixed(2)}%
+                  Tributos{" "}
+                  {(
+                    (tarifaDaLinha.aliquotaPis +
+                      tarifaDaLinha.aliquotaCofins +
+                      tarifaDaLinha.aliquotaIss) *
+                    100
+                  ).toFixed(2)}
+                  %
                 </span>
               </div>
             ) : (
@@ -947,14 +1020,50 @@ export function DiariaUfrgsModal({
             )}
 
             <div className="grid gap-4 sm:grid-cols-3 lg:grid-cols-5">
-              <CampoQt chave="qtHospedagem" valor={qtHospedagem} set={setQtHospedagem} travado={somenteLeitura} />
-              <CampoQt chave="qtCafe" valor={qtCafe} set={setQtCafe} travado={somenteLeitura} />
-              <CampoQt chave="qtAlmoco" valor={qtAlmoco} set={setQtAlmoco} travado={somenteLeitura} />
-              <CampoQt chave="qtJanta" valor={qtJanta} set={setQtJanta} travado={somenteLeitura} />
+              <CampoQt
+                chave="qtHospedagem"
+                valor={qtHospedagem}
+                set={setQtHospedagem}
+                travado={somenteLeitura}
+                unitarioCentavos={tarifaDaLinha?.hospedagemCentavos ?? null}
+                subtotalCentavos={subtotais?.hospedagemCentavos ?? null}
+              />
+              <CampoQt
+                chave="qtCafe"
+                valor={qtCafe}
+                set={setQtCafe}
+                travado={somenteLeitura}
+                unitarioCentavos={tarifaDaLinha?.cafeCentavos ?? null}
+                subtotalCentavos={subtotais?.cafeCentavos ?? null}
+              />
+              <CampoQt
+                chave="qtAlmoco"
+                valor={qtAlmoco}
+                set={setQtAlmoco}
+                travado={somenteLeitura}
+                unitarioCentavos={tarifaDaLinha?.almocoCentavos ?? null}
+                subtotalCentavos={subtotais?.almocoCentavos ?? null}
+              />
+              <CampoQt
+                chave="qtJanta"
+                valor={qtJanta}
+                set={setQtJanta}
+                travado={somenteLeitura}
+                unitarioCentavos={tarifaDaLinha?.jantaCentavos ?? null}
+                subtotalCentavos={subtotais?.jantaCentavos ?? null}
+              />
               {/* Dias de VA: na planilha este número nunca existia como campo
                   — a coluna "Valor VA" trazia "=31.69*2" digitado à mão e a
                   coluna Y recuperava o 2 dividindo de volta. */}
-              <CampoQt chave="qtVa" valor={qtVa} set={setQtVa} travado={somenteLeitura} />
+              <CampoQt
+                chave="qtVa"
+                valor={qtVa}
+                set={setQtVa}
+                travado={somenteLeitura}
+                unitarioCentavos={tarifaDaLinha?.vaCentavos ?? null}
+                subtotalCentavos={subtotais?.vaCentavos ?? null}
+                descontado
+              />
             </div>
             {tentouSalvar && !temQuantidade && (
               <p className="mt-2 text-[11px] font-medium text-destructive">

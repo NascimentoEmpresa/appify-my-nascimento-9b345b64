@@ -44,6 +44,42 @@ export function formatarQuantidadeChamados(quantidade: number): string {
   return `${quantidade} ${quantidade === 1 ? "chamado" : "chamados"}`;
 }
 
+export interface ResumoLiberacaoHoraExtra {
+  aguardando_liberacao: number;
+  aguardando_validacao: number;
+  liberadas: number;
+  horas_aprovadas_min: number;
+}
+
+/**
+ * Resume os mesmos indicadores exibidos na tela de liberação. Manter o
+ * cálculo no cliente permite que o filtro por solicitante atualize os cartões
+ * junto com a tabela, sem uma nova ida ao banco a cada troca do filtro.
+ */
+export function resumirLiberacaoHoraExtra(
+  solicitacoes: Array<Pick<SolicitacaoHoraExtra, "status" | "total_previsto_min">>,
+): ResumoLiberacaoHoraExtra {
+  const liberados: StatusHoraExtra[] = ["aprovada", "aguardando_validacao", "concluida"];
+
+  return solicitacoes.reduce<ResumoLiberacaoHoraExtra>(
+    (resumo, solicitacao) => {
+      if (solicitacao.status === "aguardando_liberacao") resumo.aguardando_liberacao += 1;
+      if (solicitacao.status === "aguardando_validacao") resumo.aguardando_validacao += 1;
+      if (liberados.includes(solicitacao.status)) {
+        resumo.liberadas += 1;
+        resumo.horas_aprovadas_min += Number(solicitacao.total_previsto_min) || 0;
+      }
+      return resumo;
+    },
+    {
+      aguardando_liberacao: 0,
+      aguardando_validacao: 0,
+      liberadas: 0,
+      horas_aprovadas_min: 0,
+    },
+  );
+}
+
 export function totalHe(inicio?: string | null, fim?: string | null): number {
   if (!inicio || !fim) return 0;
   const a = paraMinutos(inicio);

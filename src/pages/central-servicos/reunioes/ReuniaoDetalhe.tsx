@@ -27,7 +27,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
 import { usePushNotifications } from "@/hooks/usePushNotifications";
 import { useReuniaoDetalhe } from "./useReuniaoDetalhe";
-import { useUsuariosAtivos, useEditarSerieRecorrente, useExcluirReunioesEmMassa, verificarConflitoSala, verificarConflitoParticipante } from "./useReunioes";
+import { useAcessoAdminReunioes, useUsuariosAtivos, useEditarSerieRecorrente, useExcluirReunioesEmMassa, verificarConflitoSala, verificarConflitoParticipante } from "./useReunioes";
 import { PautaTabela } from "./componentes/PautaTabela";
 import { TransferirPautaDialog } from "./componentes/TransferirPautaDialog";
 import { EditarDiaHorarioDialog } from "./componentes/EditarDiaHorarioDialog";
@@ -40,6 +40,7 @@ import { exportarConvocacaoPdf } from "./pdf/convocacaoPdf";
 import { exportarAtaFinalPdf } from "./pdf/ataFinalPdf";
 import { buildGoogleCalendarUrl, baixarIcs } from "@/lib/calendarExport";
 import { ETAPA_COR, ETAPA_LABEL, nomeUsuario, SALAS_PRESENCIAIS, TIPO_REUNIAO_LABEL, type ReuniaoPauta, type TipoLocalReuniao } from "./types";
+import { podeGerenciarReuniao } from "./permissao";
 
 function iniciaisUsuario(nome: string): string {
   return nome.split(/\s+/).filter(Boolean).slice(0, 2).map((p) => p[0]?.toUpperCase()).join("");
@@ -184,6 +185,7 @@ export default function ReuniaoDetalhe() {
   const { toast } = useToast();
   const { user } = useAuth();
   const push = usePushNotifications();
+  const { data: temAcessoAdmin = false } = useAcessoAdminReunioes();
   const { data: usuarios = [] } = useUsuariosAtivos();
   const [novoConvidado, setNovoConvidado] = useState("");
   const [novoPapel, setNovoPapel] = useState<"convidado" | "observador">("convidado");
@@ -223,7 +225,7 @@ export default function ReuniaoDetalhe() {
     );
   }
 
-  const podeGerenciar = user?.id === reuniao.criado_por || user?.id === reuniao.responsavel_preenchimento_user_id || user?.id === reuniao.organizador_user_id;
+  const podeGerenciar = podeGerenciarReuniao(user?.id, reuniao, temAcessoAdmin);
   const souParticipante = podeGerenciar || convidados.some((c) => c.user_id === user?.id);
   const reuniaoEncerrada = reuniao.etapa === "concluida" || reuniao.etapa === "cancelada";
   const opcoesConvidaveis = usuarios

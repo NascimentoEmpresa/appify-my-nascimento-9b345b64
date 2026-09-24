@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseOfxAmount, parseOFX } from "@/pages/financeiro/ConciliacaoBancaria";
+import { parseOfxAmount, parseOFX } from "@/lib/conciliacaoBancariaEngine";
 
 // SIS-2026-0344 (achado real, usuária testando extratos do Bradesco): o
 // regex antigo do parser só aceitava dígito/"-"/"." em TRNAMT — um valor
@@ -87,5 +87,58 @@ VERSION:102
     const txns = parseOFX(OFX_BRADESCO, "bradesco-hagg");
     expect(txns.find((t) => t.memo.includes("NASCIMENTO SERVICOS"))?.tipo).toBe("ENTRADA");
     expect(txns.find((t) => t.memo.includes("GASTOS CARTAO"))?.tipo).toBe("SAÍDA");
+  });
+
+  // SIS-2026-0491 (Iury, correção): só o rótulo "BB Rende Fácil" em si deve
+  // ser ignorado no extrato — "Aplicação BB CDB DI" e "Resgate BB CDB DI" são
+  // movimentações normais e devem continuar contabilizadas na conciliação
+  // (a usuária corrigiu o pedido inicial, que confundia as duas coisas).
+  it("ignora só o rótulo BB Rende Fácil, mas conta Aplicação/Resgate BB CDB DI normalmente", () => {
+    const OFX_BB = `
+<OFX>
+<BANKMSGSRSV1>
+<STMTTRNRS>
+<STMTRS>
+<BANKTRANLIST>
+<STMTTRN>
+<TRNTYPE>DEBIT
+<DTPOSTED>20260709120000
+<TRNAMT>-5000,00
+<FITID>1
+<MEMO>Aplicação BB CDB DI
+</STMTTRN>
+<STMTTRN>
+<TRNTYPE>CREDIT
+<DTPOSTED>20260710120000
+<TRNAMT>5000,00
+<FITID>2
+<MEMO>Resgate BB CDB DI
+</STMTTRN>
+<STMTTRN>
+<TRNTYPE>CREDIT
+<DTPOSTED>20260710120500
+<TRNAMT>0,15
+<FITID>3
+<MEMO>RENDIMENTO BB RENDE FACIL
+</STMTTRN>
+<STMTTRN>
+<TRNTYPE>CREDIT
+<DTPOSTED>20260711120000
+<TRNAMT>1200,00
+<FITID>4
+<MEMO>PIX RECEBIDO REM: CLIENTE X
+</STMTTRN>
+</BANKTRANLIST>
+</STMTRS>
+</STMTTRNRS>
+</BANKMSGSRSV1>
+</OFX>
+`;
+    const txns = parseOFX(OFX_BB, "bb-hagg");
+    expect(txns).toHaveLength(3);
+    expect(txns.find((t) => t.memo.includes("Aplicação"))).toBeTruthy();
+    expect(txns.find((t) => t.memo.includes("Resgate"))).toBeTruthy();
+    expect(txns.find((t) => t.memo.includes("PIX RECEBIDO"))).toBeTruthy();
+    expect(txns.find((t) => t.memo.includes("RENDE FACIL"))).toBeUndefined();
   });
 });

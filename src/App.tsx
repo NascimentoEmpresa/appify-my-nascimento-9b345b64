@@ -108,6 +108,7 @@ import Cobrancas from "./pages/cobrancas/Cobrancas";
 import RelatorioServicos from "./pages/financeiro/RelatorioServicos";
 import FluxoCaixa from "./pages/financeiro/FluxoCaixa";
 import FluxoCaixaGestao from "./pages/financeiro/FluxoCaixaGestao";
+import ConciliacaoAutomaticaFluxoCaixa from "./pages/financeiro/ConciliacaoAutomaticaFluxoCaixa";
 import CartaoCredito from "./pages/financeiro/CartaoCredito";
 import DebitoAutomatico from "./pages/financeiro/DebitoAutomatico";
 import ExtratorBeneficios from "./pages/financeiro/ExtratorBeneficios";
@@ -256,6 +257,7 @@ import InboxAprovacoes from "./pages/aprovacoes/Inbox";
 import SolicitacoesErp from "./pages/sistemas/SolicitacoesErp";
 import SolicitacoesHoraExtra from "./pages/sistemas/hora-extra/SolicitacoesHoraExtra";
 import LiberacaoHoraExtra from "./pages/sistemas/hora-extra/LiberacaoHoraExtra";
+import DashboardHoraExtra from "./pages/sistemas/hora-extra/DashboardHoraExtra";
 import CentralServicos from "./pages/central-servicos/CentralServicos";
 import MeusChamados from "./pages/chamados/MeusChamados";
 import AbrirChamado from "./pages/chamados/AbrirChamado";
@@ -440,6 +442,7 @@ const App = () => (
             <Route path="sistemas/solicitacoes-erp" element={<SolicitacoesErp />} />
             <Route path="sistemas/hora-extra" element={<SolicitacoesHoraExtra />} />
             <Route path="sistemas/hora-extra/liberacao" element={<LiberacaoHoraExtra />} />
+            <Route path="sistemas/hora-extra/liberacao/dashboards" element={<DashboardHoraExtra />} />
             {/* Chamados de Sistemas (help desk) — telas de abrir/meus chamados também
                 aparecem na Central de Serviços; gestão fica só aqui em Sistemas. */}
             {/* A tela do solicitante mora na Central de Serviços. Estas duas
@@ -681,6 +684,7 @@ const App = () => (
             <Route path="financeiro/conta-garantida" element={<ContaGarantida />} />
             <Route path="financeiro/fluxo-caixa" element={<FluxoCaixa />} />
             <Route path="financeiro/gestao-financeira/fluxo-caixa" element={<FluxoCaixaGestao />} />
+            <Route path="financeiro/gestao-financeira/conciliacao-fluxo-caixa" element={<ConciliacaoAutomaticaFluxoCaixa />} />
             <Route path="financeiro/gestao-financeira/debito-automatico" element={<DebitoAutomatico />} />
             <Route path="financeiro/gestao-financeira/extrator-beneficios" element={<ExtratorBeneficios />} />
             <Route path="financeiro/checklist-faturamento" element={<ChecklistFaturamento />} />

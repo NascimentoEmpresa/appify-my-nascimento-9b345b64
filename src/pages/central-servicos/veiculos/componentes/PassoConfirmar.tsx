@@ -78,18 +78,19 @@ export function PassoConfirmar({
         <div className="flex items-start gap-2">
           <Gauge className="mt-0.5 h-5 w-5 shrink-0 text-amber-600" />
           <p className="text-sm text-foreground">
-            <b>Antes de sair com o carro:</b> registre o KM do painel e anexe a foto.
-            Ao voltar, informe o KM final e outra foto — sem isso não dá para agendar outro veículo.
+            <b>KM do painel na retirada:</b> se já estiver com o carro, registre agora; se não, deixe em
+            branco e preencha depois na viagem, em <b>Meus Agendamentos</b>. Ao voltar, informe o KM final
+            e outra foto — sem isso não dá para agendar outro veículo.
           </p>
         </div>
         <div className="grid gap-3 sm:grid-cols-2">
           <div className="space-y-1.5">
-            <Label htmlFor="km-inicial">KM inicial (painel) *</Label>
+            <Label htmlFor="km-inicial">KM inicial (painel) — opcional agora</Label>
             <Input id="km-inicial" inputMode="numeric" placeholder="Ex.: 84512" value={kmInicial}
-                   onChange={(e) => onMudar({ kmInicial: e.target.value.replace(/D/g, "") })} />
+                   onChange={(e) => onMudar({ kmInicial: e.target.value.replace(/\D/g, "") })} />
           </div>
           <div className="space-y-1.5">
-            <Label htmlFor="foto-km">Foto do painel *</Label>
+            <Label htmlFor="foto-km">Foto do painel — opcional agora</Label>
             <label htmlFor="foto-km"
                    className="flex h-10 cursor-pointer items-center gap-2 rounded-md border border-input bg-background px-3 text-sm text-muted-foreground hover:bg-muted/50">
               <Camera className="h-4 w-4 shrink-0 text-amber-600" />

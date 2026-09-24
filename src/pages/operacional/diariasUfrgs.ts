@@ -152,6 +152,39 @@ export interface QuantidadesUfrgs {
   qtVa: number;
 }
 
+/**
+ * Quanto cada quantidade vale sozinha: qtd × a tarifa do sindicato.
+ *
+ * É o "campo de total abaixo de cada quantidade" pedido em 22/09/2026 —
+ * digitar 3 hospedagens num sindicato de R$ 20,00 mostra R$ 60,00 embaixo do
+ * campo, sem a pessoa precisar abrir a tabela do contrato para conferir de
+ * onde saiu o Valor Total.
+ *
+ * Mora aqui, e não na tela, porque é a MESMA conta do parêntese de
+ * R8 = ($N$6*N8)+($O$6*O8)+($P$6*P8)+($Q$6*Q8): calcularValoresUfrgs() soma o
+ * que esta função devolve, então os quatro subtotais SEMPRE fecham com o
+ * Valor Total exibido ao lado. Duplicar a multiplicação na tela era o
+ * caminho curto para um subtotal que não bate com o total logo abaixo dele.
+ */
+export interface SubtotaisUfrgs {
+  hospedagemCentavos: number;
+  cafeCentavos: number;
+  almocoCentavos: number;
+  jantaCentavos: number;
+  /** Entra no Valor VA, que é DESCONTADO — não soma no Valor Total. */
+  vaCentavos: number;
+}
+
+export function subtotaisUfrgs(q: QuantidadesUfrgs, tarifa: TarifaUfrgs): SubtotaisUfrgs {
+  return {
+    hospedagemCentavos: tarifa.hospedagemCentavos * (q.qtHospedagem || 0),
+    cafeCentavos: tarifa.cafeCentavos * (q.qtCafe || 0),
+    almocoCentavos: tarifa.almocoCentavos * (q.qtAlmoco || 0),
+    jantaCentavos: tarifa.jantaCentavos * (q.qtJanta || 0),
+    vaCentavos: tarifa.vaCentavos * (q.qtVa || 0),
+  };
+}
+
 export interface ValoresUfrgs {
   /** Coluna R — "Valor Total". */
   valorTotalCentavos: number;
@@ -205,12 +238,10 @@ export function calcularValoresUfrgs(
   q: QuantidadesUfrgs,
   tarifa: TarifaUfrgs,
 ): ValoresUfrgs {
+  const s = subtotaisUfrgs(q, tarifa);
   const valorTotalCentavos =
-    tarifa.hospedagemCentavos * (q.qtHospedagem || 0) +
-    tarifa.cafeCentavos * (q.qtCafe || 0) +
-    tarifa.almocoCentavos * (q.qtAlmoco || 0) +
-    tarifa.jantaCentavos * (q.qtJanta || 0);
-  const valorVaCentavos = tarifa.vaCentavos * (q.qtVa || 0);
+    s.hospedagemCentavos + s.cafeCentavos + s.almocoCentavos + s.jantaCentavos;
+  const valorVaCentavos = s.vaCentavos;
   const valorLiquidoCentavos = valorTotalCentavos - valorVaCentavos;
   const f = aliquotaTotal(tarifa);
   const tributosCentavos = arredondar((valorLiquidoCentavos * f) / (1 - f));
