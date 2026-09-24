@@ -117,7 +117,7 @@ export default function ControleJuros() {
           }
         />
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           <KpiTile label="Total de despesas com juros" valor={String(kpis.totalDespesas)} icon={<FileText />} cor="slate" />
           <KpiTile label="Juros pendentes de cobrança" valor={formatBRL(kpis.valorPendente)} sub={`${kpis.qtdPendente} despesa${kpis.qtdPendente === 1 ? "" : "s"}`} icon={<Clock />} cor="amber" valorClass="text-amber-600 dark:text-amber-400" />
           <KpiTile label="Juros já cobrados" valor={formatBRL(kpis.valorCobrado)} sub={`${kpis.qtdCobrado} despesa${kpis.qtdCobrado === 1 ? "" : "s"}`} icon={<CheckCircle2 />} cor="emerald" valorClass="text-emerald-600 dark:text-emerald-400" />
