@@ -132,6 +132,20 @@ export const ajudaReferencia = (m?: string | null): string =>
 /** O nome do escolhido só é exibido quando a vaga é de Substituição. */
 export const mostraNomeReferencia = (m?: string | null): boolean => ehSubstituicao(m);
 
+// ── Quem aparece na busca de colaborador da vaga ────────────────────────
+// Até 24/09/2026 a busca filtrava `Situação = "Trabalhando"`, e quem estava
+// de atestado (férias, licença...) sumia — justamente quem às vezes precisa
+// ser substituído. A regra do RH: só fica de fora quem está DEMITIDO (7) ou
+// em AUXÍLIO DOENÇA (3); qualquer outra situação aparece. Códigos do Senior
+// (`EMPREGADOS."Cod Situacao"`, ver migration 20260906000010).
+//
+// Cadastro sem código (carga histórica/admissão feita à mão, que o robo do
+// Senior não preenche) cai na regra antiga: só se estiver "Trabalhando".
+export const SITUACOES_FORA_DA_VAGA = [3, 7];
+export const FILTRO_EMPREGADO_VAGA =
+  `"Cod Situacao".not.in.(${SITUACOES_FORA_DA_VAGA.join(",")}),` +
+  `and("Cod Situacao".is.null,"Situação".eq.Trabalhando)`;
+
 // ── Substituído só pode estar em UMA vaga ───────────────────────────────
 // Um colaborador não pode ser escolhido para substituição se já existe vaga
 // de substituição dele em pé. Reprovada e Cancelada não seguram ninguém: não

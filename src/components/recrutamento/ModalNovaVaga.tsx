@@ -41,7 +41,7 @@ import {
   cargoExigeCnh, aplicarReqCnh, REQ_CNH_TEXTO,
   rotuloReferencia, ajudaReferencia, mostraNomeReferencia, contratoDoEmpregado, rotuloContrato,
   faltamCamposManuais, podeVagaAdministrativa, statusInicialVaga, contratoEhAdministrativo, setorDoCatalogo,
-  substituidosComVagaViva, avisoSubstituidoPreso,
+  substituidosComVagaViva, avisoSubstituidoPreso, FILTRO_EMPREGADO_VAGA,
 } from "@/lib/recrutamento/vagaRegras";
 import { maskFone } from "@/lib/telefone";
 import { AlertTriangle, CheckCircle2, Undo2, PenLine, Ban, Link2, Car } from "lucide-react";
@@ -304,7 +304,7 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
     const { data, error } = await db
       .from("EMPREGADOS")
       .select('"ID", "Nome", "Empresa", "Filial", "Nome Filial", "Título do Cargo", "Valor Salário", "% Insalubridade", "Escala"')
-      .eq("Situação", "Trabalhando")
+      .or(FILTRO_EMPREGADO_VAGA)
       .ilike("Nome", `%${term}%`)
       .order('"Nome"')
       .limit(50);
