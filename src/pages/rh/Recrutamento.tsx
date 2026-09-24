@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback, type MouseEvent as ReactMouseEvent, type CSSProperties, type ReactNode } from "react";
+import { useState, useEffect, useMemo, useRef, useCallback, type MouseEvent as ReactMouseEvent, type CSSProperties, type ReactNode } from "react";
 import {
   Activity, AlertTriangle, Ban, Building2, CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, ClipboardList, Clock, Eye, FileText,
   FolderOpen, GraduationCap, History, IdCard, Landmark, Link2, LogOut, Mail, MapPin, MessageSquare, Paperclip,
@@ -53,6 +53,11 @@ interface Solicitacao {
   alta_rotatividade?: string;
   motivos_saida?: string;
   recomendacao?: string;
+  /** Recomendação estruturada (17/09/2026): quem indicou alguém para a vaga. */
+  tem_recomendacao?: boolean;
+  recomendacao_nome?: string | null;
+  recomendacao_cpf?: string | null;
+  recomendacao_whatsapp?: string | null;
   observacao_importante?: string;
   observacao_interna?: string;
   motivo_reprovacao?: string;
@@ -199,9 +204,18 @@ function esc(s: unknown): string {
     .replace(/>/g, "&gt;");
 }
 
+/**
+ * Data no padrão do resto da tela: DD/MM/AAAA (24/09/2026 — antes saía
+ * "2026-09-23", cortando o texto ISO). Timestamp vira a data LOCAL (um
+ * created_at de 22h UTC é o mesmo dia em Brasília); "AAAA-MM-DD" puro não
+ * passa pelo Date para o fuso não voltar um dia.
+ */
 function fmtDt(s?: string) {
   if (!s) return "—";
-  return s.replace("T", " ").slice(0, 10);
+  const soData = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
+  if (soData) return `${soData[3]}/${soData[2]}/${soData[1]}`;
+  const d = new Date(s);
+  return isNaN(+d) ? s.replace("T", " ").slice(0, 10) : d.toLocaleDateString("pt-BR");
 }
 
 /**
@@ -853,6 +867,27 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
       if (nm) setMsgs(nm);
     }, 5000);
   }, [loadCandidatos]);
+
+  // ‹ › no topo do detalhe (24/09/2026): passa as vagas uma a uma, na MESMA
+  // ordem da tela aberta (tabela da página atual ou colunas do kanban).
+  const listaNavegavel = useMemo<Solicitacao[]>(
+    () => (view === "tabela" ? items : Object.values(kanbanData).flat()),
+    [view, items, kanbanData],
+  );
+  const posNaLista = drawerId == null ? -1 : listaNavegavel.findIndex((x) => x.id === drawerId);
+  const vagaAnterior = posNaLista > 0 ? listaNavegavel[posNaLista - 1] : null;
+  const vagaSeguinte = posNaLista >= 0 && posNaLista < listaNavegavel.length - 1 ? listaNavegavel[posNaLista + 1] : null;
+  useEffect(() => {
+    if (drawerId == null) return;
+    const tecla = (e: KeyboardEvent) => {
+      const alvo = e.target as HTMLElement | null;
+      if (alvo && (/^(INPUT|TEXTAREA|SELECT)$/.test(alvo.tagName) || alvo.isContentEditable)) return;
+      if (e.key === "ArrowLeft" && vagaAnterior) { e.preventDefault(); verDetalhe(vagaAnterior.id); }
+      if (e.key === "ArrowRight" && vagaSeguinte) { e.preventDefault(); verDetalhe(vagaSeguinte.id); }
+    };
+    window.addEventListener("keydown", tecla);
+    return () => window.removeEventListener("keydown", tecla);
+  }, [drawerId, vagaAnterior, vagaSeguinte, verDetalhe]);
 
   const fecharDrawer = () => {
     setDrawerId(null);
@@ -1736,8 +1771,9 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
           {s.administrativa ? di("Tipo de vaga", "Administrativa (escritório)") : null}
           {/* O setor só existe na vaga administrativa: é o da Diretoria que aprova. */}
           {s.administrativa ? di("Setor", s.setor) : null}
-          {di("Escala", s.escala)}
-          {di("Horário", s.horario)}
+          {/* Horário saiu do formulário em 16/09/2026 (a escala já traz a
+              jornada); vaga antiga ainda tem os dois, e aparecem juntos. */}
+          {di("Escala / horário", [s.escala, s.horario].map((x) => String(x ?? "").trim()).filter(Boolean).join(" · "))}
           {di("Salário", s.salario)}
           {di("Benefícios", s.beneficios, true)}
           {di("Insalubridade", s.insalubridade_recebe + (s.insalubridade_quanto ? " — " + s.insalubridade_quanto : ""))}
@@ -1774,7 +1810,14 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
           {di("Alta Rotatividade", s.alta_rotatividade)}
         </div>
         {dd("Motivos de Saída", s.motivos_saida)}
-        {dd("Recomendação", s.recomendacao)}
+        {s.tem_recomendacao
+          ? dd("Recomendação", [
+              s.recomendacao_nome ? `Indicado(a): ${s.recomendacao_nome}` : "",
+              s.recomendacao_cpf ? `CPF: ${s.recomendacao_cpf}` : "",
+              s.recomendacao_whatsapp ? `WhatsApp: ${s.recomendacao_whatsapp}` : "",
+              String(s.recomendacao ?? "").trim() && !/^(n[aã]o|-|—|\.+)$/i.test(String(s.recomendacao).trim()) ? `Observação: ${s.recomendacao}` : "",
+            ].filter(Boolean).join("\n"))
+          : dd("Recomendação", s.recomendacao)}
         {dd("Observação Importante", s.observacao_importante)}
         {dd("Motivo de Reprovação", s.motivo_reprovacao)}
         {s.status === "Funcionário Selecionado" && dd("Funcionário Selecionado", s.funcionario_selecionado)}
@@ -2430,7 +2473,23 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
             {/* Head */}
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 20px", borderBottom: "1px solid #e2e8f0", flexShrink: 0, gap: 10, flexWrap: "wrap", background: "#f8fafc" }}>
               <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                <span style={{ fontSize: 13, color: "#94a3b8", fontWeight: 700 }}>Solicitação #{drawerId}</span>
+                {/* ‹ › — também pelas setas do teclado */}
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 2 }}>
+                  <button type="button" aria-label="Vaga anterior" title="Vaga anterior (←)" disabled={!vagaAnterior}
+                    onClick={() => vagaAnterior && verDetalhe(vagaAnterior.id)}
+                    style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 28, height: 28, borderRadius: 8, border: "1px solid #e2e8f0", background: "#fff", color: vagaAnterior ? "#0f3171" : "#cbd5e1", cursor: vagaAnterior ? "pointer" : "default" }}>
+                    <ChevronLeft size={16} aria-hidden />
+                  </button>
+                  <span style={{ fontSize: 13, color: "#94a3b8", fontWeight: 700, padding: "0 6px", whiteSpace: "nowrap" }}>
+                    Solicitação #{drawerId}
+                    {posNaLista >= 0 && <span style={{ fontWeight: 600, color: "#cbd5e1" }}> · {posNaLista + 1}/{listaNavegavel.length}</span>}
+                  </span>
+                  <button type="button" aria-label="Próxima vaga" title="Próxima vaga (→)" disabled={!vagaSeguinte}
+                    onClick={() => vagaSeguinte && verDetalhe(vagaSeguinte.id)}
+                    style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 28, height: 28, borderRadius: 8, border: "1px solid #e2e8f0", background: "#fff", color: vagaSeguinte ? "#0f3171" : "#cbd5e1", cursor: vagaSeguinte ? "pointer" : "default" }}>
+                    <ChevronRight size={16} aria-hidden />
+                  </button>
+                </span>
                 {drawerSol && <span className={`rec-badge ${badgeStatusCls(drawerSol.status)}`}>{drawerSol.status}</span>}
                 {drawerSol?.grau_urgencia && <span className={`rec-badge ${badgeUrgCls(drawerSol.grau_urgencia)}`}>{drawerSol.grau_urgencia.startsWith("Alta") ? <><Ic i={Zap} />Alta</> : drawerSol.grau_urgencia}</span>}
                 {drawerSol && renderEtiquetas(drawerSol)}

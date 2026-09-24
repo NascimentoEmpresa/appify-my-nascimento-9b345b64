@@ -371,6 +371,7 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
     buscarCustoDoPosto(supabase, {
       contrato: vaga.contrato, posto: postoNomeEscolhido,
       cargo: emp?.["Título do Cargo"] ?? vaga.cargo, salario: emp?.["Valor Salário"] ?? vaga.salario, cidade: vaga.cidade || null,
+      escala: vaga.escala || null,
     }).then(custo => {
       if (!vivo) return;
       const insal = insalubridadeDoCusto(custo, emp?.["% Insalubridade"], emp?.["Valor Salário"]);
@@ -379,7 +380,7 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
     }).finally(() => { if (vivo) setCustoBuscando(false); });
     return () => { vivo = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [postoNomeEscolhido, vaga.contrato, empEscolhido, vagaManual]);
+  }, [postoNomeEscolhido, vaga.contrato, empEscolhido, vagaManual, vaga.escala]);
 
   const selecionarEmpregado = (emp: EmpregadoRef, motivo: string = vaga.motivo_vaga, contratos: Record<string, unknown>[] = contratosFull) => {
     const jaTem = ehSubstituicao(motivo) ? presos.get(Number(emp.ID)) : undefined;

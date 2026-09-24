@@ -17,6 +17,7 @@ import {
 } from "@/hooks/useTreinamentosPlataforma";
 import { MENU, ROTULO_TIPO_CONTEUDO, type Modulo } from "./tipos";
 import { TrnCarregando, TrnEstilo, TrnHero } from "./ui";
+import CursoPublico from "./CursoPublico";
 
 // =====================================================================
 // TREINAMENTOS — Cursos › Visualização do curso.
@@ -143,6 +144,9 @@ export default function CursoDetalhe() {
                 <label className="flex items-center gap-2"><Switch checked={curso.comentarios_habilitados} onCheckedChange={(v) => toggle("comentarios_habilitados", v)} /> Comentários habilitados</label>
               </div>
             </AcessoGate>
+
+            {/* Publicar não libera para todos (24/09/2026): quem vê é definido aqui. */}
+            <CursoPublico cursoId={curso.id} publicado={curso.publicado} />
 
             <div className="mt-6 space-y-4">
               {modulos.length === 0 && <div className="trn-vazio">Este curso ainda não tem módulos. Adicione o primeiro.</div>}

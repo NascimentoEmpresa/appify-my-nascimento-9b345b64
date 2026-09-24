@@ -557,6 +557,7 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
     buscarCustoDoPosto(supabase, {
       contrato: vaga.contrato, posto: postoNomeEscolhido,
       cargo: emp?.["Título do Cargo"] ?? vaga.cargo, salario: emp?.["Valor Salário"] ?? vaga.salario, cidade: vaga.cidade || null,
+      escala: vaga.escala || null,
     }).then(custo => {
       if (!vivo) return;
       const insal = insalubridadeDoCusto(custo, emp?.["% Insalubridade"], emp?.["Valor Salário"]);
@@ -565,7 +566,7 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
     }).finally(() => { if (vivo) setCustoBuscando(false); });
     return () => { vivo = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [postoNomeEscolhido, vaga.contrato, empEscolhido]);
+  }, [postoNomeEscolhido, vaga.contrato, empEscolhido, vaga.escala]);
 
 
   const abrirModalVaga = () => {
