@@ -11,7 +11,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { TableHeadOrdenavel } from "@/components/ui/table-head-ordenavel";
 import { DateRangeFilter } from "@/components/ui/date-range-filter";
-import { CheckCircle2, ChevronLeft, ChevronRight, Hourglass, AlertTriangle, XCircle, FileText, Users, User, X, Check } from "lucide-react";
+import { CheckCircle2, ChevronLeft, ChevronRight, Hourglass, AlertTriangle, XCircle, FileText, Users, User, X, Check, LineChart } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { cn } from "@/lib/utils";
 import {
@@ -869,17 +869,18 @@ export default function Aprovacoes({ base = "/app/malote" }: { base?: string } =
                   <TableHeadOrdenavel coluna="status" ordenacao={ordenacao} className="text-center">Status</TableHeadOrdenavel>
                   <TableHeadOrdenavel coluna="excecao" ordenacao={ordenacao}>Exceção</TableHeadOrdenavel>
                   <TableHeadOrdenavel coluna="atualizacao" ordenacao={ordenacao}>Última atualização</TableHeadOrdenavel>
+                  <TableHead className="text-center">Ações</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {isLoading && (
                   <TableRow>
-                    <TableCell colSpan={12} className="text-center text-muted-foreground py-10">Carregando...</TableCell>
+                    <TableCell colSpan={13} className="text-center text-muted-foreground py-10">Carregando...</TableCell>
                   </TableRow>
                 )}
                 {!isLoading && visiveis.length === 0 && (
                   <TableRow>
-                    <TableCell colSpan={12} className="text-center text-muted-foreground py-10">
+                    <TableCell colSpan={13} className="text-center text-muted-foreground py-10">
                       <div className="flex flex-col items-center gap-2">
                         <CheckCircle2 className="h-8 w-8 text-muted-foreground/50" />
                         Nenhum item encontrado com os filtros atuais.
@@ -897,6 +898,7 @@ export default function Aprovacoes({ base = "/app/malote" }: { base?: string } =
                     aprovadorNomes={aprovadorNomes}
                     formaEspecialPorNome={formaEspecialPorNome}
                     onAbrir={() => abrirItem(item.despesa)}
+                    onVerFluxoCaixa={() => navigate(`/app/financeiro/gestao-financeira/fluxo-caixa?busca=${encodeURIComponent(item.despesa.numero)}`)}
                   />
                 ))}
               </TableBody>
@@ -932,6 +934,7 @@ function LinhaItem({
   aprovadorNomes,
   formaEspecialPorNome,
   onAbrir,
+  onVerFluxoCaixa,
 }: {
   item: ItemLinhaMalote;
   empresaId?: string | null;
@@ -940,6 +943,7 @@ function LinhaItem({
   aprovadorNomes: (despesa: MaloteDespesaRow, nivel: 1 | 2 | 3) => string[];
   formaEspecialPorNome: Map<string, MaloteFormaPagamento>;
   onAbrir: () => void;
+  onVerFluxoCaixa: () => void;
 }) {
   const { despesa, parcela } = item;
   const { data: solicitanteNome } = useNomeUsuario(despesa.created_by);
@@ -1026,6 +1030,24 @@ function LinhaItem({
       </TableCell>
       <TableCell className="text-sm">{despesa.excecao ? <Badge variant="destructive">Sim</Badge> : "Não"}</TableCell>
       <TableCell className="text-xs text-muted-foreground">{new Date(despesa.updated_at).toLocaleString("pt-BR")}</TableCell>
+      <TableCell className="text-center">
+        {/* SIS-2026-0038 (achado do usuário): mesmo botão "Ver no Fluxo de
+            Caixa" de PagamentoMalote.tsx — Aprovações também lista despesa
+            já paga (status despesa_paga), então precisa do mesmo link. */}
+        {status === "despesa_paga" ? (
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7 text-muted-foreground hover:text-foreground"
+            title="Ver no Fluxo de Caixa"
+            onClick={(e) => { e.stopPropagation(); onVerFluxoCaixa(); }}
+          >
+            <LineChart className="h-3.5 w-3.5" />
+          </Button>
+        ) : (
+          <span className="text-muted-foreground">—</span>
+        )}
+      </TableCell>
     </TableRow>
   );
 }

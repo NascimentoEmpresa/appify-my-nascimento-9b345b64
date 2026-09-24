@@ -52,7 +52,17 @@ import {
   usePostosUfrgs,
   useTarifasUfrgs,
 } from "@/hooks/useDiariasUfrgs";
-import { StatusSolicitacao, VisualizacaoDiaria } from "./diarias";
+import { NOME_FORNECEDOR_DISPENSA } from "@/pages/malote/rateioPadrao";
+import {
+  StatusSolicitacao,
+  TIPOS_PIX,
+  TipoPix,
+  VisualizacaoDiaria,
+  erroChavePix,
+  labelTipoPix,
+  mascaraPix,
+  placeholderPix,
+} from "./diarias";
 import { AnexoLinha, Campo, Dropzone, Leitura, Secao, VisualizacoesDiaria } from "./diariaUi";
 import {
   DiariaUfrgs,
@@ -62,6 +72,7 @@ import {
   brlDeCentavos,
   calcularValoresUfrgs,
   fmtData,
+  informacoesPagamentoUfrgs,
   subtotaisUfrgs,
   sobreposicaoUfrgs,
   tarifaVigente,
@@ -375,6 +386,8 @@ export function DiariaUfrgsModal({
   const [qtAlmoco, setQtAlmoco] = useState(0);
   const [qtJanta, setQtJanta] = useState(0);
   const [qtVa, setQtVa] = useState(0);
+  const [pix, setPix] = useState("");
+  const [pixTipo, setPixTipo] = useState<TipoPix | "">("");
   const [observacoes, setObservacoes] = useState("");
   const [arquivos, setArquivos] = useState<File[]>([]);
   const [anexosRemovidos, setAnexosRemovidos] = useState<string[]>([]);
@@ -423,6 +436,8 @@ export function DiariaUfrgsModal({
     setQtAlmoco(base?.qtAlmoco ?? 0);
     setQtJanta(base?.qtJanta ?? 0);
     setQtVa(base?.qtVa ?? 0);
+    setPix(base?.pix ?? "");
+    setPixTipo(base?.pixTipo ?? "");
     setObservacoes(base?.observacoes ?? "");
     setArquivos([]);
     setAnexosRemovidos([]);
@@ -511,9 +526,13 @@ export function DiariaUfrgsModal({
 
   const temQuantidade = qtHospedagem + qtCafe + qtAlmoco + qtJanta > 0;
   const datasOk = !!saida && !!retorno && retorno >= saida;
+  // Obrigatória no modal (24/09/2026): é a chave que o Malote usa para pagar.
+  // O banco só confere o par — ver o cabeçalho da 20260930000237.
+  const erroPix = erroChavePix(pixTipo, pix);
   const camposOk =
     !!contratoId &&
     !!motoristaNome.trim() &&
+    !erroPix &&
     !!sindicato &&
     !!lotacao &&
     !!numeroOficio.trim() &&
@@ -555,7 +574,9 @@ export function DiariaUfrgsModal({
           ? "Não há tarifa cadastrada para este sindicato na data de saída."
           : !temQuantidade
             ? "Informe ao menos uma hospedagem, café, almoço ou janta."
-            : "Preencha todos os campos obrigatórios.",
+            : erroPix
+              ? erroPix
+              : "Preencha todos os campos obrigatórios.",
         variant: "destructive",
       });
       return;
@@ -579,6 +600,8 @@ export function DiariaUfrgsModal({
       qtAlmoco,
       qtJanta,
       qtVa,
+      pix: pix.trim(),
+      pixTipo,
       observacoes: observacoes.trim(),
       anexos: arquivos,
     };
@@ -872,6 +895,63 @@ export function DiariaUfrgsModal({
                   <Input value={matricula} onChange={(e) => setMatricula(e.target.value)} />
                 </Campo>
               )}
+
+              {/* Chave Pix (24/09/2026). Mesmo desenho da diária de diarista:
+                  o TIPO vem antes e decide máscara, placeholder e validação —
+                  chave Pix errada é dinheiro na conta de outra pessoa. É ela
+                  que vira "Informações de pagamento" no Malote. */}
+              {somenteLeitura ? (
+                <Leitura
+                  label={d?.pixTipo ? `Pix (${labelTipoPix(d.pixTipo)})` : "Pix"}
+                  valor={d?.pix}
+                  dica={d?.pix ? undefined : "Diária lançada antes de o sistema pedir a chave Pix."}
+                />
+              ) : (
+                <Campo
+                  label="Chave Pix"
+                  obrigatorio
+                  erro={erro(!!erroPix, erroPix ?? "")}
+                  className="sm:col-span-2 lg:col-span-3"
+                >
+                  <div className="flex gap-2">
+                    <Select
+                      value={pixTipo}
+                      onValueChange={(v) => {
+                        const novo = v as TipoPix;
+                        setPixTipo(novo);
+                        // A chave do tipo anterior não vale para o novo (um
+                        // CPF mascarado não vira e-mail): reformata o que dá
+                        // e deixa o resto para a validação.
+                        setPix((atual) => mascaraPix(novo, atual));
+                      }}
+                    >
+                      <SelectTrigger className="w-32 shrink-0">
+                        <SelectValue placeholder="Tipo" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {TIPOS_PIX.map((t) => (
+                          <SelectItem key={t.value} value={t.value}>
+                            {t.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <Input
+                      value={pix}
+                      onChange={(e) => setPix(mascaraPix(pixTipo, e.target.value))}
+                      placeholder={placeholderPix(pixTipo)}
+                      disabled={!pixTipo}
+                      inputMode={pixTipo === "email" || !pixTipo ? undefined : "numeric"}
+                      className={cn(
+                        "min-w-0 flex-1",
+                        // Erra só depois de a pessoa digitar algo: campo vazio
+                        // com borda vermelha ao abrir o modal é ruído.
+                        !!pix.trim() && !!erroPix && "border-destructive focus-visible:ring-destructive",
+                      )}
+                    />
+                  </div>
+                </Campo>
+              )}
             </div>
 
             {sobreposicao && (
@@ -1098,13 +1178,13 @@ export function DiariaUfrgsModal({
               />
             </div>
             {/* Líquido negativo existe na planilha (o VA descontado passou do
-                que a viagem gerou) e não é erro — mas não vira despesa, então
-                a tela avisa antes de a pessoa tentar enviar para o malote. */}
+                que a viagem gerou) e não é erro. Até 24/09/2026 ele impedia o
+                envio ao malote; desde a 20260930000237 a despesa é pelo Valor
+                Total, que nunca é negativo, e o aviso ficou só informativo. */}
             {(somenteLeitura ? (d?.valorLiquidoCentavos ?? 0) : (valores?.valorLiquidoCentavos ?? 0)) < 0 && (
               <p className="mt-2 flex items-start gap-1.5 text-[11px] text-warning">
                 <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-                O VA descontado é maior que o valor da viagem, então o líquido ficou negativo. A
-                diária pode ser registrada assim, mas não pode ser enviada ao malote.
+                O VA descontado é maior que o valor da viagem, então o líquido ficou negativo.
               </p>
             )}
           </Secao>
@@ -1199,15 +1279,25 @@ export function DiariaUfrgsModal({
                 empresaId={empresaContratoId ?? null}
                 ativo={!!empresaContratoId && !!classificacaoDiaria}
                 nomeInicial={d.maloteMotivo ?? `Pagamento de diária UFRGS ${d.id}`}
-                // O que sai de caixa é o Valor à Faturar (líquido + tributos)
-                // — é ele que a planilha soma em "Valor da Fatura", e a RPC
-                // recusa despesa com outro valor.
-                valorInicial={d.valorFaturarCentavos / 100}
+                // O "Total do mês" é o VALOR TOTAL da diária (pedido de
+                // 24/09/2026). Era o Valor à Faturar; a RPC recusa despesa com
+                // outro valor, e a 20260930000237 trocou a régua de lá junto.
+                valorInicial={d.valorTotalCentavos / 100}
+                // Tudo o que a diária já sabe entra pronto — e continua
+                // editável, é só o ponto de partida.
                 inicial={{
                   dataPagamento: d.maloteDataPagamento ?? "",
                   competencia: d.competencia?.slice(0, 7) ?? "",
-                  informacoesPagamento: `Diária UFRGS ${d.id} — ofício ${d.numeroOficio}, ${d.motoristaNome}`,
+                  formaPagamento: d.pix ? "Pix" : undefined,
+                  informacoesPagamento: informacoesPagamentoUfrgs(d),
                 }}
+                // O integrante do rateio é sempre o próprio motorista (é o
+                // que se escolhia à mão em toda diária enviada até aqui).
+                linhaRateioPadrao={{
+                  contrato_id: d.contratoId,
+                  integrante_empregado_id: d.motoristaEmpregadoId,
+                }}
+                fornecedorPadraoNome={NOME_FORNECEDOR_DISPENSA}
                 aoSalvar={async (payload) => onEnviarMalote(d.uuid, payload)}
                 rotuloEnviar={
                   d.status === "solicitada" ? "Aprovar e enviar para malote" : "Enviar para malote"
@@ -1438,7 +1528,7 @@ export function DiariaUfrgsModal({
                       </>
                     ) : (
                       <Button
-                        disabled={salvando || d.valorFaturarCentavos <= 0}
+                        disabled={salvando || d.valorTotalCentavos <= 0}
                         onClick={() => setEnviandoMalote(true)}
                       >
                         <Send className="mr-2 h-4 w-4" />

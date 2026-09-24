@@ -11,6 +11,7 @@ const { darCienciaPendentes } = require("./nfeCiencia");
 const { enviarPedidosPendentes } = require("./pedidoFornecedor");
 const { alertarErroWhatsapp } = require("./discordAlert");
 const { processarJobsExtratorBeneficios } = require("./extratorBeneficios");
+const { verificarSaudeBanco } = require("./saudeBanco");
 
 const CICLO_MS = 60_000;
 
@@ -90,6 +91,18 @@ async function rodarTarefas(waClient, transportador) {
     await processarJobsExtratorBeneficios(supabase);
   } catch (e) {
     console.error("[worker] erro no ciclo do extrator de beneficios:", e);
+  }
+  try {
+    // 24/09/2026: vigia da saude do banco. Fica por ULTIMO de proposito —
+    // ele nao mexe em fila nenhuma, so le metricas e avisa. Se o ciclo
+    // estourar o tempo, e melhor perder a leitura de saude (que se repete em
+    // 60s) do que atrasar envio de e-mail ou de NF-e.
+    //
+    // Nasceu porque em 23/09 o banco ficou 20+ min fora e a equipe soube por
+    // ligacao de usuario, nao pelo sistema. Ver src/saudeBanco.js.
+    await verificarSaudeBanco();
+  } catch (e) {
+    console.error("[worker] erro no vigia de saude do banco:", e);
   }
 }
 

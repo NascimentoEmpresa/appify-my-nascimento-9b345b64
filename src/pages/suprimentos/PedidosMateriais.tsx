@@ -968,6 +968,14 @@ function CardPedido({
           Em EM PREPARACAO a ação principal deixa de ser "mudar status na mão"
           e passa a ser conferir o estoque e montar o pré-pedido — é o passo
           que faz a mercadoria sair do disponível sem sair da prateleira.
+
+          SIS-2026-0485: o botão Status NÃO pode sumir aqui. Quando nada do
+          pedido tem saldo, o pré-pedido não tem o que reservar, e o Compras
+          precisa mandar o pedido direto para AGUARDANDO COMPRA na mão —
+          sem isso ele ficava preso em EM PREPARACAO e as compradoras não
+          viam o que comprar. O banco já aceitava (sup_est_baixar só recusa
+          EM SEPARACAO); faltava o botão. Conferir ganha a linha inteira e
+          Status divide a de baixo com Editar.
         */}
         {p.status === "EM PREPARACAO" ? (
           <AcessoGate
@@ -979,8 +987,11 @@ function CardPedido({
               </Button>
             }
           >
-            <Button size="sm" className="col-span-3" onClick={onPrePedido}>
+            <Button size="sm" className="col-span-6" onClick={onPrePedido}>
               <PackageSearch className="mr-1.5 h-3.5 w-3.5" /> Conferir e reservar
+            </Button>
+            <Button size="sm" variant="outline" className="col-span-3" onClick={onStatus}>
+              <RefreshCw className="mr-1.5 h-3.5 w-3.5" /> Status
             </Button>
           </AcessoGate>
         ) : (

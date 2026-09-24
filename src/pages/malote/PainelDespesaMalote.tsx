@@ -24,6 +24,8 @@ import {
   registrarEventoDespesa,
   SalvarDespesaInput,
   useConverterSolicitacaoEmDespesa,
+  useFornecedoresAtivos,
+  useIntegrantes,
   useSalvarDespesa,
   uploadAnexosMalote,
 } from "@/hooks/useMaloteDespesa";
@@ -40,6 +42,7 @@ import { DiaPagamentoPicker } from "./DiaPagamentoPicker";
 import { ExcecaoDiaBloqueadoField } from "./ExcecaoDiaBloqueadoField";
 import { DimensoesRateio, RateioGrid } from "./RateioGrid";
 import { erroFornecedorNoRateio } from "./rateioValidacao";
+import { PadraoLinhaRateio, acharFornecedorPorNome, rateioInicialComPadrao } from "./rateioPadrao";
 
 // SIS-2026-0263 (Iury): "colocar a possibilidade de escolher de 1 a 30 para
 // o dia de pagamento e poder escolher parcelar em até 420x" — dia do
@@ -133,6 +136,8 @@ export function PainelDespesaMalote({
   aoSalvar,
   rotuloEnviar = "Enviar para aprovação",
   solicitacaoDispensadaManualmente,
+  linhaRateioPadrao,
+  fornecedorPadraoNome,
 }: {
   classificacaoId: string;
   classificacaoTipo?: TipoClassificacaoOrcamento | null;
@@ -150,6 +155,12 @@ export function PainelDespesaMalote({
   // "Não necessita solicitação" e a Classificação de fato exigia
   // solicitação — rastro de auditoria, gravado junto com a despesa.
   solicitacaoDispensadaManualmente?: boolean;
+  // Diária UFRGS (24/09/2026): o rateio nasce com UMA linha de 100% já com
+  // o que a diária sabe — contrato e integrante (o motorista) — e o
+  // fornecedor pelo nome do cadastro. Tudo continua editável. Ver
+  // rateioPadrao.ts para o porquê.
+  linhaRateioPadrao?: Pick<PadraoLinhaRateio, "contrato_id" | "integrante_empregado_id">;
+  fornecedorPadraoNome?: string;
 }) {
   const [paramsUrl] = useSearchParams();
   const obrigacaoPatrimonio = paramsUrl.get(PARAM_ORIGEM);
@@ -240,6 +251,57 @@ export function PainelDespesaMalote({
   // precisa conseguir escolher a forma específica na hora de lançar.
   const { data: formasPagamento = [] } = useFormasPagamento();
   const formasPagamentoAtivas = useMemo(() => formasPagamento.filter((f) => f.ativo), [formasPagamento]);
+
+  // A forma que veio pronta de outra tela ("Pix", da Diária UFRGS) é texto:
+  // se o catálogo a escreve com outra caixa ("PIX"), o Select mostraria
+  // vazio com um valor escondido por baixo. Acerta a grafia pela do
+  // catálogo; o que não existe nele fica como está, para a pessoa ver.
+  useEffect(() => {
+    if (!formaPagamento || formasPagamentoAtivas.some((f) => f.nome === formaPagamento)) return;
+    const alvo = formaPagamento.trim().toLowerCase();
+    const igual = formasPagamentoAtivas.find((f) => f.nome.trim().toLowerCase() === alvo);
+    if (igual) setFormaPagamento(igual.nome);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [formasPagamentoAtivas]);
+
+  // Mesmas consultas do RateioGrid (mesma queryKey, então é cache, não uma
+  // segunda ida ao banco): o painel precisa delas para resolver o padrão
+  // ANTES de montar a primeira linha.
+  const { data: fornecedoresRateio = [], isFetched: fornecedoresProntos } = useFornecedoresAtivos();
+  const { data: integrantesRateio = [], isFetched: integrantesProntos } = useIntegrantes();
+  const padraoRateio = useMemo<PadraoLinhaRateio | null>(() => {
+    if (!linhaRateioPadrao && !fornecedorPadraoNome) return null;
+    const integrante = linhaRateioPadrao?.integrante_empregado_id ?? null;
+    return {
+      // A empresa acompanha o contrato — é a mesma que o painel recebe.
+      empresa_id: linhaRateioPadrao?.contrato_id ? empresaId : null,
+      contrato_id: linhaRateioPadrao?.contrato_id ?? null,
+      fornecedor_id: fornecedorPadraoNome
+        ? (acharFornecedorPorNome(fornecedoresRateio, fornecedorPadraoNome)?.id ?? null)
+        : null,
+      // Só quem está na lista do combobox (EMPREGADOS "Trabalhando"): um id
+      // fora dela apareceria como "—" na tela e seria gravado assim mesmo,
+      // sem ninguém ter visto quem era.
+      integrante_empregado_id:
+        integrante != null && integrantesRateio.some((i) => i.id === integrante) ? integrante : null,
+    };
+  }, [linhaRateioPadrao, fornecedorPadraoNome, empresaId, fornecedoresRateio, integrantesRateio]);
+
+  // Monta a linha UMA vez, quando as duas listas chegaram e o painel está
+  // ativo (empresa resolvida). Depois disso o rateio é da pessoa: nenhuma
+  // atualização de cache pode reescrever o que ela mudou.
+  const rateioIniciado = useRef(false);
+  useEffect(() => {
+    if (!padraoRateio || rateioIniciado.current || !ativo) return;
+    if (!fornecedoresProntos || !integrantesProntos) return;
+    rateioIniciado.current = true;
+    setLinhasRateio((atual) =>
+      atual.length > 0 ? atual : rateioInicialComPadrao(padraoRateio, Number(totalMes) || 0),
+    );
+    if (padraoRateio.integrante_empregado_id != null) {
+      setDimensoes((d) => ({ ...d, integrante: true }));
+    }
+  }, [padraoRateio, ativo, fornecedoresProntos, integrantesProntos, totalMes]);
 
   const totalRateado = useMemo(() => linhasRateio.reduce((s, l) => s + (Number(l.valor) || 0), 0), [linhasRateio]);
   const { data: prazoNormal } = usePrazoNormalInclusao();
@@ -624,6 +686,7 @@ export function PainelDespesaMalote({
               classificacaoTipoUnica={classificacaoTipo ?? null}
               mostrarResumoValorTotal
               exigirFornecedor
+              linhaPadrao={padraoRateio}
             />
           </div>
 

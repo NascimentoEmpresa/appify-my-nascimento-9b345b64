@@ -1580,6 +1580,10 @@ export interface PagarDespesaInput {
   // opcionais pra não quebrar nenhuma chamada antiga da RPC.
   forma_pagamento?: string | null;
   banco_id?: string | null;
+  // SIS-2026-0524 (Iury): juros pago no boleto por atraso, informado aqui
+  // no momento do pagamento — alimenta o Controle de Juros Malote. null/0
+  // = pagamento sem juros, não entra no controle.
+  valor_juros?: number | null;
 }
 
 export function usePagarDespesa() {
@@ -1599,6 +1603,7 @@ export function usePagarDespesa() {
           _rateio_snapshot: input.rateio_snapshot ?? [],
           _forma_pagamento: input.forma_pagamento ?? null,
           _banco_id: input.banco_id ?? null,
+          _valor_juros: input.valor_juros ?? null,
         }),
       );
       if (error) throw error;
@@ -1622,6 +1627,10 @@ export interface PagarParcelaInput {
   // malote_pagar_parcela).
   forma_pagamento?: string | null;
   banco_id?: string | null;
+  // SIS-2026-0524: juros dessa parcela específica — não sincroniza pra
+  // malote_despesa (cada parcela tem seu próprio juros, ver
+  // v_controle_juros_malote).
+  valor_juros?: number | null;
 }
 
 export function usePagarParcela() {
@@ -1638,6 +1647,7 @@ export function usePagarParcela() {
           _rateio_snapshot: input.rateio_snapshot ?? [],
           _forma_pagamento: input.forma_pagamento ?? null,
           _banco_id: input.banco_id ?? null,
+          _valor_juros: input.valor_juros ?? null,
         }),
       );
       if (error) throw error;
