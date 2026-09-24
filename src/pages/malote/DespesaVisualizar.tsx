@@ -395,6 +395,10 @@ export default function DespesaVisualizar() {
   // confirmar o pagamento).
   const [formaPagamentoConfirmada, setFormaPagamentoConfirmada] = useState("");
   const [bancoIdConfirmado, setBancoIdConfirmado] = useState("");
+  // SIS-2026-0524 (Iury): juros pago no boleto por atraso — informado no
+  // momento da confirmação do pagamento, alimenta o Controle de Juros
+  // Malote. Vazio = sem juros nesse pagamento (não entra no controle).
+  const [valorJurosConfirmado, setValorJurosConfirmado] = useState("");
   const [pagando, setPagando] = useState(false);
   // SIS-2026-0223: qual parcela está sendo paga no Dialog de comprovante
   // (reaproveitado) — null = pagamento é da despesa inteira (não parcelada).
@@ -556,6 +560,12 @@ export default function DespesaVisualizar() {
       ? bancos.find((b) => b.id === bancoIdConfirmado)
       : undefined;
   const opcoesBanco = bancoConfirmadoInativo ? [...bancosAtivos, bancoConfirmadoInativo] : bancosAtivos;
+
+  // SIS-2026-0524: base do "Total a pagar" no modal de Confirmar Pagamento —
+  // valor da parcela em pagamento, ou da despesa inteira quando não-parcelada.
+  const valorBaseModalPagamento = parcelaEmPagamento
+    ? parcelaEmPagamento.valor
+    : despesa.valor_aprovado ?? despesa.valor_total;
 
   // Papéis do usuário logado em relação a esta despesa — SIS-2026-0132 Fase 1.
   const souSolicitante = despesa.created_by === user?.id;
@@ -1121,6 +1131,7 @@ export default function DespesaVisualizar() {
     // parte do que já está na despesa, editável a partir daqui.
     setFormaPagamentoConfirmada(despesa!.forma_pagamento ?? "");
     setBancoIdConfirmado(despesa!.banco_id ?? "");
+    setValorJurosConfirmado("");
     setPagarAberto(true);
   }
 
@@ -1136,6 +1147,7 @@ export default function DespesaVisualizar() {
     // Parcela ainda não paga não tem banco próprio — cai pro que já foi
     // usado nas parcelas anteriores (via sincronização em malote_despesa).
     setBancoIdConfirmado(p.banco_id ?? despesa!.banco_id ?? "");
+    setValorJurosConfirmado("");
     setPagarAberto(true);
   }
 
@@ -1179,6 +1191,7 @@ export default function DespesaVisualizar() {
       // SIS-2026-0291 (Iury): comprovante sobe com "Nome da despesa -
       // Comprovante", não mais UUID cru.
       const [comprovantePath] = await uploadAnexosMalote([comprovanteFile], despesa!.id, `${despesa!.nome} - Comprovante`);
+      const valorJuros = valorJurosConfirmado ? Number(valorJurosConfirmado) : null;
       if (despesa!.parcelado && parcelaEmPagamento) {
         await pagarParcela.mutateAsync({
           despesaId: despesa!.id,
@@ -1189,6 +1202,7 @@ export default function DespesaVisualizar() {
           rateio_snapshot: calcularRateioSnapshot(),
           forma_pagamento: formaPagamentoConfirmada || null,
           banco_id: bancoIdConfirmado || null,
+          valor_juros: valorJuros,
         });
         toast.success(`Parcela ${parcelaEmPagamento.numero_parcela}/${despesa!.numero_parcelas} paga.`);
       } else {
@@ -1200,6 +1214,7 @@ export default function DespesaVisualizar() {
           observacao: observacaoPagamento.trim() || null,
           forma_pagamento: formaPagamentoConfirmada || null,
           banco_id: bancoIdConfirmado || null,
+          valor_juros: valorJuros,
         });
         toast.success("Pagamento confirmado.");
       }
@@ -2519,6 +2534,31 @@ export default function DespesaVisualizar() {
                 maxLength={300}
               />
               <p className="text-[10px] text-muted-foreground text-right">{observacaoPagamento.length}/300</p>
+            </div>
+            {/* SIS-2026-0524 (Iury): juros por atraso, informado aqui no
+                momento do pagamento — alimenta o Controle de Juros Malote.
+                Vazio/zero = pagamento sem juros, não entra no controle. */}
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label className="text-xs">Valor da despesa (R$)</Label>
+                <Input className="h-8 text-xs" value={fmtMoneyResumo(valorBaseModalPagamento)} disabled />
+              </div>
+              <div>
+                <Label className="text-xs">Juros (R$)</Label>
+                <Input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  className="h-8 text-xs"
+                  placeholder="0,00"
+                  value={valorJurosConfirmado}
+                  onChange={(e) => setValorJurosConfirmado(e.target.value)}
+                />
+              </div>
+            </div>
+            <div className="rounded-md bg-muted/60 px-3 py-2">
+              <p className="text-[10px] text-muted-foreground uppercase tracking-wide">Total a pagar (R$)</p>
+              <p className="text-sm font-semibold">{fmtMoneyResumo((valorBaseModalPagamento ?? 0) + (Number(valorJurosConfirmado) || 0))}</p>
             </div>
           </div>
           <DialogFooter>

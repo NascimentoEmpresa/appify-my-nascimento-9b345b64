@@ -81,6 +81,7 @@ import { GitBranch, GitMerge } from "lucide-react";
 import { MessageSquare } from "lucide-react";
 import { Banknote } from "lucide-react";
 import { Crown, Landmark } from "lucide-react";
+import { Percent } from "lucide-react";
 import { TrendingDown } from "lucide-react";
 import { Megaphone, ExternalLink } from "lucide-react";
 import { Award, CalendarDays, FolderTree, Users } from "lucide-react";
@@ -390,6 +391,9 @@ const financeiroModule: ModuleDef = {
         // parte da Gestão Financeira "nativa" do ERP.
         { label: "Checklist de Faturamento", to: "/app/financeiro/checklist-faturamento", icon: ListChecks, badge: "Novo" },
         { label: "Solicitações de Ajuste", to: "/app/financeiro/solicitacoes-ajuste", icon: ClipboardList, badge: "Novo" },
+        // SIS-2026-0524: juros informado no pagamento do Malote, controle
+        // de cobrança do responsável — não gera lançamento no Fluxo de Caixa.
+        { label: "Controle de Juros", to: "/app/financeiro/controle-juros", icon: Percent, badge: "Novo" },
       ],
     },
   ],
