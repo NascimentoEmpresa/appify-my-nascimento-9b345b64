@@ -212,9 +212,16 @@ export default function DetalheOrcamento() {
       // compara contra o efetivo, não o bruto (SIS-2026-0374).
       if (classificacaoIdEfetivo && l.classificacao_id !== classificacaoIdEfetivo) return false;
       if (filtro.contratoId && l.contrato_id !== filtro.contratoId) return false;
+      // [SEM-CHAMADO] (achado real, Iury — DM-2026-1208): Classificação
+      // Malote é global (sem empresa_id próprio), então mais de uma empresa
+      // pode usar a mesma — sem este filtro, "Itens Lançados"/Utilizado
+      // somava despesas de QUALQUER empresa que usasse essa Classificação,
+      // mesmo com "Empresa: SN" selecionado no filtro (que já era aplicado
+      // certinho no Orçado, acima, só não aqui). Mesma régua.
+      if (filtroEmpresaId !== EMPRESA_FILTRO_TODAS && l.empresa_id !== filtroEmpresaId) return false;
       return true;
     });
-  }, [utilizadoLinhas, filtro.anoMes, filtro.contratoId, classificacaoIdEfetivo]);
+  }, [utilizadoLinhas, filtro.anoMes, filtro.contratoId, classificacaoIdEfetivo, filtroEmpresaId]);
 
   const utilizado = useMemo(() => itens.reduce((s, l) => s + (Number(l.valor) || 0), 0), [itens]);
   const qtdAguardando = useMemo(() => itens.filter((l) => l.status === "aguardando_pagamento").length, [itens]);
