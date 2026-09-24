@@ -18,6 +18,7 @@ import {
   formatarData,
   formatarDataHora,
   formatarDuracao,
+  minutosHeEfetivos,
   formatarQuantidadeChamados,
   resumirLiberacaoHoraExtra,
 } from "./horaExtraUtils";
@@ -256,7 +257,7 @@ export default function LiberacaoHoraExtra() {
                       </td>
                       <td className="p-3">{s.setor}</td>
                       <td className="p-3">{formatarData(s.data_he)}</td>
-                      <td className="p-3 font-bold">{formatarDuracao(s.total_previsto_min, true)}</td>
+                      <td className="p-3 font-bold">{formatarDuracao(minutosHeEfetivos(s), true)}</td>
                       <td className="p-3">
                         <button className="text-blue-600 underline" onClick={() => setDetalhes(s)}>
                           <FileText className="mr-1 inline h-3.5 w-3.5" />

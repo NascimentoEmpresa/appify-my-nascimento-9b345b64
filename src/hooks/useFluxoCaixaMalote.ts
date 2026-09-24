@@ -44,7 +44,12 @@ export interface FluxoCaixaMaloteLinha {
   tipo: "entrada" | "saida";
   // SIS-2026-0413: de qual tabela/RPC esta linha vem — usado pra escolher
   // o botão/mutation certos de Excluir na tela de Fluxo de Caixa.
-  origem: "malote" | "debito_automatico" | "cartao_fatura";
+  // SIS-2026-0473: "aplicacao_financeira" cobre tanto a saída (aplicar)
+  // quanto a entrada (resgate) — as duas views compartilham o mesmo
+  // despesa_id só pra aplicar (id da APLICACAO_FINANCEIRA); resgate usa o
+  // id do próprio resgate (não tem edição/exclusão pela tela de Fluxo, só
+  // pela tela de Aplicações Financeiras).
+  origem: "malote" | "debito_automatico" | "cartao_fatura" | "aplicacao_financeira";
   // SIS-2026-0489: true quando existe uma linha em
   // financeiro_fluxo_caixa_ajuste pra este lançamento — os campos exibidos
   // já vêm resolvidos pela view (COALESCE(ajuste, original)), este flag é
@@ -80,18 +85,29 @@ export function useFluxoCaixaCombinado() {
   return useQuery({
     queryKey: ["fluxo_caixa_combinado"],
     queryFn: async () => {
-      const [malote, debitoAutomatico, cartaoFatura] = await Promise.all([
+      // SIS-2026-0473: Aplicações Financeiras entra como DUAS views — aplicar
+      // (saída) e resgate (entrada) — pelo mesmo motivo de não dar pra
+      // representar as duas pontas de uma "aplicação com resgate" numa
+      // linha só (datas e tipos diferentes), mesma ideia da Movimentação
+      // Financeira do Débito Automático (2 linhas ligadas por par).
+      const [malote, debitoAutomatico, cartaoFatura, aplicacaoFinanceira, resgateAplicacao] = await Promise.all([
         (supabase as any).from("v_malote_pagamento_fluxo_caixa").select("*"),
         (supabase as any).from("v_debito_automatico_fluxo_caixa").select("*"),
         (supabase as any).from("v_cartao_fatura_fluxo_caixa").select("*"),
+        (supabase as any).from("v_aplicacao_financeira_fluxo_caixa").select("*"),
+        (supabase as any).from("v_aplicacao_financeira_resgate_fluxo_caixa").select("*"),
       ]);
       if (malote.error) throw malote.error;
       if (debitoAutomatico.error) throw debitoAutomatico.error;
       if (cartaoFatura.error) throw cartaoFatura.error;
+      if (aplicacaoFinanceira.error) throw aplicacaoFinanceira.error;
+      if (resgateAplicacao.error) throw resgateAplicacao.error;
       const linhas = [
         ...(malote.data ?? []),
         ...(debitoAutomatico.data ?? []),
         ...(cartaoFatura.data ?? []),
+        ...(aplicacaoFinanceira.data ?? []),
+        ...(resgateAplicacao.data ?? []),
       ] as FluxoCaixaMaloteLinha[];
       linhas.sort((a, b) => (b.data_pagamento ?? "").localeCompare(a.data_pagamento ?? ""));
       return linhas;

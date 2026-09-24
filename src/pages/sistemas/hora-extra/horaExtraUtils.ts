@@ -44,6 +44,41 @@ export function formatarQuantidadeChamados(quantidade: number): string {
   return `${quantidade} ${quantidade === 1 ? "chamado" : "chamados"}`;
 }
 
+/**
+ * Quanto de HE a solicitação vale AGORA (23/09/2026).
+ *
+ * A solicitação carrega dois totais: `total_previsto_min` (o pedido, ou o
+ * que o gestor ajustou na liberação — mig 186) e `total_real_min` (o ponto
+ * efetivo, gravado na conclusão e reescrito pelo gestor na validação — mig
+ * 193 — ou depois de concluída — mig 215). As listas liam só o previsto:
+ * o gestor corrigia uma HE de 4h para 2h, os modais mostravam 2h e a
+ * coluna "Qtd. HE", os cartões e o dashboard continuavam somando 4h.
+ *
+ * Regra única: havendo total real, é ele que vale; senão, o previsto. É a
+ * mesma leitura que o modal de decisão, o Portal do Colaborador e o
+ * Dashboard do Desenvolvedor já faziam — e a que o dashboard de HE faz no
+ * banco (mig 226). Use esta função, não `total_previsto_min`, sempre que o
+ * número for "quanto de hora extra esta HE tem".
+ */
+export function minutosHeEfetivos(
+  solicitacao: Pick<SolicitacaoHoraExtra, "total_previsto_min" | "total_real_min">,
+): number {
+  return Number(solicitacao.total_real_min ?? solicitacao.total_previsto_min) || 0;
+}
+
+/** Janela da HE que acompanha `minutosHeEfetivos`: a real, quando houver. */
+export function janelaHeEfetiva(
+  solicitacao: Pick<
+    SolicitacaoHoraExtra,
+    "total_real_min" | "he_inicio_previsto" | "he_fim_previsto" | "he_inicio_real" | "he_fim_real"
+  >,
+): { inicio: string; fim: string } {
+  const usaReal = solicitacao.total_real_min != null && Boolean(solicitacao.he_inicio_real && solicitacao.he_fim_real);
+  return usaReal
+    ? { inicio: somenteHora(solicitacao.he_inicio_real), fim: somenteHora(solicitacao.he_fim_real) }
+    : { inicio: somenteHora(solicitacao.he_inicio_previsto), fim: somenteHora(solicitacao.he_fim_previsto) };
+}
+
 export interface ResumoLiberacaoHoraExtra {
   aguardando_liberacao: number;
   aguardando_validacao: number;
@@ -57,7 +92,7 @@ export interface ResumoLiberacaoHoraExtra {
  * junto com a tabela, sem uma nova ida ao banco a cada troca do filtro.
  */
 export function resumirLiberacaoHoraExtra(
-  solicitacoes: Array<Pick<SolicitacaoHoraExtra, "status" | "total_previsto_min">>,
+  solicitacoes: Array<Pick<SolicitacaoHoraExtra, "status" | "total_previsto_min" | "total_real_min">>,
 ): ResumoLiberacaoHoraExtra {
   const liberados: StatusHoraExtra[] = ["aprovada", "aguardando_validacao", "concluida"];
 
@@ -67,7 +102,7 @@ export function resumirLiberacaoHoraExtra(
       if (solicitacao.status === "aguardando_validacao") resumo.aguardando_validacao += 1;
       if (liberados.includes(solicitacao.status)) {
         resumo.liberadas += 1;
-        resumo.horas_aprovadas_min += Number(solicitacao.total_previsto_min) || 0;
+        resumo.horas_aprovadas_min += minutosHeEfetivos(solicitacao);
       }
       return resumo;
     },

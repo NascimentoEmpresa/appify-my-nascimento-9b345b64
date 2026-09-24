@@ -30,7 +30,7 @@ export interface PlanilhaRow {
   // "Ajustar" uma divergência, sem precisar casar por valor/data de novo.
   despesaId?: string | null;
   numeroParcela?: number | null;
-  origemFluxo?: "malote" | "debito_automatico" | "cartao_fatura" | null;
+  origemFluxo?: "malote" | "debito_automatico" | "cartao_fatura" | "aplicacao_financeira" | null;
   // SIS-2026-0492 (Iury): mostrar de qual empresa é o lançamento do Fluxo
   // ajuda a identificar a divergência mais rápido quando há várias empresas
   // do grupo no mesmo período/banco.
@@ -58,7 +58,7 @@ export interface AuditRow {
   tipoPlanilha?: TipoLancamento;
   despesaId?: string | null;
   numeroParcela?: number | null;
-  origemFluxo?: "malote" | "debito_automatico" | "cartao_fatura" | null;
+  origemFluxo?: "malote" | "debito_automatico" | "cartao_fatura" | "aplicacao_financeira" | null;
   empresaNome?: string | null;
 }
 
@@ -82,7 +82,7 @@ export interface LancamentoRow {
   tipoPlanilha?: TipoLancamento;
   despesaId?: string | null;
   numeroParcela?: number | null;
-  origemFluxo?: "malote" | "debito_automatico" | "cartao_fatura" | null;
+  origemFluxo?: "malote" | "debito_automatico" | "cartao_fatura" | "aplicacao_financeira" | null;
   empresaNome?: string | null;
 }
 
