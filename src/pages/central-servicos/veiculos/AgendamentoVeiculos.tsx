@@ -88,6 +88,10 @@ export default function AgendamentoVeiculos() {
   // existe permissão própria aqui de propósito: dois lugares respondendo a
   // mesma pergunta sempre acabam discordando. Mesmo gate da RLS.
   const podeGerirFrota = !!access?.codes.has("sup_patrimonio");
+  // Dashboard tem permissão própria (24/09/2026, mig 20260930000233): menu
+  // fantasma em Acesso por Usuário › Central de Serviços. Quem tinha
+  // Patrimônio foi semeado com ela, então ninguém perdeu a aba.
+  const podeVerDashboard = !!access?.codes.has("central_servicos_veiculos_dashboard");
 
   const irPara = (p: IndicePasso) => {
     setPasso(p);
@@ -207,7 +211,7 @@ export default function AgendamentoVeiculos() {
             {podeGerirFrota && <TabsTrigger value="frota">Toda a Frota</TabsTrigger>}
             <TabsTrigger value="calendario">Calendário Geral</TabsTrigger>
             {/* Visão de gestão (nomes de quem agenda, gasto): mesma porta da Toda a Frota. */}
-            {podeGerirFrota && <TabsTrigger value="dashboard">Dashboard</TabsTrigger>}
+            {podeVerDashboard && <TabsTrigger value="dashboard">Dashboard</TabsTrigger>}
           </TabsList>
 
           <TabsContent value="novo">
@@ -399,7 +403,7 @@ export default function AgendamentoVeiculos() {
             <CalendarioGeral agendamentos={agendamentos} frota={listaFrota} />
           </TabsContent>
 
-          {podeGerirFrota && (
+          {podeVerDashboard && (
             <TabsContent value="dashboard">
               <Suspense fallback={<Skeleton className="h-96 w-full" />}>
                 <DashboardVeiculos />
