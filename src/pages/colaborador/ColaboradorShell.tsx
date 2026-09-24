@@ -64,6 +64,11 @@ export default function ColaboradorShell() {
 }
 
 function ShellAutenticado() {
+  const location = useLocation();
+  // Tela do curso (24/09/2026): o vídeo precisa de largura — max-w-3xl deixava
+  // o player com ~360px ao lado da lista de aulas. Só ela abre para 7xl.
+  const largo = /^\/colaborador\/treinamentos\/[^/]+\/?$/.test(location.pathname);
+  const largura = largo ? "max-w-7xl" : "max-w-3xl";
   const navigate = useNavigate();
   const qc = useQueryClient();
   const perfilQ = usePerfilColaborador();
@@ -84,7 +89,7 @@ function ShellAutenticado() {
   return (
     <div className="flex min-h-screen flex-col bg-background text-foreground">
       <header className="sticky top-0 z-30 border-b border-border bg-card/95 backdrop-blur">
-        <div className="mx-auto flex h-14 max-w-3xl items-center gap-3 px-4">
+        <div className={cn("mx-auto flex h-14 items-center gap-3 px-4", largura)}>
           <img src={logoGN} alt="Grupo Nascimento" className="h-8 w-8 object-contain" />
           <div className="min-w-0 flex-1 leading-tight">
             <p className="truncate text-sm font-semibold">{valor ? `Olá, ${valor.primeiroNome}` : "Portal do Colaborador"}</p>
@@ -125,7 +130,7 @@ function ShellAutenticado() {
         </div>
       </header>
 
-      <main className="mx-auto w-full max-w-3xl flex-1 px-4 pb-24 pt-4 md:pb-8">
+      <main className={cn("mx-auto w-full flex-1 px-4 pb-24 pt-4 md:pb-8", largura)}>
         {perfilQ.isLoading && <Carregando texto="Abrindo seu painel…" />}
         {perfilQ.isError && !perfilQ.data && (
           <Erro erro={perfilQ.error} acao={<button className="text-sm font-semibold underline" onClick={() => perfilQ.refetch()}>Tentar de novo</button>} />

@@ -365,7 +365,7 @@ export default function AlunosLista() {
                     <SelectItem value="cargo">Cargo (todo mundo com esse cargo)</SelectItem>
                     <SelectItem value="status">Status do aluno (ativos, inativos…)</SelectItem>
                     <SelectItem value="selecionados">Alunos selecionados na lista ({selecionados.size})</SelectItem>
-                    <SelectItem value="todos">Todos os alunos da plataforma</SelectItem>
+                    <SelectItem value="todos">Todos os alunos da plataforma (curso não vai para demitidos)</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
