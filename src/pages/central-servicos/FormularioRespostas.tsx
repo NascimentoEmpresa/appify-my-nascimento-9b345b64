@@ -7,6 +7,7 @@ import { useFormPerms } from "@/hooks/useFormPerms";
 import { useVinculoEmpregado } from "@/hooks/useVinculoEmpregado";
 import { Formulario, Pergunta, fmtDt, situacao, normalizaPerguntas } from "./Formularios";
 import EmpregadoDetalheModal, { normNome, carregarVinculos, prewarmFichas, invalidarFichas } from "./EmpregadoDetalheModal";
+import { gerarPdfRespostas, type BlocoPdf, type RespostaPdf } from "@/lib/formularios/respostasPdf";
 
 // =====================================================================
 // NASCIMENTO FORMULÁRIOS - Respostas
@@ -96,6 +97,9 @@ const valorTexto = (v: Valor): string =>
   : Array.isArray(v) ? (v.length ? v.map(x => (ehLinhaColega(x) ? textoLinhaColega(x) : String(x))).join("; ") : "-")
   : ehLinhaColega(v) ? textoLinhaColega(v)
   : String(v);
+
+// Item do menu "Exportar PDF".
+const itemMenuPdf: React.CSSProperties = { display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 2, width: "100%", textAlign: "left", border: "none", background: "none", borderRadius: 8, padding: "8px 10px", fontSize: 12.5, color: "#0f172a", cursor: "pointer" };
 
 // Texto solto de resposta: itálico, peso normal.
 const valorFonte: React.CSSProperties = { fontSize: 12.5, fontStyle: "italic", fontWeight: 500, color: "#0f172a" };
@@ -325,6 +329,7 @@ export default function FormularioRespostas() {
   const [detalhe, setDetalhe] = useState<Resposta | null>(null);  // modal "Detalhes" do cadastro
   const [pessoa, setPessoa] = useState<string | null>(null);      // modal ficha do empregado (nome citado)
   const [vinculos, setVinculos] = useState<Map<string, string>>(new Map()); // apelido -> nome do empregado (CS_FORM_VINCULOS)
+  const [menuPdf, setMenuPdf] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -498,6 +503,46 @@ export default function FormularioRespostas() {
     URL.revokeObjectURL(a.href);
   };
 
+  // ── PDF (24/09/2026): uma resposta, o recorte do filtro ou todas ──
+  // O PDF sai com o que a tela mostra: nome vinculado no lugar do texto
+  // digitado, anônima sem e-mail/setor, perguntas apagadas no fim.
+  const respostaParaPdf = (r: Resposta): RespostaPdf => {
+    const quem = nomeRespondente(r);
+    const blocos: BlocoPdf[] = pergs.map(p => {
+      const res = resolverDaPergunta(p, perguntaNomeId, resolveQuem, resolve);
+      const v = r.itens[p.id];
+      const txt = (x: Valor) => { const t = valorTexto(x); return t === "-" ? t : (res(x).exibir || t); };
+      const lista = Array.isArray(v) ? v.filter(x => x != null && x !== "") : [];
+      const itens = lista.length
+        ? lista.map(x => ehLinhaColega(x) ? textoLinhaColega({ ...x, colaborador: res(x.colaborador ?? "").exibir || x.colaborador }) : txt(x))
+        : [txt(v)];
+      const anexo = r.itens[`${p.id}__anexo`] ? String(r.itens[`${p.id}__anexo_nome`] ?? "") || "arquivo enviado" : null;
+      return { pergunta: p.titulo, itens, anexo };
+    });
+    for (const [, v] of orfasDe(r)) blocos.push({ pergunta: "", itens: [valorTexto(v)], removida: true });
+    return {
+      quem: quem !== "Anônimo" ? (resolveQuem(quem).exibir || quem) : quem,
+      email: r.respondente_email, enviadoEm: r.enviado_em, setor: r.setor, anonima: !!r.anonimo,
+      duracao: r.duracao_seg != null ? fmtDur(r.duracao_seg) : null, blocos,
+    };
+  };
+  const descricaoFiltro = () => {
+    const br = (d: string) => d.split("-").reverse().join("/");
+    return [fResp && `Respondente: ${fResp}`, fSetor && `Setor: ${fSetor}`,
+      fDe && fAte ? `De ${br(fDe)} até ${br(fAte)}` : fDe ? `A partir de ${br(fDe)}` : fAte ? `Até ${br(fAte)}` : ""]
+      .filter(Boolean).join(" · ");
+  };
+  const arquivoSeguro = (t: string) => t.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-zA-Z0-9]+/g, "-").replace(/^-|-$/g, "").toLowerCase().slice(0, 60);
+  const exportarPdf = (lista: Resposta[], recorte: string, sufixo: string) => {
+    if (!form || !lista.length) return;
+    setMenuPdf(false);
+    gerarPdfRespostas({
+      formulario: form.titulo, descricao: form.descricao, recorte,
+      respostas: lista.map(respostaParaPdf),
+      nomeArquivo: `respostas-${form.slug}${sufixo ? "-" + arquivoSeguro(sufixo) : ""}.pdf`,
+    });
+  };
+
   const excluirResp = async (r: Resposta) => {
     if (!confirm("Excluir esta resposta?")) return;
     await sb.from("CS_FORM_RESPOSTAS").delete().eq("id", r.id);
@@ -524,6 +569,29 @@ export default function FormularioRespostas() {
           ))}
         </div>
         <button onClick={exportCsv} disabled={!respsFiltradas.length} style={btn(respsFiltradas.length ? "#16a34a" : "#94a3b8")}>⬇ Exportar CSV</button>
+        <div style={{ position: "relative" }}>
+          <button onClick={() => setMenuPdf(v => !v)} disabled={!respsEscopo.length} style={btn(respsEscopo.length ? "#0f3171" : "#94a3b8")}>⬇ Exportar PDF ▾</button>
+          {menuPdf && (
+            <>
+              <div onClick={() => setMenuPdf(false)} style={{ position: "fixed", inset: 0, zIndex: 40 }} />
+              <div style={{ position: "absolute", right: 0, top: "calc(100% + 6px)", zIndex: 41, width: 290, background: "#fff", border: "1px solid #e2e8f0", borderRadius: 12, boxShadow: "0 12px 32px rgba(15,23,42,.14)", padding: 6 }}>
+                {filtrando && (
+                  <button onClick={() => exportarPdf(respsFiltradas, descricaoFiltro(), "filtro")} disabled={!respsFiltradas.length} style={itemMenuPdf}>
+                    <b>Respostas do filtro ({respsFiltradas.length})</b>
+                    <span style={{ fontSize: 11, color: "#64748b" }}>{descricaoFiltro()}</span>
+                  </button>
+                )}
+                <button onClick={() => exportarPdf(respsEscopo, "Todas as respostas", "todas")} style={itemMenuPdf}>
+                  <b>Todas as respostas ({respsEscopo.length})</b>
+                  <span style={{ fontSize: 11, color: "#64748b" }}>Uma resposta por página</span>
+                </button>
+                <div style={{ fontSize: 11, color: "#94a3b8", padding: "6px 10px 4px" }}>
+                  Para uma resposta só, use o botão PDF dela na aba Individuais. Para outro recorte, aplique os filtros antes.
+                </div>
+              </div>
+            </>
+          )}
+        </div>
       </div>
 
       {/* Formulário que aceita resposta anônima não tem barra de filtros
@@ -576,6 +644,8 @@ export default function FormularioRespostas() {
                   {r.setor && !r.anonimo && <span style={{ fontSize: 10.5, fontWeight: 800, padding: "2px 8px", borderRadius: 20, background: "#eef2ff", color: "#4338ca" }}>{r.setor}</span>}
                   {r.duracao_seg != null && <span style={{ fontSize: 10.5, fontWeight: 700, padding: "2px 8px", borderRadius: 20, background: "#f1f5f9", color: "#64748b" }}>⏱ {fmtDur(r.duracao_seg)}</span>}
                   <div style={{ flex: 1 }} />
+                  <button onClick={() => exportarPdf([r], `Resposta individual — ${quem}`, quem !== "Anônimo" ? quem : r.id.slice(0, 8))} title="Baixar esta resposta em PDF"
+                    style={btn("#fff", "#0f3171", "1px solid rgba(15,49,113,.25)")}>⬇ PDF</button>
                   {r.respondente_cadastro && <button onClick={() => setDetalhe(r)} style={btn("rgba(15,49,113,.08)", "#0f3171", "1px solid rgba(15,49,113,.2)")}>👤 Detalhes</button>}
                   <button onClick={() => excluirResp(r)} style={{ background: "none", border: "none", color: "#dc2626", cursor: "pointer", fontSize: 11.5, fontWeight: 700 }}>Excluir</button>
                 </div>
