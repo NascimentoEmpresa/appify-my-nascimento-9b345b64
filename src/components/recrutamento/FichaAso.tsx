@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { CAMPOS_ASO, EDITAVEIS_ASO, dataBrDaFicha, faltandoNaFicha, rotuloAso, type FichaAso as Ficha } from "@/lib/recrutamento/fichaAso";
+import { Stethoscope } from "lucide-react";
 
 // =====================================================================
 // FICHA DO ASO ADMISSIONAL (chamado do SST, 18/09/2026)
@@ -55,8 +56,8 @@ export function FichaAso({ candidatoId, editar, compacto, onMudou }: {
   if (!ficha) return <div style={{ fontSize: 12, color: "#94a3b8" }}>Montando a ficha do ASO…</div>;
 
   const statusLinha = faltando.length === 0
-    ? <span style={{ fontSize: 10.5, fontWeight: 800, color: "#15803d" }}>🩺 Ficha do ASO completa</span>
-    : <span style={{ fontSize: 10.5, fontWeight: 800, color: "#b91c1c" }}>🩺 Ficha do ASO: falta{faltando.length > 1 ? "m" : ""} {faltando.map(rotuloAso).join(", ")}</span>;
+    ? <span style={{ fontSize: 10.5, fontWeight: 800, color: "#15803d" }}><Stethoscope size={12} strokeWidth={2} aria-hidden style={{ display: "inline-block", verticalAlign: "-2px", marginRight: 5, flexShrink: 0 }} />Ficha do ASO completa</span>
+    : <span style={{ fontSize: 10.5, fontWeight: 800, color: "#b91c1c" }}><Stethoscope size={12} strokeWidth={2} aria-hidden style={{ display: "inline-block", verticalAlign: "-2px", marginRight: 5, flexShrink: 0 }} />Ficha do ASO: falta{faltando.length > 1 ? "m" : ""} {faltando.map(rotuloAso).join(", ")}</span>;
 
   if (compacto && !aberto) {
     return (
@@ -76,7 +77,7 @@ export function FichaAso({ candidatoId, editar, compacto, onMudou }: {
   return (
     <div style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 12, padding: "12px 14px", display: "grid", gap: 8 }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-        <div style={{ fontSize: 11.5, fontWeight: 800, color: "#0f3171", textTransform: "uppercase", letterSpacing: ".4px" }}>🩺 Ficha do ASO admissional</div>
+        <div style={{ fontSize: 11.5, fontWeight: 800, color: "#0f3171", textTransform: "uppercase", letterSpacing: ".4px" }}><Stethoscope size={12} strokeWidth={2} aria-hidden style={{ display: "inline-block", verticalAlign: "-2px", marginRight: 5, flexShrink: 0 }} />Ficha do ASO admissional</div>
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
           {statusLinha}
           {compacto && <button type="button" onClick={() => setAberto(false)} style={{ border: "none", background: "none", color: "#64748b", cursor: "pointer", fontWeight: 800, fontFamily: "inherit" }}>✕</button>}

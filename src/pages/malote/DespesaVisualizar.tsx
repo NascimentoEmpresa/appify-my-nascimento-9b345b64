@@ -566,8 +566,14 @@ export default function DespesaVisualizar() {
   // SIS-2026-0340 (uma vez configurado, só o lançador age — não os dois):
   // em necessidade_de_ajuste, se a Classificação tem lançador configurado,
   // é ele (não o solicitante) quem edita. Fora desse status, nada muda.
+  // SIS-2026-0511 (Juliana): mesma extensão pro irmão do lado do pagamento
+  // — "ajuste_pagamento" (devolvida pela Conferência de Pagamento) tinha
+  // ficado de fora do SIS-2026-0378 por esquecimento, deixando quem paga
+  // sem o botão de corrigir quando a Classificação tem lançador configurado
+  // (o pedido caía só no solicitante da cotação).
   const podeCorrigirNecessidadeDeAjuste =
-    despesa.status === "necessidade_de_ajuste" && classificacaoTemLancadorConfigurado(despesa)
+    (despesa.status === "necessidade_de_ajuste" || despesa.status === "ajuste_pagamento") &&
+    classificacaoTemLancadorConfigurado(despesa)
       ? souLancadorDespesa(despesa, user?.id)
       : souSolicitante;
   // SIS-2026-0250: Carol age em exceção como reforço a partir do Nível 2
@@ -659,7 +665,9 @@ export default function DespesaVisualizar() {
   // CHECK só bloqueia rateio de despesa PARCELADA num status de pagamento —
   // não-parcelada sempre passou, então nenhuma migration nova foi
   // necessária, só liberar aqui na UI.
-  const rateioRestritoEditavel = souSolicitante && despesa.status === "ajuste_pagamento" && !despesa.parcelado;
+  // SIS-2026-0511: acompanha a mesma extensão de podeCorrigirNecessidadeDeAjuste
+  // acima — antes só o solicitante, agora o lançador configurado também.
+  const rateioRestritoEditavel = podeCorrigirNecessidadeDeAjuste && despesa.status === "ajuste_pagamento" && !despesa.parcelado;
   // SIS-2026-0223 (complemento 3, pedido do usuário): pra despesa
   // parcelada, o Rateio só é editável na fase de lançamento — depois que
   // entra em fase de pagamento (mesma fronteira de

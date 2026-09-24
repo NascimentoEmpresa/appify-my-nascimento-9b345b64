@@ -1,4 +1,9 @@
 import { useState, useEffect, useRef, useCallback, type MouseEvent as ReactMouseEvent, type CSSProperties, type ReactNode } from "react";
+import {
+  Activity, AlertTriangle, Ban, Building2, CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, ClipboardList, Clock, Eye, FileText,
+  FolderOpen, GraduationCap, History, IdCard, Landmark, Link2, LogOut, Mail, MapPin, MessageSquare, Paperclip,
+  Pencil, Phone, Search, Settings, Tags, Target, Trash2, UserSearch, Users, XCircle, Zap, type LucideIcon,
+} from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import type { SupabaseClient } from "@supabase/supabase-js";
@@ -129,7 +134,64 @@ interface EmpCadastro { cpf_match?: string | null; situacao?: string | null; car
 /** Configuração de mensagem automática por etapa (RECRUTAMENTO_MENSAGENS). */
 interface MsgCfg { etapa: string; template_nome?: string | null; template_idioma?: string | null; texto_previa?: string | null; ativo?: boolean | null; texto?: string | null; [k: string]: unknown }
 
+/** Ícone em linha com o texto (substitui os emojis da tela, 23/09/2026). */
+function Ic({ i: Icone, s = 14 }: { i: LucideIcon; s?: number }) {
+  return <Icone size={s} strokeWidth={2} aria-hidden style={{ display: "inline-block", verticalAlign: "-2px", marginRight: 5, flexShrink: 0 }} />;
+}
+
 // ── Helpers ────────────────────────────────────────────────────────
+/** Mês mais antigo do seletor: as vagas importadas do sistema antigo começam em jan/2026. */
+const PRIMEIRO_MES = "2026-01";
+const mesAtual = () => new Date().toLocaleDateString("sv-SE", { timeZone: "America/Sao_Paulo" }).slice(0, 7);
+/** "2026-08" + 1 → "2026-09". */
+function mesVizinho(mes: string, delta: number): string {
+  const [a, m] = mes.split("-").map(Number);
+  const d = new Date(Date.UTC(a, m - 1 + delta, 1));
+  return d.toISOString().slice(0, 7);
+}
+/** "2026-08" → "2026-08-31". */
+function ultimoDiaDoMes(mes: string): string {
+  const [a, m] = mes.split("-").map(Number);
+  return `${mes}-${String(new Date(Date.UTC(a, m, 0)).getUTCDate()).padStart(2, "0")}`;
+}
+/** "2026-08" → "agosto de 2026". */
+function nomeDoMes(mes: string): string {
+  const [a, m] = mes.split("-").map(Number);
+  return new Date(Date.UTC(a, m - 1, 15)).toLocaleDateString("pt-BR", { month: "long", year: "numeric", timeZone: "UTC" });
+}
+/** Do mês atual até PRIMEIRO_MES, do mais novo pro mais antigo. */
+function mesesDoSeletor(): string[] {
+  const lista: string[] = [];
+  for (let m = mesAtual(); m >= PRIMEIRO_MES; m = mesVizinho(m, -1)) lista.push(m);
+  return lista;
+}
+
+/** "2026-08-31" → "2026-09-01" (fim exclusivo do filtro de período). */
+function diaSeguinte(iso: string): string {
+  const d = new Date(`${iso}T12:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + 1);
+  return d.toISOString().slice(0, 10);
+}
+
+/**
+ * Todas as linhas da consulta, em páginas de 1000. O PostgREST corta
+ * qualquer select em 1000 linhas; com as 984 vagas do sistema antigo
+ * (23/09/2026) a tabela passou disso, e os KPIs e as contagens do filtro,
+ * que baixam a coluna inteira pra contar aqui, ficariam faltando linhas.
+ * `montar` recebe o builder novo a cada página (não dá pra reusar o mesmo).
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- builder do PostgREST; o tipo exato muda a cada .select()
+async function lerTudo<T>(montar: () => any): Promise<{ data: T[] | null; error: { message: string } | null }> {
+  const PAGINA = 1000;
+  const todas: T[] = [];
+  for (let de = 0; ; de += PAGINA) {
+    const { data, error } = await montar().order("id", { ascending: true }).range(de, de + PAGINA - 1);
+    if (error) return { data: null, error };
+    todas.push(...((data ?? []) as T[]));
+    if (!data || data.length < PAGINA) return { data: todas, error: null };
+  }
+}
+
 function esc(s: unknown): string {
   return String(s ?? "")
     .replace(/&/g, "&amp;")
@@ -277,6 +339,12 @@ const sugerirNomeTemplate = (n?: string | null) =>
   String(n ?? "").trim().toLowerCase()
     .normalize("NFD").replace(/[̀-ͯ]/g, "")   // "Aprovação" → "aprovacao"
     .replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+// "Pendente Seleção" (23/09/2026): a vaga cujo candidato mais adiantado está
+// em APROVADO no kanban — o sr_sync_status_solicitacao grava esse status.
+// Tem atalho próprio e sai de "Em Processo".
+const STATUS_PEND_SELECAO = "Aprovado - Aguardando SST";
+const MENU_FILTRO_PEND_RECRUTAMENTO = "recrutamento_filtro_pend_recrutamento";
+const MENU_FILTRO_PEND_SELECAO      = "recrutamento_filtro_pend_selecao";
 // Status da Solicitação dirigidos pelo candidato (etapas 3–10).
 const STATUS_PROCESSO = [
   "Vaga aberta - Seleção de Currículos", "Em análise jurídica", "Entrevista e Avaliação",
@@ -290,6 +358,10 @@ const STATUS_PROCESSO = [
   "Encaminhado para SST (ASO)", "ASO Aprovado - Aguardando Informe de EPIs",
   "Aguardando Confirmação Compras",
 ];
+
+// O atalho/número "Em Processo" não conta o que já tem atalho próprio
+// (Pendente Seleção). O resto da tela (drawer, candidatos) usa STATUS_PROCESSO.
+const STATUS_EM_PROCESSO = STATUS_PROCESSO.filter(s => s !== STATUS_PEND_SELECAO);
 
 // ── Componente Principal ───────────────────────────────────────────
 //
@@ -360,6 +432,9 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
   // sistema_recrutamento_guard já reconhecem como "gestor" — não existe
   // capacidade nova para isso. O Operacional vê as etiquetas, sem botão.
   const podeEtiquetar = podeRecrutar || podeAprovarAnalista;
+  // Atalhos de filtro com acesso próprio (23/09/2026, mig 20260930000225).
+  const verFiltroPendRecrutamento = can("visualizar", undefined, MENU_FILTRO_PEND_RECRUTAMENTO);
+  const verFiltroPendSelecao      = can("visualizar", undefined, MENU_FILTRO_PEND_SELECAO);
   // Quem pode mover o candidato pra fora de cada etapa específica do kanban.
   // Vaga do escritório: só quem tem a capacidade vê, marca e decide.
   const podeAdministrativa = podeVagaAdministrativa(can);
@@ -396,6 +471,14 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
   // "Aguardando você" e os KPIs continuam só com as administrativas.
   const noEscopoLista = useCallback(<T extends { administrativa?: boolean | null; setor?: string | null }>(rows: T[]) =>
     (escopo === "diretoria" && statusFilter === "") ? rows : filtrarPorEscopo(rows, escopo, meusSetores), [escopo, meusSetores, statusFilter]);
+  // Mês da solicitação (created_at), 23/09/2026 — veio junto com a
+  // importação das vagas do sistema antigo (Discord), que trouxe todo o
+  // histórico desde jan/2026. "YYYY-MM"; vazio = todos. A primeira versão
+  // tinha também De/Até livres — ficou poluído e saiu no mesmo dia, a
+  // pedido: só o mês, passando pro lado. dataDe/dataAte saem dele.
+  const [mes, setMes] = useState("");
+  const dataDe  = mes ? `${mes}-01` : "";
+  const dataAte = mes ? ultimoDiaDoMes(mes) : "";
   const [contratoFiltro, setContratoFiltro]         = useState<string[]>([]);
   const [contratoCounts, setContratoCounts]         = useState<{ contrato: string; n: number }[]>([]);
   const [showContratoFiltro, setShowContratoFiltro] = useState(false);
@@ -522,21 +605,26 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
   useEffect(() => { setTab(tabs[0].tab); }, [isRH, podeRecrutar, soEtapa1]);
 
   // ── Carregar Stats ────────────────────────────────────────────
+  // Os KPIs seguem o período escolhido (dataDe/dataAte) — o resto dos filtros
+  // não, como sempre foi.
   const loadStats = useCallback(async () => {
-    const { data, error } = await sb
-      .from("SISTEMA_RECRUTAMENTO")
-      .select("status, administrativa, setor");
+    const { data, error } = await lerTudo<{ status: string; administrativa?: boolean | null; setor?: string | null }>(() => {
+      let q = sb.from("SISTEMA_RECRUTAMENTO").select("id, status, administrativa, setor");
+      if (dataDe)  q = q.gte("created_at", `${dataDe}T00:00:00-03:00`);
+      if (dataAte) q = q.lt("created_at", `${diaSeguinte(dataAte)}T00:00:00-03:00`);
+      return q;
+    });
     if (error || !data) return;
     const rows: { status: string; administrativa?: boolean | null; setor?: string | null }[] = noEscopo(data);
     setStats({
       total:            rows.length,
       pendentes:        rows.filter(r => r.status === STATUS_ETAPA1).length,
       ag_treinamentos:  rows.filter(r => r.status === "Pendente Recrutamento").length,
-      em_processo:      rows.filter(r => STATUS_PROCESSO.includes(r.status)).length,
+      em_processo:      rows.filter(r => STATUS_EM_PROCESSO.includes(r.status)).length,
       contratados:      rows.filter(r => r.status === "Contratado" || String(r.status ?? "").startsWith("Concluído")).length,
       reprovadas:       rows.filter(r => r.status === "Reprovada").length,
     });
-  }, [noEscopo, STATUS_ETAPA1]);
+  }, [noEscopo, STATUS_ETAPA1, dataDe, dataAte]);
 
   // ── Filtros compartilhados ────────────────────────────────────
   // Tabela e Kanban são a MESMA consulta, só muda a apresentação — então os
@@ -544,7 +632,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- builder do PostgREST; o tipo exato muda a cada .select()
   const aplicarFiltros = useCallback((q: any) => {
     if (statusFilter === "em_processo") {
-      q = q.in("status", STATUS_PROCESSO);
+      q = q.in("status", STATUS_EM_PROCESSO);
     } else if (statusFilter === "concluido") {
       q = q.like("status", "Concluído%");
     } else if (statusFilter) {
@@ -560,8 +648,11 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
     if (search) {
       q = q.or(`cargo.ilike.%${search}%,contrato.ilike.%${search}%,cidade.ilike.%${search}%`);
     }
+    // Dia inteiro no horário de Brasília: "até 31/08" inclui o 31 todo.
+    if (dataDe)  q = q.gte("created_at", `${dataDe}T00:00:00-03:00`);
+    if (dataAte) q = q.lt("created_at", `${diaSeguinte(dataAte)}T00:00:00-03:00`);
     return q;
-  }, [statusFilter, tab, search, user]);
+  }, [statusFilter, tab, search, user, dataDe, dataAte]);
 
   // ── Carregar Lista ────────────────────────────────────────────
   const listaReq = useRef(0);
@@ -604,8 +695,8 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
       if (etiquetaFiltro.length) q = q.overlaps("etiquetas", etiquetaFiltro);
       return q.order("created_at", { ascending: false });
     };
-    let { data, error } = await kbQuery("id,cargo,contrato,cidade,status,grau_urgencia,quantidade_vagas,analista_nome,solicitante_nome,created_at,status_changed_at,administrativa,setor");
-    if (error) ({ data, error } = await kbQuery("id,cargo,contrato,cidade,status,grau_urgencia,quantidade_vagas,analista_nome,solicitante_nome,created_at,administrativa,setor"));
+    let { data, error } = await lerTudo<Solicitacao>(() => kbQuery("id,cargo,contrato,cidade,status,grau_urgencia,quantidade_vagas,analista_nome,solicitante_nome,created_at,status_changed_at,administrativa,setor"));
+    if (error) ({ data, error } = await lerTudo<Solicitacao>(() => kbQuery("id,cargo,contrato,cidade,status,grau_urgencia,quantidade_vagas,analista_nome,solicitante_nome,created_at,administrativa,setor")));
     if (myReq !== kanbanReq.current) return;
     if (error || !data) return;
     const linhas = noEscopo(data as unknown as Solicitacao[]);
@@ -621,12 +712,11 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
   // aba/status/busca; ignora os dois filtros de faceta — o menu mostra quanto
   // cada opção traria, não quanto sobrou depois de marcar a outra).
   const loadContratoCounts = useCallback(async () => {
-    let q = sb.from("SISTEMA_RECRUTAMENTO").select("contrato,etiquetas");
-    q = aplicarFiltros(q);
-    let { data, error } = await q;
+    type LinhaContagem = { contrato?: string | null; etiquetas?: string[] | null };
+    let { data, error } = await lerTudo<LinhaContagem>(() => aplicarFiltros(sb.from("SISTEMA_RECRUTAMENTO").select("id,contrato,etiquetas")));
     // Banco ainda sem a coluna (migration 20260930000090 não aplicada): refaz
     // sem ela para o filtro de contratos continuar funcionando.
-    if (error) ({ data, error } = await aplicarFiltros(sb.from("SISTEMA_RECRUTAMENTO").select("contrato")));
+    if (error) ({ data, error } = await lerTudo<LinhaContagem>(() => aplicarFiltros(sb.from("SISTEMA_RECRUTAMENTO").select("id,contrato"))));
     if (error || !data) return;
     const map = new Map<string, number>();
     const porEtiqueta: Record<string, number> = {};
@@ -806,7 +896,6 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
 
     // Analista e Diretoria mandam pro Recrutamento; o Recrutamento abre a vaga.
     const novoStatus = ehAbertura ? "Vaga aberta - Seleção de Currículos" : "Pendente Recrutamento";
-    const papelEtapa1 = escopo === "diretoria" ? "Diretoria" : "Analista";
 
     const { error } = await sb
       .from("SISTEMA_RECRUTAMENTO")
@@ -814,9 +903,10 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
       .eq("id", drawerId);
 
     if (error) { toast("Erro ao aprovar: " + error.message, "err"); return; }
-    await logHistorico(drawerId, ehAbertura ? "Abertura de vaga confirmada" : `Aprovada pel${papelEtapa1 === "Diretoria" ? "a" : "o"} ${papelEtapa1}`, {
-      de: drawerSol.status, para: novoStatus, papel: ehAbertura ? "Recrutamento" : papelEtapa1,
-    });
+    // O evento ("Aprovada pelo Analista", "Abertura de vaga confirmada"...)
+    // é gravado pelo gatilho trg_rec_historico_automatico (mig
+    // 20260930000225) — gravado daqui, batia na RLS na tela do analista e
+    // sumia calado.
     toast(ehAbertura ? "Vaga aberta — já aparece no portal de candidaturas!" : "Aprovado e encaminhado ao Recrutamento!", "ok");
     fecharDrawer();
     loadStats();
@@ -834,8 +924,9 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
       .update({ status: "Concluída" })
       .eq("id", drawerId);
     if (error) { toast("Erro ao concluir: " + error.message, "err"); return; }
-    await logHistorico(drawerId, "Solicitação concluída", {
-      de: "Seleção de Candidato", para: "Concluída", papel: "Recrutamento",
+    // "Solicitação concluída" vem do gatilho; aqui só quem foi admitido.
+    await logHistorico(drawerId, "Candidato admitido na conclusão", {
+      papel: "Recrutamento",
       detalhe: admitido.nome ? `Admitido: ${admitido.nome}` : undefined,
       candidatoId: admitido.id, candidatoNome: admitido.nome,
     });
@@ -853,12 +944,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
       .update({ status: "Reprovada", motivo_reprovacao: reprovarMotivo.trim(), ...carimboAprovador() })
       .eq("id", drawerId);
     if (error) { toast("Erro ao reprovar: " + error.message, "err"); return; }
-    if (drawerId) {
-      const papel = drawerSol?.status === "Pendente Analista" ? "Analista" : "Recrutamento";
-      await logHistorico(drawerId, "Solicitação reprovada", {
-        de: drawerSol?.status, para: "Reprovada", papel, detalhe: reprovarMotivo.trim(),
-      });
-    }
+    // "Solicitação reprovada" (com o motivo) vem do gatilho trg_rec_historico_automatico.
     toast("Solicitação reprovada.", "ok");
     setModalReprovar(false);
     setReprovarMotivo("");
@@ -1718,7 +1804,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
     // Etapas 3–10 (dirigidas pelo candidato): currículos, kanban, reprovar.
     if (STATUS_PROCESSO.includes(s.status) && podeRecrutar) {
       btns.push(<button key="cv" onClick={abrirCurriculos} style={{ padding: "5px 12px", borderRadius: 8, border: "1px solid rgba(34,197,94,.25)", background: "rgba(34,197,94,.1)", color: "#22c55e", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Currículos</button>);
-      btns.push(<button key="kb" onClick={abrirKanbanCand} style={{ padding: "5px 12px", borderRadius: 8, border: "1px solid rgba(59,130,246,.35)", background: "rgba(59,130,246,.12)", color: "#2563eb", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>👥 Candidatos ({candidatos.length})</button>);
+      btns.push(<button key="kb" onClick={abrirKanbanCand} style={{ padding: "5px 12px", borderRadius: 8, border: "1px solid rgba(59,130,246,.35)", background: "rgba(59,130,246,.12)", color: "#2563eb", fontSize: 12, fontWeight: 700, cursor: "pointer" }}><Ic i={Users} />Candidatos ({candidatos.length})</button>);
       if (s.link_publico) btns.push(<button key="lnk" onClick={() => { setLinkCopiado(false); setModalLink(true); }} style={{ padding: "5px 12px", borderRadius: 8, border: "1px solid rgba(99,102,241,.35)", background: "rgba(99,102,241,.15)", color: "#818cf8", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Gerar Link</button>);
       btns.push(reprovar("rep3"));
     }
@@ -1729,7 +1815,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
       btns.push(
         <button key="edt" onClick={() => { setVagaEditando(s); setModalVaga(true); }}
           style={{ padding: "5px 12px", borderRadius: 8, border: "1px solid #bfdbfe", background: "#eff6ff", color: "#1d4ed8", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
-          ✏️ Editar solicitação
+          <Ic i={Pencil} />Editar solicitação
         </button>,
       );
     }
@@ -1737,12 +1823,12 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
       btns.push(
         <button key="del" onClick={excluirSolicitacao}
           style={{ padding: "5px 12px", borderRadius: 8, border: "1px solid #fecaca", background: "#fef2f2", color: "#b91c1c", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
-          🗑 Apagar solicitação
+          <Ic i={Trash2} />Apagar solicitação
         </button>,
       );
     }
     // Histórico — sempre disponível.
-    btns.push(<button key="hist" onClick={() => { if (drawerId) loadHistorico(drawerId); setShowHistorico(true); }} style={{ padding: "5px 12px", borderRadius: 8, border: "1px solid #e2e8f0", background: "#fff", color: "#475569", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>📜 Histórico</button>);
+    btns.push(<button key="hist" onClick={() => { if (drawerId) loadHistorico(drawerId); setShowHistorico(true); }} style={{ padding: "5px 12px", borderRadius: 8, border: "1px solid #e2e8f0", background: "#fff", color: "#475569", fontSize: 12, fontWeight: 700, cursor: "pointer" }}><Ic i={History} />Histórico</button>);
     return btns;
   };
 
@@ -1855,16 +1941,16 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
       <div style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, margin: "0 0 12px", flexWrap: "wrap", flexShrink: 0 }}>
           <div style={{ fontSize: 13, fontWeight: 800, color: "#0f3171", display: "flex", alignItems: "center", gap: 8 }}>
-            👥 Candidatos no processo
+            <Ic i={Users} />Candidatos no processo
             <span style={{ fontSize: 11, fontWeight: 700, background: "#eef4ff", border: "1px solid #dbe4f0", borderRadius: 20, padding: "1px 9px", color: "#0f3171" }}>{q ? `${candVisiveis.length} de ${candidatos.length}` : candidatos.length}</span>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-            <input value={buscaCand} onChange={e => setBuscaCand(e.target.value)} placeholder="🔎 Buscar candidato (nome, CPF, fone)…"
+            <input value={buscaCand} onChange={e => setBuscaCand(e.target.value)} placeholder="Buscar candidato (nome, CPF, fone)…"
               style={{ height: 30, width: 240, border: "1px solid #e2e8f0", borderRadius: 8, padding: "0 10px", fontSize: 12, outline: "none", background: "#fff", color: "#0f172a" }} />
             {q && <button onClick={() => setBuscaCand("")} style={{ height: 30, padding: "0 10px", borderRadius: 8, border: "1px solid #e2e8f0", background: "#f8fafc", color: "#475569", fontSize: 11.5, fontWeight: 700, cursor: "pointer" }}>Limpar</button>}
             {podeRecrutar && (
               <button onClick={abrirMsgConfig} title="Definir a mensagem de WhatsApp que o sistema envia em cada etapa"
-                style={{ padding: "5px 12px", borderRadius: 8, border: "1px solid rgba(37,211,102,.3)", background: "rgba(37,211,102,.1)", color: "#128c7e", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>⚙️ Mensagens automáticas</button>
+                style={{ padding: "5px 12px", borderRadius: 8, border: "1px solid rgba(37,211,102,.3)", background: "rgba(37,211,102,.1)", color: "#128c7e", fontSize: 12, fontWeight: 700, cursor: "pointer" }}><Ic i={Settings} />Mensagens automáticas</button>
             )}
             {podeRecrutar && (
               <button onClick={abrirCurriculos} style={{ padding: "5px 12px", borderRadius: 8, border: "1px solid rgba(34,197,94,.25)", background: "rgba(34,197,94,.1)", color: "#22c55e", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>+ Selecionar dos currículos</button>
@@ -1906,12 +1992,12 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
                               <div style={{ fontSize: 12, fontWeight: 800, color: "#0f172a", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", flex: 1 }}>{c.nome || "Sem nome"}</div>
                               <AvisoProcessos processos={processosDe(processosCand, c)} compacto />
                               <button onClick={() => abrirDetalheCandidato(c)} title="Ver detalhes e procurar cadastro dele na empresa"
-                                style={{ flexShrink: 0, width: 20, height: 20, padding: 0, display: "inline-flex", alignItems: "center", justifyContent: "center", borderRadius: 6, border: "1px solid #e2e8f0", background: "#f8fafc", cursor: "pointer", fontSize: 10.5 }}>🔍</button>
+                                style={{ flexShrink: 0, width: 20, height: 20, padding: 0, display: "inline-flex", alignItems: "center", justifyContent: "center", borderRadius: 6, border: "1px solid #e2e8f0", background: "#f8fafc", cursor: "pointer", color: "#475569" }}><Search size={12} aria-hidden /></button>
                             </div>
                             {c.cpf && <div style={{ fontSize: 10, color: "#94a3b8" }}>CPF {c.cpf}</div>}
                             {c.telefone && (
                               <div style={{ fontSize: 10, color: "#475569", display: "flex", alignItems: "center", gap: 5 }}>
-                                <span>📞 {c.telefone}</span>
+                                <span><Ic i={Phone} />{c.telefone}</span>
                                 {temWhatsApp(c) && (
                                   <button onClick={() => abrirWhatsAppInterno(c)} title="Abrir a conversa na Caixa de Entrada do WhatsApp"
                                     style={{ flexShrink: 0, width: 17, height: 17, padding: 0, border: "none", cursor: "pointer", borderRadius: "50%", background: "#25d366", display: "inline-flex", alignItems: "center", justifyContent: "center" }}>
@@ -1923,14 +2009,14 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
                               </div>
                             )}
                             {c.juridico_ok === true && <div style={{ fontSize: 9.5, color: "#15803d", marginTop: 3, fontWeight: 700 }}>✓ Jurídico aprovado</div>}
-                            {c.juridico_ok === false && <div style={{ fontSize: 9.5, color: "#b91c1c", marginTop: 3, fontWeight: 700 }}>⛔ Restrito (Jurídico)</div>}
+                            {c.juridico_ok === false && <div style={{ fontSize: 9.5, color: "#b91c1c", marginTop: 3, fontWeight: 700 }}><Ic i={Ban} />Restrito (Jurídico)</div>}
                             {c.sst_ok === true && <div style={{ fontSize: 9.5, color: "#15803d", marginTop: 3, fontWeight: 700 }}>✓ SST aprovou</div>}
-                            {c.sst_ok === false && <div style={{ fontSize: 9.5, color: "#b91c1c", marginTop: 3, fontWeight: 700 }}>⛔ Reprovado no SST</div>}
+                            {c.sst_ok === false && <div style={{ fontSize: 9.5, color: "#b91c1c", marginTop: 3, fontWeight: 700 }}><Ic i={Ban} />Reprovado no SST</div>}
                             {c.compras_ok === true && <div style={{ fontSize: 9.5, color: "#15803d", marginTop: 3, fontWeight: 700 }}>✓ Compras aprovou</div>}
-                            {c.compras_ok === false && <div style={{ fontSize: 9.5, color: "#b91c1c", marginTop: 3, fontWeight: 700 }}>⛔ Reprovado no Compras</div>}
+                            {c.compras_ok === false && <div style={{ fontSize: 9.5, color: "#b91c1c", marginTop: 3, fontWeight: 700 }}><Ic i={Ban} />Reprovado no Compras</div>}
                             {etapa === "Reprovado" && c.desistiu && (
                               <div style={{ fontSize: 9.5, color: "#b45309", marginTop: 3, fontWeight: 700 }}>
-                                🚪 Desistiu{c.desistencia_etapa ? ` (em ${c.desistencia_etapa})` : ""}
+                                <Ic i={LogOut} />Desistiu{c.desistencia_etapa ? ` (em ${c.desistencia_etapa})` : ""}
                               </div>
                             )}
                             {etapa === "Reprovado" && c.desistiu
@@ -1943,12 +2029,12 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
                                 {([["SST", c.sst_ok === true], ["Compras", c.compras_ok === true]] as [string, boolean][]).map(([rot, ok]) => (
                                   <span key={rot} style={{ fontSize: 9.5, fontWeight: 700, padding: "1px 7px", borderRadius: 20,
                                     background: ok ? "#dcfce7" : "#fef3c7", color: ok ? "#15803d" : "#b45309" }}>
-                                    {ok ? "✅" : "⏳"} {rot}
+                                    {ok ? <Ic i={CheckCircle2} /> : <Ic i={Clock} />}{rot}
                                   </span>
                                 ))}
                               </div>
                             )}
-                            {etapa === "DOCUMENTAÇÃO" && (docsCount[c.id] ?? 0) > 0 && <div style={{ fontSize: 9.5, color: "#0e7490", marginTop: 4, fontWeight: 700 }}>📎 {docsCount[c.id]} documento{docsCount[c.id] > 1 ? "s" : ""}</div>}
+                            {etapa === "DOCUMENTAÇÃO" && (docsCount[c.id] ?? 0) > 0 && <div style={{ fontSize: 9.5, color: "#0e7490", marginTop: 4, fontWeight: 700 }}><Ic i={Paperclip} />{docsCount[c.id]} documento{docsCount[c.id] > 1 ? "s" : ""}</div>}
                             {/* Ficha do ASO (18/09/2026): a partir de APROVADO o
                                 Recrutamento vê o que o SST vai receber e completa
                                 o que o automático não achou (PIS, mãe, posto…). */}
@@ -1958,9 +2044,9 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
                             {etapa === "ADMISSÃO" && c.enviado_admissao_em && <div style={{ fontSize: 9.5, color: "#15803d", marginTop: 4, fontWeight: 700 }}>✓ Contratado — na Admissão (RH)</div>}
                             <div style={{ display: "flex", flexDirection: "column", gap: 5, marginTop: 10 }}>
                               {/* ENTREVISTA/GESTOR: roteiro de entrevista */}
-                              {(etapa === "ENTREVISTA" || etapa === "ENTREVISTA GESTOR") && podeRecrutar && <button onClick={() => abrirRoteiro(c, etapa)} style={{ ...bFull, background: "rgba(59,130,246,.1)", color: "#2563eb", border: "1px solid rgba(59,130,246,.3)" }}>📋 Roteiro de entrevista</button>}
+                              {(etapa === "ENTREVISTA" || etapa === "ENTREVISTA GESTOR") && podeRecrutar && <button onClick={() => abrirRoteiro(c, etapa)} style={{ ...bFull, background: "rgba(59,130,246,.1)", color: "#2563eb", border: "1px solid rgba(59,130,246,.3)" }}><Ic i={ClipboardList} />Roteiro de entrevista</button>}
                               {/* DOCUMENTAÇÃO: anexos do candidato (vários, cada um com título) */}
-                              {etapa === "DOCUMENTAÇÃO" && podeRecrutar && <button onClick={() => abrirDocs(c)} style={{ ...bFull, background: "rgba(8,145,178,.1)", color: "#0e7490", border: "1px solid rgba(8,145,178,.3)" }}>📎 Documentos ({docsCount[c.id] ?? 0})</button>}
+                              {etapa === "DOCUMENTAÇÃO" && podeRecrutar && <button onClick={() => abrirDocs(c)} style={{ ...bFull, background: "rgba(8,145,178,.1)", color: "#0e7490", border: "1px solid rgba(8,145,178,.3)" }}><Ic i={Paperclip} />Documentos ({docsCount[c.id] ?? 0})</button>}
                               {/* Avançar — com ramificação em TRIAGEM e ENTREVISTA */}
                               {etapa === "TRIAGEM" && podeAqui ? (<>
                                 <button onClick={() => pedirMoverCand(c, "JURÍDICO")} style={{ ...avancaBtn, background: "#8b5cf6" }}>Enviar ao Jurídico</button>
@@ -1984,7 +2070,7 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
                                 <button onClick={() => pedirMoverCand(c, CAND_PROX[etapa])} style={{ ...avancaBtn, background: "#16a34a" }}>{labelProx(etapa)}</button>
                               ))}
                               {etapa === "JURÍDICO" && podeMoverJuridico && (
-                                <button onClick={() => devolverDoJuridico(c)} style={{ ...bSkip, color: "#b45309", borderColor: "#fde68a" }}>⚠ Reprovar e devolver ao RH</button>
+                                <button onClick={() => devolverDoJuridico(c)} style={{ ...bSkip, color: "#b45309", borderColor: "#fde68a" }}><Ic i={AlertTriangle} />Reprovar e devolver ao RH</button>
                               )}
                               {etapa !== "ADMISSÃO" && etapa !== "Reprovado" && podeAqui && <button onClick={() => pedirMoverCand(c, "Reprovado")} style={{ width: "100%", fontSize: 10.5, fontWeight: 700, padding: "4px", borderRadius: 7, background: "transparent", border: "none", color: "#94a3b8", cursor: "pointer" }}>Reprovar</button>}
                               {/* Desistência: cabe em QUALQUER etapa, porque
@@ -1993,7 +2079,7 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
                               {etapa !== "Reprovado" && podeRecrutar && (
                                 <button onClick={() => { setDesistMotivo(""); setDesistModal({ id: c.id, nome: c.nome || "Candidato", etapa }); }}
                                   title="Registrar que o candidato desistiu"
-                                  style={{ width: "100%", fontSize: 10, fontWeight: 700, padding: "3px", borderRadius: 7, background: "transparent", border: "none", color: "#cbd5e1", cursor: "pointer" }}>🚪 Desistiu</button>
+                                  style={{ width: "100%", fontSize: 10, fontWeight: 700, padding: "3px", borderRadius: 7, background: "transparent", border: "none", color: "#cbd5e1", cursor: "pointer" }}><Ic i={LogOut} />Desistiu</button>
                               )}
                             </div>
                           </div>
@@ -2066,10 +2152,11 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
         <div>
           <div className="rec-hero-eyebrow">{!soEtapa1 ? "Recursos Humanos · Recrutamento e Seleção" : escopo === "analista" ? "Licitações · Analistas" : escopo === "diretoria" ? "Diretoria · Vagas administrativas" : "Operacional · Acompanhamento"}</div>
           <h1>
-            {!soEtapa1 ? "🎯 Seleção e Recrutamento"
-              : escopo === "analista" ? "🎯 Vagas aguardando o analista"
-              : escopo === "diretoria" ? "🎯 Vagas aguardando a Diretoria"
-              : "🎯 Gestão de Recrutamento"}
+            <Target size={24} strokeWidth={2.2} aria-hidden style={{ display: "inline-block", verticalAlign: "-4px", marginRight: 10 }} />
+            {!soEtapa1 ? "Seleção e Recrutamento"
+              : escopo === "analista" ? "Vagas aguardando o analista"
+              : escopo === "diretoria" ? "Vagas aguardando a Diretoria"
+              : "Gestão de Recrutamento"}
           </h1>
           <p>{!soEtapa1 ? "Solicitações de vaga, funil de candidatos e o botão Status em cada pedido: onde está, quem cuida e todo o histórico."
             : escopo === "operacional" ? "Acompanhe cada pedido de vaga: quem aprovou, em que etapa está e a conversa com o Recrutamento."
@@ -2081,7 +2168,7 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
           <ResumoDeFuncoes fluxo="vaga" className="border-white/40 bg-white/15 text-white hover:bg-white hover:text-[#0f3171]" />
           {podeRecrutar && (
             <button onClick={copiarLinkPortal} title="Copia o link público (/vagas) para os candidatos escolherem a cidade e enviarem o currículo" style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "10px 16px", borderRadius: 12, border: "1.5px solid rgba(255,255,255,.4)", background: "rgba(255,255,255,.14)", color: "#fff", fontSize: 12.5, fontWeight: 800, cursor: "pointer" }}>
-              🔗 {portalCopiado ? "Link copiado!" : "Copiar link de candidatura"}
+              <Ic i={Link2} />{portalCopiado ? "Link copiado!" : "Copiar link de candidatura"}
             </button>
           )}
           {canNovaVaga && (
@@ -2101,7 +2188,7 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
             procurando onde clicar para aprovar. */}
         {escopo === "operacional" && (
           <div style={{ display: "flex", gap: 10, alignItems: "flex-start", padding: "12px 16px", marginBottom: 16, border: "1px solid #e2e8f0", borderRadius: 12, background: "#fff", fontSize: 13, color: "#475569" }}>
-            <span style={{ fontSize: 15, lineHeight: "18px" }}>👁️</span>
+            <Eye size={16} aria-hidden style={{ flexShrink: 0, marginTop: 1, color: "#64748b" }} />
             <span>
               Esta tela é de <strong>acompanhamento</strong>. Quem aprova a solicitação de vaga
               é o analista, em Licitações › Analistas Validações. Aqui você abre o card,
@@ -2116,21 +2203,21 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
             ? [
               // A fila desta tela, e o destino de quem já passou por ela — é o
               // que o operacional pergunta ("aprovei quantas hoje?").
-              { label: "Aguardando você",  val: stats.pendentes,       color: "#f59e0b", icone: "🕒" },
-              { label: "Já aprovadas",     val: stats.ag_treinamentos, color: "#8b5cf6", icone: "✅" },
-              { label: "Reprovadas",       val: stats.reprovadas,      color: "#dc2626", icone: "⛔" },
+              { label: "Aguardando você",  val: stats.pendentes,       color: "#f59e0b", icone: Clock },
+              { label: "Já aprovadas",     val: stats.ag_treinamentos, color: "#8b5cf6", icone: CheckCircle2 },
+              { label: "Reprovadas",       val: stats.reprovadas,      color: "#dc2626", icone: XCircle },
             ]
             : [
               // "Pend. Operacional" não entra: essa fila é do módulo Operacional.
-              { label: "Total de solicitações", val: stats.total,      color: "#0f3171", icone: "🗂️", sub: "cadastradas · o nº (#) de cada uma é sequência, não contagem" },
-              { label: "Pend. Recrutamento",val: stats.ag_treinamentos, color: "#8b5cf6", icone: "🎯" },
-              { label: "Em Processo",      val: stats.em_processo,     color: "#3b82f6", icone: "🔎" },
-              { label: "Concluídas",       val: stats.contratados,     color: "#16a34a", icone: "✅" },
-              { label: "Reprovadas",       val: stats.reprovadas,      color: "#dc2626", icone: "⛔" },
+              { label: "Total de solicitações", val: stats.total,      color: "#0f3171", icone: FolderOpen, sub: "cadastradas · o nº (#) de cada uma é sequência, não contagem" },
+              { label: "Pend. Recrutamento",val: stats.ag_treinamentos, color: "#8b5cf6", icone: UserSearch },
+              { label: "Em Processo",      val: stats.em_processo,     color: "#3b82f6", icone: Activity },
+              { label: "Concluídas",       val: stats.contratados,     color: "#16a34a", icone: CheckCircle2 },
+              { label: "Reprovadas",       val: stats.reprovadas,      color: "#dc2626", icone: XCircle },
             ]
           ).map(k => (
             <div key={k.label} className="rec-kpi" style={{ "--c": k.color } as CSSProperties}>
-              <div className="rec-kpi-ic">{k.icone}</div>
+              <div className="rec-kpi-ic" style={{ color: k.color }}><k.icone size={20} strokeWidth={2.2} aria-hidden /></div>
               <div>
                 <div style={{ fontSize: 10.5, color: "#94a3b8", textTransform: "uppercase", letterSpacing: ".6px", fontWeight: 800 }}>{k.label}</div>
                 <div style={{ fontSize: 24, fontWeight: 900, color: k.color, lineHeight: 1.15, marginTop: 2 }}>{k.val}</div>
@@ -2142,8 +2229,41 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
 
         {/* Filtro de Contratos */}
         <div style={{ position: "relative", marginBottom: 12, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          {/* Mês da solicitação: ‹ Mês ›. As setas passam o mês (de
+              "Todos", a primeira seta abre no mês atual); no meio, a lista
+              com "Todos" e cada mês desde jan/2026. */}
+          {(() => {
+            const meses = mesesDoSeletor();
+            const ir = (m: string) => { setMes(m); setPage(1); };
+            const seta = (desabilitada: boolean): CSSProperties => ({
+              display: "inline-flex", alignItems: "center", justifyContent: "center", width: 28, height: 28, borderRadius: 8,
+              border: "none", background: "transparent", color: desabilitada ? "#cbd5e1" : "#475569",
+              cursor: desabilitada ? "default" : "pointer",
+            });
+            const semAnterior = !!mes && mes <= PRIMEIRO_MES;
+            const semProximo  = !mes || mes >= mesAtual();
+            return (
+              <div style={{ display: "inline-flex", alignItems: "center", gap: 2, padding: "3px 4px 3px 12px", borderRadius: 10, border: "1px solid #e2e8f0", background: mes ? "#eef2fb" : "#fff", boxShadow: "0 8px 24px rgba(15,23,42,.06)", fontSize: 12, color: "#475569", fontWeight: 700 }}>
+                <Ic i={CalendarDays} />
+                <span style={{ marginRight: 4 }}>Mês</span>
+                <button type="button" aria-label="Mês anterior" disabled={semAnterior} style={seta(semAnterior)}
+                  onClick={() => ir(mes ? mesVizinho(mes, -1) : mesAtual())}>
+                  <ChevronLeft size={16} aria-hidden />
+                </button>
+                <select aria-label="Mês da solicitação" value={mes} onChange={e => ir(e.target.value)}
+                  style={{ appearance: "none", border: "none", background: "transparent", fontSize: 12.5, fontWeight: 800, color: mes ? "#0f3171" : "#0f172a", cursor: "pointer", textAlign: "center", minWidth: 128, padding: "4px 2px", textTransform: "capitalize" }}>
+                  <option value="">Todos</option>
+                  {meses.map(m => <option key={m} value={m}>{nomeDoMes(m)}</option>)}
+                </select>
+                <button type="button" aria-label="Próximo mês" disabled={semProximo} style={seta(semProximo)}
+                  onClick={() => ir(mesVizinho(mes, 1))}>
+                  <ChevronRight size={16} aria-hidden />
+                </button>
+              </div>
+            );
+          })()}
           <button onClick={() => setShowContratoFiltro(v => !v)} style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "7px 14px", borderRadius: 10, border: "1px solid #e2e8f0", background: contratoFiltro.length ? "#0f3171" : "#fff", color: contratoFiltro.length ? "#fff" : "#475569", fontSize: 12, fontWeight: 700, cursor: "pointer", boxShadow: "0 8px 24px rgba(15,23,42,.06)" }}>
-            🗂 Filtros · Contratos{contratoFiltro.length ? ` (${contratoFiltro.length})` : ""} ▾
+            <Ic i={Building2} />Filtros · Contratos{contratoFiltro.length ? ` (${contratoFiltro.length})` : ""} ▾
           </button>
           {contratoFiltro.length > 0 && (
             <button onClick={() => { setContratoFiltro([]); setPage(1); }} style={{ background: "none", border: "none", color: "#94a3b8", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>limpar</button>
@@ -2153,7 +2273,7 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
               várias traz quem tem QUALQUER uma delas (overlaps). */}
           <div style={{ position: "relative" }}>
             <button onClick={() => setShowEtiquetaFiltro(v => !v)} style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "7px 14px", borderRadius: 10, border: "1px solid #e2e8f0", background: etiquetaFiltro.length ? "#0f3171" : "#fff", color: etiquetaFiltro.length ? "#fff" : "#475569", fontSize: 12, fontWeight: 700, cursor: "pointer", boxShadow: "0 8px 24px rgba(15,23,42,.06)" }}>
-              🏷 Etiquetas{etiquetaFiltro.length ? ` (${etiquetaFiltro.length})` : ""} ▾
+              <Ic i={Tags} />Etiquetas{etiquetaFiltro.length ? ` (${etiquetaFiltro.length})` : ""} ▾
             </button>
             {showEtiquetaFiltro && (
               <>
@@ -2230,7 +2350,11 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
               ]
               : [
                 { label: "Todas", val: "" },
-                { label: "Pendente Recrutamento", val: "Pendente Recrutamento" },
+                // Os dois "Pendente" têm acesso próprio em Acesso por Usuário
+                // (menus fantasmas da mig 20260930000225) — só organização:
+                // esconde o atalho, as vagas continuam em "Todas".
+                ...(verFiltroPendRecrutamento ? [{ label: "Pendente Recrutamento", val: "Pendente Recrutamento" }] : []),
+                ...(verFiltroPendSelecao ? [{ label: "Pendente Seleção", val: STATUS_PEND_SELECAO }] : []),
                 { label: "Em Processo", val: "em_processo" },
                 { label: "Concluídas", val: "concluido" },
                 { label: "Reprovados", val: "Reprovada" },
@@ -2271,7 +2395,7 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
                         <td>{item.cidade || "—"}</td>
                         <td><span className={`rec-badge ${badgeStatusCls(item.status)}`}>{item.status || "—"}</span></td>
                         <td>{renderEtiquetas(item)}</td>
-                        <td>{item.grau_urgencia ? <span className={`rec-badge ${badgeUrgCls(item.grau_urgencia)}`}>{item.grau_urgencia.startsWith("Alta") ? "⚡ Alta" : item.grau_urgencia}</span> : "—"}</td>
+                        <td>{item.grau_urgencia ? <span className={`rec-badge ${badgeUrgCls(item.grau_urgencia)}`}>{item.grau_urgencia.startsWith("Alta") ? <><Ic i={Zap} />Alta</> : item.grau_urgencia}</span> : "—"}</td>
                         <td>{item.solicitante_nome || "—"}</td>
                         <td style={{ color: "#94a3b8", fontSize: 11 }}>{fmtDt(item.created_at)}</td>
                         <td onClick={e => e.stopPropagation()} style={{ textAlign: "right" }}>
@@ -2308,7 +2432,7 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
               <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                 <span style={{ fontSize: 13, color: "#94a3b8", fontWeight: 700 }}>Solicitação #{drawerId}</span>
                 {drawerSol && <span className={`rec-badge ${badgeStatusCls(drawerSol.status)}`}>{drawerSol.status}</span>}
-                {drawerSol?.grau_urgencia && <span className={`rec-badge ${badgeUrgCls(drawerSol.grau_urgencia)}`}>{drawerSol.grau_urgencia.startsWith("Alta") ? "⚡ Alta" : drawerSol.grau_urgencia}</span>}
+                {drawerSol?.grau_urgencia && <span className={`rec-badge ${badgeUrgCls(drawerSol.grau_urgencia)}`}>{drawerSol.grau_urgencia.startsWith("Alta") ? <><Ic i={Zap} />Alta</> : drawerSol.grau_urgencia}</span>}
                 {drawerSol && renderEtiquetas(drawerSol)}
               </div>
               <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
@@ -2329,7 +2453,7 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
                       <div style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 12, padding: "12px 14px" }}>
                         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
                           <div style={{ fontSize: 13, fontWeight: 800, color: "#0f3171", display: "flex", alignItems: "center", gap: 8 }}>
-                            👥 Candidatos no processo
+                            <Ic i={Users} />Candidatos no processo
                             <span style={{ fontSize: 11, fontWeight: 700, background: "#eef4ff", border: "1px solid #dbe4f0", borderRadius: 20, padding: "1px 9px", color: "#0f3171" }}>{candidatos.length}</span>
                           </div>
                           <button onClick={abrirKanbanCand} style={{ padding: "6px 12px", borderRadius: 8, border: "none", background: "#0f3171", color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Abrir kanban →</button>
@@ -2357,7 +2481,7 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
               {/* Right: chat */}
               <div style={{ width: 320, flexShrink: 0, display: "flex", flexDirection: "column", overflow: "hidden", borderLeft: "1px solid #e2e8f0", background: "#fff" }}>
                 <div style={{ padding: "11px 14px", borderBottom: "1px solid #e2e8f0", fontSize: 13, fontWeight: 700, color: "#475569", flexShrink: 0, background: "#f8fafc", display: "flex", alignItems: "center", gap: 6 }}>
-                  💬 Chat
+                  <Ic i={MessageSquare} />Chat
                 </div>
                 <div className="rec-chat-msgs" style={{ background: "linear-gradient(180deg,#fff 0%,#f8fafc 100%)" }}>
                   {msgs.length === 0 ? (
@@ -2366,7 +2490,7 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
                     const mine = m.autor_cpf === user?.email;
                     return (
                       <div key={m.id} className={`rec-cmsg ${mine ? "mine" : "theirs"}`}>
-                        <div style={{ fontSize: 10, color: "#94a3b8", padding: "0 2px" }}>{m.is_treinamento ? "🎓 " : ""}{m.autor_nome}</div>
+                        <div style={{ fontSize: 10, color: "#94a3b8", padding: "0 2px" }}>{m.is_treinamento ? <Ic i={GraduationCap} s={11} /> : null}{m.autor_nome}</div>
                         <div className={mine ? "rec-cbubble-mine" : "rec-cbubble-theirs"}>{m.mensagem}</div>
                         <div style={{ fontSize: 10, color: "#94a3b8", padding: "0 2px" }}>{fmtDt(m.created_at)}</div>
                       </div>
@@ -2452,7 +2576,7 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
             <div style={{ fontSize: 17, fontWeight: 800, marginBottom: 4 }}>Link para Candidatura</div>
             <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 14 }}>Compartilhe este link para receber currículos.</div>
             <div style={{ marginBottom: 16, padding: "12px 14px", background: "rgba(15,49,113,.07)", border: "1px solid rgba(15,49,113,.18)", borderRadius: 10, fontSize: 13 }}>
-              <strong>{drawerSol.cargo}</strong>{drawerSol.cidade ? ` · 📍 ${drawerSol.cidade}` : ""}
+              <strong>{drawerSol.cargo}</strong>{drawerSol.cidade ? <> · <Ic i={MapPin} s={13} />{drawerSol.cidade}</> : ""}
             </div>
             <div style={{ marginBottom: 16 }}>
               <label style={{ fontSize: 11, fontWeight: 700, letterSpacing: ".5px", color: "#94a3b8", textTransform: "uppercase", display: "block", marginBottom: 6 }}>Link de candidatura</label>
@@ -2507,7 +2631,7 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
         <div className="rec-modal-ov" style={{ zIndex: 850 }}>
           <div className="rec-modal" style={{ maxWidth: 720 }}>
             <button onClick={() => { setRoteiroModal(null); setRoteiroRows([]); }} style={{ position: "absolute", top: 14, right: 14, background: "none", border: "none", color: "#94a3b8", fontSize: 20, cursor: "pointer" }}>✕</button>
-            <div style={{ fontSize: 17, fontWeight: 800, marginBottom: 4 }}>📋 Roteiro de Entrevista</div>
+            <div style={{ fontSize: 17, fontWeight: 800, marginBottom: 4 }}><Ic i={ClipboardList} />Roteiro de Entrevista</div>
             <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 14 }}>{roteiroModal.nome} · {roteiroModal.etapa === "ENTREVISTA GESTOR" ? "Entrevista com Gestor" : "Entrevista"}</div>
             <div style={{ display: "flex", flexDirection: "column", gap: 10, maxHeight: "56vh", overflowY: "auto" }}>
               {roteiroRows.map((r, i) => {
@@ -2537,7 +2661,7 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
         <div className="rec-modal-ov" style={{ zIndex: 860 }}>
           <div className="rec-modal" style={{ maxWidth: 660 }}>
             <button onClick={() => { setDocsModal(null); setDocs([]); }} style={{ position: "absolute", top: 14, right: 14, background: "none", border: "none", color: "#94a3b8", fontSize: 20, cursor: "pointer" }}>✕</button>
-            <div style={{ fontSize: 17, fontWeight: 800, marginBottom: 4 }}>📎 Documentos do candidato</div>
+            <div style={{ fontSize: 17, fontWeight: 800, marginBottom: 4 }}><Ic i={Paperclip} />Documentos do candidato</div>
             <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 14 }}>
               {docsModal.nome} · os anexos seguem com ele para o cadastro de empregado na Admissão
             </div>
@@ -2585,7 +2709,7 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
         <div className="rec-modal-ov" style={{ zIndex: 870 }}>
           <div className="rec-modal" style={{ maxWidth: 780 }}>
             <button onClick={() => setMsgModal(false)} style={{ position: "absolute", top: 14, right: 14, background: "none", border: "none", color: "#94a3b8", fontSize: 20, cursor: "pointer" }}>✕</button>
-            <div style={{ fontSize: 17, fontWeight: 800, marginBottom: 4 }}>⚙️ Mensagens automáticas (WhatsApp)</div>
+            <div style={{ fontSize: 17, fontWeight: 800, marginBottom: 4 }}><Ic i={Settings} />Mensagens automáticas (WhatsApp)</div>
             <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 12 }}>
               Enviadas ao candidato quando ele é movido para a etapa.
             </div>
@@ -2696,7 +2820,7 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
           <div style={{ width: "94vw", height: "92vh", background: "#fff", borderRadius: 16, border: "1px solid #e2e8f0", display: "flex", flexDirection: "column", overflow: "hidden", boxShadow: "0 24px 70px rgba(15,23,42,.3)" }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 22px", borderBottom: "1px solid #e2e8f0", flexShrink: 0, background: "#f8fafc", gap: 12, flexWrap: "wrap" }}>
               <div style={{ fontSize: 16, fontWeight: 800, color: "#0f172a", display: "flex", alignItems: "center", gap: 10 }}>
-                👥 Processo Seletivo — Candidatos
+                <Ic i={Users} />Processo Seletivo — Candidatos
                 <span style={{ fontSize: 12, color: "#94a3b8" }}>{drawerSol?.cargo} · #{drawerId}</span>
               </div>
               <button onClick={() => setShowKanbanCand(false)} style={{ background: "none", border: "none", color: "#94a3b8", fontSize: 20, cursor: "pointer" }}>✕</button>
@@ -2714,7 +2838,7 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
           <div className="cv-panel" style={{ maxWidth: 720 }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 22px", borderBottom: "1px solid #e2e8f0", flexShrink: 0, background: "#f8fafc", gap: 12, flexWrap: "wrap" }}>
               <div style={{ fontSize: 16, fontWeight: 800, color: "#0f172a", display: "flex", alignItems: "center", gap: 10 }}>
-                📜 Histórico da Solicitação
+                <Ic i={History} />Histórico da Solicitação
                 <span style={{ fontSize: 12, color: "#94a3b8" }}>#{drawerId}</span>
               </div>
               <button onClick={() => setShowHistorico(false)} style={{ background: "none", border: "none", color: "#94a3b8", fontSize: 20, cursor: "pointer" }}>✕</button>
@@ -2743,7 +2867,7 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
             <div style={{ flex: 1, overflowY: "auto", padding: 22 }}>
               {curriculos.length === 0 ? (
                 <div style={{ textAlign: "center", padding: "60px 20px", color: "#94a3b8" }}>
-                  <div style={{ fontSize: 40, marginBottom: 12 }}>📄</div>
+                  <div style={{ marginBottom: 12, color: "#cbd5e1" }}><FileText size={40} aria-hidden /></div>
                   <div style={{ fontSize: 14, marginBottom: 4 }}>Nenhum currículo recebido ainda.</div>
                   <div style={{ fontSize: 12 }}>Com a vaga em <b>“Seleção de Candidato”</b>, ela aparece no portal público <b>/vagas</b> para receber candidaturas.</div>
                 </div>
@@ -2759,21 +2883,21 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
                     <div key={g.items[0].id} className="cv-card" style={{ position: "relative", outline: bl ? "2px solid #fecaca" : undefined, outlineOffset: -1 }}>
                       <div style={{ height: 3, background: cv.origem === "whatsapp" ? "linear-gradient(90deg,#22c55e,#16a34a)" : "linear-gradient(90deg,#0f3171,#1e4a8a)" }}></div>
                       <div style={{ position: "absolute", top: 9, right: 9, zIndex: 2, display: "flex", gap: 6 }}>
-                        {hasEmp && <span title="Já tem cadastro na empresa (EMPREGADOS)" style={{ display: "inline-flex", alignItems: "center", gap: 4, background: "#0f3171", color: "#fff", borderRadius: 8, padding: "3px 8px", fontSize: 10, fontWeight: 800, boxShadow: "0 6px 16px rgba(15,49,113,.3)" }}>🏦 NO BANCO</span>}
-                        {bl && <span title={`Restrição: ${bl.motivo}`} style={{ display: "inline-flex", alignItems: "center", gap: 4, background: "#d97706", color: "#fff", borderRadius: 8, padding: "3px 8px", fontSize: 10, fontWeight: 800, boxShadow: "0 6px 16px rgba(217,119,6,.32)" }}>⚠️ POSSUI RESTRIÇÕES</span>}
+                        {hasEmp && <span title="Já tem cadastro na empresa (EMPREGADOS)" style={{ display: "inline-flex", alignItems: "center", gap: 4, background: "#0f3171", color: "#fff", borderRadius: 8, padding: "3px 8px", fontSize: 10, fontWeight: 800, boxShadow: "0 6px 16px rgba(15,49,113,.3)" }}><Ic i={Landmark} />NO BANCO</span>}
+                        {bl && <span title={`Restrição: ${bl.motivo}`} style={{ display: "inline-flex", alignItems: "center", gap: 4, background: "#d97706", color: "#fff", borderRadius: 8, padding: "3px 8px", fontSize: 10, fontWeight: 800, boxShadow: "0 6px 16px rgba(217,119,6,.32)" }}><Ic i={AlertTriangle} />POSSUI RESTRIÇÕES</span>}
                       </div>
                       <div style={{ padding: "16px 18px", flex: 1, display: "flex", flexDirection: "column", gap: 10 }}>
                         <span style={{ width: "fit-content", display: "inline-flex", alignItems: "center", gap: 5, fontSize: 10, fontWeight: 700, letterSpacing: ".5px", textTransform: "uppercase", padding: "3px 9px", borderRadius: 4, background: cv.origem === "whatsapp" ? "rgba(34,197,94,.1)" : "rgba(249,115,22,.12)", color: cv.origem === "whatsapp" ? "#22c55e" : "#f97316", border: `1px solid ${cv.origem === "whatsapp" ? "rgba(34,197,94,.2)" : "rgba(249,115,22,.18)"}` }}>
                           {cv.origem === "whatsapp" ? "WhatsApp" : "Portal"}
                         </span>
                         {cv.nome ? <div style={{ fontSize: 15, fontWeight: 700, color: "#0f172a" }}>{cv.nome}</div> : <div style={{ fontSize: 14, fontWeight: 600, color: "#94a3b8", fontStyle: "italic" }}>Nome não informado</div>}
-                        {g.items.length > 1 && <span style={{ width: "fit-content", fontSize: 11, fontWeight: 700, color: "#0f3171", background: "#eef4ff", border: "1px solid #dbe4f0", borderRadius: 20, padding: "2px 10px" }}>📩 {g.items.length} candidaturas enviadas</span>}
+                        {g.items.length > 1 && <span style={{ width: "fit-content", fontSize: 11, fontWeight: 700, color: "#0f3171", background: "#eef4ff", border: "1px solid #dbe4f0", borderRadius: 20, padding: "2px 10px" }}><Ic i={Mail} />{g.items.length} candidaturas enviadas</span>}
                         <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                           {cv.telefone && <div style={{ fontSize: 12, color: "#475569", display: "flex", gap: 7 }}><span style={{ fontSize: 10, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase", minWidth: 50 }}>Fone</span>{cv.telefone}</div>}
                           {cv.email    && <div style={{ fontSize: 12, color: "#475569", display: "flex", gap: 7 }}><span style={{ fontSize: 10, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase", minWidth: 50 }}>Email</span>{cv.email}</div>}
                           {cv.cpf      && <div style={{ fontSize: 12, color: "#475569", display: "flex", gap: 7 }}><span style={{ fontSize: 10, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase", minWidth: 50 }}>CPF</span>{cv.cpf}</div>}
                         </div>
-                        {bl && <div style={{ fontSize: 11.5, color: "#92400e", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 7, padding: "8px 10px" }}><b>⚠️ Possui restrições.</b> {bl.motivo} <span style={{ color: "#b45309" }}>(definido pelo Jurídico)</span></div>}
+                        {bl && <div style={{ fontSize: 11.5, color: "#92400e", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 7, padding: "8px 10px" }}><b><Ic i={AlertTriangle} />Possui restrições.</b> {bl.motivo} <span style={{ color: "#b45309" }}>(definido pelo Jurídico)</span></div>}
                         <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                           <div style={{ fontSize: 10, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".5px", color: "#94a3b8" }}>Currículos enviados</div>
                           {g.items.map(item => (
@@ -2793,7 +2917,7 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
                             ? <span style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "5px 11px", borderRadius: 6, background: "rgba(34,197,94,.1)", border: "1px solid rgba(34,197,94,.25)", color: "#16a34a", fontSize: 11, fontWeight: 700 }}>✓ No processo</span>
                             : <button onClick={() => selecionarCandidato(cv)} title={bl ? "Atenção: CPF possui restrições (Jurídico)" : ""} style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "5px 11px", borderRadius: 6, background: "#16a34a", border: "none", color: "#fff", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>✓ Selecionar candidato</button>
                         )}
-                        <button onClick={() => setDetalheEmp({ nome: cv.nome || "Candidato", cpf: cv.cpf || "", telefone: cv.telefone, email: cv.email, itens: g.items, emps })} style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "5px 11px", borderRadius: 6, background: "rgba(15,49,113,.08)", border: "1px solid rgba(15,49,113,.25)", color: "#0f3171", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>{hasEmp ? `🏦 Ver detalhes (${emps.length})` : "Ver detalhes"}</button>
+                        <button onClick={() => setDetalheEmp({ nome: cv.nome || "Candidato", cpf: cv.cpf || "", telefone: cv.telefone, email: cv.email, itens: g.items, emps })} style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "5px 11px", borderRadius: 6, background: "rgba(15,49,113,.08)", border: "1px solid rgba(15,49,113,.25)", color: "#0f3171", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>{hasEmp ? <><Ic i={Landmark} />Ver detalhes ({emps.length})</> : "Ver detalhes"}</button>
                       </div>
                     </div>
                     );
@@ -2810,7 +2934,7 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
         <div className="rec-modal-ov" style={{ zIndex: 900 }} onClick={e => { if (e.target === e.currentTarget) setBlockModal(null); }}>
           <div className="rec-modal" style={{ maxWidth: 460 }} onClick={e => e.stopPropagation()}>
             <button onClick={() => setBlockModal(null)} style={{ position: "absolute", top: 14, right: 14, background: "none", border: "none", color: "#94a3b8", fontSize: 20, cursor: "pointer" }}>✕</button>
-            <div style={{ fontSize: 17, fontWeight: 800, marginBottom: 4, color: "#dc2626" }}>🚫 Adicionar CPF à lista negra</div>
+            <div style={{ fontSize: 17, fontWeight: 800, marginBottom: 4, color: "#dc2626" }}><Ic i={Ban} />Adicionar CPF à lista negra</div>
             <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 14 }}>CPF {blockModal.fmt} — informe o motivo do bloqueio.</div>
             <div className="rec-fg"><label>Motivo *</label>
               <textarea className="rec-fi" rows={3} value={blockMotivo} onChange={e => setBlockMotivo(e.target.value)} placeholder="Ex.: histórico de faltas, desligamento por justa causa, etc." /></div>
@@ -2826,7 +2950,7 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
       {desistModal && (
         <div className="rec-modal-ov" style={{ zIndex: 950 }} onClick={e => { if (e.target === e.currentTarget) setDesistModal(null); }}>
           <div className="rec-modal" style={{ maxWidth: 460 }} onClick={e => e.stopPropagation()}>
-            <div style={{ fontSize: 17, fontWeight: 800, marginBottom: 2 }}>🚪 Registrar desistência</div>
+            <div style={{ fontSize: 17, fontWeight: 800, marginBottom: 2 }}><Ic i={LogOut} />Registrar desistência</div>
             <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 14 }}>
               {desistModal.nome} · estava em <b style={{ color: "#475569" }}>{desistModal.etapa}</b>
             </div>
@@ -2849,13 +2973,13 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
         <div className="rec-modal-ov" style={{ zIndex: 900 }} onClick={e => { if (e.target === e.currentTarget) setDetalheEmp(null); }}>
           <div className="rec-modal" style={{ maxWidth: 580 }} onClick={e => e.stopPropagation()}>
             <button onClick={() => setDetalheEmp(null)} style={{ position: "absolute", top: 14, right: 14, background: "none", border: "none", color: "#94a3b8", fontSize: 20, cursor: "pointer" }}>✕</button>
-            <div style={{ fontSize: 17, fontWeight: 800, marginBottom: 2 }}>🪪 Detalhes do candidato</div>
+            <div style={{ fontSize: 17, fontWeight: 800, marginBottom: 2 }}><Ic i={IdCard} />Detalhes do candidato</div>
             <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 14 }}>{detalheEmp.nome} · CPF {detalheEmp.cpf || "—"}</div>
             <div style={{ display: "flex", flexDirection: "column", gap: 18, maxHeight: "64vh", overflowY: "auto" }}>
 
               {/* Dados enviados na candidatura */}
               <div>
-                <div style={{ fontSize: 11, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".5px", color: "#0f3171", marginBottom: 8 }}>📩 Candidatura ({detalheEmp.itens.length} envio{detalheEmp.itens.length > 1 ? "s" : ""})</div>
+                <div style={{ fontSize: 11, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".5px", color: "#0f3171", marginBottom: 8 }}><Ic i={Mail} />Candidatura ({detalheEmp.itens.length} envio{detalheEmp.itens.length > 1 ? "s" : ""})</div>
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "5px 16px", fontSize: 12, color: "#334155", marginBottom: 12 }}>
                   <div><span style={{ color: "#94a3b8", fontWeight: 700 }}>Nome: </span>{detalheEmp.nome || "—"}</div>
                   <div><span style={{ color: "#94a3b8", fontWeight: 700 }}>CPF: </span>{detalheEmp.cpf || "—"}</div>
@@ -2898,7 +3022,7 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
                 if (!linhas.length) return null;
                 return (
                   <div>
-                    <div style={{ fontSize: 11, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".5px", color: "#0f3171", marginBottom: 8 }}>🪪 Dados pessoais (formulário)</div>
+                    <div style={{ fontSize: 11, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".5px", color: "#0f3171", marginBottom: 8 }}><Ic i={IdCard} />Dados pessoais (formulário)</div>
                     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "5px 16px", fontSize: 12, color: "#334155" }}>
                       {linhas.map(([l, v]) => <div key={l}><span style={{ color: "#94a3b8", fontWeight: 700 }}>{l}: </span>{v === true ? "Sim" : v === false ? "Não" : v}</div>)}
                     </div>
@@ -2909,7 +3033,7 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
               {/* Cadastros na empresa (EMPREGADOS) */}
               {detalheEmp.emps.length > 0 && (
                 <div>
-                  <div style={{ fontSize: 11, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".5px", color: "#0f3171", marginBottom: 8 }}>🏦 Cadastros na empresa ({detalheEmp.emps.length})</div>
+                  <div style={{ fontSize: 11, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".5px", color: "#0f3171", marginBottom: 8 }}><Ic i={Landmark} />Cadastros na empresa ({detalheEmp.emps.length})</div>
                   <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                     {detalheEmp.emps.map((e, i) => {
                       const off = /demit|rescis|deslig|inativ/i.test(e.situacao || "");

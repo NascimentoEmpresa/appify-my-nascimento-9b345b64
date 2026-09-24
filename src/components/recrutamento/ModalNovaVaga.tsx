@@ -44,6 +44,7 @@ import {
   substituidosComVagaViva, avisoSubstituidoPreso,
 } from "@/lib/recrutamento/vagaRegras";
 import { maskFone } from "@/lib/telefone";
+import { AlertTriangle, CheckCircle2, Undo2, PenLine, Ban, Link2, Car } from "lucide-react";
 
 // EMPREGADOS, CONTRATOS, CARGOS e SISTEMA_* não estão no types.ts gerado;
 // mesmo padrão de comite-etica/db.ts — a exceção fica num lugar só.
@@ -84,8 +85,8 @@ function PrazoAviso({ prazo }: { prazo: ReturnType<typeof avaliarPrazo> }) {
   return (
     <div style={{ fontSize: 12, lineHeight: 1.5, background: cor.bg, border: `1px solid ${cor.bd}`, color: cor.tx, borderRadius: 9, padding: "8px 11px", marginBottom: 12, fontWeight: 600 }}>
       {!prazo.ok
-        ? <>⚠️ {prazo.erro}</>
-        : <>✅ <b>{prazo.dias} dias úteis</b> de antecedência → urgência <b>{prazo.grau}</b>. <span style={{ fontWeight: 500 }}>O grau sai do prazo: até 13 dias úteis é urgente, de 14 a 20 é média, 21 ou mais é baixa.</span></>}
+        ? <><AlertTriangle size={13} strokeWidth={2} aria-hidden style={{ display: "inline-block", verticalAlign: "-2px", marginRight: 5, flexShrink: 0 }} />{prazo.erro}</>
+        : <><CheckCircle2 size={13} strokeWidth={2} aria-hidden style={{ display: "inline-block", verticalAlign: "-2px", marginRight: 5, flexShrink: 0 }} /><b>{prazo.dias} dias úteis</b> de antecedência → urgência <b>{prazo.grau}</b>. <span style={{ fontWeight: 500 }}>O grau sai do prazo: até 13 dias úteis é urgente, de 14 a 20 é média, 21 ou mais é baixa.</span></>}
     </div>
   );
 }
@@ -654,7 +655,7 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
             onMouseEnter={e => { if (!vagaManual) e.currentTarget.style.background = "#f8fafc"; }}
             onMouseLeave={e => { if (!vagaManual) e.currentTarget.style.background = "#fff"; }}
           >
-            <span style={{ fontSize: 15, lineHeight: 1.2 }}>{vagaManual ? "↩️" : "✍️"}</span>
+            <span style={{ display: "inline-flex", lineHeight: 1.2 }}>{vagaManual ? <Undo2 size={15} aria-hidden /> : <PenLine size={15} aria-hidden />}</span>
             <span>
               <span style={{ display: "block", fontSize: 14, fontWeight: 800, color: vagaManual ? "#0f3171" : "#0f172a" }}>
                 {vagaManual ? "Voltar a puxar do cadastro" : "Preencher manualmente"}
@@ -695,7 +696,7 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
           {vagaManual && (
             <div className="nvg-fg" style={{ gridColumn: "1 / -1" }}>
               <div style={{ fontSize: 13, fontWeight: 600, color: "#0f3171", background: "#eef4ff", border: "1px solid #c7d7fe", borderRadius: 9, padding: "8px 11px" }}>
-                ✍️ <b>Preenchendo à mão</b> — vaga do escritório. Cargo, contrato, escala e salário
+                <PenLine size={13} strokeWidth={2} aria-hidden style={{ display: "inline-block", verticalAlign: "-2px", marginRight: 5, flexShrink: 0 }} /><b>Preenchendo à mão</b> — vaga do escritório. Cargo, contrato, escala e salário
                 são digitados por você, e não copiados de um colaborador.
               </div>
             </div>
@@ -748,7 +749,7 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
                         onMouseLeave={e => { e.currentTarget.style.background = preso ? "#f8fafc" : "#fff"; }}>
                         <div style={{ fontWeight: 600 }}>{emp.Nome}</div>
                         <div style={{ fontSize: 14, color: "#64748b" }}>{emp["Título do Cargo"]}{emp["Nome Filial"] ? ` · ${emp["Nome Filial"]}` : ""}</div>
-                        {preso && <div style={{ fontSize: 13.5, fontWeight: 800, color: "#b91c1c", marginTop: 2 }}>🚫 já está na vaga de substituição #{preso}</div>}
+                        {preso && <div style={{ fontSize: 13.5, fontWeight: 800, color: "#b91c1c", marginTop: 2 }}><Ban size={13} strokeWidth={2} aria-hidden style={{ display: "inline-block", verticalAlign: "-2px", marginRight: 5, flexShrink: 0 }} />já está na vaga de substituição #{preso}</div>}
                       </div>
                     );
                   })}
@@ -770,7 +771,7 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
                   <div style={{ marginTop: 6, fontSize: 13, color: "#64748b" }}>Procurando a solicitação de demissão…</div>
                 ) : demissaoId ? (
                   <div style={{ marginTop: 6, fontSize: 13, fontWeight: 700, color: "#0f3171", background: "#eef4ff", border: "1px solid #c7d7f5", borderRadius: 8, padding: "6px 9px" }}>
-                    🔗 Vinculada à solicitação de demissão #{demissaoId} — a vaga repõe essa saída.
+                    <Link2 size={13} strokeWidth={2} aria-hidden style={{ display: "inline-block", verticalAlign: "-2px", marginRight: 5, flexShrink: 0 }} />Vinculada à solicitação de demissão #{demissaoId} — a vaga repõe essa saída.
                   </div>
                 ) : (
                   <div style={{ marginTop: 6, fontSize: 13, color: "#92400e", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 8, padding: "8px 10px" }}>
@@ -788,7 +789,7 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
               )}
               {!!vinculoDemissao && (
                 <div style={{ marginTop: 6, fontSize: 13, fontWeight: 700, color: "#0f3171", background: "#eef4ff", border: "1px solid #c7d7f5", borderRadius: 8, padding: "6px 9px" }}>
-                  🔗 Vaga aberta a partir da solicitação de demissão #{vinculoDemissao.demissaoId} — motivo e colaborador vêm de lá e não mudam aqui.
+                  <Link2 size={13} strokeWidth={2} aria-hidden style={{ display: "inline-block", verticalAlign: "-2px", marginRight: 5, flexShrink: 0 }} />Vaga aberta a partir da solicitação de demissão #{vinculoDemissao.demissaoId} — motivo e colaborador vêm de lá e não mudam aqui.
                 </div>
               )}
             </div>
@@ -847,7 +848,7 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
             )}
             {cnhDoCargo && (
               <div style={{ marginTop: 6, fontSize: 13, fontWeight: 700, color: "#b45309", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 8, padding: "6px 9px" }}>
-                🚗 {cnhDoCargo}: CNH obrigatória — já entra sozinha nos requisitos e não pode ser tirada.
+                <Car size={13} strokeWidth={2} aria-hidden style={{ display: "inline-block", verticalAlign: "-2px", marginRight: 5, flexShrink: 0 }} />{cnhDoCargo}: CNH obrigatória — já entra sozinha nos requisitos e não pode ser tirada.
               </div>
             )}
           </div>
@@ -1040,7 +1041,7 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
               vão vir da licitação/planilha. A CNH segue automática pelo cargo. */}
           {cnhDoCargo && (
             <div style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 13.5, fontWeight: 700, color: "#b45309", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 8, padding: "7px 10px", marginBottom: 10 }}>
-              <span>🚗</span><span>{REQ_CNH_TEXTO} <span style={{ fontWeight: 600, color: "#92400e" }}>(automático para {cnhDoCargo.toLowerCase()})</span></span>
+              <span style={{ display: "inline-flex" }}><Car size={14} aria-hidden /></span><span>{REQ_CNH_TEXTO} <span style={{ fontWeight: 600, color: "#92400e" }}>(automático para {cnhDoCargo.toLowerCase()})</span></span>
             </div>
           )}
           <div className="nvg-fg"><label>Requisitos Desejáveis</label><textarea className="nvg-fi" rows={2} placeholder="Inglês básico, curso técnico... (opcional)" value={vaga.req_desejaveis} onChange={e => setVaga(v => ({ ...v, req_desejaveis: e.target.value }))} /></div>
