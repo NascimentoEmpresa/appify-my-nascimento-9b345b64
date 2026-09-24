@@ -59,6 +59,11 @@ const CSS = `
   background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.16);backdrop-filter:blur(10px)}
 .si-ponto{position:relative;width:9px;height:9px;border-radius:50%;background:var(--si-laranja)}
 .si-ponto::after{content:"";position:absolute;inset:-5px;border-radius:50%;border:2px solid var(--si-laranja);animation:si-pulso 1.8s ease-out infinite}
+.si-codigo{position:relative;z-index:3;display:flex;justify-content:center;margin:-6px 0 8px;pointer-events:none;user-select:none;animation:si-entra .7s .05s cubic-bezier(.2,.7,.2,1) both}
+.si-codigo span{font-size:clamp(46px,6.2vw,92px);font-weight:900;line-height:1;letter-spacing:.06em;padding:0 .1em .08em;
+  background:linear-gradient(180deg,var(--si-laranja2) 0%,var(--si-laranja) 100%);-webkit-background-clip:text;background-clip:text;color:transparent;
+  filter:drop-shadow(0 10px 28px rgba(242,107,29,.45))}
+.si-area .si-codigo span{font-size:clamp(38px,4.6vw,66px)}
 .si-palco{position:relative;flex:1;display:flex;align-items:center;justify-content:center;min-height:clamp(300px,50vh,480px)}
 .si-area .si-palco{min-height:clamp(260px,40vh,380px)}
 .si-palavra{position:absolute;left:50%;top:50%;transform:translate(-50%,-40.8%);margin:0;padding:.05em .2em .4em;white-space:nowrap;pointer-events:none;user-select:none;
@@ -119,7 +124,7 @@ const CSS = `
 @keyframes si-entra{from{opacity:0;transform:translateY(18px)}to{opacity:1;transform:none}}
 .si-raiz .si-texto,.si-raiz .si-palco{animation:si-entra .7s cubic-bezier(.2,.7,.2,1) both}
 .si-raiz .si-texto{animation-delay:.12s}
-@media (max-width:640px){.si-p1,.si-p4{display:none}.si-topo{padding:16px 18px}.si-marca{padding:7px 11px;border-radius:12px}.si-marca img{height:28px}.si-status{font-size:10.5px;padding:6px 11px;white-space:nowrap}.si-status-resto{display:none}.si-palco{min-height:300px}.si-personagem{height:min(250px,32vh)}}
+@media (max-width:640px){.si-p1,.si-p4{display:none}.si-topo{padding:16px 18px}.si-marca{padding:7px 11px;border-radius:12px}.si-marca img{height:28px}.si-status{font-size:10.5px;padding:6px 11px;white-space:nowrap}.si-status-resto{display:none}.si-palco{min-height:300px}.si-codigo{margin:-4px 0 10px}.si-personagem{height:min(250px,32vh)}}
 @media (prefers-reduced-motion:reduce){.si-raiz *{animation:none!important;transition:none!important}}
 `;
 
@@ -181,6 +186,10 @@ export function SistemaIndisponivel({ modo = "tela", proximaVerificacaoEm, onTen
         </div>
         <div className="si-status"><i className="si-ponto" /><span>Instabilidade<span className="si-status-resto"> em andamento</span></span></div>
       </header>
+
+      {/* "404" acima da cena (pedido de 24/09). No fluxo, não absoluto: assim
+          nunca fica atrás da cabeça do personagem, em nenhuma altura de tela. */}
+      <div className="si-codigo" aria-hidden><span>404</span></div>
 
       <div className="si-palco" aria-hidden>
         <div className="si-camada" data-prof="10"><h2 className="si-palavra">Aguarde</h2></div>
