@@ -142,3 +142,8 @@ verify_jwt = false
 # a permissao (bi_estudio + executar_ia) e conferida la dentro.
 [functions.bi-ia]
 verify_jwt = true
+
+# Consulta paga de processos por CPF (Escavador). A função confere
+# has_screen_access(chamador, juridico_consulta_processos, incluir).
+[functions.consulta-processos-cpf]
+verify_jwt = true
