@@ -9,6 +9,7 @@ import { MonitorDeQueda } from "@/components/layout/MonitorDeQueda";
 import { isAuthExpiredError } from "@/lib/authErrors";
 import { isSobrecargaError, atrasoSobrecargaMs } from "@/lib/erroSobrecarga";
 import NotFound from "./pages/NotFound.tsx";
+import Pagina404 from "./pages/Pagina404.tsx";
 import Login from "./pages/Login.tsx";
 import TrocarSenha from "./pages/TrocarSenha.tsx";
 import EsqueciSenha from "./pages/EsqueciSenha.tsx";
@@ -367,6 +368,8 @@ const App = () => (
         <Routes>
           <Route path="/" element={<Navigate to="/login" replace />} />
           <Route path="/login" element={<Login />} />
+          {/* Tela "Sistema temporariamente indisponível" num endereço próprio (pública). */}
+          <Route path="/404" element={<Pagina404 />} />
           <Route path="/trocar-senha" element={<TrocarSenha />} />
           <Route path="/esqueci-senha" element={<EsqueciSenha />} />
           <Route path="/redefinir-senha" element={<RedefinirSenha />} />
