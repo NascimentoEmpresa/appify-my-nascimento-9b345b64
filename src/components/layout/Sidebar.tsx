@@ -80,7 +80,7 @@ import { Target } from "lucide-react";
 import { GitBranch, GitMerge } from "lucide-react";
 import { MessageSquare } from "lucide-react";
 import { Banknote } from "lucide-react";
-import { Landmark } from "lucide-react";
+import { Crown, Landmark } from "lucide-react";
 import { TrendingDown } from "lucide-react";
 import { Megaphone, ExternalLink } from "lucide-react";
 import { Award, CalendarDays, FolderTree, Users } from "lucide-react";
@@ -820,21 +820,45 @@ const comiteEticaModule: ModuleDef = {
       label: "Comitê de Ética",
       defaultOpen: true,
       items: [
-        // Indicadores vem primeiro: é a leitura gerencial do módulo, e tem
-        // liberação de acesso própria (comite_etica_indicadores) — dá para a
-        // diretoria ver o painel sem ver o conteúdo dos relatos.
-        { label: "Indicadores", to: "/app/comite-etica/indicadores", icon: BarChart3 },
+        // Indicadores e Presidência saíram daqui em 24/09/2026 para o módulo
+        // Presidência (presidenciaModule, abaixo). Rotas e liberações de
+        // acesso continuam as mesmas; só mudou onde aparecem no menu.
         { label: "Denúncias", to: "/app/comite-etica/denuncias", icon: ShieldAlert },
-        // Fila da diretoria (22/09/2026): só as denúncias pós-apuração, para
-        // decidir e dar seguimento sem abrir a apuração inteira. Liberação
-        // própria (comite_etica_presidencia_painel) — ver 20260930000217.
-        { label: "Presidência", to: "/app/comite-etica/presidencia", icon: Gavel },
         // "Denúncias (Contato Seguro)" saiu daqui em 21/08/2026: o canal
         // legado foi aposentado, a tela e a função de sync foram removidas e
         // o menu ficou com app_menu.ativo = false (mesmo par que "Pregão &
         // Lances" usou). As TABELAS do legado continuam no banco, só sem
         // porta de entrada — apagar histórico de canal de ética não se desfaz.
         { label: "Configuração", to: "/app/comite-etica/configuracao", icon: Settings },
+      ],
+    },
+  ],
+};
+
+// Presidência (24/09/2026) — um lugar só com tudo em que a Helena tem ação,
+// venha de que área vier. Não tem rota nem permissão próprias: cada item é a
+// tela da área de origem, com a liberação que ela já tinha (quem não tem
+// acesso a nenhum item não vê o módulo). Cada área de origem vira um grupo,
+// para os próximos itens entrarem sem misturar assuntos.
+const presidenciaModule: ModuleDef = {
+  id: "presidencia",
+  label: "Presidência",
+  description: "Tudo em que a Presidência tem ação, reunido",
+  icon: Crown,
+  basePath: "/app/comite-etica",
+  status: "active",
+  groups: [
+    {
+      label: "Comitê de Ética",
+      defaultOpen: true,
+      items: [
+        // Fila da Presidência (22/09/2026): só as denúncias pós-apuração, para
+        // decidir e dar seguimento sem abrir a apuração inteira. Liberação
+        // própria (comite_etica_presidencia_painel) — ver 20260930000217.
+        { label: "Presidência", to: "/app/comite-etica/presidencia", icon: Gavel },
+        // Leitura gerencial do Comitê; liberação própria
+        // (comite_etica_indicadores) — vê o painel sem ver o conteúdo dos relatos.
+        { label: "Indicadores", to: "/app/comite-etica/indicadores", icon: BarChart3 },
       ],
     },
   ],
@@ -1099,6 +1123,7 @@ const erpModules: ModuleDef[] = [
   sstModule,
   centralServicosModule,
   comiteEticaModule,
+  presidenciaModule,
   treinamentosModule,
   whatsappModule,
   biModule,
