@@ -228,6 +228,8 @@ const diaria = (p: Partial<DiariaUfrgs>): DiariaUfrgs =>
     postoDescricao: "",
     valorPostoVariavelCentavos: 0,
     fiscal: "",
+    pix: "",
+    pixTipo: null,
     aliquotaTotal: 0.0674,
     tarifaId: "t-rodosul-2026",
     qtHospedagem: 1,
