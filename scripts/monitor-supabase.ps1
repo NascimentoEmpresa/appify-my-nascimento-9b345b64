@@ -46,9 +46,11 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-# Limite de conexoes da instancia. Small = 90, Micro = 60.
-# Trocou o tamanho da maquina? Ajuste aqui.
-$MaxConexoes = 90
+# Limite de conexoes: vem das PROPRIAS metricas
+# (max_connections_connection_count), entao trocar o tamanho da maquina
+# - Micro 60, Small 90, Medium 120 - e percebido sozinho. Este valor e so
+# o plano B, caso a metrica suma de uma versao futura.
+$MaxConexoesPadrao = 90
 
 $BlocoCheio = [char]0x2588
 $BlocoVazio = [char]0x2591
@@ -215,11 +217,13 @@ while ($true) {
         continue
     }
 
-    # CONEXOES
+    # CONEXOES - o teto vem da propria metrica, nao de constante no codigo
     $Conex = Get-Soma $Txt "pg_stat_database_num_backends"
+    $MaxConexoes = Get-Soma $Txt "max_connections_connection_count"
+    if (-not $MaxConexoes -or $MaxConexoes -le 0) { $MaxConexoes = $MaxConexoesPadrao }
     if ($Conex -ne $null) {
         $Pct = 100 * $Conex / $MaxConexoes
-        $Det = "{0:N0} de {1}" -f $Conex, $MaxConexoes
+        $Det = "{0:N0} de {1:N0}" -f $Conex, $MaxConexoes
         [void]$Linhas.Add((Nova-Linha "CONEXOES" $Pct $Det))
         if ($Pct -ge $Alerta) { Enviar-Alerta "conexoes" $Pct $Det }
     }
