@@ -194,27 +194,6 @@ export default function OrcamentoGeral() {
     return map;
   }, [ligacoesAdm]);
 
-  // Utilizado (SIS-2026-0168): soma dos lançamentos do Malote (Aguardando
-  // Pagamento / Despesa Paga) do período selecionado, separado em
-  // "sem contrato" (alimenta o bloco Administrativo) e "por contrato"
-  // (alimenta o bloco Contratos) — mesma Classificação pode ter lançamentos
-  // dos dois tipos, então não dá pra somar tudo junto.
-  const { utilizadoAdmPorClassificacao, utilizadoContratoPorChave } = useMemo(() => {
-    const adm = new Map<string, number>();
-    const contrato = new Map<string, number>();
-    for (const l of utilizadoLinhas) {
-      if (!l.classificacao_id || !competenciaNoPeriodo(l.competencia, anoMes)) continue;
-      const valor = Number(l.valor) || 0;
-      if (l.contrato_id) {
-        const chave = `${l.classificacao_id}|${l.contrato_id}`;
-        contrato.set(chave, (contrato.get(chave) ?? 0) + valor);
-      } else {
-        adm.set(l.classificacao_id, (adm.get(l.classificacao_id) ?? 0) + valor);
-      }
-    }
-    return { utilizadoAdmPorClassificacao: adm, utilizadoContratoPorChave: contrato };
-  }, [utilizadoLinhas, anoMes]);
-
   // SIS-2026-0337: filtro local de empresa — aplicado nos dados CRUS antes
   // de agregar por Classificação, senão uma Classificação com orçamento
   // em mais de uma empresa ficaria com o valor de todas somado mesmo
@@ -227,6 +206,41 @@ export default function OrcamentoGeral() {
     () => (filtroEmpresaId === EMPRESA_FILTRO_TODAS ? gruposContrato : (gruposContrato ?? []).filter((g) => g.contrato.empresa_id === filtroEmpresaId)),
     [gruposContrato, filtroEmpresaId]
   );
+  // [SEM-CHAMADO] (achado real, Iury — DM-2026-1208 "ADMINISTRATIVO - SN"
+  // puxando valor da HAGG, mesmo bug em "ADMINISTRATIVO - NH"): a
+  // Classificação Malote é global (sem empresa_id próprio, de propósito —
+  // ver planejamento_orcamentario_classificacao) e várias empresas podem
+  // usar a mesma. O Orçado já filtra por empresa ANTES de agregar (comentário
+  // acima), mas o Utilizado agregava direto de `utilizadoLinhas` (todas as
+  // empresas) só por `classificacao_id` — então o valor gasto pela HAGG
+  // numa Classificação Administrativa compartilhada vazava pro "Utilizado"
+  // de qualquer outra empresa (SN, NH) que usasse a mesma Classificação.
+  // Mesmo filtro de empresa aplicado nos dados crus, mesma régua do Orçado.
+  const utilizadoLinhasDaEmpresa = useMemo(
+    () => (filtroEmpresaId === EMPRESA_FILTRO_TODAS ? utilizadoLinhas : utilizadoLinhas.filter((l) => l.empresa_id === filtroEmpresaId)),
+    [utilizadoLinhas, filtroEmpresaId]
+  );
+
+  // Utilizado (SIS-2026-0168): soma dos lançamentos do Malote (Aguardando
+  // Pagamento / Despesa Paga) do período selecionado, separado em
+  // "sem contrato" (alimenta o bloco Administrativo) e "por contrato"
+  // (alimenta o bloco Contratos) — mesma Classificação pode ter lançamentos
+  // dos dois tipos, então não dá pra somar tudo junto.
+  const { utilizadoAdmPorClassificacao, utilizadoContratoPorChave } = useMemo(() => {
+    const adm = new Map<string, number>();
+    const contrato = new Map<string, number>();
+    for (const l of utilizadoLinhasDaEmpresa) {
+      if (!l.classificacao_id || !competenciaNoPeriodo(l.competencia, anoMes)) continue;
+      const valor = Number(l.valor) || 0;
+      if (l.contrato_id) {
+        const chave = `${l.classificacao_id}|${l.contrato_id}`;
+        contrato.set(chave, (contrato.get(chave) ?? 0) + valor);
+      } else {
+        adm.set(l.classificacao_id, (adm.get(l.classificacao_id) ?? 0) + valor);
+      }
+    }
+    return { utilizadoAdmPorClassificacao: adm, utilizadoContratoPorChave: contrato };
+  }, [utilizadoLinhasDaEmpresa, anoMes]);
 
   const linhasAdm: LinhaAdmGeral[] = useMemo(() => {
     const acumulado = new Map<string, { orcado: number; detalhes: Set<string>; status: Set<StatusVigencia> }>();

@@ -64,6 +64,8 @@ export function usePainelLicitacao(filters?: PainelFilters, opts?: { todasEmpres
     // no painel executivo (respeitando os filtros de período/responsável).
     const suspensos = items.filter((i) => i.fase === "Suspenso").length;
     const revogados = items.filter((i) => i.fase === "Revogado").length;
+    // [SEM-CHAMADO] Lucas: KPI de "Não Participado" no painel.
+    const naoParticipados = items.filter((i) => i.fase === "Não Participado").length;
 
     const ativas = items.filter((i) => ["À Iniciar", "Iniciado", "Em Andamento"].includes(i.fase));
     const finalizadas = items.filter((i) => i.fase === "Finalizada");
@@ -202,6 +204,7 @@ export function usePainelLicitacao(filters?: PainelFilters, opts?: { todasEmpres
       editaisParticipados,
       suspensos,
       revogados,
+      naoParticipados,
       total: items.length,
       ativas: ativas.length,
       finalizadas: finalizadas.length,
