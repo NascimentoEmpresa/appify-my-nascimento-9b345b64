@@ -61,7 +61,7 @@ const CSS = `
 .si-ponto::after{content:"";position:absolute;inset:-5px;border-radius:50%;border:2px solid var(--si-laranja);animation:si-pulso 1.8s ease-out infinite}
 .si-palco{position:relative;flex:1;display:flex;align-items:center;justify-content:center;min-height:clamp(300px,50vh,480px)}
 .si-area .si-palco{min-height:clamp(260px,40vh,380px)}
-.si-palavra{position:absolute;left:50%;top:50%;transform:translate(-50%,-54%);margin:0;white-space:nowrap;pointer-events:none;user-select:none;
+.si-palavra{position:absolute;left:50%;top:50%;transform:translate(-50%,-54%);margin:0;padding:0 .08em .06em;white-space:nowrap;pointer-events:none;user-select:none;
   font-size:clamp(88px,19vw,300px);font-weight:900;letter-spacing:-.055em;line-height:.8;
   background:linear-gradient(180deg,rgba(255,255,255,.96) 0%,rgba(255,255,255,.78) 55%,rgba(255,255,255,.12) 100%);-webkit-background-clip:text;background-clip:text;color:transparent}
 .si-area .si-palavra{font-size:clamp(70px,13vw,210px)}
