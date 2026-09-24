@@ -12,7 +12,7 @@
 // StatusSolicitacao e STATUS_SOLICITACAO são importados de ./diarias e não
 // redefinidos aqui — dois mapas de status divergiriam na primeira mudança.
 
-import { StatusSolicitacao, fmtBRL, fmtData } from "./diarias";
+import { StatusSolicitacao, TipoPix, fmtBRL, fmtData, labelTipoPix } from "./diarias";
 
 export type { StatusSolicitacao } from "./diarias";
 export { STATUS_SOLICITACAO, fmtBRL, fmtData, visivelNaLista } from "./diarias";
@@ -397,6 +397,12 @@ export interface DiariaUfrgs extends ValoresUfrgs, QuantidadesUfrgs {
   postoDescricao: string;
   valorPostoVariavelCentavos: number;
   fiscal: string;
+  /**
+   * Chave Pix de quem recebe (24/09/2026). Vazia nas diárias lançadas antes
+   * da 20260930000237 — o modal só passou a pedir a chave ali.
+   */
+  pix: string;
+  pixTipo: TipoPix | null;
   /** Alíquota total congelada no lançamento (0.0674 na tabela atual). */
   aliquotaTotal: number;
   tarifaId: string | null;
@@ -420,6 +426,27 @@ export interface DiariaUfrgs extends ValoresUfrgs, QuantidadesUfrgs {
   exclusaoMotivo?: string;
   excluidaPor?: string;
   excluidaEm?: string;
+}
+
+/**
+ * O texto de "Informações de pagamento" da despesa do Malote.
+ *
+ * A chave vem ANTES de tudo porque é ela que quem paga copia (o botão
+ * "Copiar dados de pagamento" do Malote copia este campo inteiro). Até
+ * 24/09/2026 o texto era só "Diária UFRGS DU-... — ofício ..., motorista", e
+ * a pessoa do Operacional tinha de digitar a chave de memória — a
+ * DU-2026-000004 foi para o Malote sem ela e voltou reprovada.
+ *
+ * Diária antiga, sem chave, continua com o texto de antes: é o que dá para
+ * dizer sem inventar dado.
+ */
+export function informacoesPagamentoUfrgs(
+  d: Pick<DiariaUfrgs, "id" | "numeroOficio" | "motoristaNome" | "pix" | "pixTipo">,
+): string {
+  if (d.pix && d.pixTipo) {
+    return `PIX (${labelTipoPix(d.pixTipo)}): ${d.pix} — ${d.motoristaNome}`;
+  }
+  return `Diária UFRGS ${d.id} — ofício ${d.numeroOficio}, ${d.motoristaNome}`;
 }
 
 export interface AnexoDiariaUfrgs {

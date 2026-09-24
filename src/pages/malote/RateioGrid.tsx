@@ -18,6 +18,7 @@ import { useUtilizadoOrcamento } from "@/hooks/useUtilizadoOrcamento";
 import { useLigacoesClassificacaoMalote, mapaClassificacaoVinculada, classificacaoCanonica } from "@/hooks/useMaloteClassificacaoMaloteLink";
 import { useMeusContratosAnalista } from "@/hooks/useMaloteAnalistas";
 import { TipoClassificacaoOrcamento } from "@/hooks/usePlanejamentoOrcamentario";
+import { PadraoLinhaRateio, linhaComPadrao } from "./rateioPadrao";
 
 function fmtMoney(n: number | null | undefined): string {
   if (n == null) return "—";
@@ -127,6 +128,12 @@ interface RateioGridProps {
   // DespesaVisualizar não exigem isso, então não mostram o aviso.
   // Integrante segue opcional independente disto.
   exigirFornecedor?: boolean;
+  // Diária UFRGS (24/09/2026): "quando adicionar uma linha a opção de
+  // fornecedor já vir pré-preenchida". Quem embute a grade e JÁ SABE
+  // contrato/fornecedor/integrante (ver rateioPadrao.ts) passa aqui, e toda
+  // linha nova nasce com isso. Sem a prop, a linha nasce em branco como
+  // sempre nasceu — as outras telas do Malote não mudam.
+  linhaPadrao?: PadraoLinhaRateio | null;
 }
 
 export function RateioGrid({
@@ -157,6 +164,7 @@ export function RateioGrid({
   souSolicitante,
   apenasValorEEmpresa,
   exigirFornecedor,
+  linhaPadrao,
 }: RateioGridProps) {
   const { data: empresas = [] } = useEmpresasGrupo();
   const { data: contratos = [] } = useContratosAtivos();
@@ -289,16 +297,12 @@ export function RateioGrid({
   function adicionarLinha() {
     onChange([
       ...linhas,
-      {
+      linhaComPadrao(linhaPadrao, {
         classificacao_id: mostrarClassificacao ? "" : undefined,
-        empresa_id: null,
-        contrato_id: null,
-        fornecedor_id: null,
-        integrante_empregado_id: null,
         percentual: null,
         valor: 0,
         ordem: linhas.length,
-      },
+      }),
     ]);
   }
 
@@ -388,8 +392,10 @@ export function RateioGrid({
         classificacao_id: mostrarClassificacao ? "" : undefined,
         empresa_id: c.empresa_id,
         contrato_id: c.id,
-        fornecedor_id: null,
-        integrante_empregado_id: null,
+        // O contrato é o de cada linha; fornecedor e integrante, quando a
+        // tela de origem já os sabe (linhaPadrao), valem para todas.
+        fornecedor_id: linhaPadrao?.fornecedor_id ?? null,
+        integrante_empregado_id: linhaPadrao?.integrante_empregado_id ?? null,
         percentual: percentualCada,
         valor: i === contratosAtivos.length - 1 ? Number((valorTotal - valorCada * (contratosAtivos.length - 1)).toFixed(2)) : valorCada,
         ordem: i,

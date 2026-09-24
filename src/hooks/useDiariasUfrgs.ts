@@ -12,7 +12,7 @@ import {
   StatusSolicitacao,
   TarifaUfrgs,
 } from "@/pages/operacional/diariasUfrgs";
-import { VisualizacaoDiaria } from "@/pages/operacional/diarias";
+import { TipoPix, VisualizacaoDiaria } from "@/pages/operacional/diarias";
 
 /**
  * Diárias UFRGS — o segundo tipo do Controle de Diárias.
@@ -63,6 +63,9 @@ export interface NovaDiariaUfrgs {
   qtAlmoco: number;
   qtJanta: number;
   qtVa: number;
+  /** Chave Pix de quem recebe — o tipo decide a máscara e a validação. */
+  pix: string;
+  pixTipo: TipoPix | "";
   observacoes: string;
   anexos: File[];
 }
@@ -138,6 +141,9 @@ interface DiariaUfrgsBanco {
   qt_janta: number | string | null;
   qt_va: number | string | null;
   fiscal: string | null;
+  /** Ausentes enquanto a 20260930000237 não roda (ver useDiariasUfrgs). */
+  pix?: string | null;
+  pix_tipo?: TipoPix | null;
   tarifa_id: string | null;
   aliquota_total: number | string | null;
   valor_total_centavos: number | string | null;
@@ -165,7 +171,7 @@ interface DiariaUfrgsBanco {
   posto_ref: { descricao: string | null } | null;
 }
 
-const SELECT_UFRGS = `
+const SELECT_UFRGS_BASE = `
   id, numero, status, malote_despesa_paga, diaria_ufrgs_data_deposito,
   contrato_id, contrato_nome, contrato_cliente, contrato_empresa, competencia,
   cod_fornecedor, matricula, motorista_empregado_id, motorista_nome,
@@ -182,6 +188,8 @@ const SELECT_UFRGS = `
   anexos:DIARIA_UFRGS_ANEXO ( storage_path, nome_arquivo, mime_type, tamanho_bytes, created_at ),
   posto_ref:DIARIA_UFRGS_POSTO ( descricao )
 `;
+/** A chave Pix, que chegou na 20260930000237. */
+const SELECT_UFRGS_PIX = ", pix, pix_tipo";
 
 // ── Consultas ────────────────────────────────────────────────────────
 
@@ -406,13 +414,20 @@ export function useDiariasUfrgs(apenasMinhas = false) {
     queryKey: ["diarias_ufrgs", apenasMinhas ? meuId : "todas"],
     enabled: !apenasMinhas || !!meuId,
     queryFn: async (): Promise<DiariaUfrgs[]> => {
-      let q = sb
-        .from("DIARIA_UFRGS")
-        .select(SELECT_UFRGS)
-        .order("created_at", { ascending: false })
-        .limit(5000);
-      if (apenasMinhas && meuId) q = q.eq("solicitante_id", meuId);
-      const { data, error } = await q;
+      const buscar = (colunas: string) => {
+        let q = sb
+          .from("DIARIA_UFRGS")
+          .select(colunas)
+          .order("created_at", { ascending: false })
+          .limit(5000);
+        if (apenasMinhas && meuId) q = q.eq("solicitante_id", meuId);
+        return q;
+      };
+      let { data, error } = await buscar(SELECT_UFRGS_BASE + SELECT_UFRGS_PIX);
+      // 42703 = "column does not exist": a janela entre subir o front e rodar
+      // a 20260930000237 no SQL Editor. Mesmo desvio de useTarifasUfrgs —
+      // sem ele a LISTA INTEIRA de diárias sumiria por causa de duas colunas.
+      if (error?.code === "42703") ({ data, error } = await buscar(SELECT_UFRGS_BASE));
       if (error) throw error;
       return ((data ?? []) as DiariaUfrgsBanco[]).map(mapearDiariaUfrgs);
     },
@@ -708,6 +723,8 @@ const payloadDiaria = (input: NovaDiariaUfrgs) => ({
   qt_almoco: input.qtAlmoco,
   qt_janta: input.qtJanta,
   qt_va: input.qtVa,
+  pix: input.pix,
+  pix_tipo: input.pixTipo,
   observacoes: input.observacoes,
 });
 
@@ -844,6 +861,8 @@ function mapearDiariaUfrgs(d: DiariaUfrgsBanco): DiariaUfrgs {
     qtJanta: numero(d.qt_janta),
     qtVa: numero(d.qt_va),
     fiscal: d.fiscal ?? "",
+    pix: d.pix ?? "",
+    pixTipo: d.pix_tipo ?? null,
     aliquotaTotal: numero(d.aliquota_total),
     tarifaId: d.tarifa_id ?? null,
     valorTotalCentavos: numero(d.valor_total_centavos),
