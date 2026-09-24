@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { Suspense, lazy, useMemo, useRef, useState } from "react";
 import { ArrowLeft, ArrowRight, Car, Gauge } from "lucide-react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Card } from "@/components/ui/card";
@@ -32,6 +32,9 @@ import { PassoDataTurno } from "./componentes/PassoDataTurno";
 import { PainelFrota } from "./componentes/PainelFrota";
 import { ProximosAgendamentos } from "./componentes/ProximosAgendamentos";
 import { StatusRapido } from "./componentes/StatusRapido";
+
+// Dashboard (24/09/2026): gráficos + relatório; só carrega quando a aba abre.
+const DashboardVeiculos = lazy(() => import("./componentes/DashboardVeiculos").then((m) => ({ default: m.DashboardVeiculos })));
 
 /**
  * Função e não constante: com a aba aberta desde ontem, uma data congelada no
@@ -203,6 +206,8 @@ export default function AgendamentoVeiculos() {
                 depois. */}
             {podeGerirFrota && <TabsTrigger value="frota">Toda a Frota</TabsTrigger>}
             <TabsTrigger value="calendario">Calendário Geral</TabsTrigger>
+            {/* Visão de gestão (nomes de quem agenda, gasto): mesma porta da Toda a Frota. */}
+            {podeGerirFrota && <TabsTrigger value="dashboard">Dashboard</TabsTrigger>}
           </TabsList>
 
           <TabsContent value="novo">
@@ -393,6 +398,14 @@ export default function AgendamentoVeiculos() {
           <TabsContent value="calendario">
             <CalendarioGeral agendamentos={agendamentos} frota={listaFrota} />
           </TabsContent>
+
+          {podeGerirFrota && (
+            <TabsContent value="dashboard">
+              <Suspense fallback={<Skeleton className="h-96 w-full" />}>
+                <DashboardVeiculos />
+              </Suspense>
+            </TabsContent>
+          )}
         </Tabs>
 
         <aside className="space-y-4">
