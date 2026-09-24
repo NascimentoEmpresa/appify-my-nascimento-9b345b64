@@ -836,8 +836,9 @@ const comiteEticaModule: ModuleDef = {
 };
 
 // Presidência (24/09/2026) — um lugar só com tudo em que a Helena tem ação,
-// venha de que área vier. Não tem rota nem permissão próprias: cada item é a
-// tela da área de origem, com a liberação que ela já tinha (quem não tem
+// venha de que área vier: o Painel da Presidência (/app/presidencia) e as
+// telas das outras áreas. Não tem permissão própria: cada item é a tela com a
+// liberação que ela já tinha (quem não tem
 // acesso a nenhum item não vê o módulo). Cada área de origem vira um grupo,
 // para os próximos itens entrarem sem misturar assuntos.
 const presidenciaModule: ModuleDef = {
@@ -845,9 +846,19 @@ const presidenciaModule: ModuleDef = {
   label: "Presidência",
   description: "Tudo em que a Presidência tem ação, reunido",
   icon: Crown,
-  basePath: "/app/comite-etica",
+  basePath: "/app/presidencia",
   status: "active",
   groups: [
+    {
+      label: "Presidência",
+      defaultOpen: true,
+      items: [
+        // O painel próprio da Presidência (antes um link solto no topo do menu,
+        // abaixo de Novidades — veio para cá em 24/09/2026). Liberação: código
+        // "presidencia" em app_menu, como já era.
+        { label: "Painel da Presidência", to: "/app/presidencia", icon: LayoutDashboard },
+      ],
+    },
     {
       label: "Comitê de Ética",
       defaultOpen: true,
@@ -1373,28 +1384,8 @@ export function Sidebar({ collapsed, mobileOpen = false, onMobileClose }: Sideba
           )}
         </NavLink>
 
-        {canSee("/app/presidencia") && (
-          <NavLink
-            to="/app/presidencia"
-            className={({ isActive }) =>
-              cn(
-                "sb-item mt-1 flex items-center gap-3 rounded-md px-3 py-2 text-sm font-bold",
-                isActive
-                  ? "sb-on bg-sidebar-accent text-white"
-                  : "text-white/85 hover:bg-sidebar-accent/60 hover:text-white",
-                collapsed && "justify-center px-2",
-              )
-            }
-          >
-            {({ isActive }) => (
-              <>
-                {isActive && <span className="sb-bar absolute left-0 top-1.5 bottom-1.5 w-0.5 rounded-r bg-accent" />}
-                <LayoutDashboard className={cn("sb-ic h-4 w-4 shrink-0", isActive && "text-accent")} />
-                {!collapsed && <span>Painel da Presidência</span>}
-              </>
-            )}
-          </NavLink>
-        )}
+        {/* "Painel da Presidência" (/app/presidencia) saiu daqui em 24/09/2026:
+            agora é o primeiro item do módulo Presidência (presidenciaModule). */}
 
         {temAlcada && (
           <NavLink
