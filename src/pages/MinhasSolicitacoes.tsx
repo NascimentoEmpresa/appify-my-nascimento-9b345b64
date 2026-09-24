@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { rotasSolicitacoes, type BaseSolicitacoes } from "@/lib/solicitacoes/rotas";
 import { supabase } from "@/integrations/supabase/client";
 import type { SupabaseClient } from "@supabase/supabase-js";
@@ -283,6 +283,17 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
   const [filtro, setFiltro] = useState("");
   /** Solicitacao aberta no painel de detalhes + conversa. */
   const [detalhe, setDetalhe] = useState<SolItem | null>(null);
+  // ?ferias=<id> (24/09/2026): a notificação de férias canceladas pelo RH
+  // abre direto o detalhe, onde fica o motivo e o botão de refazer.
+  const [params, setParams] = useSearchParams();
+  useEffect(() => {
+    const alvo = params.get("ferias");
+    if (!alvo || minhasSols.length === 0) return;
+    const item = minhasSols.find((x) => x.tipo === "Férias" && String(x.id) === alvo);
+    if (item) setDetalhe(item);
+    params.delete("ferias");
+    setParams(params, { replace: true });
+  }, [params, minhasSols, setParams]);
 
   // Toasts
   const [toasts, setToasts] = useState<{ id: number; msg: string; type: string }[]>([]);
@@ -717,7 +728,7 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
 
   /** Abre o modal de férias preenchido com a solicitação, em modo REFAZER. */
   const abrirRefazerFerias = (ficha: Record<string, unknown>) => {
-    const regra = podeRefazerFerias({ criado_em: ficha.criado_em as string | null, status: ficha.status as string | null });
+    const regra = podeRefazerFerias({ criado_em: ficha.criado_em as string | null, status: ficha.status as string | null, cancelada_pelo_rh: !!ficha.cancelada_pelo_rh });
     if (!regra.ok) { toast(regra.motivo, "err"); return; }
     setDetalhe(null);
     setFeriasRefazerId(Number(ficha.id));
@@ -785,6 +796,8 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
       dias_ferias: dias, dias_vendidos: vend, observacoes: ferias.observacoes.trim() || null,
       excecao,
       status: "Pendente", aprovado_por: null, aprovado_em: null, motivo_reprovacao: null,
+      // Cancelada pelo RH e refeita: volta limpa (o motivo fica no histórico).
+      cancelada_pelo_rh: false, motivo_cancelamento: null, cancelada_por: null, cancelada_em: null,
       refeita_em: agora, refeita_vezes: (Number(atual?.refeita_vezes) || 0) + 1,
       atualizado_em: agora,
     }).eq("id", id);
