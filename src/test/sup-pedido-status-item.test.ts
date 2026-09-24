@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   derivarStatusItem,
   derivarStatusVisivel,
+  derivarStatusVisiveis,
   apresentarStatusVisivel,
   ESTILO_STATUS_VISIVEL,
   STATUS_ITEM,
@@ -173,6 +174,12 @@ describe("retirado para entrega", () => {
   it("vence o parcial: o card KPI é a fila de quem precisa informar o envio", () => {
     expect(derivarStatusVisivel("RETIRADO PARA ENTREGA", null, { itens: 10, itens_atendidos: 9 }))
       .toBe("RETIRADO PARA ENTREGA");
+  });
+
+  it("permanece nas duas filas acionáveis quando a retirada deixou itens para comprar", () => {
+    expect(derivarStatusVisiveis("RETIRADO PARA ENTREGA", null, {
+      itens: 10, itens_atendidos: 5, itens_pendentes_compra: 5,
+    })).toEqual(["AGUARDANDO COMPRA", "PARCIALMENTE DESPACHADO"]);
   });
 
   it("peça que saiu com o supervisor conta como despachada no item", () => {
