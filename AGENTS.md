@@ -6,20 +6,37 @@ leia os dois, este aqui cobre só regras operacionais de execução. Existem
 `AGENTS.md` específicos em subpastas (ex. `worker/AGENTS.md`) — eles se
 aplicam além deste, não em vez dele.
 
-## Regra nº 1: nunca commitar, pushar, mergear ou rebasear sozinho
+## Git: commit, push e PR
 
-Implemente, teste, corrija — **pare aí**. Deixe as alterações no working
-directory sem commit. Quem revisa e decide se commita é o Claude Code, depois
-de aprovação humana. Isso vale mesmo se a tarefa parecer concluída com
-sucesso: "concluído" aqui significa "pronto pra revisão", não "pronto pra
-virar commit".
+Quando o desenvolvedor pedir, você **pode** commitar, dar push e abrir PR
+(`gh pr create`) — não devolva os comandos git pra ele rodar à mão. Regras
+que continuam valendo (detalhe no [`CLAUDE.md`](CLAUDE.md) e em
+[`.github/REGRAS-PR.md`](.github/REGRAS-PR.md)):
+
+- Commite na branch pessoal de quem está usando (ex. `eduardo`). **Nunca crie
+  branch nova** — só existem `eduardo`, `joao`, `pablo` e `main` (regra R8,
+  o CI bloqueia). Nunca commite nem dê push direto na `main` nem na branch de
+  outro dev.
+- PR sempre da branch pessoal para a `main`. Título começa com
+  `SIS-AAAA-NNNN: <resumo>` (sem colchetes) quando resolve um chamado, ou
+  `[SEM-CHAMADO]: <resumo>` (com colchetes) quando não.
+- Nada de `push --force`, `reset --hard`, rebase ou merge na `main` sem o
+  desenvolvedor pedir explicitamente.
+- Commit só com os arquivos da tarefa — o working directory costuma ter
+  arquivos soltos não rastreados (planilhas, backups, `.tmp-*`); não use
+  `git add -A`/`git add .`.
+
+**Exceção — execução automática (`/codex-executar`, `codex exec` disparado
+pelo Claude Code ou pelo `worker/`):** nesse fluxo o prompt diz "não
+commitar" e o Claude Code revisa antes. Obedeça o prompt: implemente, teste e
+deixe tudo sem commit.
 
 ## Sandbox e worktree
 
-Você deve estar rodando com `--sandbox workspace-write` dentro de uma git
-worktree isolada (`-C <caminho-da-worktree>`), nunca direto no checkout
-principal. Se por algum motivo você perceber que está rodando fora de uma
-worktree isolada, pare e avise em vez de continuar.
+Na execução automática você roda com `--sandbox workspace-write` dentro de
+uma git worktree isolada (`-C <caminho-da-worktree>`). No uso interativo
+(desenvolvedor conversando com você direto no checkout principal) isso não se
+aplica — pode trabalhar no checkout normal.
 
 ## Variáveis de ambiente — nunca em texto, sempre lidas do arquivo
 
