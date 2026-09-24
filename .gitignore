@@ -70,3 +70,6 @@ arquivos-da-pr.txt
 
 # Lixo do CLI do Supabase (gerado ao rodar qualquer comando logado)
 supabase/.temp/
+
+# Gerado pelo scripts/monitor-supabase.ps1 a cada leitura
+scripts/status-banco.txt
