@@ -1,6 +1,5 @@
 import { Component, ReactNode } from "react";
-import { AlertTriangle, RotateCcw } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { SistemaIndisponivel } from "./SistemaIndisponivel";
 
 /**
  * APAGÃO 08/09/2026 — três telas do Malote (Orçamento Administrativo,
@@ -32,6 +31,11 @@ import { Button } from "@/components/ui/button";
  *   - a montagem no AppShell usa `key={pathname}`, então trocar de rota já
  *     limpa o estado de erro — ninguém fica preso.
  *
+ * 23/09/2026: o visual passou a ser o de "Sistema temporariamente
+ * indisponível" (SistemaIndisponivel.tsx), pedido do Pablo para QUALQUER
+ * erro. Dentro do AppShell continua ocupando só a área de conteúdo (menu e
+ * topo de pé); na rede final do App.tsx (telaCheia) cobre a janela.
+ *
  * Precisa ser class component: `componentDidCatch`/`getDerivedStateFromError`
  * não têm equivalente em hook.
  */
@@ -39,6 +43,8 @@ interface Props {
   children: ReactNode;
   /** Rota mostrada junto do erro, pra facilitar o relato do usuário. */
   rota?: string;
+  /** Cobre a janela toda (rede final do App.tsx, fora do AppShell). */
+  telaCheia?: boolean;
 }
 
 interface State {
@@ -65,35 +71,18 @@ export class ErroDeTela extends Component<Props, State> {
     if (!erro) return this.props.children;
 
     return (
-      <div className="flex min-h-[60vh] flex-col items-center justify-center gap-4 px-6 text-center">
-        <div className="flex h-16 w-16 items-center justify-center rounded-full bg-destructive/10">
-          <AlertTriangle className="h-8 w-8 text-destructive" />
-        </div>
-        <h1 className="text-2xl font-semibold">Esta tela não conseguiu abrir</h1>
-        <p className="max-w-md text-sm text-muted-foreground">
-          O erro é desta tela, não do sistema todo — o menu ao lado continua funcionando e você pode
-          seguir para outra área normalmente. Se o problema se repetir, abra um chamado e cole a
-          mensagem abaixo.
-        </p>
-
-        <details className="w-full max-w-xl text-left">
-          <summary className="cursor-pointer text-xs text-muted-foreground">Detalhes técnicos</summary>
-          <pre className="mt-2 max-h-48 overflow-auto rounded-md border border-border bg-muted/40 p-3 text-left text-xs whitespace-pre-wrap break-words">
-            {this.props.rota ? `Rota: ${this.props.rota}\n` : ""}
-            {erro.message || String(erro)}
-          </pre>
-        </details>
-
-        <div className="flex flex-wrap items-center justify-center gap-2">
-          <Button onClick={this.tentarDeNovo}>
-            <RotateCcw className="mr-2 h-4 w-4" />
-            Tentar de novo
-          </Button>
-          <Button variant="outline" onClick={() => window.location.reload()}>
+      <SistemaIndisponivel
+        modo={this.props.telaCheia ? "tela" : "area"}
+        onTentar={this.tentarDeNovo}
+        rotuloTentar="Tentar de novo"
+        detalhe={`${this.props.rota ? `Rota: ${this.props.rota}
+` : ""}${erro.message || String(erro)}`}
+        extra={
+          <button type="button" className="si-btn si-btn-s" onClick={() => window.location.reload()}>
             Recarregar a página
-          </Button>
-        </div>
-      </div>
+          </button>
+        }
+      />
     );
   }
 }

@@ -39,7 +39,7 @@ describe("ErroDeTela", () => {
         </ErroDeTela>
       )
     ).not.toThrow();
-    expect(screen.getByText("Esta tela não conseguiu abrir")).toBeTruthy();
+    expect(screen.getByText("Sistema temporariamente indisponível")).toBeTruthy();
   });
 
   it("mostra a mensagem técnica e a rota, pro diagnóstico não depender do console", () => {
@@ -67,7 +67,7 @@ describe("ErroDeTela", () => {
         <Alternavel />
       </ErroDeTela>
     );
-    expect(screen.getByText("Esta tela não conseguiu abrir")).toBeTruthy();
+    expect(screen.getByText("Sistema temporariamente indisponível")).toBeTruthy();
 
     estado.falhar = false;
     fireEvent.click(screen.getByRole("button", { name: /Tentar de novo/i }));

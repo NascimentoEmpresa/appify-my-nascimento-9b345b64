@@ -5,6 +5,7 @@ import { Toaster as Sonner } from "@/components/ui/sonner";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ErroDeTela } from "@/components/layout/ErroDeTela";
+import { MonitorDeQueda } from "@/components/layout/MonitorDeQueda";
 import { isAuthExpiredError } from "@/lib/authErrors";
 import { isSobrecargaError, atrasoSobrecargaMs } from "@/lib/erroSobrecarga";
 import NotFound from "./pages/NotFound.tsx";
@@ -349,6 +350,8 @@ const App = () => (
     <TooltipProvider>
       <Toaster />
       <Sonner />
+      {/* Queda do banco: cobre tudo com "Sistema temporariamente indisponível" (ver lib/monitorDeQueda.ts). */}
+      <MonitorDeQueda />
       <BrowserRouter>
         {/* Rede final: o ErroDeTela do AppShell cobre as telas de /app
             mantendo menu e topbar de pé, mas não cobre o que está FORA dele
@@ -356,7 +359,7 @@ const App = () => (
             providers). Sem este segundo boundary, um erro nesses pontos
             voltaria a produzir página branca sem mensagem — que foi
             exatamente o apagão de 08/09/2026 (ver ErroDeTela.tsx). */}
-        <ErroDeTela>
+        <ErroDeTela telaCheia>
         <AuthProvider>
         <DemoModeProvider>
         <PermissoesProvider>
