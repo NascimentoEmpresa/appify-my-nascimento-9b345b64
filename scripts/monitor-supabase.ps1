@@ -41,7 +41,13 @@ param(
     # isso baixa 510 KB para receber o dado repetido.
     [int]$Segundos = 60,
     [int]$Alerta   = 75,
-    [switch]$SemAlerta
+    [switch]$SemAlerta,
+
+    # Le UMA vez, grava o arquivo de status e sai. E o modo para quando
+    # voce so quer olhar agora: o arquivo fica fresco na hora, sem precisar
+    # deixar janela aberta. Tambem e o modo certo para agendar no Windows.
+    # CPU e IOWAIT nao aparecem aqui - eles precisam de duas leituras.
+    [switch]$UmaVez
 )
 
 $ErrorActionPreference = "Stop"
@@ -299,14 +305,25 @@ while ($true) {
     [void]$Linhas.Add("")
     [void]$Linhas.Add("Limites: verde < 60% | amarelo 60-" + $Alerta + "% | vermelho >= " + $Alerta + "%")
     [void]$Linhas.Add("Painel: https://supabase.com/dashboard/project/" + $Projeto + "/observability/database")
+    [void]$Linhas.Add("")
+    [void]$Linhas.Add("ATENCAO: este arquivo so e atualizado enquanto o worker ou o monitor")
+    [void]$Linhas.Add("estiverem rodando. Confira o 'Momento' la em cima antes de confiar no")
+    [void]$Linhas.Add("numero. Para uma leitura nova agora:")
+    [void]$Linhas.Add("    .\scripts\monitor-supabase.ps1 -UmaVez")
     $Linhas | Set-Content -Path $ArqStatus -Encoding UTF8
 
     Write-Host ""
     Write-Host "  --------------------------------------------------------------" -ForegroundColor DarkGray
+    Write-Host ("   Status gravado em: {0}" -f $ArqStatus) -ForegroundColor DarkGray
+
+    if ($UmaVez) {
+        Write-Host "   Leitura unica concluida (-UmaVez)." -ForegroundColor DarkGray
+        break
+    }
+
     $Modo = "alerta no Discord acima de $Alerta%"
     if ($SemAlerta) { $Modo = "alerta DESLIGADO (-SemAlerta)" }
     Write-Host ("   Atualiza a cada {0}s . {1}" -f $Segundos, $Modo) -ForegroundColor DarkGray
-    Write-Host ("   Status gravado em: {0}" -f $ArqStatus) -ForegroundColor DarkGray
     Write-Host "   CTRL + C para sair." -ForegroundColor DarkGray
 
     Start-Sleep -Seconds $Segundos

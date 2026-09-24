@@ -238,6 +238,13 @@ function gravarStatus(linhas, projeto) {
     "",
     `Limites: verde < 60% | amarelo 60-${LIMITE_PCT}% | vermelho >= ${LIMITE_PCT}%`,
     `Painel: https://supabase.com/dashboard/project/${projeto}/observability/database`,
+    "",
+    // Sem este aviso, abrir o arquivo com o worker parado mostra numero
+    // velho com cara de atual — e o "Momento" la em cima passa batido.
+    "ATENCAO: este arquivo so e atualizado enquanto o worker ou o monitor",
+    "estiverem rodando. Confira o 'Momento' la em cima antes de confiar no",
+    "numero. Para uma leitura nova agora:",
+    "    .\\scripts\\monitor-supabase.ps1 -UmaVez",
   ].join("\n");
 
   try {
