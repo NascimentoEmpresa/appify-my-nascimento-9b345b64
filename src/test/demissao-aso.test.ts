@@ -4,6 +4,7 @@ import {
   corDoStatus, explicaStatus, linkDoLocalASO, patchDevolucao,
   podeDevolver, resumoDevolucao, resumoDoASO,
   aprovarPedeMotivoSemVaga, faltaVagaDeReposicao, temMotivoSemVaga, podeCancelarDemissao,
+  STATUS_CANCELAMENTO_SOLICITADO, temPedidoDeCancelamento,
   podeCancelarDemissaoRH, caminhoAnexoCancelamento, erroUltimaDataTrabalhada, limiteUltimaDataTrabalhada,
 } from "@/lib/demissao/solicitacao";
 
@@ -220,17 +221,22 @@ describe("aprovar sem vaga de substituição", () => {
   });
 });
 
-// Cancelar (reconsiderar) pelo encarregado (17/09/2026): até o ASO ser
-// agendado; depois disso o exame já tem custo.
+// Cancelar (reconsiderar) pelo encarregado: desde 25/09/2026 ele PEDE e o
+// RH aprova (mig 239) — por isso vale em qualquer etapa em aberto, inclusive
+// com o ASO agendado ou válido (quem pesa o custo do exame é o RH).
 describe("podeCancelarDemissao", () => {
-  it("cancela enquanto está em qualquer etapa antes do agendamento", () => {
-    for (const status of ["Pendente Operacional", "Pendente Diretoria", "Pendente RH", "Pendente SST", STATUS_SST_RECEBIDA]) {
+  it("pede o cancelamento em qualquer etapa em aberto", () => {
+    for (const status of ["Pendente Operacional", "Pendente Diretoria", "Pendente RH", "Pendente SST", STATUS_SST_RECEBIDA, STATUS_SST_AGENDADO, STATUS_SST_ASO_VALIDO]) {
       expect(podeCancelarDemissao({ status }).ok).toBe(true);
     }
   });
-  it("ASO agendado ou válido: não cancela mais, e diz por quê", () => {
-    expect(podeCancelarDemissao({ status: STATUS_SST_AGENDADO })).toMatchObject({ ok: false, motivo: expect.stringContaining("já foi agendado") });
-    expect(podeCancelarDemissao({ status: STATUS_SST_ASO_VALIDO }).ok).toBe(false);
+  it("pedido já com o RH: não pede de novo, e diz por quê", () => {
+    expect(podeCancelarDemissao({ status: STATUS_CANCELAMENTO_SOLICITADO })).toMatchObject({ ok: false, motivo: expect.stringContaining("RH") });
+    expect(temPedidoDeCancelamento({ status: STATUS_CANCELAMENTO_SOLICITADO })).toBe(true);
+    expect(temPedidoDeCancelamento({ status: "Pendente RH" })).toBe(false);
+  });
+  it("o RH não usa o cancelamento direto num card com pedido — decide o pedido", () => {
+    expect(podeCancelarDemissaoRH({ status: STATUS_CANCELAMENTO_SOLICITADO }).ok).toBe(false);
   });
   it("já encerrada (cancelada, reprovada, concluída): nada a cancelar", () => {
     for (const status of ["Cancelada", "Reprovada", "Concluída"]) expect(podeCancelarDemissao({ status }).ok).toBe(false);

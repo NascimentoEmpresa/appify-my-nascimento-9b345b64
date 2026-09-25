@@ -136,6 +136,13 @@ export const STATUS_SST_AGENDADO = "Agendamento concluído";
  * dali, sem data/hora/local, e é tão final quanto o agendado.
  */
 export const STATUS_SST_ASO_VALIDO = "ASO válido";
+/**
+ * O encarregado PEDIU o cancelamento (25/09/2026, mig 239) e o RH ainda não
+ * decidiu. A solicitação fica congelada aqui — nenhuma etapa age nela — e o
+ * status de onde saiu está em `cancel_status_anterior`, pra onde volta se o
+ * RH recusar.
+ */
+export const STATUS_CANCELAMENTO_SOLICITADO = "Cancelamento solicitado";
 
 export type Status =
   | "Pendente Operacional"
@@ -149,13 +156,14 @@ export type Status =
   | typeof STATUS_SST_AGENDADO
   | typeof STATUS_SST_ASO_VALIDO
   | "Concluída"
+  | typeof STATUS_CANCELAMENTO_SOLICITADO
   | "Cancelada";
 
 /** Na ordem do fluxo, que é a ordem em que fazem sentido em qualquer filtro. */
 export const STATUS_TODOS: Status[] = [
   "Pendente Operacional", "Pendente Diretoria", "Pendente RH", "Pendente SST",
   STATUS_SST_RECEBIDA, STATUS_SST_AGENDADO, STATUS_SST_ASO_VALIDO,
-  "Concluída", "Reprovada", "Cancelada",
+  "Concluída", "Reprovada", STATUS_CANCELAMENTO_SOLICITADO, "Cancelada",
 ];
 
 /**
@@ -184,6 +192,9 @@ export function corDoStatus(status: string): string {
     "Reprovada": "bg-red-100 text-red-700 border-red-200",
     // Vermelho (17/09/2026): reconsiderada pelo encarregado — tem que saltar aos olhos.
     "Cancelada": "bg-red-100 text-red-700 border-red-300",
+    // Pedido de cancelamento esperando o RH (25/09/2026): vermelho cheio —
+    // é o que o RH tem que ver primeiro na fila.
+    [STATUS_CANCELAMENTO_SOLICITADO]: "bg-red-600 text-white border-red-700",
   };
   return cores[status] ?? "bg-blue-100 text-blue-700 border-blue-200";
 }
@@ -201,6 +212,7 @@ export function explicaStatus(status: string): string {
     "Concluída": "O RH confirmou. Desligamento concluído.",
     "Reprovada": "Reprovada na aprovação — veja o motivo.",
     "Cancelada": "A solicitação foi cancelada.",
+    [STATUS_CANCELAMENTO_SOLICITADO]: "O solicitante pediu o cancelamento. Aguardando o RH aprovar ou recusar.",
   };
   return textos[status] ?? "";
 }
@@ -300,6 +312,18 @@ export interface SolicitacaoDemissao {
   cancelado_por?: string | null;
   cancelado_em?: string | null;
   cancelado_motivo?: string | null;
+  /**
+   * PEDIDO de cancelamento do encarregado, que o RH aprova ou recusa
+   * (25/09/2026, mig 239). `cancel_status_anterior` é pra onde a solicitação
+   * volta se o RH recusar; a recusa fica gravada em `cancel_recusa_*`.
+   */
+  cancel_pedido_por?: string | null;
+  cancel_pedido_em?: string | null;
+  cancel_pedido_motivo?: string | null;
+  cancel_status_anterior?: string | null;
+  cancel_recusa_por?: string | null;
+  cancel_recusa_em?: string | null;
+  cancel_recusa_motivo?: string | null;
 
   // ASO demissional. Os nomes são os MESMOS do ASO de admissão
   // (WA_CURRICULOS.sst_*) de propósito: quem trabalha no SST preenche a mesma
@@ -547,21 +571,24 @@ export const emailValido = (v: string) => /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(v
 
 // ── Cancelar (reconsiderar) pelo encarregado ─────────────────────────
 /**
- * O encarregado pode cancelar a própria solicitação até o SST agendar o ASO:
- * depois disso o exame já tem custo, e a resposta é a mensagem do banco
- * (RPC demissao_cancelar repete a regra). `motivo` é o que a tela mostra ao
- * clicar em Cancelar quando não pode.
+ * O encarregado PEDE o cancelamento e o RH aprova (25/09/2026, mig 239).
+ * Até então o botão cancelava na hora, e só até o ASO ser agendado. Como
+ * quem decide agora é o RH — que já cancelava com o ASO agendado ou válido
+ * —, o pedido vale em qualquer etapa em aberto (a RPC demissao_cancelar
+ * repete a regra). `motivo` é o que a tela mostra ao clicar quando não pode.
  */
 export const MOTIVO_CANCELAMENTO_MIN = 10;
 export function podeCancelarDemissao(s: Pick<SolicitacaoDemissao, "status">): { ok: boolean; motivo?: string } {
-  if (s.status === STATUS_SST_AGENDADO || s.status === STATUS_SST_ASO_VALIDO) {
-    return { ok: false, motivo: "O ASO demissional já foi agendado — a solicitação não pode mais ser cancelada, porque o exame já tem custo. Fale com o RH." };
-  }
+  if (s.status === STATUS_CANCELAMENTO_SOLICITADO) return { ok: false, motivo: "O cancelamento já foi pedido e está com o RH para aprovar." };
   if (s.status === "Cancelada") return { ok: false, motivo: "Esta solicitação já foi cancelada." };
   if (s.status === "Reprovada") return { ok: false, motivo: "Esta solicitação foi reprovada — não há o que cancelar." };
   if (s.status === "Concluída") return { ok: false, motivo: "Esta demissão já foi concluída." };
   return { ok: true };
 }
+
+/** O encarregado pediu o cancelamento e o RH tem que decidir (25/09/2026)? */
+export const temPedidoDeCancelamento = (s: Pick<SolicitacaoDemissao, "status">): boolean =>
+  s.status === STATUS_CANCELAMENTO_SOLICITADO;
 
 // ── Cancelar (reconsideração) pelo RH ────────────────────────────────
 /**

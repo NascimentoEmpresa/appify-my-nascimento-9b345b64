@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { LucideIcon } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
@@ -14,7 +15,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import {
-  BUCKET, MOTIVO_DEVOLUCAO_MIN, MOTIVO_SEM_VAGA_MIN, STATUS_SST_AGENDADO, STATUS_SST_ASO_VALIDO, STATUS_SST_RECEBIDA, acaoDoSST,
+  BUCKET, MOTIVO_DEVOLUCAO_MIN, MOTIVO_SEM_VAGA_MIN, STATUS_CANCELAMENTO_SOLICITADO, STATUS_SST_AGENDADO, STATUS_SST_ASO_VALIDO, STATUS_SST_RECEBIDA, acaoDoSST,
   aprovarPedeMotivoSemVaga, temMotivoSemVaga,
   TABELA, TABELA_ANEXOS, corDoStatus, explicaStatus,
   erroUltimaDataTrabalhada, limiteUltimaDataTrabalhada,
@@ -24,12 +25,12 @@ import {
 } from "@/lib/demissao/solicitacao";
 import { MapaPicker } from "@/components/sst/MapaPicker";
 import {
-  CheckCircle2, Clock, Download, Eye, FileText, Loader2, MapPin, Search, Stethoscope,
+  Ban, CheckCircle2, Clock, Download, Eye, FileText, Loader2, MapPin, Search, Stethoscope,
   ThumbsDown, ThumbsUp, Undo2, XCircle,
 } from "lucide-react";
 import { ConversaSolicitacao } from "@/components/solicitacoes/ConversaSolicitacao";
-import { AvisoCancelada } from "@/components/demissao/CancelarDemissao";
-import { BlocoCancelarReconsideracaoRH } from "@/components/demissao/CancelarReconsideracaoRH";
+import { AvisoCancelada, AvisoPedidoCancelamento } from "@/components/demissao/CancelarDemissao";
+import { BlocoCancelarReconsideracaoRH, BlocoDecidirCancelamentoRH } from "@/components/demissao/CancelarReconsideracaoRH";
 import { TABELA_APROVADOR_SETOR } from "@/components/admin/TrocaFuncaoSetoresUsuario";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -84,7 +85,7 @@ export type Etapa = "analista" | "operacional" | "diretoria" | "rh" | "sst";
 const TODOS_OS_STATUS = [
   "Pendente Operacional", "Pendente Diretoria", "Pendente RH", "Pendente SST",
   STATUS_SST_RECEBIDA, STATUS_SST_AGENDADO, STATUS_SST_ASO_VALIDO,
-  "Concluída", "Reprovada", "Cancelada",
+  "Concluída", "Reprovada", STATUS_CANCELAMENTO_SOLICITADO, "Cancelada",
 ];
 
 const STATUS_DA_ETAPA: Record<Etapa, string[]> = {
@@ -96,12 +97,15 @@ const STATUS_DA_ETAPA: Record<Etapa, string[]> = {
   // o fluxo inteiro. O que ele não tem é `STATUS_DE_ACAO`.
   analista: TODOS_OS_STATUS,
   // O SST é a última etapa: vê o que está chegando e o que ele já agendou.
-  sst: ["Pendente SST", STATUS_SST_RECEBIDA, STATUS_SST_AGENDADO, STATUS_SST_ASO_VALIDO],
+  // "Cancelamento solicitado" (25/09/2026): o card congela esperando o RH;
+  // o SST continua vendo, em vermelho, pra não agendar à toa.
+  sst: ["Pendente SST", STATUS_SST_RECEBIDA, STATUS_SST_AGENDADO, STATUS_SST_ASO_VALIDO, STATUS_CANCELAMENTO_SOLICITADO],
   // O RH continua vendo o que despachou — a pergunta que mais chega depois de
   // liberar é "e aí, o SST agendou?".
   // E as CANCELADAS (18/09/2026): desde que o próprio RH cancela por
   // reconsideração, sumir da fila sem rastro parecia erro.
-  rh: ["Pendente RH", "Pendente SST", STATUS_SST_RECEBIDA, STATUS_SST_AGENDADO, STATUS_SST_ASO_VALIDO, "Cancelada"],
+  // E os PEDIDOS DE CANCELAMENTO do encarregado (25/09/2026), que só o RH decide.
+  rh: [STATUS_CANCELAMENTO_SOLICITADO, "Pendente RH", "Pendente SST", STATUS_SST_RECEBIDA, STATUS_SST_AGENDADO, STATUS_SST_ASO_VALIDO, "Cancelada"],
 };
 
 /**
@@ -177,6 +181,18 @@ export function PainelDemissoes({ etapa }: { etapa: Etapa }) {
     setCarregando(false);
   }, [statusVisiveis]);
   useEffect(() => { carregar(); }, [carregar]);
+
+  // Veio do sino (25/09/2026): o link traz ?abrir=<id> — abre o card direto e
+  // limpa o parâmetro, pra um "Atualizar" não reabrir.
+  const [params, setParams] = useSearchParams();
+  const abrirId = Number(params.get("abrir") ?? "");
+  useEffect(() => {
+    if (!abrirId || carregando) return;
+    const alvo = todas.find((s) => s.id === abrirId);
+    if (alvo) setAberta(alvo);
+    else toast.info(`A solicitação #${abrirId} não está nesta fila (pode já ter andado).`);
+    const p = new URLSearchParams(params); p.delete("abrir"); setParams(p, { replace: true });
+  }, [abrirId, carregando, todas, params, setParams]);
   // Recorte por escritório/setor em memória: os setores chegam depois das linhas.
   useEffect(() => {
     setLinhas(todas.filter((s) => visivelNaEtapaDemissao(s, etapa, meusSetores)));
@@ -222,7 +238,7 @@ export function PainelDemissoes({ etapa }: { etapa: Etapa }) {
           quatro colunas fixas, que deixavam o RH com dois cartões perdidos. */}
       <div className={cn("mb-5 grid gap-3 sm:grid-cols-2",
         etapa === "analista" || etapa === "operacional" || etapa === "diretoria" ? "lg:grid-cols-3 xl:grid-cols-5"
-        : etapa === "sst" || etapa === "rh" ? "lg:grid-cols-3" : "")}>
+        : etapa === "sst" ? "lg:grid-cols-3" : etapa === "rh" ? "lg:grid-cols-4" : "")}>
         {etapa === "analista" || etapa === "operacional" || etapa === "diretoria" ? (
           <>
             <Kpi titulo={etapa === "analista" ? "Em aprovação" : "Aguardando você"}
@@ -246,6 +262,7 @@ export function PainelDemissoes({ etapa }: { etapa: Etapa }) {
         ) : (
           <>
             <Kpi titulo="Aguardando você" valor={contar("Pendente RH")} icone={Clock} cor="bg-purple-100 text-purple-700" />
+            <Kpi titulo="Pedidos de cancelamento" valor={contar(STATUS_CANCELAMENTO_SOLICITADO)} icone={Ban} cor="bg-red-600 text-white" />
             <Kpi titulo="No SST" valor={contar("Pendente SST") + contar(STATUS_SST_RECEBIDA)}
                  icone={Stethoscope} cor="bg-cyan-100 text-cyan-700" />
             <Kpi titulo="Agendadas" valor={contar(STATUS_SST_AGENDADO) + contar("Concluída")}
@@ -312,7 +329,10 @@ export function PainelDemissoes({ etapa }: { etapa: Etapa }) {
                       <TableCell className="hidden sm:table-cell">{fmtData(s.criado_em)}</TableCell>
                       <TableCell>
                         <div className="flex flex-wrap items-center gap-1">
-                          <Badge variant="outline" className={corDoStatus(s.status)}>{s.status}</Badge>
+                          <Badge variant="outline" className={corDoStatus(s.status)}>
+                            {s.status === STATUS_CANCELAMENTO_SOLICITADO && <Ban className="mr-1 h-3 w-3" />}
+                            {s.status}
+                          </Badge>
                           {/* Um card devolvido está no MESMO status de um que
                               nunca saiu do Operacional. Sem o selo, os dois se
                               parecem na lista e o retrabalho some no meio. */}
@@ -325,7 +345,7 @@ export function PainelDemissoes({ etapa }: { etapa: Etapa }) {
                       </TableCell>
                       <TableCell>
                         <Button variant="ghost" size="sm" onClick={(e) => { e.stopPropagation(); setAberta(s); }}>
-                          {statusDeAcao.includes(s.status) ? "Analisar" : "Ver"}
+                          {statusDeAcao.includes(s.status) || (etapa === "rh" && s.status === STATUS_CANCELAMENTO_SOLICITADO) ? "Analisar" : "Ver"}
                         </Button>
                       </TableCell>
                     </TableRow>
@@ -651,6 +671,8 @@ function DetalheSolicitacao({ solicitacao, etapa, quemSou, onFechar, onDecidir, 
 
         {/* Cancelada pelo encarregado (17/09/2026): em vermelho, com o motivo. */}
         <AvisoCancelada solicitacao={s} />
+        {/* Pedido de cancelamento esperando o RH, ou a recusa dele (25/09/2026). */}
+        {etapa !== "rh" && <AvisoPedidoCancelamento solicitacao={s} />}
 
         {/* A devolução vem PRIMEIRO no detalhe, antes de qualquer campo: é a
             única coisa que importa num card que voltou, e enterrá-la no meio
@@ -761,6 +783,12 @@ function DetalheSolicitacao({ solicitacao, etapa, quemSou, onFechar, onDecidir, 
             sozinho se aparece (podeCancelarDemissaoRH). */}
         {/* Não depende de podeAgir (só Pendente RH): o RH também cancela com a
             solicitação no SST (21/09/2026) — o bloco decide pelo status. */}
+        {/* PEDIDO do encarregado (25/09/2026): o RH aprova ou recusa aqui. */}
+        {etapa === "rh" && (
+          <BlocoDecidirCancelamentoRH solicitacao={s} onDecidido={onCancelada}
+            avisar={(msg, tipo) => (tipo === "err" ? toast.error(msg) : tipo === "ok" ? toast.success(msg) : toast.info(msg))} />
+        )}
+        {etapa === "rh" && s.cancel_recusa_em && s.status !== STATUS_CANCELAMENTO_SOLICITADO && <AvisoPedidoCancelamento solicitacao={s} />}
         {etapa === "rh" && (
           <BlocoCancelarReconsideracaoRH solicitacao={s} onCancelada={onCancelada}
             avisar={(msg, tipo) => (tipo === "err" ? toast.error(msg) : tipo === "ok" ? toast.success(msg) : toast.info(msg))} />

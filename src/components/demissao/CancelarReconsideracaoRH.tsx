@@ -2,7 +2,7 @@ import { useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { BUCKET, MOTIVO_CANCELAMENTO_MIN, STATUS_SST_AGENDADO, STATUS_SST_ASO_VALIDO, caminhoAnexoCancelamento, cancelarAvisaSST, podeCancelarDemissaoRH } from "@/lib/demissao/solicitacao";
+import { BUCKET, MOTIVO_CANCELAMENTO_MIN, STATUS_SST_AGENDADO, STATUS_SST_ASO_VALIDO, caminhoAnexoCancelamento, cancelarAvisaSST, podeCancelarDemissaoRH, temPedidoDeCancelamento } from "@/lib/demissao/solicitacao";
 import { fmtTamanho } from "@/lib/solicitacoes/anexos";
 
 // =====================================================================
@@ -184,6 +184,110 @@ export function BlocoCancelarReconsideracaoRH({ solicitacao, onCancelada, avisar
             <button type="button" onClick={() => setPasso(1)} disabled={salvando} style={btn("#fff", "#475569", "1px solid #e2e8f0")}>Voltar</button>
             <button type="button" onClick={executar} disabled={salvando} style={btn("#dc2626", "#fff")}>
               {salvando ? "Cancelando…" : "Confirmo — cancelar definitivamente"}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// =====================================================================
+// PEDIDO DE CANCELAMENTO do encarregado — o RH aprova ou recusa
+// (25/09/2026, mig 239). Aparece no card quando a solicitação está em
+// "Cancelamento solicitado"; o RH chega aqui pelo sino (link com ?abrir=).
+//   • Aprovar: a RPC demissao_decidir_cancelamento cancela com o motivo do
+//     encarregado — vaga de Substituição que nem abriu cai junto e, se
+//     estava no SST, o SST é avisado para desmarcar o ASO.
+//   • Recusar: observação obrigatória; a solicitação volta pro status de
+//     antes e o encarregado recebe o porquê no sino.
+// O banco repete a regra (rh_demissoes/aprovar).
+// =====================================================================
+export function BlocoDecidirCancelamentoRH({ solicitacao, onDecidido, avisar }: {
+  solicitacao: {
+    id: number; status: string; colaborador_nome?: string | null; solicitante_nome?: string | null;
+    cancel_pedido_por?: string | null; cancel_pedido_em?: string | null; cancel_pedido_motivo?: string | null; cancel_status_anterior?: string | null;
+  };
+  onDecidido: () => void;
+  avisar: (msg: string, tipo: "ok" | "err" | "info") => void;
+}) {
+  const [obs, setObs] = useState("");
+  const [confirmando, setConfirmando] = useState<"aprovar" | "recusar" | null>(null);
+  const [salvando, setSalvando] = useState(false);
+  if (!temPedidoDeCancelamento(solicitacao)) return null;
+
+  const anterior = solicitacao.cancel_status_anterior ?? "—";
+  const quem = solicitacao.cancel_pedido_por || solicitacao.solicitante_nome || "O solicitante";
+  const quando = solicitacao.cancel_pedido_em ? new Date(solicitacao.cancel_pedido_em).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" }) : "";
+  const noSST = cancelarAvisaSST(anterior);
+
+  const pedir = (acao: "aprovar" | "recusar") => {
+    if (acao === "recusar" && obs.trim().length < MOTIVO_CANCELAMENTO_MIN) {
+      avisar(`Explique ao solicitante por que o cancelamento foi recusado (mín. ${MOTIVO_CANCELAMENTO_MIN} caracteres).`, "err");
+      return;
+    }
+    setConfirmando(acao);
+  };
+
+  const decidir = async () => {
+    if (!confirmando) return;
+    setSalvando(true);
+    const { data, error } = await db.rpc("demissao_decidir_cancelamento", {
+      p_id: solicitacao.id, p_aprovar: confirmando === "aprovar", p_observacao: obs.trim() || null,
+    });
+    setSalvando(false);
+    if (error) { avisar(error.message, "err"); return; }
+    if (confirmando === "aprovar") {
+      const ret = data as { vaga?: string | null; sst_avisados?: number } | null;
+      const nSST = Number(ret?.sst_avisados ?? 0);
+      avisar(`Cancelamento aprovado: a solicitação #${solicitacao.id} está CANCELADA e o solicitante foi avisado.`
+        + (noSST ? (nSST > 0 ? ` O SST foi avisado (${nSST} pessoa(s)) para desmarcar o ASO.` : " Ninguém tem a tela ASO Demissional liberada — avise o SST diretamente.") : "")
+        + (ret?.vaga === "cancelada" ? " A vaga de Substituição que ainda não tinha aberto foi cancelada junto." : ret?.vaga === "mantida" ? " A vaga de Substituição já está em seleção — avise o Recrutamento se ela não for mais necessária." : ""), "ok");
+    } else {
+      avisar(`Cancelamento recusado: a solicitação #${solicitacao.id} voltou para "${anterior}" e o solicitante foi avisado.`, "ok");
+    }
+    setConfirmando(null); setObs("");
+    onDecidido();
+  };
+
+  return (
+    <div style={{ border: "2px solid #dc2626", background: "#fef2f2", borderRadius: 12, padding: 16, display: "grid", gap: 10 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        <span aria-hidden style={{ width: 34, height: 34, borderRadius: 999, background: "#dc2626", color: "#fff", display: "grid", placeItems: "center", fontSize: 18, flexShrink: 0 }}>🚫</span>
+        <div>
+          <div style={{ fontSize: 14, fontWeight: 900, color: "#b91c1c", textTransform: "uppercase", letterSpacing: ".4px" }}>Pedido de cancelamento — decisão do RH</div>
+          <div style={{ fontSize: 12.5, color: "#991b1b" }}>{quem}{quando ? ` · ${quando}` : ""} · estava em <b>{anterior}</b></div>
+        </div>
+      </div>
+      <div style={{ fontSize: 14, color: "#7f1d1d", background: "#fff", border: "1px solid #fecaca", borderRadius: 8, padding: "8px 10px", whiteSpace: "pre-wrap" }}>
+        <b>Motivo:</b> {solicitacao.cancel_pedido_motivo || "—"}
+      </div>
+      {noSST && (
+        <div style={{ fontSize: 13, fontWeight: 700, color: "#92400e", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 8, padding: "8px 10px" }}>
+          A solicitação estava no SST ({anterior}). Aprovando, o SST recebe o aviso para {anterior === STATUS_SST_AGENDADO ? "desmarcar o ASO já agendado" : "não agendar o ASO"}.
+        </div>
+      )}
+      <div>
+        <label htmlFor="rh-decide-obs" style={rotulo}>Observação <span style={{ fontWeight: 600, textTransform: "none", color: "#64748b" }}>(obrigatória para recusar — vai pro solicitante)</span></label>
+        <textarea id="rh-decide-obs" value={obs} onChange={(e) => { setObs(e.target.value); setConfirmando(null); }} rows={2} style={campo}
+          placeholder="Ex.: o acerto já foi feito; o colaborador confirmou que sai…" />
+      </div>
+      {!confirmando ? (
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <button type="button" onClick={() => pedir("aprovar")} style={btn("#dc2626", "#fff")}>🚫 Aprovar cancelamento</button>
+          <button type="button" onClick={() => pedir("recusar")} style={btn("#fff", "#475569", "1px solid #cbd5e1")}>↩ Recusar — a demissão continua</button>
+        </div>
+      ) : (
+        <div style={{ background: "#fff", border: "1.5px solid #dc2626", borderRadius: 10, padding: 12, display: "grid", gap: 8 }}>
+          <div style={{ fontSize: 14, color: "#0f172a" }}>
+            {confirmando === "aprovar"
+              ? <>Confirma? A demissão de <b>{solicitacao.colaborador_nome ?? "—"}</b> fica <b style={{ color: "#dc2626" }}>CANCELADA</b> e não pode ser reaberta.</>
+              : <>Confirma? O pedido é recusado e a solicitação volta para <b>{anterior}</b>.</>}
+          </div>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <button type="button" onClick={() => setConfirmando(null)} disabled={salvando} style={btn("#fff", "#475569", "1px solid #e2e8f0")}>Voltar</button>
+            <button type="button" onClick={decidir} disabled={salvando} style={confirmando === "aprovar" ? btn("#dc2626", "#fff") : btn("#0f172a", "#fff")}>
+              {salvando ? "Salvando…" : confirmando === "aprovar" ? "Confirmo — cancelar a demissão" : "Confirmo — recusar"}
             </button>
           </div>
         </div>
