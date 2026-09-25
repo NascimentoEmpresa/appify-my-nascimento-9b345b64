@@ -857,7 +857,12 @@ export default function FluxoCaixaGestao() {
           <DialogHeader>
             <DialogTitle>Lixeira do Fluxo de Caixa</DialogTitle>
           </DialogHeader>
-          <div className="space-y-5">
+          {/* [SEM-CHAMADO] (achado do usuário): DialogContent é
+              display:grid — sem min-w-0 aqui, este item de grid não
+              encolhe abaixo do conteúdo intrínseco (nome/descrição gigante
+              de algum item), inflando o modal antes do truncate interno
+              ter chance de agir. */}
+          <div className="space-y-5 min-w-0">
             {despesasLixeira.length === 0 && debitosLixeira.length === 0 && itensFaturaLixeira.length === 0 && (
               <p className="text-sm text-muted-foreground py-6 text-center">A lixeira está vazia.</p>
             )}
@@ -867,15 +872,15 @@ export default function FluxoCaixaGestao() {
                 <p className="text-xs font-semibold text-muted-foreground uppercase">Pagamento Malote</p>
                 {despesasLixeira.map((d) => (
                   <div key={d.id} className="flex items-center justify-between gap-2 rounded-md border border-border px-3 py-2 text-sm">
-                    <div className="min-w-0">
+                    <div className="flex-1 min-w-0">
                       <p className="font-mono text-xs text-muted-foreground">{d.numero}</p>
                       <p className="truncate">{d.nome}</p>
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
                       <span className="font-medium">{formatBRL(d.valor_total)}</span>
                       <AcessoGate menu="malote_despesa_visualizar" acao="excluir">
-                        <Button variant="outline" size="sm" className="gap-1.5" onClick={() => restaurar("malote", d.id)}>
-                          <RotateCcw className="h-3.5 w-3.5" /> Restaurar
+                        <Button variant="outline" size="icon" className="h-8 w-8" title="Restaurar" onClick={() => restaurar("malote", d.id)}>
+                          <RotateCcw className="h-3.5 w-3.5" />
                         </Button>
                       </AcessoGate>
                       {/* [SEM-CHAMADO] (achado do usuário): faltava excluir
@@ -899,15 +904,15 @@ export default function FluxoCaixaGestao() {
                 <p className="text-xs font-semibold text-muted-foreground uppercase">Débito Automático</p>
                 {debitosLixeira.map((d) => (
                   <div key={d.id} className="flex items-center justify-between gap-2 rounded-md border border-border px-3 py-2 text-sm">
-                    <div className="min-w-0">
+                    <div className="flex-1 min-w-0">
                       <p className="font-mono text-xs text-muted-foreground">{d.numero}</p>
                       <p className="truncate">{d.descricao}</p>
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
                       <span className="font-medium">{formatBRL(d.valor)}</span>
                       <AcessoGate menu="financeiro-debito-automatico" acao="excluir">
-                        <Button variant="outline" size="sm" className="gap-1.5" onClick={() => restaurar("debito_automatico", d.id)}>
-                          <RotateCcw className="h-3.5 w-3.5" /> Restaurar
+                        <Button variant="outline" size="icon" className="h-8 w-8" title="Restaurar" onClick={() => restaurar("debito_automatico", d.id)}>
+                          <RotateCcw className="h-3.5 w-3.5" />
                         </Button>
                       </AcessoGate>
                     </div>
@@ -921,15 +926,15 @@ export default function FluxoCaixaGestao() {
                 <p className="text-xs font-semibold text-muted-foreground uppercase">Fatura Cartão de Crédito</p>
                 {itensFaturaLixeira.map((i) => (
                   <div key={i.id} className="flex items-center justify-between gap-2 rounded-md border border-border px-3 py-2 text-sm">
-                    <div className="min-w-0">
+                    <div className="flex-1 min-w-0">
                       <p className="font-mono text-xs text-muted-foreground">{i.nome_cartao}</p>
                       <p className="truncate">{i.descricao}</p>
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
                       <span className="font-medium">{formatBRL(i.valor)}</span>
                       <AcessoGate menu="financeiro-cartao-credito" acao="excluir">
-                        <Button variant="outline" size="sm" className="gap-1.5" onClick={() => restaurar("cartao_fatura", i.id)}>
-                          <RotateCcw className="h-3.5 w-3.5" /> Restaurar
+                        <Button variant="outline" size="icon" className="h-8 w-8" title="Restaurar" onClick={() => restaurar("cartao_fatura", i.id)}>
+                          <RotateCcw className="h-3.5 w-3.5" />
                         </Button>
                       </AcessoGate>
                     </div>
