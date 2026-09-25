@@ -800,20 +800,33 @@ export default function ContratosERP() {
           extras — são funcionalidade real (Emissão de NF) que não estava
           no mockup, mas precisa continuar existindo em algum lugar. */}
       <Dialog open={modalOpen} onOpenChange={setModalOpen}>
-        <DialogContent className="max-w-4xl max-h-[88vh] overflow-y-auto">
+        <DialogContent className="max-w-5xl max-h-[88vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>{editando ? "Editar Contrato" : "Novo Contrato"}</DialogTitle>
           </DialogHeader>
 
-          <div className="space-y-3">
-          {/* Card de obrigatórios no TOPO, não perto do botão de salvar: ele é
-              o roteiro do que preencher, e roteiro se lê antes. */}
-          <CardObrigatorios
-            itens={itensObrigatorios}
-            errosQuadro={errosQuadro}
-            avisoQuadro={conferenciaQuadro.aviso}
-          />
+          {/* Duas colunas: o que FALTA à esquerda, fixo, e o formulário à
+              direita. O modal é longo (sete seções mais os Dados Fiscais) e o
+              botão "Salvar" fica lá embaixo — com o card só no topo, ele já
+              tinha rolado para fora da tela justamente na hora de salvar.
 
+              O `sticky` funciona porque quem rola é o DialogContent: a coluna
+              gruda no topo da área visível dele. `items-start` é o que dá à
+              <aside> a altura do próprio conteúdo — sem isso ela estica até o
+              fim do flex e o sticky não tem folga para deslizar. */}
+          <div className="flex flex-col gap-4 md:flex-row md:items-start">
+            <aside className="md:sticky md:top-0 md:w-60 md:shrink-0 lg:w-64">
+              <CardObrigatorios
+                itens={itensObrigatorios}
+                errosQuadro={errosQuadro}
+                avisoQuadro={conferenciaQuadro.aviso}
+              />
+            </aside>
+
+            {/* min-w-0: sem isso o conteúdo da direita (tabelas, inputs
+                largos) impede o flex de encolher e a coluna da esquerda some
+                empurrada para fora. */}
+            <div className="min-w-0 flex-1 space-y-3">
           <SectionHeader n={1} title="Dados do Contrato" />
           <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
             {/* SIS-2026-0309: empresa passa a ser campo explícito na
@@ -1076,13 +1089,14 @@ export default function ContratosERP() {
               )}
             </div>
           )}
+            </div>
           </div>
 
           <DialogFooter>
             <Button variant="outline" onClick={() => setModalOpen(false)}>Cancelar</Button>
             <Button
               onClick={handleSalvar}
-              // Mesma conferência do card do topo — ver `podeSalvar`.
+              // Mesma conferência da coluna da esquerda — ver `podeSalvar`.
               disabled={!podeSalvar || upsert.isPending || salvarQuadro.isPending || gerarVagas.isPending}
             >
               {upsert.isPending || salvarQuadro.isPending ? "Salvando…"
