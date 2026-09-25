@@ -1,12 +1,13 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
+import { useLocation } from "react-router-dom";
 import { useVinculoEmpregado } from "@/hooks/useVinculoEmpregado";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { FioDuvida } from "@/components/juridico/FioDuvida";
 import {
   CATEGORIAS_DUVIDA as CATEGORIAS, agruparComplementos, complementoPendente, entraNaBiblioteca, infoAvaliacao,
-  pendentesDeAvaliacao, type Complemento, type Duvida,
+  pendentesDeAvaliacao, respondidaPeloOperacional, type Complemento, type Duvida,
 } from "@/lib/juridico/duvidas";
 
 // =====================================================================
@@ -30,7 +31,7 @@ import {
 const db = supabase as unknown as SupabaseClient;
 
 const fmtDt = (s?: string) => { if (!s) return "—"; const d = new Date(s); return isNaN(+d) ? s : d.toLocaleDateString("pt-BR"); };
-const ASK_RESET = { titulo: "", categoria: "", pergunta: "" };
+const ASK_RESET = { titulo: "", categoria: "", pergunta: "", reservada: false };
 
 /** Cor fixa por categoria — a mesma em chips, tags e no dashboard. */
 const COR_CAT: Record<string, { bg: string; c: string }> = {
@@ -41,14 +42,23 @@ const COR_CAT: Record<string, { bg: string; c: string }> = {
 };
 const corCat = (c?: string | null) => COR_CAT[c ?? ""] ?? { bg: "#f1f5f9", c: "#475569" };
 
-/** Onde a pergunta está — os três passos do pedido, pra quem perguntou. */
-const PASSOS = ["Aprovação", "Jurídico", "Respondida"] as const;
-const passoDe = (s: string) => s === "Aberta" ? 0 : s === "Aprovada" ? 1 : s === "Respondida" ? 2 : -1;
+/**
+ * Onde a pergunta está — os três passos do pedido, pra quem perguntou. A do
+ * ENCARREGADO (mig 244, 25/09/2026) passa primeiro pelo Operacional, que
+ * responde ou encaminha ao Jurídico.
+ */
+const PASSOS_CENTRAL = ["Aprovação", "Jurídico", "Respondida"] as const;
+const PASSOS_ENCARREGADO = ["Operacional", "Jurídico", "Respondida"] as const;
+const passoDe = (s: string) => s === "Aberta" || s === "Pendente Operacional" ? 0 : s === "Aprovada" ? 1 : s === "Respondida" ? 2 : -1;
 
 export default function OrientacoesJuridicas() {
   const { user } = useAuth();
   const { empregado } = useVinculoEmpregado();
   const autor = empregado?.nome || user?.user_metadata?.nome || user?.email || "Usuário";
+  // A mesma tela nas duas portas; a do Encarregados manda a pergunta pro
+  // Operacional primeiro (o banco decide o status pela origem — mig 244).
+  const { pathname } = useLocation();
+  const doEncarregado = pathname.startsWith("/app/encarregados");
 
   const [duvidas, setDuvidas] = useState<Duvida[]>([]);
   // Fio de complementos por dúvida (17/09/2026) — ver lib/juridico/duvidas.ts.
@@ -67,7 +77,7 @@ export default function OrientacoesJuridicas() {
   const load = useCallback(async () => {
     setLoading(true);
     const [{ data }, c] = await Promise.all([
-      db.from("JUR_DUVIDAS").select("id, created_at, autor_id, titulo, pergunta, categoria, status, resposta, respondido_em, motivo_reprovacao, avaliacao, avaliacao_comentario, avaliado_em").order("created_at", { ascending: false }).limit(1000),
+      db.from("JUR_DUVIDAS").select("id, created_at, autor_id, titulo, pergunta, categoria, status, resposta, respondido_em, motivo_reprovacao, avaliacao, avaliacao_comentario, avaliado_em, origem, respondido_etapa, publicada").order("created_at", { ascending: false }).limit(1000),
       db.from("JUR_DUVIDAS_COMPLEMENTOS").select("*").order("id", { ascending: false }).limit(1000),
     ]);
     setFios(agruparComplementos(c.data ?? []));
@@ -90,11 +100,17 @@ export default function OrientacoesJuridicas() {
     if (!ask.titulo.trim() || !ask.pergunta.trim()) { toast("Preencha o assunto e a pergunta.", "err"); return; }
     const { error } = await db.from("JUR_DUVIDAS").insert({
       titulo: ask.titulo.trim(), pergunta: ask.pergunta.trim(), categoria: ask.categoria || null,
-      autor_id: user?.id ?? null, autor_nome: autor, status: "Aberta",
+      autor_id: user?.id ?? null, autor_nome: autor,
+      status: doEncarregado ? "Pendente Operacional" : "Aberta",
+      origem: doEncarregado ? "encarregados" : "central",
+      // Reservada: fora da biblioteca, só quem perguntou e os responsáveis veem.
+      publicada: !ask.reservada,
     });
     if (error) { toast("Erro ao enviar: " + error.message, "err"); return; }
     setAskModal(false); setAsk({ ...ASK_RESET }); setAba("minhas");
-    toast("Pergunta enviada. Passará por aprovação antes de ir ao Jurídico.", "ok"); load();
+    toast(doEncarregado
+      ? "Pergunta enviada ao Operacional. Ele responde ou encaminha ao Jurídico."
+      : "Pergunta enviada. Passará por aprovação antes de ir ao Jurídico.", "ok"); load();
   };
 
   const biblioteca = useMemo(() => duvidas.filter(entraNaBiblioteca), [duvidas]);
@@ -227,6 +243,7 @@ export default function OrientacoesJuridicas() {
                         {aba === "minhas" && av?.valor === "nao_resolveu" && <span className="oj-badge" style={{ background: av.bg, color: av.cor }}>{av.emoji} {av.rotulo}</span>}
                         {pend && <span className="oj-badge" style={{ background: "#ede9fe", color: "#7c3aed" }}>⏳ Complemento com o Jurídico</span>}
                         {precisaAvaliar && <span className="oj-badge" style={{ background: "#fef3c7", color: "#b45309" }}>⭐ Avalie a resposta</span>}
+                        {aba === "minhas" && d.publicada === false && <span className="oj-badge" style={{ background: "#f1f5f9", color: "#475569" }}>🔒 Reservada</span>}
                       </div>
                       <span style={{ fontSize: 12, color: "#64748b", whiteSpace: "nowrap" }}>{aba === "minhas" ? fmtDt(d.created_at) : (d.respondido_em ? fmtDt(d.respondido_em) : "")}</span>
                     </div>
@@ -239,7 +256,7 @@ export default function OrientacoesJuridicas() {
                         ? <div style={{ fontSize: 12.5, color: "#b91c1c", background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 10, padding: "7px 10px" }}>Reprovada{d.motivo_reprovacao ? `: ${d.motivo_reprovacao}` : ""}</div>
                         : (
                           <div style={{ display: "flex", alignItems: "center", gap: 0, margin: "2px 0 4px" }}>
-                            {PASSOS.map((p, i) => (
+                            {(d.origem === "encarregados" ? PASSOS_ENCARREGADO : PASSOS_CENTRAL).map((p, i, PASSOS) => (
                               <div key={p} style={{ display: "flex", alignItems: "center", flex: i < PASSOS.length - 1 ? 1 : "0 0 auto" }}>
                                 <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                                   <span style={{ width: 20, height: 20, borderRadius: "50%", display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 800, background: i < passo ? "#16a34a" : i === passo ? "#0f3171" : "#e2e8f0", color: i <= passo ? "#fff" : "#94a3b8" }}>{i < passo ? "✓" : i + 1}</span>
@@ -256,7 +273,7 @@ export default function OrientacoesJuridicas() {
 
                     {open && respondida && d.resposta && (
                       <div style={{ background: "#f0fdf4", border: "1px solid #86efac", borderRadius: 14, padding: "13px 15px" }}>
-                        <div style={{ fontSize: 12, fontWeight: 800, color: "#15803d", textTransform: "uppercase", letterSpacing: ".4px", marginBottom: 5 }}>✅ Resposta do Jurídico{d.respondido_em ? <span style={{ fontWeight: 600, textTransform: "none", letterSpacing: 0, color: "#4d7c0f" }}> · {fmtDt(d.respondido_em)}</span> : null}</div>
+                        <div style={{ fontSize: 12, fontWeight: 800, color: "#15803d", textTransform: "uppercase", letterSpacing: ".4px", marginBottom: 5 }}>✅ Resposta {respondidaPeloOperacional(d) ? "do Operacional" : "do Jurídico"}{d.respondido_em ? <span style={{ fontWeight: 600, textTransform: "none", letterSpacing: 0, color: "#4d7c0f" }}> · {fmtDt(d.respondido_em)}</span> : null}</div>
                         <div style={{ fontSize: 14.5, color: "#0f172a", whiteSpace: "pre-wrap", lineHeight: 1.55 }}>{d.resposta}</div>
                       </div>
                     )}
@@ -273,7 +290,7 @@ export default function OrientacoesJuridicas() {
                           {open ? "Fechar" : precisaAvaliar ? "⭐ Ver e avaliar" : "Ver resposta →"}
                         </button>
                       ) : (
-                        <span style={{ fontSize: 12.5, fontWeight: 700, color: "#64748b" }}>{d.status === "Aberta" ? "Aguardando aprovação" : d.status === "Aprovada" ? "Com o Jurídico" : ""}</span>
+                        <span style={{ fontSize: 12.5, fontWeight: 700, color: "#64748b" }}>{d.status === "Aberta" ? "Aguardando aprovação" : d.status === "Pendente Operacional" ? "Com o Operacional" : d.status === "Aprovada" ? "Com o Jurídico" : ""}</span>
                       )}
                     </div>
                   </div>
@@ -287,11 +304,18 @@ export default function OrientacoesJuridicas() {
         <div className="oj-ov" onClick={e => { if (e.target === e.currentTarget) setAskModal(false); }}>
           <div className="oj-modal" onClick={e => e.stopPropagation()}>
             <button onClick={() => setAskModal(false)} style={{ position: "absolute", top: 14, right: 16, border: "none", background: "none", fontSize: 20, color: "#64748b", cursor: "pointer" }}>✕</button>
-            <div style={{ fontSize: 20, fontWeight: 800, marginBottom: 4 }}>Nova pergunta ao Jurídico</div>
-            <div style={{ fontSize: 13.5, color: "#64748b", marginBottom: 16 }}>Passa por aprovação e depois o Jurídico responde. A resposta fica pública na biblioteca (sem seu nome). Depois de respondida, avalie — é o que libera a próxima pergunta.</div>
+            <div style={{ fontSize: 20, fontWeight: 800, marginBottom: 4 }}>{doEncarregado ? "Nova orientação jurídica" : "Nova pergunta ao Jurídico"}</div>
+            <div style={{ fontSize: 13.5, color: "#64748b", marginBottom: 16 }}>{doEncarregado
+              ? "Vai primeiro para o Operacional (supervisor do contrato), que responde ou encaminha ao Jurídico. Depois de respondida, avalie — é o que libera a próxima pergunta."
+              : "Passa por aprovação e depois o Jurídico responde. A resposta fica pública na biblioteca (sem seu nome). Depois de respondida, avalie — é o que libera a próxima pergunta."}</div>
             <div className="oj-fg"><label>Título do parecer *</label><input className="oj-fi" value={ask.titulo} onChange={e => setAsk(v => ({ ...v, titulo: e.target.value }))} placeholder="Ex.: Dúvida sobre…" /></div>
             <div className="oj-fg"><label>Categoria</label><select className="oj-fi" value={ask.categoria} onChange={e => setAsk(v => ({ ...v, categoria: e.target.value }))}><option value="">— Selecione —</option>{CATEGORIAS.map(c => <option key={c}>{c}</option>)}</select></div>
             <div className="oj-fg"><label>Sua pergunta *</label><textarea className="oj-fi" rows={5} value={ask.pergunta} onChange={e => setAsk(v => ({ ...v, pergunta: e.target.value }))} placeholder="Descreva sua dúvida sobre processo, lei, contrato…" /></div>
+            {/* Reservada (mig 244): não entra na biblioteca; só quem perguntou e os responsáveis veem. */}
+            <label style={{ display: "flex", alignItems: "flex-start", gap: 10, fontSize: 13.5, color: "#334155", background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 12, padding: "10px 12px", marginBottom: 16, cursor: "pointer" }}>
+              <input type="checkbox" checked={ask.reservada} onChange={e => setAsk(v => ({ ...v, reservada: e.target.checked }))} style={{ marginTop: 3 }} />
+              <span><b>🔒 Pergunta reservada</b> — não aparece na biblioteca. Só você e os responsáveis pela orientação veem a pergunta e a resposta.</span>
+            </label>
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 6 }}>
               <button className="oj-btn" onClick={() => setAskModal(false)} style={{ background: "#fff", border: "1px solid #e2e8f0", color: "#475569" }}>Cancelar</button>
               <button className="oj-btn" onClick={enviar} style={{ background: "#0f3171", color: "#fff" }}>Enviar pergunta</button>

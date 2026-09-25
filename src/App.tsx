@@ -188,6 +188,7 @@ import TrnNotificacoes from "./pages/treinamentos/plataforma/Notificacoes";
 import TrnCalendario from "./pages/treinamentos/plataforma/Calendario";
 import SolicitarTrocaFuncao from "./pages/encarregados/SolicitarTrocaFuncao";
 import OperacionalTrocaFuncao from "./pages/operacional/TrocaFuncao";
+import OperacionalOrientacoesJuridicas from "./pages/operacional/OrientacoesJuridicas";
 // Licitações › Analistas Validações — a primeira porta dos três fluxos.
 import AnalistasRecrutamento from "./pages/licitacoes/analistas/Recrutamento";
 import AnalistasTrocaFuncao from "./pages/licitacoes/analistas/TrocaFuncao";
@@ -798,6 +799,8 @@ const App = () => (
                 aprovação, SST, RH */}
             <Route path="encarregados/troca-funcao" element={<SolicitarTrocaFuncao />} />
             <Route path="operacional/troca-funcao" element={<OperacionalTrocaFuncao />} />
+            {/* Orientações Jurídicas dos encarregados passam primeiro por aqui (mig 244, 25/09/2026). */}
+            <Route path="operacional/orientacoes-juridicas" element={<OperacionalOrientacoesJuridicas />} />
             {/* Saiu do menu do RH em 02/09/2026 (o RH ficou com uma tela só, a
                 de concluir na Senior). A ROTA fica de pé: é ela que carrega a
                 permissão de quem já aprovava o administrativo. */}

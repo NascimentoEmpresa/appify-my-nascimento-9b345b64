@@ -1041,6 +1041,9 @@ const operacionalModule: ModuleDef = {
         { label: "Solicitações de Demissão", to: "/app/operacional/solicitacoes-demissao", icon: UserMinus },
         { label: "Conferência de Ponto", to: "/app/operacional/conferencia-ponto", icon: ClipboardCheck },
         { label: "Mudança de Função", to: "/app/operacional/troca-funcao", icon: ArrowLeftRight, notif: "troca_funcao" },
+        // Orientações Jurídicas (25/09/2026, mig 244): a pergunta do encarregado
+        // chega aqui antes do Jurídico — responde ou encaminha.
+        { label: "Orientações Jurídicas", to: "/app/operacional/orientacoes-juridicas", icon: Scale },
         // Advertências passaram pelo Operacional só em 15/09/2026 (mig 117);
         // em 16/09 voltaram a ser só do Jurídico, com aprovador pelo Acesso
         // por Usuário (mig 124).

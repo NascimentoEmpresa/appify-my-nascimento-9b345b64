@@ -7,7 +7,7 @@ import { useScreenAccess } from "@/hooks/useScreenAccess";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { FioDuvida } from "@/components/juridico/FioDuvida";
 import { DashboardDuvidas } from "@/components/juridico/DashboardDuvidas";
-import { CATEGORIAS_DUVIDA as CATEGORIAS, agruparComplementos, complementoPendente, infoAvaliacao, type Complemento, type Duvida } from "@/lib/juridico/duvidas";
+import { CATEGORIAS_DUVIDA as CATEGORIAS, agruparComplementos, complementoPendente, estaOculta, infoAvaliacao, respondidaPeloOperacional, type Complemento, type Duvida } from "@/lib/juridico/duvidas";
 
 // =====================================================================
 // JURÍDICO — Parecer Jurídico (gestão das dúvidas)
@@ -38,6 +38,8 @@ const fmtDt = (s?: string) => { if (!s) return "—"; const d = new Date(s); ret
 const fmtDtHora = (s?: string) => { if (!s) return "—"; const d = new Date(s); return isNaN(+d) ? s : d.toLocaleDateString("pt-BR") + " às " + d.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }); };
 const statusInfo = (s: string): { bg: string; c: string; label: string } => ({
   "Aberta": { bg: "#fff7ed", c: "#ea580c", label: "Aguardando aprovação" },
+  // Mig 244: pergunta de encarregado ainda com o Operacional (ele responde ou encaminha).
+  "Pendente Operacional": { bg: "#f1f5f9", c: "#475569", label: "Com o Operacional" },
   "Aprovada": { bg: "#ede9fe", c: "#7c3aed", label: "Aguardando resposta" },
   "Respondida": { bg: "#dcfce7", c: "#15803d", label: "Respondida" },
   "Reprovada": { bg: "#fee2e2", c: "#b91c1c", label: "Reprovada" },
@@ -129,6 +131,14 @@ export default function CentralDuvidas() {
     const { error } = await db.from("JUR_DUVIDAS").update({ resposta: resp.trim(), status: "Respondida", respondido_por: autor, respondido_em: new Date().toISOString(), updated_at: new Date().toISOString() }).eq("id", respAlvo.id);
     if (error) { toast("Erro ao responder: " + error.message, "err"); return; }
     setRespAlvo(null); setResp(""); toast("Resposta publicada na biblioteca.", "ok"); load();
+  };
+  // Ocultar / mostrar na biblioteca (mig 244): oculta, só os responsáveis veem.
+  const alternarOculta = async (d: Duvida) => {
+    const ocultar = !estaOculta(d);
+    if (ocultar && !confirm(`Ocultar "${d.titulo}"? Sai da biblioteca e só quem perguntou e os responsáveis passam a ver.`)) return;
+    const { error } = await db.rpc("jur_duvida_ocultar", { p_id: d.id, p_ocultar: ocultar });
+    if (error) { toast("Erro: " + error.message, "err"); return; }
+    toast(ocultar ? "Pergunta ocultada — só os responsáveis veem." : "Pergunta visível de novo na biblioteca.", "ok"); load();
   };
   const excluir = async (d: Duvida) => {
     if (!confirm(`Excluir a dúvida "${d.titulo}"?`)) return;
@@ -303,6 +313,8 @@ export default function CentralDuvidas() {
                           <span className="oj-badge" style={{ background: cc.bg, color: cc.c }}>{d.categoria || "Outros"}</span>
                           {av && <span className="oj-badge" style={{ background: av.bg, color: av.cor }}>{av.emoji} {av.rotulo}</span>}
                           {pend && <span className="oj-badge" style={{ background: "#ede9fe", color: "#7c3aed" }}>💬 Pede complemento</span>}
+                          {estaOculta(d) && <span className="oj-badge" title={d.ocultada_por ? `Ocultada por ${d.ocultada_por}` : undefined} style={{ background: "#f1f5f9", color: "#475569" }}>🔒 Oculta</span>}
+                          {d.origem === "encarregados" && <span className="oj-badge" style={{ background: "#fef3c7", color: "#92400e" }}>👷 Encarregado</span>}
                         </div>
                         <span style={{ fontSize: 12, color: "#64748b", whiteSpace: "nowrap" }}>{fmtDt(d.created_at)}</span>
                       </div>
@@ -315,7 +327,7 @@ export default function CentralDuvidas() {
                       {open && d.status === "Respondida" && d.resposta && (
                         <div style={{ background: "#f0fdf4", border: "1px solid #86efac", borderRadius: 14, padding: "13px 15px" }}>
                           <div style={{ fontSize: 12, fontWeight: 800, color: "#15803d", textTransform: "uppercase", letterSpacing: ".4px", marginBottom: 5 }}>
-                            ✅ Resposta do Jurídico<span style={{ fontWeight: 600, textTransform: "none", letterSpacing: 0, color: "#4d7c0f" }}> · {d.respondido_por || "Jurídico"}{d.respondido_em ? " · " + fmtDt(d.respondido_em) : ""}</span>
+                            ✅ Resposta {respondidaPeloOperacional(d) ? "do Operacional" : "do Jurídico"}<span style={{ fontWeight: 600, textTransform: "none", letterSpacing: 0, color: "#4d7c0f" }}> · {d.respondido_por || "Jurídico"}{d.respondido_em ? " · " + fmtDt(d.respondido_em) : ""}</span>
                           </div>
                           <div style={{ fontSize: 14.5, color: "#0f172a", whiteSpace: "pre-wrap", lineHeight: 1.55 }}>{d.resposta}</div>
                         </div>
@@ -337,6 +349,11 @@ export default function CentralDuvidas() {
                           </>}
                           {d.status === "Aprovada" && podeResponder && <button className="oj-btn" onClick={() => abrirResponder(d)} style={{ background: "#7c3aed", color: "#fff", padding: "8px 14px" }}>✓ Responder</button>}
                           {open && d.status === "Respondida" && podeResponder && <button className="oj-btn" onClick={() => abrirResponder(d)} style={{ background: "#f1f5f9", color: "#475569", padding: "8px 14px" }}>Editar resposta</button>}
+                          {open && (podeResponder || podeGerenciar || podeAprovar) && !(respondidaPeloOperacional(d) && estaOculta(d)) && (
+                            <button className="oj-btn" onClick={() => alternarOculta(d)} style={{ background: "#f1f5f9", color: "#334155", padding: "8px 14px" }}>
+                              {estaOculta(d) ? "👁 Mostrar na biblioteca" : "🔒 Ocultar"}
+                            </button>
+                          )}
                           {open && (podeResponder || podeGerenciar) && <button className="oj-btn" onClick={() => excluir(d)} style={{ background: "none", color: "#dc2626", padding: "8px 10px" }}>Excluir</button>}
                         </div>
                         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>

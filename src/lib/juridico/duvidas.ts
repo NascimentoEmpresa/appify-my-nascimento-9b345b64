@@ -13,7 +13,23 @@ export interface Duvida {
   aprovado_por?: string; aprovado_em?: string; motivo_reprovacao?: string;
   /** Avaliação de quem perguntou (só depois de respondida; RPC jur_duvida_avaliar). */
   avaliacao?: Avaliacao | null; avaliacao_comentario?: string | null; avaliado_em?: string | null;
+  /**
+   * Mig 244 (25/09/2026): de onde veio (a do encarregado passa pelo
+   * Operacional), quem respondeu, a decisão do Operacional e se está
+   * OCULTA (publicada = false: fora da biblioteca, só os responsáveis veem).
+   */
+  origem?: "encarregados" | "central" | null;
+  respondido_etapa?: "juridico" | "operacional" | null;
+  operacional_por?: string | null; operacional_em?: string | null;
+  operacional_acao?: "respondeu" | "encaminhou" | null; operacional_obs?: string | null;
+  publicada?: boolean | null; ocultada_por?: string | null; ocultada_em?: string | null;
 }
+
+/** Status novo (mig 244): a pergunta do encarregado esperando o Operacional. */
+export const STATUS_PENDENTE_OPERACIONAL = "Pendente Operacional";
+export const estaOculta = (d: Pick<Duvida, "publicada">): boolean => d.publicada === false;
+/** Resposta dada pelo Operacional (não é parecer do Jurídico). */
+export const respondidaPeloOperacional = (d: Pick<Duvida, "respondido_etapa">): boolean => d.respondido_etapa === "operacional";
 
 /** Um item do fio que continua depois da resposta principal. */
 export interface Complemento {
@@ -59,8 +75,9 @@ export const COMPLEMENTO_MIN = 5;
 // ── Biblioteca, avaliação obrigatória e dashboard (17/09/2026, mig 176) ──
 
 /** O que entra na biblioteca pública: respondida e NÃO avaliada como "Não resolveu". */
-export const entraNaBiblioteca = (d: Pick<Duvida, "status" | "avaliacao">): boolean =>
-  d.status === "Respondida" && d.avaliacao !== "nao_resolveu";
+export const entraNaBiblioteca = (d: Pick<Duvida, "status" | "avaliacao" | "publicada">): boolean =>
+  // Oculta (mig 244) não entra — e a resposta do Operacional já nasce oculta.
+  d.status === "Respondida" && d.avaliacao !== "nao_resolveu" && d.publicada !== false;
 
 /** As respondidas do autor que ele ainda não avaliou — travam a pergunta nova. */
 export const pendentesDeAvaliacao = <T extends Pick<Duvida, "autor_id" | "status" | "avaliacao">>(duvidas: T[], userId?: string | null): T[] =>
