@@ -30562,7 +30562,7 @@ NOTIFY pgrst, 'reload schema';
 -- NOTIFY pgrst, 'reload schema';
 -- (Enxovais gravados ficam — são os mesmos que o Suprimentos já usava.)
 
--- ===== 20260930000245_recrutamento_acompanhar_colaboradores (JA APLICADA 25/09) =====
+-- ===== 20260930000248_recrutamento_acompanhamento_por_cpf (JA APLICADA 25/09) — substitui a 245, que nunca foi aplicada =====
 -- =========================================================================
 -- Recrutamento e Seleção › ACOMPANHAR COLABORADORES e ACOMPANHAR EXPERIÊNCIA
 --
