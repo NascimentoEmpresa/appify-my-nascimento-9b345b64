@@ -64,6 +64,10 @@ export default function EpisAdmissoes() {
   const [selecao, setSelecao] = useState({ contrato_id: "", posto_id: "", funcao_id: "" });
   const [enxoval, setEnxoval] = useState<EnxovalDetalhe | null>(null);
   const [carregandoEnxoval, setCarregandoEnxoval] = useState(false);
+  // Enxoval de cada candidato da fila (25/09/2026, mig 246): desde então o
+  // RECRUTAMENTO informa os tamanhos ao mandar pra SST + COMPRAS, e a lista
+  // chega pronta no card — sem precisar abrir "Enxoval e tamanhos".
+  const [enxovais, setEnxovais] = useState<Map<number, EnxovalDetalhe & { candidato_id: number }>>(new Map());
   const [salvandoEnxoval, setSalvandoEnxoval] = useState(false);
 
   const { data: contratosCatalogo = [] } = useContratosCatalogo();
@@ -98,6 +102,13 @@ export default function EpisAdmissoes() {
     setLoading(false);
     if (error) { toast("Erro ao carregar: " + error.message, "err"); return; }
     setRows(data ?? []);
+    const ids = (data ?? []).map((r: any) => r.candidato_id).filter(Boolean);
+    if (ids.length) {
+      const { data: enx } = await sb.from("sup_admissao_enxoval")
+        .select("id,candidato_id,token,expira_em,preenchido_em,pedido_id,contrato_id,posto_id,funcao_id,sup_admissao_enxoval_item(id,nome_item,tamanho,tamanho_informado,quantidade,ordem)")
+        .in("candidato_id", ids);
+      setEnxovais(new Map((enx ?? []).map((e: any) => [Number(e.candidato_id), e])));
+    } else setEnxovais(new Map());
   }, [verTodos]);
   useEffect(() => { load(); }, [load]);
 
@@ -250,12 +261,35 @@ export default function EpisAdmissoes() {
                   {/* O que o Recrutamento pediu — informação central desta tela.
                       Sem ela o Compras não sabe o que providenciar, e é por isso
                       que o campo é obrigatório do lado de lá. */}
-                  <div style={{ marginTop: 10, fontSize: 12.5, color: "#7c2d12", background: "#fff7ed", border: "1px solid #fed7aa", borderRadius: 8, padding: "8px 11px" }}>
-                    <b>🧾 Materiais / EPIs solicitados:</b>
-                    <div style={{ marginTop: 3, whiteSpace: "pre-wrap" }}>
-                      {c.compras_necessidades?.trim() || <span style={{ color: "#c2410c" }}>Não informado pelo Recrutamento.</span>}
-                    </div>
-                  </div>
+                  {(() => {
+                    const ex = enxovais.get(Number(c.candidato_id));
+                    if (ex?.preenchido_em && ex.sup_admissao_enxoval_item?.length) {
+                      return (
+                        <div style={{ marginTop: 10, fontSize: 12.5, color: "#7c2d12", background: "#fff7ed", border: "1px solid #fed7aa", borderRadius: 8, padding: "8px 11px" }}>
+                          <b>🦺 Enxoval da função — tamanhos informados</b>
+                          <div style={{ marginTop: 6, display: "grid", gap: 3 }}>
+                            {[...ex.sup_admissao_enxoval_item].sort((a, b) => a.ordem - b.ordem).map(it => (
+                              <div key={it.id} style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
+                                <span>{it.nome_item}{it.quantidade > 1 ? ` × ${it.quantidade}` : ""}</span>
+                                <b style={{ color: it.tamanho || it.tamanho_informado ? "#0f172a" : "#94a3b8" }}>{it.tamanho || it.tamanho_informado || "sem tamanho"}</b>
+                              </div>
+                            ))}
+                          </div>
+                          {ex.pedido_id
+                            ? <div style={{ marginTop: 6, color: "#15803d", fontWeight: 700 }}>✓ Pedido de materiais gerado.</div>
+                            : <div style={{ marginTop: 6, color: "#9a3412" }}>Pronto para gerar o pedido em "Enxoval e tamanhos".</div>}
+                        </div>
+                      );
+                    }
+                    return (
+                      <div style={{ marginTop: 10, fontSize: 12.5, color: "#7c2d12", background: "#fff7ed", border: "1px solid #fed7aa", borderRadius: 8, padding: "8px 11px" }}>
+                        <b>🧾 Materiais / EPIs solicitados:</b>
+                        <div style={{ marginTop: 3, whiteSpace: "pre-wrap" }}>
+                          {c.compras_necessidades?.trim() || <span style={{ color: "#c2410c" }}>Não informado pelo Recrutamento.</span>}
+                        </div>
+                      </div>
+                    );
+                  })()}
 
                   {c.compras_em && (
                     <div style={{ marginTop: 8, fontSize: 12, color: "#15803d", background: "#ecfdf5", border: "1px solid #a7f3d0", borderRadius: 8, padding: "7px 10px" }}>
@@ -363,7 +397,7 @@ export default function EpisAdmissoes() {
               {enxoval?.preenchido_em && (
                 <div style={{ marginTop: 12 }}>
                   <div style={{ fontSize: 12, fontWeight: 800, color: "#15803d", marginBottom: 7 }}>
-                    ✓ Tamanhos informados pelo candidato
+                    ✓ Tamanhos informados (pelo Recrutamento ou pelo candidato)
                   </div>
                   <div style={{ border: "1px solid #e2e8f0", borderRadius: 8, overflow: "hidden" }}>
                     {[...(enxoval.sup_admissao_enxoval_item ?? [])]
