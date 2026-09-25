@@ -486,3 +486,26 @@ export function useMeusPedidos() {
     },
   });
 }
+
+/**
+ * Classificações operacionais de um pedido. O status persistido registra a
+ * última decisão humana, mas as filas acionáveis podem se sobrepor.
+ */
+export function derivarStatusVisiveis(
+  status: string,
+  comprovacaoStatus: StatusComprovacao,
+  situacao?: SituacaoPedido | null,
+): StatusVisivel[] {
+  const parcial = situacao != null && situacao.itens > 0
+    && situacao.itens_atendidos > 0 && situacao.itens_atendidos < situacao.itens;
+  const aguardandoCompra = status === "AGUARDANDO COMPRA"
+    || (situacao?.itens_pendentes_compra ?? 0) > 0;
+
+  // A dupla só existe quando a falta foi confirmada na separação. Um pedido
+  // apenas retirado, com itens ainda em separação, permanece nessa fila.
+  if (parcial && aguardandoCompra) {
+    return ["AGUARDANDO COMPRA", "PARCIALMENTE DESPACHADO"];
+  }
+
+  return [derivarStatusVisivel(status, comprovacaoStatus, situacao)];
+}

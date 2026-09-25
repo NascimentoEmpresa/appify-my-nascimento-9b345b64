@@ -16,7 +16,7 @@ import { useDebounce } from "@/hooks/useDebounce";
 import {
   ESTILO_STATUS, fmtDataBR,
   ESTILO_STATUS_ITEM, STATUS_ITEM, derivarStatusItem,
-  ESTILO_STATUS_VISIVEL, STATUS_VISIVEL, apresentarStatusVisivel, type SituacaoPedido,
+  ESTILO_STATUS_VISIVEL, STATUS_VISIVEL, apresentarStatusVisivel, derivarStatusVisiveis, type SituacaoPedido,
   type StatusComprovacao, type StatusVisivel,
 } from "@/hooks/useSupPedidos";
 import { ModalBaixaPedido } from "@/components/suprimentos/ModalBaixaPedido";
@@ -143,13 +143,21 @@ function comprovacaoPedido(pedido: Pedido) {
   return Array.isArray(relacao) ? relacao[0] ?? null : relacao;
 }
 
-function statusVisivelPedido(pedido: Pedido, situacao?: SituacaoPedido | null): StatusVisivel {
-  const comprovacao = comprovacaoPedido(pedido);
-  return apresentarStatusVisivel(pedido.status, comprovacao?.status, situacao).status;
+function statusVisiveisPedido(pedido: Pedido, situacao?: SituacaoPedido | null): StatusVisivel[] {
+  return derivarStatusVisiveis(pedido.status, comprovacaoPedido(pedido)?.status, situacao);
 }
 
-function apresentacaoStatusPedido(pedido: Pedido, situacao?: SituacaoPedido | null) {
-  return apresentarStatusVisivel(pedido.status, comprovacaoPedido(pedido)?.status, situacao);
+function apresentacoesStatusPedido(pedido: Pedido, situacao?: SituacaoPedido | null) {
+  const apresentacaoPrincipal = apresentarStatusVisivel(
+    pedido.status,
+    comprovacaoPedido(pedido)?.status,
+    situacao,
+  );
+  return statusVisiveisPedido(pedido, situacao).map((status) => (
+    status === apresentacaoPrincipal.status
+      ? apresentacaoPrincipal
+      : { status, ...ESTILO_STATUS_VISIVEL[status], titulo: undefined }
+  ));
 }
 
 /**
@@ -163,7 +171,7 @@ function apresentacaoStatusPedido(pedido: Pedido, situacao?: SituacaoPedido | nu
  * higienizada, que custou menos), o unitário exportado é o MAIOR. É a regra
  * que o gerente de Suprimentos definiu para não subestimar o valor do estoque.
  */
-function linhaExport(p: Pedido, i: ItemPedido | null, tags: TagEmLote[]) {
+function linhaExport(p: Pedido, i: ItemPedido | null, tags: TagEmLote[], situacao?: SituacaoPedido | null) {
   const valores = tags.map((t) => Number(t.valor_unitario ?? 0)).filter((v) => v > 0);
   const unitario = valores.length ? Math.max(...valores) : null;
   const total = tags.reduce((s, t) => s + Number(t.valor_unitario ?? 0) * (t.quantidade || 0), 0);
@@ -192,7 +200,7 @@ function linhaExport(p: Pedido, i: ItemPedido | null, tags: TagEmLote[]) {
     "Valor unitário": unitario ?? "",
     "Valor total": total > 0 ? total : "",
     "Status do item": i ? derivarStatusItem(p.status, { saiu: tags.length > 0 }) : "",
-    "Status do pedido": apresentacaoStatusPedido(p).rotulo,
+    "Status do pedido": apresentacoesStatusPedido(p, situacao).map((status) => status.rotulo).join(" | "),
     "Tipo de envio": p.envio_tipo === "SUPERVISOR" ? "Entrega via Supervisor" : p.envio_tipo === "CORREIO" ? "Entrega via Correio" : "",
     "Rastreio Correio": p.envio_rastreio ?? "",
     "Comprovação": comprovacaoPedido(p)?.status === "ENVIADO"
@@ -314,8 +322,9 @@ export default function PedidosMateriais() {
     const base: Record<string, number> = { TOTAL: pedidos.length };
     for (const s of STATUS_VISIVEL) base[s] = 0;
     for (const p of pedidos) {
-      const status = statusVisivelPedido(p, situacoes?.get(p.id) ?? null);
-      base[status] = (base[status] ?? 0) + 1;
+      for (const status of statusVisiveisPedido(p, situacoes?.get(p.id) ?? null)) {
+        base[status] = (base[status] ?? 0) + 1;
+      }
     }
     return base;
   }, [pedidos, situacoes]);
@@ -339,7 +348,7 @@ export default function PedidosMateriais() {
       indice.set(
         p.id,
         [
-          p.pedido_id, apresentacaoStatusPedido(p, situacoes?.get(p.id) ?? null).rotulo,
+          p.pedido_id, ...apresentacoesStatusPedido(p, situacoes?.get(p.id) ?? null).map((status) => status.rotulo),
           p.contrato_nome, p.posto_nome, p.funcao_nome,
           p.solicitante_login, p.solicitante_nome, p.nome_colaborador, p.matricula_colaborador,
           p.tipo_pedido, p.observacoes_solicitante, p.observacao, p.envio_rastreio,
@@ -356,8 +365,8 @@ export default function PedidosMateriais() {
   const porBusca = useMemo(() => {
     const t = buscaAtrasada.trim().toLowerCase();
     return pedidos.filter((p) => {
-      const statusVisivel = statusVisivelPedido(p, situacoes?.get(p.id) ?? null);
-      if (filtroStatus !== "TODOS" && statusVisivel !== filtroStatus) return false;
+      const statusVisiveis = statusVisiveisPedido(p, situacoes?.get(p.id) ?? null);
+      if (filtroStatus !== "TODOS" && !statusVisiveis.includes(filtroStatus as StatusVisivel)) return false;
       if (!t) return true;
       return (textoBusca.get(p.id) ?? "").includes(t);
     });
@@ -499,10 +508,11 @@ export default function PedidosMateriais() {
 
       const linhas = filtrados.flatMap((p) => {
         const itens = [...(p.sup_pedido_item ?? [])].sort((a, b) => a.ordem - b.ordem);
+        const situacao = situacoes?.get(p.id) ?? null;
         // Pedido sem item ainda assim vira uma linha: sumir com ele do
         // relatório esconderia um pedido que existe na fila.
-        if (itens.length === 0) return [linhaExport(p, null, [])];
-        return itens.map((i) => linhaExport(p, i, porItem.get(i.id) ?? []));
+        if (itens.length === 0) return [linhaExport(p, null, [], situacao)];
+        return itens.map((i) => linhaExport(p, i, porItem.get(i.id) ?? [], situacao));
       });
 
       const ws = XLSX.utils.json_to_sheet(linhas);
@@ -712,14 +722,14 @@ function CardPedido({
   rastreio: SituacaoObjeto | undefined;
   rastreioCarregando: boolean;
 }) {
-  const apresentacaoStatus = apresentacaoStatusPedido(p, situacao);
-  const statusVisivel = apresentacaoStatus.status;
+  const apresentacoesStatus = apresentacoesStatusPedido(p, situacao);
+  const statusVisivel = apresentacoesStatus[0].status;
   const situacaoCorreio = resumirSituacao(rastreio);
 
   // Em AGUARDANDO COMPRA o card esconde o que já tem etiqueta, virando uma
   // lista viva do que ainda falta comprar. É a melhor ideia de UX do legado
   // (REPLICAR §5.5) — só busca as etiquetas nesse status, para não pesar.
-  const aguardandoCompra = p.status === "AGUARDANDO COMPRA";
+  const aguardandoCompra = apresentacoesStatus.some((status) => status.status === "AGUARDANDO COMPRA");
 
   // "Enviados" / "Pendentes envio": com despacho parcial, o Supply precisa ver
   // no card o que já saiu e o que falta, sem abrir o pedido. Clicar de novo no
@@ -766,13 +776,18 @@ function CardPedido({
     )}>
       <CardHeader className="flex-row items-center justify-between gap-2 space-y-0 pb-3">
         <span className="font-mono text-sm font-semibold">{p.pedido_id}</span>
-        <Badge
-          variant="outline"
-          className={cn("shrink-0", apresentacaoStatus.classe)}
-          title={apresentacaoStatus.titulo}
-        >
-          {apresentacaoStatus.rotulo}
-        </Badge>
+        <div className="flex shrink-0 flex-col items-end gap-1">
+          {apresentacoesStatus.map((apresentacaoStatus) => (
+            <Badge
+              key={apresentacaoStatus.status}
+              variant="outline"
+              className={apresentacaoStatus.classe}
+              title={apresentacaoStatus.titulo}
+            >
+              {apresentacaoStatus.rotulo}
+            </Badge>
+          ))}
+        </div>
       </CardHeader>
 
       <CardContent className="flex-1 space-y-3 text-sm">

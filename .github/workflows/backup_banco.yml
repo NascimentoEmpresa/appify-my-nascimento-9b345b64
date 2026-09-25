@@ -1,0 +1,169 @@
+# Backup independente do banco de producao.
+#
+# POR QUE EXISTE
+# A Supabase ja faz copia diaria (Database > Backups) e vende PITR. As duas
+# ficam na infraestrutura DELES. Este backup existe para a unica pergunta que
+# nenhuma das duas responde: "e se a conta/o fornecedor sumir?". O artefato
+# gerado aqui vive no GitHub, fora da Supabase, e restaura em qualquer Postgres.
+#
+# POR QUE NO ACTIONS E NAO NA MAQUINA DO EDUARDO
+# Mesmo motivo do espelho_mysql.yml: a rede da empresa bloqueia porta na saida,
+# e a maquina dele nao fica ligada de madrugada. O runner nao tem esses dois
+# problemas.
+#
+# MEDIDO EM 24/09/2026 CONTRA PRODUCAO (nao e estimativa)
+#   duracao ............ 1min14s
+#   tamanho ............ 106,4 MB  (de um banco de 1,61 GB)
+#   conexoes usadas .... 1 de 90
+#   bloqueios ativos ... 0 (pg_dump NAO trava escrita; usa snapshot)
+#   cache hit .......... caiu de 99,99% para 99,97% durante a copia
+#   restauracao ........ 40s, e as contagens bateram LINHA A LINHA com producao
+#                        (sup_pedido 2.247, EMPREGADOS 13.355,
+#                         BiMarcacoes 3.748.805, auth.users 155)
+#
+# O QUE ESTE BACKUP NAO COBRE
+# Arquivos do Storage (anexos, fotos de cracha, XML). O banco guarda so os
+# METADADOS deles - o mesmo aviso que a propria Supabase da na tela de backups.
+# Restaurar este dump devolve a lista de arquivos, nao os arquivos.
+#
+# E NAO E FAILOVER
+# Ninguem aplica isto sozinho quando o banco cai. Restaurar e decisao humana,
+# leva dezenas de minutos e faz perder tudo que veio depois do ponto copiado.
+# Na queda de 23/09, restaurar teria sido a PIOR escolha: o banco estava
+# integro, so sufocado, e um restart resolveu em 30 segundos.
+
+name: Backup do banco
+
+on:
+  workflow_dispatch:
+    inputs:
+      retencao_dias:
+        description: 'Por quantos dias guardar este artefato'
+        type: string
+        default: '14'
+  schedule:
+    # 09:00 e 21:00 UTC = 06:00 e 18:00 de Brasilia. Duas vezes ao dia deixa a
+    # perda maxima em 12h, contra as 24h da copia diaria da Supabase. Rodar de
+    # hora em hora seria possivel (sao 74s), mas cada execucao le o banco
+    # inteiro e guarda mais 106 MB - nao compensa sem necessidade real.
+    - cron: '0 9 * * *'
+    - cron: '0 21 * * *'
+
+# Duas copias ao mesmo tempo nao corrompem nada, mas dobram a leitura no banco
+# de producao a toa.
+concurrency:
+  group: backup-banco
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    # Medido em 1min14s. 30 minutos e folga larga para rede ruim; se passar
+    # disso, alguma coisa esta errada e e melhor falhar e avisar.
+    timeout-minutes: 30
+
+    steps:
+      - name: Instalar pg_dump 17
+        # O Ubuntu do runner traz um client mais antigo. pg_dump precisa ser
+        # >= a versao do servidor (a Supabase roda 17.6), senao recusa a copia.
+        run: |
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
+            --fail https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] \
+            https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
+            | sudo tee /etc/apt/sources.list.d/pgdg.list > /dev/null
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-client-17
+          pg_dump --version
+
+      - name: Gerar o backup
+        env:
+          # Mesmo secret do espelho_mysql.yml: o credenciais.json inteiro. Ele
+          # ja carrega host, porta, usuario, banco e senha do Postgres - nao
+          # precisa de secret novo.
+          CREDENCIAIS: ${{ secrets.ESPELHO_CREDENCIAIS }}
+        run: |
+          set -euo pipefail
+
+          PGHOST=$(echo "$CREDENCIAIS"  | jq -r '.supabase.host')
+          PGPORT=$(echo "$CREDENCIAIS"  | jq -r '.supabase.porta')
+          PGUSER=$(echo "$CREDENCIAIS"  | jq -r '.supabase.usuario')
+          PGDATABASE=$(echo "$CREDENCIAIS" | jq -r '.supabase.banco')
+          PGPASSWORD=$(echo "$CREDENCIAIS" | jq -r '.supabase.senha')
+          export PGHOST PGPORT PGUSER PGDATABASE PGPASSWORD
+          export PGSSLMODE=require
+
+          ARQUIVO="backup-$(date -u +%Y%m%d-%H%M%S).dump"
+          echo "ARQUIVO=$ARQUIVO" >> "$GITHUB_ENV"
+
+          # Schemas de negocio. `extensions`, `graphql`, `vault` e afins ficam
+          # de fora: sao recriados pelo proprio Supabase num projeto novo, e
+          # incluir sem os papeis dele so gera ruido na restauracao.
+          #
+          # --no-owner / --no-privileges: o dono das tabelas na origem e o
+          # `postgres` da Supabase. Sem estas flags, restaurar em outro lugar
+          # falha em toda linha de ownership.
+          time pg_dump \
+            --format=custom \
+            --compress=6 \
+            --no-owner \
+            --no-privileges \
+            --schema=public \
+            --schema=espelho \
+            --schema=auth \
+            --schema=storage \
+            -f "$ARQUIVO"
+
+          ls -la "$ARQUIVO"
+
+      - name: Conferir que o arquivo presta
+        # Um dump truncado sobe sem reclamar e so se descobre no dia do
+        # desastre. Estas duas checagens custam segundos e evitam guardar lixo.
+        run: |
+          set -euo pipefail
+
+          # 1. O arquivo abre e o indice esta completo?
+          pg_restore --list "$ARQUIVO" > conteudo.txt
+          TABELAS=$(grep -c 'TABLE DATA' conteudo.txt || true)
+          echo "tabelas com dados no backup: $TABELAS"
+
+          # Em 24/09 eram 631. Menos de 300 significa copia parcial.
+          if [ "$TABELAS" -lt 300 ]; then
+            echo "::error::Backup com apenas $TABELAS tabelas - esperado mais de 300. Copia provavelmente parcial."
+            exit 1
+          fi
+
+          # 2. Tamanho plausivel? Em 24/09 foram 106 MB.
+          BYTES=$(stat -c%s "$ARQUIVO")
+          echo "tamanho: $((BYTES / 1048576)) MB"
+          if [ "$BYTES" -lt 10485760 ]; then
+            echo "::error::Backup com menos de 10 MB - quase certamente truncado."
+            exit 1
+          fi
+
+      - name: Guardar o artefato
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.ARQUIVO }}
+          path: ${{ env.ARQUIVO }}
+          retention-days: ${{ github.event.inputs.retencao_dias || '14' }}
+          compression-level: 0   # o dump ja vem comprimido; recomprimir so gasta tempo
+          if-no-files-found: error
+
+      - name: Avisar no Discord se falhou
+        if: failure()
+        env:
+          WEBHOOK: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: |
+          if [ -z "${WEBHOOK:-}" ]; then
+            echo "DISCORD_WEBHOOK_URL nao configurado - sem aviso."
+            exit 0
+          fi
+          RUN="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          curl -sS -X POST "$WEBHOOK" \
+            -H "Content-Type: application/json" \
+            -d "{\"content\": \":x: **Backup do banco FALHOU**\\nO ultimo backup bom pode estar com ate 12h de atraso.\\n$RUN\"}"
