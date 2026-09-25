@@ -210,12 +210,52 @@ const advertencia: Fluxo = {
   ],
 };
 
+// Orientações Jurídicas (25/09/2026, migs 244/247): a pergunta do
+// encarregado passa primeiro pelo Operacional (supervisor do contrato).
+const orientacoes: Fluxo = {
+  codigo: "orientacoes",
+  nome: "Orientações Jurídicas",
+  paraQue: "Tirar dúvidas jurídicas — a do encarregado passa primeiro pelo Operacional, que orienta ou encaminha ao Jurídico.",
+  passos: [
+    {
+      quem: "Encarregado / colaborador", faz: "Faz a pergunta. Pode marcá-la como reservada (fora da biblioteca).",
+      onde: "Encarregados › Orientações Jurídicas ou Central de Serviços › Orientações Jurídicas",
+    },
+    {
+      quem: "Operacional", faz: "Pergunta de encarregado: responde direto, encaminha ao Jurídico quando não sabe orientar, ou reprova com motivo.",
+      onde: "Operacional › Orientações Jurídicas",
+      status: "Pendente Operacional",
+    },
+    {
+      quem: "Aprovador (Acesso por Usuário)", faz: "Pergunta de quem não é encarregado: aprova ou reprova antes de ir ao Jurídico.",
+      onde: "Jurídico › Parecer Jurídico",
+      status: "Aberta",
+    },
+    {
+      quem: "Jurídico", faz: "Responde. A resposta entra na biblioteca (se a pergunta não estiver oculta).",
+      onde: "Jurídico › Parecer Jurídico",
+      status: "Aprovada",
+    },
+    {
+      quem: "Quem perguntou", faz: "Avalia a resposta e pode perguntar mais no mesmo fio.",
+      onde: "Minhas perguntas",
+      status: "Respondida",
+    },
+  ],
+  observacoes: [
+    "É 'de encarregado' quem tem a tela Orientações Jurídicas do módulo Encarregados, por qualquer porta que pergunte.",
+    "Resposta do Operacional não vai para a biblioteca do Jurídico — não é parecer.",
+    "Ocultar: a pergunta sai da biblioteca e só quem perguntou e os responsáveis (Operacional, Jurídico) veem.",
+  ],
+};
+
 const FLUXOS: Record<string, Fluxo> = {
   [demissao.codigo]: demissao,
   [trocaFuncao.codigo]: trocaFuncao,
   [vaga.codigo]: vaga,
   [ferias.codigo]: ferias,
   [advertencia.codigo]: advertencia,
+  [orientacoes.codigo]: orientacoes,
 };
 
 export const CODIGOS_DE_FLUXO = Object.keys(FLUXOS);
