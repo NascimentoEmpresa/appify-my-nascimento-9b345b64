@@ -160,6 +160,14 @@ function OpcaoFiltroN2({ label, selecionado, onClick }: { label: string; selecio
   );
 }
 
+// SIS-2026-0537-ajuste: mesmo padrão de OpcaoResponsavel em
+// PagamentoMalote.tsx — cada opção do Select resolve o próprio nome via
+// useNomeUsuario, já que não dá pra montar um Map id→nome síncrono aqui.
+function OpcaoSolicitante({ id }: { id: string }) {
+  const { data: nome } = useNomeUsuario(id);
+  return <SelectItem value={id}>{nome ?? id}</SelectItem>;
+}
+
 function GrupoTiles({ titulo, tiles, ativo, onClick }: { titulo: string; tiles: TileInfo[]; ativo: StatusDespesa | ""; onClick: (s: StatusDespesa | "") => void }) {
   return (
     <Card>
@@ -308,6 +316,13 @@ export default function Aprovacoes({ base = "/app/malote" }: { base?: string } =
   const [classificacao, setClassificacao] = useEstadoPersistido(F, "classificacao", "");
   const [empresaId, setEmpresaId] = useEstadoPersistido(F, "empresaId", "");
   const [contratoId, setContratoId] = useEstadoPersistido(F, "contratoId", "");
+  // SIS-2026-0537-ajuste (achado do usuário): "visualizar lançamentos de um
+  // solicitante" — Aprovações mostrava a coluna Solicitante mas não tinha
+  // filtro nenhum por ela (só Pagamento Malote tinha). Mesmo padrão de lá:
+  // não dá pra resolver nome/created_by num Map síncrono (nome vem de um
+  // hook por linha), então a lista de opções guarda só os IDs distintos e
+  // cada <SelectItem> resolve o próprio nome via useNomeUsuario.
+  const [solicitanteId, setSolicitanteId] = useEstadoPersistido(F, "solicitanteId", "");
   const [excecao, setExcecao] = useEstadoPersistido<"" | "sim" | "nao">(F, "excecao", "");
   const [busca, setBusca] = useEstadoPersistido(F, "busca", "");
   const [pagina, setPagina] = useEstadoPersistido(F, "pagina", 1);
@@ -325,6 +340,10 @@ export default function Aprovacoes({ base = "/app/malote" }: { base?: string } =
     return Array.from(nomes).sort();
   }, [itens]);
 
+  const solicitantesDisponiveis = useMemo(() => {
+    return Array.from(new Set(itens.map((item) => item.despesa.created_by)));
+  }, [itens]);
+
   function limparFiltros() {
     setDataAtualizacaoDe("");
     setDataAtualizacaoAte("");
@@ -340,6 +359,7 @@ export default function Aprovacoes({ base = "/app/malote" }: { base?: string } =
     setClassificacao("");
     setEmpresaId("");
     setContratoId("");
+    setSolicitanteId("");
     setExcecao("");
     setBusca("");
     setPagina(1);
@@ -417,6 +437,7 @@ export default function Aprovacoes({ base = "/app/malote" }: { base?: string } =
       if (classificacao && d.classificacao?.nome !== classificacao) return false;
       if (empresaId && empresaIdResolvida(d) !== empresaId) return false;
       if (contratoId && d.contrato_id !== contratoId) return false;
+      if (solicitanteId && d.created_by !== solicitanteId) return false;
       if (excecao === "sim" && !d.excecao) return false;
       if (excecao === "nao" && d.excecao) return false;
       // SIS-2026-0285 (Iury): antes só filtrava por "Última atualização" —
@@ -451,6 +472,7 @@ export default function Aprovacoes({ base = "/app/malote" }: { base?: string } =
     empresaId,
     empresaPrimeiraLinhaPorDespesa,
     contratoId,
+    solicitanteId,
     excecao,
     dataAtualizacaoDe,
     dataAtualizacaoAte,
@@ -473,6 +495,7 @@ export default function Aprovacoes({ base = "/app/malote" }: { base?: string } =
       if (classificacao && d.classificacao?.nome !== classificacao) return false;
       if (empresaId && empresaIdResolvida(d) !== empresaId) return false;
       if (contratoId && d.contrato_id !== contratoId) return false;
+      if (solicitanteId && d.created_by !== solicitanteId) return false;
       if (excecao === "sim" && !d.excecao) return false;
       if (excecao === "nao" && d.excecao) return false;
       if (dataAtualizacaoDe && d.updated_at < dataAtualizacaoDe) return false;
@@ -495,6 +518,7 @@ export default function Aprovacoes({ base = "/app/malote" }: { base?: string } =
     empresaId,
     empresaPrimeiraLinhaPorDespesa,
     contratoId,
+    solicitanteId,
     excecao,
     dataAtualizacaoDe,
     dataAtualizacaoAte,
@@ -814,6 +838,18 @@ export default function Aprovacoes({ base = "/app/malote" }: { base?: string } =
               </Select>
             </div>
             <div>
+              <Label className="text-xs">Solicitante</Label>
+              <Select value={solicitanteId || "todos"} onValueChange={(v) => { setSolicitanteId(v === "todos" ? "" : v); setPagina(1); }}>
+                <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="todos">Todos</SelectItem>
+                  {solicitantesDisponiveis.map((id) => (
+                    <OpcaoSolicitante key={id} id={id} />
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
               <Label className="text-xs">Exceção</Label>
               <Select value={excecao || "todas"} onValueChange={(v) => { setExcecao(v === "todas" ? "" : (v as "sim" | "nao")); setPagina(1); }}>
                 <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
@@ -824,10 +860,10 @@ export default function Aprovacoes({ base = "/app/malote" }: { base?: string } =
                 </SelectContent>
               </Select>
             </div>
-            {/* Preenche o resto da linha da Exceção (9 campos antes deste:
-                em lg:grid-cols-4 sobra 1 vago na 3ª linha; col-span-3 fecha
+            {/* Preenche o resto da linha da Exceção (10 campos antes deste:
+                em lg:grid-cols-4 sobra 2 vagos na 3ª linha; col-span-2 fecha
                 a linha certinho, sem espaço vazio do lado). */}
-            <div className="col-span-2 sm:col-span-3 lg:col-span-3">
+            <div className="col-span-2 sm:col-span-3 lg:col-span-2">
               <Label className="text-xs">Buscar por nº ou nome</Label>
               <Input className="h-8 text-xs" placeholder="Buscar por nº da despesa ou nome..." value={busca} onChange={(e) => { setBusca(e.target.value); setPagina(1); }} />
             </div>

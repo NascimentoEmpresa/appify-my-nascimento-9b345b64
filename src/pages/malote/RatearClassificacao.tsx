@@ -17,6 +17,7 @@ import { useMaloteConfig, usePrazoNormalInclusao, horaAtualPassouDe } from "@/ho
 import { useFormasPagamento } from "@/hooks/useMaloteFormaPagamento";
 import { cn } from "@/lib/utils";
 import { RateioGrid, DimensoesRateio } from "./RateioGrid";
+import { erroFornecedorNoRateio, erroEmpresaNoRateio } from "./rateioValidacao";
 import { AnexosField } from "./AnexosField";
 import { DiaPagamentoPicker } from "./DiaPagamentoPicker";
 import { ExcecaoDiaBloqueadoField } from "./ExcecaoDiaBloqueadoField";
@@ -161,6 +162,16 @@ export default function RatearClassificacao() {
       if (linhasRateio.length === 0) return "Adicione ao menos uma linha de rateio.";
       if (linhasRateio.some((l) => !l.classificacao_id)) return "Selecione a classificação em todas as linhas.";
       if (Math.abs(totalRateado - Number(valorTotal)) > 0.01) return "O total do rateio deve ser igual ao valor total da despesa.";
+      // [SEM-CHAMADO] (25/09, pedido do Iury) — mesma regra de
+      // Fornecedor/Empresa de PainelDespesaMalote.tsx, ver rateioValidacao.ts.
+      // Nunca era chamada aqui antes: esta tela (multi-classificação) não
+      // tinha nenhuma exigência de Fornecedor/Integrante/Empresa no rateio.
+      const erroFornecedor = erroFornecedorNoRateio(dimensoes, linhasRateio);
+      if (erroFornecedor) return erroFornecedor;
+      // Empresa é coluna permanente do rateio nesta tela (RateioGrid.tsx,
+      // mostrarColunaEmpresa) — toda linha exige, sem exceção.
+      const erroEmpresa = erroEmpresaNoRateio(linhasRateio.map((l) => ({ empresa_id: l.empresa_id, exigeEmpresa: true })));
+      if (erroEmpresa) return erroEmpresa;
       if (parcelado) {
         if (!diaDesconto || !quantidadeParcelas) return "Informe o dia do desconto e a quantidade de parcelas.";
         const n = Number(quantidadeParcelas);

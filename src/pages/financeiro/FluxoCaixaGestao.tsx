@@ -13,7 +13,7 @@ import {
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
-import { TrendingDown, TrendingUp, Wallet, LineChart, X, Trash2, RotateCcw, Pencil, Eye } from "lucide-react";
+import { TrendingDown, TrendingUp, Wallet, LineChart, X, Trash2, RotateCcw, Pencil, Eye, ChevronRight, ChevronDown } from "lucide-react";
 import { toast } from "sonner";
 import { AcessoGate } from "@/components/auth/AcessoGate";
 import {
@@ -52,6 +52,12 @@ const MENU_POR_ORIGEM: Record<FluxoCaixaMaloteLinha["origem"], string> = {
   aplicacao_financeira: "financeiro-aplicacao-financeira",
 };
 
+interface RateioDetalheItem {
+  id: string;
+  nome: string;
+  valor: number;
+}
+
 const LABEL_ORIGEM: Record<FluxoCaixaMaloteLinha["origem"], string> = {
   malote: "Pagamento Malote",
   debito_automatico: "Débito Automático",
@@ -79,8 +85,15 @@ export default function FluxoCaixaGestao() {
   // por lançamento (mesmo despesa_id + mesma parcela, quando parcelado),
   // somando o valor; se o grupo tiver mais de 1 contrato distinto, mostra
   // "Rateio" em vez de escolher um dos nomes arbitrariamente.
+  //
+  // SIS-2026-0537 (Iury): guarda o detalhe por contrato (nome + fatia do
+  // valor) em `rateioDetalhe`, pra tela poder expandir a linha e mostrar
+  // como o rateio foi feito, em vez de só o rótulo "Rateio".
   const linhas = useMemo(() => {
-    const grupos = new Map<string, { base: FluxoCaixaMaloteLinha; valor: number; contratos: Map<string, string> }>();
+    const grupos = new Map<
+      string,
+      { base: FluxoCaixaMaloteLinha; valor: number; contratos: Map<string, { nome: string; valor: number }> }
+    >();
     for (const l of linhasBrutas) {
       const chave = `${l.despesa_id}::${l.numero_parcela ?? ""}`;
       let grupo = grupos.get(chave);
@@ -89,13 +102,19 @@ export default function FluxoCaixaGestao() {
         grupos.set(chave, grupo);
       }
       grupo.valor += Number(l.valor) || 0;
-      if (l.contrato_id && l.contrato_nome) grupo.contratos.set(l.contrato_id, l.contrato_nome);
+      if (l.contrato_id && l.contrato_nome) {
+        const atual = grupo.contratos.get(l.contrato_id);
+        grupo.contratos.set(l.contrato_id, { nome: l.contrato_nome, valor: (atual?.valor ?? 0) + (Number(l.valor) || 0) });
+      }
     }
     return Array.from(grupos.values()).map(({ base, valor, contratos }) => {
       if (contratos.size > 1) {
-        return { ...base, valor, contrato_id: null, contrato_nome: "Rateio" };
+        const rateioDetalhe = Array.from(contratos.entries())
+          .map(([id, { nome, valor: valorContrato }]) => ({ id, nome, valor: valorContrato }))
+          .sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"));
+        return { ...base, valor, contrato_id: null, contrato_nome: "Rateio", rateioDetalhe };
       }
-      return { ...base, valor };
+      return { ...base, valor, rateioDetalhe: undefined as RateioDetalheItem[] | undefined };
     });
   }, [linhasBrutas]);
   // SIS-2026-0221/0439: "Forma de pagamento" vem do catálogo nomeado
@@ -208,6 +227,10 @@ export default function FluxoCaixaGestao() {
   const [dataAte, setDataAte] = useState("");
   const [competencia, setCompetencia] = useState("");
   const [empresaId, setEmpresaId] = useState("");
+  // SIS-2026-0537 (Iury): "retornar a coluna de Centro de custo" — filtro
+  // removido no SIS-2026-0489, pedido de volta — a coluna na view nunca
+  // saiu (CartaoCredito.tsx já dependia dela).
+  const [contratoId, setContratoId] = useState("");
   const [classificacaoId, setClassificacaoId] = useState("");
   const [formaPagamento, setFormaPagamento] = useState("");
   // SIS-2026-0307: "após o pagamento alimentamos o fluxo de caixa" (usuário)
@@ -219,10 +242,29 @@ export default function FluxoCaixaGestao() {
   // busca livre já usado em PagamentoMalote.tsx.
   const [busca, setBusca] = useState(searchParams.get("busca") ?? "");
   const [page, setPage] = useState(1);
+  // SIS-2026-0537 (Iury): "se um item for rateado, o centro de custo deve
+  // aparecer como 'Rateio' e se clicar nele ele mostra abaixo como foi
+  // dividido na mesma página, só 'expandindo' o item" — sub-linhas embaixo
+  // da linha pai (padrão árvore), sem sair da tela.
+  const [linhasExpandidas, setLinhasExpandidas] = useState<Set<string>>(new Set());
+  function alternarExpansao(chave: string) {
+    setLinhasExpandidas((prev) => {
+      const proximo = new Set(prev);
+      if (proximo.has(chave)) proximo.delete(chave);
+      else proximo.add(chave);
+      return proximo;
+    });
+  }
 
   const empresasDisponiveis = useMemo(() => {
     const map = new Map<string, string>();
     linhas.forEach((l) => l.empresa_id && l.empresa_nome && map.set(l.empresa_id, l.empresa_nome));
+    return Array.from(map.entries()).sort((a, b) => a[1].localeCompare(b[1], "pt-BR"));
+  }, [linhas]);
+
+  const contratosDisponiveis = useMemo(() => {
+    const map = new Map<string, string>();
+    linhas.forEach((l) => l.contrato_id && l.contrato_nome && map.set(l.contrato_id, l.contrato_nome));
     return Array.from(map.entries()).sort((a, b) => a[1].localeCompare(b[1], "pt-BR"));
   }, [linhas]);
 
@@ -258,6 +300,7 @@ export default function FluxoCaixaGestao() {
     setDataAte("");
     setCompetencia("");
     setEmpresaId("");
+    setContratoId("");
     setClassificacaoId("");
     setFormaPagamento("");
     setBancoId("");
@@ -272,6 +315,7 @@ export default function FluxoCaixaGestao() {
       if (dataAte && (!l.data_pagamento || l.data_pagamento > dataAte)) return false;
       if (competencia && l.competencia?.slice(0, 7) !== competencia) return false;
       if (empresaId && l.empresa_id !== empresaId) return false;
+      if (contratoId && l.contrato_id !== contratoId) return false;
       if (classificacaoId && l.classificacao_id !== classificacaoId) return false;
       if (formaPagamento && l.forma_pagamento !== formaPagamento) return false;
       if (bancoId && l.banco_id !== bancoId) return false;
@@ -282,7 +326,7 @@ export default function FluxoCaixaGestao() {
       ) return false;
       return true;
     });
-  }, [linhas, dataDe, dataAte, competencia, empresaId, classificacaoId, formaPagamento, bancoId, busca]);
+  }, [linhas, dataDe, dataAte, competencia, empresaId, contratoId, classificacaoId, formaPagamento, bancoId, busca]);
 
   // SIS-2026-0256: com o Débito Automático somado à fonte, "Saídas" precisa
   // filtrar por tipo — antes só existia saída (Malote), então somar tudo
@@ -366,6 +410,18 @@ export default function FluxoCaixaGestao() {
               </Select>
             </div>
             <div>
+              <Label className="text-xs">Contrato</Label>
+              <Select value={contratoId || "todos"} onValueChange={(v) => setContratoId(v === "todos" ? "" : v)}>
+                <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="todos">Todos</SelectItem>
+                  {contratosDisponiveis.map(([id, nome]) => (
+                    <SelectItem key={id} value={id}>{nome}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
               <Label className="text-xs">Classificação</Label>
               <Select value={classificacaoId || "todas"} onValueChange={(v) => setClassificacaoId(v === "todas" ? "" : v)}>
                 <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
@@ -425,11 +481,13 @@ export default function FluxoCaixaGestao() {
               <TableHeader>
                 {/* SIS-2026-0306 (Iury): ordem das colunas ajustada — ID,
                     Data de Pagamento, Tipo, Classificação, Descrição,
-                    Competência, Empresa, Banco, Forma de Pagamento, Valor.
-                    SIS-2026-0489 (Iury): Contrato saiu da tela (a coluna
-                    original continua na view, só CartaoCredito.tsx que
-                    ainda depende dela). */}
+                    Competência, Empresa, Contrato, Banco, Forma de
+                    Pagamento, Valor.
+                    SIS-2026-0537 (Iury): Contrato tinha saído da tela no
+                    SIS-2026-0489, pedido de volta — a coluna na view nunca
+                    saiu (CartaoCredito.tsx já dependia dela). */}
                 <TableRow>
+                  <TableHead className="w-8" />
                   <TableHead className="text-center">ID</TableHead>
                   <TableHead className="text-center">Data de Pagamento</TableHead>
                   <TableHead className="text-center">Tipo</TableHead>
@@ -437,6 +495,7 @@ export default function FluxoCaixaGestao() {
                   <TableHead className="text-center">Descrição</TableHead>
                   <TableHead className="text-center">Competência</TableHead>
                   <TableHead className="text-center">Empresa</TableHead>
+                  <TableHead className="text-center">Contrato</TableHead>
                   <TableHead className="text-center">Banco</TableHead>
                   <TableHead className="text-center">Forma de Pagamento</TableHead>
                   <TableHead className="text-center">Valor (R$)</TableHead>
@@ -446,12 +505,12 @@ export default function FluxoCaixaGestao() {
               <TableBody>
                 {isLoading && (
                   <TableRow>
-                    <TableCell colSpan={11} className="text-center text-muted-foreground py-10">Carregando...</TableCell>
+                    <TableCell colSpan={13} className="text-center text-muted-foreground py-10">Carregando...</TableCell>
                   </TableRow>
                 )}
                 {!isLoading && filtradas.length === 0 && (
                   <TableRow>
-                    <TableCell colSpan={11} className="text-center text-muted-foreground py-10">
+                    <TableCell colSpan={13} className="text-center text-muted-foreground py-10">
                       <div className="flex flex-col items-center gap-2">
                         <TrendingDown className="h-8 w-8 text-muted-foreground/50" />
                         Nenhuma movimentação encontrada com os filtros atuais.
@@ -459,11 +518,28 @@ export default function FluxoCaixaGestao() {
                     </TableCell>
                   </TableRow>
                 )}
-                {pageRows.map((l) => (
+                {pageRows.map((l) => {
                   // SIS-2026-0254: despesa parcelada agora pode gerar mais
                   // de 1 linha (1 por parcela paga) com o mesmo
                   // despesa_id — key precisa incluir o número da parcela.
-                  <TableRow key={`${l.despesa_id}-${l.numero_parcela ?? "unica"}`}>
+                  const chave = `${l.despesa_id}-${l.numero_parcela ?? "unica"}`;
+                  const temRateio = l.contrato_nome === "Rateio" && !!l.rateioDetalhe?.length;
+                  const expandida = linhasExpandidas.has(chave);
+                  return (
+                  <>
+                  <TableRow key={chave}>
+                    <TableCell className="text-center">
+                      {temRateio && (
+                        <button
+                          type="button"
+                          className="inline-flex h-6 w-6 items-center justify-center rounded hover:bg-muted"
+                          title={expandida ? "Recolher rateio" : "Ver rateio por contrato"}
+                          onClick={() => alternarExpansao(chave)}
+                        >
+                          {expandida ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                        </button>
+                      )}
+                    </TableCell>
                     <TableCell className="text-center font-mono text-xs">{l.id_malote}</TableCell>
                     <TableCell className="text-center text-sm">{l.data_pagamento ? new Date(l.data_pagamento + "T00:00:00").toLocaleDateString("pt-BR") : "—"}</TableCell>
                     <TableCell className="text-center">
@@ -489,6 +565,19 @@ export default function FluxoCaixaGestao() {
                     </TableCell>
                     <TableCell className="text-center text-sm">{l.competencia ? new Date(l.competencia + "T00:00:00").toLocaleDateString("pt-BR", { month: "2-digit", year: "numeric" }) : "—"}</TableCell>
                     <TableCell className="text-center text-sm">{l.empresa_nome ?? "—"}</TableCell>
+                    <TableCell className="text-center text-sm">
+                      {temRateio ? (
+                        <button
+                          type="button"
+                          className="underline decoration-dotted hover:text-foreground"
+                          onClick={() => alternarExpansao(chave)}
+                        >
+                          Rateio
+                        </button>
+                      ) : (
+                        l.contrato_nome ?? "—"
+                      )}
+                    </TableCell>
                     <TableCell className="text-center text-sm">
                       {l.banco_nome ? <BancoBadge nome={l.banco_nome} logoUrl={urlLogoCartao(l.banco_logo_path)} /> : "—"}
                     </TableCell>
@@ -552,7 +641,24 @@ export default function FluxoCaixaGestao() {
                       )}
                     </TableCell>
                   </TableRow>
-                ))}
+                  {temRateio && expandida && l.rateioDetalhe!.map((c) => (
+                    <TableRow key={`${chave}-${c.id}`} className="bg-muted/30 hover:bg-muted/30">
+                      <TableCell />
+                      <TableCell colSpan={7} className="text-right text-xs text-muted-foreground pr-4">
+                        <span className="inline-flex items-center gap-1.5">
+                          <ChevronRight className="h-3 w-3 opacity-50" /> {c.nome}
+                        </span>
+                      </TableCell>
+                      <TableCell />
+                      <TableCell />
+                      <TableCell />
+                      <TableCell className="text-center text-xs font-medium text-muted-foreground">{formatBRL(c.valor)}</TableCell>
+                      <TableCell />
+                    </TableRow>
+                  ))}
+                  </>
+                  );
+                })}
               </TableBody>
             </Table>
           </div>
@@ -751,7 +857,12 @@ export default function FluxoCaixaGestao() {
           <DialogHeader>
             <DialogTitle>Lixeira do Fluxo de Caixa</DialogTitle>
           </DialogHeader>
-          <div className="space-y-5">
+          {/* [SEM-CHAMADO] (achado do usuário): DialogContent é
+              display:grid — sem min-w-0 aqui, este item de grid não
+              encolhe abaixo do conteúdo intrínseco (nome/descrição gigante
+              de algum item), inflando o modal antes do truncate interno
+              ter chance de agir. */}
+          <div className="space-y-5 min-w-0">
             {despesasLixeira.length === 0 && debitosLixeira.length === 0 && itensFaturaLixeira.length === 0 && (
               <p className="text-sm text-muted-foreground py-6 text-center">A lixeira está vazia.</p>
             )}
@@ -761,15 +872,15 @@ export default function FluxoCaixaGestao() {
                 <p className="text-xs font-semibold text-muted-foreground uppercase">Pagamento Malote</p>
                 {despesasLixeira.map((d) => (
                   <div key={d.id} className="flex items-center justify-between gap-2 rounded-md border border-border px-3 py-2 text-sm">
-                    <div className="min-w-0">
+                    <div className="flex-1 min-w-0">
                       <p className="font-mono text-xs text-muted-foreground">{d.numero}</p>
                       <p className="truncate">{d.nome}</p>
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
                       <span className="font-medium">{formatBRL(d.valor_total)}</span>
                       <AcessoGate menu="malote_despesa_visualizar" acao="excluir">
-                        <Button variant="outline" size="sm" className="gap-1.5" onClick={() => restaurar("malote", d.id)}>
-                          <RotateCcw className="h-3.5 w-3.5" /> Restaurar
+                        <Button variant="outline" size="icon" className="h-8 w-8" title="Restaurar" onClick={() => restaurar("malote", d.id)}>
+                          <RotateCcw className="h-3.5 w-3.5" />
                         </Button>
                       </AcessoGate>
                       {/* [SEM-CHAMADO] (achado do usuário): faltava excluir
@@ -793,15 +904,15 @@ export default function FluxoCaixaGestao() {
                 <p className="text-xs font-semibold text-muted-foreground uppercase">Débito Automático</p>
                 {debitosLixeira.map((d) => (
                   <div key={d.id} className="flex items-center justify-between gap-2 rounded-md border border-border px-3 py-2 text-sm">
-                    <div className="min-w-0">
+                    <div className="flex-1 min-w-0">
                       <p className="font-mono text-xs text-muted-foreground">{d.numero}</p>
                       <p className="truncate">{d.descricao}</p>
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
                       <span className="font-medium">{formatBRL(d.valor)}</span>
                       <AcessoGate menu="financeiro-debito-automatico" acao="excluir">
-                        <Button variant="outline" size="sm" className="gap-1.5" onClick={() => restaurar("debito_automatico", d.id)}>
-                          <RotateCcw className="h-3.5 w-3.5" /> Restaurar
+                        <Button variant="outline" size="icon" className="h-8 w-8" title="Restaurar" onClick={() => restaurar("debito_automatico", d.id)}>
+                          <RotateCcw className="h-3.5 w-3.5" />
                         </Button>
                       </AcessoGate>
                     </div>
@@ -815,15 +926,15 @@ export default function FluxoCaixaGestao() {
                 <p className="text-xs font-semibold text-muted-foreground uppercase">Fatura Cartão de Crédito</p>
                 {itensFaturaLixeira.map((i) => (
                   <div key={i.id} className="flex items-center justify-between gap-2 rounded-md border border-border px-3 py-2 text-sm">
-                    <div className="min-w-0">
+                    <div className="flex-1 min-w-0">
                       <p className="font-mono text-xs text-muted-foreground">{i.nome_cartao}</p>
                       <p className="truncate">{i.descricao}</p>
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
                       <span className="font-medium">{formatBRL(i.valor)}</span>
                       <AcessoGate menu="financeiro-cartao-credito" acao="excluir">
-                        <Button variant="outline" size="sm" className="gap-1.5" onClick={() => restaurar("cartao_fatura", i.id)}>
-                          <RotateCcw className="h-3.5 w-3.5" /> Restaurar
+                        <Button variant="outline" size="icon" className="h-8 w-8" title="Restaurar" onClick={() => restaurar("cartao_fatura", i.id)}>
+                          <RotateCcw className="h-3.5 w-3.5" />
                         </Button>
                       </AcessoGate>
                     </div>
