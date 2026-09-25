@@ -25,6 +25,11 @@ describe("refazer solicitação de férias (16/09/2026)", () => {
     expect(podeRefazerFerias({ criado_em: "abc", status: "Pendente" }, agora).ok).toBe(false);
   });
 
+  it("cancelada PELO RH se refaz, mesmo depois de uma semana", () => {
+    expect(podeRefazerFerias({ criado_em: ha(40), status: "Cancelada", cancelada_pelo_rh: true }, agora).ok).toBe(true);
+    expect(podeRefazerFerias({ criado_em: ha(40), status: "Cancelada", cancelada_pelo_rh: false }, agora).ok).toBe(false);
+  });
+
   it("conta os dias que restam", () => {
     expect(diasRestantesParaRefazer(ha(0), agora)).toBe(7);
     expect(diasRestantesParaRefazer(ha(6.5), agora)).toBe(1);

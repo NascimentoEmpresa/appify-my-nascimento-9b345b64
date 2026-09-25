@@ -20,7 +20,7 @@ import {
   useTrnAluno, useTrnAtualizarContatoAluno, useTrnCertificadosAluno, useTrnCursos, useTrnEmitirCertificado, useTrnExcluirAluno,
   useTrnHistorico, useTrnProgressoAluno, useTrnSalvarAluno, type AlunoInput,
 } from "@/hooks/useTreinamentosPlataforma";
-import { MENU, ROTULO_STATUS_ALUNO, type StatusAluno } from "./tipos";
+import { DESCRICAO_STATUS_ALUNO, MENU, type StatusAluno } from "./tipos";
 import { ProvasDoAluno } from "./ProvaResultados";
 import { StatusAlunoBadge, TrnCarregando, TrnEstilo, TrnHero, fmtData, fmtDataHora, hojeISO } from "./ui";
 
@@ -48,7 +48,7 @@ interface Form {
   tagIds: string[]; matriculas: Record<string, string>;
 }
 const VAZIO: Form = {
-  nome: "", email: "", telefone: "", documento: "", observacoes: "", idioma: "padrao", status: "pendente",
+  nome: "", email: "", telefone: "", documento: "", observacoes: "", idioma: "padrao", status: "inativo",
   acesso_completo: false, bloquear_gamificacao: false, prazo: "", empregado_id: null, tagIds: [], matriculas: {},
 };
 
@@ -206,16 +206,17 @@ export default function AlunoForm() {
                   {editando && (
                     <div className="grupo">
                       <h4>Status do aluno</h4>
+                      {/* Status não se escolhe: o banco deriva do acesso e da
+                          Senior (mig 237). Aqui só se bloqueia/desbloqueia —
+                          ao desbloquear, o banco recalcula ativo/inativo/demitido. */}
                       <div className="flex flex-wrap items-center gap-4">
-                        <Select value={f.status} onValueChange={(v) => set({ status: v as StatusAluno })}>
-                          <SelectTrigger className="w-56"><SelectValue /></SelectTrigger>
-                          <SelectContent>{(Object.keys(ROTULO_STATUS_ALUNO) as StatusAluno[]).map((s) => <SelectItem key={s} value={s}>{ROTULO_STATUS_ALUNO[s]}</SelectItem>)}</SelectContent>
-                        </Select>
+                        <StatusAlunoBadge status={f.status} />
+                        <span className="text-xs text-muted-foreground">{DESCRICAO_STATUS_ALUNO[f.status]}</span>
                         <label className="flex items-center gap-2 text-sm">
                           <Switch checked={f.status === "bloqueado"} onCheckedChange={(v) => set({ status: v ? "bloqueado" : "ativo" })} /> Bloquear aluno
                         </label>
                       </div>
-                      <div className="ajuda mt-2 text-xs text-muted-foreground">Enquanto o aluno estiver bloqueado, ele não consegue acessar a plataforma. Pendente = ainda não confirmou o cadastro.</div>
+                      <div className="ajuda mt-2 text-xs text-muted-foreground">Ativo = já acessou os treinamentos · Inativo = ainda não acessou · Demitido = desligado na Senior. Enquanto estiver bloqueado, o aluno não consegue acessar a plataforma.</div>
                     </div>
                   )}
 

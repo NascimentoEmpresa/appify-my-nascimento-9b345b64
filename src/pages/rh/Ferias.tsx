@@ -29,6 +29,10 @@ interface SolicitacaoFerias {
   aprovado_por?: string | null;
   aprovado_em?: string | null;
   refeita_em?: string | null;
+  cancelada_pelo_rh?: boolean | null;
+  motivo_cancelamento?: string | null;
+  cancelada_por?: string | null;
+  cancelada_em?: string | null;
   criado_em?: string | null;
   atualizado_em?: string | null;
 }
@@ -95,6 +99,9 @@ export default function Ferias() {
   };
   const [reprovando, setReprovando] = useState(false);
   const [motivo, setMotivo] = useState("");
+  // Cancelar pelo RH (24/09/2026): vale também DEPOIS de aprovada, com motivo.
+  const [cancelando, setCancelando] = useState(false);
+  const [motivoCanc, setMotivoCanc] = useState("");
 
   const [toasts, setToasts] = useState<{ id: number; msg: string; type: string }[]>([]);
   const toastId = useRef(0);
@@ -139,6 +146,8 @@ export default function Ferias() {
     setSol(row);
     setReprovando(false);
     setMotivo("");
+    setCancelando(false);
+    setMotivoCanc("");
     setVerHist(false);
     carregarHist(row.id);
   };
@@ -157,6 +166,25 @@ export default function Ferias() {
     if (drawerId) carregarHist(drawerId);
     setReprovando(false);
     setMotivo("");
+    recarregarTudo();
+  };
+
+  /**
+   * Cancelamento pelo RH — RPC ferias_cancelar_pelo_rh (mig 20260930000236):
+   * Pendente ou Aprovada, motivo obrigatório. O encarregado recebe aviso no
+   * sino e na conversa, e pode refazer a solicitação.
+   */
+  const cancelarPeloRh = async () => {
+    if (!drawerId) return;
+    if (motivoCanc.trim().length < 5) { toast("Informe o motivo do cancelamento.", "err"); return; }
+    const { data, error } = await db.rpc("ferias_cancelar_pelo_rh", { p_id: drawerId, p_motivo: motivoCanc.trim() });
+    if (error) { toast("Erro: " + error.message, "err"); return; }
+    toast(data?.notificado ? "Férias canceladas. O encarregado foi avisado." : "Férias canceladas. Não achamos o login do encarregado para avisar — ele vê na conversa.", "ok");
+    const { data: novo } = await db.from("SISTEMA_SOLICITACOES_FERIAS").select("*").eq("id", drawerId).maybeSingle();
+    if (novo) setSol(novo);
+    carregarHist(drawerId);
+    setCancelando(false);
+    setMotivoCanc("");
     recarregarTudo();
   };
 
@@ -340,14 +368,46 @@ export default function Ferias() {
                 </div>
               )}
 
+              {sol.status === "Cancelada" && sol.cancelada_pelo_rh && (
+                <div style={{ marginBottom: 18, background: "#f8fafc", border: "1px solid #cbd5e1", borderRadius: 10, padding: "10px 12px" }}>
+                  <div style={{ fontSize: 10, fontWeight: 700, color: "#475569", textTransform: "uppercase", letterSpacing: ".5px", marginBottom: 4 }}>Cancelada pelo RH</div>
+                  <div style={{ fontSize: 13, color: "#0f172a" }}>{sol.motivo_cancelamento || "—"}</div>
+                  <div style={{ fontSize: 11.5, color: "#64748b", marginTop: 4 }}>{sol.cancelada_por || "—"} · {fmtDtHora(sol.cancelada_em ?? undefined)} · o encarregado pode refazer e reenviar.</div>
+                </div>
+              )}
+
+              {/* Cancelar pelo RH — também depois de aprovada */}
+              {(sol.status === "Pendente" || sol.status === "Aprovada") && !reprovando && (
+                <div style={{ marginBottom: 14 }}>
+                  {!cancelando ? (
+                    sol.status === "Aprovada" && (
+                      <button onClick={() => setCancelando(true)} style={{ width: "100%", padding: "10px", borderRadius: 10, border: "1px solid #cbd5e1", background: "#fff", color: "#475569", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
+                        Cancelar férias aprovadas
+                      </button>
+                    )
+                  ) : (
+                    <div style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 10, padding: 12 }}>
+                      <div style={{ fontSize: 12.5, fontWeight: 700, color: "#0f172a", marginBottom: 6 }}>Cancelar estas férias</div>
+                      <textarea value={motivoCanc} onChange={e => setMotivoCanc(e.target.value)} rows={2} placeholder="Motivo do cancelamento (o encarregado vai ver)..."
+                        style={{ width: "100%", border: "1px solid #cbd5e1", borderRadius: 10, padding: "8px 12px", fontSize: 13, outline: "none", fontFamily: "inherit" }} />
+                      <div style={{ fontSize: 11.5, color: "#64748b", marginTop: 4 }}>O encarregado recebe o aviso com o motivo e pode refazer a solicitação para enviar de novo.</div>
+                      <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                        <button onClick={cancelarPeloRh} style={{ flex: 1, padding: "9px", borderRadius: 10, border: "none", background: "#475569", color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>Confirmar cancelamento</button>
+                        <button onClick={() => { setCancelando(false); setMotivoCanc(""); }} style={{ padding: "9px 14px", borderRadius: 10, border: "1px solid #e2e8f0", background: "#fff", color: "#475569", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>Voltar</button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
               {/* Ações */}
-              {sol.status === "Pendente" && (
+              {sol.status === "Pendente" && !cancelando && (
                 <div style={{ marginBottom: 20 }}>
                   {!reprovando ? (
                     <div style={{ display: "flex", gap: 8 }}>
                       <button onClick={() => acao("Aprovada")} style={{ flex: 1, padding: "10px", borderRadius: 10, border: "none", background: "#16a34a", color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>✓ Aprovar</button>
                       <button onClick={() => setReprovando(true)} style={{ flex: 1, padding: "10px", borderRadius: 10, border: "1px solid #fecaca", background: "#fef2f2", color: "#b91c1c", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>✕ Reprovar</button>
-                      <button onClick={() => acao("Cancelada")} style={{ padding: "10px 14px", borderRadius: 10, border: "1px solid #e2e8f0", background: "#fff", color: "#475569", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>Cancelar</button>
+                      <button onClick={() => setCancelando(true)} style={{ padding: "10px 14px", borderRadius: 10, border: "1px solid #e2e8f0", background: "#fff", color: "#475569", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>Cancelar</button>
                     </div>
                   ) : (
                     <div>
