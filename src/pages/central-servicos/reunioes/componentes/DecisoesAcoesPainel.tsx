@@ -12,6 +12,10 @@ import { useSetoresEmpresa } from "@/hooks/useSetoresEmpresa";
 import { acharUsuarioPorNome } from "@/lib/acharUsuarioPorNome";
 import { SETOR_RESPONSAVEL_MAP, normalizeSetorNome } from "@/data/planoAcaoSetorResponsavel";
 import {
+  tituloAcaoVinculavel,
+  type PlanoAcaoVinculavel,
+} from "../acaoExistente";
+import {
   STATUS_LABELS, STATUS_ORDEM, PRIORIDADES, PRIORIDADE_LABEL, VISIBILIDADE_OPTIONS, VISIBILIDADE_LABEL,
   TIPO_ACAO_OPTIONS, TIPO_ACAO_LABEL,
 } from "@/types/planoAcao";
@@ -56,21 +60,28 @@ interface NovaAcaoPlanoAcao {
 }
 
 export function DecisoesAcoesPainel({
-  pautaId, itens, usuarios, setorPadrao, sinalAbrirAcao, onCriarDecisao, onCriarAcao, onAtualizar, onRemover,
+  pautaId, itens, acoesPlanoDisponiveis, carregandoAcoesPlano, usuarios, setorPadrao, sinalAbrirAcao,
+  onCriarDecisao, onCriarAcao, onVincularAcao, onAtualizar, onRemover,
 }: {
   pautaId: string;
   itens: ReuniaoDecisaoAcao[];
+  acoesPlanoDisponiveis: PlanoAcaoVinculavel[];
+  carregandoAcoesPlano: boolean;
   usuarios: Usuario[];
   setorPadrao?: string | null;
   /** Nonce: incrementar de fora (botão "Sim, Criar" da pergunta de condução) abre o formulário de Ação automaticamente. */
   sinalAbrirAcao?: number;
   onCriarDecisao: (dados: NovaDecisao) => Promise<boolean>;
   onCriarAcao: (dados: NovaAcaoPlanoAcao) => Promise<boolean>;
+  onVincularAcao: (pautaId: string, planoAcaoId: string) => Promise<boolean>;
   onAtualizar: (id: string, patch: Partial<Pick<ReuniaoDecisaoAcao, "status">>) => Promise<boolean>;
   onRemover: (id: string) => Promise<boolean>;
 }) {
   const [novoOpen, setNovoOpen] = useState(false);
   const [tipo, setTipo] = useState<TipoDecisaoAcao>("decisao");
+  const [modoAcao, setModoAcao] = useState<"existente" | "nova">("existente");
+  const [acaoExistenteId, setAcaoExistenteId] = useState("");
+  const [vinculandoAcao, setVinculandoAcao] = useState(false);
 
   // Campos "Decisão" (formulário simples).
   const [texto, setTexto] = useState("");
@@ -100,6 +111,17 @@ export function DecisoesAcoesPainel({
   const [salvandoAcao, setSalvandoAcao] = useState(false);
 
   const opcoesUsuarios = usuarios.map((u) => ({ value: u.id, label: u.display_name ?? "—" }));
+  const opcoesAcoesExistentes = useMemo(() => acoesPlanoDisponiveis.map((acao) => ({
+    value: acao.id,
+    label: tituloAcaoVinculavel(acao),
+    hint: [
+      STATUS_LABELS[acao.status_normalizado] ?? acao.status_normalizado,
+      acao.area,
+      nomeUsuario(usuarios, acao.responsavel_profile_id),
+      acao.data_fim_planejado ? `Prazo ${new Date(acao.data_fim_planejado).toLocaleDateString("pt-BR")}` : null,
+    ].filter(Boolean).join(" · "),
+  })), [acoesPlanoDisponiveis, usuarios]);
+  const acaoExistenteSelecionada = acoesPlanoDisponiveis.find((acao) => acao.id === acaoExistenteId);
 
   const { data: comitesMap = {} } = useComitesMap();
   const comitesReais = useMemo(() => Object.keys(comitesMap).sort((a, b) => a.localeCompare(b, "pt-BR")), [comitesMap]);
@@ -150,7 +172,6 @@ export function DecisoesAcoesPainel({
     if (sinalAbrirAcao === undefined || sinalAbrirAcao === 0) return;
     setTipo("acao");
     setNovoOpen(true);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sinalAbrirAcao]);
 
   const limpar = () => {
@@ -160,6 +181,7 @@ export function DecisoesAcoesPainel({
     setAcaoArea(setorPadrao ?? ""); setAcaoPrioridade("media"); setAcaoStatus("a_definir");
     setAcaoDataInicio(""); setAcaoDataFim(""); setAcaoResponsavel(""); setAcaoLider("");
     setAcaoVisibilidade("privado"); setAcaoComentarios("");
+    setModoAcao("existente"); setAcaoExistenteId("");
     setNovoOpen(false);
   };
 
@@ -197,6 +219,14 @@ export function DecisoesAcoesPainel({
       comentarios: acaoComentarios.trim() || null,
     });
     setSalvandoAcao(false);
+    if (ok) limpar();
+  };
+
+  const vincularAcaoExistente = async () => {
+    if (!acaoExistenteId) return;
+    setVinculandoAcao(true);
+    const ok = await onVincularAcao(pautaId, acaoExistenteId);
+    setVinculandoAcao(false);
     if (ok) limpar();
   };
 
@@ -305,7 +335,58 @@ export function DecisoesAcoesPainel({
             </>
           ) : (
             <>
-              <p className="text-xs text-muted-foreground">Cadastrar nova ação no plano — vira um registro de verdade no módulo Plano de Ações.</p>
+              <div className="flex flex-wrap gap-2 border-b border-border pb-2">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant={modoAcao === "existente" ? "default" : "outline"}
+                  onClick={() => setModoAcao("existente")}
+                >
+                  Selecionar ação existente
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant={modoAcao === "nova" ? "default" : "outline"}
+                  onClick={() => setModoAcao("nova")}
+                >
+                  Cadastrar nova ação
+                </Button>
+              </div>
+
+              {modoAcao === "existente" ? (
+                <>
+                  <p className="text-xs text-muted-foreground">
+                    Selecione uma ação ainda em aberto no Plano de Ações para acompanhar neste item, sem criar outra ação.
+                  </p>
+                  <SearchableSelect
+                    value={acaoExistenteId}
+                    onChange={setAcaoExistenteId}
+                    options={opcoesAcoesExistentes}
+                    placeholder={carregandoAcoesPlano ? "Carregando ações..." : "Selecione uma ação em aberto"}
+                    searchPlaceholder="Buscar por título, status, setor ou responsável..."
+                    emptyLabel={carregandoAcoesPlano ? "Carregando ações..." : "Nenhuma ação em aberto disponível"}
+                    disabled={carregandoAcoesPlano}
+                    allowClear
+                  />
+                  {acaoExistenteSelecionada && (
+                    <div className="grid gap-1 rounded-md bg-muted/40 p-2 text-xs sm:grid-cols-2">
+                      <span><strong>Status:</strong> {STATUS_LABELS[acaoExistenteSelecionada.status_normalizado] ?? acaoExistenteSelecionada.status_normalizado}</span>
+                      <span><strong>Responsável:</strong> {nomeUsuario(usuarios, acaoExistenteSelecionada.responsavel_profile_id) ?? "—"}</span>
+                      <span><strong>Setor:</strong> {acaoExistenteSelecionada.area ?? "—"}</span>
+                      <span><strong>Prazo:</strong> {acaoExistenteSelecionada.data_fim_planejado ? new Date(acaoExistenteSelecionada.data_fim_planejado).toLocaleDateString("pt-BR") : "—"}</span>
+                    </div>
+                  )}
+                  <div className="flex justify-end gap-2">
+                    <Button type="button" size="sm" variant="ghost" onClick={limpar}>Cancelar</Button>
+                    <Button type="button" size="sm" onClick={vincularAcaoExistente} disabled={!acaoExistenteId || vinculandoAcao}>
+                      {vinculandoAcao ? "Vinculando…" : "Vincular à pauta"}
+                    </Button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <p className="text-xs text-muted-foreground">Cadastre somente quando a ação ainda não existir no Plano de Ações.</p>
 
               <Select value={acaoTipoAcao} onValueChange={setAcaoTipoAcao}>
                 <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="Tipo de Ação" /></SelectTrigger>
@@ -426,6 +507,8 @@ export function DecisoesAcoesPainel({
                   {salvandoAcao ? "Salvando…" : "Salvar"}
                 </Button>
               </div>
+                </>
+              )}
             </>
           )}
         </div>

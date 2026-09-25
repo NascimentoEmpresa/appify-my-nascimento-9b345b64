@@ -96,7 +96,7 @@ export function ModalFichaEpi({ pedido, onFechar }: { pedido: PedidoFicha | null
               Confira os dados, ajuste o que faltar e imprima.
             </DialogDescription>
           </div>
-          <Button onClick={imprimir} disabled={!dados} title="Imprimir ficha de EPI">
+          <Button onClick={imprimir} disabled={!dados || !!error} title="Imprimir ficha de EPI">
             <Printer className="mr-2 h-4 w-4" /> Imprimir
           </Button>
         </DialogHeader>
@@ -110,8 +110,8 @@ export function ModalFichaEpi({ pedido, onFechar }: { pedido: PedidoFicha | null
                 <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
                 <p className="text-amber-900 dark:text-amber-200">
                   {faltaFuncao(error)
-                    ? "A função do banco que traz a empresa do contrato e os dados do RH ainda não foi aplicada. A ficha sai só com o que está no pedido — o cabeçalho fica sem empresa."
-                    : `Não foi possível buscar a empresa e os dados do RH: ${(error as Error).message}. A ficha sai só com o que está no pedido.`}
+                    ? "A função do banco que confirma os itens enviados ainda não foi aplicada. A impressão foi bloqueada para não incluir itens pendentes."
+                    : `Não foi possível confirmar os itens enviados: ${(error as Error).message}. A impressão foi bloqueada para não incluir itens pendentes.`}
                 </p>
               </div>
             )}
