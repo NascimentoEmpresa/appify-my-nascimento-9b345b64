@@ -1,8 +1,8 @@
 import { describe, it, expect } from "vitest";
 import {
-  type LinhaQuadroForm, LINHA_VAZIA, paraNumero, paraInteiro, chavePosto,
+  type LinhaQuadroForm, LINHA_VAZIA, paraNumero, paraInteiro, chavePosto, chaveLinha,
   faltamNaLinha, erroDaLinha, errosDoQuadro, prazoSuficiente,
-  totalDeColaboradores, totalDeVagas, totalSalarialMensal, paraPayload,
+  totalDeColaboradores, totalDePostos, totalDeVagas, totalSalarialMensal, paraPayload,
   conferirContrato, contratoCompleto, pendenciasDoContrato,
   conferirQuadroComContrato,
 } from "@/lib/licitacoes/quadroPostos";
@@ -15,8 +15,9 @@ const dataCurta = () => somaDiasUteis(hojeIso(), 1);
 
 const linha = (p: Partial<LinhaQuadroForm> = {}): LinhaQuadroForm => ({
   ...LINHA_VAZIA,
-  posto_nome: "JARDINAGEM CAMPUS CENTRO",
-  cargo: "Jardineiro",
+  posto_nome: "BLOCO CIRURGICO",
+  funcao_nome: "SERVENTE DE LIMPEZA",
+  cargo: "Servente de Limpeza",
   quantidade: "10",
   escala: "5X2 SEG A SEX",
   salario: "1.412,00",
@@ -86,10 +87,17 @@ describe("faltamNaLinha", () => {
   });
 
   it("lista cada obrigatório que falta, com o rótulo da tela", () => {
-    const faltam = faltamNaLinha(linha({ posto_nome: "", cargo: "", salario: "" }));
+    const faltam = faltamNaLinha(linha({ posto_nome: "", funcao_nome: "", cargo: "", salario: "" }));
     expect(faltam).toContain("Posto");
+    expect(faltam).toContain("Função");
     expect(faltam).toContain("Cargo");
     expect(faltam).toContain("Salário");
+  });
+
+  // A função é o que carrega o enxoval de uniforme/EPI e é por ela que se
+  // conta gente — linha sem função não vira vaga utilizável.
+  it("função é obrigatória", () => {
+    expect(faltamNaLinha(linha({ funcao_nome: "" }))).toContain("Função");
   });
 
   it("salário zero é o mesmo que salário em branco", () => {
@@ -115,9 +123,10 @@ describe("prazo de 7 dias úteis — a mesma regra do guard da vaga", () => {
     expect(prazoSuficiente(dataCurta())).toBe(false);
   });
 
-  it("erroDaLinha explica o prazo curto citando o posto", () => {
+  it("erroDaLinha explica o prazo curto citando posto e função", () => {
     const e = erroDaLinha(linha({ data_inicio_prevista: dataCurta() }));
-    expect(e).toContain("JARDINAGEM CAMPUS CENTRO");
+    expect(e).toContain("BLOCO CIRURGICO");
+    expect(e).toContain("SERVENTE DE LIMPEZA");
     expect(e).toContain("dias úteis");
   });
 
@@ -134,19 +143,28 @@ describe("prazo de 7 dias úteis — a mesma regra do guard da vaga", () => {
 
 describe("errosDoQuadro", () => {
   it("quadro válido não tem erro", () => {
-    expect(errosDoQuadro([linha(), linha({ posto_nome: "VIGILÂNCIA", cargo: "Vigilante" })])).toEqual([]);
+    expect(errosDoQuadro([linha(), linha({ posto_nome: "LAVANDERIA" })])).toEqual([]);
   });
 
-  it("acusa posto repetido pelo nome, mesmo com acento/caixa diferentes", () => {
+  // O MESMO posto com funções diferentes são duas linhas legítimas — é o
+  // caso da LAVANDERIA que tem servente e encarregado.
+  it("o mesmo posto com duas funções diferentes é válido", () => {
+    expect(errosDoQuadro([
+      linha({ posto_nome: "LAVANDERIA", funcao_nome: "SERVENTE DE LIMPEZA" }),
+      linha({ posto_nome: "LAVANDERIA", funcao_nome: "ENCARREGADO" }),
+    ])).toEqual([]);
+  });
+
+  it("acusa o par posto+função repetido, mesmo com acento/caixa diferentes", () => {
     const erros = errosDoQuadro([
-      linha({ posto_nome: "Jardinagem Campus Centro" }),
-      linha({ posto_nome: "JARDINAGEM - CAMPUS CENTRO", cargo: "Vigilante" }),
+      linha({ posto_nome: "Bloco Cirurgico", funcao_nome: "Servente de Limpeza" }),
+      linha({ posto_nome: "BLOCO - CIRURGICO", funcao_nome: "SERVENTE DE LIMPEZA" }),
     ]);
     expect(erros.some(e => e.includes("aparece duas vezes"))).toBe(true);
   });
 
   it("identifica a linha sem nome pelo número", () => {
-    const erros = errosDoQuadro([linha({ posto_nome: "" })]);
+    const erros = errosDoQuadro([linha({ posto_nome: "", funcao_nome: "" })]);
     expect(erros[0]).toContain("Posto nº 1");
   });
 
@@ -155,23 +173,43 @@ describe("errosDoQuadro", () => {
   });
 });
 
+describe("chaveLinha — a identidade é posto + função", () => {
+  it("mesmo posto com funções diferentes dá chaves diferentes", () => {
+    expect(chaveLinha({ posto_nome: "LAVANDERIA", funcao_nome: "SERVENTE" }))
+      .not.toBe(chaveLinha({ posto_nome: "LAVANDERIA", funcao_nome: "ENCARREGADO" }));
+  });
+
+  it("vazia quando falta posto ou função", () => {
+    expect(chaveLinha({ posto_nome: "LAVANDERIA", funcao_nome: "" })).toBe("");
+    expect(chaveLinha({ posto_nome: "", funcao_nome: "SERVENTE" })).toBe("");
+  });
+});
+
 describe("totais do quadro", () => {
+  // O caso real do print: BENTO GONÇALVES LIMPEZA 048/2026.
   const q = [
-    linha({ posto_nome: "JARDINAGEM", quantidade: "10", salario: "1.412,00" }),
-    linha({ posto_nome: "VIGILÂNCIA", quantidade: "10", salario: "2.000,00" }),
-    linha({ posto_nome: "ADMINISTRATIVO", quantidade: "10", salario: "2.500,00", gerar_vagas: false }),
+    linha({ posto_nome: "BLOCO CIRURGICO", quantidade: "4", salario: "1.412,00" }),
+    linha({ posto_nome: "LAVANDERIA", quantidade: "2", salario: "1.412,00" }),
+    linha({ posto_nome: "UPA 24 H", quantidade: "10", salario: "1.412,00" }),
+    linha({ posto_nome: "UPA 24 H", funcao_nome: "ENCARREGADO", quantidade: "1", salario: "2.500,00", gerar_vagas: false }),
   ];
 
-  it("soma 30 colaboradores — o caso do contrato de 30 pessoas", () => {
-    expect(totalDeColaboradores(q)).toBe(30);
+  it("soma as pessoas de todas as funções", () => {
+    expect(totalDeColaboradores(q)).toBe(17);
   });
 
-  it("só conta como vaga o posto marcado para abrir", () => {
-    expect(totalDeVagas(q)).toBe(20);
+  // 4 linhas, mas 3 postos: a UPA aparece duas vezes (duas funções).
+  it("conta POSTOS distintos, não linhas", () => {
+    expect(totalDePostos(q)).toBe(3);
+    expect(q.length).toBe(4);
   });
 
-  it("soma salarial multiplica pelo número de pessoas", () => {
-    expect(totalSalarialMensal(q)).toBe(10 * 1412 + 10 * 2000 + 10 * 2500);
+  it("só conta como vaga a função marcada para abrir", () => {
+    expect(totalDeVagas(q)).toBe(16);
+  });
+
+  it("soma salarial multiplica pelo número de pessoas de cada função", () => {
+    expect(totalSalarialMensal(q)).toBe(4 * 1412 + 2 * 1412 + 10 * 1412 + 1 * 2500);
   });
 });
 
@@ -184,17 +222,23 @@ describe("paraPayload — o que vai para a RPC", () => {
     expect(p.beneficios).toBeNull();
   });
 
+  it("leva posto e função separados", () => {
+    const [p] = paraPayload([linha()]);
+    expect(p.posto_nome).toBe("BLOCO CIRURGICO");
+    expect(p.funcao_nome).toBe("SERVENTE DE LIMPEZA");
+  });
+
   it("id vazio vira null (linha nova), e a ordem acompanha a posição", () => {
-    const p = paraPayload([linha(), linha({ posto_nome: "VIGILÂNCIA" })]);
+    const p = paraPayload([linha(), linha({ posto_nome: "LAVANDERIA" })]);
     expect(p[0].id).toBeNull();
     expect(p[0].ordem).toBe(1);
     expect(p[1].ordem).toBe(2);
   });
 
   it("estado vai em maiúsculo e os textos sem espaço nas pontas", () => {
-    const [p] = paraPayload([linha({ estado: "rs", cargo: "  Jardineiro  " })]);
+    const [p] = paraPayload([linha({ estado: "rs", cargo: "  Servente  " })]);
     expect(p.estado).toBe("RS");
-    expect(p.cargo).toBe("Jardineiro");
+    expect(p.cargo).toBe("Servente");
   });
 });
 
@@ -240,6 +284,7 @@ describe("conferirQuadroComContrato — avisa, não impede", () => {
   const q30 = [linha({ posto_nome: "A", quantidade: "10" }),
                linha({ posto_nome: "B", quantidade: "10" }),
                linha({ posto_nome: "C", quantidade: "10" })];
+
 
   it("quadro batendo com o contrato não gera aviso", () => {
     expect(conferirQuadroComContrato(q30, 30).aviso).toBeNull();

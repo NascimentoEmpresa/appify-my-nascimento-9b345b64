@@ -1,9 +1,17 @@
 // REGRAS DO QUADRO DE POSTOS DO CONTRATO — fonte única.
 //
-// O quadro é o que o contrato assinado exige: posto 1 = 10 jardineiros,
-// posto 2 = 10 vigilantes, posto 3 = 10 auxiliares administrativos. Dele saem
-// as 30 solicitações de vaga, cada uma já com salário, benefício, escala e
-// local — ver `contrato_quadro_gerar_vagas` na migration 20260930000238.
+// O quadro segue a MESMA cascata do Catálogo de Materiais — contrato → posto
+// → função → quantas pessoas:
+//
+//   BENTO GONÇALVES LIMPEZA 048/2026
+//     ├── BLOCO CIRURGICO  → SERVENTE DE LIMPEZA ....  4
+//     ├── LAVANDERIA       → SERVENTE DE LIMPEZA ....  2
+//     └── UPA 24 H         → SERVENTE DE LIMPEZA .... 10
+//
+// A quantidade pendura na FUNÇÃO, não no posto: um posto pode ter mais de uma
+// função, e "quantas pessoas" só faz sentido perguntado da função. Dela saem
+// as solicitações de vaga, cada uma já com salário, benefício, escala e local
+// — ver `contrato_quadro_gerar_vagas` na migration 20260930000238.
 //
 // As mesmas regras valem no banco (a RPC `contrato_quadro_salvar` repete cada
 // validação daqui). Aqui é onde elas ficam escritas uma vez só e onde os
@@ -25,6 +33,11 @@ export interface LinhaQuadroForm {
   /** UUID quando a linha já existe no banco; "" na linha nova. */
   id: string;
   posto_nome: string;
+  /** Id do posto no catálogo (sup_posto). "" quando o posto é novo. */
+  sup_posto_id: string;
+  funcao_nome: string;
+  /** Id da função no catálogo (sup_funcao). "" quando a função é nova. */
+  sup_funcao_id: string;
   cargo: string;
   quantidade: string;
   escala: string;
@@ -47,7 +60,8 @@ export interface LinhaQuadroForm {
 }
 
 export const LINHA_VAZIA: LinhaQuadroForm = {
-  id: "", posto_nome: "", cargo: "", quantidade: "1", escala: "", horario: "",
+  id: "", posto_nome: "", sup_posto_id: "", funcao_nome: "", sup_funcao_id: "",
+  cargo: "", quantidade: "1", escala: "", horario: "",
   salario: "", insalubridade_pct: "", periculosidade_pct: "", beneficios: "",
   estado: "", cidade: "", local_exato: "", data_inicio_prevista: "",
   motivo_vaga: "Admissão", req_obrigatorios: "", req_desejaveis: "",
@@ -97,6 +111,9 @@ export const prazoSuficiente = (data: string, hoje = hojeIso()): boolean =>
 export function faltamNaLinha(l: LinhaQuadroForm): string[] {
   const faltam: string[] = [];
   if (!l.posto_nome.trim()) faltam.push("Posto");
+  // A função não é detalhe: é dela que sai o enxoval de uniforme/EPI da
+  // admissão (sup_funcao_item), e é por função que se conta gente.
+  if (!l.funcao_nome.trim()) faltam.push("Função");
   if (!l.cargo.trim()) faltam.push("Cargo");
   if (paraInteiro(l.quantidade) <= 0) faltam.push("Quantidade de colaboradores");
   if (!l.escala.trim()) faltam.push("Escala");
@@ -114,6 +131,15 @@ export function faltamNaLinha(l: LinhaQuadroForm): string[] {
   return faltam;
 }
 
+/** Como a linha é chamada nas mensagens: "Posto X · Função Y", ou o número. */
+export function rotuloDaLinha(l: LinhaQuadroForm, i: number): string {
+  const p = l.posto_nome.trim();
+  const f = l.funcao_nome.trim();
+  if (p && f) return `Posto "${p}" · função "${f}"`;
+  if (p) return `Posto "${p}"`;
+  return `Posto nº ${i + 1}`;
+}
+
 /** Erro de regra (não de campo vazio) da linha, ou null. */
 export function erroDaLinha(l: LinhaQuadroForm, hoje = hojeIso()): string | null {
   if (faltamNaLinha(l).length) return null; // campo vazio é outra mensagem
@@ -123,12 +149,12 @@ export function erroDaLinha(l: LinhaQuadroForm, hoje = hojeIso()): string | null
     // `prazo.erro` já vem pronto e já diz a primeira data possível — repetir
     // a frase aqui daria duas versões do mesmo aviso para manter em dia.
     const prazo = avaliarPrazo(l.data_inicio_prevista, hoje);
-    if (!prazo.ok) return `Posto "${l.posto_nome.trim()}": ${prazo.erro}`;
+    if (!prazo.ok) return `${rotuloDaLinha(l, 0)}: ${prazo.erro}`;
   }
   const pct = paraNumero(l.insalubridade_pct);
-  if (pct < 0 || pct > 100) return `Posto "${l.posto_nome.trim()}": a insalubridade vai de 0 a 100%.`;
+  if (pct < 0 || pct > 100) return `${rotuloDaLinha(l, 0)}: a insalubridade vai de 0 a 100%.`;
   const per = paraNumero(l.periculosidade_pct);
-  if (per < 0 || per > 100) return `Posto "${l.posto_nome.trim()}": a periculosidade vai de 0 a 100%.`;
+  if (per < 0 || per > 100) return `${rotuloDaLinha(l, 0)}: a periculosidade vai de 0 a 100%.`;
   return null;
 }
 
@@ -136,6 +162,13 @@ export function erroDaLinha(l: LinhaQuadroForm, hoje = hojeIso()): string | null
 export const chavePosto = (s: string): string =>
   String(s ?? "").normalize("NFD").replace(/[̀-ͯ]/g, "")
     .replace(/[^A-Za-z0-9]/g, "").toUpperCase();
+
+/** A identidade da linha do quadro: posto + função, normalizados. */
+export const chaveLinha = (l: Pick<LinhaQuadroForm, "posto_nome" | "funcao_nome">): string => {
+  const p = chavePosto(l.posto_nome);
+  const f = chavePosto(l.funcao_nome);
+  return p && f ? `${p}|${f}` : "";
+};
 
 /**
  * O que impede de salvar o quadro inteiro, ou [] se está tudo certo.
@@ -151,30 +184,43 @@ export function errosDoQuadro(linhas: LinhaQuadroForm[], hoje = hojeIso()): stri
   linhas.forEach((l, i) => {
     const faltam = faltamNaLinha(l);
     if (faltam.length) {
-      const quem = l.posto_nome.trim() ? `Posto "${l.posto_nome.trim()}"` : `Posto nº ${i + 1}`;
-      erros.push(`${quem}: falta ${faltam.join(", ")}.`);
+      erros.push(`${rotuloDaLinha(l, i)}: falta ${faltam.join(", ")}.`);
       return;
     }
     const erro = erroDaLinha(l, hoje);
     if (erro) erros.push(erro);
   });
 
-  const vistos = new Map<string, string>();
+  // O que não pode repetir é o PAR posto+função. O mesmo posto entra várias
+  // vezes quando tem várias funções (LAVANDERIA com servente e com
+  // encarregado são duas linhas); duas linhas com o mesmo par é que deixariam
+  // sem resposta de qual delas é cada vaga.
+  const vistos = new Set<string>();
   for (const l of linhas) {
-    const k = chavePosto(l.posto_nome);
+    const k = chaveLinha(l);
     if (!k) continue;
     if (vistos.has(k)) {
-      erros.push(`O posto "${l.posto_nome.trim()}" aparece duas vezes no quadro. Cada posto entra uma vez só — se são dois blocos diferentes, dê nomes diferentes.`);
+      erros.push(`A função "${l.funcao_nome.trim()}" aparece duas vezes no posto "${l.posto_nome.trim()}". Some as quantidades numa linha só.`);
     } else {
-      vistos.set(k, l.posto_nome);
+      vistos.add(k);
     }
   }
   return erros;
 }
 
-/** Total de pessoas que o quadro declara (some todos os postos). */
+/** Total de pessoas que o quadro declara (soma todas as funções). */
 export const totalDeColaboradores = (linhas: LinhaQuadroForm[]): number =>
   linhas.reduce((s, l) => s + paraInteiro(l.quantidade), 0);
+
+/**
+ * Quantos POSTOS distintos o quadro toca.
+ *
+ * Não é `linhas.length`: uma linha é um par posto+função, e um posto com duas
+ * funções são duas linhas do mesmo posto. "3 postos" tem que bater com o que
+ * a pessoa vê na coluna Posto do Catálogo.
+ */
+export const totalDePostos = (linhas: LinhaQuadroForm[]): number =>
+  new Set(linhas.map(l => chavePosto(l.posto_nome)).filter(Boolean)).size;
 
 /** Quantas vagas a geração vai abrir — só os postos marcados para abrir. */
 export const totalDeVagas = (linhas: LinhaQuadroForm[]): number =>
@@ -189,6 +235,7 @@ export function paraPayload(linhas: LinhaQuadroForm[]) {
   return linhas.map((l, i) => ({
     id: l.id || null,
     posto_nome: l.posto_nome.trim(),
+    funcao_nome: l.funcao_nome.trim(),
     cargo: l.cargo.trim(),
     quantidade: paraInteiro(l.quantidade),
     escala: l.escala.trim(),

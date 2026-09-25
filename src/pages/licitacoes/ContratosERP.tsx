@@ -955,9 +955,11 @@ export default function ContratosERP() {
           >
             <SectionHeader n={7} title="Quadro de Postos e Vagas" />
             <div className="rounded-lg bg-blue-50 px-3 py-2 text-xs text-blue-700">
-              Declare quantas pessoas o contrato exige, por posto. Cada colaborador vira uma
-              solicitação de vaga no Recrutamento — com salário, benefícios, escala e local já
-              preenchidos — e segue o fluxo normal a partir de "Pendente Analista".
+              Declare quantas pessoas o contrato exige, por <b>posto</b> e <b>função</b> — a mesma
+              cascata do Catálogo de Materiais. Cada colaborador vira uma solicitação de vaga no
+              Recrutamento (com salário, benefícios, escala e local já preenchidos, e vinculada à
+              função, que é de onde sai o enxoval de uniforme e EPI) e segue o fluxo normal a
+              partir de "Pendente Analista".
               {!editando && " As vagas são abertas quando você salvar o contrato."}
             </div>
             <QuadroPostosContrato

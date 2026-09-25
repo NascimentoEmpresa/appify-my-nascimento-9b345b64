@@ -8,11 +8,24 @@
 -- digitadas à mão pelo encarregado, cada uma com salário, escala e benefício
 -- redigitados — que é exatamente onde a informação diverge do contrato.
 --
--- Agora o contrato declara o quadro: posto 1 = 10 jardineiros, posto 2 = 10
--- vigilantes, posto 3 = 10 auxiliares administrativos. Desse quadro saem as
--- 30 solicitações de vaga, JÁ com salário, benefício, escala, local e
--- requisitos — e elas seguem o fluxo normal (Pendente Analista → Recrutamento
--- → ...), sem atalho nenhum.
+-- Agora o contrato declara o quadro na MESMA cascata do Catálogo de
+-- Materiais — contrato → posto → função → quantas pessoas:
+--
+--   BENTO GONÇALVES LIMPEZA 048/2026
+--     ├── BLOCO CIRURGICO      → SERVENTE DE LIMPEZA ....  4 pessoas
+--     ├── LAVANDERIA           → SERVENTE DE LIMPEZA ....  2 pessoas
+--     └── UPA 24 H             → SERVENTE DE LIMPEZA .... 10 pessoas
+--
+-- A QUANTIDADE PENDURA NA FUNÇÃO, não no posto: um posto tem mais de uma
+-- função (o BLOCO CIRURGICO só tem SERVENTE DE LIMPEZA, mas a LAVANDERIA de
+-- outro contrato tem servente e encarregado), e "quantas pessoas" só faz
+-- sentido perguntado da função. É a mesma cascata que o encarregado já vê no
+-- Catálogo, e é dela que sai o enxoval de uniforme/EPI da admissão — por isso
+-- a vaga gerada leva `funcao_id`, não só `posto_id`.
+--
+-- Desse quadro saem as solicitações de vaga, JÁ com salário, benefício,
+-- escala, local e requisitos — e elas seguem o fluxo normal (Pendente
+-- Analista → Recrutamento → ...), sem atalho nenhum.
 --
 -- -------------------------------------------------------------------------
 -- POR QUE UMA TABELA NOVA, E NÃO sup_posto
@@ -83,6 +96,18 @@ CREATE TABLE IF NOT EXISTS public."CONTRATO_QUADRO_POSTO" (
   posto_nome   text NOT NULL,
   sup_posto_id uuid REFERENCES public.sup_posto(id) ON DELETE SET NULL,
 
+  -- A função dentro do posto ("SERVENTE DE LIMPEZA"). Sai de `sup_funcao`, e
+  -- é ela que carrega o enxoval de uniforme/EPI — a vaga gerada leva o
+  -- `sup_funcao_id` para que a admissão saiba o que entregar.
+  --
+  -- Também é texto além do FK, e pelo mesmo motivo do posto: contrato novo
+  -- pode declarar a função antes de ela existir no catálogo. Quando é nova,
+  -- a RPC de salvar a cria em sup_funcao E registra a alteração em
+  -- sup_cat_alteracao — ela entra no lote de aprovação do Catálogo como
+  -- qualquer função criada por lá, em vez de nascer aprovada por fora.
+  funcao_nome  text NOT NULL DEFAULT '',
+  sup_funcao_id uuid REFERENCES public.sup_funcao(id) ON DELETE SET NULL,
+
   -- O que o Recrutamento precisa para contratar. Os NOT NULL aqui são a
   -- razão de a tela ter um card de obrigatórios: vaga que chega sem salário
   -- ou sem escala volta para o encarregado e perde uma semana.
@@ -125,17 +150,50 @@ CREATE TABLE IF NOT EXISTS public."CONTRATO_QUADRO_POSTO" (
   ativo        boolean NOT NULL DEFAULT true,
   created_by   uuid REFERENCES auth.users(id),
   created_at   timestamptz NOT NULL DEFAULT now(),
-  updated_at   timestamptz NOT NULL DEFAULT now(),
-
-  -- Dois postos com o mesmo nome no mesmo contrato são o mesmo posto. Se a
-  -- operação precisa de dois blocos de jardineiro com escalas diferentes,
-  -- eles são postos diferentes e merecem nomes diferentes — senão ninguém
-  -- sabe qual dos dois a vaga #412 está repondo.
-  UNIQUE (contrato_id, posto_nome)
+  updated_at   timestamptz NOT NULL DEFAULT now()
 );
 
 CREATE INDEX IF NOT EXISTS idx_cqp_contrato ON public."CONTRATO_QUADRO_POSTO"(contrato_id, ordem);
 CREATE INDEX IF NOT EXISTS idx_cqp_sup_posto ON public."CONTRATO_QUADRO_POSTO"(sup_posto_id);
+CREATE INDEX IF NOT EXISTS idx_cqp_sup_funcao ON public."CONTRATO_QUADRO_POSTO"(sup_funcao_id);
+
+-- Compatibilidade com a primeira versão deste arquivo, que ainda não tinha a
+-- função na cascata (o quadro era só contrato → posto). Quem já rodou aquela
+-- versão tem a tabela sem as duas colunas e com o UNIQUE antigo; quem não
+-- rodou cai no CREATE TABLE acima e estes comandos não fazem nada. Reaplicar
+-- o arquivo inteiro é seguro nos dois casos — que é o ponto.
+ALTER TABLE public."CONTRATO_QUADRO_POSTO"
+  ADD COLUMN IF NOT EXISTS funcao_nome   text NOT NULL DEFAULT '',
+  ADD COLUMN IF NOT EXISTS sup_funcao_id uuid REFERENCES public.sup_funcao(id) ON DELETE SET NULL;
+
+DO $compat$
+DECLARE
+  v_antigo text;
+BEGIN
+  -- Acha o UNIQUE antigo pelo CONJUNTO de colunas, não pelo nome: o nome é
+  -- gerado pelo Postgres e muda se a tabela for recriada.
+  SELECT con.conname INTO v_antigo
+    FROM pg_constraint con
+    JOIN pg_class rel ON rel.oid = con.conrelid
+    JOIN pg_namespace ns ON ns.oid = rel.relnamespace
+   WHERE ns.nspname = 'public'
+     AND rel.relname = 'CONTRATO_QUADRO_POSTO'
+     AND con.contype = 'u'
+     AND (SELECT array_agg(att.attname ORDER BY att.attname)
+            FROM unnest(con.conkey) k
+            JOIN pg_attribute att ON att.attrelid = con.conrelid AND att.attnum = k)
+         = ARRAY['contrato_id', 'posto_nome']
+   LIMIT 1;
+
+  IF v_antigo IS NOT NULL THEN
+    EXECUTE format('ALTER TABLE public.%I DROP CONSTRAINT %I', 'CONTRATO_QUADRO_POSTO', v_antigo);
+  END IF;
+END $compat$;
+
+-- O UNIQUE novo (posto + função). IF NOT EXISTS não existe para constraint,
+-- então o índice único faz o mesmo papel e é idempotente.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_cqp_contrato_posto_funcao
+  ON public."CONTRATO_QUADRO_POSTO"(contrato_id, posto_nome, funcao_nome);
 
 COMMENT ON TABLE public."CONTRATO_QUADRO_POSTO" IS
   'Quadro de pessoal declarado pelo contrato: posto → cargo → quantidade, com salário, escala, benefícios e local. É a origem das solicitações de vaga do contrato (ver contrato_quadro_gerar_vagas). Não confundir com sup_posto, que é espelho da Planilha de Custo.';
@@ -346,6 +404,7 @@ GRANT EXECUTE ON FUNCTION public.rec_brl_txt(numeric), public.rec_pct_txt(numeri
 CREATE OR REPLACE FUNCTION public.contrato_quadro_listar(p_contrato_id uuid)
 RETURNS TABLE (
   id uuid, contrato_id uuid, posto_nome text, sup_posto_id uuid,
+  funcao_nome text, sup_funcao_id uuid,
   cargo text, quantidade int, escala text, horario text, salario numeric,
   insalubridade_pct numeric, periculosidade_pct numeric, beneficios text,
   estado text, cidade text, local_exato text, data_inicio_prevista date,
@@ -362,6 +421,7 @@ BEGIN
 
   RETURN QUERY
   SELECT q.id, q.contrato_id, q.posto_nome, q.sup_posto_id,
+         q.funcao_nome, q.sup_funcao_id,
          q.cargo, q.quantidade, q.escala, q.horario, q.salario,
          q.insalubridade_pct, q.periculosidade_pct, q.beneficios,
          q.estado, q.cidade, q.local_exato, q.data_inicio_prevista,
@@ -384,7 +444,7 @@ BEGIN
                    OR (pc.contrato_id IS NULL AND pc.empresa_id = q.empresa_id)))
     FROM public."CONTRATO_QUADRO_POSTO" q
    WHERE q.contrato_id = p_contrato_id AND q.ativo
-   ORDER BY q.ordem, q.posto_nome;
+   ORDER BY q.ordem, q.posto_nome, q.funcao_nome;
 END $fn$;
 
 REVOKE ALL ON FUNCTION public.contrato_quadro_listar(uuid) FROM PUBLIC, anon;
@@ -414,7 +474,11 @@ DECLARE
   v_id       uuid;
   v_nome     text;
   v_sup      uuid;
-  v_nomes    text[] := ARRAY[]::text[];
+  v_fnome    text;
+  v_fun      uuid;
+  v_contrato text;
+  v_autor    text;
+  v_chaves   text[] := ARRAY[]::text[];
   v_n        int := 0;
 BEGIN
   IF NOT public.can_access(auth.uid(), 'contrato_quadro_postos', 'alterar')
@@ -422,10 +486,16 @@ BEGIN
     RAISE EXCEPTION 'Sem permissão para alterar o quadro de postos do contrato.';
   END IF;
 
-  SELECT c.empresa_id INTO v_empresa FROM public.contratos c WHERE c.id = p_contrato_id;
+  SELECT c.empresa_id, c.nome INTO v_empresa, v_contrato
+    FROM public.contratos c WHERE c.id = p_contrato_id;
   IF v_empresa IS NULL THEN
     RAISE EXCEPTION 'Contrato não encontrado.';
   END IF;
+
+  -- Nome de quem está mexendo, para a linha do lote de aprovação do Catálogo
+  -- mostrar "criado por" como qualquer alteração feita lá (o
+  -- `registrarAlteracao` de useSupCatalogo.ts lê o mesmo `display_name`).
+  SELECT pr.display_name INTO v_autor FROM public.profiles pr WHERE pr.id = auth.uid();
 
   IF jsonb_typeof(coalesce(p_linhas, 'null'::jsonb)) <> 'array' THEN
     RAISE EXCEPTION 'O quadro precisa ser uma lista de postos.';
@@ -438,8 +508,12 @@ BEGIN
     IF v_nome = '' THEN
       RAISE EXCEPTION 'Posto nº %: informe o nome do posto.', v_n;
     END IF;
+    v_fnome := btrim(coalesce(v_linha->>'funcao_nome', ''));
+    IF v_fnome = '' THEN
+      RAISE EXCEPTION 'Posto "%": escolha a função. É dela que sai o enxoval de uniforme e EPI, e é por função que se conta quantas pessoas o posto precisa.', v_nome;
+    END IF;
     IF btrim(coalesce(v_linha->>'cargo', '')) = '' THEN
-      RAISE EXCEPTION 'Posto "%": informe o cargo.', v_nome;
+      RAISE EXCEPTION 'Posto "%" · função "%": informe o cargo.', v_nome, v_fnome;
     END IF;
     IF coalesce((v_linha->>'quantidade')::int, 0) <= 0 THEN
       RAISE EXCEPTION 'Posto "%": a quantidade de colaboradores precisa ser 1 ou mais.', v_nome;
@@ -463,10 +537,10 @@ BEGIN
     -- Repetido dentro do próprio envio. O UNIQUE da tabela pegaria isso, mas
     -- com a mensagem do Postgres ("duplicate key value violates...") em vez
     -- do nome do posto que a pessoa digitou duas vezes.
-    IF public.sup_norm_nome(v_nome) = ANY (v_nomes) THEN
-      RAISE EXCEPTION 'O posto "%" aparece duas vezes no quadro. Cada posto entra uma vez só — se são dois blocos diferentes, dê nomes diferentes.', v_nome;
+    IF (public.sup_norm_nome(v_nome) || '|' || public.sup_norm_nome(v_fnome)) = ANY (v_chaves) THEN
+      RAISE EXCEPTION 'A função "%" aparece duas vezes no posto "%". Some as quantidades numa linha só — duas linhas iguais deixariam sem resposta de qual delas é cada vaga.', v_fnome, v_nome;
     END IF;
-    v_nomes := v_nomes || public.sup_norm_nome(v_nome);
+    v_chaves := v_chaves || (public.sup_norm_nome(v_nome) || '|' || public.sup_norm_nome(v_fnome));
 
     -- Espelho em sup_posto. Escrita direta (a RPC é SECURITY DEFINER, e a
     -- policy de escrita de sup_posto não existe desde a 20260930000081) —
@@ -487,17 +561,51 @@ BEGIN
        WHERE id = v_sup;
     END IF;
 
+    -- A função dentro do posto. Diferente do posto, ela NÃO nasce aprovada:
+    -- função é cadastro do Suprimentos (é ela que carrega o enxoval), e o
+    -- Catálogo tem um lote de aprovação para isso desde a 20260819000001.
+    -- Criar aqui com aprovado = true seria abrir um segundo caminho que passa
+    -- por fora daquele lote — então a linha é criada exatamente como o
+    -- `criarFuncao` de useSupCatalogo.ts cria: sup_funcao (aprovado = false)
+    -- MAIS o rascunho em sup_cat_alteracao, sem o qual ela ficaria pendente
+    -- para sempre, invisível e nunca listada em lote nenhum.
+    SELECT f.id INTO v_fun FROM public.sup_funcao f
+     WHERE f.posto_id = v_sup
+       AND public.sup_norm_nome(f.nome) = public.sup_norm_nome(v_fnome)
+     LIMIT 1;
+
+    IF v_fun IS NULL THEN
+      INSERT INTO public.sup_funcao (posto_id, nome, ativo, aprovado, created_by)
+      VALUES (v_sup, v_fnome, true, false, auth.uid())
+      ON CONFLICT (posto_id, nome) DO UPDATE SET ativo = true
+      RETURNING id INTO v_fun;
+
+      INSERT INTO public.sup_cat_alteracao (
+        empresa_id, tipo_entidade, tipo_acao, alvo_id, dados, contexto,
+        descricao, status, criado_por, criado_por_nome)
+      VALUES (
+        v_empresa, 'funcao', 'criar', v_fun,
+        jsonb_build_object('nome', v_fnome, 'posto_id', v_sup),
+        jsonb_build_object('contrato', v_contrato, 'posto', v_nome, 'funcao', v_fnome),
+        format('Criar função "%s" (pelo quadro de postos do contrato)', v_fnome),
+        'RASCUNHO', auth.uid(), v_autor);
+    ELSE
+      UPDATE public.sup_funcao SET ativo = true, updated_at = now() WHERE id = v_fun;
+    END IF;
+
     v_id := NULLIF(btrim(coalesce(v_linha->>'id', '')), '')::uuid;
 
     IF v_id IS NULL THEN
       INSERT INTO public."CONTRATO_QUADRO_POSTO" (
-        contrato_id, empresa_id, posto_nome, sup_posto_id, cargo, quantidade,
+        contrato_id, empresa_id, posto_nome, sup_posto_id,
+        funcao_nome, sup_funcao_id, cargo, quantidade,
         escala, horario, salario, insalubridade_pct, periculosidade_pct,
         beneficios, estado, cidade, local_exato, data_inicio_prevista,
         motivo_vaga, req_obrigatorios, req_desejaveis, exp_minima,
         exp_minima_qual, observacao, gerar_vagas, ordem, created_by)
       VALUES (
         p_contrato_id, v_empresa, v_nome, v_sup,
+        v_fnome, v_fun,
         btrim(v_linha->>'cargo'), (v_linha->>'quantidade')::int,
         btrim(v_linha->>'escala'), NULLIF(btrim(coalesce(v_linha->>'horario', '')), ''),
         (v_linha->>'salario')::numeric,
@@ -517,8 +625,9 @@ BEGIN
       -- Reaproveita a linha desativada de mesmo nome em vez de estourar no
       -- UNIQUE: tirar um posto do quadro e recolocá-lo é rotina de
       -- implantação, e a segunda vez não pode falhar.
-      ON CONFLICT (contrato_id, posto_nome) DO UPDATE SET
-        ativo = true, sup_posto_id = EXCLUDED.sup_posto_id, cargo = EXCLUDED.cargo,
+      ON CONFLICT (contrato_id, posto_nome, funcao_nome) DO UPDATE SET
+        ativo = true, sup_posto_id = EXCLUDED.sup_posto_id,
+        sup_funcao_id = EXCLUDED.sup_funcao_id, cargo = EXCLUDED.cargo,
         quantidade = EXCLUDED.quantidade, escala = EXCLUDED.escala,
         horario = EXCLUDED.horario, salario = EXCLUDED.salario,
         insalubridade_pct = EXCLUDED.insalubridade_pct,
@@ -536,6 +645,7 @@ BEGIN
     ELSE
       UPDATE public."CONTRATO_QUADRO_POSTO" SET
         posto_nome = v_nome, sup_posto_id = v_sup,
+        funcao_nome = v_fnome, sup_funcao_id = v_fun,
         cargo = btrim(v_linha->>'cargo'), quantidade = (v_linha->>'quantidade')::int,
         escala = btrim(v_linha->>'escala'),
         horario = NULLIF(btrim(coalesce(v_linha->>'horario', '')), ''),
@@ -557,7 +667,7 @@ BEGIN
       WHERE id = v_id AND contrato_id = p_contrato_id;
 
       IF NOT FOUND THEN
-        RAISE EXCEPTION 'Posto "%" não pertence a este contrato.', v_nome;
+        RAISE EXCEPTION 'A linha do posto "%" não pertence a este contrato.', v_nome;
       END IF;
     END IF;
 
@@ -590,7 +700,7 @@ CREATE OR REPLACE FUNCTION public.contrato_quadro_gerar_vagas(
   p_contrato_id uuid,
   p_simular     boolean DEFAULT false
 )
-RETURNS TABLE (posto_nome text, criadas int, ja_existiam int, primeira_vaga bigint)
+RETURNS TABLE (posto_nome text, funcao_nome text, criadas int, ja_existiam int, primeira_vaga bigint)
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $fn$
 DECLARE
   v_q          record;
@@ -623,21 +733,21 @@ BEGIN
   -- mas no meio do laço: sairiam 12 vagas criadas e um erro que não diz de
   -- qual posto é. Aqui o erro sai antes, com o nome do posto e a data.
   FOR v_q IN
-    SELECT q.posto_nome, q.data_inicio_prevista
+    SELECT q.posto_nome, q.funcao_nome, q.data_inicio_prevista
       FROM public."CONTRATO_QUADRO_POSTO" q
      WHERE q.contrato_id = p_contrato_id AND q.ativo AND q.gerar_vagas
   LOOP
     v_dias := public.dias_uteis_entre(current_date, v_q.data_inicio_prevista);
     IF v_dias < 7 THEN
-      RAISE EXCEPTION 'Posto "%": a data prevista de início (%) tem % dia(s) útil(eis) de antecedência. A vaga precisa de no mínimo 7 dias úteis.',
-        v_q.posto_nome, to_char(v_q.data_inicio_prevista, 'DD/MM/YYYY'), v_dias;
+      RAISE EXCEPTION 'Posto "%" · função "%": a data prevista de início (%) tem % dia(s) útil(eis) de antecedência. A vaga precisa de no mínimo 7 dias úteis.',
+        v_q.posto_nome, v_q.funcao_nome, to_char(v_q.data_inicio_prevista, 'DD/MM/YYYY'), v_dias;
     END IF;
   END LOOP;
 
   FOR v_q IN
     SELECT q.* FROM public."CONTRATO_QUADRO_POSTO" q
      WHERE q.contrato_id = p_contrato_id AND q.ativo AND q.gerar_vagas
-     ORDER BY q.ordem, q.posto_nome
+     ORDER BY q.ordem, q.posto_nome, q.funcao_nome
   LOOP
     SELECT count(*)::int INTO v_ja
       FROM public."SISTEMA_RECRUTAMENTO" v WHERE v.quadro_posto_id = v_q.id;
@@ -664,7 +774,7 @@ BEGIN
           alta_rotatividade, req_obrigatorios, req_desejaveis,
           exp_minima, exp_minima_qual, observacao_importante,
           status, solicitante_nome, solicitante_cpf,
-          contrato_id, posto_id, quadro_posto_id, quadro_indice, administrativa)
+          contrato_id, posto_id, funcao_id, quadro_posto_id, quadro_indice, administrativa)
         VALUES (
           v_q.motivo_vaga, v_contrato, v_q.cargo, v_q.estado, v_q.cidade,
           1, to_char(v_q.data_inicio_prevista, 'YYYY-MM-DD'),
@@ -674,11 +784,11 @@ BEGIN
           'Não', v_q.req_obrigatorios, v_q.req_desejaveis,
           v_q.exp_minima, v_q.exp_minima_qual,
           btrim(concat_ws(E'\n',
-            format('Vaga %s de %s do posto "%s" — quadro do contrato %s.',
-                   v_i, v_q.quantidade, v_q.posto_nome, v_contrato),
+            format('Vaga %s de %s — posto "%s", função "%s" — quadro do contrato %s.',
+                   v_i, v_q.quantidade, v_q.posto_nome, v_q.funcao_nome, v_contrato),
             v_q.observacao)),
           'Pendente Analista', v_nome_user, v_email,
-          p_contrato_id, v_q.sup_posto_id, v_q.id, v_i, false)
+          p_contrato_id, v_q.sup_posto_id, v_q.sup_funcao_id, v_q.id, v_i, false)
         RETURNING id INTO v_id;
 
         v_criadas := v_criadas + 1;
@@ -689,6 +799,7 @@ BEGIN
     END IF;
 
     posto_nome    := v_q.posto_nome;
+    funcao_nome   := v_q.funcao_nome;
     criadas       := v_criadas;
     ja_existiam   := v_ja;
     primeira_vaga := v_primeira;
@@ -709,6 +820,7 @@ NOTIFY pgrst, 'reload schema';
 --   DROP FUNCTION IF EXISTS public.contrato_quadro_listar(uuid);
 --   DROP FUNCTION IF EXISTS public.rec_brl_txt(numeric), public.rec_pct_txt(numeric);
 --   DROP INDEX IF EXISTS public.uq_sr_quadro_indice;
+--   DROP INDEX IF EXISTS public.uq_cqp_contrato_posto_funcao;
 --   ALTER TABLE public."SISTEMA_RECRUTAMENTO"
 --     DROP COLUMN IF EXISTS quadro_posto_id,
 --     DROP COLUMN IF EXISTS quadro_indice;

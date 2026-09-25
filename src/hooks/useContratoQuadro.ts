@@ -12,6 +12,9 @@ export interface LinhaQuadro {
   contrato_id: string;
   posto_nome: string;
   sup_posto_id: string | null;
+  /** Função dentro do posto ("SERVENTE DE LIMPEZA") — é dela que sai o enxoval. */
+  funcao_nome: string;
+  sup_funcao_id: string | null;
   cargo: string;
   quantidade: number;
   escala: string;
@@ -43,6 +46,7 @@ export interface LinhaQuadro {
 /** O que a geração de vagas devolve, por posto. */
 export interface ResultadoGeracao {
   posto_nome: string;
+  funcao_nome: string;
   criadas: number;
   ja_existiam: number;
   primeira_vaga: number | null;
@@ -78,10 +82,14 @@ export function useContratoQuadroSalvar() {
     },
     onSuccess: (_n, v) => {
       qc.invalidateQueries({ queryKey: ["contrato_quadro", v.contratoId] });
-      // O quadro escreve em sup_posto (o espelho do posto). A cascata do
+      // O quadro escreve em sup_posto e sup_funcao (o espelho da cascata). O
       // Catálogo de Materiais e o vínculo da vaga leem de lá — sem isto o
-      // posto novo só apareceria depois de recarregar a página.
+      // posto/função novo só apareceria depois de recarregar a página.
       qc.invalidateQueries({ queryKey: ["sup_posto"] });
+      qc.invalidateQueries({ queryKey: ["sup_funcao"] });
+      // Função nova entra no lote de aprovação do Catálogo (sup_cat_alteracao),
+      // então a lista de rascunhos de lá também muda.
+      qc.invalidateQueries({ queryKey: ["sup_cat_alteracao"] });
     },
     onError: (e: Error) =>
       toast({ title: "Erro ao salvar o quadro de postos", description: e.message, variant: "destructive" }),
