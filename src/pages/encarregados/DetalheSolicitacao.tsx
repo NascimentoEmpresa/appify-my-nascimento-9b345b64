@@ -317,10 +317,22 @@ export function DetalheSolicitacao({ tipo, id, titulo, status, onFechar, onRefaz
           <div style={{ marginBottom: 14 }}><AvisoCancelada solicitacao={ficha as { status: string; cancelado_por?: string | null; cancelado_em?: string | null; cancelado_motivo?: string | null }} /></div>
         )}
 
+        {/* Férias canceladas pelo RH (24/09/2026): motivo em destaque, e o
+            refazer logo abaixo reenvia para aprovação. */}
+        {tipo === "Férias" && ficha?.status === "Cancelada" && !!ficha.cancelada_pelo_rh && (
+          <div style={{ marginBottom: 12, padding: "10px 14px", borderRadius: 12, border: "1px solid #fecaca", background: "#fef2f2" }}>
+            <div style={{ fontSize: 12, fontWeight: 800, color: "#b91c1c", textTransform: "uppercase", letterSpacing: ".4px" }}>Férias canceladas pelo RH</div>
+            <div style={{ fontSize: 14, color: "#7f1d1d", marginTop: 3 }}>{String(ficha.motivo_cancelamento ?? "—")}</div>
+            <div style={{ fontSize: 12, color: "#991b1b", marginTop: 3 }}>
+              {String(ficha.cancelada_por ?? "RH")}{ficha.cancelada_em ? ` · ${new Date(String(ficha.cancelada_em)).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" })}` : ""}
+            </div>
+          </div>
+        )}
+
         {/* ── Refazer (Férias) ── */}
         {tipo === "Férias" && onRefazer && ficha && (() => {
-          const regra = podeRefazerFerias({ criado_em: ficha.criado_em as string | null, status: ficha.status as string | null });
-          const dias = diasRestantesParaRefazer(ficha.criado_em as string | null);
+          const regra = podeRefazerFerias({ criado_em: ficha.criado_em as string | null, status: ficha.status as string | null, cancelada_pelo_rh: !!ficha.cancelada_pelo_rh });
+          const dias = ficha.cancelada_pelo_rh ? 0 : diasRestantesParaRefazer(ficha.criado_em as string | null);
           return (
             <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", marginBottom: 14, padding: "10px 14px", borderRadius: 12, border: `1px solid ${regra.ok ? "#c7d2fe" : "#e2e8f0"}`, background: regra.ok ? "#eef2ff" : "#f8fafc" }}>
               <div style={{ flex: 1, minWidth: 220, fontSize: 13.5, color: regra.ok ? "#3730a3" : "#64748b", lineHeight: 1.5 }}>

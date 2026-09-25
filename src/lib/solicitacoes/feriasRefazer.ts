@@ -3,7 +3,9 @@
 // O encarregado corrige a solicitação (saída, dias, abono, observações) e
 // ela volta pra fila do RH, que avalia e aprova ou reprova de novo. Vale
 // por UMA SEMANA a partir da criação; depois disso não dá mais. Cancelada
-// não se refaz.
+// não se refaz — EXCETO a cancelada PELO RH (24/09/2026, mig 20260930000236):
+// essa pode ser refeita a qualquer momento, porque o cancelamento costuma vir
+// semanas depois da aprovação.
 //
 // A mesma regra mora no trigger ferias_registrar_historico (mig
 // 20260930000168): a tela explica e esconde, o banco recusa. Sem React e
@@ -21,10 +23,11 @@ export function diasRestantesParaRefazer(criadoEm?: string | null, agora: number
 }
 
 export function podeRefazerFerias(
-  s: { criado_em?: string | null; status?: string | null },
+  s: { criado_em?: string | null; status?: string | null; cancelada_pelo_rh?: boolean | null },
   agora: number = Date.now(),
 ): { ok: boolean; motivo: string } {
   const status = String(s.status ?? "").trim();
+  if (status === "Cancelada" && s.cancelada_pelo_rh) return { ok: true, motivo: "" };
   if (status === "Cancelada") return { ok: false, motivo: "Solicitação cancelada não pode ser refeita." };
   const t = s.criado_em ? +new Date(s.criado_em) : NaN;
   if (isNaN(t)) return { ok: false, motivo: "Não foi possível conferir a data da solicitação." };

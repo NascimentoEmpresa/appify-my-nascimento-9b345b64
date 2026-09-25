@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
-import { Building2, Mail, Search, UserCheck, UserX, Users } from "lucide-react";
+import { Building2, Mail, Search, UserCheck, UserMinus, UserX, Users } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { AcessoGate } from "@/components/auth/AcessoGate";
 import { Card } from "@/components/ui/card";
@@ -16,8 +16,9 @@ import { Paginacao, StatusAlunoBadge, TrnCarregando, TrnEstilo, TrnHero, TrnKpi,
 //
 // Substitui o "Adicionar novo" do membox. Aqui aluno É colaborador: a
 // lista vem do cadastro da Senior (EMPREGADOS) e entra sozinha na admissão
-// (trigger trg_trn_aluno_do_empregado, migrations 193/194). Quem está
-// "Trabalhando" é ativo; afastado ou demitido é inativo. Não se cadastra
+// (trigger trg_trn_aluno_do_empregado, migrations 193/194). Desde a 237
+// (24/09/2026) o status vem do ACESSO: ativo = já entrou nos treinamentos,
+// inativo = ainda não entrou, demitido = desligado na Senior. Não se cadastra
 // aluno à mão nem se sincroniza à mão: o gatilho em EMPREGADOS faz tudo
 // (a RPC trn_sincronizar_alunos fica pra uso interno/manutenção).
 //
@@ -67,7 +68,7 @@ export default function AlunosGerenciar() {
 
   const [busca, setBusca] = useState("");
   const buscaLenta = useDebounce(busca);
-  const [fStatus, setFStatus] = useState<"" | "ativo" | "inativo" | "bloqueado" | "pendente">("");
+  const [fStatus, setFStatus] = useState<"" | StatusAluno>("");
   const [fSituacao, setFSituacao] = useState("");
   const [fContratos, setFContratos] = useState<string[]>([]);
   const [pagina, setPagina] = useState(1);
@@ -105,16 +106,17 @@ export default function AlunosGerenciar() {
         <TrnHero
           eyebrow="Treinamentos › Alunos"
           titulo="Gerenciar alunos"
-          texto="Aluno é colaborador: a lista vem do cadastro da Senior e acompanha sozinha a admissão, o afastamento e a demissão. Quem está Trabalhando é ativo; afastado ou demitido fica inativo."
-          pilulas={resumo ? [`${resumo.ativos} ativo(s)`, `${resumo.inativos} inativo(s)`, resumo.ultima_sync ? `Cadastro atualizado em ${fmtDataHora(resumo.ultima_sync)}` : "Cadastro ainda não lido"] : undefined}
+          texto="Aluno é colaborador: a lista vem do cadastro da Senior e acompanha sozinha a admissão, o afastamento e a demissão. Ativo é quem já acessou os treinamentos; inativo é quem ainda não entrou; demitido fica só como histórico."
+          pilulas={resumo ? [`${resumo.ativos} já acessaram`, `${resumo.inativos} nunca acessaram`, resumo.ultima_sync ? `Cadastro atualizado em ${fmtDataHora(resumo.ultima_sync)}` : "Cadastro ainda não lido"] : undefined}
           acoes={<Link to="/app/treinamentos/alunos"><Users className="h-4 w-4" /> Todos os alunos</Link>}
         />
 
         <div className="trn-kpis">
-          <TrnKpi rotulo="Ativos" valor={resumo?.ativos ?? "…"} sub="Situação Trabalhando" icone={<UserCheck className="h-5 w-5" />} />
-          <TrnKpi rotulo="Inativos" valor={resumo?.inativos ?? "…"} sub={resumo ? `${resumo.afastados} afastado(s) · ${resumo.demitidos} demitido(s)` : undefined} icone={<UserX className="h-5 w-5" />} />
+          <TrnKpi rotulo="Ativos" valor={resumo?.ativos ?? "…"} sub="já acessaram os treinamentos" icone={<UserCheck className="h-5 w-5" />} />
+          <TrnKpi rotulo="Inativos" valor={resumo?.inativos ?? "…"} sub={resumo ? `nunca acessaram · ${resumo.bloqueados} bloqueado(s)` : undefined} icone={<UserX className="h-5 w-5" />} />
+          <TrnKpi rotulo="Demitidos" valor={resumo?.demitidos ?? "…"} sub={resumo ? `histórico · ${resumo.afastados} afastado(s) hoje` : undefined} icone={<UserMinus className="h-5 w-5" />} />
           <TrnKpi rotulo="Contratos" valor={resumo?.contratos.length ?? "…"} sub="com colaborador na plataforma" icone={<Building2 className="h-5 w-5" />} />
-          <TrnKpi rotulo="Sem e-mail no cadastro" valor={resumo?.sem_email_ativos ?? "…"} sub="só entre os ativos (Trabalhando)" icone={<Mail className="h-5 w-5" />} />
+          <TrnKpi rotulo="Sem e-mail no cadastro" valor={resumo?.sem_email_ativos ?? "…"} sub="entre quem não foi demitido" icone={<Mail className="h-5 w-5" />} />
         </div>
 
         <div className="trn-card mb-3">
@@ -127,11 +129,11 @@ export default function AlunosGerenciar() {
             <Select value={fStatus || "__"} onValueChange={(v) => setFStatus(v === "__" ? "" : (v as typeof fStatus))}>
               <SelectTrigger className="w-44"><SelectValue placeholder="Status" /></SelectTrigger>
               <SelectContent>
-                <SelectItem value="__">Ativos e inativos</SelectItem>
-                <SelectItem value="ativo">Ativos</SelectItem>
-                <SelectItem value="inativo">Inativos</SelectItem>
+                <SelectItem value="__">Todos os status</SelectItem>
+                <SelectItem value="ativo">Ativos (já acessaram)</SelectItem>
+                <SelectItem value="inativo">Inativos (nunca acessaram)</SelectItem>
                 <SelectItem value="bloqueado">Bloqueados</SelectItem>
-                <SelectItem value="pendente">Pendentes</SelectItem>
+                <SelectItem value="demitido">Demitidos</SelectItem>
               </SelectContent>
             </Select>
             <Select value={fSituacao || "__"} onValueChange={(v) => setFSituacao(v === "__" ? "" : v)}>

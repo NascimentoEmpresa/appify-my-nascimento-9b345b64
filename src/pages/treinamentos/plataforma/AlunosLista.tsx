@@ -17,7 +17,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSepara
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useQuery } from "@tanstack/react-query";
 import { useTrnAcaoMassa, useTrnAlunos, useTrnCursos, useTrnExcluirAluno } from "@/hooks/useTreinamentosPlataforma";
-import { MENU, ROTULO_STATUS_ALUNO, type AlunoLista, type StatusAluno } from "./tipos";
+import { DESCRICAO_STATUS_ALUNO, MENU, ROTULO_STATUS_ALUNO, type AlunoLista, type StatusAluno } from "./tipos";
 import { Paginacao, StatusAlunoBadge, TrnCarregando, TrnEstilo, TrnHero, TrnVazio, fmtData, fmtDataHora, usePaginacao } from "./ui";
 
 // =====================================================================
@@ -46,7 +46,6 @@ const ACOES_MASSA: { v: string; rotulo: string; param?: "curso" | "texto" | "dat
   { v: "adicionar_curso", rotulo: "Adicionar alunos em curso", param: "curso" },
   { v: "remover_curso", rotulo: "Remover alunos de curso", param: "curso" },
   { v: "observacao", rotulo: "Aplicar observação nos alunos", param: "texto" },
-  { v: "ativar", rotulo: "Ativar alunos pendentes" },
   { v: "bloquear", rotulo: "Bloquear alunos" },
   { v: "desbloquear", rotulo: "Desbloquear alunos" },
   { v: "data_matricula", rotulo: "Alterar data de matrícula", param: "data" },
@@ -64,11 +63,12 @@ export default function AlunosLista() {
   const [busca, setBusca] = useState("");
   const [mostrarFiltros, setMostrarFiltros] = useState(false);
   const [fCurso, setFCurso] = useState("");
-  // "" = padrão: sem os inativos (demitido/afastado). "todos" e "inativo"
-  // são os únicos que fazem o banco mandar os inativos (22/09/2026 — a
-  // lista com os 13 mil levava ~10 s).
+  // "" = padrão: sem os DEMITIDOS (os ~10,8 mil que deixavam a lista com
+  // ~10 s — 22/09/2026). "todos" e "demitido" são os únicos que fazem o
+  // banco mandar os demitidos. Até a mig 237 o corte era por "inativo",
+  // que então queria dizer demitido/afastado; hoje inativo é "nunca acessou".
   const [fStatus, setFStatus] = useState<"" | "todos" | StatusAluno>("");
-  const incluirInativos = fStatus === "todos" || fStatus === "inativo";
+  const incluirInativos = fStatus === "todos" || fStatus === "demitido";
   const { data: alunos = [], isLoading } = useTrnAlunos(incluirInativos);
   const [fExpira, setFExpira] = useState<"" | "vitalicio" | "expira" | "expirado">("");
   const [colunas, setColunas] = useState<Set<ColunaOpcional>>(new Set(COLUNAS.filter((c) => c.padrao).map((c) => c.k)));
@@ -135,7 +135,7 @@ export default function AlunosLista() {
   const [mSoAtivos, setMSoAtivos] = useState(true);
   const [mCargos, setMCargos] = useState<string[]>([]);
   const [mBuscaCargo, setMBuscaCargo] = useState("");
-  const [mStatus, setMStatus] = useState<"ativo" | "inativo" | "bloqueado" | "pendente">("ativo");
+  const [mStatus, setMStatus] = useState<StatusAluno>("inativo");
   const [mAcao, setMAcao] = useState("");
   const [mParam, setMParam] = useState("");
   const [mCursos, setMCursos] = useState<string[]>([]);
@@ -149,7 +149,7 @@ export default function AlunosLista() {
     queryFn: async () => {
       const { data, error } = await sb.rpc("trn_alunos_recorte");
       if (error) throw error;
-      return (data ?? []) as { id: string; contrato: string | null; cargo: string | null; status: string }[];
+      return (data ?? []) as { id: string; contrato: string | null; cargo: string | null; status: string; situacao: string | null }[];
     },
   });
   const contratosDoCadastro = useMemo(() => {
@@ -157,7 +157,9 @@ export default function AlunosLista() {
     for (const a of cadastro) {
       if (!a.contrato) continue;
       const x = m.get(a.contrato) ?? { total: 0, ativos: 0 };
-      x.total++; if (a.status === "ativo") x.ativos++;
+      // "Ativos" aqui é quem está Trabalhando na Senior — é o recorte que o
+      // RH pensa ao escolher contrato, não quem já acessou (status).
+      x.total++; if (a.situacao === "Trabalhando") x.ativos++;
       m.set(a.contrato, x);
     }
     return [...m.entries()].map(([nome, n]) => ({ nome, ...n })).sort((x, y) => x.nome.localeCompare(y.nome, "pt-BR"));
@@ -168,7 +170,7 @@ export default function AlunosLista() {
   const cargosDoCadastro = useMemo(() => {
     const m = new Map<string, number>();
     for (const a of cadastro) {
-      if (!a.cargo || a.status !== "ativo") continue;
+      if (!a.cargo || a.situacao !== "Trabalhando") continue;
       m.set(a.cargo, (m.get(a.cargo) ?? 0) + 1);
     }
     return [...m.entries()].map(([nome, n]) => ({ nome, n })).sort((x, y) => x.nome.localeCompare(y.nome, "pt-BR"));
@@ -176,8 +178,8 @@ export default function AlunosLista() {
   /** Os alunos que o recorte alcança — mostrado antes de aplicar. */
   const alvoRecorte = useMemo<string[] | null>(() => {
     if (mFiltro === "selecionados") return [...selecionados];
-    if (mFiltro === "contrato") return cadastro.filter((a) => a.contrato && mContratos.includes(a.contrato) && (!mSoAtivos || a.status === "ativo")).map((a) => a.id);
-    if (mFiltro === "cargo") return cadastro.filter((a) => a.cargo && mCargos.includes(a.cargo) && a.status === "ativo").map((a) => a.id);
+    if (mFiltro === "contrato") return cadastro.filter((a) => a.contrato && mContratos.includes(a.contrato) && (!mSoAtivos || a.situacao === "Trabalhando")).map((a) => a.id);
+    if (mFiltro === "cargo") return cadastro.filter((a) => a.cargo && mCargos.includes(a.cargo) && a.situacao === "Trabalhando").map((a) => a.id);
     if (mFiltro === "status") return cadastro.filter((a) => a.status === mStatus).map((a) => a.id);
     return null; // todos: a RPC resolve
   }, [mFiltro, selecionados, cadastro, mContratos, mSoAtivos, mCargos, mStatus]);
@@ -231,7 +233,7 @@ export default function AlunosLista() {
       <AcessoGate menu={MENU.alunos} acao="visualizar" fallback={<Card className="p-6 text-sm text-muted-foreground">Você não tem liberação para ver os alunos.</Card>}>
         <TrnHero
           titulo="Todos os alunos"
-          texto={`${alunos.length} aluno(s) ${incluirInativos ? "na plataforma, com os inativos" : "sem os inativos (demitidos/afastados só aparecem pelo filtro de status)"}. Busque, filtre por curso/status e aplique ações em massa.`}
+          texto={`${alunos.length} aluno(s) ${incluirInativos ? "na plataforma, com os demitidos" : "sem os demitidos (eles só aparecem pelo filtro de status)"}. Busque, filtre por curso/status e aplique ações em massa.`}
           acoes={<>
             <button className="sec" onClick={exportar}><Download className="h-4 w-4" /> Exportar lista</button>
             <AcessoGate menu={MENU.alunos} acao="alterar">
@@ -270,9 +272,9 @@ export default function AlunosLista() {
               <Select value={fStatus || "__"} onValueChange={(v) => setFStatus(v === "__" ? "" : (v as "todos" | StatusAluno))}>
                 <SelectTrigger><SelectValue placeholder="Status" /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="__">Sem inativos (padrão)</SelectItem>
-                  <SelectItem value="todos">Todos, com inativos/demitidos</SelectItem>
-                  {(Object.keys(ROTULO_STATUS_ALUNO) as StatusAluno[]).map((s) => <SelectItem key={s} value={s}>{ROTULO_STATUS_ALUNO[s]}{s === "inativo" ? " (demitidos/afastados)" : ""}</SelectItem>)}
+                  <SelectItem value="__">Sem demitidos (padrão)</SelectItem>
+                  <SelectItem value="todos">Todos, com demitidos</SelectItem>
+                  {(Object.keys(ROTULO_STATUS_ALUNO) as StatusAluno[]).map((s) => <SelectItem key={s} value={s}>{ROTULO_STATUS_ALUNO[s]} ({DESCRICAO_STATUS_ALUNO[s]})</SelectItem>)}
                 </SelectContent>
               </Select>
               <Select value={fExpira || "__"} onValueChange={(v) => setFExpira(v === "__" ? "" : (v as typeof fExpira))}>
@@ -363,7 +365,7 @@ export default function AlunosLista() {
                   <SelectContent>
                     <SelectItem value="contrato">Contrato (todo o pessoal do contrato)</SelectItem>
                     <SelectItem value="cargo">Cargo (todo mundo com esse cargo)</SelectItem>
-                    <SelectItem value="status">Status do aluno (ativos, inativos…)</SelectItem>
+                    <SelectItem value="status">Status do aluno (já acessou, nunca acessou…)</SelectItem>
                     <SelectItem value="selecionados">Alunos selecionados na lista ({selecionados.size})</SelectItem>
                     <SelectItem value="todos">Todos os alunos da plataforma (curso não vai para demitidos)</SelectItem>
                   </SelectContent>
@@ -381,13 +383,13 @@ export default function AlunosLista() {
                         <label key={c.nome} className={`flex cursor-pointer items-center gap-2 rounded px-2 py-1 text-xs ${on ? "bg-primary/10" : "hover:bg-muted"}`}>
                           <Checkbox checked={on} onCheckedChange={() => setMContratos((l) => on ? l.filter((x) => x !== c.nome) : [...l, c.nome])} />
                           <span className="flex-1">{c.nome}</span>
-                          <span className="text-muted-foreground">{c.ativos} ativos · {c.total} total</span>
+                          <span className="text-muted-foreground">{c.ativos} trabalhando · {c.total} total</span>
                         </label>
                       );
                     })}
                   </div>
                   <label className="mt-2 flex items-center gap-2 text-xs">
-                    <Checkbox checked={mSoAtivos} onCheckedChange={(v) => setMSoAtivos(v === true)} /> Só quem está Trabalhando (ativos)
+                    <Checkbox checked={mSoAtivos} onCheckedChange={(v) => setMSoAtivos(v === true)} /> Só quem está Trabalhando na Senior
                   </label>
                 </div>
               )}
@@ -404,7 +406,7 @@ export default function AlunosLista() {
                         <label key={c.nome} className={`flex cursor-pointer items-center gap-2 rounded px-2 py-1 text-xs ${on ? "bg-primary/10" : "hover:bg-muted"}`}>
                           <Checkbox checked={on} onCheckedChange={() => setMCargos((l) => on ? l.filter((x) => x !== c.nome) : [...l, c.nome])} />
                           <span className="flex-1">{c.nome}</span>
-                          <span className="text-muted-foreground">{c.n} ativo(s)</span>
+                          <span className="text-muted-foreground">{c.n} trabalhando</span>
                         </label>
                       );
                     })}
@@ -415,10 +417,10 @@ export default function AlunosLista() {
                 <Select value={mStatus} onValueChange={(v) => setMStatus(v as typeof mStatus)}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="ativo">Ativos (Trabalhando)</SelectItem>
-                    <SelectItem value="inativo">Inativos (afastados e demitidos)</SelectItem>
+                    <SelectItem value="inativo">Inativos (nunca acessaram)</SelectItem>
+                    <SelectItem value="ativo">Ativos (já acessaram)</SelectItem>
                     <SelectItem value="bloqueado">Bloqueados</SelectItem>
-                    <SelectItem value="pendente">Pendentes</SelectItem>
+                    <SelectItem value="demitido">Demitidos</SelectItem>
                   </SelectContent>
                 </Select>
               )}
