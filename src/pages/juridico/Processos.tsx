@@ -81,8 +81,6 @@ interface Processo {
   data_entrada_reclamatoria: string; tipo_audiencia: string; modalidade_audiencia: string; audiencias: Audiencia[];
   // Recurso da condenação
   vai_recorrer: string; valor_custas_recursais: number; valor_seguro_garantia: number;
-  // Depósito recursal — do PROCESSO desde 25/09/2026 (ver salvar()).
-  valor_deposito_recursal: number;
   // Perícia médica
   houve_pericia_medica: string; valor_perito_judicial: number; valor_assistente_tecnico: number;
   // Propostas fora de audiência ("no decorrer do processo")
