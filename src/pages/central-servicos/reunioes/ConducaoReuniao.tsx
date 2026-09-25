@@ -27,10 +27,10 @@ export default function ConducaoReuniao() {
   const [encerrando, setEncerrando] = useState(false);
 
   const {
-    reuniao, isLoading, pauta, respostas, convidados, decisoesAcoes, assuntosForaPauta, pautaAnexos,
+    reuniao, isLoading, pauta, respostas, convidados, decisoesAcoes, acoesPlanoDisponiveis, carregandoAcoesPlano, assuntosForaPauta, pautaAnexos,
     iniciarReuniao, encerrarReuniao, atualizarPautaItem, salvarChecklistConducaoItem, salvarResposta,
     uploadPautaAnexo, downloadAnexo, removerPautaAnexo,
-    marcarPresenca, criarDecisaoAcao, criarAcaoPlanoAcao, atualizarDecisaoAcao, removerDecisaoAcao, criarAssuntoForaPauta,
+    marcarPresenca, criarDecisaoAcao, criarAcaoPlanoAcao, vincularAcaoPlanoAcao, atualizarDecisaoAcao, removerDecisaoAcao, criarAssuntoForaPauta,
     marcarAssuntoForaPautaConcluido,
   } = useReuniaoDetalhe(id);
 
@@ -123,6 +123,8 @@ export default function ConducaoReuniao() {
               pauta={pauta}
               respostas={respostas}
               decisoesAcoes={decisoesAcoes}
+              acoesPlanoDisponiveis={acoesPlanoDisponiveis}
+              carregandoAcoesPlano={carregandoAcoesPlano}
               usuarios={usuarios}
               setorPadrao={reuniao.setor_responsavel}
               onAtualizarNatureza={(pautaId, natureza) => atualizarPautaItem(pautaId, { natureza })}
@@ -135,6 +137,7 @@ export default function ConducaoReuniao() {
               onSalvarResposta={salvarResposta}
               onCriarDecisaoAcao={criarDecisaoAcao}
               onCriarAcaoPlanoAcao={criarAcaoPlanoAcao}
+              onVincularAcaoPlanoAcao={vincularAcaoPlanoAcao}
               onAtualizarDecisaoAcao={atualizarDecisaoAcao}
               onRemoverDecisaoAcao={removerDecisaoAcao}
               focoPautaId={focoPautaId}
