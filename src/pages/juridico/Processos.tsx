@@ -81,6 +81,8 @@ interface Processo {
   data_entrada_reclamatoria: string; tipo_audiencia: string; modalidade_audiencia: string; audiencias: Audiencia[];
   // Recurso da condenação
   vai_recorrer: string; valor_custas_recursais: number; valor_seguro_garantia: number;
+  // Depósito recursal — do PROCESSO desde 25/09/2026 (ver salvar()).
+  valor_deposito_recursal: number;
   // Perícia médica
   houve_pericia_medica: string; valor_perito_judicial: number; valor_assistente_tecnico: number;
   // Propostas fora de audiência ("no decorrer do processo")
@@ -397,7 +399,7 @@ const ehSemMotivo = (p: Processo) => SEM_MOTIVO.includes((p.motivo_items[0]?.mot
 const FORM_RESET = () => ({
   numero_processo: "", reclamante: "", reclamada: "", status: "EM ANDAMENTO", comarca: "", municipio_origem: "", data_entrada_reclamatoria: "", contrato: "", reclamante_vinculado_cpf: "", status_sentenca: "", status_recursos: "", houve_acordo: "Não", motivo_acordo: "", havera_pericia: "Não", local_pericia: "", data_pericia: "", hora_pericia: "", motivos_outros_custos: "",
   // Recurso da condenação
-  vai_recorrer: "Não", valor_custas_recursais: 0, valor_seguro_garantia: 0,
+  vai_recorrer: "Não", valor_custas_recursais: 0, valor_seguro_garantia: 0, valor_deposito_recursal: 0,
   // Perícia médica
   houve_pericia_medica: "Não", valor_perito_judicial: 0, valor_assistente_tecnico: 0,
   // Tipo (SIS-2026-0488). As partes de "outros" ficam em autor/reu (estado à parte).
@@ -694,6 +696,7 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
     contratoManual.current = !!String(p.contrato ?? "").trim();
     setForm({ numero_processo: p.numero_processo, reclamante: p.reclamante, reclamada: p.reclamada, status: p.status, comarca: p.comarca, municipio_origem: p.municipio_origem, data_entrada_reclamatoria: (p.data_entrada_reclamatoria || "").slice(0, 10), contrato: p.contrato, reclamante_vinculado_cpf: p.reclamante_vinculado_cpf || "", status_sentenca: p.status_sentenca || "", status_recursos: p.status_recursos || "", houve_acordo: p.houve_acordo || "Não", motivo_acordo: p.motivo_acordo || "", havera_pericia: p.havera_pericia || "Não", local_pericia: p.local_pericia || "", data_pericia: (p.data_pericia || "").slice(0, 10), hora_pericia: (p.hora_pericia || "").slice(0, 5), motivos_outros_custos: p.motivos_outros_custos || "",
       vai_recorrer: p.vai_recorrer || "Não", valor_custas_recursais: p.valor_custas_recursais || 0, valor_seguro_garantia: p.valor_seguro_garantia || 0,
+      valor_deposito_recursal: p.valor_deposito_recursal || 0,
       houve_pericia_medica: p.houve_pericia_medica || "Não", valor_perito_judicial: p.valor_perito_judicial || 0, valor_assistente_tecnico: p.valor_assistente_tecnico || 0,
       tipo_processo: p.tipo_processo, natureza_acao: p.natureza_acao || "" });
     setParteAutor({ tipo: (p.autor_tipo || "") as TipoParte | "", nome: p.autor_nome || "", documento: p.autor_documento || "" });
@@ -755,7 +758,11 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
       reu_tipo: outros ? parteReu.tipo : null, reu_nome: outros ? parteReu.nome.trim() : null, reu_documento: outros ? (formatarDocumento(parteReu.documento) || null) : null,
       status: form.status, ano_processo: ano, motivo_ordem: idx + 1, id_sequencial: idSequencial,
       valor_pedidos: m.valor_pedidos || 0, valor_acordo: m.valor_acordo || 0, valor_sentenca: m.valor_sentenca || 0, valor_final: m.valor_final || 0,
-      valor_outros_custos: m.valor_outros_custos || 0, valor_deposito_recursal: m.valor_deposito_recursal || 0, valor_custas_processuais: m.valor_custas_processuais || 0,
+      // Depósito recursal (25/09/2026): um valor do PROCESSO, digitado no
+      // bloco Recurso — gravado SÓ na 1ª linha de motivo, zero nas outras.
+      // Assim a coluna continua somável (agrupar(), custo final, exportação e
+      // dashboards somam entre as linhas) sem multiplicar pelo nº de motivos.
+      valor_outros_custos: m.valor_outros_custos || 0, valor_deposito_recursal: idx === 0 ? (form.valor_deposito_recursal || 0) : 0, valor_custas_processuais: m.valor_custas_processuais || 0,
       houve_acordo: form.houve_acordo || (m.valor_acordo > 0 ? "Sim" : "Não"), comarca: form.comarca.trim() || null, municipio_origem: form.municipio_origem.trim() || null,
       contrato: form.contrato.trim() || null, data_entrada_reclamatoria: dataEntrada, primeira_audiencia: primeira, data_primeira_audiencia: primeira,
       reclamante_vinculado_cpf: outros ? null : (form.reclamante_vinculado_cpf || null),
@@ -849,11 +856,6 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
   const motivosAParteDistintos = useMemo(
     () => [...new Set(processos.flatMap(p => (p.valores_a_parte || []).map(v => v.motivo)).filter(Boolean))].sort(), [processos]);
 
-  // Depósito recursal continua lançado POR MOTIVO (decisão do Pablo): a aba de
-  // recurso mostra a soma, em leitura, para não haver dois lugares somando a
-  // mesma coisa no custo final.
-  const depositoRecursalTotal = useMemo(
-    () => motivos.reduce((s, m) => s + toFloat(m.valor_deposito_recursal), 0), [motivos]);
 
   // Laranja no "pendente de documentação" porque ele é o único que cobra
   // AÇÃO de alguém — os outros três descrevem em que pé o processo está.
@@ -1415,7 +1417,7 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
               </div>
             </>)}
 
-            {sel.vai_recorrer === "Sim" && (<>
+            {(sel.vai_recorrer === "Sim" || sel.valor_deposito_recursal > 0) && (<>
               <div style={{ fontSize: 11, fontWeight: 800, color: "#0f3171", textTransform: "uppercase", letterSpacing: ".4px", marginBottom: 6 }}>Recurso</div>
               <div style={{ marginBottom: 14, display: "flex", gap: 8, flexWrap: "wrap" }}>
                 {[["Custas recursais", sel.valor_custas_recursais], ["Seguro garantia", sel.valor_seguro_garantia], ["Depósito recursal", sel.valor_deposito_recursal]].map(([l, v]: [string, number]) => (
@@ -1620,6 +1622,14 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
                   {["Não", "Sim"].map(o => <option key={o}>{o}</option>)}
                 </select>
               </div>
+              {/* Depósito recursal (25/09/2026): era lançado por motivo e aqui
+                  só aparecia a soma, sem editar; virou campo do processo. Fica
+                  visível mesmo com "Não" — há processo com depósito gravado e
+                  "Não" marcado, e esconder o campo apagaria o valor ao salvar. */}
+              <div className="jpr-fg">
+                <label>Depósito recursal (R$)</label>
+                <MoedaInput value={form.valor_deposito_recursal} onChange={n => setForm(v => ({ ...v, valor_deposito_recursal: n }))} />
+              </div>
             </div>
             {form.vai_recorrer === "Sim" && (<>
               <div className="jpr-grid2" style={{ marginTop: 16 }}>
@@ -1631,15 +1641,6 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
                   <label>Seguro garantia (R$)</label>
                   <MoedaInput value={form.valor_seguro_garantia} onChange={n => setForm(v => ({ ...v, valor_seguro_garantia: n }))} />
                 </div>
-              </div>
-              {/* Depósito recursal é lançado por motivo, lá embaixo. Aqui vai só
-                  o total, em leitura: dois campos editáveis para o mesmo dinheiro
-                  entrariam duas vezes no custo final. */}
-              <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 8, flexWrap: "wrap", background: "#f8fafc", border: "1px solid #eef2f7", borderRadius: 10, padding: "10px 14px", marginTop: 16 }}>
-                <span style={{ fontSize: 12.5, color: "#64748b" }}>
-                  Depósito recursal <b style={{ color: "#0f172a" }}>{money(depositoRecursalTotal)}</b>
-                </span>
-                <span style={{ fontSize: 11.5, color: "#94a3b8" }}>lançado por motivo, em “Motivos e valores”</span>
               </div>
             </>)}
             </div>
