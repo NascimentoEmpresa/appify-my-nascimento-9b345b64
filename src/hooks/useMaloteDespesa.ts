@@ -49,7 +49,10 @@ export type TipoEvento =
   // estar dentro da tolerância de variação da cotação (e sem troca de
   // contrato no Rateio) — distinto de 'aprovacao_nivel' pelo mesmo motivo
   // de 'ajuste_administrativo': não foi um clique real de aprovar.
-  | "aprovacao_automatica_cotacao";
+  | "aprovacao_automatica_cotacao"
+  // SIS-2026-0533: Suprimentos aprovou a cotação errado e pede ajuste antes
+  // da Juliana lançar a despesa — volta pra 'cotacao_realizada'.
+  | "ajuste_cotacao_solicitado";
 
 // Status ainda dentro da fase "Solicitação" — item abre em modal.
 // A partir daqui em diante (pendente_aprovacao em diante) o item já é

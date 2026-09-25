@@ -14,6 +14,7 @@ import { ComprasPassadas } from "@/components/malote/ComprasPassadas";
 import {
   useSolicitacaoParaCotar, useSalvarRascunhoCotacao, useEnviarCotacao,
   useAprovarCotacao, useReprovarCotacao, useCancelarCotacao, useSalvarItensDaCotacao,
+  useSolicitarAjusteCotacao,
   lerCotacoes, cotacaoPreenchida, abrirAnexoMalote,
   ROTULO_COTACAO, fmtBRL, fmtData, fmtDataHora,
   type Cotacao,
@@ -60,6 +61,7 @@ export default function CotacaoMaloteDetalhe() {
   const enviar = useEnviarCotacao();
   const aprovar = useAprovarCotacao();
   const reprovar = useReprovarCotacao();
+  const ajustar = useSolicitarAjusteCotacao();
   const cancelar = useCancelarCotacao();
   const gerarPedido = useGerarPedidoCompra();
   const salvarItens = useSalvarItensDaCotacao();
@@ -74,7 +76,7 @@ export default function CotacaoMaloteDetalhe() {
 
   const [cots, setCots] = useState<Cotacao[]>(lerCotacoes(null));
   const [carregadoDe, setCarregadoDe] = useState<string | null>(null);
-  const [confirmando, setConfirmando] = useState<null | "cancelar" | "reprovar" | "aprovar">(null);
+  const [confirmando, setConfirmando] = useState<null | "cancelar" | "reprovar" | "aprovar" | "ajustar">(null);
   const [motivo, setMotivo] = useState("");
   const [vencedor, setVencedor] = useState<1 | 2 | 3 | null>(null);
   const [observacoes, setObservacoes] = useState("");
@@ -112,7 +114,7 @@ export default function CotacaoMaloteDetalhe() {
   const minimo = dispensa ? 1 : 3;
   const preenchidas = cots.filter(cotacaoPreenchida).length;
   const ocupado = salvar.isPending || enviar.isPending || aprovar.isPending
-    || reprovar.isPending || cancelar.isPending;
+    || reprovar.isPending || cancelar.isPending || ajustar.isPending;
 
   const trocar = (i: number, campo: keyof Cotacao, valor: string) =>
     setCots((c) => c.map((x, j) => (j === i ? { ...x, [campo]: valor } : x)));
@@ -279,7 +281,22 @@ export default function CotacaoMaloteDetalhe() {
                 <PackageCheck className="mr-2 h-4 w-4" /> Lançar despesa
               </Button>
             )}
+            {/* SIS-2026-0533: aprovou errado, quer voltar antes da Juliana
+                lançar. Bloqueado se já existe pedido de compra ativo — ele
+                referencia o fornecedor/valor aprovado, cancele-o primeiro. */}
+            <Button
+              variant="outline" disabled={ocupado || !!pedidoAtivo}
+              className="border-amber-300 text-amber-700 hover:bg-amber-50"
+              onClick={() => { setMotivo(""); setConfirmando("ajustar"); }}
+            >
+              <Pencil className="mr-2 h-4 w-4" /> Solicitar ajuste
+            </Button>
           </div>
+          {!!pedidoAtivo && (
+            <p className="mt-2 text-xs text-muted-foreground">
+              Não é possível solicitar ajuste com um pedido de compra ativo — cancele o pedido {pedidoAtivo.numero} primeiro.
+            </p>
+          )}
           {itens.length === 0 && (
             <p className="mt-2 text-xs text-muted-foreground">
               Esta solicitação não possui itens, e o pedido de compra precisa de pelo menos um.
@@ -305,7 +322,17 @@ export default function CotacaoMaloteDetalhe() {
 
       {decidivel && (
         <Aviso tom="info" icone={Loader2} titulo="Cotações enviadas"
-               texto={`Enviadas por ${d.cotacao_enviada_por_nome ?? "—"} em ${fmtDataHora(d.cotacao_enviada_em)}. Escolha a cotação vencedora para aprovar, ou reprove informando o motivo.`} />
+               texto={`Enviadas por ${d.cotacao_enviada_por_nome ?? "—"} em ${fmtDataHora(d.cotacao_enviada_em)}. Escolha a cotação vencedora para aprovar, ou reprove informando o motivo.`}>
+          {/* SIS-2026-0533: volta de "cotacao_aprovada" via Solicitar ajuste
+              guarda o motivo em cotacao_observacoes, pra quem decide de novo
+              entender por que a aprovação anterior foi desfeita. */}
+          {d.cotacao_decidida_por_nome && d.cotacao_observacoes && (
+            <p className="mt-2 rounded-md border bg-background/60 p-3 text-sm">
+              <span className="text-muted-foreground">Ajuste solicitado por {d.cotacao_decidida_por_nome} em {fmtDataHora(d.cotacao_decidida_em)}: </span>
+              {d.cotacao_observacoes}
+            </p>
+          )}
+        </Aviso>
       )}
 
       {/* ── Cotações ── */}
@@ -401,17 +428,23 @@ export default function CotacaoMaloteDetalhe() {
               {confirmando === "cancelar" && "Cancelar esta solicitação?"}
               {confirmando === "reprovar" && "Reprovar a cotação?"}
               {confirmando === "aprovar" && `Aprovar a cotação ${vencedor}?`}
+              {confirmando === "ajustar" && "Solicitar ajuste na cotação?"}
             </AlertDialogTitle>
             <AlertDialogDescription>
               {confirmando === "cancelar" && "A solicitação não seguirá para aprovação. Não é possível voltar atrás."}
               {confirmando === "reprovar" && "O motivo é obrigatório e fica visível para quem abriu a solicitação."}
               {confirmando === "aprovar" && "A solicitação volta para o Malote com o valor do fornecedor escolhido. Não é possível voltar atrás."}
+              {confirmando === "ajustar" && "O motivo é obrigatório. A cotação volta para decisão de vencedor, antes que a despesa seja lançada."}
             </AlertDialogDescription>
           </AlertDialogHeader>
 
           {confirmando === "reprovar" && (
             <Textarea rows={4} value={motivo} onChange={(e) => setMotivo(e.target.value)}
                       placeholder="Ex.: valores acima do limite orçado para este tipo de despesa." />
+          )}
+          {confirmando === "ajustar" && (
+            <Textarea rows={4} value={motivo} onChange={(e) => setMotivo(e.target.value)}
+                      placeholder="Ex.: aprovei o fornecedor errado, o vencedor deveria ter sido a cotação 2." />
           )}
           {confirmando === "aprovar" && (
             <Textarea rows={3} value={observacoes} onChange={(e) => setObservacoes(e.target.value)}
@@ -421,13 +454,14 @@ export default function CotacaoMaloteDetalhe() {
           <AlertDialogFooter>
             <AlertDialogCancel>Voltar</AlertDialogCancel>
             <AlertDialogAction
-              disabled={confirmando === "reprovar" && !motivo.trim()}
+              disabled={(confirmando === "reprovar" || confirmando === "ajustar") && !motivo.trim()}
               className={confirmando === "aprovar" ? "" : "bg-destructive text-destructive-foreground hover:bg-destructive/90"}
               onClick={async () => {
                 if (confirmando === "cancelar") await cancelar.mutateAsync({ id: d.id });
                 if (confirmando === "reprovar") await reprovar.mutateAsync({ id: d.id, motivo });
                 if (confirmando === "aprovar" && vencedor)
                   await aprovar.mutateAsync({ id: d.id, vencedor, observacoes });
+                if (confirmando === "ajustar") await ajustar.mutateAsync({ id: d.id, motivo });
                 setConfirmando(null);
               }}
             >
