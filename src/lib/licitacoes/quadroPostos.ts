@@ -115,7 +115,9 @@ export function faltamNaLinha(l: LinhaQuadroForm): string[] {
   // admissão (sup_funcao_item), e é por função que se conta gente.
   if (!l.funcao_nome.trim()) faltam.push("Função");
   if (!l.cargo.trim()) faltam.push("Cargo");
-  if (paraInteiro(l.quantidade) <= 0) faltam.push("Quantidade de colaboradores");
+  // A quantidade não entra: é ELA que decide se a linha é validada
+  // (ver `linhaEmUso`). Uma linha sem quantidade não está no quadro.
+
   if (!l.escala.trim()) faltam.push("Escala");
   if (paraNumero(l.salario) <= 0) faltam.push("Salário");
   if (!l.estado.trim()) faltam.push("Estado");
@@ -163,6 +165,21 @@ export const chavePosto = (s: string): string =>
   String(s ?? "").normalize("NFD").replace(/[̀-ͯ]/g, "")
     .replace(/[^A-Za-z0-9]/g, "").toUpperCase();
 
+// ── Linha "em uso" ──────────────────────────────────────────────────────
+//
+// O quadro NASCE com a cascata inteira do contrato: os 27 postos de BENTO
+// GONÇALVES e as funções de cada um já aparecem listados, porque eles já
+// existem no catálogo — fazer alguém redigitar os 27 para dizer quantas
+// pessoas quer em três deles seria trabalho inventado.
+//
+// A consequência é que a maioria das linhas está ali só para ser vista. Uma
+// linha só ENTRA no quadro quando ganha quantidade >= 1; até lá ela não é
+// validada, não é gravada e não abre vaga. Sem essa regra o card de
+// obrigatórios abriria com 27 postos reclamando salário e escala, e o
+// contrato ficaria impossível de salvar por causa de postos que ninguém
+// pediu para preencher.
+export const linhaEmUso = (l: LinhaQuadroForm): boolean => paraInteiro(l.quantidade) >= 1;
+
 /** A identidade da linha do quadro: posto + função, normalizados. */
 export const chaveLinha = (l: Pick<LinhaQuadroForm, "posto_nome" | "funcao_nome">): string => {
   const p = chavePosto(l.posto_nome);
@@ -182,6 +199,8 @@ export function errosDoQuadro(linhas: LinhaQuadroForm[], hoje = hojeIso()): stri
   const erros: string[] = [];
 
   linhas.forEach((l, i) => {
+    // Linha sem quantidade é só o catálogo mostrando que o posto existe.
+    if (!linhaEmUso(l)) return;
     const faltam = faltamNaLinha(l);
     if (faltam.length) {
       erros.push(`${rotuloDaLinha(l, i)}: falta ${faltam.join(", ")}.`);
@@ -196,7 +215,7 @@ export function errosDoQuadro(linhas: LinhaQuadroForm[], hoje = hojeIso()): stri
   // encarregado são duas linhas); duas linhas com o mesmo par é que deixariam
   // sem resposta de qual delas é cada vaga.
   const vistos = new Set<string>();
-  for (const l of linhas) {
+  for (const l of linhas.filter(linhaEmUso)) {
     const k = chaveLinha(l);
     if (!k) continue;
     if (vistos.has(k)) {
@@ -220,7 +239,11 @@ export const totalDeColaboradores = (linhas: LinhaQuadroForm[]): number =>
  * a pessoa vê na coluna Posto do Catálogo.
  */
 export const totalDePostos = (linhas: LinhaQuadroForm[]): number =>
-  new Set(linhas.map(l => chavePosto(l.posto_nome)).filter(Boolean)).size;
+  new Set(linhas.filter(linhaEmUso).map(l => chavePosto(l.posto_nome)).filter(Boolean)).size;
+
+/** Quantas linhas (posto+função) o contrato de fato usa. */
+export const totalDeFuncoes = (linhas: LinhaQuadroForm[]): number =>
+  linhas.filter(linhaEmUso).length;
 
 /** Quantas vagas a geração vai abrir — só os postos marcados para abrir. */
 export const totalDeVagas = (linhas: LinhaQuadroForm[]): number =>
@@ -232,7 +255,10 @@ export const totalSalarialMensal = (linhas: LinhaQuadroForm[]): number =>
 
 /** O quadro pronto para a RPC: números viram número, vazio vira null. */
 export function paraPayload(linhas: LinhaQuadroForm[]) {
-  return linhas.map((l, i) => ({
+  // Só vai para o banco o que tem gente. As outras linhas são a cascata do
+  // catálogo aparecendo na tela — gravá-las encheria o quadro de todo
+  // contrato com dezenas de linhas vazias.
+  return linhas.filter(linhaEmUso).map((l, i) => ({
     id: l.id || null,
     posto_nome: l.posto_nome.trim(),
     funcao_nome: l.funcao_nome.trim(),
@@ -257,6 +283,95 @@ export function paraPayload(linhas: LinhaQuadroForm[]) {
     gerar_vagas: !!l.gerar_vagas,
     ordem: i + 1,
   }));
+}
+
+// ── O quadro nasce com a cascata do contrato ────────────────────────────
+
+/** Um par posto+função que o catálogo do contrato já tem. */
+export interface ParDoCatalogo {
+  posto_nome: string;
+  sup_posto_id: string;
+  funcao_nome: string;
+  sup_funcao_id: string;
+}
+
+/**
+ * Monta o par posto+função a partir das duas listas do catálogo.
+ *
+ * Posto SEM função entra mesmo assim, com a função em branco: ele existe no
+ * contrato, e escondê-lo faria a tela mostrar menos postos que o Catálogo de
+ * Materiais — que é exatamente a estranheza que este trecho existe para
+ * evitar. Quem for usar aquele posto digita a função na hora.
+ */
+export function paresDoCatalogo(
+  postos: { id: string; nome: string }[],
+  funcoes: { id: string; nome: string; posto_id: string }[],
+): ParDoCatalogo[] {
+  const pares: ParDoCatalogo[] = [];
+  for (const p of postos) {
+    const doPosto = funcoes.filter(f => f.posto_id === p.id);
+    if (!doPosto.length) {
+      pares.push({ posto_nome: p.nome, sup_posto_id: p.id, funcao_nome: "", sup_funcao_id: "" });
+      continue;
+    }
+    for (const f of doPosto) {
+      pares.push({ posto_nome: p.nome, sup_posto_id: p.id, funcao_nome: f.nome, sup_funcao_id: f.id });
+    }
+  }
+  return pares;
+}
+
+/**
+ * O que a tela mostra: o quadro salvo MAIS todo par posto+função do catálogo
+ * que ainda não está nele.
+ *
+ * O que já foi salvo manda — uma linha do catálogo nunca sobrescreve salário,
+ * escala ou quantidade que alguém digitou. O que vem do catálogo entra com
+ * quantidade "0", ou seja, fora do quadro até alguém dizer quantas pessoas
+ * quer (ver `linhaEmUso`).
+ *
+ * A ordem é a do Catálogo de Materiais (posto, depois função), e não "salvas
+ * primeiro": a pessoa está conferindo contra aquela tela, e duas ordens
+ * diferentes para a mesma cascata obrigariam a procurar linha por linha.
+ */
+export function mesclarComCatalogo(
+  salvas: LinhaQuadroForm[],
+  pares: ParDoCatalogo[],
+): LinhaQuadroForm[] {
+  const porChave = new Map<string, LinhaQuadroForm>();
+  for (const l of salvas) {
+    const k = chaveLinha(l) || chavePosto(l.posto_nome);
+    if (k) porChave.set(k, l);
+  }
+
+  const vindasDoCatalogo: LinhaQuadroForm[] = [];
+  for (const par of pares) {
+    const k = par.funcao_nome
+      ? `${chavePosto(par.posto_nome)}|${chavePosto(par.funcao_nome)}`
+      : chavePosto(par.posto_nome);
+    if (porChave.has(k)) continue;
+    // Posto sem função: só entra se o posto ainda não apareceu em NENHUMA
+    // linha salva. Senão o posto que já tem duas funções no quadro ganharia
+    // uma terceira linha vazia só porque o catálogo não casou a chave.
+    if (!par.funcao_nome && salvas.some(l => chavePosto(l.posto_nome) === chavePosto(par.posto_nome))) {
+      continue;
+    }
+    vindasDoCatalogo.push({
+      ...LINHA_VAZIA,
+      posto_nome: par.posto_nome,
+      sup_posto_id: par.sup_posto_id,
+      funcao_nome: par.funcao_nome,
+      sup_funcao_id: par.sup_funcao_id,
+      quantidade: "0",
+    });
+  }
+
+  const todas = [...salvas, ...vindasDoCatalogo];
+  return todas.sort((a, b) => {
+    const pa = a.posto_nome.localeCompare(b.posto_nome, "pt-BR");
+    if (pa !== 0) return pa;
+    return a.funcao_nome.localeCompare(b.funcao_nome, "pt-BR");
+  });
 }
 
 // ── O card de obrigatórios do CONTRATO ──────────────────────────────────

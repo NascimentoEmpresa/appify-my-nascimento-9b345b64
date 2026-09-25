@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   type LinhaQuadroForm, LINHA_VAZIA, paraNumero, paraInteiro, chavePosto, chaveLinha,
+  linhaEmUso, paresDoCatalogo, mesclarComCatalogo,
   faltamNaLinha, erroDaLinha, errosDoQuadro, prazoSuficiente,
   totalDeColaboradores, totalDePostos, totalDeVagas, totalSalarialMensal, paraPayload,
   conferirContrato, contratoCompleto, pendenciasDoContrato,
@@ -104,8 +105,12 @@ describe("faltamNaLinha", () => {
     expect(faltamNaLinha(linha({ salario: "0" }))).toContain("Salário");
   });
 
-  it("quantidade zero não passa — 0 vagas não é um posto", () => {
-    expect(faltamNaLinha(linha({ quantidade: "0" }))).toContain("Quantidade de colaboradores");
+  // A quantidade saiu da lista de obrigatórios porque é ELA que decide se a
+  // linha está no quadro: zerada, a linha é só o catálogo mostrando que o
+  // posto existe, e cobrar salário dela travaria o contrato por causa de
+  // postos que ninguém pediu para preencher.
+  it("quantidade não é cobrada como campo faltando", () => {
+    expect(faltamNaLinha(linha({ quantidade: "0" }))).not.toContain("Quantidade de colaboradores");
   });
 
   it('experiência "Sim" exige dizer qual', () => {
@@ -306,5 +311,119 @@ describe("conferirQuadroComContrato — avisa, não impede", () => {
 
   it("quadro vazio não acusa divergência", () => {
     expect(conferirQuadroComContrato([], 30).aviso).toBeNull();
+  });
+});
+
+// ── O quadro nasce com a cascata do contrato ──────────────────────────────
+// É o caso do print: BENTO GONÇALVES LIMPEZA 048/2026 tem 27 postos e as
+// funções deles já cadastradas no Catálogo. O quadro tem que abrir mostrando
+// tudo isso, não vazio pedindo para redigitar.
+
+const POSTOS = [
+  { id: "p1", nome: "BLOCO CIRURGICO" },
+  { id: "p2", nome: "LAVANDERIA" },
+  { id: "p3", nome: "UPA 24 H" },
+];
+const FUNCOES = [
+  { id: "f1", nome: "SERVENTE DE LIMPEZA", posto_id: "p1" },
+  { id: "f2", nome: "SERVENTE DE LIMPEZA", posto_id: "p2" },
+  { id: "f3", nome: "ENCARREGADO", posto_id: "p2" },
+  // p3 (UPA 24 H) de propósito sem função nenhuma.
+];
+
+describe("paresDoCatalogo", () => {
+  it("abre um par por função do posto", () => {
+    const pares = paresDoCatalogo(POSTOS, FUNCOES);
+    expect(pares).toHaveLength(4);
+    expect(pares.filter(p => p.posto_nome === "LAVANDERIA")).toHaveLength(2);
+  });
+
+  // Esconder o posto sem função faria a tela mostrar MENOS postos que o
+  // Catálogo de Materiais — que é a estranheza que a mesclagem veio matar.
+  it("posto sem função entra com a função em branco", () => {
+    const upa = paresDoCatalogo(POSTOS, FUNCOES).find(p => p.posto_nome === "UPA 24 H");
+    expect(upa).toBeDefined();
+    expect(upa!.funcao_nome).toBe("");
+  });
+});
+
+describe("mesclarComCatalogo", () => {
+  const pares = paresDoCatalogo(POSTOS, FUNCOES);
+
+  it("quadro vazio abre com a cascata inteira, toda zerada", () => {
+    const r = mesclarComCatalogo([], pares);
+    expect(r).toHaveLength(4);
+    expect(r.every(l => !linhaEmUso(l))).toBe(true);
+  });
+
+  it("ordena como o Catálogo: por posto, depois função", () => {
+    const r = mesclarComCatalogo([], pares);
+    expect(r.map(l => `${l.posto_nome}|${l.funcao_nome}`)).toEqual([
+      "BLOCO CIRURGICO|SERVENTE DE LIMPEZA",
+      "LAVANDERIA|ENCARREGADO",
+      "LAVANDERIA|SERVENTE DE LIMPEZA",
+      "UPA 24 H|",
+    ]);
+  });
+
+  // O salvo sempre manda: o catálogo acrescenta, nunca sobrescreve.
+  it("não sobrescreve o que já foi preenchido", () => {
+    const salva = linha({ posto_nome: "BLOCO CIRURGICO", funcao_nome: "SERVENTE DE LIMPEZA", quantidade: "4", salario: "1.412,00" });
+    const r = mesclarComCatalogo([salva], pares);
+    expect(r).toHaveLength(4);
+    const bloco = r.find(l => l.posto_nome === "BLOCO CIRURGICO")!;
+    expect(bloco.quantidade).toBe("4");
+    expect(bloco.salario).toBe("1.412,00");
+  });
+
+  it("não duplica a linha salva, mesmo com acento/caixa diferentes", () => {
+    const salva = linha({ posto_nome: "Bloco Cirurgico", funcao_nome: "Servente de Limpeza", quantidade: "4" });
+    expect(mesclarComCatalogo([salva], pares)).toHaveLength(4);
+  });
+
+  it("posto salvo que não está no catálogo continua na lista", () => {
+    const salva = linha({ posto_nome: "POSTO NOVO", funcao_nome: "VIGILANTE", quantidade: "2" });
+    const r = mesclarComCatalogo([salva], pares);
+    expect(r).toHaveLength(5);
+    expect(r.some(l => l.posto_nome === "POSTO NOVO")).toBe(true);
+  });
+
+  // O posto sem função do catálogo não pode virar uma linha vazia extra num
+  // posto que já tem função preenchida no quadro.
+  it("não acrescenta linha vazia a posto que já está no quadro", () => {
+    const salva = linha({ posto_nome: "UPA 24 H", funcao_nome: "SERVENTE DE LIMPEZA", quantidade: "10" });
+    const r = mesclarComCatalogo([salva], pares);
+    expect(r.filter(l => l.posto_nome === "UPA 24 H")).toHaveLength(1);
+  });
+});
+
+describe("linha zerada fica fora do quadro", () => {
+  const pares = paresDoCatalogo(POSTOS, FUNCOES);
+  const exibidas = mesclarComCatalogo(
+    [linha({ posto_nome: "BLOCO CIRURGICO", funcao_nome: "SERVENTE DE LIMPEZA", quantidade: "4" })],
+    pares,
+  );
+
+  it("as zeradas não geram pendência — senão o contrato não salvaria", () => {
+    expect(errosDoQuadro(exibidas)).toEqual([]);
+  });
+
+  it("só as preenchidas vão para o banco", () => {
+    const p = paraPayload(exibidas);
+    expect(p).toHaveLength(1);
+    expect(p[0].posto_nome).toBe("BLOCO CIRURGICO");
+    expect(p[0].quantidade).toBe(4);
+  });
+
+  it("os totais contam só o que está em uso", () => {
+    expect(totalDeColaboradores(exibidas)).toBe(4);
+    expect(totalDePostos(exibidas)).toBe(1);
+    expect(totalDeVagas(exibidas)).toBe(4);
+  });
+
+  it("linha zerada com campo faltando não trava o salvar", () => {
+    const meia = mesclarComCatalogo([], pares);
+    expect(errosDoQuadro(meia)).toEqual([]);
+    expect(paraPayload(meia)).toEqual([]);
   });
 });

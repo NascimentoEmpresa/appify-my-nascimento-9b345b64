@@ -32,7 +32,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Plus, Trash2, Users, ChevronDown, ChevronUp, Sparkles, TriangleAlert, Link2, CopyPlus } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { usePostos, useFuncoes } from "@/hooks/useSupCatalogo";
+import { usePostos, useFuncoesDoContrato } from "@/hooks/useSupCatalogo";
 import { ESTADOS_BR, municipiosDe } from "@/data/municipios-brasil";
 import { MOTIVOS_VAGA, dataMinimaVaga, fmtBr } from "@/lib/recrutamento/vagaRegras";
 import { buscarCustoDoPosto, beneficiosDoCusto, insalubridadeDoCusto } from "@/lib/recrutamento/custoPosto";
@@ -40,8 +40,9 @@ import { supabase } from "@/integrations/supabase/client";
 import { toast } from "@/hooks/use-toast";
 import {
   type LinhaQuadroForm, LINHA_VAZIA, faltamNaLinha, erroDaLinha, rotuloDaLinha,
-  totalDeColaboradores, totalDePostos, totalDeVagas, totalSalarialMensal,
-  brl, paraInteiro, paraNumero, chavePosto,
+  totalDeColaboradores, totalDePostos, totalDeFuncoes, totalDeVagas, totalSalarialMensal,
+  brl, paraInteiro, paraNumero, chavePosto, linhaEmUso,
+  paresDoCatalogo, mesclarComCatalogo,
 } from "@/lib/licitacoes/quadroPostos";
 import type { LinhaQuadro } from "@/hooks/useContratoQuadro";
 
@@ -95,25 +96,44 @@ interface Props {
 export function QuadroPostosContrato({
   contratoId, contratoNome, linhas, onChange, geradasPorId = {}, somenteLeitura = false,
 }: Props) {
-  const [aberta, setAberta] = useState<number | null>(linhas.length ? 0 : null);
+  const [aberta, setAberta] = useState<number | null>(null);
+  const [soEmUso, setSoEmUso] = useState(false);
   const { data: postosCatalogo = [] } = usePostos(contratoId);
+  // Uma query só para as funções de TODOS os postos do contrato — 27 postos
+  // seriam 27 chamadas se cada linha buscasse a sua.
+  const { data: funcoesCatalogo = [] } = useFuncoesDoContrato(contratoId);
 
-  const total = totalDeColaboradores(linhas);
-  const postos = totalDePostos(linhas);
-  const vagas = totalDeVagas(linhas);
-  const salarial = totalSalarialMensal(linhas);
+  // O que a tela mostra: o quadro salvo mais a cascata inteira do contrato.
+  // Ver `mesclarComCatalogo` — o salvo sempre manda, o catálogo só acrescenta
+  // o que falta, com quantidade 0 (fora do quadro até alguém preencher).
+  const pares = useMemo(
+    () => paresDoCatalogo(postosCatalogo, funcoesCatalogo),
+    [postosCatalogo, funcoesCatalogo],
+  );
+  const exibidas = useMemo(() => mesclarComCatalogo(linhas, pares), [linhas, pares]);
+  const visiveis = soEmUso ? exibidas.filter(linhaEmUso) : exibidas;
 
+  const total = totalDeColaboradores(exibidas);
+  const postos = totalDePostos(exibidas);
+  const funcoesEmUso = totalDeFuncoes(exibidas);
+  const vagas = totalDeVagas(exibidas);
+  const salarial = totalSalarialMensal(exibidas);
+  const doCatalogo = exibidas.length - linhas.length;
+
+  // Toda edição promove a lista MESCLADA a estado do formulário. É o que
+  // permite editar uma linha que veio do catálogo sem tratá-la diferente; o
+  // que não tem quantidade é descartado por `paraPayload` na hora de gravar.
   function mexer(i: number, patch: Partial<LinhaQuadroForm>) {
-    onChange(linhas.map((l, k) => (k === i ? { ...l, ...patch } : l)));
+    onChange(exibidas.map((l, k) => (k === i ? { ...l, ...patch } : l)));
   }
 
   function adicionar(base?: Partial<LinhaQuadroForm>) {
-    onChange([...linhas, { ...LINHA_VAZIA, ...base }]);
-    setAberta(linhas.length);
+    onChange([...exibidas, { ...LINHA_VAZIA, quantidade: "1", ...base }]);
+    setAberta(exibidas.length);
   }
 
   function remover(i: number) {
-    const l = linhas[i];
+    const l = exibidas[i];
     const ja = l.id ? geradasPorId[l.id]?.geradas ?? 0 : 0;
     // Tirar do quadro uma linha que já abriu vaga NÃO apaga a vaga (a RPC só
     // desativa a linha). Dizer isso aqui evita a descoberta pelo caminho
@@ -124,7 +144,7 @@ export function QuadroPostosContrato({
       `Tirar do quadro NÃO cancela essas vagas — elas continuam em andamento. ` +
       `Para cancelá-las, use a tela do Recrutamento.\n\nTirar do quadro assim mesmo?`,
     )) return;
-    onChange(linhas.filter((_, k) => k !== i));
+    onChange(exibidas.filter((_, k) => k !== i));
     setAberta(null);
   }
 
@@ -135,7 +155,7 @@ export function QuadroPostosContrato({
         <div className="flex items-center gap-1.5 text-sm font-semibold">
           <Users className="h-4 w-4 text-muted-foreground" aria-hidden />
           {total} colaborador{total === 1 ? "" : "es"} em {postos} posto{postos === 1 ? "" : "s"}
-          {linhas.length !== postos && ` · ${linhas.length} funções`}
+          {funcoesEmUso !== postos && ` · ${funcoesEmUso} funç${funcoesEmUso === 1 ? "ão" : "ões"}`}
         </div>
         <span className="text-xs text-muted-foreground">
           {vagas} vaga{vagas === 1 ? "" : "s"} a abrir no Recrutamento
@@ -148,33 +168,57 @@ export function QuadroPostosContrato({
         )}
       </div>
 
-      {linhas.length === 0 && (
+      {/* A cascata do contrato já vem listada — é o catálogo, não digitação.
+          Com 27 postos a lista é longa, então dá para esconder o que está
+          zerado assim que os primeiros são preenchidos. */}
+      {doCatalogo > 0 && (
+        <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+          <span>
+            {exibidas.length} posto/função do catálogo deste contrato.
+            Informe <b className="text-foreground">quantas pessoas</b> em cada um que o contrato exige —
+            os zerados ficam de fora do quadro.
+          </span>
+          {funcoesEmUso > 0 && (
+            <button
+              type="button"
+              onClick={() => setSoEmUso(v => !v)}
+              className="ml-auto rounded border px-2 py-1 font-medium hover:bg-muted"
+            >
+              {soEmUso ? `Mostrar todos (${exibidas.length})` : `Mostrar só os preenchidos (${funcoesEmUso})`}
+            </button>
+          )}
+        </div>
+      )}
+
+      {exibidas.length === 0 && (
         <p className="rounded-lg border border-dashed px-3 py-6 text-center text-xs text-muted-foreground">
-          Nenhuma função no quadro ainda. Adicione uma linha por <b>posto + função</b> do
-          contrato — ex.: <b>BLOCO CIRURGICO › Servente de Limpeza: 4</b>,{" "}
-          <b>LAVANDERIA › Servente de Limpeza: 2</b>.
+          Este contrato ainda não tem posto no catálogo. Adicione uma linha por{" "}
+          <b>posto + função</b> — ex.: <b>BLOCO CIRURGICO › Servente de Limpeza: 4</b>.
         </p>
       )}
 
-      {linhas.map((l, i) => (
-        <LinhaDoQuadro
-          key={l.id || `novo-${i}`}
-          linha={l}
-          indice={i}
-          aberta={aberta === i}
-          onAbrir={() => setAberta(aberta === i ? null : i)}
-          onMexer={patch => mexer(i, patch)}
-          onRemover={() => remover(i)}
-          onOutraFuncao={() => adicionar({
-            posto_nome: l.posto_nome, sup_posto_id: l.sup_posto_id,
-            estado: l.estado, cidade: l.cidade, local_exato: l.local_exato,
-            data_inicio_prevista: l.data_inicio_prevista,
-          })}
-          postosCatalogo={postosCatalogo}
-          contratoNome={contratoNome}
-          geradas={l.id ? geradasPorId[l.id] : undefined}
-          somenteLeitura={somenteLeitura}
-        />
+      {exibidas.map((l, i) => (
+        visiveis.includes(l) ? (
+          <LinhaDoQuadro
+            key={l.id || `${l.posto_nome}|${l.funcao_nome}|${i}`}
+            linha={l}
+            indice={i}
+            aberta={aberta === i}
+            onAbrir={() => setAberta(aberta === i ? null : i)}
+            onMexer={patch => mexer(i, patch)}
+            onRemover={() => remover(i)}
+            onOutraFuncao={() => adicionar({
+              posto_nome: l.posto_nome, sup_posto_id: l.sup_posto_id,
+              estado: l.estado, cidade: l.cidade, local_exato: l.local_exato,
+              data_inicio_prevista: l.data_inicio_prevista,
+            })}
+            postosCatalogo={postosCatalogo}
+            funcoesDoPosto={funcoesCatalogo.filter(f => chavePosto(f.posto_nome) === chavePosto(l.posto_nome))}
+            contratoNome={contratoNome}
+            geradas={l.id ? geradasPorId[l.id] : undefined}
+            somenteLeitura={somenteLeitura}
+          />
+        ) : null
       ))}
 
       {!somenteLeitura && (
@@ -188,9 +232,9 @@ export function QuadroPostosContrato({
 
 // ── Uma linha do quadro ───────────────────────────────────────────────────
 //
-// É componente próprio porque cada linha precisa das FUNÇÕES DO SEU POSTO, e
-// `useFuncoes` é um hook: não dá para chamá-lo dentro de um `.map()` no
-// componente de cima sem quebrar a regra dos hooks.
+// As funções do posto chegam por PROP, não por hook próprio: o pai busca as
+// funções do contrato inteiro de uma vez (useFuncoesDoContrato) e reparte.
+// Um `useFuncoes` por linha viraria 27 requisições numa tela só.
 
 interface LinhaProps {
   linha: LinhaQuadroForm;
@@ -202,6 +246,8 @@ interface LinhaProps {
   /** Nova linha no MESMO posto — o caminho de "este posto tem duas funções". */
   onOutraFuncao: () => void;
   postosCatalogo: { id: string; nome: string }[];
+  /** Funções que o catálogo tem para ESTE posto. */
+  funcoesDoPosto: { id: string; nome: string }[];
   contratoNome: string;
   geradas?: { geradas: number; vivas: number };
   somenteLeitura: boolean;
@@ -209,20 +255,21 @@ interface LinhaProps {
 
 function LinhaDoQuadro({
   linha: l, indice: i, aberta, onAbrir, onMexer, onRemover, onOutraFuncao,
-  postosCatalogo, contratoNome, geradas, somenteLeitura,
+  postosCatalogo, funcoesDoPosto: funcoes, contratoNome, geradas, somenteLeitura,
 }: LinhaProps) {
-  // O id do posto é DERIVADO do nome a cada render, em vez de guardado no
-  // estado do formulário. Guardar exigiria manter os dois em dia a cada
+  // O posto do catálogo é achado pelo NOME a cada render, em vez de guardado
+  // no estado do formulário. Guardar exigiria manter nome e id em dia a cada
   // tecla, e um id desencontrado do nome é pior que id nenhum: as funções
-  // carregadas seriam as de outro posto, sem nada na tela denunciando.
+  // mostradas seriam as de outro posto, sem nada na tela denunciando.
   const postoCat = useMemo(
     () => postosCatalogo.find(p => chavePosto(p.nome) === chavePosto(l.posto_nome)) ?? null,
     [postosCatalogo, l.posto_nome],
   );
-  const { data: funcoes = [] } = useFuncoes(postoCat?.id ?? null);
 
-  const faltam = faltamNaLinha(l);
-  const erro = erroDaLinha(l);
+  const emUso = linhaEmUso(l);
+  // Linha zerada é o catálogo mostrando que o posto existe — não é cobrada.
+  const faltam = emUso ? faltamNaLinha(l) : [];
+  const erro = emUso ? erroDaLinha(l) : null;
   const qtd = paraInteiro(l.quantidade);
   const cidades = municipiosDe(l.estado);
   const dataMinima = dataMinimaVaga();
@@ -276,27 +323,42 @@ function LinhaDoQuadro({
   }
 
   return (
-    <div className={cn("rounded-lg border", (faltam.length || erro) ? "border-amber-300" : "border-border")}>
-      {/* Cabeçalho da linha: o resumo que se lê sem abrir. */}
-      <button type="button" onClick={onAbrir} className="flex w-full items-center gap-2 px-3 py-2.5 text-left">
-        <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-bold text-primary">
-          {i + 1}
-        </span>
-        <span className="min-w-0 flex-1">
-          <span className="block truncate text-sm font-semibold">
-            {l.posto_nome.trim() || "Posto sem nome"}
-            <span className="mx-1.5 text-muted-foreground">›</span>
-            <span className={cn(!l.funcao_nome.trim() && "font-normal text-muted-foreground")}>
-              {l.funcao_nome.trim() || "função não escolhida"}
+    <div className={cn(
+      "rounded-lg border",
+      (faltam.length || erro) ? "border-amber-300" : emUso ? "border-border" : "border-dashed",
+    )}>
+      {/* Cabeçalho: posto › função e a QUANTIDADE, sem precisar abrir. Com 27
+          linhas na tela, esconder o campo de quantidade dentro do painel
+          obrigaria a abrir e fechar 27 painéis para dizer "quero 4 aqui". */}
+      <div className={cn("flex items-center gap-2 px-3 py-2", !emUso && "opacity-70")}>
+        <button type="button" onClick={onAbrir} className="flex min-w-0 flex-1 items-center gap-2 text-left">
+          <span className={cn(
+            "flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-bold",
+            emUso ? "bg-primary/10 text-primary" : "bg-muted text-muted-foreground",
+          )}>
+            {i + 1}
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className="block truncate text-sm font-semibold">
+              {l.posto_nome.trim() || "Posto sem nome"}
+              <span className="mx-1.5 text-muted-foreground">›</span>
+              <span className={cn(!l.funcao_nome.trim() && "font-normal text-muted-foreground")}>
+                {l.funcao_nome.trim() || "função não escolhida"}
+              </span>
+            </span>
+            <span className="block truncate text-xs text-muted-foreground">
+              {emUso
+                ? <>
+                    {paraNumero(l.salario) > 0 ? brl(paraNumero(l.salario)) : "salário a preencher"}
+                    {l.escala.trim() && ` · ${l.escala.trim()}`}
+                    {l.local_exato.trim() && ` · ${l.local_exato.trim()}`}
+                  </>
+                : "do catálogo — sem vaga nesta leva"}
             </span>
           </span>
-          <span className="block truncate text-xs text-muted-foreground">
-            {qtd} pessoa{qtd === 1 ? "" : "s"}
-            {paraNumero(l.salario) > 0 && ` · ${brl(paraNumero(l.salario))}`}
-            {l.escala.trim() && ` · ${l.escala.trim()}`}
-          </span>
-        </span>
-        {!l.gerar_vagas && (
+        </button>
+
+        {!l.gerar_vagas && emUso && (
           <span className="shrink-0 rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold text-slate-600">
             sem abrir vaga
           </span>
@@ -309,10 +371,25 @@ function LinhaDoQuadro({
         {(faltam.length > 0 || erro) && (
           <TriangleAlert className="h-4 w-4 shrink-0 text-amber-500" aria-hidden />
         )}
-        {aberta
-          ? <ChevronUp className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
-          : <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />}
-      </button>
+
+        <div className="flex shrink-0 items-center gap-1.5">
+          <label className="text-[11px] text-muted-foreground" htmlFor={`qtd-${i}`}>pessoas</label>
+          <Input
+            id={`qtd-${i}`}
+            type="number" min={0} max={999}
+            className={cn("h-8 w-16 text-center", emUso && "font-semibold")}
+            value={l.quantidade}
+            disabled={somenteLeitura}
+            onChange={e => onMexer({ quantidade: e.target.value })}
+          />
+        </div>
+
+        <button type="button" onClick={onAbrir} className="shrink-0" aria-label="Detalhes da linha">
+          {aberta
+            ? <ChevronUp className="h-4 w-4 text-muted-foreground" aria-hidden />
+            : <ChevronDown className="h-4 w-4 text-muted-foreground" aria-hidden />}
+        </button>
+      </div>
 
       {aberta && (
         <div className="space-y-3 border-t px-3 py-3">
@@ -322,7 +399,7 @@ function LinhaDoQuadro({
             </p>
           )}
 
-          {/* A cascata: posto → função → quantas pessoas */}
+          {/* A cascata: posto → função (a quantidade fica no cabeçalho) */}
           <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
             <div className="flex flex-col gap-1">
               <Label className="text-xs">Posto <span className="text-destructive">*</span></Label>
@@ -389,19 +466,6 @@ function LinhaDoQuadro({
                   Posto fora do catálogo: digite a função.
                 </span>
               )}
-            </div>
-
-            <div className="flex flex-col gap-1">
-              <Label className="text-xs">Quantas pessoas <span className="text-destructive">*</span></Label>
-              <Input
-                type="number" min={1} max={999} className="h-9"
-                value={l.quantidade}
-                disabled={somenteLeitura}
-                onChange={e => onMexer({ quantidade: e.target.value })}
-              />
-              <span className="text-[11px] text-muted-foreground">
-                {qtd} solicitaç{qtd === 1 ? "ão" : "ões"} de vaga
-              </span>
             </div>
 
             <div className="flex flex-col gap-1">
