@@ -5,8 +5,12 @@
 // É o check-in da planilha CONTRATOS_VIGENTES.xlsx que o RH usava: um bloco
 // por contrato e, por pessoa, os marcos de 7, 30, 60 e 90 dias da admissão,
 // "permaneceu após a experiência?", data de saída, demitido/demissionário,
-// motivo e observação. A base é a Senior (EMPREGADOS); a origem
-// "recrutamento" é quem casou pelo CPF com um candidato que chegou à ADMISSÃO.
+// motivo e observação. Duas fontes, chave = CPF (11 dígitos):
+//   • EMPREGADOS (Senior) — admitidos no período; origem "recrutamento"
+//     quando o CPF casa com candidato do nosso processo;
+//   • candidato na ADMISSÃO do Recrutamento que ainda NÃO está na Senior —
+//     "Ainda não admitido no sistema Senior": sem admissão, os marcos não
+//     correm (e o banco recusa check-in).
 
 export const MARCOS = [7, 30, 60, 90] as const;
 export type Marco = (typeof MARCOS)[number];
@@ -27,20 +31,31 @@ export const infoResultado = (r?: string | null) => RESULTADOS.find((x) => x.val
 export const resultadoPedeObservacao = (r: Resultado) => r === "ressalvas" || r === "negativo";
 
 export interface CheckAcomp {
-  id: number; empregado_id: number; marco: Marco; resultado: Resultado;
+  id: number; cpf: string; marco: Marco; resultado: Resultado;
   realizado_em: string; observacao: string | null; registrado_por: string | null; registrado_em: string;
 }
 export interface Acomp {
-  empregado_id: number; permaneceu: "Sim" | "Não" | null; data_saida: string | null;
+  cpf: string; empregado_id: number | null; candidato_id: number | null; permaneceu: "Sim" | "Não" | null; data_saida: string | null;
   tipo_saida: "Demitido" | "Demissionário" | null; motivo_saida: string | null;
   observacao: string | null; cidade: string | null; atualizado_por: string | null; atualizado_em: string | null;
 }
 export interface LinhaAcomp {
-  empregado_id: number; nome: string; cpf: string; cargo: string; contrato: string; local: string | null;
-  situacao: string; admissao: string; afastamento: string | null; causa: string | null; saiu: boolean;
-  dias: number; origem: "recrutamento" | "senior"; candidato_id: number | null; vaga_id: number | null;
+  /** A chave: CPF só com os 11 dígitos. */
+  cpf: string;
+  /** false = passou pelo nosso Recrutamento e ainda não está na EMPREGADOS. */
+  admitido_senior: boolean;
+  empregado_id: number | null; candidato_id: number | null;
+  nome: string; cargo: string; contrato: string; local: string | null;
+  situacao: string; admissao: string | null; afastamento: string | null; causa: string | null; saiu: boolean;
+  /** Dias desde a admissão (null sem admissão). */
+  dias: number | null;
+  /** Quem ainda não foi admitido: quando entrou na etapa ADMISSÃO do Recrutamento. */
+  data_ref: string | null;
+  origem: "recrutamento" | "senior"; vaga_id: number | null;
   vaga_status: string | null; cidade: string | null; acomp: Acomp | null; checks: CheckAcomp[];
 }
+
+export const NAO_ADMITIDO_SENIOR = "Ainda não admitido no sistema Senior";
 
 // ── Datas (sem fuso: tudo é data de calendário) ─────────────────────────
 const paraData = (iso: string) => { const [a, m, d] = iso.slice(0, 10).split("-").map(Number); return new Date(a, m - 1, d); };
@@ -57,11 +72,13 @@ export type EstadoMarco =
   | { tipo: "hoje"; vence: string }
   | { tipo: "breve"; vence: string; dias: number }      // faltam N dias (≤ JANELA_AVISO)
   | { tipo: "futuro"; vence: string; dias: number }
-  | { tipo: "nao_se_aplica"; vence: string };           // saiu antes do marco
+  | { tipo: "nao_se_aplica"; vence: string }            // saiu antes do marco
+  | { tipo: "aguardando" };                             // ainda não admitido na Senior
 
 export function estadoDoMarco(l: Pick<LinhaAcomp, "admissao" | "checks" | "saiu" | "afastamento" | "acomp">, marco: Marco, hoje = hojeIso()): EstadoMarco {
   const check = l.checks.find((c) => c.marco === marco);
   if (check) return { tipo: "feito", check };
+  if (!l.admissao) return { tipo: "aguardando" };
   const vence = somarDias(l.admissao, marco);
   const saida = l.acomp?.data_saida ?? (l.saiu ? l.afastamento : null);
   if (saida && saida < vence) return { tipo: "nao_se_aplica", vence };
@@ -89,6 +106,7 @@ export function proximaPendencia(l: LinhaAcomp, hoje = hojeIso()): { marco: Marc
  */
 export function permaneceuEfetivo(l: Pick<LinhaAcomp, "acomp" | "saiu" | "dias" | "afastamento" | "admissao">): { valor: "Sim" | "Não" | null; automatico: boolean } {
   if (l.acomp?.permaneceu) return { valor: l.acomp.permaneceu, automatico: false };
+  if (!l.admissao || l.dias == null) return { valor: null, automatico: true };
   if (l.saiu) {
     const diasAteSair = l.afastamento ? diasEntre(l.admissao, l.afastamento) : 0;
     return { valor: diasAteSair <= DIAS_EXPERIENCIA ? "Não" : "Sim", automatico: true };
@@ -131,6 +149,7 @@ export function resumoAcomp(linhas: LinhaAcomp[], hoje = hojeIso()) {
   return {
     pessoas: linhas.length,
     doRecrutamento: linhas.filter((l) => l.origem === "recrutamento").length,
+    naoAdmitidos: linhas.filter((l) => !l.admitido_senior).length,
     atrasados, hoje: hojeN, breve, feitos, negativos,
     permaneceram: perm.filter((p) => p === "Sim").length,
     sairam: perm.filter((p) => p === "Não").length,
