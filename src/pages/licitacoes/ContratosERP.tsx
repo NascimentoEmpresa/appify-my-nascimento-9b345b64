@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Button } from "@/components/ui/button";
@@ -35,6 +35,17 @@ import { useEmpresasGrupo } from "@/hooks/useMaloteDespesa";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "@/hooks/use-toast";
 import { useContratoDocsPorContrato } from "@/hooks/useDocumentos";
+import {
+  useContratoQuadro, useContratoQuadroSalvar, useContratoQuadroGerarVagas, somarCriadas,
+} from "@/hooks/useContratoQuadro";
+import { QuadroPostosContrato, paraFormulario } from "@/components/licitacoes/QuadroPostosContrato";
+import { CardObrigatorios } from "@/components/licitacoes/CardObrigatorios";
+import { AcessoGate } from "@/components/auth/AcessoGate";
+import { useScreenAccess } from "@/hooks/useScreenAccess";
+import {
+  type LinhaQuadroForm, conferirContrato, contratoCompleto, errosDoQuadro,
+  conferirQuadroComContrato, paraPayload, totalDeVagas,
+} from "@/lib/licitacoes/quadroPostos";
 import { BADGE as DOC_BADGE, periodLabel } from "@/pages/Documentos";
 import { corEmpresa, corEmpresaFundo } from "@/pages/malote/EmpresaContratoBadge";
 
@@ -191,6 +202,67 @@ export default function ContratosERP() {
 
   const { data: docsContrato = [] } = useContratoDocsPorContrato(editando?.id);
 
+  // ── Quadro de postos (24/09/2026) ─────────────────────────────────────
+  // O que o contrato exige em pessoas, por posto — e de onde saem as
+  // solicitações de vaga. Mora no estado do modal porque o contrato NOVO
+  // ainda não tem id: o quadro só pode ser gravado depois do upsert, e até
+  // lá ele existe só aqui. Ver src/lib/licitacoes/quadroPostos.ts.
+  const [quadro, setQuadro] = useState<LinhaQuadroForm[]>([]);
+  const { data: quadroSalvo = [], isSuccess: quadroCarregou } = useContratoQuadro(editando?.id ?? null);
+  const salvarQuadro = useContratoQuadroSalvar();
+  const gerarVagas = useContratoQuadroGerarVagas();
+
+  // Carrega o quadro do contrato quando ele chega do banco, UMA vez por
+  // contrato — comparar por id evita sobrescrever o que a pessoa está
+  // digitando a cada refetch.
+  //
+  // O `quadroCarregou` não é zelo: sem ele o efeito rodava na primeira
+  // renderização, com a query ainda pendente e `quadroSalvo` vazio, marcava o
+  // contrato como carregado e saía pela porta de cima quando os dados
+  // chegavam. O quadro aparecia vazio em TODO contrato editado — e salvar
+  // nesse estado mandaria uma lista vazia para `contrato_quadro_salvar`, que
+  // desativa o que não veio no envio: o quadro inteiro do contrato apagado
+  // por abrir e salvar a tela.
+  const idQuadroCarregado = useRef<string | null>(null);
+  useEffect(() => {
+    if (!editando || !quadroCarregou) return;
+    if (idQuadroCarregado.current === editando.id) return;
+    idQuadroCarregado.current = editando.id;
+    setQuadro(quadroSalvo.map(paraFormulario));
+  }, [editando, quadroSalvo, quadroCarregou]);
+
+  const geradasPorId = useMemo(() => {
+    const m: Record<string, { geradas: number; vivas: number }> = {};
+    for (const l of quadroSalvo) m[l.id] = { geradas: l.vagas_geradas, vivas: l.vagas_vivas };
+    return m;
+  }, [quadroSalvo]);
+
+  // Quem pode MEXER no quadro (não só ver). Editar contrato existente pede
+  // 'alterar'; contrato novo pede 'incluir' — é a mesma régua que a RPC
+  // `contrato_quadro_salvar` aplica no banco, que é quem de fato recusa.
+  const podeAlterarQuadro = useScreenAccess("contrato_quadro_postos", "alterar").data === true;
+  const podeIncluirQuadro = useScreenAccess("contrato_quadro_postos", "incluir").data === true;
+  const podeEditarQuadro = editando ? podeAlterarQuadro : podeIncluirQuadro;
+
+  // Conferência do contrato + do quadro, para o card do topo e para o botão
+  // de salvar. Os dois leem a MESMA função — um card que diz "completo" com
+  // o botão desabilitado seria pior que card nenhum.
+  const itensObrigatorios = useMemo(() => conferirContrato(form), [form]);
+  const errosQuadro = useMemo(() => errosDoQuadro(quadro), [quadro]);
+  const conferenciaQuadro = useMemo(
+    () => conferirQuadroComContrato(quadro, form.quant_func_estipulado),
+    [quadro, form.quant_func_estipulado],
+  );
+  const podeSalvar = contratoCompleto(form) && errosQuadro.length === 0;
+
+  // Quantas vagas ainda faltam abrir — o que o botão anuncia e o que o
+  // confirm pergunta. Desconta as já geradas: reabrir um contrato salvo não
+  // pode prometer 30 vagas quando 30 já existem.
+  const vagasPendentes = Math.max(
+    totalDeVagas(quadro) - Object.values(geradasPorId).reduce((s, g) => s + g.geradas, 0),
+    0,
+  );
+
   // SIS-2026-0325: agregados por contrato (execução real/custo indireto/
   // lucro mensal, vindos ao vivo da Planilha de Custo) — substitui o
   // cálculo duplicado que existia só pra "Vlr. Mensal", reaproveitando os
@@ -306,11 +378,21 @@ export default function ContratosERP() {
     setEditando(null);
     setForm(EMPTY);
     setFiscal(FISCAL_EMPTY);
+    // Contrato novo começa com o quadro vazio — e `idQuadroCarregado` volta a
+    // null para que o efeito carregue o quadro do próximo contrato editado.
+    setQuadro([]);
+    idQuadroCarregado.current = null;
     setModalOpen(true);
   }
 
   function abrirEditar(c: ContratoERP) {
     setEditando(c);
+    if (idQuadroCarregado.current !== c.id) {
+      // Zera enquanto o quadro do contrato escolhido não chega: sem isto o
+      // modal abriria mostrando o quadro do contrato anterior.
+      setQuadro([]);
+      idQuadroCarregado.current = null;
+    }
     setForm({
       empresa_id: c.empresa_id,
       nome: c.nome,
@@ -341,12 +423,37 @@ export default function ContratosERP() {
   }
 
   async function handleSalvar() {
-    if (!form.empresa_id) {
-      toast({ title: "Selecione a empresa do contrato.", variant: "destructive" });
+    // Até 24/09/2026 a única conferência era a empresa — os "*" do formulário
+    // eram decorativos, e contrato sem vigência, sem valor e sem quantidade
+    // de funcionários entrava. Agora o card de obrigatórios diz o que falta e
+    // o botão espera; a lista das pendências está em conferirContrato().
+    const pendentes = conferirContrato(form).filter(i => !i.ok);
+    if (pendentes.length) {
+      toast({
+        title: "Faltam informações obrigatórias",
+        description: pendentes.map(p => p.campo).join(", "),
+        variant: "destructive",
+      });
       return;
     }
+    const errosQuadro = errosDoQuadro(quadro);
+    if (errosQuadro.length) {
+      toast({ title: "Quadro de postos incompleto", description: errosQuadro[0], variant: "destructive" });
+      return;
+    }
+
+    // Quantas vagas a gravação vai abrir. Perguntar ANTES é deliberado: são
+    // 30 solicitações caindo na fila do analista de uma vez, e "criei e
+    // avisei depois" transformaria um erro de digitação (300 em vez de 30)
+    // em 300 vagas para cancelar uma a uma.
+    const vagasAAbrir = vagasPendentes;
+    if (vagasAAbrir > 0 && !confirm(
+      `Salvar o contrato e abrir ${vagasAAbrir} solicitaç${vagasAAbrir === 1 ? "ão" : "ões"} de vaga no Recrutamento?\n\n` +
+      `As vagas nascem em "Pendente Analista" e seguem o fluxo normal — o analista aprova, o Recrutamento toca.`,
+    )) return;
+
     const pctToNum = (v: string) => (v.trim() ? Number(v) / 100 : 0);
-    await upsert.mutateAsync({
+    const contratoId = await upsert.mutateAsync({
       ...form,
       issqn_pct: pctToNum(fiscal.issqn_pct),
       ir_pct: pctToNum(fiscal.ir_pct),
@@ -361,6 +468,43 @@ export default function ContratosERP() {
       instrucoes_envio: fiscal.instrucoes_envio || null,
       id: editando?.id,
     });
+
+    // O quadro é gravado DEPOIS do contrato, e não junto, porque o contrato
+    // novo só ganha id aqui. Falhar no quadro não desfaz o contrato (não há
+    // transação entre dois round-trips do PostgREST): o contrato fica salvo,
+    // a tela continua aberta e o erro diz o que corrigir — melhor que perder
+    // o cadastro inteiro por causa de uma linha de posto.
+    if (quadro.length || quadroSalvo.length) {
+      try {
+        await salvarQuadro.mutateAsync({ contratoId, linhas: paraPayload(quadro) });
+      } catch {
+        toast({
+          title: "Contrato salvo, mas o quadro de postos não",
+          description: "Corrija o quadro e salve de novo — o contrato já está gravado.",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      if (vagasAAbrir > 0) {
+        try {
+          const r = await gerarVagas.mutateAsync({ contratoId });
+          const criadas = somarCriadas(r);
+          toast({
+            title: criadas ? `${criadas} solicitaç${criadas === 1 ? "ão" : "ões"} de vaga aberta${criadas === 1 ? "" : "s"}` : "Nenhuma vaga nova",
+            description: criadas
+              ? r.filter(x => x.criadas > 0).map(x => `${x.posto_nome}: ${x.criadas}`).join(" · ")
+              : "Os postos do quadro já tinham as vagas abertas.",
+          });
+        } catch {
+          // O toast do erro já saiu no onError do hook. O contrato e o quadro
+          // estão salvos — reabrir e clicar de novo gera só o que falta
+          // (quadro_posto_id + quadro_indice tornam a geração repetível).
+          return;
+        }
+      }
+    }
+
     setModalOpen(false);
   }
 
@@ -662,6 +806,14 @@ export default function ContratosERP() {
           </DialogHeader>
 
           <div className="space-y-3">
+          {/* Card de obrigatórios no TOPO, não perto do botão de salvar: ele é
+              o roteiro do que preencher, e roteiro se lê antes. */}
+          <CardObrigatorios
+            itens={itensObrigatorios}
+            errosQuadro={errosQuadro}
+            avisoQuadro={conferenciaQuadro.aviso}
+          />
+
           <SectionHeader n={1} title="Dados do Contrato" />
           <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
             {/* SIS-2026-0309: empresa passa a ser campo explícito na
@@ -773,6 +925,37 @@ export default function ContratosERP() {
             <CalculoField label="Lucro Global" value={fmt(lucroMensalCalc * 12)} />
             <CalculoField label="Total Lucro e Custo Global" value={fmt(totalLucroCustoMensal * 12)} />
           </div>
+
+          {/* ── Quadro de Postos (24/09/2026) ─────────────────────────────
+              O que o contrato exige em pessoas, posto a posto — e de onde
+              saem as solicitações de vaga do Recrutamento. Fica DEPOIS dos
+              números do contrato de propósito: a quantidade estipulada da
+              seção 3 é a referência contra a qual o quadro é conferido.
+
+              Bloco com visibilidade própria: o menu fantasma
+              `contrato_quadro_postos` (migration 20260930000238) decide quem
+              vê e quem edita, no painel de Acesso por Usuário. */}
+          <AcessoGate
+            menu="contrato_quadro_postos"
+            acao="visualizar"
+            fallback={null}
+          >
+            <SectionHeader n={7} title="Quadro de Postos e Vagas" />
+            <div className="rounded-lg bg-blue-50 px-3 py-2 text-xs text-blue-700">
+              Declare quantas pessoas o contrato exige, por posto. Cada colaborador vira uma
+              solicitação de vaga no Recrutamento — com salário, benefícios, escala e local já
+              preenchidos — e segue o fluxo normal a partir de "Pendente Analista".
+              {!editando && " As vagas são abertas quando você salvar o contrato."}
+            </div>
+            <QuadroPostosContrato
+              contratoId={editando?.id ?? null}
+              contratoNome={form.nome ?? ""}
+              linhas={quadro}
+              onChange={setQuadro}
+              geradasPorId={geradasPorId}
+              somenteLeitura={!podeEditarQuadro}
+            />
+          </AcessoGate>
 
           <div className="space-y-3 border-t border-border pt-4">
               <div>
@@ -899,9 +1082,13 @@ export default function ContratosERP() {
             <Button variant="outline" onClick={() => setModalOpen(false)}>Cancelar</Button>
             <Button
               onClick={handleSalvar}
-              disabled={!form.nome || !form.cliente || upsert.isPending}
+              // Mesma conferência do card do topo — ver `podeSalvar`.
+              disabled={!podeSalvar || upsert.isPending || salvarQuadro.isPending || gerarVagas.isPending}
             >
-              {upsert.isPending ? "Salvando…" : "Salvar"}
+              {upsert.isPending || salvarQuadro.isPending ? "Salvando…"
+                : gerarVagas.isPending ? "Abrindo vagas…"
+                  : vagasPendentes > 0 ? `Salvar e abrir ${vagasPendentes} vaga${vagasPendentes === 1 ? "" : "s"}`
+                    : "Salvar"}
             </Button>
           </DialogFooter>
         </DialogContent>
