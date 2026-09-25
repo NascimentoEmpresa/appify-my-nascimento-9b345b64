@@ -95,17 +95,23 @@ export function useContratoERPUpsert() {
   const qc = useQueryClient();
 
   return useMutation({
-    mutationFn: async ({ id, ...input }: ContratoERPInput & { id?: string }) => {
+    // Devolve o id do contrato — o do que foi editado, ou o do que acabou de
+    // nascer. O quadro de postos (useContratoQuadro) precisa dele: num
+    // contrato NOVO o quadro só pode ser gravado depois do insert, e sem o id
+    // de volta a tela teria que reprocurar o contrato pelo nome, que não é
+    // único entre empresas.
+    mutationFn: async ({ id, ...input }: ContratoERPInput & { id?: string }): Promise<string> => {
       if (id) {
         const { error } = await sb
           .from("contratos")
           .update({ ...input, updated_at: new Date().toISOString() })
           .eq("id", id);
         if (error) throw error;
-      } else {
-        const { error } = await sb.from("contratos").insert(input);
-        if (error) throw error;
+        return id;
       }
+      const { data, error } = await sb.from("contratos").insert(input).select("id").single();
+      if (error) throw error;
+      return data.id as string;
     },
     // SIS-2026-0309: invalida por prefixo (sem 2º elemento) — a leitura
     // pode estar em modo `todasEmpresas` ("todas") ou por empresa, e o
