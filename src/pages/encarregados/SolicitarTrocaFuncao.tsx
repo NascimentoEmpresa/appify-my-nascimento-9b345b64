@@ -102,6 +102,9 @@ export default function SolicitarTrocaFuncao() {
     if (!horarioNovo.trim()) return soHorario ? "Informe o horário novo que a pessoa vai fazer." : "Informe a carga horária/escala que a pessoa vai fazer no cargo novo.";
     if (mesmoHorario) return "O horário novo é igual ao atual — não há o que trocar.";
     if (!motivo.trim()) return "Escreva o motivo da mudança.";
+    // Obrigatória desde 25/09/2026 (mig 243): chegou pedido sem a data e o RH
+    // não tinha como fazer a troca — não sabia a partir de quando vale.
+    if (!dataPretendida) return soHorario ? "Informe a partir de quando vale o horário novo." : "Informe a partir de quando vale a nova função.";
     // Escritório (15/09/2026): o setor é obrigatório — é por ele que o
     // administrativo acha o pedido na fila. Em contrato continua opcional.
     if (eEscritorio && !setor) return "Pedido do escritório administrativo precisa do setor.";
@@ -132,7 +135,7 @@ export default function SolicitarTrocaFuncao() {
       e_escritorio: eEscritorio,
       setor: setor || null,
       motivo: motivo.trim(),
-      data_pretendida: dataPretendida || null,
+      data_pretendida: dataPretendida,
       status: statusInicial(eEscritorio, setor || null),
     }).select("id").single();
     setEnviando(false);
@@ -280,9 +283,10 @@ export default function SolicitarTrocaFuncao() {
           </div>
 
           <div className="space-y-1.5">
-            <Label>A partir de quando (opcional)</Label>
-            <Input type="date" className="sm:w-56" value={dataPretendida}
+            <Label>{soHorario ? "Data da troca de horário" : "Data da troca de função"} <span className="text-destructive">*</span></Label>
+            <Input type="date" className="sm:w-56" value={dataPretendida} required
                    onChange={e => setDataPretendida(e.target.value)} />
+            <p className="text-xs text-muted-foreground">A partir de quando a mudança vale — sem ela o RH não consegue fazer a troca.</p>
           </div>
 
           {/* Setor: opcional em contrato, OBRIGATÓRIO no escritório (15/09/2026)
