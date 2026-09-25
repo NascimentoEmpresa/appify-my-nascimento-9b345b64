@@ -41,7 +41,7 @@ import { AnexosField } from "./AnexosField";
 import { DiaPagamentoPicker } from "./DiaPagamentoPicker";
 import { ExcecaoDiaBloqueadoField } from "./ExcecaoDiaBloqueadoField";
 import { DimensoesRateio, RateioGrid } from "./RateioGrid";
-import { erroFornecedorNoRateio } from "./rateioValidacao";
+import { erroFornecedorNoRateio, erroEmpresaNoRateio } from "./rateioValidacao";
 import { PadraoLinhaRateio, acharFornecedorPorNome, rateioInicialComPadrao } from "./rateioPadrao";
 
 // SIS-2026-0263 (Iury): "colocar a possibilidade de escolher de 1 a 30 para
@@ -363,10 +363,17 @@ export function PainelDespesaMalote({
     if (paraEnviar) {
       if (linhasRateio.length === 0) return "Adicione ao menos uma linha de rateio.";
       if (Math.abs(totalRateado - Number(totalMes)) > 0.01) return "O total do rateio deve ser igual ao Total do mês.";
-      // SIS-2026-0467 + SIS-2026-0480 — a regra e o histórico dela estão em
-      // rateioValidacao.ts, com teste próprio.
+      // SIS-2026-0467 + SIS-2026-0480 + [SEM-CHAMADO] (25/09) — a regra e o
+      // histórico dela estão em rateioValidacao.ts, com teste próprio.
       const erroFornecedor = erroFornecedorNoRateio(dimensoes, linhasRateio);
       if (erroFornecedor) return erroFornecedor;
+      // [SEM-CHAMADO] (25/09, pedido do Iury, achado DM-2026-1364): Empresa
+      // é coluna permanente do rateio nesta tela (RateioGrid.tsx,
+      // mostrarColunaEmpresa) — toda linha exige, sem exceção.
+      const erroEmpresa = erroEmpresaNoRateio(
+        linhasRateio.map((l) => ({ empresa_id: l.empresa_id, exigeEmpresa: true })),
+      );
+      if (erroEmpresa) return erroEmpresa;
       if (parcelado === "sim") {
         if (!diaDesconto || !quantidadeParcelas) return "Informe o dia do desconto e a quantidade de parcelas.";
         const n = Number(quantidadeParcelas);
@@ -685,7 +692,6 @@ export function PainelDespesaMalote({
               contratoPorClassificacao
               classificacaoTipoUnica={classificacaoTipo ?? null}
               mostrarResumoValorTotal
-              exigirFornecedor
               linhaPadrao={padraoRateio}
             />
           </div>

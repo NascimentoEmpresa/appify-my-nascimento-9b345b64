@@ -233,6 +233,23 @@ export function useReprovarCotacao() {
 }
 
 /**
+ * SIS-2026-0533: depois da cotação aprovada, antes da Juliana lançar a
+ * despesa — volta pra "cotacao_realizada" pra reabrir a escolha do
+ * vencedor, sem exigir recotar do zero.
+ */
+export function useSolicitarAjusteCotacao() {
+  const invalidar = useInvalidar();
+  return useMutation({
+    mutationFn: async (v: { id: string; motivo: string }) => {
+      const { error } = await sb.rpc("sup_malote_solicitar_ajuste_cotacao", { p_id: v.id, p_motivo: v.motivo });
+      if (error) throw error;
+    },
+    onSuccess: () => { invalidar(); toast.success("Ajuste solicitado. A cotação volta para decisão."); },
+    onError: (e: any) => toast.error(e?.message ?? "Não foi possível solicitar o ajuste."),
+  });
+}
+
+/**
  * O comprador monta os itens da solicitação que está cotando.
  *
  * Existe porque a policy de escrita de `malote_despesa_item` é do SOLICITANTE,

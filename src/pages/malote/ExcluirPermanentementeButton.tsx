@@ -61,16 +61,22 @@ export function ExcluirPermanentementeButton({ despesaId, numero, menu, voltarPa
 
   return (
     <>
+      {/* [SEM-CHAMADO] (achado do usuário): "Excluir permanentemente" por
+          extenso, ao lado de "Restaurar", não cabia nas linhas da Lixeira
+          (Meus Itens/Fluxo de Caixa) e forçava scroll lateral no Dialog —
+          ícone só, com title, e o texto continua no AlertDialog de
+          confirmação abaixo, onde a clareza realmente importa. */}
       <Button
         variant="outline"
-        size="sm"
-        className="text-destructive border-destructive hover:bg-destructive/10 gap-1.5"
+        size="icon"
+        className="h-8 w-8 text-destructive border-destructive hover:bg-destructive/10"
+        title="Excluir permanentemente"
         onClick={() => {
           setConfirmacao("");
           setAberto(true);
         }}
       >
-        <Trash2 className="h-3.5 w-3.5" /> Excluir permanentemente
+        <Trash2 className="h-3.5 w-3.5" />
       </Button>
 
       <AlertDialog open={aberto} onOpenChange={setAberto}>
