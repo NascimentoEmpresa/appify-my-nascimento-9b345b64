@@ -7,6 +7,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { DecisoesAcoesPainel } from "./DecisoesAcoesPainel";
 import { AnexoPautaCelula } from "./PautaTabela";
 import { TextoResumido } from "./PautaVinculos";
+import type { PlanoAcaoVinculavel } from "../acaoExistente";
 import {
   NATUREZA_ITEM_LABEL, PERGUNTAS_CONDUCAO_ITEM, nomeUsuario,
   type NaturezaItem, type PerguntaChecklist, type ReuniaoDecisaoAcao, type ReuniaoPauta, type ReuniaoPautaAnexo, type ReuniaoResposta,
@@ -91,8 +92,8 @@ function RespostaDecisaoItem({
 }
 
 export function PautaConducao({
-  pauta, respostas, decisoesAcoes, usuarios, setorPadrao, pautaAnexos,
-  onAtualizarNatureza, onAtualizarPrazo, onSalvarChecklist, onSalvarResposta, onCriarDecisaoAcao, onCriarAcaoPlanoAcao, onAtualizarDecisaoAcao, onRemoverDecisaoAcao,
+  pauta, respostas, decisoesAcoes, acoesPlanoDisponiveis, carregandoAcoesPlano, usuarios, setorPadrao, pautaAnexos,
+  onAtualizarNatureza, onAtualizarPrazo, onSalvarChecklist, onSalvarResposta, onCriarDecisaoAcao, onCriarAcaoPlanoAcao, onVincularAcaoPlanoAcao, onAtualizarDecisaoAcao, onRemoverDecisaoAcao,
   onUploadPautaAnexo, onDownloadAnexo, onRemoverPautaAnexo, focoPautaId, onFocoAplicado,
 }: {
   /** Item pra onde a condução deve pular (ex.: assunto fora da pauta recém-registrado). */
@@ -101,6 +102,8 @@ export function PautaConducao({
   pauta: ReuniaoPauta[];
   respostas: ReuniaoResposta[];
   decisoesAcoes: ReuniaoDecisaoAcao[];
+  acoesPlanoDisponiveis: PlanoAcaoVinculavel[];
+  carregandoAcoesPlano: boolean;
   usuarios: Usuario[];
   setorPadrao?: string | null;
   pautaAnexos: ReuniaoPautaAnexo[];
@@ -122,6 +125,7 @@ export function PautaConducao({
     responsavel_profile_id?: string | null; lider_comite_profile_id?: string | null;
     visibilidade?: string; comentarios?: string | null;
   }) => Promise<boolean>;
+  onVincularAcaoPlanoAcao: (pautaId: string, planoAcaoId: string) => Promise<boolean>;
   onAtualizarDecisaoAcao: (id: string, patch: Partial<Pick<ReuniaoDecisaoAcao, "status">>) => Promise<boolean>;
   onRemoverDecisaoAcao: (id: string) => Promise<boolean>;
 }) {
@@ -227,11 +231,16 @@ export function PautaConducao({
       <DecisoesAcoesPainel
         pautaId={item.id}
         itens={decisoesAcoes.filter((d) => d.pauta_id === item.id)}
+        acoesPlanoDisponiveis={acoesPlanoDisponiveis.filter(
+          (acao) => !decisoesAcoes.some((itemVinculado) => itemVinculado.plano_acao_id === acao.id),
+        )}
+        carregandoAcoesPlano={carregandoAcoesPlano}
         usuarios={usuarios}
         setorPadrao={setorPadrao}
         sinalAbrirAcao={sinalAbrirAcao}
         onCriarDecisao={onCriarDecisaoAcao}
         onCriarAcao={onCriarAcaoPlanoAcao}
+        onVincularAcao={onVincularAcaoPlanoAcao}
         onAtualizar={onAtualizarDecisaoAcao}
         onRemover={onRemoverDecisaoAcao}
       />

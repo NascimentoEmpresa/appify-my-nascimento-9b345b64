@@ -9,6 +9,12 @@ import type {
 import { gerarAtaFinalPdfBlob } from "./pdf/ataFinalPdf";
 import { registrarLog } from "./registrarLog";
 import { mensagemErroTransferencia } from "./transferenciaPauta";
+import {
+  STATUS_ACAO_NAO_VINCULAVEL,
+  acaoPodeSerVinculada,
+  tituloAcaoVinculavel,
+  type PlanoAcaoVinculavel,
+} from "./acaoExistente";
 
 const BUCKET = "reunioes";
 
@@ -178,6 +184,23 @@ export function useReuniaoDetalhe(id: string | undefined) {
         .order("created_at", { ascending: true });
       if (error) throw error;
       return (data ?? []) as ReuniaoDecisaoAcao[];
+    },
+  });
+
+  const { data: acoesPlanoDisponiveis = [], isLoading: carregandoAcoesPlano } = useQuery({
+    queryKey: ["reuniao_acoes_plano_disponiveis", user?.id],
+    enabled: !!user && reuniao?.etapa === "em_andamento",
+    queryFn: async () => {
+      const statusTerminais = `(${STATUS_ACAO_NAO_VINCULAVEL.join(",")})`;
+      const { data, error } = await supabase
+        .from("plano_acao")
+        .select("id, titulo, acao, area, status_normalizado, prioridade_normalizada, responsavel_profile_id, data_fim_planejado, updated_at")
+        .is("deleted_at", null)
+        .not("status_normalizado", "in", statusTerminais)
+        .order("updated_at", { ascending: false })
+        .limit(500);
+      if (error) throw error;
+      return ((data ?? []) as PlanoAcaoVinculavel[]).filter(acaoPodeSerVinculada);
     },
   });
 
@@ -646,6 +669,44 @@ export function useReuniaoDetalhe(id: string | undefined) {
     return true;
   };
 
+  /** Vincula à pauta uma ação já existente sem criar outro registro em plano_acao. */
+  const vincularAcaoPlanoAcao = async (pautaId: string, planoAcaoId: string): Promise<boolean> => {
+    if (!id) return false;
+    const acao = acoesPlanoDisponiveis.find((item) => item.id === planoAcaoId);
+    const executarRpcVinculo = supabase.rpc as unknown as (
+      nome: string,
+      parametros: Record<string, string>,
+    ) => Promise<{ error: { message: string } | null }>;
+    const { error } = await executarRpcVinculo("vincular_acao_existente_reuniao", {
+      _reuniao_id: id,
+      _pauta_id: pautaId,
+      _plano_acao_id: planoAcaoId,
+    });
+    if (error) {
+      const duplicada = error.message?.includes("acao_ja_vinculada_reuniao");
+      const indisponivel = error.message?.includes("acao_nao_esta_em_aberto");
+      toast({
+        title: "Erro ao vincular ação",
+        description: duplicada
+          ? "Esta ação já está vinculada a uma pauta desta reunião."
+          : indisponivel
+            ? "A ação já foi concluída ou cancelada e não pode mais ser vinculada."
+            : error.message,
+        variant: "destructive",
+      });
+      return false;
+    }
+    qc.invalidateQueries({ queryKey: ["reuniao_decisao_acao", id] });
+    const topico = pauta.find((p) => p.id === pautaId)?.titulo_topico ?? "";
+    registrarLog(
+      id,
+      "acao_existente_vinculada",
+      `Ação existente vinculada ao tópico "${topico}": "${acao ? tituloAcaoVinculavel(acao) : planoAcaoId}"`,
+    );
+    toast({ title: "Ação existente vinculada à pauta" });
+    return true;
+  };
+
   const atualizarDecisaoAcao = async (
     decisaoAcaoId: string,
     patch: Partial<Pick<ReuniaoDecisaoAcao, "texto" | "responsavel_user_id" | "prazo" | "prioridade" | "status" | "necessita_comprovacao" | "setor_impactado">>,
@@ -787,12 +848,12 @@ export function useReuniaoDetalhe(id: string | undefined) {
 
   return {
     reuniao, isLoading, pauta, respostas, convidados, anexos, pautaAnexos, comentarios, assinaturas, logs,
-    decisoesAcoes, assuntosForaPauta, reunioesTransferencia,
+    decisoesAcoes, acoesPlanoDisponiveis, carregandoAcoesPlano, assuntosForaPauta, reunioesTransferencia,
     mudarEtapa, cancelarReuniao, excluirReuniao, iniciarReuniao, encerrarReuniao, atualizarCampos,
     salvarPautaItem, atualizarPautaItem, reordenarPauta, removerPautaItem, salvarResposta, salvarChecklistConducaoItem,
     uploadAnexo, removerAnexo, downloadAnexo, uploadPautaAnexo, removerPautaAnexo,
     adicionarConvidado, removerConvidado, marcarPresenca, adicionarComentario, removerComentario, salvarAssinatura,
-    criarDecisaoAcao, criarAcaoPlanoAcao, atualizarDecisaoAcao, removerDecisaoAcao, criarAssuntoForaPauta, removerAssuntoForaPauta,
+    criarDecisaoAcao, criarAcaoPlanoAcao, vincularAcaoPlanoAcao, atualizarDecisaoAcao, removerDecisaoAcao, criarAssuntoForaPauta, removerAssuntoForaPauta,
     marcarAssuntoForaPautaConcluido, transferirPauta,
   };
 }
