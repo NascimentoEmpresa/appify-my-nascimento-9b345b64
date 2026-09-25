@@ -541,6 +541,16 @@ const recrutamentoModule: ModuleDef = {
         { label: "Banco de Talentos", to: "/app/rh/banco-talentos", icon: Users2 },
       ],
     },
+    {
+      // Depois da admissão (25/09/2026, mig 245): o check-in de 7/30/60/90
+      // dias que o RH fazia na planilha CONTRATOS_VIGENTES.
+      label: "Acompanhamento",
+      defaultOpen: true,
+      items: [
+        { label: "Acompanhar Colaboradores", to: "/app/rh/recrutamento/acompanhar-colaboradores", icon: ClipboardCheck },
+        { label: "Acompanhar Experiência", to: "/app/rh/recrutamento/acompanhar-experiencia", icon: CalendarCheck2 },
+      ],
+    },
   ],
 };
 
