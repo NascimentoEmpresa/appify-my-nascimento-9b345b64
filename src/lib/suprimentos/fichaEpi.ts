@@ -124,9 +124,12 @@ export function montarFichaEpi(pedido: PedidoFicha, resposta: RespostaFichaEpi |
   const despachado = pedido.status === "DESPACHADO";
   const retiradaPadrao = despachado ? dataBR(pedido.data_despachado) : "";
 
-  const itensOrigem = resposta?.itens?.length
-    ? resposta.itens
-    : (pedido.sup_pedido_item ?? []).map((i) => ({ ...i, ca: null }));
+  // A RPC devolve somente o que efetivamente saiu do estoque, já com a
+  // quantidade enviada (inclusive quando o atendimento foi parcial). Sem a
+  // resposta dela não há como distinguir enviado de pendente com segurança:
+  // deixar a grade vazia é preferível a emitir um documento trabalhista com
+  // material que o colaborador não recebeu.
+  const itensOrigem = resposta?.itens ?? [];
 
   const itens = [...itensOrigem]
     .sort((a, b) => a.ordem - b.ordem)

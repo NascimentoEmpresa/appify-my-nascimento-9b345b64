@@ -69,14 +69,27 @@ describe("ficha de EPI — montagem", () => {
     ]);
   });
 
-  it("sem a RPC (migration não aplicada) usa só o pedido e deixa o cabeçalho vazio", () => {
+  it("sem a RPC não presume que os itens solicitados foram enviados", () => {
     const f = montarFichaEpi(pedido, null);
     expect(f.empresa).toBeNull();
     expect(f.contrato).toBe("HOSPITAL SÃO CAMILO - 50163.2025");
     expect(f.campos.funcao).toBe("PORTEIRO(A)");
     expect(f.campos.admissao).toBe("");
-    expect(f.itens.map((i) => i.descricao)).toEqual(["BOTINA", "LUVA NITRILICA"]);
-    expect(f.itens.every((i) => i.ca === "")).toBe(true);
+    expect(f.itens).toEqual([]);
+  });
+
+  it("imprime somente os itens enviados e usa a quantidade efetivamente enviada", () => {
+    const f = montarFichaEpi(pedido, {
+      ...resposta,
+      itens: [
+        { nome_item: "LUVA NITRILICA", tamanho: "M", quantidade: 1, litros: null, ordem: 2, ca: null },
+      ],
+    });
+
+    expect(f.itens.map((i) => [i.descricao, i.quantidade])).toEqual([
+      ["LUVA NITRILICA", "1"],
+    ]);
+    expect(f.itens.some((i) => i.descricao === "BOTINA")).toBe(false);
   });
 
   it("admissão: pessoa fora do RH usa a data de admissão do pedido", () => {
