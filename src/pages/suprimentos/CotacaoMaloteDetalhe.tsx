@@ -384,6 +384,16 @@ export default function CotacaoMaloteDetalhe() {
               <XCircle className="mr-1.5 h-4 w-4" /> Reprovar cotação
             </Button>
           )}
+          {/* SIS-2026-0533: cotações precisam ser refeitas (arquivo/valor
+              errado) — volta pro Suprimentos cotar de novo, sem reprovar a
+              solicitação inteira. */}
+          {decidivel && (
+            <Button variant="outline" disabled={ocupado}
+                    className="border-amber-300 text-amber-700 hover:bg-amber-50"
+                    onClick={() => { setMotivo(""); setConfirmando("ajustar"); }}>
+              <Pencil className="mr-1.5 h-4 w-4" /> Solicitar ajuste
+            </Button>
+          )}
 
           <div className="ml-auto flex flex-wrap gap-2">
             {editavel && (
@@ -434,7 +444,9 @@ export default function CotacaoMaloteDetalhe() {
               {confirmando === "cancelar" && "A solicitação não seguirá para aprovação. Não é possível voltar atrás."}
               {confirmando === "reprovar" && "O motivo é obrigatório e fica visível para quem abriu a solicitação."}
               {confirmando === "aprovar" && "A solicitação volta para o Malote com o valor do fornecedor escolhido. Não é possível voltar atrás."}
-              {confirmando === "ajustar" && "O motivo é obrigatório. A cotação volta para decisão de vencedor, antes que a despesa seja lançada."}
+              {confirmando === "ajustar" && (d.status === "cotacao_aprovada"
+                ? "O motivo é obrigatório. A cotação volta para decisão de vencedor, antes que a despesa seja lançada."
+                : "O motivo é obrigatório. A solicitação volta para o Suprimentos cotar de novo.")}
             </AlertDialogDescription>
           </AlertDialogHeader>
 

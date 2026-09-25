@@ -9,7 +9,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { SearchableSelect } from "@/components/ui/searchable-select";
-import { ArrowLeft, ShoppingCart, Paperclip, X, Trash2, Check, ClipboardList, ExternalLink, Building2, Trophy, CalendarClock, Info, Wallet, TrendingUp } from "lucide-react";
+import { ArrowLeft, ShoppingCart, Paperclip, X, Trash2, Check, ClipboardList, ExternalLink, Building2, Trophy, CalendarClock, Info, Wallet, TrendingUp, Pencil } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { cn } from "@/lib/utils";
@@ -25,6 +25,7 @@ import {
   useReprovarSolicitacaoInicial,
   useAprovarCotacao,
   useReprovarCotacao,
+  useSolicitarAjusteCotacao,
   souAprovadorSolicitacao,
   uploadAnexosMalote,
   registrarEventoDespesa,
@@ -81,11 +82,14 @@ export default function SolicitacaoVisualizar() {
   const reprovarInicial = useReprovarSolicitacaoInicial();
   const aprovarCotacaoMut = useAprovarCotacao();
   const reprovarCotacaoMut = useReprovarCotacao();
+  const ajustarCotacaoMut = useSolicitarAjusteCotacao();
   const [comentarioAprovacao, setComentarioAprovacao] = useState("");
   const [acaoAprovacao, setAcaoAprovacao] = useState<"aprovar" | "reprovar" | null>(null);
   const [numeroSelecionado, setNumeroSelecionado] = useState<1 | 2 | 3 | null>(null);
+  const [motivoAjusteCotacao, setMotivoAjusteCotacao] = useState("");
+  const [ajustandoCotacao, setAjustandoCotacao] = useState(false);
   const [comentarioCotacao, setComentarioCotacao] = useState("");
-  const [acaoCotacao, setAcaoCotacao] = useState<"aprovar" | "reprovar" | null>(null);
+  const [acaoCotacao, setAcaoCotacao] = useState<"aprovar" | "reprovar" | "ajustar" | null>(null);
 
   const [nome, setNome] = useState("");
   const [motivo, setMotivo] = useState("");
@@ -160,6 +164,11 @@ export default function SolicitacaoVisualizar() {
   // Enviar/digitar cotações é telas do Suprimentos (SIS-2026-0112,
   // /app/suprimentos/cotacoes-malote) — aqui só mostramos o resultado.
   const podeEscolherCotacao = despesa.status === "cotacao_realizada" && souAprovadorDaClassificacao;
+
+  // SIS-2026-0533: aprovou a cotação errado, quer voltar antes da despesa
+  // ser lançada no Malote — mesmo aprovador de podeEscolherCotacao, um
+  // status depois.
+  const podeAjustarCotacao = despesa.status === "cotacao_aprovada" && souAprovadorDaClassificacao;
 
   // Status em que o aprovador configurado veria os painéis de Resumo/
   // Orçamento/Impacto — usado só pra explicar pra quem não é esse aprovador
@@ -279,6 +288,44 @@ export default function SolicitacaoVisualizar() {
     }
   }
 
+  // SIS-2026-0533, situação 2 do chamado original: as cotações em si
+  // precisam ser refeitas (arquivo errado, valor errado etc.) — diferente
+  // de reprovar (mata a solicitação inteira), volta pro Suprimentos cotar
+  // de novo sem perder a solicitação.
+  async function handleSolicitarAjusteCotacaoDecisao() {
+    if (!comentarioCotacao.trim()) {
+      toast.error("Descreva o motivo do ajuste no campo Comentário.");
+      return;
+    }
+    setAcaoCotacao("ajustar");
+    try {
+      await ajustarCotacaoMut.mutateAsync({ id: despesa!.id, motivo: comentarioCotacao.trim() });
+      toast.success("Ajuste solicitado. A cotação volta para o Suprimentos.");
+      setComentarioCotacao("");
+    } catch (e: any) {
+      toast.error(e.message ?? "Erro ao solicitar ajuste.");
+    } finally {
+      setAcaoCotacao(null);
+    }
+  }
+
+  async function handleSolicitarAjusteCotacao() {
+    if (!motivoAjusteCotacao.trim()) {
+      toast.error("Descreva o motivo do ajuste no campo abaixo.");
+      return;
+    }
+    setAjustandoCotacao(true);
+    try {
+      await ajustarCotacaoMut.mutateAsync({ id: despesa!.id, motivo: motivoAjusteCotacao.trim() });
+      toast.success("Ajuste solicitado. A cotação volta para decisão.");
+      setMotivoAjusteCotacao("");
+    } catch (e: any) {
+      toast.error(e.message ?? "Erro ao solicitar ajuste.");
+    } finally {
+      setAjustandoCotacao(false);
+    }
+  }
+
   async function handleSalvar() {
     if (!nome.trim()) return toast.error("Informe o nome da solicitação.");
     if (!motivo.trim()) return toast.error("Informe o motivo.");
@@ -391,6 +438,42 @@ export default function SolicitacaoVisualizar() {
           )}
         </CardContent>
       </Card>
+
+      {/* SIS-2026-0533: aprovou a cotação errado, quer voltar antes da
+          despesa ser lançada no Malote por cima do erro. */}
+      {podeAjustarCotacao && (
+        <Card className="border-l-4 border-l-amber-400">
+          <CardContent className="p-4 space-y-2">
+            <div className="flex items-center gap-2">
+              <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-amber-100 text-amber-600 dark:bg-amber-950/40 dark:text-amber-400">
+                <Pencil className="h-3.5 w-3.5" />
+              </span>
+              <p className="text-sm font-semibold">Aprovou errado?</p>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Solicite ajuste antes que a despesa seja lançada — a cotação volta para decisão do vencedor.
+            </p>
+            <Textarea
+              value={motivoAjusteCotacao}
+              onChange={(e) => setMotivoAjusteCotacao(e.target.value.slice(0, 500))}
+              placeholder="Ex.: aprovei o fornecedor errado, o vencedor deveria ter sido a cotação 2."
+              className="text-xs"
+              rows={2}
+            />
+            <div className="flex justify-end">
+              <Button
+                size="sm"
+                variant="outline"
+                className="border-amber-300 text-amber-700 hover:bg-amber-50 gap-1.5"
+                onClick={handleSolicitarAjusteCotacao}
+                disabled={ajustandoCotacao}
+              >
+                <Pencil className="h-3.5 w-3.5" /> {ajustandoCotacao ? "Solicitando..." : "Solicitar ajuste"}
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-stretch">
         <div className="lg:col-span-2">
@@ -795,7 +878,7 @@ export default function SolicitacaoVisualizar() {
                 <textarea
                   value={comentarioCotacao}
                   onChange={(e) => setComentarioCotacao(e.target.value.slice(0, 500))}
-                  placeholder="Motivo da reprovação (obrigatório só se for reprovar)..."
+                  placeholder="Motivo (obrigatório pra reprovar ou solicitar ajuste)..."
                   className="w-full min-h-10 rounded-md border border-input bg-background p-2 text-xs"
                   maxLength={500}
                 />
@@ -810,6 +893,18 @@ export default function SolicitacaoVisualizar() {
                       disabled={acaoCotacao !== null}
                     >
                       <X className="h-3.5 w-3.5" /> {acaoCotacao === "reprovar" ? "Reprovando..." : "Reprovar solicitação"}
+                    </Button>
+                    {/* SIS-2026-0533: as cotações precisam ser refeitas
+                        (arquivo/valor errado) — volta pro Suprimentos cotar
+                        de novo, sem reprovar a solicitação inteira. */}
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="border-amber-300 text-amber-700 hover:bg-amber-50 gap-1.5"
+                      onClick={handleSolicitarAjusteCotacaoDecisao}
+                      disabled={acaoCotacao !== null}
+                    >
+                      <Pencil className="h-3.5 w-3.5" /> {acaoCotacao === "ajustar" ? "Solicitando..." : "Solicitar ajuste"}
                     </Button>
                     <Button size="sm" className="gap-1.5" onClick={handleAprovarCotacaoEscolhida} disabled={acaoCotacao !== null || !numeroSelecionado}>
                       <Check className="h-3.5 w-3.5" /> {acaoCotacao === "aprovar" ? "Aprovando..." : "Aprovar cotação selecionada"}

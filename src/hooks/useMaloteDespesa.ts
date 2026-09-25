@@ -1711,6 +1711,25 @@ export function useReprovarCotacao() {
   });
 }
 
+/**
+ * SIS-2026-0533: solicita ajuste na cotação, de dois pontos possíveis —
+ * durante a decisão ("cotacao_realizada", volta pra "aguardando_cotacao"
+ * pro Suprimentos cotar de novo) ou depois de aprovada ("cotacao_aprovada",
+ * volta pra "cotacao_realizada" pra reabrir a escolha do vencedor). A RPC
+ * decide o destino pelo status atual. Mesma regra de permissão de
+ * aprovar/reprovar cotação.
+ */
+export function useSolicitarAjusteCotacao() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, motivo }: { id: string; motivo: string }) => {
+      const { error } = await (supabase as any).rpc("malote_solicitar_ajuste_cotacao", { _id: id, _motivo: motivo });
+      if (error) throw error;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: [DESPESA_KEY] }),
+  });
+}
+
 export interface ItemAguardandoAprovacao {
   despesa: MaloteDespesaRow;
   tela: "solicitacao" | "despesa";

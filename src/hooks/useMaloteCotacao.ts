@@ -233,9 +233,11 @@ export function useReprovarCotacao() {
 }
 
 /**
- * SIS-2026-0533: depois da cotação aprovada, antes da Juliana lançar a
- * despesa — volta pra "cotacao_realizada" pra reabrir a escolha do
- * vencedor, sem exigir recotar do zero.
+ * SIS-2026-0533: solicita ajuste na cotação, de dois pontos possíveis —
+ * durante a decisão ("cotacao_realizada", volta pra "aguardando_cotacao"
+ * pro Suprimentos cotar de novo) ou depois de aprovada ("cotacao_aprovada",
+ * volta pra "cotacao_realizada" pra reabrir a escolha do vencedor, sem
+ * exigir recotar do zero). A RPC decide o destino pelo status atual.
  */
 export function useSolicitarAjusteCotacao() {
   const invalidar = useInvalidar();
@@ -244,7 +246,7 @@ export function useSolicitarAjusteCotacao() {
       const { error } = await sb.rpc("sup_malote_solicitar_ajuste_cotacao", { p_id: v.id, p_motivo: v.motivo });
       if (error) throw error;
     },
-    onSuccess: () => { invalidar(); toast.success("Ajuste solicitado. A cotação volta para decisão."); },
+    onSuccess: () => { invalidar(); toast.success("Ajuste solicitado."); },
     onError: (e: any) => toast.error(e?.message ?? "Não foi possível solicitar o ajuste."),
   });
 }
