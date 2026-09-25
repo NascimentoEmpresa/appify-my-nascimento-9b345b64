@@ -27968,3 +27968,598 @@ NOTIFY pgrst, 'reload schema';
 -- ALTER TABLE public."SISTEMA_SOLICITACOES_FERIAS" DROP COLUMN IF EXISTS cancelada_pelo_rh,
 --   DROP COLUMN IF EXISTS motivo_cancelamento, DROP COLUMN IF EXISTS cancelada_por, DROP COLUMN IF EXISTS cancelada_em;
 -- NOTIFY pgrst, 'reload schema';
+
+-- ===== 20260930000239_demissao_cancelamento_pede_aprovacao_rh =====
+-- =========================================================================
+-- Demissão: o cancelamento pedido pelo ENCARREGADO passa pela aprovação do RH
+--
+-- PEDIDO (25/09/2026, Pablo)
+--   "Quando o encarregado solicita CANCELAMENTO de demissão, deve ir pro RH
+--   aprovar o cancelamento. Com um ícone vermelho de cancelamento."
+--
+-- ANTES (mig 182 → 200)
+--   O botão Cancelar do encarregado cancelava na hora (status 'Cancelada'),
+--   até o ASO ser agendado. O RH só ficava sabendo pelo fio da conversa.
+--
+-- AGORA
+--   1. Status novo 'Cancelamento solicitado'. O encarregado PEDE, com motivo;
+--      a solicitação congela ali (nenhuma etapa age nela) e o status de onde
+--      saiu fica em cancel_status_anterior. Vale em qualquer etapa em aberto,
+--      inclusive com o ASO agendado ou válido: quem decide agora é o RH, que
+--      já cancelava nesses status (mig 198/200).
+--   2. RPC demissao_decidir_cancelamento(id, aprovar, observacao): só quem tem
+--      rh_demissoes/aprovar.
+--        · aprova → 'Cancelada' com o motivo do encarregado, cancela a vaga de
+--          Substituição que nem abriu e, se estava no SST, avisa o SST pra
+--          desmarcar o ASO (a mesma efetivação do cancelamento direto do RH);
+--        · recusa (observação obrigatória) → volta pro status de antes, e o
+--          encarregado é avisado no sino com o porquê.
+--   3. O cancelamento DIRETO do RH (BlocoCancelarReconsideracaoRH) continua
+--      igual — a efetivação saiu pra demissao_efetivar_cancelamento, que as
+--      duas RPCs chamam.
+--   4. Gatilhos que enxergavam status:
+--        · demissao_exige_vaga deixa ir pra 'Cancelamento solicitado' sem a
+--          vaga (pedir cancelamento não é "seguir");
+--        · ssd_guard_aprovador_setor não barra o encarregado que pede
+--          cancelamento de uma demissão em 'Pendente Diretoria' — a trava é
+--          de APROVAÇÃO por setor, não de cancelamento (antes o cancelamento
+--          direto ali também estourava essa trava).
+--
+-- O aviso ao RH quando chega o pedido é do gatilho de notificações da
+-- mig 20260930000240 (status 'Cancelamento solicitado' → rh_demissoes/aprovar).
+--
+-- Idempotente. Aplicar no banco do app. ROLLBACK no fim.
+-- =========================================================================
+
+ALTER TABLE public."SISTEMA_SOLICITACOES_DEMISSAO"
+  ADD COLUMN IF NOT EXISTS cancel_pedido_por      text,
+  ADD COLUMN IF NOT EXISTS cancel_pedido_email    text,
+  ADD COLUMN IF NOT EXISTS cancel_pedido_em       timestamptz,
+  ADD COLUMN IF NOT EXISTS cancel_pedido_motivo   text,
+  ADD COLUMN IF NOT EXISTS cancel_status_anterior text,
+  ADD COLUMN IF NOT EXISTS cancel_recusa_por      text,
+  ADD COLUMN IF NOT EXISTS cancel_recusa_em       timestamptz,
+  ADD COLUMN IF NOT EXISTS cancel_recusa_motivo   text;
+
+COMMENT ON COLUMN public."SISTEMA_SOLICITACOES_DEMISSAO".cancel_status_anterior IS
+  'Status em que a demissão estava quando o encarregado pediu o cancelamento — pra onde ela volta se o RH recusar (mig 239, 25/09/2026).';
+
+-- ── 4) Gatilhos ─────────────────────────────────────────────────────────
+CREATE OR REPLACE FUNCTION public.demissao_exige_vaga()
+RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = public, pg_temp
+AS $fn$
+BEGIN
+  IF NEW.vaga_obrigatoria
+     AND NEW.vaga_id IS NULL
+     AND OLD.status IN ('Pendente Operacional', 'Pendente Analista', 'Pendente Diretoria')
+     AND NEW.status NOT IN ('Pendente Operacional', 'Pendente Analista', 'Pendente Diretoria', 'Reprovada', 'Cancelada', 'Cancelamento solicitado')
+     AND length(btrim(coalesce(NEW.sem_vaga_motivo, ''))) < 10 THEN
+    RAISE EXCEPTION 'Esta demissão ainda não tem a vaga de reposição. Abra a vaga de Substituição de % ou descreva o motivo da exceção antes de o pedido seguir.', NEW.colaborador_nome;
+  END IF;
+  RETURN NEW;
+END $fn$;
+
+CREATE OR REPLACE FUNCTION public.ssd_guard_aprovador_setor()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $fn$
+BEGIN
+  IF auth.uid() IS NULL THEN RETURN NEW; END IF;
+  IF OLD.status = 'Pendente Diretoria'
+     AND NEW.status IS DISTINCT FROM OLD.status
+     AND NEW.status NOT IN ('Cancelamento solicitado', 'Cancelada')
+     AND NOT public.aprova_setor(OLD.setor) THEN
+    RAISE EXCEPTION 'Você não aprova demissões do setor "%". Peça ao administrador para marcar o setor em Acesso por Usuário.', coalesce(OLD.setor, '—')
+      USING ERRCODE = '42501';
+  END IF;
+  RETURN NEW;
+END $fn$;
+
+-- ── 3) A efetivação (interna): o que o cancelamento faz, venha de onde vier ─
+-- p_status_origem é o status em que a demissão ESTAVA (no pedido do
+-- encarregado, o cancel_status_anterior) — é ele que decide se o SST precisa
+-- desmarcar um exame. Não avisa o solicitante: cada RPC avisa com a frase dela.
+CREATE OR REPLACE FUNCTION public.demissao_efetivar_cancelamento(
+  p_id bigint, p_status_origem text, p_motivo text, p_cancelado_por text,
+  p_email text, p_texto_fio text, p_anexos jsonb DEFAULT '[]'::jsonb)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $fn$
+DECLARE
+  d          record;
+  v_vaga     text := NULL;
+  v_n_anexos int := 0;
+  a          jsonb;
+  v_no_sst   boolean := p_status_origem = ANY (ARRAY['Pendente SST', 'Solicitação de agendamento de DEMISSIONAL recebida', 'Agendamento concluído']);
+  v_exame    text := '';
+  v_n_sst    int := 0;
+BEGIN
+  SELECT * INTO d FROM public."SISTEMA_SOLICITACOES_DEMISSAO" WHERE id = p_id FOR UPDATE;
+
+  UPDATE public."SISTEMA_SOLICITACOES_DEMISSAO"
+     SET status = 'Cancelada',
+         cancelado_por = p_cancelado_por,
+         cancelado_em = now(),
+         cancelado_motivo = btrim(p_motivo),
+         atualizado_em = now()
+   WHERE id = p_id;
+
+  FOR a IN SELECT * FROM jsonb_array_elements(coalesce(p_anexos, '[]'::jsonb)) LOOP
+    IF coalesce(a->>'storage_path', '') <> '' THEN
+      INSERT INTO public."SISTEMA_SOL_DEMISSAO_ANEXOS" (solicitacao_id, nome, storage_path, tamanho, tipo, enviado_por)
+      VALUES (p_id, 'Cancelamento — ' || coalesce(a->>'nome', 'arquivo'), a->>'storage_path',
+              nullif(a->>'tamanho', '')::bigint, nullif(a->>'tipo', ''), p_email);
+      v_n_anexos := v_n_anexos + 1;
+    END IF;
+  END LOOP;
+
+  -- A vaga de Substituição que nem abriu ainda cai junto.
+  IF d.vaga_id IS NOT NULL THEN
+    UPDATE public."SISTEMA_RECRUTAMENTO"
+       SET status = 'Cancelada'
+     WHERE id = d.vaga_id AND status LIKE 'Pendente%';
+    IF FOUND THEN v_vaga := 'cancelada'; ELSE v_vaga := 'mantida'; END IF;
+  END IF;
+
+  IF p_status_origem = 'Agendamento concluído' THEN
+    v_exame := ' Exame agendado: ' || coalesce(to_char(d.sst_data_exame::date, 'DD/MM/YYYY'), 'data não informada')
+            || coalesce(' às ' || left(d.sst_hora_exame::text, 5), '')
+            || coalesce(' — ' || nullif(rtrim(btrim(d.sst_local_exame::text), '.'), ''), '') || '.';
+  END IF;
+
+  INSERT INTO public."SISTEMA_COMENTARIOS" (modulo, entidade_id, autor_nome, autor_cpf, texto)
+  VALUES ('demissao', p_id::text, p_cancelado_por, p_email,
+          p_texto_fio
+          || CASE WHEN v_no_sst THEN ' Estava no SST (' || p_status_origem || ') — SST avisado para cancelar o agendamento do ASO.'
+                  WHEN p_status_origem = 'ASO válido' THEN ' Já estava concluída pelo SST (ASO válido — não havia exame a desmarcar).'
+                  ELSE '' END
+          || ' Motivo: ' || btrim(p_motivo)
+          || CASE WHEN v_n_anexos > 0 THEN ' (' || v_n_anexos || ' arquivo(s) em Documentos)' ELSE '' END);
+
+  IF v_no_sst THEN
+    INSERT INTO public.notificacoes (user_id, titulo, mensagem, tipo, link)
+    SELECT u, 'Cancelar agendamento do ASO demissional',
+           left('#' || p_id || ' · ' || coalesce(d.colaborador_nome, '—')
+                || ' — demissão cancelada (reconsideração).' || v_exame
+                || ' Motivo: ' || btrim(p_motivo), 300),
+           'warning', '/app/sst/aso-demissional?abrir=' || p_id
+      FROM public.malote_usuarios_com_acesso('sst_aso_demissional', 'visualizar'::public.app_acao) AS u
+     WHERE u IS DISTINCT FROM auth.uid();
+    GET DIAGNOSTICS v_n_sst = ROW_COUNT;
+  END IF;
+
+  RETURN jsonb_build_object('id', p_id, 'status', 'Cancelada', 'vaga', v_vaga,
+                            'anexos', v_n_anexos, 'sst_avisados', v_n_sst);
+END $fn$;
+-- Interna: só as RPCs abaixo (SECURITY DEFINER) chamam.
+REVOKE ALL ON FUNCTION public.demissao_efetivar_cancelamento(bigint, text, text, text, text, text, jsonb) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.demissao_efetivar_cancelamento(bigint, text, text, text, text, text, jsonb) FROM anon;
+REVOKE ALL ON FUNCTION public.demissao_efetivar_cancelamento(bigint, text, text, text, text, text, jsonb) FROM authenticated;
+
+-- ── 1) demissao_cancelar: o RH cancela direto; o encarregado PEDE ─────────
+CREATE OR REPLACE FUNCTION public.demissao_cancelar(p_id bigint, p_motivo text, p_anexos jsonb DEFAULT '[]'::jsonb)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $fn$
+DECLARE
+  d           record;
+  v_email     text := lower(coalesce(auth.email(), ''));
+  v_nome      text;
+  v_sou_solic boolean;
+  v_sou_rh    boolean;
+  v_rh_status boolean;
+  v_solic_id  uuid;
+  v_ret       jsonb;
+BEGIN
+  IF length(btrim(coalesce(p_motivo, ''))) < 10 THEN
+    RAISE EXCEPTION 'Informe o motivo da reconsideração (mín. 10 caracteres).';
+  END IF;
+  SELECT * INTO d FROM public."SISTEMA_SOLICITACOES_DEMISSAO" WHERE id = p_id FOR UPDATE;
+  IF d.id IS NULL THEN RAISE EXCEPTION 'Solicitação #% não existe.', p_id; END IF;
+
+  IF d.status IN ('Concluída', 'Reprovada', 'Cancelada') THEN
+    RAISE EXCEPTION 'A solicitação já está %: não há o que cancelar.', lower(d.status);
+  END IF;
+  IF d.status = 'Cancelamento solicitado' THEN
+    RAISE EXCEPTION 'O cancelamento desta solicitação já foi pedido e está com o RH para aprovar.';
+  END IF;
+
+  v_sou_solic := lower(coalesce(d.solicitante_email, '')) = v_email;
+  v_sou_rh    := public.has_screen_access(auth.uid(), 'rh_demissoes', 'aprovar'::public.app_acao);
+  v_rh_status := d.status = ANY (ARRAY['Pendente RH', 'Pendente SST', 'Solicitação de agendamento de DEMISSIONAL recebida', 'Agendamento concluído', 'ASO válido']);
+
+  SELECT coalesce(p.display_name, p.email) INTO v_nome FROM public.profiles p WHERE p.id = auth.uid();
+  v_nome := coalesce(v_nome, v_email);
+
+  -- O RH decide a reconsideração: cancela direto (mig 186/198/200).
+  IF v_sou_rh AND v_rh_status THEN
+    v_ret := public.demissao_efetivar_cancelamento(p_id, d.status, p_motivo, v_nome || ' (RH)', v_email,
+                                                   '🚫 DEMISSÃO CANCELADA pelo RH.', p_anexos);
+    IF NOT v_sou_solic THEN
+      SELECT id INTO v_solic_id FROM public.profiles WHERE lower(email) = lower(coalesce(d.solicitante_email, '')) LIMIT 1;
+      IF v_solic_id IS NOT NULL AND v_solic_id IS DISTINCT FROM auth.uid() THEN
+        INSERT INTO public.notificacoes (user_id, titulo, mensagem, tipo, link)
+        VALUES (v_solic_id, 'Demissão cancelada pelo RH (reconsideração)',
+                left('#' || p_id || ' · ' || coalesce(d.colaborador_nome, '—') || ' — ' || btrim(p_motivo), 300),
+                'warning', '/app/encarregados/minhas-solicitacoes');
+      END IF;
+    END IF;
+    RETURN v_ret || jsonb_build_object('por', 'pelo RH');
+  END IF;
+
+  -- O encarregado PEDE — o RH aprova ou recusa (demissao_decidir_cancelamento).
+  IF v_sou_solic THEN
+    UPDATE public."SISTEMA_SOLICITACOES_DEMISSAO"
+       SET status = 'Cancelamento solicitado',
+           cancel_status_anterior = d.status,
+           cancel_pedido_por = v_nome,
+           cancel_pedido_email = v_email,
+           cancel_pedido_em = now(),
+           cancel_pedido_motivo = btrim(p_motivo),
+           cancel_recusa_por = NULL, cancel_recusa_em = NULL, cancel_recusa_motivo = NULL,
+           atualizado_em = now()
+     WHERE id = p_id;
+
+    INSERT INTO public."SISTEMA_COMENTARIOS" (modulo, entidade_id, autor_nome, autor_cpf, texto)
+    VALUES ('demissao', p_id::text, v_nome, v_email,
+            '🚫 CANCELAMENTO SOLICITADO pelo solicitante (estava em ' || d.status || ') — aguardando a aprovação do RH. Motivo: ' || btrim(p_motivo));
+
+    RETURN jsonb_build_object('id', p_id, 'status', 'Cancelamento solicitado', 'por', 'pedido', 'anterior', d.status);
+  END IF;
+
+  IF v_sou_rh THEN
+    RAISE EXCEPTION 'O RH cancela a solicitação a partir do Pendente RH (agora está %).', d.status;
+  END IF;
+  RAISE EXCEPTION 'Só quem solicitou a demissão (pedindo ao RH), ou o RH, pode cancelá-la.';
+END $fn$;
+REVOKE ALL ON FUNCTION public.demissao_cancelar(bigint, text, jsonb) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.demissao_cancelar(bigint, text, jsonb) FROM anon;
+GRANT EXECUTE ON FUNCTION public.demissao_cancelar(bigint, text, jsonb) TO authenticated;
+
+-- ── 2) O RH decide o pedido ───────────────────────────────────────────────
+CREATE OR REPLACE FUNCTION public.demissao_decidir_cancelamento(p_id bigint, p_aprovar boolean, p_observacao text DEFAULT NULL)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $fn$
+DECLARE
+  d          record;
+  v_email    text := lower(coalesce(auth.email(), ''));
+  v_nome     text;
+  v_solic_id uuid;
+  v_obs      text := nullif(btrim(coalesce(p_observacao, '')), '');
+  v_ret      jsonb;
+BEGIN
+  IF NOT public.has_screen_access(auth.uid(), 'rh_demissoes', 'aprovar'::public.app_acao) THEN
+    RAISE EXCEPTION 'Só o RH (Solicitações de Demissão › aprovar) decide o pedido de cancelamento.' USING ERRCODE = '42501';
+  END IF;
+  SELECT * INTO d FROM public."SISTEMA_SOLICITACOES_DEMISSAO" WHERE id = p_id FOR UPDATE;
+  IF d.id IS NULL THEN RAISE EXCEPTION 'Solicitação #% não existe.', p_id; END IF;
+  IF d.status <> 'Cancelamento solicitado' THEN
+    RAISE EXCEPTION 'A solicitação #% não tem pedido de cancelamento em aberto (está %).', p_id, d.status;
+  END IF;
+  IF NOT p_aprovar AND length(coalesce(v_obs, '')) < 10 THEN
+    RAISE EXCEPTION 'Explique ao solicitante por que o cancelamento foi recusado (mín. 10 caracteres).';
+  END IF;
+
+  SELECT coalesce(p.display_name, p.email) INTO v_nome FROM public.profiles p WHERE p.id = auth.uid();
+  v_nome := coalesce(v_nome, v_email);
+  SELECT id INTO v_solic_id FROM public.profiles WHERE lower(email) = lower(coalesce(d.solicitante_email, '')) LIMIT 1;
+
+  IF p_aprovar THEN
+    v_ret := public.demissao_efetivar_cancelamento(
+      p_id, coalesce(d.cancel_status_anterior, ''), d.cancel_pedido_motivo,
+      coalesce(d.cancel_pedido_por, d.solicitante_nome, 'Solicitante') || ' · aprovado pelo RH (' || v_nome || ')',
+      v_email,
+      '🚫 DEMISSÃO CANCELADA — pedido do solicitante APROVADO pelo RH (' || v_nome || ').'
+        || coalesce(' Observação do RH: ' || v_obs || '.', ''),
+      '[]'::jsonb);
+    IF v_solic_id IS NOT NULL AND v_solic_id IS DISTINCT FROM auth.uid() THEN
+      INSERT INTO public.notificacoes (user_id, titulo, mensagem, tipo, link)
+      VALUES (v_solic_id, 'Cancelamento de demissão aprovado pelo RH',
+              left('#' || p_id || ' · ' || coalesce(d.colaborador_nome, '—') || ' — a demissão foi cancelada.'
+                   || coalesce(' ' || v_obs, ''), 300),
+              'success', '/app/encarregados/minhas-solicitacoes');
+    END IF;
+    RETURN v_ret || jsonb_build_object('decisao', 'aprovado');
+  END IF;
+
+  IF coalesce(d.cancel_status_anterior, '') = '' THEN
+    RAISE EXCEPTION 'Não sei para onde a solicitação #% volta (status anterior não gravado). Fale com o suporte.', p_id;
+  END IF;
+
+  UPDATE public."SISTEMA_SOLICITACOES_DEMISSAO"
+     SET status = d.cancel_status_anterior,
+         cancel_recusa_por = v_nome,
+         cancel_recusa_em = now(),
+         cancel_recusa_motivo = v_obs,
+         atualizado_em = now()
+   WHERE id = p_id;
+
+  INSERT INTO public."SISTEMA_COMENTARIOS" (modulo, entidade_id, autor_nome, autor_cpf, texto)
+  VALUES ('demissao', p_id::text, v_nome, v_email,
+          '↩ Pedido de cancelamento RECUSADO pelo RH — a demissão segue em ' || d.cancel_status_anterior || '. Motivo: ' || v_obs);
+
+  IF v_solic_id IS NOT NULL AND v_solic_id IS DISTINCT FROM auth.uid() THEN
+    INSERT INTO public.notificacoes (user_id, titulo, mensagem, tipo, link)
+    VALUES (v_solic_id, 'Cancelamento de demissão recusado pelo RH',
+            left('#' || p_id || ' · ' || coalesce(d.colaborador_nome, '—') || ' — a demissão continua. Motivo: ' || v_obs, 300),
+            'warning', '/app/encarregados/minhas-solicitacoes');
+  END IF;
+
+  RETURN jsonb_build_object('id', p_id, 'status', d.cancel_status_anterior, 'decisao', 'recusado');
+END $fn$;
+REVOKE ALL ON FUNCTION public.demissao_decidir_cancelamento(bigint, boolean, text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.demissao_decidir_cancelamento(bigint, boolean, text) FROM anon;
+GRANT EXECUTE ON FUNCTION public.demissao_decidir_cancelamento(bigint, boolean, text) TO authenticated;
+
+NOTIFY pgrst, 'reload schema';
+
+-- =========================================================================
+-- ROLLBACK
+-- =========================================================================
+-- (antes, devolver as que estiverem em 'Cancelamento solicitado':)
+-- UPDATE public."SISTEMA_SOLICITACOES_DEMISSAO" SET status = cancel_status_anterior
+--  WHERE status = 'Cancelamento solicitado' AND cancel_status_anterior IS NOT NULL;
+-- DROP FUNCTION IF EXISTS public.demissao_decidir_cancelamento(bigint, boolean, text);
+-- DROP FUNCTION IF EXISTS public.demissao_efetivar_cancelamento(bigint, text, text, text, text, text, jsonb);
+-- Reaplicar demissao_cancelar da 20260930000200, demissao_exige_vaga da 182
+-- e ssd_guard_aprovador_setor da versão anterior (sem a exceção de cancelamento).
+-- NOTIFY pgrst, 'reload schema';
+
+-- ===== 20260930000240_sino_solicitacoes_rh =====
+-- =========================================================================
+-- Sino do ERP: aviso quando chega SOLICITAÇÃO na fila de quem trata
+--
+-- PEDIDO (25/09/2026, Pablo)
+--   "Tem que adicionar notificações lá em cima quando receber solicitações
+--   dos sistemas, qualquer sistema que o usuário tenha permissão. Tipo
+--   solicitações de demissão, de férias, etc. E ao clicar transfere pro
+--   sistema da notificação."
+--
+-- O sino (public.notificacoes / Topbar) já avisava Malote, Compras, Atas,
+-- Reembolso, Diárias, Parecer Jurídico e Advertências (mig 083, 185...).
+-- Faltavam as solicitações de RH. Entram aqui, no mesmo desenho da 185:
+-- gatilho AFTER INSERT / UPDATE OF status que, quando a solicitação CHEGA
+-- numa fila, avisa quem tem a permissão daquela tela
+-- (malote_usuarios_com_acesso — exceção individual ou perfil; o "concede
+-- tudo" do administrador fica de fora, senão o admin recebe tudo de todos) e
+-- nunca quem fez a ação (jur_notificar pula auth.uid()).
+--
+-- O `link` leva à tela da fila. Na demissão vai com ?abrir=<id> e o painel
+-- já abre o card.
+--
+-- QUEM RECEBE O QUÊ
+--   Demissão ........ Pendente Operacional → operacional_demissoes
+--                     Pendente Diretoria   → diretoria_solicitacoes_demissao (pelo setor)
+--                     Pendente RH          → rh_demissoes
+--                     Pendente SST         → sst_aso_demissional
+--                     Cancelamento solicitado → rh_demissoes/aprovar (🚫, vermelho)
+--   Férias .......... Pendente             → rh_ferias/alterar
+--   Mudança de função Pendente Operacional → operacional_troca_funcao
+--                     Pendente Escritório  → diretoria_troca_funcao / escritorio_troca_funcao (pelo setor)
+--                     Pendente SST         → sst_troca_funcao
+--                     Pendente RH          → rh_troca_funcao
+--   Vaga ............ Pendente Analista    → licitacoes_analistas_recrutamento
+--                     Pendente Operacional → operacional_recrutamento
+--                     Pendente Diretoria   → diretoria_recrutamento (pelo setor)
+--                     Pendente Recrutamento→ recrutamento_gestao
+--
+-- Filas por setor (Diretoria): a mesma regra de aprova_setor — quem não tem
+-- setor marcado em Acesso por Usuário vê todos; quem tem, só os dele.
+--
+-- Volta de um pedido de cancelamento recusado (Cancelamento solicitado →
+-- status anterior) NÃO avisa de novo: não é solicitação nova. Vaga importada
+-- do sistema antigo (legado_chave) também não.
+--
+-- Idempotente. Aplicar no banco do app. ROLLBACK no fim.
+-- =========================================================================
+
+-- ── Helpers ──────────────────────────────────────────────────────────────
+-- aprova_setor para OUTRO usuário (a original olha auth.uid()).
+CREATE OR REPLACE FUNCTION public.aprova_setor_de(_user uuid, _setor text)
+RETURNS boolean
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $fn$
+  SELECT public.cs_reembolso_norm_setor(_setor) IS NULL
+      OR NOT EXISTS (SELECT 1 FROM public."SISTEMA_APROVADOR_SETOR" a WHERE a.user_id = _user)
+      OR EXISTS (
+        SELECT 1 FROM public."SISTEMA_APROVADOR_SETOR" a
+         WHERE a.user_id = _user
+           AND public.cs_reembolso_norm_setor(a.setor) = public.cs_reembolso_norm_setor(_setor)
+      );
+$fn$;
+REVOKE ALL ON FUNCTION public.aprova_setor_de(uuid, text) FROM PUBLIC, anon;
+
+-- Quem tem a permissão da tela E trata aquele setor, como array.
+CREATE OR REPLACE FUNCTION public.sino_quem_tem_setor(_menu text, _acao public.app_acao, _setor text)
+RETURNS uuid[]
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $fn$
+  SELECT coalesce(array_agg(u), '{}'::uuid[])
+    FROM public.malote_usuarios_com_acesso(_menu, _acao) AS u
+   WHERE public.aprova_setor_de(u, _setor);
+$fn$;
+REVOKE ALL ON FUNCTION public.sino_quem_tem_setor(text, public.app_acao, text) FROM PUBLIC, anon;
+
+-- ── Demissão ─────────────────────────────────────────────────────────────
+CREATE OR REPLACE FUNCTION public.sino_demissao_notificar()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $fn$
+DECLARE
+  v_quem text := '#' || NEW.id || ' · ' || coalesce(NEW.colaborador_nome, '—')
+                 || coalesce(' — ' || nullif(btrim(NEW.contrato), ''), '');
+BEGIN
+  IF TG_OP = 'UPDATE' AND (NEW.status IS NOT DISTINCT FROM OLD.status OR OLD.status = 'Cancelamento solicitado') THEN
+    RETURN NEW;
+  END IF;
+
+  IF NEW.status = 'Pendente Operacional' THEN
+    PERFORM public.jur_notificar(public.jur_quem_tem('operacional_demissoes', 'visualizar'),
+      'Nova solicitação de demissão', v_quem || ' — aguardando a aprovação do Operacional.',
+      'info', '/app/operacional/solicitacoes-demissao?abrir=' || NEW.id);
+  ELSIF NEW.status = 'Pendente Diretoria' THEN
+    PERFORM public.jur_notificar(public.sino_quem_tem_setor('diretoria_solicitacoes_demissao', 'visualizar', NEW.setor),
+      'Nova solicitação de demissão', v_quem || coalesce(' (setor ' || nullif(btrim(NEW.setor), '') || ')', '') || ' — aguardando a Diretoria.',
+      'info', '/app/diretoria/solicitacoes-demissao?abrir=' || NEW.id);
+  ELSIF NEW.status = 'Pendente RH' THEN
+    PERFORM public.jur_notificar(public.jur_quem_tem('rh_demissoes', 'visualizar'),
+      'Demissão aprovada — aguardando o RH', v_quem || ' — confira e libere para o SST.',
+      'info', '/app/rh/solicitacoes-demissao?abrir=' || NEW.id);
+  ELSIF NEW.status = 'Pendente SST' THEN
+    PERFORM public.jur_notificar(public.jur_quem_tem('sst_aso_demissional', 'visualizar'),
+      'ASO demissional a agendar', v_quem || ' — liberada pelo RH.',
+      'info', '/app/sst/aso-demissional?abrir=' || NEW.id);
+  ELSIF NEW.status = 'Cancelamento solicitado' THEN
+    PERFORM public.jur_notificar(public.jur_quem_tem('rh_demissoes', 'aprovar'),
+      '🚫 Pedido de CANCELAMENTO de demissão',
+      v_quem || ' — ' || coalesce(NEW.cancel_pedido_por, NEW.solicitante_nome, 'o solicitante')
+        || ' pede para cancelar. Motivo: ' || coalesce(NEW.cancel_pedido_motivo, '—'),
+      'error', '/app/rh/solicitacoes-demissao?abrir=' || NEW.id);
+  END IF;
+  RETURN NEW;
+END $fn$;
+
+DROP TRIGGER IF EXISTS trg_sino_demissao ON public."SISTEMA_SOLICITACOES_DEMISSAO";
+CREATE TRIGGER trg_sino_demissao
+  AFTER INSERT OR UPDATE OF status ON public."SISTEMA_SOLICITACOES_DEMISSAO"
+  FOR EACH ROW EXECUTE FUNCTION public.sino_demissao_notificar();
+
+-- ── Férias ───────────────────────────────────────────────────────────────
+CREATE OR REPLACE FUNCTION public.sino_ferias_notificar()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $fn$
+BEGIN
+  IF TG_OP = 'UPDATE' AND NEW.status IS NOT DISTINCT FROM OLD.status THEN RETURN NEW; END IF;
+  IF NEW.status = 'Pendente' THEN
+    PERFORM public.jur_notificar(public.jur_quem_tem('rh_ferias', 'alterar'),
+      CASE WHEN TG_OP = 'UPDATE' THEN 'Solicitação de férias reenviada' ELSE 'Nova solicitação de férias' END,
+      '#' || NEW.id || ' · ' || coalesce(NEW.colaborador_nome, '—')
+        || coalesce(' — saída ' || to_char(NEW.data_saida::date, 'DD/MM/YYYY'), '')
+        || coalesce(', ' || NEW.dias_ferias || ' dias', '')
+        || coalesce(' · pedido por ' || nullif(btrim(NEW.solicitante_nome), ''), ''),
+      'info', '/app/rh/ferias');
+  END IF;
+  RETURN NEW;
+END $fn$;
+
+DROP TRIGGER IF EXISTS trg_sino_ferias ON public."SISTEMA_SOLICITACOES_FERIAS";
+CREATE TRIGGER trg_sino_ferias
+  AFTER INSERT OR UPDATE OF status ON public."SISTEMA_SOLICITACOES_FERIAS"
+  FOR EACH ROW EXECUTE FUNCTION public.sino_ferias_notificar();
+
+-- ── Mudança de função ────────────────────────────────────────────────────
+CREATE OR REPLACE FUNCTION public.sino_troca_funcao_notificar()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $fn$
+DECLARE
+  v_quem text := '#' || NEW.id || ' · ' || coalesce(NEW.colaborador_nome, '—')
+                 || coalesce(' — ' || nullif(btrim(NEW.cargo_atual), '') || ' → ' || nullif(btrim(NEW.cargo_novo), ''), '');
+  v_dir  uuid[];
+BEGIN
+  IF TG_OP = 'UPDATE' AND NEW.status IS NOT DISTINCT FROM OLD.status THEN RETURN NEW; END IF;
+
+  IF NEW.status = 'Pendente Operacional' THEN
+    PERFORM public.jur_notificar(public.jur_quem_tem('operacional_troca_funcao', 'visualizar'),
+      'Nova solicitação de mudança de função', v_quem, 'info', '/app/operacional/troca-funcao');
+  ELSIF NEW.status = 'Pendente Escritório' THEN
+    -- Duas portas para a mesma fila; quem tem as duas recebe um aviso só.
+    v_dir := public.sino_quem_tem_setor('diretoria_troca_funcao', 'visualizar', NEW.setor);
+    PERFORM public.jur_notificar(v_dir,
+      'Nova solicitação de mudança de função', v_quem || ' (escritório)', 'info', '/app/diretoria/troca-funcao-escritorio');
+    PERFORM public.jur_notificar(
+      ARRAY(SELECT u FROM unnest(public.sino_quem_tem_setor('escritorio_troca_funcao', 'visualizar', NEW.setor)) AS u
+             WHERE u <> ALL (v_dir)),
+      'Nova solicitação de mudança de função', v_quem || ' (escritório)', 'info', '/app/rh/troca-funcao-escritorio');
+  ELSIF NEW.status = 'Pendente SST' THEN
+    PERFORM public.jur_notificar(public.jur_quem_tem('sst_troca_funcao', 'visualizar'),
+      'Mudança de função — ASO a tratar', v_quem, 'info', '/app/sst/troca-funcao');
+  ELSIF NEW.status = 'Pendente RH' THEN
+    PERFORM public.jur_notificar(public.jur_quem_tem('rh_troca_funcao', 'visualizar'),
+      'Mudança de função aguardando o RH', v_quem, 'info', '/app/rh/troca-funcao');
+  END IF;
+  RETURN NEW;
+END $fn$;
+
+DROP TRIGGER IF EXISTS trg_sino_troca_funcao ON public."SISTEMA_SOLICITACOES_TROCA_FUNCAO";
+CREATE TRIGGER trg_sino_troca_funcao
+  AFTER INSERT OR UPDATE OF status ON public."SISTEMA_SOLICITACOES_TROCA_FUNCAO"
+  FOR EACH ROW EXECUTE FUNCTION public.sino_troca_funcao_notificar();
+
+-- ── Vaga (Recrutamento) ──────────────────────────────────────────────────
+CREATE OR REPLACE FUNCTION public.sino_vaga_notificar()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $fn$
+DECLARE
+  v_quem text := '#' || NEW.id || ' · ' || coalesce(nullif(btrim(NEW.cargo), ''), 'vaga')
+                 || coalesce(' (' || NEW.quantidade_vagas || ')', '')
+                 || coalesce(' — ' || nullif(btrim(NEW.contrato), ''), '')
+                 || coalesce(' · ' || nullif(btrim(NEW.motivo_vaga), ''), '');
+BEGIN
+  IF TG_OP = 'UPDATE' AND NEW.status IS NOT DISTINCT FROM OLD.status THEN RETURN NEW; END IF;
+  IF TG_OP = 'INSERT' AND NEW.legado_chave IS NOT NULL THEN RETURN NEW; END IF;
+
+  IF NEW.status = 'Pendente Analista' THEN
+    PERFORM public.jur_notificar(public.jur_quem_tem('licitacoes_analistas_recrutamento', 'visualizar'),
+      'Nova solicitação de vaga', v_quem, 'info', '/app/licitacoes/analistas/recrutamento');
+  ELSIF NEW.status = 'Pendente Operacional' THEN
+    PERFORM public.jur_notificar(public.jur_quem_tem('operacional_recrutamento', 'visualizar'),
+      'Nova solicitação de vaga', v_quem, 'info', '/app/operacional/recrutamento');
+  ELSIF NEW.status = 'Pendente Diretoria' THEN
+    PERFORM public.jur_notificar(public.sino_quem_tem_setor('diretoria_recrutamento', 'visualizar', NEW.setor),
+      'Nova solicitação de vaga (administrativa)', v_quem, 'info', '/app/diretoria/recrutamento');
+  ELSIF NEW.status = 'Pendente Recrutamento' THEN
+    PERFORM public.jur_notificar(public.jur_quem_tem('recrutamento_gestao', 'visualizar'),
+      'Vaga aprovada — conferir e abrir', v_quem, 'info', '/app/rh/recrutamento');
+  END IF;
+  RETURN NEW;
+END $fn$;
+
+DROP TRIGGER IF EXISTS trg_sino_vaga ON public."SISTEMA_RECRUTAMENTO";
+CREATE TRIGGER trg_sino_vaga
+  AFTER INSERT OR UPDATE OF status ON public."SISTEMA_RECRUTAMENTO"
+  FOR EACH ROW EXECUTE FUNCTION public.sino_vaga_notificar();
+
+NOTIFY pgrst, 'reload schema';
+
+-- =========================================================================
+-- ROLLBACK
+-- =========================================================================
+-- DROP TRIGGER IF EXISTS trg_sino_demissao ON public."SISTEMA_SOLICITACOES_DEMISSAO";
+-- DROP TRIGGER IF EXISTS trg_sino_ferias ON public."SISTEMA_SOLICITACOES_FERIAS";
+-- DROP TRIGGER IF EXISTS trg_sino_troca_funcao ON public."SISTEMA_SOLICITACOES_TROCA_FUNCAO";
+-- DROP TRIGGER IF EXISTS trg_sino_vaga ON public."SISTEMA_RECRUTAMENTO";
+-- DROP FUNCTION IF EXISTS public.sino_demissao_notificar();
+-- DROP FUNCTION IF EXISTS public.sino_ferias_notificar();
+-- DROP FUNCTION IF EXISTS public.sino_troca_funcao_notificar();
+-- DROP FUNCTION IF EXISTS public.sino_vaga_notificar();
+-- DROP FUNCTION IF EXISTS public.sino_quem_tem_setor(text, public.app_acao, text);
+-- DROP FUNCTION IF EXISTS public.aprova_setor_de(uuid, text);
+-- NOTIFY pgrst, 'reload schema';

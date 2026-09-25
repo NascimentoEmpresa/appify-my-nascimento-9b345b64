@@ -64,6 +64,8 @@ function badgeStatusCls(st: string) {
     "Solicitação de agendamento de DEMISSIONAL recebida": "bg-sky-100 text-sky-800 border-sky-200",
     "Agendamento concluído": "bg-emerald-100 text-emerald-700 border-emerald-200",
     "ASO válido": "bg-emerald-100 text-emerald-700 border-emerald-200",
+    // Pedido de cancelamento esperando o RH (25/09/2026) — vermelho cheio.
+    "Cancelamento solicitado": "bg-red-600 text-white border-red-700",
     "Concluída": "bg-green-100 text-green-700 border-green-200",
     Pendente: "bg-yellow-100 text-yellow-800 border-yellow-200",
     Aprovada: "bg-green-100 text-green-700 border-green-200",
@@ -1143,7 +1145,7 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
                           📆 Alterar data
                         </button>
                       )}
-                      {/* Demissão (17/09/2026): reconsiderar — cancela até o ASO ser agendado. */}
+                      {/* Demissão: reconsiderar — desde 25/09/2026 pede ao RH, que aprova ou recusa. */}
                       {s.tipo === "Demissão" && typeof s.id === "number" && (
                         <BotaoCancelarDemissao compacto solicitacao={{ id: s.id, status: s.status, colaborador_nome: s.titulo.replace(/^Demissão — /, "") }}
                           onCancelada={carregarMinhasSols} avisar={(m, t) => toast(m, t)} />

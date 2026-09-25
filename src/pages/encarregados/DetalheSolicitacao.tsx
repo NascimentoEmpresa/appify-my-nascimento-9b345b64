@@ -7,7 +7,7 @@ import { AVISO_REFAZER, diasRestantesParaRefazer, podeRefazerFerias } from "@/li
 import { ConversaSolicitacao, type ModuloConversa } from "@/components/solicitacoes/ConversaSolicitacao";
 import { AnexosSolicitacao } from "@/components/solicitacoes/AnexosSolicitacao";
 import { tempoDeEmpresa } from "@/lib/rh/colaboradoresUtils";
-import { AvisoCancelada } from "@/components/demissao/CancelarDemissao";
+import { AvisoCancelada, AvisoPedidoCancelamento } from "@/components/demissao/CancelarDemissao";
 
 // `integrations/supabase/types.ts` é gerado e não conhece as tabelas de
 // solicitações. O resto do ERP resolve isso com um cast solto em cada
@@ -315,6 +315,11 @@ export function DetalheSolicitacao({ tipo, id, titulo, status, onFechar, onRefaz
         {/* Demissão cancelada (17/09/2026): o motivo em vermelho, antes de tudo. */}
         {tipo === "Demissão" && ficha?.status === "Cancelada" && (
           <div style={{ marginBottom: 14 }}><AvisoCancelada solicitacao={ficha as { status: string; cancelado_por?: string | null; cancelado_em?: string | null; cancelado_motivo?: string | null }} /></div>
+        )}
+
+        {/* Pedido de cancelamento com o RH, ou recusado por ele (25/09/2026). */}
+        {tipo === "Demissão" && ficha && (ficha.status === "Cancelamento solicitado" || ficha.cancel_recusa_em) && (
+          <div style={{ marginBottom: 14 }}><AvisoPedidoCancelamento solicitacao={ficha as Parameters<typeof AvisoPedidoCancelamento>[0]["solicitacao"]} /></div>
         )}
 
         {/* Férias canceladas pelo RH (24/09/2026): motivo em destaque, e o
