@@ -11,7 +11,7 @@ import { baixar } from "@/lib/exportarRelatorio";
 import { carregarExtras, gerarExcel, gerarHtml, nomeArquivo, type ProcessoExp } from "./processos/exportar";
 import { honorariosEmReais, pctHonorarios, totalDaProposta } from "@/lib/juridico/proposta";
 import {
-  NATUREZAS_ACAO, PARTE_VAZIA, ROTULO_TIPO_PARTE, empresaDoGrupo, erroDasPartes, formatarDocumento, partes, seloOutros,
+  NATUREZAS_ACAO, PARTE_VAZIA, ROTULO_TIPO_PARTE, empresaDoGrupo, empresaRecebe, erroDasPartes, formatarDocumento, partes, seloOutros,
   type Parte, type TipoParte, type TipoProcesso,
 } from "@/lib/juridico/tipoProcesso";
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, Cell, PieChart, Pie, Legend, CartesianGrid } from "recharts";
@@ -174,8 +174,13 @@ const valoresAParteDestino = (p: Processo, destino: DestinoValorAParte) =>
 const pedidosTotal  = (p: Processo) => p.valor_pedidos  + valoresAParteDestino(p, "pedidos");
 const acordoTotal   = (p: Processo) => p.valor_acordo   + valoresAParteDestino(p, "acordo");
 const sentencaTotal = (p: Processo) => p.valor_sentenca + valoresAParteDestino(p, "sentenca");
+// Empresa AUTORA (28/09/2026): acordo e sentença são dinheiro que ENTRA —
+// não somam no custo final; ali fica só o que ela desembolsa no processo
+// (custas, depósito, perícia…). Ver empresaRecebe() e aReceberTotal.
 const custoTotal = (p: Processo) => p.valor_final > 0 ? p.valor_final
-  : acordoTotal(p) + sentencaTotal(p) + p.valor_outros_custos + p.valor_deposito_recursal + p.valor_custas_processuais + custosDoProcesso(p) + valoresAParteDestino(p, "custo_final");
+  : (empresaRecebe(p) ? 0 : acordoTotal(p) + sentencaTotal(p)) + p.valor_outros_custos + p.valor_deposito_recursal + p.valor_custas_processuais + custosDoProcesso(p) + valoresAParteDestino(p, "custo_final");
+/** O que a empresa autora espera receber: a sentença, senão o acordo, senão o pedido. */
+const aReceberTotal = (p: Processo) => !empresaRecebe(p) ? 0 : (sentencaTotal(p) || acordoTotal(p) || pedidosTotal(p));
 const motivoTotal = (i: MotivoItem) => VAL_FIELDS_MOTIVO.reduce((s, k) => s + toFloat(i[k]), 0);
 
 // Vínculo reclamante ⇄ EMPREGADOS. Lê a tabela direto (mesmo padrão do Recrutamento).
@@ -419,7 +424,7 @@ const MOTIVO_RESET = (): MotivoItem => ({ ordem: 1, motivo: "", valor_pedidos: 0
 /** O processo + os totais que a tela calcula — é o que o Exportar dados recebe. */
 const paraExportar = (p: Processo): ProcessoExp => ({
   ...(p as unknown as ProcessoExp),
-  totais: { pedidos: pedidosTotal(p), acordo: acordoTotal(p), sentenca: sentencaTotal(p), custoFinal: custoTotal(p), aParte: valoresAParteTotal(p) },
+  totais: { pedidos: pedidosTotal(p), acordo: acordoTotal(p), sentenca: sentencaTotal(p), custoFinal: custoTotal(p), aParte: valoresAParteTotal(p), empresaAutora: empresaRecebe(p) },
 });
 
 const TITULOS: Record<string, string> = { dashboard: "📊 Dashboard - Processos", processos: "📁 Processos", audiencias: "📅 Audiências" };
@@ -516,8 +521,15 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
 
   const processos = useMemo(() => agrupar(rows), [rows]);
   const resumo = useMemo(() => {
-    const r = { processos: processos.length, em_andamento: 0, pedidos: 0, acordos: 0, sentencas: 0, final: 0, causa_rt: 0 };
-    for (const p of processos) { if (ativo(p)) r.em_andamento++; r.pedidos += pedidosTotal(p); r.acordos += acordoTotal(p); r.sentencas += sentencaTotal(p); r.final += custoTotal(p); if (p.origem === "rtgeral") r.causa_rt += p.valor_causa; }
+    // Pedidos/acordos/sentenças somam só o que a empresa PAGA; os da empresa
+    // autora vão para "a receber" (28/09/2026).
+    const r = { processos: processos.length, em_andamento: 0, pedidos: 0, acordos: 0, sentencas: 0, final: 0, causa_rt: 0, a_receber: 0, n_autora: 0 };
+    for (const p of processos) {
+      if (ativo(p)) r.em_andamento++;
+      if (empresaRecebe(p)) { r.a_receber += aReceberTotal(p); r.n_autora++; }
+      else { r.pedidos += pedidosTotal(p); r.acordos += acordoTotal(p); r.sentencas += sentencaTotal(p); }
+      r.final += custoTotal(p); if (p.origem === "rtgeral") r.causa_rt += p.valor_causa;
+    }
     return r;
   }, [processos]);
   const porMotivo = useMemo(() => {
@@ -527,7 +539,7 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
   }, [processos]);
   const porAno = useMemo(() => {
     const acc = new Map<number, { ano: string; count: number; pedidos: number; acordos: number; total: number }>();
-    for (const p of processos) { if (!p.ano_processo) continue; const s = acc.get(p.ano_processo) || { ano: String(p.ano_processo), count: 0, pedidos: 0, acordos: 0, total: 0 }; s.count++; s.pedidos += pedidosTotal(p); s.acordos += acordoTotal(p); s.total += custoTotal(p); acc.set(p.ano_processo, s); }
+    for (const p of processos) { if (!p.ano_processo) continue; const s = acc.get(p.ano_processo) || { ano: String(p.ano_processo), count: 0, pedidos: 0, acordos: 0, total: 0 }; s.count++; if (!empresaRecebe(p)) { s.pedidos += pedidosTotal(p); s.acordos += acordoTotal(p); } s.total += custoTotal(p); acc.set(p.ano_processo, s); }
     return [...acc.values()].sort((a, b) => Number(a.ano) - Number(b.ano));
   }, [processos]);
   const porReclamada = useMemo(() => {
@@ -1025,6 +1037,7 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
               {kpi("Custo total final", moneyShort(resumo.final), "#15803d", "Valores finais")}
               {kpi("Em andamento", resumo.em_andamento, "#a78bfa", "Processos ativos")}
               {kpi("Valor causa RT", moneyShort(resumo.causa_rt), "#eab308", "RT Geral")}
+              {resumo.n_autora > 0 && kpi("A receber", moneyShort(resumo.a_receber), "#0d9488", `${resumo.n_autora} processo(s) com a empresa autora`, "💵")}
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "1.3fr 1fr", gap: 16, marginBottom: 16 }} className="jpr-grid2">
               <div style={card}>
@@ -1060,7 +1073,7 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
             </div>
             <div style={card}>
               <div style={{ fontSize: 13, fontWeight: 800, color: "#0f172a" }}>Evolução por Ano</div>
-              <div style={{ fontSize: 11.5, color: "#94a3b8", marginBottom: 10 }}>Valor pedido × acordo × custo final</div>
+              <div style={{ fontSize: 11.5, color: "#94a3b8", marginBottom: 10 }}>Valor pedido × acordo × custo final (sem os valores a receber da empresa autora)</div>
               {porAno.length === 0 ? <div style={{ color: "#94a3b8", fontSize: 13, padding: 30, textAlign: "center" }}>Sem dados.</div> : (
                 <ResponsiveContainer width="100%" height={300}>
                   <BarChart data={porAno} margin={{ left: 10, right: 10 }}>
@@ -1189,7 +1202,10 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
                         <div style={{ fontSize: 11.5, color: "#64748b", fontVariantNumeric: "tabular-nums" }}>{p.numero_processo}{p.ano_processo ? ` · ${p.ano_processo}` : ""}{p.contrato ? <span style={{ color: "#94a3b8" }}> · {p.contrato}</span> : null}</div></td>
                       <td style={{ color: "#334155", fontWeight: 600 }}>{partes(p).nome2 || "—"}</td>
                       <td><span style={{ fontSize: 12, color: "#0f172a" }}>{p.motivo_items[0]?.motivo || "—"}</span>{p.motivo_items.length > 1 && <span style={{ marginLeft: 6, fontSize: 10.5, color: "#0f3171", fontWeight: 800, background: "#eef4ff", borderRadius: 999, padding: "1px 7px" }}>+{p.motivo_items.length - 1}</span>}</td>
-                      <td style={{ textAlign: "right", color: "#475569", fontVariantNumeric: "tabular-nums" }}>{money(pedidosTotal(p))}</td>
+                      <td style={{ textAlign: "right", color: empresaRecebe(p) ? "#0d9488" : "#475569", fontVariantNumeric: "tabular-nums" }}>
+                        {money(pedidosTotal(p))}
+                        {empresaRecebe(p) && <div style={{ fontSize: 10, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".3px" }}>a receber</div>}
+                      </td>
                       <td style={{ textAlign: "right", fontWeight: 800, color: custoTotal(p) > 0 ? "#0f172a" : "#94a3b8", fontVariantNumeric: "tabular-nums" }}>{money(custoTotal(p))}</td>
                       <td><span className="jpr-st" title={p.status} style={{ background: sc.bg, color: sc.c }}>{STATUS_CURTO[p.status] ?? p.status}</span></td>
                       <td className="jpr-acoes" style={{ textAlign: "right", whiteSpace: "nowrap" }}>
@@ -1362,7 +1378,12 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
               ? <div style={{ marginTop: 8 }}><button className="jpr-btn" onClick={() => verDetalhesReclamante(sel.reclamante_vinculado_cpf)} style={{ background: "#eef4ff", color: "#0f3171" }}>👤 Todos os detalhes do reclamante</button></div>
               : <div style={{ marginTop: 8, fontSize: 11.5, color: "#94a3b8" }}>Reclamante não vinculado a um cadastro. Use “Editar” para vincular.</div>}
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap", margin: "14px 0" }}>
-              {[["Pedidos", pedidosTotal(sel), "#ea580c"], ["Acordo", acordoTotal(sel), "#dc2626"], ["Sentença", sentencaTotal(sel), "#2563eb"], ["Custo final", custoTotal(sel), "#15803d"]].map(([l, v, c]: [string, number, string]) => (
+              {/* Empresa AUTORA (28/09/2026): pedido, acordo e sentença são o que ela
+                  vai RECEBER — rótulo e cor mudam, e o custo final não os soma. */}
+              {(empresaRecebe(sel)
+                ? [["Pedidos · a receber", pedidosTotal(sel), "#0d9488"], ["Acordo · a receber", acordoTotal(sel), "#0d9488"], ["Sentença · a receber", sentencaTotal(sel), "#0d9488"], ["Custo final", custoTotal(sel), "#15803d"]]
+                : [["Pedidos", pedidosTotal(sel), "#ea580c"], ["Acordo", acordoTotal(sel), "#dc2626"], ["Sentença", sentencaTotal(sel), "#2563eb"], ["Custo final", custoTotal(sel), "#15803d"]]
+              ).map(([l, v, c]: [string, number, string]) => (
                 <div key={l} style={{ flex: 1, minWidth: 120, background: "#f8fafc", border: "1px solid #eef2f7", borderRadius: 10, padding: "8px 11px" }}>
                   <div style={{ fontSize: 10, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase" }}>{l}</div><div style={{ fontSize: 14, fontWeight: 800, color: c }}>{money(v)}</div>
                 </div>

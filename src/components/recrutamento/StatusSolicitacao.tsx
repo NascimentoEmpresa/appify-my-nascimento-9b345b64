@@ -109,7 +109,7 @@ export function StatusSolicitacao({ sol, onClose }: { sol: SolicitacaoStatus; on
         .sts-card{width:70vw;min-width:min(720px,96vw);max-width:1240px;max-height:90vh;background:#f5f7fb;border-radius:26px;box-shadow:0 40px 100px rgba(15,23,42,.45);overflow:hidden;display:flex;flex-direction:column;animation:sts-card-in .45s cubic-bezier(.2,.8,.2,1);position:relative}
         @keyframes sts-card-in{from{opacity:0;transform:translateY(28px) scale(.96)}to{opacity:1;transform:none}}
         @keyframes sts-card-out{to{opacity:0;transform:translateY(16px) scale(.97)}}
-        .sts-hero{position:relative;overflow:hidden;padding:26px 30px 22px;background:linear-gradient(135deg,#0f3171 0%,#1d4ed8 60%,#2563eb 100%);color:#fff;background-size:200% 200%;animation:sts-grad 16s ease-in-out infinite}
+        .sts-hero{flex-shrink:0;position:relative;overflow:hidden;padding:26px 30px 22px;background:linear-gradient(135deg,#0f3171 0%,#1d4ed8 60%,#2563eb 100%);color:#fff;background-size:200% 200%;animation:sts-grad 16s ease-in-out infinite}
         @keyframes sts-grad{0%,100%{background-position:0% 0%}50%{background-position:100% 100%}}
         .sts-hero::before{content:"";position:absolute;right:-80px;top:-100px;width:320px;height:320px;border-radius:50%;background:rgba(255,255,255,.08);animation:sts-drift 14s ease-in-out infinite}
         .sts-hero::after{content:"";position:absolute;left:30%;bottom:-160px;width:260px;height:260px;border-radius:50%;background:rgba(255,255,255,.05);animation:sts-drift 18s ease-in-out -6s infinite}
@@ -131,7 +131,7 @@ export function StatusSolicitacao({ sol, onClose }: { sol: SolicitacaoStatus; on
         .sts-pills span b{font-weight:900}
         .sts-x{position:absolute;top:16px;right:18px;z-index:2;border:none;background:rgba(255,255,255,.16);color:#fff;width:38px;height:38px;border-radius:12px;font-size:18px;cursor:pointer;transition:.15s;font-family:inherit}
         .sts-x:hover{background:rgba(255,255,255,.3);transform:rotate(90deg)}
-        .sts-body{overflow-y:auto;padding:22px 30px 30px;display:grid;gap:20px}
+        .sts-body{flex:1;min-height:0;overflow-y:auto;padding:22px 30px 30px;display:grid;gap:20px}
         .sts-sec{background:#fff;border:1px solid #e2e8f0;border-radius:20px;padding:20px 22px;box-shadow:0 8px 24px rgba(15,23,42,.05)}
         .sts-sec-t{font-size:12.5px;font-weight:800;color:#0f3171;text-transform:uppercase;letter-spacing:.5px;display:flex;align-items:center;gap:8px;margin-bottom:16px}
         .sts-sec-t::before{content:"";width:4px;height:16px;border-radius:2px;background:#0f3171}

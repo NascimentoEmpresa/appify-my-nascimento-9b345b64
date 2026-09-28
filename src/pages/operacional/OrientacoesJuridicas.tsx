@@ -10,6 +10,7 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { FioDuvida } from "@/components/juridico/FioDuvida";
+import { EmbasamentoJuridico } from "@/components/juridico/EmbasamentoJuridico";
 import { ResumoDeFuncoes } from "@/components/fluxos/ResumoDeFuncoes";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -213,6 +214,8 @@ export default function OperacionalOrientacoesJuridicas() {
                       <p className="mt-1 whitespace-pre-wrap text-sm">{d.resposta}</p>
                     </div>
                   )}
+                  {/* Embasamento jurídico (mig 253) — só existe na resposta do Jurídico. */}
+                  {open && d.status === "Respondida" && <EmbasamentoJuridico duvida={d} />}
                   {open && d.status === "Respondida" && (
                     <FioDuvida duvida={d} fio={fios.get(d.id) ?? []} userId={user?.id} autorNome={autor}
                       podeResponder={respondidaPeloOperacional(d)} mostrarNomes onMudou={carregar}

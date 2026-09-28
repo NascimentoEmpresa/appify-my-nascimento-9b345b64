@@ -1,6 +1,14 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import type { SupabaseClient } from "@supabase/supabase-js";
+
+// screen_permission_user sem os tipos gerados (28/09/2026): o types.ts do
+// Lovable parou no enum app_acao antigo e não conhece enviar_malote,
+// editar_concluida, fundamentar… — gravar essas ações quebrava o type-check
+// da PR. Mesmo padrão do `db` sem tipo usado nas tabelas que o types.ts não
+// acompanha.
+const tabelaPermissoes = () => (supabase as unknown as SupabaseClient).from("screen_permission_user");
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
@@ -352,7 +360,7 @@ function MenusEditor({ moduloId, menus, podeGerenciar, onChange }: { moduloId: s
 
 // O enum app_acao do banco. Tipado aqui porque o insert em
 // screen_permission_user exige a união exata, não `string`.
-type AppAcao = "visualizar" | "incluir" | "alterar" | "excluir" | "aprovar" | "enviar_malote" | "exportar" | "executar_ia" | "alterar_dre" | "responder" | "editar_concluida";
+type AppAcao = "visualizar" | "incluir" | "alterar" | "excluir" | "aprovar" | "enviar_malote" | "exportar" | "executar_ia" | "alterar_dre" | "responder" | "fundamentar" | "editar_concluida";
 
 // LIBERAR A TELA É LIBERAR A TELA.
 //
@@ -388,11 +396,11 @@ const ACOES_DO_TOGGLE = (codigo: string): AppAcao[] =>
 // Suprimentos. Pior, 'executar_ia' e 'alterar_dre' não são checadas em canto
 // nenhum do sistema — aqueles dois switches nunca controlaram nada.
 const ORDEM_ACOES: readonly AppAcao[] = [
-  "visualizar", "incluir", "alterar", "excluir", "aprovar", "enviar_malote", "responder", "editar_concluida", "exportar", "executar_ia", "alterar_dre",
+  "visualizar", "incluir", "alterar", "excluir", "aprovar", "enviar_malote", "responder", "fundamentar", "editar_concluida", "exportar", "executar_ia", "alterar_dre",
 ];
 const ACAO_LABEL: Record<AppAcao, string> = {
   visualizar: "Visualizar", incluir: "Incluir", alterar: "Alterar", excluir: "Excluir",
-  aprovar: "Aprovar", enviar_malote: "Enviar para malote", responder: "Responder", editar_concluida: "Editar concluída", exportar: "Exportar", executar_ia: "Executar IA", alterar_dre: "Alterar DRE",
+  aprovar: "Aprovar", enviar_malote: "Enviar para malote", responder: "Responder", fundamentar: "Fundamentar", editar_concluida: "Editar concluída", exportar: "Exportar", executar_ia: "Executar IA", alterar_dre: "Alterar DRE",
 };
 
 const ACAO_LABEL_POR_MENU: Readonly<Record<string, Partial<Record<AppAcao, string>>>> = {
@@ -400,6 +408,9 @@ const ACAO_LABEL_POR_MENU: Readonly<Record<string, Partial<Record<AppAcao, strin
   encarregados_diarias: { incluir: "Incluir / Editar" },
   financeiro_diarias: { incluir: "Incluir / Editar" },
   sistemas_hora_extra: { editar_concluida: "Editar HE já concluída" },
+  // Parecer Jurídico (28/09/2026, mig 253): duas respostas por dúvida, cada
+  // uma com seu switch de quem ESCREVE. Ler, todos leem — não se gerencia aqui.
+  duvidas: { responder: "Responder (resposta simples)", fundamentar: "Responder embasamento jurídico" },
 };
 
 const rotuloAcao = (menuCodigo: string, acao: AppAcao) =>
@@ -589,12 +600,12 @@ function UserAccessPanel({ podeGerenciar, modulos, menus }: { podeGerenciar: boo
         // ligadas são gravadas no laço de `pendingAcoes`, logo abaixo.
         const alvo = acoesGravadasPeloToggle(codigo, allow) as AppAcao[];
 
-        const { error: delErr } = await supabase.from("screen_permission_user").delete()
+        const { error: delErr } = await tabelaPermissoes().delete()
           .eq("user_id", selectedUserId).eq("menu_codigo", codigo)
           .in("acao", alvo).is("empresa_id", null);
         if (delErr) console.warn("delete perm error", delErr);
 
-        const { error } = await supabase.from("screen_permission_user").insert(
+        const { error } = await tabelaPermissoes().insert(
           alvo.map((acao) => ({
             user_id: selectedUserId, menu_codigo: codigo, acao, allow, empresa_id: null,
           })),
@@ -604,11 +615,11 @@ function UserAccessPanel({ podeGerenciar, modulos, menus }: { podeGerenciar: boo
 
       for (const [key, allow] of pendingAcoes) {
         const [codigo, acao] = key.split("::") as [string, AppAcao];
-        const { error: delErr } = await supabase.from("screen_permission_user").delete()
+        const { error: delErr } = await tabelaPermissoes().delete()
           .eq("user_id", selectedUserId).eq("menu_codigo", codigo).eq("acao", acao).is("empresa_id", null);
         if (delErr) console.warn("delete perm (ação extra) error", delErr);
 
-        const { error } = await supabase.from("screen_permission_user").insert({
+        const { error } = await tabelaPermissoes().insert({
           user_id: selectedUserId, menu_codigo: codigo, acao, allow, empresa_id: null,
         });
         if (error) throw error;
@@ -1059,11 +1070,11 @@ function PessoasComAcessoAoMenu({ menuCodigo, podeGerenciar }: { menuCodigo: str
       // só aquela ação específica.
       const acoes = acao === "visualizar" ? ACOES_DO_TOGGLE(menuCodigo) : [acao];
       for (const [userId, allow] of pending) {
-        const { error: delErr } = await supabase.from("screen_permission_user").delete()
+        const { error: delErr } = await tabelaPermissoes().delete()
           .eq("user_id", userId).eq("menu_codigo", menuCodigo).in("acao", acoes).is("empresa_id", null);
         if (delErr) console.warn("delete perm error", delErr);
 
-        const { error } = await supabase.from("screen_permission_user").insert(
+        const { error } = await tabelaPermissoes().insert(
           acoes.map((a) => ({ user_id: userId, menu_codigo: menuCodigo, acao: a, allow, empresa_id: null })),
         );
         if (error) throw error;

@@ -8,6 +8,7 @@ import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { useAuth } from "@/hooks/useAuth";
+import { useVinculoEmpregado } from "@/hooks/useVinculoEmpregado";
 import { usePermissoes } from "@/context/PermissoesContext";
 import { ResumoDeFuncoes } from "@/components/fluxos/ResumoDeFuncoes";
 import { ModalNovaVaga } from "@/components/recrutamento/ModalNovaVaga";
@@ -427,6 +428,10 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
   // A etapa 1 desta tela: analista decide "Pendente Analista"; Diretoria, "Pendente Diretoria".
   const STATUS_ETAPA1 = escopo === "diretoria" ? STATUS_VAGA_DIRETORIA : "Pendente Analista";
   const { user } = useAuth();
+  // Nome oficial (EMPREGADOS) de quem está logado — é o que vai no carimbo de
+  // quem aprovou/reprovou (28/09/2026: sem nome no metadata o carimbo gravava
+  // o e-mail, ex. "mileny@..." no lugar de MILENY DE OLIVEIRA DA ROSA).
+  const { empregado: euEmpregado } = useVinculoEmpregado();
   const { roles, can } = usePermissoes();
   const navigate = useNavigate();
 
@@ -585,7 +590,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
   // Quem aprova/reprova fica gravado com nome E e-mail (mig 187): o nome do
   // metadata quando existe, senão o e-mail — e a tela traduz por EMPREGADOS.
   const carimboAprovador = () => ({
-    aprovado_por_nome: user?.user_metadata?.nome ?? user?.email ?? "",
+    aprovado_por_nome: euEmpregado?.nome || user?.user_metadata?.nome || user?.email || "",
     aprovado_por_email: user?.email ?? null,
   });
   // Roteiro de entrevista (ENTREVISTA / ENTREVISTA GESTOR)

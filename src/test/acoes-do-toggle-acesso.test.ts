@@ -98,4 +98,9 @@ describe("catálogo de exceções", () => {
     expect(acoesGravadasPeloToggle("duvidas", true)).toEqual([...ACOES_DO_TOGGLE_PADRAO]);
     expect(acoesGravadasPeloToggle("duvidas", false)).toContain("responder");
   });
+
+  it("Parecer Jurídico: embasamento (fundamentar) também tem switch próprio e sai ao desligar a tela", () => {
+    expect(acoesGravadasPeloToggle("duvidas", true)).not.toContain("fundamentar");
+    expect(acoesGravadasPeloToggle("duvidas", false)).toEqual(expect.arrayContaining(["responder", "fundamentar"]));
+  });
 });

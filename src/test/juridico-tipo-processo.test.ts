@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  PARTE_VAZIA, empresaDoGrupo, erroDasPartes, formatarDocumento, partes, posicaoEmpresa, seloOutros,
+  PARTE_VAZIA, empresaDoGrupo, empresaRecebe, erroDasPartes, formatarDocumento, partes, posicaoEmpresa, seloOutros,
 } from "@/lib/juridico/tipoProcesso";
 
 // SIS-2026-0488 — processo "Outros": Autor × Réu, a empresa pode ser autora.
@@ -51,5 +51,13 @@ describe("tipo de processo — validação das partes", () => {
     expect(formatarDocumento("12345678901")).toBe("123.456.789-01");
     expect(formatarDocumento("03644009000123")).toBe("03.644.009/0001-23");
     expect(formatarDocumento(" abc ")).toBe("abc");
+  });
+});
+
+describe("empresaRecebe (28/09/2026)", () => {
+  it("só a empresa autora recebe; trabalhista e empresa ré pagam", () => {
+    expect(empresaRecebe({ tipo_processo: "outros", autor_tipo: "grupo", reu_tipo: "pj" })).toBe(true);
+    expect(empresaRecebe({ tipo_processo: "outros", autor_tipo: "pf", reu_tipo: "grupo" })).toBe(false);
+    expect(empresaRecebe({ tipo_processo: "trabalhista" })).toBe(false);
   });
 });

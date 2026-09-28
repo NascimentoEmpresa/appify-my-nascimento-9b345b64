@@ -8,7 +8,8 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { FioDuvida } from "@/components/juridico/FioDuvida";
 import { ResumoDeFuncoes } from "@/components/fluxos/ResumoDeFuncoes";
 import { DashboardDuvidas } from "@/components/juridico/DashboardDuvidas";
-import { CATEGORIAS_DUVIDA as CATEGORIAS, agruparComplementos, complementoPendente, estaOculta, infoAvaliacao, respondidaPeloOperacional, type Complemento, type Duvida } from "@/lib/juridico/duvidas";
+import { EmbasamentoJuridico } from "@/components/juridico/EmbasamentoJuridico";
+import { CATEGORIAS_DUVIDA as CATEGORIAS, agruparComplementos, complementoPendente, estaOculta, faltaEmbasamento, infoAvaliacao, respondidaPeloOperacional, type Complemento, type Duvida } from "@/lib/juridico/duvidas";
 
 // =====================================================================
 // JURÍDICO — Parecer Jurídico (gestão das dúvidas)
@@ -24,6 +25,12 @@ import { CATEGORIAS_DUVIDA as CATEGORIAS, agruparComplementos, complementoPenden
 // (resolveu / em parte / não resolveu) e pode perguntar mais no mesmo fio,
 // sem nova aprovação; o Jurídico complementa ali. Card "Pedem complemento" =
 // fios cujo último item é uma pergunta. Componente: FioDuvida.
+// DUAS RESPOSTAS (28/09/2026, mig 253): a resposta SIMPLES (ação "responder",
+// objetiva, o que fazer — a do Gustavo) e o EMBASAMENTO JURÍDICO (ação
+// "fundamentar": leis, normas, cláusulas). Cada uma tem seu switch no Acesso
+// por Usuário; ler, todos leem — o embasamento fica recolhido atrás de
+// "Visualizar embasamento jurídico" (EmbasamentoJuridico). Só a resposta
+// simples muda o status; o embasamento pode vir antes ou depois dela.
 //
 // LAYOUT (18/09/2026, pedido do Pablo): a mesma cara da Central de Orientações
 // Jurídicas (central-servicos/OrientacoesJuridicas.tsx) — hero azul com busca
@@ -56,7 +63,7 @@ const COR_CAT: Record<string, { bg: string; c: string }> = {
 };
 const corCat = (c?: string | null) => COR_CAT[c ?? ""] ?? { bg: "#f1f5f9", c: "#475569" };
 
-type Aba = "todas" | "aprovacao" | "resposta" | "complementar" | "respondidas" | "reprovadas" | "minhas";
+type Aba = "todas" | "aprovacao" | "resposta" | "embasamento" | "complementar" | "respondidas" | "reprovadas" | "minhas";
 
 export default function CentralDuvidas() {
   const { user } = useAuth();
@@ -68,6 +75,8 @@ export default function CentralDuvidas() {
   // Quem responde (17/09/2026, mig 173): a ação "responder" do menu, marcada
   // no Acesso por Usuário — antes era setor JURIDICO / JUR_DUVIDAS_RESPONSAVEIS.
   const { data: temResponder } = useScreenAccess("duvidas", "responder");
+  // Quem escreve o embasamento jurídico (28/09/2026, mig 253).
+  const { data: temFundamentar } = useScreenAccess("duvidas", "fundamentar");
   // Dashboard de avaliações e categorias (17/09/2026, mig 176): menu fantasma
   // `duvidas_dashboard`, marcado no Acesso por Usuário — só quem tem vê a aba.
   const { data: temDashboard } = useScreenAccess("duvidas_dashboard", "visualizar");
@@ -87,6 +96,7 @@ export default function CentralDuvidas() {
   const [ask, setAsk] = useState({ ...ASK_RESET });
   const [respAlvo, setRespAlvo] = useState<Duvida | null>(null);
   const [resp, setResp] = useState("");
+  const [emb, setEmb] = useState("");
   const [reprAlvo, setReprAlvo] = useState<Duvida | null>(null);
   const [motivoRep, setMotivoRep] = useState("");
 
@@ -94,6 +104,7 @@ export default function CentralDuvidas() {
 
   const podeAprovar = !!temAprovar;
   const podeResponder = !!temResponder;
+  const podeFundamentar = !!temFundamentar;
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -125,13 +136,21 @@ export default function CentralDuvidas() {
     setReprAlvo(null); setMotivoRep(""); toast("Dúvida reprovada.", "ok"); load();
   };
 
-  const abrirResponder = (d: Duvida) => { setRespAlvo(d); setResp(d.resposta ?? ""); };
+  const abrirResponder = (d: Duvida) => { setRespAlvo(d); setResp(d.resposta ?? ""); setEmb(d.embasamento ?? ""); };
+  // Cada um grava só o campo que é seu: a resposta simples (responder) e/ou o
+  // embasamento (fundamentar). O gatilho do banco (mig 253) repete a regra.
   const responder = async () => {
     if (!respAlvo) return;
-    if (!resp.trim()) { toast("Escreva a resposta.", "err"); return; }
-    const { error } = await db.from("JUR_DUVIDAS").update({ resposta: resp.trim(), status: "Respondida", respondido_por: autor, respondido_em: new Date().toISOString(), updated_at: new Date().toISOString() }).eq("id", respAlvo.id);
-    if (error) { toast("Erro ao responder: " + error.message, "err"); return; }
-    setRespAlvo(null); setResp(""); toast("Resposta publicada na biblioteca.", "ok"); load();
+    if (podeResponder && !resp.trim()) { toast("Escreva a resposta simples.", "err"); return; }
+    if (!podeResponder && podeFundamentar && !emb.trim()) { toast("Escreva o embasamento jurídico.", "err"); return; }
+    const agora = new Date().toISOString();
+    const upd: Record<string, unknown> = { updated_at: agora };
+    if (podeResponder) Object.assign(upd, { resposta: resp.trim(), status: "Respondida", respondido_por: autor, respondido_em: agora });
+    if (podeFundamentar && emb.trim() !== (respAlvo.embasamento ?? "").trim()) Object.assign(upd, { embasamento: emb.trim() || null, embasamento_por: emb.trim() ? autor : null });
+    const { error } = await db.from("JUR_DUVIDAS").update(upd).eq("id", respAlvo.id);
+    if (error) { toast("Erro ao salvar: " + error.message, "err"); return; }
+    setRespAlvo(null); setResp(""); setEmb("");
+    toast(podeResponder ? "Resposta publicada na biblioteca." : "Embasamento jurídico salvo.", "ok"); load();
   };
   // Ocultar / mostrar na biblioteca (mig 244): oculta, só os responsáveis veem.
   const alternarOculta = async (d: Duvida) => {
@@ -150,6 +169,7 @@ export default function CentralDuvidas() {
 
   // Biblioteca de respostas já dadas — o Jurídico reaproveita ao responder.
   const respondidasLib = duvidas.filter(d => d.status === "Respondida" && d.resposta);
+  const embasamentosLib = duvidas.filter(d => (d.embasamento ?? "").trim());
   const pedeComplemento = (d: Duvida) => d.status === "Respondida" && complementoPendente(fios.get(d.id) ?? []);
   const nAberta = duvidas.filter(d => d.status === "Aberta").length;
   const nAprovada = duvidas.filter(d => d.status === "Aprovada").length;
@@ -158,14 +178,19 @@ export default function CentralDuvidas() {
   // Respondidas em que quem perguntou pediu mais e o Jurídico ainda não complementou.
   const nComplementar = duvidas.filter(pedeComplemento).length;
   const nMinhas = duvidas.filter(d => d.autor_id === user?.id).length;
+  // Aprovadas/respondidas do Jurídico ainda sem embasamento (mig 253).
+  const nSemEmb = duvidas.filter(faltaEmbasamento).length;
   // O que está parado na MINHA etapa — é o que a pílula do hero destaca.
-  const minhaFila = (podeAprovar ? nAberta : 0) + (podeResponder ? nAprovada + nComplementar : 0);
+  // Quem responde E fundamenta não conta a mesma Aprovada duas vezes.
+  const minhaFila = (podeAprovar ? nAberta : 0) + (podeResponder ? nAprovada + nComplementar : 0)
+    + (podeFundamentar ? duvidas.filter(d => faltaEmbasamento(d) && !(podeResponder && d.status === "Aprovada")).length : 0);
 
   const base = useMemo(() => duvidas.filter(d => {
     if (aba === "aprovacao") return d.status === "Aberta";
     if (aba === "resposta") return d.status === "Aprovada";
     if (aba === "respondidas") return d.status === "Respondida";
     if (aba === "complementar") return pedeComplemento(d);
+    if (aba === "embasamento") return faltaEmbasamento(d);
     if (aba === "reprovadas") return d.status === "Reprovada";
     if (aba === "minhas") return d.autor_id === user?.id;
     return true;
@@ -173,7 +198,7 @@ export default function CentralDuvidas() {
   }), [duvidas, fios, aba, user?.id]);
   const filtradas = base.filter(d => {
     if (fCat && d.categoria !== fCat) return false;
-    if (busca) { const q = busca.toLowerCase(); return [d.titulo, d.pergunta, d.resposta, d.categoria, d.autor_nome].some(x => (x || "").toLowerCase().includes(q)); }
+    if (busca) { const q = busca.toLowerCase(); return [d.titulo, d.pergunta, d.resposta, d.embasamento, d.categoria, d.autor_nome].some(x => (x || "").toLowerCase().includes(q)); }
     return true;
   });
   // Contagem por categoria do recorte atual, pros chips.
@@ -185,6 +210,7 @@ export default function CentralDuvidas() {
     { k: "aprovacao", icone: "🕒", label: "Aguardando aprovação", n: nAberta, alerta: podeAprovar && nAberta > 0 },
     { k: "resposta", icone: "⚖️", label: "Aguardando resposta", n: nAprovada, alerta: podeResponder && nAprovada > 0 },
     { k: "complementar", icone: "💬", label: "Pedem complemento", n: nComplementar, alerta: podeResponder && nComplementar > 0 },
+    { k: "embasamento", icone: "📚", label: "Sem embasamento", n: nSemEmb, alerta: podeFundamentar && nSemEmb > 0 },
     { k: "respondidas", icone: "✅", label: "Respondidas", n: nResp },
     { k: "reprovadas", icone: "⛔", label: "Reprovadas", n: nReprov },
     { k: "minhas", icone: "🙋", label: "Minhas", n: nMinhas },
@@ -286,10 +312,11 @@ export default function CentralDuvidas() {
             </div>
           </div>
 
-          {(podeAprovar || podeResponder) && (
+          {(podeAprovar || podeResponder || podeFundamentar) && (
             <div style={{ background: "#eff6ff", border: "1.5px solid #bfdbfe", borderRadius: 16, padding: "12px 16px", fontSize: 13.5, color: "#1d4ed8", marginBottom: 14 }}>
               {podeAprovar && <>Você <b>aprova/reprova</b> as dúvidas em <b>Aguardando aprovação</b>. </>}
-              {podeResponder && <>Você <b>responde</b> as em <b>Aguardando resposta</b> e os complementos em <b>Pedem complemento</b>.</>}
+              {podeResponder && <>Você <b>responde</b> (resposta simples) as em <b>Aguardando resposta</b> e os complementos em <b>Pedem complemento</b>. </>}
+              {podeFundamentar && <>Você escreve o <b>embasamento jurídico</b> das em <b>Sem embasamento</b>.</>}
             </div>
           )}
 
@@ -305,7 +332,8 @@ export default function CentralDuvidas() {
                   const cc = corCat(d.categoria);
                   const av = infoAvaliacao(d.avaliacao);
                   const pend = pedeComplemento(d);
-                  const naMinhaFila = (d.status === "Aberta" && podeAprovar) || ((d.status === "Aprovada" || pend) && podeResponder);
+                  const semEmb = faltaEmbasamento(d);
+                  const naMinhaFila = (d.status === "Aberta" && podeAprovar) || ((d.status === "Aprovada" || pend) && podeResponder) || (semEmb && podeFundamentar);
                   const nFio = (fios.get(d.id) ?? []).length;
                   return (
                     <div key={d.id} className={"oj-card" + (open ? " open" : "")} style={naMinhaFila && !open ? { borderColor: si.c, boxShadow: `0 0 0 3px ${si.bg}` } : undefined}>
@@ -315,6 +343,7 @@ export default function CentralDuvidas() {
                           <span className="oj-badge" style={{ background: cc.bg, color: cc.c }}>{d.categoria || "Outros"}</span>
                           {av && <span className="oj-badge" style={{ background: av.bg, color: av.cor }}>{av.emoji} {av.rotulo}</span>}
                           {pend && <span className="oj-badge" style={{ background: "#ede9fe", color: "#7c3aed" }}>💬 Pede complemento</span>}
+                          {semEmb && (podeFundamentar || podeResponder) && <span className="oj-badge" style={{ background: "#eef2ff", color: "#4338ca" }}>📚 Sem embasamento</span>}
                           {estaOculta(d) && <span className="oj-badge" title={d.ocultada_por ? `Ocultada por ${d.ocultada_por}` : undefined} style={{ background: "#f1f5f9", color: "#475569" }}>🔒 Oculta</span>}
                           {d.origem === "encarregados" && <span className="oj-badge" style={{ background: "#fef3c7", color: "#92400e" }}>👷 Encarregado</span>}
                         </div>
@@ -334,6 +363,8 @@ export default function CentralDuvidas() {
                           <div style={{ fontSize: 14.5, color: "#0f172a", whiteSpace: "pre-wrap", lineHeight: 1.55 }}>{d.resposta}</div>
                         </div>
                       )}
+                      {/* Embasamento jurídico (mig 253): recolhido; aparece também na Aprovada se já foi escrito antes da resposta simples. */}
+                      {open && (d.status === "Respondida" || d.status === "Aprovada") && <EmbasamentoJuridico duvida={d} />}
                       {/* Avaliação de quem perguntou + fio de complementos (17/09/2026). */}
                       {open && d.status === "Respondida" && (
                         <FioDuvida duvida={d} fio={fios.get(d.id) ?? []} userId={user?.id} autorNome={autor}
@@ -350,7 +381,13 @@ export default function CentralDuvidas() {
                             <button className="oj-btn" onClick={() => { setReprAlvo(d); setMotivoRep(""); }} style={{ background: "#fee2e2", color: "#b91c1c", padding: "8px 14px" }}>Reprovar</button>
                           </>}
                           {d.status === "Aprovada" && podeResponder && <button className="oj-btn" onClick={() => abrirResponder(d)} style={{ background: "#7c3aed", color: "#fff", padding: "8px 14px" }}>✓ Responder</button>}
-                          {open && d.status === "Respondida" && podeResponder && <button className="oj-btn" onClick={() => abrirResponder(d)} style={{ background: "#f1f5f9", color: "#475569", padding: "8px 14px" }}>Editar resposta</button>}
+                          {open && d.status === "Respondida" && podeResponder && <button className="oj-btn" onClick={() => abrirResponder(d)} style={{ background: "#f1f5f9", color: "#475569", padding: "8px 14px" }}>{podeFundamentar ? "Editar resposta / embasamento" : "Editar resposta"}</button>}
+                          {/* Só fundamenta (sem responder): botão próprio, grava só o embasamento. */}
+                          {(d.status === "Aprovada" || (open && d.status === "Respondida")) && podeFundamentar && !podeResponder && !respondidaPeloOperacional(d) && (
+                            <button className="oj-btn" onClick={() => abrirResponder(d)} style={semEmb ? { background: "#4338ca", color: "#fff", padding: "8px 14px" } : { background: "#f1f5f9", color: "#475569", padding: "8px 14px" }}>
+                              {semEmb ? "📚 Escrever embasamento" : "Editar embasamento"}
+                            </button>
+                          )}
                           {open && (podeResponder || podeGerenciar || podeAprovar) && !(respondidaPeloOperacional(d) && estaOculta(d)) && (
                             <button className="oj-btn" onClick={() => alternarOculta(d)} style={{ background: "#f1f5f9", color: "#334155", padding: "8px 14px" }}>
                               {estaOculta(d) ? "👁 Mostrar na biblioteca" : "🔒 Ocultar"}
@@ -413,13 +450,14 @@ export default function CentralDuvidas() {
         <div className="oj-ov" onClick={e => { if (e.target === e.currentTarget) setRespAlvo(null); }}>
           <div className="oj-modal" onClick={e => e.stopPropagation()}>
             <button onClick={() => setRespAlvo(null)} style={{ position: "absolute", top: 14, right: 16, border: "none", background: "none", fontSize: 20, color: "#64748b", cursor: "pointer" }}>✕</button>
-            <div style={{ fontSize: 20, fontWeight: 800, marginBottom: 10 }}>Responder dúvida</div>
+            <div style={{ fontSize: 20, fontWeight: 800, marginBottom: 10 }}>{podeResponder ? "Responder dúvida" : "Embasamento jurídico"}</div>
             <div style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 14, padding: "12px 14px", marginBottom: 16 }}>
               <div style={{ fontWeight: 800, color: "#0f172a", fontSize: 15 }}>{respAlvo.titulo}</div>
               <div style={{ fontSize: 13.5, color: "#475569", marginTop: 5, whiteSpace: "pre-wrap" }}>{respAlvo.pergunta}</div>
               <div style={{ fontSize: 12, color: "#64748b", marginTop: 6 }}>{respAlvo.categoria ? respAlvo.categoria + " · " : ""}por {respAlvo.autor_nome || "—"} · {fmtDtHora(respAlvo.created_at)}</div>
             </div>
             {/* Reaproveitar resposta de outra pergunta (repetida) */}
+            {podeResponder && <>
             <div className="oj-fg">
               <label>Encaminhar resposta de outra pergunta (se repetida)</label>
               <select className="oj-fi" value="" onChange={e => { const alvo = respondidasLib.find(x => String(x.id) === e.target.value); if (alvo?.resposta) setResp(alvo.resposta); }}>
@@ -427,10 +465,37 @@ export default function CentralDuvidas() {
                 {respondidasLib.filter(x => x.id !== respAlvo.id).map(x => <option key={x.id} value={x.id}>{x.titulo}</option>)}
               </select>
             </div>
-            <div className="oj-fg"><label>Resposta do Jurídico *</label><textarea className="oj-fi" rows={7} value={resp} onChange={e => setResp(e.target.value)} placeholder="Escreva a resposta. Ela ficará pública na biblioteca (sem o nome de quem perguntou)." /></div>
+            <div className="oj-fg">
+              <label>Resposta simples *</label>
+              <div style={{ fontSize: 12.5, color: "#64748b", marginBottom: 6 }}>Clara e objetiva: a orientação e as providências, para quem perguntou entender rápido o que fazer.</div>
+              <textarea className="oj-fi" rows={6} value={resp} onChange={e => setResp(e.target.value)} placeholder="Ex.: Pode aplicar a advertência. Antes, registre a ocorrência por escrito e colha a assinatura de duas testemunhas." />
+            </div>
+            </>}
+            {!podeResponder && respAlvo.resposta && (
+              <div style={{ background: "#f0fdf4", border: "1px solid #86efac", borderRadius: 14, padding: "11px 14px", marginBottom: 16 }}>
+                <div style={{ fontSize: 12, fontWeight: 800, color: "#15803d", textTransform: "uppercase", letterSpacing: ".4px", marginBottom: 4 }}>Resposta simples</div>
+                <div style={{ fontSize: 13.5, color: "#0f172a", whiteSpace: "pre-wrap" }}>{respAlvo.resposta}</div>
+              </div>
+            )}
+            {podeFundamentar && <>
+              {embasamentosLib.some(x => x.id !== respAlvo.id) && (
+                <div className="oj-fg">
+                  <label>Reaproveitar embasamento de outra pergunta</label>
+                  <select className="oj-fi" value="" onChange={e => { const alvo = embasamentosLib.find(x => String(x.id) === e.target.value); if (alvo?.embasamento) setEmb(alvo.embasamento); }}>
+                    <option value="">— Selecione um embasamento já escrito —</option>
+                    {embasamentosLib.filter(x => x.id !== respAlvo.id).map(x => <option key={x.id} value={x.id}>{x.titulo}</option>)}
+                  </select>
+                </div>
+              )}
+              <div className="oj-fg">
+                <label>Embasamento jurídico{podeResponder ? "" : " *"}</label>
+                <div style={{ fontSize: 12.5, color: "#64748b", marginBottom: 6 }}>Fundamentação legal, normas, cláusulas contratuais e demais justificativas. Fica recolhido na tela, em "Visualizar embasamento jurídico".</div>
+                <textarea className="oj-fi" rows={7} value={emb} onChange={e => setEmb(e.target.value)} placeholder="Ex.: CLT, art. 482, alínea 'e'; Súmula 212 do TST; cláusula 7ª do contrato…" />
+              </div>
+            </>}
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 6 }}>
               <button className="oj-btn" onClick={() => setRespAlvo(null)} style={{ background: "#fff", border: "1px solid #e2e8f0", color: "#475569" }}>Cancelar</button>
-              <button className="oj-btn" onClick={responder} style={{ background: "#15803d", color: "#fff" }}>Publicar resposta</button>
+              <button className="oj-btn" onClick={responder} style={{ background: podeResponder ? "#15803d" : "#4338ca", color: "#fff" }}>{podeResponder ? "Publicar resposta" : "Salvar embasamento"}</button>
             </div>
           </div>
         </div>

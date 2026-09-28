@@ -62,6 +62,13 @@ export function posicaoEmpresa(p: ComPartes): "autora" | "re" | "nenhuma" {
   return "nenhuma";
 }
 
+/**
+ * Empresa AUTORA (28/09/2026, pedido do Pablo): pedidos, acordo e sentença
+ * são o que ela vai RECEBER, não pagar. Não entram no custo final nem nas
+ * somas de "a pagar" — têm total próprio ("a receber").
+ */
+export const empresaRecebe = (p: ComPartes): boolean => posicaoEmpresa(p) === "autora";
+
 /** A empresa do grupo envolvida (o "Por empresa" do dashboard agrupa por ela). */
 export function empresaDoGrupo(p: ComPartes): string {
   if (!ehOutros(p)) return p.reclamada || "";
