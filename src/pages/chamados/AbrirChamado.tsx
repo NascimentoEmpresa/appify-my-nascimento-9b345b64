@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
@@ -16,10 +16,24 @@ import { Label } from "@/components/ui/label";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
-import { Flag, UploadCloud, Info, XCircle, CheckCircle2, Lightbulb, Clock, X, Star } from "lucide-react";
+import { Flag, UploadCloud, Info, XCircle, CheckCircle2, Lightbulb, Clock, X, Star, ClipboardPaste, FileText, ListChecks } from "lucide-react";
 import {
   CATEGORIAS, TIPOS, IMPACTOS, URGENCIAS, MODULOS_ERP, AMBIENTES, PRIORIDADES, BUCKET_CHAMADOS,
 } from "./types";
+import { imagensDoClipboard } from "@/lib/imagensColadas";
+
+const TITULO_MAX = 120;
+const TAMANHO_MAX_MB = 20; // igual ao limite do bucket (mesmo valor do ChatChamado)
+
+// O que uma boa descrição responde — aparece como guia acima do campo, e o
+// "Usar roteiro" preenche o campo com as mesmas perguntas (28/09/2026).
+const GUIA_DESCRICAO = [
+  { t: "O que aconteceu", d: "o erro, a mensagem ou o que precisa mudar" },
+  { t: "Onde e como", d: "a tela e o passo a passo até chegar lá" },
+  { t: "O que você esperava", d: "o resultado certo, na sua visão" },
+];
+const ROTEIRO_DESCRICAO =
+  "O que aconteceu:\n\n\nOnde (tela) e passo a passo:\n1. \n2. \n\nO que eu esperava:\n";
 
 const EXEMPLOS = [
   "Erro ao salvar registro", "Relatório com informações incorretas", "Campo não está atualizando",
@@ -63,6 +77,43 @@ export default function AbrirChamado({ base = "/app/central-servicos/chamados" }
   const [afetaUsuarios, setAfetaUsuarios] = useState("");
   const [arquivos, setArquivos] = useState<File[]>([]);
   const [salvando, setSalvando] = useState(false);
+  const [arrastando, setArrastando] = useState(false);
+
+  // Arquivo acima do limite do bucket nem entra na lista (antes o erro só
+  // aparecia depois de enviar, como "anexo com falha").
+  const adicionarArquivos = (novos: File[]) => {
+    const limite = TAMANHO_MAX_MB * 1024 * 1024;
+    const grandes = novos.filter((f) => f.size > limite);
+    if (grandes.length) {
+      toast({ title: `Arquivo acima de ${TAMANHO_MAX_MB} MB`, description: grandes.map((f) => f.name).join(", "), variant: "destructive" });
+    }
+    const ok = novos.filter((f) => f.size <= limite);
+    if (ok.length) setArquivos((cur) => [...cur, ...ok]);
+    return ok.length;
+  };
+
+  // Ctrl+V com print em QUALQUER lugar da tela vira anexo (28/09/2026) — o
+  // print é colado logo depois de tirado, quase sempre com o cursor no campo
+  // de descrição. Texto colado segue normal: só imagem é interceptada.
+  useEffect(() => {
+    const aoColar = (ev: ClipboardEvent) => {
+      const imagens = imagensDoClipboard(ev.clipboardData);
+      if (!imagens.length) return;
+      ev.preventDefault(); // senão o navegador cola o caminho do arquivo no texto
+      const n = adicionarArquivos(imagens);
+      if (n) toast({ title: n === 1 ? "Print anexado" : `${n} prints anexados`, description: "Aparece em Prints e anexos, abaixo da descrição." });
+    };
+    window.addEventListener("paste", aoColar);
+    return () => window.removeEventListener("paste", aoColar);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Miniatura das imagens anexadas; as URLs são liberadas quando a lista muda.
+  const previas = useMemo(
+    () => arquivos.map((f) => (f.type.startsWith("image/") ? URL.createObjectURL(f) : null)),
+    [arquivos],
+  );
+  useEffect(() => () => previas.forEach((u) => u && URL.revokeObjectURL(u)), [previas]);
 
   const toggleCategoria = (v: string) =>
     setCategorias((cur) => (cur.includes(v) ? cur.filter((x) => x !== v) : [...cur, v]));
@@ -73,13 +124,13 @@ export default function AbrirChamado({ base = "/app/central-servicos/chamados" }
   // o que falta preencher quando o usuário tenta enviar — em vez de só travar.
   const faltando = useMemo(() => {
     const req = [
-      { id: "campo-assunto",     label: "Assunto",              ok: !!assunto.trim() },
+      { id: "campo-assunto",     label: "Título",               ok: !!assunto.trim() },
       { id: "campo-categorias",  label: "Categorias",           ok: categorias.length > 0 },
       { id: "campo-tipo",        label: "Tipo de solicitação",  ok: !!tipo },
       { id: "campo-modulo",      label: "Módulo / Sistema",     ok: !!modulo },
       { id: "campo-modulo",      label: "Qual sistema (Outro)", ok: modulo !== "outro" || !!moduloOutro.trim() },
       { id: "campo-prioridade",  label: "Prioridade",           ok: !!prioridade },
-      { id: "campo-descricao",   label: "Descrição detalhada",  ok: !!descricao.trim() },
+      { id: "campo-descricao",   label: "Descrição",            ok: !!descricao.trim() && descricao.trim() !== ROTEIRO_DESCRICAO.trim() },
       { id: "campo-impacto",     label: "Impacto no trabalho",  ok: !!impacto },
       { id: "campo-urgencia",    label: "Urgência",             ok: !!urgencia },
     ];
@@ -212,15 +263,112 @@ export default function AbrirChamado({ base = "/app/central-servicos/chamados" }
             </div>
           </Card>
 
+          {/* ── 1. Título + descrição + prints (28/09/2026) ──────────────────
+              Antes o "Assunto" dividia linha com as categorias e a descrição
+              ficava lá embaixo, depois da prioridade: quem abria o chamado
+              preenchia classificação antes de contar o problema. Agora o
+              relato vem primeiro, junto com os prints (Ctrl+V em qualquer
+              lugar da tela), e a classificação depois. */}
           <Card className="space-y-5 p-5">
-            <p className="text-xs text-muted-foreground">Campos com <span className="text-destructive">*</span> são obrigatórios.</p>
-            <p className="text-sm font-bold text-foreground">1. Informações do chamado</p>
+            <div className="flex flex-wrap items-baseline justify-between gap-2">
+              <p className="text-sm font-bold text-foreground">1. O que você precisa?</p>
+              <p className="text-xs text-muted-foreground">Campos com <span className="text-destructive">*</span> são obrigatórios.</p>
+            </div>
+
+            <div id="campo-assunto" className="scroll-mt-24">
+              <Label htmlFor="ch-titulo" className="block text-sm font-semibold">Título <span className="text-destructive">*</span></Label>
+              <p className="mb-2 mt-0.5 text-xs text-muted-foreground">Uma frase que resume o problema ou o pedido — é o que o time lê primeiro na fila.</p>
+              <Input
+                id="ch-titulo" maxLength={TITULO_MAX}
+                className="h-11 text-base font-medium"
+                placeholder="Ex.: Relatório de comissões sai sem a coluna “Valor”"
+                value={assunto} onChange={(e) => setAssunto(e.target.value)}
+              />
+              <div className="mt-1 flex items-center justify-between gap-2 text-[11px] text-muted-foreground">
+                <span>
+                  <span className="text-success">✓ Bom:</span> diz <i>o quê</i> e <i>onde</i>.{" "}
+                  <span className="text-destructive">✗ Evite:</span> “Erro”, “Ajuda”, “Urgente”.
+                </span>
+                <span className="shrink-0">{assunto.length}/{TITULO_MAX}</span>
+              </div>
+            </div>
+
+            <div id="campo-descricao" className="scroll-mt-24">
+              <div className="flex flex-wrap items-end justify-between gap-2">
+                <div>
+                  <Label htmlFor="ch-descricao" className="block text-sm font-semibold">Descrição <span className="text-destructive">*</span></Label>
+                  <p className="mt-0.5 text-xs text-muted-foreground">Conte como se o time não conhecesse a sua tela.</p>
+                </div>
+                {!descricao.trim() && (
+                  <Button type="button" variant="outline" size="sm" className="h-7 gap-1 text-xs" onClick={() => setDescricao(ROTEIRO_DESCRICAO)}>
+                    <ListChecks className="h-3.5 w-3.5" /> Usar roteiro
+                  </Button>
+                )}
+              </div>
+              <div className="mb-2 mt-2 grid gap-1.5 sm:grid-cols-3">
+                {GUIA_DESCRICAO.map((g, i) => (
+                  <div key={g.t} className="rounded-md border border-border bg-muted/40 px-2.5 py-1.5">
+                    <p className="text-[11px] font-semibold text-foreground">{i + 1}. {g.t}</p>
+                    <p className="text-[11px] text-muted-foreground">{g.d}</p>
+                  </div>
+                ))}
+              </div>
+              <Textarea
+                id="ch-descricao" rows={8} maxLength={4000}
+                className="text-sm leading-relaxed"
+                placeholder="O que aconteceu, em qual tela, o passo a passo até o problema e o que você esperava que acontecesse."
+                value={descricao} onChange={(e) => setDescricao(e.target.value)}
+              />
+              <div className="mt-1 flex items-center justify-between gap-2 text-[11px] text-muted-foreground">
+                <span className="flex items-center gap-1"><ClipboardPaste className="h-3.5 w-3.5" /> Tirou print? Cole aqui com <kbd className="rounded border border-border bg-muted px-1 font-mono text-[10px]">Ctrl</kbd>+<kbd className="rounded border border-border bg-muted px-1 font-mono text-[10px]">V</kbd> — vira anexo.</span>
+                <span className="shrink-0">{descricao.length}/4000</span>
+              </div>
+            </div>
+
+            {/* Prints e anexos — logo abaixo do relato que eles ilustram. */}
+            <div>
+              <p className="mb-1.5 text-sm font-semibold">Prints e anexos <span className="font-normal text-muted-foreground">(opcional)</span></p>
+              <label
+                onDragOver={(e) => { e.preventDefault(); setArrastando(true); }}
+                onDragLeave={() => setArrastando(false)}
+                onDrop={(e) => { e.preventDefault(); setArrastando(false); adicionarArquivos(Array.from(e.dataTransfer.files ?? [])); }}
+                className={`flex cursor-pointer flex-col items-center justify-center gap-1.5 rounded-lg border border-dashed p-5 text-center transition-colors ${arrastando ? "border-primary bg-primary/5" : "border-border hover:border-primary/40"}`}
+              >
+                <UploadCloud className="h-6 w-6 text-muted-foreground" />
+                <span className="text-sm font-medium">Cole com Ctrl+V, arraste aqui ou clique para selecionar</span>
+                <span className="text-[11px] text-muted-foreground">PNG, JPG, PDF, DOC, XLS, ZIP — máx. {TAMANHO_MAX_MB} MB por arquivo</span>
+                <input
+                  type="file" multiple className="hidden"
+                  accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv,.zip,image/*"
+                  onChange={(e) => { adicionarArquivos(Array.from(e.target.files ?? [])); e.target.value = ""; }}
+                />
+              </label>
+              {arquivos.length > 0 && (
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {arquivos.map((f, i) => (
+                    <div key={`${f.name}-${i}`} className="group relative flex w-28 flex-col overflow-hidden rounded-md border border-border bg-background">
+                      {previas[i]
+                        ? <img src={previas[i]!} alt={f.name} className="h-20 w-full object-cover" />
+                        : <div className="grid h-20 place-items-center bg-muted/50"><FileText className="h-6 w-6 text-muted-foreground" /></div>}
+                      <span className="truncate px-1.5 py-1 text-[10px]" title={f.name}>{f.name}</span>
+                      <button
+                        type="button" aria-label={`Remover ${f.name}`}
+                        onClick={() => setArquivos((cur) => cur.filter((_, j) => j !== i))}
+                        className="absolute right-1 top-1 grid h-5 w-5 place-items-center rounded-full bg-background/90 text-muted-foreground shadow hover:text-destructive"
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </Card>
+
+          <Card className="space-y-5 p-5">
+            <p className="text-sm font-bold text-foreground">2. Classificação</p>
 
             <div className="grid gap-4 md:grid-cols-2">
-              <div id="campo-assunto" className="scroll-mt-24">
-                <Label className="mb-1.5 block text-xs font-semibold">Assunto <span className="text-destructive">*</span></Label>
-                <Input placeholder="Ex.: Erro ao gerar relatório de comissões" value={assunto} onChange={(e) => setAssunto(e.target.value)} />
-              </div>
               <div id="campo-categorias" className="scroll-mt-24">
                 <Label className="mb-1.5 block text-xs font-semibold">Categorias <span className="text-destructive">*</span> <span className="font-normal text-muted-foreground">(uma ou mais)</span></Label>
                 <div className="grid grid-cols-2 gap-1.5">
@@ -232,9 +380,6 @@ export default function AbrirChamado({ base = "/app/central-servicos/chamados" }
                   ))}
                 </div>
               </div>
-            </div>
-
-            <div className="grid gap-4 md:grid-cols-2">
               <div id="campo-tipo" className="scroll-mt-24">
                 <Label className="mb-1.5 block text-xs font-semibold">Tipo de solicitação <span className="text-destructive">*</span></Label>
                 <div className="flex flex-wrap gap-x-4 gap-y-1.5">
@@ -284,18 +429,8 @@ export default function AbrirChamado({ base = "/app/central-servicos/chamados" }
               </div>
             </div>
 
-            <div id="campo-descricao" className="scroll-mt-24">
-              <Label className="mb-1.5 block text-xs font-semibold">Descrição detalhada <span className="text-destructive">*</span></Label>
-              <Textarea
-                rows={5} maxLength={4000}
-                placeholder="Descreva o que está acontecendo, incluindo o passo a passo para reproduzir o problema ou o que precisa ser ajustado."
-                value={descricao} onChange={(e) => setDescricao(e.target.value)}
-              />
-              <p className="mt-1 text-right text-[11px] text-muted-foreground">{descricao.length}/4000 caracteres</p>
-            </div>
-
             <div>
-              <Label className="mb-1.5 block text-xs font-semibold">Observações do solicitante <span className="font-normal text-muted-foreground">(opcional)</span></Label>
+              <Label className="mb-1.5 block text-xs font-semibold">Observações adicionais <span className="font-normal text-muted-foreground">(opcional)</span></Label>
               <Textarea
                 rows={3} maxLength={2000}
                 placeholder="Contexto adicional, resultado esperado, horários em que ocorre, exemplos…"
@@ -344,33 +479,6 @@ export default function AbrirChamado({ base = "/app/central-servicos/chamados" }
                 <Input type="number" min={0} placeholder="Opcional" value={afetaUsuarios} onChange={(e) => setAfetaUsuarios(e.target.value)} />
               </div>
             </div>
-          </Card>
-
-          {/* Anexos */}
-          <Card className="space-y-3 p-5">
-            <p className="text-sm font-bold text-foreground">2. Anexos e evidências <span className="font-normal text-muted-foreground">(opcional)</span></p>
-            <label className="flex cursor-pointer flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-border p-6 text-center hover:border-primary/40">
-              <UploadCloud className="h-7 w-7 text-muted-foreground" />
-              <span className="text-sm font-medium">Arraste e solte os arquivos aqui ou clique para selecionar</span>
-              <span className="text-[11px] text-muted-foreground">Formatos aceitos: PNG, JPG, PDF, DOC, XLS, ZIP (máx. 20 MB por arquivo)</span>
-              <input
-                type="file" multiple className="hidden"
-                accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv,.zip,image/*"
-                onChange={(e) => { setArquivos((cur) => [...cur, ...Array.from(e.target.files ?? [])]); e.target.value = ""; }}
-              />
-            </label>
-            {arquivos.length > 0 && (
-              <div className="space-y-1">
-                {arquivos.map((f, i) => (
-                  <div key={i} className="flex items-center justify-between rounded border border-border px-2.5 py-1.5 text-xs">
-                    <span className="truncate">{f.name}</span>
-                    <button type="button" onClick={() => setArquivos((cur) => cur.filter((_, j) => j !== i))} className="ml-2 text-muted-foreground hover:text-destructive">
-                      <X className="h-3.5 w-3.5" />
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
           </Card>
 
           {faltando.length > 0 && (
