@@ -24,10 +24,17 @@
 #                        (sup_pedido 2.247, EMPREGADOS 13.355,
 #                         BiMarcacoes 3.748.805, auth.users 155)
 #
+# O ARTEFATO E CRIPTOGRAFADO
+# Desde 28/09/2026 o que sobe e `.dump.gpg`, nao `.dump`. O motivo esta
+# inteiro no comentario do passo "Criptografar antes de publicar": este
+# repositorio e publico. Para restaurar e preciso a chave privada do Eduardo -
+# o passo de descriptografia esta em docs/restaurar-backup.md.
+#
 # O QUE ESTE BACKUP NAO COBRE
 # Arquivos do Storage (anexos, fotos de cracha, XML). O banco guarda so os
 # METADADOS deles - o mesmo aviso que a propria Supabase da na tela de backups.
-# Restaurar este dump devolve a lista de arquivos, nao os arquivos.
+# Restaurar este dump devolve a lista de arquivos, nao os arquivos. Medido em
+# 28/09/2026: sao 7.380 arquivos e 4.465 MB - quase 3x o tamanho do banco.
 #
 # E NAO E FAILOVER
 # Ninguem aplica isto sozinho quando o banco cai. Restaurar e decisao humana,
@@ -168,11 +175,68 @@ jobs:
             exit 1
           fi
 
+      - name: Criptografar antes de publicar
+        # POR QUE ESTE PASSO EXISTE
+        # Este repositorio e PUBLICO. Artifact de repositorio publico segue a
+        # permissao de leitura do repositorio - ou seja, qualquer pessoa com
+        # conta no GitHub. Em 28/09/2026 foi confirmado que a listagem responde
+        # sem autenticacao nenhuma:
+        #
+        #   curl https://api.github.com/repos/<org>/<repo>/actions/artifacts
+        #   -> HTTP 200, com nome, tamanho e sha256 do dump
+        #
+        # E o dump nao e um arquivo qualquer: tem o schema `auth` (155 usuarios
+        # e os hashes de senha deles), "EMPREGADOS" (13.355 pessoas, com CPF),
+        # malote e pagamentos. Formato custom do pg_dump e comprimido, nao
+        # criptografado - quem baixasse dava pg_restore e tinha o ERP inteiro.
+        # Isso e exposicao de dado pessoal, com consequencia de LGPD.
+        #
+        # Deixar o repositorio privado NAO resolveria: no plano free, repo
+        # privado tem 500 MB de artifact storage e so o backup gera ~3 GB por
+        # ciclo de retencao. Quebraria o backup.
+        #
+        # POR QUE CHAVE ASSIMETRICA E NAO SENHA
+        # O runner tem so a chave PUBLICA (`.github/backup-chave-publica.asc`,
+        # commitada de proposito - e publica, e para isso que serve). Com ela
+        # ele CRIA backup criptografado e NAO consegue abrir nenhum. Se o
+        # repositorio for comprometido, o atacante grava e nao le. Medido em
+        # 28/09/2026, num chaveiro vazio igual ao do runner:
+        #
+        #   criptografar com a publica ....... OK
+        #   descriptografar no mesmo lugar ... gpg: decryption failed: No secret key
+        #   round-trip no chaveiro do Eduardo  sha256 identico
+        #
+        # A chave privada esta so com o Eduardo. PERDER A CHAVE PRIVADA E
+        # PERDER TODOS OS BACKUPS, DE FORMA DEFINITIVA - ver docs/restaurar-backup.md.
+        #
+        # `--compress-algo none` porque o dump ja sai comprimido do pg_dump
+        # (--compress=6); recomprimir so gastaria CPU. Medido: 0,9 s para 108 MB.
+        run: |
+          set -euo pipefail
+
+          gpg --batch --yes --trust-model always --compress-algo none \
+            --recipient-file .github/backup-chave-publica.asc \
+            --encrypt --output "$ARQUIVO.gpg" "$ARQUIVO"
+
+          # O texto claro nao pode sobreviver a este passo nem por engano.
+          shred -u "$ARQUIVO" 2>/dev/null || rm -f "$ARQUIVO"
+
+          # Trava: se por qualquer motivo o arquivo publicado ainda comecar com
+          # a assinatura do pg_dump ("PGDMP"), ele esta em texto claro e o
+          # backup NAO pode subir.
+          if head -c 5 "$ARQUIVO.gpg" | grep -q "PGDMP"; then
+            echo "::error::O arquivo a publicar esta em TEXTO CLARO. Abortando."
+            exit 1
+          fi
+
+          echo "ARQUIVO_CIFRADO=$ARQUIVO.gpg" >> "$GITHUB_ENV"
+          ls -la "$ARQUIVO.gpg"
+
       - name: Guardar o artefato
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.ARQUIVO }}
-          path: ${{ env.ARQUIVO }}
+          name: ${{ env.ARQUIVO_CIFRADO }}
+          path: ${{ env.ARQUIVO_CIFRADO }}
           retention-days: ${{ github.event.inputs.retencao_dias || '14' }}
           compression-level: 0   # o dump ja vem comprimido; recomprimir so gasta tempo
           if-no-files-found: error
