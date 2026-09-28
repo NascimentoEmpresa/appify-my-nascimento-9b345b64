@@ -66,10 +66,20 @@ jobs:
     timeout-minutes: 30
 
     steps:
-      - name: Instalar pg_dump 16
+      - name: Instalar pg_dump 17
         # O Ubuntu do runner traz um client mais antigo. pg_dump precisa ser
         # >= a versao do servidor (a Supabase roda 17.6), senao recusa a copia.
+        #
+        # Na primeira execucao agendada (28/09/2026) este passo instalava o
+        # postgresql-client-16 e o backup morria em 1,2 s com:
+        #   pg_dump: error: aborting because of server version mismatch
+        #   pg_dump: detail: server version: 17.6; pg_dump version: 16.15
+        # Dai as tres travas abaixo: instalar o 17, por o diretorio dele na
+        # frente do PATH (o runner ja traz um pg_dump 16 em /usr/bin, e o
+        # pg_wrapper do Debian pode escolher o errado), e abortar com mensagem
+        # clara se mesmo assim a versao vier menor que 17.
         run: |
+          set -euo pipefail
           sudo install -d /usr/share/postgresql-common/pgdg
           sudo curl -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
             --fail https://www.postgresql.org/media/keys/ACCC4CF8.asc
@@ -77,8 +87,18 @@ jobs:
             https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
             | sudo tee /etc/apt/sources.list.d/pgdg.list > /dev/null
           sudo apt-get update -qq
-          sudo apt-get install -y -qq postgresql-client-16
-          pg_dump --version
+          sudo apt-get install -y -qq postgresql-client-17
+
+          # Vale para todos os passos seguintes (pg_dump e pg_restore).
+          echo "/usr/lib/postgresql/17/bin" >> "$GITHUB_PATH"
+          export PATH="/usr/lib/postgresql/17/bin:$PATH"
+
+          VERSAO=$(pg_dump --version | grep -oE '[0-9]+' | head -1)
+          echo "pg_dump em uso: $(command -v pg_dump) -> $(pg_dump --version)"
+          if [ "$VERSAO" -lt 17 ]; then
+            echo "::error::pg_dump $VERSAO e mais antigo que o servidor (17.6). O backup nao rodaria."
+            exit 1
+          fi
 
       - name: Gerar o backup
         env:
