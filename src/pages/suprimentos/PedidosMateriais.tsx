@@ -27,7 +27,7 @@ import { useTagsDoPedido, useTagsDePedidos, buscarTagsDePedidos, type TagEmLote 
 import {
   Search, Package, Boxes, Clock, ShoppingCart, Truck, History as HistoryIcon,
   RefreshCw, Inbox, Download, ShieldAlert, Trash2, AlertTriangle, Pencil, Printer, FileText,
-  PackageSearch, PackageOpen, Car, HardHat,
+  PackageSearch, PackageOpen, Car, HardHat, Undo2,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { toast } from "sonner";
@@ -128,7 +128,7 @@ function valorLegivel(v: string | null): string {
 
 type ItemPedido = Pedido["sup_pedido_item"][number];
 
-import { useSituacaoPedidos } from "@/hooks/useSupSeparacao";
+import { useSituacaoPedidos, useLiberarReserva } from "@/hooks/useSupSeparacao";
 import { ModalPrePedido } from "@/components/suprimentos/ModalPrePedido";
 
 /**
@@ -250,6 +250,7 @@ export default function PedidosMateriais() {
   const [historicoDe, setHistoricoDe] = useState<Pedido | null>(null);
   const [editandoDe, setEditandoDe] = useState<Pedido | null>(null);
   const [prePedidoDe, setPrePedidoDe] = useState<Pedido | null>(null);
+  const [liberandoDe, setLiberandoDe] = useState<Pedido | null>(null);
   const [excluindo, setExcluindo] = useState<Pedido | null>(null);
   const [etiquetaDe, setEtiquetaDe] = useState<Pedido | null>(null);
   const [fichaDe, setFichaDe] = useState<Pedido | null>(null);
@@ -628,6 +629,7 @@ export default function PedidosMateriais() {
               situacao={situacaoDe(p)}
               onStatus={() => setStatusDe(p)}
               onPrePedido={() => setPrePedidoDe(p)}
+              onLiberar={() => setLiberandoDe(p)}
               onEditar={() => setEditandoDe(p)}
               onHistorico={() => setHistoricoDe(p)}
               onExcluir={() => setExcluindo(p)}
@@ -664,6 +666,9 @@ export default function PedidosMateriais() {
         aberto={!!prePedidoDe}
         onFechar={() => setPrePedidoDe(null)}
       />
+
+      {/* Desfaz o pré-pedido: devolve as reservas e volta para Em preparação. */}
+      <ModalLiberarReserva pedido={liberandoDe} onFechar={() => setLiberandoDe(null)} />
 
       {/* Status + baixa de estoque numa transação só (ver ModalBaixaPedido). */}
       <ModalBaixaPedido pedido={statusDe} onFechar={() => setStatusDe(null)} />
@@ -712,12 +717,12 @@ function CardKpi({
 }
 
 function CardPedido({
-  pedido: p, situacao, onStatus, onPrePedido, onEditar, onHistorico, onExcluir, onEtiqueta, onFichaEpi,
+  pedido: p, situacao, onStatus, onPrePedido, onLiberar, onEditar, onHistorico, onExcluir, onEtiqueta, onFichaEpi,
   rastreio, rastreioCarregando,
 }: {
   pedido: Pedido;
   situacao: SituacaoPedido | null;
-  onStatus: () => void; onPrePedido: () => void; onEditar: () => void;
+  onStatus: () => void; onPrePedido: () => void; onLiberar: () => void; onEditar: () => void;
   onHistorico: () => void; onExcluir: () => void; onEtiqueta: () => void; onFichaEpi: () => void;
   rastreio: SituacaoObjeto | undefined;
   rastreioCarregando: boolean;
@@ -1009,16 +1014,37 @@ function CardPedido({
               <RefreshCw className="mr-1.5 h-3.5 w-3.5" /> Status
             </Button>
           </AcessoGate>
-        ) : (
-          <Button
-            size="sm"
-            className="col-span-3"
-            onClick={onStatus}
-            disabled={p.status === "EM SEPARACAO"}
-            title={p.status === "EM SEPARACAO"
-              ? "Pedido em separação: confirme ou libere pela tela de Separação de Pedidos."
-              : undefined}
+        ) : p.status === "EM SEPARACAO" ? (
+          /*
+            SIS-2026-0538: aqui ficava só o Status desabilitado, com a dica
+            "libere pela tela de Separação" — só que nenhuma tela chamava
+            sup_sep_liberar. Um pedido cuja reserva sumiu por uma edição
+            simultânea (PED-20260924-0408) não aparecia na fila de Separação e
+            não tinha botão nenhum que o tirasse de EM SEPARACAO. Liberar é ato
+            da supervisora (a RPC confere sup_pedidos_materiais/alterar), daí
+            o mesmo gate do "Conferir e reservar".
+          */
+          <AcessoGate
+            menu="sup_pedidos_materiais"
+            acao="alterar"
+            fallback={
+              <Button
+                size="sm" className="col-span-3" disabled
+                title="Pedido em separação: a separação é confirmada na tela de Separação de Pedidos."
+              >
+                <RefreshCw className="mr-1.5 h-3.5 w-3.5" /> Status
+              </Button>
+            }
           >
+            <Button
+              size="sm" variant="outline" className="col-span-3" onClick={onLiberar}
+              title="Devolve as unidades reservadas ao estoque e o pedido volta para Em preparação."
+            >
+              <Undo2 className="mr-1.5 h-3.5 w-3.5" /> Liberar reserva
+            </Button>
+          </AcessoGate>
+        ) : (
+          <Button size="sm" className="col-span-3" onClick={onStatus}>
             <RefreshCw className="mr-1.5 h-3.5 w-3.5" /> Status
           </Button>
         )}
@@ -1047,6 +1073,64 @@ function CardPedido({
         </Button>
       </div>
     </Card>
+  );
+}
+
+/**
+ * Liberar a reserva de um pedido em separação (SIS-2026-0538).
+ *
+ * Nada sai do estoque: as unidades reservadas voltam a ficar disponíveis e
+ * o pedido volta para Em preparação, para conferir e reservar de novo. Por
+ * isso uma confirmação simples basta. O motivo é opcional e vai para o
+ * histórico do pedido e para a trilha do material.
+ *
+ * Também é a saída do pedido que ficou em separação SEM reserva (ela sumiu
+ * por uma edição simultânea): sup_sep_liberar devolve esse pedido à
+ * preparação mesmo sem ter o que liberar (20260930000251).
+ */
+function ModalLiberarReserva({ pedido, onFechar }: { pedido: Pedido | null; onFechar: () => void }) {
+  const [motivo, setMotivo] = useState("");
+  const liberar = useLiberarReserva();
+
+  const fechar = () => { setMotivo(""); onFechar(); };
+
+  return (
+    <Dialog open={!!pedido} onOpenChange={(o) => { if (!o) fechar(); }}>
+      <DialogContent className="max-w-md">
+        <DialogHeader><DialogTitle>Liberar reserva de {pedido?.pedido_id}?</DialogTitle></DialogHeader>
+
+        <div className="space-y-3 py-2 text-sm">
+          <p className="text-muted-foreground">
+            As unidades reservadas para este pedido voltam ao estoque disponível e o pedido
+            volta para <strong>Em preparação</strong>, onde pode ser conferido e reservado de novo.
+            Nada sai do estoque.
+          </p>
+          <div className="space-y-1.5">
+            <Label htmlFor="motivo-liberar">Motivo (opcional)</Label>
+            <Textarea
+              id="motivo-liberar"
+              value={motivo}
+              onChange={(e) => setMotivo(e.target.value)}
+              placeholder="Ex.: pedido editado depois da reserva"
+              rows={2}
+            />
+          </div>
+        </div>
+
+        <DialogFooter>
+          <Button variant="outline" onClick={fechar} disabled={liberar.isPending}>Cancelar</Button>
+          <Button
+            disabled={liberar.isPending || !pedido}
+            onClick={() => pedido && liberar.mutate(
+              { pedido_id: pedido.id, motivo: motivo.trim() || null },
+              { onSuccess: fechar },
+            )}
+          >
+            {liberar.isPending ? "Liberando…" : "Liberar reserva"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 

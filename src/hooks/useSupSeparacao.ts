@@ -229,7 +229,11 @@ export function useLiberarReserva() {
     },
     onSuccess: (r) => {
       invalidar();
-      toast.success(`${r.unidades} unidade(s) devolvida(s) ao estoque disponível.`);
+      // Zero unidades não é erro: é o pedido que ficou em separação sem
+      // reserva nenhuma (SIS-2026-0538), e o que aconteceu foi só a volta.
+      toast.success(r.unidades > 0
+        ? `${r.unidades} unidade(s) devolvida(s) ao estoque disponível.`
+        : "Pedido devolvido para Em preparação.");
     },
     onError: (e: any) => toast.error(e?.message ?? "Não foi possível liberar a reserva."),
   });
