@@ -400,20 +400,34 @@ export default function MeusItens() {
           <DialogHeader>
             <DialogTitle>Lixeira do Malote</DialogTitle>
           </DialogHeader>
-          <div className="space-y-1.5">
+          {/* [SEM-CHAMADO] (achado do usuário): DialogContent é display:grid
+              — sem min-w-0 aqui, este item de grid não encolhe abaixo do
+              conteúdo intrínseco (nome gigante da despesa) mesmo com
+              flex-1/min-w-0/truncate nas linhas lá dentro; o "..." nunca
+              chegava a entrar em ação. */}
+          <div className="space-y-1.5 min-w-0">
             {despesasLixeira.length === 0 && (
               <p className="text-sm text-muted-foreground py-6 text-center">A lixeira está vazia.</p>
             )}
             {despesasLixeira.map((d) => (
+              // [SEM-CHAMADO] (achado do usuário): "Restaurar" + "Excluir
+              // permanentemente" por extenso não cabiam ao lado do
+              // nome/valor na largura do Dialog e criavam scroll lateral —
+              // os dois viraram ícone só (com title).
               <div key={d.id} className="flex items-center justify-between gap-2 rounded-md border border-border px-3 py-2 text-sm">
-                <div className="min-w-0">
+                {/* [SEM-CHAMADO] (achado do usuário): min-w-0 sozinho não
+                    bastava — sem flex-1 explícito, o flex-basis (auto) da
+                    div seguia o tamanho do texto, então o truncate nunca
+                    entrava em ação e o nome gigante empurrava a linha pra
+                    fora, criando o scroll lateral. */}
+                <div className="flex-1 min-w-0">
                   <p className="font-mono text-xs text-muted-foreground">{d.numero}</p>
                   <p className="truncate">{d.nome}</p>
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
                   <span className="font-medium">{formatBRL(d.valor_total)}</span>
-                  <Button variant="outline" size="sm" className="gap-1.5" onClick={() => handleRestaurar(d.id)} disabled={restaurarDespesa.isPending}>
-                    <RotateCcw className="h-3.5 w-3.5" /> Restaurar
+                  <Button variant="outline" size="icon" className="h-8 w-8" title="Restaurar" onClick={() => handleRestaurar(d.id)} disabled={restaurarDespesa.isPending}>
+                    <RotateCcw className="h-3.5 w-3.5" />
                   </Button>
                   <ExcluirPermanentementeButton
                     despesaId={d.id}

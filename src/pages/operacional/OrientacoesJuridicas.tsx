@@ -10,9 +10,10 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { FioDuvida } from "@/components/juridico/FioDuvida";
+import { ResumoDeFuncoes } from "@/components/fluxos/ResumoDeFuncoes";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
-import { EyeOff, Loader2, MessageSquareReply, Scale, Search, Send } from "lucide-react";
+import { Ban, EyeOff, Loader2, MessageSquareReply, Scale, Search, Send } from "lucide-react";
 import {
   STATUS_PENDENTE_OPERACIONAL, agruparComplementos, complementoPendente, estaOculta, infoAvaliacao,
   respondidaPeloOperacional, type Complemento, type Duvida,
@@ -26,7 +27,10 @@ import {
 //   • RESPONDE direto ao encarregado — a resposta não vai pra biblioteca do
 //     Jurídico (não é parecer), e o fio de complementos continua aqui;
 //   • ou ENCAMINHA ao Jurídico quando não sabe orientar — cai na fila de
-//     resposta do Parecer Jurídico ("Aprovada"), com a observação dele.
+//     resposta do Parecer Jurídico ("Aprovada"), com a observação dele;
+//   • ou REPROVA, com motivo (mig 247) — o encarregado lê no sino.
+// "De encarregado" = quem pergunta tem a tela Orientações Jurídicas dos
+// Encarregados, por qualquer porta (mig 247).
 // Pode também OCULTAR a pergunta: só quem perguntou e os responsáveis veem.
 // As decisões são RPCs (jur_duvida_operacional_decidir / jur_duvida_ocultar);
 // quem pode é quem tem o menu operacional_orientacoes — a RLS repete.
@@ -104,14 +108,16 @@ export default function OperacionalOrientacoesJuridicas() {
 
   const abrir = (id: number) => { setAberta(aberta === id ? null : id); setTexto(""); };
 
-  const decidir = async (d: Duvida, acao: "responder" | "encaminhar") => {
+  const decidir = async (d: Duvida, acao: "responder" | "encaminhar" | "reprovar") => {
     if (acao === "responder" && texto.trim().length < 5) { toast.error("Escreva a orientação para o encarregado."); return; }
+    if (acao === "reprovar" && texto.trim().length < 5) { toast.error("Escreva o motivo da reprovação — é o que o encarregado lê."); return; }
     setSalvando(true);
     const { error } = await db.rpc("jur_duvida_operacional_decidir", { p_id: d.id, p_acao: acao, p_texto: texto.trim() || null });
     setSalvando(false);
     if (error) { toast.error(error.message); return; }
     toast.success(acao === "responder"
       ? "Orientação enviada ao encarregado."
+      : acao === "reprovar" ? "Pergunta reprovada — o encarregado foi avisado com o motivo."
       : "Encaminhada ao Jurídico — ela entra na fila de resposta do Parecer Jurídico.");
     setAberta(null); setTexto(""); carregar();
   };
@@ -139,6 +145,7 @@ export default function OperacionalOrientacoesJuridicas() {
         subtitle="Perguntas dos encarregados. Responda direto quando souber orientar; quando não, encaminhe ao Jurídico."
         module="Operacional"
         breadcrumb={["Orientações Jurídicas"]}
+        actions={<ResumoDeFuncoes fluxo="orientacoes" />}
       />
 
       <div className="mb-4 flex flex-wrap items-center gap-2">
@@ -187,6 +194,11 @@ export default function OperacionalOrientacoesJuridicas() {
                   </div>
                   <p className={cn("whitespace-pre-wrap text-sm text-slate-700", !open && "line-clamp-3")}>{d.pergunta}</p>
 
+                  {d.status === "Reprovada" && d.motivo_reprovacao && (
+                    <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800">
+                      Reprovada por {d.aprovado_por || "—"}: {d.motivo_reprovacao}
+                    </div>
+                  )}
                   {open && d.operacional_acao === "encaminhou" && (
                     <div className="rounded-lg border bg-violet-50 p-3 text-sm text-violet-900">
                       <Scale className="mr-1 inline h-4 w-4" /> Encaminhada ao Jurídico por {d.operacional_por} · {fmtDtHora(d.operacional_em)}
@@ -211,13 +223,16 @@ export default function OperacionalOrientacoesJuridicas() {
                     <div className="space-y-3 rounded-lg border border-primary/30 bg-primary/5 p-4">
                       <p className="text-sm font-semibold">Sua decisão</p>
                       <Textarea rows={4} value={texto} onChange={(e) => setTexto(e.target.value)}
-                        placeholder="Para RESPONDER: escreva a orientação ao encarregado. Para ENCAMINHAR: opcional — o que o Jurídico precisa saber." />
+                        placeholder="RESPONDER: a orientação ao encarregado. ENCAMINHAR: opcional — o que o Jurídico precisa saber. REPROVAR: o motivo (o encarregado lê)." />
                       <div className="flex flex-wrap gap-2">
                         <Button onClick={() => decidir(d, "responder")} disabled={salvando}>
                           <MessageSquareReply className="mr-2 h-4 w-4" /> Responder ao encarregado
                         </Button>
                         <Button variant="outline" onClick={() => decidir(d, "encaminhar")} disabled={salvando}>
                           <Send className="mr-2 h-4 w-4" /> Não sei orientar — encaminhar ao Jurídico
+                        </Button>
+                        <Button variant="destructive" onClick={() => decidir(d, "reprovar")} disabled={salvando}>
+                          <Ban className="mr-2 h-4 w-4" /> Reprovar
                         </Button>
                       </div>
                     </div>

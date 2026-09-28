@@ -22,6 +22,7 @@ import {
 import { AvisoProcessos, processosDe, useProcessosDosCandidatos } from "@/components/recrutamento/AvisoProcessos";
 import { FichaAso } from "@/components/recrutamento/FichaAso";
 import { StatusSolicitacao } from "@/components/recrutamento/StatusSolicitacao";
+import { EnxovalAdmissao, type EnxovalAdmissaoHandle } from "@/components/recrutamento/EnxovalAdmissao";
 
 // ── Tipos ──────────────────────────────────────────────────────────
 interface Solicitacao {
@@ -571,6 +572,10 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
   // para a etapa paralela: sem a lista o pedido chega vazio no módulo de
   // Suprimentos e alguém volta perguntando.
   const [candMateriais, setCandMateriais]   = useState("");
+  // Enxoval da função (25/09/2026, mig 246): o card de tamanhos do modal de
+  // SST + COMPRAS — o Confirmar grava por ele antes de mover o candidato.
+  const enxovalRef = useRef<EnxovalAdmissaoHandle>(null);
+  const [enviandoEnxoval, setEnviandoEnxoval] = useState(false);
   const [showKanbanCand, setShowKanbanCand] = useState(false);   // painel dedicado do kanban
   const [showHistorico, setShowHistorico]   = useState(false);   // painel de histórico
   const [historico, setHistorico]           = useState<EventoHist[]>([]);
@@ -1518,16 +1523,20 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
     if (!candModal) return;
     const { id, novaEtapa } = candModal;
     if (novaEtapa === "Reprovado" && !candObs.trim()) { toast("Informe o motivo da reprovação.", "err"); return; }
-    // Compras precisa saber O QUE comprar: sem a lista, o pedido chega vazio
-    // no módulo de Suprimentos e alguém tem que voltar perguntando. Para o
-    // SST a observação é opcional — o exame independe de descrição.
-    if (novaEtapa === ETAPA_SST_COMPRAS && !candMateriais.trim()) {
-      toast("Descreva os materiais/EPIs necessários — o Compras precisa disso.", "err"); return;
-    }
+    // Compras precisa saber O QUE comprar. Desde 25/09/2026 (mig 246) a
+    // lista vem do Catálogo — o enxoval da função da vaga — e o Recrutamento
+    // só informa os tamanhos, no card EnxovalAdmissao. Ele grava o enxoval
+    // (que o Compras abre em EPIs — Admissões) e devolve o resumo, que segue
+    // em compras_necessidades como antes. Para o SST a observação é opcional.
     const extra: Record<string, unknown> = {};
     const origem = candidatos.find(c => c.id === id)?.etapa_processo;
     if (novaEtapa === ETAPA_SST_COMPRAS) {
-      extra.compras_necessidades = candMateriais.trim();
+      if (!enxovalRef.current) { toast("O enxoval ainda está carregando.", "err"); return; }
+      setEnviandoEnxoval(true);
+      const r = await enxovalRef.current.enviar();
+      setEnviandoEnxoval(false);
+      if (!r.ok) { toast(r.erro, "err"); return; }
+      if (r.resumo) extra.compras_necessidades = r.resumo;
       if (candObs.trim()) extra.sst_obs = candObs.trim();
     } else if (novaEtapa === "Reprovado") {
       extra.motivo_reprovacao = candObs.trim();
@@ -2755,20 +2764,14 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
       {/* ── Modal Mover Candidato (kanban interno) ── */}
       {candModal && (
         <div className="rec-modal-ov" style={{ zIndex: 850 }}>
-          <div className="rec-modal" style={{ maxWidth: 420 }}>
+          <div className="rec-modal" style={{ maxWidth: candModal.novaEtapa === ETAPA_SST_COMPRAS ? 620 : 420 }}>
             <button onClick={() => { setCandModal(null); setCandObs(""); setCandMateriais(""); }} style={{ position: "absolute", top: 14, right: 14, background: "none", border: "none", color: "#94a3b8", fontSize: 20, cursor: "pointer" }}>✕</button>
             <div style={{ fontSize: 17, fontWeight: 800, marginBottom: 4 }}>
               {candModal.novaEtapa === "Reprovado" ? "Reprovar candidato" : `Mover para "${candModal.novaEtapa}"`}
             </div>
             <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 14 }}>{candModal.nome}</div>
             {candModal.novaEtapa === ETAPA_SST_COMPRAS && (
-              <div className="rec-fg">
-                <label>Materiais / EPIs necessários *</label>
-                <textarea className="rec-fi" rows={3} placeholder="Ex.: 2 uniformes tam. M, botina 42, luva de raspa, protetor auricular…" value={candMateriais} onChange={e => setCandMateriais(e.target.value)} />
-                <div style={{ fontSize: 10.5, color: "#94a3b8", marginTop: 4 }}>
-                  Vai para o Suprimentos (EPIs — Admissões), que é quem compra.
-                </div>
-              </div>
+              <EnxovalAdmissao ref={enxovalRef} candidatoId={candModal.id} />
             )}
             <div className="rec-fg">
               <label>{candModal.novaEtapa === "Reprovado" ? "Motivo *"
@@ -2778,7 +2781,7 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
             </div>
             <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 4 }}>
               <button onClick={() => { setCandModal(null); setCandObs(""); setCandMateriais(""); }} style={{ padding: "7px 14px", borderRadius: 10, border: "1px solid #e2e8f0", background: "#fff", color: "#475569", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Cancelar</button>
-              <button onClick={confirmarMoverCand} style={{ padding: "7px 14px", borderRadius: 10, border: "none", background: candModal.novaEtapa === "Reprovado" ? "#dc2626" : "#0f3171", color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Confirmar</button>
+              <button onClick={confirmarMoverCand} disabled={enviandoEnxoval} style={{ padding: "7px 14px", borderRadius: 10, border: "none", background: candModal.novaEtapa === "Reprovado" ? "#dc2626" : "#0f3171", color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer", opacity: enviandoEnxoval ? .6 : 1 }}>{enviandoEnxoval ? "Enviando…" : candModal.novaEtapa === ETAPA_SST_COMPRAS ? "Enviar ao SST e ao Compras" : "Confirmar"}</button>
             </div>
           </div>
         </div>
