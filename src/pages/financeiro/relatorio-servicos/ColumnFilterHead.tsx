@@ -39,9 +39,19 @@ export function ColumnFilterHead({
   }
 
   return (
-    <TableHead className={cn("text-center", className)}>
+    <TableHead
+      className={cn(
+        "text-center",
+        // Achado real (pedido do usuário): o funil sozinho mudando de cor
+        // era discreto demais pra notar de cara qual coluna estava
+        // filtrada numa tabela com muitas colunas — a própria coluna
+        // ganha destaque (fundo + borda inferior), não só o ícone.
+        value && "bg-primary/10 border-b-2 border-b-primary",
+        className
+      )}
+    >
       <div className="flex items-center justify-center gap-1">
-        <span>{label}</span>
+        <span className={cn(value && "font-semibold text-primary")}>{label}</span>
         <Popover open={open} onOpenChange={setOpen}>
           <PopoverTrigger asChild>
             <button
