@@ -1,0 +1,96 @@
+-- ============================================================================
+-- sup_pedido: indice em created_at DESC
+-- ============================================================================
+--
+-- POR QUE ISSO EXISTE
+-- -------------------
+-- Em 28/09/2026 o monitor de saude do banco (scripts/banco.cmd) acusou MEMORIA
+-- em 85% e SWAP em 67% na instancia Small. Investigando pelo pg_stat_statements,
+-- as duas queries que mais derramavam arquivo temporario pro disco eram a mesma
+-- tela: /app/suprimentos/pedidos-materiais.
+--
+--   WITH pgrst_source AS (SELECT "public"."sup_pedido".*, ...)   2648 chamadas
+--        1255 MB de temp, 1664 ms medios
+--   idem (segunda variacao da mesma tela)                        1344 chamadas
+--         636 MB de temp, 2071 ms medios
+--
+-- O EXPLAIN (ANALYZE, BUFFERS) rodado em producao como role `authenticated`
+-- explicou o motivo. A query do PostgREST e:
+--
+--   SELECT sup_pedido.*, <json_agg de sup_pedido_item>, <sup_pedido_comprovacao>
+--     FROM sup_pedido
+--     LEFT JOIN LATERAL (...sup_pedido_item...)       ON true
+--     LEFT JOIN LATERAL (...sup_pedido_comprovacao...) ON true
+--    ORDER BY sup_pedido.created_at DESC
+--    LIMIT 20 OFFSET 0
+--
+-- A tabela tinha indice em `data_solicitacao DESC` (idx_sup_pedido_data), mas
+-- NAO em `created_at` — que e a coluna do ORDER BY. Sem esse indice o plano era:
+--
+--   Seq Scan on sup_pedido (rows=2291)
+--     -> Nested Loop Left Join (loops=2291)   <-- monta o JSON de itens de
+--                                                 TODOS os 2291 pedidos
+--        -> SubPlan: Index Scan on sup_pedido (loops=7819)  <-- ver abaixo
+--     -> Sort (top-N heapsort)
+--     -> Limit 20                             <-- e joga 2271 no lixo
+--
+--   Buffers: shared hit=207914   (= 1,6 GB de paginas)
+--   Execution Time: 1007 ms      para devolver 20 linhas de uma tabela de 1,8 MB
+--
+-- O `loops=7819` do SubPlan tem causa propria e agravava tudo: a policy
+-- sup_pedido_item_select e `EXISTS (SELECT 1 FROM sup_pedido p WHERE p.id =
+-- sup_pedido_item.pedido_id)`, e como sup_pedido tambem tem RLS, cada linha de
+-- item reavalia a policy inteira do pai — inclusive as chamadas a can_access().
+-- Eram 148.561 dos 207.914 buffers (71% do custo) so nisso.
+--
+-- O QUE ESTA MIGRATION FAZ
+-- ------------------------
+-- Cria o indice que faltava. Com ele o planner caminha a tabela ja na ordem de
+-- created_at DESC, aplica o filtro de RLS e PARA nas primeiras 20 linhas que
+-- passam — os LATERAL passam a rodar 20 vezes em vez de 2291, e o Sort deixa de
+-- existir. Medido em producao dentro de uma transacao com rollback:
+--
+--                        SEM indice      COM indice
+--   Buffers (8 kB)         207.914           1.658     125x menos
+--   Execution Time        1007 ms           13 ms       77x mais rapido
+--   Nested Loop rows        2.291              20
+--   SubPlan loops           7.819              73
+--   Sort                top-N heapsort      nao existe
+--
+-- Isso tambem zera o derrame de temp: os ~485 KB de arquivo temporario por
+-- chamada vinham de ordenar 2291 linhas gordas (cada uma carregando o jsonb
+-- de itens) com work_mem de 5 MB. Sem Sort, nao ha derrame.
+--
+-- O indice custa ~64 kB e uma entrada por INSERT em sup_pedido. created_at e
+-- NOT NULL, entao nao ha linha de fora.
+--
+-- O QUE ESTA MIGRATION *NAO* FAZ (de proposito)
+-- ---------------------------------------------
+-- Nao mexe nas policies. O `loops=7819` da policy de sup_pedido_item e real e
+-- ainda vale ser tratado (envelopar as chamadas a can_access()/auth.uid() em
+-- subquery escalar, `(select can_access(...))`, faz o Postgres avaliar uma vez
+-- por query em vez de uma vez por linha — padrao recomendado pela propria
+-- Supabase para RLS). Mas depois deste indice o volume caiu de 7819 para 73
+-- loops, e mexer em caminho de acesso pede migration propria, com teste de
+-- visibilidade por usuario. Fica registrado aqui para nao se perder.
+--
+-- APLICACAO
+-- ---------
+-- O indice JA FOI APLICADO em producao em 28/09/2026 via
+-- `CREATE INDEX CONCURRENTLY` (sem travar escrita). O IF NOT EXISTS abaixo
+-- torna esta migration um no-op la, e mantem o schema do repo fiel ao real.
+-- Em ambiente novo, o CREATE INDEX simples basta: a tabela tem 1,8 MB e o
+-- lock dura milissegundos.
+-- ============================================================================
+
+CREATE INDEX IF NOT EXISTS idx_sup_pedido_created_at_desc
+  ON public.sup_pedido (created_at DESC);
+
+NOTIFY pgrst, 'reload schema';
+
+-- ============================================================================
+-- ROLLBACK
+-- ============================================================================
+-- DROP INDEX IF EXISTS public.idx_sup_pedido_created_at_desc;
+-- NOTIFY pgrst, 'reload schema';
+-- ============================================================================
