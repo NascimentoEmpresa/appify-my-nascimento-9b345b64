@@ -1,0 +1,123 @@
+-- ============================================================================
+-- Dois indices que faltavam: sup_estoque_reserva(tag_id) e app_menu(codigo)
+-- ============================================================================
+--
+-- CONTINUACAO DA 20260930000252
+-- -----------------------------
+-- Depois do indice de sup_pedido.created_at, a memoria caiu de 85% para 60%
+-- e voltou a 75% em uma hora. A investigacao mostrou que a memoria nao estava
+-- indo para execucao de query (em 100 s de trafego real: 0 MB lidos do disco,
+-- 0 MB de temp), e sim para conexao: o PostgREST passou de 16 para 31 conexoes
+-- no mesmo periodo, e cada backend do Postgres carrega um cache de catalogo
+-- que nunca devolve — com 604 tabelas e 1.181 funcoes no `public`, esse cache
+-- e grande. 15 conexoes novas x ~18 MB ~= 270 MB, contra os 281 MB que a
+-- AnonPages cresceu.
+--
+-- O que faz o PostgREST abrir mais conexao e query lenta: se cada request
+-- demora 1 s em vez de 10 ms, ele precisa de mais conexoes simultaneas para
+-- o mesmo numero de usuarios. Dai o ciclo:
+--
+--   query lenta -> mais conexoes -> mais memoria -> swap -> tudo mais lento
+--                       ^                                          |
+--                       +------------------------------------------+
+--
+-- Esta migration ataca o primeiro elo: as duas queries mais lentas que
+-- sobraram em pg_stat_statements.
+--
+-- ----------------------------------------------------------------------------
+-- 1) sup_estoque_reserva (tag_id)
+-- ----------------------------------------------------------------------------
+-- A tela de estoque pede, por PostgREST:
+--
+--   sup_estoque_item -> sup_item -> item pai -> almoxarifado
+--                    -> sup_estoque_tag -> sup_estoque_reserva
+--
+-- O nivel mais interno e:
+--
+--   SELECT quantidade, situacao FROM sup_estoque_reserva WHERE tag_id = <tag>
+--
+-- A tabela tinha TRES indices que comecam em tag_id, e nenhum servia, porque
+-- os tres sao PARCIAIS com `WHERE situacao = 'ATIVA'`:
+--
+--   uq_sup_reserva_ativa       (tag_id, pedido_item_id) WHERE situacao='ATIVA'
+--   idx_sup_reserva_tag_ativa  (tag_id) INCLUDE (quantidade) WHERE situacao='ATIVA'
+--   idx_sup_reserva_item_ativa (item_estoque_id)             WHERE situacao='ATIVA'
+--
+-- Postgres so usa indice parcial quando o WHERE da query implica o predicado
+-- do indice. A query quer TODAS as situacoes (ela devolve `situacao` como
+-- coluna), entao nenhum dos tres e elegivel e o plano caia em Seq Scan —
+-- uma varredura completa de sup_estoque_reserva por tag, e sao 13.444 tags.
+--
+-- ----------------------------------------------------------------------------
+-- 2) app_menu (codigo) WHERE ativo
+-- ----------------------------------------------------------------------------
+-- can_access() comeca com:
+--
+--   WHEN NOT EXISTS (SELECT 1 FROM app_menu WHERE codigo = _menu AND ativo)
+--
+-- app_menu so tinha indice UNIQUE em (modulo_id, codigo). Com codigo em
+-- segunda posicao, ele nao atende `WHERE codigo = _menu` — cada chamada a
+-- can_access() varria as 246 linhas. Como can_access() aparece no filtro de
+-- RLS linha a linha, isso acontece dezenas de milhares de vezes por request.
+-- O indice e parcial em `ativo` porque a funcao sempre filtra por ele.
+--
+-- Este segundo indice vale para o sistema inteiro, nao so para o estoque:
+-- toda policy que chama can_access()/has_screen_access() passa por aqui.
+--
+-- MEDICAO
+-- -------
+-- EXPLAIN (ANALYZE, BUFFERS) em producao, como role `authenticated` com JWT de
+-- usuario real, dentro de transacao com ROLLBACK:
+--
+--   sem nenhum dos dois ....... 2.454 ms   619.859 buffers (4,7 GB)
+--   + sup_estoque_reserva ..... 1.183 ms   228.647 buffers
+--   + app_menu ................ 1.082 ms
+--
+-- 56% mais rapido, 2,7x menos leitura.
+--
+-- O QUE SOBRA, E POR QUE NAO ESTA AQUI
+-- ------------------------------------
+-- Os 1.082 ms restantes sao quase todos can_access() sendo avaliada por linha
+-- dentro dos filtros de RLS: 855 itens de estoque, 12.034 tags e 12.034
+-- reservas, cada um chamando a funcao. has_screen_access() e PL/pgSQL e faz
+-- ate 4 consultas por chamada (excecao individual -> perfil concede_tudo ->
+-- uniao de perfis).
+--
+-- A correcao conhecida e envelopar as chamadas em subquery escalar dentro das
+-- policies — `(select can_access(...))` em vez de `can_access(...)` — o que faz
+-- o Postgres avaliar uma vez por query, como InitPlan, em vez de uma vez por
+-- linha. E o padrao que a propria Supabase recomenda para RLS.
+--
+-- Nao esta aqui porque mexer em policy e mexer no caminho de acesso: errar ali
+-- vaza dado entre usuarios, em vez de deixar a tela lenta. Isso pede migration
+-- propria, com teste de visibilidade por usuario antes e depois, e conferencia
+-- de que a lista que cada perfil enxerga nao mudou. Fica registrado para nao
+-- se perder.
+--
+-- Tambem testei e DESCARTEI um indice composto ("Situação","Nome") em
+-- EMPREGADOS: media 67.211 -> 66.898 buffers, 0,5%. O custo daquela query
+-- tambem e RLS por linha, nao ordenacao. Indice sem ganho medido so custa
+-- escrita.
+--
+-- APLICACAO
+-- ---------
+-- Os dois JA FORAM APLICADOS em producao em 28/09/2026 via
+-- CREATE INDEX CONCURRENTLY (32 ms e 27 ms, sem travar escrita). O
+-- IF NOT EXISTS torna esta migration um no-op la.
+-- ============================================================================
+
+CREATE INDEX IF NOT EXISTS idx_sup_reserva_tag
+  ON public.sup_estoque_reserva (tag_id);
+
+CREATE INDEX IF NOT EXISTS idx_app_menu_codigo
+  ON public.app_menu (codigo) WHERE ativo;
+
+NOTIFY pgrst, 'reload schema';
+
+-- ============================================================================
+-- ROLLBACK
+-- ============================================================================
+-- DROP INDEX IF EXISTS public.idx_sup_reserva_tag;
+-- DROP INDEX IF EXISTS public.idx_app_menu_codigo;
+-- NOTIFY pgrst, 'reload schema';
+-- ============================================================================

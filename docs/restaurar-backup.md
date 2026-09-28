@@ -34,7 +34,7 @@ dias**. Para gerar um agora: botão **"Run workflow"** na mesma tela.
 
 **Contém:** os schemas `public`, `espelho`, `auth` e `storage` — tabelas,
 dados, funções, índices e políticas de RLS. Em 24/09 eram **631 tabelas com
-dados** e **8.093 objetos**.
+dados** e **8.093 objetos**; em 28/09, **634 tabelas**.
 
 **NÃO contém: os arquivos do Storage.** Anexos, fotos de crachá e XMLs ficam
 fora do banco; ele guarda só os metadados. Restaurar devolve *a lista* de
@@ -143,9 +143,15 @@ Medido em 24/09/2026, banco de 1,61 GB:
 
 | Etapa | Tempo |
 |---|---|
-| Gerar o backup | **1 min 14 s** |
+| Gerar o backup — da máquina do Eduardo | **1 min 14 s** |
+| Gerar o backup — pelo GitHub Actions | **7 min 05 s** |
 | Restaurar (`--jobs=4`) | **40 s** |
-| Arquivo gerado | **106,4 MB** |
+| Arquivo gerado | **107 MB** |
+
+O runner demora ~6× mais que a máquina local, e isso é **latência de rede até
+`sa-east-1`, não o banco**: nas duas medições houve 0 bloqueios esperando e o
+cache hit ficou acima de 99,95%. O agendamento tem 30 min de limite, então
+sobra folga larga.
 
 O tempo total até o sistema voltar no ar é maior: somar criar o projeto novo,
 trocar as variáveis e publicar o frontend. **Conte com algumas horas**, não com
