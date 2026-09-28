@@ -6,13 +6,14 @@ import {
 
 const HOJE = "2026-09-25";
 const linha = (p: Partial<LinhaAcomp> = {}): LinhaAcomp => ({
-  empregado_id: 1, nome: "FULANO", cpf: "", cargo: "SERVENTE", contrato: "UFRGS", local: null,
+  cpf: "00000000191", admitido_senior: true, empregado_id: 1, candidato_id: null,
+  nome: "FULANO", cargo: "SERVENTE", contrato: "UFRGS", local: null,
   situacao: "Trabalhando", admissao: "2026-09-10", afastamento: null, causa: null, saiu: false,
-  dias: 15, origem: "senior", candidato_id: null, vaga_id: null, vaga_status: null, cidade: null,
+  dias: 15, data_ref: null, origem: "senior", vaga_id: null, vaga_status: null, cidade: null,
   acomp: null, checks: [], ...p,
 });
 const check = (marco: 7 | 30 | 60 | 90, resultado: CheckAcomp["resultado"] = "positivo"): CheckAcomp => ({
-  id: marco, empregado_id: 1, marco, resultado, realizado_em: HOJE, observacao: null, registrado_por: "RH", registrado_em: HOJE,
+  id: marco, cpf: "00000000191", marco, resultado, realizado_em: HOJE, observacao: null, registrado_por: "RH", registrado_em: HOJE,
 });
 
 describe("estadoDoMarco", () => {
@@ -35,6 +36,18 @@ describe("estadoDoMarco", () => {
     const l = linha({ admissao: "2026-08-01", saiu: true, afastamento: "2026-08-20" });
     expect(estadoDoMarco(l, 7, HOJE).tipo).toBe("atrasado");
     expect(estadoDoMarco(l, 30, HOJE).tipo).toBe("nao_se_aplica");
+  });
+});
+
+describe("ainda não admitido no sistema Senior", () => {
+  const naoAdm = linha({ admitido_senior: false, empregado_id: null, candidato_id: 9, admissao: null, dias: null, data_ref: "2026-09-20", origem: "recrutamento" });
+  it("os marcos não correm (aguardam a admissão) e não viram pendência", () => {
+    expect(estadoDoMarco(naoAdm, 7, HOJE)).toEqual({ tipo: "aguardando" });
+    expect(proximaPendencia(naoAdm, HOJE)).toBeNull();
+  });
+  it("permanência fica em aberto e o resumo conta à parte", () => {
+    expect(permaneceuEfetivo(naoAdm).valor).toBeNull();
+    expect(resumoAcomp([naoAdm, linha()], HOJE)).toMatchObject({ pessoas: 2, naoAdmitidos: 1, atrasados: 1 });
   });
 });
 
