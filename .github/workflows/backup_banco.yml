@@ -24,6 +24,11 @@
 #                        (sup_pedido 2.247, EMPREGADOS 13.355,
 #                         BiMarcacoes 3.748.805, auth.users 155)
 #
+# ISSO NAO E MAIS UMA MEDICAO DE UM DIA SO
+# Desde 28/09/2026 a restauracao e testada em TODA execucao, dentro deste
+# mesmo job, num postgres:17 puro - ver o passo "Provar que o backup restaura".
+# Backup que nao restaura nao chega a ser publicado.
+#
 # O ARTEFATO E CRIPTOGRAFADO
 # Desde 28/09/2026 o que sobe e `.dump.gpg`, nao `.dump`. O motivo esta
 # inteiro no comentario do passo "Criptografar antes de publicar": este
@@ -71,9 +76,27 @@ permissions:
 jobs:
   backup:
     runs-on: ubuntu-latest
-    # Medido em 7min05s pelo runner (1min14s local). 30 minutos e folga; se passar
-    # disso, alguma coisa esta errada e e melhor falhar e avisar.
+    # Medido em 7min05s pelo runner (1min14s local); com o teste de restauracao,
+    # ~10min. 30 minutos e folga; se passar disso, alguma coisa esta errada e e
+    # melhor falhar e avisar.
     timeout-minutes: 30
+
+    # Postgres PURO, sem nada da Supabase, so para provar que o backup restaura.
+    # E de proposito que e o postgres oficial e nao uma imagem da Supabase: o
+    # cenario que este backup existe para cobrir e "a Supabase sumiu". Se o dump
+    # so restaurasse dentro da Supabase, ele nao cobriria esse cenario.
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
 
     steps:
       - name: Pegar so a chave publica do repositorio
@@ -194,6 +217,103 @@ jobs:
             echo "::error::Backup com menos de 10 MB - quase certamente truncado."
             exit 1
           fi
+
+      - name: Provar que o backup restaura
+        # POR QUE ISTO RODA AQUI DENTRO, E NAO NUM WORKFLOW SEPARADO
+        # O plano original era um workflow mensal de teste de restauracao. A
+        # criptografia matou essa ideia: um workflow separado precisaria da
+        # chave PRIVADA para abrir o .gpg, e por a chave privada num secret do
+        # GitHub desfaz exatamente a protecao que o passo seguinte cria.
+        #
+        # Aqui dentro, entre gerar e cifrar, e o unico momento em que o runner
+        # tem o texto claro por direito. Sai melhor que o plano: roda em TODA
+        # execucao (2x por dia) em vez de 1x por mes, e um backup que nao passa
+        # no teste NAO chega a ser publicado - em vez de guardarmos um arquivo
+        # quebrado por 14 dias sem saber.
+        #
+        # POR QUE COMPARAR COM A PRODUCAO EM VEZ DE USAR NUMEROS FIXOS
+        # Numero fixo envelhece: a base cresce e o teste vira mentira ou alarme
+        # falso. Comparando com a producao ao vivo, a referencia se atualiza
+        # sozinha. A tolerancia de 5% existe porque o dump e um retrato de um
+        # instante e a producao continua andando enquanto o job roda - sem ela,
+        # qualquer pedido novo reprovaria o backup.
+        env:
+          CREDENCIAIS: ${{ secrets.ESPELHO_CREDENCIAIS }}
+        run: |
+          set -euo pipefail
+
+          PROD_HOST=$(echo "$CREDENCIAIS" | jq -r '.supabase.host')
+          PROD_PORT=$(echo "$CREDENCIAIS" | jq -r '.supabase.porta')
+          PROD_USER=$(echo "$CREDENCIAIS" | jq -r '.supabase.usuario')
+          PROD_DB=$(echo "$CREDENCIAIS"   | jq -r '.supabase.banco')
+          PROD_PASS=$(echo "$CREDENCIAIS" | jq -r '.supabase.senha')
+
+          conta_prod() { PGPASSWORD="$PROD_PASS" PGSSLMODE=require \
+            psql -h "$PROD_HOST" -p "$PROD_PORT" -U "$PROD_USER" -d "$PROD_DB" -At -c "$1"; }
+          conta_rest() { PGPASSWORD=postgres \
+            psql -h localhost -p 5432 -U postgres -d restaurado -At -c "$1"; }
+
+          PGPASSWORD=postgres psql -h localhost -p 5432 -U postgres -d postgres -q \
+            -v ON_ERROR_STOP=1 \
+            -c "CREATE DATABASE restaurado TEMPLATE template0 ENCODING 'UTF8';"
+
+          # ATENCAO AO `PGPASSWORD=` NA MESMA LINHA DO pg_restore.
+          # Prefixo de variavel em shell vale SO para aquele comando. Na
+          # primeira versao deste passo (execucao 36496892805, 28/09/2026) o
+          # psql acima tinha o prefixo e o pg_restore nao tinha: ele tentou
+          # conectar sem senha, o container recusou e ele morreu em 50 ms com
+          # 2 linhas de erro. O banco `restaurado` existia e estava vazio, e a
+          # comparacao acusou "relation public.sup_pedido does not exist".
+          #
+          # pg_restore reclama dos papeis que so existem na Supabase
+          # (authenticated, anon, service_role). Isso e ESPERADO num Postgres
+          # comum - em 24/09 foram 1.373 erros e a restauracao estava correta.
+          # Ver docs/restaurar-backup.md. A validacao e por CONTAGEM, nunca por
+          # ausencia de erro; por isso o `|| true`.
+          PGPASSWORD=postgres pg_restore -h localhost -p 5432 -U postgres -d restaurado \
+            --no-owner --no-privileges --jobs=4 "$ARQUIVO" 2> erros-restauracao.txt || true
+
+          # IMPRIMIR, nao so contar. Na primeira versao eu so contava as linhas,
+          # e foi exatamente isso que escondeu a causa da falha acima: "2 erros"
+          # nao dizia nada, enquanto as 2 linhas diziam tudo.
+          echo "linhas de erro do pg_restore: $(wc -l < erros-restauracao.txt)"
+          echo "--- primeiras 20 (as de papel inexistente sao esperadas) ---"
+          head -20 erros-restauracao.txt || true
+          echo "-----------------------------------------------------------"
+
+          FALHOU=0
+          for T in 'public.sup_pedido' 'public.malote_despesa' 'public."EMPREGADOS"' \
+                   'public.profiles' 'auth.users'; do
+            P=$(conta_prod "select count(*) from $T")
+            R=$(conta_rest "select count(*) from $T")
+            if [ "$P" -eq 0 ]; then
+              echo "::error::$T devolveu 0 linhas na PRODUCAO. Nao da para validar o backup contra isso."
+              FALHOU=1
+              continue
+            fi
+            DIF=$(( (R > P ? R - P : P - R) * 100 / P ))
+            printf '%-26s producao=%-9s restaurado=%-9s diferenca=%s%%\n' "$T" "$P" "$R" "$DIF"
+            if [ "$DIF" -gt 5 ]; then
+              echo "::error::$T divergiu $DIF% (producao $P, backup $R). Copia provavelmente parcial."
+              FALHOU=1
+            fi
+          done
+
+          # A maior tabela do banco. Contar na producao custaria varredura de
+          # milhoes de linhas numa instancia que ja vive perto do limite de
+          # memoria, entao aqui vale piso fixo: em 24/09 eram 3.748.805.
+          BM=$(conta_rest 'select count(*) from espelho."BiMarcacoes"')
+          echo "espelho.BiMarcacoes restaurado: $BM"
+          if [ "$BM" -lt 3000000 ]; then
+            echo "::error::BiMarcacoes voltou com $BM linhas - esperado mais de 3 milhoes."
+            FALHOU=1
+          fi
+
+          if [ "$FALHOU" -ne 0 ]; then
+            echo "::error::O backup NAO restaura corretamente. Ele nao sera publicado."
+            exit 1
+          fi
+          echo "Backup restaurado e conferido contra a producao."
 
       - name: Criptografar antes de publicar
         # POR QUE ESTE PASSO EXISTE
