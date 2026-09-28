@@ -120,17 +120,22 @@ function PessoaDoDia({
   const pilhas = useMemo(() => {
     // Guarda também QUEM reagiu: o hover na pilha mostra os nomes
     // (22/09/2026 — "ao colocar o mouse em cima deixa ver quem reagiu").
-    const conta = new Map<string, { n: number; quem: string[] }>();
+    // 28/09/2026: a lista virou o painel do Discord (abas por emoji à
+    // esquerda, pessoas com foto à direita) — então guarda a foto também.
+    const conta = new Map<string, { n: number; quem: { nome: string; avatar: string | null; eu: boolean }[] }>();
     felicitacoes.forEach((f) => {
       if (!f.reacao) return;
       const atual = conta.get(f.reacao) ?? { n: 0, quem: [] };
       atual.n += 1;
-      atual.quem.push(f.sou_eu ? "Você" : primeiroESobrenome(f.autor_nome));
+      atual.quem.push({ nome: f.sou_eu ? "Você" : nomeLegivel(primeiroESobrenome(f.autor_nome)), avatar: f.autor_avatar, eu: f.sou_eu });
       conta.set(f.reacao, atual);
     });
     return [...conta.entries()].sort((a, b) => b[1].n - a[1].n);
   }, [felicitacoes]);
   const totalReacoes = pilhas.reduce((soma, [, v]) => soma + v.n, 0);
+  // Aba aberta no painel de quem reagiu; sem escolha, a reação mais usada.
+  const [abaReacao, setAbaReacao] = useState<string | null>(null);
+  const abaAtual = pilhas.find(([k]) => k === abaReacao) ?? pilhas[0];
 
   // ── Festa (22/09/2026): confete quando o cartão abre com alguém do dia e
   // a cada reação enviada; emoji subindo, como o "curtir" do Facebook.
@@ -197,16 +202,41 @@ function PessoaDoDia({
             ))}
             {pilhas.length > 3 && <span className="aniv-reacao-chip"><b>+{pilhas.length - 3}</b></span>}
 
-            {/* Quem reagiu — aparece no hover ou no foco pelo teclado. */}
-            <div className="aniv-tip" role="tooltip">
-              <b>{totalReacoes} {totalReacoes === 1 ? "reação" : "reações"}</b>
-              {pilhas.map(([chave, v]) => (
-                <div key={chave} className="aniv-tip-linha">
-                  <span aria-hidden>{EMOJI_REACAO[chave] ?? "🎉"}</span>
-                  <span>{v.quem.join(", ")}</span>
+            {/* Quem reagiu — aparece no hover ou no foco pelo teclado. Desenho
+                do Discord (pedido do Pablo, 28/09/2026): uma aba por emoji com
+                a contagem à esquerda, e à direita só quem usou aquele emoji,
+                um por linha com a foto. A lista corrida de nomes separados
+                por vírgula virava um paredão ilegível a partir de ~10 reações. */}
+            {abaAtual && (
+              <div className="aniv-tip" role="dialog" aria-label={`${totalReacoes} ${totalReacoes === 1 ? "reação" : "reações"}`}>
+                <div className="aniv-tip-abas" role="tablist">
+                  {pilhas.map(([chave, v]) => (
+                    <button
+                      key={chave}
+                      type="button"
+                      role="tab"
+                      aria-selected={chave === abaAtual[0]}
+                      className={`aniv-tip-aba ${chave === abaAtual[0] ? "aniv-tip-aba--on" : ""}`}
+                      onClick={() => setAbaReacao(chave)}
+                      onMouseEnter={() => setAbaReacao(chave)}
+                    >
+                      <span aria-hidden>{EMOJI_REACAO[chave] ?? "🎉"}</span>
+                      <b>{v.n}</b>
+                    </button>
+                  ))}
                 </div>
-              ))}
-            </div>
+                <ul className="aniv-tip-pessoas" role="tabpanel">
+                  {abaAtual[1].quem.map((q, i) => (
+                    <li key={`${q.nome}-${i}`} className="aniv-tip-pessoa">
+                      {q.avatar
+                        ? <img src={q.avatar} alt="" loading="lazy" />
+                        : <span className="aniv-tip-ini" aria-hidden>{iniciais(q.nome)}</span>}
+                      <span className={q.eu ? "aniv-tip-eu" : undefined}>{q.nome}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -342,6 +372,13 @@ function primeiroESobrenome(nome: string) {
   const partes = (nome || "").trim().split(/\s+/).filter(Boolean);
   if (partes.length <= 2) return partes.join(" ");
   return `${partes[0]} ${partes[partes.length - 1]}`;
+}
+
+/** "CASSIO DUARTE" → "Cassio Duarte" (o Senior grava em maiúsculas); "da/de/dos" ficam minúsculos. */
+function nomeLegivel(nome: string) {
+  return (nome || "").toLowerCase().split(/\s+/).filter(Boolean)
+    .map((p, i) => (i > 0 && /^(d[aeo]s?|e)$/.test(p) ? p : p[0].toUpperCase() + p.slice(1)))
+    .join(" ");
 }
 
 function iniciais(nome: string) {
