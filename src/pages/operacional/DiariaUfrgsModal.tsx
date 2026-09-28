@@ -413,8 +413,17 @@ export function DiariaUfrgsModal({
   // `d?.qt...` próprio na tela, leem direto deste estado. Até 23/09/2026 só o
   // "editar" carregava a linha, e quem abria uma diária para conferir via
   // tudo zerado com o Valor Total preenchido — parecia dado perdido.
+  //
+  // O estado nasce em `null`, não em `chave`: o painel só monta este modal
+  // quando há linha escolhida (`{modal && <DiariaUfrgsModal aberto ... />}`),
+  // então a PRIMEIRA renderização já é a abertura. Com `useState(chave)` a
+  // comparação abaixo dava igual logo de cara e a carga nunca rodava — a
+  // correção de 23/09 ficou sem efeito e o encarregado/aprovador continuou
+  // vendo Qt. Hosp./Café/Alm./Janta zerados (SIS-2026-0429, relato de
+  // 28/09/2026). Só o "editar" via "Pedir edição" funcionava, porque ali o
+  // `modo` muda com o modal já montado.
   const chave = `${modo}-${diaria?.uuid ?? "nova"}-${aberto}`;
-  const [chaveAtual, setChaveAtual] = useState(chave);
+  const [chaveAtual, setChaveAtual] = useState<string | null>(null);
   if (chave !== chaveAtual) {
     const base = modo === "nova" ? null : diaria;
     setChaveAtual(chave);
