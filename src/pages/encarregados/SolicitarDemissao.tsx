@@ -4,6 +4,7 @@ import { baseDaUrl, rotasSolicitacoes } from "@/lib/solicitacoes/rotas";
 import { supabase } from "@/integrations/supabase/client";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { useAuth } from "@/hooks/useAuth";
+import { useVinculoEmpregado } from "@/hooks/useVinculoEmpregado";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -21,6 +22,7 @@ import {
   TABELA, TABELA_ANEXOS, TERMINOS_EXPERIENCIA,
   corDoStatus, emailValido, erroDoArquivo, explicaStatus, faltaVagaDeReposicao, fmtData, fmtTamanho,
   hojeISO, mascaraTelefone, statusInicialDemissao, telefoneCompleto, type SolicitacaoDemissao,
+  ehAPropriaPessoa, MSG_PROPRIA_DEMISSAO,
 } from "@/lib/demissao/solicitacao";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -117,6 +119,10 @@ export default function SolicitarDemissao() {
     })();
   }, []);
   const [colaborador, setColaborador] = useState<EmpregadoEscolhido | null>(null);
+  // Ninguém pede a própria demissão (28/09/2026) — nem escolhendo na busca
+  // nem vindo por link (?colaborador=). O banco repete (mig 256).
+  const { empregado: eu } = useVinculoEmpregado();
+  const souEu = ehAPropriaPessoa(colaborador, eu);
   // Já tem demissão em aberto (ou concluída) para quem foi escolhido? O
   // banco responde (solicitacao_em_aberto) e o passo 1 não avança.
   const [duplicada, setDuplicada] = useState<SolicitacaoEmAberto | null>(null);
@@ -264,6 +270,7 @@ export default function SolicitarDemissao() {
   // Escolher a pessoa traz junto o contato do cadastro — o encarregado ainda
   // pode corrigir telefone/e-mail, que é o dado que mais desatualiza.
   const escolherColaborador = (e: EmpregadoEscolhido | null) => {
+    if (e && ehAPropriaPessoa(e, eu)) { toast.error(MSG_PROPRIA_DEMISSAO); return; }
     setColaborador(e);
     // Cadastro que diz ADMINISTRATIVO/ESCRITÓRIO no posto já vem marcado como
     // escritório — o encarregado pode desmarcar.
@@ -304,6 +311,7 @@ export default function SolicitarDemissao() {
       if (!form.data_solicitacao) return "Informe a data da solicitação.";
       if (!solicitante.nome || !solicitante.email) return "Não consegui identificar você. Recarregue a página.";
       if (!colaborador) return "Escolha o colaborador na lista.";
+      if (souEu) return MSG_PROPRIA_DEMISSAO;
       // Sem cargo no cadastro a solicitação chegava vazia no RH/SST
       // (18/09/2026). O sync do Senior completa a ficha (mig 188); se ainda
       // assim faltar, é o RH que corrige em Colaboradores.
@@ -543,6 +551,12 @@ export default function SolicitarDemissao() {
                 <p className="mt-1 text-xs text-muted-foreground">
                   Escolha na lista. Contrato e escala vêm do cadastro e não podem ser trocados.
                 </p>
+                {souEu && (
+                  <div className="mt-2 rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive">
+                    <p className="font-semibold">🚫 Este é você.</p>
+                    <p className="mt-0.5 text-destructive/90">{MSG_PROPRIA_DEMISSAO}</p>
+                  </div>
+                )}
                 {duplicada && (
                   <div className="mt-2 rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive">
                     <p className="font-semibold">🚫 Este colaborador já tem solicitação de demissão.</p>
