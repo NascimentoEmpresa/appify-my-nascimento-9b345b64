@@ -570,7 +570,7 @@ function DetalheSolicitacao({ solicitacao, etapa, quemSou, onFechar, onDecidir, 
 
   return (
     <Dialog open onOpenChange={(v) => { if (!v) onFechar(); }}>
-      <DialogContent className="max-h-[90vh] max-w-3xl overflow-y-auto">
+      <DialogContent className="max-h-[90vh] max-w-3xl grid-cols-[minmax(0,1fr)] overflow-y-auto overflow-x-hidden">
         <DialogHeader>
           <DialogTitle className="flex flex-wrap items-center gap-2">
             Solicitação #{s.id} · {s.colaborador_nome}
