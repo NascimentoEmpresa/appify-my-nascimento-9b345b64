@@ -5,6 +5,7 @@ import { useLocation } from "react-router-dom";
 import { useVinculoEmpregado } from "@/hooks/useVinculoEmpregado";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { FioDuvida } from "@/components/juridico/FioDuvida";
+import { EmbasamentoJuridico } from "@/components/juridico/EmbasamentoJuridico";
 import { ResumoDeFuncoes } from "@/components/fluxos/ResumoDeFuncoes";
 import {
   CATEGORIAS_DUVIDA as CATEGORIAS, agruparComplementos, complementoPendente, entraNaBiblioteca, infoAvaliacao,
@@ -78,7 +79,7 @@ export default function OrientacoesJuridicas() {
   const load = useCallback(async () => {
     setLoading(true);
     const [{ data }, c] = await Promise.all([
-      db.from("JUR_DUVIDAS").select("id, created_at, autor_id, titulo, pergunta, categoria, status, resposta, respondido_em, motivo_reprovacao, avaliacao, avaliacao_comentario, avaliado_em, origem, respondido_etapa, publicada").order("created_at", { ascending: false }).limit(1000),
+      db.from("JUR_DUVIDAS").select("id, created_at, autor_id, titulo, pergunta, categoria, status, resposta, respondido_em, embasamento, embasamento_por, embasamento_em, motivo_reprovacao, avaliacao, avaliacao_comentario, avaliado_em, origem, respondido_etapa, publicada").order("created_at", { ascending: false }).limit(1000),
       db.from("JUR_DUVIDAS_COMPLEMENTOS").select("*").order("id", { ascending: false }).limit(1000),
     ]);
     setFios(agruparComplementos(c.data ?? []));
@@ -283,6 +284,8 @@ export default function OrientacoesJuridicas() {
                         <div style={{ fontSize: 14.5, color: "#0f172a", whiteSpace: "pre-wrap", lineHeight: 1.55 }}>{d.resposta}</div>
                       </div>
                     )}
+                    {/* Embasamento jurídico (mig 253): todos veem, recolhido por padrão. */}
+                    {open && respondida && <EmbasamentoJuridico duvida={d} />}
                     {open && respondida && (
                       <FioDuvida duvida={d} fio={fios.get(d.id) ?? []} userId={user?.id} autorNome={autor}
                         podeResponder={false} mostrarNomes={false} onMudou={load} toast={toast} />

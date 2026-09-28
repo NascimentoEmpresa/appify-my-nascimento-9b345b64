@@ -4,7 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { KpiTile } from "@/components/financeiro/KpiTile";
-import { ListChecks, TrendingUp, CheckCircle2, AlertTriangle, PieChart as PieChartIcon } from "lucide-react";
+import { ListChecks, TrendingUp, CheckCircle2, AlertTriangle, PieChart as PieChartIcon, FileText } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useEmpresasGrupo } from "@/hooks/useMaloteDespesa";
 import { NfEmissaoItemRow, TipoNota, TIPOS_NOTA, useItensNfEmissaoEmLote, useNfsEmissao } from "@/hooks/useNfEmissao";
@@ -80,7 +80,7 @@ export default function DashboardRelatorioServicos() {
     }
     const pctPago = linhas.length ? (pagas / linhas.length) * 100 : 0;
     const pctDescontos = executado ? (descontos / executado) * 100 : 0;
-    return { executado, faturado, recebido, pendente, descontos, pctPago, pctDescontos };
+    return { total: linhas.length, executado, faturado, recebido, pendente, descontos, pctPago, pctDescontos };
   }, [linhas, itensPorNf]);
 
   const evolucaoMensal = useMemo(() => {
@@ -190,7 +190,8 @@ export default function DashboardRelatorioServicos() {
         <span className="text-muted-foreground ml-auto">Códigos: N · R · M · DH</span>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
+        <KpiTile label="Total de Notas" valor={kpis.total.toLocaleString("pt-BR")} icon={<FileText />} cor="slate" />
         <KpiTile label="Valor Executado" valor={fmtMoney(kpis.executado)} icon={<ListChecks />} cor="slate" />
         <KpiTile label="Valor Faturado" valor={fmtMoney(kpis.faturado)} icon={<TrendingUp />} cor="sky" />
         <KpiTile label="Valor Recebido" valor={fmtMoney(kpis.recebido)} icon={<CheckCircle2 />} cor="emerald" valorClass="text-emerald-600 dark:text-emerald-400" />

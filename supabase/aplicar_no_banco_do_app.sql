@@ -31082,3 +31082,696 @@ NOTIFY pgrst, 'reload schema';
 -- DROP FUNCTION IF EXISTS public.jur_duvida_autor_e_encarregado(uuid);
 -- (as perguntas movidas para 'Pendente Operacional' ficam — decidir no Operacional)
 -- NOTIFY pgrst, 'reload schema';
+
+
+-- ===== 20260930000252_app_acao_fundamentar (JA APLICADA 28/09) =====
+-- =========================================================================
+-- app_acao ganha o valor 'fundamentar'
+--
+-- Pedido do Pablo (28/09/2026): no Parecer Jurídico cada dúvida passa a ter
+-- DUAS respostas — a resposta simples (objetiva, do Gustavo) e o EMBASAMENTO
+-- JURÍDICO (leis, normas, cláusulas). Quem escreve cada uma é controlado em
+-- Administração › Acesso por Usuário, no menu `duvidas` que já existe:
+--   responder   → resposta simples (a ação da mig 173, sem mudança)
+--   fundamentar → embasamento jurídico (esta)
+-- Nada de gerenciamento de acesso novo — é só mais um switch na mesma linha.
+--
+-- ⚠ ARQUIVO SEPARADO DE PROPÓSITO (mesmo motivo da mig 172): o Postgres não
+-- deixa USAR um valor novo de enum na mesma transação em que ele foi
+-- adicionado. A mig 253 (que usa 'fundamentar'::app_acao) tem que rodar em
+-- OUTRA execução — primeiro esta, depois aquela.
+--
+-- Idempotente. Aplicar no banco do app.
+-- =========================================================================
+ALTER TYPE public.app_acao ADD VALUE IF NOT EXISTS 'fundamentar';
+
+-- ROLLBACK: Postgres não remove valor de enum; fica sem uso (a 253 tem o seu).
+
+
+-- ===== 20260930000253_parecer_juridico_embasamento (JA APLICADA 28/09) =====
+-- =========================================================================
+-- Parecer Jurídico: resposta simples + EMBASAMENTO JURÍDICO em cada dúvida
+--
+-- Pedido do Pablo (28/09/2026):
+--   "Adicionar dois campos de resposta em cada demanda. O primeiro será
+--    destinado à resposta do Gustavo, de forma simples, clara e objetiva
+--    [...]. O segundo campo será destinado ao embasamento jurídico da
+--    resposta, contendo as fundamentações legais, normas, cláusulas
+--    contratuais ou demais justificativas [...]."
+--   O embasamento fica oculto na tela, atrás de "Visualizar embasamento
+--   jurídico". TODOS que veem a resposta veem o embasamento; o que é
+--   gerenciado é só QUEM ESCREVE cada um — no Acesso por Usuário que já
+--   existe, sem gerenciamento novo.
+--
+-- DESENHO
+--   resposta     (coluna antiga) = resposta simples. Continua mandando no
+--                status: gravá-la é o que leva a dúvida a 'Respondida'.
+--                Quem escreve: ação `responder` do menu `duvidas` (mig 173).
+--   embasamento  (coluna nova)   = fundamentação. Não mexe no status — pode
+--                ser escrito antes da resposta simples (já 'Aprovada') ou
+--                depois ('Respondida'). Quem escreve: ação `fundamentar` do
+--                mesmo menu (valor de enum da mig 252).
+--
+--   A RLS de UPDATE é por LINHA, não por coluna — então quem só tem
+--   `fundamentar` passa na policy e o gatilho jur_duvidas_guarda_embasamento
+--   segura o resto: ele só pode mexer nas colunas do embasamento. Do outro
+--   lado, só quem tem `fundamentar` muda o embasamento. O gatilho só vale
+--   pra escrita direta da tela (current_user authenticated/anon); as RPCs
+--   SECURITY DEFINER (avaliar, ocultar, decisão do Operacional) passam.
+--
+-- Quem já responde ganha `fundamentar` também, pra ninguém ficar sem poder
+-- escrever o embasamento no primeiro dia — tira-se no Acesso por Usuário de
+-- quem não deve (ex.: deixar só a resposta simples com o Gustavo).
+--
+-- ⚠ Precisa da mig 252 aplicada ANTES, em execução separada (valor novo de
+-- enum não pode ser usado na transação em que foi criado).
+--
+-- Idempotente. Aplicar no banco do app. ROLLBACK no fim.
+-- =========================================================================
+
+-- ── Colunas ──────────────────────────────────────────────────────────────
+ALTER TABLE public."JUR_DUVIDAS"
+  ADD COLUMN IF NOT EXISTS embasamento     text,
+  ADD COLUMN IF NOT EXISTS embasamento_por text,
+  ADD COLUMN IF NOT EXISTS embasamento_em  timestamptz;
+
+COMMENT ON COLUMN public."JUR_DUVIDAS".resposta IS
+  'Resposta SIMPLES e objetiva (o que fazer). Quem escreve: duvidas/responder. Mig 253, 28/09/2026.';
+COMMENT ON COLUMN public."JUR_DUVIDAS".embasamento IS
+  'Embasamento jurídico da resposta (leis, normas, cláusulas). Quem escreve: duvidas/fundamentar. Visível a quem vê a resposta. Mig 253.';
+
+-- ── A ação no menu que já existe (vira switch no Acesso por Usuário) ─────
+INSERT INTO public.app_menu_acao (menu_codigo, acao)
+VALUES ('duvidas', 'fundamentar'::app_acao)
+ON CONFLICT (menu_codigo, acao) DO NOTHING;
+
+CREATE OR REPLACE FUNCTION public.pode_fundamentar_duvida()
+RETURNS boolean
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $fn$
+  SELECT public.has_screen_access(auth.uid(), 'duvidas', 'fundamentar'::app_acao);
+$fn$;
+REVOKE ALL ON FUNCTION public.pode_fundamentar_duvida() FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.pode_fundamentar_duvida() TO authenticated;
+
+-- ── Quem fundamenta também é "Jurídico das dúvidas" (vê as ocultas) ──────
+CREATE OR REPLACE FUNCTION public.e_juridico_das_duvidas()
+RETURNS boolean
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $fn$
+  SELECT public.is_juridico_ativo()
+      OR public.has_screen_access(auth.uid(), 'duvidas', 'aprovar'::public.app_acao)
+      OR public.has_screen_access(auth.uid(), 'duvidas', 'responder'::public.app_acao)
+      OR public.has_screen_access(auth.uid(), 'duvidas', 'fundamentar'::public.app_acao)
+      OR public.has_screen_access(auth.uid(), 'duvidas', 'alterar'::public.app_acao);
+$fn$;
+REVOKE ALL ON FUNCTION public.e_juridico_das_duvidas() FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.e_juridico_das_duvidas() TO authenticated;
+
+-- ── UPDATE: quem fundamenta passa na policy (o gatilho recorta as colunas) ─
+DROP POLICY IF EXISTS jur_duvidas_update ON public."JUR_DUVIDAS";
+CREATE POLICY jur_duvidas_update ON public."JUR_DUVIDAS" FOR UPDATE TO authenticated
+  USING (public.pode_responder_duvida() OR public.pode_aprovar_duvida() OR public.pode_fundamentar_duvida())
+  WITH CHECK (public.pode_responder_duvida() OR public.pode_aprovar_duvida() OR public.pode_fundamentar_duvida());
+
+-- ── Gatilho: cada um escreve o seu campo ─────────────────────────────────
+CREATE OR REPLACE FUNCTION public.jur_duvidas_guarda_embasamento()
+RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = public, pg_temp
+AS $fn$
+DECLARE
+  v_cols_emb text[] := ARRAY['embasamento', 'embasamento_por', 'embasamento_em', 'updated_at'];
+BEGIN
+  -- RPCs SECURITY DEFINER (avaliar, ocultar, Operacional) não passam por aqui.
+  IF current_user NOT IN ('authenticated', 'anon') THEN
+    RETURN NEW;
+  END IF;
+
+  IF NEW.embasamento IS DISTINCT FROM OLD.embasamento THEN
+    IF NOT public.pode_fundamentar_duvida() THEN
+      RAISE EXCEPTION 'Sem permissão para escrever o embasamento jurídico (Acesso por Usuário › Parecer Jurídico › Fundamentar).'
+        USING ERRCODE = '42501';
+    END IF;
+    IF OLD.status NOT IN ('Aprovada', 'Respondida') THEN
+      RAISE EXCEPTION 'O embasamento jurídico só pode ser escrito em dúvida aprovada ou respondida.';
+    END IF;
+    NEW.embasamento    := nullif(btrim(NEW.embasamento), '');
+    NEW.embasamento_em := CASE WHEN NEW.embasamento IS NULL THEN NULL ELSE now() END;
+    IF NEW.embasamento IS NULL THEN NEW.embasamento_por := NULL; END IF;
+  END IF;
+
+  -- Só `fundamentar` (sem responder/aprovar): mexe apenas no embasamento.
+  IF NOT (public.pode_responder_duvida() OR public.pode_aprovar_duvida())
+     AND (to_jsonb(NEW) - v_cols_emb) IS DISTINCT FROM (to_jsonb(OLD) - v_cols_emb) THEN
+    RAISE EXCEPTION 'Você só pode alterar o embasamento jurídico desta dúvida.'
+      USING ERRCODE = '42501';
+  END IF;
+
+  RETURN NEW;
+END $fn$;
+
+DROP TRIGGER IF EXISTS trg_jur_duvidas_guarda_embasamento ON public."JUR_DUVIDAS";
+CREATE TRIGGER trg_jur_duvidas_guarda_embasamento
+  BEFORE UPDATE ON public."JUR_DUVIDAS"
+  FOR EACH ROW EXECUTE FUNCTION public.jur_duvidas_guarda_embasamento();
+
+-- ── Quem já responde ganha fundamentar (tira-se no Acesso por Usuário) ───
+INSERT INTO public.screen_permission_user (user_id, menu_codigo, acao, allow, motivo)
+SELECT DISTINCT s.user_id, 'duvidas', 'fundamentar'::app_acao, true,
+       'Migração 20260930000253: já respondia as dúvidas (duvidas/responder)'
+  FROM public.screen_permission_user s
+ WHERE s.menu_codigo = 'duvidas' AND s.acao = 'responder'::app_acao AND s.allow
+   AND NOT EXISTS (
+     SELECT 1 FROM public.screen_permission_user x
+      WHERE x.user_id = s.user_id AND x.menu_codigo = 'duvidas' AND x.acao = 'fundamentar'::app_acao);
+
+-- ── Sino: dúvida aprovada avisa quem responde E quem fundamenta ──────────
+-- Cópia da jur_duvidas_notificar da mig 244; só muda o destinatário de 'Aprovada'.
+CREATE OR REPLACE FUNCTION public.jur_duvidas_notificar()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $fn$
+DECLARE
+  v_link_gestao text := '/app/juridico/duvidas';
+  v_link_op     text := '/app/operacional/orientacoes-juridicas';
+  v_link_autor  text := CASE WHEN NEW.origem = 'encarregados' THEN '/app/encarregados/orientacoes-juridicas'
+                             ELSE '/app/central-servicos/orientacoes-juridicas' END;
+BEGIN
+  IF TG_OP = 'INSERT' THEN
+    IF NEW.status = 'Pendente Operacional' THEN
+      PERFORM public.jur_notificar(public.jur_quem_tem('operacional_orientacoes', 'visualizar'),
+        'Nova orientação jurídica de encarregado',
+        coalesce(NEW.titulo, '') || ' — de ' || coalesce(NEW.autor_nome, '—') || coalesce(' · ' || NEW.categoria, ''),
+        'info', v_link_op);
+    ELSE
+      PERFORM public.jur_notificar(public.jur_quem_tem('duvidas', 'aprovar'),
+        'Nova dúvida jurídica para aprovar',
+        coalesce(NEW.titulo, '') || ' — de ' || coalesce(NEW.autor_nome, '—') || coalesce(' · ' || NEW.categoria, ''),
+        'info', v_link_gestao);
+    END IF;
+    RETURN NEW;
+  END IF;
+
+  IF NEW.status IS DISTINCT FROM OLD.status THEN
+    IF NEW.status = 'Aprovada' THEN
+      PERFORM public.jur_notificar(
+        ARRAY(SELECT DISTINCT u FROM unnest(public.jur_quem_tem('duvidas', 'responder')
+                                         || public.jur_quem_tem('duvidas', 'fundamentar')) AS u),
+        CASE WHEN OLD.status = 'Pendente Operacional' THEN 'Orientação encaminhada pelo Operacional — aguardando o Jurídico'
+             ELSE 'Dúvida aprovada — aguardando resposta do Jurídico' END,
+        coalesce(NEW.titulo, '') || coalesce(' · ' || NEW.categoria, '') || coalesce(' — obs.: ' || NEW.operacional_obs, ''),
+        'warning', v_link_gestao);
+    ELSIF NEW.status = 'Respondida' AND OLD.status <> 'Respondida' THEN
+      PERFORM public.jur_notificar(ARRAY[NEW.autor_id],
+        CASE WHEN NEW.respondido_etapa = 'operacional' THEN 'Sua dúvida foi respondida pelo Operacional'
+             ELSE 'Sua dúvida foi respondida pelo Jurídico' END,
+        coalesce(NEW.titulo, '') || ' — avalie a resposta em Minhas perguntas.',
+        'success', v_link_autor);
+    ELSIF NEW.status = 'Reprovada' THEN
+      PERFORM public.jur_notificar(ARRAY[NEW.autor_id],
+        'Sua dúvida não foi aprovada',
+        coalesce(NEW.titulo, '') || coalesce(' — ' || NEW.motivo_reprovacao, ''),
+        'error', v_link_autor);
+    END IF;
+  END IF;
+  RETURN NEW;
+END $fn$;
+
+NOTIFY pgrst, 'reload schema';
+
+-- Conferência
+-- SELECT p.email, s.acao FROM public.screen_permission_user s JOIN public.profiles p ON p.id = s.user_id
+--  WHERE s.menu_codigo = 'duvidas' AND s.acao IN ('responder', 'fundamentar') AND s.allow ORDER BY 1, 2;
+
+-- =========================================================================
+-- ROLLBACK
+-- =========================================================================
+-- DROP TRIGGER IF EXISTS trg_jur_duvidas_guarda_embasamento ON public."JUR_DUVIDAS";
+-- DROP FUNCTION IF EXISTS public.jur_duvidas_guarda_embasamento();
+-- DROP POLICY IF EXISTS jur_duvidas_update ON public."JUR_DUVIDAS";
+-- CREATE POLICY jur_duvidas_update ON public."JUR_DUVIDAS" FOR UPDATE TO authenticated
+--   USING (public.pode_responder_duvida() OR public.pode_aprovar_duvida())
+--   WITH CHECK (public.pode_responder_duvida() OR public.pode_aprovar_duvida());
+-- Reaplicar e_juridico_das_duvidas() e jur_duvidas_notificar() da 20260930000244;
+-- DROP FUNCTION IF EXISTS public.pode_fundamentar_duvida();
+-- DELETE FROM public.screen_permission_user WHERE menu_codigo = 'duvidas' AND acao = 'fundamentar';
+-- DELETE FROM public.app_menu_acao WHERE menu_codigo = 'duvidas' AND acao = 'fundamentar';
+-- (as colunas embasamento* ficam — sem uso)
+-- NOTIFY pgrst, 'reload schema';
+
+
+-- ===== 20260930000255_chamado_reabrir_pelo_solicitante (JA APLICADA 28/09) =====
+-- =========================================================================
+-- Chamados de Sistemas: o SOLICITANTE pode reabrir o próprio chamado
+--
+-- Pedido do Pablo (28/09/2026): "Permitir que o usuário reabra a solicitação
+-- quando necessário." Até aqui só reabria quem coordena, aprova ou é o dev
+-- responsável (ReabrirChamadoDialog) — o solicitante, que é quem descobre que
+-- a entrega não resolveu, tinha que abrir um chamado novo e recontar tudo.
+--
+-- COMO
+--   RPC chamado_reabrir_pelo_solicitante(chamado, motivo): valida que quem
+--   chama é o solicitante e que o chamado está encerrado; motivo obrigatório
+--   (vai pro histórico/conversa como "Chamado reaberto: <motivo>", o mesmo
+--   texto que ChatChamado já traduz para "Fulano reabriu o chamado — …").
+--     concluido → volta pro responsável ('em_andamento', fim da fila dele)
+--                 ou pra coordenação ('aberto') se não tiver responsável —
+--                 mesma regra de statusAoReabrir / chamado_adicionar_informacao;
+--     reprovado → SEMPRE 'aberto': a coordenação/aprovação decide de novo.
+--                 O solicitante não "desreprova" nada sozinho.
+--
+--   O gatilho chamado_sistema_guard barra troca de status de quem não é da
+--   equipe — e dentro de SECURITY DEFINER o auth.uid() continua sendo o
+--   solicitante. Por isso a RPC liga a marca de transação
+--   app.chamado_solicitante (set_config local, some no fim da transação; o
+--   PostgREST não expõe set_config ao cliente) e o gatilho, com a marca,
+--   deixa passar SÓ a troca de status: os campos de abertura/coordenação e a
+--   reprovação continuam travados como antes. Mesmo desenho da marca
+--   app.exclusao_usuario (mig 20260930000093).
+--
+--   chamado_adicionar_informacao (mig 20260804000001) e
+--   chamado_enviar_mensagem (mig 20260831000001) tinham o mesmo problema: o
+--   UPDATE de 'aguardando_retorno' → 'em_andamento' feito em nome do
+--   solicitante batia no gatilho e derrubava a transação inteira (a mensagem
+--   dele não era gravada). As duas passam a ligar a marca também.
+--
+-- O gatilho abaixo é a cópia da versão da mig 093 (conferida contra o banco
+-- em 28/09/2026) + o bloco v_solic.
+--
+-- Idempotente. Aplicar no banco do app. ROLLBACK no fim.
+-- =========================================================================
+
+CREATE OR REPLACE FUNCTION public.chamado_sistema_guard()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp
+AS $$
+DECLARE
+  -- Faxina de exclusão de usuário (admin_excluir_usuario_completo).
+  v_faxina boolean := COALESCE(current_setting('app.exclusao_usuario', true) = 'on', false);
+  -- Automação de servidor: edge function com service_role, sem sessão.
+  v_auto  boolean := COALESCE(auth.role() = 'service_role', false);
+  -- Solicitante devolvendo/reabrindo o próprio chamado por RPC (mig 255).
+  v_solic boolean := COALESCE(current_setting('app.chamado_solicitante', true) = 'on', false);
+  v_coord boolean;
+  v_aprov boolean;
+  v_resp  boolean;
+BEGIN
+  -- A faxina não é alguém editando o chamado: é o sistema tirando o nome de
+  -- quem saiu da empresa. Nenhum campo de negócio muda — só as colunas que
+  -- apontam pro usuário, e por ação de chave estrangeira. Os automatismos de
+  -- status continuam valendo.
+  IF v_faxina THEN
+    IF NEW.status = 'concluido' AND NEW.concluido_em IS NULL THEN NEW.concluido_em := now(); END IF;
+    IF NEW.status <> 'concluido' THEN NEW.concluido_em := NULL; END IF;
+    RETURN NEW;
+  END IF;
+
+  v_coord := public.tem_acesso_menu('chamados_sistemas_coordenar');
+  v_aprov := public.tem_acesso_menu('chamados_sistemas_aprovar');
+  v_resp  := COALESCE(OLD.responsavel_id = auth.uid(), false);
+
+  -- Campos de abertura + coordenação só mudam com "coordenar".
+  IF NOT v_coord THEN
+    IF NEW.assunto              IS DISTINCT FROM OLD.assunto
+    OR NEW.categorias           IS DISTINCT FROM OLD.categorias
+    OR NEW.tipo_solicitacao     IS DISTINCT FROM OLD.tipo_solicitacao
+    OR NEW.prioridade           IS DISTINCT FROM OLD.prioridade
+    OR NEW.descricao            IS DISTINCT FROM OLD.descricao
+    OR NEW.impacto_trabalho     IS DISTINCT FROM OLD.impacto_trabalho
+    OR NEW.urgencia             IS DISTINCT FROM OLD.urgencia
+    OR NEW.modulo_sistema       IS DISTINCT FROM OLD.modulo_sistema
+    OR NEW.modulo_sistema_outro IS DISTINCT FROM OLD.modulo_sistema_outro
+    OR NEW.afeta_usuarios       IS DISTINCT FROM OLD.afeta_usuarios
+    OR NEW.solicitante_id       IS DISTINCT FROM OLD.solicitante_id
+    OR NEW.solicitante_nome     IS DISTINCT FROM OLD.solicitante_nome
+    OR NEW.setor                IS DISTINCT FROM OLD.setor
+    OR NEW.responsavel_id       IS DISTINCT FROM OLD.responsavel_id
+    OR NEW.observacao_gerente   IS DISTINCT FROM OLD.observacao_gerente
+    OR NEW.comentario_gerente   IS DISTINCT FROM OLD.comentario_gerente THEN
+      RAISE EXCEPTION 'Sem permissão para coordenar/editar este chamado.';
+    END IF;
+  END IF;
+
+  -- Reprovar/motivo só com "aprovar".
+  IF (NEW.status = 'reprovado' AND OLD.status <> 'reprovado') AND NOT v_aprov THEN
+    RAISE EXCEPTION 'Sem permissão para reprovar chamados.';
+  END IF;
+  IF NEW.motivo_reprovacao IS DISTINCT FROM OLD.motivo_reprovacao AND NOT v_aprov THEN
+    RAISE EXCEPTION 'Sem permissão para reprovar chamados.';
+  END IF;
+
+  -- Demais mudanças de status: coordenar, aprovar, o dev responsável, a
+  -- automação de servidor (conclusão no merge da PR) OU o solicitante pelas
+  -- RPCs que ligam app.chamado_solicitante — e aí só para voltar à fila
+  -- ('aberto' / 'em_andamento'); concluir ou reprovar continua da equipe.
+  IF NEW.status IS DISTINCT FROM OLD.status AND NOT (v_auto OR v_coord OR v_aprov OR v_resp
+       OR (v_solic AND NEW.status IN ('aberto', 'em_andamento'))) THEN
+    RAISE EXCEPTION 'Sem permissão para alterar o status do chamado.';
+  END IF;
+
+  IF NEW.status = 'concluido' AND NEW.concluido_em IS NULL THEN NEW.concluido_em := now(); END IF;
+  IF NEW.status <> 'concluido' THEN NEW.concluido_em := NULL; END IF;
+  RETURN NEW;
+END;
+$$;
+
+-- ── Reabrir pelo solicitante ─────────────────────────────────────────────
+CREATE OR REPLACE FUNCTION public.chamado_reabrir_pelo_solicitante(p_chamado_id uuid, p_motivo text)
+RETURNS text
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_solicitante uuid;
+  v_status      text;
+  v_responsavel uuid;
+  v_novo        text;
+BEGIN
+  IF p_motivo IS NULL OR length(btrim(p_motivo)) < 5 THEN
+    RAISE EXCEPTION 'Conte por que o chamado precisa ser reaberto.';
+  END IF;
+
+  SELECT solicitante_id, status, responsavel_id
+    INTO v_solicitante, v_status, v_responsavel
+    FROM public."CHAMADO_SISTEMA"
+   WHERE id = p_chamado_id
+   FOR UPDATE;
+
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'Chamado não encontrado.';
+  END IF;
+  IF v_solicitante IS DISTINCT FROM auth.uid() THEN
+    RAISE EXCEPTION 'Apenas quem abriu o chamado pode reabri-lo por aqui.';
+  END IF;
+  IF v_status NOT IN ('concluido', 'reprovado') THEN
+    RAISE EXCEPTION 'O chamado ainda está em atendimento — use a conversa do chamado.';
+  END IF;
+
+  v_novo := CASE WHEN v_status = 'concluido' AND v_responsavel IS NOT NULL THEN 'em_andamento' ELSE 'aberto' END;
+
+  PERFORM set_config('app.chamado_solicitante', 'on', true);
+  UPDATE public."CHAMADO_SISTEMA" SET status = v_novo WHERE id = p_chamado_id;
+  PERFORM set_config('app.chamado_solicitante', 'off', true);
+
+  INSERT INTO public."CHAMADO_SISTEMA_EVENTO" (chamado_id, autor_id, tipo, texto)
+  VALUES (p_chamado_id, auth.uid(), 'evento', 'Chamado reaberto: ' || btrim(p_motivo));
+
+  RETURN v_novo;
+END;
+$$;
+REVOKE ALL ON FUNCTION public.chamado_reabrir_pelo_solicitante(uuid, text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.chamado_reabrir_pelo_solicitante(uuid, text) FROM anon;
+GRANT EXECUTE ON FUNCTION public.chamado_reabrir_pelo_solicitante(uuid, text) TO authenticated;
+
+-- ── Adicionar informação: mesma marca (cópia da mig 20260804000001) ──────
+CREATE OR REPLACE FUNCTION public.chamado_adicionar_informacao(
+  p_chamado_id uuid,
+  p_texto      text
+)
+RETURNS void
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_solicitante uuid;
+  v_status      text;
+  v_responsavel uuid;
+BEGIN
+  IF p_texto IS NULL OR btrim(p_texto) = '' THEN
+    RAISE EXCEPTION 'Informe o texto com as informações.';
+  END IF;
+
+  SELECT solicitante_id, status, responsavel_id
+    INTO v_solicitante, v_status, v_responsavel
+    FROM public."CHAMADO_SISTEMA"
+   WHERE id = p_chamado_id;
+
+  IF v_solicitante IS NULL THEN
+    RAISE EXCEPTION 'Chamado não encontrado.';
+  END IF;
+  IF v_solicitante <> auth.uid() THEN
+    RAISE EXCEPTION 'Apenas o solicitante pode adicionar informações a este chamado.';
+  END IF;
+  IF v_status IN ('concluido', 'reprovado') THEN
+    RAISE EXCEPTION 'Chamado encerrado — não é possível adicionar informações.';
+  END IF;
+
+  -- (1) histórico: visível ao solicitante, ao responsável e à gestão.
+  INSERT INTO public."CHAMADO_SISTEMA_EVENTO" (chamado_id, autor_id, tipo, texto)
+  VALUES (p_chamado_id, auth.uid(), 'comentario', btrim(p_texto));
+
+  -- (2) devolve ao time quando estava aguardando o retorno do solicitante.
+  IF v_status = 'aguardando_retorno' THEN
+    PERFORM set_config('app.chamado_solicitante', 'on', true);
+    UPDATE public."CHAMADO_SISTEMA"
+       SET status = CASE WHEN v_responsavel IS NOT NULL THEN 'em_andamento' ELSE 'aberto' END
+     WHERE id = p_chamado_id;
+    PERFORM set_config('app.chamado_solicitante', 'off', true);
+  END IF;
+END;
+$$;
+REVOKE ALL ON FUNCTION public.chamado_adicionar_informacao(uuid, text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.chamado_adicionar_informacao(uuid, text) FROM anon;
+GRANT EXECUTE ON FUNCTION public.chamado_adicionar_informacao(uuid, text) TO authenticated;
+
+-- ── Conversa: mesma marca (cópia da mig 20260831000001, conferida contra o
+--    banco em 28/09/2026) — o solicitante respondendo o "aguardando retorno"
+--    pelo chat devolve o chamado ao time, e esse UPDATE também batia no guard.
+CREATE OR REPLACE FUNCTION public.chamado_enviar_mensagem(
+  p_chamado_id uuid,
+  p_texto      text,
+  p_interno    boolean DEFAULT false,
+  p_tem_anexo  boolean DEFAULT false
+)
+RETURNS uuid LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_uid         uuid := auth.uid();
+  v_solicitante uuid;
+  v_responsavel uuid;
+  v_status      text;
+  v_equipe      boolean;
+  v_texto       text := NULLIF(btrim(COALESCE(p_texto, '')), '');
+  v_id          uuid;
+BEGIN
+  IF v_texto IS NULL AND NOT p_tem_anexo THEN
+    RAISE EXCEPTION 'Escreva uma mensagem ou anexe um arquivo.' USING ERRCODE = '22023';
+  END IF;
+
+  SELECT c.solicitante_id, c.responsavel_id, c.status
+    INTO v_solicitante, v_responsavel, v_status
+    FROM public."CHAMADO_SISTEMA" c WHERE c.id = p_chamado_id;
+
+  IF v_solicitante IS NULL THEN
+    RAISE EXCEPTION 'Chamado não encontrado.' USING ERRCODE = '42704';
+  END IF;
+
+  v_equipe := (v_responsavel = v_uid) OR public.chamado_sistema_gestor();
+
+  IF NOT (v_equipe OR v_solicitante = v_uid) THEN
+    RAISE EXCEPTION 'Sem acesso à conversa deste chamado.' USING ERRCODE = '42501';
+  END IF;
+  IF p_interno AND NOT v_equipe THEN
+    RAISE EXCEPTION 'Somente a equipe registra mensagens internas.' USING ERRCODE = '42501';
+  END IF;
+  -- Chamado encerrado ainda aceita registro interno (a equipe documenta o que
+  -- ficou), mas não aceita mais conversa com o solicitante.
+  IF v_status IN ('concluido', 'reprovado') AND NOT p_interno THEN
+    RAISE EXCEPTION 'Chamado encerrado — a conversa está fechada.' USING ERRCODE = '22023';
+  END IF;
+
+  INSERT INTO public."CHAMADO_SISTEMA_EVENTO" (chamado_id, autor_id, tipo, texto)
+  VALUES (p_chamado_id, v_uid,
+          CASE WHEN p_interno THEN 'observacao_interna' ELSE 'comentario' END,
+          v_texto)
+  RETURNING id INTO v_id;
+
+  -- Quem escreveu já leu a própria mensagem.
+  INSERT INTO public."CHAMADO_SISTEMA_LEITURA" (chamado_id, user_id, lido_em)
+  VALUES (p_chamado_id, v_uid, now())
+  ON CONFLICT (chamado_id, user_id)
+  DO UPDATE SET lido_em = GREATEST(public."CHAMADO_SISTEMA_LEITURA".lido_em, EXCLUDED.lido_em);
+
+  -- Solicitante respondeu o "aguardando retorno" → volta pro time.
+  IF v_solicitante = v_uid AND NOT v_equipe AND v_status = 'aguardando_retorno' THEN
+    PERFORM set_config('app.chamado_solicitante', 'on', true);
+    UPDATE public."CHAMADO_SISTEMA"
+       SET status = CASE WHEN v_responsavel IS NOT NULL THEN 'em_andamento' ELSE 'aberto' END
+     WHERE id = p_chamado_id;
+    PERFORM set_config('app.chamado_solicitante', 'off', true);
+  END IF;
+
+  RETURN v_id;
+END;
+$$;
+REVOKE ALL ON FUNCTION public.chamado_enviar_mensagem(uuid, text, boolean, boolean) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.chamado_enviar_mensagem(uuid, text, boolean, boolean) TO authenticated;
+
+NOTIFY pgrst, 'reload schema';
+
+-- =========================================================================
+-- ROLLBACK
+-- =========================================================================
+-- Reaplicar chamado_sistema_guard() da 20260930000093,
+-- chamado_adicionar_informacao() da 20260804000001 e
+-- chamado_enviar_mensagem() da 20260831000001;
+-- DROP FUNCTION IF EXISTS public.chamado_reabrir_pelo_solicitante(uuid, text);
+-- NOTIFY pgrst, 'reload schema';
+
+
+-- ===== 20260930000256_demissao_sino_cancelada_e_nao_pedir_a_propria (JA APLICADA 28/09) =====
+-- =========================================================================
+-- Demissão: o sino avisa a CANCELADA, e ninguém pede a própria demissão
+--
+-- Pedido do Pablo (28/09/2026):
+--   "aqui encima tem que aparecer as solicitações de demissões canceladas
+--    pelos encarregados também" / "o usuario não pode solicitar demissão pra
+--    ele mesmo".
+--
+-- 1) SINO (sino_demissao_notificar, mig 240)
+--    ANTES  só o PEDIDO de cancelamento ('Cancelamento solicitado') avisava,
+--           e só quem aprova no RH (rh_demissoes/aprovar). A solicitação
+--           virando 'Cancelada' não avisava ninguém — e a que saía de
+--           'Cancelamento solicitado' era descartada logo na 1ª linha (a
+--           regra que evita repetir aviso quando o RH RECUSA o pedido).
+--    AGORA  • pedido de cancelamento avisa rh_demissoes/aprovar (como antes)
+--             E quem acompanha o RH (rh_demissoes/visualizar);
+--           • 'Cancelada' (a pedido do encarregado e aprovada pelo RH, ou
+--             direto pelo RH) avisa as filas por onde a solicitação passou:
+--             Operacional sempre; Diretoria (pelo setor) se estava lá; RH se
+--             já tinha chegado nele; SST se já estava no ASO. A etapa vem do
+--             status anterior — ou do cancel_status_anterior quando veio de
+--             'Cancelamento solicitado'.
+--           Recusa do pedido (volta ao status anterior) segue sem aviso.
+--    Cópia da função da mig 240 (conferida contra o banco em 28/09/2026)
+--    com esses dois blocos a mais.
+--
+-- 2) PRÓPRIA DEMISSÃO (gatilho demissao_bloqueia_propria)
+--    BEFORE INSERT: se o CPF do colaborador (só dígitos) é o do EMPREGADOS
+--    vinculado a quem está logado, recusa. A tela já trava
+--    (ehAPropriaPessoa em lib/demissao/solicitacao.ts); aqui é a garantia.
+--    Sem login (automação/service_role) ou sem vínculo, passa.
+--
+-- Idempotente. Aplicar no banco do app. ROLLBACK no fim.
+-- =========================================================================
+
+-- ── 1) Sino ──────────────────────────────────────────────────────────────
+CREATE OR REPLACE FUNCTION public.sino_demissao_notificar()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $fn$
+DECLARE
+  v_quem   text := '#' || NEW.id || ' · ' || coalesce(NEW.colaborador_nome, '—')
+                   || coalesce(' — ' || nullif(btrim(NEW.contrato), ''), '');
+  v_origem text;
+  v_msg    text;
+  v_sst    text[] := ARRAY['Pendente SST', 'Solicitação de agendamento de DEMISSIONAL recebida',
+                           'Agendamento concluído', 'ASO válido'];
+BEGIN
+  -- Cancelada (mig 256): avisa as filas por onde a solicitação passou.
+  IF TG_OP = 'UPDATE' AND NEW.status = 'Cancelada' AND OLD.status IS DISTINCT FROM 'Cancelada' THEN
+    v_origem := CASE WHEN OLD.status = 'Cancelamento solicitado'
+                     THEN coalesce(NEW.cancel_status_anterior, OLD.cancel_status_anterior, OLD.status)
+                     ELSE OLD.status END;
+    v_msg := v_quem || ' — cancelada'
+             || coalesce(' a pedido de ' || nullif(btrim(NEW.cancel_pedido_por), ''), '')
+             || coalesce(' por ' || nullif(btrim(NEW.cancelado_por), ''), '')
+             || coalesce('. Motivo: ' || nullif(btrim(NEW.cancelado_motivo), ''), '.');
+
+    PERFORM public.jur_notificar(public.jur_quem_tem('operacional_demissoes', 'visualizar'),
+      '🚫 Demissão CANCELADA', v_msg, 'error', '/app/operacional/solicitacoes-demissao?abrir=' || NEW.id);
+    IF v_origem = 'Pendente Diretoria' THEN
+      PERFORM public.jur_notificar(public.sino_quem_tem_setor('diretoria_solicitacoes_demissao', 'visualizar', NEW.setor),
+        '🚫 Demissão CANCELADA', v_msg, 'error', '/app/diretoria/solicitacoes-demissao?abrir=' || NEW.id);
+    END IF;
+    IF v_origem NOT IN ('Pendente Operacional', 'Pendente Analista', 'Pendente Diretoria') THEN
+      PERFORM public.jur_notificar(public.jur_quem_tem('rh_demissoes', 'visualizar'),
+        '🚫 Demissão CANCELADA', v_msg, 'error', '/app/rh/solicitacoes-demissao?abrir=' || NEW.id);
+    END IF;
+    IF v_origem = ANY (v_sst) THEN
+      PERFORM public.jur_notificar(public.jur_quem_tem('sst_aso_demissional', 'visualizar'),
+        '🚫 Demissão CANCELADA — ASO não é mais necessário', v_msg, 'error', '/app/sst/aso-demissional?abrir=' || NEW.id);
+    END IF;
+    RETURN NEW;
+  END IF;
+
+  IF TG_OP = 'UPDATE' AND (NEW.status IS NOT DISTINCT FROM OLD.status OR OLD.status = 'Cancelamento solicitado') THEN
+    RETURN NEW;
+  END IF;
+
+  IF NEW.status = 'Pendente Operacional' THEN
+    PERFORM public.jur_notificar(public.jur_quem_tem('operacional_demissoes', 'visualizar'),
+      'Nova solicitação de demissão', v_quem || ' — aguardando a aprovação do Operacional.',
+      'info', '/app/operacional/solicitacoes-demissao?abrir=' || NEW.id);
+  ELSIF NEW.status = 'Pendente Diretoria' THEN
+    PERFORM public.jur_notificar(public.sino_quem_tem_setor('diretoria_solicitacoes_demissao', 'visualizar', NEW.setor),
+      'Nova solicitação de demissão', v_quem || coalesce(' (setor ' || nullif(btrim(NEW.setor), '') || ')', '') || ' — aguardando a Diretoria.',
+      'info', '/app/diretoria/solicitacoes-demissao?abrir=' || NEW.id);
+  ELSIF NEW.status = 'Pendente RH' THEN
+    PERFORM public.jur_notificar(public.jur_quem_tem('rh_demissoes', 'visualizar'),
+      'Demissão aprovada — aguardando o RH', v_quem || ' — confira e libere para o SST.',
+      'info', '/app/rh/solicitacoes-demissao?abrir=' || NEW.id);
+  ELSIF NEW.status = 'Pendente SST' THEN
+    PERFORM public.jur_notificar(public.jur_quem_tem('sst_aso_demissional', 'visualizar'),
+      'ASO demissional a agendar', v_quem || ' — liberada pelo RH.',
+      'info', '/app/sst/aso-demissional?abrir=' || NEW.id);
+  ELSIF NEW.status = 'Cancelamento solicitado' THEN
+    -- Quem aprova decide; quem só acompanha o RH também fica sabendo (mig 256).
+    PERFORM public.jur_notificar(
+      ARRAY(SELECT DISTINCT u FROM unnest(public.jur_quem_tem('rh_demissoes', 'aprovar')
+                                       || public.jur_quem_tem('rh_demissoes', 'visualizar')) AS u),
+      '🚫 Pedido de CANCELAMENTO de demissão',
+      v_quem || ' — ' || coalesce(NEW.cancel_pedido_por, NEW.solicitante_nome, 'o solicitante')
+        || ' pede para cancelar. Motivo: ' || coalesce(NEW.cancel_pedido_motivo, '—'),
+      'error', '/app/rh/solicitacoes-demissao?abrir=' || NEW.id);
+  END IF;
+  RETURN NEW;
+END $fn$;
+
+-- ── 2) Ninguém pede a própria demissão ───────────────────────────────────
+CREATE OR REPLACE FUNCTION public.demissao_bloqueia_propria()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $fn$
+DECLARE
+  v_cpf text := regexp_replace(coalesce(NEW.colaborador_cpf, ''), '\D', '', 'g');
+BEGIN
+  IF auth.uid() IS NULL OR length(v_cpf) <> 11 THEN
+    RETURN NEW;
+  END IF;
+  IF EXISTS (
+    SELECT 1 FROM public."EMPREGADOS" e
+     WHERE e.auth_user_id = auth.uid()
+       AND regexp_replace(coalesce(e."CPF", ''), '\D', '', 'g') = v_cpf
+  ) THEN
+    RAISE EXCEPTION 'Você não pode solicitar a sua própria demissão. Se quer sair da empresa, fale com o seu gestor ou com o RH.'
+      USING ERRCODE = '42501';
+  END IF;
+  RETURN NEW;
+END $fn$;
+REVOKE ALL ON FUNCTION public.demissao_bloqueia_propria() FROM PUBLIC, anon;
+
+DROP TRIGGER IF EXISTS trg_demissao_bloqueia_propria ON public."SISTEMA_SOLICITACOES_DEMISSAO";
+CREATE TRIGGER trg_demissao_bloqueia_propria
+  BEFORE INSERT ON public."SISTEMA_SOLICITACOES_DEMISSAO"
+  FOR EACH ROW EXECUTE FUNCTION public.demissao_bloqueia_propria();
+
+NOTIFY pgrst, 'reload schema';
+
+-- =========================================================================
+-- ROLLBACK
+-- =========================================================================
+-- Reaplicar sino_demissao_notificar() da 20260930000240;
+-- DROP TRIGGER IF EXISTS trg_demissao_bloqueia_propria ON public."SISTEMA_SOLICITACOES_DEMISSAO";
+-- DROP FUNCTION IF EXISTS public.demissao_bloqueia_propria();
+-- NOTIFY pgrst, 'reload schema';

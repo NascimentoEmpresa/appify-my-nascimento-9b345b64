@@ -615,3 +615,25 @@ export function podeCancelarDemissaoRH(s: Pick<SolicitacaoDemissao, "status">): 
 /** Caminho no bucket demissoes-docs de um arquivo anexado ao cancelar. */
 export const caminhoAnexoCancelamento = (id: number, nome: string, agora = Date.now()): string =>
   `${id}/${agora}-cancelamento-${nome.replace(/[^\w.-]+/g, "_")}`;
+
+// ── Ninguém pede a própria demissão por aqui (28/09/2026) ──────────────
+/**
+ * O colaborador escolhido é quem está logado? Compara o ID do EMPREGADOS e,
+ * na falta, o CPF só com dígitos (o cadastro mistura "000.000.000-00" e
+ * "00000000000"). Quem quer sair pede ao gestor/RH — a solicitação de
+ * demissão é do encarregado sobre a equipe. O banco repete a regra
+ * (gatilho demissao_bloqueia_propria, mig 256).
+ */
+export function ehAPropriaPessoa(
+  colaborador: { id?: number | null; cpf?: string | null } | null | undefined,
+  eu: { id?: number | null; cpf?: string | null } | null | undefined,
+): boolean {
+  if (!colaborador || !eu) return false;
+  if (colaborador.id != null && eu.id != null && colaborador.id === eu.id) return true;
+  const a = (colaborador.cpf ?? "").replace(/\D/g, "");
+  const b = (eu.cpf ?? "").replace(/\D/g, "");
+  return a.length === 11 && a === b;
+}
+
+export const MSG_PROPRIA_DEMISSAO =
+  "Você não pode solicitar a sua própria demissão. Se quer sair da empresa, fale com o seu gestor ou com o RH.";

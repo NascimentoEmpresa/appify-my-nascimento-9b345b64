@@ -232,7 +232,7 @@ const orientacoes: Fluxo = {
       status: "Aberta",
     },
     {
-      quem: "Jurídico", faz: "Responde. A resposta entra na biblioteca (se a pergunta não estiver oculta).",
+      quem: "Jurídico", faz: "Responde em duas partes: a resposta simples (objetiva, o que fazer) e o embasamento jurídico (leis, normas, cláusulas), que fica recolhido em \"Visualizar embasamento jurídico\". Quem escreve cada parte é marcado no Acesso por Usuário (Responder / Responder embasamento jurídico). A resposta entra na biblioteca (se a pergunta não estiver oculta).",
       onde: "Jurídico › Parecer Jurídico",
       status: "Aprovada",
     },

@@ -11,6 +11,7 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { ArrowLeft, MessageSquarePlus, Paperclip, RotateCcw, Star } from "lucide-react";
 import { AvaliarChamadoDialog } from "./AvaliarChamadoDialog";
+import { ReabrirChamadoDialog } from "./ReabrirChamadoDialog";
 import { ChatChamado } from "./ChatChamado";
 import {
   StatusBadge, PrioridadeBadge, CardAvaliacao,
@@ -30,6 +31,7 @@ export default function AcompanharChamado({ base = "/app/central-servicos/chamad
   const { user } = useAuth();
 
   const [avaliarAberto, setAvaliarAberto] = useState(false);
+  const [reabrirAberto, setReabrirAberto] = useState(false);
 
   // Abriu o chamado → o solicitante viu a novidade.
   useEffect(() => { chamadosMarkSeen(user?.id, "meus"); }, [user?.id]);
@@ -233,13 +235,36 @@ export default function AcompanharChamado({ base = "/app/central-servicos/chamad
             ) : null
           )}
 
+          {/* Reabrir (28/09/2026, mig 255): o solicitante reabre o próprio
+              chamado encerrado, com motivo — em vez de abrir outro e recontar. */}
           {encerrado && (
-            <Card className="p-4 text-xs text-muted-foreground">
-              Este chamado está <b>{chamado.status === "concluido" ? "concluído" : "reprovado"}</b> e não aceita mais informações.
-            </Card>
+            ehSolicitante ? (
+              <Card className="space-y-2 p-4">
+                <p className="flex items-center gap-1.5 text-sm font-bold"><RotateCcw className="h-4 w-4 text-primary" /> Não resolveu?</p>
+                <p className="text-xs text-muted-foreground">
+                  Este chamado está <b>{chamado.status === "concluido" ? "concluído" : "reprovado"}</b>. Se o problema continua
+                  {chamado.status === "reprovado" ? " ou você tem informação nova" : ""}, reabra e conte o que falta.
+                </p>
+                <Button variant="outline" className="w-full gap-2" onClick={() => setReabrirAberto(true)}>
+                  <RotateCcw className="h-4 w-4" /> Reabrir chamado
+                </Button>
+              </Card>
+            ) : (
+              <Card className="p-4 text-xs text-muted-foreground">
+                Este chamado está <b>{chamado.status === "concluido" ? "concluído" : "reprovado"}</b> e não aceita mais informações.
+              </Card>
+            )
           )}
         </div>
       </div>
+
+      <ReabrirChamadoDialog
+        open={reabrirAberto}
+        onOpenChange={setReabrirAberto}
+        chamado={chamado}
+        modo="solicitante"
+        onReaberto={invalidar}
+      />
 
       <AvaliarChamadoDialog
         open={avaliarAberto}

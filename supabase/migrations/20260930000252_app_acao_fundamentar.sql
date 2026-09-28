@@ -1,0 +1,21 @@
+-- =========================================================================
+-- app_acao ganha o valor 'fundamentar'
+--
+-- Pedido do Pablo (28/09/2026): no Parecer Jurídico cada dúvida passa a ter
+-- DUAS respostas — a resposta simples (objetiva, do Gustavo) e o EMBASAMENTO
+-- JURÍDICO (leis, normas, cláusulas). Quem escreve cada uma é controlado em
+-- Administração › Acesso por Usuário, no menu `duvidas` que já existe:
+--   responder   → resposta simples (a ação da mig 173, sem mudança)
+--   fundamentar → embasamento jurídico (esta)
+-- Nada de gerenciamento de acesso novo — é só mais um switch na mesma linha.
+--
+-- ⚠ ARQUIVO SEPARADO DE PROPÓSITO (mesmo motivo da mig 172): o Postgres não
+-- deixa USAR um valor novo de enum na mesma transação em que ele foi
+-- adicionado. A mig 253 (que usa 'fundamentar'::app_acao) tem que rodar em
+-- OUTRA execução — primeiro esta, depois aquela.
+--
+-- Idempotente. Aplicar no banco do app.
+-- =========================================================================
+ALTER TYPE public.app_acao ADD VALUE IF NOT EXISTS 'fundamentar';
+
+-- ROLLBACK: Postgres não remove valor de enum; fica sem uso (a 253 tem o seu).

@@ -24,6 +24,7 @@ export type AppAcao =
   | "executar_ia"
   | "alterar_dre"
   | "responder"
+  | "fundamentar"
   | "editar_concluida";
 
 /** O pacote de trabalho que ligar uma tela concede, quando não há exceção. */
@@ -57,7 +58,9 @@ export const ACOES_FORA_DO_TOGGLE: Readonly<Record<string, readonly AppAcao[]>> 
   operacional_diarias: ["aprovar", "enviar_malote"],
   // Parecer Jurídico (17/09/2026): responder dúvida é decisão do Jurídico,
   // não vem de brinde com a tela — mas desligar a tela revoga junto.
-  duvidas: ["responder"],
+  // 'fundamentar' (28/09/2026, mig 253) é quem escreve o embasamento jurídico
+  // da resposta — mesma lógica, switch próprio ao lado do 'responder'.
+  duvidas: ["responder", "fundamentar"],
   encarregados_diarias: ["aprovar", "enviar_malote"],
   financeiro_diarias: ["aprovar", "enviar_malote"],
   // Hora Extra (22/09/2026): 'editar_concluida' reescreve o ponto de uma HE

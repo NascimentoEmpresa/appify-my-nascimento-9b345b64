@@ -30,6 +30,7 @@ import {
   Check, CheckCheck, Paperclip, Send, X, Lock, Users, Download, ImageIcon, Loader2,
 } from "lucide-react";
 import { BUCKET_CHAMADOS, fmtDataHora, type Anexo, type Evento } from "./types";
+import { imagensDoClipboard } from "@/lib/imagensColadas";
 
 export interface Participante {
   user_id: string;
@@ -319,18 +320,8 @@ export function ChatChamado({
 
   // Ctrl+V com print na área de transferência → vira anexo da mensagem.
   const colar = (ev: React.ClipboardEvent<HTMLTextAreaElement>) => {
-    const itens = Array.from(ev.clipboardData?.items ?? []);
-    const imagens = itens
-      .filter((i) => i.kind === "file" && i.type.startsWith("image/"))
-      .map((i) => i.getAsFile())
-      .filter((f): f is File => !!f)
-      .map((f) => {
-        const ext = (f.type.split("/")[1] || "png").replace("jpeg", "jpg");
-        // Print colado vem sem nome útil ("image.png"): carimba a hora pra dar contexto.
-        return f.name && f.name !== "image.png"
-          ? f
-          : new File([f], `print-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, "")}.${ext}`, { type: f.type });
-      });
+    // Nome com data/hora pro print sem nome — ver lib/imagensColadas.ts.
+    const imagens = imagensDoClipboard(ev.clipboardData);
     if (imagens.length) {
       ev.preventDefault(); // senão o navegador ainda cola o caminho do arquivo no texto
       adicionarArquivos(imagens);

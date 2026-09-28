@@ -42,7 +42,12 @@ export type ProcessoExp = Linha & {
   valores_a_parte: Linha[];
   audiencias: Linha[];
   propostas: Linha[];
-  totais: { pedidos: number; acordo: number; sentenca: number; custoFinal: number; aParte: number };
+  /**
+   * empresaAutora (28/09/2026): pedidos, acordo e sentença são o que a
+   * empresa vai RECEBER — os rótulos dizem isso e as somas "a pagar" do
+   * resumo os deixam de fora. Opcional: sem ele, é processo em que ela paga.
+   */
+  totais: { pedidos: number; acordo: number; sentenca: number; custoFinal: number; aParte: number; empresaAutora?: boolean };
 };
 
 export interface ExtrasProcesso {
@@ -149,6 +154,7 @@ const FICHA: GrupoFicha<ProcessoExp>[] = [
     { rotulo: "Acordo", tipo: "moeda", valor: p => p.totais.acordo },
     { rotulo: "Sentença", tipo: "moeda", valor: p => p.totais.sentenca },
     { rotulo: "Custo final", tipo: "moeda", valor: p => p.totais.custoFinal },
+    { rotulo: "Empresa", valor: p => (p.totais.empresaAutora ? "Autora — pedidos, acordo e sentença são a RECEBER" : "") },
     { rotulo: "Total de valores à parte", tipo: "moeda", valor: p => p.totais.aParte || "" },
   ] },
   { grupo: "Custos do processo", campos: [
@@ -293,9 +299,9 @@ function modelo(processos: ProcessoExp[], extras: ExtrasProcesso, autor: string)
       selos: [p.status, p.status_sentenca ? `Sentença: ${txt(p.status_sentenca)}` : ""],
     }),
     destaques: p => [
-      ["Pedidos", moeda(p.totais.pedidos)],
-      ["Acordo", moeda(p.totais.acordo)],
-      ["Sentença", moeda(p.totais.sentenca)],
+      [p.totais.empresaAutora ? "Pedidos · a receber" : "Pedidos", moeda(p.totais.pedidos)],
+      [p.totais.empresaAutora ? "Acordo · a receber" : "Acordo", moeda(p.totais.acordo)],
+      [p.totais.empresaAutora ? "Sentença · a receber" : "Sentença", moeda(p.totais.sentenca)],
       ["Custo final", moeda(p.totais.custoFinal)],
     ],
     ficha: FICHA,
@@ -304,9 +310,11 @@ function modelo(processos: ProcessoExp[], extras: ExtrasProcesso, autor: string)
       { rotulo: "Total de processos", valor: processos.length },
       { rotulo: "Em andamento", valor: processos.filter(p => p.status !== "ARQUIVADO").length },
       { rotulo: "Arquivados", valor: processos.filter(p => p.status === "ARQUIVADO").length },
-      { rotulo: "Pedidos", valor: soma(p => p.totais.pedidos), tipo: "moeda" },
-      { rotulo: "Acordos", valor: soma(p => p.totais.acordo), tipo: "moeda" },
-      { rotulo: "Sentenças", valor: soma(p => p.totais.sentenca), tipo: "moeda" },
+      // Somas "a pagar" sem a empresa autora; o que ela recebe vem à parte.
+      { rotulo: "Pedidos", valor: soma(p => (p.totais.empresaAutora ? 0 : p.totais.pedidos)), tipo: "moeda" },
+      { rotulo: "Acordos", valor: soma(p => (p.totais.empresaAutora ? 0 : p.totais.acordo)), tipo: "moeda" },
+      { rotulo: "Sentenças", valor: soma(p => (p.totais.empresaAutora ? 0 : p.totais.sentenca)), tipo: "moeda" },
+      { rotulo: "A receber (empresa autora)", valor: soma(p => (p.totais.empresaAutora ? (p.totais.sentenca || p.totais.acordo || p.totais.pedidos) : 0)), tipo: "moeda" },
       { rotulo: "Custo final", valor: soma(p => p.totais.custoFinal), tipo: "moeda" },
     ],
     indice: [

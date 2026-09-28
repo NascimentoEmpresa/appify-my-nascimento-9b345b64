@@ -158,18 +158,38 @@ export const CSS_ANIVERSARIOS = `
 /* Quem reagiu: aparece ao passar o mouse (ou focar) na pilha de reações. */
 .aniv-reacao-pilha{position:relative;display:inline-flex;}
 .aniv-reacao-pilha:focus{outline:none;}
+/* Painel de quem reagiu, no desenho do Discord (28/09/2026): abas por emoji
+   à esquerda com a contagem, e à direita a lista de quem usou o emoji da aba,
+   um por linha com a foto. É interativo (troca de aba), então a ponte
+   invisível do ::before cobre o vão entre as bolinhas e o painel — sem ela o
+   hover caía no caminho e o painel fechava antes do mouse chegar. */
 .aniv-tip{position:absolute;left:0;top:calc(100% + 8px);transform:translateY(3px) scale(.98);
-  z-index:9;min-width:132px;max-width:230px;padding:7px 10px;border-radius:10px;
+  z-index:9;display:flex;width:252px;max-width:calc(100vw - 48px);border-radius:12px;overflow:visible;
   background:hsl(var(--popover, var(--card)));color:hsl(var(--foreground));
-  border:1px solid hsl(var(--border));box-shadow:0 10px 26px -12px hsl(218 50% 15% / .55);
-  font-size:.7rem;line-height:1.45;text-align:left;
+  border:1px solid hsl(var(--border));box-shadow:0 14px 34px -14px hsl(218 50% 15% / .6);
+  font-size:.74rem;line-height:1.35;text-align:left;
   opacity:0;visibility:hidden;transition:opacity .15s,transform .15s;}
+.aniv-tip::before{content:'';position:absolute;left:0;right:0;top:-10px;height:10px;}
 .aniv-reacao-pilha:hover .aniv-tip,
 .aniv-reacao-pilha:focus-within .aniv-tip{opacity:1;visibility:visible;transform:none;}
-.aniv-tip b{display:block;font-size:.62rem;text-transform:uppercase;letter-spacing:.1em;
-  color:hsl(var(--muted-foreground));margin-bottom:3px;}
-.aniv-tip-linha{display:flex;gap:5px;align-items:baseline;}
-.aniv-tip-linha span:first-child{flex:none;}
+.aniv-tip-abas{flex:none;display:flex;flex-direction:column;gap:3px;padding:6px;
+  border-right:1px solid hsl(var(--border));max-height:236px;overflow-y:auto;}
+.aniv-tip-aba{display:flex;align-items:center;gap:7px;min-width:52px;padding:5px 8px;border-radius:8px;
+  border:none;background:transparent;cursor:pointer;font-size:.9rem;line-height:1;
+  color:hsl(var(--muted-foreground));transition:background .12s;}
+.aniv-tip-aba b{font-size:.74rem;font-weight:800;}
+.aniv-tip-aba:hover{background:hsl(var(--muted) / .6);}
+.aniv-tip-aba--on{background:hsl(var(--muted));color:hsl(var(--foreground));}
+.aniv-tip-pessoas{flex:1;min-width:0;list-style:none;margin:0;padding:6px 4px;
+  max-height:236px;overflow-y:auto;}
+.aniv-tip-pessoa{display:flex;align-items:center;gap:8px;padding:5px 6px;border-radius:8px;
+  font-weight:700;color:hsl(var(--foreground));}
+.aniv-tip-pessoa:hover{background:hsl(var(--muted) / .5);}
+.aniv-tip-pessoa > span:last-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.aniv-tip-pessoa img,.aniv-tip-ini{flex:none;width:24px;height:24px;border-radius:9999px;object-fit:cover;}
+.aniv-tip-ini{display:grid;place-items:center;font-size:.56rem;font-weight:800;
+  color:hsl(var(--primary));background:hsl(var(--primary) / .12);}
+.aniv-tip-eu{color:hsl(var(--primary));}
 
 @media (max-width:900px){
   .aniv-recado-bt{margin-left:0;}
