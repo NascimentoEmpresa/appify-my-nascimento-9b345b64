@@ -254,16 +254,32 @@ jobs:
             psql -h localhost -p 5432 -U postgres -d restaurado -At -c "$1"; }
 
           PGPASSWORD=postgres psql -h localhost -p 5432 -U postgres -d postgres -q \
+            -v ON_ERROR_STOP=1 \
             -c "CREATE DATABASE restaurado TEMPLATE template0 ENCODING 'UTF8';"
 
+          # ATENCAO AO `PGPASSWORD=` NA MESMA LINHA DO pg_restore.
+          # Prefixo de variavel em shell vale SO para aquele comando. Na
+          # primeira versao deste passo (execucao 36496892805, 28/09/2026) o
+          # psql acima tinha o prefixo e o pg_restore nao tinha: ele tentou
+          # conectar sem senha, o container recusou e ele morreu em 50 ms com
+          # 2 linhas de erro. O banco `restaurado` existia e estava vazio, e a
+          # comparacao acusou "relation public.sup_pedido does not exist".
+          #
           # pg_restore reclama dos papeis que so existem na Supabase
           # (authenticated, anon, service_role). Isso e ESPERADO num Postgres
           # comum - em 24/09 foram 1.373 erros e a restauracao estava correta.
           # Ver docs/restaurar-backup.md. A validacao e por CONTAGEM, nunca por
           # ausencia de erro; por isso o `|| true`.
-          pg_restore -h localhost -p 5432 -U postgres -d restaurado \
+          PGPASSWORD=postgres pg_restore -h localhost -p 5432 -U postgres -d restaurado \
             --no-owner --no-privileges --jobs=4 "$ARQUIVO" 2> erros-restauracao.txt || true
-          echo "erros do pg_restore (esperados, quase todos de papel inexistente): $(wc -l < erros-restauracao.txt)"
+
+          # IMPRIMIR, nao so contar. Na primeira versao eu so contava as linhas,
+          # e foi exatamente isso que escondeu a causa da falha acima: "2 erros"
+          # nao dizia nada, enquanto as 2 linhas diziam tudo.
+          echo "linhas de erro do pg_restore: $(wc -l < erros-restauracao.txt)"
+          echo "--- primeiras 20 (as de papel inexistente sao esperadas) ---"
+          head -20 erros-restauracao.txt || true
+          echo "-----------------------------------------------------------"
 
           FALHOU=0
           for T in 'public.sup_pedido' 'public.malote_despesa' 'public."EMPREGADOS"' \
