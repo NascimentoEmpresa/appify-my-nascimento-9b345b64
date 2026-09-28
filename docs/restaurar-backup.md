@@ -176,6 +176,31 @@ Em 24/09 bateram exatamente: `2.247 / 1.118 / 13.355 / 155 / 3.748.805 / 155`.
 
 ---
 
+## O backup já se testa sozinho — e o que isso NÃO cobre
+
+Desde **28/09/2026**, toda execução do workflow restaura o dump que acabou de
+gerar num **PostgreSQL 17 puro** (nada da Supabase) e compara as contagens com
+a produção ao vivo, com tolerância de 5%. **Backup que não restaura não é
+publicado.** Duas vezes por dia, não uma vez por trimestre.
+
+Isso responde ao cenário "a Supabase sumiu": se o dump só restaurasse dentro da
+Supabase, ele não serviria justamente no dia em que é mais necessário.
+
+O que o teste automático **não** cobre, e por isso o teste manual abaixo continua
+valendo:
+
+| Não coberto | Por quê |
+|---|---|
+| A sua chave privada funciona | O runner nunca a viu — de propósito |
+| O procedimento humano | Ninguém testa o runbook lendo o runbook |
+| O tempo real até o ERP voltar | O teste mede o banco, não o sistema |
+| Os arquivos do Storage | Não estão no backup |
+
+Ou seja: o automático prova que **o arquivo presta**. O manual prova que **você
+consegue usá-lo**. São coisas diferentes e as duas precisam existir.
+
+---
+
 ## Testar sem arriscar nada (recomendado a cada trimestre)
 
 Dá para restaurar num Postgres descartável na sua máquina, sem tocar em
