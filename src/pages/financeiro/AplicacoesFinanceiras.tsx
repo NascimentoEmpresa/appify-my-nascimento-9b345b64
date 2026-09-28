@@ -31,7 +31,8 @@ import {
   useCriarAplicacao,
   useEditarAplicacao,
   useAtualizarRendimento,
-  useResgatarAplicacao,
+  useResgatarMontanteAplicacao,
+  useResgatesCaixa,
   useExcluirAplicacao,
   useHistoricoAplicacao,
   type AplicacaoFinanceiraLinha,
@@ -66,13 +67,14 @@ const fmtData = (iso: string | null) => (iso ? new Date(iso + "T00:00:00").toLoc
 
 export default function AplicacoesFinanceiras() {
   const { data: linhas = [], isLoading } = useAplicacoesFinanceiras();
+  const { data: resgatesCaixa = [] } = useResgatesCaixa();
   const { data: empresas = [] } = useEmpresasGrupo();
   const excluir = useExcluirAplicacao();
 
   const [dialogNova, setDialogNova] = useState(false);
+  const [dialogResgate, setDialogResgate] = useState(false);
   const [registroEditar, setRegistroEditar] = useState<AplicacaoFinanceiraLinha | null>(null);
   const [registroRendimento, setRegistroRendimento] = useState<AplicacaoFinanceiraLinha | null>(null);
-  const [registroResgate, setRegistroResgate] = useState<AplicacaoFinanceiraLinha | null>(null);
   const [registroHistorico, setRegistroHistorico] = useState<AplicacaoFinanceiraLinha | null>(null);
   const [registroExcluir, setRegistroExcluir] = useState<AplicacaoFinanceiraLinha | null>(null);
 
@@ -112,10 +114,14 @@ export default function AplicacoesFinanceiras() {
     const ativas = linhas.filter((l) => l.status === "ativa");
     const totalAplicado = ativas.reduce((s, l) => s + Number(l.saldo_principal), 0);
     const rendimentoAcumulado = ativas.reduce((s, l) => s + Number(l.rendimento_acumulado), 0);
-    const totalResgatado = linhas.reduce((s, l) => s + Number(l.total_principal_resgatado) + Number(l.total_rendimento_resgatado), 0);
+    // Resgate não é mais por linha (entra no caixa da empresa, ver
+    // useResgatarMontanteAplicacao) — soma vem da tabela própria, não das
+    // colunas total_principal_resgatado/total_rendimento_resgatado da view
+    // (essas ficam sempre zero pra resgates feitos por esse fluxo).
+    const totalResgatado = resgatesCaixa.reduce((s, r) => s + Number(r.valor_principal) + Number(r.valor_rendimento), 0);
     const vencidas = ativas.filter((l) => l.status_exibicao === "vencida").length;
     return { totalAplicado, rendimentoAcumulado, totalResgatado, vencidas };
-  }, [linhas]);
+  }, [linhas, resgatesCaixa]);
 
   async function confirmarExcluir() {
     if (!registroExcluir) return;
@@ -137,11 +143,18 @@ export default function AplicacoesFinanceiras() {
           module="Financeiro"
           breadcrumb={["Financeiro", "Gestão Financeira", "Aplicações Financeiras"]}
           actions={
-            <AcessoGate menu={MENU_CODIGO} acao="incluir">
-              <Button size="sm" onClick={() => setDialogNova(true)}>
-                <Plus className="mr-1.5 h-4 w-4" /> Nova Aplicação
-              </Button>
-            </AcessoGate>
+            <div className="flex flex-wrap items-center gap-2">
+              <AcessoGate menu={MENU_CODIGO} acao="incluir">
+                <Button size="sm" onClick={() => setDialogNova(true)}>
+                  <Plus className="mr-1.5 h-4 w-4" /> Nova Aplicação
+                </Button>
+              </AcessoGate>
+              <AcessoGate menu={MENU_CODIGO} acao="alterar">
+                <Button size="sm" variant="outline" onClick={() => setDialogResgate(true)}>
+                  <PiggyBank className="mr-1.5 h-4 w-4" /> Novo Resgate
+                </Button>
+              </AcessoGate>
+            </div>
           }
         />
 
@@ -287,11 +300,6 @@ export default function AplicacoesFinanceiras() {
                                   <DropdownMenuItem onClick={() => setRegistroEditar(l)}>
                                     <Pencil className="mr-2 h-3.5 w-3.5" /> Editar
                                   </DropdownMenuItem>
-                                  {l.status === "ativa" && (
-                                    <DropdownMenuItem onClick={() => setRegistroResgate(l)}>
-                                      <PiggyBank className="mr-2 h-3.5 w-3.5" /> Registrar Resgate
-                                    </DropdownMenuItem>
-                                  )}
                                 </>
                               </AcessoGate>
                               <AcessoGate menu={MENU_CODIGO} acao="excluir">
@@ -321,7 +329,7 @@ export default function AplicacoesFinanceiras() {
       <DialogNovaAplicacao open={dialogNova} onClose={() => setDialogNova(false)} />
       <DialogEditarAplicacao registro={registroEditar} onClose={() => setRegistroEditar(null)} />
       <DialogAtualizarRendimento registro={registroRendimento} onClose={() => setRegistroRendimento(null)} />
-      <DialogResgatarAplicacao registro={registroResgate} onClose={() => setRegistroResgate(null)} />
+      <DialogResgatarMontante open={dialogResgate} onClose={() => setDialogResgate(false)} />
       <DialogHistoricoAplicacao registro={registroHistorico} onClose={() => setRegistroHistorico(null)} />
 
       <AlertDialog open={!!registroExcluir} onOpenChange={(o) => !o && setRegistroExcluir(null)}>
@@ -619,33 +627,57 @@ function DialogAtualizarRendimento({ registro, onClose }: { registro: AplicacaoF
   );
 }
 
-// ── Dialog: Registrar Resgate (parcial ou total) ────────────────────────
+// ── Dialog: Novo Resgate (sobre o montante ativo da empresa) ───────────
+//
+// Achado real (Cálita): resgate não é por linha/aplicação — é sobre o
+// montante total ativo daquela empresa. Por isso vive no cabeçalho, ao
+// lado de "Nova Aplicação", pedindo só empresa + valor; a RPC
+// aplicacao_financeira_resgatar_montante consome em FIFO (aplicações mais
+// antigas primeiro) até completar o valor.
 
-function DialogResgatarAplicacao({ registro, onClose }: { registro: AplicacaoFinanceiraLinha | null; onClose: () => void }) {
-  const resgatar = useResgatarAplicacao();
+function DialogResgatarMontante({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const { data: empresas = [] } = useEmpresasGrupo();
+  const { data: linhas = [] } = useAplicacoesFinanceiras();
+  const { data: resgatesCaixa = [] } = useResgatesCaixa();
+  const resgatar = useResgatarMontanteAplicacao();
+
+  const [empresaId, setEmpresaId] = useState("");
   const [dataResgate, setDataResgate] = useState(hoje());
-  const [tipo, setTipo] = useState<"parcial" | "total">("total");
   const [valorPrincipal, setValorPrincipal] = useState("");
   const [valorRendimento, setValorRendimento] = useState("");
   const [observacao, setObservacao] = useState("");
 
-  if (!registro) return null;
+  // Saldo disponível = tudo que já foi aplicado por essa empresa (todas as
+  // linhas, não só "ativa" — resgate não fecha linha) menos o que já
+  // entrou pelo resgate de montante. Igual à conta que a RPC faz.
+  const montanteEmpresa = useMemo(() => {
+    if (!empresaId) return null;
+    const daEmpresa = linhas.filter((l) => l.empresa_id === empresaId);
+    const totalAplicadoPrincipal = daEmpresa.reduce((s, l) => s + Number(l.valor_aplicado), 0);
+    const totalAplicadoRendimento = daEmpresa.reduce((s, l) => s + Number(l.rendimento_acumulado), 0);
+    const resgatadoDaEmpresa = resgatesCaixa.filter((r) => r.empresa_id === empresaId);
+    const totalResgatadoPrincipal = resgatadoDaEmpresa.reduce((s, r) => s + Number(r.valor_principal), 0);
+    const totalResgatadoRendimento = resgatadoDaEmpresa.reduce((s, r) => s + Number(r.valor_rendimento), 0);
+    return {
+      principal: totalAplicadoPrincipal - totalResgatadoPrincipal,
+      rendimento: totalAplicadoRendimento - totalResgatadoRendimento,
+    };
+  }, [linhas, resgatesCaixa, empresaId]);
 
   function limpar() {
-    setDataResgate(hoje()); setTipo("total"); setValorPrincipal(""); setValorRendimento(""); setObservacao("");
+    setEmpresaId(""); setDataResgate(hoje()); setValorPrincipal(""); setValorRendimento(""); setObservacao("");
   }
 
   async function confirmar() {
-    if (!registro) return;
-    const principal = tipo === "total" ? registro.saldo_principal : Number(valorPrincipal.replace(/\./g, "").replace(",", "."));
-    const rendimento = tipo === "total" ? registro.rendimento_acumulado : Number((valorRendimento || "0").replace(/\./g, "").replace(",", "."));
-    if (!dataResgate || !principal || principal <= 0) {
-      toast.error("Informe a data e o valor do principal resgatado.");
+    const principal = Number(valorPrincipal.replace(/\./g, "").replace(",", "."));
+    const rendimento = Number((valorRendimento || "0").replace(/\./g, "").replace(",", "."));
+    if (!empresaId || !dataResgate || !principal || principal <= 0) {
+      toast.error("Selecione a empresa e informe a data e o valor do principal resgatado.");
       return;
     }
     try {
-      await resgatar.mutateAsync({ id: registro.id, dataResgate, valorPrincipal: principal, valorRendimento: rendimento, tipo, observacao: observacao.trim() || null });
-      toast.success(tipo === "total" ? "Resgate total registrado — aplicação encerrada." : "Resgate parcial registrado.");
+      await resgatar.mutateAsync({ empresaId, dataResgate, valorPrincipal: principal, valorRendimento: rendimento, observacao: observacao.trim() || null });
+      toast.success("Resgate registrado.");
       limpar();
       onClose();
     } catch (e: any) {
@@ -654,50 +686,49 @@ function DialogResgatarAplicacao({ registro, onClose }: { registro: AplicacaoFin
   }
 
   return (
-    <Dialog open={!!registro} onOpenChange={(v) => { if (!v) { limpar(); onClose(); } }}>
+    <Dialog open={open} onOpenChange={(v) => { if (!v) { limpar(); onClose(); } }}>
       <DialogContent className="sm:max-w-sm p-5">
         <DialogHeader>
-          <DialogTitle>Registrar Resgate</DialogTitle>
+          <DialogTitle>Novo Resgate</DialogTitle>
         </DialogHeader>
         <div className="space-y-3">
-          <p className="text-xs text-muted-foreground">
-            {registro.numero} — saldo disponível: {formatBRL(registro.saldo_principal)} de principal +{" "}
-            {formatBRL(registro.rendimento_acumulado)} de rendimento.
-          </p>
           <div>
-            <Label className="text-xs">Tipo de Resgate</Label>
-            <Select value={tipo} onValueChange={(v) => setTipo(v as "parcial" | "total")}>
-              <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="total">Total (encerra a aplicação)</SelectItem>
-                <SelectItem value="parcial">Parcial (mantém o restante ativo)</SelectItem>
-              </SelectContent>
+            <Label className="text-xs">Empresa *</Label>
+            <Select value={empresaId} onValueChange={setEmpresaId}>
+              <SelectTrigger className="h-9"><SelectValue placeholder="Selecione…" /></SelectTrigger>
+              <SelectContent>{empresas.map((e) => <SelectItem key={e.id} value={e.id}>{e.nome}</SelectItem>)}</SelectContent>
             </Select>
           </div>
+          {montanteEmpresa && (
+            <p className="text-xs text-muted-foreground">
+              Montante ativo disponível: {formatBRL(montanteEmpresa.principal)} de principal +{" "}
+              {formatBRL(montanteEmpresa.rendimento)} de rendimento.
+            </p>
+          )}
           <div>
             <Label className="text-xs">Data do Resgate *</Label>
             <Input type="date" className="h-9" value={dataResgate} onChange={(e) => setDataResgate(e.target.value)} />
           </div>
-          {tipo === "parcial" && (
-            <>
-              <div>
-                <Label className="text-xs">Valor do Principal Resgatado (R$) *</Label>
-                <Input className="h-9" value={valorPrincipal} onChange={(e) => setValorPrincipal(e.target.value)} placeholder="0,00" />
-              </div>
-              <div>
-                <Label className="text-xs">Valor do Rendimento Resgatado (R$)</Label>
-                <Input className="h-9" value={valorRendimento} onChange={(e) => setValorRendimento(e.target.value)} placeholder="0,00" />
-              </div>
-            </>
-          )}
+          <div>
+            <Label className="text-xs">Valor do Principal Resgatado (R$) *</Label>
+            <Input className="h-9" value={valorPrincipal} onChange={(e) => setValorPrincipal(e.target.value)} placeholder="0,00" />
+          </div>
+          <div>
+            <Label className="text-xs">Valor do Rendimento Resgatado (R$)</Label>
+            <Input className="h-9" value={valorRendimento} onChange={(e) => setValorRendimento(e.target.value)} placeholder="0,00" />
+          </div>
           <div>
             <Label className="text-xs">Observação (opcional)</Label>
             <Textarea value={observacao} onChange={(e) => setObservacao(e.target.value.slice(0, 300))} placeholder="Ex: resgate para pagamento de fornecedor X" />
           </div>
+          <p className="text-xs text-muted-foreground">
+            O valor é retirado das aplicações ativas dessa empresa, começando pelas mais antigas, até completar
+            o total pedido — não é possível escolher uma aplicação específica.
+          </p>
         </div>
         <DialogFooter>
           <Button variant="outline" size="sm" onClick={onClose} disabled={resgatar.isPending}>Cancelar</Button>
-          <Button size="sm" onClick={confirmar} disabled={resgatar.isPending}>{resgatar.isPending ? "Salvando..." : "Registrar como resgatada"}</Button>
+          <Button size="sm" onClick={confirmar} disabled={resgatar.isPending}>{resgatar.isPending ? "Salvando..." : "Registrar resgate"}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

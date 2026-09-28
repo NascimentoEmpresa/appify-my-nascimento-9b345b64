@@ -67,9 +67,39 @@ export interface AplicacaoFinanceiraEvento {
   created_at: string;
 }
 
+export interface AplicacaoFinanceiraResgateCaixa {
+  id: string;
+  empresa_id: string;
+  data_resgate: string;
+  valor_principal: number;
+  valor_rendimento: number;
+  observacao: string | null;
+  created_by: string | null;
+  created_at: string;
+}
+
 const LISTA_KEY = "aplicacao_financeira_lista";
 const RESGATES_KEY = "aplicacao_financeira_resgates";
+const RESGATES_CAIXA_KEY = "aplicacao_financeira_resgates_caixa";
 const EVENTO_KEY = "aplicacao_financeira_evento";
+
+// Resgate entra no caixa da empresa (achado real da Cálita: não pode
+// alterar/fechar a linha de aplicação original, precisa bater com o
+// extrato pra conciliação) — por isso é uma tabela própria por empresa,
+// sem vínculo com nenhuma linha de APLICACAO_FINANCEIRA.
+export function useResgatesCaixa() {
+  return useQuery({
+    queryKey: [RESGATES_CAIXA_KEY],
+    queryFn: async () => {
+      const { data, error } = await (supabase as any)
+        .from("APLICACAO_FINANCEIRA_RESGATE_CAIXA")
+        .select("*")
+        .order("data_resgate", { ascending: false });
+      if (error) throw error;
+      return (data ?? []) as AplicacaoFinanceiraResgateCaixa[];
+    },
+  });
+}
 
 export function useAplicacoesFinanceiras() {
   return useQuery({
@@ -190,34 +220,34 @@ export function useAtualizarRendimento() {
   });
 }
 
-export interface ResgatarAplicacaoInput {
-  id: string;
+// Resgate é sobre o MONTANTE ativo da empresa, não por linha/aplicação
+// específica (achado real da Cálita) — o valor pedido é consumido em FIFO
+// (aplicações ativas mais antigas primeiro) pela RPC
+// aplicacao_financeira_resgatar_montante, uma por empresa.
+export interface ResgatarMontanteInput {
+  empresaId: string;
   dataResgate: string;
   valorPrincipal: number;
   valorRendimento: number;
-  tipo: TipoResgate;
   observacao?: string | null;
 }
 
-export function useResgatarAplicacao() {
+export function useResgatarMontanteAplicacao() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (input: ResgatarAplicacaoInput) => {
-      const { data, error } = await (supabase as any).rpc("aplicacao_financeira_resgatar", {
-        _id: input.id,
+    mutationFn: async (input: ResgatarMontanteInput) => {
+      const { data, error } = await (supabase as any).rpc("aplicacao_financeira_resgatar_montante", {
+        _empresa_id: input.empresaId,
         _data_resgate: input.dataResgate,
         _valor_principal: input.valorPrincipal,
         _valor_rendimento: input.valorRendimento,
-        _tipo: input.tipo,
         _observacao: input.observacao ?? null,
       });
       if (error) throw error;
-      return data as string;
+      return data as { aplicacao_id: string }[];
     },
-    onSuccess: (_data, vars) => {
-      qc.invalidateQueries({ queryKey: [LISTA_KEY] });
-      qc.invalidateQueries({ queryKey: [RESGATES_KEY, vars.id] });
-      qc.invalidateQueries({ queryKey: [EVENTO_KEY, vars.id] });
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: [RESGATES_CAIXA_KEY] });
       qc.invalidateQueries({ queryKey: ["fluxo_caixa_combinado"] });
     },
   });
