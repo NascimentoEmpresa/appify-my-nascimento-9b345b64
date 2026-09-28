@@ -76,6 +76,26 @@ jobs:
     timeout-minutes: 30
 
     steps:
+      - name: Pegar so a chave publica do repositorio
+        # Este workflow rodou de 24/09 a 28/09 SEM checkout nenhum, e estava
+        # certo: ele so chamava pg_dump contra um host remoto, nao lia arquivo
+        # do repositorio. O passo de criptografia mudou isso - ele precisa de
+        # `.github/backup-chave-publica.asc`.
+        #
+        # A primeira execucao com criptografia (36494436511, 28/09/2026) falhou
+        # exatamente por isso, depois de 6 minutos gerando o dump:
+        #   gpg: can't open '.github/backup-chave-publica.asc': No such file or directory
+        #   gpg: encryption failed: No public key
+        # Falhou de forma segura - nada foi publicado -, mas queimou o dump.
+        #
+        # sparse-checkout traz so esse arquivo em vez do repositorio inteiro
+        # (~16 mil arquivos): o job nao precisa de mais nada.
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: .github/backup-chave-publica.asc
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+
       - name: Instalar pg_dump 17
         # O Ubuntu do runner traz um client mais antigo. pg_dump precisa ser
         # >= a versao do servidor (a Supabase roda 17.6), senao recusa a copia.
