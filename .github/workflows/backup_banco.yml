@@ -12,7 +12,10 @@
 # problemas.
 #
 # MEDIDO EM 24/09/2026 CONTRA PRODUCAO (nao e estimativa)
-#   duracao ............ 1min14s
+#   duracao ............ 1min14s da maquina do Eduardo (Brasil)
+#                        7min05s do runner do GitHub (28/09, primeira execucao
+#                        que passou). A diferenca e latencia de rede ate
+#                        sa-east-1, nao o banco: 0 bloqueios nos dois casos.
 #   tamanho ............ 106,4 MB  (de um banco de 1,61 GB)
 #   conexoes usadas .... 1 de 90
 #   bloqueios ativos ... 0 (pg_dump NAO trava escrita; usa snapshot)
@@ -61,7 +64,7 @@ permissions:
 jobs:
   backup:
     runs-on: ubuntu-latest
-    # Medido em 1min14s. 30 minutos e folga larga para rede ruim; se passar
+    # Medido em 7min05s pelo runner (1min14s local). 30 minutos e folga; se passar
     # disso, alguma coisa esta errada e e melhor falhar e avisar.
     timeout-minutes: 30
 
@@ -151,7 +154,7 @@ jobs:
           TABELAS=$(grep -c 'TABLE DATA' conteudo.txt || true)
           echo "tabelas com dados no backup: $TABELAS"
 
-          # Em 24/09 eram 631. Menos de 300 significa copia parcial.
+          # Em 24/09 eram 631; em 28/09, 634. Menos de 300 e copia parcial.
           if [ "$TABELAS" -lt 300 ]; then
             echo "::error::Backup com apenas $TABELAS tabelas - esperado mais de 300. Copia provavelmente parcial."
             exit 1
