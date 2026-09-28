@@ -1,6 +1,14 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import type { SupabaseClient } from "@supabase/supabase-js";
+
+// screen_permission_user sem os tipos gerados (28/09/2026): o types.ts do
+// Lovable parou no enum app_acao antigo e não conhece enviar_malote,
+// editar_concluida, fundamentar… — gravar essas ações quebrava o type-check
+// da PR. Mesmo padrão do `db` sem tipo usado nas tabelas que o types.ts não
+// acompanha.
+const tabelaPermissoes = () => (supabase as unknown as SupabaseClient).from("screen_permission_user");
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
@@ -592,12 +600,12 @@ function UserAccessPanel({ podeGerenciar, modulos, menus }: { podeGerenciar: boo
         // ligadas são gravadas no laço de `pendingAcoes`, logo abaixo.
         const alvo = acoesGravadasPeloToggle(codigo, allow) as AppAcao[];
 
-        const { error: delErr } = await supabase.from("screen_permission_user").delete()
+        const { error: delErr } = await tabelaPermissoes().delete()
           .eq("user_id", selectedUserId).eq("menu_codigo", codigo)
           .in("acao", alvo).is("empresa_id", null);
         if (delErr) console.warn("delete perm error", delErr);
 
-        const { error } = await supabase.from("screen_permission_user").insert(
+        const { error } = await tabelaPermissoes().insert(
           alvo.map((acao) => ({
             user_id: selectedUserId, menu_codigo: codigo, acao, allow, empresa_id: null,
           })),
@@ -607,11 +615,11 @@ function UserAccessPanel({ podeGerenciar, modulos, menus }: { podeGerenciar: boo
 
       for (const [key, allow] of pendingAcoes) {
         const [codigo, acao] = key.split("::") as [string, AppAcao];
-        const { error: delErr } = await supabase.from("screen_permission_user").delete()
+        const { error: delErr } = await tabelaPermissoes().delete()
           .eq("user_id", selectedUserId).eq("menu_codigo", codigo).eq("acao", acao).is("empresa_id", null);
         if (delErr) console.warn("delete perm (ação extra) error", delErr);
 
-        const { error } = await supabase.from("screen_permission_user").insert({
+        const { error } = await tabelaPermissoes().insert({
           user_id: selectedUserId, menu_codigo: codigo, acao, allow, empresa_id: null,
         });
         if (error) throw error;
@@ -1062,11 +1070,11 @@ function PessoasComAcessoAoMenu({ menuCodigo, podeGerenciar }: { menuCodigo: str
       // só aquela ação específica.
       const acoes = acao === "visualizar" ? ACOES_DO_TOGGLE(menuCodigo) : [acao];
       for (const [userId, allow] of pending) {
-        const { error: delErr } = await supabase.from("screen_permission_user").delete()
+        const { error: delErr } = await tabelaPermissoes().delete()
           .eq("user_id", userId).eq("menu_codigo", menuCodigo).in("acao", acoes).is("empresa_id", null);
         if (delErr) console.warn("delete perm error", delErr);
 
-        const { error } = await supabase.from("screen_permission_user").insert(
+        const { error } = await tabelaPermissoes().insert(
           acoes.map((a) => ({ user_id: userId, menu_codigo: menuCodigo, acao: a, allow, empresa_id: null })),
         );
         if (error) throw error;
