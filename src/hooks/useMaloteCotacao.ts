@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import type { MaloteDespesaRow, StatusDespesa } from "@/hooks/useMaloteDespesa";
+import { uploadAnexoMalote } from "@/hooks/useMaloteDespesa";
 
 /**
  * SIS-2026-0112 — a perna de Suprimentos no fluxo do Malote.
@@ -242,8 +243,14 @@ export function useReprovarCotacao() {
 export function useSolicitarAjusteCotacao() {
   const invalidar = useInvalidar();
   return useMutation({
-    mutationFn: async (v: { id: string; motivo: string }) => {
-      const { error } = await sb.rpc("sup_malote_solicitar_ajuste_cotacao", { p_id: v.id, p_motivo: v.motivo });
+    mutationFn: async (v: { id: string; motivo: string; anexo?: File | null }) => {
+      // Controle interno do próprio ajuste — não é o arquivo da solicitação
+      // nem o anexo de pagamento que a Juliana sobe no lançamento.
+      const anexoPath = v.anexo ? await uploadAnexoMalote(v.anexo, v.id) : null;
+      const { error } = await sb.rpc("sup_malote_solicitar_ajuste_cotacao", {
+        p_id: v.id, p_motivo: v.motivo,
+        p_anexo_path: anexoPath, p_anexo_nome: v.anexo?.name ?? null,
+      });
       if (error) throw error;
     },
     onSuccess: () => { invalidar(); toast.success("Ajuste solicitado."); },

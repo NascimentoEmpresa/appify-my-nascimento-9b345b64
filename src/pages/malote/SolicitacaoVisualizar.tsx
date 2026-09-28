@@ -26,6 +26,7 @@ import {
   useAprovarCotacao,
   useReprovarCotacao,
   useSolicitarAjusteCotacao,
+  useSouSupervisorMalote,
   souAprovadorSolicitacao,
   uploadAnexosMalote,
   registrarEventoDespesa,
@@ -87,8 +88,10 @@ export default function SolicitacaoVisualizar() {
   const [acaoAprovacao, setAcaoAprovacao] = useState<"aprovar" | "reprovar" | null>(null);
   const [numeroSelecionado, setNumeroSelecionado] = useState<1 | 2 | 3 | null>(null);
   const [motivoAjusteCotacao, setMotivoAjusteCotacao] = useState("");
+  const [anexoAjusteCotacao, setAnexoAjusteCotacao] = useState<File[]>([]);
   const [ajustandoCotacao, setAjustandoCotacao] = useState(false);
   const [comentarioCotacao, setComentarioCotacao] = useState("");
+  const [anexoAjusteDecisao, setAnexoAjusteDecisao] = useState<File[]>([]);
   const [acaoCotacao, setAcaoCotacao] = useState<"aprovar" | "reprovar" | "ajustar" | null>(null);
 
   const [nome, setNome] = useState("");
@@ -156,25 +159,40 @@ export default function SolicitacaoVisualizar() {
   // Solicitação (aprovador_solicitacao_user_id), diferente do
   // aprovador1/2/3 da Despesa — SIS-2026-0189 corrigiu isso, antes
   // checava souAprovadorConfigurado (despesa) por engano.
+  //
+  // SIS-2026-0533: o Cassio (supervisor por cargo, não necessariamente o
+  // aprovador_solicitacao_user_id configurado em toda Classificação) não
+  // via NENHUMA ação de decisão/ajuste em várias solicitações, mesmo tendo
+  // permissão de sobra no banco — as RPCs malote_aprovar_cotacao/
+  // reprovar_cotacao/solicitar_ajuste_cotacao já liberam
+  // malote_supervisor_por_cargo(), mas esses gates do front só olhavam pro
+  // aprovador exato. Reaproveita a mesma RPC que a RLS já usa (não duplica
+  // regra de cargo em JS, ver useSouSupervisorMalote).
   const souAprovadorDaClassificacao = souAprovadorSolicitacao(despesa, user?.id);
-  const aguardandoMinhaAprovacaoInicial = despesa.status === "aguardando_aprovacao_inicial" && souAprovadorDaClassificacao;
-  const aguardandoCotacaoComoAprovador = despesa.status === "aguardando_cotacao" && souAprovadorDaClassificacao;
+  const { data: souSupervisorMaloteRaw } = useSouSupervisorMalote();
+  const souSupervisorMalote = !!souSupervisorMaloteRaw;
+  const souAprovadorOuSupervisor = souAprovadorDaClassificacao || souSupervisorMalote;
+  const aguardandoMinhaAprovacaoInicial = despesa.status === "aguardando_aprovacao_inicial" && souAprovadorOuSupervisor;
+  const aguardandoCotacaoComoAprovador = despesa.status === "aguardando_cotacao" && souAprovadorOuSupervisor;
   const emAprovacaoInicial = aguardandoMinhaAprovacaoInicial || aguardandoCotacaoComoAprovador;
 
   // Enviar/digitar cotações é telas do Suprimentos (SIS-2026-0112,
   // /app/suprimentos/cotacoes-malote) — aqui só mostramos o resultado.
-  const podeEscolherCotacao = despesa.status === "cotacao_realizada" && souAprovadorDaClassificacao;
+  const podeEscolherCotacao = despesa.status === "cotacao_realizada" && souAprovadorOuSupervisor;
 
   // SIS-2026-0533: aprovou a cotação errado, quer voltar antes da despesa
   // ser lançada no Malote — mesmo aprovador de podeEscolherCotacao, um
-  // status depois.
-  const podeAjustarCotacao = despesa.status === "cotacao_aprovada" && souAprovadorDaClassificacao;
+  // status depois. Também dá pra cancelar a despesa direto daqui — antes
+  // "cotacao_aprovada" não tinha ação nenhuma pro aprovador, só o aviso de
+  // que a Juliana (lançadora) ia lançar.
+  const podeAjustarCotacao = despesa.status === "cotacao_aprovada" && souAprovadorOuSupervisor;
+  const podeCancelarAprovado = despesa.status === "cotacao_aprovada" && souAprovadorOuSupervisor;
 
   // Status em que o aprovador configurado veria os painéis de Resumo/
   // Orçamento/Impacto — usado só pra explicar pra quem não é esse aprovador
-  // (solicitante, supervisor por cargo etc.) por que eles não aparecem aqui.
+  // (solicitante etc.) por que eles não aparecem aqui.
   const statusComPainelDeAprovador = ["aguardando_aprovacao_inicial", "aguardando_cotacao", "cotacao_realizada"].includes(despesa.status);
-  const painelOcultoPorNaoSerAprovador = statusComPainelDeAprovador && !souAprovadorDaClassificacao;
+  const painelOcultoPorNaoSerAprovador = statusComPainelDeAprovador && !souAprovadorOuSupervisor;
 
   const cotacoes: {
     n: 1 | 2 | 3;
@@ -299,9 +317,12 @@ export default function SolicitacaoVisualizar() {
     }
     setAcaoCotacao("ajustar");
     try {
-      await ajustarCotacaoMut.mutateAsync({ id: despesa!.id, motivo: comentarioCotacao.trim() });
+      await ajustarCotacaoMut.mutateAsync({
+        id: despesa!.id, motivo: comentarioCotacao.trim(), anexo: anexoAjusteDecisao[0] ?? null,
+      });
       toast.success("Ajuste solicitado. A cotação volta para o Suprimentos.");
       setComentarioCotacao("");
+      setAnexoAjusteDecisao([]);
     } catch (e: any) {
       toast.error(e.message ?? "Erro ao solicitar ajuste.");
     } finally {
@@ -316,9 +337,12 @@ export default function SolicitacaoVisualizar() {
     }
     setAjustandoCotacao(true);
     try {
-      await ajustarCotacaoMut.mutateAsync({ id: despesa!.id, motivo: motivoAjusteCotacao.trim() });
+      await ajustarCotacaoMut.mutateAsync({
+        id: despesa!.id, motivo: motivoAjusteCotacao.trim(), anexo: anexoAjusteCotacao[0] ?? null,
+      });
       toast.success("Ajuste solicitado. A cotação volta para decisão.");
       setMotivoAjusteCotacao("");
+      setAnexoAjusteCotacao([]);
     } catch (e: any) {
       toast.error(e.message ?? "Erro ao solicitar ajuste.");
     } finally {
@@ -460,6 +484,10 @@ export default function SolicitacaoVisualizar() {
               className="text-xs"
               rows={2}
             />
+            {/* SIS-2026-0533: anexo opcional do próprio ajuste — controle
+                interno do Suprimentos, não é o arquivo da solicitação nem
+                o anexo de pagamento que a Juliana sobe no lançamento. */}
+            <AnexosField arquivos={anexoAjusteCotacao} onChange={(f) => setAnexoAjusteCotacao(f.slice(-1))} />
             <div className="flex justify-end">
               <Button
                 size="sm"
@@ -768,6 +796,37 @@ export default function SolicitacaoVisualizar() {
                 {podeEscolherCotacao && (
                   <p className="text-xs text-muted-foreground">Clique em uma cotação abaixo pra selecionar a vencedora.</p>
                 )}
+                {/* SIS-2026-0533: se voltou pra cá por um ajuste, mostra o
+                    motivo (e o anexo, se teve) pra quem decide de novo. */}
+                {despesa.cotacao_observacoes && (
+                  <div className="rounded-md border bg-muted/40 p-2.5 text-xs">
+                    <span className="text-muted-foreground">Ajuste solicitado: </span>
+                    {despesa.cotacao_observacoes}
+                    {despesa.cotacao_ajuste_anexo_path && (
+                      <button
+                        type="button"
+                        onClick={() => abrirAnexo(despesa.cotacao_ajuste_anexo_path!)}
+                        className="ml-1.5 inline-flex items-center gap-1 text-primary hover:underline"
+                      >
+                        <Paperclip className="h-3 w-3" /> {despesa.cotacao_ajuste_anexo_nome || "Abrir anexo"}
+                      </button>
+                    )}
+                    {/* SIS-2026-0533: quem pediu o ajuste espera um arquivo
+                        novo do solicitante (não o Cassio anexando, ver
+                        anexo do próprio ajuste acima) — atalho aqui pro
+                        MESMO campo/Salvar de "Arquivos anexados" mais acima
+                        na tela, pra não ficar escondido. */}
+                    {editavel && (
+                      <div className="mt-2 space-y-1.5 border-t border-border/70 pt-2">
+                        <p className="text-muted-foreground">Anexe o arquivo novo aqui e salve:</p>
+                        <AnexosField arquivos={arquivosNovos} onChange={setArquivosNovos} />
+                        <Button size="sm" onClick={handleSalvar} disabled={salvando}>
+                          {salvando ? "Salvando..." : "Salvar arquivo novo"}
+                        </Button>
+                      </div>
+                    )}
+                  </div>
+                )}
                 <div className="grid gap-3 md:grid-cols-3">
                   {(() => {
                     const menorValor = Math.min(...cotacoes.filter((c) => c.valor != null).map((c) => Number(c.valor)));
@@ -882,6 +941,10 @@ export default function SolicitacaoVisualizar() {
                   className="w-full min-h-10 rounded-md border border-input bg-background p-2 text-xs"
                   maxLength={500}
                 />
+                {/* SIS-2026-0533: anexo opcional do ajuste — controle
+                    interno do Suprimentos, não some com nada que já existe
+                    na solicitação. */}
+                <AnexosField arquivos={anexoAjusteDecisao} onChange={(f) => setAnexoAjusteDecisao(f.slice(-1))} />
                 <div className="flex items-center justify-between gap-2">
                   <p className="text-[11px] text-muted-foreground">{comentarioCotacao.length}/500</p>
                   <div className="flex gap-2">
@@ -958,9 +1021,15 @@ export default function SolicitacaoVisualizar() {
         </Card>
       )}
 
-      {!emAprovacaoInicial && !podeEscolherCotacao && (podeCancelar || editavel) && (
+      {/* SIS-2026-0533: antes este bloco (Salvar/Cancelar, inclui editar
+          arquivo anexado) ficava escondido sempre que quem via a tela
+          também era o aprovador daquele status (emAprovacaoInicial) — quem
+          precisasse só corrigir o anexo, sem reprovar nem aprovar, não
+          tinha como. Removido o gate por emAprovacaoInicial: os dois
+          painéis (decisão + edição) agora coexistem quando fizer sentido. */}
+      {!podeEscolherCotacao && (podeCancelar || editavel || podeCancelarAprovado) && (
         <div className="flex justify-end gap-2">
-          {podeCancelar && (
+          {(podeCancelar || podeCancelarAprovado) && (
             <Button variant="outline" className="text-destructive border-destructive hover:bg-destructive/10 gap-1.5" onClick={handleCancelar} disabled={cancelando}>
               <Trash2 className="h-4 w-4" /> {cancelando ? "Cancelando..." : "Cancelar solicitação"}
             </Button>
