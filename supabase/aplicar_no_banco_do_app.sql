@@ -31084,7 +31084,7 @@ NOTIFY pgrst, 'reload schema';
 -- NOTIFY pgrst, 'reload schema';
 
 
--- ===== 20260930000252_app_acao_fundamentar (RODAR SOZINHA, numa execução; depois a 253 em OUTRA) =====
+-- ===== 20260930000252_app_acao_fundamentar (JA APLICADA 28/09) =====
 -- =========================================================================
 -- app_acao ganha o valor 'fundamentar'
 --
@@ -31108,7 +31108,7 @@ ALTER TYPE public.app_acao ADD VALUE IF NOT EXISTS 'fundamentar';
 -- ROLLBACK: Postgres não remove valor de enum; fica sem uso (a 253 tem o seu).
 
 
--- ===== 20260930000253_parecer_juridico_embasamento (só DEPOIS da 252, em execução separada) =====
+-- ===== 20260930000253_parecer_juridico_embasamento (JA APLICADA 28/09) =====
 -- =========================================================================
 -- Parecer Jurídico: resposta simples + EMBASAMENTO JURÍDICO em cada dúvida
 --
@@ -31329,7 +31329,7 @@ NOTIFY pgrst, 'reload schema';
 -- NOTIFY pgrst, 'reload schema';
 
 
--- ===== 20260930000255_chamado_reabrir_pelo_solicitante =====
+-- ===== 20260930000255_chamado_reabrir_pelo_solicitante (JA APLICADA 28/09) =====
 -- =========================================================================
 -- Chamados de Sistemas: o SOLICITANTE pode reabrir o próprio chamado
 --
@@ -31625,7 +31625,7 @@ NOTIFY pgrst, 'reload schema';
 -- NOTIFY pgrst, 'reload schema';
 
 
--- ===== 20260930000256_demissao_sino_cancelada_e_nao_pedir_a_propria =====
+-- ===== 20260930000256_demissao_sino_cancelada_e_nao_pedir_a_propria (JA APLICADA 28/09) =====
 -- =========================================================================
 -- Demissão: o sino avisa a CANCELADA, e ninguém pede a própria demissão
 --
