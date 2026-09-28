@@ -18,7 +18,7 @@ import {
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import {
-  DIAS_EXPERIENCIA, MARCOS, RESULTADOS, agruparPorContrato, dataSaidaEfetiva, estadoDoMarco, fmtData, hojeIso, infoResultado,
+  DIAS_EXPERIENCIA, MARCOS, NAO_ADMITIDO_SENIOR, RESULTADOS, agruparPorContrato, dataSaidaEfetiva, estadoDoMarco, fmtData, hojeIso, infoResultado,
   permaneceuEfetivo, proximaPendencia, resultadoPedeObservacao, resumoAcomp, somarDias, sugerirTipoSaida, tipoSaidaEfetivo,
   type EstadoMarco, type LinhaAcomp, type Marco, type Resultado,
 } from "@/lib/recrutamento/acompanhamento";
@@ -27,7 +27,7 @@ import {
 // Recrutamento e Seleção › ACOMPANHAR COLABORADORES / ACOMPANHAR EXPERIÊNCIA
 // (25/09/2026, mig 20260930000245) — a mesma tela, dois recortes:
 //
-//   colaboradores → todo mundo admitido no período (padrão: últimos 180
+//   colaboradores → todo mundo admitido no período (padrão: últimos 90
 //                   dias, filtro por DATA DE ADMISSÃO), inclusive quem já
 //                   saiu — é o histórico, como a planilha do RH.
 //   experiencia   → só quem ainda está no contrato e tem até 90 dias de
@@ -39,10 +39,11 @@ import {
 // Cada marco é um botão: registra o check-in (resultado, data, observação).
 // "Exportar Excel" devolve a planilha no mesmo formato.
 //
-// Base: Senior (EMPREGADOS), pela RPC recrut_acompanhamento_lista; a origem
-// "Recrutamento" é quem casou pelo CPF com um candidato que chegou à
-// ADMISSÃO. Gravação por RPC (recrut_acomp_registrar_check / _salvar), com
-// a ação "alterar" do menu — o banco repete a regra.
+// Base: Senior (EMPREGADOS) + quem chegou à ADMISSÃO no nosso Recrutamento
+// e ainda não está na Senior ("Ainda não admitido no sistema Senior" — os
+// marcos esperam a admissão). Chave = CPF. RPC recrut_acompanhamento_lista;
+// gravação por RPC (recrut_acomp_registrar_check / _salvar), com a ação
+// "alterar" do menu — o banco repete a regra.
 // =====================================================================
 
 const db = supabase as unknown as SupabaseClient;
@@ -69,6 +70,7 @@ function Kpi({ titulo, valor, icone: Icone, cor, dica }: { titulo: string; valor
 
 /** O botão de um marco (7/30/60/90) — a "célula" do Excel. */
 function CelulaMarco({ estado, onClick, podeEditar }: { estado: EstadoMarco; onClick: () => void; podeEditar: boolean }) {
+  if (estado.tipo === "aguardando") return <span className="text-xs text-muted-foreground" title="Conta a partir da admissão na Senior">aguarda</span>;
   if (estado.tipo === "nao_se_aplica") return <span className="text-xs text-muted-foreground" title="Saiu antes deste marco">—</span>;
   if (estado.tipo === "feito") {
     const r = infoResultado(estado.check.resultado)!;
@@ -96,14 +98,14 @@ export function PainelAcompanhamento({ modo }: { modo: ModoAcomp }) {
   const { can } = usePermissoes();
   const podeEditar = can("alterar", undefined, MENU[modo]);
 
-  const [ini, setIni] = useState(() => somarDias(hojeIso(), -180));
+  const [ini, setIni] = useState(() => somarDias(hojeIso(), -90));
   const [fim, setFim] = useState(() => hojeIso());
   const [linhas, setLinhas] = useState<LinhaAcomp[]>([]);
   const [carregando, setCarregando] = useState(true);
   const [busca, setBusca] = useState("");
   const [fContratos, setFContratos] = useState<string[]>([]);
   const [fOrigem, setFOrigem] = useState<"todos" | "recrutamento">("todos");
-  const [fSituacao, setFSituacao] = useState<"todos" | "no_contrato" | "sairam">("todos");
+  const [fSituacao, setFSituacao] = useState<"todos" | "no_contrato" | "sairam" | "nao_admitidos">("todos");
   const [fPendencia, setFPendencia] = useState<"todas" | "pendentes" | "atrasados">("todas");
   const [fechados, setFechados] = useState<Set<string>>(new Set());
 
@@ -123,8 +125,9 @@ export function PainelAcompanhamento({ modo }: { modo: ModoAcomp }) {
     const r = linhas.filter((l) => {
       if (!passaNoFiltroContratos(l, "contrato", fContratos)) return false;
       if (fOrigem === "recrutamento" && l.origem !== "recrutamento") return false;
-      if (fSituacao === "no_contrato" && l.saiu) return false;
+      if (fSituacao === "no_contrato" && (l.saiu || !l.admitido_senior)) return false;
       if (fSituacao === "sairam" && !l.saiu) return false;
+      if (fSituacao === "nao_admitidos" && l.admitido_senior) return false;
       if (fPendencia !== "todas") {
         const p = proximaPendencia(l, hoje);
         if (!p) return false;
@@ -136,7 +139,7 @@ export function PainelAcompanhamento({ modo }: { modo: ModoAcomp }) {
     // Experiência: dentro de cada contrato, primeiro quem tem check vencendo.
     if (modo === "experiencia") {
       const peso = (l: LinhaAcomp) => { const p = proximaPendencia(l, hoje); return !p ? 9 : p.estado.tipo === "atrasado" ? 0 : p.estado.tipo === "hoje" ? 1 : 2; };
-      r.sort((a, b) => peso(a) - peso(b) || a.admissao.localeCompare(b.admissao));
+      r.sort((a, b) => peso(a) - peso(b) || String(a.admissao ?? "9").localeCompare(String(b.admissao ?? "9")));
     }
     return r;
   }, [linhas, busca, fContratos, fOrigem, fSituacao, fPendencia, modo, hoje]);
@@ -162,7 +165,7 @@ export function PainelAcompanhamento({ modo }: { modo: ModoAcomp }) {
     }
     setSalvando(true);
     const { error } = await db.rpc("recrut_acomp_registrar_check", {
-      p_empregado_id: alvoCheck.l.empregado_id, p_marco: alvoCheck.marco,
+      p_cpf: alvoCheck.l.cpf, p_marco: alvoCheck.marco,
       p_resultado: apagar ? null : fCheck.resultado, p_realizado_em: fCheck.data || null, p_observacao: fCheck.obs.trim() || null,
     });
     setSalvando(false);
@@ -190,7 +193,7 @@ export function PainelAcompanhamento({ modo }: { modo: ModoAcomp }) {
     if (!alvoLinha) return;
     if (fLinha.permaneceu === "Não" && !fLinha.data_saida) { toast.error("Quem não permaneceu precisa da data de saída."); return; }
     setSalvando(true);
-    const { error } = await db.rpc("recrut_acomp_salvar", { p_empregado_id: alvoLinha.empregado_id, p_dados: fLinha });
+    const { error } = await db.rpc("recrut_acomp_salvar", { p_cpf: alvoLinha.cpf, p_dados: fLinha });
     setSalvando(false);
     if (error) { toast.error(error.message); return; }
     toast.success("Acompanhamento salvo."); setAlvoLinha(null); carregar();
@@ -205,6 +208,7 @@ export function PainelAcompanhamento({ modo }: { modo: ModoAcomp }) {
       const e = estadoDoMarco(l, m, hoje);
       if (e.tipo === "feito") { const r = infoResultado(e.check.resultado)!; return `${r.curto} ${fmtData(e.check.realizado_em)}${e.check.observacao ? ` — ${e.check.observacao}` : ""}`; }
       if (e.tipo === "nao_se_aplica") return "—";
+      if (e.tipo === "aguardando") return "Aguarda admissão";
       if (e.tipo === "atrasado") return `ATRASADO (venceu ${fmtData(e.vence)})`;
       return `Vence ${fmtData(e.vence)}`;
     };
@@ -212,7 +216,7 @@ export function PainelAcompanhamento({ modo }: { modo: ModoAcomp }) {
     for (const [contrato, ls] of grupos) {
       aoa.push(["CONTRATO", contrato], cab);
       for (const l of ls) {
-        aoa.push([l.nome, l.cargo, l.cidade ?? l.local ?? "", fmtData(l.admissao), ...MARCOS.map((m) => celMarco(l, m)),
+        aoa.push([l.nome + (l.admitido_senior ? "" : " (" + NAO_ADMITIDO_SENIOR + ")"), l.cargo, l.cidade ?? l.local ?? "", l.admissao ? fmtData(l.admissao) : "", ...MARCOS.map((m) => celMarco(l, m)),
           permaneceuEfetivo(l).valor ?? "", fmtData(dataSaidaEfetiva(l)) === "—" ? "" : fmtData(dataSaidaEfetiva(l)),
           tipoSaidaEfetivo(l) ?? "", l.acomp?.motivo_saida ?? (l.saiu ? l.causa ?? "" : ""), l.acomp?.observacao ?? ""]);
       }
@@ -231,7 +235,7 @@ export function PainelAcompanhamento({ modo }: { modo: ModoAcomp }) {
     <>
       <div className={cn("mb-5 grid gap-3 sm:grid-cols-2", modo === "experiencia" ? "lg:grid-cols-4" : "lg:grid-cols-5")}>
         <Kpi titulo={modo === "experiencia" ? "Em experiência" : "Admitidos no período"} valor={resumo.pessoas} icone={Users} cor="bg-blue-100 text-blue-700"
-             dica={`${resumo.doRecrutamento} vieram do Recrutamento`} />
+             dica={`${resumo.doRecrutamento} vieram do Recrutamento · ${resumo.naoAdmitidos} ainda não admitidos na Senior`} />
         <Kpi titulo="Check-ins atrasados" valor={resumo.atrasados} icone={AlertTriangle} cor="bg-red-100 text-red-700" />
         <Kpi titulo="Vencem hoje / em breve" valor={resumo.hoje + resumo.breve} icone={CalendarClock} cor="bg-amber-100 text-amber-700"
              dica={`Hoje: ${resumo.hoje} · próximos 3 dias: ${resumo.breve}`} />
@@ -266,6 +270,7 @@ export function PainelAcompanhamento({ modo }: { modo: ModoAcomp }) {
                 <SelectItem value="todos">Todas as situações</SelectItem>
                 <SelectItem value="no_contrato">Ainda no contrato</SelectItem>
                 <SelectItem value="sairam">Já saíram</SelectItem>
+                <SelectItem value="nao_admitidos">Ainda não admitidos na Senior</SelectItem>
               </SelectContent>
             </Select>
           ) : (
@@ -332,7 +337,7 @@ export function PainelAcompanhamento({ modo }: { modo: ModoAcomp }) {
                           const tipo = tipoSaidaEfetivo(l);
                           const motivo = l.acomp?.motivo_saida ?? (l.saiu ? l.causa : null);
                           return (
-                            <tr key={l.empregado_id} className="border-b last:border-0 hover:bg-slate-50/60">
+                            <tr key={l.cpf} className={cn("border-b last:border-0 hover:bg-slate-50/60", !l.admitido_senior && "bg-amber-50/40")}>
                               <td className="px-3 py-2">
                                 <div className="font-medium">{l.nome}</div>
                                 <div className="flex flex-wrap items-center gap-1 text-[11px] text-muted-foreground">
@@ -341,15 +346,26 @@ export function PainelAcompanhamento({ modo }: { modo: ModoAcomp }) {
                                       Recrutamento{l.vaga_id ? ` · vaga #${l.vaga_id}` : ""}
                                     </Badge>
                                   )}
+                                  {!l.admitido_senior && (
+                                    <Badge variant="outline" className="h-5 border-amber-300 bg-amber-50 px-1.5 text-[10px] text-amber-800">{NAO_ADMITIDO_SENIOR}</Badge>
+                                  )}
                                   {l.saiu && <Badge variant="outline" className="h-5 border-red-300 bg-red-50 px-1.5 text-[10px] text-red-700">{l.situacao}</Badge>}
-                                  {!l.saiu && l.situacao !== "Trabalhando" && <Badge variant="outline" className="h-5 px-1.5 text-[10px]">{l.situacao}</Badge>}
+                                  {l.admitido_senior && !l.saiu && l.situacao !== "Trabalhando" && <Badge variant="outline" className="h-5 px-1.5 text-[10px]">{l.situacao}</Badge>}
                                 </div>
                               </td>
                               <td className="px-3 py-2 text-xs">{l.cargo}</td>
                               <td className="px-3 py-2 text-xs">{l.cidade || l.local || "—"}</td>
                               <td className="px-3 py-2 text-xs">
-                                {fmtData(l.admissao)}
-                                <div className="text-[11px] text-muted-foreground">{l.dias}d{l.dias <= DIAS_EXPERIENCIA && !l.saiu ? " · experiência" : ""}</div>
+                                {l.admissao ? (
+                                  <>
+                                    {fmtData(l.admissao)}
+                                    <div className="text-[11px] text-muted-foreground">{l.dias}d{(l.dias ?? 0) <= DIAS_EXPERIENCIA && !l.saiu ? " · experiência" : ""}</div>
+                                  </>
+                                ) : (
+                                  <span className="text-amber-700" title="Ainda não está na EMPREGADOS (Senior)">
+                                    —<div className="text-[11px]">na Admissão desde {fmtData(l.data_ref)}</div>
+                                  </span>
+                                )}
                               </td>
                               {MARCOS.map((m) => (
                                 <td key={m} className="px-2 py-2 text-center">
@@ -397,7 +413,7 @@ export function PainelAcompanhamento({ modo }: { modo: ModoAcomp }) {
               <div className="rounded-lg bg-slate-50 p-3 text-sm">
                 <div className="font-semibold">{alvoCheck.l.nome}</div>
                 <div className="text-xs text-muted-foreground">
-                  {alvoCheck.l.cargo} · {alvoCheck.l.contrato} · admitido em {fmtData(alvoCheck.l.admissao)} · vence em {fmtData(somarDias(alvoCheck.l.admissao, alvoCheck.marco))}
+                  {alvoCheck.l.cargo} · {alvoCheck.l.contrato} · admitido em {fmtData(alvoCheck.l.admissao)} · vence em {alvoCheck.l.admissao ? fmtData(somarDias(alvoCheck.l.admissao, alvoCheck.marco)) : "—"}
                 </div>
               </div>
               <div>

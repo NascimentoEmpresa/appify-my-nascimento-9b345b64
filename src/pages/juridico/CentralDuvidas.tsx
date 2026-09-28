@@ -6,6 +6,7 @@ import { usePermissoes } from "@/context/PermissoesContext";
 import { useScreenAccess } from "@/hooks/useScreenAccess";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { FioDuvida } from "@/components/juridico/FioDuvida";
+import { ResumoDeFuncoes } from "@/components/fluxos/ResumoDeFuncoes";
 import { DashboardDuvidas } from "@/components/juridico/DashboardDuvidas";
 import { CATEGORIAS_DUVIDA as CATEGORIAS, agruparComplementos, complementoPendente, estaOculta, infoAvaliacao, respondidaPeloOperacional, type Complemento, type Duvida } from "@/lib/juridico/duvidas";
 
@@ -234,6 +235,7 @@ export default function CentralDuvidas() {
                   {visao === "dashboard" ? "☰ Lista" : "📊 Dashboard"}
                 </button>
               )}
+              <ResumoDeFuncoes fluxo="orientacoes" variant="secondary" size="default" />
               <button className="oj-btn" onClick={() => { setAsk({ ...ASK_RESET }); setAskModal(true); }}
                 style={{ background: "#fff", color: "#0f3171", padding: "13px 22px", fontSize: 14.5, boxShadow: "0 12px 28px rgba(0,0,0,.18)", whiteSpace: "nowrap" }}>
                 + Nova dúvida

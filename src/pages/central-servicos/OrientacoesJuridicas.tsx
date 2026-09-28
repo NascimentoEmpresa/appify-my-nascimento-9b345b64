@@ -5,6 +5,7 @@ import { useLocation } from "react-router-dom";
 import { useVinculoEmpregado } from "@/hooks/useVinculoEmpregado";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { FioDuvida } from "@/components/juridico/FioDuvida";
+import { ResumoDeFuncoes } from "@/components/fluxos/ResumoDeFuncoes";
 import {
   CATEGORIAS_DUVIDA as CATEGORIAS, agruparComplementos, complementoPendente, entraNaBiblioteca, infoAvaliacao,
   pendentesDeAvaliacao, respondidaPeloOperacional, type Complemento, type Duvida,
@@ -98,17 +99,19 @@ export default function OrientacoesJuridicas() {
 
   const enviar = async () => {
     if (!ask.titulo.trim() || !ask.pergunta.trim()) { toast("Preencha o assunto e a pergunta.", "err"); return; }
-    const { error } = await db.from("JUR_DUVIDAS").insert({
+    const { data: criada, error } = await db.from("JUR_DUVIDAS").insert({
       titulo: ask.titulo.trim(), pergunta: ask.pergunta.trim(), categoria: ask.categoria || null,
       autor_id: user?.id ?? null, autor_nome: autor,
       status: doEncarregado ? "Pendente Operacional" : "Aberta",
       origem: doEncarregado ? "encarregados" : "central",
       // Reservada: fora da biblioteca, só quem perguntou e os responsáveis veem.
       publicada: !ask.reservada,
-    });
+    }).select("status").single();
     if (error) { toast("Erro ao enviar: " + error.message, "err"); return; }
     setAskModal(false); setAsk({ ...ASK_RESET }); setAba("minhas");
-    toast(doEncarregado
+    // O banco decide a etapa pelo autor (mig 247): encarregado vai pro
+    // Operacional mesmo perguntando pela Central de Serviços.
+    toast((criada as { status?: string } | null)?.status === "Pendente Operacional"
       ? "Pergunta enviada ao Operacional. Ele responde ou encaminha ao Jurídico."
       : "Pergunta enviada. Passará por aprovação antes de ir ao Jurídico.", "ok"); load();
   };
@@ -162,10 +165,13 @@ export default function OrientacoesJuridicas() {
               <h1 style={{ margin: "6px 0 8px", fontSize: 34, fontWeight: 900, lineHeight: 1.1, letterSpacing: "-.5px" }}>⚖️ Central de Orientações Jurídicas</h1>
               <p style={{ margin: 0, fontSize: 15, opacity: .92, lineHeight: 1.5 }}>Tire dúvidas sobre lei, contrato, processo e rotina com o Jurídico. As respostas viram uma biblioteca aberta a toda a empresa — pesquise antes de perguntar: talvez já tenha resposta.</p>
             </div>
+            <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+            <ResumoDeFuncoes fluxo="orientacoes" variant="secondary" size="default" />
             <button className="oj-btn" onClick={abrirNova} title={pendentes.length ? "Avalie as respostas pendentes para abrir uma nova pergunta" : "Perguntar ao Jurídico"}
               style={{ background: pendentes.length ? "rgba(255,255,255,.35)" : "#fff", color: "#0f3171", padding: "13px 22px", fontSize: 14.5, boxShadow: "0 12px 28px rgba(0,0,0,.18)", whiteSpace: "nowrap" }}>
               {pendentes.length ? "⭐ Avalie para perguntar" : "+ Nova pergunta"}
             </button>
+            </div>
           </div>
           <div style={{ position: "relative", marginTop: 22, display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
             <div style={{ flex: 1, minWidth: 280, position: "relative" }}>
