@@ -241,6 +241,8 @@ export interface MaloteDespesaRow {
   cotacao_reprovada_motivo: string | null;
   cotacao_observacoes: string | null;
   cotacao_vencedor_num: 1 | 2 | 3 | null;
+  cotacao_ajuste_anexo_path: string | null;
+  cotacao_ajuste_anexo_nome: string | null;
   // ── Pagamento Malote (SIS-2026-0160) ──
   comprovante_pagamento_path: string | null;
   observacao_pagamento: string | null;
@@ -366,7 +368,7 @@ const DESPESA_COLUMNS =
   "cot2_fornecedor, cot2_valor, cot2_prazo, cot2_link, cot2_anexo_path, cot2_anexo_nome, " +
   "cot3_fornecedor, cot3_valor, cot3_prazo, cot3_link, cot3_anexo_path, cot3_anexo_nome, " +
   "cotacao_enviada_em, cotacao_enviada_por, cotacao_enviada_por_nome, cotacao_decidida_em, cotacao_decidida_por, cotacao_decidida_por_nome, " +
-  "cotacao_reprovada_motivo, cotacao_observacoes, cotacao_vencedor_num, " +
+  "cotacao_reprovada_motivo, cotacao_observacoes, cotacao_vencedor_num, cotacao_ajuste_anexo_path, cotacao_ajuste_anexo_nome, " +
   "comprovante_pagamento_path, observacao_pagamento, pago_em, pago_por, conferido_em, conferido_por, " +
   "arquivos, created_at, created_by, updated_at, deleted_at, deleted_por, " +
   "classificacao:classificacao_id(id, nome, setor_responsavel, aprovador1_nomes, aprovador2_nomes, aprovador3_nomes, aprovador1_user_ids, aprovador2_user_ids, aprovador3_user_ids, " +
@@ -1722,8 +1724,14 @@ export function useReprovarCotacao() {
 export function useSolicitarAjusteCotacao() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async ({ id, motivo }: { id: string; motivo: string }) => {
-      const { error } = await (supabase as any).rpc("malote_solicitar_ajuste_cotacao", { _id: id, _motivo: motivo });
+    mutationFn: async ({ id, motivo, anexo }: { id: string; motivo: string; anexo?: File | null }) => {
+      // Controle interno do próprio ajuste — não é o arquivo da solicitação
+      // nem o anexo de pagamento que a Juliana sobe no lançamento.
+      const anexoPath = anexo ? await uploadAnexoMalote(anexo, id) : null;
+      const { error } = await (supabase as any).rpc("malote_solicitar_ajuste_cotacao", {
+        _id: id, _motivo: motivo,
+        _anexo_path: anexoPath, _anexo_nome: anexo?.name ?? null,
+      });
       if (error) throw error;
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: [DESPESA_KEY] }),
@@ -2003,17 +2011,37 @@ export function souAprovadorConfiguradoComRateio(
   );
 }
 
+// Achado real (SIS-2026-0533, DM-2026-0576 do Patrimônio/Jurídico): sem
+// `.range()`, o PostgREST corta em 1000 linhas por padrão, em silêncio —
+// sem erro, sem toast. Com `malote_despesa` já em 1200+ linhas, qualquer
+// despesa que não esteja entre as 1000 mais recentemente atualizadas
+// simplesmente não aparece nem em Aprovações nem em Pagamento Malote,
+// mesmo aprovada e correta. Mesmo padrão já usado em
+// buscarTodasLinhasRateio (linhas acima) e em useFluxoCaixaMalote.ts —
+// paginar em blocos de 1000 até uma página vir incompleta.
+async function buscarTodasDespesas(): Promise<MaloteDespesaRow[]> {
+  const TAMANHO_PAGINA = 1000;
+  const despesas: MaloteDespesaRow[] = [];
+  for (let pagina = 0; ; pagina++) {
+    const { data, error } = await (supabase as any)
+      .from("malote_despesa")
+      .select(DESPESA_COLUMNS)
+      .is("deleted_at", null)
+      .order("updated_at", { ascending: false })
+      .order("id")
+      .range(pagina * TAMANHO_PAGINA, pagina * TAMANHO_PAGINA + TAMANHO_PAGINA - 1);
+    if (error) throw error;
+    despesas.push(...((data ?? []) as MaloteDespesaRow[]));
+    if (!data || data.length < TAMANHO_PAGINA) break;
+  }
+  return despesas;
+}
+
 export function useItensAprovacoesMalote() {
   return useQuery({
     queryKey: [DESPESA_KEY, "aprovacoes_malote"],
     queryFn: async () => {
-      const { data, error } = await (supabase as any)
-        .from("malote_despesa")
-        .select(DESPESA_COLUMNS)
-        .is("deleted_at", null)
-        .order("updated_at", { ascending: false });
-      if (error) throw error;
-      const despesas = (data ?? []) as MaloteDespesaRow[];
+      const despesas = await buscarTodasDespesas();
       const parcelasPorDespesa = await buscarParcelasPorDespesa(despesas);
       return explodirParcelas(despesas, parcelasPorDespesa);
     },
