@@ -21,6 +21,7 @@ import {
 } from "@/hooks/useMaloteCotacao";
 import { STATUS_BADGE_CLASS, souLancadorDespesa, uploadAnexoMalote, useItensDaDespesa } from "@/hooks/useMaloteDespesa";
 import { ItensSolicitacao } from "@/components/malote/ItensSolicitacao";
+import { AnexosField } from "@/pages/malote/AnexosField";
 import { useEmpresaId } from "@/hooks/useEmpresaId";
 import { useAuth } from "@/hooks/useAuth";
 import { useFornecedores, type FornecedorOpcao } from "@/hooks/useSupEstoque";
@@ -80,6 +81,10 @@ export default function CotacaoMaloteDetalhe() {
   const [motivo, setMotivo] = useState("");
   const [vencedor, setVencedor] = useState<1 | 2 | 3 | null>(null);
   const [observacoes, setObservacoes] = useState("");
+  // SIS-2026-0533: anexo opcional do ajuste — controle interno, não é o
+  // arquivo da solicitação nem o de pagamento que a Juliana sobe no
+  // lançamento.
+  const [anexoAjuste, setAnexoAjuste] = useState<File[]>([]);
 
   // Semeia ao carregar (e ao trocar de item), sem useEffect de dependência solta.
   if (d && carregadoDe !== d.id) {
@@ -287,7 +292,7 @@ export default function CotacaoMaloteDetalhe() {
             <Button
               variant="outline" disabled={ocupado || !!pedidoAtivo}
               className="border-amber-300 text-amber-700 hover:bg-amber-50"
-              onClick={() => { setMotivo(""); setConfirmando("ajustar"); }}
+              onClick={() => { setMotivo(""); setAnexoAjuste([]); setConfirmando("ajustar"); }}
             >
               <Pencil className="mr-2 h-4 w-4" /> Solicitar ajuste
             </Button>
@@ -330,6 +335,12 @@ export default function CotacaoMaloteDetalhe() {
             <p className="mt-2 rounded-md border bg-background/60 p-3 text-sm">
               <span className="text-muted-foreground">Ajuste solicitado por {d.cotacao_decidida_por_nome} em {fmtDataHora(d.cotacao_decidida_em)}: </span>
               {d.cotacao_observacoes}
+              {d.cotacao_ajuste_anexo_path && (
+                <button type="button" onClick={() => abrirAnexoMalote(d.cotacao_ajuste_anexo_path!)}
+                        className="ml-1.5 inline-flex items-center gap-1 text-primary hover:underline">
+                  <Paperclip className="h-3 w-3" /> {d.cotacao_ajuste_anexo_nome || "Abrir anexo"}
+                </button>
+              )}
             </p>
           )}
         </Aviso>
@@ -390,7 +401,7 @@ export default function CotacaoMaloteDetalhe() {
           {decidivel && (
             <Button variant="outline" disabled={ocupado}
                     className="border-amber-300 text-amber-700 hover:bg-amber-50"
-                    onClick={() => { setMotivo(""); setConfirmando("ajustar"); }}>
+                    onClick={() => { setMotivo(""); setAnexoAjuste([]); setConfirmando("ajustar"); }}>
               <Pencil className="mr-1.5 h-4 w-4" /> Solicitar ajuste
             </Button>
           )}
@@ -455,8 +466,11 @@ export default function CotacaoMaloteDetalhe() {
                       placeholder="Ex.: valores acima do limite orçado para este tipo de despesa." />
           )}
           {confirmando === "ajustar" && (
-            <Textarea rows={4} value={motivo} onChange={(e) => setMotivo(e.target.value)}
-                      placeholder="Ex.: aprovei o fornecedor errado, o vencedor deveria ter sido a cotação 2." />
+            <>
+              <Textarea rows={4} value={motivo} onChange={(e) => setMotivo(e.target.value)}
+                        placeholder="Ex.: aprovei o fornecedor errado, o vencedor deveria ter sido a cotação 2." />
+              <AnexosField arquivos={anexoAjuste} onChange={(f) => setAnexoAjuste(f.slice(-1))} />
+            </>
           )}
           {confirmando === "aprovar" && (
             <Textarea rows={3} value={observacoes} onChange={(e) => setObservacoes(e.target.value)}
@@ -473,7 +487,9 @@ export default function CotacaoMaloteDetalhe() {
                 if (confirmando === "reprovar") await reprovar.mutateAsync({ id: d.id, motivo });
                 if (confirmando === "aprovar" && vencedor)
                   await aprovar.mutateAsync({ id: d.id, vencedor, observacoes });
-                if (confirmando === "ajustar") await ajustar.mutateAsync({ id: d.id, motivo });
+                if (confirmando === "ajustar")
+                  await ajustar.mutateAsync({ id: d.id, motivo, anexo: anexoAjuste[0] ?? null });
+                setAnexoAjuste([]);
                 setConfirmando(null);
               }}
             >
