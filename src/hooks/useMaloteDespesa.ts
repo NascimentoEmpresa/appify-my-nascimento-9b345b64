@@ -49,7 +49,10 @@ export type TipoEvento =
   // estar dentro da tolerância de variação da cotação (e sem troca de
   // contrato no Rateio) — distinto de 'aprovacao_nivel' pelo mesmo motivo
   // de 'ajuste_administrativo': não foi um clique real de aprovar.
-  | "aprovacao_automatica_cotacao";
+  | "aprovacao_automatica_cotacao"
+  // SIS-2026-0533: Suprimentos aprovou a cotação errado e pede ajuste antes
+  // da Juliana lançar a despesa — volta pra 'cotacao_realizada'.
+  | "ajuste_cotacao_solicitado";
 
 // Status ainda dentro da fase "Solicitação" — item abre em modal.
 // A partir daqui em diante (pendente_aprovacao em diante) o item já é
@@ -1702,6 +1705,25 @@ export function useReprovarCotacao() {
   return useMutation({
     mutationFn: async ({ id, motivo }: { id: string; motivo: string }) => {
       const { error } = await (supabase as any).rpc("malote_reprovar_cotacao", { _id: id, _motivo: motivo });
+      if (error) throw error;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: [DESPESA_KEY] }),
+  });
+}
+
+/**
+ * SIS-2026-0533: solicita ajuste na cotação, de dois pontos possíveis —
+ * durante a decisão ("cotacao_realizada", volta pra "aguardando_cotacao"
+ * pro Suprimentos cotar de novo) ou depois de aprovada ("cotacao_aprovada",
+ * volta pra "cotacao_realizada" pra reabrir a escolha do vencedor). A RPC
+ * decide o destino pelo status atual. Mesma regra de permissão de
+ * aprovar/reprovar cotação.
+ */
+export function useSolicitarAjusteCotacao() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, motivo }: { id: string; motivo: string }) => {
+      const { error } = await (supabase as any).rpc("malote_solicitar_ajuste_cotacao", { _id: id, _motivo: motivo });
       if (error) throw error;
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: [DESPESA_KEY] }),

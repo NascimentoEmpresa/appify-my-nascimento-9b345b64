@@ -122,12 +122,6 @@ interface RateioGridProps {
   // se isso força reenvio é DespesaVisualizar.tsx (rateioMudouValor), não
   // esta grade.
   apenasValorEEmpresa?: boolean;
-  // SIS-2026-0467 (substitui o SIS-2026-0457): mostra o aviso de que
-  // Fornecedor é sempre obrigatório em cada linha — só quem valida isso no
-  // submit (hoje, PainelDespesaMalote) passa true. RatearClassificacao/
-  // DespesaVisualizar não exigem isso, então não mostram o aviso.
-  // Integrante segue opcional independente disto.
-  exigirFornecedor?: boolean;
   // Diária UFRGS (24/09/2026): "quando adicionar uma linha a opção de
   // fornecedor já vir pré-preenchida". Quem embute a grade e JÁ SABE
   // contrato/fornecedor/integrante (ver rateioPadrao.ts) passa aqui, e toda
@@ -163,7 +157,6 @@ export function RateioGrid({
   podeJustificarComoAprovador,
   souSolicitante,
   apenasValorEEmpresa,
-  exigirFornecedor,
   linhaPadrao,
 }: RateioGridProps) {
   const { data: empresas = [] } = useEmpresasGrupo();
@@ -283,7 +276,13 @@ export function RateioGrid({
   }
 
   const mostrarColunaContrato = colunaContratoAtiva || colunaContratoOpcional;
-  const mostrarColunaEmpresa = dimensoes.empresa || (contratoPorClassificacao && colunaContratoAtiva);
+  // [SEM-CHAMADO] (25/09, pedido do Iury): nas telas de criação
+  // (contratoPorClassificacao), a coluna Empresa é permanente — toda linha
+  // tem, sempre obrigatória, sem checkbox próprio (ver acima). Derivada do
+  // Contrato quando a Classificação exige; editável nas demais. Em
+  // DespesaVisualizar (contratoPorClassificacao=false), segue o toggle
+  // manual de sempre.
+  const mostrarColunaEmpresa = contratoPorClassificacao ? true : dimensoes.empresa;
 
   const nenhumaDimensao = !mostrarClassificacao && !dimensoes.empresa && !mostrarColunaContrato && !dimensoes.fornecedor && !dimensoes.integrante;
 
@@ -410,7 +409,13 @@ export function RateioGrid({
         <div>
           <p className="text-sm font-medium">O que deseja ratear? (marque uma ou mais opções)</p>
           <div className="mt-1 flex flex-wrap gap-4">
-            {!(contratoPorClassificacao && !mostrarClassificacao && classificacaoTipoUnica === "contrato") && (
+            {/* [SEM-CHAMADO] (25/09, pedido do Iury): nas telas de criação
+                (contratoPorClassificacao=true), Empresa deixou de ser um
+                checkbox independente — só aparece quando o Contrato já
+                exige (deriva automático, ver atualizarContratoDaLinha).
+                DespesaVisualizar.tsx (edição, contratoPorClassificacao=false)
+                continua com o toggle manual, sem mudança. */}
+            {!contratoPorClassificacao && (
               <label className="flex items-center gap-1.5 text-sm cursor-pointer">
                 <Checkbox checked={dimensoes.empresa} onCheckedChange={(c) => atualizarDimensao("empresa", c === true)} disabled={disabled || travarEstrutura} />
                 Empresa
@@ -433,18 +438,29 @@ export function RateioGrid({
                 Contrato
               </label>
             )}
+            {/* [SEM-CHAMADO] (25/09, pedido do Iury) volta pro SIS-2026-0457:
+                Fornecedor e Integrante são dimensões igualmente opcionais
+                entre si, mas ao menos uma das duas tem que estar marcada —
+                erroFornecedorNoRateio (rateioValidacao.ts) reprova no submit
+                se nenhuma estiver. O SIS-2026-0467 tinha travado Fornecedor
+                sempre marcado/desabilitado (prop exigirFornecedor, removida
+                agora) — isso impedia usar Integrante como alternativa. */}
             <label className="flex items-center gap-1.5 text-sm cursor-pointer">
-              <Checkbox checked={dimensoes.fornecedor} onCheckedChange={(c) => atualizarDimensao("fornecedor", c === true)} disabled={disabled || travarEstrutura || exigirFornecedor} />
-              Fornecedor{!exigirFornecedor && " (opcional)"}
+              <Checkbox checked={dimensoes.fornecedor} onCheckedChange={(c) => atualizarDimensao("fornecedor", c === true)} disabled={disabled || travarEstrutura} />
+              Fornecedor
             </label>
             <label className="flex items-center gap-1.5 text-sm cursor-pointer">
               <Checkbox checked={dimensoes.integrante} onCheckedChange={(c) => atualizarDimensao("integrante", c === true)} disabled={disabled || travarEstrutura} />
-              Integrante (opcional)
+              Integrante
             </label>
           </div>
-          {exigirFornecedor && (
+          {(dimensoes.fornecedor || dimensoes.integrante) && (
             <p className="mt-1.5 text-xs text-muted-foreground">
-              Fornecedor é obrigatório em cada linha do rateio.
+              {dimensoes.fornecedor && dimensoes.integrante
+                ? "Informe o Fornecedor ou o Integrante em cada linha do rateio."
+                : dimensoes.fornecedor
+                  ? "Fornecedor é obrigatório em cada linha do rateio."
+                  : "Integrante é obrigatório em cada linha do rateio."}
             </p>
           )}
         </div>
@@ -530,13 +546,24 @@ export function RateioGrid({
                 </TableHead>
               )}
               {mostrarClassificacao && <TableHead>Classificação *</TableHead>}
-              {mostrarColunaEmpresa && <TableHead>Empresa {colunaContratoAtiva && !dimensoes.empresa ? "" : "*"}</TableHead>}
+              {/* [SEM-CHAMADO] (25/09, pedido do Iury, achado DM-2026-1364):
+                  Empresa passou a ser obrigatória em toda linha que mostra a
+                  coluna — inclusive quando derivada do Contrato (antes o "*"
+                  só aparecia no modo manual, ver erroEmpresaNoRateio em
+                  rateioValidacao.ts). */}
+              {mostrarColunaEmpresa && <TableHead>Empresa *</TableHead>}
               {mostrarColunaContrato && <TableHead>Contrato {colunaContratoAtiva ? "*" : "(opcional)"}</TableHead>}
               <TableHead>{ratearPor === "percentual" ? "% Rateio *" : "Valor (R$) *"}</TableHead>
+              {/* [SEM-CHAMADO] (25/09): "*" só quando a dimensão está sozinha
+                  (aí é obrigatória de fato); com as duas marcadas, nenhuma
+                  coluna é obrigatória isolada — o que vale é "uma das duas
+                  por linha" (erroFornecedorNoRateio). */}
               {dimensoes.fornecedor && (
-                <TableHead>Fornecedor{!exigirFornecedor && " (opcional)"}</TableHead>
+                <TableHead>Fornecedor{!dimensoes.integrante ? " *" : ""}</TableHead>
               )}
-              {dimensoes.integrante && <TableHead>Integrante (opcional)</TableHead>}
+              {dimensoes.integrante && (
+                <TableHead>Integrante{!dimensoes.fornecedor ? " *" : ""}</TableHead>
+              )}
               {mostrarColunasOrcamento && mostrarValorParcela1 && (
                 <TableHead className="text-center">Valor da parcela {parcelaSelecionada?.numero_parcela ?? 1}</TableHead>
               )}
@@ -615,7 +642,7 @@ export function RateioGrid({
                       <p className="h-8 flex items-center text-xs text-muted-foreground">
                         {empresas.find((e) => e.id === linha.empresa_id)?.nome ?? "Derivada do contrato"}
                       </p>
-                    ) : dimensoes.empresa ? (
+                    ) : contratoPorClassificacao || dimensoes.empresa ? (
                       <Select value={linha.empresa_id ?? ""} onValueChange={(v) => atualizarLinha(idx, { empresa_id: v })} disabled={disabled}>
                         <SelectTrigger className="h-8 w-36 text-xs">
                           <SelectValue placeholder="Selecione..." />
@@ -647,13 +674,20 @@ export function RateioGrid({
                           triggerClassName="h-8 text-xs"
                         />
                       ) : colunaContratoOpcional ? (
-                        // SIS-2026-0341: referência visual apenas — não usa
-                        // atualizarContratoDaLinha (não auto-preenche
-                        // Empresa nem troca a origem do Orçado, que segue
-                        // sendo o Orçamento Administrativo da Classificação).
+                        // SIS-2026-0341: continua não trocando a origem do
+                        // Orçado (segue Orçamento Administrativo da
+                        // Classificação, nunca a Planilha de Custo do
+                        // Contrato — useOrcadoClassificacao.resolver só olha
+                        // contrato_id quando classificacao.tipo === "contrato",
+                        // que não é o caso aqui). [SEM-CHAMADO] (25/09,
+                        // pedido do Iury): passa a usar
+                        // atualizarContratoDaLinha mesmo assim, só pra
+                        // aproveitar o auto-preenchimento de Empresa — agora
+                        // que Empresa é coluna obrigatória sempre, escolher
+                        // o Contrato de referência já resolve ela também.
                         <SearchableSelect
                           value={linha.contrato_id ?? ""}
-                          onChange={(v) => atualizarLinha(idx, { contrato_id: v || null })}
+                          onChange={(v) => atualizarContratoDaLinha(idx, v)}
                           options={contratos.map((c) => ({ value: c.id, label: c.nome, muted: c.status === "encerrado" }))}
                           placeholder="Referência (opcional)..."
                           disabled={disabled || travarEstrutura}
