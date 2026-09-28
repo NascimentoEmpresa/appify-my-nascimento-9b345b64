@@ -352,7 +352,7 @@ function MenusEditor({ moduloId, menus, podeGerenciar, onChange }: { moduloId: s
 
 // O enum app_acao do banco. Tipado aqui porque o insert em
 // screen_permission_user exige a união exata, não `string`.
-type AppAcao = "visualizar" | "incluir" | "alterar" | "excluir" | "aprovar" | "enviar_malote" | "exportar" | "executar_ia" | "alterar_dre" | "responder" | "editar_concluida";
+type AppAcao = "visualizar" | "incluir" | "alterar" | "excluir" | "aprovar" | "enviar_malote" | "exportar" | "executar_ia" | "alterar_dre" | "responder" | "fundamentar" | "editar_concluida";
 
 // LIBERAR A TELA É LIBERAR A TELA.
 //
@@ -388,11 +388,11 @@ const ACOES_DO_TOGGLE = (codigo: string): AppAcao[] =>
 // Suprimentos. Pior, 'executar_ia' e 'alterar_dre' não são checadas em canto
 // nenhum do sistema — aqueles dois switches nunca controlaram nada.
 const ORDEM_ACOES: readonly AppAcao[] = [
-  "visualizar", "incluir", "alterar", "excluir", "aprovar", "enviar_malote", "responder", "editar_concluida", "exportar", "executar_ia", "alterar_dre",
+  "visualizar", "incluir", "alterar", "excluir", "aprovar", "enviar_malote", "responder", "fundamentar", "editar_concluida", "exportar", "executar_ia", "alterar_dre",
 ];
 const ACAO_LABEL: Record<AppAcao, string> = {
   visualizar: "Visualizar", incluir: "Incluir", alterar: "Alterar", excluir: "Excluir",
-  aprovar: "Aprovar", enviar_malote: "Enviar para malote", responder: "Responder", editar_concluida: "Editar concluída", exportar: "Exportar", executar_ia: "Executar IA", alterar_dre: "Alterar DRE",
+  aprovar: "Aprovar", enviar_malote: "Enviar para malote", responder: "Responder", fundamentar: "Fundamentar", editar_concluida: "Editar concluída", exportar: "Exportar", executar_ia: "Executar IA", alterar_dre: "Alterar DRE",
 };
 
 const ACAO_LABEL_POR_MENU: Readonly<Record<string, Partial<Record<AppAcao, string>>>> = {
@@ -400,6 +400,9 @@ const ACAO_LABEL_POR_MENU: Readonly<Record<string, Partial<Record<AppAcao, strin
   encarregados_diarias: { incluir: "Incluir / Editar" },
   financeiro_diarias: { incluir: "Incluir / Editar" },
   sistemas_hora_extra: { editar_concluida: "Editar HE já concluída" },
+  // Parecer Jurídico (28/09/2026, mig 253): duas respostas por dúvida, cada
+  // uma com seu switch de quem ESCREVE. Ler, todos leem — não se gerencia aqui.
+  duvidas: { responder: "Responder (resposta simples)", fundamentar: "Responder embasamento jurídico" },
 };
 
 const rotuloAcao = (menuCodigo: string, acao: AppAcao) =>

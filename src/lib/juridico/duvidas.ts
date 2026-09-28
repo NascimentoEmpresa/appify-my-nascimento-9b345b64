@@ -9,7 +9,14 @@
 export interface Duvida {
   id: number; created_at?: string; autor_id?: string; autor_nome?: string;
   titulo: string; pergunta: string; categoria?: string; status: string;
+  /** Resposta SIMPLES e objetiva — ação `responder` do menu `duvidas`. */
   resposta?: string; respondido_por?: string; respondido_em?: string;
+  /**
+   * Mig 253 (28/09/2026): embasamento jurídico da resposta (leis, normas,
+   * cláusulas) — ação `fundamentar`. Todos que veem a resposta veem; a tela
+   * só esconde atrás de "Visualizar embasamento jurídico".
+   */
+  embasamento?: string | null; embasamento_por?: string | null; embasamento_em?: string | null;
   aprovado_por?: string; aprovado_em?: string; motivo_reprovacao?: string;
   /** Avaliação de quem perguntou (só depois de respondida; RPC jur_duvida_avaliar). */
   avaliacao?: Avaliacao | null; avaliacao_comentario?: string | null; avaliado_em?: string | null;
@@ -30,6 +37,13 @@ export const STATUS_PENDENTE_OPERACIONAL = "Pendente Operacional";
 export const estaOculta = (d: Pick<Duvida, "publicada">): boolean => d.publicada === false;
 /** Resposta dada pelo Operacional (não é parecer do Jurídico). */
 export const respondidaPeloOperacional = (d: Pick<Duvida, "respondido_etapa">): boolean => d.respondido_etapa === "operacional";
+
+/**
+ * Falta o embasamento (mig 253): dúvida do Jurídico já aprovada ou respondida
+ * sem fundamentação. Resposta do Operacional não tem embasamento — fica fora.
+ */
+export const faltaEmbasamento = (d: Pick<Duvida, "status" | "embasamento" | "respondido_etapa">): boolean =>
+  (d.status === "Aprovada" || d.status === "Respondida") && !respondidaPeloOperacional(d) && !(d.embasamento ?? "").trim();
 
 /** Um item do fio que continua depois da resposta principal. */
 export interface Complemento {
