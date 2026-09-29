@@ -23,10 +23,62 @@ depois do ponto copiado**. Na maioria das quedas, não é o que resolve.
 ## Onde está o backup
 
 GitHub → **Actions** → workflow **"Backup do banco"** → abra a execução mais
-recente → seção **Artifacts** → baixe `backup-AAAAMMDD-HHMMSS.dump`.
+recente → seção **Artifacts** → baixe `backup-AAAAMMDD-HHMMSS.dump.gpg`.
 
 Roda automaticamente às **06:00 e 18:00** (horário de Brasília). Guarda **14
 dias**. Para gerar um agora: botão **"Run workflow"** na mesma tela.
+
+---
+
+## Antes de restaurar: descriptografar
+
+> **Desde 28/09/2026 o arquivo é criptografado.** Ele termina em `.dump.gpg` e
+> o `pg_restore` **não** abre ele direto — você precisa descriptografar antes.
+
+O motivo: este repositório é **público**, e artifact de repositório público é
+baixável por qualquer pessoa com conta no GitHub. O dump tem o schema `auth`
+(155 usuários e os hashes de senha), `EMPREGADOS` (13.355 pessoas, com CPF),
+malote e pagamentos. Até 28/09/2026 ele subia em texto claro; isso foi
+corrigido e o artefato exposto foi apagado no mesmo dia.
+
+**Só a chave privada do Eduardo abre o arquivo.** O GitHub tem apenas a chave
+pública (`.github/backup-chave-publica.asc`) — ele consegue *criar* backup e
+não consegue *abrir* nenhum, de propósito.
+
+```bash
+gpg --decrypt --output backup-AAAAMMDD-HHMMSS.dump backup-AAAAMMDD-HHMMSS.dump.gpg
+```
+
+Se a chave estiver protegida por senha, ele vai pedir. Daí em diante o arquivo
+`.dump` é igual ao de sempre e todos os passos abaixo valem sem mudança.
+
+### ⚠️ Se a chave privada for perdida, TODOS os backups viram lixo
+
+Não existe recuperação, não existe suporte para acionar, não existe chave
+mestra. A chave privada e a senha dela precisam estar em **três lugares**:
+
+1. Gerenciador de senhas
+2. Mídia externa guardada fora da mesa (pendrive, HD)
+3. Impressa em papel, no cofre
+
+Identificação da chave em uso (criada em 28/09/2026):
+
+```text
+pub   rsa4096/23595EC2   53B1F5DE1075BAA392D1AD1D346F5F8723595EC2  [C]
+sub   rsa4096/A3F1159F                                             [E]
+uid   Eduardo Monteiro (backup ERP) <eduardojeielmonteiro1802@gmail.com>
+```
+
+Para conferir que a sua cópia da chave privada é a certa **e que ela realmente
+descriptografa** — faça isto a cada trimestre, junto com o teste de restauração:
+
+```bash
+gpg --list-secret-keys "backup ERP"     # tem que mostrar a subchave [E]
+```
+
+Uma cópia da chave privada exportada **antes** da subchave `[E]` existir parece
+válida e não descriptografa nada. Se a sua cópia não listar a linha `ssb`,
+ela não serve.
 
 ---
 
@@ -41,8 +93,22 @@ fora do banco; ele guarda só os metadados. Restaurar devolve *a lista* de
 arquivos, não os arquivos. É a mesma limitação que a própria Supabase avisa na
 tela de backups dela.
 
+Medido em produção em **28/09/2026**, para dimensionar o buraco:
+
+| | |
+|---|---|
+| Arquivos no Storage | **7.380** |
+| Volume | **4.465 MB** — quase **3×** o tamanho do banco (1,61 GB) |
+| Maior arquivo | 243 MB |
+| Crescimento só em setembro/2026 | 6.213 arquivos, 3.415 MB |
+
+Os três maiores buckets são `checklist-faturamento-anexos` (1,5 GB),
+`malote-anexos` (757 MB) e `treinamentos` (474 MB).
+
 > Se o objetivo for sobreviver à perda total da conta, os arquivos do Storage
 > precisam de uma cópia própria. Isso ainda **não existe** e é o próximo item.
+> Pelo volume acima, ele não cabe em artifact do Actions — precisa de
+> armazenamento de objeto externo.
 
 ---
 
@@ -107,6 +173,31 @@ Rode no banco restaurado **e** no de origem, se ele ainda existir. Os números
 têm que bater.
 
 Em 24/09 bateram exatamente: `2.247 / 1.118 / 13.355 / 155 / 3.748.805 / 155`.
+
+---
+
+## O backup já se testa sozinho — e o que isso NÃO cobre
+
+Desde **28/09/2026**, toda execução do workflow restaura o dump que acabou de
+gerar num **PostgreSQL 17 puro** (nada da Supabase) e compara as contagens com
+a produção ao vivo, com tolerância de 5%. **Backup que não restaura não é
+publicado.** Duas vezes por dia, não uma vez por trimestre.
+
+Isso responde ao cenário "a Supabase sumiu": se o dump só restaurasse dentro da
+Supabase, ele não serviria justamente no dia em que é mais necessário.
+
+O que o teste automático **não** cobre, e por isso o teste manual abaixo continua
+valendo:
+
+| Não coberto | Por quê |
+|---|---|
+| A sua chave privada funciona | O runner nunca a viu — de propósito |
+| O procedimento humano | Ninguém testa o runbook lendo o runbook |
+| O tempo real até o ERP voltar | O teste mede o banco, não o sistema |
+| Os arquivos do Storage | Não estão no backup |
+
+Ou seja: o automático prova que **o arquivo presta**. O manual prova que **você
+consegue usá-lo**. São coisas diferentes e as duas precisam existir.
 
 ---
 
