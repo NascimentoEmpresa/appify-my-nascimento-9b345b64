@@ -8,7 +8,7 @@
 --  devolvem o mesmo booleano, entao as contagens tem que bater LINHA A LINHA
 --  antes e depois. Se qualquer numero mudar, NAO aplique / faca rollback.
 --
---  COMO USAR (no SQL Editor do projeto de producao)
+--  COMO USAR (no SQL Editor do projeto de producao, ou no psql)
 --  1. Rode este arquivo INTEIRO com a policy AINDA CRUA (antes da migration).
 --     Anote os numeros da coluna "linhas_visiveis".
 --  2. Aplique a migration 20260930000265.
@@ -16,17 +16,13 @@
 --  4. Compare: os numeros de cada linha tem que ser IDENTICOS.
 --     A unica diferenca esperada e o tempo (depois deve ser muito mais rapido).
 --
---  Testa dois perfis reais:
---   - um ADMIN (tem 'administracao','alterar')  -> deve ver TODAS as linhas
---   - um usuario NORMAL (nao tem)               -> deve ver ZERO em todas
---  e uma amostra de 3 tabelas (pequena, media, grande). A policy das 34 e
---  identica, entao a amostra representa o conjunto.
+--  Feito com UUID escrito direto (sem \set), para rodar no SQL Editor do
+--  Supabase, que nao entende os comandos de cliente do psql.
+--
+--  Testa dois perfis reais (troque os UUIDs se estes nao existirem mais):
+--   - ADMIN     97260632-2f1a-44e3-9f93-58b2b1f3702c  -> deve ver TODAS as linhas
+--   - SEM ACESSO 777fddd0-2739-4dc2-92fd-242cb1c206e6 -> deve ver ZERO em todas
 -- ============================================================================
-
--- Troque pelos UUIDs reais se estes ja nao existirem.
--- (capturados em 29/09/2026: um admin e um usuario sem acesso)
-\set ADMIN    '97260632-2f1a-44e3-9f93-58b2b1f3702c'
-\set SEMACESSO '777fddd0-2739-4dc2-92fd-242cb1c206e6'
 
 -- ---------------------------------------------------------------------------
 -- PERFIL ADMIN — deve enxergar as linhas
@@ -34,7 +30,7 @@
 BEGIN;
   SET LOCAL ROLE authenticated;
   SELECT set_config('request.jwt.claims',
-    json_build_object('sub', :'ADMIN', 'role', 'authenticated')::text, true);
+    '{"sub":"97260632-2f1a-44e3-9f93-58b2b1f3702c","role":"authenticated"}', true);
 
   SELECT 'ADMIN' AS perfil, 'mz_02_dim_empresas' AS tabela,
          count(*) AS linhas_visiveis FROM public.mz_02_dim_empresas
@@ -52,7 +48,7 @@ ROLLBACK;
 BEGIN;
   SET LOCAL ROLE authenticated;
   SELECT set_config('request.jwt.claims',
-    json_build_object('sub', :'SEMACESSO', 'role', 'authenticated')::text, true);
+    '{"sub":"777fddd0-2739-4dc2-92fd-242cb1c206e6","role":"authenticated"}', true);
 
   SELECT 'SEM_ACESSO' AS perfil, 'mz_02_dim_empresas' AS tabela,
          count(*) AS linhas_visiveis FROM public.mz_02_dim_empresas
