@@ -60,4 +60,9 @@ describe("empresaRecebe (28/09/2026)", () => {
     expect(empresaRecebe({ tipo_processo: "outros", autor_tipo: "pf", reu_tipo: "grupo" })).toBe(false);
     expect(empresaRecebe({ tipo_processo: "trabalhista" })).toBe(false);
   });
+  it("autora marcada como 'irá pagar' volta a pagar (29/09/2026)", () => {
+    expect(empresaRecebe({ tipo_processo: "outros", autor_tipo: "grupo", reu_tipo: "pf", empresa_autora_resultado: "pagar" })).toBe(false);
+    expect(empresaRecebe({ tipo_processo: "outros", autor_tipo: "grupo", reu_tipo: "pf", empresa_autora_resultado: "receber" })).toBe(true);
+    expect(empresaRecebe({ tipo_processo: "outros", autor_tipo: "grupo", reu_tipo: "pf", empresa_autora_resultado: null })).toBe(true);
+  });
 });

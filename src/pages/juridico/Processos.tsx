@@ -11,7 +11,7 @@ import { baixar } from "@/lib/exportarRelatorio";
 import { carregarExtras, gerarExcel, gerarHtml, nomeArquivo, type ProcessoExp } from "./processos/exportar";
 import { honorariosEmReais, pctHonorarios, totalDaProposta } from "@/lib/juridico/proposta";
 import {
-  NATUREZAS_ACAO, PARTE_VAZIA, ROTULO_TIPO_PARTE, empresaDoGrupo, empresaRecebe, erroDasPartes, formatarDocumento, partes, seloOutros,
+  NATUREZAS_ACAO, PARTE_VAZIA, ROTULO_TIPO_PARTE, empresaDoGrupo, empresaRecebe, erroDasPartes, resultadoEmpresaAutora, type ResultadoEmpresaAutora, formatarDocumento, partes, seloOutros,
   type Parte, type TipoParte, type TipoProcesso,
 } from "@/lib/juridico/tipoProcesso";
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, Cell, PieChart, Pie, Legend, CartesianGrid } from "recharts";
@@ -91,6 +91,8 @@ interface Processo {
   tipo_processo: TipoProcesso; natureza_acao: string;
   autor_tipo: string; autor_nome: string; autor_documento: string;
   reu_tipo: string; reu_nome: string; reu_documento: string;
+  // Empresa autora: 'receber' | 'pagar' ('' = receber). Mig 259.
+  empresa_autora_resultado: string;
 }
 interface Comentario { id: number; entidade_id?: string; autor_nome?: string; texto: string; created_at?: string; }
 
@@ -387,6 +389,7 @@ function agrupar(rows: LinhaProcesso[]): Processo[] {
       tipo_processo: first("tipo_processo") === "outros" ? "outros" : "trabalhista", natureza_acao: first("natureza_acao"),
       autor_tipo: first("autor_tipo"), autor_nome: first("autor_nome"), autor_documento: first("autor_documento"),
       reu_tipo: first("reu_tipo"), reu_nome: first("reu_nome"), reu_documento: first("reu_documento"),
+      empresa_autora_resultado: first("empresa_autora_resultado"),
     });
   }
   // Ordem de chegada: o cadastrado por último (maior nº sequencial) fica no topo.
@@ -407,6 +410,8 @@ const FORM_RESET = () => ({
   houve_pericia_medica: "Não", valor_perito_judicial: 0, valor_assistente_tecnico: 0,
   // Tipo (SIS-2026-0488). As partes de "outros" ficam em autor/reu (estado à parte).
   tipo_processo: "trabalhista" as TipoProcesso, natureza_acao: "",
+  // Empresa autora: irá receber (padrão) ou irá pagar (29/09/2026, mig 259).
+  empresa_autora_resultado: "receber" as ResultadoEmpresaAutora,
 });
 const STATUS_SENTENCA_OPC = ["", "PROCEDENTE", "IMPROCEDENTE", "PARCIALMENTE PROCEDENTE", "EM ANDAMENTO", "ACORDO", "EXTINTO", "ARQUIVADO"];
 const STATUS_RECURSO_OPC = ["", "SEM RECURSO", "EM ANDAMENTO", "PROVIDO", "IMPROVIDO", "ARQUIVADO"];
@@ -708,7 +713,8 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
       vai_recorrer: p.vai_recorrer || "Não", valor_custas_recursais: p.valor_custas_recursais || 0, valor_seguro_garantia: p.valor_seguro_garantia || 0,
       valor_deposito_recursal: p.valor_deposito_recursal || 0,
       houve_pericia_medica: p.houve_pericia_medica || "Não", valor_perito_judicial: p.valor_perito_judicial || 0, valor_assistente_tecnico: p.valor_assistente_tecnico || 0,
-      tipo_processo: p.tipo_processo, natureza_acao: p.natureza_acao || "" });
+      tipo_processo: p.tipo_processo, natureza_acao: p.natureza_acao || "",
+      empresa_autora_resultado: resultadoEmpresaAutora(p) });
     setParteAutor({ tipo: (p.autor_tipo || "") as TipoParte | "", nome: p.autor_nome || "", documento: p.autor_documento || "" });
     setParteReu({ tipo: (p.reu_tipo || "") as TipoParte | "", nome: p.reu_nome || "", documento: p.reu_documento || "" });
     setMotivos(p.motivo_items.length ? p.motivo_items.map(m => ({ ...m })) : [MOTIVO_RESET()]);
@@ -766,6 +772,8 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
       tipo_processo: form.tipo_processo, natureza_acao: outros ? (form.natureza_acao.trim() || null) : null,
       autor_tipo: outros ? parteAutor.tipo : null, autor_nome: outros ? parteAutor.nome.trim() : null, autor_documento: outros ? (formatarDocumento(parteAutor.documento) || null) : null,
       reu_tipo: outros ? parteReu.tipo : null, reu_nome: outros ? parteReu.nome.trim() : null, reu_documento: outros ? (formatarDocumento(parteReu.documento) || null) : null,
+      // Só faz sentido com a empresa autora; fora disso fica NULL.
+      empresa_autora_resultado: outros && parteAutor.tipo === "grupo" ? form.empresa_autora_resultado : null,
       status: form.status, ano_processo: ano, motivo_ordem: idx + 1, id_sequencial: idSequencial,
       valor_pedidos: m.valor_pedidos || 0, valor_acordo: m.valor_acordo || 0, valor_sentenca: m.valor_sentenca || 0, valor_final: m.valor_final || 0,
       // Depósito recursal (25/09/2026): um valor do PROCESSO, digitado no
@@ -1523,6 +1531,30 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(280px,1fr))", gap: 12, marginBottom: 14 }}>
                 <ParteCampos rotulo="Autor" parte={parteAutor} onChange={setParteAutor} empresas={empresasGrupo} />
                 <ParteCampos rotulo="Réu" parte={parteReu} onChange={setParteReu} empresas={empresasGrupo} />
+              </div>
+            )}
+            {/* Empresa AUTORA também pode acabar pagando (29/09/2026, mig 259):
+                "irá pagar" faz pedidos/acordo/sentença voltarem a contar como
+                desembolso (custo final, totais "a pagar"); "irá receber" é o
+                que valia pra toda autora antes. */}
+            {outrosForm && parteAutor.tipo === "grupo" && (
+              <div className="jpr-fg" style={{ marginBottom: 14 }}>
+                <label>A empresa (autora) neste processo *</label>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(220px,1fr))", gap: 8 }}>
+                  {([["receber", "💵 Irá RECEBER", "Pedidos, acordo e sentença são dinheiro que entra (a receber)."],
+                     ["pagar", "💸 Irá PAGAR", "Mesmo sendo autora, a empresa desembolsa: entra no custo final."]] as const).map(([k, t, d]) => {
+                    const on = form.empresa_autora_resultado === k;
+                    const cor = k === "receber" ? "#0d9488" : "#b91c1c";
+                    return (
+                      <button key={k} type="button" onClick={() => setForm(v => ({ ...v, empresa_autora_resultado: k }))}
+                        style={{ textAlign: "left", padding: "10px 12px", borderRadius: 11, cursor: "pointer", fontFamily: "inherit",
+                                 border: on ? `2px solid ${cor}` : "1.5px solid #e2e8f0", background: on ? (k === "receber" ? "#f0fdfa" : "#fef2f2") : "#fff" }}>
+                        <div style={{ fontSize: 13.5, fontWeight: 800, color: on ? cor : "#0f172a" }}>{t}</div>
+                        <div style={{ fontSize: 11.5, color: "#64748b", marginTop: 2 }}>{d}</div>
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
             )}
             <div className="jpr-grid2">

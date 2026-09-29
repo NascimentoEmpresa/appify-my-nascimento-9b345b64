@@ -38,6 +38,8 @@ export interface ComPartes {
   autor_tipo?: string | null; autor_nome?: string | null;
   reu_tipo?: string | null; reu_nome?: string | null;
   natureza_acao?: string | null;
+  /** Só com a empresa AUTORA: 'receber' (padrão, NULL) | 'pagar'. Mig 259. */
+  empresa_autora_resultado?: string | null;
 }
 
 export const ehOutros = (p: ComPartes) => p.tipo_processo === "outros";
@@ -66,8 +68,17 @@ export function posicaoEmpresa(p: ComPartes): "autora" | "re" | "nenhuma" {
  * Empresa AUTORA (28/09/2026, pedido do Pablo): pedidos, acordo e sentença
  * são o que ela vai RECEBER, não pagar. Não entram no custo final nem nas
  * somas de "a pagar" — têm total próprio ("a receber").
+ *
+ * 29/09/2026 (mig 259): autora às vezes PAGA mesmo assim (consignação em
+ * pagamento, ação que perde…). O cadastro escolhe "irá receber" / "irá
+ * pagar" em empresa_autora_resultado; NULL = receber, que é o que todo
+ * processo já cadastrado assumia.
  */
-export const empresaRecebe = (p: ComPartes): boolean => posicaoEmpresa(p) === "autora";
+export type ResultadoEmpresaAutora = "receber" | "pagar";
+export const resultadoEmpresaAutora = (p: ComPartes): ResultadoEmpresaAutora =>
+  p.empresa_autora_resultado === "pagar" ? "pagar" : "receber";
+export const empresaRecebe = (p: ComPartes): boolean =>
+  posicaoEmpresa(p) === "autora" && resultadoEmpresaAutora(p) === "receber";
 
 /** A empresa do grupo envolvida (o "Por empresa" do dashboard agrupa por ela). */
 export function empresaDoGrupo(p: ComPartes): string {
