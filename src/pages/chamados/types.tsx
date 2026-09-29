@@ -84,6 +84,8 @@ export const STATUS_CHAMADO: Record<string, { label: string; cls: string }> = {
   aguardando_retorno: { label: "Aguardando retorno", cls: "border-primary/30 bg-primary/10 text-primary" },
   concluido:          { label: "Concluído",          cls: "border-success/30 bg-success/10 text-success" },
   reprovado:          { label: "Reprovado",          cls: "border-destructive/30 bg-destructive/10 text-destructive" },
+  // Solicitante desistiu (29/09/2026, mig 260) — encerrado, mas não é recusa do time.
+  cancelado:          { label: "Cancelado",          cls: "border-muted-foreground/30 bg-muted text-muted-foreground" },
 };
 
 export const labelDe = (opts: readonly { value: string; label: string }[], v?: string | null) =>
@@ -118,6 +120,9 @@ export interface Chamado {
   comentario_gerente: string | null;
   motivo_reprovacao: string | null;
   concluido_em: string | null;
+  // Cancelamento pelo solicitante (mig 260). O motivo fica mesmo após reabrir.
+  motivo_cancelamento?: string | null;
+  cancelado_em?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -183,8 +188,16 @@ export const mediaAvaliacao = (a: Pick<AvaliacaoChamado, CriterioKey>) =>
 
 export const BUCKET_CHAMADOS = "chamados-sistemas";
 
-/** Chamado ativo = ainda está na fila (não foi concluído nem reprovado). */
-export const chamadoAtivo = (status: string) => status !== "concluido" && status !== "reprovado";
+/**
+ * Status de fim de linha: saem da fila e fecham a conversa. 'cancelado'
+ * (29/09/2026) é o solicitante desistindo — mesma lista das funções do banco
+ * (mig 20260930000260).
+ */
+export const STATUS_ENCERRADOS = ["concluido", "reprovado", "cancelado"] as const;
+export const chamadoEncerrado = (status: string) => (STATUS_ENCERRADOS as readonly string[]).includes(status);
+
+/** Chamado ativo = ainda está na fila (não foi concluído, reprovado nem cancelado). */
+export const chamadoAtivo = (status: string) => !chamadoEncerrado(status);
 
 /**
  * Status para onde um chamado encerrado volta ao ser reaberto: se ainda tem

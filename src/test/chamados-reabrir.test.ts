@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { podeReabrirChamado, statusAoReabrir } from "@/pages/chamados/types";
+import { chamadoAtivo, chamadoEncerrado, podeReabrirChamado, statusAoReabrir } from "@/pages/chamados/types";
 
 // O que está sendo travado aqui é o contrato com o BANCO. `podeReabrirChamado`
 // espelha o trigger chamado_sistema_guard: se a tela liberar mais do que ele,
@@ -29,8 +29,8 @@ describe("podeReabrirChamado", () => {
     }
   });
 
-  it("vale tanto para concluído quanto para reprovado", () => {
-    for (const status of ["concluido", "reprovado"]) {
+  it("vale para concluído, reprovado e cancelado", () => {
+    for (const status of ["concluido", "reprovado", "cancelado"]) {
       expect(podeReabrirChamado(chamado({ status }), { ...NINGUEM, canCoordenar: true })).toBe(true);
     }
   });
@@ -60,5 +60,17 @@ describe("podeReabrirChamado", () => {
 
   it("sem usuário logado, a via do dev não abre", () => {
     expect(podeReabrirChamado(chamado({ responsavel_id: "u1" }), { ...NINGUEM, canDev: true, userId: null })).toBe(false);
+  });
+});
+
+// Cancelado (29/09/2026, mig 260) é fim de linha como concluído e reprovado:
+// sai da fila e fecha a conversa. Mesma lista das funções do banco.
+describe("chamadoEncerrado / chamadoAtivo", () => {
+  it("cancelado é encerrado", () => {
+    expect(chamadoEncerrado("cancelado")).toBe(true);
+    expect(chamadoAtivo("cancelado")).toBe(false);
+  });
+  it("os status em atendimento seguem ativos", () => {
+    for (const s of ["aberto", "em_andamento", "aguardando_retorno"]) expect(chamadoAtivo(s)).toBe(true);
   });
 });

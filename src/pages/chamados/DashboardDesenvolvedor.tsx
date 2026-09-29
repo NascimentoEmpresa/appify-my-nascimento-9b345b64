@@ -41,7 +41,7 @@ const primeiroNome = (nome: string) => nome.trim().split(/\s+/)[0] || nome;
 const DONUT: Record<string, string> = {
   aberto: "hsl(var(--warning))", em_andamento: "hsl(var(--info))",
   aguardando_retorno: "hsl(var(--primary))", concluido: "hsl(var(--success))",
-  reprovado: "hsl(var(--destructive))",
+  reprovado: "hsl(var(--destructive))", cancelado: "hsl(var(--muted-foreground))",
 };
 
 const DIAS_SEMANA = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
