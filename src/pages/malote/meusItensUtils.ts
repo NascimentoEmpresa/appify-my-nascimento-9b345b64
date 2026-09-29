@@ -1,6 +1,8 @@
 import {
+  ClassificacaoAprovadores,
   ItemLinhaMalote,
   MaloteDespesaRow,
+  nomesAprovadorNivel,
   STATUS_FASE_SOLICITACAO,
   STATUS_LABEL,
   StatusDespesa,
@@ -71,13 +73,27 @@ export function tipoLabelDe(despesa: MaloteDespesaRow): string {
 // A lista completa vai no tooltip do <AprovadorPendenteCell> abaixo — achado
 // do usuário: em "Meus Itens" só dava pra ver o primeiro nome (ex. "Yuri Rosa"),
 // sem jeito de saber os demais aprovadores daquele nível.
-export function aprovadoresPendentes(despesa: MaloteDespesaRow): string[] | null {
+// Achado real (Cassio, SIS-2026-0552): despesa de Rateio de Classificação
+// (despesa.classificacao_id null — a classificação é por linha do rateio)
+// sempre voltava null aqui, então "Aprovador pendente" ficava "—" em Meus
+// Itens pra qualquer rateio, mesmo com aprovador de verdade cadastrado —
+// mesmo bug já corrigido em Aprovações (nomesAprovadorNivel), só faltava
+// aqui. Os dois mapas são opcionais pra não quebrar quem já chamava essa
+// função sem eles (ex. testes existentes) — sem eles, rateio continua "—".
+export function aprovadoresPendentes(
+  despesa: MaloteDespesaRow,
+  classificacaoIdsRateio?: Set<string>,
+  classificacaoPorId?: Map<string, ClassificacaoAprovadores>,
+): string[] | null {
   if (despesa.status !== "pendente_aprovacao" || !despesa.nivel_aprovacao_atual) return null;
-  const c = despesa.classificacao;
-  if (!c) return null;
-  const nomes =
-    despesa.nivel_aprovacao_atual === 1 ? c.aprovador1_nomes : despesa.nivel_aprovacao_atual === 2 ? c.aprovador2_nomes : c.aprovador3_nomes;
-  return nomes && nomes.length > 0 ? nomes : null;
+  const nivel = despesa.nivel_aprovacao_atual;
+  if (despesa.classificacao) {
+    const nomes = nivel === 1 ? despesa.classificacao.aprovador1_nomes : nivel === 2 ? despesa.classificacao.aprovador2_nomes : despesa.classificacao.aprovador3_nomes;
+    return nomes && nomes.length > 0 ? nomes : null;
+  }
+  if (!classificacaoPorId) return null;
+  const nomes = nomesAprovadorNivel(despesa, nivel, classificacaoIdsRateio, classificacaoPorId);
+  return nomes.length > 0 ? nomes : null;
 }
 
 function formatarData(data: string | null | undefined): string {
@@ -97,23 +113,31 @@ function formatarDataHora(data: string | null | undefined): string {
 export function montarLinhasExcelMeusItens(
   itens: ItemLinhaMalote[],
   nomeEmpresaDe: (despesa: MaloteDespesaRow) => string,
+  rateio?: {
+    classificacaoIdsRateio: Map<string, Set<string>> | undefined;
+    classificacaoPorId: Map<string, ClassificacaoAprovadores & { nome?: string }>;
+  },
 ): Record<string, string | number>[] {
   return itens.map((item) => {
     const { despesa, parcela } = item;
     const status = statusEfetivo(item);
     const nivel = status === "pendente_aprovacao" && despesa.nivel_aprovacao_atual ? ` N${despesa.nivel_aprovacao_atual}` : "";
+    const idsRateio = rateio?.classificacaoIdsRateio?.get(despesa.id);
+    const classificacaoTexto =
+      despesa.classificacao?.nome ??
+      (idsRateio ? Array.from(idsRateio).map((id) => rateio?.classificacaoPorId.get(id)?.nome).filter(Boolean).join(", ") : "");
     return {
       "Tipo": tipoLabelDe(despesa),
       "Nº / ID": despesa.numero ?? "",
       "Parcela": parcela ? `${parcela.numero_parcela}/${despesa.numero_parcelas}` : "",
       "Data de pagamento": formatarData(dataPagamentoDe(item)),
-      "Classificação": despesa.classificacao?.nome ?? "",
+      "Classificação": classificacaoTexto,
       "Nome da despesa": despesa.nome ?? "",
       "Empresa": nomeEmpresaDe(despesa) ?? "",
       "Forma de pagamento": despesa.forma_pagamento ?? "",
       "Valor (R$)": valorDe(item),
       "Status": `${STATUS_LABEL[status]}${nivel}`,
-      "Aprovador pendente": aprovadoresPendentes(despesa)?.join(", ") ?? "",
+      "Aprovador pendente": aprovadoresPendentes(despesa, idsRateio, rateio?.classificacaoPorId)?.join(", ") ?? "",
       "Exceção": despesa.excecao ? "Sim" : "Não",
       "Justificativa da exceção": despesa.justificativa_excecao ?? "",
       "Última atualização": formatarDataHora(despesa.updated_at),

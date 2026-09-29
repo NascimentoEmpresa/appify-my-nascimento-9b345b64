@@ -57,21 +57,35 @@ export interface NfEmissaoRow {
 
 // SIS-2026-0323: Relatório Geral e Dashboard precisam de NFs de TODAS as
 // empresas de uma vez — mesmo padrão de `useContratosERP({ todasEmpresas })`.
+// PostgREST devolve no máximo 1000 linhas por padrão — sem paginação, a
+// importação do Relatório de Serviços (SIS-2026-0540, 1561 notas) ficava
+// cortada em 1000 silenciosamente, sem erro (achado real: "Total de Notas"
+// no Dashboard mostrava 1.000 fixo). Mesma classe de bug já corrigida em
+// Fluxo de Caixa e Aprovações do Malote (useMaloteDespesa.ts).
+async function buscarTodasNfsEmissao(todasEmpresas: boolean, empresaId: string | null | undefined) {
+  const TAMANHO_PAGINA = 1000;
+  const linhas: NfEmissaoRow[] = [];
+  for (let pagina = 0; ; pagina++) {
+    let q = (supabase as any)
+      .from("nf_emissao")
+      .select("*, contrato:contrato_id(id, nome, cliente), empresa:empresa_id(id, nome_fantasia, razao_social)")
+      .order("created_at", { ascending: false })
+      .range(pagina * TAMANHO_PAGINA, pagina * TAMANHO_PAGINA + TAMANHO_PAGINA - 1);
+    if (!todasEmpresas) q = q.eq("empresa_id", empresaId);
+    const { data, error } = await q;
+    if (error) throw error;
+    linhas.push(...((data ?? []) as NfEmissaoRow[]));
+    if (!data || data.length < TAMANHO_PAGINA) break;
+  }
+  return linhas;
+}
+
 export function useNfsEmissao(empresaId: string | null | undefined, opts?: { todasEmpresas?: boolean }) {
   const todasEmpresas = opts?.todasEmpresas ?? false;
   return useQuery({
     queryKey: todasEmpresas ? [NF_EMISSAO_KEY, "todas"] : [NF_EMISSAO_KEY, empresaId],
     enabled: todasEmpresas || !!empresaId,
-    queryFn: async () => {
-      let q = (supabase as any)
-        .from("nf_emissao")
-        .select("*, contrato:contrato_id(id, nome, cliente), empresa:empresa_id(id, nome_fantasia, razao_social)")
-        .order("created_at", { ascending: false });
-      if (!todasEmpresas) q = q.eq("empresa_id", empresaId);
-      const { data, error } = await q;
-      if (error) throw error;
-      return (data ?? []) as NfEmissaoRow[];
-    },
+    queryFn: () => buscarTodasNfsEmissao(todasEmpresas, empresaId),
   });
 }
 
@@ -432,13 +446,29 @@ export function useItensNfEmissaoEmLote(nfIds: string[]) {
     queryKey: ["nf_emissao_item", "lote", chave],
     enabled: nfIds.length > 0,
     queryFn: async () => {
-      const { data, error } = await (supabase as any)
-        .from("nf_emissao_item")
-        .select("*")
-        .in("nf_emissao_id", nfIds);
-      if (error) throw error;
+      // Mesmo limite de 1000 linhas do PostgREST (ver buscarTodasNfsEmissao)
+      // — com 1561 notas concluídas, .in() sozinho já cortava os itens das
+      // últimas notas. Pagina em blocos de ids (também evita URL longa
+      // demais com 1561 uuids num .in() só) e em blocos de linhas dentro
+      // de cada bloco de ids.
+      const TAMANHO_BLOCO_IDS = 200;
+      const TAMANHO_PAGINA = 1000;
+      const todosItens: NfEmissaoItemRow[] = [];
+      for (let i = 0; i < nfIds.length; i += TAMANHO_BLOCO_IDS) {
+        const bloco = nfIds.slice(i, i + TAMANHO_BLOCO_IDS);
+        for (let pagina = 0; ; pagina++) {
+          const { data, error } = await (supabase as any)
+            .from("nf_emissao_item")
+            .select("*")
+            .in("nf_emissao_id", bloco)
+            .range(pagina * TAMANHO_PAGINA, pagina * TAMANHO_PAGINA + TAMANHO_PAGINA - 1);
+          if (error) throw error;
+          todosItens.push(...((data ?? []) as NfEmissaoItemRow[]));
+          if (!data || data.length < TAMANHO_PAGINA) break;
+        }
+      }
       const porNf = new Map<string, NfEmissaoItemRow[]>();
-      for (const item of (data ?? []) as NfEmissaoItemRow[]) {
+      for (const item of todosItens) {
         const arr = porNf.get(item.nf_emissao_id) ?? [];
         arr.push(item);
         porNf.set(item.nf_emissao_id, arr);
