@@ -487,6 +487,11 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
   const podeMoverJuridico = can("aprovar", undefined, "recrutamento_etapa_juridico");
   const podeMoverSst      = can("aprovar", undefined, "recrutamento_etapa_sst");
   const podeMoverCompras  = can("aprovar", undefined, "recrutamento_etapa_compras");
+  // Atalho DOCUMENTAÇÃO → ADMISSÃO sem passar por SST + COMPRAS (29/09/2026,
+  // mig 20260930000264). Capacidade própria: pular exame e enxoval não pode
+  // vir de brinde com o "alterar" de quem conduz o processo. O trigger
+  // rec_pular_sst_compras_guard recusa a mesma passagem no banco.
+  const podePularSstCompras = can("aprovar", undefined, "recrutamento_pular_sst_compras");
 
   // ── Estado ─────────────────────────────────────────────────────
   const [view, setView]               = useState<"tabela" | "kanban">("tabela");
@@ -1387,12 +1392,13 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
     setCandModal({ id: cv.id, novaEtapa, nome: cv.nome || "Candidato" });
   };
 
-  const executarMoverCand = async (id: number, novaEtapa: string, extra: Record<string, unknown> = {}) => {
+  const executarMoverCand = async (id: number, novaEtapa: string, extra: Record<string, unknown> = {}, detalheHist?: string) => {
     const nowIso = new Date().toISOString();
     const nome = user?.user_metadata?.nome ?? user?.email ?? "";
     const cand = candidatos.find(c => c.id === id);
     const origem = cand?.etapa_processo || "";
     const reprovado = novaEtapa === "Reprovado";
+    const pulouSstCompras = origem === "DOCUMENTAÇÃO" && novaEtapa === "ADMISSÃO";
     const payload: Record<string, unknown> = { etapa_processo: novaEtapa, etapa_changed_at: nowIso, ...extra };
     // Carimba quem completou a etapa de ORIGEM (e decisão do Jurídico colore o card).
     if (origem === "JURÍDICO")  { payload.juridico_ok = !reprovado; payload.juridico_por = nome; payload.juridico_em = nowIso; }
@@ -1420,10 +1426,11 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
       "ADMISSÃO": "SST e Compras aprovaram → Admissão",
       Reprovado: "Candidato reprovado",
     };
-    if (drawerId) await logHistorico(drawerId, eventoTxt[novaEtapa] || `Movido para ${novaEtapa}`, {
+    const evento = pulouSstCompras ? "SST e Compras dispensados → Admissão" : (eventoTxt[novaEtapa] || `Movido para ${novaEtapa}`);
+    if (drawerId) await logHistorico(drawerId, evento, {
       de: origem, para: novaEtapa, papel: PAPEL_ETAPA[origem] || "Recrutamento",
       candidatoId: id, candidatoNome: cand?.nome,
-      detalhe: String(extra.motivo_reprovacao || extra.juridico_obs || extra.sst_obs || "") || undefined,
+      detalhe: detalheHist || String(extra.motivo_reprovacao || extra.juridico_obs || extra.sst_obs || "") || undefined,
     });
     toast(`Candidato movido para "${novaEtapa}".`, "ok");
     if (!reprovado) await dispararMensagemEtapa(id, novaEtapa, cand?.nome);
@@ -1528,6 +1535,16 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
     if (!candModal) return;
     const { id, novaEtapa } = candModal;
     if (novaEtapa === "Reprovado" && !candObs.trim()) { toast("Informe o motivo da reprovação.", "err"); return; }
+    const origemMov = candidatos.find(c => c.id === id)?.etapa_processo;
+    // Pular SST e Compras deixa o candidato sem ASO e sem enxoval pelo fluxo
+    // normal — o porquê tem que ficar no histórico.
+    if (origemMov === "DOCUMENTAÇÃO" && novaEtapa === "ADMISSÃO") {
+      if (!candObs.trim()) { toast("Informe o motivo para pular SST e Compras.", "err"); return; }
+      const motivo = candObs.trim();
+      setCandModal(null); setCandObs(""); setCandMateriais("");
+      await executarMoverCand(id, novaEtapa, {}, motivo);
+      return;
+    }
     // Compras precisa saber O QUE comprar. Desde 25/09/2026 (mig 246) a
     // lista vem do Catálogo — o enxoval da função da vaga — e o Recrutamento
     // só informa os tamanhos, no card EnxovalAdmissao. Ele grava o enxoval
@@ -1554,6 +1571,10 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
     setCandMateriais("");
     await executarMoverCand(id, novaEtapa, extra);
   };
+
+  // Modal aberto pelo botão "Pular SST e Compras" (DOCUMENTAÇÃO → ADMISSÃO).
+  const pulandoSstCompras = !!candModal && candModal.novaEtapa === "ADMISSÃO"
+    && candidatos.find(c => c.id === candModal.id)?.etapa_processo === "DOCUMENTAÇÃO";
 
   // ── Kanban Mover ──────────────────────────────────────────────
   const executarMover = async (id: number, novoStatus: string, oldSt: string, extra: Record<string, unknown>) => {
@@ -2274,6 +2295,9 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
                               ) : (CAND_PROX[etapa] && podeAqui && (
                                 <button onClick={() => pedirMoverCand(c, CAND_PROX[etapa])} style={{ ...avancaBtn, background: "#16a34a" }}>{labelProx(etapa)}</button>
                               ))}
+                              {etapa === "DOCUMENTAÇÃO" && podeRecrutar && podePularSstCompras && (
+                                <button onClick={() => pedirMoverCand(c, "ADMISSÃO")} style={bSkip}>Pular SST e Compras →</button>
+                              )}
                               {etapa === "JURÍDICO" && podeMoverJuridico && (
                                 <button onClick={() => devolverDoJuridico(c)} style={{ ...bSkip, color: "#b45309", borderColor: "#fde68a" }}><Ic i={AlertTriangle} />Reprovar e devolver ao RH</button>
                               )}
@@ -2821,14 +2845,20 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
           <div className="rec-modal" style={{ maxWidth: candModal.novaEtapa === ETAPA_SST_COMPRAS ? 620 : 420 }}>
             <button onClick={() => { setCandModal(null); setCandObs(""); setCandMateriais(""); }} style={{ position: "absolute", top: 14, right: 14, background: "none", border: "none", color: "#94a3b8", fontSize: 20, cursor: "pointer" }}>✕</button>
             <div style={{ fontSize: 17, fontWeight: 800, marginBottom: 4 }}>
-              {candModal.novaEtapa === "Reprovado" ? "Reprovar candidato" : `Mover para "${candModal.novaEtapa}"`}
+              {candModal.novaEtapa === "Reprovado" ? "Reprovar candidato" : pulandoSstCompras ? "Pular SST e Compras" : `Mover para "${candModal.novaEtapa}"`}
             </div>
             <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 14 }}>{candModal.nome}</div>
+            {pulandoSstCompras && (
+              <div style={{ fontSize: 12, color: "#b45309", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 10, padding: "9px 11px", marginBottom: 12 }}>
+                O candidato vai direto para <strong>Admissão</strong>, sem passar pelo exame admissional (SST) nem pelo enxoval (Compras).
+              </div>
+            )}
             {candModal.novaEtapa === ETAPA_SST_COMPRAS && (
               <EnxovalAdmissao ref={enxovalRef} candidatoId={candModal.id} />
             )}
             <div className="rec-fg">
               <label>{candModal.novaEtapa === "Reprovado" ? "Motivo *"
+                : pulandoSstCompras ? "Motivo para pular SST e Compras *"
                 : candModal.novaEtapa === ETAPA_SST_COMPRAS ? "Observação para o SST (opcional)"
                 : "Observação (opcional)"}</label>
               <textarea className="rec-fi" rows={3} placeholder={candModal.novaEtapa === "Reprovado" ? "Descreva o motivo..." : "Observação da etapa..."} value={candObs} onChange={e => setCandObs(e.target.value)} />
