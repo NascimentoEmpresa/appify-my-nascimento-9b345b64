@@ -1,0 +1,250 @@
+# Vigia do banco de producao - alerta 24x7 sem servidor proprio.
+#
+# POR QUE EXISTE
+# O banco caiu tres vezes (21/09, CPU/Nano; CONEXAO; MEMORIA/Micro) e a
+# instancia vive perto do teto: em 28/09/2026 a memoria estava em 86% e o swap
+# em 79%. O unico monitor que existia era o scripts/monitor-supabase.ps1, que
+# so enxerga enquanto o Eduardo esta com o terminal aberto - ou seja, nunca de
+# madrugada, que e justamente quando ninguem esta olhando.
+#
+# POR QUE NO ACTIONS E NAO EM PROMETHEUS
+# Prometheus/Grafana/Loki (Fase 2 do plano de infraestrutura) precisam de uma
+# maquina ligada 24h. Enquanto o servidor da empresa nao chega e a VPS nao e
+# contratada, este workflow entrega a parte que realmente importa - ser avisado
+# quando aperta - de graca e sem host nenhum.
+#
+# O QUE ELE NAO E
+# Nao e series temporal: nao guarda historico nem desenha grafico, e o cron do
+# Actions e "melhor esforco" (pode atrasar minutos sob carga). Para tendencia e
+# diagnostico, o Prometheus continua sendo o destino. Isto e o alarme de
+# incendio, nao o termometro de parede.
+#
+# CUSTO
+# Repositorio publico: minutos de Actions sao gratuitos. 48 execucoes por dia
+# de ~1 min. No banco, cada execucao abre 1 conexao por alguns segundos e roda
+# consultas de catalogo (pg_stat_*), que nao varrem tabela nenhuma.
+
+name: Vigia do banco
+
+on:
+  schedule:
+    # A cada 30 min. Poderia ser 15, mas 30 ja pega qualquer subida de memoria
+    # com folga e corta o ruido pela metade.
+    - cron: '*/30 * * * *'
+  workflow_dispatch:
+  # ENSAIO NA PR. workflow_dispatch so funciona depois que o arquivo esta na
+  # branch padrao, entao sem isto o vigia so poderia ser testado DEPOIS de
+  # mergeado - e vigia quebrado e pior que vigia nenhum, porque da falsa
+  # sensacao de cobertura. Rodando na PR que mexe nele, a mudanca e provada
+  # antes de entrar. No ensaio ele mede e imprime, mas NAO avisa no Discord e
+  # NAO toca no estado real (senao bagunçaria a maquina de estados do vigia
+  # de verdade e mandaria alerta duplicado).
+  pull_request:
+    paths:
+      - '.github/workflows/vigia_banco.yml'
+
+concurrency:
+  group: vigia-banco
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  vigiar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      # O estado anterior (OK ou ALARME) vive no cache do Actions. Sem ele o
+      # vigia mandaria mensagem a cada 30 min enquanto durasse o problema - 48
+      # por dia -, e alerta que repete vira alerta que se ignora.
+      - name: Lembrar do que foi visto da ultima vez
+        if: github.event_name != 'pull_request'
+        uses: actions/cache/restore@v4
+        with:
+          path: estado-vigia
+          key: vigia-estado-
+          restore-keys: vigia-estado-
+
+      - name: Instalar psql
+        # De proposito o postgresql-client do Ubuntu, e nao o 17 do PGDG: a
+        # trava de versao vale para pg_dump, nao para consulta. psql mais
+        # antigo conversa com servidor 17 sem problema, e assim o passo leva
+        # segundos em vez de meio minuto, 48 vezes por dia.
+        run: sudo apt-get install -y -qq postgresql-client
+
+      - name: Medir e alertar
+        env:
+          CREDENCIAIS: ${{ secrets.ESPELHO_CREDENCIAIS }}
+          SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          WEBHOOK: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          # O ref do projeto NAO e segredo: ele vai no bundle do navegador
+          # dentro do VITE_SUPABASE_URL, visivel para qualquer visitante.
+          PROJETO: ${{ vars.SUPABASE_PROJETO_REF || 'fwmzeaztjxrxxzxzxmgc' }}
+        run: |
+          set -uo pipefail
+
+          ALERTAS=""
+          RESUMO=""
+          anota() { RESUMO="$RESUMO$1"$'\n'; echo "$1"; }
+          alerta() { ALERTAS="$ALERTAS- $1"$'\n'; }
+
+          # ------------------------------------------------------------------
+          # 1. O que da para ver de dentro do banco (sempre disponivel)
+          # ------------------------------------------------------------------
+          PGHOST=$(echo "$CREDENCIAIS"  | jq -r '.supabase.host')
+          PGPORT=$(echo "$CREDENCIAIS"  | jq -r '.supabase.porta')
+          PGUSER=$(echo "$CREDENCIAIS"  | jq -r '.supabase.usuario')
+          PGDATABASE=$(echo "$CREDENCIAIS" | jq -r '.supabase.banco')
+          PGPASSWORD=$(echo "$CREDENCIAIS" | jq -r '.supabase.senha')
+          export PGHOST PGPORT PGUSER PGDATABASE PGPASSWORD PGSSLMODE=require
+
+          # Consulta unica: uma ida so ao banco, tudo de catalogo, sem varrer
+          # tabela de negocio nenhuma.
+          LINHA=$(psql -At -F'|' -c "
+            select
+              (select count(*) from pg_stat_activity),
+              (select setting::int from pg_settings where name='max_connections'),
+              (select count(*) from pg_stat_activity where wait_event_type='Lock'),
+              (select coalesce(max(extract(epoch from now()-query_start))::int,0)
+                 from pg_stat_activity
+                where state='active' and backend_type='client backend'
+                  and query not like '%pg_stat_activity%'),
+              (select round(100.0*sum(blks_hit)/nullif(sum(blks_hit)+sum(blks_read),0),3)
+                 from pg_stat_database),
+              (select pg_size_pretty(pg_database_size(current_database())))
+          " 2>&1)
+
+          if [ -z "${LINHA:-}" ] || echo "$LINHA" | grep -qi "error\|could not\|falhou"; then
+            anota "BANCO ....... NAO RESPONDEU"
+            anota "$LINHA"
+            alerta "**O banco nao respondeu.** Pode estar fora do ar."
+            CONEX=0; MAXCONEX=90
+          else
+            CONEX=$(echo "$LINHA" | cut -d'|' -f1)
+            MAXCONEX=$(echo "$LINHA" | cut -d'|' -f2)
+            # Divisor vazio derrubaria o passo inteiro por divisao por zero,
+            # e perder o vigia por causa disso seria pior que a imprecisao.
+            [ -z "${MAXCONEX:-}" ] && MAXCONEX=90
+            LOCKS=$(echo "$LINHA"  | cut -d'|' -f3)
+            LENTA=$(echo "$LINHA"  | cut -d'|' -f4)
+            CACHE=$(echo "$LINHA"  | cut -d'|' -f5)
+            TAM=$(echo "$LINHA"    | cut -d'|' -f6)
+
+            PCONEX=$(( 100 * CONEX / MAXCONEX ))
+            anota "CONEXOES .... ${PCONEX}%  (${CONEX} de ${MAXCONEX})"
+            anota "CACHE HIT ... ${CACHE}%"
+            anota "BLOQUEIOS ... ${LOCKS} esperando"
+            anota "QUERY MAIS LONGA ... ${LENTA}s"
+            anota "TAMANHO ..... ${TAM}"
+
+            [ "$PCONEX" -ge 80 ] && alerta "**Conexoes em ${PCONEX}%** (${CONEX} de ${MAXCONEX}). Foi assim que o banco caiu em 21/09."
+            [ "$LOCKS"  -ge 5  ] && alerta "**${LOCKS} consultas travadas esperando bloqueio.**"
+            [ "$LENTA"  -ge 300 ] && alerta "**Consulta rodando ha ${LENTA}s.** Algo travou ou esta varrendo tabela grande."
+            # bash nao faz conta com decimal; comparo so a parte inteira
+            [ "${CACHE%%.*}" -lt 99 ] && alerta "**Cache hit em ${CACHE}%.** O banco esta indo ao disco mais do que deveria."
+          fi
+
+          # ------------------------------------------------------------------
+          # 2. O que so o endpoint de metricas sabe: memoria, swap e disco
+          # ------------------------------------------------------------------
+          # Sem a chave service_role o vigia continua funcionando - so nao
+          # enxerga a maquina por fora. E de proposito: nao quero que a falta
+          # de um secret derrube o alerta de conexao, que e o que ja derrubou
+          # o banco antes.
+          if [ -z "${SERVICE_KEY:-}" ]; then
+            anota "MEMORIA/SWAP/DISCO ... sem leitura (secret SUPABASE_SERVICE_ROLE_KEY nao configurado)"
+          else
+            M=$(curl -sS --max-time 25 -u "service_role:$SERVICE_KEY" \
+                  "https://$PROJETO.supabase.co/customer/v1/privileged/metrics" 2>&1) || M=""
+            soma() { echo "$M" | grep "^$1" | awk '{s+=$NF} END{printf "%.0f", s}'; }
+
+            if [ -z "$M" ] || ! echo "$M" | grep -q "node_memory_MemTotal_bytes"; then
+              anota "METRICAS .... endpoint nao respondeu"
+              alerta "**O endpoint de metricas nao respondeu.** Se persistir, pode ser sintoma de banco sufocado."
+            else
+              MT=$(soma node_memory_MemTotal_bytes);  MD=$(soma node_memory_MemAvailable_bytes)
+              ST=$(soma node_memory_SwapTotal_bytes); SL=$(soma node_memory_SwapFree_bytes)
+
+              PMEM=$(( 100 * (MT - MD) / MT ))
+              anota "MEMORIA ..... ${PMEM}%  ($(( MD / 1048576 )) MB livres de $(( MT / 1048576 )) MB)"
+              [ "$PMEM" -ge 90 ] && alerta "**Memoria em ${PMEM}%.**"
+
+              if [ "$ST" -gt 0 ]; then
+                PSWAP=$(( 100 * (ST - SL) / ST ))
+                anota "SWAP ........ ${PSWAP}%  ($(( (ST - SL) / 1048576 )) MB em disco)"
+                # Swap e o aviso mais antecipado de todos: ele sobe antes de a
+                # memoria estourar.
+                [ "$PSWAP" -ge 85 ] && alerta "**Swap em ${PSWAP}%.** E o sinal que aparece ANTES da queda."
+              fi
+
+              DT=$(echo "$M" | grep '^node_filesystem_size_bytes'  | grep 'mountpoint="/data"' | awk '{s+=$NF} END{printf "%.0f", s}')
+              DL=$(echo "$M" | grep '^node_filesystem_avail_bytes' | grep 'mountpoint="/data"' | awk '{s+=$NF} END{printf "%.0f", s}')
+              if [ -n "${DT:-}" ] && [ "${DT:-0}" -gt 0 ]; then
+                PDISCO=$(( 100 * (DT - DL) / DT ))
+                anota "DISCO ....... ${PDISCO}%  ($(( DL / 1073741824 )) GB livres)"
+                [ "$PDISCO" -ge 80 ] && alerta "**Disco em ${PDISCO}%.**"
+              fi
+            fi
+          fi
+
+          # ------------------------------------------------------------------
+          # 3. Avisar - so na virada, nunca a cada execucao
+          # ------------------------------------------------------------------
+          mkdir -p estado-vigia
+          ANTERIOR=$(cat estado-vigia/situacao 2>/dev/null || echo "OK")
+          SEGUIDAS=$(cat estado-vigia/seguidas 2>/dev/null || echo "0")
+
+          if [ -n "$ALERTAS" ]; then ATUAL="ALARME"; else ATUAL="OK"; fi
+
+          AVISAR=nao
+          if [ "$ATUAL" = "ALARME" ] && [ "$ANTERIOR" = "OK" ]; then
+            AVISAR=abriu
+            SEGUIDAS=1
+          elif [ "$ATUAL" = "ALARME" ]; then
+            SEGUIDAS=$(( SEGUIDAS + 1 ))
+            # Lembrete a cada 8 execucoes = ~4 horas. Sem isso, um alarme que
+            # comecou de madrugada e passou batido nunca mais avisaria.
+            [ $(( SEGUIDAS % 8 )) -eq 0 ] && AVISAR=lembrete
+          elif [ "$ANTERIOR" = "ALARME" ]; then
+            AVISAR=normalizou
+            SEGUIDAS=0
+          fi
+
+          echo "$ATUAL"    > estado-vigia/situacao
+          echo "$SEGUIDAS" > estado-vigia/seguidas
+          echo "situacao anterior=$ANTERIOR atual=$ATUAL seguidas=$SEGUIDAS avisar=$AVISAR"
+
+          if [ "$AVISAR" != "nao" ]; then
+            case "$AVISAR" in
+              abriu)      TITULO=":rotating_light: **Banco de producao em alerta**" ;;
+              lembrete)   TITULO=":rotating_light: **Ainda em alerta** (ha ~$(( SEGUIDAS / 2 ))h)" ;;
+              normalizou) TITULO=":white_check_mark: **Banco normalizou**" ;;
+            esac
+            CORPO=$(printf '%s\n\n%s\n```\n%s```' "$TITULO" "$ALERTAS" "$RESUMO")
+
+            if [ "${GITHUB_EVENT_NAME:-}" = "pull_request" ]; then
+              echo "--- ENSAIO: a mensagem abaixo NAO foi enviada ---"
+              echo "$CORPO"
+              echo "-------------------------------------------------"
+            elif [ -n "${WEBHOOK:-}" ]; then
+              jq -n --arg c "$CORPO" '{content:$c}' \
+                | curl -sS -X POST "$WEBHOOK" -H "Content-Type: application/json" -d @- > /dev/null
+              echo "aviso enviado ao Discord: $AVISAR"
+            else
+              echo "DISCORD_WEBHOOK_URL nao configurado - ninguem foi avisado."
+            fi
+          fi
+
+          # O workflow NAO falha quando alerta. Falha vermelha no Actions
+          # dispara e-mail automatico do GitHub a cada 30 min, e o canal de
+          # aviso aqui e o Discord, de proposito, com controle de repeticao.
+          exit 0
+
+      - name: Guardar o que foi visto
+        if: always() && github.event_name != 'pull_request'
+        uses: actions/cache/save@v4
+        with:
+          path: estado-vigia
+          key: vigia-estado-${{ github.run_id }}
