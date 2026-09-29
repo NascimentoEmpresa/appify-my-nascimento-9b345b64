@@ -32399,7 +32399,7 @@ NOTIFY pgrst, 'reload schema';
 -- =====================================================================
 
 
--- ===== 20260930000258_colaborador_ia =====
+-- ===== 20260930000258_colaborador_ia (JA APLICADA 29/09) =====
 -- PORTAL DO COLABORADOR — Assistente de IA (botão "Tirar dúvida").
 --
 -- A Edge Function `colaborador-ia` responde dúvidas do colaborador na tela de
