@@ -170,10 +170,14 @@ jobs:
             HTTP=$(curl -s --compressed -o metricas.txt -w '%{http_code}' --max-time 25 \
                      -u "service_role:$SERVICE_KEY" \
                      "https://$PROJETO.supabase.co/customer/v1/privileged/metrics" || echo "000")
-            M=$(cat metricas.txt 2>/dev/null || echo "")
-            # Le do ARQUIVO, nao da variavel: sao ~300 kB de texto, e passar isso
-            # por `echo "$M" | grep` a cada metrica e tao fragil quanto
-            # desnecessario.
+            # TUDO LE DO ARQUIVO, NUNCA DE VARIAVEL.
+            # A resposta tem ~300 kB. Guardar isso numa variavel e passar por
+            # `echo "$M" | grep` falhou em producao (29/09/2026): o endpoint
+            # devolvia HTTP 200 com o corpo certo, `head -c 80` no arquivo
+            # mostrava texto valido, e mesmo assim o grep na variavel nao achava
+            # `node_memory_MemTotal_bytes`. Lendo do arquivo, achou de primeira.
+            # Nao vale a pena descobrir o limite exato do shell - vale nao
+            # depender dele.
             soma() { grep "^$1" metricas.txt 2>/dev/null | awk '{s+=$NF} END{printf "%.0f", s+0}'; }
 
             if [ "$HTTP" = "401" ] || [ "$HTTP" = "403" ]; then
@@ -211,8 +215,8 @@ jobs:
                 [ "$PSWAP" -ge 85 ] && alerta "**Swap em ${PSWAP}%.** E o sinal que aparece ANTES da queda."
               fi
 
-              DT=$(echo "$M" | grep '^node_filesystem_size_bytes'  | grep 'mountpoint="/data"' | awk '{s+=$NF} END{printf "%.0f", s}')
-              DL=$(echo "$M" | grep '^node_filesystem_avail_bytes' | grep 'mountpoint="/data"' | awk '{s+=$NF} END{printf "%.0f", s}')
+              DT=$(grep '^node_filesystem_size_bytes'  metricas.txt | grep 'mountpoint="/data"' | awk '{s+=$NF} END{printf "%.0f", s+0}')
+              DL=$(grep '^node_filesystem_avail_bytes' metricas.txt | grep 'mountpoint="/data"' | awk '{s+=$NF} END{printf "%.0f", s+0}')
               if [ -n "${DT:-}" ] && [ "${DT:-0}" -gt 0 ]; then
                 PDISCO=$(( 100 * (DT - DL) / DT ))
                 anota "DISCO ....... ${PDISCO}%  ($(( DL / 1073741824 )) GB livres)"
