@@ -23,7 +23,7 @@ import { ChatChamado } from "./ChatChamado";
 import {
   StatusBadge, PrioridadeBadge, STATUS_CHAMADO, CardAvaliacao,
   CATEGORIAS, TIPOS, IMPACTOS, URGENCIAS, AMBIENTES,
-  labelDe, moduloLabel, fmtData, fmtDataHora, podeReabrirChamado,
+  labelDe, moduloLabel, fmtData, fmtDataHora, podeReabrirChamado, chamadoEncerrado,
   BUCKET_CHAMADOS, type Chamado, type Anexo, type Evento, type AvaliacaoChamado,
 } from "./types";
 
@@ -145,7 +145,7 @@ export default function ExecutarChamado() {
   // Anexos de resposta anteriores ao chat: não pertencem a mensagem nenhuma, então
   // não têm balão onde aparecer — seguem listados à parte.
   const anexosLegado = anexos.filter((a) => a.campo && a.campo !== "abertura" && !a.evento_id);
-  const encerrado = chamado.status === "concluido" || chamado.status === "reprovado";
+  const encerrado = chamadoEncerrado(chamado.status);
 
   const Campo = ({ label, children }: { label: string; children: React.ReactNode }) => (
     <div>
@@ -335,7 +335,7 @@ export default function ExecutarChamado() {
                   {agindo === "cancelar_info" ? "Cancelando…" : "Cancelar solicitação de informações"}
                 </Button>
               )}
-              {canAprovar && chamado.status !== "concluido" && chamado.status !== "reprovado" && (
+              {canAprovar && !chamadoEncerrado(chamado.status) && (
                 <Button variant="outline" className="w-full justify-start gap-2 text-destructive transition-transform active:scale-95" onClick={() => setReprovando(true)}>
                   <XCircle className="h-4 w-4" /> Reprovar chamado
                 </Button>

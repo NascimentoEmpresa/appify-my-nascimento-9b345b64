@@ -124,7 +124,7 @@ const COR_PRIO: Record<string, string> = {
 };
 const COR_STATUS: Record<string, string> = {
   aberto: "38 95% 58%", em_andamento: "205 90% 60%", aguardando_retorno: "265 80% 70%",
-  concluido: "152 60% 48%", reprovado: "0 80% 62%",
+  concluido: "152 60% 48%", reprovado: "0 80% 62%", cancelado: "215 20% 62%",
 };
 
 // 5 devs por página: a 6ª célula da grade é sempre o card de gráficos.

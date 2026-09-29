@@ -17,7 +17,7 @@ import {
 } from "@/components/ui/dialog";
 import { MessageSquare } from "lucide-react";
 import { ChatChamado } from "./ChatChamado";
-import { StatusBadge, PrioridadeBadge, fmtData, type Chamado } from "./types";
+import { StatusBadge, PrioridadeBadge, fmtData, chamadoEncerrado, type Chamado } from "./types";
 
 /** Mensagens esperando por mim, por chamado. Alimenta a bolinha vermelha. */
 export function useChamadosNaoLidos() {
@@ -51,7 +51,7 @@ export function BotaoChatChamado({
 }: BotaoChatChamadoProps) {
   const [aberto, setAberto] = useState(false);
   const qc = useQueryClient();
-  const encerrado = chamado.status === "concluido" || chamado.status === "reprovado";
+  const encerrado = chamadoEncerrado(chamado.status);
 
   return (
     <>

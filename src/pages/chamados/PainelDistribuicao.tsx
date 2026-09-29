@@ -62,12 +62,13 @@ const ABAS = [
   { key: "aguardando_retorno", label: "Aguardando retorno" },
   { key: "concluido", label: "Concluídos" },
   { key: "reprovado", label: "Reprovados" },
+  { key: "cancelado", label: "Cancelados" },
 ] as const;
 
 const DONUT = {
   aberto: "hsl(var(--warning))", em_andamento: "hsl(var(--info))",
   aguardando_retorno: "hsl(var(--primary))", concluido: "hsl(var(--success))",
-  reprovado: "hsl(var(--destructive))",
+  reprovado: "hsl(var(--destructive))", cancelado: "hsl(var(--muted-foreground))",
 };
 
 export default function PainelDistribuicao() {
@@ -233,7 +234,7 @@ export default function PainelDistribuicao() {
 
   // Fila por prioridade (chamados ativos) para o rodapé.
   const filaPorPrioridade = useMemo(() => {
-    const ativos = chamados.filter((c) => c.status !== "concluido" && c.status !== "reprovado");
+    const ativos = chamados.filter((c) => chamadoAtivo(c.status));
     return {
       alta: ativos.filter((c) => c.prioridade === "alta"),
       media: ativos.filter((c) => c.prioridade === "media"),
@@ -415,7 +416,7 @@ export default function PainelDistribuicao() {
                       </TableCell>
                       <TableCell className="text-xs text-muted-foreground">{c.categorias.map((x) => labelDe(CATEGORIAS, x)).join(", ") || "—"}</TableCell>
                       <TableCell onClick={(e) => e.stopPropagation()}>
-                        {c.status !== "concluido" && c.status !== "reprovado" ? (
+                        {chamadoAtivo(c.status) ? (
                           <div className={flashPrioridade === c.id ? "animate-pop" : ""}>
                             <Select value={c.prioridade} onValueChange={(v) => mudarPrioridade(c.id, v, c.numero)}>
                               <SelectTrigger className="h-7 w-[92px] text-xs"><SelectValue /></SelectTrigger>
