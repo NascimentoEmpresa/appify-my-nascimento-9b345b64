@@ -3,6 +3,7 @@ import { Navigate, useNavigate, useSearchParams } from "react-router-dom";
 import { AlertCircle, ArrowRight, Eye, EyeOff, IdCard, Lock, ShieldCheck } from "lucide-react";
 import logoGN from "@/assets/logo-grupo-nascimento.png";
 import { chamarPortal, guardarSessao, lerToken, type RespostaLogin } from "@/hooks/useColaboradorPortal";
+import { AssistenteIA } from "./AssistenteIA";
 
 // =====================================================================
 // PORTAL DO COLABORADOR — entrar (/colaborador/entrar)
@@ -145,6 +146,7 @@ export default function EntrarColaborador() {
         </div>
         <p className="mt-6 text-center text-[11px] text-muted-foreground">© {new Date().getFullYear()} Grupo Nascimento</p>
       </section>
+      <AssistenteIA />
     </div>
   );
 }
