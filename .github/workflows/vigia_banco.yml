@@ -1,0 +1,325 @@
+# Vigia do banco de producao - alerta 24x7 sem servidor proprio.
+#
+# POR QUE EXISTE
+# O banco caiu tres vezes (21/09, CPU/Nano; CONEXAO; MEMORIA/Micro) e a
+# instancia vive perto do teto: em 28/09/2026 a memoria estava em 86% e o swap
+# em 79%. O unico monitor que existia era o scripts/monitor-supabase.ps1, que
+# so enxerga enquanto o Eduardo esta com o terminal aberto - ou seja, nunca de
+# madrugada, que e justamente quando ninguem esta olhando.
+#
+# POR QUE NO ACTIONS E NAO EM PROMETHEUS
+# Prometheus/Grafana/Loki (Fase 2 do plano de infraestrutura) precisam de uma
+# maquina ligada 24h. Enquanto o servidor da empresa nao chega e a VPS nao e
+# contratada, este workflow entrega a parte que realmente importa - ser avisado
+# quando aperta - de graca e sem host nenhum.
+#
+# O QUE ELE NAO E
+# Nao e series temporal: nao guarda historico nem desenha grafico, e o cron do
+# Actions e "melhor esforco" (pode atrasar minutos sob carga). Para tendencia e
+# diagnostico, o Prometheus continua sendo o destino. Isto e o alarme de
+# incendio, nao o termometro de parede.
+#
+# CUSTO
+# Repositorio publico: minutos de Actions sao gratuitos. 48 execucoes por dia
+# de ~1 min. No banco, cada execucao abre 1 conexao por alguns segundos e roda
+# consultas de catalogo (pg_stat_*), que nao varrem tabela nenhuma.
+
+name: Vigia do banco
+
+on:
+  schedule:
+    # A cada 30 min. Poderia ser 15, mas 30 ja pega qualquer subida de memoria
+    # com folga e corta o ruido pela metade.
+    - cron: '*/30 * * * *'
+  workflow_dispatch:
+    inputs:
+      testar_aviso:
+        description: 'Mandar uma DM de teste com a leitura atual, mesmo sem alarme'
+        type: boolean
+        default: false
+  # ENSAIO NA PR. workflow_dispatch so funciona depois que o arquivo esta na
+  # branch padrao, entao sem isto o vigia so poderia ser testado DEPOIS de
+  # mergeado - e vigia quebrado e pior que vigia nenhum, porque da falsa
+  # sensacao de cobertura. Rodando na PR que mexe nele, a mudanca e provada
+  # antes de entrar. No ensaio ele mede e imprime, mas NAO avisa no Discord e
+  # NAO toca no estado real (senao bagunçaria a maquina de estados do vigia
+  # de verdade e mandaria alerta duplicado).
+  pull_request:
+    paths:
+      - '.github/workflows/vigia_banco.yml'
+
+concurrency:
+  group: vigia-banco
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  vigiar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      # O estado anterior (OK ou ALARME) vive no cache do Actions. Sem ele o
+      # vigia mandaria mensagem a cada 30 min enquanto durasse o problema - 48
+      # por dia -, e alerta que repete vira alerta que se ignora.
+      - name: Lembrar do que foi visto da ultima vez
+        if: github.event_name != 'pull_request'
+        uses: actions/cache/restore@v4
+        with:
+          path: estado-vigia
+          key: vigia-estado-
+          restore-keys: vigia-estado-
+
+      - name: Instalar psql
+        # De proposito o postgresql-client do Ubuntu, e nao o 17 do PGDG: a
+        # trava de versao vale para pg_dump, nao para consulta. psql mais
+        # antigo conversa com servidor 17 sem problema, e assim o passo leva
+        # segundos em vez de meio minuto, 48 vezes por dia.
+        run: sudo apt-get install -y -qq postgresql-client
+
+      - name: Medir e alertar
+        env:
+          CREDENCIAIS: ${{ secrets.ESPELHO_CREDENCIAIS }}
+          SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          # DM PARA O EDUARDO, NUNCA CANAL.
+          # A primeira versao usava DISCORD_WEBHOOK_URL, que cai num canal com
+          # varias pessoas. Alerta de infraestrutura ali e ruido para quem nao
+          # pode agir e exposicao desnecessaria de problema interno. Mesmo
+          # padrao do pr_notify_dm.yml: bot abre DM e manda so para quem cuida.
+          DISCORD_TOKEN: ${{ secrets.DISCORD_TOKEN }}
+          DESTINO: ${{ vars.DISCORD_USER_ID_EDUARDO || '1384572666752663653' }}
+          TESTAR: ${{ inputs.testar_aviso }}
+          # O ref do projeto NAO e segredo: ele vai no bundle do navegador
+          # dentro do VITE_SUPABASE_URL, visivel para qualquer visitante.
+          PROJETO: ${{ vars.SUPABASE_PROJETO_REF || 'fwmzeaztjxrxxzxzxmgc' }}
+        run: |
+          set -uo pipefail
+
+          ALERTAS=""
+          RESUMO=""
+          anota() { RESUMO="$RESUMO$1"$'\n'; echo "$1"; }
+          alerta() { ALERTAS="$ALERTAS- $1"$'\n'; }
+
+          # ------------------------------------------------------------------
+          # 1. O que da para ver de dentro do banco (sempre disponivel)
+          # ------------------------------------------------------------------
+          PGHOST=$(echo "$CREDENCIAIS"  | jq -r '.supabase.host')
+          PGPORT=$(echo "$CREDENCIAIS"  | jq -r '.supabase.porta')
+          PGUSER=$(echo "$CREDENCIAIS"  | jq -r '.supabase.usuario')
+          PGDATABASE=$(echo "$CREDENCIAIS" | jq -r '.supabase.banco')
+          PGPASSWORD=$(echo "$CREDENCIAIS" | jq -r '.supabase.senha')
+          export PGHOST PGPORT PGUSER PGDATABASE PGPASSWORD PGSSLMODE=require
+
+          # Consulta unica: uma ida so ao banco, tudo de catalogo, sem varrer
+          # tabela de negocio nenhuma.
+          LINHA=$(psql -At -F'|' -c "
+            select
+              (select count(*) from pg_stat_activity),
+              (select setting::int from pg_settings where name='max_connections'),
+              (select count(*) from pg_stat_activity where wait_event_type='Lock'),
+              (select coalesce(max(extract(epoch from now()-query_start))::int,0)
+                 from pg_stat_activity
+                where state='active' and backend_type='client backend'
+                  and query not like '%pg_stat_activity%'),
+              (select round(100.0*sum(blks_hit)/nullif(sum(blks_hit)+sum(blks_read),0),3)
+                 from pg_stat_database),
+              (select pg_size_pretty(pg_database_size(current_database())))
+          " 2>&1)
+
+          if [ -z "${LINHA:-}" ] || echo "$LINHA" | grep -qi "error\|could not\|falhou"; then
+            anota "BANCO ....... NAO RESPONDEU"
+            anota "$LINHA"
+            alerta "**O banco nao respondeu.** Pode estar fora do ar."
+            CONEX=0; MAXCONEX=90
+          else
+            CONEX=$(echo "$LINHA" | cut -d'|' -f1)
+            MAXCONEX=$(echo "$LINHA" | cut -d'|' -f2)
+            # Divisor vazio derrubaria o passo inteiro por divisao por zero,
+            # e perder o vigia por causa disso seria pior que a imprecisao.
+            [ -z "${MAXCONEX:-}" ] && MAXCONEX=90
+            LOCKS=$(echo "$LINHA"  | cut -d'|' -f3)
+            LENTA=$(echo "$LINHA"  | cut -d'|' -f4)
+            CACHE=$(echo "$LINHA"  | cut -d'|' -f5)
+            TAM=$(echo "$LINHA"    | cut -d'|' -f6)
+
+            PCONEX=$(( 100 * CONEX / MAXCONEX ))
+            anota "CONEXOES .... ${PCONEX}%  (${CONEX} de ${MAXCONEX})"
+            anota "CACHE HIT ... ${CACHE}%"
+            anota "BLOQUEIOS ... ${LOCKS} esperando"
+            anota "QUERY MAIS LONGA ... ${LENTA}s"
+            anota "TAMANHO ..... ${TAM}"
+
+            [ "$PCONEX" -ge 80 ] && alerta "**Conexoes em ${PCONEX}%** (${CONEX} de ${MAXCONEX}). Foi assim que o banco caiu em 21/09."
+            [ "$LOCKS"  -ge 5  ] && alerta "**${LOCKS} consultas travadas esperando bloqueio.**"
+            [ "$LENTA"  -ge 300 ] && alerta "**Consulta rodando ha ${LENTA}s.** Algo travou ou esta varrendo tabela grande."
+            # bash nao faz conta com decimal; comparo so a parte inteira
+            [ "${CACHE%%.*}" -lt 99 ] && alerta "**Cache hit em ${CACHE}%.** O banco esta indo ao disco mais do que deveria."
+          fi
+
+          # ------------------------------------------------------------------
+          # 2. O que so o endpoint de metricas sabe: memoria, swap e disco
+          # ------------------------------------------------------------------
+          # Sem a chave service_role o vigia continua funcionando - so nao
+          # enxerga a maquina por fora. E de proposito: nao quero que a falta
+          # de um secret derrube o alerta de conexao, que e o que ja derrubou
+          # o banco antes.
+          if [ -z "${SERVICE_KEY:-}" ]; then
+            anota "MEMORIA/SWAP/DISCO ... sem leitura (secret SUPABASE_SERVICE_ROLE_KEY nao configurado)"
+          else
+            # O CODIGO HTTP TEM QUE APARECER NO LOG.
+            # A primeira versao deste passo dizia so "endpoint nao respondeu", e
+            # isso nao distingue chave errada de banco sufocado - duas coisas com
+            # acoes completamente diferentes. E o mesmo erro que ja me custou uma
+            # execucao no backup: esconder o diagnostico atras de uma mensagem
+            # generica.
+            # --compressed e obrigatorio. Sem ele o endpoint devolveu HTTP 200 e
+            # um corpo que o grep nao entendia (29/09/2026), porque vem
+            # comprimido. O monitor em PowerShell nunca sofreu com isso porque o
+            # Invoke-WebRequest descompacta sozinho; o curl so descompacta se
+            # voce pedir.
+            HTTP=$(curl -s --compressed -o metricas.txt -w '%{http_code}' --max-time 25 \
+                     -u "service_role:$SERVICE_KEY" \
+                     "https://$PROJETO.supabase.co/customer/v1/privileged/metrics" || echo "000")
+            # TUDO LE DO ARQUIVO, NUNCA DE VARIAVEL.
+            # A resposta tem ~300 kB. Guardar isso numa variavel e passar por
+            # `echo "$M" | grep` falhou em producao (29/09/2026): o endpoint
+            # devolvia HTTP 200 com o corpo certo, `head -c 80` no arquivo
+            # mostrava texto valido, e mesmo assim o grep na variavel nao achava
+            # `node_memory_MemTotal_bytes`. Lendo do arquivo, achou de primeira.
+            # Nao vale a pena descobrir o limite exato do shell - vale nao
+            # depender dele.
+            soma() { grep "^$1" metricas.txt 2>/dev/null | awk '{s+=$NF} END{printf "%.0f", s+0}'; }
+
+            if [ "$HTTP" = "401" ] || [ "$HTTP" = "403" ]; then
+              # Chave recusada e problema de CONFIGURACAO, nao de saude do banco.
+              # Alarmar aqui faria o vigia gritar para sempre por causa de um
+              # secret errado, e alarme permanente e alarme ignorado.
+              anota "METRICAS .... HTTP $HTTP - chave recusada (confira o secret SUPABASE_SERVICE_ROLE_KEY)"
+            elif [ "$HTTP" != "200" ] || ! grep -q "node_memory_MemTotal_bytes" metricas.txt; then
+              # Quando falha, mostrar o suficiente para diagnosticar sem
+              # despejar o corpo inteiro no log de um repositorio publico. Nome
+              # de metrica nao e dado sensivel; valor pode ser, entao so os
+              # nomes saem daqui.
+              anota "METRICAS .... HTTP $HTTP - sem resposta util ($(wc -c < metricas.txt 2>/dev/null || echo 0) bytes)"
+              anota "             inicio: $(head -c 80 metricas.txt 2>/dev/null | tr -d '\0' | tr '\n' ' ')"
+              anota "             familias de metrica presentes:"
+              grep -oE '^[a-zA-Z_:][a-zA-Z0-9_:]*' metricas.txt 2>/dev/null \
+                | sed 's/_[a-z0-9]*$//' | sort -u | head -30 | sed 's/^/               /'
+              anota "             nomes com 'mem' ou 'swap':"
+              grep -oiE '^[a-zA-Z_:][a-zA-Z0-9_:]*(mem|swap)[a-zA-Z0-9_:]*' metricas.txt 2>/dev/null \
+                | sort -u | head -15 | sed 's/^/               /'
+              alerta "**O endpoint de metricas respondeu HTTP $HTTP.** Se persistir, pode ser sintoma de banco sufocado."
+            else
+              MT=$(soma node_memory_MemTotal_bytes);  MD=$(soma node_memory_MemAvailable_bytes)
+              ST=$(soma node_memory_SwapTotal_bytes); SL=$(soma node_memory_SwapFree_bytes)
+
+              PMEM=$(( 100 * (MT - MD) / MT ))
+              anota "MEMORIA ..... ${PMEM}%  ($(( MD / 1048576 )) MB livres de $(( MT / 1048576 )) MB)"
+              [ "$PMEM" -ge 90 ] && alerta "**Memoria em ${PMEM}%.**"
+
+              if [ "$ST" -gt 0 ]; then
+                PSWAP=$(( 100 * (ST - SL) / ST ))
+                anota "SWAP ........ ${PSWAP}%  ($(( (ST - SL) / 1048576 )) MB em disco)"
+                # Swap e o aviso mais antecipado de todos: ele sobe antes de a
+                # memoria estourar.
+                [ "$PSWAP" -ge 85 ] && alerta "**Swap em ${PSWAP}%.** E o sinal que aparece ANTES da queda."
+              fi
+
+              DT=$(grep '^node_filesystem_size_bytes'  metricas.txt | grep 'mountpoint="/data"' | awk '{s+=$NF} END{printf "%.0f", s+0}')
+              DL=$(grep '^node_filesystem_avail_bytes' metricas.txt | grep 'mountpoint="/data"' | awk '{s+=$NF} END{printf "%.0f", s+0}')
+              if [ -n "${DT:-}" ] && [ "${DT:-0}" -gt 0 ]; then
+                PDISCO=$(( 100 * (DT - DL) / DT ))
+                anota "DISCO ....... ${PDISCO}%  ($(( DL / 1073741824 )) GB livres)"
+                [ "$PDISCO" -ge 80 ] && alerta "**Disco em ${PDISCO}%.**"
+              fi
+            fi
+          fi
+
+          # ------------------------------------------------------------------
+          # 3. Avisar - so na virada, nunca a cada execucao
+          # ------------------------------------------------------------------
+          mkdir -p estado-vigia
+          ANTERIOR=$(cat estado-vigia/situacao 2>/dev/null || echo "OK")
+          SEGUIDAS=$(cat estado-vigia/seguidas 2>/dev/null || echo "0")
+
+          if [ -n "$ALERTAS" ]; then ATUAL="ALARME"; else ATUAL="OK"; fi
+
+          AVISAR=nao
+          if [ "$ATUAL" = "ALARME" ] && [ "$ANTERIOR" = "OK" ]; then
+            AVISAR=abriu
+            SEGUIDAS=1
+          elif [ "$ATUAL" = "ALARME" ]; then
+            SEGUIDAS=$(( SEGUIDAS + 1 ))
+            # Lembrete a cada 8 execucoes = ~4 horas. Sem isso, um alarme que
+            # comecou de madrugada e passou batido nunca mais avisaria.
+            [ $(( SEGUIDAS % 8 )) -eq 0 ] && AVISAR=lembrete
+          elif [ "$ANTERIOR" = "ALARME" ]; then
+            AVISAR=normalizou
+            SEGUIDAS=0
+          fi
+
+          echo "$ATUAL"    > estado-vigia/situacao
+          echo "$SEGUIDAS" > estado-vigia/seguidas
+          echo "situacao anterior=$ANTERIOR atual=$ATUAL seguidas=$SEGUIDAS avisar=$AVISAR"
+
+          # BOTAO DE TESTE DO ALARME.
+          # Canal de alerta que nunca foi exercitado e canal que voce descobre
+          # quebrado no dia do incidente. Isto permite conferir a DM sem esperar
+          # o banco passar mal - e sem mexer na maquina de estados, porque a
+          # situacao calculada acima nao e alterada aqui.
+          if [ "${TESTAR:-false}" = "true" ]; then
+            AVISAR=teste
+          fi
+
+          if [ "$AVISAR" != "nao" ]; then
+            case "$AVISAR" in
+              teste)      TITULO=":wrench: **Teste do vigia** - leitura atual, sem alarme" ;;
+              abriu)      TITULO=":rotating_light: **Banco de producao em alerta**" ;;
+              lembrete)   TITULO=":rotating_light: **Ainda em alerta** (ha ~$(( SEGUIDAS / 2 ))h)" ;;
+              normalizou) TITULO=":white_check_mark: **Banco normalizou**" ;;
+            esac
+            CORPO=$(printf '%s\n\n%s\n```\n%s```' "$TITULO" "$ALERTAS" "$RESUMO")
+
+            if [ "${GITHUB_EVENT_NAME:-}" = "pull_request" ]; then
+              echo "--- ENSAIO: a mensagem abaixo NAO foi enviada ---"
+              echo "$CORPO"
+              echo "-------------------------------------------------"
+            elif [ -n "${DISCORD_TOKEN:-}" ]; then
+              API="https://discord.com/api/v10"
+              UA="DiscordBot (https://github.com/NascimentoEmpresa/appify-my-nascimento-9b345b64, 1.0)"
+
+              # A DM nao existe ate ser aberta: este POST devolve o id do canal
+              # privado entre o bot e o destinatario.
+              CANAL=$(curl -sS -X POST "$API/users/@me/channels" \
+                        -H "Authorization: Bot $DISCORD_TOKEN" \
+                        -H "Content-Type: application/json" -A "$UA" \
+                        -d "{\"recipient_id\":\"$DESTINO\"}" \
+                      | jq -r '.id // empty')
+
+              if [ -z "$CANAL" ]; then
+                echo "::warning::Nao consegui abrir DM no Discord. Ninguem foi avisado."
+              else
+                jq -n --arg c "$CORPO" '{content:$c}' \
+                  | curl -sS -X POST "$API/channels/$CANAL/messages" \
+                      -H "Authorization: Bot $DISCORD_TOKEN" \
+                      -H "Content-Type: application/json" -A "$UA" -d @- > /dev/null
+                echo "aviso enviado por DM: $AVISAR"
+              fi
+            else
+              echo "DISCORD_TOKEN nao configurado - ninguem foi avisado."
+            fi
+          fi
+
+          # O workflow NAO falha quando alerta. Falha vermelha no Actions
+          # dispara e-mail automatico do GitHub a cada 30 min, e o canal de
+          # aviso aqui e o Discord, de proposito, com controle de repeticao.
+          exit 0
+
+      - name: Guardar o que foi visto
+        if: always() && github.event_name != 'pull_request'
+        uses: actions/cache/save@v4
+        with:
+          path: estado-vigia
+          key: vigia-estado-${{ github.run_id }}

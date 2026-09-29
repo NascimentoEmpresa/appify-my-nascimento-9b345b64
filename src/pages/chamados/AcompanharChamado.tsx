@@ -9,14 +9,15 @@ import { PageHeader } from "@/components/layout/PageHeader";
 import { ExportarChamado } from "./ExportarChamado";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { ArrowLeft, MessageSquarePlus, Paperclip, RotateCcw, Star } from "lucide-react";
+import { ArrowLeft, MessageSquarePlus, Paperclip, RotateCcw, Star, XCircle } from "lucide-react";
 import { AvaliarChamadoDialog } from "./AvaliarChamadoDialog";
 import { ReabrirChamadoDialog } from "./ReabrirChamadoDialog";
+import { CancelarChamadoDialog } from "./CancelarChamadoDialog";
 import { ChatChamado } from "./ChatChamado";
 import {
   StatusBadge, PrioridadeBadge, CardAvaliacao,
   CATEGORIAS, TIPOS, IMPACTOS, URGENCIAS, AMBIENTES,
-  labelDe, moduloLabel, fmtData, fmtDataHora,
+  labelDe, moduloLabel, fmtData, fmtDataHora, chamadoEncerrado,
   BUCKET_CHAMADOS, type Chamado, type Anexo, type AvaliacaoChamado,
 } from "./types";
 
@@ -32,6 +33,7 @@ export default function AcompanharChamado({ base = "/app/central-servicos/chamad
 
   const [avaliarAberto, setAvaliarAberto] = useState(false);
   const [reabrirAberto, setReabrirAberto] = useState(false);
+  const [cancelarAberto, setCancelarAberto] = useState(false);
 
   // Abriu o chamado → o solicitante viu a novidade.
   useEffect(() => { chamadosMarkSeen(user?.id, "meus"); }, [user?.id]);
@@ -89,7 +91,8 @@ export default function AcompanharChamado({ base = "/app/central-servicos/chamad
   if (!chamado) return <p className="p-6 text-sm text-muted-foreground">Carregando…</p>;
 
   const ehSolicitante = chamado.solicitante_id === user?.id;
-  const encerrado = chamado.status === "concluido" || chamado.status === "reprovado";
+  const encerrado = chamadoEncerrado(chamado.status);
+  const rotuloEncerrado = chamado.status === "concluido" ? "concluído" : chamado.status === "cancelado" ? "cancelado" : "reprovado";
   const aguardandoRetorno = chamado.status === "aguardando_retorno";
   const anexosAbertura = anexos.filter((a) => (a.campo ?? "abertura") === "abertura");
   // Anexos anteriores ao chat: sem mensagem dona, ficam listados à parte.
@@ -137,6 +140,14 @@ export default function AcompanharChamado({ base = "/app/central-servicos/chamad
             <Card className="space-y-1 p-4">
               <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Observação do gerente</p>
               <p className="whitespace-pre-wrap text-sm [overflow-wrap:anywhere]">{chamado.observacao_gerente}</p>
+            </Card>
+          )}
+          {chamado.status === "cancelado" && chamado.motivo_cancelamento && (
+            <Card className="space-y-1 border-muted-foreground/30 bg-muted/40 p-4">
+              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                Motivo do cancelamento{chamado.cancelado_em ? ` · ${fmtDataHora(chamado.cancelado_em)}` : ""}
+              </p>
+              <p className="whitespace-pre-wrap text-sm [overflow-wrap:anywhere]">{chamado.motivo_cancelamento}</p>
             </Card>
           )}
           {chamado.status === "reprovado" && chamado.motivo_reprovacao && (
@@ -220,6 +231,21 @@ export default function AcompanharChamado({ base = "/app/central-servicos/chamad
             </Card>
           )}
 
+          {/* Cancelar (29/09/2026, mig 260): enquanto não encerrado, quem
+              abriu desiste com motivo — antes precisava pedir pra equipe
+              reprovar, e "reprovado" dizia que o time recusou. */}
+          {ehSolicitante && !encerrado && (
+            <Card className="space-y-2 p-4">
+              <p className="flex items-center gap-1.5 text-sm font-bold"><XCircle className="h-4 w-4 text-destructive" /> Não precisa mais?</p>
+              <p className="text-xs text-muted-foreground">
+                Se o problema se resolveu ou o pedido perdeu o sentido, cancele e conte o motivo. Dá para reabrir depois.
+              </p>
+              <Button variant="outline" className="w-full gap-2 border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive" onClick={() => setCancelarAberto(true)}>
+                <XCircle className="h-4 w-4" /> Cancelar solicitação
+              </Button>
+            </Card>
+          )}
+
           {/* Avaliação — só em chamados concluídos */}
           {chamado.status === "concluido" && (
             avaliacao ? (
@@ -242,8 +268,10 @@ export default function AcompanharChamado({ base = "/app/central-servicos/chamad
               <Card className="space-y-2 p-4">
                 <p className="flex items-center gap-1.5 text-sm font-bold"><RotateCcw className="h-4 w-4 text-primary" /> Não resolveu?</p>
                 <p className="text-xs text-muted-foreground">
-                  Este chamado está <b>{chamado.status === "concluido" ? "concluído" : "reprovado"}</b>. Se o problema continua
-                  {chamado.status === "reprovado" ? " ou você tem informação nova" : ""}, reabra e conte o que falta.
+                  Este chamado está <b>{rotuloEncerrado}</b>.{" "}
+                  {chamado.status === "cancelado"
+                    ? "Se ainda precisar, reabra e conte o que mudou."
+                    : <>Se o problema continua{chamado.status === "reprovado" ? " ou você tem informação nova" : ""}, reabra e conte o que falta.</>}
                 </p>
                 <Button variant="outline" className="w-full gap-2" onClick={() => setReabrirAberto(true)}>
                   <RotateCcw className="h-4 w-4" /> Reabrir chamado
@@ -251,7 +279,7 @@ export default function AcompanharChamado({ base = "/app/central-servicos/chamad
               </Card>
             ) : (
               <Card className="p-4 text-xs text-muted-foreground">
-                Este chamado está <b>{chamado.status === "concluido" ? "concluído" : "reprovado"}</b> e não aceita mais informações.
+                Este chamado está <b>{rotuloEncerrado}</b> e não aceita mais informações.
               </Card>
             )
           )}
@@ -264,6 +292,13 @@ export default function AcompanharChamado({ base = "/app/central-servicos/chamad
         chamado={chamado}
         modo="solicitante"
         onReaberto={invalidar}
+      />
+
+      <CancelarChamadoDialog
+        open={cancelarAberto}
+        onOpenChange={setCancelarAberto}
+        chamado={chamado}
+        onCancelado={invalidar}
       />
 
       <AvaliarChamadoDialog

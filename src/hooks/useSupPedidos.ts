@@ -509,3 +509,125 @@ export function derivarStatusVisiveis(
 
   return [derivarStatusVisivel(status, comprovacaoStatus, situacao)];
 }
+
+// ── Romaneios de retirada ───────────────────────────────────────────────
+
+export interface PedidoDoRomaneio {
+  id: string;
+  pedido_id: string;
+  status: string;
+  nome_colaborador: string;
+  posto_nome: string;
+  sup_pedido_item: Array<{ quantidade: number }>;
+}
+
+export interface RomaneioRetirada {
+  id: string;
+  codigo: string;
+  contrato_id: string;
+  contrato_nome: string;
+  status: "ABERTO" | "RETIRADO" | "CANCELADO";
+  volumes: number | null;
+  observacao: string | null;
+  criado_por_nome: string;
+  created_at: string;
+  retirado_em: string | null;
+  retirado_por_nome: string | null;
+  motivo_cancelamento: string | null;
+  sup_pedido: PedidoDoRomaneio[];
+}
+
+function invalidarRomaneios(qc: ReturnType<typeof useQueryClient>) {
+  qc.invalidateQueries({ queryKey: ["sup_pedido"] });
+  qc.invalidateQueries({ queryKey: ["sup_romaneio"] });
+}
+
+export function useRomaneios() {
+  return useQuery({
+    queryKey: ["sup_romaneio"],
+    queryFn: async (): Promise<RomaneioRetirada[]> => {
+      const { data, error } = await sb
+        .from("sup_romaneio")
+        .select("*, sup_pedido(id, pedido_id, status, nome_colaborador, posto_nome, sup_pedido_item(quantidade))")
+        .in("status", ["ABERTO", "RETIRADO"])
+        .order("created_at", { ascending: false });
+      if (error) throw error;
+      return (data ?? []) as RomaneioRetirada[];
+    },
+  });
+}
+
+export function useCriarRomaneio() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      pedidoIds,
+      volumes,
+      observacao,
+    }: {
+      pedidoIds: string[];
+      volumes: number | null;
+      observacao: string | null;
+    }) => {
+      const { data, error } = await sb.rpc("sup_romaneio_criar", {
+        p_pedido_ids: pedidoIds,
+        p_volumes: volumes,
+        p_observacao: observacao,
+      });
+      if (error) throw error;
+      return data as Omit<RomaneioRetirada, "sup_pedido">;
+    },
+    onSuccess: () => invalidarRomaneios(qc),
+  });
+}
+
+export function useRemoverDoRomaneio() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ romaneioId, pedidoId }: { romaneioId: string; pedidoId: string }) => {
+      const { data, error } = await sb.rpc("sup_romaneio_remover_pedido", {
+        p_romaneio: romaneioId,
+        p_pedido: pedidoId,
+      });
+      if (error) throw error;
+      return data;
+    },
+    onSuccess: () => invalidarRomaneios(qc),
+  });
+}
+
+export function useCancelarRomaneio() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ romaneioId, motivo }: { romaneioId: string; motivo: string }) => {
+      const { data, error } = await sb.rpc("sup_romaneio_cancelar", {
+        p_romaneio: romaneioId,
+        p_motivo: motivo,
+      });
+      if (error) throw error;
+      return data;
+    },
+    onSuccess: () => invalidarRomaneios(qc),
+  });
+}
+
+export function useDespacharRomaneio() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      romaneioId,
+      envio,
+    }: {
+      romaneioId: string;
+      envio: { tipo: "SUPERVISOR" | "CORREIO"; rastreio: string | null };
+    }) => {
+      const { data, error } = await sb.rpc("sup_romaneio_despachar", {
+        p_romaneio: romaneioId,
+        p_envio: envio,
+      });
+      if (error) throw error;
+      return data as { codigo: string; despachados: Array<{ pedido_id: string }>; pulados: Array<{ pedido_id: string; motivo: string }> };
+    },
+    onSuccess: () => invalidarRomaneios(qc),
+  });
+}

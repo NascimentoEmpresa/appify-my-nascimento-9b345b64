@@ -220,7 +220,9 @@ export default function MeusChamados({ base = "/app/central-servicos/chamados" }
                     <TableCell className="whitespace-nowrap text-xs">{fmtData(c.prazo_previsto)}</TableCell>
                     <TableCell className="whitespace-nowrap text-xs text-muted-foreground">{fmtDataHora(c.created_at)}</TableCell>
                     <TableCell className="max-w-[200px] truncate text-xs text-muted-foreground" title={c.observacao_gerente ?? ""}>
-                      {c.observacao_gerente || (c.status === "reprovado" && c.motivo_reprovacao ? c.motivo_reprovacao : "—")}
+                      {c.observacao_gerente
+                        || (c.status === "reprovado" && c.motivo_reprovacao ? c.motivo_reprovacao
+                        : c.status === "cancelado" && c.motivo_cancelamento ? `Cancelado: ${c.motivo_cancelamento}` : "—")}
                     </TableCell>
                     <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
                       <div className="flex items-center justify-end gap-1.5">
@@ -230,7 +232,7 @@ export default function MeusChamados({ base = "/app/central-servicos/chamados" }
                         naoLidos={naoLidos[c.id] ?? 0}
                         responsavelNome={nomeDe(c.responsavel_id)}
                       />
-                      {c.status !== "concluido" ? (
+                      {c.status === "cancelado" ? null : c.status !== "concluido" ? (
                         <Button variant="ghost" size="sm" disabled className="h-8 cursor-not-allowed gap-1.5 text-muted-foreground/60">
                           <Lock className="h-3.5 w-3.5" /> Avaliar
                         </Button>
