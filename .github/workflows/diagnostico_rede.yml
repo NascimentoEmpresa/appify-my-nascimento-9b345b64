@@ -15,6 +15,9 @@ name: Diagnostico de rede (temporario)
 
 on:
   workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/diagnostico_rede.yml'
 
 permissions:
   contents: read
