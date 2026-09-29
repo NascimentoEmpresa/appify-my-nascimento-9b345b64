@@ -32,6 +32,16 @@ on:
     # com folga e corta o ruido pela metade.
     - cron: '*/30 * * * *'
   workflow_dispatch:
+  # ENSAIO NA PR. workflow_dispatch so funciona depois que o arquivo esta na
+  # branch padrao, entao sem isto o vigia so poderia ser testado DEPOIS de
+  # mergeado - e vigia quebrado e pior que vigia nenhum, porque da falsa
+  # sensacao de cobertura. Rodando na PR que mexe nele, a mudanca e provada
+  # antes de entrar. No ensaio ele mede e imprime, mas NAO avisa no Discord e
+  # NAO toca no estado real (senao bagunçaria a maquina de estados do vigia
+  # de verdade e mandaria alerta duplicado).
+  pull_request:
+    paths:
+      - '.github/workflows/vigia_banco.yml'
 
 concurrency:
   group: vigia-banco
@@ -50,6 +60,7 @@ jobs:
       # vigia mandaria mensagem a cada 30 min enquanto durasse o problema - 48
       # por dia -, e alerta que repete vira alerta que se ignora.
       - name: Lembrar do que foi visto da ultima vez
+        if: github.event_name != 'pull_request'
         uses: actions/cache/restore@v4
         with:
           path: estado-vigia
@@ -205,16 +216,25 @@ jobs:
           echo "$SEGUIDAS" > estado-vigia/seguidas
           echo "situacao anterior=$ANTERIOR atual=$ATUAL seguidas=$SEGUIDAS avisar=$AVISAR"
 
-          if [ "$AVISAR" != "nao" ] && [ -n "${WEBHOOK:-}" ]; then
+          if [ "$AVISAR" != "nao" ]; then
             case "$AVISAR" in
               abriu)      TITULO=":rotating_light: **Banco de producao em alerta**" ;;
               lembrete)   TITULO=":rotating_light: **Ainda em alerta** (ha ~$(( SEGUIDAS / 2 ))h)" ;;
               normalizou) TITULO=":white_check_mark: **Banco normalizou**" ;;
             esac
             CORPO=$(printf '%s\n\n%s\n```\n%s```' "$TITULO" "$ALERTAS" "$RESUMO")
-            jq -n --arg c "$CORPO" '{content:$c}' \
-              | curl -sS -X POST "$WEBHOOK" -H "Content-Type: application/json" -d @- > /dev/null
-            echo "aviso enviado ao Discord: $AVISAR"
+
+            if [ "${GITHUB_EVENT_NAME:-}" = "pull_request" ]; then
+              echo "--- ENSAIO: a mensagem abaixo NAO foi enviada ---"
+              echo "$CORPO"
+              echo "-------------------------------------------------"
+            elif [ -n "${WEBHOOK:-}" ]; then
+              jq -n --arg c "$CORPO" '{content:$c}' \
+                | curl -sS -X POST "$WEBHOOK" -H "Content-Type: application/json" -d @- > /dev/null
+              echo "aviso enviado ao Discord: $AVISAR"
+            else
+              echo "DISCORD_WEBHOOK_URL nao configurado - ninguem foi avisado."
+            fi
           fi
 
           # O workflow NAO falha quando alerta. Falha vermelha no Actions
@@ -223,7 +243,7 @@ jobs:
           exit 0
 
       - name: Guardar o que foi visto
-        if: always()
+        if: always() && github.event_name != 'pull_request'
         uses: actions/cache/save@v4
         with:
           path: estado-vigia
