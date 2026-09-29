@@ -118,6 +118,7 @@ import ControleJuros from "./pages/financeiro/ControleJuros";
 import ExtratorBeneficios from "./pages/financeiro/ExtratorBeneficios";
 import ChecklistFaturamento from "./pages/financeiro/ChecklistFaturamento";
 import SolicitacoesAjuste from "./pages/financeiro/SolicitacoesAjuste";
+import DocCanaa from "./pages/financeiro/DocCanaa";
 import ContaGarantida from "./pages/financeiro/ContaGarantida";
 import FluxoCaixaDiario from "./pages/financeiro/FluxoCaixaDiario";
 import CapitalGiro from "./pages/financeiro/CapitalGiro";
@@ -702,6 +703,7 @@ const App = () => (
             <Route path="financeiro/gestao-financeira/extrator-beneficios" element={<ExtratorBeneficios />} />
             <Route path="financeiro/checklist-faturamento" element={<ChecklistFaturamento />} />
             <Route path="financeiro/solicitacoes-ajuste" element={<SolicitacoesAjuste />} />
+            <Route path="financeiro/doc-canaa" element={<DocCanaa />} />
             <Route path="financeiro/gestao-financeira/cartao-credito" element={<CartaoCredito />} />
             <Route path="financeiro/fluxo-caixa-diario" element={<FluxoCaixaDiario />} />
             <Route path="financeiro/capital-giro" element={<CapitalGiro />} />
