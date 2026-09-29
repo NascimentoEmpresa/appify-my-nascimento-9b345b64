@@ -1,0 +1,57 @@
+# Diagnostico temporario de rede - 29/09/2026.
+#
+# O ensaio de recuperacao travou porque o pooler do projeto de teste
+# (aws-0-sa-east-1) nao aceita conexao na 5432 a partir da rede da empresa,
+# enquanto o pooler da producao (aws-1-sa-east-1) aceita. Da maquina do Eduardo
+# nao da para saber se o bloqueio e da rede dele ou do proprio endpoint: o ICMP
+# morre no gateway e nao ha outro ponto de vista disponivel.
+#
+# Este workflow existe so para dar esse ponto de vista externo. Ele NAO usa
+# segredo nenhum e nao toca em banco nenhum - so abre socket e reporta.
+#
+# APAGAR depois de responder a pergunta.
+
+name: Diagnostico de rede (temporario)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  testar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Alcance dos poolers a partir do runner
+        run: |
+          set -u
+          testar() {
+            if timeout 8 bash -c "exec 3<>/dev/tcp/$1/$2" 2>/dev/null; then
+              echo "  $1:$2 -> ABRE"
+            else
+              echo "  $1:$2 -> bloqueado/sem resposta"
+            fi
+          }
+
+          echo "### por nome"
+          for H in aws-0-sa-east-1.pooler.supabase.com aws-1-sa-east-1.pooler.supabase.com; do
+            echo "$H resolve para: $(getent ahostsv4 "$H" | awk '{print $1}' | sort -u | tr '\n' ' ')"
+            testar "$H" 5432
+            testar "$H" 6543
+          done
+
+          echo "### pelos IPs exatos vistos da rede da empresa"
+          for IP in 15.229.150.166 54.94.90.106 54.232.77.43; do
+            testar "$IP" 5432
+            testar "$IP" 443
+          done
+
+          echo "### o pooler responde protocolo? (handshake do Postgres)"
+          sudo apt-get install -y -qq postgresql-client > /dev/null 2>&1
+          for H in aws-0-sa-east-1 aws-1-sa-east-1; do
+            echo -n "  $H: "
+            PGCONNECT_TIMEOUT=8 psql "postgresql://usuario_que_nao_existe@$H.pooler.supabase.com:5432/postgres" \
+              -c "select 1" 2>&1 | head -1 | cut -c1-110
+          done
