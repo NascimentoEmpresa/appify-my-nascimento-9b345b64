@@ -9,6 +9,7 @@ import {
   type PerfilColaborador,
 } from "@/hooks/useColaboradorPortal";
 import { Carregando, Erro } from "./ui";
+import { AssistenteIA } from "./AssistenteIA";
 
 // =====================================================================
 // PORTAL DO COLABORADOR — a casca de /colaborador
@@ -141,6 +142,9 @@ function ShellAutenticado() {
           </Ctx.Provider>
         )}
       </main>
+
+      {/* "Tirar dúvida" — no celular fica acima da barra inferior */}
+      <AssistenteIA logado acimaDaBarra />
 
       {/* Barra inferior — só no celular */}
       <nav className="fixed inset-x-0 bottom-0 z-30 border-t border-border bg-card/95 backdrop-blur md:hidden" style={{ paddingBottom: "env(safe-area-inset-bottom)" }}>
