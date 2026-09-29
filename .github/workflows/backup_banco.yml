@@ -383,14 +383,37 @@ jobs:
 
       - name: Avisar no Discord se falhou
         if: failure()
+        # DM PARA O EDUARDO, NUNCA CANAL.
+        # Ate 29/09/2026 este aviso ia para o DISCORD_WEBHOOK_URL, que cai num
+        # canal com varias pessoas. Backup falhando nao e assunto de canal
+        # coletivo: quem pode agir e uma pessoa so, e para os demais e ruido -
+        # e exposicao de problema interno. Mesmo padrao do pr_notify_dm.yml.
         env:
-          WEBHOOK: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          DISCORD_TOKEN: ${{ secrets.DISCORD_TOKEN }}
+          DESTINO: ${{ vars.DISCORD_USER_ID_EDUARDO || '1384572666752663653' }}
         run: |
-          if [ -z "${WEBHOOK:-}" ]; then
-            echo "DISCORD_WEBHOOK_URL nao configurado - sem aviso."
+          if [ -z "${DISCORD_TOKEN:-}" ]; then
+            echo "DISCORD_TOKEN nao configurado - sem aviso."
             exit 0
           fi
+          API="https://discord.com/api/v10"
+          UA="DiscordBot (https://github.com/NascimentoEmpresa/appify-my-nascimento-9b345b64, 1.0)"
           RUN="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-          curl -sS -X POST "$WEBHOOK" \
-            -H "Content-Type: application/json" \
-            -d "{\"content\": \":x: **Backup do banco FALHOU**\\nO ultimo backup bom pode estar com ate 12h de atraso.\\n$RUN\"}"
+
+          CANAL=$(curl -sS -X POST "$API/users/@me/channels" \
+                    -H "Authorization: Bot $DISCORD_TOKEN" \
+                    -H "Content-Type: application/json" -A "$UA" \
+                    -d "{\"recipient_id\":\"$DESTINO\"}" | jq -r '.id // empty')
+
+          if [ -z "$CANAL" ]; then
+            echo "::warning::Nao consegui abrir DM no Discord. Ninguem foi avisado."
+            exit 0
+          fi
+
+          jq -n --arg c ":x: **Backup do banco FALHOU**
+          O ultimo backup bom pode estar com ate 12h de atraso.
+          $RUN" '{content:$c}' \
+            | curl -sS -X POST "$API/channels/$CANAL/messages" \
+                -H "Authorization: Bot $DISCORD_TOKEN" \
+                -H "Content-Type: application/json" -A "$UA" -d @- > /dev/null
+          echo "aviso de falha enviado por DM."
