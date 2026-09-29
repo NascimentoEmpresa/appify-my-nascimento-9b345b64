@@ -171,18 +171,29 @@ jobs:
                      -u "service_role:$SERVICE_KEY" \
                      "https://$PROJETO.supabase.co/customer/v1/privileged/metrics" || echo "000")
             M=$(cat metricas.txt 2>/dev/null || echo "")
-            soma() { echo "$M" | grep "^$1" | awk '{s+=$NF} END{printf "%.0f", s}'; }
+            # Le do ARQUIVO, nao da variavel: sao ~300 kB de texto, e passar isso
+            # por `echo "$M" | grep` a cada metrica e tao fragil quanto
+            # desnecessario.
+            soma() { grep "^$1" metricas.txt 2>/dev/null | awk '{s+=$NF} END{printf "%.0f", s+0}'; }
 
             if [ "$HTTP" = "401" ] || [ "$HTTP" = "403" ]; then
               # Chave recusada e problema de CONFIGURACAO, nao de saude do banco.
               # Alarmar aqui faria o vigia gritar para sempre por causa de um
               # secret errado, e alarme permanente e alarme ignorado.
               anota "METRICAS .... HTTP $HTTP - chave recusada (confira o secret SUPABASE_SERVICE_ROLE_KEY)"
-            elif [ "$HTTP" != "200" ] || ! echo "$M" | grep -q "node_memory_MemTotal_bytes"; then
+            elif [ "$HTTP" != "200" ] || ! grep -q "node_memory_MemTotal_bytes" metricas.txt; then
               # Quando falha, mostrar o suficiente para diagnosticar sem
-              # despejar o corpo inteiro no log de um repositorio publico.
+              # despejar o corpo inteiro no log de um repositorio publico. Nome
+              # de metrica nao e dado sensivel; valor pode ser, entao so os
+              # nomes saem daqui.
               anota "METRICAS .... HTTP $HTTP - sem resposta util ($(wc -c < metricas.txt 2>/dev/null || echo 0) bytes)"
               anota "             inicio: $(head -c 80 metricas.txt 2>/dev/null | tr -d '\0' | tr '\n' ' ')"
+              anota "             familias de metrica presentes:"
+              grep -oE '^[a-zA-Z_:][a-zA-Z0-9_:]*' metricas.txt 2>/dev/null \
+                | sed 's/_[a-z0-9]*$//' | sort -u | head -30 | sed 's/^/               /'
+              anota "             nomes com 'mem' ou 'swap':"
+              grep -oiE '^[a-zA-Z_:][a-zA-Z0-9_:]*(mem|swap)[a-zA-Z0-9_:]*' metricas.txt 2>/dev/null \
+                | sort -u | head -15 | sed 's/^/               /'
               alerta "**O endpoint de metricas respondeu HTTP $HTTP.** Se persistir, pode ser sintoma de banco sufocado."
             else
               MT=$(soma node_memory_MemTotal_bytes);  MD=$(soma node_memory_MemAvailable_bytes)
