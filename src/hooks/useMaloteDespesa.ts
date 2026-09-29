@@ -1940,7 +1940,7 @@ export function useContratoPrimeiraLinhaRateio(despesaIds: string[]) {
   });
 }
 
-type ClassificacaoAprovadores = {
+export type ClassificacaoAprovadores = {
   aprovador1_nomes?: string[] | null;
   aprovador2_nomes?: string[] | null;
   aprovador3_nomes?: string[] | null;

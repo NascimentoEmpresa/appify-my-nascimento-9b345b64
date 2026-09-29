@@ -44,7 +44,8 @@ interface Props {
   aviso?: string | null;
 }
 
-const CSS = `
+// Exportado para a tela "Sem acesso" (SemAcesso.tsx) usar o mesmo visual.
+export const CSS_SISTEMA_INDISPONIVEL = `
 .si-raiz{--si-azul:#0b2a63;--si-azul2:#0f3171;--si-escuro:#061636;--si-laranja:#f26b1d;--si-laranja2:#ff9a4d;
   position:relative;overflow:hidden;isolation:isolate;color:#fff;font-family:Inter,"Plus Jakarta Sans",system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
   background:radial-gradient(1200px 700px at 78% -10%,#1e4fb3 0%,transparent 60%),radial-gradient(900px 600px at -10% 110%,#12306e 0%,transparent 55%),linear-gradient(160deg,var(--si-azul2) 0%,var(--si-azul) 45%,var(--si-escuro) 100%);
@@ -181,7 +182,7 @@ export function SistemaIndisponivel({ modo = "tela", proximaVerificacaoEm, onTen
 
   return (
     <div ref={raiz} className={`si-raiz ${modo === "tela" ? "si-tela" : "si-area"}`} role="alert" aria-live="assertive">
-      <style>{CSS + (jogo ? CSS_JOGO : "")}</style>
+      <style>{CSS_SISTEMA_INDISPONIVEL + (jogo ? CSS_JOGO : "")}</style>
 
       <header className="si-topo">
         <div className="si-marca">

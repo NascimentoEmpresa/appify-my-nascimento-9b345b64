@@ -17,6 +17,21 @@ const simNao = (b: any) => (b === true ? "Sim" : b === false ? "Não" : "—");
 const digitsOf = (s?: string) => String(s ?? "").replace(/\D/g, "");
 type Aba = "favoritos" | "banco" | "vaga" | "todos";
 
+// O PostgREST corta cada resposta em 1.000 linhas, sem erro. SISTEMA_RECRUTAMENTO
+// passou disso (1.111 em 29/09/2026) e o "Puxar para uma vaga" mostrava só as
+// vagas abertas que caíam nas primeiras 1.000 — umas sim, outras não. Busca em
+// blocos até acabar. `montar` recebe (de, até) e devolve a query com .range().
+async function todasAsLinhas(montar: (de: number, ate: number) => any): Promise<any[]> {
+  const BLOCO = 1000;
+  const tudo: any[] = [];
+  for (let de = 0; ; de += BLOCO) {
+    const { data, error } = await montar(de, de + BLOCO - 1);
+    if (error) throw error;
+    tudo.push(...(data ?? []));
+    if (!data || data.length < BLOCO) return tudo;
+  }
+}
+
 // Junta candidaturas da MESMA PESSOA: mesmo CPF (cpf ou cpf_cand) OU mesmo
 // e-mail — candidaturas antigas nem sempre têm os dois. Um registro que
 // conecta dois grupos (CPF num, e-mail noutro) funde os grupos.
@@ -68,6 +83,9 @@ export default function BancoTalentos() {
   const [puxar, setPuxar] = useState<any | null>(null);
   const [detalhe, setDetalhe] = useState<{ latest: any; items: any[]; n: number } | null>(null);
   const [vagaSel, setVagaSel] = useState<string>("");
+  // Busca do "Puxar para uma vaga": a lista só aparece digitando (código,
+  // cargo ou cidade) — com 50+ vagas abertas o select virava um paredão.
+  const [buscaVaga, setBuscaVaga] = useState("");
   const [toasts, setToasts] = useState<{ id: number; msg: string; t: string }[]>([]);
 
   const toast = (msg: string, t = "info") => {
@@ -77,15 +95,21 @@ export default function BancoTalentos() {
   };
 
   const cargoDe = (id?: number | null) => sols.find(s => s.id === id)?.cargo || (id ? `#${id}` : "—");
+  // Só a vaga em seleção recebe candidato: concluída, reprovada, contratada ou
+  // nas etapas de admissão ficam de fora do "Puxar para uma vaga".
   const vagasAbertas = sols.filter(s => s.status === "Vaga aberta - Seleção de Currículos");
 
   // Carrega TODAS as candidaturas de uma vez; o recorte por aba é feito por
   // PESSOA (client-side), pra pessoa aparecer inteira em qualquer aba.
   const load = useCallback(async () => {
     setLoading(true);
-    const { data, error } = await (supabase as any).from("WA_CURRICULOS").select("*").order("created_at", { ascending: false });
+    // Em blocos (todasAsLinhas): passando de 1.000 candidaturas, o resto sumiria calado.
+    let data: any[] = [];
+    try {
+      data = await todasAsLinhas((de, ate) => (supabase as any).from("WA_CURRICULOS").select("*")
+        .order("created_at", { ascending: false }).order("id", { ascending: false }).range(de, ate));
+    } catch (e: any) { setLoading(false); toast("Erro ao carregar: " + (e?.message ?? e), "err"); return; }
     setLoading(false);
-    if (error) { toast("Erro ao carregar: " + error.message, "err"); return; }
     const list = (data ?? []).map((c: any) => ({ ...c, nome: String(c.nome ?? "").trim().toUpperCase() }));
     setRows(list);
     const ids = list.map((c: any) => c.id);
@@ -99,11 +123,14 @@ export default function BancoTalentos() {
 
   // Metadados (uma vez): solicitações + contadores + vagas com candidatura.
   const loadMeta = useCallback(async () => {
-    const [{ data: s }, { data: all }] = await Promise.all([
-      (supabase as any).from("SISTEMA_RECRUTAMENTO").select("id,cargo,cidade,status"),
-      (supabase as any).from("WA_CURRICULOS").select("id,vaga_id"),
-    ]);
-    setSols(s ?? []);
+    let s: any[] = [], all: any[] = [];
+    try {
+      [s, all] = await Promise.all([
+        todasAsLinhas((de, ate) => (supabase as any).from("SISTEMA_RECRUTAMENTO").select("id,cargo,cidade,status").order("id").range(de, ate)),
+        todasAsLinhas((de, ate) => (supabase as any).from("WA_CURRICULOS").select("id,vaga_id").order("id").range(de, ate)),
+      ]);
+    } catch (e: any) { toast("Erro ao carregar as vagas: " + (e?.message ?? e), "err"); }
+    setSols(s);
     const porVaga = new Map<number, number>();
     (all ?? []).forEach((c: any) => { if (c.vaga_id) porVaga.set(c.vaga_id, (porVaga.get(c.vaga_id) || 0) + 1); });
     setVagasComCand(Array.from(porVaga, ([vaga_id, n]) => ({ vaga_id, n })).sort((a, b) => b.n - a.n));
@@ -169,7 +196,7 @@ export default function BancoTalentos() {
       });
     } catch { /* noop */ }
     toast(`${puxar.nome || "Candidato"} enviado para a vaga.`, "ok");
-    setPuxar(null); setVagaSel("");
+    setPuxar(null); setVagaSel(""); setBuscaVaga("");
     load();
   };
 
@@ -338,7 +365,7 @@ export default function BancoTalentos() {
                           tinha sido reprovado em alguma ficava preso: todas as
                           candidaturas dele tinham vaga_id. Agora vale sempre —
                           reprovado numa vaga pode concorrer a outra. */}
-                      {podeAgir && <button onClick={() => { setVagaSel(""); setPuxar(semVaga ?? c); }} style={btnStyle("#16a34a", "none", "#fff")}>✓ Puxar para vaga</button>}
+                      {podeAgir && <button onClick={() => { setVagaSel(""); setBuscaVaga(""); setPuxar(semVaga ?? c); }} style={btnStyle("#16a34a", "none", "#fff")}>✓ Puxar para vaga</button>}
                     </div>
                   </div>
                 </div>
@@ -352,7 +379,7 @@ export default function BancoTalentos() {
       {puxar && (
         <div style={{ position: "fixed", inset: 0, zIndex: 700, background: "rgba(15,23,42,.42)", backdropFilter: "blur(4px)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
           <div style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 18, padding: 24, width: "100%", maxWidth: 460, position: "relative", boxShadow: "0 16px 40px rgba(15,23,42,.1)" }}>
-            <button onClick={() => { setPuxar(null); setVagaSel(""); }} style={{ position: "absolute", top: 14, right: 14, background: "none", border: "none", color: "#94a3b8", fontSize: 20, cursor: "pointer" }}>✕</button>
+            <button onClick={() => { setPuxar(null); setVagaSel(""); setBuscaVaga(""); }} style={{ position: "absolute", top: 14, right: 14, background: "none", border: "none", color: "#94a3b8", fontSize: 20, cursor: "pointer" }}>✕</button>
             <div style={{ fontSize: 17, fontWeight: 800, marginBottom: 4 }}>Puxar para uma vaga</div>
             <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 14 }}>{puxar.nome} entrará no kanban da vaga em ENTRADA.</div>
             {vagasAbertas.length === 0 ? (
@@ -360,14 +387,48 @@ export default function BancoTalentos() {
             ) : (
               <div style={{ marginBottom: 16 }}>
                 <label style={{ display: "block", fontSize: 11, fontWeight: 600, color: "#94a3b8", textTransform: "uppercase", letterSpacing: ".5px", marginBottom: 5 }}>Vaga *</label>
-                <select value={vagaSel} onChange={e => setVagaSel(e.target.value)} style={{ width: "100%", background: "#fff", border: "1px solid #e2e8f0", borderRadius: 12, color: "#0f172a", fontSize: 13, padding: "9px 12px", outline: "none" }}>
-                  <option value="">— Selecione a vaga —</option>
-                  {vagasAbertas.map(v => <option key={v.id} value={v.id}>#{v.id} · {v.cargo} · {v.cidade || ""}</option>)}
-                </select>
+                {(() => {
+                  const escolhida = vagasAbertas.find(v => String(v.id) === vagaSel);
+                  if (escolhida) return (
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, border: "1.5px solid #16a34a", background: "#f0fdf4", borderRadius: 12, padding: "9px 12px", fontSize: 13, color: "#0f172a" }}>
+                      <span style={{ flex: 1 }}><b>#{escolhida.id}</b> · {escolhida.cargo} · {escolhida.cidade || ""}</span>
+                      <button type="button" onClick={() => setVagaSel("")} style={{ background: "none", border: "none", color: "#16a34a", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Trocar</button>
+                    </div>
+                  );
+                  // Sem acento e sem caixa: "servente limp" acha "SERVENTE DE LIMPEZA".
+                  const norm = (x: any) => String(x ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+                  const termos = norm(buscaVaga).replace(/#/g, "").split(/\s+/).filter(Boolean);
+                  const achadas = termos.length
+                    ? vagasAbertas.filter(v => {
+                        const alvo = norm(`${v.id} ${v.cargo} ${v.cidade}`);
+                        return termos.every(t => alvo.includes(t));
+                      })
+                    : [];
+                  return (
+                    <>
+                      <input autoFocus value={buscaVaga} onChange={e => setBuscaVaga(e.target.value)}
+                        placeholder={`Digite o código, cargo ou cidade (${vagasAbertas.length} vagas abertas)`}
+                        style={{ width: "100%", boxSizing: "border-box", background: "#fff", border: "1px solid #e2e8f0", borderRadius: 12, color: "#0f172a", fontSize: 13, padding: "9px 12px", outline: "none" }} />
+                      {termos.length > 0 && (
+                        <div style={{ marginTop: 6, maxHeight: 240, overflowY: "auto", border: "1px solid #e2e8f0", borderRadius: 12 }}>
+                          {achadas.length === 0
+                            ? <div style={{ padding: "10px 12px", fontSize: 12, color: "#94a3b8" }}>Nenhuma vaga aberta com “{buscaVaga}”.</div>
+                            : achadas.map(v => (
+                                <button key={v.id} type="button" onClick={() => setVagaSel(String(v.id))}
+                                  style={{ display: "block", width: "100%", textAlign: "left", background: "#fff", border: "none", borderBottom: "1px solid #f1f5f9", padding: "8px 12px", fontSize: 13, color: "#0f172a", cursor: "pointer", fontFamily: "inherit" }}
+                                  onMouseEnter={e => (e.currentTarget.style.background = "#f8fafc")} onMouseLeave={e => (e.currentTarget.style.background = "#fff")}>
+                                  <b>#{v.id}</b> · {v.cargo} · <span style={{ color: "#64748b" }}>{v.cidade || ""}</span>
+                                </button>
+                              ))}
+                        </div>
+                      )}
+                    </>
+                  );
+                })()}
               </div>
             )}
             <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-              <button onClick={() => { setPuxar(null); setVagaSel(""); }} style={{ padding: "7px 14px", borderRadius: 10, border: "1px solid #e2e8f0", background: "#fff", color: "#475569", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Cancelar</button>
+              <button onClick={() => { setPuxar(null); setVagaSel(""); setBuscaVaga(""); }} style={{ padding: "7px 14px", borderRadius: 10, border: "1px solid #e2e8f0", background: "#fff", color: "#475569", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Cancelar</button>
               <button onClick={confirmarPuxar} disabled={!vagaSel} style={{ padding: "7px 14px", borderRadius: 10, border: "none", background: vagaSel ? "#16a34a" : "#cbd5e1", color: "#fff", fontSize: 12, fontWeight: 700, cursor: vagaSel ? "pointer" : "default" }}>Confirmar</button>
             </div>
           </div>

@@ -70,6 +70,8 @@ function mensagemChamado(evento: string | undefined, numero: string, assunto: st
     // precisa dizer que voltou — senão ele só descobre ao abrir a tela.
     case "reaberto":       return { title: "Chamado reaberto",       body: `#${numero} voltou para atendimento.` };
     case "reprovado":      return { title: "Chamado reprovado",      body: `#${numero} — ${assunto}` };
+    // Solicitante desistiu (mig 260) — o aviso é pro responsável tirar da cabeça.
+    case "cancelado":      return { title: "Chamado cancelado",      body: `#${numero} foi cancelado pelo solicitante.` };
     case "solicitar_info": return { title: "Aguardando seu retorno", body: `#${numero}: o time pediu mais informações.` };
     case "info_adicionada":return { title: "Novas informações no chamado", body: `#${numero}: o solicitante adicionou informações.` };
     // Mensagem do time na conversa do chamado. Interna não passa por aqui — a
