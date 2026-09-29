@@ -28,6 +28,31 @@ recente → seção **Artifacts** → baixe `backup-AAAAMMDD-HHMMSS.dump.gpg`.
 Roda automaticamente às **06:00 e 18:00** (horário de Brasília). Guarda **14
 dias**. Para gerar um agora: botão **"Run workflow"** na mesma tela.
 
+### E existe uma segunda cópia, no servidor da empresa
+
+Desde **29/09/2026**, uma cópia diária também vai para:
+
+```
+S:\1- SERVIDOR\Analise de dados\Grupo Nascimento\Analise de Sistemas\Eduardo\BACKUP-BANCO
+```
+
+É lá que estão os backups **com mais de 14 dias** — o GitHub apaga, o servidor
+não. A retenção é 30 diários, 12 semanais e 12 mensais, ou seja, dá para voltar
+cerca de um ano.
+
+Quem faz a cópia é `scripts/copiar-backup-para-servidor.ps1`, por tarefa agendada
+na máquina do Eduardo. O runner do GitHub não alcança `192.168.100.60` — é rede
+interna —, então a cópia tem de ser puxada de dentro da empresa.
+
+**Duas limitações que precisam estar claras:**
+
+1. Enquanto rodar na máquina do Eduardo, a cópia só acontece com ela ligada. O
+   script avisa por DM se o backup mais recente tiver 3 dias ou mais.
+2. `S:` é **um** servidor, sem imutabilidade. Um ransomware na rede da empresa
+   alcança ele. Isto é uma terceira localização sob controle diferente — Supabase,
+   GitHub, servidor interno —, **não é um cofre**. Cópia à prova de exclusão
+   (Object Lock em nuvem) continua sendo o próximo passo.
+
 ---
 
 ## Antes de restaurar: descriptografar
@@ -105,10 +130,28 @@ Medido em produção em **28/09/2026**, para dimensionar o buraco:
 Os três maiores buckets são `checklist-faturamento-anexos` (1,5 GB),
 `malote-anexos` (757 MB) e `treinamentos` (474 MB).
 
-> Se o objetivo for sobreviver à perda total da conta, os arquivos do Storage
-> precisam de uma cópia própria. Isso ainda **não existe** e é o próximo item.
-> Pelo volume acima, ele não cabe em artifact do Actions — precisa de
-> armazenamento de objeto externo.
+### Os arquivos do Storage têm cópia própria, em outro lugar
+
+Desde **29/09/2026** existe um espelho dos arquivos em:
+
+```
+S:\1- SERVIDOR\Analise de dados\Grupo Nascimento\Analise de Sistemas\Eduardo\BACKUP-STORAGE
+```
+
+Feito por `scripts/espelhar-storage-para-servidor.ps1`, que lê o Storage pelo
+protocolo S3 e copia para o servidor da empresa. **Numa restauração completa são
+necessárias as duas coisas**: o `.dump.gpg` devolve o banco e a *lista* de
+arquivos; esta pasta devolve os arquivos.
+
+Três detalhes que importam no dia do desastre:
+
+- **O espelho usa `copy`, não `sync`.** Arquivo apagado na Supabase **continua**
+  no espelho. Isso é deliberado: se alguém apagar um anexo por engano, é daqui
+  que ele volta. Consequência esperada: o espelho fica maior que a origem.
+- **Os arquivos ficam em claro**, diferente do dump do banco. A pasta é de acesso
+  restrito no servidor.
+- **A estrutura é `bucket/caminho/arquivo`**, igual à da Supabase — então dá para
+  localizar um arquivo pelo caminho que está em `storage.objects`.
 
 ---
 

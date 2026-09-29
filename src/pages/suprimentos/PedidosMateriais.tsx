@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { PageHeader } from "@/components/layout/PageHeader";
@@ -18,16 +19,20 @@ import {
   ESTILO_STATUS_ITEM, STATUS_ITEM, derivarStatusItem,
   ESTILO_STATUS_VISIVEL, STATUS_VISIVEL, apresentarStatusVisivel, derivarStatusVisiveis, type SituacaoPedido,
   type StatusComprovacao, type StatusVisivel,
+  useRomaneios, useRemoverDoRomaneio, useCancelarRomaneio, useDespacharRomaneio,
+  type RomaneioRetirada,
 } from "@/hooks/useSupPedidos";
 import { ModalBaixaPedido } from "@/components/suprimentos/ModalBaixaPedido";
 import { ModalEditarPedido } from "@/components/suprimentos/ModalEditarPedido";
 import { ModalEtiquetaTermica } from "@/components/suprimentos/ModalEtiquetaTermica";
+import { ModalRomaneio } from "@/components/suprimentos/ModalRomaneio";
 import { AcessoGate } from "@/components/auth/AcessoGate";
 import { useTagsDoPedido, useTagsDePedidos, buscarTagsDePedidos, type TagEmLote } from "@/hooks/useSupEstoque";
 import {
   Search, Package, Boxes, Clock, ShoppingCart, Truck, History as HistoryIcon,
   RefreshCw, Inbox, Download, ShieldAlert, Trash2, AlertTriangle, Pencil, Printer, FileText,
   PackageSearch, PackageOpen, Car, HardHat, Undo2,
+  PackageCheck, Ban, Send,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { toast } from "sonner";
@@ -41,6 +46,8 @@ import { ModalFichaEpi } from "@/components/suprimentos/ModalFichaEpi";
 import { FotoCracha } from "@/components/suprimentos/FotoCracha";
 import { calcularEnvioItens } from "@/lib/suprimentos/envioItens";
 import { useRastreioEmLote, resumirSituacao, type SituacaoObjeto } from "@/hooks/useCorreios";
+import { pedidoEmRomaneioAberto, validarSelecaoRomaneio } from "@/lib/suprimentos/romaneio";
+import { imprimirRomaneio } from "@/lib/suprimentos/romaneioImpressao";
 
 /**
  * Pedidos de Materiais — fila operacional do Supply.
@@ -77,6 +84,8 @@ interface Pedido {
   envio_tipo: "SUPERVISOR" | "CORREIO" | null; envio_rastreio: string | null;
   // Carimbados pela leitura do QR da etiqueta (sup_retirada_confirmar).
   retirado_em: string | null; retirado_por_nome: string | null;
+  romaneio_id: string | null;
+  sup_romaneio: { codigo: string; status: string } | null;
   sup_pedido_comprovacao: { id: string; status: StatusComprovacao; respondido_em: string | null }[] | { id: string; status: StatusComprovacao; respondido_em: string | null } | null;
   sup_pedido_item: { id: string; item_id: string | null; nome_item: string; tipo_item: string; tamanho: string | null; quantidade: number; litros: string | null; ordem: number }[];
 }
@@ -254,6 +263,8 @@ export default function PedidosMateriais() {
   const [excluindo, setExcluindo] = useState<Pedido | null>(null);
   const [etiquetaDe, setEtiquetaDe] = useState<Pedido | null>(null);
   const [fichaDe, setFichaDe] = useState<Pedido | null>(null);
+  const [selecionadosRomaneio, setSelecionadosRomaneio] = useState<Set<string>>(new Set());
+  const [modalRomaneioAberto, setModalRomaneioAberto] = useState(false);
 
   const { data: pedidos = [], isLoading, error } = useQuery({
     queryKey: ["sup_pedido", empresaId],
@@ -283,7 +294,7 @@ export default function PedidosMateriais() {
       const PAGINA = 1000;
       const COLUNAS =
         // item_id vem junto porque a baixa confere se a etiqueta é do material certo.
-        "*, sup_pedido_item(id, item_id, nome_item, tipo_item, tamanho, quantidade, litros, ordem), sup_pedido_comprovacao(id, status, respondido_em)";
+        "*, sup_romaneio(codigo, status), sup_pedido_item(id, item_id, nome_item, tipo_item, tamanho, quantidade, litros, ordem), sup_pedido_comprovacao(id, status, respondido_em)";
 
       const buscarPagina = async (de: number, comContagem = false) => {
         const q = sb
@@ -316,6 +327,42 @@ export default function PedidosMateriais() {
   const idsDosPedidos = useMemo(() => pedidos.map((p) => p.id), [pedidos]);
   const { data: situacoes } = useSituacaoPedidos(idsDosPedidos);
   const situacaoDe = (p: Pedido) => situacoes?.get(p.id) ?? null;
+
+  const pedidosSelecionadosRomaneio = useMemo(
+    () => pedidos.filter((pedido) => selecionadosRomaneio.has(pedido.id)),
+    [pedidos, selecionadosRomaneio],
+  );
+  const validacaoRomaneio = useMemo(
+    () => validarSelecaoRomaneio(pedidosSelecionadosRomaneio),
+    [pedidosSelecionadosRomaneio],
+  );
+
+  // Depois de uma criação/invalidação, pedidos que ganharam romaneio não
+  // podem continuar visualmente selecionados para uma segunda criação.
+  //
+  // Devolver o MESMO Set quando nada saiu é o que impede um laço infinito:
+  // `pedidos` nasce como um [] novo a cada render enquanto a consulta carrega
+  // (e para sempre em quem não tem empresa), e um Set novo a cada execução
+  // dispararia outro render, que traria outro [], e assim por diante.
+  useEffect(() => {
+    setSelecionadosRomaneio((atual) => {
+      if (atual.size === 0) return atual;
+      const validos = [...atual].filter((id) => {
+        const pedido = pedidos.find((item) => item.id === id);
+        return pedido?.status === "AGUARDANDO ENVIO" && !pedidoEmRomaneioAberto(pedido);
+      });
+      return validos.length === atual.size ? atual : new Set(validos);
+    });
+  }, [pedidos]);
+
+  const alternarPedidoRomaneio = (pedidoId: string) => {
+    setSelecionadosRomaneio((atual) => {
+      const proximo = new Set(atual);
+      if (proximo.has(pedidoId)) proximo.delete(pedidoId);
+      else proximo.add(pedidoId);
+      return proximo;
+    });
+  };
 
   // Contagens sobre TUDO que veio, não sobre a página filtrada — os cards
   // precisam refletir a fila inteira.
@@ -542,6 +589,10 @@ export default function PedidosMateriais() {
         }
       />
 
+      <AcessoGate menu="sup_romaneio" acao="visualizar">
+        <SecaoRomaneios />
+      </AcessoGate>
+
       <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-6">
         <CardKpi rotulo="Total" valor={contagens.TOTAL} icone={Package} ativo={filtroStatus === "TODOS"} onClick={() => setFiltroStatus("TODOS")} />
         {STATUS_VISIVEL.filter((s) => s !== "CANCELADO").map((s) => (
@@ -587,6 +638,25 @@ export default function PedidosMateriais() {
           </SelectContent>
         </Select>
       </div>
+
+      <AcessoGate menu="sup_romaneio" acao="incluir">
+        {selecionadosRomaneio.size > 0 && (
+          <div className="sticky top-2 z-20 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-primary/30 bg-background/95 p-3 shadow-md backdrop-blur">
+            <div>
+              <p className="font-medium">{selecionadosRomaneio.size} selecionado(s) · Gerar romaneio</p>
+              {!validacaoRomaneio.valida && (
+                <p className="text-xs text-amber-700 dark:text-amber-400">{validacaoRomaneio.motivo}</p>
+              )}
+            </div>
+            <div className="flex gap-2">
+              <Button variant="ghost" size="sm" onClick={() => setSelecionadosRomaneio(new Set())}>Limpar</Button>
+              <Button size="sm" disabled={!validacaoRomaneio.valida} onClick={() => setModalRomaneioAberto(true)}>
+                <PackageCheck className="mr-2 h-4 w-4" /> Gerar romaneio
+              </Button>
+            </div>
+          </div>
+        )}
+      </AcessoGate>
 
       {filtrandoPorItem && buscandoTags && (
         <p className="text-xs text-muted-foreground">Conferindo as etiquetas de cada item…</p>
@@ -635,6 +705,8 @@ export default function PedidosMateriais() {
               onExcluir={() => setExcluindo(p)}
               onEtiqueta={() => setEtiquetaDe(p)}
               onFichaEpi={() => setFichaDe(p)}
+              selecionadoRomaneio={selecionadosRomaneio.has(p.id)}
+              onSelecionarRomaneio={() => alternarPedidoRomaneio(p.id)}
               rastreio={p.envio_rastreio ? situacoesCorreio[p.envio_rastreio.trim().toUpperCase()] : undefined}
               rastreioCarregando={carregandoRastreio}
             />
@@ -682,6 +754,15 @@ export default function PedidosMateriais() {
 
       <ModalEtiquetaTermica pedido={etiquetaDe} onFechar={() => setEtiquetaDe(null)} />
 
+      <AcessoGate menu="sup_romaneio" acao="incluir">
+        <ModalRomaneio
+          pedidos={pedidosSelecionadosRomaneio}
+          aberto={modalRomaneioAberto}
+          onFechar={() => setModalRomaneioAberto(false)}
+          onCriado={() => setSelecionadosRomaneio(new Set())}
+        />
+      </AcessoGate>
+
       {/* Ficha de EPI com a empresa do contrato no cabeçalho (ver fichaEpi.ts). */}
       <ModalFichaEpi pedido={fichaDe} onFechar={() => setFichaDe(null)} />
 
@@ -692,6 +773,227 @@ export default function PedidosMateriais() {
         excluindo={excluir.isPending}
       />
     </div>
+  );
+}
+
+function SecaoRomaneios() {
+  const { data: todosRomaneios = [], isLoading, error } = useRomaneios();
+  // Só o que ainda pede ação: aberto (falta retirar) ou retirado com pedido
+  // esperando o despacho. O resto fica na trilha de cada pedido (badge +
+  // histórico) — senão esta seção cresce para sempre acima da fila.
+  const romaneios = todosRomaneios.filter((romaneio) =>
+    romaneio.status === "ABERTO"
+    || (romaneio.status === "RETIRADO"
+      && romaneio.sup_pedido.some((pedido) => pedido.status === "RETIRADO PARA ENTREGA")));
+  const remover = useRemoverDoRomaneio();
+  const cancelar = useCancelarRomaneio();
+  const [cancelando, setCancelando] = useState<RomaneioRetirada | null>(null);
+  const [motivo, setMotivo] = useState("");
+  const [despachando, setDespachando] = useState<RomaneioRetirada | null>(null);
+
+  const reimprimir = async (romaneio: RomaneioRetirada) => {
+    try {
+      const abriu = await imprimirRomaneio({
+        ...romaneio,
+        pedidos: romaneio.sup_pedido,
+      });
+      if (!abriu) toast.error("Libere os pop-ups para abrir a impressão do romaneio.");
+    } catch {
+      toast.error("Não foi possível gerar o QR code do romaneio.");
+    }
+  };
+
+  const removerPedido = async (romaneio: RomaneioRetirada, pedidoId: string) => {
+    try {
+      await remover.mutateAsync({ romaneioId: romaneio.id, pedidoId });
+      toast.success("Pedido removido do romaneio.");
+    } catch (erro: unknown) {
+      toast.error(erro instanceof Error ? erro.message : "Não foi possível remover o pedido.");
+    }
+  };
+
+  const confirmarCancelamento = async () => {
+    if (!cancelando || !motivo.trim()) return;
+    try {
+      await cancelar.mutateAsync({ romaneioId: cancelando.id, motivo: motivo.trim() });
+      toast.success(`${cancelando.codigo} cancelado.`);
+      setCancelando(null);
+      setMotivo("");
+    } catch (erro: unknown) {
+      toast.error(erro instanceof Error ? erro.message : "Não foi possível cancelar o romaneio.");
+    }
+  };
+
+  return (
+    <section className="space-y-3 rounded-xl border bg-muted/20 p-4">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <h2 className="flex items-center gap-2 font-semibold"><PackageCheck className="h-5 w-5" /> Romaneios</h2>
+          <p className="text-sm text-muted-foreground">Abertos e retirados aguardando despacho.</p>
+        </div>
+        <Badge variant="outline">{romaneios.length}</Badge>
+      </div>
+
+      {isLoading ? (
+        <p className="py-4 text-sm text-muted-foreground">Carregando romaneios…</p>
+      ) : error ? (
+        <p className="rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">
+          {(error as Error).message}
+        </p>
+      ) : romaneios.length === 0 ? (
+        <p className="py-4 text-sm text-muted-foreground">Nenhum romaneio pendente.</p>
+      ) : (
+        <div className="grid gap-3 lg:grid-cols-2">
+          {romaneios.map((romaneio) => {
+            const pendentesDespacho = romaneio.sup_pedido.filter((pedido) => pedido.status === "RETIRADO PARA ENTREGA").length;
+            return (
+              <Card key={romaneio.id}>
+                <CardHeader className="space-y-2 pb-3">
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <p className="font-mono font-semibold">{romaneio.codigo}</p>
+                      <p className="text-sm text-muted-foreground">{romaneio.contrato_nome}</p>
+                    </div>
+                    <Badge variant="outline">{romaneio.status}</Badge>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    {romaneio.sup_pedido.length} pedido(s) · {romaneio.volumes ? `${romaneio.volumes} volume(s)` : "volumes não informados"} · criado por {romaneio.criado_por_nome}
+                  </p>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  <ul className="max-h-40 space-y-1 overflow-y-auto text-xs">
+                    {romaneio.sup_pedido.map((pedido) => (
+                      <li key={pedido.id} className="flex items-center justify-between gap-2 rounded border bg-background px-2 py-1.5">
+                        <span className="min-w-0 truncate">
+                          <span className="font-mono font-medium">{pedido.pedido_id}</span> · {pedido.nome_colaborador || pedido.posto_nome}
+                        </span>
+                        {romaneio.status === "ABERTO" && (
+                          <AcessoGate menu="sup_romaneio" acao="alterar">
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className="h-7 px-2 text-destructive"
+                              disabled={remover.isPending}
+                              onClick={() => removerPedido(romaneio, pedido.id)}
+                            >
+                              Remover
+                            </Button>
+                          </AcessoGate>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                  <div className="flex flex-wrap gap-2">
+                    <Button size="sm" variant="outline" onClick={() => reimprimir(romaneio)}>
+                      <Printer className="mr-1.5 h-3.5 w-3.5" /> Reimprimir
+                    </Button>
+                    {romaneio.status === "ABERTO" && (
+                      <AcessoGate menu="sup_romaneio" acao="alterar">
+                        <Button size="sm" variant="outline" className="text-destructive" onClick={() => { setCancelando(romaneio); setMotivo(""); }}>
+                          <Ban className="mr-1.5 h-3.5 w-3.5" /> Cancelar
+                        </Button>
+                      </AcessoGate>
+                    )}
+                    {romaneio.status === "RETIRADO" && (
+                      <AcessoGate menu="sup_pedidos_materiais" acao="alterar">
+                        <Button size="sm" disabled={pendentesDespacho === 0} onClick={() => setDespachando(romaneio)}>
+                          <Send className="mr-1.5 h-3.5 w-3.5" /> Despachar ({pendentesDespacho})
+                        </Button>
+                      </AcessoGate>
+                    )}
+                  </div>
+                </CardContent>
+              </Card>
+            );
+          })}
+        </div>
+      )}
+
+      <Dialog open={!!cancelando} onOpenChange={(aberto) => !aberto && setCancelando(null)}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Cancelar {cancelando?.codigo}</DialogTitle></DialogHeader>
+          <div className="space-y-2">
+            <Label htmlFor="romaneio-motivo">Motivo do cancelamento</Label>
+            <Textarea id="romaneio-motivo" value={motivo} onChange={(evento) => setMotivo(evento.target.value)} />
+            <p className="text-xs text-muted-foreground">Todos os pedidos voltam a ficar livres para outro romaneio.</p>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setCancelando(null)}>Voltar</Button>
+            <Button variant="destructive" disabled={!motivo.trim() || cancelar.isPending} onClick={confirmarCancelamento}>
+              {cancelar.isPending ? "Cancelando…" : "Cancelar romaneio"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <ModalDespacharRomaneio romaneio={despachando} onFechar={() => setDespachando(null)} />
+    </section>
+  );
+}
+
+function ModalDespacharRomaneio({
+  romaneio,
+  onFechar,
+}: {
+  romaneio: RomaneioRetirada | null;
+  onFechar: () => void;
+}) {
+  const despachar = useDespacharRomaneio();
+  const [tipo, setTipo] = useState<"" | "SUPERVISOR" | "CORREIO">("");
+  const [rastreio, setRastreio] = useState("");
+
+  useEffect(() => {
+    if (!romaneio) return;
+    setTipo("");
+    setRastreio("");
+  }, [romaneio]);
+
+  const confirmar = async () => {
+    if (!romaneio || !tipo) return;
+    try {
+      const resultado = await despachar.mutateAsync({
+        romaneioId: romaneio.id,
+        envio: { tipo, rastreio: tipo === "CORREIO" ? rastreio.trim() : null },
+      });
+      toast.success(`${resultado.despachados.length} pedido(s) despachado(s).`, {
+        description: resultado.pulados.length ? `${resultado.pulados.length} pedido(s) foram pulados.` : undefined,
+      });
+      onFechar();
+    } catch (erro: unknown) {
+      toast.error(erro instanceof Error ? erro.message : "Não foi possível despachar o romaneio.");
+    }
+  };
+
+  return (
+    <Dialog open={!!romaneio} onOpenChange={(aberto) => !aberto && onFechar()}>
+      <DialogContent>
+        <DialogHeader><DialogTitle>Despachar {romaneio?.codigo}</DialogTitle></DialogHeader>
+        <div className="space-y-4">
+          <div className="space-y-1.5">
+            <Label>Tipo de envio</Label>
+            <Select value={tipo} onValueChange={(valor: "SUPERVISOR" | "CORREIO") => setTipo(valor)}>
+              <SelectTrigger><SelectValue placeholder="Selecione" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="SUPERVISOR">Entrega via Supervisor</SelectItem>
+                <SelectItem value="CORREIO">Entrega via Correios</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          {tipo === "CORREIO" && (
+            <div className="space-y-1.5">
+              <Label htmlFor="romaneio-rastreio">ID de rastreio dos Correios</Label>
+              <Input id="romaneio-rastreio" value={rastreio} onChange={(evento) => setRastreio(evento.target.value.toUpperCase())} />
+            </div>
+          )}
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onFechar}>Cancelar</Button>
+          <Button disabled={!tipo || (tipo === "CORREIO" && !rastreio.trim()) || despachar.isPending} onClick={confirmar}>
+            {despachar.isPending ? "Despachando…" : "Despachar romaneio"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -718,7 +1020,7 @@ function CardKpi({
 
 function CardPedido({
   pedido: p, situacao, onStatus, onPrePedido, onLiberar, onEditar, onHistorico, onExcluir, onEtiqueta, onFichaEpi,
-  rastreio, rastreioCarregando,
+  rastreio, rastreioCarregando, selecionadoRomaneio, onSelecionarRomaneio,
 }: {
   pedido: Pedido;
   situacao: SituacaoPedido | null;
@@ -726,6 +1028,8 @@ function CardPedido({
   onHistorico: () => void; onExcluir: () => void; onEtiqueta: () => void; onFichaEpi: () => void;
   rastreio: SituacaoObjeto | undefined;
   rastreioCarregando: boolean;
+  selecionadoRomaneio: boolean;
+  onSelecionarRomaneio: () => void;
 }) {
   const apresentacoesStatus = apresentacoesStatusPedido(p, situacao);
   const statusVisivel = apresentacoesStatus[0].status;
@@ -780,7 +1084,18 @@ function CardPedido({
       statusVisivel === "DESPACHADO_ENTREGUE" && "bg-emerald-50/60 border-emerald-300/60 dark:bg-emerald-950/20",
     )}>
       <CardHeader className="flex-row items-center justify-between gap-2 space-y-0 pb-3">
-        <span className="font-mono text-sm font-semibold">{p.pedido_id}</span>
+        <div className="flex items-center gap-2">
+          {p.status === "AGUARDANDO ENVIO" && !pedidoEmRomaneioAberto(p) && (
+            <AcessoGate menu="sup_romaneio" acao="incluir">
+              <Checkbox
+                checked={selecionadoRomaneio}
+                onCheckedChange={onSelecionarRomaneio}
+                aria-label={`Selecionar ${p.pedido_id} para romaneio`}
+              />
+            </AcessoGate>
+          )}
+          <span className="font-mono text-sm font-semibold">{p.pedido_id}</span>
+        </div>
         <div className="flex shrink-0 flex-col items-end gap-1">
           {apresentacoesStatus.map((apresentacaoStatus) => (
             <Badge
@@ -792,6 +1107,11 @@ function CardPedido({
               {apresentacaoStatus.rotulo}
             </Badge>
           ))}
+          {p.sup_romaneio && (
+            <Badge variant="secondary" className="font-mono text-[10px]">
+              Romaneio {p.sup_romaneio.codigo}
+            </Badge>
+          )}
         </div>
       </CardHeader>
 
