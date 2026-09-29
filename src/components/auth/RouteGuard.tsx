@@ -1,9 +1,8 @@
 import { ReactNode, useEffect, useRef } from "react";
-import { useLocation, Link } from "react-router-dom";
-import { ShieldAlert } from "lucide-react";
+import { useLocation } from "react-router-dom";
 import { useAccessibleMenus, matchMenuCode } from "@/hooks/useAccessibleMenus";
 import { supabase } from "@/integrations/supabase/client";
-import { Button } from "@/components/ui/button";
+import { SemAcesso } from "@/components/layout/SemAcesso";
 import { useFeatureFlag } from "@/lib/featureFlags";
 import { ACESSO_ABERTO_SEM_PERMISSOES, rotaSempreLiberada } from "@/lib/acesso";
 import { useModoExterno, rotaPermitidaExterno } from "@/hooks/useModoExterno";
@@ -100,32 +99,23 @@ export function RouteGuard({ children }: { children: ReactNode }) {
   if (!externo && !ACESSO_ABERTO_SEM_PERMISSOES && !access) return null;
   if (allowed) return <>{children}</>;
 
+  // 29/09/2026 (pedido do Pablo): tela própria de "sem acesso", no mesmo
+  // visual da de queda (SemAcesso.tsx) — antes era um aviso pequeno e
+  // genérico, e a de "Sistema indisponível" fazia a pessoa achar que o ERP
+  // tinha caído quando era só permissão.
+  if (externo) {
+    return (
+      <SemAcesso inicio="/app/encarregados/solicitar-materiais" semSuporte titulo="Esta área não faz parte do seu acesso">
+        <p>O acesso externo é para <b>solicitar materiais</b> e <b>acompanhar seus pedidos</b>.</p>
+        <p>Se precisar de outra coisa, fale com o seu contato no Grupo Nascimento.</p>
+      </SemAcesso>
+    );
+  }
   return (
-    <div className="flex min-h-[60vh] flex-col items-center justify-center gap-4 px-6 text-center">
-      <div className="flex h-16 w-16 items-center justify-center rounded-full bg-destructive/10">
-        <ShieldAlert className="h-8 w-8 text-destructive" />
-      </div>
-      <h1 className="text-2xl font-semibold">Acesso negado</h1>
-      <p className="max-w-md text-sm text-muted-foreground">
-        {externo ? (
-          <>Esta área não faz parte do acesso externo. Você pode solicitar materiais e acompanhar seus pedidos.</>
-        ) : (
-          <>
-            Você não tem permissão para visualizar esta tela. Caso precise de acesso,
-            solicite ao administrador em <strong>Configurações do ERP &gt; Acesso por Usuário</strong>.
-          </>
-        )}
-      </p>
-      {!externo && (
-        <p className="text-xs text-muted-foreground">
-          Tela: <code>{menuCode}</code> · Rota: <code>{pathname}</code>
-        </p>
-      )}
-      <Button asChild>
-        <Link to={externo ? "/app/encarregados/solicitar-materiais" : "/app/painel-executivo"}>
-          Voltar ao início
-        </Link>
-      </Button>
-    </div>
+    <SemAcesso
+      inicio="/app"
+      detalhe={`Tela: ${menuCode ?? "(não cadastrada)"}
+Rota: ${pathname}`}
+    />
   );
 }
