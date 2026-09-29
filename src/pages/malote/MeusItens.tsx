@@ -25,10 +25,12 @@ import {
   useContratosAtivos,
   useEmpresasGrupo,
   useEmpresaPrimeiraLinhaRateio,
+  useClassificacaoIdsPorDespesaRateio,
   useDespesasLixeira,
   useRestaurarDespesa,
   MaloteDespesaRow,
   ItemLinhaMalote,
+  ClassificacaoAprovadores,
   STATUS_LABEL,
   STATUS_BADGE_CLASS,
   STATUS_FASE_SOLICITACAO,
@@ -38,8 +40,9 @@ import {
 } from "@/hooks/useMaloteDespesa";
 import { useFormasPagamento, MaloteFormaPagamento } from "@/hooks/useMaloteFormaPagamento";
 import { ExcluirPermanentementeButton } from "./ExcluirPermanentementeButton";
+import { ClassificacaoRateioCell } from "./ClassificacaoRateioCell";
 import { formatBRL } from "@/hooks/usePlanilhaCusto";
-import { useClassificacoesOrcamento } from "@/hooks/usePlanejamentoOrcamentario";
+import { useClassificacoesOrcamento, useClassificacoesOrcamentoAdmin } from "@/hooks/usePlanejamentoOrcamentario";
 import { useOrdenacaoTabela } from "@/hooks/useOrdenacaoTabela";
 import { useEstadoPersistido } from "@/hooks/useEstadoPersistido";
 import { ordenarPor } from "@/lib/ordenarTabela";
@@ -132,7 +135,17 @@ function itemMatchesChip(item: ItemLinhaMalote, chip: ChipKey): boolean {
 // está em Fluxo Especial (forma de pagamento com aprovador fixo, ex.
 // Calita) — mesmo bug de exibição já corrigido em DespesaVisualizar.tsx/
 // Aprovacoes.tsx, faltava aqui.
-function AprovadorPendenteCell({ despesa, formasPagamentoCatalogo }: { despesa: MaloteDespesaRow; formasPagamentoCatalogo: MaloteFormaPagamento[] }) {
+function AprovadorPendenteCell({
+  despesa,
+  formasPagamentoCatalogo,
+  classificacaoIdsRateio,
+  classificacaoPorId,
+}: {
+  despesa: MaloteDespesaRow;
+  formasPagamentoCatalogo: MaloteFormaPagamento[];
+  classificacaoIdsRateio: Set<string> | undefined;
+  classificacaoPorId: Map<string, ClassificacaoAprovadores>;
+}) {
   const formaEspecial = formasPagamentoCatalogo.find(
     (f) => f.nome === despesa.forma_pagamento && f.fluxo_aprovacao === "especial"
   );
@@ -140,7 +153,7 @@ function AprovadorPendenteCell({ despesa, formasPagamentoCatalogo }: { despesa: 
   if (despesa.status !== "pendente_aprovacao") return <span className="text-muted-foreground">—</span>;
   if (formaEspecial) return <span>{nomeEspecial ?? "Aprovador do Fluxo Especial"}</span>;
 
-  const nomes = aprovadoresPendentes(despesa);
+  const nomes = aprovadoresPendentes(despesa, classificacaoIdsRateio, classificacaoPorId);
   if (!nomes) return <span className="text-muted-foreground">—</span>;
   const label = nomes.length > 1 ? `${nomes[0]} +${nomes.length - 1}` : nomes[0];
   if (nomes.length === 1) return <span>{label}</span>;
@@ -180,6 +193,18 @@ export default function MeusItens() {
   const { data: classificacoes = [] } = useClassificacoesOrcamento();
   const { data: contratos = [] } = useContratosAtivos();
   const { data: empresas = [] } = useEmpresasGrupo();
+  // Achado real (Cassio, SIS-2026-0552): despesa de Rateio de Classificação
+  // não traz aprovador2/3_nomes prontos nem nome de classificação (é por
+  // linha do rateio, não na despesa) — mesma resolução em lote já usada em
+  // Aprovações (useClassificacaoIdsPorDespesaRateio + useClassificacoesOrcamentoAdmin).
+  const despesaIdsRateio = useMemo(
+    () => Array.from(new Set(itens.filter((i) => !i.despesa.classificacao_id).map((i) => i.despesa.id))),
+    [itens]
+  );
+  const { data: classificacaoIdsRateio } = useClassificacaoIdsPorDespesaRateio(despesaIdsRateio);
+  const { data: classificacoesTodas = [] } = useClassificacoesOrcamentoAdmin();
+  const classificacaoPorId = useMemo(() => new Map(classificacoesTodas.map((c) => [c.id, c])), [classificacoesTodas]);
+  const nomePorClassificacaoId = useMemo(() => new Map(classificacoesTodas.map((c) => [c.id, c.nome])), [classificacoesTodas]);
   // SIS-2026-0288 (Iury, achado testando DM-2026-0180): coluna/filtro de
   // Empresa usava despesa.empresa_id direto — contexto de sessão de quem
   // lançou, não a empresa do rateio de verdade (mesmo ajuste já feito em
@@ -307,6 +332,7 @@ export default function MeusItens() {
       const linhas = montarLinhasExcelMeusItens(
         lista,
         (despesa) => empresas.find((empresa) => empresa.id === empresaIdResolvida(despesa))?.nome ?? "",
+        { classificacaoIdsRateio, classificacaoPorId },
       );
       const ws = linhas.length > 0
         ? XLSX.utils.json_to_sheet(linhas)
@@ -588,7 +614,13 @@ export default function MeusItens() {
                       {parcela ? `${parcela.numero_parcela}/${despesa.numero_parcelas}` : <span className="text-muted-foreground">—</span>}
                     </TableCell>
                     <TableCell>{dataPagamento ? new Date(dataPagamento + "T00:00:00").toLocaleDateString("pt-BR") : "—"}</TableCell>
-                    <TableCell>{despesa.classificacao?.nome ?? "—"}</TableCell>
+                    <TableCell>
+                      <ClassificacaoRateioCell
+                        despesa={despesa}
+                        classificacaoIdsRateio={classificacaoIdsRateio?.get(despesa.id)}
+                        nomePorClassificacaoId={nomePorClassificacaoId}
+                      />
+                    </TableCell>
                     <TableCell className="font-medium">{despesa.nome}</TableCell>
                     <TableCell>{empresas.find((e) => e.id === empresaIdResolvida(despesa))?.nome ?? "—"}</TableCell>
                     <TableCell>{despesa.forma_pagamento ?? "—"}</TableCell>
@@ -600,7 +632,12 @@ export default function MeusItens() {
                       </Badge>
                     </TableCell>
                     <TableCell className="text-sm">
-                      <AprovadorPendenteCell despesa={despesa} formasPagamentoCatalogo={formasPagamentoCatalogo} />
+                      <AprovadorPendenteCell
+                        despesa={despesa}
+                        formasPagamentoCatalogo={formasPagamentoCatalogo}
+                        classificacaoIdsRateio={classificacaoIdsRateio?.get(despesa.id)}
+                        classificacaoPorId={classificacaoPorId}
+                      />
                     </TableCell>
                     <TableCell>
                       {despesa.excecao ? <Badge variant="destructive">Sim</Badge> : <span className="text-muted-foreground text-sm">Não</span>}
