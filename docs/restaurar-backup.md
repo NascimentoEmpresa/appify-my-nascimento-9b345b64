@@ -130,10 +130,28 @@ Medido em produção em **28/09/2026**, para dimensionar o buraco:
 Os três maiores buckets são `checklist-faturamento-anexos` (1,5 GB),
 `malote-anexos` (757 MB) e `treinamentos` (474 MB).
 
-> Se o objetivo for sobreviver à perda total da conta, os arquivos do Storage
-> precisam de uma cópia própria. Isso ainda **não existe** e é o próximo item.
-> Pelo volume acima, ele não cabe em artifact do Actions — precisa de
-> armazenamento de objeto externo.
+### Os arquivos do Storage têm cópia própria, em outro lugar
+
+Desde **29/09/2026** existe um espelho dos arquivos em:
+
+```
+S:\1- SERVIDOR\Analise de dados\Grupo Nascimento\Analise de Sistemas\Eduardo\BACKUP-STORAGE
+```
+
+Feito por `scripts/espelhar-storage-para-servidor.ps1`, que lê o Storage pelo
+protocolo S3 e copia para o servidor da empresa. **Numa restauração completa são
+necessárias as duas coisas**: o `.dump.gpg` devolve o banco e a *lista* de
+arquivos; esta pasta devolve os arquivos.
+
+Três detalhes que importam no dia do desastre:
+
+- **O espelho usa `copy`, não `sync`.** Arquivo apagado na Supabase **continua**
+  no espelho. Isso é deliberado: se alguém apagar um anexo por engano, é daqui
+  que ele volta. Consequência esperada: o espelho fica maior que a origem.
+- **Os arquivos ficam em claro**, diferente do dump do banco. A pasta é de acesso
+  restrito no servidor.
+- **A estrutura é `bucket/caminho/arquivo`**, igual à da Supabase — então dá para
+  localizar um arquivo pelo caminho que está em `storage.objects`.
 
 ---
 

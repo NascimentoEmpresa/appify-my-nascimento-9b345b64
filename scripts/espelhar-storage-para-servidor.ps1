@@ -189,8 +189,51 @@ try {
     if ($Ensaio) { $Flags += "--dry-run"; Log "ENSAIO: nada sera baixado" "Yellow" }
 
     Log "Copiando $Origem -> $Para"
+
+    # USAR --log-file DO RCLONE, NUNCA O `2>` DO POWERSHELL.
+    # No PowerShell 5.1, redirecionar stderr de executavel nativo embrulha cada
+    # linha num ErrorRecord; com $ErrorActionPreference = "Stop" isso vira erro
+    # TERMINANTE. Aconteceu em 29/09/2026: a linha inofensiva
+    #   NOTICE: Config file "...rclone.conf" not found - using defaults
+    # derrubou o script inteiro, depois de ele ter copiado tudo certinho.
+    $Erros = Join-Path $env:TEMP ("rclone-log-" + [guid]::NewGuid().ToString("N").Substring(0,8) + ".txt")
+    $Flags += @("--log-file", $Erros)
     & $Rclone copy $Origem $Para @Flags
-    if ($LASTEXITCODE -ne 0) { throw "rclone copy terminou com erro (exit $LASTEXITCODE)." }
+    $Codigo = $LASTEXITCODE
+
+    # REGISTRO FANTASMA NAO PODE DERRUBAR O ESPELHO.
+    # Na primeira execucao (29/09/2026) o rclone saiu com codigo 4 por causa de
+    # UM arquivo: anexos/teste-exclusao/32b56bf8-...txt existia em
+    # storage.objects e nao existia no Storage. Os outros 7.611 foram copiados
+    # normalmente.
+    #
+    # Tratar isso como falha total significaria alarme diario para sempre por
+    # causa de uma linha orfa - e alarme que toca todo dia e alarme que se
+    # ignora. Mas silenciar tambem seria errado: linha orfa e inconsistencia
+    # real, que no dia do desastre aparece como "o banco diz que o arquivo
+    # existe e ele nao abre". Entao: nao derruba, mas reporta nominalmente.
+    #
+    # Codigos do rclone: 0 ok, 4 arquivo nao encontrado, 6 erros menos graves,
+    # 9 nada a transferir. Qualquer outro e problema de verdade.
+    $Fantasmas = @()
+    if (Test-Path $Erros) {
+        $Fantasmas = @(Get-Content $Erros |
+            Where-Object { $_ -match 'Failed to copy: failed to open source object: object not found' } |
+            ForEach-Object { if ($_ -match 'ERROR\s*:\s*(.+?):\s*Failed to copy') { $Matches[1] } } |
+            Sort-Object -Unique)
+        Remove-Item $Erros -Force -ErrorAction SilentlyContinue
+    }
+
+    if ($Codigo -notin @(0, 4, 6, 9)) {
+        throw "rclone copy terminou com erro (exit $Codigo)."
+    }
+    if ($Codigo -ne 0 -and $Fantasmas.Count -eq 0) {
+        throw "rclone copy saiu com exit $Codigo e nao foi por registro fantasma. Verifique o log."
+    }
+    if ($Fantasmas.Count -gt 0) {
+        Log "  $($Fantasmas.Count) registro(s) fantasma no Storage (linha existe, arquivo nao):" "Yellow"
+        $Fantasmas | ForEach-Object { Log "    $_" "DarkYellow" }
+    }
 
     # -----------------------------------------------------------------------
     # 5. Conferir o que chegou
@@ -200,10 +243,20 @@ try {
     $Minutos  = [math]::Round((New-TimeSpan -Start $Inicio -End (Get-Date)).TotalMinutes, 1)
     Log ("Pronto: {0} arquivos, {1} GB, em {2} min" -f $Arquivos.Count, $TotalGB, $Minutos) "Green"
 
-    # Sanidade: em 28/09/2026 eram 7.380 arquivos. Bem menos que isso significa
-    # que a copia parou no meio - e espelho pela metade da falsa seguranca.
-    if (-not $Ensaio -and $Arquivos.Count -lt 5000) {
-        Avisar ":warning: **Espelho do Storage suspeito**`nSó $($Arquivos.Count) arquivos no servidor; em 28/09 eram 7.380. A cópia pode ter parado no meio."
+    # Sanidade: em 29/09/2026 eram 7.592 objetos na origem e 7.612 no espelho
+    # (o espelho e maior de proposito, porque `copy` nunca apaga). Bem menos que
+    # isso significa que a copia parou no meio - e espelho pela metade da falsa
+    # seguranca, que e pior que espelho nenhum.
+    if (-not $Ensaio -and $Arquivos.Count -lt 6000) {
+        Avisar ":warning: **Espelho do Storage suspeito**`nSó $($Arquivos.Count) arquivos no servidor; em 29/09 eram 7.612. A cópia pode ter parado no meio."
+    }
+
+    # Fantasma nao derruba a execucao, mas o Eduardo precisa saber: e linha orfa
+    # em storage.objects, e no dia do desastre vira "o banco diz que o arquivo
+    # existe e ele nao abre".
+    if (-not $Ensaio -and $Fantasmas.Count -gt 0) {
+        $Lista = ($Fantasmas | Select-Object -First 10) -join "`n- "
+        Avisar (":information_source: **Espelho do Storage concluído, com $($Fantasmas.Count) registro(s) fantasma**`nLinha existe em ``storage.objects`` e o arquivo não existe no Storage:`n- $Lista")
     }
 
 } catch {
