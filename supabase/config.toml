@@ -67,6 +67,12 @@ verify_jwt = true
 [functions.colaborador-portal]
 verify_jwt = false
 
+# Assistente de IA do portal ("Tirar dúvida") — mesmo desenho da de cima:
+# token do portal opcional no corpo, conferido dentro da função; cota por
+# IP/empregado em col_ia_consumir. Ver 20260930000258_colaborador_ia.sql.
+[functions.colaborador-ia]
+verify_jwt = false
+
 # Webhook público da Meta — chamado sem JWT (a validação é pela assinatura
 # X-Hub-Signature-256 com o WHATSAPP_APP_SECRET).
 [functions.whatsapp-webhook]

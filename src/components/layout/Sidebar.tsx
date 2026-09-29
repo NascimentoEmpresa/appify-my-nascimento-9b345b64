@@ -82,6 +82,7 @@ import { MessageSquare } from "lucide-react";
 import { Banknote } from "lucide-react";
 import { Crown, Landmark } from "lucide-react";
 import { Percent } from "lucide-react";
+import { FolderOpen } from "lucide-react";
 import { TrendingDown } from "lucide-react";
 import { Megaphone, ExternalLink } from "lucide-react";
 import { Award, CalendarDays, FolderTree, Users } from "lucide-react";
@@ -394,6 +395,10 @@ const financeiroModule: ModuleDef = {
         // SIS-2026-0524: juros informado no pagamento do Malote, controle
         // de cobrança do responsável — não gera lançamento no Fluxo de Caixa.
         { label: "Controle de Juros", to: "/app/financeiro/controle-juros", icon: Percent, badge: "Novo" },
+        // DOC CANAA: gestão de documentos da Escola Canaã, migrada do
+        // blueprint Flask legado `sistema_canaa` — módulo migrado de sistema
+        // externo, por isso aqui em Ferramentas junto do Checklist/Ajustes.
+        { label: "DOC CANAA", to: "/app/financeiro/doc-canaa", icon: FolderOpen, badge: "Novo" },
       ],
     },
   ],

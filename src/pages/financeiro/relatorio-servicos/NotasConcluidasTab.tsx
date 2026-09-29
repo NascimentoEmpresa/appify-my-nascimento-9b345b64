@@ -409,7 +409,7 @@ export default function NotasConcluidasTab() {
                     <ColumnFilterHead label="Código" value={colFiltros.codigo ?? ""} onApply={(v) => setColFiltro("codigo", v)} type="select" options={Object.keys(TIPOS_NOTA)} />
                     <ColumnFilterHead label="Data de emissão" value={colFiltros.emissao ?? ""} onApply={(v) => setColFiltro("emissao", v)} type="date" />
                     <ColumnFilterHead label="Competência" value={colFiltros.competencia ?? ""} onApply={(v) => setColFiltro("competencia", v)} type="select" options={opcoesFiltro.competencias} />
-                    <ColumnFilterHead label="Variação" value={colFiltros.variacao ?? ""} onApply={(v) => setColFiltro("variacao", v)} />
+                    <ColumnFilterHead label="Variação" value={colFiltros.variacao ?? ""} onApply={(v) => setColFiltro("variacao", v)} type="select" options={opcoesFiltro.variacoes} />
                     <ColumnFilterHead label="Valor executado" value={colFiltros.executado ?? ""} onApply={(v) => setColFiltro("executado", v)} type="money" />
                     <ColumnFilterHead label="Valor contábil" value={colFiltros.contabil ?? ""} onApply={(v) => setColFiltro("contabil", v)} type="money" />
                     <ColumnFilterHead label="Valor líquido" value={colFiltros.liquido ?? ""} onApply={(v) => setColFiltro("liquido", v)} type="money" />
@@ -461,7 +461,7 @@ export default function NotasConcluidasTab() {
                   <ColumnFilterHead label="Código" value={colFiltros.codigo ?? ""} onApply={(v) => setColFiltro("codigo", v)} type="select" options={Object.keys(TIPOS_NOTA)} />
                   <ColumnFilterHead label="Data de emissão" value={colFiltros.emissao ?? ""} onApply={(v) => setColFiltro("emissao", v)} type="date" />
                   <ColumnFilterHead label="Competência" value={colFiltros.competencia ?? ""} onApply={(v) => setColFiltro("competencia", v)} type="select" options={opcoesFiltro.competencias} />
-                  <ColumnFilterHead label="Variação" value={colFiltros.variacao ?? ""} onApply={(v) => setColFiltro("variacao", v)} />
+                  <ColumnFilterHead label="Variação" value={colFiltros.variacao ?? ""} onApply={(v) => setColFiltro("variacao", v)} type="select" options={opcoesFiltro.variacoes} />
                   <ColumnFilterHead label="Valor executado" value={colFiltros.executado ?? ""} onApply={(v) => setColFiltro("executado", v)} type="money" />
                   <ColumnFilterHead label="Valor contábil" value={colFiltros.contabil ?? ""} onApply={(v) => setColFiltro("contabil", v)} type="money" />
                   <ColumnFilterHead label="Valor líquido" value={colFiltros.liquido ?? ""} onApply={(v) => setColFiltro("liquido", v)} type="money" />
