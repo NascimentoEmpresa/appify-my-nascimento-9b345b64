@@ -32,6 +32,11 @@ on:
     # com folga e corta o ruido pela metade.
     - cron: '*/30 * * * *'
   workflow_dispatch:
+    inputs:
+      testar_aviso:
+        description: 'Mandar uma DM de teste com a leitura atual, mesmo sem alarme'
+        type: boolean
+        default: false
   # ENSAIO NA PR. workflow_dispatch so funciona depois que o arquivo esta na
   # branch padrao, entao sem isto o vigia so poderia ser testado DEPOIS de
   # mergeado - e vigia quebrado e pior que vigia nenhum, porque da falsa
@@ -78,7 +83,14 @@ jobs:
         env:
           CREDENCIAIS: ${{ secrets.ESPELHO_CREDENCIAIS }}
           SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-          WEBHOOK: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          # DM PARA O EDUARDO, NUNCA CANAL.
+          # A primeira versao usava DISCORD_WEBHOOK_URL, que cai num canal com
+          # varias pessoas. Alerta de infraestrutura ali e ruido para quem nao
+          # pode agir e exposicao desnecessaria de problema interno. Mesmo
+          # padrao do pr_notify_dm.yml: bot abre DM e manda so para quem cuida.
+          DISCORD_TOKEN: ${{ secrets.DISCORD_TOKEN }}
+          DESTINO: ${{ vars.DISCORD_USER_ID_EDUARDO || '1384572666752663653' }}
+          TESTAR: ${{ inputs.testar_aviso }}
           # O ref do projeto NAO e segredo: ele vai no bundle do navegador
           # dentro do VITE_SUPABASE_URL, visivel para qualquer visitante.
           PROJETO: ${{ vars.SUPABASE_PROJETO_REF || 'fwmzeaztjxrxxzxzxmgc' }}
@@ -156,13 +168,49 @@ jobs:
           if [ -z "${SERVICE_KEY:-}" ]; then
             anota "MEMORIA/SWAP/DISCO ... sem leitura (secret SUPABASE_SERVICE_ROLE_KEY nao configurado)"
           else
-            M=$(curl -sS --max-time 25 -u "service_role:$SERVICE_KEY" \
-                  "https://$PROJETO.supabase.co/customer/v1/privileged/metrics" 2>&1) || M=""
-            soma() { echo "$M" | grep "^$1" | awk '{s+=$NF} END{printf "%.0f", s}'; }
+            # O CODIGO HTTP TEM QUE APARECER NO LOG.
+            # A primeira versao deste passo dizia so "endpoint nao respondeu", e
+            # isso nao distingue chave errada de banco sufocado - duas coisas com
+            # acoes completamente diferentes. E o mesmo erro que ja me custou uma
+            # execucao no backup: esconder o diagnostico atras de uma mensagem
+            # generica.
+            # --compressed e obrigatorio. Sem ele o endpoint devolveu HTTP 200 e
+            # um corpo que o grep nao entendia (29/09/2026), porque vem
+            # comprimido. O monitor em PowerShell nunca sofreu com isso porque o
+            # Invoke-WebRequest descompacta sozinho; o curl so descompacta se
+            # voce pedir.
+            HTTP=$(curl -s --compressed -o metricas.txt -w '%{http_code}' --max-time 25 \
+                     -u "service_role:$SERVICE_KEY" \
+                     "https://$PROJETO.supabase.co/customer/v1/privileged/metrics" || echo "000")
+            # TUDO LE DO ARQUIVO, NUNCA DE VARIAVEL.
+            # A resposta tem ~300 kB. Guardar isso numa variavel e passar por
+            # `echo "$M" | grep` falhou em producao (29/09/2026): o endpoint
+            # devolvia HTTP 200 com o corpo certo, `head -c 80` no arquivo
+            # mostrava texto valido, e mesmo assim o grep na variavel nao achava
+            # `node_memory_MemTotal_bytes`. Lendo do arquivo, achou de primeira.
+            # Nao vale a pena descobrir o limite exato do shell - vale nao
+            # depender dele.
+            soma() { grep "^$1" metricas.txt 2>/dev/null | awk '{s+=$NF} END{printf "%.0f", s+0}'; }
 
-            if [ -z "$M" ] || ! echo "$M" | grep -q "node_memory_MemTotal_bytes"; then
-              anota "METRICAS .... endpoint nao respondeu"
-              alerta "**O endpoint de metricas nao respondeu.** Se persistir, pode ser sintoma de banco sufocado."
+            if [ "$HTTP" = "401" ] || [ "$HTTP" = "403" ]; then
+              # Chave recusada e problema de CONFIGURACAO, nao de saude do banco.
+              # Alarmar aqui faria o vigia gritar para sempre por causa de um
+              # secret errado, e alarme permanente e alarme ignorado.
+              anota "METRICAS .... HTTP $HTTP - chave recusada (confira o secret SUPABASE_SERVICE_ROLE_KEY)"
+            elif [ "$HTTP" != "200" ] || ! grep -q "node_memory_MemTotal_bytes" metricas.txt; then
+              # Quando falha, mostrar o suficiente para diagnosticar sem
+              # despejar o corpo inteiro no log de um repositorio publico. Nome
+              # de metrica nao e dado sensivel; valor pode ser, entao so os
+              # nomes saem daqui.
+              anota "METRICAS .... HTTP $HTTP - sem resposta util ($(wc -c < metricas.txt 2>/dev/null || echo 0) bytes)"
+              anota "             inicio: $(head -c 80 metricas.txt 2>/dev/null | tr -d '\0' | tr '\n' ' ')"
+              anota "             familias de metrica presentes:"
+              grep -oE '^[a-zA-Z_:][a-zA-Z0-9_:]*' metricas.txt 2>/dev/null \
+                | sed 's/_[a-z0-9]*$//' | sort -u | head -30 | sed 's/^/               /'
+              anota "             nomes com 'mem' ou 'swap':"
+              grep -oiE '^[a-zA-Z_:][a-zA-Z0-9_:]*(mem|swap)[a-zA-Z0-9_:]*' metricas.txt 2>/dev/null \
+                | sort -u | head -15 | sed 's/^/               /'
+              alerta "**O endpoint de metricas respondeu HTTP $HTTP.** Se persistir, pode ser sintoma de banco sufocado."
             else
               MT=$(soma node_memory_MemTotal_bytes);  MD=$(soma node_memory_MemAvailable_bytes)
               ST=$(soma node_memory_SwapTotal_bytes); SL=$(soma node_memory_SwapFree_bytes)
@@ -179,8 +227,8 @@ jobs:
                 [ "$PSWAP" -ge 85 ] && alerta "**Swap em ${PSWAP}%.** E o sinal que aparece ANTES da queda."
               fi
 
-              DT=$(echo "$M" | grep '^node_filesystem_size_bytes'  | grep 'mountpoint="/data"' | awk '{s+=$NF} END{printf "%.0f", s}')
-              DL=$(echo "$M" | grep '^node_filesystem_avail_bytes' | grep 'mountpoint="/data"' | awk '{s+=$NF} END{printf "%.0f", s}')
+              DT=$(grep '^node_filesystem_size_bytes'  metricas.txt | grep 'mountpoint="/data"' | awk '{s+=$NF} END{printf "%.0f", s+0}')
+              DL=$(grep '^node_filesystem_avail_bytes' metricas.txt | grep 'mountpoint="/data"' | awk '{s+=$NF} END{printf "%.0f", s+0}')
               if [ -n "${DT:-}" ] && [ "${DT:-0}" -gt 0 ]; then
                 PDISCO=$(( 100 * (DT - DL) / DT ))
                 anota "DISCO ....... ${PDISCO}%  ($(( DL / 1073741824 )) GB livres)"
@@ -216,8 +264,18 @@ jobs:
           echo "$SEGUIDAS" > estado-vigia/seguidas
           echo "situacao anterior=$ANTERIOR atual=$ATUAL seguidas=$SEGUIDAS avisar=$AVISAR"
 
+          # BOTAO DE TESTE DO ALARME.
+          # Canal de alerta que nunca foi exercitado e canal que voce descobre
+          # quebrado no dia do incidente. Isto permite conferir a DM sem esperar
+          # o banco passar mal - e sem mexer na maquina de estados, porque a
+          # situacao calculada acima nao e alterada aqui.
+          if [ "${TESTAR:-false}" = "true" ]; then
+            AVISAR=teste
+          fi
+
           if [ "$AVISAR" != "nao" ]; then
             case "$AVISAR" in
+              teste)      TITULO=":wrench: **Teste do vigia** - leitura atual, sem alarme" ;;
               abriu)      TITULO=":rotating_light: **Banco de producao em alerta**" ;;
               lembrete)   TITULO=":rotating_light: **Ainda em alerta** (ha ~$(( SEGUIDAS / 2 ))h)" ;;
               normalizou) TITULO=":white_check_mark: **Banco normalizou**" ;;
@@ -228,12 +286,29 @@ jobs:
               echo "--- ENSAIO: a mensagem abaixo NAO foi enviada ---"
               echo "$CORPO"
               echo "-------------------------------------------------"
-            elif [ -n "${WEBHOOK:-}" ]; then
-              jq -n --arg c "$CORPO" '{content:$c}' \
-                | curl -sS -X POST "$WEBHOOK" -H "Content-Type: application/json" -d @- > /dev/null
-              echo "aviso enviado ao Discord: $AVISAR"
+            elif [ -n "${DISCORD_TOKEN:-}" ]; then
+              API="https://discord.com/api/v10"
+              UA="DiscordBot (https://github.com/NascimentoEmpresa/appify-my-nascimento-9b345b64, 1.0)"
+
+              # A DM nao existe ate ser aberta: este POST devolve o id do canal
+              # privado entre o bot e o destinatario.
+              CANAL=$(curl -sS -X POST "$API/users/@me/channels" \
+                        -H "Authorization: Bot $DISCORD_TOKEN" \
+                        -H "Content-Type: application/json" -A "$UA" \
+                        -d "{\"recipient_id\":\"$DESTINO\"}" \
+                      | jq -r '.id // empty')
+
+              if [ -z "$CANAL" ]; then
+                echo "::warning::Nao consegui abrir DM no Discord. Ninguem foi avisado."
+              else
+                jq -n --arg c "$CORPO" '{content:$c}' \
+                  | curl -sS -X POST "$API/channels/$CANAL/messages" \
+                      -H "Authorization: Bot $DISCORD_TOKEN" \
+                      -H "Content-Type: application/json" -A "$UA" -d @- > /dev/null
+                echo "aviso enviado por DM: $AVISAR"
+              fi
             else
-              echo "DISCORD_WEBHOOK_URL nao configurado - ninguem foi avisado."
+              echo "DISCORD_TOKEN nao configurado - ninguem foi avisado."
             fi
           fi
 
