@@ -31,6 +31,8 @@ import {
 } from "./types";
 
 const POR_PAGINA = 8;
+// Avaliações uma a uma: sem paginar, a lista crescia a página inteira.
+const AVALIACOES_POR_PAGINA = 20;
 
 interface PainelStats { total: number; abertos: number; em_andamento: number; concluidos_mes: number; atrasados: number; }
 interface Dev { id: string; display_name: string; em_andamento: number; abertos: number; }
@@ -90,6 +92,7 @@ export default function PainelDistribuicao() {
   const [flashPrioridade, setFlashPrioridade] = useState<string | null>(null);
   // Filtro do detalhamento de avaliações: "todos" ou o id do integrante.
   const [fAvaliado, setFAvaliado] = useState("todos");
+  const [paginaAval, setPaginaAval] = useState(1);
 
   const { data: usuarios = [] } = useQuery({
     queryKey: ["chamados-usuarios"],
@@ -168,6 +171,15 @@ export default function PainelDistribuicao() {
     () => (fAvaliado === "todos" ? avaliacoes : avaliacoes.filter((a) => a.responsavel_id === fAvaliado)),
     [avaliacoes, fAvaliado],
   );
+  useEffect(() => { setPaginaAval(1); }, [fAvaliado]);
+  const totalPaginasAval = Math.max(1, Math.ceil(avaliacoesFiltradas.length / AVALIACOES_POR_PAGINA));
+  const paginaAvalAtual = Math.min(paginaAval, totalPaginasAval);
+  const avaliacoesPagina = useMemo(
+    () => avaliacoesFiltradas.slice((paginaAvalAtual - 1) * AVALIACOES_POR_PAGINA, paginaAvalAtual * AVALIACOES_POR_PAGINA),
+    [avaliacoesFiltradas, paginaAvalAtual],
+  );
+  const deAval = avaliacoesFiltradas.length === 0 ? 0 : (paginaAvalAtual - 1) * AVALIACOES_POR_PAGINA + 1;
+  const ateAval = Math.min(paginaAvalAtual * AVALIACOES_POR_PAGINA, avaliacoesFiltradas.length);
 
   // Opções do filtro de responsável: os devs liberados + quem já é responsável
   // por algum chamado (alguém pode ter perdido a capacidade depois de assumir).
@@ -658,7 +670,7 @@ export default function PainelDistribuicao() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {avaliacoesFiltradas.map((a) => {
+              {avaliacoesPagina.map((a) => {
                 const nota = mediaAvaliacao(a);
                 return (
                   <TableRow
@@ -714,6 +726,20 @@ export default function PainelDistribuicao() {
               )}
             </TableBody>
           </Table>
+        </div>
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+          <p className="text-xs text-muted-foreground">Mostrando {deAval} a {ateAval} de {avaliacoesFiltradas.length} avaliações</p>
+          {totalPaginasAval > 1 && (
+            <div className="flex items-center gap-1">
+              <Button variant="outline" size="sm" className="h-8 px-2" disabled={paginaAvalAtual <= 1} onClick={() => setPaginaAval((p) => Math.max(1, p - 1))}>
+                <ChevronLeft className="h-4 w-4" />
+              </Button>
+              <span className="px-2 text-xs text-muted-foreground">Página {paginaAvalAtual} de {totalPaginasAval}</span>
+              <Button variant="outline" size="sm" className="h-8 px-2" disabled={paginaAvalAtual >= totalPaginasAval} onClick={() => setPaginaAval((p) => Math.min(totalPaginasAval, p + 1))}>
+                <ChevronRight className="h-4 w-4" />
+              </Button>
+            </div>
+          )}
         </div>
         <p className="mt-3 flex items-center justify-center gap-1.5 border-t border-border/60 pt-3 text-[11px] text-muted-foreground">
           <Info className="h-3.5 w-3.5" /> Desde 31/08/2026, nota abaixo de 5 em qualquer critério só é aceita com comentário — as avaliações anteriores a isso podem estar sem.
