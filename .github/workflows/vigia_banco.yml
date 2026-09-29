@@ -156,13 +156,26 @@ jobs:
           if [ -z "${SERVICE_KEY:-}" ]; then
             anota "MEMORIA/SWAP/DISCO ... sem leitura (secret SUPABASE_SERVICE_ROLE_KEY nao configurado)"
           else
-            M=$(curl -sS --max-time 25 -u "service_role:$SERVICE_KEY" \
-                  "https://$PROJETO.supabase.co/customer/v1/privileged/metrics" 2>&1) || M=""
+            # O CODIGO HTTP TEM QUE APARECER NO LOG.
+            # A primeira versao deste passo dizia so "endpoint nao respondeu", e
+            # isso nao distingue chave errada de banco sufocado - duas coisas com
+            # acoes completamente diferentes. E o mesmo erro que ja me custou uma
+            # execucao no backup: esconder o diagnostico atras de uma mensagem
+            # generica.
+            HTTP=$(curl -s -o metricas.txt -w '%{http_code}' --max-time 25 \
+                     -u "service_role:$SERVICE_KEY" \
+                     "https://$PROJETO.supabase.co/customer/v1/privileged/metrics" || echo "000")
+            M=$(cat metricas.txt 2>/dev/null || echo "")
             soma() { echo "$M" | grep "^$1" | awk '{s+=$NF} END{printf "%.0f", s}'; }
 
-            if [ -z "$M" ] || ! echo "$M" | grep -q "node_memory_MemTotal_bytes"; then
-              anota "METRICAS .... endpoint nao respondeu"
-              alerta "**O endpoint de metricas nao respondeu.** Se persistir, pode ser sintoma de banco sufocado."
+            if [ "$HTTP" = "401" ] || [ "$HTTP" = "403" ]; then
+              # Chave recusada e problema de CONFIGURACAO, nao de saude do banco.
+              # Alarmar aqui faria o vigia gritar para sempre por causa de um
+              # secret errado, e alarme permanente e alarme ignorado.
+              anota "METRICAS .... HTTP $HTTP - chave recusada (confira o secret SUPABASE_SERVICE_ROLE_KEY)"
+            elif [ "$HTTP" != "200" ] || ! echo "$M" | grep -q "node_memory_MemTotal_bytes"; then
+              anota "METRICAS .... HTTP $HTTP - sem resposta util"
+              alerta "**O endpoint de metricas respondeu HTTP $HTTP.** Se persistir, pode ser sintoma de banco sufocado."
             else
               MT=$(soma node_memory_MemTotal_bytes);  MD=$(soma node_memory_MemAvailable_bytes)
               ST=$(soma node_memory_SwapTotal_bytes); SL=$(soma node_memory_SwapFree_bytes)
