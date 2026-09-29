@@ -162,7 +162,12 @@ jobs:
             # acoes completamente diferentes. E o mesmo erro que ja me custou uma
             # execucao no backup: esconder o diagnostico atras de uma mensagem
             # generica.
-            HTTP=$(curl -s -o metricas.txt -w '%{http_code}' --max-time 25 \
+            # --compressed e obrigatorio. Sem ele o endpoint devolveu HTTP 200 e
+            # um corpo que o grep nao entendia (29/09/2026), porque vem
+            # comprimido. O monitor em PowerShell nunca sofreu com isso porque o
+            # Invoke-WebRequest descompacta sozinho; o curl so descompacta se
+            # voce pedir.
+            HTTP=$(curl -s --compressed -o metricas.txt -w '%{http_code}' --max-time 25 \
                      -u "service_role:$SERVICE_KEY" \
                      "https://$PROJETO.supabase.co/customer/v1/privileged/metrics" || echo "000")
             M=$(cat metricas.txt 2>/dev/null || echo "")
@@ -174,7 +179,10 @@ jobs:
               # secret errado, e alarme permanente e alarme ignorado.
               anota "METRICAS .... HTTP $HTTP - chave recusada (confira o secret SUPABASE_SERVICE_ROLE_KEY)"
             elif [ "$HTTP" != "200" ] || ! echo "$M" | grep -q "node_memory_MemTotal_bytes"; then
-              anota "METRICAS .... HTTP $HTTP - sem resposta util"
+              # Quando falha, mostrar o suficiente para diagnosticar sem
+              # despejar o corpo inteiro no log de um repositorio publico.
+              anota "METRICAS .... HTTP $HTTP - sem resposta util ($(wc -c < metricas.txt 2>/dev/null || echo 0) bytes)"
+              anota "             inicio: $(head -c 80 metricas.txt 2>/dev/null | tr -d '\0' | tr '\n' ' ')"
               alerta "**O endpoint de metricas respondeu HTTP $HTTP.** Se persistir, pode ser sintoma de banco sufocado."
             else
               MT=$(soma node_memory_MemTotal_bytes);  MD=$(soma node_memory_MemAvailable_bytes)
