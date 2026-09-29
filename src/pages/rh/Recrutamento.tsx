@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useRef, useCallback, type MouseEvent as ReactMouseEvent, type CSSProperties, type ReactNode } from "react";
 import {
-  Activity, AlertTriangle, Ban, Building2, CalendarDays, Check, CheckCircle2, ChevronLeft, ChevronRight, ClipboardList, Clock, Eye, FileText,
+  Activity, AlertTriangle, Ban, Building2, CalendarDays, Check, CheckCircle2, ChevronLeft, ChevronRight, ClipboardList, Clock, Copy, Eye, FileText,
   FolderOpen, GraduationCap, History, IdCard, Landmark, Link2, LogOut, Mail, MapPin, MessageSquare, Paperclip,
   Pencil, Phone, Search, Settings, Tags, Target, Trash2, UserSearch, Users, X, XCircle, Zap, type LucideIcon,
 } from "lucide-react";
@@ -1779,6 +1779,45 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
     );
   };
 
+  // "Copiar informações" (29/09/2026): a vaga em texto puro, "Rótulo: valor"
+  // por linha, pronta pra colar no WhatsApp/e-mail. Campo vazio não entra.
+  // Fica de fora o que é interno do processo (quem solicitou/aprovou,
+  // recomendação com CPF, motivo de reprovação).
+  const copiarInfoVaga = async (s: Solicitacao) => {
+    const linhas: Array<[string, unknown]> = [
+      ["Contrato", s.contrato],
+      ["Cargo", s.cargo],
+      ["Cidade", s.cidade],
+      ["Motivo da vaga", motivoLabel(s.motivo_vaga)],
+      ["Tipo de vaga", s.administrativa ? "Administrativa (escritório)" : ""],
+      ["Setor", s.administrativa ? s.setor : ""],
+      ["Escala / horário", [s.escala, s.horario].map((x) => String(x ?? "").trim()).filter(Boolean).join(" · ")],
+      ["Salário", s.salario],
+      ["Benefícios", s.beneficios],
+      ["Insalubridade", s.insalubridade_recebe ? s.insalubridade_recebe + (s.insalubridade_quanto ? " — " + s.insalubridade_quanto : "") : ""],
+      ["Posto de trabalho", s.local_exato],
+      ["Data início prevista", fmtBr(s.data_inicio_prevista)],
+      ["Colaborador substituído", mostraNomeReferencia(s.motivo_vaga) ? s.nome_substituido : ""],
+      ["Requisitos obrigatórios", s.req_obrigatorios],
+      ["Requisitos desejáveis", s.req_desejaveis],
+      ["Experiência mínima", s.exp_minima ? s.exp_minima + (s.exp_minima_qual ? " — " + s.exp_minima_qual : "") : ""],
+      ["Alta rotatividade", s.alta_rotatividade],
+      ["Observação importante", s.observacao_importante],
+    ];
+    const corpo = linhas
+      .map(([rotulo, v]) => [rotulo, String(v ?? "").trim()] as const)
+      .filter(([, v]) => v && v !== "—")
+      .map(([rotulo, v]) => `${rotulo}: ${v}`)
+      .join("\n");
+    const texto = `Vaga #${s.id}\n\n${corpo}`;
+    try {
+      await navigator.clipboard.writeText(texto);
+      toast("Informações da vaga copiadas!", "ok");
+    } catch {
+      toast("Não consegui copiar — o navegador bloqueou a área de transferência.", "err");
+    }
+  };
+
   const renderDetalhe = (s: Solicitacao) => {
     const di = (label: string, val: ReactNode, full = false) => (
       <div className={`rec-di${full ? " full" : ""}`} key={label}>
@@ -1795,6 +1834,16 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
 
     return (
       <div style={{ padding: 20 }}>
+        <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 10 }}>
+          <button
+            type="button"
+            onClick={() => copiarInfoVaga(s)}
+            title="Copia as informações da vaga em texto, uma por linha"
+            style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "6px 12px", borderRadius: 8, border: "1px solid #cbd5e1", background: "#fff", color: "#0f3171", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}
+          >
+            <Copy size={14} /> Copiar informações
+          </button>
+        </div>
         <div className="rec-dg">
           {di("Contrato", s.contrato, true)}
           {di("Cargo", s.cargo)}
