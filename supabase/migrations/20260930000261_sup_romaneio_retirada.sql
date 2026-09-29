@@ -113,7 +113,7 @@ ON CONFLICT (perfil_id, menu_codigo, acao) DO NOTHING;
 -- Pedidos de Materiais recebe as ações do romaneio como exceção individual.
 INSERT INTO public.screen_permission_user (user_id, menu_codigo, acao, allow, motivo)
 SELECT DISTINCT s.user_id, 'sup_romaneio', a.acao, true,
-       'Migração 20260930000259: já podia alterar Pedidos de Materiais'
+       'Migração 20260930000261: já podia alterar Pedidos de Materiais'
   FROM public.screen_permission_user s
  CROSS JOIN (VALUES
    ('visualizar'::public.app_acao),
