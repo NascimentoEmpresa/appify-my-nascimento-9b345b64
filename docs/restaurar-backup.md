@@ -28,6 +28,31 @@ recente → seção **Artifacts** → baixe `backup-AAAAMMDD-HHMMSS.dump.gpg`.
 Roda automaticamente às **06:00 e 18:00** (horário de Brasília). Guarda **14
 dias**. Para gerar um agora: botão **"Run workflow"** na mesma tela.
 
+### E existe uma segunda cópia, no servidor da empresa
+
+Desde **29/09/2026**, uma cópia diária também vai para:
+
+```
+S:\1- SERVIDOR\Analise de dados\Grupo Nascimento\Analise de Sistemas\Eduardo\BACKUP-BANCO
+```
+
+É lá que estão os backups **com mais de 14 dias** — o GitHub apaga, o servidor
+não. A retenção é 30 diários, 12 semanais e 12 mensais, ou seja, dá para voltar
+cerca de um ano.
+
+Quem faz a cópia é `scripts/copiar-backup-para-servidor.ps1`, por tarefa agendada
+na máquina do Eduardo. O runner do GitHub não alcança `192.168.100.60` — é rede
+interna —, então a cópia tem de ser puxada de dentro da empresa.
+
+**Duas limitações que precisam estar claras:**
+
+1. Enquanto rodar na máquina do Eduardo, a cópia só acontece com ela ligada. O
+   script avisa por DM se o backup mais recente tiver 3 dias ou mais.
+2. `S:` é **um** servidor, sem imutabilidade. Um ransomware na rede da empresa
+   alcança ele. Isto é uma terceira localização sob controle diferente — Supabase,
+   GitHub, servidor interno —, **não é um cofre**. Cópia à prova de exclusão
+   (Object Lock em nuvem) continua sendo o próximo passo.
+
 ---
 
 ## Antes de restaurar: descriptografar
