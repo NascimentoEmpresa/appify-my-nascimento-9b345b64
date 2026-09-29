@@ -72,6 +72,7 @@ import { useOrcadoClassificacao, useOrcadoClassificacaoMultiMes } from "@/hooks/
 import { useMaloteConfig, usePrazoNormalInclusao, useSouGerenteFinanceiroMalote, exigeJustificativaPorConferenciaAtrasada } from "@/hooks/useMaloteConfig";
 import { useClassificacoesOrcamentoAdmin } from "@/hooks/usePlanejamentoOrcamentario";
 import { AnexosField } from "./AnexosField";
+import { ClassificacaoRateioCell } from "./ClassificacaoRateioCell";
 import { useFormasPagamento } from "@/hooks/useMaloteFormaPagamento";
 import { useCartaoBancos, urlLogoCartao } from "@/hooks/useMaloteCartaoCredito";
 import { BancoBadge } from "@/components/financeiro/BancoBadge";
@@ -257,7 +258,7 @@ const TILE_COR = {
   violet: "text-violet-300 dark:text-violet-800",
 } as const;
 
-function TileDestaque({ label, valor, icon, cor }: { label: string; valor: string; icon: React.ReactNode; cor: keyof typeof TILE_COR }) {
+function TileDestaque({ label, valor, icon, cor }: { label: string; valor: React.ReactNode; icon: React.ReactNode; cor: keyof typeof TILE_COR }) {
   return (
     <div className="relative overflow-hidden rounded-lg border border-border p-3">
       <div
@@ -481,6 +482,10 @@ export default function DespesaVisualizar() {
   const { data: classificacoesCatalogo = [] } = useClassificacoesOrcamentoAdmin();
   const classificacaoPorId = useMemo(
     () => new Map(classificacoesCatalogo.map((c) => [c.id, c])),
+    [classificacoesCatalogo],
+  );
+  const nomePorClassificacaoId = useMemo(
+    () => new Map(classificacoesCatalogo.map((c) => [c.id, c.nome])),
     [classificacoesCatalogo],
   );
   // [SEM-CHAMADO] (achado do usuário, 22/09/2026 — DM-2026-0895 travada em
@@ -1623,7 +1628,21 @@ export default function DespesaVisualizar() {
                   icon={<DollarSign />}
                   cor="emerald"
                 />
-                <TileDestaque label="Classificação" valor={classificacaoEditadaCatalogo?.nome ?? despesa.classificacao?.nome ?? "—"} icon={<Tag />} cor="violet" />
+                <TileDestaque
+                  label="Classificação"
+                  valor={
+                    classificacaoEditadaCatalogo?.nome ??
+                    despesa.classificacao?.nome ?? (
+                      <ClassificacaoRateioCell
+                        despesa={despesa}
+                        classificacaoIdsRateio={classificacaoIdsRateioDespesa}
+                        nomePorClassificacaoId={nomePorClassificacaoId}
+                      />
+                    )
+                  }
+                  icon={<Tag />}
+                  cor="violet"
+                />
               </div>
 
               {dadosDespesaPagamentoEditaveis && (

@@ -41,6 +41,7 @@ import { useOrdenacaoTabela } from "@/hooks/useOrdenacaoTabela";
 import { ordenarPor } from "@/lib/ordenarTabela";
 import { abreviarNome } from "./JustificativaPendenteBadge";
 import { EmpresaContratoBadge } from "./EmpresaContratoBadge";
+import { ClassificacaoRateioCell } from "./ClassificacaoRateioCell";
 
 // SIS-2026-0316: colunas ordenáveis. Fora: Empresa/Contrato (fica só como
 // Empresa pra ordenar, o badge continua mostrando os dois), Parcela
@@ -246,6 +247,10 @@ export default function Aprovacoes({ base = "/app/malote" }: { base?: string } =
   const { data: classificacoesTodas = [] } = useClassificacoesOrcamentoAdmin();
   const classificacaoPorId = useMemo(
     () => new Map(classificacoesTodas.map((c) => [c.id, c])),
+    [classificacoesTodas]
+  );
+  const nomePorClassificacaoId = useMemo(
+    () => new Map(classificacoesTodas.map((c) => [c.id, c.nome])),
     [classificacoesTodas]
   );
   function aprovadorNomes(despesa: MaloteDespesaRow, nivel: 1 | 2 | 3): string[] {
@@ -933,6 +938,8 @@ export default function Aprovacoes({ base = "/app/malote" }: { base?: string } =
                     nomeContrato={contratosMap.get(contratoIdResolvido(item.despesa) ?? "")}
                     aprovadorNomes={aprovadorNomes}
                     formaEspecialPorNome={formaEspecialPorNome}
+                    classificacaoIdsRateio={classificacaoIdsRateio?.get(item.despesa.id)}
+                    nomePorClassificacaoId={nomePorClassificacaoId}
                     onAbrir={() => abrirItem(item.despesa)}
                     onVerFluxoCaixa={() => navigate(`/app/financeiro/gestao-financeira/fluxo-caixa?busca=${encodeURIComponent(item.despesa.numero)}`)}
                   />
@@ -969,6 +976,8 @@ function LinhaItem({
   nomeContrato,
   aprovadorNomes,
   formaEspecialPorNome,
+  classificacaoIdsRateio,
+  nomePorClassificacaoId,
   onAbrir,
   onVerFluxoCaixa,
 }: {
@@ -978,6 +987,8 @@ function LinhaItem({
   nomeContrato?: string;
   aprovadorNomes: (despesa: MaloteDespesaRow, nivel: 1 | 2 | 3) => string[];
   formaEspecialPorNome: Map<string, MaloteFormaPagamento>;
+  classificacaoIdsRateio: Set<string> | undefined;
+  nomePorClassificacaoId: Map<string, string>;
   onAbrir: () => void;
   onVerFluxoCaixa: () => void;
 }) {
@@ -1014,7 +1025,13 @@ function LinhaItem({
         {parcela ? `${parcela.numero_parcela}/${despesa.numero_parcelas}` : <span className="text-muted-foreground">—</span>}
       </TableCell>
       <TableCell className="text-sm">{despesa.nome}</TableCell>
-      <TableCell className="text-sm">{despesa.classificacao?.nome ?? "—"}</TableCell>
+      <TableCell className="text-sm">
+        <ClassificacaoRateioCell
+          despesa={despesa}
+          classificacaoIdsRateio={classificacaoIdsRateio}
+          nomePorClassificacaoId={nomePorClassificacaoId}
+        />
+      </TableCell>
       <TableCell className="text-right text-sm">
         {Number(valor).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
       </TableCell>
