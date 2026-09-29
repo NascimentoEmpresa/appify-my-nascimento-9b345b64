@@ -253,6 +253,34 @@ jobs:
           conta_rest() { PGPASSWORD=postgres \
             psql -h localhost -p 5432 -U postgres -d restaurado -At -c "$1"; }
 
+          # OS PAPEIS DA SUPABASE PRECISAM EXISTIR ANTES DA RESTAURACAO.
+          # Descoberto no ensaio de recuperacao de 29/09/2026, e e o achado mais
+          # grave que esse ensaio produziu: `CREATE POLICY ... TO authenticated`
+          # FALHA quando o papel `authenticated` nao existe. Num Postgres comum
+          # nenhum papel da Supabase existe, entao praticamente toda a RLS caia
+          # em silencio:
+          #
+          #   sem os papeis ....... 35 policies restauradas, 6.212 linhas de erro
+          #   com os papeis ..... 1.443 policies restauradas,    78 linhas de erro
+          #   producao no momento  1.447 policies
+          #
+          # E este teste passava VERDE nos dois casos, porque so conferia
+          # contagem de linha. Um backup que volta com 2% da RLS nao e um backup
+          # recuperavel: e um banco onde qualquer usuario le tudo.
+          #
+          # A lista saiu de pg_roles da producao. Papeis de sistema (pg_*) e o
+          # proprio `postgres` ficam de fora.
+          for PAPEL in anon authenticated authenticator cli_login_postgres \
+                       dashboard_user service_role supabase_admin \
+                       supabase_auth_admin supabase_etl_admin \
+                       supabase_functions_admin supabase_privileged_role \
+                       supabase_read_only_user supabase_realtime_admin \
+                       supabase_replication_admin supabase_storage_admin; do
+            PGPASSWORD=postgres psql -h localhost -p 5432 -U postgres -d postgres -q \
+              -c "create role \"$PAPEL\" nologin noinherit;" > /dev/null 2>&1 || true
+          done
+          echo "papeis da Supabase criados no destino: $(PGPASSWORD=postgres psql -h localhost -p 5432 -U postgres -d postgres -At -c "select count(*) from pg_roles where rolname not like 'pg_%' and rolname <> 'postgres'")"
+
           PGPASSWORD=postgres psql -h localhost -p 5432 -U postgres -d postgres -q \
             -v ON_ERROR_STOP=1 \
             -c "CREATE DATABASE restaurado TEMPLATE template0 ENCODING 'UTF8';"
@@ -298,6 +326,21 @@ jobs:
               FALHOU=1
             fi
           done
+
+          # CONTAR LINHA NAO BASTA - TEM QUE CONFERIR A SEGURANCA.
+          # Ate 29/09/2026 este teste olhava so quantidade de linha, e por isso
+          # deu verde durante dias enquanto 97,6% das policies de RLS falhavam
+          # na restauracao. Dado completo com RLS ausente nao e recuperacao: e
+          # um vazamento pronto. A tolerancia aqui e de 2%, apertada de
+          # proposito - policy nao aparece nem some sozinha como linha de tabela.
+          PP=$(conta_prod "select count(*) from pg_policies")
+          PR=$(conta_rest "select count(*) from pg_policies")
+          DIFP=$(( (PR > PP ? PR - PP : PP - PR) * 100 / PP ))
+          printf '%-26s producao=%-9s restaurado=%-9s diferenca=%s%%\n' "RLS (pg_policies)" "$PP" "$PR" "$DIFP"
+          if [ "$DIFP" -gt 2 ]; then
+            echo "::error::A RLS nao voltou: producao tem $PP policies e o backup restaurou $PR. Backup restaurado sem RLS deixa todo usuario enxergar tudo."
+            FALHOU=1
+          fi
 
           # A maior tabela do banco. Contar na producao custaria varredura de
           # milhoes de linhas numa instancia que ja vive perto do limite de
