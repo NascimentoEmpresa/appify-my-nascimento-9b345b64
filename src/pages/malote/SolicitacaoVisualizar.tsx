@@ -147,6 +147,12 @@ export default function SolicitacaoVisualizar() {
   const { data: utilizadoLinhas = [] } = useUtilizadoOrcamento();
   const { data: ligacoesClassMalote = [] } = useLigacoesClassificacaoMalote();
   const mapaVinculo = mapaClassificacaoVinculada(ligacoesClassMalote);
+  // Hook ANTES do return de "Carregando..." (29/09/2026): chamado depois
+  // dele, a 1ª renderização (carregando) tinha um hook a menos que a 2ª
+  // (dados chegaram) e o React derrubava a tela — "Rendered more hooks than
+  // during the previous render" —, que caía na tela de "Sistema
+  // indisponível" ao abrir qualquer solicitação (diárias inclusive).
+  const { data: souSupervisorMaloteRaw } = useSouSupervisorMalote();
 
   if (isLoading || !despesa) {
     return <div className="p-6 text-muted-foreground">Carregando...</div>;
@@ -169,7 +175,6 @@ export default function SolicitacaoVisualizar() {
   // aprovador exato. Reaproveita a mesma RPC que a RLS já usa (não duplica
   // regra de cargo em JS, ver useSouSupervisorMalote).
   const souAprovadorDaClassificacao = souAprovadorSolicitacao(despesa, user?.id);
-  const { data: souSupervisorMaloteRaw } = useSouSupervisorMalote();
   const souSupervisorMalote = !!souSupervisorMaloteRaw;
   const souAprovadorOuSupervisor = souAprovadorDaClassificacao || souSupervisorMalote;
   const aguardandoMinhaAprovacaoInicial = despesa.status === "aguardando_aprovacao_inicial" && souAprovadorOuSupervisor;
