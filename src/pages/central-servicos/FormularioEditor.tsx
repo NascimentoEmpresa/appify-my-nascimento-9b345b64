@@ -321,7 +321,10 @@ export default function FormularioEditor() {
       const setores = (data ?? [])
         .map((r: any) => String(r.setor ?? "").trim())
         .filter(Boolean) as string[];
-      setSetoresErp([...new Set(setores)].sort());
+      // ENCARREGADOS (mig 276): o setor deles mora na user_setor, não no
+      // Setor_ERP — por isso não vem da RPC. Liberar para ele põe o formulário
+      // em Encarregados › Nascimento Formulários (cs_form_alvo confere no banco).
+      setSetoresErp([...new Set([...setores, "ENCARREGADOS"])].sort());
     })();
   }, []);
 

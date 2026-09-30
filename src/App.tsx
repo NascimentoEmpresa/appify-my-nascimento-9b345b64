@@ -226,6 +226,7 @@ import PainelGerencialFormularios from "./pages/central-servicos/PainelGerencial
 import FormulariosConfig from "./pages/central-servicos/FormulariosConfig";
 import FormularioPublico from "./pages/publico/FormularioPublico";
 import CampanhaPublica from "./pages/publico/CampanhaPublica";
+import FormulariosEncarregados from "./pages/encarregados/FormulariosEncarregados";
 import Denuncia from "./pages/publico/Denuncia";
 import FornecedorCadastro from "./pages/publico/FornecedorCadastro";
 import PedidoConfirmar from "./pages/publico/PedidoConfirmar";
@@ -441,6 +442,9 @@ const App = () => (
                 usuário externo (sessão anônima) enxerga; ver useModoExterno. */}
             <Route path="encarregados/solicitar-materiais" element={<SolicitarMateriais />} />
             <Route path="encarregados/meus-pedidos" element={<MeusPedidos />} />
+            {/* Nascimento Formulários dos encarregados (mig 276): só os formulários
+                liberados para o setor ENCARREGADOS — responder e ver as próprias respostas. */}
+            <Route path="encarregados/formularios" element={<FormulariosEncarregados />} />
             {/* Chamados de Sistemas para o encarregado. São as MESMAS telas da
                 Central de Serviços — o prop `base` já existia para isto —, só
                 que ancoradas no módulo dele, para não obrigar quem vive em
