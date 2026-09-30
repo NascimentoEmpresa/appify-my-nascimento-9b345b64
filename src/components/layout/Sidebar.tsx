@@ -876,6 +876,11 @@ const presidenciaModule: ModuleDef = {
         // abaixo de Novidades — veio para cá em 24/09/2026). Liberação: código
         // "presidencia" em app_menu, como já era.
         { label: "Painel da Presidência", to: "/app/presidencia", icon: LayoutDashboard },
+        // Desenvolvimento Chamados (29/09/2026, mig 266): chamados de sistemas
+        // marcados "Enviar à Presidência" — a direção valida o desenvolvimento
+        // e acompanha o treinamento. Liberação própria
+        // (presidencia_chamados_dev; aprovar/devolver: _validar).
+        { label: "Desenvolvimento Chamados", to: "/app/presidencia/chamados-desenvolvimento", icon: CheckCircle2 },
       ],
     },
     {

@@ -14,6 +14,7 @@ import { AvaliarChamadoDialog } from "./AvaliarChamadoDialog";
 import { ReabrirChamadoDialog } from "./ReabrirChamadoDialog";
 import { CancelarChamadoDialog } from "./CancelarChamadoDialog";
 import { ChatChamado } from "./ChatChamado";
+import { BotaoStatusChamado, CardTreinamento, CardValidacaoPresidencia, useValidacaoChamado } from "./StatusValidacao";
 import {
   StatusBadge, PrioridadeBadge, CardAvaliacao,
   CATEGORIAS, TIPOS, IMPACTOS, URGENCIAS, AMBIENTES,
@@ -75,7 +76,11 @@ export default function AcompanharChamado({ base = "/app/central-servicos/chamad
     },
   });
 
+  // Validação da Presidência (mig 266) — null quando o chamado não foi enviado.
+  const { data: validacao } = useValidacaoChamado(id);
+
   const invalidar = () => {
+    qc.invalidateQueries({ queryKey: ["chamado-validacao", id] });
     qc.invalidateQueries({ queryKey: ["chamado", id] });
     qc.invalidateQueries({ queryKey: ["chamado-eventos", id] });
     qc.invalidateQueries({ queryKey: ["chamados-meus", user?.id] });
@@ -112,7 +117,12 @@ export default function AcompanharChamado({ base = "/app/central-servicos/chamad
         subtitle={chamado.assunto}
         module="Central de Serviços"
         breadcrumb={["Chamados de Sistemas", `#${chamado.numero}`]}
-        actions={<Button variant="outline" className="gap-1.5" onClick={() => nav(base)}><ArrowLeft className="h-4 w-4" /> Meus chamados</Button>}
+        actions={
+          <div className="flex flex-wrap gap-2">
+            <BotaoStatusChamado chamado={chamado} validacao={validacao} nomeDe={nomeDe} size="default" />
+            <Button variant="outline" className="gap-1.5" onClick={() => nav(base)}><ArrowLeft className="h-4 w-4" /> Meus chamados</Button>
+          </div>
+        }
       />
 
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
@@ -211,6 +221,10 @@ export default function AcompanharChamado({ base = "/app/central-servicos/chamad
 
         {/* Coluna de ação do solicitante */}
         <div className="space-y-4">
+          {/* Presidência + treinamento (mig 266): o solicitante confirma aqui
+              que recebeu o treinamento. */}
+          <CardTreinamento chamado={chamado} validacao={validacao} nomeDe={nomeDe} />
+          <CardValidacaoPresidencia chamado={chamado} validacao={validacao} nomeDe={nomeDe} />
           <ExportarChamado chamadoId={chamado.id} numero={chamado.numero} totalAnexos={anexos.length} />
 
           {ehSolicitante && !encerrado && (

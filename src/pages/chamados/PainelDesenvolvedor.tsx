@@ -18,7 +18,7 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
 import { PieChart, Pie, Cell, ResponsiveContainer } from "recharts";
-import { ListChecks, Clock, MessageSquare, CheckCircle2, AlertTriangle, ShieldAlert, CalendarClock, RotateCw, RotateCcw, ArrowUpRight, Plus, BookOpen, ClipboardCheck, Sparkles, FileText, Zap, Star, Trophy, GitPullRequest, LayoutDashboard } from "lucide-react";
+import { ListChecks, Clock, MessageSquare, CheckCircle2, AlertTriangle, ShieldAlert, CalendarClock, RotateCw, RotateCcw, ArrowUpRight, Plus, BookOpen, ClipboardCheck, Sparkles, FileText, Zap, Star, Trophy, GitPullRequest, LayoutDashboard, GraduationCap } from "lucide-react";
 import { HoverCard, HoverCardTrigger, HoverCardContent } from "@/components/ui/hover-card";
 import { FeedAtualizacoes } from "./FeedAtualizacoes";
 import { BotaoChatChamado, useChamadosNaoLidos } from "./BotaoChatChamado";
@@ -160,6 +160,22 @@ export default function PainelDesenvolvedor() {
 
   const { data: naoLidos = {} } = useChamadosNaoLidos();
 
+  // Treinamentos que o dev deve confirmar (mig 266): a Presidência aprovou o
+  // desenvolvimento que ele concluiu e falta ele dizer que deu o treinamento.
+  const { data: treinamentosPendentes = [] } = useQuery({
+    queryKey: ["chamado-validacoes", "treinamento-dev", user?.id],
+    enabled: !!user?.id,
+    queryFn: async () => {
+      const { data } = await (supabase as any)
+        .from("CHAMADO_SISTEMA_VALIDACAO")
+        .select("chamado_id, CHAMADO_SISTEMA!inner(numero, assunto)")
+        .eq("etapa", "treinamento")
+        .eq("desenvolvedor_id", user!.id)
+        .is("treinamento_dev_em", null);
+      return ((data ?? []) as Array<{ chamado_id: string; CHAMADO_SISTEMA: { numero: string; assunto: string } }>);
+    },
+  });
+
   // Ranking de satisfação da equipe (nota final ponderada + médias por critério).
   const { data: ranking = [] } = useQuery({
     queryKey: ["chamados-ranking-satisfacao"],
@@ -294,6 +310,22 @@ export default function PainelDesenvolvedor() {
           </Button>
         }
       />
+
+      {treinamentosPendentes.length > 0 && (
+        <Card className="mb-4 space-y-2 border-primary/40 bg-primary/5 p-4">
+          <p className="flex items-center gap-1.5 text-sm font-semibold text-primary">
+            <GraduationCap className="h-4 w-4" /> A Presidência aprovou {treinamentosPendentes.length} desenvolvimento(s) seu(s) — confirme que o treinamento foi dado.
+          </p>
+          <div className="flex flex-wrap gap-1.5">
+            {treinamentosPendentes.map((t) => (
+              <button key={t.chamado_id} onClick={() => nav(`/app/sistemas/chamados/${t.chamado_id}`)} title={t.CHAMADO_SISTEMA?.assunto}
+                className="flex items-center gap-1 rounded border border-primary/40 bg-background px-2 py-1 text-xs transition-transform hover:border-primary hover:bg-primary/5 active:scale-90">
+                <GraduationCap className="h-3 w-3 text-primary" /> <span className="font-mono font-semibold">#{t.CHAMADO_SISTEMA?.numero}</span> confirmar
+              </button>
+            ))}
+          </div>
+        </Card>
+      )}
 
       <div className="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
         <StatCard icon={ListChecks} tone="primary" label="Meus chamados abertos" value={stats.abertos} />

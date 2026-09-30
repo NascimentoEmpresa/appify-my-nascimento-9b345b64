@@ -20,8 +20,12 @@ import {
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import {
   Send, ShieldAlert, XCircle, CheckCircle2, FileText, GripVertical, Info,
-  ChevronRight, MessageSquareMore, ClipboardList,
+  ChevronRight, MessageSquareMore, ClipboardList, Crown,
 } from "lucide-react";
+import { Checkbox } from "@/components/ui/checkbox";
+import {
+  BotaoStatusChamado, SeloEtapaValidacao, useValidacaoChamado, useInvalidarValidacao,
+} from "./StatusValidacao";
 import {
   StatusBadge, PrioridadeBadge, PRIORIDADES, CATEGORIAS, AMBIENTES, URGENCIAS, labelDe,
   iniciais, fmtDataHora, moduloLabel, chamadoAtivo, CardAvaliacao,
@@ -81,6 +85,12 @@ export default function CoordenarChamado() {
   const [textoInfo, setTextoInfo] = useState("");
   const [obsInterna, setObsInterna] = useState(false);
   const [textoObs, setTextoObs] = useState("");
+  // "Enviar à Presidência" (mig 266): marcado aqui, na aprovação/direcionamento.
+  // null = ainda não mexeu; segue o que está gravado.
+  const [enviarPresidencia, setEnviarPresidencia] = useState<boolean | null>(null);
+  const [enviandoPresidencia, setEnviandoPresidencia] = useState(false);
+  const { data: validacao } = useValidacaoChamado(gestor ? id : null);
+  const invalidarValidacao = useInvalidarValidacao();
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
 
@@ -231,9 +241,12 @@ export default function CoordenarChamado() {
     const mudouPosicao = posicaoAtual !== novaPosicao;
     const mudouObs = (observacao.trim() || null) !== (chamado?.observacao_gerente || null);
     const mudouPrioridade = !!prioridade && prioridade !== chamado?.prioridade;
+    const mudouPresidencia = enviarPresidencia !== null && enviarPresidencia !== !!validacao;
 
     // Já é tarefa deste dev e nada mudou → só avisa, não reescreve a fila.
+    // (Só a marcação da Presidência mudou → grava só ela.)
     if (jaDesignado && !mudouPosicao && !mudouObs && !mudouPrioridade) {
+      if (mudouPresidencia) { await gravarPresidencia(enviarPresidencia!); return; }
       toast({
         title: "Essa tarefa já está designada para esse desenvolvedor selecionado.",
         description: `${nomeResponsavel} — ${posicaoAtual}º lugar na fila. Altere a posição/fila ou a observação para atualizar.`,
@@ -254,8 +267,12 @@ export default function CoordenarChamado() {
       p_posicao: novaPosicao,
       p_observacao: observacao.trim() || null,
     });
+    if (error) { setSalvando(false); toast({ title: "Erro ao direcionar", description: error.message, variant: "destructive" }); return; }
+    if (mudouPresidencia) {
+      const ok = await gravarPresidencia(enviarPresidencia!, true);
+      if (!ok) { setSalvando(false); invalidar(); return; }
+    }
     setSalvando(false);
-    if (error) { toast({ title: "Erro ao direcionar", description: error.message, variant: "destructive" }); return; }
     supabase.functions.invoke("enviar-notificacao-push", { body: { chamado_id: id, evento: "atribuido" } }).catch(() => {});
     supabase.functions.invoke("notificar-chamado-whatsapp", { body: { chamado_id: id, evento: "atribuido" } }).catch(() => {});
     toast({
@@ -264,6 +281,33 @@ export default function CoordenarChamado() {
     });
     invalidar();
     nav("/app/sistemas/chamados/painel");
+  };
+
+  /**
+   * Marca/desmarca "Enviar à Presidência" (RPC chamado_presidencia_definir).
+   * Chamado já concluído vai direto para a validação da Presidência.
+   * `silencioso` = parte do "Atribuir e direcionar", que já dá o próprio aviso.
+   */
+  const gravarPresidencia = async (enviar: boolean, silencioso = false) => {
+    setEnviandoPresidencia(true);
+    const { error } = await (supabase as any).rpc("chamado_presidencia_definir", {
+      p_chamado_id: id, p_enviar: enviar, p_observacao: null,
+    });
+    setEnviandoPresidencia(false);
+    if (error) {
+      toast({ title: "Erro ao marcar o envio à Presidência", description: error.message, variant: "destructive" });
+      return false;
+    }
+    setEnviarPresidencia(null);
+    invalidarValidacao(id);
+    if (!silencioso) {
+      toast(enviar
+        ? { title: "Chamado enviado à Presidência", description: chamado?.status === "concluido"
+            ? "Já está aguardando a validação da Presidência."
+            : "Quando o desenvolvedor concluir, ele vai para a validação da Presidência." }
+        : { title: "Chamado retirado da validação da Presidência" });
+    }
+    return true;
   };
 
   const reprovar = async () => {
@@ -347,7 +391,12 @@ export default function CoordenarChamado() {
         subtitle={chamado.assunto}
         module="Sistemas"
         breadcrumb={["Chamados de Sistemas", `#${chamado.numero}`]}
-        actions={<Button variant="outline" onClick={() => nav("/app/sistemas/chamados/painel")}>Voltar ao painel</Button>}
+        actions={
+          <div className="flex flex-wrap gap-2">
+            <BotaoStatusChamado chamado={chamado} validacao={validacao} nomeDe={nomeDe} size="default" />
+            <Button variant="outline" onClick={() => nav("/app/sistemas/chamados/painel")}>Voltar ao painel</Button>
+          </div>
+        }
       />
 
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_340px]">
@@ -524,6 +573,54 @@ export default function CoordenarChamado() {
                   </Button>
                 )}
               </div>
+
+              {/* 5. Enviar à Presidência (mig 266) — logo abaixo da aprovação.
+                  Marcado: depois que o dev concluir, o chamado vai para
+                  Presidência › Desenvolvimento Chamados, e só finaliza com a
+                  validação da direção + o treinamento confirmado pelo dev e
+                  pelo solicitante. */}
+              {(canCoordenar || canAprovar) && (() => {
+                const marcado = enviarPresidencia ?? !!validacao;
+                // Depois que a Presidência decidiu, não dá mais para retirar.
+                const travado = !!validacao && (validacao.etapa === "treinamento" || validacao.etapa === "finalizado");
+                const podeMarcar = !travado && chamado.status !== "reprovado" && chamado.status !== "cancelado";
+                // Encerrado (concluído) não passa pelo "Atribuir": grava na hora.
+                const gravaNaHora = encerrado || !canCoordenar;
+                return (
+                  <div className={`mt-3 rounded-lg border p-3 ${marcado ? "border-warning/40 bg-warning/5" : "border-border"}`}>
+                    <label className={`flex items-start gap-2.5 ${podeMarcar ? "cursor-pointer" : "cursor-not-allowed opacity-70"}`}>
+                      <Checkbox
+                        className="mt-0.5"
+                        checked={marcado}
+                        disabled={!podeMarcar || enviandoPresidencia}
+                        onCheckedChange={(v) => {
+                          const novo = v === true;
+                          if (gravaNaHora) { if (novo !== !!validacao) gravarPresidencia(novo); }
+                          else setEnviarPresidencia(novo === !!validacao ? null : novo);
+                        }}
+                      />
+                      <span className="min-w-0">
+                        <span className="flex flex-wrap items-center gap-2 text-sm font-bold">
+                          <Crown className="h-4 w-4 text-warning" /> Enviar à Presidência
+                          {validacao && <SeloEtapaValidacao v={validacao} />}
+                        </span>
+                        <span className="mt-0.5 block text-[11px] text-muted-foreground">
+                          Ao concluir, o chamado vai para <b>Presidência › Desenvolvimento Chamados</b>. A direção valida
+                          se o desenvolvimento está OK e, aprovado, o desenvolvedor e o solicitante confirmam o treinamento.
+                        </span>
+                        {travado && (
+                          <span className="mt-1 block text-[11px] text-muted-foreground">A Presidência já validou — não dá mais para retirar.</span>
+                        )}
+                        {!gravaNaHora && enviarPresidencia !== null && (
+                          <span className="mt-1 block text-[11px] font-medium text-warning">
+                            Alteração pendente — vale ao clicar em "Atribuir tarefas e direcionar chamado".
+                          </span>
+                        )}
+                      </span>
+                    </label>
+                  </div>
+                );
+              })()}
             </div>
           </Card>
         </div>
