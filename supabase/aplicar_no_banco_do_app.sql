@@ -32399,7 +32399,7 @@ NOTIFY pgrst, 'reload schema';
 -- =====================================================================
 
 
--- ===== 20260930000258_colaborador_ia =====
+-- ===== 20260930000258_colaborador_ia (JA APLICADA 29/09) =====
 -- PORTAL DO COLABORADOR — Assistente de IA (botão "Tirar dúvida").
 --
 -- A Edge Function `colaborador-ia` responde dúvidas do colaborador na tela de
@@ -33034,4 +33034,960 @@ NOTIFY pgrst, 'reload schema';
 -- ALTER TABLE public."CHAMADO_SISTEMA" ADD CONSTRAINT "CHAMADO_SISTEMA_status_check"
 --   CHECK (status IN ('aberto', 'em_andamento', 'aguardando_retorno', 'concluido', 'reprovado'));
 -- ALTER TABLE public."CHAMADO_SISTEMA" DROP COLUMN IF EXISTS cancelado_em, DROP COLUMN IF EXISTS motivo_cancelamento;
+-- NOTIFY pgrst, 'reload schema';
+
+-- ===== 20260930000262_malote_despesa_select_sem_recursao (JA APLICADA 29/09) =====
+-- [SEM-CHAMADO] (achado real, 29/09/2026 — Aprovações do Malote, Meus
+-- Itens e Pagamento Malote vazios pra TODO mundo, tiles todos em 0):
+-- a policy malote_despesa_select ganhou (aplicada direto no banco, sem
+-- migration no git) um ramo pra despesa de rateio com
+--   EXISTS (SELECT 1 FROM malote_despesa_rateio_linha rl WHERE rl.despesa_id = malote_despesa.id ...)
+-- Só que a RLS de malote_despesa_rateio_linha (malote_rateio_linha_all)
+-- faz EXISTS em malote_despesa de volta → despesa → linha → despesa → ...
+-- e o Postgres recusa a consulta inteira com "42P17: infinite recursion
+-- detected in policy for relation malote_despesa". A tela engole o erro e
+-- mostra "Nenhum item encontrado".
+--
+-- Correção: a mesma regra (despesa de rateio visível se ALGUMA linha tem
+-- classificação do setor liberado pro usuário) passa a morar numa função
+-- SECURITY DEFINER — ela lê malote_despesa_rateio_linha sem passar pela
+-- RLS da linha, então o ciclo some. Mesmo padrão já usado em
+-- malote_despesa_visivel_por_setor. Regra de visibilidade idêntica.
+--
+-- ROLLBACK (volta ao estado quebrado — só se for pra trocar a solução):
+--   DROP POLICY IF EXISTS malote_despesa_select ON public.malote_despesa;
+--   (recriar com o EXISTS direto em malote_despesa_rateio_linha)
+--   DROP FUNCTION IF EXISTS public.malote_despesa_visivel_por_rateio(uuid, uuid);
+--   NOTIFY pgrst, 'reload schema';
+
+CREATE OR REPLACE FUNCTION public.malote_despesa_visivel_por_rateio(_user_id uuid, _despesa_id uuid)
+RETURNS boolean
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+  SELECT EXISTS (
+    SELECT 1
+      FROM public.malote_despesa_rateio_linha rl
+     WHERE rl.despesa_id = _despesa_id
+       AND public.malote_despesa_visivel_por_setor(_user_id, rl.classificacao_id)
+  );
+$$;
+
+REVOKE ALL ON FUNCTION public.malote_despesa_visivel_por_rateio(uuid, uuid) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.malote_despesa_visivel_por_rateio(uuid, uuid) TO authenticated;
+
+DROP POLICY IF EXISTS malote_despesa_select ON public.malote_despesa;
+CREATE POLICY malote_despesa_select ON public.malote_despesa
+  FOR SELECT TO authenticated
+  USING (
+    (created_by = auth.uid())
+    OR has_role(auth.uid(), 'admin'::app_role)
+    OR (user_pode_ver_empresa(auth.uid(), empresa_id) AND malote_despesa_visivel_por_setor(auth.uid(), classificacao_id))
+    OR (
+      classificacao_id IS NULL
+      AND user_pode_ver_empresa(auth.uid(), empresa_id)
+      AND malote_despesa_visivel_por_rateio(auth.uid(), id)
+    )
+    OR (can_access(auth.uid(), 'sup_cotacoes_malote'::text, 'visualizar'::app_acao) AND malote_despesa_em_fase_cotacao(status))
+    OR can_access(auth.uid(), 'malote_pagamento'::text, 'aprovar'::app_acao)
+    OR (excecao AND status = 'pendente_aprovacao'::text AND malote_gerente_financeiro(auth.uid()))
+    OR (
+      origem = 'solicitacao'::text
+      AND EXISTS (
+        SELECT 1 FROM planejamento_orcamentario_classificacao c
+         WHERE c.id = malote_despesa.classificacao_id
+           AND auth.uid() = ANY (c.lancador_despesa_user_ids)
+      )
+    )
+  );
+
+NOTIFY pgrst, 'reload schema';
+
+-- ===== 20260930000263_encarregados_advertencia_menu (JA APLICADA 29/09) =====
+-- =====================================================================
+-- SOLICITAR MEDIDA DISCIPLINAR NO MÓDULO ENCARREGADOS — menu próprio
+-- (encarregados_advertencia)
+--
+-- O PROBLEMA (relatado em 29/09/2026, com print do Gerenciamento de Acesso):
+-- no /app/administracao?tab=modulos, o bloco "Encarregados" não tinha chave
+-- para "Solicitar Medida Disciplinar", embora a sidebar desenhe o item dentro
+-- de Encarregados › Jurídico. Não havia chave porque não havia linha em
+-- app_menu para /app/encarregados/advertencia — e matchMenuCode() casa por
+-- prefixo mais longo, então a rota caía no menu raiz `minhas_solicitações`
+-- (rota '/app/encarregados', o toggle "Encarregados" do topo do bloco).
+-- Resultado: não dava para liberar/tirar a medida disciplinar sozinha; ela
+-- andava junto com o acesso ao módulo inteiro. Mesmo desenho do caso das
+-- Diárias (20260930000065).
+--
+-- A SOLUÇÃO: menu próprio com a rota exata. A chave passa a aparecer no bloco
+-- Encarregados e governa só este item.
+--
+-- NINGUÉM GANHA NEM PERDE ACESSO NO DEPLOY: a partir desta linha a rota deixa
+-- de herdar `minhas_solicitações`, então as regras de quem já tinha aquele
+-- menu (liberadas E negadas) são copiadas para o menu novo, ação por ação.
+--
+-- O que NÃO muda: a decisão da medida continua no Jurídico (menu
+-- `advertencias`, ação 'aprovar'). A policy adv_insert já é
+-- `solicitante_email = auth.email() OR ...` — o gate de quem abre é a tela;
+-- este arquivo não toca RLS de SISTEMA_SOLICITACOES_ADVERTENCIA.
+-- =====================================================================
+
+-- ── 1) Menu ──────────────────────────────────────────────────────────
+INSERT INTO public.app_menu (modulo_id, codigo, nome, rota, ordem)
+SELECT mo.id, 'encarregados_advertencia', 'Solicitar Medida Disciplinar', '/app/encarregados/advertencia', 44
+  FROM public.app_modulo mo
+ WHERE mo.codigo = 'encarregados'
+   AND NOT EXISTS (SELECT 1 FROM public.app_menu am WHERE am.codigo = 'encarregados_advertencia');
+
+-- can_access() devolve false para menu inativo antes de olhar perfil.
+UPDATE public.app_menu SET ativo = true WHERE codigo = 'encarregados_advertencia';
+
+-- ── 2) Herança das regras atuais ─────────────────────────────────────
+-- Por usuário (fonte da verdade): copia allow=true e allow=false.
+INSERT INTO public.screen_permission_user (user_id, menu_codigo, acao, allow, empresa_id, motivo, created_by)
+SELECT s.user_id, 'encarregados_advertencia', s.acao, s.allow, s.empresa_id,
+       'Herdado de minhas_solicitações (mig 20260930000263)', s.created_by
+  FROM public.screen_permission_user s
+ WHERE s.menu_codigo = 'minhas_solicitações'
+   AND NOT EXISTS (
+     SELECT 1 FROM public.screen_permission_user x
+      WHERE x.user_id = s.user_id
+        AND x.menu_codigo = 'encarregados_advertencia'
+        AND x.acao = s.acao
+        AND x.empresa_id IS NOT DISTINCT FROM s.empresa_id
+   );
+
+-- Perfil de módulo "Encarregados": mesmo pacote que ele tem no menu raiz.
+INSERT INTO public.perfil_acesso_permissao (perfil_id, menu_codigo, acao, allow)
+SELECT pa.id, 'encarregados_advertencia', v.acao::public.app_acao, true
+  FROM public.perfil_acesso pa
+  JOIN (VALUES ('visualizar'), ('incluir')) AS v(acao) ON true
+ WHERE pa.nome = 'Encarregados' AND pa.ativo = true AND pa.concede_tudo = false
+ON CONFLICT (perfil_id, menu_codigo, acao) DO NOTHING;
+
+NOTIFY pgrst, 'reload schema';
+
+-- =====================================================================
+-- ROLLBACK
+-- =====================================================================
+-- DELETE FROM public.screen_permission_user  WHERE menu_codigo = 'encarregados_advertencia';
+-- DELETE FROM public.perfil_acesso_permissao WHERE menu_codigo = 'encarregados_advertencia';
+-- DELETE FROM public.app_menu                WHERE codigo      = 'encarregados_advertencia';
+-- NOTIFY pgrst, 'reload schema';
+
+-- ===== 20260930000264_recrutamento_pular_sst_compras (JA APLICADA 30/09) =====
+-- =========================================================================
+-- Recrutamento: "Pular SST e Compras" (DOCUMENTAÇÃO → ADMISSÃO)
+--
+-- Pedido (29/09/2026): no kanban do processo seletivo, com o candidato em
+-- DOCUMENTAÇÃO, um botão que pula a etapa paralela SST + COMPRAS e leva
+-- direto para ADMISSÃO — e que só ALGUNS tenham, concedido em
+-- Administração › Acesso por Usuário.
+--
+-- CAPACIDADE PRÓPRIA, NÃO O `alterar` DA TELA
+--   `recrutamento_gestao`/alterar é quem conduz o processo (podeRecrutar) e
+--   entra de brinde no toggle padrão. Se pular SST/Compras dependesse dele,
+--   todo recrutador passaria a dispensar o exame admissional e o enxoval.
+--   Menu fantasma (`rota = NULL`), mesmo mecanismo de
+--   `recrutamento_etapa_*` e `recrutamento_solicitacao_*` (mig 077). Nasce
+--   SEM ninguém liberado.
+--
+-- A TRAVA MORA NO BANCO
+--   A RLS de WA_CURRICULOS (wa_curriculos_gate) deixa gravar quem enxerga a
+--   tela — esconder o botão sozinho não impediria um UPDATE via API. O
+--   trigger abaixo recusa DOCUMENTAÇÃO → ADMISSÃO de quem não tem a
+--   capacidade. auth.uid() nulo (SQL Editor, jobs) passa: não é usuário do
+--   app. O caminho normal (SST + COMPRAS → ADMISSÃO pelo
+--   trg_rec_paralelo_admissao) não é tocado.
+--
+-- Idempotente. Aplicar no banco do app.
+-- =========================================================================
+
+-- ── A capacidade ─────────────────────────────────────────────────────────
+INSERT INTO public.app_menu (modulo_id, codigo, nome, rota, ordem, ativo)
+SELECT m.id, 'recrutamento_pular_sst_compras', 'Pular SST e Compras (Documentação → Admissão)', NULL, 23, true
+  FROM public.app_modulo m
+ WHERE m.codigo = 'recrutamento'
+ON CONFLICT (modulo_id, codigo) DO NOTHING;
+
+INSERT INTO public.app_menu_acao (menu_codigo, acao)
+VALUES ('recrutamento_pular_sst_compras', 'aprovar'::app_acao)
+ON CONFLICT (menu_codigo, acao) DO NOTHING;
+
+-- ── A trava ──────────────────────────────────────────────────────────────
+CREATE OR REPLACE FUNCTION public.rec_pular_sst_compras_guard()
+RETURNS trigger
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp
+AS $$
+BEGIN
+  IF OLD.etapa_processo = 'DOCUMENTAÇÃO'
+     AND NEW.etapa_processo = 'ADMISSÃO'
+     AND auth.uid() IS NOT NULL
+     AND NOT public.has_screen_access(auth.uid(), 'recrutamento_pular_sst_compras', 'aprovar'::app_acao)
+  THEN
+    RAISE EXCEPTION 'Você não tem permissão para pular SST e Compras.';
+  END IF;
+  RETURN NEW;
+END $$;
+
+REVOKE ALL ON FUNCTION public.rec_pular_sst_compras_guard() FROM PUBLIC, anon;
+
+DROP TRIGGER IF EXISTS trg_rec_pular_sst_compras_guard ON public."WA_CURRICULOS";
+CREATE TRIGGER trg_rec_pular_sst_compras_guard
+  BEFORE UPDATE OF etapa_processo ON public."WA_CURRICULOS"
+  FOR EACH ROW EXECUTE FUNCTION public.rec_pular_sst_compras_guard();
+
+NOTIFY pgrst, 'reload schema';
+
+-- =========================================================================
+-- ROLLBACK
+-- =========================================================================
+-- DROP TRIGGER IF EXISTS trg_rec_pular_sst_compras_guard ON public."WA_CURRICULOS";
+-- DROP FUNCTION IF EXISTS public.rec_pular_sst_compras_guard();
+-- DELETE FROM public.screen_permission_user WHERE menu_codigo = 'recrutamento_pular_sst_compras';
+-- DELETE FROM public.app_menu_acao          WHERE menu_codigo = 'recrutamento_pular_sst_compras';
+-- DELETE FROM public.app_menu               WHERE codigo      = 'recrutamento_pular_sst_compras';
+-- NOTIFY pgrst, 'reload schema';
+
+
+-- ===== 20260930000268_treinamentos_campanhas (JA APLICADA 30/09) =====
+-- =========================================================================
+-- Treinamentos › Campanhas (30/09/2026)
+--
+-- Pedido do Pablo: "deixar possível do setor colocar campanhas, com vídeo e
+-- que esse vídeo tenha qrcode para ser acessado ... essas campanhas criadas
+-- vão ser PÚBLICAS, qualquer um pode acessar, então ao criar vai gerar uma
+-- URL pública e o QRCODE, nessas campanhas é possível adicionar vídeos,
+-- textos, provinhas etc."
+--
+-- DESENHO
+--   TRN_CAMPANHA           a campanha (título, capa, cor, período, slug da
+--                          URL pública /campanhas/<slug>).
+--   TRN_CAMPANHA_ITEM      o conteúdo, em ordem: vídeo, texto, imagem, link,
+--                          arquivo ou provinha. A provinha usa o MESMO formato
+--                          de pergunta de TRN_AULA.quiz (trn_prova_perguntas,
+--                          mig 205) — o editor do front é o mesmo.
+--   TRN_CAMPANHA_RESPOSTA  quem respondeu a provinha (nome/CPF digitados, nota).
+--
+-- PÚBLICO SEM LOGIN, MAS SEM TABELA ABERTA
+--   anon NÃO lê nenhuma das três tabelas. A página pública fala só com duas
+--   RPCs SECURITY DEFINER:
+--     · trn_campanha_publica(slug)  — devolve a campanha publicada e dentro
+--       do período, com a provinha SEM gabarito (correta/corretas/explicação
+--       ficam no banco), e conta o acesso;
+--     · trn_campanha_responder(...) — corrige no banco e grava a resposta.
+--   Rascunho, campanha fora do período e slug inexistente respondem igual
+--   (NULL) — não dá para sondar o que existe.
+--
+-- ACESSO (gestão)
+--   Menu próprio `treinamentos_campanhas`, deny-by-default como o resto:
+--   visualizar = ver campanhas e respostas; incluir/alterar = editar;
+--   excluir = apagar campanha e resposta. Não entra em trn_ve_modulo() de
+--   propósito — quem só cuida de campanha não precisa ler aluno/curso. Para
+--   essa pessoa conseguir subir vídeo/capa, as policies de upload do bucket
+--   trn-midia ganham um OU com a permissão de campanhas.
+--
+-- Policies com (select …) em volta do helper: avaliado uma vez por consulta,
+-- não por linha (mesmo padrão das mig 265/267 de RLS).
+--
+-- Idempotente. Aplicar no banco do app. ROLLBACK no fim.
+-- =========================================================================
+
+-- ── 1) Menu ──────────────────────────────────────────────────────────────
+INSERT INTO public.app_menu (modulo_id, codigo, nome, rota, ordem, ativo)
+SELECT m.id, 'treinamentos_campanhas', 'Campanhas', '/app/treinamentos/campanhas', 60, true
+  FROM public.app_modulo m
+ WHERE m.codigo = 'treinamentos'
+ON CONFLICT (modulo_id, codigo) DO NOTHING;
+
+INSERT INTO public.app_menu_acao (menu_codigo, acao)
+VALUES ('treinamentos_campanhas', 'excluir'::app_acao)
+ON CONFLICT (menu_codigo, acao) DO NOTHING;
+
+-- ── 2) Tabelas ───────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS public."TRN_CAMPANHA" (
+  id                   uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  titulo               text NOT NULL,
+  slug                 text NOT NULL UNIQUE,
+  resumo               text,
+  capa_path            text,
+  cor                  text NOT NULL DEFAULT '#0f3171',
+  publicada            boolean NOT NULL DEFAULT false,
+  inicio_em            timestamptz,
+  fim_em               timestamptz,
+  -- Provinha: pedir o nome de quem responde (e o CPF, se marcado).
+  pedir_identificacao  boolean NOT NULL DEFAULT true,
+  pedir_documento      boolean NOT NULL DEFAULT false,
+  criado_por           uuid DEFAULT auth.uid(),
+  created_at           timestamptz NOT NULL DEFAULT now(),
+  updated_at           timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT trn_campanha_periodo_ck CHECK (fim_em IS NULL OR inicio_em IS NULL OR fim_em >= inicio_em)
+);
+
+CREATE TABLE IF NOT EXISTS public."TRN_CAMPANHA_ITEM" (
+  id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  campanha_id   uuid NOT NULL REFERENCES public."TRN_CAMPANHA"(id) ON DELETE CASCADE,
+  posicao       integer NOT NULL DEFAULT 0,
+  tipo          text NOT NULL CHECK (tipo IN ('video','texto','imagem','link','arquivo','prova')),
+  titulo        text,
+  texto         text,
+  video_url     text,
+  video_path    text,
+  imagem_path   text,
+  arquivo_path  text,
+  arquivo_nome  text,
+  link_url      text,
+  link_rotulo   text,
+  quiz          jsonb,
+  nota_minima   integer NOT NULL DEFAULT 70 CHECK (nota_minima BETWEEN 0 AND 100),
+  prova_config  jsonb NOT NULL DEFAULT '{}'::jsonb,
+  created_at    timestamptz NOT NULL DEFAULT now(),
+  updated_at    timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_trn_campanha_item_campanha ON public."TRN_CAMPANHA_ITEM"(campanha_id, posicao);
+
+-- A resposta sobrevive ao item apagado (item_id vira NULL; o título fica
+-- guardado) — apagar uma provinha não some com quem já respondeu.
+CREATE TABLE IF NOT EXISTS public."TRN_CAMPANHA_RESPOSTA" (
+  id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  campanha_id   uuid NOT NULL REFERENCES public."TRN_CAMPANHA"(id) ON DELETE CASCADE,
+  item_id       uuid REFERENCES public."TRN_CAMPANHA_ITEM"(id) ON DELETE SET NULL,
+  item_titulo   text,
+  nome          text,
+  documento     text,
+  respostas     jsonb NOT NULL DEFAULT '{}'::jsonb,
+  correcao      jsonb,
+  acertos       integer NOT NULL DEFAULT 0,
+  total         integer NOT NULL DEFAULT 0,
+  pontos        numeric NOT NULL DEFAULT 0,
+  pontos_total  numeric NOT NULL DEFAULT 0,
+  nota          integer NOT NULL DEFAULT 0,
+  aprovado      boolean NOT NULL DEFAULT false,
+  created_at    timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_trn_campanha_resposta_campanha ON public."TRN_CAMPANHA_RESPOSTA"(campanha_id, created_at DESC);
+
+-- Acessos por dia (cada abertura da página pública). Tabela à parte para
+-- não mexer em TRN_CAMPANHA.updated_at a cada visita — e dá o gráfico.
+CREATE TABLE IF NOT EXISTS public."TRN_CAMPANHA_ACESSO" (
+  campanha_id  uuid NOT NULL REFERENCES public."TRN_CAMPANHA"(id) ON DELETE CASCADE,
+  dia          date NOT NULL DEFAULT ((now() AT TIME ZONE 'America/Sao_Paulo')::date),
+  acessos      integer NOT NULL DEFAULT 0,
+  PRIMARY KEY (campanha_id, dia)
+);
+
+-- ── 3) Triggers ──────────────────────────────────────────────────────────
+DROP TRIGGER IF EXISTS trn_touch_trg ON public."TRN_CAMPANHA";
+CREATE TRIGGER trn_touch_trg BEFORE UPDATE ON public."TRN_CAMPANHA"
+  FOR EACH ROW EXECUTE FUNCTION public.trn_touch();
+DROP TRIGGER IF EXISTS trn_touch_trg ON public."TRN_CAMPANHA_ITEM";
+CREATE TRIGGER trn_touch_trg BEFORE UPDATE ON public."TRN_CAMPANHA_ITEM"
+  FOR EACH ROW EXECUTE FUNCTION public.trn_touch();
+
+-- Slug da URL pública: do título quando vier vazio, único (sufixo -2, -3…).
+-- Mudar o título NÃO troca o slug — o QR Code já impresso continua valendo.
+CREATE OR REPLACE FUNCTION public.trn_campanha_slug() RETURNS trigger
+LANGUAGE plpgsql SET search_path = public, pg_temp
+AS $$
+DECLARE base text; cand text; n int := 1;
+BEGIN
+  IF TG_OP = 'UPDATE' AND NEW.slug IS NOT DISTINCT FROM OLD.slug THEN RETURN NEW; END IF;
+  base := coalesce(public.trn_slugify(NEW.slug), public.trn_slugify(NEW.titulo), 'campanha');
+  base := left(base, 80);
+  cand := base;
+  WHILE EXISTS (SELECT 1 FROM public."TRN_CAMPANHA" WHERE slug = cand AND id <> NEW.id) LOOP
+    n := n + 1; cand := base || '-' || n;
+  END LOOP;
+  NEW.slug := cand;
+  RETURN NEW;
+END $$;
+DROP TRIGGER IF EXISTS trn_campanha_slug_trg ON public."TRN_CAMPANHA";
+CREATE TRIGGER trn_campanha_slug_trg BEFORE INSERT OR UPDATE OF slug ON public."TRN_CAMPANHA"
+  FOR EACH ROW EXECUTE FUNCTION public.trn_campanha_slug();
+
+-- ── 4) RLS ───────────────────────────────────────────────────────────────
+ALTER TABLE public."TRN_CAMPANHA"          ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public."TRN_CAMPANHA_ITEM"     ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public."TRN_CAMPANHA_RESPOSTA" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public."TRN_CAMPANHA_ACESSO"   ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON public."TRN_CAMPANHA", public."TRN_CAMPANHA_ITEM", public."TRN_CAMPANHA_RESPOSTA", public."TRN_CAMPANHA_ACESSO" FROM PUBLIC, anon;
+GRANT SELECT ON public."TRN_CAMPANHA_ACESSO" TO authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON public."TRN_CAMPANHA", public."TRN_CAMPANHA_ITEM" TO authenticated;
+GRANT SELECT, DELETE ON public."TRN_CAMPANHA_RESPOSTA" TO authenticated;
+
+DROP POLICY IF EXISTS trn_campanha_select ON public."TRN_CAMPANHA";
+DROP POLICY IF EXISTS trn_campanha_insert ON public."TRN_CAMPANHA";
+DROP POLICY IF EXISTS trn_campanha_update ON public."TRN_CAMPANHA";
+DROP POLICY IF EXISTS trn_campanha_delete ON public."TRN_CAMPANHA";
+CREATE POLICY trn_campanha_select ON public."TRN_CAMPANHA" FOR SELECT TO authenticated
+  USING ((select public.trn_acesso('treinamentos_campanhas')));
+CREATE POLICY trn_campanha_insert ON public."TRN_CAMPANHA" FOR INSERT TO authenticated
+  WITH CHECK ((select public.trn_acesso('treinamentos_campanhas','incluir')) OR (select public.trn_acesso('treinamentos_campanhas','alterar')));
+CREATE POLICY trn_campanha_update ON public."TRN_CAMPANHA" FOR UPDATE TO authenticated
+  USING ((select public.trn_acesso('treinamentos_campanhas','alterar'))) WITH CHECK ((select public.trn_acesso('treinamentos_campanhas','alterar')));
+CREATE POLICY trn_campanha_delete ON public."TRN_CAMPANHA" FOR DELETE TO authenticated
+  USING ((select public.trn_acesso('treinamentos_campanhas','excluir')));
+
+-- Itens: quem cria a campanha monta o conteúdo dela no mesmo passo, então
+-- incluir OU alterar escreve item (inclusive apagar item dentro do editor).
+DROP POLICY IF EXISTS trn_campanha_item_select ON public."TRN_CAMPANHA_ITEM";
+DROP POLICY IF EXISTS trn_campanha_item_insert ON public."TRN_CAMPANHA_ITEM";
+DROP POLICY IF EXISTS trn_campanha_item_update ON public."TRN_CAMPANHA_ITEM";
+DROP POLICY IF EXISTS trn_campanha_item_delete ON public."TRN_CAMPANHA_ITEM";
+CREATE POLICY trn_campanha_item_select ON public."TRN_CAMPANHA_ITEM" FOR SELECT TO authenticated
+  USING ((select public.trn_acesso('treinamentos_campanhas')));
+CREATE POLICY trn_campanha_item_insert ON public."TRN_CAMPANHA_ITEM" FOR INSERT TO authenticated
+  WITH CHECK ((select public.trn_acesso('treinamentos_campanhas','incluir')) OR (select public.trn_acesso('treinamentos_campanhas','alterar')));
+CREATE POLICY trn_campanha_item_update ON public."TRN_CAMPANHA_ITEM" FOR UPDATE TO authenticated
+  USING ((select public.trn_acesso('treinamentos_campanhas','incluir')) OR (select public.trn_acesso('treinamentos_campanhas','alterar')))
+  WITH CHECK ((select public.trn_acesso('treinamentos_campanhas','incluir')) OR (select public.trn_acesso('treinamentos_campanhas','alterar')));
+CREATE POLICY trn_campanha_item_delete ON public."TRN_CAMPANHA_ITEM" FOR DELETE TO authenticated
+  USING ((select public.trn_acesso('treinamentos_campanhas','incluir')) OR (select public.trn_acesso('treinamentos_campanhas','alterar')));
+
+-- Respostas: ninguém grava pela API — só a RPC pública, que corrige no banco.
+DROP POLICY IF EXISTS trn_campanha_resposta_select ON public."TRN_CAMPANHA_RESPOSTA";
+DROP POLICY IF EXISTS trn_campanha_resposta_delete ON public."TRN_CAMPANHA_RESPOSTA";
+CREATE POLICY trn_campanha_resposta_select ON public."TRN_CAMPANHA_RESPOSTA" FOR SELECT TO authenticated
+  USING ((select public.trn_acesso('treinamentos_campanhas')));
+CREATE POLICY trn_campanha_resposta_delete ON public."TRN_CAMPANHA_RESPOSTA" FOR DELETE TO authenticated
+  USING ((select public.trn_acesso('treinamentos_campanhas','excluir')));
+
+DROP POLICY IF EXISTS trn_campanha_acesso_select ON public."TRN_CAMPANHA_ACESSO";
+CREATE POLICY trn_campanha_acesso_select ON public."TRN_CAMPANHA_ACESSO" FOR SELECT TO authenticated
+  USING ((select public.trn_acesso('treinamentos_campanhas')));
+
+-- ── 5) Storage: quem edita campanha sobe vídeo/capa no trn-midia ─────────
+-- Mesmas policies da mig 190, com o OU das campanhas. A leitura continua
+-- pública (o bucket já é) — é assim que o vídeo toca na página sem login.
+DROP POLICY IF EXISTS "trn midia insert" ON storage.objects;
+DROP POLICY IF EXISTS "trn midia update" ON storage.objects;
+DROP POLICY IF EXISTS "trn midia delete" ON storage.objects;
+CREATE POLICY "trn midia insert" ON storage.objects FOR INSERT TO authenticated
+  WITH CHECK (bucket_id = 'trn-midia' AND ((select public.trn_ve_modulo()) OR (select public.trn_acesso('treinamentos_campanhas','incluir')) OR (select public.trn_acesso('treinamentos_campanhas','alterar'))));
+CREATE POLICY "trn midia update" ON storage.objects FOR UPDATE TO authenticated
+  USING (bucket_id = 'trn-midia' AND ((select public.trn_ve_modulo()) OR (select public.trn_acesso('treinamentos_campanhas','alterar'))));
+CREATE POLICY "trn midia delete" ON storage.objects FOR DELETE TO authenticated
+  USING (bucket_id = 'trn-midia' AND ((select public.trn_ve_modulo()) OR (select public.trn_acesso('treinamentos_campanhas','alterar'))));
+
+-- ── 6) RPCs públicas ─────────────────────────────────────────────────────
+
+-- Está no ar? Publicada e dentro do período (sem data = sem limite).
+CREATE OR REPLACE FUNCTION public.trn_campanha_no_ar(c public."TRN_CAMPANHA")
+RETURNS boolean LANGUAGE sql STABLE SET search_path = public, pg_temp AS $$
+  SELECT c.publicada
+     AND (c.inicio_em IS NULL OR c.inicio_em <= now())
+     AND (c.fim_em    IS NULL OR c.fim_em    >= now());
+$$;
+
+-- 6.1 A página pública. `_contar` = false na prévia do editor (não infla o
+-- número de acessos). Devolve NULL quando não há o que mostrar.
+CREATE OR REPLACE FUNCTION public.trn_campanha_publica(_slug text, _contar boolean DEFAULT true)
+RETURNS jsonb LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path = public, pg_temp AS $$
+DECLARE c public."TRN_CAMPANHA"; v_itens jsonb;
+BEGIN
+  SELECT * INTO c FROM public."TRN_CAMPANHA" WHERE slug = lower(btrim(_slug));
+  IF NOT FOUND OR NOT public.trn_campanha_no_ar(c) THEN RETURN NULL; END IF;
+
+  IF _contar THEN
+    INSERT INTO public."TRN_CAMPANHA_ACESSO"(campanha_id, acessos) VALUES (c.id, 1)
+    ON CONFLICT (campanha_id, dia) DO UPDATE SET acessos = public."TRN_CAMPANHA_ACESSO".acessos + 1;
+  END IF;
+
+  SELECT coalesce(jsonb_agg(jsonb_build_object(
+           'id', i.id, 'tipo', i.tipo, 'titulo', i.titulo, 'texto', i.texto,
+           'video_url', i.video_url, 'video_path', i.video_path, 'imagem_path', i.imagem_path,
+           'arquivo_path', i.arquivo_path, 'arquivo_nome', i.arquivo_nome,
+           'link_url', i.link_url, 'link_rotulo', i.link_rotulo,
+           'nota_minima', i.nota_minima,
+           'prova', CASE WHEN i.tipo = 'prova' THEN jsonb_build_object(
+               'titulo',     coalesce(nullif(i.prova_config->>'titulo', ''), i.titulo, 'Provinha'),
+               'instrucoes', i.prova_config->>'instrucoes',
+               -- Sem correta/corretas/explicação: o gabarito não sai do banco.
+               'perguntas',  (SELECT coalesce(jsonb_agg(jsonb_build_object(
+                                 'id', q.pid, 'tipo', q.tipo, 'enunciado', q.enunciado,
+                                 'opcoes', q.opcoes, 'pontos', q.pontos) ORDER BY q.ord), '[]'::jsonb)
+                                FROM public.trn_prova_perguntas(i.quiz) q)
+             ) END
+         ) ORDER BY i.posicao, i.created_at), '[]'::jsonb)
+    INTO v_itens
+    FROM public."TRN_CAMPANHA_ITEM" i
+   WHERE i.campanha_id = c.id;
+
+  RETURN jsonb_build_object(
+    'id', c.id, 'titulo', c.titulo, 'slug', c.slug, 'resumo', c.resumo, 'capa_path', c.capa_path,
+    'cor', c.cor, 'fim_em', c.fim_em,
+    'pedir_identificacao', c.pedir_identificacao, 'pedir_documento', c.pedir_documento,
+    'itens', v_itens);
+END $$;
+REVOKE ALL ON FUNCTION public.trn_campanha_publica(text, boolean) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.trn_campanha_publica(text, boolean) TO anon, authenticated;
+
+-- 6.2 Responder a provinha. Corrige como trn_prova_responder (mig 205):
+-- múltipla com ponto parcial opcional, nota = % dos pontos; o quanto do
+-- gabarito volta depende de prova_config.gabarito:
+--   nunca     → só a nota
+--   resultado → o que acertou e errou
+--   ao_final / sempre → também a resposta certa e a explicação
+-- (sem tentativas contadas aqui: é público, não há "aluno" para contar.)
+CREATE OR REPLACE FUNCTION public.trn_campanha_responder(_slug text, _item uuid, _nome text, _documento text, _respostas jsonb)
+RETURNS jsonb LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path = public, pg_temp AS $$
+DECLARE
+  c public."TRN_CAMPANHA"; it public."TRN_CAMPANHA_ITEM"; cfg jsonb; p record;
+  v_marc int[]; v_hits int; v_erros int; v_pts numeric; v_ok boolean;
+  v_total_pts numeric := 0; v_obt numeric := 0; v_acertos int := 0; v_total int := 0; v_nota int; v_aprov boolean;
+  v_itens jsonb := '[]'::jsonb; v_gab text; v_nome text; v_doc text;
+BEGIN
+  SELECT * INTO c FROM public."TRN_CAMPANHA" WHERE slug = lower(btrim(_slug));
+  IF NOT FOUND OR NOT public.trn_campanha_no_ar(c) THEN RAISE EXCEPTION 'Campanha indisponível.'; END IF;
+  SELECT * INTO it FROM public."TRN_CAMPANHA_ITEM" WHERE id = _item AND campanha_id = c.id AND tipo = 'prova';
+  IF NOT FOUND THEN RAISE EXCEPTION 'Provinha não encontrada. Recarregue a página.'; END IF;
+
+  v_nome := nullif(left(btrim(coalesce(_nome, '')), 120), '');
+  v_doc  := nullif(left(regexp_replace(coalesce(_documento, ''), '\D', '', 'g'), 14), '');
+  IF c.pedir_identificacao AND v_nome IS NULL THEN RAISE EXCEPTION 'Informe seu nome.'; END IF;
+  IF c.pedir_documento AND (v_doc IS NULL OR length(v_doc) <> 11) THEN RAISE EXCEPTION 'Informe o CPF completo (11 dígitos).'; END IF;
+  IF _respostas IS NULL OR jsonb_typeof(_respostas) <> 'object' OR length(_respostas::text) > 20000 THEN
+    RAISE EXCEPTION 'Respostas inválidas.';
+  END IF;
+
+  cfg := public.trn_prova_cfg(it.prova_config);
+  FOR p IN SELECT * FROM public.trn_prova_perguntas(it.quiz) ORDER BY ord LOOP
+    v_total := v_total + 1;
+    v_total_pts := v_total_pts + p.pontos;
+    v_marc := CASE jsonb_typeof(_respostas->p.pid)
+                WHEN 'array'  THEN ARRAY(SELECT DISTINCT x::int FROM jsonb_array_elements_text(_respostas->p.pid) x WHERE x ~ '^\d{1,3}$')
+                WHEN 'number' THEN ARRAY[(_respostas->>p.pid)::int]
+                ELSE '{}'::int[] END;
+    IF p.tipo <> 'multipla' AND cardinality(v_marc) > 1 THEN v_marc := v_marc[1:1]; END IF;
+    v_ok := v_marc <@ p.corretas AND p.corretas <@ v_marc AND cardinality(v_marc) > 0;
+    IF v_ok THEN
+      v_pts := p.pontos;
+    ELSIF p.tipo = 'multipla' AND (cfg->>'multipla_parcial')::boolean AND cardinality(p.corretas) > 0 THEN
+      SELECT count(*) FILTER (WHERE m = ANY(p.corretas)), count(*) FILTER (WHERE NOT (m = ANY(p.corretas)))
+        INTO v_hits, v_erros FROM unnest(v_marc) m;
+      v_pts := round(p.pontos * greatest(v_hits - v_erros, 0)::numeric / cardinality(p.corretas), 2);
+    ELSE
+      v_pts := 0;
+    END IF;
+    IF v_ok THEN v_acertos := v_acertos + 1; END IF;
+    v_obt := v_obt + v_pts;
+    v_itens := v_itens || jsonb_build_object('id', p.pid, 'ok', v_ok, 'pontos', v_pts, 'max', p.pontos,
+                                             'marcadas', to_jsonb(v_marc), 'corretas', to_jsonb(p.corretas),
+                                             'explicacao', p.explicacao);
+  END LOOP;
+  IF v_total = 0 THEN RAISE EXCEPTION 'Esta provinha ainda não tem perguntas.'; END IF;
+
+  v_nota  := CASE WHEN v_total_pts = 0 THEN 0 ELSE round(100.0 * v_obt / v_total_pts) END;
+  v_aprov := v_nota >= it.nota_minima;
+
+  INSERT INTO public."TRN_CAMPANHA_RESPOSTA"(campanha_id, item_id, item_titulo, nome, documento, respostas, correcao,
+                                             acertos, total, pontos, pontos_total, nota, aprovado)
+  VALUES (c.id, it.id, coalesce(nullif(it.prova_config->>'titulo', ''), it.titulo, 'Provinha'), v_nome, v_doc, _respostas, v_itens,
+          v_acertos, v_total, v_obt, v_total_pts, v_nota, v_aprov);
+
+  v_gab := cfg->>'gabarito';
+  RETURN jsonb_build_object(
+    'nota', v_nota, 'aprovado', v_aprov, 'nota_minima', it.nota_minima,
+    'pontos', v_obt, 'pontos_total', v_total_pts, 'acertos', v_acertos, 'total', v_total,
+    'itens', CASE
+               WHEN v_gab = 'nunca' THEN NULL
+               WHEN v_gab IN ('sempre', 'ao_final') THEN v_itens
+               ELSE (SELECT jsonb_agg(i - 'corretas' - 'explicacao') FROM jsonb_array_elements(v_itens) i)
+             END);
+END $$;
+REVOKE ALL ON FUNCTION public.trn_campanha_responder(text, uuid, text, text, jsonb) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.trn_campanha_responder(text, uuid, text, text, jsonb) TO anon, authenticated;
+
+-- ── 7) RPC de gestão: duplicar campanha (vira rascunho, slug novo) ───────
+CREATE OR REPLACE FUNCTION public.trn_campanha_duplicar(_id uuid)
+RETURNS uuid LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path = public, pg_temp AS $$
+DECLARE c public."TRN_CAMPANHA"; v_nova uuid;
+BEGIN
+  IF NOT (public.trn_acesso('treinamentos_campanhas','incluir') OR public.trn_acesso('treinamentos_campanhas','alterar')) THEN
+    RAISE EXCEPTION 'Sem permissão para criar campanhas.';
+  END IF;
+  SELECT * INTO c FROM public."TRN_CAMPANHA" WHERE id = _id;
+  IF NOT FOUND THEN RAISE EXCEPTION 'Campanha não encontrada.'; END IF;
+
+  INSERT INTO public."TRN_CAMPANHA"(titulo, slug, resumo, capa_path, cor, publicada, inicio_em, fim_em, pedir_identificacao, pedir_documento)
+  VALUES (c.titulo || ' (cópia)', c.slug || '-copia', c.resumo, c.capa_path, c.cor, false, c.inicio_em, c.fim_em, c.pedir_identificacao, c.pedir_documento)
+  RETURNING id INTO v_nova;
+
+  INSERT INTO public."TRN_CAMPANHA_ITEM"(campanha_id, posicao, tipo, titulo, texto, video_url, video_path, imagem_path,
+                                         arquivo_path, arquivo_nome, link_url, link_rotulo, quiz, nota_minima, prova_config)
+  SELECT v_nova, posicao, tipo, titulo, texto, video_url, video_path, imagem_path,
+         arquivo_path, arquivo_nome, link_url, link_rotulo, quiz, nota_minima, prova_config
+    FROM public."TRN_CAMPANHA_ITEM" WHERE campanha_id = c.id;
+  RETURN v_nova;
+END $$;
+REVOKE ALL ON FUNCTION public.trn_campanha_duplicar(uuid) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.trn_campanha_duplicar(uuid) TO authenticated;
+
+NOTIFY pgrst, 'reload schema';
+
+-- =========================================================================
+-- ROLLBACK
+-- =========================================================================
+-- DROP FUNCTION IF EXISTS public.trn_campanha_duplicar(uuid);
+-- DROP FUNCTION IF EXISTS public.trn_campanha_responder(text, uuid, text, text, jsonb);
+-- DROP FUNCTION IF EXISTS public.trn_campanha_publica(text, boolean);
+-- DROP FUNCTION IF EXISTS public.trn_campanha_no_ar(public."TRN_CAMPANHA");
+-- DROP TABLE IF EXISTS public."TRN_CAMPANHA_ACESSO";
+-- DROP TABLE IF EXISTS public."TRN_CAMPANHA_RESPOSTA";
+-- DROP TABLE IF EXISTS public."TRN_CAMPANHA_ITEM";
+-- DROP TABLE IF EXISTS public."TRN_CAMPANHA";
+-- DROP FUNCTION IF EXISTS public.trn_campanha_slug();
+-- -- Storage: voltar às policies da mig 190 (só trn_ve_modulo()):
+-- DROP POLICY IF EXISTS "trn midia insert" ON storage.objects;
+-- DROP POLICY IF EXISTS "trn midia update" ON storage.objects;
+-- DROP POLICY IF EXISTS "trn midia delete" ON storage.objects;
+-- CREATE POLICY "trn midia insert" ON storage.objects FOR INSERT TO authenticated WITH CHECK (bucket_id = 'trn-midia' AND public.trn_ve_modulo());
+-- CREATE POLICY "trn midia update" ON storage.objects FOR UPDATE TO authenticated USING (bucket_id = 'trn-midia' AND public.trn_ve_modulo());
+-- CREATE POLICY "trn midia delete" ON storage.objects FOR DELETE TO authenticated USING (bucket_id = 'trn-midia' AND public.trn_ve_modulo());
+-- DELETE FROM public.screen_permission_user WHERE menu_codigo = 'treinamentos_campanhas';
+-- DELETE FROM public.app_menu_acao          WHERE menu_codigo = 'treinamentos_campanhas';
+-- DELETE FROM public.app_menu               WHERE codigo      = 'treinamentos_campanhas';
+-- NOTIFY pgrst, 'reload schema';
+
+
+-- ===== 20260930000270_recrutamento_pular_sst_compras_nome_na_gestao (JA APLICADA 30/09) =====
+-- =========================================================================
+-- Recrutamento: "Pode pular etapa SST/Compras" aparece junto da Gestão
+--
+-- SINTOMA (30/09/2026, Pablo): o botão "Pular SST e Compras" não aparecia no
+-- kanban e a permissão não estava em Administração › Acesso por Usuário.
+--
+-- CAUSA: a mig 20260930000264 (que cria a capacidade
+-- `recrutamento_pular_sst_compras` e o trigger que trava no banco) estava na
+-- fila do aplicar_no_banco_do_app.sql e nunca tinha rodado — sem a linha em
+-- app_menu não há o que ligar na tela, e o front (já na main) esconde o botão
+-- de quem não tem a capacidade. Aplicada junto com esta.
+--
+-- ESTA MIGRATION: só o nome e a posição, para o switch ficar logo abaixo de
+-- "Recrutamento e Seleção" (recrutamento_gestao, ordem 10) com o rótulo que o
+-- RH procura — "Pode pular etapa SST/Compras". Código, ação ('aprovar') e
+-- trava não mudam.
+--
+-- Idempotente. Depende da 264. ROLLBACK no fim.
+-- =========================================================================
+
+UPDATE public.app_menu
+   SET nome  = 'Gestão Recrutamento — Pode pular etapa SST/Compras (Documentação → Admissão)',
+       ordem = 11
+ WHERE codigo = 'recrutamento_pular_sst_compras';
+
+NOTIFY pgrst, 'reload schema';
+
+-- =========================================================================
+-- ROLLBACK
+-- =========================================================================
+-- UPDATE public.app_menu SET nome = 'Pular SST e Compras (Documentação → Admissão)', ordem = 23
+--  WHERE codigo = 'recrutamento_pular_sst_compras';
+
+
+-- ===== 20260930000269_chamado_treinamento_cada_um_confirma (PENDENTE - aplicar junto com o front dos chamados) =====
+-- =========================================================================
+-- CHAMADOS DE SISTEMAS — Treinamento: cada um confirma o seu, e só depois
+-- vem a avaliação (ajuste da mig 266)
+--
+-- PEDIDO (30/09/2026, Pablo, testando o #SIS-2026-0567):
+--   "confirmei o treinamento lá no painel do desenvolvedor, confirmei por mim
+--    e pelo solicitante, mas cada um tem que confirmar o seu."
+--   "o confirmar treinamento do solicitante tem que ficar ali onde envia a
+--    avaliação ... tem primeiro que confirmar o treinamento, e depois avaliar.
+--    pra abrir outro chamado primeiro tem que confirmar o treinamento e avaliar."
+--   "todos treinamentos pendentes do desenvolvedor vão ficar no painel de
+--    distribuição ... o dev pode aprovar, o gerente do dev pode também."
+--
+-- CAUSA DO "CONFIRMEI PELOS DOIS"
+--   chamado_treinamento_confirmar (mig 266) marcava os DOIS lados quando a
+--   mesma pessoa era dev e solicitante — foi o caso do teste (Pablo abriu e
+--   atendeu o próprio chamado). Agora a RPC recebe o PAPEL e marca só ele:
+--     p_papel = 'desenvolvedor' — o dev que concluiu OU a gestão de chamados
+--               (chamado_sistema_gestor: Painel/Coordenar/Aprovar — é quem
+--               enxerga o Painel de Distribuição; é o "gerente do dev"),
+--               confirmando por ele. Fica registrado quem confirmou.
+--     p_papel = 'solicitante'   — só o próprio solicitante. Ninguém confirma
+--               por ele.
+--   Sem p_papel, a RPC deduz; se a pessoa for as duas partes, recusa e pede
+--   o papel (a tela sempre manda).
+--
+-- AVALIAÇÃO DEPOIS DO TREINAMENTO
+--   Num chamado que passa pela Presidência, o 'concluido' chega ANTES da
+--   Presidência validar. Até aqui o solicitante já era cobrado a avaliar
+--   (e bloqueado de abrir outro chamado) com o desenvolvimento ainda em
+--   validação. Agora:
+--     · validação/treinamento em aberto → não dá para avaliar ainda
+--       (trigger em CHAMADO_SISTEMA_AVALIACAO);
+--     · o solicitante confirmou o treinamento (ou o chamado é do fluxo
+--       normal) → avalia.
+--   A pendência que trava "abrir novo chamado" passa a ser:
+--     · treinamento a confirmar pelo solicitante, OU
+--     · avaliação a fazer (no fluxo normal, ou depois de confirmar).
+--   Enquanto a Presidência ainda valida, o solicitante não tem o que fazer —
+--   não trava (seria punir por uma espera que não é dele).
+--
+-- Idempotente. Aplicar no banco do app. ROLLBACK no fim.
+-- =========================================================================
+
+-- ── 1. Confirmar treinamento, por papel ───────────────────────────────────
+DROP FUNCTION IF EXISTS public.chamado_treinamento_confirmar(uuid, text);
+
+CREATE OR REPLACE FUNCTION public.chamado_treinamento_confirmar(
+  p_chamado_id uuid, p_observacao text DEFAULT NULL, p_papel text DEFAULT NULL
+)
+RETURNS text
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_uid      uuid := auth.uid();
+  v_obs      text := NULLIF(btrim(COALESCE(p_observacao, '')), '');
+  v          public."CHAMADO_SISTEMA_VALIDACAO"%ROWTYPE;
+  v_solic    uuid;
+  v_resp     uuid;
+  v_dev      uuid;
+  v_eh_dev   boolean;
+  v_eh_solic boolean;
+  v_gestao   boolean;
+  v_papel    text := NULLIF(lower(btrim(COALESCE(p_papel, ''))), '');
+  v_nome     text;
+BEGIN
+  IF v_uid IS NULL THEN
+    RAISE EXCEPTION 'Sessão expirada — entre de novo.';
+  END IF;
+  IF v_papel IS NOT NULL AND v_papel NOT IN ('desenvolvedor', 'solicitante') THEN
+    RAISE EXCEPTION 'Papel inválido: %', p_papel;
+  END IF;
+
+  SELECT * INTO v FROM public."CHAMADO_SISTEMA_VALIDACAO"
+   WHERE chamado_id = p_chamado_id FOR UPDATE;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'Este chamado não passa pela validação da Presidência.';
+  END IF;
+  IF v.etapa <> 'treinamento' THEN
+    RAISE EXCEPTION 'O treinamento só é confirmado depois que a Presidência aprova o desenvolvimento.';
+  END IF;
+
+  SELECT solicitante_id, responsavel_id INTO v_solic, v_resp
+    FROM public."CHAMADO_SISTEMA" WHERE id = p_chamado_id;
+
+  v_dev      := COALESCE(v.desenvolvedor_id, v_resp);
+  v_eh_dev   := COALESCE(v_uid = v_dev, false);
+  v_eh_solic := COALESCE(v_uid = v_solic, false);
+  v_gestao   := public.chamado_sistema_gestor();
+
+  -- Sem papel: deduz. Quem é as duas partes precisa dizer qual está confirmando.
+  IF v_papel IS NULL THEN
+    IF v_eh_dev AND v_eh_solic THEN
+      RAISE EXCEPTION 'Você é o desenvolvedor e o solicitante deste chamado — cada confirmação é feita no seu lugar (a do solicitante, no acompanhamento do chamado).';
+    ELSIF v_eh_solic THEN
+      v_papel := 'solicitante';
+    ELSE
+      v_papel := 'desenvolvedor';
+    END IF;
+  END IF;
+
+  IF v_papel = 'solicitante' THEN
+    IF NOT v_eh_solic THEN
+      RAISE EXCEPTION 'Só o próprio solicitante confirma que recebeu o treinamento.';
+    END IF;
+    IF v.treinamento_solic_em IS NOT NULL THEN
+      RAISE EXCEPTION 'O solicitante já confirmou o treinamento.';
+    END IF;
+    UPDATE public."CHAMADO_SISTEMA_VALIDACAO"
+       SET treinamento_solic_por = v_uid, treinamento_solic_em = now(), treinamento_solic_obs = v_obs
+     WHERE chamado_id = p_chamado_id;
+  ELSE
+    IF NOT (v_eh_dev OR v_gestao) THEN
+      RAISE EXCEPTION 'Só o desenvolvedor que concluiu (ou a gestão de chamados) confirma o treinamento dado.';
+    END IF;
+    IF v.treinamento_dev_em IS NOT NULL THEN
+      RAISE EXCEPTION 'O desenvolvedor já confirmou o treinamento.';
+    END IF;
+    UPDATE public."CHAMADO_SISTEMA_VALIDACAO"
+       SET treinamento_dev_por = v_uid, treinamento_dev_em = now(), treinamento_dev_obs = v_obs
+     WHERE chamado_id = p_chamado_id;
+  END IF;
+
+  SELECT display_name INTO v_nome FROM public.profiles WHERE id = v_uid;
+  PERFORM public.chamado_validacao_registrar_evento(p_chamado_id,
+    CASE
+      WHEN v_papel = 'solicitante' THEN
+        format('Solicitante confirmou que recebeu o treinamento (%s)', COALESCE(v_nome, 'usuário'))
+      WHEN v_eh_dev THEN
+        format('Desenvolvedor confirmou que deu o treinamento (%s)', COALESCE(v_nome, 'usuário'))
+      ELSE
+        format('Gestão confirmou o treinamento pelo desenvolvedor %s (%s)',
+               COALESCE((SELECT display_name FROM public.profiles WHERE id = v_dev), '—'), COALESCE(v_nome, 'usuário'))
+    END || COALESCE(': ' || v_obs, ''));
+
+  -- Os dois confirmaram → finaliza.
+  UPDATE public."CHAMADO_SISTEMA_VALIDACAO"
+     SET etapa = 'finalizado', finalizado_em = now()
+   WHERE chamado_id = p_chamado_id
+     AND treinamento_dev_em IS NOT NULL
+     AND treinamento_solic_em IS NOT NULL
+     AND etapa = 'treinamento';
+  IF FOUND THEN
+    PERFORM public.chamado_validacao_registrar_evento(p_chamado_id,
+      'Treinamento confirmado pelo desenvolvedor e pelo solicitante — solicitação finalizada');
+    RETURN 'finalizado';
+  END IF;
+  RETURN 'treinamento';
+END;
+$$;
+REVOKE ALL ON FUNCTION public.chamado_treinamento_confirmar(uuid, text, text) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.chamado_treinamento_confirmar(uuid, text, text) TO authenticated;
+
+-- ── 2. Pendências do solicitante (treinamento → avaliação) ────────────────
+-- Uma fonte só para a tela "Abrir chamado" e para o trigger que trava.
+CREATE OR REPLACE FUNCTION public.chamado_pendencias_solicitante(p_uid uuid)
+RETURNS TABLE(id uuid, numero text, assunto text, concluido_em timestamptz, pendencia text)
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, pg_temp
+AS $$
+  SELECT c.id, c.numero, c.assunto, c.concluido_em,
+         CASE WHEN v.chamado_id IS NOT NULL AND v.etapa = 'treinamento' AND v.treinamento_solic_em IS NULL
+              THEN 'treinamento' ELSE 'avaliacao' END
+    FROM public."CHAMADO_SISTEMA" c
+    LEFT JOIN public."CHAMADO_SISTEMA_VALIDACAO" v ON v.chamado_id = c.id
+   WHERE c.solicitante_id = p_uid
+     AND c.status = 'concluido'
+     AND NOT EXISTS (SELECT 1 FROM public."CHAMADO_SISTEMA_AVALIACAO" a WHERE a.chamado_id = c.id)
+     -- Presidência ainda validando (ou devolvido ao dev): nada a fazer pelo solicitante.
+     AND (v.chamado_id IS NULL OR v.etapa IN ('treinamento', 'finalizado'))
+   ORDER BY c.concluido_em NULLS LAST;
+$$;
+REVOKE ALL ON FUNCTION public.chamado_pendencias_solicitante(uuid) FROM PUBLIC, anon;
+
+-- A RPC da tela ganha a coluna `pendencia` — mudar o retorno exige DROP.
+DROP FUNCTION IF EXISTS public.chamados_meus_avaliacoes_pendentes();
+CREATE OR REPLACE FUNCTION public.chamados_meus_avaliacoes_pendentes()
+RETURNS TABLE(id uuid, numero text, assunto text, concluido_em timestamptz, pendencia text)
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, pg_temp
+AS $$
+  SELECT * FROM public.chamado_pendencias_solicitante(auth.uid());
+$$;
+REVOKE ALL ON FUNCTION public.chamados_meus_avaliacoes_pendentes() FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.chamados_meus_avaliacoes_pendentes() TO authenticated;
+
+-- ── 3. Trava ao abrir novo chamado (mesma regra da tela) ──────────────────
+CREATE OR REPLACE FUNCTION public.chamado_sistema_bloqueia_avaliacao_pendente()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp
+AS $$
+DECLARE v_pend text;
+BEGIN
+  SELECT pendencia INTO v_pend FROM public.chamado_pendencias_solicitante(NEW.solicitante_id) LIMIT 1;
+  IF v_pend = 'treinamento' THEN
+    RAISE EXCEPTION 'Você tem chamado concluído com treinamento a confirmar. Confirme o treinamento e avalie antes de abrir um novo.';
+  ELSIF v_pend = 'avaliacao' THEN
+    RAISE EXCEPTION 'Você tem chamados concluídos aguardando avaliação. Avalie-os antes de abrir um novo.';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+-- (o trigger trg_chamado_bloqueia_avaliacao, da mig 20260810000001, já
+--  aponta para esta função — só o corpo muda.)
+
+-- ── 4. Avaliar só depois do treinamento ───────────────────────────────────
+CREATE OR REPLACE FUNCTION public.chamado_avaliacao_exige_treinamento()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp
+AS $$
+DECLARE v public."CHAMADO_SISTEMA_VALIDACAO"%ROWTYPE;
+BEGIN
+  SELECT * INTO v FROM public."CHAMADO_SISTEMA_VALIDACAO" WHERE chamado_id = NEW.chamado_id;
+  IF NOT FOUND OR v.etapa = 'finalizado' THEN RETURN NEW; END IF;
+  IF v.etapa IN ('desenvolvimento', 'validacao_presidencia') THEN
+    RAISE EXCEPTION 'Este chamado ainda está na validação da Presidência. A avaliação abre depois do treinamento.';
+  END IF;
+  IF v.treinamento_solic_em IS NULL THEN
+    RAISE EXCEPTION 'Confirme primeiro que recebeu o treinamento; depois avalie o atendimento.';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+REVOKE ALL ON FUNCTION public.chamado_avaliacao_exige_treinamento() FROM PUBLIC, anon;
+
+DROP TRIGGER IF EXISTS trg_chamado_avaliacao_exige_treinamento ON public."CHAMADO_SISTEMA_AVALIACAO";
+CREATE TRIGGER trg_chamado_avaliacao_exige_treinamento
+  BEFORE INSERT ON public."CHAMADO_SISTEMA_AVALIACAO"
+  FOR EACH ROW EXECUTE FUNCTION public.chamado_avaliacao_exige_treinamento();
+
+NOTIFY pgrst, 'reload schema';
+
+-- =========================================================================
+-- ROLLBACK
+-- =========================================================================
+-- DROP TRIGGER IF EXISTS trg_chamado_avaliacao_exige_treinamento ON public."CHAMADO_SISTEMA_AVALIACAO";
+-- DROP FUNCTION IF EXISTS public.chamado_avaliacao_exige_treinamento();
+-- -- Voltar a trava e a RPC de pendentes ao corpo da mig 20260810000001:
+-- CREATE OR REPLACE FUNCTION public.chamado_sistema_bloqueia_avaliacao_pendente() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
+-- BEGIN
+--   IF EXISTS (SELECT 1 FROM public."CHAMADO_SISTEMA" c WHERE c.solicitante_id = NEW.solicitante_id AND c.status = 'concluido'
+--              AND NOT EXISTS (SELECT 1 FROM public."CHAMADO_SISTEMA_AVALIACAO" a WHERE a.chamado_id = c.id)) THEN
+--     RAISE EXCEPTION 'Você tem chamados concluídos aguardando avaliação. Avalie-os antes de abrir um novo.';
+--   END IF;
+--   RETURN NEW;
+-- END; $$;
+-- DROP FUNCTION IF EXISTS public.chamados_meus_avaliacoes_pendentes();
+-- CREATE OR REPLACE FUNCTION public.chamados_meus_avaliacoes_pendentes() RETURNS TABLE(id uuid, numero text, assunto text, concluido_em timestamptz)
+-- LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, pg_temp AS $$
+--   SELECT c.id, c.numero, c.assunto, c.concluido_em FROM public."CHAMADO_SISTEMA" c
+--    WHERE c.solicitante_id = auth.uid() AND c.status = 'concluido'
+--      AND NOT EXISTS (SELECT 1 FROM public."CHAMADO_SISTEMA_AVALIACAO" a WHERE a.chamado_id = c.id)
+--    ORDER BY c.concluido_em NULLS LAST; $$;
+-- GRANT EXECUTE ON FUNCTION public.chamados_meus_avaliacoes_pendentes() TO authenticated;
+-- DROP FUNCTION IF EXISTS public.chamado_pendencias_solicitante(uuid);
+-- -- chamado_treinamento_confirmar: recriar a versão (uuid, text) da mig 266.
+-- DROP FUNCTION IF EXISTS public.chamado_treinamento_confirmar(uuid, text, text);
+-- NOTIFY pgrst, 'reload schema';
+
+
+-- ===== 20260930000271_cs_form_pergunta_em_nome_de (JA APLICADA 30/09) =====
+-- =========================================================================
+-- Formulários: resposta "em nome de outra pessoa"
+--
+-- SINTOMA (30/09/2026): "PESQUISA DE DIAGNÓSTICO DA LIDERANÇA — algumas
+-- pessoas do operacional responderam mas não está aparecendo".
+--
+-- CAUSA: as respostas estão TODAS gravadas (54; toda pessoa com acesso ao
+-- formulário enxerga as 54). Mas quem respondeu pelo operacional foram os
+-- supervisores/gerentes, logados no ERP, preenchendo POR cada colaborador:
+-- o nome da pessoa vai na pergunta "Nome do Colaborador (Caso seja outra
+-- Pessoa)". Logado, a resposta é carimbada com o cadastro de quem ENVIOU —
+-- então ~45 colaboradores (Suelen, Paulo Roberto, Jessica…) apareciam na tela
+-- como "DAISON TAVARES RODRIGUES" (16×), "ISMAEL KUHL LOPES" (12×) etc., e
+-- não existiam no filtro de respondente.
+--
+-- CORREÇÃO: o formulário ganha a configuração `pergunta_em_nome_de_id` — a
+-- pergunta onde se escreve o nome de quem está sendo respondido. Preenchida
+-- numa resposta, a tela de Respostas mostra ESSA pessoa (filtro, PDF, CSV) e
+-- guarda "enviado por <quem estava logado>" ao lado. Não se confunde com
+-- `pergunta_nome_id` (que identifica o próprio respondente e mapeia apelido →
+-- cadastro de quem enviou — usar aquela aqui casaria o nome da colaboradora
+-- com o do supervisor).
+--
+-- Já liga a configuração no formulário do diagnóstico da liderança.
+-- Idempotente. ROLLBACK no fim.
+-- =========================================================================
+
+ALTER TABLE public."CS_FORMULARIOS"
+  ADD COLUMN IF NOT EXISTS pergunta_em_nome_de_id text;
+
+COMMENT ON COLUMN public."CS_FORMULARIOS".pergunta_em_nome_de_id IS
+  'Pergunta onde se escreve o nome de quem está sendo respondido (resposta preenchida por outra pessoa). Preenchida, a tela de Respostas mostra essa pessoa e "enviado por" quem estava logado.';
+
+-- PESQUISA DE DIAGNÓSTICO DA LIDERANÇA → "Nome do Colaborador (Caso seja outra Pessoa)"
+UPDATE public."CS_FORMULARIOS"
+   SET pergunta_em_nome_de_id = 'ad1c0910-fee6-4005-bcf9-b8347a8339e2'
+ WHERE id = '077ec978-ece7-43ca-86a6-bc8674cb3bda'
+   AND pergunta_em_nome_de_id IS NULL;
+
+NOTIFY pgrst, 'reload schema';
+
+-- =========================================================================
+-- ROLLBACK
+-- =========================================================================
+-- ALTER TABLE public."CS_FORMULARIOS" DROP COLUMN IF EXISTS pergunta_em_nome_de_id;
 -- NOTIFY pgrst, 'reload schema';

@@ -16,7 +16,8 @@ import { Label } from "@/components/ui/label";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
-import { Flag, UploadCloud, Info, XCircle, CheckCircle2, Lightbulb, Clock, X, Star, ClipboardPaste, FileText, ListChecks } from "lucide-react";
+import { Flag, UploadCloud, Info, XCircle, CheckCircle2, Lightbulb, Clock, X, Star, ClipboardPaste, FileText, ListChecks, GraduationCap } from "lucide-react";
+import type { PendenciaSolicitante } from "./validacaoPresidencia";
 import {
   CATEGORIAS, TIPOS, IMPACTOS, URGENCIAS, MODULOS_ERP, AMBIENTES, PRIORIDADES, BUCKET_CHAMADOS,
 } from "./types";
@@ -50,15 +51,17 @@ export default function AbrirChamado({ base = "/app/central-servicos/chamados" }
   const { canAbrir, loading: permLoading } = useChamadoPerms();
   const { toast } = useToast();
 
-  // Avaliações pendentes: não pode abrir novo chamado enquanto houver chamado
-  // concluído sem avaliação (regra também enforçada por trigger no banco).
+  // Pendências: não pode abrir novo chamado enquanto houver chamado concluído
+  // sem avaliação — e, no fluxo da Presidência, com o treinamento ainda por
+  // confirmar (mig 269; o trigger no banco trava igual).
   const { data: avaliacoesPendentes = [] } = useQuery({
     queryKey: ["chamados-avaliacoes-pendentes"],
     queryFn: async () => {
       const { data } = await (supabase as any).rpc("chamados_meus_avaliacoes_pendentes");
-      return (data ?? []) as Array<{ id: string; numero: string; assunto: string }>;
+      return (data ?? []) as PendenciaSolicitante[];
     },
   });
+  const pendTreino = avaliacoesPendentes.filter((p) => p.pendencia === "treinamento").length;
 
   const nome = empregado?.nome || (user?.user_metadata as any)?.nome || user?.email || "—";
   const setor = empregado?.setor || "—";
@@ -218,16 +221,21 @@ export default function AbrirChamado({ base = "/app/central-servicos/chamados" }
       <div>
         <PageHeader title="Abrir Novo Chamado" module="Central de Serviços" breadcrumb={["Chamados de Sistemas", "Abrir Novo Chamado"]} />
         <Card className="space-y-3 border-warning/40 bg-warning/5 p-6">
-          <p className="flex items-center gap-1.5 text-sm font-bold text-warning"><Star className="h-4 w-4" /> Você tem avaliação(ões) pendente(s)</p>
+          <p className="flex items-center gap-1.5 text-sm font-bold text-warning">
+            <Star className="h-4 w-4" /> {pendTreino > 0 ? "Você tem treinamento a confirmar e avaliação pendente" : "Você tem avaliação(ões) pendente(s)"}
+          </p>
           <p className="text-sm text-muted-foreground">
-            Antes de abrir um novo chamado, avalie {avaliacoesPendentes.length === 1 ? "o chamado concluído" : `os ${avaliacoesPendentes.length} chamados concluídos`} abaixo:
+            Antes de abrir um novo chamado, {pendTreino > 0 ? "confirme o treinamento e avalie" : "avalie"}{" "}
+            {avaliacoesPendentes.length === 1 ? "o chamado concluído" : `os ${avaliacoesPendentes.length} chamados concluídos`} abaixo:
           </p>
           <div className="space-y-1.5">
             {avaliacoesPendentes.map((p) => (
               <button key={p.id} onClick={() => nav(`${base}/${p.id}/acompanhar`)}
                 className="flex w-full items-center justify-between gap-2 rounded border border-border px-3 py-2 text-left text-sm hover:border-warning/50">
                 <span className="min-w-0 flex-1 truncate"><span className="font-mono text-xs font-semibold">#{p.numero}</span> {p.assunto}</span>
-                <span className="flex shrink-0 items-center gap-1 text-warning"><Star className="h-4 w-4" /> Avaliar</span>
+                {p.pendencia === "treinamento"
+                  ? <span className="flex shrink-0 items-center gap-1 text-primary"><GraduationCap className="h-4 w-4" /> Confirmar treinamento e avaliar</span>
+                  : <span className="flex shrink-0 items-center gap-1 text-warning"><Star className="h-4 w-4" /> Avaliar</span>}
               </button>
             ))}
           </div>

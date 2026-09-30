@@ -85,7 +85,7 @@ import { Percent } from "lucide-react";
 import { FolderOpen } from "lucide-react";
 import { TrendingDown } from "lucide-react";
 import { Megaphone, ExternalLink } from "lucide-react";
-import { Award, CalendarDays, FolderTree, Users } from "lucide-react";
+import { Award, CalendarDays, FolderTree, QrCode, Users } from "lucide-react";
 import { CreditCard } from "lucide-react";
 import { Network } from "lucide-react";
 import { useNovidades } from "@/hooks/useNovidades";
@@ -721,6 +721,14 @@ const treinamentosModule: ModuleDef = {
         { label: "Calendário", to: "/app/treinamentos/comunicacao/calendario", icon: CalendarDays },
       ],
     },
+    {
+      // Páginas públicas com QR Code (mig 20260930000268).
+      label: "Campanhas",
+      defaultOpen: true,
+      items: [
+        { label: "Campanhas", to: "/app/treinamentos/campanhas", icon: QrCode },
+      ],
+    },
   ],
 };
 
@@ -882,6 +890,11 @@ const presidenciaModule: ModuleDef = {
         // abaixo de Novidades — veio para cá em 24/09/2026). Liberação: código
         // "presidencia" em app_menu, como já era.
         { label: "Painel da Presidência", to: "/app/presidencia", icon: LayoutDashboard },
+        // Desenvolvimento Chamados (29/09/2026, mig 266): chamados de sistemas
+        // marcados "Enviar à Presidência" — a direção valida o desenvolvimento
+        // e acompanha o treinamento. Liberação própria
+        // (presidencia_chamados_dev; aprovar/devolver: _validar).
+        { label: "Desenvolvimento Chamados", to: "/app/presidencia/chamados-desenvolvimento", icon: CheckCircle2 },
       ],
     },
     {

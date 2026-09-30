@@ -20,6 +20,7 @@ import { CheckCircle2, MessageSquare, XCircle, Paperclip, ArrowLeft, Trash2, Sta
 import { ExcluirChamadoDialog } from "./ExcluirChamadoDialog";
 import { ReabrirChamadoDialog } from "./ReabrirChamadoDialog";
 import { ChatChamado } from "./ChatChamado";
+import { BotaoStatusChamado, CardTreinamento, CardValidacaoPresidencia, useValidacaoChamado } from "./StatusValidacao";
 import {
   StatusBadge, PrioridadeBadge, STATUS_CHAMADO, CardAvaliacao,
   CATEGORIAS, TIPOS, IMPACTOS, URGENCIAS, AMBIENTES,
@@ -88,6 +89,9 @@ export default function ExecutarChamado() {
     },
   });
 
+  // Validação da Presidência (mig 266) — null quando o chamado não foi enviado.
+  const { data: validacao } = useValidacaoChamado(id);
+
   const ehResponsavel = !!chamado && chamado.responsavel_id === user?.id;
   const podeAgir = canCoordenar || canAprovar || (canDev && ehResponsavel);
 
@@ -97,6 +101,9 @@ export default function ExecutarChamado() {
     qc.invalidateQueries({ queryKey: ["chamado", id] });
     qc.invalidateQueries({ queryKey: ["chamado-eventos", id] });
     qc.invalidateQueries({ queryKey: ["chamados-meus-atribuidos", user?.id] });
+    // Concluir/reabrir move a etapa da Presidência (trigger no banco).
+    qc.invalidateQueries({ queryKey: ["chamado-validacao", id] });
+    qc.invalidateQueries({ queryKey: ["chamado-validacoes"] });
   };
 
   const mudarStatus = async (status: string, texto: string, evento: string) => {
@@ -161,7 +168,12 @@ export default function ExecutarChamado() {
         subtitle={chamado.assunto}
         module="Sistemas"
         breadcrumb={["Chamados de Sistemas", `#${chamado.numero}`]}
-        actions={<Button variant="outline" className="gap-1.5" onClick={() => nav("/app/sistemas/chamados/dev")}><ArrowLeft className="h-4 w-4" /> Meus chamados</Button>}
+        actions={
+          <div className="flex flex-wrap gap-2">
+            <BotaoStatusChamado chamado={chamado} validacao={validacao} nomeDe={nomeDe} size="default" />
+            <Button variant="outline" className="gap-1.5" onClick={() => nav("/app/sistemas/chamados/dev")}><ArrowLeft className="h-4 w-4" /> Meus chamados</Button>
+          </div>
+        }
       />
 
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_300px]">
@@ -261,6 +273,10 @@ export default function ExecutarChamado() {
 
         {/* Coluna de execução */}
         <div className="space-y-4">
+          <CardValidacaoPresidencia chamado={chamado} validacao={validacao} nomeDe={nomeDe} />
+          {/* Só o papel de desenvolvedor aqui (dev ou gestão por ele, mig 269);
+              o solicitante confirma no acompanhamento, antes de avaliar. */}
+          <CardTreinamento chamado={chamado} validacao={validacao} nomeDe={nomeDe} papel="desenvolvedor" />
           <Card className="space-y-3 p-4">
             <p className="text-sm font-bold">Execução do chamado</p>
             <div>

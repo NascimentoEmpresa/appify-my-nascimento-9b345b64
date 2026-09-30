@@ -1,6 +1,6 @@
 import { Link, useParams } from "react-router-dom";
 import { ArrowLeft, Printer } from "lucide-react";
-import { CertificadoFrente, CertificadoVerso } from "@/pages/treinamentos/plataforma/CertificadoPreview";
+import { CertificadoFrente, CertificadoVerso, dataCertificado } from "@/pages/treinamentos/plataforma/CertificadoPreview";
 import type { CertificadoModelo } from "@/pages/treinamentos/plataforma/tipos";
 import { useCertificadoColaborador } from "@/hooks/useColaboradorPortal";
 import { Carregando, Erro } from "./ui";
@@ -26,15 +26,15 @@ export default function CertificadoColaborador() {
   }
   const c = q.data;
   const modelo = (c.modelo ?? {
-    id: "", nome: "Padrão", titulo: "Certificado de conclusão de curso", texto_superior: "Certificamos que", texto_inferior: "concluiu com êxito o curso ${curso} em ${data}.",
-    exibir_nome_negocio: true, exibir_logo: false, exibir_cnpj: false, exibir_carga_horaria: true, exibir_qr: false, exibir_documento: true,
-    frente_verso: false, verso_somente_modulos: false, verso_titulo: null, layout: "centro", fundo_path: null, fundo_verso_path: null, created_at: "", updated_at: "",
+    id: "", nome: "Padrão", titulo: "Certificado de conclusão de curso", texto_superior: "A instituição de ensino Grupo Nascimento certifica que o(a) aluno(a)", texto_inferior: "Concluiu o curso de ${curso} no dia ${data}",
+    exibir_nome_negocio: true, exibir_logo: false, exibir_cnpj: false, exibir_carga_horaria: true, exibir_qr: true, exibir_documento: true,
+    frente_verso: false, verso_somente_modulos: false, verso_titulo: null, layout: "esquerda", fundo_path: null, fundo_verso_path: null, created_at: "", updated_at: "",
   }) as unknown as CertificadoModelo;
   const dados = {
     aluno: c.aluno,
     documento: c.documento,
     curso: c.curso,
-    data: new Date(c.emitido_em).toLocaleDateString("pt-BR", { day: "numeric", month: "long", year: "numeric" }),
+    data: dataCertificado(c.emitido_em),
     cargaHorariaMin: c.carga_horaria_min,
     codigo: c.codigo,
     modulos: c.modulos,

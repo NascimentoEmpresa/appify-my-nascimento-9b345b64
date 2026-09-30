@@ -104,13 +104,13 @@ describe("etiqueta térmica — compacta", () => {
  * confirma que levou o volume. Sem ele na etiqueta padrão, a retirada volta a
  * não ter dono.
  */
-describe("etiqueta térmica — QR code de retirada", () => {
+describe("etiqueta térmica — QR code", () => {
   const qr = "data:image/png;base64,iVBORw0KGgo=";
 
   it("a etiqueta padrão imprime o QR quando ele vem pronto", () => {
     const html = htmlEtiqueta({ ...dados, qrDataUrl: qr }, "PADRAO", "");
     expect(html).toContain(`<img src="${qr}"`);
-    expect(html).toContain("leia ao retirar");
+    expect(html).toContain("comprovar a entrega");
   });
 
   it("sem QR gerado, a etiqueta sai normalmente — sem imagem quebrada", () => {
@@ -123,7 +123,7 @@ describe("etiqueta térmica — QR code de retirada", () => {
     expect(htmlEtiqueta({ ...dados, qrDataUrl: qr }, "COMPACTO", "")).not.toContain("<img");
   });
 
-  it("o QR aponta para a tela de retirada pelo id do pedido", () => {
+  it("a tela de retirada (hoje usada pelo QR do romaneio) é aberta pelo id", () => {
     expect(urlRetirada("7b1e0c1a-0000-4000-8000-000000000001", "https://erp.exemplo"))
       .toBe("https://erp.exemplo/app/suprimentos/retirada/7b1e0c1a-0000-4000-8000-000000000001");
   });

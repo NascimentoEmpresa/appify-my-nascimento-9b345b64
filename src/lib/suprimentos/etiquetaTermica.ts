@@ -14,9 +14,11 @@
  * distingue quem pediu de para quem é, que na etiqueta nova apareciam
  * confundidos num campo só.
  *
- * O QR code no canto inferior (só no modelo padrão) é a retirada para
- * entrega: o supervisor que busca o volume fora do horário lê com o celular
- * e confirma que levou — ver src/pages/suprimentos/RetiradaPedido.tsx.
+ * O QR code no canto inferior (só no modelo padrão) é a comprovação de
+ * entrega: quem recebe o pedido no destino lê com o celular e cai no
+ * formulário de "Meus Pedidos" — ver comprovacaoQr.ts. Até 30/09/2026 ele era
+ * a retirada do supervisor, que agora lê o QR do romaneio (urlRetirada, abaixo,
+ * continua servindo a ele e às etiquetas já impressas).
  */
 
 import { calcularEnvioItens, type EtiquetaParaEnvio, type ItemParaEnvio } from "./envioItens";
@@ -40,7 +42,7 @@ export interface DadosEtiqueta {
    */
   itens: ItemParaEnvio[];
   /**
-   * PNG (data URL) do QR code de retirada. Vem pronto de fora porque a
+   * PNG (data URL) do QR code de comprovação de entrega. Vem pronto de fora porque a
    * geração é assíncrona e esta função monta HTML de forma síncrona — é o
    * mesmo HTML da prévia e da impressão.
    */
@@ -48,7 +50,8 @@ export interface DadosEtiqueta {
 }
 
 /**
- * Endereço que o QR code abre. Leva o id (uuid) do pedido, e não o
+ * Endereço da tela de retirada — hoje usado pelo QR do romaneio
+ * (romaneioImpressao.ts); a etiqueta do pedido usa urlComprovacao. Leva o id (uuid), e não o
  * protocolo: é inequívoco e não depende do formato do protocolo, que mudou
  * entre o legado e o sistema novo.
  */
@@ -152,7 +155,7 @@ export function htmlEtiqueta(dados: DadosEtiqueta, tamanho: TamanhoEtiqueta, tex
         ${!compacto && extra ? `<div class="livre">${escaparHtml(extra)}</div>` : ""}
       </div>
       ${!compacto && dados.qrDataUrl
-        ? `<div class="qr"><span>Supervisor: leia ao retirar o pedido</span><img src="${escaparHtml(dados.qrDataUrl)}" alt=""></div>`
+        ? `<div class="qr"><span>Recebeu? Leia para comprovar a entrega</span><img src="${escaparHtml(dados.qrDataUrl)}" alt=""></div>`
         : ""}
       ${compacto ? "" : `<div class="rodape">Gerado automaticamente via ERP | ${MEDIDAS[tamanho].largura}x${MEDIDAS[tamanho].altura}mm</div>`}
     </section>
