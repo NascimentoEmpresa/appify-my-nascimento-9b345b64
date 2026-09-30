@@ -231,7 +231,7 @@ export const MENU = {
 
 export const BUCKET_TRN = "trn-midia";
 
-// ── Campanhas (mig 20260930000267) ───────────────────────────────────
+// ── Campanhas (mig 20260930000268) ───────────────────────────────────
 // Conteúdo PÚBLICO, sem login, em /campanhas/<slug>. A provinha usa o mesmo
 // formato de pergunta da prova da aula (PerguntaQuiz + ProvaConfig).
 export type TipoItemCampanha = "video" | "texto" | "imagem" | "link" | "arquivo" | "prova";

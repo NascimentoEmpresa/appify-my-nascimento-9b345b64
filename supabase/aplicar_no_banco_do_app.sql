@@ -33252,7 +33252,7 @@ NOTIFY pgrst, 'reload schema';
 -- NOTIFY pgrst, 'reload schema';
 
 
--- ===== 20260930000267_treinamentos_campanhas (PENDENTE - aplicar antes do front subir) =====
+-- ===== 20260930000268_treinamentos_campanhas (PENDENTE - aplicar antes do front subir) =====
 -- =========================================================================
 -- Treinamentos › Campanhas (30/09/2026)
 --
@@ -33288,6 +33288,9 @@ NOTIFY pgrst, 'reload schema';
 --   propósito — quem só cuida de campanha não precisa ler aluno/curso. Para
 --   essa pessoa conseguir subir vídeo/capa, as policies de upload do bucket
 --   trn-midia ganham um OU com a permissão de campanhas.
+--
+-- Policies com (select …) em volta do helper: avaliado uma vez por consulta,
+-- não por linha (mesmo padrão das mig 265/267 de RLS).
 --
 -- Idempotente. Aplicar no banco do app. ROLLBACK no fim.
 -- =========================================================================
@@ -33419,13 +33422,13 @@ DROP POLICY IF EXISTS trn_campanha_insert ON public."TRN_CAMPANHA";
 DROP POLICY IF EXISTS trn_campanha_update ON public."TRN_CAMPANHA";
 DROP POLICY IF EXISTS trn_campanha_delete ON public."TRN_CAMPANHA";
 CREATE POLICY trn_campanha_select ON public."TRN_CAMPANHA" FOR SELECT TO authenticated
-  USING (public.trn_acesso('treinamentos_campanhas'));
+  USING ((select public.trn_acesso('treinamentos_campanhas')));
 CREATE POLICY trn_campanha_insert ON public."TRN_CAMPANHA" FOR INSERT TO authenticated
-  WITH CHECK (public.trn_acesso('treinamentos_campanhas','incluir') OR public.trn_acesso('treinamentos_campanhas','alterar'));
+  WITH CHECK ((select public.trn_acesso('treinamentos_campanhas','incluir')) OR (select public.trn_acesso('treinamentos_campanhas','alterar')));
 CREATE POLICY trn_campanha_update ON public."TRN_CAMPANHA" FOR UPDATE TO authenticated
-  USING (public.trn_acesso('treinamentos_campanhas','alterar')) WITH CHECK (public.trn_acesso('treinamentos_campanhas','alterar'));
+  USING ((select public.trn_acesso('treinamentos_campanhas','alterar'))) WITH CHECK ((select public.trn_acesso('treinamentos_campanhas','alterar')));
 CREATE POLICY trn_campanha_delete ON public."TRN_CAMPANHA" FOR DELETE TO authenticated
-  USING (public.trn_acesso('treinamentos_campanhas','excluir'));
+  USING ((select public.trn_acesso('treinamentos_campanhas','excluir')));
 
 -- Itens: quem cria a campanha monta o conteúdo dela no mesmo passo, então
 -- incluir OU alterar escreve item (inclusive apagar item dentro do editor).
@@ -33434,26 +33437,26 @@ DROP POLICY IF EXISTS trn_campanha_item_insert ON public."TRN_CAMPANHA_ITEM";
 DROP POLICY IF EXISTS trn_campanha_item_update ON public."TRN_CAMPANHA_ITEM";
 DROP POLICY IF EXISTS trn_campanha_item_delete ON public."TRN_CAMPANHA_ITEM";
 CREATE POLICY trn_campanha_item_select ON public."TRN_CAMPANHA_ITEM" FOR SELECT TO authenticated
-  USING (public.trn_acesso('treinamentos_campanhas'));
+  USING ((select public.trn_acesso('treinamentos_campanhas')));
 CREATE POLICY trn_campanha_item_insert ON public."TRN_CAMPANHA_ITEM" FOR INSERT TO authenticated
-  WITH CHECK (public.trn_acesso('treinamentos_campanhas','incluir') OR public.trn_acesso('treinamentos_campanhas','alterar'));
+  WITH CHECK ((select public.trn_acesso('treinamentos_campanhas','incluir')) OR (select public.trn_acesso('treinamentos_campanhas','alterar')));
 CREATE POLICY trn_campanha_item_update ON public."TRN_CAMPANHA_ITEM" FOR UPDATE TO authenticated
-  USING (public.trn_acesso('treinamentos_campanhas','incluir') OR public.trn_acesso('treinamentos_campanhas','alterar'))
-  WITH CHECK (public.trn_acesso('treinamentos_campanhas','incluir') OR public.trn_acesso('treinamentos_campanhas','alterar'));
+  USING ((select public.trn_acesso('treinamentos_campanhas','incluir')) OR (select public.trn_acesso('treinamentos_campanhas','alterar')))
+  WITH CHECK ((select public.trn_acesso('treinamentos_campanhas','incluir')) OR (select public.trn_acesso('treinamentos_campanhas','alterar')));
 CREATE POLICY trn_campanha_item_delete ON public."TRN_CAMPANHA_ITEM" FOR DELETE TO authenticated
-  USING (public.trn_acesso('treinamentos_campanhas','incluir') OR public.trn_acesso('treinamentos_campanhas','alterar'));
+  USING ((select public.trn_acesso('treinamentos_campanhas','incluir')) OR (select public.trn_acesso('treinamentos_campanhas','alterar')));
 
 -- Respostas: ninguém grava pela API — só a RPC pública, que corrige no banco.
 DROP POLICY IF EXISTS trn_campanha_resposta_select ON public."TRN_CAMPANHA_RESPOSTA";
 DROP POLICY IF EXISTS trn_campanha_resposta_delete ON public."TRN_CAMPANHA_RESPOSTA";
 CREATE POLICY trn_campanha_resposta_select ON public."TRN_CAMPANHA_RESPOSTA" FOR SELECT TO authenticated
-  USING (public.trn_acesso('treinamentos_campanhas'));
+  USING ((select public.trn_acesso('treinamentos_campanhas')));
 CREATE POLICY trn_campanha_resposta_delete ON public."TRN_CAMPANHA_RESPOSTA" FOR DELETE TO authenticated
-  USING (public.trn_acesso('treinamentos_campanhas','excluir'));
+  USING ((select public.trn_acesso('treinamentos_campanhas','excluir')));
 
 DROP POLICY IF EXISTS trn_campanha_acesso_select ON public."TRN_CAMPANHA_ACESSO";
 CREATE POLICY trn_campanha_acesso_select ON public."TRN_CAMPANHA_ACESSO" FOR SELECT TO authenticated
-  USING (public.trn_acesso('treinamentos_campanhas'));
+  USING ((select public.trn_acesso('treinamentos_campanhas')));
 
 -- ── 5) Storage: quem edita campanha sobe vídeo/capa no trn-midia ─────────
 -- Mesmas policies da mig 190, com o OU das campanhas. A leitura continua
@@ -33462,11 +33465,11 @@ DROP POLICY IF EXISTS "trn midia insert" ON storage.objects;
 DROP POLICY IF EXISTS "trn midia update" ON storage.objects;
 DROP POLICY IF EXISTS "trn midia delete" ON storage.objects;
 CREATE POLICY "trn midia insert" ON storage.objects FOR INSERT TO authenticated
-  WITH CHECK (bucket_id = 'trn-midia' AND (public.trn_ve_modulo() OR public.trn_acesso('treinamentos_campanhas','incluir') OR public.trn_acesso('treinamentos_campanhas','alterar')));
+  WITH CHECK (bucket_id = 'trn-midia' AND ((select public.trn_ve_modulo()) OR (select public.trn_acesso('treinamentos_campanhas','incluir')) OR (select public.trn_acesso('treinamentos_campanhas','alterar'))));
 CREATE POLICY "trn midia update" ON storage.objects FOR UPDATE TO authenticated
-  USING (bucket_id = 'trn-midia' AND (public.trn_ve_modulo() OR public.trn_acesso('treinamentos_campanhas','alterar')));
+  USING (bucket_id = 'trn-midia' AND ((select public.trn_ve_modulo()) OR (select public.trn_acesso('treinamentos_campanhas','alterar'))));
 CREATE POLICY "trn midia delete" ON storage.objects FOR DELETE TO authenticated
-  USING (bucket_id = 'trn-midia' AND (public.trn_ve_modulo() OR public.trn_acesso('treinamentos_campanhas','alterar')));
+  USING (bucket_id = 'trn-midia' AND ((select public.trn_ve_modulo()) OR (select public.trn_acesso('treinamentos_campanhas','alterar'))));
 
 -- ── 6) RPCs públicas ─────────────────────────────────────────────────────
 

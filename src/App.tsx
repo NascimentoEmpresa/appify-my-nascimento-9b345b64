@@ -389,7 +389,7 @@ const App = () => (
           <Route path="/formularios/:slug" element={<FormularioPublico />} />
           <Route path="/candidatura" element={<Navigate to="/vagas" replace />} />
           {/* Campanhas do Treinamentos — página pública do QR Code, sem login
-              (mig 20260930000267: só as RPCs trn_campanha_publica/_responder). */}
+              (mig 20260930000268: só as RPCs trn_campanha_publica/_responder). */}
           <Route path="/campanhas/:slug" element={<CampanhaPublica />} />
           {/* Nascimento Formulários — resposta pública, sem login */}
           <Route path="/formularios/:slug" element={<FormularioPublico />} />

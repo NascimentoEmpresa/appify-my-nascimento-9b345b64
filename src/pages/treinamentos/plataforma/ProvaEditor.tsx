@@ -60,7 +60,7 @@ export function quizParaSalvar(quiz: PerguntaQuiz[]): PerguntaQuiz[] {
 const numOuNull = (v: string) => (v.trim() === "" ? null : Math.max(0, Math.floor(Number(v) || 0)) || null);
 
 /**
- * `publico` = provinha de Campanha (página sem login, mig 267): não há aluno,
+ * `publico` = provinha de Campanha (página sem login, mig 268): não há aluno,
  * então somem tentativas, espera, tempo, sorteio, embaralhar e "só depois do
  * vídeo" — a correção pública (trn_campanha_responder) não usa nenhum deles.
  */

@@ -3,7 +3,7 @@ import { supabase } from "@/integrations/supabase/client";
 import type { Campanha, CampanhaItem, CampanhaResposta, ProvaConfig, TipoItemCampanha } from "@/pages/treinamentos/plataforma/tipos";
 
 // =====================================================================
-// TREINAMENTOS › Campanhas — dados (mig 20260930000267).
+// TREINAMENTOS › Campanhas — dados (mig 20260930000268).
 //
 // Gestão: tabelas TRN_CAMPANHA* direto, RLS pelo menu
 // `treinamentos_campanhas`. Página pública (/campanhas/<slug>): só as RPCs

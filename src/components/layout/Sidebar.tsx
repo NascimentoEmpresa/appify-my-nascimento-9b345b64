@@ -716,7 +716,7 @@ const treinamentosModule: ModuleDef = {
       ],
     },
     {
-      // Páginas públicas com QR Code (mig 20260930000267).
+      // Páginas públicas com QR Code (mig 20260930000268).
       label: "Campanhas",
       defaultOpen: true,
       items: [
