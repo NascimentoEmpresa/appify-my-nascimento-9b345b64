@@ -639,6 +639,16 @@ const encarregadosModule: ModuleDef = {
       ],
     },
     {
+      label: "Formulários",
+      defaultOpen: true,
+      items: [
+        // Nascimento Formulários (30/09/2026, mig 276): só os formulários que a
+        // Central de Serviços liberou para o setor ENCARREGADOS; o encarregado
+        // responde e vê as próprias respostas, nada mais.
+        { label: "Nascimento Formulários", to: "/app/encarregados/formularios", icon: ClipboardList },
+      ],
+    },
+    {
       label: "Sistemas",
       defaultOpen: true,
       items: [
