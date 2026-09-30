@@ -119,6 +119,7 @@ export default function CampanhaForm() {
       const n = `Bloco ${k + 1} (${ROTULO_ITEM_CAMPANHA[it.tipo]})`;
       if (it.tipo === "video" && !it.video_path && !it.video_url?.trim()) return `${n}: informe o link ou envie o vídeo.`;
       if (it.tipo === "texto" && !it.texto?.trim()) return `${n}: escreva o texto.`;
+      if (it.tipo === "texto" && it.recolhido && !it.titulo?.trim()) return `${n}: texto recolhido precisa de título (é o que aparece com a setinha).`;
       if (it.tipo === "imagem" && !it.imagem_path) return `${n}: envie a imagem.`;
       if (it.tipo === "arquivo" && !it.arquivo_path) return `${n}: envie o arquivo.`;
       if (it.tipo === "link" && !/^https?:\/\/\S+$/i.test(it.link_url?.trim() ?? "")) return `${n}: o link precisa começar com http:// ou https://.`;
@@ -141,7 +142,7 @@ export default function CampanhaForm() {
       const salva = await salvar.mutateAsync({
         campanha: { ...c, titulo: c.titulo.trim(), resumo: c.resumo?.trim() || null, slug: c.slug ? slugify(c.slug) : null },
         itens: itens.map((i) => ({
-          ...i, titulo: i.titulo?.trim() || null, texto: i.texto?.trim() || null,
+          ...i, titulo: i.titulo?.trim() || null, texto: i.texto?.trim() || null, recolhido: i.tipo === "texto" && !!i.recolhido,
           video_url: i.tipo === "video" && !i.video_path ? i.video_url?.trim() || null : null,
           link_url: i.link_url?.trim() || null, link_rotulo: i.link_rotulo?.trim() || null,
           quiz: i.tipo === "prova" ? quizParaSalvar(i.quiz ?? []) : null,
@@ -162,7 +163,7 @@ export default function CampanhaForm() {
     id: c.id ?? "previa", titulo: c.titulo, slug: slugSalvo ?? "previa", resumo: c.resumo, capa_path: c.capa_path, cor: c.cor, fim_em: c.fim_em,
     pedir_identificacao: c.pedir_identificacao, pedir_documento: c.pedir_documento,
     itens: itens.map((i) => ({
-      id: i.id, tipo: i.tipo, titulo: i.titulo, texto: i.texto, video_url: i.video_path ? null : i.video_url, video_path: i.video_path,
+      id: i.id, tipo: i.tipo, titulo: i.titulo, texto: i.texto, recolhido: i.tipo === "texto" && !!i.recolhido, video_url: i.video_path ? null : i.video_url, video_path: i.video_path,
       imagem_path: i.imagem_path, arquivo_path: i.arquivo_path, arquivo_nome: i.arquivo_nome, link_url: i.link_url, link_rotulo: i.link_rotulo,
       nota_minima: Number(i.nota_minima) || 0,
       prova: i.tipo === "prova" ? {
@@ -362,7 +363,7 @@ function Bloco({ it, k, total, slug, titulo, avisoQr, subindo, setItem, mover, r
       </div>
       <div className="grid gap-3 p-3">
         {it.tipo !== "prova" && (
-          <div className="campo"><label>Título {it.tipo === "texto" ? "(opcional)" : ""}</label>
+          <div className="campo"><label>Título {it.tipo === "texto" ? (it.recolhido ? "*" : "(opcional)") : ""}</label>
             <Input value={it.titulo ?? ""} onChange={(e) => setItem({ titulo: e.target.value })} placeholder={it.tipo === "video" ? "Ex.: Como usar o EPI corretamente" : ""} /></div>
         )}
 
@@ -389,7 +390,18 @@ function Bloco({ it, k, total, slug, titulo, avisoQr, subindo, setItem, mover, r
         {it.tipo === "texto" && (
           <div className="campo"><label>Texto *</label>
             <Textarea rows={6} value={it.texto ?? ""} onChange={(e) => setItem({ texto: e.target.value })} />
-            <div className="ajuda">Quebras de linha são mantidas. Use **assim** para negrito; links (https://…) viram clicáveis.</div></div>
+            <div className="ajuda">Quebras de linha são mantidas. Use **assim** para negrito; links (https://…) viram clicáveis.</div>
+            {/* Texto recolhido (mig 278): na página pública fica só o título com
+                a setinha, e o conteúdo abre ao tocar — como as seções da
+                Wikipédia no celular. Recolhidos em sequência viram uma lista. */}
+            <label className="mt-2 flex cursor-pointer items-start gap-2 rounded-lg border border-slate-200 bg-slate-50 p-2.5">
+              <input type="checkbox" className="mt-0.5 h-4 w-4 accent-[#0f3171]" checked={!!it.recolhido}
+                     onChange={(e) => setItem({ recolhido: e.target.checked })} />
+              <span>
+                <span className="block text-sm font-semibold text-slate-800">Recolhido — mostrar só o título com a setinha</span>
+                <span className="block text-xs text-slate-500">O texto abre ao clicar no título. Vários textos recolhidos seguidos formam uma lista de tópicos.</span>
+              </span>
+            </label></div>
         )}
 
         {it.tipo === "imagem" && (

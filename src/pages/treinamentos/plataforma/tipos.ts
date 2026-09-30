@@ -248,6 +248,8 @@ export interface Campanha {
 
 export interface CampanhaItem {
   id: string; campanha_id: string; posicao: number; tipo: TipoItemCampanha; titulo: string | null; texto: string | null;
+  /** Texto recolhido: na página pública só o título + setinha; abre ao tocar (mig 278). */
+  recolhido?: boolean;
   video_url: string | null; video_path: string | null; imagem_path: string | null;
   arquivo_path: string | null; arquivo_nome: string | null; link_url: string | null; link_rotulo: string | null;
   quiz: PerguntaQuiz[] | null; nota_minima: number; prova_config: ProvaConfig;
