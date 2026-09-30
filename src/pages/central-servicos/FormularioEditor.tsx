@@ -112,6 +112,24 @@ function Seguranca({ form, mudaForm, setoresErp, usuarios, alvo, setAlvo, senha,
         {opcao("restrito", "🔒 Restrito", "Exige entrar no ERP p/ responder.")}
       </div>
 
+      {/* Liberado + Encarregados (30/09/2026): o formulário público também
+          aparece em Encarregados › Nascimento Formulários. Sem isto, só o
+          "Restrito + setor ENCARREGADOS" chegava lá, e formulário público
+          nunca aparecia para eles. Grava ['ENCARREGADOS'] em setores_acesso —
+          no liberado isso não restringe nada (cs_form_alvo deixa todos). */}
+      {!restrito && (() => {
+        const on = (form.setores_acesso ?? []).some(s => s.trim().toUpperCase() === "ENCARREGADOS");
+        return (
+          <label style={{ marginTop: 10, display: "flex", alignItems: "center", gap: 9, padding: "10px 12px", borderRadius: 11, border: on ? "1.5px solid #0f3171" : "1px solid #e2e8f0", background: on ? "rgba(15,49,113,.04)" : "#fff", cursor: "pointer" }}>
+            <input type="checkbox" checked={on} onChange={e => mudaForm({ setores_acesso: e.target.checked ? ["ENCARREGADOS"] : null })} style={{ width: 16, height: 16, accentColor: "#0f3171" }} />
+            <div>
+              <div style={{ fontSize: 12.5, fontWeight: 800, color: on ? "#0f3171" : "#0f172a" }}>👷 Mostrar para os Encarregados</div>
+              <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 1 }}>Aparece em Encarregados › Nascimento Formulários (continua aberto a qualquer um com o link).</div>
+            </div>
+          </label>
+        );
+      })()}
+
       {restrito && (
         <div style={{ marginTop: 10, border: "1px solid #e2e8f0", borderRadius: 12, padding: 12, background: "#f8fafc", display: "flex", flexDirection: "column", gap: 12 }}>
           {/* Setores */}
@@ -425,7 +443,10 @@ export default function FormularioEditor() {
       pergunta_em_nome_de_id: form.pergunta_em_nome_de_id || null,
       seguranca: form.seguranca ?? "liberado",
       // Liberado zera os filtros: não deixa restrição órfã no banco.
-      setores_acesso: restrito ? (form.setores_acesso?.length ? form.setores_acesso : null) : null,
+      // Liberado guarda só o ENCARREGADOS ("Mostrar para os Encarregados");
+      // os demais setores não fazem sentido sem restrição.
+      setores_acesso: restrito ? (form.setores_acesso?.length ? form.setores_acesso : null)
+        : ((form.setores_acesso ?? []).some(s => s.trim().toUpperCase() === "ENCARREGADOS") ? ["ENCARREGADOS"] : null),
       permite_anonimo: !!form.permite_anonimo,
       intervalo_horas: form.intervalo_mensal ? null : (form.intervalo_horas ?? null),
       intervalo_mensal: !!form.intervalo_mensal,
