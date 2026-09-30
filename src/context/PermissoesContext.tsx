@@ -67,6 +67,30 @@ interface PermissoesCtx {
 
 const Ctx = createContext<PermissoesCtx | null>(null);
 
+/**
+ * Lê TODAS as linhas de uma consulta, em páginas de 1000.
+ *
+ * INCIDENTE 30/09/2026: o PostgREST corta qualquer select em 1000 linhas
+ * (max-rows), sem erro nem aviso. As exceções individuais vinham numa
+ * consulta só — o Pablo passou a ter 1380 linhas em screen_permission_user
+ * (e o Iury 944, quase lá) e 380 delas sumiam, SEM ORDEM DEFINIDA: qualquer
+ * permissão podia cair. Caiu o `alterar` de recrutamento_gestao e o kanban
+ * do Recrutamento perdeu todos os botões ("→ Triagem", "→ SST + Compras",
+ * "Pular SST e Compras"…) com o banco dizendo que ele tinha acesso.
+ * A ordem estável (menu, ação) é obrigatória: range() sem order pode repetir
+ * ou pular linhas entre páginas.
+ */
+async function lerTodasAsLinhas<T>(consulta: (de: number, ate: number) => PromiseLike<{ data: T[] | null; error: unknown }>): Promise<T[]> {
+  const PAGINA = 1000;
+  const todas: T[] = [];
+  for (let de = 0; ; de += PAGINA) {
+    const { data, error } = await consulta(de, de + PAGINA - 1);
+    if (error || !data) return todas;
+    todas.push(...data);
+    if (data.length < PAGINA) return todas;
+  }
+}
+
 function findOverride(overrides: UserOverride[], acao: Acao, menu?: string): UserOverride | null {
   if (!menu) return null;
   return overrides.find((item) => item.menu === menu && item.acao === acao) ?? null;
@@ -126,11 +150,16 @@ export function PermissoesProvider({ children }: { children: ReactNode }) {
 
       const activeEmpresaId = profile?.empresa_atual_id ?? profile?.empresa_id ?? null;
 
-      const [overridesRes, perfisRes] = await Promise.all([
-        supabase
-          .from("screen_permission_user")
-          .select("menu_codigo, acao, allow")
-          .eq("user_id", user.id),
+      // Paginado: com mais de 1000 exceções, as que passavam do corte sumiam
+      // (ver lerTodasAsLinhas).
+      const [overrides, perfisRes] = await Promise.all([
+        lerTodasAsLinhas<{ menu_codigo: string; acao: string; allow: boolean }>((de, ate) =>
+          (supabase as any)
+            .from("screen_permission_user")
+            .select("menu_codigo, acao, allow")
+            .eq("user_id", user.id)
+            .order("menu_codigo").order("acao")
+            .range(de, ate)),
         (supabase as any)
           .from("usuario_perfil_acesso")
           .select("perfil_acesso(id, ativo, concede_tudo)")
@@ -143,15 +172,20 @@ export function PermissoesProvider({ children }: { children: ReactNode }) {
       const jaConcedeTudo = perfisAtivos.some((p) => p.concede_tudo);
       const perfilIds = perfisAtivos.map((p) => p.id as string);
 
-      const permissaoRes = perfilIds.length
-        ? await (supabase as any).from("perfil_acesso_permissao").select("menu_codigo, acao, allow").in("perfil_id", perfilIds)
-        : { data: [] as any[] };
+      // Idem: um perfil amplo passa fácil de 1000 linhas de permissão.
+      const permissoesPerfil = perfilIds.length
+        ? await lerTodasAsLinhas<{ menu_codigo: string; acao: string; allow: boolean }>((de, ate) =>
+            (supabase as any).from("perfil_acesso_permissao").select("menu_codigo, acao, allow")
+              .in("perfil_id", perfilIds)
+              .order("perfil_id").order("menu_codigo").order("acao")
+              .range(de, ate))
+        : [];
 
       if (!cancelled) {
         setRoles(userRoles.length ? userRoles : ["usuario" as Role]);
         setEmpresaId(activeEmpresaId);
         setUserOverrides(
-          (overridesRes.data ?? []).map((permission: any) => ({
+          overrides.map((permission: any) => ({
             menu: permission.menu_codigo,
             acao: permission.acao as Acao,
             allow: Boolean(permission.allow),
@@ -159,7 +193,7 @@ export function PermissoesProvider({ children }: { children: ReactNode }) {
         );
         setConcedeTudo(jaConcedeTudo);
         setPerfilPermissoes(
-          (permissaoRes.data ?? []).map((permission: any) => ({
+          permissoesPerfil.map((permission: any) => ({
             menu: permission.menu_codigo,
             acao: permission.acao as Acao,
             allow: Boolean(permission.allow),
