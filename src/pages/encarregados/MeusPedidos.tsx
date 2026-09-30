@@ -1,5 +1,5 @@
-import { useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import { useEffect, useMemo, useState } from "react";
+import { Link, useSearchParams } from "react-router-dom";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -10,8 +10,31 @@ import {
   useMeusPedidos, apresentarStatusVisivel, fmtDataBR, type MeuPedido,
 } from "@/hooks/useSupPedidos";
 import { ModalComprovacaoEntrega } from "@/components/suprimentos/ModalComprovacaoEntrega";
-import { Search, Package, Plus, MessageSquare, Inbox, AlertTriangle, Camera } from "lucide-react";
+import { PARAM_COMPROVAR, situacaoComprovacaoQr, type SituacaoComprovacaoQr } from "@/lib/suprimentos/comprovacaoQr";
+import { Search, Package, Plus, MessageSquare, Inbox, AlertTriangle, Camera, QrCode } from "lucide-react";
 import { cn } from "@/lib/utils";
+
+/** Texto do aviso quando o pedido lido no QR não pode ser comprovado agora. */
+function textoAvisoQr(situacao: Exclude<SituacaoComprovacaoQr, "PREENCHER">, pedido: MeuPedido | undefined) {
+  const protocolo = pedido?.pedido_id ?? "este pedido";
+  switch (situacao) {
+    case "JA_ENVIADA":
+      return { titulo: "Entrega já comprovada", texto: `A comprovação de entrega de ${protocolo} já foi enviada. Não é preciso fazer mais nada.` };
+    case "DISPENSADA":
+      return { titulo: "Comprovação não necessária", texto: `${protocolo} é anterior à regra de comprovação de entrega e não precisa de fotos.` };
+    case "AGUARDANDO_DESPACHO":
+      return {
+        titulo: "Comprovação ainda não liberada",
+        texto: `${protocolo} está como "${pedido ? apresentarStatusVisivel(pedido.status, pedido.comprovacao_status).rotulo : "—"}". `
+          + "O formulário é liberado quando o Compras marca o pedido como despachado. Leia o QR code de novo mais tarde.",
+      };
+    case "NAO_ENCONTRADO":
+      return {
+        titulo: "Pedido não encontrado entre os seus",
+        texto: "A comprovação de entrega só pode ser enviada por quem fez o pedido. Entre com o usuário do solicitante e leia o QR code de novo.",
+      };
+  }
+}
 
 /**
  * Meus Pedidos — acompanhamento do solicitante.
@@ -24,10 +47,32 @@ import { cn } from "@/lib/utils";
  * Editar e cancelar NÃO existem aqui por decisão de produto — são do Supply.
  */
 export default function MeusPedidos() {
-  const { data: pedidos = [], isLoading } = useMeusPedidos();
+  const { data: pedidos = [], isLoading, isSuccess } = useMeusPedidos();
   const [busca, setBusca] = useState("");
-  const [avisoAberto, setAvisoAberto] = useState(true);
+  const [searchParams, setSearchParams] = useSearchParams();
+  // `?comprovar=<uuid>` é o destino do QR code da etiqueta do pedido (ver
+  // comprovacaoQr.ts). Quem chega por ele vem comprovar AQUELE pedido: o
+  // aviso genérico de pendências não abre por cima.
+  const pedidoQr = searchParams.get(PARAM_COMPROVAR);
+  const [avisoAberto, setAvisoAberto] = useState(!pedidoQr);
   const [comprovando, setComprovando] = useState<MeuPedido | null>(null);
+  const [avisoQr, setAvisoQr] = useState<{ situacao: Exclude<SituacaoComprovacaoQr, "PREENCHER">; pedido?: MeuPedido } | null>(null);
+
+  // Só decide com a lista carregada de verdade: com a consulta falhando,
+  // "não encontrado" seria mentira. O parâmetro sai da URL depois de lido,
+  // para recarregar a página ou fechar o formulário não reabrir tudo.
+  useEffect(() => {
+    if (!pedidoQr || !isSuccess) return;
+    const pedido = pedidos.find((p) => p.id === pedidoQr);
+    const situacao = situacaoComprovacaoQr(pedido);
+    if (situacao === "PREENCHER" && pedido) setComprovando(pedido);
+    else if (situacao !== "PREENCHER") setAvisoQr({ situacao, pedido });
+    setSearchParams((atual) => {
+      const proximo = new URLSearchParams(atual);
+      proximo.delete(PARAM_COMPROVAR);
+      return proximo;
+    }, { replace: true });
+  }, [pedidoQr, isSuccess, pedidos, setSearchParams]);
 
   const pendentes = useMemo(
     () => pedidos.filter((p) => p.status === "DESPACHADO" && p.comprovacao_status === "PENDENTE"),
@@ -110,6 +155,25 @@ export default function MeusPedidos() {
           <DialogFooter>
             <Button variant="outline" onClick={() => setAvisoAberto(false)}>Agora não</Button>
             <Button onClick={() => { setComprovando(pendentes[0]); setAvisoAberto(false); }}>Preencher agora</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!avisoQr} onOpenChange={(aberto) => !aberto && setAvisoQr(null)}>
+        <DialogContent className="max-w-lg">
+          {avisoQr && (() => {
+            const aviso = textoAvisoQr(avisoQr.situacao, avisoQr.pedido);
+            return (
+              <>
+                <DialogHeader>
+                  <DialogTitle className="flex items-center gap-2"><QrCode className="h-5 w-5" /> {aviso.titulo}</DialogTitle>
+                </DialogHeader>
+                <p className="py-2 text-sm text-muted-foreground">{aviso.texto}</p>
+              </>
+            );
+          })()}
+          <DialogFooter>
+            <Button onClick={() => setAvisoQr(null)}>Entendi</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
