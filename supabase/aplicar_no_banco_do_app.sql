@@ -33993,7 +33993,7 @@ NOTIFY pgrst, 'reload schema';
 -- NOTIFY pgrst, 'reload schema';
 
 
--- ===== 20260930000273_chamado_treinamento_sistemas (PENDENTE - aplicar ANTES de o front ir para a main) =====
+-- ===== 20260930000273_chamado_treinamento_sistemas (JA APLICADA 30/09) =====
 -- =========================================================================
 -- CHAMADOS DE SISTEMAS — Treinamento vai para "Treinamentos Sistemas"
 -- (Central de Serviços › Treinamentos), com participantes escolhidos pelo dev
