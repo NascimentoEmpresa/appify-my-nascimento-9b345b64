@@ -18,6 +18,7 @@ import {
 import { MENU, ROTULO_TIPO_CONTEUDO, type Modulo } from "./tipos";
 import { TrnCarregando, TrnEstilo, TrnHero } from "./ui";
 import CursoPublico from "./CursoPublico";
+import { AVISO_QR_CURSO, BotaoQrCode, urlCursoPortal } from "./QrCodeDialog";
 
 // =====================================================================
 // TREINAMENTOS — Cursos › Visualização do curso.
@@ -113,6 +114,7 @@ export default function CursoDetalhe() {
         <TrnHero eyebrow="Treinamentos › Cursos" titulo="Visualização do curso" texto={curso?.nome}
                  acoes={<>
                    <Link to="/app/treinamentos/cursos" className="sec">← Todos os cursos</Link>
+                   {curso && <BotaoQrCode url={urlCursoPortal(curso.id)} titulo={curso.nome} subtitulo="Portal do Colaborador" rotulo="GERAR QR CODE" variant="secondary" aviso={AVISO_QR_CURSO} />}
                    <AcessoGate menu={MENU.cursos} acao="excluir"><button className="sec" onClick={apagarCurso}><Trash2 className="h-4 w-4" /> Excluir</button></AcessoGate>
                    <AcessoGate menu={MENU.cursos} acao="incluir"><button className="sec" onClick={duplicar}><Copy className="h-4 w-4" /> Duplicar</button></AcessoGate>
                    <AcessoGate menu={MENU.cursos} acao="alterar"><Link to={`/app/treinamentos/cursos/${id}/editar`}><Pencil className="h-4 w-4" /> Editar curso</Link></AcessoGate>

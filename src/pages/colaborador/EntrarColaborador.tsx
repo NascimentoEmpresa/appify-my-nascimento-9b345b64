@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Navigate, useNavigate, useSearchParams } from "react-router-dom";
+import { Navigate, useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { AlertCircle, ArrowRight, Eye, EyeOff, IdCard, Lock, ShieldCheck } from "lucide-react";
 import logoGN from "@/assets/logo-grupo-nascimento.png";
 import { chamarPortal, guardarSessao, lerToken, type RespostaLogin } from "@/hooks/useColaboradorPortal";
@@ -28,8 +28,14 @@ export default function EntrarColaborador() {
   const [carregando, setCarregando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
   const expirada = params.get("expirada") === "1";
+  // Veio de um link direto (ex.: QR Code de um curso, 30/09/2026): o
+  // ColaboradorShell manda para cá com state.de; depois de entrar, volta
+  // para lá. Só caminhos do próprio portal — nada de redirecionar para fora.
+  const location = useLocation();
+  const de = (location.state as { de?: string } | null)?.de;
+  const destino = de && /^\/colaborador\/[\w/-]+$/.test(de) ? de : "/colaborador";
 
-  if (lerToken()) return <Navigate to="/colaborador" replace />;
+  if (lerToken()) return <Navigate to={destino} replace />;
 
   const entrar = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -40,7 +46,7 @@ export default function EntrarColaborador() {
       const r = await chamarPortal<RespostaLogin>("login", { cpf, senha });
       if (!r.ok || !r.token) { setErro(r.error ?? "CPF ou senha inválidos."); return; }
       guardarSessao(r.token, r.nome ?? "");
-      navigate("/colaborador", { replace: true });
+      navigate(destino, { replace: true });
     } catch (err) {
       setErro(err instanceof Error ? err.message : "Não foi possível entrar agora.");
     } finally {

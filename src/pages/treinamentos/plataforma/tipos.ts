@@ -226,6 +226,36 @@ export const MENU = {
   avisos: "treinamentos_avisos",
   notificacoes: "treinamentos_notificacoes",
   calendario: "treinamentos_calendario",
+  campanhas: "treinamentos_campanhas",
 } as const;
 
 export const BUCKET_TRN = "trn-midia";
+
+// ── Campanhas (mig 20260930000268) ───────────────────────────────────
+// Conteúdo PÚBLICO, sem login, em /campanhas/<slug>. A provinha usa o mesmo
+// formato de pergunta da prova da aula (PerguntaQuiz + ProvaConfig).
+export type TipoItemCampanha = "video" | "texto" | "imagem" | "link" | "arquivo" | "prova";
+export const ROTULO_ITEM_CAMPANHA: Record<TipoItemCampanha, string> = {
+  video: "Vídeo", texto: "Texto", imagem: "Imagem", link: "Link", arquivo: "Arquivo", prova: "Provinha",
+};
+
+export interface Campanha {
+  id: string; titulo: string; slug: string; resumo: string | null; capa_path: string | null; cor: string;
+  publicada: boolean; inicio_em: string | null; fim_em: string | null;
+  pedir_identificacao: boolean; pedir_documento: boolean;
+  criado_por: string | null; created_at: string; updated_at: string;
+}
+
+export interface CampanhaItem {
+  id: string; campanha_id: string; posicao: number; tipo: TipoItemCampanha; titulo: string | null; texto: string | null;
+  video_url: string | null; video_path: string | null; imagem_path: string | null;
+  arquivo_path: string | null; arquivo_nome: string | null; link_url: string | null; link_rotulo: string | null;
+  quiz: PerguntaQuiz[] | null; nota_minima: number; prova_config: ProvaConfig;
+}
+
+export interface CampanhaResposta {
+  id: string; campanha_id: string; item_id: string | null; item_titulo: string | null;
+  nome: string | null; documento: string | null; acertos: number; total: number;
+  pontos: number; pontos_total: number; nota: number; aprovado: boolean; created_at: string;
+}
+

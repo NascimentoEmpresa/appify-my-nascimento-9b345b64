@@ -188,6 +188,8 @@ import TrnCertificadoVisualizar from "./pages/treinamentos/plataforma/Certificad
 import TrnAvisos from "./pages/treinamentos/plataforma/Avisos";
 import TrnNotificacoes from "./pages/treinamentos/plataforma/Notificacoes";
 import TrnCalendario from "./pages/treinamentos/plataforma/Calendario";
+import TrnCampanhasLista from "./pages/treinamentos/plataforma/CampanhasLista";
+import TrnCampanhaForm from "./pages/treinamentos/plataforma/CampanhaForm";
 import SolicitarTrocaFuncao from "./pages/encarregados/SolicitarTrocaFuncao";
 import OperacionalTrocaFuncao from "./pages/operacional/TrocaFuncao";
 import OperacionalOrientacoesJuridicas from "./pages/operacional/OrientacoesJuridicas";
@@ -221,6 +223,7 @@ import FormulariosDashboard from "./pages/central-servicos/FormulariosDashboard"
 import PainelGerencialFormularios from "./pages/central-servicos/PainelGerencial";
 import FormulariosConfig from "./pages/central-servicos/FormulariosConfig";
 import FormularioPublico from "./pages/publico/FormularioPublico";
+import CampanhaPublica from "./pages/publico/CampanhaPublica";
 import Denuncia from "./pages/publico/Denuncia";
 import FornecedorCadastro from "./pages/publico/FornecedorCadastro";
 import PedidoConfirmar from "./pages/publico/PedidoConfirmar";
@@ -385,6 +388,9 @@ const App = () => (
           {/* Portal público de resposta a formulários (sem login) */}
           <Route path="/formularios/:slug" element={<FormularioPublico />} />
           <Route path="/candidatura" element={<Navigate to="/vagas" replace />} />
+          {/* Campanhas do Treinamentos — página pública do QR Code, sem login
+              (mig 20260930000268: só as RPCs trn_campanha_publica/_responder). */}
+          <Route path="/campanhas/:slug" element={<CampanhaPublica />} />
           {/* Nascimento Formulários — resposta pública, sem login */}
           <Route path="/formularios/:slug" element={<FormularioPublico />} />
           {/* Cadastro que o próprio fornecedor preenche, sem login. A credencial
@@ -800,6 +806,9 @@ const App = () => (
             <Route path="treinamentos/comunicacao/avisos" element={<TrnAvisos />} />
             <Route path="treinamentos/comunicacao/notificacoes" element={<TrnNotificacoes />} />
             <Route path="treinamentos/comunicacao/calendario" element={<TrnCalendario />} />
+            <Route path="treinamentos/campanhas" element={<TrnCampanhasLista />} />
+            <Route path="treinamentos/campanhas/nova" element={<TrnCampanhaForm />} />
+            <Route path="treinamentos/campanhas/:id" element={<TrnCampanhaForm />} />
             {/* Licitações › Analistas Validações — a PRIMEIRA porta dos três
                 fluxos (02/09/2026). Antes a etapa 1 era do Operacional, que
                 ficou só com o acompanhamento. */}
