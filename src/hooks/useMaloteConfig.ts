@@ -33,6 +33,10 @@ export interface MaloteDiaBloqueado {
   // SIS-2026-0211: liberado=true LIBERA essa data específica mesmo que
   // caia num fim de semana bloqueado por padrão — é a exceção pontual.
   liberado: boolean;
+  // SIS-2026-0572: tipo "Folha" (e, no futuro, qualquer outro tipo) pode
+  // restringir o bloqueio a só liberar certas classificações — vazio
+  // continua bloqueando todo mundo, igual sempre foi.
+  classificacao_ids: string[];
 }
 
 const CONFIG_KEY = "malote_config";
@@ -170,10 +174,17 @@ export function useMaloteDiasBloqueados() {
     queryFn: async () => {
       const { data, error } = await (supabase as any)
         .from("malote_dia_bloqueado")
-        .select("id, data, tipo, descricao, liberado")
+        .select("id, data, tipo, descricao, liberado, malote_dia_bloqueado_classificacao_liberada(classificacao_id)")
         .order("data", { ascending: false });
       if (error) throw error;
-      return (data ?? []) as MaloteDiaBloqueado[];
+      return (data ?? []).map((d: any) => ({
+        id: d.id,
+        data: d.data,
+        tipo: d.tipo,
+        descricao: d.descricao,
+        liberado: d.liberado,
+        classificacao_ids: (d.malote_dia_bloqueado_classificacao_liberada ?? []).map((l: any) => l.classificacao_id),
+      })) as MaloteDiaBloqueado[];
     },
   });
 }
@@ -184,14 +195,31 @@ interface SalvarDiaBloqueadoInput {
   tipo: string;
   descricao: string | null;
   liberado?: boolean;
+  // SIS-2026-0572: ids de classificação liberados pra esse dia — vazio/
+  // omitido remove todos os vínculos (dia volta a bloquear todo mundo).
+  classificacao_ids?: string[];
 }
 
 export function useSalvarDiaBloqueado() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (input: SalvarDiaBloqueadoInput) => {
-      const { error } = await (supabase as any).from("malote_dia_bloqueado").upsert(input);
+    mutationFn: async ({ classificacao_ids, ...input }: SalvarDiaBloqueadoInput) => {
+      const { data, error } = await (supabase as any).from("malote_dia_bloqueado").upsert(input).select("id").single();
       if (error) throw error;
+      const diaId = data.id as string;
+      // Mesmo padrão delete-then-insert já usado pra malote_despesa_rateio_linha
+      // em useMaloteDespesa.ts — mais simples que calcular o diff.
+      const { error: delErro } = await (supabase as any)
+        .from("malote_dia_bloqueado_classificacao_liberada")
+        .delete()
+        .eq("dia_bloqueado_id", diaId);
+      if (delErro) throw delErro;
+      if (classificacao_ids?.length) {
+        const { error: insErro } = await (supabase as any)
+          .from("malote_dia_bloqueado_classificacao_liberada")
+          .insert(classificacao_ids.map((classificacao_id) => ({ dia_bloqueado_id: diaId, classificacao_id })));
+        if (insErro) throw insErro;
+      }
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: [DIAS_KEY] }),
   });
