@@ -253,6 +253,12 @@ const controladoriaOrcModule: ModuleDef = {
       defaultOpen: true,
       items: [
         { label: "Gerador de POPs", to: "/app/controladoria/gerador-pops", icon: FileOutput },
+        // SIS-2026-0562: item precisa existir AQUI (não só em app_menu) —
+        // a sidebar não lê o menu do banco pra montar a navegação, só usa
+        // app_menu pra decidir se o item aparece dado o acesso do usuário
+        // (ver isAllowed logo abaixo). Sem esta linha, a rota funciona por
+        // acesso direto mas nunca aparece pra ninguém clicar.
+        { label: "Controle de Faturamento", to: "/app/controladoria/controle-faturamento", icon: FileText },
       ],
     },
   ],
