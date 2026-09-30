@@ -9,7 +9,7 @@ import { FeedAtualizacoes } from "./FeedAtualizacoes";
 import { AvaliarChamadoDialog } from "./AvaliarChamadoDialog";
 import { BotaoChatChamado, useChamadosNaoLidos } from "./BotaoChatChamado";
 import { BotaoStatusChamado, SeloEtapaValidacao, useValidacoesChamados } from "./StatusValidacao";
-import { pendenciaTreinamento } from "./validacaoPresidencia";
+import { avaliacaoLiberada, pendenciaTreinamento } from "./validacaoPresidencia";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -46,7 +46,11 @@ export default function MeusChamados({ base = "/app/central-servicos/chamados" }
     queryKey: ["chamados-avaliacoes-pendentes"],
     queryFn: async () => {
       const { data } = await (supabase as any).rpc("chamados_meus_avaliacoes_pendentes");
-      return (data ?? []) as Array<{ id: string; numero: string; assunto: string }>;
+      // Só o que já dá para AVALIAR: os de treinamento a confirmar (mig 269)
+      // aparecem no card "Confirme o treinamento", logo abaixo — avaliar
+      // antes de confirmar o banco recusa.
+      return ((data ?? []) as Array<{ id: string; numero: string; assunto: string; pendencia?: string }>)
+        .filter((p) => p.pendencia !== "treinamento");
     },
   });
 
@@ -268,6 +272,14 @@ export default function MeusChamados({ base = "/app/central-servicos/chamados" }
                       />
                       {c.status === "cancelado" ? null : c.status !== "concluido" ? (
                         <Button variant="ghost" size="sm" disabled className="h-8 cursor-not-allowed gap-1.5 text-muted-foreground/60">
+                          <Lock className="h-3.5 w-3.5" /> Avaliar
+                        </Button>
+                      ) : !avaliacaoLiberada(validacoes[c.id]).liberada ? (
+                        // Presidência validando ou treinamento a confirmar (mig 269): avalia depois.
+                        <Button variant="ghost" size="sm" disabled
+                          title={avaliacaoLiberada(validacoes[c.id]).motivo === "treinamento"
+                            ? "Confirme o treinamento no chamado; depois avalie" : "Aguardando a validação da Presidência"}
+                          className="h-8 cursor-not-allowed gap-1.5 text-muted-foreground/60">
                           <Lock className="h-3.5 w-3.5" /> Avaliar
                         </Button>
                       ) : pendentesIds.has(c.id) ? (

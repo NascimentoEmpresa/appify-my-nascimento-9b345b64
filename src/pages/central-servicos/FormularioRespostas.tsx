@@ -392,16 +392,32 @@ export default function FormularioRespostas() {
 
   // Quem respondeu: o nome gravado na resposta ou, quando ela veio sem nome
   // (importada), o valor da pergunta que identifica o respondente.
+  // Respondendo POR outra pessoa (mig 271): o nome digitado na pergunta
+  // configurada em pergunta_em_nome_de_id. No Diagnóstico da Liderança os
+  // supervisores, logados, responderam por ~45 colaboradores — que sumiam na
+  // tela atrás do nome de quem enviou (30/09/2026).
+  const emNomeDe = useCallback((r: Resposta): string => {
+    if (r.anonimo || !form?.pergunta_em_nome_de_id) return "";
+    const v = r.itens[form.pergunta_em_nome_de_id];
+    return (Array.isArray(v) ? (v[0] != null ? String(v[0]) : "") : (v != null ? String(v) : "")).trim();
+  }, [form?.pergunta_em_nome_de_id]);
+
   const nomeRespondente = useCallback((r: Resposta): string => {
     // Anônima é anônima: nem a pergunta de identificação vale como nome aqui
     // (o formulário pode ter uma, e ela devolveria a pessoa pela porta dos fundos).
     if (r.anonimo) return "Anônimo";
+    const porOutro = emNomeDe(r);
+    if (porOutro) return porOutro;
     const gravado = (r.respondente_nome ?? "").trim();
     if (gravado) return gravado;
     const v = perguntaNomeId ? r.itens[perguntaNomeId] : null;
     const txt = Array.isArray(v) ? (v[0] != null ? String(v[0]) : "") : (v != null ? String(v) : "");
     return txt.trim() || "Anônimo";
-  }, [perguntaNomeId]);
+  }, [perguntaNomeId, emNomeDe]);
+
+  /** Quem ENVIOU a resposta, quando foi em nome de outra pessoa (senão ""). */
+  const enviadoPor = useCallback((r: Resposta): string =>
+    emNomeDe(r) ? String(r.respondente_cadastro?.nome ?? r.respondente_nome ?? "").trim() : "", [emNomeDe]);
 
   // Identidade oficial de quem respondeu. Ela vem da PRÓPRIA resposta: quem
   // envia logado chega carimbado com o cadastro (respondente_cadastro), então
@@ -490,9 +506,9 @@ export default function FormularioRespostas() {
   const exportCsv = () => {
     if (!form) return;
     const esc = (s: unknown) => `"${String(s ?? "").replace(/"/g, '""')}"`;
-    const cab = ["Enviado em", "Nome", "E-mail", ...pergs.map(p => p.titulo)];
+    const cab = ["Enviado em", "Nome", "Enviado por", "E-mail", ...pergs.map(p => p.titulo)];
     const linhas = respsFiltradas.map(r => [
-      fmtDt(r.enviado_em), nomeRespondente(r), r.respondente_email ?? "",
+      fmtDt(r.enviado_em), nomeRespondente(r), enviadoPor(r), r.respondente_email ?? "",
       ...pergs.map(p => valorTexto(r.itens[p.id])),
     ]);
     const csv = "﻿" + [cab, ...linhas].map(l => l.map(esc).join(";")).join("\r\n");
@@ -634,6 +650,12 @@ export default function FormularioRespostas() {
                       ? <NomeLink texto={quem} resolve={resolveQuem} onPessoa={setPessoa} />
                       : quem}
                   </span>
+                  {enviadoPor(r) && (
+                    <span title="Resposta preenchida por outra pessoa, logada no ERP, em nome deste colaborador"
+                      style={{ fontSize: 10.5, fontWeight: 800, padding: "2px 8px", borderRadius: 20, background: "#fff7ed", color: "#c2410c" }}>
+                      ✍ enviado por {enviadoPor(r)}
+                    </span>
+                  )}
                   {r.anonimo && <span title="Enviada sem identificação - nada nesta resposta aponta para quem respondeu" style={{ fontSize: 10.5, fontWeight: 800, padding: "2px 8px", borderRadius: 20, background: "#f1f5f9", color: "#475569" }}>🕶 Anônima</span>}
                   {r.respondente_email && <span style={{ fontSize: 11.5, color: "#64748b" }}>{r.respondente_email}</span>}
                   <span style={{ fontSize: 11, color: "#94a3b8" }}>{fmtDt(r.enviado_em)}</span>
@@ -646,7 +668,7 @@ export default function FormularioRespostas() {
                   <div style={{ flex: 1 }} />
                   <button onClick={() => exportarPdf([r], `Resposta individual — ${quem}`, quem !== "Anônimo" ? quem : r.id.slice(0, 8))} title="Baixar esta resposta em PDF"
                     style={btn("#fff", "#0f3171", "1px solid rgba(15,49,113,.25)")}>⬇ PDF</button>
-                  {r.respondente_cadastro && <button onClick={() => setDetalhe(r)} style={btn("rgba(15,49,113,.08)", "#0f3171", "1px solid rgba(15,49,113,.2)")}>👤 Detalhes</button>}
+                  {r.respondente_cadastro && <button onClick={() => setDetalhe(r)} title={enviadoPor(r) ? "Cadastro de quem ENVIOU a resposta" : undefined} style={btn("rgba(15,49,113,.08)", "#0f3171", "1px solid rgba(15,49,113,.2)")}>👤 {enviadoPor(r) ? "Quem enviou" : "Detalhes"}</button>}
                   <button onClick={() => excluirResp(r)} style={{ background: "none", border: "none", color: "#dc2626", cursor: "pointer", fontSize: 11.5, fontWeight: 700 }}>Excluir</button>
                 </div>
                 <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>

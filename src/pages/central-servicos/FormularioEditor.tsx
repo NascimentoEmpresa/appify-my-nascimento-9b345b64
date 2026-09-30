@@ -419,6 +419,7 @@ export default function FormularioEditor() {
     const extra = {
       pergunta_setor_id: form.pergunta_setor_id || null,
       pergunta_nome_id: form.pergunta_nome_id || null,
+      pergunta_em_nome_de_id: form.pergunta_em_nome_de_id || null,
       seguranca: form.seguranca ?? "liberado",
       // Liberado zera os filtros: não deixa restrição órfã no banco.
       setores_acesso: restrito ? (form.setores_acesso?.length ? form.setores_acesso : null) : null,
@@ -557,6 +558,14 @@ export default function FormularioEditor() {
                     {pergs.filter(p => p.titulo.trim()).map(p => <option key={p.id} value={p.id}>{p.titulo.length > 60 ? p.titulo.slice(0, 60) + "…" : p.titulo}</option>)}
                   </select>
                   <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 4 }}>Usada quando a resposta não tem nome (ex.: importadas) — vira o nome em Respostas e no filtro.</div>
+                </div>
+                <div style={{ gridColumn: "1 / -1" }}>
+                  <label style={lbl}>Pergunta "respondendo por outra pessoa" (nome de quem está sendo respondido)</label>
+                  <select value={form.pergunta_em_nome_de_id ?? ""} onChange={e => mudaForm({ pergunta_em_nome_de_id: e.target.value || null })} style={{ ...inp, width: "100%", maxWidth: 420, textOverflow: "ellipsis" }}>
+                    <option value="">- Nenhuma (cada um responde por si) -</option>
+                    {pergs.filter(p => p.titulo.trim()).map(p => <option key={p.id} value={p.id}>{p.titulo.length > 60 ? p.titulo.slice(0, 60) + "…" : p.titulo}</option>)}
+                  </select>
+                  <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 4 }}>Quando alguém (ex.: o supervisor, logado) responde pelo colaborador: com esta pergunta preenchida, Respostas mostra o colaborador e "enviado por" quem estava logado.</div>
                 </div>
               </>}
             </div>
