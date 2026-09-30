@@ -99,10 +99,22 @@ export function pendenteHaMaisDe30Dias(n: { situacao_site_pmt?: string | null; s
   return dias !== null && dias > 30;
 }
 
+// Achado real (Ruan): nota Cancelada/Substituída nunca vai ter pagamento —
+// contava como "pendente de receber" em todo lugar que soma isso, inflando
+// o total. `situacaoEspecial` já existe pro badge visual; centralizando a
+// checagem aqui corrige os 4 lugares que chamam esta função de uma vez, em
+// vez de repetir a mesma condição em cada um.
 export function valorPendenteNf(
-  nf: { vlr_liquido_total: number; valor_pago: number | null; desconto_conta_vinculada: number },
+  nf: {
+    vlr_liquido_total: number;
+    valor_pago: number | null;
+    desconto_conta_vinculada: number;
+    situacao_site_pmt?: string | null;
+    situacao_dominio?: string | null;
+  },
   itens: { multas_pos_emissao: number; glosas_pos_emissao: number; outros_descontos_pos_emissao: number }[],
 ): number {
+  if (situacaoEspecial(nf)) return 0;
   const pos = somaDescontosPosEmissao(itens);
   return Math.max(0, nf.vlr_liquido_total - (nf.valor_pago ?? 0) - nf.desconto_conta_vinculada - pos);
 }

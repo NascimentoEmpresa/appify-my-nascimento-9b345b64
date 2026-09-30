@@ -63,10 +63,16 @@ espelho-mysql/logs
 # Estado do type-check incremental (tsc --incremental) e a saída bruta que o
 # job `tipos` do CI monta. Local, descartável e grande — nunca versionar.
 .tsbuildinfo-ci/
+.tsbuildinfo-local/
 *.tsbuildinfo
 tsc-saida.txt
 tsc-da-pr.txt
 arquivos-da-pr.txt
+
+# Arquivos locais soltos na raiz, sem relação com o código (planilha de
+# referência e handoff de outra sessão) — nunca versionar.
+/Classificacoes-Malote-o-que-cada-uma-contempla.xlsx
+/HANDOFF-seletor-empresa-licitacao.md
 
 # Lixo do CLI do Supabase (gerado ao rodar qualquer comando logado)
 supabase/.temp/
