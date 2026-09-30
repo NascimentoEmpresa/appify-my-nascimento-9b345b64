@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "@/hooks/use-toast";
+import type { OrigemContrato } from "@/lib/implantacao/camposOrigem";
 
 export interface ChecklistItem {
   id: string;
@@ -247,5 +248,29 @@ export function useRespostaUpsert(empresaId: string) {
       qc.invalidateQueries({ queryKey: ["respostas", vars.contratoId] });
     },
     onError: (e: Error) => toast({ title: "Erro ao salvar", description: e.message, variant: "destructive" }),
+  });
+}
+
+// ── Origem dos campos (Capa de Edital + Grade de Licitações) ───────────────
+
+// SIS-2026-0559: os 11 itens do checklist que já existem na Capa/Grade vêm
+// prontos pro usuário confirmar. A leitura é por RPC e NÃO por embed do
+// PostgREST porque as três tabelas são gateadas por menus diferentes
+// (implantacao / editais / pipeline): quem tem acesso só à Implantação
+// receberia o embed como null — sem erro, sem aviso, com a tela toda vazia.
+// O SECURITY DEFINER da função é gateado por 'implantacao' (migration
+// 20260930000275), então não amplia o que a pessoa já podia ver aqui.
+export function useImplantacaoOrigem(contratoId: string | null) {
+  return useQuery({
+    queryKey: ["implantacao-origem", contratoId],
+    enabled: !!contratoId,
+    queryFn: async () => {
+      const { data, error } = await (supabase as any).rpc("implantacao_origem_contrato", {
+        p_contrato_id: contratoId!,
+      });
+      if (error) throw error;
+      // RETURNS TABLE devolve array; o filtro é por PK, então é 0 ou 1 linha.
+      return ((data ?? [])[0] ?? null) as OrigemContrato | null;
+    },
   });
 }

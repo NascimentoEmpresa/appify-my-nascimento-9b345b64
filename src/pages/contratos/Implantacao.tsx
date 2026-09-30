@@ -6,10 +6,13 @@ import {
   useChecklistItems,
   useRespostas,
   useRespostaUpsert,
+  useImplantacaoOrigem,
   calcPrazo,
 } from "@/hooks/useImplantacao";
+import { PainelOrigemContrato } from "@/components/contratos/PainelOrigemContrato";
+import { ROW_INDEX_NO_TOPO } from "@/lib/implantacao/camposOrigem";
 import type { ImplantacaoContrato, ChecklistItem, Resposta, HistoricoEntry } from "@/hooks/useImplantacao";
-import { CheckCircle2, Circle, Clock, Pencil, Eye, ArrowRight, Trash2, MapPin, X as XIcon, CheckCircle, History } from "lucide-react";
+import { CheckCircle2, Circle, ChevronDown, Trash2, MapPin, X as XIcon, CheckCircle, History } from "lucide-react";
 import { useUsuariosEmpresa } from "@/hooks/useUsuariosEmpresa";
 import { useDocTipos } from "@/hooks/useDocumentos";
 import { usePlanilhaCustos } from "@/hooks/usePlanilhaCusto";
@@ -76,6 +79,10 @@ export default function Implantacao() {
 
   const itensFiltrados = useMemo(() => {
     return checklistItems.filter((i) => {
+      // SIS-2026-0559: os 11 itens que vêm prontos da Capa/Grade subiram pro
+      // painel do topo. Deixá-los também aqui faria responder o mesmo
+      // `row_index` em dois lugares. Continuam contando no progresso geral.
+      if (ROW_INDEX_NO_TOPO.has(i.row_index)) return false;
       if (momentoFiltro && i.momento !== momentoFiltro) return false;
       if (responsavelFiltro && i.responsavel_acao !== responsavelFiltro && i.responsavel_acao !== "Todos") return false;
       return true;
@@ -88,6 +95,8 @@ export default function Implantacao() {
   // pela origem), não mais da empresa "ativa" do seletor global.
   const { data: respostas = [] } = useRespostas(contratoSelecionado, contrato?.empresa_id ?? null);
   const upsert = useRespostaUpsert(contrato?.empresa_id ?? "");
+  // SIS-2026-0559: valores que já existem na Capa de Edital / Grade de Licitações.
+  const { data: origem = null, isLoading: carregandoOrigem } = useImplantacaoOrigem(contratoSelecionado);
   const { data: usuarios = [] } = useUsuariosEmpresa();
   const usuariosMap = useMemo(() => {
     const m: Record<string, string> = {};
@@ -172,25 +181,21 @@ export default function Implantacao() {
             )}
           </div>
 
-          {/* Banner confirmação de nome */}
-          {contrato && !nomeConfirmados.has(contrato.id) && (
-            <div className="flex items-center justify-between gap-3 rounded-lg border border-amber-400/50 bg-amber-500/10 px-4 py-3">
-              <div className="text-xs text-amber-700">
-                <span className="font-semibold">O nome do contrato está correto?</span>
-                <span className="ml-2 font-mono">"{contrato.nome}"</span>
-              </div>
-              <div className="flex gap-2">
-                <Button size="sm" variant="outline"
-                  className="h-7 gap-1.5 px-2 text-[11px] border-amber-400/50 text-amber-700 hover:bg-amber-50"
-                  onClick={() => setEditandoNome(true)}>
-                  <Pencil className="h-3 w-3" /> Editar
-                </Button>
-                <Button size="sm" className="h-7 px-2 text-[11px] bg-emerald-600 hover:bg-emerald-700"
-                  onClick={() => confirmarNome(contrato.id)}>
-                  Confirmar
-                </Button>
-              </div>
-            </div>
+          {/* SIS-2026-0559: dados que já vêm da Capa/Grade, no topo, só pra confirmar.
+              Absorve o antigo banner âmbar "O nome do contrato está correto?". */}
+          {contrato && (
+            <PainelOrigemContrato
+              contratoNome={contrato.nome}
+              origem={origem}
+              carregando={carregandoOrigem}
+              respostaMap={respostaMap}
+              onSalvar={(rowIndex, resposta) =>
+                upsert.mutateAsync({ contratoId: contrato.id, rowIndex, resposta, obs: null })
+              }
+              nomeConfirmado={nomeConfirmados.has(contrato.id)}
+              onConfirmarNome={() => confirmarNome(contrato.id)}
+              onEditarNome={() => setEditandoNome(true)}
+            />
           )}
 
           {/* Barra de progresso */}
@@ -233,7 +238,11 @@ export default function Implantacao() {
             <div className="space-y-6">
               {responsaveisFiltrados.map((responsavel) => {
                 const itensSetor = itensFiltrados.filter((i) => i.responsavel_acao === responsavel);
-                const respSetor  = itensSetor.filter((i) => respostaMap[i.id]?.resposta).length;
+                // SIS-2026-0559: era `respostaMap[i.id]`, e `respostaMap` é indexado
+                // por `row_index` (número) enquanto `item.id` é uuid — a conta dava
+                // 0 sempre, e a barra de cada setor ficava zerada mesmo com tudo
+                // respondido. O contador global embaixo já usava a chave certa.
+                const respSetor  = itensSetor.filter((i) => respostaMap[i.row_index]?.resposta).length;
                 return (
                   <section key={responsavel}>
                     {/* Header do responsável */}
@@ -249,10 +258,11 @@ export default function Implantacao() {
                       </div>
                     </div>
 
-                    {/* Grid de cards */}
-                    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+                    {/* SIS-2026-0559: lista de linhas (era grade de 3 colunas de cards).
+                        Linha respondida fica fechada; quem falta responder fica aberta. */}
+                    <div className="divide-y divide-border rounded-xl border border-border bg-card">
                       {itensSetor.map((item) => (
-                        <CardChecklist
+                        <LinhaChecklist
                           key={item.id}
                           item={item}
                           contrato={contrato}
@@ -400,7 +410,7 @@ function EnderecosPostos({ contratoNome }: { contratoNome: string }) {
   );
 }
 
-function CardChecklist({
+function LinhaChecklist({
   item,
   contrato,
   resposta: savedResp,
@@ -417,12 +427,16 @@ function CardChecklist({
   const isDocs      = isDocsItem(item);
   const isEnderecos = isEnderecosItem(item);
   const prazo       = calcPrazo(item, contrato);
-  const answered   = !!savedResp?.resposta;
+  const answered    = !!savedResp?.resposta;
 
   const [localResp, setLocalResp] = useState<string>(savedResp?.resposta ?? "");
   const [localObs,  setLocalObs]  = useState<string>(savedResp?.obs ?? "");
   const [state, setState]         = useState<"idle" | "saving" | "saved" | "failed">("idle");
   const [showHistorico, setShowHistorico] = useState(false);
+  // SIS-2026-0559: linha respondida nasce fechada, linha pendente nasce aberta.
+  // É o que faz o "quanto falta" aparecer batendo o olho — o pedido do chamado
+  // era justamente enxergar o progresso do preenchimento.
+  const [aberta, setAberta] = useState(!answered);
   const historico: HistoricoEntry[] = savedResp?.historico ?? [];
 
   useEffect(() => {
@@ -432,119 +446,144 @@ function CardChecklist({
     }
   }, [savedResp]);
 
-  async function handleSave() {
-    if (!localResp) return;
+  async function salvar(resposta: string, obs: string) {
+    if (!resposta) return;
     setState("saving");
     try {
-      await onSave(localResp, localObs);
+      await onSave(resposta, obs);
       setState("saved");
       setTimeout(() => setState("idle"), 2000);
+      setAberta(false);
     } catch {
       setState("failed");
       setTimeout(() => setState("idle"), 2500);
     }
   }
 
+  /** Resumo do que está salvo, pra linha fechada mostrar sem abrir. */
+  const resumo = useMemo(() => {
+    const r = savedResp?.resposta ?? "";
+    if (!r) return "";
+    if (isDocs) {
+      try {
+        const lista = JSON.parse(r) as string[];
+        return `${lista.length} documento${lista.length !== 1 ? "s" : ""}`;
+      } catch { return r; }
+    }
+    return r;
+  }, [savedResp, isDocs]);
+
   return (
-    <div className={cn(
-      "rounded-xl border bg-card flex flex-col gap-3 shadow-sm transition-all",
-      answered ? "border-l-4 border-l-emerald-400" : "border-border",
-      "hover:shadow-md hover:border-primary/30 p-4"
-    )}>
-      {/* Cabeçalho */}
-      <div className="flex items-start justify-between gap-2">
-        <div className="flex flex-wrap items-center gap-1.5">
-          {item.responsavel_acao && (
-            <span className="inline-flex items-center gap-1 text-[11px] font-semibold bg-secondary border border-border px-2 py-0.5 rounded">
-              <ArrowRight className="w-3 h-3 text-primary" />
-              {item.responsavel_acao}
-            </span>
-          )}
+    <div className={cn("transition-colors", answered && "bg-emerald-500/[0.04]")}>
+      {/* Cabeçalho da linha — sempre visível */}
+      <div className="flex items-center gap-3 px-3 py-2">
+        <button onClick={() => setAberta((p) => !p)} className="flex min-w-0 flex-1 items-center gap-2.5 text-left">
+          {answered
+            ? <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600" />
+            : <Circle className="h-4 w-4 shrink-0 text-muted-foreground/50" />}
+          <span className="min-w-0 flex-1 truncate text-sm font-medium">{item.item}</span>
+        </button>
+
+        <div className="hidden shrink-0 items-center gap-1.5 lg:flex">
           {item.categoria && (
-            <span className="text-[11px] font-semibold text-orange-600 bg-orange-50 border border-orange-200 px-2 py-0.5 rounded">
+            <span className="rounded border border-orange-200 bg-orange-50 px-1.5 py-0.5 text-[10px] font-semibold text-orange-600">
               {item.categoria}
             </span>
           )}
+          {item.momento && (
+            <span className="max-w-[140px] truncate text-[10px] text-muted-foreground">{item.momento}</span>
+          )}
         </div>
-        {item.momento && (
-          <span className="text-[10px] text-muted-foreground text-right shrink-0 leading-tight max-w-[120px]">
-            {item.momento}
-          </span>
-        )}
-      </div>
 
-      {/* Pergunta */}
-      <p className="text-sm font-semibold text-foreground leading-snug">{item.item}</p>
-
-      {/* Resposta */}
-      <div className="space-y-1">
-        <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Resposta</span>
-        {isEnderecos ? (
-          <EnderecosPostos contratoNome={contrato.nome} />
-        ) : isDocs ? (
-          <DocMultiSelect value={localResp} onChange={setLocalResp} />
-        ) : isSimNao ? (
-          <div className="flex gap-2">
+        {/* Sim/Não/N/A direto na linha: um clique salva, sem precisar abrir. */}
+        {isSimNao && !isDocs && !isEnderecos ? (
+          <div className="flex shrink-0 gap-1">
             {(["Sim", "Não", "N/A"] as const).map((op) => (
-              <button key={op} onClick={() => setLocalResp(localResp === op ? "" : op)}
+              <button key={op} disabled={state === "saving"} onClick={() => salvar(op, localObs)}
                 className={cn(
-                  "flex-1 py-1.5 text-xs font-semibold rounded-lg border transition-all",
-                  localResp === op && op === "Sim" && "bg-emerald-50 border-emerald-500 text-emerald-700",
-                  localResp === op && op === "Não" && "bg-red-50 border-red-500 text-red-700",
-                  localResp === op && op === "N/A" && "bg-muted border-muted-foreground/40 text-muted-foreground",
-                  localResp !== op && "bg-card border-border text-foreground hover:bg-muted/50"
+                  "rounded-md border px-2 py-1 text-[11px] font-semibold transition-all",
+                  savedResp?.resposta === op && op === "Sim" && "bg-emerald-50 border-emerald-500 text-emerald-700",
+                  savedResp?.resposta === op && op === "Não" && "bg-red-50 border-red-500 text-red-700",
+                  savedResp?.resposta === op && op === "N/A" && "bg-muted border-muted-foreground/40 text-muted-foreground",
+                  savedResp?.resposta !== op && "bg-card border-border text-muted-foreground hover:bg-muted/50"
                 )}>
-                {op === "Sim" ? "✓ Sim" : op === "Não" ? "✗ Não" : "N/A"}
+                {op}
               </button>
             ))}
           </div>
         ) : (
-          <Textarea placeholder="Digite a resposta…" className="min-h-[52px] text-xs resize-y"
-            value={localResp} onChange={(e) => setLocalResp(e.target.value)} />
+          <span className="hidden max-w-[220px] shrink-0 truncate text-xs text-muted-foreground md:block">{resumo}</span>
         )}
+
+        <button onClick={() => setAberta((p) => !p)} className="shrink-0 text-muted-foreground hover:text-foreground" title={aberta ? "Fechar" : "Abrir"}>
+          <ChevronDown className={cn("h-4 w-4 transition-transform", aberta && "rotate-180")} />
+        </button>
       </div>
 
-      {/* Observações */}
-      <div className="space-y-1">
-        <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Observações</span>
-        <Textarea
-          placeholder="Adicione observações…"
-          className="min-h-[40px] text-xs resize-y"
-          value={localObs}
-          onChange={(e) => setLocalObs(e.target.value)}
-        />
-      </div>
+      {/* Corpo — abre pra responder */}
+      {aberta && (
+        <div className="space-y-3 border-t border-border/60 bg-muted/20 px-3 py-3">
+          <div className="space-y-1">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Resposta</span>
+            {isEnderecos ? (
+              <EnderecosPostos contratoNome={contrato.nome} />
+            ) : isDocs ? (
+              <DocMultiSelect value={localResp} onChange={setLocalResp} />
+            ) : isSimNao ? (
+              <div className="flex max-w-md gap-2">
+                {(["Sim", "Não", "N/A"] as const).map((op) => (
+                  <button key={op} onClick={() => setLocalResp(localResp === op ? "" : op)}
+                    className={cn(
+                      "flex-1 rounded-lg border py-1.5 text-xs font-semibold transition-all",
+                      localResp === op && op === "Sim" && "bg-emerald-50 border-emerald-500 text-emerald-700",
+                      localResp === op && op === "Não" && "bg-red-50 border-red-500 text-red-700",
+                      localResp === op && op === "N/A" && "bg-muted border-muted-foreground/40 text-muted-foreground",
+                      localResp !== op && "bg-card border-border text-foreground hover:bg-muted/50"
+                    )}>
+                    {op === "Sim" ? "✓ Sim" : op === "Não" ? "✗ Não" : "N/A"}
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <Textarea placeholder="Digite a resposta…" className="min-h-[52px] text-xs resize-y"
+                value={localResp} onChange={(e) => setLocalResp(e.target.value)} />
+            )}
+          </div>
 
-      {/* Salvar + Histórico */}
-      <div className="flex gap-2">
-        <Button
-          size="sm"
-          className={cn(
-            "flex-1 text-xs font-semibold",
-            state === "saved"  && "bg-emerald-600 hover:bg-emerald-600",
-            state === "failed" && "bg-destructive hover:bg-destructive",
+          <div className="space-y-1">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Observações</span>
+            <Textarea placeholder="Adicione observações…" className="min-h-[40px] text-xs resize-y"
+              value={localObs} onChange={(e) => setLocalObs(e.target.value)} />
+          </div>
+
+          <div className="flex gap-2">
+            <Button size="sm"
+              className={cn(
+                "text-xs font-semibold",
+                state === "saved"  && "bg-emerald-600 hover:bg-emerald-600",
+                state === "failed" && "bg-destructive hover:bg-destructive",
+              )}
+              disabled={state === "saving" || !localResp}
+              onClick={() => salvar(localResp, localObs)}>
+              {state === "saving" ? "Salvando…" : state === "saved" ? "✓ Salvo" : state === "failed" ? "✗ Falhou" : "Salvar"}
+            </Button>
+            {historico.length > 0 && (
+              <Button size="sm" variant="outline" className="px-2.5" title="Ver histórico" onClick={() => setShowHistorico(true)}>
+                <History className="h-3.5 w-3.5" />
+                <span className="ml-1 text-xs">{historico.length}</span>
+              </Button>
+            )}
+          </div>
+
+          {(item.plano_acao || item.responsavel_acao || item.onde || prazo) && (
+            <div className="space-y-1.5 rounded-lg bg-muted/60 px-3 py-2.5 text-[11px]">
+              <p className="mb-1 text-[9px] font-bold uppercase tracking-widest text-muted-foreground">Meta-block — contexto para execução</p>
+              {item.plano_acao && <MetaRow label="Plano de ação" value={item.plano_acao} />}
+              {item.responsavel_acao && <MetaRow label="Resp. ação" value={item.responsavel_acao} />}
+              {item.onde && <MetaRow label="Onde" value={item.onde} />}
+              {prazo && <MetaRow label="Prazo" value={prazo} highlight />}
+            </div>
           )}
-          disabled={state === "saving" || !localResp}
-          onClick={handleSave}
-        >
-          {state === "saving" ? "Salvando…" : state === "saved" ? "✓ Salvo" : state === "failed" ? "✗ Falhou" : "Salvar"}
-        </Button>
-        {historico.length > 0 && (
-          <Button size="sm" variant="outline" className="px-2.5" title="Ver histórico" onClick={() => setShowHistorico(true)}>
-            <History className="h-3.5 w-3.5" />
-            <span className="ml-1 text-xs">{historico.length}</span>
-          </Button>
-        )}
-      </div>
-
-      {/* Meta-block */}
-      {(item.plano_acao || item.responsavel_acao || item.onde || prazo) && (
-        <div className="bg-muted/60 rounded-lg px-3 py-2.5 space-y-1.5 text-[11px]">
-          <p className="text-[9px] font-bold uppercase tracking-widest text-muted-foreground mb-1">Meta-block — contexto para execução</p>
-          {item.plano_acao && <MetaRow label="Plano de ação" value={item.plano_acao} />}
-          {item.responsavel_acao && <MetaRow label="Resp. ação" value={item.responsavel_acao} />}
-          {item.onde && <MetaRow label="Onde" value={item.onde} />}
-          {prazo && <MetaRow label="Prazo" value={prazo} highlight />}
         </div>
       )}
 
