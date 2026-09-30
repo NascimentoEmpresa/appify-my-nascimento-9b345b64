@@ -62,7 +62,10 @@ export interface Formulario {
 
 /** Rótulo/cor da segurança, p/ badge na lista e no editor. */
 export function seguranca(f: Formulario) {
-  if ((f.seguranca ?? "liberado") === "liberado") return { rotulo: "Liberado - sem login", bg: "#dcfce7", c: "#15803d", icone: "🌐" };
+  if ((f.seguranca ?? "liberado") === "liberado") {
+    const enc = (f.setores_acesso ?? []).some(s => s.trim().toUpperCase() === "ENCARREGADOS");
+    return { rotulo: `Liberado - sem login${enc ? " + Encarregados" : ""}`, bg: "#dcfce7", c: "#15803d", icone: "🌐" };
+  }
   const partes: string[] = [];
   const st = f.setores_acesso ?? [];
   if (st.length) partes.push(st.length === 1 ? st[0] : `${st.length} setores`);
@@ -418,7 +421,10 @@ export default function Formularios() {
     // continuam vendo o card — são justamente quem precisa achá-lo.
     if (listaExclui(f) && !podeVerRespostas(f) && !podeAcesso(f) && !podeEditar(f)) return false;
     if (soGestorSetor) return canCriarSetor(f.setor);
-    const restr = f.setores_acesso ?? [];
+    // Só o RESTRITO recorta por setor. No liberado, setores_acesso pode ter só
+    // o ["ENCARREGADOS"] ("Mostrar para os Encarregados") — isso não esconde o
+    // formulário de mais ninguém.
+    const restr = (f.seguranca ?? "liberado") === "restrito" ? (f.setores_acesso ?? []) : [];
     return restr.length === 0 || podeVerTodos || (!!setor && restr.includes(setor));
   });
   const termo = busca.trim().toLowerCase();
