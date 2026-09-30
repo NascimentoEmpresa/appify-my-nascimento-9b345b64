@@ -636,7 +636,13 @@ export function PainelDespesaMalote({
             </div>
             <div>
               <Label>Data de pagamento *</Label>
-              <DiaPagamentoPicker value={dataPagamento} onChange={setDataPagamento} disabled={!ativo} permitirDiasBloqueados={excecao} />
+              <DiaPagamentoPicker
+                value={dataPagamento}
+                onChange={setDataPagamento}
+                disabled={!ativo}
+                permitirDiasBloqueados={excecao}
+                classificacaoId={classificacaoId}
+              />
             </div>
           </div>
           <ExcecaoDiaBloqueadoField

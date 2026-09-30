@@ -13,6 +13,8 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Save, Shield, Lock, FileText, Plus, Pencil, Trash2, AlertTriangle, Download, Calendar } from "lucide-react";
 import { toast } from "sonner";
 import { usePermissoes } from "@/context/PermissoesContext";
+import { SearchableMultiSelect } from "@/components/ui/searchable-multi-select";
+import { useClassificacoesOrcamentoAdmin } from "@/hooks/usePlanejamentoOrcamentario";
 import {
   useMaloteConfig,
   useSalvarMaloteConfig,
@@ -535,15 +537,22 @@ interface DiaBloqueadoForm {
   tipo: string;
   descricao: string;
   liberado: boolean;
+  // SIS-2026-0572: só usado (e só mostrado no dialog) quando tipo === "Folha".
+  classificacaoIds: string[];
 }
 
 function DiasBloqueadosSection({ podeEditar }: { podeEditar: boolean }) {
   const { data: dias = [], isLoading } = useMaloteDiasBloqueados();
   const { data: tipos = [] } = useMaloteTiposBloqueio();
+  const { data: classificacoes = [] } = useClassificacoesOrcamentoAdmin();
   const salvarDia = useSalvarDiaBloqueado();
   const excluirDia = useExcluirDiaBloqueado();
   const criarTipo = useCriarTipoBloqueio();
   const importarFeriados = useImportarFeriadosNacionais();
+  const opcoesClassificacao = useMemo(
+    () => classificacoes.filter((c) => c.ativo).map((c) => ({ value: c.id, label: c.nome })),
+    [classificacoes]
+  );
 
   const [filtroData, setFiltroData] = useState("");
   const [filtroTipo, setFiltroTipo] = useState("todos");
@@ -576,13 +585,20 @@ function DiasBloqueadosSection({ podeEditar }: { podeEditar: boolean }) {
   );
 
   function abrirNovo() {
-    setEditando({ data: "", tipo: "", descricao: "", liberado: false });
+    setEditando({ data: "", tipo: "", descricao: "", liberado: false, classificacaoIds: [] });
     setNovoTipo("");
     setOpen(true);
   }
 
   function abrirEditar(d: MaloteDiaBloqueado) {
-    setEditando({ id: d.id, data: d.data, tipo: d.tipo, descricao: d.descricao ?? "", liberado: d.liberado });
+    setEditando({
+      id: d.id,
+      data: d.data,
+      tipo: d.tipo,
+      descricao: d.descricao ?? "",
+      liberado: d.liberado,
+      classificacaoIds: d.classificacao_ids,
+    });
     setNovoTipo("");
     setOpen(true);
   }
@@ -602,7 +618,14 @@ function DiasBloqueadosSection({ podeEditar }: { podeEditar: boolean }) {
         data: editando.data,
         tipo: editando.tipo,
         descricao: editando.descricao.trim() || null,
-        liberado: editando.liberado,
+        // "Liberar este dia" e a lista de classificações são exceções
+        // que se excluem: liberado=true abre o dia geral e tornaria a
+        // lista de classificações letra morta — por isso o checkbox nem
+        // aparece pra tipo "Folha" (ver dialog abaixo), e aqui trava
+        // liberado=false por garantia, mesmo que o valor tenha ficado
+        // marcado de uma edição anterior com outro tipo.
+        liberado: editando.tipo === "Folha" ? false : editando.liberado,
+        classificacao_ids: editando.tipo === "Folha" ? editando.classificacaoIds : [],
       });
       toast.success("Dia bloqueado salvo.");
       setOpen(false);
@@ -794,6 +817,22 @@ function DiasBloqueadosSection({ podeEditar }: { podeEditar: boolean }) {
                 </Button>
               </div>
             </div>
+            {editando?.tipo === "Folha" && (
+              <div>
+                <Label>Classificações liberadas nesse dia</Label>
+                <p className="text-xs text-muted-foreground mb-1">
+                  Só despesa lançada com uma dessas classificações (ex.: SALÁRIO) pode ter data de pagamento nesse
+                  dia — o resto continua bloqueado. Deixe vazio pra bloquear geral, como os outros tipos.
+                </p>
+                <SearchableMultiSelect
+                  value={editando?.classificacaoIds ?? []}
+                  onChange={(v) => setEditando((s) => (s ? { ...s, classificacaoIds: v } : s))}
+                  options={opcoesClassificacao}
+                  placeholder="Buscar classificação..."
+                  searchPlaceholder="Buscar classificação..."
+                />
+              </div>
+            )}
             <div>
               <Label>Descrição</Label>
               <Input
@@ -802,20 +841,31 @@ function DiasBloqueadosSection({ podeEditar }: { podeEditar: boolean }) {
                 onChange={(e) => setEditando((v) => (v ? { ...v, descricao: e.target.value } : v))}
               />
             </div>
-            <label className="flex items-start gap-2 text-sm cursor-pointer">
-              <Checkbox
-                checked={editando?.liberado ?? false}
-                onCheckedChange={(checked) => setEditando((v) => (v ? { ...v, liberado: checked === true } : v))}
-              />
-              <span>
-                <span className="font-medium">Liberar este dia</span>
-                <br />
-                <span className="text-xs text-muted-foreground">
-                  Marque só pra abrir uma exceção pontual num sábado/domingo (ou outro dia normalmente bloqueado).
-                  Deixe desmarcado pro uso padrão (bloquear essa data).
+            {editando?.tipo === "Folha" ? (
+              // "Liberar este dia" abre o dia geral pra todo mundo — em
+              // "Folha" a exceção já é a lista de classificações acima,
+              // marcar os dois ao mesmo tempo tornaria a lista inútil
+              // (liberado sempre vence). Por isso some nesse tipo.
+              <p className="text-xs text-muted-foreground">
+                Em "Folha" quem decide a exceção é a lista de classificações acima — não existe "liberar o dia
+                inteiro" aqui, senão a lista perderia o sentido.
+              </p>
+            ) : (
+              <label className="flex items-start gap-2 text-sm cursor-pointer">
+                <Checkbox
+                  checked={editando?.liberado ?? false}
+                  onCheckedChange={(checked) => setEditando((v) => (v ? { ...v, liberado: checked === true } : v))}
+                />
+                <span>
+                  <span className="font-medium">Liberar este dia</span>
+                  <br />
+                  <span className="text-xs text-muted-foreground">
+                    Marque só pra abrir uma exceção pontual num sábado/domingo (ou outro dia normalmente bloqueado).
+                    Deixe desmarcado pro uso padrão (bloquear essa data).
+                  </span>
                 </span>
-              </span>
-            </label>
+              </label>
+            )}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setOpen(false)}>
