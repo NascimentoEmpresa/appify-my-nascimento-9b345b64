@@ -73,3 +73,6 @@ supabase/.temp/
 
 # Gerado pelo scripts/monitor-supabase.ps1 a cada leitura
 scripts/status-banco.txt
+
+# Credenciais da replica de failover (SERVICE_ROLE_KEY ignora RLS)
+infra/failover/.env

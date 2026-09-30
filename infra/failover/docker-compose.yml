@@ -1,0 +1,136 @@
+# ============================================================================
+#  Réplica Supabase self-hosted — base do failover
+# ============================================================================
+#
+#  POR QUE POSTGRES E NAO MYSQL/MARIADB/SQLITE
+#  O controle de acesso deste ERP são 1.312 políticas de RLS (Row Level
+#  Security) no banco. MySQL e MariaDB NAO tem RLS - o conceito nao existe
+#  neles. SQLite e um arquivo embarcado, sem servidor de rede nem multiplos
+#  usuarios. Trocar o motor significaria reescrever todo o modelo de acesso do
+#  ERP na aplicacao. A replica precisa ser Postgres com a stack Supabase para
+#  preservar RLS, funcoes, login e a API automatica.
+#
+#  O QUE ESTA STACK ENTREGA
+#  Os mesmos componentes que o ERP consome hoje:
+#    db       - Postgres com as extensoes da Supabase
+#    auth     - GoTrue (login, senhas, tokens)
+#    rest     - PostgREST (a API que o frontend chama)
+#    storage  - API de arquivos
+#    kong     - o gateway que junta tudo numa URL so
+#
+#  O QUE ELA NAO E (ainda)
+#  Isto e um STANDBY, nao failover automatico. Ele sobe vazio e precisa ser
+#  alimentado (ver preparar-replica.ps1). A promocao automatica, a troca de
+#  trafego e a trava contra split-brain sao a etapa seguinte - ver README.md.
+#
+#  COMO SUBIR
+#    1. Instale o Rancher Desktop (gratuito). Docker Desktop NAO e gratuito
+#       para empresa com mais de 250 funcionarios.
+#    2. node gerar-chaves.mjs  > gera .env com JWT_SECRET, ANON_KEY e SERVICE_ROLE_KEY
+#    3. docker compose up -d
+#    4. .\preparar-replica.ps1  > cria os papeis e carrega o backup
+# ============================================================================
+
+name: erp-failover
+
+services:
+  db:
+    # Imagem oficial da Supabase: Postgres + extensoes que o ERP usa
+    # (pgcrypto, uuid-ossp, pg_stat_statements...). Postgres puro nao serve:
+    # faltariam extensoes e os papeis internos.
+    image: supabase/postgres:15.8.1.060
+    restart: unless-stopped
+    ports:
+      - "${PORTA_POSTGRES:-55432}:5432"
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: postgres
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_EXP: 3600
+    volumes:
+      - db-dados:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -h localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  auth:
+    # GoTrue: o mesmo servico que valida as senhas hoje. O JWT_SECRET tem que
+    # ser o MESMO usado para gerar ANON_KEY e SERVICE_ROLE_KEY, senao nenhum
+    # token e aceito.
+    image: supabase/gotrue:v2.158.1
+    restart: unless-stopped
+    depends_on:
+      db: { condition: service_healthy }
+    environment:
+      GOTRUE_API_HOST: 0.0.0.0
+      GOTRUE_API_PORT: 9999
+      API_EXTERNAL_URL: ${URL_EXTERNA}
+      GOTRUE_DB_DRIVER: postgres
+      GOTRUE_DB_DATABASE_URL: postgres://supabase_auth_admin:${POSTGRES_PASSWORD}@db:5432/postgres
+      GOTRUE_SITE_URL: ${URL_SITE}
+      GOTRUE_URI_ALLOW_LIST: ${URL_SITE}
+      GOTRUE_JWT_SECRET: ${JWT_SECRET}
+      GOTRUE_JWT_EXP: 3600
+      GOTRUE_JWT_DEFAULT_GROUP_NAME: authenticated
+      GOTRUE_DISABLE_SIGNUP: "true"
+      GOTRUE_EXTERNAL_EMAIL_ENABLED: "true"
+      GOTRUE_MAILER_AUTOCONFIRM: "true"
+
+  rest:
+    # PostgREST: transforma o schema do Postgres em API REST. E ele que aplica
+    # a RLS - por isso a replica precisa das policies carregadas.
+    image: postgrest/postgrest:v12.2.3
+    restart: unless-stopped
+    depends_on:
+      db: { condition: service_healthy }
+    environment:
+      PGRST_DB_URI: postgres://authenticator:${POSTGRES_PASSWORD}@db:5432/postgres
+      PGRST_DB_SCHEMAS: public,storage
+      PGRST_DB_ANON_ROLE: anon
+      PGRST_JWT_SECRET: ${JWT_SECRET}
+      PGRST_DB_USE_LEGACY_GUCS: "false"
+
+  storage:
+    image: supabase/storage-api:v1.11.13
+    restart: unless-stopped
+    depends_on:
+      db: { condition: service_healthy }
+      rest: { condition: service_started }
+    environment:
+      ANON_KEY: ${ANON_KEY}
+      SERVICE_KEY: ${SERVICE_ROLE_KEY}
+      POSTGREST_URL: http://rest:3000
+      PGRST_JWT_SECRET: ${JWT_SECRET}
+      DATABASE_URL: postgres://supabase_storage_admin:${POSTGRES_PASSWORD}@db:5432/postgres
+      FILE_SIZE_LIMIT: 52428800
+      STORAGE_BACKEND: file
+      FILE_STORAGE_BACKEND_PATH: /var/lib/storage
+      TENANT_ID: stub
+      REGION: stub
+      GLOBAL_S3_BUCKET: stub
+    volumes:
+      - storage-arquivos:/var/lib/storage
+
+  kong:
+    # O gateway. E a UNICA porta que o frontend conhece: ele publica
+    # /auth/v1, /rest/v1 e /storage/v1 sob um endereco so - exatamente como a
+    # URL da Supabase hoje. E por isso que trocar de backend um dia sera
+    # trocar UM endereco, nao reescrever o frontend.
+    image: kong:2.8.1
+    restart: unless-stopped
+    depends_on: [auth, rest, storage]
+    ports:
+      - "${PORTA_API:-8000}:8000"
+    environment:
+      KONG_DATABASE: "off"
+      KONG_DECLARATIVE_CONFIG: /home/kong/kong.yml
+      KONG_DNS_ORDER: LAST,A,CNAME
+      KONG_PLUGINS: request-transformer,cors,key-auth,acl
+    volumes:
+      - ./kong.yml:/home/kong/kong.yml:ro
+
+volumes:
+  db-dados:
+  storage-arquivos:

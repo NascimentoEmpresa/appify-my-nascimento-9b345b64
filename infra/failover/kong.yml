@@ -1,0 +1,56 @@
+# Gateway da replica — publica os mesmos caminhos que a URL da Supabase.
+# O frontend chama /auth/v1, /rest/v1 e /storage/v1; aqui eles sao roteados
+# para os containers correspondentes. Manter os caminhos IDENTICOS e o que
+# permite trocar de backend sem tocar no codigo do ERP.
+_format_version: "2.1"
+_transform: true
+
+consumers:
+  - username: anon
+    keyauth_credentials:
+      - key: $SUPABASE_ANON_KEY
+  - username: service_role
+    keyauth_credentials:
+      - key: $SUPABASE_SERVICE_KEY
+
+acls:
+  - consumer: anon
+    group: anon
+  - consumer: service_role
+    group: admin
+
+services:
+  - name: auth-v1
+    url: http://auth:9999/
+    routes:
+      - name: auth-v1-rota
+        strip_path: true
+        paths: [/auth/v1/]
+    plugins:
+      - name: cors
+
+  - name: rest-v1
+    url: http://rest:3000/
+    routes:
+      - name: rest-v1-rota
+        strip_path: true
+        paths: [/rest/v1/]
+    plugins:
+      - name: cors
+      - name: key-auth
+        config:
+          hide_credentials: true
+          key_names: [apikey]
+      - name: acl
+        config:
+          hide_groups_header: true
+          allow: [admin, anon]
+
+  - name: storage-v1
+    url: http://storage:5000/
+    routes:
+      - name: storage-v1-rota
+        strip_path: true
+        paths: [/storage/v1/]
+    plugins:
+      - name: cors
