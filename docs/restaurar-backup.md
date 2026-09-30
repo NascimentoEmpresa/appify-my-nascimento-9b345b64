@@ -159,27 +159,77 @@ Três detalhes que importam no dia do desastre:
 
 É o caminho de desastre real.
 
-**1.** Crie um projeto novo no painel da Supabase, mesma região (`sa-east-1`).
+> **Ensaiado de verdade em 29/09/2026, e tropeçou em três coisas que NINGUÉM
+> sabia antes.** Leia os três avisos abaixo antes de começar — cada um custaria
+> muito tempo com o sistema fora do ar se descoberto na hora.
 
-**2.** Pegue a senha e o host do projeto novo em
-`Project Settings → Database → Connection string`.
+### ⚠️ Aviso 1 — o projeto novo tem que nascer Small ou maior
 
-**3.** No terminal, com o `.dump` baixado na pasta atual:
+No ensaio, o projeto de teste foi criado **Micro (1 GB de RAM)**. A restauração
+do banco de 1,6 GB **derrubou a instância**: o pooler entrou em circuit breaker
+(`ECIRCUITBREAKER` / `econnrefused`) e o banco parou de aceitar conexão, sem se
+recuperar. Os dados até entraram, mas a instância não ficou de pé para servi-los.
+
+**Na hora do desastre, crie o projeto já como Small (ou maior)** —
+`Compute size` na criação, ou suba depois em `Settings → Compute and Disk`
+**antes** de restaurar. Micro não serve para este banco.
+
+### ⚠️ Aviso 2 — `auth` e `storage` NÃO restauram por este caminho
+
+Restaurando com o usuário `postgres` do pooler, os schemas `auth` (logins e
+senhas) e `storage` (metadados de arquivo) recusam a escrita:
+
+```
+ERROR: permission denied for schema auth
+ERROR: permission denied for schema storage
+ERROR: must be owner of relation sessions
+```
+
+Isso é esperado: num Supabase gerenciado esses schemas pertencem aos admins
+internos (`supabase_auth_admin`, `supabase_storage_admin`), e o `postgres` comum
+não pode sobrescrevê-los. **Este `pg_restore` recupera os dados de negócio
+(`public`, `espelho`), mas NÃO os usuários de login nem os metadados de arquivo.**
+
+Para recuperar `auth` e `storage` num Supabase novo, use a ferramenta oficial
+"Restore to a new project" da Supabase, que roda com os papéis certos.
+[Restore to a New Project](https://supabase.com/docs/guides/platform/backups)
+
+### ⚠️ Aviso 3 — a porta 5432 de saída precisa estar liberada na rede
+
+A rede da empresa filtra a saída por destino (appliance Starti em
+`192.168.100.1`). A produção funciona porque alguns IPs do pooler foram
+liberados um dia — mas os IPs do Supabase **mudam sozinhos**. Se ao restaurar
+der timeout na 5432, não é o backup: é a borda. Peça a liberação de **saída TCP
+5432 para a faixa AWS `sa-east-1`** (não por IP fixo, que envelhece).
+
+---
+
+### Passo a passo
+
+**1.** Crie um projeto novo no painel da Supabase, mesma região (`sa-east-1`),
+**compute Small ou maior** (ver Aviso 1).
+
+**2.** No modal `Connect` → aba **Session pooler** → copie a connection string.
+Use o **Session pooler** (`aws-N-sa-east-1.pooler.supabase.com`), não a conexão
+direta `db.<ref>.supabase.co`, que é só IPv6 e não funciona da rede da empresa.
+
+**3.** Descriptografe o backup (ver a seção "Antes de restaurar") e, no terminal,
+com o `.dump` já em claro:
 
 ```bash
 pg_restore \
-  --host=<host-do-projeto-novo> \
+  --host=aws-0-sa-east-1.pooler.supabase.com \
   --port=5432 \
   --username=postgres.<ref-do-projeto-novo> \
   --dbname=postgres \
   --no-owner \
   --no-privileges \
-  --jobs=4 \
+  --jobs=2 \
   backup-AAAAMMDD-HHMMSS.dump
 ```
 
-**4.** Vão aparecer **muitos erros** — e a maioria é esperada. Leia a seção
-seguinte antes de se assustar.
+**4.** Vão aparecer **muitos erros** — e a maioria é esperada (ver Avisos 2 e a
+seção seguinte). Confira pelas **contagens**, nunca pela ausência de erro.
 
 **5.** Aponte a aplicação para o projeto novo: trocar `VITE_SUPABASE_URL` e
 `VITE_SUPABASE_ANON_KEY` no `.env`, e as mesmas variáveis no `worker/.env`.
