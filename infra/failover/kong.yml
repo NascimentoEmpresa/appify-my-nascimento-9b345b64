@@ -1,8 +1,21 @@
+# ATENCAO: este arquivo e um TEMPLATE, nao o config final.
+# O Kong NAO interpola variavel de ambiente em config declarativo. As
+# duas chaves abaixo ($SUPABASE_ANON_KEY / $SUPABASE_SERVICE_KEY) sao
+# substituidas pelo entrypoint do servico kong antes do Kong subir.
+# Por isso: use SEMPRE aspas simples aqui. Aspas duplas quebram o render,
+# que e feito com echo.
+# OS DESTINOS SAO VARIAVEIS ($ALVO_REST etc.) porque o nome de cada
+# servico muda conforme onde a stack roda:
+#   docker-compose local -> rest:3000
+#   Render               -> erp-rest:3000
+# Deixar "rest:3000" fixo aqui faria o Kong subir NORMALMENTE na Render e
+# responder 503 em tudo, porque o destino simplesmente nao resolve. Os
+# valores entram pelo mesmo render do template, junto com as chaves.
 # Gateway da replica — publica os mesmos caminhos que a URL da Supabase.
 # O frontend chama /auth/v1, /rest/v1 e /storage/v1; aqui eles sao roteados
 # para os containers correspondentes. Manter os caminhos IDENTICOS e o que
 # permite trocar de backend sem tocar no codigo do ERP.
-_format_version: "2.1"
+_format_version: '2.1'
 _transform: true
 
 consumers:
@@ -21,7 +34,7 @@ acls:
 
 services:
   - name: auth-v1
-    url: http://auth:9999/
+    url: http://$ALVO_AUTH/
     routes:
       - name: auth-v1-rota
         strip_path: true
@@ -30,7 +43,7 @@ services:
       - name: cors
 
   - name: rest-v1
-    url: http://rest:3000/
+    url: http://$ALVO_REST/
     routes:
       - name: rest-v1-rota
         strip_path: true
@@ -47,10 +60,26 @@ services:
           allow: [admin, anon]
 
   - name: storage-v1
-    url: http://storage:5000/
+    url: http://$ALVO_STORAGE/
     routes:
       - name: storage-v1-rota
         strip_path: true
         paths: [/storage/v1/]
+    plugins:
+      - name: cors
+
+  # As Edge Functions. Sem esta rota o Kong devolve 404 para /functions/v1/* e
+  # o navegador mostra o erro como CORS, o que manda investigar o lado errado.
+  # NAO leva o plugin key-auth de proposito: 14 das 59 funcoes sao publicas
+  # (Canal de Etica, Portal do Colaborador, webhook da Meta, chamadas do CI) e
+  # o navegador nem manda apikey nelas. Quem decide se exige JWT e o roteador
+  # em functions-main/, lendo o supabase/config.toml - funcao por funcao,
+  # igual a producao.
+  - name: functions-v1
+    url: http://$ALVO_FUNCTIONS/
+    routes:
+      - name: functions-v1-rota
+        strip_path: true
+        paths: [/functions/v1/]
     plugins:
       - name: cors

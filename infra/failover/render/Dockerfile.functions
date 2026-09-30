@@ -1,0 +1,21 @@
+# ============================================================================
+#  Edge Functions da replica, para a Render
+# ============================================================================
+#
+#  Mesmo motivo do Dockerfile.db: na Render nao ha bind mount, entao as 59
+#  funcoes, o config.toml e o roteador entram DENTRO da imagem.
+#
+#  O config.toml vem junto de proposito. E dele que o roteador tira quais
+#  funcoes sao publicas (14) e quais exigem JWT (45). Sem ele, o roteador
+#  fecha tudo - e o Canal de Etica e o Portal do Colaborador, que rodam sem
+#  login, param de funcionar.
+#
+#  Contexto de build: a RAIZ do repositorio.
+# ============================================================================
+FROM supabase/edge-runtime:v1.77.2
+
+COPY supabase/functions               /home/deno/functions
+COPY supabase/config.toml             /home/deno/config.toml
+COPY infra/failover/functions-main    /home/deno/main
+
+CMD ["start", "--main-service", "/home/deno/main"]

@@ -21,7 +21,15 @@ SELECT
   (SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
     WHERE n.nspname='public')                                                                AS funcoes,
   (SELECT count(*) FROM pg_class WHERE relkind='i')                                          AS indices;
-\echo 'Referencia da producao em 30/09/2026: ~641 tabelas | ~1.312 policies | ~1.211 funcoes'
+-- Referencia MEDIDA no ensaio de 30/09/2026, contra o backup de 29/09:
+--   641 tabelas | 1.300 policies em public (1.445 no banco todo) | 1.238 funcoes
+-- Os numeros batem exatamente com o conteudo do dump: ele tem 641 CREATE TABLE
+-- e 1.445 CREATE POLICY, e o restore terminou com UM unico erro, o benigno
+-- 'schema "public" already exists'. Ou seja: 1.445 policies NAO e "quase tudo",
+-- e o total.
+-- O "~1.312" que estava aqui antes era uma contagem antiga so do schema public
+-- e fazia parecer que faltavam 12 policies. Nao faltavam.
+\echo 'Referencia medida em 30/09/2026: 641 tabelas | 1.300 policies em public | 1.238 funcoes'
 \echo 'ATENCAO: policies na casa das DEZENAS = os papeis nao existiam na restauracao.'
 \echo ''
 
