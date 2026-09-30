@@ -59,9 +59,15 @@ export function quizParaSalvar(quiz: PerguntaQuiz[]): PerguntaQuiz[] {
 
 const numOuNull = (v: string) => (v.trim() === "" ? null : Math.max(0, Math.floor(Number(v) || 0)) || null);
 
-export function ProvaEditor({ quiz, notaMinima, cfg, onChange }: {
+/**
+ * `publico` = provinha de Campanha (página sem login, mig 267): não há aluno,
+ * então somem tentativas, espera, tempo, sorteio, embaralhar e "só depois do
+ * vídeo" — a correção pública (trn_campanha_responder) não usa nenhum deles.
+ */
+export function ProvaEditor({ quiz, notaMinima, cfg, onChange, publico = false }: {
   quiz: PerguntaQuiz[]; notaMinima: string; cfg: ProvaConfig;
   onChange: (p: { quiz?: PerguntaQuiz[]; notaMinima?: string; cfg?: ProvaConfig }) => void;
+  publico?: boolean;
 }) {
   const c = { ...PROVA_PADRAO, ...cfg };
   const setCfg = (patch: Partial<ProvaConfig>) => onChange({ cfg: { ...cfg, ...patch } });
@@ -96,6 +102,7 @@ export function ProvaEditor({ quiz, notaMinima, cfg, onChange }: {
             <label>Nota mínima para aprovar (%)</label>
             <Input inputMode="numeric" value={notaMinima} onChange={(e) => onChange({ notaMinima: e.target.value })} />
           </div>
+          {!publico && <>
           <div className="campo">
             <label>Tentativas</label>
             <Select value={c.tentativas_max == null ? "ilim" : String(c.tentativas_max)} onValueChange={(v) => setCfg({ tentativas_max: v === "ilim" ? null : Number(v) })}>
@@ -114,13 +121,15 @@ export function ProvaEditor({ quiz, notaMinima, cfg, onChange }: {
               <SelectContent><SelectItem value="maior">A maior entre as tentativas</SelectItem><SelectItem value="ultima">A da última tentativa</SelectItem></SelectContent>
             </Select>
           </div>
+          </>}
           <div className="campo">
             <label>Gabarito para o aluno</label>
             <Select value={c.gabarito} onValueChange={(v) => setCfg({ gabarito: v as ModoGabarito })}>
               <SelectTrigger><SelectValue /></SelectTrigger>
-              <SelectContent>{(Object.keys(ROTULO_GABARITO) as ModoGabarito[]).map((g) => <SelectItem key={g} value={g}>{ROTULO_GABARITO[g]}</SelectItem>)}</SelectContent>
+              <SelectContent>{(Object.keys(ROTULO_GABARITO) as ModoGabarito[]).filter((g) => !publico || g !== "ao_final").map((g) => <SelectItem key={g} value={g}>{publico && g === "sempre" ? "Mostrar a resposta certa ao enviar" : ROTULO_GABARITO[g]}</SelectItem>)}</SelectContent>
             </Select>
           </div>
+          {!publico && <>
           <div className="campo">
             <label>Tempo limite (min, opcional)</label>
             <Input inputMode="numeric" placeholder="sem limite" value={c.tempo_limite_min ?? ""} onChange={(e) => setCfg({ tempo_limite_min: numOuNull(e.target.value) })} />
@@ -140,6 +149,9 @@ export function ProvaEditor({ quiz, notaMinima, cfg, onChange }: {
             <div className="ajuda -mt-1 ml-11">Vale para vídeo enviado por arquivo, YouTube e Vimeo. Link/embed de outra plataforma não tem como ser medido — a prova abre direto.</div>
             <label className="flex items-center gap-2 text-sm"><Switch checked={c.embaralhar_perguntas} onCheckedChange={(v) => setCfg({ embaralhar_perguntas: v })} /> Embaralhar a ordem das perguntas</label>
             <label className="flex items-center gap-2 text-sm"><Switch checked={c.embaralhar_opcoes} onCheckedChange={(v) => setCfg({ embaralhar_opcoes: v })} /> Embaralhar as opções de resposta</label>
+          </div>
+          </>}
+          <div className="campo sm:col-span-2 space-y-2">
             <label className="flex items-center gap-2 text-sm"><Switch checked={c.multipla_parcial} onCheckedChange={(v) => setCfg({ multipla_parcial: v })} /> Múltipla escolha vale ponto parcial (senão, é tudo ou nada)</label>
           </div>
         </div>

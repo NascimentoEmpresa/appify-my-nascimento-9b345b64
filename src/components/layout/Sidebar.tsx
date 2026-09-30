@@ -85,7 +85,7 @@ import { Percent } from "lucide-react";
 import { FolderOpen } from "lucide-react";
 import { TrendingDown } from "lucide-react";
 import { Megaphone, ExternalLink } from "lucide-react";
-import { Award, CalendarDays, FolderTree, Users } from "lucide-react";
+import { Award, CalendarDays, FolderTree, QrCode, Users } from "lucide-react";
 import { CreditCard } from "lucide-react";
 import { Network } from "lucide-react";
 import { useNovidades } from "@/hooks/useNovidades";
@@ -713,6 +713,14 @@ const treinamentosModule: ModuleDef = {
         { label: "Avisos", to: "/app/treinamentos/comunicacao/avisos", icon: Megaphone },
         { label: "Notificações", to: "/app/treinamentos/comunicacao/notificacoes", icon: Bell },
         { label: "Calendário", to: "/app/treinamentos/comunicacao/calendario", icon: CalendarDays },
+      ],
+    },
+    {
+      // Páginas públicas com QR Code (mig 20260930000267).
+      label: "Campanhas",
+      defaultOpen: true,
+      items: [
+        { label: "Campanhas", to: "/app/treinamentos/campanhas", icon: QrCode },
       ],
     },
   ],
