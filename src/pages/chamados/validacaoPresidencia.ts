@@ -81,13 +81,16 @@ export function pendenciaTreinamento(
  * chamado_avaliacao_exige_treinamento (mig 269): no fluxo da Presidência,
  * primeiro o solicitante confirma o treinamento, depois avalia.
  */
+// Retorno "achatado" (motivo null quando liberada) de propósito: o projeto
+// compila sem strictNullChecks, e aí a união discriminada por `liberada` não
+// estreita — `motivo` não existia no tipo e o job "tipos" da PR #732 caiu.
 export function avaliacaoLiberada(
   v: Pick<ValidacaoChamado, "etapa" | "treinamento_solic_em"> | null | undefined,
-): { liberada: true } | { liberada: false; motivo: "presidencia" | "treinamento" } {
-  if (!v || v.etapa === "finalizado") return { liberada: true };
+): { liberada: boolean; motivo: "presidencia" | "treinamento" | null } {
+  if (!v || v.etapa === "finalizado") return { liberada: true, motivo: null };
   if (v.etapa === "desenvolvimento" || v.etapa === "validacao_presidencia") return { liberada: false, motivo: "presidencia" };
   if (!v.treinamento_solic_em) return { liberada: false, motivo: "treinamento" };
-  return { liberada: true };
+  return { liberada: true, motivo: null };
 }
 
 /** Linha de chamados_meus_avaliacoes_pendentes (mig 269): o que trava abrir outro chamado. */

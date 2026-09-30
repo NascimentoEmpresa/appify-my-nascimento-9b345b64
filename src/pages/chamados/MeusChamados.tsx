@@ -274,12 +274,11 @@ export default function MeusChamados({ base = "/app/central-servicos/chamados" }
                         <Button variant="ghost" size="sm" disabled className="h-8 cursor-not-allowed gap-1.5 text-muted-foreground/60">
                           <Lock className="h-3.5 w-3.5" /> Avaliar
                         </Button>
-                      ) : (() => { const l = avaliacaoLiberada(validacoes[c.id]); return !l.liberada; })() ? (
+                      ) : !avaliacaoLiberada(validacoes[c.id]).liberada ? (
                         // Presidência validando ou treinamento a confirmar (mig 269): avalia depois.
                         <Button variant="ghost" size="sm" disabled
-                          title={avaliacaoLiberada(validacoes[c.id]).liberada ? undefined
-                            : (avaliacaoLiberada(validacoes[c.id]) as { motivo: string }).motivo === "treinamento"
-                              ? "Confirme o treinamento no chamado; depois avalie" : "Aguardando a validação da Presidência"}
+                          title={avaliacaoLiberada(validacoes[c.id]).motivo === "treinamento"
+                            ? "Confirme o treinamento no chamado; depois avalie" : "Aguardando a validação da Presidência"}
                           className="h-8 cursor-not-allowed gap-1.5 text-muted-foreground/60">
                           <Lock className="h-3.5 w-3.5" /> Avaliar
                         </Button>

@@ -101,7 +101,7 @@ describe("pendenciaTreinamento", () => {
 
 describe("avaliacaoLiberada", () => {
   it("fluxo normal (sem Presidência) avalia direto", () => {
-    expect(avaliacaoLiberada(null)).toEqual({ liberada: true });
+    expect(avaliacaoLiberada(null)).toEqual({ liberada: true, motivo: null });
   });
 
   it("com a Presidência validando ainda não avalia", () => {
@@ -112,8 +112,8 @@ describe("avaliacaoLiberada", () => {
   it("no treinamento, primeiro o solicitante confirma, depois avalia", () => {
     expect(avaliacaoLiberada(validacao({ etapa: "treinamento" }))).toEqual({ liberada: false, motivo: "treinamento" });
     // Solicitante já confirmou (o dev ainda não): pode avaliar.
-    expect(avaliacaoLiberada(validacao({ etapa: "treinamento", treinamento_solic_em: "2026-09-30T09:07:00Z" }))).toEqual({ liberada: true });
-    expect(avaliacaoLiberada(validacao({ etapa: "finalizado" }))).toEqual({ liberada: true });
+    expect(avaliacaoLiberada(validacao({ etapa: "treinamento", treinamento_solic_em: "2026-09-30T09:07:00Z" }))).toEqual({ liberada: true, motivo: null });
+    expect(avaliacaoLiberada(validacao({ etapa: "finalizado" }))).toEqual({ liberada: true, motivo: null });
   });
 });
 
