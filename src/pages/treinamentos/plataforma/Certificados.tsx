@@ -8,9 +8,9 @@ import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { uploadMidia, urlMidia, useTrnExcluirModelo, useTrnModelosCertificado, useTrnSalvarModelo } from "@/hooks/useTreinamentosPlataforma";
+import { uploadMidia, useTrnExcluirModelo, useTrnModelosCertificado, useTrnSalvarModelo } from "@/hooks/useTreinamentosPlataforma";
 import { MENU, type CertificadoModelo } from "./tipos";
-import { CertificadoFrente, CertificadoVerso, EXEMPLO } from "./CertificadoPreview";
+import { CertificadoFrente, CertificadoVerso, EXEMPLO, FUNDOS_PRONTOS, FundoMiniatura, PREFIXO_PRESET, resolverFundo } from "./CertificadoPreview";
 import { TrnCarregando, TrnEstilo, TrnHero, TrnVazio } from "./ui";
 
 // =====================================================================
@@ -29,7 +29,7 @@ const NOVO: Omit<CertificadoModelo, "id" | "created_at" | "updated_at"> = {
   texto_inferior: "Concluiu o curso de ${curso} no dia ${data}",
   exibir_nome_negocio: true, exibir_logo: false, exibir_cnpj: false, exibir_carga_horaria: true, exibir_qr: true,
   exibir_documento: true, frente_verso: false, verso_somente_modulos: false, verso_titulo: "Conteúdo programático",
-  layout: "centro", fundo_path: null, fundo_verso_path: null,
+  layout: "esquerda", fundo_path: `${PREFIXO_PRESET}nascimento`, fundo_verso_path: null,
 };
 
 export default function Certificados() {
@@ -75,7 +75,7 @@ export default function Certificados() {
           <div className="grid gap-3 sm:grid-cols-2">
             {modelos.map((m) => (
               <div key={m.id} className="trn-card flex items-center gap-4">
-                <div className="grid h-14 w-20 place-items-center rounded-lg border bg-slate-100 text-[10px] font-bold uppercase text-slate-500">{urlMidia(m.fundo_path) ? <img src={urlMidia(m.fundo_path)!} alt="" className="h-full w-full rounded-lg object-cover" /> : "custom"}</div>
+                <div className="w-20 shrink-0 overflow-hidden rounded-lg border"><FundoMiniatura path={m.fundo_path} /></div>
                 <div className="min-w-0 flex-1"><b className="block truncate">{m.nome}</b><span className="text-xs text-slate-500">{m.titulo} · {m.layout === "centro" ? "centralizado" : "à esquerda"}{m.frente_verso ? " · frente e verso" : ""}</span></div>
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild><Button variant="ghost" size="icon" className="h-8 w-8"><MoreVertical className="h-4 w-4" /></Button></DropdownMenuTrigger>
@@ -117,20 +117,22 @@ export default function Certificados() {
                   <h4>Conteúdo do verso</h4>
                   <div className="campo"><label>Título do verso</label><Input value={editando.verso_titulo ?? ""} onChange={(e) => set({ verso_titulo: e.target.value })} /></div>
                   <div className="campo mt-3"><label>Imagem de fundo do verso</label>
-                    <label className="cursor-pointer rounded-lg border px-3 py-2 text-xs font-semibold hover:bg-muted"><ImagePlus className="mr-1 inline h-4 w-4" /> {subindo === "fundo_verso_path" ? "Enviando…" : "Selecionar"}<input type="file" accept="image/*" className="hidden" onChange={(e) => subir(e.target.files?.[0] ?? null, "fundo_verso_path")} /></label>
-                    {editando.fundo_verso_path && <button type="button" className="ml-2 text-xs text-rose-600" onClick={() => set({ fundo_verso_path: null })}>remover</button>}
-                    <div className="ajuda">Sem imagem, usa a mesma da frente.</div></div>
+                    <GaleriaFundos valor={editando.fundo_verso_path ?? null} lado="verso" enviando={subindo === "fundo_verso_path"}
+                                   onEscolher={(v) => set({ fundo_verso_path: v === editando.fundo_verso_path ? null : v })}
+                                   onEnviar={(f) => subir(f, "fundo_verso_path")} onRemover={() => set({ fundo_verso_path: null })} />
+                    <div className="ajuda">Se nenhuma imagem for selecionada, será usada a mesma imagem de fundo configurada na frente do certificado.</div></div>
                 </div>
               )}
               <div className="grupo">
-                <h4>Layout e fundo</h4>
-                <div className="mb-3 flex gap-2">
-                  {(["esquerda", "centro"] as const).map((l) => <button key={l} type="button" onClick={() => set({ layout: l })} className={`rounded-lg border px-3 py-2 text-xs font-semibold ${editando.layout === l ? "border-orange-500 bg-orange-50 text-orange-700" : ""}`}>{l === "centro" ? "Centralizado" : "Alinhado à esquerda"}</button>)}
+                <h4>Layout do certificado *</h4>
+                <div className="mb-4 grid grid-cols-2 gap-2">
+                  {(["esquerda", "centro"] as const).map((l) => <button key={l} type="button" onClick={() => set({ layout: l })} className={`rounded-lg border px-3 py-3 text-sm font-medium ${editando.layout === l ? "border-orange-500 bg-orange-50 text-orange-700" : "bg-slate-100 text-slate-600 hover:bg-slate-200"}`}>{l === "centro" ? "Centralizado" : "Alinhado à esquerda"}</button>)}
                 </div>
-                <div className="campo"><label>Imagem de fundo (frente)</label>
-                  <label className="cursor-pointer rounded-lg border px-3 py-2 text-xs font-semibold hover:bg-muted"><ImagePlus className="mr-1 inline h-4 w-4" /> {subindo === "fundo_path" ? "Enviando…" : "Selecionar"}<input type="file" accept="image/*" className="hidden" onChange={(e) => subir(e.target.files?.[0] ?? null, "fundo_path")} /></label>
-                  {editando.fundo_path && <button type="button" className="ml-2 text-xs text-rose-600" onClick={() => set({ fundo_path: null })}>remover</button>}
-                  <div className="ajuda">A4 paisagem (297 × 210 mm). Sem imagem, o fundo é neutro.</div></div>
+                <div className="campo"><label>Imagem de fundo (frente) *</label>
+                  <GaleriaFundos valor={editando.fundo_path ?? null} lado="frente" enviando={subindo === "fundo_path"}
+                                 onEscolher={(v) => set({ fundo_path: v })}
+                                 onEnviar={(f) => subir(f, "fundo_path")} onRemover={() => set({ fundo_path: `${PREFIXO_PRESET}nascimento` })} />
+                  <div className="ajuda">Escolha um fundo pronto ou envie o seu (JPG/PNG, A4 paisagem — 297 × 210 mm).</div></div>
               </div>
               <div className="flex gap-2">
                 <AcessoGate menu={MENU.certificados} acao={editando.id ? "alterar" : "incluir"} fallback={<p className="text-xs text-muted-foreground">Você pode ver, mas não tem a ação de salvar.</p>}>
@@ -147,6 +149,40 @@ export default function Certificados() {
           </div>
         )}
       </AcessoGate>
+    </div>
+  );
+}
+
+/**
+ * Galeria de fundos: os prontos (desenhados em CertificadoPreview) + um
+ * quadro para imagem própria. Na frente, `null` equivale ao padrão
+ * Nascimento; no verso, `null` = "usar o mesmo da frente" (nada marcado).
+ */
+function GaleriaFundos({ valor, lado, enviando, onEscolher, onEnviar, onRemover }: {
+  valor: string | null; lado: "frente" | "verso"; enviando: boolean;
+  onEscolher: (v: string) => void; onEnviar: (f: File | null) => void; onRemover: () => void;
+}) {
+  const atual = lado === "verso" && !valor ? { preset: null, url: null } : resolverFundo(valor);
+  const propria = !!atual.url;
+  return (
+    <div className="grid grid-cols-3 gap-3">
+      {FUNDOS_PRONTOS.map((f) => (
+        <button key={f.id} type="button" title={f.nome} onClick={() => onEscolher(`${PREFIXO_PRESET}${f.id}`)}
+                className={`overflow-hidden rounded-lg border-2 transition ${atual.preset === f.id ? "border-orange-500 ring-2 ring-orange-200" : "border-slate-200 hover:border-slate-400"}`}>
+          <FundoMiniatura path={`${PREFIXO_PRESET}${f.id}`} />
+        </button>
+      ))}
+      {propria ? (
+        <div className="relative overflow-hidden rounded-lg border-2 border-orange-500 ring-2 ring-orange-200">
+          <FundoMiniatura path={valor} />
+          <button type="button" title="Remover imagem" onClick={onRemover} className="absolute right-1 top-1 rounded bg-white/90 p-1 text-rose-600 shadow hover:bg-white"><Trash2 className="h-4 w-4" /></button>
+        </div>
+      ) : (
+        <label className="grid aspect-[297/210] cursor-pointer place-items-center rounded-lg border-2 border-dashed border-slate-300 bg-slate-50 text-center text-[11px] font-semibold text-slate-500 hover:border-slate-400">
+          <span><ImagePlus className="mx-auto mb-1 h-5 w-5" />{enviando ? "Enviando…" : "Enviar imagem"}</span>
+          <input type="file" accept="image/png,image/jpeg" className="hidden" disabled={enviando} onChange={(e) => { onEnviar(e.target.files?.[0] ?? null); e.target.value = ""; }} />
+        </label>
+      )}
     </div>
   );
 }
