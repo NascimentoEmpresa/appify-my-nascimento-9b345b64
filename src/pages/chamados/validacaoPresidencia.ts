@@ -54,21 +54,49 @@ export const desenvolvedorDaValidacao = (
 
 /**
  * O que falta o usuário confirmar no treinamento. ESPELHA a RPC
- * chamado_treinamento_confirmar: só na etapa 'treinamento', o dev que
- * concluiu e o solicitante, cada um uma vez (a mesma pessoa nos dois papéis
- * confirma os dois de uma vez).
+ * chamado_treinamento_confirmar (mig 269): só na etapa 'treinamento', e
+ * CADA PAPEL NO SEU LUGAR — a confirmação vai com `p_papel`:
+ *   · comoDev: o dev que concluiu, ou a gestão de chamados (`gestao`, o
+ *     "gerente do dev", pelo Painel de Distribuição) confirmando por ele;
+ *   · comoSolicitante: só o próprio solicitante.
+ * Até 30/09/2026 a mesma pessoa nos dois papéis confirmava os dois de uma
+ * vez (o teste do #SIS-2026-0567) — agora são duas confirmações separadas.
  */
 export function pendenciaTreinamento(
   v: ValidacaoChamado | null | undefined,
   c: Pick<Chamado, "solicitante_id" | "responsavel_id">,
   userId: string | null | undefined,
+  opts: { gestao?: boolean } = {},
 ): { comoDev: boolean; comoSolicitante: boolean } {
   const nada = { comoDev: false, comoSolicitante: false };
   if (!v || !userId || v.etapa !== "treinamento") return nada;
   return {
-    comoDev: desenvolvedorDaValidacao(v, c) === userId && !v.treinamento_dev_em,
+    comoDev: (desenvolvedorDaValidacao(v, c) === userId || !!opts.gestao) && !v.treinamento_dev_em,
     comoSolicitante: c.solicitante_id === userId && !v.treinamento_solic_em,
   };
+}
+
+/**
+ * A avaliação do atendimento já pode ser feita? ESPELHA o trigger
+ * chamado_avaliacao_exige_treinamento (mig 269): no fluxo da Presidência,
+ * primeiro o solicitante confirma o treinamento, depois avalia.
+ */
+// Retorno "achatado" (motivo null quando liberada) de propósito: o projeto
+// compila sem strictNullChecks, e aí a união discriminada por `liberada` não
+// estreita — `motivo` não existia no tipo e o job "tipos" da PR #732 caiu.
+export function avaliacaoLiberada(
+  v: Pick<ValidacaoChamado, "etapa" | "treinamento_solic_em"> | null | undefined,
+): { liberada: boolean; motivo: "presidencia" | "treinamento" | null } {
+  if (!v || v.etapa === "finalizado") return { liberada: true, motivo: null };
+  if (v.etapa === "desenvolvimento" || v.etapa === "validacao_presidencia") return { liberada: false, motivo: "presidencia" };
+  if (!v.treinamento_solic_em) return { liberada: false, motivo: "treinamento" };
+  return { liberada: true, motivo: null };
+}
+
+/** Linha de chamados_meus_avaliacoes_pendentes (mig 269): o que trava abrir outro chamado. */
+export interface PendenciaSolicitante {
+  id: string; numero: string; assunto: string; concluido_em: string | null;
+  pendencia: "treinamento" | "avaliacao";
 }
 
 // ---- Linha do tempo do botão "Status" ---------------------------------

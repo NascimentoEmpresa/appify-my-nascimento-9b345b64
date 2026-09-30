@@ -2,7 +2,7 @@
 // Validação da Presidência (mig 266) — peças de tela compartilhadas:
 //   · useValidacaoChamado / useValidacoesChamados — leitura da tabela
 //   · BotaoStatusChamado — botão "Status" que abre a linha do tempo
-//   · CardTreinamento — confirmação do treinamento (dev e solicitante)
+//   · CardTreinamento / ConfirmarTreinamento — treinamento, um papel por vez (mig 269)
 //   · SeloEtapaValidacao — selo da etapa nas listas
 // A lógica (etapas, quem confirma) mora em validacaoPresidencia.ts.
 // =====================================================================
@@ -19,9 +19,10 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { CheckCircle2, Circle, CircleDot, Crown, GraduationCap, ListChecks, XCircle } from "lucide-react";
 import { fmtDataHora, type Chamado } from "./types";
 import {
-  ETAPAS_VALIDACAO, montarLinhaDoTempo, pendenciaTreinamento, resumoStatus,
+  ETAPAS_VALIDACAO, desenvolvedorDaValidacao, montarLinhaDoTempo, pendenciaTreinamento, resumoStatus,
   type ValidacaoChamado, type SituacaoPasso,
 } from "./validacaoPresidencia";
+import { useChamadoPerms } from "./useChamadoPerms";
 
 // ---- Dados -------------------------------------------------------------
 
@@ -250,42 +251,80 @@ export function CardValidacaoPresidencia({
 // ---- Card de confirmação do treinamento -----------------------------------
 
 /**
- * Aparece para o dev que concluiu e para o solicitante enquanto o chamado
- * está na etapa 'treinamento'. Mostra quem já confirmou; o botão só aparece
- * para quem ainda deve a confirmação.
+ * Confirmação de UM papel do treinamento (mig 269 — cada um confirma o seu):
+ *   · "desenvolvedor": o dev que concluiu, ou a gestão de chamados por ele;
+ *   · "solicitante": o próprio solicitante, no card da avaliação.
  */
-export function CardTreinamento({
-  chamado, validacao, nomeDe = () => "—",
+export function ConfirmarTreinamento({
+  chamadoId, papel, rotulo, onConfirmado,
 }: {
-  chamado: Pick<Chamado, "id" | "solicitante_id" | "responsavel_id">;
-  validacao: ValidacaoChamado | null | undefined;
-  nomeDe?: (id: string | null) => string;
+  chamadoId: string;
+  papel: "desenvolvedor" | "solicitante";
+  rotulo?: string;
+  onConfirmado?: (resultado: string) => void;
 }) {
-  const { user } = useAuth();
   const { toast } = useToast();
   const invalidar = useInvalidarValidacao();
+  const qc = useQueryClient();
   const [obs, setObs] = useState("");
   const [enviando, setEnviando] = useState(false);
-
-  if (!validacao || (validacao.etapa !== "treinamento" && validacao.etapa !== "finalizado")) return null;
-
-  const pend = pendenciaTreinamento(validacao, chamado, user?.id);
-  const deveConfirmar = pend.comoDev || pend.comoSolicitante;
-  const finalizado = validacao.etapa === "finalizado";
 
   const confirmar = async () => {
     setEnviando(true);
     const { data, error } = await (supabase as any).rpc("chamado_treinamento_confirmar", {
-      p_chamado_id: chamado.id, p_observacao: obs.trim() || null,
+      p_chamado_id: chamadoId, p_observacao: obs.trim() || null, p_papel: papel,
     });
     setEnviando(false);
     if (error) { toast({ title: "Erro ao confirmar o treinamento", description: error.message, variant: "destructive" }); return; }
     toast(data === "finalizado"
       ? { title: "Treinamento confirmado — solicitação finalizada" }
-      : { title: "Treinamento confirmado", description: "Falta a confirmação da outra parte." });
+      : { title: "Treinamento confirmado", description: papel === "solicitante" ? "Agora avalie o atendimento." : "Falta a confirmação do solicitante." });
     setObs("");
-    invalidar(chamado.id);
+    invalidar(chamadoId);
+    qc.invalidateQueries({ queryKey: ["chamados-avaliacoes-pendentes"] });
+    onConfirmado?.(data as string);
   };
+
+  return (
+    <div className="space-y-2">
+      <Textarea
+        rows={2} maxLength={500} value={obs} onChange={(e) => setObs(e.target.value)}
+        placeholder="Observação (opcional): data, duração, quem participou…"
+      />
+      <Button className="w-full gap-2" disabled={enviando} onClick={confirmar}>
+        <GraduationCap className="h-4 w-4" />
+        {enviando ? "Confirmando…" : rotulo ?? (papel === "desenvolvedor" ? "Confirmar que dei o treinamento" : "Confirmar que recebi o treinamento")}
+      </Button>
+    </div>
+  );
+}
+
+/**
+ * Situação do treinamento (quem já confirmou). Com `papel`, mostra também o
+ * botão desse papel para quem o deve: "desenvolvedor" na tela de execução
+ * (dev ou gestão). Sem `papel` é só informativo — o solicitante confirma no
+ * card da avaliação (AcompanharChamado), porque lá é "confirmar → avaliar".
+ */
+export function CardTreinamento({
+  chamado, validacao, nomeDe = () => "—", papel,
+}: {
+  chamado: Pick<Chamado, "id" | "solicitante_id" | "responsavel_id">;
+  validacao: ValidacaoChamado | null | undefined;
+  nomeDe?: (id: string | null) => string;
+  papel?: "desenvolvedor" | "solicitante";
+}) {
+  const { user } = useAuth();
+  const { gestor } = useChamadoPerms();
+
+  if (!validacao || (validacao.etapa !== "treinamento" && validacao.etapa !== "finalizado")) return null;
+
+  const pend = pendenciaTreinamento(validacao, chamado, user?.id, { gestao: gestor });
+  const deveConfirmar = papel === "desenvolvedor" ? pend.comoDev : papel === "solicitante" ? pend.comoSolicitante : false;
+  const finalizado = validacao.etapa === "finalizado";
+  const devId = desenvolvedorDaValidacao(validacao, chamado);
+  const peloGestor = papel === "desenvolvedor" && deveConfirmar && devId !== user?.id;
+  // Quem confirmou pelo dev não foi o próprio dev (gestão confirmando por ele).
+  const devPorOutro = validacao.treinamento_dev_por && devId && validacao.treinamento_dev_por !== devId;
 
   const Linha = ({ titulo, em, obs: o }: { titulo: string; em: string | null; obs: string | null }) => (
     <div className="flex items-start gap-2 text-xs">
@@ -314,23 +353,20 @@ export function CardTreinamento({
         </p>
       )}
       <div className="space-y-1.5">
-        <Linha titulo="Desenvolvedor confirmou" em={validacao.treinamento_dev_em} obs={validacao.treinamento_dev_obs} />
+        <Linha
+          titulo={devPorOutro ? `Desenvolvedor — confirmado por ${nomeDe(validacao.treinamento_dev_por)}` : "Desenvolvedor confirmou"}
+          em={validacao.treinamento_dev_em} obs={validacao.treinamento_dev_obs}
+        />
         <Linha titulo="Solicitante confirmou" em={validacao.treinamento_solic_em} obs={validacao.treinamento_solic_obs} />
       </div>
-      {deveConfirmar && (
-        <div className="space-y-2">
-          <Textarea
-            rows={2} maxLength={500} value={obs} onChange={(e) => setObs(e.target.value)}
-            placeholder="Observação (opcional): data, duração, quem participou…"
-          />
-          <Button className="w-full gap-2" disabled={enviando} onClick={confirmar}>
-            <GraduationCap className="h-4 w-4" />
-            {enviando ? "Confirmando…"
-              : pend.comoDev && pend.comoSolicitante ? "Confirmar treinamento (dev e solicitante)"
-              : pend.comoDev ? "Confirmar que dei o treinamento"
-              : "Confirmar que recebi o treinamento"}
-          </Button>
-        </div>
+      {deveConfirmar && papel && (
+        <ConfirmarTreinamento
+          chamadoId={chamado.id} papel={papel}
+          rotulo={peloGestor ? `Confirmar treinamento por ${nomeDe(devId)}` : undefined}
+        />
+      )}
+      {!finalizado && !papel && pend.comoDev && (
+        <p className="text-[11px] text-muted-foreground">A sua confirmação como desenvolvedor é feita na tela de execução do chamado.</p>
       )}
     </Card>
   );
