@@ -358,6 +358,9 @@ const financeiroModule: ModuleDef = {
       defaultOpen: true,
       items: [
         { label: "Conferência de Ponto", to: "/app/financeiro/conferencia-ponto", icon: ClipboardCheck },
+        // Dashboard de Pontos (30/09/2026, mig 274): o painel do RH, com menu
+        // próprio do Financeiro (financeiro_dashboard_pontos).
+        { label: "Dashboard de Pontos", to: "/app/financeiro/dashboard-pontos", icon: BarChart3 },
         // Espelho das rotas de Diárias do Operacional e de Encarregados
         // (17/09/2026). Item próprio porque a permissão da sidebar é casada
         // por rota — ver o comentário da rota em App.tsx.
@@ -514,9 +517,10 @@ const rhModule: ModuleDef = {
         { label: "Gestão de Férias", to: "/app/rh/ferias", icon: CalendarRange },
         { label: "Solicitações de Demissão", to: "/app/rh/solicitacoes-demissao", icon: UserMinus },
         { label: "Conferência de Ponto", to: "/app/rh/conferencia-ponto", icon: ClipboardCheck },
-        // Sem o "— Painel" no rótulo (pedido do Pablo, 17/09/2026): só o título;
-        // o ícone de gráfico é o que distingue do item de cima.
-        { label: "Conferência de Ponto", to: "/app/rh/conferencia-ponto/painel", icon: BarChart3 },
+        // "Dashboard de Pontos" desde 30/09/2026 (antes dois itens com o mesmo
+        // nome "Conferência de Ponto"). A mesma tela está no Financeiro e no
+        // Operacional, cada um com o seu menu (mig 274).
+        { label: "Dashboard de Pontos", to: "/app/rh/conferencia-ponto/painel", icon: BarChart3 },
         // Uma só, desde 02/09/2026: a etapa do RH é ALTERAR NA SENIOR. A
         // aprovação do administrativo, que era o segundo item aqui, foi para o
         // analista junto com a de contrato. A rota
@@ -1072,6 +1076,8 @@ const operacionalModule: ModuleDef = {
         // analista entre 02/09 e 14/09).
         { label: "Solicitações de Demissão", to: "/app/operacional/solicitacoes-demissao", icon: UserMinus },
         { label: "Conferência de Ponto", to: "/app/operacional/conferencia-ponto", icon: ClipboardCheck },
+        // Dashboard de Pontos (30/09/2026, mig 274): menu operacional_dashboard_pontos.
+        { label: "Dashboard de Pontos", to: "/app/operacional/dashboard-pontos", icon: BarChart3 },
         { label: "Mudança de Função", to: "/app/operacional/troca-funcao", icon: ArrowLeftRight, notif: "troca_funcao" },
         // Orientações Jurídicas (25/09/2026, mig 244): a pergunta do encarregado
         // chega aqui antes do Jurídico — responde ou encaminha.

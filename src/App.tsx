@@ -767,6 +767,10 @@ const App = () => (
                 três setores e ninguém troca de módulo para ver o seu. */}
             <Route path="operacional/conferencia-ponto" element={<OperacionalConferenciaPonto />} />
             <Route path="financeiro/conferencia-ponto" element={<FinanceiroConferenciaPonto />} />
+            {/* Dashboard de Pontos (mig 274): a mesma tela do painel do RH, com
+                menu próprio em cada módulo (financeiro_/operacional_dashboard_pontos). */}
+            <Route path="financeiro/dashboard-pontos" element={<ConferenciaPontoPainel />} />
+            <Route path="operacional/dashboard-pontos" element={<ConferenciaPontoPainel />} />
             {/* Operacional — fila de aprovação das demissões pedidas pelos encarregados. */}
             <Route path="operacional/solicitacoes-demissao" element={<OperacionalSolicitacoesDemissao />} />
             {/* A MESMA tela do Recrutamento, recortada na etapa 1 — ver o
