@@ -8,9 +8,10 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "
 import { ESTILO_STATUS } from "@/hooks/useSupPedidos";
 import { useTagsDoPedido } from "@/hooks/useSupEstoque";
 import {
-  MEDIDAS, cssEtiqueta, htmlEtiqueta, imprimirEtiqueta, textoItens, urlRetirada,
+  MEDIDAS, cssEtiqueta, htmlEtiqueta, imprimirEtiqueta, textoItens,
   type DadosEtiqueta, type TamanhoEtiqueta,
 } from "@/lib/suprimentos/etiquetaTermica";
+import { urlComprovacao } from "@/lib/suprimentos/comprovacaoQr";
 import { Eye, Printer } from "lucide-react";
 import { toast } from "sonner";
 import QRCode from "qrcode";
@@ -33,7 +34,7 @@ import QRCode from "qrcode";
  */
 
 export interface PedidoEtiqueta {
-  /** uuid do pedido — é o que o QR code de retirada carrega. */
+  /** uuid do pedido — é o que o QR code de comprovação de entrega carrega. */
   id: string;
   pedido_id: string;
   status: string;
@@ -124,9 +125,11 @@ export function ModalEtiquetaTermica({
     let ativo = true;
     setQr(null);
     setGerandoQr(true);
-    QRCode.toDataURL(urlRetirada(pedido.id, window.location.origin), { margin: 0, width: 512, errorCorrectionLevel: "M" })
+    // Aponta para a comprovação de entrega, não mais para a retirada: quem
+    // retira agora lê o QR do romaneio (ver comprovacaoQr.ts).
+    QRCode.toDataURL(urlComprovacao(pedido.id, window.location.origin), { margin: 0, width: 512, errorCorrectionLevel: "M" })
       .then((url) => { if (ativo) setQr(url); })
-      .catch(() => { if (ativo) toast.error("Não foi possível gerar o QR code de retirada. A etiqueta sairá sem ele."); })
+      .catch(() => { if (ativo) toast.error("Não foi possível gerar o QR code de comprovação de entrega. A etiqueta sairá sem ele."); })
       .finally(() => { if (ativo) setGerandoQr(false); });
     return () => { ativo = false; };
   }, [pedido]);
