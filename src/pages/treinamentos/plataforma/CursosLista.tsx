@@ -9,6 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { urlMidia, useTrnCategorias, useTrnCursos } from "@/hooks/useTreinamentosPlataforma";
 import { MENU } from "./tipos";
 import { TrnCarregando, TrnEstilo, TrnHero, TrnVazio } from "./ui";
+import { AVISO_QR_CURSO, BotaoQrCode, urlCursoPortal } from "./QrCodeDialog";
 
 // =====================================================================
 // TREINAMENTOS — Cursos › Visualizar (a vitrine de cartões do membox).
@@ -84,6 +85,7 @@ export default function CursosLista() {
                       <span className="flex items-center gap-1"><Star className="h-3.5 w-3.5 text-amber-500" /> {c.avaliacao != null ? `${Number(c.avaliacao).toFixed(1)} (${c.avaliacoes})` : "—"}</span>
                       <span className="ml-auto">{c.modulos} mód. · {c.aulas} aula(s)</span>
                     </div>
+                    <BotaoQrCode url={urlCursoPortal(c.id)} titulo={c.nome} subtitulo="Portal do Colaborador" rotulo="GERAR QR CODE" className="mt-2 w-full" aviso={AVISO_QR_CURSO} />
                   </div>
                 </Link>
               );
