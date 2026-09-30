@@ -535,6 +535,15 @@ const rhModule: ModuleDef = {
         { label: "Mudança de Função", to: "/app/rh/troca-funcao", icon: ArrowLeftRight, notif: "troca_funcao" },
       ],
     },
+    {
+      // Ativos/Contratos (30/09/2026, mig 279): efetivo ativo da EMPREGADOS ×
+      // QT. PESSOAS da Planilha de Custo, conferido posto a posto.
+      label: "Contratos",
+      defaultOpen: true,
+      items: [
+        { label: "Ativos/Contratos", to: "/app/rh/ativos-contratos", icon: ClipboardCheck },
+      ],
+    },
   ],
 };
 
