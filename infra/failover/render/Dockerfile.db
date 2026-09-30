@@ -1,0 +1,33 @@
+# ============================================================================
+#  Banco da replica, para a Render
+# ============================================================================
+#
+#  POR QUE UMA IMAGEM PROPRIA, E NAO A supabase/postgres DIRETO
+#  No docker-compose local, o script de inicializacao entra por bind mount
+#  (./db-init:/docker-entrypoint-initdb.d/). Na Render nao existe bind mount:
+#  ela roda a imagem como ela e. Entao o script precisa estar DENTRO da imagem.
+#
+#  E ele nao e opcional. Sem esse script, os papeis authenticator,
+#  supabase_auth_admin e supabase_storage_admin ficam com a senha propria da
+#  imagem, e rest/auth/storage sobem em restart loop com
+#  "password authentication failed" - com a aplicacao abrindo em branco, que
+#  parece backup quebrado. Depois do primeiro boot nao da mais para corrigir:
+#  a extensao supautils marca os tres como reservados e nem o usuario
+#  `postgres` consegue altera-los.
+#
+#  A VERSAO TEM QUE SER >= A DA PRODUCAO (hoje 17.6). Um pg_restore mais
+#  antigo recusa o arquivo inteiro com "unsupported version in file header" e
+#  deixa a replica vazia sem alarde.
+#
+#  Contexto de build: a RAIZ do repositorio (ver dockerContext no render.yaml).
+# ============================================================================
+FROM supabase/postgres:17.11.0.002
+
+COPY infra/failover/db-init/zz-senhas-dos-servicos.sh \
+     /docker-entrypoint-initdb.d/zz-senhas-dos-servicos.sh
+
+# O arquivo vem do Windows e pode chegar com CRLF; o shell do container nao
+# aceita o \r e falharia com "bad interpreter". Ja aconteceu com outros
+# scripts deste projeto - ver repo_arquivos_crlf_misturado.
+RUN sed -i 's/\r$//' /docker-entrypoint-initdb.d/zz-senhas-dos-servicos.sh \
+ && chmod +x /docker-entrypoint-initdb.d/zz-senhas-dos-servicos.sh
