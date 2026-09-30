@@ -33035,3 +33035,218 @@ NOTIFY pgrst, 'reload schema';
 --   CHECK (status IN ('aberto', 'em_andamento', 'aguardando_retorno', 'concluido', 'reprovado'));
 -- ALTER TABLE public."CHAMADO_SISTEMA" DROP COLUMN IF EXISTS cancelado_em, DROP COLUMN IF EXISTS motivo_cancelamento;
 -- NOTIFY pgrst, 'reload schema';
+
+-- ===== 20260930000262_malote_despesa_select_sem_recursao (JA APLICADA 29/09) =====
+-- [SEM-CHAMADO] (achado real, 29/09/2026 — Aprovações do Malote, Meus
+-- Itens e Pagamento Malote vazios pra TODO mundo, tiles todos em 0):
+-- a policy malote_despesa_select ganhou (aplicada direto no banco, sem
+-- migration no git) um ramo pra despesa de rateio com
+--   EXISTS (SELECT 1 FROM malote_despesa_rateio_linha rl WHERE rl.despesa_id = malote_despesa.id ...)
+-- Só que a RLS de malote_despesa_rateio_linha (malote_rateio_linha_all)
+-- faz EXISTS em malote_despesa de volta → despesa → linha → despesa → ...
+-- e o Postgres recusa a consulta inteira com "42P17: infinite recursion
+-- detected in policy for relation malote_despesa". A tela engole o erro e
+-- mostra "Nenhum item encontrado".
+--
+-- Correção: a mesma regra (despesa de rateio visível se ALGUMA linha tem
+-- classificação do setor liberado pro usuário) passa a morar numa função
+-- SECURITY DEFINER — ela lê malote_despesa_rateio_linha sem passar pela
+-- RLS da linha, então o ciclo some. Mesmo padrão já usado em
+-- malote_despesa_visivel_por_setor. Regra de visibilidade idêntica.
+--
+-- ROLLBACK (volta ao estado quebrado — só se for pra trocar a solução):
+--   DROP POLICY IF EXISTS malote_despesa_select ON public.malote_despesa;
+--   (recriar com o EXISTS direto em malote_despesa_rateio_linha)
+--   DROP FUNCTION IF EXISTS public.malote_despesa_visivel_por_rateio(uuid, uuid);
+--   NOTIFY pgrst, 'reload schema';
+
+CREATE OR REPLACE FUNCTION public.malote_despesa_visivel_por_rateio(_user_id uuid, _despesa_id uuid)
+RETURNS boolean
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+  SELECT EXISTS (
+    SELECT 1
+      FROM public.malote_despesa_rateio_linha rl
+     WHERE rl.despesa_id = _despesa_id
+       AND public.malote_despesa_visivel_por_setor(_user_id, rl.classificacao_id)
+  );
+$$;
+
+REVOKE ALL ON FUNCTION public.malote_despesa_visivel_por_rateio(uuid, uuid) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.malote_despesa_visivel_por_rateio(uuid, uuid) TO authenticated;
+
+DROP POLICY IF EXISTS malote_despesa_select ON public.malote_despesa;
+CREATE POLICY malote_despesa_select ON public.malote_despesa
+  FOR SELECT TO authenticated
+  USING (
+    (created_by = auth.uid())
+    OR has_role(auth.uid(), 'admin'::app_role)
+    OR (user_pode_ver_empresa(auth.uid(), empresa_id) AND malote_despesa_visivel_por_setor(auth.uid(), classificacao_id))
+    OR (
+      classificacao_id IS NULL
+      AND user_pode_ver_empresa(auth.uid(), empresa_id)
+      AND malote_despesa_visivel_por_rateio(auth.uid(), id)
+    )
+    OR (can_access(auth.uid(), 'sup_cotacoes_malote'::text, 'visualizar'::app_acao) AND malote_despesa_em_fase_cotacao(status))
+    OR can_access(auth.uid(), 'malote_pagamento'::text, 'aprovar'::app_acao)
+    OR (excecao AND status = 'pendente_aprovacao'::text AND malote_gerente_financeiro(auth.uid()))
+    OR (
+      origem = 'solicitacao'::text
+      AND EXISTS (
+        SELECT 1 FROM planejamento_orcamentario_classificacao c
+         WHERE c.id = malote_despesa.classificacao_id
+           AND auth.uid() = ANY (c.lancador_despesa_user_ids)
+      )
+    )
+  );
+
+NOTIFY pgrst, 'reload schema';
+
+-- ===== 20260930000263_encarregados_advertencia_menu (JA APLICADA 29/09) =====
+-- =====================================================================
+-- SOLICITAR MEDIDA DISCIPLINAR NO MÓDULO ENCARREGADOS — menu próprio
+-- (encarregados_advertencia)
+--
+-- O PROBLEMA (relatado em 29/09/2026, com print do Gerenciamento de Acesso):
+-- no /app/administracao?tab=modulos, o bloco "Encarregados" não tinha chave
+-- para "Solicitar Medida Disciplinar", embora a sidebar desenhe o item dentro
+-- de Encarregados › Jurídico. Não havia chave porque não havia linha em
+-- app_menu para /app/encarregados/advertencia — e matchMenuCode() casa por
+-- prefixo mais longo, então a rota caía no menu raiz `minhas_solicitações`
+-- (rota '/app/encarregados', o toggle "Encarregados" do topo do bloco).
+-- Resultado: não dava para liberar/tirar a medida disciplinar sozinha; ela
+-- andava junto com o acesso ao módulo inteiro. Mesmo desenho do caso das
+-- Diárias (20260930000065).
+--
+-- A SOLUÇÃO: menu próprio com a rota exata. A chave passa a aparecer no bloco
+-- Encarregados e governa só este item.
+--
+-- NINGUÉM GANHA NEM PERDE ACESSO NO DEPLOY: a partir desta linha a rota deixa
+-- de herdar `minhas_solicitações`, então as regras de quem já tinha aquele
+-- menu (liberadas E negadas) são copiadas para o menu novo, ação por ação.
+--
+-- O que NÃO muda: a decisão da medida continua no Jurídico (menu
+-- `advertencias`, ação 'aprovar'). A policy adv_insert já é
+-- `solicitante_email = auth.email() OR ...` — o gate de quem abre é a tela;
+-- este arquivo não toca RLS de SISTEMA_SOLICITACOES_ADVERTENCIA.
+-- =====================================================================
+
+-- ── 1) Menu ──────────────────────────────────────────────────────────
+INSERT INTO public.app_menu (modulo_id, codigo, nome, rota, ordem)
+SELECT mo.id, 'encarregados_advertencia', 'Solicitar Medida Disciplinar', '/app/encarregados/advertencia', 44
+  FROM public.app_modulo mo
+ WHERE mo.codigo = 'encarregados'
+   AND NOT EXISTS (SELECT 1 FROM public.app_menu am WHERE am.codigo = 'encarregados_advertencia');
+
+-- can_access() devolve false para menu inativo antes de olhar perfil.
+UPDATE public.app_menu SET ativo = true WHERE codigo = 'encarregados_advertencia';
+
+-- ── 2) Herança das regras atuais ─────────────────────────────────────
+-- Por usuário (fonte da verdade): copia allow=true e allow=false.
+INSERT INTO public.screen_permission_user (user_id, menu_codigo, acao, allow, empresa_id, motivo, created_by)
+SELECT s.user_id, 'encarregados_advertencia', s.acao, s.allow, s.empresa_id,
+       'Herdado de minhas_solicitações (mig 20260930000263)', s.created_by
+  FROM public.screen_permission_user s
+ WHERE s.menu_codigo = 'minhas_solicitações'
+   AND NOT EXISTS (
+     SELECT 1 FROM public.screen_permission_user x
+      WHERE x.user_id = s.user_id
+        AND x.menu_codigo = 'encarregados_advertencia'
+        AND x.acao = s.acao
+        AND x.empresa_id IS NOT DISTINCT FROM s.empresa_id
+   );
+
+-- Perfil de módulo "Encarregados": mesmo pacote que ele tem no menu raiz.
+INSERT INTO public.perfil_acesso_permissao (perfil_id, menu_codigo, acao, allow)
+SELECT pa.id, 'encarregados_advertencia', v.acao::public.app_acao, true
+  FROM public.perfil_acesso pa
+  JOIN (VALUES ('visualizar'), ('incluir')) AS v(acao) ON true
+ WHERE pa.nome = 'Encarregados' AND pa.ativo = true AND pa.concede_tudo = false
+ON CONFLICT (perfil_id, menu_codigo, acao) DO NOTHING;
+
+NOTIFY pgrst, 'reload schema';
+
+-- =====================================================================
+-- ROLLBACK
+-- =====================================================================
+-- DELETE FROM public.screen_permission_user  WHERE menu_codigo = 'encarregados_advertencia';
+-- DELETE FROM public.perfil_acesso_permissao WHERE menu_codigo = 'encarregados_advertencia';
+-- DELETE FROM public.app_menu                WHERE codigo      = 'encarregados_advertencia';
+-- NOTIFY pgrst, 'reload schema';
+
+-- ===== 20260930000264_recrutamento_pular_sst_compras (PENDENTE - aplicar antes do front subir) =====
+-- =========================================================================
+-- Recrutamento: "Pular SST e Compras" (DOCUMENTAÇÃO → ADMISSÃO)
+--
+-- Pedido (29/09/2026): no kanban do processo seletivo, com o candidato em
+-- DOCUMENTAÇÃO, um botão que pula a etapa paralela SST + COMPRAS e leva
+-- direto para ADMISSÃO — e que só ALGUNS tenham, concedido em
+-- Administração › Acesso por Usuário.
+--
+-- CAPACIDADE PRÓPRIA, NÃO O `alterar` DA TELA
+--   `recrutamento_gestao`/alterar é quem conduz o processo (podeRecrutar) e
+--   entra de brinde no toggle padrão. Se pular SST/Compras dependesse dele,
+--   todo recrutador passaria a dispensar o exame admissional e o enxoval.
+--   Menu fantasma (`rota = NULL`), mesmo mecanismo de
+--   `recrutamento_etapa_*` e `recrutamento_solicitacao_*` (mig 077). Nasce
+--   SEM ninguém liberado.
+--
+-- A TRAVA MORA NO BANCO
+--   A RLS de WA_CURRICULOS (wa_curriculos_gate) deixa gravar quem enxerga a
+--   tela — esconder o botão sozinho não impediria um UPDATE via API. O
+--   trigger abaixo recusa DOCUMENTAÇÃO → ADMISSÃO de quem não tem a
+--   capacidade. auth.uid() nulo (SQL Editor, jobs) passa: não é usuário do
+--   app. O caminho normal (SST + COMPRAS → ADMISSÃO pelo
+--   trg_rec_paralelo_admissao) não é tocado.
+--
+-- Idempotente. Aplicar no banco do app.
+-- =========================================================================
+
+-- ── A capacidade ─────────────────────────────────────────────────────────
+INSERT INTO public.app_menu (modulo_id, codigo, nome, rota, ordem, ativo)
+SELECT m.id, 'recrutamento_pular_sst_compras', 'Pular SST e Compras (Documentação → Admissão)', NULL, 23, true
+  FROM public.app_modulo m
+ WHERE m.codigo = 'recrutamento'
+ON CONFLICT (modulo_id, codigo) DO NOTHING;
+
+INSERT INTO public.app_menu_acao (menu_codigo, acao)
+VALUES ('recrutamento_pular_sst_compras', 'aprovar'::app_acao)
+ON CONFLICT (menu_codigo, acao) DO NOTHING;
+
+-- ── A trava ──────────────────────────────────────────────────────────────
+CREATE OR REPLACE FUNCTION public.rec_pular_sst_compras_guard()
+RETURNS trigger
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp
+AS $$
+BEGIN
+  IF OLD.etapa_processo = 'DOCUMENTAÇÃO'
+     AND NEW.etapa_processo = 'ADMISSÃO'
+     AND auth.uid() IS NOT NULL
+     AND NOT public.has_screen_access(auth.uid(), 'recrutamento_pular_sst_compras', 'aprovar'::app_acao)
+  THEN
+    RAISE EXCEPTION 'Você não tem permissão para pular SST e Compras.';
+  END IF;
+  RETURN NEW;
+END $$;
+
+REVOKE ALL ON FUNCTION public.rec_pular_sst_compras_guard() FROM PUBLIC, anon;
+
+DROP TRIGGER IF EXISTS trg_rec_pular_sst_compras_guard ON public."WA_CURRICULOS";
+CREATE TRIGGER trg_rec_pular_sst_compras_guard
+  BEFORE UPDATE OF etapa_processo ON public."WA_CURRICULOS"
+  FOR EACH ROW EXECUTE FUNCTION public.rec_pular_sst_compras_guard();
+
+NOTIFY pgrst, 'reload schema';
+
+-- =========================================================================
+-- ROLLBACK
+-- =========================================================================
+-- DROP TRIGGER IF EXISTS trg_rec_pular_sst_compras_guard ON public."WA_CURRICULOS";
+-- DROP FUNCTION IF EXISTS public.rec_pular_sst_compras_guard();
+-- DELETE FROM public.screen_permission_user WHERE menu_codigo = 'recrutamento_pular_sst_compras';
+-- DELETE FROM public.app_menu_acao          WHERE menu_codigo = 'recrutamento_pular_sst_compras';
+-- DELETE FROM public.app_menu               WHERE codigo      = 'recrutamento_pular_sst_compras';
+-- NOTIFY pgrst, 'reload schema';

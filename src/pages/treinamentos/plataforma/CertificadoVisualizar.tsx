@@ -5,7 +5,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import type { Certificado, CertificadoModelo } from "./tipos";
-import { CertificadoFrente, CertificadoVerso, type DadosCertificado } from "./CertificadoPreview";
+import { CertificadoFrente, CertificadoVerso, dataCertificado, type DadosCertificado } from "./CertificadoPreview";
 import { TrnCarregando, TrnEstilo } from "./ui";
 
 // =====================================================================
@@ -40,7 +40,7 @@ export default function CertificadoVisualizar() {
 
   const dados: DadosCertificado = {
     aluno: data.cert.aluno.nome, documento: data.cert.aluno.documento, curso: data.cert.curso.nome,
-    data: new Date(data.cert.emitido_em).toLocaleDateString("pt-BR", { day: "numeric", month: "long", year: "numeric" }),
+    data: dataCertificado(data.cert.emitido_em),
     cargaHorariaMin: data.cert.carga_horaria_min ?? data.cert.curso.carga_horaria_min, codigo: data.cert.codigo_validacao,
     modulos: data.modulos.map((m) => ({ nome: m.nome, aulas: (m.TRN_AULA ?? []).sort((a: any, b: any) => a.posicao - b.posicao).map((a: any) => a.nome) })),
   };
