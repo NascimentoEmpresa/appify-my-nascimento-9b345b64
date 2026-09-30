@@ -171,6 +171,7 @@ import Processos from "./pages/juridico/Processos";
 import Advertencias from "./pages/juridico/Advertencias";
 import VerificacaoCandidatos from "./pages/juridico/VerificacaoCandidatos";
 import TreinamentosERP from "./pages/treinamentos/TreinamentosERP";
+import TreinamentosSistemasPagina from "./pages/treinamentos/TreinamentosSistemas";
 // Plataforma de Treinamentos (porta do membox, 18/09/2026) — ver a migration
 // 20260930000190_treinamentos_plataforma.sql.
 import TreinamentosDashboard from "./pages/treinamentos/plataforma/Dashboard";
@@ -521,6 +522,10 @@ const App = () => (
                 liberado porta a porta. Igual ao que Chamados de Sistemas já
                 faz entre Encarregados e Central de Serviços. */}
             <Route path="central-servicos/treinamentos" element={<TreinamentosERP escopo="central_servicos" />} />
+            {/* Treinamentos Sistemas (mig 273): confirmação do treinamento dos
+                chamados que passaram pela Presidência. Liberada a todo logado
+                (ROTAS_SEMPRE_LIBERADAS) — só mostra os treinamentos da pessoa. */}
+            <Route path="central-servicos/treinamentos-sistemas" element={<TreinamentosSistemasPagina />} />
             <Route path="central-servicos/reembolso" element={<SolicitarReembolso />} />
             <Route path="central-servicos/reembolso/aprovacao" element={<AprovacaoReembolso />} />
             <Route path="central-servicos/reembolso/configuracao" element={<ConfiguracaoReembolso />} />

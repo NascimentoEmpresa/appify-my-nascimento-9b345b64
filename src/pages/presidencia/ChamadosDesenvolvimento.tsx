@@ -4,7 +4,8 @@
 // Chamados de sistemas que a coordenação marcou "Enviar à Presidência"
 // (mig 20260930000266). Quando o dev conclui, o chamado cai aqui para a
 // direção validar se o desenvolvimento está OK:
-//   · Aprovar  → fica pendente de treinamento (dev e solicitante confirmam
+//   · Aprovar  → fica pendente de treinamento (o dev envia a usuários/setores e
+//     cada um confirma em Treinamentos Sistemas — mig 273; antes: dev e solicitante confirmavam
 //                na tela do chamado; quando os dois confirmam, finaliza)
 //   · Devolver → volta para a fila do dev com o parecer da Presidência
 //
@@ -68,6 +69,9 @@ interface LinhaPresidencia {
   treinamento_solic_em: string | null;
   treinamento_solic_obs: string | null;
   finalizado_em: string | null;
+  /** Participantes do treinamento e quantos já confirmaram (mig 273). */
+  treinamento_participantes?: number | null;
+  treinamento_confirmados?: number | null;
 }
 
 type Aba = "validacao_presidencia" | "treinamento" | "finalizado" | "desenvolvimento" | "todos";
@@ -159,7 +163,7 @@ export default function ChamadosDesenvolvimento() {
     setGravando(false);
     if (error) { toast({ title: "Erro ao registrar a decisão", description: error.message, variant: "destructive" }); return; }
     toast(decisao.aprovar
-      ? { title: `#${decisao.linha.numero} aprovado`, description: "Agora fica pendente de treinamento (dev e solicitante confirmam)." }
+      ? { title: `#${decisao.linha.numero} aprovado`, description: "Agora fica pendente de treinamento: o dev envia a quem vai recebê-lo." }
       : { title: `#${decisao.linha.numero} devolvido ao desenvolvimento`, description: "O chamado voltou para a fila do desenvolvedor com o seu parecer." });
     invalidar(decisao.linha.chamado_id);
     setDecisao(null); setParecer("");
@@ -197,7 +201,7 @@ export default function ChamadosDesenvolvimento() {
 
       <div className="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard icon={Crown} tone="warning" label="Aguardando validação" value={contagem.validacao_presidencia} hint="Dev concluiu" />
-        <StatCard icon={GraduationCap} tone="primary" label="Treinamento pendente" value={contagem.treinamento} hint="Dev e solicitante confirmam" />
+        <StatCard icon={GraduationCap} tone="primary" label="Treinamento pendente" value={contagem.treinamento} hint="Dev envia · participantes confirmam" />
         <StatCard icon={Flag} tone="success" label="Finalizados" value={contagem.finalizado} hint="Treinamento confirmado" />
         <StatCard icon={Code2} tone="info" label="Em desenvolvimento" value={contagem.desenvolvimento} hint="Ainda com o dev" />
       </div>
@@ -294,8 +298,10 @@ export default function ChamadosDesenvolvimento() {
                   {(l.etapa === "treinamento" || l.etapa === "finalizado") && (
                     <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 rounded-md bg-muted/40 px-2.5 py-1.5">
                       <span className="flex items-center gap-1 text-[11px] font-semibold"><GraduationCap className="h-3.5 w-3.5 text-primary" /> Treinamento:</span>
-                      <Check ok={!!l.treinamento_dev_em} titulo="Desenvolvedor" quando={l.treinamento_dev_em} />
-                      <Check ok={!!l.treinamento_solic_em} titulo="Solicitante" quando={l.treinamento_solic_em} />
+                      <Check ok={!!l.treinamento_dev_em} titulo="Enviado pelo dev" quando={l.treinamento_dev_em} />
+                      <Check ok={l.etapa === "finalizado"}
+                        titulo={l.treinamento_participantes ? `Participantes: ${l.treinamento_confirmados ?? 0} de ${l.treinamento_participantes} confirmaram` : "Participantes confirmaram"}
+                        quando={l.etapa === "finalizado" ? l.finalizado_em : null} />
                     </div>
                   )}
 
@@ -344,7 +350,7 @@ export default function ChamadosDesenvolvimento() {
           </DialogHeader>
           <p className="text-sm text-muted-foreground">
             {decisao?.aprovar
-              ? "O desenvolvimento está OK. O chamado fica pendente de treinamento: o desenvolvedor e o solicitante confirmam, cada um, que o treinamento foi dado."
+              ? "O desenvolvimento está OK. O chamado fica pendente de treinamento: o desenvolvedor envia o treinamento às pessoas/setores que vão recebê-lo, e cada uma confirma em Treinamentos Sistemas."
               : "O chamado volta para a fila do desenvolvedor com o seu parecer. Quando ele concluir de novo, retorna para a sua validação."}
           </p>
           <Textarea

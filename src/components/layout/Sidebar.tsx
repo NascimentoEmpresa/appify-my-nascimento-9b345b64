@@ -85,7 +85,7 @@ import { Percent } from "lucide-react";
 import { FolderOpen } from "lucide-react";
 import { TrendingDown } from "lucide-react";
 import { Megaphone, ExternalLink } from "lucide-react";
-import { Award, CalendarDays, FolderTree, QrCode, Users } from "lucide-react";
+import { Award, CalendarDays, FolderTree, MonitorCog, QrCode, Users } from "lucide-react";
 import { CreditCard } from "lucide-react";
 import { Network } from "lucide-react";
 import { useNovidades } from "@/hooks/useNovidades";
@@ -791,6 +791,10 @@ const centralServicosModule: ModuleDef = {
         // (`central_servicos_treinamentos`) — liberar esta porta não abre a
         // de lá, nem o contrário.
         { label: "Treinamentos", to: "/app/central-servicos/treinamentos", icon: GraduationCap },
+        // Treinamentos Sistemas (mig 273): rota em ROTAS_SEMPRE_LIBERADAS,
+        // aparece para todos — qualquer um pode receber treinamento de um
+        // desenvolvimento do ERP (o dev escolhe setores inteiros).
+        { label: "Treinamentos Sistemas", to: "/app/central-servicos/treinamentos-sistemas", icon: MonitorCog },
         // Só o "Solicitar" entra no menu. Aprovação e Tipos/Limites ficam de
         // fora de propósito: são telas de poucas pessoas, alcançadas pelos
         // botões do cabeçalho da própria tela de solicitar (que só aparecem

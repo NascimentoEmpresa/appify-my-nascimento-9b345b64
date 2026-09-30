@@ -9,7 +9,7 @@ import { FeedAtualizacoes } from "./FeedAtualizacoes";
 import { AvaliarChamadoDialog } from "./AvaliarChamadoDialog";
 import { BotaoChatChamado, useChamadosNaoLidos } from "./BotaoChatChamado";
 import { BotaoStatusChamado, SeloEtapaValidacao, useValidacoesChamados } from "./StatusValidacao";
-import { avaliacaoLiberada, pendenciaTreinamento } from "./validacaoPresidencia";
+import { avaliacaoLiberada } from "./validacaoPresidencia";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -46,11 +46,18 @@ export default function MeusChamados({ base = "/app/central-servicos/chamados" }
     queryKey: ["chamados-avaliacoes-pendentes"],
     queryFn: async () => {
       const { data } = await (supabase as any).rpc("chamados_meus_avaliacoes_pendentes");
-      // Só o que já dá para AVALIAR: os de treinamento a confirmar (mig 269)
-      // aparecem no card "Confirme o treinamento", logo abaixo — avaliar
-      // antes de confirmar o banco recusa.
-      return ((data ?? []) as Array<{ id: string; numero: string; assunto: string; pendencia?: string }>)
-        .filter((p) => p.pendencia !== "treinamento");
+      return (data ?? []) as Array<{ id: string; numero: string; assunto: string }>;
+    },
+  });
+
+  // Treinamentos de sistemas que EU devo confirmar (mig 273) — de qualquer
+  // chamado, não só dos meus: posso ter recebido pelo meu setor.
+  const { data: treinamentosPendentes = 0 } = useQuery({
+    queryKey: ["chamado-validacoes", "treinamentos-sistemas-meus", user?.id],
+    enabled: !!user?.id,
+    queryFn: async () => {
+      const { data } = await (supabase as any).rpc("treinamentos_sistemas_meus");
+      return ((data ?? []) as Array<{ confirmado_em: string | null }>).filter((t) => !t.confirmado_em).length;
     },
   });
 
@@ -96,12 +103,8 @@ export default function MeusChamados({ base = "/app/central-servicos/chamados" }
   });
 
   // Validação da Presidência (mig 266) dos chamados listados: selo da etapa
-  // e o aviso de treinamento a confirmar.
+  // e a trava da avaliação enquanto a Presidência valida.
   const { data: validacoes = {} } = useValidacoesChamados(chamados.map((c) => c.id));
-  const treinamentosPendentes = useMemo(
-    () => chamados.filter((c) => pendenciaTreinamento(validacoes[c.id], c, user?.id).comoSolicitante),
-    [chamados, validacoes, user?.id],
-  );
 
   // Paginação (client-side) para não renderizar centenas de linhas de uma vez.
   const totalPaginas = Math.max(1, Math.ceil(chamados.length / POR_PAGINA));
@@ -161,21 +164,16 @@ export default function MeusChamados({ base = "/app/central-servicos/chamados" }
         </Card>
       )}
 
-      {/* Treinamento a confirmar (mig 266): a Presidência aprovou e falta o
-          solicitante dizer que recebeu o treinamento. */}
-      {treinamentosPendentes.length > 0 && (
-        <Card className="mb-4 space-y-2 border-primary/40 bg-primary/5 p-4">
+      {/* Treinamentos de sistemas a confirmar (mig 273): a confirmação é em
+          Central de Serviços › Treinamentos › Treinamentos Sistemas. */}
+      {treinamentosPendentes > 0 && (
+        <Card className="mb-4 flex flex-wrap items-center justify-between gap-2 border-primary/40 bg-primary/5 p-4">
           <p className="flex items-center gap-1.5 text-sm font-semibold text-primary">
-            <GraduationCap className="h-4 w-4" /> Confirme o treinamento de {treinamentosPendentes.length} chamado(s) — a solicitação só finaliza com a sua confirmação.
+            <GraduationCap className="h-4 w-4" /> Você tem {treinamentosPendentes} treinamento(s) de sistemas para confirmar.
           </p>
-          <div className="flex flex-wrap gap-1.5">
-            {treinamentosPendentes.map((c) => (
-              <button key={c.id} onClick={() => nav(`${base}/${c.id}/acompanhar`)}
-                className="flex items-center gap-1 rounded border border-primary/40 bg-background px-2 py-1 text-xs transition-transform hover:border-primary hover:bg-primary/5 active:scale-90">
-                <GraduationCap className="h-3 w-3 text-primary" /> <span className="font-mono font-semibold">#{c.numero}</span> confirmar
-              </button>
-            ))}
-          </div>
+          <Button size="sm" onClick={() => nav("/app/central-servicos/treinamentos-sistemas")} className="gap-1.5">
+            <GraduationCap className="h-4 w-4" /> Ir para Treinamentos Sistemas
+          </Button>
         </Card>
       )}
 
@@ -275,10 +273,9 @@ export default function MeusChamados({ base = "/app/central-servicos/chamados" }
                           <Lock className="h-3.5 w-3.5" /> Avaliar
                         </Button>
                       ) : !avaliacaoLiberada(validacoes[c.id]).liberada ? (
-                        // Presidência validando ou treinamento a confirmar (mig 269): avalia depois.
+                        // Presidência validando (mig 273): a avaliação abre depois que ela aprovar.
                         <Button variant="ghost" size="sm" disabled
-                          title={avaliacaoLiberada(validacoes[c.id]).motivo === "treinamento"
-                            ? "Confirme o treinamento no chamado; depois avalie" : "Aguardando a validação da Presidência"}
+                          title="Aguardando a validação da Presidência — a avaliação abre depois que ela aprovar"
                           className="h-8 cursor-not-allowed gap-1.5 text-muted-foreground/60">
                           <Lock className="h-3.5 w-3.5" /> Avaliar
                         </Button>
