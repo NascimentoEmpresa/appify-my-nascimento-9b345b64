@@ -274,7 +274,9 @@ export default function ExecutarChamado() {
         {/* Coluna de execução */}
         <div className="space-y-4">
           <CardValidacaoPresidencia chamado={chamado} validacao={validacao} nomeDe={nomeDe} />
-          <CardTreinamento chamado={chamado} validacao={validacao} nomeDe={nomeDe} />
+          {/* Só o papel de desenvolvedor aqui (dev ou gestão por ele, mig 269);
+              o solicitante confirma no acompanhamento, antes de avaliar. */}
+          <CardTreinamento chamado={chamado} validacao={validacao} nomeDe={nomeDe} papel="desenvolvedor" />
           <Card className="space-y-3 p-4">
             <p className="text-sm font-bold">Execução do chamado</p>
             <div>

@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
-  montarLinhaDoTempo, pendenciaTreinamento, resumoStatus, type ValidacaoChamado,
+  avaliacaoLiberada, montarLinhaDoTempo, pendenciaTreinamento, resumoStatus, type ValidacaoChamado,
 } from "@/pages/chamados/validacaoPresidencia";
 
 // =====================================================================
@@ -83,9 +83,37 @@ describe("pendenciaTreinamento", () => {
     expect(pendenciaTreinamento(semRegistro, chamado(), DEV).comoDev).toBe(true);
   });
 
-  it("dev que abriu o próprio chamado confirma os dois papéis", () => {
+  it("dev que abriu o próprio chamado deve os dois papéis — e cada um some sozinho", () => {
+    // 30/09/2026: antes um clique confirmava os dois; agora a RPC recebe o papel.
     const v = validacao({ etapa: "treinamento", desenvolvedor_id: DEV });
     expect(pendenciaTreinamento(v, chamado({ solicitante_id: DEV }), DEV)).toEqual({ comoDev: true, comoSolicitante: true });
+    const soDev = validacao({ etapa: "treinamento", desenvolvedor_id: DEV, treinamento_dev_em: "2026-09-30T09:07:00Z" });
+    expect(pendenciaTreinamento(soDev, chamado({ solicitante_id: DEV }), DEV)).toEqual({ comoDev: false, comoSolicitante: true });
+  });
+
+  it("a gestão (gerente do dev) confirma pelo dev, nunca pelo solicitante", () => {
+    const v = validacao({ etapa: "treinamento", desenvolvedor_id: DEV });
+    expect(pendenciaTreinamento(v, chamado(), OUTRO, { gestao: true })).toEqual({ comoDev: true, comoSolicitante: false });
+    const devJa = validacao({ etapa: "treinamento", desenvolvedor_id: DEV, treinamento_dev_em: "2026-09-30T09:07:00Z" });
+    expect(pendenciaTreinamento(devJa, chamado(), OUTRO, { gestao: true }).comoDev).toBe(false);
+  });
+});
+
+describe("avaliacaoLiberada", () => {
+  it("fluxo normal (sem Presidência) avalia direto", () => {
+    expect(avaliacaoLiberada(null)).toEqual({ liberada: true });
+  });
+
+  it("com a Presidência validando ainda não avalia", () => {
+    expect(avaliacaoLiberada(validacao({ etapa: "validacao_presidencia" }))).toEqual({ liberada: false, motivo: "presidencia" });
+    expect(avaliacaoLiberada(validacao({ etapa: "desenvolvimento" }))).toEqual({ liberada: false, motivo: "presidencia" });
+  });
+
+  it("no treinamento, primeiro o solicitante confirma, depois avalia", () => {
+    expect(avaliacaoLiberada(validacao({ etapa: "treinamento" }))).toEqual({ liberada: false, motivo: "treinamento" });
+    // Solicitante já confirmou (o dev ainda não): pode avaliar.
+    expect(avaliacaoLiberada(validacao({ etapa: "treinamento", treinamento_solic_em: "2026-09-30T09:07:00Z" }))).toEqual({ liberada: true });
+    expect(avaliacaoLiberada(validacao({ etapa: "finalizado" }))).toEqual({ liberada: true });
   });
 });
 

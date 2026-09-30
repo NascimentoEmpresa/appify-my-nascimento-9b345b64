@@ -9,12 +9,13 @@ import { PageHeader } from "@/components/layout/PageHeader";
 import { ExportarChamado } from "./ExportarChamado";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { ArrowLeft, MessageSquarePlus, Paperclip, RotateCcw, Star, XCircle } from "lucide-react";
+import { ArrowLeft, CheckCircle2, GraduationCap, Lock, MessageSquarePlus, Paperclip, RotateCcw, Star, XCircle } from "lucide-react";
 import { AvaliarChamadoDialog } from "./AvaliarChamadoDialog";
 import { ReabrirChamadoDialog } from "./ReabrirChamadoDialog";
 import { CancelarChamadoDialog } from "./CancelarChamadoDialog";
 import { ChatChamado } from "./ChatChamado";
-import { BotaoStatusChamado, CardTreinamento, CardValidacaoPresidencia, useValidacaoChamado } from "./StatusValidacao";
+import { BotaoStatusChamado, CardTreinamento, CardValidacaoPresidencia, ConfirmarTreinamento, useValidacaoChamado } from "./StatusValidacao";
+import { avaliacaoLiberada } from "./validacaoPresidencia";
 import {
   StatusBadge, PrioridadeBadge, CardAvaliacao,
   CATEGORIAS, TIPOS, IMPACTOS, URGENCIAS, AMBIENTES,
@@ -78,6 +79,7 @@ export default function AcompanharChamado({ base = "/app/central-servicos/chamad
 
   // Validação da Presidência (mig 266) — null quando o chamado não foi enviado.
   const { data: validacao } = useValidacaoChamado(id);
+  const liberacao = avaliacaoLiberada(validacao);
 
   const invalidar = () => {
     qc.invalidateQueries({ queryKey: ["chamado-validacao", id] });
@@ -221,8 +223,9 @@ export default function AcompanharChamado({ base = "/app/central-servicos/chamad
 
         {/* Coluna de ação do solicitante */}
         <div className="space-y-4">
-          {/* Presidência + treinamento (mig 266): o solicitante confirma aqui
-              que recebeu o treinamento. */}
+          {/* Presidência + treinamento (mig 266): situação do treinamento, só
+              leitura. A confirmação do solicitante fica no card da avaliação,
+              mais abaixo (mig 269: confirmar → avaliar). */}
           <CardTreinamento chamado={chamado} validacao={validacao} nomeDe={nomeDe} />
           <CardValidacaoPresidencia chamado={chamado} validacao={validacao} nomeDe={nomeDe} />
           <ExportarChamado chamadoId={chamado.id} numero={chamado.numero} totalAnexos={anexos.length} />
@@ -260,17 +263,43 @@ export default function AcompanharChamado({ base = "/app/central-servicos/chamad
             </Card>
           )}
 
-          {/* Avaliação — só em chamados concluídos */}
+          {/* Avaliação — só em chamados concluídos. No fluxo da Presidência
+              (mig 269, 30/09/2026) é "1. confirmar o treinamento → 2. avaliar",
+              no mesmo card: a confirmação do solicitante mora aqui, e a
+              avaliação só abre depois dela (o banco também trava). Com a
+              Presidência ainda validando, não há o que fazer — o card some e
+              o CardValidacaoPresidencia, acima, explica a espera. */}
           {chamado.status === "concluido" && (
             avaliacao ? (
               <CardAvaliacao avaliacao={avaliacao} titulo="Sua avaliação" />
-            ) : ehSolicitante ? (
+            ) : ehSolicitante && liberacao.liberada ? (
               <Card className="animate-rise-in space-y-3 border-warning/40 bg-warning/5 p-4">
                 <p className="flex items-center gap-1.5 text-sm font-bold"><Star className="h-4 w-4 text-warning animate-pulse-soft" /> Avaliar atendimento</p>
+                {validacao && (
+                  <p className="flex items-center gap-1.5 text-xs text-success"><CheckCircle2 className="h-3.5 w-3.5" /> Treinamento confirmado</p>
+                )}
                 <p className="text-xs text-muted-foreground">Chamado concluído. Avalie o atendimento em 6 critérios — o comentário é opcional.</p>
                 <Button className="w-full gap-2 transition-transform active:scale-95" onClick={() => setAvaliarAberto(true)}>
                   <Star className="h-4 w-4" /> Avaliar chamado
                 </Button>
+              </Card>
+            ) : ehSolicitante && !liberacao.liberada && liberacao.motivo === "treinamento" ? (
+              <Card className="animate-rise-in space-y-3 border-primary/40 bg-primary/5 p-4">
+                <p className="flex items-center gap-1.5 text-sm font-bold"><GraduationCap className="h-4 w-4 text-primary" /> Treinamento e avaliação</p>
+                <p className="text-xs text-muted-foreground">
+                  A Presidência aprovou o desenvolvimento. Primeiro confirme que recebeu o treinamento; depois avalie o atendimento.
+                  Até lá, não dá para abrir outro chamado.
+                </p>
+                <div className="space-y-1.5">
+                  <p className="text-xs font-semibold">1. Confirme o treinamento</p>
+                  <ConfirmarTreinamento chamadoId={chamado.id} papel="solicitante" />
+                </div>
+                <div className="space-y-1.5 opacity-60">
+                  <p className="text-xs font-semibold">2. Avalie o atendimento</p>
+                  <Button className="w-full gap-2" disabled title="Confirme o treinamento primeiro">
+                    <Lock className="h-4 w-4" /> Avaliar chamado
+                  </Button>
+                </div>
               </Card>
             ) : null
           )}
