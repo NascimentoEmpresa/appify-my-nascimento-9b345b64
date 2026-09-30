@@ -2186,6 +2186,7 @@ export default function DespesaVisualizar() {
                 onChange={setDataPagamento}
                 disabled={!dataPagamentoEditavel}
                 permitirDiasBloqueados={excecao}
+                classificacaoId={classificacaoIdEditado || despesa.classificacao_id}
               />
             </div>
             <div className={cn(!dadosDespesaPagamentoEditaveis && "opacity-60")}>
