@@ -14,7 +14,9 @@ import { cn } from "@/lib/utils";
 const sb = supabase as any;
 
 /**
- * Painel da Conferência de Ponto — a tela de telão.
+ * Painel da Conferência de Ponto — a tela de telão. Chama-se "Dashboard de
+ * Pontos" desde 30/09/2026 e é a MESMA tela em três módulos (RH, Financeiro e
+ * Operacional), cada um com o seu menu (mig 20260930000274).
  *
  * Porte do `painel_tv_ponto.html`. Fica o dia inteiro numa TV, ninguém opera:
  * por isso ela se vira sozinha — passa os contratos de lado em slides, recarrega
@@ -86,11 +88,15 @@ export default function ConferenciaPontoPainel() {
 
   // ── Dados ──────────────────────────────────────────────────────────
   const carregar = useCallback(async () => {
+    // Contratos pela RPC (mig 274), não pela tabela: a RLS de CONTRATOS só
+    // abre para Recrutamento/Colaboradores/Encarregados… — o painel, agora
+    // também no Financeiro e no Operacional, não está lá.
     const [ct, cf] = await Promise.all([
-      sb.from("CONTRATOS").select('"Empresa","Filial","NOME EMPRESA","NOME CONTRATO"').eq("ATIVO", "SIM"),
+      sb.rpc("ponto_painel_contratos"),
       sb.from(TABELA).select("*").eq("mes_referencia", mes),
     ]);
-    setContratos(ct.data ?? []);
+    setContratos(((ct.data ?? []) as { empresa: string; filial: number; nome_empresa: string | null; nome_contrato: string | null }[])
+      .map(c => ({ Empresa: c.empresa, Filial: c.filial, "NOME EMPRESA": c.nome_empresa, "NOME CONTRATO": c.nome_contrato })));
     setLinhas(cf.data ?? []);
   }, [mes]);
 
@@ -190,7 +196,7 @@ export default function ConferenciaPontoPainel() {
       <header className="flex flex-wrap items-center justify-between gap-4 rounded-xl border bg-card px-5 py-3">
         <div>
           <h1 className={cn("font-bold tracking-tight", cheia ? "text-3xl" : "text-2xl")}>
-            Conferência de Ponto
+            Dashboard de Pontos
           </h1>
           <p className="text-sm text-muted-foreground">
             {avanco.total} contratos · {mesLegivel(mes)}
