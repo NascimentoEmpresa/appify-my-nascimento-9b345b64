@@ -15,6 +15,7 @@ import { TreinamentoEditor } from "./treinamento/TreinamentoEditor";
 import { TreinamentoVisor } from "./treinamento/TreinamentoVisor";
 import { DashboardVideos } from "./treinamento/DashboardVideos";
 import { recursosDe, type EscopoTreinamento, type Treinamento } from "./treinamento/core";
+import { AbasTreinamentos } from "./TreinamentosSistemas";
 
 // =====================================================================
 // TREINAMENTOS — a grade de cards.
@@ -62,6 +63,12 @@ export default function TreinamentosERP({ escopo }: Props) {
   const [emEdicao, setEmEdicao] = useState<Treinamento | null>(null);
   const [assistindo, setAssistindo] = useState<Treinamento | null>(null);
   const [dashboardAberto, setDashboardAberto] = useState(false);
+
+  // Central de Serviços ganha a aba "Treinamentos Sistemas" (30/09/2026, mig
+  // 273): treinamento dos desenvolvimentos do ERP aprovados pela Presidência,
+  // que cada participante confirma. Rota própria e liberada a todos
+  // (TreinamentosSistemas.tsx) — aqui é só a aba que leva até lá.
+  const comSistemas = escopo === "central_servicos";
 
   const carregar = useCallback(async () => {
     // Os dois blocos em paralelo: a grade não precisa esperar o histórico
@@ -174,6 +181,8 @@ export default function TreinamentosERP({ escopo }: Props) {
           )}
         </div>
       </div>
+
+      {comSistemas && <AbasTreinamentos atual="videos" />}
 
       {/* ---- barra de progresso ---- */}
       {!carregando && lista.length > 0 && (
