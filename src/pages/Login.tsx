@@ -87,7 +87,10 @@ const PECAS: { m: number; x: string; y: string; d: number; atraso: number }[] = 
 
 export default function Login() {
   const [showPwd, setShowPwd] = useState(false);
-  const [email, setEmail] = useState("");
+  // "Lembrar meu e-mail": só o e-mail, no navegador da pessoa (nunca a senha).
+  const [email, setEmail] = useState(() => lerEmailLembrado());
+  const [lembrar, setLembrar] = useState(() => !!lerEmailLembrado());
+  const [capsLock, setCapsLock] = useState(false);
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -120,6 +123,7 @@ export default function Login() {
     try {
       const { error: signInError } = await supabase.auth.signInWithPassword({ email, password });
       if (signInError) throw signInError;
+      gravarEmailLembrado(lembrar ? email.trim() : null);
       disableDemo();
       navigate(destino);
     } catch (err: unknown) {
@@ -132,6 +136,9 @@ export default function Login() {
   };
 
   const atraso = (s: number): CSSProperties => ({ animationDelay: `${s}s` });
+  const verCaps = (e: React.KeyboardEvent) => setCapsLock(e.getModifierState?.("CapsLock") ?? false);
+  const hora = new Date().getHours();
+  const saudacao = hora < 5 ? "Boa noite" : hora < 12 ? "Bom dia" : hora < 18 ? "Boa tarde" : "Boa noite";
 
   return (
     <div className="lg-raiz grid min-h-screen lg:grid-cols-[1.08fr_1fr]">
@@ -139,117 +146,152 @@ export default function Login() {
       <PainelMarca />
 
       {/* Formulário */}
-      <section className="lg-form relative flex items-center justify-center overflow-hidden bg-background p-6 lg:p-12">
+      <section className="lg-form relative flex items-center justify-center overflow-hidden bg-background p-5 sm:p-8 lg:p-12">
+        <div className="lg-form-pontos" aria-hidden />
         <div className="lg-form-bolha" aria-hidden />
-        <div className="relative w-full max-w-md">
-          <div className="lg-sobe mb-10 lg:hidden" style={atraso(0)}>
+        <div className="lg-form-bolha lg-form-bolha-2" aria-hidden />
+
+        <div className="relative w-full max-w-[440px]">
+          <div className="lg-sobe mb-8 flex justify-center lg:hidden" style={atraso(0)}>
             <img src={logoCompleto} alt="Nascimento — soluções em serviços" className="h-12 w-auto" />
           </div>
 
-          <div className="lg-sobe mb-3 inline-flex items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground shadow-sm" style={atraso(0.05)}>
-            <ShieldCheck className="h-3 w-3 text-success" /> Acesso restrito
-          </div>
-          <h2 className="lg-sobe font-display text-[2rem] font-extrabold leading-[1.1] tracking-tight" style={atraso(0.12)}>
-            Bem-vindo de volta<span className="text-accent">.</span>
-          </h2>
-          <p className="lg-sobe mt-2 text-sm text-muted-foreground" style={atraso(0.18)}>
-            Use suas credenciais corporativas para acessar o ERP.
-            <span className="mt-0.5 block text-xs">Novos acessos são criados pelo administrador do sistema.</span>
-          </p>
+          <div className="lg-cartao lg-sobe relative overflow-hidden rounded-[28px] border border-border/70 bg-card/85 p-7 backdrop-blur-xl sm:p-9" style={atraso(0.05)}>
+            <div className="lg-cartao-faixa" aria-hidden />
 
-          {sessionExpired && (
-            <div className="lg-sobe mt-5 flex items-start gap-2 rounded-xl border border-amber-400/40 bg-amber-500/10 px-3 py-2.5 text-sm text-foreground">
-              <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
-              <p><span className="font-semibold text-amber-700">Sessão expirada.</span> Por inatividade, sua sessão foi encerrada automaticamente. Faça login novamente para continuar.</p>
-            </div>
-          )}
-
-          {successMsg && (
-            <div className="lg-sobe mt-5 flex items-start gap-2 rounded-xl border border-success/30 bg-success/10 px-3 py-2.5 text-sm text-foreground">
-              <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-success" />
-              <p>{successMsg}</p>
-            </div>
-          )}
-
-          {error && (
-            <div key={error} className="lg-treme mt-5 flex items-start gap-2 rounded-xl border border-destructive/30 bg-destructive-soft px-3 py-2.5 text-sm text-destructive">
-              <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
-              <p>{error}</p>
-            </div>
-          )}
-
-          <form onSubmit={handleSubmit} className="mt-7 space-y-4">
-            <div className="lg-sobe" style={atraso(0.24)}>
-              <Field label="E-mail corporativo" icon={<Mail className="h-4 w-4" />}>
-                <input
-                  type="email"
-                  required
-                  autoComplete="username"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  placeholder="nome.sobrenome@gruponascimento.com.br"
-                  className="lg-input h-12 w-full rounded-xl border border-border bg-card pl-10 pr-3 text-sm shadow-sm"
-                />
-              </Field>
+            <div className="flex items-center justify-between gap-3">
+              <span className="lg-sobe inline-flex items-center gap-1.5 rounded-full border border-border bg-background/80 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground" style={atraso(0.12)}>
+                <ShieldCheck className="h-3 w-3 text-success" /> Acesso restrito
+              </span>
+              <span className="lg-sobe hidden items-center gap-2 text-[11px] font-medium text-muted-foreground sm:inline-flex" style={atraso(0.12)}>
+                <span className="lg-ponto-vivo lg-ponto-vivo-p" /> Sistema operando
+              </span>
             </div>
 
-            <div className="lg-sobe" style={atraso(0.3)}>
-              <Field label="Senha" icon={<Lock className="h-4 w-4" />}>
-                <input
-                  type={showPwd ? "text" : "password"}
-                  required
-                  minLength={6}
-                  autoComplete="current-password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  placeholder="••••••••••••"
-                  className="lg-input h-12 w-full rounded-xl border border-border bg-card pl-10 pr-10 text-sm shadow-sm"
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowPwd((v) => !v)}
-                  aria-label={showPwd ? "Esconder senha" : "Mostrar senha"}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground transition-colors hover:text-foreground"
+            <h2 className="lg-sobe mt-5 font-display text-[2rem] font-extrabold leading-[1.08] tracking-tight" style={atraso(0.18)}>
+              Bem-vindo de volta<span className="text-accent">.</span>
+            </h2>
+            <p className="lg-sobe mt-2 text-sm leading-relaxed text-muted-foreground" style={atraso(0.22)}>
+              {saudacao}! Use suas credenciais corporativas para acessar o ERP.
+            </p>
+
+            {sessionExpired && (
+              <div className="lg-sobe mt-5 flex items-start gap-2 rounded-xl border border-amber-400/40 bg-amber-500/10 px-3 py-2.5 text-sm text-foreground">
+                <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
+                <p><span className="font-semibold text-amber-700">Sessão expirada.</span> Por inatividade, sua sessão foi encerrada automaticamente. Faça login novamente para continuar.</p>
+              </div>
+            )}
+
+            {successMsg && (
+              <div className="lg-sobe mt-5 flex items-start gap-2 rounded-xl border border-success/30 bg-success/10 px-3 py-2.5 text-sm text-foreground">
+                <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-success" />
+                <p>{successMsg}</p>
+              </div>
+            )}
+
+            {error && (
+              <div key={error} className="lg-treme mt-5 flex items-start gap-2 rounded-xl border border-destructive/30 bg-destructive-soft px-3 py-2.5 text-sm text-destructive">
+                <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+                <p>{error}</p>
+              </div>
+            )}
+
+            <form onSubmit={handleSubmit} className="mt-7 space-y-5">
+              <div className="lg-sobe" style={atraso(0.28)}>
+                <Field label="E-mail corporativo" icon={<Mail className="h-4 w-4" />}>
+                  <input
+                    type="email"
+                    required
+                    autoComplete="username"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    placeholder="nome.sobrenome@gruponascimento.com.br"
+                    className="lg-input h-12 w-full rounded-2xl border border-border bg-background pl-11 pr-3 text-sm"
+                  />
+                </Field>
+              </div>
+
+              <div className="lg-sobe" style={atraso(0.33)}>
+                <Field
+                  label="Senha"
+                  icon={<Lock className="h-4 w-4" />}
+                  right={
+                    <Link to="/esqueci-senha" className="text-xs font-medium text-muted-foreground transition-colors hover:text-accent">
+                      Esqueci minha senha
+                    </Link>
+                  }
                 >
-                  {showPwd ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  <input
+                    type={showPwd ? "text" : "password"}
+                    required
+                    minLength={6}
+                    autoComplete="current-password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    onKeyDown={verCaps}
+                    onKeyUp={verCaps}
+                    onBlur={() => setCapsLock(false)}
+                    placeholder="••••••••••••"
+                    className="lg-input h-12 w-full rounded-2xl border border-border bg-background pl-11 pr-11 text-sm"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPwd((v) => !v)}
+                    aria-label={showPwd ? "Esconder senha" : "Mostrar senha"}
+                    className="absolute right-2 top-1/2 grid h-8 w-8 -translate-y-1/2 place-items-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                  >
+                    {showPwd ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  </button>
+                </Field>
+                {capsLock && (
+                  <p className="lg-aparece mt-1.5 flex items-center gap-1.5 text-[11px] font-medium text-amber-600">
+                    <AlertCircle className="h-3.5 w-3.5" /> Caps Lock está ativado
+                  </p>
+                )}
+              </div>
+
+              <label className="lg-sobe flex w-fit cursor-pointer select-none items-center gap-2.5 text-[13px] text-muted-foreground" style={atraso(0.37)}>
+                <input type="checkbox" checked={lembrar} onChange={(e) => setLembrar(e.target.checked)} className="lg-check" />
+                Lembrar meu e-mail neste computador
+              </label>
+
+              <div className="lg-sobe" style={atraso(0.41)}>
+                <button
+                  type="submit"
+                  disabled={loading}
+                  className="lg-botao group relative flex h-12 w-full items-center justify-center gap-2 overflow-hidden rounded-full bg-gradient-accent text-sm font-bold text-accent-foreground shadow-[0_14px_30px_-12px_hsl(22_95%_50%/0.7)] transition-[transform,box-shadow] duration-300 hover:-translate-y-0.5 hover:shadow-[0_20px_38px_-14px_hsl(22_95%_50%/0.85)] active:translate-y-0 disabled:opacity-70"
+                >
+                  {loading ? <><Loader2 className="h-4 w-4 animate-spin" /> Entrando…</> : <>Entrar na plataforma <ArrowRight className="h-4 w-4 transition-transform duration-300 group-hover:translate-x-1" /></>}
                 </button>
-              </Field>
-            </div>
+              </div>
+            </form>
 
-            <div className="lg-sobe pt-1" style={atraso(0.36)}>
-              <button
-                type="submit"
-                disabled={loading}
-                className="lg-botao group relative flex h-12 w-full items-center justify-center gap-2 overflow-hidden rounded-full bg-gradient-accent text-sm font-bold text-accent-foreground shadow-[0_14px_30px_-12px_hsl(22_95%_50%/0.7)] transition-[transform,box-shadow] duration-300 hover:-translate-y-0.5 hover:shadow-[0_20px_38px_-14px_hsl(22_95%_50%/0.85)] active:translate-y-0 disabled:opacity-70"
-              >
-                {loading ? <><Loader2 className="h-4 w-4 animate-spin" /> Entrando…</> : <>Entrar na plataforma <ArrowRight className="h-4 w-4 transition-transform duration-300 group-hover:translate-x-1" /></>}
-              </button>
-            </div>
-
-            <div className="lg-sobe text-center" style={atraso(0.42)}>
-              <Link
-                to="/esqueci-senha"
-                className="text-xs text-muted-foreground underline underline-offset-4 transition-colors hover:text-foreground"
-              >
-                Esqueci minha senha
-              </Link>
-            </div>
-          </form>
-
-          <div className="lg-sobe mt-8 flex gap-3 rounded-2xl border border-border bg-card/70 p-4 text-xs text-muted-foreground backdrop-blur" style={atraso(0.5)}>
-            <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-primary/10 text-primary"><ShieldCheck className="h-4 w-4" /></span>
-            <div>
-              <p className="font-semibold text-foreground">Acesso monitorado</p>
-              <p className="mt-0.5 leading-relaxed">
-                Toda autenticação é registrada com data, hora, IP e dispositivo. Atividades suspeitas
-                acionam bloqueio automático e auditoria.
+            <div className="lg-sobe mt-7 flex items-start gap-3 border-t border-border/70 pt-5 text-[11.5px] leading-relaxed text-muted-foreground" style={atraso(0.47)}>
+              <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-primary/10 text-primary"><ShieldCheck className="h-4 w-4" /></span>
+              <p>
+                <span className="font-semibold text-foreground">Acesso monitorado.</span> Toda autenticação é registrada com data, hora, IP e
+                dispositivo; atividades suspeitas acionam bloqueio automático e auditoria.
               </p>
             </div>
           </div>
+
+          <p className="lg-sobe mt-5 text-center text-[11px] text-muted-foreground" style={atraso(0.55)}>
+            Novos acessos são criados pelo administrador do sistema.
+          </p>
         </div>
       </section>
     </div>
   );
+}
+
+// "Lembrar meu e-mail" — só o e-mail, no localStorage deste navegador.
+// Acesso em try/catch: aba anônima ou site com dados bloqueados joga erro.
+const CHAVE_EMAIL = "erp.login.email";
+function lerEmailLembrado(): string {
+  try { return localStorage.getItem(CHAVE_EMAIL) ?? ""; } catch { return ""; }
+}
+function gravarEmailLembrado(email: string | null) {
+  try { if (email) localStorage.setItem(CHAVE_EMAIL, email); else localStorage.removeItem(CHAVE_EMAIL); } catch { /* sem armazenamento: segue sem lembrar */ }
 }
 
 // ── Painel da marca (lado esquerdo, só desktop) ─────────────────────────
@@ -439,12 +481,12 @@ function Field({
 }: { label: string; icon: React.ReactNode; right?: React.ReactNode; children: React.ReactNode }) {
   return (
     <div>
-      <div className="mb-1.5 flex items-center justify-between">
-        <label className="text-xs font-semibold text-foreground">{label}</label>
+      <div className="mb-2 flex items-center justify-between">
+        <label className="text-[13px] font-semibold text-foreground">{label}</label>
         {right}
       </div>
       <div className="lg-campo relative">
-        <span className="lg-campo-icone pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground transition-colors">{icon}</span>
+        <span className="lg-campo-icone pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-muted-foreground transition-colors">{icon}</span>
         {children}
       </div>
     </div>
@@ -524,10 +566,29 @@ const CSS_LOGIN = `
 @keyframes lg-sobe{from{opacity:0;transform:translateY(16px);filter:blur(4px)}to{opacity:1;transform:none;filter:none}}
 
 /* formulário */
+.lg-form-pontos{position:absolute;inset:0;pointer-events:none;opacity:.55;
+  background-image:radial-gradient(hsl(var(--muted-foreground)/.18) 1px,transparent 1px);background-size:22px 22px;
+  mask-image:radial-gradient(ellipse at 50% 50%,#000 0%,transparent 68%);-webkit-mask-image:radial-gradient(ellipse at 50% 50%,#000 0%,transparent 68%)}
 .lg-form-bolha{position:absolute;width:520px;height:520px;right:-180px;top:-200px;border-radius:9999px;filter:blur(60px);pointer-events:none;
-  background:radial-gradient(closest-side,hsl(22 95% 54%/.14),transparent);animation:lg-bolha 14s ease-in-out infinite alternate}
+  background:radial-gradient(closest-side,hsl(22 95% 54%/.16),transparent);animation:lg-bolha 14s ease-in-out infinite alternate}
+.lg-form-bolha-2{right:auto;top:auto;left:-220px;bottom:-240px;background:radial-gradient(closest-side,hsl(218 78% 40%/.13),transparent);animation-duration:18s;animation-direction:alternate-reverse}
+.lg-cartao{box-shadow:0 1px 0 hsl(0 0% 100%/.6) inset,0 40px 80px -40px hsl(218 78% 22%/.35),0 12px 24px -16px hsl(218 78% 22%/.18)}
+.lg-cartao-faixa{position:absolute;left:0;right:0;top:0;height:4px;background:linear-gradient(90deg,#0f3171,#2a5bd7,#f26b1d,#ff9a4d,#0f3171);background-size:200% 100%;animation:lg-faixa 8s linear infinite}
+@keyframes lg-faixa{to{background-position:-200% 0}}
+.lg-ponto-vivo-p{width:7px;height:7px}
+.lg-aparece{animation:lg-sobe .3s ease-out both}
+.lg-check{appearance:none;-webkit-appearance:none;width:17px;height:17px;border-radius:6px;border:1.5px solid hsl(var(--border));background:hsl(var(--background));
+  display:grid;place-items:center;cursor:pointer;transition:background .2s,border-color .2s,box-shadow .2s;flex-shrink:0;margin:0}
+.lg-check::after{content:"";width:9px;height:5px;border-left:2px solid #fff;border-bottom:2px solid #fff;transform:translateY(-1px) rotate(-45deg) scale(0);transition:transform .2s cubic-bezier(.3,1.6,.5,1)}
+.lg-check:checked{background:hsl(var(--accent));border-color:hsl(var(--accent))}
+.lg-check:checked::after{transform:translateY(-1px) rotate(-45deg) scale(1)}
+.lg-check:focus-visible{box-shadow:0 0 0 4px hsl(var(--accent)/.18)}
+/* o navegador pinta de azul o campo preenchido sozinho — devolve a cor do tema */
+.lg-input:-webkit-autofill,.lg-input:-webkit-autofill:hover{-webkit-box-shadow:0 0 0 1000px hsl(var(--background)) inset;-webkit-text-fill-color:hsl(var(--foreground));caret-color:hsl(var(--foreground));transition:background-color 99999s}
+.lg-input:-webkit-autofill:focus{-webkit-box-shadow:0 0 0 1000px hsl(var(--background)) inset,0 0 0 4px hsl(var(--accent)/.14)}
 @keyframes lg-bolha{to{transform:translate(-60px,80px) scale(1.1)}}
 .lg-input{transition:border-color .2s,box-shadow .25s,background-color .2s;outline:none}
+.lg-input{box-shadow:0 1px 2px hsl(218 78% 22%/.05)}
 .lg-input:hover{border-color:hsl(var(--muted-foreground)/.35)}
 .lg-input:focus{border-color:hsl(var(--accent));box-shadow:0 0 0 4px hsl(var(--accent)/.14),0 8px 20px -12px hsl(var(--accent)/.5)}
 .lg-campo:focus-within .lg-campo-icone{color:hsl(var(--accent))}
@@ -543,7 +604,7 @@ const CSS_LOGIN = `
    parar (flutuar, parallax, bolha). Entradas, traço do arco, contagem, troca
    da palavra e esteira continuam — são curtos ou lentos e laterais. */
 @media (prefers-reduced-motion:reduce){
-  .lg-arco-flutua,.lg-form-bolha{animation:none!important}
+  .lg-arco-flutua,.lg-form-bolha,.lg-cartao-faixa{animation:none!important}
   .lg-boneco{animation:lg-boneco-entra .95s cubic-bezier(.2,.9,.25,1.15) 1s both!important}
   .lg-boneco-sombra{animation:lg-sombra-entra .95s ease-out 1s both!important}
   .lg-peca{animation:lg-entra .8s cubic-bezier(.2,.8,.2,1) forwards!important}
