@@ -332,6 +332,10 @@ interface RegistrarPagamentoNfInput {
   recebimento_extra?: number;
   falta_receber?: number;
   pago_a_mais?: number;
+  // Achado real (analista faz o processo no fim do dia, Financeiro só
+  // emite/reconcilia no dia seguinte — sem campo aqui, a correção da data
+  // de emissão exigia ir pra outra tela, Emissão de NF).
+  data_emissao?: string | null;
 }
 
 export function useRegistrarPagamentoNf() {
@@ -349,6 +353,7 @@ export function useRegistrarPagamentoNf() {
           ...(input.recebimento_extra !== undefined ? { recebimento_extra: input.recebimento_extra } : {}),
           ...(input.falta_receber !== undefined ? { falta_receber: input.falta_receber } : {}),
           ...(input.pago_a_mais !== undefined ? { pago_a_mais: input.pago_a_mais } : {}),
+          ...(input.data_emissao !== undefined ? { data_emissao: input.data_emissao } : {}),
         })
         .eq("id", input.id);
       if (error) throw error;

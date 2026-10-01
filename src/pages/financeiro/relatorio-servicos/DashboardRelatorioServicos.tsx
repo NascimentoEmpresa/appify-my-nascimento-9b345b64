@@ -8,7 +8,7 @@ import { ListChecks, TrendingUp, CheckCircle2, AlertTriangle, PieChart as PieCha
 import { cn } from "@/lib/utils";
 import { useEmpresasGrupo } from "@/hooks/useMaloteDespesa";
 import { NfEmissaoItemRow, TipoNota, TIPOS_NOTA, useItensNfEmissaoEmLote, useNfsEmissao } from "@/hooks/useNfEmissao";
-import { fmtMoney, statusDaNota, pendenteHaMaisDe30Dias, valorPendenteNf, StatusNota } from "@/pages/financeiro/nf-emissao/shared";
+import { fmtMoney, statusDaNota, situacaoEspecial, pendenteHaMaisDe30Dias, valorPendenteNf, StatusNota } from "@/pages/financeiro/nf-emissao/shared";
 
 const STATUS_LABEL: Record<StatusNota, string> = {
   pago: "Pago",
@@ -69,7 +69,12 @@ export default function DashboardRelatorioServicos() {
   const kpis = useMemo(() => {
     let executado = 0, faturado = 0, recebido = 0, pendente = 0, descontos = 0;
     let pagas = 0;
+    // Achado real (Ruan): nota Cancelada/Substituída ainda carrega valores
+    // em vlr_bruto_total/vlr_liquido_total/valor_pago (a planilha legada
+    // não zera na migração) — sem esse filtro, ela entrava em Executado/
+    // Faturado/Recebido como se fosse uma nota normal, inflando o total.
     for (const n of linhas) {
+      if (situacaoEspecial(n)) continue;
       const itens = itensPorNf?.get(n.id) ?? [];
       executado += n.valor_contrato_exec_total;
       faturado += n.vlr_bruto_total;
@@ -86,6 +91,7 @@ export default function DashboardRelatorioServicos() {
   const evolucaoMensal = useMemo(() => {
     const porComp = new Map<string, { comp: string; executado: number; faturado: number; recebido: number }>();
     for (const n of linhas) {
+      if (situacaoEspecial(n)) continue;
       const atual = porComp.get(n.competencia) ?? { comp: n.competencia, executado: 0, faturado: 0, recebido: 0 };
       atual.executado += n.valor_contrato_exec_total;
       atual.faturado += n.vlr_bruto_total;
@@ -107,6 +113,7 @@ export default function DashboardRelatorioServicos() {
     const items = CAMPOS_DESCONTO.map(({ key, label }) => {
       let valor = 0, count = 0;
       for (const n of linhas) {
+        if (situacaoEspecial(n)) continue;
         for (const it of itensPorNf?.get(n.id) ?? []) {
           const v = Number(it[key]) || 0;
           if (v !== 0) { valor += v; count++; }
@@ -114,7 +121,8 @@ export default function DashboardRelatorioServicos() {
       }
       return { label, valor, count };
     });
-    const contaVinculada = { label: "Conta vinculada", valor: linhas.reduce((s, n) => s + n.desconto_conta_vinculada, 0), count: linhas.filter((n) => n.desconto_conta_vinculada > 0).length };
+    const linhasValidas = linhas.filter((n) => !situacaoEspecial(n));
+    const contaVinculada = { label: "Conta vinculada", valor: linhasValidas.reduce((s, n) => s + n.desconto_conta_vinculada, 0), count: linhasValidas.filter((n) => n.desconto_conta_vinculada > 0).length };
     const todos = [...items, contaVinculada];
     return { items: todos, total: todos.reduce((s, x) => s + x.valor, 0), max: Math.max(1, ...todos.map((x) => x.valor)) };
   }, [linhas, itensPorNf]);

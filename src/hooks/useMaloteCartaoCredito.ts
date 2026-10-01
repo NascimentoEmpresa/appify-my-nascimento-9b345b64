@@ -102,10 +102,17 @@ export interface CartaoCredito {
   // guiando só pelo nome. 4 últimos dígitos, visível no cadastro e no
   // Select de import.
   final_cartao: string | null;
+  // SIS-2026-0568: quem além de quem já tem 'alterar' no módulo pode
+  // classificar (Classificação/Contrato) os itens da fatura DESTE cartão —
+  // mesmo padrão de array + cache de nomes de aprovador1_user_ids/
+  // aprovador1_nomes (ClassificacoesMalote.tsx).
+  usuarios_classificar_ids: string[];
+  usuarios_classificar_nomes: string[];
 }
 
 const KEY = "malote_cartao_credito";
-const COLUMNS = "id, nome_cartao, tipo_forma_pagamento, empresa_id, banco_id, bandeira_id, dia_fechamento, dia_vencimento, limite, ativo, final_cartao";
+const COLUMNS =
+  "id, nome_cartao, tipo_forma_pagamento, empresa_id, banco_id, bandeira_id, dia_fechamento, dia_vencimento, limite, ativo, final_cartao, usuarios_classificar_ids, usuarios_classificar_nomes";
 
 export function useCartoesCredito() {
   return useQuery({
@@ -133,6 +140,8 @@ interface SalvarCartaoCreditoInput {
   limite: number;
   ativo: boolean;
   final_cartao: string | null;
+  usuarios_classificar_ids: string[];
+  usuarios_classificar_nomes: string[];
 }
 
 export function useSalvarCartaoCredito() {
