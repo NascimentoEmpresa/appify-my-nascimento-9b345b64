@@ -97,36 +97,49 @@ CREATE POLICY mcfir_all_alterar ON public.malote_cartao_fatura_item_rateio
   WITH CHECK (public.cartao_fatura_pode_classificar(item_id, auth.uid()));
 
 -- ── 4. View do Fluxo de Caixa — Classificação/Contrato reais agora ─────
--- Item sem rateio: continua NULL/'Cartão de Crédito' (como hoje). Item com
--- 1 linha de rateio: mostra a Classificação/Contrato dessa linha. Item com
--- mais de 1 linha (dividido entre vários): mostra "Rateado (N)" em vez de
--- escolher 1 arbitrariamente ou duplicar a linha no Fluxo de Caixa.
+-- CORREÇÃO (achado só na hora de rodar): a view em produção já tinha sido
+-- redefinida DEPOIS de 20260930000060 — por 20260930000212/20260930000222
+-- (financeiro_fluxo_caixa_ajuste: override manual por lançamento, incluindo
+-- classificacao_id, mais as colunas origem/ajustado e o filtro
+-- deleted_at). Minha 1ª versão foi escrita em cima do corpo antigo (60) e o
+-- Postgres recusou com 42P16 "cannot drop columns from view" porque de fato
+-- removia origem/ajustado e o COALESCE com aj. Corrigido: parte inteira do
+-- corpo de 222 preservada; só Contrato/Classificação ganham a camada nova
+-- de rateio, com fallback pro aj.classificacao_id já existente quando o
+-- item ainda não tem nenhuma linha de rateio (comportamento de quem já
+-- tinha feito um ajuste manual antes desta feature existir).
 CREATE OR REPLACE VIEW public.v_cartao_fatura_fluxo_caixa AS
 SELECT
   fi.id AS despesa_id,
   cc.nome_cartao || ' — ' || to_char(f.competencia, 'MM/YYYY') AS id_malote,
-  fi.data_compra AS data_pagamento,
-  f.competencia,
-  cc.empresa_id,
+  COALESCE(aj.data_pagamento, fi.data_compra) AS data_pagamento,
+  COALESCE(aj.competencia, f.competencia) AS competencia,
+  COALESCE(aj.empresa_id, cc.empresa_id) AS empresa_id,
   COALESCE(e.nome_fantasia, e.razao_social) AS empresa_nome,
   (CASE WHEN r.qtd = 1 THEN r.contrato_unico ELSE NULL END) AS contrato_id,
   (CASE WHEN r.qtd = 1 THEN co.nome WHEN r.qtd > 1 THEN 'Rateado (' || r.qtd || ')' ELSE NULL END) AS contrato_nome,
-  (CASE WHEN r.qtd = 1 THEN r.classificacao_unica ELSE NULL END) AS classificacao_id,
-  (CASE WHEN r.qtd = 1 THEN cl.nome WHEN r.qtd > 1 THEN 'Rateado (' || r.qtd || ')' ELSE 'Cartão de Crédito' END) AS classificacao_nome,
-  fi.descricao,
-  cc.tipo_forma_pagamento AS forma_pagamento,
-  cc.banco_id,
+  (CASE WHEN r.qtd = 1 THEN r.classificacao_unica WHEN r.qtd > 1 THEN NULL ELSE aj.classificacao_id END) AS classificacao_id,
+  (CASE WHEN r.qtd = 1 THEN cl_rateio.nome WHEN r.qtd > 1 THEN 'Rateado (' || r.qtd || ')' ELSE COALESCE(cl_aj.nome, 'Cartão de Crédito'::text) END) AS classificacao_nome,
+  COALESCE(aj.descricao, fi.descricao) AS descricao,
+  COALESCE(aj.forma_pagamento, cc.tipo_forma_pagamento) AS forma_pagamento,
+  COALESCE(aj.banco_id, cc.banco_id) AS banco_id,
   cb.nome AS banco_nome,
   cb.logo_path AS banco_logo_path,
   fi.parcela_atual AS numero_parcela,
   fi.parcela_total AS numero_parcelas,
-  fi.valor,
-  'saida'::text AS tipo
+  COALESCE(aj.valor, fi.valor) AS valor,
+  COALESCE(aj.tipo, 'saida'::text) AS tipo,
+  'cartao_fatura'::text AS origem,
+  (aj.id IS NOT NULL) AS ajustado
 FROM public.malote_cartao_fatura_item fi
 JOIN public.malote_cartao_fatura f ON f.id = fi.fatura_id
 JOIN public.malote_cartao_credito cc ON cc.id = f.cartao_id
-LEFT JOIN public.empresas e ON e.id = cc.empresa_id
-LEFT JOIN public.malote_cartao_banco cb ON cb.id = cc.banco_id
+LEFT JOIN public.financeiro_fluxo_caixa_ajuste aj
+  ON aj.origem = 'cartao_fatura' AND aj.despesa_id = fi.id
+ AND aj.numero_parcela IS NOT DISTINCT FROM fi.parcela_atual
+LEFT JOIN public.empresas e ON e.id = COALESCE(aj.empresa_id, cc.empresa_id)
+LEFT JOIN public.malote_cartao_banco cb ON cb.id = COALESCE(aj.banco_id, cc.banco_id)
+LEFT JOIN public.planejamento_orcamentario_classificacao cl_aj ON cl_aj.id = aj.classificacao_id
 LEFT JOIN (
   SELECT item_id, count(*) AS qtd,
          (array_agg(contrato_id))[1] AS contrato_unico,
@@ -135,8 +148,8 @@ LEFT JOIN (
   GROUP BY item_id
 ) r ON r.item_id = fi.id
 LEFT JOIN public.contratos co ON co.id = r.contrato_unico
-LEFT JOIN public.planejamento_orcamentario_classificacao cl ON cl.id = r.classificacao_unica
-WHERE fi.status = 'confirmado';
+LEFT JOIN public.planejamento_orcamentario_classificacao cl_rateio ON cl_rateio.id = r.classificacao_unica
+WHERE fi.status = 'confirmado' AND fi.deleted_at IS NULL;
 
 ALTER VIEW public.v_cartao_fatura_fluxo_caixa SET (security_invoker = true);
 GRANT SELECT ON public.v_cartao_fatura_fluxo_caixa TO authenticated;
@@ -171,7 +184,7 @@ NOTIFY pgrst, 'reload schema';
 --   DELETE FROM public.perfil_acesso_permissao WHERE menu_codigo = 'financeiro-cartao-credito-classificar';
 --   DELETE FROM public.app_menu_acao WHERE menu_codigo = 'financeiro-cartao-credito-classificar';
 --   DELETE FROM public.app_menu WHERE codigo = 'financeiro-cartao-credito-classificar';
---   (recriar v_cartao_fatura_fluxo_caixa com o corpo de 20260930000060_cartao_fatura_import.sql)
+--   (recriar v_cartao_fatura_fluxo_caixa com o corpo de 20260930000222_financeiro_fluxo_caixa_ajuste_valor.sql)
 --   DROP POLICY IF EXISTS malote_cartao_fatura_item_select_autorizado ON public.malote_cartao_fatura_item;
 --   DROP POLICY IF EXISTS malote_cartao_fatura_select_autorizado ON public.malote_cartao_fatura;
 --   DROP POLICY IF EXISTS malote_cartao_credito_select_autorizado ON public.malote_cartao_credito;
