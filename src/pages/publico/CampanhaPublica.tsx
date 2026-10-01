@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useMemo, useState, type ReactNode } from "react";
 import { useLocation, useParams } from "react-router-dom";
-import { CheckCircle2, ClipboardCheck, Download, ExternalLink, Loader2, RotateCcw, XCircle } from "lucide-react";
+import { CheckCircle2, ChevronDown, ClipboardCheck, Download, ExternalLink, Loader2, RotateCcw, XCircle } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import logoNascimento from "@/assets/logo-nascimento-completo.webp";
@@ -93,9 +93,14 @@ export function CampanhaConteudo({ campanha, slug, previa = false }: { campanha:
         {campanha.itens.length === 0 && (
           <section className="rounded-2xl bg-white p-6 text-center text-sm text-slate-500 shadow-sm">Nenhum conteúdo ainda.</section>
         )}
-        {campanha.itens.map((it) => (
-          <section key={it.id} id={`item-${it.id}`} className="scroll-mt-4 overflow-hidden rounded-2xl bg-white shadow-sm transition-shadow">
-            <Item item={it} cor={cor} slug={slug} previa={previa} campanha={campanha} identidade={identidade} setIdentidade={setIdentidade} />
+        {agruparItens(campanha.itens).map((g) => Array.isArray(g) ? (
+          // Textos recolhidos em sequência: um cartão só, com as seções empilhadas.
+          <section key={g[0].id} className="overflow-hidden rounded-2xl bg-white shadow-sm">
+            {g.map((it) => <TextoRecolhido key={it.id} item={it} cor={cor} />)}
+          </section>
+        ) : (
+          <section key={g.id} id={`item-${g.id}`} className="scroll-mt-4 overflow-hidden rounded-2xl bg-white shadow-sm transition-shadow">
+            <Item item={g} cor={cor} slug={slug} previa={previa} campanha={campanha} identidade={identidade} setIdentidade={setIdentidade} />
           </section>
         ))}
       </main>
@@ -106,6 +111,37 @@ export function CampanhaConteudo({ campanha, slug, previa = false }: { campanha:
 }
 
 type Identidade = { nome: string; documento: string };
+
+const ehRecolhido = (i: ItemPublico) => i.tipo === "texto" && !!i.recolhido && !!i.titulo?.trim();
+
+/** Junta textos recolhidos consecutivos num grupo (array); o resto fica solto. */
+function agruparItens(itens: ItemPublico[]): (ItemPublico | ItemPublico[])[] {
+  const out: (ItemPublico | ItemPublico[])[] = [];
+  itens.forEach((it) => {
+    const ultimo = out[out.length - 1];
+    if (ehRecolhido(it) && Array.isArray(ultimo)) ultimo.push(it);
+    else out.push(ehRecolhido(it) ? [it] : it);
+  });
+  return out;
+}
+
+/**
+ * Texto recolhido (mig 278): só o título com a setinha; tocar abre e fecha o
+ * conteúdo. Modelo pedido: as seções da Wikipédia no celular.
+ */
+function TextoRecolhido({ item, cor }: { item: ItemPublico; cor: string }) {
+  const [aberto, setAberto] = useState(false);
+  return (
+    <div id={`item-${item.id}`} className="scroll-mt-4 border-b border-slate-200 last:border-b-0">
+      <button type="button" onClick={() => setAberto((v) => !v)} aria-expanded={aberto}
+              className="flex w-full items-center gap-3 px-5 py-4 text-left transition-colors hover:bg-slate-50">
+        <ChevronDown className={cn("h-5 w-5 shrink-0 transition-transform duration-200", !aberto && "-rotate-90")} style={{ color: cor }} />
+        <span className="flex-1 text-lg font-bold text-slate-900">{item.titulo}</span>
+      </button>
+      {aberto && <TextoRico texto={item.texto ?? ""} className="px-5 pb-5 pl-[52px]" />}
+    </div>
+  );
+}
 
 /** Só http(s): o link vem digitado no editor e vai para uma página pública. */
 const urlSegura = (u: string | null | undefined) => (u && /^https?:\/\//i.test(u.trim()) ? u.trim() : null);

@@ -7,7 +7,7 @@ import {
 } from "lucide-react";
 import {
   usePlanilhaPostoLocalizacao, usePlanilhaPostoLocalizacaoAll,
-  usePostoLocalizacaoSave, usePostoLocalizacaoDelete,
+  usePostoLocalizacaoSave, usePostoLocalizacaoDelete, copiarLocalizacoesPosto,
   type PostoLocalizacao,
 } from "@/hooks/usePlanilhaPostoLocalizacao";
 import { PageHeader } from "@/components/layout/PageHeader";
@@ -2107,11 +2107,25 @@ function FormDrawer({
         sindicato: form.sindicato || null,
         servico: form.servico || null,
       };
-      await save.mutateAsync({
+      const novoRegistro = await save.mutateAsync({
         ...(editRow ? { id: editRow.id } : { empresa_id: empresaResolvidaId }),
         ...payload,
       });
-      toast.success(editRow ? "Registro atualizado." : updateFromRow ? "Nova vigência lançada com sucesso." : "Registro lançado com sucesso.");
+      // SIS-2026-0581: a cabeça por local não muda no reajuste, só o valor —
+      // clona a divisão por local da vigência anterior pra não nascer zerada.
+      let qtdLocaisCopiados = 0;
+      if (updateFromRow && novoRegistro?.id) {
+        qtdLocaisCopiados = await copiarLocalizacoesPosto(updateFromRow.id, novoRegistro.id);
+      }
+      toast.success(
+        editRow
+          ? "Registro atualizado."
+          : updateFromRow
+            ? qtdLocaisCopiados > 0
+              ? `Nova vigência lançada com sucesso (${qtdLocaisCopiados} localizações copiadas da vigência anterior).`
+              : "Nova vigência lançada com sucesso."
+            : "Registro lançado com sucesso."
+      );
       onClose();
     } catch (err: any) {
       toast.error("Erro ao salvar: " + err.message);

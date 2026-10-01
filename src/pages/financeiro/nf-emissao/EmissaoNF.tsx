@@ -28,6 +28,7 @@ import {
   Settings,
   ChevronDown,
   CheckCircle2,
+  AlertTriangle,
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -754,6 +755,18 @@ function NovaNfDialog({ open, onOpenChange, contratos, nfParaEditar, contratoIdI
 
   const totais = useMemo(() => calcularTotaisNf(itensCalculados), [itensCalculados]);
 
+  // SIS-2026-0581 (parcial — contrato de 1 variação): 1 variação = 1 NF
+  // cobrindo o contrato inteiro, então o total de "Contrato Exec." dos
+  // itens deveria bater com o total executado da planilha de custo. Não
+  // trava o campo (autofill continua editável) — só avisa quando diverge,
+  // pra quem lança a nota decidir se é um ajuste manual válido ou engano.
+  const { data: modelosDoContrato = [] } = useModelosNf(contratoId);
+  const variacoesAtivasDoContrato = useMemo(() => modelosDoContrato.filter((m) => m.ativo), [modelosDoContrato]);
+  const contratoDeVariacaoUnica = variacoesAtivasDoContrato.length === 1;
+  const totalExecutadoPlanilha = useMemo(() => postosVigentes.reduce((s, p) => s + p.valorTotal, 0), [postosVigentes]);
+  const diferencaParaPlanilha = totais.valor_contrato_exec_total - totalExecutadoPlanilha;
+  const divergeDaPlanilha = contratoDeVariacaoUnica && postosVigentes.length > 0 && Math.abs(diferencaParaPlanilha) > 0.01;
+
   function updateItem(i: number, patch: Partial<ItemInput & { identificacao: string }>) {
     setItens((arr) => arr.map((it, k) => (k === i ? { ...it, ...patch } : it)));
     if ("valor_contrato_exec" in patch && !("qtd_colaboradores" in patch)) {
@@ -1065,6 +1078,20 @@ function NovaNfDialog({ open, onOpenChange, contratos, nfParaEditar, contratoIdI
           onQtdColaboradoresChange={qtdColaboradoresChange}
         />
 
+        {divergeDaPlanilha && (
+          <div className="flex items-start gap-2 rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-300">
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+            <div>
+              <p className="font-medium">Contrato Exec. total diverge da Planilha de Custo</p>
+              <p className="text-amber-800/90 dark:text-amber-300/80">
+                Nota: {fmtMoney(totais.valor_contrato_exec_total)} · Planilha (executado vigente): {fmtMoney(totalExecutadoPlanilha)} ·{" "}
+                Diferença: {fmtMoney(diferencaParaPlanilha)}. Este contrato tem só 1 variação cadastrada, então os dois valores
+                deveriam bater — confira se o ajuste é intencional antes de salvar.
+              </p>
+            </div>
+          </div>
+        )}
+
         <section className="rounded-xl border bg-card p-3 space-y-2">
           <Label>Observações</Label>
           <Textarea
@@ -1171,6 +1198,10 @@ function DetalhesNfDialog({
   const enviar = useEnviarNfEmissao();
   const excluir = useExcluirNfEmissao();
   const [confirmandoExclusao, setConfirmandoExclusao] = useState(false);
+  // [SEM-CHAMADO] (pedido do usuário): informativo de Mão de Obra em
+  // destaque — vlr_mao_obra já é persistido por item (calculos.ts), só
+  // faltava o total da nota aqui na visualização.
+  const vlrMaoObraTotal = useMemo(() => itens.reduce((s, it) => s + (Number(it.vlr_mao_obra) || 0), 0), [itens]);
 
   async function handleBaixar(storagePath: string) {
     try {
@@ -1324,6 +1355,9 @@ function DetalhesNfDialog({
                 <span>
                   <span className="text-muted-foreground">Bruto total: </span>
                   <span className="font-medium">{fmtMoney(nf.vlr_bruto_total)}</span>
+                </span>
+                <span className="inline-flex items-center gap-1.5 rounded-full bg-violet-100 px-2.5 py-0.5 font-semibold text-violet-800 dark:bg-violet-950/40 dark:text-violet-300">
+                  Mão de Obra: {fmtMoney(vlrMaoObraTotal)}
                 </span>
                 <span>
                   <span className="text-muted-foreground">ISSQN ({fmtPct(nf.issqn_pct)}): </span>

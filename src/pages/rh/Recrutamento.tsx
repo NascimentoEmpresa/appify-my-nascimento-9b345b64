@@ -22,6 +22,7 @@ import {
 } from "@/lib/recrutamento/etiquetas";
 import { AvisoProcessos, processosDe, useProcessosDosCandidatos } from "@/components/recrutamento/AvisoProcessos";
 import { FichaAso } from "@/components/recrutamento/FichaAso";
+import { CandidatoManualDialog } from "@/components/recrutamento/CandidatoManualDialog";
 import { StatusSolicitacao } from "@/components/recrutamento/StatusSolicitacao";
 import { EnxovalAdmissao, type EnxovalAdmissaoHandle } from "@/components/recrutamento/EnxovalAdmissao";
 
@@ -556,6 +557,8 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
   // A solicitação aberta no modal para EDIÇÃO (null = solicitação nova).
   const [vagaEditando, setVagaEditando]     = useState<Solicitacao | null>(null);
   const [curriculos, setCurriculos]         = useState<Curriculo[]>([]);
+  // Candidato inserido à mão (CandidatoManualDialog, 30/09/2026).
+  const [showCandManual, setShowCandManual] = useState(false);
   const [showCurriculos, setShowCurriculos] = useState(false);
   const [empCpf, setEmpCpf]                 = useState<Record<string, EmpCadastro[]>>({});   // CPF dígitos → cadastros EMPREGADOS
   const [blacklist, setBlacklist]           = useState<Record<string, { motivo: string; criado_em?: string }>>({});
@@ -2185,11 +2188,15 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
             {podeRecrutar && (
               <button onClick={abrirCurriculos} style={{ padding: "5px 12px", borderRadius: 8, border: "1px solid rgba(34,197,94,.25)", background: "rgba(34,197,94,.1)", color: "#22c55e", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>+ Selecionar dos currículos</button>
             )}
+            {podeRecrutar && (
+              <button onClick={() => setShowCandManual(true)} title="Cadastrar um candidato que não veio pelo portal (só nome completo e CPF são obrigatórios)"
+                style={{ padding: "5px 12px", borderRadius: 8, border: "1px solid rgba(15,49,113,.25)", background: "rgba(15,49,113,.08)", color: "#0f3171", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>+ Inserir manualmente</button>
+            )}
           </div>
         </div>
         {candidatos.length === 0 ? (
           <div style={{ border: "1px dashed #cbd5e1", borderRadius: 12, padding: "26px 16px", textAlign: "center", color: "#94a3b8", fontSize: 12.5 }}>
-            Nenhum candidato selecionado ainda. Abra <b>Currículos</b> e clique em <b>Selecionar candidato</b> para iniciar o processo (Triagem → Jurídico → Entrevistas → Aprovado → Documentação → Exame SST → Compras → Admissão).
+            Nenhum candidato selecionado ainda. Abra <b>Currículos</b> e clique em <b>Selecionar candidato</b> (ou use <b>Inserir manualmente</b>) para iniciar o processo (Triagem → Jurídico → Entrevistas → Aprovado → Documentação → Exame SST → Compras → Admissão).
           </div>
         ) : (
           <div style={{ display: "flex", gap: 6, flex: 1, minHeight: 0, paddingBottom: 4, alignItems: "stretch" }}>
@@ -3099,6 +3106,23 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
         </div>
       )}
 
+      {/* ── Inserir candidato manualmente (fora do portal /vagas) ── */}
+      {showCandManual && drawerId && (
+        <CandidatoManualDialog
+          vagaId={drawerId} cargo={drawerSol?.cargo} autor={user?.user_metadata?.nome ?? user?.email ?? ""}
+          onFechar={() => setShowCandManual(false)}
+          onSalvo={async ({ id, nome, noProcesso }) => {
+            setShowCandManual(false);
+            await logHistorico(drawerId, noProcesso ? "Candidato inserido manualmente e selecionado" : "Candidato inserido manualmente", {
+              ...(noProcesso ? { para: "ENTRADA" } : {}), papel: "Recrutamento", candidatoId: id, candidatoNome: nome,
+            });
+            toast(noProcesso ? `${nome} inserido e colocado no processo.` : `${nome} inserido nos currículos da vaga.`, "ok");
+            loadCandidatos(drawerId);
+            if (showCurriculos) abrirCurriculos();
+          }}
+        />
+      )}
+
       {/* ── Painel Currículos ── */}
       {showCurriculos && (
         <div className="cv-panel-ov" onClick={e => { if (e.target === e.currentTarget) setShowCurriculos(false); }}>
@@ -3110,6 +3134,10 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
               </div>
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                 <span style={{ fontSize: 12, color: "#94a3b8" }}>{drawerSol?.cargo} — #{drawerId}</span>
+                {podeRecrutar && (
+                  <button onClick={() => setShowCandManual(true)}
+                    style={{ padding: "5px 12px", borderRadius: 8, border: "1px solid rgba(15,49,113,.25)", background: "rgba(15,49,113,.08)", color: "#0f3171", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>+ Inserir manualmente</button>
+                )}
                 <button onClick={() => setShowCurriculos(false)} style={{ background: "none", border: "none", color: "#94a3b8", fontSize: 20, cursor: "pointer" }}>✕</button>
               </div>
             </div>

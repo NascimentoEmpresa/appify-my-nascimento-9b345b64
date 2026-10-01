@@ -207,7 +207,10 @@ export default function NotasConcluidasTab() {
   const { data: itensContrato } = useItensNfEmissaoEmLote(nfsDoContrato.map((n) => n.id));
   const kpisContrato = useMemo(() => {
     let executado = 0, faturado = 0, recebido = 0, pendente = 0;
+    // Achado real (Ruan): Cancelada/Substituída ainda carrega valores da
+    // planilha legada — some da conta pra não inflar os totais.
     for (const n of nfsDoContrato) {
+      if (situacaoEspecial(n)) continue;
       executado += n.valor_contrato_exec_total;
       faturado += n.vlr_bruto_total;
       recebido += n.valor_pago ?? 0;
@@ -528,6 +531,7 @@ function NfPagamentoDialog({ nf, onClose }: { nf: NfEmissaoRow | null; onClose: 
   const [confirmandoRemocao, setConfirmandoRemocao] = useState(false);
   const [situacaoSitePmt, setSituacaoSitePmt] = useState("");
   const [situacaoDominio, setSituacaoDominio] = useState("");
+  const [dataEmissao, setDataEmissao] = useState("");
   const [descontoContaVinculada, setDescontoContaVinculada] = useState("0");
   const [recebimentoExtra, setRecebimentoExtra] = useState("0");
   const [faltaReceber, setFaltaReceber] = useState("0");
@@ -539,6 +543,7 @@ function NfPagamentoDialog({ nf, onClose }: { nf: NfEmissaoRow | null; onClose: 
     setDataPagamento(nf.data_pagamento ?? new Date().toISOString().slice(0, 10));
     setSituacaoSitePmt(nf.situacao_site_pmt ?? "");
     setSituacaoDominio(nf.situacao_dominio ?? "");
+    setDataEmissao(nf.data_emissao ?? "");
     setDescontoContaVinculada(String(nf.desconto_conta_vinculada ?? 0));
     setRecebimentoExtra(String(nf.recebimento_extra ?? 0));
     setFaltaReceber(String(nf.falta_receber ?? 0));
@@ -595,6 +600,7 @@ function NfPagamentoDialog({ nf, onClose }: { nf: NfEmissaoRow | null; onClose: 
         recebimento_extra: Number(recebimentoExtra) || 0,
         falta_receber: Number(faltaReceber) || 0,
         pago_a_mais: Number(pagoAMais) || 0,
+        data_emissao: dataEmissao || null,
       });
       await registrarLogNf(nf.id, "reconciliacao_atualizada", "Reconciliação de pagamento atualizada");
       toast.success("Reconciliação salva.");
@@ -704,6 +710,14 @@ function NfPagamentoDialog({ nf, onClose }: { nf: NfEmissaoRow | null; onClose: 
           <section className="rounded-xl border bg-card p-3 space-y-3">
             <div className="text-sm font-semibold">Reconciliação</div>
             <div className="grid grid-cols-4 gap-3">
+              <div>
+                {/* Achado real: analista faz o processo no fim do dia,
+                    Financeiro só emite/reconcilia no dia seguinte — sem
+                    este campo aqui, corrigir a data exigia ir pra outra
+                    tela (Emissão de NF). */}
+                <Label className="text-xs">Data de Emissão</Label>
+                <Input type="date" value={dataEmissao} onChange={(e) => setDataEmissao(e.target.value)} />
+              </div>
               <div>
                 <Label className="text-xs">Situação site P.M.T.</Label>
                 <Input value={situacaoSitePmt} onChange={(e) => setSituacaoSitePmt(e.target.value)} placeholder="Ex: Normal" />

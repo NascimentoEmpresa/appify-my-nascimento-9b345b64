@@ -10,14 +10,27 @@
 // (a planilha tem cabeçalho de texto, mas linhas de resumo acima variam,
 // então usamos posição fixa, igual documentado no plano do chamado).
 //
-// Idempotente por rodada: sem --apagar-tudo, é dry-run puro (não escreve
-// nada). Com --apagar-tudo, apaga TODAS as linhas de nf_emissao (cascade
-// cuida de nf_emissao_item/nf_emissao_anexo) e insere as novas.
+// Idempotente por rodada: sem --apagar-tudo/--somente-novas, é dry-run puro
+// (não escreve nada). Com --apagar-tudo, apaga TODAS as linhas de
+// nf_emissao (cascade cuida de nf_emissao_item/nf_emissao_anexo) e insere
+// as novas — uso original, pra quando a tabela tem lixo/teste misturado.
+//
+// SIS-2026-0540 (rodada 2, achado real): planilha voltou a ser atualizada
+// por fora do sistema (pessoal manteve o hábito antigo). Como as linhas já
+// importadas continuam limpas (conferido: nenhuma edição manual desde a
+// 1ª importação), apagar tudo de novo é desnecessário e arriscado sem
+// necessidade — --somente-novas insere só as linhas da planilha que ainda
+// não existem no banco, comparando pela chave natural (numero_nf +
+// contrato_id resolvido + competência + variação — é o que distingue duas
+// linhas reais com o mesmo nº de nota, ex. 2 variações/postos na mesma NF).
+// Não faz UPDATE em linha já existente (se o VALOR de uma nota já
+// importada mudou na planilha, isso não é pego por este modo — só chegada
+// de nota nova).
 //
 // Uso:
 //   SUPABASE_URL=https://xxxx.supabase.co \
 //   SUPABASE_SERVICE_ROLE_KEY=eyJ... \
-//   node scripts/importar-relatorio-servicos.mjs "planilha.xlsx" [--apagar-tudo]
+//   node scripts/importar-relatorio-servicos.mjs "planilha.xlsx" [--apagar-tudo|--somente-novas]
 
 import XLSX from "xlsx";
 import fs from "fs";
@@ -26,6 +39,7 @@ const URL_SB = process.env.SUPABASE_URL;
 const KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const ARQUIVO = process.argv[2];
 const APAGAR_TUDO = process.argv.includes("--apagar-tudo");
+const SOMENTE_NOVAS = process.argv.includes("--somente-novas");
 // nf_emissao_guard_enviada bloqueia DELETE de notas enviada/concluida sob
 // a service_role key (auth.uid() vem nulo) — o usuário já limpou a tabela
 // manualmente no SQL Editor (trigger desligada/religada). Com essa flag,
@@ -46,7 +60,21 @@ const api = async (caminho, init = {}) => {
 };
 
 // ── Conversões (mesmo padrão de scripts/importar-patrimonios-planilha.mjs) ──
-const texto = (v) => { const s = String(v ?? "").trim(); return s === "" ? null : s; };
+// Achado real (Ruan): "Variação" vazia em algumas linhas puxou uma data
+// tipo "Wed Sep 02 2026 00:00:28 GMT-0300 (Horário Padrão de Brasília)" em
+// vez de ficar em branco. Causa: a célula tá vazia mas formatada como data
+// na planilha — com `cellDates: true` (linha de leitura do workbook), o
+// SheetJS devolve um objeto Date (época/artefato) pra ela em vez de null,
+// e `texto()` fazia `String(dateObject)`, que é exatamente essa string
+// feia. Nenhuma coluna que passa por `texto()` é legitimamente uma data
+// (datas de verdade usam a função `data()` abaixo) — tratar Date como
+// vazio aqui resolve pra "Variação" e qualquer outra coluna futura com o
+// mesmo problema.
+const texto = (v) => {
+  if (v instanceof Date) return null;
+  const s = String(v ?? "").trim();
+  return s === "" ? null : s;
+};
 const numero = (v) => {
   if (v === "" || v == null) return 0;
   const n = typeof v === "number" ? v : Number(String(v).replace(/[^\d,.-]/g, "").replace(/\./g, "").replace(",", "."));
@@ -192,8 +220,13 @@ async function main() {
     totalValorPago += valorPago;
     totalVlrLiquido += vlrLiquido;
 
+    // Chave natural pra --somente-novas: numero_nf + contrato real
+    // (resolvido, não o texto da planilha) + competência + variação.
+    const chaveNatural = `${numeroNf}|${contrato.id}|${data(row[COL.competencia])}|${texto(row[COL.variacao]) ?? ""}`;
+
     paraInserirNf.push({
       _linha: i + 1,
+      _chaveNatural: chaveNatural,
       empresa_id: empresa.id,
       contrato_id: contrato.id,
       _tipoMatch: tipo,
@@ -253,8 +286,66 @@ async function main() {
     console.log(`Linhas sem match de empresa (revisar manual):`, semMatchEmpresa.slice(0, 10));
   }
 
-  if (!APAGAR_TUDO && !SEM_DELETE) {
-    console.log(`\nDry-run — nada foi escrito no banco. Rode com --apagar-tudo pra aplicar de verdade.`);
+  // Duplicidade dentro da própria planilha (mesma nota+contrato+competência
+  // +variação aparecendo 2x, ex. linha de correção deixada ao lado da
+  // original) — ambíguo, não dá pra decidir automaticamente qual vale.
+  // Sempre reportado, mesmo fora de --somente-novas.
+  const porChave = new Map();
+  for (const nf of paraInserirNf) {
+    if (!porChave.has(nf._chaveNatural)) porChave.set(nf._chaveNatural, []);
+    porChave.get(nf._chaveNatural).push(nf);
+  }
+  const duplicadasNaPlanilha = [...porChave.values()].filter((arr) => arr.length > 1);
+  if (duplicadasNaPlanilha.length > 0) {
+    console.log(`\n⚠ ${duplicadasNaPlanilha.length} chave(s) repetida(s) DENTRO da planilha (mesma nota/contrato/competência/variação em mais de uma linha) — revisar manualmente, nenhuma das duas foi inserida automaticamente:`);
+    for (const arr of duplicadasNaPlanilha) console.log(`  linhas ${arr.map((a) => a._linha).join(", ")} — nota ${arr[0].numero_nf}, contrato ${arr[0].contrato_id}`);
+  }
+
+  let paraInserirFinal = paraInserirNf;
+  if (SOMENTE_NOVAS) {
+    console.log(`\nBuscando notas já existentes pra comparar (--somente-novas)...`);
+    const existentesPage = 1000;
+    const chavesExistentes = new Set();
+    // Achado real (29/09→30/09): a chave completa inclui `variacao`, que é
+    // texto bruto da planilha — uma correção de parsing (ex.: a de hoje,
+    // célula vazia virando data feia) muda o valor de `variacao` pras
+    // MESMAS linhas que já foram importadas antes da correção, e a chave
+    // completa não bate mais → pareceram "novas" e duplicaram 192 notas.
+    // `chavesSemVariacao` é uma segunda rede: mesma nota/contrato/
+    // competência, ignorando variacao — se bater só nessa, é sinal de
+    // que já existe uma versão dessa nota no banco (mesmo que o texto da
+    // variação tenha mudado), então não insere sem alguém olhar.
+    const chavesExistentesSemVariacao = new Set();
+    for (let offset = 0; ; offset += existentesPage) {
+      const pagina = await api(`nf_emissao?select=numero_nf,contrato_id,competencia,variacao&order=created_at&offset=${offset}&limit=${existentesPage}`);
+      for (const n of pagina) {
+        chavesExistentes.add(`${n.numero_nf}|${n.contrato_id}|${n.competencia}|${n.variacao ?? ""}`);
+        chavesExistentesSemVariacao.add(`${n.numero_nf}|${n.contrato_id}|${n.competencia}`);
+      }
+      if (pagina.length < existentesPage) break;
+    }
+    console.log(`${chavesExistentes.size} notas já existentes no banco.`);
+    const jaExistiam = paraInserirNf.filter((nf) => chavesExistentes.has(nf._chaveNatural));
+    const chaveSemVariacao = (nf) => nf._chaveNatural.split("|").slice(0, 3).join("|");
+    const mudouSoAVariacao = paraInserirNf.filter(
+      (nf) => !chavesExistentes.has(nf._chaveNatural) && chavesExistentesSemVariacao.has(chaveSemVariacao(nf))
+    );
+    if (mudouSoAVariacao.length > 0) {
+      console.log(`\n⚠ ${mudouSoAVariacao.length} nota(s) já existe(m) no banco com a MESMA nota/contrato/competência, só a Variação leu diferente agora — não inserida(s) automaticamente, revisar manualmente:`);
+      for (const nf of mudouSoAVariacao) console.log(`  linha ${nf._linha} — nota ${nf.numero_nf}, contrato ${nf.contrato_id}, variação lida agora: ${JSON.stringify(nf.variacao)}`);
+    }
+    // Linha duplicada NA PLANILHA nunca entra automaticamente, nem se a
+    // chave for nova — fica de fora dos dois grupos, só no aviso acima.
+    const chavesAmbiguas = new Set(duplicadasNaPlanilha.flatMap((arr) => arr.map((a) => a._chaveNatural)));
+    const chavesMudouVariacao = new Set(mudouSoAVariacao.map((nf) => nf._chaveNatural));
+    paraInserirFinal = paraInserirNf.filter(
+      (nf) => !chavesExistentes.has(nf._chaveNatural) && !chavesAmbiguas.has(nf._chaveNatural) && !chavesMudouVariacao.has(nf._chaveNatural)
+    );
+    console.log(`${jaExistiam.length} já estavam no banco (ignoradas), ${chavesAmbiguas.size > 0 ? duplicadasNaPlanilha.reduce((s, a) => s + a.length, 0) + " em linhas ambíguas (ignoradas), " : ""}${mudouSoAVariacao.length > 0 ? mudouSoAVariacao.length + " com variação divergente (ignoradas), " : ""}${paraInserirFinal.length} são novas de verdade.`);
+  }
+
+  if (!APAGAR_TUDO && !SEM_DELETE && !SOMENTE_NOVAS) {
+    console.log(`\nDry-run — nada foi escrito no banco. Rode com --apagar-tudo ou --somente-novas pra aplicar de verdade.`);
     return;
   }
 
@@ -262,16 +353,23 @@ async function main() {
     console.log(`\n--apagar-tudo confirmado. Apagando nf_emissao existente...`);
     await api("nf_emissao?id=neq.00000000-0000-0000-0000-000000000000", { method: "DELETE" });
     console.log(`nf_emissao esvaziada (cascade cuidou de nf_emissao_item/nf_emissao_anexo).`);
-  } else {
+  } else if (SEM_DELETE) {
     console.log(`\n--sem-delete: pulando a limpeza (feita manualmente) e só inserindo.`);
+  } else {
+    console.log(`\n--somente-novas: nenhuma linha existente é tocada, só inserindo o que é novo.`);
   }
 
-  console.log(`Inserindo ${paraInserirNf.length} notas...`);
+  if (paraInserirFinal.length === 0) {
+    console.log(`\nNada pra inserir — a planilha não trouxe nenhuma nota realmente nova.`);
+    return;
+  }
+
+  console.log(`Inserindo ${paraInserirFinal.length} notas...`);
   const TAMANHO_LOTE = 200;
   let inseridas = 0;
-  for (let i = 0; i < paraInserirNf.length; i += TAMANHO_LOTE) {
-    const lote = paraInserirNf.slice(i, i + TAMANHO_LOTE);
-    const payload = lote.map(({ _linha, _tipoMatch, _item, ...resto }) => resto);
+  for (let i = 0; i < paraInserirFinal.length; i += TAMANHO_LOTE) {
+    const lote = paraInserirFinal.slice(i, i + TAMANHO_LOTE);
+    const payload = lote.map(({ _linha, _chaveNatural, _tipoMatch, _item, ...resto }) => resto);
     const inseridos = await api("nf_emissao", {
       method: "POST",
       headers: { Prefer: "return=representation" },
@@ -284,7 +382,7 @@ async function main() {
       body: JSON.stringify(itens),
     });
     inseridas += inseridos.length;
-    console.log(`  ${inseridas}/${paraInserirNf.length}`);
+    console.log(`  ${inseridas}/${paraInserirFinal.length}`);
   }
 
   console.log(`\nImportação concluída: ${inseridas} notas + ${inseridas} itens.`);
