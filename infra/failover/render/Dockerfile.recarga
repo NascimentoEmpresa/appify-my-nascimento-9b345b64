@@ -1,0 +1,34 @@
+# ============================================================================
+#  Imagem do job que recarrega a replica na Render
+# ============================================================================
+#
+#  Ela nao serve requisicao nenhuma: roda, carrega o banco e morre. Na Render
+#  e um Cron Job.
+#
+#  A base e o proprio postgres:18-alpine porque o que importa aqui e ter
+#  pg_restore, e ele precisa ser >= a versao que gerou o dump (hoje pg_dump
+#  17.11). Um cliente mais ANTIGO recusa o arquivo inteiro com
+#  "unsupported version in file header" e deixa a replica vazia sem alarde.
+#  Cliente mais novo que o servidor e seguro; o contrario, nao.
+#
+#  Contexto de build: a RAIZ do repositorio.
+# ============================================================================
+FROM postgres:18-alpine
+
+# gnupg  -> abrir o backup cifrado
+# curl   -> falar com a API do GitHub
+# jq     -> escolher o artefato mais recente que ainda nao venceu
+# unzip  -> o artefato do GitHub sempre vem como .zip
+# bash   -> os scripts usam array e substituicao que o sh do Alpine nao tem
+RUN apk add --no-cache gnupg curl jq unzip bash coreutils
+
+COPY infra/failover/carregar-replica.sh      /app/carregar-replica.sh
+COPY infra/failover/render/recarga-render.sh /app/render/recarga-render.sh
+
+# Vindos do Windows, podem chegar com CRLF - o shell falharia com
+# "bad interpreter". Ver repo_arquivos_crlf_misturado.
+RUN sed -i 's/\r$//' /app/carregar-replica.sh /app/render/recarga-render.sh \
+ && chmod +x /app/carregar-replica.sh /app/render/recarga-render.sh
+
+WORKDIR /app
+CMD ["/app/render/recarga-render.sh"]

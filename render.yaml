@@ -189,6 +189,50 @@ services:
       - key: VERIFY_JWT
         value: "false"
 
+  # --- recarga automatica ---------------------------------------------------
+  # Roda, carrega o banco e morre. E o que impede a replica de envelhecer ate
+  # virar inutil: sem isto ela tem a idade da ultima carga manual.
+  #
+  # 06:00 UTC = 03:00 em Brasilia. O backup do workflow sai as 09:00 e 21:00
+  # UTC, entao as 06:00 pegamos o das 21:00 do dia anterior, ja pronto - e o
+  # horario de menor uso do ERP, caso a carga pese no banco.
+  #
+  # ATENCAO: este job precisa da CHAVE PRIVADA de GPG, a mesma que abre todos
+  # os backups da empresa. Quem tem acesso a este servico tem acesso aos
+  # backups. O caminho para reduzir isso (uma segunda chave, so da replica)
+  # esta descrito em render/recarga-render.sh.
+  - name: erp-recarga
+    type: cron
+    runtime: docker
+    plan: starter
+    region: virginia
+    schedule: "0 6 * * *"
+    dockerfilePath: ./infra/failover/render/Dockerfile.recarga
+    dockerContext: .
+    autoDeploy: false
+    envVars:
+      - key: GITHUB_REPO
+        value: NascimentoEmpresa/appify-my-nascimento-9b345b64
+      - key: GITHUB_TOKEN
+        sync: false            # token so de leitura de Actions
+      - key: GPG_PRIVATE_KEY_B64
+        sync: false            # chave privada exportada, em base64
+      - key: GPG_PASSPHRASE
+        sync: false
+      - key: PGHOST
+        fromService:
+          name: erp-db
+          type: pserv
+          property: host
+      - key: PGPORT
+        value: "5432"
+      - key: PGUSER
+        value: postgres
+      - key: PGDATABASE
+        value: postgres
+      - key: PGPASSWORD
+        sync: false            # o mesmo POSTGRES_PASSWORD do erp-db
+
   # --- gateway (o unico publico) -------------------------------------------
   - name: erp-kong
     type: web
