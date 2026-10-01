@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 import logoBranco from "@/assets/logo-nascimento-branco.webp";
 import logoCompleto from "@/assets/logo-nascimento-completo.webp";
+import bigodinho from "@/assets/bigodinho-em-pe.webp";
 import { useDemoMode } from "@/context/DemoModeContext";
 import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
@@ -31,6 +32,11 @@ import { ROTAS_EXTERNO } from "@/hooks/useModoExterno";
 // ar, numa esteira dupla. A lista é ESTÁTICA de propósito — o login roda
 // sem sessão e app_modulo exige autenticado; módulo novo → 1 linha em
 // MODULOS abaixo.
+//
+// 01/10 (mesmo dia): o personagem da empresa (o "bigodinho", em pé, mãos na
+// cintura) entrou no centro do palco, na frente da palavra — ele é o
+// "produto" da Carmed agora; o arco foi para trás da cabeça, como auréola.
+// Sobe na entrada, respira parado e dá um pulinho quando o mouse passa.
 //
 // Logo: o arquivo branco (logo-nascimento-branco.webp, 2000×1271 com
 // transparência) tem margem grande; o recorte é por CSS (LogoBranco), com
@@ -316,7 +322,11 @@ function PainelMarca() {
           <div className="lg-arco-flutua">
             <ArcoLogo />
           </div>
-          <div className="lg-arco-sombra" />
+        </div>
+
+        <div className="lg-boneco-pos">
+          <div className="lg-boneco-sombra" aria-hidden />
+          <img src={bigodinho} alt="Mascote do Grupo Nascimento" draggable={false} className="lg-boneco" />
         </div>
       </div>
 
@@ -461,12 +471,25 @@ const CSS_LOGIN = `
 @keyframes lg-palavra{0%{opacity:0;filter:blur(14px);letter-spacing:.02em}14%{opacity:1;filter:blur(0);letter-spacing:-.05em}86%{opacity:1;filter:blur(0)}100%{opacity:0;filter:blur(10px)}}
 
 /* arco do logo, o "produto" do palco */
-.lg-arco-pos{position:absolute;left:50%;top:50%;width:min(34%,320px);transform:translate3d(calc(-50% + var(--mx)*22px),calc(-58% + var(--my)*16px),0);transition:transform .7s cubic-bezier(.2,.7,.2,1)}
+.lg-arco-pos{position:absolute;left:50%;top:34%;width:min(50%,380px);transform:translate3d(calc(-50% + var(--mx)*22px),calc(-50% + var(--my)*16px),0);transition:transform .7s cubic-bezier(.2,.7,.2,1)}
 .lg-arco-flutua{animation:lg-flutua 6s ease-in-out 2.2s infinite}
 .lg-arco{display:block;width:100%;height:auto;overflow:visible;filter:drop-shadow(0 18px 30px rgba(242,107,29,.45)) drop-shadow(0 0 60px rgba(242,107,29,.25))}
 .lg-arco-traco{stroke-dasharray:1;stroke-dashoffset:1;animation:lg-traca 1.4s cubic-bezier(.65,0,.25,1) .35s forwards}
 .lg-arco-haste{transform-box:fill-box;transform-origin:50% 100%;transform:scaleY(0);animation:lg-haste .55s cubic-bezier(.2,.9,.25,1.25) 1.6s forwards}
-.lg-arco-sombra{margin:18px auto 0;width:70%;height:16px;border-radius:50%;background:radial-gradient(closest-side,rgba(0,0,0,.45),transparent);animation:lg-sombra 6s ease-in-out 2.2s infinite}
+/* o personagem, na frente da palavra e do arco */
+.lg-boneco-pos{position:absolute;left:50%;bottom:3%;height:94%;z-index:2;transform:translate3d(calc(-50% + var(--mx)*10px),calc(var(--my)*5px),0);transition:transform .7s cubic-bezier(.2,.7,.2,1)}
+.lg-boneco{position:relative;display:block;height:100%;width:auto;max-width:none;user-select:none;cursor:pointer;transform-origin:50% 100%;
+  filter:drop-shadow(0 22px 26px rgba(2,8,28,.45));
+  animation:lg-boneco-entra .95s cubic-bezier(.2,.9,.25,1.15) 1s both,lg-respira 4.8s ease-in-out 2.2s infinite}
+.lg-boneco-pos:hover .lg-boneco{animation:lg-pulo .7s cubic-bezier(.3,.7,.3,1) both}
+.lg-boneco-sombra{position:absolute;left:-30%;right:-30%;bottom:-8px;height:26px;border-radius:50%;
+  background:radial-gradient(closest-side,rgba(0,0,0,.5),transparent);animation:lg-sombra-entra .95s ease-out 1s both}
+@keyframes lg-boneco-entra{from{opacity:0;transform:translateY(60px) scale(.9)}to{opacity:1;transform:none}}
+@keyframes lg-respira{0%,100%{transform:scale(1,1) rotate(0)}50%{transform:scale(1.008,1.014) rotate(-.6deg)}}
+@keyframes lg-pulo{0%{transform:none}25%{transform:scale(1.04,.94)}55%{transform:translateY(-26px) scale(.98,1.04)}80%{transform:translateY(0) scale(1.03,.96)}100%{transform:none}}
+@keyframes lg-sombra-entra{from{opacity:0}to{opacity:1}}
+.lg-boneco-pos:hover .lg-boneco-sombra{animation:lg-sombra-pulo .7s cubic-bezier(.3,.7,.3,1) both}
+@keyframes lg-sombra-pulo{55%{transform:scale(.7);opacity:.5}}
 @keyframes lg-traca{to{stroke-dashoffset:0}}
 @keyframes lg-haste{to{transform:scaleY(1)}}
 @keyframes lg-flutua{0%,100%{transform:translateY(0) rotate(0)}50%{transform:translateY(-14px) rotate(-1.5deg)}}
@@ -520,8 +543,10 @@ const CSS_LOGIN = `
    parar (flutuar, parallax, bolha). Entradas, traço do arco, contagem, troca
    da palavra e esteira continuam — são curtos ou lentos e laterais. */
 @media (prefers-reduced-motion:reduce){
-  .lg-arco-flutua,.lg-arco-sombra,.lg-form-bolha{animation:none!important}
+  .lg-arco-flutua,.lg-form-bolha{animation:none!important}
+  .lg-boneco{animation:lg-boneco-entra .95s cubic-bezier(.2,.9,.25,1.15) 1s both!important}
+  .lg-boneco-sombra{animation:lg-sombra-entra .95s ease-out 1s both!important}
   .lg-peca{animation:lg-entra .8s cubic-bezier(.2,.8,.2,1) forwards!important}
-  .lg-peca-pos,.lg-arco-pos,.lg-luz,.lg-palavra{transition:none!important}
+  .lg-peca-pos,.lg-arco-pos,.lg-boneco-pos,.lg-luz,.lg-palavra{transition:none!important}
 }
 `;
