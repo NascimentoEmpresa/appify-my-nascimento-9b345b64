@@ -115,6 +115,7 @@ import FluxoCaixa from "./pages/financeiro/FluxoCaixa";
 import FluxoCaixaGestao from "./pages/financeiro/FluxoCaixaGestao";
 import ConciliacaoAutomaticaFluxoCaixa from "./pages/financeiro/ConciliacaoAutomaticaFluxoCaixa";
 import CartaoCredito from "./pages/financeiro/CartaoCredito";
+import ClassificarLancamentos from "./pages/financeiro/cartao-credito/ClassificarLancamentos";
 import DebitoAutomatico from "./pages/financeiro/DebitoAutomatico";
 import AplicacoesFinanceiras from "./pages/financeiro/AplicacoesFinanceiras";
 import ControleJuros from "./pages/financeiro/ControleJuros";
@@ -729,6 +730,7 @@ const App = () => (
             <Route path="financeiro/solicitacoes-ajuste" element={<SolicitacoesAjuste />} />
             <Route path="financeiro/doc-canaa" element={<DocCanaa />} />
             <Route path="financeiro/gestao-financeira/cartao-credito" element={<CartaoCredito />} />
+            <Route path="financeiro/gestao-financeira/cartao-credito/classificar" element={<ClassificarLancamentos />} />
             <Route path="financeiro/fluxo-caixa-diario" element={<FluxoCaixaDiario />} />
             <Route path="financeiro/capital-giro" element={<CapitalGiro />} />
             <Route path="financeiro/conciliacao-fluxo-caixa" element={<ConciliacaoFluxoCaixa />} />

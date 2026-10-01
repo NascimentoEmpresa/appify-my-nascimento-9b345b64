@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -12,7 +13,7 @@ import { useEmpresasGrupo } from "@/hooks/useMaloteDespesa";
 import { useContratosERP, ContratoERP } from "@/hooks/useContratosERP";
 import { usePlanilhaCustos, resolverLinhasPorPeriodo, somarCamposEmLinhas, fimDoMes } from "@/hooks/usePlanilhaCusto";
 import { useNfsEmissao } from "@/hooks/useNfEmissao";
-import { fmtMoney } from "@/pages/financeiro/nf-emissao/shared";
+import { fmtMoney, situacaoEspecial } from "@/pages/financeiro/nf-emissao/shared";
 
 // SIS-2026-0562 (Iury): "Base de Contratos Vigentes × Relatório de
 // Serviços", igual ao protótipo em anexo (Dashboard_Controle_Faturamento_
@@ -79,6 +80,7 @@ interface LinhaFaturamento {
 }
 
 export default function ControleFaturamento() {
+  const navigate = useNavigate();
   const { data: contratos = [], isLoading: carregandoContratos } = useContratosERP({ todasEmpresas: true });
   const { data: planilha = [], isLoading: carregandoPlanilha } = usePlanilhaCustos({ todasEmpresas: true });
   const { data: nfs = [], isLoading: carregandoNfs } = useNfsEmissao(null, { todasEmpresas: true });
@@ -127,8 +129,11 @@ export default function ControleFaturamento() {
   // desse mês (pode ter mais de uma nota pro mesmo contrato/competência).
   const nfAggPorContratoCompetencia = useMemo(() => {
     const mapa = new Map<string, { execRel: number; contabil: number; liquido: number; recebido: number; cv: number; count: number }>();
+    // Achado real (Ruan): nota Cancelada/Substituída ainda carrega valores
+    // da planilha legada e, sem este filtro, contava como "lançamento"
+    // (célula verde) mesmo sendo uma nota que nunca vai receber pagamento.
     for (const n of nfs) {
-      if (n.tipo_nota !== "N") continue;
+      if (n.tipo_nota !== "N" || situacaoEspecial(n)) continue;
       const chave = `${n.contrato_id}|${n.competencia}`;
       const atual = mapa.get(chave) ?? { execRel: 0, contabil: 0, liquido: 0, recebido: 0, cv: 0, count: 0 };
       atual.execRel += n.valor_contrato_exec_total;
@@ -205,7 +210,7 @@ export default function ControleFaturamento() {
   const evolucao = useMemo(() => {
     const porComp = new Map<string, { comp: string; contabil: number; liquido: number; recebido: number }>();
     for (const n of nfs) {
-      if (n.tipo_nota !== "N") continue;
+      if (n.tipo_nota !== "N" || situacaoEspecial(n)) continue;
       if (filtroEmpresa && n.empresa_id !== filtroEmpresa) continue;
       const atual = porComp.get(n.competencia) ?? { comp: n.competencia, contabil: 0, liquido: 0, recebido: 0 };
       atual.contabil += n.vlr_bruto_total;
@@ -239,6 +244,14 @@ export default function ControleFaturamento() {
     () => linhasCompetencia.filter((l) => l.status === "NENHUM_LANCAMENTO").sort((a, b) => b.executavel - a.executavel),
     [linhasCompetencia]
   );
+
+  // SIS-2026-0562 (Iury): clicar na linha leva pro Relatório de Serviços
+  // (aba Relatório Geral) já com empresa/competência/contrato filtrados —
+  // mesmo recorte que gerou os números daquela linha.
+  function abrirNoRelatorioServicos(l: LinhaFaturamento) {
+    const params = new URLSearchParams({ empresa: l.contrato.empresa_id, competencia, contrato: l.contrato.id });
+    navigate(`/app/financeiro/relatorio-servicos?${params.toString()}`);
+  }
 
   const carregando = carregandoContratos || carregandoPlanilha || carregandoNfs;
 
@@ -391,7 +404,12 @@ export default function ControleFaturamento() {
                         <TableRow><TableCell colSpan={11} className="text-center text-muted-foreground py-8">Sem contratos vigentes para os filtros selecionados.</TableCell></TableRow>
                       )}
                       {linhasCompetencia.map((l) => (
-                        <TableRow key={l.contrato.id}>
+                        <TableRow
+                          key={l.contrato.id}
+                          className="cursor-pointer hover:bg-muted/50"
+                          onClick={() => abrirNoRelatorioServicos(l)}
+                          title="Ver as notas deste contrato/competência no Relatório de Serviços"
+                        >
                           <TableCell className="text-sm">{empresaNomePorId.get(l.contrato.empresa_id) ?? "—"}</TableCell>
                           <TableCell className="text-sm font-medium">{l.contrato.nome}</TableCell>
                           <TableCell className="text-center">
