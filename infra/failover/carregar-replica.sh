@@ -150,6 +150,37 @@ done
 # E assim que o PostgREST troca de identidade conforme o token recebido.
 sql_ignora "grant anon, authenticated, service_role to authenticator;" >/dev/null
 
+# --- 6b. O SCHEMA auth PRECISA DOS SEUS PROPRIOS GRANTS ---------------------
+# As tabelas de auth nascem na PRIMEIRA passada do pg_restore, feita como
+# `postgres` - entao pertencem a ele, nao ao supabase_auth_admin, que e quem o
+# GoTrue usa para conectar. Sem isto o login sobe, conecta, e falha em TODA
+# leitura de usuario:
+#     {"code":500,"error_code":"unexpected_failure",
+#      "msg":"Database error loading user"}
+# Medido na Render em 01/10/2026. O erro nao diz "permission denied" em lugar
+# nenhum - fala em "database error", o que manda procurar no lugar errado.
+sql_ignora "grant usage on schema auth to supabase_auth_admin, service_role;"                >/dev/null
+sql_ignora "grant all on all tables    in schema auth to supabase_auth_admin;"                >/dev/null
+sql_ignora "grant all on all sequences in schema auth to supabase_auth_admin;"                >/dev/null
+sql_ignora "grant all on all functions in schema auth to supabase_auth_admin;"                >/dev/null
+# O dono tambem muda: sem isso o GoTrue nao consegue ALTERAR as tabelas dele
+# (ele roda migration propria a cada boot).
+sql_ignora "do \$\$ declare t record; begin for t in select tablename from pg_tables where schemaname='auth' loop execute format('alter table auth.%I owner to supabase_auth_admin', t.tablename); end loop; end \$\$;" >/dev/null
+sql_ignora "do \$\$ declare s record; begin for s in select sequencename from pg_sequences where schemaname='auth' loop execute format('alter sequence auth.%I owner to supabase_auth_admin', s.sequencename); end loop; end \$\$;" >/dev/null
+# Mesmo tratamento para storage, pelo mesmo motivo.
+sql_ignora "do \$\$ declare t record; begin for t in select tablename from pg_tables where schemaname='storage' loop execute format('alter table storage.%I owner to supabase_storage_admin', t.tablename); end loop; end \$\$;" >/dev/null
+
+# --- 6c. AVISAR O PostgREST QUE O SCHEMA MUDOU ------------------------------
+# Ele carrega o schema UMA VEZ, no boot. Numa replica recem-criada isso
+# aconteceu com o banco VAZIO - entao, depois da carga, ele continua sem
+# enxergar as 581 tabelas e as 1.213 funcoes. O sintoma e enganoso: a tabela
+# responde (ela ja estava no cache de outro jeito) mas as RPCs somem com
+#     PGRST202: Could not find the function public.X in the schema cache
+# e parece que o restore nao trouxe as funcoes. Trouxe - o PostgREST e que nao
+# foi avisado. E o mesmo NOTIFY que as migrations deste ERP usam no fim.
+log "Avisando o PostgREST para recarregar o schema..."
+sql_ignora "notify pgrst, 'reload schema';" >/dev/null
+
 # Nota: alinhar a senha das contas de servico NAO acontece aqui. Na imagem
 # supabase/postgres a extensao supautils protege esses papeis depois do boot -
 # quem faz isso e o db-init/, na inicializacao. Num Postgres puro, o operador
