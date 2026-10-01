@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { SearchableSelect } from "@/components/ui/searchable-select";
+import { SearchableMultiSelect } from "@/components/ui/searchable-multi-select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { DateRangeFilter } from "@/components/ui/date-range-filter";
 import { Badge } from "@/components/ui/badge";
@@ -31,6 +32,7 @@ import { useFaturasResumoPorCartao } from "@/hooks/useCartaoFatura";
 import { ImportarFaturaModal } from "./cartao-credito/ImportarFaturaModal";
 import { useEmpresasGrupo } from "@/hooks/useMaloteDespesa";
 import { useTiposFormaPagamento } from "@/hooks/useMaloteFormaPagamento";
+import { useUsuariosAtivos } from "@/hooks/useNfEmissao";
 import { formatBRL } from "@/hooks/usePlanilhaCusto";
 import {
   useCartoesCredito,
@@ -60,6 +62,7 @@ interface FormState {
   limite: string;
   ativo: boolean;
   finalCartao: string;
+  usuariosClassificarIds: string[];
 }
 
 const VAZIO: FormState = {
@@ -73,6 +76,7 @@ const VAZIO: FormState = {
   limite: "",
   ativo: true,
   finalCartao: "",
+  usuariosClassificarIds: [],
 };
 
 function paraFormState(c: CartaoCreditoRow): FormState {
@@ -88,6 +92,7 @@ function paraFormState(c: CartaoCreditoRow): FormState {
     limite: String(c.limite),
     ativo: c.ativo,
     finalCartao: c.final_cartao ?? "",
+    usuariosClassificarIds: c.usuarios_classificar_ids ?? [],
   };
 }
 
@@ -259,6 +264,11 @@ export default function CartaoCredito() {
   const { data: tiposFormaPagamento = [] } = useTiposFormaPagamento();
   const { data: bancos = [] } = useCartaoBancos();
   const { data: bandeiras = [] } = useCartaoBandeiras();
+  const { data: usuariosAtivos = [] } = useUsuariosAtivos();
+  const opcoesUsuariosClassificar = useMemo(
+    () => usuariosAtivos.map((u) => ({ value: u.id, label: u.display_name })),
+    [usuariosAtivos],
+  );
   const salvar = useSalvarCartaoCredito();
   const salvarBanco = useSalvarCartaoBanco();
   const statusBanco = useAtualizarStatusCartaoBanco();
@@ -324,6 +334,12 @@ export default function CartaoCredito() {
   }, [cartoes, filtroCartaoId, filtroEmpresaId, filtroBancoId, filtroBandeiraId, filtroStatus]);
 
   function limparFiltros() {
+    // [SEM-CHAMADO] (pedido do usuário): Competência sempre vinha
+    // pré-preenchida com o mês atual e "Limpar filtros" não zerava ela —
+    // não tinha como ver o período inteiro. Competência vazia já é tratada
+    // como "sem filtro" em lancamentosDeCartao (e zera a Fatura do Mês dos
+    // cartões, que não faz sentido sem um mês selecionado).
+    setCompetencia("");
     setFiltroCartaoId("");
     setFiltroEmpresaId("");
     setFiltroBancoId("");
@@ -450,6 +466,10 @@ export default function CartaoCredito() {
         limite,
         ativo: editando.ativo,
         final_cartao: editando.finalCartao ? editando.finalCartao : null,
+        usuarios_classificar_ids: editando.usuariosClassificarIds,
+        usuarios_classificar_nomes: editando.usuariosClassificarIds.map(
+          (id) => usuariosAtivos.find((u) => u.id === id)?.display_name ?? "",
+        ),
       });
       toast.success("Cartão salvo.");
       setOpen(false);
@@ -712,6 +732,11 @@ export default function CartaoCredito() {
             Lançamentos conforme os pagamentos em cartões de crédito recebidos no Fluxo de Caixa. Respeita os
             filtros do card acima.
           </p>
+          {/* [SEM-CHAMADO] (pedido do usuário): essa tabela pode crescer bastante
+              (36+ lançamentos já no banco) e deixava a tela inteira enorme —
+              scroll interno, mesmo padrão de altura máxima já usado em
+              ImportarFaturaModal.tsx pra revisão de fatura. */}
+          <div className="max-h-96 overflow-y-auto rounded-md border border-border">
           <Table>
             <TableHeader>
               <TableRow>
@@ -757,6 +782,7 @@ export default function CartaoCredito() {
               ))}
             </TableBody>
           </Table>
+          </div>
         </CardContent>
       </Card>
 
@@ -905,6 +931,20 @@ export default function CartaoCredito() {
                   </SelectContent>
                 </Select>
               </div>
+            </div>
+            <div>
+              {/* SIS-2026-0568: Financeiro libera, por cartão, quem mais
+                  (ex. alguém do Suprimentos) pode preencher Classificação/
+                  Contrato dos itens deste cartão na tela "Classificar
+                  Lançamentos de Cartão" — sem acesso ao resto deste módulo. */}
+              <Label>Quem mais pode classificar os itens deste cartão</Label>
+              <SearchableMultiSelect
+                value={editando?.usuariosClassificarIds ?? []}
+                onChange={(ids) => setEditando((s) => (s ? { ...s, usuariosClassificarIds: ids } : s))}
+                options={opcoesUsuariosClassificar}
+                placeholder="Buscar usuário..."
+                searchPlaceholder="Buscar usuário..."
+              />
             </div>
           </div>
           <DialogFooter>

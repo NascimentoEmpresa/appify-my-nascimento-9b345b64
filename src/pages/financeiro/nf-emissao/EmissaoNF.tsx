@@ -1171,6 +1171,10 @@ function DetalhesNfDialog({
   const enviar = useEnviarNfEmissao();
   const excluir = useExcluirNfEmissao();
   const [confirmandoExclusao, setConfirmandoExclusao] = useState(false);
+  // [SEM-CHAMADO] (pedido do usuário): informativo de Mão de Obra em
+  // destaque — vlr_mao_obra já é persistido por item (calculos.ts), só
+  // faltava o total da nota aqui na visualização.
+  const vlrMaoObraTotal = useMemo(() => itens.reduce((s, it) => s + (Number(it.vlr_mao_obra) || 0), 0), [itens]);
 
   async function handleBaixar(storagePath: string) {
     try {
@@ -1324,6 +1328,9 @@ function DetalhesNfDialog({
                 <span>
                   <span className="text-muted-foreground">Bruto total: </span>
                   <span className="font-medium">{fmtMoney(nf.vlr_bruto_total)}</span>
+                </span>
+                <span className="inline-flex items-center gap-1.5 rounded-full bg-violet-100 px-2.5 py-0.5 font-semibold text-violet-800 dark:bg-violet-950/40 dark:text-violet-300">
+                  Mão de Obra: {fmtMoney(vlrMaoObraTotal)}
                 </span>
                 <span>
                   <span className="text-muted-foreground">ISSQN ({fmtPct(nf.issqn_pct)}): </span>

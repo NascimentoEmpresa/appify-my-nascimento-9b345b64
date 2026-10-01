@@ -6,13 +6,14 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { AlertCircle, Plus, Trash2, Upload } from "lucide-react";
+import { AlertCircle, ListTree, Plus, Trash2, Upload } from "lucide-react";
 import { toast } from "sonner";
 import { useCartoesCredito, useCartaoBancos } from "@/hooks/useMaloteCartaoCredito";
 import { useConfirmarImportacaoFatura, useFaturaExistente, useUploadArquivoFatura } from "@/hooks/useCartaoFatura";
 import { adaptadorPorNomeBanco, extensaoAceita, BANCOS_COM_ADAPTADOR } from "@/lib/cartaoFatura/adaptadores";
 import { reconciliar, type ItemRevisao } from "@/lib/cartaoFatura/reconciliar";
 import { novoUuid } from "@/lib/utils";
+import { RateioItemFaturaDialog } from "./RateioItemFaturaDialog";
 
 const STATUS_LABEL: Record<ItemRevisao["statusRevisao"], string> = {
   novo: "Nova",
@@ -43,6 +44,10 @@ export function ImportarFaturaModal({ open, onClose, cartaoInicialId }: { open: 
   const [analisando, setAnalisando] = useState(false);
   const [arquivoNome, setArquivoNome] = useState<string | null>(null);
   const [arquivoParaEnviar, setArquivoParaEnviar] = useState<File | null>(null);
+  // SIS-2026-0568: classificar (Classificação/Contrato, com rateio) um item
+  // já confirmado — só disponível depois que a linha tem `id` de verdade
+  // (rateio pendura em item_id, que só existe após o insert).
+  const [linhaClassificar, setLinhaClassificar] = useState<LinhaTabela | null>(null);
 
   const competenciaISO = competencia ? `${competencia}-01` : null;
   const { data: existente } = useFaturaExistente(cartaoId || null, competenciaISO);
@@ -266,6 +271,7 @@ export function ImportarFaturaModal({ open, onClose, cartaoInicialId }: { open: 
                     <TableHead className="w-32 text-right">Valor</TableHead>
                     <TableHead className="w-40">Status</TableHead>
                     <TableHead className="w-10" />
+                    <TableHead className="w-10" />
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -308,6 +314,19 @@ export function ImportarFaturaModal({ open, onClose, cartaoInicialId }: { open: 
                         <Badge className={STATUS_CLASSE[l.statusRevisao]}>{STATUS_LABEL[l.statusRevisao]}</Badge>
                       </TableCell>
                       <TableCell className="p-1">
+                        {l.id && !l.removida && (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-7 w-7"
+                            title="Classificar (Classificação/Contrato)"
+                            onClick={() => setLinhaClassificar(l)}
+                          >
+                            <ListTree className="h-3.5 w-3.5" />
+                          </Button>
+                        )}
+                      </TableCell>
+                      <TableCell className="p-1">
                         <Button
                           variant="ghost"
                           size="icon"
@@ -338,6 +357,14 @@ export function ImportarFaturaModal({ open, onClose, cartaoInicialId }: { open: 
           )}
         </DialogFooter>
       </DialogContent>
+
+      <RateioItemFaturaDialog
+        open={!!linhaClassificar}
+        onClose={() => setLinhaClassificar(null)}
+        itemId={linhaClassificar?.id ?? null}
+        descricaoItem={linhaClassificar?.descricao ?? ""}
+        valorItem={Number(linhaClassificar?.valor ?? 0)}
+      />
     </Dialog>
   );
 }

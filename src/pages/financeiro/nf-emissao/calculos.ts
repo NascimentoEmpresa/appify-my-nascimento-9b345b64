@@ -117,6 +117,7 @@ export function calcularItem(input: ItemInput, pct: PercentuaisFiscais): ItemCal
 const SOMA_FIELDS = [
   "valor_contrato_exec",
   "vlr_bruto",
+  "vlr_mao_obra",
   "vlr_liquido",
   "issqn",
   "inss",
@@ -129,6 +130,10 @@ const SOMA_FIELDS = [
 export interface TotaisNf {
   valor_contrato_exec_total: number;
   vlr_bruto_total: number;
+  // [SEM-CHAMADO] (pedido do usuário): informativo de Mão de Obra em
+  // destaque no cadastro — já existia por item (vlr_mao_obra), faltava o
+  // total da nota.
+  vlr_mao_obra_total: number;
   vlr_liquido_total: number;
   issqn_total: number;
   inss_total: number;
@@ -143,6 +148,7 @@ export function calcularTotaisNf(itens: ItemCalculado[]): TotaisNf {
   return {
     valor_contrato_exec_total: soma("valor_contrato_exec"),
     vlr_bruto_total: soma("vlr_bruto"),
+    vlr_mao_obra_total: soma("vlr_mao_obra"),
     vlr_liquido_total: soma("vlr_liquido"),
     issqn_total: soma("issqn"),
     inss_total: soma("inss"),
