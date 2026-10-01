@@ -295,6 +295,11 @@ export function ItensNfEditor({
             <span className="text-muted-foreground">Bruto total: </span>
             <span className="font-medium">{fmtMoney(totais.vlr_bruto_total)}</span>
           </span>
+          {/* [SEM-CHAMADO] (pedido do usuário): Mão de Obra = Bruto - VA - VT -
+              Materiais em destaque — já existia por item, faltava o total. */}
+          <span className="inline-flex items-center gap-1.5 rounded-full bg-violet-100 px-2.5 py-0.5 font-semibold text-violet-800 dark:bg-violet-950/40 dark:text-violet-300">
+            Mão de Obra: {fmtMoney(totais.vlr_mao_obra_total)}
+          </span>
           <span>
             <span className="text-muted-foreground">ISSQN ({fmtPct(pctFiscais.issqn_pct)}): </span>
             {fmtMoney(totais.issqn_total)}
