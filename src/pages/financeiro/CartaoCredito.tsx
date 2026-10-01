@@ -334,6 +334,12 @@ export default function CartaoCredito() {
   }, [cartoes, filtroCartaoId, filtroEmpresaId, filtroBancoId, filtroBandeiraId, filtroStatus]);
 
   function limparFiltros() {
+    // [SEM-CHAMADO] (pedido do usuário): Competência sempre vinha
+    // pré-preenchida com o mês atual e "Limpar filtros" não zerava ela —
+    // não tinha como ver o período inteiro. Competência vazia já é tratada
+    // como "sem filtro" em lancamentosDeCartao (e zera a Fatura do Mês dos
+    // cartões, que não faz sentido sem um mês selecionado).
+    setCompetencia("");
     setFiltroCartaoId("");
     setFiltroEmpresaId("");
     setFiltroBancoId("");
@@ -726,6 +732,11 @@ export default function CartaoCredito() {
             Lançamentos conforme os pagamentos em cartões de crédito recebidos no Fluxo de Caixa. Respeita os
             filtros do card acima.
           </p>
+          {/* [SEM-CHAMADO] (pedido do usuário): essa tabela pode crescer bastante
+              (36+ lançamentos já no banco) e deixava a tela inteira enorme —
+              scroll interno, mesmo padrão de altura máxima já usado em
+              ImportarFaturaModal.tsx pra revisão de fatura. */}
+          <div className="max-h-96 overflow-y-auto rounded-md border border-border">
           <Table>
             <TableHeader>
               <TableRow>
@@ -771,6 +782,7 @@ export default function CartaoCredito() {
               ))}
             </TableBody>
           </Table>
+          </div>
         </CardContent>
       </Card>
 

@@ -6,7 +6,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Plus, Trash2 } from "lucide-react";
+import { CheckCircle2, Plus, Trash2, XCircle } from "lucide-react";
 import { toast } from "sonner";
 import { useClassificacoesOrcamento } from "@/hooks/usePlanejamentoOrcamentario";
 import { useContratosAtivos } from "@/hooks/useMaloteDespesa";
@@ -42,7 +42,10 @@ export function RateioItemFaturaDialog({ open, onClose, itemId, descricaoItem, v
   }, [open, linhasExistentes]);
 
   const totalRateado = useMemo(() => linhas.reduce((s, l) => s + (Number(l.valor) || 0), 0), [linhas]);
-  const bate = Math.abs(totalRateado - valorItem) <= 0.01;
+  const diferenca = valorItem - totalRateado;
+  const bate = Math.abs(diferenca) <= 0.01;
+  const todasClassificadas = linhas.every((l) => !!l.classificacao_id);
+  const podeSalvar = bate && todasClassificadas;
 
   function atualizarLinha(idx: number, patch: Partial<RateioItemLinha>) {
     setLinhas((prev) => prev.map((l, i) => (i === idx ? { ...l, ...patch } : l)));
@@ -67,14 +70,7 @@ export function RateioItemFaturaDialog({ open, onClose, itemId, descricaoItem, v
   }
 
   async function handleSalvar() {
-    if (linhas.some((l) => !l.classificacao_id)) {
-      toast.error("Selecione a classificação em todas as linhas.");
-      return;
-    }
-    if (!bate) {
-      toast.error("O total do rateio deve ser igual ao valor do item.");
-      return;
-    }
+    if (!podeSalvar) return;
     try {
       await salvar.mutateAsync({ itemId: itemId!, linhas });
       toast.success("Classificação salva.");
@@ -179,21 +175,39 @@ export function RateioItemFaturaDialog({ open, onClose, itemId, descricaoItem, v
           </Table>
         </div>
 
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between gap-4">
           <Button type="button" variant="outline" size="sm" onClick={adicionarLinha} className="gap-1.5">
             <Plus className="h-3.5 w-3.5" /> Adicionar linha
           </Button>
-          <p className={bate ? "text-sm text-muted-foreground" : "text-sm text-destructive"}>
-            Total do rateio: {fmtBRL(totalRateado)} / {fmtBRL(valorItem)}
-            {bate ? " ✓" : " — não bate"}
-          </p>
+          {/* [SEM-CHAMADO] (pedido do usuário): total mais visual (ícone +
+              cor + quanto falta/excedeu), e o botão de Salvar abaixo passa a
+              ficar desabilitado em vez de só avisar depois do clique. */}
+          <div
+            className={
+              "flex items-center gap-2 rounded-md border px-3 py-1.5 text-sm " +
+              (bate
+                ? "border-emerald-300 bg-emerald-50 text-emerald-700 dark:border-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-400"
+                : "border-destructive/30 bg-destructive/10 text-destructive")
+            }
+          >
+            {bate ? <CheckCircle2 className="h-4 w-4 shrink-0" /> : <XCircle className="h-4 w-4 shrink-0" />}
+            <span>
+              Total do rateio: <span className="font-semibold">{fmtBRL(totalRateado)}</span> / {fmtBRL(valorItem)}
+              {!bate && (
+                <span className="ml-1">
+                  ({diferenca > 0 ? "faltam " : "excedeu "}
+                  {fmtBRL(Math.abs(diferenca))})
+                </span>
+              )}
+            </span>
+          </div>
         </div>
 
         <DialogFooter>
           <Button variant="outline" onClick={onClose} disabled={salvar.isPending}>
             Cancelar
           </Button>
-          <Button onClick={handleSalvar} disabled={salvar.isPending}>
+          <Button onClick={handleSalvar} disabled={salvar.isPending || !podeSalvar} title={!podeSalvar ? "Selecione a classificação em todas as linhas e acerte o total do rateio" : undefined}>
             {salvar.isPending ? "Salvando..." : "Salvar"}
           </Button>
         </DialogFooter>

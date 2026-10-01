@@ -377,7 +377,7 @@ const financeiroModule: ModuleDef = {
         { label: "Fluxo de Caixa", to: "/app/financeiro/gestao-financeira/fluxo-caixa", icon: TrendingDown },
         { label: "Débito Automático", to: "/app/financeiro/gestao-financeira/debito-automatico", icon: ArrowLeftRight, badge: "Novo" },
         { label: "Cartão de Crédito", to: "/app/financeiro/gestao-financeira/cartao-credito", icon: CreditCard, badge: "Novo" },
-        { label: "Classificar Lançamentos de Cartão", to: "/app/financeiro/gestao-financeira/cartao-credito/classificar", icon: ListTree, badge: "Novo" },
+        { label: "Classificar Lançamentos", to: "/app/financeiro/gestao-financeira/cartao-credito/classificar", icon: ListTree, badge: "Novo" },
         { label: "Extrator de Benefícios (VA/VT)", to: "/app/financeiro/gestao-financeira/extrator-beneficios", icon: FileSpreadsheet, badge: "Novo" },
         // SIS-2026-0473: registra aplicações (CDB/Fundo DI/etc.) e resgates,
         // alimenta o Fluxo de Caixa igual ao Débito Automático.
