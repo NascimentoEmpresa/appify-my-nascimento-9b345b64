@@ -33,9 +33,9 @@ export interface Etiqueta {
 
 const TIPOS: Record<TipoEtiqueta, { rotulo: string; frase: string; icone: typeof ScanSearch; cor: string; ponto: string }> = {
   conferindo:            { rotulo: "Conferindo",                     frase: "está conferindo",          icone: ScanSearch,    cor: "border-sky-200 bg-sky-50 text-sky-800 hover:bg-sky-100",             ponto: "bg-sky-500" },
-  aguardando_documentos: { rotulo: "Aguardando documentos",          frase: "aguarda documentos",       icone: FileClock,     cor: "border-amber-200 bg-amber-50 text-amber-800 hover:bg-amber-100",     ponto: "bg-amber-500" },
+  aguardando_documentos: { rotulo: "Aguardando",                     frase: "Aguardando",       icone: FileClock,     cor: "border-amber-200 bg-amber-50 text-amber-800 hover:bg-amber-100",     ponto: "bg-amber-500" },
   divergencia:           { rotulo: "Com divergência",                frase: "achou divergência",        icone: AlertTriangle, cor: "border-rose-200 bg-rose-50 text-rose-800 hover:bg-rose-100",         ponto: "bg-rose-500" },
-  conferido:             { rotulo: "Conferido — pronto para enviar", frase: "conferiu, pronto p/ enviar", icone: CheckCircle2, cor: "border-emerald-200 bg-emerald-50 text-emerald-800 hover:bg-emerald-100", ponto: "bg-emerald-500" },
+  conferido:             { rotulo: "Conferido | pronto pra enviar",  frase: "Conferido | pronto pra enviar", icone: CheckCircle2, cor: "border-emerald-200 bg-emerald-50 text-emerald-800 hover:bg-emerald-100", ponto: "bg-emerald-500" },
 };
 
 const MODULO_ROTULO: Record<string, string> = { operacional: "Operacional", rh: "RH", financeiro: "Financeiro" };
