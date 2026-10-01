@@ -1,0 +1,36 @@
+# ============================================================================
+#  Gateway (Kong) da replica, para a Render
+# ============================================================================
+#
+#  E o UNICO servico publico da stack. Todos os outros ficam na rede privada da
+#  Render e so falam com ele. E tambem o unico endereco que o frontend conhece:
+#  /auth/v1, /rest/v1, /storage/v1 e /functions/v1 saem todos daqui, exatamente
+#  como na URL da Supabase. E por isso que trocar de backend um dia sera trocar
+#  UM endereco, e nao mexer no codigo do ERP.
+#
+#  O kong.yml e um TEMPLATE: o Kong nao interpola variavel de ambiente em
+#  config declarativo. Sem o render abaixo, a chave esperada no header apikey
+#  seria a string literal "$SUPABASE_ANON_KEY" e TODA chamada a /rest/v1
+#  voltaria 401.
+#
+#  Contexto de build: a RAIZ do repositorio.
+# ============================================================================
+FROM kong:2.8.1
+
+USER root
+COPY infra/failover/kong.yml /home/kong/kong.template.yml
+
+# O render do template acontece no boot, quando as variaveis ja existem.
+RUN printf '%s\n' \
+    '#!/bin/sh' \
+    'set -e' \
+    '# As aspas simples no kong.yml nao sao estilo: o render abaixo e feito com' \
+    '# echo, e aspas duplas quebrariam a substituicao.' \
+    'eval "echo \"$(cat /home/kong/kong.template.yml)\"" > /home/kong/kong.yml' \
+    'exec /docker-entrypoint.sh kong docker-start' \
+    > /usr/local/bin/subir-kong.sh \
+ && chmod +x /usr/local/bin/subir-kong.sh \
+ && chown kong:kong /home/kong
+
+USER kong
+ENTRYPOINT ["/usr/local/bin/subir-kong.sh"]
