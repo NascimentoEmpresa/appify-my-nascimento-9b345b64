@@ -60,19 +60,38 @@ e a API.
 ## O que esta pasta entrega
 
 ```
-docker-compose.yml       a stack: Postgres 17 + GoTrue + PostgREST + Storage + Kong
+docker-compose.yml       a stack: Postgres 17 + GoTrue + PostgREST + Storage
+                         + Edge Functions + Kong
 kong.yml                 o gateway (TEMPLATE — ver o entrypoint do serviço kong)
 db-init/                 script que roda no primeiro boot do banco
+functions-main/          roteador das 59 Edge Functions
 gerar-chaves.mjs         gera JWT_SECRET + chaves anon e service_role coerentes
-preparar-replica.sh      carrega o backup  (LINUX — é o que roda no host real)
-preparar-replica.ps1     carrega o backup  (WINDOWS — para ensaiar no PC)
+
+carregar-replica.sh      ⭐ AS CORREÇÕES DO RESTORE MORAM AQUI, e só aqui
+preparar-replica.sh      atalho: aponta o de cima para o compose local
+preparar-replica.ps1     idem, para o PowerShell (ensaio no PC)
+recarregar-replica.sh    ciclo completo de recarga (derruba, sobe, carrega, confere)
 validar-replica.sql      prova que a réplica tem dados E segurança
+
+render/                  o que só existe por causa da Render
+  Dockerfile.db          imagem do banco com o db-init embutido
+  Dockerfile.functions   imagem com as 59 funções e o config.toml
+  Dockerfile.kong        imagem do gateway com o template
+  Dockerfile.recarga     imagem do job de recarga automática
+  recarga-render.sh      busca o backup no GitHub, descriptografa e carrega
 ```
 
-Há **dois** scripts de carga de propósito. O `.ps1` serve para ensaiar no PC do
-Eduardo, contra um Postgres local. O `.sh` é o que vale num host Linux
-(Render, AWS, servidor próprio), onde não existe PowerShell nem psql instalado
-— ele faz tudo por `docker compose exec`.
+**O `carregar-replica.sh` é o único lugar com a lógica do restore.** Todos os
+outros apontam para ele. Isso é deliberado: as quatro correções são sutis e
+silenciosas — um papel faltando derruba 1.410 policies sem uma linha de erro.
+Três cópias divergiriam sem ninguém perceber, e o lugar onde isso apareceria
+seria a emergência em que a réplica precisasse funcionar.
+
+Ele fala com o banco por TCP com `psql`/`pg_restore` comuns, então serve tanto
+o container local quanto um servidor do outro lado do mundo.
+
+> O cliente pode ser **mais novo** que o servidor. Mais **antigo** não serve: ele
+> recusa o arquivo inteiro com `unsupported version in file header`.
 
 ---
 
