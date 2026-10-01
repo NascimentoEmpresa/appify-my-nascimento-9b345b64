@@ -12,7 +12,7 @@ import { cn } from "@/lib/utils";
 import { useContratosERP } from "@/hooks/useContratosERP";
 import { useEmpresasGrupo } from "@/hooks/useMaloteDespesa";
 import { NfEmissaoRow, TipoNota, TIPOS_NOTA, useItensNfEmissaoEmLote, useNfsEmissao } from "@/hooks/useNfEmissao";
-import { fmtMoney, fmtDate, statusDaNota, situacaoEspecial, pendenteHaMaisDe30Dias, valorPendenteNf, StatusNota } from "@/pages/financeiro/nf-emissao/shared";
+import { fmtMoney, fmtDate, statusDaNota, foraDoRelatorio, naoContabilizaKpi, pendenteHaMaisDe30Dias, valorPendenteNf, StatusNota } from "@/pages/financeiro/nf-emissao/shared";
 
 const STATUS_LABEL: Record<StatusNota, string> = {
   pendente: "Pendente",
@@ -62,6 +62,7 @@ export default function RelatorioGeralTab() {
   const linhas = useMemo(() => {
     const termo = busca.trim().toLowerCase();
     return nfs.filter((n) => {
+      if (foraDoRelatorio(n)) return false;
       if (filtroEmpresa && n.empresa_id !== filtroEmpresa) return false;
       if (filtroCompetencia && n.competencia !== filtroCompetencia) return false;
       if (filtroContrato && n.contrato_id !== filtroContrato) return false;
@@ -82,10 +83,10 @@ export default function RelatorioGeralTab() {
 
   const kpis = useMemo(() => {
     let executado = 0, faturado = 0, recebido = 0, pendente = 0;
-    // Achado real (Ruan): Cancelada/Substituída ainda carrega valores da
-    // planilha legada — some da conta pra não inflar os totais.
+    // Achado real (Ruan): Cancelada/Substituída continua aparecendo na
+    // lista, mas não deve entrar nos totais.
     for (const n of linhas) {
-      if (situacaoEspecial(n)) continue;
+      if (naoContabilizaKpi(n)) continue;
       executado += n.valor_contrato_exec_total;
       faturado += n.vlr_bruto_total;
       recebido += n.valor_pago ?? 0;
