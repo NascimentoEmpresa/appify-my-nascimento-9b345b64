@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState, type DragEvent, type MouseEvent a
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import {
-  ArrowLeft, ArrowRight, ChevronDown, ChevronUp, Loader2, Maximize, Minus, Network, Pencil, Plus, Printer, Search,
+  ArrowLeft, ArrowRight, Check, ChevronDown, ChevronUp, Loader2, Maximize, Minus, Network, Pencil, Plus, Printer, Search,
   Trash2, UserPlus, Users, X,
 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
@@ -38,6 +38,7 @@ const MENU = "organograma";
 interface No {
   id: string; user_id: string; parent_id: string | null; ordem: number; funcao_manual: string | null;
   nome: string; email: string | null; avatar_url: string | null; cargo: string | null; setor: string | null; ativo: boolean;
+  cor: string | null;
 }
 interface Usuario {
   user_id: string; nome: string; email: string | null; avatar_url: string | null; cargo: string | null; setor: string | null; no_organograma: boolean;
@@ -47,6 +48,18 @@ const funcaoDe = (n: Pick<No, "funcao_manual" | "cargo">) => n.funcao_manual || 
 
 const CORES = ["#0f3171", "#1d4ed8", "#0e7490", "#047857", "#7c3aed", "#be123c", "#b45309", "#334155"];
 const corDe = (s: string) => CORES[[...s].reduce((a, c) => a + c.charCodeAt(0), 0) % CORES.length];
+// Cor do card (mig 20260930000279): opcional, pinta faixa do topo, borda e
+// um fundo bem claro. Hex de 6 dígitos — o sufixo de 2 dígitos dá a opacidade.
+const PALETA_CARD: { cor: string; nome: string }[] = [
+  { cor: "#0f3171", nome: "Azul-marinho" }, { cor: "#2563eb", nome: "Azul" }, { cor: "#0891b2", nome: "Ciano" },
+  { cor: "#0d9488", nome: "Verde-água" }, { cor: "#16a34a", nome: "Verde" }, { cor: "#65a30d", nome: "Lima" },
+  { cor: "#ca8a04", nome: "Amarelo" }, { cor: "#ea580c", nome: "Laranja" }, { cor: "#dc2626", nome: "Vermelho" },
+  { cor: "#db2777", nome: "Rosa" }, { cor: "#9333ea", nome: "Roxo" }, { cor: "#475569", nome: "Cinza" },
+];
+const estiloCard = (cor: string | null) => cor
+  ? { borderColor: `${cor}66`, borderTop: `5px solid ${cor}`, background: `linear-gradient(${cor}14, ${cor}14), hsl(var(--card))` }
+  : undefined;
+
 const iniciais = (nome: string) => nome.split(/\s+/).filter(Boolean).slice(0, 2).map((p) => p[0]).join("").toUpperCase();
 
 function Avatar({ nome, url, tamanho = 56 }: { nome: string; url: string | null; tamanho?: number }) {
@@ -206,6 +219,7 @@ export default function Organograma() {
           onDragLeave={() => setAlvoDrop((a) => (a === n.id ? null : a))}
           onDrop={(e) => onDrop(e, n.id)}
           onClick={() => edicao && podeMontar && setEditando(n)}
+          style={estiloCard(n.cor)}
           className={cn(
             "org-card relative flex w-[188px] flex-col items-center gap-1.5 rounded-2xl border bg-card px-3 pb-3 pt-4 text-center shadow-sm transition",
             edicao && podeMontar && "cursor-pointer hover:border-primary/50 hover:shadow-md",
@@ -218,7 +232,7 @@ export default function Organograma() {
         >
           <Avatar nome={n.nome} url={n.avatar_url} />
           <p className="line-clamp-2 text-[13px] font-bold leading-tight">{n.nome}</p>
-          {funcaoDe(n) && <p className="line-clamp-2 text-[11px] font-medium leading-tight text-primary">{funcaoDe(n)}</p>}
+          {funcaoDe(n) && <p className="line-clamp-2 text-[11px] font-medium leading-tight text-primary" style={n.cor ? { color: n.cor } : undefined}>{funcaoDe(n)}</p>}
           {n.setor && <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-semibold text-muted-foreground">{n.setor}</span>}
           {!n.ativo && <span className="text-[10px] font-semibold text-destructive">usuário inativo</span>}
           {edicao && podeMontar && <Pencil className="absolute right-2 top-2 h-3.5 w-3.5 text-muted-foreground" />}
@@ -459,20 +473,26 @@ function EditarPessoa({ no, nos, descendentes, podeAlterar, podeExcluir, podeInc
 }) {
   const [chefe, setChefe] = useState<string | null>(no.parent_id);
   const [funcao, setFuncao] = useState(no.funcao_manual ?? "");
+  const [cor, setCor] = useState<string | null>(no.cor);
+  const [corNaEquipe, setCorNaEquipe] = useState(false);
   const [salvando, setSalvando] = useState(false);
   const excluir = new Set([no.id, ...descendentes]);
   const equipe = descendentes.size;
 
   const salvar = async () => {
     setSalvando(true);
-    const patch: Record<string, unknown> = { funcao: funcao.trim() || null };
+    const patch: Record<string, unknown> = { funcao: funcao.trim() || null, cor };
     if (chefe !== no.parent_id) {
       patch.parent_id = chefe;
       patch.ordem = nos.filter((n) => (n.parent_id ?? null) === chefe).length;
     }
     const { error } = await sb.from("ORGANOGRAMA_NO").update(patch).eq("id", no.id);
+    if (error) { setSalvando(false); toast.error(error.message); return; }
+    if (corNaEquipe && descendentes.size) {
+      const { error: e2 } = await sb.from("ORGANOGRAMA_NO").update({ cor }).in("id", [...descendentes]);
+      if (e2) { setSalvando(false); toast.error(e2.message); return; }
+    }
     setSalvando(false);
-    if (error) { toast.error(error.message); return; }
     toast.success("Organograma atualizado.");
     onSalvo();
   };
@@ -510,6 +530,34 @@ function EditarPessoa({ no, nos, descendentes, podeAlterar, podeExcluir, podeInc
               <p className="text-xs font-semibold">Função no organograma <span className="font-normal text-muted-foreground">(opcional)</span></p>
               <Input value={funcao} onChange={(e) => setFuncao(e.target.value)} maxLength={80} placeholder={no.cargo || "Ex.: Gerente de RH"} />
               <p className="text-[11px] text-muted-foreground">Em branco, vale o cargo do cadastro{no.cargo ? ` (${no.cargo})` : ""}.</p>
+            </div>
+            <div className="space-y-1.5">
+              <p className="text-xs font-semibold">Cor do card</p>
+              <div className="flex flex-wrap items-center gap-1.5">
+                <button type="button" title="Sem cor" onClick={() => setCor(null)}
+                  className={cn("grid h-7 w-7 place-items-center rounded-full border-2 bg-card text-muted-foreground transition hover:scale-110", cor === null ? "border-foreground" : "border-border")}>
+                  <X className="h-3.5 w-3.5" />
+                </button>
+                {PALETA_CARD.map((p) => (
+                  <button key={p.cor} type="button" title={p.nome} onClick={() => setCor(p.cor)}
+                    className={cn("grid h-7 w-7 place-items-center rounded-full ring-offset-2 ring-offset-background transition hover:scale-110", cor?.toLowerCase() === p.cor && "ring-2 ring-foreground")}
+                    style={{ background: p.cor }}>
+                    {cor?.toLowerCase() === p.cor && <Check className="h-3.5 w-3.5 text-white" />}
+                  </button>
+                ))}
+                <label title="Outra cor" className={cn("relative grid h-7 w-7 cursor-pointer place-items-center overflow-hidden rounded-full border-2 border-dashed text-muted-foreground transition hover:scale-110",
+                  cor && !PALETA_CARD.some((p) => p.cor === cor.toLowerCase()) ? "border-foreground" : "border-border")}
+                  style={cor && !PALETA_CARD.some((p) => p.cor === cor.toLowerCase()) ? { background: cor } : undefined}>
+                  <Plus className="h-3.5 w-3.5" />
+                  <input type="color" className="absolute inset-0 cursor-pointer opacity-0" value={cor ?? "#0f3171"} onChange={(e) => setCor(e.target.value)} />
+                </label>
+              </div>
+              {equipe > 0 && (
+                <label className="flex cursor-pointer items-center gap-2 text-xs text-muted-foreground">
+                  <input type="checkbox" checked={corNaEquipe} onChange={(e) => setCorNaEquipe(e.target.checked)} className="h-3.5 w-3.5 accent-primary" />
+                  Aplicar a mesma cor à equipe abaixo ({equipe} pessoa(s))
+                </label>
+              )}
             </div>
             <div className="flex items-center gap-2">
               <p className="text-xs font-semibold">Posição entre os colegas</p>
@@ -555,6 +603,6 @@ const CSS_ORGANOGRAMA = `
   body *{visibility:hidden}
   .org-caixa,.org-caixa *{visibility:visible}
   .org-caixa{position:absolute;left:0;top:0;height:auto!important;overflow:visible!important;border:0;background:none!important}
-  .org-card{box-shadow:none!important;break-inside:avoid}
+  .org-card{box-shadow:none!important;break-inside:avoid;-webkit-print-color-adjust:exact;print-color-adjust:exact}
 }
 `;
