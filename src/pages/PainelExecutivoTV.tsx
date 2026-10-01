@@ -170,10 +170,12 @@ const BRASIL_PATH =
 export default function PainelExecutivoTV() {
   const navigate = useNavigate();
   const { empresa } = useEmpresaAtiva();
-  // SIS-2026-0359: TV pode mostrar o grupo inteiro com ?grupo=1 na URL
-  // (default mantém o comportamento atual: só a empresa ativa).
-  const grupoTV = typeof window !== "undefined" &&
-    /[?&]grupo=1\b/.test(window.location.search);
+  // SIS-2026-0573: a TV mostra o GRUPO INTEIRO por padrão — o módulo de licitação
+  // já é cross-empresa desde a remoção do seletor (SIS-2026-0359/0463), então a
+  // TV presa à empresa ativa escondia pregões das outras empresas (ex.: SN some,
+  // só aparece HAGG). `?grupo=0` na URL restringe à empresa ativa, se precisar.
+  const grupoTV = !(typeof window !== "undefined" &&
+    /[?&]grupo=0\b/.test(window.location.search));
   const { stats, isLoading, items } = usePainelLicitacao(undefined, { todasEmpresas: grupoTV });
   const [slide, setSlide] = useState(0);
   const [paused, setPaused] = useState(false);
@@ -242,7 +244,7 @@ export default function PainelExecutivoTV() {
           </div>
           <div>
             <p className="text-[11px] font-bold uppercase tracking-[0.2em]" style={{ color: N.cyan }}>Grupo Nascimento · Licitações</p>
-            <p className="text-[10px]" style={{ color: "rgba(255,255,255,0.35)" }}>{empresa?.nome_fantasia ?? empresa?.razao_social ?? "—"}</p>
+            <p className="text-[10px]" style={{ color: "rgba(255,255,255,0.35)" }}>{grupoTV ? "Todas as empresas do grupo" : (empresa?.razao ?? empresa?.sigla ?? "—")}</p>
           </div>
         </div>
 
