@@ -24,6 +24,7 @@ import {
   type Acao, type EventoConferencia, type LinhaConferencia, type Modulo, type StatusPonto,
 } from "@/lib/conferenciaPonto/conferencia";
 import { toast } from "sonner";
+import { EtiquetaConferencia, TABELA_ETIQUETA, type Etiqueta } from "./EtiquetaConferencia";
 import { cn } from "@/lib/utils";
 
 const sb = supabase as any;
@@ -101,6 +102,8 @@ export function PainelConferenciaPonto({ modulo }: { modulo: Modulo }) {
   const [mes, setMes] = useState(mesPadrao());
   const [contratos, setContratos] = useState<ContratoCad[]>([]);
   const [linhas, setLinhas] = useState<LinhaConferencia[]>([]);
+  // Etiqueta "Conferindo" por contrato (mig 284) — chave = chaveDoContrato.
+  const [etiquetas, setEtiquetas] = useState<Map<string, Etiqueta>>(new Map());
   const [carregando, setCarregando] = useState(true);
   const [busca, setBusca] = useState("");
   const [fStatus, setFStatus] = useState("");
@@ -139,6 +142,21 @@ export function PainelConferenciaPonto({ modulo }: { modulo: Modulo }) {
   }, [mes]);
 
   useEffect(() => { carregar(); }, [carregar]);
+
+  // Etiquetas: carregam à parte (mudam o tempo todo) e chegam em tempo real —
+  // quem marca "Conferindo" aparece na tela dos outros sem recarregar.
+  const carregarEtiquetas = useCallback(async () => {
+    const { data, error } = await sb.from(TABELA_ETIQUETA).select("*").eq("mes_referencia", mes);
+    if (error) return; // recado entre a equipe: falhar aqui não pode travar a tela
+    setEtiquetas(new Map((data ?? []).map((e: Etiqueta) => [chaveDoContrato(e), e])));
+  }, [mes]);
+  useEffect(() => {
+    carregarEtiquetas();
+    const canal = sb.channel(`scp_etiqueta_${mes}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: TABELA_ETIQUETA }, () => carregarEtiquetas())
+      .subscribe();
+    return () => { sb.removeChannel(canal); };
+  }, [carregarEtiquetas, mes]);
 
   /** O cadastro + o andamento do mês, na mesma linha. */
   const juntas: LinhaConferencia[] = useMemo(() => {
@@ -281,6 +299,10 @@ export function PainelConferenciaPonto({ modulo }: { modulo: Modulo }) {
         usuario_nome: meuNome, usuario_email: user?.email ?? null,
       });
     }
+
+    // Agiu = a conferência daquela etapa acabou: a etiqueta sai.
+    const etq = etiquetas.get(chaveDoContrato(linha));
+    if (etq) { await sb.from(TABELA_ETIQUETA).delete().eq("id", etq.id); carregarEtiquetas(); }
 
     setSalvando(false);
     toast.success(`${linha.contrato_nome ?? "Contrato"} → ${destino}`);
@@ -446,6 +468,12 @@ export function PainelConferenciaPonto({ modulo }: { modulo: Modulo }) {
                         <TableCell>
                           <div className="font-medium">{l.contrato_nome || "—"}</div>
                           <div className="text-xs text-muted-foreground">Filial {l.contrato_filial}</div>
+                          <EtiquetaConferencia
+                            etiqueta={etiquetas.get(chaveDoContrato(l)) ?? null}
+                            chave={{ mes_referencia: mes, contrato_empresa: l.contrato_empresa, contrato_filial: l.contrato_filial }}
+                            modulo={modulo} meuNome={meuNome} meuId={user?.id}
+                            onMudou={carregarEtiquetas}
+                          />
                         </TableCell>
                         <TableCell className="hidden lg:table-cell text-sm text-muted-foreground">
                           {l.nome_empresa || "—"}
