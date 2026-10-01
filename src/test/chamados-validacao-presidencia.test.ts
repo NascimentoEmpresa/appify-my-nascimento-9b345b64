@@ -1,14 +1,13 @@
 import { describe, it, expect } from "vitest";
 import {
-  avaliacaoLiberada, montarLinhaDoTempo, pendenciaTreinamento, resumoStatus, type ValidacaoChamado,
+  avaliacaoLiberada, montarLinhaDoTempo, podeEnviarTreinamento, resumoParticipantes, resumoStatus, type ValidacaoChamado,
 } from "@/pages/chamados/validacaoPresidencia";
 
 // =====================================================================
 // Validação da Presidência + treinamento (mig 20260930000266).
 //
-// pendenciaTreinamento espelha a RPC chamado_treinamento_confirmar: se a
-// tela mostrar o botão para quem o banco recusa (ou esconder de quem deve
-// confirmar), o chamado nunca finaliza. A linha do tempo é o que o
+// podeEnviarTreinamento espelha a RPC chamado_treinamento_enviar (mig 273):
+// se a tela esconder o botão de quem deve enviar, o chamado nunca finaliza. A linha do tempo é o que o
 // solicitante vê no botão "Status".
 // =====================================================================
 
@@ -54,48 +53,46 @@ const validacao = (over: Partial<ValidacaoChamado> = {}): ValidacaoChamado => ({
   ...over,
 });
 
-describe("pendenciaTreinamento", () => {
-  it("fora da etapa de treinamento ninguém confirma", () => {
+describe("podeEnviarTreinamento", () => {
+  // Espelha a RPC chamado_treinamento_enviar (mig 273): o dev que concluiu —
+  // ou a gestão, por ele — escolhe quem recebe o treinamento, uma vez.
+  it("fora da etapa de treinamento ninguém envia", () => {
     for (const etapa of ["desenvolvimento", "validacao_presidencia", "finalizado"] as const) {
-      expect(pendenciaTreinamento(validacao({ etapa, desenvolvedor_id: DEV }), chamado(), SOLIC))
-        .toEqual({ comoDev: false, comoSolicitante: false });
+      expect(podeEnviarTreinamento(validacao({ etapa, desenvolvedor_id: DEV }), chamado(), DEV)).toBe(false);
     }
   });
 
-  it("no treinamento, dev e solicitante confirmam cada um o seu", () => {
+  it("no treinamento, só o dev que concluiu envia — o solicitante não", () => {
     const v = validacao({ etapa: "treinamento", desenvolvedor_id: DEV });
-    expect(pendenciaTreinamento(v, chamado(), DEV)).toEqual({ comoDev: true, comoSolicitante: false });
-    expect(pendenciaTreinamento(v, chamado(), SOLIC)).toEqual({ comoDev: false, comoSolicitante: true });
-    expect(pendenciaTreinamento(v, chamado(), OUTRO)).toEqual({ comoDev: false, comoSolicitante: false });
+    expect(podeEnviarTreinamento(v, chamado(), DEV)).toBe(true);
+    expect(podeEnviarTreinamento(v, chamado(), SOLIC)).toBe(false);
+    expect(podeEnviarTreinamento(v, chamado(), OUTRO)).toBe(false);
   });
 
-  it("quem já confirmou não confirma de novo", () => {
-    const v = validacao({ etapa: "treinamento", desenvolvedor_id: DEV, treinamento_dev_em: "2026-09-05T10:00:00Z" });
-    expect(pendenciaTreinamento(v, chamado(), DEV).comoDev).toBe(false);
-    expect(pendenciaTreinamento(v, chamado(), SOLIC).comoSolicitante).toBe(true);
+  it("depois de enviado, ninguém envia de novo", () => {
+    const v = validacao({ etapa: "treinamento", desenvolvedor_id: DEV, treinamento_dev_em: "2026-09-30T09:07:00Z" });
+    expect(podeEnviarTreinamento(v, chamado(), DEV)).toBe(false);
+    expect(podeEnviarTreinamento(v, chamado(), OUTRO, { gestao: true })).toBe(false);
   });
 
   it("o dev é quem concluiu; sem registro, o responsável", () => {
     const concluiuOutro = validacao({ etapa: "treinamento", desenvolvedor_id: OUTRO });
-    expect(pendenciaTreinamento(concluiuOutro, chamado(), DEV).comoDev).toBe(false);
-    expect(pendenciaTreinamento(concluiuOutro, chamado(), OUTRO).comoDev).toBe(true);
-    const semRegistro = validacao({ etapa: "treinamento", desenvolvedor_id: null });
-    expect(pendenciaTreinamento(semRegistro, chamado(), DEV).comoDev).toBe(true);
+    expect(podeEnviarTreinamento(concluiuOutro, chamado(), DEV)).toBe(false);
+    expect(podeEnviarTreinamento(concluiuOutro, chamado(), OUTRO)).toBe(true);
+    expect(podeEnviarTreinamento(validacao({ etapa: "treinamento", desenvolvedor_id: null }), chamado(), DEV)).toBe(true);
   });
 
-  it("dev que abriu o próprio chamado deve os dois papéis — e cada um some sozinho", () => {
-    // 30/09/2026: antes um clique confirmava os dois; agora a RPC recebe o papel.
+  it("a gestão (gerente do dev) envia por ele", () => {
     const v = validacao({ etapa: "treinamento", desenvolvedor_id: DEV });
-    expect(pendenciaTreinamento(v, chamado({ solicitante_id: DEV }), DEV)).toEqual({ comoDev: true, comoSolicitante: true });
-    const soDev = validacao({ etapa: "treinamento", desenvolvedor_id: DEV, treinamento_dev_em: "2026-09-30T09:07:00Z" });
-    expect(pendenciaTreinamento(soDev, chamado({ solicitante_id: DEV }), DEV)).toEqual({ comoDev: false, comoSolicitante: true });
+    expect(podeEnviarTreinamento(v, chamado(), OUTRO, { gestao: true })).toBe(true);
   });
+});
 
-  it("a gestão (gerente do dev) confirma pelo dev, nunca pelo solicitante", () => {
-    const v = validacao({ etapa: "treinamento", desenvolvedor_id: DEV });
-    expect(pendenciaTreinamento(v, chamado(), OUTRO, { gestao: true })).toEqual({ comoDev: true, comoSolicitante: false });
-    const devJa = validacao({ etapa: "treinamento", desenvolvedor_id: DEV, treinamento_dev_em: "2026-09-30T09:07:00Z" });
-    expect(pendenciaTreinamento(devJa, chamado(), OUTRO, { gestao: true }).comoDev).toBe(false);
+describe("resumoParticipantes", () => {
+  it("conta participantes e confirmações", () => {
+    expect(resumoParticipantes([{ confirmado_em: null }, { confirmado_em: "2026-09-30T10:00:00Z" }, { confirmado_em: null }]))
+      .toEqual({ total: 3, confirmados: 1 });
+    expect(resumoParticipantes(null)).toEqual({ total: 0, confirmados: 0 });
   });
 });
 
@@ -109,10 +106,8 @@ describe("avaliacaoLiberada", () => {
     expect(avaliacaoLiberada(validacao({ etapa: "desenvolvimento" }))).toEqual({ liberada: false, motivo: "presidencia" });
   });
 
-  it("no treinamento, primeiro o solicitante confirma, depois avalia", () => {
-    expect(avaliacaoLiberada(validacao({ etapa: "treinamento" }))).toEqual({ liberada: false, motivo: "treinamento" });
-    // Solicitante já confirmou (o dev ainda não): pode avaliar.
-    expect(avaliacaoLiberada(validacao({ etapa: "treinamento", treinamento_solic_em: "2026-09-30T09:07:00Z" }))).toEqual({ liberada: true, motivo: null });
+  it("aprovada pela Presidência, avalia — o treinamento não trava mais (mig 273)", () => {
+    expect(avaliacaoLiberada(validacao({ etapa: "treinamento" }))).toEqual({ liberada: true, motivo: null });
     expect(avaliacaoLiberada(validacao({ etapa: "finalizado" }))).toEqual({ liberada: true, motivo: null });
   });
 });
@@ -144,14 +139,17 @@ describe("montarLinhaDoTempo", () => {
     expect(situacao(p, "treinamento")).toBe("pendente");
   });
 
-  it("treinamento mostra quem já confirmou", () => {
+  it("treinamento mostra o envio e o andamento dos participantes", () => {
     const p = montarLinhaDoTempo(
       chamado({ status: "concluido" }),
-      validacao({ etapa: "treinamento", presidencia_aprovado: true, treinamento_solic_em: "2026-09-06T10:00:00Z" }),
+      validacao({ etapa: "treinamento", presidencia_aprovado: true, treinamento_dev_em: "2026-09-30T10:00:00Z" }),
+      undefined,
+      { total: 5, confirmados: 2 },
     );
     const t = p.find((x) => x.key === "treinamento")!;
     expect(t.situacao).toBe("atual");
-    expect(t.itens?.map((i) => i.feito)).toEqual([false, true]);
+    expect(t.itens?.map((i) => i.feito)).toEqual([true, false]);
+    expect(t.itens?.[1].titulo).toContain("2 de 5");
   });
 
   it("finalizado fecha todos os passos", () => {

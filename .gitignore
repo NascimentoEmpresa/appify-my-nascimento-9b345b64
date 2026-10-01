@@ -38,6 +38,11 @@ dist-ssr
 .env
 .env.local
 .env.*.local
+# .env.replica aponta o ERP para a replica de failover (infra/failover). Nao
+# casava com nenhuma das linhas acima - `.env.*.local` exige o sufixo .local -
+# e ia ser commitado num repositorio PUBLICO. Achado em 30/09/2026.
+# Mesmo sendo chave de replica local, credencial nao entra no versionamento.
+.env.replica
 deno.lock
 
 # .claude/ é versionado de propósito (CLAUDE.md, skills e slash commands são
@@ -79,3 +84,6 @@ supabase/.temp/
 
 # Gerado pelo scripts/monitor-supabase.ps1 a cada leitura
 scripts/status-banco.txt
+
+# Credenciais da replica de failover (SERVICE_ROLE_KEY ignora RLS)
+infra/failover/.env

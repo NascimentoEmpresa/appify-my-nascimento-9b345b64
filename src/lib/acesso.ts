@@ -46,6 +46,12 @@ export const ROTAS_SEMPRE_LIBERADAS = [
   // Avisos do sistema (changelog do ERP). A sidebar mostra o item para todo
   // mundo, então sem estar aqui o clique dava "Acesso negado".
   "/app/novidades",
+  // Treinamentos Sistemas (30/09/2026, mig 273): quem recebeu o treinamento de
+  // um desenvolvimento do ERP confirma aqui. Participante pode ser QUALQUER um
+  // (o dev escolhe setores inteiros), e só 40 de 154 logins tinham o menu de
+  // Treinamentos — sem estar aqui, a maioria nem teria onde confirmar. A tela
+  // só mostra os treinamentos DA PRÓPRIA pessoa (RPC treinamentos_sistemas_meus).
+  "/app/central-servicos/treinamentos-sistemas",
 ];
 
 /**

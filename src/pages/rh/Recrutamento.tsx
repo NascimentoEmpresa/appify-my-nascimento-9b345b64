@@ -1683,7 +1683,11 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
       .kb-col.drag-over{border-color:#0f3171;background:rgba(15,49,113,.04)}
       .kb-col-head{padding:10px 12px 8px;border-bottom:1px solid #e2e8f0;flex-shrink:0;display:flex;align-items:center;gap:6px;background:#fcfdff}
       .kb-col-body{flex:1;overflow-y:auto;padding:8px 6px;display:flex;flex-direction:column;gap:6px;user-select:none}
-      .kb-card{background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;overflow:hidden;cursor:pointer;transition:transform .12s,border-color .12s;box-shadow:0 8px 24px rgba(15,23,42,.06);user-select:none}
+      /* flex-shrink:0 (30/09/2026): com overflow:hidden, o card dentro da coluna
+         flex era ESPREMIDO até caber na altura dela (141px → 57px) e o fim dele
+         sumia — justamente os botões (→ SST + Compras, Pular, Documentos,
+         Reprovar). A coluna já rola (kb-col-body overflow-y:auto). */
+      .kb-card{flex-shrink:0;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;overflow:hidden;cursor:pointer;transition:transform .12s,border-color .12s;box-shadow:0 8px 24px rgba(15,23,42,.06);user-select:none}
       .kb-card:hover{border-color:#cbd5e1;transform:translateY(-2px)}
       .kb-card.dragging{opacity:.3;transform:scale(.96)}
       .cv-panel-ov{position:fixed;inset:0;z-index:800;background:rgba(15,23,42,.48);backdrop-filter:blur(5px);display:flex;justify-content:flex-end}

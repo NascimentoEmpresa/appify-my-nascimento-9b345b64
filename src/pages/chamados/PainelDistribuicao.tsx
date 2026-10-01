@@ -25,7 +25,7 @@ import { ClipboardList, Clock, Users, CheckCircle2, AlertTriangle, ShieldAlert, 
 import { FeedAtualizacoes } from "./FeedAtualizacoes";
 import { ExcluirChamadoDialog } from "./ExcluirChamadoDialog";
 import { ReabrirChamadoDialog } from "./ReabrirChamadoDialog";
-import { ConfirmarTreinamento } from "./StatusValidacao";
+import { EnviarTreinamentoDialog } from "./StatusValidacao";
 import { desenvolvedorDaValidacao, type ValidacaoChamado } from "./validacaoPresidencia";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import {
@@ -66,8 +66,9 @@ const ABAS = [
   { key: "concluido", label: "Concluídos" },
   { key: "reprovado", label: "Reprovados" },
   { key: "cancelado", label: "Cancelados" },
-  // Presidência aprovou e falta confirmar o treinamento (mig 266/269). O dev
-  // confirma na execução; a gestão (gerente do dev) confirma por ele aqui.
+  // Presidência aprovou e o treinamento está em aberto (mig 273): falta o dev
+  // ENVIAR (escolher usuários/setores) ou os participantes confirmarem. O dev
+  // envia na execução; a gestão (gerente do dev) pode enviar por ele aqui.
   { key: "treinamento", label: "Pendentes treinamento" },
 ] as const;
 
@@ -100,7 +101,7 @@ export default function PainelDistribuicao() {
   // Filtro do detalhamento de avaliações: "todos" ou o id do integrante.
   const [fAvaliado, setFAvaliado] = useState("todos");
   const [paginaAval, setPaginaAval] = useState(1);
-  const [confirmarTreino, setConfirmarTreino] = useState<{ chamado: Chamado; v: ValidacaoChamado } | null>(null);
+  const [enviarTreino, setEnviarTreino] = useState<{ chamado: Chamado; v: ValidacaoChamado } | null>(null);
 
   const { data: usuarios = [] } = useQuery({
     queryKey: ["chamados-usuarios"],
@@ -179,6 +180,23 @@ export default function PainelDistribuicao() {
       if (error) throw error;
       const m: Record<string, ValidacaoChamado> = {};
       ((data ?? []) as ValidacaoChamado[]).forEach((v) => { m[v.chamado_id] = v; });
+      return m;
+    },
+  });
+
+  const idsTreino = Object.keys(treinosPendentes);
+  const { data: participantes = {} } = useQuery({
+    queryKey: ["chamado-validacoes", "painel-participantes", [...idsTreino].sort().join(",")],
+    enabled: gestor && idsTreino.length > 0,
+    queryFn: async () => {
+      const { data, error } = await (supabase as any)
+        .from("CHAMADO_TREINAMENTO_DESTINATARIO").select("chamado_id, confirmado_em").in("chamado_id", idsTreino);
+      if (error) throw error;
+      const m: Record<string, { total: number; confirmados: number }> = {};
+      ((data ?? []) as Array<{ chamado_id: string; confirmado_em: string | null }>).forEach((d) => {
+        const r = (m[d.chamado_id] ??= { total: 0, confirmados: 0 });
+        r.total += 1; if (d.confirmado_em) r.confirmados += 1;
+      });
       return m;
     },
   });
@@ -461,23 +479,25 @@ export default function PainelDistribuicao() {
                       <TableCell className="whitespace-nowrap text-xs text-muted-foreground">{fmtDataHora(c.created_at)}</TableCell>
                       <TableCell>
                         {treinosPendentes[c.id] ? (
-                          <div className="space-y-0.5 text-[11px]">
-                            <div className={treinosPendentes[c.id].treinamento_dev_em ? "text-success" : "font-semibold text-warning"}>
-                              {treinosPendentes[c.id].treinamento_dev_em ? "✓" : "○"} Dev {treinosPendentes[c.id].treinamento_dev_em ? "confirmou" : "pendente"}
+                          treinosPendentes[c.id].treinamento_dev_em ? (
+                            <div className="space-y-0.5 text-[11px]">
+                              <div className="text-success">✓ Enviado · {fmtData(treinosPendentes[c.id].treinamento_dev_em)}</div>
+                              <div className="font-semibold text-warning">
+                                {participantes[c.id]?.confirmados ?? 0} de {participantes[c.id]?.total ?? "…"} confirmaram
+                              </div>
                             </div>
-                            <div className={treinosPendentes[c.id].treinamento_solic_em ? "text-success" : "font-semibold text-warning"}>
-                              {treinosPendentes[c.id].treinamento_solic_em ? "✓" : "○"} Solicitante {treinosPendentes[c.id].treinamento_solic_em ? "confirmou" : "pendente"}
-                            </div>
-                          </div>
+                          ) : (
+                            <div className="text-[11px] font-semibold text-warning">○ Envio pendente</div>
+                          )
                         ) : <StatusBadge status={c.status} />}
                       </TableCell>
                       <TableCell className="text-xs">{nomeDe(treinosPendentes[c.id] ? desenvolvedorDaValidacao(treinosPendentes[c.id], c) : c.responsavel_id)}</TableCell>
                       <TableCell onClick={(e) => e.stopPropagation()}>
                         <div className="flex items-center justify-end gap-0.5">
                           {treinosPendentes[c.id] && !treinosPendentes[c.id].treinamento_dev_em && (
-                            <Button size="sm" variant="outline" className="h-7 gap-1 px-2 text-[11px]" title="Confirmar o treinamento pelo desenvolvedor"
-                              onClick={() => setConfirmarTreino({ chamado: c, v: treinosPendentes[c.id] })}>
-                              <GraduationCap className="h-3.5 w-3.5" /> Confirmar
+                            <Button size="sm" variant="outline" className="h-7 gap-1 px-2 text-[11px]" title="Enviar o treinamento (escolher usuários/setores)"
+                              onClick={() => setEnviarTreino({ chamado: c, v: treinosPendentes[c.id] })}>
+                              <GraduationCap className="h-3.5 w-3.5" /> Enviar
                             </Button>
                           )}
                           {canExcluir && (
@@ -519,8 +539,9 @@ export default function PainelDistribuicao() {
               </Table>
               {aba === "treinamento" && (
                 <p className="mt-2 text-[11px] text-muted-foreground">
-                  Chamados que a Presidência aprovou e ainda esperam a confirmação do treinamento. O desenvolvedor confirma na tela do
-                  chamado; a gestão pode confirmar por ele aqui (botão Confirmar). O solicitante confirma no próprio acompanhamento, antes de avaliar.
+                  Chamados que a Presidência aprovou com o treinamento em aberto. O desenvolvedor envia o treinamento na tela do chamado,
+                  escolhendo usuários e/ou setores; a gestão pode enviar por ele aqui (botão Enviar). Cada participante confirma em
+                  Central de Serviços › Treinamentos › Treinamentos Sistemas — com todos confirmados, a solicitação finaliza.
                 </p>
               )}
               <p className="mt-2 text-[11px] text-muted-foreground">
@@ -844,36 +865,15 @@ export default function PainelDistribuicao() {
         onReaberto={() => { setReabrir(null); setAba("fila"); setPagina(1); }}
       />
 
-      {/* Gestão confirma o treinamento PELO dev (mig 269). A do solicitante
-          ninguém faz por ele — fica no acompanhamento do chamado. */}
-      <Dialog open={!!confirmarTreino} onOpenChange={(v) => !v && setConfirmarTreino(null)}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2"><GraduationCap className="h-5 w-5 text-primary" /> Confirmar treinamento</DialogTitle>
-            <DialogDescription>
-              {confirmarTreino && <>#{confirmarTreino.chamado.numero} · {confirmarTreino.chamado.assunto}</>}
-            </DialogDescription>
-          </DialogHeader>
-          {confirmarTreino && (() => {
-            const devId = desenvolvedorDaValidacao(confirmarTreino.v, confirmarTreino.chamado);
-            const proprio = devId === user?.id;
-            return (
-              <>
-                <p className="text-sm text-muted-foreground">
-                  {proprio
-                    ? "Você é o desenvolvedor deste chamado: confirme que deu o treinamento."
-                    : <>Confirmando <b>pelo desenvolvedor {nomeDe(devId)}</b> — fica registrado que foi você. A confirmação do solicitante continua com ele.</>}
-                </p>
-                <ConfirmarTreinamento
-                  chamadoId={confirmarTreino.chamado.id} papel="desenvolvedor"
-                  rotulo={proprio ? undefined : `Confirmar por ${nomeDe(devId)}`}
-                  onConfirmado={() => setConfirmarTreino(null)}
-                />
-              </>
-            );
-          })()}
-        </DialogContent>
-      </Dialog>
+      {/* Enviar o treinamento (mig 273): a gestão escolhe usuários/setores,
+          pelo dev quando não é ele. Cada participante confirma em
+          Central de Serviços › Treinamentos › Treinamentos Sistemas. */}
+      {enviarTreino && (
+        <EnviarTreinamentoDialog
+          chamado={enviarTreino.chamado} aberto onFechar={() => setEnviarTreino(null)}
+          peloDev={(() => { const d = desenvolvedorDaValidacao(enviarTreino.v, enviarTreino.chamado); return d !== user?.id ? nomeDe(d) : null; })()}
+        />
+      )}
     </div>
   );
 }

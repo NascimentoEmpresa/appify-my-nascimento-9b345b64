@@ -53,50 +53,51 @@ export const desenvolvedorDaValidacao = (
 ) => v.desenvolvedor_id ?? c.responsavel_id ?? null;
 
 /**
- * O que falta o usuário confirmar no treinamento. ESPELHA a RPC
- * chamado_treinamento_confirmar (mig 269): só na etapa 'treinamento', e
- * CADA PAPEL NO SEU LUGAR — a confirmação vai com `p_papel`:
- *   · comoDev: o dev que concluiu, ou a gestão de chamados (`gestao`, o
- *     "gerente do dev", pelo Painel de Distribuição) confirmando por ele;
- *   · comoSolicitante: só o próprio solicitante.
- * Até 30/09/2026 a mesma pessoa nos dois papéis confirmava os dois de uma
- * vez (o teste do #SIS-2026-0567) — agora são duas confirmações separadas.
+ * O usuário pode ENVIAR o treinamento deste chamado? ESPELHA a RPC
+ * chamado_treinamento_enviar (mig 269): etapa 'treinamento', ainda não
+ * enviado, e quem envia é o dev que concluiu — ou a gestão de chamados
+ * (`gestao`, o "gerente do dev", pelo Painel de Distribuição) por ele.
  */
-export function pendenciaTreinamento(
+export function podeEnviarTreinamento(
   v: ValidacaoChamado | null | undefined,
-  c: Pick<Chamado, "solicitante_id" | "responsavel_id">,
+  c: Pick<Chamado, "responsavel_id">,
   userId: string | null | undefined,
   opts: { gestao?: boolean } = {},
-): { comoDev: boolean; comoSolicitante: boolean } {
-  const nada = { comoDev: false, comoSolicitante: false };
-  if (!v || !userId || v.etapa !== "treinamento") return nada;
-  return {
-    comoDev: (desenvolvedorDaValidacao(v, c) === userId || !!opts.gestao) && !v.treinamento_dev_em,
-    comoSolicitante: c.solicitante_id === userId && !v.treinamento_solic_em,
-  };
+): boolean {
+  if (!v || !userId || v.etapa !== "treinamento" || v.treinamento_dev_em) return false;
+  return desenvolvedorDaValidacao(v, c) === userId || !!opts.gestao;
 }
+
+/** Participante do treinamento (CHAMADO_TREINAMENTO_DESTINATARIO, mig 269). */
+export interface DestinatarioTreinamento {
+  chamado_id: string; user_id: string; origem: "usuario" | "setor"; setor: string | null;
+  confirmado_em: string | null; confirmado_obs: string | null; created_at: string;
+}
+
+/** Resumo do andamento: quantos participantes e quantos já confirmaram. */
+export const resumoParticipantes = (ds: Pick<DestinatarioTreinamento, "confirmado_em">[] | null | undefined) =>
+  ({ total: ds?.length ?? 0, confirmados: (ds ?? []).filter((d) => !!d.confirmado_em).length });
 
 /**
  * A avaliação do atendimento já pode ser feita? ESPELHA o trigger
- * chamado_avaliacao_exige_treinamento (mig 269): no fluxo da Presidência,
- * primeiro o solicitante confirma o treinamento, depois avalia.
+ * chamado_avaliacao_exige_presidencia (mig 269): no fluxo da Presidência,
+ * o solicitante avalia depois que ela aprova. O treinamento não trava mais a
+ * avaliação — ele é confirmado pelos participantes, em Treinamentos Sistemas.
  */
 // Retorno "achatado" (motivo null quando liberada) de propósito: o projeto
 // compila sem strictNullChecks, e aí a união discriminada por `liberada` não
 // estreita — `motivo` não existia no tipo e o job "tipos" da PR #732 caiu.
 export function avaliacaoLiberada(
-  v: Pick<ValidacaoChamado, "etapa" | "treinamento_solic_em"> | null | undefined,
-): { liberada: boolean; motivo: "presidencia" | "treinamento" | null } {
-  if (!v || v.etapa === "finalizado") return { liberada: true, motivo: null };
-  if (v.etapa === "desenvolvimento" || v.etapa === "validacao_presidencia") return { liberada: false, motivo: "presidencia" };
-  if (!v.treinamento_solic_em) return { liberada: false, motivo: "treinamento" };
+  v: Pick<ValidacaoChamado, "etapa"> | null | undefined,
+): { liberada: boolean; motivo: "presidencia" | null } {
+  if (v && (v.etapa === "desenvolvimento" || v.etapa === "validacao_presidencia")) return { liberada: false, motivo: "presidencia" };
   return { liberada: true, motivo: null };
 }
 
 /** Linha de chamados_meus_avaliacoes_pendentes (mig 269): o que trava abrir outro chamado. */
 export interface PendenciaSolicitante {
   id: string; numero: string; assunto: string; concluido_em: string | null;
-  pendencia: "treinamento" | "avaliacao";
+  pendencia: "avaliacao";
 }
 
 // ---- Linha do tempo do botão "Status" ---------------------------------
@@ -126,6 +127,8 @@ export function montarLinhaDoTempo(
   c: ChamadoStatus,
   v: ValidacaoChamado | null | undefined,
   nomeDe: (id: string | null) => string = () => "—",
+  /** Andamento dos participantes (resumoParticipantes), quando a tela já leu. */
+  participantes?: { total: number; confirmados: number } | null,
 ): PassoStatus[] {
   const passos: PassoStatus[] = [];
   const encerradoSemEntrega = c.status === "reprovado" || c.status === "cancelado";
@@ -194,15 +197,21 @@ export function montarLinhaDoTempo(
     key: "treinamento",
     titulo: "Treinamento",
     situacao: treinoFeito ? "feito" : etapa === "treinamento" ? "atual" : "pendente",
-    detalhe: etapa === "treinamento" ? "Desenvolvedor e solicitante confirmam que o treinamento foi dado" : null,
+    detalhe: etapa === "treinamento"
+      ? (v.treinamento_dev_em
+          ? "Os participantes confirmam em Central de Serviços › Treinamentos › Treinamentos Sistemas"
+          : "O desenvolvedor escolhe quem recebe o treinamento e o envia")
+      : null,
     itens: [
       {
-        titulo: "Desenvolvedor confirmou", feito: !!v.treinamento_dev_em,
-        quando: v.treinamento_dev_em, detalhe: v.treinamento_dev_obs,
+        titulo: v.treinamento_dev_em ? `Treinamento enviado por ${nomeDe(v.treinamento_dev_por)}` : "Treinamento enviado",
+        feito: !!v.treinamento_dev_em, quando: v.treinamento_dev_em, detalhe: v.treinamento_dev_obs,
       },
       {
-        titulo: "Solicitante confirmou", feito: !!v.treinamento_solic_em,
-        quando: v.treinamento_solic_em, detalhe: v.treinamento_solic_obs,
+        titulo: participantes && participantes.total > 0
+          ? `Participantes confirmaram (${participantes.confirmados} de ${participantes.total})`
+          : "Participantes confirmaram",
+        feito: treinoFeito,
       },
     ],
   });

@@ -177,7 +177,7 @@ export function useTrnExcluirRespostaCampanha(campanhaId: string) {
 
 export interface PerguntaPublica { id: string; tipo: "unica" | "multipla" | "vf"; enunciado: string; opcoes: string[]; pontos: number }
 export interface ItemPublico {
-  id: string; tipo: TipoItemCampanha; titulo: string | null; texto: string | null;
+  id: string; tipo: TipoItemCampanha; titulo: string | null; texto: string | null; recolhido?: boolean;
   video_url: string | null; video_path: string | null; imagem_path: string | null;
   arquivo_path: string | null; arquivo_nome: string | null; link_url: string | null; link_rotulo: string | null;
   nota_minima: number;
@@ -223,7 +223,7 @@ export function useResponderCampanha(slug: string) {
 /** Item novo do editor, já com id (o QR do vídeo depende dele). */
 export function novoItemCampanha(tipo: TipoItemCampanha): ItemInput {
   return {
-    id: crypto.randomUUID(), tipo, titulo: "", texto: "", video_url: null, video_path: null, imagem_path: null,
+    id: crypto.randomUUID(), tipo, titulo: "", texto: "", recolhido: false, video_url: null, video_path: null, imagem_path: null,
     arquivo_path: null, arquivo_nome: null, link_url: null, link_rotulo: null,
     quiz: tipo === "prova" ? [] : null, nota_minima: 70,
     prova_config: (tipo === "prova" ? { titulo: "Provinha", gabarito: "sempre" } : {}) as ProvaConfig,

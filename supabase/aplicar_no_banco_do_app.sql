@@ -33687,7 +33687,7 @@ NOTIFY pgrst, 'reload schema';
 --  WHERE codigo = 'recrutamento_pular_sst_compras';
 
 
--- ===== 20260930000269_chamado_treinamento_cada_um_confirma (PENDENTE - aplicar junto com o front dos chamados) =====
+-- ===== 20260930000269_chamado_treinamento_cada_um_confirma (JA APLICADA 30/09 - substituida pela 273) =====
 -- =========================================================================
 -- CHAMADOS DE SISTEMAS — Treinamento: cada um confirma o seu, e só depois
 -- vem a avaliação (ajuste da mig 266)
@@ -33991,3 +33991,1304 @@ NOTIFY pgrst, 'reload schema';
 -- =========================================================================
 -- ALTER TABLE public."CS_FORMULARIOS" DROP COLUMN IF EXISTS pergunta_em_nome_de_id;
 -- NOTIFY pgrst, 'reload schema';
+
+
+-- ===== 20260930000273_chamado_treinamento_sistemas (JA APLICADA 30/09) =====
+-- =========================================================================
+-- CHAMADOS DE SISTEMAS — Treinamento vai para "Treinamentos Sistemas"
+-- (Central de Serviços › Treinamentos), com participantes escolhidos pelo dev
+--
+-- PEDIDO (30/09/2026, Pablo):
+--   "quando for concluído um chamado enviado pra presidência, não vai mais
+--    precisar confirmar o treinamento nos chamados na central de serviços.
+--    vai ficar em uma parte nova dentro de treinamentos da central de
+--    serviços ... Treinamentos Sistemas, aí quando o dev for confirmar o envio
+--    do treinamento, ele tem que selecionar os USUÁRIOS que vão receber o
+--    treinamento ou o setor inteiro que vai. e esses usuários confirmam lá."
+--
+-- Substitui o desenho das mig 266/269 (dev e solicitante confirmam no
+-- chamado, cada um o seu papel — a 269 ficou no ar só entre 30/09 e esta).
+--
+-- FLUXO
+--   Presidência aprova → etapa 'treinamento'
+--     → o DEV que concluiu (ou a gestão de chamados, por ele) ENVIA o
+--       treinamento: escolhe usuários e/ou setores inteiros
+--       (chamado_treinamento_enviar). Setor = quem tem login ativo com aquele
+--       Setor_ERP NO MOMENTO do envio (a lista fica gravada).
+--     → cada participante confirma que recebeu, em Central de Serviços ›
+--       Treinamentos › Treinamentos Sistemas (chamado_treinamento_confirmar_recebimento)
+--     → todos confirmaram → etapa 'finalizado'.
+--   Colunas reaproveitadas: treinamento_dev_* = o ENVIO (quem, quando, obs).
+--   treinamento_solic_* deixam de ser usadas (ficam, com o histórico antigo).
+--
+-- SOLICITANTE / AVALIAÇÃO
+--   Não confirma mais nada no chamado. Avalia assim que a Presidência aprova
+--   (enquanto ela valida, não — o trigger abaixo trava). A pendência que trava
+--   "abrir novo chamado" volta a ser só a avaliação; chamado ainda na
+--   Presidência não trava (não há o que o solicitante fazer).
+--
+-- Idempotente. Aplicar no banco do app ANTES de o front ir para a main: o
+-- front antigo continua abrindo (chamado_treinamento_confirmar vira uma casca
+-- que pede para atualizar a página). ROLLBACK no fim.
+-- =========================================================================
+
+-- ── 1. Participantes do treinamento ──────────────────────────────────────
+CREATE TABLE IF NOT EXISTS public."CHAMADO_TREINAMENTO_DESTINATARIO" (
+  chamado_id     uuid NOT NULL REFERENCES public."CHAMADO_SISTEMA_VALIDACAO"(chamado_id) ON DELETE CASCADE,
+  user_id        uuid NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  -- Como entrou: escolhido a dedo ou pelo setor (e qual).
+  origem         text NOT NULL DEFAULT 'usuario' CHECK (origem IN ('usuario', 'setor')),
+  setor          text,
+  confirmado_em  timestamptz,
+  confirmado_obs text,
+  created_at     timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (chamado_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_chamado_trein_dest_user ON public."CHAMADO_TREINAMENTO_DESTINATARIO"(user_id, confirmado_em);
+
+ALTER TABLE public."CHAMADO_TREINAMENTO_DESTINATARIO" ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON public."CHAMADO_TREINAMENTO_DESTINATARIO" FROM PUBLIC, anon;
+GRANT SELECT ON public."CHAMADO_TREINAMENTO_DESTINATARIO" TO authenticated;
+
+-- Ler: o próprio participante, quem já enxerga a validação do chamado
+-- (dev, solicitante, responsável, gestão, Presidência). Escrever: só RPC.
+DROP POLICY IF EXISTS chamado_trein_dest_select ON public."CHAMADO_TREINAMENTO_DESTINATARIO";
+CREATE POLICY chamado_trein_dest_select ON public."CHAMADO_TREINAMENTO_DESTINATARIO" FOR SELECT TO authenticated
+  USING (
+    user_id = (select auth.uid())
+    OR (select public.chamado_sistema_gestor())
+    OR (select public.tem_acesso_menu('presidencia_chamados_dev'))
+    OR (select public.tem_acesso_menu('presidencia_chamados_dev_validar'))
+    OR EXISTS (
+      SELECT 1 FROM public."CHAMADO_SISTEMA" c
+        JOIN public."CHAMADO_SISTEMA_VALIDACAO" v ON v.chamado_id = c.id
+       WHERE c.id = "CHAMADO_TREINAMENTO_DESTINATARIO".chamado_id
+         AND ((select auth.uid()) IN (c.solicitante_id, c.responsavel_id, v.desenvolvedor_id))
+    )
+  );
+
+-- Chamado reaberto (sync da mig 266 zera treinamento_dev_*): a lista de
+-- participantes era da entrega antiga — sai junto.
+CREATE OR REPLACE FUNCTION public.chamado_treinamento_limpa_destinatarios()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp
+AS $$
+BEGIN
+  IF OLD.treinamento_dev_em IS NOT NULL AND NEW.treinamento_dev_em IS NULL THEN
+    DELETE FROM public."CHAMADO_TREINAMENTO_DESTINATARIO" WHERE chamado_id = NEW.chamado_id;
+  END IF;
+  RETURN NEW;
+END $$;
+REVOKE ALL ON FUNCTION public.chamado_treinamento_limpa_destinatarios() FROM PUBLIC, anon;
+DROP TRIGGER IF EXISTS trg_chamado_treinamento_limpa_dest ON public."CHAMADO_SISTEMA_VALIDACAO";
+CREATE TRIGGER trg_chamado_treinamento_limpa_dest
+  AFTER UPDATE OF treinamento_dev_em ON public."CHAMADO_SISTEMA_VALIDACAO"
+  FOR EACH ROW EXECUTE FUNCTION public.chamado_treinamento_limpa_destinatarios();
+
+-- ── 2. O dev envia o treinamento ─────────────────────────────────────────
+-- A confirmação antiga (dev + solicitante no chamado, mig 266/269) sai. Fica
+-- uma casca com o mesmo nome e assinatura da 269, só para o front que ainda
+-- estiver aberto (antes de publicar o novo) receber uma mensagem clara em vez
+-- de "function not found" — e para esta migration poder ser aplicada ANTES
+-- do merge sem quebrar a tela no ar.
+DROP FUNCTION IF EXISTS public.chamado_treinamento_confirmar(uuid, text);
+CREATE OR REPLACE FUNCTION public.chamado_treinamento_confirmar(
+  p_chamado_id uuid, p_observacao text DEFAULT NULL, p_papel text DEFAULT NULL
+)
+RETURNS text LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp
+AS $$
+BEGIN
+  RAISE EXCEPTION 'O treinamento mudou: o desenvolvedor envia o treinamento pela tela do chamado e cada participante confirma em Central de Serviços › Treinamentos Sistemas. Atualize a página (Ctrl+F5).';
+END;
+$$;
+REVOKE ALL ON FUNCTION public.chamado_treinamento_confirmar(uuid, text, text) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.chamado_treinamento_confirmar(uuid, text, text) TO authenticated;
+
+CREATE OR REPLACE FUNCTION public.chamado_treinamento_enviar(
+  p_chamado_id uuid, p_usuarios uuid[] DEFAULT NULL, p_setores text[] DEFAULT NULL, p_observacao text DEFAULT NULL
+)
+RETURNS integer
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_uid   uuid := auth.uid();
+  v_obs   text := NULLIF(btrim(COALESCE(p_observacao, '')), '');
+  v       public."CHAMADO_SISTEMA_VALIDACAO"%ROWTYPE;
+  v_resp  uuid;
+  v_dev   uuid;
+  v_setores text[];
+  v_n     integer;
+  v_nome  text;
+BEGIN
+  IF v_uid IS NULL THEN RAISE EXCEPTION 'Sessão expirada — entre de novo.'; END IF;
+
+  SELECT * INTO v FROM public."CHAMADO_SISTEMA_VALIDACAO" WHERE chamado_id = p_chamado_id FOR UPDATE;
+  IF NOT FOUND THEN RAISE EXCEPTION 'Este chamado não passa pela validação da Presidência.'; END IF;
+  IF v.etapa <> 'treinamento' THEN
+    RAISE EXCEPTION 'O treinamento só é enviado depois que a Presidência aprova o desenvolvimento.';
+  END IF;
+  IF v.treinamento_dev_em IS NOT NULL THEN
+    RAISE EXCEPTION 'O treinamento deste chamado já foi enviado.';
+  END IF;
+
+  SELECT responsavel_id INTO v_resp FROM public."CHAMADO_SISTEMA" WHERE id = p_chamado_id;
+  v_dev := COALESCE(v.desenvolvedor_id, v_resp);
+  IF NOT (v_uid = v_dev OR public.chamado_sistema_gestor()) THEN
+    RAISE EXCEPTION 'Só o desenvolvedor que concluiu (ou a gestão de chamados) envia o treinamento.';
+  END IF;
+
+  -- Setores normalizados (maiúsculo, sem acento) para casar com o Setor_ERP.
+  SELECT array_agg(DISTINCT upper(public.trn_slugify_sem_hifen(s)))
+    INTO v_setores
+    FROM unnest(COALESCE(p_setores, '{}'::text[])) s
+   WHERE btrim(COALESCE(s, '')) <> '';
+
+  -- Setor inteiro: logins ativos com aquele Setor_ERP agora.
+  INSERT INTO public."CHAMADO_TREINAMENTO_DESTINATARIO"(chamado_id, user_id, origem, setor)
+  SELECT DISTINCT ON (p.id) p_chamado_id, p.id, 'setor', btrim(e."Setor_ERP")
+    FROM public.profiles p
+    JOIN public."EMPREGADOS" e ON e.auth_user_id = p.id
+   WHERE p.ativo
+     AND v_setores IS NOT NULL
+     AND upper(public.trn_slugify_sem_hifen(e."Setor_ERP")) = ANY (v_setores)
+  ON CONFLICT (chamado_id, user_id) DO NOTHING;
+
+  -- Escolhidos a dedo (só login ativo). Quem já entrou pelo setor vira "usuario".
+  INSERT INTO public."CHAMADO_TREINAMENTO_DESTINATARIO"(chamado_id, user_id, origem)
+  SELECT DISTINCT p_chamado_id, p.id, 'usuario'
+    FROM public.profiles p
+   WHERE p.ativo AND p.id = ANY (COALESCE(p_usuarios, '{}'::uuid[]))
+  ON CONFLICT (chamado_id, user_id) DO UPDATE SET origem = 'usuario', setor = NULL;
+
+  SELECT count(*) INTO v_n FROM public."CHAMADO_TREINAMENTO_DESTINATARIO" WHERE chamado_id = p_chamado_id;
+  IF v_n = 0 THEN
+    RAISE EXCEPTION 'Escolha ao menos um usuário ou um setor com pessoas ativas no ERP.';
+  END IF;
+
+  UPDATE public."CHAMADO_SISTEMA_VALIDACAO"
+     SET treinamento_dev_por = v_uid, treinamento_dev_em = now(), treinamento_dev_obs = v_obs
+   WHERE chamado_id = p_chamado_id;
+
+  SELECT display_name INTO v_nome FROM public.profiles WHERE id = v_uid;
+  PERFORM public.chamado_validacao_registrar_evento(p_chamado_id,
+    format('Treinamento enviado por %s para %s pessoa(s)%s%s — confirmam em Central de Serviços › Treinamentos',
+           COALESCE(v_nome, 'usuário'), v_n,
+           CASE WHEN v_setores IS NOT NULL THEN ' (setores: ' || array_to_string(p_setores, ', ') || ')' ELSE '' END,
+           COALESCE(': ' || v_obs, '')));
+  RETURN v_n;
+END;
+$$;
+REVOKE ALL ON FUNCTION public.chamado_treinamento_enviar(uuid, uuid[], text[], text) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.chamado_treinamento_enviar(uuid, uuid[], text[], text) TO authenticated;
+
+-- Normalização de setor: sem acento, maiúsculo, espaços simples. (trn_slugify
+-- da mig 190 troca espaço por hífen — aqui o setor tem que casar com o texto.)
+CREATE OR REPLACE FUNCTION public.trn_slugify_sem_hifen(_txt text) RETURNS text
+LANGUAGE sql IMMUTABLE SET search_path = public, pg_temp AS $$
+  SELECT regexp_replace(btrim(upper(translate(coalesce(_txt, ''),
+           'áàâãäéèêëíìîïóòôõöúùûüçÁÀÂÃÄÉÈÊËÍÌÎÏÓÒÔÕÖÚÙÛÜÇ',
+           'aaaaaeeeeiiiiooooouuuucAAAAAEEEEIIIIOOOOOUUUUC'))), '\s+', ' ', 'g');
+$$;
+
+-- ── 3. O participante confirma que recebeu ───────────────────────────────
+CREATE OR REPLACE FUNCTION public.chamado_treinamento_confirmar_recebimento(p_chamado_id uuid, p_observacao text DEFAULT NULL)
+RETURNS text
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_uid  uuid := auth.uid();
+  v_obs  text := NULLIF(btrim(COALESCE(p_observacao, '')), '');
+  d      public."CHAMADO_TREINAMENTO_DESTINATARIO"%ROWTYPE;
+  v_nome text;
+BEGIN
+  IF v_uid IS NULL THEN RAISE EXCEPTION 'Sessão expirada — entre de novo.'; END IF;
+
+  SELECT * INTO d FROM public."CHAMADO_TREINAMENTO_DESTINATARIO"
+   WHERE chamado_id = p_chamado_id AND user_id = v_uid FOR UPDATE;
+  IF NOT FOUND THEN RAISE EXCEPTION 'Você não está entre os participantes deste treinamento.'; END IF;
+  IF d.confirmado_em IS NOT NULL THEN RAISE EXCEPTION 'Você já confirmou este treinamento.'; END IF;
+
+  UPDATE public."CHAMADO_TREINAMENTO_DESTINATARIO"
+     SET confirmado_em = now(), confirmado_obs = v_obs
+   WHERE chamado_id = p_chamado_id AND user_id = v_uid;
+
+  SELECT display_name INTO v_nome FROM public.profiles WHERE id = v_uid;
+  PERFORM public.chamado_validacao_registrar_evento(p_chamado_id,
+    format('%s confirmou que recebeu o treinamento%s', COALESCE(v_nome, 'Participante'), COALESCE(': ' || v_obs, '')));
+
+  -- Todos confirmaram → finaliza.
+  IF NOT EXISTS (SELECT 1 FROM public."CHAMADO_TREINAMENTO_DESTINATARIO"
+                  WHERE chamado_id = p_chamado_id AND confirmado_em IS NULL) THEN
+    UPDATE public."CHAMADO_SISTEMA_VALIDACAO"
+       SET etapa = 'finalizado', finalizado_em = now()
+     WHERE chamado_id = p_chamado_id AND etapa = 'treinamento';
+    IF FOUND THEN
+      PERFORM public.chamado_validacao_registrar_evento(p_chamado_id,
+        'Todos os participantes confirmaram o treinamento — solicitação finalizada');
+      RETURN 'finalizado';
+    END IF;
+  END IF;
+  RETURN 'treinamento';
+END;
+$$;
+REVOKE ALL ON FUNCTION public.chamado_treinamento_confirmar_recebimento(uuid, text) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.chamado_treinamento_confirmar_recebimento(uuid, text) TO authenticated;
+
+-- ── 4. "Treinamentos Sistemas" — os meus ─────────────────────────────────
+-- Lê o chamado sem abrir a RLS dele: o participante pode não ser nem
+-- solicitante nem responsável (entrou pelo setor).
+CREATE OR REPLACE FUNCTION public.treinamentos_sistemas_meus()
+RETURNS TABLE (
+  chamado_id uuid, numero text, assunto text, descricao text, modulo_sistema text, modulo_sistema_outro text,
+  solicitante_nome text, desenvolvedor_nome text, enviado_por_nome text, enviado_em timestamptz, enviado_obs text,
+  origem text, setor text, confirmado_em timestamptz, confirmado_obs text,
+  participantes integer, confirmados integer
+)
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, pg_temp
+AS $$
+  SELECT c.id, c.numero, c.assunto, c.descricao, c.modulo_sistema, c.modulo_sistema_outro,
+         c.solicitante_nome, pd.display_name, pe.display_name, v.treinamento_dev_em, v.treinamento_dev_obs,
+         d.origem, d.setor, d.confirmado_em, d.confirmado_obs,
+         (SELECT count(*)::int FROM public."CHAMADO_TREINAMENTO_DESTINATARIO" x WHERE x.chamado_id = d.chamado_id),
+         (SELECT count(*)::int FROM public."CHAMADO_TREINAMENTO_DESTINATARIO" x WHERE x.chamado_id = d.chamado_id AND x.confirmado_em IS NOT NULL)
+    FROM public."CHAMADO_TREINAMENTO_DESTINATARIO" d
+    JOIN public."CHAMADO_SISTEMA_VALIDACAO" v ON v.chamado_id = d.chamado_id
+    JOIN public."CHAMADO_SISTEMA" c ON c.id = d.chamado_id
+    LEFT JOIN public.profiles pd ON pd.id = COALESCE(v.desenvolvedor_id, c.responsavel_id)
+    LEFT JOIN public.profiles pe ON pe.id = v.treinamento_dev_por
+   WHERE d.user_id = auth.uid()
+   ORDER BY (d.confirmado_em IS NOT NULL), v.treinamento_dev_em DESC;
+$$;
+REVOKE ALL ON FUNCTION public.treinamentos_sistemas_meus() FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.treinamentos_sistemas_meus() TO authenticated;
+
+-- ── 5. Lista da Presidência com o andamento do treinamento ───────────────
+-- Retorno muda (participantes/confirmados) → DROP + CREATE. Corpo igual ao
+-- da mig 266 fora as duas colunas novas.
+DROP FUNCTION IF EXISTS public.chamado_presidencia_listar();
+CREATE OR REPLACE FUNCTION public.chamado_presidencia_listar()
+RETURNS TABLE (
+  chamado_id uuid, numero text, assunto text, descricao text, prioridade text,
+  modulo_sistema text, modulo_sistema_outro text, status text,
+  solicitante_id uuid, solicitante_nome text, setor text,
+  responsavel_id uuid, responsavel_nome text, chamado_criado_em timestamptz,
+  etapa text, enviado_por_nome text, enviado_em timestamptz, observacao_envio text,
+  desenvolvedor_id uuid, desenvolvedor_nome text, desenvolvimento_concluido_em timestamptz,
+  devolucoes integer, presidencia_por uuid, presidencia_nome text, presidencia_em timestamptz,
+  presidencia_aprovado boolean, presidencia_parecer text,
+  treinamento_dev_em timestamptz, treinamento_dev_obs text,
+  treinamento_solic_em timestamptz, treinamento_solic_obs text,
+  finalizado_em timestamptz,
+  treinamento_participantes integer, treinamento_confirmados integer
+)
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public, pg_temp
+AS $$
+BEGIN
+  IF NOT (public.tem_acesso_menu('presidencia_chamados_dev')
+          OR public.tem_acesso_menu('presidencia_chamados_dev_validar')) THEN
+    RAISE EXCEPTION 'Sem acesso a Desenvolvimento Chamados.';
+  END IF;
+
+  RETURN QUERY
+  SELECT c.id, c.numero, c.assunto, c.descricao, c.prioridade,
+         c.modulo_sistema, c.modulo_sistema_outro, c.status,
+         c.solicitante_id, c.solicitante_nome, c.setor,
+         c.responsavel_id, pr.display_name, c.created_at,
+         v.etapa, pe.display_name, v.enviado_em, v.observacao_envio,
+         v.desenvolvedor_id, pd.display_name, v.desenvolvimento_concluido_em,
+         v.devolucoes, v.presidencia_por, pp.display_name, v.presidencia_em,
+         v.presidencia_aprovado, v.presidencia_parecer,
+         v.treinamento_dev_em, v.treinamento_dev_obs,
+         v.treinamento_solic_em, v.treinamento_solic_obs,
+         v.finalizado_em,
+         (SELECT count(*)::int FROM public."CHAMADO_TREINAMENTO_DESTINATARIO" d WHERE d.chamado_id = v.chamado_id),
+         (SELECT count(*)::int FROM public."CHAMADO_TREINAMENTO_DESTINATARIO" d WHERE d.chamado_id = v.chamado_id AND d.confirmado_em IS NOT NULL)
+    FROM public."CHAMADO_SISTEMA_VALIDACAO" v
+    JOIN public."CHAMADO_SISTEMA" c ON c.id = v.chamado_id
+    LEFT JOIN public.profiles pr ON pr.id = c.responsavel_id
+    LEFT JOIN public.profiles pe ON pe.id = v.enviado_por
+    LEFT JOIN public.profiles pd ON pd.id = COALESCE(v.desenvolvedor_id, c.responsavel_id)
+    LEFT JOIN public.profiles pp ON pp.id = v.presidencia_por
+   ORDER BY COALESCE(v.desenvolvimento_concluido_em, v.enviado_em) DESC;
+END;
+$$;
+REVOKE ALL ON FUNCTION public.chamado_presidencia_listar() FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.chamado_presidencia_listar() TO authenticated;
+
+-- ── 6. Pendências do solicitante: só a avaliação ─────────────────────────
+CREATE OR REPLACE FUNCTION public.chamado_pendencias_solicitante(p_uid uuid)
+RETURNS TABLE(id uuid, numero text, assunto text, concluido_em timestamptz, pendencia text)
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, pg_temp
+AS $$
+  SELECT c.id, c.numero, c.assunto, c.concluido_em, 'avaliacao'::text
+    FROM public."CHAMADO_SISTEMA" c
+    LEFT JOIN public."CHAMADO_SISTEMA_VALIDACAO" v ON v.chamado_id = c.id
+   WHERE c.solicitante_id = p_uid
+     AND c.status = 'concluido'
+     AND NOT EXISTS (SELECT 1 FROM public."CHAMADO_SISTEMA_AVALIACAO" a WHERE a.chamado_id = c.id)
+     -- Presidência ainda validando (ou devolvido ao dev): nada a fazer pelo solicitante.
+     AND (v.chamado_id IS NULL OR v.etapa IN ('treinamento', 'finalizado'))
+   ORDER BY c.concluido_em NULLS LAST;
+$$;
+REVOKE ALL ON FUNCTION public.chamado_pendencias_solicitante(uuid) FROM PUBLIC, anon;
+
+-- A RPC da tela ganha a coluna `pendencia` — mudar o retorno exige DROP.
+DROP FUNCTION IF EXISTS public.chamados_meus_avaliacoes_pendentes();
+CREATE OR REPLACE FUNCTION public.chamados_meus_avaliacoes_pendentes()
+RETURNS TABLE(id uuid, numero text, assunto text, concluido_em timestamptz, pendencia text)
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, pg_temp
+AS $$
+  SELECT * FROM public.chamado_pendencias_solicitante(auth.uid());
+$$;
+REVOKE ALL ON FUNCTION public.chamados_meus_avaliacoes_pendentes() FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.chamados_meus_avaliacoes_pendentes() TO authenticated;
+
+-- Trava ao abrir novo chamado (mesma regra da tela). O trigger
+-- trg_chamado_bloqueia_avaliacao (mig 20260810000001) já aponta para ela.
+CREATE OR REPLACE FUNCTION public.chamado_sistema_bloqueia_avaliacao_pendente()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp
+AS $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM public.chamado_pendencias_solicitante(NEW.solicitante_id)) THEN
+    RAISE EXCEPTION 'Você tem chamados concluídos aguardando avaliação. Avalie-os antes de abrir um novo.';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+-- ── 7. Avaliar só depois da Presidência ──────────────────────────────────
+-- A trava da 269 ("confirme o treinamento antes de avaliar") sai: o
+-- solicitante não confirma mais treinamento no chamado.
+DROP TRIGGER IF EXISTS trg_chamado_avaliacao_exige_treinamento ON public."CHAMADO_SISTEMA_AVALIACAO";
+DROP FUNCTION IF EXISTS public.chamado_avaliacao_exige_treinamento();
+
+CREATE OR REPLACE FUNCTION public.chamado_avaliacao_exige_presidencia()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp
+AS $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM public."CHAMADO_SISTEMA_VALIDACAO"
+              WHERE chamado_id = NEW.chamado_id AND etapa IN ('desenvolvimento', 'validacao_presidencia')) THEN
+    RAISE EXCEPTION 'Este chamado ainda está na validação da Presidência. A avaliação abre depois que ela aprovar.';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+REVOKE ALL ON FUNCTION public.chamado_avaliacao_exige_presidencia() FROM PUBLIC, anon;
+DROP TRIGGER IF EXISTS trg_chamado_avaliacao_exige_presidencia ON public."CHAMADO_SISTEMA_AVALIACAO";
+CREATE TRIGGER trg_chamado_avaliacao_exige_presidencia
+  BEFORE INSERT ON public."CHAMADO_SISTEMA_AVALIACAO"
+  FOR EACH ROW EXECUTE FUNCTION public.chamado_avaliacao_exige_presidencia();
+
+-- ── 8. Chamados que já estavam no treinamento pelo fluxo antigo ──────────
+-- Dev já tinha "confirmado" no chamado (mig 266/269, sem participantes): volta a ficar
+-- pendente de ENVIO, para ele escolher quem recebe. O que foi confirmado no
+-- fluxo antigo fica no histórico do chamado (eventos).
+UPDATE public."CHAMADO_SISTEMA_VALIDACAO" v
+   SET treinamento_dev_por = NULL, treinamento_dev_em = NULL, treinamento_dev_obs = NULL
+ WHERE v.etapa = 'treinamento'
+   AND v.treinamento_dev_em IS NOT NULL
+   AND NOT EXISTS (SELECT 1 FROM public."CHAMADO_TREINAMENTO_DESTINATARIO" d WHERE d.chamado_id = v.chamado_id);
+
+NOTIFY pgrst, 'reload schema';
+
+-- =========================================================================
+-- ROLLBACK
+-- =========================================================================
+-- DROP TRIGGER IF EXISTS trg_chamado_avaliacao_exige_presidencia ON public."CHAMADO_SISTEMA_AVALIACAO";
+-- DROP FUNCTION IF EXISTS public.chamado_avaliacao_exige_presidencia();
+-- DROP FUNCTION IF EXISTS public.treinamentos_sistemas_meus();
+-- DROP FUNCTION IF EXISTS public.chamado_treinamento_confirmar_recebimento(uuid, text);
+-- DROP FUNCTION IF EXISTS public.chamado_treinamento_enviar(uuid, uuid[], text[], text);
+-- DROP FUNCTION IF EXISTS public.trn_slugify_sem_hifen(text);
+-- DROP TRIGGER IF EXISTS trg_chamado_treinamento_limpa_dest ON public."CHAMADO_SISTEMA_VALIDACAO";
+-- DROP FUNCTION IF EXISTS public.chamado_treinamento_limpa_destinatarios();
+-- DROP TABLE IF EXISTS public."CHAMADO_TREINAMENTO_DESTINATARIO";
+-- -- chamado_treinamento_confirmar(uuid, text), chamado_presidencia_listar(),
+-- -- chamados_meus_avaliacoes_pendentes() e o corpo da trava: recriar pela
+-- -- mig 20260930000266 / 20260810000001.
+-- NOTIFY pgrst, 'reload schema';
+
+
+-- ===== 20260930000274_dashboard_de_pontos (JA APLICADA 30/09) =====
+-- =========================================================================
+-- "Dashboard de Pontos" — o painel da Conferência de Ponto no RH, no
+-- Financeiro e no Operacional (30/09/2026)
+--
+-- PEDIDO (Pablo): "troca o nome disso pra DASHBOARD DE PONTOS e replica no
+-- módulo financeiro também pra eles também conseguirem ver. e no módulo
+-- OPERACIONAL tem que ter também o DASHBOARD DE PONTOS".
+--
+-- 1. rh_conferencia_ponto_painel (/app/rh/conferencia-ponto/painel) passa a
+--    se chamar "Dashboard de Pontos" — no menu lateral havia DOIS itens
+--    "Conferência de Ponto" no RH, um deles era o painel.
+-- 2. Dois menus novos, a mesma tela em cada módulo (acesso é por menu, e cada
+--    módulo libera o seu):
+--      financeiro_dashboard_pontos  → /app/financeiro/dashboard-pontos
+--      operacional_dashboard_pontos → /app/operacional/dashboard-pontos
+--    Nascem com quem JÁ vê a Conferência de Ponto daquele módulo (exceções
+--    individuais e perfis, só 'visualizar'): 6 pessoas no Financeiro e 9 no
+--    Operacional em 30/09. O resto se ajusta em Acesso por Usuário.
+-- 3. O painel lia "CONTRATOS" direto, e a RLS dela (contratos_gate) só deixa
+--    quem tem Recrutamento/Colaboradores/Encarregados/etc. — o menu do painel
+--    nunca esteve lá; funcionava para quem tinha um daqueles por acaso. Em vez
+--    de abrir a tabela de contratos inteira para mais três menus, a RPC
+--    ponto_painel_contratos() devolve SÓ o que o painel mostra (empresa,
+--    filial e nomes dos contratos ativos) para quem tem um dos três menus.
+--    SISTEMA_CONFERENCIA_PONTO já é legível por qualquer autenticado.
+--
+-- Idempotente. Aplicar no banco do app. ROLLBACK no fim.
+-- =========================================================================
+
+-- ── 1. Nome ──────────────────────────────────────────────────────────────
+UPDATE public.app_menu SET nome = 'Dashboard de Pontos'
+ WHERE codigo = 'rh_conferencia_ponto_painel';
+
+-- ── 2. Menus no Financeiro e no Operacional ──────────────────────────────
+INSERT INTO public.app_menu (modulo_id, codigo, nome, rota, ordem, ativo)
+SELECT m.id, x.codigo, 'Dashboard de Pontos', x.rota, x.ordem, true
+  FROM (VALUES
+    ('financeiro',  'financeiro_dashboard_pontos',  '/app/financeiro/dashboard-pontos',  172),
+    ('operacional', 'operacional_dashboard_pontos', '/app/operacional/dashboard-pontos',  33)
+  ) AS x(modulo, codigo, rota, ordem)
+  JOIN public.app_modulo m ON m.codigo = x.modulo
+ON CONFLICT (modulo_id, codigo) DO NOTHING;
+
+-- Quem já vê a Conferência de Ponto do módulo passa a ver o Dashboard dele.
+INSERT INTO public.screen_permission_user (user_id, menu_codigo, acao, allow, empresa_id, motivo)
+SELECT s.user_id, x.novo, 'visualizar'::app_acao, true, s.empresa_id,
+       'Dashboard de Pontos (mig 274): herdado de ' || x.origem
+  FROM (VALUES
+    ('financeiro_conferencia_ponto',  'financeiro_dashboard_pontos'),
+    ('operacional_conferencia_ponto', 'operacional_dashboard_pontos')
+  ) AS x(origem, novo)
+  JOIN public.screen_permission_user s
+    ON s.menu_codigo = x.origem AND s.acao = 'visualizar'::app_acao AND s.allow
+ON CONFLICT (user_id, menu_codigo, acao, empresa_id) DO NOTHING;
+
+INSERT INTO public.perfil_acesso_permissao (perfil_id, menu_codigo, acao, allow)
+SELECT p.perfil_id, x.novo, 'visualizar'::app_acao, true
+  FROM (VALUES
+    ('financeiro_conferencia_ponto',  'financeiro_dashboard_pontos'),
+    ('operacional_conferencia_ponto', 'operacional_dashboard_pontos')
+  ) AS x(origem, novo)
+  JOIN public.perfil_acesso_permissao p
+    ON p.menu_codigo = x.origem AND p.acao = 'visualizar'::app_acao AND p.allow
+ON CONFLICT (perfil_id, menu_codigo, acao) DO NOTHING;
+
+-- ── 3. Contratos do painel ───────────────────────────────────────────────
+CREATE OR REPLACE FUNCTION public.ponto_painel_contratos()
+RETURNS TABLE (empresa text, filial integer, nome_empresa text, nome_contrato text)
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public, pg_temp
+AS $$
+BEGIN
+  IF NOT (public.can_access(auth.uid(), 'rh_conferencia_ponto_painel', 'visualizar'::app_acao)
+       OR public.can_access(auth.uid(), 'financeiro_dashboard_pontos', 'visualizar'::app_acao)
+       OR public.can_access(auth.uid(), 'operacional_dashboard_pontos', 'visualizar'::app_acao)
+       OR public.can_access(auth.uid(), 'rh_conferencia_ponto', 'visualizar'::app_acao)) THEN
+    RAISE EXCEPTION 'Sem acesso ao Dashboard de Pontos.';
+  END IF;
+  RETURN QUERY
+  SELECT c."Empresa"::text, c."Filial"::integer, c."NOME EMPRESA"::text, c."NOME CONTRATO"::text
+    FROM public."CONTRATOS" c
+   WHERE c."ATIVO" = 'SIM';
+END;
+$$;
+REVOKE ALL ON FUNCTION public.ponto_painel_contratos() FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.ponto_painel_contratos() TO authenticated;
+
+NOTIFY pgrst, 'reload schema';
+
+-- =========================================================================
+-- ROLLBACK
+-- =========================================================================
+-- DROP FUNCTION IF EXISTS public.ponto_painel_contratos();
+-- DELETE FROM public.perfil_acesso_permissao WHERE menu_codigo IN ('financeiro_dashboard_pontos','operacional_dashboard_pontos');
+-- DELETE FROM public.screen_permission_user  WHERE menu_codigo IN ('financeiro_dashboard_pontos','operacional_dashboard_pontos');
+-- DELETE FROM public.app_menu WHERE codigo IN ('financeiro_dashboard_pontos','operacional_dashboard_pontos');
+-- UPDATE public.app_menu SET nome = 'Conferência de Ponto — Painel' WHERE codigo = 'rh_conferencia_ponto_painel';
+-- NOTIFY pgrst, 'reload schema';
+
+
+-- ===== 20260930000275_empregados_igual_a_senior (JA APLICADA 30/09 - corrigiu 32 linhas) =====
+-- =========================================================================
+-- EMPREGADOS igual à Senior (BiEmpregados): o sync passa a corrigir o que
+-- está errado — e corrige agora as 32 linhas divergentes
+--
+-- SINTOMA (30/09/2026, Pablo): EMPREGADOS ID 13597 = "LUIZA VITORIA VEIGA
+-- BARRETO", Empresa 1 / Cadastro 10542, filial 1099, admissão 04/09/2026.
+-- Na Senior o 1/10542 é DAIANE CAROLINE ANTUNES DA CRUZ, filial 1050,
+-- admissão 10/09/2026, outro CPF. "As informações do EMPREGADOS têm que estar
+-- idênticas ao BiEmpregados ... só ajusta o que tá errado."
+--
+-- CAUSA (rh_sync_senior_empregados, chamada pelo integracao-senior):
+--   1. Chave (Empresa, Cadastro) — e a Senior REAPROVEITA o numcad.
+--   2. Achada a linha, o sync só mexia em Situação / Cod Situacao / Data
+--      Afastamento / Valor Salário. Nome, CPF, Admissão, Filial, Nascimento,
+--      Sexo e PIS só entravam no INSERT — nunca mais corrigidos, embora a
+--      integração mande todos a cada passada.
+--
+-- MEDIDO em 30/09 (13.332 linhas não-MEI pareadas com a Senior, tipcol = 1):
+--   32 divergem — nome 14, filial 14, admissão 13, PIS 10, nascimento 7,
+--   CPF 5, sexo 4, situação 0. Das 14 de nome, 6 são OUTRA PESSOA (cadastro
+--   reaproveitado: LUIZA→DAIANE 1/10542, SABRINA PINHEIRO→MAICOL 1/10628,
+--   DAIANE SILVA→ANTONIO ROSA 1/9901, ISMAEL→EMERSON 1/10513, BIATRIZ→PETRICK
+--   2/2453, CLEITON→MARIA BEATRIZ 1/2078) e 8 são o mesmo nome corrigido na
+--   Senior. Nenhuma das 32 tinha login do ERP vinculado.
+--
+-- CORREÇÃO
+--   a) O sync compara e REESCREVE cada campo que vem da Senior quando ele
+--      difere de verdade (data como data; CPF/PIS sem zero à esquerda; nome
+--      sem diferença de espaço/caixa). Igual → não toca (o formato gravado
+--      não muda à toa).
+--   b) Pessoa trocada = CPF diferente (os dois preenchidos): o que era da
+--      pessoa ANTIGA sai junto — login, e-mail, senha, perfil/setor/líder do
+--      ERP, permissões, telefone, pix e a ficha (cargo, escala, local, posto,
+--      Nome Filial), que é remontada pelo espelho (tipcol = 1).
+--   c) Filial mudou → "Nome Filial" recalculado pela filial nova.
+--   d) Tudo que muda fica em EMPREGADOS_SYNC_SENIOR_LOG (antes/depois) —
+--      RLS ligada, sem policy (guarda CPF/PIS).
+--   e) Cadastro repetido na EMPREGADOS (3 casos): casa com o mesmo nome, o
+--      mesmo CPF, Trabalhando, ID maior — nessa ordem.
+--   f) Roda uma vez AGORA pelo espelho (espelho."BiEmpregados", tipcol = 1),
+--      no mesmo formato da integração.
+--
+-- FORA (sem decisão): terceiros (tipcol = 2) e as 22 linhas não-MEI que não
+-- existem na Senior. Nada é apagado aqui.
+--
+-- Idempotente. Aplicar no banco do app. ROLLBACK no fim.
+-- =========================================================================
+
+-- ── Histórico do que o sync altera ───────────────────────────────────────
+CREATE TABLE IF NOT EXISTS public."EMPREGADOS_SYNC_SENIOR_LOG" (
+  id             bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  empregado_id   bigint NOT NULL,
+  empresa        bigint,
+  cadastro       bigint,
+  pessoa_trocada boolean NOT NULL DEFAULT false,
+  antes          jsonb NOT NULL,
+  depois         jsonb NOT NULL,
+  criado_em      timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_empregados_sync_log_emp ON public."EMPREGADOS_SYNC_SENIOR_LOG"(empregado_id, criado_em DESC);
+ALTER TABLE public."EMPREGADOS_SYNC_SENIOR_LOG" ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON public."EMPREGADOS_SYNC_SENIOR_LOG" FROM PUBLIC, anon, authenticated;
+
+-- Normalizadores (só para COMPARAR; o valor gravado mantém o formato).
+CREATE OR REPLACE FUNCTION public.rh_norm_nome(_t text) RETURNS text
+LANGUAGE sql IMMUTABLE SET search_path = public, pg_temp AS $$
+  SELECT nullif(regexp_replace(upper(btrim(coalesce(_t, ''))), '\s+', ' ', 'g'), '');
+$$;
+CREATE OR REPLACE FUNCTION public.rh_norm_doc(_t text) RETURNS text
+LANGUAGE sql IMMUTABLE SET search_path = public, pg_temp AS $$
+  SELECT nullif(ltrim(regexp_replace(coalesce(_t, ''), '\D', '', 'g'), '0'), '');
+$$;
+
+-- ── O sync ───────────────────────────────────────────────────────────────
+CREATE OR REPLACE FUNCTION public.rh_sync_senior_empregados(_linhas jsonb)
+RETURNS jsonb
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp
+AS $function$
+DECLARE
+  v_ins int := 0;
+  v_upd int := 0;
+  v_troca int := 0;
+  v_ign int := 0;
+  v_id  bigint;
+  r     record;
+  e     public."EMPREGADOS"%ROWTYPE;
+  v_outra boolean;
+  v_filial_mudou boolean;
+  v_antes jsonb;
+  v_depois jsonb;
+  v_enriquecer jsonb;
+  v_contratos jsonb;
+  v_fichas    jsonb;
+BEGIN
+  -- "ID" nao e identity nem tem default: quem insere precisa gerar.
+  SELECT coalesce(max("ID"), 0) INTO v_id FROM public."EMPREGADOS";
+
+  FOR r IN
+    SELECT * FROM jsonb_to_recordset(coalesce(_linhas, '[]'::jsonb)) AS x(
+      empresa bigint, cadastro bigint, nome text, admissao text,
+      situacao text, data_afastamento text, filial bigint, sexo text,
+      nascimento text, cpf text, pis text, salario text, cod_situacao integer)
+  LOOP
+    IF r.empresa IS NULL OR r.cadastro IS NULL OR coalesce(btrim(r.nome), '') = '' THEN
+      v_ign := v_ign + 1;
+      CONTINUE;
+    END IF;
+
+    SELECT * INTO e
+      FROM public."EMPREGADOS" x
+     WHERE x."Empresa" = r.empresa AND x."Cadastro" = r.cadastro
+     ORDER BY (public.rh_norm_nome(x."Nome") = public.rh_norm_nome(r.nome)) DESC NULLS LAST,
+              (public.rh_norm_doc(x."CPF") = public.rh_norm_doc(r.cpf)) DESC NULLS LAST,
+              (x."Situação" = 'Trabalhando') DESC NULLS LAST,
+              x."ID" DESC
+     LIMIT 1;
+
+    IF NOT FOUND THEN
+      v_id := v_id + 1;
+      INSERT INTO public."EMPREGADOS"
+        ("ID", "Empresa", "Cadastro", "Nome", "Admissão", "Situação", "Cod Situacao",
+         "Data Afastamento", "Filial", "Sexo", "Nascimento", "CPF", "PIS", "Valor Salário")
+      VALUES
+        (v_id, r.empresa, r.cadastro, btrim(r.nome), r.admissao, r.situacao, r.cod_situacao,
+         r.data_afastamento, r.filial, r.sexo, r.nascimento, r.cpf, r.pis, r.salario);
+      v_ins := v_ins + 1;
+      CONTINUE;
+    END IF;
+
+    -- Outra pessoa: CPF diferente; sem CPF dos dois lados para comparar, o
+    -- primeiro nome diferente (nome corrigido na Senior mantém o primeiro nome).
+    v_outra := CASE
+      WHEN public.rh_norm_doc(e."CPF") IS NOT NULL AND public.rh_norm_doc(r.cpf) IS NOT NULL
+        THEN public.rh_norm_doc(e."CPF") <> public.rh_norm_doc(r.cpf)
+      ELSE split_part(public.rh_norm_nome(e."Nome"), ' ', 1) IS DISTINCT FROM split_part(public.rh_norm_nome(r.nome), ' ', 1)
+    END;
+    v_filial_mudou := r.filial IS NOT NULL AND e."Filial" IS DISTINCT FROM r.filial;
+
+    IF NOT v_outra AND NOT v_filial_mudou
+       AND public.rh_norm_nome(e."Nome") IS NOT DISTINCT FROM public.rh_norm_nome(r.nome)
+       AND (r.cpf IS NULL OR public.rh_norm_doc(e."CPF") IS NOT DISTINCT FROM public.rh_norm_doc(r.cpf))
+       AND (r.pis IS NULL OR public.rh_norm_doc(e."PIS") IS NOT DISTINCT FROM public.rh_norm_doc(r.pis))
+       AND (r.admissao IS NULL OR public.rh_data_br_para_date(e."Admissão") IS NOT DISTINCT FROM public.rh_data_br_para_date(r.admissao))
+       AND (r.nascimento IS NULL OR public.rh_data_br_para_date(e."Nascimento") IS NOT DISTINCT FROM public.rh_data_br_para_date(r.nascimento))
+       AND public.rh_data_br_para_date(e."Data Afastamento") IS NOT DISTINCT FROM public.rh_data_br_para_date(r.data_afastamento)
+       AND (r.sexo IS NULL OR e."Sexo" IS NOT DISTINCT FROM r.sexo)
+       AND (r.situacao IS NULL OR e."Situação" IS NOT DISTINCT FROM r.situacao)
+       AND (r.cod_situacao IS NULL OR e."Cod Situacao" IS NOT DISTINCT FROM r.cod_situacao)
+       AND (r.salario IS NULL OR e."Valor Salário" IS NOT DISTINCT FROM r.salario) THEN
+      CONTINUE;
+    END IF;
+
+    v_antes := to_jsonb(e);
+
+    UPDATE public."EMPREGADOS" x
+       SET "Nome"             = CASE WHEN public.rh_norm_nome(x."Nome") IS NOT DISTINCT FROM public.rh_norm_nome(r.nome) THEN x."Nome" ELSE btrim(r.nome) END,
+           "CPF"              = CASE WHEN r.cpf IS NULL OR public.rh_norm_doc(x."CPF") IS NOT DISTINCT FROM public.rh_norm_doc(r.cpf) THEN x."CPF" ELSE r.cpf END,
+           "PIS"              = CASE WHEN r.pis IS NULL OR public.rh_norm_doc(x."PIS") IS NOT DISTINCT FROM public.rh_norm_doc(r.pis) THEN x."PIS" ELSE r.pis END,
+           "Admissão"         = CASE WHEN r.admissao IS NULL
+                                       OR public.rh_data_br_para_date(x."Admissão") IS NOT DISTINCT FROM public.rh_data_br_para_date(r.admissao)
+                                     THEN x."Admissão" ELSE r.admissao END,
+           "Nascimento"       = CASE WHEN r.nascimento IS NULL
+                                       OR public.rh_data_br_para_date(x."Nascimento") IS NOT DISTINCT FROM public.rh_data_br_para_date(r.nascimento)
+                                     THEN x."Nascimento" ELSE r.nascimento END,
+           "Data Afastamento" = CASE WHEN public.rh_data_br_para_date(x."Data Afastamento") IS NOT DISTINCT FROM public.rh_data_br_para_date(r.data_afastamento)
+                                     THEN x."Data Afastamento" ELSE r.data_afastamento END,
+           "Filial"           = coalesce(r.filial, x."Filial"),
+           "Sexo"             = coalesce(r.sexo, x."Sexo"),
+           "Situação"         = coalesce(r.situacao, x."Situação"),
+           "Cod Situacao"     = coalesce(r.cod_situacao, x."Cod Situacao"),
+           "Valor Salário"    = coalesce(r.salario, x."Valor Salário"),
+           "Nome Filial"      = CASE WHEN v_filial_mudou OR v_outra THEN NULL ELSE x."Nome Filial" END,
+           auth_user_id       = CASE WHEN v_outra THEN NULL ELSE x.auth_user_id END,
+           email              = CASE WHEN v_outra THEN NULL ELSE x.email END,
+           "Senha"            = CASE WHEN v_outra THEN NULL ELSE x."Senha" END,
+           chave_secreta      = CASE WHEN v_outra THEN NULL ELSE x.chave_secreta END,
+           "Perfil_ERP"       = CASE WHEN v_outra THEN NULL ELSE x."Perfil_ERP" END,
+           "Setor_ERP"        = CASE WHEN v_outra THEN NULL ELSE x."Setor_ERP" END,
+           "Ativo_ERP"        = CASE WHEN v_outra THEN NULL ELSE x."Ativo_ERP" END,
+           "LIDER"            = CASE WHEN v_outra THEN NULL ELSE x."LIDER" END,
+           tipo_acesso        = CASE WHEN v_outra THEN NULL ELSE x.tipo_acesso END,
+           telefone           = CASE WHEN v_outra THEN NULL ELSE x.telefone END,
+           contrato_responsavel_id = CASE WHEN v_outra THEN NULL ELSE x.contrato_responsavel_id END,
+           contrato_responsavel    = CASE WHEN v_outra THEN NULL ELSE x.contrato_responsavel END,
+           permissoes_compras      = CASE WHEN v_outra THEN NULL ELSE x.permissoes_compras END,
+           permissoes_malote       = CASE WHEN v_outra THEN NULL ELSE x.permissoes_malote END,
+           classificacoes_responsavel = CASE WHEN v_outra THEN NULL ELSE x.classificacoes_responsavel END,
+           aprovar_cotacao_classif = CASE WHEN v_outra THEN NULL ELSE x.aprovar_cotacao_classif END,
+           "Chave Pix"        = CASE WHEN v_outra THEN NULL ELSE x."Chave Pix" END,
+           "Cargo"            = CASE WHEN v_outra THEN NULL ELSE x."Cargo" END,
+           "Título do Cargo"  = CASE WHEN v_outra THEN NULL ELSE x."Título do Cargo" END,
+           "Nome do Cargo"    = CASE WHEN v_outra THEN NULL ELSE x."Nome do Cargo" END,
+           "Escala_1"         = CASE WHEN v_outra THEN NULL ELSE x."Escala_1" END,
+           "Escala"           = CASE WHEN v_outra THEN NULL ELSE x."Escala" END,
+           "Descrição do Local" = CASE WHEN v_outra THEN NULL ELSE x."Descrição do Local" END,
+           "Posto"            = CASE WHEN v_outra THEN NULL ELSE x."Posto" END,
+           "Nome do Posto"    = CASE WHEN v_outra THEN NULL ELSE x."Nome do Posto" END
+     WHERE x."ID" = e."ID";
+
+    SELECT to_jsonb(x) INTO v_depois FROM public."EMPREGADOS" x WHERE x."ID" = e."ID";
+    INSERT INTO public."EMPREGADOS_SYNC_SENIOR_LOG"(empregado_id, empresa, cadastro, pessoa_trocada, antes, depois)
+    VALUES (e."ID", r.empresa, r.cadastro, v_outra, v_antes, v_depois);
+
+    v_upd := v_upd + 1;
+    IF v_outra THEN v_troca := v_troca + 1; END IF;
+  END LOOP;
+
+  -- Remonta o que ficou vazio (ficha da pessoa nova, Nome Filial de quem
+  -- mudou de filial) pelo espelho, com o join certo (tipcol = 1).
+  BEGIN
+    v_enriquecer := public.rh_enriquecer_empregados_do_espelho(false);
+  EXCEPTION WHEN OTHERS THEN
+    v_enriquecer := jsonb_build_object('erro', SQLERRM);
+  END;
+
+  BEGIN
+    v_contratos := public.contratos_sincronizar_filiais();
+  EXCEPTION WHEN OTHERS THEN
+    v_contratos := jsonb_build_object('erro', SQLERRM);
+  END;
+
+  BEGIN
+    v_fichas := public.rh_completar_ficha_do_senior();
+  EXCEPTION WHEN OTHERS THEN
+    v_fichas := jsonb_build_object('erro', SQLERRM);
+  END;
+
+  RETURN jsonb_build_object('inseridos', v_ins, 'atualizados', v_upd, 'pessoas_trocadas', v_troca, 'ignorados', v_ign,
+                            'enriquecer', v_enriquecer, 'contratos', v_contratos, 'fichas', v_fichas);
+END $function$;
+REVOKE ALL ON FUNCTION public.rh_sync_senior_empregados(jsonb) FROM PUBLIC, anon;
+
+-- ── Uma passada agora, pelo espelho (mesmo formato da integração) ────────
+SELECT public.rh_sync_senior_empregados(coalesce((
+  SELECT jsonb_agg(jsonb_build_object(
+           'empresa', b.numemp, 'cadastro', b.numcad, 'nome', btrim(b.nomfun),
+           'admissao',   CASE WHEN b.datadm IS NULL OR extract(year FROM b.datadm) <= 1901 THEN NULL ELSE to_char(b.datadm, 'DD/MM/YYYY') END,
+           'data_afastamento', CASE WHEN b.datafa IS NULL OR extract(year FROM b.datafa) <= 1901 THEN NULL ELSE to_char(b.datafa, 'DD/MM/YYYY') END,
+           'nascimento', CASE WHEN b.datnas IS NULL OR extract(year FROM b.datnas) <= 1901 THEN NULL ELSE to_char(b.datnas, 'DD/MM/YYYY') END,
+           'situacao', nullif(btrim(coalesce(s.descricao, '')), ''),
+           'cod_situacao', b.sitafa,
+           'filial', b.codfil,
+           'sexo', nullif(btrim(coalesce(b.tipsex, '')), ''),
+           'cpf', nullif(b.numcpf::text, ''),
+           'pis', nullif(b.numpis::text, ''),
+           'salario', CASE WHEN b.valsal IS NULL THEN NULL
+                           ELSE replace(replace(replace(to_char(b.valsal, 'FM999,999,990.00'), ',', '#'), '.', ','), '#', '.') END))
+    FROM espelho."BiEmpregados" b
+    LEFT JOIN espelho."BiSituacoes" s
+           ON nullif(regexp_replace(s.situacao::text, '\D', '', 'g'), '')::int = b.sitafa
+   WHERE b.tipcol = 1), '[]'::jsonb));
+
+NOTIFY pgrst, 'reload schema';
+
+-- =========================================================================
+-- ROLLBACK
+-- =========================================================================
+-- Cada linha alterada tem a versão anterior INTEIRA em
+-- "EMPREGADOS_SYNC_SENIOR_LOG".antes (to_jsonb da linha). Para voltar uma:
+--   UPDATE public."EMPREGADOS" x SET "Nome" = l.antes->>'Nome', "CPF" = l.antes->>'CPF', ...
+--     FROM public."EMPREGADOS_SYNC_SENIOR_LOG" l WHERE l.id = <id do log> AND x."ID" = l.empregado_id;
+-- A função anterior está em 20260906000011_rh_sync_empregados_com_cod_situacao.sql (+ mig 188).
+
+
+-- ===== 20260930000276_formularios_encarregados (JA APLICADA 30/09) =====
+-- =========================================================================
+-- Nascimento Formulários no módulo ENCARREGADOS + setor "Visitante" vira
+-- "Encarregados" (30/09/2026)
+--
+-- PEDIDO (Pablo): "duplica a rota de /app/central-servicos/formularios pro
+-- módulo dos encarregados, mas os encarregados só têm acesso APENAS A ALGUNS
+-- FORMULÁRIOS e ... ELES SÓ PODEM ABRIR OS FORMULÁRIOS e ver as PRÓPRIAS
+-- RESPOSTAS, NADA MAIS! e lá na central de serviços temos que conseguir
+-- liberar por setor. o setor dos encarregados é VISITANTE (TROCA O NOME PRA:
+-- ENCARREGADOS). liberando o formulário pro setor ENCARREGADOS, todos vão
+-- poder ver nos formulários do Encarregados."
+--
+-- 1. SETOR. O setor dos encarregados mora em user_setor ("Visitante", 91
+--    pessoas) — NÃO em EMPREGADOS."Setor_ERP" (80 deles nem têm). Renomeia
+--    no setor_catalogo (user_setor segue por ON UPDATE CASCADE) e nas duas
+--    tabelas que guardam o nome sem FK: malote_setor_visivel_usuario (12) e
+--    CS_REEMBOLSO_APROVADOR_SETOR (1). "visitante" do handle_new_user é o
+--    PAPEL (user_roles), outra coisa — não muda.
+-- 2. LIBERAR POR SETOR. Os formulários decidem o setor da pessoa só pelo
+--    Setor_ERP (cs_form_alvo). Entra o setor ENCARREGADOS (grafia do
+--    público-alvo, em maiúsculas como os demais): quem está em user_setor
+--    "Encarregados" responde formulário restrito liberado para ENCARREGADOS.
+--    Só esse setor passa a valer pela user_setor — os outros continuam pelo
+--    Setor_ERP, como antes (não amplia o alvo de formulário nenhum existente).
+-- 3. A TELA DOS ENCARREGADOS (/app/encarregados/formularios, menu
+--    encarregados_formularios): só os formulários publicados e liberados
+--    para ENCARREGADOS; ações: RESPONDER e ver AS PRÓPRIAS respostas. Tudo por
+--    RPC SECURITY DEFINER — o encarregado não ganha nenhuma capacidade
+--    (ver_proprias etc.) nos formulários em geral.
+-- 4. A resposta de encarregado sem setor no cadastro é carimbada com
+--    ENCARREGADOS — é por esse setor que o painel, o filtro e o "ver por
+--    setor" da Central de Serviços enxergam as respostas deles.
+-- 5. Menu nasce com quem já tem o módulo: perfil "Encarregados" (86) e as
+--    exceções individuais de encarregados_minhas_solicitacoes (18).
+--
+-- Idempotente. Aplicar no banco do app. ROLLBACK no fim.
+-- =========================================================================
+
+-- ── 1. Setor: Visitante → Encarregados ───────────────────────────────────
+UPDATE public.setor_catalogo SET nome = 'Encarregados' WHERE nome = 'Visitante'
+  AND NOT EXISTS (SELECT 1 FROM public.setor_catalogo WHERE nome = 'Encarregados');
+UPDATE public.malote_setor_visivel_usuario SET setor = 'Encarregados' WHERE setor = 'Visitante';
+UPDATE public."CS_REEMBOLSO_APROVADOR_SETOR" SET setor = 'Encarregados' WHERE setor = 'Visitante';
+
+-- ── 2. Setor ENCARREGADOS no público-alvo dos formulários ────────────────
+-- A pessoa é do setor dos encarregados? (user_setor, sem acento/caixa)
+CREATE OR REPLACE FUNCTION public.cs_form_eh_encarregado(_uid uuid DEFAULT auth.uid())
+RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, pg_temp AS $$
+  SELECT _uid IS NOT NULL AND EXISTS (
+    SELECT 1 FROM public.user_setor us
+     WHERE us.user_id = _uid AND upper(btrim(us.setor)) = 'ENCARREGADOS');
+$$;
+REVOKE ALL ON FUNCTION public.cs_form_eh_encarregado(uuid) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.cs_form_eh_encarregado(uuid) TO authenticated;
+
+-- O formulário foi liberado para o setor ENCARREGADOS?
+CREATE OR REPLACE FUNCTION public.cs_form_para_encarregados(_setores text[])
+RETURNS boolean LANGUAGE sql IMMUTABLE SET search_path = public, pg_temp AS $$
+  SELECT EXISTS (SELECT 1 FROM unnest(coalesce(_setores, '{}'::text[])) s WHERE upper(btrim(s)) = 'ENCARREGADOS');
+$$;
+
+-- cs_form_alvo: corpo da versão no ar + o setor ENCARREGADOS pela user_setor.
+CREATE OR REPLACE FUNCTION public.cs_form_alvo(_form_id uuid)
+ RETURNS boolean
+ LANGUAGE sql
+ STABLE SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+  SELECT EXISTS (
+    SELECT 1 FROM public."CS_FORMULARIOS" f
+     WHERE f.id = _form_id
+       AND (
+         f.seguranca = 'liberado'
+         OR (auth.uid() IS NOT NULL AND (
+           -- restrito sem filtro nenhum = qualquer usuário logado do ERP
+           (COALESCE(array_length(f.setores_acesso, 1), 0) = 0
+            AND NOT EXISTS (SELECT 1 FROM public."CS_FORM_ALVO_USUARIOS" u WHERE u.formulario_id = f.id))
+           -- união: do setor liberado OU escolhido a dedo
+           OR EXISTS (SELECT 1 FROM public."EMPREGADOS" e
+                       WHERE e.auth_user_id = auth.uid()
+                         AND e."Setor_ERP" = ANY (f.setores_acesso))
+           -- Setor ENCARREGADOS (30/09/2026, mig 276): o setor deles está na
+           -- user_setor, não no Setor_ERP.
+           OR (public.cs_form_para_encarregados(f.setores_acesso) AND public.cs_form_eh_encarregado())
+           OR EXISTS (SELECT 1 FROM public."CS_FORM_ALVO_USUARIOS" u
+                       WHERE u.formulario_id = f.id AND u.user_id = auth.uid())
+           -- quem administra ou lê pela lista do botão "Acesso" também
+           -- responde, esteja ou não no público-alvo.
+           OR public.cs_form_papel_no_form(f.id) IS NOT NULL
+         ))
+       ));
+$function$;
+
+-- ── 3. RPCs da tela dos encarregados ─────────────────────────────────────
+-- Quem pode abrir a tela: encarregado (setor) ou quem tem o menu (admin/gestão
+-- conferindo o que eles veem).
+CREATE OR REPLACE FUNCTION public.cs_form_enc_pode_ver()
+RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, pg_temp AS $$
+  SELECT public.cs_form_eh_encarregado()
+      OR public.can_access(auth.uid(), 'encarregados_formularios', 'visualizar'::app_acao);
+$$;
+REVOKE ALL ON FUNCTION public.cs_form_enc_pode_ver() FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.cs_form_enc_pode_ver() TO authenticated;
+
+CREATE OR REPLACE FUNCTION public.cs_form_encarregados_lista()
+RETURNS TABLE (
+  id uuid, titulo text, descricao text, slug text, imagem_capa_url text,
+  inicia_em timestamptz, encerra_em timestamptz, aberto boolean,
+  minhas_respostas integer, ultima_resposta timestamptz
+)
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public, pg_temp
+AS $$
+BEGIN
+  IF NOT public.cs_form_enc_pode_ver() THEN
+    RAISE EXCEPTION 'Sem acesso aos formulários dos encarregados.';
+  END IF;
+  RETURN QUERY
+  SELECT f.id, f.titulo, f.descricao, f.slug, f.imagem_capa_url, f.inicia_em, f.encerra_em,
+         public.cs_form_aberto(f.id),
+         (SELECT count(*)::int FROM public."CS_FORM_RESPOSTAS" r WHERE r.formulario_id = f.id AND r.criado_por = auth.uid()),
+         (SELECT max(r.enviado_em) FROM public."CS_FORM_RESPOSTAS" r WHERE r.formulario_id = f.id AND r.criado_por = auth.uid())
+    FROM public."CS_FORMULARIOS" f
+   WHERE f.deleted_at IS NULL
+     AND f.status = 'publicado'
+     AND public.cs_form_para_encarregados(f.setores_acesso)
+   ORDER BY public.cs_form_aberto(f.id) DESC, f.created_at DESC;
+END;
+$$;
+REVOKE ALL ON FUNCTION public.cs_form_encarregados_lista() FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.cs_form_encarregados_lista() TO authenticated;
+
+-- As MINHAS respostas de um formulário dos encarregados (+ as perguntas, para
+-- a tela mostrar o título de cada uma). Só as enviadas identificado: a
+-- anônima não guarda quem respondeu.
+CREATE OR REPLACE FUNCTION public.cs_form_encarregados_minhas_respostas(_form_id uuid)
+RETURNS jsonb
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public, pg_temp
+AS $$
+DECLARE f public."CS_FORMULARIOS"%ROWTYPE;
+BEGIN
+  IF NOT public.cs_form_enc_pode_ver() THEN
+    RAISE EXCEPTION 'Sem acesso aos formulários dos encarregados.';
+  END IF;
+  SELECT * INTO f FROM public."CS_FORMULARIOS" WHERE id = _form_id AND deleted_at IS NULL;
+  IF NOT FOUND OR NOT public.cs_form_para_encarregados(f.setores_acesso) THEN
+    RAISE EXCEPTION 'Formulário não disponível para os encarregados.';
+  END IF;
+  RETURN jsonb_build_object(
+    'titulo', f.titulo,
+    'perguntas', coalesce(f.perguntas, '[]'::jsonb),
+    'respostas', coalesce((
+      SELECT jsonb_agg(jsonb_build_object('id', r.id, 'enviado_em', r.enviado_em, 'itens', r.itens) ORDER BY r.enviado_em DESC)
+        FROM public."CS_FORM_RESPOSTAS" r
+       WHERE r.formulario_id = f.id AND r.criado_por = auth.uid()), '[]'::jsonb));
+END;
+$$;
+REVOKE ALL ON FUNCTION public.cs_form_encarregados_minhas_respostas(uuid) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.cs_form_encarregados_minhas_respostas(uuid) TO authenticated;
+
+-- ── 4. Resposta de encarregado carimbada com o setor ─────────────────────
+CREATE OR REPLACE FUNCTION public.cs_form_resposta_setor_encarregado()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
+BEGIN
+  IF btrim(coalesce(NEW.setor, '')) = '' AND NEW.criado_por IS NOT NULL
+     AND public.cs_form_eh_encarregado(NEW.criado_por) THEN
+    NEW.setor := 'ENCARREGADOS';
+  END IF;
+  RETURN NEW;
+END $$;
+REVOKE ALL ON FUNCTION public.cs_form_resposta_setor_encarregado() FROM PUBLIC, anon;
+DROP TRIGGER IF EXISTS trg_cs_form_resposta_setor_encarregado ON public."CS_FORM_RESPOSTAS";
+CREATE TRIGGER trg_cs_form_resposta_setor_encarregado
+  BEFORE INSERT ON public."CS_FORM_RESPOSTAS"
+  FOR EACH ROW EXECUTE FUNCTION public.cs_form_resposta_setor_encarregado();
+
+-- ── 5. Menu no módulo Encarregados ───────────────────────────────────────
+INSERT INTO public.app_menu (modulo_id, codigo, nome, rota, ordem, ativo)
+SELECT m.id, 'encarregados_formularios', 'Nascimento Formulários', '/app/encarregados/formularios', 45, true
+  FROM public.app_modulo m WHERE m.codigo = 'encarregados'
+ON CONFLICT (modulo_id, codigo) DO NOTHING;
+
+INSERT INTO public.perfil_acesso_permissao (perfil_id, menu_codigo, acao, allow)
+SELECT p.perfil_id, 'encarregados_formularios', 'visualizar'::app_acao, true
+  FROM public.perfil_acesso_permissao p
+ WHERE p.menu_codigo = 'encarregados_minhas_solicitacoes' AND p.acao = 'visualizar'::app_acao AND p.allow
+ON CONFLICT (perfil_id, menu_codigo, acao) DO NOTHING;
+
+INSERT INTO public.screen_permission_user (user_id, menu_codigo, acao, allow, empresa_id, motivo)
+SELECT s.user_id, 'encarregados_formularios', 'visualizar'::app_acao, true, s.empresa_id,
+       'Formulários dos Encarregados (mig 276): herdado de encarregados_minhas_solicitacoes'
+  FROM public.screen_permission_user s
+ WHERE s.menu_codigo = 'encarregados_minhas_solicitacoes' AND s.acao = 'visualizar'::app_acao AND s.allow
+ON CONFLICT (user_id, menu_codigo, acao, empresa_id) DO NOTHING;
+
+-- ── 6. Todo o setor Encarregados vê a tela ───────────────────────────────
+-- 5 dos 91 do setor não estão no perfil "Encarregados": liberação individual
+-- ("liberando o formulário pro setor ENCARREGADOS, todos vão poder ver").
+INSERT INTO public.screen_permission_user (user_id, menu_codigo, acao, allow, empresa_id, motivo)
+SELECT us.user_id, 'encarregados_formularios', 'visualizar'::app_acao, true, NULL,
+       'Formulários dos Encarregados (mig 276): setor Encarregados'
+  FROM public.user_setor us
+ WHERE upper(btrim(us.setor)) = 'ENCARREGADOS'
+   AND NOT public.can_access(us.user_id, 'encarregados_formularios', 'visualizar'::app_acao)
+ON CONFLICT (user_id, menu_codigo, acao, empresa_id) DO NOTHING;
+
+NOTIFY pgrst, 'reload schema';
+
+-- =========================================================================
+-- ROLLBACK
+-- =========================================================================
+-- DELETE FROM public.screen_permission_user  WHERE menu_codigo = 'encarregados_formularios';
+-- DELETE FROM public.perfil_acesso_permissao WHERE menu_codigo = 'encarregados_formularios';
+-- DELETE FROM public.app_menu WHERE codigo = 'encarregados_formularios';
+-- DROP TRIGGER IF EXISTS trg_cs_form_resposta_setor_encarregado ON public."CS_FORM_RESPOSTAS";
+-- DROP FUNCTION IF EXISTS public.cs_form_resposta_setor_encarregado();
+-- DROP FUNCTION IF EXISTS public.cs_form_encarregados_minhas_respostas(uuid);
+-- DROP FUNCTION IF EXISTS public.cs_form_encarregados_lista();
+-- DROP FUNCTION IF EXISTS public.cs_form_enc_pode_ver();
+-- -- cs_form_alvo: recriar sem a linha do setor ENCARREGADOS (versão acima menos o OR).
+-- DROP FUNCTION IF EXISTS public.cs_form_para_encarregados(text[]);
+-- DROP FUNCTION IF EXISTS public.cs_form_eh_encarregado(uuid);
+-- UPDATE public."CS_REEMBOLSO_APROVADOR_SETOR" SET setor = 'Visitante' WHERE setor = 'Encarregados';
+-- UPDATE public.malote_setor_visivel_usuario SET setor = 'Visitante' WHERE setor = 'Encarregados';
+-- UPDATE public.setor_catalogo SET nome = 'Visitante' WHERE nome = 'Encarregados';
+-- NOTIFY pgrst, 'reload schema';
+
+
+-- ===== 20260930000277_organograma (JA APLICADA 30/09) =====
+-- =========================================================================
+-- Módulo ORGANOGRAMA (30/09/2026)
+--
+-- PEDIDO (Pablo): "Criar um novo módulo de organograma separado de todos no
+-- menu lateral, deixar possível montar o organograma com os integrantes que
+-- temos como usuários no sistema. Se possível com foto, nome e função."
+--
+-- MODELO
+--   "ORGANOGRAMA_NO" — um nó por pessoa (usuário do ERP), com quem ela
+--   "reporta a" (parent_id), a ordem entre irmãos e, opcionalmente, uma
+--   função escrita à mão (senão vale o cargo do cadastro).
+--   Foto, nome e cargo NÃO são copiados: vêm na leitura de profiles
+--   (avatar_url, display_name) e de EMPREGADOS ("Título do Cargo", pelo
+--   auth_user_id) — trocar a foto ou o cargo reflete no organograma sozinho.
+--
+-- REGRAS NO BANCO
+--   · uma pessoa aparece uma vez só (user_id único);
+--   · "reporta a" não pode fechar ciclo (A → B → A) — trigger recusa;
+--   · apagar um nó sobe os subordinados dele para o chefe dele (ninguém fica
+--     solto nem some junto).
+--
+-- ACESSO — módulo próprio, menu `organograma` (deny-by-default):
+--   visualizar = ver; incluir/alterar = montar; excluir = tirar pessoa.
+--   Nasce liberado só para o Pablo (quem pediu, para montar o primeiro);
+--   o resto se libera em Administração › Acesso por Usuário.
+--
+-- Idempotente. Aplicar no banco do app. ROLLBACK no fim.
+-- =========================================================================
+
+-- ── 1. Módulo e menu ─────────────────────────────────────────────────────
+INSERT INTO public.app_modulo (codigo, nome, ordem, ativo)
+VALUES ('organograma', 'Organograma', 6, true)
+ON CONFLICT (codigo) DO NOTHING;
+
+INSERT INTO public.app_menu (modulo_id, codigo, nome, rota, ordem, ativo)
+SELECT m.id, 'organograma', 'Organograma', '/app/organograma', 10, true
+  FROM public.app_modulo m WHERE m.codigo = 'organograma'
+ON CONFLICT (modulo_id, codigo) DO NOTHING;
+
+INSERT INTO public.app_menu_acao (menu_codigo, acao)
+VALUES ('organograma', 'excluir'::app_acao)
+ON CONFLICT (menu_codigo, acao) DO NOTHING;
+
+-- ── 2. Tabela ────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS public."ORGANOGRAMA_NO" (
+  id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id     uuid NOT NULL UNIQUE REFERENCES auth.users(id) ON DELETE CASCADE,
+  parent_id   uuid REFERENCES public."ORGANOGRAMA_NO"(id) ON DELETE SET NULL,
+  funcao      text,
+  ordem       integer NOT NULL DEFAULT 0,
+  criado_por  uuid DEFAULT auth.uid(),
+  created_at  timestamptz NOT NULL DEFAULT now(),
+  updated_at  timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT organograma_no_nao_e_chefe_de_si CHECK (parent_id IS NULL OR parent_id <> id)
+);
+CREATE INDEX IF NOT EXISTS idx_organograma_no_parent ON public."ORGANOGRAMA_NO"(parent_id, ordem);
+
+DROP TRIGGER IF EXISTS trg_organograma_no_updated_at ON public."ORGANOGRAMA_NO";
+CREATE TRIGGER trg_organograma_no_updated_at
+  BEFORE UPDATE ON public."ORGANOGRAMA_NO"
+  FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+-- "Reporta a" sem ciclo: sobe a cadeia do novo chefe; se passar por si, recusa.
+CREATE OR REPLACE FUNCTION public.organograma_no_sem_ciclo()
+RETURNS trigger LANGUAGE plpgsql SET search_path = public, pg_temp AS $$
+DECLARE v uuid := NEW.parent_id; n int := 0;
+BEGIN
+  WHILE v IS NOT NULL LOOP
+    IF v = NEW.id THEN
+      RAISE EXCEPTION 'Essa pessoa não pode reportar a alguém que está abaixo dela no organograma.';
+    END IF;
+    SELECT parent_id INTO v FROM public."ORGANOGRAMA_NO" WHERE id = v;
+    n := n + 1;
+    IF n > 500 THEN RAISE EXCEPTION 'Organograma com ciclo — revise quem reporta a quem.'; END IF;
+  END LOOP;
+  RETURN NEW;
+END $$;
+DROP TRIGGER IF EXISTS trg_organograma_no_sem_ciclo ON public."ORGANOGRAMA_NO";
+CREATE TRIGGER trg_organograma_no_sem_ciclo
+  BEFORE INSERT OR UPDATE OF parent_id ON public."ORGANOGRAMA_NO"
+  FOR EACH ROW EXECUTE FUNCTION public.organograma_no_sem_ciclo();
+
+-- Tirar alguém: os subordinados sobem para o chefe dela.
+CREATE OR REPLACE FUNCTION public.organograma_no_sobe_filhos()
+RETURNS trigger LANGUAGE plpgsql SET search_path = public, pg_temp AS $$
+BEGIN
+  UPDATE public."ORGANOGRAMA_NO" SET parent_id = OLD.parent_id WHERE parent_id = OLD.id;
+  RETURN OLD;
+END $$;
+DROP TRIGGER IF EXISTS trg_organograma_no_sobe_filhos ON public."ORGANOGRAMA_NO";
+CREATE TRIGGER trg_organograma_no_sobe_filhos
+  BEFORE DELETE ON public."ORGANOGRAMA_NO"
+  FOR EACH ROW EXECUTE FUNCTION public.organograma_no_sobe_filhos();
+
+-- ── 3. RLS ───────────────────────────────────────────────────────────────
+ALTER TABLE public."ORGANOGRAMA_NO" ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON public."ORGANOGRAMA_NO" FROM PUBLIC, anon;
+GRANT SELECT, INSERT, UPDATE, DELETE ON public."ORGANOGRAMA_NO" TO authenticated;
+
+DROP POLICY IF EXISTS organograma_no_select ON public."ORGANOGRAMA_NO";
+DROP POLICY IF EXISTS organograma_no_insert ON public."ORGANOGRAMA_NO";
+DROP POLICY IF EXISTS organograma_no_update ON public."ORGANOGRAMA_NO";
+DROP POLICY IF EXISTS organograma_no_delete ON public."ORGANOGRAMA_NO";
+CREATE POLICY organograma_no_select ON public."ORGANOGRAMA_NO" FOR SELECT TO authenticated
+  USING ((select public.can_access(auth.uid(), 'organograma', 'visualizar'::app_acao)));
+CREATE POLICY organograma_no_insert ON public."ORGANOGRAMA_NO" FOR INSERT TO authenticated
+  WITH CHECK ((select public.can_access(auth.uid(), 'organograma', 'incluir'::app_acao))
+           OR (select public.can_access(auth.uid(), 'organograma', 'alterar'::app_acao)));
+CREATE POLICY organograma_no_update ON public."ORGANOGRAMA_NO" FOR UPDATE TO authenticated
+  USING ((select public.can_access(auth.uid(), 'organograma', 'alterar'::app_acao)))
+  WITH CHECK ((select public.can_access(auth.uid(), 'organograma', 'alterar'::app_acao)));
+CREATE POLICY organograma_no_delete ON public."ORGANOGRAMA_NO" FOR DELETE TO authenticated
+  USING ((select public.can_access(auth.uid(), 'organograma', 'excluir'::app_acao)));
+
+-- ── 4. Leitura com foto, nome e função ───────────────────────────────────
+CREATE OR REPLACE FUNCTION public.organograma_nos()
+RETURNS TABLE (
+  id uuid, user_id uuid, parent_id uuid, ordem integer, funcao_manual text,
+  nome text, email text, avatar_url text, cargo text, setor text, ativo boolean
+)
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public, pg_temp
+AS $$
+BEGIN
+  IF NOT public.can_access(auth.uid(), 'organograma', 'visualizar'::app_acao) THEN
+    RAISE EXCEPTION 'Sem acesso ao Organograma.';
+  END IF;
+  RETURN QUERY
+  SELECT o.id, o.user_id, o.parent_id, o.ordem, nullif(btrim(o.funcao), ''),
+         coalesce(nullif(btrim(p.display_name), ''), p.email, 'Usuário'),
+         p.email, p.avatar_url,
+         coalesce(nullif(btrim(e."Título do Cargo"), ''), nullif(btrim(p.cargo), '')),
+         coalesce(nullif(btrim(e."Setor_ERP"), ''), (SELECT min(us.setor) FROM public.user_setor us WHERE us.user_id = o.user_id)),
+         coalesce(p.ativo, false)
+    FROM public."ORGANOGRAMA_NO" o
+    LEFT JOIN public.profiles p ON p.id = o.user_id
+    LEFT JOIN LATERAL (
+      SELECT x."Título do Cargo", x."Setor_ERP" FROM public."EMPREGADOS" x
+       WHERE x.auth_user_id = o.user_id
+       ORDER BY (x."Situação" = 'Trabalhando') DESC NULLS LAST, x."ID" DESC LIMIT 1
+    ) e ON true
+   ORDER BY o.ordem, 6;
+END;
+$$;
+REVOKE ALL ON FUNCTION public.organograma_nos() FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.organograma_nos() TO authenticated;
+
+-- Usuários que podem entrar (para o "Adicionar pessoa"), com cargo e setor.
+CREATE OR REPLACE FUNCTION public.organograma_usuarios()
+RETURNS TABLE (user_id uuid, nome text, email text, avatar_url text, cargo text, setor text, no_organograma boolean)
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public, pg_temp
+AS $$
+BEGIN
+  IF NOT (public.can_access(auth.uid(), 'organograma', 'incluir'::app_acao)
+       OR public.can_access(auth.uid(), 'organograma', 'alterar'::app_acao)) THEN
+    RAISE EXCEPTION 'Sem permissão para montar o Organograma.';
+  END IF;
+  RETURN QUERY
+  SELECT p.id, coalesce(nullif(btrim(p.display_name), ''), p.email, 'Usuário'), p.email, p.avatar_url,
+         coalesce(nullif(btrim(e."Título do Cargo"), ''), nullif(btrim(p.cargo), '')),
+         coalesce(nullif(btrim(e."Setor_ERP"), ''), (SELECT min(us.setor) FROM public.user_setor us WHERE us.user_id = p.id)),
+         EXISTS (SELECT 1 FROM public."ORGANOGRAMA_NO" o WHERE o.user_id = p.id)
+    FROM public.profiles p
+    LEFT JOIN LATERAL (
+      SELECT x."Título do Cargo", x."Setor_ERP" FROM public."EMPREGADOS" x
+       WHERE x.auth_user_id = p.id
+       ORDER BY (x."Situação" = 'Trabalhando') DESC NULLS LAST, x."ID" DESC LIMIT 1
+    ) e ON true
+   WHERE p.ativo
+   ORDER BY 2;
+END;
+$$;
+REVOKE ALL ON FUNCTION public.organograma_usuarios() FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.organograma_usuarios() TO authenticated;
+
+-- ── 5. Primeiro acesso: quem pediu monta ─────────────────────────────────
+INSERT INTO public.screen_permission_user (user_id, menu_codigo, acao, allow, empresa_id, motivo)
+SELECT p.id, 'organograma', a.acao::app_acao, true, NULL, 'Organograma (mig 277): quem pediu o módulo'
+  FROM public.profiles p
+ CROSS JOIN (VALUES ('visualizar'), ('incluir'), ('alterar'), ('excluir')) AS a(acao)
+ WHERE p.ativo AND upper(btrim(p.display_name)) = 'PABLO FLORES SANTAREM'
+ON CONFLICT (user_id, menu_codigo, acao, empresa_id) DO NOTHING;
+
+NOTIFY pgrst, 'reload schema';
+
+-- =========================================================================
+-- ROLLBACK
+-- =========================================================================
+-- DROP FUNCTION IF EXISTS public.organograma_usuarios();
+-- DROP FUNCTION IF EXISTS public.organograma_nos();
+-- DROP TABLE IF EXISTS public."ORGANOGRAMA_NO";
+-- DROP FUNCTION IF EXISTS public.organograma_no_sobe_filhos();
+-- DROP FUNCTION IF EXISTS public.organograma_no_sem_ciclo();
+-- DELETE FROM public.screen_permission_user WHERE menu_codigo = 'organograma';
+-- DELETE FROM public.app_menu_acao          WHERE menu_codigo = 'organograma';
+-- DELETE FROM public.app_menu               WHERE codigo      = 'organograma';
+-- DELETE FROM public.app_modulo             WHERE codigo      = 'organograma';
+-- NOTIFY pgrst, 'reload schema';
+
+-- =====================================================================
+-- JA APLICADA 30/09 — 20260930000278_trn_campanha_texto_recolhido.sql
+-- =====================================================================
+-- =====================================================================
+-- Campanhas: texto recolhido (título + setinha, abre ao clicar)
+-- 30/09/2026
+--
+-- "Ao criar uma campanha, ter como criar textos assim, onde só apareça o
+-- título do texto com uma setinha ao lado e, ao clicar na setinha, apareça
+-- toda a descrição" (Pablo, com print das seções da Wikipédia).
+--
+-- Um item de texto ganha a opção `recolhido`: na página pública ele aparece
+-- só com o título e a setinha; o conteúdo abre e fecha ao tocar. Vários
+-- textos recolhidos em sequência formam a lista de seções da referência.
+-- A página pública lê pela RPC trn_campanha_publica (anon não lê a tabela),
+-- então ela passa a devolver o campo; duplicar a campanha também o copia.
+-- =====================================================================
+
+ALTER TABLE public."TRN_CAMPANHA_ITEM" ADD COLUMN IF NOT EXISTS recolhido boolean NOT NULL DEFAULT false;
+
+-- 1) Página pública: devolve `recolhido` (resto igual à mig 268).
+CREATE OR REPLACE FUNCTION public.trn_campanha_publica(_slug text, _contar boolean DEFAULT true)
+RETURNS jsonb LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path = public, pg_temp AS $$
+DECLARE c public."TRN_CAMPANHA"; v_itens jsonb;
+BEGIN
+  SELECT * INTO c FROM public."TRN_CAMPANHA" WHERE slug = lower(btrim(_slug));
+  IF NOT FOUND OR NOT public.trn_campanha_no_ar(c) THEN RETURN NULL; END IF;
+
+  IF _contar THEN
+    INSERT INTO public."TRN_CAMPANHA_ACESSO"(campanha_id, acessos) VALUES (c.id, 1)
+    ON CONFLICT (campanha_id, dia) DO UPDATE SET acessos = public."TRN_CAMPANHA_ACESSO".acessos + 1;
+  END IF;
+
+  SELECT coalesce(jsonb_agg(jsonb_build_object(
+           'id', i.id, 'tipo', i.tipo, 'titulo', i.titulo, 'texto', i.texto, 'recolhido', i.recolhido,
+           'video_url', i.video_url, 'video_path', i.video_path, 'imagem_path', i.imagem_path,
+           'arquivo_path', i.arquivo_path, 'arquivo_nome', i.arquivo_nome,
+           'link_url', i.link_url, 'link_rotulo', i.link_rotulo,
+           'nota_minima', i.nota_minima,
+           'prova', CASE WHEN i.tipo = 'prova' THEN jsonb_build_object(
+               'titulo',     coalesce(nullif(i.prova_config->>'titulo', ''), i.titulo, 'Provinha'),
+               'instrucoes', i.prova_config->>'instrucoes',
+               -- Sem correta/corretas/explicação: o gabarito não sai do banco.
+               'perguntas',  (SELECT coalesce(jsonb_agg(jsonb_build_object(
+                                 'id', q.pid, 'tipo', q.tipo, 'enunciado', q.enunciado,
+                                 'opcoes', q.opcoes, 'pontos', q.pontos) ORDER BY q.ord), '[]'::jsonb)
+                                FROM public.trn_prova_perguntas(i.quiz) q)
+             ) END
+         ) ORDER BY i.posicao, i.created_at), '[]'::jsonb)
+    INTO v_itens
+    FROM public."TRN_CAMPANHA_ITEM" i
+   WHERE i.campanha_id = c.id;
+
+  RETURN jsonb_build_object(
+    'id', c.id, 'titulo', c.titulo, 'slug', c.slug, 'resumo', c.resumo, 'capa_path', c.capa_path,
+    'cor', c.cor, 'fim_em', c.fim_em,
+    'pedir_identificacao', c.pedir_identificacao, 'pedir_documento', c.pedir_documento,
+    'itens', v_itens);
+END $$;
+REVOKE ALL ON FUNCTION public.trn_campanha_publica(text, boolean) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.trn_campanha_publica(text, boolean) TO anon, authenticated;
+
+-- 2) Duplicar a campanha copia também o `recolhido`.
+CREATE OR REPLACE FUNCTION public.trn_campanha_duplicar(_id uuid)
+RETURNS uuid LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path = public, pg_temp AS $$
+DECLARE c public."TRN_CAMPANHA"; v_nova uuid;
+BEGIN
+  IF NOT (public.trn_acesso('treinamentos_campanhas','incluir') OR public.trn_acesso('treinamentos_campanhas','alterar')) THEN
+    RAISE EXCEPTION 'Sem permissão para criar campanhas.';
+  END IF;
+  SELECT * INTO c FROM public."TRN_CAMPANHA" WHERE id = _id;
+  IF NOT FOUND THEN RAISE EXCEPTION 'Campanha não encontrada.'; END IF;
+
+  INSERT INTO public."TRN_CAMPANHA"(titulo, slug, resumo, capa_path, cor, publicada, inicio_em, fim_em, pedir_identificacao, pedir_documento)
+  VALUES (c.titulo || ' (cópia)', c.slug || '-copia', c.resumo, c.capa_path, c.cor, false, c.inicio_em, c.fim_em, c.pedir_identificacao, c.pedir_documento)
+  RETURNING id INTO v_nova;
+
+  INSERT INTO public."TRN_CAMPANHA_ITEM"(campanha_id, posicao, tipo, titulo, texto, recolhido, video_url, video_path, imagem_path,
+                                         arquivo_path, arquivo_nome, link_url, link_rotulo, quiz, nota_minima, prova_config)
+  SELECT v_nova, posicao, tipo, titulo, texto, recolhido, video_url, video_path, imagem_path,
+         arquivo_path, arquivo_nome, link_url, link_rotulo, quiz, nota_minima, prova_config
+    FROM public."TRN_CAMPANHA_ITEM" WHERE campanha_id = c.id;
+  RETURN v_nova;
+END $$;
+REVOKE ALL ON FUNCTION public.trn_campanha_duplicar(uuid) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.trn_campanha_duplicar(uuid) TO authenticated;
+
+NOTIFY pgrst, 'reload schema';
+
+-- ROLLBACK
+-- (recriar trn_campanha_publica e trn_campanha_duplicar como na mig 268)
+-- ALTER TABLE public."TRN_CAMPANHA_ITEM" DROP COLUMN IF EXISTS recolhido;

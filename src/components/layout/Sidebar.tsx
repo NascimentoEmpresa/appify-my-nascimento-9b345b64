@@ -85,7 +85,7 @@ import { Percent } from "lucide-react";
 import { FolderOpen } from "lucide-react";
 import { TrendingDown } from "lucide-react";
 import { Megaphone, ExternalLink } from "lucide-react";
-import { Award, CalendarDays, FolderTree, QrCode, Users } from "lucide-react";
+import { Award, CalendarDays, FolderTree, MonitorCog, QrCode, Users } from "lucide-react";
 import { CreditCard, ListTree } from "lucide-react";
 import { Network } from "lucide-react";
 import { useNovidades } from "@/hooks/useNovidades";
@@ -364,6 +364,9 @@ const financeiroModule: ModuleDef = {
       defaultOpen: true,
       items: [
         { label: "Conferência de Ponto", to: "/app/financeiro/conferencia-ponto", icon: ClipboardCheck },
+        // Dashboard de Pontos (30/09/2026, mig 274): o painel do RH, com menu
+        // próprio do Financeiro (financeiro_dashboard_pontos).
+        { label: "Dashboard de Pontos", to: "/app/financeiro/dashboard-pontos", icon: BarChart3 },
         // Espelho das rotas de Diárias do Operacional e de Encarregados
         // (17/09/2026). Item próprio porque a permissão da sidebar é casada
         // por rota — ver o comentário da rota em App.tsx.
@@ -521,15 +524,25 @@ const rhModule: ModuleDef = {
         { label: "Gestão de Férias", to: "/app/rh/ferias", icon: CalendarRange },
         { label: "Solicitações de Demissão", to: "/app/rh/solicitacoes-demissao", icon: UserMinus },
         { label: "Conferência de Ponto", to: "/app/rh/conferencia-ponto", icon: ClipboardCheck },
-        // Sem o "— Painel" no rótulo (pedido do Pablo, 17/09/2026): só o título;
-        // o ícone de gráfico é o que distingue do item de cima.
-        { label: "Conferência de Ponto", to: "/app/rh/conferencia-ponto/painel", icon: BarChart3 },
+        // "Dashboard de Pontos" desde 30/09/2026 (antes dois itens com o mesmo
+        // nome "Conferência de Ponto"). A mesma tela está no Financeiro e no
+        // Operacional, cada um com o seu menu (mig 274).
+        { label: "Dashboard de Pontos", to: "/app/rh/conferencia-ponto/painel", icon: BarChart3 },
         // Uma só, desde 02/09/2026: a etapa do RH é ALTERAR NA SENIOR. A
         // aprovação do administrativo, que era o segundo item aqui, foi para o
         // analista junto com a de contrato. A rota
         // /app/rh/troca-funcao-escritorio continua existindo para quem já tem a
         // permissão — ela só não é mais um item de menu do RH.
         { label: "Mudança de Função", to: "/app/rh/troca-funcao", icon: ArrowLeftRight, notif: "troca_funcao" },
+      ],
+    },
+    {
+      // Ativos/Contratos (30/09/2026, mig 279): efetivo ativo da EMPREGADOS ×
+      // QT. PESSOAS da Planilha de Custo, conferido posto a posto.
+      label: "Contratos",
+      defaultOpen: true,
+      items: [
+        { label: "Ativos/Contratos", to: "/app/rh/ativos-contratos", icon: ClipboardCheck },
       ],
     },
   ],
@@ -633,6 +646,16 @@ const encarregadosModule: ModuleDef = {
         // (`encarregados_orientacoes`): o encarregado vê todas as respostas do
         // Jurídico e as próprias perguntas sem sair do módulo dele (17/09/2026).
         { label: "Orientações Jurídicas", to: "/app/encarregados/orientacoes-juridicas", icon: BookOpen },
+      ],
+    },
+    {
+      label: "Formulários",
+      defaultOpen: true,
+      items: [
+        // Nascimento Formulários (30/09/2026, mig 276): só os formulários que a
+        // Central de Serviços liberou para o setor ENCARREGADOS; o encarregado
+        // responde e vê as próprias respostas, nada mais.
+        { label: "Nascimento Formulários", to: "/app/encarregados/formularios", icon: ClipboardList },
       ],
     },
     {
@@ -798,6 +821,10 @@ const centralServicosModule: ModuleDef = {
         // (`central_servicos_treinamentos`) — liberar esta porta não abre a
         // de lá, nem o contrário.
         { label: "Treinamentos", to: "/app/central-servicos/treinamentos", icon: GraduationCap },
+        // Treinamentos Sistemas (mig 273): rota em ROTAS_SEMPRE_LIBERADAS,
+        // aparece para todos — qualquer um pode receber treinamento de um
+        // desenvolvimento do ERP (o dev escolhe setores inteiros).
+        { label: "Treinamentos Sistemas", to: "/app/central-servicos/treinamentos-sistemas", icon: MonitorCog },
         // Só o "Solicitar" entra no menu. Aprovação e Tipos/Limites ficam de
         // fora de propósito: são telas de poucas pessoas, alcançadas pelos
         // botões do cabeçalho da própria tela de solicitar (que só aparecem
@@ -1075,6 +1102,8 @@ const operacionalModule: ModuleDef = {
         // analista entre 02/09 e 14/09).
         { label: "Solicitações de Demissão", to: "/app/operacional/solicitacoes-demissao", icon: UserMinus },
         { label: "Conferência de Ponto", to: "/app/operacional/conferencia-ponto", icon: ClipboardCheck },
+        // Dashboard de Pontos (30/09/2026, mig 274): menu operacional_dashboard_pontos.
+        { label: "Dashboard de Pontos", to: "/app/operacional/dashboard-pontos", icon: BarChart3 },
         { label: "Mudança de Função", to: "/app/operacional/troca-funcao", icon: ArrowLeftRight, notif: "troca_funcao" },
         // Orientações Jurídicas (25/09/2026, mig 244): a pergunta do encarregado
         // chega aqui antes do Jurídico — responde ou encaminha.
@@ -1158,6 +1187,29 @@ const diretoriaModule: ModuleDef = {
   ],
 };
 
+// Organograma (30/09/2026, mig 277): módulo próprio, separado dos demais —
+// quem é quem e quem reporta a quem, montado com os usuários do ERP (foto,
+// nome e função). Liberação: código "organograma" em app_menu (visualizar;
+// incluir/alterar montam; excluir tira pessoa).
+const organogramaModule: ModuleDef = {
+  id: "organograma",
+  label: "Organograma",
+  description: "Quem é quem na empresa, com foto, nome e função",
+  icon: Network,
+  basePath: "/app/organograma",
+  headerLink: "/app/organograma",
+  status: "active",
+  groups: [
+    {
+      label: "Organograma",
+      defaultOpen: true,
+      items: [
+        { label: "Organograma", to: "/app/organograma", icon: Network },
+      ],
+    },
+  ],
+};
+
 const erpModules: ModuleDef[] = [
   licitacoesModule,
   controladoriaOrcModule,
@@ -1177,6 +1229,7 @@ const erpModules: ModuleDef[] = [
   centralServicosModule,
   comiteEticaModule,
   presidenciaModule,
+  organogramaModule,
   treinamentosModule,
   whatsappModule,
   biModule,

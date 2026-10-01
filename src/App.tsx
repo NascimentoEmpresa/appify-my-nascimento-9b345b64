@@ -23,6 +23,7 @@ import PainelExecutivoTV from "./pages/PainelExecutivoTV";
 import Inicio from "./pages/Inicio";
 import Novidades from "./pages/Novidades";
 import Presidencia from "./pages/Presidencia";
+import Organograma from "./pages/organograma/Organograma";
 import ChamadosDesenvolvimentoPresidencia from "./pages/presidencia/ChamadosDesenvolvimento";
 import Pipeline from "./pages/Pipeline";
 import CadastroEdital from "./pages/CadastroEdital";
@@ -165,6 +166,7 @@ import DREGerencialReal from "./pages/contabil/DREGerencialReal";
 import ConciliacaoEventos from "./pages/contabil/ConciliacaoEventos";
 import Contabilidade from "./pages/Contabilidade";
 import Colaboradores from "./pages/rh/Colaboradores";
+import AtivosContratos from "./pages/rh/AtivosContratos";
 import Recrutamento from "./pages/rh/Recrutamento";
 import Patrimonios from "./pages/juridico/Patrimonios";
 import JuridicoNotificacoes from "./pages/juridico/Notificacoes";
@@ -173,6 +175,7 @@ import Processos from "./pages/juridico/Processos";
 import Advertencias from "./pages/juridico/Advertencias";
 import VerificacaoCandidatos from "./pages/juridico/VerificacaoCandidatos";
 import TreinamentosERP from "./pages/treinamentos/TreinamentosERP";
+import TreinamentosSistemasPagina from "./pages/treinamentos/TreinamentosSistemas";
 // Plataforma de Treinamentos (porta do membox, 18/09/2026) — ver a migration
 // 20260930000190_treinamentos_plataforma.sql.
 import TreinamentosDashboard from "./pages/treinamentos/plataforma/Dashboard";
@@ -226,6 +229,7 @@ import PainelGerencialFormularios from "./pages/central-servicos/PainelGerencial
 import FormulariosConfig from "./pages/central-servicos/FormulariosConfig";
 import FormularioPublico from "./pages/publico/FormularioPublico";
 import CampanhaPublica from "./pages/publico/CampanhaPublica";
+import FormulariosEncarregados from "./pages/encarregados/FormulariosEncarregados";
 import Denuncia from "./pages/publico/Denuncia";
 import FornecedorCadastro from "./pages/publico/FornecedorCadastro";
 import PedidoConfirmar from "./pages/publico/PedidoConfirmar";
@@ -441,6 +445,9 @@ const App = () => (
                 usuário externo (sessão anônima) enxerga; ver useModoExterno. */}
             <Route path="encarregados/solicitar-materiais" element={<SolicitarMateriais />} />
             <Route path="encarregados/meus-pedidos" element={<MeusPedidos />} />
+            {/* Nascimento Formulários dos encarregados (mig 276): só os formulários
+                liberados para o setor ENCARREGADOS — responder e ver as próprias respostas. */}
+            <Route path="encarregados/formularios" element={<FormulariosEncarregados />} />
             {/* Chamados de Sistemas para o encarregado. São as MESMAS telas da
                 Central de Serviços — o prop `base` já existia para isto —, só
                 que ancoradas no módulo dele, para não obrigar quem vive em
@@ -523,6 +530,10 @@ const App = () => (
                 liberado porta a porta. Igual ao que Chamados de Sistemas já
                 faz entre Encarregados e Central de Serviços. */}
             <Route path="central-servicos/treinamentos" element={<TreinamentosERP escopo="central_servicos" />} />
+            {/* Treinamentos Sistemas (mig 273): confirmação do treinamento dos
+                chamados que passaram pela Presidência. Liberada a todo logado
+                (ROTAS_SEMPRE_LIBERADAS) — só mostra os treinamentos da pessoa. */}
+            <Route path="central-servicos/treinamentos-sistemas" element={<TreinamentosSistemasPagina />} />
             <Route path="central-servicos/reembolso" element={<SolicitarReembolso />} />
             <Route path="central-servicos/reembolso/aprovacao" element={<AprovacaoReembolso />} />
             <Route path="central-servicos/reembolso/configuracao" element={<ConfiguracaoReembolso />} />
@@ -555,6 +566,7 @@ const App = () => (
             <Route path="painel-executivo" element={<PainelExecutivo />} />
             <Route path="painel-executivo/tv" element={<PainelExecutivoTV />} />
             <Route path="presidencia" element={<Presidencia />} />
+            <Route path="organograma" element={<Organograma />} />
             {/* Presidência › Desenvolvimento Chamados (mig 266): validação do
                 desenvolvimento dos chamados enviados à Presidência. */}
             <Route path="presidencia/chamados-desenvolvimento" element={<ChamadosDesenvolvimentoPresidencia />} />
@@ -745,6 +757,8 @@ const App = () => (
             <Route path="contabil/conciliacao-eventos" element={<ConciliacaoEventos />} />
             {/* RH */}
             <Route path="rh/colaboradores" element={<Colaboradores />} />
+            {/* Ativos/Contratos (mig 279): efetivo da EMPREGADOS × QT. PESSOAS da Planilha de Custo, por posto. */}
+            <Route path="rh/ativos-contratos" element={<AtivosContratos />} />
             {/* RH > Hierarquia removido (jul/2026) — feature descontinuada. A tabela
                 RH_CONTRATO_ENCARREGADO pode ser dropada; a RPC rh_hierarquia_dados
                 CONTINUA (usada por Líderes por setor / Painel Gerencial). */}
@@ -766,6 +780,10 @@ const App = () => (
                 três setores e ninguém troca de módulo para ver o seu. */}
             <Route path="operacional/conferencia-ponto" element={<OperacionalConferenciaPonto />} />
             <Route path="financeiro/conferencia-ponto" element={<FinanceiroConferenciaPonto />} />
+            {/* Dashboard de Pontos (mig 274): a mesma tela do painel do RH, com
+                menu próprio em cada módulo (financeiro_/operacional_dashboard_pontos). */}
+            <Route path="financeiro/dashboard-pontos" element={<ConferenciaPontoPainel />} />
+            <Route path="operacional/dashboard-pontos" element={<ConferenciaPontoPainel />} />
             {/* Operacional — fila de aprovação das demissões pedidas pelos encarregados. */}
             <Route path="operacional/solicitacoes-demissao" element={<OperacionalSolicitacoesDemissao />} />
             {/* A MESMA tela do Recrutamento, recortada na etapa 1 — ver o
