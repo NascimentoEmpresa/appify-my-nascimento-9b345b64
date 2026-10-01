@@ -535,6 +535,15 @@ const rhModule: ModuleDef = {
         { label: "Mudança de Função", to: "/app/rh/troca-funcao", icon: ArrowLeftRight, notif: "troca_funcao" },
       ],
     },
+    {
+      // Ativos/Contratos (30/09/2026, mig 279): efetivo ativo da EMPREGADOS ×
+      // QT. PESSOAS da Planilha de Custo, conferido posto a posto.
+      label: "Contratos",
+      defaultOpen: true,
+      items: [
+        { label: "Ativos/Contratos", to: "/app/rh/ativos-contratos", icon: ClipboardCheck },
+      ],
+    },
   ],
 };
 
@@ -1177,6 +1186,29 @@ const diretoriaModule: ModuleDef = {
   ],
 };
 
+// Organograma (30/09/2026, mig 277): módulo próprio, separado dos demais —
+// quem é quem e quem reporta a quem, montado com os usuários do ERP (foto,
+// nome e função). Liberação: código "organograma" em app_menu (visualizar;
+// incluir/alterar montam; excluir tira pessoa).
+const organogramaModule: ModuleDef = {
+  id: "organograma",
+  label: "Organograma",
+  description: "Quem é quem na empresa, com foto, nome e função",
+  icon: Network,
+  basePath: "/app/organograma",
+  headerLink: "/app/organograma",
+  status: "active",
+  groups: [
+    {
+      label: "Organograma",
+      defaultOpen: true,
+      items: [
+        { label: "Organograma", to: "/app/organograma", icon: Network },
+      ],
+    },
+  ],
+};
+
 const erpModules: ModuleDef[] = [
   licitacoesModule,
   controladoriaOrcModule,
@@ -1196,6 +1228,7 @@ const erpModules: ModuleDef[] = [
   centralServicosModule,
   comiteEticaModule,
   presidenciaModule,
+  organogramaModule,
   treinamentosModule,
   whatsappModule,
   biModule,

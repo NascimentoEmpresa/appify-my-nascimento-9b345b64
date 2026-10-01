@@ -23,6 +23,7 @@ import PainelExecutivoTV from "./pages/PainelExecutivoTV";
 import Inicio from "./pages/Inicio";
 import Novidades from "./pages/Novidades";
 import Presidencia from "./pages/Presidencia";
+import Organograma from "./pages/organograma/Organograma";
 import ChamadosDesenvolvimentoPresidencia from "./pages/presidencia/ChamadosDesenvolvimento";
 import Pipeline from "./pages/Pipeline";
 import CadastroEdital from "./pages/CadastroEdital";
@@ -164,6 +165,7 @@ import DREGerencialReal from "./pages/contabil/DREGerencialReal";
 import ConciliacaoEventos from "./pages/contabil/ConciliacaoEventos";
 import Contabilidade from "./pages/Contabilidade";
 import Colaboradores from "./pages/rh/Colaboradores";
+import AtivosContratos from "./pages/rh/AtivosContratos";
 import Recrutamento from "./pages/rh/Recrutamento";
 import Patrimonios from "./pages/juridico/Patrimonios";
 import JuridicoNotificacoes from "./pages/juridico/Notificacoes";
@@ -563,6 +565,7 @@ const App = () => (
             <Route path="painel-executivo" element={<PainelExecutivo />} />
             <Route path="painel-executivo/tv" element={<PainelExecutivoTV />} />
             <Route path="presidencia" element={<Presidencia />} />
+            <Route path="organograma" element={<Organograma />} />
             {/* Presidência › Desenvolvimento Chamados (mig 266): validação do
                 desenvolvimento dos chamados enviados à Presidência. */}
             <Route path="presidencia/chamados-desenvolvimento" element={<ChamadosDesenvolvimentoPresidencia />} />
@@ -752,6 +755,8 @@ const App = () => (
             <Route path="contabil/conciliacao-eventos" element={<ConciliacaoEventos />} />
             {/* RH */}
             <Route path="rh/colaboradores" element={<Colaboradores />} />
+            {/* Ativos/Contratos (mig 279): efetivo da EMPREGADOS × QT. PESSOAS da Planilha de Custo, por posto. */}
+            <Route path="rh/ativos-contratos" element={<AtivosContratos />} />
             {/* RH > Hierarquia removido (jul/2026) — feature descontinuada. A tabela
                 RH_CONTRATO_ENCARREGADO pode ser dropada; a RPC rh_hierarquia_dados
                 CONTINUA (usada por Líderes por setor / Painel Gerencial). */}
