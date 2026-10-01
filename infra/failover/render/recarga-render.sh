@@ -122,8 +122,21 @@ log "  $(du -h "$DUMP" | cut -f1) em claro"
 # --- 4. carregar ------------------------------------------------------------
 # Mesmo script que roda no PC do Eduardo. As quatro correcoes do restore vivem
 # la, num lugar so.
+# O carregar-replica.sh mora em lugares diferentes conforme a imagem:
+#   imagem do cron (Dockerfile.recarga) ... /app/carregar-replica.sh, e este
+#                                           script fica em /app/render/
+#   imagem unica (Dockerfile.monolito) .... os dois lado a lado em /usr/local/bin/
+# Fixar "../carregar-replica.sh" quebrava na segunda, e so na hora da carga -
+# depois de baixar e descriptografar 110 MB. Medido em 01/10/2026.
 AQUI="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CARREGAR=""
+for tentativa in "$AQUI/carregar-replica.sh" "$AQUI/../carregar-replica.sh" "/usr/local/bin/carregar-replica.sh" "/app/carregar-replica.sh"; do
+  [[ -x "$tentativa" ]] && { CARREGAR="$tentativa"; break; }
+done
+[[ -n "$CARREGAR" ]] || erro "nao achei o carregar-replica.sh (procurei em $AQUI, $AQUI/.., /usr/local/bin e /app)"
+log "usando $CARREGAR"
+
 export LOG_ERR="$TRABALHO/restore.err.log"
-"$AQUI/../carregar-replica.sh" "$DUMP" || erro "a carga falhou - ver o log acima"
+"$CARREGAR" "$DUMP" || erro "a carga falhou - ver o log acima"
 
 log "=== recarga concluida ==="
