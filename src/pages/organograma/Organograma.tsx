@@ -48,7 +48,7 @@ const funcaoDe = (n: Pick<No, "funcao_manual" | "cargo">) => n.funcao_manual || 
 
 const CORES = ["#0f3171", "#1d4ed8", "#0e7490", "#047857", "#7c3aed", "#be123c", "#b45309", "#334155"];
 const corDe = (s: string) => CORES[[...s].reduce((a, c) => a + c.charCodeAt(0), 0) % CORES.length];
-// Cor do card (mig 20260930000279): opcional, pinta faixa do topo, borda e
+// Cor do card (mig 20260930000280): opcional, pinta faixa do topo, borda e
 // um fundo bem claro. Hex de 6 dígitos — o sufixo de 2 dígitos dá a opacidade.
 const PALETA_CARD: { cor: string; nome: string }[] = [
   { cor: "#0f3171", nome: "Azul-marinho" }, { cor: "#2563eb", nome: "Azul" }, { cor: "#0891b2", nome: "Ciano" },

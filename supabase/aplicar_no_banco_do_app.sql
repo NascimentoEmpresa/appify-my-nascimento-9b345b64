@@ -35293,7 +35293,7 @@ NOTIFY pgrst, 'reload schema';
 -- (recriar trn_campanha_publica e trn_campanha_duplicar como na mig 268)
 -- ALTER TABLE public."TRN_CAMPANHA_ITEM" DROP COLUMN IF EXISTS recolhido;
 
--- ===== 20260930000279_organograma_cor_do_card (JA APLICADA 01/10) =====
+-- ===== 20260930000280_organograma_cor_do_card (JA APLICADA 01/10) =====
 -- =========================================================================
 -- Organograma: cor do card (01/10/2026)
 --
