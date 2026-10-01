@@ -35358,3 +35358,329 @@ NOTIFY pgrst, 'reload schema';
 -- ALTER TABLE public."ORGANOGRAMA_NO" DROP CONSTRAINT IF EXISTS organograma_no_cor_hex;
 -- ALTER TABLE public."ORGANOGRAMA_NO" DROP COLUMN IF EXISTS cor;
 -- NOTIFY pgrst, 'reload schema';
+
+-- ===== 20260930000282_postos_do_contrato_volta_para_quem_pede_vaga (JA APLICADA 01/10) =====
+-- =========================================================================
+-- Postos do contrato: volta a liberar para quem pede vaga (01/10/2026)
+--
+-- RELATO (Pablo): encarregado abrindo vaga no módulo Encarregados via
+-- "Contrato sem posto no catálogo" para a POLÍCIA CIVIL RS LIMPEZA -
+-- 066/2026, que tem 151 postos no Catálogo de Suprimentos. "Tem que
+-- aparecer todos os postos desse contrato pra ele selecionar qual quiser, e
+-- isso pra todos os contratos."
+--
+-- CAUSA — regressão: a mig 111 tinha aberto sup_cat_postos_do_contrato para
+-- quem pede vaga (Central, Recrutamento, encarregados). A 238 (quadro de
+-- postos) e a 241 (correção dela) recriaram a função a partir do corpo
+-- antigo (081/096) e a trava voltou a ser só 'sup_catalogo'. Quem não tem o
+-- Catálogo recebe a exceção, o VinculoCatalogoVaga engole o erro e mostra a
+-- lista vazia. Provado em 01/10: a mesma chamada devolve 151 postos para o
+-- Pablo e "Sem permissão para o Catálogo de Materiais." para um encarregado.
+--
+-- O QUE MUDA: só a trava do início (lista da 111 + a vaga administrativa do
+-- Recrutamento). O corpo é o que está no ar (o da 241, com o quadro).
+-- A leitura direta de sup_posto/sup_funcao já foi aberta na mig 116.
+--
+-- Idempotente. Aplicar no banco do app.
+-- =========================================================================
+
+CREATE OR REPLACE FUNCTION public.sup_cat_postos_do_contrato(p_contrato_id uuid)
+ RETURNS TABLE(id uuid, contrato_id uuid, nome text, ativo boolean, aprovado boolean, na_planilha boolean)
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public', 'pg_temp'
+AS $function$
+#variable_conflict use_column
+DECLARE
+  v_empresa   uuid;
+  v_contrato  text;
+  v_nomes     text[];   -- nomes de posto como a planilha escreveu
+  v_norm      text[];   -- os mesmos, normalizados, para casar sem acento/caixa
+  v_quadro    text[];   -- nomes normalizados que o QUADRO do contrato declara
+  v_vivos     text[];   -- planilha + quadro: o que não pode ser desativado
+BEGIN
+  -- Quem pede vaga também escolhe o posto (mig 111). A 238/241 recriaram esta
+  -- função a partir do corpo antigo e a trava voltou a ser só sup_catalogo.
+  IF NOT (public.can_access(auth.uid(), 'sup_catalogo', 'visualizar')
+          OR public.can_access(auth.uid(), 'central_servicos_solicitar_vaga', 'visualizar')
+          OR public.can_access(auth.uid(), 'central_servicos_solicitacoes', 'visualizar')
+          OR public.can_access(auth.uid(), 'recrutamento_gestao', 'visualizar')
+          OR public.can_access(auth.uid(), 'recrutamento_vaga_administrativa', 'visualizar')
+          OR public.can_access(auth.uid(), 'encarregados_solicitar_demissao', 'visualizar')
+          OR public.can_access(auth.uid(), 'encarregados_minhas_solicitacoes', 'visualizar')) THEN
+    RAISE EXCEPTION 'Sem permissão para o Catálogo de Materiais.';
+  END IF;
+
+  SELECT c.empresa_id, c.nome INTO v_empresa, v_contrato
+    FROM public.contratos c WHERE c.id = p_contrato_id;
+  IF v_empresa IS NULL THEN
+    RETURN;
+  END IF;
+
+  SELECT array_agg(p.nome), array_agg(public.sup_norm_nome(p.nome))
+    INTO v_nomes, v_norm
+    FROM (
+      SELECT DISTINCT btrim(pc.posto) AS nome
+        FROM public.planilha_custo pc
+       WHERE btrim(coalesce(pc.posto, '')) <> ''
+         AND (pc.contrato_id = p_contrato_id
+              OR (pc.contrato_id IS NULL
+                  AND pc.empresa_id = v_empresa
+                  AND public.sup_norm_nome(pc.contrato) = public.sup_norm_nome(v_contrato)))
+    ) p;
+
+  v_nomes := coalesce(v_nomes, ARRAY[]::text[]);
+  v_norm  := coalesce(v_norm,  ARRAY[]::text[]);
+
+  SELECT coalesce(array_agg(public.sup_norm_nome(q.posto_nome)), ARRAY[]::text[])
+    INTO v_quadro
+    FROM public."CONTRATO_QUADRO_POSTO" q
+   WHERE q.contrato_id = p_contrato_id AND q.ativo;
+
+  v_vivos := v_norm || v_quadro;
+
+  -- (a) novos
+  INSERT INTO public.sup_posto (empresa_id, contrato_id, nome, ativo, aprovado)
+  SELECT v_empresa, p_contrato_id, n, true, true
+    FROM unnest(v_nomes) AS n
+   WHERE NOT EXISTS (
+     SELECT 1 FROM public.sup_posto sp
+      WHERE sp.contrato_id = p_contrato_id
+        AND public.sup_norm_nome(sp.nome) = public.sup_norm_nome(n))
+  ON CONFLICT (contrato_id, nome) DO NOTHING;
+
+  -- (b) reativados
+  UPDATE public.sup_posto sp
+     SET ativo = true, aprovado = true, updated_at = now()
+   WHERE sp.contrato_id = p_contrato_id
+     AND (sp.ativo IS FALSE OR sp.aprovado IS FALSE)
+     AND public.sup_norm_nome(sp.nome) = ANY (v_vivos);
+
+  -- (c) saiu da planilha E não está no quadro E não tem função -- sai da lista
+  IF array_length(v_vivos, 1) > 0 THEN
+    UPDATE public.sup_posto sp
+       SET ativo = false, updated_at = now()
+     WHERE sp.contrato_id = p_contrato_id
+       AND sp.ativo
+       AND NOT (public.sup_norm_nome(sp.nome) = ANY (v_vivos))
+       AND NOT EXISTS (
+         SELECT 1 FROM public.sup_funcao f
+          WHERE f.posto_id = sp.id AND f.ativo);
+  END IF;
+
+  RETURN QUERY
+  SELECT sp.id, sp.contrato_id, sp.nome, sp.ativo, sp.aprovado,
+         (public.sup_norm_nome(sp.nome) = ANY (v_norm)) AS na_planilha
+    FROM public.sup_posto sp
+   WHERE sp.contrato_id = p_contrato_id
+     AND sp.ativo
+   ORDER BY sp.nome;
+END $function$;
+
+REVOKE ALL ON FUNCTION public.sup_cat_postos_do_contrato(uuid) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.sup_cat_postos_do_contrato(uuid) TO authenticated;
+
+NOTIFY pgrst, 'reload schema';
+
+-- ROLLBACK
+-- Reexecutar o CREATE OR REPLACE de sup_cat_postos_do_contrato da
+-- 20260930000241_contrato_quadro_postos_corrige_cast.sql (trava só sup_catalogo)
+-- e NOTIFY pgrst, 'reload schema';
+
+-- ===== 20260930000283_ponto_chaves_por_modulo_nomes_e_contratos (JA APLICADA 01/10) =====
+-- =========================================================================
+-- Conferência de Ponto: chaves no módulo certo, nomes sem "�" e leitura
+-- de CONTRATOS para as telas de ponto (01/10/2026)
+--
+-- RELATO (Pablo):
+--   1. Em Administração › Acesso por Usuário, as quatro chaves do ponto
+--      aparecem todas no módulo RH — inclusive "marcar como pago", que é do
+--      Financeiro, e "aprovar contratos", que é do Operacional.
+--   2. Os nomes aparecem com "�" ("Ponto � marcar como pago",
+--      "Confer�ncia de Ponto", "Mudan�a de Fun��o � Aprova��o").
+--   3. A Calita (Financeiro) tem a tela e a chave de pagar, mas a Conferência
+--      de Ponto do Financeiro mostra "Nenhum contrato ativo no cadastro" e as
+--      barras ficam 0% (0/0).
+--
+-- CAUSAS
+--   1. As chaves nasceram penduradas no módulo rh (mig da Conferência de
+--      Ponto). O acesso não depende do módulo da chave (can_access olha só o
+--      código), então mover é só arrumar onde o admin enxerga.
+--   2. O texto foi gravado com o acento já perdido — o "�" (U+FFFD) está no
+--      banco, não é a tela. Os nomes abaixo vão com escape Unicode (U&'...')
+--      justamente para não depender da codificação de quem aplica.
+--   3. O painel lê CONTRATOS (cadastro, fonte única) e a policy contratos_gate
+--      não tinha nenhuma tela de ponto: quem só tem o ponto (caso do
+--      Financeiro) recebia a lista vazia, sem erro.
+--
+-- O QUE FICA, POR MÓDULO (pedido do Pablo)
+--   Operacional: Conferência de Ponto · Dashboard de Pontos · Ponto — aprovar contratos
+--   RH:          Conferência de Ponto · Dashboard de Pontos · Ponto — confirmar a aprovação
+--                · Ponto — informar valor e enviar ao financeiro
+--   Financeiro:  Conferência de Ponto · Dashboard de Pontos · Ponto — marcar como pago
+--   (os três Dashboards de Pontos já existiam, um por módulo.)
+--
+-- Idempotente. Aplicar no banco do app. ROLLBACK no fim.
+-- =========================================================================
+
+-- ── 1. Nomes ─────────────────────────────────────────────────────────────
+UPDATE public.app_menu SET nome = U&'Confer\00EAncia de Ponto', updated_at = now()
+ WHERE codigo IN ('rh_conferencia_ponto', 'operacional_conferencia_ponto', 'financeiro_conferencia_ponto');
+UPDATE public.app_menu SET nome = U&'Ponto \2014 aprovar contratos', updated_at = now()
+ WHERE codigo = 'ponto_aprovar_contrato';
+UPDATE public.app_menu SET nome = U&'Ponto \2014 confirmar a aprova\00E7\00E3o', updated_at = now()
+ WHERE codigo = 'ponto_confirmar_aprovacao';
+UPDATE public.app_menu SET nome = U&'Ponto \2014 informar valor e enviar ao financeiro', updated_at = now()
+ WHERE codigo = 'ponto_informar_valor';
+UPDATE public.app_menu SET nome = U&'Ponto \2014 marcar como pago', updated_at = now()
+ WHERE codigo = 'ponto_marcar_pago';
+UPDATE public.app_menu SET nome = U&'Mudan\00E7a de Fun\00E7\00E3o \2014 Aprova\00E7\00E3o', updated_at = now()
+ WHERE codigo = 'escritorio_troca_funcao';
+
+-- ── 2. Cada chave no módulo de quem a usa ────────────────────────────────
+UPDATE public.app_menu m
+   SET modulo_id = mo.id, ordem = 34, updated_at = now()
+  FROM public.app_modulo mo
+ WHERE mo.codigo = 'operacional' AND m.codigo = 'ponto_aprovar_contrato';
+
+UPDATE public.app_menu m
+   SET modulo_id = mo.id, ordem = 173, updated_at = now()
+  FROM public.app_modulo mo
+ WHERE mo.codigo = 'financeiro' AND m.codigo = 'ponto_marcar_pago';
+
+UPDATE public.app_menu SET ordem = 68, updated_at = now() WHERE codigo = 'ponto_confirmar_aprovacao';
+UPDATE public.app_menu SET ordem = 69, updated_at = now() WHERE codigo = 'ponto_informar_valor';
+
+-- ── 3. CONTRATOS: as telas de ponto também leem o cadastro ───────────────
+DROP POLICY IF EXISTS contratos_gate ON public."CONTRATOS";
+CREATE POLICY contratos_gate ON public."CONTRATOS" FOR SELECT TO authenticated
+  USING (
+    has_screen_access(auth.uid(), 'recrutamento_gestao', 'visualizar'::app_acao)
+    OR has_screen_access(auth.uid(), 'colaboradores', 'visualizar'::app_acao)
+    OR has_screen_access(auth.uid(), 'encarregados_minhas_solicitacoes', 'visualizar'::app_acao)
+    OR has_screen_access(auth.uid(), 'central_servicos_solicitacoes', 'visualizar'::app_acao)
+    OR has_screen_access(auth.uid(), 'advertencias', 'visualizar'::app_acao)
+    OR has_screen_access(auth.uid(), 'central_servicos_solicitar_vaga', 'visualizar'::app_acao)
+    -- Conferência de Ponto e Dashboard de Pontos, nos três módulos
+    OR has_screen_access(auth.uid(), 'rh_conferencia_ponto', 'visualizar'::app_acao)
+    OR has_screen_access(auth.uid(), 'operacional_conferencia_ponto', 'visualizar'::app_acao)
+    OR has_screen_access(auth.uid(), 'financeiro_conferencia_ponto', 'visualizar'::app_acao)
+    OR has_screen_access(auth.uid(), 'rh_conferencia_ponto_painel', 'visualizar'::app_acao)
+    OR has_screen_access(auth.uid(), 'operacional_dashboard_pontos', 'visualizar'::app_acao)
+    OR has_screen_access(auth.uid(), 'financeiro_dashboard_pontos', 'visualizar'::app_acao)
+  );
+
+NOTIFY pgrst, 'reload schema';
+
+-- =========================================================================
+-- ROLLBACK
+-- =========================================================================
+-- UPDATE public.app_menu m SET modulo_id = mo.id FROM public.app_modulo mo
+--  WHERE mo.codigo = 'rh' AND m.codigo IN ('ponto_aprovar_contrato', 'ponto_marcar_pago');
+-- DROP POLICY IF EXISTS contratos_gate ON public."CONTRATOS";
+-- CREATE POLICY contratos_gate ON public."CONTRATOS" FOR SELECT TO authenticated
+--   USING (has_screen_access(auth.uid(), 'recrutamento_gestao', 'visualizar'::app_acao)
+--       OR has_screen_access(auth.uid(), 'colaboradores', 'visualizar'::app_acao)
+--       OR has_screen_access(auth.uid(), 'encarregados_minhas_solicitacoes', 'visualizar'::app_acao)
+--       OR has_screen_access(auth.uid(), 'central_servicos_solicitacoes', 'visualizar'::app_acao)
+--       OR has_screen_access(auth.uid(), 'advertencias', 'visualizar'::app_acao)
+--       OR has_screen_access(auth.uid(), 'central_servicos_solicitar_vaga', 'visualizar'::app_acao));
+-- NOTIFY pgrst, 'reload schema';
+
+-- ===== 20260930000284_conferencia_ponto_etiqueta (JA APLICADA 01/10) =====
+-- =========================================================================
+-- Conferência de Ponto: etiqueta "Conferindo" por contrato (01/10/2026)
+--
+-- PEDIDO (Pablo): "um botão que o usuário clique em CONFERINDO, só pra
+-- ficar com um status ali tipo uma etiqueta que o usuário está conferindo;
+-- ao clicar no card da etiqueta aparecem as opções e observação".
+--
+-- MODELO
+--   Tabela à parte, uma etiqueta por contrato no mês — a mesma chave da
+--   SISTEMA_CONFERENCIA_PONTO (mes_referencia, contrato_empresa,
+--   contrato_filial). Não mexe no status do fluxo e não cria linha lá: o
+--   contrato sem linha (ninguém agiu ainda) também pode ser etiquetado.
+--   Quem marcou fica gravado (nome + id); qualquer um das três telas pode
+--   trocar ou tirar — é recado entre a equipe, não trava.
+--   Quando alguém AGE no contrato (aprova, confirma, paga, devolve), a tela
+--   tira a etiqueta: a conferência daquela etapa acabou.
+--
+-- ACESSO: quem abre qualquer Conferência de Ponto (RH, Operacional,
+-- Financeiro) lê e escreve.
+--
+-- Realtime ligado: a etiqueta aparece para os outros sem recarregar.
+--
+-- Idempotente. Aplicar no banco do app. ROLLBACK no fim.
+-- =========================================================================
+
+CREATE TABLE IF NOT EXISTS public."SISTEMA_CONFERENCIA_PONTO_ETIQUETA" (
+  id               bigint GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+  mes_referencia   text   NOT NULL,
+  contrato_empresa bigint NOT NULL,
+  contrato_filial  bigint NOT NULL,
+  tipo             text   NOT NULL DEFAULT 'conferindo',  -- código; o rótulo é da tela
+  observacao       text,
+  modulo           text,
+  por_id           uuid   DEFAULT auth.uid(),
+  por_nome         text,
+  created_at       timestamptz NOT NULL DEFAULT now(),
+  updated_at       timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT scp_etiqueta_unica UNIQUE (mes_referencia, contrato_empresa, contrato_filial),
+  CONSTRAINT scp_etiqueta_tipo CHECK (tipo IN ('conferindo', 'aguardando_documentos', 'divergencia', 'conferido')),
+  CONSTRAINT scp_etiqueta_modulo CHECK (modulo IS NULL OR modulo IN ('operacional', 'rh', 'financeiro'))
+);
+CREATE INDEX IF NOT EXISTS idx_scp_etiqueta_mes ON public."SISTEMA_CONFERENCIA_PONTO_ETIQUETA"(mes_referencia);
+
+DROP TRIGGER IF EXISTS trg_scp_etiqueta_updated_at ON public."SISTEMA_CONFERENCIA_PONTO_ETIQUETA";
+CREATE TRIGGER trg_scp_etiqueta_updated_at
+  BEFORE UPDATE ON public."SISTEMA_CONFERENCIA_PONTO_ETIQUETA"
+  FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+-- Quem grava é sempre quem está logado (a tela manda o nome, o banco o id).
+CREATE OR REPLACE FUNCTION public.scp_etiqueta_autor()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
+BEGIN
+  NEW.por_id := auth.uid();
+  IF NEW.por_nome IS NULL OR btrim(NEW.por_nome) = '' THEN
+    SELECT coalesce(display_name, email) INTO NEW.por_nome FROM public.profiles WHERE id = auth.uid();
+  END IF;
+  RETURN NEW;
+END $$;
+DROP TRIGGER IF EXISTS trg_scp_etiqueta_autor ON public."SISTEMA_CONFERENCIA_PONTO_ETIQUETA";
+CREATE TRIGGER trg_scp_etiqueta_autor
+  BEFORE INSERT OR UPDATE ON public."SISTEMA_CONFERENCIA_PONTO_ETIQUETA"
+  FOR EACH ROW EXECUTE FUNCTION public.scp_etiqueta_autor();
+
+ALTER TABLE public."SISTEMA_CONFERENCIA_PONTO_ETIQUETA" ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON public."SISTEMA_CONFERENCIA_PONTO_ETIQUETA" FROM PUBLIC, anon;
+GRANT SELECT, INSERT, UPDATE, DELETE ON public."SISTEMA_CONFERENCIA_PONTO_ETIQUETA" TO authenticated;
+
+DROP POLICY IF EXISTS scp_etiqueta_gate ON public."SISTEMA_CONFERENCIA_PONTO_ETIQUETA";
+CREATE POLICY scp_etiqueta_gate ON public."SISTEMA_CONFERENCIA_PONTO_ETIQUETA" FOR ALL TO authenticated
+  USING (
+    (select public.can_access(auth.uid(), 'rh_conferencia_ponto', 'visualizar'::app_acao))
+    OR (select public.can_access(auth.uid(), 'operacional_conferencia_ponto', 'visualizar'::app_acao))
+    OR (select public.can_access(auth.uid(), 'financeiro_conferencia_ponto', 'visualizar'::app_acao))
+  )
+  WITH CHECK (
+    (select public.can_access(auth.uid(), 'rh_conferencia_ponto', 'visualizar'::app_acao))
+    OR (select public.can_access(auth.uid(), 'operacional_conferencia_ponto', 'visualizar'::app_acao))
+    OR (select public.can_access(auth.uid(), 'financeiro_conferencia_ponto', 'visualizar'::app_acao))
+  );
+
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_publication_tables
+                  WHERE pubname = 'supabase_realtime' AND tablename = 'SISTEMA_CONFERENCIA_PONTO_ETIQUETA') THEN
+    ALTER PUBLICATION supabase_realtime ADD TABLE public."SISTEMA_CONFERENCIA_PONTO_ETIQUETA";
+  END IF;
+END $$;
+
+NOTIFY pgrst, 'reload schema';
+
+-- =========================================================================
+-- ROLLBACK
+-- =========================================================================
+-- ALTER PUBLICATION supabase_realtime DROP TABLE public."SISTEMA_CONFERENCIA_PONTO_ETIQUETA";
+-- DROP TABLE IF EXISTS public."SISTEMA_CONFERENCIA_PONTO_ETIQUETA";
+-- DROP FUNCTION IF EXISTS public.scp_etiqueta_autor();
+-- NOTIFY pgrst, 'reload schema';
