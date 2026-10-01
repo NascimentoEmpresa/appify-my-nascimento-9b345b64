@@ -13,7 +13,7 @@ import { useEmpresasGrupo } from "@/hooks/useMaloteDespesa";
 import { useContratosERP, ContratoERP } from "@/hooks/useContratosERP";
 import { usePlanilhaCustos, resolverLinhasPorPeriodo, somarCamposEmLinhas, fimDoMes } from "@/hooks/usePlanilhaCusto";
 import { useNfsEmissao } from "@/hooks/useNfEmissao";
-import { fmtMoney, situacaoEspecial } from "@/pages/financeiro/nf-emissao/shared";
+import { fmtMoney, foraDoRelatorio, naoContabilizaKpi } from "@/pages/financeiro/nf-emissao/shared";
 
 // SIS-2026-0562 (Iury): "Base de Contratos Vigentes × Relatório de
 // Serviços", igual ao protótipo em anexo (Dashboard_Controle_Faturamento_
@@ -130,10 +130,12 @@ export default function ControleFaturamento() {
   const nfAggPorContratoCompetencia = useMemo(() => {
     const mapa = new Map<string, { execRel: number; contabil: number; liquido: number; recebido: number; cv: number; count: number }>();
     // Achado real (Ruan): nota Cancelada/Substituída ainda carrega valores
-    // da planilha legada e, sem este filtro, contava como "lançamento"
-    // (célula verde) mesmo sendo uma nota que nunca vai receber pagamento.
+    // da planilha legada, e nota em Rascunho/Enviada (ainda não validada
+    // pelo Financeiro) ou Cancelada pelo próprio app não deveriam contar
+    // como "lançamento" (célula verde) — processo real só considera lançada
+    // a nota já validada (concluida).
     for (const n of nfs) {
-      if (n.tipo_nota !== "N" || situacaoEspecial(n)) continue;
+      if (n.tipo_nota !== "N" || foraDoRelatorio(n) || naoContabilizaKpi(n)) continue;
       const chave = `${n.contrato_id}|${n.competencia}`;
       const atual = mapa.get(chave) ?? { execRel: 0, contabil: 0, liquido: 0, recebido: 0, cv: 0, count: 0 };
       atual.execRel += n.valor_contrato_exec_total;
@@ -210,7 +212,7 @@ export default function ControleFaturamento() {
   const evolucao = useMemo(() => {
     const porComp = new Map<string, { comp: string; contabil: number; liquido: number; recebido: number }>();
     for (const n of nfs) {
-      if (n.tipo_nota !== "N" || situacaoEspecial(n)) continue;
+      if (n.tipo_nota !== "N" || foraDoRelatorio(n) || naoContabilizaKpi(n)) continue;
       if (filtroEmpresa && n.empresa_id !== filtroEmpresa) continue;
       const atual = porComp.get(n.competencia) ?? { comp: n.competencia, contabil: 0, liquido: 0, recebido: 0 };
       atual.contabil += n.vlr_bruto_total;

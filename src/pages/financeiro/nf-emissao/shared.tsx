@@ -53,14 +53,39 @@ export function situacaoEspecial(n: {
 export type StatusNota = "pendente" | "pago" | "substituida" | "cancelada";
 
 export function statusDaNota(n: {
+  status?: string;
   situacao_site_pmt?: string | null;
   situacao_dominio?: string | null;
   data_pagamento?: string | null;
 }): StatusNota {
   const esp = situacaoEspecial(n);
-  if (esp === "CANCELADA") return "cancelada";
+  // "cancelada" direto pelo app (sem passar pela planilha legada) conta
+  // junto com a legada — mesmo badge/filtro "Cancelada" nos relatórios.
+  if (esp === "CANCELADA" || n.status === "cancelada") return "cancelada";
   if (esp === "SUBSTITUIDA") return "substituida";
   return n.data_pagamento ? "pago" : "pendente";
+}
+
+// Achado real (Ruan/Financeiro, 01/10/2026): processo real é rascunho ->
+// enviada pro Financeiro -> Financeiro valida (concluida) ou rejeita
+// (cancelada). Nota rascunho/enviada (ainda não validada) não deveria
+// aparecer no Relatório de Serviços/Dashboard/Controle de Faturamento —
+// nenhum desses lugares checava a coluna `status`.
+export function foraDoRelatorio(n: { status?: string }): boolean {
+  return n.status === "rascunho" || n.status === "enviada";
+}
+
+// Nota Cancelada/Substituída (legada ou cancelada direto pelo app) pode
+// continuar aparecendo no Relatório de Serviços (pedido do usuário — ela é
+// um registro válido, só não vai gerar pagamento), mas não deve contar nos
+// KPIs/somatórios de dinheiro.
+export function naoContabilizaKpi(n: {
+  status?: string;
+  situacao_site_pmt?: string | null;
+  situacao_dominio?: string | null;
+}): boolean {
+  const s = statusDaNota(n);
+  return s === "cancelada" || s === "substituida";
 }
 
 // SIS-2026-0323 (mockup do Ruan/Discord): descontos aplicados DEPOIS da

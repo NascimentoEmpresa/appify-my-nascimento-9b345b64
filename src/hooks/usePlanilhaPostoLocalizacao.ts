@@ -101,6 +101,28 @@ export function usePostoLocalizacaoCoords() {
   });
 }
 
+// SIS-2026-0581: "Atualizar vigência" (PlanilhaCusto.tsx) clona a linha do
+// posto pra uma data_vigencia nova via INSERT — a divisão por local não
+// seguia pro registro novo (nascia zerada), mesmo a cabeça por local não
+// mudando no reajuste (só o valor). Chamado depois do INSERT da nova
+// vigência, com o id da linha antiga e o id da linha nova.
+export async function copiarLocalizacoesPosto(origemPlanilhaCustoId: string, destinoPlanilhaCustoId: string) {
+  const { data: antigas, error: eSelect } = await (supabase as any)
+    .from("planilha_posto_localizacao")
+    .select("*")
+    .eq("planilha_custo_id", origemPlanilhaCustoId);
+  if (eSelect) throw eSelect;
+  if (!antigas || antigas.length === 0) return 0;
+
+  const payload = antigas.map((l: PostoLocalizacao) => {
+    const { id, created_at, updated_at, planilha_custo_id, ...resto } = l;
+    return { ...resto, planilha_custo_id: destinoPlanilhaCustoId };
+  });
+  const { error: eInsert } = await (supabase as any).from("planilha_posto_localizacao").insert(payload);
+  if (eInsert) throw eInsert;
+  return payload.length;
+}
+
 export function usePostoLocalizacaoDelete(planilhaCustoId: string) {
   const qc = useQueryClient();
   return useMutation({
