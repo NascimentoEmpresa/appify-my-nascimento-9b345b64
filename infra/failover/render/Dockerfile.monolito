@@ -1,0 +1,110 @@
+# ============================================================================
+#  A replica inteira numa imagem só  (para a Render)
+# ============================================================================
+#
+#  POR QUE UMA IMAGEM EM VEZ DE SEIS SERVICOS
+#  O docker-compose tem seis containers porque isso e bom em PRODUCAO: cada
+#  peca reinicia, escala e falha sozinha. Mas a replica nao atende ninguem ate
+#  a Supabase cair. Isolamento que ninguem usa, cobrado por mes, e desperdicio:
+#  na Render seis servicos custam ~US$ 64/mes e este aqui custa ~US$ 27.
+#
+#  E ha um ganho que vale mais que o dinheiro: hoje o que se testa no PC
+#  (compose) e PARECIDO com o que roda na Render, nao igual. Com uma imagem so,
+#  os dois passam a ser o MESMO artefato - o que foi testado e o que sobe.
+#
+#  O QUE SE PERDE, honestamente: um processo que morre e reiniciado pelo
+#  supervisor, mas um problema grave derruba tudo junto. Para um standby frio,
+#  e troca aceitavel. Se um dia a replica virar producao de verdade, vale
+#  voltar para servicos separados.
+#
+#  POR QUE POSTGRES PURO E NAO supabase/postgres
+#  O ERP nao precisa de nada exclusivo da imagem deles: as quatro extensoes que
+#  o dump exige (pg_trgm, btree_gist, unaccent, pgcrypto) vem no contrib
+#  padrao - conferido nesta base. E a imagem da Supabase traz a extensao
+#  supautils, que ATRAPALHA aqui: ela marca authenticator e os *_admin como
+#  "reserved roles", e depois do boot nem o usuario postgres troca a senha
+#  deles. Com Postgres puro criamos os papeis nos mesmos, com senha, e o
+#  problema deixa de existir.
+#
+#  POR QUE NGINX E NAO KONG
+#  O Kong e OpenResty inteiro - pesado para embutir. O trabalho dele aqui e
+#  rotear quatro caminhos e exigir o header apikey. O nginx faz os dois em 40
+#  linhas, e o comportamento que importa (sem apikey -> 401) e reproduzido.
+# ============================================================================
+
+FROM postgres:17-bookworm
+
+# --- os binarios das imagens oficiais ---------------------------------------
+# Conferido em 01/10/2026 que os tres rodam nesta base:
+#   postgrest     -> PostgREST 12.2.3
+#   auth (GoTrue) -> binario ESTATICO ("not a dynamic executable"), roda em
+#                    qualquer libc; veio de uma imagem Alpine e funciona aqui
+#   edge-runtime  -> edge-runtime 0.1.0
+COPY --from=postgrest/postgrest:v12.2.3   /bin/postgrest              /usr/local/bin/postgrest
+COPY --from=supabase/gotrue:v2.158.1      /usr/local/bin/auth         /usr/local/bin/gotrue
+COPY --from=supabase/edge-runtime:v1.77.2 /usr/local/bin/edge-runtime /usr/local/bin/edge-runtime
+
+# --- o Storage e aplicacao Node, nao binario --------------------------------
+# A imagem dele e Alpine e traz 2 modulos nativos (fs-xattr) compilados para
+# musl, que NAO carregam aqui. Entao instalamos o Node e recompilamos so esse
+# modulo. Se a recompilacao falhar, o storage e desativado no supervisord e o
+# resto da replica continua de pe - anexos ficariam indisponiveis no failover,
+# e isso esta dito no README.
+COPY --from=supabase/storage-api:v1.11.13 /app /opt/storage
+
+RUN set -eux; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends \
+        nginx supervisor ca-certificates curl gnupg jq unzip procps; \
+    # Node 20, a mesma major da imagem do storage (v20.18.0)
+    mkdir -p /etc/apt/keyrings; \
+    curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
+      | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg; \
+    echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_20.x nodistro main" \
+      > /etc/apt/sources.list.d/nodesource.list; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends nodejs; \
+    # Ferramentas so para recompilar o modulo nativo.
+    # ATENCAO: python3 NAO sai depois. O supervisor e escrito em Python, e
+    # remove-lo levava junto o interpretador - o container subia, preparava o
+    # banco e morria em "/usr/bin/supervisord: No such file or directory".
+    # Medido em 01/10/2026. Saem so o compilador e o make, que ninguem mais usa.
+    apt-get install -y --no-install-recommends python3 make g++; \
+    ( cd /opt/storage && npm rebuild fs-xattr --build-from-source ) \
+      && echo "fs-xattr recompilado" > /opt/storage/.nativo-ok \
+      || echo "fs-xattr FALHOU - storage sera desativado no boot" > /opt/storage/.nativo-falhou; \
+    apt-get purge -y make g++; \
+    apt-get autoremove -y; \
+    rm -rf /var/lib/apt/lists/* /root/.npm
+
+# --- configuracao -----------------------------------------------------------
+COPY infra/failover/render/monolito/nginx.conf      /etc/nginx/nginx.conf
+COPY infra/failover/render/monolito/cabecalhos.conf /etc/nginx/cabecalhos.conf
+COPY infra/failover/render/monolito/supervisord.conf /etc/supervisor/supervisord.conf
+COPY infra/failover/render/monolito/iniciar.sh      /usr/local/bin/iniciar.sh
+COPY infra/failover/render/monolito/esperar-banco.sh /usr/local/bin/esperar-banco.sh
+COPY infra/failover/render/monolito/recarga-diaria.sh /usr/local/bin/recarga-diaria.sh
+COPY infra/failover/render/monolito/preparar-banco.sh /usr/local/bin/preparar-banco.sh
+COPY infra/failover/render/monolito/bootstrap.sql     /usr/local/share/bootstrap.sql
+COPY infra/failover/carregar-replica.sh             /usr/local/bin/carregar-replica.sh
+COPY infra/failover/render/recarga-render.sh        /usr/local/bin/recarga-render.sh
+
+# As 59 Edge Functions e o config.toml de onde o roteador tira quais sao
+# publicas (14) e quais exigem JWT (45).
+COPY supabase/functions            /home/deno/functions
+COPY supabase/config.toml          /home/deno/config.toml
+COPY infra/failover/functions-main /home/deno/main
+
+RUN set -eux; \
+    # vindos do Windows, podem chegar com CRLF - o shell falharia com
+    # "bad interpreter" (ver repo_arquivos_crlf_misturado)
+    sed -i 's/\r$//' /usr/local/bin/*.sh; \
+    chmod +x /usr/local/bin/*.sh; \
+    mkdir -p /var/lib/storage /var/log/supervisor /run/postgresql; \
+    chown -R postgres:postgres /var/lib/storage /run/postgresql
+
+# O unico porto publico. Tudo o mais fala por 127.0.0.1 dentro do container.
+EXPOSE 8000
+ENV PGDATA=/var/lib/postgresql/data/pgdata
+
+CMD ["/usr/local/bin/iniciar.sh"]
