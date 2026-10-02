@@ -6,6 +6,7 @@ import { DemoBanner } from "./DemoBanner";
 import { ChamadoFab } from "@/components/chamados/ChamadoFab";
 import { RouteGuard } from "@/components/auth/RouteGuard";
 import { ErroDeTela } from "./ErroDeTela";
+import { StatusDevTela } from "./StatusDevTela";
 import { VinculoGate } from "@/components/auth/VinculoEmpregado";
 import { VinculoDiscordGate } from "@/components/auth/VinculoDiscordGate";
 import { GateNotificacoes } from "@/components/notificacoes/GateNotificacoes";
@@ -62,6 +63,15 @@ export function AppShell() {
               cabeçalho de ErroDeTela.tsx). A `key` no pathname remonta o
               boundary a cada navegação, então trocar de tela já limpa o
               estado de erro; sem ela, o usuário ficaria preso na mensagem. */}
+          {/* Card do status de desenvolvimento da tela (Checklist de Módulos,
+              02/10/2026): canto superior direito de TODA rota do catálogo.
+              Fica no fluxo, acima da tela, para nunca cobrir os botões dela;
+              a margem negativa encosta o card na faixa do padding. */}
+          {!externo && location.pathname !== "/app/painel-executivo/tv" && (
+            <div className="-mt-2 mb-2 flex justify-end sm:-mt-3 lg:-mt-5">
+              <StatusDevTela />
+            </div>
+          )}
           <ErroDeTela key={location.pathname} rota={location.pathname}>
           <RouteGuard>
             {/* A `key` no pathname é o que faz a animação TOCAR A CADA

@@ -63,7 +63,10 @@ export function ItemDialog({ alvo, usuarios, onFechar }: { alvo: AlvoItem | null
 
   return (
     <Dialog open onOpenChange={(v) => !v && !salvar.isPending && onFechar()}>
-      <DialogContent className="z-[1100] max-h-[90vh] max-w-2xl overflow-y-auto">
+      {/* Sem z-index próprio: o z-[1100] era para ficar acima da gaveta
+          (ModuloSheet, removida em 02/10/2026) e jogava a lista do
+          Responsável/Usuário-chave (Popover, z-50) para TRÁS da janela. */}
+      <DialogContent className="max-h-[90vh] max-w-2xl overflow-y-auto">
         <DialogHeader>
           <DialogTitle>{ehModulo ? `Status do módulo · ${alvo.moduloNome}` : alvo.telaNome}</DialogTitle>
           <DialogDescription>
