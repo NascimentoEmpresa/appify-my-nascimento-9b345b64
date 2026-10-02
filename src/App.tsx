@@ -218,6 +218,7 @@ import ControleCa from "./pages/sst/ControleCa";
 import NovasAdmissoes from "./pages/rh/NovasAdmissoes";
 import BancoTalentos from "./pages/rh/BancoTalentos";
 import AcompanharColaboradores from "./pages/rh/AcompanharColaboradores";
+import DashboardRecrutamento from "./pages/rh/DashboardRecrutamento";
 import RecrutamentoDashboard from "./pages/rh/RecrutamentoDashboard";
 import OrientacoesJuridicas from "./pages/central-servicos/OrientacoesJuridicas";
 import Formularios from "./pages/central-servicos/Formularios";
@@ -766,6 +767,8 @@ const App = () => (
             <Route path="rh/banco-talentos" element={<BancoTalentos />} />
             {/* Check-in dos recém-admitidos (25/09/2026, mig 245) — o Excel CONTRATOS_VIGENTES do RH. */}
             <Route path="rh/recrutamento/acompanhar-colaboradores" element={<AcompanharColaboradores />} />
+            {/* Dashboard Recrutamento (02/10/2026, mig 288) — o painel completo; o Dashboard antigo segue em rh/recrutamento-dashboard. */}
+            <Route path="rh/recrutamento/dashboard" element={<DashboardRecrutamento />} />
             <Route path="rh/recrutamento/acompanhar-experiencia" element={<Navigate to="/app/rh/recrutamento/acompanhar-colaboradores?situacao=experiencia" replace />} />
             <Route path="rh/recrutamento-dashboard" element={<RecrutamentoDashboard />} />
             <Route path="rh/ferias" element={<Ferias />} />
