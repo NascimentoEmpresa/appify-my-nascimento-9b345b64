@@ -286,12 +286,23 @@ else
              'get_user_empresa','has_role','is_admin'
            )
       loop
-        execute format('revoke execute on function %s from authenticated, anon', f.assinatura);
+        -- PUBLIC entra aqui, e e o detalhe que fez a primeira versao nao
+        -- funcionar: o Postgres concede EXECUTE a PUBLIC em TODA funcao
+        -- criada, por padrao. Revogar so de authenticated nao tira nada,
+        -- porque o privilegio continua vindo de PUBLIC. Com tabela isso nao
+        -- acontece - dai o REVOKE das tabelas ter funcionado de primeira e
+        -- este nao. Conferido em 02/10/2026: bdi_criar_versao executou e
+        -- chegou na regra de negocio (LICITACAO_NAO_ENCONTRADA) depois da
+        -- revogacao que eu julgava aplicada.
+        execute format('revoke execute on function %s from public, authenticated, anon', f.assinatura);
         n := n + 1;
       end loop;
       raise notice 'rpc de escrita revogadas: %', n;
     end
-  \$BLOCO\$;" >/dev/null
+  \$BLOCO\$;" 2>&1 | grep -E 'rpc de escrita revogadas' | sed 's/^NOTICE:  /  /'
+  # O NOTICE aparece no log de proposito: a versao anterior mandava tudo para
+  # /dev/null e o bloco falhou em silencio - so descobri porque testei chamando
+  # uma RPC de escrita, que executou normalmente.
   sql_ignora "notify pgrst, 'reload schema';" >/dev/null
 fi
 
