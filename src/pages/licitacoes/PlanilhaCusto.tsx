@@ -1714,7 +1714,13 @@ function ContratoCombobox({
   contratoId: string | null;
   onPick: (c: ContratoERP | null) => void;
 }) {
-  const { data: contratos = [] } = useContratosERP();
+  // Lista os contratos de TODAS as empresas: um contrato recém-criado ao ganhar
+  // uma licitação (migration 20261002000001) pode ser de outra empresa que não a
+  // "ativa", e a Licitação precisa dele aqui pra definir os postos. A empresa do
+  // posto já é resolvida a partir do contrato escolhido (ver FormModal).
+  const { data: contratos = [] } = useContratosERP({ todasEmpresas: true });
+  const { empresas } = useEmpresaAtiva();
+  const siglaEmpresa = (id: string) => empresas.find((e) => e.id === id)?.sigla;
   const [aberto, setAberto] = useState(false);
   const opcoes = [...contratos].sort(
     (a, b) =>
@@ -1752,7 +1758,9 @@ function ContratoCombobox({
                   <span className="flex min-w-0 flex-1 flex-col">
                     <span className="truncate">{c.nome}</span>
                     <span className="text-xs text-muted-foreground">
-                      {c.cliente}{c.status !== "ativo" ? ` · ${c.status}` : ""}
+                      {c.cliente}
+                      {siglaEmpresa(c.empresa_id) ? ` · ${siglaEmpresa(c.empresa_id)}` : ""}
+                      {c.status !== "ativo" ? ` · ${c.status}` : ""}
                     </span>
                   </span>
                 </CommandItem>
@@ -1771,7 +1779,7 @@ function ClienteCombobox({
   cliente: string;
   onPick: (nome: string) => void;
 }) {
-  const { data: contratos = [] } = useContratosERP();
+  const { data: contratos = [] } = useContratosERP({ todasEmpresas: true });
   const [aberto, setAberto] = useState(false);
   const clientes = Array.from(
     new Set(contratos.map((c) => c.cliente).filter(Boolean)),
