@@ -4,7 +4,7 @@ import {
   cargoExigeCnh, aplicarReqCnh, motivoLabel, MOTIVO_EXPANSAO,
   GRAU_ALTA, GRAU_MEDIA, GRAU_BAIXA, REQ_CNH_TEXTO,
   contratoDoEmpregado, chaveContrato, rotuloContrato, rotuloReferencia, mostraNomeReferencia,
-  ehVagaAdministrativa, statusInicialVaga, STATUS_VAGA_DIRETORIA, rotuloStatusVaga, contratoEhAdministrativo, setorDoCatalogo,
+  ehVagaAdministrativa, statusInicialVaga, STATUS_VAGA_DIRETORIA, rotuloStatusVaga, nomeCompletoValido, vagaConcluiDireto, contratoEhAdministrativo, setorDoCatalogo,
   MENU_VAGA_ADMINISTRATIVA, podeVagaAdministrativa, filtrarAdministrativas,
   vagaSeguraSubstituido, substituidosComVagaViva,
   podePreencherVagaManual, faltamCamposManuais,
@@ -350,5 +350,25 @@ describe("rotuloStatusVaga (mig 287)", () => {
   });
   it("o valor gravado continua 'Pendente Analista' — só o rótulo troca", () => {
     expect(statusInicialVaga(false)).toBe("Pendente Analista");
+  });
+});
+
+describe("concluir direto (mig 289)", () => {
+  it("nome completo: nome e sobrenome", () => {
+    expect(nomeCompletoValido("Maria da Silva")).toBe(true);
+    expect(nomeCompletoValido("  ANA   SOUZA ")).toBe(true);
+    expect(nomeCompletoValido("Maria")).toBe(false);
+    expect(nomeCompletoValido("A B")).toBe(false);
+    expect(nomeCompletoValido(null)).toBe(false);
+  });
+  it("só conclui vaga aprovada e ainda aberta", () => {
+    expect(vagaConcluiDireto("Vaga aberta - Seleção de Currículos")).toBe(true);
+    expect(vagaConcluiDireto("Pendente Recrutamento")).toBe(true);
+    expect(vagaConcluiDireto("Aguardando SST e Compras")).toBe(true);
+    expect(vagaConcluiDireto("Pendente Analista")).toBe(false);
+    expect(vagaConcluiDireto("Pendente Diretoria")).toBe(false);
+    expect(vagaConcluiDireto("Contratado")).toBe(false);
+    expect(vagaConcluiDireto("Concluído")).toBe(false);
+    expect(vagaConcluiDireto("Reprovada")).toBe(false);
   });
 });

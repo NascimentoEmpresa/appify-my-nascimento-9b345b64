@@ -385,6 +385,10 @@ const financeiroModule: ModuleDef = {
         // SIS-2026-0473: registra aplicações (CDB/Fundo DI/etc.) e resgates,
         // alimenta o Fluxo de Caixa igual ao Débito Automático.
         { label: "Aplicações Financeiras", to: "/app/financeiro/gestao-financeira/aplicacoes-financeiras", icon: Landmark, badge: "Novo" },
+        // O item saiu da sidebar no SIS-2026-0317 (menus obsoletos) e foi
+        // reexposto só no Gerenciamento de Acesso (dc0d7389) — a tela
+        // continuou viva e acessível só por URL. Volta aqui, na rota atual.
+        { label: "Conta Garantida", to: "/app/financeiro/conta-garantida", icon: ShieldCheck },
       ],
     },
     {

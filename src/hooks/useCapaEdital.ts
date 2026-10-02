@@ -206,6 +206,9 @@ export function useCapaUpdate() {
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["capa-edital"] });
+      // Virar "Ganhamos" cria Implantação + Contrato por trigger no banco.
+      qc.invalidateQueries({ queryKey: ["implantacao"] });
+      qc.invalidateQueries({ queryKey: ["contratos_erp"] });
       toast({ title: "Licitação atualizada!" });
     },
     onError: (e: Error) => toast({ title: "Erro", description: e.message, variant: "destructive" }),
@@ -232,63 +235,23 @@ export function useCapaDelete() {
 // PRÓPRIA Capa (capa.empresa_id) — origem da cadeia — nunca mais de um
 // parâmetro externo sourced da empresa "ativa" do seletor. Sem isso, promover
 // uma Capa enquanto a empresa ativa era outra criava tudo na empresa errada.
+// Pós-Ganhamos (migration 20261002000001): o contrato nasce SOZINHO por trigger
+// quando a Capa vira "Ganhamos" — Implantação, Contratos e Planilha de Custo
+// rodam em paralelo e a Licitação preenche valores depois. Esta mutation é só a
+// RECUPERAÇÃO (Capa já ganha que ficou sem contrato): chama a mesma lógica via
+// RPC, que não exige mais Cliente nem reunião de alinhamento (Cliente vazio vira
+// "A definir"; a reunião se completa depois na Capa) e não depende de
+// user_empresa (SECURITY DEFINER, gate can_access 'editais'/'alterar').
 export function useCapaPromover() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async ({
-      capa,
-      reuniaoAlinhamento,
-    }: {
-      capa: CapaEdital;
-      reuniaoAlinhamento: string;
-    }) => {
+    mutationFn: async ({ capa }: { capa: CapaEdital }) => {
       if (capa.status !== "Ganhamos") throw new Error("Apenas licitações ganhas podem ser promovidas.");
       if (capa.contrato_id) throw new Error("Já possui contrato vinculado.");
-      if (!capa.cliente?.trim()) throw new Error("Preencha o campo Cliente / Órgão na Capa antes de promover.");
 
-      const nome = [capa.cidade, capa.objeto].filter(Boolean).join(" — ").trim() || "Contrato sem nome";
-
-      const { data: contrato, error: cErr } = await (supabase as any)
-        .from("implantacao_contrato")
-        .insert({
-          empresa_id: capa.empresa_id,
-          nome,
-          capa_id: capa.id,
-          status: "ativo",
-          data_inicio: capa.data_inicio,
-          abertura: capa.abertura,
-          reuniao_alinhamento: reuniaoAlinhamento,
-          data_homologacao: capa.data_homologacao,
-        })
-        .select()
-        .single();
-      if (cErr) throw cErr;
-
-      // Cria também o contrato oficial (public.contratos, plural) — é o que
-      // Financeiro/NF/Cobrança usam. Aditivo: não altera nada do fluxo de
-      // Implantação acima, só acrescenta esse insert.
-      const { error: pcErr } = await (supabase as any).from("contratos").insert({
-        empresa_id: capa.empresa_id,
-        nome,
-        cliente: capa.cliente.trim(),
-        data_inicio: capa.data_inicio,
-        status: "ativo",
-        capa_id: capa.id,
-        grade_id: capa.grade_id,
-      });
-      if (pcErr) throw pcErr;
-
-      const now = new Date().toLocaleString("pt-BR");
-      const historico = [...(capa.historico ?? [])];
-      historico.push({ ts: now, campo: "Reunião de alinhamento", de: "—", para: reuniaoAlinhamento });
-
-      const { error: capaErr } = await (supabase as any)
-        .from("capa_edital")
-        .update({ contrato_id: contrato.id, reuniao_alinhamento: reuniaoAlinhamento, historico })
-        .eq("id", capa.id);
-      if (capaErr) throw capaErr;
-
-      return contrato;
+      const { data, error } = await (supabase as any).rpc("criar_contrato_da_capa", { p_capa_id: capa.id });
+      if (error) throw error;
+      return { id: data as string, nome: [capa.cidade, capa.objeto].filter(Boolean).join(" — ").trim() || "Contrato" };
     },
     onSuccess: (contrato) => {
       qc.invalidateQueries({ queryKey: ["capa-edital"] });

@@ -48,7 +48,7 @@ import {
 import { useContratosERP, ContratoERP } from "@/hooks/useContratosERP";
 import { usePlanilhaCustos, resolverPostosVigentes, PostoVigente } from "@/hooks/usePlanilhaCusto";
 import { useModelosNf, buscarItensModeloNf, NfEmissaoModeloRow } from "@/hooks/useNfEmissaoModelo";
-import { calcularItem, calcularTotaisNf, pctEfetivo, ItemInput, ItemCalculado, INSS_CATEGORIAS, PercentuaisFiscais } from "./calculos";
+import { calcularItem, calcularTotaisNf, pctEfetivo, pctFiscaisDaNf, ItemInput, ItemCalculado, INSS_CATEGORIAS, PercentuaisFiscais } from "./calculos";
 import {
   fmtMoney,
   fmtPct,
@@ -688,13 +688,7 @@ function NovaNfDialog({ open, onOpenChange, contratos, nfParaEditar, contratoIdI
       setDescricao(nfParaEditar.descricao ?? "");
       setObservacoes(nfParaEditar.observacoes ?? "");
       setAnexosParaRemover(new Set());
-      setPctFiscais({
-        issqn_pct: nfParaEditar.issqn_pct,
-        ir_pct: nfParaEditar.ir_pct,
-        cofins_pct: nfParaEditar.cofins_pct,
-        pis_pct: nfParaEditar.pis_pct,
-        csll_pct: nfParaEditar.csll_pct,
-      });
+      setPctFiscais(pctFiscaisDaNf(nfParaEditar));
       // NF já emitida — os percentuais gravados são a fonte, não importa se
       // o contrato tem dados fiscais hoje.
       setPctFiscaisConfigurado(true);
@@ -1202,6 +1196,9 @@ function DetalhesNfDialog({
   // destaque — vlr_mao_obra já é persistido por item (calculos.ts), só
   // faltava o total da nota aqui na visualização.
   const vlrMaoObraTotal = useMemo(() => itens.reduce((s, it) => s + (Number(it.vlr_mao_obra) || 0), 0), [itens]);
+  // Nota importada da planilha legada traz retenção em valor mas percentual 0
+  // salvo — os rótulos "(x% s/ bruto)" derivam do total (ver pctFiscaisDaNf).
+  const pctNf = nf ? pctFiscaisDaNf(nf) : PCT_FISCAIS_ZERO;
 
   async function handleBaixar(storagePath: string) {
     try {
@@ -1331,15 +1328,15 @@ function DetalhesNfDialog({
                               <Linha label="Vlr Bruto" valor={it.vlr_bruto} destaque />
                               <Linha label="Vlr Mão de Obra" valor={it.vlr_mao_obra} />
                               <div className="border-t pt-1.5 space-y-1">
-                                <Linha label={`ISSQN (${fmtPct(nf.issqn_pct)} s/ bruto)`} valor={-it.issqn} />
+                                <Linha label={`ISSQN (${fmtPct(pctNf.issqn_pct)} s/ bruto)`} valor={-it.issqn} />
                                 <Linha
                                   label={`INSS (${INSS_CATEGORIAS[it.inss_categoria].label}, ${fmtPct(INSS_CATEGORIAS[it.inss_categoria].pct)} s/ mão de obra)`}
                                   valor={-it.inss}
                                 />
-                                <Linha label={`IR (${fmtPct(nf.ir_pct)} s/ bruto)`} valor={-it.ir} />
-                                <Linha label={`COFINS (${fmtPct(nf.cofins_pct)} s/ bruto)`} valor={-it.cofins} />
-                                <Linha label={`PIS (${fmtPct(nf.pis_pct)} s/ bruto)`} valor={-it.pis} />
-                                <Linha label={`CSLL (${fmtPct(nf.csll_pct)} s/ bruto)`} valor={-it.csll} />
+                                <Linha label={`IR (${fmtPct(pctNf.ir_pct)} s/ bruto)`} valor={-it.ir} />
+                                <Linha label={`COFINS (${fmtPct(pctNf.cofins_pct)} s/ bruto)`} valor={-it.cofins} />
+                                <Linha label={`PIS (${fmtPct(pctNf.pis_pct)} s/ bruto)`} valor={-it.pis} />
+                                <Linha label={`CSLL (${fmtPct(pctNf.csll_pct)} s/ bruto)`} valor={-it.csll} />
                               </div>
                               <Linha label="Vlr Líquido" valor={it.vlr_liquido} destaque />
                             </PopoverContent>
@@ -1360,7 +1357,7 @@ function DetalhesNfDialog({
                   Mão de Obra: {fmtMoney(vlrMaoObraTotal)}
                 </span>
                 <span>
-                  <span className="text-muted-foreground">ISSQN ({fmtPct(nf.issqn_pct)}): </span>
+                  <span className="text-muted-foreground">ISSQN ({fmtPct(pctNf.issqn_pct)}): </span>
                   {fmtMoney(nf.issqn_total)}
                 </span>
                 <span>
@@ -1368,19 +1365,19 @@ function DetalhesNfDialog({
                   {fmtMoney(nf.inss_total)}
                 </span>
                 <span>
-                  <span className="text-muted-foreground">IR ({fmtPct(nf.ir_pct)}): </span>
+                  <span className="text-muted-foreground">IR ({fmtPct(pctNf.ir_pct)}): </span>
                   {fmtMoney(nf.ir_total)}
                 </span>
                 <span>
-                  <span className="text-muted-foreground">COFINS ({fmtPct(nf.cofins_pct)}): </span>
+                  <span className="text-muted-foreground">COFINS ({fmtPct(pctNf.cofins_pct)}): </span>
                   {fmtMoney(nf.cofins_total)}
                 </span>
                 <span>
-                  <span className="text-muted-foreground">PIS ({fmtPct(nf.pis_pct)}): </span>
+                  <span className="text-muted-foreground">PIS ({fmtPct(pctNf.pis_pct)}): </span>
                   {fmtMoney(nf.pis_total)}
                 </span>
                 <span>
-                  <span className="text-muted-foreground">CSLL ({fmtPct(nf.csll_pct)}): </span>
+                  <span className="text-muted-foreground">CSLL ({fmtPct(pctNf.csll_pct)}): </span>
                   {fmtMoney(nf.csll_total)}
                 </span>
                 <span>

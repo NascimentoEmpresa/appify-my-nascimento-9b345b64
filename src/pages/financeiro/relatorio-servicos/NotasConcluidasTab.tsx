@@ -24,7 +24,7 @@ import {
   useRegistrarPagamentoNf,
   TIPOS_NOTA,
 } from "@/hooks/useNfEmissao";
-import { calcularItem, calcularTotaisNf, pctEfetivo, ItemCalculado } from "@/pages/financeiro/nf-emissao/calculos";
+import { calcularItem, calcularTotaisNf, pctEfetivo, pctFiscaisDaNf, ItemCalculado } from "@/pages/financeiro/nf-emissao/calculos";
 import {
   fmtMoney, fmtDate, situacaoEspecial, statusDaNota, pendenteHaMaisDe30Dias, moneyTextContains, valorPendenteNf,
 } from "@/pages/financeiro/nf-emissao/shared";
@@ -552,9 +552,7 @@ function NfPagamentoDialog({ nf, onClose }: { nf: NfEmissaoRow | null; onClose: 
 
   const itens: ItemForm[] = useMemo(() => itensExistentes.map(itemRowParaForm), [itensExistentes]);
 
-  const pctFiscais = nf
-    ? { issqn_pct: nf.issqn_pct, ir_pct: nf.ir_pct, cofins_pct: nf.cofins_pct, pis_pct: nf.pis_pct, csll_pct: nf.csll_pct }
-    : null;
+  const pctFiscais = nf ? pctFiscaisDaNf(nf) : null;
 
   const itensCalculados: ItemCalculado[] = useMemo(() => {
     if (!pctFiscais) return [];

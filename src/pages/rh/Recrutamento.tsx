@@ -15,7 +15,9 @@ import { ModalNovaVaga } from "@/components/recrutamento/ModalNovaVaga";
 import {
   motivoLabel, fmtBr, mostraNomeReferencia,
   podeVagaAdministrativa, filtrarAdministrativas, filtrarPorEscopo, normSetorVaga, STATUS_VAGA_DIRETORIA, rotuloStatusVaga,
+  vagaConcluiDireto,
 } from "@/lib/recrutamento/vagaRegras";
+import { ModalConcluirDireto } from "@/components/recrutamento/ModalConcluirDireto";
 import { TABELA_APROVADOR_SETOR } from "@/components/admin/TrocaFuncaoSetoresUsuario";
 import {
   ETIQUETAS_RECRUTAMENTO, alternarEtiqueta, corDaEtiqueta, etiquetasValidas,
@@ -367,6 +369,10 @@ const MENU_FILTRO_PEND_RECRUTAMENTO = "recrutamento_filtro_pend_recrutamento";
 // aparece. O banco repete a regra (rec_guard_aprovador_setor).
 const MENU_APROVA_VAGAS_OPERACIONAL = "operacional_aprova_vagas";
 const MENU_APROVA_VAGAS_LICITACOES  = "licitacoes_aprova_vagas";
+// "PODE CONCLUIR DIRETO" (02/10/2026, mig 20260930000289): encerra a vaga
+// como Contratado e manda quem foi contratado (nome + CPF) direto para a
+// Admissão, sem o kanban. Menu fantasma em Recrutamento e Seleção.
+const MENU_CONCLUIR_DIRETO = "recrutamento_concluir_direto";
 const MENU_FILTRO_PEND_SELECAO      = "recrutamento_filtro_pend_selecao";
 // Status da Solicitação dirigidos pelo candidato (etapas 3–10).
 const STATUS_PROCESSO = [
@@ -515,6 +521,8 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
   // vir de brinde com o "alterar" de quem conduz o processo. O trigger
   // rec_pular_sst_compras_guard recusa a mesma passagem no banco.
   const podePularSstCompras = can("aprovar", undefined, "recrutamento_pular_sst_compras");
+  // Só na tela do Recrutamento (escopo rh): é o fim do processo dele.
+  const podeConcluirDireto = escopo === "rh" && can("aprovar", undefined, MENU_CONCLUIR_DIRETO);
 
   // ── Estado ─────────────────────────────────────────────────────
   const [view, setView]               = useState<"tabela" | "kanban">("tabela");
@@ -563,6 +571,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
   // Botão "Status" de cada solicitação (18/09/2026): o cartão grande com a
   // régua do fluxo e o histórico. Um só, pra solicitação clicada.
   const [statusDe, setStatusDe]       = useState<Solicitacao | null>(null);
+  const [concluirDireto, setConcluirDireto] = useState<Solicitacao | null>(null);
   const [msgs, setMsgs]               = useState<Mensagem[]>([]);
   const [chatInput, setChatInput]     = useState("");
   const [sendingMsg, setSendingMsg]   = useState(false);
@@ -1982,6 +1991,16 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
       if (s.link_publico) btns.push(<button key="lnk" onClick={() => { setLinkCopiado(false); setModalLink(true); }} style={{ padding: "5px 12px", borderRadius: 8, border: "1px solid rgba(99,102,241,.35)", background: "rgba(99,102,241,.15)", color: "#818cf8", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Gerar Link</button>);
       btns.push(reprovar("rep3"));
     }
+    // Concluir direto (mig 289): a vaga aprovada e ainda aberta fecha aqui,
+    // com nome + CPF de quem foi contratado, que vai direto para a Admissão.
+    if (podeConcluirDireto && vagaConcluiDireto(s.status)) {
+      btns.push(
+        <button key="cdir" onClick={() => setConcluirDireto(s)}
+          style={{ padding: "5px 12px", borderRadius: 8, border: "1px solid #86efac", background: "#f0fdf4", color: "#15803d", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+          <Ic i={CheckCircle2} />Concluir vaga
+        </button>,
+      );
+    }
     // Editar e apagar a solicitação. Ficam antes do histórico e valem em
     // QUALQUER status: a correção de um pedido errado (cargo trocado, contrato
     // errado) costuma chegar justamente depois de ele ter andado.
@@ -2685,6 +2704,20 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
       </div>
 
       {/* ── Cartão de Status (18/09/2026) ── */}
+      {concluirDireto && (
+        <ModalConcluirDireto
+          vaga={concluirDireto}
+          candidatos={candidatos}
+          onFechar={() => setConcluirDireto(null)}
+          onConcluida={(nome) => {
+            setConcluirDireto(null);
+            toast(`Vaga concluída — ${nome} foi para a Admissão (RH).`, "ok");
+            fecharDrawer();
+            loadStats();
+            loadLista();
+          }}
+        />
+      )}
       {statusDe && <StatusSolicitacao sol={statusDe} onClose={() => setStatusDe(null)} />}
 
       {/* ── Drawer Detalhe ── */}
