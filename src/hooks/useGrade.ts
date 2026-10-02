@@ -194,6 +194,9 @@ export function useGradeUpdate() {
           .update({ status: novoStatus })
           .eq("id", updated.capa_id);
         qc.invalidateQueries({ queryKey: ["capa-edital"] });
+        // Capa "Ganhamos" cria Implantação + Contrato por trigger no banco.
+        qc.invalidateQueries({ queryKey: ["implantacao"] });
+        qc.invalidateQueries({ queryKey: ["contratos_erp"] });
       }
 
       return updated;

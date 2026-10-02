@@ -9,14 +9,17 @@ import { supabase } from "@/integrations/supabase/client";
 // lançamento podia sumir do cliente sem erro nenhum. Pagina em blocos de
 // 1000 até a página vir menor que o tamanho pedido.
 const TAMANHO_PAGINA = 1000;
-async function buscarTodasLinhas(tabela: string): Promise<any[]> {
+// SIS-2026-0569: `ordenarPor` só pra fonte grande (importação histórica,
+// ~20 mil linhas) — paginação sem ORDER BY pode repetir/pular linhas entre
+// páginas, e com 20 páginas esse risco deixa de ser teórico. As outras
+// fontes continuam como sempre foram.
+async function buscarTodasLinhas(tabela: string, ordenarPor?: string): Promise<any[]> {
   const linhas: any[] = [];
   let pagina = 0;
   for (;;) {
-    const { data, error } = await (supabase as any)
-      .from(tabela)
-      .select("*")
-      .range(pagina * TAMANHO_PAGINA, pagina * TAMANHO_PAGINA + TAMANHO_PAGINA - 1);
+    let q = (supabase as any).from(tabela).select("*");
+    if (ordenarPor) q = q.order(ordenarPor, { ascending: true });
+    const { data, error } = await q.range(pagina * TAMANHO_PAGINA, pagina * TAMANHO_PAGINA + TAMANHO_PAGINA - 1);
     if (error) throw error;
     linhas.push(...(data ?? []));
     if (!data || data.length < TAMANHO_PAGINA) break;
@@ -73,13 +76,18 @@ export interface FluxoCaixaMaloteLinha {
   // despesa_id só pra aplicar (id da APLICACAO_FINANCEIRA); resgate usa o
   // id do próprio resgate (não tem edição/exclusão pela tela de Fluxo, só
   // pela tela de Aplicações Financeiras).
-  origem: "malote" | "debito_automatico" | "cartao_fatura" | "aplicacao_financeira";
+  origem: "malote" | "debito_automatico" | "cartao_fatura" | "aplicacao_financeira" | "importacao_historica";
   // SIS-2026-0489: true quando existe uma linha em
   // financeiro_fluxo_caixa_ajuste pra este lançamento — os campos exibidos
   // já vêm resolvidos pela view (COALESCE(ajuste, original)), este flag é
   // só pra tela avisar visualmente que aquele valor foi editado só aqui,
   // sem mudar o lançamento original.
   ajustado: boolean;
+  // SIS-2026-0569: só a view da importação histórica devolve — texto com o
+  // que subiu sem vínculo (contrato/classificação não mapeados, possível
+  // duplicidade). Calculado na view, então some sozinho quando a linha é
+  // corrigida. Nas demais origens vem undefined.
+  inconsistencia?: string | null;
 }
 
 export function useFluxoCaixaMalote() {
@@ -111,12 +119,19 @@ export function useFluxoCaixaCombinado() {
       // representar as duas pontas de uma "aplicação com resgate" numa
       // linha só (datas e tipos diferentes), mesma ideia da Movimentação
       // Financeira do Débito Automático (2 linhas ligadas por par).
-      const [malote, debitoAutomatico, cartaoFatura, aplicacaoFinanceira, resgateAplicacao] = await Promise.all([
+      const [malote, debitoAutomatico, cartaoFatura, aplicacaoFinanceira, resgateAplicacao, importacaoHistorica] = await Promise.all([
         buscarTodasLinhas("v_malote_pagamento_fluxo_caixa"),
         buscarTodasLinhas("v_debito_automatico_fluxo_caixa"),
         buscarTodasLinhas("v_cartao_fatura_fluxo_caixa"),
         buscarTodasLinhas("v_aplicacao_financeira_fluxo_caixa"),
         buscarTodasLinhas("v_aplicacao_financeira_resgate_fluxo_caixa"),
+        // SIS-2026-0569: planilha de Fluxo de Caixa 2026 importada. Migration
+        // não se auto-aplica — se o código subir antes dela, a view ainda
+        // não existe; sem este guard a tela inteira do Fluxo quebraria.
+        buscarTodasLinhas("v_fluxo_caixa_importado_fluxo_caixa", "despesa_id").catch((e: any) => {
+          if (e?.code === "PGRST205" || e?.code === "42P01") return [];
+          throw e;
+        }),
       ]);
       const linhas = [
         ...malote,
@@ -124,6 +139,7 @@ export function useFluxoCaixaCombinado() {
         ...cartaoFatura,
         ...aplicacaoFinanceira,
         ...resgateAplicacao,
+        ...importacaoHistorica,
       ] as FluxoCaixaMaloteLinha[];
       linhas.sort((a, b) => (b.data_pagamento ?? "").localeCompare(a.data_pagamento ?? ""));
       return linhas;
