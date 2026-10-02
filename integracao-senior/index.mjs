@@ -91,6 +91,16 @@ const dataBR = (v) => {
   if (d.getFullYear() <= 1901) return null;
   return `${String(d.getDate()).padStart(2, "0")}/${String(d.getMonth() + 1).padStart(2, "0")}/${d.getFullYear()}`;
 };
+// CPF: no Senior numcpf e NUMERO e perde o zero a esquerda ("2222996066"
+// era 022.229.960-66 — incidente 02/10/2026, login do portal caia no
+// cadastro demitido). Sai sempre 000.000.000-00, como o resto da EMPREGADOS;
+// o gatilho trg_rh_empregados_cpf_padrao (mig 20261002000004) garante no banco.
+const cpfBR = (v) => {
+  const d = String(v ?? "").replace(/\D/g, "");
+  if (!d || /^0+$/.test(d) || d.length > 11) return d || null;
+  const p = d.padStart(11, "0");
+  return `${p.slice(0, 3)}.${p.slice(3, 6)}.${p.slice(6, 9)}-${p.slice(9)}`;
+};
 // Salario vai como texto pt-BR: e assim que a coluna esta preenchida hoje.
 const valorBR = (v) => (v == null || v === "" ? null
   : Number(v).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 4 }));
@@ -161,7 +171,7 @@ async function rodar() {
     empresa: e.numemp, cadastro: e.numcad, nome: String(e.nomfun ?? "").trim(),
     admissao: dataBR(e.datadm), situacao: String(e.situacao ?? "").trim() || null,
     data_afastamento: dataBR(e.datafa), filial: e.codfil, sexo: String(e.tipsex ?? "").trim() || null,
-    nascimento: dataBR(e.datnas), cpf: String(e.numcpf ?? "").trim() || null,
+    nascimento: dataBR(e.datnas), cpf: cpfBR(e.numcpf),
     pis: String(e.numpis ?? "").trim() || null, salario: valorBR(e.valsal),
     cod_situacao: e.sitafa == null ? null : Number(e.sitafa),
   }));

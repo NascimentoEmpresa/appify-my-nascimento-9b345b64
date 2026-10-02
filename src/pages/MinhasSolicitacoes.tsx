@@ -880,7 +880,7 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
   const trocarParaVerbal = () => {
     setMedida("verbal");
     setSemVerbal(false); setSemVerbalOk(false); setVerbais(null);
-    setAdv(a => ({ ...a, tipo_advertencia: "Verbal", grau: "", advertencia_verbal_dada: "Não", data_advertencia_verbal: "" }));
+    setAdv(a => ({ ...a, tipo_advertencia: "Verbal", advertencia_verbal_dada: "Não", data_advertencia_verbal: "" }));
   };
 
   const abrirModalAdv = abrirModalMedida;
@@ -915,7 +915,7 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
   };
 
   const submitAdv = async () => {
-    const erro = erroDaMedida(medida, { colaborador_id: adv.colaborador_id, data_ocorrido: adv.data_ocorrido, descricao_ocorrido: adv.descricao_ocorrido, grau: adv.grau });
+    const erro = erroDaMedida(medida, { colaborador_id: adv.colaborador_id, data_ocorrido: adv.data_ocorrido, descricao_ocorrido: adv.descricao_ocorrido, grau: adv.grau, data_advertencia_verbal: adv.data_advertencia_verbal });
     if (erro) { toast(erro, "err"); return; }
     if (!ehRegistroVerbal && adv.advertencia_verbal_dada === "Sim" && !adv.data_advertencia_verbal) { toast("Informe a data em que a advertência verbal foi aplicada.", "err"); return; }
     if (advBloqueada) { toast("Primeiro dê a advertência verbal para dar a escrita.", "err"); return; }
@@ -938,10 +938,11 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
       colaborador_cargo: adv.colaborador_cargo, colaborador_filial: adv.colaborador_filial,
       colaborador_admissao: adv.colaborador_admissao || null, colaborador_posto: adv.colaborador_posto || null, colaborador_escala: adv.colaborador_escala || null,
       contrato: adv.contrato || null, contrato_id: adv.contrato_id,
-      tipo_advertencia: medidaAtual?.tipoGravado ?? adv.tipo_advertencia, grau: ehRegistroVerbal ? null : adv.grau, data_ocorrido: adv.data_ocorrido,
+      tipo_advertencia: medidaAtual?.tipoGravado ?? adv.tipo_advertencia, grau: adv.grau, data_ocorrido: adv.data_ocorrido,
       descricao_ocorrido: adv.descricao_ocorrido.trim(),
-      advertencia_verbal_dada: ehRegistroVerbal ? false : adv.advertencia_verbal_dada === "Sim",
-      data_advertencia_verbal: (!ehRegistroVerbal && adv.advertencia_verbal_dada === "Sim") ? (adv.data_advertencia_verbal || null) : null,
+      // Verbal: o próprio registro É a verbal dada, com a data da conversa (02/10/2026).
+      advertencia_verbal_dada: ehRegistroVerbal ? true : adv.advertencia_verbal_dada === "Sim",
+      data_advertencia_verbal: (ehRegistroVerbal || adv.advertencia_verbal_dada === "Sim") ? (adv.data_advertencia_verbal || null) : null,
       // Verbal entra pronta no histórico ("Registrada"); as outras vão pra fila.
       status: statusDaMedida((medida || "escrita") as MedidaDisciplinar),
       excecao, justificativa_excecao: justificativa,
@@ -1765,15 +1766,19 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
               <input className="ini-fi" readOnly value={adv.contrato || "—"} style={{ background: "#f8fafc", color: "#475569", cursor: "not-allowed" }} />
             </div>
 
-            <div style={{ display: "grid", gridTemplateColumns: ehRegistroVerbal ? "1fr" : "1fr 1fr", gap: 12 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
               {/* O tipo vem da escolha do card e não se troca aqui (22/09/2026). */}
               <div className="ini-fg"><label>Tipo</label><input className="ini-fi" readOnly value={medidaAtual?.tipoGravado ?? ""} style={{ background: "#f8fafc", color: "#475569", cursor: "not-allowed", fontWeight: 700 }} /></div>
-              {!ehRegistroVerbal && (
-                <div className="ini-fg"><label>Grau *</label><select className="ini-fi" value={adv.grau} onChange={e => setAdv(a => ({ ...a, grau: e.target.value }))}><option value="">— Selecione —</option>{["Baixo", "Médio", "Alto"].map(o => <option key={o}>{o}</option>)}</select></div>
-              )}
+              {/* Grau obrigatório em TODA medida, verbal inclusive (02/10/2026). */}
+              <div className="ini-fg"><label>Grau *</label><select className="ini-fi" value={adv.grau} onChange={e => setAdv(a => ({ ...a, grau: e.target.value }))}><option value="">— Selecione —</option>{["Baixo", "Médio", "Alto"].map(o => <option key={o}>{o}</option>)}</select></div>
             </div>
 
-            <div className="ini-fg"><label>Data do ocorrido *</label><input className="ini-fi" type="date" max={hojeMaisDias(0)} value={adv.data_ocorrido} onChange={e => setAdv(a => ({ ...a, data_ocorrido: e.target.value }))} /><div style={{ fontSize: 14.5, color: (!ehRegistroVerbal && advForaDoPrazo()) ? "#dc2626" : "#64748b", marginTop: 3, fontWeight: 600 }}>{ehRegistroVerbal ? "Quando a conversa com o colaborador aconteceu." : advForaDoPrazo() ? "⚠️ Mais de 3 dias atrás — será registrada como Exceção (com justificativa)." : "Prazo ideal: até 3 dias atrás."}</div></div>
+            <div style={{ display: "grid", gridTemplateColumns: ehRegistroVerbal ? "1fr 1fr" : "1fr", gap: 12 }}>
+              <div className="ini-fg"><label>Data do ocorrido *</label><input className="ini-fi" type="date" max={hojeMaisDias(0)} value={adv.data_ocorrido} onChange={e => setAdv(a => ({ ...a, data_ocorrido: e.target.value }))} /><div style={{ fontSize: 14.5, color: (!ehRegistroVerbal && advForaDoPrazo()) ? "#dc2626" : "#64748b", marginTop: 3, fontWeight: 600 }}>{ehRegistroVerbal ? "Quando o fato aconteceu." : advForaDoPrazo() ? "⚠️ Mais de 3 dias atrás — será registrada como Exceção (com justificativa)." : "Prazo ideal: até 3 dias atrás."}</div></div>
+              {ehRegistroVerbal && (
+                <div className="ini-fg"><label>Data da advertência verbal *</label><input className="ini-fi" type="date" min={adv.data_ocorrido || undefined} max={hojeMaisDias(0)} value={adv.data_advertencia_verbal} onChange={e => setAdv(a => ({ ...a, data_advertencia_verbal: e.target.value }))} /><div style={{ fontSize: 14.5, color: "#64748b", marginTop: 3, fontWeight: 600 }}>Quando a conversa com o colaborador aconteceu.</div></div>
+              )}
+            </div>
             <div className="ini-fg">
               <label>Descrição do ocorrido * (mín. 50 caracteres)</label>
               <textarea className="ini-fi" rows={4} placeholder="Descreva o que aconteceu, com detalhes..." value={adv.descricao_ocorrido} onChange={e => setAdv(a => ({ ...a, descricao_ocorrido: e.target.value }))} />
