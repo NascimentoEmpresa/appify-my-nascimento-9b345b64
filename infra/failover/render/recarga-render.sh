@@ -139,4 +139,21 @@ log "usando $CARREGAR"
 export LOG_ERR="$TRABALHO/restore.err.log"
 "$CARREGAR" "$DUMP" || erro "a carga falhou - ver o log acima"
 
+# --- os ARQUIVOS do Storage ------------------------------------------------
+# O dump traz os REGISTROS dos anexos; os arquivos moram no disco e vem por
+# fora. Sem isto, a lista de anexos aparece e o download falha - a pior
+# combinacao, porque parece defeito do sistema e nao contingencia.
+#
+# Roda DEPOIS da carga do banco de proposito: o script confere o resultado
+# pedindo um objeto real ao Storage, e para isso os registros precisam estar
+# no lugar.
+#
+# Nao derruba a recarga se falhar: banco atualizado sem os anexos e muito
+# melhor que nenhum dos dois.
+if [[ -x /usr/local/bin/carregar-arquivos.sh ]]; then
+  /usr/local/bin/carregar-arquivos.sh || log "os arquivos do Storage falharam - o banco esta carregado mesmo assim"
+else
+  log "carregar-arquivos.sh ausente - os anexos nao serao copiados"
+fi
+
 log "=== recarga concluida ==="
