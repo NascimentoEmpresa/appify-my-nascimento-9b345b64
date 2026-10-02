@@ -665,6 +665,10 @@ function NovaNfDialog({ open, onOpenChange, contratos, nfParaEditar, contratoIdI
   const [dataEmissao, setDataEmissao] = useState("");
   const [tipoNota, setTipoNota] = useState<TipoNota>("N");
   const [descricao, setDescricao] = useState("");
+  // SIS-2026-0582: Código de Serviço / CNAE pré-preenchidos do contrato; NBS manual.
+  const [codigoServico, setCodigoServico] = useState("");
+  const [cnae, setCnae] = useState("");
+  const [nbs, setNbs] = useState("");
   const [observacoes, setObservacoes] = useState("");
   const [itens, setItens] = useState<(ItemInput & { identificacao: string })[]>([itemVazio(1)]);
   const [anexos, setAnexos] = useState<File[]>([]);
@@ -686,6 +690,10 @@ function NovaNfDialog({ open, onOpenChange, contratos, nfParaEditar, contratoIdI
       setDataEmissao(nfParaEditar.data_emissao ?? "");
       setTipoNota(nfParaEditar.tipo_nota);
       setDescricao(nfParaEditar.descricao ?? "");
+      const cEdit = contratos.find((x) => x.id === nfParaEditar.contrato_id);
+      setCodigoServico(nfParaEditar.codigo_servico ?? cEdit?.codigo_servico_lc116 ?? "");
+      setCnae(nfParaEditar.cnae ?? cEdit?.codigo_servico_municipal_cnae ?? "");
+      setNbs(nfParaEditar.nbs ?? "");
       setObservacoes(nfParaEditar.observacoes ?? "");
       setAnexosParaRemover(new Set());
       setPctFiscais(pctFiscaisDaNf(nfParaEditar));
@@ -702,12 +710,17 @@ function NovaNfDialog({ open, onOpenChange, contratos, nfParaEditar, contratoIdI
       setPctFiscais(seed.pctFiscais);
       setPctFiscaisConfigurado(seed.pctFiscaisConfigurado);
       setDescricao(seed.descricao);
+      const cSeed = contratos.find((x) => x.id === contratoIdInicial);
+      setCodigoServico(cSeed?.codigo_servico_lc116 ?? "");
+      setCnae(cSeed?.codigo_servico_municipal_cnae ?? "");
     } else if (contratoIdInicial) {
       setContratoId(contratoIdInicial);
       const c = contratos.find((x) => x.id === contratoIdInicial);
       const pctContrato = c ? pctFiscaisDoContrato(c) : null;
       setPctFiscais(pctContrato ?? PCT_FISCAIS_ZERO);
       setPctFiscaisConfigurado(!!pctContrato);
+      setCodigoServico(c?.codigo_servico_lc116 ?? "");
+      setCnae(c?.codigo_servico_municipal_cnae ?? "");
     }
   }, [open, nfParaEditar?.id, contratoIdInicial, seed]);
 
@@ -827,6 +840,9 @@ function NovaNfDialog({ open, onOpenChange, contratos, nfParaEditar, contratoIdI
     setModeloIdOrigem(null);
     setPctFiscais(PCT_FISCAIS_ZERO);
     setPctFiscaisConfigurado(false);
+    setCodigoServico("");
+    setCnae("");
+    setNbs("");
   }
 
   function handleClose(v: boolean) {
@@ -872,6 +888,9 @@ function NovaNfDialog({ open, onOpenChange, contratos, nfParaEditar, contratoIdI
           variacao: variacao || null,
           competencia,
           data_emissao: dataEmissao || null,
+          codigo_servico: codigoServico.trim() || null,
+          cnae: cnae.trim() || null,
+          nbs: nbs.trim() || null,
           tipo_nota: tipoNota,
           descricao: descricao || null,
           observacoes: observacoes || null,
@@ -894,6 +913,9 @@ function NovaNfDialog({ open, onOpenChange, contratos, nfParaEditar, contratoIdI
           competencia,
           data_emissao: dataEmissao || null,
           numero_nf: null,
+          codigo_servico: codigoServico.trim() || null,
+          cnae: cnae.trim() || null,
+          nbs: nbs.trim() || null,
           tipo_nota: tipoNota,
           descricao: descricao || null,
           observacoes: observacoes || null,
@@ -951,6 +973,8 @@ function NovaNfDialog({ open, onOpenChange, contratos, nfParaEditar, contratoIdI
                     const pctContrato = c ? pctFiscaisDoContrato(c) : null;
                     setPctFiscais(pctContrato ?? PCT_FISCAIS_ZERO);
                     setPctFiscaisConfigurado(!!pctContrato);
+                    setCodigoServico(c?.codigo_servico_lc116 ?? "");
+                    setCnae(c?.codigo_servico_municipal_cnae ?? "");
                   }}
                 >
                   <SelectTrigger>
@@ -1018,6 +1042,18 @@ function NovaNfDialog({ open, onOpenChange, contratos, nfParaEditar, contratoIdI
                 Descrição <span className="text-destructive">*</span>
               </Label>
               <Textarea rows={1} value={descricao} onChange={(e) => setDescricao(e.target.value)} />
+            </div>
+            <div>
+              <Label>Código de Serviço</Label>
+              <Input value={codigoServico} onChange={(e) => setCodigoServico(e.target.value)} placeholder="Ex: 17.05" />
+            </div>
+            <div>
+              <Label>CNAE</Label>
+              <Input value={cnae} onChange={(e) => setCnae(e.target.value)} />
+            </div>
+            <div>
+              <Label>Código NBS</Label>
+              <Input value={nbs} onChange={(e) => setNbs(e.target.value)} />
             </div>
           </div>
 

@@ -6,7 +6,7 @@ import {
 // Medida disciplinar (22/09/2026): verbal é registro; escrita/suspensão/justa
 // causa são solicitação e checam se existe verbal antes.
 
-const ok = { colaborador_id: 10, data_ocorrido: "2026-09-20", descricao_ocorrido: "x".repeat(50), grau: "Médio" };
+const ok = { colaborador_id: 10, data_ocorrido: "2026-09-20", descricao_ocorrido: "x".repeat(50), grau: "Médio", data_advertencia_verbal: "2026-09-21" };
 
 describe("medida disciplinar — opções", () => {
   it("são quatro, e só a verbal é registro", () => {
@@ -39,10 +39,19 @@ describe("medida disciplinar — validação", () => {
     expect(erroDaMedida("verbal", { ...ok, data_ocorrido: "" })).toMatch(/data do ocorrido/);
     expect(erroDaMedida("verbal", { ...ok, descricao_ocorrido: "curta" })).toMatch(/50 caracteres/);
   });
-  it("grau só é cobrado fora do registro verbal", () => {
-    expect(erroDaMedida("verbal", { ...ok, grau: "" })).toBeNull();
+  it("grau é obrigatório em toda medida, verbal inclusive", () => {
+    expect(erroDaMedida("verbal", { ...ok, grau: "" })).toMatch(/grau/);
+    expect(erroDaMedida("verbal", ok)).toBeNull();
     expect(erroDaMedida("escrita", { ...ok, grau: "" })).toMatch(/grau/);
     expect(erroDaMedida("escrita", ok)).toBeNull();
+  });
+  it("verbal exige a data da advertência verbal, entre o ocorrido e hoje", () => {
+    expect(erroDaMedida("verbal", { ...ok, data_advertencia_verbal: "" })).toMatch(/data da advertência verbal/);
+    expect(erroDaMedida("verbal", { ...ok, data_advertencia_verbal: "2026-09-19" })).toMatch(/antes do ocorrido/);
+    expect(erroDaMedida("verbal", { ...ok, data_advertencia_verbal: "2099-01-01" })).toMatch(/futuro/);
+    expect(erroDaMedida("verbal", { ...ok, data_advertencia_verbal: "2026-09-20" })).toBeNull();
+    // Escrita não pede essa data aqui (a tela cobra quando responde "Sim").
+    expect(erroDaMedida("escrita", { ...ok, data_advertencia_verbal: "" })).toBeNull();
   });
   it("data no futuro é reconhecida", () => {
     const hoje = new Date("2026-09-22T12:00:00");
