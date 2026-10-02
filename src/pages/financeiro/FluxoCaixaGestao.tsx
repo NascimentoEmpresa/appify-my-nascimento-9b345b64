@@ -45,11 +45,17 @@ import { urlLogoCartao, useCartaoBancos } from "@/hooks/useMaloteCartaoCredito";
 // própria tela de Aplicações Financeiras. Os dois botões ficam ocultos pra
 // essa origem (ver render da linha, abaixo); as entradas nos Records abaixo
 // só existem pra satisfazer o tipo exaustivo.
+// SIS-2026-0569: importacao_historica (planilha de Fluxo de Caixa 2026) edita
+// pelo ajuste como as outras, mas não tem tela dona nem lixeira — o botão
+// Excluir fica oculto pra ela (ver render da linha); a entrada aqui só
+// satisfaz o tipo exaustivo. Linha duplicada/errada: zerar o valor pela
+// edição.
 const MENU_POR_ORIGEM: Record<FluxoCaixaMaloteLinha["origem"], string> = {
   malote: "malote_despesa_visualizar",
   debito_automatico: "financeiro-debito-automatico",
   cartao_fatura: "financeiro-cartao-credito",
   aplicacao_financeira: "financeiro-aplicacao-financeira",
+  importacao_historica: "financeiro-fluxo-caixa-gestao",
 };
 
 interface RateioDetalheItem {
@@ -63,6 +69,7 @@ const LABEL_ORIGEM: Record<FluxoCaixaMaloteLinha["origem"], string> = {
   debito_automatico: "Débito Automático",
   cartao_fatura: "Fatura Cartão de Crédito",
   aplicacao_financeira: "Aplicação Financeira",
+  importacao_historica: "Importação (planilha)",
 };
 
 // SIS-2026-0413 (complemento): a tabela renderizava todas as linhas
@@ -236,6 +243,9 @@ export default function FluxoCaixaGestao() {
   // SIS-2026-0307: "após o pagamento alimentamos o fluxo de caixa" (usuário)
   // — Banco entra aqui, não em Pagamento Malote/Meus Itens.
   const [bancoId, setBancoId] = useState("");
+  // SIS-2026-0569: linhas importadas da planilha que subiram sem vínculo
+  // (contrato/classificação não mapeados, possível duplicidade).
+  const [soInconsistentes, setSoInconsistentes] = useState(false);
   // SIS-2026-0038 (achado do usuário): vindo do botão "Ver no Fluxo de
   // Caixa" em Pagamento Malote (?busca=<numero da despesa>), ou digitado
   // direto aqui — busca por ID (numero) ou descrição, igual ao padrão de
@@ -304,6 +314,7 @@ export default function FluxoCaixaGestao() {
     setClassificacaoId("");
     setFormaPagamento("");
     setBancoId("");
+    setSoInconsistentes(false);
     setBusca("");
     setPage(1);
   }
@@ -319,6 +330,7 @@ export default function FluxoCaixaGestao() {
       if (classificacaoId && l.classificacao_id !== classificacaoId) return false;
       if (formaPagamento && l.forma_pagamento !== formaPagamento) return false;
       if (bancoId && l.banco_id !== bancoId) return false;
+      if (soInconsistentes && !l.inconsistencia) return false;
       if (
         buscaNorm &&
         !(l.id_malote ?? "").toLowerCase().includes(buscaNorm) &&
@@ -326,7 +338,7 @@ export default function FluxoCaixaGestao() {
       ) return false;
       return true;
     });
-  }, [linhas, dataDe, dataAte, competencia, empresaId, contratoId, classificacaoId, formaPagamento, bancoId, busca]);
+  }, [linhas, dataDe, dataAte, competencia, empresaId, contratoId, classificacaoId, formaPagamento, bancoId, soInconsistentes, busca]);
 
   // SIS-2026-0256: com o Débito Automático somado à fonte, "Saídas" precisa
   // filtrar por tipo — antes só existia saída (Malote), então somar tudo
@@ -466,6 +478,17 @@ export default function FluxoCaixaGestao() {
                 onChange={(e) => { setBusca(e.target.value); setPage(1); }}
               />
             </div>
+            <div className="flex items-end">
+              <label className="flex h-8 cursor-pointer items-center gap-2 text-xs">
+                <input
+                  type="checkbox"
+                  className="h-3.5 w-3.5"
+                  checked={soInconsistentes}
+                  onChange={(e) => { setSoInconsistentes(e.target.checked); setPage(1); }}
+                />
+                Só importadas com inconsistência
+              </label>
+            </div>
           </div>
         </CardContent>
       </Card>
@@ -561,6 +584,14 @@ export default function FluxoCaixaGestao() {
                             ajustado
                           </span>
                         )}
+                        {l.inconsistencia && (
+                          <span
+                            title={`Importada da planilha com pendência: ${l.inconsistencia}`}
+                            className="rounded-full bg-red-100 px-1.5 py-0.5 text-[10px] font-medium text-red-800 dark:bg-red-950/40 dark:text-red-300"
+                          >
+                            revisar
+                          </span>
+                        )}
                       </span>
                     </TableCell>
                     <TableCell className="text-center text-sm">{l.competencia ? new Date(l.competencia + "T00:00:00").toLocaleDateString("pt-BR", { month: "2-digit", year: "numeric" }) : "—"}</TableCell>
@@ -621,22 +652,24 @@ export default function FluxoCaixaGestao() {
                               <Pencil className="h-3.5 w-3.5" />
                             </Button>
                           </AcessoGate>
-                          <AcessoGate menu={MENU_POR_ORIGEM[l.origem]} acao="excluir">
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="h-7 w-7 text-muted-foreground hover:text-destructive"
-                              disabled={l.origem === "malote" && l.numero_parcela != null}
-                              title={
-                                l.origem === "malote" && l.numero_parcela != null
-                                  ? "Despesa parcelada — exclua a despesa inteira pela tela do Malote"
-                                  : "Excluir"
-                              }
-                              onClick={() => setItemExcluir(l)}
-                            >
-                              <Trash2 className="h-3.5 w-3.5" />
-                            </Button>
-                          </AcessoGate>
+                          {l.origem !== "importacao_historica" && (
+                            <AcessoGate menu={MENU_POR_ORIGEM[l.origem]} acao="excluir">
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-7 w-7 text-muted-foreground hover:text-destructive"
+                                disabled={l.origem === "malote" && l.numero_parcela != null}
+                                title={
+                                  l.origem === "malote" && l.numero_parcela != null
+                                    ? "Despesa parcelada — exclua a despesa inteira pela tela do Malote"
+                                    : "Excluir"
+                                }
+                                onClick={() => setItemExcluir(l)}
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </Button>
+                            </AcessoGate>
+                          )}
                         </div>
                       )}
                     </TableCell>
