@@ -25,7 +25,7 @@ import {
   TIPOS_NOTA,
 } from "@/hooks/useNfEmissao";
 import { usePlanilhaCustos, resolverPostosVigentes, PostoVigente } from "@/hooks/usePlanilhaCusto";
-import { calcularItem, calcularTotaisNf, pctEfetivo, ItemCalculado } from "@/pages/financeiro/nf-emissao/calculos";
+import { calcularItem, calcularTotaisNf, pctEfetivo, pctFiscaisDaNf, ItemCalculado } from "@/pages/financeiro/nf-emissao/calculos";
 import { fmtMoney, fmtDate, STATUS_LABEL, STATUS_CLASS, itemVazio, situacaoEspecial } from "@/pages/financeiro/nf-emissao/shared";
 import { ItensNfEditor, ItemForm } from "@/pages/financeiro/nf-emissao/ItensNfEditor";
 import { registrarLogNf } from "@/pages/financeiro/nf-emissao/registrarLogNf";
@@ -264,9 +264,7 @@ function ValidarNfDialog({ nf, onClose }: { nf: NfEmissaoRow | null; onClose: ()
     setUnitariosPorItem(itensExistentes.map(() => null));
   }, [nf?.id, itensExistentes]);
 
-  const pctFiscais = nf
-    ? { issqn_pct: nf.issqn_pct, ir_pct: nf.ir_pct, cofins_pct: nf.cofins_pct, pis_pct: nf.pis_pct, csll_pct: nf.csll_pct }
-    : null;
+  const pctFiscais = nf ? pctFiscaisDaNf(nf) : null;
 
   const postosVigentes = useMemo(
     () => (nf ? resolverPostosVigentes(planilha, nf.contrato_id) : []),
