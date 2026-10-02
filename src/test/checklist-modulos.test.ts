@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   FILTROS_VAZIOS, aderenciaUsuarioChave, checklistEm, derivarDev, derivarTreinamento, derivarValidacao, efetividade,
   evolucaoEntregas, filtrarModulos, fraseMovimentacao, indicadores, montarModulos, ordenarModulos, prontosSemValidacao,
-  rankingAreas, rotuloValor, variacao, variacaoPP, modulosSemTreinamento,
+  rankingAreas, rotuloValor, variacao, variacaoPP, modulosSemTreinamento, statusDevDaTela,
+  type StatusDevTelas,
   type ChecklistItem, type DadosChecklist, type Historico, type TelaCat,
 } from "@/lib/sistemas/checklistModulos";
 
@@ -162,5 +163,28 @@ describe("textos", () => {
   it("rótulos", () => {
     expect(rotuloValor("status_validacao", "pendente")).toBe("Não validado");
     expect(rotuloValor("previsao_entrega", "2026-10-30")).toBe("30/10/2026");
+  });
+});
+
+describe("status de desenvolvimento no canto da tela", () => {
+  const base: StatusDevTelas = {
+    telas: [
+      { codigo: "a", modulo_id: "m1", ativo: true, status_dev: "pronto" },
+      { codigo: "b", modulo_id: "m1", ativo: true, status_dev: null },
+      { codigo: "c", modulo_id: "m2", ativo: true, status_dev: null },
+      { codigo: "d", modulo_id: "m3", ativo: true, status_dev: null },
+    ],
+    modulos: [{ modulo_id: "m2", status_dev: "em_homologacao" }],
+  };
+  it("vale o da tela; vazia, o do módulo; sem módulo, o calculado; nada, pendente", () => {
+    expect(statusDevDaTela(base, "a")).toEqual({ status: "pronto", origem: "tela" });
+    expect(statusDevDaTela(base, "c")).toEqual({ status: "em_homologacao", origem: "modulo" });
+    expect(statusDevDaTela(base, "b")).toEqual({ status: "em_desenvolvimento", origem: "calculado" });
+    expect(statusDevDaTela(base, "d")).toEqual({ status: null, origem: "pendente" });
+  });
+  it("tela fora do catálogo ou sem dados não mostra nada", () => {
+    expect(statusDevDaTela(base, "zz")).toBeNull();
+    expect(statusDevDaTela(null, "a")).toBeNull();
+    expect(statusDevDaTela(base, null)).toBeNull();
   });
 });

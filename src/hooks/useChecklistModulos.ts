@@ -3,7 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import type {
-  ChecklistItem, DadosChecklist, Historico, Severidade, StatusBug,
+  ChecklistItem, DadosChecklist, Historico, Severidade, StatusBug, StatusDevTelas,
 } from "@/lib/sistemas/checklistModulos";
 
 // Sistemas › Checklist de Módulos (mig 20260930000291). O painel inteiro vem
@@ -228,5 +228,28 @@ export function registrarUsoTela(menuCodigo: string, rota: string) {
   ultimoRegistro.set(chave, agora);
   sb.rpc("sis_registrar_uso", { _menu: menuCodigo, _rota: rota }).then(({ error }) => {
     if (error) ultimoRegistro.delete(chave);
+  });
+}
+
+/**
+ * Status de desenvolvimento de cada tela/módulo para o selo do canto de TODA
+ * tela (mig 20261002000003). Qualquer usuário logado lê. Se a RPC falhar,
+ * o card só não aparece (o erro não é guardado como "sem dados") — nunca
+ * derruba a tela. Mesma chave-mãe do checklist: salvar status já atualiza.
+ */
+export function useStatusDevTelas(enabled = true) {
+  return useQuery({
+    queryKey: [...CHAVE, "status-dev"],
+    enabled,
+    // Falha NÃO vira "sem dados" guardado: em 02/10 a 1ª consulta rodou antes
+    // da RPC existir, o null ficou 5 min no cache e o card não aparecia.
+    staleTime: 60_000,
+    refetchOnWindowFocus: true,
+    queryFn: async (): Promise<StatusDevTelas | null> => {
+      const { data, error } = await sb.rpc("sis_status_dev_telas");
+      if (error) throw error;
+      if (!data) return null;
+      return data as StatusDevTelas;
+    },
   });
 }

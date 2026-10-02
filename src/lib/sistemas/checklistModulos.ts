@@ -531,3 +531,25 @@ export function fraseMovimentacao(h: Historico, nomeModulo: string, nomeTela: st
   if (h.campo.startsWith("status_")) return { tipo: "atualizado", texto: `${alvo}: ${ROTULO_CAMPO[h.campo]} → ${rotuloValor(h.campo, h.para)}${por}`, destaque };
   return { tipo: "outro", texto: `${alvo}: ${ROTULO_CAMPO[h.campo] ?? h.campo} atualizado${por}`, destaque };
 }
+
+// ── Status de desenvolvimento no canto de TODA tela (02/10/2026) ─────────
+// Vem da RPC sis_status_dev_telas (mig 20261002000003), legível por
+// qualquer usuário logado. Vale o status da TELA; vazia, o do MÓDULO como o
+// painel mostra (marcado no módulo ou calculado pelas telas ativas).
+
+export interface StatusDevTelas {
+  telas: { codigo: string; modulo_id: string; ativo: boolean; status_dev: StatusDev | null }[];
+  modulos: { modulo_id: string; status_dev: StatusDev | null }[];
+}
+export type OrigemStatusDev = "tela" | "modulo" | "calculado" | "pendente";
+
+export function statusDevDaTela(d: StatusDevTelas | null | undefined, menuCodigo: string | null): { status: StatusDev | null; origem: OrigemStatusDev } | null {
+  if (!d || !menuCodigo) return null;
+  const tela = d.telas.find((t) => t.codigo === menuCodigo);
+  if (!tela) return null;
+  if (tela.status_dev) return { status: tela.status_dev, origem: "tela" };
+  const doModulo = d.modulos.find((m) => m.modulo_id === tela.modulo_id)?.status_dev ?? null;
+  if (doModulo) return { status: doModulo, origem: "modulo" };
+  const calc = derivarDev(d.telas.filter((t) => t.modulo_id === tela.modulo_id && t.ativo).map((t) => t.status_dev));
+  return calc ? { status: calc, origem: "calculado" } : { status: null, origem: "pendente" };
+}
