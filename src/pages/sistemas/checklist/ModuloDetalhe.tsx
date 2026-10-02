@@ -185,7 +185,7 @@ export default function ModuloDetalhe() {
                   <StatusPill etapa={e.chave} valor={statusChave[e.chave]} calculado={m.calculado[e.chave]} />
                   <p className="mt-2 text-[11.5px] text-muted-foreground">
                     {m.calculado[e.chave] ? "Calculado pelas telas · " : m.item?.[e.campo] ? "Marcado no módulo · " : ""}
-                    <b className="text-foreground">{c.feitas}</b>/{m.ativas} submódulos {e.chave === "dev" ? "prontos" : e.chave === "implantacao" ? "implantados" : e.chave === "treinamento" ? "treinados" : "validados"}
+                    <b className="text-foreground">{c.feitas}</b>/{m.ativas} submódulos {e.chave === "dev" ? "liberados" : e.chave === "implantacao" ? "implantados" : e.chave === "treinamento" ? "treinados" : "validados"}
                   </p>
                   <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-muted">
                     <div className="h-full rounded-full bg-emerald-500" style={{ width: `${m.ativas ? (c.feitas / m.ativas) * 100 : 0}%` }} />
@@ -211,7 +211,7 @@ export default function ModuloDetalhe() {
       {/* ── Números do módulo ───────────────────────────────────── */}
       <div className="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-6">
         <CardIndicador icone={<Layers className="h-7 w-7" />} cor="#0f2a5c" fundo="#e0e7ff" valor={String(m.ativas)} rotulo="Submódulos ativos" variacao={null} />
-        <CardIndicador icone={<CheckCircle2 className="h-7 w-7" />} cor="#16a34a" fundo="#dcfce7" valor={`${contagem.dev.feitas}`} rotulo="Prontos" variacao={null} />
+        <CardIndicador icone={<CheckCircle2 className="h-7 w-7" />} cor="#16a34a" fundo="#dcfce7" valor={`${contagem.dev.feitas}`} rotulo="Liberados" variacao={null} />
         <CardIndicador icone={<GraduationCap className="h-7 w-7" />} cor="#2563eb" fundo="#dbeafe" valor={`${contagem.treinamento.feitas}`} rotulo="Treinados" variacao={null} />
         <CardIndicador icone={<Users className="h-7 w-7" />} cor="#7c3aed" fundo="#ede9fe" valor={`${contagem.validacao.feitas}`} rotulo="Validados" variacao={null} />
         <CardIndicador icone={<Activity className="h-7 w-7" />} cor="#0e7490" fundo="#cffafe" valor={`${m.ativos30d}/${m.comAcesso}`} rotulo="Usaram em 30 dias" variacao={null} />

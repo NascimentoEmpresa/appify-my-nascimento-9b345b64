@@ -32,7 +32,7 @@ export type Tom = "ok" | "andamento" | "atencao" | "progresso" | "risco" | "neut
 export interface OpcaoStatus<T extends string> { valor: T; rotulo: string; tom: Tom; peso: number | null }
 
 export const OPCOES_DEV: OpcaoStatus<StatusDev>[] = [
-  { valor: "pronto", rotulo: "Pronto", tom: "ok", peso: 1 },
+  { valor: "pronto", rotulo: "Liberado", tom: "ok", peso: 1 },   // rótulo "Liberado" desde 02/10/2026 (valor no banco segue "pronto")
   { valor: "em_homologacao", rotulo: "Em homologação", tom: "atencao", peso: 0.75 },
   { valor: "em_desenvolvimento", rotulo: "Em desenvolvimento", tom: "andamento", peso: 0.4 },
   { valor: "nao_iniciado", rotulo: "Não iniciado", tom: "neutro", peso: 0 },
@@ -436,7 +436,7 @@ export const inicioDoMes = (agora = new Date()) => new Date(agora.getFullYear(),
 export const modulosSemTreinamento = (mods: LinhaModulo[]) =>
   mods.filter((m) => m.modulo.ativo && m.status.status_treinamento !== "treinado" && m.status.status_treinamento !== "nao_se_aplica");
 
-/** Prontos que o usuário ainda não validou. */
+/** Liberados (status_dev "pronto") que o usuário ainda não validou. */
 export const prontosSemValidacao = (mods: LinhaModulo[]) =>
   mods.filter((m) => m.modulo.ativo && m.status.status_dev === "pronto" && m.status.status_validacao !== "validado");
 
@@ -456,7 +456,7 @@ export function rankingAreas(mods: LinhaModulo[]) {
     .sort((a, b) => b.pendencias - a.pendencias || a.area.localeCompare(b.area));
 }
 
-/** Últimos N meses: quantas vezes algo virou Pronto / Treinado / Validado (módulos e telas). */
+/** Últimos N meses: quantas vezes algo virou Liberado / Treinado / Validado (módulos e telas). */
 export function evolucaoEntregas(historico: Pick<Historico, "campo" | "para" | "created_at">[], meses = 6, agora = new Date()) {
   const lista: { mes: string; rotulo: string; prontos: number; treinados: number; validados: number }[] = [];
   for (let i = meses - 1; i >= 0; i--) {
@@ -506,7 +506,7 @@ export const ROTULO_CAMPO: Record<string, string> = {
   data_validacao: "Data da validação", observacoes: "Observações", area: "Área",
 };
 
-/** "pronto" → "Pronto" (qualquer etapa); data ISO → dd/mm/aaaa; resto como veio. */
+/** "pronto" → "Liberado" (qualquer etapa); data ISO → dd/mm/aaaa; resto como veio. */
 export function rotuloValor(campo: string, v: string | null): string {
   if (v == null || v === "") return "—";
   const etapa = ETAPAS.find((e) => e.campo === campo);
