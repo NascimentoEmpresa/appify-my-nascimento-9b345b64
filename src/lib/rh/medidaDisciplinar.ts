@@ -60,20 +60,31 @@ export interface DadosMedida {
   data_ocorrido: string;
   descricao_ocorrido: string;
   grau?: string;
+  /** Verbal: quando a conversa com o colaborador aconteceu (obrigatória desde 02/10/2026). */
+  data_advertencia_verbal?: string;
 }
 
 export const MIN_DESCRICAO = 50;
 
 /**
- * Erro que impede gravar, ou null. A verbal não pede grau (não há punição a
- * graduar, é registro do fato); as demais continuam pedindo.
+ * Erro que impede gravar, ou null.
+ *
+ * 02/10/2026 (pedido do Pablo): TODA medida pede grau — a verbal também, ela
+ * deixou de sair com "Grau —" no detalhe do Jurídico. E a verbal pede a data
+ * em que a conversa aconteceu (antes ficava "Data da advertência verbal —"),
+ * que não pode ser antes do ocorrido nem no futuro.
  */
 export function erroDaMedida(chave: MedidaDisciplinar | "", d: DadosMedida): string | null {
   const medida = medidaPor(chave);
   if (!medida) return "Escolha a medida disciplinar.";
   if (!d.colaborador_id) return "Selecione o colaborador.";
   if (!d.data_ocorrido) return "Informe a data do ocorrido.";
-  if (!medida.registro && !d.grau) return "Selecione o grau da advertência.";
+  if (!d.grau) return "Selecione o grau da advertência.";
+  if (medida.registro) {
+    if (!d.data_advertencia_verbal) return "Informe a data da advertência verbal.";
+    if (dataNoFuturo(d.data_advertencia_verbal)) return "A data da advertência verbal não pode ser no futuro.";
+    if (d.data_advertencia_verbal < d.data_ocorrido) return "A data da advertência verbal não pode ser antes do ocorrido.";
+  }
   if (d.descricao_ocorrido.trim().length < MIN_DESCRICAO) {
     return `Descreva o ocorrido com pelo menos ${MIN_DESCRICAO} caracteres.`;
   }
