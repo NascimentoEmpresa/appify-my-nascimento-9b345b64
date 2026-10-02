@@ -22,6 +22,9 @@ export interface NfEmissaoRow {
   competencia: string;
   data_emissao: string | null;
   numero_nf: string | null;
+  codigo_servico: string | null;
+  cnae: string | null;
+  nbs: string | null;
   status: "rascunho" | "enviada" | "concluida" | "cancelada";
   tipo_nota: TipoNota;
   descricao: string | null;
@@ -100,6 +103,9 @@ interface SalvarNfEmissaoInput {
   competencia: string;
   data_emissao: string | null;
   numero_nf: string | null;
+  codigo_servico: string | null;
+  cnae: string | null;
+  nbs: string | null;
   tipo_nota: TipoNota;
   descricao: string | null;
   observacoes: string | null;
@@ -126,6 +132,9 @@ export function useSalvarNfEmissao() {
           competencia: input.competencia,
           data_emissao: input.data_emissao,
           numero_nf: input.numero_nf,
+          codigo_servico: input.codigo_servico,
+          cnae: input.cnae,
+          nbs: input.nbs,
           tipo_nota: input.tipo_nota,
           descricao: input.descricao,
           observacoes: input.observacoes,
@@ -184,6 +193,9 @@ interface AtualizarNfEmissaoInput {
   variacao: string | null;
   competencia: string;
   data_emissao: string | null;
+  codigo_servico: string | null;
+  cnae: string | null;
+  nbs: string | null;
   tipo_nota: TipoNota;
   descricao: string | null;
   observacoes: string | null;
@@ -209,6 +221,9 @@ export function useAtualizarNfEmissao() {
           variacao: input.variacao,
           competencia: input.competencia,
           data_emissao: input.data_emissao,
+          codigo_servico: input.codigo_servico,
+          cnae: input.cnae,
+          nbs: input.nbs,
           tipo_nota: input.tipo_nota,
           descricao: input.descricao,
           observacoes: input.observacoes,
@@ -336,6 +351,8 @@ interface RegistrarPagamentoNfInput {
   // emite/reconcilia no dia seguinte — sem campo aqui, a correção da data
   // de emissão exigia ir pra outra tela, Emissão de NF).
   data_emissao?: string | null;
+  // SIS-2026-0582: Ruan corrige o número da NF direto no Relatório de Serviços.
+  numero_nf?: string | null;
 }
 
 export function useRegistrarPagamentoNf() {
@@ -354,6 +371,7 @@ export function useRegistrarPagamentoNf() {
           ...(input.falta_receber !== undefined ? { falta_receber: input.falta_receber } : {}),
           ...(input.pago_a_mais !== undefined ? { pago_a_mais: input.pago_a_mais } : {}),
           ...(input.data_emissao !== undefined ? { data_emissao: input.data_emissao } : {}),
+          ...(input.numero_nf !== undefined ? { numero_nf: input.numero_nf } : {}),
         })
         .eq("id", input.id);
       if (error) throw error;
