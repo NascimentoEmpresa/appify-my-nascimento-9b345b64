@@ -241,35 +241,43 @@ export default function Organograma() {
     !n.ativo && "opacity-60",
   );
 
+  // Largura FIXA do painel (02/10/2026): sem ela o galho da árvore encolhia
+  // (flex) e os cards da grade de 2 colunas ficavam uns por cima dos outros,
+  // com o nome do setor cortado ("S...", "TREINAMEN...").
+  const CARD_PAINEL = 236, GAP_PAINEL = 10, PAD_PAINEL = 14;
   const renderPainel = (setor: string, membros: No[], pai: No) => {
     const contagem = new Map<string, number>();
     membros.forEach((m) => m.cor && contagem.set(m.cor, (contagem.get(m.cor) ?? 0) + 1));
     const corMembros = [...contagem.entries()].sort((a, b) => b[1] - a[1])[0]?.[0];
     const cor = corMembros ?? pai.cor ?? corDe(setor);
     const Icone = iconeSetor(setor);
-    const duasColunas = membros.length > 4;
+    const colunas = membros.length > 4 ? 2 : 1;
+    const largura = colunas * CARD_PAINEL + (colunas - 1) * GAP_PAINEL + PAD_PAINEL * 2;
     return (
       <li key={`painel-${pai.id}-${setor}`}>
-        <div className="org-painel rounded-2xl border-2 p-3 shadow-sm" style={{ borderColor: `${cor}40`, background: `linear-gradient(${cor}0d, ${cor}0d), hsl(var(--card))` }}>
-          <div className="mb-2.5 flex items-center gap-2 px-1">
-            <Icone className="h-5 w-5 shrink-0" style={{ color: cor }} />
-            <span className="flex-1 truncate text-sm font-bold" style={{ color: cor }}>{setor}</span>
-            <span className="shrink-0 rounded-md px-2 py-0.5 text-[11px] font-semibold" style={{ color: cor, background: `${cor}1f` }}>
+        <div className="org-painel rounded-2xl border-2 shadow-sm"
+             style={{ width: largura, padding: PAD_PAINEL, borderColor: `${cor}40`, background: `linear-gradient(${cor}0d, ${cor}0d), hsl(var(--card))` }}>
+          <div className="mb-3 flex items-center gap-2 px-0.5">
+            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg" style={{ background: `${cor}1f` }}>
+              <Icone className="h-[18px] w-[18px]" style={{ color: cor }} />
+            </span>
+            <span className="line-clamp-2 min-w-0 flex-1 text-[13px] font-extrabold uppercase leading-tight tracking-wide" style={{ color: cor }} title={setor}>{setor}</span>
+            <span className="shrink-0 whitespace-nowrap rounded-full px-2.5 py-0.5 text-[11px] font-bold" style={{ color: cor, background: `${cor}1f` }}>
               {membros.length} {membros.length === 1 ? "pessoa" : "pessoas"}
             </span>
           </div>
-          <div className={cn("grid gap-2", duasColunas ? "grid-cols-2" : "grid-cols-1")}>
+          <div className="grid" style={{ gridTemplateColumns: `repeat(${colunas}, ${CARD_PAINEL}px)`, gap: GAP_PAINEL }}>
             {membros.map((m) => (
-              <div key={m.id} {...eventosCard(m)}
-                className={cn("org-card relative flex w-[226px] items-center gap-3 rounded-xl border bg-card px-3 py-2.5 text-left shadow-sm transition", estadoCard(m))}>
-                <Avatar nome={m.nome} url={m.avatar_url} tamanho={40} />
-                <div className="min-w-0 flex-1">
-                  <p className="line-clamp-2 text-[11.5px] font-bold uppercase leading-tight">{m.nome}</p>
-                  {funcaoDe(m) && <p className="mt-0.5 line-clamp-2 text-[10px] font-semibold uppercase leading-tight" style={{ color: m.cor ?? cor }}>{funcaoDe(m)}</p>}
-                  {m.setor && <p className="mt-0.5 truncate text-[10px] text-muted-foreground">{m.setor}</p>}
+              <div key={m.id} {...eventosCard(m)} title={[m.nome, funcaoDe(m)].filter(Boolean).join(" · ")}
+                className={cn("org-card relative flex min-h-[64px] items-center gap-2.5 rounded-xl border bg-card px-3 py-2.5 text-left shadow-sm transition", estadoCard(m))}>
+                <Avatar nome={m.nome} url={m.avatar_url} tamanho={38} />
+                {/* Sem a linha do setor aqui: o cabeçalho do painel já diz. */}
+                <div className="min-w-0 flex-1 pr-2">
+                  <p className="line-clamp-2 text-[11px] font-bold uppercase leading-tight text-foreground">{m.nome}</p>
+                  {funcaoDe(m) && <p className="mt-0.5 line-clamp-2 text-[9.5px] font-semibold uppercase leading-tight" style={{ color: m.cor ?? cor }}>{funcaoDe(m)}</p>}
                   {!m.ativo && <p className="text-[10px] font-semibold text-destructive">usuário inativo</p>}
                 </div>
-                {edicao && podeMontar && <Pencil className="absolute right-2 top-2 h-3 w-3 text-muted-foreground" />}
+                {edicao && podeMontar && <Pencil className="absolute right-1.5 top-1.5 h-3 w-3 text-muted-foreground" />}
               </div>
             ))}
           </div>
@@ -294,9 +302,10 @@ export default function Organograma() {
     return (
       <li key={n.id}>
         <div {...eventosCard(n)} style={estiloCard(n.cor)}
-          className={cn("org-card relative flex w-[250px] items-center gap-3 rounded-2xl border-2 bg-card px-4 py-3.5 text-left shadow-sm transition", estadoCard(n))}>
-          <Avatar nome={n.nome} url={n.avatar_url} tamanho={52} />
-          <div className="min-w-0 flex-1">
+          title={[n.nome, funcaoDe(n), n.setor].filter(Boolean).join(" · ")}
+          className={cn("org-card relative flex min-h-[84px] w-[264px] items-center gap-3 rounded-2xl border-2 bg-card px-4 py-3 text-left shadow-sm transition", estadoCard(n))}>
+          <Avatar nome={n.nome} url={n.avatar_url} tamanho={50} />
+          <div className="min-w-0 flex-1 pr-2">
             <p className="line-clamp-2 text-[12.5px] font-bold uppercase leading-tight">{n.nome}</p>
             {funcaoDe(n) && <p className="mt-0.5 line-clamp-2 text-[10.5px] font-semibold uppercase leading-tight text-primary" style={n.cor ? { color: n.cor } : undefined}>{funcaoDe(n)}</p>}
             {n.setor && <p className="mt-0.5 truncate text-[11px] text-muted-foreground">{n.setor}</p>}
@@ -653,11 +662,11 @@ function EditarPessoa({ no, nos, descendentes, podeAlterar, podeExcluir, podeInc
 
 // Conectores do organograma (árvore de cima para baixo) e impressão.
 const CSS_ORGANOGRAMA = `
-.org-arvore ul{position:relative;display:flex;justify-content:center;padding-top:28px;margin:0}
-.org-arvore ul.org-raiz{padding-top:0;gap:48px}
-.org-arvore li{position:relative;display:flex;flex-direction:column;align-items:center;padding:28px 10px 0;list-style:none}
+.org-arvore ul{position:relative;display:flex;justify-content:center;align-items:flex-start;padding-top:32px;margin:0}
+.org-arvore ul.org-raiz{padding-top:0;gap:56px}
+.org-arvore li{position:relative;display:flex;flex-direction:column;align-items:center;flex-shrink:0;padding:32px 16px 0;list-style:none}
 .org-arvore ul.org-raiz>li{padding-top:0}
-.org-arvore li::before,.org-arvore li::after{content:"";position:absolute;top:0;right:50%;width:50%;height:28px;border-top:2px solid hsl(var(--border))}
+.org-arvore li::before,.org-arvore li::after{content:"";position:absolute;top:0;right:50%;width:50%;height:32px;border-top:2px solid hsl(var(--border))}
 .org-arvore li::after{right:auto;left:50%;border-left:2px solid hsl(var(--border))}
 .org-arvore ul.org-raiz>li::before,.org-arvore ul.org-raiz>li::after{display:none}
 .org-arvore li:only-child::before{display:none}
@@ -666,8 +675,8 @@ const CSS_ORGANOGRAMA = `
 .org-arvore li:last-child::before{border-right:2px solid hsl(var(--border));border-radius:0 10px 0 0}
 .org-arvore li:first-child::after{border-radius:10px 0 0 0}
 .org-arvore li:only-child::after{border-radius:0}
-.org-arvore ul ul::before{content:"";position:absolute;top:0;left:50%;height:28px;border-left:2px solid hsl(var(--border))}
-.org-arvore li>ul{padding-top:28px}
+.org-arvore ul ul::before{content:"";position:absolute;top:0;left:50%;height:32px;border-left:2px solid hsl(var(--border))}
+.org-arvore li>ul{padding-top:32px}
 @media print{
   body *{visibility:hidden}
   .org-caixa,.org-caixa *{visibility:visible}
