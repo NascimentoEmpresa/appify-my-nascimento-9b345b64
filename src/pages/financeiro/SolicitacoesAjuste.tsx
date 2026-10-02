@@ -40,7 +40,9 @@ export default function SolicitacoesAjuste() {
   const despachoAtrasado = (s: SolicitacaoAjuste) => s.status === "enviado" && !s.data_despacho && !!s.prazo_despacho && s.prazo_despacho < hoje;
 
   const kpis = useMemo(() => {
-    const contagem: Record<string, number> = { total: solicitacoes.length, despacho: 0 };
+    // SIS-2026-0571: "Ativas" = o que ainda está em andamento. Enviada sai
+    // de Ativas e passa a ser contada/listada só em "Enviadas".
+    const contagem: Record<string, number> = { total: solicitacoes.filter((s) => s.status !== "enviado").length, despacho: 0 };
     for (const s of solicitacoes) {
       contagem[s.status] = (contagem[s.status] ?? 0) + 1;
       if (despachoAtrasado(s)) contagem.despacho++;
@@ -50,6 +52,7 @@ export default function SolicitacoesAjuste() {
 
   const filtradas = useMemo(() => {
     return solicitacoes.filter((s) => {
+      if (filtroStatus === "todas" && s.status === "enviado") return false;
       if (filtroStatus === "despacho_atrasado" && !despachoAtrasado(s)) return false;
       if (filtroStatus !== "todas" && filtroStatus !== "despacho_atrasado" && s.status !== filtroStatus) return false;
       if (busca && !s.contrato?.nome.toLowerCase().includes(busca.toLowerCase())) return false;
@@ -84,7 +87,7 @@ export default function SolicitacoesAjuste() {
         <KpiTile label="Aguardando RH" valor={String(kpis.aguardando_rh ?? 0)} icon={<Clock />} cor="amber" onClick={() => setFiltroStatus("aguardando_rh")} />
         <KpiTile label="Em Conf. RH" valor={String(kpis.em_conferencia_rh ?? 0)} icon={<Clock />} cor="sky" onClick={() => setFiltroStatus("em_conferencia_rh")} />
         <KpiTile label="Concluído RH" valor={String(kpis.concluido_rh ?? 0)} icon={<CheckCircle2 />} cor="sky" onClick={() => setFiltroStatus("concluido_rh")} />
-        <KpiTile label="Enviados" valor={String(kpis.enviado ?? 0)} icon={<CheckCircle2 />} cor="emerald" onClick={() => setFiltroStatus("enviado")} />
+        <KpiTile label="Enviadas" valor={String(kpis.enviado ?? 0)} icon={<CheckCircle2 />} cor="emerald" onClick={() => setFiltroStatus("enviado")} />
         <KpiTile
           label="Despacho atrasado" valor={String(kpis.despacho ?? 0)} icon={<AlertTriangle />}
           cor="red" valorClass={kpis.despacho > 0 ? "text-destructive" : undefined}
