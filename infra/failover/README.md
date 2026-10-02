@@ -407,16 +407,34 @@ cada restore desfaz a trava.
 |---|---|
 | POST/PATCH/PUT/DELETE direto em tabela pela API REST | **sim** |
 | Login, sessão, refresh token (GoTrue) | não travado **de propósito** — sem isso ninguém entra |
-| RPC marcada `SECURITY DEFINER` | **não** — roda como o dono e ignora o REVOKE |
+| RPC marcada `SECURITY DEFINER` | **sim**, desde 02/10 — ver abaixo |
 
-O app chama **410 RPCs distintas**; pelo nome, ao menos 5 gravam
-(`criar_plano_acao`, `salvar_planejamento_orcamentario`, …). Fechar isso exige
-revogar `EXECUTE` função a função, separando as que escrevem das que só leem.
-**Esse trabalho ainda não foi feito.**
+As funções `SECURITY DEFINER` rodam com os privilégios do **dono**, então o
+`REVOKE` nas tabelas não as alcança. Elas são tratadas em separado, pelo mesmo
+bloco do `carregar-replica.sh`: um `DO` percorre o `pg_proc` e revoga `EXECUTE`
+de toda função `SECURITY DEFINER` cujo corpo contenha INSERT/UPDATE/DELETE/
+TRUNCATE.
 
-Consequência prática, dita sem rodeio: em contingência, a consulta é segura e
-as telas comuns não conseguem gravar; uma tela que grave por RPC ainda
-conseguiria, e esse dado se perderia na recarga seguinte.
+Medido no repositório em 02/10/2026: de 1.032 definições de função, **444 se
+encaixam no critério** e **249 delas são chamadas pelo app**. Nenhuma com nome
+sugerindo leitura (`get_`, `listar_`, `buscar_`…) — a amostra é
+`nf_lancar_estoque`, `cotacao_fechar`, `cnab_gerar_remessa`.
+
+Falso positivo aqui é **seguro**: revogar uma função de leitura que tinha a
+palavra "update" solta num comentário não faz falta em modo consulta. Falso
+negativo seria o perigo, e só aconteceria com escrita montada por `EXECUTE`
+dinâmico.
+
+**As funções de RLS ficam de fora, e isso não é opcional.** `can_access`
+aparece 2.063 vezes dentro de policies, `has_screen_access` 830,
+`tem_acesso_menu` 750. Elas são chamadas *dentro* da policy, com os
+privilégios de quem está consultando. Revogar `EXECUTE` delas não deixaria o
+banco mais seguro: derrubaria **toda a leitura**, porque cada policy passaria a
+dar erro de permissão. A réplica viraria uma tela de erro.
+
+Consequência prática: em contingência, **249 operações do app recusam com
+`permission denied`**. Isso é o desenho funcionando, não defeito — é o que
+impede que um pedido aprovado ali desapareça na recarga seguinte.
 
 ### Partes
 
