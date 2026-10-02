@@ -7,6 +7,7 @@ import {
   Download, ExternalLink, ListChecks, Check, X, Trophy, RotateCcw, Loader2, PartyPopper,
 } from "lucide-react";
 import { corrigirProva, embedDeVideo, type EscopoTreinamento, type Resultado, type Treinamento } from "./core";
+import { PlayerAteOFim, type FonteVideo } from "@/components/treinamentos/PlayerAteOFim";
 
 // =====================================================================
 // TREINAMENTOS — assistir, baixar o material e fazer a prova.
@@ -14,6 +15,12 @@ import { corrigirProva, embedDeVideo, type EscopoTreinamento, type Resultado, ty
 // Sem prova, abrir já conclui. Com prova, a conclusão é o resultado dela —
 // e a nota é recalculada aqui, no cliente, apenas para mostrar; o que vale
 // para o histórico é a linha gravada em TREINAMENTO_CONCLUSAO.
+//
+// 02/10/2026: com vídeo que o player acompanha (arquivo, YouTube, Vimeo), só
+// conclui — e só envia a prova — depois de assistir até o fim, sem adiantar
+// (PlayerAteOFim, a mesma regra das aulas do Portal, mig 290). Quem já tinha
+// concluído antes revê livre. Aqui a trava é da tela: a conclusão é gravada
+// direto em TREINAMENTO_CONCLUSAO (sem RPC) e este módulo não emite certificado.
 // =====================================================================
 
 interface Props {
@@ -38,6 +45,15 @@ export function TreinamentoVisor({ treinamento, meuNome, meuId, escopo, jaFeito,
   const t = treinamento;
   const temProva = Array.isArray(t?.prova) && t!.prova!.length > 0;
   const embed = t?.video_url ? embedDeVideo(t.video_url) : null;
+  // O vídeo que o player acompanha até o fim: o arquivo do bucket ou o link.
+  const fonte: FonteVideo | null = urlVideo
+    ? { tipo: "arquivo", src: urlVideo }
+    : embed && (embed.tipo === "youtube" || embed.tipo === "vimeo" || embed.tipo === "arquivo") ? { tipo: embed.tipo, src: embed.src } : null;
+  const exigeVideo = !!t?.video_path || !!fonte;
+  const [videoVisto, setVideoVisto] = useState(false);
+  useEffect(() => { setVideoVisto(false); }, [t?.id]);
+  const jaConcluiu = !!jaFeito;
+  const faltaVideo = exigeVideo && !videoVisto && !jaConcluiu;
 
   // Bucket privado: o arquivo só abre por URL assinada, gerada a cada
   // abertura. Uma hora é folga suficiente para assistir sem recarregar.
@@ -106,7 +122,7 @@ export function TreinamentoVisor({ treinamento, meuNome, meuId, escopo, jaFeito,
   };
 
   const enviarProva = async () => {
-    if (!t) return;
+    if (!t || faltaVideo) return;
     const naoRespondidas = t.prova!.filter(q => respostas[q.id] == null).length;
     if (naoRespondidas > 0) {
       toast({
@@ -124,7 +140,7 @@ export function TreinamentoVisor({ treinamento, meuNome, meuId, escopo, jaFeito,
   };
 
   const concluirSemProva = async () => {
-    if (!t) return;
+    if (!t || faltaVideo) return;
     setEnviando(true);
     await registrar(corrigirProva(null, {}));
     setEnviando(false);
@@ -147,15 +163,15 @@ export function TreinamentoVisor({ treinamento, meuNome, meuId, escopo, jaFeito,
           )}
 
           {/* ---- vídeo ---- */}
-          {embed && (embed.tipo === "youtube" || embed.tipo === "vimeo") && (
-            <div className="aspect-video overflow-hidden rounded-xl border bg-black shadow-lg animate-in fade-in zoom-in-95 duration-300">
-              <iframe src={embed.src} className="h-full w-full" allowFullScreen
-                      allow="accelerometer; autoplay; clipboard-write; encrypted-media; picture-in-picture"
-                      title={t.titulo} />
+          {fonte && (
+            <div className="animate-in fade-in zoom-in-95 duration-300">
+              <PlayerAteOFim fonte={fonte} titulo={t.titulo} jaAssistido={jaConcluiu} onTerminou={() => setVideoVisto(true)} />
             </div>
           )}
-          {embed && embed.tipo === "arquivo" && (
-            <video src={embed.src} controls className="aspect-video w-full rounded-xl border bg-black shadow-lg" />
+          {t.video_path && !urlVideo && (
+            <div className="grid aspect-video place-items-center rounded-xl border bg-black text-white/70">
+              <Loader2 className="h-6 w-6 animate-spin" />
+            </div>
           )}
           {embed && embed.tipo === "desconhecido" && (
             <Button variant="outline" asChild className="w-full">
@@ -163,9 +179,6 @@ export function TreinamentoVisor({ treinamento, meuNome, meuId, escopo, jaFeito,
                 <ExternalLink className="mr-2 h-4 w-4" /> Abrir o vídeo em outra aba
               </a>
             </Button>
-          )}
-          {urlVideo && (
-            <video src={urlVideo} controls className="aspect-video w-full rounded-xl border bg-black shadow-lg animate-in fade-in duration-300" />
           )}
 
           {/* ---- anexo ---- */}
@@ -217,7 +230,10 @@ export function TreinamentoVisor({ treinamento, meuNome, meuId, escopo, jaFeito,
                 </div>
               ))}
 
-              <Button className="w-full" size="lg" onClick={enviarProva} disabled={enviando}>
+              {faltaVideo && (
+                <p className="rounded-lg bg-muted p-3 text-center text-sm text-muted-foreground">Assista o vídeo até o fim para enviar a prova.</p>
+              )}
+              <Button className="w-full" size="lg" onClick={enviarProva} disabled={enviando || faltaVideo}>
                 {enviando ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Corrigindo…</> : "Enviar prova"}
               </Button>
             </div>
@@ -275,10 +291,13 @@ export function TreinamentoVisor({ treinamento, meuNome, meuId, escopo, jaFeito,
 
           {/* Sem prova, concluir é o próprio botão. */}
           {!temProva && (
-            <Button className="w-full" size="lg" onClick={concluirSemProva} disabled={enviando}>
-              {enviando ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Check className="mr-2 h-4 w-4" />}
-              Marcar como concluído
-            </Button>
+            <div className="space-y-2">
+              {faltaVideo && <p className="text-center text-sm text-muted-foreground">Assista o vídeo até o fim para concluir.</p>}
+              <Button className="w-full" size="lg" onClick={concluirSemProva} disabled={enviando || faltaVideo}>
+                {enviando ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Check className="mr-2 h-4 w-4" />}
+                Marcar como concluído
+              </Button>
+            </div>
           )}
         </div>
       </DialogContent>

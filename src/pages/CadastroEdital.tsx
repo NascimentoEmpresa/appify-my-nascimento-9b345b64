@@ -275,13 +275,10 @@ export default function CadastroEdital() {
               onEdit={() => { setEditing(capa); setSheetOpen(true); }}
               onView={() => setViewItem(capa)}
               onDelete={() => setDeleteTarget(capa)}
-              onPromover={() => {
-                if (!capa.reuniao_alinhamento) {
-                  setReuniaoModal(capa);
-                } else {
-                  setPromoverTarget(capa);
-                }
-              }}
+              // Recuperação: o contrato nasce sozinho ao virar "Ganhamos"; este
+              // botão só aparece pra Capa ganha que ficou sem contrato. Reunião de
+              // alinhamento deixou de ser pré-requisito (completa depois).
+              onPromover={() => setPromoverTarget(capa)}
               onStatusChange={(status) =>
                 update.mutate({ id: capa.id, changes: { status }, current: capa })
               }
@@ -319,15 +316,7 @@ export default function CadastroEdital() {
           onConfirm={(data) => {
             update.mutate(
               { id: reuniaoModal.id, changes: { reuniao_alinhamento: data }, current: reuniaoModal },
-              {
-                onSuccess: () => {
-                  setReuniaoModal(null);
-                  // Se veio do fluxo de criar contrato, abre confirmação de promoção
-                  if (reuniaoModal.status === "Ganhamos" && !reuniaoModal.contrato_id) {
-                    setPromoverTarget({ ...reuniaoModal, reuniao_alinhamento: data });
-                  }
-                },
-              }
+              { onSuccess: () => setReuniaoModal(null) }
             );
           }}
         />
@@ -360,11 +349,12 @@ export default function CadastroEdital() {
       <AlertDialog open={!!promoverTarget} onOpenChange={(o) => !o && setPromoverTarget(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Criar contrato de implantação?</AlertDialogTitle>
+            <AlertDialogTitle>Criar contrato desta licitação?</AlertDialogTitle>
             <AlertDialogDescription>
               Um contrato será criado para{" "}
               <strong>{promoverTarget?.objeto || promoverTarget?.cidade || "esta licitação"}</strong> e ficará disponível
-              no módulo <strong>Implantação de Contratos</strong>.
+              em <strong>Implantação</strong>, <strong>Contratos</strong> e na <strong>Planilha de Custo</strong> (sem valores).
+              Cliente e reunião de alinhamento podem ser completados depois.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -373,7 +363,7 @@ export default function CadastroEdital() {
               onClick={() => {
                 if (promoverTarget)
                   promover.mutate(
-                    { capa: promoverTarget, reuniaoAlinhamento: promoverTarget.reuniao_alinhamento ?? "" },
+                    { capa: promoverTarget },
                     { onSuccess: () => setPromoverTarget(null) }
                   );
               }}
@@ -893,7 +883,7 @@ function ReuniaoModal({ capa, onClose, onConfirm }: {
         </DialogHeader>
         <div className="space-y-3 py-2">
           <p className="text-xs text-muted-foreground">
-            <strong>{capa.objeto || capa.cidade}</strong> — informe a data da reunião de alinhamento antes de criar o contrato.
+            <strong>{capa.objeto || capa.cidade}</strong> — informe a data da reunião de alinhamento com o cliente.
           </p>
           <div className="space-y-1">
             <Label className="text-xs">Data da reunião</Label>
