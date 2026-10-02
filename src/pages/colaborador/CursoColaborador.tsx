@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type SyntheticEvent } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import {
   ArrowLeft, Award, CheckCircle2, ChevronDown, ChevronRight, Circle, ExternalLink, FileText, Loader2, Lock,
@@ -14,6 +14,7 @@ import {
   useCursoColaborador, type AulaAluno,
 } from "@/hooks/useColaboradorPortal";
 import { ProvaAula } from "./ProvaAula";
+import { PlayerAteOFim } from "@/components/treinamentos/PlayerAteOFim";
 import { Carregando, Chip, Erro, Vazio } from "./ui";
 
 // =====================================================================
@@ -24,10 +25,12 @@ import { Carregando, Chip, Erro, Vazio } from "./ui";
 // descrição, materiais, CTA, prova e comentários. Concluir manda
 // col_concluir_aula; se a aula tem prova, só conclui depois de passar (a
 // RPC cobra — e passar na prova já conclui sozinho). A prova (ProvaAula.tsx,
-// 22/09/2026) abre depois do vídeo visto até o fim: o player avisa o banco
-// (video_assistido) ao chegar em 90% — <video> pelo timeupdate, YouTube e
-// Vimeo pela API de postMessage de cada um. Ao fechar 100% e o curso ter modelo, o certificado sai
-// sozinho e o botão aparece.
+// 22/09/2026) abre depois do vídeo visto até o fim. Desde 02/10/2026 (mig
+// 290) o vídeo vale de verdade só no FIM, sem adiantar (PlayerAteOFim), e
+// a aula com vídeo só conclui depois disso — o banco cobra em
+// col_concluir_aula, e sem todas as aulas concluídas não há certificado.
+// Ao fechar 100% e o curso ter modelo, o certificado sai sozinho e o botão
+// aparece.
 //
 // Tempo assistido: um contador local acumula enquanto a aula está aberta e
 // a aba visível, e manda em lotes de ~60 s (registrar_tempo). É estatística
@@ -159,10 +162,16 @@ function AulaAberta({ aula, cursoId, comentariosHabilitados, anterior, proxima }
   const concluir = useConcluirAula(cursoId);
   const qc = useQueryClient();
   // Vídeo chegou ao fim: grava e recarrega a prova (que pode ter liberado).
+  const [terminouAgora, setTerminouAgora] = useState(false);
+  useEffect(() => { setTerminouAgora(false); }, [aula.id]);
   const videoTerminou = async () => {
+    setTerminouAgora(true);
     await avisarVideoAssistido(aula.id);
     qc.invalidateQueries({ queryKey: ["colaborador", "prova", aula.id] });
+    qc.invalidateQueries({ queryKey: ["colaborador", "curso", cursoId] });
   };
+  // Aula com vídeo só conclui depois de assisti-lo até o fim (mig 290).
+  const faltaVideo = !!aula.video_obrigatorio && !aula.video_assistido && !terminouAgora;
   const [avaliacao, setAvaliacao] = useState<number | null>(aula.avaliacao);
   const travada = aula.bloqueado || aula.moduloBloqueado;
   const temQuiz = !!aula.quiz?.length;
@@ -268,9 +277,9 @@ function AulaAberta({ aula, cursoId, comentariosHabilitados, anterior, proxima }
           {!aula.concluida ? (
             <button
               type="button"
-              disabled={concluir.isPending || (temQuiz && !passouQuiz)}
+              disabled={concluir.isPending || faltaVideo || (temQuiz && !passouQuiz)}
               onClick={marcarConcluida}
-              title={temQuiz && !passouQuiz ? `Passe na prova (mínimo ${aula.nota_minima}%) para concluir` : undefined}
+              title={faltaVideo ? "Assista o vídeo até o fim para concluir" : temQuiz && !passouQuiz ? `Passe na prova (mínimo ${aula.nota_minima}%) para concluir` : undefined}
               className="inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-gradient-accent px-5 text-sm font-semibold text-accent-foreground disabled:opacity-60"
             >
               {concluir.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
@@ -280,6 +289,9 @@ function AulaAberta({ aula, cursoId, comentariosHabilitados, anterior, proxima }
             <p className="inline-flex items-center gap-2 text-sm font-semibold text-success"><CheckCircle2 className="h-4 w-4" /> Aula concluída</p>
           )}
         </div>
+        {faltaVideo && !aula.concluida && (
+          <p className="mt-2 text-xs font-medium text-muted-foreground">Assista o vídeo até o fim para concluir esta aula — sem isso o certificado não é emitido.</p>
+        )}
         {temQuiz && !passouQuiz && !aula.concluida && (
           <p className="mt-2 text-xs text-muted-foreground">Esta aula tem prova: alcance {aula.nota_minima}% para concluí-la.</p>
         )}
@@ -296,71 +308,27 @@ function AulaAberta({ aula, cursoId, comentariosHabilitados, anterior, proxima }
 
 function Player({ aula, onFim }: { aula: AulaAluno; onFim?: () => void }) {
   const thumb = urlMidia(aula.thumb_path);
-  const avisou = useRef(false);
-  const iframe = useRef<HTMLIFrameElement | null>(null);
-  useEffect(() => { avisou.current = false; }, [aula.id]);
-  const fim = () => { if (!avisou.current) { avisou.current = true; onFim?.(); } };
-  const noTempo = (e: SyntheticEvent<HTMLVideoElement>) => {
-    const v = e.currentTarget;
-    if (v.duration > 0 && v.currentTime / v.duration >= 0.9) fim();
-  };
   const emb = aula.video_url ? embedDeVideo(aula.video_url) : null;
 
-  // YouTube/Vimeo: escuta os eventos do player embutido (postMessage).
-  useEffect(() => {
-    if (!emb || (emb.tipo !== "youtube" && emb.tipo !== "vimeo")) return;
-    const ouvir = (ev: MessageEvent) => {
-      if (!/^https:\/\/([a-z0-9-]+\.)*(youtube\.com|youtube-nocookie\.com|vimeo\.com)$/.test(ev.origin)) return;
-      let d: any = ev.data;
-      if (typeof d === "string") { try { d = JSON.parse(d); } catch { return; } }
-      if (!d || typeof d !== "object") return;
-      // YouTube: estado 0 = terminou; infoDelivery traz o tempo.
-      if (d.event === "onStateChange" && d.info === 0) fim();
-      if (d.event === "infoDelivery" && d.info) {
-        if (d.info.playerState === 0) fim();
-        if (d.info.duration > 0 && d.info.currentTime / d.info.duration >= 0.9) fim();
-      }
-      // Vimeo: pronto → assina os eventos; timeupdate traz o percentual.
-      if (d.event === "ready") {
-        for (const value of ["timeupdate", "ended"]) iframe.current?.contentWindow?.postMessage(JSON.stringify({ method: "addEventListener", value }), "*");
-      }
-      if (d.event === "ended" || (d.event === "timeupdate" && d.data?.percent >= 0.9)) fim();
-    };
-    window.addEventListener("message", ouvir);
-    return () => window.removeEventListener("message", ouvir);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [aula.id, emb?.src]);
-  const aoCarregarIframe = () => {
-    // YouTube só manda eventos depois de alguém dizer que está ouvindo.
-    if (emb?.tipo === "youtube") iframe.current?.contentWindow?.postMessage(JSON.stringify({ event: "listening", id: aula.id, channel: "widget" }), "*");
-  };
-
+  // Vídeo que dá para acompanhar (arquivo, YouTube, Vimeo): só conta no FIM
+  // e não deixa adiantar (mig 290 — antes avisava a 90% e dava para pular).
   if (aula.video_path) {
     const src = urlMidia(aula.video_path);
+    if (src) return <PlayerAteOFim fonte={{ tipo: "arquivo", src }} titulo={aula.nome} poster={thumb} jaAssistido={!!aula.video_assistido} onTerminou={onFim} />;
+  }
+  // Aula ao vivo não tem "fim": fica o player simples, sem trava (o banco
+  // também não exige o vídeo nela — trn_aula_video_obrigatorio).
+  if (emb && aula.tipo_conteudo === "ao_vivo" && (emb.tipo === "youtube" || emb.tipo === "vimeo")) {
     return (
       <div className="overflow-hidden rounded-2xl bg-black">
-        <video src={src ?? undefined} poster={thumb ?? undefined} controls playsInline className="aspect-video w-full" onTimeUpdate={noTempo} onEnded={fim} />
+        <iframe src={emb.src} title={aula.nome} allow="accelerometer; autoplay; encrypted-media; gyroscope; picture-in-picture; fullscreen" allowFullScreen className="aspect-video w-full" />
       </div>
     );
   }
+  if (emb && (emb.tipo === "youtube" || emb.tipo === "vimeo" || emb.tipo === "arquivo")) {
+    return <PlayerAteOFim fonte={{ tipo: emb.tipo, src: emb.src }} titulo={aula.nome} poster={thumb} jaAssistido={!!aula.video_assistido} onTerminou={onFim} />;
+  }
   if (aula.video_url && emb) {
-    if (emb.tipo === "youtube" || emb.tipo === "vimeo") {
-      const src = emb.tipo === "youtube"
-        ? `${emb.src}?enablejsapi=1&origin=${encodeURIComponent(window.location.origin)}`
-        : `${emb.src}?api=1`;
-      return (
-        <div className="overflow-hidden rounded-2xl bg-black">
-          <iframe ref={iframe} onLoad={aoCarregarIframe} src={src} title={aula.nome} allow="accelerometer; autoplay; encrypted-media; gyroscope; picture-in-picture; fullscreen" allowFullScreen className="aspect-video w-full" />
-        </div>
-      );
-    }
-    if (emb.tipo === "arquivo") {
-      return (
-        <div className="overflow-hidden rounded-2xl bg-black">
-          <video src={emb.src} poster={thumb ?? undefined} controls playsInline className="aspect-video w-full" onTimeUpdate={noTempo} onEnded={fim} />
-        </div>
-      );
-    }
     if (aula.tipo_conteudo === "embed") {
       return (
         <div className="overflow-hidden rounded-2xl bg-black">
