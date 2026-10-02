@@ -6,9 +6,11 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { SearchableSelect } from "@/components/ui/searchable-select";
+import { SearchableMultiSelect } from "@/components/ui/searchable-multi-select";
+import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { useSalvarChecklist, type CamposChecklist } from "@/hooks/useChecklistModulos";
-import { AREA_PADRAO, ETAPAS, opcaoDe, type ChecklistItem, type Status4, type UsuarioCat } from "@/lib/sistemas/checklistModulos";
+import { AREA_PADRAO, ETAPAS, exigeResponsavelTreinamento, opcaoDe, type ChecklistItem, type Status4, type UsuarioCat } from "@/lib/sistemas/checklistModulos";
 import { CLASSE_TOM, PONTO_TOM, fmtDataHora } from "./ui";
 
 // Preencher o checklist de uma TELA (submódulo) ou do MÓDULO. No módulo, a
@@ -39,6 +41,7 @@ export function ItemDialog({ alvo, usuarios, onFechar }: { alvo: AlvoItem | null
       previsao_entrega: i?.previsao_entrega ?? null, data_implantacao: i?.data_implantacao ?? null,
       data_treinamento: i?.data_treinamento ?? null, data_validacao: i?.data_validacao ?? null,
       observacoes: i?.observacoes ?? null, area: i?.area ?? null,
+      treinamento_responsaveis: i?.treinamento_responsaveis ?? [],
     });
   }, [alvo]);
 
@@ -48,8 +51,15 @@ export function ItemDialog({ alvo, usuarios, onFechar }: { alvo: AlvoItem | null
   const areaPadrao = AREA_PADRAO[alvo.moduloCodigo ?? ""] ?? alvo.moduloNome;
 
   const gravar = async () => {
+    // Treinamento com status pede quem conduz (02/10/2026; CHECK no banco, mig 20261002000006).
+    const exige = exigeResponsavelTreinamento(f.status_treinamento);
+    if (exige && !(f.treinamento_responsaveis ?? []).length) {
+      toast.error("Informe o(s) responsável(is) pelo treinamento.");
+      return;
+    }
     const campos: CamposChecklist = { ...f, observacoes: f.observacoes?.trim() || null };
     if (ehModulo) campos.area = f.area?.trim() || null; else delete campos.area;
+    if (!exige) campos.treinamento_responsaveis = [];
     for (const k of ["previsao_entrega", "data_implantacao", "data_treinamento", "data_validacao"] as const) {
       if (!campos[k]) campos[k] = null;
     }
@@ -109,6 +119,21 @@ export function ItemDialog({ alvo, usuarios, onFechar }: { alvo: AlvoItem | null
                   <div className="mt-2 flex items-center gap-2">
                     <Label className="text-xs text-muted-foreground">Data</Label>
                     <Input type="date" className="h-8 w-40" value={(f[campoData] as string | null) ?? ""} onChange={(ev) => mudar({ [campoData]: ev.target.value || null } as CamposChecklist)} />
+                  </div>
+                )}
+                {e.chave === "treinamento" && exigeResponsavelTreinamento(f.status_treinamento) && (
+                  <div className="mt-2 space-y-1">
+                    <Label className="text-xs text-muted-foreground">
+                      Responsável(is) pelo treinamento <span className="text-destructive">*</span>
+                    </Label>
+                    <SearchableMultiSelect
+                      value={f.treinamento_responsaveis ?? []}
+                      onChange={(v) => mudar({ treinamento_responsaveis: v })}
+                      options={usuarios.map((u) => ({ value: u.id, label: u.nome, hint: u.email ?? undefined }))}
+                      placeholder="Quem conduz o treinamento"
+                      searchPlaceholder="Buscar pessoa…"
+                      className={cn(!(f.treinamento_responsaveis ?? []).length && "ring-1 ring-destructive/50 rounded-md")}
+                    />
                   </div>
                 )}
               </div>

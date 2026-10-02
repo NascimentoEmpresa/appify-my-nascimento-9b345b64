@@ -191,6 +191,14 @@ export default function ModuloDetalhe() {
                     <div className="h-full rounded-full bg-emerald-500" style={{ width: `${m.ativas ? (c.feitas / m.ativas) * 100 : 0}%` }} />
                   </div>
                   {!e.noPercentual && <p className="mt-1 text-[10.5px] text-muted-foreground">não entra no % de efetividade</p>}
+                  {e.chave === "treinamento" && (
+                    <p className="mt-1.5 text-[11.5px] text-muted-foreground">
+                      Responsável(is):{" "}
+                      <b className="text-foreground">
+                        {m.item?.treinamento_responsaveis?.length ? m.item.treinamento_responsaveis.map((id) => nomeUsuario.get(id) ?? "—").join(", ") : "—"}
+                      </b>
+                    </p>
+                  )}
                 </div>
               );
             })}

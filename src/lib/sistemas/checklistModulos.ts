@@ -100,6 +100,8 @@ export interface ChecklistItem {
   responsavel_id: string | null; usuario_chave_id: string | null;
   previsao_entrega: string | null; data_implantacao: string | null; data_treinamento: string | null; data_validacao: string | null;
   observacoes: string | null; area?: string | null; atualizado_por: string | null; atualizado_em: string;
+  /** Quem conduz o treinamento (profiles.id) — obrigatório com status de treinamento, menos "não se aplica" (mig 20261002000006). */
+  treinamento_responsaveis?: string[] | null;
 }
 export interface BugResumo { modulo_id: string; menu_id: string | null; status: StatusBug; severidade: Severidade }
 export interface ChamadosModulo { modulo: string | null; abertos: number; total: number }
@@ -504,6 +506,7 @@ export const ROTULO_CAMPO: Record<string, string> = {
   status_validacao: "Validação", responsavel_id: "Responsável", usuario_chave_id: "Usuário-chave",
   previsao_entrega: "Previsão de entrega", data_implantacao: "Data de implantação", data_treinamento: "Data do treinamento",
   data_validacao: "Data da validação", observacoes: "Observações", area: "Área",
+  treinamento_responsaveis: "Responsáveis pelo treinamento",
 };
 
 /** "pronto" → "Liberado" (qualquer etapa); data ISO → dd/mm/aaaa; resto como veio. */
@@ -553,3 +556,6 @@ export function statusDevDaTela(d: StatusDevTelas | null | undefined, menuCodigo
   const calc = derivarDev(d.telas.filter((t) => t.modulo_id === tela.modulo_id && t.ativo).map((t) => t.status_dev));
   return calc ? { status: calc, origem: "calculado" } : { status: null, origem: "pendente" };
 }
+
+/** Treinamento com status (menos "não se aplica") exige ao menos um responsável — mesma regra do CHECK no banco. */
+export const exigeResponsavelTreinamento = (status: StatusTreinamento | null | undefined) => !!status && status !== "nao_se_aplica";
