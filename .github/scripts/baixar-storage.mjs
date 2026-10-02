@@ -20,11 +20,9 @@
 //  seguinte, baixa-se so o que nao esta nele ou cuja data mudou. Sem ele a
 //  copia e completa - correta, so demorada.
 // ============================================================================
-import { writeFileSync, readFileSync, existsSync, mkdirSync, createWriteStream } from 'node:fs';
+import { writeFileSync, readFileSync, existsSync, mkdirSync, rmSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { Readable } from 'node:stream';
-import { pipeline } from 'node:stream/promises';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, execFile } from 'node:child_process';
 
 const CHAVE = process.env.SERVICE_ROLE_KEY;
 const CREDENCIAIS = process.env.CREDENCIAIS;
@@ -113,50 +111,73 @@ log(`${paraBaixar.length} arquivos novos ou alterados`);
 
 // --- 3. baixar -------------------------------------------------------------
 // Em paralelo moderado: a Supabase e uma instancia Small e este job nao pode
-// ser o motivo de ela caber menos requisicao do ERP. 6 por vez e suficiente
-// para terminar rapido sem sufocar ninguem.
+// ser o motivo de ela caber menos requisicao do ERP. 6 por vez termina rapido
+// sem sufocar ninguem - medido: 8.522 arquivos em 27 minutos, com a latencia
+// da producao entre 0,09s e 0,14s (linha de base 0,10s).
 const SIMULTANEOS = 6;
-/** Uma segunda chance por arquivo; ver o comentario em baixarUm. */
-const TENTATIVAS = 2;
+
+// POR QUE curl E NAO O fetch DO NODE
+// A primeira versao usava fetch + stream. Ela morreu no meio da segunda
+// execucao real com
+//     AssertionError [ERR_ASSERTION]: assert(!this.paused)
+//       at Parser.finish (node:internal/deps/undici/undici)
+// que e o undici quebrando quando a conexao cai no meio de um stream. O erro
+// e lancado FORA da pilha do await: nenhum try/catch pega, e o processo
+// inteiro cai levando junto os milhares de arquivos ja baixados.
+//
+// curl nao tem esse problema, ja traz --retry com espera progressiva, respeita
+// --max-time por arquivo e escreve direto no destino sem passar pela memoria
+// do Node. Um processo por arquivo custa alguns milissegundos - irrelevante
+// perto de um download de rede.
+const TENTATIVAS = 3;
+
+function baixarUm(obj) {
+  return new Promise((pronto) => {
+    const caminho = `${obj.bucket_id}/${obj.name}`;
+    const destino = join('arquivos', caminho);
+    const endereco = `${URL_SUPABASE}/storage/v1/object/${encodeURI(caminho)}`;
+    mkdirSync(dirname(destino), { recursive: true });
+    execFile(
+      'curl',
+      [
+        '-sS', '--fail',              // --fail: 4xx/5xx viram codigo de saida
+        // Sem --retry-all-errors de proposito: testado em 02/10/2026, ele
+        // repete ate um 401, que nunca vai funcionar - quatro tentativas
+        // inuteis por arquivo, castigando a producao. O padrao do --retry ja
+        // cobre exatamente o que interessa: tempo esgotado, 408, 429 e 5xx,
+        // que sao os 504 de arquivo grande vistos na primeira execucao.
+        '--retry', String(TENTATIVAS),
+        '--retry-delay', '2',
+        '--max-time', '180',
+        '-o', destino,
+        '-H', `Authorization: Bearer ${CHAVE}`,
+        '-H', `apikey: ${CHAVE}`,
+        endereco,
+      ],
+      { maxBuffer: 1024 * 1024 },
+      (erro, _saida, errSaida) => {
+        if (erro) {
+          falhas++;
+          // O codigo do curl diz mais que a mensagem: 22 = HTTP >= 400,
+          // 28 = tempo esgotado, 56 = conexao cortada no meio.
+          const t = `curl ${erro.code ?? '?'}${/HTTP (\d+)/.exec(errSaida || '')?.[1] ? ` HTTP ${/HTTP (\d+)/.exec(errSaida)[1]}` : ''}`;
+          errosPorTipo.set(t, (errosPorTipo.get(t) || 0) + 1);
+          // Meio arquivo e pior que nenhum: ele entraria no inventario como
+          // copiado e nunca mais seria tentado.
+          try { if (existsSync(destino)) rmSync(destino); } catch { /* nada a fazer */ }
+        } else {
+          baixados++;
+          bytes += Number(obj.tamanho);
+          if (baixados % 250 === 0) log(`${baixados}/${paraBaixar.length} baixados...`);
+        }
+        pronto();
+      },
+    );
+  });
+}
+
 let baixados = 0, falhas = 0, bytes = 0;
 const errosPorTipo = new Map();
-
-async function baixarUm(obj, tentativa = 1) {
-  const caminho = `${obj.bucket_id}/${obj.name}`;
-  const destino = join('arquivos', caminho);
-  const endereco = `${URL_SUPABASE}/storage/v1/object/${encodeURI(caminho)}`;
-  try {
-    const resp = await fetch(endereco, { headers: { Authorization: `Bearer ${CHAVE}`, apikey: CHAVE } });
-    if (!resp.ok) {
-      // 504 e 5xx são o gateway desistindo de um arquivo grande, não "o arquivo
-      // não existe": na primeira execução completa (02/10/2026) foram 4 de 8.527,
-      // todos 504. Uma segunda tentativa resolve a maioria, e insistir mais que
-      // isso só castigaria a produção por um arquivo que a próxima execução
-      // pegaria de qualquer jeito.
-      if (resp.status >= 500 && tentativa < TENTATIVAS) {
-        await new Promise((ok) => setTimeout(ok, 1500 * tentativa));
-        return baixarUm(obj, tentativa + 1);
-      }
-      falhas++;
-      const t = `HTTP ${resp.status}`;
-      errosPorTipo.set(t, (errosPorTipo.get(t) || 0) + 1);
-      return;
-    }
-    mkdirSync(dirname(destino), { recursive: true });
-    await pipeline(Readable.fromWeb(resp.body), createWriteStream(destino));
-    baixados++;
-    bytes += Number(obj.tamanho);
-    if (baixados % 250 === 0) log(`${baixados}/${paraBaixar.length} baixados...`);
-  } catch (e) {
-    if (tentativa < TENTATIVAS) {
-      await new Promise((ok) => setTimeout(ok, 1500 * tentativa));
-      return baixarUm(obj, tentativa + 1);
-    }
-    falhas++;
-    const t = e.message.slice(0, 40);
-    errosPorTipo.set(t, (errosPorTipo.get(t) || 0) + 1);
-  }
-}
 
 const fila = [...paraBaixar];
 await Promise.all(
