@@ -61,8 +61,17 @@ desgastando o banco de produção sem ganho.
 
 ### 3. Backup dos arquivos — um buraco que foi fechado
 
-Os 8.527 arquivos (4,7 GB) passaram a ser copiados automaticamente, de forma
+Os **8.556 arquivos (4,8 GB)** passaram a ser copiados automaticamente, de forma
 incremental e **criptografada**. Antes disso, não havia cópia alguma.
+
+A primeira cópia completa foi feita em 02/10/2026 e levou 22 minutos. As
+seguintes copiam só o que mudou: a execução de conferência, logo depois,
+levou **menos de um minuto** e transferiu 8 arquivos. É isso que torna cinco
+cópias por dia sustentáveis.
+
+Durante toda a cópia o sistema de produção foi medido a cada 30 segundos e
+**não apresentou lentidão** (0,09s a 0,14s de resposta, contra 0,10s medidos
+antes de começar).
 
 ### 4. Modo consulta durante uma queda
 
@@ -104,7 +113,7 @@ Dito abertamente, para que a direção saiba o alcance exato do que existe hoje:
 | Item | Situação |
 |---|---|
 | Arquivos copiados **para dentro** da réplica | Não. Estão salvos em backup, mas ainda não dentro da réplica — exige ampliar o disco (+US$ 2,50/mês) |
-| Telas que gravam por rotina interna | Uma pequena parte do sistema ainda conseguiria gravar durante o modo consulta. Identificado e documentado |
+| Telas que gravam por rotina interna | **Resolvido em 02/10** — 444 rotinas de gravação bloqueadas, sem afetar a leitura |
 | Troca de endereço automática | A troca é oferecida ao usuário, não imposta |
 
 ---
