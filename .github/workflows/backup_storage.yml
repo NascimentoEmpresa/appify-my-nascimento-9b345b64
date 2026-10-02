@@ -1,0 +1,198 @@
+# ============================================================================
+#  Backup dos ARQUIVOS do Storage
+# ============================================================================
+#
+#  O QUE ESTE WORKFLOW RESOLVE
+#  O backup_banco.yml copia o banco - e o proprio comentario dele avisa que os
+#  arquivos ficam de fora: "Restaurar este dump devolve a lista de arquivos,
+#  nao os arquivos."
+#
+#  Medido em 02/10/2026: sao 7.735 objetos. Ate hoje eles existiam em UM lugar
+#  so, a Supabase. Perder a conta ou o bucket significava perder anexo de
+#  patrimonio, foto de cracha, XML de nota - sem copia nenhuma em lugar nenhum.
+#  Isso e um buraco que existe independente do failover, e e o que este arquivo
+#  fecha.
+#
+#  POR QUE INCREMENTAL
+#  Sao ~4,4 GB. Baixar tudo todo dia seria 4,4 GB de leitura na Supabase e no
+#  armazenamento do GitHub, por dia, para copiar os mesmos arquivos. Entao:
+#  guarda-se um INVENTARIO do que ja foi copiado, e cada execucao busca so o
+#  que mudou (arquivo novo ou com updated_at mais recente).
+#
+#  POR QUE AQUI E NAO NA REPLICA
+#  Porque a credencial de producao JA ESTA aqui (SUPABASE_SERVICE_ROLE_KEY,
+#  usada pelo vigia_banco.yml). Fazer a replica buscar direto exigiria colocar
+#  essa mesma chave na Render, somada a chave GPG que ja esta la - e a
+#  service_role ignora TODA a RLS. Decisao consciente de nao acumular.
+#
+#  O QUE ELE NAO FAZ
+#  Nao envia os arquivos para a replica ainda. Primeiro existe a copia; levar
+#  ate la e o passo seguinte.
+# ============================================================================
+name: Backup dos arquivos do Storage
+
+on:
+  workflow_dispatch:
+    inputs:
+      completo:
+        description: 'Ignorar o inventario e baixar TUDO de novo'
+        type: boolean
+        default: false
+      retencao_dias:
+        description: 'Dias de retencao do artefato'
+        default: '14'
+  schedule:
+    # 07, 10, 13, 16 e 20h de Brasilia (UTC-3). SO NO EXPEDIENTE, de proposito:
+    # de madrugada ninguem mexe no sistema, e copiar as 3h da manha produziria
+    # exatamente o mesmo conteudo das 20h - gastando leitura numa instancia
+    # Small que ja caiu tres vezes este ano, para guardar copia identica.
+    # Cinco execucoes cobrem o dia de trabalho inteiro.
+    # A janela descoberta e das 20h as 7h: uma mudanca feita as 21h so e
+    # copiada no dia seguinte. Aceitavel porque fora do expediente, e e o
+    # motivo de o ultimo horario ser 20h e nao 19h.
+    - cron: '0 10,13,16,19,23 * * *'
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  # Duas execucoes ao mesmo tempo baixariam os mesmos arquivos e brigariam pelo
+  # inventario. A segunda espera.
+  group: backup-storage
+  cancel-in-progress: false
+
+jobs:
+  copiar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Trazer so os scripts necessarios
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            .github/scripts
+          sparse-checkout-cone-mode: false
+
+      - name: Recuperar o inventario da execucao anterior
+        id: inventario
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -uo pipefail
+          # O inventario diz o que ja foi copiado antes. Sem ele, a execucao e
+          # completa - o que e correto, so demorado.
+          ID=$(gh api "repos/${{ github.repository }}/actions/artifacts?per_page=100" \
+                 --jq '[.artifacts[] | select(.expired==false) | select(.name=="storage-inventario")]
+                       | sort_by(.created_at) | reverse | .[0].id // empty')
+          if [[ -n "$ID" && "${{ inputs.completo }}" != "true" ]]; then
+            gh api "repos/${{ github.repository }}/actions/artifacts/$ID/zip" > inv.zip 2>/dev/null \
+              && unzip -qo inv.zip && echo "  inventario recuperado: $(wc -l < inventario.txt) arquivos conhecidos" \
+              || { echo "  nao consegui abrir o inventario; sera copia completa"; : > inventario.txt; }
+          else
+            echo "  sem inventario anterior (ou copia completa pedida)"
+            : > inventario.txt
+          fi
+
+      - name: Instalar o cliente Postgres 17
+        # O script lista os objetos pelo banco (uma consulta resolve o que a API
+        # de Storage exigiria em centenas de chamadas). O Ubuntu do runner traz
+        # um cliente mais antigo que a producao (17.6), e psql antigo contra
+        # servidor novo recusa a conexao com "server version mismatch".
+        run: |
+          set -euo pipefail
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl -fsSL -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
+            https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] \
+            https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
+            | sudo tee /etc/apt/sources.list.d/pgdg.list > /dev/null
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-client-17
+          echo "/usr/lib/postgresql/17/bin" >> "$GITHUB_PATH"
+
+      - name: Baixar o que mudou
+        env:
+          # NAO existe um secret SUPABASE_URL neste repositorio - a primeira
+          # execucao falhou com "FALTAM SUPABASE_URL" justamente por isso. O
+          # script deriva a URL do projeto a partir do usuario do banco, que ja
+          # vem no ESPELHO_CREDENCIAIS. Segredo novo so quando nao houver jeito.
+          SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          CREDENCIAIS: ${{ secrets.ESPELHO_CREDENCIAIS }}
+        run: node .github/scripts/baixar-storage.mjs
+
+      - name: Conferir que o que foi baixado presta
+        run: |
+          set -euo pipefail
+          # Um backup de arquivos que nao abre e pior que nenhum: da a impressao
+          # de protecao. Conferimos tamanho e amostra antes de publicar.
+          if [[ ! -s inventario.txt ]]; then
+            echo "::error::o inventario ficou vazio - nada foi copiado"
+            exit 1
+          fi
+          TOTAL=$(wc -l < inventario.txt)
+          echo "  $TOTAL arquivos no inventario"
+          if (( TOTAL < 5000 )); then
+            echo "::error::so $TOTAL arquivos no inventario; a producao tem ~7.700. Algo cortou a listagem."
+            exit 1
+          fi
+          # Os arquivos ficam em arquivos/ apenas quando mudaram nesta execucao.
+          NOVOS=$(find arquivos -type f 2>/dev/null | wc -l)
+          echo "  $NOVOS arquivos baixados nesta execucao"
+          if (( NOVOS > 0 )); then
+            # Amostra: o primeiro arquivo tem que ter tamanho > 0
+            AMOSTRA=$(find arquivos -type f | head -1)
+            [[ -s "$AMOSTRA" ]] || { echo "::error::arquivo baixado esta vazio: $AMOSTRA"; exit 1; }
+            echo "  amostra OK: $AMOSTRA ($(stat -c%s "$AMOSTRA") bytes)"
+          fi
+
+      - name: Criptografar antes de publicar
+        if: hashFiles('arquivos/**') != ''
+        run: |
+          set -euo pipefail
+          # MESMO motivo do backup_banco.yml: este repositorio e PUBLICO. Anexo
+          # de patrimonio, foto de cracha e XML de nota nao podem subir em
+          # claro. A chave publica esta versionada de proposito; abrir so com a
+          # privada do Eduardo.
+          curl -fsSL -o chave.asc \
+            "https://raw.githubusercontent.com/${{ github.repository }}/main/.github/backup-chave-publica.asc"
+          gpg --batch --import chave.asc
+          FPR=$(gpg --list-keys --with-colons | awk -F: '/^fpr/{print $10; exit}')
+          tar -cf - arquivos | gpg --batch --yes --trust-model always -r "$FPR" \
+            --compress-algo none -o storage-arquivos.tar.gpg -e
+          echo "  $(du -h storage-arquivos.tar.gpg | cut -f1) cifrados"
+
+      - name: Guardar os arquivos
+        if: hashFiles('storage-arquivos.tar.gpg') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: storage-arquivos-${{ github.run_id }}
+          path: storage-arquivos.tar.gpg
+          retention-days: ${{ inputs.retencao_dias || '14' }}
+
+      - name: Guardar o inventario
+        # SEM retencao curta: o inventario e o que torna a proxima execucao
+        # incremental. Perde-lo significa baixar os 4,4 GB de novo.
+        uses: actions/upload-artifact@v4
+        with:
+          name: storage-inventario
+          path: inventario.txt
+          retention-days: 90
+
+      - name: Avisar o Eduardo se falhou
+        if: failure()
+        env:
+          DISCORD_TOKEN: ${{ secrets.DISCORD_TOKEN }}
+        run: |
+          set -uo pipefail
+          # DM, nunca no canal: alerta de infraestrutura e ruido para quem nao
+          # pode agir. Mesmo padrao do backup_banco.yml e do vigia_banco.yml.
+          CANAL=$(curl -s -X POST "https://discord.com/api/v10/users/@me/channels" \
+            -H "Authorization: Bot $DISCORD_TOKEN" -H "Content-Type: application/json" \
+            -H "User-Agent: DiscordBot (erp, 1.0)" \
+            -d '{"recipient_id":"1384572666752663653"}' | jq -r '.id')
+          curl -s -X POST "https://discord.com/api/v10/channels/$CANAL/messages" \
+            -H "Authorization: Bot $DISCORD_TOKEN" -H "Content-Type: application/json" \
+            -H "User-Agent: DiscordBot (erp, 1.0)" \
+            -d "{\"content\":\"⚠️ **Backup dos arquivos do Storage falhou**\\nOs 4,4 GB de anexos podem estar sem cópia nova.\\n${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}" \
+            > /dev/null
