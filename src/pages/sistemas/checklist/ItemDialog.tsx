@@ -8,22 +8,24 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { cn } from "@/lib/utils";
 import { useSalvarChecklist, type CamposChecklist } from "@/hooks/useChecklistModulos";
-import { ETAPAS, type ChecklistItem, type UsuarioCat } from "@/lib/sistemas/checklistModulos";
+import { AREA_PADRAO, ETAPAS, opcaoDe, type ChecklistItem, type Status4, type UsuarioCat } from "@/lib/sistemas/checklistModulos";
 import { CLASSE_TOM, PONTO_TOM, fmtDataHora } from "./ui";
 
-// Preencher o checklist de uma TELA (status das quatro etapas, datas,
-// responsável, usuário-chave, observações) ou os dados do MÓDULO (só
-// responsável, usuário-chave e observações — os status do módulo são a soma
-// das telas). Status vazio = "pendente de preenchimento"; dá para voltar a
-// vazio clicando de novo no status marcado.
+// Preencher o checklist de uma TELA (submódulo) ou do MÓDULO. No módulo, a
+// etapa deixada vazia é calculada pelas telas (o diálogo mostra o que sairia)
+// e entram também a Área e os dados do módulo. Status vazio = "pendente de
+// preenchimento"; clicar de novo no marcado desmarca.
 
 const SEM = "__sem";
 
-export function ItemDialog({ alvo, usuarios, onFechar }: {
-  alvo: { moduloId: string; moduloNome: string; menuId: string | null; telaNome?: string; rota?: string; item: ChecklistItem | null } | null;
-  usuarios: UsuarioCat[];
-  onFechar: () => void;
-}) {
+export interface AlvoItem {
+  moduloId: string; moduloNome: string; moduloCodigo?: string; menuId: string | null; telaNome?: string; rota?: string;
+  item: ChecklistItem | null;
+  /** Só no módulo: o status que as telas dão para cada etapa (o que vale se ficar vazio). */
+  calculado?: Status4;
+}
+
+export function ItemDialog({ alvo, usuarios, onFechar }: { alvo: AlvoItem | null; usuarios: UsuarioCat[]; onFechar: () => void }) {
   const salvar = useSalvarChecklist();
   const [f, setF] = useState<CamposChecklist>({});
   const ehModulo = !alvo?.menuId;
@@ -36,20 +38,20 @@ export function ItemDialog({ alvo, usuarios, onFechar }: {
       responsavel_id: i?.responsavel_id ?? null, usuario_chave_id: i?.usuario_chave_id ?? null,
       previsao_entrega: i?.previsao_entrega ?? null, data_implantacao: i?.data_implantacao ?? null,
       data_treinamento: i?.data_treinamento ?? null, data_validacao: i?.data_validacao ?? null,
-      observacoes: i?.observacoes ?? null,
+      observacoes: i?.observacoes ?? null, area: i?.area ?? null,
     });
   }, [alvo]);
 
   if (!alvo) return null;
   const opcoesUsuario = [{ value: SEM, label: "— Ninguém —" }, ...usuarios.map((u) => ({ value: u.id, label: u.nome, hint: u.email ?? undefined }))];
   const mudar = (p: CamposChecklist) => setF((x) => ({ ...x, ...p }));
+  const areaPadrao = AREA_PADRAO[alvo.moduloCodigo ?? ""] ?? alvo.moduloNome;
 
   const gravar = async () => {
-    const campos: CamposChecklist = ehModulo
-      ? { responsavel_id: f.responsavel_id ?? null, usuario_chave_id: f.usuario_chave_id ?? null, observacoes: f.observacoes?.trim() || null, previsao_entrega: f.previsao_entrega || null }
-      : { ...f, observacoes: f.observacoes?.trim() || null };
+    const campos: CamposChecklist = { ...f, observacoes: f.observacoes?.trim() || null };
+    if (ehModulo) campos.area = f.area?.trim() || null; else delete campos.area;
     for (const k of ["previsao_entrega", "data_implantacao", "data_treinamento", "data_validacao"] as const) {
-      if (k in campos && !campos[k]) campos[k] = null;
+      if (!campos[k]) campos[k] = null;
     }
     await salvar.mutateAsync({ id: alvo.item?.id ?? null, moduloId: alvo.moduloId, menuId: alvo.menuId, campos });
     onFechar();
@@ -61,61 +63,70 @@ export function ItemDialog({ alvo, usuarios, onFechar }: {
 
   return (
     <Dialog open onOpenChange={(v) => !v && !salvar.isPending && onFechar()}>
-      <DialogContent className="max-h-[90vh] max-w-2xl overflow-y-auto">
+      <DialogContent className="z-[1100] max-h-[90vh] max-w-2xl overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>{ehModulo ? `Módulo · ${alvo.moduloNome}` : alvo.telaNome}</DialogTitle>
+          <DialogTitle>{ehModulo ? `Status do módulo · ${alvo.moduloNome}` : alvo.telaNome}</DialogTitle>
           <DialogDescription>
             {ehModulo
-              ? "Responsável, usuário-chave e observações do módulo. Os status do módulo são a soma das telas dele."
+              ? "Marque o status do módulo. Etapa deixada em branco é calculada pelas telas (submódulos) dele."
               : <>{alvo.moduloNome}{alvo.rota ? <> · <span className="font-mono text-[11px]">{alvo.rota}</span></> : null}</>}
           </DialogDescription>
         </DialogHeader>
 
-        {!ehModulo && (
-          <div className="space-y-4">
-            {ETAPAS.map((e) => {
-              const atual = f[e.campo as keyof CamposChecklist] as string | null | undefined;
-              const campoData = dataDaEtapa[e.campo];
-              return (
-                <div key={e.chave} className="rounded-xl border border-border p-3">
-                  <div className="mb-2 flex items-center justify-between gap-2">
-                    <p className="text-sm font-bold">{e.titulo}</p>
-                    {!atual && <span className="text-[11px] font-medium text-muted-foreground">Pendente de preenchimento</span>}
-                  </div>
-                  <div className="flex flex-wrap gap-1.5">
-                    {e.opcoes.map((o) => {
-                      const marcado = atual === o.valor;
-                      return (
-                        <button key={o.valor} type="button"
-                          onClick={() => mudar({ [e.campo]: marcado ? null : o.valor } as CamposChecklist)}
-                          className={cn("inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-semibold transition",
-                            marcado ? CLASSE_TOM[o.tom] + " ring-2 ring-offset-1 ring-primary/40" : "border-border text-muted-foreground hover:border-primary/40 hover:text-foreground")}>
-                          <span className={cn("h-1.5 w-1.5 rounded-full", marcado ? PONTO_TOM[o.tom] : "bg-slate-300")} />
-                          {o.rotulo}
-                        </button>
-                      );
-                    })}
-                  </div>
-                  {campoData && (
-                    <div className="mt-2 flex items-center gap-2">
-                      <Label className="text-xs text-muted-foreground">Data</Label>
-                      <Input type="date" className="h-8 w-40" value={(f[campoData] as string | null) ?? ""} onChange={(ev) => mudar({ [campoData]: ev.target.value || null } as CamposChecklist)} />
-                    </div>
+        <div className="space-y-3">
+          {ETAPAS.map((e) => {
+            const atual = f[e.campo] as string | null | undefined;
+            const campoData = dataDaEtapa[e.campo];
+            const calc = ehModulo ? (alvo.calculado?.[e.campo] ?? null) : null;
+            return (
+              <div key={e.chave} className="rounded-xl border border-border p-3">
+                <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-sm font-bold">{e.titulo}{!e.noPercentual && <span className="ml-1.5 text-[11px] font-normal text-muted-foreground">(não entra no %)</span>}</p>
+                  {!atual && (
+                    <span className="text-[11px] font-medium text-muted-foreground">
+                      {ehModulo ? <>Em branco · pelas telas: <b>{opcaoDe(e.chave, calc)?.rotulo ?? "pendente"}</b></> : "Pendente de preenchimento"}
+                    </span>
                   )}
                 </div>
-              );
-            })}
-          </div>
-        )}
+                <div className="flex flex-wrap gap-1.5">
+                  {e.opcoes.map((o) => {
+                    const marcado = atual === o.valor;
+                    return (
+                      <button key={o.valor} type="button"
+                        onClick={() => mudar({ [e.campo]: marcado ? null : o.valor } as CamposChecklist)}
+                        className={cn("inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-semibold transition",
+                          marcado ? CLASSE_TOM[o.tom] + " ring-2 ring-primary/40 ring-offset-1" : "border-border text-muted-foreground hover:border-primary/40 hover:text-foreground")}>
+                        <span className={cn("h-1.5 w-1.5 rounded-full", marcado ? PONTO_TOM[o.tom] : "bg-slate-300")} />
+                        {o.rotulo}
+                      </button>
+                    );
+                  })}
+                </div>
+                {campoData && (
+                  <div className="mt-2 flex items-center gap-2">
+                    <Label className="text-xs text-muted-foreground">Data</Label>
+                    <Input type="date" className="h-8 w-40" value={(f[campoData] as string | null) ?? ""} onChange={(ev) => mudar({ [campoData]: ev.target.value || null } as CamposChecklist)} />
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
 
         <div className="grid gap-3 sm:grid-cols-2">
+          {ehModulo && (
+            <div className="space-y-1.5 sm:col-span-2">
+              <Label>Área</Label>
+              <Input value={f.area ?? ""} onChange={(e) => mudar({ area: e.target.value })} placeholder={`Padrão: ${areaPadrao}`} maxLength={60} />
+            </div>
+          )}
           <div className="space-y-1.5">
             <Label>Responsável (Sistemas)</Label>
             <SearchableSelect value={f.responsavel_id ?? SEM} onChange={(v) => mudar({ responsavel_id: v === SEM ? null : v })}
               options={opcoesUsuario} placeholder="Escolha" searchPlaceholder="Buscar pessoa…" />
           </div>
           <div className="space-y-1.5">
-            <Label>Usuário-chave (valida a tela)</Label>
+            <Label>Usuário-chave (valida)</Label>
             <SearchableSelect value={f.usuario_chave_id ?? SEM} onChange={(v) => mudar({ usuario_chave_id: v === SEM ? null : v })}
               options={opcoesUsuario} placeholder="Escolha" searchPlaceholder="Buscar pessoa…" />
           </div>

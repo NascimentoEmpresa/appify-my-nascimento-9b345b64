@@ -275,6 +275,7 @@ import AjudaTopico from "./pages/ajuda/AjudaTopico";
 import InboxAprovacoes from "./pages/aprovacoes/Inbox";
 import SolicitacoesErp from "./pages/sistemas/SolicitacoesErp";
 import ChecklistModulos from "./pages/sistemas/checklist/ChecklistModulos";
+import ChecklistModuloDetalhe from "./pages/sistemas/checklist/ModuloDetalhe";
 import SolicitacoesHoraExtra from "./pages/sistemas/hora-extra/SolicitacoesHoraExtra";
 import LiberacaoHoraExtra from "./pages/sistemas/hora-extra/LiberacaoHoraExtra";
 import DashboardHoraExtra from "./pages/sistemas/hora-extra/DashboardHoraExtra";
@@ -473,6 +474,7 @@ const App = () => (
             <Route path="sistemas/solicitacoes-erp" element={<SolicitacoesErp />} />
             {/* Checklist de Módulos (02/10/2026, mig 291): status, uso, bugs e chamados de cada módulo/tela. */}
             <Route path="sistemas/checklist-modulos" element={<ChecklistModulos />} />
+            <Route path="sistemas/checklist-modulos/:moduloId" element={<ChecklistModuloDetalhe />} />
             <Route path="sistemas/hora-extra" element={<SolicitacoesHoraExtra />} />
             <Route path="sistemas/hora-extra/liberacao" element={<LiberacaoHoraExtra />} />
             <Route path="sistemas/hora-extra/liberacao/dashboards" element={<DashboardHoraExtra />} />

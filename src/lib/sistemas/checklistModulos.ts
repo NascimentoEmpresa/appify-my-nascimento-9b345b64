@@ -1,20 +1,23 @@
 // =====================================================================
-// Sistemas › CHECKLIST DE MÓDULOS — as regras (02/10/2026, mig 291)
+// Sistemas › CHECKLIST DE MÓDULOS — as regras (02/10/2026, migs 291/292)
 //
-// Tudo que a tela src/pages/sistemas/checklist/* mostra e calcula sai daqui
-// (testado em src/test/checklist-modulos.test.ts). O catálogo vem do banco:
-// módulos (app_modulo) e telas (app_menu com rota). O checklist de cada tela
-// começa vazio — "pendente de preenchimento" — e quem preenche é o gerente
-// de sistemas.
+// Tudo que a tela "Controle de Efetividade dos Módulos"
+// (src/pages/sistemas/checklist/*) mostra e calcula sai daqui — testado em
+// src/test/checklist-modulos.test.ts. O catálogo vem do banco: módulos
+// (app_modulo) e telas/submódulos (app_menu com rota). Tudo começa
+// "pendente de preenchimento"; o gerente de sistemas preenche.
 //
-// EFETIVIDADE de uma tela = média das quatro etapas que se aplicam:
+// STATUS DO MÓDULO: o que o gerente marcou no próprio módulo (linha do
+// checklist com menu_id NULL). Etapa que ele deixou vazia é CALCULADA pelas
+// telas (ver derivar*): todas prontas → Pronto; alguma em desenvolvimento →
+// Em desenvolvimento; e assim por diante.
+//
+// EFETIVIDADE = média das três etapas do painel (as colunas do modelo):
 //   desenvolvimento  pronto 1 · homologação 0,75 · em desenvolvimento 0,4 · não iniciado 0
-//   implantação      implantado 1 · em implantação 0,5 · não implantado 0
 //   treinamento      treinado 1 · agendado 0,3 · pendente 0 · "não se aplica" sai da média
-//   validação        validado 1 · em validação 0,5 · pendente/reprovado 0
-// Etapa sem preenchimento conta 0. Módulo = média das telas ATIVAS dele
-// (tela pendente entra como 0 — senão um módulo com 1 tela pronta e 20 sem
-// preencher apareceria 100%).
+//   validação        validado 1 · em validação 0,5 · não validado/reprovado 0
+// Implantação é registrada e mostrada na janela do módulo, mas não entra no %.
+// Sem nenhuma etapa preenchida (nem calculável), a efetividade é "—".
 // =====================================================================
 
 export type StatusDev = "nao_iniciado" | "em_desenvolvimento" | "em_homologacao" | "pronto";
@@ -23,39 +26,40 @@ export type StatusTreinamento = "pendente" | "agendado" | "treinado" | "nao_se_a
 export type StatusValidacao = "pendente" | "em_validacao" | "validado" | "reprovado";
 export type Etapa = "dev" | "implantacao" | "treinamento" | "validacao";
 
-export type Tom = "ok" | "progresso" | "atencao" | "risco" | "neutro" | "pendente";
+/** ok verde · andamento laranja · atencao amarelo · progresso azul · risco vermelho · neutro cinza · pendente tracejado. */
+export type Tom = "ok" | "andamento" | "atencao" | "progresso" | "risco" | "neutro" | "pendente";
 
 export interface OpcaoStatus<T extends string> { valor: T; rotulo: string; tom: Tom; peso: number | null }
 
 export const OPCOES_DEV: OpcaoStatus<StatusDev>[] = [
-  { valor: "nao_iniciado", rotulo: "Não iniciado", tom: "neutro", peso: 0 },
-  { valor: "em_desenvolvimento", rotulo: "Em desenvolvimento", tom: "progresso", peso: 0.4 },
-  { valor: "em_homologacao", rotulo: "Em homologação", tom: "atencao", peso: 0.75 },
   { valor: "pronto", rotulo: "Pronto", tom: "ok", peso: 1 },
+  { valor: "em_homologacao", rotulo: "Em homologação", tom: "atencao", peso: 0.75 },
+  { valor: "em_desenvolvimento", rotulo: "Em desenvolvimento", tom: "andamento", peso: 0.4 },
+  { valor: "nao_iniciado", rotulo: "Não iniciado", tom: "neutro", peso: 0 },
 ];
 export const OPCOES_IMPLANTACAO: OpcaoStatus<StatusImplantacao>[] = [
-  { valor: "nao_implantado", rotulo: "Não implantado", tom: "neutro", peso: 0 },
-  { valor: "em_implantacao", rotulo: "Em implantação", tom: "progresso", peso: 0.5 },
-  { valor: "implantado", rotulo: "Implantado", tom: "ok", peso: 1 },
+  { valor: "implantado", rotulo: "Implantado", tom: "ok", peso: null },
+  { valor: "em_implantacao", rotulo: "Em implantação", tom: "andamento", peso: null },
+  { valor: "nao_implantado", rotulo: "Não implantado", tom: "neutro", peso: null },
 ];
 export const OPCOES_TREINAMENTO: OpcaoStatus<StatusTreinamento>[] = [
-  { valor: "pendente", rotulo: "Pendente", tom: "atencao", peso: 0 },
-  { valor: "agendado", rotulo: "Agendado", tom: "progresso", peso: 0.3 },
   { valor: "treinado", rotulo: "Treinado", tom: "ok", peso: 1 },
+  { valor: "agendado", rotulo: "Agendado", tom: "progresso", peso: 0.3 },
+  { valor: "pendente", rotulo: "Pendente", tom: "andamento", peso: 0 },
   { valor: "nao_se_aplica", rotulo: "Não se aplica", tom: "neutro", peso: null },
 ];
 export const OPCOES_VALIDACAO: OpcaoStatus<StatusValidacao>[] = [
-  { valor: "pendente", rotulo: "Pendente", tom: "atencao", peso: 0 },
-  { valor: "em_validacao", rotulo: "Em validação", tom: "progresso", peso: 0.5 },
   { valor: "validado", rotulo: "Validado", tom: "ok", peso: 1 },
+  { valor: "em_validacao", rotulo: "Em validação", tom: "progresso", peso: 0.5 },
+  { valor: "pendente", rotulo: "Não validado", tom: "risco", peso: 0 },
   { valor: "reprovado", rotulo: "Reprovado", tom: "risco", peso: 0 },
 ];
 
-export const ETAPAS: { chave: Etapa; campo: keyof ChecklistItem; titulo: string; opcoes: OpcaoStatus<string>[] }[] = [
-  { chave: "dev", campo: "status_dev", titulo: "Desenvolvimento", opcoes: OPCOES_DEV },
-  { chave: "implantacao", campo: "status_implantacao", titulo: "Implantação", opcoes: OPCOES_IMPLANTACAO },
-  { chave: "treinamento", campo: "status_treinamento", titulo: "Treinamento", opcoes: OPCOES_TREINAMENTO },
-  { chave: "validacao", campo: "status_validacao", titulo: "Validação do usuário", opcoes: OPCOES_VALIDACAO },
+export const ETAPAS: { chave: Etapa; campo: "status_dev" | "status_implantacao" | "status_treinamento" | "status_validacao"; titulo: string; opcoes: OpcaoStatus<string>[]; noPercentual: boolean }[] = [
+  { chave: "dev", campo: "status_dev", titulo: "Desenvolvimento", opcoes: OPCOES_DEV, noPercentual: true },
+  { chave: "implantacao", campo: "status_implantacao", titulo: "Implantação", opcoes: OPCOES_IMPLANTACAO, noPercentual: false },
+  { chave: "treinamento", campo: "status_treinamento", titulo: "Treinamento", opcoes: OPCOES_TREINAMENTO, noPercentual: true },
+  { chave: "validacao", campo: "status_validacao", titulo: "Validação do usuário", opcoes: OPCOES_VALIDACAO, noPercentual: true },
 ];
 
 export const ROTULO_PENDENTE = "Pendente de preenchimento";
@@ -64,6 +68,19 @@ export function opcaoDe(etapa: Etapa, valor: string | null | undefined): OpcaoSt
   if (!valor) return null;
   return ETAPAS.find((e) => e.chave === etapa)!.opcoes.find((o) => o.valor === valor) ?? null;
 }
+
+// ── Área do módulo ───────────────────────────────────────────────────────
+
+/** Setor dono de cada módulo, quando o gerente não escreveu outro (SIS_CHECKLIST.area). */
+export const AREA_PADRAO: Record<string, string> = {
+  presidencia: "Diretoria", diretoria: "Diretoria", organograma: "Recursos Humanos",
+  licitacoes: "Comercial", contratos: "Comercial", controladoria: "Controladoria", financeiro: "Financeiro",
+  contabil: "Contábil", fiscal: "Fiscal", suprimentos: "Suprimentos", rh: "Recursos Humanos",
+  recrutamento: "Recursos Humanos", treinamentos: "Recursos Humanos", sst: "Segurança do Trabalho",
+  juridico: "Jurídico", comite_etica: "Jurídico", plano_acoes: "Planejamento", bi: "BI & Analytics",
+  admin: "Sistemas", sistemas: "Sistemas", ti: "Sistemas", encarregados: "Operacional", operacional: "Operacional",
+  central_servicos: "Central de Serviços", whatsapp: "Comunicação", malote: "Logística",
+};
 
 // ── Dados (como a RPC sis_checklist_dados devolve) ──────────────────────
 
@@ -82,7 +99,7 @@ export interface ChecklistItem {
   status_treinamento: StatusTreinamento | null; status_validacao: StatusValidacao | null;
   responsavel_id: string | null; usuario_chave_id: string | null;
   previsao_entrega: string | null; data_implantacao: string | null; data_treinamento: string | null; data_validacao: string | null;
-  observacoes: string | null; atualizado_por: string | null; atualizado_em: string;
+  observacoes: string | null; area?: string | null; atualizado_por: string | null; atualizado_em: string;
 }
 export interface BugResumo { modulo_id: string; menu_id: string | null; status: StatusBug; severidade: Severidade }
 export interface ChamadosModulo { modulo: string | null; abertos: number; total: number }
@@ -119,29 +136,75 @@ export const bugAberto = (s: StatusBug) => s === "aberto" || s === "em_analise" 
 export const rotuloStatusBug = (s: string) => STATUS_BUG.find((x) => x.valor === s)?.rotulo ?? s;
 export const rotuloSeveridade = (s: string) => SEVERIDADES.find((x) => x.valor === s)?.rotulo ?? s;
 
-// ── Cálculo ──────────────────────────────────────────────────────────────
+// ── Status e efetividade ─────────────────────────────────────────────────
+
+export interface Status4 {
+  status_dev: StatusDev | null; status_implantacao: StatusImplantacao | null;
+  status_treinamento: StatusTreinamento | null; status_validacao: StatusValidacao | null;
+}
 
 /** Algum status foi preenchido? (responsável/observação sozinhos não contam.) */
-export const preenchido = (c: Partial<ChecklistItem> | null | undefined) =>
+export const preenchido = (c: Partial<Status4> | null | undefined) =>
   !!c && !!(c.status_dev || c.status_implantacao || c.status_treinamento || c.status_validacao);
 
-/** 0–1 (null = nenhuma etapa aplicável, só "não se aplica" no treinamento e o resto vazio não acontece: o resto conta 0). */
-export function efetividade(c: Partial<ChecklistItem> | null | undefined): number {
+/** Alguma etapa que ENTRA no percentual está preenchida? */
+const temPercentual = (c: Partial<Status4> | null | undefined) =>
+  !!c && !!(c.status_dev || c.status_treinamento || c.status_validacao);
+
+/** 0–1 sobre desenvolvimento, treinamento e validação; null = nada para medir. */
+export function efetividade(c: Partial<Status4> | null | undefined): number | null {
+  if (!temPercentual(c)) return null;
   const pesos: number[] = [];
   for (const e of ETAPAS) {
-    const v = c?.[e.campo] as string | null | undefined;
-    const o = opcaoDe(e.chave, v);
+    if (!e.noPercentual) continue;
+    const o = opcaoDe(e.chave, c?.[e.campo] as string | null | undefined);
     if (o && o.peso == null) continue;   // "não se aplica"
     pesos.push(o?.peso ?? 0);
   }
-  return pesos.length ? pesos.reduce((a, b) => a + b, 0) / pesos.length : 0;
+  return pesos.length ? pesos.reduce((a, b) => a + b, 0) / pesos.length : null;
 }
+
+/** Status do módulo pelas telas ATIVAS, etapa a etapa (null = nenhuma tela preenchida nessa etapa). */
+export function derivarDev(vals: (StatusDev | null)[]): StatusDev | null {
+  const v = vals.filter((x): x is StatusDev => !!x);
+  if (!v.length) return null;
+  if (v.length === vals.length && v.every((x) => x === "pronto")) return "pronto";
+  if (v.includes("em_desenvolvimento")) return "em_desenvolvimento";
+  if (v.includes("em_homologacao")) return "em_homologacao";
+  if (v.includes("pronto")) return "em_desenvolvimento";   // parte pronta, parte por fazer
+  return "nao_iniciado";
+}
+export function derivarImplantacao(vals: (StatusImplantacao | null)[]): StatusImplantacao | null {
+  const v = vals.filter((x): x is StatusImplantacao => !!x);
+  if (!v.length) return null;
+  if (v.length === vals.length && v.every((x) => x === "implantado")) return "implantado";
+  if (v.some((x) => x === "implantado" || x === "em_implantacao")) return "em_implantacao";
+  return "nao_implantado";
+}
+export function derivarTreinamento(vals: (StatusTreinamento | null)[]): StatusTreinamento | null {
+  const v = vals.filter((x): x is StatusTreinamento => !!x);
+  if (!v.length) return null;
+  if (v.every((x) => x === "nao_se_aplica")) return "nao_se_aplica";
+  if (v.length === vals.length && v.every((x) => x === "treinado" || x === "nao_se_aplica")) return "treinado";
+  if (v.includes("agendado")) return "agendado";
+  return "pendente";
+}
+export function derivarValidacao(vals: (StatusValidacao | null)[]): StatusValidacao | null {
+  const v = vals.filter((x): x is StatusValidacao => !!x);
+  if (!v.length) return null;
+  if (v.length === vals.length && v.every((x) => x === "validado")) return "validado";
+  if (v.includes("reprovado")) return "reprovado";
+  if (v.some((x) => x === "em_validacao" || x === "validado")) return "em_validacao";
+  return "pendente";
+}
+
+// ── Linhas ───────────────────────────────────────────────────────────────
 
 export interface LinhaTela {
   tela: TelaCat;
   item: ChecklistItem | null;
   preenchido: boolean;
-  efetividade: number;
+  efetividade: number | null;
   bugsAbertos: number;
   treinados: number;
   /** usuários ativos em 30 dias ÷ usuários com acesso (null = ninguém com acesso). */
@@ -150,24 +213,33 @@ export interface LinhaTela {
 
 export interface LinhaModulo {
   modulo: ModuloCat;
-  item: ChecklistItem | null;           // dados do módulo (responsável, usuário-chave, observações)
-  telas: LinhaTela[];                   // todas (ativas primeiro)
+  item: ChecklistItem | null;             // a linha do próprio módulo
+  area: string;
+  /** Status efetivo do módulo: o marcado no módulo, ou o calculado pelas telas. */
+  status: Status4;
+  /** Etapas cujo status veio das telas (não foi marcado no módulo). */
+  calculado: Record<Etapa, boolean>;
+  efetividade: number | null;
+  responsavelId: string | null;
+  usuarioChaveId: string | null;
+  ultimaAtualizacao: string | null;
+  telas: LinhaTela[];
   ativas: number;
   preenchidas: number;
-  efetividade: number;                  // média das telas ativas
-  porDev: Record<StatusDev | "pendente", number>;
-  prontas: number; implantadas: number; treinadas: number; validadas: number;
   bugsAbertos: number;
   chamadosAbertos: number;
-  comAcesso: number;                    // pessoas distintas
-  ativos30d: number;                    // pessoas distintas, 30 dias
+  comAcesso: number;
+  ativos30d: number;
   acessos30d: number;
-  ultimoUso: string | null;
 }
 
-const ZERO_DEV = (): Record<StatusDev | "pendente", number> => ({ pendente: 0, nao_iniciado: 0, em_desenvolvimento: 0, em_homologacao: 0, pronto: 0 });
+const maisFrequente = (xs: (string | null | undefined)[]) => {
+  const m = new Map<string, number>();
+  xs.forEach((x) => { if (x) m.set(x, (m.get(x) ?? 0) + 1); });
+  return [...m.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
+};
 
-export function montarModulos(d: DadosChecklist): LinhaModulo[] {
+export function montarModulos(d: Pick<DadosChecklist, "modulos" | "telas" | "checklist" | "bugs" | "chamados" | "treinados">): LinhaModulo[] {
   const itemTela = new Map<string, ChecklistItem>();
   const itemModulo = new Map<string, ChecklistItem>();
   for (const c of d.checklist) {
@@ -197,104 +269,241 @@ export function montarModulos(d: DadosChecklist): LinhaModulo[] {
       })
       .sort((a, b) => Number(b.tela.ativo) - Number(a.tela.ativo) || (a.tela.ordem ?? 999) - (b.tela.ordem ?? 999) || a.tela.nome.localeCompare(b.tela.nome));
     const ativas = telas.filter((t) => t.tela.ativo);
-    const porDev = ZERO_DEV();
-    for (const t of ativas) porDev[t.item?.status_dev ?? "pendente"] += 1;
-    const conta = (f: (t: LinhaTela) => boolean) => ativas.filter(f).length;
+    const item = itemModulo.get(m.id) ?? null;
+    const de = <K extends keyof Status4>(k: K) => ativas.map((t) => (t.item?.[k] ?? null) as Status4[K]);
+    const calc: Status4 = {
+      status_dev: derivarDev(de("status_dev")),
+      status_implantacao: derivarImplantacao(de("status_implantacao")),
+      status_treinamento: derivarTreinamento(de("status_treinamento")),
+      status_validacao: derivarValidacao(de("status_validacao")),
+    };
+    const status: Status4 = {
+      status_dev: item?.status_dev ?? calc.status_dev,
+      status_implantacao: item?.status_implantacao ?? calc.status_implantacao,
+      status_treinamento: item?.status_treinamento ?? calc.status_treinamento,
+      status_validacao: item?.status_validacao ?? calc.status_validacao,
+    };
+    const datas = [item?.atualizado_em, ...ativas.map((t) => t.item?.atualizado_em)].filter((x): x is string => !!x).sort();
     return {
       modulo: m,
-      item: itemModulo.get(m.id) ?? null,
+      item,
+      area: (item?.area ?? "").trim() || AREA_PADRAO[m.codigo] || m.nome,
+      status,
+      calculado: {
+        dev: !item?.status_dev && !!calc.status_dev,
+        implantacao: !item?.status_implantacao && !!calc.status_implantacao,
+        treinamento: !item?.status_treinamento && !!calc.status_treinamento,
+        validacao: !item?.status_validacao && !!calc.status_validacao,
+      },
+      efetividade: efetividade(status),
+      responsavelId: item?.responsavel_id ?? maisFrequente(ativas.map((t) => t.item?.responsavel_id)),
+      usuarioChaveId: item?.usuario_chave_id ?? maisFrequente(ativas.map((t) => t.item?.usuario_chave_id)),
+      ultimaAtualizacao: datas.pop() ?? null,
       telas,
       ativas: ativas.length,
-      preenchidas: conta((t) => t.preenchido),
-      efetividade: ativas.length ? ativas.reduce((s, t) => s + t.efetividade, 0) / ativas.length : 0,
-      porDev,
-      prontas: porDev.pronto,
-      implantadas: conta((t) => t.item?.status_implantacao === "implantado"),
-      treinadas: conta((t) => t.item?.status_treinamento === "treinado"),
-      validadas: conta((t) => t.item?.status_validacao === "validado"),
+      preenchidas: ativas.filter((t) => t.preenchido).length,
       bugsAbertos: bugsModulo.get(m.id) ?? 0,
       chamadosAbertos: chamados.get(m.codigo) ?? 0,
       comAcesso: m.com_acesso ?? 0,
       ativos30d: m.ativos_30d ?? 0,
       acessos30d: ativas.reduce((s, t) => s + t.tela.acessos_30d, 0),
-      ultimoUso: ativas.map((t) => t.tela.ultimo_uso).filter((x): x is string => !!x).sort().pop() ?? null,
     };
   });
 }
 
-// ── Filtros ──────────────────────────────────────────────────────────────
+// ── Filtros e ordem (lista de módulos) ───────────────────────────────────
 
 export interface FiltrosChecklist {
-  modulo: string;               // id ou ""
+  area: string;
   dev: "" | StatusDev | "pendente";
   treinamento: "" | StatusTreinamento | "sem";
   validacao: "" | StatusValidacao | "sem";
-  responsavel: string;          // user id ou ""
+  responsavel: string;
   busca: string;
-  soPendentes: boolean;
-  mostrarInativas: boolean;
 }
-export const FILTROS_VAZIOS: FiltrosChecklist = {
-  modulo: "", dev: "", treinamento: "", validacao: "", responsavel: "", busca: "", soPendentes: false, mostrarInativas: false,
-};
+export const FILTROS_VAZIOS: FiltrosChecklist = { area: "", dev: "", treinamento: "", validacao: "", responsavel: "", busca: "" };
 
 const norm = (s: string) => s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
 
-export function telaPassa(t: LinhaTela, m: LinhaModulo, f: FiltrosChecklist): boolean {
-  if (!f.mostrarInativas && !t.tela.ativo) return false;
-  if (f.dev && (t.item?.status_dev ?? "pendente") !== f.dev) return false;
-  if (f.treinamento && (t.item?.status_treinamento ?? "sem") !== f.treinamento) return false;
-  if (f.validacao && (t.item?.status_validacao ?? "sem") !== f.validacao) return false;
-  if (f.responsavel && (t.item?.responsavel_id ?? m.item?.responsavel_id ?? "") !== f.responsavel) return false;
-  if (f.soPendentes && t.preenchido) return false;
-  if (f.busca.trim()) {
-    const q = norm(f.busca.trim());
-    if (![t.tela.nome, t.tela.rota, t.tela.codigo, m.modulo.nome].some((x) => norm(x ?? "").includes(q))) return false;
-  }
-  return true;
+export function filtrarModulos(mods: LinhaModulo[], f: FiltrosChecklist): LinhaModulo[] {
+  const q = norm(f.busca.trim());
+  return mods.filter((m) =>
+    m.modulo.ativo
+    && (!f.area || m.area === f.area)
+    && (!f.dev || (m.status.status_dev ?? "pendente") === f.dev)
+    && (!f.treinamento || (m.status.status_treinamento ?? "sem") === f.treinamento)
+    && (!f.validacao || (m.status.status_validacao ?? "sem") === f.validacao)
+    && (!f.responsavel || m.responsavelId === f.responsavel)
+    && (!q || [m.modulo.nome, m.area, ...m.telas.map((t) => t.tela.nome)].some((x) => norm(x).includes(q))));
 }
 
-/** Módulos com as telas que passam no filtro (módulo sem nenhuma tela que passe some, a não ser sem filtro de tela). */
-export function filtrarModulos(mods: LinhaModulo[], f: FiltrosChecklist): { modulo: LinhaModulo; telas: LinhaTela[] }[] {
-  const temFiltroTela = !!(f.dev || f.treinamento || f.validacao || f.responsavel || f.busca.trim() || f.soPendentes);
-  return mods
-    .filter((m) => !f.modulo || m.modulo.id === f.modulo)
-    .filter((m) => f.mostrarInativas || m.modulo.ativo)
-    .map((m) => ({ modulo: m, telas: m.telas.filter((t) => telaPassa(t, m, f)) }))
-    .filter((x) => !temFiltroTela || x.telas.length > 0
-      || (!!f.busca.trim() && norm(x.modulo.modulo.nome).includes(norm(f.busca.trim()))));
-}
-
-// ── KPIs gerais ──────────────────────────────────────────────────────────
-
-export function indicadores(mods: LinhaModulo[]) {
-  const telas = mods.filter((m) => m.modulo.ativo).flatMap((m) => m.telas.filter((t) => t.tela.ativo));
-  const conta = (f: (t: LinhaTela) => boolean) => telas.filter(f).length;
-  return {
-    modulos: mods.filter((m) => m.modulo.ativo).length,
-    telas: telas.length,
-    preenchidas: conta((t) => t.preenchido),
-    pendentes: conta((t) => !t.preenchido),
-    prontas: conta((t) => t.item?.status_dev === "pronto"),
-    emDesenvolvimento: conta((t) => t.item?.status_dev === "em_desenvolvimento" || t.item?.status_dev === "em_homologacao"),
-    implantadas: conta((t) => t.item?.status_implantacao === "implantado"),
-    treinadas: conta((t) => t.item?.status_treinamento === "treinado"),
-    validadas: conta((t) => t.item?.status_validacao === "validado"),
-    efetividade: telas.length ? telas.reduce((s, t) => s + t.efetividade, 0) / telas.length : 0,
-    bugsAbertos: mods.reduce((s, m) => s + m.bugsAbertos, 0),
-    semUso: conta((t) => t.tela.com_acesso > 0 && t.tela.ativos_30d === 0),
+export type ColunaOrdem = "ordem" | "dev" | "validacao" | "atualizacao";
+const ORDEM_DEV_VAL: Record<string, number> = { pronto: 0, em_homologacao: 1, em_desenvolvimento: 2, nao_iniciado: 3 };
+const ORDEM_VAL_VAL: Record<string, number> = { validado: 0, em_validacao: 1, pendente: 2, reprovado: 3 };
+export function ordenarModulos(mods: LinhaModulo[], col: ColunaOrdem, asc: boolean): LinhaModulo[] {
+  const k = (m: LinhaModulo): number | string => {
+    if (col === "dev") return ORDEM_DEV_VAL[m.status.status_dev ?? ""] ?? 9;
+    if (col === "validacao") return ORDEM_VAL_VAL[m.status.status_validacao ?? ""] ?? 9;
+    if (col === "atualizacao") return m.ultimaAtualizacao ?? "";
+    return m.modulo.ordem ?? 999;
   };
+  const r = [...mods].sort((a, b) => {
+    const x = k(a), y = k(b);
+    const c = typeof x === "number" && typeof y === "number" ? x - y : String(x).localeCompare(String(y));
+    return c || a.modulo.nome.localeCompare(b.modulo.nome);
+  });
+  return asc ? r : r.reverse();
+}
+
+// ── Indicadores e o mês anterior ─────────────────────────────────────────
+
+export interface Indicadores {
+  modulos: number; prontos: number; emDesenvolvimento: number; treinados: number; validados: number;
+  efetividade: number | null; preenchidos: number;
+  porDev: Record<StatusDev | "pendente", number>;
+}
+
+export function indicadores(mods: LinhaModulo[]): Indicadores {
+  const ativos = mods.filter((m) => m.modulo.ativo);
+  const porDev: Record<StatusDev | "pendente", number> = { pronto: 0, em_homologacao: 0, em_desenvolvimento: 0, nao_iniciado: 0, pendente: 0 };
+  ativos.forEach((m) => { porDev[m.status.status_dev ?? "pendente"] += 1; });
+  const efs = ativos.map((m) => m.efetividade).filter((x): x is number => x != null);
+  return {
+    modulos: ativos.length,
+    prontos: porDev.pronto,
+    emDesenvolvimento: porDev.em_desenvolvimento + porDev.em_homologacao,
+    treinados: ativos.filter((m) => m.status.status_treinamento === "treinado").length,
+    validados: ativos.filter((m) => m.status.status_validacao === "validado").length,
+    // Módulo sem nada para medir conta 0 no geral (senão 1 módulo pronto e
+    // 24 sem preencher dariam 100%).
+    efetividade: ativos.length && efs.length ? ativos.reduce((s, m) => s + (m.efetividade ?? 0), 0) / ativos.length : null,
+    preenchidos: ativos.filter((m) => preenchido(m.status)).length,
+    porDev,
+  };
+}
+
+const CAMPOS_STATUS = ["status_dev", "status_implantacao", "status_treinamento", "status_validacao"] as const;
+
+/**
+ * O checklist como estava em `ate` (ISO), refeito pelo histórico: cada
+ * status vale o último "para" gravado até lá; linha criada depois some.
+ * É o que dá o "vs. mês anterior" dos indicadores.
+ */
+export function checklistEm(checklist: ChecklistItem[], historico: Pick<Historico, "checklist_id" | "campo" | "para" | "created_at">[], ate: string): ChecklistItem[] {
+  const ultimo = new Map<string, string | null>();
+  const existia = new Set<string>();
+  const ordenado = [...historico].filter((h) => h.created_at <= ate).sort((a, b) => a.created_at.localeCompare(b.created_at));
+  for (const h of ordenado) {
+    if (!h.checklist_id) continue;
+    existia.add(h.checklist_id);
+    if ((CAMPOS_STATUS as readonly string[]).includes(h.campo)) ultimo.set(`${h.checklist_id}|${h.campo}`, h.para);
+  }
+  return checklist
+    .filter((c) => existia.has(c.id))
+    .map((c) => {
+      const r = { ...c };
+      for (const k of CAMPOS_STATUS) {
+        const chave = `${c.id}|${k}`;
+        (r as Record<string, unknown>)[k] = ultimo.has(chave) ? ultimo.get(chave) : null;
+      }
+      return r;
+    });
+}
+
+export interface Variacao { texto: string; sentido: "sobe" | "desce" | "igual"; bom: boolean | null }
+
+/** "+12%" (relativo) ou "+2" (quando não havia base), e se a mudança é boa. */
+export function variacao(atual: number, anterior: number, maisEhMelhor: boolean): Variacao {
+  const d = atual - anterior;
+  if (d === 0) return { texto: "0", sentido: "igual", bom: null };
+  const sinal = d > 0 ? "+" : "−";
+  const texto = anterior > 0 ? `${sinal}${Math.round(Math.abs(d) / anterior * 100)}%` : `${sinal}${Math.abs(d)}`;
+  return { texto, sentido: d > 0 ? "sobe" : "desce", bom: d > 0 ? maisEhMelhor : !maisEhMelhor };
+}
+/** Diferença em pontos percentuais (efetividade): "+8,4 p.p.". */
+export function variacaoPP(atual: number | null, anterior: number | null): Variacao {
+  const d = ((atual ?? 0) - (anterior ?? 0)) * 100;
+  if (Math.abs(d) < 0.05) return { texto: "0 p.p.", sentido: "igual", bom: null };
+  return { texto: `${d > 0 ? "+" : "−"}${Math.abs(d).toLocaleString("pt-BR", { maximumFractionDigits: 1 })} p.p.`, sentido: d > 0 ? "sobe" : "desce", bom: d > 0 };
+}
+
+/** Primeiro instante do mês corrente (ISO) — o "mês anterior" é o estado até aqui. */
+export const inicioDoMes = (agora = new Date()) => new Date(agora.getFullYear(), agora.getMonth(), 1).toISOString();
+
+// ── Análises adicionais ──────────────────────────────────────────────────
+
+/** Módulos que ainda não foram treinados (pendente, agendado ou sem preenchimento). */
+export const modulosSemTreinamento = (mods: LinhaModulo[]) =>
+  mods.filter((m) => m.modulo.ativo && m.status.status_treinamento !== "treinado" && m.status.status_treinamento !== "nao_se_aplica");
+
+/** Prontos que o usuário ainda não validou. */
+export const prontosSemValidacao = (mods: LinhaModulo[]) =>
+  mods.filter((m) => m.modulo.ativo && m.status.status_dev === "pronto" && m.status.status_validacao !== "validado");
+
+/** Por área: módulos e quantas pendências (etapa do % que não está concluída). */
+export function rankingAreas(mods: LinhaModulo[]) {
+  const m = new Map<string, { area: string; modulos: number; pendencias: number; efetividade: number }>();
+  for (const x of mods.filter((y) => y.modulo.ativo)) {
+    const r = m.get(x.area) ?? { area: x.area, modulos: 0, pendencias: 0, efetividade: 0 };
+    r.modulos += 1;
+    r.efetividade += x.efetividade ?? 0;
+    if (x.status.status_dev !== "pronto") r.pendencias += 1;
+    if (x.status.status_treinamento !== "treinado" && x.status.status_treinamento !== "nao_se_aplica") r.pendencias += 1;
+    if (x.status.status_validacao !== "validado") r.pendencias += 1;
+    m.set(x.area, r);
+  }
+  return [...m.values()].map((r) => ({ ...r, efetividade: r.modulos ? r.efetividade / r.modulos : 0 }))
+    .sort((a, b) => b.pendencias - a.pendencias || a.area.localeCompare(b.area));
+}
+
+/** Últimos N meses: quantas vezes algo virou Pronto / Treinado / Validado (módulos e telas). */
+export function evolucaoEntregas(historico: Pick<Historico, "campo" | "para" | "created_at">[], meses = 6, agora = new Date()) {
+  const lista: { mes: string; rotulo: string; prontos: number; treinados: number; validados: number }[] = [];
+  for (let i = meses - 1; i >= 0; i--) {
+    const d = new Date(agora.getFullYear(), agora.getMonth() - i, 1);
+    const mes = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+    lista.push({ mes, rotulo: `${["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"][d.getMonth()]}/${String(d.getFullYear()).slice(2)}`, prontos: 0, treinados: 0, validados: 0 });
+  }
+  const porMes = new Map(lista.map((x) => [x.mes, x]));
+  for (const h of historico) {
+    const x = porMes.get(new Date(h.created_at).toISOString().slice(0, 7));
+    if (!x) continue;
+    if (h.campo === "status_dev" && h.para === "pronto") x.prontos += 1;
+    if (h.campo === "status_treinamento" && h.para === "treinado") x.treinados += 1;
+    if (h.campo === "status_validacao" && h.para === "validado") x.validados += 1;
+  }
+  return lista;
+}
+
+/** Por usuário-chave: quantos módulos/telas estão com ele e quantos ele já validou. */
+export function aderenciaUsuarioChave(mods: LinhaModulo[]) {
+  const m = new Map<string, { userId: string; itens: number; validados: number; emValidacao: number }>();
+  const somar = (uid: string | null | undefined, v: StatusValidacao | null | undefined) => {
+    if (!uid) return;
+    const r = m.get(uid) ?? { userId: uid, itens: 0, validados: 0, emValidacao: 0 };
+    r.itens += 1;
+    if (v === "validado") r.validados += 1;
+    if (v === "em_validacao") r.emValidacao += 1;
+    m.set(uid, r);
+  };
+  for (const x of mods.filter((y) => y.modulo.ativo)) {
+    if (x.item?.usuario_chave_id) somar(x.item.usuario_chave_id, x.status.status_validacao);
+    for (const t of x.telas) if (t.tela.ativo && t.item?.usuario_chave_id) somar(t.item.usuario_chave_id, t.item.status_validacao);
+  }
+  return [...m.values()].map((r) => ({ ...r, taxa: r.itens ? r.validados / r.itens : 0 })).sort((a, b) => b.itens - a.itens);
 }
 
 // ── Texto ────────────────────────────────────────────────────────────────
 
 export const pct = (x: number | null | undefined) => (x == null ? "—" : `${Math.round(x * 100)}%`);
+export const pct1 = (x: number | null | undefined) =>
+  x == null ? "—" : `${(x * 100).toLocaleString("pt-BR", { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%`;
 
 export const ROTULO_CAMPO: Record<string, string> = {
   status_dev: "Desenvolvimento", status_implantacao: "Implantação", status_treinamento: "Treinamento",
   status_validacao: "Validação", responsavel_id: "Responsável", usuario_chave_id: "Usuário-chave",
   previsao_entrega: "Previsão de entrega", data_implantacao: "Data de implantação", data_treinamento: "Data do treinamento",
-  data_validacao: "Data da validação", observacoes: "Observações",
+  data_validacao: "Data da validação", observacoes: "Observações", area: "Área",
 };
 
 /** "pronto" → "Pronto" (qualquer etapa); data ISO → dd/mm/aaaa; resto como veio. */
@@ -304,4 +513,21 @@ export function rotuloValor(campo: string, v: string | null): string {
   if (etapa) return etapa.opcoes.find((o) => o.valor === v)?.rotulo ?? v;
   if (/^\d{4}-\d{2}-\d{2}$/.test(v)) return v.split("-").reverse().join("/");
   return v;
+}
+
+export type TipoMovimentacao = "validado" | "treinamento" | "atualizado" | "atribuido" | "outro";
+
+/** A frase das "Últimas movimentações": "Módulo Compras validado por Juliana Santos". */
+export function fraseMovimentacao(h: Historico, nomeModulo: string, nomeTela: string | null): { tipo: TipoMovimentacao; texto: string; destaque: string } {
+  const alvo = nomeTela ? `Tela ${nomeTela} (${nomeModulo})` : `Módulo ${nomeModulo}`;
+  const destaque = nomeTela ?? nomeModulo;
+  const por = h.usuario_nome ? ` por ${h.usuario_nome}` : "";
+  if (h.campo === "status_validacao" && h.para === "validado") return { tipo: "validado", texto: `${alvo} validado${por}`, destaque };
+  if (h.campo === "status_treinamento" && h.para === "agendado") return { tipo: "treinamento", texto: `${alvo} enviado para treinamento`, destaque };
+  if (h.campo === "status_treinamento" && h.para === "treinado") return { tipo: "treinamento", texto: `${alvo} treinado${por}`, destaque };
+  if (h.campo === "responsavel_id" || h.campo === "usuario_chave_id") {
+    return { tipo: "atribuido", texto: h.para ? `${alvo} atribuído para ${h.para}${h.campo === "usuario_chave_id" ? " (usuário-chave)" : ""}` : `${alvo} ficou sem ${ROTULO_CAMPO[h.campo].toLowerCase()}`, destaque };
+  }
+  if (h.campo.startsWith("status_")) return { tipo: "atualizado", texto: `${alvo}: ${ROTULO_CAMPO[h.campo]} → ${rotuloValor(h.campo, h.para)}${por}`, destaque };
+  return { tipo: "outro", texto: `${alvo}: ${ROTULO_CAMPO[h.campo] ?? h.campo} atualizado${por}`, destaque };
 }

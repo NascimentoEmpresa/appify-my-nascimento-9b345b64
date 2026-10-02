@@ -1,139 +1,141 @@
 import { useMemo, useState } from "react";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import {
-  Activity, AlertTriangle, Bug, CheckCircle2, ChevronDown, ChevronRight, ClipboardList, FileSpreadsheet, Gauge, GraduationCap,
-  History, Info, Layers, ListChecks, Loader2, Pencil, RefreshCw, Rocket, Search, ShieldCheck, Wrench, XCircle,
+  Activity, AlertCircle, AlertTriangle, ArrowLeft, ArrowUpDown, BarChart3, Bug, CheckCircle2, ChevronLeft, ChevronRight,
+  Clock, Download, ExternalLink, Eye, GraduationCap, History, LineChart, MoreVertical, Pencil, RefreshCw, Search, Settings,
+  UserRound, Users,
 } from "lucide-react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { usePermissoes } from "@/context/PermissoesContext";
-import { useChecklistDados } from "@/hooks/useChecklistModulos";
+import { useChecklistDados, useHistorico } from "@/hooks/useChecklistModulos";
 import { cn } from "@/lib/utils";
 import {
-  FILTROS_VAZIOS, OPCOES_DEV, OPCOES_TREINAMENTO, OPCOES_VALIDACAO, ROTULO_PENDENTE, filtrarModulos, indicadores, montarModulos,
-  opcaoDe, pct, type FiltrosChecklist, type LinhaModulo, type LinhaTela, type StatusDev,
+  FILTROS_VAZIOS, OPCOES_DEV, OPCOES_TREINAMENTO, OPCOES_VALIDACAO, ROTULO_PENDENTE, checklistEm, filtrarModulos,
+  fraseMovimentacao, indicadores, inicioDoMes, montarModulos, ordenarModulos, pct, pct1, variacao, variacaoPP,
+  modulosSemTreinamento, prontosSemValidacao,
+  type ColunaOrdem, type FiltrosChecklist, type LinhaModulo, type TipoMovimentacao,
 } from "@/lib/sistemas/checklistModulos";
-import { BarraEfetividade, MENU_CHECKLIST, PONTO_TOM, Tile, fmtDataHora } from "./ui";
-import { TabelaTelas } from "./TabelaTelas";
-import { ItemDialog } from "./ItemDialog";
-import { ModuloSheet } from "./ModuloSheet";
-import { BugsPainel, type NovoBugPadrao } from "./BugsPainel";
+import { BarraEfetividade, CardIndicador, MARINHO, MENU_CHECKLIST, StatusPill, fmtDataHora, fmtDataHoraAs } from "./ui";
+import { ItemDialog, type AlvoItem } from "./ItemDialog";
+import { BugsPainel } from "./BugsPainel";
 import { UsoPainel } from "./UsoPainel";
 import { HistoricoLista } from "./HistoricoLista";
+import { DonutStatusModulos } from "./DonutStatusModulos";
+import { AnaliseDialog, type Analise } from "./AnaliseDialog";
+import { exportarChecklist } from "./exportar";
 
 // =====================================================================
-// Sistemas › CHECKLIST DE MÓDULOS (02/10/2026, mig 20260930000291)
+// Sistemas › CONTROLE DE EFETIVIDADE DOS MÓDULOS (Checklist de Módulos)
+// 02/10/2026, migs 20260930000291/292
 //
 // Solicitação: "acompanhar criação, implantação, treinamento, medição de uso
 // de cada módulo por cada usuário, cadastro de bugs e encaminhamento inicial
-// de chamados". Pedido do Pablo: todos os sistemas na tela; clicou no
-// módulo, aparecem os submódulos e o status de tudo; começa PENDENTE de
-// preenchimento — o gerente de sistemas preenche.
+// de chamados". Pedido do Pablo (02/10): o painel IGUAL ao modelo que ele
+// mandou — filtros em cima, cinco indicadores com "vs. mês anterior", a
+// lista de módulos em tabela (uma linha por MÓDULO, com Área, status,
+// responsável, efetividade) e, embaixo, status geral + últimas
+// movimentações + análises. Clicou no módulo, abre a PÁGINA do módulo
+// (ModuloDetalhe.tsx, /app/sistemas/checklist-modulos/:moduloId) com tudo
+// dele e das telas (submódulos).
 //
-// O catálogo é o próprio cadastro de acesso (app_modulo + app_menu com
-// rota): tela nova entra sozinha. Abas: Checklist (status por tela, com
-// edição), Uso do ERP (medição pelo RouteGuard), Bugs (registro, triagem e
-// "encaminhar como chamado") e Histórico (cada mudança, por gatilho).
+// Uso do ERP, Bugs e Histórico geral continuam aqui, nos botões do topo
+// (?aba=uso|bugs|historico) — o modelo não tinha, mas já estavam em uso.
 // Regras e contas: src/lib/sistemas/checklistModulos.ts (com teste).
 // =====================================================================
 
 const TODOS = "__todos";
-const ORDEM_DEV: (StatusDev | "pendente")[] = ["pronto", "em_homologacao", "em_desenvolvimento", "nao_iniciado", "pendente"];
-const ROTULO_DEV_RESUMO: Record<StatusDev | "pendente", string> = {
-  pronto: "Pronto", em_homologacao: "Em homologação", em_desenvolvimento: "Em desenvolvimento", nao_iniciado: "Não iniciado", pendente: "Pendente de preenchimento",
-};
-const tomDev = (k: StatusDev | "pendente") => (k === "pendente" ? "pendente" : opcaoDe("dev", k)!.tom);
+const POR_PAGINA = 12;
 
 export default function ChecklistModulos() {
+  const navigate = useNavigate();
+  const [params, setParams] = useSearchParams();
   const q = useChecklistDados();
+  // Histórico completo: dá o "vs. mês anterior" e o histórico de validações
+  // (a RPC do painel só traz as 40 últimas movimentações).
+  const histCompleto = useHistorico(null, 5000);
   const { can } = usePermissoes();
   const podeAlterar = can("alterar", undefined, MENU_CHECKLIST);
   const podeIncluir = can("incluir", undefined, MENU_CHECKLIST) || podeAlterar;
   const podeExcluir = can("excluir", undefined, MENU_CHECKLIST);
   const podeExportar = can("exportar", undefined, MENU_CHECKLIST);
 
-  const [aba, setAba] = useState("checklist");
+  const aba = params.get("aba") ?? "painel";
+  const irAba = (a: string) => setParams((p) => { const n = new URLSearchParams(p); if (a === "painel") n.delete("aba"); else n.set("aba", a); return n; });
+
   const [f, setF] = useState<FiltrosChecklist>(FILTROS_VAZIOS);
-  const [abertos, setAbertos] = useState<Set<string>>(new Set());
-  const [editando, setEditando] = useState<Parameters<typeof ItemDialog>[0]["alvo"]>(null);
-  const [detalhe, setDetalhe] = useState<string | null>(null);
-  const [novoBug, setNovoBug] = useState<NovoBugPadrao | null>(null);
+  const [buscaDigitada, setBuscaDigitada] = useState("");
+  const [ordem, setOrdem] = useState<{ col: ColunaOrdem; asc: boolean }>({ col: "ordem", asc: true });
+  const [pagina, setPagina] = useState(1);
+  const [editando, setEditando] = useState<AlvoItem | null>(null);
+  const [analise, setAnalise] = useState<Analise | null>(null);
 
   const dados = q.data;
   const modulos = useMemo(() => (dados ? montarModulos(dados) : []), [dados]);
-  const filtrados = useMemo(() => filtrarModulos(modulos, f), [modulos, f]);
+  const filtrados = useMemo(() => ordenarModulos(filtrarModulos(modulos, f), ordem.col, ordem.asc), [modulos, f, ordem]);
   const ind = useMemo(() => indicadores(modulos), [modulos]);
+  const indAnterior = useMemo(() => {
+    if (!dados || !histCompleto.data) return null;
+    return indicadores(montarModulos({ ...dados, checklist: checklistEm(dados.checklist, histCompleto.data, inicioDoMes()) }));
+  }, [dados, histCompleto.data]);
   const nomeUsuario = useMemo(() => new Map((dados?.usuarios ?? []).map((u) => [u.id, u.nome])), [dados?.usuarios]);
+  const areas = useMemo(() => [...new Set(modulos.filter((m) => m.modulo.ativo).map((m) => m.area))].sort((a, b) => a.localeCompare(b)), [modulos]);
   const responsaveis = useMemo(() => {
-    const ids = new Set<string>();
-    dados?.checklist.forEach((c) => c.responsavel_id && ids.add(c.responsavel_id));
+    const ids = new Set(modulos.map((m) => m.responsavelId).filter((x): x is string => !!x));
     return [...ids].map((id) => ({ id, nome: nomeUsuario.get(id) ?? "—" })).sort((a, b) => a.nome.localeCompare(b.nome));
-  }, [dados?.checklist, nomeUsuario]);
-  const porDevGeral = useMemo(() => {
-    const r: Record<StatusDev | "pendente", number> = { pronto: 0, em_homologacao: 0, em_desenvolvimento: 0, nao_iniciado: 0, pendente: 0 };
-    modulos.filter((m) => m.modulo.ativo).forEach((m) => ORDEM_DEV.forEach((k) => { r[k] += m.porDev[k]; }));
-    return r;
-  }, [modulos]);
-  const bugsAbertos = ind.bugsAbertos;
-  const moduloDetalhe = modulos.find((m) => m.modulo.id === detalhe) ?? null;
+  }, [modulos, nomeUsuario]);
+  const bugsAbertos = useMemo(() => modulos.reduce((s, m) => s + m.bugsAbertos, 0), [modulos]);
 
-  const mudar = (p: Partial<FiltrosChecklist>) => setF((x) => ({ ...x, ...p }));
-  const filtrosAtivos = [f.modulo, f.dev, f.treinamento, f.validacao, f.responsavel, f.busca.trim()].filter(Boolean).length + (f.soPendentes ? 1 : 0) + (f.mostrarInativas ? 1 : 0);
-  const alternar = (id: string) => setAbertos((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
-  const temFiltroTela = !!(f.dev || f.treinamento || f.validacao || f.responsavel || f.busca.trim() || f.soPendentes);
+  const totalPaginas = Math.max(1, Math.ceil(filtrados.length / POR_PAGINA));
+  const paginaAtual = Math.min(pagina, totalPaginas);
+  const visiveis = filtrados.slice((paginaAtual - 1) * POR_PAGINA, paginaAtual * POR_PAGINA);
 
-  const editarTela = (m: LinhaModulo, t: LinhaTela) => setEditando({ moduloId: m.modulo.id, moduloNome: m.modulo.nome, menuId: t.tela.id, telaNome: t.tela.nome, rota: t.tela.rota, item: t.item });
-  const editarModulo = (m: LinhaModulo) => setEditando({ moduloId: m.modulo.id, moduloNome: m.modulo.nome, menuId: null, item: m.item });
-  const bugTela = (m: LinhaModulo, t: LinhaTela | null) => { setDetalhe(null); setNovoBug({ moduloId: m.modulo.id, menuId: t?.tela.id ?? null }); setAba("bugs"); };
+  const mudar = (p: Partial<FiltrosChecklist>) => { setF((x) => ({ ...x, ...p })); setPagina(1); };
+  const pesquisar = () => mudar({ busca: buscaDigitada });
+  const limpar = () => { setF(FILTROS_VAZIOS); setBuscaDigitada(""); setPagina(1); };
+  const ordenarPor = (col: ColunaOrdem) => setOrdem((o) => (o.col === col ? { col, asc: !o.asc } : { col, asc: true }));
+  const abrir = (m: LinhaModulo) => navigate(`/app/sistemas/checklist-modulos/${m.modulo.id}`);
+  const editarModulo = (m: LinhaModulo) => setEditando({
+    moduloId: m.modulo.id, moduloNome: m.modulo.nome, moduloCodigo: m.modulo.codigo, menuId: null, item: m.item,
+    calculado: {
+      status_dev: m.calculado.dev ? m.status.status_dev : null, status_implantacao: m.calculado.implantacao ? m.status.status_implantacao : null,
+      status_treinamento: m.calculado.treinamento ? m.status.status_treinamento : null, status_validacao: m.calculado.validacao ? m.status.status_validacao : null,
+    },
+  });
 
-  const exportar = async () => {
-    if (!dados) return;
-    const XLSX = await import("xlsx");
-    const rot = (etapa: Parameters<typeof opcaoDe>[0], v: string | null | undefined) => opcaoDe(etapa, v)?.rotulo ?? "Pendente";
-    const linhas = modulos.flatMap((m) => m.telas.map((t) => ({
-      "Módulo": m.modulo.nome, "Tela": t.tela.nome, "Rota": t.tela.rota, "Ativa": t.tela.ativo ? "Sim" : "Não",
-      "Desenvolvimento": rot("dev", t.item?.status_dev), "Implantação": rot("implantacao", t.item?.status_implantacao),
-      "Treinamento": rot("treinamento", t.item?.status_treinamento), "Validação do usuário": rot("validacao", t.item?.status_validacao),
-      "Responsável": nomeUsuario.get(t.item?.responsavel_id ?? m.item?.responsavel_id ?? "") ?? "",
-      "Usuário-chave": nomeUsuario.get(t.item?.usuario_chave_id ?? m.item?.usuario_chave_id ?? "") ?? "",
-      "Previsão de entrega": t.item?.previsao_entrega ?? "", "Implantado em": t.item?.data_implantacao ?? "",
-      "Treinado em": t.item?.data_treinamento ?? "", "Validado em": t.item?.data_validacao ?? "",
-      "Com acesso": t.tela.com_acesso, "Usaram (30d)": t.tela.ativos_30d, "Acessos (30d)": t.tela.acessos_30d,
-      "Bugs abertos": t.bugsAbertos, "Efetividade": t.preenchido ? `${Math.round(t.efetividade * 100)}%` : "",
-      "Observações": t.item?.observacoes ?? "", "Atualizado por": t.item?.atualizado_por ?? "", "Atualizado em": t.item ? fmtDataHora(t.item.atualizado_em) : "",
-    })));
-    const resumo = modulos.filter((m) => m.modulo.ativo).map((m) => ({
-      "Módulo": m.modulo.nome, "Telas ativas": m.ativas, "Preenchidas": m.preenchidas, "Prontas": m.prontas, "Implantadas": m.implantadas,
-      "Treinadas": m.treinadas, "Validadas": m.validadas, "Efetividade": `${Math.round(m.efetividade * 100)}%`,
-      "Com acesso (pessoas)": m.comAcesso, "Usaram 30d (pessoas)": m.ativos30d, "Bugs abertos": m.bugsAbertos, "Chamados abertos": m.chamadosAbertos,
-      "Responsável": nomeUsuario.get(m.item?.responsavel_id ?? "") ?? "",
-    }));
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(resumo), "Módulos");
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(linhas), "Telas");
-    XLSX.writeFile(wb, `checklist-modulos-${new Date().toISOString().slice(0, 10)}.xlsx`);
-  };
+  const voltar = (
+    <Button variant="ghost" size="sm" className="mb-3 gap-1.5 px-2" onClick={() => irAba("painel")}><ArrowLeft className="h-4 w-4" /> Voltar ao painel</Button>
+  );
 
   return (
     <div>
       <PageHeader
-        title="Checklist de Módulos"
-        subtitle="Cada módulo e cada tela do ERP: desenvolvimento, implantação, treinamento, validação do usuário, uso real por pessoa, bugs e chamados."
+        title="Controle de Efetividade dos Módulos"
+        subtitle="Acompanhe os módulos do ERP quanto ao status de desenvolvimento, treinamento e validação pelos usuários."
         module="Sistemas"
-        breadcrumb={["Checklist de Módulos"]}
+        breadcrumb={["Controle de Efetividade dos Módulos"]}
         actions={
           <>
-            <Button variant="outline" size="sm" className="gap-1.5" onClick={() => q.refetch()} disabled={q.isFetching}>
-              <RefreshCw className={cn("h-4 w-4", q.isFetching && "animate-spin")} /> Atualizar
+            <Button variant={aba === "uso" ? "secondary" : "ghost"} size="sm" className="gap-1.5" onClick={() => irAba(aba === "uso" ? "painel" : "uso")}><Activity className="h-4 w-4" /> Uso do ERP</Button>
+            <Button variant={aba === "bugs" ? "secondary" : "ghost"} size="sm" className="gap-1.5" onClick={() => irAba(aba === "bugs" ? "painel" : "bugs")}>
+              <Bug className="h-4 w-4" /> Bugs{bugsAbertos ? <span className="rounded-full bg-red-600 px-1.5 text-[10px] font-bold text-white">{bugsAbertos}</span> : null}
+            </Button>
+            <Button variant={aba === "historico" ? "secondary" : "ghost"} size="sm" className="gap-1.5" onClick={() => irAba(aba === "historico" ? "painel" : "historico")}><History className="h-4 w-4" /> Histórico</Button>
+            <Button variant="ghost" size="icon" className="h-9 w-9" title="Atualizar" onClick={() => { q.refetch(); histCompleto.refetch(); }} disabled={q.isFetching}>
+              <RefreshCw className={cn("h-4 w-4", q.isFetching && "animate-spin")} />
             </Button>
             {podeExportar && (
-              <Button size="sm" className="gap-1.5" onClick={exportar} disabled={!dados}><FileSpreadsheet className="h-4 w-4" /> Exportar relatório</Button>
+              <Button variant="outline" className="h-10 gap-2 px-4 font-semibold" onClick={() => dados && exportarChecklist(modulos, nomeUsuario)} disabled={!dados}>
+                <Download className="h-4 w-4" /> Exportar Relatório
+              </Button>
             )}
           </>
         }
@@ -141,256 +143,325 @@ export default function ChecklistModulos() {
 
       {q.isLoading ? (
         <div className="space-y-4">
-          <div className="grid gap-3 sm:grid-cols-3 xl:grid-cols-6">{[0, 1, 2, 3, 4, 5].map((i) => <Skeleton key={i} className="h-24 rounded-xl" />)}</div>
-          {[0, 1, 2, 3, 4].map((i) => <Skeleton key={i} className="h-20 rounded-xl" />)}
+          <Skeleton className="h-20 rounded-xl" />
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">{[0, 1, 2, 3, 4].map((i) => <Skeleton key={i} className="h-28 rounded-xl" />)}</div>
+          <Skeleton className="h-[480px] rounded-xl" />
         </div>
       ) : q.isError || !dados ? (
         <Card className="flex items-start gap-3 border-destructive/40 bg-destructive/5 p-5 text-sm">
           <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-destructive" />
-          <div><p className="font-semibold text-destructive">Não foi possível carregar o checklist.</p><p className="text-muted-foreground">{(q.error as Error)?.message}</p></div>
+          <div><p className="font-semibold text-destructive">Não foi possível carregar o painel.</p><p className="text-muted-foreground">{(q.error as Error)?.message}</p></div>
         </Card>
+      ) : aba === "uso" ? (
+        <div>{voltar}<UsoPainel dados={dados} modulos={modulos} podeAlterar={podeAlterar} /></div>
+      ) : aba === "bugs" ? (
+        <div>{voltar}<BugsPainel dados={dados} podeIncluir={podeIncluir} podeAlterar={podeAlterar} podeExcluir={podeExcluir} /></div>
+      ) : aba === "historico" ? (
+        <div>{voltar}<HistoricoLista dados={dados} /></div>
       ) : (
-        <Tabs value={aba} onValueChange={setAba}>
-          <TabsList className="mb-4">
-            <TabsTrigger value="checklist" className="gap-1.5"><ListChecks className="h-4 w-4" /> Checklist</TabsTrigger>
-            <TabsTrigger value="uso" className="gap-1.5"><Activity className="h-4 w-4" /> Uso do ERP</TabsTrigger>
-            <TabsTrigger value="bugs" className="gap-1.5"><Bug className="h-4 w-4" /> Bugs{bugsAbertos ? <span className="ml-1 rounded-full bg-red-600 px-1.5 text-[10px] font-bold text-white">{bugsAbertos}</span> : null}</TabsTrigger>
-            <TabsTrigger value="historico" className="gap-1.5"><History className="h-4 w-4" /> Histórico</TabsTrigger>
-          </TabsList>
-
-          {/* ── CHECKLIST ───────────────────────────────────────────── */}
-          <TabsContent value="checklist" className="space-y-5">
-            {ind.pendentes > 0 && (
-              <div className="flex flex-wrap items-center gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-100">
-                <ClipboardList className="h-5 w-5 shrink-0" />
-                <p className="flex-1">
-                  <b>{ind.pendentes} de {ind.telas} telas</b> estão pendentes de preenchimento.
-                  {podeAlterar ? " Abra o módulo e clique na tela para preencher o status de cada etapa." : " O gerente de sistemas vai preencher."}
-                </p>
-                <Button variant="outline" size="sm" className="h-8 border-amber-300 bg-white/70 dark:bg-transparent" onClick={() => mudar({ soPendentes: !f.soPendentes })}>
-                  {f.soPendentes ? "Mostrar todas" : "Ver só as pendentes"}
-                </Button>
-              </div>
-            )}
-
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-6">
-              <Tile icone={<CheckCircle2 className="h-5 w-5" />} rotulo="Telas prontas" valor={String(ind.prontas)} sub={`de ${ind.telas} telas · ${ind.modulos} módulos`} cor="#15803d"
-                ativo={f.dev === "pronto"} onClick={() => mudar({ dev: f.dev === "pronto" ? "" : "pronto" })} />
-              <Tile icone={<Wrench className="h-5 w-5" />} rotulo="Em desenvolvimento" valor={String(ind.emDesenvolvimento)} sub="inclui homologação" cor="#c2410c"
-                ativo={f.dev === "em_desenvolvimento"} onClick={() => mudar({ dev: f.dev === "em_desenvolvimento" ? "" : "em_desenvolvimento" })} />
-              <Tile icone={<Rocket className="h-5 w-5" />} rotulo="Implantadas" valor={String(ind.implantadas)} sub="em uso pelo setor" cor="#0e7490" />
-              <Tile icone={<GraduationCap className="h-5 w-5" />} rotulo="Treinadas" valor={String(ind.treinadas)} sub="usuários treinados" cor="#2563eb"
-                ativo={f.treinamento === "treinado"} onClick={() => mudar({ treinamento: f.treinamento === "treinado" ? "" : "treinado" })} />
-              <Tile icone={<ShieldCheck className="h-5 w-5" />} rotulo="Validadas" valor={String(ind.validadas)} sub="pelo usuário-chave" cor="#7c3aed"
-                ativo={f.validacao === "validado"} onClick={() => mudar({ validacao: f.validacao === "validado" ? "" : "validado" })} />
-              <Tile icone={<Gauge className="h-5 w-5" />} rotulo="% de efetividade" valor={pct(ind.efetividade)} sub={`${ind.preenchidas} de ${ind.telas} telas preenchidas`} />
-            </div>
-
-            {/* Filtros */}
-            <Card className="p-3">
-              <div className="flex flex-wrap items-end gap-2">
-                <Filtro rotulo="Área (módulo)">
-                  <Select value={f.modulo || TODOS} onValueChange={(v) => mudar({ modulo: v === TODOS ? "" : v })}>
-                    <SelectTrigger className="h-9 w-52"><SelectValue /></SelectTrigger>
-                    <SelectContent className="max-h-80">
-                      <SelectItem value={TODOS}>Todas</SelectItem>
-                      {modulos.filter((m) => f.mostrarInativas || m.modulo.ativo).map((m) => <SelectItem key={m.modulo.id} value={m.modulo.id}>{m.modulo.nome}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
-                </Filtro>
-                <Filtro rotulo="Desenvolvimento">
-                  <Select value={f.dev || TODOS} onValueChange={(v) => mudar({ dev: v === TODOS ? "" : (v as FiltrosChecklist["dev"]) })}>
-                    <SelectTrigger className="h-9 w-48"><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value={TODOS}>Todos</SelectItem>
-                      {OPCOES_DEV.map((o) => <SelectItem key={o.valor} value={o.valor}>{o.rotulo}</SelectItem>)}
-                      <SelectItem value="pendente">{ROTULO_PENDENTE}</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </Filtro>
-                <Filtro rotulo="Treinamento">
-                  <Select value={f.treinamento || TODOS} onValueChange={(v) => mudar({ treinamento: v === TODOS ? "" : (v as FiltrosChecklist["treinamento"]) })}>
-                    <SelectTrigger className="h-9 w-40"><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value={TODOS}>Todos</SelectItem>
-                      {OPCOES_TREINAMENTO.map((o) => <SelectItem key={o.valor} value={o.valor}>{o.rotulo}</SelectItem>)}
-                      <SelectItem value="sem">Sem preenchimento</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </Filtro>
-                <Filtro rotulo="Validação do usuário">
-                  <Select value={f.validacao || TODOS} onValueChange={(v) => mudar({ validacao: v === TODOS ? "" : (v as FiltrosChecklist["validacao"]) })}>
-                    <SelectTrigger className="h-9 w-40"><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value={TODOS}>Todos</SelectItem>
-                      {OPCOES_VALIDACAO.map((o) => <SelectItem key={o.valor} value={o.valor}>{o.rotulo}</SelectItem>)}
-                      <SelectItem value="sem">Sem preenchimento</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </Filtro>
-                <Filtro rotulo="Responsável">
-                  <Select value={f.responsavel || TODOS} onValueChange={(v) => mudar({ responsavel: v === TODOS ? "" : v })}>
-                    <SelectTrigger className="h-9 w-44"><SelectValue /></SelectTrigger>
-                    <SelectContent className="max-h-80">
-                      <SelectItem value={TODOS}>Todos</SelectItem>
-                      {responsaveis.map((r) => <SelectItem key={r.id} value={r.id}>{r.nome}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
-                </Filtro>
-                <Filtro rotulo="Buscar">
-                  <div className="relative">
-                    <Search className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                    <Input className="h-9 w-56 pl-8" placeholder="Módulo, tela ou rota…" value={f.busca} onChange={(e) => mudar({ busca: e.target.value })} />
-                  </div>
-                </Filtro>
-                <div className="flex items-center gap-4 pb-1.5">
-                  <label className="flex items-center gap-2 text-xs font-medium"><Switch checked={f.soPendentes} onCheckedChange={(v) => mudar({ soPendentes: v })} /> Só pendentes</label>
-                  <label className="flex items-center gap-2 text-xs font-medium"><Switch checked={f.mostrarInativas} onCheckedChange={(v) => mudar({ mostrarInativas: v })} /> Mostrar inativas</label>
+        <div className="space-y-4">
+          {/* ── Filtros ─────────────────────────────────────────────── */}
+          <Card className="p-4">
+            <div className="flex flex-wrap items-end gap-3">
+              <Filtro rotulo="Área">
+                <Select value={f.area || TODOS} onValueChange={(v) => mudar({ area: v === TODOS ? "" : v })}>
+                  <SelectTrigger className="h-10"><SelectValue /></SelectTrigger>
+                  <SelectContent className="max-h-80">
+                    <SelectItem value={TODOS}>Todas</SelectItem>
+                    {areas.map((a) => <SelectItem key={a} value={a}>{a}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </Filtro>
+              <Filtro rotulo="Status do módulo">
+                <Select value={f.dev || TODOS} onValueChange={(v) => mudar({ dev: v === TODOS ? "" : (v as FiltrosChecklist["dev"]) })}>
+                  <SelectTrigger className="h-10"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={TODOS}>Todos</SelectItem>
+                    {OPCOES_DEV.map((o) => <SelectItem key={o.valor} value={o.valor}>{o.rotulo}</SelectItem>)}
+                    <SelectItem value="pendente">{ROTULO_PENDENTE}</SelectItem>
+                  </SelectContent>
+                </Select>
+              </Filtro>
+              <Filtro rotulo="Treinamento">
+                <Select value={f.treinamento || TODOS} onValueChange={(v) => mudar({ treinamento: v === TODOS ? "" : (v as FiltrosChecklist["treinamento"]) })}>
+                  <SelectTrigger className="h-10"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={TODOS}>Todos</SelectItem>
+                    {OPCOES_TREINAMENTO.map((o) => <SelectItem key={o.valor} value={o.valor}>{o.rotulo}</SelectItem>)}
+                    <SelectItem value="sem">{ROTULO_PENDENTE}</SelectItem>
+                  </SelectContent>
+                </Select>
+              </Filtro>
+              <Filtro rotulo="Validação do usuário">
+                <Select value={f.validacao || TODOS} onValueChange={(v) => mudar({ validacao: v === TODOS ? "" : (v as FiltrosChecklist["validacao"]) })}>
+                  <SelectTrigger className="h-10"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={TODOS}>Todos</SelectItem>
+                    {OPCOES_VALIDACAO.map((o) => <SelectItem key={o.valor} value={o.valor}>{o.rotulo}</SelectItem>)}
+                    <SelectItem value="sem">{ROTULO_PENDENTE}</SelectItem>
+                  </SelectContent>
+                </Select>
+              </Filtro>
+              <Filtro rotulo="Responsável">
+                <Select value={f.responsavel || TODOS} onValueChange={(v) => mudar({ responsavel: v === TODOS ? "" : v })}>
+                  <SelectTrigger className="h-10"><SelectValue /></SelectTrigger>
+                  <SelectContent className="max-h-80">
+                    <SelectItem value={TODOS}>Todos</SelectItem>
+                    {responsaveis.map((r) => <SelectItem key={r.id} value={r.id}>{r.nome}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </Filtro>
+              <Filtro rotulo="Buscar módulo" largo>
+                <div className="relative">
+                  <Input className="h-10 pr-9" placeholder="Digite o nome do módulo..." value={buscaDigitada}
+                    onChange={(e) => { setBuscaDigitada(e.target.value); if (!e.target.value) mudar({ busca: "" }); }}
+                    onKeyDown={(e) => e.key === "Enter" && pesquisar()} />
+                  <Search className="absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                 </div>
-                {filtrosAtivos > 0 && (
-                  <Button variant="ghost" size="sm" className="h-9 gap-1 text-xs" onClick={() => setF(FILTROS_VAZIOS)}><XCircle className="h-3.5 w-3.5" /> Limpar filtros</Button>
-                )}
-              </div>
+              </Filtro>
+              <Button variant="outline" className="h-10 px-5 font-semibold" onClick={limpar}>Limpar filtros</Button>
+              <Button className="h-10 gap-2 px-6 font-semibold text-white hover:opacity-90" style={{ background: MARINHO }} onClick={pesquisar}>
+                <Search className="h-4 w-4" /> Pesquisar
+              </Button>
+            </div>
+          </Card>
+
+          {/* ── Indicadores ─────────────────────────────────────────── */}
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
+            <CardIndicador icone={<CheckCircle2 className="h-8 w-8" strokeWidth={2.2} />} cor="#16a34a" fundo="#dcfce7"
+              valor={String(ind.prontos)} rotulo="Módulos prontos" variacao={indAnterior && variacao(ind.prontos, indAnterior.prontos, true)} />
+            <CardIndicador icone={<Settings className="h-8 w-8" strokeWidth={2.2} />} cor="#f97316" fundo="#ffedd5"
+              valor={String(ind.emDesenvolvimento)} rotulo="Em desenvolvimento" variacao={indAnterior && variacao(ind.emDesenvolvimento, indAnterior.emDesenvolvimento, false)} />
+            <CardIndicador icone={<GraduationCap className="h-8 w-8" strokeWidth={2.2} />} cor="#2563eb" fundo="#dbeafe"
+              valor={String(ind.treinados)} rotulo="Treinados" variacao={indAnterior && variacao(ind.treinados, indAnterior.treinados, true)} />
+            <CardIndicador icone={<Users className="h-8 w-8" strokeWidth={2.2} />} cor="#7c3aed" fundo="#ede9fe"
+              valor={String(ind.validados)} rotulo="Validados pelos usuários" variacao={indAnterior && variacao(ind.validados, indAnterior.validados, true)} />
+            <CardIndicador icone={<BarChart3 className="h-8 w-8" strokeWidth={2.2} />} cor="#2563eb" fundo="#dbeafe"
+              valor={pct1(ind.efetividade ?? 0)} rotulo="% de efetividade" variacao={indAnterior && variacaoPP(ind.efetividade, indAnterior.efetividade)} />
+          </div>
+
+          {/* ── Lista de módulos ────────────────────────────────────── */}
+          <Card className="overflow-hidden">
+            <div className="flex flex-wrap items-center justify-between gap-2 px-4 pb-3 pt-4">
+              <p className="text-[15px] font-bold">
+                Lista de Módulos do ERP <span className="font-normal text-muted-foreground">({filtrados.length} {filtrados.length === 1 ? "registro" : "registros"})</span>
+              </p>
+              {ind.preenchidos < ind.modulos && (
+                <p className="text-xs text-muted-foreground">
+                  <span className="font-semibold text-amber-700 dark:text-amber-400">{ind.modulos - ind.preenchidos} de {ind.modulos} módulos</span> sem nenhum status preenchido
+                  {podeAlterar ? " — clique no módulo para preencher." : "."}
+                </p>
+              )}
+            </div>
+            <div className="overflow-x-auto px-4">
+              <table className="w-full min-w-[1120px] text-[13px]">
+                <thead>
+                  <tr className="border-y border-border bg-muted/40 text-left text-xs font-semibold text-foreground">
+                    <th className="w-10 px-3 py-2.5">#</th>
+                    <th className="px-3 py-2.5">Módulo</th>
+                    <th className="px-3 py-2.5">Área</th>
+                    <ThOrdenavel rotulo="Status do desenvolvimento" col="dev" ordem={ordem} onClick={ordenarPor} />
+                    <th className="px-3 py-2.5">Treinamento realizado</th>
+                    <ThOrdenavel rotulo="Validação do usuário" col="validacao" ordem={ordem} onClick={ordenarPor} />
+                    <th className="px-3 py-2.5">Responsável</th>
+                    <ThOrdenavel rotulo="Última atualização" col="atualizacao" ordem={ordem} onClick={ordenarPor} />
+                    <th className="px-3 py-2.5">Efetividade</th>
+                    <th className="w-20 px-3 py-2.5 text-center">Ações</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {visiveis.length === 0 && (
+                    <tr><td colSpan={10} className="px-3 py-12 text-center text-sm text-muted-foreground">Nenhum módulo neste filtro.</td></tr>
+                  )}
+                  {visiveis.map((m, i) => (
+                    <tr key={m.modulo.id} onClick={() => abrir(m)} className="cursor-pointer border-b border-border transition hover:bg-muted/40">
+                      <td className="px-3 py-2 tabular-nums text-muted-foreground">{(paginaAtual - 1) * POR_PAGINA + i + 1}</td>
+                      <td className="px-3 py-2">
+                        <p className="font-medium text-foreground">{m.modulo.nome}</p>
+                        <p className="text-[11px] text-muted-foreground">
+                          {m.ativas} {m.ativas === 1 ? "submódulo" : "submódulos"}
+                          {m.bugsAbertos > 0 && <span className="ml-1.5 font-semibold text-red-600">· {m.bugsAbertos} bug{m.bugsAbertos === 1 ? "" : "s"}</span>}
+                        </p>
+                      </td>
+                      <td className="px-3 py-2 text-muted-foreground">{m.area}</td>
+                      <td className="px-3 py-2"><StatusPill etapa="dev" valor={m.status.status_dev} calculado={m.calculado.dev} /></td>
+                      <td className="px-3 py-2"><StatusPill etapa="treinamento" valor={m.status.status_treinamento} calculado={m.calculado.treinamento} /></td>
+                      <td className="px-3 py-2"><StatusPill etapa="validacao" valor={m.status.status_validacao} calculado={m.calculado.validacao} /></td>
+                      <td className="px-3 py-2">{m.responsavelId ? nomeUsuario.get(m.responsavelId) ?? "—" : <span className="text-muted-foreground">—</span>}</td>
+                      <td className="whitespace-nowrap px-3 py-2 tabular-nums">{m.ultimaAtualizacao ? fmtDataHora(m.ultimaAtualizacao) : <span className="text-muted-foreground">—</span>}</td>
+                      <td className="px-3 py-2"><BarraEfetividade valor={m.efetividade} largura="w-28" /></td>
+                      <td className="px-3 py-2" onClick={(e) => e.stopPropagation()}>
+                        <div className="flex items-center justify-center gap-1">
+                          <button type="button" title="Ver detalhes do módulo" onClick={() => abrir(m)} className="rounded-md p-1.5 text-foreground/80 hover:bg-muted hover:text-foreground">
+                            <Eye className="h-4 w-4" />
+                          </button>
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <button type="button" title="Mais ações" className="rounded-md p-1.5 text-foreground/80 hover:bg-muted hover:text-foreground"><MoreVertical className="h-4 w-4" /></button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end" className="w-56">
+                              <DropdownMenuItem onClick={() => abrir(m)}><Eye className="mr-2 h-4 w-4" /> Ver detalhes e submódulos</DropdownMenuItem>
+                              <DropdownMenuItem onClick={() => window.open(`/app/sistemas/checklist-modulos/${m.modulo.id}`, "_blank")}><ExternalLink className="mr-2 h-4 w-4" /> Abrir em nova janela</DropdownMenuItem>
+                              {podeAlterar && <DropdownMenuItem onClick={() => editarModulo(m)}><Pencil className="mr-2 h-4 w-4" /> Editar status do módulo</DropdownMenuItem>}
+                              {podeIncluir && <DropdownMenuSeparator />}
+                              {podeIncluir && <DropdownMenuItem onClick={() => navigate(`/app/sistemas/checklist-modulos/${m.modulo.id}?aba=bugs&novo=1`)}><Bug className="mr-2 h-4 w-4" /> Registrar bug</DropdownMenuItem>}
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-3 text-[13px] text-muted-foreground">
+              <span>
+                {filtrados.length ? <>Mostrando {(paginaAtual - 1) * POR_PAGINA + 1} a {Math.min(paginaAtual * POR_PAGINA, filtrados.length)} de {filtrados.length} registros</> : "Nenhum registro"}
+              </span>
+              <Paginacao pagina={paginaAtual} total={totalPaginas} onIr={setPagina} />
+            </div>
+          </Card>
+
+          {/* ── Rodapé: status geral · movimentações · análises ────── */}
+          <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.05fr)_minmax(0,1.3fr)]">
+            <Card className="p-4">
+              <p className="mb-3 text-[15px] font-bold">Status Geral dos Módulos</p>
+              <DonutStatusModulos porDev={ind.porDev} total={ind.modulos} />
             </Card>
 
-            {/* Lista de módulos */}
-            <div className="space-y-1">
-              <div className="flex items-center justify-between px-1 pb-1">
-                <p className="text-sm font-bold">
-                  Módulos do ERP <span className="font-normal text-muted-foreground">({filtrados.length} {filtrados.length === 1 ? "módulo" : "módulos"} · {filtrados.reduce((s, x) => s + x.telas.length, 0)} telas)</span>
-                </p>
-                <div className="flex gap-1">
-                  <Button variant="ghost" size="sm" className="h-8 text-xs" onClick={() => setAbertos(new Set(filtrados.map((x) => x.modulo.modulo.id)))}>Expandir tudo</Button>
-                  <Button variant="ghost" size="sm" className="h-8 text-xs" onClick={() => setAbertos(new Set())}>Recolher tudo</Button>
-                </div>
+            <Card className="p-4">
+              <div className="mb-3 flex items-center justify-between">
+                <p className="text-[15px] font-bold">Últimas movimentações</p>
+                <button type="button" className="text-xs font-semibold text-blue-600 hover:underline" onClick={() => irAba("historico")}>Ver todas</button>
               </div>
+              <UltimasMovimentacoes dados={dados} />
+            </Card>
 
-              {filtrados.length === 0 && <Card className="p-10 text-center text-sm text-muted-foreground">Nenhum módulo neste filtro.</Card>}
-
-              <div className="space-y-2.5">
-                {filtrados.map(({ modulo: m, telas }) => {
-                  const aberto = abertos.has(m.modulo.id) || (temFiltroTela && filtrados.length <= 3);
-                  return (
-                    <Card key={m.modulo.id} className={cn("overflow-hidden transition", aberto && "ring-1 ring-primary/20")}>
-                      <button type="button" onClick={() => alternar(m.modulo.id)}
-                        className="grid w-full grid-cols-[auto_minmax(180px,1.3fr)_minmax(160px,1fr)_auto] items-center gap-4 px-4 py-3 text-left hover:bg-muted/40 lg:grid-cols-[auto_minmax(200px,1.2fr)_minmax(180px,1fr)_auto_auto_auto]">
-                        {aberto ? <ChevronDown className="h-4 w-4 text-primary" /> : <ChevronRight className="h-4 w-4 text-muted-foreground" />}
-                        <div className="min-w-0">
-                          <p className="truncate font-bold text-foreground">
-                            {m.modulo.nome}
-                            {!m.modulo.ativo && <span className="ml-1.5 rounded bg-muted px-1.5 py-0.5 text-[10px] font-bold uppercase text-muted-foreground">inativo</span>}
-                          </p>
-                          <p className="text-xs text-muted-foreground">
-                            {m.ativas} {m.ativas === 1 ? "tela" : "telas"}
-                            {m.preenchidas < m.ativas ? <> · <span className="font-semibold text-amber-700 dark:text-amber-400">{m.ativas - m.preenchidas} pendente{m.ativas - m.preenchidas === 1 ? "" : "s"}</span></> : m.ativas ? " · tudo preenchido" : ""}
-                            {m.item?.responsavel_id ? <> · {nomeUsuario.get(m.item.responsavel_id)}</> : null}
-                          </p>
-                        </div>
-                        {/* Composição do desenvolvimento das telas */}
-                        <div className="min-w-0">
-                          <div className="flex h-2 overflow-hidden rounded-full bg-muted" title={ORDEM_DEV.filter((k) => m.porDev[k]).map((k) => `${ROTULO_DEV_RESUMO[k]}: ${m.porDev[k]}`).join(" · ")}>
-                            {ORDEM_DEV.map((k) => m.porDev[k] > 0 && (
-                              <div key={k} className={cn("h-full border-r-2 border-card last:border-r-0", PONTO_TOM[tomDev(k)])} style={{ width: `${(m.porDev[k] / Math.max(1, m.ativas)) * 100}%` }} />
-                            ))}
-                          </div>
-                          <p className="mt-1 truncate text-[11px] text-muted-foreground">
-                            <b className="text-foreground">{m.prontas}</b> prontas · {m.implantadas} implantadas · {m.treinadas} treinadas · {m.validadas} validadas
-                          </p>
-                        </div>
-                        <div className="hidden text-right text-xs lg:block" title="Pessoas que usaram em 30 dias / pessoas com acesso">
-                          <p className="font-bold tabular-nums text-foreground">{m.ativos30d}/{m.comAcesso}</p>
-                          <p className="text-muted-foreground">uso 30d</p>
-                        </div>
-                        <div className="hidden items-center gap-1.5 lg:flex">
-                          {m.bugsAbertos > 0 && <span className="inline-flex items-center gap-1 rounded-full bg-red-100 px-2 py-0.5 text-[11px] font-bold text-red-700 dark:bg-red-950/50 dark:text-red-300" title="Bugs em aberto"><Bug className="h-3 w-3" />{m.bugsAbertos}</span>}
-                          {m.chamadosAbertos > 0 && <span className="inline-flex items-center gap-1 rounded-full bg-blue-100 px-2 py-0.5 text-[11px] font-bold text-blue-700 dark:bg-blue-950/50 dark:text-blue-300" title="Chamados de sistemas em aberto"><Layers className="h-3 w-3" />{m.chamadosAbertos}</span>}
-                        </div>
-                        <BarraEfetividade valor={m.efetividade} vazio={!m.preenchidas} />
-                      </button>
-
-                      {aberto && (
-                        <div className="border-t border-border">
-                          <div className="flex flex-wrap items-center gap-2 bg-muted/30 px-4 py-2">
-                            <Button variant="outline" size="sm" className="h-8 gap-1.5" onClick={() => setDetalhe(m.modulo.id)}><Info className="h-3.5 w-3.5" /> Detalhes do módulo</Button>
-                            {podeAlterar && <Button variant="outline" size="sm" className="h-8 gap-1.5" onClick={() => editarModulo(m)}><Pencil className="h-3.5 w-3.5" /> Responsável e observações</Button>}
-                            {podeIncluir && <Button variant="outline" size="sm" className="h-8 gap-1.5" onClick={() => bugTela(m, null)}><Bug className="h-3.5 w-3.5" /> Registrar bug</Button>}
-                            {m.item?.observacoes && <p className="ml-auto max-w-xl truncate text-xs text-muted-foreground" title={m.item.observacoes}>📝 {m.item.observacoes}</p>}
-                          </div>
-                          <TabelaTelas modulo={m} telas={telas} nomeUsuario={nomeUsuario} podeAlterar={podeAlterar} podeIncluir={podeIncluir}
-                            onEditar={(t) => editarTela(m, t)} onBug={(t) => bugTela(m, t)} />
-                        </div>
-                      )}
-                    </Card>
-                  );
-                })}
+            <Card className="p-4">
+              <p className="mb-3 text-[15px] font-bold">Análises adicionais sugeridas</p>
+              <div className="grid gap-2.5 sm:grid-cols-2">
+                <CardAnalise icone={<GraduationCap className="h-6 w-6 text-blue-600" />} titulo="Módulos sem treinamento"
+                  sub={`${modulosSemTreinamento(modulos).length} módulos pendentes`} onClick={() => setAnalise("sem_treinamento")} />
+                <CardAnalise icone={<AlertCircle className="h-6 w-6 text-red-600" />} titulo="Módulos prontos sem validação"
+                  sub={`${prontosSemValidacao(modulos).length} módulos`} onClick={() => setAnalise("prontos_sem_validacao")} />
+                <CardAnalise icone={<BarChart3 className="h-6 w-6 text-blue-600" />} titulo="Ranking de áreas com mais pendências"
+                  sub="Ver por área" onClick={() => setAnalise("ranking_areas")} />
+                <CardAnalise icone={<LineChart className="h-6 w-6 text-blue-600" />} titulo="Evolução das entregas"
+                  sub="Últimos 6 meses" onClick={() => setAnalise("evolucao")} />
+                <CardAnalise icone={<UserRound className="h-6 w-6 text-blue-600" />} titulo="Aderência por usuário-chave"
+                  sub="Participação nas validações" onClick={() => setAnalise("aderencia")} />
+                <CardAnalise icone={<Clock className="h-6 w-6 text-blue-600" />} titulo="Histórico de validações"
+                  sub="Ver registros de auditoria" onClick={() => setAnalise("historico_validacoes")} />
               </div>
-            </div>
-
-            {/* Resumo embaixo: composição geral + últimas movimentações */}
-            <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.3fr)]">
-              <Card className="p-4">
-                <p className="mb-3 text-sm font-bold">Status geral das telas · desenvolvimento</p>
-                <div className="flex h-3 overflow-hidden rounded-full bg-muted">
-                  {ORDEM_DEV.map((k) => porDevGeral[k] > 0 && (
-                    <div key={k} className={cn("h-full border-r-2 border-card last:border-r-0", PONTO_TOM[tomDev(k)])} style={{ width: `${(porDevGeral[k] / Math.max(1, ind.telas)) * 100}%` }} />
-                  ))}
-                </div>
-                <ul className="mt-4 space-y-2">
-                  {ORDEM_DEV.map((k) => (
-                    <li key={k} className="flex items-center gap-2 text-sm">
-                      <span className={cn("h-2.5 w-2.5 rounded-full", PONTO_TOM[tomDev(k)])} />
-                      <span className="flex-1">{ROTULO_DEV_RESUMO[k]}</span>
-                      <span className="font-bold tabular-nums">{porDevGeral[k]}</span>
-                      <span className="w-12 text-right text-xs tabular-nums text-muted-foreground">{pct(ind.telas ? porDevGeral[k] / ind.telas : 0)}</span>
-                    </li>
-                  ))}
-                </ul>
-              </Card>
-              <Card className="p-4">
-                <div className="mb-3 flex items-center justify-between">
-                  <p className="text-sm font-bold">Últimas movimentações</p>
-                  <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => setAba("historico")}>Ver todas</Button>
-                </div>
-                <div className="max-h-[300px] overflow-auto pr-1">
-                  <HistoricoLista dados={dados} itens={dados.historico.slice(0, 8)} />
-                </div>
-              </Card>
-            </div>
-          </TabsContent>
-
-          {/* ── USO ─────────────────────────────────────────────────── */}
-          <TabsContent value="uso">
-            <UsoPainel dados={dados} modulos={modulos} podeAlterar={podeAlterar} />
-          </TabsContent>
-
-          {/* ── BUGS ────────────────────────────────────────────────── */}
-          <TabsContent value="bugs">
-            <BugsPainel dados={dados} podeIncluir={podeIncluir} podeAlterar={podeAlterar} podeExcluir={podeExcluir}
-              novoBug={novoBug} onNovoBugUsado={() => setNovoBug(null)} />
-          </TabsContent>
-
-          {/* ── HISTÓRICO ───────────────────────────────────────────── */}
-          <TabsContent value="historico">
-            <HistoricoLista dados={dados} />
-          </TabsContent>
-        </Tabs>
+            </Card>
+          </div>
+        </div>
       )}
 
       {editando && dados && <ItemDialog alvo={editando} usuarios={dados.usuarios} onFechar={() => setEditando(null)} />}
-      {moduloDetalhe && dados && (
-        <ModuloSheet modulo={moduloDetalhe} dados={dados} nomeUsuario={nomeUsuario}
-          podeAlterar={podeAlterar} podeIncluir={podeIncluir} podeExcluir={podeExcluir}
-          onFechar={() => setDetalhe(null)} onEditarModulo={editarModulo} onEditarTela={editarTela} onBugTela={bugTela} />
+      {analise && dados && (
+        <AnaliseDialog tipo={analise} modulos={modulos} dados={dados} historico={histCompleto.data ?? null} nomeUsuario={nomeUsuario}
+          onAbrirModulo={(id) => navigate(`/app/sistemas/checklist-modulos/${id}`)} onFechar={() => setAnalise(null)} />
       )}
     </div>
   );
 }
 
-function Filtro({ rotulo, children }: { rotulo: string; children: React.ReactNode }) {
+function Filtro({ rotulo, largo, children }: { rotulo: string; largo?: boolean; children: React.ReactNode }) {
   return (
-    <div className="space-y-1">
-      <Label className="text-[11px] font-semibold text-muted-foreground">{rotulo}</Label>
+    <div className={cn("min-w-[130px] flex-1 space-y-1.5", largo && "min-w-[190px] flex-[1.3]")}>
+      <Label className="text-[13px] font-medium text-foreground">{rotulo}</Label>
       {children}
     </div>
+  );
+}
+
+function ThOrdenavel({ rotulo, col, ordem, onClick }: { rotulo: string; col: ColunaOrdem; ordem: { col: ColunaOrdem; asc: boolean }; onClick: (c: ColunaOrdem) => void }) {
+  const ativo = ordem.col === col;
+  return (
+    <th className="px-3 py-2.5">
+      <button type="button" onClick={() => onClick(col)} className={cn("inline-flex items-center gap-1 whitespace-nowrap hover:text-primary", ativo && "text-primary")}>
+        {rotulo}<ArrowUpDown className="h-3 w-3 opacity-60" />
+      </button>
+    </th>
+  );
+}
+
+function Paginacao({ pagina, total, onIr }: { pagina: number; total: number; onIr: (p: number) => void }) {
+  // 1 2 3 … N, com a página atual sempre visível.
+  const nums: (number | "…")[] = [];
+  for (let p = 1; p <= total; p++) {
+    if (p === 1 || p === total || Math.abs(p - pagina) <= 1 || (pagina <= 3 && p <= 3)) nums.push(p);
+    else if (nums[nums.length - 1] !== "…") nums.push("…");
+  }
+  const base = "flex h-8 min-w-8 items-center justify-center rounded-md border border-border px-2 text-[13px] font-medium transition";
+  return (
+    <div className="flex items-center gap-1.5">
+      <button type="button" className={cn(base, "disabled:opacity-40")} disabled={pagina <= 1} onClick={() => onIr(pagina - 1)} aria-label="Anterior"><ChevronLeft className="h-4 w-4" /></button>
+      {nums.map((n, i) => n === "…"
+        ? <span key={`r${i}`} className="px-1 text-foreground">…</span>
+        : <button key={n} type="button" onClick={() => onIr(n)} className={cn(base, n === pagina ? "border-transparent text-white" : "border-transparent text-foreground hover:bg-muted")} style={n === pagina ? { background: MARINHO } : undefined}>{n}</button>)}
+      <button type="button" className={cn(base, "disabled:opacity-40")} disabled={pagina >= total} onClick={() => onIr(pagina + 1)} aria-label="Próxima"><ChevronRight className="h-4 w-4" /></button>
+    </div>
+  );
+}
+
+const ICONE_MOV: Record<TipoMovimentacao, { icone: typeof CheckCircle2; cor: string; fundo: string }> = {
+  validado: { icone: CheckCircle2, cor: "#ffffff", fundo: "#16a34a" },
+  treinamento: { icone: GraduationCap, cor: "#2563eb", fundo: "#dbeafe" },
+  atualizado: { icone: Settings, cor: "#f97316", fundo: "#ffedd5" },
+  atribuido: { icone: Users, cor: "#7c3aed", fundo: "#ede9fe" },
+  outro: { icone: History, cor: "#64748b", fundo: "#f1f5f9" },
+};
+
+function UltimasMovimentacoes({ dados }: { dados: NonNullable<ReturnType<typeof useChecklistDados>["data"]> }) {
+  const nomeModulo = useMemo(() => new Map(dados.modulos.map((m) => [m.id, m.nome])), [dados.modulos]);
+  const nomeTela = useMemo(() => new Map(dados.telas.map((t) => [t.id, t.nome])), [dados.telas]);
+  const itens = dados.historico.slice(0, 4);
+  if (!itens.length) {
+    return (
+      <div className="flex flex-col items-center gap-2 py-8 text-center">
+        <History className="h-8 w-8 text-muted-foreground/40" />
+        <p className="text-sm text-muted-foreground">Nenhuma movimentação ainda — cada status preenchido aparece aqui.</p>
+      </div>
+    );
+  }
+  return (
+    <ul className="space-y-3">
+      {itens.map((h) => {
+        const mod = nomeModulo.get(h.modulo_id ?? "") ?? "—";
+        const tela = h.menu_id ? nomeTela.get(h.menu_id) ?? "tela removida" : null;
+        const fr = fraseMovimentacao(h, mod, tela);
+        const ic = ICONE_MOV[fr.tipo];
+        const partes = fr.texto.split(fr.destaque);
+        return (
+          <li key={h.id} className="flex items-start gap-3">
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full" style={{ background: ic.fundo, color: ic.cor }}>
+              <ic.icone className="h-5 w-5" strokeWidth={2.2} />
+            </span>
+            <div className="min-w-0">
+              <p className="text-[13px] leading-snug text-foreground">
+                {partes.length > 1 ? <>{partes[0]}<b className="font-semibold">{fr.destaque}</b>{partes.slice(1).join(fr.destaque)}</> : fr.texto}
+              </p>
+              <p className="text-[11.5px] text-muted-foreground">{fmtDataHoraAs(h.created_at)}</p>
+            </div>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+function CardAnalise({ icone, titulo, sub, onClick }: { icone: React.ReactNode; titulo: string; sub: string; onClick: () => void }) {
+  return (
+    <button type="button" onClick={onClick}
+      className="flex items-center gap-3 rounded-lg border border-border bg-card px-3 py-2.5 text-left transition hover:border-primary/40 hover:bg-muted/40">
+      <span className="shrink-0">{icone}</span>
+      <span className="min-w-0 flex-1">
+        <span className="block text-[12.5px] font-semibold leading-tight text-foreground">{titulo}</span>
+        <span className="block text-[11.5px] text-muted-foreground">{sub}</span>
+      </span>
+      <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />
+    </button>
   );
 }
