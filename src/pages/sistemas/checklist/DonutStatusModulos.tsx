@@ -5,7 +5,7 @@ import { HEX_TOM } from "./ui";
 // "Pendente de preenchimento" só aparece quando existe — no começo é tudo ela.
 
 const FATIAS: { chave: StatusDev | "pendente"; rotulo: string; cor: string }[] = [
-  { chave: "pronto", rotulo: "Prontos", cor: HEX_TOM.ok },
+  { chave: "pronto", rotulo: "Liberados", cor: HEX_TOM.ok },
   { chave: "em_desenvolvimento", rotulo: "Em desenvolvimento", cor: HEX_TOM.andamento },
   { chave: "em_homologacao", rotulo: "Em homologação", cor: "#facc15" },
   { chave: "nao_iniciado", rotulo: "Não iniciados", cor: "#cbd5e1" },

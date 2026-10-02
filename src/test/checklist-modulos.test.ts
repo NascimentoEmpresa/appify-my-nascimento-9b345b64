@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   FILTROS_VAZIOS, aderenciaUsuarioChave, checklistEm, derivarDev, derivarTreinamento, derivarValidacao, efetividade,
   evolucaoEntregas, filtrarModulos, fraseMovimentacao, indicadores, montarModulos, ordenarModulos, prontosSemValidacao,
-  rankingAreas, rotuloValor, variacao, variacaoPP, modulosSemTreinamento, statusDevDaTela,
+  rankingAreas, rotuloValor, variacao, variacaoPP, modulosSemTreinamento, statusDevDaTela, exigeResponsavelTreinamento,
   type StatusDevTelas,
   type ChecklistItem, type DadosChecklist, type Historico, type TelaCat,
 } from "@/lib/sistemas/checklistModulos";
@@ -186,5 +186,15 @@ describe("status de desenvolvimento no canto da tela", () => {
     expect(statusDevDaTela(base, "zz")).toBeNull();
     expect(statusDevDaTela(null, "a")).toBeNull();
     expect(statusDevDaTela(base, null)).toBeNull();
+  });
+});
+
+describe("responsáveis pelo treinamento", () => {
+  it("obrigatório com status de treinamento, menos 'não se aplica'", () => {
+    expect(exigeResponsavelTreinamento("treinado")).toBe(true);
+    expect(exigeResponsavelTreinamento("agendado")).toBe(true);
+    expect(exigeResponsavelTreinamento("pendente")).toBe(true);
+    expect(exigeResponsavelTreinamento("nao_se_aplica")).toBe(false);
+    expect(exigeResponsavelTreinamento(null)).toBe(false);
   });
 });
