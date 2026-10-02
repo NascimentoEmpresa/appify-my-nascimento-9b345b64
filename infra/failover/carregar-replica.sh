@@ -249,6 +249,49 @@ else
   log "Reaplicando a trava de somente leitura (o restore acabou de apaga-la)..."
   sql_ignora "revoke insert, update, delete, truncate on all tables in schema public from authenticated, anon;" >/dev/null
   sql_ignora "revoke usage on all sequences in schema public from authenticated, anon;" >/dev/null
+  # --- e as RPC que escrevem -----------------------------------------------
+  # O REVOKE acima nao alcanca funcao SECURITY DEFINER: ela roda com os
+  # privilegios do DONO, nao de quem chamou. Sem este bloco, uma tela que grave
+  # por RPC continuaria gravando na replica - e esse dado morreria na recarga
+  # seguinte, que e exatamente o que a contingencia promete nao deixar
+  # acontecer.
+  #
+  # O criterio e o corpo da funcao: se tem INSERT/UPDATE/DELETE/TRUNCATE, ela
+  # escreve. Falso positivo aqui e seguro (revoga uma funcao de leitura que
+  # tinha a palavra solta num comentario, e em modo consulta isso nao faz
+  # falta); falso negativo seria o perigo, e so aconteceria com escrita montada
+  # por EXECUTE dinamico.
+  #
+  # AS FUNCOES DE RLS FICAM DE FORA, E ISSO NAO E OPCIONAL
+  # can_access aparece 2.063 vezes dentro de policies, has_screen_access 830,
+  # tem_acesso_menu 750. Elas sao chamadas DENTRO da policy, com os privilegios
+  # de quem esta consultando. Revogar EXECUTE delas nao deixaria o banco mais
+  # seguro: derrubaria TODA a leitura, porque cada policy passaria a dar erro
+  # de permissao. A replica viraria uma tela de erro.
+  log "Revogando as RPC que escrevem (SECURITY DEFINER passa por cima do REVOKE)..."
+  sql_ignora "do \$BLOCO\$
+    declare
+      f record;
+      n int := 0;
+    begin
+      for f in
+        select p.oid::regprocedure as assinatura
+          from pg_proc p
+          join pg_namespace ns on ns.oid = p.pronamespace
+         where ns.nspname = 'public'
+           and p.prosecdef
+           and p.prosrc ~* '\m(insert|update|delete|truncate)\M'
+           and p.proname not in (
+             'can_access','has_screen_access','tem_acesso_menu',
+             'get_user_empresa','has_role','is_admin'
+           )
+      loop
+        execute format('revoke execute on function %s from authenticated, anon', f.assinatura);
+        n := n + 1;
+      end loop;
+      raise notice 'rpc de escrita revogadas: %', n;
+    end
+  \$BLOCO\$;" >/dev/null
   sql_ignora "notify pgrst, 'reload schema';" >/dev/null
 fi
 
