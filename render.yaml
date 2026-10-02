@@ -1,283 +1,108 @@
 # ============================================================================
-#  Replica de failover do ERP na Render
+#  Replica de failover do ERP na Render  —  UM serviço só
 # ============================================================================
 #
-#  O QUE ESTE ARQUIVO E
-#  A Render nao roda docker-compose: la cada container e um servico proprio.
-#  Este arquivo (um "Blueprint") descreve os seis de uma vez, para nao ser
-#  preciso preencher seis formularios a mao e correr o risco de esquecer uma
-#  variavel - foi exatamente uma variavel esquecida (GOTRUE_JWT_AUD) que fez
-#  todos os 154 usuarios receberem "credenciais invalidas" no ensaio local.
+#  POR QUE UM E NAO SETE
+#  A primeira versao deste arquivo descrevia sete servicos, traduzindo o
+#  docker-compose ao pe da letra. Sete containers e bom em PRODUCAO: cada peca
+#  reinicia, escala e falha sozinha. Mas a replica NAO ATENDE NINGUEM ate a
+#  Supabase cair - isolamento que ninguem usa, cobrado por mes, e desperdicio.
+#
+#      sete servicos separados ....... ~US$ 64/mes
+#      uma imagem com tudo dentro .... ~US$ 27,50/mes
+#
+#  E ha um ganho que vale mais que o dinheiro: com uma imagem so, o que se
+#  testa na maquina do dev e o que roda na Render passam a ser o MESMO
+#  artefato, e nao dois parecidos.
+#
+#  O QUE SE PERDE: um processo que morre e reiniciado pelo supervisor, mas um
+#  problema grave derruba tudo junto. Para um standby frio, troca aceitavel. Se
+#  um dia a replica virar producao de verdade, vale voltar a separar.
+#
+#  O QUE RODA DENTRO (ver infra/failover/render/Dockerfile.monolito)
+#      postgres 17   o banco, com as 1.445 policies de RLS
+#      postgrest     a API que o ERP chama (e quem aplica a RLS)
+#      gotrue        o login, com as senhas restauradas do backup
+#      storage       os anexos
+#      edge-runtime  as 59 Edge Functions
+#      nginx         o gateway, unico processo exposto
+#      recarga       mantem a replica atualizada (desligada por padrao)
 #
 #  COMO USAR
-#  No painel da Render: New > Blueprint > escolher este repositorio.
-#  Ela le este arquivo, mostra os seis servicos e pede os segredos marcados
-#  abaixo com `sync: false`. Nada e cobrado ate voce confirmar.
+#      No painel da Render: New > Blueprint > este repositorio, branch main.
+#      Ela le este arquivo e pede os segredos marcados com `sync: false`.
+#      Rode antes: node infra/failover/gerar-chaves.mjs
+#      As chaves precisam ser COERENTES entre si (anon e service_role sao
+#      assinadas com o JWT_SECRET); gerar na mao, separado, nao funciona.
 #
-#  DE ONDE SAEM OS SEGREDOS
-#  Rode `node infra/failover/gerar-chaves.mjs` e use os valores do .env gerado.
-#  As chaves precisam ser COERENTES entre si (anon e service_role sao assinadas
-#  com o JWT_SECRET); gerar na mao, separado, nao funciona.
+#  AUTO SYNC: recomendo DESLIGAR no painel. Ligado, todo push na main faz a
+#  Render reimplantar - inclusive durante um incidente, que e justamente quando
+#  ninguem quer surpresa.
 #
-#  CUSTO ESTIMADO: ~US$ 57/mes (5 servicos Starter + 1 Standard + 2 discos).
-#  A conta esta aberta no README desta pasta, junto com a alternativa.
-#
-#  REGIAO: virginia (US-East). A Render nao tem datacenter na America do Sul;
-#  virginia e a mais proxima do Brasil. Os seis servicos PRECISAM ficar na
-#  mesma regiao: so assim eles se enxergam na rede privada da Render. Um
-#  servico em outra regiao simplesmente nao resolve o endereco dos outros.
-#
-#  AUTO SYNC: recomendo deixar DESLIGADO no painel. Ligado, todo push na
-#  branch faz a Render reimplantar - inclusive durante um incidente, que e
-#  justamente quando ninguem quer surpresa.
+#  REGIAO: virginia (US-East). A Render nao tem datacenter na America do Sul, e
+#  virginia e a mais proxima do Brasil.
 # ============================================================================
 services:
-
-  # --- banco ----------------------------------------------------------------
-  # Privado: nao tem endereco publico, so os outros servicos o alcancam.
-  # Standard (2 GB) e o minimo com folga: a instancia Micro da Supabase (1 GB)
-  # ja CAIU restaurando este mesmo banco, em 29/09/2026.
-  - name: erp-db
-    type: pserv
+  - name: erp-failover
+    type: web
     runtime: docker
+    # Standard (1 CPU / 2 GB) e o minimo com folga. Nao e escolha de conforto:
+    # a instancia Micro da Supabase, com 1 GB, JA CAIU restaurando este mesmo
+    # banco em 29/09/2026. E na Render nao existe nada entre 512 MB (US$ 7) e
+    # 2 GB (US$ 25) - o salto e esse.
     plan: standard
     region: virginia
-    dockerfilePath: ./infra/failover/render/Dockerfile.db
+    dockerfilePath: ./infra/failover/render/Dockerfile.monolito
     dockerContext: .
+    # Desligado de proposito: um push na main durante um incidente
+    # reconstruiria a replica bem na hora em que ela precisa ficar parada.
     autoDeploy: false
+    # O /saude responde sem tocar no banco, de proposito: um banco ocupado
+    # restaurando nao pode fazer a Render achar que o servico morreu.
+    healthCheckPath: /saude
     disk:
       name: dados
+      # O Postgres e os anexos vivem aqui. 10 GB: o banco restaurado ocupa
+      # ~2,6 GB e os anexos do Storage somam ~4,4 GB quando forem copiados.
       mountPath: /var/lib/postgresql/data
       sizeGB: 10
     envVars:
+      # --- os quatro segredos, do .env gerado por gerar-chaves.mjs ----------
       - key: POSTGRES_PASSWORD
-        sync: false            # do .env gerado por gerar-chaves.mjs
-      - key: POSTGRES_DB
-        value: postgres
-
-  # --- API (PostgREST) ------------------------------------------------------
-  # E quem aplica as 1.445 policies de RLS. Conecta como `authenticator` e
-  # troca de papel conforme o token que recebe.
-  - name: erp-rest
-    type: pserv
-    runtime: image
-    plan: starter
-    region: virginia
-    image:
-      url: docker.io/postgrest/postgrest:v12.2.3
-    envVars:
-      - key: PGRST_DB_URI
-        sync: false            # postgres://authenticator:<SENHA>@<host do erp-db>:5432/postgres
-      - key: PGRST_DB_SCHEMAS
-        value: public,storage
-      - key: PGRST_DB_ANON_ROLE
-        value: anon
-      - key: PGRST_JWT_SECRET
         sync: false
-      - key: PGRST_DB_USE_LEGACY_GUCS
-        value: "false"
-      - key: PGRST_SERVER_PORT
-        value: "3000"
-
-  # --- login (GoTrue) -------------------------------------------------------
-  - name: erp-auth
-    type: pserv
-    runtime: image
-    plan: starter
-    region: virginia
-    image:
-      url: docker.io/supabase/gotrue:v2.158.1
-    envVars:
-      - key: GOTRUE_API_HOST
-        value: 0.0.0.0
-      - key: GOTRUE_API_PORT
-        value: "9999"
-      - key: GOTRUE_DB_DRIVER
-        value: postgres
-      - key: GOTRUE_DB_DATABASE_URL
-        sync: false            # postgres://supabase_auth_admin:<SENHA>@<host do erp-db>:5432/postgres
-      - key: GOTRUE_JWT_SECRET
-        sync: false
-      - key: GOTRUE_JWT_EXP
-        value: "3600"
-      - key: GOTRUE_JWT_DEFAULT_GROUP_NAME
-        value: authenticated
-      # SEM ESTA LINHA NENHUM DOS 154 USUARIOS ENTRA. O GoTrue procura o
-      # usuario por e-mail E audiencia; os restaurados tem aud='authenticated'
-      # e, sem isto, ele procura audiencia vazia e responde
-      # "Invalid login credentials" para todo mundo. Parece senha errada.
-      - key: GOTRUE_JWT_AUD
-        value: authenticated
-      - key: GOTRUE_DISABLE_SIGNUP
-        value: "true"
-      - key: GOTRUE_MAILER_AUTOCONFIRM
-        value: "true"
-      - key: GOTRUE_EXTERNAL_EMAIL_ENABLED
-        value: "true"
-      - key: API_EXTERNAL_URL
-        sync: false            # a URL publica do erp-kong
-      - key: GOTRUE_SITE_URL
-        sync: false            # onde o ERP e servido (a Vercel, por exemplo)
-      - key: GOTRUE_URI_ALLOW_LIST
-        sync: false
-
-  # --- arquivos -------------------------------------------------------------
-  - name: erp-storage
-    type: pserv
-    runtime: image
-    plan: starter
-    region: virginia
-    image:
-      url: docker.io/supabase/storage-api:v1.11.13
-    disk:
-      name: arquivos
-      mountPath: /var/lib/storage
-      sizeGB: 5
-    envVars:
-      - key: ANON_KEY
-        sync: false
-      - key: SERVICE_KEY
-        sync: false
-      - key: PGRST_JWT_SECRET
-        sync: false
-      - key: DATABASE_URL
-        sync: false            # postgres://supabase_storage_admin:<SENHA>@<host do erp-db>:5432/postgres
-      - key: POSTGREST_URL
-        fromService:
-          name: erp-rest
-          type: pserv
-          property: hostport
-      - key: FILE_SIZE_LIMIT
-        value: "52428800"
-      - key: STORAGE_BACKEND
-        value: file
-      - key: FILE_STORAGE_BACKEND_PATH
-        value: /var/lib/storage
-      - key: TENANT_ID
-        value: stub
-      - key: REGION
-        value: stub
-      - key: GLOBAL_S3_BUCKET
-        value: stub
-
-  # --- Edge Functions -------------------------------------------------------
-  # Imagem propria: as 59 funcoes e o config.toml entram nela (a Render nao
-  # tem bind mount).
-  - name: erp-functions
-    type: pserv
-    runtime: docker
-    plan: starter
-    region: virginia
-    dockerfilePath: ./infra/failover/render/Dockerfile.functions
-    dockerContext: .
-    autoDeploy: false
-    envVars:
       - key: JWT_SECRET
         sync: false
-      - key: SUPABASE_URL
-        sync: false            # a URL publica do erp-kong
-      - key: SUPABASE_ANON_KEY
+      - key: ANON_KEY
         sync: false
-      - key: SUPABASE_SERVICE_ROLE_KEY
+      - key: SERVICE_ROLE_KEY
         sync: false
-      - key: SUPABASE_PUBLISHABLE_KEY
-        sync: false
-      - key: SUPABASE_DB_URL
-        sync: false
-      # A verificacao de JWT e feita POR FUNCAO pelo roteador, lendo o
-      # config.toml. Um interruptor global aqui quebraria as 14 publicas.
-      - key: VERIFY_JWT
-        value: "false"
 
-  # --- recarga automatica ---------------------------------------------------
-  # Roda, carrega o banco e morre. E o que impede a replica de envelhecer ate
-  # virar inutil: sem isto ela tem a idade da ultima carga manual.
-  #
-  # 06:00 UTC = 03:00 em Brasilia. O backup do workflow sai as 09:00 e 21:00
-  # UTC, entao as 06:00 pegamos o das 21:00 do dia anterior, ja pronto - e o
-  # horario de menor uso do ERP, caso a carga pese no banco.
-  #
-  # ATENCAO: este job precisa da CHAVE PRIVADA de GPG, a mesma que abre todos
-  # os backups da empresa. Quem tem acesso a este servico tem acesso aos
-  # backups. O caminho para reduzir isso (uma segunda chave, so da replica)
-  # esta descrito em render/recarga-render.sh.
-  - name: erp-recarga
-    type: cron
-    runtime: docker
-    plan: starter
-    region: virginia
-    schedule: "0 6 * * *"
-    dockerfilePath: ./infra/failover/render/Dockerfile.recarga
-    dockerContext: .
-    autoDeploy: false
-    envVars:
+      # --- enderecos --------------------------------------------------------
+      # URL_PUBLICA e a propria URL deste servico na Render. Fica em branco na
+      # criacao (ela so existe depois) e e preenchida no painel logo em
+      # seguida: o GoTrue usa para montar os links que manda por e-mail.
+      - key: URL_PUBLICA
+        sync: false
+      # Onde o ERP e servido hoje. O GoTrue recusa redirecionar para qualquer
+      # endereco fora desta lista - se ficar errado, o login "funciona" e
+      # devolve o usuario para lugar nenhum.
+      - key: URL_SITE
+        value: https://appify-my-nascimento.lovable.app
+
+      # --- recarga automatica (desligada ate ter as credenciais) ------------
+      # Ligar exige GITHUB_TOKEN e a chave GPG abaixo. Enquanto estiver "nao",
+      # a replica tem a idade da ultima carga manual.
+      - key: RECARGA_AUTOMATICA
+        value: "nao"
       - key: GITHUB_REPO
         value: NascimentoEmpresa/appify-my-nascimento-9b345b64
+      # ATENCAO: a chave privada de GPG abre TODOS os backups da empresa. Quem
+      # tiver acesso a este servico tem acesso aos backups. O caminho para
+      # reduzir isso (uma segunda chave, so da replica) esta descrito em
+      # infra/failover/render/recarga-render.sh e ainda NAO foi feito.
       - key: GITHUB_TOKEN
-        sync: false            # token so de leitura de Actions
+        sync: false
       - key: GPG_PRIVATE_KEY_B64
-        sync: false            # chave privada exportada, em base64
+        sync: false
       - key: GPG_PASSPHRASE
         sync: false
-      - key: PGHOST
-        fromService:
-          name: erp-db
-          type: pserv
-          property: host
-      - key: PGPORT
-        value: "5432"
-      - key: PGUSER
-        value: postgres
-      - key: PGDATABASE
-        value: postgres
-      - key: PGPASSWORD
-        sync: false            # o mesmo POSTGRES_PASSWORD do erp-db
-
-  # --- gateway (o unico publico) -------------------------------------------
-  - name: erp-kong
-    type: web
-    runtime: docker
-    plan: starter
-    region: virginia
-    dockerfilePath: ./infra/failover/render/Dockerfile.kong
-    dockerContext: .
-    autoDeploy: false
-    healthCheckPath: /rest/v1/
-    envVars:
-      - key: KONG_DATABASE
-        value: "off"
-      - key: KONG_DECLARATIVE_CONFIG
-        value: /home/kong/kong.yml
-      - key: KONG_DNS_ORDER
-        value: LAST,A,CNAME
-      - key: KONG_PLUGINS
-        value: request-transformer,cors,key-auth,acl
-      - key: KONG_PROXY_LISTEN
-        value: 0.0.0.0:8000
-      - key: SUPABASE_ANON_KEY
-        sync: false
-      - key: SUPABASE_SERVICE_KEY
-        sync: false
-      # Os destinos das rotas. A propria Render preenche com o endereco
-      # interno de cada servico, entao nao ha endereco escrito a mao para
-      # ficar desatualizado.
-      - key: ALVO_AUTH
-        fromService:
-          name: erp-auth
-          type: pserv
-          property: hostport
-      - key: ALVO_REST
-        fromService:
-          name: erp-rest
-          type: pserv
-          property: hostport
-      - key: ALVO_STORAGE
-        fromService:
-          name: erp-storage
-          type: pserv
-          property: hostport
-      - key: ALVO_FUNCTIONS
-        fromService:
-          name: erp-functions
-          type: pserv
-          property: hostport

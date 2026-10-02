@@ -105,6 +105,28 @@ export function useSolicitacoesParaCotar(empresaId: string | null) {
         // "Lançar despesa" pro usuário logado.
         .select("*, classificacao:classificacao_id(id, nome, lancador_despesa_user_ids, lancador_despesa_nomes)")
         .in("status", STATUS_SUPRIMENTOS)
+        // [SEM-CHAMADO] 01/10/2026 — filtrar por status era pouco. `cancelada`
+        // é o ÚNICO status que os dois fluxos compartilham: despesa lançada
+        // direto (classificação sem "Requer solicitação") vive com status do
+        // Malote (pendente_aprovacao, aguardando_pagamento, despesa_paga…),
+        // nenhum deles nesta lista — até alguém cancelar. useCancelarDespesa
+        // grava status='cancelada' e a despesa caía aqui na hora, sem nunca
+        // ter passado por Suprimentos. Era "toda despesa cancelada do Malote
+        // aparece na fila de cotação", e foi exatamente assim que o Eduardo
+        // encontrou.
+        //
+        // O critério é `origem`, NÃO classificacao.requer_solicitacao: o check
+        // da Classificação é editável a qualquer momento (desmarcar hoje
+        // reescreveria o passado de despesas antigas) e existe o bypass do
+        // SIS-2026-0334, que cria origem='despesa_unica' numa classificação
+        // que exige solicitação — essas também não são de Suprimentos.
+        // `origem` é o que de fato aconteceu com a linha, e a conversão em
+        // despesa preserva 'solicitacao' (useConverterSolicitacaoEmDespesa),
+        // então solicitação cancelada continua aparecendo, como deve.
+        .eq("origem", "solicitacao")
+        // Item na lixeira do Fluxo de Caixa (malote_despesa_excluir) não é
+        // item vivo. As outras consultas do Malote já filtravam; esta não.
+        .is("deleted_at", null)
         .order("updated_at", { ascending: false });
       if (error) throw error;
       return data ?? [];
