@@ -62,15 +62,25 @@ services:
     healthCheckPath: /saude
     disk:
       name: dados
-      # Medido em 02/10/2026, com o banco ja restaurado:
-      #     banco     3,5 GB
-      #     anexos    4,7 GB  (8.527 arquivos na producao)
+      # 20 GB desde 02/10/2026. Medido com o banco restaurado e os anexos ja
+      # copiados para o backup:
+      #     banco     3,9 GB
+      #     anexos    4,7 GB  (8.556 arquivos na producao)
       #     --------------
-      #     total     8,2 GB  de 10 GB = 82%
+      #     total     8,6 GB
       #
-      # Cabe hoje, com pouca folga, e os dois lados crescem. Antes de copiar os
-      # anexos para ca, subir para 20 GB (+US$ 2,50/mes) - 82% num disco que
-      # tambem recebe o espaco temporario do restore e pedir problema.
+      # Em 10 GB isso daria 86% - e nao sobra so o que esta guardado: cinco
+      # vezes por dia a recarga BAIXA o backup e DESCOMPACTA dentro deste mesmo
+      # disco. Faltar espaco no meio de um restore nao da erro educado: o
+      # Postgres para de aceitar escrita e pode corromper o que estava
+      # gravando. A replica quebraria justamente por termos enchido o disco.
+      #
+      # Em 20 GB sao 43%, com folga para o banco crescer - que e o motivo
+      # principal. 3,9 GB de banco em 10 GB apertaria sozinho em poucos meses,
+      # mesmo sem anexo nenhum.
+      #
+      # Custo: US$ 0,25/GB/mes -> US$ 5,00 em vez de US$ 2,50. A Render cobra
+      # proporcional por segundo, entao a diferenca entra no mes corrente.
       #
       # Os anexos ficam em /var/lib/postgresql/data/storage, DENTRO deste
       # disco. Ate 02/10 o Storage apontava para /var/lib/storage, no overlay
@@ -78,7 +88,7 @@ services:
       # nenhum. Esse mesmo descuido ja custou 82 anexos de patrimonio em outro
       # servico da Render.
       mountPath: /var/lib/postgresql/data
-      sizeGB: 10
+      sizeGB: 20
     envVars:
       # --- os quatro segredos, do .env gerado por gerar-chaves.mjs ----------
       - key: POSTGRES_PASSWORD

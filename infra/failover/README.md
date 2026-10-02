@@ -449,3 +449,40 @@ impede que um pedido aprovado ali desapareça na recarga seguinte.
 Fica **inerte** sem `VITE_FAILOVER_URL` e `VITE_FAILOVER_ANON_KEY` no build —
 isto entra no caminho de todos os usuários e não deve ligar por acidente de
 merge.
+
+---
+
+## Mudar algo do `render.yaml` na Render (02/10/2026)
+
+O serviço é **Blueprint managed**: mexer no painel seria desfeito na próxima
+sincronização. A mudança vem do repositório, e o caminho tem um passo que não é
+óbvio.
+
+1. alterar o `render.yaml` e **mergear na `main`** — o blueprint lê de lá, não
+   da branch pessoal;
+2. no painel, *Blueprint → erp-failover →* **Manual sync**;
+3. **aprovar o plano.** A Render monta uma lista do que vai mudar e **para,
+   esperando um clique em "Approve"**. Sem ele nada acontece, e a tela não
+   volta sozinha para o histórico — parece que o sync falhou quando na verdade
+   está aguardando.
+
+O passo 3 custou uma rodada inteira de confusão: o clique em "Manual sync"
+parecia não ter efeito, o histórico de Syncs continuava mostrando só o sync
+antigo, e o disco seguia em 10 GB. Estava tudo certo; faltava aprovar.
+
+**`Auto Sync: Yes` não dispensa a aprovação** para mudanças deste tipo.
+
+### O sync NÃO faz deploy do código
+
+Ele aplica o que é de infraestrutura — disco, variáveis, plano. O serviço
+continua rodando a imagem do commit anterior. Para trazer script novo é preciso
+*Manual Deploy → Deploy latest commit*, que é um passo separado.
+
+Isso importa aqui porque toda a lógica da trava e da recarga vive em scripts
+dentro da imagem: um sync bem-sucedido pode dar a impressão de que a correção
+subiu quando ela ainda nem foi compilada.
+
+### Redimensionar disco reinicia o serviço
+
+A réplica fica alguns minutos fora (502 no `/saude`). **Sem impacto no ERP**,
+que continua na Supabase.
