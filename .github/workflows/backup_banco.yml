@@ -451,8 +451,12 @@ jobs:
           else
             HORA=$(date -u +%H)
             case "$HORA" in
-              10|23) DIAS=14 ;;   # 07h e 20h de Brasilia: historico
-              *)     DIAS=3  ;;   # meio do expediente: so alimenta a replica
+              23) DIAS=90 ;;   # 20h de Brasilia: ARQUIVO de longo prazo (o
+                               # ultimo do dia). 90 dias e o maximo do GitHub;
+                               # em repo publico o armazenamento e gratuito.
+                               # Ponte ate o arquivo definitivo no servidor.
+              10) DIAS=14 ;;   # 07h de Brasilia: historico de curto prazo
+              *)  DIAS=3  ;;   # meio do expediente: so alimenta a replica
             esac
           fi
           echo "dias=$DIAS" >> "$GITHUB_OUTPUT"
