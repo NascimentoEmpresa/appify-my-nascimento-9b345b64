@@ -6,6 +6,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ErroDeTela } from "@/components/layout/ErroDeTela";
 import { MonitorDeQueda } from "@/components/layout/MonitorDeQueda";
+import { AvisoContingencia } from "@/components/layout/AvisoContingencia";
 import { isAuthExpiredError } from "@/lib/authErrors";
 import { isSobrecargaError, atrasoSobrecargaMs } from "@/lib/erroSobrecarga";
 import NotFound from "./pages/NotFound.tsx";
@@ -218,7 +219,7 @@ import ControleCa from "./pages/sst/ControleCa";
 import NovasAdmissoes from "./pages/rh/NovasAdmissoes";
 import BancoTalentos from "./pages/rh/BancoTalentos";
 import AcompanharColaboradores from "./pages/rh/AcompanharColaboradores";
-import AcompanharExperiencia from "./pages/rh/AcompanharExperiencia";
+import DashboardRecrutamento from "./pages/rh/DashboardRecrutamento";
 import RecrutamentoDashboard from "./pages/rh/RecrutamentoDashboard";
 import OrientacoesJuridicas from "./pages/central-servicos/OrientacoesJuridicas";
 import Formularios from "./pages/central-servicos/Formularios";
@@ -369,6 +370,7 @@ const App = () => (
       <Sonner />
       {/* Queda do banco: cobre tudo com "Sistema temporariamente indisponível" (ver lib/monitorDeQueda.ts). */}
       <MonitorDeQueda />
+      <AvisoContingencia />
       <BrowserRouter>
         {/* Rede final: o ErroDeTela do AppShell cobre as telas de /app
             mantendo menu e topbar de pé, mas não cobre o que está FORA dele
@@ -767,7 +769,9 @@ const App = () => (
             <Route path="rh/banco-talentos" element={<BancoTalentos />} />
             {/* Check-in dos recém-admitidos (25/09/2026, mig 245) — o Excel CONTRATOS_VIGENTES do RH. */}
             <Route path="rh/recrutamento/acompanhar-colaboradores" element={<AcompanharColaboradores />} />
-            <Route path="rh/recrutamento/acompanhar-experiencia" element={<AcompanharExperiencia />} />
+            {/* Dashboard Recrutamento (02/10/2026, mig 288) — o painel completo; o Dashboard antigo segue em rh/recrutamento-dashboard. */}
+            <Route path="rh/recrutamento/dashboard" element={<DashboardRecrutamento />} />
+            <Route path="rh/recrutamento/acompanhar-experiencia" element={<Navigate to="/app/rh/recrutamento/acompanhar-colaboradores?situacao=experiencia" replace />} />
             <Route path="rh/recrutamento-dashboard" element={<RecrutamentoDashboard />} />
             <Route path="rh/ferias" element={<Ferias />} />
             <Route path="rh/recrutamento" element={<Recrutamento />} />

@@ -350,3 +350,102 @@ público).
 
 Senha de chave GPG não entra em script. A descriptografia do backup é um passo
 à parte, feito por uma pessoa, de propósito.
+
+---
+
+## Contingência: consultar a réplica quando a Supabase cai (02/10/2026)
+
+Quando o `monitorDeQueda` confirma que a Supabase está fora, o ERP passa a
+**oferecer** "Consultar em modo leitura" apontando para esta réplica. Conferir
+um pedido, uma escala ou um contrato é a maior parte do uso e não depende de
+gravar nada.
+
+### O risco que define o desenho: split-brain
+
+Se metade dos navegadores escrevesse aqui e a outra metade na Supabase,
+existiriam duas verdades — e a próxima recarga apagaria o que foi escrito aqui.
+Pedido aprovado que some, hora extra que não existe mais. Pior que ficar fora
+do ar, porque o usuário viu "salvo com sucesso".
+
+Por isso: **automático lê, humano escreve.** A réplica vive em somente leitura;
+liberar escrita é decisão explícita (`promover.sh promover`).
+
+### Como a trava é feita, e por que não do jeito óbvio
+
+A primeira tentativa foi a que parece natural:
+
+```sql
+alter role authenticated set default_transaction_read_only = on;
+```
+
+**Não funciona, e falha em silêncio.** Testado contra a API real em 02/10/2026:
+a configuração aparece em `pg_roles` nos três papéis e mesmo assim
+
+```
+POST  /rest/v1/notificacoes   HTTP 201   (criou)
+PATCH /rest/v1/notificacoes   HTTP 204   (alterou)
+```
+
+O PostgREST abre a transação declarando o modo conforme o método HTTP, e esse
+`BEGIN ... READ WRITE` sobrescreve o default do papel. Quem olhasse só o
+`pg_roles` concluiria que estava protegido.
+
+O que funciona é `REVOKE`, verificado independente do modo da transação:
+
+```sql
+revoke insert, update, delete, truncate on all tables in schema public
+  from authenticated, anon;
+```
+
+Aplicado no fim de **toda** recarga (`carregar-replica.sh`, bloco 6d) — porque
+o dump traz as permissões da produção, onde escrever é permitido, e portanto
+cada restore desfaz a trava.
+
+### O que fica coberto, e o que não
+
+| Caminho | Coberto? |
+|---|---|
+| POST/PATCH/PUT/DELETE direto em tabela pela API REST | **sim** |
+| Login, sessão, refresh token (GoTrue) | não travado **de propósito** — sem isso ninguém entra |
+| RPC marcada `SECURITY DEFINER` | **sim**, desde 02/10 — ver abaixo |
+
+As funções `SECURITY DEFINER` rodam com os privilégios do **dono**, então o
+`REVOKE` nas tabelas não as alcança. Elas são tratadas em separado, pelo mesmo
+bloco do `carregar-replica.sh`: um `DO` percorre o `pg_proc` e revoga `EXECUTE`
+de toda função `SECURITY DEFINER` cujo corpo contenha INSERT/UPDATE/DELETE/
+TRUNCATE.
+
+Medido no repositório em 02/10/2026: de 1.032 definições de função, **444 se
+encaixam no critério** e **249 delas são chamadas pelo app**. Nenhuma com nome
+sugerindo leitura (`get_`, `listar_`, `buscar_`…) — a amostra é
+`nf_lancar_estoque`, `cotacao_fechar`, `cnab_gerar_remessa`.
+
+Falso positivo aqui é **seguro**: revogar uma função de leitura que tinha a
+palavra "update" solta num comentário não faz falta em modo consulta. Falso
+negativo seria o perigo, e só aconteceria com escrita montada por `EXECUTE`
+dinâmico.
+
+**As funções de RLS ficam de fora, e isso não é opcional.** `can_access`
+aparece 2.063 vezes dentro de policies, `has_screen_access` 830,
+`tem_acesso_menu` 750. Elas são chamadas *dentro* da policy, com os
+privilégios de quem está consultando. Revogar `EXECUTE` delas não deixaria o
+banco mais seguro: derrubaria **toda a leitura**, porque cada policy passaria a
+dar erro de permissão. A réplica viraria uma tela de erro.
+
+Consequência prática: em contingência, **249 operações do app recusam com
+`permission denied`**. Isso é o desenho funcionando, não defeito — é o que
+impede que um pedido aprovado ali desapareça na recarga seguinte.
+
+### Partes
+
+| Onde | O quê |
+|---|---|
+| `src/integrations/supabase/contingencia.ts` | decide o backend; só aceita a URL embutida no build, nunca uma vinda do armazenamento |
+| `src/components/layout/MonitorDeQueda.tsx` | oferece a troca, e só depois de a réplica responder |
+| `src/components/layout/AvisoContingencia.tsx` | faixa fixa: "Modo consulta — não é possível salvar" |
+| `carregar-replica.sh` (6d) | reaplica a trava após cada recarga |
+| `promover.sh` | `status` / `promover` / `reverter` |
+
+Fica **inerte** sem `VITE_FAILOVER_URL` e `VITE_FAILOVER_ANON_KEY` no build —
+isto entra no caminho de todos os usuários e não deve ligar por acidente de
+merge.

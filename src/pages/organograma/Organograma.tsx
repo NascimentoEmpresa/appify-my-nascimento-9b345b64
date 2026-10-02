@@ -2,9 +2,10 @@ import { useEffect, useMemo, useRef, useState, type DragEvent, type MouseEvent a
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import {
-  ArrowLeft, ArrowRight, Check, ChevronDown, ChevronUp, Loader2, Maximize, Minus, Network, Pencil, Plus, Printer, Search,
-  Trash2, UserPlus, Users, X,
+  ArrowLeft, ArrowRight, BarChart3, Building2, Check, ChevronDown, ChevronUp, FileText, GraduationCap, HardHat, Loader2, Maximize,
+  Megaphone, Minus, Monitor, Network, Package, Pencil, Plus, Printer, Scale, Search, ShieldCheck, Trash2, UserPlus, Users, X,
 } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { usePermissoes } from "@/context/PermissoesContext";
 import { PageHeader } from "@/components/layout/PageHeader";
@@ -59,6 +60,18 @@ const PALETA_CARD: { cor: string; nome: string }[] = [
 const estiloCard = (cor: string | null) => cor
   ? { borderColor: `${cor}66`, borderTop: `5px solid ${cor}`, background: `linear-gradient(${cor}14, ${cor}14), hsl(var(--card))` }
   : undefined;
+
+// Ícone do painel de setor: pelo nome (sem acento, minúsculo); senão, um prédio.
+const ICONES_SETOR: [RegExp, LucideIcon][] = [
+  [/\b(rh|recursos humanos|pessoal|recrut)/, Users], [/financ|tesour|contab|fiscal|controlador/, BarChart3],
+  [/licita|contrato/, FileText], [/sistema|\bti\b|tecnologia|informatica/, Monitor], [/\bsst\b|seguranca|saude/, ShieldCheck],
+  [/treinamento/, GraduationCap], [/juridic/, Scale], [/suprimento|compra|almox/, Package], [/operac|campo|obra/, HardHat],
+  [/marketing|comunica/, Megaphone],
+];
+const iconeSetor = (setor: string): LucideIcon => {
+  const s = setor.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+  return ICONES_SETOR.find(([re]) => re.test(s))?.[1] ?? Building2;
+};
 
 const iniciais = (nome: string) => nome.split(/\s+/).filter(Boolean).slice(0, 2).map((p) => p[0]).join("").toUpperCase();
 
@@ -204,48 +217,113 @@ export default function Organograma() {
   };
 
   // ── Desenho ─────────────────────────────────────────────────────────
+  // Layout de 02/10/2026 (pedido do Pablo, com imagem de referência): quem
+  // tem equipe é um card horizontal (foto à esquerda) ligado na árvore; quem
+  // NÃO tem ninguém abaixo não abre mais um galho próprio — entra num painel
+  // por SETOR debaixo do chefe ("RH · 4 pessoas"), em lista (2 colunas a
+  // partir de 5). A árvore fica baixa e larga em vez de descer em escada.
+  const eventosCard = (n: No) => ({
+    id: `org-${n.id}`, "data-card": true,
+    draggable: edicao && podeAlterar,
+    onDragStart: (e: DragEvent) => onDragStart(e, n.id),
+    onDragEnd: () => { setArrastando(null); setAlvoDrop(null); },
+    onDragOver: (e: DragEvent) => onDragOver(e, n.id),
+    onDragLeave: () => setAlvoDrop((a) => (a === n.id ? null : a)),
+    onDrop: (e: DragEvent) => onDrop(e, n.id),
+    onClick: () => edicao && podeMontar && setEditando(n),
+  });
+  const estadoCard = (n: No) => cn(
+    edicao && podeMontar && "cursor-pointer hover:border-primary/50 hover:shadow-md",
+    edicao && podeAlterar && "cursor-grab active:cursor-grabbing",
+    achados.has(n.id) && "ring-4 ring-amber-300",
+    alvoDrop === n.id && "ring-4 ring-primary/40",
+    arrastando === n.id && "opacity-40",
+    !n.ativo && "opacity-60",
+  );
+
+  // Largura FIXA do painel (02/10/2026): sem ela o galho da árvore encolhia
+  // (flex) e os cards da grade de 2 colunas ficavam uns por cima dos outros,
+  // com o nome do setor cortado ("S...", "TREINAMEN...").
+  const CARD_PAINEL = 236, GAP_PAINEL = 10, PAD_PAINEL = 14;
+  const renderPainel = (setor: string, membros: No[], pai: No) => {
+    const contagem = new Map<string, number>();
+    membros.forEach((m) => m.cor && contagem.set(m.cor, (contagem.get(m.cor) ?? 0) + 1));
+    const corMembros = [...contagem.entries()].sort((a, b) => b[1] - a[1])[0]?.[0];
+    const cor = corMembros ?? pai.cor ?? corDe(setor);
+    const Icone = iconeSetor(setor);
+    const colunas = membros.length > 4 ? 2 : 1;
+    const largura = colunas * CARD_PAINEL + (colunas - 1) * GAP_PAINEL + PAD_PAINEL * 2;
+    return (
+      <li key={`painel-${pai.id}-${setor}`}>
+        <div className="org-painel rounded-2xl border-2 shadow-sm"
+             style={{ width: largura, padding: PAD_PAINEL, borderColor: `${cor}40`, background: `linear-gradient(${cor}0d, ${cor}0d), hsl(var(--card))` }}>
+          <div className="mb-3 flex items-center gap-2 px-0.5">
+            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg" style={{ background: `${cor}1f` }}>
+              <Icone className="h-[18px] w-[18px]" style={{ color: cor }} />
+            </span>
+            <span className="line-clamp-2 min-w-0 flex-1 text-[13px] font-extrabold uppercase leading-tight tracking-wide" style={{ color: cor }} title={setor}>{setor}</span>
+            <span className="shrink-0 whitespace-nowrap rounded-full px-2.5 py-0.5 text-[11px] font-bold" style={{ color: cor, background: `${cor}1f` }}>
+              {membros.length} {membros.length === 1 ? "pessoa" : "pessoas"}
+            </span>
+          </div>
+          <div className="grid" style={{ gridTemplateColumns: `repeat(${colunas}, ${CARD_PAINEL}px)`, gap: GAP_PAINEL }}>
+            {membros.map((m) => (
+              <div key={m.id} {...eventosCard(m)} title={[m.nome, funcaoDe(m)].filter(Boolean).join(" · ")}
+                className={cn("org-card relative flex min-h-[64px] items-center gap-2.5 rounded-xl border bg-card px-3 py-2.5 text-left shadow-sm transition", estadoCard(m))}>
+                <Avatar nome={m.nome} url={m.avatar_url} tamanho={38} />
+                {/* Sem a linha do setor aqui: o cabeçalho do painel já diz. */}
+                <div className="min-w-0 flex-1 pr-2">
+                  <p className="line-clamp-2 text-[11px] font-bold uppercase leading-tight text-foreground">{m.nome}</p>
+                  {funcaoDe(m) && <p className="mt-0.5 line-clamp-2 text-[9.5px] font-semibold uppercase leading-tight" style={{ color: m.cor ?? cor }}>{funcaoDe(m)}</p>}
+                  {!m.ativo && <p className="text-[10px] font-semibold text-destructive">usuário inativo</p>}
+                </div>
+                {edicao && podeMontar && <Pencil className="absolute right-1.5 top-1.5 h-3 w-3 text-muted-foreground" />}
+              </div>
+            ))}
+          </div>
+        </div>
+      </li>
+    );
+  };
+
   const renderNo = (n: No) => {
     const subs = filhos.get(n.id) ?? [];
     const recolhido = recolhidos.has(n.id);
-    const achado = achados.has(n.id);
+    // Filhos com equipe seguem na árvore; os sem equipe vão para o painel do
+    // setor, na posição do primeiro deles.
+    const itens: ({ tipo: "no"; no: No } | { tipo: "painel"; setor: string; membros: No[] })[] = [];
+    const paineis = new Map<string, No[]>();
+    subs.forEach((f) => {
+      if ((filhos.get(f.id) ?? []).length) { itens.push({ tipo: "no", no: f }); return; }
+      const setor = f.setor?.trim() || "Sem setor";
+      if (!paineis.has(setor)) { const membros: No[] = []; paineis.set(setor, membros); itens.push({ tipo: "painel", setor, membros }); }
+      paineis.get(setor)!.push(f);
+    });
     return (
       <li key={n.id}>
-        <div
-          id={`org-${n.id}`} data-card
-          draggable={edicao && podeAlterar}
-          onDragStart={(e) => onDragStart(e, n.id)}
-          onDragEnd={() => { setArrastando(null); setAlvoDrop(null); }}
-          onDragOver={(e) => onDragOver(e, n.id)}
-          onDragLeave={() => setAlvoDrop((a) => (a === n.id ? null : a))}
-          onDrop={(e) => onDrop(e, n.id)}
-          onClick={() => edicao && podeMontar && setEditando(n)}
-          style={estiloCard(n.cor)}
-          className={cn(
-            "org-card relative flex w-[188px] flex-col items-center gap-1.5 rounded-2xl border bg-card px-3 pb-3 pt-4 text-center shadow-sm transition",
-            edicao && podeMontar && "cursor-pointer hover:border-primary/50 hover:shadow-md",
-            edicao && podeAlterar && "cursor-grab active:cursor-grabbing",
-            achado && "ring-4 ring-amber-300",
-            alvoDrop === n.id && "ring-4 ring-primary/40",
-            arrastando === n.id && "opacity-40",
-            !n.ativo && "opacity-60",
-          )}
-        >
-          <Avatar nome={n.nome} url={n.avatar_url} />
-          <p className="line-clamp-2 text-[13px] font-bold leading-tight">{n.nome}</p>
-          {funcaoDe(n) && <p className="line-clamp-2 text-[11px] font-medium leading-tight text-primary" style={n.cor ? { color: n.cor } : undefined}>{funcaoDe(n)}</p>}
-          {n.setor && <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-semibold text-muted-foreground">{n.setor}</span>}
-          {!n.ativo && <span className="text-[10px] font-semibold text-destructive">usuário inativo</span>}
+        <div {...eventosCard(n)} style={estiloCard(n.cor)}
+          title={[n.nome, funcaoDe(n), n.setor].filter(Boolean).join(" · ")}
+          className={cn("org-card relative flex min-h-[84px] w-[264px] items-center gap-3 rounded-2xl border-2 bg-card px-4 py-3 text-left shadow-sm transition", estadoCard(n))}>
+          <Avatar nome={n.nome} url={n.avatar_url} tamanho={50} />
+          <div className="min-w-0 flex-1 pr-2">
+            <p className="line-clamp-2 text-[12.5px] font-bold uppercase leading-tight">{n.nome}</p>
+            {funcaoDe(n) && <p className="mt-0.5 line-clamp-2 text-[10.5px] font-semibold uppercase leading-tight text-primary" style={n.cor ? { color: n.cor } : undefined}>{funcaoDe(n)}</p>}
+            {n.setor && <p className="mt-0.5 truncate text-[11px] text-muted-foreground">{n.setor}</p>}
+            {!n.ativo && <p className="text-[10px] font-semibold text-destructive">usuário inativo</p>}
+          </div>
           {edicao && podeMontar && <Pencil className="absolute right-2 top-2 h-3.5 w-3.5 text-muted-foreground" />}
           {subs.length > 0 && (
             <button type="button" data-card
               onClick={(e) => { e.stopPropagation(); setRecolhidos((s) => { const x = new Set(s); x.has(n.id) ? x.delete(n.id) : x.add(n.id); return x; }); }}
-              title={recolhido ? "Mostrar a equipe" : "Recolher a equipe"}
+              title={recolhido ? `Mostrar a equipe (${totalAbaixo(n.id)})` : `Recolher a equipe (${totalAbaixo(n.id)})`}
               className="absolute -bottom-3 left-1/2 flex h-6 -translate-x-1/2 items-center gap-0.5 rounded-full border bg-background px-2 text-[10px] font-bold text-muted-foreground shadow-sm hover:text-foreground">
               {recolhido ? <ChevronDown className="h-3 w-3" /> : <ChevronUp className="h-3 w-3" />} {totalAbaixo(n.id)}
             </button>
           )}
         </div>
-        {subs.length > 0 && !recolhido && <ul>{subs.map(renderNo)}</ul>}
+        {subs.length > 0 && !recolhido && (
+          <ul>{itens.map((it) => (it.tipo === "no" ? renderNo(it.no) : renderPainel(it.setor, it.membros, n)))}</ul>
+        )}
       </li>
     );
   };
@@ -584,11 +662,11 @@ function EditarPessoa({ no, nos, descendentes, podeAlterar, podeExcluir, podeInc
 
 // Conectores do organograma (árvore de cima para baixo) e impressão.
 const CSS_ORGANOGRAMA = `
-.org-arvore ul{position:relative;display:flex;justify-content:center;padding-top:28px;margin:0}
-.org-arvore ul.org-raiz{padding-top:0;gap:48px}
-.org-arvore li{position:relative;display:flex;flex-direction:column;align-items:center;padding:28px 10px 0;list-style:none}
+.org-arvore ul{position:relative;display:flex;justify-content:center;align-items:flex-start;padding-top:32px;margin:0}
+.org-arvore ul.org-raiz{padding-top:0;gap:56px}
+.org-arvore li{position:relative;display:flex;flex-direction:column;align-items:center;flex-shrink:0;padding:32px 16px 0;list-style:none}
 .org-arvore ul.org-raiz>li{padding-top:0}
-.org-arvore li::before,.org-arvore li::after{content:"";position:absolute;top:0;right:50%;width:50%;height:28px;border-top:2px solid hsl(var(--border))}
+.org-arvore li::before,.org-arvore li::after{content:"";position:absolute;top:0;right:50%;width:50%;height:32px;border-top:2px solid hsl(var(--border))}
 .org-arvore li::after{right:auto;left:50%;border-left:2px solid hsl(var(--border))}
 .org-arvore ul.org-raiz>li::before,.org-arvore ul.org-raiz>li::after{display:none}
 .org-arvore li:only-child::before{display:none}
@@ -597,8 +675,8 @@ const CSS_ORGANOGRAMA = `
 .org-arvore li:last-child::before{border-right:2px solid hsl(var(--border));border-radius:0 10px 0 0}
 .org-arvore li:first-child::after{border-radius:10px 0 0 0}
 .org-arvore li:only-child::after{border-radius:0}
-.org-arvore ul ul::before{content:"";position:absolute;top:0;left:50%;height:28px;border-left:2px solid hsl(var(--border))}
-.org-arvore li>ul{padding-top:28px}
+.org-arvore ul ul::before{content:"";position:absolute;top:0;left:50%;height:32px;border-left:2px solid hsl(var(--border))}
+.org-arvore li>ul{padding-top:32px}
 @media print{
   body *{visibility:hidden}
   .org-caixa,.org-caixa *{visibility:visible}

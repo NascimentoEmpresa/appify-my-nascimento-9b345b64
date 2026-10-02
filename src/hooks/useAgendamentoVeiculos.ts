@@ -106,7 +106,7 @@ export interface NovoAgendamento {
   contratos: { codigo: number | null; nome: string; administrativo?: boolean }[];
   /** KM do painel na retirada + a foto dele. Obrigatórios de 22 a 23/09/2026;
    *  agora opcionais ao agendar — dá para registrar depois, na viagem
-   *  (cs_veiculo_km_inicial). Fechar a viagem ainda exige o KM inicial. */
+   *  (cs_veiculo_km_inicial). Desde 02/10/2026 (mig 286) nada de KM é obrigatório, nem para finalizar. */
   km_inicial: number | null;
   km_inicial_foto: File | null;
 }
@@ -356,6 +356,7 @@ function useInvalidar() {
     qc.invalidateQueries({ queryKey: ["cs_veiculo_agendamento"] });
     qc.invalidateQueries({ queryKey: ["cs_veiculos_frota"] });
     qc.invalidateQueries({ queryKey: ["cs_veiculo_km_pendentes"] });
+    qc.invalidateQueries({ queryKey: ["cs_veiculo_minhas_pendencias"] });
   };
 }
 
@@ -478,8 +479,10 @@ export interface Viagem {
   data_inicio: string; data_fim: string; turno: Turno; status: StatusAgendamento;
   solicitante_nome: string | null; solicitante_id: string;
   destino: string | null; motivo: string | null; observacoes: string | null;
-  /** false = viagem anterior ao controle de KM (legado): fechar é opcional. */
+  /** false = viagem anterior ao controle de KM (legado). Não muda regra desde a mig 286. */
   controle_km: boolean;
+  /** Quando a viagem foi finalizada (mig 286). null = ainda aberta. */
+  finalizada_em: string | null;
   km_inicial: number | null; km_inicial_foto: string | null; km_inicial_em: string | null;
   km_final: number | null; km_final_foto: string | null; km_final_em: string | null;
   rodados: number | null;
@@ -507,7 +510,25 @@ export async function abrirArquivoVeiculo(path: string): Promise<void> {
   window.open(data.signedUrl, "_blank", "noopener");
 }
 
-/** Viagens minhas que terminaram e não tiveram o KM final fechado. */
+/** O que falta em cada viagem minha já começada e não finalizada (mig 286) — lembrete, não trava nada. */
+export interface PendenciaViagem {
+  id: string; numero: number; veiculo_nome: string; data_inicio: string; data_fim: string; terminou: boolean;
+  falta_km_inicial: boolean; falta_foto_inicial: boolean; falta_km_final: boolean; falta_foto_final: boolean; notas: number;
+}
+
+export function useMinhasPendencias() {
+  return useQuery({
+    queryKey: ["cs_veiculo_minhas_pendencias"],
+    queryFn: async (): Promise<PendenciaViagem[]> => {
+      const { data, error } = await sb.rpc("cs_veiculo_minhas_pendencias");
+      if (error) throw error;
+      return (data ?? []) as PendenciaViagem[];
+    },
+    staleTime: 30_000,
+  });
+}
+
+/** Viagens minhas que terminaram e não foram finalizadas. */
 export function useKmPendentes() {
   return useQuery({
     queryKey: ["cs_veiculo_km_pendentes"],
@@ -539,6 +560,7 @@ function useInvalidarViagem() {
     qc.invalidateQueries({ queryKey: ["cs_veiculo_viagem", id] });
     qc.invalidateQueries({ queryKey: ["cs_veiculo_agendamento"] });
     qc.invalidateQueries({ queryKey: ["cs_veiculo_km_pendentes"] });
+    qc.invalidateQueries({ queryKey: ["cs_veiculo_minhas_pendencias"] });
   };
 }
 
@@ -559,14 +581,14 @@ export function useRegistrarKmInicial() {
 export function useFecharKm() {
   const invalidar = useInvalidarViagem();
   return useMutation({
-    // km/foto são opcionais para viagem LEGADO (controle_km = false — a RPC
-    // decide o que é obrigatório; ver cs_veiculo_km_final).
+    // KM e foto opcionais (mig 286): sem nenhum dos dois, só finaliza; com a
+    // viagem já finalizada, completa o que faltou.
     mutationFn: async (v: { id: string; km: number | null; foto: File | null }) => {
       const path = v.foto ? (await subirArquivoVeiculo(v.foto, `km/${v.id}`)).path : null;
       const { error } = await sb.rpc("cs_veiculo_km_final", { p_agendamento: v.id, p_km: v.km, p_foto: path });
       if (error) throw error;
     },
-    onSuccess: (_d, v) => { invalidar(v.id); toast.success("KM final registrado. Viagem fechada."); },
+    onSuccess: (_d, v) => { invalidar(v.id); toast.success("Viagem atualizada."); },
     onError: (e: any) => toast.error(mensagemDeErro(e)),
   });
 }

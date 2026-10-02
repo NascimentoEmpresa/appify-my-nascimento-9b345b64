@@ -561,6 +561,9 @@ const recrutamentoModule: ModuleDef = {
       label: "Gestão",
       defaultOpen: true,
       items: [
+        // Dashboard Recrutamento (02/10/2026, mig 288): o painel completo — vagas
+        // atrasadas/em atenção/no prazo, andamento, tempos e candidatos.
+        { label: "Dashboard Recrutamento", to: "/app/rh/recrutamento/dashboard", icon: LayoutDashboard },
         { label: "Dashboard", to: "/app/rh/recrutamento-dashboard", icon: BarChart3 },
         { label: "Gestão Recrutamento", to: "/app/rh/recrutamento", icon: UserCog },
         { label: "Banco de Talentos", to: "/app/rh/banco-talentos", icon: Users2 },
@@ -573,7 +576,6 @@ const recrutamentoModule: ModuleDef = {
       defaultOpen: true,
       items: [
         { label: "Acompanhar Colaboradores", to: "/app/rh/recrutamento/acompanhar-colaboradores", icon: ClipboardCheck },
-        { label: "Acompanhar Experiência", to: "/app/rh/recrutamento/acompanhar-experiencia", icon: CalendarCheck2 },
       ],
     },
   ],

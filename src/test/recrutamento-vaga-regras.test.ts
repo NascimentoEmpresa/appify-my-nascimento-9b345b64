@@ -4,7 +4,7 @@ import {
   cargoExigeCnh, aplicarReqCnh, motivoLabel, MOTIVO_EXPANSAO,
   GRAU_ALTA, GRAU_MEDIA, GRAU_BAIXA, REQ_CNH_TEXTO,
   contratoDoEmpregado, chaveContrato, rotuloContrato, rotuloReferencia, mostraNomeReferencia,
-  ehVagaAdministrativa, statusInicialVaga, STATUS_VAGA_DIRETORIA, contratoEhAdministrativo, setorDoCatalogo,
+  ehVagaAdministrativa, statusInicialVaga, STATUS_VAGA_DIRETORIA, rotuloStatusVaga, contratoEhAdministrativo, setorDoCatalogo,
   MENU_VAGA_ADMINISTRATIVA, podeVagaAdministrativa, filtrarAdministrativas,
   vagaSeguraSubstituido, substituidosComVagaViva,
   podePreencherVagaManual, faltamCamposManuais,
@@ -338,5 +338,17 @@ describe("setorDoCatalogo", () => {
   it("sem match ou vazio: vazio", () => {
     expect(setorDoCatalogo(cat, "SEGURANCA")).toBe("");
     expect(setorDoCatalogo(cat, null)).toBe("");
+  });
+});
+
+describe("rotuloStatusVaga (mig 287)", () => {
+  it("'Pendente Analista' aparece como 'Pendente Operacional'; o resto não muda", () => {
+    expect(rotuloStatusVaga("Pendente Analista")).toBe("Pendente Operacional");
+    expect(rotuloStatusVaga("Pendente Recrutamento")).toBe("Pendente Recrutamento");
+    expect(rotuloStatusVaga(STATUS_VAGA_DIRETORIA)).toBe(STATUS_VAGA_DIRETORIA);
+    expect(rotuloStatusVaga(null)).toBe("");
+  });
+  it("o valor gravado continua 'Pendente Analista' — só o rótulo troca", () => {
+    expect(statusInicialVaga(false)).toBe("Pendente Analista");
   });
 });
