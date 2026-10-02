@@ -768,6 +768,15 @@ const sistemasModule: ModuleDef = {
   status: "active",
   groups: [
     {
+      // Checklist de Módulos (02/10/2026, mig 291): criação, implantação,
+      // treinamento, uso por pessoa, bugs e chamados de cada módulo do ERP.
+      label: "Gestão do ERP",
+      defaultOpen: true,
+      items: [
+        { label: "Checklist de Módulos", to: "/app/sistemas/checklist-modulos", icon: ListChecks },
+      ],
+    },
+    {
       label: "Solicitações",
       defaultOpen: true,
       items: [

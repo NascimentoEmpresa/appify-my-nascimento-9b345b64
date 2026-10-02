@@ -6,6 +6,7 @@ import { SemAcesso } from "@/components/layout/SemAcesso";
 import { useFeatureFlag } from "@/lib/featureFlags";
 import { ACESSO_ABERTO_SEM_PERMISSOES, rotaSempreLiberada } from "@/lib/acesso";
 import { useModoExterno, rotaPermitidaExterno } from "@/hooks/useModoExterno";
+import { registrarUsoTela } from "@/hooks/useChecklistModulos";
 
 /**
  * Bloco V3 — Rotas governadas por feature flag soberana de fase.
@@ -68,6 +69,15 @@ export function RouteGuard({ children }: { children: ReactNode }) {
           !!menuCode &&
           !access.inactiveCodes.has(menuCode) &&
           access.codes.has(menuCode)));
+
+  // Medição de uso (02/10/2026, mig 291 — Sistemas › Checklist de Módulos):
+  // tela aberta com acesso conta um acesso para a pessoa. Só tela cadastrada
+  // (menuCode) e só usuário interno; registrarUsoTela já evita contar de novo
+  // em menos de 10 min e não derruba nada se falhar.
+  useEffect(() => {
+    if (isLoading || !allowed || externo || !menuCode) return;
+    registrarUsoTela(menuCode, pathname);
+  }, [isLoading, allowed, externo, menuCode, pathname]);
 
   useEffect(() => {
     // Externo não tem grant em access_audit_log e o bloqueio dele não é um
