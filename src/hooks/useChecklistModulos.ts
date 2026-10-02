@@ -3,7 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import type {
-  ChecklistItem, DadosChecklist, Historico, Severidade, StatusBug,
+  ChecklistItem, DadosChecklist, Historico, Severidade, StatusBug, StatusDevTelas,
 } from "@/lib/sistemas/checklistModulos";
 
 // Sistemas › Checklist de Módulos (mig 20260930000291). O painel inteiro vem
@@ -228,5 +228,25 @@ export function registrarUsoTela(menuCodigo: string, rota: string) {
   ultimoRegistro.set(chave, agora);
   sb.rpc("sis_registrar_uso", { _menu: menuCodigo, _rota: rota }).then(({ error }) => {
     if (error) ultimoRegistro.delete(chave);
+  });
+}
+
+/**
+ * Status de desenvolvimento de cada tela/módulo para o selo do canto de TODA
+ * tela (mig 20261002000003). Qualquer usuário logado lê. Se a RPC ainda não
+ * existir no banco, devolve null e o selo simplesmente não aparece — nunca
+ * derruba a tela. Mesma chave-mãe do checklist: salvar status já atualiza.
+ */
+export function useStatusDevTelas(enabled = true) {
+  return useQuery({
+    queryKey: [...CHAVE, "status-dev"],
+    enabled,
+    staleTime: 5 * 60_000,
+    retry: false,
+    queryFn: async (): Promise<StatusDevTelas | null> => {
+      const { data, error } = await sb.rpc("sis_status_dev_telas");
+      if (error || !data) return null;
+      return data as StatusDevTelas;
+    },
   });
 }

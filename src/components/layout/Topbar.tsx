@@ -1,3 +1,4 @@
+import { StatusDevTela } from "./StatusDevTela";
 import { Bell, Search, PanelLeft, ChevronDown, Building2, HelpCircle, Settings, LogOut, Check, ExternalLink, User as UserIcon, Monitor, ShieldCheck, Contact } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
@@ -230,6 +231,8 @@ export function Topbar({ onToggleSidebar, onOpenMobile }: { onToggleSidebar: () 
             direto pro "Acesso negado". Sobra o menu de perfil e o Sair. */}
         {!externo && (
           <>
+        {/* Status de desenvolvimento da tela aberta (Checklist de Módulos, 02/10/2026). */}
+        <StatusDevTela className="mr-1 hidden md:flex" />
         {/* Ajuda */}
         <div className="relative" data-topbar-menu>
           <IconBtn aria-label="Ajuda" onClick={() => { fecharTodos(); setOpenHelp((o) => !o); }}><HelpCircle className="h-4 w-4" /></IconBtn>
