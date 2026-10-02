@@ -16,7 +16,7 @@ Você vai precisar de:
 - acesso de **Área de Trabalho Remota** (ou físico) ao servidor;
 - ser administrador **nesse servidor** (só para instalar; o agente em si vai
   rodar como usuário comum);
-- a pasta onde o histórico vai ficar, por exemplo `S:\Backups\ERP`.
+- a pasta onde o histórico vai ficar, por exemplo `S:\1- SERVIDOR\Sistemas\Backup-ERP`.
 
 A máquina precisa alcançar a internet. **Não é preciso abrir porta nenhuma no
 firewall**: o agente liga para o GitHub de dentro para fora, igual a um
@@ -44,8 +44,10 @@ Guarde essa senha no gerenciador de senhas — você vai usá-la no passo 4.
 Agora dê a ele acesso **só** à pasta do histórico:
 
 ```powershell
-New-Item -ItemType Directory -Path "S:\Backups\ERP" -Force
-icacls "S:\Backups\ERP" /grant "runner-erp:(OI)(CI)M"
+# As aspas sao OBRIGATORIAS aqui: o caminho tem um espaco ("1- SERVIDOR") e,
+# sem elas, o PowerShell corta no espaco e cria a pasta no lugar errado.
+New-Item -ItemType Directory -Path "S:\1- SERVIDOR\Sistemas\Backup-ERP" -Force
+icacls "S:\1- SERVIDOR\Sistemas\Backup-ERP" /grant "runner-erp:(OI)(CI)M"
 ```
 
 O `M` é "modificar": ele pode criar e alterar arquivos ali dentro, e **nada
@@ -132,7 +134,7 @@ https://github.com/NascimentoEmpresa/appify-my-nascimento-9b345b64/settings/vari
 Clique em **New repository variable**:
 
 - **Name:** `CAMINHO_HISTORICO`
-- **Value:** `S:\Backups\ERP`
+- **Value:** `S:\1- SERVIDOR\Sistemas\Backup-ERP`
 
 O caminho fica aqui, e não dentro do código, por dois motivos: dá para mudar a
 pasta sem mexer em arquivo nenhum, e o caminho interno da empresa não vai parar
@@ -172,7 +174,7 @@ novo e terminam em segundos.
 Quando acabar, confira no servidor:
 
 ```powershell
-Get-ChildItem S:\Backups\ERP -Recurse -Filter *.zip |
+Get-ChildItem S:\1- SERVIDOR\Sistemas\Backup-ERP -Recurse -Filter *.zip |
   Group-Object { $_.Directory.Name } |
   Select-Object Name, Count, @{n='GB';e={[math]::Round(($_.Group | Measure-Object Length -Sum).Sum/1GB,2)}}
 ```
@@ -190,7 +192,7 @@ quem procura vai no `S:` com esse nome.
 ```powershell
 # Os backups sao ZIPs cifrados; esta busca encontra o BACKUP que contem a data,
 # nao o arquivo solto. Para extrair, veja "Recuperar" abaixo.
-Get-ChildItem S:\Backups\ERP -Recurse -Filter "storage-arquivos*" |
+Get-ChildItem S:\1- SERVIDOR\Sistemas\Backup-ERP -Recurse -Filter "storage-arquivos*" |
   Sort-Object LastWriteTime -Descending | Select-Object Name, LastWriteTime, @{n='MB';e={[math]::Round($_.Length/1MB)}}
 ```
 
@@ -204,7 +206,7 @@ Para extrair, no PC que tem a chave:
 
 ```powershell
 # 1. descompactar o ZIP do GitHub
-Expand-Archive "S:\Backups\ERP\2026-10\storage-arquivos-XXXX.zip" -DestinationPath .\tmp
+Expand-Archive "S:\1- SERVIDOR\Sistemas\Backup-ERP\2026-10\storage-arquivos-XXXX.zip" -DestinationPath .\tmp
 # 2. decifrar e extrair (pede a senha da chave)
 gpg --decrypt .\tmp\storage-arquivos.tar.gpg | tar -xf -
 ```
