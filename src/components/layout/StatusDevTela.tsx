@@ -45,17 +45,17 @@ export function StatusDevTela({ className }: { className?: string }) {
   const conteudo = (
     <>
       <Wrench className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-      <span className="hidden text-[11px] font-semibold text-muted-foreground xl:inline">Status</span>
+      <span className="whitespace-nowrap text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Status de desenvolvimento</span>
       <StatusPill etapa="dev" valor={r.status} compacto calculado={r.origem === "calculado"} />
     </>
   );
 
   return podeAbrir ? (
     <button type="button" title={titulo} onClick={() => navigate(`/app/sistemas/checklist-modulos/${moduloId}`)}
-      className={cn("flex items-center gap-1.5 rounded-lg px-2 py-1 transition hover:bg-secondary", className)}>
+      className={cn("flex items-center gap-2 rounded-xl border border-border bg-card px-3 py-1.5 shadow-sm transition hover:border-primary/40 hover:shadow", className)}>
       {conteudo}
     </button>
   ) : (
-    <div title={titulo} className={cn("flex items-center gap-1.5 px-2 py-1", className)}>{conteudo}</div>
+    <div title={titulo} className={cn("flex items-center gap-2 rounded-xl border border-border bg-card px-3 py-1.5 shadow-sm", className)}>{conteudo}</div>
   );
 }

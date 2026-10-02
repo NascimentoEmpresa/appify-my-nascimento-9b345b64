@@ -35685,7 +35685,7 @@ NOTIFY pgrst, 'reload schema';
 -- DROP FUNCTION IF EXISTS public.scp_etiqueta_autor();
 -- NOTIFY pgrst, 'reload schema';
 
--- ===== 20261002000002_empregados_cpf_padrao (PENDENTE — aplicar) =====
+-- ===== 20261002000002_empregados_cpf_padrao (JA APLICADA 02/10) =====
 -- =========================================================================
 -- EMPREGADOS: CPF sempre no padrão 000.000.000-00 (02/10/2026)
 --
@@ -35791,7 +35791,7 @@ NOTIFY pgrst, 'reload schema';
 -- Reaplicar col_empregado_por_cpf da 20260930000196 (WHERE e."CPF" IN (v_cpf, v_fmt)).
 -- NOTIFY pgrst, 'reload schema';
 
--- ===== 20261002000003_sis_status_dev_telas (PENDENTE — aplicar) =====
+-- ===== 20261002000003_sis_status_dev_telas (JA APLICADA 02/10) =====
 -- =========================================================================
 -- Sistemas › Checklist de Módulos: STATUS DE DESENVOLVIMENTO EM TODA TELA
 -- (02/10/2026)
