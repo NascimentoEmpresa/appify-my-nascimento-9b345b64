@@ -35685,7 +35685,7 @@ NOTIFY pgrst, 'reload schema';
 -- DROP FUNCTION IF EXISTS public.scp_etiqueta_autor();
 -- NOTIFY pgrst, 'reload schema';
 
--- ===== 20261002000002_empregados_cpf_padrao (JA APLICADA 02/10) =====
+-- ===== 20261002000004_empregados_cpf_padrao (JA APLICADA 02/10) =====
 -- =========================================================================
 -- EMPREGADOS: CPF sempre no padrão 000.000.000-00 (02/10/2026)
 --

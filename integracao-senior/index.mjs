@@ -94,7 +94,7 @@ const dataBR = (v) => {
 // CPF: no Senior numcpf e NUMERO e perde o zero a esquerda ("2222996066"
 // era 022.229.960-66 — incidente 02/10/2026, login do portal caia no
 // cadastro demitido). Sai sempre 000.000.000-00, como o resto da EMPREGADOS;
-// o gatilho trg_rh_empregados_cpf_padrao (mig 20261002000002) garante no banco.
+// o gatilho trg_rh_empregados_cpf_padrao (mig 20261002000004) garante no banco.
 const cpfBR = (v) => {
   const d = String(v ?? "").replace(/\D/g, "");
   if (!d || /^0+$/.test(d) || d.length > 11) return d || null;
