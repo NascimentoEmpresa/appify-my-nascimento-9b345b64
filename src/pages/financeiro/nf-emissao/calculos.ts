@@ -54,6 +54,30 @@ export interface PercentuaisFiscais {
   csll_pct: number;
 }
 
+// Achado real (Ruan, NF 1186 Caxias do Sul): nota importada da planilha legada
+// (SIS-2026-0540) traz os TOTAIS de retenção (issqn_total, ir_total...) mas os
+// percentuais ficam 0 em nf_emissao — quem recalcula a nota a partir do
+// percentual (NF Concluída, Controle de Notas) zerava ISSQN/IR e o líquido
+// divergia do Relatório (R$ 40.839,73 na nota × R$ 36.801,65 no relatório).
+// Se a nota não tem nenhum percentual salvo mas tem retenção salva, deriva o
+// percentual de total/bruto (arredondado em 4 casas: 4% e 4,8% saem exatos).
+export function pctFiscaisDaNf(nf: {
+  issqn_pct: number; ir_pct: number; cofins_pct: number; pis_pct: number; csll_pct: number;
+  vlr_bruto_total: number;
+  issqn_total: number; ir_total: number; cofins_total: number; pis_total: number; csll_total: number;
+}): PercentuaisFiscais {
+  const salvos: PercentuaisFiscais = {
+    issqn_pct: nf.issqn_pct, ir_pct: nf.ir_pct, cofins_pct: nf.cofins_pct, pis_pct: nf.pis_pct, csll_pct: nf.csll_pct,
+  };
+  const algumPercentual = Object.values(salvos).some((p) => p > 0);
+  if (algumPercentual || !(nf.vlr_bruto_total > 0)) return salvos;
+  const deriva = (total: number) => Math.round(((total || 0) / nf.vlr_bruto_total) * 10000) / 10000;
+  return {
+    issqn_pct: deriva(nf.issqn_total), ir_pct: deriva(nf.ir_total), cofins_pct: deriva(nf.cofins_total),
+    pis_pct: deriva(nf.pis_total), csll_pct: deriva(nf.csll_total),
+  };
+}
+
 // Resolve o percentual que vale pra este item: override do item, se houver,
 // senão o padrão da nota/contrato.
 export function pctEfetivo(
