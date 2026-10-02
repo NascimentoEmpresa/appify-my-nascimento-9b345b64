@@ -7,11 +7,14 @@ import { useUsoPorDia } from "@/hooks/useChecklistModulos";
 import { pct, type DadosChecklist, type LinhaModulo } from "@/lib/sistemas/checklistModulos";
 import { BarraEfetividade, Tile, fmtData, haQuanto } from "./ui";
 import { PessoasModulo } from "./PessoasModulo";
+import { UsoPorUsuario } from "./UsoPorUsuario";
 
 // "Uso do ERP" — a medição: acessos por dia, adoção por módulo (pessoas que
 // usaram ÷ pessoas com acesso), telas mais usadas, telas que ninguém abre e
-// o detalhe por pessoa de um módulo. Conta a partir do dia em que a medição
-// entrou no ar (mig 291) — antes disso não existe registro.
+// o detalhe por pessoa de um módulo. Desde 02/10/2026 também o histórico
+// de cada usuário (UsoPorUsuario: o que cada pessoa mais acessa). Conta a
+// partir do dia em que a medição entrou no ar (mig 291) — antes disso não
+// existe registro.
 
 const COR = "#2a78d6";
 const EIXO = { fontSize: 11, fill: "hsl(var(--muted-foreground))" };
@@ -65,6 +68,8 @@ export function UsoPainel({ dados, modulos, podeAlterar }: { dados: DadosCheckli
           </BarChart>
         </ResponsiveContainer>
       </Card>
+
+      <UsoPorUsuario />
 
       <div className="grid gap-4 lg:grid-cols-2">
         <Card className="p-4">
@@ -125,7 +130,7 @@ export function UsoPainel({ dados, modulos, podeAlterar }: { dados: DadosCheckli
       <Card className="p-4">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
           <div>
-            <p className="text-sm font-bold">Uso por pessoa</p>
+            <p className="text-sm font-bold">Uso por pessoa em um módulo</p>
             <p className="text-xs text-muted-foreground">Escolha um módulo para ver quem usa, quem nunca abriu e quem foi treinado</p>
           </div>
           <Select value={moduloSel} onValueChange={setModuloSel}>

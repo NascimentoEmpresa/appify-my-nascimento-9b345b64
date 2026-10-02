@@ -54,6 +54,11 @@ export function TabelaTelas({ modulo, telas, nomeUsuario, podeAlterar, podeInclu
                 <td className="px-2 py-2.5"><StatusPill etapa="implantacao" valor={t.item?.status_implantacao} compacto /></td>
                 <td className="px-2 py-2.5">
                   <StatusPill etapa="treinamento" valor={t.item?.status_treinamento} compacto />
+                  {!!t.item?.treinamento_responsaveis?.length && (
+                    <p className="mt-0.5 max-w-[160px] truncate text-[10.5px] text-muted-foreground" title={`Responsável(is) pelo treinamento: ${t.item.treinamento_responsaveis.map((id) => nomeUsuario.get(id) ?? "—").join(", ")}`}>
+                      por {t.item.treinamento_responsaveis.map((id) => nomeUsuario.get(id) ?? "—").join(", ")}
+                    </p>
+                  )}
                   {t.treinados > 0 && <p className="mt-0.5 text-[10.5px] text-muted-foreground">{t.treinados} pessoa(s)</p>}
                 </td>
                 <td className="px-2 py-2.5"><StatusPill etapa="validacao" valor={t.item?.status_validacao} compacto /></td>

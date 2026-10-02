@@ -253,3 +253,39 @@ export function useStatusDevTelas(enabled = true) {
     },
   });
 }
+
+// ── Uso por USUÁRIO (mig 20261002000005) ──────────────────────────────────
+export interface UsoUsuarioResumo {
+  user_id: string; nome: string | null; email: string | null; cargo: string | null; setor: string | null;
+  acessos: number; dias: number; telas: number; modulos: number; ultimo: string | null; primeiro_dia: string | null;
+  tela_top: string | null; tela_top_rota: string | null; modulo_top: string | null; tela_top_acessos: number | null;
+}
+export function useUsoUsuarios(dias = 30) {
+  return useQuery({
+    queryKey: [...CHAVE, "uso-usuarios", dias],
+    staleTime: 60_000,
+    queryFn: async (): Promise<UsoUsuarioResumo[]> => {
+      const { data, error } = await sb.rpc("sis_uso_usuarios", { _dias: dias });
+      if (error) throw error;
+      return (data ?? []) as UsoUsuarioResumo[];
+    },
+  });
+}
+
+export interface UsoUsuarioDetalhe {
+  telas: { menu_id: string; tela: string; rota: string; modulo: string; acessos: number; dias: number; ultimo: string }[];
+  modulos: { modulo: string; acessos: number; telas: number; dias: number }[];
+  por_dia: { dia: string; acessos: number; telas: number }[];
+  historico: { dia: string; tela: string; rota: string; modulo: string; acessos: number; primeiro_em: string; ultimo_em: string }[];
+}
+export function useUsoUsuario(userId: string | null, dias = 30) {
+  return useQuery({
+    queryKey: [...CHAVE, "uso-usuario", userId, dias],
+    enabled: !!userId,
+    queryFn: async (): Promise<UsoUsuarioDetalhe> => {
+      const { data, error } = await sb.rpc("sis_uso_usuario", { _user: userId, _dias: dias });
+      if (error) throw error;
+      return data as UsoUsuarioDetalhe;
+    },
+  });
+}

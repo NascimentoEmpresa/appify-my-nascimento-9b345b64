@@ -35836,3 +35836,493 @@ NOTIFY pgrst, 'reload schema';
 -- ROLLBACK
 -- DROP FUNCTION IF EXISTS public.sis_status_dev_telas();
 -- NOTIFY pgrst, 'reload schema';
+
+-- ===== 20261002000005_sis_uso_por_usuario (JA APLICADA 02/10) =====
+-- =========================================================================
+-- Sistemas › Checklist de Módulos › Uso do ERP: HISTÓRICO POR USUÁRIO
+-- (02/10/2026)
+--
+-- Pedido do Pablo: na aba "Uso do ERP", o histórico de cada usuário — o que
+-- cada pessoa mais acessa, quando, quais módulos. A medição já existia
+-- (SIS_USO_TELA: pessoa × tela × dia, com primeiro/último acesso do dia,
+-- gravada pelo RouteGuard desde a mig 291); faltava ler POR PESSOA.
+--
+--   sis_uso_usuarios(_dias)        lista: cada usuário ativo com acessos,
+--                                  dias ativos, telas/módulos distintos,
+--                                  último acesso e a tela que MAIS usa.
+--                                  Quem não usou no período vem com zero.
+--   sis_uso_usuario(_user, _dias)  detalhe de uma pessoa: telas e módulos
+--                                  mais usados, acessos por dia e o
+--                                  histórico (dia × tela, 1ª e última hora).
+--
+-- Mesma trava das outras RPCs de uso: só quem vê o Checklist de Módulos.
+-- SIS_USO_TELA continua sem policy de leitura direta.
+-- Idempotente. Aplicar no banco do app.
+-- =========================================================================
+
+CREATE OR REPLACE FUNCTION public.sis_uso_usuarios(_dias integer DEFAULT 30)
+RETURNS jsonb LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public, pg_temp AS $f$
+DECLARE v_desde date := (now() AT TIME ZONE 'America/Sao_Paulo')::date - greatest(coalesce(_dias, 30), 1) + 1;
+BEGIN
+  IF NOT public.sis_ck_pode('visualizar') THEN
+    RAISE EXCEPTION 'Sem acesso ao Checklist de Módulos.' USING ERRCODE = '42501';
+  END IF;
+  RETURN coalesce((
+    WITH uso AS (
+      SELECT u.user_id, sum(u.acessos) acessos, count(DISTINCT u.dia) dias,
+             count(DISTINCT u.menu_id) telas, count(DISTINCT u.modulo_id) modulos, max(u.ultimo_em) ultimo
+        FROM public."SIS_USO_TELA" u WHERE u.dia >= v_desde GROUP BY u.user_id),
+    geral AS (
+      SELECT u.user_id, max(u.ultimo_em) ultimo, min(u.dia) primeiro_dia
+        FROM public."SIS_USO_TELA" u GROUP BY u.user_id),
+    top AS (
+      SELECT DISTINCT ON (x.user_id) x.user_id, a.nome tela, a.rota, m.nome modulo, x.acessos
+        FROM (SELECT user_id, menu_id, sum(acessos) acessos FROM public."SIS_USO_TELA"
+               WHERE dia >= v_desde GROUP BY 1, 2) x
+        JOIN public.app_menu a ON a.id = x.menu_id
+        JOIN public.app_modulo m ON m.id = a.modulo_id
+       ORDER BY x.user_id, x.acessos DESC, a.nome),
+    cargo AS (
+      SELECT DISTINCT ON (e.auth_user_id) e.auth_user_id, nullif(btrim(e."Título do Cargo"), '') cargo, nullif(btrim(e."Setor_ERP"), '') setor
+        FROM public."EMPREGADOS" e WHERE e.auth_user_id IS NOT NULL
+       ORDER BY e.auth_user_id, public.col_desligado(e."Situação") ASC, e."ID" DESC),
+    pessoas AS (
+      SELECT p.id FROM public.profiles p WHERE coalesce(p.ativo, true)
+      UNION SELECT user_id FROM uso)
+    SELECT jsonb_agg(jsonb_build_object(
+             'user_id', pe.id, 'nome', public.sis_ck_nome_usuario(pe.id), 'email', pr.email,
+             'cargo', c.cargo, 'setor', c.setor,
+             'acessos', coalesce(u.acessos, 0), 'dias', coalesce(u.dias, 0),
+             'telas', coalesce(u.telas, 0), 'modulos', coalesce(u.modulos, 0),
+             'ultimo', coalesce(u.ultimo, g.ultimo), 'primeiro_dia', g.primeiro_dia,
+             'tela_top', t.tela, 'tela_top_rota', t.rota, 'modulo_top', t.modulo, 'tela_top_acessos', t.acessos)
+           ORDER BY coalesce(u.acessos, 0) DESC, public.sis_ck_nome_usuario(pe.id))
+      FROM pessoas pe
+      LEFT JOIN public.profiles pr ON pr.id = pe.id
+      LEFT JOIN uso u ON u.user_id = pe.id
+      LEFT JOIN geral g ON g.user_id = pe.id
+      LEFT JOIN top t ON t.user_id = pe.id
+      LEFT JOIN cargo c ON c.auth_user_id = pe.id
+  ), '[]'::jsonb);
+END $f$;
+REVOKE ALL ON FUNCTION public.sis_uso_usuarios(integer) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.sis_uso_usuarios(integer) TO authenticated;
+
+CREATE OR REPLACE FUNCTION public.sis_uso_usuario(_user uuid, _dias integer DEFAULT 30)
+RETURNS jsonb LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public, pg_temp AS $f$
+DECLARE
+  v_ate   date := (now() AT TIME ZONE 'America/Sao_Paulo')::date;
+  v_desde date := v_ate - greatest(coalesce(_dias, 30), 1) + 1;
+BEGIN
+  IF NOT public.sis_ck_pode('visualizar') THEN
+    RAISE EXCEPTION 'Sem acesso ao Checklist de Módulos.' USING ERRCODE = '42501';
+  END IF;
+  RETURN jsonb_build_object(
+    'telas', coalesce((
+      SELECT jsonb_agg(jsonb_build_object('menu_id', x.menu_id, 'tela', a.nome, 'rota', a.rota, 'modulo', m.nome,
+                                          'acessos', x.acessos, 'dias', x.dias, 'ultimo', x.ultimo)
+                       ORDER BY x.acessos DESC, x.ultimo DESC)
+        FROM (SELECT menu_id, sum(acessos) acessos, count(DISTINCT dia) dias, max(ultimo_em) ultimo
+                FROM public."SIS_USO_TELA" WHERE user_id = _user AND dia >= v_desde GROUP BY menu_id) x
+        JOIN public.app_menu a ON a.id = x.menu_id
+        JOIN public.app_modulo m ON m.id = a.modulo_id), '[]'::jsonb),
+    'modulos', coalesce((
+      SELECT jsonb_agg(jsonb_build_object('modulo', m.nome, 'acessos', x.acessos, 'telas', x.telas, 'dias', x.dias)
+                       ORDER BY x.acessos DESC)
+        FROM (SELECT modulo_id, sum(acessos) acessos, count(DISTINCT menu_id) telas, count(DISTINCT dia) dias
+                FROM public."SIS_USO_TELA" WHERE user_id = _user AND dia >= v_desde GROUP BY modulo_id) x
+        JOIN public.app_modulo m ON m.id = x.modulo_id), '[]'::jsonb),
+    'por_dia', coalesce((
+      SELECT jsonb_agg(jsonb_build_object('dia', d.dia::date, 'acessos', coalesce(x.acessos, 0), 'telas', coalesce(x.telas, 0)) ORDER BY d.dia)
+        FROM generate_series(v_desde, v_ate, interval '1 day') AS d(dia)
+        LEFT JOIN (SELECT dia, sum(acessos) acessos, count(DISTINCT menu_id) telas
+                     FROM public."SIS_USO_TELA" WHERE user_id = _user GROUP BY dia) x ON x.dia = d.dia::date), '[]'::jsonb),
+    'historico', coalesce((
+      SELECT jsonb_agg(h ORDER BY h->>'ultimo_em' DESC)
+        FROM (SELECT jsonb_build_object('dia', u.dia, 'tela', a.nome, 'rota', a.rota, 'modulo', m.nome,
+                                        'acessos', u.acessos, 'primeiro_em', u.primeiro_em, 'ultimo_em', u.ultimo_em) h
+                FROM public."SIS_USO_TELA" u
+                JOIN public.app_menu a ON a.id = u.menu_id
+                JOIN public.app_modulo m ON m.id = u.modulo_id
+               WHERE u.user_id = _user AND u.dia >= v_desde
+               ORDER BY u.ultimo_em DESC LIMIT 1000) s), '[]'::jsonb)
+  );
+END $f$;
+REVOKE ALL ON FUNCTION public.sis_uso_usuario(uuid, integer) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.sis_uso_usuario(uuid, integer) TO authenticated;
+
+NOTIFY pgrst, 'reload schema';
+
+-- ROLLBACK
+-- DROP FUNCTION IF EXISTS public.sis_uso_usuarios(integer);
+-- DROP FUNCTION IF EXISTS public.sis_uso_usuario(uuid, integer);
+-- NOTIFY pgrst, 'reload schema';
+
+-- ===== 20261002000006_sis_checklist_responsaveis_treinamento (JA APLICADA 02/10) =====
+-- =========================================================================
+-- Sistemas › Checklist de Módulos: RESPONSÁVEIS PELO TREINAMENTO (02/10/2026)
+--
+-- Pedido do Pablo: "quando for definir o treinamento tem que ter um
+-- responsável ou responsáveis pelo treinamento". Nova coluna com UMA OU MAIS
+-- pessoas (profiles), obrigatória sempre que a etapa Treinamento tiver
+-- status — menos "Não se aplica" (não há treinamento a conduzir).
+--
+-- A trava fica também no banco (CHECK), não só na tela. NOT VALID: as 4
+-- linhas já marcadas "Treinado" sem responsável não quebram a migration,
+-- mas a próxima gravação delas exige o responsável — que é a regra.
+--
+-- O histórico (SIS_CHECKLIST_HIST) passa a registrar a troca, com os nomes.
+-- Idempotente. Aplicar no banco do app.
+-- =========================================================================
+
+ALTER TABLE public."SIS_CHECKLIST" ADD COLUMN IF NOT EXISTS treinamento_responsaveis uuid[] NOT NULL DEFAULT '{}';
+COMMENT ON COLUMN public."SIS_CHECKLIST".treinamento_responsaveis IS
+  'Quem conduz o treinamento (profiles.id). Obrigatório com status_treinamento preenchido, exceto nao_se_aplica. Mig 20261002000006.';
+
+ALTER TABLE public."SIS_CHECKLIST" DROP CONSTRAINT IF EXISTS sis_checklist_treinamento_responsavel_ck;
+ALTER TABLE public."SIS_CHECKLIST" ADD CONSTRAINT sis_checklist_treinamento_responsavel_ck CHECK (
+  status_treinamento IS NULL OR status_treinamento = 'nao_se_aplica'
+  OR coalesce(cardinality(treinamento_responsaveis), 0) > 0
+) NOT VALID;
+
+CREATE OR REPLACE FUNCTION public.sis_checklist_historico()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $f$
+DECLARE
+  v_nome text := coalesce(public.sis_ck_nome_usuario(auth.uid()), 'Sistema');
+  k text;
+  v_de text;
+  v_para text;
+  v_campos text[] := ARRAY['status_dev', 'status_implantacao', 'status_treinamento', 'status_validacao',
+                           'responsavel_id', 'usuario_chave_id', 'previsao_entrega', 'data_implantacao',
+                           'data_treinamento', 'data_validacao', 'observacoes', 'area', 'treinamento_responsaveis'];
+BEGIN
+  FOREACH k IN ARRAY v_campos LOOP
+    v_para := to_jsonb(NEW) ->> k;
+    v_de := CASE WHEN TG_OP = 'UPDATE' THEN to_jsonb(OLD) ->> k END;
+    -- Lista vazia conta como vazio (não registra "[] → []" na criação).
+    IF k = 'treinamento_responsaveis' THEN
+      v_para := nullif(v_para, '[]');
+      v_de := nullif(v_de, '[]');
+    END IF;
+    IF v_para IS DISTINCT FROM v_de AND NOT (TG_OP = 'INSERT' AND v_para IS NULL) THEN
+      IF k IN ('responsavel_id', 'usuario_chave_id') THEN
+        v_de := public.sis_ck_nome_usuario(v_de::uuid);
+        v_para := public.sis_ck_nome_usuario(v_para::uuid);
+      ELSIF k = 'treinamento_responsaveis' THEN
+        v_de := (SELECT string_agg(public.sis_ck_nome_usuario(x::uuid), ', ') FROM jsonb_array_elements_text(to_jsonb(OLD) -> k) x WHERE TG_OP = 'UPDATE');
+        v_para := (SELECT string_agg(public.sis_ck_nome_usuario(x::uuid), ', ') FROM jsonb_array_elements_text(to_jsonb(NEW) -> k) x);
+      END IF;
+      INSERT INTO public."SIS_CHECKLIST_HIST"(checklist_id, modulo_id, menu_id, campo, de, para, usuario_id, usuario_nome)
+      VALUES (NEW.id, NEW.modulo_id, NEW.menu_id, k, left(v_de, 300), left(v_para, 300), auth.uid(), v_nome);
+    END IF;
+  END LOOP;
+  RETURN NEW;
+END $f$;
+
+NOTIFY pgrst, 'reload schema';
+
+-- ROLLBACK
+-- ALTER TABLE public."SIS_CHECKLIST" DROP CONSTRAINT IF EXISTS sis_checklist_treinamento_responsavel_ck;
+-- ALTER TABLE public."SIS_CHECKLIST" DROP COLUMN IF EXISTS treinamento_responsaveis;
+-- Reaplicar sis_checklist_historico da 20260930000292 (sem treinamento_responsaveis).
+-- NOTIFY pgrst, 'reload schema';
+
+-- ===== 20261002000007_empregados_postos_da_planilha_senior (JA APLICADA 02/10) =====
+-- =========================================================================
+-- RH: POSTO dos colaboradores corrigido pela planilha da Senior (02/10/2026)
+--
+-- Pedido do Pablo: atualizar SOMENTE os postos, pelas planilhas exportadas
+-- da Senior (HAGG, SN, NH, CANAÃ — 12.761 linhas), para o colaborador cair
+-- no posto certo em RH › Ativos/Contratos (rh_ac_ativos lê "Nome do Posto").
+--
+-- Planilha → EMPREGADOS:  "Posto" → "Posto"  ·  "Descrição Reduzida (Posto)"
+-- → "Nome do Posto". Casamento por (Empresa, Cadastro) E nome igual
+-- (normalizado) — cadastro reaproveitado pela Senior não troca de pessoa.
+-- Resultado da conferência: 12.494 já iguais; 253 corrigidos (181 ativos que
+-- estavam SEM posto, o resto com posto diferente); nenhum posto apagado.
+-- 14 linhas da planilha sem cadastro no EMPREGADOS ficaram de fora (8
+-- trabalhando — admissões que o sync ainda não trouxe).
+--
+-- Só "Posto" e "Nome do Posto" mudam. Antes em EMPREGADOS_POSTO_BKP.
+-- Idempotente (reaplicar não muda nada). Aplicar no banco do app.
+-- =========================================================================
+
+CREATE TABLE IF NOT EXISTS public."EMPREGADOS_POSTO_BKP" (
+  empregado_id      bigint PRIMARY KEY,
+  posto_antigo      text,
+  nome_posto_antigo text,
+  criado_em         timestamptz NOT NULL DEFAULT now()
+);
+ALTER TABLE public."EMPREGADOS_POSTO_BKP" ENABLE ROW LEVEL SECURITY;
+
+CREATE TEMP TABLE _posto_novo (id bigint PRIMARY KEY, posto text, nome_posto text) ON COMMIT DROP;
+INSERT INTO _posto_novo (id, posto, nome_posto) VALUES
+  (11711, 'PO-00357', '05-1093-0022-0219-6-ANALISTA DE CONTRATO-44h-BENTO E DEMAIS'),
+  (12908, 'PO-00363', '05-1093-0022-01103-6-ANALISTA FINANCEIRO II-44h'),
+  (11722, 'PO-00414', '05-1093-0022-0234-6-SUPERVISOR(A) DE CONTRATOS-44h'),
+  (12912, 'PO-00233', '05-1093-0022-0196-6-ASSISTENTE DEP PESSOAL I-44h'),
+  (11796, 'PO-00247', '05-1093-0022-219-6-ANALISTA JURIDICO II-44h'),
+  (13521, '05.1093.0022.1103.S04', 'ADMINISTRATIVO - ANALISTA FINANCEIRO II - SIND 6'),
+  (13703, 'PO-00415', '05-1093-0022-0198-6-ASSISTENTE FINANCEIRO I-44h'),
+  (12650, 'PO-00416', '05-1093-0022-199-6-ANALISTA OPERACIONAL I-44h'),
+  (13729, 'PO-00287', '05-1097-0042-0015-4-SERV LIMPEZA - 40H - EMEI'),
+  (13606, 'PO-00288', '05-1097-0042-0015-4-SERV LIMPEZA - 40H - EMEF'),
+  (13525, 'PO-00288', '05-1097-0042-0015-4-SERV LIMPEZA - 40H - EMEF'),
+  (13615, 'PO-00288', '05-1097-0042-0015-4-SERV LIMPEZA - 40H - EMEF'),
+  (12358, 'PO-00417', '05-1093-0022-0197-6-ASSISTENTE DEP PESSOAL II-44h'),
+  (13558, 'PO-00287', '05-1097-0042-0015-4-SERV LIMPEZA - 40H - EMEI'),
+  (13710, 'PO-00178', '03-1067-0035-0067-14-APOIO-44H 5X2'),
+  (13709, 'PO-00178', '03-1067-0035-0067-14-APOIO-44H 5X2'),
+  (13566, 'PO-00177', '03-1067-0035-0064-15-PROFESSOR-44H 5X2'),
+  (13694, 'PO-00194', '02-1064-0008-0012-06-VIGIA-44H'),
+  (13609, 'PO-00207', '02-1066-0026-0013-6-PORTEIRO-6X1 TER A DOM'),
+  (13621, 'PO-00370', '02-1098-0032-0015-06-SERVENTE LIMPEZA-POA'),
+  (13607, 'PO-00194', '02-1064-0008-0012-06-VIGIA-44H'),
+  (13708, 'PO-00190', '02-1059-0019-0072-06-PORTEIRO-12X36 DIU'),
+  (13723, 'PO-00192', '02-1064-0008-0012-06-VIGIA-12X36 NOT'),
+  (13722, 'PO-00194', '02-1064-0008-0012-06-VIGIA-44H'),
+  (13602, 'PO-00370', '02-1098-0032-0015-06-SERVENTE LIMPEZA-POA'),
+  (10030, 'PO-00187', '02-1065-0024-0072-06-PORTEIRO-POSTO "B" 10H SEG A SEX'),
+  (13522, 'PO-00200', '02-1058-0011-0072-12-PORTEIRO-44H'),
+  (13613, 'PO-00370', '02-1098-0032-0015-06-SERVENTE LIMPEZA-POA'),
+  (13603, 'PO-00371', '02-1098-0032-0015-06-SERVENTE LIMPEZA-ENCARREGADO POA'),
+  (13589, 'PO-00194', '02-1064-0008-0012-06-VIGIA-44H'),
+  (13604, 'PO-00370', '02-1098-0032-0015-06-SERVENTE LIMPEZA-POA'),
+  (13554, '1', 'Posto padrão do sistema'),
+  (13640, 'PO-00192', '02-1064-0008-0012-06-VIGIA-12X36 NOT'),
+  (13605, 'PO-00370', '02-1098-0032-0015-06-SERVENTE LIMPEZA-POA'),
+  (13590, 'PO-00209', '02-1066-0026-0013-6-PORTEIRO-5X2 SEG A SEX'),
+  (13645, 'PO-00370', '02-1098-0032-0015-06-SERVENTE LIMPEZA-POA'),
+  (12926, '1', 'Posto padrão do sistema'),
+  (13614, 'PO-00221', '02-1091-0025-0072-6-PORTEIRO-30H ITEM 6'),
+  (13724, 'PO-00194', '02-1064-0008-0012-06-VIGIA-44H'),
+  (13683, 'PO-00196', '02-1055-0007-0015-07-AUX LIMPEZA-44H SEG A SEX'),
+  (13555, '1', 'Posto padrão do sistema'),
+  (11343, 'PO-00212', '02-1054-0031-0217-6-APRENDIZ-40h'),
+  (13629, 'PO-00370', '02-1098-0032-0015-06-SERVENTE LIMPEZA-POA'),
+  (13610, 'PO-00370', '02-1098-0032-0015-06-SERVENTE LIMPEZA-POA'),
+  (13655, 'PO-00410', '01-1113-0080-0231-06-AUX.ESCRITÓRIO-CACHOERINHA'),
+  (12925, '01.1057.0043.0001.S04', 'PREF DE BENTO GONÇALVES AUX E COP 5X2-AUXILIAR ADMINISTRATIVO-SIND: 37'),
+  (13611, 'PO-00154', '01-1057-0043-0001-37-AUX ADM - 200H SEG A SEX'),
+  (13592, 'PO-00007', '01-1099-0071-0061-06-RECEPCIONISTA-C 220 Hrs 12x36 Diu'),
+  (13695, 'PO-00381', '01-1113-0080-0120-06-TELEFONISTA-POA(4H)'),
+  (13531, 'PO-00254', '01-1037-0043-0015-37-SER. DE LIMPEZA-40h'),
+  (13627, 'PO-00174', '01-1050-0062-0015-6-AUX SERVIÇOS GERAIS-30H'),
+  (13608, 'PO-00117', '01-1043-0052-0015-41-AUX SERVIÇOS GERAIS-110H SEG A SEX'),
+  (13644, 'PO-00007', '01-1099-0071-0061-06-RECEPCIONISTA-C 220 Hrs 12x36 Diu'),
+  (13635, 'PO-00373', '01-1113-0080-0231-06-AUX.ESCRITÓRIO-POA'),
+  (13622, 'PO-00021', '01-1030-0055-0122-48-AUX DE LIMPEZA-44H'),
+  (13636, 'PO-00410', '01-1113-0080-0231-06-AUX.ESCRITÓRIO-CACHOERINHA'),
+  (13543, 'PO-00174', '01-1050-0062-0015-6-AUX SERVIÇOS GERAIS-30H'),
+  (13638, 'PO-00373', '01-1113-0080-0231-06-AUX.ESCRITÓRIO-POA'),
+  (13646, 'PO-00373', '01-1113-0080-0231-06-AUX.ESCRITÓRIO-POA'),
+  (13633, 'PO-00049', '01-1072-0055-0122-04-AUX DE LIMPEZA-44H'),
+  (13656, 'PO-00373', '01-1113-0080-0231-06-AUX.ESCRITÓRIO-POA'),
+  (13562, 'PO-00050', '01-1072-0055-0025-04-JARDINEIRO-44H'),
+  (13530, 'PO-00097', '01-1035-0035-0015-06-SERV LIMPEZA-5DIAS 44H SEG A SEX'),
+  (13713, 'PO-00408', '01-1113-0080-0231-06-AUX.ESCRITÓRIO-TORRES'),
+  (13575, 'PO-00002', '01-1099-0071-0061-06-RECEPCIONISTA-B 40H 5X2'),
+  (13528, 'PO-00174', '01-1050-0062-0015-6-AUX SERVIÇOS GERAIS-30H'),
+  (13639, 'PO-00130', '01-1049-0060-0015-06-AUX LIMPEZA-40H'),
+  (13677, 'PO-00069', '01-1097-0069-0203-08-OPERADOR DE RADIO-E 12X36 06 AS 18'),
+  (13706, 'PO-00007', '01-1099-0071-0061-06-RECEPCIONISTA-C 220 Hrs 12x36 Diu'),
+  (1209, 'PO-00007', '01-1099-0071-0061-06-RECEPCIONISTA-C 220 Hrs 12x36 Diu'),
+  (13526, 'PO-00117', '01-1043-0052-0015-41-AUX SERVIÇOS GERAIS-110H SEG A SEX'),
+  (13584, 'PO-00097', '01-1035-0035-0015-06-SERV LIMPEZA-5DIAS 44H SEG A SEX'),
+  (13658, 'PO-0380', '01-1113-0080-0236-06-TÉC.SECRETARIADO-POA'),
+  (13570, 'PO-00078', '01-1036-0038-0015-06-SERV DE LIMPEZA-200H SEG A SEX'),
+  (13705, 'PO-00174', '01-1050-0062-0015-6-AUX SERVIÇOS GERAIS-30H'),
+  (1476, 'PO-00065', '01-1097-0069-0201-06-TELEFONISTA TARM-A 6X1 06 AS 12'),
+  (13653, 'PO-00373', '01-1113-0080-0231-06-AUX.ESCRITÓRIO-POA'),
+  (13673, 'PO-00118', '01-1043-0052-0051-41-COZINHEIRO-220H SEG A SEX'),
+  (12150, 'PO-00162', '01-1102-0074-0015-56-SERVENTE LIMPEZA-12X36 NOT'),
+  (13657, 'PO-00308', '01-1109-077-0015-6-SERV LIMPEZA-40h-POA'),
+  (13647, 'PO-00308', '01-1109-077-0015-6-SERV LIMPEZA-40h-POA'),
+  (13552, '1', 'Posto padrão do sistema'),
+  (13618, 'PO-00067', '01-1097-0069-0201-08-TELEFONISTA TARM-C 6X1 18 AS 24'),
+  (13597, 'PO-00174', '01-1050-0062-0015-6-AUX SERVIÇOS GERAIS-30H'),
+  (13714, 'PO-00405', '01-1113-0080-0231-06-AUX.ESCRITÓRIO-SÃO LOURENÇO DO SUL'),
+  (13580, 'PO-00114', '01-1043-0052-0015-41-AUX SERVIÇOS GERAIS-220H SEG A SEX'),
+  (13726, 'PO-00310', '01-1109-077-0015-6-SERV LIMPEZA-20h-POA'),
+  (13547, 'PO-00174', '01-1050-0062-0015-6-AUX SERVIÇOS GERAIS-30H'),
+  (13716, 'PO-00395', '01-1113-0080-0231-06-AUX.ESCRITÓRIO-MOSTARDAS'),
+  (2634, 'PO-00365', '01-1112-0054-0136-42-AUX SAUDE BUCAL-30H-DIA'),
+  (13737, 'PO-00255', '01-1037-0043-0015-37-SER. DE LIMPEZA-12x36 Diu'),
+  (13560, 'PO-00174', '01-1050-0062-0015-6-AUX SERVIÇOS GERAIS-30H'),
+  (13545, 'PO-00174', '01-1050-0062-0015-6-AUX SERVIÇOS GERAIS-30H'),
+  (13565, 'PO-00130', '01-1049-0060-0015-06-AUX LIMPEZA-40H'),
+  (13616, 'PO-00255', '01-1037-0043-0015-37-SER. DE LIMPEZA-12x36 Diu'),
+  (13601, 'PO-00269', '01-1071-0055-0209-04-SERV. GERAIS-44H'),
+  (2842, 'PO-00161', '01-1102-0074-0015-56-SERVENTE LIMPEZA-12X36 DIU'),
+  (13577, 'PO-00254', '01-1037-0043-0015-37-SER. DE LIMPEZA-40h'),
+  (13599, 'PO-00310', '01-1109-077-0015-6-SERV LIMPEZA-20h-POA'),
+  (13563, 'PO-00307', '01-1109-077-0102-6-AUX SERV GERAIS-40h-CANOAS'),
+  (13699, 'PO-00379', '01-1113-0080-0235-02-TÉC.CONSTRUÇÃO CIVIL-POA'),
+  (12181, 'PO-00334', '01-1109-077-0015-6-SERV LIMPEZA-40H-SÃO LEOPOLDO'),
+  (13659, 'PO-00410', '01-1113-0080-0231-06-AUX.ESCRITÓRIO-CACHOERINHA'),
+  (13648, 'PO-00373', '01-1113-0080-0231-06-AUX.ESCRITÓRIO-POA'),
+  (13696, 'PO-00373', '01-1113-0080-0231-06-AUX.ESCRITÓRIO-POA'),
+  (13698, 'PO-00256', '01-1037-0043-0015-37-SER. DE LIMPEZA-12x36 Not'),
+  (13660, 'PO-00410', '01-1113-0080-0231-06-AUX.ESCRITÓRIO-CACHOERINHA'),
+  (13567, 'PO-00013', '01-1073-0055-0122-06-AUX DE LIMPEZA-44H'),
+  (13634, 'PO-00114', '01-1043-0052-0015-41-AUX SERVIÇOS GERAIS-220H SEG A SEX'),
+  (13637, 'PO-00174', '01-1050-0062-0015-6-AUX SERVIÇOS GERAIS-30H'),
+  (12084, 'PO-00113', '01-1042-0051-0001-12-AUX ADMINISTRATIVO-200H'),
+  (13540, 'PO-00002', '01-1099-0071-0061-06-RECEPCIONISTA-B 40H 5X2'),
+  (13588, 'PO-00097', '01-1035-0035-0015-06-SERV LIMPEZA-5DIAS 44H SEG A SEX'),
+  (3586, 'PO-00009', '01-1099-0071-0061-06-RECEPCIONISTA-D 220 Hrs 12x36 Not'),
+  (13701, 'PO-00411', '01-1113-0080-0235-02-TÉC.CONSTRUÇÃO CIVIL-CACHOERINHA'),
+  (12923, 'PO-00228', '01-1053-0022-0029-6-PEDAGOGA-44h'),
+  (3663, 'PO-00259', '01-1039-0045-0098-38-AUX CARGA E DESCARGA-44h-5X2-TRAM.'),
+  (12199, 'PO-00308', '01-1109-077-0015-6-SERV LIMPEZA-40h-POA'),
+  (13596, 'PO-00099', '01-1035-0035-0015-06-SER LIMPEZA-6DIAS 44H SEG A SAB 07:20'),
+  (13661, 'PO-00373', '01-1113-0080-0231-06-AUX.ESCRITÓRIO-POA'),
+  (13728, 'PO-00057', '01-1074-0055-0140-49-TRAB VOLANTE-44H'),
+  (13662, 'PO-00373', '01-1113-0080-0231-06-AUX.ESCRITÓRIO-POA'),
+  (13617, 'PO-00002', '01-1099-0071-0061-06-RECEPCIONISTA-B 40H 5X2'),
+  (13715, 'PO-00398', '01-1113-0080-0231-06-AUX.ESCRITÓRIO-PELOTAS'),
+  (13559, 'PO-00174', '01-1050-0062-0015-6-AUX SERVIÇOS GERAIS-30H'),
+  (13527, 'PO-00174', '01-1050-0062-0015-6-AUX SERVIÇOS GERAIS-30H'),
+  (13733, 'PO-00374', '01-1113-0080-0232-06-CONTÍNUO-POA'),
+  (13569, 'PO-00106', '01-1040-0046-0025-06-JARDINEIRO-40H 5X2'),
+  (13574, 'PO-00078', '01-1036-0038-0015-06-SERV DE LIMPEZA-200H SEG A SEX'),
+  (13630, 'PO-00030', '01-1030-0055-0080-0058-TRATORISTA-44H'),
+  (13524, 'PO-00069', '01-1097-0069-0203-08-OPERADOR DE RADIO-E 12X36 06 AS 18'),
+  (13678, 'PO-00373', '01-1113-0080-0231-06-AUX.ESCRITÓRIO-POA'),
+  (13523, 'PO-00068', '01-1097-0069-0201-08-TELEFONISTA TARM-D 6X1 00 AS 06'),
+  (4531, 'PO-00075', '01-1103-0038-0149-06-MERENDEIRA-200H SEG A SEX'),
+  (13541, 'PO-00110', '01-1042-0051-0041-12-RECEPCIONISTA-150H'),
+  (13692, 'PO-00311', '01-1109-077-0015-6-SERV LIMPEZA-12X36 DIUR-POA'),
+  (4638, 'PO-00131', '01-1049-0060-0161-06-SUPERVISOR OPERACIONAL-40H'),
+  (13564, 'PO-00355', '01-1110-078-0228-61-DIGITADOR-30H-5X2'),
+  (13649, 'PO-00373', '01-1113-0080-0231-06-AUX.ESCRITÓRIO-POA'),
+  (4855, 'PO-00147', '01-1052-0048-0130-02-OP. MAQUINA AREA SUJA-44H SEG A SAB'),
+  (13553, '01.1043.0052.0015.S01', 'PREFEITURA DE VERANOPOLIS-SERVENTE DE LIMPEZA-SIND: 41'),
+  (13576, 'PO-00155', '01-1057-0043-0001-37-AUX ADM - 210H 6X12'),
+  (13652, 'PO-00308', '01-1109-077-0015-6-SERV LIMPEZA-40h-POA'),
+  (13620, 'PO-00155', '01-1057-0043-0001-37-AUX ADM - 210H 6X12'),
+  (13663, 'PO-00373', '01-1113-0080-0231-06-AUX.ESCRITÓRIO-POA'),
+  (13641, 'PO-00401', '01-1113-0080-0231-06-AUX.ESCRITÓRIO-SÃO BORJA'),
+  (13732, 'PO-00106', '01-1040-0046-0025-06-JARDINEIRO-40H 5X2'),
+  (13738, 'PO-00366', '01-1112-0054-0136-42-AUX SAUDE BUCAL-30H-NOITE'),
+  (5247, 'PO-00365', '01-1112-0054-0136-42-AUX SAUDE BUCAL-30H-DIA'),
+  (13556, 'PO-00001', '01-1099-0071-0061-06-RECEPCIONISTA-A 30H 5X2'),
+  (13532, 'PO-00032', '01-1071-0055-0122-04-AUX DE LIMPEZA-44H'),
+  (13557, 'PO-00097', '01-1035-0035-0015-06-SERV LIMPEZA-5DIAS 44H SEG A SEX'),
+  (5509, 'PO-00105', '01-1040-0046-0102-06-AUX SERVIÇOS GERAIS-44H 5X2'),
+  (13671, 'PO-00373', '01-1113-0080-0231-06-AUX.ESCRITÓRIO-POA'),
+  (5627, 'PO-00075', '01-1103-0038-0149-06-MERENDEIRA-200H SEG A SEX'),
+  (13529, 'PO-00106', '01-1040-0046-0025-06-JARDINEIRO-40H 5X2'),
+  (13539, 'PO-00119', '01-1043-0052-0129-41-AUX COZINHA-220H SEG A SEX'),
+  (13700, 'PO-00066', '01-1097-0069-0201-08-TELEFONISTA TARM-B 6X1 12 AS 18'),
+  (13542, 'PO-00078', '01-1036-0038-0015-06-SERV DE LIMPEZA-200H SEG A SEX'),
+  (13679, 'PO-00392', '01-1113-0080-0231-06-AUX.ESCRITÓRIO-GUAIBA'),
+  (13631, 'PO-00255', '01-1037-0043-0015-37-SER. DE LIMPEZA-12x36 Diu'),
+  (13690, 'PO-00312', '01-1109-077-0015-6-SERV LIMPEZA-12X36 NOT-POA'),
+  (13625, 'PO-00298', '01-1108-0076-0134-6-COLETOR DE LIXO-220H'),
+  (13666, 'PO-00373', '01-1113-0080-0231-06-AUX.ESCRITÓRIO-POA'),
+  (13697, 'PO-00255', '01-1037-0043-0015-37-SER. DE LIMPEZA-12x36 Diu'),
+  (13689, 'PO-00256', '01-1037-0043-0015-37-SER. DE LIMPEZA-12x36 Not'),
+  (13581, 'PO-00311', '01-1109-077-0015-6-SERV LIMPEZA-12X36 DIUR-POA'),
+  (13600, 'PO-00310', '01-1109-077-0015-6-SERV LIMPEZA-20h-POA'),
+  (13681, 'PO-0380', '01-1113-0080-0236-06-TÉC.SECRETARIADO-POA'),
+  (13582, 'PO-00003', '01-1099-0071-0061-06-RECEPCIONISTA-B1 40H 5X2'),
+  (13667, 'PO-00378', '01-1113-0080-0231-06-AUX.ESCRITÓRIO-POA SUPERVISOR'),
+  (13550, '1', 'Posto padrão do sistema'),
+  (13546, 'PO-00174', '01-1050-0062-0015-6-AUX SERVIÇOS GERAIS-30H'),
+  (13623, 'PO-00055', '01-1074-0055-0084-49-AUX DE SERV GERAIS-44H'),
+  (6373, 'PO-00009', '01-1099-0071-0061-06-RECEPCIONISTA-D 220 Hrs 12x36 Not'),
+  (13568, 'PO-00099', '01-1035-0035-0015-06-SER LIMPEZA-6DIAS 44H SEG A SAB 07:20'),
+  (13573, 'PO-00162', '01-1102-0074-0015-56-SERVENTE LIMPEZA-12X36 NOT'),
+  (13711, 'PO-00061', '01-1074-0055-0143-49-AUX VETERINARIO-44H'),
+  (13598, 'PO-00002', '01-1099-0071-0061-06-RECEPCIONISTA-B 40H 5X2'),
+  (13687, 'PO-00373', '01-1113-0080-0231-06-AUX.ESCRITÓRIO-POA'),
+  (13619, 'PO-00130', '01-1049-0060-0015-06-AUX LIMPEZA-40H'),
+  (13731, 'PO-00254', '01-1037-0043-0015-37-SER. DE LIMPEZA-40h'),
+  (13632, 'PO-00013', '01-1073-0055-0122-06-AUX DE LIMPEZA-44H'),
+  (13672, 'PO-00373', '01-1113-0080-0231-06-AUX.ESCRITÓRIO-POA'),
+  (6939, 'PO-00105', '01-1040-0046-0102-06-AUX SERVIÇOS GERAIS-44H 5X2'),
+  (13668, 'PO-00373', '01-1113-0080-0231-06-AUX.ESCRITÓRIO-POA'),
+  (13665, 'PO-00085', '01-1034-0020-0025-07-JARDINEIRO-220H SEG A SAB'),
+  (13727, 'PO-00051', '01-1072-0055-0209-04-SERVICOS GERAIS- CARGA DESCARGA-44H'),
+  (13717, 'PO-00372', '01-1113-0080-0092-06-ALMOXARIFE-POA'),
+  (13578, 'PO-00106', '01-1040-0046-0025-06-JARDINEIRO-40H 5X2'),
+  (13561, 'PO-00174', '01-1050-0062-0015-6-AUX SERVIÇOS GERAIS-30H'),
+  (13624, 'PO-00099', '01-1035-0035-0015-06-SER LIMPEZA-6DIAS 44H SEG A SAB 07:20'),
+  (12035, 'PO-00174', '01-1050-0062-0015-6-AUX SERVIÇOS GERAIS-30H'),
+  (13594, 'PO-00284', '01-1107-0075-0139-6-INTERPRETE DE LIBRAS-30h-POA'),
+  (13587, 'PO-00305', '01-1109-077-0102-6-AUX SERV GERAIS-40h-POA'),
+  (12041, 'PO-00176', '01-1050-0062-0100-6-SUPERVISOR-44H 5 DIAS'),
+  (13720, 'PO-00106', '01-1040-0046-0025-06-JARDINEIRO-40H 5X2'),
+  (13718, 'PO-00394', '01-1113-0080-0231-06-AUX.ESCRITÓRIO-JAGUARÃO'),
+  (13682, 'PO-00412', '01-1113-0080-0231-06-AUX.ESCRITÓRIO-CACHOERINHA SUPERVISOR'),
+  (13643, 'PO-00002', '01-1099-0071-0061-06-RECEPCIONISTA-B 40H 5X2'),
+  (13591, 'PO-00145', '01-1105-0067-0183-08-MENSAGEIRO-44H-6X1 659.2024'),
+  (13688, 'PO-00373', '01-1113-0080-0231-06-AUX.ESCRITÓRIO-POA'),
+  (13628, 'PO-00023', '01-1030-0055-0140-48-TRAB VOLANTE AGRI-44H'),
+  (13734, 'PO-00377', '01-1113-0080-0041-06-RECEPCIONISTA-POA'),
+  (13595, 'PO-00108', '01-1041-0050-0122-06-AUX SERVIÇOS GERAIS-44H SEG A SEX'),
+  (13551, '1', 'Posto padrão do sistema'),
+  (13572, 'PO-00001', '01-1099-0071-0061-06-RECEPCIONISTA-A 30H 5X2'),
+  (13704, 'PO-00308', '01-1109-077-0015-6-SERV LIMPEZA-40h-POA'),
+  (13651, 'PO-00130', '01-1049-0060-0015-06-AUX LIMPEZA-40H'),
+  (13680, 'PO-00326', '01-1109-077-0015-6-SERV LIMPEZA-12X36 DIUR-CANOAS'),
+  (7977, 'PO-00002', '01-1099-0071-0061-06-RECEPCIONISTA-B 40H 5X2'),
+  (13626, 'PO-00173', '01-1050-0062-0015-6-AUX SERVIÇOS GERAIS-36H'),
+  (13579, 'PO-00254', '01-1037-0043-0015-37-SER. DE LIMPEZA-40h'),
+  (13535, 'PO-00254', '01-1037-0043-0015-37-SER. DE LIMPEZA-40h'),
+  (13586, 'PO-00104', '01-1094-0053-0118-48-LIDER DE GRUPO-44H SEG A SEX'),
+  (12442, 'PO-00168', '01-1048-0059-0157-52-MOTORISTA CAT D-44H'),
+  (12924, '1', 'Posto padrão do sistema'),
+  (12922, 'PO-00300', '01-1108-0076-0100-6-SUPERVISOR-220H'),
+  (13571, 'PO-00254', '01-1037-0043-0015-37-SER. DE LIMPEZA-40h'),
+  (13674, 'PO-00373', '01-1113-0080-0231-06-AUX.ESCRITÓRIO-POA'),
+  (13664, 'PO-00410', '01-1113-0080-0231-06-AUX.ESCRITÓRIO-CACHOERINHA'),
+  (13693, 'PO-00311', '01-1109-077-0015-6-SERV LIMPEZA-12X36 DIUR-POA'),
+  (13719, 'PO-00402', '01-1113-0080-0231-06-AUX.ESCRITÓRIO-SANTA VITORIA DO PALMAR'),
+  (8291, 'PO-00075', '01-1103-0038-0149-06-MERENDEIRA-200H SEG A SEX'),
+  (13736, 'PO-00327', '01-1109-077-0015-6-SERV LIMPEZA-20H-CANOAS'),
+  (13548, 'PO-00149', '01-1052-0048-0130-02-OP. MAQUINA AREA LIMPA-44H SEG A SAB'),
+  (13650, 'PO-00002', '01-1099-0071-0061-06-RECEPCIONISTA-B 40H 5X2'),
+  (13538, 'PO-0361', '01-1111-0079-0231-06-MONITOR DE OFICINA-25H'),
+  (13642, 'PO-00173', '01-1050-0062-0015-6-AUX SERVIÇOS GERAIS-36H'),
+  (13583, 'PO-00041', '01-1075-0055-0122-49-AUX DE LIMPEZA-44H'),
+  (8478, 'PO-00007', '01-1099-0071-0061-06-RECEPCIONISTA-C 220 Hrs 12x36 Diu'),
+  (13549, '1', 'Posto padrão do sistema'),
+  (13684, 'PO-00373', '01-1113-0080-0231-06-AUX.ESCRITÓRIO-POA'),
+  (13585, 'PO-00311', '01-1109-077-0015-6-SERV LIMPEZA-12X36 DIUR-POA'),
+  (13725, 'PO-00002', '01-1099-0071-0061-06-RECEPCIONISTA-B 40H 5X2'),
+  (8635, 'PO-00075', '01-1103-0038-0149-06-MERENDEIRA-200H SEG A SEX'),
+  (13593, 'PO-00174', '01-1050-0062-0015-6-AUX SERVIÇOS GERAIS-30H'),
+  (13702, 'PO-00386', '01-1113-0080-0231-06-AUX.ESCRITÓRIO-CACHOEIRA DO SUL(1)'),
+  (13685, 'PO-00373', '01-1113-0080-0231-06-AUX.ESCRITÓRIO-POA'),
+  (13544, 'PO-00309', '01-1109-077-0015-6-SERV LIMPEZA-30h-POA'),
+  (13686, 'PO-00373', '01-1113-0080-0231-06-AUX.ESCRITÓRIO-POA'),
+  (13735, 'PO-00382', '01-1113-0080-0231-06-AUX.ESCRITÓRIO-PALMARES DO SUL'),
+  (13691, 'PO-00311', '01-1109-077-0015-6-SERV LIMPEZA-12X36 DIUR-POA'),
+  (13730, 'PO-00305', '01-1109-077-0102-6-AUX SERV GERAIS-40h-POA'),
+  (13654, 'PO-00066', '01-1097-0069-0201-08-TELEFONISTA TARM-B 6X1 12 AS 18'),
+  (8862, 'PO-00007', '01-1099-0071-0061-06-RECEPCIONISTA-C 220 Hrs 12x36 Diu'),
+  (13675, 'PO-0380', '01-1113-0080-0236-06-TÉC.SECRETARIADO-POA'),
+  (13676, 'PO-0380', '01-1113-0080-0236-06-TÉC.SECRETARIADO-POA'),
+  (13721, 'PO-00002', '01-1099-0071-0061-06-RECEPCIONISTA-B 40H 5X2'),
+  (13707, 'PO-00174', '01-1050-0062-0015-6-AUX SERVIÇOS GERAIS-30H'),
+  (13712, 'PO-00330', '01-1109-077-0015-6-SERV LIMPEZA-20H-DP ESTEIO'),
+  (13669, 'PO-00373', '01-1113-0080-0231-06-AUX.ESCRITÓRIO-POA'),
+  (13670, 'PO-00387', '01-1113-0080-0231-06-AUX.ESCRITÓRIO-CACHOEIRA DO SUL(2)');
+
+INSERT INTO public."EMPREGADOS_POSTO_BKP" (empregado_id, posto_antigo, nome_posto_antigo)
+SELECT e."ID", e."Posto", e."Nome do Posto"
+  FROM public."EMPREGADOS" e JOIN _posto_novo n ON n.id = e."ID"
+ WHERE e."Posto" IS DISTINCT FROM n.posto OR e."Nome do Posto" IS DISTINCT FROM n.nome_posto
+ON CONFLICT (empregado_id) DO NOTHING;
+
+UPDATE public."EMPREGADOS" e
+   SET "Posto" = n.posto, "Nome do Posto" = n.nome_posto
+  FROM _posto_novo n
+ WHERE n.id = e."ID"
+   AND (e."Posto" IS DISTINCT FROM n.posto OR e."Nome do Posto" IS DISTINCT FROM n.nome_posto);
+
+-- ROLLBACK
+-- UPDATE public."EMPREGADOS" e SET "Posto" = b.posto_antigo, "Nome do Posto" = b.nome_posto_antigo
+--   FROM public."EMPREGADOS_POSTO_BKP" b WHERE b.empregado_id = e."ID";
