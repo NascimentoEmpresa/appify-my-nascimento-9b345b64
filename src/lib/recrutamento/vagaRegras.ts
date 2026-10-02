@@ -274,6 +274,16 @@ export const STATUS_VAGA_DIRETORIA = "Pendente Diretoria";
 export const statusInicialVaga = (administrativa: boolean, setor?: string | null): string =>
   ehVagaAdministrativa({ administrativa, setor }) ? STATUS_VAGA_DIRETORIA : "Pendente Analista";
 
+/**
+ * O nome do status NA TELA (02/10/2026). "Pendente Analista" aparece como
+ * "Pendente Operacional": desde a mig 287 a etapa 1 é de quem tem "APROVA
+ * VAGAS", no Operacional ou em Licitações. Só o rótulo muda — o valor no
+ * banco continua "Pendente Analista" (gatilhos, filtros e histórico dependem
+ * dele), então compare sempre o valor, nunca o rótulo.
+ */
+export const rotuloStatusVaga = (status: string | null | undefined): string =>
+  status === "Pendente Analista" ? "Pendente Operacional" : String(status ?? "");
+
 export const normSetorVaga = (s: string | null | undefined): string =>
   String(s ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim().toUpperCase();
 

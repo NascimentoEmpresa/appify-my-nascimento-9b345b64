@@ -11,6 +11,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { FiltroContratos, passaNoFiltroContratos } from "@/components/solicitacoes/FiltroContratos";
+import { useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import {
@@ -24,17 +25,20 @@ import {
 } from "@/lib/recrutamento/acompanhamento";
 
 // =====================================================================
-// Recrutamento e Seleção › ACOMPANHAR COLABORADORES / ACOMPANHAR EXPERIÊNCIA
-// (25/09/2026, mig 20260930000245) — a mesma tela, dois recortes:
+// Recrutamento e Seleção › ACOMPANHAR COLABORADORES
+// (25/09/2026, mig 20260930000245).
 //
-//   colaboradores → todo mundo admitido no período (padrão: últimos 90
-//                   dias, filtro por DATA DE ADMISSÃO), inclusive quem já
-//                   saiu — é o histórico, como a planilha do RH.
-//   experiencia   → só quem ainda está no contrato e tem até 90 dias de
-//                   admissão: a fila de check-ins, ordenada pelo que vence.
+// Até 02/10/2026 eram duas telas com este mesmo painel em dois "modos" —
+// Acompanhar Colaboradores (admitidos no período, inclusive quem saiu) e
+// Acompanhar Experiência (só quem está no contrato com até 90 dias). Eram
+// quase a mesma coisa e viraram uma só (mig 20260930000285): a Experiência
+// agora é a opção "Em experiência" do filtro de situação, e o filtro de
+// pendência (check-in a fazer / atrasado) vale para tudo. Os check-ins
+// vencendo vêm primeiro dentro de cada contrato. A rota antiga redireciona
+// para cá já com ?situacao=experiencia.
 //
 // O layout é o do Excel CONTRATOS_VIGENTES: um bloco por CONTRATO, e as
-// colunas NOME · CARGO · CIDADE · ADMISSÃO · 7 · 30 · 60 · 90 DIAS ·
+// colunas NOME · CARGO · CIDADE · ADMISSÃO · 30 · 60 · 90 DIAS ·
 // PERMANECEU? · DATA SAÍDA · DEMITIDO/DEMISSIONÁRIO · MOTIVO · OBSERVAÇÃO.
 // Cada marco é um botão: registra o check-in (resultado, data, observação).
 // "Exportar Excel" devolve a planilha no mesmo formato.
@@ -48,11 +52,16 @@ import {
 
 const db = supabase as unknown as SupabaseClient;
 
-export type ModoAcomp = "colaboradores" | "experiencia";
-const MENU: Record<ModoAcomp, string> = {
-  colaboradores: "recrutamento_acompanhar_colaboradores",
-  experiencia: "recrutamento_acompanhar_experiencia",
-};
+const MENU = "recrutamento_acompanhar_colaboradores";
+// Menu da tela antiga, desativado na fusão (mig 285); a permissão dele ainda
+// vale — o banco (recrut_acomp_pode) aceita qualquer um dos dois.
+const MENU_ANTIGO_EXPERIENCIA = "recrutamento_acompanhar_experiencia";
+
+type Situacao = "todos" | "experiencia" | "no_contrato" | "sairam" | "nao_admitidos";
+const SITUACOES: Situacao[] = ["todos", "experiencia", "no_contrato", "sairam", "nao_admitidos"];
+
+/** Em experiência: ainda no contrato e com até 90 dias de admissão (ou ainda esperando a Senior). */
+const emExperiencia = (l: LinhaAcomp) => !l.saiu && (!l.admitido_senior || (l.dias ?? 0) <= DIAS_EXPERIENCIA);
 
 function Kpi({ titulo, valor, icone: Icone, cor, dica }: { titulo: string; valor: number; icone: LucideIcon; cor: string; dica?: string }) {
   return (
@@ -68,7 +77,7 @@ function Kpi({ titulo, valor, icone: Icone, cor, dica }: { titulo: string; valor
   );
 }
 
-/** O botão de um marco (7/30/60/90) — a "célula" do Excel. */
+/** O botão de um marco (30/60/90) — a "célula" do Excel. */
 function CelulaMarco({ estado, onClick, podeEditar }: { estado: EstadoMarco; onClick: () => void; podeEditar: boolean }) {
   if (estado.tipo === "aguardando") return <span className="text-xs text-muted-foreground" title="Conta a partir da admissão na Senior">aguarda</span>;
   if (estado.tipo === "nao_se_aplica") return <span className="text-xs text-muted-foreground" title="Saiu antes deste marco">—</span>;
@@ -94,9 +103,10 @@ function CelulaMarco({ estado, onClick, podeEditar }: { estado: EstadoMarco; onC
   );
 }
 
-export function PainelAcompanhamento({ modo }: { modo: ModoAcomp }) {
+export function PainelAcompanhamento() {
   const { can } = usePermissoes();
-  const podeEditar = can("alterar", undefined, MENU[modo]);
+  const podeEditar = can("alterar", undefined, MENU) || can("alterar", undefined, MENU_ANTIGO_EXPERIENCIA);
+  const [params] = useSearchParams();
 
   const [ini, setIni] = useState(() => somarDias(hojeIso(), -90));
   const [fim, setFim] = useState(() => hojeIso());
@@ -105,18 +115,20 @@ export function PainelAcompanhamento({ modo }: { modo: ModoAcomp }) {
   const [busca, setBusca] = useState("");
   const [fContratos, setFContratos] = useState<string[]>([]);
   const [fOrigem, setFOrigem] = useState<"todos" | "recrutamento">("todos");
-  const [fSituacao, setFSituacao] = useState<"todos" | "no_contrato" | "sairam" | "nao_admitidos">("todos");
+  const [fSituacao, setFSituacao] = useState<Situacao>(() => {
+    const p = params.get("situacao") as Situacao | null;
+    return p && SITUACOES.includes(p) ? p : "todos";
+  });
   const [fPendencia, setFPendencia] = useState<"todas" | "pendentes" | "atrasados">("todas");
   const [fechados, setFechados] = useState<Set<string>>(new Set());
 
   const carregar = useCallback(async () => {
     setCarregando(true);
-    const { data, error } = await db.rpc("recrut_acompanhamento_lista", modo === "experiencia"
-      ? { _modo: "experiencia" } : { _modo: "colaboradores", _ini: ini, _fim: fim });
+    const { data, error } = await db.rpc("recrut_acompanhamento_lista", { _modo: "colaboradores", _ini: ini, _fim: fim });
     if (error) toast.error("Erro ao carregar: " + error.message);
     setLinhas(((data as { linhas?: LinhaAcomp[] } | null)?.linhas ?? []) as LinhaAcomp[]);
     setCarregando(false);
-  }, [modo, ini, fim]);
+  }, [ini, fim]);
   useEffect(() => { carregar(); }, [carregar]);
 
   const hoje = hojeIso();
@@ -125,6 +137,7 @@ export function PainelAcompanhamento({ modo }: { modo: ModoAcomp }) {
     const r = linhas.filter((l) => {
       if (!passaNoFiltroContratos(l, "contrato", fContratos)) return false;
       if (fOrigem === "recrutamento" && l.origem !== "recrutamento") return false;
+      if (fSituacao === "experiencia" && !emExperiencia(l)) return false;
       if (fSituacao === "no_contrato" && (l.saiu || !l.admitido_senior)) return false;
       if (fSituacao === "sairam" && !l.saiu) return false;
       if (fSituacao === "nao_admitidos" && l.admitido_senior) return false;
@@ -136,13 +149,11 @@ export function PainelAcompanhamento({ modo }: { modo: ModoAcomp }) {
       if (!q) return true;
       return [l.nome, l.cpf, l.cargo, l.contrato, l.local, l.cidade].some((x) => String(x ?? "").toLowerCase().includes(q));
     });
-    // Experiência: dentro de cada contrato, primeiro quem tem check vencendo.
-    if (modo === "experiencia") {
-      const peso = (l: LinhaAcomp) => { const p = proximaPendencia(l, hoje); return !p ? 9 : p.estado.tipo === "atrasado" ? 0 : p.estado.tipo === "hoje" ? 1 : 2; };
-      r.sort((a, b) => peso(a) - peso(b) || String(a.admissao ?? "9").localeCompare(String(b.admissao ?? "9")));
-    }
+    // Dentro de cada contrato, primeiro quem tem check vencendo.
+    const peso = (l: LinhaAcomp) => { const p = proximaPendencia(l, hoje); return !p ? 9 : p.estado.tipo === "atrasado" ? 0 : p.estado.tipo === "hoje" ? 1 : 2; };
+    r.sort((a, b) => peso(a) - peso(b) || String(a.admissao ?? "9").localeCompare(String(b.admissao ?? "9")));
     return r;
-  }, [linhas, busca, fContratos, fOrigem, fSituacao, fPendencia, modo, hoje]);
+  }, [linhas, busca, fContratos, fOrigem, fSituacao, fPendencia, hoje]);
 
   const grupos = useMemo(() => agruparPorContrato(filtradas), [filtradas]);
   const resumo = useMemo(() => resumoAcomp(filtradas, hoje), [filtradas, hoje]);
@@ -202,7 +213,7 @@ export function PainelAcompanhamento({ modo }: { modo: ModoAcomp }) {
   // ── Exportar no formato da planilha ─────────────────────────────────
   const exportar = async () => {
     const XLSX: any = await import("xlsx");
-    const cab = ["NOME DO COLABORADOR", "CARGO", "CIDADE", "DATA ADMISSÃO", "7 DIAS", "30 DIAS", "60 DIAS", "90 DIAS",
+    const cab = ["NOME DO COLABORADOR", "CARGO", "CIDADE", "DATA ADMISSÃO", "30 DIAS", "60 DIAS", "90 DIAS",
       "PERMANECEU APÓS EXPERIÊNCIA?", "DATA SAÍDA", "DEMITIDO / DEMISSIONÁRIO", "MOTIVO", "OBSERVAÇÃO"];
     const celMarco = (l: LinhaAcomp, m: Marco) => {
       const e = estadoDoMarco(l, m, hoje);
@@ -223,38 +234,32 @@ export function PainelAcompanhamento({ modo }: { modo: ModoAcomp }) {
       aoa.push([]);
     }
     const ws = XLSX.utils.aoa_to_sheet(aoa);
-    ws["!cols"] = [34, 26, 18, 13, 22, 22, 22, 22, 16, 12, 18, 28, 36].map((w) => ({ wch: w }));
+    ws["!cols"] = [34, 26, 18, 13, 22, 22, 22, 16, 12, 18, 28, 36].map((w) => ({ wch: w }));
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Acompanhamento");
-    XLSX.writeFile(wb, `acompanhamento-${modo}-${hoje}.xlsx`);
+    XLSX.writeFile(wb, `acompanhamento-${hoje}.xlsx`);
   };
 
   const alternarGrupo = (c: string) => setFechados((s) => { const n = new Set(s); n.has(c) ? n.delete(c) : n.add(c); return n; });
 
   return (
     <>
-      <div className={cn("mb-5 grid gap-3 sm:grid-cols-2", modo === "experiencia" ? "lg:grid-cols-4" : "lg:grid-cols-5")}>
-        <Kpi titulo={modo === "experiencia" ? "Em experiência" : "Admitidos no período"} valor={resumo.pessoas} icone={Users} cor="bg-blue-100 text-blue-700"
+      <div className="mb-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+        <Kpi titulo={fSituacao === "experiencia" ? "Em experiência" : "Admitidos no período"} valor={resumo.pessoas} icone={Users} cor="bg-blue-100 text-blue-700"
              dica={`${resumo.doRecrutamento} vieram do Recrutamento · ${resumo.naoAdmitidos} ainda não admitidos na Senior`} />
         <Kpi titulo="Check-ins atrasados" valor={resumo.atrasados} icone={AlertTriangle} cor="bg-red-100 text-red-700" />
         <Kpi titulo="Vencem hoje / em breve" valor={resumo.hoje + resumo.breve} icone={CalendarClock} cor="bg-amber-100 text-amber-700"
              dica={`Hoje: ${resumo.hoje} · próximos 3 dias: ${resumo.breve}`} />
         <Kpi titulo="Check-ins feitos" valor={resumo.feitos} icone={CheckCircle2} cor="bg-green-100 text-green-700"
              dica={`${resumo.negativos} com resultado negativo`} />
-        {modo === "colaboradores" && (
-          <Kpi titulo="Permaneceram / saíram" valor={resumo.permaneceram} icone={UserCheck} cor="bg-emerald-100 text-emerald-700"
-               dica={`${resumo.permaneceram} permaneceram após a experiência · ${resumo.sairam} saíram`} />
-        )}
+        <Kpi titulo="Permaneceram / saíram" valor={resumo.permaneceram} icone={UserCheck} cor="bg-emerald-100 text-emerald-700"
+             dica={`${resumo.permaneceram} permaneceram após a experiência · ${resumo.sairam} saíram`} />
       </div>
 
       <Card className="mb-4">
         <CardContent className="flex flex-wrap items-end gap-3 py-4">
-          {modo === "colaboradores" && (
-            <>
-              <div><Label className="text-xs">Admitidos de</Label><Input type="date" className="w-40" value={ini} max={fim} onChange={(e) => setIni(e.target.value)} /></div>
-              <div><Label className="text-xs">até</Label><Input type="date" className="w-40" value={fim} min={ini} onChange={(e) => setFim(e.target.value)} /></div>
-            </>
-          )}
+          <div><Label className="text-xs">Admitidos de</Label><Input type="date" className="w-40" value={ini} max={fim} onChange={(e) => setIni(e.target.value)} /></div>
+          <div><Label className="text-xs">até</Label><Input type="date" className="w-40" value={fim} min={ini} onChange={(e) => setFim(e.target.value)} /></div>
           <FiltroContratos linhas={linhas} campo="contrato" selecionados={fContratos} onChange={setFContratos} />
           <Select value={fOrigem} onValueChange={(v) => setFOrigem(v as typeof fOrigem)}>
             <SelectTrigger className="w-52"><SelectValue /></SelectTrigger>
@@ -263,26 +268,24 @@ export function PainelAcompanhamento({ modo }: { modo: ModoAcomp }) {
               <SelectItem value="recrutamento">Só vindos do Recrutamento</SelectItem>
             </SelectContent>
           </Select>
-          {modo === "colaboradores" ? (
-            <Select value={fSituacao} onValueChange={(v) => setFSituacao(v as typeof fSituacao)}>
-              <SelectTrigger className="w-44"><SelectValue /></SelectTrigger>
+          <Select value={fSituacao} onValueChange={(v) => setFSituacao(v as Situacao)}>
+              <SelectTrigger className="w-56"><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="todos">Todas as situações</SelectItem>
+                <SelectItem value="experiencia">Em experiência (até 90 dias)</SelectItem>
                 <SelectItem value="no_contrato">Ainda no contrato</SelectItem>
                 <SelectItem value="sairam">Já saíram</SelectItem>
                 <SelectItem value="nao_admitidos">Ainda não admitidos na Senior</SelectItem>
               </SelectContent>
             </Select>
-          ) : (
             <Select value={fPendencia} onValueChange={(v) => setFPendencia(v as typeof fPendencia)}>
               <SelectTrigger className="w-56"><SelectValue /></SelectTrigger>
               <SelectContent>
-                <SelectItem value="todas">Todos em experiência</SelectItem>
+                <SelectItem value="todas">Todos os check-ins</SelectItem>
                 <SelectItem value="pendentes">Com check-in a fazer</SelectItem>
                 <SelectItem value="atrasados">Com check-in atrasado</SelectItem>
               </SelectContent>
             </Select>
-          )}
           <div className="relative">
             <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
             <Input className="w-60 pl-8" placeholder="Nome, CPF, cargo, contrato…" value={busca} onChange={(e) => setBusca(e.target.value)} />
@@ -298,7 +301,7 @@ export function PainelAcompanhamento({ modo }: { modo: ModoAcomp }) {
         <p className="py-10 text-center text-sm text-muted-foreground"><Loader2 className="mr-2 inline h-4 w-4 animate-spin" />Carregando…</p>
       ) : grupos.length === 0 ? (
         <Card><CardContent className="py-10 text-center text-sm text-muted-foreground">
-          {modo === "experiencia" ? "Ninguém em experiência com esse filtro." : "Nenhuma admissão no período com esse filtro."}
+          Nenhuma admissão no período com esse filtro.
         </CardContent></Card>
       ) : (
         <div className="space-y-4">

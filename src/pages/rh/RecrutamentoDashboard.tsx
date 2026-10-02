@@ -6,7 +6,7 @@ import {
   LineChart, Line, PieChart, Pie, Legend,
 } from "recharts";
 import { FiltroContratos, passaNoFiltroContratos } from "@/components/solicitacoes/FiltroContratos";
-import { STATUS_VAGA_MORTA } from "@/lib/recrutamento/vagaRegras";
+import { STATUS_VAGA_MORTA, rotuloStatusVaga } from "@/lib/recrutamento/vagaRegras";
 
 // =====================================================================
 // RECRUTAMENTO — Dashboard (RH e Diretoria — a MESMA tela nas duas rotas)
@@ -292,7 +292,7 @@ export default function RecrutamentoDashboard() {
             {FASES.map(f => <option key={f} value={f}>{f} · {contPorFase.get(f) ?? 0}</option>)}
           </optgroup>
           <optgroup label="Status (cada etapa)">
-            {statusOrdenados.map(([st, n]) => <option key={st} value={"status:" + st}>{st} · {n}</option>)}
+            {statusOrdenados.map(([st, n]) => <option key={st} value={"status:" + st}>{rotuloStatusVaga(st)} · {n}</option>)}
           </optgroup>
         </select>
         <select className="rdb-fi" value={fMotivo} onChange={e => setFMotivo(e.target.value)}><option value="">Todos os motivos</option>{motivos.map(m => <option key={m}>{m}</option>)}</select>
