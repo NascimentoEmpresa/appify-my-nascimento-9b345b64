@@ -28,6 +28,13 @@ log "gateway em :8000   |   site: $URL_SITE"
 # isso ele reinicia em loop e enterra o log dos outros processos.
 if [[ -f /opt/storage/.nativo-ok ]]; then
   log "storage: modulo nativo OK, sera iniciado"
+  # A pasta dos anexos fica DENTRO do disco persistente, e isso nao e detalhe:
+  # ate 02/10/2026 ela apontava para /var/lib/storage, que mora no overlay do
+  # container - ou seja, todo arquivo enviado aqui sumiria no deploy seguinte,
+  # sem erro nenhum, so uma pasta vazia. Esse mesmo descuido ja custou 82
+  # anexos de patrimonio em outro servico da Render.
+  mkdir -p /var/lib/postgresql/data/storage
+  chown -R 1000:1000 /var/lib/postgresql/data/storage 2>/dev/null || true
   sed -i '/^\[program:storage\]/,/^\[/{s/^autostart=false/autostart=true/}' /etc/supervisor/supervisord.conf
 else
   log "storage: DESATIVADO (fs-xattr nao recompilou). Anexos nao funcionam nesta replica."
