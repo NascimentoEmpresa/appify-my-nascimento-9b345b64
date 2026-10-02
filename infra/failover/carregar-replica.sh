@@ -213,6 +213,45 @@ sql_ignora "notify pgrst, 'reload schema';" >/dev/null
 # quem faz isso e o db-init/, na inicializacao. Num Postgres puro, o operador
 # cria os papeis com senha antes de rodar este script.
 
+# --- 6d. A TRAVA DE SOMENTE LEITURA, REAPLICADA ----------------------------
+# Tem que ser AQUI, depois de cada restore: as permissoes vem do dump da
+# PRODUCAO, onde escrever e permitido. Todo restore desfaz esta trava, entao
+# reaplica-la no fim de cada carga e o que a torna permanente.
+#
+# POR QUE REVOKE E NAO default_transaction_read_only
+# A primeira tentativa foi
+#     alter role authenticated set default_transaction_read_only = on;
+# Testado na replica em 02/10/2026 contra a API real: a configuracao aparece
+# em pg_roles nos TRES papeis e MESMO ASSIM o POST devolveu 201 e o PATCH
+# devolveu 204 - a escrita entrou. O motivo: o PostgREST abre a transacao
+# declarando o modo conforme o metodo HTTP, e esse BEGIN ... READ WRITE
+# sobrescreve o default do papel. Aquela configuracao nao protege nada neste
+# caminho. REVOKE e verificado pelo Postgres independente do modo da
+# transacao, entao e o que de fato recusa.
+#
+# O QUE ISTO COBRE: toda escrita direta pela API REST (POST, PATCH, PUT,
+# DELETE em tabela), que e como o ERP grava na enorme maioria das telas.
+#
+# O QUE NAO COBRE: RPC marcada SECURITY DEFINER, que roda com os privilegios
+# do DONO e por isso ignora este REVOKE. Fechar exigiria revogar EXECUTE
+# funcao a funcao, separando as que escrevem das que so leem - trabalho ainda
+# nao feito, anotado no README. Enquanto nao for, a contingencia e segura
+# para consulta, e uma tela que grave por RPC ainda conseguiria gravar.
+#
+# O GoTrue e o Storage ficam de fora: login ESCREVE (sessao, refresh token,
+# last_sign_in_at) e uma replica onde ninguem entra nao serve de nada. Eles
+# usam supabase_auth_admin e supabase_storage_admin.
+#
+# Liberar escrita e decisao humana: promover.sh promover.
+if [[ -f /var/lib/postgresql/data/PROMOVIDA ]]; then
+  log "replica PROMOVIDA - deixando a escrita liberada (nao travando)"
+else
+  log "Reaplicando a trava de somente leitura (o restore acabou de apaga-la)..."
+  sql_ignora "revoke insert, update, delete, truncate on all tables in schema public from authenticated, anon;" >/dev/null
+  sql_ignora "revoke usage on all sequences in schema public from authenticated, anon;" >/dev/null
+  sql_ignora "notify pgrst, 'reload schema';" >/dev/null
+fi
+
 # --- 7. conferir ------------------------------------------------------------
 tabelas=$(sql_ignora "select count(*) from information_schema.tables where table_schema in ('public','auth','storage','espelho') and table_type='BASE TABLE'")
 policies=$(sql_ignora "select count(*) from pg_policies")
