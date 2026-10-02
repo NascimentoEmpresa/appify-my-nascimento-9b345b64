@@ -350,3 +350,84 @@ público).
 
 Senha de chave GPG não entra em script. A descriptografia do backup é um passo
 à parte, feito por uma pessoa, de propósito.
+
+---
+
+## Contingência: consultar a réplica quando a Supabase cai (02/10/2026)
+
+Quando o `monitorDeQueda` confirma que a Supabase está fora, o ERP passa a
+**oferecer** "Consultar em modo leitura" apontando para esta réplica. Conferir
+um pedido, uma escala ou um contrato é a maior parte do uso e não depende de
+gravar nada.
+
+### O risco que define o desenho: split-brain
+
+Se metade dos navegadores escrevesse aqui e a outra metade na Supabase,
+existiriam duas verdades — e a próxima recarga apagaria o que foi escrito aqui.
+Pedido aprovado que some, hora extra que não existe mais. Pior que ficar fora
+do ar, porque o usuário viu "salvo com sucesso".
+
+Por isso: **automático lê, humano escreve.** A réplica vive em somente leitura;
+liberar escrita é decisão explícita (`promover.sh promover`).
+
+### Como a trava é feita, e por que não do jeito óbvio
+
+A primeira tentativa foi a que parece natural:
+
+```sql
+alter role authenticated set default_transaction_read_only = on;
+```
+
+**Não funciona, e falha em silêncio.** Testado contra a API real em 02/10/2026:
+a configuração aparece em `pg_roles` nos três papéis e mesmo assim
+
+```
+POST  /rest/v1/notificacoes   HTTP 201   (criou)
+PATCH /rest/v1/notificacoes   HTTP 204   (alterou)
+```
+
+O PostgREST abre a transação declarando o modo conforme o método HTTP, e esse
+`BEGIN ... READ WRITE` sobrescreve o default do papel. Quem olhasse só o
+`pg_roles` concluiria que estava protegido.
+
+O que funciona é `REVOKE`, verificado independente do modo da transação:
+
+```sql
+revoke insert, update, delete, truncate on all tables in schema public
+  from authenticated, anon;
+```
+
+Aplicado no fim de **toda** recarga (`carregar-replica.sh`, bloco 6d) — porque
+o dump traz as permissões da produção, onde escrever é permitido, e portanto
+cada restore desfaz a trava.
+
+### O que fica coberto, e o que não
+
+| Caminho | Coberto? |
+|---|---|
+| POST/PATCH/PUT/DELETE direto em tabela pela API REST | **sim** |
+| Login, sessão, refresh token (GoTrue) | não travado **de propósito** — sem isso ninguém entra |
+| RPC marcada `SECURITY DEFINER` | **não** — roda como o dono e ignora o REVOKE |
+
+O app chama **410 RPCs distintas**; pelo nome, ao menos 5 gravam
+(`criar_plano_acao`, `salvar_planejamento_orcamentario`, …). Fechar isso exige
+revogar `EXECUTE` função a função, separando as que escrevem das que só leem.
+**Esse trabalho ainda não foi feito.**
+
+Consequência prática, dita sem rodeio: em contingência, a consulta é segura e
+as telas comuns não conseguem gravar; uma tela que grave por RPC ainda
+conseguiria, e esse dado se perderia na recarga seguinte.
+
+### Partes
+
+| Onde | O quê |
+|---|---|
+| `src/integrations/supabase/contingencia.ts` | decide o backend; só aceita a URL embutida no build, nunca uma vinda do armazenamento |
+| `src/components/layout/MonitorDeQueda.tsx` | oferece a troca, e só depois de a réplica responder |
+| `src/components/layout/AvisoContingencia.tsx` | faixa fixa: "Modo consulta — não é possível salvar" |
+| `carregar-replica.sh` (6d) | reaplica a trava após cada recarga |
+| `promover.sh` | `status` / `promover` / `reverter` |
+
+Fica **inerte** sem `VITE_FAILOVER_URL` e `VITE_FAILOVER_ANON_KEY` no build —
+isto entra no caminho de todos os usuários e não deve ligar por acidente de
+merge.

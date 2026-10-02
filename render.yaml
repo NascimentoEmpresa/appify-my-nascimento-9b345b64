@@ -62,8 +62,21 @@ services:
     healthCheckPath: /saude
     disk:
       name: dados
-      # O Postgres e os anexos vivem aqui. 10 GB: o banco restaurado ocupa
-      # ~2,6 GB e os anexos do Storage somam ~4,4 GB quando forem copiados.
+      # Medido em 02/10/2026, com o banco ja restaurado:
+      #     banco     3,5 GB
+      #     anexos    4,7 GB  (8.527 arquivos na producao)
+      #     --------------
+      #     total     8,2 GB  de 10 GB = 82%
+      #
+      # Cabe hoje, com pouca folga, e os dois lados crescem. Antes de copiar os
+      # anexos para ca, subir para 20 GB (+US$ 2,50/mes) - 82% num disco que
+      # tambem recebe o espaco temporario do restore e pedir problema.
+      #
+      # Os anexos ficam em /var/lib/postgresql/data/storage, DENTRO deste
+      # disco. Ate 02/10 o Storage apontava para /var/lib/storage, no overlay
+      # do container: todo arquivo enviado sumiria no deploy seguinte, sem erro
+      # nenhum. Esse mesmo descuido ja custou 82 anexos de patrimonio em outro
+      # servico da Render.
       mountPath: /var/lib/postgresql/data
       sizeGB: 10
     envVars:

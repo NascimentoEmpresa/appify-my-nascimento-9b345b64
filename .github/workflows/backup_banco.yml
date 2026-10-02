@@ -57,12 +57,27 @@ on:
         type: string
         default: '14'
   schedule:
-    # 09:00 e 21:00 UTC = 06:00 e 18:00 de Brasilia. Duas vezes ao dia deixa a
-    # perda maxima em 12h, contra as 24h da copia diaria da Supabase. Rodar de
-    # hora em hora seria possivel (sao 74s), mas cada execucao le o banco
-    # inteiro e guarda mais 106 MB - nao compensa sem necessidade real.
-    - cron: '0 9 * * *'
-    - cron: '0 21 * * *'
+    # 07, 10, 13, 16 e 20h de Brasilia (UTC-3), so no EXPEDIENTE.
+    #
+    # Eram duas vezes ao dia (09:00 e 21:00 UTC), com perda maxima de 12h. A
+    # replica de failover mudou a necessidade: ela recarrega a partir DESTE
+    # artefato, e o elo mais lento define o atraso. Recarregar a replica cinco
+    # vezes ao dia com backup de 12 em 12 horas nao adiantaria nada - ela
+    # buscaria o mesmo arquivo cinco vezes.
+    #
+    # Por que nao de hora em hora: cada execucao le o banco INTEIRO e leva de
+    # 6 a 9 minutos. Vinte e quatro por dia dariam ~3 horas diarias de leitura
+    # completa numa instancia Small que ja caiu tres vezes este ano (CPU,
+    # conexoes e memoria) - risco de derrubar o ERP justamente para proteger
+    # contra ele cair. Cinco execucoes dao ~45 min por dia.
+    #
+    # Por que so no expediente: de madrugada ninguem mexe no sistema, e copiar
+    # as 3h da manha produziria exatamente o mesmo conteudo das 20h.
+    #
+    # A janela descoberta e das 20h as 7h. Uma mudanca feita as 21h so e
+    # copiada no dia seguinte - aceitavel porque e fora do expediente, e e o
+    # motivo de o ultimo horario ser 20h e nao 19h.
+    - cron: '0 10,13,16,19,23 * * *'
 
 # Duas copias ao mesmo tempo nao corrompem nada, mas dobram a leitura no banco
 # de producao a toa.
@@ -415,12 +430,40 @@ jobs:
           echo "ARQUIVO_CIFRADO=$ARQUIVO.gpg" >> "$GITHUB_ENV"
           ls -la "$ARQUIVO.gpg"
 
+      - name: Decidir por quantos dias guardar
+        id: retencao
+        run: |
+          set -euo pipefail
+          # RETENCAO DIFERENCIADA, por causa da frequencia nova.
+          # Com cinco execucoes por dia e 14 dias para todas, seriam
+          # 5 x 109 MB x 14 = ~7,6 GB guardados o tempo todo. Mas backup de
+          # meio de expediente serve para UMA coisa: alimentar a recarga da
+          # replica, que acontece 30 min depois. Ninguem vai restaurar o de
+          # terca as 13h daqui a dez dias.
+          #
+          # Entao: o PRIMEIRO e o ULTIMO do dia (07h e 20h de Brasilia) sao o
+          # historico de verdade e ficam 14 dias. Os do meio ficam 3 - tempo de
+          # sobra para a replica recarregar e para alguem investigar um
+          # problema do mesmo dia.
+          #   5 x 109 MB: 2 por 14 dias (3,0 GB) + 3 por 3 dias (1,0 GB) = 4 GB
+          if [[ -n "${{ github.event.inputs.retencao_dias }}" ]]; then
+            DIAS="${{ github.event.inputs.retencao_dias }}"     # pedido a mao manda
+          else
+            HORA=$(date -u +%H)
+            case "$HORA" in
+              10|23) DIAS=14 ;;   # 07h e 20h de Brasilia: historico
+              *)     DIAS=3  ;;   # meio do expediente: so alimenta a replica
+            esac
+          fi
+          echo "dias=$DIAS" >> "$GITHUB_OUTPUT"
+          echo "  guardando por $DIAS dias (execucao das $(date -u +%H:%M) UTC)"
+
       - name: Guardar o artefato
         uses: actions/upload-artifact@v4
         with:
           name: ${{ env.ARQUIVO_CIFRADO }}
           path: ${{ env.ARQUIVO_CIFRADO }}
-          retention-days: ${{ github.event.inputs.retencao_dias || '14' }}
+          retention-days: ${{ steps.retencao.outputs.dias }}
           compression-level: 0   # o dump ja vem comprimido; recomprimir so gasta tempo
           if-no-files-found: error
 
