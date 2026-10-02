@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
+import { rotuloStatusVaga } from "@/lib/recrutamento/vagaRegras";
 import { supabase } from "@/integrations/supabase/client";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import {
@@ -184,7 +185,7 @@ export function StatusSolicitacao({ sol, onClose }: { sol: SolicitacaoStatus; on
             <p>{[sol.cidade, sol.solicitante_nome ? `pedida por ${sol.solicitante_nome}` : null, sol.created_at ? `em ${fmtDt(sol.created_at)}` : null].filter(Boolean).join(" · ")}</p>
           </div>
           <div className="sts-up" style={{ animationDelay: ".18s", display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginTop: 14 }}>
-            <span className="sts-status" style={{ "--c": corDesfecho } as React.CSSProperties}><i />{sol.status}</span>
+            <span className="sts-status" style={{ "--c": corDesfecho } as React.CSSProperties}><i />{rotuloStatusVaga(sol.status)}</span>
             <span style={{ fontSize: 12.5, fontWeight: 800, background: "rgba(255,255,255,.16)", border: "1px solid rgba(255,255,255,.3)", borderRadius: 999, padding: "7px 13px" }}>{rotuloDesfecho}</span>
             {sol.grau_urgencia?.startsWith("Alta") && <span style={{ fontSize: 12.5, fontWeight: 900, background: "#fff", color: "#b91c1c", borderRadius: 999, padding: "7px 13px" }}><Zap size={12} strokeWidth={2} aria-hidden style={{ display: "inline-block", verticalAlign: "-2px", marginRight: 5, flexShrink: 0 }} />Urgente</span>}
           </div>
@@ -245,9 +246,9 @@ export function StatusSolicitacao({ sol, onClose }: { sol: SolicitacaoStatus; on
                           <span><User size={12} strokeWidth={2} aria-hidden style={{ display: "inline-block", verticalAlign: "-2px", marginRight: 5, flexShrink: 0 }} />{nome(e)}</span>
                           {e.para_status && e.para_status !== e.de_status && (
                             <span style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
-                              {e.de_status && <span className="sts-de">{e.de_status}</span>}
+                              {e.de_status && <span className="sts-de">{rotuloStatusVaga(e.de_status)}</span>}
                               {e.de_status && <span style={{ color: "#94a3b8" }}>→</span>}
-                              <span className="sts-para">{e.para_status}</span>
+                              <span className="sts-para">{rotuloStatusVaga(e.para_status)}</span>
                             </span>
                           )}
                         </div>

@@ -15,7 +15,7 @@ import {
   cargoExigeCnh, aplicarReqCnh, REQ_CNH_TEXTO, MIN_DIAS_UTEIS, fmtBr,
   rotuloReferencia, ajudaReferencia, mostraNomeReferencia, contratoDoEmpregado, rotuloContrato,
   SALARIO_MASCARA, substituidosComVagaViva, avisoSubstituidoPreso,
-  podeVagaAdministrativa, statusInicialVaga, contratoEhAdministrativo, setorDoCatalogo,
+  podeVagaAdministrativa, statusInicialVaga, rotuloStatusVaga, contratoEhAdministrativo, setorDoCatalogo,
 } from "@/lib/recrutamento/vagaRegras";
 import { maskFone } from "@/lib/telefone";
 import { dataParaIso, tempoDeEmpresa } from "@/lib/rh/colaboradoresUtils";
@@ -1129,7 +1129,7 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
                       <div className="ini-sol-meta">{s.tipo} · #{s.id} · {fmtDt(s.data)}</div>
                     </div>
                     <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4 }}>
-                      <span className={`ini-badge ${badgeStatusCls(s.status)}`}>{s.status}</span>
+                      <span className={`ini-badge ${badgeStatusCls(s.status)}`}>{s.tipo === "Vaga" ? rotuloStatusVaga(s.status) : s.status}</span>
                       {s.excecao && <span className="ini-badge" style={{ background: "#fef3c7", color: "#b45309", borderColor: "#fde68a" }}>EXCEÇÃO</span>}
                       {dias !== null && (
                         <span className="ini-sol-dias" title={`Tempo parado no status atual: ${s.status}`}>
