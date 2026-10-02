@@ -14,7 +14,7 @@ import { ResumoDeFuncoes } from "@/components/fluxos/ResumoDeFuncoes";
 import { ModalNovaVaga } from "@/components/recrutamento/ModalNovaVaga";
 import {
   motivoLabel, fmtBr, mostraNomeReferencia,
-  podeVagaAdministrativa, filtrarAdministrativas, filtrarPorEscopo, normSetorVaga, STATUS_VAGA_DIRETORIA,
+  podeVagaAdministrativa, filtrarAdministrativas, filtrarPorEscopo, normSetorVaga, STATUS_VAGA_DIRETORIA, rotuloStatusVaga,
 } from "@/lib/recrutamento/vagaRegras";
 import { TABELA_APROVADOR_SETOR } from "@/components/admin/TrocaFuncaoSetoresUsuario";
 import {
@@ -361,6 +361,12 @@ const sugerirNomeTemplate = (n?: string | null) =>
 // Tem atalho próprio e sai de "Em Processo".
 const STATUS_PEND_SELECAO = "Aprovado - Aguardando SST";
 const MENU_FILTRO_PEND_RECRUTAMENTO = "recrutamento_filtro_pend_recrutamento";
+// "APROVA VAGAS" (02/10/2026, mig 20260930000287): quem decide a etapa 1
+// ("Pendente Analista", na tela "Pendente Operacional"). Um menu fantasma em
+// cada módulo, em Acesso por Usuário — desmarcado, não aprova e o botão nem
+// aparece. O banco repete a regra (rec_guard_aprovador_setor).
+const MENU_APROVA_VAGAS_OPERACIONAL = "operacional_aprova_vagas";
+const MENU_APROVA_VAGAS_LICITACOES  = "licitacoes_aprova_vagas";
 const MENU_FILTRO_PEND_SELECAO      = "recrutamento_filtro_pend_selecao";
 // Status da Solicitação dirigidos pelo candidato (etapas 3–10).
 const STATUS_PROCESSO = [
@@ -403,14 +409,20 @@ const STATUS_EM_PROCESSO_SEM_SELECAO = STATUS_PROCESSO.filter(s => !STATUS_SELEC
 //   escopo "rh"          → Recrutamento e Seleção, o processo inteiro
 //   escopo "analista"    → só a fila "Pendente Analista", para aprovar
 //                          ou reprovar antes de virar vaga
-//   escopo "operacional" → a MESMA fila, só que sem decidir nada: abre o
-//                          card, lê o andamento e pronto
+//   escopo "operacional" → a MESMA fila; decide só quem tem "APROVA VAGAS"
+//                          do Operacional, os demais só acompanham
 //
 // A ETAPA 1 MUDOU DE DONO em 02/09/2026: era do Operacional, passou para o
 // analista (Licitações › Analistas Validações). O Operacional não perdeu a
 // tela — perdeu o botão. Foi pedido assim: "pode deixar a gestão recrutamento
 // no operacional só pra eles verem os andamentos das solicitações, mas nenhuma
 // interação".
+//
+// E VOLTOU EM PARTE em 02/10/2026 (mig 20260930000287): "APROVA VAGAS", um
+// menu fantasma no Operacional e outro em Licitações, decide quem aprova —
+// marcado, aprova pela tela do próprio módulo; desmarcado, não aprova e o
+// botão nem aparece. Na tela o status "Pendente Analista" virou "Pendente
+// Operacional" (só o rótulo — rotuloStatusVaga; o valor no banco é o mesmo).
 //
 // O que muda é o recorte e QUAL MENU decide as permissões — cada escopo tem o
 // seu, então liberar o menu certo já basta; não precisa dar Gestão
@@ -448,7 +460,15 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
   // e só existe na tela dele. No Recrutamento a solicitação nessa fase aparece
   // na lista, para acompanhar, mas sem botão de decidir — senão as duas telas
   // aprovariam a mesma coisa e a última a salvar ganharia.
-  const podeAprovarAnalista = (escopo === "analista" || escopo === "diretoria") && can("aprovar", undefined, menuAcesso);
+  //
+  // 02/10/2026: no analista e no Operacional quem decide é o "APROVA VAGAS"
+  // do módulo, não mais o 'aprovar' da tela — o Operacional voltou a poder
+  // aprovar, mas só quem tiver a caixa marcada.
+  const podeAprovarAnalista =
+    escopo === "analista"    ? can("aprovar", undefined, MENU_APROVA_VAGAS_LICITACOES)
+    : escopo === "operacional" ? can("aprovar", undefined, MENU_APROVA_VAGAS_OPERACIONAL)
+    : escopo === "diretoria" ? can("aprovar", undefined, menuAcesso)
+    : false;
   // Setores que EU aprovo na Diretoria (Acesso por Usuário) — recorta a fila.
   const [meusSetores, setMeusSetores] = useState<Set<string>>(new Set());
   useEffect(() => {
@@ -465,7 +485,9 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
   // Recrutamento e o analista. São as mesmas portas que a RLS e o gatilho
   // sistema_recrutamento_guard já reconhecem como "gestor" — não existe
   // capacidade nova para isso. O Operacional vê as etiquetas, sem botão.
-  const podeEtiquetar = podeRecrutar || podeAprovarAnalista;
+  // Continua no 'aprovar' da TELA (não no "APROVA VAGAS"): é o que o banco
+  // reconhece para etiquetas, e o Operacional segue sem etiquetar.
+  const podeEtiquetar = podeRecrutar || ((escopo === "analista" || escopo === "diretoria") && can("aprovar", undefined, menuAcesso));
   // Atalhos de filtro com acesso próprio (23/09/2026, mig 20260930000225).
   const verFiltroPendRecrutamento = can("visualizar", undefined, MENU_FILTRO_PEND_RECRUTAMENTO);
   const verFiltroPendSelecao      = can("visualizar", undefined, MENU_FILTRO_PEND_SELECAO);
@@ -638,7 +660,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
 
   // ── Tabs por perfil ───────────────────────────────────────────
   const tabs = soEtapa1
-    ? [{ label: "Pendente Analista", tab: "analista" }]
+    ? [{ label: rotuloStatusVaga(STATUS_ETAPA1), tab: "analista" }]
     : isRH
     ? [{ label: "Todas as Solicitações", tab: "todas" }]
     : podeRecrutar
@@ -2059,7 +2081,7 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
       { titulo: "Solicitação criada", papel: "Solicitante", n: 0, ev: criada[0] },
       administrativa
         ? { titulo: "Aprovação da Diretoria", papel: "Diretoria", n: 1, ev: achar((e) => e.evento === "Aprovada pela Diretoria" || (e.de_status === STATUS_VAGA_DIRETORIA && e.para_status === "Pendente Recrutamento")) }
-        : { titulo: "Aprovação do Analista", papel: "Analista", n: 1, ev: achar((e) => e.evento === "Aprovada pelo Analista" || e.evento === "Aprovada pelo Operacional" || ((e.de_status === "Pendente Analista" || e.de_status === "Pendente Operacional") && e.para_status === "Pendente Recrutamento")) },
+        : { titulo: "Aprovação (Operacional / Analista)", papel: "Analista", n: 1, ev: achar((e) => e.evento === "Aprovada pelo Analista" || e.evento === "Aprovada pelo Operacional" || ((e.de_status === "Pendente Analista" || e.de_status === "Pendente Operacional") && e.para_status === "Pendente Recrutamento")) },
       { titulo: "Abertura da vaga", papel: "Recrutamento", n: 2, ev: achar((e) => e.evento === "Abertura de vaga confirmada" || (e.de_status === "Pendente Recrutamento" && !!e.para_status && e.para_status !== "Reprovada")) },
       { titulo: "Seleção de candidatos", papel: "Recrutamento", n: 3, ev: achar((e) => !!e.para_status && STATUS_PROCESSO.includes(e.para_status) && e.de_status !== "Pendente Recrutamento") },
       { titulo: "Conclusão", papel: "Recrutamento", n: 4, ev: achar((e) => e.evento === "Solicitação concluída") },
@@ -2096,7 +2118,7 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
                     ? <><b style={{ color: "#0f172a" }}>{quem}</b> · {quando(ev?.created_at)}</>
                     : feita
                       ? <span style={{ color: "#94a3b8" }}>Sem registro de quem fez — etapa concluída antes de o histórico automático existir (23/09/2026).</span>
-                      : atual ? <span style={{ color: "#b45309" }}>Aguardando {et.papel === "Solicitante" ? "o solicitante" : et.papel === "Analista" ? "o analista" : et.papel === "Diretoria" ? "a Diretoria" : "o Recrutamento"}.</span>
+                      : atual ? <span style={{ color: "#b45309" }}>Aguardando {et.papel === "Solicitante" ? "o solicitante" : et.papel === "Analista" ? "quem aprova vagas (Operacional ou analista)" : et.papel === "Diretoria" ? "a Diretoria" : "o Recrutamento"}.</span>
                       : <span style={{ color: "#94a3b8" }}>Ainda não chegou nesta etapa.</span>}
                 </div>
                 {reprovou && reprovadaEm?.detalhe && <div style={{ fontSize: 12, color: "#991b1b", marginTop: 3 }}>Motivo: {reprovadaEm.detalhe}</div>}
@@ -2126,7 +2148,7 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
                   <span style={{ fontSize: 13.5, fontWeight: 800, color: "#0f172a" }}>{e.evento}</span>
                   {e.papel && <span style={{ fontSize: 10, fontWeight: 800, padding: "1px 8px", borderRadius: 20, background: `${cor}1a`, color: cor }}>{e.papel}</span>}
                 </div>
-                {(e.de_status || e.para_status) && <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 2 }}>{e.de_status ? `${e.de_status} → ` : ""}{e.para_status || ""}</div>}
+                {(e.de_status || e.para_status) && <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 2 }}>{e.de_status ? `${rotuloStatusVaga(e.de_status)} → ` : ""}{rotuloStatusVaga(e.para_status)}</div>}
                 {e.candidato_nome && <div style={{ fontSize: 12, color: "#475569", marginTop: 2 }}>Candidato: <b>{e.candidato_nome}</b></div>}
                 {e.detalhe && <div style={{ fontSize: 12, color: "#475569", marginTop: 4, background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 8, padding: "6px 9px", whiteSpace: "pre-wrap" }}>{e.detalhe}</div>}
                 <div style={{ fontSize: 12.5, color: "#0f172a", marginTop: 4 }}><span style={{ fontWeight: 800 }}>{nomeExibido}</span><span style={{ color: "#94a3b8", fontWeight: 400 }}> · {quando(e.created_at)}</span></div>
@@ -2390,7 +2412,7 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
       <div className="rec-hero">
         <div className="rec-hero-in">
         <div>
-          <div className="rec-hero-eyebrow">{!soEtapa1 ? "Recursos Humanos · Recrutamento e Seleção" : escopo === "analista" ? "Licitações · Analistas" : escopo === "diretoria" ? "Diretoria · Vagas administrativas" : "Operacional · Acompanhamento"}</div>
+          <div className="rec-hero-eyebrow">{!soEtapa1 ? "Recursos Humanos · Recrutamento e Seleção" : escopo === "analista" ? "Licitações · Analistas" : escopo === "diretoria" ? "Diretoria · Vagas administrativas" : podeAprovarAnalista ? "Operacional · Aprovação de vagas" : "Operacional · Acompanhamento"}</div>
           <h1>
             <Target size={24} strokeWidth={2.2} aria-hidden style={{ display: "inline-block", verticalAlign: "-4px", marginRight: 10 }} />
             {!soEtapa1 ? "Seleção e Recrutamento"
@@ -2399,7 +2421,7 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
               : "Gestão de Recrutamento"}
           </h1>
           <p>{!soEtapa1 ? "Solicitações de vaga, funil de candidatos e o botão Status em cada pedido: onde está, quem cuida e todo o histórico."
-            : escopo === "operacional" ? "Acompanhe cada pedido de vaga: quem aprovou, em que etapa está e a conversa com o Recrutamento."
+            : escopo === "operacional" && !podeAprovarAnalista ? "Acompanhe cada pedido de vaga: quem aprovou, em que etapa está e a conversa com o Recrutamento."
             : "Aprove ou reprove as solicitações da sua fila. O botão Status mostra o caminho completo de cada pedido."}</p>
         </div>
         <div className="rec-hero-acoes">
@@ -2426,13 +2448,15 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
         {/* O Operacional acompanha, não decide. Dizer isso é melhor do que
             simplesmente não desenhar botão: sem a frase, quem abre o card fica
             procurando onde clicar para aprovar. */}
-        {escopo === "operacional" && (
+        {/* 02/10/2026: com "APROVA VAGAS" marcado o Operacional decide, e o
+            aviso de "só acompanhamento" sai. */}
+        {escopo === "operacional" && !podeAprovarAnalista && (
           <div style={{ display: "flex", gap: 10, alignItems: "flex-start", padding: "12px 16px", marginBottom: 16, border: "1px solid #e2e8f0", borderRadius: 12, background: "#fff", fontSize: 13, color: "#475569" }}>
             <Eye size={16} aria-hidden style={{ flexShrink: 0, marginTop: 1, color: "#64748b" }} />
             <span>
-              Esta tela é de <strong>acompanhamento</strong>. Quem aprova a solicitação de vaga
-              é o analista, em Licitações › Analistas Validações. Aqui você abre o card,
-              vê o andamento e a conversa.
+              Esta tela é de <strong>acompanhamento</strong>. Para aprovar ou reprovar as vagas
+              daqui, peça ao administrador para marcar <strong>APROVA VAGAS</strong> do Operacional
+              em Acesso por Usuário. Aqui você abre o card, vê o andamento e a conversa.
             </span>
           </div>
         )}
@@ -2633,7 +2657,7 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
                         <td style={{ fontWeight: 600, color: "#0f172a" }}>{item.contrato || "—"}</td>
                         <td>{item.cargo || "—"}</td>
                         <td>{item.cidade || "—"}</td>
-                        <td><span className={`rec-badge ${badgeStatusCls(item.status)}`}>{item.status || "—"}</span></td>
+                        <td><span className={`rec-badge ${badgeStatusCls(item.status)}`}>{rotuloStatusVaga(item.status) || "—"}</span></td>
                         <td>{renderEtiquetas(item)}</td>
                         <td>{item.grau_urgencia ? <span className={`rec-badge ${badgeUrgCls(item.grau_urgencia)}`}>{item.grau_urgencia.startsWith("Alta") ? <><Ic i={Zap} />Alta</> : item.grau_urgencia}</span> : "—"}</td>
                         <td>{item.solicitante_nome || "—"}</td>
@@ -2687,7 +2711,7 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
                     <ChevronRight size={16} aria-hidden />
                   </button>
                 </span>
-                {drawerSol && <span className={`rec-badge ${badgeStatusCls(drawerSol.status)}`}>{drawerSol.status}</span>}
+                {drawerSol && <span className={`rec-badge ${badgeStatusCls(drawerSol.status)}`}>{rotuloStatusVaga(drawerSol.status)}</span>}
                 {drawerSol?.grau_urgencia && <span className={`rec-badge ${badgeUrgCls(drawerSol.grau_urgencia)}`}>{drawerSol.grau_urgencia.startsWith("Alta") ? <><Ic i={Zap} />Alta</> : drawerSol.grau_urgencia}</span>}
                 {drawerSol && renderEtiquetas(drawerSol)}
               </div>

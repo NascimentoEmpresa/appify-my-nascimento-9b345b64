@@ -139,9 +139,9 @@ const vaga: Fluxo = {
       onde: "Encarregados › Solicitar Vaga",
     },
     {
-      quem: "Analista", faz: "Aprova ou reprova a solicitação de contrato antes de ela virar vaga.",
-      onde: "Licitações › Analistas Validações › Gestão Recrutamento",
-      status: "Pendente Analista",
+      quem: "Operacional / Analista", faz: "Aprova ou reprova a solicitação de contrato antes de ela virar vaga — quem tem \"APROVA VAGAS\" (Acesso por Usuário, no Operacional ou em Licitações).",
+      onde: "Operacional › Gestão Recrutamento ou Licitações › Analistas Validações › Gestão Recrutamento",
+      status: "Pendente Operacional",
     },
     {
       quem: "Diretoria", faz: "Aprova ou reprova a vaga administrativa / com setor — só depois dela o Recrutamento vê.",

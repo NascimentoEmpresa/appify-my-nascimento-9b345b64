@@ -5,21 +5,21 @@ import { PainelAcompanhamento } from "@/components/recrutamento/PainelAcompanham
  * Recrutamento e Seleção › Acompanhar Colaboradores (25/09/2026, mig 245).
  *
  * O check-in da planilha CONTRATOS_VIGENTES do RH, dentro do sistema: todo
- * mundo admitido no período (Senior), por contrato, com os marcos de 7, 30,
+ * mundo admitido no período (Senior), por contrato, com os marcos de 30,
  * 60 e 90 dias, permanência e saída. Filtra por data de admissão (padrão:
- * últimos 180 dias). A fila só de quem está na experiência é a tela irmã,
- * Acompanhar Experiência.
+ * últimos 90 dias). Desde 02/10/2026 (mig 285) absorveu a antiga Acompanhar
+ * Experiência — virou o filtro "Em experiência" da situação.
  */
 export default function AcompanharColaboradores() {
   return (
     <div className="mx-auto max-w-[1400px]">
       <PageHeader
         title="Acompanhar Colaboradores"
-        subtitle="Admitidos no período, por contrato: check-in de 7, 30, 60 e 90 dias, permanência após a experiência e saída."
+        subtitle="Admitidos no período, por contrato: check-in de 30, 60 e 90 dias, permanência após a experiência e saída. Os check-ins atrasados aparecem primeiro."
         module="Recrutamento e Seleção"
         breadcrumb={["Acompanhar Colaboradores"]}
       />
-      <PainelAcompanhamento modo="colaboradores" />
+      <PainelAcompanhamento />
     </div>
   );
 }

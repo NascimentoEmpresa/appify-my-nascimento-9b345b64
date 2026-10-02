@@ -70,9 +70,11 @@ describe("o resumo não pode divergir da regra", () => {
     // No recrutamento o status tem o mesmo nome, mas ele não vem de uma lib —
     // está no Recrutamento.tsx. A demissão saiu daqui em 14/09/2026 e a troca
     // de função em 16/09/2026 (Licitações só acompanha).
+    // 02/10/2026 (mig 287): na vaga a etapa é de quem tem "APROVA VAGAS" — no
+    // Operacional OU em Licitações — então o passo diz os dois.
     for (const codigo of ["vaga"]) {
       const f = fluxoPorCodigo(codigo)!;
-      const temAnalista = f.passos.some(p => p.quem === "Analista");
+      const temAnalista = f.passos.some(p => p.quem.includes("Analista"));
       expect(temAnalista, `${codigo} deveria ter a etapa do analista`).toBe(true);
     }
   });
@@ -82,7 +84,8 @@ describe("o resumo não pode divergir da regra", () => {
     // o encarregado abrindo, então o analista tem que ser o passo 2.
     for (const codigo of ["vaga"]) {
       const f = fluxoPorCodigo(codigo)!;
-      expect(f.passos[1].quem, codigo).toBe("Analista");
+      expect(f.passos[1].quem, codigo).toBe("Operacional / Analista");
+      expect(f.passos[1].status, codigo).toBe("Pendente Operacional");
     }
   });
 

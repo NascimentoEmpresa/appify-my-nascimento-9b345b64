@@ -53,7 +53,7 @@ export default function SolicitarVaga() {
           <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
             São três etapas: identificação da vaga, detalhes do posto e requisitos. O grau de
             urgência sai do prazo da data de início — quanto mais perto, mais urgente. Depois de
-            enviada, a solicitação vai para <b>Pendente Analista</b> e você acompanha o andamento em
+            enviada, a solicitação vai para <b>Pendente Operacional</b> e você acompanha o andamento em
             Minhas Solicitações.
           </p>
         </div>
