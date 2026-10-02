@@ -61,6 +61,26 @@ fi
 
 mkdir -p "$DESTINO" "$TMP" "$TMPDIR"
 
+# --- a chave GPG, importada AQUI -------------------------------------------
+# Este script precisa ser autossuficiente. A primeira versao dependia de o
+# recarga-render.sh ter importado a chave antes - e quando rodei este script
+# SOZINHO (02/10/2026), o download trouxe os 4,8 GB e o gpg falhou em todos com
+#     nao consegui decifrar/extrair
+# porque nao havia chave no chaveiro. Agora ele importa a propria, no disco
+# persistente (nao em /tmp, que estoura em 2 GB na Render).
+if [[ -z "${GPG_PRIVATE_KEY_B64:-}" || -z "${GPG_PASSPHRASE:-}" ]]; then
+  log "sem GPG_PRIVATE_KEY_B64 ou GPG_PASSPHRASE - nao da para decifrar. Pulando."
+  exit 0
+fi
+export GNUPGHOME="$TMPDIR/gpg"
+mkdir -p "$GNUPGHOME"; chmod 700 "$GNUPGHOME"
+# limpa o chaveiro ao sair: a chave privada nao sobrevive ao processo
+trap 'rm -rf "$GNUPGHOME" "$TMP" 2>/dev/null || true' EXIT
+if ! echo "$GPG_PRIVATE_KEY_B64" | base64 -d | gpg --batch --quiet --import 2>/dev/null; then
+  log "nao consegui importar a chave GPG (base64 correta?). Pulando."
+  exit 0
+fi
+
 # --- 1. quantos arquivos ja estao aqui? -------------------------------------
 antes=$(find "$DESTINO" -type f 2>/dev/null | wc -l)
 log "no disco agora: $antes arquivo(s)"
@@ -97,8 +117,11 @@ while IFS='|' read -r id nome tamanho; do
   cifrado=$(find "$TMP/x" -name '*.tar.gpg' | head -1)
   [[ -z "$cifrado" ]] && { log "    sem .tar.gpg dentro"; continue; }
 
-  # A chave privada e a mesma do backup do banco, ja configurada no container.
-  if ! gpg --batch --yes --quiet --decrypt "$cifrado" 2>/dev/null \
+  # A chave privada e a mesma do backup do banco; a passphrase vem por
+  # --pinentry-mode loopback, senao o gpg tenta abrir um prompt que nao existe
+  # num processo em segundo plano e falha calado.
+  if ! gpg --batch --yes --quiet --pinentry-mode loopback \
+       --passphrase "$GPG_PASSPHRASE" --decrypt "$cifrado" 2>/dev/null \
        | tar -xf - -C "$TMP/x" 2>/dev/null; then
     log "    nao consegui decifrar/extrair"
     continue
