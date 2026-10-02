@@ -116,16 +116,27 @@ log(`${paraBaixar.length} arquivos novos ou alterados`);
 // ser o motivo de ela caber menos requisicao do ERP. 6 por vez e suficiente
 // para terminar rapido sem sufocar ninguem.
 const SIMULTANEOS = 6;
+/** Uma segunda chance por arquivo; ver o comentario em baixarUm. */
+const TENTATIVAS = 2;
 let baixados = 0, falhas = 0, bytes = 0;
 const errosPorTipo = new Map();
 
-async function baixarUm(obj) {
+async function baixarUm(obj, tentativa = 1) {
   const caminho = `${obj.bucket_id}/${obj.name}`;
   const destino = join('arquivos', caminho);
   const endereco = `${URL_SUPABASE}/storage/v1/object/${encodeURI(caminho)}`;
   try {
     const resp = await fetch(endereco, { headers: { Authorization: `Bearer ${CHAVE}`, apikey: CHAVE } });
     if (!resp.ok) {
+      // 504 e 5xx são o gateway desistindo de um arquivo grande, não "o arquivo
+      // não existe": na primeira execução completa (02/10/2026) foram 4 de 8.527,
+      // todos 504. Uma segunda tentativa resolve a maioria, e insistir mais que
+      // isso só castigaria a produção por um arquivo que a próxima execução
+      // pegaria de qualquer jeito.
+      if (resp.status >= 500 && tentativa < TENTATIVAS) {
+        await new Promise((ok) => setTimeout(ok, 1500 * tentativa));
+        return baixarUm(obj, tentativa + 1);
+      }
       falhas++;
       const t = `HTTP ${resp.status}`;
       errosPorTipo.set(t, (errosPorTipo.get(t) || 0) + 1);
@@ -137,6 +148,10 @@ async function baixarUm(obj) {
     bytes += Number(obj.tamanho);
     if (baixados % 250 === 0) log(`${baixados}/${paraBaixar.length} baixados...`);
   } catch (e) {
+    if (tentativa < TENTATIVAS) {
+      await new Promise((ok) => setTimeout(ok, 1500 * tentativa));
+      return baixarUm(obj, tentativa + 1);
+    }
     falhas++;
     const t = e.message.slice(0, 40);
     errosPorTipo.set(t, (errosPorTipo.get(t) || 0) + 1);
