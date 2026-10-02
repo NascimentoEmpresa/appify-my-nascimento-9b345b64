@@ -26,14 +26,31 @@ import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { execFileSync } from 'node:child_process';
 
-const URL_SUPABASE = process.env.SUPABASE_URL?.replace(/\/$/, '');
 const CHAVE = process.env.SERVICE_ROLE_KEY;
 const CREDENCIAIS = process.env.CREDENCIAIS;
 
-if (!URL_SUPABASE || !CHAVE) {
-  console.error('FALTAM SUPABASE_URL ou SERVICE_ROLE_KEY');
+if (!CHAVE || !CREDENCIAIS) {
+  console.error('FALTAM SUPABASE_SERVICE_ROLE_KEY ou ESPELHO_CREDENCIAIS');
   process.exit(1);
 }
+
+// A URL do projeto NAO vem de um secret proprio: nao existe SUPABASE_URL neste
+// repositorio (conferido em 02/10/2026 - a primeira execucao falhou com
+// "FALTAM SUPABASE_URL" porque o secret estava vazio). Ela e derivada do host
+// do banco, que ja esta no ESPELHO_CREDENCIAIS:
+//     aws-1-sa-east-1.pooler.supabase.com  +  usuario postgres.<ref>
+//  -> https://<ref>.supabase.co
+// Assim nao se cria segredo novo para guardar uma informacao que ja esta ali.
+const cfg = JSON.parse(CREDENCIAIS).supabase;
+const REF = String(cfg.usuario).includes('.')
+  ? String(cfg.usuario).split('.').pop()
+  : null;
+if (!REF) {
+  console.error(`::error::nao consegui extrair a referencia do projeto do usuario "${cfg.usuario}"`);
+  process.exit(1);
+}
+const URL_SUPABASE = `https://${REF}.supabase.co`;
+console.log('  projeto:', URL_SUPABASE);
 
 const log = (...a) => console.log('  ', ...a);
 
@@ -43,7 +60,6 @@ const log = (...a) => console.log('  ', ...a);
 // o backup do banco. Uma dependencia a menos para manter.
 // O separador e TAB porque nome de arquivo pode conter virgula e ponto-virgula,
 // mas nao TAB.
-const cfg = JSON.parse(CREDENCIAIS).supabase;
 const consulta = `
   select bucket_id || E'\\t' || name || E'\\t' ||
          coalesce(to_char(updated_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'), '') || E'\\t' ||

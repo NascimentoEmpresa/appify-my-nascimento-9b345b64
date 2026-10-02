@@ -42,10 +42,15 @@ on:
         description: 'Dias de retencao do artefato'
         default: '14'
   schedule:
-    # 03:00 UTC = 00:00 de Brasilia. Uma vez ao dia: arquivo anexado raramente
-    # muda depois de enviado, entao o ganho de rodar mais vezes e pequeno
-    # perto do custo de ler o bucket inteiro.
-    - cron: '0 3 * * *'
+    # 07, 10, 13, 16 e 20h de Brasilia (UTC-3). SO NO EXPEDIENTE, de proposito:
+    # de madrugada ninguem mexe no sistema, e copiar as 3h da manha produziria
+    # exatamente o mesmo conteudo das 20h - gastando leitura numa instancia
+    # Small que ja caiu tres vezes este ano, para guardar copia identica.
+    # Cinco execucoes cobrem o dia de trabalho inteiro.
+    # A janela descoberta e das 20h as 7h: uma mudanca feita as 21h so e
+    # copiada no dia seguinte. Aceitavel porque fora do expediente, e e o
+    # motivo de o ultimo horario ser 20h e nao 19h.
+    - cron: '0 10,13,16,19,23 * * *'
 
 permissions:
   contents: read
@@ -108,7 +113,10 @@ jobs:
 
       - name: Baixar o que mudou
         env:
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          # NAO existe um secret SUPABASE_URL neste repositorio - a primeira
+          # execucao falhou com "FALTAM SUPABASE_URL" justamente por isso. O
+          # script deriva a URL do projeto a partir do usuario do banco, que ja
+          # vem no ESPELHO_CREDENCIAIS. Segredo novo so quando nao houver jeito.
           SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           CREDENCIAIS: ${{ secrets.ESPELHO_CREDENCIAIS }}
         run: node .github/scripts/baixar-storage.mjs
