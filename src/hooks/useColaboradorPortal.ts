@@ -144,6 +144,8 @@ export interface AulaAluno {
   carga_horaria_min: number | null; materiais: MaterialAula[]; cta_texto: string | null; cta_url: string | null;
   quiz: PerguntaQuizAluno[] | null; nota_minima: number; libera_em: string | null; bloqueado: boolean;
   concluida: boolean; concluida_em: string | null; avaliacao: number | null; tempo_seg: number; nota_quiz: number | null;
+  /** Mig 290: o aluno já viu o vídeo até o fim / a aula exige isso para concluir. */
+  video_assistido?: boolean; video_obrigatorio?: boolean;
 }
 export interface ModuloAluno { id: string; nome: string; posicao: number; libera_em: string | null; bloqueado: boolean; aulas: AulaAluno[] }
 export interface CursoDetalheAluno {

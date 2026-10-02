@@ -70,6 +70,27 @@ export function cpfValido(v?: string | null): boolean {
   return d2 === parseInt(c[10], 10);
 }
 
+/** Nome completo: nome e sobrenome (2+ palavras), 5+ caracteres. O banco repete (rec_concluir_direto). */
+export function nomeCompletoValido(v?: string | null): boolean {
+  const s = String(v ?? "").trim().replace(/s+/g, " ");
+  return s.length >= 5 && s.split(" ").length >= 2;
+}
+
+/** A vaga ainda espera a aprovação da etapa 1 (Operacional/analista ou Diretoria). */
+export const STATUS_AGUARDANDO_APROVACAO = ["Pendente Analista", "Pendente Operacional", "Pendente Diretoria"];
+
+/**
+ * "PODE CONCLUIR DIRETO" (02/10/2026, mig 289): a vaga conclui direto só
+ * depois de aprovada e enquanto não estiver encerrada. A RPC
+ * rec_concluir_direto recusa o resto com a mesma regra.
+ */
+export function vagaConcluiDireto(status?: string | null): boolean {
+  const s = String(status ?? "").trim();
+  if (!s || STATUS_AGUARDANDO_APROVACAO.includes(s)) return false;
+  if (["Reprovada", "Cancelada", "Contratado", "Concluída"].includes(s) || s.startsWith("Concluído")) return false;
+  return true;
+}
+
 export interface RecomendacaoForm {
   tem_recomendacao: string;   // "Sim" | "Não", que é o que o <select> devolve
   recomendacao_nome: string;
