@@ -573,7 +573,6 @@ const recrutamentoModule: ModuleDef = {
       defaultOpen: true,
       items: [
         { label: "Acompanhar Colaboradores", to: "/app/rh/recrutamento/acompanhar-colaboradores", icon: ClipboardCheck },
-        { label: "Acompanhar Experiência", to: "/app/rh/recrutamento/acompanhar-experiencia", icon: CalendarCheck2 },
       ],
     },
   ],

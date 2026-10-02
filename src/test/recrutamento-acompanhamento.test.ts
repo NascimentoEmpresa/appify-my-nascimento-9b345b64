@@ -8,11 +8,11 @@ const HOJE = "2026-09-25";
 const linha = (p: Partial<LinhaAcomp> = {}): LinhaAcomp => ({
   cpf: "00000000191", admitido_senior: true, empregado_id: 1, candidato_id: null,
   nome: "FULANO", cargo: "SERVENTE", contrato: "UFRGS", local: null,
-  situacao: "Trabalhando", admissao: "2026-09-10", afastamento: null, causa: null, saiu: false,
-  dias: 15, data_ref: null, origem: "senior", vaga_id: null, vaga_status: null, cidade: null,
+  situacao: "Trabalhando", admissao: "2026-08-18", afastamento: null, causa: null, saiu: false,
+  dias: 38, data_ref: null, origem: "senior", vaga_id: null, vaga_status: null, cidade: null,
   acomp: null, checks: [], ...p,
 });
-const check = (marco: 7 | 30 | 60 | 90, resultado: CheckAcomp["resultado"] = "positivo"): CheckAcomp => ({
+const check = (marco: 30 | 60 | 90, resultado: CheckAcomp["resultado"] = "positivo"): CheckAcomp => ({
   id: marco, cpf: "00000000191", marco, resultado, realizado_em: HOJE, observacao: null, registrado_por: "RH", registrado_em: HOJE,
 });
 
@@ -21,28 +21,28 @@ describe("estadoDoMarco", () => {
     expect(somarDias("2026-09-10", 7)).toBe("2026-09-17");
     expect(somarDias("2026-08-31", 30)).toBe("2026-09-30");
   });
-  it("7 dias passou sem check: atrasado, com os dias de atraso", () => {
-    expect(estadoDoMarco(linha(), 7, HOJE)).toEqual({ tipo: "atrasado", vence: "2026-09-17", dias: 8 });
+  it("30 dias passou sem check: atrasado, com os dias de atraso", () => {
+    expect(estadoDoMarco(linha(), 30, HOJE)).toEqual({ tipo: "atrasado", vence: "2026-09-17", dias: 8 });
   });
   it("vencendo hoje, em breve (até 3 dias) e futuro", () => {
-    expect(estadoDoMarco(linha({ admissao: "2026-09-18" }), 7, HOJE).tipo).toBe("hoje");
-    expect(estadoDoMarco(linha({ admissao: "2026-09-20" }), 7, HOJE)).toMatchObject({ tipo: "breve", dias: 2 });
-    expect(estadoDoMarco(linha(), 30, HOJE)).toMatchObject({ tipo: "futuro", vence: "2026-10-10" });
+    expect(estadoDoMarco(linha({ admissao: "2026-08-26" }), 30, HOJE).tipo).toBe("hoje");
+    expect(estadoDoMarco(linha({ admissao: "2026-08-28" }), 30, HOJE)).toMatchObject({ tipo: "breve", dias: 2 });
+    expect(estadoDoMarco(linha(), 60, HOJE)).toMatchObject({ tipo: "futuro", vence: "2026-10-17" });
   });
   it("com check registrado é 'feito', mesmo atrasado", () => {
-    expect(estadoDoMarco(linha({ checks: [check(7)] }), 7, HOJE).tipo).toBe("feito");
+    expect(estadoDoMarco(linha({ checks: [check(30)] }), 30, HOJE).tipo).toBe("feito");
   });
   it("saiu antes do marco: não se aplica (não cobra check de quem já foi)", () => {
-    const l = linha({ admissao: "2026-08-01", saiu: true, afastamento: "2026-08-20" });
-    expect(estadoDoMarco(l, 7, HOJE).tipo).toBe("atrasado");
-    expect(estadoDoMarco(l, 30, HOJE).tipo).toBe("nao_se_aplica");
+    const l = linha({ admissao: "2026-07-01", saiu: true, afastamento: "2026-08-15" });
+    expect(estadoDoMarco(l, 30, HOJE).tipo).toBe("atrasado");
+    expect(estadoDoMarco(l, 60, HOJE).tipo).toBe("nao_se_aplica");
   });
 });
 
 describe("ainda não admitido no sistema Senior", () => {
   const naoAdm = linha({ admitido_senior: false, empregado_id: null, candidato_id: 9, admissao: null, dias: null, data_ref: "2026-09-20", origem: "recrutamento" });
   it("os marcos não correm (aguardam a admissão) e não viram pendência", () => {
-    expect(estadoDoMarco(naoAdm, 7, HOJE)).toEqual({ tipo: "aguardando" });
+    expect(estadoDoMarco(naoAdm, 30, HOJE)).toEqual({ tipo: "aguardando" });
     expect(proximaPendencia(naoAdm, HOJE)).toBeNull();
   });
   it("permanência fica em aberto e o resumo conta à parte", () => {
@@ -53,8 +53,8 @@ describe("ainda não admitido no sistema Senior", () => {
 
 describe("proximaPendencia", () => {
   it("devolve o primeiro marco que pede ação", () => {
-    expect(proximaPendencia(linha(), HOJE)?.marco).toBe(7);
-    expect(proximaPendencia(linha({ checks: [check(7)] }), HOJE)).toBeNull();
+    expect(proximaPendencia(linha(), HOJE)?.marco).toBe(30);
+    expect(proximaPendencia(linha({ checks: [check(30)] }), HOJE)).toBeNull();
   });
 });
 
@@ -80,7 +80,7 @@ describe("sugerirTipoSaida", () => {
 
 describe("resumoAcomp e agrupamento", () => {
   it("conta pendências e resultados", () => {
-    const r = resumoAcomp([linha(), linha({ empregado_id: 2, checks: [check(7, "negativo")], origem: "recrutamento" })], HOJE);
+    const r = resumoAcomp([linha(), linha({ empregado_id: 2, checks: [check(30, "negativo")], origem: "recrutamento" })], HOJE);
     expect(r).toMatchObject({ pessoas: 2, doRecrutamento: 1, atrasados: 1, feitos: 1, negativos: 1 });
   });
   it("um bloco por contrato, em ordem alfabética", () => {

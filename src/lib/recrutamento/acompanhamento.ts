@@ -1,9 +1,9 @@
-// Recrutamento e Seleção › Acompanhar Colaboradores / Acompanhar Experiência
-// (25/09/2026, mig 20260930000245) — as regras que as duas telas e o Excel
+// Recrutamento e Seleção › Acompanhar Colaboradores (a Experiência foi fundida nela em 02/10/2026)
+// (25/09/2026, mig 20260930000245) — as regras que a tela e o Excel
 // compartilham.
 //
 // É o check-in da planilha CONTRATOS_VIGENTES.xlsx que o RH usava: um bloco
-// por contrato e, por pessoa, os marcos de 7, 30, 60 e 90 dias da admissão,
+// por contrato e, por pessoa, os marcos de 30, 60 e 90 dias da admissão,
 // "permaneceu após a experiência?", data de saída, demitido/demissionário,
 // motivo e observação. Duas fontes, chave = CPF (11 dígitos):
 //   • EMPREGADOS (Senior) — admitidos no período; origem "recrutamento"
@@ -12,7 +12,9 @@
 //     "Ainda não admitido no sistema Senior": sem admissão, os marcos não
 //     correm (e o banco recusa check-in).
 
-export const MARCOS = [7, 30, 60, 90] as const;
+// O marco de 7 dias saiu em 02/10/2026 — o RH acompanha só 30, 60 e 90. O
+// banco ainda aceita 7 (CHECK da tabela), mas a tela não mostra nem cobra.
+export const MARCOS = [30, 60, 90] as const;
 export type Marco = (typeof MARCOS)[number];
 /** Experiência = até 90 dias da admissão. */
 export const DIAS_EXPERIENCIA = 90;
