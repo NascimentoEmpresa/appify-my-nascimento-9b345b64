@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Button } from "@/components/ui/button";
@@ -29,6 +29,7 @@ import {
   ChevronDown,
   CheckCircle2,
   AlertTriangle,
+  Wand2,
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -48,6 +49,7 @@ import {
 import { useContratosERP, ContratoERP } from "@/hooks/useContratosERP";
 import { usePlanilhaCustos, resolverPostosVigentes, PostoVigente } from "@/hooks/usePlanilhaCusto";
 import { useModelosNf, buscarItensModeloNf, NfEmissaoModeloRow } from "@/hooks/useNfEmissaoModelo";
+import { VARIAVEIS_DESCRICAO, preencherVariaveis, temVariaveis } from "./descricaoVariaveis";
 import { calcularItem, calcularTotaisNf, pctEfetivo, pctFiscaisDaNf, ItemInput, ItemCalculado, INSS_CATEGORIAS, PercentuaisFiscais } from "./calculos";
 import {
   fmtMoney,
@@ -665,6 +667,7 @@ function NovaNfDialog({ open, onOpenChange, contratos, nfParaEditar, contratoIdI
   const [dataEmissao, setDataEmissao] = useState("");
   const [tipoNota, setTipoNota] = useState<TipoNota>("N");
   const [descricao, setDescricao] = useState("");
+  const descricaoRef = useRef<HTMLTextAreaElement>(null);
   // SIS-2026-0582: Código de Serviço / CNAE pré-preenchidos do contrato; NBS manual.
   const [codigoServico, setCodigoServico] = useState("");
   const [cnae, setCnae] = useState("");
@@ -741,6 +744,9 @@ function NovaNfDialog({ open, onOpenChange, contratos, nfParaEditar, contratoIdI
         multas_pos_emissao: r.multas_pos_emissao,
         glosas_pos_emissao: r.glosas_pos_emissao,
         outros_descontos_pos_emissao: r.outros_descontos_pos_emissao,
+        justificativa_multas: r.justificativa_multas,
+        justificativa_glosas: r.justificativa_glosas,
+        justificativa_outros_descontos: r.justificativa_outros_descontos,
         qtd_colaboradores: r.qtd_colaboradores,
         inss_categoria: r.inss_categoria,
       }))
@@ -850,7 +856,7 @@ function NovaNfDialog({ open, onOpenChange, contratos, nfParaEditar, contratoIdI
     onOpenChange(v);
   }
 
-  function validar(): string | null {
+  function validar(status: "rascunho" | "enviada"): string | null {
     if (!contratoId) return "Selecione o Contrato.";
     // Retenção do contrato não é mais pré-requisito — se a nota ou pelo
     // menos um item já define seus próprios percentuais, isso já cobre a
@@ -867,11 +873,48 @@ function NovaNfDialog({ open, onOpenChange, contratos, nfParaEditar, contratoIdI
     if (!dataEmissao) return "Informe a Data de Emissão.";
     if (!descricao.trim()) return "Informe a Descrição.";
     if (itensCalculados.length === 0) return "Adicione ao menos um item.";
+    if (status === "enviada") {
+      // SIS-2026-0578: desconto sem motivo obriga a Controladoria a ligar pro
+      // supervisor do contrato — pede a justificativa antes de enviar.
+      for (const it of itens) {
+        const nome = it.identificacao || "item";
+        if (it.multas > 0 && !it.justificativa_multas?.trim()) return `Informe a justificativa das Multas (${nome}).`;
+        if (it.glosas > 0 && !it.justificativa_glosas?.trim()) return `Informe a justificativa das Glosas (${nome}).`;
+        if (it.outros_descontos > 0 && !it.justificativa_outros_descontos?.trim()) {
+          return `Informe a justificativa dos Outros descontos (${nome}).`;
+        }
+      }
+      if (temVariaveis(descricao)) {
+        return 'A Descrição ainda tem variáveis {…} sem preencher — use "Preencher variáveis" ou apague-as.';
+      }
+    }
     return null;
   }
 
+  function preencherDescricao() {
+    setDescricao(
+      preencherVariaveis(descricao, { competencia, itens: itensCalculados, codigo_servico: codigoServico, cnae, nbs })
+    );
+  }
+
+  function inserirVariavel(chave: string) {
+    const el = descricaoRef.current;
+    const ins = `{${chave}}`;
+    if (!el) {
+      setDescricao((d) => d + ins);
+      return;
+    }
+    const ini = el.selectionStart ?? descricao.length;
+    const fim = el.selectionEnd ?? ini;
+    setDescricao(descricao.slice(0, ini) + ins + descricao.slice(fim));
+    requestAnimationFrame(() => {
+      el.focus();
+      el.setSelectionRange(ini + ins.length, ini + ins.length);
+    });
+  }
+
   async function handleSalvar(status: "rascunho" | "enviada") {
-    const erro = validar();
+    const erro = validar(status);
     if (erro) {
       toast.error(erro);
       return;
@@ -1038,10 +1081,45 @@ function NovaNfDialog({ open, onOpenChange, contratos, nfParaEditar, contratoIdI
               </Select>
             </div>
             <div className="col-span-2">
-              <Label>
-                Descrição <span className="text-destructive">*</span>
-              </Label>
-              <Textarea rows={1} value={descricao} onChange={(e) => setDescricao(e.target.value)} />
+              <div className="flex items-center justify-between gap-2">
+                <Label>
+                  Descrição <span className="text-destructive">*</span>
+                </Label>
+                <div className="flex items-center gap-1">
+                  <Popover>
+                    <PopoverTrigger asChild>
+                      <Button type="button" variant="ghost" size="sm" className="h-6 px-2 text-xs">
+                        Inserir variável
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent align="end" className="w-72 max-h-72 overflow-y-auto p-1">
+                      {VARIAVEIS_DESCRICAO.map((v) => (
+                        <button
+                          key={v.chave}
+                          type="button"
+                          className="flex w-full items-center justify-between gap-2 rounded px-2 py-1 text-left text-xs hover:bg-muted"
+                          onClick={() => inserirVariavel(v.chave)}
+                        >
+                          <span>{v.rotulo}</span>
+                          <code className="text-muted-foreground">{`{${v.chave}}`}</code>
+                        </button>
+                      ))}
+                    </PopoverContent>
+                  </Popover>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-6 px-2 text-xs"
+                    onClick={preencherDescricao}
+                    disabled={!temVariaveis(descricao)}
+                    title="Troca cada {variável} pelo valor lançado nesta nota"
+                  >
+                    <Wand2 className="mr-1 h-3 w-3" /> Preencher variáveis
+                  </Button>
+                </div>
+              </div>
+              <Textarea ref={descricaoRef} rows={4} value={descricao} onChange={(e) => setDescricao(e.target.value)} />
             </div>
             <div>
               <Label>Código de Serviço</Label>

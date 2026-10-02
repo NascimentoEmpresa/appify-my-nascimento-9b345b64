@@ -23,6 +23,7 @@ import {
   useImportarVariacoesDoExcel,
 } from "@/hooks/useNfEmissaoModelo";
 import { INSS_CATEGORIAS, InssCategoria } from "./calculos";
+import { VARIAVEIS_DESCRICAO } from "./descricaoVariaveis";
 import { parseModeloExcel } from "./importarModeloExcel";
 import { PostoMultiSelect } from "./PostoMultiSelect";
 
@@ -584,6 +585,9 @@ export function ModeloNfDialog({
               value={form.descricao}
               onChange={(e) => setForm((f) => ({ ...f, descricao: e.target.value }))}
             />
+            <p className="mt-1 text-[11px] text-muted-foreground">
+              Variáveis preenchidas na emissão (botão "Preencher variáveis"): {VARIAVEIS_DESCRICAO.map((v) => `{${v.chave}}`).join(" ")}. Linha cujas variáveis estão todas zeradas some sozinha.
+            </p>
           </div>
 
           <div className="space-y-2">
