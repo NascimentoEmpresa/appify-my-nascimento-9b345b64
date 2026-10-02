@@ -336,10 +336,16 @@ function ValidarNfDialog({ nf, onClose }: { nf: NfEmissaoRow | null; onClose: ()
       toast.error("Informe uma observação explicando o cancelamento.");
       return;
     }
+    // SIS-2026-0582: só o Financeiro tem o número da NF emitida — sem ele a
+    // nota não vai pro Relatório de Serviços (cancelar segue sem número).
+    if (status === "concluida" && !numeroNf.trim()) {
+      toast.error("Informe o número da NF para validar.");
+      return;
+    }
     try {
       await validar.mutateAsync({
         id: nf.id,
-        numero_nf: numeroNf || null,
+        numero_nf: numeroNf.trim() || null,
         data_emissao: dataEmissao || null,
         observacoes_financeiro: observacoesFinanceiro || null,
         itens: itensCalculados,
@@ -393,7 +399,7 @@ function ValidarNfDialog({ nf, onClose }: { nf: NfEmissaoRow | null; onClose: ()
                 </div>
               </div>
               <div>
-                <Label>Número da NF</Label>
+                <Label>Número da NF{!readOnly && <span className="text-destructive"> *</span>}</Label>
                 <Input value={numeroNf} onChange={(e) => setNumeroNf(e.target.value)} placeholder="Ex: 1234" disabled={readOnly} />
               </div>
               <div>
