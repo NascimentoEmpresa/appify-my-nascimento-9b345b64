@@ -532,6 +532,7 @@ function NfPagamentoDialog({ nf, onClose }: { nf: NfEmissaoRow | null; onClose: 
   const [situacaoSitePmt, setSituacaoSitePmt] = useState("");
   const [situacaoDominio, setSituacaoDominio] = useState("");
   const [dataEmissao, setDataEmissao] = useState("");
+  const [numeroNf, setNumeroNf] = useState("");
   const [descontoContaVinculada, setDescontoContaVinculada] = useState("0");
   const [recebimentoExtra, setRecebimentoExtra] = useState("0");
   const [faltaReceber, setFaltaReceber] = useState("0");
@@ -544,6 +545,7 @@ function NfPagamentoDialog({ nf, onClose }: { nf: NfEmissaoRow | null; onClose: 
     setSituacaoSitePmt(nf.situacao_site_pmt ?? "");
     setSituacaoDominio(nf.situacao_dominio ?? "");
     setDataEmissao(nf.data_emissao ?? "");
+    setNumeroNf(nf.numero_nf ?? "");
     setDescontoContaVinculada(String(nf.desconto_conta_vinculada ?? 0));
     setRecebimentoExtra(String(nf.recebimento_extra ?? 0));
     setFaltaReceber(String(nf.falta_receber ?? 0));
@@ -599,6 +601,9 @@ function NfPagamentoDialog({ nf, onClose }: { nf: NfEmissaoRow | null; onClose: 
         falta_receber: Number(faltaReceber) || 0,
         pago_a_mais: Number(pagoAMais) || 0,
         data_emissao: dataEmissao || null,
+        // SIS-2026-0582: número da NF corrigível aqui também; em branco não
+        // apaga o que já está salvo.
+        ...(numeroNf.trim() ? { numero_nf: numeroNf.trim() } : {}),
       });
       await registrarLogNf(nf.id, "reconciliacao_atualizada", "Reconciliação de pagamento atualizada");
       toast.success("Reconciliação salva.");
@@ -715,6 +720,10 @@ function NfPagamentoDialog({ nf, onClose }: { nf: NfEmissaoRow | null; onClose: 
                     tela (Emissão de NF). */}
                 <Label className="text-xs">Data de Emissão</Label>
                 <Input type="date" value={dataEmissao} onChange={(e) => setDataEmissao(e.target.value)} />
+              </div>
+              <div>
+                <Label className="text-xs">Nº NF</Label>
+                <Input value={numeroNf} onChange={(e) => setNumeroNf(e.target.value)} placeholder="Ex: 1234" />
               </div>
               <div>
                 <Label className="text-xs">Situação site P.M.T.</Label>
