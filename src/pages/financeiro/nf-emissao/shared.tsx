@@ -166,6 +166,9 @@ export function itemVazio(ordem: number) {
     cofins_pct: null,
     pis_pct: null,
     csll_pct: null,
+    justificativa_multas: null,
+    justificativa_glosas: null,
+    justificativa_outros_descontos: null,
   };
 }
 

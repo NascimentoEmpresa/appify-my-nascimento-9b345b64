@@ -31,6 +31,10 @@ export interface ItemInput {
   cofins_pct?: number | null;
   pis_pct?: number | null;
   csll_pct?: number | null;
+  // SIS-2026-0578: motivo dos descontos, exigido na tela quando há valor.
+  justificativa_multas?: string | null;
+  justificativa_glosas?: string | null;
+  justificativa_outros_descontos?: string | null;
 }
 
 export interface ItemCalculado extends ItemInput {
