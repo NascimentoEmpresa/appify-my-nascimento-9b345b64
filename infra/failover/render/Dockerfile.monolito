@@ -88,6 +88,8 @@ COPY infra/failover/render/monolito/preparar-banco.sh /usr/local/bin/preparar-ba
 COPY infra/failover/render/monolito/bootstrap.sql     /usr/local/share/bootstrap.sql
 COPY infra/failover/carregar-replica.sh             /usr/local/bin/carregar-replica.sh
 COPY infra/failover/render/recarga-render.sh        /usr/local/bin/recarga-render.sh
+COPY infra/failover/render/monolito/promover.sh       /usr/local/bin/promover.sh
+COPY infra/failover/render/monolito/carregar-arquivos.sh /usr/local/bin/carregar-arquivos.sh
 
 # As 59 Edge Functions e o config.toml de onde o roteador tira quais sao
 # publicas (14) e quais exigem JWT (45).
