@@ -256,11 +256,23 @@ else
   # seguinte, que e exatamente o que a contingencia promete nao deixar
   # acontecer.
   #
+  # PUBLIC PRECISA ENTRAR NO REVOKE. O Postgres concede EXECUTE a PUBLIC em
+  # TODA funcao criada, por padrao; revogar so de authenticated nao tira nada.
+  # Com tabela isso nao acontece - dai o REVOKE das tabelas ter funcionado de
+  # primeira e este nao.
+  #
+  # CADA FUNCAO EM SEU PROPRIO BLOCO, e isso nao e preciosismo: o dump traz
+  # funcoes de donos diferentes, e revogar uma funcao de que nao se e dono da
+  #     ERROR: permissao negada para funcao X
+  # Num DO unico, esse primeiro erro aborta a transacao inteira e NENHUMA
+  # funcao e revogada. Foi o que aconteceu em 02/10/2026: o log dizia
+  # "Revogando as RPC..." e o catalogo continuava com as mesmas 796 funcoes.
+  # Com o EXCEPTION aqui dentro, a que falha e contada e as outras seguem.
+  #
   # O criterio e o corpo da funcao: se tem INSERT/UPDATE/DELETE/TRUNCATE, ela
-  # escreve. Falso positivo aqui e seguro (revoga uma funcao de leitura que
-  # tinha a palavra solta num comentario, e em modo consulta isso nao faz
-  # falta); falso negativo seria o perigo, e so aconteceria com escrita montada
-  # por EXECUTE dinamico.
+  # escreve. Falso positivo e seguro (revoga uma funcao de leitura que tinha a
+  # palavra solta num comentario, e em modo consulta isso nao faz falta); falso
+  # negativo so aconteceria com escrita montada por EXECUTE dinamico.
   #
   # AS FUNCOES DE RLS FICAM DE FORA, E ISSO NAO E OPCIONAL
   # can_access aparece 2.063 vezes dentro de policies, has_screen_access 830,
@@ -269,10 +281,15 @@ else
   # seguro: derrubaria TODA a leitura, porque cada policy passaria a dar erro
   # de permissao. A replica viraria uma tela de erro.
   log "Revogando as RPC que escrevem (SECURITY DEFINER passa por cima do REVOKE)..."
-  sql_ignora "do \$BLOCO\$
+  # psql direto, e nao sql_ignora: aquela funcao manda o stderr para /dev/null,
+  # e o NOTICE com a contagem some junto. Sem a contagem no log nao da para
+  # saber se o bloco revogou 444 funcoes ou nenhuma - que foi exatamente como
+  # a falha passou despercebida.
+  psql -Atc "do \$BLOCO\$
     declare
       f record;
       n int := 0;
+      sem_permissao int := 0;
     begin
       for f in
         select p.oid::regprocedure as assinatura
@@ -286,23 +303,16 @@ else
              'get_user_empresa','has_role','is_admin'
            )
       loop
-        -- PUBLIC entra aqui, e e o detalhe que fez a primeira versao nao
-        -- funcionar: o Postgres concede EXECUTE a PUBLIC em TODA funcao
-        -- criada, por padrao. Revogar so de authenticated nao tira nada,
-        -- porque o privilegio continua vindo de PUBLIC. Com tabela isso nao
-        -- acontece - dai o REVOKE das tabelas ter funcionado de primeira e
-        -- este nao. Conferido em 02/10/2026: bdi_criar_versao executou e
-        -- chegou na regra de negocio (LICITACAO_NAO_ENCONTRADA) depois da
-        -- revogacao que eu julgava aplicada.
-        execute format('revoke execute on function %s from public, authenticated, anon', f.assinatura);
-        n := n + 1;
+        begin
+          execute format('revoke execute on function %s from public, authenticated, anon', f.assinatura);
+          n := n + 1;
+        exception when insufficient_privilege or others then
+          sem_permissao := sem_permissao + 1;
+        end;
       end loop;
-      raise notice 'rpc de escrita revogadas: %', n;
+      raise notice 'rpc de escrita revogadas: % (sem permissao: %)', n, sem_permissao;
     end
-  \$BLOCO\$;" 2>&1 | grep -E 'rpc de escrita revogadas' | sed 's/^NOTICE:  /  /'
-  # O NOTICE aparece no log de proposito: a versao anterior mandava tudo para
-  # /dev/null e o bloco falhou em silencio - so descobri porque testei chamando
-  # uma RPC de escrita, que executou normalmente.
+  \$BLOCO\$;" 2>&1 | sed 's/^NOTICE:  /  /;s/^NOTA:  /  /' | grep -E 'rpc de escrita|ERROR|ERRO' || true
   sql_ignora "notify pgrst, 'reload schema';" >/dev/null
 fi
 
