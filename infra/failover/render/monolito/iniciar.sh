@@ -40,6 +40,21 @@ else
   log "storage: DESATIVADO (fs-xattr nao recompilou). Anexos nao funcionam nesta replica."
 fi
 
+# --- o que o ERP precisa saber para falar com esta replica -----------------
+# A chave anon DESTA replica (assinada com outro segredo - a de producao nao
+# serve aqui) nao pode morar no codigo do ERP: o repositorio e publico, e
+# credencial versionada e credencial vazada. Entao a replica publica a propria
+# configuracao, e no ERP fica so o endereco - que ja e publico.
+#
+# Escrito no boot porque o nginx nao interpola variavel de ambiente na
+# configuracao.
+mkdir -p /var/lib/nginx
+printf '{"url":"%s","anon":"%s"}' \
+  "${URL_PUBLICA:-https://erp-failover.onrender.com}" "${ANON_KEY:-}" \
+  > /var/lib/nginx/contingencia.json
+chmod 644 /var/lib/nginx/contingencia.json
+log "configuracao de contingencia publicada em /contingencia.json"
+
 # A carga do backup roda em segundo plano para nao atrasar o health check da
 # Render: ela derruba o servico se o /saude nao responder em alguns minutos, e
 # restaurar 641 tabelas leva mais que isso.
