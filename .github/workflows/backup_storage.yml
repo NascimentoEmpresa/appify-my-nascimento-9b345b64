@@ -133,15 +133,20 @@ jobs:
           TOTAL=$(wc -l < inventario.txt)
           echo "  $TOTAL arquivos no inventario"
           if (( TOTAL < 5000 )); then
-            echo "::error::so $TOTAL arquivos no inventario; a producao tem ~7.700. Algo cortou a listagem."
+            echo "::error::so $TOTAL arquivos no inventario; a producao tem ~8.500. Algo cortou a listagem."
             exit 1
           fi
           # Os arquivos ficam em arquivos/ apenas quando mudaram nesta execucao.
           NOVOS=$(find arquivos -type f 2>/dev/null | wc -l)
           echo "  $NOVOS arquivos baixados nesta execucao"
           if (( NOVOS > 0 )); then
-            # Amostra: o primeiro arquivo tem que ter tamanho > 0
-            AMOSTRA=$(find arquivos -type f | head -1)
+            # -print -quit, e NAO "| head -1": com set -o pipefail o head fecha
+            # o pipe, o find morre de SIGPIPE e o passo inteiro falha com
+            #     find: write error / Broken pipe
+            # Foi exatamente o que derrubou a primeira execucao completa, em
+            # 02/10/2026, DEPOIS de baixar os 8.522 arquivos com sucesso - uma
+            # hora de trabalho perdida na linha da conferencia.
+            AMOSTRA=$(find arquivos -type f -print -quit)
             [[ -s "$AMOSTRA" ]] || { echo "::error::arquivo baixado esta vazio: $AMOSTRA"; exit 1; }
             echo "  amostra OK: $AMOSTRA ($(stat -c%s "$AMOSTRA") bytes)"
           fi
