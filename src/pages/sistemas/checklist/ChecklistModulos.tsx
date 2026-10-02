@@ -229,7 +229,7 @@ export default function ChecklistModulos() {
           {/* ── Indicadores ─────────────────────────────────────────── */}
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
             <CardIndicador icone={<CheckCircle2 className="h-8 w-8" strokeWidth={2.2} />} cor="#16a34a" fundo="#dcfce7"
-              valor={String(ind.prontos)} rotulo="Módulos prontos" variacao={indAnterior && variacao(ind.prontos, indAnterior.prontos, true)} />
+              valor={String(ind.prontos)} rotulo="Módulos liberados" variacao={indAnterior && variacao(ind.prontos, indAnterior.prontos, true)} />
             <CardIndicador icone={<Settings className="h-8 w-8" strokeWidth={2.2} />} cor="#f97316" fundo="#ffedd5"
               valor={String(ind.emDesenvolvimento)} rotulo="Em desenvolvimento" variacao={indAnterior && variacao(ind.emDesenvolvimento, indAnterior.emDesenvolvimento, false)} />
             <CardIndicador icone={<GraduationCap className="h-8 w-8" strokeWidth={2.2} />} cor="#2563eb" fundo="#dbeafe"
@@ -342,7 +342,7 @@ export default function ChecklistModulos() {
               <div className="grid gap-2.5 sm:grid-cols-2">
                 <CardAnalise icone={<GraduationCap className="h-6 w-6 text-blue-600" />} titulo="Módulos sem treinamento"
                   sub={`${modulosSemTreinamento(modulos).length} módulos pendentes`} onClick={() => setAnalise("sem_treinamento")} />
-                <CardAnalise icone={<AlertCircle className="h-6 w-6 text-red-600" />} titulo="Módulos prontos sem validação"
+                <CardAnalise icone={<AlertCircle className="h-6 w-6 text-red-600" />} titulo="Módulos liberados sem validação"
                   sub={`${prontosSemValidacao(modulos).length} módulos`} onClick={() => setAnalise("prontos_sem_validacao")} />
                 <CardAnalise icone={<BarChart3 className="h-6 w-6 text-blue-600" />} titulo="Ranking de áreas com mais pendências"
                   sub="Ver por área" onClick={() => setAnalise("ranking_areas")} />

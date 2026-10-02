@@ -15,9 +15,9 @@ export type Analise = "sem_treinamento" | "prontos_sem_validacao" | "ranking_are
 
 const TITULO: Record<Analise, [string, string]> = {
   sem_treinamento: ["Módulos sem treinamento", "Módulos ativos cujo treinamento ainda não foi realizado (pendente, agendado ou sem preenchimento)."],
-  prontos_sem_validacao: ["Módulos prontos sem validação", "Desenvolvimento pronto, mas o usuário-chave ainda não validou."],
+  prontos_sem_validacao: ["Módulos liberados sem validação", "Desenvolvimento liberado, mas o usuário-chave ainda não validou."],
   ranking_areas: ["Ranking de áreas com mais pendências", "Pendência = etapa não concluída (desenvolvimento, treinamento ou validação) em cada módulo da área."],
-  evolucao: ["Evolução das entregas", "Quantas vezes algo (módulo ou tela) virou Pronto, Treinado ou Validado em cada mês."],
+  evolucao: ["Evolução das entregas", "Quantas vezes algo (módulo ou tela) virou Liberado, Treinado ou Validado em cada mês."],
   aderencia: ["Aderência por usuário-chave", "Módulos e telas sob cada usuário-chave e quantos ele já validou."],
   historico_validacoes: ["Histórico de validações", "Toda mudança de validação do usuário, com quem fez e quando (auditoria)."],
 };
@@ -98,7 +98,7 @@ function Conteudo({ tipo, modulos, dados, historico, nomeUsuario, onAbrirModulo 
     const ev = evolucaoEntregas(historico);
     const max = Math.max(1, ...ev.flatMap((x) => [x.prontos, x.treinados, x.validados]));
     const series = [
-      { k: "prontos" as const, rotulo: "Prontos", cor: "#16a34a" },
+      { k: "prontos" as const, rotulo: "Liberados", cor: "#16a34a" },
       { k: "treinados" as const, rotulo: "Treinados", cor: "#2563eb" },
       { k: "validados" as const, rotulo: "Validados", cor: "#7c3aed" },
     ];
