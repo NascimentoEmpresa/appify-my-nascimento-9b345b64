@@ -1,0 +1,189 @@
+# ============================================================================
+#  Leva o backup para o servidor de arquivos da empresa (o S:)
+# ============================================================================
+#
+#  O PROBLEMA QUE ISTO RESOLVE
+#  Os artefatos do GitHub EXPIRAM. O backup completo dos arquivos (4,8 GB)
+#  morre 14 dias depois de criado, e os incrementais sozinhos nao reconstroem
+#  nada. Sem este workflow, o historico de anexos da empresa dura duas semanas.
+#
+#  O servidor da empresa tem 2 TB, fica numa sala refrigerada, com nobreak, e
+#  nunca e desligado. E o lugar certo para o historico - e e armazenamento que
+#  a empresa ja paga.
+#
+#  POR QUE UM RUNNER DENTRO DA EMPRESA
+#  O runner do GitHub roda na nuvem e NAO alcanca a rede interna: nenhum
+#  workflow normal consegue escrever no S:. Um runner instalado na propria
+#  maquina resolve, porque ele chama o GitHub de dentro para fora - nao e
+#  preciso abrir porta nenhuma no firewall.
+#
+#  ==========================================================================
+#  SEGURANCA - LEIA ANTES DE LIGAR
+#  ==========================================================================
+#  Este repositorio e PUBLICO. O proprio GitHub desaconselha runner
+#  self-hosted em repositorio publico, e o motivo e serio: um workflow
+#  disparado por terceiro rodaria codigo arbitrario DENTRO da rede da empresa,
+#  na maquina que guarda os 2 TB.
+#
+#  O que torna este caso seguro:
+#
+#  1. ESTE WORKFLOW NAO RODA EM PULL REQUEST. So em schedule e
+#     workflow_dispatch, que existem apenas na branch default - ninguem de
+#     fora altera. Um PR de fork nao tem como dispara-lo.
+#
+#  2. O `if` abaixo trava no nome do repositorio: mesmo que alguem forke tudo,
+#     o workflow nao roda no fork.
+#
+#  3. O runner roda com um usuario DEDICADO do Windows, SEM direitos de
+#     administrador, com acesso apenas a pasta de backup. Isso esta no passo a
+#     passo (docs/runner-servidor-empresa.md) e nao e opcional.
+#
+#  4. Em Settings > Actions > General, "Fork pull request workflows from
+#     outside collaborators" fica em "Require approval for all external
+#     contributors".
+#
+#  Com esses quatro pontos, o risco restante e: alguem com acesso de ESCRITA
+#  ao repositorio poderia rodar codigo no servidor. Esse conjunto de pessoas e
+#  a propria equipe - mesmo nivel de confianca de quem ja faz deploy.
+#
+#  A CHAVE GPG NAO VAI PARA O SERVIDOR. O que chega la e o backup cifrado,
+#  exatamente como esta no GitHub. Quem comprometer o servidor leva arquivos
+#  que nao consegue abrir.
+# ============================================================================
+name: Historico no servidor da empresa
+
+on:
+  workflow_dispatch:
+    inputs:
+      dias:
+        description: 'Copiar artefatos criados nos ultimos N dias'
+        default: '30'
+  schedule:
+    # 02:00 UTC = 23:00 de Brasilia. Depois do ultimo backup do dia (20h) e
+    # fora do expediente: a maquina fica livre para a copia, que e pesada na
+    # primeira vez.
+    - cron: '0 2 * * *'
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: historico-servidor
+  cancel-in-progress: false
+
+jobs:
+  copiar:
+    # Trava contra fork: ver o item 2 do bloco de seguranca acima.
+    if: github.repository == 'NascimentoEmpresa/appify-my-nascimento-9b345b64'
+    runs-on: [self-hosted, windows, servidor-arquivos]
+    timeout-minutes: 180
+    steps:
+      - name: Onde vamos guardar
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          # O destino vem de uma variavel do repositorio, nao fica escrito
+          # aqui: da para mudar a pasta sem mexer no codigo, e o caminho
+          # interno da empresa nao vai parar num repositorio publico.
+          $base = "${{ vars.CAMINHO_HISTORICO }}"
+          if ([string]::IsNullOrWhiteSpace($base)) {
+            Write-Error "CAMINHO_HISTORICO nao definida (Settings > Secrets and variables > Actions > Variables). Exemplo: S:\Backups\ERP"
+          }
+          if (-not (Test-Path $base)) { New-Item -ItemType Directory -Path $base -Force | Out-Null }
+          $letra = $base.Substring(0,1)
+          $livre = (Get-PSDrive -Name $letra).Free / 1GB
+          Write-Output "  destino: $base"
+          Write-Output ("  livre no volume {0}: {1:N1} GB" -f $letra, $livre)
+          # Encher o disco do servidor da empresa seria um estrago muito maior
+          # que perder uma copia. Para antes.
+          if ($livre -lt 20) { Write-Error "Menos de 20 GB livres - abortado para nao encher o disco do servidor." }
+          "BASE=$base" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Baixar o que ainda nao esta la
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $dias = 30
+          if ("${{ inputs.dias }}" -ne "") { $dias = [int]"${{ inputs.dias }}" }
+          $corte = (Get-Date).AddDays(-$dias)
+
+          $json = gh api "repos/${{ github.repository }}/actions/artifacts?per_page=100" | ConvertFrom-Json
+          $alvos = $json.artifacts | Where-Object {
+            (-not $_.expired) -and
+            (($_.name -like 'backup-*') -or ($_.name -like 'storage-arquivos*')) -and
+            ([datetime]$_.created_at -ge $corte)
+          }
+          Write-Output "  $($alvos.Count) artefato(s) candidatos"
+
+          $novos = 0
+          $pulados = 0
+          foreach ($a in $alvos) {
+            # Pasta por mes: com centenas de arquivos, o S: continua navegavel
+            # para quem for procurar um anexo a mao.
+            $mes = ([datetime]$a.created_at).ToString('yyyy-MM')
+            $pasta = Join-Path $env:BASE $mes
+            if (-not (Test-Path $pasta)) { New-Item -ItemType Directory -Path $pasta -Force | Out-Null }
+            $destino = Join-Path $pasta ($a.name + '.zip')
+
+            # Ja copiado antes nao baixa de novo - e o que permite rodar todo
+            # dia sem reler 5 GB a toa.
+            if ((Test-Path $destino) -and ((Get-Item $destino).Length -gt 1024)) {
+              $pulados++
+              continue
+            }
+            $mb = [math]::Round($a.size_in_bytes / 1MB)
+            Write-Output "  baixando $($a.name) ($mb MB)"
+            gh api "repos/${{ github.repository }}/actions/artifacts/$($a.id)/zip" > $destino
+            if ((Get-Item $destino).Length -lt 1024) {
+              Remove-Item $destino -Force
+              Write-Output "    veio vazio - descartado, sera tentado amanha"
+            } else {
+              $novos++
+            }
+          }
+          Write-Output "  novos: $novos   ja existiam: $pulados"
+
+      - name: Conferir o que ficou no servidor
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          # Um backup que nao abre e pior que nenhum. Aqui so da para conferir
+          # que o zip e um zip de verdade: o conteudo esta cifrado com GPG e a
+          # chave privada NAO fica no servidor, de proposito.
+          $todos = Get-ChildItem -Path $env:BASE -Recurse -Filter *.zip
+          if ($todos.Count -eq 0) { Write-Error "nenhum arquivo no destino - a copia nao fez nada" }
+          $totalGB = [math]::Round((($todos | Measure-Object -Property Length -Sum).Sum / 1GB), 2)
+          Write-Output "  $($todos.Count) arquivo(s), $totalGB GB no total"
+
+          $ruins = 0
+          foreach ($f in ($todos | Sort-Object LastWriteTime -Descending | Select-Object -First 5)) {
+            $fs = [System.IO.File]::OpenRead($f.FullName)
+            $b = New-Object byte[] 2
+            [void]$fs.Read($b, 0, 2)
+            $fs.Close()
+            # 'PK' (0x50 0x4B) e a assinatura de todo arquivo ZIP
+            if (($b[0] -ne 0x50) -or ($b[1] -ne 0x4B)) {
+              Write-Output "    CORROMPIDO: $($f.Name)"
+              $ruins++
+            }
+          }
+          if ($ruins -gt 0) { Write-Error "$ruins arquivo(s) recentes nao sao ZIP valido" }
+          Write-Output "  amostra dos 5 mais recentes: OK"
+
+      - name: Avisar o Eduardo se falhou
+        if: failure()
+        shell: powershell
+        env:
+          DISCORD_TOKEN: ${{ secrets.DISCORD_TOKEN }}
+        run: |
+          # DM, nunca no canal: alerta de infraestrutura e ruido para quem nao
+          # pode agir. Mesmo padrao dos outros workflows.
+          $h = @{ Authorization = "Bot $env:DISCORD_TOKEN"; 'User-Agent' = 'DiscordBot (erp, 1.0)' }
+          $corpo = @{ recipient_id = '1384572666752663653' } | ConvertTo-Json
+          $c = Invoke-RestMethod -Method Post -Uri 'https://discord.com/api/v10/users/@me/channels' -Headers $h -ContentType 'application/json' -Body $corpo
+          $texto = "ATENCAO: o historico no servidor da empresa falhou. O S: pode estar sem as copias novas. ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          $msg = @{ content = $texto } | ConvertTo-Json
+          Invoke-RestMethod -Method Post -Uri "https://discord.com/api/v10/channels/$($c.id)/messages" -Headers $h -ContentType 'application/json' -Body $msg | Out-Null

@@ -32,7 +32,9 @@ export function MonitorDeQueda() {
   const estado = useSyncExternalStore(monitorDeQueda.assinar, monitorDeQueda.estado);
   const proxima = useSyncExternalStore(monitorDeQueda.assinar, monitorDeQueda.proximaVerificacaoEm);
   const [aviso, setAviso] = useState<string | null>(null);
-  const [replicaNoAr, setReplicaNoAr] = useState(false);
+  // Guarda a CHAVE que a replica devolveu, nao um sim/nao: e ela que o
+  // entrarEmContingencia precisa, e buscar duas vezes seria desperdicio.
+  const [chaveReplica, setChaveReplica] = useState<string | null>(null);
 
   const fora = estado === "fora";
 
@@ -41,8 +43,8 @@ export function MonitorDeQueda() {
     // roda, e o ERP não paga nada por existir.
     if (!fora || !CONTINGENCIA_CONFIGURADA) return;
     let vivo = true;
-    void replicaRespondendo().then((ok) => {
-      if (vivo) setReplicaNoAr(ok);
+    void replicaRespondendo().then((chave) => {
+      if (vivo) setChaveReplica(chave);
     });
     return () => {
       vivo = false;
@@ -64,11 +66,11 @@ export function MonitorDeQueda() {
       rotuloTentar="Recarregar"
       aviso={aviso}
       extra={
-        replicaNoAr ? (
+        chaveReplica ? (
           <button
             type="button"
             className="si-btn si-btn-s"
-            onClick={() => entrarEmContingencia()}
+            onClick={() => entrarEmContingencia(chaveReplica)}
             title="Abre uma cópia do sistema onde você consulta os dados, mas não consegue salvar alterações"
           >
             <BookOpen size={17} strokeWidth={2.4} aria-hidden />
