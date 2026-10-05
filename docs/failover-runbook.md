@@ -226,6 +226,8 @@ já trata as oito armadilhas documentadas no README.
 | Em contingência o login não sai do lugar, e o console do navegador diz `blocked by CORS policy` | falta um cabeçalho em `Access-Control-Allow-Headers`, ou o preflight não responde 2xx | **teste sempre no navegador, não com `curl`** — `curl` não faz preflight. Os quatro casos já corrigidos estão em `cabecalhos.conf` e `nginx.conf` com a medição de cada um |
 | `Access-Control-Allow-Origin header contains multiple values` | o serviço (PostgREST/GoTrue) manda o CORS dele e o gateway manda o nosso | `proxy_hide_header` nos seis cabeçalhos de CORS, em `cabecalhos.conf` |
 | Foto de colaborador, avatar ou logo quebrada **só em contingência** | a rota `/storage/v1/object/public/` exigia apikey, e `<img src>` não manda cabeçalho | já corrigido: essa rota tem bloco próprio no `nginx.conf`, sem a trava de apikey |
+| Imagem ou anexo falha com `net::ERR_BLOCKED_BY_ORB` | a resposta não é do tipo que a tag esperava — quase sempre um JSON de erro onde ia um PNG | **busque a mesma URL com `fetch()` para ver o erro real.** O ORB esconde a causa; neste caso era `401` da trava de apikey na URL assinada |
+| Uma tela aparece **vazia** em contingência, sem erro visível | o código é mais novo que o esquema da réplica: o `select` cita coluna que ainda não existe lá e o PostgREST devolve `400` (`42703`), que a tela trata como "nenhum resultado" | confira o console do navegador. Não é defeito do failover, é a janela de atraso. A próxima recarga resolve |
 | Arquivo puxado do branch não chega atualizado no container | o CDN do `raw.githubusercontent` serve cache e ignora quebra-cache por query | puxe pela API: `curl -H "Authorization: Bearer $GITHUB_TOKEN" -H 'Accept: application/vnd.github.raw' ".../contents/<caminho>?ref=<branch>"` |
 | `nao consegui decifrar/extrair` na carga de anexos | chave GPG ausente no ambiente | confira `GPG_PRIVATE_KEY_B64` e `GPG_PASSPHRASE` nas variáveis da Render |
 | Anexo devolve **500** e o log do serviço diz `ENODATA` / "extended attribute does not exist" | o arquivo está no disco mas sem o atributo estendido que guarda o content-type | rode uma recarga: o bloco 3c regrava `user.supabase.content-type` e `user.supabase.cache-control` lendo o mimetype do banco |
@@ -241,6 +243,13 @@ já trata as oito armadilhas documentadas no README.
 
 Dito sem rodeio, para ninguém contar com o que não existe:
 
+- **Tela vazia em contingência pode ser esquema atrasado, não falta de dados.** Se
+  uma migration foi aplicada na produção depois do backup que alimentou a última
+  recarga, a réplica não tem a coluna nova, o PostgREST devolve `400` e a tela
+  mostra "nenhum resultado". Aconteceu em 05/10/2026 com `malote_despesa`
+  (`cotacao_iniciada_em` e duas irmãs): existiam na produção, não na réplica.
+  **Não é defeito do failover** — é o atraso de até ~3h30 aparecendo de um jeito
+  que engana. Confira sempre o console antes de concluir que a cópia está vazia.
 - **Teste de anexo por `curl` não vale como prova de contingência.** O
   navegador faz *preflight* e manda cabeçalhos que o `curl` não manda; já
   houve 152 anexos conferidos pela API com sucesso enquanto a contingência
