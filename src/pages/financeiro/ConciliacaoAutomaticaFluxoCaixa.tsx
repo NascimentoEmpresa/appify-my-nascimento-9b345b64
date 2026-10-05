@@ -10,6 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { SearchableMultiSelect } from "@/components/ui/searchable-multi-select";
+import { ehSaldoAnterior, linhasSaldoAnterior } from "@/lib/conciliacaoSaldoAnterior";
 import { Upload, X, Play, RefreshCw, GitMerge, Pencil, Ban, PlusCircle, Save, History, CheckCircle2 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -163,10 +164,9 @@ function ConciliarTab() {
   // "SALDO ANTERIOR" (importação histórica, dia 01/01) é o saldo de abertura
   // da conta — no extrato aparece como "SALDO ANT EM 24/12", não como
   // movimento, então nunca tem par no OFX e virava uma divergência falsa
-  // (achado da Érica: R$ 270,22 da AGPS/Banrisul). Fica fora da comparação e
-  // aparece só como informação, pra conferir com o saldo anterior do extrato.
-  const ehSaldoAnterior = (l: { classificacao_nome: string | null }) =>
-    (l.classificacao_nome ?? "").trim().toUpperCase() === "SALDO ANTERIOR";
+  // (achado da Érica: R$ 270,22 da AGPS/Banrisul). Fica fora da comparação
+  // normal; se a pessoa digitar o saldo do extrato, entra como uma linha da
+  // conciliação (ver `rodar`).
   const saldoAnteriorFluxo = useMemo(() => {
     const itens = linhasDoBancoEmpresa.filter(ehSaldoAnterior);
     const total = itens.reduce((t, l) => t + (l.tipo === "entrada" ? Number(l.valor) : -Number(l.valor)), 0);
@@ -191,8 +191,16 @@ function ConciliarTab() {
   const empresasEscolhidas = todasEmpresas || empresaIds.length > 0;
 
   function rodar(trns: OFXTransaction[]) {
-    const planRows = linhasFluxoParaPlanilhaRow(linhasPeriodoBanco);
-    const res = reconciliar(planRows, trns);
+    // Saldo anterior digitado entra como uma linha da conciliação, nos dois
+    // lados (extrato e Fluxo) — ver lib/conciliacaoSaldoAnterior.ts.
+    const saldoLinhas = linhasSaldoAnterior(
+      linhasDoBancoEmpresa.filter(ehSaldoAnterior),
+      saldoExtrato,
+      dataDe,
+      bancos.find((b) => b.id === bancoId)?.nome ?? "—"
+    );
+    const planRows = [...linhasFluxoParaPlanilhaRow(linhasPeriodoBanco), ...saldoLinhas.plan];
+    const res = reconciliar(planRows, [...trns, ...saldoLinhas.ofx]);
     setResultado(res);
     toast.success(`Conciliação processada — ${res.totalDias} dias, ${res.divergencias} dia(s) com divergência.`);
   }
@@ -447,25 +455,15 @@ function ConciliarTab() {
               onChange={(e) => setSaldoExtratoTxt(e.target.value)}
             />
           </div>
-          {saldoConfere !== null && (
-            <div
-              className={cn(
-                "w-full rounded-md border px-3 py-2 text-xs",
-                saldoConfere
-                  ? "border-emerald-200 bg-emerald-50 text-emerald-800"
-                  : "border-rose-200 bg-rose-50 text-rose-800"
-              )}
-            >
-              {saldoConfere
-                ? `✅ Saldo anterior confere: Fluxo ${saldoFluxoTotal.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })} = extrato ${saldoExtrato!.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}.`
-                : `⚠️ Saldo anterior diverge: Fluxo ${saldoFluxoTotal.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })} × extrato ${saldoExtrato!.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })} (diferença ${(saldoExtrato! - saldoFluxoTotal).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}).`}
-            </div>
-          )}
           <div className="w-full text-xs text-muted-foreground">
             {bancoId && empresasEscolhidas
               ? `${linhasPeriodoBanco.length} de ${linhasPeriodo.length} lançamento(s) do Fluxo de Caixa no período são deste banco${todasEmpresas ? "" : " e das empresas escolhidas"}.${
                   saldoAnteriorFluxo.qtd > 0
-                    ? ` Saldo anterior no Fluxo (${saldoAnteriorFluxo.total.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}) fica fora da comparação — confira com o "SALDO ANT" do extrato.`
+                    ? ` Saldo anterior no Fluxo: ${saldoAnteriorFluxo.total.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}. ${
+                        saldoExtrato == null
+                          ? 'Fica fora da comparação — digite o "SALDO ANT" do extrato para conferi-lo como uma linha da conciliação.'
+                          : "Entra na conciliação como uma linha, comparado com o saldo digitado."
+                      }`
                     : ""
                 }`
               : `${linhasPeriodo.length} lançamento(s) do Fluxo de Caixa no período. Escolha o banco e a(s) empresa(s) para conciliar.`}
