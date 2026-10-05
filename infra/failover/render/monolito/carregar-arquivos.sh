@@ -53,8 +53,21 @@ set -uo pipefail
 # A validacao no fim deste script existe exatamente para isto: ela pergunta ao
 # Storage se ele consegue servir um objeto real e avisa quando o layout nao
 # bate, em vez de deixar passar como se tivesse dado certo.
+# O CAMINHO COMPLETO, lido do proprio erro do storage-api em 05/10/2026:
+#
+#     ENOENT: stat '/var/lib/postgresql/data/storage/stub/stub/
+#              integration-uploads/<nome>/90638add-...'
+#
+# e no mesmo log:  "tenantId":"stub"   "project":"stub"
+#
+#   <raiz>/<tenant>/<projeto>/<balde>/<nome>/<versao>
+#
+# Sao DOIS niveis antes do balde, nao um. A tentativa anterior colocou so o
+# tenant e continuou dando erro; esta leitura veio do log do servico, que
+# imprime o caminho exato que ele procurou - muito mais confiavel que deduzir.
+TENANT="${TENANT_ID:-stub}"
 RAIZ="${FILE_STORAGE_BACKEND_PATH:-/var/lib/postgresql/data/storage}"
-DESTINO="$RAIZ"
+DESTINO="$RAIZ/$TENANT/$TENANT"
 REPO="${GITHUB_REPO:-NascimentoEmpresa/appify-my-nascimento-9b345b64}"
 # O TRABALHO NAO PODE ACONTECER EM /tmp, e isso derrubou a replica duas vezes.
 # O /tmp da Render e um volume temporario com LIMITE DE 2 GB, e o backup de
@@ -115,18 +128,33 @@ if (( livre_kb < 6 * 1024 * 1024 )); then
   log "         seguindo mesmo assim - os incrementais pequenos devem caber."
 fi
 
-# --- 0b. restos da tentativa com tenant ------------------------------------
-# A tentativa anterior extraiu para <raiz>/stub/<balde>/..., apostando num
-# tenant que nao existe no caminho. Sao 4,8 GB que o Storage nunca le e que
-# ocupam o disco justamente quando ele e apertado.
+# --- 0b. aproveitar o que ja esta no disco ---------------------------------
+# As tentativas anteriores deixaram os arquivos em dois lugares errados:
 #
-# Remove APENAS esse diretorio, nomeado pela variavel de ambiente - nunca os
-# baldes, que agora sao o conteudo valido.
-antigo_tenant="$RAIZ/${TENANT_ID:-stub}"
-if [[ -n "${TENANT_ID:-stub}" && -d "$antigo_tenant" ]]; then
-  log "removendo resto da tentativa com tenant: $antigo_tenant ($(du -sh "$antigo_tenant" 2>/dev/null | cut -f1))"
-  rm -rf "$antigo_tenant"
-fi
+#   <raiz>/<balde>/...          (sem prefixo nenhum)
+#   <raiz>/<tenant>/<balde>/... (com um nivel so)
+#
+# Os bytes estao certos - so o prefixo esta errado. MOVER e instantaneo
+# (rename no mesmo sistema de arquivos) e evita rebaixar 4,8 GB.
+mkdir -p "$DESTINO"
+for origem_errada in "$RAIZ" "$RAIZ/$TENANT"; do
+  [[ -d "$origem_errada" ]] || continue
+  for balde in "$origem_errada"/*; do
+    [[ -d "$balde" ]] || continue
+    nome_balde="$(basename "$balde")"
+    # nunca mover o proprio diretorio do tenant nem um destino ja correto
+    [[ "$nome_balde" == "$TENANT" ]] && continue
+    [[ "$balde" == "$DESTINO"* ]] && continue
+    if [[ -d "$DESTINO/$nome_balde" ]]; then
+      # ja existe no lugar certo: o errado e sobra
+      log "removendo sobra: $balde"
+      rm -rf "$balde"
+    else
+      log "movendo para o caminho certo: $nome_balde"
+      mv "$balde" "$DESTINO/$nome_balde" 2>/dev/null || true
+    fi
+  done
+done
 
 # --- 1. quantos arquivos ja estao aqui? -------------------------------------
 antes=$(find "$DESTINO" -type f 2>/dev/null | wc -l)
