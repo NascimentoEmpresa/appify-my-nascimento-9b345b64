@@ -170,6 +170,23 @@ alguém precisa levar à mão.
 
 ## Recuperar dados
 
+### Como se sabe que os anexos estão realmente sendo servidos
+
+Olhar o disco não prova nada: os arquivos já estiveram lá, com os bytes certos,
+e o download falhava mesmo assim — por causa do caminho, do papel no banco e do
+atributo estendido, um problema de cada vez. A prova é **pedir o arquivo pela
+API**, como o ERP pede, e comparar o tamanho recebido com o que o banco diz.
+
+Conferido em 05/10/2026: **152 objetos, 36 baldes, bytes exatos e content-type
+igual ao do banco**.
+
+Duas armadilhas no próprio teste, que já produziram falso resultado aqui:
+
+- amostra vazia tem que **falhar**, não passar — um teste que roda zero
+  objetos e diz "tudo ok" é pior que nenhum teste;
+- nome de arquivo com espaço precisa ir **codificado** na URL, senão o curl
+  recusa a URL e devolve `000`, que parece recusa da réplica e não é.
+
 ### Um anexo antigo
 
 1. no ERP, copie o nome do arquivo;
@@ -207,6 +224,9 @@ já trata as oito armadilhas documentadas no README.
 | Escrita na réplica retorna **201/204** | a trava caiu | rode uma recarga: ela reaplica `REVOKE` nas tabelas e nas RPC |
 | Botão "Consultar em modo leitura" não aparece | `/contingencia.json` fora, ou CORS | `curl https://erp-failover.onrender.com/contingencia.json` deve devolver JSON com `url` e `anon` |
 | `nao consegui decifrar/extrair` na carga de anexos | chave GPG ausente no ambiente | confira `GPG_PRIVATE_KEY_B64` e `GPG_PASSPHRASE` nas variáveis da Render |
+| Anexo devolve **500** e o log do serviço diz `ENODATA` / "extended attribute does not exist" | o arquivo está no disco mas sem o atributo estendido que guarda o content-type | rode uma recarga: o bloco 3c regrava `user.supabase.content-type` e `user.supabase.cache-control` lendo o mimetype do banco |
+| Anexo devolve **500** e o log diz `ENOENT` com `stub/stub` repetido | caminho em disco errado | o layout é `<raiz>/<tenant>/<projeto>/<balde>/<nome>/<versão>` — dois níveis antes do balde |
+| `funzip error: invalid compressed data--len` na carga | artefato grande exige ZIP64, que o `funzip` não trata | já substituído por um descompactador de stream em python3 embutido no script; se reaparecer, confira se `python3` existe no container |
 | Backup falhou | — | chega DM no Discord do Eduardo; o canal não é usado para isto |
 | Mudança no `render.yaml` não aplica | falta aprovar o plano | Blueprint → **Manual sync** → **Approve**. A tela não volta sozinha, e parece que falhou |
 | Script novo não entrou na réplica | sync ≠ deploy | o sync aplica disco/variáveis; código exige **Manual Deploy → Deploy latest commit** |
