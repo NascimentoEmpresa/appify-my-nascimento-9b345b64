@@ -30,17 +30,31 @@
 # ============================================================================
 set -uo pipefail
 
-# O TENANT ENTRA NO CAMINHO, e foi isto que fez o Storage nao achar os arquivos.
-# O storage-api guarda em <raiz>/<tenant>/<balde>/<objeto>, nao em
-# <raiz>/<balde>/<objeto>. Extraindo sem o tenant, os 254 arquivos ficaram no
-# disco e o Storage devolvia HTTP 400 - conferido em 05/10/2026, com TENANT_ID
-# valendo "stub" no ambiente do servico.
+# ONDE O STORAGE PROCURA: <raiz>/<balde>/<nome>/<versao>
+#
+# Levou varias tentativas ate medir isto direito. O storage-api NAO guarda em
+# <raiz>/<balde>/<nome>: o "nome" vira um DIRETORIO, e o arquivo de verdade
+# chama-se com o UUID da coluna storage.objects.version. Conferido em
+# 05/10/2026 na propria tabela:
+#
+#     bucket_id = integration-uploads
+#     name      = 5a61c769-.../d963bd54-...xlsx
+#     version   = 90638add-08da-4b31-9049-67ea0b588b65
+#
+#   disco: <raiz>/integration-uploads/5a61c769-.../d963bd54-...xlsx/90638add-...
+#
+# E NAO HA TENANT no caminho. A tentativa anterior acrescentou "stub" (o
+# TENANT_ID do ambiente) e os 8.936 arquivos continuaram invisiveis para o
+# Storage, que seguia devolvendo HTTP 400.
+#
+# O backup traz os objetos como <balde>/<nome>; a etapa 3b converte cada um
+# para o formato versionado, por rename - sem copiar e sem espaco extra.
 #
 # A validacao no fim deste script existe exatamente para isto: ela pergunta ao
 # Storage se ele consegue servir um objeto real e avisa quando o layout nao
 # bate, em vez de deixar passar como se tivesse dado certo.
 RAIZ="${FILE_STORAGE_BACKEND_PATH:-/var/lib/postgresql/data/storage}"
-DESTINO="$RAIZ/${TENANT_ID:-stub}"
+DESTINO="$RAIZ"
 REPO="${GITHUB_REPO:-NascimentoEmpresa/appify-my-nascimento-9b345b64}"
 # O TRABALHO NAO PODE ACONTECER EM /tmp, e isso derrubou a replica duas vezes.
 # O /tmp da Render e um volume temporario com LIMITE DE 2 GB, e o backup de
@@ -101,18 +115,17 @@ if (( livre_kb < 6 * 1024 * 1024 )); then
   log "         seguindo mesmo assim - os incrementais pequenos devem caber."
 fi
 
-# --- 0b. restos do layout antigo -------------------------------------------
-# Ate 05/10/2026 os arquivos iam para <raiz>/<balde>/... Com o tenant no
-# caminho, aqueles viraram lixo que o Storage nunca le e que ocupa disco
-# justamente quando ele e apertado. Remove so o que for balde conhecido, nunca
-# o diretorio do tenant.
-if [[ -d "$RAIZ" ]]; then
-  for antigo in "$RAIZ"/*; do
-    [[ -d "$antigo" ]] || continue
-    [[ "$(basename "$antigo")" == "${TENANT_ID:-stub}" ]] && continue
-    log "removendo resto do layout antigo: $(basename "$antigo")"
-    rm -rf "$antigo"
-  done
+# --- 0b. restos da tentativa com tenant ------------------------------------
+# A tentativa anterior extraiu para <raiz>/stub/<balde>/..., apostando num
+# tenant que nao existe no caminho. Sao 4,8 GB que o Storage nunca le e que
+# ocupam o disco justamente quando ele e apertado.
+#
+# Remove APENAS esse diretorio, nomeado pela variavel de ambiente - nunca os
+# baldes, que agora sao o conteudo valido.
+antigo_tenant="$RAIZ/${TENANT_ID:-stub}"
+if [[ -n "${TENANT_ID:-stub}" && -d "$antigo_tenant" ]]; then
+  log "removendo resto da tentativa com tenant: $antigo_tenant ($(du -sh "$antigo_tenant" 2>/dev/null | cut -f1))"
+  rm -rf "$antigo_tenant"
 fi
 
 # --- 1. quantos arquivos ja estao aqui? -------------------------------------
@@ -188,11 +201,42 @@ while IFS='|' read -r id nome tamanho; do
   fi
 done <<< "$lista"
 
+# --- 3b. cada objeto vira <nome>/<versao> ----------------------------------
+# O backup guarda os objetos como <balde>/<nome> (um arquivo). O storage-api
+# espera <balde>/<nome>/<versao>, onde <nome> e um DIRETORIO e o arquivo real
+# se chama com o UUID de storage.objects.version.
+#
+# A conversao e por RENAME, no mesmo sistema de arquivos: nao copia nada e nao
+# precisa de espaco extra - o que importa num disco que ja chegou a 48K livres.
+#
+# A fonte da verdade e o BANCO, nao um palpite sobre o formato: a versao de
+# cada objeto vem de storage.objects. Objeto sem versao e pulado.
+#
+# O separador e | porque nome de arquivo nao contem | (contem espaco, acento e
+# parenteses, que quebrariam uma leitura ingenua).
+log "Convertendo os objetos para <nome>/<versao> (formato do Storage)..."
+convertidos=0
+ja_ok=0
+sem_versao=0
+psql -At -c "select bucket_id || '|' || name || '|' || coalesce(version,'') from storage.objects where bucket_id is not null and name is not null" 2>/dev/null > "$TMP/objetos.txt"
+while IFS='|' read -r balde nome versao; do
+  [[ -z "$balde" || -z "$nome" ]] && continue
+  if [[ -z "$versao" ]]; then sem_versao=$(( sem_versao + 1 )); continue; fi
+  alvo="$DESTINO/$balde/$nome"
+  # Ja convertido numa execucao anterior.
+  if [[ -d "$alvo" && -f "$alvo/$versao" ]]; then ja_ok=$(( ja_ok + 1 )); continue; fi
+  # Ainda no formato do backup: <nome> e um arquivo comum.
+  if [[ -f "$alvo" ]]; then
+    mv "$alvo" "$alvo.__conv" 2>/dev/null || continue
+    mkdir -p "$alvo" 2>/dev/null
+    mv "$alvo.__conv" "$alvo/$versao" 2>/dev/null && convertidos=$(( convertidos + 1 ))
+  fi
+done < "$TMP/objetos.txt"
+rm -f "$TMP/objetos.txt"
+log "  convertidos: $convertidos   ja estavam: $ja_ok   sem versao: $sem_versao"
+
 # --- 4. o dono precisa ser o do Storage -------------------------------------
 # Extraido como root, o storage-api (que roda como outro usuario) nao leria.
-# A RAIZ inteira, nao so o diretorio do tenant: o storage-api precisa atravessar
-# <raiz> para chegar em <raiz>/<tenant>/..., e sem permissao na raiz ele para
-# antes de entrar.
 chown -R 1000:1000 "$RAIZ" 2>/dev/null || true
 
 depois=$(find "$DESTINO" -type f 2>/dev/null | wc -l)
