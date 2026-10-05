@@ -223,6 +223,10 @@ já trata as oito armadilhas documentadas no README.
 | `Instance failed: /tmp exceeded 2GB` nos eventos | algo gravando em `/tmp` | o `/tmp` da Render é limitado a 2 GB; todo trabalho pesado vai em `/var/lib/postgresql/data/tmp` |
 | Escrita na réplica retorna **201/204** | a trava caiu | rode uma recarga: ela reaplica `REVOKE` nas tabelas e nas RPC |
 | Botão "Consultar em modo leitura" não aparece | `/contingencia.json` fora, ou CORS | `curl https://erp-failover.onrender.com/contingencia.json` deve devolver JSON com `url` e `anon` |
+| Em contingência o login não sai do lugar, e o console do navegador diz `blocked by CORS policy` | falta um cabeçalho em `Access-Control-Allow-Headers`, ou o preflight não responde 2xx | **teste sempre no navegador, não com `curl`** — `curl` não faz preflight. Os quatro casos já corrigidos estão em `cabecalhos.conf` e `nginx.conf` com a medição de cada um |
+| `Access-Control-Allow-Origin header contains multiple values` | o serviço (PostgREST/GoTrue) manda o CORS dele e o gateway manda o nosso | `proxy_hide_header` nos seis cabeçalhos de CORS, em `cabecalhos.conf` |
+| Foto de colaborador, avatar ou logo quebrada **só em contingência** | a rota `/storage/v1/object/public/` exigia apikey, e `<img src>` não manda cabeçalho | já corrigido: essa rota tem bloco próprio no `nginx.conf`, sem a trava de apikey |
+| Arquivo puxado do branch não chega atualizado no container | o CDN do `raw.githubusercontent` serve cache e ignora quebra-cache por query | puxe pela API: `curl -H "Authorization: Bearer $GITHUB_TOKEN" -H 'Accept: application/vnd.github.raw' ".../contents/<caminho>?ref=<branch>"` |
 | `nao consegui decifrar/extrair` na carga de anexos | chave GPG ausente no ambiente | confira `GPG_PRIVATE_KEY_B64` e `GPG_PASSPHRASE` nas variáveis da Render |
 | Anexo devolve **500** e o log do serviço diz `ENODATA` / "extended attribute does not exist" | o arquivo está no disco mas sem o atributo estendido que guarda o content-type | rode uma recarga: o bloco 3c regrava `user.supabase.content-type` e `user.supabase.cache-control` lendo o mimetype do banco |
 | Anexo devolve **500** e o log diz `ENOENT` com `stub/stub` repetido | caminho em disco errado | o layout é `<raiz>/<tenant>/<projeto>/<balde>/<nome>/<versão>` — dois níveis antes do balde |
@@ -237,6 +241,11 @@ já trata as oito armadilhas documentadas no README.
 
 Dito sem rodeio, para ninguém contar com o que não existe:
 
+- **Teste de anexo por `curl` não vale como prova de contingência.** O
+  navegador faz *preflight* e manda cabeçalhos que o `curl` não manda; já
+  houve 152 anexos conferidos pela API com sucesso enquanto a contingência
+  estava quebrada para gente de verdade. Em 05/10/2026 foram quatro falhas de
+  CORS seguidas, uma escondida atrás da outra.
 - **A troca não é automática.** O ERP *oferece* a cópia; quem decide é o
   usuário. Promover a réplica a produção é decisão humana, de propósito —
   troca automática arriscaria duas verdades ao mesmo tempo.
