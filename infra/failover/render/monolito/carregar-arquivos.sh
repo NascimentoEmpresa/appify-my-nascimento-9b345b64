@@ -246,7 +246,11 @@ log "Convertendo os objetos para <nome>/<versao> (formato do Storage)..."
 convertidos=0
 ja_ok=0
 sem_versao=0
-psql -At -c "select bucket_id || '|' || name || '|' || coalesce(version,'') from storage.objects where bucket_id is not null and name is not null" 2>/dev/null > "$TMP/objetos.txt"
+# Sem 2>/dev/null: psql calado aqui significa ZERO objetos convertidos, e o
+# sintoma seria um 500 no download sem nenhuma pista no log desta carga.
+psql -At -c "select bucket_id || '|' || name || '|' || coalesce(version,'') from storage.objects where bucket_id is not null and name is not null" \
+  > "$TMP/objetos.txt" 2>"$TMP/psql-obj.err" \
+  || log "  ATENCAO: psql falhou: $(tail -1 "$TMP/psql-obj.err" 2>/dev/null)"
 while IFS='|' read -r balde nome versao; do
   [[ -z "$balde" || -z "$nome" ]] && continue
   if [[ -z "$versao" ]]; then sem_versao=$(( sem_versao + 1 )); continue; fi
@@ -262,6 +266,76 @@ while IFS='|' read -r balde nome versao; do
 done < "$TMP/objetos.txt"
 rm -f "$TMP/objetos.txt"
 log "  convertidos: $convertidos   ja estavam: $ja_ok   sem versao: $sem_versao"
+
+# --- 3c. o tipo do arquivo mora num ATRIBUTO ESTENDIDO, nao no banco --------
+# Este foi o ULTIMO erro da cadeia, e o mais escondido de todos. Com o caminho
+# certo e os bytes certos no lugar certo, o download AINDA devolvia 500:
+#
+#     {"code":"ENODATA","errno":61}
+#     "The extended attribute does not exist."
+#
+# O storage-api com STORAGE_BACKEND=file nao guarda o content-type no banco:
+# ele grava DOIS atributos estendidos no proprio arquivo e os le de volta a
+# cada GET (conferido em /opt/storage/dist em 05/10/2026):
+#
+#     user.supabase.content-type
+#     user.supabase.cache-control
+#
+# O tar NAO carrega xattr por padrao, entao todo arquivo restaurado chega sem
+# eles - e sem o content-type o GET morre antes de enviar um unico byte. E o
+# erro nao diz nada sobre arquivo: diz "atributo estendido", num GET que o
+# usuario fez de um .xlsx. Foi preciso ler o log do servico para achar.
+#
+# POR QUE python3 E NAO setfattr
+# setfattr (pacote attr) NAO existe nesta imagem - conferido no container.
+# python3 existe e tem os.setxattr na biblioteca padrao, sem instalar nada.
+#
+# POR QUE O VALOR VEM DO BANCO
+# Porque e o mimetype que a producao gravou no upload. Adivinhar pela extensao
+# daria "application/octet-stream" em metade dos anexos, e o navegador baixaria
+# arquivo em vez de abrir imagem.
+if command -v python3 >/dev/null 2>&1; then
+  log "Marcando o tipo de cada arquivo (atributo estendido)..."
+  psql -At -c "select bucket_id || '|' || name || '|' || coalesce(version,'') || '|' || coalesce(metadata->>'mimetype','application/octet-stream') || '|' || coalesce(metadata->>'cacheControl','max-age=3600') from storage.objects where bucket_id is not null and name is not null and version is not null" \
+    > "$TMP/metadados.txt" 2>"$TMP/psql-meta.err" \
+    || log "  ATENCAO: psql falhou: $(tail -1 "$TMP/psql-meta.err" 2>/dev/null)"
+  python3 - "$DESTINO" "$TMP/metadados.txt" <<'PY' || log "  ATENCAO: python3 falhou ao marcar os atributos"
+import os, sys
+
+destino, lista = sys.argv[1], sys.argv[2]
+marcados = ausentes = erros = 0
+
+with open(lista, encoding='utf-8', errors='surrogateescape') as f:
+    for linha in f:
+        partes = linha.rstrip('\n').split('|')
+        if len(partes) < 5:
+            continue
+        # O nome pode conter '|'; balde/versao/tipo/cache nunca contem. Por
+        # isso o nome e o que sobra no meio, nao partes[1].
+        balde = partes[0]
+        nome = '|'.join(partes[1:-3])
+        versao, tipo, cache = partes[-3], partes[-2], partes[-1]
+        caminho = os.path.join(destino, balde, nome, versao)
+        if not os.path.isfile(caminho):
+            ausentes += 1
+            continue
+        try:
+            os.setxattr(caminho, 'user.supabase.content-type', tipo.encode('utf-8'))
+            os.setxattr(caminho, 'user.supabase.cache-control', cache.encode('utf-8'))
+            marcados += 1
+        except OSError as e:
+            erros += 1
+            if erros == 1:
+                print('  primeiro erro de xattr: %s' % e, flush=True)
+
+print('  marcados: %d   sem arquivo no disco: %d   falharam: %d'
+      % (marcados, ausentes, erros), flush=True)
+PY
+  rm -f "$TMP/metadados.txt" "$TMP/psql-meta.err"
+else
+  log "ATENCAO: python3 ausente - nao consigo gravar o content-type nos arquivos."
+  log "         Sem isso o Storage devolve 500 (ENODATA) em TODO download."
+fi
 
 # --- 4. o dono precisa ser o do Storage -------------------------------------
 # Extraido como root, o storage-api (que roda como outro usuario) nao leria.
