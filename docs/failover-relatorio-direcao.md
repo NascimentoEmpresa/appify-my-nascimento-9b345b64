@@ -97,9 +97,9 @@ acompanhando a situação — nunca automática.
 
 | | Por mês |
 |---|---|
-| Réplica (servidor + disco) | **US$ 27,50** |
+| Réplica (servidor + disco de 20 GB) | **US$ 30,00** |
 | Serviços antigos desligados | − US$ 13,00 |
-| **Aumento real** | **US$ 14,50** |
+| **Aumento real** | **US$ 17,00** |
 
 Backups e automações rodam na conta GitHub que a empresa já mantém, sem custo
 adicional.
@@ -112,9 +112,16 @@ Dito abertamente, para que a direção saiba o alcance exato do que existe hoje:
 
 | Item | Situação |
 |---|---|
-| Arquivos copiados **para dentro** da réplica | Não. Estão salvos em backup, mas ainda não dentro da réplica — exige ampliar o disco (+US$ 2,50/mês) |
-| Telas que gravam por rotina interna | **Resolvido em 02/10** — 444 rotinas de gravação bloqueadas, sem afetar a leitura |
-| Troca de endereço automática | A troca é oferecida ao usuário, não imposta |
+| Telas que gravam por rotina interna | **Resolvido em 02/10** — 451 rotinas de gravação bloqueadas, sem afetar a leitura |
+| Arquivo de longo prazo no servidor da empresa | **Aguarda a senha de administrador do servidor.** Enquanto isso, o histórico fica guardado por 90 dias nas cópias automáticas — nada corre risco |
+| Troca de endereço automática | A troca é **oferecida** ao usuário, não imposta. É de propósito: impor a troca arriscaria duas versões dos dados ao mesmo tempo |
+
+### Sobre o prazo das cópias
+
+As cópias dos arquivos ficavam guardadas por 14 dias. Isso foi identificado como
+risco — depois desse prazo, o histórico mais antigo deixaria de existir — e
+**corrigido em 02/10**: o prazo passou a ser de **90 dias**, e todo dia 1º do mês
+é gerada uma cópia completa nova. Sem custo adicional.
 
 ---
 
@@ -124,7 +131,7 @@ Dito abertamente, para que a direção saiba o alcance exato do que existe hoje:
 |---|---|---|
 | Cópia do sistema em outro fornecedor | não existia | **existe e funciona** |
 | Atraso dessa cópia | — | **~3h30** |
-| Cópia dos arquivos anexados | **nenhuma** | **5× ao dia, criptografada** |
+| Cópia dos arquivos anexados | **nenhuma** | **5× ao dia, criptografada, guardada 90 dias** |
 | Durante uma queda | tela de espera | **consulta aos dados** |
 | Risco de perder trabalho na troca | — | **bloqueado pelo banco** |
 
