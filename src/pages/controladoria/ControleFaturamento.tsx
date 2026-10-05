@@ -15,6 +15,8 @@ import { usePlanilhaCustos, resolverLinhasPorPeriodo, somarCamposEmLinhas, fimDo
 import { useNfsEmissao } from "@/hooks/useNfEmissao";
 import { fmtMoney, foraDoRelatorio, naoContabilizaKpi } from "@/pages/financeiro/nf-emissao/shared";
 import { contratoEncerradoNaCompetencia } from "./vigenciaContrato";
+import { StatusCelula, excessoDeFaturamento, faltaDeFaturamento, resumirFaturamento, statusCelula } from "./faturamentoStatus";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 
 // SIS-2026-0562 (Iury): "Base de Contratos Vigentes × Relatório de
 // Serviços", igual ao protótipo em anexo (Dashboard_Controle_Faturamento_
@@ -36,23 +38,15 @@ import { contratoEncerradoNaCompetencia } from "./vigenciaContrato";
 // Base de propósito, é exatamente essa divergência que o protótipo existe
 // pra mostrar.
 
-type StatusCelula = "NOTAS_LANCADAS" | "NENHUM_LANCAMENTO" | "COMPETENCIA_SEM_DADOS" | "SEM_VIGENCIA";
-
 const STATUS_INFO: Record<StatusCelula, { label: string; labelCurto: string; className: string; dot: string }> = {
   NOTAS_LANCADAS: { label: "Notas lançadas (Código N)", labelCurto: "Faturado", className: "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-400", dot: "#2aa978" },
+  FATURADO_PARCIAL: { label: "Faturado parcial (NF abaixo do executável)", labelCurto: "Parcial", className: "bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-400", dot: "#f59e0b" },
   NENHUM_LANCAMENTO: { label: "Nenhum lançamento", labelCurto: "Sem lançamento", className: "bg-red-100 text-red-700 dark:bg-red-950/40 dark:text-red-400", dot: "#d75a54" },
   COMPETENCIA_SEM_DADOS: { label: "Competência ainda sem dado no relatório", labelCurto: "Sem dado no relatório", className: "bg-slate-100 text-slate-500 dark:bg-slate-800/40 dark:text-slate-400", dot: "#94a3b8" },
   SEM_VIGENCIA: { label: "Sem vigência no período ou não está na planilha", labelCurto: "Sem vigência/base", className: "bg-muted text-muted-foreground/70", dot: "#cbd5e1" },
 };
 
 const MESES_LABEL = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"];
-
-function statusCelula(valorExecutavel: number, temNotaN: boolean, competenciaTemDados: boolean): StatusCelula {
-  if (valorExecutavel > 0 && temNotaN) return "NOTAS_LANCADAS";
-  if (valorExecutavel > 0 && !competenciaTemDados) return "COMPETENCIA_SEM_DADOS";
-  if (valorExecutavel > 0) return "NENHUM_LANCAMENTO";
-  return "SEM_VIGENCIA";
-}
 
 // nf_emissao.competencia é `date` ("YYYY-MM-DD", sempre dia 01) — a
 // competência de referência usada em todo o painel segue esse mesmo
@@ -77,6 +71,8 @@ interface LinhaFaturamento {
   recebido: number;
   cv: number;
   naoEmitido: number;
+  // NF acima do executável — mostrado à parte, NÃO abate o Não Emitido.
+  excesso: number;
   status: StatusCelula;
 }
 
@@ -162,11 +158,12 @@ export default function ControleFaturamento() {
     // sem nota lançada é "sem vigência", não pendência. Se houver NF lançada
     // (faturamento final fora do mês), a célula continua como lançada.
     if (agg.count === 0 && contratoEncerradoNaCompetencia(c, mesAlvo)) {
-      return { contrato: c, executavel: 0, execRel: 0, contabil: 0, liquido: 0, recebido: 0, cv: 0, naoEmitido: 0, status: "SEM_VIGENCIA" };
+      return { contrato: c, executavel: 0, execRel: 0, contabil: 0, liquido: 0, recebido: 0, cv: 0, naoEmitido: 0, excesso: 0, status: "SEM_VIGENCIA" };
     }
-    const naoEmitido = Math.max(0, executavel - agg.contabil);
-    const status = statusCelula(executavel, agg.count > 0, competenciasComDadosN.has(mesAlvo));
-    return { contrato: c, executavel, execRel: agg.execRel, contabil: agg.contabil, liquido: agg.liquido, recebido: agg.recebido, cv: agg.cv, naoEmitido, status };
+    const naoEmitido = faltaDeFaturamento(executavel, agg.contabil);
+    const excesso = excessoDeFaturamento(executavel, agg.contabil);
+    const status = statusCelula(executavel, agg.count > 0, competenciasComDadosN.has(mesAlvo), agg.contabil);
+    return { contrato: c, executavel, execRel: agg.execRel, contabil: agg.contabil, liquido: agg.liquido, recebido: agg.recebido, cv: agg.cv, naoEmitido, excesso, status };
   }
 
   function ordenarPorEmpresaContrato(a: { contrato: ContratoERP }, b: { contrato: ContratoERP }) {
@@ -187,21 +184,18 @@ export default function ControleFaturamento() {
   );
 
   const kpis = useMemo(() => {
-    let executavel = 0, contabil = 0, liquido = 0, recebido = 0, lancadas = 0, pendentes = 0, semDados = 0;
+    let liquido = 0, recebido = 0;
     for (const l of linhasCompetencia) {
-      executavel += l.executavel;
-      contabil += l.contabil;
       liquido += l.liquido;
       recebido += l.recebido;
-      if (l.status === "NOTAS_LANCADAS") lancadas++;
-      else if (l.status === "NENHUM_LANCAMENTO") pendentes++;
-      else if (l.status === "COMPETENCIA_SEM_DADOS") semDados++;
     }
-    const naoEmitido = Math.max(0, executavel - contabil);
+    // Não Emitido = soma das faltas por contrato (excesso de um contrato não
+    // abate a falta de outro) — ver faturamentoStatus.ts.
+    const { executavel, contabil, naoEmitido, excesso, lancadas, parciais, pendentes, semDados } = resumirFaturamento(linhasCompetencia);
     return {
       vigentes: linhasCompetencia.length,
-      lancadas, pendentes, semDados,
-      executavel, contabil, naoEmitido, liquido, recebido,
+      lancadas, parciais, pendentes, semDados,
+      executavel, contabil, naoEmitido, excesso, liquido, recebido,
       pctNaoEmitido: executavel ? (naoEmitido / executavel) * 100 : 0,
       pctRecebido: contabil ? (recebido / contabil) * 100 : 0,
     };
@@ -209,8 +203,12 @@ export default function ControleFaturamento() {
 
   const donutStatus = useMemo(
     () =>
-      (["NOTAS_LANCADAS", "NENHUM_LANCAMENTO", "COMPETENCIA_SEM_DADOS"] as StatusCelula[])
-        .map((s) => ({ status: s, nome: STATUS_INFO[s].labelCurto, valor: kpis[s === "NOTAS_LANCADAS" ? "lancadas" : s === "NENHUM_LANCAMENTO" ? "pendentes" : "semDados"] }))
+      (["NOTAS_LANCADAS", "FATURADO_PARCIAL", "NENHUM_LANCAMENTO", "COMPETENCIA_SEM_DADOS"] as StatusCelula[])
+        .map((s) => ({
+          status: s,
+          nome: STATUS_INFO[s].labelCurto,
+          valor: kpis[s === "NOTAS_LANCADAS" ? "lancadas" : s === "FATURADO_PARCIAL" ? "parciais" : s === "NENHUM_LANCAMENTO" ? "pendentes" : "semDados"],
+        }))
         .filter((x) => x.valor > 0),
     [kpis]
   );
@@ -249,6 +247,18 @@ export default function ControleFaturamento() {
     if (filtroStatusAno === "todos") return linhasAno;
     return linhasAno.filter((l) => l.celulas.find((c) => c.mes === competencia)?.status === filtroStatusAno);
   }, [linhasAno, filtroStatusAno, competencia]);
+
+  // Clicar no card "Divergências": divergências de faturamento por contrato —
+  // falta emitir (sem NF ou NF abaixo do executável) E emitido a mais (NF acima
+  // do executável), do maior desvio pro menor. Card = falta + excesso.
+  const [abrirNaoEmitido, setAbrirNaoEmitido] = useState(false);
+  const naoEmitidoDetalhe = useMemo(
+    () =>
+      linhasCompetencia
+        .filter((l) => l.naoEmitido > 0 || l.excesso > 0)
+        .sort((a, b) => Math.max(b.naoEmitido, b.excesso) - Math.max(a.naoEmitido, a.excesso)),
+    [linhasCompetencia]
+  );
 
   // ── NFs Não Emitidas: só os pendentes da competência selecionada ─────
   const pendentesCompetencia = useMemo(
@@ -318,12 +328,12 @@ export default function ControleFaturamento() {
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
               <KpiTile label="Executável (Base)" valor={fmtMoney(kpis.executavel)} icon={<ListChecks />} cor="slate" />
               <KpiTile label="Valor Contábil (Código N)" valor={fmtMoney(kpis.contabil)} icon={<TrendingUp />} cor="sky" />
-              <KpiTile label="Não Emitido" valor={fmtMoney(kpis.naoEmitido)} sub={`${kpis.pctNaoEmitido.toFixed(1).replace(".", ",")}% do executável`} icon={<AlertTriangle />} cor="red" valorClass="text-red-600 dark:text-red-400" />
+              <KpiTile label="Divergências" valor={fmtMoney(kpis.naoEmitido + kpis.excesso)} sub={`${fmtMoney(kpis.naoEmitido)} a emitir · ${fmtMoney(kpis.excesso)} emitidos a mais · clique para ver por contrato`} icon={<AlertTriangle />} cor="red" valorClass="text-red-600 dark:text-red-400" onClick={() => setAbrirNaoEmitido(true)} />
               <KpiTile label="Contratos Pendentes" valor={kpis.pendentes.toLocaleString("pt-BR")} sub={`de ${kpis.vigentes} vigentes na competência`} icon={<FileWarning />} cor="amber" valorClass="text-amber-600 dark:text-amber-400" />
               <KpiTile label="Valor Líquido" valor={fmtMoney(kpis.liquido)} icon={<Wallet />} cor="slate" />
               <KpiTile label="Valor Recebido" valor={fmtMoney(kpis.recebido)} icon={<CheckCircle2 />} cor="emerald" valorClass="text-emerald-600 dark:text-emerald-400" />
               <KpiTile label="% Recebido sobre Faturado" valor={`${kpis.pctRecebido.toFixed(1).replace(".", ",")}%`} sub={`${fmtMoney(kpis.recebido)} de ${fmtMoney(kpis.contabil)}`} icon={<Percent />} cor="emerald" valorClass="text-emerald-600 dark:text-emerald-400" />
-              <KpiTile label="Contratos Faturados" valor={kpis.lancadas.toLocaleString("pt-BR")} sub={kpis.vigentes ? `${((kpis.lancadas / kpis.vigentes) * 100).toFixed(0)}% dos vigentes` : undefined} icon={<CheckCircle2 />} cor="emerald" valorClass="text-emerald-600 dark:text-emerald-400" />
+              <KpiTile label="Contratos Faturados" valor={kpis.lancadas.toLocaleString("pt-BR")} sub={kpis.vigentes ? `${((kpis.lancadas / kpis.vigentes) * 100).toFixed(0)}% dos vigentes${kpis.parciais > 0 ? ` · +${kpis.parciais} parcial(is)` : ""}` : undefined} icon={<CheckCircle2 />} cor="emerald" valorClass="text-emerald-600 dark:text-emerald-400" />
             </div>
 
             {kpis.executavel > 0 && kpis.naoEmitido > 0 && (
@@ -332,7 +342,7 @@ export default function ControleFaturamento() {
                   <AlertTriangle className="h-8 w-8 text-amber-500 shrink-0" />
                   <div>
                     <p className="text-sm font-semibold">Impacto dos não faturados: {kpis.pctNaoEmitido.toFixed(2).replace(".", ",")}%</p>
-                    <p className="text-xs text-muted-foreground">{fmtMoney(kpis.naoEmitido)} de {fmtMoney(kpis.executavel)} do faturamento mensal executável em {labelMes(competencia)}.</p>
+                    <p className="text-xs text-muted-foreground">{fmtMoney(kpis.naoEmitido)} de {fmtMoney(kpis.executavel)} do faturamento mensal executável em {labelMes(competencia)}.{kpis.excesso > 0 ? ` Contratos com NF acima do executável somam ${fmtMoney(kpis.excesso)} (não abatidos).` : ""}</p>
                   </div>
                 </CardContent>
               </Card>
@@ -361,7 +371,7 @@ export default function ControleFaturamento() {
                   </div>
                   {kpis.vigentes > 0 && (
                     <p className="text-center text-xs text-muted-foreground mt-3 pt-3 border-t">
-                      <strong className="text-foreground text-base">{((kpis.lancadas / kpis.vigentes) * 100).toFixed(0)}%</strong> dos contratos vigentes já faturados — {kpis.lancadas} em dia, {kpis.pendentes} pendentes.
+                      <strong className="text-foreground text-base">{((kpis.lancadas / kpis.vigentes) * 100).toFixed(0)}%</strong> dos contratos vigentes faturados por completo — {kpis.lancadas} em dia, {kpis.parciais} parciais, {kpis.pendentes} pendentes.
                     </p>
                   )}
                 </CardContent>
@@ -553,6 +563,65 @@ export default function ControleFaturamento() {
           </TabsContent>
         </Tabs>
       )}
+
+      <Dialog open={abrirNaoEmitido} onOpenChange={setAbrirNaoEmitido}>
+        <DialogContent className="max-w-5xl max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Divergências de faturamento — {labelMes(competencia)}</DialogTitle>
+            <DialogDescription>
+              Contratos em que o valor contábil lançado (Código N) difere do executável da Base: o que ainda falta emitir e o que foi emitido a mais.
+              Clique numa linha para ver as notas.
+            </DialogDescription>
+          </DialogHeader>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead className="px-2">Contrato</TableHead>
+                <TableHead className="px-2 text-center">Situação</TableHead>
+                <TableHead className="px-2 text-right">Executável</TableHead>
+                <TableHead className="px-2 text-right">Lançado (N)</TableHead>
+                <TableHead className="px-2 text-right">Falta emitir</TableHead>
+                <TableHead className="px-2 text-right">Emitido a mais</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {naoEmitidoDetalhe.length === 0 && (
+                <TableRow><TableCell colSpan={6} className="text-center text-muted-foreground py-8">Nenhuma divergência nessa competência.</TableCell></TableRow>
+              )}
+              {naoEmitidoDetalhe.map((l) => (
+                <TableRow key={l.contrato.id} className="cursor-pointer hover:bg-muted/50" onClick={() => { setAbrirNaoEmitido(false); abrirNoRelatorioServicos(l); }}>
+                  <TableCell className="px-2 py-2">
+                    <div className="text-sm font-medium leading-tight">{l.contrato.nome}</div>
+                    <div className="text-[11px] text-muted-foreground">{empresaNomePorId.get(l.contrato.empresa_id) ?? "—"}</div>
+                  </TableCell>
+                  <TableCell className="px-2 py-2 text-center">
+                    <span className={cn("inline-block px-2 py-0.5 rounded text-[11px] font-medium whitespace-nowrap", STATUS_INFO[l.status].className)}>{STATUS_INFO[l.status].labelCurto}</span>
+                  </TableCell>
+                  <TableCell className="px-2 py-2 text-right text-sm whitespace-nowrap">{fmtMoney(l.executavel)}</TableCell>
+                  <TableCell className="px-2 py-2 text-right text-sm whitespace-nowrap">{fmtMoney(l.contabil)}</TableCell>
+                  <TableCell className={cn("px-2 py-2 text-right text-sm whitespace-nowrap", l.naoEmitido > 0 && "font-semibold text-red-600 dark:text-red-400")}>{l.naoEmitido > 0 ? fmtMoney(l.naoEmitido) : "—"}</TableCell>
+                  <TableCell className={cn("px-2 py-2 text-right text-sm whitespace-nowrap", l.excesso > 0 && "font-semibold text-sky-600 dark:text-sky-400")}>{l.excesso > 0 ? fmtMoney(l.excesso) : "—"}</TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+            {naoEmitidoDetalhe.length > 0 && (
+              <TableFooter>
+                <TableRow className="font-semibold bg-muted/40">
+                  <TableCell colSpan={4} className="px-2">TOTAL ({naoEmitidoDetalhe.length} contrato(s))</TableCell>
+                  <TableCell className="px-2 text-right whitespace-nowrap text-red-600 dark:text-red-400">{fmtMoney(kpis.naoEmitido)}</TableCell>
+                  <TableCell className="px-2 text-right whitespace-nowrap text-sky-600 dark:text-sky-400">{fmtMoney(kpis.excesso)}</TableCell>
+                </TableRow>
+              </TableFooter>
+            )}
+          </Table>
+          {kpis.excesso > 0 && (
+            <p className="text-xs text-muted-foreground">
+              O excesso emitido a mais não é abatido da falta a emitir (o card soma as duas pontas em valor absoluto). Saldo líquido do mês: {fmtMoney(Math.abs(kpis.excesso - kpis.naoEmitido))}{" "}
+              {kpis.excesso - kpis.naoEmitido >= 0 ? "a mais emitido" : "a emitir"}.
+            </p>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
