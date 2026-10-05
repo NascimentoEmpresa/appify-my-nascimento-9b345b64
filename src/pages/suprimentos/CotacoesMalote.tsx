@@ -83,7 +83,10 @@ export default function CotacoesMalote() {
       if (status !== TODOS && i.status !== status) return false;
       if (classificacao !== TODOS && i.classificacao_id !== classificacao) return false;
       if (!t) return true;
-      return [i.numero, i.nome, i.motivo, i.classificacao?.nome, i.cotacao_enviada_por_nome, String(i.valor_total)]
+      return [i.numero, i.nome, i.motivo, i.classificacao?.nome,
+              // Quem assumiu a cotação entra na busca: "o que está com o
+              // Marcos?" é pergunta de rotina na reunião de Suprimentos.
+              i.cotacao_iniciada_por_nome, i.cotacao_enviada_por_nome, String(i.valor_total)]
         .filter(Boolean).join(" ").toLowerCase().includes(t);
     });
   }, [itens, status, classificacao, busca]);
@@ -207,6 +210,10 @@ export default function CotacoesMalote() {
               // achar como converter.
               podeLancar={i.status === "cotacao_aprovada" && souLancadorDespesa(i, user?.id)}
               onLancar={() => navegar(`/app/malote/criar-despesa?solicitacaoId=${i.id}`)}
+              // [SEM-CHAMADO] 05/10/2026: muda só o texto do selo ("Você está
+              // cotando" em vez do próprio nome) — o selo em si vem de
+              // cotacao_iniciada_por_nome.
+              euAssumi={!!i.cotacao_iniciada_por && i.cotacao_iniciada_por === user?.id}
             />
           ))}
         </div>
@@ -231,6 +238,7 @@ function CardCotacao({
   onAbrir,
   podeLancar,
   onLancar,
+  euAssumi,
 }: {
   item: MaloteDespesaRow;
   onAbrir: () => void;
@@ -239,6 +247,8 @@ function CardCotacao({
   // o botão "Lançar despesa" aparece no rodapé do card.
   podeLancar: boolean;
   onLancar: () => void;
+  /** [SEM-CHAMADO] 05/10/2026: fui eu que cliquei em "Iniciar cotação". */
+  euAssumi: boolean;
 }) {
   return (
     // Era um único <button> (o card inteiro clicável) — virou <div> com
@@ -273,6 +283,23 @@ function CardCotacao({
         )}>
           {ROTULO_COTACAO[i.status] ?? i.status}
         </span>
+
+        {/* [SEM-CHAMADO] 05/10/2026 — alguém já está atrás dos orçamentos
+            deste item (botão "Iniciar cotação", no detalhe). Fica na frente
+            do card, logo abaixo do status, porque é o que evita o trabalho
+            duplicado: a fila é compartilhada e dois compradores ligavam para
+            os mesmos fornecedores. Só existe em "Cotação Pendente" — o
+            trigger malote_despesa_limpar_cotacao_iniciada_trg zera a marca em
+            qualquer troca de status, e a partir daí quem informa é o
+            "Cotado por" abaixo. */}
+        {i.cotacao_iniciada_por_nome && (
+          <span className="inline-flex w-fit max-w-full items-center gap-1.5 rounded-full border border-indigo-400/50 bg-indigo-50 px-2 py-0.5 text-[11px] font-semibold text-indigo-700 dark:bg-indigo-950/30 dark:text-indigo-300">
+            <UserRound className="h-3 w-3 shrink-0" aria-hidden="true" />
+            <span className="truncate">
+              {euAssumi ? "Você está cotando" : `Sendo cotado por ${i.cotacao_iniciada_por_nome}`}
+            </span>
+          </span>
+        )}
 
         <p className="text-lg font-semibold tabular-nums">{fmtBRL(i.valor_total)}</p>
 
