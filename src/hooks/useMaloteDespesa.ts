@@ -232,6 +232,13 @@ export interface MaloteDespesaRow {
   cot3_link: string | null;
   cot3_anexo_path: string | null;
   cot3_anexo_nome: string | null;
+  // [SEM-CHAMADO] 05/10/2026 — quem assumiu a cotação na fila de Suprimentos
+  // ("Iniciar cotação"). O trigger malote_despesa_limpar_cotacao_iniciada_trg
+  // zera os três em qualquer troca de status, então só valem enquanto a
+  // solicitação está em aguardando_cotacao.
+  cotacao_iniciada_em: string | null;
+  cotacao_iniciada_por: string | null;
+  cotacao_iniciada_por_nome: string | null;
   cotacao_enviada_em: string | null;
   cotacao_enviada_por: string | null;
   cotacao_enviada_por_nome: string | null;
@@ -367,6 +374,7 @@ const DESPESA_COLUMNS =
   "cot1_fornecedor, cot1_valor, cot1_prazo, cot1_link, cot1_anexo_path, cot1_anexo_nome, " +
   "cot2_fornecedor, cot2_valor, cot2_prazo, cot2_link, cot2_anexo_path, cot2_anexo_nome, " +
   "cot3_fornecedor, cot3_valor, cot3_prazo, cot3_link, cot3_anexo_path, cot3_anexo_nome, " +
+  "cotacao_iniciada_em, cotacao_iniciada_por, cotacao_iniciada_por_nome, " +
   "cotacao_enviada_em, cotacao_enviada_por, cotacao_enviada_por_nome, cotacao_decidida_em, cotacao_decidida_por, cotacao_decidida_por_nome, " +
   "cotacao_reprovada_motivo, cotacao_observacoes, cotacao_vencedor_num, cotacao_ajuste_anexo_path, cotacao_ajuste_anexo_nome, " +
   "comprovante_pagamento_path, observacao_pagamento, pago_em, pago_por, conferido_em, conferido_por, " +
