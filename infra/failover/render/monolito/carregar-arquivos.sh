@@ -285,29 +285,13 @@ while IFS='|' read -r id nome tamanho; do
   #
   # --strip-components=1 remove o prefixo "arquivos/" com que o backup foi
   # criado, para os objetos caírem direto em <destino>/<balde>/...
-  # --overwrite --recursive-unlink: SEM ISTO O INCREMENTAL NAO ENTRA
-  #
-  # O bloco 3b transforma <balde>/<nome> em um DIRETORIO <nome>/<versao>. Na
-  # carga seguinte o tar tenta gravar um arquivo comum nesse mesmo caminho, que
-  # agora e diretorio, e recusa (medido em 05/10/2026):
-  #
-  #     tar: whatsapp-midia/wa/1480519754175453: Cannot open: File exists
-  #     EXTRACAO exit=2  nomes=11  linhas_de_erro=4
-  #
-  # O estrago era duplo: o objeto ATUALIZADO nunca chegava na replica, e o tar
-  # saindo != 0 fazia a cadeia inteira ser marcada como falha mesmo tendo
-  # gravado os outros 8 arquivos - o que mandava investigar rede, chave e zip.
-  #
-  # --recursive-unlink remove o diretorio antigo antes de gravar; o 3b converte
-  # de novo para a versao que o BANCO manda, e o 3c remarca o content-type.
   : > "$TMP/curl.err"; : > "$TMP/desunzip.err"; : > "$TMP/gpg.err"; : > "$TMP/tar.err"
   if curl -sS -L -m 3600 -H "Authorization: Bearer $GITHUB_TOKEN" \
        "https://api.github.com/repos/$REPO/actions/artifacts/$id/zip" 2>"$TMP/curl.err" \
      | python3 "$TMP/desunzip.py" 2>"$TMP/desunzip.err" \
      | gpg --batch --quiet --pinentry-mode loopback \
            --passphrase "$GPG_PASSPHRASE" --decrypt 2>"$TMP/gpg.err" \
-     | tar -xf - -C "$DESTINO" --strip-components=1 \
-           --overwrite --recursive-unlink 2>"$TMP/tar.err"
+     | tar -xf - -C "$DESTINO" --strip-components=1 2>"$TMP/tar.err"
   then
     depois_deste=$(find "$DESTINO" -type f 2>/dev/null | wc -l)
     n=$(( depois_deste - antes_deste ))
