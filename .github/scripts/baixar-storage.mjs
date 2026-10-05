@@ -21,7 +21,7 @@
 //  copia e completa - correta, so demorada.
 // ============================================================================
 import { writeFileSync, readFileSync, existsSync, mkdirSync, rmSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve, sep } from 'node:path';
 import { execFileSync, execFile } from 'node:child_process';
 
 const CHAVE = process.env.SERVICE_ROLE_KEY;
@@ -104,10 +104,24 @@ const rows = saida.split('\n').filter(Boolean).map((linha) => {
 //
 // Objeto sem versao (ha 1 na producao) continua no formato antigo - a replica
 // ainda sabe converter esse caso.
+// O nome vem do BANCO, nao de mim. Hoje nenhum dos ~8.900 objetos tem "../"
+// (conferido em 05/10/2026 nos quatro padroes: ../, inicio com .., barra
+// inicial e barra dupla), mas se um aparecer o arquivo seria gravado FORA de
+// arquivos/ e sumiria do artefato EM SILENCIO - o backup pareceria completo
+// sem estar, que e a pior falha possivel num backup.
+//
+// Devolve null nesse caso, e quem chama trata como falha, para o objeto NAO
+// entrar no inventario como coberto - assim a proxima execucao tenta de novo
+// em vez de considera-lo salvo para sempre.
+const RAIZ_ARQUIVOS = resolve('arquivos');
+
 function caminhoEmDisco(obj) {
-  return obj.version
+  const alvo = obj.version
     ? join('arquivos', obj.bucket_id, obj.name, obj.version)
     : join('arquivos', obj.bucket_id, obj.name);
+  const absoluto = resolve(alvo);
+  if (absoluto !== RAIZ_ARQUIVOS && !absoluto.startsWith(RAIZ_ARQUIVOS + sep)) return null;
+  return alvo;
 }
 
 const totalBytes = rows.reduce((s, r) => s + Number(r.tamanho), 0);
@@ -163,6 +177,11 @@ function baixarUm(obj) {
   return new Promise((pronto) => {
     const caminho = `${obj.bucket_id}/${obj.name}`;
     const destino = caminhoEmDisco(obj);
+    if (!destino) {
+      log(`  RECUSADO: o nome sairia de arquivos/ -> ${caminho}`);
+      pronto(false);
+      return;
+    }
     const endereco = `${URL_SUPABASE}/storage/v1/object/${encodeURI(caminho)}`;
     mkdirSync(dirname(destino), { recursive: true });
     execFile(
@@ -233,7 +252,8 @@ for (const r of rows) {
   // `new Date('').toISOString()` LANCA excecao, e updated_at pode vir vazio.
   const quando = r.updated_at || '';
   const jaEstava = conhecidos.get(chave) === quando;
-  const baixouAgora = existsSync(caminhoEmDisco(r));
+  const emDisco = caminhoEmDisco(r);
+  const baixouAgora = emDisco ? existsSync(emDisco) : false;
   if (jaEstava || baixouAgora) novoInventario.push(`${chave}\t${quando}`);
 }
 writeFileSync('inventario.txt', novoInventario.join('\n'));
