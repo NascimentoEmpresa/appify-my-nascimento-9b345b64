@@ -11,10 +11,11 @@ import { urlMidia } from "@/hooks/useTreinamentosPlataforma";
 import { embedDeVideo } from "@/pages/treinamentos/treinamento/core";
 import {
   avisarVideoAssistido, fmtData, fmtDataHora, registrarTempoAula, useComentar, useComentariosAula, useConcluirAula,
-  useCursoColaborador, type AulaAluno,
+  useCurtirAula, useCursoColaborador, useNumerosAula, type AulaAluno,
 } from "@/hooks/useColaboradorPortal";
 import { ProvaAula } from "./ProvaAula";
 import { PlayerAteOFim } from "@/components/treinamentos/PlayerAteOFim";
+import { ReacoesVideo } from "@/components/treinamentos/ReacoesVideo";
 import { Carregando, Chip, Erro, Vazio } from "./ui";
 
 // =====================================================================
@@ -175,6 +176,10 @@ function AulaAberta({ aula, cursoId, comentariosHabilitados, anterior, proxima }
   const [avaliacao, setAvaliacao] = useState<number | null>(aula.avaliacao);
   const travada = aula.bloqueado || aula.moduloBloqueado;
   const temQuiz = !!aula.quiz?.length;
+  // Visualizações e curtidas (mig 20261005000004) — só em aula com vídeo.
+  const temVideo = !!(aula.video_url || aula.video_path);
+  const numeros = useNumerosAula(aula.id, temVideo && !travada);
+  const curtir = useCurtirAula(aula.id);
   const passouQuiz = temQuiz && aula.nota_quiz != null && aula.nota_quiz >= aula.nota_minima;
 
   // Tempo assistido: conta só com a aba visível, manda a cada 60 s e no unmount.
@@ -219,6 +224,10 @@ function AulaAberta({ aula, cursoId, comentariosHabilitados, anterior, proxima }
   return (
     <div className="space-y-4">
       <Player aula={aula} onFim={videoTerminou} />
+      {temVideo && (
+        <ReacoesVideo className="px-1" numeros={numeros.data} curtindo={curtir.isPending}
+          onCurtir={() => curtir.mutate(undefined, { onError: (e) => toast.error(e instanceof Error ? e.message : "Não deu para curtir.") })} />
+      )}
 
       <div className="rounded-2xl border border-border bg-card p-5 shadow-sm md:p-6">
         <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{aula.moduloNome}</p>

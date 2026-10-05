@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { SUPABASE_FUNCTIONS_URL } from "@/integrations/supabase/env";
 import type { AssinaturaCertificado } from "@/pages/treinamentos/plataforma/tipos";
+import type { NumerosVideo } from "@/components/treinamentos/ReacoesVideo";
 
 // =====================================================================
 // PORTAL DO COLABORADOR (/colaborador) — acesso a dados
@@ -349,6 +350,31 @@ export function useCertificadoColaborador(cursoId: string | undefined) {
     queryFn: () => chamarPortal<CertificadoAluno>("certificado", { curso_id: cursoId }),
     enabled: !!cursoId,
     retry: false,
+  });
+}
+
+// ── Visualizações e curtidas da aula (mig 20261005000004) ─────────────
+/**
+ * Abrir a aula com vídeo soma UMA visualização e traz os números. A query
+ * não revalida sozinha (staleTime infinito): cada abertura da aula conta
+ * uma vez, não a cada foco de janela.
+ */
+export function useNumerosAula(aulaId: string, ativo: boolean) {
+  return useQuery({
+    queryKey: ["colaborador", "aula-numeros", aulaId],
+    queryFn: () => chamarPortal<NumerosVideo>("aula_visualizar", { aula_id: aulaId }),
+    enabled: ativo && !!aulaId,
+    staleTime: Infinity,
+    gcTime: 0,
+    retry: false,
+  });
+}
+
+export function useCurtirAula(aulaId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => chamarPortal<NumerosVideo>("aula_curtir", { aula_id: aulaId }),
+    onSuccess: (n) => qc.setQueryData(["colaborador", "aula-numeros", aulaId], n),
   });
 }
 

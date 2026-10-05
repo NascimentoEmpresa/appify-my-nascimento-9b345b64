@@ -480,6 +480,30 @@ export async function buscarAssinatura(id: string | null | undefined): Promise<A
   return data ?? null;
 }
 
+// ── Visualizações e curtidas das aulas (mig 20261005000004) ──────────
+/** Por aula: visualizações (soma das aberturas) e curtidas. Quem curte é o aluno, no Portal. */
+export function useTrnNumerosAulas(aulaIds: string[]) {
+  const ids = [...aulaIds].sort();
+  return useQuery({
+    queryKey: ["trn-aula-numeros", ids],
+    enabled: ids.length > 0,
+    staleTime: 60_000,
+    queryFn: async (): Promise<Record<string, { visualizacoes: number; curtidas: number; curti: boolean }>> => {
+      const [v, c] = await Promise.all([
+        sb.from("TRN_AULA_VISUALIZACAO").select("aula_id, aberturas").in("aula_id", ids),
+        sb.from("TRN_AULA_CURTIDA").select("aula_id").in("aula_id", ids),
+      ]);
+      if (v.error) throw v.error;
+      if (c.error) throw c.error;
+      const m: Record<string, { visualizacoes: number; curtidas: number; curti: boolean }> = {};
+      ids.forEach((id) => { m[id] = { visualizacoes: 0, curtidas: 0, curti: false }; });
+      (v.data ?? []).forEach((r: { aula_id: string; aberturas: number }) => { m[r.aula_id].visualizacoes += r.aberturas; });
+      (c.data ?? []).forEach((r: { aula_id: string }) => { m[r.aula_id].curtidas += 1; });
+      return m;
+    },
+  });
+}
+
 // ── Cursos, módulos, aulas ───────────────────────────────────────────
 export function useTrnCursos() {
   return useQuery({

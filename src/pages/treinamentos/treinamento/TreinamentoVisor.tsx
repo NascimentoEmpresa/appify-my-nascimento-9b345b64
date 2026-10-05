@@ -8,6 +8,8 @@ import {
 } from "lucide-react";
 import { corrigirProva, embedDeVideo, type EscopoTreinamento, type Resultado, type Treinamento } from "./core";
 import { PlayerAteOFim, type FonteVideo } from "@/components/treinamentos/PlayerAteOFim";
+import { ReacoesVideo } from "@/components/treinamentos/ReacoesVideo";
+import { useCurtirTreinamento, useNumerosTreinamentos, useRecarregarNumeros } from "@/hooks/useVideoNumeros";
 
 // =====================================================================
 // TREINAMENTOS — assistir, baixar o material e fazer a prova.
@@ -78,6 +80,12 @@ export function TreinamentoVisor({ treinamento, meuNome, meuId, escopo, jaFeito,
   //
   // Falha em silêncio de propósito: não conseguir contabilizar não pode
   // impedir ninguém de assistir ao treinamento.
+  //
+  // Visualizações e curtidas (05/10/2026, mig 20261005000004): depois de
+  // registrar, recarrega os números para a abertura de agora já aparecer.
+  const numeros = useNumerosTreinamentos(t?.id ? [t.id] : []);
+  const recarregarNumeros = useRecarregarNumeros();
+  const curtir = useCurtirTreinamento();
   useEffect(() => {
     if (!t?.id || !meuId) return;
     (async () => {
@@ -86,7 +94,9 @@ export function TreinamentoVisor({ treinamento, meuNome, meuId, escopo, jaFeito,
         _escopo: escopo,
       });
       if (error) console.warn("[treinamentos] visualização não registrada:", error.message);
+      else recarregarNumeros();
     })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [t?.id, meuId, escopo]);
 
   const baixarAnexo = async () => {
@@ -167,6 +177,12 @@ export function TreinamentoVisor({ treinamento, meuNome, meuId, escopo, jaFeito,
             <div className="animate-in fade-in zoom-in-95 duration-300">
               <PlayerAteOFim fonte={fonte} titulo={t.titulo} jaAssistido={jaConcluiu} onTerminou={() => setVideoVisto(true)} />
             </div>
+          )}
+          {(t.video_url || t.video_path) && (
+            <ReacoesVideo numeros={numeros.data?.[t.id]} curtindo={curtir.isPending}
+              onCurtir={() => curtir.mutate(t.id, {
+                onError: (e) => toast({ title: "Não deu para curtir", description: (e as Error).message, variant: "destructive" }),
+              })} />
           )}
           {t.video_path && !urlVideo && (
             <div className="grid aspect-video place-items-center rounded-xl border bg-black text-white/70">
