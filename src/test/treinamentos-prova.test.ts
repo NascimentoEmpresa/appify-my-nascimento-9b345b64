@@ -20,7 +20,7 @@ describe("prova — validação do editor", () => {
   });
   it("múltipla escolha exige ao menos uma correta", () => {
     const m = { ...novaPergunta("multipla"), enunciado: "pares", opcoes: ["2", "3"] };
-    expect(erroDaProva([m], {})).toMatch(/ao menos uma/);
+    expect(erroDaProva([m], {})).toMatch(/Marcar certa.*pelo menos uma/);
     expect(erroDaProva([{ ...m, corretas: [0] }], {})).toBeNull();
   });
   it("pontuação zero não vale", () => {

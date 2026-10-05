@@ -190,6 +190,7 @@ import TrnAulaForm from "./pages/treinamentos/plataforma/AulaForm";
 import TrnComentarios from "./pages/treinamentos/plataforma/Comentarios";
 import TrnCategorias from "./pages/treinamentos/plataforma/Categorias";
 import TrnCertificados from "./pages/treinamentos/plataforma/Certificados";
+import TrnAssinaturas from "./pages/treinamentos/plataforma/Assinaturas";
 import TrnCertificadoVisualizar from "./pages/treinamentos/plataforma/CertificadoVisualizar";
 import TrnAvisos from "./pages/treinamentos/plataforma/Avisos";
 import TrnNotificacoes from "./pages/treinamentos/plataforma/Notificacoes";
@@ -830,6 +831,7 @@ const App = () => (
             <Route path="treinamentos/cursos/comentarios" element={<TrnComentarios />} />
             <Route path="treinamentos/cursos/categorias" element={<TrnCategorias />} />
             <Route path="treinamentos/cursos/certificados" element={<TrnCertificados />} />
+            <Route path="treinamentos/cursos/assinaturas" element={<TrnAssinaturas />} />
             <Route path="treinamentos/cursos/:id" element={<TrnCursoDetalhe />} />
             <Route path="treinamentos/cursos/:id/editar" element={<TrnCursoForm />} />
             <Route path="treinamentos/cursos/:id/aulas/:aulaId" element={<TrnAulaForm />} />

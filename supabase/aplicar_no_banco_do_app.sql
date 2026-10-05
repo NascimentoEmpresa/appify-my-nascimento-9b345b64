@@ -36709,3 +36709,421 @@ GRANT EXECUTE ON FUNCTION public.rh_ac_painel() TO authenticated;
 NOTIFY pgrst, 'reload schema';
 
 -- ROLLBACK: reaplicar a seção 4 da mig 20261005000001 (sem 'todos_contratos').
+
+-- ===== 20261005000003_treinamentos_assinaturas (JA APLICADA 05/10) =====
+-- =========================================================================
+-- TREINAMENTOS — ASSINATURA no certificado (05/10/2026)
+--
+-- PEDIDO (Pablo): cada treinamento pode ter uma ASSINATURA (opcional). Ao
+-- marcar que o certificado do curso tem assinatura, quem tem permissão cria
+-- a assinatura e a coloca como ASSINATURA PRINCIPAL. No certificado sai:
+-- "ASSINADO DIGITALMENTE POR: <nome completo do treinador>" + a assinatura
+-- desenhada na tela OU o nome escrito numa fonte cursiva escolhida.
+--
+-- MODELO
+--   · "TRN_ASSINATURA": uma assinatura = um treinador. tipo 'desenho' guarda
+--     o PNG (data URL) do traço; tipo 'texto' guarda o texto e a fonte. O
+--     PNG fica NA TABELA, não no bucket trn-midia — o bucket é público, e
+--     imagem de assinatura solta na internet é convite a falsificação.
+--   · "TRN_CURSO".assinatura_id: a assinatura principal do curso (NULL = sem).
+--   · "TRN_CERTIFICADO".assinatura_id: a assinatura VIGENTE NA EMISSÃO,
+--     copiada do curso por gatilho (vale para as duas portas de emissão:
+--     trn_emitir_certificado e col_trn_certificar). Trocar a assinatura do
+--     curso depois não reescreve certificado já emitido.
+--   · Assinatura usada em certificado não pode ser apagada (FK RESTRICT) —
+--     a tela oferece desativar.
+--
+-- ACESSO: menu "Cursos — Assinaturas" (treinamentos_assinaturas), nasce
+-- fechado. Ler: qualquer porta do módulo (como o resto, trn_rls). O curso
+-- só pode apontar para assinatura ATIVA (gatilho).
+--
+-- Idempotente. Aplicar no banco do app (SQL Editor) — não se auto-aplica.
+-- =========================================================================
+
+-- ── 1) Menu ──────────────────────────────────────────────────────────────
+INSERT INTO public.app_menu (modulo_id, codigo, nome, rota, ordem, ativo)
+SELECT m.id, 'treinamentos_assinaturas', 'Cursos — Assinaturas', '/app/treinamentos/cursos/assinaturas', 45, true
+  FROM public.app_modulo m WHERE m.codigo = 'treinamentos'
+ON CONFLICT (modulo_id, codigo) DO NOTHING;
+
+-- ── 2) Assinaturas ───────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS public."TRN_ASSINATURA" (
+  id             uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  -- Sai no certificado depois de "ASSINADO DIGITALMENTE POR:".
+  nome_completo  text NOT NULL CHECK (length(btrim(nome_completo)) >= 3),
+  -- Linha opcional embaixo do nome (ex.: "Instrutor de Treinamentos").
+  cargo          text,
+  -- O treinador dono da assinatura (login do ERP), quando houver.
+  usuario_id     uuid REFERENCES auth.users(id) ON DELETE SET NULL,
+  tipo           text NOT NULL CHECK (tipo IN ('desenho', 'texto')),
+  -- tipo 'desenho': PNG em data URL (o traço, fundo transparente).
+  imagem         text,
+  -- tipo 'texto': o que aparece escrito e a fonte (lista em assinaturas.ts).
+  texto          text,
+  fonte          text,
+  ativo          boolean NOT NULL DEFAULT true,
+  created_at     timestamptz NOT NULL DEFAULT now(),
+  updated_at     timestamptz NOT NULL DEFAULT now(),
+  created_by     uuid DEFAULT auth.uid(),
+  CHECK (
+    (tipo = 'desenho' AND imagem LIKE 'data:image/png;base64,%' AND length(imagem) <= 400000)
+    OR (tipo = 'texto' AND length(btrim(coalesce(texto, ''))) >= 2 AND coalesce(fonte, '') <> '')
+  )
+);
+
+SELECT public.trn_rls('TRN_ASSINATURA', 'treinamentos_assinaturas');
+-- trn_ve_modulo não conhece o menu novo: quem só tem "Assinaturas" também lê.
+DROP POLICY IF EXISTS trn_assinatura_select ON public."TRN_ASSINATURA";
+CREATE POLICY trn_assinatura_select ON public."TRN_ASSINATURA" FOR SELECT TO authenticated
+  USING (public.trn_ve_modulo() OR public.trn_acesso('treinamentos_assinaturas'));
+
+DROP TRIGGER IF EXISTS trg_trn_assinatura_touch ON public."TRN_ASSINATURA";
+CREATE TRIGGER trg_trn_assinatura_touch BEFORE UPDATE ON public."TRN_ASSINATURA"
+  FOR EACH ROW EXECUTE FUNCTION public.trn_touch();
+
+-- ── 3) Assinatura principal do curso ─────────────────────────────────────
+ALTER TABLE public."TRN_CURSO"
+  ADD COLUMN IF NOT EXISTS assinatura_id uuid REFERENCES public."TRN_ASSINATURA"(id) ON DELETE SET NULL;
+
+CREATE OR REPLACE FUNCTION public.trn_curso_assinatura_ativa()
+RETURNS trigger LANGUAGE plpgsql SET search_path = public, pg_temp AS $$
+BEGIN
+  IF NEW.assinatura_id IS NOT NULL
+     AND NEW.assinatura_id IS DISTINCT FROM (CASE WHEN TG_OP = 'UPDATE' THEN OLD.assinatura_id END)
+     AND NOT EXISTS (SELECT 1 FROM public."TRN_ASSINATURA" WHERE id = NEW.assinatura_id AND ativo) THEN
+    RAISE EXCEPTION 'Essa assinatura está desativada — escolha outra ou reative em Cursos › Assinaturas.';
+  END IF;
+  RETURN NEW;
+END $$;
+
+DROP TRIGGER IF EXISTS trg_trn_curso_assinatura_ativa ON public."TRN_CURSO";
+CREATE TRIGGER trg_trn_curso_assinatura_ativa BEFORE INSERT OR UPDATE OF assinatura_id ON public."TRN_CURSO"
+  FOR EACH ROW EXECUTE FUNCTION public.trn_curso_assinatura_ativa();
+
+-- ── 4) Assinatura gravada no certificado emitido ─────────────────────────
+ALTER TABLE public."TRN_CERTIFICADO"
+  ADD COLUMN IF NOT EXISTS assinatura_id uuid REFERENCES public."TRN_ASSINATURA"(id) ON DELETE RESTRICT;
+
+CREATE OR REPLACE FUNCTION public.trn_certificado_assinatura()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
+BEGIN
+  IF NEW.assinatura_id IS NULL THEN
+    SELECT c.assinatura_id INTO NEW.assinatura_id
+      FROM public."TRN_CURSO" c
+      JOIN public."TRN_ASSINATURA" a ON a.id = c.assinatura_id AND a.ativo
+     WHERE c.id = NEW.curso_id;
+  END IF;
+  RETURN NEW;
+END $$;
+
+DROP TRIGGER IF EXISTS trg_trn_certificado_assinatura ON public."TRN_CERTIFICADO";
+CREATE TRIGGER trg_trn_certificado_assinatura BEFORE INSERT ON public."TRN_CERTIFICADO"
+  FOR EACH ROW EXECUTE FUNCTION public.trn_certificado_assinatura();
+
+-- ── 5) Portal do Colaborador: o certificado devolve a assinatura ─────────
+-- Mesmo corpo de col_certificado (mig 20260930000196) + 'assinatura'. A Edge
+-- colaborador-portal só repassa o JSON — não precisa de redeploy.
+CREATE OR REPLACE FUNCTION public.col_certificado(p_emp bigint, p_curso uuid)
+ RETURNS jsonb
+ LANGUAGE plpgsql
+ STABLE SECURITY DEFINER
+ SET search_path TO 'public', 'pg_temp'
+AS $function$
+DECLARE v_aluno uuid; ce record; a record; c record; m record; v_mod jsonb; v_ass jsonb;
+BEGIN
+  SELECT id INTO v_aluno FROM public."TRN_ALUNO" WHERE empregado_id = p_emp ORDER BY created_at LIMIT 1;
+  IF v_aluno IS NULL THEN RAISE EXCEPTION 'Você ainda não tem cadastro nos treinamentos.'; END IF;
+  SELECT * INTO ce FROM public."TRN_CERTIFICADO" WHERE aluno_id = v_aluno AND curso_id = p_curso;
+  IF NOT FOUND THEN RAISE EXCEPTION 'Certificado ainda não emitido para este curso.'; END IF;
+  SELECT * INTO a FROM public."TRN_ALUNO" WHERE id = v_aluno;
+  SELECT * INTO c FROM public."TRN_CURSO" WHERE id = p_curso;
+  SELECT * INTO m FROM public."TRN_CERTIFICADO_MODELO" WHERE id = ce.modelo_id;
+  SELECT coalesce(jsonb_agg(jsonb_build_object('nome', mo.nome,
+           'aulas', (SELECT coalesce(jsonb_agg(au.nome ORDER BY au.posicao), '[]'::jsonb) FROM public."TRN_AULA" au WHERE au.modulo_id = mo.id AND au.publicada))
+           ORDER BY mo.posicao), '[]'::jsonb)
+    INTO v_mod FROM public."TRN_MODULO" mo WHERE mo.curso_id = p_curso;
+  SELECT jsonb_build_object('nome_completo', s.nome_completo, 'cargo', s.cargo, 'tipo', s.tipo,
+                            'imagem', s.imagem, 'texto', s.texto, 'fonte', s.fonte)
+    INTO v_ass FROM public."TRN_ASSINATURA" s WHERE s.id = ce.assinatura_id;
+  RETURN jsonb_build_object(
+    'codigo', ce.codigo_validacao, 'emitido_em', ce.emitido_em, 'carga_horaria_min', ce.carga_horaria_min,
+    'aluno', a.nome, 'documento', a.documento, 'curso', c.nome,
+    'modelo', CASE WHEN m.id IS NULL THEN NULL ELSE to_jsonb(m) END,
+    'modulos', v_mod,
+    'assinatura', v_ass);
+END $function$;
+
+NOTIFY pgrst, 'reload schema';
+
+-- ROLLBACK
+-- Reaplicar col_certificado da mig 20260930000196 (sem 'assinatura').
+-- DROP TRIGGER IF EXISTS trg_trn_certificado_assinatura ON public."TRN_CERTIFICADO";
+-- DROP FUNCTION IF EXISTS public.trn_certificado_assinatura();
+-- ALTER TABLE public."TRN_CERTIFICADO" DROP COLUMN IF EXISTS assinatura_id;
+-- DROP TRIGGER IF EXISTS trg_trn_curso_assinatura_ativa ON public."TRN_CURSO";
+-- DROP FUNCTION IF EXISTS public.trn_curso_assinatura_ativa();
+-- ALTER TABLE public."TRN_CURSO" DROP COLUMN IF EXISTS assinatura_id;
+-- DROP TABLE IF EXISTS public."TRN_ASSINATURA";
+-- DELETE FROM public.app_menu WHERE codigo = 'treinamentos_assinaturas';
+
+-- ===== 20261005000004_treinamentos_videos_visualizacoes_curtidas (JA APLICADA 05/10) =====
+-- =========================================================================
+-- TREINAMENTOS — visualizações e curtidas de cada vídeo, no próprio sistema
+--
+-- PEDIDO (05/10/2026, Pablo): "tem que ter quantas visualizações e curtidas
+-- cada vídeo teve também, não só as que estão no youtube, tem que dar pra
+-- curtir no sistema" — nos dois lugares que têm vídeo, e em todo vídeo novo.
+--
+-- 1. TREINAMENTOS ERP ("TREINAMENTOS", visor do ERP, usuário logado)
+--    · visualização: JÁ existia — "TREINAMENTO_VISUALIZACAO" conta as
+--      aberturas por pessoa (trn_registrar_visualizacao, mig 063).
+--    · curtida: nova, "TREINAMENTO_CURTIDA" (uma por pessoa por vídeo).
+--    · trn_video_numeros(_ids) → visualizações (soma das aberturas), quem
+--      viu, curtidas e se EU curti; trn_video_curtir(_id) liga/desliga.
+--
+-- 2. PLATAFORMA (aulas "TRN_AULA", Portal do Colaborador — sem auth.uid(),
+--    a pessoa é o p_emp que a Edge colaborador-portal resolve pela sessão)
+--    · "TRN_AULA_VISUALIZACAO": aberturas por aluno (mesmo formato da ERP);
+--    · "TRN_AULA_CURTIDA": uma por aluno por aula;
+--    · col_aula_visualizar / col_aula_curtir — chamadas pelas ações novas
+--      "aula_visualizar" e "aula_curtir" da Edge (exige redeploy da Edge);
+--    · a gestão lê as duas tabelas pela RLS do módulo (trn_rls).
+--
+-- "Visualização" = abrir o vídeo (o mesmo que a ERP já conta): YouTube e
+-- Vimeo tocam em iframe de outro domínio, e a abertura é o que dá para
+-- afirmar com honestidade. Cada abertura soma.
+--
+-- Escrita só pelas RPCs (SECURITY DEFINER), sempre em nome de quem está
+-- logado — ninguém curte por outro nem infla o contador de vídeo que não vê.
+--
+-- Idempotente. Aplicar no banco do app (SQL Editor) — não se auto-aplica.
+-- =========================================================================
+
+-- ── 1) Treinamentos ERP: curtidas ────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS public."TREINAMENTO_CURTIDA" (
+  treinamento_id uuid NOT NULL REFERENCES public."TREINAMENTOS"(id) ON DELETE CASCADE,
+  user_id        uuid NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  created_at     timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (treinamento_id, user_id)
+);
+ALTER TABLE public."TREINAMENTO_CURTIDA" ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON public."TREINAMENTO_CURTIDA" FROM PUBLIC, anon, authenticated;
+-- Sem policy: leitura e escrita só pelas RPCs abaixo.
+
+-- Números de vários vídeos de uma vez (a lista de cards e o visor).
+CREATE OR REPLACE FUNCTION public.trn_video_numeros(_ids uuid[])
+RETURNS TABLE (treinamento_id uuid, visualizacoes bigint, pessoas bigint, curtidas bigint, curti boolean)
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, pg_temp
+AS $$
+  SELECT t.id,
+         COALESCE((SELECT sum(v.aberturas) FROM public."TREINAMENTO_VISUALIZACAO" v WHERE v.treinamento_id = t.id), 0)::bigint,
+         (SELECT count(*) FROM public."TREINAMENTO_VISUALIZACAO" v WHERE v.treinamento_id = t.id)::bigint,
+         (SELECT count(*) FROM public."TREINAMENTO_CURTIDA" c WHERE c.treinamento_id = t.id)::bigint,
+         EXISTS (SELECT 1 FROM public."TREINAMENTO_CURTIDA" c WHERE c.treinamento_id = t.id AND c.user_id = auth.uid())
+    FROM public."TREINAMENTOS" t
+   WHERE t.id = ANY(_ids)
+     AND auth.uid() IS NOT NULL
+     AND public.trn_pode_ver_escopos(t.escopos);
+$$;
+REVOKE ALL ON FUNCTION public.trn_video_numeros(uuid[]) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.trn_video_numeros(uuid[]) TO authenticated;
+
+-- Curtir / descurtir. Devolve se ficou curtido.
+CREATE OR REPLACE FUNCTION public.trn_video_curtir(_treinamento uuid)
+RETURNS boolean
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp
+AS $$
+DECLARE v_escopos text[];
+BEGIN
+  IF auth.uid() IS NULL THEN RAISE EXCEPTION 'Sessão inválida.'; END IF;
+  SELECT t.escopos INTO v_escopos FROM public."TREINAMENTOS" t WHERE t.id = _treinamento;
+  IF v_escopos IS NULL THEN RAISE EXCEPTION 'Treinamento não encontrado.'; END IF;
+  IF NOT public.trn_pode_ver_escopos(v_escopos) THEN RAISE EXCEPTION 'Você não tem acesso a este treinamento.'; END IF;
+
+  DELETE FROM public."TREINAMENTO_CURTIDA" WHERE treinamento_id = _treinamento AND user_id = auth.uid();
+  IF FOUND THEN RETURN false; END IF;
+  INSERT INTO public."TREINAMENTO_CURTIDA" (treinamento_id, user_id) VALUES (_treinamento, auth.uid());
+  RETURN true;
+END $$;
+REVOKE ALL ON FUNCTION public.trn_video_curtir(uuid) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.trn_video_curtir(uuid) TO authenticated;
+
+-- ── 2) Plataforma: visualizações e curtidas por aula ─────────────────────
+CREATE TABLE IF NOT EXISTS public."TRN_AULA_VISUALIZACAO" (
+  aula_id     uuid NOT NULL REFERENCES public."TRN_AULA"(id) ON DELETE CASCADE,
+  aluno_id    uuid NOT NULL REFERENCES public."TRN_ALUNO"(id) ON DELETE CASCADE,
+  aberturas   integer NOT NULL DEFAULT 1 CHECK (aberturas > 0),
+  primeira_em timestamptz NOT NULL DEFAULT now(),
+  ultima_em   timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (aula_id, aluno_id)
+);
+CREATE TABLE IF NOT EXISTS public."TRN_AULA_CURTIDA" (
+  aula_id    uuid NOT NULL REFERENCES public."TRN_AULA"(id) ON DELETE CASCADE,
+  aluno_id   uuid NOT NULL REFERENCES public."TRN_ALUNO"(id) ON DELETE CASCADE,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (aula_id, aluno_id)
+);
+-- Gestão lê pelo módulo; escrita só pelas col_* abaixo (a Edge usa service_role).
+SELECT public.trn_rls('TRN_AULA_VISUALIZACAO', 'treinamentos_cursos');
+SELECT public.trn_rls('TRN_AULA_CURTIDA', 'treinamentos_cursos');
+REVOKE INSERT, UPDATE, DELETE ON public."TRN_AULA_VISUALIZACAO" FROM authenticated;
+REVOKE INSERT, UPDATE, DELETE ON public."TRN_AULA_CURTIDA" FROM authenticated;
+
+-- Os números de uma aula, do ponto de vista do aluno.
+CREATE OR REPLACE FUNCTION public.col_aula_numeros(p_aula uuid, p_aluno uuid)
+RETURNS jsonb
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, pg_temp
+AS $$
+  SELECT jsonb_build_object(
+    'visualizacoes', COALESCE((SELECT sum(aberturas) FROM public."TRN_AULA_VISUALIZACAO" WHERE aula_id = p_aula), 0),
+    'curtidas', (SELECT count(*) FROM public."TRN_AULA_CURTIDA" WHERE aula_id = p_aula),
+    'curti', EXISTS (SELECT 1 FROM public."TRN_AULA_CURTIDA" WHERE aula_id = p_aula AND aluno_id = p_aluno));
+$$;
+REVOKE ALL ON FUNCTION public.col_aula_numeros(uuid, uuid) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.col_aula_numeros(uuid, uuid) TO service_role;
+
+-- Abriu a aula: soma uma visualização e devolve os números.
+CREATE OR REPLACE FUNCTION public.col_aula_visualizar(p_emp bigint, p_aula uuid)
+RETURNS jsonb
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp
+AS $$
+DECLARE v_aluno uuid;
+BEGIN
+  PERFORM public.col_prova_curso_ok(p_emp, p_aula);   -- matriculado e aula publicada
+  v_aluno := public.col_trn_aluno(p_emp);
+  INSERT INTO public."TRN_AULA_VISUALIZACAO" (aula_id, aluno_id)
+  VALUES (p_aula, v_aluno)
+  ON CONFLICT (aula_id, aluno_id) DO UPDATE
+     SET aberturas = public."TRN_AULA_VISUALIZACAO".aberturas + 1, ultima_em = now();
+  RETURN public.col_aula_numeros(p_aula, v_aluno);
+END $$;
+REVOKE ALL ON FUNCTION public.col_aula_visualizar(bigint, uuid) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.col_aula_visualizar(bigint, uuid) TO service_role;
+
+-- Curtir / descurtir a aula. Devolve os números já atualizados.
+CREATE OR REPLACE FUNCTION public.col_aula_curtir(p_emp bigint, p_aula uuid)
+RETURNS jsonb
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp
+AS $$
+DECLARE v_aluno uuid;
+BEGIN
+  PERFORM public.col_prova_curso_ok(p_emp, p_aula);
+  v_aluno := public.col_trn_aluno(p_emp);
+  DELETE FROM public."TRN_AULA_CURTIDA" WHERE aula_id = p_aula AND aluno_id = v_aluno;
+  IF NOT FOUND THEN
+    INSERT INTO public."TRN_AULA_CURTIDA" (aula_id, aluno_id) VALUES (p_aula, v_aluno);
+  END IF;
+  RETURN public.col_aula_numeros(p_aula, v_aluno);
+END $$;
+REVOKE ALL ON FUNCTION public.col_aula_curtir(bigint, uuid) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.col_aula_curtir(bigint, uuid) TO service_role;
+
+NOTIFY pgrst, 'reload schema';
+
+-- ROLLBACK
+-- DROP FUNCTION IF EXISTS public.col_aula_curtir(bigint, uuid);
+-- DROP FUNCTION IF EXISTS public.col_aula_visualizar(bigint, uuid);
+-- DROP FUNCTION IF EXISTS public.col_aula_numeros(uuid, uuid);
+-- DROP TABLE IF EXISTS public."TRN_AULA_CURTIDA";
+-- DROP TABLE IF EXISTS public."TRN_AULA_VISUALIZACAO";
+-- DROP FUNCTION IF EXISTS public.trn_video_curtir(uuid);
+-- DROP FUNCTION IF EXISTS public.trn_video_numeros(uuid[]);
+-- DROP TABLE IF EXISTS public."TREINAMENTO_CURTIDA";
+
+-- ===== 20261005000005_sis_checklist_permissoes_status_e_bug (JA APLICADA 05/10) =====
+-- =========================================================================
+-- Sistemas › CHECKLIST DE MÓDULOS — duas permissões separadas (05/10/2026)
+--
+-- PEDIDO (Pablo): "tem que ter duas permissões diferentes, quem pode editar
+-- os status e quem pode adicionar um bug, adiciona no gerenciamento de acesso
+-- por usuário. Deixa padrão ninguém conseguir editar os status, só com a
+-- liberação pelo gerenciamento de acesso por usuário."
+--
+-- ANTES (mig 20260930000291): tudo pela tela sistemas_checklist_modulos —
+-- "incluir" registrava bug e "alterar" preenchia o checklist (os status).
+-- Quem é Gerente de Sistemas ganhou as duas na semeadura.
+--
+-- AGORA: dois menus fantasma (rota NULL) no módulo Sistemas, que aparecem
+-- sozinhos em Administração › Acesso por Usuário:
+--   · sistemas_checklist_editar_status — "Checklist de Módulos · Editar status"
+--     preencher/alterar o checklist de módulos e telas ("SIS_CHECKLIST").
+--     NASCE FECHADO PARA TODO MUNDO — inclusive admin: a checagem é a
+--     liberação EXPLÍCITA em screen_permission_user (sis_ck_liberado), sem o
+--     atalho do perfil "concede tudo" do has_screen_access. Mesmo critério
+--     das capacidades dos Formulários.
+--   · sistemas_checklist_adicionar_bug — "Checklist de Módulos · Adicionar bug"
+--     registrar bug ("SIS_BUG" INSERT). Semeado para quem já registrava bug
+--     hoje (incluir ou alterar na tela), para ninguém perder o que tinha.
+--
+-- Fica como estava: ver (visualizar), triagem/encaminhamento de bug e
+-- treinamentos (alterar), apagar (excluir), exportar — na tela do checklist.
+--
+-- Idempotente. Aplicar no banco do app (SQL Editor) — não se auto-aplica.
+-- =========================================================================
+
+-- ── 1) Os dois menus fantasma ────────────────────────────────────────────
+INSERT INTO public.app_menu (modulo_id, codigo, nome, rota, ordem, ativo)
+SELECT m.id, x.codigo, x.nome, NULL, x.ordem, true
+  FROM (VALUES
+    ('sistemas_checklist_editar_status', 'Checklist de Módulos · Editar status', 6),
+    ('sistemas_checklist_adicionar_bug', 'Checklist de Módulos · Adicionar bug', 7)
+  ) AS x(codigo, nome, ordem)
+  JOIN public.app_modulo m ON m.codigo = 'sistemas'
+ON CONFLICT (modulo_id, codigo) DO NOTHING;
+
+-- ── 2) Quem já registrava bug continua registrando ───────────────────────
+INSERT INTO public.screen_permission_user (user_id, menu_codigo, acao, allow, motivo)
+SELECT DISTINCT s.user_id, 'sistemas_checklist_adicionar_bug', 'visualizar'::public.app_acao, true,
+       'Migração 20261005000005: já registrava bug no Checklist de Módulos'
+  FROM public.screen_permission_user s
+ WHERE s.menu_codigo = 'sistemas_checklist_modulos' AND s.allow
+   AND s.acao IN ('incluir'::public.app_acao, 'alterar'::public.app_acao)
+   AND NOT EXISTS (SELECT 1 FROM public.screen_permission_user x
+                    WHERE x.user_id = s.user_id AND x.menu_codigo = 'sistemas_checklist_adicionar_bug'
+                      AND x.acao = 'visualizar'::public.app_acao);
+
+-- ── 3) Liberação explícita (sem o atalho de admin) ───────────────────────
+CREATE OR REPLACE FUNCTION public.sis_ck_liberado(_menu text)
+RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, pg_temp AS $f$
+  SELECT auth.uid() IS NOT NULL AND coalesce((
+    SELECT s.allow FROM public.screen_permission_user s
+     WHERE s.user_id = auth.uid() AND s.menu_codigo = _menu AND s.acao = 'visualizar'::public.app_acao
+     ORDER BY s.updated_at DESC LIMIT 1), false);
+$f$;
+REVOKE ALL ON FUNCTION public.sis_ck_liberado(text) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.sis_ck_liberado(text) TO authenticated;
+
+-- O que a tela precisa saber de uma vez.
+CREATE OR REPLACE FUNCTION public.sis_ck_minhas_capacidades()
+RETURNS jsonb LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, pg_temp AS $f$
+  SELECT jsonb_build_object(
+    'editar_status', public.sis_ck_pode('visualizar') AND public.sis_ck_liberado('sistemas_checklist_editar_status'),
+    'adicionar_bug', public.sis_ck_pode('visualizar') AND public.sis_ck_liberado('sistemas_checklist_adicionar_bug'));
+$f$;
+REVOKE ALL ON FUNCTION public.sis_ck_minhas_capacidades() FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.sis_ck_minhas_capacidades() TO authenticated;
+
+-- ── 4) As policies passam a cobrar as permissões novas ───────────────────
+DROP POLICY IF EXISTS sis_checklist_escrever ON public."SIS_CHECKLIST";
+CREATE POLICY sis_checklist_escrever ON public."SIS_CHECKLIST" FOR ALL TO authenticated
+  USING (public.sis_ck_pode('visualizar') AND public.sis_ck_liberado('sistemas_checklist_editar_status'))
+  WITH CHECK (public.sis_ck_pode('visualizar') AND public.sis_ck_liberado('sistemas_checklist_editar_status'));
+
+DROP POLICY IF EXISTS sis_bug_incluir ON public."SIS_BUG";
+CREATE POLICY sis_bug_incluir ON public."SIS_BUG" FOR INSERT TO authenticated
+  WITH CHECK (public.sis_ck_pode('visualizar') AND public.sis_ck_liberado('sistemas_checklist_adicionar_bug')
+              AND status = 'aberto' AND chamado_id IS NULL);
+
+NOTIFY pgrst, 'reload schema';
+
+-- ROLLBACK
+-- DROP POLICY IF EXISTS sis_checklist_escrever ON public."SIS_CHECKLIST";
+-- CREATE POLICY sis_checklist_escrever ON public."SIS_CHECKLIST" FOR ALL TO authenticated
+--   USING (public.sis_ck_pode('alterar')) WITH CHECK (public.sis_ck_pode('alterar'));
+-- DROP POLICY IF EXISTS sis_bug_incluir ON public."SIS_BUG";
+-- CREATE POLICY sis_bug_incluir ON public."SIS_BUG" FOR INSERT TO authenticated
+--   WITH CHECK (public.sis_ck_pode('incluir') AND status = 'aberto' AND chamado_id IS NULL);
+-- DROP FUNCTION IF EXISTS public.sis_ck_minhas_capacidades();
+-- DROP FUNCTION IF EXISTS public.sis_ck_liberado(text);
+-- DELETE FROM public.screen_permission_user WHERE menu_codigo IN ('sistemas_checklist_editar_status','sistemas_checklist_adicionar_bug');
+-- DELETE FROM public.app_menu WHERE codigo IN ('sistemas_checklist_editar_status','sistemas_checklist_adicionar_bug');

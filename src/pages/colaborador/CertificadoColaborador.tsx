@@ -38,6 +38,7 @@ export default function CertificadoColaborador() {
     cargaHorariaMin: c.carga_horaria_min,
     codigo: c.codigo,
     modulos: c.modulos,
+    assinatura: c.assinatura ?? null,
   };
 
   return (

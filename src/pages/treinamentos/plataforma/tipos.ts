@@ -77,7 +77,23 @@ export interface CertificadoModelo {
 export interface Certificado {
   id: string; aluno_id: string; curso_id: string; modelo_id: string | null; codigo_validacao: string;
   carga_horaria_min: number | null; emitido_em: string;
+  /** Assinatura vigente na emissão (mig 20261005000003). */
+  assinatura_id: string | null;
 }
+
+/** "TRN_ASSINATURA" (mig 20261005000003): a assinatura de um treinador. */
+export interface Assinatura {
+  id: string; nome_completo: string; cargo: string | null; usuario_id: string | null;
+  tipo: "desenho" | "texto";
+  /** tipo "desenho": PNG em data URL. */
+  imagem: string | null;
+  /** tipo "texto": o texto e a fonte (FONTES_ASSINATURA). */
+  texto: string | null; fonte: string | null;
+  ativo: boolean; created_at: string; updated_at: string;
+}
+
+/** O que a folha do certificado precisa para desenhar a assinatura. */
+export type AssinaturaCertificado = Pick<Assinatura, "nome_completo" | "cargo" | "tipo" | "imagem" | "texto" | "fonte">;
 
 export type CapaFormato = "paisagem" | "retrato" | "quadrado";
 
@@ -87,6 +103,8 @@ export interface Curso {
   carga_horaria_min: number | null; url_vendas: string | null; liberar_em: string | null; liberar_dias: number;
   prazo_acesso_dias: number | null; modulos_como_cursos: boolean; publicado: boolean; em_breve: boolean;
   comentarios_habilitados: boolean; created_at: string; updated_at: string;
+  /** Assinatura principal do certificado (NULL = sem assinatura). */
+  assinatura_id: string | null;
 }
 
 /** Linha da RPC trn_cursos_lista. */
@@ -223,6 +241,7 @@ export const MENU = {
   comentarios: "treinamentos_comentarios",
   categorias: "treinamentos_categorias",
   certificados: "treinamentos_certificados",
+  assinaturas: "treinamentos_assinaturas",
   avisos: "treinamentos_avisos",
   notificacoes: "treinamentos_notificacoes",
   calendario: "treinamentos_calendario",
