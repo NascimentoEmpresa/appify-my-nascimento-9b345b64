@@ -13,10 +13,11 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSepara
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
   urlMidia, useTrnCurso, useTrnCursos, useTrnDuplicarCurso, useTrnDuplicarModulo, useTrnExcluirAula, useTrnExcluirCurso,
-  useTrnExcluirModulo, useTrnReordenar, useTrnSalvarCurso, useTrnSalvarModulo,
+  useTrnExcluirModulo, useTrnNumerosAulas, useTrnReordenar, useTrnSalvarCurso, useTrnSalvarModulo,
 } from "@/hooks/useTreinamentosPlataforma";
 import { MENU, ROTULO_TIPO_CONTEUDO, type Modulo } from "./tipos";
 import { TrnCarregando, TrnEstilo, TrnHero } from "./ui";
+import { ReacoesVideoMini } from "@/components/treinamentos/ReacoesVideo";
 import CursoPublico from "./CursoPublico";
 import { AVISO_QR_CURSO, BotaoQrCode, urlCursoPortal } from "./QrCodeDialog";
 
@@ -35,6 +36,8 @@ export default function CursoDetalhe() {
   const navigate = useNavigate();
   const { data, isLoading } = useTrnCurso(id);
   const { data: cursos = [] } = useTrnCursos();
+  // Visualizações e curtidas de cada aula com vídeo (mig 20261005000004).
+  const numerosAulas = useTrnNumerosAulas((data?.modulos ?? []).flatMap((m) => m.aulas.map((a) => a.id)));
   const salvarCurso = useTrnSalvarCurso();
   const excluirCurso = useTrnExcluirCurso();
   const duplicarCurso = useTrnDuplicarCurso();
@@ -181,6 +184,7 @@ export default function CursoDetalhe() {
                         <span className="text-xs font-bold text-slate-400">{j + 1}</span>
                         <Link to={`/app/treinamentos/cursos/${id}/aulas/${a.id}`} className="min-w-0 flex-1 truncate text-sm font-semibold text-slate-900 hover:underline">{a.nome}</Link>
                         <span className="hidden text-[11px] text-slate-400 sm:inline">{ROTULO_TIPO_CONTEUDO[a.tipo_conteudo]}{a.carga_horaria_min ? ` · ${a.carga_horaria_min} min` : ""}</span>
+                        {(a.video_url || a.video_path) && <ReacoesVideoMini numeros={numerosAulas.data?.[a.id]} className="hidden sm:flex" />}
                         {a.gratuita && <span className="trn-badge ok">Aula gratuita</span>}
                         {a.quiz && a.quiz.length > 0 && <span className="trn-badge info">Quiz</span>}
                         <span className={`trn-badge ${a.publicada ? "ok" : "off"}`}>{a.publicada ? "Publicada" : "Rascunho"}</span>

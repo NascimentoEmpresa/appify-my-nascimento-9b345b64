@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useParams } from "react-router-dom";
 import { Printer } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
+import { buscarAssinatura } from "@/hooks/useTreinamentosPlataforma";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import type { Certificado, CertificadoModelo } from "./tipos";
@@ -11,7 +12,8 @@ import { TrnCarregando, TrnEstilo } from "./ui";
 // =====================================================================
 // TREINAMENTOS — certificado emitido, pronto para imprimir/salvar em PDF
 // (Ctrl+P → "Salvar como PDF"). A frente e, se o modelo pedir, o verso com
-// o conteúdo programático montado dos módulos/aulas do curso.
+// o conteúdo programático montado dos módulos/aulas do curso. Com a
+// assinatura gravada na emissão, se houver (mig 20261005000003).
 // =====================================================================
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -26,11 +28,12 @@ export default function CertificadoVisualizar() {
       const { data: c, error } = await sb.from("TRN_CERTIFICADO").select("*, aluno:TRN_ALUNO(nome, documento), curso:TRN_CURSO(nome, carga_horaria_min)").eq("id", id).single();
       if (error) throw error;
       const cert = c as Certificado & { aluno: { nome: string; documento: string | null }; curso: { nome: string; carga_horaria_min: number | null } };
-      const [{ data: modelo }, { data: mods }] = await Promise.all([
+      const [{ data: modelo }, { data: mods }, assinatura] = await Promise.all([
         cert.modelo_id ? sb.from("TRN_CERTIFICADO_MODELO").select("*").eq("id", cert.modelo_id).maybeSingle() : Promise.resolve({ data: null }),
         sb.from("TRN_MODULO").select("nome, posicao, TRN_AULA(nome, posicao)").eq("curso_id", cert.curso_id).order("posicao"),
+        buscarAssinatura(cert.assinatura_id),
       ]);
-      return { cert, modelo: modelo as CertificadoModelo | null, modulos: (mods ?? []) as any[] };
+      return { cert, modelo: modelo as CertificadoModelo | null, modulos: (mods ?? []) as any[], assinatura };
     },
   });
 
@@ -43,6 +46,7 @@ export default function CertificadoVisualizar() {
     data: dataCertificado(data.cert.emitido_em),
     cargaHorariaMin: data.cert.carga_horaria_min ?? data.cert.curso.carga_horaria_min, codigo: data.cert.codigo_validacao,
     modulos: data.modulos.map((m) => ({ nome: m.nome, aulas: (m.TRN_AULA ?? []).sort((a: any, b: any) => a.posicao - b.posicao).map((a: any) => a.nome) })),
+    assinatura: data.assinatura,
   };
 
   return (

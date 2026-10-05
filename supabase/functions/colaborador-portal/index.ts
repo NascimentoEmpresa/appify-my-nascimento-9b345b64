@@ -140,6 +140,13 @@ Deno.serve(async (req) => {
       case "video_assistido":
         await rpc("col_video_assistido", { p_emp: emp, p_aula: uuid(body.aula_id) });
         return json({ ok: true });
+      // Visualizações e curtidas da aula (05/10/2026, mig 20261005000004):
+      // abrir a aula soma uma visualização; curtir liga/desliga. As duas
+      // devolvem { visualizacoes, curtidas, curti }.
+      case "aula_visualizar":
+        return json(await rpc("col_aula_visualizar", { p_emp: emp, p_aula: uuid(body.aula_id) }));
+      case "aula_curtir":
+        return json(await rpc("col_aula_curtir", { p_emp: emp, p_aula: uuid(body.aula_id) }));
       case "comentarios":
         return json(await rpc("col_comentarios", { p_emp: emp, p_aula: uuid(body.aula_id) }));
       case "comentar":

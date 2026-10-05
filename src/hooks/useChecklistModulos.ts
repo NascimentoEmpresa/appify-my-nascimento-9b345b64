@@ -14,6 +14,24 @@ import type {
 const sb = supabase as unknown as SupabaseClient;
 const CHAVE = ["sis-checklist"] as const;
 
+/**
+ * As duas permissões próprias do checklist (mig 20261005000005), em
+ * Acesso por Usuário: "Editar status" (nasce fechada para todos, inclusive
+ * admin) e "Adicionar bug". A RLS cobra as mesmas regras.
+ */
+export function useCapacidadesChecklist() {
+  const q = useQuery({
+    queryKey: [...CHAVE, "capacidades"],
+    staleTime: 60_000,
+    queryFn: async (): Promise<{ editar_status: boolean; adicionar_bug: boolean }> => {
+      const { data, error } = await sb.rpc("sis_ck_minhas_capacidades");
+      if (error) throw error;
+      return (data as { editar_status: boolean; adicionar_bug: boolean }) ?? { editar_status: false, adicionar_bug: false };
+    },
+  });
+  return { editarStatus: !!q.data?.editar_status, adicionarBug: !!q.data?.adicionar_bug };
+}
+
 export function useChecklistDados() {
   return useQuery({
     queryKey: [...CHAVE, "dados"],

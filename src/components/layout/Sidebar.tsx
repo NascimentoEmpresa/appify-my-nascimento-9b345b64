@@ -85,7 +85,7 @@ import { Percent } from "lucide-react";
 import { FolderOpen } from "lucide-react";
 import { TrendingDown } from "lucide-react";
 import { Megaphone, ExternalLink } from "lucide-react";
-import { Award, CalendarDays, FolderTree, MonitorCog, QrCode, Users } from "lucide-react";
+import { Award, CalendarDays, FolderTree, MonitorCog, PenLine, QrCode, Users } from "lucide-react";
 import { CreditCard, ListTree } from "lucide-react";
 import { Network } from "lucide-react";
 import { useNovidades } from "@/hooks/useNovidades";
@@ -740,6 +740,7 @@ const treinamentosModule: ModuleDef = {
         { label: "Comentários", to: "/app/treinamentos/cursos/comentarios", icon: MessageSquare },
         { label: "Categorias", to: "/app/treinamentos/cursos/categorias", icon: FolderTree },
         { label: "Certificados", to: "/app/treinamentos/cursos/certificados", icon: Award },
+        { label: "Assinaturas", to: "/app/treinamentos/cursos/assinaturas", icon: PenLine },
       ],
     },
     {
