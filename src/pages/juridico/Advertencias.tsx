@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
+import { useSearchParams } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { useAuth } from "@/hooks/useAuth";
@@ -79,7 +80,13 @@ export default function Advertencias() {
   const [rows, setRows] = useState<Adv[]>([]);
   const [loading, setLoading] = useState(true);
   const [visao, setVisao] = useState<"lista" | "dashboard">("lista");
-  const [aba, setAba] = useState("Aguardando Aprovação");
+  // ?aba=Registrada (05/10/2026): a notificação da advertência VERBAL abre
+  // direto na aba "Verbais registradas" — antes caía em "Aguardando
+  // Aprovação" vazia e parecia que a advertência tinha sumido.
+  const [params] = useSearchParams();
+  const abaDoLink = params.get("aba");
+  const [aba, setAba] = useState(abaDoLink && STATUS.includes(abaDoLink) ? abaDoLink : "Aguardando Aprovação");
+  useEffect(() => { if (abaDoLink && STATUS.includes(abaDoLink)) setAba(abaDoLink); }, [abaDoLink]);
   const [busca, setBusca] = useState("");
   // Filtros · Contratos (14/09/2026): multi, com contagem — era um select de um só.
   const [fContratos, setFContratos] = useState<string[]>([]);
