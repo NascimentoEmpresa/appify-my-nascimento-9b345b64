@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { SUPABASE_FUNCTIONS_URL } from "@/integrations/supabase/env";
+import type { AssinaturaCertificado } from "@/pages/treinamentos/plataforma/tipos";
 
 // =====================================================================
 // PORTAL DO COLABORADOR (/colaborador) — acesso a dados
@@ -162,6 +163,8 @@ export interface ComentarioAluno {
 export interface CertificadoAluno {
   codigo: string; emitido_em: string; carga_horaria_min: number | null; aluno: string; documento: string | null; curso: string;
   modelo: Record<string, unknown> | null; modulos: { nome: string; aulas: string[] }[];
+  /** Assinatura do treinador gravada na emissão (mig 20261005000003). */
+  assinatura: AssinaturaCertificado | null;
 }
 
 // ── Queries ─────────────────────────────────────────────────────────────
