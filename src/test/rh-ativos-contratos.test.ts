@@ -160,3 +160,36 @@ describe("sugerirContrato", () => {
     expect(sugerirContrato("1093 - ADM E ESTAGIARIOS - NH", cts)).toBeNull();
   });
 });
+
+describe("sugerirPostos — jornada, cidade e chefia (casos reais de 05/10/2026)", () => {
+  const CAMARA = [pl("AUX. LIMPEZA 220H 5X2", 9), pl("COPEIRA 220H 5X2", 4), pl("ENCARREGADO 220H 5X2", 1)];
+  const VERANOPOLIS = [pl("AUX. COZINHA/COPEIRO 220H 5X2"), pl("AUX. LIMPEZA 22H 5X2"), pl("AUX. LIMPEZA 44H 5X2"), pl("COPEIRA 22H 5X2"), pl("COPEIRA 33H 5X2")];
+  const CANAA = [pl("SERVENTE DE LIMPEZA 40H 40% INSALUBRIDADE"), pl("SUPERVISOR 20H"), pl("PROFESSOR REGENTE DE TURMA 44H")];
+  const CARGA = [pl("AUX. CARGA E DESCARGA 44H 5X2 PORTO ALEGRE"), pl("AUX. CARGA E DESCARGA 44H 5X2 TRAMANDAI"), pl("SUPERVISOR DE CARGA E DESCARGA 5X2 PORTO ALEGRE")];
+
+  it("44H semanal = 220H mensal; SEG A SEX = 5X2; LIDER = ENCARREGADO", () => {
+    expect(sugerirPostos("AUX LIMPEZA-44H SEG A SEX", CAMARA)).toEqual(["AUX. LIMPEZA 220H 5X2"]);
+    expect(sugerirPostos("AUX LIMPEZA (LIDER)-44H SEG A SEX", CAMARA)).toEqual(["ENCARREGADO 220H 5X2"]);
+    expect(sugerirPostos("RECEPCIONISTA-150H", [pl("RECEPCIONISTA 30H"), pl("RECEPCIONISTA 40H")])).toEqual(["RECEPCIONISTA 30H"]);
+  });
+  it("COPEIRO = COPEIRA, e carga horária diferente é outro posto", () => {
+    expect(sugerirPostos("COPEIRO-110H SEG A SEX", VERANOPOLIS)).toEqual(["COPEIRA 22H 5X2"]);
+  });
+  it("só jornada em comum não é sugestão", () => {
+    expect(sugerirPostos("APRENDIZ-40h", CANAA)).toEqual([]);
+    expect(sugerirPostos("APRENDIZ-20h", CANAA)).toEqual([]);
+  });
+  it("POA = PORTO ALEGRE; supervisor só casa com supervisor", () => {
+    expect(sugerirPostos("AUX CARGA E DESCARGA-44h-5X2-POA", CARGA)).toEqual(["AUX. CARGA E DESCARGA 44H 5X2 PORTO ALEGRE"]);
+    expect(sugerirPostos("SUPERVISOR-44h-5X2-POA", CARGA)).toEqual(["SUPERVISOR DE CARGA E DESCARGA 5X2 PORTO ALEGRE"]);
+  });
+  it("na conferência: empate (cidades) não sugere; contrato de um posto só sugere ele", () => {
+    const pes = (posto_senior: string): PessoaContrato => ({ id: 1, cadastro: "1", nome: "A", cargo: "COPEIRO", situacao: "Trabalhando", conta: true, posto_senior, posto: null, fora: false, origem: null });
+    const empate = conferirContrato({ id: "c", nome: "C", cliente: null, encerrado: false,
+      postos: [pl("COPEIRO 40H 5X2 IMBÉ"), pl("COPEIRO 40H 5X2 PORTO ALEGRE")], pessoas: [pes("COPEIRO-40H REITORIA")] });
+    expect(empate.pendentes[0].sugestao).toBeNull();
+    const unico = conferirContrato({ id: "c", nome: "C", cliente: null, encerrado: false,
+      postos: [pl("CONTÍNUO 44H", 30)], pessoas: [pes("MENSAGEIRO-44H-6X1")] });
+    expect(unico.pendentes[0].sugestao).toBe("CONTÍNUO 44H");
+  });
+});
