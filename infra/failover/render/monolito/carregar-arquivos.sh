@@ -298,9 +298,23 @@ while IFS='|' read -r id nome tamanho; do
     extraidos=$(( extraidos + n ))
     log "    $n arquivo(s) novo(s)   livre: $(df -h "$DESTINO" | awk 'NR==2{print $4}')"
   else
+    # FALHA TOTAL E FALHA PARCIAL NAO SAO A MESMA COISA.
+    #
+    # O tar sai != 0 se UM unico nome deu problema, mesmo tendo gravado todos
+    # os outros. Dizer so "falhou" nesse caso manda investigar rede, chave e
+    # zip quando o que houve foi conflito de um objeto - aconteceu aqui, e
+    # mascarou o problema de layout por varias rodadas. Por isso contamos
+    # quantos arquivos entraram ANTES de chamar a cadeia de falha.
+    depois_deste=$(find "$DESTINO" -type f 2>/dev/null | wc -l)
+    n=$(( depois_deste - antes_deste ))
+    extraidos=$(( extraidos + n ))
+    if (( n > 0 )); then
+      log "    PARCIAL: $n arquivo(s) entraram, mas a cadeia reportou erro:"
+    else
+      log "    falhou nesta cadeia, nenhum arquivo entrou:"
+    fi
     # Cada etapa reporta o proprio erro. Sem isto, "falhou" nao diz se foi
     # rede, zip, chave, senha ou disco - e foi o que me custou tres rodadas.
-    log "    falhou nesta cadeia:"
     for etapa in curl desunzip gpg tar; do
       [[ -s "$TMP/$etapa.err" ]] && log "      $etapa: $(tail -2 "$TMP/$etapa.err" | tr '\n' ' ')"
     done
