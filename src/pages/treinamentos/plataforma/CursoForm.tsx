@@ -9,8 +9,10 @@ import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { uploadMidia, urlMidia, useTrnCategorias, useTrnCurso, useTrnModelosCertificado, useTrnSalvarCurso } from "@/hooks/useTreinamentosPlataforma";
+import { uploadMidia, urlMidia, useTrnAssinaturas, useTrnCategorias, useTrnCurso, useTrnModelosCertificado, useTrnSalvarCurso } from "@/hooks/useTreinamentosPlataforma";
 import { MENU, type CapaFormato } from "./tipos";
+import { AssinaturaTraco } from "./assinaturaFolha";
+import { DialogAssinatura } from "./Assinaturas";
 import { TrnCarregando, TrnEstilo, TrnHero } from "./ui";
 
 // =====================================================================
@@ -21,6 +23,10 @@ import { TrnCarregando, TrnEstilo, TrnHero } from "./ui";
 // URL de vendas, data e dias de liberação, "exibir módulos como cursos",
 // prazo de acesso, e os três toggles do topo da visualização (publicado,
 // em breve, comentários). Módulos e aulas ficam na visualização do curso.
+//
+// Assinatura (05/10/2026, mig 20261005000003): "Certificado com assinatura"
+// obriga a escolher a ASSINATURA PRINCIPAL — ou criar uma ali mesmo, para
+// quem tem o menu Cursos — Assinaturas.
 // =====================================================================
 
 const PRAZOS = [730, 365, 180, 90, 60, 30, 14, 7];
@@ -30,11 +36,13 @@ interface Form {
   categoria_id: string; certificado_modelo_id: string; ordem_vitrine: string; carga_horaria: string; url_vendas: string;
   liberar_em: string; liberar_dias: string; prazo: string; prazoOutro: string; modulos_como_cursos: boolean;
   publicado: boolean; em_breve: boolean; comentarios_habilitados: boolean;
+  com_assinatura: boolean; assinatura_id: string;
 }
 const VAZIO: Form = {
   nome: "", descricao: "", slug: "", capa_path: null, capa_formato: "paisagem", categoria_id: "", certificado_modelo_id: "",
   ordem_vitrine: "", carga_horaria: "", url_vendas: "", liberar_em: "", liberar_dias: "0", prazo: "", prazoOutro: "",
   modulos_como_cursos: false, publicado: false, em_breve: false, comentarios_habilitados: true,
+  com_assinatura: false, assinatura_id: "",
 };
 
 export default function CursoForm() {
@@ -44,6 +52,8 @@ export default function CursoForm() {
   const { data, isLoading } = useTrnCurso(editando ? id : null);
   const { data: categorias = [] } = useTrnCategorias();
   const { data: modelos = [] } = useTrnModelosCertificado();
+  const { data: assinaturas = [] } = useTrnAssinaturas();
+  const [criandoAssinatura, setCriandoAssinatura] = useState(false);
   const salvar = useTrnSalvarCurso();
   const [f, setF] = useState<Form>(VAZIO);
   const [subindo, setSubindo] = useState(false);
@@ -62,6 +72,7 @@ export default function CursoForm() {
       prazo: c.prazo_acesso_dias == null ? "" : prazoConhecido ? String(c.prazo_acesso_dias) : "outros",
       prazoOutro: c.prazo_acesso_dias != null && !prazoConhecido ? String(c.prazo_acesso_dias) : "",
       modulos_como_cursos: c.modulos_como_cursos, publicado: c.publicado, em_breve: c.em_breve, comentarios_habilitados: c.comentarios_habilitados,
+      com_assinatura: !!c.assinatura_id, assinatura_id: c.assinatura_id ?? "",
     });
   }, [data]);
 
@@ -81,12 +92,15 @@ export default function CursoForm() {
     if (prazo !== null && (!Number.isInteger(prazo) || prazo <= 0)) return toast.error("Prazo de acesso inválido.");
     const carga = f.carga_horaria.trim() ? Math.round(Number(f.carga_horaria.replace(",", ".")) * 60) : null;
     if (carga !== null && (!Number.isFinite(carga) || carga < 0)) return toast.error("Carga horária inválida.");
+    if (f.com_assinatura && !f.certificado_modelo_id) return toast.error("Para ter assinatura, o curso precisa emitir certificado — escolha o modelo.");
+    if (f.com_assinatura && !f.assinatura_id) return toast.error("Escolha a assinatura principal do certificado (ou crie uma).");
     try {
       const novoId = await salvar.mutateAsync({
         id: editando ? id : undefined,
         nome: f.nome.trim(), descricao: f.descricao.trim(), slug: f.slug.trim(), capa_path: f.capa_path, capa_formato: f.capa_formato,
         categoria_id: f.modulos_como_cursos ? null : (f.categoria_id || null),
         certificado_modelo_id: f.certificado_modelo_id || null,
+        assinatura_id: f.com_assinatura && f.certificado_modelo_id ? f.assinatura_id : null,
         ordem_vitrine: f.ordem_vitrine.trim() ? Number(f.ordem_vitrine) : null,
         carga_horaria_min: carga, url_vendas: f.url_vendas.trim() || null,
         liberar_em: f.liberar_em || null, liberar_dias: Math.max(0, Number(f.liberar_dias) || 0),
@@ -195,6 +209,47 @@ export default function CursoForm() {
                 </div>
               </div>
 
+              {f.certificado_modelo_id && (
+                <div className="grupo">
+                  <h4>Assinatura do certificado</h4>
+                  <label className="flex items-center gap-2 text-sm">
+                    <Switch checked={f.com_assinatura} onCheckedChange={(v) => set({ com_assinatura: v })} />
+                    {f.com_assinatura ? "O certificado deste curso tem assinatura" : "Sem assinatura"}
+                  </label>
+                  {f.com_assinatura && (
+                    <div className="mt-3 grid gap-2">
+                      <div className="campo">
+                        <label>Assinatura principal *</label>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <Select value={f.assinatura_id || "__"} onValueChange={(v) => set({ assinatura_id: v === "__" ? "" : v })}>
+                            <SelectTrigger className="w-80"><SelectValue placeholder="Escolha a assinatura" /></SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="__">Escolha a assinatura…</SelectItem>
+                              {assinaturas.filter((a) => a.ativo || a.id === f.assinatura_id).map((a) => (
+                                <SelectItem key={a.id} value={a.id}>{a.nome_completo}{a.cargo ? ` · ${a.cargo}` : ""}{a.ativo ? "" : " (desativada)"}</SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          <AcessoGate menu={MENU.assinaturas} acao="incluir" fallback={assinaturas.length === 0 ? <span className="text-xs text-muted-foreground">Nenhuma assinatura — peça a liberação de <b>Cursos — Assinaturas</b> para criar.</span> : null}>
+                            <Button type="button" variant="outline" size="sm" onClick={() => setCriandoAssinatura(true)}>+ Criar assinatura</Button>
+                          </AcessoGate>
+                        </div>
+                      </div>
+                      {(() => {
+                        const a = assinaturas.find((x) => x.id === f.assinatura_id);
+                        return a ? (
+                          <div className="flex items-center gap-3 rounded-lg border bg-white px-3 py-2">
+                            <div className="h-12 w-40 overflow-hidden"><AssinaturaTraco a={a} altura="48px" /></div>
+                            <div className="text-xs"><div className="font-semibold uppercase tracking-wide text-slate-500">Assinado digitalmente por:</div><div className="font-bold">{a.nome_completo}</div>{a.cargo && <div className="text-slate-500">{a.cargo}</div>}</div>
+                          </div>
+                        ) : null;
+                      })()}
+                      <div className="ajuda text-xs text-muted-foreground">Sai no rodapé de todo certificado emitido a partir de agora. Certificados já emitidos ficam como estão.</div>
+                    </div>
+                  )}
+                </div>
+              )}
+
               <div className="grupo">
                 <h4>Exibir módulos como cursos na vitrine</h4>
                 <label className="flex items-center gap-2 text-sm"><Switch checked={f.modulos_como_cursos} onCheckedChange={(v) => set({ modulos_como_cursos: v })} /> {f.modulos_como_cursos ? "Habilitado" : "Desabilitado"}</label>
@@ -238,9 +293,13 @@ export default function CursoForm() {
               Nome, descrição e capa são o que o aluno vê na vitrine. Depois de criar, adicione módulos e aulas na visualização do curso.
               <h5>Certificado</h5>
               Escolha um modelo em Cursos › Certificados. Sem modelo, o curso não emite certificado.
+              <h5>Assinatura</h5>
+              Opcional. Ligada, o certificado sai com "ASSINADO DIGITALMENTE POR" + o nome e a assinatura do treinador. As assinaturas ficam em Cursos › Assinaturas.
             </div>
           </div>
         )}
+        <DialogAssinatura aberto={criandoAssinatura} onClose={() => setCriandoAssinatura(false)}
+          onSalvo={(novo) => set({ assinatura_id: novo, com_assinatura: true })} />
       </AcessoGate>
     </div>
   );

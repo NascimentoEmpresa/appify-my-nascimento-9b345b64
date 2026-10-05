@@ -3,7 +3,7 @@ import * as tus from "tus-js-client";
 import { supabase } from "@/integrations/supabase/client";
 import { SUPABASE_ANON_KEY, SUPABASE_URL } from "@/integrations/supabase/env";
 import {
-  BUCKET_TRN, type Aluno, type AlunoLista, type Aula, type Aviso, type Categoria, type Certificado,
+  BUCKET_TRN, type Aluno, type Assinatura, type AlunoLista, type Aula, type Aviso, type Categoria, type Certificado,
   type CertificadoModelo, type Comentario, type Curso, type CursoLista, type Dashboard, type Evento,
   type Historico, type Matricula, type Modulo, type Notificacao, type ProgressoLinha, type Publico,
   type StatusComentario, type Tag,
@@ -26,7 +26,7 @@ const K = {
   certificados: "trn-certificados", categorias: "trn-categorias", modelos: "trn-modelos",
   cursos: "trn-cursos", curso: "trn-curso", modulos: "trn-modulos", aulas: "trn-aulas", aula: "trn-aula",
   comentarios: "trn-comentarios", avisos: "trn-avisos", notificacoes: "trn-notificacoes",
-  eventos: "trn-eventos", alcance: "trn-alcance",
+  eventos: "trn-eventos", alcance: "trn-alcance", assinaturas: "trn-assinaturas",
 };
 
 const invalidar = (qc: ReturnType<typeof useQueryClient>, ...chaves: string[]) =>
@@ -411,6 +411,96 @@ export function useTrnExcluirModelo() {
   return useMutation({
     mutationFn: async (id: string) => { const { error } = await sb.from("TRN_CERTIFICADO_MODELO").delete().eq("id", id); if (error) throw error; },
     onSuccess: () => invalidar(qc, K.modelos, K.cursos),
+  });
+}
+
+// ── Assinaturas do certificado (mig 20261005000003) ──────────────────
+export type AssinaturaComUso = Assinatura & { cursos: number; certificados: number };
+
+/** Todas as assinaturas, com quantos cursos e certificados usam cada uma. */
+export function useTrnAssinaturas() {
+  return useQuery({
+    queryKey: [K.assinaturas],
+    queryFn: async (): Promise<AssinaturaComUso[]> => {
+      const [{ data, error }, cursos, certs] = await Promise.all([
+        sb.from("TRN_ASSINATURA").select("*").order("nome_completo"),
+        sb.from("TRN_CURSO").select("assinatura_id").not("assinatura_id", "is", null),
+        sb.from("TRN_CERTIFICADO").select("assinatura_id").not("assinatura_id", "is", null),
+      ]);
+      if (error) throw error;
+      const conta = (linhas: { assinatura_id: string }[] | null) => {
+        const m = new Map<string, number>();
+        (linhas ?? []).forEach((l) => m.set(l.assinatura_id, (m.get(l.assinatura_id) ?? 0) + 1));
+        return m;
+      };
+      const mc = conta(cursos.data), mce = conta(certs.data);
+      return (data ?? []).map((a: Assinatura) => ({ ...a, cursos: mc.get(a.id) ?? 0, certificados: mce.get(a.id) ?? 0 }));
+    },
+  });
+}
+
+export function useTrnSalvarAssinatura() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (a: Partial<Assinatura> & { nome_completo: string; tipo: Assinatura["tipo"] }): Promise<string> => {
+      const { id, created_at, updated_at, cursos, certificados, ...linha } = a as any;
+      // Só guarda o campo do tipo escolhido (o CHECK do banco cobra o par certo).
+      const limpa = linha.tipo === "desenho" ? { ...linha, texto: null, fonte: null } : { ...linha, imagem: null };
+      if (id) {
+        const { error } = await sb.from("TRN_ASSINATURA").update(limpa).eq("id", id);
+        if (error) throw error;
+        return id;
+      }
+      const { data, error } = await sb.from("TRN_ASSINATURA").insert(limpa).select("id").single();
+      if (error) throw error;
+      return data.id as string;
+    },
+    onSuccess: () => invalidar(qc, K.assinaturas, K.curso),
+  });
+}
+
+export function useTrnExcluirAssinatura() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) => {
+      const { error } = await sb.from("TRN_ASSINATURA").delete().eq("id", id);
+      // FK RESTRICT: já saiu em certificado emitido — tem que desativar.
+      if (error?.code === "23503") throw new Error("Esta assinatura já está em certificados emitidos — desative em vez de excluir.");
+      if (error) throw error;
+    },
+    onSuccess: () => invalidar(qc, K.assinaturas, K.curso, K.cursos),
+  });
+}
+
+/** Assinatura gravada num certificado (ou null). */
+export async function buscarAssinatura(id: string | null | undefined): Promise<Assinatura | null> {
+  if (!id) return null;
+  const { data, error } = await sb.from("TRN_ASSINATURA").select("*").eq("id", id).maybeSingle();
+  if (error) throw error;
+  return data ?? null;
+}
+
+// ── Visualizações e curtidas das aulas (mig 20261005000004) ──────────
+/** Por aula: visualizações (soma das aberturas) e curtidas. Quem curte é o aluno, no Portal. */
+export function useTrnNumerosAulas(aulaIds: string[]) {
+  const ids = [...aulaIds].sort();
+  return useQuery({
+    queryKey: ["trn-aula-numeros", ids],
+    enabled: ids.length > 0,
+    staleTime: 60_000,
+    queryFn: async (): Promise<Record<string, { visualizacoes: number; curtidas: number; curti: boolean }>> => {
+      const [v, c] = await Promise.all([
+        sb.from("TRN_AULA_VISUALIZACAO").select("aula_id, aberturas").in("aula_id", ids),
+        sb.from("TRN_AULA_CURTIDA").select("aula_id").in("aula_id", ids),
+      ]);
+      if (v.error) throw v.error;
+      if (c.error) throw c.error;
+      const m: Record<string, { visualizacoes: number; curtidas: number; curti: boolean }> = {};
+      ids.forEach((id) => { m[id] = { visualizacoes: 0, curtidas: 0, curti: false }; });
+      (v.data ?? []).forEach((r: { aula_id: string; aberturas: number }) => { m[r.aula_id].visualizacoes += r.aberturas; });
+      (c.data ?? []).forEach((r: { aula_id: string }) => { m[r.aula_id].curtidas += 1; });
+      return m;
+    },
   });
 }
 

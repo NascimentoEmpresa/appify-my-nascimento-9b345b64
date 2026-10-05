@@ -2,7 +2,8 @@ import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
 import QRCode from "qrcode";
 import { urlMidia } from "@/hooks/useTreinamentosPlataforma";
 import logoNascimento from "@/assets/logo-nascimento-completo.webp";
-import type { CertificadoModelo } from "./tipos";
+import type { AssinaturaCertificado, CertificadoModelo } from "./tipos";
+import { BlocoAssinatura } from "./assinaturaFolha";
 
 // =====================================================================
 // A folha do certificado — usada na prévia do editor de modelo e na
@@ -18,6 +19,10 @@ import type { CertificadoModelo } from "./tipos";
 // logo) — assim modelos antigos, criados antes da galeria, já saem no
 // layout novo sem precisar editar. Sem migration: a coluna é text livre.
 //
+// Assinatura (05/10/2026, mig 20261005000003): quando o certificado foi
+// emitido com assinatura, o rodapé ganha à direita o bloco "ASSINADO
+// DIGITALMENTE POR:" + nome do treinador, e "Grupo Nascimento" vai pro meio.
+//
 // Tamanhos em `cqw` (relativos à largura da folha): a arte fica igual na
 // prévia pequena do editor, na tela do colaborador e na impressão A4.
 // =====================================================================
@@ -26,6 +31,7 @@ export interface DadosCertificado {
   aluno: string; documento?: string | null; curso: string; data: string;
   cargaHorariaMin?: number | null; codigo: string;
   modulos?: { nome: string; aulas: string[] }[];
+  assinatura?: AssinaturaCertificado | null;
 }
 
 /** "30 de Setembro de 2026" — mês com inicial maiúscula, como no modelo. */
@@ -208,7 +214,7 @@ function Folha({ modelo, lado, children }: { modelo: CertificadoModelo; lado: "f
 
 function Rodape({ modelo, dados, centro }: { modelo: CertificadoModelo; dados: DadosCertificado; centro: boolean }) {
   return (
-    <div style={{ position: "absolute", left: centro ? "12%" : "16.5%", right: centro ? "12%" : "15%", bottom: "15.5%", display: "flex", alignItems: "center", justifyContent: "space-between", gap: "2cqw" }}>
+    <div style={{ position: "absolute", left: centro ? "12%" : "16.5%", right: centro ? "12%" : "15%", bottom: dados.assinatura ? "11%" : "15.5%", display: "flex", alignItems: dados.assinatura ? "flex-end" : "center", justifyContent: "space-between", gap: "2cqw" }}>
       <div style={{ display: "flex", alignItems: "center", gap: "1cqw" }}>
         {modelo.exibir_qr && <QrValidacao codigo={dados.codigo} />}
         <div style={{ fontSize: ".85cqw", lineHeight: 1.5, color: "#8a90b4" }}>
@@ -221,6 +227,7 @@ function Rodape({ modelo, dados, centro }: { modelo: CertificadoModelo; dados: D
           {modelo.exibir_cnpj && <div style={{ color: "#71717a" }}>CNPJ: —</div>}
         </div>
       )}
+      {dados.assinatura && <BlocoAssinatura a={dados.assinatura} />}
     </div>
   );
 }

@@ -14,6 +14,7 @@ import { useContratosERP, ContratoERP } from "@/hooks/useContratosERP";
 import { usePlanilhaCustos, resolverLinhasPorPeriodo, somarCamposEmLinhas, fimDoMes } from "@/hooks/usePlanilhaCusto";
 import { useNfsEmissao } from "@/hooks/useNfEmissao";
 import { fmtMoney, foraDoRelatorio, naoContabilizaKpi } from "@/pages/financeiro/nf-emissao/shared";
+import { contratoEncerradoNaCompetencia } from "./vigenciaContrato";
 
 // SIS-2026-0562 (Iury): "Base de Contratos Vigentes × Relatório de
 // Serviços", igual ao protótipo em anexo (Dashboard_Controle_Faturamento_
@@ -155,6 +156,14 @@ export default function ControleFaturamento() {
     const linhasVigentes = resolverLinhasPorPeriodo(rowsDoContrato, c.id, fimDoMes(mesAlvo));
     const executavel = somarCamposEmLinhas(linhasVigentes, ["total_por_empregado"]);
     const agg = nfAggPorContratoCompetencia.get(`${c.id}|${mesAlvo}`) ?? { execRel: 0, contabil: 0, liquido: 0, recebido: 0, cv: 0, count: 0 };
+    // SIS-2026-0605 (Iury): a planilha de um contrato encerrado segue com
+    // valor depois do fim (Caxias 162, fim 28/02/2026, aparecia "sem
+    // lançamento" de mar a set). Depois da data fim do contrato, competência
+    // sem nota lançada é "sem vigência", não pendência. Se houver NF lançada
+    // (faturamento final fora do mês), a célula continua como lançada.
+    if (agg.count === 0 && contratoEncerradoNaCompetencia(c, mesAlvo)) {
+      return { contrato: c, executavel: 0, execRel: 0, contabil: 0, liquido: 0, recebido: 0, cv: 0, naoEmitido: 0, status: "SEM_VIGENCIA" };
+    }
     const naoEmitido = Math.max(0, executavel - agg.contabil);
     const status = statusCelula(executavel, agg.count > 0, competenciasComDadosN.has(mesAlvo));
     return { contrato: c, executavel, execRel: agg.execRel, contabil: agg.contabil, liquido: agg.liquido, recebido: agg.recebido, cv: agg.cv, naoEmitido, status };

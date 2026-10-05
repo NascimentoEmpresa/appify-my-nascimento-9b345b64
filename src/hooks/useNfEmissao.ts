@@ -53,6 +53,11 @@ export interface NfEmissaoRow {
   pis_pct: number;
   csll_pct: number;
   created_at: string;
+  // null = linha importada da planilha legada (SIS-2026-0540), sem autor no app.
+  created_by: string | null;
+  // Lixeira do Relatório Geral: != null = NF na lixeira (fora de todos os totais).
+  deleted_at: string | null;
+  deleted_by: string | null;
   nf_emissao_modelo_id: string | null;
   contrato: { id: string; nome: string; cliente: string } | null;
   empresa: { id: string; nome_fantasia: string | null; razao_social: string } | null;
@@ -65,15 +70,16 @@ export interface NfEmissaoRow {
 // cortada em 1000 silenciosamente, sem erro (achado real: "Total de Notas"
 // no Dashboard mostrava 1.000 fixo). Mesma classe de bug já corrigida em
 // Fluxo de Caixa e Aprovações do Malote (useMaloteDespesa.ts).
-async function buscarTodasNfsEmissao(todasEmpresas: boolean, empresaId: string | null | undefined) {
+async function buscarTodasNfsEmissao(todasEmpresas: boolean, empresaId: string | null | undefined, naLixeira = false) {
   const TAMANHO_PAGINA = 1000;
   const linhas: NfEmissaoRow[] = [];
   for (let pagina = 0; ; pagina++) {
     let q = (supabase as any)
       .from("nf_emissao")
       .select("*, contrato:contrato_id(id, nome, cliente), empresa:empresa_id(id, nome_fantasia, razao_social)")
-      .order("created_at", { ascending: false })
+      .order(naLixeira ? "deleted_at" : "created_at", { ascending: false })
       .range(pagina * TAMANHO_PAGINA, pagina * TAMANHO_PAGINA + TAMANHO_PAGINA - 1);
+    q = naLixeira ? q.not("deleted_at", "is", null) : q.is("deleted_at", null);
     if (!todasEmpresas) q = q.eq("empresa_id", empresaId);
     const { data, error } = await q;
     if (error) throw error;
@@ -89,6 +95,15 @@ export function useNfsEmissao(empresaId: string | null | undefined, opts?: { tod
     queryKey: todasEmpresas ? [NF_EMISSAO_KEY, "todas"] : [NF_EMISSAO_KEY, empresaId],
     enabled: todasEmpresas || !!empresaId,
     queryFn: () => buscarTodasNfsEmissao(todasEmpresas, empresaId),
+  });
+}
+
+// NFs na lixeira (todas as empresas) — só a aba Relatório Geral lê isto.
+export function useNfsEmissaoLixeira(habilitado = true) {
+  return useQuery({
+    queryKey: [NF_EMISSAO_KEY, "lixeira"],
+    enabled: habilitado,
+    queryFn: () => buscarTodasNfsEmissao(true, null, true),
   });
 }
 
@@ -391,6 +406,61 @@ export function useExcluirNfEmissao() {
       }
       const { error } = await (supabase as any).from("nf_emissao").delete().eq("id", input.id);
       if (error) throw error;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: [NF_EMISSAO_KEY] }),
+  });
+}
+
+// Lixeira do Relatório Geral: enviar (deleted_at = agora) e restaurar (null).
+// O guard de imutabilidade + a RLS exigem a ação 'excluir' em nf-emissao
+// (Nível D) para mexer em NF concluída/cancelada.
+async function marcarLixeira(ids: string[], enviar: boolean) {
+  const userId = enviar ? ((await supabase.auth.getUser()).data.user?.id ?? null) : null;
+  const campos = enviar ? { deleted_at: new Date().toISOString(), deleted_by: userId } : { deleted_at: null, deleted_by: null };
+  const TAMANHO_LOTE = 100;
+  for (let i = 0; i < ids.length; i += TAMANHO_LOTE) {
+    const { error } = await (supabase as any).from("nf_emissao").update(campos).in("id", ids.slice(i, i + TAMANHO_LOTE));
+    if (error) throw error;
+  }
+}
+
+export function useEnviarNfsParaLixeira() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (ids: string[]) => marcarLixeira(ids, true),
+    onSuccess: () => qc.invalidateQueries({ queryKey: [NF_EMISSAO_KEY] }),
+  });
+}
+
+export function useRestaurarNfsDaLixeira() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (ids: string[]) => marcarLixeira(ids, false),
+    onSuccess: () => qc.invalidateQueries({ queryKey: [NF_EMISSAO_KEY] }),
+  });
+}
+
+// Exclusão DEFINITIVA em lote (só a partir da lixeira do Relatório Geral).
+// Itens/anexos (linhas) saem por ON DELETE CASCADE; os ARQUIVOS dos anexos no
+// storage são removidos antes. O trigger de imutabilidade + a RLS exigem a
+// ação 'excluir' em nf-emissao (Nível D).
+export function useExcluirNfsEmissaoEmLote() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (ids: string[]) => {
+      const TAMANHO_LOTE = 100;
+      for (let i = 0; i < ids.length; i += TAMANHO_LOTE) {
+        const lote = ids.slice(i, i + TAMANHO_LOTE);
+        const { data: anexos, error: eAnexos } = await (supabase as any).from("nf_emissao_anexo").select("storage_path").in("nf_emissao_id", lote);
+        if (eAnexos) throw eAnexos;
+        const paths = ((anexos ?? []) as { storage_path: string }[]).map((a) => a.storage_path);
+        if (paths.length > 0) {
+          const rm = await supabase.storage.from(BUCKET).remove(paths);
+          if (rm.error) throw rm.error;
+        }
+        const { error } = await (supabase as any).from("nf_emissao").delete().in("id", lote);
+        if (error) throw error;
+      }
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: [NF_EMISSAO_KEY] }),
   });

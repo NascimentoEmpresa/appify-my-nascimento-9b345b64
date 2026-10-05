@@ -1,4 +1,5 @@
-import { ArrowDown, ArrowUp, Copy, Plus, Trash2 } from "lucide-react";
+import { ArrowDown, ArrowUp, Check, Copy, Plus, Trash2 } from "lucide-react";
+import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
@@ -17,7 +18,71 @@ import {
 // é TRN_AULA.quiz (formato estendido: tipo, corretas, pontos, explicação) e
 // a configuração é TRN_AULA.prova_config — quem corrige, conta tentativa e
 // decide o gabarito é o banco (trn_prova_*, migration 205); aqui só se edita.
+//
+// 05/10/2026: "ficou ruim de selecionar qual é a resposta certa" — a
+// bolinha/caixinha miúda ao lado do campo virou um botão "Correta" em cada
+// opção, a opção certa fica verde, e o V/F são dois botões grandes.
 // =====================================================================
+
+const LETRAS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+
+/** As opções de uma pergunta, com a marcação da(s) correta(s) bem visível. */
+function OpcoesPergunta({ p, tipo, onMarcar, onTexto, onRemover, onAdicionar }: {
+  p: PerguntaQuiz; tipo: TipoPergunta;
+  onMarcar: (k: number) => void; onTexto: (k: number, v: string) => void;
+  onRemover: (k: number) => void; onAdicionar: () => void;
+}) {
+  const certa = (k: number) => (tipo === "multipla" ? !!p.corretas?.includes(k) : p.correta === k);
+  const nenhuma = tipo === "multipla" && !p.corretas?.length;
+
+  if (tipo === "vf") {
+    return (
+      <div className="mt-3">
+        <div className="mb-1.5 text-xs font-semibold text-slate-600">Qual é a resposta certa?</div>
+        <div className="grid grid-cols-2 gap-2">
+          {p.opcoes.map((o, k) => (
+            <button key={k} type="button" onClick={() => onMarcar(k)} aria-pressed={certa(k)}
+              className={cn("flex items-center justify-center gap-2 rounded-xl border-2 px-4 py-3 text-sm font-bold transition",
+                certa(k) ? "border-emerald-500 bg-emerald-50 text-emerald-700 ring-2 ring-emerald-200" : "border-slate-200 text-slate-500 hover:border-slate-400")}>
+              {certa(k) && <Check className="h-4 w-4" />} {o}
+            </button>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="mt-3 space-y-2">
+      <div className="text-xs font-semibold text-slate-600">
+        Opções — {tipo === "multipla" ? "clique em \"Correta\" em TODAS as opções certas" : "clique em \"Correta\" na opção certa"}
+      </div>
+      {p.opcoes.map((o, k) => (
+        <div key={k} className={cn("flex items-center gap-2 rounded-xl border-2 p-1.5 pl-2 transition",
+          certa(k) ? "border-emerald-500 bg-emerald-50/70" : "border-slate-200 bg-white")}>
+          <span className={cn("grid h-7 w-7 shrink-0 place-items-center rounded-full text-xs font-bold",
+            certa(k) ? "bg-emerald-500 text-white" : "bg-slate-100 text-slate-500")}>{LETRAS[k] ?? k + 1}</span>
+          <Input className="h-9 border-0 bg-transparent shadow-none focus-visible:ring-0" placeholder={`Opção ${LETRAS[k] ?? k + 1}`}
+            value={o} onChange={(e) => onTexto(k, e.target.value)} />
+          <button type="button" onClick={() => onMarcar(k)} aria-pressed={certa(k)} title={certa(k) ? "Desmarcar" : "Marcar como resposta certa"}
+            className={cn("flex shrink-0 items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-bold transition",
+              certa(k) ? "bg-emerald-500 text-white hover:bg-emerald-600" : "border border-slate-300 text-slate-500 hover:border-emerald-500 hover:text-emerald-600")}>
+            <Check className="h-3.5 w-3.5" /> {certa(k) ? "Correta" : "Marcar certa"}
+          </button>
+          {p.opcoes.length > 2 && (
+            <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0 text-slate-400 hover:text-rose-600" title="Remover opção" onClick={() => onRemover(k)}>
+              <Trash2 className="h-3.5 w-3.5" />
+            </Button>
+          )}
+        </div>
+      ))}
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <Button variant="outline" size="sm" onClick={onAdicionar}><Plus className="mr-1 h-3.5 w-3.5" /> Adicionar opção</Button>
+        {nenhuma && <span className="text-xs font-semibold text-amber-600">Nenhuma opção marcada como certa.</span>}
+      </div>
+    </div>
+  );
+}
 
 export const novaPergunta = (tipo: TipoPergunta = "unica"): PerguntaQuiz => ({
   id: crypto.randomUUID(), enunciado: "", tipo, pontos: 1, explicacao: "",
@@ -33,8 +98,8 @@ export function erroDaProva(quiz: PerguntaQuiz[], cfg: ProvaConfig): string | nu
     if (!p.enunciado.trim()) return `${n} sem enunciado.`;
     if (p.opcoes.filter((o) => o.trim()).length < 2 || p.opcoes.some((o) => !o.trim())) return `${n}: preencha as opções (mínimo 2, nenhuma vazia).`;
     if ((p.tipo ?? "unica") === "multipla") {
-      if (!p.corretas?.length) return `${n}: marque ao menos uma opção correta.`;
-    } else if (p.opcoes[p.correta] == null) return `${n}: marque a opção correta.`;
+      if (!p.corretas?.length) return `${n}: clique em "Marcar certa" em pelo menos uma opção.`;
+    } else if (p.opcoes[p.correta] == null) return `${n}: clique em "Marcar certa" na opção correta.`;
     if (!(Number(p.pontos ?? 1) > 0)) return `${n}: a pontuação precisa ser maior que zero.`;
   }
   if (cfg.sortear != null && (cfg.sortear < 1 || cfg.sortear > quiz.length)) return `Sortear: escolha de 1 a ${quiz.length} perguntas.`;
@@ -182,32 +247,20 @@ export function ProvaEditor({ quiz, notaMinima, cfg, onChange, publico = false }
               </div>
             </div>
             <Textarea rows={2} placeholder="Enunciado" value={p.enunciado} onChange={(e) => setQ(i, { enunciado: e.target.value })} />
-            <div className="mt-2 space-y-1.5">
-              {p.opcoes.map((o, k) => {
+            <OpcoesPergunta p={p} tipo={tipo}
+              onMarcar={(k) => {
                 const marcada = tipo === "multipla" ? !!p.corretas?.includes(k) : p.correta === k;
-                return (
-                  <div key={k} className="flex items-center gap-2">
-                    <input
-                      type={tipo === "multipla" ? "checkbox" : "radio"} name={`correta-${p.id}`} checked={marcada} title="Correta"
-                      onChange={() => tipo === "multipla"
-                        ? setQ(i, { corretas: marcada ? (p.corretas ?? []).filter((x) => x !== k) : [...(p.corretas ?? []), k] })
-                        : setQ(i, { correta: k })}
-                    />
-                    <Input placeholder={`Opção ${k + 1}`} value={o} disabled={tipo === "vf"}
-                           onChange={(e) => setQ(i, { opcoes: p.opcoes.map((x, j) => (j === k ? e.target.value : x)) })} />
-                    {tipo !== "vf" && p.opcoes.length > 2 && (
-                      <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => setQ(i, {
-                        opcoes: p.opcoes.filter((_, j) => j !== k),
-                        correta: p.correta === k ? 0 : p.correta > k ? p.correta - 1 : p.correta,
-                        corretas: p.corretas?.filter((x) => x !== k).map((x) => (x > k ? x - 1 : x)),
-                      })}><Trash2 className="h-3.5 w-3.5" /></Button>
-                    )}
-                  </div>
-                );
+                setQ(i, tipo === "multipla"
+                  ? { corretas: marcada ? (p.corretas ?? []).filter((x) => x !== k) : [...(p.corretas ?? []), k] }
+                  : { correta: k });
+              }}
+              onTexto={(k, v) => setQ(i, { opcoes: p.opcoes.map((x, j) => (j === k ? v : x)) })}
+              onRemover={(k) => setQ(i, {
+                opcoes: p.opcoes.filter((_, j) => j !== k),
+                correta: p.correta === k ? 0 : p.correta > k ? p.correta - 1 : p.correta,
+                corretas: p.corretas?.filter((x) => x !== k).map((x) => (x > k ? x - 1 : x)),
               })}
-              {tipo !== "vf" && <Button variant="outline" size="sm" onClick={() => setQ(i, { opcoes: [...p.opcoes, ""] })}><Plus className="mr-1 h-3.5 w-3.5" /> Opção</Button>}
-              <div className="text-[11px] text-slate-400">{tipo === "multipla" ? "Marque todas as corretas (caixinhas)." : "Marque a correta (bolinha)."}</div>
-            </div>
+              onAdicionar={() => setQ(i, { opcoes: [...p.opcoes, ""] })} />
             <Input className="mt-2 text-xs" placeholder="Explicação da resposta (opcional — aparece no gabarito)" value={p.explicacao ?? ""} onChange={(e) => setQ(i, { explicacao: e.target.value })} />
           </div>
         );

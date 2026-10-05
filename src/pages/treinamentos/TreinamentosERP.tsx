@@ -16,6 +16,8 @@ import { TreinamentoVisor } from "./treinamento/TreinamentoVisor";
 import { DashboardVideos } from "./treinamento/DashboardVideos";
 import { recursosDe, type EscopoTreinamento, type Treinamento } from "./treinamento/core";
 import { AbasTreinamentos } from "./TreinamentosSistemas";
+import { ReacoesVideoMini } from "@/components/treinamentos/ReacoesVideo";
+import { useNumerosTreinamentos } from "@/hooks/useVideoNumeros";
 
 // =====================================================================
 // TREINAMENTOS — a grade de cards.
@@ -114,6 +116,9 @@ export default function TreinamentosERP({ escopo }: Props) {
   }, [user?.id, toast, escopo]);
 
   useEffect(() => { carregar(); }, [carregar]);
+
+  // Visualizações e curtidas de cada vídeo, numa chamada só (mig 20261005000004).
+  const numeros = useNumerosTreinamentos(useMemo(() => lista.map(x => x.id), [lista]));
 
   const filtrados = useMemo(() => {
     const q = busca.trim().toLowerCase();
@@ -278,6 +283,8 @@ export default function TreinamentosERP({ escopo }: Props) {
                       </span>
                     )}
                   </div>
+
+                  {r.video && <ReacoesVideoMini numeros={numeros.data?.[t.id]} />}
 
                   <div className="mt-auto flex items-center gap-2 pt-1">
                     <Button className="flex-1" size="sm" onClick={() => setAssistindo(t)}>

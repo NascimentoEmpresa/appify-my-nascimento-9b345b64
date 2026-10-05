@@ -6,12 +6,15 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { KpiTile } from "@/components/financeiro/KpiTile";
-import { Search, FileDown, ListChecks, CheckCircle2, AlertTriangle, TrendingUp } from "lucide-react";
+import { Search, FileDown, ListChecks, CheckCircle2, AlertTriangle, TrendingUp, Trash2, RotateCcw } from "lucide-react";
+import { Checkbox } from "@/components/ui/checkbox";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
+import { usePermissoes } from "@/context/PermissoesContext";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { useContratosERP } from "@/hooks/useContratosERP";
 import { useEmpresasGrupo } from "@/hooks/useMaloteDespesa";
-import { NfEmissaoRow, TipoNota, TIPOS_NOTA, useItensNfEmissaoEmLote, useNfsEmissao } from "@/hooks/useNfEmissao";
+import { NfEmissaoRow, TipoNota, TIPOS_NOTA, useEnviarNfsParaLixeira, useExcluirNfsEmissaoEmLote, useItensNfEmissaoEmLote, useNfsEmissao, useNfsEmissaoLixeira, useRestaurarNfsDaLixeira } from "@/hooks/useNfEmissao";
 import { fmtMoney, fmtDate, statusDaNota, foraDoRelatorio, naoContabilizaKpi, pendenteHaMaisDe30Dias, valorPendenteNf, StatusNota } from "@/pages/financeiro/nf-emissao/shared";
 
 const STATUS_LABEL: Record<StatusNota, string> = {
@@ -33,9 +36,27 @@ function competenciaCurta(c: string) {
 }
 
 export default function RelatorioGeralTab() {
-  const { data: nfs = [], isLoading } = useNfsEmissao(null, { todasEmpresas: true });
+  const { data: nfsAtivas = [], isLoading: carregandoAtivas } = useNfsEmissao(null, { todasEmpresas: true });
+  const { data: nfsLixeira = [], isLoading: carregandoLixeira } = useNfsEmissaoLixeira();
+  // Lixeira dentro da própria tela: alterna a fonte da tabela. Na lixeira as
+  // NFs ficam fora de todos os totais (Dashboard, Controle de Faturamento…).
+  const [verLixeira, setVerLixeira] = useState(false);
+  const nfs = verLixeira ? nfsLixeira : nfsAtivas;
+  const isLoading = verLixeira ? carregandoLixeira : carregandoAtivas;
   const { data: contratos = [] } = useContratosERP({ todasEmpresas: true });
   const { data: empresas = [] } = useEmpresasGrupo();
+
+  // Exclusão de NFs pelo Relatório Geral (importadas da planilha ou criadas
+  // pelo fluxo do app — achado do Ruan: sobraram notas que não valem mais).
+  // Duas etapas: enviar para a lixeira (reversível) e, de lá, excluir de vez.
+  // Mesma ação 'excluir' que o banco exige (trigger + RLS de nf_emissao).
+  const { can } = usePermissoes();
+  const podeExcluir = can("excluir", "financeiro", "nf-emissao");
+  const excluirLote = useExcluirNfsEmissaoEmLote();
+  const enviarLixeira = useEnviarNfsParaLixeira();
+  const restaurarLixeira = useRestaurarNfsDaLixeira();
+  const [selecionadas, setSelecionadas] = useState<Set<string>>(new Set());
+  const [confirmandoExclusao, setConfirmandoExclusao] = useState(false);
 
   // SIS-2026-0562 (Iury): chegar aqui a partir de uma linha do Controle de
   // Faturamento já aplica o mesmo recorte (empresa/competência/contrato) —
@@ -80,6 +101,80 @@ export default function RelatorioGeralTab() {
   }, [nfs, filtroEmpresa, filtroCompetencia, filtroContrato, filtroStatus, filtroCodigo, filtroEmissaoDe, filtroEmissaoAte, filtroOver30, busca]);
 
   const { data: itensPorNf } = useItensNfEmissaoEmLote(linhas.map((n) => n.id));
+
+  const antigasVisiveis = linhas;
+  // Só conta o que ainda está visível/filtrado — filtro novo não deixa
+  // seleção "escondida" que seria excluída sem a pessoa ver.
+  const selecionadasVisiveis = useMemo(() => antigasVisiveis.filter((n) => selecionadas.has(n.id)), [antigasVisiveis, selecionadas]);
+  const todasMarcadas = antigasVisiveis.length > 0 && selecionadasVisiveis.length === antigasVisiveis.length;
+
+  function alternar(id: string) {
+    setSelecionadas((prev) => {
+      const novo = new Set(prev);
+      if (novo.has(id)) novo.delete(id); else novo.add(id);
+      return novo;
+    });
+  }
+
+  function alternarTodas() {
+    setSelecionadas(todasMarcadas ? new Set() : new Set(antigasVisiveis.map((n) => n.id)));
+  }
+
+  function alternarLixeira() {
+    setSelecionadas(new Set());
+    setVerLixeira((v) => !v);
+  }
+
+  async function enviarSelecionadasParaLixeira() {
+    const alvo = selecionadasVisiveis;
+    if (alvo.length === 0) return;
+    try {
+      await enviarLixeira.mutateAsync(alvo.map((n) => n.id));
+      toast.success(`${alvo.length} NF(s) enviada(s) para a lixeira.`);
+      setSelecionadas(new Set());
+    } catch (e: any) {
+      toast.error(e?.message ?? "Não foi possível enviar para a lixeira.");
+    }
+  }
+
+  async function restaurarSelecionadas() {
+    const alvo = selecionadasVisiveis;
+    if (alvo.length === 0) return;
+    try {
+      await restaurarLixeira.mutateAsync(alvo.map((n) => n.id));
+      toast.success(`${alvo.length} NF(s) restaurada(s).`);
+      setSelecionadas(new Set());
+    } catch (e: any) {
+      toast.error(e?.message ?? "Não foi possível restaurar.");
+    }
+  }
+
+  async function excluirSelecionadas() {
+    const alvo = selecionadasVisiveis;
+    if (alvo.length === 0) return;
+    // Rede de segurança: baixa um JSON com as linhas antes de apagar (itens
+    // e anexos vão junto por cascade).
+    try {
+      const blob = new Blob([JSON.stringify(alvo, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `backup_nfs_excluidas_${new Date().toISOString().slice(0, 10)}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      /* backup é cortesia — não impede a exclusão pedida */
+    }
+    try {
+      await excluirLote.mutateAsync(alvo.map((n) => n.id));
+      toast.success(`${alvo.length} NF(s) excluída(s).`);
+      setSelecionadas(new Set());
+    } catch (e: any) {
+      toast.error(e?.message ?? "Não foi possível excluir.");
+    } finally {
+      setConfirmandoExclusao(false);
+    }
+  }
 
   const kpis = useMemo(() => {
     let executado = 0, faturado = 0, recebido = 0, pendente = 0;
@@ -156,7 +251,8 @@ export default function RelatorioGeralTab() {
         <KpiTile label="Valor Pendente de Recebimento" valor={fmtMoney(kpis.pendente)} icon={<AlertTriangle />} cor="red" valorClass="text-red-600 dark:text-red-400" />
       </div>
 
-      <div className="card-elevated p-3 flex items-center gap-x-2 gap-y-3 flex-wrap text-xs">
+      <div className="card-elevated p-4 space-y-3 text-xs">
+      <div className="flex items-center gap-x-4 gap-y-3 flex-wrap">
         <label className="flex items-center gap-1.5">
           <span className="text-muted-foreground">Empresa:</span>
           <Select value={filtroEmpresa || "__todas"} onValueChange={(v) => setFiltroEmpresa(v === "__todas" ? "" : v)}>
@@ -213,6 +309,8 @@ export default function RelatorioGeralTab() {
         </label>
         <span className="text-muted-foreground">até</span>
         <Input type="date" value={filtroEmissaoAte} onChange={(e) => setFiltroEmissaoAte(e.target.value)} className="h-8 w-36 text-xs" />
+      </div>
+      <div className="flex items-center gap-x-3 gap-y-3 flex-wrap">
         <button
           onClick={() => setFiltroOver30((v) => !v)}
           className={cn(
@@ -225,7 +323,30 @@ export default function RelatorioGeralTab() {
         <button onClick={limparFiltros} className="h-8 px-2.5 rounded-md border border-border bg-background text-muted-foreground hover:text-destructive hover:border-destructive/50 transition-colors">
           Limpar filtros
         </button>
-        <div className="relative w-56">
+        {podeExcluir && (
+          <Button size="sm" variant={verLixeira ? "default" : "outline"} className="h-8 text-xs" onClick={alternarLixeira}>
+            <Trash2 className="h-3.5 w-3.5 mr-1.5" /> {verLixeira ? "Voltar ao relatório" : `Lixeira (${nfsLixeira.length.toLocaleString("pt-BR")})`}
+          </Button>
+        )}
+        {podeExcluir && !verLixeira && selecionadasVisiveis.length > 0 && (
+          <Button size="sm" variant="destructive" className="h-8 text-xs" disabled={enviarLixeira.isPending} onClick={() => void enviarSelecionadasParaLixeira()}>
+            <Trash2 className="h-3.5 w-3.5 mr-1.5" /> Enviar {selecionadasVisiveis.length} para a lixeira
+          </Button>
+        )}
+        {podeExcluir && verLixeira && selecionadasVisiveis.length > 0 && (
+          <>
+            <Button size="sm" variant="outline" className="h-8 text-xs" disabled={restaurarLixeira.isPending} onClick={() => void restaurarSelecionadas()}>
+              <RotateCcw className="h-3.5 w-3.5 mr-1.5" /> Restaurar {selecionadasVisiveis.length}
+            </Button>
+            <Button size="sm" variant="destructive" className="h-8 text-xs" onClick={() => setConfirmandoExclusao(true)}>
+              <Trash2 className="h-3.5 w-3.5 mr-1.5" /> Excluir {selecionadasVisiveis.length} definitivamente
+            </Button>
+          </>
+        )}
+        <Button size="sm" variant="outline" className="h-8 text-xs" onClick={exportarExcel}>
+          <FileDown className="h-3.5 w-3.5 mr-1.5" /> Exportar Excel
+        </Button>
+        <div className="relative min-w-[220px] flex-1 max-w-sm">
           <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
           <input
             value={busca}
@@ -234,11 +355,16 @@ export default function RelatorioGeralTab() {
             className="h-8 w-full rounded-md border border-border bg-background pl-8 pr-3 text-xs outline-none focus:border-primary"
           />
         </div>
-        <span className="text-muted-foreground ml-auto">{linhas.length.toLocaleString("pt-BR")} de {nfs.length.toLocaleString("pt-BR")} registros</span>
-        <Button size="sm" variant="outline" className="h-8 text-xs" onClick={exportarExcel}>
-          <FileDown className="h-3.5 w-3.5 mr-1.5" /> Exportar Excel
-        </Button>
+        <span className="text-muted-foreground ml-auto whitespace-nowrap">{linhas.length.toLocaleString("pt-BR")} de {nfs.length.toLocaleString("pt-BR")} registros</span>
       </div>
+      </div>
+
+      {verLixeira && (
+        <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
+          Lixeira: estas NFs estão fora do relatório, do Dashboard e dos totais. Marque e use "Restaurar" para devolvê-las
+          ou "Excluir definitivamente" para apagá-las de vez.
+        </div>
+      )}
 
       <div className="card-elevated overflow-hidden">
         {/* Table (shadcn) já embute seu próprio div overflow-auto (sem altura) —
@@ -248,6 +374,17 @@ export default function RelatorioGeralTab() {
           <Table>
             <TableHeader className="sticky top-0 z-10 bg-card">
               <TableRow>
+                {podeExcluir && (
+                  <TableHead className="w-8 bg-card">
+                    <Checkbox
+                      checked={todasMarcadas}
+                      onCheckedChange={alternarTodas}
+                      disabled={antigasVisiveis.length === 0}
+                      aria-label="Selecionar todas as NFs listadas"
+                      title="Selecionar todas as NFs listadas (respeita os filtros)"
+                    />
+                  </TableHead>
+                )}
                 <TableHead className="text-center bg-card">Empresa</TableHead>
                 <TableHead className="text-center bg-card">Contrato</TableHead>
                 <TableHead className="text-center bg-card">Competência</TableHead>
@@ -278,13 +415,18 @@ export default function RelatorioGeralTab() {
             <TableBody>
               {!isLoading && linhas.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={24} className="text-center text-muted-foreground py-10">Nenhum registro encontrado com os filtros atuais.</TableCell>
+                  <TableCell colSpan={podeExcluir ? 25 : 24} className="text-center text-muted-foreground py-10">{verLixeira ? "A lixeira está vazia." : "Nenhum registro encontrado com os filtros atuais."}</TableCell>
                 </TableRow>
               )}
               {linhas.map((nf: NfEmissaoRow) => {
                 const status = statusDaNota(nf);
                 return (
                   <TableRow key={nf.id}>
+                    {podeExcluir && (
+                      <TableCell className="w-8">
+                        <Checkbox checked={selecionadas.has(nf.id)} onCheckedChange={() => alternar(nf.id)} aria-label={`Selecionar NF ${nf.numero_nf ?? ""}`} />
+                      </TableCell>
+                    )}
                     <TableCell className="text-center whitespace-nowrap">{empresaPorId.get(nf.empresa_id) ?? nf.empresa?.nome_fantasia ?? "-"}</TableCell>
                     <TableCell className="text-center max-w-[200px] truncate">{nf.contrato?.nome ?? "-"}</TableCell>
                     <TableCell className="text-center whitespace-nowrap">{competenciaCurta(nf.competencia)}</TableCell>
@@ -321,6 +463,28 @@ export default function RelatorioGeralTab() {
           </Table>
         </div>
       </div>
+
+      <AlertDialog open={confirmandoExclusao} onOpenChange={setConfirmandoExclusao}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Excluir definitivamente {selecionadasVisiveis.length} NF(s)?</AlertDialogTitle>
+            <AlertDialogDescription>
+              As NFs marcadas serão apagadas de vez da lixeira, junto com itens e anexos. Um arquivo de backup (.json)
+              é baixado antes. Não dá para desfazer.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={excluirLote.isPending}>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={excluirLote.isPending}
+              onClick={(e) => { e.preventDefault(); void excluirSelecionadas(); }}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {excluirLote.isPending ? "Excluindo…" : "Excluir definitivamente"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
