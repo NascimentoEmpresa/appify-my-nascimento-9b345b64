@@ -21,7 +21,7 @@
 //  copia e completa - correta, so demorada.
 // ============================================================================
 import { writeFileSync, readFileSync, existsSync, mkdirSync, rmSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve, sep } from 'node:path';
 import { execFileSync, execFile } from 'node:child_process';
 
 const CHAVE = process.env.SERVICE_ROLE_KEY;
@@ -61,7 +61,8 @@ const log = (...a) => console.log('  ', ...a);
 const consulta = `
   select bucket_id || E'\\t' || name || E'\\t' ||
          coalesce(to_char(updated_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'), '') || E'\\t' ||
-         coalesce((metadata->>'size')::bigint, 0)
+         coalesce((metadata->>'size')::bigint, 0) || E'\\t' ||
+         coalesce(version::text, '')
     from storage.objects
    where bucket_id is not null and name is not null
    order by bucket_id, name
@@ -78,9 +79,50 @@ const saida = execFileSync('psql', ['-At', '-c', consulta], {
 });
 
 const rows = saida.split('\n').filter(Boolean).map((linha) => {
-  const [bucket_id, name, updated_at, tamanho] = linha.split('\t');
-  return { bucket_id, name, updated_at, tamanho: Number(tamanho || 0) };
+  const [bucket_id, name, updated_at, tamanho, version] = linha.split('\t');
+  return { bucket_id, name, updated_at, tamanho: Number(tamanho || 0), version: version || '' };
 });
+
+// POR QUE O BACKUP GRAVA <balde>/<nome>/<versao>, E NAO <balde>/<nome>
+//
+// Porque e esse o formato que o storage-api espera em disco: <nome> e um
+// DIRETORIO e o arquivo real se chama com o UUID de storage.objects.version.
+//
+// A versao anterior gravava <balde>/<nome> como arquivo comum, e a replica
+// convertia depois da extracao. Essa conversao era justamente o que fazia a
+// carga SEGUINTE colidir: o tar tentava gravar um arquivo onde a conversao
+// havia criado um diretorio, e recusava (medido em 05/10/2026):
+//
+//     tar: whatsapp-midia/wa/1480519754175453: Cannot open: File exists
+//
+// O efeito pratico era grave: objeto ATUALIZADO nunca chegava na replica.
+//
+// A tentacao e resolver no restauro, mandando o tar apagar o que estorva.
+// Tentei, com --recursive-unlink, e o tar apagou diretorio inteiro de forma
+// recursiva: o acervo caiu de 8.936 para 1.936 arquivos. Gravando no formato
+// certo na ORIGEM, nao ha conversao, e sem conversao nao ha colisao.
+//
+// Objeto sem versao (ha 1 na producao) continua no formato antigo - a replica
+// ainda sabe converter esse caso.
+// O nome vem do BANCO, nao de mim. Hoje nenhum dos ~8.900 objetos tem "../"
+// (conferido em 05/10/2026 nos quatro padroes: ../, inicio com .., barra
+// inicial e barra dupla), mas se um aparecer o arquivo seria gravado FORA de
+// arquivos/ e sumiria do artefato EM SILENCIO - o backup pareceria completo
+// sem estar, que e a pior falha possivel num backup.
+//
+// Devolve null nesse caso, e quem chama trata como falha, para o objeto NAO
+// entrar no inventario como coberto - assim a proxima execucao tenta de novo
+// em vez de considera-lo salvo para sempre.
+const RAIZ_ARQUIVOS = resolve('arquivos');
+
+function caminhoEmDisco(obj) {
+  const alvo = obj.version
+    ? join('arquivos', obj.bucket_id, obj.name, obj.version)
+    : join('arquivos', obj.bucket_id, obj.name);
+  const absoluto = resolve(alvo);
+  if (absoluto !== RAIZ_ARQUIVOS && !absoluto.startsWith(RAIZ_ARQUIVOS + sep)) return null;
+  return alvo;
+}
 
 const totalBytes = rows.reduce((s, r) => s + Number(r.tamanho), 0);
 log(`${rows.length} objetos na producao, ${(totalBytes / 1073741824).toFixed(2)} GB`);
@@ -134,7 +176,12 @@ const TENTATIVAS = 3;
 function baixarUm(obj) {
   return new Promise((pronto) => {
     const caminho = `${obj.bucket_id}/${obj.name}`;
-    const destino = join('arquivos', caminho);
+    const destino = caminhoEmDisco(obj);
+    if (!destino) {
+      log(`  RECUSADO: o nome sairia de arquivos/ -> ${caminho}`);
+      pronto(false);
+      return;
+    }
     const endereco = `${URL_SUPABASE}/storage/v1/object/${encodeURI(caminho)}`;
     mkdirSync(dirname(destino), { recursive: true });
     execFile(
@@ -205,7 +252,8 @@ for (const r of rows) {
   // `new Date('').toISOString()` LANCA excecao, e updated_at pode vir vazio.
   const quando = r.updated_at || '';
   const jaEstava = conhecidos.get(chave) === quando;
-  const baixouAgora = existsSync(join('arquivos', chave));
+  const emDisco = caminhoEmDisco(r);
+  const baixouAgora = emDisco ? existsSync(emDisco) : false;
   if (jaEstava || baixouAgora) novoInventario.push(`${chave}\t${quando}`);
 }
 writeFileSync('inventario.txt', novoInventario.join('\n'));
