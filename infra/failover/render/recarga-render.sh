@@ -51,7 +51,18 @@ erro() { log "FALHOU: $*" >&2; exit 1; }
 : "${PGHOST:?defina PGHOST}"
 : "${PGPASSWORD:?defina PGPASSWORD}"
 
-TRABALHO="$(mktemp -d)"
+# O /tmp da Render e limitado a 2 GB, e passar disso NAO da erro: a Render
+# mata a instancia e sobe outra -
+#     Instance failed: Size of temporary storage volume /tmp exceeded 2GB
+# O dump de hoje tem 109 MB e cabe com folga, mas o banco cresce, e esse
+# limite nao avisa antes de morder. Quando o disco persistente existir, o
+# trabalho acontece la; fora da Render, /tmp mesmo.
+if [[ -d /var/lib/postgresql/data ]]; then
+  mkdir -p /var/lib/postgresql/data/tmp
+  TRABALHO="$(mktemp -d -p /var/lib/postgresql/data/tmp)"
+else
+  TRABALHO="$(mktemp -d)"
+fi
 limpar() {
   # O dump em claro e a chave privada NAO podem sobreviver ao job.
   rm -rf "$TRABALHO" "$GNUPGHOME" 2>/dev/null || true

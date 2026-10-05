@@ -32,7 +32,25 @@ set -uo pipefail
 
 DESTINO="${FILE_STORAGE_BACKEND_PATH:-/var/lib/postgresql/data/storage}"
 REPO="${GITHUB_REPO:-NascimentoEmpresa/appify-my-nascimento-9b345b64}"
-TMP="${TMPDIR:-/tmp}/arquivos-replica"
+# O TRABALHO NAO PODE ACONTECER EM /tmp, e isso derrubou a replica duas vezes.
+# O /tmp da Render e um volume temporario com LIMITE DE 2 GB, e o backup de
+# arquivos tem 4,8 GB. Ao passar do limite a Render MATA a instancia:
+#
+#     Instance failed: Size of temporary storage volume /tmp exceeded the
+#     limit of 2GB. Automatically starting a replacement instance.
+#
+# O sintoma era enganoso: o container reiniciava, o processo sumia sem erro e
+# o log (que estava em /tmp) ia junto - parecia que o script nem tinha rodado.
+# Aconteceu em 02/10/2026 as 15:39 e as 16:00.
+#
+# O disco persistente tem 15 GB livres e e onde o trabalho acontece agora.
+# NAO usa ${TMPDIR:-...}: a variavel costuma vir valendo /tmp no ambiente, e
+# o padrao nunca entraria. O caminho e fixo, dentro do disco.
+TMP="/var/lib/postgresql/data/tmp/arquivos-replica"
+
+# gpg, tar e unzip tambem criam temporarios por conta propria, e cairiam em
+# /tmp pelo mesmo motivo. Apontar TMPDIR aqui cobre os tres.
+export TMPDIR="/var/lib/postgresql/data/tmp"
 
 log() { printf '[arquivos %(%H:%M:%S)T] %s\n' -1 "$*"; }
 
@@ -41,7 +59,7 @@ if [[ -z "${GITHUB_TOKEN:-}" ]]; then
   exit 0
 fi
 
-mkdir -p "$DESTINO" "$TMP"
+mkdir -p "$DESTINO" "$TMP" "$TMPDIR"
 
 # --- 1. quantos arquivos ja estao aqui? -------------------------------------
 antes=$(find "$DESTINO" -type f 2>/dev/null | wc -l)
