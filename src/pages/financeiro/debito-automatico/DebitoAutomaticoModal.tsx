@@ -1,10 +1,10 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { AlertCircle } from "lucide-react";
+import { AlertCircle, Paperclip, X } from "lucide-react";
 import { toast } from "sonner";
 import {
   DebitoAutomaticoLinha,
@@ -12,13 +12,17 @@ import {
   useCriarDebito,
   useCriarMovimentacao,
   useCriarNota,
+  useCriarDebitoParcelado,
   useEditarDebito,
+  enviarAnexosDebito,
 } from "@/hooks/useDebitoAutomatico";
 import { useEmpresasGrupo, useContratosAtivos } from "@/hooks/useMaloteDespesa";
 import { useTiposFormaPagamento } from "@/hooks/useMaloteFormaPagamento";
 import { useClassificacoesOrcamento } from "@/hooks/usePlanejamentoOrcamentario";
 import { useCartaoBancos, urlLogoCartao } from "@/hooks/useMaloteCartaoCredito";
 import { BancoBadge } from "@/components/financeiro/BancoBadge";
+import { AnexosDebito } from "./AnexosDebito";
+import { ParcelaCalculada, gerarParcelasAutomaticas, somaParcelas, validarParcelas } from "./parcelas";
 
 // SIS-2026-0256: um modal só cobre os 3 tipos de lançamento (Débito
 // Automático, Movimentação Financeira, Nota Recebida) — os campos variam
@@ -55,8 +59,11 @@ export function DebitoAutomaticoModal({
   const criarDebito = useCriarDebito();
   const criarMovimentacao = useCriarMovimentacao();
   const criarNota = useCriarNota();
+  const criarParcelado = useCriarDebitoParcelado();
   const editar = useEditarDebito();
-  const salvando = criarDebito.isPending || criarMovimentacao.isPending || criarNota.isPending || editar.isPending;
+  const [enviandoAnexos, setEnviandoAnexos] = useState(false);
+  const salvando =
+    criarDebito.isPending || criarMovimentacao.isPending || criarNota.isPending || criarParcelado.isPending || editar.isPending || enviandoAnexos;
 
   const [dataPagamento, setDataPagamento] = useState("");
   const [competencia, setCompetencia] = useState("");
@@ -73,11 +80,25 @@ export function DebitoAutomaticoModal({
   const [bancoId, setBancoId] = useState("");
   const [bancoSaidaId, setBancoSaidaId] = useState("");
   const [bancoEntradaId, setBancoEntradaId] = useState("");
+  // SIS-2026-0570: vencimento (editável), parcelamento e anexos na criação.
+  const [dataVencimento, setDataVencimento] = useState("");
+  const [parcelar, setParcelar] = useState(false);
+  const [qtdParcelas, setQtdParcelas] = useState("2");
+  const [modoParcelas, setModoParcelas] = useState<"auto" | "manual">("auto");
+  const [parcelas, setParcelas] = useState<ParcelaCalculada[]>([]);
+  const [arquivosNovos, setArquivosNovos] = useState<File[]>([]);
+  const arquivosRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (!open) return;
+    setParcelar(false);
+    setQtdParcelas("2");
+    setModoParcelas("auto");
+    setParcelas([]);
+    setArquivosNovos([]);
     if (registroEditar) {
       setDataPagamento(registroEditar.data_pagamento);
+      setDataVencimento(registroEditar.data_vencimento ?? registroEditar.data_pagamento);
       setCompetencia(registroEditar.competencia.slice(0, 7));
       setTipo(registroEditar.tipo);
       setEmpresaId(registroEditar.empresa_id);
@@ -94,6 +115,7 @@ export function DebitoAutomaticoModal({
       setBancoEntradaId(registroEditar.tipo === "entrada" ? registroEditar.banco_id : registroParEditar?.banco_id ?? "");
     } else {
       setDataPagamento("");
+      setDataVencimento("");
       setCompetencia("");
       setTipo("saida");
       setEmpresaId("");
@@ -128,15 +150,40 @@ export function DebitoAutomaticoModal({
     if (rec) setClassificacaoId(rec.id);
   }, [open, registroEditar, tipoOrigem, classificacaoId, classificacoes]);
 
+  const valorNumero = Number(valor.replace(",", ".")) || 0;
+  const permiteParcelar = !editando && tipoOrigem === "debito_automatico";
+  const parcelando = permiteParcelar && parcelar;
+
+  // Modo automático: divisão igual + um vencimento por mês a partir do 1º
+  // vencimento (o campo de data). No manual a grade parte da mesma sugestão
+  // e depois é editada à mão — só é refeita se o nº de parcelas mudar, pra
+  // não perder o que a pessoa já ajustou.
+  useEffect(() => {
+    if (!parcelando) return;
+    const base = gerarParcelasAutomaticas(valorNumero, Number(qtdParcelas) || 0, dataPagamento);
+    if (modoParcelas === "auto") setParcelas(base);
+    else setParcelas((atual) => (atual.length !== base.length && base.length > 0 ? base : atual));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [parcelando, modoParcelas, valor, qtdParcelas, dataPagamento]);
+
+  function editarParcela(i: number, patch: Partial<ParcelaCalculada>) {
+    setModoParcelas("manual");
+    setParcelas((ps) => ps.map((p, k) => (k === i ? { ...p, ...patch } : p)));
+  }
+
   const titulo =
     tipoOrigem === "debito_automatico" ? "Débito Automático" : tipoOrigem === "movimentacao_financeira" ? "Movimentação Financeira" : "Nota Recebida";
 
   function validar(): string | null {
-    if (!dataPagamento) return "Informe a Data de Pagamento.";
-    if (!competencia) return "Informe a Competência.";
+    if (!dataPagamento) return parcelando ? "Informe o 1º vencimento." : "Informe a Data de Pagamento.";
+    if (!parcelando && !competencia) return "Informe a Competência.";
     if (!descricao.trim()) return "Informe a Descrição.";
     const valorNum = Number(valor.replace(",", "."));
     if (!valorNum || valorNum <= 0) return "Informe um Valor válido.";
+    if (parcelando) {
+      const erroParcelas = validarParcelas(parcelas, valorNum);
+      if (erroParcelas) return erroParcelas;
+    }
     if (tipoOrigem === "movimentacao_financeira") {
       if (!empresaSaidaId) return "Informe a Empresa de Saída.";
       if (!empresaEntradaId) return "Informe a Empresa de Entrada.";
@@ -167,6 +214,20 @@ export function DebitoAutomaticoModal({
     return null;
   }
 
+  // O lançamento já foi criado quando chega aqui — se o upload falhar, avisa
+  // mas não desfaz (o arquivo pode ser anexado de novo pela edição).
+  async function anexarNovos(ids: string[]) {
+    if (arquivosNovos.length === 0) return;
+    setEnviandoAnexos(true);
+    try {
+      for (const id of ids) await enviarAnexosDebito(id, "lancamento", arquivosNovos);
+    } catch (e: any) {
+      toast.error(`Lançamento criado, mas houve erro ao anexar: ${e.message ?? "tente de novo pela edição."}`);
+    } finally {
+      setEnviandoAnexos(false);
+    }
+  }
+
   async function handleSalvar() {
     const erro = validar();
     if (erro) {
@@ -185,6 +246,14 @@ export function DebitoAutomaticoModal({
           valor: valorNum,
           status,
         };
+        // SIS-2026-0570: vencimento editável. Enquanto pendente a data única
+        // do formulário É o vencimento (a data de pagamento só passa a
+        // importar quando pagar), então as duas andam juntas.
+        if (status === "pendente") {
+          campos.data_vencimento = dataPagamento;
+        } else if (dataVencimento) {
+          campos.data_vencimento = dataVencimento;
+        }
         if (tipoOrigem !== "movimentacao_financeira") {
           campos.empresa_id = empresaId;
           campos.contrato_id = contratoId || null;
@@ -204,8 +273,21 @@ export function DebitoAutomaticoModal({
           }
         }
         toast.success("Lançamento atualizado.");
+      } else if (parcelando) {
+        const ids = await criarParcelado.mutateAsync({
+          tipo,
+          empresa_id: empresaId,
+          contrato_id: contratoId || null,
+          classificacao_id: classificacaoId,
+          descricao: descricao.trim(),
+          forma_pagamento: formaPagamento,
+          banco_id: bancoId,
+          parcelas,
+        });
+        await anexarNovos(ids);
+        toast.success(`Débito Automático parcelado em ${parcelas.length}x incluído.`);
       } else if (tipoOrigem === "debito_automatico") {
-        await criarDebito.mutateAsync({
+        const novoId = await criarDebito.mutateAsync({
           data_pagamento: dataPagamento,
           competencia: competenciaDate,
           tipo,
@@ -217,9 +299,10 @@ export function DebitoAutomaticoModal({
           valor: valorNum,
           banco_id: bancoId,
         });
+        await anexarNovos([novoId]);
         toast.success("Débito Automático incluído.");
       } else if (tipoOrigem === "movimentacao_financeira") {
-        await criarMovimentacao.mutateAsync({
+        const novoId = await criarMovimentacao.mutateAsync({
           data_pagamento: dataPagamento,
           competencia: competenciaDate,
           empresa_saida_id: empresaSaidaId,
@@ -231,9 +314,10 @@ export function DebitoAutomaticoModal({
           banco_saida_id: bancoSaidaId,
           banco_entrada_id: bancoEntradaId,
         });
+        await anexarNovos([novoId]);
         toast.success("Movimentação Financeira incluída.");
       } else {
-        await criarNota.mutateAsync({
+        const novoId = await criarNota.mutateAsync({
           data_pagamento: dataPagamento,
           competencia: competenciaDate,
           empresa_id: empresaId,
@@ -244,6 +328,7 @@ export function DebitoAutomaticoModal({
           status,
           banco_id: bancoId,
         });
+        await anexarNovos([novoId]);
         toast.success("Nota Recebida incluída.");
       }
       onClose();
@@ -265,14 +350,29 @@ export function DebitoAutomaticoModal({
         <div className="space-y-3">
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <Label className="text-xs">Data de Pagamento *</Label>
+              <Label className="text-xs">
+                {parcelando ? "1º Vencimento *" : editando && status === "pendente" ? "Vencimento *" : "Data de Pagamento *"}
+              </Label>
               <Input type="date" value={dataPagamento} onChange={(e) => setDataPagamento(e.target.value)} />
             </div>
-            <div>
-              <Label className="text-xs">Competência *</Label>
-              <Input type="month" value={competencia} onChange={(e) => setCompetencia(e.target.value)} />
-            </div>
+            {parcelando ? (
+              <div>
+                <Label className="text-xs">Competência</Label>
+                <Input value="Mês de cada vencimento" disabled />
+              </div>
+            ) : (
+              <div>
+                <Label className="text-xs">Competência *</Label>
+                <Input type="month" value={competencia} onChange={(e) => setCompetencia(e.target.value)} />
+              </div>
+            )}
           </div>
+          {editando && status === "pago" && (
+            <div>
+              <Label className="text-xs">Vencimento original</Label>
+              <Input type="date" value={dataVencimento} onChange={(e) => setDataVencimento(e.target.value)} />
+            </div>
+          )}
 
           {tipoOrigem === "movimentacao_financeira" && (
             <div className="flex items-start gap-2 rounded-md border bg-muted/40 p-2.5 text-xs text-muted-foreground">
@@ -434,6 +534,99 @@ export function DebitoAutomaticoModal({
               </Select>
             </div>
           </div>
+
+          {permiteParcelar && (
+            <div className="space-y-2 rounded-lg border p-3">
+              <label className="flex items-center gap-2 text-sm font-medium">
+                <input type="checkbox" checked={parcelar} onChange={(e) => setParcelar(e.target.checked)} />
+                Parcelar este débito
+              </label>
+              {parcelar && (
+                <>
+                  <p className="text-xs text-muted-foreground">
+                    Cada parcela vira um lançamento pendente, com seu vencimento e comprovante. Só entra no Fluxo de Caixa quando for paga.
+                  </p>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <Label className="text-xs">Nº de parcelas</Label>
+                      <Input type="number" min="2" max="120" value={qtdParcelas} onChange={(e) => { setModoParcelas("auto"); setQtdParcelas(e.target.value); }} />
+                    </div>
+                    <div>
+                      <Label className="text-xs">Valores e datas</Label>
+                      <Select value={modoParcelas} onValueChange={(v: "auto" | "manual") => setModoParcelas(v)}>
+                        <SelectTrigger><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="auto">Automático (divisão igual, mês a mês)</SelectItem>
+                          <SelectItem value="manual">Manual (edito cada parcela)</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+                  {parcelas.length === 0 && (
+                    <p className="rounded-md border border-dashed p-2 text-xs text-muted-foreground">
+                      Preencha o <strong>1º vencimento</strong> (campo de data no topo) e o <strong>valor total</strong> para as parcelas aparecerem aqui.
+                    </p>
+                  )}
+                  {parcelas.length > 0 && (
+                    <div className="space-y-1.5">
+                      <div className="grid grid-cols-[2.5rem_1fr_1fr] gap-2 text-[11px] font-medium text-muted-foreground">
+                        <span>#</span><span>Vencimento</span><span>Valor (R$)</span>
+                      </div>
+                      <div className="max-h-52 space-y-1.5 overflow-y-auto pr-1">
+                        {parcelas.map((p, i) => (
+                          <div key={i} className="grid grid-cols-[2.5rem_1fr_1fr] items-center gap-2">
+                            <span className="text-xs text-muted-foreground">{i + 1}/{parcelas.length}</span>
+                            <Input type="date" className="h-8" value={p.data_vencimento} onChange={(e) => editarParcela(i, { data_vencimento: e.target.value })} />
+                            <Input type="number" step="0.01" min="0" className="h-8" value={p.valor} onChange={(e) => editarParcela(i, { valor: Number(e.target.value) })} />
+                          </div>
+                        ))}
+                      </div>
+                      <p className={`text-xs ${somaParcelas(parcelas) === Math.round(valorNumero * 100) / 100 ? "text-muted-foreground" : "text-destructive font-medium"}`}>
+                        Soma das parcelas: {somaParcelas(parcelas).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })} de{" "}
+                        {valorNumero.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
+                      </p>
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          )}
+
+          {!editando ? (
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-medium flex items-center gap-1"><Paperclip className="h-3.5 w-3.5" /> Anexos (nota, boleto…)</span>
+                <input
+                  ref={arquivosRef}
+                  type="file"
+                  multiple
+                  className="hidden"
+                  onChange={(e) => {
+                    setArquivosNovos((a) => [...a, ...Array.from(e.target.files ?? [])]);
+                    if (arquivosRef.current) arquivosRef.current.value = "";
+                  }}
+                />
+                <Button type="button" variant="outline" size="sm" className="h-7 text-xs" onClick={() => arquivosRef.current?.click()}>
+                  Anexar
+                </Button>
+              </div>
+              {arquivosNovos.length > 0 && (
+                <ul className="space-y-1">
+                  {arquivosNovos.map((f, i) => (
+                    <li key={i} className="flex items-center justify-between gap-2 rounded border bg-muted/30 px-2 py-1 text-xs">
+                      <span className="truncate">{f.name}</span>
+                      <button type="button" onClick={() => setArquivosNovos((a) => a.filter((_, k) => k !== i))}><X className="h-3.5 w-3.5" /></button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {parcelando && arquivosNovos.length > 0 && (
+                <p className="text-[11px] text-muted-foreground">O mesmo arquivo é anexado a todas as parcelas; o comprovante de cada uma é enviado na hora de pagar.</p>
+              )}
+            </div>
+          ) : (
+            registroEditar && <AnexosDebito debitoId={registroEditar.id} tipo="lancamento" titulo="Anexos (nota, boleto…)" />
+          )}
         </div>
 
         <DialogFooter>
