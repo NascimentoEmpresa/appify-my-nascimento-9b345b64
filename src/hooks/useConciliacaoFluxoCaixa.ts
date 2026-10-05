@@ -31,6 +31,16 @@ export interface ConciliacaoFluxoCaixaSalva {
   linhas_ignoradas: number;
   created_by: string | null;
   created_at: string;
+  // Banco + empresa(s) da conciliação (conciliação é por conta). Registros
+  // anteriores à migration 20261005000001 vêm com todas_empresas = true.
+  banco_id: string | null;
+  todas_empresas: boolean;
+  empresa_ids: string[];
+  conta_extrato: string | null;
+  // Saldo anterior (abertura) conferido na conciliação — null quando a
+  // pessoa não informou o do extrato.
+  saldo_anterior_fluxo: number | null;
+  saldo_anterior_extrato: number | null;
 }
 
 export interface ConciliacaoFluxoCaixaArquivo {
@@ -111,6 +121,12 @@ export interface SalvarConciliacaoInput {
   dataInicio: string;
   dataFim: string;
   observacoes: string | null;
+  bancoId: string;
+  todasEmpresas: boolean;
+  empresaIds: string[];
+  contaExtrato: string | null;
+  saldoAnteriorFluxo: number | null;
+  saldoAnteriorExtrato: number | null;
   arquivosOfx: File[];
   linhas: Omit<ConciliacaoFluxoCaixaLinha, "id" | "conciliacao_id">[];
 }
@@ -134,6 +150,12 @@ export function useSalvarConciliacaoFluxoCaixa() {
           data_inicio: input.dataInicio,
           data_fim: input.dataFim,
           observacoes: input.observacoes,
+          banco_id: input.bancoId,
+          todas_empresas: input.todasEmpresas,
+          empresa_ids: input.todasEmpresas ? [] : input.empresaIds,
+          conta_extrato: input.contaExtrato,
+          saldo_anterior_fluxo: input.saldoAnteriorFluxo,
+          saldo_anterior_extrato: input.saldoAnteriorExtrato,
           total_linhas: input.linhas.length,
           linhas_ajustadas: contagem.ajustado,
           linhas_criadas: contagem.criado,
