@@ -1,15 +1,21 @@
 // =====================================================================
-// RH › ATIVOS/CONTRATOS (/app/rh/ativos-contratos) — mig 20260930000279
+// RH › ATIVOS/CONTRATOS (/app/rh/ativos-contratos) — migs 20260930000279
+// e 20261005000001
 //
-// Por contrato: quantos colaboradores ativos a EMPREGADOS tem × quantos a
-// Planilha de Custo diz que deveria ter ("QT. PESSOAS" de cada posto
-// vigente), conferido POSTO A POSTO.
+// Por contrato e por posto da Planilha de Custo: PREVISTO ("QT. PESSOAS")
+// × TEM (colaboradores ativos da EMPREGADOS que estão no posto e contam —
+// trabalhando ou de atestado; auxílio-doença, licença, férias etc. não
+// contam e aparecem em "Afastados", com a lista ao passar o mouse).
 //
-// O posto da Senior ("01-1099-0071-0061-06-RECEPCIONISTA-B1 40H 5X2") e o da
-// planilha ("POSTO B1 - RECEPCIONISTA 40H 5X2") não têm chave em comum, então
-// cada posto da Senior é ligado uma vez ao(s) posto(s) da planilha — a tela
-// sugere, quem tem "Vincular postos" confirma. Postos ligados entre si formam
-// um grupo e a conferência é no total do grupo (conferenciaAtivos.ts).
+// O posto da Senior ("01-1099-0071-0061-06-RECEPCIONISTA-B1 40H 5X2") não
+// tem chave em comum com o da planilha ("POSTO B1 - RECEPCIONISTA 40H 5X2"):
+// cada posto da Senior é ligado UMA vez a um posto da planilha (a tela
+// sugere), e quem foge à regra é movido pessoa a pessoa.
+//
+// v2 (05/10/2026): a v1 mostrava grupos muitos-para-muitos, pendentes,
+// ignorados e órfãos ao mesmo tempo — "tá MUITO CONFUSO". Ficou: previsto,
+// tem, saldo, afastados; e um bloco "Definir posto" enquanto houver gente
+// sem posto.
 // =====================================================================
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
@@ -18,53 +24,53 @@ import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Checkbox } from "@/components/ui/checkbox";
 import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+  Select, SelectContent, SelectItem, SelectSeparator, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card";
 import {
-  AlertTriangle, CheckCircle2, ChevronDown, ChevronRight, EyeOff, Link2, Loader2,
-  Search, ShieldAlert, Sparkles, Undo2, Users, UserX, Building2, FileSpreadsheet,
+  AlertTriangle, Building2, CheckCircle2, ChevronDown, ChevronRight, Loader2, Search,
+  ShieldAlert, Sparkles, UserMinus, Users, UserX,
 } from "lucide-react";
 import { useAccessibleMenus } from "@/hooks/useAccessibleMenus";
 import {
   usePainelAtivosContratos, usePessoasAtivas, useVincularPostos, useVincularFilial,
-  type ItemVinculo,
+  useMoverColaborador,
 } from "@/hooks/useAtivosContratos";
 import {
-  conferirContrato, sugerirPostos, limparPostoSenior, fmtDiferenca,
-  type ContratoAtivos, type ConferenciaContrato, type PostoSenior, type SituacaoGrupo,
+  conferirContrato, limparPostoSenior, fmtSaldo, sugerirContrato,
+  type ContratoAtivos, type ConferenciaContrato, type ConferenciaPosto, type PessoaContrato,
+  type PendenteSenior, type Situacao, type PainelAtivos,
 } from "./conferenciaAtivos";
 
-type Filtro = "todos" | "falta" | "excesso" | "ok" | "pendente" | "sem_planilha";
+type Filtro = "todos" | "falta" | "excesso" | "ok" | "sem_posto" | "sem_planilha";
+type Linha = { c: ContratoAtivos; conf: ConferenciaContrato };
 
-type Linha = { c: ContratoAtivos; conf: ConferenciaContrato; estado: Exclude<Filtro, "todos"> };
+const FILTROS: { k: Filtro; label: string }[] = [
+  { k: "todos", label: "Todos" },
+  { k: "falta", label: "Falta gente" },
+  { k: "excesso", label: "Acima do previsto" },
+  { k: "ok", label: "Completo" },
+  { k: "sem_posto", label: "Gente sem posto" },
+  { k: "sem_planilha", label: "Sem planilha" },
+];
 
-const ESTADO: Record<Exclude<Filtro, "todos">, { label: string; cls: string }> = {
-  falta:        { label: "Falta gente",      cls: "border-destructive/30 bg-destructive/10 text-destructive" },
-  excesso:      { label: "Acima do previsto", cls: "border-warning/30 bg-warning/10 text-warning" },
-  ok:           { label: "Confere",          cls: "border-success/30 bg-success/10 text-success" },
-  pendente:     { label: "Vincular postos",  cls: "border-info/30 bg-info/10 text-info" },
-  sem_planilha: { label: "Sem planilha",     cls: "border-muted-foreground/30 bg-muted text-muted-foreground" },
+const passa = (l: Linha, f: Filtro) => {
+  const temPlanilha = l.c.postos.length > 0;
+  switch (f) {
+    case "todos": return true;
+    case "sem_planilha": return !temPlanilha;
+    case "sem_posto": return temPlanilha && l.conf.semPosto > 0;
+    default: return temPlanilha && l.conf.situacao === f;
+  }
 };
 
-const SIT_GRUPO: Record<SituacaoGrupo, { label: string; cls: string }> = {
-  falta:   { label: "Falta",   cls: "text-destructive" },
-  excesso: { label: "Excesso", cls: "text-warning" },
-  ok:      { label: "OK",      cls: "text-success" },
-};
+const corSaldo = (n: number) => (n === 0 ? "text-success" : n < 0 ? "text-destructive" : "text-warning");
 
-function estadoDo(c: ContratoAtivos, conf: ConferenciaContrato): Linha["estado"] {
-  if (!c.postos.length) return "sem_planilha";
-  if (conf.pessoasPendentes > 0) return "pendente";
-  if (conf.grupos.some((g) => g.situacao === "falta") || conf.planilhaSemVinculo.some((p) => p.vagas > 0)) return "falta";
-  if (conf.grupos.some((g) => g.situacao === "excesso")) return "excesso";
-  return "ok";
-}
-
-const corDif = (n: number) => (n === 0 ? "text-success" : n < 0 ? "text-destructive" : "text-warning");
+// Valores especiais do Select de posto (o Radix não aceita value vazio).
+const FORA = "__fora__";
+const DA_SENIOR = "__senior__";
 
 function Kpi({ icon: Icon, valor, rotulo, dica, tom = "primary" }: {
   icon: typeof Users; valor: React.ReactNode; rotulo: string; dica?: string; tom?: string;
@@ -72,17 +78,58 @@ function Kpi({ icon: Icon, valor, rotulo, dica, tom = "primary" }: {
   const tons: Record<string, string> = {
     primary: "bg-primary/10 text-primary", success: "bg-success/10 text-success",
     warning: "bg-warning/10 text-warning", destructive: "bg-destructive/10 text-destructive",
-    info: "bg-info/10 text-info", muted: "bg-muted text-muted-foreground",
+    info: "bg-info/10 text-info",
   };
   return (
     <Card className="flex items-center gap-3 p-4">
       <div className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl ${tons[tom]}`}><Icon className="h-5 w-5" /></div>
       <div className="min-w-0">
-        <p className="text-2xl font-bold leading-none">{valor}</p>
+        <p className="text-2xl font-bold leading-none tabular-nums">{valor}</p>
         <p className="mt-1 truncate text-xs font-medium text-muted-foreground">{rotulo}</p>
         {dica && <p className="truncate text-[11px] text-muted-foreground/70">{dica}</p>}
       </div>
     </Card>
+  );
+}
+
+function SituacaoBadge({ situacao, saldo }: { situacao: Situacao; saldo: number }) {
+  if (situacao === "ok") {
+    return <Badge variant="outline" className="gap-1 border-success/30 bg-success/10 text-[10px] font-semibold text-success"><CheckCircle2 className="h-3 w-3" /> Completo</Badge>;
+  }
+  if (situacao === "falta") {
+    return <Badge variant="outline" className="border-destructive/30 bg-destructive/10 text-[10px] font-semibold text-destructive">Faltam {-saldo}</Badge>;
+  }
+  return <Badge variant="outline" className="border-warning/30 bg-warning/10 text-[10px] font-semibold text-warning">{saldo} acima</Badge>;
+}
+
+/** Número de afastados; ao passar o mouse, quem são. */
+function Afastados({ pessoas, mostrarPosto = false }: { pessoas: PessoaContrato[]; mostrarPosto?: boolean }) {
+  if (!pessoas.length) return <span className="text-muted-foreground/50">—</span>;
+  return (
+    <HoverCard openDelay={80} closeDelay={80}>
+      <HoverCardTrigger asChild>
+        <button type="button" onClick={(e) => e.stopPropagation()}
+          className="cursor-default rounded px-1.5 font-medium text-warning underline decoration-dotted underline-offset-4 hover:bg-warning/10">
+          {pessoas.length}
+        </button>
+      </HoverCardTrigger>
+      <HoverCardContent align="end" className="w-96 p-0" onClick={(e) => e.stopPropagation()}>
+        <p className="border-b border-border px-3 py-2 text-xs font-semibold">
+          Afastados · não contam no posto ({pessoas.length})
+        </p>
+        <div className="max-h-72 overflow-y-auto py-1">
+          {pessoas.map((p) => (
+            <div key={p.id} className="px-3 py-1.5 text-xs">
+              <div className="flex items-baseline justify-between gap-2">
+                <span className="font-medium">{p.nome}</span>
+                <span className="shrink-0 text-warning">{p.situacao ?? "—"}</span>
+              </div>
+              {mostrarPosto && <p className="truncate text-[11px] text-muted-foreground">{p.posto ?? limparPostoSenior(p.posto_senior)}</p>}
+            </div>
+          ))}
+        </div>
+      </HoverCardContent>
+    </HoverCard>
   );
 }
 
@@ -94,35 +141,36 @@ export default function AtivosContratos() {
   const [busca, setBusca] = useState("");
   const [filtro, setFiltro] = useState<Filtro>("todos");
   const [aberto, setAberto] = useState<string | null>(null);
-  const [pessoasDe, setPessoasDe] = useState<{ contratoId: string | null; filial: string | null; titulo: string } | null>(null);
+  const [pessoasDe, setPessoasDe] = useState<{ filial: string } | null>(null);
 
   const linhas: Linha[] = useMemo(
-    () => (data?.contratos ?? []).map((c) => {
-      const conf = conferirContrato(c);
-      return { c, conf, estado: estadoDo(c, conf) };
-    }),
+    () => (data?.contratos ?? []).map((c) => ({ c, conf: conferirContrato(c) })),
     [data],
   );
 
   const contagem = useMemo(() => {
-    const m: Record<string, number> = {};
-    linhas.forEach((l) => { m[l.estado] = (m[l.estado] ?? 0) + 1; });
+    const m = {} as Record<Filtro, number>;
+    FILTROS.forEach(({ k }) => { m[k] = linhas.filter((l) => passa(l, k)).length; });
     return m;
   }, [linhas]);
 
   const visiveis = useMemo(() => {
     const q = busca.trim().toLowerCase();
     return linhas
-      .filter((l) => filtro === "todos" || l.estado === filtro)
+      .filter((l) => passa(l, filtro))
       .filter((l) => !q || l.c.nome.toLowerCase().includes(q) || (l.c.cliente ?? "").toLowerCase().includes(q));
   }, [linhas, filtro, busca]);
 
   const tot = useMemo(() => {
-    const comPlanilha = linhas.filter((l) => l.c.postos.length);
+    const com = linhas.filter((l) => l.c.postos.length);
     return {
-      previsto: comPlanilha.reduce((s, l) => s + l.conf.previsto, 0),
-      ativosComPlanilha: comPlanilha.reduce((s, l) => s + l.conf.ativos, 0),
-      pendentes: linhas.reduce((s, l) => s + l.conf.pessoasPendentes, 0),
+      previsto: com.reduce((s, l) => s + l.conf.previsto, 0),
+      tem: com.reduce((s, l) => s + l.conf.tem, 0),
+      falta: com.reduce((s, l) => s + l.conf.falta, 0),
+      sobra: com.reduce((s, l) => s + l.conf.sobra, 0),
+      semPosto: com.reduce((s, l) => s + l.conf.semPosto, 0),
+      contratosSemPosto: com.filter((l) => l.conf.semPosto > 0).length,
+      afastados: com.reduce((s, l) => s + l.conf.afastados.length, 0),
       semContrato: (data?.filiais_sem_contrato ?? []).reduce((s, f) => s + f.qtd, 0),
     };
   }, [linhas, data]);
@@ -142,7 +190,7 @@ export default function AtivosContratos() {
     <div>
       <PageHeader
         title="Ativos/Contratos"
-        subtitle="Colaboradores ativos (EMPREGADOS) × quantidade contratada por posto (Planilha de Custo)."
+        subtitle="Quantas pessoas cada posto deveria ter (Planilha de Custo) e quantas tem de fato."
         module="Recursos Humanos"
         breadcrumb={["Recursos Humanos", "Ativos/Contratos"]}
       />
@@ -151,14 +199,27 @@ export default function AtivosContratos() {
         <Card className="flex items-center gap-2 p-6 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Carregando…</Card>
       ) : (
         <>
-          <div className="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
-            <Kpi icon={Users} valor={data.total_ativos.toLocaleString("pt-BR")} rotulo="Colaboradores ativos" dica={`${data.com_contrato.toLocaleString("pt-BR")} ligados a contrato`} />
-            <Kpi icon={FileSpreadsheet} valor={tot.previsto.toLocaleString("pt-BR")} rotulo="Previsto na planilha" dica="soma do QT. PESSOAS vigente" tom="info" />
-            <Kpi icon={AlertTriangle} valor={<span className={corDif(tot.ativosComPlanilha - tot.previsto)}>{fmtDiferenca(tot.ativosComPlanilha - tot.previsto)}</span>}
-                 rotulo="Ativos − previsto" dica={`${tot.ativosComPlanilha.toLocaleString("pt-BR")} ativos em contratos com planilha`} tom="warning" />
-            <Kpi icon={Link2} valor={tot.pendentes.toLocaleString("pt-BR")} rotulo="Em postos não vinculados" dica={`${contagem.pendente ?? 0} contrato(s) a vincular`} tom="info" />
-            <Kpi icon={UserX} valor={tot.semContrato.toLocaleString("pt-BR")} rotulo="Ativos sem contrato" dica={`${data.filiais_sem_contrato.length} filial(is)`} tom="muted" />
+          <div className="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <Kpi icon={Users} valor={tot.previsto.toLocaleString("pt-BR")} rotulo="Previsto" dica="soma das vagas da planilha" tom="info" />
+            <Kpi icon={CheckCircle2} valor={tot.tem.toLocaleString("pt-BR")} rotulo="Tem" dica={`trabalhando ou de atestado · ${tot.afastados} afastado(s) fora`} tom="success" />
+            {/* Falta posto a posto só é real com todo mundo no seu posto — antes
+                disso, gente "sem posto" vira falta no posto e infla o número. */}
+            <Kpi icon={AlertTriangle} valor={<span className={corSaldo(tot.tem - tot.previsto)}>{fmtSaldo(tot.tem - tot.previsto)}</span>}
+                 rotulo="Saldo geral (tem − previsto)"
+                 dica={tot.semPosto ? "posto a posto: defina o posto de todos" : `posto a posto: faltam ${tot.falta}, sobram ${tot.sobra}`}
+                 tom="destructive" />
+            <Kpi icon={UserMinus} valor={tot.semPosto.toLocaleString("pt-BR")} rotulo="Pessoas sem posto definido"
+                 dica={`${tot.contratosSemPosto} contrato(s) — defina para a conta fechar`} tom="warning" />
           </div>
+
+          {tot.semContrato > 0 && (
+            <button type="button" onClick={() => document.getElementById("sem-contrato")?.scrollIntoView({ behavior: "smooth" })}
+              className="mb-4 flex w-full items-center gap-2 rounded-lg border border-warning/30 bg-warning/5 px-4 py-2.5 text-left text-sm hover:bg-warning/10">
+              <UserX className="h-4 w-4 shrink-0 text-warning" />
+              <span><b>{tot.semContrato}</b> colaborador(es) ativos em {data.filiais_sem_contrato.length} filial(is) da Senior sem contrato ligado — não entram em conta nenhuma.</span>
+              <span className="ml-auto shrink-0 text-xs font-medium text-primary">Ligar ao contrato ↓</span>
+            </button>
+          )}
 
           <Card className="p-4">
             <div className="mb-3 flex flex-wrap items-center gap-2">
@@ -167,10 +228,10 @@ export default function AtivosContratos() {
                 <Input className="h-9 pl-8 text-sm" placeholder="Buscar contrato ou cliente…" value={busca} onChange={(e) => setBusca(e.target.value)} />
               </div>
               <div className="flex flex-wrap gap-1.5">
-                {(["todos", "falta", "excesso", "pendente", "ok", "sem_planilha"] as Filtro[]).map((f) => (
-                  <Button key={f} size="sm" variant={filtro === f ? "default" : "outline"} className="h-8 text-xs" onClick={() => setFiltro(f)}>
-                    {f === "todos" ? "Todos" : ESTADO[f].label}
-                    <span className="ml-1.5 rounded-full bg-background/20 px-1.5 text-[10px]">{f === "todos" ? linhas.length : contagem[f] ?? 0}</span>
+                {FILTROS.map(({ k, label }) => (
+                  <Button key={k} size="sm" variant={filtro === k ? "default" : "outline"} className="h-8 text-xs" onClick={() => setFiltro(k)}>
+                    {label}
+                    <span className="ml-1.5 rounded-full bg-background/20 px-1.5 text-[10px]">{contagem[k] ?? 0}</span>
                   </Button>
                 ))}
               </div>
@@ -182,23 +243,19 @@ export default function AtivosContratos() {
                   <tr className="border-b border-border bg-muted/40 text-left text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
                     <th className="w-8 py-2 pl-3" />
                     <th className="py-2 pr-3">Contrato</th>
-                    <th className="py-2 pr-3 text-right">Previsto</th>
-                    <th className="py-2 pr-3 text-right">Ativos</th>
-                    <th className="py-2 pr-3 text-right">Diferença</th>
-                    <th className="py-2 pr-3 text-right">Afastados</th>
-                    <th className="py-2 pr-3">Situação</th>
+                    <th className="w-24 py-2 pr-3 text-right">Previsto</th>
+                    <th className="w-24 py-2 pr-3 text-right">Tem</th>
+                    <th className="w-24 py-2 pr-3 text-right">Saldo</th>
+                    <th className="w-24 py-2 pr-3 text-right">Afastados</th>
+                    <th className="w-56 py-2 pr-3" />
                   </tr>
                 </thead>
                 <tbody>
-                  {visiveis.map(({ c, conf, estado }) => {
+                  {visiveis.map(({ c, conf }) => {
                     const exp = aberto === c.id;
                     return (
-                      <FragmentoContrato
-                        key={c.id} c={c} conf={conf} estado={estado} aberto={exp}
-                        onToggle={() => setAberto(exp ? null : c.id)}
-                        podeVincular={podeVincular}
-                        onVerPessoas={() => setPessoasDe({ contratoId: c.id, filial: null, titulo: c.nome })}
-                      />
+                      <LinhaContrato key={c.id} c={c} conf={conf} aberto={exp} podeVincular={podeVincular}
+                        onToggle={() => setAberto(exp ? null : c.id)} />
                     );
                   })}
                   {visiveis.length === 0 && (
@@ -212,31 +269,31 @@ export default function AtivosContratos() {
           {data.filiais_sem_contrato.length > 0 && (
             <FiliaisSemContrato
               filiais={data.filiais_sem_contrato}
-              contratos={data.contratos}
+              contratos={data.todos_contratos}
               podeVincular={podeVincular}
-              onVerPessoas={(f) => setPessoasDe({ contratoId: null, filial: f, titulo: f })}
+              onVerPessoas={(f) => setPessoasDe({ filial: f })}
             />
           )}
 
           <p className="mt-3 text-[11px] text-muted-foreground">
-            Ativo = qualquer situação exceto demitido/desligado/aposentado (férias e afastados ocupam o posto e aparecem em "Afastados").
+            Tem = colaboradores ativos no posto que estão trabalhando ou de atestado. Auxílio-doença, licença, férias e
+            outros afastamentos não contam (o posto está descoberto) e aparecem em Afastados.
             Previsto = QT. PESSOAS dos postos EXECUTADO vigentes da Planilha de Custo. Atualizado em {new Date(data.gerado_em).toLocaleString("pt-BR")}.
           </p>
         </>
       )}
 
-      <DialogPessoas alvo={pessoasDe} onClose={() => setPessoasDe(null)} />
+      <DialogPessoasFilial filial={pessoasDe?.filial ?? null} onClose={() => setPessoasDe(null)} />
     </div>
   );
 }
 
-// ---- Linha do contrato + detalhe ---------------------------------------------
+// ---- Linha do contrato ---------------------------------------------------------
 
-function FragmentoContrato({ c, conf, estado, aberto, onToggle, podeVincular, onVerPessoas }: {
-  c: ContratoAtivos; conf: ConferenciaContrato; estado: Linha["estado"]; aberto: boolean;
-  onToggle: () => void; podeVincular: boolean; onVerPessoas: () => void;
+function LinhaContrato({ c, conf, aberto, podeVincular, onToggle }: {
+  c: ContratoAtivos; conf: ConferenciaContrato; aberto: boolean; podeVincular: boolean; onToggle: () => void;
 }) {
-  const e = ESTADO[estado];
+  const temPlanilha = c.postos.length > 0;
   return (
     <>
       <tr className={`cursor-pointer border-b border-border/60 hover:bg-muted/30 ${aberto ? "bg-muted/30" : ""}`} onClick={onToggle}>
@@ -245,21 +302,27 @@ function FragmentoContrato({ c, conf, estado, aberto, onToggle, podeVincular, on
           <p className="font-medium">{c.nome}</p>
           {c.cliente && <p className="text-[11px] text-muted-foreground">{c.cliente}</p>}
         </td>
-        <td className="py-2.5 pr-3 text-right tabular-nums">{c.postos.length ? conf.previsto : "—"}</td>
-        <td className="py-2.5 pr-3 text-right tabular-nums">{conf.ativos}</td>
-        <td className={`py-2.5 pr-3 text-right font-semibold tabular-nums ${c.postos.length ? corDif(conf.diferenca) : "text-muted-foreground"}`}>
-          {c.postos.length ? fmtDiferenca(conf.diferenca) : "—"}
+        <td className="py-2.5 pr-3 text-right tabular-nums">{temPlanilha ? conf.previsto : "—"}</td>
+        <td className="py-2.5 pr-3 text-right font-medium tabular-nums">{conf.tem}</td>
+        <td className={`py-2.5 pr-3 text-right font-bold tabular-nums ${temPlanilha ? corSaldo(conf.saldo) : "text-muted-foreground"}`}>
+          {temPlanilha ? fmtSaldo(conf.saldo) : "—"}
         </td>
-        <td className="py-2.5 pr-3 text-right tabular-nums text-muted-foreground">{conf.afastados || "—"}</td>
+        <td className="py-2.5 pr-3 text-right tabular-nums"><Afastados pessoas={conf.afastados} mostrarPosto /></td>
         <td className="py-2.5 pr-3">
-          <Badge variant="outline" className={`text-[10px] font-semibold ${e.cls}`}>{e.label}</Badge>
-          {estado === "pendente" && <span className="ml-1.5 text-[11px] text-muted-foreground">{conf.pessoasPendentes} pessoa(s)</span>}
+          <div className="flex items-center gap-1 whitespace-nowrap">
+            {temPlanilha
+              ? <SituacaoBadge situacao={conf.situacao} saldo={conf.saldo} />
+              : <Badge variant="outline" className="text-[10px] text-muted-foreground">Sem planilha</Badge>}
+            {temPlanilha && conf.semPosto > 0 && (
+              <Badge variant="outline" className="border-info/30 bg-info/10 text-[10px] font-semibold text-info">{conf.semPosto} sem posto</Badge>
+            )}
+          </div>
         </td>
       </tr>
       {aberto && (
         <tr className="border-b border-border">
-          <td colSpan={7} className="bg-muted/10 p-3">
-            <DetalheContrato c={c} conf={conf} podeVincular={podeVincular} onVerPessoas={onVerPessoas} />
+          <td colSpan={7} className="bg-muted/10 p-4">
+            <DetalheContrato c={c} conf={conf} podeVincular={podeVincular} />
           </td>
         </tr>
       )}
@@ -267,350 +330,386 @@ function FragmentoContrato({ c, conf, estado, aberto, onToggle, podeVincular, on
   );
 }
 
-function DetalheContrato({ c, conf, podeVincular, onVerPessoas }: {
-  c: ContratoAtivos; conf: ConferenciaContrato; podeVincular: boolean; onVerPessoas: () => void;
-}) {
-  const vincular = useVincularPostos();
-  const [editando, setEditando] = useState<string | null>(null);
+// ---- Detalhe do contrato -------------------------------------------------------
 
-  const salvar = async (itens: ItemVinculo[], ok: string) => {
-    try {
-      await vincular.mutateAsync({ contratoId: c.id, itens });
-      toast.success(ok);
-      setEditando(null);
-    } catch (e) {
-      toast.error((e as Error).message);
-    }
-  };
-
-  const sugestoes = useMemo(
-    () => conf.seniorPendentes
-      .map((s) => ({ s, sug: sugerirPostos(s.posto_senior, c.postos) }))
-      .filter((x) => x.sug.length > 0),
-    [conf.seniorPendentes, c.postos],
-  );
-
-  const vinculosDe = (posto: string) => c.vinculos.filter((v) => v.posto_senior === posto && v.planilha_posto).map((v) => v.planilha_posto!);
-
+function DetalheContrato({ c, conf, podeVincular }: { c: ContratoAtivos; conf: ConferenciaContrato; podeVincular: boolean }) {
   if (!c.postos.length) {
     return (
       <div className="space-y-2 text-sm">
-        <p className="flex items-center gap-1.5 text-muted-foreground">
-          <FileSpreadsheet className="h-4 w-4" /> Este contrato não tem posto EXECUTADO vigente na Planilha de Custo — não há quantidade prevista para comparar.
+        <p className="text-muted-foreground">
+          Este contrato não tem posto EXECUTADO vigente na Planilha de Custo — não há quantidade prevista para comparar.
         </p>
-        <ListaSenior titulo={`Postos na Senior (${conf.ativos} ativos)`} itens={c.postos_senior} />
-        <Button size="sm" variant="outline" className="gap-1.5" onClick={onVerPessoas}><Users className="h-3.5 w-3.5" /> Ver colaboradores</Button>
+        <ListaPessoas pessoas={c.pessoas} />
       </div>
     );
   }
-
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="text-xs text-muted-foreground">
-          {c.postos.length} posto(s) na planilha · {c.postos_senior.length} posto(s) na Senior · previsto <b>{conf.previsto}</b> · ativos <b>{conf.ativos}</b>
-        </p>
-        <Button size="sm" variant="outline" className="h-8 gap-1.5" onClick={onVerPessoas}><Users className="h-3.5 w-3.5" /> Ver colaboradores</Button>
-      </div>
-
-      {/* Conferência por grupo de postos */}
-      {conf.grupos.length > 0 && (
-        <div className="overflow-x-auto rounded-lg border border-border bg-background">
-          <table className="w-full text-xs">
-            <thead>
-              <tr className="border-b border-border bg-muted/40 text-left text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-                <th className="py-2 pl-3 pr-3">Posto na planilha</th>
-                <th className="py-2 pr-3">Posto na Senior</th>
-                <th className="py-2 pr-3 text-right">Previsto</th>
-                <th className="py-2 pr-3 text-right">Ativos</th>
-                <th className="py-2 pr-3 text-right">Afast.</th>
-                <th className="py-2 pr-3 text-right">Dif.</th>
-                <th className="py-2 pr-3" />
-              </tr>
-            </thead>
-            <tbody>
-              {conf.grupos.map((g) => (
-                <tr key={g.chave} className="border-b border-border/60 align-top last:border-0">
-                  <td className="py-2 pl-3 pr-3">
-                    {g.planilha.map((p) => <p key={p.nome}>{p.nome} <span className="text-muted-foreground">({p.vagas})</span></p>)}
-                  </td>
-                  <td className="py-2 pr-3">
-                    {g.senior.map((s) => (
-                      <div key={s.posto_senior} className="flex items-center gap-1.5">
-                        <span title={s.posto_senior}>{limparPostoSenior(s.posto_senior)} <span className="text-muted-foreground">({s.qtd})</span></span>
-                        {podeVincular && (
-                          <button type="button" className="text-[10px] text-primary hover:underline" onClick={() => setEditando(s.posto_senior)}>alterar</button>
-                        )}
-                      </div>
-                    ))}
-                  </td>
-                  <td className="py-2 pr-3 text-right tabular-nums">{g.previsto}</td>
-                  <td className="py-2 pr-3 text-right tabular-nums">{g.ativos}</td>
-                  <td className="py-2 pr-3 text-right tabular-nums text-muted-foreground">{g.afastados || "—"}</td>
-                  <td className={`py-2 pr-3 text-right font-semibold tabular-nums ${corDif(g.diferenca)}`}>{fmtDiferenca(g.diferenca)}</td>
-                  <td className={`py-2 pr-3 font-semibold ${SIT_GRUPO[g.situacao].cls}`}>{SIT_GRUPO[g.situacao].label}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-
-      {/* Postos da Senior ainda sem ligação */}
-      {conf.seniorPendentes.length > 0 && (
-        <div className="rounded-lg border border-info/30 bg-info/5 p-3">
-          <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-            <p className="flex items-center gap-1.5 text-xs font-semibold">
-              <Link2 className="h-3.5 w-3.5 text-info" /> Postos da Senior sem vínculo — {conf.pessoasPendentes} pessoa(s) fora da conferência
-            </p>
-            {podeVincular && sugestoes.length > 0 && (
-              <Button size="sm" className="h-7 gap-1.5 text-xs" disabled={vincular.isPending}
-                onClick={() => salvar(sugestoes.map((x) => ({ posto_senior: x.s.posto_senior, planilha_postos: x.sug, ignorar: false })),
-                  `${sugestoes.length} posto(s) vinculado(s) pela sugestão`)}>
-                <Sparkles className="h-3.5 w-3.5" /> Aplicar {sugestoes.length} sugestão(ões)
-              </Button>
-            )}
-          </div>
-          <div className="space-y-1.5">
-            {conf.seniorPendentes.map((s) => (
-              <LinhaPendente
-                key={s.posto_senior} s={s} c={c} podeVincular={podeVincular} salvando={vincular.isPending}
-                onSalvar={(postos) => salvar([{ posto_senior: s.posto_senior, planilha_postos: postos, ignorar: false }], "Posto vinculado")}
-                onIgnorar={() => salvar([{ posto_senior: s.posto_senior, planilha_postos: [], ignorar: true }], "Posto ignorado na conferência")}
-              />
-            ))}
-          </div>
-          {!podeVincular && (
-            <p className="mt-2 text-[11px] text-muted-foreground">Para vincular, peça a liberação de <b>Ativos/Contratos · Vincular postos</b> em Acesso por Usuário.</p>
-          )}
-        </div>
-      )}
-
-      {/* Postos da planilha sem ninguém ligado */}
-      {conf.planilhaSemVinculo.length > 0 && (
-        <div className="rounded-lg border border-border bg-background p-3">
-          <p className="mb-1.5 text-xs font-semibold">Postos da planilha sem nenhum posto da Senior ligado</p>
-          <div className="flex flex-wrap gap-1.5">
-            {conf.planilhaSemVinculo.map((p) => (
-              <span key={p.nome} className={`rounded-md border px-2 py-0.5 text-[11px] ${p.vagas ? "border-destructive/30 text-destructive" : "border-border text-muted-foreground"}`}>
-                {p.nome} · {p.vagas} vaga(s)
-              </span>
-            ))}
-          </div>
-          <p className="mt-1.5 text-[11px] text-muted-foreground">Se há gente nesses postos, ela está num posto da Senior ainda não vinculado.</p>
-        </div>
-      )}
-
-      {conf.vinculosOrfaos.length > 0 && (
-        <p className="flex items-center gap-1.5 text-[11px] text-warning">
-          <AlertTriangle className="h-3.5 w-3.5" />
-          {conf.vinculosOrfaos.length} vínculo(s) apontam para posto que saiu da planilha vigente
-          ({conf.vinculosOrfaos.map((v) => v.planilha_posto_gravado).join(", ")}) — vincule de novo.
-        </p>
-      )}
-
-      {conf.seniorIgnorados.length > 0 && (
-        <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
-          <EyeOff className="h-3.5 w-3.5" /> Fora da conta:
-          {conf.seniorIgnorados.map((s) => (
-            <span key={s.posto_senior} className="inline-flex items-center gap-1 rounded-md border border-border px-1.5 py-0.5">
-              {limparPostoSenior(s.posto_senior)} ({s.qtd})
-              {podeVincular && (
-                <button type="button" title="Voltar a contar" onClick={() => salvar([{ posto_senior: s.posto_senior, planilha_postos: [], ignorar: false }], "Posto voltou para a conferência")}>
-                  <Undo2 className="h-3 w-3 text-primary" />
-                </button>
-              )}
-            </span>
-          ))}
-        </div>
-      )}
-
-      <DialogEditarVinculo
-        aberto={!!editando}
-        posto={editando}
-        c={c}
-        atuais={editando ? vinculosDe(editando) : []}
-        salvando={vincular.isPending}
-        onClose={() => setEditando(null)}
-        onSalvar={(postos) => editando && salvar([{ posto_senior: editando, planilha_postos: postos, ignorar: false }], "Vínculo atualizado")}
-        onIgnorar={() => editando && salvar([{ posto_senior: editando, planilha_postos: [], ignorar: true }], "Posto ignorado na conferência")}
-      />
+      {conf.pendentes.length > 0 && <DefinirPostos c={c} conf={conf} podeVincular={podeVincular} />}
+      <TabelaPostos c={c} conf={conf} podeVincular={podeVincular} />
+      {conf.fora.length > 0 && <ForaDaConta c={c} pessoas={conf.fora} podeVincular={podeVincular} />}
     </div>
   );
 }
 
-function ListaSenior({ titulo, itens }: { titulo: string; itens: PostoSenior[] }) {
+/** Select de posto da planilha, com "fora da conta" e (opcional) "voltar ao posto da Senior". */
+function SelectPosto({ c, valor, onChange, disabled, comVoltar = false, placeholder = "Escolher posto…", className = "w-72" }: {
+  c: ContratoAtivos; valor: string | undefined; onChange: (v: string) => void; disabled?: boolean;
+  comVoltar?: boolean; placeholder?: string; className?: string;
+}) {
   return (
-    <div>
-      <p className="mb-1 text-xs font-semibold">{titulo}</p>
-      <div className="flex flex-wrap gap-1.5">
-        {itens.map((s) => (
-          <span key={s.posto_senior} title={s.posto_senior} className="rounded-md border border-border bg-background px-2 py-0.5 text-[11px]">
-            {limparPostoSenior(s.posto_senior)} · {s.qtd}
-          </span>
+    <Select value={valor ?? ""} onValueChange={onChange} disabled={disabled}>
+      <SelectTrigger className={`h-8 text-xs ${className}`} onClick={(e) => e.stopPropagation()}><SelectValue placeholder={placeholder} /></SelectTrigger>
+      <SelectContent>
+        {c.postos.map((p) => (
+          <SelectItem key={p.nome} value={p.nome} className="text-xs">{p.nome} <span className="text-muted-foreground">· {p.vagas} vaga(s)</span></SelectItem>
         ))}
-      </div>
-    </div>
+        <SelectSeparator />
+        {comVoltar && <SelectItem value={DA_SENIOR} className="text-xs">Voltar ao posto da Senior</SelectItem>}
+        <SelectItem value={FORA} className="text-xs text-muted-foreground">Fora da conta deste contrato</SelectItem>
+      </SelectContent>
+    </Select>
   );
 }
 
-/** Um posto da Senior pendente: sugestão + escolha manual + ignorar. */
-function LinhaPendente({ s, c, podeVincular, salvando, onSalvar, onIgnorar }: {
-  s: PostoSenior; c: ContratoAtivos; podeVincular: boolean; salvando: boolean;
-  onSalvar: (postos: string[]) => void; onIgnorar: () => void;
-}) {
-  const sug = useMemo(() => sugerirPostos(s.posto_senior, c.postos), [s.posto_senior, c.postos]);
-  return (
-    <div className="flex flex-wrap items-center gap-2 rounded-md bg-background px-2.5 py-1.5 text-xs">
-      <span className="min-w-[220px] flex-1 font-medium" title={s.posto_senior}>
-        {limparPostoSenior(s.posto_senior)} <span className="font-normal text-muted-foreground">· {s.qtd} pessoa(s)</span>
-      </span>
-      {sug.length > 0 ? (
-        <span className="flex items-center gap-1 text-muted-foreground">
-          <Sparkles className="h-3 w-3 text-info" /> {sug.join(" + ")}
-        </span>
-      ) : (
-        <span className="text-muted-foreground">sem sugestão</span>
-      )}
-      {podeVincular && (
-        <span className="ml-auto flex gap-1">
-          {sug.length > 0 && (
-            <Button size="sm" variant="outline" className="h-7 text-xs" disabled={salvando} onClick={() => onSalvar(sug)}>Aceitar</Button>
-          )}
-          <EscolherPostos postos={c.postos.map((p) => p.nome)} iniciais={sug} salvando={salvando} onConfirmar={onSalvar} />
-          <Button size="sm" variant="ghost" className="h-7 gap-1 text-xs text-muted-foreground" disabled={salvando} onClick={onIgnorar} title="Não contar este posto">
-            <EyeOff className="h-3.5 w-3.5" /> Ignorar
-          </Button>
-        </span>
-      )}
-    </div>
-  );
+function useAcoesPosto(c: ContratoAtivos) {
+  const vincular = useVincularPostos();
+  const mover = useMoverColaborador();
+  const ligarPostoSenior = async (pares: { posto_senior: string; destino: string }[]) => {
+    try {
+      await vincular.mutateAsync({
+        contratoId: c.id,
+        itens: pares.map(({ posto_senior, destino }) => ({
+          posto_senior, planilha_postos: destino === FORA ? [] : [destino], ignorar: destino === FORA,
+        })),
+      });
+      const n = pares.length;
+      toast.success(n === 1 ? "Posto definido" : `${n} postos da Senior definidos`);
+      return true;
+    } catch (e) { toast.error((e as Error).message); return false; }
+  };
+  const moverPessoa = async (p: PessoaContrato, destino: string) => {
+    try {
+      await mover.mutateAsync({ empregadoId: p.id, posto: destino === DA_SENIOR ? null : destino === FORA ? "" : destino });
+      toast.success(destino === DA_SENIOR ? `${p.nome} voltou ao posto da Senior`
+        : destino === FORA ? `${p.nome} fora da conta` : `${p.nome} → ${destino}`);
+    } catch (e) { toast.error((e as Error).message); }
+  };
+  return { ligarPostoSenior, moverPessoa, salvando: vincular.isPending || mover.isPending };
 }
 
-/** Escolha de um ou mais postos da planilha (popover com checkboxes). */
-function EscolherPostos({ postos, iniciais, salvando, onConfirmar, rotulo = "Escolher" }: {
-  postos: string[]; iniciais: string[]; salvando: boolean; onConfirmar: (p: string[]) => void; rotulo?: string;
-}) {
-  const [aberto, setAberto] = useState(false);
-  const [sel, setSel] = useState<string[]>(iniciais);
-  const [q, setQ] = useState("");
-  const vis = postos.filter((p) => p.toLowerCase().includes(q.toLowerCase()));
+/** Bloco em destaque enquanto houver gente sem posto da planilha. */
+function DefinirPostos({ c, conf, podeVincular }: { c: ContratoAtivos; conf: ConferenciaContrato; podeVincular: boolean }) {
+  const { ligarPostoSenior, moverPessoa, salvando } = useAcoesPosto(c);
+  const [escolha, setEscolha] = useState<Record<string, string>>({});
+  const [abertos, setAbertos] = useState<Set<string>>(new Set());
+  const destino = (g: PendenteSenior) => escolha[g.posto_senior] ?? g.sugestao ?? undefined;
+  const prontos = conf.pendentes.filter((g) => destino(g));
+
   return (
-    <Popover open={aberto} onOpenChange={(o) => { setAberto(o); if (o) { setSel(iniciais); setQ(""); } }}>
-      <PopoverTrigger asChild>
-        <Button size="sm" variant="outline" className="h-7 text-xs">{rotulo}</Button>
-      </PopoverTrigger>
-      <PopoverContent className="w-80 p-2" align="end">
-        <Input className="mb-2 h-8 text-xs" placeholder="Filtrar postos da planilha…" value={q} onChange={(e) => setQ(e.target.value)} />
-        <div className="max-h-64 space-y-0.5 overflow-y-auto">
-          {vis.map((p) => (
-            <label key={p} className="flex cursor-pointer items-start gap-2 rounded px-1.5 py-1 text-xs hover:bg-muted">
-              <Checkbox className="mt-0.5" checked={sel.includes(p)}
-                onCheckedChange={(v) => setSel((cur) => v === true ? [...cur, p] : cur.filter((x) => x !== p))} />
-              <span>{p}</span>
-            </label>
-          ))}
-          {vis.length === 0 && <p className="px-1.5 py-2 text-xs text-muted-foreground">Nenhum posto.</p>}
+    <div className="rounded-lg border border-info/40 bg-info/5 p-3">
+      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <p className="text-sm font-semibold">Definir o posto de {conf.semPosto} pessoa(s)</p>
+          <p className="text-[11px] text-muted-foreground">
+            Escolha em qual posto da planilha fica cada posto da Senior — vale para todos que estão nele.
+            Quem estiver em outro posto, abra a lista e mova a pessoa.
+          </p>
         </div>
-        <p className="mt-1 text-[10px] text-muted-foreground">Marque mais de um quando a planilha separa (por cidade, turno…) o que na Senior é um posto só.</p>
-        <div className="mt-2 flex justify-end gap-1.5">
-          <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => setAberto(false)}>Cancelar</Button>
-          <Button size="sm" className="h-7 text-xs" disabled={!sel.length || salvando} onClick={() => { onConfirmar(sel); setAberto(false); }}>
-            Vincular {sel.length > 1 ? `(${sel.length})` : ""}
+        {podeVincular && prontos.length > 0 && (
+          <Button size="sm" className="h-8 gap-1.5 text-xs" disabled={salvando}
+            onClick={() => ligarPostoSenior(prontos.map((g) => ({ posto_senior: g.posto_senior, destino: destino(g)! })))}>
+            <Sparkles className="h-3.5 w-3.5" /> Confirmar {prontos.length === conf.pendentes.length ? "todos" : `${prontos.length} preenchido(s)`}
           </Button>
-        </div>
-      </PopoverContent>
-    </Popover>
-  );
-}
-
-function DialogEditarVinculo({ aberto, posto, c, atuais, salvando, onClose, onSalvar, onIgnorar }: {
-  aberto: boolean; posto: string | null; c: ContratoAtivos; atuais: string[]; salvando: boolean;
-  onClose: () => void; onSalvar: (p: string[]) => void; onIgnorar: () => void;
-}) {
-  return (
-    <Dialog open={aberto} onOpenChange={(o) => { if (!o) onClose(); }}>
-      <DialogContent>
-        <DialogHeader><DialogTitle>Alterar vínculo do posto</DialogTitle></DialogHeader>
-        {posto != null && (
-          <div className="space-y-3 text-sm">
-            <p><span className="text-muted-foreground">Posto na Senior:</span> <b>{limparPostoSenior(posto)}</b></p>
-            <p><span className="text-muted-foreground">Ligado hoje a:</span> {atuais.join(" + ") || "—"}</p>
-            <div className="flex flex-wrap justify-end gap-2">
-              <Button variant="ghost" className="gap-1.5 text-muted-foreground" disabled={salvando} onClick={onIgnorar}><EyeOff className="h-4 w-4" /> Ignorar este posto</Button>
-              <EscolherPostos postos={c.postos.map((p) => p.nome)} iniciais={atuais} salvando={salvando} onConfirmar={onSalvar} rotulo="Escolher postos da planilha" />
-            </div>
-          </div>
         )}
-      </DialogContent>
-    </Dialog>
+      </div>
+
+      <div className="overflow-hidden rounded-md border border-border bg-background">
+        {conf.pendentes.map((g) => {
+          const exp = abertos.has(g.posto_senior);
+          const d = destino(g);
+          return (
+            <div key={g.posto_senior} className="border-b border-border/60 last:border-0">
+              <div className="flex flex-wrap items-center gap-2 px-3 py-2 text-xs">
+                <button type="button" className="flex min-w-[240px] flex-1 items-center gap-1.5 text-left"
+                  onClick={() => setAbertos((s) => { const n = new Set(s); if (exp) n.delete(g.posto_senior); else n.add(g.posto_senior); return n; })}>
+                  {exp ? <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" /> : <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />}
+                  <span>
+                    <span className="font-medium" title={g.posto_senior}>{limparPostoSenior(g.posto_senior)}</span>
+                    <span className="text-muted-foreground"> · {g.pessoas.length} pessoa(s)</span>
+                  </span>
+                </button>
+                {podeVincular ? (
+                  <>
+                    {g.sugestao && !escolha[g.posto_senior] && (
+                      <span className="flex items-center gap-1 text-[10px] text-info"><Sparkles className="h-3 w-3" /> sugerido</span>
+                    )}
+                    <SelectPosto c={c} valor={d} disabled={salvando}
+                      onChange={(v) => setEscolha((cur) => ({ ...cur, [g.posto_senior]: v }))} />
+                    <Button size="sm" variant="outline" className="h-8 text-xs" disabled={!d || salvando}
+                      onClick={() => d && ligarPostoSenior([{ posto_senior: g.posto_senior, destino: d }])}>
+                      Confirmar
+                    </Button>
+                  </>
+                ) : (
+                  <span className="text-muted-foreground">{g.sugestao ? `sugestão: ${g.sugestao}` : "sem sugestão"}</span>
+                )}
+              </div>
+              {exp && (
+                <div className="border-t border-border/60 bg-muted/20 px-3 py-1.5">
+                  {g.pessoas.map((p) => (
+                    <LinhaPessoa key={p.id} p={p} c={c} podeVincular={podeVincular} salvando={salvando} onMover={moverPessoa} />
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+      {!podeVincular && (
+        <p className="mt-2 text-[11px] text-muted-foreground">Para definir os postos, peça a liberação de <b>Ativos/Contratos · Vincular postos</b> em Acesso por Usuário.</p>
+      )}
+    </div>
+  );
+}
+
+/** Previsto × tem de cada posto da planilha. Clique abre quem está no posto. */
+function TabelaPostos({ c, conf, podeVincular }: { c: ContratoAtivos; conf: ConferenciaContrato; podeVincular: boolean }) {
+  const [aberto, setAberto] = useState<string | null>(null);
+  return (
+    <div className="overflow-x-auto rounded-lg border border-border bg-background">
+      <table className="w-full text-xs">
+        <thead>
+          <tr className="border-b border-border bg-muted/40 text-left text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+            <th className="w-7 py-2 pl-3" />
+            <th className="py-2 pr-3">Posto</th>
+            <th className="w-20 py-2 pr-3 text-right">Previsto</th>
+            <th className="w-20 py-2 pr-3 text-right">Tem</th>
+            <th className="w-20 py-2 pr-3 text-right">Saldo</th>
+            <th className="w-20 py-2 pr-3 text-right">Afastados</th>
+            <th className="w-32 py-2 pr-3" />
+          </tr>
+        </thead>
+        <tbody>
+          {conf.postos.map((p) => (
+            <LinhaPosto key={p.nome} c={c} p={p} aberto={aberto === p.nome} podeVincular={podeVincular}
+              onToggle={() => setAberto(aberto === p.nome ? null : p.nome)} />
+          ))}
+        </tbody>
+        <tfoot>
+          <tr className="border-t border-border bg-muted/30 font-semibold">
+            <td />
+            <td className="py-2 pr-3">Total{conf.semPosto > 0 && <span className="font-normal text-muted-foreground"> · {conf.semPosto} pessoa(s) ainda sem posto entram só no total do contrato</span>}</td>
+            <td className="py-2 pr-3 text-right tabular-nums">{conf.previsto}</td>
+            <td className="py-2 pr-3 text-right tabular-nums">{conf.postos.reduce((s, p) => s + p.tem, 0)}</td>
+            <td className="py-2 pr-3 text-right tabular-nums">
+              <span className="text-destructive">−{conf.falta}</span>
+              {conf.sobra > 0 && <span className="text-warning"> / +{conf.sobra}</span>}
+            </td>
+            <td className="py-2 pr-3 text-right tabular-nums"><Afastados pessoas={conf.postos.flatMap((p) => p.afastados)} mostrarPosto /></td>
+            <td />
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+  );
+}
+
+function LinhaPosto({ c, p, aberto, podeVincular, onToggle }: {
+  c: ContratoAtivos; p: ConferenciaPosto; aberto: boolean; podeVincular: boolean; onToggle: () => void;
+}) {
+  const { ligarPostoSenior, moverPessoa, salvando } = useAcoesPosto(c);
+  // Dentro do posto, quem veio pelo posto da Senior fica agrupado (dá para
+  // trocar o posto do grupo inteiro); quem foi movido aparece à parte.
+  const grupos = useMemo(() => {
+    const m = new Map<string, PessoaContrato[]>();
+    p.pessoas.filter((x) => x.origem !== "pessoa").forEach((x) => {
+      if (!m.has(x.posto_senior)) m.set(x.posto_senior, []);
+      m.get(x.posto_senior)!.push(x);
+    });
+    return [...m.entries()];
+  }, [p.pessoas]);
+  const movidos = p.pessoas.filter((x) => x.origem === "pessoa");
+
+  return (
+    <>
+      <tr className={`border-b border-border/60 ${p.pessoas.length ? "cursor-pointer hover:bg-muted/30" : ""} ${aberto ? "bg-muted/30" : ""}`}
+        onClick={() => p.pessoas.length && onToggle()}>
+        <td className="py-2 pl-3 text-muted-foreground">
+          {p.pessoas.length > 0 && (aberto ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />)}
+        </td>
+        <td className="py-2 pr-3 font-medium">{p.nome}</td>
+        <td className="py-2 pr-3 text-right tabular-nums">{p.previsto}</td>
+        <td className="py-2 pr-3 text-right font-medium tabular-nums">{p.tem}</td>
+        <td className={`py-2 pr-3 text-right font-bold tabular-nums ${corSaldo(p.saldo)}`}>{fmtSaldo(p.saldo)}</td>
+        <td className="py-2 pr-3 text-right tabular-nums"><Afastados pessoas={p.afastados} /></td>
+        <td className="py-2 pr-3"><SituacaoBadge situacao={p.situacao} saldo={p.saldo} /></td>
+      </tr>
+      {aberto && (
+        <tr className="border-b border-border/60">
+          <td colSpan={7} className="bg-muted/10 px-4 py-2">
+            {grupos.map(([ps, pessoas]) => (
+              <div key={ps} className="mb-2 last:mb-0">
+                <div className="flex flex-wrap items-center gap-2 py-1">
+                  <p className="flex-1 text-[11px] text-muted-foreground">
+                    Posto na Senior: <span className="font-medium text-foreground" title={ps}>{limparPostoSenior(ps)}</span> · {pessoas.length}
+                  </p>
+                  {podeVincular && (
+                    <SelectPosto c={c} valor={undefined} disabled={salvando} placeholder="Trocar o posto de todos…" className="w-60"
+                      onChange={(v) => v !== p.nome && ligarPostoSenior([{ posto_senior: ps, destino: v }])} />
+                  )}
+                </div>
+                {pessoas.map((x) => <LinhaPessoa key={x.id} p={x} c={c} podeVincular={podeVincular} salvando={salvando} onMover={moverPessoa} />)}
+              </div>
+            ))}
+            {movidos.length > 0 && (
+              <div>
+                <p className="py-1 text-[11px] text-muted-foreground">Movidos para este posto individualmente · {movidos.length}</p>
+                {movidos.map((x) => <LinhaPessoa key={x.id} p={x} c={c} podeVincular={podeVincular} salvando={salvando} onMover={moverPessoa} mostrarSenior />)}
+              </div>
+            )}
+          </td>
+        </tr>
+      )}
+    </>
+  );
+}
+
+function LinhaPessoa({ p, c, podeVincular, salvando, onMover, mostrarSenior = false }: {
+  p: PessoaContrato; c: ContratoAtivos; podeVincular: boolean; salvando: boolean;
+  onMover: (p: PessoaContrato, destino: string) => void; mostrarSenior?: boolean;
+}) {
+  return (
+    <div className="flex flex-wrap items-center gap-2 rounded px-1 py-1 text-xs hover:bg-background">
+      <span className="w-16 shrink-0 tabular-nums text-muted-foreground">{p.cadastro ?? "—"}</span>
+      <span className="min-w-[180px] flex-1">
+        <span className="font-medium">{p.nome}</span>
+        {p.cargo && <span className="text-muted-foreground"> · {p.cargo}</span>}
+        {mostrarSenior && <span className="text-muted-foreground"> · Senior: {limparPostoSenior(p.posto_senior)}</span>}
+      </span>
+      <span className={`w-36 shrink-0 ${p.conta ? "text-muted-foreground" : "font-medium text-warning"}`}>{p.situacao ?? "—"}</span>
+      {podeVincular && (
+        <SelectPosto c={c} valor={undefined} disabled={salvando} placeholder="Mover para…" className="w-52" comVoltar={p.origem === "pessoa"}
+          onChange={(v) => v !== p.posto && onMover(p, v)} />
+      )}
+    </div>
+  );
+}
+
+function ForaDaConta({ c, pessoas, podeVincular }: { c: ContratoAtivos; pessoas: PessoaContrato[]; podeVincular: boolean }) {
+  const { ligarPostoSenior, moverPessoa, salvando } = useAcoesPosto(c);
+  const [aberto, setAberto] = useState(false);
+  return (
+    <div className="rounded-lg border border-border bg-background p-3">
+      <button type="button" className="flex items-center gap-1.5 text-xs font-semibold" onClick={() => setAberto(!aberto)}>
+        {aberto ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+        Fora da conta · {pessoas.length} pessoa(s)
+      </button>
+      {aberto && (
+        <div className="mt-1.5">
+          {pessoas.map((p) => (
+            <div key={p.id} className="flex flex-wrap items-center gap-2 px-1 py-1 text-xs">
+              <span className="min-w-[180px] flex-1"><span className="font-medium">{p.nome}</span>
+                <span className="text-muted-foreground"> · Senior: {limparPostoSenior(p.posto_senior)}</span></span>
+              <span className="w-36 text-muted-foreground">{p.situacao ?? "—"}</span>
+              {podeVincular && (
+                <SelectPosto c={c} valor={undefined} disabled={salvando} placeholder="Colocar em…" className="w-52"
+                  onChange={(v) => {
+                    if (v === FORA) return;
+                    // Fora por causa do posto da Senior inteiro → desfaz o "ignorar" do posto;
+                    // fora individualmente → move a pessoa.
+                    if (p.origem === "posto") ligarPostoSenior([{ posto_senior: p.posto_senior, destino: v }]);
+                    else moverPessoa(p, v);
+                  }} />
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ListaPessoas({ pessoas }: { pessoas: PessoaContrato[] }) {
+  return (
+    <div className="max-h-80 overflow-y-auto rounded-md border border-border bg-background p-2">
+      {pessoas.map((p) => (
+        <div key={p.id} className="flex gap-2 px-1 py-0.5 text-xs">
+          <span className="w-16 tabular-nums text-muted-foreground">{p.cadastro ?? "—"}</span>
+          <span className="flex-1 font-medium">{p.nome}</span>
+          <span className="flex-1 text-muted-foreground">{limparPostoSenior(p.posto_senior)}</span>
+          <span className={p.conta ? "text-muted-foreground" : "text-warning"}>{p.situacao}</span>
+        </div>
+      ))}
+      {!pessoas.length && <p className="p-2 text-xs text-muted-foreground">Ninguém ativo.</p>}
+    </div>
   );
 }
 
 // ---- Filiais sem contrato ------------------------------------------------------
 
 function FiliaisSemContrato({ filiais, contratos, podeVincular, onVerPessoas }: {
-  filiais: { filial: string; qtd: number }[]; contratos: ContratoAtivos[]; podeVincular: boolean;
+  filiais: { filial: string; qtd: number }[]; contratos: PainelAtivos["todos_contratos"]; podeVincular: boolean;
   onVerPessoas: (f: string) => void;
 }) {
   const vincular = useVincularFilial();
   const [escolha, setEscolha] = useState<Record<string, string>>({});
   const opcoes = useMemo(() => [...contratos].sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR")), [contratos]);
+  const sugestao = useMemo(() => {
+    const m: Record<string, string> = {};
+    filiais.forEach((f) => { const s = sugerirContrato(f.filial, opcoes); if (s) m[f.filial] = s.id; });
+    return m;
+  }, [filiais, opcoes]);
 
   return (
-    <Card className="mt-4 p-4">
-      <p className="flex items-center gap-1.5 text-sm font-bold"><Building2 className="h-4 w-4 text-muted-foreground" /> Ativos sem contrato identificado</p>
+    <Card id="sem-contrato" className="mt-4 scroll-mt-4 p-4">
+      <p className="flex items-center gap-1.5 text-sm font-bold"><Building2 className="h-4 w-4 text-muted-foreground" /> Filiais da Senior sem contrato ligado</p>
       <p className="mb-3 text-xs text-muted-foreground">
-        A filial do colaborador não tem o mesmo nome de nenhum contrato. {podeVincular ? "Ligue a filial ao contrato certo — vale também para Suprimentos e o Espaço do Colaborador." : ""}
+        O nome da filial não bateu com nenhum contrato (ex.: "CAXIAS DO SUL - 95.2026" × "CAXIAS DO SUL - 2026/95").
+        {podeVincular ? " Ligue ao contrato certo — vale também para Suprimentos e o Espaço do Colaborador." : ""}
       </p>
       <div className="space-y-1.5">
-        {filiais.map((f) => (
-          <div key={f.filial} className="flex flex-wrap items-center gap-2 rounded-md border border-border px-3 py-1.5 text-xs">
-            <span className="min-w-[240px] flex-1 font-medium">{f.filial}</span>
-            <span className="text-muted-foreground">{f.qtd} ativo(s)</span>
-            <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => onVerPessoas(f.filial)}>Ver</Button>
-            {podeVincular && f.filial !== "(sem filial)" && (
-              <>
-                <Select value={escolha[f.filial] ?? ""} onValueChange={(v) => setEscolha((cur) => ({ ...cur, [f.filial]: v }))}>
-                  <SelectTrigger className="h-7 w-64 text-xs"><SelectValue placeholder="Contrato…" /></SelectTrigger>
-                  <SelectContent>
-                    {opcoes.map((c) => <SelectItem key={c.id} value={c.id} className="text-xs">{c.nome}</SelectItem>)}
-                  </SelectContent>
-                </Select>
-                <Button size="sm" className="h-7 text-xs" disabled={!escolha[f.filial] || vincular.isPending}
-                  onClick={async () => {
-                    try {
-                      await vincular.mutateAsync({ filial: f.filial, contratoId: escolha[f.filial] });
-                      toast.success("Filial ligada ao contrato");
-                    } catch (e) { toast.error((e as Error).message); }
-                  }}>
-                  Ligar
-                </Button>
-              </>
-            )}
-          </div>
-        ))}
+        {filiais.map((f) => {
+          const sel = escolha[f.filial] ?? sugestao[f.filial];
+          return (
+            <div key={f.filial} className="flex flex-wrap items-center gap-2 rounded-md border border-border px-3 py-1.5 text-xs">
+              <span className="min-w-[240px] flex-1 font-medium">{f.filial}</span>
+              <span className="text-muted-foreground">{f.qtd} ativo(s)</span>
+              <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => onVerPessoas(f.filial)}>Ver</Button>
+              {podeVincular && f.filial !== "(sem filial)" && (
+                <>
+                  {sel && !escolha[f.filial] && <span className="flex items-center gap-1 text-[10px] text-info"><Sparkles className="h-3 w-3" /> sugerido</span>}
+                  <Select value={sel ?? ""} onValueChange={(v) => setEscolha((cur) => ({ ...cur, [f.filial]: v }))}>
+                    <SelectTrigger className="h-7 w-72 text-xs"><SelectValue placeholder="Contrato…" /></SelectTrigger>
+                    <SelectContent>
+                      {opcoes.map((c) => <SelectItem key={c.id} value={c.id} className="text-xs">{c.nome}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                  <Button size="sm" className="h-7 text-xs" disabled={!sel || vincular.isPending}
+                    onClick={async () => {
+                      try {
+                        await vincular.mutateAsync({ filial: f.filial, contratoId: sel! });
+                        toast.success("Filial ligada ao contrato");
+                      } catch (e) { toast.error((e as Error).message); }
+                    }}>
+                    Ligar
+                  </Button>
+                </>
+              )}
+            </div>
+          );
+        })}
       </div>
-      <p className="mt-2 text-[11px] text-muted-foreground">
-        Contratos que só aparecem com "Sem planilha" ou sem ativos costumam ser o outro lado desta lista — ex.: a filial "GUAPORÉ LIMP SMED…" e o contrato "GUAPORÉ LIMPEZA SMED…".
-      </p>
     </Card>
   );
 }
 
-// ---- Lista de colaboradores ---------------------------------------------------
-
-function DialogPessoas({ alvo, onClose }: {
-  alvo: { contratoId: string | null; filial: string | null; titulo: string } | null; onClose: () => void;
-}) {
-  const { data = [], isLoading } = usePessoasAtivas(alvo?.contratoId ?? null, alvo?.filial ?? null, !!alvo);
-  const [q, setQ] = useState("");
-  const vis = data.filter((p) => !q || [p.nome, p.cargo, p.posto_senior, p.cadastro].some((x) => (x ?? "").toLowerCase().includes(q.toLowerCase())));
+function DialogPessoasFilial({ filial, onClose }: { filial: string | null; onClose: () => void }) {
+  const { data = [], isLoading } = usePessoasAtivas(null, filial, !!filial);
   return (
-    <Dialog open={!!alvo} onOpenChange={(o) => { if (!o) { onClose(); setQ(""); } }}>
+    <Dialog open={!!filial} onOpenChange={(o) => { if (!o) onClose(); }}>
       <DialogContent className="max-w-3xl">
-        <DialogHeader><DialogTitle className="pr-6">Colaboradores ativos · {alvo?.titulo}</DialogTitle></DialogHeader>
-        <Input className="h-8 text-sm" placeholder="Buscar nome, cargo, posto ou matrícula…" value={q} onChange={(e) => setQ(e.target.value)} />
+        <DialogHeader><DialogTitle className="pr-6">Colaboradores ativos · {filial}</DialogTitle></DialogHeader>
         <div className="max-h-[60vh] overflow-auto rounded-md border border-border">
           {isLoading ? (
             <p className="flex items-center gap-2 p-4 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Carregando…</p>
@@ -623,21 +722,20 @@ function DialogPessoas({ alvo, onClose }: {
                 </tr>
               </thead>
               <tbody>
-                {vis.map((p) => (
+                {data.map((p) => (
                   <tr key={p.empregado_id} className="border-t border-border/60">
                     <td className="px-2 py-1 tabular-nums text-muted-foreground">{p.cadastro ?? "—"}</td>
                     <td className="px-2 py-1 font-medium">{p.nome}</td>
                     <td className="px-2 py-1">{p.cargo ?? "—"}</td>
                     <td className="px-2 py-1" title={p.posto_senior}>{limparPostoSenior(p.posto_senior)}</td>
-                    <td className={`px-2 py-1 ${p.situacao === "Trabalhando" ? "" : "text-warning"}`}>{p.situacao ?? "—"}</td>
+                    <td className="px-2 py-1">{p.situacao ?? "—"}</td>
                   </tr>
                 ))}
-                {vis.length === 0 && <tr><td colSpan={5} className="p-4 text-center text-muted-foreground">Ninguém.</td></tr>}
+                {data.length === 0 && <tr><td colSpan={5} className="p-4 text-center text-muted-foreground">Ninguém.</td></tr>}
               </tbody>
             </table>
           )}
         </div>
-        <p className="text-[11px] text-muted-foreground">{vis.length} de {data.length} colaborador(es)</p>
       </DialogContent>
     </Dialog>
   );
