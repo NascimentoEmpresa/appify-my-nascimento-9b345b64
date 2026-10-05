@@ -10,7 +10,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { Wallet, CalendarClock, AlertTriangle, TimerOff, X, Plus, ArrowLeftRight, FileInput, Pencil, Trash2, History, MoreHorizontal } from "lucide-react";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Wallet, CalendarClock, AlertTriangle, TimerOff, X, Plus, ArrowLeftRight, FileInput, Pencil, Trash2, History, MoreHorizontal, BellRing, Paperclip } from "lucide-react";
 import { toast } from "sonner";
 import { AcessoGate } from "@/components/auth/AcessoGate";
 import { KpiTile } from "@/components/financeiro/KpiTile";
@@ -21,6 +22,10 @@ import { urlLogoCartao } from "@/hooks/useMaloteCartaoCredito";
 import { DebitoAutomaticoLinha, TipoOrigemDebito, useDebitoAutomaticoLista, useExcluirDebito } from "@/hooks/useDebitoAutomatico";
 import { DebitoAutomaticoModal } from "./debito-automatico/DebitoAutomaticoModal";
 import { HistoricoDebitoDialog } from "./debito-automatico/HistoricoDebitoDialog";
+import { AVencerTab, vencimentoDe } from "./debito-automatico/AVencerTab";
+import { AnexosDebito } from "./debito-automatico/AnexosDebito";
+import { DIAS_AVISO_VENCIMENTO, diasParaVencer } from "./debito-automatico/parcelas";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 
 const MENU_CODIGO = "financeiro-debito-automatico";
 
@@ -30,7 +35,8 @@ const TIPO_ORIGEM_LABEL: Record<TipoOrigemDebito, string> = {
   nota_recebida: "Nota Recebida",
 };
 
-const hoje = () => new Date().toISOString().slice(0, 10);
+// Data local (sv-SE = yyyy-mm-dd) — toISOString() é UTC e virava o dia às 21h.
+const hoje = () => new Date().toLocaleDateString("sv-SE");
 
 // SIS-2026-0256: novo submódulo abaixo de Fluxo de Caixa — lança direto no
 // Fluxo de Caixa itens que NÃO passam pelo Malote (aluguel, transferência
@@ -48,6 +54,10 @@ export default function DebitoAutomatico() {
   const [parEditar, setParEditar] = useState<DebitoAutomaticoLinha | null>(null);
   const [registroHistorico, setRegistroHistorico] = useState<DebitoAutomaticoLinha | null>(null);
   const [registroExcluir, setRegistroExcluir] = useState<DebitoAutomaticoLinha | null>(null);
+  const [registroAnexos, setRegistroAnexos] = useState<DebitoAutomaticoLinha | null>(null);
+  // SIS-2026-0570: aba "A vencer" (débitos futuros/pendentes por vencimento).
+  const [aba, setAba] = useState<"lancamentos" | "a_vencer">("lancamentos");
+  const [filtroAVencer, setFiltroAVencer] = useState<"todos" | "vencidos" | "proximos" | "futuros">("todos");
 
   const [tipoOrigemFiltro, setTipoOrigemFiltro] = useState("");
   const [tipoFiltro, setTipoFiltro] = useState("");
@@ -96,8 +106,25 @@ export default function DebitoAutomatico() {
     const debitosHoje = pendentes.filter((l) => l.tipo === "saida" && l.data_pagamento === h).reduce((s, l) => s + Number(l.valor), 0);
     const debitosEmAberto = pendentes.filter((l) => l.tipo === "saida").reduce((s, l) => s + Number(l.valor), 0);
     const debitosVencidos = pendentes.filter((l) => l.tipo === "saida" && l.data_pagamento < h).reduce((s, l) => s + Number(l.valor), 0);
-    return { saldoAtual, debitosHoje, debitosEmAberto, debitosVencidos };
+    // Aviso de vencimento: pendentes (parcelas e avulsos) que vencem em até
+    // DIAS_AVISO_VENCIMENTO dias, mais os que já venceram.
+    const aVencer = pendentes.filter((l) => diasParaVencer(vencimentoDe(l), h) <= DIAS_AVISO_VENCIMENTO);
+    const proximos = pendentes.filter((l) => {
+      const d = diasParaVencer(vencimentoDe(l), h);
+      return d >= 0 && d <= DIAS_AVISO_VENCIMENTO;
+    });
+    const vencidosQtd = aVencer.length - proximos.length;
+    const proximosSaida = proximos.filter((l) => l.tipo === "saida").reduce((s, l) => s + Number(l.valor), 0);
+    return {
+      saldoAtual, debitosHoje, debitosEmAberto, debitosVencidos,
+      proximosQtd: proximos.length, proximosSaida, vencidosQtd,
+    };
   }, [linhas]);
+
+  function abrirAVencer(filtro: "todos" | "vencidos" | "proximos" | "futuros") {
+    setFiltroAVencer(filtro);
+    setAba("a_vencer");
+  }
 
   // SIS-2026-0413: o botão Editar do Fluxo de Caixa traz o usuário pra cá
   // com ?editar=<id> — assim que a lista carrega, abre direto no modal de
@@ -155,13 +182,49 @@ export default function DebitoAutomatico() {
           }
         />
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        {(kpis.proximosQtd > 0 || kpis.vencidosQtd > 0) && (
+          <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
+            <span className="flex items-center gap-2">
+              <BellRing className="h-4 w-4 shrink-0" />
+              {kpis.vencidosQtd > 0 && <strong>{kpis.vencidosQtd} vencido{kpis.vencidosQtd === 1 ? "" : "s"}.</strong>}
+              {kpis.proximosQtd > 0 && (
+                <span>
+                  {kpis.proximosQtd} vencimento{kpis.proximosQtd === 1 ? "" : "s"} nos próximos {DIAS_AVISO_VENCIMENTO} dias
+                  {kpis.proximosSaida > 0 && <> — saídas de {formatBRL(kpis.proximosSaida)}</>}.
+                </span>
+              )}
+            </span>
+            <Button size="sm" variant="outline" className="h-7 border-amber-400 text-xs" onClick={() => abrirAVencer(kpis.vencidosQtd > 0 ? "todos" : "proximos")}>
+              Ver na aba A vencer
+            </Button>
+          </div>
+        )}
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
           <KpiTile label="Saldo Atual (Débitos)" valor={formatBRL(kpis.saldoAtual)} icon={<Wallet />} cor="slate" />
           <KpiTile label="Débitos Hoje" valor={formatBRL(kpis.debitosHoje)} icon={<CalendarClock />} cor="sky" />
           <KpiTile label="Débitos em Aberto" valor={formatBRL(kpis.debitosEmAberto)} icon={<AlertTriangle />} cor="amber" valorClass="text-amber-600 dark:text-amber-400" />
           <KpiTile label="Débitos Vencidos" valor={formatBRL(kpis.debitosVencidos)} icon={<TimerOff />} cor="red" valorClass="text-red-600 dark:text-red-400" />
+          <KpiTile
+            label={`Vencendo em ${DIAS_AVISO_VENCIMENTO} dias`}
+            valor={formatBRL(kpis.proximosSaida)}
+            icon={<BellRing />}
+            cor="amber"
+            onClick={() => abrirAVencer("proximos")}
+          />
         </div>
 
+        <Tabs value={aba} onValueChange={(v) => setAba(v as "lancamentos" | "a_vencer")} className="space-y-4">
+          <TabsList>
+            <TabsTrigger value="lancamentos">Lançamentos</TabsTrigger>
+            <TabsTrigger value="a_vencer">A vencer</TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="a_vencer" className="mt-0">
+            <AVencerTab key={filtroAVencer} linhas={linhas} hoje={hoje()} filtroInicial={filtroAVencer} onEditar={abrirEdicao} />
+          </TabsContent>
+
+          <TabsContent value="lancamentos" className="mt-0 space-y-6">
         <Card>
           <CardContent className="p-4 space-y-3">
             <div className="flex items-center justify-between">
@@ -309,6 +372,9 @@ export default function DebitoAutomatico() {
                             <DropdownMenuItem onClick={() => setRegistroHistorico(l)}>
                               <History className="mr-2 h-3.5 w-3.5" /> Histórico
                             </DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => setRegistroAnexos(l)}>
+                              <Paperclip className="mr-2 h-3.5 w-3.5" /> Anexos
+                            </DropdownMenuItem>
                             <AcessoGate menu={MENU_CODIGO} acao="alterar">
                               <DropdownMenuItem onClick={() => abrirEdicao(l)}>
                                 <Pencil className="mr-2 h-3.5 w-3.5" /> Editar
@@ -335,7 +401,24 @@ export default function DebitoAutomatico() {
             )}
           </CardContent>
         </Card>
+          </TabsContent>
+        </Tabs>
       </div>
+
+      <Dialog open={!!registroAnexos} onOpenChange={(o) => !o && setRegistroAnexos(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Anexos — {registroAnexos?.numero}</DialogTitle>
+            <DialogDescription>{registroAnexos?.descricao}</DialogDescription>
+          </DialogHeader>
+          {registroAnexos && (
+            <div className="space-y-4">
+              <AnexosDebito debitoId={registroAnexos.id} tipo="lancamento" titulo="Nota / boleto" />
+              <AnexosDebito debitoId={registroAnexos.id} tipo="comprovante" titulo="Comprovante de pagamento" />
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
 
       {modalTipo && (
         <DebitoAutomaticoModal
