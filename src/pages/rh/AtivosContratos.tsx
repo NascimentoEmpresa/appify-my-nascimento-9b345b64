@@ -41,7 +41,7 @@ import {
 import {
   conferirContrato, limparPostoSenior, fmtSaldo, sugerirContrato,
   type ContratoAtivos, type ConferenciaContrato, type ConferenciaPosto, type PessoaContrato,
-  type PendenteSenior, type Situacao,
+  type PendenteSenior, type Situacao, type PainelAtivos,
 } from "./conferenciaAtivos";
 
 type Filtro = "todos" | "falta" | "excesso" | "ok" | "sem_posto" | "sem_planilha";
@@ -269,7 +269,7 @@ export default function AtivosContratos() {
           {data.filiais_sem_contrato.length > 0 && (
             <FiliaisSemContrato
               filiais={data.filiais_sem_contrato}
-              contratos={data.contratos}
+              contratos={data.todos_contratos}
               podeVincular={podeVincular}
               onVerPessoas={(f) => setPessoasDe({ filial: f })}
             />
@@ -649,12 +649,12 @@ function ListaPessoas({ pessoas }: { pessoas: PessoaContrato[] }) {
 // ---- Filiais sem contrato ------------------------------------------------------
 
 function FiliaisSemContrato({ filiais, contratos, podeVincular, onVerPessoas }: {
-  filiais: { filial: string; qtd: number }[]; contratos: ContratoAtivos[]; podeVincular: boolean;
+  filiais: { filial: string; qtd: number }[]; contratos: PainelAtivos["todos_contratos"]; podeVincular: boolean;
   onVerPessoas: (f: string) => void;
 }) {
   const vincular = useVincularFilial();
   const [escolha, setEscolha] = useState<Record<string, string>>({});
-  const opcoes = useMemo(() => [...contratos].filter((c) => !c.encerrado).sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR")), [contratos]);
+  const opcoes = useMemo(() => [...contratos].sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR")), [contratos]);
   const sugestao = useMemo(() => {
     const m: Record<string, string> = {};
     filiais.forEach((f) => { const s = sugerirContrato(f.filial, opcoes); if (s) m[f.filial] = s.id; });

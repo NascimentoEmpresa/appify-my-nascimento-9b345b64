@@ -157,7 +157,7 @@ describe("sugerirContrato", () => {
     expect(sugerirContrato("1107 - UFRGS - INTERPRETE DE LIBRAS - 009.2026", cts)?.id).toBe("lb");
   });
   it("não sugere quando não há contrato parecido", () => {
-    expect(sugerirContrato("1093 - ADM E ESTAGIARIOS - NH", cts)).toBeNull();
+    expect(sugerirContrato("1036 - PM DE CHARQUEADAS", cts)).toBeNull();
   });
 });
 
@@ -191,5 +191,17 @@ describe("sugerirPostos — jornada, cidade e chefia (casos reais de 05/10/2026)
     const unico = conferirContrato({ id: "c", nome: "C", cliente: null, encerrado: false,
       postos: [pl("CONTÍNUO 44H", 30)], pessoas: [pes("MENSAGEIRO-44H-6X1")] });
     expect(unico.pendentes[0].sugestao).toBe("CONTÍNUO 44H");
+  });
+});
+
+describe("sugerirContrato — filiais administrativas", () => {
+  const cts = [
+    { id: "nh", nome: "ADMINISTRATIVO - NH" }, { id: "sn", nome: "ADMINISTRATIVO - SN" },
+    { id: "hagg", nome: "ADMINISTRATIVO - HAGG" }, { id: "irga", nome: "IRGA APOIO ADMINISTRATIVO - 049/2026" },
+  ];
+  it("ADM = ADMINISTRATIVO, e a empresa no fim decide", () => {
+    expect(sugerirContrato("1093 - ADM E ESTAGIARIOS - NH", cts)?.id).toBe("nh");
+    expect(sugerirContrato("1054 - ADM E ESTAGIARIOS - SN", cts)?.id).toBe("sn");
+    expect(sugerirContrato("1053 - ADM E ESTAGIARIOS - HAGG", cts)?.id).toBe("hagg");
   });
 });

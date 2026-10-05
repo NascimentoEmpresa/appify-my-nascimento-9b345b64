@@ -38,6 +38,7 @@ export function usePainelAtivosContratos() {
         total_ativos: data?.total_ativos ?? 0,
         com_contrato: data?.com_contrato ?? 0,
         contratos: data?.contratos ?? [],
+        todos_contratos: data?.todos_contratos ?? [],
         filiais_sem_contrato: data?.filiais_sem_contrato ?? [],
       };
     },

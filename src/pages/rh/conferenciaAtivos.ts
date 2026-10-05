@@ -56,6 +56,9 @@ export interface PainelAtivos {
   total_ativos: number;
   com_contrato: number;
   contratos: ContratoAtivos[];
+  /** Todo contrato não encerrado, para ligar filial — inclusive os que ainda
+   *  não têm planilha nem gente (ex.: "ADMINISTRATIVO - NH"). */
+  todos_contratos: { id: string; nome: string; cliente: string | null }[];
   filiais_sem_contrato: { filial: string; qtd: number }[];
 }
 
@@ -72,7 +75,7 @@ export function limparPostoSenior(nome: string): string {
 
 const SINONIMOS: Record<string, string> = {
   NOT: "NOTURNO", NOTURNA: "NOTURNO", DIU: "DIURNO", DIUR: "DIURNO", DIA: "DIURNO", DIURNA: "DIURNO",
-  AUX: "AUXILIAR", SERV: "SERVICOS", SERVICO: "SERVICOS",
+  AUX: "AUXILIAR", ADM: "ADMINISTRATIVO", SERV: "SERVICOS", SERVICO: "SERVICOS",
   SUP: "SUPERVISOR", SUPER: "SUPERVISOR", SUPERVISAO: "SUPERVISOR",
   RECEP: "RECEPCIONISTA", RECEPCAO: "RECEPCIONISTA",
   MNT: "MANUTENCAO", LIMP: "LIMPEZA", PORTEIRO: "PORTARIA",
