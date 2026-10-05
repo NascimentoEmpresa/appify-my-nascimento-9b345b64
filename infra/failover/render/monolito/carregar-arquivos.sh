@@ -91,9 +91,33 @@ if ! echo "$GPG_PRIVATE_KEY_B64" | base64 -d | gpg --batch --quiet --import 2>/d
   exit 0
 fi
 
+# --- 0. espaco, antes de comecar -------------------------------------------
+# O artefato completo tem 5,1 GB; somados ao .tar.gpg extraido, o pico de uso
+# passa de 10 GB. Comecar sem espaco significa falhar no meio, depois de
+# baixar tudo - e foi assim que a tentativa de 05/10/2026 se perdeu.
+livre_kb=$(df -Pk "$TMP" | awk 'NR==2{print $4}')
+if (( livre_kb < 11 * 1024 * 1024 )); then
+  log "ATENCAO: so $(( livre_kb / 1024 / 1024 )) GB livres; o pico da carga passa de 10 GB."
+  log "         seguindo mesmo assim - os incrementais pequenos devem caber."
+fi
+
+# --- 0b. restos do layout antigo -------------------------------------------
+# Ate 05/10/2026 os arquivos iam para <raiz>/<balde>/... Com o tenant no
+# caminho, aqueles viraram lixo que o Storage nunca le e que ocupa disco
+# justamente quando ele e apertado. Remove so o que for balde conhecido, nunca
+# o diretorio do tenant.
+if [[ -d "$RAIZ" ]]; then
+  for antigo in "$RAIZ"/*; do
+    [[ -d "$antigo" ]] || continue
+    [[ "$(basename "$antigo")" == "${TENANT_ID:-stub}" ]] && continue
+    log "removendo resto do layout antigo: $(basename "$antigo")"
+    rm -rf "$antigo"
+  done
+fi
+
 # --- 1. quantos arquivos ja estao aqui? -------------------------------------
 antes=$(find "$DESTINO" -type f 2>/dev/null | wc -l)
-log "no disco agora: $antes arquivo(s)"
+log "no disco agora: $antes arquivo(s)   livre: $(df -h "$TMP" | awk 'NR==2{print $4}')"
 
 # --- 2. achar os artefatos de arquivos --------------------------------------
 # Pega TODOS os nao expirados, do mais antigo para o mais novo: o primeiro e a
@@ -122,15 +146,26 @@ while IFS='|' read -r id nome tamanho; do
     continue
   fi
   rm -rf "$TMP/x"; mkdir -p "$TMP/x"
-  # O artefato completo tem ~4,8 GB, e acima de 4 GB o zip usa ZIP64 - que o
-  # unzip classico (Info-ZIP) nao abre, devolvendo "zip ilegivel" sem explicar.
-  # Foi o que aconteceu em 05/10/2026 com o artefato de 4827 MB. O zipfile do
-  # Python lida com ZIP64 e ja esta no container (o supervisor e Python).
-  if ! unzip -qo "$TMP/a.zip" -d "$TMP/x" 2>/dev/null; then
-    log "    unzip falhou (provavel ZIP64 >4GB) - tentando com python3"
-    python3 -m zipfile -e "$TMP/a.zip" "$TMP/x" 2>/dev/null \
-      || { log "    zip ilegivel mesmo com python3"; continue; }
+
+  # O ERRO DO unzip APARECE NO LOG, e isso nao e detalhe. Em 05/10/2026 este
+  # passo rodava com 2>/dev/null e um "No space left on device" virava
+  # "zip ilegivel" - a mesma armadilha que ja tinha me custado tres tentativas
+  # no bloco das RPC. Quando o unzip falha, a mensagem dele e o diagnostico.
+  if ! unzip -qo "$TMP/a.zip" -d "$TMP/x" 2>"$TMP/unzip.err"; then
+    log "    unzip falhou: $(tail -2 "$TMP/unzip.err" | tr '\n' ' ')"
+    log "    tentando com python3 (ZIP64 >4GB o unzip classico nao abre)"
+    if ! python3 -m zipfile -e "$TMP/a.zip" "$TMP/x" 2>"$TMP/py.err"; then
+      log "    python3 tambem falhou: $(tail -2 "$TMP/py.err" | tr '\n' ' ')"
+      log "    livre no disco: $(df -h "$TMP" | awk 'NR==2{print $4}')"
+      continue
+    fi
   fi
+
+  # O ZIP SAI DE CENA ASSIM QUE O CONTEUDO ESTA FORA. Sao 5,1 GB que nao fazem
+  # falta nenhuma a partir daqui, e o decifrar+extrair a seguir precisa de
+  # outros ~4,8 GB. Sem isto, o disco de 20 GB nao comporta as tres copias
+  # simultaneas (zip + tar.gpg + arquivos finais).
+  rm -f "$TMP/a.zip"
 
   cifrado=$(find "$TMP/x" -name '*.tar.gpg' | head -1)
   [[ -z "$cifrado" ]] && { log "    sem .tar.gpg dentro"; continue; }
@@ -138,12 +173,19 @@ while IFS='|' read -r id nome tamanho; do
   # A chave privada e a mesma do backup do banco; a passphrase vem por
   # --pinentry-mode loopback, senao o gpg tenta abrir um prompt que nao existe
   # num processo em segundo plano e falha calado.
+  # Mesma regra do unzip: o erro vai para o log. "nao consegui decifrar" sem a
+  # mensagem do gpg nao diz se foi chave errada, senha errada ou disco cheio.
   if ! gpg --batch --yes --quiet --pinentry-mode loopback \
-       --passphrase "$GPG_PASSPHRASE" --decrypt "$cifrado" 2>/dev/null \
-       | tar -xf - -C "$TMP/x" 2>/dev/null; then
-    log "    nao consegui decifrar/extrair"
+       --passphrase "$GPG_PASSPHRASE" --decrypt "$cifrado" 2>"$TMP/gpg.err" \
+       | tar -xf - -C "$TMP/x" 2>"$TMP/tar.err"; then
+    log "    decifrar/extrair falhou"
+    [[ -s "$TMP/gpg.err" ]] && log "      gpg: $(tail -2 "$TMP/gpg.err" | tr '\n' ' ')"
+    [[ -s "$TMP/tar.err" ]] && log "      tar: $(tail -2 "$TMP/tar.err" | tr '\n' ' ')"
+    log "      livre no disco: $(df -h "$TMP" | awk 'NR==2{print $4}')"
     continue
   fi
+  # O .tar.gpg tambem some assim que foi extraido - sao outros 4,8 GB.
+  rm -f "$cifrado"
 
   origem="$TMP/x/arquivos"
   [[ -d "$origem" ]] || { log "    sem a pasta arquivos/"; continue; }
