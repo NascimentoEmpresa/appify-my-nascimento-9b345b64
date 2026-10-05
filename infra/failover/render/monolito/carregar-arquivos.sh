@@ -30,7 +30,17 @@
 # ============================================================================
 set -uo pipefail
 
-DESTINO="${FILE_STORAGE_BACKEND_PATH:-/var/lib/postgresql/data/storage}"
+# O TENANT ENTRA NO CAMINHO, e foi isto que fez o Storage nao achar os arquivos.
+# O storage-api guarda em <raiz>/<tenant>/<balde>/<objeto>, nao em
+# <raiz>/<balde>/<objeto>. Extraindo sem o tenant, os 254 arquivos ficaram no
+# disco e o Storage devolvia HTTP 400 - conferido em 05/10/2026, com TENANT_ID
+# valendo "stub" no ambiente do servico.
+#
+# A validacao no fim deste script existe exatamente para isto: ela pergunta ao
+# Storage se ele consegue servir um objeto real e avisa quando o layout nao
+# bate, em vez de deixar passar como se tivesse dado certo.
+RAIZ="${FILE_STORAGE_BACKEND_PATH:-/var/lib/postgresql/data/storage}"
+DESTINO="$RAIZ/${TENANT_ID:-stub}"
 REPO="${GITHUB_REPO:-NascimentoEmpresa/appify-my-nascimento-9b345b64}"
 # O TRABALHO NAO PODE ACONTECER EM /tmp, e isso derrubou a replica duas vezes.
 # O /tmp da Render e um volume temporario com LIMITE DE 2 GB, e o backup de
@@ -112,7 +122,15 @@ while IFS='|' read -r id nome tamanho; do
     continue
   fi
   rm -rf "$TMP/x"; mkdir -p "$TMP/x"
-  unzip -qo "$TMP/a.zip" -d "$TMP/x" 2>/dev/null || { log "    zip ilegivel"; continue; }
+  # O artefato completo tem ~4,8 GB, e acima de 4 GB o zip usa ZIP64 - que o
+  # unzip classico (Info-ZIP) nao abre, devolvendo "zip ilegivel" sem explicar.
+  # Foi o que aconteceu em 05/10/2026 com o artefato de 4827 MB. O zipfile do
+  # Python lida com ZIP64 e ja esta no container (o supervisor e Python).
+  if ! unzip -qo "$TMP/a.zip" -d "$TMP/x" 2>/dev/null; then
+    log "    unzip falhou (provavel ZIP64 >4GB) - tentando com python3"
+    python3 -m zipfile -e "$TMP/a.zip" "$TMP/x" 2>/dev/null \
+      || { log "    zip ilegivel mesmo com python3"; continue; }
+  fi
 
   cifrado=$(find "$TMP/x" -name '*.tar.gpg' | head -1)
   [[ -z "$cifrado" ]] && { log "    sem .tar.gpg dentro"; continue; }
@@ -140,7 +158,10 @@ done <<< "$lista"
 
 # --- 4. o dono precisa ser o do Storage -------------------------------------
 # Extraido como root, o storage-api (que roda como outro usuario) nao leria.
-chown -R 1000:1000 "$DESTINO" 2>/dev/null || true
+# A RAIZ inteira, nao so o diretorio do tenant: o storage-api precisa atravessar
+# <raiz> para chegar em <raiz>/<tenant>/..., e sem permissao na raiz ele para
+# antes de entrar.
+chown -R 1000:1000 "$RAIZ" 2>/dev/null || true
 
 depois=$(find "$DESTINO" -type f 2>/dev/null | wc -l)
 log "no disco agora: $depois arquivo(s)  (+$(( depois - antes )))"
