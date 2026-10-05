@@ -177,6 +177,76 @@ fi
 log "$(echo "$lista" | wc -l) artefato(s) a processar"
 
 # --- 3. baixar, decifrar e extrair ------------------------------------------
+# O descompactador de stream vive AQUI DENTRO, escrito em disco a cada
+# execucao, e nao como arquivo proprio copiado pelo Dockerfile. De proposito:
+# assim o script e autossuficiente e pode ser testado puxando SO ele do branch
+# para dentro do container, antes de qualquer merge. Foi como esta carga passou
+# a ser validada.
+cat > "$TMP/desunzip.py" <<'PYZIP'
+#!/usr/bin/env python3
+# Extrai o PRIMEIRO membro de um zip lido da entrada padrao para a saida
+# padrao. Substitui o funzip, que nao trata ZIP64 e por isso falhava no
+# artefato completo de 4,8 GB.
+import sys, struct, zlib
+
+ent = sys.stdin.buffer
+sai = sys.stdout.buffer
+BLOCO = 1 << 20
+
+assinatura = ent.read(4)
+if assinatura != b'PK\x03\x04':
+    sys.stderr.write('nao parece um zip (assinatura %r)\n' % assinatura)
+    sys.exit(3)
+
+cabecalho = ent.read(26)
+if len(cabecalho) < 26:
+    sys.stderr.write('cabecalho do zip truncado\n')
+    sys.exit(3)
+
+(_versao, bandeiras, metodo, _hora, _data,
+ _crc, _tam_comprimido, tam_original,
+ tam_nome, tam_extra) = struct.unpack('<HHHHHIIIHH', cabecalho)
+
+ent.read(tam_nome)
+ent.read(tam_extra)
+
+# Bandeira 0x08: os tamanhos reais vem DEPOIS dos dados, num descritor. Para
+# deflate isso nao importa (zlib detecta o fim do stream), mas para "armazenado"
+# ficaria impossivel saber onde os dados terminam.
+tamanhos_desconhecidos = bool(bandeiras & 0x08)
+
+try:
+    if metodo == 0:
+        if tamanhos_desconhecidos or tam_original == 0:
+            sys.stderr.write('membro armazenado sem tamanho conhecido\n')
+            sys.exit(3)
+        restante = tam_original
+        while restante > 0:
+            pedaco = ent.read(min(BLOCO, restante))
+            if not pedaco:
+                sys.stderr.write('stream terminou antes do fim do membro\n')
+                sys.exit(3)
+            sai.write(pedaco)
+            restante -= len(pedaco)
+    elif metodo == 8:
+        inflador = zlib.decompressobj(-15)
+        while True:
+            pedaco = ent.read(BLOCO)
+            if not pedaco:
+                break
+            sai.write(inflador.decompress(pedaco))
+            if inflador.eof:
+                break
+        sai.write(inflador.flush())
+    else:
+        sys.stderr.write('metodo de compressao %d nao suportado\n' % metodo)
+        sys.exit(3)
+    sai.flush()
+except BrokenPipeError:
+    # gpg ou tar fecharam antes. Quem reporta o erro de verdade e eles.
+    sys.exit(0)
+PYZIP
+
 extraidos=0
 while IFS='|' read -r id nome tamanho; do
   [[ -z "$id" ]] && continue
@@ -197,18 +267,28 @@ while IFS='|' read -r id nome tamanho; do
   # Transmitindo em cadeia, nada disso toca o disco: so os arquivos finais
   # (~4,8 GB) sao gravados, e cabem com folga.
   #
-  #   curl  ->  funzip  ->  gpg  ->  tar
+  #   curl  ->  desunzip.py  ->  gpg  ->  tar
   #
-  # funzip extrai o PRIMEIRO membro de um zip lido da entrada padrao, que e
-  # exatamente o caso aqui: o artefato do GitHub contem um unico arquivo,
-  # storage-arquivos.tar.gpg.
+  # POR QUE NAO funzip
+  # Porque ele NAO abre o artefato completo. Medido em 05/10/2026, com 3 GB
+  # livres (ou seja, nao era disco):
+  #     funzip: funzip error: invalid compressed data--len
+  # funzip nao trata ZIP64, e um artefato de 4,8 GB obriga ZIP64. O efeito era
+  # grave e silencioso: os incrementais (pequenos) passavam, o completo falhava,
+  # e como a replica JA tinha os arquivos no disco ninguem notava. Numa replica
+  # VAZIA - exatamente o caso de desastre - nao teria entrado nada.
+  #
+  # desunzip.py faz o mesmo papel sem a limitacao: le o cabecalho local do
+  # primeiro membro e infla com zlib, em blocos, sem nunca precisar buscar no
+  # stream (o que descarta zipfile, que exige arquivo buscavel). bsdtar e 7z
+  # nao existem nesta imagem; python3 existe.
   #
   # --strip-components=1 remove o prefixo "arquivos/" com que o backup foi
   # criado, para os objetos caírem direto em <destino>/<balde>/...
-  : > "$TMP/curl.err"; : > "$TMP/funzip.err"; : > "$TMP/gpg.err"; : > "$TMP/tar.err"
+  : > "$TMP/curl.err"; : > "$TMP/desunzip.err"; : > "$TMP/gpg.err"; : > "$TMP/tar.err"
   if curl -sS -L -m 3600 -H "Authorization: Bearer $GITHUB_TOKEN" \
        "https://api.github.com/repos/$REPO/actions/artifacts/$id/zip" 2>"$TMP/curl.err" \
-     | funzip 2>"$TMP/funzip.err" \
+     | python3 "$TMP/desunzip.py" 2>"$TMP/desunzip.err" \
      | gpg --batch --quiet --pinentry-mode loopback \
            --passphrase "$GPG_PASSPHRASE" --decrypt 2>"$TMP/gpg.err" \
      | tar -xf - -C "$DESTINO" --strip-components=1 2>"$TMP/tar.err"
@@ -221,7 +301,7 @@ while IFS='|' read -r id nome tamanho; do
     # Cada etapa reporta o proprio erro. Sem isto, "falhou" nao diz se foi
     # rede, zip, chave, senha ou disco - e foi o que me custou tres rodadas.
     log "    falhou nesta cadeia:"
-    for etapa in curl funzip gpg tar; do
+    for etapa in curl desunzip gpg tar; do
       [[ -s "$TMP/$etapa.err" ]] && log "      $etapa: $(tail -2 "$TMP/$etapa.err" | tr '\n' ' ')"
     done
     log "      livre no disco: $(df -h "$DESTINO" | awk 'NR==2{print $4}')"
