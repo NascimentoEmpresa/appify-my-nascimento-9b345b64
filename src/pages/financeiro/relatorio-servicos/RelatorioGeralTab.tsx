@@ -251,7 +251,8 @@ export default function RelatorioGeralTab() {
         <KpiTile label="Valor Pendente de Recebimento" valor={fmtMoney(kpis.pendente)} icon={<AlertTriangle />} cor="red" valorClass="text-red-600 dark:text-red-400" />
       </div>
 
-      <div className="card-elevated p-3 flex items-center gap-x-2 gap-y-3 flex-wrap text-xs">
+      <div className="card-elevated p-4 space-y-3 text-xs">
+      <div className="flex items-center gap-x-4 gap-y-3 flex-wrap">
         <label className="flex items-center gap-1.5">
           <span className="text-muted-foreground">Empresa:</span>
           <Select value={filtroEmpresa || "__todas"} onValueChange={(v) => setFiltroEmpresa(v === "__todas" ? "" : v)}>
@@ -308,6 +309,8 @@ export default function RelatorioGeralTab() {
         </label>
         <span className="text-muted-foreground">até</span>
         <Input type="date" value={filtroEmissaoAte} onChange={(e) => setFiltroEmissaoAte(e.target.value)} className="h-8 w-36 text-xs" />
+      </div>
+      <div className="flex items-center gap-x-3 gap-y-3 flex-wrap">
         <button
           onClick={() => setFiltroOver30((v) => !v)}
           className={cn(
@@ -320,16 +323,6 @@ export default function RelatorioGeralTab() {
         <button onClick={limparFiltros} className="h-8 px-2.5 rounded-md border border-border bg-background text-muted-foreground hover:text-destructive hover:border-destructive/50 transition-colors">
           Limpar filtros
         </button>
-        <div className="relative w-56">
-          <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-          <input
-            value={busca}
-            onChange={(e) => setBusca(e.target.value)}
-            placeholder="Buscar em todos os campos…"
-            className="h-8 w-full rounded-md border border-border bg-background pl-8 pr-3 text-xs outline-none focus:border-primary"
-          />
-        </div>
-        <span className="text-muted-foreground ml-auto">{linhas.length.toLocaleString("pt-BR")} de {nfs.length.toLocaleString("pt-BR")} registros</span>
         {podeExcluir && (
           <Button size="sm" variant={verLixeira ? "default" : "outline"} className="h-8 text-xs" onClick={alternarLixeira}>
             <Trash2 className="h-3.5 w-3.5 mr-1.5" /> {verLixeira ? "Voltar ao relatório" : `Lixeira (${nfsLixeira.length.toLocaleString("pt-BR")})`}
@@ -353,6 +346,17 @@ export default function RelatorioGeralTab() {
         <Button size="sm" variant="outline" className="h-8 text-xs" onClick={exportarExcel}>
           <FileDown className="h-3.5 w-3.5 mr-1.5" /> Exportar Excel
         </Button>
+        <div className="relative min-w-[220px] flex-1 max-w-sm">
+          <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+          <input
+            value={busca}
+            onChange={(e) => setBusca(e.target.value)}
+            placeholder="Buscar em todos os campos…"
+            className="h-8 w-full rounded-md border border-border bg-background pl-8 pr-3 text-xs outline-none focus:border-primary"
+          />
+        </div>
+        <span className="text-muted-foreground ml-auto whitespace-nowrap">{linhas.length.toLocaleString("pt-BR")} de {nfs.length.toLocaleString("pt-BR")} registros</span>
+      </div>
       </div>
 
       {verLixeira && (
