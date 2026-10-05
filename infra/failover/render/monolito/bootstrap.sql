@@ -53,6 +53,27 @@ alter role supabase_admin         with login password :'senha';
 -- authenticator entra no banco e assume anon ou authenticated.
 grant anon, authenticated, service_role to authenticator;
 
+-- O STORAGE PRECISA DO MESMO, e a falta disto quebrou TUDO que e anexo.
+--
+-- O storage-api entra como supabase_storage_admin e assume o papel do token
+-- (service_role nas chamadas administrativas, anon/authenticated nas do app),
+-- igual ao PostgREST. Sem a concessao, o SET ROLE falha, ele fica num papel
+-- sem bypassrls e a RLS barra TODAS as operacoes - download, listagem, balde
+-- publico e privado - sempre com a mesma mensagem enganosa:
+--
+--     {"statusCode":"403","message":"new row violates row-level security policy"}
+--
+-- "new row" num GET nao faz sentido nenhum, e foi o que me fez perseguir
+-- caminho em disco, tenant, versao e chave JWT por varias rodadas. Conferido
+-- em 05/10/2026:
+--
+--     authenticator          -> anon, authenticated, service_role
+--     supabase_storage_admin -> (nenhum)          <- a diferenca
+--
+-- supabase_auth_admin entra junto: o GoTrue faz o mesmo movimento.
+grant anon, authenticated, service_role to supabase_storage_admin;
+grant anon, authenticated, service_role to supabase_auth_admin;
+
 -- --- schemas dos servicos ---------------------------------------------------
 -- GoTrue e Storage rodam migration propria no boot e precisam mandar no proprio
 -- schema. Sem o authorization, eles sobem e falham ao criar as tabelas deles.
