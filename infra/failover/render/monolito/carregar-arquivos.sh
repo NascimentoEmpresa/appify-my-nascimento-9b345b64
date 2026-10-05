@@ -92,12 +92,12 @@ if ! echo "$GPG_PRIVATE_KEY_B64" | base64 -d | gpg --batch --quiet --import 2>/d
 fi
 
 # --- 0. espaco, antes de comecar -------------------------------------------
-# O artefato completo tem 5,1 GB; somados ao .tar.gpg extraido, o pico de uso
-# passa de 10 GB. Comecar sem espaco significa falhar no meio, depois de
-# baixar tudo - e foi assim que a tentativa de 05/10/2026 se perdeu.
-livre_kb=$(df -Pk "$TMP" | awk 'NR==2{print $4}')
-if (( livre_kb < 11 * 1024 * 1024 )); then
-  log "ATENCAO: so $(( livre_kb / 1024 / 1024 )) GB livres; o pico da carga passa de 10 GB."
+# Com a cadeia (curl|funzip|gpg|tar) o unico consumo e o dos arquivos FINAIS,
+# ~4,8 GB - nenhum intermediario toca o disco. O aviso usa 6 GB para dar
+# alguma folga; antes disso, a carga nao vale a pena comecar.
+livre_kb=$(df -Pk "$DESTINO" | awk 'NR==2{print $4}')
+if (( livre_kb < 6 * 1024 * 1024 )); then
+  log "ATENCAO: so $(( livre_kb / 1024 / 1024 )) GB livres, e os anexos somam ~4,8 GB."
   log "         seguindo mesmo assim - os incrementais pequenos devem caber."
 fi
 
@@ -140,62 +140,52 @@ extraidos=0
 while IFS='|' read -r id nome tamanho; do
   [[ -z "$id" ]] && continue
   log "  $nome ($(( tamanho / 1048576 )) MB)"
-  if ! curl -sS -L -m 1800 -H "Authorization: Bearer $GITHUB_TOKEN" \
-       "https://api.github.com/repos/$REPO/actions/artifacts/$id/zip" -o "$TMP/a.zip"; then
-    log "    falhou o download - seguindo para o proximo"
+  antes_deste=$(find "$DESTINO" -type f 2>/dev/null | wc -l)
+
+  # TUDO EM CADEIA, SEM ARQUIVO INTERMEDIARIO
+  #
+  # A versao anterior baixava o zip (5,1 GB), extraia o .tar.gpg (4,8 GB) e so
+  # entao decifrava - precisando de ~15 GB de espaco temporario. Em 05/10/2026
+  # isso estourou o disco de 20 GB, com a mensagem
+  #     unzip: write error (disk full?)
+  #     python3: [Errno 28] No space left on device
+  #     livre no disco: 48K
+  # porque o pgdata havia crescido para 12 GB (restores repetidos incham o
+  # banco) e sobravam apenas 8,2 GB.
+  #
+  # Transmitindo em cadeia, nada disso toca o disco: so os arquivos finais
+  # (~4,8 GB) sao gravados, e cabem com folga.
+  #
+  #   curl  ->  funzip  ->  gpg  ->  tar
+  #
+  # funzip extrai o PRIMEIRO membro de um zip lido da entrada padrao, que e
+  # exatamente o caso aqui: o artefato do GitHub contem um unico arquivo,
+  # storage-arquivos.tar.gpg.
+  #
+  # --strip-components=1 remove o prefixo "arquivos/" com que o backup foi
+  # criado, para os objetos caírem direto em <destino>/<balde>/...
+  : > "$TMP/curl.err"; : > "$TMP/funzip.err"; : > "$TMP/gpg.err"; : > "$TMP/tar.err"
+  if curl -sS -L -m 3600 -H "Authorization: Bearer $GITHUB_TOKEN" \
+       "https://api.github.com/repos/$REPO/actions/artifacts/$id/zip" 2>"$TMP/curl.err" \
+     | funzip 2>"$TMP/funzip.err" \
+     | gpg --batch --quiet --pinentry-mode loopback \
+           --passphrase "$GPG_PASSPHRASE" --decrypt 2>"$TMP/gpg.err" \
+     | tar -xf - -C "$DESTINO" --strip-components=1 2>"$TMP/tar.err"
+  then
+    depois_deste=$(find "$DESTINO" -type f 2>/dev/null | wc -l)
+    n=$(( depois_deste - antes_deste ))
+    extraidos=$(( extraidos + n ))
+    log "    $n arquivo(s) novo(s)   livre: $(df -h "$DESTINO" | awk 'NR==2{print $4}')"
+  else
+    # Cada etapa reporta o proprio erro. Sem isto, "falhou" nao diz se foi
+    # rede, zip, chave, senha ou disco - e foi o que me custou tres rodadas.
+    log "    falhou nesta cadeia:"
+    for etapa in curl funzip gpg tar; do
+      [[ -s "$TMP/$etapa.err" ]] && log "      $etapa: $(tail -2 "$TMP/$etapa.err" | tr '\n' ' ')"
+    done
+    log "      livre no disco: $(df -h "$DESTINO" | awk 'NR==2{print $4}')"
     continue
   fi
-  rm -rf "$TMP/x"; mkdir -p "$TMP/x"
-
-  # O ERRO DO unzip APARECE NO LOG, e isso nao e detalhe. Em 05/10/2026 este
-  # passo rodava com 2>/dev/null e um "No space left on device" virava
-  # "zip ilegivel" - a mesma armadilha que ja tinha me custado tres tentativas
-  # no bloco das RPC. Quando o unzip falha, a mensagem dele e o diagnostico.
-  if ! unzip -qo "$TMP/a.zip" -d "$TMP/x" 2>"$TMP/unzip.err"; then
-    log "    unzip falhou: $(tail -2 "$TMP/unzip.err" | tr '\n' ' ')"
-    log "    tentando com python3 (ZIP64 >4GB o unzip classico nao abre)"
-    if ! python3 -m zipfile -e "$TMP/a.zip" "$TMP/x" 2>"$TMP/py.err"; then
-      log "    python3 tambem falhou: $(tail -2 "$TMP/py.err" | tr '\n' ' ')"
-      log "    livre no disco: $(df -h "$TMP" | awk 'NR==2{print $4}')"
-      continue
-    fi
-  fi
-
-  # O ZIP SAI DE CENA ASSIM QUE O CONTEUDO ESTA FORA. Sao 5,1 GB que nao fazem
-  # falta nenhuma a partir daqui, e o decifrar+extrair a seguir precisa de
-  # outros ~4,8 GB. Sem isto, o disco de 20 GB nao comporta as tres copias
-  # simultaneas (zip + tar.gpg + arquivos finais).
-  rm -f "$TMP/a.zip"
-
-  cifrado=$(find "$TMP/x" -name '*.tar.gpg' | head -1)
-  [[ -z "$cifrado" ]] && { log "    sem .tar.gpg dentro"; continue; }
-
-  # A chave privada e a mesma do backup do banco; a passphrase vem por
-  # --pinentry-mode loopback, senao o gpg tenta abrir um prompt que nao existe
-  # num processo em segundo plano e falha calado.
-  # Mesma regra do unzip: o erro vai para o log. "nao consegui decifrar" sem a
-  # mensagem do gpg nao diz se foi chave errada, senha errada ou disco cheio.
-  if ! gpg --batch --yes --quiet --pinentry-mode loopback \
-       --passphrase "$GPG_PASSPHRASE" --decrypt "$cifrado" 2>"$TMP/gpg.err" \
-       | tar -xf - -C "$TMP/x" 2>"$TMP/tar.err"; then
-    log "    decifrar/extrair falhou"
-    [[ -s "$TMP/gpg.err" ]] && log "      gpg: $(tail -2 "$TMP/gpg.err" | tr '\n' ' ')"
-    [[ -s "$TMP/tar.err" ]] && log "      tar: $(tail -2 "$TMP/tar.err" | tr '\n' ' ')"
-    log "      livre no disco: $(df -h "$TMP" | awk 'NR==2{print $4}')"
-    continue
-  fi
-  # O .tar.gpg tambem some assim que foi extraido - sao outros 4,8 GB.
-  rm -f "$cifrado"
-
-  origem="$TMP/x/arquivos"
-  [[ -d "$origem" ]] || { log "    sem a pasta arquivos/"; continue; }
-  n=$(find "$origem" -type f | wc -l)
-  # -a preserva tudo; sem --update de proposito: o artefato mais novo DEVE
-  # sobrescrever, porque e a versao mais recente daquele arquivo.
-  cp -a "$origem/." "$DESTINO/" 2>/dev/null
-  extraidos=$(( extraidos + n ))
-  log "    $n arquivo(s) extraido(s)"
-  rm -rf "$TMP/a.zip" "$TMP/x"
 done <<< "$lista"
 
 # --- 4. o dono precisa ser o do Storage -------------------------------------
