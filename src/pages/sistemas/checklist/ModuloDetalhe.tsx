@@ -12,7 +12,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { usePermissoes } from "@/context/PermissoesContext";
-import { useChamadosModulo, useChecklistDados } from "@/hooks/useChecklistModulos";
+import { useCapacidadesChecklist, useChamadosModulo, useChecklistDados } from "@/hooks/useChecklistModulos";
 import { STATUS_CHAMADO } from "@/pages/chamados/types";
 import { cn } from "@/lib/utils";
 import {
@@ -56,8 +56,10 @@ export default function ModuloDetalhe() {
   const [params, setParams] = useSearchParams();
   const q = useChecklistDados();
   const { can } = usePermissoes();
+  // Triagem de bug e treinamentos seguem no "alterar" da tela; status e
+  // registrar bug têm permissão própria (mig 20261005000005).
   const podeAlterar = can("alterar", undefined, MENU_CHECKLIST);
-  const podeIncluir = can("incluir", undefined, MENU_CHECKLIST) || podeAlterar;
+  const { editarStatus: podeEditarStatus, adicionarBug: podeIncluir } = useCapacidadesChecklist();
   const podeExcluir = can("excluir", undefined, MENU_CHECKLIST);
   const podeExportar = can("exportar", undefined, MENU_CHECKLIST);
 
@@ -155,7 +157,7 @@ export default function ModuloDetalhe() {
           <>
             {podeIncluir && <Button variant="outline" size="sm" className="gap-1.5" onClick={() => bugTela(null)}><Bug className="h-4 w-4" /> Registrar bug</Button>}
             {podeExportar && <Button variant="outline" size="sm" className="gap-1.5" onClick={() => exportarChecklist([m], nomeUsuario, `efetividade-${m.modulo.codigo}`)}><FileSpreadsheet className="h-4 w-4" /> Exportar</Button>}
-            {podeAlterar && <Button size="sm" className="gap-1.5" onClick={editarModulo}><Pencil className="h-4 w-4" /> Editar status do módulo</Button>}
+            {podeEditarStatus && <Button size="sm" className="gap-1.5" onClick={editarModulo}><Pencil className="h-4 w-4" /> Editar status do módulo</Button>}
           </>
         }
       />
@@ -254,12 +256,12 @@ export default function ModuloDetalhe() {
                   </SelectContent>
                 </Select>
               </div>
-              {podeAlterar && m.preenchidas < m.ativas && (
+              {podeEditarStatus && m.preenchidas < m.ativas && (
                 <p className="border-b border-border bg-amber-50 px-4 py-2 text-xs text-amber-900 dark:bg-amber-950/30 dark:text-amber-100">
                   <b>{m.ativas - m.preenchidas}</b> submódulo{m.ativas - m.preenchidas === 1 ? "" : "s"} pendente{m.ativas - m.preenchidas === 1 ? "" : "s"} de preenchimento — clique na linha para preencher.
                 </p>
               )}
-              <TabelaTelas modulo={m} telas={telasFiltradas} nomeUsuario={nomeUsuario} podeAlterar={podeAlterar} podeIncluir={podeIncluir}
+              <TabelaTelas modulo={m} telas={telasFiltradas} nomeUsuario={nomeUsuario} podeAlterar={podeEditarStatus} podeIncluir={podeIncluir}
                 onEditar={editarTela} onBug={bugTela} />
             </Card>
             <div className="space-y-4">

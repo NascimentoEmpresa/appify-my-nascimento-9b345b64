@@ -16,7 +16,7 @@ import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { usePermissoes } from "@/context/PermissoesContext";
-import { useChecklistDados, useHistorico } from "@/hooks/useChecklistModulos";
+import { useCapacidadesChecklist, useChecklistDados, useHistorico } from "@/hooks/useChecklistModulos";
 import { cn } from "@/lib/utils";
 import {
   FILTROS_VAZIOS, OPCOES_DEV, OPCOES_TREINAMENTO, OPCOES_VALIDACAO, ROTULO_PENDENTE, checklistEm, filtrarModulos,
@@ -63,8 +63,10 @@ export default function ChecklistModulos() {
   // (a RPC do painel só traz as 40 últimas movimentações).
   const histCompleto = useHistorico(null, 5000);
   const { can } = usePermissoes();
+  // Triagem de bug e treinamentos seguem no "alterar" da tela; status e
+  // registrar bug têm permissão própria (mig 20261005000005).
   const podeAlterar = can("alterar", undefined, MENU_CHECKLIST);
-  const podeIncluir = can("incluir", undefined, MENU_CHECKLIST) || podeAlterar;
+  const { editarStatus: podeEditarStatus, adicionarBug: podeIncluir } = useCapacidadesChecklist();
   const podeExcluir = can("excluir", undefined, MENU_CHECKLIST);
   const podeExportar = can("exportar", undefined, MENU_CHECKLIST);
 
@@ -249,7 +251,7 @@ export default function ChecklistModulos() {
               {ind.preenchidos < ind.modulos && (
                 <p className="text-xs text-muted-foreground">
                   <span className="font-semibold text-amber-700 dark:text-amber-400">{ind.modulos - ind.preenchidos} de {ind.modulos} módulos</span> sem nenhum status preenchido
-                  {podeAlterar ? " — clique no módulo para preencher." : "."}
+                  {podeEditarStatus ? " — clique no módulo para preencher." : "."}
                 </p>
               )}
             </div>
@@ -302,7 +304,7 @@ export default function ChecklistModulos() {
                             <DropdownMenuContent align="end" className="w-56">
                               <DropdownMenuItem onClick={() => abrir(m)}><Eye className="mr-2 h-4 w-4" /> Ver detalhes e submódulos</DropdownMenuItem>
                               <DropdownMenuItem onClick={() => window.open(`/app/sistemas/checklist-modulos/${m.modulo.id}`, "_blank")}><ExternalLink className="mr-2 h-4 w-4" /> Abrir em nova janela</DropdownMenuItem>
-                              {podeAlterar && <DropdownMenuItem onClick={() => editarModulo(m)}><Pencil className="mr-2 h-4 w-4" /> Editar status do módulo</DropdownMenuItem>}
+                              {podeEditarStatus && <DropdownMenuItem onClick={() => editarModulo(m)}><Pencil className="mr-2 h-4 w-4" /> Editar status do módulo</DropdownMenuItem>}
                               {podeIncluir && <DropdownMenuSeparator />}
                               {podeIncluir && <DropdownMenuItem onClick={() => navigate(`/app/sistemas/checklist-modulos/${m.modulo.id}?aba=bugs&novo=1`)}><Bug className="mr-2 h-4 w-4" /> Registrar bug</DropdownMenuItem>}
                             </DropdownMenuContent>
