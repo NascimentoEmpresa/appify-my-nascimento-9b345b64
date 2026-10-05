@@ -65,6 +65,18 @@ export function useAccessibleMenus(acao: string = "visualizar") {
       }
       const codes = new Set<string>((rpcResult.data ?? []).map((r: any) => r.menu_codigo));
 
+      // Diretoria › Relatórios (05/10/2026, mig 20261005000006): o Relatório
+      // Geral MOSTRA os 10 sistemas, então quem tem ele abre cada relatório
+      // individual — senão o card do Geral levava a uma rota negada pelo
+      // RouteGuard e o item sumia do Sidebar. O banco faz a mesma conta
+      // (dir_rel_exige aceita o menu do sistema OU o geral). Só ACRESCENTA:
+      // quem tem um relatório avulso continua com ele.
+      if (codes.has("diretoria_relatorio_geral")) {
+        menusResult.data?.forEach((m: { codigo: string }) => {
+          if (m.codigo.startsWith("diretoria_rel_")) codes.add(m.codigo);
+        });
+      }
+
       const menus = (menusResult.data ?? []) as { codigo: string; rota: string | null; ativo: boolean }[];
 
       const routes: MenuRoute[] = menus
