@@ -1,18 +1,18 @@
 import { describe, it, expect } from "vitest";
 import {
-  limparPostoSenior, sugerirPostos, semelhancaPosto, conferirContrato,
-  type ContratoAtivos, type PostoPlanilha,
+  limparPostoSenior, sugerirPostos, semelhancaPosto, conferirContrato, fmtSaldo, sugerirContrato,
+  type ContratoAtivos, type PostoPlanilha, type PessoaContrato,
 } from "@/pages/rh/conferenciaAtivos";
 
 // =====================================================================
-// RH › Ativos/Contratos (mig 20260930000279).
+// RH › Ativos/Contratos (migs 20260930000279 e 20261005000001).
 //
 // Os nomes abaixo são reais (30/09/2026): o posto da Senior vem com código
 // ("01-1099-0071-0061-06-…") e o da planilha é texto livre da licitação.
 // A sugestão erra para o lado seguro: na dúvida, não sugere — quem liga é o RH.
 // =====================================================================
 
-const pl = (nome: string, vagas = 1): PostoPlanilha => ({ nome, vagas, servico: null, vigencia: "2026-01-01" });
+const pl = (nome: string, vagas = 1): PostoPlanilha => ({ nome, vagas });
 
 const PREF_POA = [
   pl("POSTO A - RECEPCIONISTA 30H 5X2", 11),
@@ -74,91 +74,134 @@ describe("sugerirPostos", () => {
 });
 
 describe("conferirContrato", () => {
+  let seq = 0;
+  const p = (over: Partial<PessoaContrato>): PessoaContrato => ({
+    id: ++seq, cadastro: String(seq), nome: `Pessoa ${seq}`, cargo: null, situacao: "Trabalhando",
+    conta: true, posto_senior: "X", posto: null, fora: false, origem: null, ...over,
+  });
   const base = (over: Partial<ContratoAtivos>): ContratoAtivos => ({
-    id: "c1", nome: "Contrato", cliente: null, status: "ativo", encerrado: false,
-    postos: [], postos_senior: [], vinculos: [], ...over,
+    id: "c1", nome: "Contrato", cliente: null, encerrado: false, postos: [], pessoas: [], ...over,
   });
-  const v = (posto_senior: string, planilha_posto: string | null, extra: Partial<{ ignorar: boolean; orfa: boolean }> = {}) => ({
-    posto_senior, planilha_posto, ignorar: false, orfa: false, planilha_posto_gravado: planilha_posto, ...extra,
-  });
+  const n = (k: number, over: Partial<PessoaContrato>) => Array.from({ length: k }, () => p(over));
 
-  it("1 para 1: confere vagas × pessoas em cada posto", () => {
+  it("previsto × tem posto a posto; afastado fica no posto mas não conta", () => {
     const r = conferirContrato(base({
       postos: TRIUNFO,
-      postos_senior: [
-        { posto_senior: "VIGIA-12X36 NOT", qtd: 85, afastados: 3 },
-        { posto_senior: "VIGIA-44H", qtd: 25, afastados: 0 },
-        { posto_senior: "VIGIA-12X36 DIU", qtd: 8, afastados: 1 },
+      pessoas: [
+        ...n(85, { posto: "VIGIA 12X36 NOTURNO", origem: "posto" }),
+        ...n(3, { posto: "VIGIA 12X36 NOTURNO", origem: "posto", situacao: "Auxílio Doença", conta: false }),
+        ...n(25, { posto: "VIGIA 44H DIURNO", origem: "posto" }),
+        ...n(1, { posto: "VIGIA 44H DIURNO", origem: "posto", situacao: "Atestado (dias)", conta: true }),
       ],
-      vinculos: [v("VIGIA-12X36 NOT", "VIGIA 12X36 NOTURNO"), v("VIGIA-44H", "VIGIA 44H DIURNO"), v("VIGIA-12X36 DIU", "VIGIA 12X36 DIURNO")],
     }));
-    expect(r.grupos).toHaveLength(3);
-    const noturno = r.grupos.find((g) => g.planilha[0].nome === "VIGIA 12X36 NOTURNO")!;
-    expect(noturno).toMatchObject({ previsto: 90, ativos: 85, diferenca: -5, situacao: "falta", afastados: 3 });
-    expect(r.grupos.find((g) => g.planilha[0].nome === "VIGIA 44H DIURNO")!.situacao).toBe("ok");
-    expect(r.grupos[0].situacao).toBe("falta");                 // pior primeiro
-    expect(r.previsto).toBe(124);
-    expect(r.ativos).toBe(118);
-    expect(r.pessoasPendentes).toBe(0);
-    expect(r.fechado).toBe(false);
+    const noturno = r.postos.find((x) => x.nome === "VIGIA 12X36 NOTURNO")!;
+    expect(noturno).toMatchObject({ previsto: 90, tem: 85, saldo: -5, situacao: "falta" });
+    expect(noturno.afastados).toHaveLength(3);
+    expect(noturno.pessoas).toHaveLength(88);
+    expect(r.postos.find((x) => x.nome === "VIGIA 44H DIURNO")).toMatchObject({ tem: 26, saldo: 1, situacao: "excesso" });
+    expect(r.postos.find((x) => x.nome === "VIGIA 12X36 DIURNO")).toMatchObject({ previsto: 9, tem: 0, saldo: -9 });
+    expect(r).toMatchObject({ previsto: 124, tem: 111, saldo: -13, falta: 14, sobra: 1, semPosto: 0 });
+    expect(r.afastados).toHaveLength(3);
   });
 
-  it("um posto da Senior para vários da planilha vira um grupo com a soma", () => {
+  it("quem não tem posto fica pendente, agrupado pelo posto da Senior, com sugestão", () => {
     const r = conferirContrato(base({
-      postos: [pl("ASG 5D POA", 233), pl("ASG 5D TRAMANDAI", 7), pl("ASG 6D POA", 37)],
-      postos_senior: [
-        { posto_senior: "AUX SERVIÇOS GERAIS-30H", qtd: 278, afastados: 10 },
-        { posto_senior: "AUX SERVIÇOS GERAIS-36H", qtd: 52, afastados: 2 },
-      ],
-      vinculos: [
-        v("AUX SERVIÇOS GERAIS-30H", "ASG 5D POA"),
-        v("AUX SERVIÇOS GERAIS-30H", "ASG 5D TRAMANDAI"),
-        v("AUX SERVIÇOS GERAIS-36H", "ASG 6D POA"),
+      postos: TRIUNFO,
+      pessoas: [
+        ...n(2, { posto_senior: "02-1064-0008-0012-06-VIGIA-12X36 NOT" }),
+        ...n(1, { posto_senior: "02-1064-0023-0051-6-COZINHEIRA" }),
       ],
     }));
-    expect(r.grupos).toHaveLength(2);
-    const g5 = r.grupos.find((g) => g.planilha.length === 2)!;
-    expect(g5).toMatchObject({ previsto: 240, ativos: 278, diferenca: 38, situacao: "excesso" });
+    expect(r.semPosto).toBe(3);
+    expect(r.pendentes.map((x) => [x.pessoas.length, x.sugestao])).toEqual([[2, "VIGIA 12X36 NOTURNO"], [1, null]]);
+    expect(r.tem).toBe(3);                                      // conta no contrato, mesmo sem posto
+    expect(r.postos.every((x) => x.tem === 0)).toBe(true);
   });
 
-  it("postos da Senior sem ligação ficam pendentes; ignorados saem da conta", () => {
+  it("fora da conta não entra em lugar nenhum", () => {
     const r = conferirContrato(base({
-      postos: [pl("VIGIA 44H DIURNO", 25)],
-      postos_senior: [
-        { posto_senior: "VIGIA-44H", qtd: 25, afastados: 0 },
-        { posto_senior: "COZINHEIRA", qtd: 1, afastados: 0 },
-        { posto_senior: "Posto padrão do sistema", qtd: 1, afastados: 0 },
-      ],
-      vinculos: [v("VIGIA-44H", "VIGIA 44H DIURNO"), v("Posto padrão do sistema", null, { ignorar: true })],
+      postos: [pl("VIGIA 44H DIURNO", 1)],
+      pessoas: [p({ posto: "VIGIA 44H DIURNO" }), p({ fora: true, origem: "pessoa" })],
     }));
-    expect(r.seniorPendentes.map((s) => s.posto_senior)).toEqual(["COZINHEIRA"]);
-    expect(r.seniorIgnorados.map((s) => s.posto_senior)).toEqual(["Posto padrão do sistema"]);
-    expect(r.pessoasPendentes).toBe(1);
-    expect(r.ativos).toBe(26);                                   // ignorado fora
-    expect(r.fechado).toBe(false);                               // ainda tem pendente
+    expect(r).toMatchObject({ tem: 1, saldo: 0, situacao: "ok", semPosto: 0 });
+    expect(r.fora).toHaveLength(1);
   });
 
-  it("posto da planilha sem ninguém ligado aparece à parte; ligação órfã é avisada", () => {
+  it("posto que saiu da planilha volta a ser pendente", () => {
     const r = conferirContrato(base({
-      postos: [pl("PORTARIA 400H", 20), pl("PORTARIA 460H", 2)],
-      postos_senior: [{ posto_senior: "PORTEIRO-44H ITEM 3", qtd: 15, afastados: 0 }],
-      vinculos: [
-        v("PORTEIRO-44H ITEM 3", "PORTARIA 400H"),
-        v("PORTEIRO-30H ITEM 6", null, { orfa: true }),
-      ],
+      postos: [pl("PORTARIA 400H", 2)],
+      pessoas: [p({ posto: "PORTARIA ANTIGA", posto_senior: "PORTEIRO-44H" })],
     }));
-    expect(r.planilhaSemVinculo.map((p) => p.nome)).toEqual(["PORTARIA 460H"]);
-    expect(r.vinculosOrfaos).toHaveLength(1);
-    expect(r.grupos[0]).toMatchObject({ previsto: 20, ativos: 15, situacao: "falta" });
+    expect(r.semPosto).toBe(1);
   });
 
-  it("tudo ligado e batendo = contrato fechado", () => {
-    const r = conferirContrato(base({
-      postos: [pl("VIGIA 44H DIURNO", 25)],
-      postos_senior: [{ posto_senior: "VIGIA-44H", qtd: 25, afastados: 0 }],
-      vinculos: [v("VIGIA-44H", "VIGIA 44H DIURNO")],
-    }));
-    expect(r.fechado).toBe(true);
-    expect(r.diferenca).toBe(0);
+  it("fmtSaldo", () => {
+    expect([fmtSaldo(3), fmtSaldo(-2), fmtSaldo(0)]).toEqual(["+3", "−2", "0"]);
+  });
+});
+
+describe("sugerirContrato", () => {
+  const cts = [
+    { id: "cx", nome: "CAXIAS DO SUL - 2026/95" },
+    { id: "cx-old", nome: "CAXIAS DO SUL  -2025/162" },
+    { id: "gu", nome: "GUAPORÉ LIMPEZA SMED EMERGENCIAL - 063/2026" },
+    { id: "em", nome: "EMBRAPA - CANOINHA - 47/2024" },
+    { id: "em2", nome: "EMBRAPA CLIMA TEMPERADO - 2026/02" },
+    { id: "lb", nome: "UFRGS INTERPRETE DE LIBRAS C. 009.2026" },
+    { id: "sb", nome: "UFRGS AUXILIAR DE SAUDE BUCAL - 030/2026" },
+  ];
+  it("casa número/ano em qualquer ordem e abreviações", () => {
+    expect(sugerirContrato("1042 - CAXIAS DO SUL - 95.2026", cts)?.id).toBe("cx");
+    expect(sugerirContrato("1097 - GUAPORÉ LIMP SMED EMERGENCIAL - 063.2026", cts)?.id).toBe("gu");
+    expect(sugerirContrato("1094 - EMBRAPA CANOINHAS - 47/2024", cts)?.id).toBe("em");
+    expect(sugerirContrato("1107 - UFRGS - INTERPRETE DE LIBRAS - 009.2026", cts)?.id).toBe("lb");
+  });
+  it("não sugere quando não há contrato parecido", () => {
+    expect(sugerirContrato("1036 - PM DE CHARQUEADAS", cts)).toBeNull();
+  });
+});
+
+describe("sugerirPostos — jornada, cidade e chefia (casos reais de 05/10/2026)", () => {
+  const CAMARA = [pl("AUX. LIMPEZA 220H 5X2", 9), pl("COPEIRA 220H 5X2", 4), pl("ENCARREGADO 220H 5X2", 1)];
+  const VERANOPOLIS = [pl("AUX. COZINHA/COPEIRO 220H 5X2"), pl("AUX. LIMPEZA 22H 5X2"), pl("AUX. LIMPEZA 44H 5X2"), pl("COPEIRA 22H 5X2"), pl("COPEIRA 33H 5X2")];
+  const CANAA = [pl("SERVENTE DE LIMPEZA 40H 40% INSALUBRIDADE"), pl("SUPERVISOR 20H"), pl("PROFESSOR REGENTE DE TURMA 44H")];
+  const CARGA = [pl("AUX. CARGA E DESCARGA 44H 5X2 PORTO ALEGRE"), pl("AUX. CARGA E DESCARGA 44H 5X2 TRAMANDAI"), pl("SUPERVISOR DE CARGA E DESCARGA 5X2 PORTO ALEGRE")];
+
+  it("44H semanal = 220H mensal; SEG A SEX = 5X2; LIDER = ENCARREGADO", () => {
+    expect(sugerirPostos("AUX LIMPEZA-44H SEG A SEX", CAMARA)).toEqual(["AUX. LIMPEZA 220H 5X2"]);
+    expect(sugerirPostos("AUX LIMPEZA (LIDER)-44H SEG A SEX", CAMARA)).toEqual(["ENCARREGADO 220H 5X2"]);
+    expect(sugerirPostos("RECEPCIONISTA-150H", [pl("RECEPCIONISTA 30H"), pl("RECEPCIONISTA 40H")])).toEqual(["RECEPCIONISTA 30H"]);
+  });
+  it("COPEIRO = COPEIRA, e carga horária diferente é outro posto", () => {
+    expect(sugerirPostos("COPEIRO-110H SEG A SEX", VERANOPOLIS)).toEqual(["COPEIRA 22H 5X2"]);
+  });
+  it("só jornada em comum não é sugestão", () => {
+    expect(sugerirPostos("APRENDIZ-40h", CANAA)).toEqual([]);
+    expect(sugerirPostos("APRENDIZ-20h", CANAA)).toEqual([]);
+  });
+  it("POA = PORTO ALEGRE; supervisor só casa com supervisor", () => {
+    expect(sugerirPostos("AUX CARGA E DESCARGA-44h-5X2-POA", CARGA)).toEqual(["AUX. CARGA E DESCARGA 44H 5X2 PORTO ALEGRE"]);
+    expect(sugerirPostos("SUPERVISOR-44h-5X2-POA", CARGA)).toEqual(["SUPERVISOR DE CARGA E DESCARGA 5X2 PORTO ALEGRE"]);
+  });
+  it("na conferência: empate (cidades) não sugere; contrato de um posto só sugere ele", () => {
+    const pes = (posto_senior: string): PessoaContrato => ({ id: 1, cadastro: "1", nome: "A", cargo: "COPEIRO", situacao: "Trabalhando", conta: true, posto_senior, posto: null, fora: false, origem: null });
+    const empate = conferirContrato({ id: "c", nome: "C", cliente: null, encerrado: false,
+      postos: [pl("COPEIRO 40H 5X2 IMBÉ"), pl("COPEIRO 40H 5X2 PORTO ALEGRE")], pessoas: [pes("COPEIRO-40H REITORIA")] });
+    expect(empate.pendentes[0].sugestao).toBeNull();
+    const unico = conferirContrato({ id: "c", nome: "C", cliente: null, encerrado: false,
+      postos: [pl("CONTÍNUO 44H", 30)], pessoas: [pes("MENSAGEIRO-44H-6X1")] });
+    expect(unico.pendentes[0].sugestao).toBe("CONTÍNUO 44H");
+  });
+});
+
+describe("sugerirContrato — filiais administrativas", () => {
+  const cts = [
+    { id: "nh", nome: "ADMINISTRATIVO - NH" }, { id: "sn", nome: "ADMINISTRATIVO - SN" },
+    { id: "hagg", nome: "ADMINISTRATIVO - HAGG" }, { id: "irga", nome: "IRGA APOIO ADMINISTRATIVO - 049/2026" },
+  ];
+  it("ADM = ADMINISTRATIVO, e a empresa no fim decide", () => {
+    expect(sugerirContrato("1093 - ADM E ESTAGIARIOS - NH", cts)?.id).toBe("nh");
+    expect(sugerirContrato("1054 - ADM E ESTAGIARIOS - SN", cts)?.id).toBe("sn");
+    expect(sugerirContrato("1053 - ADM E ESTAGIARIOS - HAGG", cts)?.id).toBe("hagg");
   });
 });
