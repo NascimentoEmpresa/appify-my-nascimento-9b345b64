@@ -3,6 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { CurrencyInput } from "@/components/ui/CurrencyInput";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -43,6 +44,12 @@ const CAMPOS_BASE = [
   ["glosas", "Glosas"],
   ["outros_descontos", "Outros desc."],
   ["qtd_colaboradores", "Qtd Colab."],
+] as const;
+
+const JUSTIFICATIVAS = [
+  ["multas", "justificativa_multas", "Multas"],
+  ["glosas", "justificativa_glosas", "Glosas"],
+  ["outros_descontos", "justificativa_outros_descontos", "Outros descontos"],
 ] as const;
 
 const CAMPOS_POS_EMISSAO = [
@@ -244,6 +251,27 @@ export function ItensNfEditor({
                             </Select>
                           </div>
                         </div>
+
+                        {/* SIS-2026-0578: motivo de cada desconto, exigido ao enviar. */}
+                        {JUSTIFICATIVAS.some(([valor]) => it[valor] > 0) && (
+                          <div className="mt-3 grid grid-cols-3 gap-3">
+                            {JUSTIFICATIVAS.filter(([valor]) => it[valor] > 0).map(([, just, rotulo]) => (
+                              <div key={just}>
+                                <Label className="text-xs">
+                                  Justificativa — {rotulo} <span className="text-destructive">*</span>
+                                </Label>
+                                <Textarea
+                                  rows={2}
+                                  className="text-xs"
+                                  placeholder="Motivo do desconto (ex.: posto descoberto de 10 a 15/09)"
+                                  value={it[just] ?? ""}
+                                  onChange={(e) => onUpdateItem(i, { [just]: e.target.value } as any)}
+                                  disabled={readOnly}
+                                />
+                              </div>
+                            ))}
+                          </div>
+                        )}
 
                         <div className="mt-3 space-y-1.5 rounded-lg border bg-background p-2">
                           <Label className="text-xs">

@@ -424,6 +424,9 @@ export interface NfEmissaoItemRow {
   multas_pos_emissao: number;
   glosas_pos_emissao: number;
   outros_descontos_pos_emissao: number;
+  justificativa_multas: string | null;
+  justificativa_glosas: string | null;
+  justificativa_outros_descontos: string | null;
   qtd_colaboradores: number;
   vlr_bruto: number;
   total_descontos: number;
