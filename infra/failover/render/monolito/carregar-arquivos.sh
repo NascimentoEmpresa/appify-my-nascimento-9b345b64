@@ -91,9 +91,33 @@ if ! echo "$GPG_PRIVATE_KEY_B64" | base64 -d | gpg --batch --quiet --import 2>/d
   exit 0
 fi
 
+# --- 0. espaco, antes de comecar -------------------------------------------
+# Com a cadeia (curl|funzip|gpg|tar) o unico consumo e o dos arquivos FINAIS,
+# ~4,8 GB - nenhum intermediario toca o disco. O aviso usa 6 GB para dar
+# alguma folga; antes disso, a carga nao vale a pena comecar.
+livre_kb=$(df -Pk "$DESTINO" | awk 'NR==2{print $4}')
+if (( livre_kb < 6 * 1024 * 1024 )); then
+  log "ATENCAO: so $(( livre_kb / 1024 / 1024 )) GB livres, e os anexos somam ~4,8 GB."
+  log "         seguindo mesmo assim - os incrementais pequenos devem caber."
+fi
+
+# --- 0b. restos do layout antigo -------------------------------------------
+# Ate 05/10/2026 os arquivos iam para <raiz>/<balde>/... Com o tenant no
+# caminho, aqueles viraram lixo que o Storage nunca le e que ocupa disco
+# justamente quando ele e apertado. Remove so o que for balde conhecido, nunca
+# o diretorio do tenant.
+if [[ -d "$RAIZ" ]]; then
+  for antigo in "$RAIZ"/*; do
+    [[ -d "$antigo" ]] || continue
+    [[ "$(basename "$antigo")" == "${TENANT_ID:-stub}" ]] && continue
+    log "removendo resto do layout antigo: $(basename "$antigo")"
+    rm -rf "$antigo"
+  done
+fi
+
 # --- 1. quantos arquivos ja estao aqui? -------------------------------------
 antes=$(find "$DESTINO" -type f 2>/dev/null | wc -l)
-log "no disco agora: $antes arquivo(s)"
+log "no disco agora: $antes arquivo(s)   livre: $(df -h "$TMP" | awk 'NR==2{print $4}')"
 
 # --- 2. achar os artefatos de arquivos --------------------------------------
 # Pega TODOS os nao expirados, do mais antigo para o mais novo: o primeiro e a
@@ -116,44 +140,52 @@ extraidos=0
 while IFS='|' read -r id nome tamanho; do
   [[ -z "$id" ]] && continue
   log "  $nome ($(( tamanho / 1048576 )) MB)"
-  if ! curl -sS -L -m 1800 -H "Authorization: Bearer $GITHUB_TOKEN" \
-       "https://api.github.com/repos/$REPO/actions/artifacts/$id/zip" -o "$TMP/a.zip"; then
-    log "    falhou o download - seguindo para o proximo"
+  antes_deste=$(find "$DESTINO" -type f 2>/dev/null | wc -l)
+
+  # TUDO EM CADEIA, SEM ARQUIVO INTERMEDIARIO
+  #
+  # A versao anterior baixava o zip (5,1 GB), extraia o .tar.gpg (4,8 GB) e so
+  # entao decifrava - precisando de ~15 GB de espaco temporario. Em 05/10/2026
+  # isso estourou o disco de 20 GB, com a mensagem
+  #     unzip: write error (disk full?)
+  #     python3: [Errno 28] No space left on device
+  #     livre no disco: 48K
+  # porque o pgdata havia crescido para 12 GB (restores repetidos incham o
+  # banco) e sobravam apenas 8,2 GB.
+  #
+  # Transmitindo em cadeia, nada disso toca o disco: so os arquivos finais
+  # (~4,8 GB) sao gravados, e cabem com folga.
+  #
+  #   curl  ->  funzip  ->  gpg  ->  tar
+  #
+  # funzip extrai o PRIMEIRO membro de um zip lido da entrada padrao, que e
+  # exatamente o caso aqui: o artefato do GitHub contem um unico arquivo,
+  # storage-arquivos.tar.gpg.
+  #
+  # --strip-components=1 remove o prefixo "arquivos/" com que o backup foi
+  # criado, para os objetos caírem direto em <destino>/<balde>/...
+  : > "$TMP/curl.err"; : > "$TMP/funzip.err"; : > "$TMP/gpg.err"; : > "$TMP/tar.err"
+  if curl -sS -L -m 3600 -H "Authorization: Bearer $GITHUB_TOKEN" \
+       "https://api.github.com/repos/$REPO/actions/artifacts/$id/zip" 2>"$TMP/curl.err" \
+     | funzip 2>"$TMP/funzip.err" \
+     | gpg --batch --quiet --pinentry-mode loopback \
+           --passphrase "$GPG_PASSPHRASE" --decrypt 2>"$TMP/gpg.err" \
+     | tar -xf - -C "$DESTINO" --strip-components=1 2>"$TMP/tar.err"
+  then
+    depois_deste=$(find "$DESTINO" -type f 2>/dev/null | wc -l)
+    n=$(( depois_deste - antes_deste ))
+    extraidos=$(( extraidos + n ))
+    log "    $n arquivo(s) novo(s)   livre: $(df -h "$DESTINO" | awk 'NR==2{print $4}')"
+  else
+    # Cada etapa reporta o proprio erro. Sem isto, "falhou" nao diz se foi
+    # rede, zip, chave, senha ou disco - e foi o que me custou tres rodadas.
+    log "    falhou nesta cadeia:"
+    for etapa in curl funzip gpg tar; do
+      [[ -s "$TMP/$etapa.err" ]] && log "      $etapa: $(tail -2 "$TMP/$etapa.err" | tr '\n' ' ')"
+    done
+    log "      livre no disco: $(df -h "$DESTINO" | awk 'NR==2{print $4}')"
     continue
   fi
-  rm -rf "$TMP/x"; mkdir -p "$TMP/x"
-  # O artefato completo tem ~4,8 GB, e acima de 4 GB o zip usa ZIP64 - que o
-  # unzip classico (Info-ZIP) nao abre, devolvendo "zip ilegivel" sem explicar.
-  # Foi o que aconteceu em 05/10/2026 com o artefato de 4827 MB. O zipfile do
-  # Python lida com ZIP64 e ja esta no container (o supervisor e Python).
-  if ! unzip -qo "$TMP/a.zip" -d "$TMP/x" 2>/dev/null; then
-    log "    unzip falhou (provavel ZIP64 >4GB) - tentando com python3"
-    python3 -m zipfile -e "$TMP/a.zip" "$TMP/x" 2>/dev/null \
-      || { log "    zip ilegivel mesmo com python3"; continue; }
-  fi
-
-  cifrado=$(find "$TMP/x" -name '*.tar.gpg' | head -1)
-  [[ -z "$cifrado" ]] && { log "    sem .tar.gpg dentro"; continue; }
-
-  # A chave privada e a mesma do backup do banco; a passphrase vem por
-  # --pinentry-mode loopback, senao o gpg tenta abrir um prompt que nao existe
-  # num processo em segundo plano e falha calado.
-  if ! gpg --batch --yes --quiet --pinentry-mode loopback \
-       --passphrase "$GPG_PASSPHRASE" --decrypt "$cifrado" 2>/dev/null \
-       | tar -xf - -C "$TMP/x" 2>/dev/null; then
-    log "    nao consegui decifrar/extrair"
-    continue
-  fi
-
-  origem="$TMP/x/arquivos"
-  [[ -d "$origem" ]] || { log "    sem a pasta arquivos/"; continue; }
-  n=$(find "$origem" -type f | wc -l)
-  # -a preserva tudo; sem --update de proposito: o artefato mais novo DEVE
-  # sobrescrever, porque e a versao mais recente daquele arquivo.
-  cp -a "$origem/." "$DESTINO/" 2>/dev/null
-  extraidos=$(( extraidos + n ))
-  log "    $n arquivo(s) extraido(s)"
-  rm -rf "$TMP/a.zip" "$TMP/x"
 done <<< "$lista"
 
 # --- 4. o dono precisa ser o do Storage -------------------------------------
