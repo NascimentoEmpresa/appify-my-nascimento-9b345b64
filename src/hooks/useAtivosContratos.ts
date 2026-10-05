@@ -3,7 +3,7 @@ import { supabase } from "@/integrations/supabase/client";
 import type { PainelAtivos } from "@/pages/rh/conferenciaAtivos";
 
 // =====================================================================
-// RH › Ativos/Contratos — acesso a dados (RPCs rh_ac_*, mig 20260930000279).
+// RH › Ativos/Contratos — acesso a dados (RPCs rh_ac_*, migs 20260930000279 e 20261005000001).
 // Tudo por RPC, nunca .from("EMPREGADOS"): a linha da EMPREGADOS carrega CPF,
 // salário e conta bancária, e as RPCs devolvem só nome, cargo, posto e
 // situação (mesmo motivo do useEspacoColaborador).
@@ -38,6 +38,7 @@ export function usePainelAtivosContratos() {
         total_ativos: data?.total_ativos ?? 0,
         com_contrato: data?.com_contrato ?? 0,
         contratos: data?.contratos ?? [],
+        todos_contratos: data?.todos_contratos ?? [],
         filiais_sem_contrato: data?.filiais_sem_contrato ?? [],
       };
     },
@@ -86,6 +87,24 @@ export function useVincularFilial() {
     mutationFn: async ({ filial, contratoId }: { filial: string; contratoId: string | null }) => {
       const { error } = await sb.rpc<null>("rh_ac_vincular_filial", {
         p_filial: filial, p_contrato_id: contratoId,
+      });
+      if (error) throw error;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["rh-ativos-contratos"] }),
+  });
+}
+
+/**
+ * Move UM colaborador para um posto da planilha (mig 20261005000001).
+ * posto: nome do posto → fica nele; "" → fora da conta; null → volta a valer
+ * o posto da Senior.
+ */
+export function useMoverColaborador() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ empregadoId, posto }: { empregadoId: number; posto: string | null }) => {
+      const { error } = await sb.rpc<null>("rh_ac_mover_colaborador", {
+        p_empregado_id: empregadoId, p_planilha_posto: posto,
       });
       if (error) throw error;
     },
