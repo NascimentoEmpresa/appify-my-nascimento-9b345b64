@@ -2,53 +2,53 @@
 // RH › ATIVOS/CONTRATOS — lógica pura (sem React), testada em
 // src/test/rh-ativos-contratos.test.ts.
 //
-// O banco (rh_ac_painel, mig 20260930000279) devolve, por contrato:
+// O banco (rh_ac_painel, mig 20261005000001) devolve, por contrato:
 //   · os postos VIGENTES da Planilha de Custo, com as vagas ("QT. PESSOAS");
-//   · os postos da Senior ("Nome do Posto" dos ativos em EMPREGADOS), com as
-//     pessoas;
-//   · as ligações entre os dois (RH_POSTO_DEPARA), muitos-para-muitos.
+//   · os colaboradores ativos, cada um já com o posto da planilha em que está
+//     (pelo posto da Senior ligado, ou movido individualmente) e se CONTA no
+//     posto — só "Trabalhando" e atestado contam; auxílio-doença, licença,
+//     férias etc. deixam o posto descoberto (rh_ac_conta_no_posto).
 //
-// Aqui: (1) sugerir a ligação de um posto da Senior, porque os nomes não
-// batem ("01-1099-0071-0061-06-RECEPCIONISTA-B1 40H 5X2" ↔ "POSTO B1 -
-// RECEPCIONISTA 40H 5X2"); (2) juntar os postos ligados em GRUPOS e conferir
-// vagas × pessoas em cada grupo. Grupo existe porque às vezes a planilha
-// separa por cidade o que a Senior tem num posto só (UFRGS Limpeza Geral).
+// Aqui: (1) sugerir o posto da planilha de um posto da Senior, porque os
+// nomes não batem ("01-1099-0071-0061-06-RECEPCIONISTA-B1 40H 5X2" ↔ "POSTO
+// B1 - RECEPCIONISTA 40H 5X2"); (2) somar previsto × tem posto a posto.
+//
+// A v1 (mig 20260930000279) juntava postos ligados muitos-para-muitos em
+// "grupos" e ficou confusa demais (pedido de 05/10/2026). Agora um posto da
+// Senior aponta para UM posto da planilha, e quem foge à regra (UFRGS: um
+// posto na Senior, vários na planilha por cidade) é movido pessoa a pessoa.
 // =====================================================================
 
 export interface PostoPlanilha {
   nome: string;
-  servico: string | null;
   vagas: number;
-  vigencia: string | null;
 }
 
-export interface PostoSenior {
+export interface PessoaContrato {
+  id: number;
+  cadastro: string | null;
+  nome: string;
+  cargo: string | null;
+  situacao: string | null;
+  /** Ocupa o posto hoje (Trabalhando ou atestado). */
+  conta: boolean;
   /** "Nome do Posto" como vem da Senior; "" = sem posto no cadastro. */
   posto_senior: string;
-  qtd: number;
-  /** Ativos que não estão "Trabalhando" (férias, atestado, auxílio-doença…). */
-  afastados: number;
-}
-
-export interface Vinculo {
-  posto_senior: string;
-  /** Nome ATUAL do posto na planilha; null quando ignorar ou órfã. */
-  planilha_posto: string | null;
-  ignorar: boolean;
-  /** Ligado a um posto que saiu da planilha vigente. */
-  orfa: boolean;
-  planilha_posto_gravado: string | null;
+  /** Posto da planilha em que a pessoa está; null = ainda sem posto. */
+  posto: string | null;
+  /** Fora da conta deste contrato (marcado pelo RH). */
+  fora: boolean;
+  /** De onde veio o posto: do posto da Senior ou movido individualmente. */
+  origem: "posto" | "pessoa" | null;
 }
 
 export interface ContratoAtivos {
   id: string;
   nome: string;
   cliente: string | null;
-  status: string | null;
   encerrado: boolean;
   postos: PostoPlanilha[];
-  postos_senior: PostoSenior[];
-  vinculos: Vinculo[];
+  pessoas: PessoaContrato[];
 }
 
 export interface PainelAtivos {
@@ -132,9 +132,9 @@ export function semelhancaPosto(senior: string, planilha: string): number {
 export const LIMIAR_SUGESTAO = 0.45;
 
 /**
- * Postos da planilha sugeridos para um posto da Senior: o de maior
+ * Postos da planilha parecidos com um posto da Senior: o de maior
  * semelhança, mais os empatados com ele (quando a planilha separa por cidade
- * o mesmo posto, todos empatam e todos são sugeridos). Vazio = sem sugestão.
+ * o mesmo posto, todos empatam). Vazio = sem sugestão.
  */
 export function sugerirPostos(senior: string, planilha: PostoPlanilha[]): string[] {
   if (!senior.trim()) return [];
@@ -147,116 +147,148 @@ export function sugerirPostos(senior: string, planilha: PostoPlanilha[]): string
   return notas.filter((x) => topo - x.nota < 0.02).slice(0, 8).map((x) => x.nome);
 }
 
-// ---- Grupos e conferência --------------------------------------------------
+// ---- Conferência -----------------------------------------------------------
 
-export type SituacaoGrupo = "ok" | "falta" | "excesso";
+export type Situacao = "ok" | "falta" | "excesso";
 
-export interface GrupoPostos {
-  chave: string;
-  planilha: PostoPlanilha[];
-  senior: PostoSenior[];
+export const situacaoDe = (saldo: number): Situacao => (saldo === 0 ? "ok" : saldo < 0 ? "falta" : "excesso");
+
+export interface ConferenciaPosto {
+  nome: string;
   previsto: number;
-  ativos: number;
-  afastados: number;
-  /** ativos − previsto (negativo = falta gente). */
-  diferenca: number;
-  situacao: SituacaoGrupo;
+  /** Pessoas no posto que contam (trabalhando/atestado). */
+  tem: number;
+  /** tem − previsto (negativo = falta gente). */
+  saldo: number;
+  situacao: Situacao;
+  /** Todos no posto, inclusive afastados. */
+  pessoas: PessoaContrato[];
+  /** No posto mas sem contar (auxílio-doença, licença, férias…). */
+  afastados: PessoaContrato[];
+}
+
+/** Um posto da Senior cujas pessoas ainda não têm posto da planilha. */
+export interface PendenteSenior {
+  posto_senior: string;
+  pessoas: PessoaContrato[];
+  /** Posto da planilha mais parecido; null = sem sugestão segura. */
+  sugestao: string | null;
 }
 
 export interface ConferenciaContrato {
-  grupos: GrupoPostos[];
-  /** Postos da planilha que nenhum posto da Senior foi ligado. */
-  planilhaSemVinculo: PostoPlanilha[];
-  /** Postos da Senior ainda sem ligação (nem ignorados). */
-  seniorPendentes: PostoSenior[];
-  seniorIgnorados: PostoSenior[];
-  /** Ligações a postos que saíram da planilha vigente. */
-  vinculosOrfaos: Vinculo[];
+  postos: ConferenciaPosto[];
+  pendentes: PendenteSenior[];
+  /** Quantas pessoas estão sem posto da planilha. */
+  semPosto: number;
+  fora: PessoaContrato[];
   previsto: number;
-  ativos: number;
-  afastados: number;
-  /** Pessoas em postos da Senior ainda não ligados. */
-  pessoasPendentes: number;
-  /** ativos − previsto, no contrato inteiro. */
-  diferenca: number;
-  /** Tudo ligado e todos os grupos batem. */
-  fechado: boolean;
+  /** Todos que contam no contrato (com ou sem posto definido). */
+  tem: number;
+  saldo: number;
+  situacao: Situacao;
+  /** Soma do que falta posto a posto (não compensa sobra de um com falta de outro). */
+  falta: number;
+  /** Soma do que sobra posto a posto. */
+  sobra: number;
+  /** Afastados do contrato inteiro (não contam). */
+  afastados: PessoaContrato[];
 }
 
-const situacaoDe = (dif: number): SituacaoGrupo => (dif === 0 ? "ok" : dif < 0 ? "falta" : "excesso");
+const porNome = (a: { nome: string }, b: { nome: string }) => a.nome.localeCompare(b.nome, "pt-BR");
 
-/** Junta os postos ligados entre si (componentes conexos) e confere cada grupo. */
 export function conferirContrato(c: ContratoAtivos): ConferenciaContrato {
-  const pai = new Map<string, string>();
-  const acha = (x: string): string => {
-    let r = x;
-    while (pai.get(r) !== r) r = pai.get(r)!;
-    let y = x;
-    while (pai.get(y) !== r) { const p = pai.get(y)!; pai.set(y, r); y = p; }
-    return r;
-  };
-  const une = (a: string, b: string) => { const ra = acha(a), rb = acha(b); if (ra !== rb) pai.set(ra, rb); };
+  const dentro = c.pessoas.filter((p) => !p.fora);
+  const noPosto = new Map<string, PessoaContrato[]>();
+  const semPosto = new Map<string, PessoaContrato[]>();
+  const nomesPlanilha = new Set(c.postos.map((p) => p.nome));
 
-  const P = (n: string) => `P:${n}`;
-  const S = (n: string) => `S:${n}`;
-  const planilhaPorNome = new Map(c.postos.map((p) => [p.nome, p]));
-
-  const ignorados = new Set(c.vinculos.filter((v) => v.ignorar).map((v) => v.posto_senior));
-  const validos = c.vinculos.filter((v) => !v.ignorar && !v.orfa && v.planilha_posto && planilhaPorNome.has(v.planilha_posto));
-  const ligados = new Set(validos.map((v) => v.posto_senior));
-
-  c.postos.forEach((p) => pai.set(P(p.nome), P(p.nome)));
-  c.postos_senior.filter((s) => ligados.has(s.posto_senior)).forEach((s) => pai.set(S(s.posto_senior), S(s.posto_senior)));
-  for (const v of validos) {
-    if (!pai.has(S(v.posto_senior))) continue;   // posto da Senior sem ninguém ativo hoje
-    une(S(v.posto_senior), P(v.planilha_posto!));
+  for (const p of dentro) {
+    if (p.posto && nomesPlanilha.has(p.posto)) {
+      if (!noPosto.has(p.posto)) noPosto.set(p.posto, []);
+      noPosto.get(p.posto)!.push(p);
+    } else {
+      if (!semPosto.has(p.posto_senior)) semPosto.set(p.posto_senior, []);
+      semPosto.get(p.posto_senior)!.push(p);
+    }
   }
 
-  const grupos = new Map<string, { planilha: PostoPlanilha[]; senior: PostoSenior[] }>();
-  const doGrupo = (raiz: string) => {
-    if (!grupos.has(raiz)) grupos.set(raiz, { planilha: [], senior: [] });
-    return grupos.get(raiz)!;
-  };
-  c.postos.forEach((p) => doGrupo(acha(P(p.nome))).planilha.push(p));
-  c.postos_senior.filter((s) => pai.has(S(s.posto_senior))).forEach((s) => doGrupo(acha(S(s.posto_senior))).senior.push(s));
+  const postos: ConferenciaPosto[] = c.postos.map((pl) => {
+    const pessoas = (noPosto.get(pl.nome) ?? []).slice().sort(porNome);
+    const tem = pessoas.filter((p) => p.conta).length;
+    const saldo = tem - (pl.vagas || 0);
+    return {
+      nome: pl.nome, previsto: pl.vagas || 0, tem, saldo, situacao: situacaoDe(saldo),
+      pessoas, afastados: pessoas.filter((p) => !p.conta),
+    };
+  }).sort(porNome);
 
-  const lista: GrupoPostos[] = [];
-  const planilhaSemVinculo: PostoPlanilha[] = [];
-  for (const [chave, g] of grupos) {
-    if (!g.senior.length) { planilhaSemVinculo.push(...g.planilha); continue; }
-    const previsto = g.planilha.reduce((s, p) => s + (p.vagas || 0), 0);
-    const ativos = g.senior.reduce((s, p) => s + p.qtd, 0);
-    const afastados = g.senior.reduce((s, p) => s + p.afastados, 0);
-    lista.push({
-      chave, planilha: g.planilha, senior: g.senior, previsto, ativos, afastados,
-      diferenca: ativos - previsto, situacao: situacaoDe(ativos - previsto),
-    });
-  }
-  // Pior primeiro: falta, depois excesso, depois ok; dentro, maior diferença.
-  const ordem: Record<SituacaoGrupo, number> = { falta: 0, excesso: 1, ok: 2 };
-  lista.sort((a, b) => ordem[a.situacao] - ordem[b.situacao] || Math.abs(b.diferenca) - Math.abs(a.diferenca)
-    || a.planilha[0]?.nome.localeCompare(b.planilha[0]?.nome ?? "", "pt-BR"));
+  const pendentes: PendenteSenior[] = [...semPosto.entries()]
+    .map(([posto_senior, pessoas]) => ({
+      posto_senior,
+      pessoas: pessoas.slice().sort(porNome),
+      sugestao: sugerirPostos(posto_senior, c.postos)[0] ?? null,
+    }))
+    .sort((a, b) => b.pessoas.length - a.pessoas.length || a.posto_senior.localeCompare(b.posto_senior, "pt-BR"));
 
-  const seniorPendentes = c.postos_senior.filter((s) => !ligados.has(s.posto_senior) && !ignorados.has(s.posto_senior));
-  const seniorIgnorados = c.postos_senior.filter((s) => ignorados.has(s.posto_senior));
-  const previsto = c.postos.reduce((s, p) => s + (p.vagas || 0), 0);
-  const ativosNaConta = c.postos_senior.filter((s) => !ignorados.has(s.posto_senior));
-  const ativos = ativosNaConta.reduce((s, p) => s + p.qtd, 0);
-  const afastados = ativosNaConta.reduce((s, p) => s + p.afastados, 0);
-  const pessoasPendentes = seniorPendentes.reduce((s, p) => s + p.qtd, 0);
+  const previsto = postos.reduce((s, p) => s + p.previsto, 0);
+  const tem = dentro.filter((p) => p.conta).length;
+  const saldo = tem - previsto;
 
   return {
-    grupos: lista,
-    planilhaSemVinculo: planilhaSemVinculo.sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR")),
-    seniorPendentes,
-    seniorIgnorados,
-    vinculosOrfaos: c.vinculos.filter((v) => v.orfa),
-    previsto, ativos, afastados, pessoasPendentes,
-    diferenca: ativos - previsto,
-    fechado: pessoasPendentes === 0 && planilhaSemVinculo.every((p) => !p.vagas)
-      && lista.every((g) => g.situacao === "ok"),
+    postos,
+    pendentes,
+    semPosto: pendentes.reduce((s, p) => s + p.pessoas.length, 0),
+    fora: c.pessoas.filter((p) => p.fora).sort(porNome),
+    previsto, tem, saldo,
+    situacao: situacaoDe(saldo),
+    falta: postos.reduce((s, p) => s + Math.max(0, -p.saldo), 0),
+    sobra: postos.reduce((s, p) => s + Math.max(0, p.saldo), 0),
+    afastados: dentro.filter((p) => !p.conta).sort(porNome),
   };
 }
 
-/** Rótulo curto da diferença: "+3", "−2", "0". */
-export const fmtDiferenca = (n: number) => (n > 0 ? `+${n}` : n < 0 ? `−${Math.abs(n)}` : "0");
+/** Rótulo curto do saldo: "+3", "−2", "0". */
+export const fmtSaldo = (n: number) => (n > 0 ? `+${n}` : n < 0 ? `−${Math.abs(n)}` : "0");
+
+// ---- Filial da Senior → contrato -------------------------------------------
+
+const PARADAS_CONTRATO = new Set(["DE", "DA", "DO", "DAS", "DOS", "E", "C", "PM", "PREFEITURA", "MUNICIPAL"]);
+
+function termosDoContrato(nome: string): { palavras: string[]; numeros: string[] } {
+  const s = semAcento((nome ?? "").replace(/^\s*\d+\s*-\s*/, "")).toUpperCase();
+  const palavras: string[] = [];
+  const numeros: string[] = [];
+  for (const cru of s.split(/[^A-Z0-9]+/)) {
+    if (!cru) continue;
+    if (/^\d+$/.test(cru)) numeros.push(cru.replace(/^0+(?=\d)/, ""));
+    else {
+      const t = SINONIMOS[cru] ?? cru;
+      if (!PARADAS_CONTRATO.has(t)) palavras.push(t);
+    }
+  }
+  return { palavras, numeros };
+}
+
+// "CANOINHAS" × "CANOINHA": prefixo comum de 5+ letras conta como a mesma palavra.
+const mesmaPalavra = (a: string, b: string) =>
+  a === b || (a.length >= 5 && b.length >= 5 && (a.startsWith(b) || b.startsWith(a)));
+
+/**
+ * Contrato mais parecido com o "Nome Filial" da Senior. O número do contrato
+ * vem em qualquer ordem e com qualquer separador ("95.2026" = "2026/95"), por
+ * isso números são comparados como conjunto. null = nada parecido o bastante.
+ */
+export function sugerirContrato<T extends { id: string; nome: string }>(filial: string, contratos: T[]): T | null {
+  const a = termosDoContrato(filial);
+  if (!a.palavras.length) return null;
+  let melhor: { c: T; nota: number } | null = null;
+  for (const c of contratos) {
+    const b = termosDoContrato(c.nome);
+    const pal = a.palavras.filter((x) => b.palavras.some((y) => mesmaPalavra(x, y))).length;
+    if (!pal) continue;
+    const num = a.numeros.filter((x) => b.numeros.includes(x)).length;
+    const nota = (2 * (pal + 2 * num)) / (a.palavras.length + b.palavras.length + 2 * (a.numeros.length + b.numeros.length));
+    if (!melhor || nota > melhor.nota) melhor = { c, nota };
+  }
+  return melhor && melhor.nota >= 0.6 ? melhor.c : null;
+}
