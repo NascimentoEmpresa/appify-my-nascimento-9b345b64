@@ -35,6 +35,25 @@ export interface ItemInput {
   justificativa_multas?: string | null;
   justificativa_glosas?: string | null;
   justificativa_outros_descontos?: string | null;
+  // Item importado da planilha legada (SIS-2026-0540): a planilha traz o INSS
+  // já calculado pelo Financeiro (sobre a base SEM VA/VT/materiais), mas não
+  // traz VA/VT/materiais. Recalcular pela regra do ERP (INSS = mão de obra ×
+  // alíquota, com VA/VT/materiais = 0) inflava o INSS e o líquido divergia do
+  // Relatório. Quando preenchido, é o INSS gravado que vale (ver
+  // inssLegadoDoItem).
+  inss_legado?: number | null;
+}
+
+// Item legado: a planilha nunca gravou a mão de obra (fica 0) nem VA/VT/
+// materiais, mas gravou o INSS. Item criado pelo ERP sempre tem mão de obra
+// > 0 gravada, então não cai aqui.
+export function inssLegadoDoItem(r: {
+  vlr_va: number; vlr_vt: number; vlr_materiais: number;
+  vlr_mao_obra?: number | null; inss?: number | null;
+}): number | null {
+  const semDetalhe = (r.vlr_va || 0) + (r.vlr_vt || 0) + (r.vlr_materiais || 0) === 0;
+  if (semDetalhe && (r.vlr_mao_obra ?? 0) === 0 && (r.inss ?? 0) > 0) return Number(r.inss);
+  return null;
 }
 
 export interface ItemCalculado extends ItemInput {
@@ -116,14 +135,21 @@ export function calcularItem(input: ItemInput, pct: PercentuaisFiscais): ItemCal
     input.outros_descontos +
     input.outros_descontos_pos_emissao;
   const vlr_bruto = input.valor_contrato_exec - total_descontos;
-  const vlr_mao_obra = vlr_bruto - input.vlr_va - input.vlr_vt - input.vlr_materiais;
+  let vlr_mao_obra = vlr_bruto - input.vlr_va - input.vlr_vt - input.vlr_materiais;
 
   const issqn = vlr_bruto * pct.issqn_pct;
   const ir = vlr_bruto * pct.ir_pct;
   const cofins = vlr_bruto * pct.cofins_pct;
   const pis = vlr_bruto * pct.pis_pct;
   const csll = vlr_bruto * pct.csll_pct;
-  const inss = vlr_mao_obra * INSS_CATEGORIAS[input.inss_categoria].pct;
+  let inss = vlr_mao_obra * INSS_CATEGORIAS[input.inss_categoria].pct;
+  if (input.inss_legado != null) {
+    // Nota legada: vale o INSS da planilha; a mão de obra mostrada é a
+    // implícita nele (INSS ÷ alíquota), pra a tela fechar com o gravado.
+    inss = input.inss_legado;
+    const aliquota = INSS_CATEGORIAS[input.inss_categoria].pct;
+    if (aliquota > 0) vlr_mao_obra = Math.round((inss / aliquota) * 100) / 100;
+  }
 
   const vlr_liquido = vlr_bruto - issqn - inss - ir - cofins - pis - csll;
 

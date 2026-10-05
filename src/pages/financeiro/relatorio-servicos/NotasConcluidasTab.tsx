@@ -24,7 +24,7 @@ import {
   useRegistrarPagamentoNf,
   TIPOS_NOTA,
 } from "@/hooks/useNfEmissao";
-import { calcularItem, calcularTotaisNf, pctEfetivo, pctFiscaisDaNf, ItemCalculado } from "@/pages/financeiro/nf-emissao/calculos";
+import { calcularItem, calcularTotaisNf, inssLegadoDoItem, pctEfetivo, pctFiscaisDaNf, ItemCalculado } from "@/pages/financeiro/nf-emissao/calculos";
 import {
   fmtMoney, fmtDate, situacaoEspecial, statusDaNota, pendenteHaMaisDe30Dias, moneyTextContains, valorPendenteNf,
 } from "@/pages/financeiro/nf-emissao/shared";
@@ -94,6 +94,7 @@ function itemRowParaForm(r: NfEmissaoItemRow): ItemForm {
     justificativa_outros_descontos: r.justificativa_outros_descontos,
     qtd_colaboradores: r.qtd_colaboradores,
     inss_categoria: r.inss_categoria,
+    inss_legado: inssLegadoDoItem(r),
     issqn_pct: r.issqn_pct,
     ir_pct: r.ir_pct,
     cofins_pct: r.cofins_pct,
@@ -435,7 +436,16 @@ export default function NotasConcluidasTab() {
                   )}
                   {nfsDoContrato.map((nf) => (
                     <TableRow key={nf.id} className="cursor-pointer hover:bg-muted/50" onClick={() => setNfSelecionada(nf)}>
-                      <TableCell className="text-center font-medium">{nf.numero_nf ?? "-"}</TableCell>
+                      <TableCell className="text-center font-medium">
+                        <span className="inline-flex items-center gap-1">
+                          {nf.numero_nf ?? "-"}
+                          {divergenciaLiquidoNf(nf, itensContrato?.get(nf.id)) !== 0 && (
+                            <span title="O líquido salvo difere do recalculado pelos itens — abra a nota para conferir">
+                              <AlertTriangle className="h-3.5 w-3.5 text-amber-500" />
+                            </span>
+                          )}
+                        </span>
+                      </TableCell>
                       <TableCell className="text-center"><Badge variant="outline">{nf.tipo_nota}</Badge></TableCell>
                       <TableCell className="text-center whitespace-nowrap">{fmtDate(nf.data_emissao)}</TableCell>
                       <TableCell className="text-center whitespace-nowrap">
@@ -524,6 +534,18 @@ export default function NotasConcluidasTab() {
   );
 }
 
+const r2c = (n: number) => Math.round(n * 100) / 100;
+
+// Diferença entre o líquido recalculado pelos itens e o líquido SALVO da nota
+// (0 = sem divergência / sem itens carregados). Mesma conta do aviso do diálogo.
+function divergenciaLiquidoNf(nf: NfEmissaoRow, itensRows: NfEmissaoItemRow[] | undefined): number {
+  if (!itensRows || itensRows.length === 0) return 0;
+  const pct = pctFiscaisDaNf(nf);
+  const calculados = itensRows.map(itemRowParaForm).map((it) => calcularItem(it, pctEfetivo(it, pct)));
+  const dif = r2c(calcularTotaisNf(calculados).vlr_liquido_total - (nf.vlr_liquido_total ?? 0));
+  return Math.abs(dif) > 0.01 ? dif : 0;
+}
+
 function NfPagamentoDialog({ nf, onClose }: { nf: NfEmissaoRow | null; onClose: () => void }) {
   const { data: itensExistentes = [] } = useItensNfEmissao(nf?.id);
   const registrarPagamento = useRegistrarPagamentoNf();
@@ -565,6 +587,12 @@ function NfPagamentoDialog({ nf, onClose }: { nf: NfEmissaoRow | null; onClose: 
   }, [itens, pctFiscais]);
 
   const totais = useMemo(() => calcularTotaisNf(itensCalculados), [itensCalculados]);
+
+  // O líquido salvo (que o Relatório e o Dashboard somam) pode divergir do que
+  // os itens recalculam. O valor SALVO é o de referência (veio da planilha do
+  // Financeiro) — o aviso só aponta a nota pra conferência. Centavos não contam.
+  const divergenciaLiquido = nf && itensCalculados.length > 0 ? r2c(totais.vlr_liquido_total - (nf.vlr_liquido_total ?? 0)) : 0;
+  const temDivergencia = Math.abs(divergenciaLiquido) > 0.01;
 
   function toggleExpandido(i: number) {
     setExpandidos((exp) => {
@@ -634,6 +662,17 @@ function NfPagamentoDialog({ nf, onClose }: { nf: NfEmissaoRow | null; onClose: 
           <DialogTitle>NF Concluída</DialogTitle>
           <DialogDescription>Confira os dados validados e registre o pagamento quando ele acontecer.</DialogDescription>
         </DialogHeader>
+
+        {nf && temDivergencia && (
+          <div className="flex flex-wrap items-center gap-3 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
+            <AlertTriangle className="h-4 w-4 shrink-0" />
+            <span className="flex-1 min-w-[240px]">
+              <strong>Valores divergentes:</strong> o líquido salvo desta nota (<strong>{fmtMoney(nf.vlr_liquido_total)}</strong>, o que o Relatório soma)
+              é diferente do recalculado pelos itens (<strong>{fmtMoney(totais.vlr_liquido_total)}</strong>), uma diferença de{" "}
+              {fmtMoney(Math.abs(divergenciaLiquido))}. Costuma acontecer em nota importada da planilha, que não traz VA/VT/materiais. Confira com o Financeiro.
+            </span>
+          </div>
+        )}
 
         {nf && (
           <section className="rounded-xl border bg-card p-3 space-y-3">
