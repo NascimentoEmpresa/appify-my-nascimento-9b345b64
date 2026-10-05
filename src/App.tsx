@@ -207,6 +207,9 @@ import AnalistasSolicitacoesDemissao from "./pages/licitacoes/analistas/Solicita
 import RhTrocaFuncaoEscritorio from "./pages/rh/TrocaFuncaoEscritorio";
 import DiretoriaSolicitacoesDemissao from "./pages/diretoria/SolicitacoesDemissao";
 import DiretoriaRecrutamento from "./pages/diretoria/Recrutamento";
+import DiretoriaRelatorioGeral from "./pages/diretoria/relatorios/RelatorioGeral";
+import DiretoriaRelatorioSistema from "./pages/diretoria/relatorios/RelatorioSistema";
+import { SISTEMAS as DIRETORIA_RELATORIOS } from "./pages/diretoria/relatorios/sistemas";
 import SstTrocaFuncao from "./pages/sst/TrocaFuncao";
 import RhTrocaFuncao from "./pages/rh/TrocaFuncao";
 import AsoCandidatos from "./pages/sst/AsoCandidatos";
@@ -664,6 +667,12 @@ const App = () => (
             {/* Diretoria (16/09/2026): demissão e vaga do escritório / com setor. */}
             <Route path="diretoria/solicitacoes-demissao" element={<DiretoriaSolicitacoesDemissao />} />
             <Route path="diretoria/recrutamento" element={<DiretoriaRecrutamento />} />
+            {/* Diretoria › Relatórios (05/10/2026, mig 20261005000006): uma rota por
+                relatório, cada uma com menu próprio em Acesso por Usuário. */}
+            <Route path="diretoria/relatorios" element={<DiretoriaRelatorioGeral />} />
+            {DIRETORIA_RELATORIOS.map((s) => (
+              <Route key={s.slug} path={`diretoria/relatorios/${s.slug}`} element={<DiretoriaRelatorioSistema key={s.slug} slug={s.slug} />} />
+            ))}
             {/* O MESMO dashboard do RH, com menu próprio na Diretoria (17/09/2026). */}
             <Route path="diretoria/recrutamento-dashboard" element={<RecrutamentoDashboard />} />
             <Route path="orcamento" element={<Orcamento />} />
