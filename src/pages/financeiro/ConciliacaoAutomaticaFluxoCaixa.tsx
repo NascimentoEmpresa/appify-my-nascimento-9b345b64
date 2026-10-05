@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -9,6 +9,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { SearchableMultiSelect } from "@/components/ui/searchable-multi-select";
 import { Upload, X, Play, RefreshCw, GitMerge, Pencil, Ban, PlusCircle, Save, History, CheckCircle2 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -106,6 +107,15 @@ function ConciliarTab() {
   const [dataDe, setDataDe] = useState("");
   const [dataAte, setDataAte] = useState("");
   const [bancoId, setBancoId] = useState("");
+  // Conciliação é por conta: o extrato OFX é de UMA empresa naquele banco.
+  // A pessoa informa quais empresas entram (uma, várias ou todas) — sem isso
+  // o lado do Fluxo traz lançamentos de outras empresas do mesmo banco.
+  const [empresaIds, setEmpresaIds] = useState<string[]>([]);
+  const [todasEmpresas, setTodasEmpresas] = useState(false);
+  const [contaExtrato, setContaExtrato] = useState<string | null>(null);
+  // O OFX só traz movimentos e o saldo final — o saldo ANTERIOR (abertura)
+  // está só no extrato impresso/PDF. Campo opcional pra digitar e conferir.
+  const [saldoExtratoTxt, setSaldoExtratoTxt] = useState("");
   const [ofxFiles, setOfxFiles] = useState<File[]>([]);
   const [ofxTrns, setOfxTrns] = useState<OFXTransaction[] | null>(null);
   const [resultado, setResultado] = useState<ReconciliacaoResult | null>(null);
@@ -120,6 +130,7 @@ function ConciliarTab() {
 
   const { data: linhasBrutas = [] } = useFluxoCaixaCombinado();
   const { data: bancos = [] } = useCartaoBancos();
+  const { data: empresas = [] } = useEmpresasGrupo();
   const ajustar = useAjustarLinhaFluxoCaixa();
   const criarDebito = useCriarDebito();
   const salvar = useSalvarConciliacaoFluxoCaixa();
@@ -139,10 +150,45 @@ function ConciliarTab() {
   // vai fazer sempre por banco") — filtra o lado Fluxo pro banco escolhido
   // antes de comparar com o extrato, senão um lançamento de outro banco com
   // mesmo valor/data podia "casar" por coincidência e mascarar divergência real.
-  const linhasPeriodoBanco = useMemo(
-    () => linhasPeriodo.filter((l) => l.banco_id === bancoId),
-    [linhasPeriodo, bancoId]
+  // Também só das empresas escolhidas: o banco é compartilhado pelo grupo, mas
+  // o extrato é de uma conta. "Todas" não filtra (inclui lançamento sem empresa).
+  const linhasDoBancoEmpresa = useMemo(
+    () =>
+      linhasPeriodo.filter(
+        (l) => l.banco_id === bancoId && (todasEmpresas || (!!l.empresa_id && empresaIds.includes(l.empresa_id)))
+      ),
+    [linhasPeriodo, bancoId, todasEmpresas, empresaIds]
   );
+
+  // "SALDO ANTERIOR" (importação histórica, dia 01/01) é o saldo de abertura
+  // da conta — no extrato aparece como "SALDO ANT EM 24/12", não como
+  // movimento, então nunca tem par no OFX e virava uma divergência falsa
+  // (achado da Érica: R$ 270,22 da AGPS/Banrisul). Fica fora da comparação e
+  // aparece só como informação, pra conferir com o saldo anterior do extrato.
+  const ehSaldoAnterior = (l: { classificacao_nome: string | null }) =>
+    (l.classificacao_nome ?? "").trim().toUpperCase() === "SALDO ANTERIOR";
+  const saldoAnteriorFluxo = useMemo(() => {
+    const itens = linhasDoBancoEmpresa.filter(ehSaldoAnterior);
+    const total = itens.reduce((t, l) => t + (l.tipo === "entrada" ? Number(l.valor) : -Number(l.valor)), 0);
+    return { qtd: itens.length, total };
+  }, [linhasDoBancoEmpresa]);
+  const linhasPeriodoBanco = useMemo(
+    () => linhasDoBancoEmpresa.filter((l) => !ehSaldoAnterior(l)),
+    [linhasDoBancoEmpresa]
+  );
+
+  // Aceita "270,22", "1.234,56" ou "270.22". Vazio/inválido = não informado.
+  const saldoExtrato = useMemo(() => {
+    const t = saldoExtratoTxt.replace(/R\$|\s/g, "");
+    if (!t) return null;
+    const n = Number(t.includes(",") ? t.replace(/\./g, "").replace(",", ".") : t);
+    return Number.isFinite(n) ? Math.round(n * 100) / 100 : null;
+  }, [saldoExtratoTxt]);
+  const saldoFluxoTotal = Math.round(saldoAnteriorFluxo.total * 100) / 100;
+  // Só compara quando há saldo anterior no Fluxo E a pessoa informou o do extrato.
+  const saldoConfere = saldoExtrato != null && saldoAnteriorFluxo.qtd > 0 ? saldoExtrato === saldoFluxoTotal : null;
+
+  const empresasEscolhidas = todasEmpresas || empresaIds.length > 0;
 
   function rodar(trns: OFXTransaction[]) {
     const planRows = linhasFluxoParaPlanilhaRow(linhasPeriodoBanco);
@@ -160,6 +206,10 @@ function ConciliarTab() {
       toast.error("Selecione o banco desta conciliação.");
       return;
     }
+    if (!empresasEscolhidas) {
+      toast.error("Informe a(s) empresa(s) desta conciliação, ou marque \"Todas\".");
+      return;
+    }
     if (ofxFiles.length === 0) {
       toast.error("Selecione ao menos um arquivo .OFX.");
       return;
@@ -167,10 +217,17 @@ function ConciliarTab() {
     setProcessando(true);
     try {
       const trns: OFXTransaction[] = [];
+      const contas = new Set<string>();
       for (const f of ofxFiles) {
         const text = await f.text();
         trns.push(...parseOFX(text, f.name));
+        // Conta do próprio extrato (BANKID/ACCTID) — só informativa, pra
+        // conferir se a empresa escolhida é a dona desse arquivo.
+        const bank = /<BANKID>\s*([^\s<]+)/i.exec(text)?.[1];
+        const acct = /<ACCTID>\s*([^\s<]+)/i.exec(text)?.[1];
+        if (acct) contas.add(bank ? `${bank} / ${acct}` : acct);
       }
+      setContaExtrato(contas.size ? Array.from(contas).join(" · ") : null);
       if (!trns.length) throw new Error("Nenhum lançamento encontrado nos extratos OFX.");
       setOfxTrns(trns);
       setResolvidos({});
@@ -193,6 +250,8 @@ function ConciliarTab() {
     setResultado(null);
     setResolvidos({});
     setObservacoes("");
+    setContaExtrato(null);
+    setSaldoExtratoTxt("");
   }
 
   const pendentes = useMemo(
@@ -316,7 +375,12 @@ function ConciliarTab() {
         numero_parcela: r.linha.numeroParcela ?? null,
       }));
       const arquivosOfx = ofxFiles;
-      const id = await salvar.mutateAsync({ dataInicio: dataDe, dataFim: dataAte, observacoes: observacoes || null, arquivosOfx, linhas });
+      const id = await salvar.mutateAsync({
+        dataInicio: dataDe, dataFim: dataAte, observacoes: observacoes || null,
+        bancoId, todasEmpresas, empresaIds, contaExtrato, arquivosOfx, linhas,
+        saldoAnteriorFluxo: saldoAnteriorFluxo.qtd > 0 ? saldoFluxoTotal : null,
+        saldoAnteriorExtrato: saldoExtrato,
+      });
       toast.success("Conciliação salva.");
       reiniciar();
       void id;
@@ -329,7 +393,7 @@ function ConciliarTab() {
     <div className="space-y-4">
       <Card>
         <CardHeader className="pb-3">
-          <CardTitle className="text-sm">Período e Banco</CardTitle>
+          <CardTitle className="text-sm">Período, Banco e Empresa</CardTitle>
         </CardHeader>
         <CardContent className="flex flex-wrap gap-4 items-end">
           <div>
@@ -351,10 +415,60 @@ function ConciliarTab() {
               </SelectContent>
             </Select>
           </div>
-          <div className="text-xs text-muted-foreground">
-            {bancoId
-              ? `${linhasPeriodoBanco.length} de ${linhasPeriodo.length} lançamento(s) do Fluxo de Caixa no período são deste banco.`
-              : `${linhasPeriodo.length} lançamento(s) do Fluxo de Caixa no período.`}
+          <div className="min-w-[16rem] flex-1">
+            <div className="flex items-center justify-between gap-3">
+              <Label className="text-xs">Empresa(s) desta conciliação *</Label>
+              <label className="flex items-center gap-1.5 text-xs">
+                <input
+                  type="checkbox"
+                  checked={todasEmpresas}
+                  onChange={(e) => { setTodasEmpresas(e.target.checked); if (e.target.checked) setEmpresaIds([]); }}
+                />
+                Todas as empresas
+              </label>
+            </div>
+            <SearchableMultiSelect
+              value={empresaIds}
+              onChange={setEmpresaIds}
+              options={empresas.map((e) => ({ value: e.id, label: e.nome }))}
+              placeholder={todasEmpresas ? "Todas as empresas" : "Selecione uma ou mais empresas…"}
+              searchPlaceholder="Buscar empresa…"
+              disabled={todasEmpresas}
+              maxBadges={3}
+            />
+          </div>
+          <div>
+            <Label className="text-xs">Saldo anterior do extrato (R$) <span className="text-muted-foreground">— opcional</span></Label>
+            <Input
+              className="h-9 w-44"
+              inputMode="decimal"
+              placeholder="Ex.: 270,22"
+              value={saldoExtratoTxt}
+              onChange={(e) => setSaldoExtratoTxt(e.target.value)}
+            />
+          </div>
+          {saldoConfere !== null && (
+            <div
+              className={cn(
+                "w-full rounded-md border px-3 py-2 text-xs",
+                saldoConfere
+                  ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+                  : "border-rose-200 bg-rose-50 text-rose-800"
+              )}
+            >
+              {saldoConfere
+                ? `✅ Saldo anterior confere: Fluxo ${saldoFluxoTotal.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })} = extrato ${saldoExtrato!.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}.`
+                : `⚠️ Saldo anterior diverge: Fluxo ${saldoFluxoTotal.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })} × extrato ${saldoExtrato!.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })} (diferença ${(saldoExtrato! - saldoFluxoTotal).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}).`}
+            </div>
+          )}
+          <div className="w-full text-xs text-muted-foreground">
+            {bancoId && empresasEscolhidas
+              ? `${linhasPeriodoBanco.length} de ${linhasPeriodo.length} lançamento(s) do Fluxo de Caixa no período são deste banco${todasEmpresas ? "" : " e das empresas escolhidas"}.${
+                  saldoAnteriorFluxo.qtd > 0
+                    ? ` Saldo anterior no Fluxo (${saldoAnteriorFluxo.total.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}) fica fora da comparação — confira com o "SALDO ANT" do extrato.`
+                    : ""
+                }`
+              : `${linhasPeriodo.length} lançamento(s) do Fluxo de Caixa no período. Escolha o banco e a(s) empresa(s) para conciliar.`}
           </div>
         </CardContent>
       </Card>
@@ -394,7 +508,7 @@ function ConciliarTab() {
             )}
             <Button
               onClick={executar}
-              disabled={processando || !dataDe || !dataAte || !bancoId || ofxFiles.length === 0}
+              disabled={processando || !dataDe || !dataAte || !bancoId || !empresasEscolhidas || ofxFiles.length === 0}
               className="w-full"
             >
               {processando ? <RefreshCw className="h-4 w-4 mr-2 animate-spin" /> : <Play className="h-4 w-4 mr-2" />}
@@ -578,7 +692,7 @@ function ConciliarTab() {
       )}
 
       <DialogAjustar linha={dialogAjustar} onClose={() => setDialogAjustar(null)} onConfirmar={confirmarAjuste} salvando={ajustar.isPending} />
-      <DialogCriarLancamento linha={dialogCriar} onClose={() => setDialogCriar(null)} onConfirmar={confirmarCriar} salvando={criarDebito.isPending} />
+      <DialogCriarLancamento linha={dialogCriar} onClose={() => setDialogCriar(null)} onConfirmar={confirmarCriar} salvando={criarDebito.isPending} empresaInicial={!todasEmpresas && empresaIds.length === 1 ? empresaIds[0] : ""} bancoInicial={bancoId} />
       <DialogIgnorar linha={dialogIgnorar} onClose={() => setDialogIgnorar(null)} onConfirmar={confirmarIgnorar} />
     </div>
   );
@@ -677,22 +791,35 @@ function DialogCriarLancamento({
   onClose,
   onConfirmar,
   salvando,
+  empresaInicial = "",
+  bancoInicial = "",
 }: {
   linha: LancamentoRow | null;
   onClose: () => void;
   onConfirmar: (dados: { empresaId: string; classificacaoId: string; descricao: string; formaPagamento: string; bancoId: string }) => void;
   salvando: boolean;
+  // Vêm da conciliação: com uma só empresa escolhida, não faz sentido pedir de novo.
+  empresaInicial?: string;
+  bancoInicial?: string;
 }) {
-  const [empresaId, setEmpresaId] = useState("");
+  const [empresaId, setEmpresaId] = useState(empresaInicial);
   const [classificacaoId, setClassificacaoId] = useState("");
   const [descricao, setDescricao] = useState("");
   const [formaPagamento, setFormaPagamento] = useState("");
-  const [bancoId, setBancoId] = useState("");
+  const [bancoId, setBancoId] = useState(bancoInicial);
 
   const { data: empresas = [] } = useEmpresasGrupo();
   const { data: classificacoes = [] } = useClassificacoesOrcamentoAdmin();
   const { data: formasPagamento = [] } = useFormasPagamento();
   const { data: bancos = [] } = useCartaoBancos();
+
+  // O componente fica montado entre uma linha e outra: sugere a empresa e o
+  // banco da conciliação toda vez que abre para uma linha nova.
+  useEffect(() => {
+    if (!linha) return;
+    setEmpresaId(empresaInicial);
+    setBancoId(bancoInicial);
+  }, [linha?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!linha) return null;
   return (
@@ -809,7 +936,11 @@ function DialogIgnorar({ linha, onClose, onConfirmar }: { linha: LancamentoRow |
 
 function HistoricoTab() {
   const { data: salvas = [], isLoading } = useConciliacoesFluxoCaixaSalvas();
+  const { data: bancos = [] } = useCartaoBancos();
+  const { data: empresas = [] } = useEmpresasGrupo();
   const [abrirId, setAbrirId] = useState<string | null>(null);
+  const bancoNome = (id: string) => bancos.find((b) => b.id === id)?.nome ?? "—";
+  const empresaNome = (id: string) => empresas.find((e) => e.id === id)?.nome ?? "—";
 
   return (
     <div className="space-y-4">
@@ -824,6 +955,7 @@ function HistoricoTab() {
               <thead>
                 <tr className="border-b bg-muted/40">
                   <th className="text-left px-4 py-2 font-medium text-muted-foreground">Período</th>
+                  <th className="text-left px-4 py-2 font-medium text-muted-foreground">Banco / Empresa</th>
                   <th className="text-center px-4 py-2 font-medium text-muted-foreground">Divergências</th>
                   <th className="text-center px-4 py-2 font-medium text-muted-foreground">Ajustadas</th>
                   <th className="text-center px-4 py-2 font-medium text-muted-foreground">Criadas</th>
@@ -836,6 +968,17 @@ function HistoricoTab() {
                 {salvas.map((c) => (
                   <tr key={c.id} className="border-b">
                     <td className="px-4 py-2">{isoParaBR(c.data_inicio)} — {isoParaBR(c.data_fim)}</td>
+                    <td className="px-4 py-2 text-xs">
+                      <div className="font-medium">{c.banco_id ? bancoNome(c.banco_id) : "—"}</div>
+                      <div className="text-muted-foreground" title={c.conta_extrato ?? undefined}>
+                        {c.todas_empresas ? "Todas as empresas" : c.empresa_ids.map(empresaNome).join(", ") || "—"}
+                      </div>
+                      {c.saldo_anterior_extrato != null && c.saldo_anterior_fluxo != null && (
+                        <div className={c.saldo_anterior_extrato === c.saldo_anterior_fluxo ? "text-emerald-700" : "text-rose-700"}>
+                          Saldo ant.: {c.saldo_anterior_extrato === c.saldo_anterior_fluxo ? "confere" : "diverge"}
+                        </div>
+                      )}
+                    </td>
                     <td className="px-4 py-2 text-center">{c.total_linhas}</td>
                     <td className="px-4 py-2 text-center">{c.linhas_ajustadas}</td>
                     <td className="px-4 py-2 text-center">{c.linhas_criadas}</td>
