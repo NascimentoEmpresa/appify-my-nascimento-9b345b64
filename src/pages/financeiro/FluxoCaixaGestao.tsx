@@ -13,12 +13,13 @@ import {
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
-import { TrendingDown, TrendingUp, Wallet, LineChart, X, Trash2, RotateCcw, Pencil, Eye, ChevronRight, ChevronDown } from "lucide-react";
+import { TrendingDown, TrendingUp, Wallet, LineChart, X, Trash2, RotateCcw, Pencil, Eye, ChevronRight, ChevronDown, FileDown } from "lucide-react";
 import { toast } from "sonner";
 import { AcessoGate } from "@/components/auth/AcessoGate";
 import {
   useFluxoCaixaCombinado,
   useAjustarLinhaFluxoCaixa,
+  useTrocarContratoFluxoCaixa,
   useReverterAjusteFluxoCaixa,
   type FluxoCaixaMaloteLinha,
 } from "@/hooks/useFluxoCaixaMalote";
@@ -32,6 +33,7 @@ import { ExcluirPermanentementeButton } from "@/pages/malote/ExcluirPermanenteme
 import { KpiTile } from "@/components/financeiro/KpiTile";
 import { BancoBadge } from "@/components/financeiro/BancoBadge";
 import { urlLogoCartao, useCartaoBancos } from "@/hooks/useMaloteCartaoCredito";
+import { ContratoTrocaCampo } from "@/pages/financeiro/fluxo-caixa/ContratoTrocaCampo";
 
 // SIS-2026-0413: menu_codigo de cada origem, pra gatear o botão Excluir de
 // cada linha (não existe um menu_codigo próprio do Fluxo de Caixa pra
@@ -56,6 +58,25 @@ const MENU_POR_ORIGEM: Record<FluxoCaixaMaloteLinha["origem"], string> = {
   cartao_fatura: "financeiro-cartao-credito",
   aplicacao_financeira: "financeiro-aplicacao-financeira",
   importacao_historica: "financeiro-fluxo-caixa-gestao",
+};
+
+interface FiltrosExport {
+  dataDe: string;
+  dataAte: string;
+  competencia: string;
+  empresaId: string;
+  bancoId: string;
+  contratoId: string;
+  classificacaoId: string;
+  formaPagamento: string;
+  tipo: "todos" | "entrada" | "saida";
+  origem: "todas" | FluxoCaixaMaloteLinha["origem"];
+  soRevisar: boolean;
+}
+
+const FILTROS_EXPORT_VAZIOS: FiltrosExport = {
+  dataDe: "", dataAte: "", competencia: "", empresaId: "", bancoId: "", contratoId: "", classificacaoId: "", formaPagamento: "",
+  tipo: "todos", origem: "todas", soRevisar: false,
 };
 
 interface RateioDetalheItem {
@@ -155,6 +176,12 @@ export default function FluxoCaixaGestao() {
   const { data: bancosCartao = [] } = useCartaoBancos();
   const { data: classificacoesCatalogo = [] } = useClassificacoesOrcamentoAdmin();
   const [itemEditar, setItemEditar] = useState<FluxoCaixaMaloteLinha | null>(null);
+  // SIS-2026-0552: troca de contrato dentro da edição — grava na ORIGEM (RPC) e
+  // repassa o valor no Orçamento; os demais campos continuam só no Fluxo.
+  const trocarContrato = useTrocarContratoFluxoCaixa();
+  const [editNovoContratoId, setEditNovoContratoId] = useState("");
+  const [editCienteEstouro, setEditCienteEstouro] = useState(false);
+  const [editExigeCiencia, setEditExigeCiencia] = useState(false);
   const [salvandoEdicao, setSalvandoEdicao] = useState(false);
   const [editData, setEditData] = useState("");
   const [editTipo, setEditTipo] = useState<"entrada" | "saida">("saida");
@@ -175,12 +202,24 @@ export default function FluxoCaixaGestao() {
     setEditEmpresaId(l.empresa_id ?? "");
     setEditFormaPagamento(l.forma_pagamento ?? "");
     setEditBancoId(l.banco_id ?? "");
+    setEditNovoContratoId("");
+    setEditCienteEstouro(false);
+    setEditExigeCiencia(false);
   }
 
   async function confirmarEditar() {
     if (!itemEditar) return;
+    if (editNovoContratoId && editExigeCiencia && !editCienteEstouro) {
+      toast.error("O contrato novo ficará acima do orçamento — marque “Estou ciente” para trocar.");
+      return;
+    }
     setSalvandoEdicao(true);
     try {
+      // 1º a troca de contrato (valida empresa/rateio no banco e pode falhar);
+      // só depois o ajuste dos outros campos.
+      if (editNovoContratoId) {
+        await trocarContrato.mutateAsync({ origem: itemEditar.origem, despesaId: itemEditar.despesa_id, contratoId: editNovoContratoId });
+      }
       await ajustarLinha.mutateAsync({
         origem: itemEditar.origem,
         despesaId: itemEditar.despesa_id,
@@ -194,7 +233,11 @@ export default function FluxoCaixaGestao() {
         formaPagamento: editFormaPagamento || null,
         bancoId: editBancoId || null,
       });
-      toast.success("Atualizado só neste Fluxo de Caixa — o lançamento original não muda.");
+      toast.success(
+        editNovoContratoId
+          ? "Contrato alterado na origem" + (itemEditar.origem === "malote" ? " (valor repassado no Orçamento)" : "") + "; os demais campos valem só neste Fluxo de Caixa."
+          : "Atualizado só neste Fluxo de Caixa — o lançamento original não muda."
+      );
       setItemEditar(null);
     } catch (e: any) {
       toast.error(e.message ?? "Erro ao salvar.");
@@ -346,6 +389,106 @@ export default function FluxoCaixaGestao() {
   const totalSaidas = useMemo(() => filtradas.filter((l) => l.tipo === "saida").reduce((s, l) => s + Number(l.valor), 0), [filtradas]);
   const totalEntradas = useMemo(() => filtradas.filter((l) => l.tipo === "entrada").reduce((s, l) => s + Number(l.valor), 0), [filtradas]);
 
+  // Exportação com escolha do recorte: o diálogo já abre com os filtros que a
+  // tela está usando, e a pessoa ajusta o que quiser (período, empresa, banco,
+  // tipo, origem...). A 2ª aba do arquivo registra o recorte e os totais.
+  const [exportando, setExportando] = useState(false);
+  const [fx, setFx] = useState<FiltrosExport>(FILTROS_EXPORT_VAZIOS);
+
+  function abrirExportacao() {
+    setFx({
+      dataDe, dataAte, competencia, empresaId, bancoId, contratoId, classificacaoId, formaPagamento,
+      tipo: "todos", origem: "todas", soRevisar: soInconsistentes,
+    });
+    setExportando(true);
+  }
+
+  const linhasExport = useMemo(() => {
+    if (!exportando) return [] as typeof linhas;
+    return linhas.filter((l) => {
+      if (fx.dataDe && (!l.data_pagamento || l.data_pagamento < fx.dataDe)) return false;
+      if (fx.dataAte && (!l.data_pagamento || l.data_pagamento > fx.dataAte)) return false;
+      if (fx.competencia && l.competencia?.slice(0, 7) !== fx.competencia) return false;
+      if (fx.empresaId && l.empresa_id !== fx.empresaId) return false;
+      if (fx.bancoId && l.banco_id !== fx.bancoId) return false;
+      if (fx.contratoId && l.contrato_id !== fx.contratoId) return false;
+      if (fx.classificacaoId && l.classificacao_id !== fx.classificacaoId) return false;
+      if (fx.formaPagamento && l.forma_pagamento !== fx.formaPagamento) return false;
+      if (fx.tipo !== "todos" && l.tipo !== fx.tipo) return false;
+      if (fx.origem !== "todas" && l.origem !== fx.origem) return false;
+      if (fx.soRevisar && !l.inconsistencia) return false;
+      return true;
+    });
+  }, [exportando, linhas, fx]);
+  const exportEntradas = useMemo(() => linhasExport.filter((l) => l.tipo === "entrada").reduce((t, l) => t + Number(l.valor), 0), [linhasExport]);
+  const exportSaidas = useMemo(() => linhasExport.filter((l) => l.tipo === "saida").reduce((t, l) => t + Number(l.valor), 0), [linhasExport]);
+
+  function gerarExcel() {
+    if (linhasExport.length === 0) {
+      toast.error("Não há lançamentos para exportar com essas opções.");
+      return;
+    }
+    const nomeDe = (lista: [string, string][], id: string) => lista.find(([i]) => i === id)?.[1] ?? "";
+    const dia = (iso: string | null) => (iso ? iso.slice(0, 10).split("-").reverse().join("/") : "");
+    const mesAno = (iso: string | null) => (iso ? `${iso.slice(5, 7)}/${iso.slice(0, 4)}` : "");
+    const linhasPlanilha = [...linhasExport]
+      .sort((a, b) => (a.data_pagamento ?? "").localeCompare(b.data_pagamento ?? ""))
+      .map((l) => ({
+        "Data pagamento": dia(l.data_pagamento),
+        Tipo: l.tipo === "entrada" ? "Entrada" : "Saída",
+        Origem: LABEL_ORIGEM[l.origem],
+        "Nº": l.id_malote ?? "",
+        Classificação: l.classificacao_nome ?? "",
+        Descrição: l.descricao ?? "",
+        Competência: mesAno(l.competencia),
+        Empresa: l.empresa_nome ?? "",
+        Contrato: l.contrato_nome ?? "",
+        "Rateio (contrato: valor)": l.rateioDetalhe ? l.rateioDetalhe.map((r) => `${r.nome}: ${formatBRL(r.valor)}`).join(" | ") : "",
+        "Forma de pagamento": l.forma_pagamento ?? "",
+        Banco: l.banco_nome ?? "",
+        Parcela: l.numero_parcela ? (l.numero_parcelas ? `${l.numero_parcela}/${l.numero_parcelas}` : String(l.numero_parcela)) : "",
+        Valor: l.tipo === "entrada" ? Number(l.valor) : -Number(l.valor),
+        Ajustado: l.ajustado ? "Sim" : "",
+        "Revisar (motivo)": l.inconsistencia ?? "",
+      }));
+    const recorte: [string, string][] = [
+      ["Período (data de pagamento)", fx.dataDe || fx.dataAte ? `${fx.dataDe ? dia(fx.dataDe) : "início"} a ${fx.dataAte ? dia(fx.dataAte) : "hoje"}` : "Todos"],
+      ["Competência", fx.competencia ? `${fx.competencia.slice(5, 7)}/${fx.competencia.slice(0, 4)}` : "Todas"],
+      ["Empresa", fx.empresaId ? nomeDe(empresasDisponiveis, fx.empresaId) : "Todas"],
+      ["Banco", fx.bancoId ? nomeDe(bancosDisponiveis, fx.bancoId) : "Todos"],
+      ["Contrato", fx.contratoId ? nomeDe(contratosDisponiveis, fx.contratoId) : "Todos"],
+      ["Classificação", fx.classificacaoId ? nomeDe(classificacoesDisponiveis, fx.classificacaoId) : "Todas"],
+      ["Forma de pagamento", fx.formaPagamento || "Todas"],
+      ["Tipo", fx.tipo === "todos" ? "Entradas e saídas" : fx.tipo === "entrada" ? "Só entradas" : "Só saídas"],
+      ["Origem", fx.origem === "todas" ? "Todas" : LABEL_ORIGEM[fx.origem]],
+      ["Só linhas com selo \"revisar\"", fx.soRevisar ? "Sim" : "Não"],
+    ];
+    import("xlsx").then((XLSX) => {
+      const ws = XLSX.utils.json_to_sheet(linhasPlanilha);
+      ws["!cols"] = [14, 9, 22, 16, 26, 42, 12, 14, 34, 40, 20, 18, 9, 16, 9, 40].map((wch) => ({ wch }));
+      const resumo = [
+        ["Fluxo de Caixa — exportação", ""],
+        ["Gerado em", new Date().toLocaleString("pt-BR")],
+        ["", ""],
+        ...recorte,
+        ["", ""],
+        ["Lançamentos exportados", linhasExport.length],
+        ["Total de entradas", exportEntradas],
+        ["Total de saídas", exportSaidas],
+        ["Saldo (entradas − saídas)", exportEntradas - exportSaidas],
+        ["", ""],
+        ["Obs.: na planilha, saídas aparecem com valor negativo.", ""],
+      ];
+      const wsResumo = XLSX.utils.aoa_to_sheet(resumo);
+      wsResumo["!cols"] = [{ wch: 34 }, { wch: 40 }];
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, "Fluxo de Caixa");
+      XLSX.utils.book_append_sheet(wb, wsResumo, "Recorte e totais");
+      XLSX.writeFile(wb, `Fluxo_de_Caixa_${new Date().toISOString().slice(0, 10)}.xlsx`);
+      setExportando(false);
+    });
+  }
+
   const totalPages = Math.max(1, Math.ceil(filtradas.length / PAGE_SIZE));
   const currentPage = Math.min(page, totalPages);
   const pageRows = filtradas.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
@@ -358,11 +501,128 @@ export default function FluxoCaixaGestao() {
         module="Financeiro"
         breadcrumb={["Financeiro", "Gestão Financeira", "Fluxo de Caixa"]}
         actions={
-          <Button variant="outline" size="sm" className="gap-1.5" onClick={() => setLixeiraAberta(true)}>
-            <Trash2 className="h-3.5 w-3.5" /> Lixeira
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button variant="outline" size="sm" className="gap-1.5" onClick={abrirExportacao}>
+              <FileDown className="h-3.5 w-3.5" /> Exportar Excel
+            </Button>
+            <Button variant="outline" size="sm" className="gap-1.5" onClick={() => setLixeiraAberta(true)}>
+              <Trash2 className="h-3.5 w-3.5" /> Lixeira
+            </Button>
+          </div>
         }
       />
+
+      <Dialog open={exportando} onOpenChange={setExportando}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Exportar Fluxo de Caixa para Excel</DialogTitle>
+          </DialogHeader>
+          <p className="text-xs text-muted-foreground -mt-2">
+            Escolha o recorte. Já vem preenchido com os filtros que estão na tela; ajuste o que precisar.
+          </p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+            <div className="space-y-1">
+              <Label className="text-xs">Pagamento de</Label>
+              <Input type="date" className="h-9" value={fx.dataDe} onChange={(e) => setFx((f) => ({ ...f, dataDe: e.target.value }))} />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Pagamento até</Label>
+              <Input type="date" className="h-9" value={fx.dataAte} onChange={(e) => setFx((f) => ({ ...f, dataAte: e.target.value }))} />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Competência</Label>
+              <Input type="month" className="h-9" value={fx.competencia} onChange={(e) => setFx((f) => ({ ...f, competencia: e.target.value }))} />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Tipo</Label>
+              <Select value={fx.tipo} onValueChange={(v) => setFx((f) => ({ ...f, tipo: v as FiltrosExport["tipo"] }))}>
+                <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="todos">Entradas e saídas</SelectItem>
+                  <SelectItem value="entrada">Só entradas</SelectItem>
+                  <SelectItem value="saida">Só saídas</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Empresa</Label>
+              <Select value={fx.empresaId || "__todas"} onValueChange={(v) => setFx((f) => ({ ...f, empresaId: v === "__todas" ? "" : v }))}>
+                <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__todas">Todas</SelectItem>
+                  {empresasDisponiveis.map(([id, nome]) => <SelectItem key={id} value={id}>{nome}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Banco</Label>
+              <Select value={fx.bancoId || "__todos"} onValueChange={(v) => setFx((f) => ({ ...f, bancoId: v === "__todos" ? "" : v }))}>
+                <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__todos">Todos</SelectItem>
+                  {bancosDisponiveis.map(([id, nome]) => <SelectItem key={id} value={id}>{nome}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Contrato</Label>
+              <Select value={fx.contratoId || "__todos"} onValueChange={(v) => setFx((f) => ({ ...f, contratoId: v === "__todos" ? "" : v }))}>
+                <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__todos">Todos</SelectItem>
+                  {contratosDisponiveis.map(([id, nome]) => <SelectItem key={id} value={id}>{nome}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Classificação</Label>
+              <Select value={fx.classificacaoId || "__todas"} onValueChange={(v) => setFx((f) => ({ ...f, classificacaoId: v === "__todas" ? "" : v }))}>
+                <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__todas">Todas</SelectItem>
+                  {classificacoesDisponiveis.map(([id, nome]) => <SelectItem key={id} value={id}>{nome}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Forma de pagamento</Label>
+              <Select value={fx.formaPagamento || "__todas"} onValueChange={(v) => setFx((f) => ({ ...f, formaPagamento: v === "__todas" ? "" : v }))}>
+                <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__todas">Todas</SelectItem>
+                  {formasPagamentoDisponiveis.map((nome) => <SelectItem key={nome} value={nome}>{nome}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Origem do lançamento</Label>
+              <Select value={fx.origem} onValueChange={(v) => setFx((f) => ({ ...f, origem: v as FiltrosExport["origem"] }))}>
+                <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="todas">Todas</SelectItem>
+                  {(Object.keys(LABEL_ORIGEM) as FluxoCaixaMaloteLinha["origem"][]).map((o) => <SelectItem key={o} value={o}>{LABEL_ORIGEM[o]}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            <label className="flex items-center gap-2 sm:col-span-2 cursor-pointer">
+              <input type="checkbox" checked={fx.soRevisar} onChange={(e) => setFx((f) => ({ ...f, soRevisar: e.target.checked }))} />
+              Só lançamentos com o selo "revisar"
+            </label>
+          </div>
+          <div className="rounded-md border bg-muted/30 px-3 py-2 text-xs">
+            <strong>{linhasExport.length.toLocaleString("pt-BR")}</strong> lançamento(s) serão exportados · entradas{" "}
+            <span className="text-emerald-600">{formatBRL(exportEntradas)}</span> · saídas{" "}
+            <span className="text-red-600">{formatBRL(exportSaidas)}</span>
+          </div>
+          <DialogFooter className="gap-2">
+            <Button variant="ghost" size="sm" onClick={() => setFx(FILTROS_EXPORT_VAZIOS)}>Limpar opções</Button>
+            <Button variant="outline" onClick={() => setExportando(false)}>Cancelar</Button>
+            <Button onClick={gerarExcel} disabled={linhasExport.length === 0} className="gap-1.5">
+              <FileDown className="h-4 w-4" /> Exportar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <KpiTile label="Saldo Atual" valor="—" icon={<Wallet />} cor="slate" valorClass="text-muted-foreground" />
@@ -772,10 +1032,11 @@ export default function FluxoCaixaGestao() {
       <Dialog open={!!itemEditar} onOpenChange={(o) => !o && setItemEditar(null)}>
         <DialogContent className="max-w-md">
           <DialogHeader>
-            <DialogTitle>Editar lançamento (só neste Fluxo de Caixa)</DialogTitle>
+            <DialogTitle>Editar lançamento</DialogTitle>
           </DialogHeader>
           <p className="text-xs text-muted-foreground -mt-2">
-            {itemEditar?.id_malote} — {LABEL_ORIGEM[itemEditar?.origem ?? "malote"]}
+            {itemEditar?.id_malote} — {LABEL_ORIGEM[itemEditar?.origem ?? "malote"]}. Os campos abaixo mudam só neste Fluxo de Caixa; o
+            <strong> Contrato</strong> muda no lançamento de origem.
           </p>
           <div className="space-y-3">
             <div>
@@ -848,6 +1109,16 @@ export default function FluxoCaixaGestao() {
                 </SelectContent>
               </Select>
             </div>
+            {itemEditar && (
+              <ContratoTrocaCampo
+                linha={itemEditar}
+                novoId={editNovoContratoId}
+                onNovoId={setEditNovoContratoId}
+                ciente={editCienteEstouro}
+                onCiente={setEditCienteEstouro}
+                onExigeCiencia={setEditExigeCiencia}
+              />
+            )}
           </div>
           <DialogFooter className="flex-wrap gap-2 sm:justify-between">
             {itemEditar?.ajustado && (
