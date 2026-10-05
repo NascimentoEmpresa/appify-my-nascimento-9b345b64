@@ -224,6 +224,30 @@ export function useAjustarLinhaFluxoCaixa() {
   });
 }
 
+// SIS-2026-0552: troca o contrato de um lançamento pelo Fluxo, gravando na
+// ORIGEM (rateio do Malote / débito automático / importação) via RPC — é o que
+// faz o valor ir pro contrato certo no Orçamento. Ver a migration
+// 20261005000020_fluxo_caixa_trocar_contrato.sql.
+export function useTrocarContratoFluxoCaixa() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ origem, despesaId, contratoId }: { origem: string; despesaId: string; contratoId: string }) => {
+      const { error } = await (supabase as any).rpc("fluxo_caixa_trocar_contrato", {
+        _origem: origem,
+        _despesa_id: despesaId,
+        _contrato_id: contratoId,
+      });
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["fluxo_caixa_combinado"] });
+      qc.invalidateQueries({ queryKey: ["fluxo_caixa_malote"] });
+      qc.invalidateQueries({ queryKey: ["utilizado_orcamento"] });
+      qc.invalidateQueries({ queryKey: ["malote_despesa"] });
+    },
+  });
+}
+
 // Apaga a linha de ajuste inteira — a linha volta a mostrar 100% do valor
 // original (não dá pra reverter campo a campo por aqui; quem editou um
 // campo errado edita ele de novo, com o valor certo).
