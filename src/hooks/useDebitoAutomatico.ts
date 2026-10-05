@@ -56,6 +56,13 @@ export interface DebitoAutomaticoLinha {
   // SIS-2026-0413: lixeira do Fluxo de Caixa — null = item ativo.
   deleted_at: string | null;
   deleted_por: string | null;
+  // SIS-2026-0570: parcelamento. data_vencimento = prazo original (a
+  // data_pagamento é a que vai pro Fluxo ao pagar); as 3 outras só vêm
+  // preenchidas em débito parcelado.
+  data_vencimento: string | null;
+  grupo_parcelas_id: string | null;
+  numero_parcela: number | null;
+  total_parcelas: number | null;
 }
 
 export interface DebitoAutomaticoEvento {
@@ -278,4 +285,145 @@ export function useRestaurarDebito() {
       qc.invalidateQueries({ queryKey: ["fluxo_caixa_combinado"] });
     },
   });
+}
+
+// ── SIS-2026-0570: parcelamento, pagamento e anexos ──────────────────────
+
+export interface CriarDebitoParceladoInput {
+  tipo: TipoDebito;
+  empresa_id: string;
+  contrato_id: string | null;
+  classificacao_id: string;
+  descricao: string;
+  forma_pagamento: string;
+  banco_id: string;
+  parcelas: { valor: number; data_vencimento: string }[];
+}
+
+// Devolve os ids das parcelas na ordem (1..N) — a tela usa pra anexar o
+// arquivo do lançamento em cada uma.
+export function useCriarDebitoParcelado() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: CriarDebitoParceladoInput) => {
+      const { data, error } = await (supabase as any).rpc("debito_automatico_criar_parcelado", {
+        _tipo: input.tipo,
+        _empresa_id: input.empresa_id,
+        _contrato_id: input.contrato_id,
+        _classificacao_id: input.classificacao_id,
+        _descricao: input.descricao,
+        _forma_pagamento: input.forma_pagamento,
+        _banco_id: input.banco_id,
+        _parcelas: input.parcelas,
+      });
+      if (error) throw error;
+      return data as string[];
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: [LISTA_KEY] }),
+  });
+}
+
+// Parcela só paga com comprovante próprio (a RPC confere); a data informada
+// é a que entra no Fluxo de Caixa.
+export function usePagarDebito() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, data_pagamento }: { id: string; data_pagamento: string }) => {
+      const { error } = await (supabase as any).rpc("debito_automatico_pagar", { _id: id, _data_pagamento: data_pagamento });
+      if (error) throw error;
+    },
+    onSuccess: (_d, vars) => {
+      qc.invalidateQueries({ queryKey: [LISTA_KEY] });
+      qc.invalidateQueries({ queryKey: [EVENTO_KEY, vars.id] });
+      qc.invalidateQueries({ queryKey: ["fluxo_caixa_combinado"] });
+    },
+  });
+}
+
+export type TipoAnexoDebito = "lancamento" | "comprovante";
+
+export interface DebitoAutomaticoAnexo {
+  id: string;
+  debito_id: string;
+  tipo: TipoAnexoDebito;
+  nome_arquivo: string;
+  storage_path: string;
+  tamanho_bytes: number | null;
+  created_by: string | null;
+  created_at: string;
+}
+
+const ANEXO_KEY = "debito_automatico_anexo";
+const BUCKET_ANEXOS = "debito-automatico-anexos";
+
+export function useAnexosDebito(debitoId: string | null) {
+  return useQuery({
+    queryKey: [ANEXO_KEY, debitoId],
+    enabled: !!debitoId,
+    queryFn: async () => {
+      const { data, error } = await (supabase as any)
+        .from("DEBITO_AUTOMATICO_ANEXO")
+        .select("*")
+        .eq("debito_id", debitoId)
+        .order("created_at", { ascending: true });
+      if (error) throw error;
+      return (data ?? []) as DebitoAutomaticoAnexo[];
+    },
+  });
+}
+
+function nomeSeguro(nome: string) {
+  return nome.normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^a-zA-Z0-9._-]+/g, "_");
+}
+
+// Sobe os arquivos pro bucket e grava 1 linha por arquivo. Se o registro
+// falhar depois do upload, remove o arquivo pra não deixar lixo no storage.
+export async function enviarAnexosDebito(debitoId: string, tipo: TipoAnexoDebito, arquivos: File[]) {
+  const userId = (await supabase.auth.getUser()).data.user?.id ?? null;
+  for (const file of arquivos) {
+    const path = `${debitoId}/${tipo}/${Date.now()}_${nomeSeguro(file.name)}`;
+    const up = await supabase.storage.from(BUCKET_ANEXOS).upload(path, file, { contentType: file.type || undefined });
+    if (up.error) throw up.error;
+    const { error } = await (supabase as any).from("DEBITO_AUTOMATICO_ANEXO").insert({
+      debito_id: debitoId,
+      tipo,
+      nome_arquivo: file.name,
+      storage_path: path,
+      tamanho_bytes: file.size,
+      created_by: userId,
+    });
+    if (error) {
+      await supabase.storage.from(BUCKET_ANEXOS).remove([path]);
+      throw error;
+    }
+  }
+}
+
+export function useEnviarAnexosDebito() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ debitoId, tipo, arquivos }: { debitoId: string; tipo: TipoAnexoDebito; arquivos: File[] }) => {
+      await enviarAnexosDebito(debitoId, tipo, arquivos);
+    },
+    onSuccess: (_d, vars) => qc.invalidateQueries({ queryKey: [ANEXO_KEY, vars.debitoId] }),
+  });
+}
+
+export function useExcluirAnexoDebito() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (anexo: DebitoAutomaticoAnexo) => {
+      const rm = await supabase.storage.from(BUCKET_ANEXOS).remove([anexo.storage_path]);
+      if (rm.error) throw rm.error;
+      const { error } = await (supabase as any).from("DEBITO_AUTOMATICO_ANEXO").delete().eq("id", anexo.id);
+      if (error) throw error;
+    },
+    onSuccess: (_d, anexo) => qc.invalidateQueries({ queryKey: [ANEXO_KEY, anexo.debito_id] }),
+  });
+}
+
+export async function baixarAnexoDebito(storagePath: string) {
+  const { data, error } = await supabase.storage.from(BUCKET_ANEXOS).createSignedUrl(storagePath, 60);
+  if (error || !data?.signedUrl) throw error ?? new Error("Não foi possível abrir o arquivo.");
+  window.open(data.signedUrl, "_blank", "noopener");
 }

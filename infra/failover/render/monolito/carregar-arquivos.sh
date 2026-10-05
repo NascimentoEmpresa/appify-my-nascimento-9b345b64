@@ -30,7 +30,17 @@
 # ============================================================================
 set -uo pipefail
 
-DESTINO="${FILE_STORAGE_BACKEND_PATH:-/var/lib/postgresql/data/storage}"
+# O TENANT ENTRA NO CAMINHO, e foi isto que fez o Storage nao achar os arquivos.
+# O storage-api guarda em <raiz>/<tenant>/<balde>/<objeto>, nao em
+# <raiz>/<balde>/<objeto>. Extraindo sem o tenant, os 254 arquivos ficaram no
+# disco e o Storage devolvia HTTP 400 - conferido em 05/10/2026, com TENANT_ID
+# valendo "stub" no ambiente do servico.
+#
+# A validacao no fim deste script existe exatamente para isto: ela pergunta ao
+# Storage se ele consegue servir um objeto real e avisa quando o layout nao
+# bate, em vez de deixar passar como se tivesse dado certo.
+RAIZ="${FILE_STORAGE_BACKEND_PATH:-/var/lib/postgresql/data/storage}"
+DESTINO="$RAIZ/${TENANT_ID:-stub}"
 REPO="${GITHUB_REPO:-NascimentoEmpresa/appify-my-nascimento-9b345b64}"
 # O TRABALHO NAO PODE ACONTECER EM /tmp, e isso derrubou a replica duas vezes.
 # O /tmp da Render e um volume temporario com LIMITE DE 2 GB, e o backup de
@@ -60,6 +70,26 @@ if [[ -z "${GITHUB_TOKEN:-}" ]]; then
 fi
 
 mkdir -p "$DESTINO" "$TMP" "$TMPDIR"
+
+# --- a chave GPG, importada AQUI -------------------------------------------
+# Este script precisa ser autossuficiente. A primeira versao dependia de o
+# recarga-render.sh ter importado a chave antes - e quando rodei este script
+# SOZINHO (02/10/2026), o download trouxe os 4,8 GB e o gpg falhou em todos com
+#     nao consegui decifrar/extrair
+# porque nao havia chave no chaveiro. Agora ele importa a propria, no disco
+# persistente (nao em /tmp, que estoura em 2 GB na Render).
+if [[ -z "${GPG_PRIVATE_KEY_B64:-}" || -z "${GPG_PASSPHRASE:-}" ]]; then
+  log "sem GPG_PRIVATE_KEY_B64 ou GPG_PASSPHRASE - nao da para decifrar. Pulando."
+  exit 0
+fi
+export GNUPGHOME="$TMPDIR/gpg"
+mkdir -p "$GNUPGHOME"; chmod 700 "$GNUPGHOME"
+# limpa o chaveiro ao sair: a chave privada nao sobrevive ao processo
+trap 'rm -rf "$GNUPGHOME" "$TMP" 2>/dev/null || true' EXIT
+if ! echo "$GPG_PRIVATE_KEY_B64" | base64 -d | gpg --batch --quiet --import 2>/dev/null; then
+  log "nao consegui importar a chave GPG (base64 correta?). Pulando."
+  exit 0
+fi
 
 # --- 1. quantos arquivos ja estao aqui? -------------------------------------
 antes=$(find "$DESTINO" -type f 2>/dev/null | wc -l)
@@ -92,13 +122,24 @@ while IFS='|' read -r id nome tamanho; do
     continue
   fi
   rm -rf "$TMP/x"; mkdir -p "$TMP/x"
-  unzip -qo "$TMP/a.zip" -d "$TMP/x" 2>/dev/null || { log "    zip ilegivel"; continue; }
+  # O artefato completo tem ~4,8 GB, e acima de 4 GB o zip usa ZIP64 - que o
+  # unzip classico (Info-ZIP) nao abre, devolvendo "zip ilegivel" sem explicar.
+  # Foi o que aconteceu em 05/10/2026 com o artefato de 4827 MB. O zipfile do
+  # Python lida com ZIP64 e ja esta no container (o supervisor e Python).
+  if ! unzip -qo "$TMP/a.zip" -d "$TMP/x" 2>/dev/null; then
+    log "    unzip falhou (provavel ZIP64 >4GB) - tentando com python3"
+    python3 -m zipfile -e "$TMP/a.zip" "$TMP/x" 2>/dev/null \
+      || { log "    zip ilegivel mesmo com python3"; continue; }
+  fi
 
   cifrado=$(find "$TMP/x" -name '*.tar.gpg' | head -1)
   [[ -z "$cifrado" ]] && { log "    sem .tar.gpg dentro"; continue; }
 
-  # A chave privada e a mesma do backup do banco, ja configurada no container.
-  if ! gpg --batch --yes --quiet --decrypt "$cifrado" 2>/dev/null \
+  # A chave privada e a mesma do backup do banco; a passphrase vem por
+  # --pinentry-mode loopback, senao o gpg tenta abrir um prompt que nao existe
+  # num processo em segundo plano e falha calado.
+  if ! gpg --batch --yes --quiet --pinentry-mode loopback \
+       --passphrase "$GPG_PASSPHRASE" --decrypt "$cifrado" 2>/dev/null \
        | tar -xf - -C "$TMP/x" 2>/dev/null; then
     log "    nao consegui decifrar/extrair"
     continue
@@ -117,7 +158,10 @@ done <<< "$lista"
 
 # --- 4. o dono precisa ser o do Storage -------------------------------------
 # Extraido como root, o storage-api (que roda como outro usuario) nao leria.
-chown -R 1000:1000 "$DESTINO" 2>/dev/null || true
+# A RAIZ inteira, nao so o diretorio do tenant: o storage-api precisa atravessar
+# <raiz> para chegar em <raiz>/<tenant>/..., e sem permissao na raiz ele para
+# antes de entrar.
+chown -R 1000:1000 "$RAIZ" 2>/dev/null || true
 
 depois=$(find "$DESTINO" -type f 2>/dev/null | wc -l)
 log "no disco agora: $depois arquivo(s)  (+$(( depois - antes )))"
