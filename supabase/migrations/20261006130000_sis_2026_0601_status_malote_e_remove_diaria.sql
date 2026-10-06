@@ -31,8 +31,9 @@ GRANT EXECUTE ON FUNCTION public.diaria_malote_status(public."DIARIA_SOLICITACAO
 
 -- Correção pontual solicitada no chamado. A exclusão física libera as linhas
 -- de escala porque DIARIA_LINHA/ANEXO/EVENTO/VISUALIZACAO têm ON DELETE
--- CASCADE. A despesa cancelada fica preservada no Malote como trilha da ação
--- que já aconteceu lá.
+-- CASCADE. A despesa terminal sem pagamento fica preservada no Malote como
+-- trilha da ação que já aconteceu lá. No banco real, o cancelamento desta
+-- despesa foi encerrado como `despesa_reprovada`, não como `cancelada`.
 DO $$
 DECLARE
   v_solicitacao_id uuid;
@@ -60,9 +61,10 @@ BEGIN
     FROM public.malote_despesa d
    WHERE d.id = v_malote_id;
 
-  IF v_malote_status IS DISTINCT FROM 'cancelada' THEN
+  IF v_malote_status IS NULL
+     OR v_malote_status NOT IN ('cancelada', 'despesa_reprovada') THEN
     RAISE EXCEPTION
-      'SIS-2026-0601: despesa % vinculada à SD-2026-000078 está com status %, não cancelada; exclusão abortada.',
+      'SIS-2026-0601: despesa % vinculada à SD-2026-000078 está com status %, não é terminal sem pagamento; exclusão abortada.',
       v_malote_id,
       COALESCE(v_malote_status, '<não encontrada>');
   END IF;
@@ -71,8 +73,9 @@ BEGIN
    WHERE id = v_solicitacao_id;
 
   RAISE NOTICE
-    'SIS-2026-0601: SD-2026-000078 removida; despesa cancelada % preservada no Malote.',
-    v_malote_id;
+    'SIS-2026-0601: SD-2026-000078 removida; despesa % com status % preservada no Malote.',
+    v_malote_id,
+    v_malote_status;
 END
 $$;
 
