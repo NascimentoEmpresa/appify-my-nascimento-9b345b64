@@ -19,9 +19,15 @@ import {
 } from "@/hooks/useSupPedidos";
 import {
   ChevronLeft, ChevronRight, CheckCircle2, Shirt, HardHat, Upload, Truck, Loader2,
+  type LucideIcon,
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import {
+  QUANTIDADE_MAXIMA_SOLICITACAO,
+  normalizarQuantidadeSolicitada,
+  quantidadeSolicitadaValida,
+} from "@/lib/suprimentos/solicitacaoMateriais";
 
 /**
  * Solicitar Materiais — wizard do encarregado (4 passos), espelhando a jornada
@@ -111,7 +117,7 @@ export default function SolicitarMateriais() {
     const sel = selecionados[i.id];
     if (!sel) return true;
     if (i.opcao_tamanho?.length && !sel.tamanho) return false;
-    if (i.opcao_quantidade?.length && !sel.quantidade) return false;
+    if (i.opcao_quantidade?.length && !quantidadeSolicitadaValida(sel.quantidade)) return false;
     if (i.opcao_litros?.length && !sel.litros) return false;
     return true;
   };
@@ -138,6 +144,11 @@ export default function SolicitarMateriais() {
 
   const enviar = async () => {
     if (!contratoEfetivo || !postoId || !funcaoId) return;
+    if (!marcados.every(itemCompleto)) {
+      toast.error("Revise as opções e informe uma quantidade inteira maior que zero.");
+      setPasso(2);
+      return;
+    }
 
     // Falha no upload não derruba o pedido, mas o usuário FICA SABENDO — no
     // legado o erro só ia para o console e a pessoa achava que tinha anexado.
@@ -170,7 +181,7 @@ export default function SolicitarMateriais() {
         item_id: i.id,
         nome_item: i.nome,
         tamanho: selecionados[i.id]?.tamanho || null,
-        quantidade: Number(selecionados[i.id]?.quantidade || 1),
+        quantidade: normalizarQuantidadeSolicitada(selecionados[i.id]?.quantidade) ?? 1,
         litros: selecionados[i.id]?.litros || null,
       })),
     });
@@ -507,7 +518,7 @@ function ListaItens({
   titulo, icone: Icone, itens, selecionados, onAlternar, onDefinir,
 }: {
   titulo: string;
-  icone: any;
+  icone: LucideIcon;
   itens: ItemEnxoval[];
   selecionados: Record<string, Selecao>;
   onAlternar: (i: ItemEnxoval) => void;
@@ -538,8 +549,8 @@ function ListaItens({
                     />
                   )}
                   {!!i.opcao_quantidade?.length && (
-                    <CampoOpcao
-                      rotulo="Quantidade" valor={sel.quantidade} opcoes={i.opcao_quantidade}
+                    <CampoQuantidade
+                      valor={sel.quantidade} opcoes={i.opcao_quantidade}
                       onMudar={(v) => onDefinir(i.id, "quantidade", v)}
                     />
                   )}
@@ -558,6 +569,44 @@ function ListaItens({
           );
         })}
       </div>
+    </div>
+  );
+}
+
+function CampoQuantidade({
+  valor, opcoes, onMudar,
+}: { valor: string; opcoes: string[]; onMudar: (v: string) => void }) {
+  const opcaoSelecionada = opcoes.includes(valor);
+  const invalida = valor !== "" && !quantidadeSolicitadaValida(valor);
+
+  return (
+    <div>
+      <Label className="text-xs">Quantidade *</Label>
+      <div className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2">
+        <Select value={opcaoSelecionada ? valor : ""} onValueChange={onMudar}>
+          <SelectTrigger className="h-9"><SelectValue placeholder="Selecione" /></SelectTrigger>
+          <SelectContent>
+            {opcoes.map((o) => <SelectItem key={o} value={o}>{o}</SelectItem>)}
+          </SelectContent>
+        </Select>
+        <span className="text-[11px] text-muted-foreground">ou</span>
+        <Input
+          type="number"
+          inputMode="numeric"
+          min={1}
+          max={QUANTIDADE_MAXIMA_SOLICITACAO}
+          step={1}
+          value={opcaoSelecionada ? "" : valor}
+          onChange={(e) => onMudar(e.target.value)}
+          placeholder="Digite"
+          aria-label="Quantidade digitada"
+          aria-invalid={invalida}
+          className="h-9"
+        />
+      </div>
+      {invalida && (
+        <p className="mt-1 text-xs text-destructive">Informe um número inteiro maior que zero.</p>
+      )}
     </div>
   );
 }
