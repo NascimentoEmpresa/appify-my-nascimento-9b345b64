@@ -24,7 +24,7 @@ import {
   useRegistrarPagamentoNf,
   TIPOS_NOTA,
 } from "@/hooks/useNfEmissao";
-import { calcularItem, calcularTotaisNf, inssLegadoDoItem, pctEfetivo, pctFiscaisDaNf, ItemCalculado } from "@/pages/financeiro/nf-emissao/calculos";
+import { calcularItem, calcularTotaisNf, valoresLegadosDoItem, pctEfetivo, pctFiscaisDaNf, ItemCalculado } from "@/pages/financeiro/nf-emissao/calculos";
 import {
   fmtMoney, fmtDate, situacaoEspecial, statusDaNota, pendenteHaMaisDe30Dias, moneyTextContains, valorPendenteNf,
 } from "@/pages/financeiro/nf-emissao/shared";
@@ -94,7 +94,7 @@ function itemRowParaForm(r: NfEmissaoItemRow): ItemForm {
     justificativa_outros_descontos: r.justificativa_outros_descontos,
     qtd_colaboradores: r.qtd_colaboradores,
     inss_categoria: r.inss_categoria,
-    inss_legado: inssLegadoDoItem(r),
+    valores_legados: valoresLegadosDoItem(r),
     issqn_pct: r.issqn_pct,
     ir_pct: r.ir_pct,
     cofins_pct: r.cofins_pct,
