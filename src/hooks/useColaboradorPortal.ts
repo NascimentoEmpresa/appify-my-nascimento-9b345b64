@@ -398,11 +398,11 @@ export function useAlterarSenhaColaborador() {
   });
 }
 
-/** Sexo, estado civil e celular/WhatsApp que o próprio colaborador informa (mig 20261006000007). */
+/** Sexo, estado civil, celular/WhatsApp e e-mail que o próprio colaborador informa (migs 20261006000007/08). */
 export function useAtualizarDadosColaborador() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (p: { sexo: string | null; estado_civil: string | null; celular: string | null }) =>
+    mutationFn: (p: { sexo: string | null; estado_civil: string | null; celular: string | null; email: string | null }) =>
       chamarPortal<PerfilColaborador>("atualizar_dados", p),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["colaborador", "perfil"] }),
   });

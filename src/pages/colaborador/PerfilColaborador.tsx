@@ -36,7 +36,6 @@ export default function PerfilColaborador() {
           <Dado rotulo="Nascimento" valor={fmtData(perfil.nascimento)} sempre />
           <Dado rotulo="Escolaridade" valor={perfil.instrucao} />
           <Dado rotulo="Nacionalidade" valor={perfil.nacionalidade} />
-          <Dado rotulo="E-mail" valor={perfil.email} />
           <Dado rotulo="PIS" valor={perfil.pis} mono />
           <Dado rotulo="CTPS" valor={perfil.ctps} mono />
         </GradeDados>
@@ -73,7 +72,8 @@ export default function PerfilColaborador() {
 }
 
 // ---------------------------------------------------------------------
-// Sexo, estado civil e celular/WhatsApp (06/10/2026, mig 20261006000007).
+// Sexo, estado civil, celular/WhatsApp (06/10/2026, mig 20261006000007) e
+// e-mail (mig 20261006000008 — esse é a própria coluna email da EMPREGADOS).
 // Vinham da Senior e estavam errados (ex.: colaboradora viúva aparecendo
 // como "Masculino / Solteiro"). Agora são do colaborador: começam vazios,
 // ele preenche e corrige quando quiser. Gravam em colunas próprias da
@@ -96,18 +96,21 @@ function DadosProprios({ perfil }: { perfil: PerfilColaborador }) {
   const [sexo, setSexo] = useState("");
   const [estadoCivil, setEstadoCivil] = useState("");
   const [celular, setCelular] = useState("");
+  const [email, setEmail] = useState("");
   const salvar = useAtualizarDadosColaborador();
 
   const abrir = () => {
-    setSexo(perfil.sexo ?? ""); setEstadoCivil(perfil.estado_civil ?? ""); setCelular(formatarCelular(perfil.celular_whatsapp));
+    setSexo(perfil.sexo ?? ""); setEstadoCivil(perfil.estado_civil ?? ""); setCelular(formatarCelular(perfil.celular_whatsapp)); setEmail(perfil.email ?? "");
     setEditando(true);
   };
   const enviar = async (e: React.FormEvent) => {
     e.preventDefault();
     const dig = celular.replace(/\D/g, "");
     if (dig && (dig.length < 10 || dig.length > 13)) { toast.error("Celular inválido — informe com DDD, ex.: (51) 99999-9999."); return; }
+    const mail = email.trim().toLowerCase();
+    if (mail && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(mail)) { toast.error("E-mail inválido."); return; }
     try {
-      await salvar.mutateAsync({ sexo: sexo || null, estado_civil: estadoCivil || null, celular: dig || null });
+      await salvar.mutateAsync({ sexo: sexo || null, estado_civil: estadoCivil || null, celular: dig || null, email: mail || null });
       toast.success("Dados atualizados.");
       setEditando(false);
     } catch (err) {
@@ -115,7 +118,7 @@ function DadosProprios({ perfil }: { perfil: PerfilColaborador }) {
     }
   };
 
-  const nada = !perfil.sexo && !perfil.estado_civil && !perfil.celular_whatsapp;
+  const nada = !perfil.sexo && !perfil.estado_civil && !perfil.celular_whatsapp && !perfil.email;
   return (
     <Secao
       titulo="Seus dados"
@@ -127,6 +130,7 @@ function DadosProprios({ perfil }: { perfil: PerfilColaborador }) {
           <Dado rotulo="Sexo" valor={perfil.sexo} sempre />
           <Dado rotulo="Estado civil" valor={perfil.estado_civil} sempre />
           <Dado rotulo="Celular / WhatsApp" valor={formatarCelular(perfil.celular_whatsapp)} mono sempre />
+          <Dado rotulo="E-mail" valor={perfil.email} sempre />
         </GradeDados>
       ) : (
         <form onSubmit={enviar} className="space-y-3">
@@ -136,6 +140,12 @@ function DadosProprios({ perfil }: { perfil: PerfilColaborador }) {
             <span className="mb-1 block text-xs font-semibold">Celular / WhatsApp (com DDD)</span>
             <input type="tel" inputMode="tel" autoComplete="tel" placeholder="(51) 99999-9999" value={celular}
               onChange={(e) => setCelular(e.target.value)} onBlur={() => setCelular(formatarCelular(celular) || celular)}
+              className="h-11 w-full rounded-lg border border-border bg-background px-3 text-base focus:border-ring focus:outline-none focus:ring-2 focus:ring-ring/30" />
+          </label>
+          <label className="block">
+            <span className="mb-1 block text-xs font-semibold">E-mail</span>
+            <input type="email" inputMode="email" autoComplete="email" placeholder="seunome@exemplo.com" value={email}
+              onChange={(e) => setEmail(e.target.value)}
               className="h-11 w-full rounded-lg border border-border bg-background px-3 text-base focus:border-ring focus:outline-none focus:ring-2 focus:ring-ring/30" />
           </label>
           <div className="flex gap-2">
