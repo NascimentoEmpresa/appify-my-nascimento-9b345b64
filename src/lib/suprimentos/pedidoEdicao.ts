@@ -96,6 +96,22 @@ export function validarEdicao(c: ContextoEdicao): string | null {
   return null;
 }
 
+/**
+ * Este item exige tamanho?
+ *
+ * Todo **uniforme** exige — por grade quando existe, por texto livre quando
+ * não existe. Foi o buraco do SIS-2026-0481: uniforme sem grade (ex. a JAQUETA
+ * do PED-20260916-0113) não mostrava campo nenhum e seguia sem tamanho, e o
+ * Supply ficava sem como separar. Insumo/EPI só exige quando tem grade — o que
+ * ele oferece é o que se escolhe, nada mais.
+ *
+ * Mesma regra que a migration da admissão já aplica (20260930000017): o que
+ * muda entre grade e sem grade é só a forma de responder, não a obrigação.
+ */
+export function exigeTamanhoItem(tipo: string, temGrade: boolean): boolean {
+  return tipo === "uniforme" || temGrade;
+}
+
 export interface ItemPayload {
   id: string | null;
   item_id: string | null;

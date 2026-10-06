@@ -28,6 +28,7 @@ import {
   normalizarQuantidadeSolicitada,
   quantidadeSolicitadaValida,
 } from "@/lib/suprimentos/solicitacaoMateriais";
+import { exigeTamanhoItem } from "@/lib/suprimentos/pedidoEdicao";
 
 /**
  * Solicitar Materiais — wizard do encarregado (4 passos), espelhando a jornada
@@ -41,7 +42,9 @@ import {
  * que posto/função/item pertencem mesmo àquele contrato.
  */
 
-type Selecao = { tamanho: string; quantidade: string; litros: string };
+// `tamanhoTexto` é o tamanho ESCRITO, usado no uniforme que não tem grade
+// cadastrada (SIS-2026-0481). `tamanho` continua sendo a escolha da grade.
+type Selecao = { tamanho: string; tamanhoTexto: string; quantidade: string; litros: string };
 
 const PASSOS = ["Dados", "Posto e Função", "Materiais", "Confirmação"];
 
@@ -103,7 +106,7 @@ export default function SolicitarMateriais() {
     setSelecionados((s) => {
       const novo = { ...s };
       if (novo[item.id]) delete novo[item.id];
-      else novo[item.id] = { tamanho: "", quantidade: "", litros: "" };
+      else novo[item.id] = { tamanho: "", tamanhoTexto: "", quantidade: "", litros: "" };
       return novo;
     });
   };
@@ -111,12 +114,28 @@ export default function SolicitarMateriais() {
   const definir = (itemId: string, campo: keyof Selecao, valor: string) =>
     setSelecionados((s) => ({ ...s, [itemId]: { ...s[itemId], [campo]: valor } }));
 
-  // Um item só está completo quando TODOS os selects que ele oferece foram
-  // preenchidos — mesma regra do "Avançar" do legado.
+  // Tamanho que vai pro pedido: a escolha da grade, ou o texto escrito quando
+  // o uniforme não tem grade (SIS-2026-0481). Vazio vira null.
+  const tamanhoEfetivo = (itemId: string): string | null => {
+    const sel = selecionados[itemId];
+    return (sel?.tamanho || sel?.tamanhoTexto || "").trim() || null;
+  };
+
+  // O tamanho exigido por este item foi satisfeito? Fonte única da regra, usada
+  // por itemCompleto e pelo aviso de bloqueio, pra elas não divergirem.
+  const tamanhoSatisfeito = (i: ItemEnxoval, sel?: Selecao): boolean => {
+    const temGrade = !!i.opcao_tamanho?.length;
+    if (!exigeTamanhoItem(i.tipo, temGrade)) return true;
+    return temGrade ? !!sel?.tamanho : !!sel?.tamanhoTexto?.trim();
+  };
+
+  // Um item só está completo quando TODOS os campos que ele exige foram
+  // preenchidos — mesma regra do "Avançar" do legado. Uniforme sempre exige
+  // tamanho (SIS-2026-0481): da grade quando existe, escrito quando não existe.
   const itemCompleto = (i: ItemEnxoval) => {
     const sel = selecionados[i.id];
     if (!sel) return true;
-    if (i.opcao_tamanho?.length && !sel.tamanho) return false;
+    if (!tamanhoSatisfeito(i, sel)) return false;
     if (i.opcao_quantidade?.length && !quantidadeSolicitadaValida(sel.quantidade)) return false;
     if (i.opcao_litros?.length && !sel.litros) return false;
     return true;
@@ -145,7 +164,7 @@ export default function SolicitarMateriais() {
   const enviar = async () => {
     if (!contratoEfetivo || !postoId || !funcaoId) return;
     if (!marcados.every(itemCompleto)) {
-      toast.error("Revise as opções e informe uma quantidade inteira maior que zero.");
+      toast.error("Revise os itens marcados: informe o tamanho e uma quantidade inteira maior que zero.");
       setPasso(2);
       return;
     }
@@ -180,7 +199,7 @@ export default function SolicitarMateriais() {
       itens: marcados.map((i) => ({
         item_id: i.id,
         nome_item: i.nome,
-        tamanho: selecionados[i.id]?.tamanho || null,
+        tamanho: tamanhoEfetivo(i.id),
         quantidade: normalizarQuantidadeSolicitada(selecionados[i.id]?.quantidade) ?? 1,
         litros: selecionados[i.id]?.litros || null,
       })),
@@ -440,6 +459,12 @@ export default function SolicitarMateriais() {
                 <p className="mt-1 text-right text-[11px] text-muted-foreground">{observacoes.length}/500</p>
               </div>
 
+              {marcados.some((i) => i.tipo === "uniforme" && !tamanhoSatisfeito(i, selecionados[i.id])) && (
+                <p className="text-sm text-destructive">
+                  Uniforme exige o tamanho — escolha na lista, ou escreva o tamanho no item marcado.
+                </p>
+              )}
+
               {marcados.length > 0 && tipoPedido !== "insumos" && !colaboradorDefinido && (
                 <p className="text-sm text-destructive">
                   Pedido com uniforme exige o colaborador — volte ao passo 1 e escolha da lista,
@@ -465,8 +490,9 @@ export default function SolicitarMateriais() {
                 <div className="divide-y rounded-md border">
                   {marcados.map((i) => {
                     const s = selecionados[i.id];
+                    const tam = tamanhoEfetivo(i.id);
                     const detalhes = [
-                      s?.tamanho && `Tam. ${s.tamanho}`,
+                      tam && `Tam. ${tam}`,
                       s?.quantidade && `Qtd. ${s.quantidade}`,
                       s?.litros && `${s.litros} L`,
                     ].filter(Boolean).join(" · ");
@@ -548,6 +574,18 @@ function ListaItens({
                       onMudar={(v) => onDefinir(i.id, "tamanho", v)}
                     />
                   )}
+                  {/* Uniforme sem grade: o tamanho é escrito (SIS-2026-0481). */}
+                  {i.tipo === "uniforme" && !i.opcao_tamanho?.length && (
+                    <div>
+                      <Label className="text-xs">Tamanho *</Label>
+                      <Input
+                        className="mt-1 h-9"
+                        value={sel.tamanhoTexto}
+                        onChange={(e) => onDefinir(i.id, "tamanhoTexto", e.target.value)}
+                        placeholder="Ex.: M, 42, GG — como o colaborador usa"
+                      />
+                    </div>
+                  )}
                   {!!i.opcao_quantidade?.length && (
                     <CampoQuantidade
                       valor={sel.quantidade} opcoes={i.opcao_quantidade}
@@ -560,7 +598,7 @@ function ListaItens({
                       onMudar={(v) => onDefinir(i.id, "litros", v)}
                     />
                   )}
-                  {!i.opcao_tamanho?.length && !i.opcao_quantidade?.length && !i.opcao_litros?.length && (
+                  {i.tipo !== "uniforme" && !i.opcao_tamanho?.length && !i.opcao_quantidade?.length && !i.opcao_litros?.length && (
                     <p className="text-xs text-muted-foreground sm:col-span-3">Sem opções a escolher.</p>
                   )}
                 </div>
