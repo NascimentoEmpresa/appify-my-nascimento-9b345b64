@@ -53,7 +53,8 @@ bootstrap:
     - local all all peer
     - host  all all 127.0.0.1/32 scram-sha-256
     # A rede privada da Vultr. Trocar se a faixa for outra.
-    - host  all all 10.0.0.0/8 scram-sha-256
+    # Só a rede de dentro do túnel cifrado. Nada entra pela internet aberta.
+    - host  all all 10.77.0.0/24 scram-sha-256
     - host  replication replicator __IP_BANCO1__/32 scram-sha-256
     - host  replication replicator __IP_BANCO2__/32 scram-sha-256
 
