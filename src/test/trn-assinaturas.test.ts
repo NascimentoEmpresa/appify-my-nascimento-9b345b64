@@ -47,3 +47,18 @@ describe("assinaturaValeParaPublicar", () => {
     expect(cargoERegistro(BASE)).toBe("Técnica em Segurança do Trabalho · Registro: 0031036");
   });
 });
+
+describe("letras e tamanho (06/10/2026)", () => {
+  it("as 8 letras originais continuam na lista (assinatura salva não quebra)", () => {
+    for (const id of ["Great Vibes", "Dancing Script", "Allura", "Alex Brush", "Sacramento", "Pinyon Script", "Parisienne", "Caveat"])
+      expect(FONTES_ASSINATURA.some((f) => f.id === id)).toBe(true);
+    expect(FONTES_ASSINATURA.length).toBeGreaterThanOrEqual(30);
+    expect(new Set(FONTES_ASSINATURA.map((f) => f.id)).size).toBe(FONTES_ASSINATURA.length);
+  });
+  it("tamanho só entre 60% e 140%", () => {
+    const ok = { ...BASE, tipo: "texto" as const, texto: "Ana", fonte: "Kristi" };
+    expect(problemaAssinatura({ ...ok, tamanho: 1.4 })).toBeNull();
+    expect(problemaAssinatura({ ...ok, tamanho: 0.5 })).toMatch(/Tamanho/);
+    expect(problemaAssinatura({ ...ok, tamanho: 1.5 })).toMatch(/Tamanho/);
+  });
+});

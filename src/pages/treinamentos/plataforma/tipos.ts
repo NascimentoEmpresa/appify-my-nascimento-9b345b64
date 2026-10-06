@@ -91,11 +91,13 @@ export interface Assinatura {
   imagem: string | null;
   /** tipo "texto": o texto e a fonte (FONTES_ASSINATURA). */
   texto: string | null; fonte: string | null;
+  /** tipo "texto": multiplicador da letra, 0,6–1,4 (mig 20261006000002). */
+  tamanho: number | null;
   ativo: boolean; created_at: string; updated_at: string;
 }
 
 /** O que a folha do certificado precisa para desenhar a assinatura. */
-export type AssinaturaCertificado = Pick<Assinatura, "nome_completo" | "cargo" | "registro" | "tipo" | "imagem" | "texto" | "fonte">;
+export type AssinaturaCertificado = Pick<Assinatura, "nome_completo" | "cargo" | "registro" | "tipo" | "imagem" | "texto" | "fonte"> & { tamanho?: number | null };
 
 export type CapaFormato = "paisagem" | "retrato" | "quadrado";
 
