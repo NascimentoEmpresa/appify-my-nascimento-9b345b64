@@ -8,7 +8,11 @@ import { SearchableMultiSelect } from "@/components/ui/searchable-multi-select";
 import { usePlanoAcoes, type PlanoAcaoRow } from "@/hooks/usePlanoAcoes";
 import { usePlanoAcaoPermissao } from "@/hooks/usePlanoAcaoPermissao";
 import { usePlanoAcaoFilterOptions, matchResponsavel, matchTexto, manterValidos } from "@/hooks/usePlanoAcaoFilterOptions";
-import { STATUS_LABELS, STATUS_COR, STATUS_ORDEM, PRIORIDADE_COR, PRIORIDADE_LABEL } from "@/types/planoAcao";
+import type { SearchableOption } from "@/components/ui/searchable-select";
+import {
+  STATUS_LABELS, STATUS_COR, STATUS_ORDEM, PRIORIDADE_COR, PRIORIDADE_LABEL,
+  COMITES_FILTRO, SETORES_FILTRO, TIPO_ACAO_OPTIONS, TIPO_ACAO_LABEL,
+} from "@/types/planoAcao";
 import { ForbiddenCard } from "./Lista";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
@@ -16,6 +20,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { podeValidarPlanoAcao } from "@/lib/podeValidarPlanoAcao";
 
 const COLUNAS = STATUS_ORDEM;
+const OPCOES_TIPO: SearchableOption[] = TIPO_ACAO_OPTIONS.map(t => ({ value: t, label: TIPO_ACAO_LABEL[t] }));
 
 export default function PlanoAcoesKanban() {
   const { data: rows = [], isLoading } = usePlanoAcoes();
@@ -24,30 +29,31 @@ export default function PlanoAcoesKanban() {
   const qc = useQueryClient();
   const { toast } = useToast();
 
+  // Comitê/Setor saem de listas fixas (SIS-2026-0612); o dropdown antigo de
+  // "Setor" lia a coluna `setor`, que está sempre vazia, e foi removido.
   const [fComite, setFComite] = useState<string[]>([]);
   const [fArea, setFArea] = useState<string[]>([]);
-  const [fSetor, setFSetor] = useState<string[]>([]);
+  const [fTipo, setFTipo] = useState<string[]>([]);
   const [fResp, setFResp] = useState<string[]>([]);
   const [fEmpresa, setFEmpresa] = useState<string[]>([]);
-  const { comites, areas, setores, responsaveis, empresas } = usePlanoAcaoFilterOptions(rows);
+  const { responsaveis, empresas } = usePlanoAcaoFilterOptions(rows);
 
   // manterValidos devolve a mesma referência quando nada muda — sem re-render.
   useEffect(() => {
-    setFComite(prev => manterValidos(prev, comites));
-    setFArea(prev => manterValidos(prev, areas));
-    setFSetor(prev => manterValidos(prev, setores));
+    setFComite(prev => manterValidos(prev, COMITES_FILTRO));
+    setFArea(prev => manterValidos(prev, SETORES_FILTRO));
     setFResp(prev => manterValidos(prev, responsaveis));
     setFEmpresa(prev => manterValidos(prev, empresas));
-  }, [comites, areas, setores, responsaveis, empresas]);
+  }, [responsaveis, empresas]);
 
   const filteredRows = useMemo(() => rows.filter(r => {
     if (!matchTexto(r.comite, fComite)) return false;
     if (!matchTexto(r.area, fArea)) return false;
-    if (!matchTexto(r.setor, fSetor)) return false;
+    if (fTipo.length > 0 && !fTipo.includes(r.tipo_acao)) return false;
     if (!matchResponsavel(r, fResp)) return false;
     if (fEmpresa.length > 0 && !fEmpresa.includes(r.empresa_id)) return false;
     return true;
-  }), [rows, fComite, fArea, fSetor, fResp, fEmpresa]);
+  }), [rows, fComite, fArea, fTipo, fResp, fEmpresa]);
 
   const grouped = useMemo(() => {
     const m = new Map<string, PlanoAcaoRow[]>();
@@ -101,9 +107,9 @@ export default function PlanoAcoesKanban() {
       {isLoading && <p className="text-sm text-muted-foreground">Carregando...</p>}
       <Card className="mb-4 p-3">
         <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-          <SearchableMultiSelect value={fComite} onChange={setFComite} options={comites} placeholder="Todos os comitês" searchPlaceholder="Buscar comitê..." maxBadges={2} />
-          <SearchableMultiSelect value={fArea} onChange={setFArea} options={areas} placeholder="Todas as áreas" searchPlaceholder="Buscar área..." maxBadges={2} />
-          <SearchableMultiSelect value={fSetor} onChange={setFSetor} options={setores} placeholder="Todos os setores" searchPlaceholder="Buscar setor..." maxBadges={2} />
+          <SearchableMultiSelect value={fComite} onChange={setFComite} options={COMITES_FILTRO} placeholder="Todos os comitês" searchPlaceholder="Buscar comitê..." maxBadges={2} />
+          <SearchableMultiSelect value={fArea} onChange={setFArea} options={SETORES_FILTRO} placeholder="Todos os setores" searchPlaceholder="Buscar setor..." maxBadges={2} />
+          <SearchableMultiSelect value={fTipo} onChange={setFTipo} options={OPCOES_TIPO} placeholder="Todos os tipos" searchPlaceholder="Buscar tipo..." maxBadges={2} />
           <SearchableMultiSelect value={fResp} onChange={setFResp} options={responsaveis} placeholder="Todos os responsáveis" searchPlaceholder="Buscar responsável..." maxBadges={2} />
           <SearchableMultiSelect value={fEmpresa} onChange={setFEmpresa} options={empresas} placeholder="Todas as empresas" searchPlaceholder="Buscar empresa..." maxBadges={2} />
         </div>

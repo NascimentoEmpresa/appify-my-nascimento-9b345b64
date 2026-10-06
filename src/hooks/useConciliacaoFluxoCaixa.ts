@@ -7,8 +7,19 @@ import type { FluxoCaixaMaloteLinha } from "@/hooks/useFluxoCaixaMalote";
 // Fluxo de Caixa interno (useFluxoCaixaCombinado), não de planilha subida.
 // Este adaptador é o único ponto de contato entre os dois mundos: reusa o
 // motor de comparação (`reconciliar`) sem duplicar o algoritmo.
+// Conta vinculada (pedido do Iury, 06/10/2026): saída com "CONTA VINCULADA" na
+// descrição (ex. "RESGATE CONTA VINCULADA") é movimento interno da conta
+// bloqueada, não aparece no extrato da conta corrente — acusava "FLUXO - NÃO
+// ENCONTRADO" à toa. Só SAÍDA: a entrada ("RECEBIMENTO DE NOTA - CONTA
+// VINCULADA") continua na conciliação.
+export function ignoraNaConciliacao(l: Pick<FluxoCaixaMaloteLinha, "tipo" | "descricao"> & { classificacao_nome?: string | null }): boolean {
+  // O SALDO ANTERIOR (abertura) nunca é ignorado: tem tratamento próprio.
+  if ((l.classificacao_nome ?? "").trim().toUpperCase() === "SALDO ANTERIOR") return false;
+  return l.tipo === "saida" && (l.descricao ?? "").toUpperCase().includes("CONTA VINCULADA");
+}
+
 export function linhasFluxoParaPlanilhaRow(linhas: FluxoCaixaMaloteLinha[]): PlanilhaRow[] {
-  return linhas.map((l) => ({
+  return linhas.filter((l) => !ignoraNaConciliacao(l)).map((l) => ({
     dia: l.data_pagamento ?? "",
     valor: l.valor,
     tipo: l.tipo === "entrada" ? "ENTRADA" : "SAÍDA",

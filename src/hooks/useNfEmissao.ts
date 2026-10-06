@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import type { ItemCalculado, TotaisNf, PercentuaisFiscais, InssCategoria } from "@/pages/financeiro/nf-emissao/calculos";
+import { itemParaGravar, substituirItensNf } from "@/pages/financeiro/nf-emissao/itemParaGravar";
 
 const BUCKET = "nf-emissao";
 
@@ -167,12 +168,7 @@ export function useSalvarNfEmissao() {
       const nfId = nf.id as string;
 
       if (input.itens.length > 0) {
-        const payloadItens = input.itens.map((it, idx) => ({
-          nf_emissao_id: nfId,
-          ordem: idx + 1,
-          identificacao: (it as any).identificacao || `Item ${idx + 1}`,
-          ...it,
-        }));
+        const payloadItens = input.itens.map((it, idx) => itemParaGravar(it as any, nfId, idx));
         const { error: eItens } = await (supabase as any).from("nf_emissao_item").insert(payloadItens);
         if (eItens) throw eItens;
       }
@@ -251,19 +247,7 @@ export function useAtualizarNfEmissao() {
         .eq("id", input.id);
       if (error) throw error;
 
-      const { error: eDelItens } = await (supabase as any).from("nf_emissao_item").delete().eq("nf_emissao_id", input.id);
-      if (eDelItens) throw eDelItens;
-
-      if (input.itens.length > 0) {
-        const payloadItens = input.itens.map((it, idx) => ({
-          nf_emissao_id: input.id,
-          ordem: idx + 1,
-          identificacao: (it as any).identificacao || `Item ${idx + 1}`,
-          ...it,
-        }));
-        const { error: eItens } = await (supabase as any).from("nf_emissao_item").insert(payloadItens);
-        if (eItens) throw eItens;
-      }
+      await substituirItensNf(supabase, input.id, input.itens as any);
 
       for (const a of input.anexosParaRemover) {
         const rm = await supabase.storage.from(BUCKET).remove([a.storage_path]);
@@ -316,6 +300,12 @@ export function useValidarNfEmissao() {
     mutationFn: async (input: ValidarNfEmissaoInput) => {
       const userId = (await supabase.auth.getUser()).data.user?.id ?? null;
 
+      // Itens PRIMEIRO, status da nota por último: se a gravação dos itens falhar
+      // (e substituirItensNf devolve os antigos), a NF continua "enviada" para
+      // ser validada de novo — antes ela ficava concluída/cancelada e sem itens
+      // (incidente da NF 1416, 06/10/2026).
+      await substituirItensNf(supabase, input.id, input.itens as any);
+
       const { error } = await (supabase as any)
         .from("nf_emissao")
         .update({
@@ -328,20 +318,6 @@ export function useValidarNfEmissao() {
         })
         .eq("id", input.id);
       if (error) throw error;
-
-      const { error: eDelItens } = await (supabase as any).from("nf_emissao_item").delete().eq("nf_emissao_id", input.id);
-      if (eDelItens) throw eDelItens;
-
-      if (input.itens.length > 0) {
-        const payloadItens = input.itens.map((it, idx) => ({
-          nf_emissao_id: input.id,
-          ordem: idx + 1,
-          identificacao: (it as any).identificacao || `Item ${idx + 1}`,
-          ...it,
-        }));
-        const { error: eItens } = await (supabase as any).from("nf_emissao_item").insert(payloadItens);
-        if (eItens) throw eItens;
-      }
 
       return input.id;
     },
@@ -368,6 +344,67 @@ interface RegistrarPagamentoNfInput {
   data_emissao?: string | null;
   // SIS-2026-0582: Ruan corrige o número da NF direto no Relatório de Serviços.
   numero_nf?: string | null;
+}
+
+// SIS-2026-0592: grava o ajuste de valores de uma NF concluída (descontos
+// pós-emissão + VA/VT/materiais por item + bruto/retenções/líquido derivados, por item e no total).
+// Sem RPC: a RLS de nf_emissao_item e o guard de nf_emissao (concluída) já
+// exigem a ação 'excluir' em nf-emissao (Nível D) — a tela só oferece o botão
+// a quem a tem.
+const r2nf = (n: number) => Math.round(n * 100) / 100;
+
+export interface AjusteDescontosPosInput {
+  nfId: string;
+  itens: {
+    id: string;
+    multas_pos_emissao: number;
+    glosas_pos_emissao: number;
+    outros_descontos_pos_emissao: number;
+    vlr_va: number;
+    vlr_vt: number;
+    vlr_materiais: number;
+    total_descontos: number;
+    vlr_bruto: number;
+    vlr_mao_obra: number;
+    vlr_liquido: number;
+    issqn: number;
+    inss: number;
+    ir: number;
+    cofins: number;
+    pis: number;
+    csll: number;
+  }[];
+  totais: {
+    vlr_bruto_total: number;
+    vlr_mao_obra_total: number;
+    vlr_liquido_total: number;
+    issqn_total: number;
+    inss_total: number;
+    ir_total: number;
+    cofins_total: number;
+    pis_total: number;
+    csll_total: number;
+  };
+}
+
+export function useAjustarDescontosPosEmissao() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ nfId, itens, totais }: AjusteDescontosPosInput) => {
+      for (const { id, ...campos } of itens) {
+        const corpo = Object.fromEntries(Object.entries(campos).map(([k, v]) => [k, r2nf(v as number)]));
+        const { error } = await (supabase as any).from("nf_emissao_item").update(corpo).eq("id", id);
+        if (error) throw error;
+      }
+      const corpoTotais = Object.fromEntries(Object.entries(totais).map(([k, v]) => [k, r2nf(v)]));
+      const { error } = await (supabase as any).from("nf_emissao").update(corpoTotais).eq("id", nfId);
+      if (error) throw error;
+    },
+    onSuccess: (_d, vars) => {
+      qc.invalidateQueries({ queryKey: [NF_EMISSAO_KEY] });
+      qc.invalidateQueries({ queryKey: ["nf_emissao_item"] });
+    },
+  });
 }
 
 export function useRegistrarPagamentoNf() {
