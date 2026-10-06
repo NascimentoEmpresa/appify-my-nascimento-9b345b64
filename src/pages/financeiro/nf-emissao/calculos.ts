@@ -247,3 +247,61 @@ export function calcularTotaisNf(itens: ItemCalculado[]): TotaisNf {
     csll_total: soma("csll"),
   };
 }
+
+// SIS-2026-0592: o Financeiro ajusta, numa NF já concluída, os valores que
+// mudam depois da emissão: multas/glosas/outros descontos PÓS-emissão e
+// VA/VT/materiais. Nota criada no ERP recalcula pela regra normal. Nota
+// importada da planilha (valores_legados) tem os valores gravados como
+// referência, e as retenções não podem ser refeitas sem VA/VT/materiais
+// (a planilha os discriminava e eles não vieram):
+//  - só descontos pós-emissão mudaram: a diferença é aplicada direto sobre o
+//    bruto e o líquido gravados, e as retenções ficam como estão;
+//  - o Financeiro informou VA/VT/materiais: a nota deixa de ser "legada" e
+//    passa a ser recalculada pela regra do ERP (INSS sobre bruto − VA − VT −
+//    materiais). Informando os valores certos da planilha, o INSS e o líquido
+//    voltam a bater com o gravado.
+export interface DescontosPosEmissao {
+  multas_pos_emissao: number;
+  glosas_pos_emissao: number;
+  outros_descontos_pos_emissao: number;
+}
+
+export interface AjusteValoresItem extends DescontosPosEmissao {
+  vlr_va: number;
+  vlr_vt: number;
+  vlr_materiais: number;
+}
+
+export function somaDescontosPosEmissao(d: DescontosPosEmissao): number {
+  return d.multas_pos_emissao + d.glosas_pos_emissao + d.outros_descontos_pos_emissao;
+}
+
+export function ajustarValoresNfConcluida(
+  base: ItemInput,
+  pct: PercentuaisFiscais,
+  novos: AjusteValoresItem
+): ItemCalculado {
+  const item: ItemInput = { ...base, ...novos };
+  if (base.valores_legados) {
+    if (novos.vlr_va + novos.vlr_vt + novos.vlr_materiais > 0) {
+      item.valores_legados = null;
+    } else {
+      const delta = Math.round((somaDescontosPosEmissao(novos) - somaDescontosPosEmissao(base)) * 100) / 100;
+      item.valores_legados = {
+        ...base.valores_legados,
+        vlr_bruto: Math.round((base.valores_legados.vlr_bruto - delta) * 100) / 100,
+        vlr_liquido: Math.round((base.valores_legados.vlr_liquido - delta) * 100) / 100,
+      };
+    }
+  }
+  return calcularItem(item, pct);
+}
+
+// Só os descontos pós-emissão (VA/VT/materiais ficam como estão).
+export function ajustarDescontosPosEmissao(
+  base: ItemInput,
+  pct: PercentuaisFiscais,
+  novos: DescontosPosEmissao
+): ItemCalculado {
+  return ajustarValoresNfConcluida(base, pct, { ...novos, vlr_va: base.vlr_va, vlr_vt: base.vlr_vt, vlr_materiais: base.vlr_materiais });
+}
