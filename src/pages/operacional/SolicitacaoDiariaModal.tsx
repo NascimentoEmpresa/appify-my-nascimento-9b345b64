@@ -76,6 +76,7 @@ import {
   mascaraPix,
   placeholderPix,
   soDigitos,
+  statusExibicaoDiaria,
   textoConflito,
   valorTotalLinha,
   valorTotalSolicitacao,
@@ -831,6 +832,14 @@ export function SolicitacaoDiariaModal({
 
   const badgeStatus = (() => {
     if (modo === "nova" || !solicitacao) return null;
+    const statusExibido = statusExibicaoDiaria(solicitacao);
+    if (statusExibido.origem === "malote") {
+      return (
+        <Badge className={cn("px-2.5 py-1 text-xs font-semibold", statusExibido.cls)}>
+          {statusExibido.label}
+        </Badge>
+      );
+    }
     const { icone: Icone, texto, cls } = BADGE_STATUS[solicitacao.status];
     return (
       <Badge variant="outline" className={cn("gap-1.5 px-2.5 py-1 text-xs font-semibold", cls)}>
