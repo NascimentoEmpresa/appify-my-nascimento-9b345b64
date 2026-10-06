@@ -1,0 +1,80 @@
+# Modelo preenchido por instalar-banco.sh. Não editar a cópia em /etc/patroni
+# direto: editar aqui e reinstalar, senão a próxima máquina nasce diferente.
+scope: erp-ha
+namespace: /db/
+name: __NOME__
+
+restapi:
+  listen: 0.0.0.0:8008
+  # Endereço por IP, nunca por nome: quando o nó morre, resolver nome falha
+  # devagar e atrasa a troca. IP falha na hora.
+  connect_address: __IP__:8008
+
+etcd3:
+  hosts: __IP_BANCO1__:2379,__IP_BANCO2__:2379,__IP_ARBITRO__:2379
+
+bootstrap:
+  dcs:
+    # ttl é o tempo que a standby espera antes de concluir que o primário
+    # morreu. O Patroni RECUSA valor abaixo de 20 ("ttl can't be smaller than
+    # 20, adjusting") — medido em 06/10/2026. Então 20 é o piso, e a troca
+    # medida foi de ~20 s. Não adianta pedir menos.
+    ttl: 20
+    loop_wait: 5
+    retry_timeout: 5
+    maximum_lag_on_failover: 1048576
+
+    # A garantia de não perder transação. Com isto o primário só confirma um
+    # commit depois que a standby confirmou que recebeu.
+    synchronous_mode: true
+    # synchronous_mode_strict: true   # ver README antes de ligar
+
+    postgresql:
+      use_pg_rewind: true
+      use_slots: true
+      parameters:
+        wal_level: replica
+        hot_standby: "on"
+        max_wal_senders: 10
+        max_replication_slots: 10
+        max_connections: 200
+        shared_buffers: 1GB
+        effective_cache_size: 3GB
+        work_mem: 5MB
+        maintenance_work_mem: 256MB
+        wal_keep_size: 1GB
+        password_encryption: scram-sha-256
+
+  initdb:
+    - encoding: UTF8
+    - data-checksums
+
+  pg_hba:
+    - local all all peer
+    - host  all all 127.0.0.1/32 scram-sha-256
+    # A rede privada da Vultr. Trocar se a faixa for outra.
+    - host  all all 10.0.0.0/8 scram-sha-256
+    - host  replication replicator __IP_BANCO1__/32 scram-sha-256
+    - host  replication replicator __IP_BANCO2__/32 scram-sha-256
+
+postgresql:
+  listen: 0.0.0.0:5432
+  connect_address: __IP__:5432
+  data_dir: /var/lib/postgresql/dados
+  bin_dir: /usr/lib/postgresql/__VERSAO_PG__/bin
+  pgpass: /var/lib/postgresql/.pgpass_patroni
+  authentication:
+    replication:
+      username: replicator
+      password: __SENHA_REPL__
+    superuser:
+      username: postgres
+      password: __SENHA_SUPER__
+  parameters:
+    unix_socket_directories: /var/run/postgresql
+
+tags:
+  nofailover: false
+  noloadbalance: false
+  clonefrom: false
+  nosync: false
