@@ -9,7 +9,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Plus, Trash2, Calculator, ChevronDown, ChevronRight } from "lucide-react";
 import type { PostoVigente } from "@/hooks/usePlanilhaCusto";
-import { ItemInput, ItemCalculado, TotaisNf, PercentuaisFiscais, INSS_CATEGORIAS, InssCategoria, pctEfetivo } from "./calculos";
+import { ItemInput, ItemCalculado, TotaisNf, PercentuaisFiscais, INSS_CATEGORIAS, InssCategoria, pctEfetivo, somaRetencoesPisCofinsCsll } from "./calculos";
 import { fmtMoney, fmtPct, Linha } from "./shared";
 import { PostoMultiSelect } from "./PostoMultiSelect";
 
@@ -367,6 +367,13 @@ export function ItensNfEditor({
           <span>
             <span className="text-muted-foreground">CSLL ({fmtPct(pctFiscais.csll_pct)}): </span>
             {fmtMoney(totais.csll_total)}
+          </span>
+          {/* SIS-2026-0591 (Ana): total PIS + COFINS + CSLL para informar na emissão da NF. */}
+          <span
+            className="inline-flex items-center gap-1.5 rounded-full bg-sky-100 px-2.5 py-0.5 font-semibold text-sky-800 dark:bg-sky-950/40 dark:text-sky-300"
+            title="PIS + COFINS + CSLL somados"
+          >
+            PIS + COFINS + CSLL: {fmtMoney(somaRetencoesPisCofinsCsll(totais))}
           </span>
           <span>
             <span className="text-muted-foreground">Líquido total: </span>
