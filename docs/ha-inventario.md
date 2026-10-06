@@ -28,7 +28,7 @@ permissões idênticas e anexos servidos.
 
 ## 2. O que é exclusivo da Supabase e precisa de substituto
 
-### 2.1 `pg_net` — 8 chamadas, 7 migrations · **bloqueador**
+### 2.1 `pg_net` · **resolvido no código, aguarda aplicação** ~~bloqueador~~
 
 Extensão da Supabase para HTTP de dentro do Postgres. **Não existe** em RDS,
 Cloud SQL, Neon ou Postgres puro. Todas as chamadas apontam para Edge Functions
@@ -44,7 +44,19 @@ com **URL fixa do projeto de produção**:
 | `20260914000004_canal_denuncia_alertas` | `comite-etica-alertas-tick` | pg_cron |
 | `20260925000002_canal_denuncia_aviso_email` | *(e-mail ao comitê)* | **gatilho** (2) |
 
-**Substituto proposto:** tabela de fila + o `worker/` que a empresa já mantém.
+**Feito em 06/10/2026:** `20261006000001_fila_http_substitui_pg_net.sql` +
+`worker/src/filaHttp.js`. O gatilho grava em `public.fila_http` na mesma
+transação do dado; o worker entrega, com retentativa e alerta. Testado no
+esquema real da réplica: o gatilho do Canal de Ética enfileirou
+`comite-etica-nova-denuncia` com o `denuncia_id` certo, e o `ROLLBACK`
+desfez a denúncia **e** a intenção juntas — a propriedade que o `pg_net`
+não tinha. **Falta aplicar na produção** (SQL Editor) e subir o worker.
+
+**Correção ao que este documento dizia antes:** a estrutura não era a que o
+repo sugeria. As 5 chamadas `-tick` não estão em função nenhuma — vivem
+**dentro do comando do `cron.schedule`**, e os horários estão no repo
+(`0 * * * *`, `0 6 * * *`, `*/5 * * * *`, `0 8 * * 1-5`). Só 2 funções de
+gatilho tinham `net.http_post`.
 O gatilho passa a inserir na fila em vez de fazer HTTP; o worker consome. É
 melhor desenho mesmo ficando na Supabase: HTTP dentro de transação de banco
 perde a chamada se a transação volta atrás.
@@ -54,11 +66,25 @@ correto. Os 5 JWT literais encontrados em migrations são chave **`anon`**, que 
 pública por natureza. **Não há vazamento de `service_role` no repo** (conferido
 em 05/10/2026).
 
-### 2.2 Supabase Vault — guarda os segredos que o banco usa
+### 2.2 Vault e `app_config_runtime` — **eu havia errado aqui**
 
-`vault.decrypted_secrets` guarda ao menos `anon_key` e `whatsapp_tick_secret`.
-Fora da Supabase não existe. Substituto: segredo no ambiente do worker, uma vez
-que o HTTP sai do banco (ver 2.1) e o Vault deixa de ser necessário.
+O documento dizia que as chamadas pegavam a chave do Vault. Conferido no
+banco em 06/10/2026, o quadro real é outro:
+
+- **1** função usa `vault.decrypted_secrets` (não todas);
+- a versão real de `canal_denuncia_avisa_comite` lê de
+  **`public.app_config_runtime`** (chaves `anon_key` e `functions_url`) —
+  ou seja, para ela a URL **não** era fixa. Alguém já estava migrando do
+  Vault para tabela de config;
+- o schema `vault` **não existe na réplica** — então essa função falharia lá
+  mesmo se `pg_net` existisse;
+- `chamado_concluido_gera_novidade` tem a URL **e** a chave `anon` literais
+  no corpo. A chave é pública por natureza; a URL fixa, não.
+
+Com a fila (2.1), o banco deixa de precisar de Vault **e** de
+`app_config_runtime` para este caminho: quem guarda chave e endereço é o
+worker, no ambiente dele. `WHATSAPP_TICK_SECRET` precisa ser copiado do
+Vault para `worker/.env` — é o único segredo que muda de casa.
 
 ### 2.3 `pg_cron` — **inventário pendente, precisa do Eduardo**
 
