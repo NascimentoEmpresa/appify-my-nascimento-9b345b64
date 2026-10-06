@@ -37127,3 +37127,1023 @@ NOTIFY pgrst, 'reload schema';
 -- DROP FUNCTION IF EXISTS public.sis_ck_liberado(text);
 -- DELETE FROM public.screen_permission_user WHERE menu_codigo IN ('sistemas_checklist_editar_status','sistemas_checklist_adicionar_bug');
 -- DELETE FROM public.app_menu WHERE codigo IN ('sistemas_checklist_editar_status','sistemas_checklist_adicionar_bug');
+
+-- ===== 20261005000006_diretoria_relatorios (JA APLICADA 05/10) =====
+-- =========================================================================
+-- DIRETORIA E PRESIDÊNCIA › RELATÓRIOS (05/10/2026)
+--
+-- PEDIDO (Pablo): "um submódulo completo pra diretoria e presidência.
+-- RELATÓRIO GERAL vai ter relatório de TODOS os sistemas de solicitações —
+-- Gestão Recrutamento, Demissões, Materiais, Férias, Medida Disciplinar,
+-- Chamados, Orientações Jurídicas, Mudança de Função, Colaboradores e
+-- Turn-over —, gráfico pra tudo e I.A integrada pra gerar análises. Cada
+-- sistema em particular vai ter seu relatório."
+--
+-- DESENHO
+--   · Um menu por relatório (aparece em Acesso por Usuário › Diretoria),
+--     todos nascem FECHADOS. Quem tem o Relatório Geral lê todos os sistemas
+--     (o geral é a soma deles). A I.A é uma capacidade à parte
+--     (diretoria_relatorios_ia, menu fantasma) — usa tokens de IA.
+--   · Uma RPC por sistema, todas devolvendo o MESMO formato (a tela é uma só
+--     e desenha qualquer relatório):
+--       { titulo, periodo, kpis[{rotulo,valor,formato,tom,dica}],
+--         mensal{series[{chave,rotulo}], dados[{mes,...}]},
+--         por_status[{nome,n,grupo}], rankings[{titulo,itens[{nome,n}]}],
+--         recentes{colunas[], linhas[]} }
+--   · Os 8 sistemas de SOLICITAÇÃO passam por dir_rel_montar: cada um só diz
+--     de onde vem a data, o status, o "grupo" (aberto/concluído/recusado) e
+--     três dimensões de ranking. Colaboradores e Turn-over leem a EMPREGADOS
+--     e têm montagem própria.
+--   · Tudo SECURITY DEFINER, só leitura. Nenhuma tabela nova.
+--
+-- Períodos: _de/_ate (date). NULL = últimos 12 meses até hoje. A variação
+-- compara com o período anterior de mesmo tamanho.
+--
+-- Materiais lê sup_pedido (Suprimentos) — só leitura, nada muda no módulo.
+--
+-- Idempotente. Aplicar no banco do app (SQL Editor) — não se auto-aplica.
+-- =========================================================================
+
+-- ── 1) Menus ─────────────────────────────────────────────────────────────
+INSERT INTO public.app_menu (modulo_id, codigo, nome, rota, ordem, ativo)
+SELECT m.id, x.codigo, x.nome, x.rota, x.ordem, true
+  FROM (VALUES
+    ('diretoria_relatorio_geral',       'Relatórios — Relatório Geral',        '/app/diretoria/relatorios',                     40),
+    ('diretoria_rel_recrutamento',      'Relatórios — Gestão Recrutamento',    '/app/diretoria/relatorios/recrutamento',        41),
+    ('diretoria_rel_demissoes',         'Relatórios — Demissões',              '/app/diretoria/relatorios/demissoes',           42),
+    ('diretoria_rel_materiais',         'Relatórios — Materiais',              '/app/diretoria/relatorios/materiais',           43),
+    ('diretoria_rel_ferias',            'Relatórios — Férias',                 '/app/diretoria/relatorios/ferias',              44),
+    ('diretoria_rel_medida_disciplinar','Relatórios — Medida Disciplinar',     '/app/diretoria/relatorios/medida-disciplinar',  45),
+    ('diretoria_rel_chamados',          'Relatórios — Chamados',               '/app/diretoria/relatorios/chamados',            46),
+    ('diretoria_rel_orientacoes',       'Relatórios — Orientações Jurídicas',  '/app/diretoria/relatorios/orientacoes',         47),
+    ('diretoria_rel_mudanca_funcao',    'Relatórios — Mudança de Função',      '/app/diretoria/relatorios/mudanca-funcao',      48),
+    ('diretoria_rel_colaboradores',     'Relatórios — Colaboradores',          '/app/diretoria/relatorios/colaboradores',       49),
+    ('diretoria_rel_turnover',          'Relatórios — Turn-over',              '/app/diretoria/relatorios/turnover',            50),
+    ('diretoria_relatorios_ia',         'Relatórios — Análise com I.A',        NULL,                                            51)
+  ) AS x(codigo, nome, rota, ordem)
+  JOIN public.app_modulo m ON m.codigo = 'diretoria'
+ON CONFLICT (modulo_id, codigo) DO NOTHING;
+
+-- ── 2) Acesso ────────────────────────────────────────────────────────────
+-- O relatório do sistema OU o Relatório Geral (que mostra todos).
+CREATE OR REPLACE FUNCTION public.dir_rel_exige(_menu text)
+RETURNS void LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public, pg_temp AS $$
+BEGIN
+  IF auth.uid() IS NULL THEN RAISE EXCEPTION 'Não autenticado' USING ERRCODE = '42501'; END IF;
+  IF NOT (public.has_screen_access(auth.uid(), _menu, 'visualizar'::public.app_acao)
+          OR public.has_screen_access(auth.uid(), 'diretoria_relatorio_geral', 'visualizar'::public.app_acao)) THEN
+    RAISE EXCEPTION 'Sem acesso a este relatório' USING ERRCODE = '42501';
+  END IF;
+END $$;
+REVOKE ALL ON FUNCTION public.dir_rel_exige(text) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.dir_rel_exige(text) TO authenticated;
+
+-- ── 3) Montagem padrão dos sistemas de solicitação ───────────────────────
+-- _sql devolve UMA linha por solicitação com as colunas:
+--   dt date, titulo text, status text, grupo text ('aberto'|'concluido'|'recusado'),
+--   d1 text, d2 text, d3 text, dias numeric (tempo até concluir; NULL se não concluiu)
+-- O texto vem SEMPRE das funções dir_rel_* abaixo (nunca do cliente).
+CREATE OR REPLACE FUNCTION public.dir_rel_montar(
+  _titulo text, _sql text, _de date, _ate date, _dims jsonb, _rotulo_item text DEFAULT 'solicitações')
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
+DECLARE
+  v_ate date := COALESCE(_ate, current_date);
+  v_de  date := COALESCE(_de, (date_trunc('month', COALESCE(_ate, current_date)) - interval '11 months')::date);
+  v_dur int;
+  v_out jsonb;
+BEGIN
+  v_dur := (v_ate - v_de) + 1;
+  EXECUTE 'CREATE TEMP TABLE IF NOT EXISTS _dir_base (dt date, titulo text, status text, grupo text, d1 text, d2 text, d3 text, dias numeric) ON COMMIT DROP';
+  EXECUTE 'TRUNCATE _dir_base';
+  EXECUTE 'INSERT INTO _dir_base ' || _sql;
+
+  WITH p AS (SELECT * FROM _dir_base WHERE dt BETWEEN v_de AND v_ate),
+  ant AS (SELECT count(*) n FROM _dir_base WHERE dt BETWEEN v_de - v_dur AND v_de - 1),
+  meses AS (
+    SELECT to_char(g, 'YYYY-MM') mes FROM generate_series(date_trunc('month', v_de), date_trunc('month', v_ate), interval '1 month') g
+  ),
+  k AS (
+    SELECT count(*) total,
+           count(*) FILTER (WHERE grupo = 'aberto') abertos,
+           count(*) FILTER (WHERE grupo = 'concluido') concluidos,
+           count(*) FILTER (WHERE grupo = 'recusado') recusados,
+           round(avg(dias) FILTER (WHERE grupo = 'concluido' AND dias >= 0), 1) tempo
+      FROM p
+  )
+  SELECT jsonb_build_object(
+    'titulo', _titulo,
+    'periodo', jsonb_build_object('de', v_de, 'ate', v_ate),
+    'kpis', jsonb_build_array(
+      jsonb_build_object('rotulo', 'Total no período', 'valor', k.total, 'formato', 'n', 'tom', 'primary',
+                         'dica', CASE WHEN ant.n > 0 THEN round((k.total - ant.n) * 100.0 / ant.n)::text || '% vs período anterior (' || ant.n || ')' ELSE 'sem período anterior para comparar' END,
+                         'variacao', CASE WHEN ant.n > 0 THEN round((k.total - ant.n) * 100.0 / ant.n, 1) END),
+      jsonb_build_object('rotulo', 'Em andamento', 'valor', k.abertos, 'formato', 'n', 'tom', 'warning', 'dica', 'ainda não concluídas'),
+      jsonb_build_object('rotulo', 'Concluídas', 'valor', k.concluidos, 'formato', 'n', 'tom', 'success',
+                         'dica', CASE WHEN k.total > 0 THEN round(k.concluidos * 100.0 / k.total) || '% do total' END),
+      jsonb_build_object('rotulo', 'Recusadas / canceladas', 'valor', k.recusados, 'formato', 'n', 'tom', 'destructive',
+                         'dica', CASE WHEN k.total > 0 THEN round(k.recusados * 100.0 / k.total) || '% do total' END),
+      jsonb_build_object('rotulo', 'Tempo médio até concluir', 'valor', k.tempo, 'formato', 'dias', 'tom', 'info', 'dica', 'da abertura à conclusão')
+    ),
+    'mensal', jsonb_build_object(
+      'series', jsonb_build_array(
+        jsonb_build_object('chave', 'total', 'rotulo', 'Abertas'),
+        jsonb_build_object('chave', 'concluidos', 'rotulo', 'Concluídas'),
+        jsonb_build_object('chave', 'recusados', 'rotulo', 'Recusadas')),
+      'dados', (SELECT COALESCE(jsonb_agg(jsonb_build_object(
+                  'mes', m.mes,
+                  'total', (SELECT count(*) FROM p WHERE to_char(p.dt, 'YYYY-MM') = m.mes),
+                  'concluidos', (SELECT count(*) FROM p WHERE to_char(p.dt, 'YYYY-MM') = m.mes AND grupo = 'concluido'),
+                  'recusados', (SELECT count(*) FROM p WHERE to_char(p.dt, 'YYYY-MM') = m.mes AND grupo = 'recusado'))
+                  ORDER BY m.mes), '[]'::jsonb) FROM meses m)),
+    'por_status', (SELECT COALESCE(jsonb_agg(jsonb_build_object('nome', s.status, 'n', s.n, 'grupo', s.grupo) ORDER BY s.n DESC), '[]'::jsonb)
+                     FROM (SELECT COALESCE(NULLIF(btrim(status), ''), '(sem status)') status, max(grupo) grupo, count(*) n FROM p GROUP BY 1) s),
+    'rankings', (SELECT COALESCE(jsonb_agg(r.obj ORDER BY r.ordem), '[]'::jsonb) FROM (
+       SELECT 1 ordem, jsonb_build_object('titulo', _dims->>0, 'itens', (SELECT COALESCE(jsonb_agg(jsonb_build_object('nome', x.nome, 'n', x.n) ORDER BY x.n DESC), '[]'::jsonb)
+              FROM (SELECT COALESCE(NULLIF(btrim(d1), ''), '(não informado)') nome, count(*) n FROM p GROUP BY 1 ORDER BY 2 DESC LIMIT 12) x)) obj
+        WHERE _dims->>0 IS NOT NULL
+       UNION ALL
+       SELECT 2, jsonb_build_object('titulo', _dims->>1, 'itens', (SELECT COALESCE(jsonb_agg(jsonb_build_object('nome', x.nome, 'n', x.n) ORDER BY x.n DESC), '[]'::jsonb)
+              FROM (SELECT COALESCE(NULLIF(btrim(d2), ''), '(não informado)') nome, count(*) n FROM p GROUP BY 1 ORDER BY 2 DESC LIMIT 12) x))
+        WHERE _dims->>1 IS NOT NULL
+       UNION ALL
+       SELECT 3, jsonb_build_object('titulo', _dims->>2, 'itens', (SELECT COALESCE(jsonb_agg(jsonb_build_object('nome', x.nome, 'n', x.n) ORDER BY x.n DESC), '[]'::jsonb)
+              FROM (SELECT COALESCE(NULLIF(btrim(d3), ''), '(não informado)') nome, count(*) n FROM p GROUP BY 1 ORDER BY 2 DESC LIMIT 12) x))
+        WHERE _dims->>2 IS NOT NULL) r),
+    'recentes', jsonb_build_object(
+      'colunas', jsonb_build_array('Data', 'Solicitação', 'Status', COALESCE(_dims->>0, '—')),
+      'linhas', (SELECT COALESCE(jsonb_agg(jsonb_build_array(to_char(x.dt, 'DD/MM/YYYY'), x.titulo, x.status, x.d1)), '[]'::jsonb)
+                   FROM (SELECT * FROM p ORDER BY dt DESC NULLS LAST LIMIT 15) x)),
+    'rotulo_item', _rotulo_item
+  ) INTO v_out
+  FROM k, ant;
+
+  RETURN v_out;
+END $$;
+REVOKE ALL ON FUNCTION public.dir_rel_montar(text, text, date, date, jsonb, text) FROM PUBLIC, anon, authenticated;
+
+-- ── 4) Os 8 sistemas de solicitação ──────────────────────────────────────
+CREATE OR REPLACE FUNCTION public.dir_rel_recrutamento(_de date DEFAULT NULL, _ate date DEFAULT NULL)
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
+BEGIN
+  PERFORM public.dir_rel_exige('diretoria_rel_recrutamento');
+  RETURN public.dir_rel_montar('Gestão Recrutamento', $q$
+    SELECT created_at::date, '#' || id || ' · ' || COALESCE(cargo, 'vaga') || COALESCE(' — ' || contrato, ''), status,
+           CASE WHEN status IN ('Concluído', 'Contratado') THEN 'concluido'
+                WHEN status IN ('Reprovada', 'Cancelada') THEN 'recusado' ELSE 'aberto' END,
+           contrato, cargo, motivo_vaga,
+           CASE WHEN status IN ('Concluído', 'Contratado') AND status_changed_at IS NOT NULL
+                THEN extract(epoch FROM status_changed_at - created_at) / 86400 END
+      FROM public."SISTEMA_RECRUTAMENTO" $q$,
+    _de, _ate, '["Vagas por contrato", "Vagas por cargo", "Motivo da vaga"]'::jsonb, 'vagas');
+END $$;
+
+CREATE OR REPLACE FUNCTION public.dir_rel_demissoes(_de date DEFAULT NULL, _ate date DEFAULT NULL)
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
+BEGIN
+  PERFORM public.dir_rel_exige('diretoria_rel_demissoes');
+  RETURN public.dir_rel_montar('Demissões', $q$
+    SELECT COALESCE(data_solicitacao, criado_em::date), COALESCE(colaborador_nome, 'colaborador') || COALESCE(' — ' || colaborador_cargo, ''), status,
+           CASE WHEN status IN ('Concluída', 'ASO válido', 'Agendamento concluído') THEN 'concluido'
+                WHEN status IN ('Reprovada', 'Cancelada') THEN 'recusado' ELSE 'aberto' END,
+           contrato, COALESCE(motivo_solicitacao, motivo_pedido), colaborador_cargo,
+           CASE WHEN status IN ('Concluída', 'ASO válido', 'Agendamento concluído')
+                THEN extract(epoch FROM atualizado_em - criado_em) / 86400 END
+      FROM public."SISTEMA_SOLICITACOES_DEMISSAO" $q$,
+    _de, _ate, '["Demissões por contrato", "Motivo da demissão", "Cargo"]'::jsonb, 'demissões');
+END $$;
+
+CREATE OR REPLACE FUNCTION public.dir_rel_materiais(_de date DEFAULT NULL, _ate date DEFAULT NULL)
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
+BEGIN
+  PERFORM public.dir_rel_exige('diretoria_rel_materiais');
+  RETURN public.dir_rel_montar('Materiais', $q$
+    SELECT COALESCE(data_solicitacao, created_at::date), 'Pedido ' || COALESCE(pedido_id::text, id::text) || COALESCE(' — ' || nome_colaborador, ''), status,
+           CASE WHEN status IN ('DESPACHADO', 'RETIRADO PARA ENTREGA') THEN 'concluido'
+                WHEN status = 'CANCELADO' THEN 'recusado' ELSE 'aberto' END,
+           contrato_nome, tipo_pedido, funcao_nome,
+           CASE WHEN data_despachado IS NOT NULL
+                THEN extract(epoch FROM data_despachado - COALESCE(data_solicitacao::timestamptz, created_at)) / 86400 END
+      FROM public.sup_pedido $q$,
+    _de, _ate, '["Pedidos por contrato", "Tipo de pedido", "Função"]'::jsonb, 'pedidos');
+END $$;
+
+CREATE OR REPLACE FUNCTION public.dir_rel_ferias(_de date DEFAULT NULL, _ate date DEFAULT NULL)
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
+BEGIN
+  PERFORM public.dir_rel_exige('diretoria_rel_ferias');
+  RETURN public.dir_rel_montar('Férias', $q$
+    SELECT criado_em::date, COALESCE(colaborador_nome, 'colaborador') || COALESCE(' · ' || dias_ferias || ' dias', ''), status,
+           CASE WHEN status = 'Aprovada' THEN 'concluido'
+                WHEN status IN ('Reprovada', 'Cancelada') THEN 'recusado' ELSE 'aberto' END,
+           colaborador_filial, colaborador_cargo, COALESCE(dias_ferias::text || ' dias', NULL),
+           CASE WHEN status = 'Aprovada' AND aprovado_em IS NOT NULL THEN extract(epoch FROM aprovado_em - criado_em) / 86400 END
+      FROM public."SISTEMA_SOLICITACOES_FERIAS" $q$,
+    _de, _ate, '["Férias por filial/contrato", "Cargo", "Dias de férias"]'::jsonb, 'solicitações');
+END $$;
+
+CREATE OR REPLACE FUNCTION public.dir_rel_medida_disciplinar(_de date DEFAULT NULL, _ate date DEFAULT NULL)
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
+BEGIN
+  PERFORM public.dir_rel_exige('diretoria_rel_medida_disciplinar');
+  RETURN public.dir_rel_montar('Medida Disciplinar', $q$
+    SELECT created_at::date, COALESCE(colaborador_nome, 'colaborador') || COALESCE(' — ' || tipo_advertencia, ''), status,
+           CASE WHEN status IN ('Concluída', 'Registrada') THEN 'concluido'
+                WHEN status IN ('Reprovada', 'Cancelada') THEN 'recusado' ELSE 'aberto' END,
+           contrato, tipo_advertencia, grau,
+           CASE WHEN status IN ('Concluída', 'Registrada') AND status_changed_at IS NOT NULL
+                THEN extract(epoch FROM status_changed_at - created_at) / 86400 END
+      FROM public."SISTEMA_SOLICITACOES_ADVERTENCIA" $q$,
+    _de, _ate, '["Medidas por contrato", "Tipo de medida", "Grau"]'::jsonb, 'medidas');
+END $$;
+
+CREATE OR REPLACE FUNCTION public.dir_rel_chamados(_de date DEFAULT NULL, _ate date DEFAULT NULL)
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
+BEGIN
+  PERFORM public.dir_rel_exige('diretoria_rel_chamados');
+  RETURN public.dir_rel_montar('Chamados', $q$
+    SELECT created_at::date, COALESCE(numero, '#' || id::text) || ' · ' || COALESCE(assunto, ''), status,
+           CASE WHEN status = 'concluido' THEN 'concluido'
+                WHEN status IN ('reprovado', 'cancelado') THEN 'recusado' ELSE 'aberto' END,
+           COALESCE(NULLIF(modulo_sistema, ''), modulo_sistema_outro), prioridade, setor,
+           CASE WHEN status = 'concluido' AND concluido_em IS NOT NULL THEN extract(epoch FROM concluido_em - created_at) / 86400 END
+      FROM public."CHAMADO_SISTEMA" $q$,
+    _de, _ate, '["Chamados por módulo", "Prioridade", "Setor"]'::jsonb, 'chamados');
+END $$;
+
+CREATE OR REPLACE FUNCTION public.dir_rel_orientacoes(_de date DEFAULT NULL, _ate date DEFAULT NULL)
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
+BEGIN
+  PERFORM public.dir_rel_exige('diretoria_rel_orientacoes');
+  RETURN public.dir_rel_montar('Orientações Jurídicas', $q$
+    SELECT created_at::date, COALESCE(titulo, left(pergunta, 80)), status,
+           CASE WHEN status = 'Respondida' THEN 'concluido'
+                WHEN status IN ('Reprovada', 'Recusada', 'Oculta', 'Cancelada') THEN 'recusado' ELSE 'aberto' END,
+           categoria, origem, autor_nome,
+           CASE WHEN respondido_em IS NOT NULL THEN extract(epoch FROM respondido_em - created_at) / 86400 END
+      FROM public."JUR_DUVIDAS" $q$,
+    _de, _ate, '["Orientações por categoria", "Origem", "Quem perguntou"]'::jsonb, 'orientações');
+END $$;
+
+CREATE OR REPLACE FUNCTION public.dir_rel_mudanca_funcao(_de date DEFAULT NULL, _ate date DEFAULT NULL)
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
+BEGIN
+  PERFORM public.dir_rel_exige('diretoria_rel_mudanca_funcao');
+  RETURN public.dir_rel_montar('Mudança de Função', $q$
+    SELECT criado_em::date, COALESCE(colaborador_nome, 'colaborador') || ': ' || COALESCE(cargo_atual, '?') || ' → ' || COALESCE(cargo_novo, '?'), status,
+           CASE WHEN status = 'Concluída' THEN 'concluido'
+                WHEN status IN ('Reprovada', 'Cancelada') THEN 'recusado' ELSE 'aberto' END,
+           COALESCE(NULLIF(setor, ''), filial), COALESCE(cargo_atual, '?') || ' → ' || COALESCE(cargo_novo, '?'),
+           CASE WHEN e_escritorio THEN 'Escritório' ELSE 'Operação' END,
+           CASE WHEN status = 'Concluída' THEN extract(epoch FROM atualizado_em - criado_em) / 86400 END
+      FROM public."SISTEMA_SOLICITACOES_TROCA_FUNCAO" $q$,
+    _de, _ate, '["Por setor/filial", "De → para", "Escritório × operação"]'::jsonb, 'mudanças');
+END $$;
+
+-- ── 5) Colaboradores (retrato da EMPREGADOS) ─────────────────────────────
+CREATE OR REPLACE FUNCTION public.dir_rel_colaboradores(_de date DEFAULT NULL, _ate date DEFAULT NULL)
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
+DECLARE
+  v_ate date := COALESCE(_ate, current_date);
+  v_de  date := COALESCE(_de, (date_trunc('month', COALESCE(_ate, current_date)) - interval '11 months')::date);
+  v_out jsonb;
+BEGIN
+  PERFORM public.dir_rel_exige('diretoria_rel_colaboradores');
+  WITH e AS MATERIALIZED (
+    SELECT e."Nome" nome, e."Situação" sit, e."Título do Cargo" cargo, e."Nome Filial" filial, e."Empresa"::text empresa,
+           e."Sexo" sexo, COALESCE(NULLIF(btrim(e."Setor_ERP"), ''), '(sem setor)') setor,
+           public.data_universal(e."Admissão") adm,
+           CASE WHEN e."Situação" = 'Demitido' THEN public.data_universal(e."Data Afastamento") END dem,
+           public.esp_col_esta_ativo(e."Situação") ativo
+      FROM public."EMPREGADOS" e
+     WHERE COALESCE(btrim(e."Nome"), '') <> ''
+  ),
+  meses AS (SELECT g::date ini, (g + interval '1 month' - interval '1 day')::date fim, to_char(g, 'YYYY-MM') mes
+              FROM generate_series(date_trunc('month', v_de), date_trunc('month', v_ate), interval '1 month') g),
+  a AS (SELECT count(*) FILTER (WHERE ativo) ativos,
+               count(*) FILTER (WHERE sit = 'Trabalhando') trabalhando,
+               count(*) FILTER (WHERE ativo AND sit <> 'Trabalhando' AND sit NOT ILIKE 'atestado%') afastados,
+               count(*) FILTER (WHERE adm BETWEEN v_de AND v_ate) admitidos,
+               count(*) FILTER (WHERE dem BETWEEN v_de AND v_ate) desligados
+          FROM e)
+  SELECT jsonb_build_object(
+    'titulo', 'Colaboradores',
+    'periodo', jsonb_build_object('de', v_de, 'ate', v_ate),
+    'kpis', jsonb_build_array(
+      jsonb_build_object('rotulo', 'Colaboradores ativos', 'valor', a.ativos, 'formato', 'n', 'tom', 'primary', 'dica', 'hoje, na EMPREGADOS'),
+      jsonb_build_object('rotulo', 'Trabalhando', 'valor', a.trabalhando, 'formato', 'n', 'tom', 'success',
+                         'dica', CASE WHEN a.ativos > 0 THEN round(a.trabalhando * 100.0 / a.ativos) || '% dos ativos' END),
+      jsonb_build_object('rotulo', 'Afastados', 'valor', a.afastados, 'formato', 'n', 'tom', 'warning', 'dica', 'auxílio-doença, licença, férias…'),
+      jsonb_build_object('rotulo', 'Admitidos no período', 'valor', a.admitidos, 'formato', 'n', 'tom', 'info'),
+      jsonb_build_object('rotulo', 'Desligados no período', 'valor', a.desligados, 'formato', 'n', 'tom', 'destructive')
+    ),
+    'mensal', jsonb_build_object(
+      'series', jsonb_build_array(
+        jsonb_build_object('chave', 'ativos', 'rotulo', 'Ativos no fim do mês'),
+        jsonb_build_object('chave', 'admitidos', 'rotulo', 'Admitidos'),
+        jsonb_build_object('chave', 'desligados', 'rotulo', 'Desligados')),
+      'dados', (SELECT COALESCE(jsonb_agg(jsonb_build_object(
+                  'mes', m.mes,
+                  -- Quadro no fim do mês: admitido até lá e não desligado até lá.
+                  'ativos', (SELECT count(*) FROM e WHERE e.adm <= m.fim AND (e.dem IS NULL OR e.dem > m.fim) AND (e.ativo OR e.dem IS NOT NULL)),
+                  'admitidos', (SELECT count(*) FROM e WHERE e.adm BETWEEN m.ini AND m.fim),
+                  'desligados', (SELECT count(*) FROM e WHERE e.dem BETWEEN m.ini AND m.fim))
+                  ORDER BY m.mes), '[]'::jsonb) FROM meses m)),
+    'por_status', (SELECT COALESCE(jsonb_agg(jsonb_build_object('nome', x.sit, 'n', x.n, 'grupo', CASE WHEN x.sit = 'Trabalhando' THEN 'concluido' ELSE 'aberto' END) ORDER BY x.n DESC), '[]'::jsonb)
+                     FROM (SELECT sit, count(*) n FROM e WHERE ativo GROUP BY 1) x),
+    'rankings', jsonb_build_array(
+      jsonb_build_object('titulo', 'Ativos por contrato (filial)', 'itens', (SELECT COALESCE(jsonb_agg(jsonb_build_object('nome', x.nome, 'n', x.n) ORDER BY x.n DESC), '[]'::jsonb)
+         FROM (SELECT COALESCE(filial, '(sem filial)') nome, count(*) n FROM e WHERE ativo GROUP BY 1 ORDER BY 2 DESC LIMIT 12) x)),
+      jsonb_build_object('titulo', 'Ativos por cargo', 'itens', (SELECT COALESCE(jsonb_agg(jsonb_build_object('nome', x.nome, 'n', x.n) ORDER BY x.n DESC), '[]'::jsonb)
+         FROM (SELECT COALESCE(cargo, '(sem cargo)') nome, count(*) n FROM e WHERE ativo GROUP BY 1 ORDER BY 2 DESC LIMIT 12) x)),
+      jsonb_build_object('titulo', 'Ativos por setor', 'itens', (SELECT COALESCE(jsonb_agg(jsonb_build_object('nome', x.nome, 'n', x.n) ORDER BY x.n DESC), '[]'::jsonb)
+         FROM (SELECT setor nome, count(*) n FROM e WHERE ativo GROUP BY 1 ORDER BY 2 DESC LIMIT 12) x)),
+      jsonb_build_object('titulo', 'Ativos por sexo', 'itens', (SELECT COALESCE(jsonb_agg(jsonb_build_object('nome', x.nome, 'n', x.n) ORDER BY x.n DESC), '[]'::jsonb)
+         FROM (SELECT CASE upper(left(COALESCE(sexo, ''), 1)) WHEN 'M' THEN 'Masculino' WHEN 'F' THEN 'Feminino' ELSE '(não informado)' END nome, count(*) n FROM e WHERE ativo GROUP BY 1) x))
+    ),
+    'recentes', jsonb_build_object(
+      'colunas', jsonb_build_array('Admissão', 'Colaborador', 'Situação', 'Contrato (filial)'),
+      'linhas', (SELECT COALESCE(jsonb_agg(jsonb_build_array(to_char(x.adm, 'DD/MM/YYYY'), x.nome || COALESCE(' — ' || x.cargo, ''), x.sit, x.filial)), '[]'::jsonb)
+                   FROM (SELECT * FROM e WHERE adm BETWEEN v_de AND v_ate ORDER BY adm DESC LIMIT 15) x)),
+    'rotulo_item', 'colaboradores'
+  ) INTO v_out FROM a;
+  RETURN v_out;
+END $$;
+
+-- ── 6) Turn-over ─────────────────────────────────────────────────────────
+-- Taxa mensal = ((admitidos + desligados) / 2) / ativos no início do mês.
+-- "Desligado em até 90 dias" = turn-over precoce (contratação que não firmou).
+CREATE OR REPLACE FUNCTION public.dir_rel_turnover(_de date DEFAULT NULL, _ate date DEFAULT NULL)
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
+DECLARE
+  v_ate date := COALESCE(_ate, current_date);
+  v_de  date := COALESCE(_de, (date_trunc('month', COALESCE(_ate, current_date)) - interval '11 months')::date);
+  v_out jsonb;
+BEGIN
+  PERFORM public.dir_rel_exige('diretoria_rel_turnover');
+  WITH e AS MATERIALIZED (
+    SELECT e."Nome" nome, e."Título do Cargo" cargo, e."Nome Filial" filial,
+           public.data_universal(e."Admissão") adm,
+           CASE WHEN e."Situação" = 'Demitido' THEN public.data_universal(e."Data Afastamento") END dem,
+           public.esp_col_esta_ativo(e."Situação") ativo
+      FROM public."EMPREGADOS" e
+     WHERE COALESCE(btrim(e."Nome"), '') <> ''
+  ),
+  m AS MATERIALIZED (
+    SELECT to_char(g, 'YYYY-MM') mes, g::date ini, (g + interval '1 month' - interval '1 day')::date fim,
+           (SELECT count(*) FROM e WHERE e.adm < g::date AND (e.dem IS NULL OR e.dem >= g::date) AND (e.ativo OR e.dem IS NOT NULL)) base,
+           (SELECT count(*) FROM e WHERE e.adm BETWEEN g::date AND (g + interval '1 month' - interval '1 day')::date) adm,
+           (SELECT count(*) FROM e WHERE e.dem BETWEEN g::date AND (g + interval '1 month' - interval '1 day')::date) dem
+      FROM generate_series(date_trunc('month', v_de), date_trunc('month', v_ate), interval '1 month') g
+  ),
+  t AS (SELECT sum(adm) adm, sum(dem) dem,
+               round(avg(CASE WHEN base > 0 THEN (adm + dem) / 2.0 / base * 100 END), 2) taxa,
+               (SELECT count(*) FROM e WHERE e.dem BETWEEN v_de AND v_ate AND e.adm IS NOT NULL AND e.dem - e.adm <= 90) precoce
+          FROM m)
+  SELECT jsonb_build_object(
+    'titulo', 'Turn-over',
+    'periodo', jsonb_build_object('de', v_de, 'ate', v_ate),
+    'kpis', jsonb_build_array(
+      jsonb_build_object('rotulo', 'Turn-over médio mensal', 'valor', t.taxa, 'formato', 'pct', 'tom', 'primary', 'dica', '((admitidos + desligados) ÷ 2) ÷ quadro do início do mês'),
+      jsonb_build_object('rotulo', 'Admitidos', 'valor', t.adm, 'formato', 'n', 'tom', 'success'),
+      jsonb_build_object('rotulo', 'Desligados', 'valor', t.dem, 'formato', 'n', 'tom', 'destructive'),
+      jsonb_build_object('rotulo', 'Saldo (admitidos − desligados)', 'valor', t.adm - t.dem, 'formato', 'n', 'tom', CASE WHEN t.adm >= t.dem THEN 'success' ELSE 'destructive' END),
+      jsonb_build_object('rotulo', 'Desligados em até 90 dias', 'valor', t.precoce, 'formato', 'n', 'tom', 'warning',
+                         'dica', CASE WHEN t.dem > 0 THEN round(t.precoce * 100.0 / t.dem) || '% dos desligamentos — contratação que não firmou' END)
+    ),
+    'mensal', jsonb_build_object(
+      'series', jsonb_build_array(
+        jsonb_build_object('chave', 'admitidos', 'rotulo', 'Admitidos'),
+        jsonb_build_object('chave', 'desligados', 'rotulo', 'Desligados'),
+        jsonb_build_object('chave', 'taxa', 'rotulo', 'Turn-over (%)', 'eixo', 'direita')),
+      'dados', (SELECT COALESCE(jsonb_agg(jsonb_build_object('mes', mes, 'admitidos', adm, 'desligados', dem,
+                  'taxa', CASE WHEN base > 0 THEN round((adm + dem) / 2.0 / base * 100, 2) END) ORDER BY mes), '[]'::jsonb) FROM m)),
+    'por_status', jsonb_build_array(
+      jsonb_build_object('nome', 'Admitidos', 'n', t.adm, 'grupo', 'concluido'),
+      jsonb_build_object('nome', 'Desligados', 'n', t.dem, 'grupo', 'recusado')),
+    'rankings', jsonb_build_array(
+      jsonb_build_object('titulo', 'Desligamentos por contrato (filial)', 'itens', (SELECT COALESCE(jsonb_agg(jsonb_build_object('nome', x.nome, 'n', x.n) ORDER BY x.n DESC), '[]'::jsonb)
+         FROM (SELECT COALESCE(filial, '(sem filial)') nome, count(*) n FROM e WHERE dem BETWEEN v_de AND v_ate GROUP BY 1 ORDER BY 2 DESC LIMIT 12) x)),
+      jsonb_build_object('titulo', 'Desligamentos por cargo', 'itens', (SELECT COALESCE(jsonb_agg(jsonb_build_object('nome', x.nome, 'n', x.n) ORDER BY x.n DESC), '[]'::jsonb)
+         FROM (SELECT COALESCE(cargo, '(sem cargo)') nome, count(*) n FROM e WHERE dem BETWEEN v_de AND v_ate GROUP BY 1 ORDER BY 2 DESC LIMIT 12) x)),
+      jsonb_build_object('titulo', 'Tempo de casa de quem saiu', 'itens', (SELECT COALESCE(jsonb_agg(jsonb_build_object('nome', x.nome, 'n', x.n) ORDER BY x.ord), '[]'::jsonb)
+         FROM (SELECT CASE WHEN dem - adm <= 90 THEN 'Até 3 meses' WHEN dem - adm <= 180 THEN '3 a 6 meses' WHEN dem - adm <= 365 THEN '6 meses a 1 ano'
+                           WHEN dem - adm <= 730 THEN '1 a 2 anos' ELSE 'Mais de 2 anos' END nome,
+                      min(CASE WHEN dem - adm <= 90 THEN 1 WHEN dem - adm <= 180 THEN 2 WHEN dem - adm <= 365 THEN 3 WHEN dem - adm <= 730 THEN 4 ELSE 5 END) ord,
+                      count(*) n
+                 FROM e WHERE dem BETWEEN v_de AND v_ate AND adm IS NOT NULL GROUP BY 1) x))
+    ),
+    'recentes', jsonb_build_object(
+      'colunas', jsonb_build_array('Desligamento', 'Colaborador', 'Tempo de casa', 'Contrato (filial)'),
+      'linhas', (SELECT COALESCE(jsonb_agg(jsonb_build_array(to_char(x.dem, 'DD/MM/YYYY'), x.nome || COALESCE(' — ' || x.cargo, ''),
+                          CASE WHEN x.adm IS NULL THEN '—' ELSE (x.dem - x.adm) || ' dias' END, x.filial)), '[]'::jsonb)
+                   FROM (SELECT * FROM e WHERE dem BETWEEN v_de AND v_ate ORDER BY dem DESC LIMIT 15) x)),
+    'rotulo_item', 'movimentações'
+  ) INTO v_out FROM t;
+  RETURN v_out;
+END $$;
+
+-- ── 7) Relatório Geral: os 10 de uma vez ─────────────────────────────────
+CREATE OR REPLACE FUNCTION public.dir_rel_geral(_de date DEFAULT NULL, _ate date DEFAULT NULL)
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
+DECLARE v jsonb := '{}'::jsonb;
+BEGIN
+  PERFORM public.dir_rel_exige('diretoria_relatorio_geral');
+  v := v || jsonb_build_object('recrutamento',       public.dir_rel_recrutamento(_de, _ate));
+  v := v || jsonb_build_object('demissoes',          public.dir_rel_demissoes(_de, _ate));
+  v := v || jsonb_build_object('materiais',          public.dir_rel_materiais(_de, _ate));
+  v := v || jsonb_build_object('ferias',             public.dir_rel_ferias(_de, _ate));
+  v := v || jsonb_build_object('medida-disciplinar', public.dir_rel_medida_disciplinar(_de, _ate));
+  v := v || jsonb_build_object('chamados',           public.dir_rel_chamados(_de, _ate));
+  v := v || jsonb_build_object('orientacoes',        public.dir_rel_orientacoes(_de, _ate));
+  v := v || jsonb_build_object('mudanca-funcao',     public.dir_rel_mudanca_funcao(_de, _ate));
+  v := v || jsonb_build_object('colaboradores',      public.dir_rel_colaboradores(_de, _ate));
+  v := v || jsonb_build_object('turnover',           public.dir_rel_turnover(_de, _ate));
+  RETURN v;
+END $$;
+
+-- A I.A só para quem tem a capacidade (cobrada também na Edge diretoria-ia).
+CREATE OR REPLACE FUNCTION public.dir_rel_pode_ia()
+RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, pg_temp AS $$
+  SELECT auth.uid() IS NOT NULL AND public.has_screen_access(auth.uid(), 'diretoria_relatorios_ia', 'visualizar'::public.app_acao);
+$$;
+
+DO $$
+DECLARE f text;
+BEGIN
+  FOREACH f IN ARRAY ARRAY['dir_rel_recrutamento','dir_rel_demissoes','dir_rel_materiais','dir_rel_ferias',
+                           'dir_rel_medida_disciplinar','dir_rel_chamados','dir_rel_orientacoes','dir_rel_mudanca_funcao',
+                           'dir_rel_colaboradores','dir_rel_turnover','dir_rel_geral'] LOOP
+    EXECUTE format('REVOKE ALL ON FUNCTION public.%I(date, date) FROM PUBLIC, anon', f);
+    EXECUTE format('GRANT EXECUTE ON FUNCTION public.%I(date, date) TO authenticated', f);
+  END LOOP;
+END $$;
+REVOKE ALL ON FUNCTION public.dir_rel_pode_ia() FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.dir_rel_pode_ia() TO authenticated;
+
+NOTIFY pgrst, 'reload schema';
+
+-- Conferência (logado como quem tem o Relatório Geral):
+-- SELECT jsonb_object_keys(public.dir_rel_geral());
+
+-- ROLLBACK
+-- DROP FUNCTION IF EXISTS public.dir_rel_geral(date, date);
+-- DROP FUNCTION IF EXISTS public.dir_rel_turnover(date, date);
+-- DROP FUNCTION IF EXISTS public.dir_rel_colaboradores(date, date);
+-- DROP FUNCTION IF EXISTS public.dir_rel_mudanca_funcao(date, date);
+-- DROP FUNCTION IF EXISTS public.dir_rel_orientacoes(date, date);
+-- DROP FUNCTION IF EXISTS public.dir_rel_chamados(date, date);
+-- DROP FUNCTION IF EXISTS public.dir_rel_medida_disciplinar(date, date);
+-- DROP FUNCTION IF EXISTS public.dir_rel_ferias(date, date);
+-- DROP FUNCTION IF EXISTS public.dir_rel_materiais(date, date);
+-- DROP FUNCTION IF EXISTS public.dir_rel_demissoes(date, date);
+-- DROP FUNCTION IF EXISTS public.dir_rel_recrutamento(date, date);
+-- DROP FUNCTION IF EXISTS public.dir_rel_montar(text, text, date, date, jsonb, text);
+-- DROP FUNCTION IF EXISTS public.dir_rel_pode_ia();
+-- DROP FUNCTION IF EXISTS public.dir_rel_exige(text);
+-- DELETE FROM public.app_menu WHERE codigo LIKE 'diretoria_rel%' OR codigo = 'diretoria_relatorio_geral';
+
+-- ===== 20261005000007_sis_checklist_permissao_igual_tela_de_acesso (JA APLICADA 05/10) =====
+-- =========================================================================
+-- Sistemas › CHECKLIST DE MÓDULOS — "Editar status" segue a tela de acesso
+-- (05/10/2026, hotfix da mig 20261005000005)
+--
+-- INCIDENTE (Pablo, 05/10/2026): "mesmo tendo permissão pra editar o status
+-- não tá deixando editar o status no checklist de sistemas".
+--
+-- CAUSA: a mig 20261005000005 cobrava a liberação EXPLÍCITA em
+-- screen_permission_user (sis_ck_liberado), ignorando o perfil "concede
+-- tudo" (Administrador Geral). Só que a tela Administração › Acesso por
+-- Usuário mostra o toggle LIGADO para quem tem esse perfil — então a tela
+-- dizia "liberado" e o banco dizia "não". Em 05/10 não havia NENHUMA linha
+-- em screen_permission_user para sistemas_checklist_editar_status.
+--
+-- AGORA: sis_ck_liberado usa has_screen_access — a mesma regra que a tela
+-- de acesso desenha. Continua fechado para todo mundo que não é
+-- Administrador Geral nem foi liberado no toggle.
+--
+-- Idempotente. Aplicar no banco do app.
+-- =========================================================================
+
+CREATE OR REPLACE FUNCTION public.sis_ck_liberado(_menu text)
+RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, pg_temp AS $f$
+  SELECT auth.uid() IS NOT NULL
+     AND public.has_screen_access(auth.uid(), _menu, 'visualizar'::public.app_acao);
+$f$;
+
+NOTIFY pgrst, 'reload schema';
+
+-- ROLLBACK (volta à liberação só explícita, mig 20261005000005)
+-- CREATE OR REPLACE FUNCTION public.sis_ck_liberado(_menu text)
+-- RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, pg_temp AS $f$
+--   SELECT auth.uid() IS NOT NULL AND coalesce((
+--     SELECT s.allow FROM public.screen_permission_user s
+--      WHERE s.user_id = auth.uid() AND s.menu_codigo = _menu AND s.acao = 'visualizar'::public.app_acao
+--      ORDER BY s.updated_at DESC LIMIT 1), false);
+-- $f$;
+
+-- ===== 20261005000008_advertencia_verbal_notifica_sem_aprovar (JA APLICADA 05/10) =====
+-- =========================================================================
+-- Jurídico › ADVERTÊNCIAS — verbal não notifica "para aprovar" (05/10/2026)
+--
+-- BUG (Gustavo/Jurídico, 05/10/2026): chegou "Nova solicitação de
+-- advertência para aprovar" (Carlos Roberto Nunes da Silva · Verbal · grau
+-- Alto · UFRGS Jardinagem), mas em "Aguardando Aprovação" não havia nada.
+--
+-- CAUSA: a advertência VERBAL não passa por aprovação — nasce "Registrada"
+-- (22/09/2026) e fica na aba "Verbais registradas". O gatilho adv_notificar
+-- mandava a mesma notificação "para aprovar" em TODO insert, sem olhar o
+-- status (id 29, 05/10/2026 18:12, já nasceu Registrada).
+--
+-- AGORA: insert "Registrada" → "Advertência verbal registrada" (só aviso),
+-- com link direto para a aba das verbais (/app/juridico/advertencias?aba=
+-- Registrada). O resto do gatilho é o mesmo.
+--
+-- Idempotente. Aplicar no banco do app.
+-- =========================================================================
+
+CREATE OR REPLACE FUNCTION public.adv_notificar()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public', 'pg_temp'
+AS $function$
+DECLARE
+  v_link      text := '/app/juridico/advertencias';
+  v_resumo    text := coalesce(NEW.colaborador_nome, '—') || ' · ' || coalesce(NEW.tipo_advertencia, '') || coalesce(' · grau ' || NEW.grau, '') || coalesce(' · ' || NEW.contrato, '');
+  v_solic     uuid;
+BEGIN
+  IF TG_OP = 'INSERT' THEN
+    IF NEW.status = 'Registrada' THEN
+      -- Verbal: já registrada pelo encarregado, ninguém aprova.
+      PERFORM public.jur_notificar(public.jur_quem_tem('advertencias', 'aprovar'),
+        'Advertência verbal registrada',
+        v_resumo || ' — registrada por ' || coalesce(NEW.solicitante_nome, '—') || ' (não precisa de aprovação)',
+        'info', v_link || '?aba=Registrada');
+    ELSE
+      PERFORM public.jur_notificar(public.jur_quem_tem('advertencias', 'aprovar'),
+        'Nova solicitação de advertência para aprovar',
+        v_resumo || ' — pedida por ' || coalesce(NEW.solicitante_nome, '—'),
+        'info', v_link);
+    END IF;
+    RETURN NEW;
+  END IF;
+
+  IF NEW.status IS DISTINCT FROM OLD.status THEN
+    IF NEW.status = 'Aguardando Jurídico' THEN
+      PERFORM public.jur_notificar(public.jur_quem_tem('advertencias', 'aprovar') || public.jur_quem_tem('advertencias', 'alterar'),
+        'Advertência aprovada — aguardando parecer do Jurídico',
+        v_resumo, 'warning', v_link);
+    ELSIF NEW.status IN ('Concluída', 'Reprovada') THEN
+      SELECT id INTO v_solic FROM public.profiles WHERE lower(email) = lower(coalesce(NEW.solicitante_email, '')) LIMIT 1;
+      PERFORM public.jur_notificar(ARRAY[v_solic],
+        CASE WHEN NEW.status = 'Concluída' THEN 'Advertência concluída pelo Jurídico' ELSE 'Solicitação de advertência reprovada' END,
+        v_resumo || coalesce(' — ' || NEW.resultado, '') || coalesce(' — ' || NEW.motivo_reprovacao, ''),
+        CASE WHEN NEW.status = 'Concluída' THEN 'success' ELSE 'error' END,
+        '/app/encarregados/minhas-solicitacoes');
+    END IF;
+  END IF;
+  RETURN NEW;
+END $function$;
+
+NOTIFY pgrst, 'reload schema';
+
+-- ROLLBACK: reaplicar adv_notificar sem o ramo IF NEW.status = 'Registrada'.
+
+-- ===== 20261005000009_advertencia_historico (JA APLICADA 05/10) =====
+-- =========================================================================
+-- Jurídico › ADVERTÊNCIAS — histórico com a data da solicitação (05/10/2026)
+--
+-- PEDIDO (Pablo): "sistema de advertência: adicionar histórico da data de
+-- solicitação de advertência". A tela só mostrava a data do OCORRIDO; quando
+-- a advertência foi pedida, aprovada, reprovada ou concluída não aparecia em
+-- lugar nenhum (a tabela só guardava created_at e o status_changed_at da
+-- ÚLTIMA mudança).
+--
+-- AGORA: "SISTEMA_ADVERTENCIA_HISTORICO" — uma linha por evento (solicitada,
+-- cada mudança de status), com data/hora e quem fez, gravada por gatilho.
+-- Leitura: quem enxerga a advertência enxerga o histórico dela (a policy
+-- consulta a própria tabela de advertências, que já tem a RLS certa).
+-- Escrita: só o gatilho.
+--
+-- BACKFILL das 23 que já existiam: o que dá para afirmar — a solicitação
+-- (created_at, por solicitante_nome) e o status atual (status_changed_at,
+-- por quem aprovou/concluiu). As etapas do meio dessas antigas não foram
+-- guardadas na época e ficam de fora (marcado no detalhe).
+--
+-- Idempotente. Aplicar no banco do app.
+-- =========================================================================
+
+CREATE TABLE IF NOT EXISTS public."SISTEMA_ADVERTENCIA_HISTORICO" (
+  id             bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  advertencia_id bigint NOT NULL REFERENCES public."SISTEMA_SOLICITACOES_ADVERTENCIA"(id) ON DELETE CASCADE,
+  em             timestamptz NOT NULL DEFAULT now(),
+  evento         text NOT NULL,
+  de_status      text,
+  para_status    text,
+  usuario_id     uuid,
+  usuario_nome   text,
+  detalhe        text
+);
+CREATE INDEX IF NOT EXISTS idx_adv_historico_adv ON public."SISTEMA_ADVERTENCIA_HISTORICO"(advertencia_id, em);
+
+ALTER TABLE public."SISTEMA_ADVERTENCIA_HISTORICO" ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON public."SISTEMA_ADVERTENCIA_HISTORICO" FROM PUBLIC, anon;
+GRANT SELECT ON public."SISTEMA_ADVERTENCIA_HISTORICO" TO authenticated;
+
+DROP POLICY IF EXISTS adv_historico_select ON public."SISTEMA_ADVERTENCIA_HISTORICO";
+CREATE POLICY adv_historico_select ON public."SISTEMA_ADVERTENCIA_HISTORICO" FOR SELECT TO authenticated
+  USING (EXISTS (SELECT 1 FROM public."SISTEMA_SOLICITACOES_ADVERTENCIA" a WHERE a.id = advertencia_id));
+
+-- ── Gatilho ──────────────────────────────────────────────────────────────
+CREATE OR REPLACE FUNCTION public.adv_historico_registrar()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
+DECLARE v_nome text;
+BEGIN
+  SELECT coalesce(nullif(btrim(display_name), ''), email) INTO v_nome FROM public.profiles WHERE id = auth.uid();
+  IF TG_OP = 'INSERT' THEN
+    INSERT INTO public."SISTEMA_ADVERTENCIA_HISTORICO" (advertencia_id, em, evento, para_status, usuario_id, usuario_nome, detalhe)
+    VALUES (NEW.id, coalesce(NEW.created_at, now()),
+            CASE WHEN NEW.status = 'Registrada' THEN 'Advertência verbal registrada' ELSE 'Solicitação de advertência enviada' END,
+            NEW.status, auth.uid(), coalesce(v_nome, NEW.solicitante_nome),
+            concat_ws(' · ', NEW.tipo_advertencia, 'grau ' || NEW.grau, 'ocorrido em ' || to_char(NEW.data_ocorrido::date, 'DD/MM/YYYY')));
+  ELSIF NEW.status IS DISTINCT FROM OLD.status THEN
+    INSERT INTO public."SISTEMA_ADVERTENCIA_HISTORICO" (advertencia_id, evento, de_status, para_status, usuario_id, usuario_nome, detalhe)
+    VALUES (NEW.id,
+            CASE NEW.status
+              WHEN 'Aguardando Jurídico' THEN 'Aprovada — enviada ao Jurídico'
+              WHEN 'Reprovada'           THEN 'Reprovada'
+              WHEN 'Concluída'           THEN 'Concluída pelo Jurídico'
+              ELSE 'Status alterado para ' || coalesce(NEW.status, '—') END,
+            OLD.status, NEW.status, auth.uid(),
+            coalesce(v_nome, CASE WHEN NEW.status = 'Concluída' THEN NEW.concluido_por_nome ELSE NEW.aprovado_por_nome END),
+            CASE NEW.status
+              WHEN 'Reprovada' THEN nullif(btrim(coalesce(NEW.motivo_reprovacao, '')), '')
+              WHEN 'Concluída' THEN nullif(concat_ws(' · ', NEW.resultado, NEW.parecer_juridico), '')
+            END);
+  END IF;
+  RETURN NEW;
+END $$;
+
+DROP TRIGGER IF EXISTS trg_adv_historico ON public."SISTEMA_SOLICITACOES_ADVERTENCIA";
+CREATE TRIGGER trg_adv_historico AFTER INSERT OR UPDATE OF status ON public."SISTEMA_SOLICITACOES_ADVERTENCIA"
+  FOR EACH ROW EXECUTE FUNCTION public.adv_historico_registrar();
+
+-- ── Backfill das que já existiam (só se ainda não têm histórico) ─────────
+INSERT INTO public."SISTEMA_ADVERTENCIA_HISTORICO" (advertencia_id, em, evento, para_status, usuario_nome, detalhe)
+SELECT a.id, a.created_at,
+       CASE WHEN a.tipo_advertencia ILIKE 'verbal%' AND a.status = 'Registrada' THEN 'Advertência verbal registrada' ELSE 'Solicitação de advertência enviada' END,
+       CASE WHEN a.status = 'Registrada' THEN 'Registrada' ELSE 'Aguardando Aprovação' END,
+       a.solicitante_nome,
+       concat_ws(' · ', a.tipo_advertencia, 'grau ' || a.grau, 'ocorrido em ' || to_char(a.data_ocorrido::date, 'DD/MM/YYYY'))
+  FROM public."SISTEMA_SOLICITACOES_ADVERTENCIA" a
+ WHERE NOT EXISTS (SELECT 1 FROM public."SISTEMA_ADVERTENCIA_HISTORICO" h WHERE h.advertencia_id = a.id);
+
+INSERT INTO public."SISTEMA_ADVERTENCIA_HISTORICO" (advertencia_id, em, evento, para_status, usuario_nome, detalhe)
+SELECT a.id, a.status_changed_at,
+       CASE a.status WHEN 'Aguardando Jurídico' THEN 'Aprovada — enviada ao Jurídico'
+                     WHEN 'Reprovada' THEN 'Reprovada' WHEN 'Concluída' THEN 'Concluída pelo Jurídico' END,
+       a.status,
+       CASE WHEN a.status = 'Concluída' THEN coalesce(a.concluido_por_nome, a.aprovado_por_nome) ELSE a.aprovado_por_nome END,
+       concat_ws(' · ', CASE a.status WHEN 'Reprovada' THEN a.motivo_reprovacao WHEN 'Concluída' THEN a.resultado END,
+                 'registro reconstruído — as etapas intermediárias não eram guardadas antes de 05/10/2026')
+  FROM public."SISTEMA_SOLICITACOES_ADVERTENCIA" a
+ WHERE a.status IN ('Aguardando Jurídico', 'Reprovada', 'Concluída')
+   AND a.status_changed_at IS NOT NULL
+   AND (SELECT count(*) FROM public."SISTEMA_ADVERTENCIA_HISTORICO" h WHERE h.advertencia_id = a.id) = 1;
+
+NOTIFY pgrst, 'reload schema';
+
+-- ROLLBACK
+-- DROP TRIGGER IF EXISTS trg_adv_historico ON public."SISTEMA_SOLICITACOES_ADVERTENCIA";
+-- DROP FUNCTION IF EXISTS public.adv_historico_registrar();
+-- DROP TABLE IF EXISTS public."SISTEMA_ADVERTENCIA_HISTORICO";
+
+-- ===== 20261006000001_treinamentos_assinatura_tst_obrigatoria (JA APLICADA 06/10) =====
+-- =========================================================================
+-- TREINAMENTOS — curso só PUBLICA com assinatura de TÉCNICO(A) EM SEGURANÇA
+-- (06/10/2026)
+--
+-- PEDIDO (Pablo): "nos 3 pontinhos do curso tem que ter um botão pra
+-- adicionar a assinatura, e o curso não pode ser publicado sem ter uma
+-- assinatura de uma Técnica em Segurança, e o cargo tem que aparecer na
+-- assinatura também — Cargo e Registro."
+--
+-- MODELO (em cima da mig 20261005000003)
+--   · "TRN_ASSINATURA".registro: o registro profissional (ex. nº do MTE).
+--     Sai no certificado embaixo do cargo. Até aqui o cargo e o registro
+--     iam juntos num texto só ("Téc em segurança - 0031036") — separados
+--     abaixo para a única assinatura que existia.
+--   · trn_assinatura_eh_tst(cargo, registro): a assinatura vale para
+--     publicar quando o cargo é de Técnico(a) em Segurança (aceita
+--     abreviação "Téc em segurança") E o registro está preenchido.
+--   · Gatilho no "TRN_CURSO": publicar (ou trocar a assinatura de curso já
+--     publicado) exige assinatura ATIVA e válida. Cursos que já estavam
+--     publicados sem assinatura NÃO são despublicados — a trava pega na
+--     próxima vez que alguém publicar/trocar.
+--   · Gatilho no "TRN_ASSINATURA": não deixa desativar, excluir ou tirar o
+--     cargo/registro de uma assinatura que segura curso publicado.
+--
+-- Idempotente. Aplicar no banco do app (SQL Editor) — não se auto-aplica.
+-- =========================================================================
+
+-- ── 1) Registro ──────────────────────────────────────────────────────────
+ALTER TABLE public."TRN_ASSINATURA" ADD COLUMN IF NOT EXISTS registro text;
+
+-- A assinatura que existia guardava "cargo - registro" num campo só.
+UPDATE public."TRN_ASSINATURA"
+   SET cargo = 'Técnica em Segurança do Trabalho', registro = '0031036'
+ WHERE id = '489a3809-97a0-4a2b-9b0a-8a9eb4fd4369'
+   AND registro IS NULL AND cargo = 'Téc em segurança - 0031036';
+
+-- ── 2) O que conta como Técnico(a) em Segurança ──────────────────────────
+-- Mesma regra em src/pages/treinamentos/plataforma/assinaturaFolha.tsx
+-- (assinaturaValeParaPublicar) — mudar nos dois lugares.
+CREATE OR REPLACE FUNCTION public.trn_assinatura_eh_tst(p_cargo text, p_registro text)
+RETURNS boolean LANGUAGE sql IMMUTABLE SET search_path = public, pg_temp AS $$
+  SELECT lower(translate(coalesce(p_cargo, ''), 'ÉéÊêÇç', 'EeEeCc')) ~ 'tec.*seguranc'
+     AND length(btrim(coalesce(p_registro, ''))) >= 2
+$$;
+
+-- ── 3) Curso: publicar exige a assinatura ────────────────────────────────
+CREATE OR REPLACE FUNCTION public.trn_curso_publicar_exige_assinatura()
+RETURNS trigger LANGUAGE plpgsql SET search_path = public, pg_temp AS $$
+BEGIN
+  IF NEW.publicado
+     AND (TG_OP = 'INSERT' OR NOT OLD.publicado OR NEW.assinatura_id IS DISTINCT FROM OLD.assinatura_id) THEN
+    IF NEW.assinatura_id IS NULL THEN
+      RAISE EXCEPTION 'O curso só pode ser publicado com a assinatura de um(a) Técnico(a) em Segurança — adicione nos três pontinhos do curso (Assinatura do curso).';
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM public."TRN_ASSINATURA" a
+                    WHERE a.id = NEW.assinatura_id AND a.ativo
+                      AND public.trn_assinatura_eh_tst(a.cargo, a.registro)) THEN
+      RAISE EXCEPTION 'A assinatura do curso precisa ser de um(a) Técnico(a) em Segurança, com cargo e registro preenchidos.';
+    END IF;
+  END IF;
+  RETURN NEW;
+END $$;
+
+DROP TRIGGER IF EXISTS trg_trn_curso_publicar_exige_assinatura ON public."TRN_CURSO";
+CREATE TRIGGER trg_trn_curso_publicar_exige_assinatura BEFORE INSERT OR UPDATE OF publicado, assinatura_id ON public."TRN_CURSO"
+  FOR EACH ROW EXECUTE FUNCTION public.trn_curso_publicar_exige_assinatura();
+
+-- ── 4) Assinatura em uso por curso publicado não perde a validade ────────
+CREATE OR REPLACE FUNCTION public.trn_assinatura_protege_publicado()
+RETURNS trigger LANGUAGE plpgsql SET search_path = public, pg_temp AS $$
+DECLARE v_curso text;
+BEGIN
+  IF TG_OP = 'UPDATE' AND NEW.ativo AND public.trn_assinatura_eh_tst(NEW.cargo, NEW.registro) THEN
+    RETURN NEW;
+  END IF;
+  SELECT c.nome INTO v_curso FROM public."TRN_CURSO" c WHERE c.assinatura_id = OLD.id AND c.publicado LIMIT 1;
+  IF v_curso IS NOT NULL THEN
+    RAISE EXCEPTION 'Esta assinatura é a do curso publicado "%" — troque a assinatura do curso (ou despublique) antes.', v_curso;
+  END IF;
+  RETURN CASE WHEN TG_OP = 'DELETE' THEN OLD ELSE NEW END;
+END $$;
+
+DROP TRIGGER IF EXISTS trg_trn_assinatura_protege_publicado ON public."TRN_ASSINATURA";
+CREATE TRIGGER trg_trn_assinatura_protege_publicado BEFORE UPDATE OR DELETE ON public."TRN_ASSINATURA"
+  FOR EACH ROW EXECUTE FUNCTION public.trn_assinatura_protege_publicado();
+
+-- ── 5) Portal do Colaborador: o certificado devolve o registro ───────────
+-- Mesmo corpo de col_certificado (mig 20261005000003) + 'registro'.
+CREATE OR REPLACE FUNCTION public.col_certificado(p_emp bigint, p_curso uuid)
+ RETURNS jsonb
+ LANGUAGE plpgsql
+ STABLE SECURITY DEFINER
+ SET search_path TO 'public', 'pg_temp'
+AS $function$
+DECLARE v_aluno uuid; ce record; a record; c record; m record; v_mod jsonb; v_ass jsonb;
+BEGIN
+  SELECT id INTO v_aluno FROM public."TRN_ALUNO" WHERE empregado_id = p_emp ORDER BY created_at LIMIT 1;
+  IF v_aluno IS NULL THEN RAISE EXCEPTION 'Você ainda não tem cadastro nos treinamentos.'; END IF;
+  SELECT * INTO ce FROM public."TRN_CERTIFICADO" WHERE aluno_id = v_aluno AND curso_id = p_curso;
+  IF NOT FOUND THEN RAISE EXCEPTION 'Certificado ainda não emitido para este curso.'; END IF;
+  SELECT * INTO a FROM public."TRN_ALUNO" WHERE id = v_aluno;
+  SELECT * INTO c FROM public."TRN_CURSO" WHERE id = p_curso;
+  SELECT * INTO m FROM public."TRN_CERTIFICADO_MODELO" WHERE id = ce.modelo_id;
+  SELECT coalesce(jsonb_agg(jsonb_build_object('nome', mo.nome,
+           'aulas', (SELECT coalesce(jsonb_agg(au.nome ORDER BY au.posicao), '[]'::jsonb) FROM public."TRN_AULA" au WHERE au.modulo_id = mo.id AND au.publicada))
+           ORDER BY mo.posicao), '[]'::jsonb)
+    INTO v_mod FROM public."TRN_MODULO" mo WHERE mo.curso_id = p_curso;
+  SELECT jsonb_build_object('nome_completo', s.nome_completo, 'cargo', s.cargo, 'registro', s.registro, 'tipo', s.tipo,
+                            'imagem', s.imagem, 'texto', s.texto, 'fonte', s.fonte)
+    INTO v_ass FROM public."TRN_ASSINATURA" s WHERE s.id = ce.assinatura_id;
+  RETURN jsonb_build_object(
+    'codigo', ce.codigo_validacao, 'emitido_em', ce.emitido_em, 'carga_horaria_min', ce.carga_horaria_min,
+    'aluno', a.nome, 'documento', a.documento, 'curso', c.nome,
+    'modelo', CASE WHEN m.id IS NULL THEN NULL ELSE to_jsonb(m) END,
+    'modulos', v_mod,
+    'assinatura', v_ass);
+END $function$;
+
+NOTIFY pgrst, 'reload schema';
+
+-- ROLLBACK
+-- Reaplicar col_certificado da mig 20261005000003 (sem 'registro').
+-- DROP TRIGGER IF EXISTS trg_trn_assinatura_protege_publicado ON public."TRN_ASSINATURA";
+-- DROP FUNCTION IF EXISTS public.trn_assinatura_protege_publicado();
+-- DROP TRIGGER IF EXISTS trg_trn_curso_publicar_exige_assinatura ON public."TRN_CURSO";
+-- DROP FUNCTION IF EXISTS public.trn_curso_publicar_exige_assinatura();
+-- DROP FUNCTION IF EXISTS public.trn_assinatura_eh_tst(text, text);
+-- UPDATE public."TRN_ASSINATURA" SET cargo = 'Téc em segurança - 0031036' WHERE id = '489a3809-97a0-4a2b-9b0a-8a9eb4fd4369';
+-- ALTER TABLE public."TRN_ASSINATURA" DROP COLUMN IF EXISTS registro;
+
+-- ===== 20261006000002_treinamentos_assinatura_tamanho (JA APLICADA 06/10) =====
+-- =========================================================================
+-- TREINAMENTOS — assinatura: TAMANHO da letra (06/10/2026)
+--
+-- PEDIDO (Pablo): "a assinatura tem que ficar melhor, bem mais tipos de
+-- letra, escolher tamanho das letras, alguns formatos estão saindo pra
+-- fora". As letras novas são só front (lista FONTES_ASSINATURA em
+-- assinaturaFolha.tsx — o banco só exige fonte não vazia). O "saindo pra
+-- fora" também é front: o texto agora encolhe para caber na largura.
+--
+--   · "TRN_ASSINATURA".tamanho: multiplicador da letra da assinatura
+--     escrita (0,6 a 1,4; 1 = padrão). Nunca passa da largura do bloco —
+--     acima do que cabe, o front reduz.
+--   · col_certificado devolve 'tamanho' para o Portal do Colaborador.
+--
+-- Idempotente. Aplicar no banco do app (SQL Editor) — não se auto-aplica.
+-- =========================================================================
+
+ALTER TABLE public."TRN_ASSINATURA" ADD COLUMN IF NOT EXISTS tamanho numeric(3,2) NOT NULL DEFAULT 1;
+ALTER TABLE public."TRN_ASSINATURA" DROP CONSTRAINT IF EXISTS trn_assinatura_tamanho_chk;
+ALTER TABLE public."TRN_ASSINATURA" ADD CONSTRAINT trn_assinatura_tamanho_chk CHECK (tamanho BETWEEN 0.6 AND 1.4);
+
+-- Mesmo corpo de col_certificado (mig 20261006000001) + 'tamanho'.
+CREATE OR REPLACE FUNCTION public.col_certificado(p_emp bigint, p_curso uuid)
+ RETURNS jsonb
+ LANGUAGE plpgsql
+ STABLE SECURITY DEFINER
+ SET search_path TO 'public', 'pg_temp'
+AS $function$
+DECLARE v_aluno uuid; ce record; a record; c record; m record; v_mod jsonb; v_ass jsonb;
+BEGIN
+  SELECT id INTO v_aluno FROM public."TRN_ALUNO" WHERE empregado_id = p_emp ORDER BY created_at LIMIT 1;
+  IF v_aluno IS NULL THEN RAISE EXCEPTION 'Você ainda não tem cadastro nos treinamentos.'; END IF;
+  SELECT * INTO ce FROM public."TRN_CERTIFICADO" WHERE aluno_id = v_aluno AND curso_id = p_curso;
+  IF NOT FOUND THEN RAISE EXCEPTION 'Certificado ainda não emitido para este curso.'; END IF;
+  SELECT * INTO a FROM public."TRN_ALUNO" WHERE id = v_aluno;
+  SELECT * INTO c FROM public."TRN_CURSO" WHERE id = p_curso;
+  SELECT * INTO m FROM public."TRN_CERTIFICADO_MODELO" WHERE id = ce.modelo_id;
+  SELECT coalesce(jsonb_agg(jsonb_build_object('nome', mo.nome,
+           'aulas', (SELECT coalesce(jsonb_agg(au.nome ORDER BY au.posicao), '[]'::jsonb) FROM public."TRN_AULA" au WHERE au.modulo_id = mo.id AND au.publicada))
+           ORDER BY mo.posicao), '[]'::jsonb)
+    INTO v_mod FROM public."TRN_MODULO" mo WHERE mo.curso_id = p_curso;
+  SELECT jsonb_build_object('nome_completo', s.nome_completo, 'cargo', s.cargo, 'registro', s.registro, 'tipo', s.tipo,
+                            'imagem', s.imagem, 'texto', s.texto, 'fonte', s.fonte, 'tamanho', s.tamanho)
+    INTO v_ass FROM public."TRN_ASSINATURA" s WHERE s.id = ce.assinatura_id;
+  RETURN jsonb_build_object(
+    'codigo', ce.codigo_validacao, 'emitido_em', ce.emitido_em, 'carga_horaria_min', ce.carga_horaria_min,
+    'aluno', a.nome, 'documento', a.documento, 'curso', c.nome,
+    'modelo', CASE WHEN m.id IS NULL THEN NULL ELSE to_jsonb(m) END,
+    'modulos', v_mod,
+    'assinatura', v_ass);
+END $function$;
+
+NOTIFY pgrst, 'reload schema';
+
+-- ROLLBACK
+-- Reaplicar col_certificado da mig 20261006000001 (sem 'tamanho').
+-- ALTER TABLE public."TRN_ASSINATURA" DROP CONSTRAINT IF EXISTS trn_assinatura_tamanho_chk;
+-- ALTER TABLE public."TRN_ASSINATURA" DROP COLUMN IF EXISTS tamanho;
+
+-- ===== 20261006000003_diretoria_turnover_painel (JA APLICADA 06/10) =====
+-- =========================================================================
+-- DIRETORIA › RELATÓRIOS › TURN-OVER no formato do Power BI (06/10/2026)
+--
+-- PEDIDO (Pablo): "preciso que o turnover fique assim" — o painel do Power
+-- BI "TURNOVER GRUPO NASCIMENTO". Decidido com ele: páginas 1 (Resumo) e 3
+-- (Analistas) agora, no visual do ERP; a página 2 (Valores das rescisões)
+-- fica para depois — o ERP não tem as verbas (folha_evento vazio; teria que
+-- vir da Senior, hagg.R046VER).
+--
+-- FÓRMULAS — calibradas contra o Power BI em 06/10/2026:
+--   · Turnover do mês = demissões no mês ÷ efetivo no FIM do mês.
+--     jan/26: 91 ÷ 2.163 = 4,21% (Power BI 4,20%); fev 103 ÷ 2.139 = 4,81%.
+--   · Turnover do ano = SOMA das taxas mensais (o 32,7% do Power BI é a
+--     soma de jan–jul). Meta 41%/ano → 3,42%/mês.
+--   · Por empresa e por contrato: demissões ÷ efetivo MÉDIO dos meses
+--     (fim de cada mês). "Em relação ao grupo" divide pelo efetivo médio
+--     do grupo todo. No contrato, a média é só dos meses em que ele teve
+--     gente — contrato que começou em agosto dividindo por 10 meses dava
+--     451% (UFRGS - Aux. de Saúde Bucal, na primeira versão).
+--   · Projeção = acumulado × (dias do ano ÷ dias decorridos).
+--   · Efetivo = quem conta como ativo (esp_col_esta_ativo) ou foi demitido
+--     depois da data — mesma base do dir_rel_turnover.
+--   · Contrato = EMPREGADOS."Nome Filial" (= BiFilial.apelido na Senior).
+--   · Empresa = EMPREGADOS."Empresa": 1 HAGG (Nascimento), 2 SN, 3 CANAÃ,
+--     4 LF, 5 NH (hagg.R030EMP).
+--   · Tipo de desligamento = "Descrição (Causa)" — vazio em ~metade dos
+--     demitidos de 2026 (vira "(não informado)"); o filtro só recorta as
+--     demissões, nunca o efetivo.
+--   · Analistas (avisos): "SISTEMA_SOLICITACOES_DEMISSAO".modelo_aviso,
+--     sem Cancelada/Reprovada, na data do aviso. Só existe para demissão
+--     pedida pelo ERP — o histórico anterior não tem aviso.
+--
+-- Acesso: o mesmo do relatório Turn-over (dir_rel_exige).
+-- Idempotente. Aplicar no banco do app (SQL Editor) — não se auto-aplica.
+-- =========================================================================
+
+CREATE OR REPLACE FUNCTION public.dir_turnover_painel(_ano int DEFAULT NULL, _mes int DEFAULT NULL, _contrato text DEFAULT NULL, _causas text[] DEFAULT NULL)
+RETURNS jsonb LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public, pg_temp AS $$
+DECLARE
+  v_ano int := COALESCE(_ano, extract(year FROM current_date)::int);
+  v_ini date := make_date(COALESCE(_ano, extract(year FROM current_date)::int), 1, 1);
+  v_ult date;
+  v_fator numeric;
+  v_out jsonb;
+BEGIN
+  PERFORM public.dir_rel_exige('diretoria_rel_turnover');
+  IF _mes IS NOT NULL AND (_mes < 1 OR _mes > 12) THEN RAISE EXCEPTION 'Mês inválido'; END IF;
+  v_ult := LEAST(CASE WHEN _mes IS NULL THEN make_date(v_ano, 12, 31)
+                      ELSE (make_date(v_ano, _mes, 1) + interval '1 month' - interval '1 day')::date END,
+                 current_date);
+  IF v_ult < v_ini THEN RAISE EXCEPTION 'Esse período ainda não começou.'; END IF;
+  -- Projeção para o ano inteiro a partir do que já passou.
+  v_fator := (make_date(v_ano, 12, 31) - v_ini + 1)::numeric / (v_ult - v_ini + 1);
+
+  WITH e AS MATERIALIZED (
+    SELECT public.data_universal(x."Admissão") adm,
+           CASE WHEN x."Situação" = 'Demitido' THEN public.data_universal(x."Data Afastamento") END dem,
+           (public.esp_col_esta_ativo(x."Situação") OR x."Situação" = 'Demitido') conta,
+           COALESCE(NULLIF(btrim(x."Nome Filial"), ''), '(sem contrato)') contrato,
+           CASE x."Empresa" WHEN 1 THEN 'HAGG' WHEN 2 THEN 'SN' WHEN 3 THEN 'CANAÃ' WHEN 4 THEN 'LF' WHEN 5 THEN 'NH' ELSE '(sem empresa)' END empresa,
+           COALESCE(NULLIF(btrim(x."Descrição (Causa)"), ''), '(não informado)') causa
+      FROM public."EMPREGADOS" x
+     WHERE COALESCE(btrim(x."Nome"), '') <> ''
+       AND (_contrato IS NULL OR x."Nome Filial" = _contrato)
+  ),
+  -- Demissões que entram na conta (recorte por tipo de desligamento).
+  d AS MATERIALIZED (
+    SELECT * FROM e WHERE e.dem BETWEEN v_ini AND v_ult AND (_causas IS NULL OR e.causa = ANY(_causas))
+  ),
+  mm AS MATERIALIZED (
+    SELECT g::date ini, LEAST((g + interval '1 month' - interval '1 day')::date, v_ult) fim
+      FROM generate_series(v_ini, v_ult, interval '1 month') g
+  ),
+  ef AS MATERIALIZED (   -- efetivo no fim de cada mês, por contrato/empresa
+    SELECT mm.ini, e.contrato, e.empresa, count(*) n
+      FROM mm JOIN e ON e.conta AND e.adm <= mm.fim AND (e.dem IS NULL OR e.dem > mm.fim)
+     GROUP BY 1, 2, 3
+  ),
+  mes AS (
+    SELECT mm.ini,
+           (SELECT COALESCE(sum(n), 0) FROM ef WHERE ef.ini = mm.ini) efetivo,
+           (SELECT count(*) FROM d WHERE d.dem BETWEEN mm.ini AND mm.fim) demissoes
+      FROM mm
+  ),
+  nmes AS (SELECT count(*)::numeric n FROM mm),
+  ef_medio_grupo AS (SELECT COALESCE(sum(n), 0) / (SELECT n FROM nmes) n FROM ef),
+  por_contrato AS (
+    SELECT c.contrato, c.empresa, c.efetivo_medio, COALESCE(dd.n, 0) demissoes, COALESCE(at.n, 0) efetivo_atual,
+           COALESCE(dt.n, 0) demissoes_todas
+      FROM (SELECT contrato, max(empresa) empresa, sum(n)::numeric / count(DISTINCT ini) efetivo_medio FROM ef GROUP BY 1) c
+      LEFT JOIN (SELECT contrato, count(*) n FROM d GROUP BY 1) dd USING (contrato)
+      LEFT JOIN (SELECT contrato, sum(n) n FROM ef WHERE ef.ini = (SELECT max(ini) FROM mm) GROUP BY 1) at USING (contrato)
+      LEFT JOIN (SELECT contrato, count(*) n FROM e WHERE e.dem BETWEEN v_ini AND v_ult GROUP BY 1) dt USING (contrato)
+  ),
+  av AS (
+    SELECT s.contrato,
+           count(*) FILTER (WHERE s.modelo_aviso = 'Aviso Prévio Trabalhado') trabalhado,
+           count(*) FILTER (WHERE s.modelo_aviso = 'Aviso Prévio Indenizado') indenizado
+      FROM public."SISTEMA_SOLICITACOES_DEMISSAO" s
+     WHERE s.status NOT IN ('Cancelada', 'Reprovada')
+       AND s.modelo_aviso IN ('Aviso Prévio Trabalhado', 'Aviso Prévio Indenizado')
+       AND COALESCE(s.data_aviso, s.data_solicitacao, s.criado_em::date) BETWEEN v_ini AND v_ult
+       AND (_contrato IS NULL OR s.contrato = _contrato)
+     GROUP BY 1
+  )
+  SELECT jsonb_build_object(
+    'ano', v_ano, 'mes', _mes, 'de', v_ini, 'ate', v_ult, 'fator_projecao', round(v_fator, 4),
+    'efetivo_medio', round((SELECT n FROM ef_medio_grupo), 1),
+    'mensal', (SELECT COALESCE(jsonb_agg(jsonb_build_object('mes', to_char(ini, 'YYYY-MM'), 'efetivo', efetivo, 'demissoes', demissoes,
+                 'taxa', CASE WHEN efetivo > 0 THEN round(demissoes * 100.0 / efetivo, 2) END) ORDER BY ini), '[]'::jsonb) FROM mes),
+    'por_empresa', (SELECT COALESCE(jsonb_agg(jsonb_build_object('empresa', x.empresa, 'efetivo_medio', round(x.ef, 1), 'demissoes', x.dem,
+                     'taxa', CASE WHEN x.ef > 0 THEN round(x.dem * 100.0 / x.ef, 2) END) ORDER BY x.dem * 1.0 / NULLIF(x.ef, 0) DESC NULLS LAST), '[]'::jsonb)
+                      FROM (SELECT ee.empresa, ee.ef, COALESCE(dd.dem, 0) dem FROM (SELECT empresa, sum(n) / (SELECT n FROM nmes) ef FROM ef GROUP BY 1) ee LEFT JOIN (SELECT empresa, count(*) dem FROM d GROUP BY 1) dd USING (empresa)) x
+                     WHERE x.ef > 0 OR x.dem > 0),
+    'por_contrato', (SELECT COALESCE(jsonb_agg(jsonb_build_object(
+                       'contrato', pc.contrato, 'empresa', pc.empresa, 'efetivo_medio', round(pc.efetivo_medio, 1), 'efetivo_atual', pc.efetivo_atual,
+                       'demissoes', pc.demissoes, 'demissoes_todas', pc.demissoes_todas,
+                       'aviso_trabalhado', COALESCE(av.trabalhado, 0), 'aviso_indenizado', COALESCE(av.indenizado, 0))
+                       ORDER BY pc.demissoes DESC, pc.contrato), '[]'::jsonb)
+                       FROM por_contrato pc LEFT JOIN av USING (contrato)),
+    'causas', (SELECT COALESCE(jsonb_agg(jsonb_build_object('causa', x.causa, 'n', x.n) ORDER BY x.n DESC), '[]'::jsonb)
+                 FROM (SELECT causa, count(*) n FROM e WHERE e.dem BETWEEN v_ini AND v_ult GROUP BY 1) x),
+    'contratos', (SELECT COALESCE(jsonb_agg(x.c ORDER BY x.c), '[]'::jsonb) FROM (
+                    SELECT DISTINCT btrim(y."Nome Filial") c FROM public."EMPREGADOS" y
+                     WHERE COALESCE(btrim(y."Nome Filial"), '') <> ''
+                       AND (public.esp_col_esta_ativo(y."Situação") OR public.data_universal(y."Data Afastamento") >= v_ini)) x)
+  ) INTO v_out;
+  RETURN v_out;
+END $$;
+
+REVOKE ALL ON FUNCTION public.dir_turnover_painel(int, int, text, text[]) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.dir_turnover_painel(int, int, text, text[]) TO authenticated;
+
+NOTIFY pgrst, 'reload schema';
+
+-- ROLLBACK
+-- DROP FUNCTION IF EXISTS public.dir_turnover_painel(int, int, text, text[]);

@@ -53,7 +53,19 @@ function classificarComplexidade(chamado) {
   const r = spawnSync(
     CLAUDE_BIN,
     ["--print", "--model", "haiku", "--output-format", "json", prompt],
-    { encoding: "utf8", timeout: TIMEOUT_TRIAGEM_MS },
+    {
+      encoding: "utf8",
+      timeout: TIMEOUT_TRIAGEM_MS,
+      // MESMO motivo da chamada de planejamento mais abaixo, que já tinha isto:
+      // no Windows o binário é `claude.cmd` e o Node não executa `.cmd` direto.
+      // Faltava AQUI, e o efeito era silencioso: a triagem falhava SEMPRE com
+      // `spawnSync claude.cmd EINVAL`, caía no `return "normal"` do catch e
+      // seguia como se tivesse classificado. Ou seja, a triagem de
+      // complexidade nunca funcionou no Windows — todo chamado virava "normal"
+      // e, por consequência, modelo "sonnet". Medido no log do worker em
+      // 06/10/2026, no SIS-2026-0510.
+      shell: process.platform === "win32",
+    },
   );
   if (r.error || r.status !== 0) {
     console.error("[chamadosDev] triagem falhou, usando 'normal' como padrão:", r.error || r.stderr);
