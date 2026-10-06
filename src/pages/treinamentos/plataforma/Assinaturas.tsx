@@ -11,10 +11,10 @@ import { Card } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import {
-  useTrnAssinaturas, useTrnExcluirAssinatura, useTrnSalvarAssinatura, type AssinaturaComUso,
+  useTrnAssinaturas, useTrnExcluirAssinatura, useTrnSalvarAssinatura, useTrnSalvarCurso, type AssinaturaComUso,
 } from "@/hooks/useTreinamentosPlataforma";
 import { MENU, type Assinatura } from "./tipos";
-import { AssinaturaTraco, problemaAssinatura } from "./assinaturaFolha";
+import { AssinaturaTraco, assinaturaValeParaPublicar, cargoERegistro, problemaAssinatura } from "./assinaturaFolha";
 import { AssinaturaEditor, type RascunhoAssinatura } from "./AssinaturaEditor";
 import { TrnCarregando, TrnEstilo, TrnHero, TrnVazio } from "./ui";
 
@@ -59,7 +59,7 @@ export function DialogAssinatura({ aberto, inicial, onClose, onSalvo }: {
     const p = problemaAssinatura(r);
     if (p) return toast.error(p);
     try {
-      const id = await salvar.mutateAsync({ ...r, nome_completo: r.nome_completo!.trim(), cargo: r.cargo?.trim() || null, texto: r.texto?.trim() || null } as never);
+      const id = await salvar.mutateAsync({ ...r, nome_completo: r.nome_completo!.trim(), cargo: r.cargo?.trim() || null, registro: r.registro?.trim() || null, texto: r.texto?.trim() || null } as never);
       toast.success(inicial ? "Assinatura atualizada." : "Assinatura criada.");
       onSalvo?.(id);
       onClose();
@@ -80,6 +80,78 @@ export function DialogAssinatura({ aberto, inicial, onClose, onSalvo }: {
         </div>
       </DialogContent>
     </Dialog>
+  );
+}
+
+/**
+ * "Assinatura do curso" — aberto pelos três pontinhos da visualização do
+ * curso (06/10/2026, mig 20261006000001). Escolhe a assinatura principal
+ * ou cria uma ali. Só a de Técnico(a) em Segurança com registro pode ser
+ * escolhida: sem ela o curso não publica (o banco cobra também).
+ */
+export function DialogAssinaturaCurso({ curso, onClose }: {
+  curso: { id: string; nome: string; assinatura_id: string | null; publicado: boolean } | null; onClose: () => void;
+}) {
+  const { data: lista = [], isLoading } = useTrnAssinaturas();
+  const salvarCurso = useTrnSalvarCurso();
+  const [escolhida, setEscolhida] = useState<string | null>(null);
+  const [criando, setCriando] = useState(false);
+
+  useEffect(() => { if (curso) setEscolhida(curso.assinatura_id); }, [curso]);
+
+  const opcoes = lista.filter((a) => a.ativo || a.id === curso?.assinatura_id);
+  const gravar = async (id: string | null) => {
+    if (!curso) return;
+    if (curso.publicado && !id) return toast.error("Curso publicado não pode ficar sem assinatura — despublique antes.");
+    try {
+      await salvarCurso.mutateAsync({ id: curso.id, nome: curso.nome, assinatura_id: id });
+      toast.success(id ? "Assinatura do curso salva — sai nos próximos certificados." : "Assinatura removida do curso.");
+      onClose();
+    } catch (e) { toast.error((e as Error).message ?? "Não deu para salvar."); }
+  };
+
+  return (
+    <>
+      <Dialog open={!!curso && !criando} onOpenChange={(o) => { if (!o) onClose(); }}>
+        <DialogContent className="max-h-[92vh] max-w-2xl overflow-y-auto">
+          <DialogHeader><DialogTitle className="flex items-center gap-2"><PenLine className="h-4 w-4" /> Assinatura do curso</DialogTitle></DialogHeader>
+          <p className="text-sm text-muted-foreground">
+            <b>{curso?.nome}</b> só pode ser publicado com a assinatura de um(a) <b>Técnico(a) em Segurança</b> — com cargo e registro, que saem no certificado.
+          </p>
+          {isLoading ? <TrnCarregando /> : (
+            <div className="grid gap-2">
+              {opcoes.length === 0 && <p className="rounded-lg border border-dashed p-4 text-center text-sm text-muted-foreground">Nenhuma assinatura cadastrada ainda.</p>}
+              {opcoes.map((a) => {
+                const vale = a.ativo && assinaturaValeParaPublicar(a);
+                const marcada = escolhida === a.id;
+                return (
+                  <button key={a.id} type="button" disabled={!vale} onClick={() => setEscolhida(a.id)}
+                    className={`flex items-center gap-3 rounded-lg border-2 bg-white px-3 py-2 text-left transition ${marcada ? "border-orange-500 ring-2 ring-orange-200" : "border-slate-200 hover:border-slate-400"} ${vale ? "" : "cursor-not-allowed opacity-50"}`}>
+                    <div className="h-12 w-40 shrink-0 overflow-hidden"><AssinaturaTraco a={a} altura="48px" /></div>
+                    <div className="min-w-0 text-xs">
+                      <div className="truncate font-bold">{a.nome_completo}</div>
+                      <div className="text-slate-500">{cargoERegistro(a) || "Sem cargo e registro"}</div>
+                      {!vale && <div className="text-amber-700">{a.ativo ? "Não é de Técnico(a) em Segurança com registro — edite em Cursos › Assinaturas." : "Desativada"}</div>}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <AcessoGate menu={MENU.assinaturas} acao="incluir" fallback={<span className="text-xs text-muted-foreground">Para criar uma assinatura, peça a liberação de <b>Cursos — Assinaturas</b>.</span>}>
+              <Button type="button" variant="outline" onClick={() => setCriando(true)}><Plus className="mr-1 h-4 w-4" /> Nova assinatura</Button>
+            </AcessoGate>
+            <div className="flex gap-2">
+              {curso?.assinatura_id && !curso.publicado && <Button variant="ghost" className="text-rose-600" disabled={salvarCurso.isPending} onClick={() => gravar(null)}>Remover</Button>}
+              <Button variant="outline" onClick={onClose}>Cancelar</Button>
+              <Button disabled={!escolhida || escolhida === curso?.assinatura_id || salvarCurso.isPending} onClick={() => gravar(escolhida)}><Save className="mr-2 h-4 w-4" /> Salvar</Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+      <DialogAssinatura aberto={criando} onClose={() => setCriando(false)} onSalvo={(id) => setEscolhida(id)} />
+    </>
   );
 }
 
@@ -123,9 +195,10 @@ export default function Assinaturas() {
                 <div className="flex items-start gap-2">
                   <div className="min-w-0 flex-1">
                     <b className="block truncate">{a.nome_completo}</b>
-                    <span className="text-xs text-slate-500">{a.cargo || (a.tipo === "desenho" ? "Desenhada" : `Escrita · ${a.fonte}`)}</span>
+                    <span className="text-xs text-slate-500">{cargoERegistro(a) || (a.tipo === "desenho" ? "Desenhada" : `Escrita · ${a.fonte}`)}</span>
                     <div className="mt-1.5 flex flex-wrap gap-1">
                       {!a.ativo && <Badge variant="outline" className="text-[10px]">Desativada</Badge>}
+                      {a.ativo && assinaturaValeParaPublicar(a) && <Badge variant="outline" className="border-emerald-300 text-[10px] text-emerald-700">Técnico(a) em Segurança</Badge>}
                       <Badge variant="outline" className="text-[10px]">{a.cursos} curso(s)</Badge>
                       <Badge variant="outline" className="text-[10px]">{a.certificados} certificado(s)</Badge>
                     </div>
