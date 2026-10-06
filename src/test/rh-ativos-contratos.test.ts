@@ -91,17 +91,17 @@ describe("conferirContrato", () => {
         ...n(85, { posto: "VIGIA 12X36 NOTURNO", origem: "posto" }),
         ...n(3, { posto: "VIGIA 12X36 NOTURNO", origem: "posto", situacao: "Auxílio Doença", conta: false }),
         ...n(25, { posto: "VIGIA 44H DIURNO", origem: "posto" }),
-        ...n(1, { posto: "VIGIA 44H DIURNO", origem: "posto", situacao: "Atestado (dias)", conta: true }),
+        ...n(1, { posto: "VIGIA 44H DIURNO", origem: "posto", situacao: "Atestado (dias)", conta: false }), // atestado é afastado desde 06/10/2026
       ],
     }));
     const noturno = r.postos.find((x) => x.nome === "VIGIA 12X36 NOTURNO")!;
     expect(noturno).toMatchObject({ previsto: 90, tem: 85, saldo: -5, situacao: "falta" });
     expect(noturno.afastados).toHaveLength(3);
     expect(noturno.pessoas).toHaveLength(88);
-    expect(r.postos.find((x) => x.nome === "VIGIA 44H DIURNO")).toMatchObject({ tem: 26, saldo: 1, situacao: "excesso" });
+    expect(r.postos.find((x) => x.nome === "VIGIA 44H DIURNO")).toMatchObject({ tem: 25, saldo: 0, situacao: "ok" });
     expect(r.postos.find((x) => x.nome === "VIGIA 12X36 DIURNO")).toMatchObject({ previsto: 9, tem: 0, saldo: -9 });
-    expect(r).toMatchObject({ previsto: 124, tem: 111, saldo: -13, falta: 14, sobra: 1, semPosto: 0 });
-    expect(r.afastados).toHaveLength(3);
+    expect(r).toMatchObject({ previsto: 124, tem: 110, saldo: -14, falta: 14, sobra: 0, semPosto: 0 });
+    expect(r.afastados).toHaveLength(4);
   });
 
   it("quem não tem posto fica pendente, agrupado pelo posto da Senior, com sugestão", () => {

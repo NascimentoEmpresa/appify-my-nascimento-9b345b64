@@ -4,8 +4,9 @@
 //
 // Por contrato e por posto da Planilha de Custo: PREVISTO ("QT. PESSOAS")
 // × TEM (colaboradores ativos da EMPREGADOS que estão no posto e contam —
-// trabalhando ou de atestado; auxílio-doença, licença, férias etc. não
-// contam e aparecem em "Afastados", com a lista ao passar o mouse).
+// só quem está TRABALHANDO; atestado, auxílio-doença, licença, férias etc.
+// não contam e aparecem em "Afastados", com a lista ao passar o mouse —
+// atestado passou a ser afastado em 06/10/2026, mig 20261006000011).
 //
 // O posto da Senior ("01-1099-0071-0061-06-RECEPCIONISTA-B1 40H 5X2") não
 // tem chave em comum com o da planilha ("POSTO B1 - RECEPCIONISTA 40H 5X2"):
@@ -201,7 +202,7 @@ export default function AtivosContratos() {
         <>
           <div className="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             <Kpi icon={Users} valor={tot.previsto.toLocaleString("pt-BR")} rotulo="Previsto" dica="soma das vagas da planilha" tom="info" />
-            <Kpi icon={CheckCircle2} valor={tot.tem.toLocaleString("pt-BR")} rotulo="Tem" dica={`trabalhando ou de atestado · ${tot.afastados} afastado(s) fora`} tom="success" />
+            <Kpi icon={CheckCircle2} valor={tot.tem.toLocaleString("pt-BR")} rotulo="Tem" dica={`trabalhando · ${tot.afastados} afastado(s) fora`} tom="success" />
             {/* Falta posto a posto só é real com todo mundo no seu posto — antes
                 disso, gente "sem posto" vira falta no posto e infla o número. */}
             <Kpi icon={AlertTriangle} valor={<span className={corSaldo(tot.tem - tot.previsto)}>{fmtSaldo(tot.tem - tot.previsto)}</span>}
@@ -276,7 +277,7 @@ export default function AtivosContratos() {
           )}
 
           <p className="mt-3 text-[11px] text-muted-foreground">
-            Tem = colaboradores ativos no posto que estão trabalhando ou de atestado. Auxílio-doença, licença, férias e
+            Tem = colaboradores ativos no posto que estão trabalhando. Atestado, auxílio-doença, licença, férias e
             outros afastamentos não contam (o posto está descoberto) e aparecem em Afastados.
             Previsto = QT. PESSOAS dos postos EXECUTADO vigentes da Planilha de Custo. Atualizado em {new Date(data.gerado_em).toLocaleString("pt-BR")}.
           </p>
