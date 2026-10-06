@@ -76,7 +76,7 @@ import { useTrocaFuncaoNotif } from "@/hooks/useTrocaFuncaoNotif";
 import { useJuridicoNotif } from "@/hooks/useJuridicoNotif";
 import { useReembolsoNotif } from "@/hooks/useReembolsoNotif";
 import { Inbox, type LucideIcon } from "lucide-react";
-import { Target } from "lucide-react";
+import { Target, MessagesSquare } from "lucide-react";
 import { GitBranch, GitMerge } from "lucide-react";
 import { MessageSquare } from "lucide-react";
 import { Banknote } from "lucide-react";
@@ -260,6 +260,9 @@ const controladoriaOrcModule: ModuleDef = {
         // (ver isAllowed logo abaixo). Sem esta linha, a rota funciona por
         // acesso direto mas nunca aparece pra ninguém clicar.
         { label: "Controle de Faturamento", to: "/app/controladoria/controle-faturamento", icon: FileText },
+        // 06/10/2026 (mig 20261006000005): transcrições das reuniões dos
+        // supervisores com os encarregados → dashboard de dificuldades.
+        { label: "Reuniões com Encarregados", to: "/app/controladoria/reunioes-encarregados", icon: MessagesSquare, badge: "Novo" },
       ],
     },
   ],
