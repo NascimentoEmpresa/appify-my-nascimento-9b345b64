@@ -260,6 +260,9 @@ const controladoriaOrcModule: ModuleDef = {
         // (ver isAllowed logo abaixo). Sem esta linha, a rota funciona por
         // acesso direto mas nunca aparece pra ninguém clicar.
         { label: "Controle de Faturamento", to: "/app/controladoria/controle-faturamento", icon: FileText },
+        // SIS-2026-0556: mesma regra do item acima — precisa existir aqui E em app_menu.
+        { label: "Faturamento da Empresa", to: "/app/controladoria/faturamento-empresa", icon: TrendingUp },
+        { label: "Lucratividade de Contratos", to: "/app/controladoria/lucratividade-contratos", icon: TrendingUp },
       ],
     },
   ],
