@@ -140,6 +140,7 @@ import MaloteOrcamentoContratos from "./pages/malote/OrcamentoContratos";
 import MaloteOrcamentoGeral from "./pages/malote/OrcamentoGeral";
 import MaloteDetalheOrcamento from "./pages/malote/DetalheOrcamento";
 import GeradorPops from "./pages/controladoria/GeradorPops";
+import ReunioesEncarregados from "./pages/controladoria/reunioes/ReunioesEncarregados";
 import MaloteAprovacoes from "./pages/malote/Aprovacoes";
 import MalotePagamento from "./pages/malote/PagamentoMalote";
 import MaloteConfiguracoes from "./pages/malote/Configuracoes";
@@ -631,6 +632,7 @@ const App = () => (
             <Route path="meu-perfil/discord" element={<DiscordCallback />} />
             <Route path="controladoria/empresas" element={<Empresas />} />
             <Route path="controladoria/controle-faturamento" element={<ControleFaturamento />} />
+            <Route path="controladoria/reunioes-encarregados" element={<ReunioesEncarregados />} />
             <Route path="controladoria/faturamento-empresa" element={<FaturamentoEmpresa />} />
             <Route path="controladoria/lucratividade-contratos" element={<LucratividadeContratos />} />
             <Route path="controladoria/centros-custo" element={<CentrosCusto />} />

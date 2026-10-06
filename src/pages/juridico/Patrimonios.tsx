@@ -81,7 +81,7 @@ const TIPOS = ["Imóvel", "Veículo", "Terreno", "Equipamento", "Outros"];
 // parcelas do Financiamento/Consórcio. Categoria antiga já gravada continua
 // aparecendo no select ao editar aquela conta (ver categoriasDoSelect), senão
 // abrir para editar trocaria a categoria sozinho.
-const CATEGORIAS = ["Financiamento", "Consórcio", "IPTU", "Condomínio", "Água", "Luz", "Internet", "Telefone", "Seguro", "Aluguel", "Imposto", "IPVA", "Licenciamento", "Manutenção", "Rastreamento", "Outros"];
+const CATEGORIAS = ["Financiamento", "Consórcio", "IPTU", "Condomínio", "Água", "Luz", "Gás", "Internet", "Telefone", "Seguro", "Aluguel", "Imposto", "IPVA", "Licenciamento", "Manutenção", "Rastreamento", "Outros"];
 // Financiamento e Consórcio: têm entrada E parcelas de contrato. As demais
 // são conta de mês — nelas o campo de entrada nem aparece, para não sugerir
 // que uma conta de luz tem valor de entrada.
