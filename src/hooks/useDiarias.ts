@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { NovaParcela, RateioLinha, uploadAnexoMalote } from "@/hooks/useMaloteDespesa";
+import type { StatusDespesa } from "@/lib/maloteStatus";
 import {
   AnexoDiaria,
   LinhaDiaria,
@@ -156,8 +157,8 @@ interface SolicitacaoDiariaBanco {
   id: string;
   numero: string | null;
   status: Exclude<StatusSolicitacao, "paga">;
-  /** Campo computado: a despesa do Malote gerada na aprovação já foi paga. */
-  malote_despesa_paga: boolean | null;
+  /** Campo computado: status atual da despesa do Malote vinculada. */
+  diaria_malote_status: StatusDespesa | null;
   contrato_id: string;
   contrato_nome: string;
   contrato_cliente: string | null;
@@ -324,7 +325,7 @@ export function useSolicitacoesDiaria(apenasMinhas = false) {
            faltante_empregado_id, faltante_nome, faltante_cpf,
            diarista_empregado_id, diarista_nome, diarista_cpf, pix, pix_tipo,
            observacoes, valor_total_centavos, solicitante_id, solicitante_nome,
-           malote_motivo, malote_data_pagamento, created_at, malote_despesa_paga,
+           malote_motivo, malote_data_pagamento, created_at, diaria_malote_status,
            ajuste_motivo, ajuste_pedido_por_nome, ajuste_pedido_em,
            exclusao_motivo, excluida_por_nome, excluida_em, diaria_comprovantes_pagamento,
            linhas:DIARIA_LINHA ( id, data, turno, qt_vt, valor_unit_vt_centavos, valor_diaria_centavos ),
@@ -830,9 +831,8 @@ function mapearSolicitacao(s: SolicitacaoDiariaBanco): SolicitacaoDiaria {
     uuid: s.id,
     id: s.numero ?? s.id,
     criadoEm: new Date(s.created_at).toLocaleString("pt-BR"),
-    // O pagamento acontece só no Malote; a diária continua 'aprovada' no
-    // banco e vira "Paga" aqui quando a despesa dela chega a despesa_paga.
-    status: s.status === "aprovada" && s.malote_despesa_paga ? "paga" : s.status,
+    status: s.status,
+    maloteStatus: s.diaria_malote_status,
     contratoId: s.contrato_id,
     contratoNome: s.contrato_nome ?? "—",
     contratoCliente: s.contrato_cliente ?? "—",

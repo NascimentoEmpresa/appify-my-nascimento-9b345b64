@@ -11,10 +11,10 @@ import {
   tarifaVigente,
 } from "./diariasUfrgs";
 import {
-  STATUS_SOLICITACAO as STATUS_DIARISTA,
   SolicitacaoDiaria,
   labelTipoPix,
   labelTurno,
+  statusExibicaoDiaria,
   valorTotalLinha,
 } from "./diarias";
 
@@ -644,7 +644,7 @@ export function exportarDiariasDiaristas(
         l.valorUnitVt,
         l.valorDiaria,
         valorTotalLinha(l),
-        STATUS_DIARISTA[s.status].label,
+        statusExibicaoDiaria(s).label,
         s.solicitante,
         s.criadoEm,
         s.observacoes,
