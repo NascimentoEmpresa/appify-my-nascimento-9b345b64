@@ -370,6 +370,67 @@ interface RegistrarPagamentoNfInput {
   numero_nf?: string | null;
 }
 
+// SIS-2026-0592: grava o ajuste de valores de uma NF concluída (descontos
+// pós-emissão + VA/VT/materiais por item + bruto/retenções/líquido derivados, por item e no total).
+// Sem RPC: a RLS de nf_emissao_item e o guard de nf_emissao (concluída) já
+// exigem a ação 'excluir' em nf-emissao (Nível D) — a tela só oferece o botão
+// a quem a tem.
+const r2nf = (n: number) => Math.round(n * 100) / 100;
+
+export interface AjusteDescontosPosInput {
+  nfId: string;
+  itens: {
+    id: string;
+    multas_pos_emissao: number;
+    glosas_pos_emissao: number;
+    outros_descontos_pos_emissao: number;
+    vlr_va: number;
+    vlr_vt: number;
+    vlr_materiais: number;
+    total_descontos: number;
+    vlr_bruto: number;
+    vlr_mao_obra: number;
+    vlr_liquido: number;
+    issqn: number;
+    inss: number;
+    ir: number;
+    cofins: number;
+    pis: number;
+    csll: number;
+  }[];
+  totais: {
+    vlr_bruto_total: number;
+    vlr_mao_obra_total: number;
+    vlr_liquido_total: number;
+    issqn_total: number;
+    inss_total: number;
+    ir_total: number;
+    cofins_total: number;
+    pis_total: number;
+    csll_total: number;
+  };
+}
+
+export function useAjustarDescontosPosEmissao() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ nfId, itens, totais }: AjusteDescontosPosInput) => {
+      for (const { id, ...campos } of itens) {
+        const corpo = Object.fromEntries(Object.entries(campos).map(([k, v]) => [k, r2nf(v as number)]));
+        const { error } = await (supabase as any).from("nf_emissao_item").update(corpo).eq("id", id);
+        if (error) throw error;
+      }
+      const corpoTotais = Object.fromEntries(Object.entries(totais).map(([k, v]) => [k, r2nf(v)]));
+      const { error } = await (supabase as any).from("nf_emissao").update(corpoTotais).eq("id", nfId);
+      if (error) throw error;
+    },
+    onSuccess: (_d, vars) => {
+      qc.invalidateQueries({ queryKey: [NF_EMISSAO_KEY] });
+      qc.invalidateQueries({ queryKey: ["nf_emissao_item"] });
+    },
+  });
+}
+
 export function useRegistrarPagamentoNf() {
   const qc = useQueryClient();
   return useMutation({
