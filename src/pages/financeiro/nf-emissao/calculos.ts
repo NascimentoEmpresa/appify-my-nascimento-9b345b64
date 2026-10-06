@@ -305,3 +305,9 @@ export function ajustarDescontosPosEmissao(
 ): ItemCalculado {
   return ajustarValoresNfConcluida(base, pct, { ...novos, vlr_va: base.vlr_va, vlr_vt: base.vlr_vt, vlr_materiais: base.vlr_materiais });
 }
+
+// SIS-2026-0591 (Ana): na emissão da NF a prefeitura pede as retenções federais
+// PIS + COFINS + CSLL juntas, então a validação mostra o total somado.
+export function somaRetencoesPisCofinsCsll(t: { pis_total: number; cofins_total: number; csll_total: number }): number {
+  return Math.round(((t.pis_total || 0) + (t.cofins_total || 0) + (t.csll_total || 0)) * 100) / 100;
+}
