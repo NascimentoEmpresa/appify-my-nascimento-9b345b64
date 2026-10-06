@@ -36,6 +36,8 @@ export type TipoEvento =
   | "conferido_pagamento"
   | "ajuste_pagamento_solicitado"
   | "despesa_paga"
+  // Pago sem comprovante; o arquivo foi anexado depois (migration 20261006000004).
+  | "comprovante_anexado"
   | "despesa_reprovada"
   | "cancelamento"
   | "exclusao"
@@ -165,6 +167,11 @@ export interface Parcela {
   // parcela pode em tese ser paga por um banco diferente, mesmo padrão de
   // comprovante_pagamento_path/data_pagamento_real acima.
   banco_id: string | null;
+  // Pagamento sem comprovante: parcela paga, arquivo ainda por anexar.
+  comprovante_pendente?: boolean;
+  comprovante_pendente_motivo?: string | null;
+  comprovante_anexado_em?: string | null;
+  comprovante_anexado_por?: string | null;
 }
 
 // O que gerarParcelas monta na criação/edição, antes de existir linha no
@@ -255,6 +262,12 @@ export interface MaloteDespesaRow {
   observacao_pagamento: string | null;
   pago_em: string | null;
   pago_por: string | null;
+  // Pago sem comprovante ("Pago — aguardando comprovante"): a despesa fica
+  // despesa_paga com esta marca até quem pagou anexar o arquivo.
+  comprovante_pendente: boolean;
+  comprovante_pendente_motivo: string | null;
+  comprovante_anexado_em: string | null;
+  comprovante_anexado_por: string | null;
   conferido_em: string | null;
   conferido_por: string | null;
   arquivos: string[];
@@ -378,6 +391,7 @@ const DESPESA_COLUMNS =
   "cotacao_enviada_em, cotacao_enviada_por, cotacao_enviada_por_nome, cotacao_decidida_em, cotacao_decidida_por, cotacao_decidida_por_nome, " +
   "cotacao_reprovada_motivo, cotacao_observacoes, cotacao_vencedor_num, cotacao_ajuste_anexo_path, cotacao_ajuste_anexo_nome, " +
   "comprovante_pagamento_path, observacao_pagamento, pago_em, pago_por, conferido_em, conferido_por, " +
+  "comprovante_pendente, comprovante_pendente_motivo, comprovante_anexado_em, comprovante_anexado_por, " +
   "arquivos, created_at, created_by, updated_at, deleted_at, deleted_por, " +
   "classificacao:classificacao_id(id, nome, setor_responsavel, aprovador1_nomes, aprovador2_nomes, aprovador3_nomes, aprovador1_user_ids, aprovador2_user_ids, aprovador3_user_ids, " +
   "aprovador1_limite_pct, aprovador1_sem_limite, aprovador2_limite_pct, aprovador2_sem_limite, aprovador3_limite_pct, aprovador3_sem_limite, " +
@@ -1581,7 +1595,8 @@ export function useSolicitarAjustePagamentoDespesa() {
 export interface PagarDespesaInput {
   id: string;
   data_pagamento: string;
-  comprovante_path: string;
+  // null = pagar SEM comprovante ("Pago — aguardando comprovante").
+  comprovante_path: string | null;
   observacao: string | null;
   // SIS-2026-0212 (complemento): Orçado/Utilizado calculados no client no
   // momento do pagamento (mesma lógica de useOrcadoClassificacao/
@@ -1597,6 +1612,8 @@ export interface PagarDespesaInput {
   // no momento do pagamento — alimenta o Controle de Juros Malote. null/0
   // = pagamento sem juros, não entra no controle.
   valor_juros?: number | null;
+  // Por que foi pago sem comprovante (opcional, só vale com comprovante_path nulo).
+  comprovante_motivo?: string | null;
 }
 
 export function usePagarDespesa() {
@@ -1617,6 +1634,7 @@ export function usePagarDespesa() {
           _forma_pagamento: input.forma_pagamento ?? null,
           _banco_id: input.banco_id ?? null,
           _valor_juros: input.valor_juros ?? null,
+          _comprovante_motivo: input.comprovante_motivo ?? null,
         }),
       );
       if (error) throw error;
@@ -1632,7 +1650,7 @@ export interface PagarParcelaInput {
   despesaId: string;
   parcelaId: string;
   data_pagamento: string;
-  comprovante_path: string;
+  comprovante_path: string | null;
   observacao: string | null;
   rateio_snapshot?: { linha_id: string; orcado: number | null; utilizado_com_lancamento: number | null }[];
   // SIS-2026-0307: mesmos dois campos de PagarDespesaInput — sincronizados
@@ -1644,6 +1662,7 @@ export interface PagarParcelaInput {
   // malote_despesa (cada parcela tem seu próprio juros, ver
   // v_controle_juros_malote).
   valor_juros?: number | null;
+  comprovante_motivo?: string | null;
 }
 
 export function usePagarParcela() {
@@ -1661,6 +1680,32 @@ export function usePagarParcela() {
           _forma_pagamento: input.forma_pagamento ?? null,
           _banco_id: input.banco_id ?? null,
           _valor_juros: input.valor_juros ?? null,
+          _comprovante_motivo: input.comprovante_motivo ?? null,
+        }),
+      );
+      if (error) throw error;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: [DESPESA_KEY] }),
+  });
+}
+
+// Anexa o comprovante de uma despesa/parcela paga sem ele. A função do banco só
+// deixa quem registrou o pagamento (ou admin) — a tela só oferece o botão a ele.
+export interface AnexarComprovanteInput {
+  despesaId: string;
+  comprovante_path: string;
+  parcelaId?: string | null;
+}
+
+export function useAnexarComprovanteMalote() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: AnexarComprovanteInput) => {
+      const { error } = await comRetentativaRede<{ error: any }>(() =>
+        (supabase as any).rpc("malote_anexar_comprovante", {
+          _despesa_id: input.despesaId,
+          _comprovante_path: input.comprovante_path,
+          _parcela_id: input.parcelaId ?? null,
         }),
       );
       if (error) throw error;

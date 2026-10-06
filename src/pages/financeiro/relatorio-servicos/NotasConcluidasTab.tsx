@@ -3,6 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { CurrencyInput } from "@/components/ui/CurrencyInput";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
@@ -13,6 +14,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Search, FileCheck, CircleDollarSign, FileDown, ListChecks, TrendingUp, CheckCircle2, AlertTriangle } from "lucide-react";
 import { toast } from "sonner";
+import { usePermissoes } from "@/context/PermissoesContext";
 import { cn } from "@/lib/utils";
 import { useContratosERP } from "@/hooks/useContratosERP";
 import {
@@ -22,9 +24,13 @@ import {
   useItensNfEmissao,
   useItensNfEmissaoEmLote,
   useRegistrarPagamentoNf,
+  useAjustarDescontosPosEmissao,
   TIPOS_NOTA,
 } from "@/hooks/useNfEmissao";
-import { calcularItem, calcularTotaisNf, valoresLegadosDoItem, pctEfetivo, pctFiscaisDaNf, ItemCalculado } from "@/pages/financeiro/nf-emissao/calculos";
+import {
+  calcularItem, calcularTotaisNf, valoresLegadosDoItem, pctEfetivo, pctFiscaisDaNf, ItemCalculado,
+  ajustarValoresNfConcluida, somaDescontosPosEmissao, AjusteValoresItem,
+} from "@/pages/financeiro/nf-emissao/calculos";
 import {
   fmtMoney, fmtDate, situacaoEspecial, statusDaNota, pendenteHaMaisDe30Dias, moneyTextContains, valorPendenteNf,
 } from "@/pages/financeiro/nf-emissao/shared";
@@ -536,6 +542,26 @@ export default function NotasConcluidasTab() {
 
 const r2c = (n: number) => Math.round(n * 100) / 100;
 
+// SIS-2026-0592: campos que o Financeiro pode ajustar numa NF concluída — cada
+// um se comporta como na emissão (mesmo input monetário, mesmo cálculo).
+const CAMPOS_AJUSTE: { chave: keyof AjusteValoresItem; rotulo: string }[] = [
+  { chave: "vlr_va", rotulo: "VA" },
+  { chave: "vlr_vt", rotulo: "VT" },
+  { chave: "vlr_materiais", rotulo: "Materiais" },
+  { chave: "multas_pos_emissao", rotulo: "Multas pós-emissão" },
+  { chave: "glosas_pos_emissao", rotulo: "Glosas pós-emissão" },
+  { chave: "outros_descontos_pos_emissao", rotulo: "Outros desc. pós-emissão" },
+];
+const CHAVES_AJUSTE: ReadonlySet<string> = new Set(CAMPOS_AJUSTE.map((c) => c.chave));
+const camposAjuste = (it: ItemForm): AjusteValoresItem => ({
+  vlr_va: it.vlr_va,
+  vlr_vt: it.vlr_vt,
+  vlr_materiais: it.vlr_materiais,
+  multas_pos_emissao: it.multas_pos_emissao,
+  glosas_pos_emissao: it.glosas_pos_emissao,
+  outros_descontos_pos_emissao: it.outros_descontos_pos_emissao,
+});
+
 // Diferença entre o líquido recalculado pelos itens e o líquido SALVO da nota
 // (0 = sem divergência / sem itens carregados). Mesma conta do aviso do diálogo.
 function divergenciaLiquidoNf(nf: NfEmissaoRow, itensRows: NfEmissaoItemRow[] | undefined): number {
@@ -549,6 +575,15 @@ function divergenciaLiquidoNf(nf: NfEmissaoRow, itensRows: NfEmissaoItemRow[] | 
 function NfPagamentoDialog({ nf, onClose }: { nf: NfEmissaoRow | null; onClose: () => void }) {
   const { data: itensExistentes = [] } = useItensNfEmissao(nf?.id);
   const registrarPagamento = useRegistrarPagamentoNf();
+  // SIS-2026-0592: ajustar descontos pós-emissão de NF concluída — mesma ação
+  // 'excluir' (Nível D) que o banco exige para mexer em NF concluída.
+  const ajustarDescontosPos = useAjustarDescontosPosEmissao();
+  const { can } = usePermissoes();
+  const podeAjustarDescontos = can("excluir", "financeiro", "nf-emissao");
+  const [modoAjuste, setModoAjuste] = useState(false);
+  const [posEdit, setPosEdit] = useState<Record<number, AjusteValoresItem>>({});
+  const [motivoAjuste, setMotivoAjuste] = useState("");
+  const [confirmandoAjuste, setConfirmandoAjuste] = useState(false);
 
   const [expandidos, setExpandidos] = useState<Set<number>>(new Set());
   const [valorPago, setValorPago] = useState("");
@@ -575,16 +610,28 @@ function NfPagamentoDialog({ nf, onClose }: { nf: NfEmissaoRow | null; onClose: 
     setRecebimentoExtra(String(nf.recebimento_extra ?? 0));
     setFaltaReceber(String(nf.falta_receber ?? 0));
     setPagoAMais(String(nf.pago_a_mais ?? 0));
+    setModoAjuste(false);
+    setPosEdit({});
+    setMotivoAjuste("");
   }, [nf?.id]);
 
-  const itens: ItemForm[] = useMemo(() => itensExistentes.map(itemRowParaForm), [itensExistentes]);
+  const itensBase: ItemForm[] = useMemo(() => itensExistentes.map(itemRowParaForm), [itensExistentes]);
+  // No modo de ajuste, os 3 campos pós-emissão editados sobrepõem os salvos.
+  const itens: ItemForm[] = useMemo(
+    () => (modoAjuste ? itensBase.map((it, i) => ({ ...it, ...(posEdit[i] ?? {}) })) : itensBase),
+    [itensBase, modoAjuste, posEdit]
+  );
 
   const pctFiscais = nf ? pctFiscaisDaNf(nf) : null;
 
   const itensCalculados: ItemCalculado[] = useMemo(() => {
     if (!pctFiscais) return [];
-    return itens.map((it) => calcularItem(it, pctEfetivo(it, pctFiscais)));
-  }, [itens, pctFiscais]);
+    return itens.map((it, i) =>
+      modoAjuste
+        ? ajustarValoresNfConcluida(itensBase[i], pctEfetivo(it, pctFiscais), camposAjuste(it))
+        : calcularItem(it, pctEfetivo(it, pctFiscais))
+    );
+  }, [itens, itensBase, modoAjuste, pctFiscais]);
 
   const totais = useMemo(() => calcularTotaisNf(itensCalculados), [itensCalculados]);
 
@@ -592,7 +639,105 @@ function NfPagamentoDialog({ nf, onClose }: { nf: NfEmissaoRow | null; onClose: 
   // os itens recalculam. O valor SALVO é o de referência (veio da planilha do
   // Financeiro) — o aviso só aponta a nota pra conferência. Centavos não contam.
   const divergenciaLiquido = nf && itensCalculados.length > 0 ? r2c(totais.vlr_liquido_total - (nf.vlr_liquido_total ?? 0)) : 0;
-  const temDivergencia = Math.abs(divergenciaLiquido) > 0.01;
+  const temDivergencia = !modoAjuste && Math.abs(divergenciaLiquido) > 0.01;
+
+  // Ajuste de valores de NF concluída (SIS-2026-0592): o que mudou frente ao salvo.
+  const posAntes = itensBase.reduce((s, it) => s + somaDescontosPosEmissao(it), 0);
+  const posDepois = itens.reduce((s, it) => s + somaDescontosPosEmissao(it), 0);
+  const ajusteMudou = modoAjuste && itensBase.some((it, i) => CAMPOS_AJUSTE.some(({ chave }) => r2c(itens[i][chave] - it[chave]) !== 0));
+  // Nota importada da planilha que ganha VA/VT/materiais passa a ser recalculada pelo ERP.
+  const legadaConvertida =
+    modoAjuste && itensBase.some((it, i) => !!it.valores_legados && itens[i].vlr_va + itens[i].vlr_vt + itens[i].vlr_materiais > 0);
+  // Resumo item a item: serve à confirmação e ao Histórico (campo, antes → depois e efeito).
+  const resumoAjuste = !modoAjuste
+    ? []
+    : itensBase
+        .map((it, i) => {
+          const salvo = itensExistentes[i];
+          const c = itensCalculados[i];
+          return {
+            identificacao: it.identificacao || `Item ${i + 1}`,
+            campos: CAMPOS_AJUSTE.filter(({ chave }) => r2c(itens[i][chave] - it[chave]) !== 0).map(({ chave, rotulo }) => ({
+              campo: rotulo,
+              antes: it[chave],
+              depois: itens[i][chave],
+            })),
+            bruto: { antes: salvo?.vlr_bruto ?? 0, depois: r2c(c?.vlr_bruto ?? 0) },
+            inss: { antes: salvo?.inss ?? 0, depois: r2c(c?.inss ?? 0) },
+            liquido: { antes: salvo?.vlr_liquido ?? 0, depois: r2c(c?.vlr_liquido ?? 0) },
+          };
+        })
+        .filter((x) => x.campos.length > 0);
+
+  async function handleSalvarAjuste() {
+    if (!nf || itensCalculados.length !== itensExistentes.length) return;
+    if (motivoAjuste.trim().length < 5) {
+      toast.error("Informe o motivo do ajuste (ele fica no histórico da nota).");
+      return;
+    }
+    try {
+      await ajustarDescontosPos.mutateAsync({
+        nfId: nf.id,
+        itens: itensCalculados.map((c, i) => ({
+          id: itensExistentes[i].id,
+          multas_pos_emissao: c.multas_pos_emissao,
+          glosas_pos_emissao: c.glosas_pos_emissao,
+          outros_descontos_pos_emissao: c.outros_descontos_pos_emissao,
+          vlr_va: c.vlr_va,
+          vlr_vt: c.vlr_vt,
+          vlr_materiais: c.vlr_materiais,
+          total_descontos: c.total_descontos,
+          vlr_bruto: c.vlr_bruto,
+          vlr_mao_obra: c.vlr_mao_obra,
+          vlr_liquido: c.vlr_liquido,
+          issqn: c.issqn,
+          inss: c.inss,
+          ir: c.ir,
+          cofins: c.cofins,
+          pis: c.pis,
+          csll: c.csll,
+        })),
+        totais: {
+          vlr_bruto_total: totais.vlr_bruto_total,
+          vlr_mao_obra_total: totais.vlr_mao_obra_total,
+          vlr_liquido_total: totais.vlr_liquido_total,
+          issqn_total: totais.issqn_total,
+          inss_total: totais.inss_total,
+          ir_total: totais.ir_total,
+          cofins_total: totais.cofins_total,
+          pis_total: totais.pis_total,
+          csll_total: totais.csll_total,
+        },
+      });
+      const motivo = motivoAjuste.trim();
+      const texto = resumoAjuste
+        .map((x) => `${x.identificacao}: ${x.campos.map((c) => `${c.campo} ${fmtMoney(c.antes)} → ${fmtMoney(c.depois)}`).join(", ")}`)
+        .join("; ");
+      await registrarLogNf(
+        nf.id,
+        "valores_nf_concluida_ajustados",
+        `Valores ajustados após a conclusão — ${motivo}. ${texto}. Líquido ${fmtMoney(nf.vlr_liquido_total)} → ${fmtMoney(totais.vlr_liquido_total)}`,
+        {
+          tipo: "ajuste_valores",
+          motivo,
+          legado_convertido: legadaConvertida,
+          itens: resumoAjuste,
+          totais: {
+            bruto: { antes: r2c(nf.vlr_bruto_total ?? 0), depois: r2c(totais.vlr_bruto_total) },
+            inss: { antes: r2c(nf.inss_total ?? 0), depois: r2c(totais.inss_total) },
+            liquido: { antes: r2c(nf.vlr_liquido_total ?? 0), depois: r2c(totais.vlr_liquido_total) },
+          },
+        }
+      );
+      toast.success("Valores da nota atualizados.");
+      setConfirmandoAjuste(false);
+      setModoAjuste(false);
+      setPosEdit({});
+      setMotivoAjuste("");
+    } catch (e: any) {
+      toast.error(e.message ?? "Erro ao atualizar os valores da nota.");
+    }
+  }
 
   function toggleExpandido(i: number) {
     setExpandidos((exp) => {
@@ -705,6 +850,37 @@ function NfPagamentoDialog({ nf, onClose }: { nf: NfEmissaoRow | null; onClose: 
           </section>
         )}
 
+        {nf && podeAjustarDescontos && (
+          <div className="flex flex-wrap items-center gap-3 rounded-md border bg-muted/30 p-3 text-sm">
+            {!modoAjuste ? (
+              <>
+                <span className="flex-1 min-w-[240px] text-muted-foreground">
+                  VA, VT, materiais e os descontos aplicados depois da emissão (multas, glosas e outros) podem ser corrigidos aqui.
+                </span>
+                <Button size="sm" variant="outline" onClick={() => setModoAjuste(true)} disabled={itensExistentes.length === 0}>
+                  Ajustar valores da nota
+                </Button>
+              </>
+            ) : (
+              <>
+                <span className="flex-1 min-w-[240px]">
+                  Abra o item e edite <strong>VA, VT, Materiais</strong> ou os campos <strong>pós-emissão</strong>. Bruto, INSS e líquido são recalculados.
+                  {legadaConvertida && " Nota importada da planilha: com VA/VT/materiais informados, ela passa a ser recalculada pelo ERP."}
+                  {ajusteMudou && (
+                    <> Líquido: <strong>{fmtMoney(nf.vlr_liquido_total)}</strong> → <strong>{fmtMoney(totais.vlr_liquido_total)}</strong>.</>
+                  )}
+                </span>
+                <Button size="sm" variant="ghost" onClick={() => { setModoAjuste(false); setPosEdit({}); setMotivoAjuste(""); }} disabled={ajustarDescontosPos.isPending}>
+                  Cancelar
+                </Button>
+                <Button size="sm" onClick={() => setConfirmandoAjuste(true)} disabled={!ajusteMudou || ajustarDescontosPos.isPending}>
+                  Salvar ajuste
+                </Button>
+              </>
+            )}
+          </div>
+        )}
+
         {nf && (
           <ItensNfEditor
             itens={itens}
@@ -715,8 +891,18 @@ function NfPagamentoDialog({ nf, onClose }: { nf: NfEmissaoRow | null; onClose: 
             contratoId={nf.contrato_id}
             expandidos={expandidos}
             mostrarPosEmissao
+            camposEditaveis={modoAjuste ? CHAVES_AJUSTE : undefined}
             readOnly
-            onUpdateItem={() => {}}
+            onUpdateItem={(i, patch) => {
+              if (!modoAjuste) return;
+              const atual = posEdit[i] ?? camposAjuste(itensBase[i]);
+              const prox = { ...atual };
+              for (const { chave } of CAMPOS_AJUSTE) {
+                const v = (patch as any)[chave];
+                if (v !== undefined) prox[chave] = Math.max(0, Number(v) || 0);
+              }
+              setPosEdit((p) => ({ ...p, [i]: prox }));
+            }}
             onAddItem={() => {}}
             onRemoveItem={() => {}}
             onToggleExpandido={toggleExpandido}
@@ -813,6 +999,68 @@ function NfPagamentoDialog({ nf, onClose }: { nf: NfEmissaoRow | null; onClose: 
           </Button>
         </DialogFooter>
       </DialogContent>
+
+      <AlertDialog open={confirmandoAjuste} onOpenChange={setConfirmandoAjuste}>
+        <AlertDialogContent className="max-w-2xl">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Salvar o ajuste dos valores da nota?</AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-3 text-sm">
+                {nf && (
+                  <>
+                    <p>
+                      Líquido da nota: {fmtMoney(nf.vlr_liquido_total)} → <strong>{fmtMoney(totais.vlr_liquido_total)}</strong>. O Relatório de Serviços,
+                      o Dashboard e o Controle de Faturamento passam a usar o novo valor.
+                      {nf.data_pagamento && " Esta nota já tem pagamento registrado: confira o valor pago e a reconciliação depois."}
+                    </p>
+                    {legadaConvertida && (
+                      <p className="rounded-md border border-amber-300 bg-amber-50 p-2 text-amber-900 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
+                        Esta nota foi importada da planilha. Com VA/VT/materiais informados, ela passa a ser <strong>recalculada pelo ERP</strong> — confira o
+                        bruto e o INSS abaixo, que podem mudar além do líquido.
+                      </p>
+                    )}
+                    <div className="max-h-56 space-y-2 overflow-y-auto">
+                      {resumoAjuste.map((x, i) => (
+                        <div key={i} className="rounded-md border p-2">
+                          <p className="font-medium text-foreground">{x.identificacao}</p>
+                          <ul className="mt-1 space-y-0.5 text-xs">
+                            {x.campos.map((c) => (
+                              <li key={c.campo}>{c.campo}: {fmtMoney(c.antes)} → <strong>{fmtMoney(c.depois)}</strong></li>
+                            ))}
+                            <li className="text-muted-foreground">
+                              Bruto {fmtMoney(x.bruto.antes)} → {fmtMoney(x.bruto.depois)} · INSS {fmtMoney(x.inss.antes)} → {fmtMoney(x.inss.depois)} · Líquido{" "}
+                              {fmtMoney(x.liquido.antes)} → {fmtMoney(x.liquido.depois)}
+                            </li>
+                          </ul>
+                        </div>
+                      ))}
+                    </div>
+                    <div>
+                      <Label className="text-xs text-foreground">Motivo do ajuste *</Label>
+                      <Textarea
+                        value={motivoAjuste}
+                        onChange={(e) => setMotivoAjuste(e.target.value)}
+                        placeholder="Ex.: VA/VT conforme planilha do Financeiro; glosa aplicada pelo cliente em 10/10."
+                        rows={2}
+                      />
+                      <p className="mt-1 text-[11px] text-muted-foreground">Fica registrado no Histórico da nota, com seu nome, a data e o antes/depois.</p>
+                    </div>
+                  </>
+                )}
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={ajustarDescontosPos.isPending}>Voltar</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={ajustarDescontosPos.isPending || motivoAjuste.trim().length < 5}
+              onClick={(e) => { e.preventDefault(); void handleSalvarAjuste(); }}
+            >
+              {ajustarDescontosPos.isPending ? "Salvando…" : "Salvar ajuste"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <AlertDialog open={confirmandoRemocao} onOpenChange={setConfirmandoRemocao}>
         <AlertDialogContent>

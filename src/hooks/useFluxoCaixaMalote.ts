@@ -9,21 +9,38 @@ import { supabase } from "@/integrations/supabase/client";
 // lançamento podia sumir do cliente sem erro nenhum. Pagina em blocos de
 // 1000 até a página vir menor que o tamanho pedido.
 const TAMANHO_PAGINA = 1000;
-// SIS-2026-0569: `ordenarPor` só pra fonte grande (importação histórica,
-// ~20 mil linhas) — paginação sem ORDER BY pode repetir/pular linhas entre
-// páginas, e com 20 páginas esse risco deixa de ser teórico. As outras
-// fontes continuam como sempre foram.
-async function buscarTodasLinhas(tabela: string, ordenarPor?: string): Promise<any[]> {
+// Perf do Fluxo (06/10/2026): a importação histórica tem ~20 mil linhas e as
+// 20 páginas eram buscadas uma após a outra (~3,8 s só nela, de ~16 MB no
+// total). Agora as páginas saem em "ondas" de CONCORRENCIA_PAGINAS ao mesmo
+// tempo — não todas de uma vez: o banco já foi afogado por rajada de
+// requisições (incidente de 21/09, ver erroSobrecarga em App.tsx), e 4 por
+// vez ainda corta o tempo de ~20 voltas para ~5.
+const CONCORRENCIA_PAGINAS = 4;
+// Ordenação das fontes. Paginação sem ORDER BY pode repetir/pular linhas entre
+// páginas (SIS-2026-0569), e ordenar por uma chave que repete (despesa_id é
+// compartilhado por todas as linhas de um rateio/parcelamento) também. Por
+// isso o desempate é por colunas que existem nas 6 views alinhadas.
+// A importação ainda ganha `linha_id` (único; migration 20261006000002) — se
+// a migration não subiu, cai na ordenação sem ele em vez de quebrar a tela.
+const ORDEM_FONTES = ["despesa_id", "numero_parcela", "contrato_id", "valor"];
+const ORDEM_IMPORTACAO = ["despesa_id", "linha_id"];
+
+async function buscarPagina(tabela: string, ordenarPor: string[], pagina: number): Promise<any[]> {
+  let q = (supabase as any).from(tabela).select("*");
+  for (const col of ordenarPor) q = q.order(col, { ascending: true });
+  const { data, error } = await q.range(pagina * TAMANHO_PAGINA, pagina * TAMANHO_PAGINA + TAMANHO_PAGINA - 1);
+  if (error) throw error;
+  return data ?? [];
+}
+
+async function buscarTodasLinhas(tabela: string, ordenarPor: string[] = ORDEM_FONTES): Promise<any[]> {
   const linhas: any[] = [];
-  let pagina = 0;
-  for (;;) {
-    let q = (supabase as any).from(tabela).select("*");
-    if (ordenarPor) q = q.order(ordenarPor, { ascending: true });
-    const { data, error } = await q.range(pagina * TAMANHO_PAGINA, pagina * TAMANHO_PAGINA + TAMANHO_PAGINA - 1);
-    if (error) throw error;
-    linhas.push(...(data ?? []));
-    if (!data || data.length < TAMANHO_PAGINA) break;
-    pagina += 1;
+  for (let onda = 0; ; onda += 1) {
+    const paginas = Array.from({ length: CONCORRENCIA_PAGINAS }, (_, i) => onda * CONCORRENCIA_PAGINAS + i);
+    const resultados = await Promise.all(paginas.map((p) => buscarPagina(tabela, ordenarPor, p)));
+    for (const dados of resultados) linhas.push(...dados);
+    // Onda terminou quando alguma página veio incompleta (a última).
+    if (resultados.some((dados) => dados.length < TAMANHO_PAGINA)) break;
   }
   return linhas;
 }
@@ -88,6 +105,8 @@ export interface FluxoCaixaMaloteLinha {
   // duplicidade). Calculado na view, então some sozinho quando a linha é
   // corrigida. Nas demais origens vem undefined.
   inconsistencia?: string | null;
+  // Só a view da importação: id único da linha (desempate da paginação).
+  linha_id?: string;
 }
 
 export function useFluxoCaixaMalote() {
@@ -113,6 +132,12 @@ export function useFluxoCaixaMalote() {
 export function useFluxoCaixaCombinado() {
   return useQuery({
     queryKey: ["fluxo_caixa_combinado"],
+    // 16 MB de JSON: não refaz a cada 30s (padrão global) nem descarta ao sair
+    // da tela. Quem edita/exclui/troca contrato já invalida esta chave, então
+    // o dado do próprio usuário nunca fica velho; mudança de outra pessoa
+    // aparece em até 2 min ou ao recarregar.
+    staleTime: 120_000,
+    gcTime: 1_800_000,
     queryFn: async () => {
       // SIS-2026-0473: Aplicações Financeiras entra como DUAS views — aplicar
       // (saída) e resgate (entrada) — pelo mesmo motivo de não dar pra
@@ -128,10 +153,13 @@ export function useFluxoCaixaCombinado() {
         // SIS-2026-0569: planilha de Fluxo de Caixa 2026 importada. Migration
         // não se auto-aplica — se o código subir antes dela, a view ainda
         // não existe; sem este guard a tela inteira do Fluxo quebraria.
-        buscarTodasLinhas("v_fluxo_caixa_importado_fluxo_caixa", "despesa_id").catch((e: any) => {
-          if (e?.code === "PGRST205" || e?.code === "42P01") return [];
-          throw e;
-        }),
+        buscarTodasLinhas("v_fluxo_caixa_importado_fluxo_caixa", ORDEM_IMPORTACAO)
+          // linha_id ainda não existe (migration 20261006000002 não aplicada).
+          .catch((e: any) => (e?.code === "42703" ? buscarTodasLinhas("v_fluxo_caixa_importado_fluxo_caixa", ["despesa_id"]) : Promise.reject(e)))
+          .catch((e: any) => {
+            if (e?.code === "PGRST205" || e?.code === "42P01") return [];
+            throw e;
+          }),
       ]);
       const linhas = [
         ...malote,
