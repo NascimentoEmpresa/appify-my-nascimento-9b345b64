@@ -170,6 +170,23 @@ alguém precisa levar à mão.
 
 ## Recuperar dados
 
+### Como se sabe que os anexos estão realmente sendo servidos
+
+Olhar o disco não prova nada: os arquivos já estiveram lá, com os bytes certos,
+e o download falhava mesmo assim — por causa do caminho, do papel no banco e do
+atributo estendido, um problema de cada vez. A prova é **pedir o arquivo pela
+API**, como o ERP pede, e comparar o tamanho recebido com o que o banco diz.
+
+Conferido em 05/10/2026: **152 objetos, 36 baldes, bytes exatos e content-type
+igual ao do banco**.
+
+Duas armadilhas no próprio teste, que já produziram falso resultado aqui:
+
+- amostra vazia tem que **falhar**, não passar — um teste que roda zero
+  objetos e diz "tudo ok" é pior que nenhum teste;
+- nome de arquivo com espaço precisa ir **codificado** na URL, senão o curl
+  recusa a URL e devolve `000`, que parece recusa da réplica e não é.
+
 ### Um anexo antigo
 
 1. no ERP, copie o nome do arquivo;
@@ -206,7 +223,16 @@ já trata as oito armadilhas documentadas no README.
 | `Instance failed: /tmp exceeded 2GB` nos eventos | algo gravando em `/tmp` | o `/tmp` da Render é limitado a 2 GB; todo trabalho pesado vai em `/var/lib/postgresql/data/tmp` |
 | Escrita na réplica retorna **201/204** | a trava caiu | rode uma recarga: ela reaplica `REVOKE` nas tabelas e nas RPC |
 | Botão "Consultar em modo leitura" não aparece | `/contingencia.json` fora, ou CORS | `curl https://erp-failover.onrender.com/contingencia.json` deve devolver JSON com `url` e `anon` |
+| Em contingência o login não sai do lugar, e o console do navegador diz `blocked by CORS policy` | falta um cabeçalho em `Access-Control-Allow-Headers`, ou o preflight não responde 2xx | **teste sempre no navegador, não com `curl`** — `curl` não faz preflight. Os quatro casos já corrigidos estão em `cabecalhos.conf` e `nginx.conf` com a medição de cada um |
+| `Access-Control-Allow-Origin header contains multiple values` | o serviço (PostgREST/GoTrue) manda o CORS dele e o gateway manda o nosso | `proxy_hide_header` nos seis cabeçalhos de CORS, em `cabecalhos.conf` |
+| Foto de colaborador, avatar ou logo quebrada **só em contingência** | a rota `/storage/v1/object/public/` exigia apikey, e `<img src>` não manda cabeçalho | já corrigido: essa rota tem bloco próprio no `nginx.conf`, sem a trava de apikey |
+| Imagem ou anexo falha com `net::ERR_BLOCKED_BY_ORB` | a resposta não é do tipo que a tag esperava — quase sempre um JSON de erro onde ia um PNG | **busque a mesma URL com `fetch()` para ver o erro real.** O ORB esconde a causa; neste caso era `401` da trava de apikey na URL assinada |
+| Uma tela aparece **vazia** em contingência, sem erro visível | o código é mais novo que o esquema da réplica: o `select` cita coluna que ainda não existe lá e o PostgREST devolve `400` (`42703`), que a tela trata como "nenhum resultado" | confira o console do navegador. Não é defeito do failover, é a janela de atraso. A próxima recarga resolve |
+| Arquivo puxado do branch não chega atualizado no container | o CDN do `raw.githubusercontent` serve cache e ignora quebra-cache por query | puxe pela API: `curl -H "Authorization: Bearer $GITHUB_TOKEN" -H 'Accept: application/vnd.github.raw' ".../contents/<caminho>?ref=<branch>"` |
 | `nao consegui decifrar/extrair` na carga de anexos | chave GPG ausente no ambiente | confira `GPG_PRIVATE_KEY_B64` e `GPG_PASSPHRASE` nas variáveis da Render |
+| Anexo devolve **500** e o log do serviço diz `ENODATA` / "extended attribute does not exist" | o arquivo está no disco mas sem o atributo estendido que guarda o content-type | rode uma recarga: o bloco 3c regrava `user.supabase.content-type` e `user.supabase.cache-control` lendo o mimetype do banco |
+| Anexo devolve **500** e o log diz `ENOENT` com `stub/stub` repetido | caminho em disco errado | o layout é `<raiz>/<tenant>/<projeto>/<balde>/<nome>/<versão>` — dois níveis antes do balde |
+| `funzip error: invalid compressed data--len` na carga | artefato grande exige ZIP64, que o `funzip` não trata | já substituído por um descompactador de stream em python3 embutido no script; se reaparecer, confira se `python3` existe no container |
 | Backup falhou | — | chega DM no Discord do Eduardo; o canal não é usado para isto |
 | Mudança no `render.yaml` não aplica | falta aprovar o plano | Blueprint → **Manual sync** → **Approve**. A tela não volta sozinha, e parece que falhou |
 | Script novo não entrou na réplica | sync ≠ deploy | o sync aplica disco/variáveis; código exige **Manual Deploy → Deploy latest commit** |
@@ -217,6 +243,18 @@ já trata as oito armadilhas documentadas no README.
 
 Dito sem rodeio, para ninguém contar com o que não existe:
 
+- **Tela vazia em contingência pode ser esquema atrasado, não falta de dados.** Se
+  uma migration foi aplicada na produção depois do backup que alimentou a última
+  recarga, a réplica não tem a coluna nova, o PostgREST devolve `400` e a tela
+  mostra "nenhum resultado". Aconteceu em 05/10/2026 com `malote_despesa`
+  (`cotacao_iniciada_em` e duas irmãs): existiam na produção, não na réplica.
+  **Não é defeito do failover** — é o atraso de até ~3h30 aparecendo de um jeito
+  que engana. Confira sempre o console antes de concluir que a cópia está vazia.
+- **Teste de anexo por `curl` não vale como prova de contingência.** O
+  navegador faz *preflight* e manda cabeçalhos que o `curl` não manda; já
+  houve 152 anexos conferidos pela API com sucesso enquanto a contingência
+  estava quebrada para gente de verdade. Em 05/10/2026 foram quatro falhas de
+  CORS seguidas, uma escondida atrás da outra.
 - **A troca não é automática.** O ERP *oferece* a cópia; quem decide é o
   usuário. Promover a réplica a produção é decisão humana, de propósito —
   troca automática arriscaria duas verdades ao mesmo tempo.

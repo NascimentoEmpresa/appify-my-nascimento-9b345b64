@@ -35,6 +35,47 @@ export interface ItemInput {
   justificativa_multas?: string | null;
   justificativa_glosas?: string | null;
   justificativa_outros_descontos?: string | null;
+  // Item importado da planilha legada (SIS-2026-0540): a planilha traz os
+  // valores JÁ calculados pelo Financeiro, que discriminava VA/VT/materiais lá
+  // — esses três campos não vêm pro ERP. Recalcular pela regra do ERP (com
+  // VA/VT/materiais = 0) muda INSS/ISSQN/IR/líquido e a nota abria diferente
+  // do Relatório (ex. NF 238: R$ 9.390,79 × R$ 9.533,79 salvo, que é o certo).
+  // Quando preenchido, valem os valores gravados (ver valoresLegadosDoItem).
+  valores_legados?: ValoresLegadosItem | null;
+}
+
+export interface ValoresLegadosItem {
+  vlr_bruto: number;
+  issqn: number;
+  inss: number;
+  ir: number;
+  cofins: number;
+  pis: number;
+  csll: number;
+  vlr_liquido: number;
+}
+
+// Item legado: a planilha nunca gravou a mão de obra (fica 0) nem VA/VT/
+// materiais, mas gravou o bruto e as retenções. Item criado pelo ERP sempre
+// tem mão de obra > 0 gravada, então não cai aqui.
+export function valoresLegadosDoItem(r: {
+  vlr_va: number; vlr_vt: number; vlr_materiais: number;
+  vlr_mao_obra?: number | null; vlr_bruto?: number | null; vlr_liquido?: number | null;
+  issqn?: number | null; inss?: number | null; ir?: number | null;
+  cofins?: number | null; pis?: number | null; csll?: number | null;
+}): ValoresLegadosItem | null {
+  const semDetalhe = (r.vlr_va || 0) + (r.vlr_vt || 0) + (r.vlr_materiais || 0) === 0;
+  if (!semDetalhe || (r.vlr_mao_obra ?? 0) !== 0 || !((r.vlr_bruto ?? 0) > 0)) return null;
+  return {
+    vlr_bruto: Number(r.vlr_bruto),
+    issqn: Number(r.issqn ?? 0),
+    inss: Number(r.inss ?? 0),
+    ir: Number(r.ir ?? 0),
+    cofins: Number(r.cofins ?? 0),
+    pis: Number(r.pis ?? 0),
+    csll: Number(r.csll ?? 0),
+    vlr_liquido: Number(r.vlr_liquido ?? 0),
+  };
 }
 
 export interface ItemCalculado extends ItemInput {
@@ -115,6 +156,26 @@ export function calcularItem(input: ItemInput, pct: PercentuaisFiscais): ItemCal
     input.glosas_pos_emissao +
     input.outros_descontos +
     input.outros_descontos_pos_emissao;
+  if (input.valores_legados) {
+    // Nota importada da planilha: valem os valores gravados (ver ItemInput).
+    // A mão de obra mostrada é a implícita no INSS (INSS ÷ alíquota); sem INSS,
+    // é o próprio bruto.
+    const v = input.valores_legados;
+    const aliquota = INSS_CATEGORIAS[input.inss_categoria].pct;
+    return {
+      ...input,
+      vlr_bruto: v.vlr_bruto,
+      total_descontos,
+      vlr_mao_obra: aliquota > 0 && v.inss > 0 ? Math.round((v.inss / aliquota) * 100) / 100 : v.vlr_bruto,
+      vlr_liquido: v.vlr_liquido,
+      issqn: v.issqn,
+      inss: v.inss,
+      ir: v.ir,
+      cofins: v.cofins,
+      pis: v.pis,
+      csll: v.csll,
+    };
+  }
   const vlr_bruto = input.valor_contrato_exec - total_descontos;
   const vlr_mao_obra = vlr_bruto - input.vlr_va - input.vlr_vt - input.vlr_materiais;
 

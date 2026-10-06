@@ -12,6 +12,7 @@ const { enviarPedidosPendentes } = require("./pedidoFornecedor");
 const { alertarErroWhatsapp } = require("./discordAlert");
 const { processarJobsExtratorBeneficios } = require("./extratorBeneficios");
 const { verificarSaudeBanco } = require("./saudeBanco");
+const { processarFilaHttp } = require("./filaHttp");
 
 const CICLO_MS = 60_000;
 
@@ -43,6 +44,14 @@ async function rodarCiclo(waClient, transportador) {
 }
 
 async function rodarTarefas(waClient, transportador) {
+  try {
+    // Primeiro da fila: sao eventos que o banco JA registrou (denuncia nova,
+    // chamado concluido) esperando entrega. Atrasar isto atrasa aviso a gente
+    // de verdade. Ver worker/src/filaHttp.js.
+    await processarFilaHttp(supabase);
+  } catch (e) {
+    console.error("[worker] erro na fila de chamadas HTTP:", e);
+  }
   try {
     // `waClient` vem nulo enquanto o WhatsApp não está pronto. Pular aqui é o
     // que permite o resto do ciclo rodar sem ele — ver a nota em `main`.

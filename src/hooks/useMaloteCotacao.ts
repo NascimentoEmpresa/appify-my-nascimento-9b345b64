@@ -215,6 +215,46 @@ export function useSalvarRascunhoCotacao() {
   });
 }
 
+/**
+ * [SEM-CHAMADO] 05/10/2026 — "Iniciar cotação".
+ *
+ * A fila é compartilhada: todo mundo de Suprimentos vê as mesmas solicitações
+ * em "Cotação Pendente". Quem vai atrás dos orçamentos de uma delas clica aqui
+ * e o card dela na lista passa a dizer "Sendo cotado por <nome>" — antes dois
+ * compradores ligavam para os mesmos fornecedores e o segundo a salvar
+ * apagava as cotações do primeiro (`sup_malote_aplicar_cotacoes` grava as três
+ * posições sempre, inclusive as vazias).
+ *
+ * Não trava escrita: quem tem permissão continua conseguindo cotar qualquer
+ * solicitação. É aviso de fila, não lock — comprador de férias não pode deixar
+ * item preso.
+ */
+export function useIniciarCotacao() {
+  const invalidar = useInvalidar();
+  return useMutation({
+    mutationFn: async (v: { id: string }) => {
+      const { error } = await sb.rpc("sup_malote_iniciar_cotacao", { p_id: v.id });
+      if (error) throw error;
+    },
+    onSuccess: () => { invalidar(); toast.success("Cotação iniciada. A fila já mostra que está com você."); },
+    onError: (e: any) => toast.error(e?.message ?? "Não foi possível iniciar a cotação."),
+  });
+}
+
+/** Devolve a solicitação para a fila livre. Só quem assumiu, ou quem tem a
+ *  ação `aprovar` da tela (a RPC é que decide). */
+export function useLiberarCotacao() {
+  const invalidar = useInvalidar();
+  return useMutation({
+    mutationFn: async (v: { id: string }) => {
+      const { error } = await sb.rpc("sup_malote_liberar_cotacao", { p_id: v.id });
+      if (error) throw error;
+    },
+    onSuccess: () => { invalidar(); toast.success("Cotação liberada para a fila."); },
+    onError: (e: any) => toast.error(e?.message ?? "Não foi possível liberar a cotação."),
+  });
+}
+
 export function useEnviarCotacao() {
   const invalidar = useInvalidar();
   return useMutation({

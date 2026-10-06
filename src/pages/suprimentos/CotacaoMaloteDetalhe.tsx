@@ -14,7 +14,7 @@ import { ComprasPassadas } from "@/components/malote/ComprasPassadas";
 import {
   useSolicitacaoParaCotar, useSalvarRascunhoCotacao, useEnviarCotacao,
   useAprovarCotacao, useReprovarCotacao, useCancelarCotacao, useSalvarItensDaCotacao,
-  useSolicitarAjusteCotacao,
+  useSolicitarAjusteCotacao, useIniciarCotacao, useLiberarCotacao,
   lerCotacoes, cotacaoPreenchida, abrirAnexoMalote,
   ROTULO_COTACAO, fmtBRL, fmtData, fmtDataHora,
   type Cotacao,
@@ -30,6 +30,7 @@ import { useScreenAccess } from "@/hooks/useScreenAccess";
 import {
   ArrowLeft, Paperclip, Save, Send, Trash2, CheckCircle2, XCircle, Ban,
   Trophy, Loader2, ShieldAlert, Info, ShoppingCart, Pencil, PackageCheck,
+  PlayCircle, UserRound,
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -64,6 +65,8 @@ export default function CotacaoMaloteDetalhe() {
   const reprovar = useReprovarCotacao();
   const ajustar = useSolicitarAjusteCotacao();
   const cancelar = useCancelarCotacao();
+  const iniciar = useIniciarCotacao();
+  const liberar = useLiberarCotacao();
   const gerarPedido = useGerarPedidoCompra();
   const salvarItens = useSalvarItensDaCotacao();
 
@@ -72,6 +75,10 @@ export default function CotacaoMaloteDetalhe() {
   const [rascunhoItens, setRascunhoItens] = useState<any[]>([]);
   const { data: pedidoAtivo, isLoading: carregandoPedidoAtivo } = usePedidoAtivoDaDespesa(id);
   const { data: podeAbrirPedido = false } = useScreenAccess("sup_compra_pedido", "visualizar");
+  // Quem decide a cotação também pode devolver para a fila o item que ficou
+  // marcado por um comprador ausente — a RPC sup_malote_liberar_cotacao usa
+  // exatamente este critério, aqui é só para não mostrar botão que vai falhar.
+  const { data: podeLiberarDeOutro = false } = useScreenAccess("sup_cotacoes_malote", "aprovar");
   const { data: empresaId } = useEmpresaId();
   const { data: fornecedores = [] } = useFornecedores(empresaId ?? null);
 
@@ -106,6 +113,7 @@ export default function CotacaoMaloteDetalhe() {
   if (isLoading || !d) return <p className="py-20 text-center text-sm text-muted-foreground">Carregando…</p>;
 
   const editavel = d.status === "aguardando_cotacao";
+  const euAssumi = !!d.cotacao_iniciada_por && d.cotacao_iniciada_por === user?.id;
   // Os itens seguem editaveis pelo comprador em toda a fase de cotacao — a
   // RPC recusa fora dela, entao a tela so evita oferecer o que seria negado.
   const podeEditarItens = ["aguardando_cotacao", "cotacao_realizada", "cotacao_aprovada"]
@@ -133,6 +141,45 @@ export default function CotacaoMaloteDetalhe() {
         <span className={cn("rounded-full border px-3 py-1 text-xs font-semibold", STATUS_BADGE_CLASS[d.status])}>
           {ROTULO_COTACAO[d.status] ?? d.status}
         </span>
+
+        {/* [SEM-CHAMADO] 05/10/2026 — "Iniciar cotação".
+            Fica aqui no topo, junto do status, porque é a primeira coisa que
+            o comprador faz ao abrir um item da fila: avisar os colegas que
+            está indo atrás dos orçamentos. O card dele em
+            /app/suprimentos/cotacoes-malote passa a dizer "Sendo cotado por
+            <nome>". Só aparece em Cotação Pendente — nos outros status a
+            etapa de cotar já passou, e o trigger do banco zera a marca em
+            qualquer troca de status. */}
+        {editavel && !d.cotacao_iniciada_por && (
+          <Button size="sm" disabled={iniciar.isPending || liberar.isPending}
+                  onClick={() => iniciar.mutate({ id: d.id })}>
+            {iniciar.isPending
+              ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
+              : <PlayCircle className="mr-1.5 h-4 w-4" />}
+            Iniciar cotação
+          </Button>
+        )}
+        {editavel && d.cotacao_iniciada_por && (
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="inline-flex items-center gap-1.5 rounded-full border border-indigo-400/50 bg-indigo-50 px-3 py-1 text-xs font-semibold text-indigo-700 dark:bg-indigo-950/30 dark:text-indigo-300">
+              <UserRound className="h-3.5 w-3.5" />
+              {euAssumi
+                ? "Você está cotando"
+                : `Sendo cotado por ${d.cotacao_iniciada_por_nome ?? "outro usuário"}`}
+              {d.cotacao_iniciada_em && (
+                <span className="font-normal opacity-80">· desde {fmtDataHora(d.cotacao_iniciada_em)}</span>
+              )}
+            </span>
+            {(euAssumi || podeLiberarDeOutro) && (
+              <Button variant="ghost" size="sm" disabled={liberar.isPending || iniciar.isPending}
+                      onClick={() => liberar.mutate({ id: d.id })}>
+                {liberar.isPending && <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />}
+                Liberar
+              </Button>
+            )}
+          </div>
+        )}
+
         <span className="ml-auto text-right text-xs text-muted-foreground">
           Última atualização<br />{fmtDataHora(d.updated_at)}
         </span>
