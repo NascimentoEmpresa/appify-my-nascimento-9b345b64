@@ -25,6 +25,7 @@ import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/hooks/useAuth";
+import { diasAguardandoComprovante, severidadeComprovante, textoDiasComprovante } from "./comprovantePendente";
 import { AcessoGate } from "@/components/auth/AcessoGate";
 import {
   useDespesa,
@@ -44,6 +45,7 @@ import {
   useSolicitarAjustePagamentoDespesa,
   usePagarDespesa,
   usePagarParcela,
+  useAnexarComprovanteMalote,
   useAtualizarDatasParcelas,
   useAtualizarValoresParcelas,
   validarOrdemParcelas,
@@ -212,6 +214,7 @@ const EVENTO_LABEL: Record<TipoEvento, string> = {
   ajuste_administrativo: "Ajuste administrativo (movida manualmente via banco)",
   aprovacao_automatica_cotacao: "Aprovada automaticamente (dentro da tolerância da cotação)",
   ajuste_cotacao_solicitado: "Ajuste solicitado após cotação aprovada",
+  comprovante_anexado: "Comprovante anexado",
 };
 
 function LinhaHistorico({ evento, criadoPor }: { evento: DespesaEvento; criadoPor: string }) {
@@ -346,6 +349,7 @@ export default function DespesaVisualizar() {
   const solicitarAjustePagamento = useSolicitarAjustePagamentoDespesa();
   const pagar = usePagarDespesa();
   const pagarParcela = usePagarParcela();
+  const anexarComprovante = useAnexarComprovanteMalote();
 
   const [valorAprovado, setValorAprovado] = useState("");
   // SIS-2026-0292 (Iury): "Dados da Despesa" (Nome/Classificação/Arquivos)
@@ -386,6 +390,13 @@ export default function DespesaVisualizar() {
   const [acaoPagamentoEmAndamento, setAcaoPagamentoEmAndamento] = useState<"conferir" | "ajuste" | "reprovar" | null>(null);
   const [pagarAberto, setPagarAberto] = useState(false);
   const [comprovanteFile, setComprovanteFile] = useState<File | null>(null);
+  // Pagar sem comprovante ("Pago — aguardando comprovante"): motivo opcional.
+  const [motivoSemComprovante, setMotivoSemComprovante] = useState("");
+  // Anexar o comprovante depois (só quem registrou o pagamento).
+  const [anexarAberto, setAnexarAberto] = useState(false);
+  const [anexarParcela, setAnexarParcela] = useState<Parcela | null>(null);
+  const [arquivoAnexar, setArquivoAnexar] = useState<File | null>(null);
+  const [anexando, setAnexando] = useState(false);
   const [dataPagamentoConfirmado, setDataPagamentoConfirmado] = useState("");
   const [observacaoPagamento, setObservacaoPagamento] = useState("");
   // SIS-2026-0307 (Iury): "Forma de pagamento" pré-selecionada com a que já
@@ -1131,6 +1142,7 @@ export default function DespesaVisualizar() {
   function abrirPagar() {
     setParcelaEmPagamento(null);
     setComprovanteFile(null);
+    setMotivoSemComprovante("");
     setDataPagamentoConfirmado(despesa!.data_pagamento ?? new Date().toISOString().slice(0, 10));
     setObservacaoPagamento("");
     // SIS-2026-0307: "pré-selecionada a forma que o usuário selecionou" —
@@ -1147,6 +1159,7 @@ export default function DespesaVisualizar() {
   function abrirPagarParcela(p: Parcela) {
     setParcelaEmPagamento(p);
     setComprovanteFile(null);
+    setMotivoSemComprovante("");
     setDataPagamentoConfirmado(p.data_vencimento);
     setObservacaoPagamento("");
     setFormaPagamentoConfirmada(despesa!.forma_pagamento ?? "");
@@ -1184,10 +1197,6 @@ export default function DespesaVisualizar() {
   }
 
   async function handleConfirmarPagamento() {
-    if (!comprovanteFile) {
-      toast.error("Anexe o comprovante de pagamento.");
-      return;
-    }
     if (!dataPagamentoConfirmado) {
       toast.error("Informe a data do pagamento.");
       return;
@@ -1196,7 +1205,11 @@ export default function DespesaVisualizar() {
     try {
       // SIS-2026-0291 (Iury): comprovante sobe com "Nome da despesa -
       // Comprovante", não mais UUID cru.
-      const [comprovantePath] = await uploadAnexosMalote([comprovanteFile], despesa!.id, `${despesa!.nome} - Comprovante`);
+      // Sem arquivo = pago SEM comprovante: a despesa/parcela fica paga e marcada
+      // "aguardando comprovante" até quem pagou anexar (evita pagar em duplicidade).
+      const comprovantePath = comprovanteFile
+        ? (await uploadAnexosMalote([comprovanteFile], despesa!.id, `${despesa!.nome} - Comprovante`))[0]
+        : null;
       const valorJuros = valorJurosConfirmado ? Number(valorJurosConfirmado) : null;
       if (despesa!.parcelado && parcelaEmPagamento) {
         await pagarParcela.mutateAsync({
@@ -1204,25 +1217,27 @@ export default function DespesaVisualizar() {
           parcelaId: parcelaEmPagamento.id,
           data_pagamento: dataPagamentoConfirmado,
           comprovante_path: comprovantePath,
+          comprovante_motivo: comprovanteFile ? null : motivoSemComprovante.trim() || null,
           observacao: observacaoPagamento.trim() || null,
           rateio_snapshot: calcularRateioSnapshot(),
           forma_pagamento: formaPagamentoConfirmada || null,
           banco_id: bancoIdConfirmado || null,
           valor_juros: valorJuros,
         });
-        toast.success(`Parcela ${parcelaEmPagamento.numero_parcela}/${despesa!.numero_parcelas} paga.`);
+        toast.success(`Parcela ${parcelaEmPagamento.numero_parcela}/${despesa!.numero_parcelas} paga${comprovanteFile ? "" : " — aguardando comprovante"}.`);
       } else {
         await pagar.mutateAsync({
           id: despesa!.id,
           data_pagamento: dataPagamentoConfirmado,
           comprovante_path: comprovantePath,
+          comprovante_motivo: comprovanteFile ? null : motivoSemComprovante.trim() || null,
           rateio_snapshot: calcularRateioSnapshot(),
           observacao: observacaoPagamento.trim() || null,
           forma_pagamento: formaPagamentoConfirmada || null,
           banco_id: bancoIdConfirmado || null,
           valor_juros: valorJuros,
         });
-        toast.success("Pagamento confirmado.");
+        toast.success(comprovanteFile ? "Pagamento confirmado." : "Pagamento registrado — aguardando comprovante.");
       }
       setPagarAberto(false);
     } catch (e: any) {
@@ -1230,6 +1245,30 @@ export default function DespesaVisualizar() {
     } finally {
       setPagando(false);
     }
+  }
+
+  async function handleAnexarComprovante() {
+    if (!arquivoAnexar) {
+      toast.error("Selecione o arquivo do comprovante.");
+      return;
+    }
+    setAnexando(true);
+    try {
+      const [path] = await uploadAnexosMalote([arquivoAnexar], despesa!.id, `${despesa!.nome} - Comprovante`);
+      await anexarComprovante.mutateAsync({ despesaId: despesa!.id, comprovante_path: path, parcelaId: anexarParcela?.id ?? null });
+      toast.success("Comprovante anexado.");
+      setAnexarAberto(false);
+    } catch (e: any) {
+      toast.error(e.message ?? "Erro ao anexar o comprovante.");
+    } finally {
+      setAnexando(false);
+    }
+  }
+
+  function abrirAnexarComprovante(parcela: Parcela | null) {
+    setAnexarParcela(parcela);
+    setArquivoAnexar(null);
+    setAnexarAberto(true);
   }
 
   async function handleCancelar() {
@@ -1726,6 +1765,39 @@ export default function DespesaVisualizar() {
                 </div>
               )}
 
+              {despesa.status === "despesa_paga" && despesa.comprovante_pendente && (() => {
+                const dias = diasAguardandoComprovante(despesa.pago_em);
+                const sev = severidadeComprovante(dias);
+                const souQuemPagou = !!user?.id && despesa.pago_por === user.id;
+                return (
+                  <div
+                    className={cn(
+                      "space-y-1.5 rounded-md border p-3 text-sm",
+                      sev === "critico"
+                        ? "border-red-300 bg-red-50 text-red-900 dark:border-red-900 dark:bg-red-950/30 dark:text-red-200"
+                        : "border-amber-300 bg-amber-50 text-amber-900 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200"
+                    )}
+                  >
+                    <p className="font-semibold">Pago — aguardando comprovante ({textoDiasComprovante(dias)})</p>
+                    <p className="text-xs">
+                      {despesa.pago_em && <>Pagamento registrado em {new Date(despesa.pago_em).toLocaleDateString("pt-BR")}. </>}
+                      {pagoPorNome && <>Por {pagoPorNome}. </>}
+                      {despesa.comprovante_pendente_motivo && <>Motivo: {despesa.comprovante_pendente_motivo}. </>}
+                      {despesa.parcelado
+                        ? "Anexe o comprovante de cada parcela na tabela de parcelas."
+                        : souQuemPagou
+                          ? "Anexe o arquivo assim que o fornecedor emitir."
+                          : "Só quem registrou o pagamento pode anexar o comprovante."}
+                    </p>
+                    {!despesa.parcelado && souQuemPagou && (
+                      <Button size="sm" className="gap-1.5" onClick={() => abrirAnexarComprovante(null)}>
+                        <Upload className="h-3.5 w-3.5" /> Anexar comprovante
+                      </Button>
+                    )}
+                  </div>
+                );
+              })()}
+
               {despesa.comprovante_pagamento_path && (
                 <div className="space-y-2">
                   <p className="text-xs text-muted-foreground">Pagamento</p>
@@ -1901,7 +1973,11 @@ export default function DespesaVisualizar() {
                       </TableCell>
                       <TableCell>
                         {p.status === "paga" ? (
-                          <Badge className={STATUS_BADGE_CLASS.despesa_paga}>Paga</Badge>
+                          p.comprovante_pendente ? (
+                            <Badge className="bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300">Paga · aguardando comprovante</Badge>
+                          ) : (
+                            <Badge className={STATUS_BADGE_CLASS.despesa_paga}>Paga</Badge>
+                          )
                         ) : parcelasEmFaseDePagamento ? (
                           <Badge className={STATUS_BADGE_CLASS.aguardando_pagamento}>Aguardando pagamento</Badge>
                         ) : (
@@ -1914,6 +1990,14 @@ export default function DespesaVisualizar() {
                           <button type="button" onClick={() => abrirAnexo(p.comprovante_pagamento_path!)} className="text-xs text-primary underline">
                             Abrir
                           </button>
+                        ) : p.status === "paga" && p.comprovante_pendente ? (
+                          user?.id && p.pago_por === user.id ? (
+                            <Button size="sm" variant="outline" className="h-7 gap-1 text-xs" onClick={() => abrirAnexarComprovante(p)}>
+                              <Upload className="h-3 w-3" /> Anexar
+                            </Button>
+                          ) : (
+                            <span className="text-xs text-amber-700 dark:text-amber-400">Pendente</span>
+                          )
                         ) : (
                           <span className="text-xs text-muted-foreground">—</span>
                         )}
@@ -2482,7 +2566,7 @@ export default function DespesaVisualizar() {
           </DialogHeader>
           <div className="space-y-3">
             <div>
-              <Label className="text-xs">Arquivo do comprovante</Label>
+              <Label className="text-xs">Arquivo do comprovante (opcional)</Label>
               <label className="mt-1 flex items-center gap-2 rounded-md border border-dashed border-input px-3 py-2.5 text-xs cursor-pointer hover:bg-muted/50">
                 <Upload className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
                 <span className="truncate text-muted-foreground">
@@ -2495,6 +2579,21 @@ export default function DespesaVisualizar() {
                   onChange={(e) => setComprovanteFile(e.target.files?.[0] ?? null)}
                 />
               </label>
+              {!comprovanteFile && (
+                <div className="mt-2 space-y-1.5 rounded-md border border-amber-300 bg-amber-50 p-2 text-[11px] text-amber-900 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
+                  <p>
+                    Sem o arquivo, o pagamento é registrado como <strong>"Pago — aguardando comprovante"</strong>: a despesa não volta para a fila
+                    de pagamento. Quem pagou anexa o comprovante depois, na própria despesa.
+                  </p>
+                  <textarea
+                    value={motivoSemComprovante}
+                    onChange={(e) => setMotivoSemComprovante(e.target.value.slice(0, 200))}
+                    placeholder="Motivo (opcional) — ex.: fornecedor ainda não emitiu o comprovante"
+                    className="w-full min-h-10 rounded-md border border-amber-300 bg-background p-1.5 text-xs text-foreground dark:border-amber-900"
+                    maxLength={200}
+                  />
+                </div>
+              )}
             </div>
             <div>
               <Label className="text-xs">Data do pagamento</Label>
@@ -2587,7 +2686,32 @@ export default function DespesaVisualizar() {
               Cancelar
             </Button>
             <Button size="sm" onClick={handleConfirmarPagamento} disabled={pagando}>
-              {pagando ? "Confirmando..." : "Confirmar pagamento"}
+              {pagando ? "Confirmando..." : comprovanteFile ? "Confirmar pagamento" : "Pagar sem comprovante"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={anexarAberto} onOpenChange={setAnexarAberto}>
+        <DialogContent className="sm:max-w-sm p-5">
+          <DialogHeader>
+            <DialogTitle className="text-base">
+              {anexarParcela ? `Anexar comprovante — parcela ${anexarParcela.numero_parcela}/${despesa.numero_parcelas}` : "Anexar comprovante de pagamento"}
+            </DialogTitle>
+          </DialogHeader>
+          <div>
+            <Label className="text-xs">Arquivo do comprovante</Label>
+            <label className="mt-1 flex items-center gap-2 rounded-md border border-dashed border-input px-3 py-2.5 text-xs cursor-pointer hover:bg-muted/50">
+              <Upload className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+              <span className="truncate text-muted-foreground">{arquivoAnexar ? arquivoAnexar.name : "Selecionar arquivo (PDF, JPG, PNG)"}</span>
+              <input type="file" className="hidden" accept=".pdf,.jpg,.jpeg,.png" onChange={(e) => setArquivoAnexar(e.target.files?.[0] ?? null)} />
+            </label>
+            <p className="mt-1.5 text-[11px] text-muted-foreground">Ao anexar, a marca "aguardando comprovante" sai e a ação fica na linha do tempo da despesa.</p>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" size="sm" onClick={() => setAnexarAberto(false)} disabled={anexando}>Cancelar</Button>
+            <Button size="sm" onClick={handleAnexarComprovante} disabled={anexando || !arquivoAnexar}>
+              {anexando ? "Anexando..." : "Anexar comprovante"}
             </Button>
           </DialogFooter>
         </DialogContent>
