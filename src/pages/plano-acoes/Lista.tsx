@@ -16,7 +16,10 @@ import { usePlanoAcaoPermissao } from "@/hooks/usePlanoAcaoPermissao";
 import {
   usePlanoAcaoFilterOptions, matchResponsavel, matchTexto, manterValidos, normalizarValorTexto, normalizarValorResponsavel,
 } from "@/hooks/usePlanoAcaoFilterOptions";
-import { STATUS_LABELS, STATUS_COR, PRIORIDADE_LABEL, PRIORIDADE_COR, STATUS_ORDEM, PRIORIDADES } from "@/types/planoAcao";
+import {
+  STATUS_LABELS, STATUS_COR, PRIORIDADE_LABEL, PRIORIDADE_COR, STATUS_ORDEM, PRIORIDADES,
+  STATUS_NAO_CONCLUIDAS, COMITES_FILTRO, SETORES_FILTRO, TIPO_ACAO_OPTIONS, TIPO_ACAO_LABEL,
+} from "@/types/planoAcao";
 import { KpiCard, type KpiTone } from "./KpiCard";
 import {
   CABECALHOS_EXCEL_PLANO_ACOES,
@@ -25,12 +28,13 @@ import {
   nomeArquivoPlanoAcoes,
 } from "./listaExcelUtils";
 import {
-  Plus, Search, AlertTriangle, Clock, CheckCircle2, ArrowUp, ArrowDown, ListChecks, ListTodo, FileQuestion,
+  Plus, Search, AlertTriangle, Clock, CheckCircle2, ArrowUp, ArrowDown, ListChecks, ListTodo, ListFilter, FileQuestion,
   CircleDashed, Activity, FileWarning, Ban, X, Download,
 } from "lucide-react";
 
 const OPCOES_STATUS: SearchableOption[] = STATUS_ORDEM.map(s => ({ value: s, label: STATUS_LABELS[s] }));
 const OPCOES_PRIORIDADE: SearchableOption[] = PRIORIDADES.map(p => ({ value: p, label: PRIORIDADE_LABEL[p] }));
+const OPCOES_TIPO: SearchableOption[] = TIPO_ACAO_OPTIONS.map(t => ({ value: t, label: TIPO_ACAO_LABEL[t] }));
 
 // Cards acima dos filtros (SIS-2026-0392) — um por status, mesmo visual do
 // Dashboard. Clicar liga/desliga aquele status no filtro.
@@ -113,10 +117,11 @@ export default function PlanoAcoesLista() {
     prior:   searchParams.getAll("prior"),
     comite:  searchParams.getAll("comite").map(normalizarValorTexto),
     area:    searchParams.getAll("area").map(normalizarValorTexto),
+    tipo:    searchParams.getAll("tipo"),
     resp:    searchParams.getAll("resp").map(normalizarValorResponsavel),
     empresa: searchParams.getAll("empresa"),
   }), [searchParams]);
-  const { status: fStatus, prior: fPrior, comite: fComite, area: fArea, resp: fResp, empresa: fEmpresa } = filtros;
+  const { status: fStatus, prior: fPrior, comite: fComite, area: fArea, tipo: fTipo, resp: fResp, empresa: fEmpresa } = filtros;
   const fPeriodo = (searchParams.get("periodo") as FiltroInclusao | null) ?? "todos";
   const fDataIni = searchParams.get("dataIni") ?? "";
   const fDataFim = searchParams.get("dataFim") ?? "";
@@ -149,14 +154,25 @@ export default function PlanoAcoesLista() {
   };
   const setFilterMulti = (key: string, values: string[]) => setFiltrosMulti({ [key]: values });
 
-  const { comites, areas, responsaveis, empresas, empresaLabelById } = usePlanoAcaoFilterOptions(rows);
+  // Comitê/Setor agora saem de listas FIXAS (COMITES_FILTRO/SETORES_FILTRO,
+  // SIS-2026-0612), não mais das linhas — por isso não desestruturamos mais
+  // `comites`/`areas` do hook. Responsável e Empresa continuam vindo do dado.
+  const { responsaveis, empresas, empresaLabelById } = usePlanoAcaoFilterOptions(rows);
 
-  // Na montagem: se a URL não tem filtros, tenta restaurar do sessionStorage
-  // Isso garante persistência mesmo ao navegar pelo Sidebar (que não passa params)
+  // Na montagem: se a URL não tem filtros, restaura do sessionStorage; e se nem
+  // isso existe, abre no recorte "Não concluídas" por padrão (SIS-2026-0612) —
+  // a solicitante não quer ver ação encerrada toda vez que abre a tela. O card
+  // "Total de ações" zera o status e volta a mostrar tudo.
   useEffect(() => {
     if (!searchParams.toString()) {
       const saved = sessionStorage.getItem("planoAcoesFilters");
-      if (saved) setSearchParams(new URLSearchParams(saved), { replace: true });
+      if (saved) {
+        setSearchParams(new URLSearchParams(saved), { replace: true });
+      } else {
+        const inicial = new URLSearchParams();
+        STATUS_NAO_CONCLUIDAS.forEach(s => inicial.append("status", s));
+        setSearchParams(inicial, { replace: true });
+      }
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -171,7 +187,7 @@ export default function PlanoAcoesLista() {
   useEffect(() => {
     if (isLoading || rows.length === 0) return;
     const candidatos: [string, string[], SearchableOption[]][] = [
-      ["comite", fComite, comites], ["area", fArea, areas], ["resp", fResp, responsaveis], ["empresa", fEmpresa, empresas],
+      ["comite", fComite, COMITES_FILTRO], ["area", fArea, SETORES_FILTRO], ["resp", fResp, responsaveis], ["empresa", fEmpresa, empresas],
     ];
     const trocas: Record<string, string[]> = {};
     for (const [key, sel, opts] of candidatos) {
@@ -179,7 +195,7 @@ export default function PlanoAcoesLista() {
       if (validos !== sel) trocas[key] = validos;
     }
     if (Object.keys(trocas).length > 0) setFiltrosMulti(trocas);
-  }, [comites, areas, responsaveis, empresas, isLoading, rows.length]);
+  }, [responsaveis, empresas, isLoading, rows.length]);
 
   // Todos os filtros MENOS status — base dos cards (a contagem de cada status
   // respeita busca/comitê/setor/etc., e clicar num card não zera os outros).
@@ -189,6 +205,7 @@ export default function PlanoAcoesLista() {
       if (fPrior.length > 0 && !fPrior.includes(r.prioridade_normalizada ?? "nao_informada")) return false;
       if (!matchTexto(r.comite, fComite)) return false;
       if (!matchTexto(r.area, fArea)) return false;
+      if (fTipo.length > 0 && !fTipo.includes(r.tipo_acao)) return false;
       if (!matchResponsavel(r, fResp)) return false;
       if (fEmpresa.length > 0 && !fEmpresa.includes(r.empresa_id)) return false;
       if (!dentroPeriodoInclusao(r.created_at, fPeriodo, fDataIni, fDataFim)) return false;
@@ -196,7 +213,7 @@ export default function PlanoAcoesLista() {
       return [r.titulo, r.problema, r.acao, r.responsavel_nome_origem, r.id_importacao]
         .filter(Boolean).some(s => (s as string).toLowerCase().includes(q));
     });
-  }, [rows, busca, fPrior, fComite, fArea, fResp, fEmpresa, fPeriodo, fDataIni, fDataFim]);
+  }, [rows, busca, fPrior, fComite, fArea, fTipo, fResp, fEmpresa, fPeriodo, fDataIni, fDataFim]);
 
   const contagemStatus = useMemo(() => {
     const m = new Map<string, number>();
@@ -205,11 +222,15 @@ export default function PlanoAcoesLista() {
   }, [semStatus]);
   const totalEmAberto = STATUS_EM_ABERTO.reduce((acc, s) => acc + (contagemStatus.get(s) ?? 0), 0);
   const emAbertoAtivo = fStatus.length === STATUS_EM_ABERTO.length && STATUS_EM_ABERTO.every(s => fStatus.includes(s));
+  // "Não concluídas" (SIS-2026-0612) = tudo menos as duas concluídas (mantém
+  // Cancelada). É o recorte padrão da tela; o card deixa ligar/desligar depois.
+  const totalNaoConcluidas = STATUS_NAO_CONCLUIDAS.reduce((acc, s) => acc + (contagemStatus.get(s) ?? 0), 0);
+  const naoConcluidasAtivo = fStatus.length === STATUS_NAO_CONCLUIDAS.length && STATUS_NAO_CONCLUIDAS.every(s => fStatus.includes(s));
   const toggleStatus = (s: string) =>
     setFilterMulti("status", fStatus.includes(s) ? fStatus.filter(x => x !== s) : [...fStatus, s]);
 
   const temFiltroAtivo = !!busca || fPeriodo !== "todos"
-    || [fStatus, fPrior, fComite, fArea, fResp, fEmpresa].some(f => f.length > 0);
+    || [fStatus, fPrior, fComite, fArea, fTipo, fResp, fEmpresa].some(f => f.length > 0);
 
   const filtered = useMemo(() => {
     const base = fStatus.length > 0 ? semStatus.filter(r => fStatus.includes(r.status_normalizado)) : semStatus;
@@ -295,6 +316,7 @@ export default function PlanoAcoesLista() {
 
       <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
         <KpiCard label="Total de ações" value={semStatus.length} icon={ListChecks} ativo={fStatus.length === 0} onClick={() => setFilterMulti("status", [])} />
+        <KpiCard label="Não concluídas" value={totalNaoConcluidas} icon={ListFilter} tone="primary" ativo={naoConcluidasAtivo} onClick={() => setFilterMulti("status", naoConcluidasAtivo ? [] : STATUS_NAO_CONCLUIDAS)} />
         <KpiCard label="Em aberto" value={totalEmAberto} icon={ListTodo} tone="primary" ativo={emAbertoAtivo} onClick={() => setFilterMulti("status", emAbertoAtivo ? [] : STATUS_EM_ABERTO)} />
         {STATUS_ORDEM.map(s => (
           <KpiCard
@@ -303,7 +325,7 @@ export default function PlanoAcoesLista() {
             value={contagemStatus.get(s) ?? 0}
             icon={KPI_STATUS[s].icon}
             tone={KPI_STATUS[s].tone}
-            ativo={!emAbertoAtivo && fStatus.includes(s)}
+            ativo={!emAbertoAtivo && !naoConcluidasAtivo && fStatus.includes(s)}
             onClick={() => toggleStatus(s)}
           />
         ))}
@@ -322,8 +344,9 @@ export default function PlanoAcoesLista() {
           </div>
           <SearchableMultiSelect value={fStatus}  onChange={v => setFilterMulti("status", v)}  options={OPCOES_STATUS}     placeholder="Todos os status"        searchPlaceholder="Buscar status..."      maxBadges={2} />
           <SearchableMultiSelect value={fPrior}   onChange={v => setFilterMulti("prior", v)}   options={OPCOES_PRIORIDADE} placeholder="Todas as prioridades"   searchPlaceholder="Buscar prioridade..."  maxBadges={2} />
-          <SearchableMultiSelect value={fComite}  onChange={v => setFilterMulti("comite", v)}  options={comites}           placeholder="Todos os comitês"       searchPlaceholder="Buscar comitê..."      maxBadges={2} />
-          <SearchableMultiSelect value={fArea}    onChange={v => setFilterMulti("area", v)}    options={areas}             placeholder="Todos os setores"       searchPlaceholder="Buscar setor..."       maxBadges={2} />
+          <SearchableMultiSelect value={fComite}  onChange={v => setFilterMulti("comite", v)}  options={COMITES_FILTRO}    placeholder="Todos os comitês"       searchPlaceholder="Buscar comitê..."      maxBadges={2} />
+          <SearchableMultiSelect value={fArea}    onChange={v => setFilterMulti("area", v)}    options={SETORES_FILTRO}    placeholder="Todos os setores"       searchPlaceholder="Buscar setor..."       maxBadges={2} />
+          <SearchableMultiSelect value={fTipo}    onChange={v => setFilterMulti("tipo", v)}    options={OPCOES_TIPO}       placeholder="Todos os tipos"         searchPlaceholder="Buscar tipo..."        maxBadges={2} />
           <SearchableMultiSelect value={fResp}    onChange={v => setFilterMulti("resp", v)}    options={responsaveis}      placeholder="Todos os responsáveis"  searchPlaceholder="Buscar responsável..." maxBadges={2} />
           <SearchableMultiSelect value={fEmpresa} onChange={v => setFilterMulti("empresa", v)} options={empresas}          placeholder="Todas as empresas"      searchPlaceholder="Buscar empresa..."     maxBadges={2} />
           <Select value={fPeriodo} onValueChange={v => setFilter("periodo", v === "todos" ? "" : v)}>
