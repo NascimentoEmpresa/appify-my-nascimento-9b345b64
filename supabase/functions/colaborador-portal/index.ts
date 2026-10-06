@@ -160,6 +160,12 @@ Deno.serve(async (req) => {
         return json(await rpc("col_alterar_senha", {
           p_emp: emp, p_atual: str(body.atual, 200) ?? "", p_nova: str(body.nova, 200) ?? "",
         }));
+      // 06/10/2026 (mig 20261006000007): sexo, estado civil e celular/WhatsApp
+      // que o próprio colaborador informa — gravados na EMPREGADOS, só dele.
+      case "atualizar_dados":
+        return json(await rpc("col_atualizar_dados", {
+          p_emp: emp, p_sexo: str(body.sexo, 20), p_estado_civil: str(body.estado_civil, 30), p_celular: str(body.celular, 30),
+        }));
       default:
         return json({ error: "Ação desconhecida." }, 400);
     }
