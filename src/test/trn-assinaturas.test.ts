@@ -1,26 +1,49 @@
 import { describe, it, expect } from "vitest";
-import { problemaAssinatura, FONTES_ASSINATURA } from "@/pages/treinamentos/plataforma/assinaturaFolha";
+import { assinaturaValeParaPublicar, cargoERegistro, problemaAssinatura, FONTES_ASSINATURA } from "@/pages/treinamentos/plataforma/assinaturaFolha";
 
 // =====================================================================
 // Treinamentos › Assinaturas (mig 20261005000003): o que a tela cobra antes
-// de salvar — as mesmas regras do CHECK de "TRN_ASSINATURA".
+// de salvar — as mesmas regras do CHECK de "TRN_ASSINATURA". Cargo e
+// registro obrigatórios, e só Técnico(a) em Segurança publica curso
+// (mig 20261006000001 — trn_assinatura_eh_tst no banco).
 // =====================================================================
 
 const PNG = "data:image/png;base64,iVBORw0KGgo=";
+const BASE = { nome_completo: "Ana Souza", cargo: "Técnica em Segurança do Trabalho", registro: "0031036" };
 
 describe("problemaAssinatura", () => {
   it("exige o nome completo do treinador", () => {
-    expect(problemaAssinatura({ tipo: "desenho", imagem: PNG, nome_completo: "  " })).toMatch(/nome completo/);
+    expect(problemaAssinatura({ ...BASE, tipo: "desenho", imagem: PNG, nome_completo: "  " })).toMatch(/nome completo/);
+  });
+  it("exige cargo e registro", () => {
+    expect(problemaAssinatura({ ...BASE, tipo: "desenho", imagem: PNG, cargo: "" })).toMatch(/cargo/);
+    expect(problemaAssinatura({ ...BASE, tipo: "desenho", imagem: PNG, registro: " " })).toMatch(/registro/);
   });
   it("desenhada: precisa do traço em PNG", () => {
-    expect(problemaAssinatura({ tipo: "desenho", nome_completo: "Ana Souza", imagem: null })).toMatch(/Desenhe/);
-    expect(problemaAssinatura({ tipo: "desenho", nome_completo: "Ana Souza", imagem: "data:image/jpeg;base64,xx" })).toMatch(/Desenhe/);
-    expect(problemaAssinatura({ tipo: "desenho", nome_completo: "Ana Souza", imagem: PNG + "A".repeat(400_000) })).toMatch(/grande/);
-    expect(problemaAssinatura({ tipo: "desenho", nome_completo: "Ana Souza", imagem: PNG })).toBeNull();
+    expect(problemaAssinatura({ ...BASE, tipo: "desenho", imagem: null })).toMatch(/Desenhe/);
+    expect(problemaAssinatura({ ...BASE, tipo: "desenho", imagem: "data:image/jpeg;base64,xx" })).toMatch(/Desenhe/);
+    expect(problemaAssinatura({ ...BASE, tipo: "desenho", imagem: PNG + "A".repeat(400_000) })).toMatch(/grande/);
+    expect(problemaAssinatura({ ...BASE, tipo: "desenho", imagem: PNG })).toBeNull();
   });
   it("escrita: precisa do texto e de uma fonte da lista", () => {
-    expect(problemaAssinatura({ tipo: "texto", nome_completo: "Ana Souza", texto: "", fonte: "Allura" })).toMatch(/Escreva/);
-    expect(problemaAssinatura({ tipo: "texto", nome_completo: "Ana Souza", texto: "Ana Souza", fonte: "Comic Sans" })).toMatch(/letra/);
-    expect(problemaAssinatura({ tipo: "texto", nome_completo: "Ana Souza", texto: "Ana Souza", fonte: FONTES_ASSINATURA[0].id })).toBeNull();
+    expect(problemaAssinatura({ ...BASE, tipo: "texto", texto: "", fonte: "Allura" })).toMatch(/Escreva/);
+    expect(problemaAssinatura({ ...BASE, tipo: "texto", texto: "Ana Souza", fonte: "Comic Sans" })).toMatch(/letra/);
+    expect(problemaAssinatura({ ...BASE, tipo: "texto", texto: "Ana Souza", fonte: FONTES_ASSINATURA[0].id })).toBeNull();
+  });
+});
+
+describe("assinaturaValeParaPublicar", () => {
+  it("aceita Técnico(a) em Segurança, por extenso ou abreviado, com registro", () => {
+    expect(assinaturaValeParaPublicar(BASE)).toBe(true);
+    expect(assinaturaValeParaPublicar({ cargo: "TÉCNICO DE SEGURANÇA DO TRABALHO", registro: "12" })).toBe(true);
+    expect(assinaturaValeParaPublicar({ cargo: "Téc em segurança", registro: "12" })).toBe(true);
+  });
+  it("recusa outro cargo ou sem registro", () => {
+    expect(assinaturaValeParaPublicar({ cargo: "Instrutor de Treinamentos", registro: "12" })).toBe(false);
+    expect(assinaturaValeParaPublicar({ cargo: "Técnica em Segurança do Trabalho", registro: "" })).toBe(false);
+    expect(assinaturaValeParaPublicar(null)).toBe(false);
+  });
+  it("monta a linha Cargo · Registro", () => {
+    expect(cargoERegistro(BASE)).toBe("Técnica em Segurança do Trabalho · Registro: 0031036");
   });
 });

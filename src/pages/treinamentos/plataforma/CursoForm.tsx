@@ -11,7 +11,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { uploadMidia, urlMidia, useTrnAssinaturas, useTrnCategorias, useTrnCurso, useTrnModelosCertificado, useTrnSalvarCurso } from "@/hooks/useTreinamentosPlataforma";
 import { MENU, type CapaFormato } from "./tipos";
-import { AssinaturaTraco } from "./assinaturaFolha";
+import { AssinaturaTraco, assinaturaValeParaPublicar, cargoERegistro } from "./assinaturaFolha";
 import { DialogAssinatura } from "./Assinaturas";
 import { TrnCarregando, TrnEstilo, TrnHero } from "./ui";
 
@@ -26,7 +26,9 @@ import { TrnCarregando, TrnEstilo, TrnHero } from "./ui";
 //
 // Assinatura (05/10/2026, mig 20261005000003): "Certificado com assinatura"
 // obriga a escolher a ASSINATURA PRINCIPAL — ou criar uma ali mesmo, para
-// quem tem o menu Cursos — Assinaturas.
+// quem tem o menu Cursos — Assinaturas. Desde 06/10/2026 (mig
+// 20261006000001) o curso só publica com assinatura de Técnico(a) em
+// Segurança com registro, e o bloco aparece mesmo sem modelo de certificado.
 // =====================================================================
 
 const PRAZOS = [730, 365, 180, 90, 60, 30, 14, 7];
@@ -92,15 +94,18 @@ export default function CursoForm() {
     if (prazo !== null && (!Number.isInteger(prazo) || prazo <= 0)) return toast.error("Prazo de acesso inválido.");
     const carga = f.carga_horaria.trim() ? Math.round(Number(f.carga_horaria.replace(",", ".")) * 60) : null;
     if (carga !== null && (!Number.isFinite(carga) || carga < 0)) return toast.error("Carga horária inválida.");
-    if (f.com_assinatura && !f.certificado_modelo_id) return toast.error("Para ter assinatura, o curso precisa emitir certificado — escolha o modelo.");
     if (f.com_assinatura && !f.assinatura_id) return toast.error("Escolha a assinatura principal do certificado (ou crie uma).");
+    // Mig 20261006000001: publicar exige assinatura de Técnico(a) em Segurança com registro.
+    const ass = f.com_assinatura ? assinaturas.find((a) => a.id === f.assinatura_id) : null;
+    if (f.publicado && !(ass?.ativo && assinaturaValeParaPublicar(ass)))
+      return toast.error("O curso só pode ser publicado com a assinatura de um(a) Técnico(a) em Segurança (cargo e registro) — ligue a assinatura abaixo.");
     try {
       const novoId = await salvar.mutateAsync({
         id: editando ? id : undefined,
         nome: f.nome.trim(), descricao: f.descricao.trim(), slug: f.slug.trim(), capa_path: f.capa_path, capa_formato: f.capa_formato,
         categoria_id: f.modulos_como_cursos ? null : (f.categoria_id || null),
         certificado_modelo_id: f.certificado_modelo_id || null,
-        assinatura_id: f.com_assinatura && f.certificado_modelo_id ? f.assinatura_id : null,
+        assinatura_id: f.com_assinatura ? f.assinatura_id : null,
         ordem_vitrine: f.ordem_vitrine.trim() ? Number(f.ordem_vitrine) : null,
         carga_horaria_min: carga, url_vendas: f.url_vendas.trim() || null,
         liberar_em: f.liberar_em || null, liberar_dias: Math.max(0, Number(f.liberar_dias) || 0),
@@ -209,7 +214,8 @@ export default function CursoForm() {
                 </div>
               </div>
 
-              {f.certificado_modelo_id && (
+              {/* Fora do "se tem certificado" desde 06/10/2026: sem assinatura o curso não publica. */}
+              {(
                 <div className="grupo">
                   <h4>Assinatura do certificado</h4>
                   <label className="flex items-center gap-2 text-sm">
@@ -226,7 +232,7 @@ export default function CursoForm() {
                             <SelectContent>
                               <SelectItem value="__">Escolha a assinatura…</SelectItem>
                               {assinaturas.filter((a) => a.ativo || a.id === f.assinatura_id).map((a) => (
-                                <SelectItem key={a.id} value={a.id}>{a.nome_completo}{a.cargo ? ` · ${a.cargo}` : ""}{a.ativo ? "" : " (desativada)"}</SelectItem>
+                                <SelectItem key={a.id} value={a.id}>{a.nome_completo}{cargoERegistro(a) ? ` · ${cargoERegistro(a)}` : ""}{a.ativo ? "" : " (desativada)"}{a.ativo && !assinaturaValeParaPublicar(a) ? " — não serve para publicar" : ""}</SelectItem>
                               ))}
                             </SelectContent>
                           </Select>
@@ -240,7 +246,7 @@ export default function CursoForm() {
                         return a ? (
                           <div className="flex items-center gap-3 rounded-lg border bg-white px-3 py-2">
                             <div className="h-12 w-40 overflow-hidden"><AssinaturaTraco a={a} altura="48px" /></div>
-                            <div className="text-xs"><div className="font-semibold uppercase tracking-wide text-slate-500">Assinado digitalmente por:</div><div className="font-bold">{a.nome_completo}</div>{a.cargo && <div className="text-slate-500">{a.cargo}</div>}</div>
+                            <div className="text-xs"><div className="font-semibold uppercase tracking-wide text-slate-500">Assinado digitalmente por:</div><div className="font-bold">{a.nome_completo}</div>{cargoERegistro(a) && <div className="text-slate-500">{cargoERegistro(a)}</div>}</div>
                           </div>
                         ) : null;
                       })()}
@@ -294,7 +300,7 @@ export default function CursoForm() {
               <h5>Certificado</h5>
               Escolha um modelo em Cursos › Certificados. Sem modelo, o curso não emite certificado.
               <h5>Assinatura</h5>
-              Opcional. Ligada, o certificado sai com "ASSINADO DIGITALMENTE POR" + o nome e a assinatura do treinador. As assinaturas ficam em Cursos › Assinaturas.
+              Obrigatória para publicar: tem que ser de um(a) Técnico(a) em Segurança, com cargo e registro. O certificado sai com "ASSINADO DIGITALMENTE POR" + nome, cargo, registro e a assinatura. As assinaturas ficam em Cursos › Assinaturas.
             </div>
           </div>
         )}

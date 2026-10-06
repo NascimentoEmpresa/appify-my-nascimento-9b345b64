@@ -84,6 +84,8 @@ export interface Certificado {
 /** "TRN_ASSINATURA" (mig 20261005000003): a assinatura de um treinador. */
 export interface Assinatura {
   id: string; nome_completo: string; cargo: string | null; usuario_id: string | null;
+  /** Registro profissional (ex. nº do MTE) — sai embaixo do cargo (mig 20261006000001). */
+  registro: string | null;
   tipo: "desenho" | "texto";
   /** tipo "desenho": PNG em data URL. */
   imagem: string | null;
@@ -93,7 +95,7 @@ export interface Assinatura {
 }
 
 /** O que a folha do certificado precisa para desenhar a assinatura. */
-export type AssinaturaCertificado = Pick<Assinatura, "nome_completo" | "cargo" | "tipo" | "imagem" | "texto" | "fonte">;
+export type AssinaturaCertificado = Pick<Assinatura, "nome_completo" | "cargo" | "registro" | "tipo" | "imagem" | "texto" | "fonte">;
 
 export type CapaFormato = "paisagem" | "retrato" | "quadrado";
 

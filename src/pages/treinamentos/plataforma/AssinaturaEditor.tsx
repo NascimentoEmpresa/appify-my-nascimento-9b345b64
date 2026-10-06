@@ -3,12 +3,13 @@ import { Eraser, PenLine, Type } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import type { Assinatura, AssinaturaCertificado } from "./tipos";
-import { AssinaturaTraco, BlocoAssinatura, FONTES_ASSINATURA, useFontesAssinatura } from "./assinaturaFolha";
+import { AssinaturaTraco, BlocoAssinatura, FONTES_ASSINATURA, assinaturaValeParaPublicar, useFontesAssinatura } from "./assinaturaFolha";
 
 // =====================================================================
 // TREINAMENTOS — editor de assinatura (mig 20261005000003).
 // Usado na tela Cursos › Assinaturas e no "Criar assinatura" do Editar
-// curso. Nome completo + cargo, e a assinatura em si: DESENHADA no quadro
+// curso. Nome completo + cargo e registro (obrigatórios desde 06/10/2026,
+// mig 20261006000001), e a assinatura em si: DESENHADA no quadro
 // (mouse, caneta ou dedo) ou ESCRITA numa fonte cursiva. A prévia mostra
 // o bloco exatamente como sai no certificado.
 // =====================================================================
@@ -19,7 +20,7 @@ export function AssinaturaEditor({ valor, onChange }: { valor: RascunhoAssinatur
   useFontesAssinatura();
   const set = (p: Partial<RascunhoAssinatura>) => onChange({ ...valor, ...p });
   const previa: AssinaturaCertificado = {
-    nome_completo: valor.nome_completo?.trim() || "Nome do treinador", cargo: valor.cargo?.trim() || null,
+    nome_completo: valor.nome_completo?.trim() || "Nome do treinador", cargo: valor.cargo?.trim() || null, registro: valor.registro?.trim() || null,
     tipo: valor.tipo, imagem: valor.imagem ?? null,
     texto: valor.texto?.trim() || valor.nome_completo?.trim() || "Assinatura", fonte: valor.fonte ?? FONTES_ASSINATURA[0].id,
   };
@@ -32,8 +33,22 @@ export function AssinaturaEditor({ valor, onChange }: { valor: RascunhoAssinatur
           <Input value={valor.nome_completo ?? ""} onChange={(e) => set({ nome_completo: e.target.value })} placeholder="Como sai no certificado" />
         </div>
         <div className="campo">
-          <label>Cargo / função (opcional)</label>
-          <Input value={valor.cargo ?? ""} onChange={(e) => set({ cargo: e.target.value })} placeholder="ex.: Instrutor de Treinamentos" />
+          <label>Cargo *</label>
+          <Input list="trn-cargos-assinatura" value={valor.cargo ?? ""} onChange={(e) => set({ cargo: e.target.value })} placeholder="ex.: Técnica em Segurança do Trabalho" />
+          <datalist id="trn-cargos-assinatura">
+            <option value="Técnica em Segurança do Trabalho" />
+            <option value="Técnico em Segurança do Trabalho" />
+          </datalist>
+        </div>
+        <div className="campo sm:col-span-2">
+          <label>Registro *</label>
+          <Input value={valor.registro ?? ""} onChange={(e) => set({ registro: e.target.value })} placeholder="ex.: 0031036 (registro profissional / MTE)" />
+          {/* Mig 20261006000001: curso só publica com assinatura de Técnico(a) em Segurança. */}
+          <div className="ajuda">
+            {assinaturaValeParaPublicar(valor)
+              ? "✓ Vale para publicar cursos (Técnico(a) em Segurança com registro)."
+              : "Para publicar um curso, a assinatura tem que ser de Técnico(a) em Segurança, com o registro."}
+          </div>
         </div>
       </div>
 

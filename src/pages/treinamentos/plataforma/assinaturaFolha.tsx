@@ -41,9 +41,29 @@ export function useFontesAssinatura() {
   }, []);
 }
 
+/**
+ * Assinatura que deixa o curso ser PUBLICADO (mig 20261006000001, pedido de
+ * 06/10/2026): cargo de Técnico(a) em Segurança — aceita "Téc em segurança"
+ * — e registro preenchido. Mesma regra de trn_assinatura_eh_tst no banco;
+ * mudar nos dois lugares.
+ */
+export function assinaturaValeParaPublicar(a: Pick<AssinaturaCertificado, "cargo" | "registro"> | null | undefined): boolean {
+  if (!a) return false;
+  const cargo = (a.cargo ?? "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
+  return /tec.*seguranc/.test(cargo) && (a.registro ?? "").trim().length >= 2;
+}
+
+/** "Cargo · Registro: X" — a linha embaixo do nome nas listas e seletores. */
+export function cargoERegistro(a: Pick<AssinaturaCertificado, "cargo" | "registro">): string {
+  return [a.cargo?.trim(), a.registro?.trim() ? `Registro: ${a.registro.trim()}` : ""].filter(Boolean).join(" · ");
+}
+
 /** O que falta para a assinatura poder ser salva; null = está ok. Mesmas regras do CHECK do banco. */
 export function problemaAssinatura(a: Partial<AssinaturaCertificado>): string | null {
   if ((a.nome_completo ?? "").trim().length < 3) return "Informe o nome completo do treinador.";
+  // Cargo e registro aparecem na assinatura (06/10/2026) — obrigatórios.
+  if ((a.cargo ?? "").trim().length < 2) return "Informe o cargo (ex.: Técnica em Segurança do Trabalho).";
+  if ((a.registro ?? "").trim().length < 2) return "Informe o registro profissional.";
   if (a.tipo === "desenho") {
     if (!a.imagem?.startsWith("data:image/png;base64,")) return "Desenhe a assinatura no quadro.";
     if (a.imagem.length > 400_000) return "A assinatura ficou grande demais — limpe e desenhe de novo.";
@@ -76,7 +96,8 @@ export function AssinaturaTraco({ a, altura, cor = "#1e293b" }: { a: AssinaturaC
 }
 
 /**
- * O bloco da folha: traço, linha, "ASSINADO DIGITALMENTE POR:", nome e cargo.
+ * O bloco da folha: traço, linha, "ASSINADO DIGITALMENTE POR:", nome, cargo
+ * e registro (registro desde 06/10/2026, mig 20261006000001).
  * Medido em cqw da folha; `escala` aumenta tudo junto (a prévia do editor
  * não está dentro de uma folha, então desenha maior).
  */
@@ -91,6 +112,7 @@ export function BlocoAssinatura({ a, escala = 1 }: { a: AssinaturaCertificado; e
       </div>
       <div style={{ fontSize: u(1.05), fontWeight: 700, color: "#27272a", marginTop: u(0.2), lineHeight: 1.2 }}>{a.nome_completo}</div>
       {a.cargo && <div style={{ fontSize: u(0.85), color: "#71717a", marginTop: u(0.15) }}>{a.cargo}</div>}
+      {a.registro && <div style={{ fontSize: u(0.78), color: "#71717a", marginTop: u(0.1) }}>Registro: {a.registro}</div>}
     </div>
   );
 }
