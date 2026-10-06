@@ -25,7 +25,7 @@ import {
   TIPOS_NOTA,
 } from "@/hooks/useNfEmissao";
 import { usePlanilhaCustos, resolverPostosVigentes, PostoVigente } from "@/hooks/usePlanilhaCusto";
-import { calcularItem, calcularTotaisNf, inssLegadoDoItem, pctEfetivo, pctFiscaisDaNf, ItemCalculado } from "@/pages/financeiro/nf-emissao/calculos";
+import { calcularItem, calcularTotaisNf, valoresLegadosDoItem, pctEfetivo, pctFiscaisDaNf, ItemCalculado } from "@/pages/financeiro/nf-emissao/calculos";
 import { fmtMoney, fmtDate, STATUS_LABEL, STATUS_CLASS, itemVazio, situacaoEspecial } from "@/pages/financeiro/nf-emissao/shared";
 import { ItensNfEditor, ItemForm } from "@/pages/financeiro/nf-emissao/ItensNfEditor";
 import { registrarLogNf } from "@/pages/financeiro/nf-emissao/registrarLogNf";
@@ -230,7 +230,7 @@ function itemRowParaForm(r: NfEmissaoItemRow): ItemForm {
     justificativa_outros_descontos: r.justificativa_outros_descontos,
     qtd_colaboradores: r.qtd_colaboradores,
     inss_categoria: r.inss_categoria,
-    inss_legado: inssLegadoDoItem(r),
+    valores_legados: valoresLegadosDoItem(r),
     issqn_pct: r.issqn_pct,
     ir_pct: r.ir_pct,
     cofins_pct: r.cofins_pct,

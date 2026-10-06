@@ -130,9 +130,12 @@ export default function FluxoCaixaGestao() {
         grupos.set(chave, grupo);
       }
       grupo.valor += Number(l.valor) || 0;
-      if (l.contrato_id && l.contrato_nome) {
-        const atual = grupo.contratos.get(l.contrato_id);
-        grupo.contratos.set(l.contrato_id, { nome: l.contrato_nome, valor: (atual?.valor ?? 0) + (Number(l.valor) || 0) });
+      // Rateio importado da planilha pode ter cota em contrato não cadastrado
+      // (ex.: "ADMINISTRATIVO"): sem contrato_id, entra pelo nome.
+      const chaveContrato = l.contrato_id ?? (l.contrato_nome ? `nome:${l.contrato_nome}` : null);
+      if (chaveContrato && l.contrato_nome) {
+        const atual = grupo.contratos.get(chaveContrato);
+        grupo.contratos.set(chaveContrato, { nome: l.contrato_nome, valor: (atual?.valor ?? 0) + (Number(l.valor) || 0) });
       }
     }
     return Array.from(grupos.values()).map(({ base, valor, contratos }) => {

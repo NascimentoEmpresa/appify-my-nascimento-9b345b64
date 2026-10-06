@@ -10,6 +10,7 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Checkbox } from "@/components/ui/checkbox";
 import { ArrowLeft, LayoutGrid, AlertTriangle } from "lucide-react";
 import { toast } from "sonner";
+import { dadosPagamentoDispensados, formaPagamentoEhPix } from "./pagamentoPix";
 import { useEmpresaId } from "@/hooks/useEmpresaId";
 import { useClassificacoesOrcamento } from "@/hooks/usePlanejamentoOrcamentario";
 import { useSalvarDespesa, uploadAnexosMalote, gerarParcelas, mesclarDatasParcelas, mesclarValoresParcelas, validarOrdemParcelas, validarSomaParcelas, ModoValorParcela, RateioLinha, useEmpresasGrupo } from "@/hooks/useMaloteDespesa";
@@ -139,11 +140,17 @@ export default function RatearClassificacao() {
     [parcelasPreview],
   );
 
+  // SIS-2026-0583: com Pix a chave é obrigatória — "só por anexo" (feito pro
+  // boleto) não dispensa mais o campo. Ver pagamentoPix.ts.
+  const ehPix = formaPagamentoEhPix(formaPagamento);
+  const soAnexo = dadosPagamentoDispensados(formaPagamento, pagamentoSoAnexo);
+
   function validar(paraEnviar: boolean): string | null {
     if (!nome.trim()) return "Informe o nome da despesa.";
     if (!valorTotal || Number(valorTotal) <= 0) return "Informe o valor total da despesa.";
     if (!formaPagamento) return "Selecione a forma de pagamento.";
-    if (!pagamentoSoAnexo && !dadosPagamento.trim()) return "Informe os dados de pagamento.";
+    if (ehPix && !dadosPagamento.trim()) return "Informe a chave Pix (obrigatória quando a forma de pagamento é Pix).";
+    if (!soAnexo && !dadosPagamento.trim()) return "Informe os dados de pagamento.";
     if (!dataPagamento) return "Informe a data de pagamento.";
     // SIS-2026-0361 (complemento): piso absoluto, nem Exceção passa por
     // cima — mesma regra do trigger malote_bloqueia_dia_pagamento.
@@ -185,7 +192,7 @@ export default function RatearClassificacao() {
           if (erroSoma) return erroSoma;
         }
       }
-      if (pagamentoSoAnexo && arquivos.length === 0) return "Anexe ao menos um arquivo (Pagamento só por anexo está marcado).";
+      if (soAnexo && arquivos.length === 0) return "Anexe ao menos um arquivo (Pagamento só por anexo está marcado).";
     }
     return null;
   }
@@ -353,21 +360,24 @@ export default function RatearClassificacao() {
               </Select>
             </div>
             <div>
-              <Label>Dados de Pagamento {!pagamentoSoAnexo && "*"}</Label>
+              <Label>{ehPix ? "Chave Pix" : "Dados de Pagamento"} {!soAnexo && "*"}</Label>
               <Input
                 value={dadosPagamento}
                 onChange={(e) => setDadosPagamento(e.target.value)}
-                placeholder={pagamentoSoAnexo ? "Não preencher — a informação é o anexo" : "Pix, copia e cola, dados bancários, etc."}
-                disabled={pagamentoSoAnexo}
+                placeholder={soAnexo ? "Não preencher — a informação é o anexo" : ehPix ? "Informe a chave Pix (CPF/CNPJ, e-mail, telefone, aleatória ou copia e cola)" : "Pix, copia e cola, dados bancários, etc."}
+                disabled={soAnexo}
               />
               <label className="mt-1.5 flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer">
                 <input
                   type="checkbox"
-                  checked={pagamentoSoAnexo}
+                  checked={soAnexo}
                   onChange={(e) => setPagamentoSoAnexo(e.target.checked)}
+                  disabled={ehPix}
                   className="h-3.5 w-3.5"
                 />
-                Pagamento só por anexo (ex.: boleto) — dispensa este campo, mas exige arquivo
+                {ehPix
+                  ? "Pagamento só por anexo não vale para Pix — a chave Pix é obrigatória"
+                  : "Pagamento só por anexo (ex.: boleto) — dispensa este campo, mas exige arquivo"}
               </label>
             </div>
             <div>
@@ -545,7 +555,7 @@ export default function RatearClassificacao() {
           </div>
 
           <div>
-            <Label>Arquivos anexados {pagamentoSoAnexo && "*"}</Label>
+            <Label>Arquivos anexados {soAnexo && "*"}</Label>
             <AnexosField arquivos={arquivos} onChange={setArquivos} />
           </div>
 
