@@ -67,6 +67,8 @@ import { PermissoesProvider } from "./context/PermissoesContext";
 import { AuthProvider } from "./hooks/useAuth";
 import Empresas from "./pages/controladoria/Empresas";
 import ControleFaturamento from "./pages/controladoria/ControleFaturamento";
+import FaturamentoEmpresa from "./pages/controladoria/FaturamentoEmpresa";
+import LucratividadeContratos from "./pages/controladoria/LucratividadeContratos";
 import CentrosCusto from "./pages/controladoria/CentrosCusto";
 import EstruturaOrganizacional from "./pages/controladoria/EstruturaOrganizacional";
 import LinhasDRE from "./pages/controladoria/DRE";
@@ -631,6 +633,8 @@ const App = () => (
             <Route path="controladoria/empresas" element={<Empresas />} />
             <Route path="controladoria/controle-faturamento" element={<ControleFaturamento />} />
             <Route path="controladoria/reunioes-encarregados" element={<ReunioesEncarregados />} />
+            <Route path="controladoria/faturamento-empresa" element={<FaturamentoEmpresa />} />
+            <Route path="controladoria/lucratividade-contratos" element={<LucratividadeContratos />} />
             <Route path="controladoria/centros-custo" element={<CentrosCusto />} />
             <Route path="controladoria/estrutura-organizacional" element={<EstruturaOrganizacional />} />
             <Route path="controladoria/dre" element={<LinhasDRE />} />

@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import type { ItemCalculado, TotaisNf, PercentuaisFiscais, InssCategoria } from "@/pages/financeiro/nf-emissao/calculos";
+import { itemParaGravar, substituirItensNf } from "@/pages/financeiro/nf-emissao/itemParaGravar";
 
 const BUCKET = "nf-emissao";
 
@@ -167,12 +168,7 @@ export function useSalvarNfEmissao() {
       const nfId = nf.id as string;
 
       if (input.itens.length > 0) {
-        const payloadItens = input.itens.map((it, idx) => ({
-          nf_emissao_id: nfId,
-          ordem: idx + 1,
-          identificacao: (it as any).identificacao || `Item ${idx + 1}`,
-          ...it,
-        }));
+        const payloadItens = input.itens.map((it, idx) => itemParaGravar(it as any, nfId, idx));
         const { error: eItens } = await (supabase as any).from("nf_emissao_item").insert(payloadItens);
         if (eItens) throw eItens;
       }
@@ -251,19 +247,7 @@ export function useAtualizarNfEmissao() {
         .eq("id", input.id);
       if (error) throw error;
 
-      const { error: eDelItens } = await (supabase as any).from("nf_emissao_item").delete().eq("nf_emissao_id", input.id);
-      if (eDelItens) throw eDelItens;
-
-      if (input.itens.length > 0) {
-        const payloadItens = input.itens.map((it, idx) => ({
-          nf_emissao_id: input.id,
-          ordem: idx + 1,
-          identificacao: (it as any).identificacao || `Item ${idx + 1}`,
-          ...it,
-        }));
-        const { error: eItens } = await (supabase as any).from("nf_emissao_item").insert(payloadItens);
-        if (eItens) throw eItens;
-      }
+      await substituirItensNf(supabase, input.id, input.itens as any);
 
       for (const a of input.anexosParaRemover) {
         const rm = await supabase.storage.from(BUCKET).remove([a.storage_path]);
@@ -316,6 +300,12 @@ export function useValidarNfEmissao() {
     mutationFn: async (input: ValidarNfEmissaoInput) => {
       const userId = (await supabase.auth.getUser()).data.user?.id ?? null;
 
+      // Itens PRIMEIRO, status da nota por último: se a gravação dos itens falhar
+      // (e substituirItensNf devolve os antigos), a NF continua "enviada" para
+      // ser validada de novo — antes ela ficava concluída/cancelada e sem itens
+      // (incidente da NF 1416, 06/10/2026).
+      await substituirItensNf(supabase, input.id, input.itens as any);
+
       const { error } = await (supabase as any)
         .from("nf_emissao")
         .update({
@@ -328,20 +318,6 @@ export function useValidarNfEmissao() {
         })
         .eq("id", input.id);
       if (error) throw error;
-
-      const { error: eDelItens } = await (supabase as any).from("nf_emissao_item").delete().eq("nf_emissao_id", input.id);
-      if (eDelItens) throw eDelItens;
-
-      if (input.itens.length > 0) {
-        const payloadItens = input.itens.map((it, idx) => ({
-          nf_emissao_id: input.id,
-          ordem: idx + 1,
-          identificacao: (it as any).identificacao || `Item ${idx + 1}`,
-          ...it,
-        }));
-        const { error: eItens } = await (supabase as any).from("nf_emissao_item").insert(payloadItens);
-        if (eItens) throw eItens;
-      }
 
       return input.id;
     },

@@ -105,7 +105,11 @@ export interface ReconciliacaoResult {
 // SIS-2026-0491 (Iury, correção): só o rótulo "BB Rende Fácil" em si deve
 // ser ignorado no extrato — "Aplicação BB CDB DI"/"Resgate BB CDB DI" são
 // movimentações normais e devem continuar contabilizadas.
-export const MEMOS_IGNORAR = ["RENDE FACIL", "BB RENDE", "RENDE F"];
+// SIS-2026-0604: "SALDO ANTERIOR" que o banco lança no próprio extrato é o saldo de
+// abertura, não um movimento — nunca tem par no Fluxo e sempre acusava divergência.
+// Aqui só some a LEITURA dele; o saldo anterior é conferido à parte (campo
+// "saldo anterior" da conciliação do Fluxo de Caixa).
+export const MEMOS_IGNORAR = ["RENDE FACIL", "BB RENDE", "RENDE F", "SALDO ANTERIOR", "SDO ANTERIOR"];
 
 // ── Parser OFX ─────────────────────────────────────────────────────────────
 

@@ -263,6 +263,9 @@ const controladoriaOrcModule: ModuleDef = {
         // 06/10/2026 (mig 20261006000005): transcrições das reuniões dos
         // supervisores com os encarregados → dashboard de dificuldades.
         { label: "Reuniões com Encarregados", to: "/app/controladoria/reunioes-encarregados", icon: MessagesSquare, badge: "Novo" },
+        // SIS-2026-0556: mesma regra do item acima — precisa existir aqui E em app_menu.
+        { label: "Faturamento da Empresa", to: "/app/controladoria/faturamento-empresa", icon: TrendingUp },
+        { label: "Lucratividade de Contratos", to: "/app/controladoria/lucratividade-contratos", icon: TrendingUp },
       ],
     },
   ],
