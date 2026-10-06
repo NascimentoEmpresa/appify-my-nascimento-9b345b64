@@ -77,7 +77,7 @@ import { useJuridicoNotif } from "@/hooks/useJuridicoNotif";
 import { useReembolsoNotif } from "@/hooks/useReembolsoNotif";
 import { useAprovacoesNotif } from "@/hooks/useAprovacoesNotif";
 import { Inbox, type LucideIcon } from "lucide-react";
-import { Target, MessagesSquare } from "lucide-react";
+import { Target, MessagesSquare, KeyRound } from "lucide-react";
 import { GitBranch, GitMerge } from "lucide-react";
 import { MessageSquare } from "lucide-react";
 import { Banknote } from "lucide-react";
@@ -787,6 +787,10 @@ const sistemasModule: ModuleDef = {
       defaultOpen: true,
       items: [
         { label: "Checklist de Módulos", to: "/app/sistemas/checklist-modulos", icon: ListChecks },
+        // SIS-2026-0598 (mig 20261006000009): logins a criar (admissão de
+        // encarregado) e de demitidos a excluir. A bolinha vem da
+        // minhas_pendencias_aprovacao (mig 20261006000010).
+        { label: "Logins — Admissão e Demissão", to: "/app/sistemas/logins", icon: KeyRound },
       ],
     },
     {
