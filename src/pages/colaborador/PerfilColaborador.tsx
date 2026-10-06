@@ -57,7 +57,6 @@ export default function PerfilColaborador() {
           <Dado rotulo="Tipo de contrato" valor={perfil.tipo_contrato} />
           <Dado rotulo="Categoria" valor={perfil.categoria} />
           <Dado rotulo="Escala" valor={perfil.escala} />
-          <Dado rotulo="Nível" valor={perfil.lider} />
           {perfil.data_afastamento && <Dado rotulo="Afastamento" valor={fmtData(perfil.data_afastamento)} />}
         </GradeDados>
       </Secao>
