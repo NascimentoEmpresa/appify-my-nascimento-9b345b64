@@ -15,6 +15,19 @@ const SINONIMOS: Record<string, string> = {
   "diretoria adm": "diretor administrativo",
   "diretoria administrativa": "diretor administrativo",
   "diretoria operacional": "diretor operacional",
+  // SIS-2026-0612: o filtro de Comitê mostrava a forma curta e a forma longa
+  // como duas opções ("Administrativo" e "Comitê Administrativo"); colapsa a
+  // longa na curta que a presidência fixou como canônica (ver COMITES_FILTRO).
+  "comite administrativo": "administrativo",
+  "comite de controladoria": "controladoria",
+  "comite de sistemas": "sistemas",
+  "comite diretivo": "diretivo",
+  "comite gestor": "gestor",
+  "comite operacional": "operacional",
+  "comite sistemas": "sistemas",
+  // SIS-2026-0612: setor "Compras" foi renomeado para "SUPLY" no vocabulário
+  // novo (SETORES_FILTRO) — as ações antigas continuam gravadas como "Compras".
+  "compras": "suply",
 };
 
 export function chaveTextoPlanoAcao(s: string | null | undefined): string {
