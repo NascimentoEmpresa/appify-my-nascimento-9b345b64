@@ -235,7 +235,20 @@ export function ItensNfEditor({
                             )
                           )}
                           <div className="col-span-2">
-                            <Label className="text-xs">Categoria de risco (INSS)</Label>
+                            <div className="flex flex-wrap items-center gap-2">
+                              <Label className="text-xs">Categoria de risco (INSS)</Label>
+                              {/* Pedido do Ruan: valor do INSS já calculado, ao lado da
+                                  categoria. A base é a mão de obra (bruto − VA − VT −
+                                  materiais), não o bruto cheio — o title mostra a conta. */}
+                              {calc && (
+                                <span
+                                  className="inline-flex items-center rounded-full bg-violet-100 px-2 py-0.5 text-[11px] font-semibold text-violet-800 dark:bg-violet-950/40 dark:text-violet-300"
+                                  title={`${fmtPct(INSS_CATEGORIAS[it.inss_categoria].pct)} sobre a mão de obra de ${fmtMoney(calc.vlr_mao_obra)} (bruto ${fmtMoney(calc.vlr_bruto)} − VA − VT − materiais)`}
+                                >
+                                  INSS: {fmtMoney(calc.inss)}
+                                </span>
+                              )}
+                            </div>
                             <Select
                               value={it.inss_categoria}
                               onValueChange={(v) => onUpdateItem(i, { inss_categoria: v as InssCategoria })}
