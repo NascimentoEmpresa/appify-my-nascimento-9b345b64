@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { toast } from "sonner";
-import { ArrowDown, ArrowUp, Copy, MoreVertical, Pencil, Plus, Star, Trash2, Users } from "lucide-react";
+import { ArrowDown, ArrowUp, Copy, MoreVertical, Pencil, PenLine, Plus, Star, Trash2, Users } from "lucide-react";
 import { AcessoGate } from "@/components/auth/AcessoGate";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -12,7 +12,7 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
-  urlMidia, useTrnCurso, useTrnCursos, useTrnDuplicarCurso, useTrnDuplicarModulo, useTrnExcluirAula, useTrnExcluirCurso,
+  urlMidia, useTrnAssinaturas, useTrnCurso, useTrnCursos, useTrnDuplicarCurso, useTrnDuplicarModulo, useTrnExcluirAula, useTrnExcluirCurso,
   useTrnExcluirModulo, useTrnNumerosAulas, useTrnReordenar, useTrnSalvarCurso, useTrnSalvarModulo,
 } from "@/hooks/useTreinamentosPlataforma";
 import { MENU, ROTULO_TIPO_CONTEUDO, type Modulo } from "./tipos";
@@ -20,6 +20,8 @@ import { TrnCarregando, TrnEstilo, TrnHero } from "./ui";
 import { ReacoesVideoMini } from "@/components/treinamentos/ReacoesVideo";
 import CursoPublico from "./CursoPublico";
 import { AVISO_QR_CURSO, BotaoQrCode, urlCursoPortal } from "./QrCodeDialog";
+import { DialogAssinaturaCurso } from "./Assinaturas";
+import { AssinaturaTraco, assinaturaValeParaPublicar, cargoERegistro } from "./assinaturaFolha";
 
 // =====================================================================
 // TREINAMENTOS — Cursos › Visualização do curso.
@@ -29,6 +31,11 @@ import { AVISO_QR_CURSO, BotaoQrCode, urlCursoPortal } from "./QrCodeDialog";
 // com as aulas. Cada módulo: editar, excluir, duplicar (para este ou outro
 // curso), mover. Cada aula: editar, excluir, mover. Botões "Adicionar
 // aula +" por módulo e "Adicionar módulo +" no fim.
+//
+// Assinatura (06/10/2026, mig 20261006000001): "Adicionar assinatura" nos
+// três pontinhos (do curso, de cada módulo e de cada aula). Sem assinatura
+// de Técnico(a) em Segurança com registro o curso não publica — o toggle
+// avisa e abre o diálogo, e o banco barra também.
 // =====================================================================
 
 export default function CursoDetalhe() {
@@ -46,6 +53,8 @@ export default function CursoDetalhe() {
   const duplicarModulo = useTrnDuplicarModulo();
   const excluirAula = useTrnExcluirAula();
   const reordenar = useTrnReordenar();
+  const { data: assinaturas = [] } = useTrnAssinaturas();
+  const [assinaturaAberta, setAssinaturaAberta] = useState(false);
 
   const [modAberto, setModAberto] = useState(false);
   const [modEditando, setModEditando] = useState<Modulo | null>(null);
@@ -58,8 +67,16 @@ export default function CursoDetalhe() {
   const curso = data?.curso;
   const modulos = data?.modulos ?? [];
 
+  const assinatura = assinaturas.find((a) => a.id === curso?.assinatura_id) ?? null;
+  const assinaturaOk = !!assinatura?.ativo && assinaturaValeParaPublicar(assinatura);
+
   const toggle = async (campo: "publicado" | "em_breve" | "comentarios_habilitados", v: boolean) => {
     if (!curso) return;
+    if (campo === "publicado" && v && !assinaturaOk) {
+      toast.error("Para publicar, adicione a assinatura de um(a) Técnico(a) em Segurança (com cargo e registro).");
+      setAssinaturaAberta(true);
+      return;
+    }
     try { await salvarCurso.mutateAsync({ id: curso.id, nome: curso.nome, [campo]: v }); }
     catch (e: any) { toast.error(e?.message ?? "Não deu."); }
   };
@@ -150,6 +167,33 @@ export default function CursoDetalhe() {
               </div>
             </AcessoGate>
 
+            <div className={`mt-4 flex flex-wrap items-center gap-3 rounded-xl border px-3 py-2 ${assinaturaOk ? "bg-white" : "border-amber-300 bg-amber-50"}`}>
+              {assinatura ? (
+                <>
+                  <div className="h-12 w-40 shrink-0 overflow-hidden"><AssinaturaTraco a={assinatura} altura="48px" /></div>
+                  <div className="min-w-0 flex-1 text-xs">
+                    <div className="font-semibold uppercase tracking-wide text-slate-500">Assinado digitalmente por:</div>
+                    <div className="font-bold">{assinatura.nome_completo}</div>
+                    <div className="text-slate-500">{cargoERegistro(assinatura)}</div>
+                    {!assinaturaOk && <div className="text-amber-700">Não é assinatura de Técnico(a) em Segurança com registro — o curso não pode ser publicado com ela.</div>}
+                  </div>
+                </>
+              ) : (
+                <div className="min-w-0 flex-1 text-sm text-amber-800">
+                  <b>Sem assinatura.</b> O curso só pode ser publicado com a assinatura de um(a) Técnico(a) em Segurança (cargo e registro).
+                </div>
+              )}
+              <AcessoGate menu={MENU.cursos} acao="alterar">
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild><Button variant="ghost" size="icon" className="h-8 w-8" title="Opções do curso"><MoreVertical className="h-4 w-4" /></Button></DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    <DropdownMenuItem onSelect={() => setAssinaturaAberta(true)}><PenLine className="mr-2 h-4 w-4" /> {curso.assinatura_id ? "Trocar assinatura" : "Adicionar assinatura"}</DropdownMenuItem>
+                    <DropdownMenuItem onSelect={() => navigate(`/app/treinamentos/cursos/${id}/editar`)}><Pencil className="mr-2 h-4 w-4" /> Editar curso</DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </AcessoGate>
+            </div>
+
             {/* Publicar não libera para todos (24/09/2026): quem vê é definido aqui. */}
             <CursoPublico cursoId={curso.id} publicado={curso.publicado} />
 
@@ -171,6 +215,7 @@ export default function CursoDetalhe() {
                         <DropdownMenuContent align="end">
                           <DropdownMenuItem onSelect={() => abrirModulo(m)}>Editar</DropdownMenuItem>
                           <DropdownMenuItem onSelect={() => { setDupModulo(m); setDupDestino(curso.id); }}>Duplicar</DropdownMenuItem>
+                          <DropdownMenuItem onSelect={() => setAssinaturaAberta(true)}>{curso.assinatura_id ? "Assinatura do curso" : "Adicionar assinatura"}</DropdownMenuItem>
                           <DropdownMenuSeparator />
                           <DropdownMenuItem className="text-rose-600" onSelect={() => apagarModulo(m)}>Excluir</DropdownMenuItem>
                         </DropdownMenuContent>
@@ -195,6 +240,7 @@ export default function CursoDetalhe() {
                             <DropdownMenuTrigger asChild><Button variant="ghost" size="icon" className="h-7 w-7"><MoreVertical className="h-4 w-4" /></Button></DropdownMenuTrigger>
                             <DropdownMenuContent align="end">
                               <DropdownMenuItem onSelect={() => navigate(`/app/treinamentos/cursos/${id}/aulas/${a.id}`)}>Editar</DropdownMenuItem>
+                              <DropdownMenuItem onSelect={() => setAssinaturaAberta(true)}>{curso.assinatura_id ? "Assinatura do curso" : "Adicionar assinatura"}</DropdownMenuItem>
                               <DropdownMenuItem className="text-rose-600" onSelect={async () => { if (window.confirm(`Excluir a aula "${a.nome}"?`)) { try { await excluirAula.mutateAsync(a.id); toast.success("Aula excluída."); } catch (e: any) { toast.error(e?.message ?? "Não deu."); } } }}>Excluir</DropdownMenuItem>
                             </DropdownMenuContent>
                           </DropdownMenu>
@@ -215,6 +261,8 @@ export default function CursoDetalhe() {
             </div>
           </div>
         )}
+
+        <DialogAssinaturaCurso curso={assinaturaAberta && curso ? curso : null} onClose={() => setAssinaturaAberta(false)} />
 
         <Dialog open={modAberto} onOpenChange={setModAberto}>
           <DialogContent className="max-w-md">

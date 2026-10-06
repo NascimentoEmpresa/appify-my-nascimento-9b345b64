@@ -5,6 +5,7 @@ import { Card } from "@/components/ui/card";
 import { AcessoGate } from "@/components/auth/AcessoGate";
 import { useRelatorio } from "@/hooks/useRelatoriosDiretoria";
 import { MENU_IA, sistemaPorSlug } from "./sistemas";
+import TurnoverPainel from "./TurnoverPainel";
 import {
   GraficoMensal, GraficoRanking, GraficoStatus, LinhaKpis, PainelIA, SeletorPeriodo, TabelaRecentes, usePeriodo,
 } from "./componentes";
@@ -17,6 +18,12 @@ import {
 // =====================================================================
 
 export default function RelatorioSistema({ slug }: { slug: string }) {
+  // Turn-over tem tela própria no formato do Power BI (mig 20261006000003).
+  // O Relatório Geral continua lendo o dir_rel_turnover padrão.
+  return slug === "turnover" ? <TurnoverPainel /> : <RelatorioPadrao slug={slug} />;
+}
+
+function RelatorioPadrao({ slug }: { slug: string }) {
   const s = sistemaPorSlug(slug)!;
   const periodo = usePeriodo();
   const q = useRelatorio(s.rpc, periodo.de, periodo.ate);
