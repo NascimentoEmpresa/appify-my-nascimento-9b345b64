@@ -91,6 +91,7 @@ import { Network } from "lucide-react";
 import { useNovidades } from "@/hooks/useNovidades";
 import { cn } from "@/lib/utils";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { SISTEMAS as DIRETORIA_RELATORIOS } from "@/pages/diretoria/relatorios/sistemas";
 
 interface NavItem {
   label: string;
@@ -1198,6 +1199,15 @@ const diretoriaModule: ModuleDef = {
         { label: "Gestão Recrutamento", to: "/app/diretoria/recrutamento", icon: Users2 },
         // O mesmo Dashboard de Recrutamento do RH, com menu próprio (17/09/2026).
         { label: "Dashboard de Recrutamento", to: "/app/diretoria/recrutamento-dashboard", icon: BarChart3 },
+      ],
+    },
+    {
+      // Relatórios (05/10/2026, mig 20261005000006): o geral + um por sistema.
+      label: "Relatórios",
+      defaultOpen: true,
+      items: [
+        { label: "Relatório Geral", to: "/app/diretoria/relatorios", icon: BarChart3 },
+        ...DIRETORIA_RELATORIOS.map((s) => ({ label: s.titulo, to: `/app/diretoria/relatorios/${s.slug}`, icon: s.icone })),
       ],
     },
   ],
