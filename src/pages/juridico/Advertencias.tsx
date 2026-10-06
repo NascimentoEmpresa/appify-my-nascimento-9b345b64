@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
+import { useSearchParams } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { useAuth } from "@/hooks/useAuth";
@@ -63,6 +64,48 @@ const statusCor = (s: string): { bg: string; c: string } => ({
 /** Rótulo da aba: "Registrada" é a verbal — o nome sozinho não diz isso. */
 const rotuloStatus = (s: string) => (s === "Registrada" ? "Verbais registradas" : s);
 const grauCor = (g: string): string => ({ "Baixo": "#16a34a", "Médio": "#d97706", "Alto": "#dc2626" }[g] || "#64748b");
+/** "05/10/2026 às 15:12" — a hora importa na data da solicitação. */
+const fmtDtHora = (s?: string | null) => {
+  if (!s) return "—";
+  const d = new Date(s);
+  return isNaN(+d) ? String(s) : `${d.toLocaleDateString("pt-BR")} às ${d.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}`;
+};
+
+interface EventoAdv { id: number; em: string; evento: string; de_status: string | null; para_status: string | null; usuario_nome: string | null; detalhe: string | null }
+
+/**
+ * Histórico da advertência (05/10/2026, mig 20261005000009): solicitação e
+ * cada mudança de status, com data/hora e quem fez — gravado por gatilho.
+ */
+function HistoricoAdvertencia({ id }: { id: number }) {
+  const [eventos, setEventos] = useState<EventoAdv[] | null>(null);
+  useEffect(() => {
+    let vivo = true;
+    db.from("SISTEMA_ADVERTENCIA_HISTORICO").select("*").eq("advertencia_id", id).order("em", { ascending: true })
+      .then(({ data }) => { if (vivo) setEventos((data ?? []) as EventoAdv[]); });
+    return () => { vivo = false; };
+  }, [id]);
+  return (
+    <div style={{ marginTop: 14 }}>
+      <div style={{ fontSize: 11, fontWeight: 800, color: "#0f3171", textTransform: "uppercase", letterSpacing: ".4px", marginBottom: 6 }}>Histórico</div>
+      {eventos === null ? <div style={{ fontSize: 12, color: "#94a3b8" }}>Carregando…</div>
+        : eventos.length === 0 ? <div style={{ fontSize: 12, color: "#94a3b8" }}>Sem histórico.</div>
+        : (
+          <div style={{ borderLeft: "2px solid #e2e8f0", marginLeft: 6, paddingLeft: 14 }}>
+            {eventos.map((e, i) => (
+              <div key={e.id} style={{ position: "relative", paddingBottom: i === eventos.length - 1 ? 0 : 12 }}>
+                <span style={{ position: "absolute", left: -20, top: 3, width: 10, height: 10, borderRadius: 10, background: i === 0 ? "#0f3171" : statusCor(e.para_status ?? "").c, border: "2px solid #fff" }} />
+                <div style={{ fontSize: 12.5, fontWeight: 700, color: "#0f172a" }}>{e.evento}</div>
+                <div style={{ fontSize: 11.5, color: "#64748b" }}>{fmtDtHora(e.em)}{e.usuario_nome ? ` · ${e.usuario_nome}` : ""}</div>
+                {e.detalhe && <div style={{ fontSize: 11.5, color: "#475569", marginTop: 2, overflowWrap: "break-word" }}>{e.detalhe}</div>}
+              </div>
+            ))}
+          </div>
+        )}
+    </div>
+  );
+}
+
 const fmtDt = (s?: string) => { if (!s) return "—"; const d = new Date(String(s).length <= 10 ? s + "T12:00:00" : s); return isNaN(+d) ? String(s) : d.toLocaleDateString("pt-BR"); };
 
 export default function Advertencias() {
@@ -79,7 +122,13 @@ export default function Advertencias() {
   const [rows, setRows] = useState<Adv[]>([]);
   const [loading, setLoading] = useState(true);
   const [visao, setVisao] = useState<"lista" | "dashboard">("lista");
-  const [aba, setAba] = useState("Aguardando Aprovação");
+  // ?aba=Registrada (05/10/2026): a notificação da advertência VERBAL abre
+  // direto na aba "Verbais registradas" — antes caía em "Aguardando
+  // Aprovação" vazia e parecia que a advertência tinha sumido.
+  const [params] = useSearchParams();
+  const abaDoLink = params.get("aba");
+  const [aba, setAba] = useState(abaDoLink && STATUS.includes(abaDoLink) ? abaDoLink : "Aguardando Aprovação");
+  useEffect(() => { if (abaDoLink && STATUS.includes(abaDoLink)) setAba(abaDoLink); }, [abaDoLink]);
   const [busca, setBusca] = useState("");
   // Filtros · Contratos (14/09/2026): multi, com contagem — era um select de um só.
   const [fContratos, setFContratos] = useState<string[]>([]);
@@ -348,6 +397,7 @@ export default function Advertencias() {
                       <span style={{ fontSize: 11, fontWeight: 700, padding: "2px 8px", borderRadius: 6, background: "#f1f5f9", color: "#334155" }}>{a.tipo_advertencia || "—"}</span>
                       <span style={{ fontSize: 11, fontWeight: 700, padding: "2px 8px", borderRadius: 6, background: "#fff", color: grauCor(a.grau), border: `1px solid ${grauCor(a.grau)}` }}>Grau {a.grau || "—"}</span>
                       <span style={{ fontSize: 11, color: "#64748b" }}>Ocorrido: {fmtDt(a.data_ocorrido)}</span>
+                      <span style={{ fontSize: 11, color: "#64748b" }}>· Solicitada: {fmtDtHora(a.created_at)}</span>
                     </div>
                     <div style={{ fontSize: 12, color: "#475569", lineHeight: 1.4, maxHeight: 60, overflow: "hidden", overflowWrap: "break-word", wordBreak: "break-word" }}>{a.descricao_ocorrido || "—"}</div>
                     <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 6 }}>Solicitante: {a.solicitante_nome || "—"} · #{a.id}</div>
@@ -392,7 +442,7 @@ export default function Advertencias() {
               ))}
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-              {[["Tipo", detalhe.tipo_advertencia], ["Grau", detalhe.grau], ["Data do ocorrido", fmtDt(detalhe.data_ocorrido)], ["Status", detalhe.status], ["Advertência verbal já foi dada para o mesmo fato?", detalhe.advertencia_verbal_dada ? "Sim" : "Não"], ["Data da advertência verbal", detalhe.advertencia_verbal_dada ? fmtDt(detalhe.data_advertencia_verbal) : "—"], ["Solicitante", detalhe.solicitante_nome], ["Aprovado/decidido por", detalhe.aprovado_por_nome || "—"]].map(([l, v]) => (
+              {[["Tipo", detalhe.tipo_advertencia], ["Grau", detalhe.grau], ["Data do ocorrido", fmtDt(detalhe.data_ocorrido)], ["Status", detalhe.status], ["Advertência verbal já foi dada para o mesmo fato?", detalhe.advertencia_verbal_dada ? "Sim" : "Não"], ["Data da advertência verbal", detalhe.advertencia_verbal_dada ? fmtDt(detalhe.data_advertencia_verbal) : "—"], ["Solicitante", detalhe.solicitante_nome], ["Data da solicitação", fmtDtHora(detalhe.created_at)], ["Aprovado/decidido por", detalhe.aprovado_por_nome || "—"]].map(([l, v]) => (
                 <div key={String(l)} style={{ background: "#f8fafc", border: "1px solid #eef2f7", borderRadius: 9, padding: "7px 10px" }}>
                   <div style={{ fontSize: 9.5, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase" }}>{l}</div>
                   <div style={{ fontSize: 12.5, fontWeight: 600, color: "#334155", marginTop: 2 }}>{String(v || "—")}</div>
@@ -408,6 +458,7 @@ export default function Advertencias() {
             <div style={{ fontSize: 11, fontWeight: 800, color: "#0f3171", textTransform: "uppercase", letterSpacing: ".4px", margin: "14px 0 4px" }}>Descrição do ocorrido</div>
             <div style={{ fontSize: 13, color: "#0f172a", whiteSpace: "pre-wrap", overflowWrap: "break-word", wordBreak: "break-word", background: "#f8fafc", borderRadius: 9, padding: "9px 12px" }}>{detalhe.descricao_ocorrido || "—"}</div>
             {detalhe.detalhe_anterior && <><div style={{ fontSize: 11, fontWeight: 800, color: "#0f3171", textTransform: "uppercase", margin: "12px 0 4px" }}>Advertência anterior</div><div style={{ fontSize: 12.5, color: "#475569" }}>{detalhe.detalhe_anterior}</div></>}
+            <HistoricoAdvertencia id={detalhe.id} />
             {/* Anexos de quem pediu (17/09/2026). O Jurídico só lê — anexa quem solicitou, pelo card dele. */}
             <AnexosSolicitacao modulo="advertencia" entidadeId={detalhe.id} podeAnexar={false} titulo="Anexos da solicitação" />
             {detalhe.parecer_juridico && <><div style={{ fontSize: 11, fontWeight: 800, color: "#0f3171", textTransform: "uppercase", margin: "12px 0 4px" }}>Parecer do Jurídico</div><div style={{ fontSize: 12.5, color: "#475569" }}>{detalhe.parecer_juridico}</div></>}
