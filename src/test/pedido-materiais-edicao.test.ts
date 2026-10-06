@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   edicaoReduzida,
+  exigeTamanhoItem,
   itensTravados,
   montarItensPayload,
   resumoAlteracoes,
@@ -177,6 +178,20 @@ describe("payload dos itens enviado à RPC", () => {
     expect(montarItensPayload([linha({ quantidade: "2.7" })])[0].quantidade).toBe(2);
     expect(montarItensPayload([linha({ quantidade: "0" })])[0].quantidade).toBe(1);
     expect(montarItensPayload([linha({ quantidade: "" })])[0].quantidade).toBe(1);
+  });
+});
+
+// SIS-2026-0481: todo uniforme exige tamanho, tenha grade ou não. O buraco era
+// uniforme sem grade (nenhum campo aparecia e o pedido saía sem tamanho).
+describe("quando o item exige tamanho", () => {
+  it("exige em todo uniforme, com grade ou sem grade", () => {
+    expect(exigeTamanhoItem("uniforme", true)).toBe(true);
+    expect(exigeTamanhoItem("uniforme", false)).toBe(true);
+  });
+
+  it("no insumo, exige só quando o catálogo oferece grade", () => {
+    expect(exigeTamanhoItem("insumo", true)).toBe(true);
+    expect(exigeTamanhoItem("insumo", false)).toBe(false);
   });
 });
 
