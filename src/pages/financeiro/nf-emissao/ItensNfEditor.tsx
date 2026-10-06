@@ -24,6 +24,8 @@ interface ItensNfEditorProps {
   contratoId: string;
   expandidos: Set<number>;
   mostrarPosEmissao?: boolean;
+  // SIS-2026-0592: libera só estes campos (chaves do ItemForm) numa tela readOnly.
+  camposEditaveis?: ReadonlySet<string>;
   readOnly?: boolean;
   onUpdateItem: (i: number, patch: Partial<ItemForm>) => void;
   onAddItem: () => void;
@@ -67,6 +69,7 @@ export function ItensNfEditor({
   contratoId,
   expandidos,
   mostrarPosEmissao,
+  camposEditaveis,
   readOnly,
   onUpdateItem,
   onAddItem,
@@ -226,7 +229,7 @@ export function ItensNfEditor({
                                   className="h-8"
                                   value={String(it[key] || "")}
                                   onChange={(v) => onUpdateItem(i, { [key]: parseFloat(v) || 0 } as any)}
-                                  disabled={readOnly}
+                                  disabled={readOnly && !camposEditaveis?.has(key)}
                                 />
                               </div>
                             )

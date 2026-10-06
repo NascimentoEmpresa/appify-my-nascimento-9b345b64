@@ -10,8 +10,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { TableHeadOrdenavel } from "@/components/ui/table-head-ordenavel";
 import { DateRangeFilter } from "@/components/ui/date-range-filter";
-import { CheckCircle2, ChevronLeft, ChevronRight, Hourglass, AlertTriangle, XCircle, ClipboardCheck, X, Wallet, CheckCircle, Clock3, LineChart } from "lucide-react";
+import { CheckCircle2, ChevronLeft, ChevronRight, Hourglass, AlertTriangle, XCircle, ClipboardCheck, X, Wallet, CheckCircle, Clock3, LineChart, FileWarning } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { comprovantePendenteDoItem, diasAguardandoComprovante, pagoEmDoItem, severidadeComprovante, textoDiasComprovante } from "./comprovantePendente";
 import {
   useItensAprovacoesMalote,
   useNomeUsuario,
@@ -70,6 +71,10 @@ interface TileInfo {
   count: number;
   icon: React.ComponentType<{ className?: string }>;
   cor: "amber" | "sky" | "violet" | "emerald" | "red" | "blue";
+  // Card que não é um status (ex.: "Aguardando comprovante"): comanda o próprio
+  // filtro em vez do filtro de status.
+  selecionado?: boolean;
+  onClick?: () => void;
 }
 
 const COR_TILE: Record<TileInfo["cor"], string> = {
@@ -104,12 +109,12 @@ function GrupoTiles({ tiles, ativo, onClick }: { tiles: TileInfo[]; ativo: Statu
     <div className="grid gap-2 grid-cols-[repeat(auto-fit,minmax(130px,1fr))]">
       {tiles.map((t) => {
         const Icon = t.icon;
-        const selecionado = !!t.status && ativo === t.status;
+        const selecionado = t.selecionado ?? (!!t.status && ativo === t.status);
         return (
           <button
             key={t.label}
             type="button"
-            onClick={() => onClick(selecionado ? "" : t.status ?? "")}
+            onClick={() => (t.onClick ? t.onClick() : onClick(selecionado ? "" : t.status ?? ""))}
             className={cn(
               "flex flex-col items-center gap-1.5 rounded-lg border p-3 text-center transition-colors",
               selecionado ? "border-primary bg-primary/10 ring-1 ring-primary" : COR_TILE_CARD[t.cor]
@@ -221,6 +226,8 @@ export default function PagamentoMalote() {
   const [dataPagamentoDe, setDataPagamentoDe] = useEstadoPersistido(F, "dataPagamentoDe", "");
   const [dataPagamentoAte, setDataPagamentoAte] = useEstadoPersistido(F, "dataPagamentoAte", "");
   const [status, setStatus] = useEstadoPersistido<StatusDespesa | "">(F, "status", "");
+  // Cobrança: só o que foi pago sem comprovante e ainda espera o anexo.
+  const [soSemComprovante, setSoSemComprovante] = useEstadoPersistido<boolean>(F, "semComprovante", false);
   const [classificacao, setClassificacao] = useEstadoPersistido(F, "classificacao", "");
   const [responsavelId, setResponsavelId] = useEstadoPersistido(F, "responsavelId", "");
   const [empresaId, setEmpresaId] = useEstadoPersistido(F, "empresaId", "");
@@ -266,6 +273,7 @@ export default function PagamentoMalote() {
     setDataPagamentoDe("");
     setDataPagamentoAte("");
     setStatus("");
+    setSoSemComprovante(false);
     setClassificacao("");
     setResponsavelId("");
     setEmpresaId("");
@@ -276,6 +284,7 @@ export default function PagamentoMalote() {
 
   function setStatusFiltro(s: StatusDespesa | "") {
     setStatus(s);
+    setSoSemComprovante(false);
     setPagina(1);
   }
 
@@ -283,6 +292,7 @@ export default function PagamentoMalote() {
     return itens.filter((item) => {
       const d = item.despesa;
       if (status && statusEfetivo(item) !== status) return false;
+      if (soSemComprovante && !comprovantePendenteDoItem(item)) return false;
       if (classificacao && d.classificacao?.nome !== classificacao) return false;
       if (responsavelId && d.created_by !== responsavelId) return false;
       if (empresaId && empresaIdResolvida(d) !== empresaId) return false;
@@ -304,6 +314,7 @@ export default function PagamentoMalote() {
   }, [
     itens,
     status,
+    soSemComprovante,
     classificacao,
     responsavelId,
     empresaId,
@@ -394,6 +405,18 @@ export default function PagamentoMalote() {
     { label: STATUS_LABEL.pronto_para_pagar, status: "pronto_para_pagar", count: contar("pronto_para_pagar"), icon: ClipboardCheck, cor: "violet" },
     { label: STATUS_LABEL.despesa_reprovada, status: "despesa_reprovada", count: contar("despesa_reprovada"), icon: XCircle, cor: "red" },
     { label: STATUS_LABEL.despesa_paga, status: "despesa_paga", count: contar("despesa_paga"), icon: CheckCircle2, cor: "emerald" },
+    {
+      label: "Paga — aguardando comprovante",
+      count: itensComFiltrosDoPainel.filter(comprovantePendenteDoItem).length,
+      icon: FileWarning,
+      cor: "amber",
+      selecionado: soSemComprovante,
+      onClick: () => {
+        setSoSemComprovante(!soSemComprovante);
+        setStatus("");
+        setPagina(1);
+      },
+    },
   ];
 
   // SIS-2026-0286 (Iury) / SIS-2026-0323 (Iury, revertido): "três cards com
@@ -627,6 +650,11 @@ function LinhaItem({
   const { despesa, parcela } = item;
   const { data: solicitanteNome } = useNomeUsuario(despesa.created_by);
   const status = statusEfetivo(item);
+  // Pago sem comprovante: etiqueta dentro da coluna de status (sem coluna nova,
+  // pra tabela não ganhar scroll lateral). Esquenta com os dias parados.
+  const semComprovante = comprovantePendenteDoItem(item);
+  const diasSemComprovante = semComprovante ? diasAguardandoComprovante(pagoEmDoItem(item)) : 0;
+  const sevComprovante = severidadeComprovante(diasSemComprovante);
   const valor = parcela ? parcela.valor : despesa.valor_aprovado ?? despesa.valor_total;
   const dataPagamento = parcela ? parcela.data_pagamento_real ?? parcela.data_vencimento : despesa.data_pagamento;
   return (
@@ -655,7 +683,22 @@ function LinhaItem({
       <TableCell className="text-center text-sm">{despesa.forma_pagamento ?? "—"}</TableCell>
       <TableCell className="text-center text-sm">{solicitanteNome ?? "—"}</TableCell>
       <TableCell className="text-center">
-        <Badge className={STATUS_BADGE_CLASS[status]}>{STATUS_LABEL[status]}</Badge>
+        <div className="flex flex-col items-center gap-1">
+          <Badge className={STATUS_BADGE_CLASS[status]}>{STATUS_LABEL[status]}</Badge>
+          {semComprovante && (
+            <span
+              title="Pago sem comprovante — quem pagou precisa anexar o arquivo"
+              className={cn(
+                "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium",
+                sevComprovante === "critico"
+                  ? "bg-red-100 text-red-700 dark:bg-red-950/40 dark:text-red-300"
+                  : "bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300"
+              )}
+            >
+              <FileWarning className="h-3 w-3" /> Aguardando comprovante · {textoDiasComprovante(diasSemComprovante)}
+            </span>
+          )}
+        </div>
       </TableCell>
       <TableCell className="text-center text-xs text-muted-foreground">{new Date(despesa.updated_at).toLocaleString("pt-BR")}</TableCell>
       <TableCell className="text-center">
