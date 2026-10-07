@@ -11,7 +11,7 @@ import { fmtKpi, MENU_IA, rotuloMes, SISTEMAS, type RelatorioDados } from "./sis
 import { GraficoMensal, PainelIA, SeletorPeriodo, usePeriodo } from "./componentes";
 
 // =====================================================================
-// DIRETORIA E PRESIDÊNCIA › RELATÓRIO GERAL (mig 20261005000006)
+// RELATÓRIOS › RELATÓRIO GERAL (mig 20261005000006; módulo próprio desde 07/10/2026, mig 20261007000010)
 //
 // Pedido (05/10/2026): "RELATÓRIO GERAL vai ter relatório de TODOS os
 // sistemas de solicitações … gráfico pra tudo, e I.A integrada pra gerar
@@ -57,7 +57,7 @@ export default function RelatorioGeral() {
   return (
     <div className="space-y-4">
       <PageHeader title="Relatório Geral" subtitle="Todos os sistemas de solicitação, o quadro de colaboradores e o turn-over — com análise por I.A."
-        module="Diretoria e Presidência" breadcrumb={["Diretoria", "Relatórios", "Relatório Geral"]} />
+        module="Relatórios" breadcrumb={["Relatório Geral"]} />
       <div className="flex justify-end"><SeletorPeriodo periodo={periodo} /></div>
 
       {q.isLoading ? (
@@ -73,7 +73,7 @@ export default function RelatorioGeral() {
               const Icone = s.icone;
               const [k1, k2, k3] = r.kpis;
               return (
-                <Link key={s.slug} to={`/app/diretoria/relatorios/${s.slug}`}
+                <Link key={s.slug} to={`/app/relatorios/${s.slug}`}
                   className="group rounded-xl border bg-card p-3 transition hover:-translate-y-0.5 hover:shadow-lg">
                   <div className="flex items-center gap-2">
                     <span className="grid h-8 w-8 place-items-center rounded-lg" style={{ background: `${s.cor}1a`, color: s.cor }}><Icone className="h-4 w-4" /></span>

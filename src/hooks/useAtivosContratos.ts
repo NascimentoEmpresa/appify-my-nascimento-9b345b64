@@ -30,6 +30,8 @@ export function usePainelAtivosContratos() {
   return useQuery({
     queryKey: ["rh-ativos-contratos"],
     staleTime: 2 * 60_000,
+    // Volta pelo menu com a tela já pintada (revalida em segundo plano).
+    gcTime: 30 * 60_000,
     queryFn: async (): Promise<PainelAtivos> => {
       const { data, error } = await sb.rpc<PainelAtivos>("rh_ac_painel");
       if (error) throw error;
