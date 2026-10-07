@@ -22,6 +22,7 @@ export interface TvItem {
   id: string; playlist_id: string; ordem: number; tipo: TipoItem; titulo: string | null; url: string | null;
   arquivo: string | null; texto: string | null; cor: string | null; duracao_seg: number;
   valido_de: string | null; valido_ate: string | null; ativo: boolean;
+  relatorio: string | null; rel_periodo: string | null; rel_contrato: string | null;
 }
 export interface TvPlaylist { id: string; nome: string; descricao: string | null; itens: TvItem[] }
 export interface TvAlerta {
@@ -74,6 +75,15 @@ export const useAtualizarTv = () => useMut(async (p: { id: string; patch: Partia
 
 export const useRecarregarTv = () => useMut(async (ids: string[]) =>
   ok(await sb.from("TV_DISPOSITIVO").update({ comando: "recarregar", comando_em: new Date().toISOString() }).in("id", ids)));
+
+/** Link fixo (mig 20261007000014): gera a chave curta da TV; a anterior para de valer. */
+export const useGerarLinkTv = () => useMutation({
+  mutationFn: async (id: string): Promise<string> => {
+    const { data, error } = await sb.rpc("tv_gerar_link", { p_id: id });
+    if (error) throw error;
+    return data as string;
+  },
+});
 
 export const useRemoverTv = () => useMut(async (id: string) => ok(await sb.from("TV_DISPOSITIVO").delete().eq("id", id)));
 

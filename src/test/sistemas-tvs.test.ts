@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { corAviso, duracaoTotal, haQuanto, statusTv, urlValida, youtubeEmbed } from "@/lib/tv/tv";
+import { corAviso, duracaoTotal, haQuanto, normalizarChaveTv, rotuloPeriodoTv, statusTv, tituloRelatorioTv, urlValida, youtubeEmbed } from "@/lib/tv/tv";
 
 // Sistemas › TV's (mig 20261007000012).
 
@@ -37,5 +37,21 @@ describe("TVs — regras", () => {
     expect(corAviso("red; background:url(x)")).toBe("#1d4ed8");
     expect(duracaoTotal([{ duracao_seg: 90 }, { duracao_seg: 60 }])).toBe("2 min 30 s");
     expect(duracaoTotal([{ duracao_seg: 20 }])).toBe("20 s");
+  });
+});
+
+describe("TVs — link fixo e relatórios (mig 20261007000014)", () => {
+  it("chave do link fixo: 12 caracteres sem 0/O/1/I", () => {
+    expect(normalizarChaveTv("LS9YCJ26HREN")).toBe("LS9YCJ26HREN");
+    expect(normalizarChaveTv("ls9y-cj26-hren")).toBe("LS9YCJ26HREN");
+    expect(normalizarChaveTv("LS9YCJ26HRE0")).toBeNull();
+    expect(normalizarChaveTv("curta")).toBeNull();
+    expect(normalizarChaveTv(null)).toBeNull();
+  });
+  it("rótulos de relatório e período", () => {
+    expect(tituloRelatorioTv("demissoes")).toBe("Demissões");
+    expect(tituloRelatorioTv("xyz")).toBe("Relatório");
+    expect(rotuloPeriodoTv("mes")).toBe("Este mês");
+    expect(rotuloPeriodoTv(null)).toBe("Últimos 12 meses");
   });
 });

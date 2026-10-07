@@ -1,7 +1,7 @@
 import { useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import {
-  AlertTriangle, ArrowDown, ArrowUp, Copy, Eye, EyeOff, Image as ImageIcon, ListVideo, Loader2, Megaphone, MonitorPlay,
+  AlertTriangle, ArrowDown, ArrowUp, BarChart3, Copy, Eye, EyeOff, Image as ImageIcon, Link2, ListVideo, Loader2, Megaphone, MonitorPlay, Power,
   Pause, Play, Plus, RefreshCw, Trash2, Tv, Type, Upload, Video, Clapperboard, Globe,
 } from "lucide-react";
 import { PageHeader } from "@/components/layout/PageHeader";
@@ -17,12 +17,16 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { AcessoGate } from "@/components/auth/AcessoGate";
 import { useAuth } from "@/hooks/useAuth";
+import { useContratosRelatorio } from "@/hooks/useRelatoriosDiretoria";
 import {
-  MENU_TVS, enviarMidia, urlMidia, useAtualizarTv, useCriarAlerta, useEncerrarAlerta, useExcluirItem, useExcluirPlaylist,
+  MENU_TVS, enviarMidia, urlMidia, useAtualizarTv, useGerarLinkTv, useCriarAlerta, useEncerrarAlerta, useExcluirItem, useExcluirPlaylist,
   useMoverItem, useParearTv, useRecarregarTv, useRemoverTv, useSalvarItem, useSalvarPlaylist, useTvAlertas, useTvDispositivos,
   useTvPlaylists, type TvDispositivo, type TvItem, type TvPlaylist,
 } from "@/hooks/useTvs";
-import { TIPOS_ITEM, corAviso, duracaoTotal, haQuanto, statusTv, urlValida, youtubeEmbed, type TipoItem } from "@/lib/tv/tv";
+import {
+  PERIODOS_TV, RELATORIOS_TV, TIPOS_ITEM, corAviso, duracaoTotal, haQuanto, rotuloPeriodoTv, statusTv, tituloRelatorioTv, urlValida, youtubeEmbed,
+  type TipoItem,
+} from "@/lib/tv/tv";
 
 // =====================================================================
 // SISTEMAS › TV's (07/10/2026, mig 20261007000012)
@@ -36,10 +40,13 @@ import { TIPOS_ITEM, corAviso, duracaoTotal, haQuanto, statusTv, urlValida, yout
 //     página web, com duração, validade e ordem;
 //   · Aviso geral — texto que cobre a tela de todas (ou algumas) TVs até
 //     a hora escolhida.
+// 07/10/2026 (mig 20261007000014): item "Relatório do ERP" (qual relatório,
+// período e contrato — tela cheia na TV) e LINK FIXO por TV (<app>/tv/<chave>)
+// para a TV abrir já conectada ao ligar, com o guia do app de quiosque.
 // Liberação: sistemas_tvs (Acesso por Usuário). Regras em src/lib/tv/tv.ts.
 // =====================================================================
 
-const ICONE: Record<TipoItem, typeof ImageIcon> = { imagem: ImageIcon, video: Video, aviso: Type, youtube: Clapperboard, url: Globe };
+const ICONE: Record<TipoItem, typeof ImageIcon> = { imagem: ImageIcon, video: Video, aviso: Type, youtube: Clapperboard, url: Globe, relatorio: BarChart3 };
 const fmtDataHora = (iso: string | null) => (iso ? new Date(iso).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) : "—");
 const urlPlayer = () => `${window.location.origin}/tv`;
 
@@ -71,6 +78,7 @@ export default function Tvs() {
 
 function AbaTvs({ tvs, carregando, playlists }: { tvs: TvDispositivo[]; carregando: boolean; playlists: TvPlaylist[] }) {
   const [adicionando, setAdicionando] = useState(false);
+  const [linkDe, setLinkDe] = useState<TvDispositivo | null>(null);
   const atualizar = useAtualizarTv();
   const recarregar = useRecarregarTv();
   const remover = useRemoverTv();
@@ -140,6 +148,7 @@ function AbaTvs({ tvs, carregando, playlists }: { tvs: TvDispositivo[]; carregan
                       <td className="px-3 py-2 text-xs text-muted-foreground">{t.tela ?? "—"}</td>
                       <td className="whitespace-nowrap px-3 py-2 text-right">
                         <AcessoGate menu={MENU_TVS} acao="alterar">
+                          <Button size="sm" variant="ghost" className="h-8 text-xs" title="Endereço fixo desta TV, para ela abrir já conectada ao ligar" onClick={() => setLinkDe(t)}><Link2 className="mr-1 h-3.5 w-3.5" /> Link fixo</Button>
                           <Button size="icon" variant="ghost" title="Recarregar a TV" onClick={() => recarregar.mutateAsync([t.id]).then(() => toast.success(`${t.nome} recarrega em até 15 s.`))}><RefreshCw className="h-4 w-4" /></Button>
                           <Button size="icon" variant="ghost" title={t.ativo ? "Pausar (mostra só o nome)" : "Voltar a tocar"} onClick={() => salvar(t.id, { ativo: !t.ativo }, t.ativo ? `${t.nome} pausada.` : `${t.nome} voltou a tocar.`)}>
                             {t.ativo ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
@@ -159,8 +168,61 @@ function AbaTvs({ tvs, carregando, playlists }: { tvs: TvDispositivo[]; carregan
             </table>
           </Card>
         )}
+      <GuiaAutomatico />
       <DialogAdicionar aberto={adicionando} onClose={() => setAdicionando(false)} playlists={playlists} />
+      <DialogLinkFixo tv={linkDe} onClose={() => setLinkDe(null)} />
     </div>
+  );
+}
+
+function DialogLinkFixo({ tv, onClose }: { tv: TvDispositivo | null; onClose: () => void }) {
+  const gerar = useGerarLinkTv();
+  const [chave, setChave] = useState<string | null>(null);
+  const fechar = () => { setChave(null); onClose(); };
+  const url = chave ? `${urlPlayer()}/${chave}` : "";
+  const criar = async () => {
+    if (!tv) return;
+    try { setChave(await gerar.mutateAsync(tv.id)); } catch (e) { toast.error((e as Error).message); }
+  };
+  return (
+    <Dialog open={!!tv} onOpenChange={(o) => !o && fechar()}>
+      <DialogContent className="max-w-lg">
+        <DialogHeader><DialogTitle>Link fixo — {tv?.nome}</DialogTitle></DialogHeader>
+        {!chave ? (
+          <div className="space-y-3 text-sm text-muted-foreground">
+            <p>O link fixo é o endereço desta TV. Coloque-o como <b className="text-foreground">página inicial</b> do navegador da TV (ou no app de quiosque): ao ligar, ela abre <b className="text-foreground">já conectada</b>, sem código, mesmo que o navegador tenha apagado tudo.</p>
+            <p className="rounded-md border border-warning/40 bg-warning/5 p-2 text-xs">Gerar um link novo <b>desliga o anterior</b> — se esta TV já usa um link fixo, ela vai pedir o novo.</p>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            <p className="text-sm text-muted-foreground">Digite na TV exatamente assim:</p>
+            <div className="rounded-lg border bg-muted/40 p-3 text-center font-mono text-lg font-bold break-all">{url}</div>
+            <p className="text-center text-xs text-muted-foreground">Chave: <span className="font-mono text-base font-bold tracking-widest text-foreground">{chave.slice(0, 4)} {chave.slice(4, 8)} {chave.slice(8)}</span> (sem 0, O, 1 ou I — não tem como confundir)</p>
+            <Button variant="outline" className="w-full" onClick={() => navigator.clipboard?.writeText(url).then(() => toast.success("Link copiado."))}><Copy className="mr-1 h-4 w-4" /> Copiar link</Button>
+            <p className="text-[11px] text-muted-foreground">Guarde o link: por segurança ele só aparece agora. Se perder, gere outro.</p>
+          </div>
+        )}
+        <DialogFooter>
+          <Button variant="outline" onClick={fechar}>{chave ? "Pronto" : "Cancelar"}</Button>
+          {!chave && <Button disabled={gerar.isPending} onClick={criar}><Link2 className="mr-1 h-4 w-4" /> Gerar link fixo</Button>}
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/** Como deixar a TV ligando e conectando sozinha (pedido de 07/10/2026). */
+function GuiaAutomatico() {
+  return (
+    <Card className="space-y-2 p-4 text-sm">
+      <p className="flex items-center gap-2 font-semibold"><Power className="h-4 w-4 text-primary" /> Deixar a TV 100% automática (liga, abre e conecta sozinha)</p>
+      <ol className="list-decimal space-y-1.5 pl-5 text-xs text-muted-foreground">
+        <li><b className="text-foreground">Melhor opção — Android TV / Fire TV Stick / TV Box:</b> instale o app <b className="text-foreground">Fully Kiosk Browser</b> (Play Store / Amazon Appstore). Em <i>Settings › Web Content</i>, ponha o <b className="text-foreground">Link fixo</b> desta TV como <i>Start URL</i>; em <i>Device Management</i> ligue <i>Launch on Boot</i> e <i>Keep Screen On</i>; em <i>Web Auto Reload</i> ligue <i>Reload on Network Reconnect</i>. A TV ligou → o app abre sozinho na tela da TV, em tela cheia.</li>
+        <li><b className="text-foreground">Smart TV sem app (Samsung/LG):</b> abra o navegador da TV no Link fixo e salve como <b className="text-foreground">página inicial</b>. Nas configurações da TV, desligue <i>Desligamento automático / Eco / Economia de energia</i> — é isso que costuma desligar a TV sozinha depois de algumas horas.</li>
+        <li><b className="text-foreground">Ligar e desligar no horário:</b> use o <i>Timer de ligar/desligar</i> da própria TV (Configurações › Geral › Hora). Com Fire TV/TV Box ligado em HDMI-CEC, a TV também liga junto com o aparelho.</li>
+        <li>Se a TV perder a internet, ela tenta de novo sozinha e <b className="text-foreground">recarrega depois de 3 min sem conexão</b>; uma vez por dia, de madrugada, faz uma recarga limpa.</li>
+      </ol>
+    </Card>
   );
 }
 
@@ -279,7 +341,7 @@ function EditorPlaylist({ p, onRenomear, onExcluir }: { p: TvPlaylist; onRenomea
                 <li key={i.id} className={`flex items-center gap-3 border-t px-3 py-2 first:border-t-0 ${i.ativo && !fora ? "" : "opacity-50"}`}>
                   <Miniatura item={i} />
                   <div className="min-w-0 flex-1">
-                    <p className="flex items-center gap-1.5 truncate text-sm font-medium"><Ic className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />{i.titulo || i.texto || i.url || TIPOS_ITEM.find((t) => t.valor === i.tipo)?.rotulo}</p>
+                    <p className="flex items-center gap-1.5 truncate text-sm font-medium"><Ic className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />{i.titulo || (i.tipo === "relatorio" ? `${tituloRelatorioTv(i.relatorio)} · ${rotuloPeriodoTv(i.rel_periodo)}` : null) || i.texto || i.url || TIPOS_ITEM.find((t) => t.valor === i.tipo)?.rotulo}</p>
                     <p className="text-[11px] text-muted-foreground">
                       {i.tipo === "video" ? "toca até o fim" : `${i.duracao_seg} s`}
                       {(i.valido_de || i.valido_ate) && <> · {i.valido_de ? `de ${fmtDataHora(i.valido_de)}` : ""} {i.valido_ate ? `até ${fmtDataHora(i.valido_ate)}` : ""}</>}
@@ -312,15 +374,17 @@ function Miniatura({ item }: { item: TvItem }) {
   const cls = "h-12 w-20 shrink-0 overflow-hidden rounded border bg-muted";
   if (item.tipo === "imagem" && item.arquivo) return <img src={urlMidia(item.arquivo)} alt="" className={`${cls} object-cover`} loading="lazy" />;
   if (item.tipo === "video" && item.arquivo) return <video src={urlMidia(item.arquivo)} className={`${cls} object-cover`} muted preload="metadata" />;
+  if (item.tipo === "relatorio") return <div className={`${cls} flex flex-col items-center justify-center bg-[#0b1220] p-1 text-center text-[8px] font-bold leading-tight text-white`}><BarChart3 className="mb-0.5 h-3.5 w-3.5 text-blue-400" />{tituloRelatorioTv(item.relatorio).slice(0, 24)}</div>;
   if (item.tipo === "aviso") return <div className={`${cls} flex items-center justify-center p-1 text-center text-[8px] font-bold leading-tight text-white`} style={{ background: corAviso(item.cor) }}>{(item.texto ?? "").slice(0, 40)}</div>;
   const Ic = ICONE[item.tipo];
   return <div className={`${cls} flex items-center justify-center`}><Ic className="h-5 w-5 text-muted-foreground" /></div>;
 }
 
-const VAZIO = { tipo: "imagem" as TipoItem, titulo: "", url: "", texto: "", cor: "#1d4ed8", duracao: "15", de: "", ate: "" };
+const VAZIO = { tipo: "relatorio" as TipoItem, titulo: "", url: "", texto: "", cor: "#1d4ed8", duracao: "30", de: "", ate: "", relatorio: "geral", periodo: "12m", contrato: "" };
 
 function NovoItem({ playlistId, proximaOrdem }: { playlistId: string; proximaOrdem: number }) {
   const salvar = useSalvarItem();
+  const { data: contratos = [] } = useContratosRelatorio();
   const [f, setF] = useState(VAZIO);
   const [arquivo, setArquivo] = useState<File | null>(null);
   const [enviando, setEnviando] = useState(false);
@@ -348,6 +412,8 @@ function NovoItem({ playlistId, proximaOrdem }: { playlistId: string; proximaOrd
         playlist_id: playlistId, ordem: proximaOrdem, tipo: f.tipo, titulo: f.titulo.trim() || null,
         url: f.tipo === "url" || f.tipo === "youtube" ? f.url.trim() : null, arquivo: caminho,
         texto: f.tipo === "aviso" ? f.texto.trim() : null, cor: f.tipo === "aviso" ? f.cor : null,
+        relatorio: f.tipo === "relatorio" ? f.relatorio : null, rel_periodo: f.tipo === "relatorio" ? f.periodo : null,
+        rel_contrato: f.tipo === "relatorio" && f.contrato ? f.contrato : null,
         duracao_seg: f.tipo === "video" ? 15 : Number(f.duracao),
         valido_de: f.de ? new Date(f.de).toISOString() : null, valido_ate: f.ate ? new Date(f.ate).toISOString() : null,
       } });
@@ -384,6 +450,29 @@ function NovoItem({ playlistId, proximaOrdem }: { playlistId: string; proximaOrd
         {(f.tipo === "url" || f.tipo === "youtube") && (
           <div className="sm:col-span-2"><Label className="text-xs">{f.tipo === "youtube" ? "Link do vídeo *" : "Endereço *"}</Label>
             <Input value={f.url} onChange={(e) => setF({ ...f, url: e.target.value })} placeholder={f.tipo === "youtube" ? "https://www.youtube.com/watch?v=…" : "https://…"} /></div>
+        )}
+        {f.tipo === "relatorio" && (
+          <>
+            <div><Label className="text-xs">Relatório *</Label>
+              <Select value={f.relatorio} onValueChange={(v) => setF({ ...f, relatorio: v })}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>{RELATORIOS_TV.map((r) => <SelectItem key={r.slug} value={r.slug}>{r.titulo}</SelectItem>)}</SelectContent>
+              </Select></div>
+            <div><Label className="text-xs">Período</Label>
+              <Select value={f.periodo} onValueChange={(v) => setF({ ...f, periodo: v })}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>{PERIODOS_TV.map((p) => <SelectItem key={p.valor} value={p.valor}>{p.rotulo}</SelectItem>)}</SelectContent>
+              </Select></div>
+            <div className="sm:col-span-2"><Label className="text-xs">Contrato (opcional)</Label>
+              <Select value={f.contrato || "__"} onValueChange={(v) => setF({ ...f, contrato: v === "__" ? "" : v })}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent className="max-h-72">
+                  <SelectItem value="__">Todos os contratos</SelectItem>
+                  {contratos.filter((c) => !c.encerrado).map((c) => <SelectItem key={c.id} value={c.id}>{c.nome}</SelectItem>)}
+                </SelectContent>
+              </Select>
+              <p className="mt-1 text-[11px] text-muted-foreground">Ex.: na TV do contrato UFRGS, só os números da UFRGS. Os números se atualizam sozinhos.</p></div>
+          </>
         )}
         {f.tipo === "aviso" && (
           <>

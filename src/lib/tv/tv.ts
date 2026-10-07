@@ -3,9 +3,10 @@
 // (mig 20261007000012). Com teste em src/test/sistemas-tvs.test.ts.
 // =====================================================================
 
-export type TipoItem = "imagem" | "video" | "url" | "youtube" | "aviso";
+export type TipoItem = "imagem" | "video" | "url" | "youtube" | "aviso" | "relatorio";
 
 export const TIPOS_ITEM: { valor: TipoItem; rotulo: string; dica: string }[] = [
+  { valor: "relatorio", rotulo: "Relatório do ERP", dica: "Números do ERP em tela cheia, atualizados sozinhos — sem rolar nem mexer" },
   { valor: "imagem", rotulo: "Imagem", dica: "JPG, PNG ou WEBP — fica na tela pelo tempo escolhido" },
   { valor: "video", rotulo: "Vídeo", dica: "MP4 — toca até o fim (sem som)" },
   { valor: "aviso", rotulo: "Aviso em texto", dica: "Texto grande sobre uma cor de fundo" },
@@ -16,6 +17,38 @@ export const TIPOS_ITEM: { valor: TipoItem; rotulo: string; dica: string }[] = [
 export interface ItemTv {
   id: string; tipo: TipoItem; titulo: string | null; url: string | null; arquivo: string | null;
   texto: string | null; cor: string | null; duracao_seg: number;
+  relatorio?: string | null; rel_periodo?: PeriodoTv | null;
+}
+
+// ---- Relatórios na TV (mig 20261007000014) ----------------------------------
+
+/** Relatórios que a TV sabe mostrar em tela cheia (mesmos slugs de src/pages/relatorios/sistemas.ts + "geral"). */
+export const RELATORIOS_TV: { slug: string; titulo: string }[] = [
+  { slug: "geral", titulo: "Visão geral — todos os sistemas" },
+  { slug: "recrutamento", titulo: "Gestão Recrutamento" },
+  { slug: "demissoes", titulo: "Demissões" },
+  { slug: "materiais", titulo: "Materiais" },
+  { slug: "ferias", titulo: "Férias" },
+  { slug: "medida-disciplinar", titulo: "Medida Disciplinar" },
+  { slug: "mudanca-funcao", titulo: "Mudança de Função" },
+  { slug: "chamados", titulo: "Chamados" },
+  { slug: "orientacoes", titulo: "Orientações Jurídicas" },
+  { slug: "colaboradores", titulo: "Colaboradores" },
+  { slug: "turnover", titulo: "Turn-over" },
+];
+export const tituloRelatorioTv = (slug: string | null | undefined) => RELATORIOS_TV.find((r) => r.slug === slug)?.titulo ?? "Relatório";
+
+export type PeriodoTv = "mes" | "3m" | "6m" | "12m" | "ano";
+export const PERIODOS_TV: { valor: PeriodoTv; rotulo: string }[] = [
+  { valor: "mes", rotulo: "Este mês" }, { valor: "3m", rotulo: "Últimos 3 meses" }, { valor: "6m", rotulo: "Últimos 6 meses" },
+  { valor: "12m", rotulo: "Últimos 12 meses" }, { valor: "ano", rotulo: "Este ano" },
+];
+export const rotuloPeriodoTv = (p: string | null | undefined) => PERIODOS_TV.find((x) => x.valor === p)?.rotulo ?? "Últimos 12 meses";
+
+/** Chave do link fixo: 12 caracteres do alfabeto sem 0/O/1/I (tv_gerar_link). Aceita com espaço/traço e minúscula. */
+export function normalizarChaveTv(c: string | null | undefined): string | null {
+  const s = (c ?? "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+  return /^[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{12}$/.test(s) ? s : null;
 }
 
 export interface EstadoTv {

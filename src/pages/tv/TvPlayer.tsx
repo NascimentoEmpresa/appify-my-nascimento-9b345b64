@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useParams } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
-import { corAviso, INTERVALO_PING_S, youtubeEmbed, type EstadoTv, type ItemTv } from "@/lib/tv/tv";
+import { corAviso, INTERVALO_PING_S, normalizarChaveTv, youtubeEmbed, type EstadoTv, type ItemTv } from "@/lib/tv/tv";
+import { TvRelatorio } from "./TvRelatorio";
 
 // =====================================================================
 // /tv — PLAYER das TVs da empresa (Sistemas › TV's, mig 20261007000012)
@@ -15,6 +17,15 @@ import { corAviso, INTERVALO_PING_S, youtubeEmbed, type EstadoTv, type ItemTv } 
 //      cadastrado; vídeo até acabar). O aviso geral cobre tudo enquanto
 //      estiver valendo.
 // Token apagado/desconhecido → registra de novo (novo código).
+//
+// 07/10/2026 (mig 20261007000014) — "elas ficam desligando; ao ligar, só de
+// abrir o navegador já teria que conectar":
+//   · /tv/<chave>: LINK FIXO da TV (gerado em Sistemas › TV's). A chave é o
+//     token: não depende do navegador guardar nada. Vai como página inicial
+//     do navegador / app de quiosque;
+//   · cão de guarda: 3 min sem conseguir falar com o ERP → recarrega; e uma
+//     recarga limpa por dia, de madrugada (navegador de TV vaza memória);
+//   · item "relatório": números do ERP em tela cheia (TvRelatorio).
 // =====================================================================
 
 const CHAVE_TOKEN = "gn:tv:token";
@@ -24,10 +35,16 @@ const lerToken = () => { try { return localStorage.getItem(CHAVE_TOKEN); } catch
 const gravarToken = (t: string | null) => { try { t ? localStorage.setItem(CHAVE_TOKEN, t) : localStorage.removeItem(CHAVE_TOKEN); } catch { /* modo privado */ } };
 const midia = (arquivo: string | null) => (arquivo ? supabase.storage.from("tv-midia").getPublicUrl(arquivo).data.publicUrl : "");
 
+const SEM_CONTATO_RECARREGA_MS = 3 * 60_000;
+const ABERTA_EM = Date.now();
+
 export default function TvPlayer() {
+  const { chave } = useParams<{ chave?: string }>();
+  const chaveFixa = normalizarChaveTv(chave);
   const [estado, setEstado] = useState<EstadoTv | null>(null);
   const [erro, setErro] = useState<string | null>(null);
-  const tokenRef = useRef<string | null>(lerToken());
+  const tokenRef = useRef<string | null>(chaveFixa ?? lerToken());
+  const ultimoOk = useRef(Date.now());
 
   const consultar = useCallback(async () => {
     try {
@@ -39,18 +56,37 @@ export default function TvPlayer() {
       const { data, error } = await rpc("tv_estado", { p_token: tokenRef.current, p_tela: tela() });
       if (error) throw new Error(error.message);
       const e = data as EstadoTv;
-      if (e.desconhecida) { tokenRef.current = null; gravarToken(null); return consultar(); }
+      if (e.desconhecida) {
+        // Link fixo com chave que não vale mais: NÃO cria outra TV — avisa.
+        if (chaveFixa) { setEstado(null); setErro("Este link de TV não vale mais. Gere um novo em Sistemas › TV's."); return; }
+        tokenRef.current = null; gravarToken(null); return consultar();
+      }
+      ultimoOk.current = Date.now();
       if (e.comando === "recarregar") { window.location.reload(); return; }
       setEstado(e); setErro(null);
     } catch (e) {
       setErro((e as Error).message || "Sem conexão com o ERP.");
     }
-  }, []);
+  }, [chaveFixa]);
 
   useEffect(() => {
+    if (chaveFixa) gravarToken(chaveFixa);
     consultar();
     const t = window.setInterval(consultar, INTERVALO_PING_S * 1000);
     return () => window.clearInterval(t);
+  }, [consultar]);
+
+  // Cão de guarda: sem falar com o ERP há 3 min, ou de madrugada depois de
+  // 20 h no ar, recarrega a página inteira (rede caiu, navegador travou).
+  useEffect(() => {
+    const t = window.setInterval(() => {
+      const h = new Date().getHours();
+      if (Date.now() - ultimoOk.current > SEM_CONTATO_RECARREGA_MS && navigator.onLine !== false) window.location.reload();
+      else if (Date.now() - ABERTA_EM > 20 * 3600_000 && h >= 3 && h < 5) window.location.reload();
+    }, 30_000);
+    const voltou = () => consultar();
+    window.addEventListener("online", voltou);
+    return () => { window.clearInterval(t); window.removeEventListener("online", voltou); };
   }, [consultar]);
 
   // Tela não apaga (onde o navegador deixa) e o cursor some.
@@ -68,7 +104,7 @@ export default function TvPlayer() {
     <div className="fixed inset-0 overflow-hidden bg-black text-white" onDoubleClick={() => document.documentElement.requestFullscreen?.().catch(() => {})}>
       {!estado ? <Centro titulo="Conectando ao ERP…" sub={erro ?? undefined} />
         : !estado.pareada ? <Pareamento codigo={estado.codigo ?? "------"} erro={erro} />
-        : <Reprodutor itens={estado.itens ?? []} nome={estado.nome ?? ""} ativa={estado.ativa !== false} />}
+        : <Reprodutor itens={estado.itens ?? []} nome={estado.nome ?? ""} ativa={estado.ativa !== false} token={tokenRef.current ?? ""} />}
       {estado?.pareada && estado.alerta && <Alerta texto={estado.alerta.texto} cor={estado.alerta.cor} />}
       {erro && estado?.pareada && <div className="absolute bottom-2 right-3 rounded bg-black/60 px-2 py-1 text-xs text-white/70">sem conexão — tentando de novo</div>}
     </div>
@@ -104,7 +140,7 @@ function Alerta({ texto, cor }: { texto: string; cor: string }) {
   );
 }
 
-function Reprodutor({ itens, nome, ativa }: { itens: ItemTv[]; nome: string; ativa: boolean }) {
+function Reprodutor({ itens, nome, ativa, token }: { itens: ItemTv[]; nome: string; ativa: boolean; token: string }) {
   const [idx, setIdx] = useState(0);
   const assinatura = useMemo(() => itens.map((i) => `${i.id}:${i.duracao_seg}`).join("|"), [itens]);
   const atual = itens.length ? itens[idx % itens.length] : null;
@@ -126,14 +162,15 @@ function Reprodutor({ itens, nome, ativa }: { itens: ItemTv[]; nome: string; ati
   const prox = itens.length > 1 ? itens[(idx + 1) % itens.length] : null;
   return (
     <>
-      <Item key={`${atual.id}-${idx}`} item={atual} sozinho={itens.length === 1} aoAcabar={proximo} />
+      <Item key={`${atual.id}-${idx}`} item={atual} sozinho={itens.length === 1} aoAcabar={proximo} token={token} />
       {/* pré-carrega a próxima imagem para a troca não piscar */}
       {prox?.tipo === "imagem" && prox.arquivo && <link rel="preload" as="image" href={midia(prox.arquivo)} />}
     </>
   );
 }
 
-function Item({ item, sozinho, aoAcabar }: { item: ItemTv; sozinho: boolean; aoAcabar: () => void }) {
+function Item({ item, sozinho, aoAcabar, token }: { item: ItemTv; sozinho: boolean; aoAcabar: () => void; token: string }) {
+  if (item.tipo === "relatorio") return <TvRelatorio item={item} token={token} />;
   if (item.tipo === "imagem") {
     return <img src={midia(item.arquivo)} alt={item.titulo ?? ""} className="h-full w-full object-contain" onError={aoAcabar} />;
   }

@@ -426,6 +426,7 @@ const App = () => (
           {/* Player das TVs da empresa (Sistemas › TV's, mig 20261007000012): público,
               a TV não tem login — pareia por código e usa um token próprio. */}
           <Route path="/tv" element={<TvPlayer />} />
+          <Route path="/tv/:chave" element={<TvPlayer />} />
           <Route path="/denuncia/acompanhar" element={<Navigate to="/denuncia?acompanhar" replace />} />
           {/* Portal do Colaborador — o colaborador de campo entra com o CPF,
               sem conta no Supabase Auth: fora do ProtectedRoute e do AppShell
