@@ -51,6 +51,9 @@ export default function TurnoverPainel() {
   const [causas, setCausas] = useState<string[] | null>(null);
   const q = useTurnoverPainel({ ano, meses, contrato, causas });
   const p = q.data;
+  // Analistas olha sempre o ano inteiro (limites anuais, pedido de 07/10/2026).
+  // Com "Ano inteiro" no filtro a chave é a mesma da consulta acima — uma só ida ao banco.
+  const qAno = useTurnoverPainel({ ano, meses: null, contrato, causas });
 
   return (
     <div className="space-y-4">
@@ -86,7 +89,10 @@ export default function TurnoverPainel() {
             <FiltroCausas p={p} causas={causas} onChange={setCausas} />
             <Resumo p={p} />
           </TabsContent>
-          <TabsContent value="analistas" className="space-y-4"><Analistas p={p} /></TabsContent>
+          <TabsContent value="analistas" className="space-y-4">
+            {qAno.data ? <Analistas p={qAno.data} filtrado={meses != null} />
+              : <Card className="flex items-center gap-2 p-6 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Montando o ano inteiro…</Card>}
+          </TabsContent>
           <TabsContent value="valores">
             <Card className="flex items-start gap-3 p-6 text-sm text-muted-foreground">
               <Info className="mt-0.5 h-5 w-5 shrink-0 text-info" />
@@ -309,7 +315,7 @@ function RankingContratos({ titulo, subtitulo, itens, cor }: {
 
 const TITULO: Record<TipoLimite, string> = { trabalhado: "% Aviso trabalhado", indenizado: "% Aviso indenizado", demissao: "% De demissão" };
 
-function Analistas({ p }: { p: PainelTurnover }) {
+function Analistas({ p, filtrado }: { p: PainelTurnover; filtrado: boolean }) {
   const tipos: TipoLimite[] = ["trabalhado", "indenizado", "demissao"];
   const linhas = useMemo(() => Object.fromEntries(tipos.map((t) => [t, analistas(p, t)])) as Record<TipoLimite, LinhaAnalista[]>, [p]);
   const tabela = useMemo(() => [...p.por_contrato].filter((c) => c.efetivo_atual > 0).sort((a, b) => nomeContrato(a.contrato).localeCompare(nomeContrato(b.contrato))), [p]);
@@ -321,7 +327,8 @@ function Analistas({ p }: { p: PainelTurnover }) {
         <Info className="mt-0.5 h-4 w-4 shrink-0 text-info" />
         <p>
           O tipo de aviso vem das solicitações feitas em <b className="text-foreground">Solicitar Demissão</b> no ERP (sem canceladas e reprovadas) — demissões anteriores ao ERP não têm aviso registrado.
-          Os limites são sobre o efetivo atual de cada contrato, no ano.
+          Os limites são sobre o efetivo atual de cada contrato, no ano. Avisos já pedidos com data futura entram na conta.
+          {filtrado && <> <b className="text-foreground">Esta aba mostra sempre o ano inteiro de {p.ano}</b> — o filtro de meses vale só para o Resumo.</>}
         </p>
       </div>
       <div className="grid gap-4 md:grid-cols-3">
