@@ -95,10 +95,11 @@ export default function CursoForm() {
     const carga = f.carga_horaria.trim() ? Math.round(Number(f.carga_horaria.replace(",", ".")) * 60) : null;
     if (carga !== null && (!Number.isFinite(carga) || carga < 0)) return toast.error("Carga horária inválida.");
     if (f.com_assinatura && !f.assinatura_id) return toast.error("Escolha a assinatura principal do certificado (ou crie uma).");
-    // Mig 20261006000001: publicar exige assinatura de Técnico(a) em Segurança com registro.
+    // Mig 20261007000002: assinatura é opcional; se tiver, para publicar tem que
+    // ser de Técnico(a) em Segurança com registro (regra da mig 20261006000001).
     const ass = f.com_assinatura ? assinaturas.find((a) => a.id === f.assinatura_id) : null;
-    if (f.publicado && !(ass?.ativo && assinaturaValeParaPublicar(ass)))
-      return toast.error("O curso só pode ser publicado com a assinatura de um(a) Técnico(a) em Segurança (cargo e registro) — ligue a assinatura abaixo.");
+    if (f.publicado && ass && !(ass.ativo && assinaturaValeParaPublicar(ass)))
+      return toast.error("A assinatura escolhida não é de um(a) Técnico(a) em Segurança com registro — troque ou desligue a assinatura para publicar.");
     try {
       const novoId = await salvar.mutateAsync({
         id: editando ? id : undefined,
@@ -214,7 +215,7 @@ export default function CursoForm() {
                 </div>
               </div>
 
-              {/* Fora do "se tem certificado" desde 06/10/2026: sem assinatura o curso não publica. */}
+              {/* Fora do "se tem certificado" desde 06/10/2026. Opcional desde 07/10/2026 (mig 20261007000002). */}
               {(
                 <div className="grupo">
                   <h4>Assinatura do certificado</h4>
@@ -300,7 +301,7 @@ export default function CursoForm() {
               <h5>Certificado</h5>
               Escolha um modelo em Cursos › Certificados. Sem modelo, o curso não emite certificado.
               <h5>Assinatura</h5>
-              Obrigatória para publicar: tem que ser de um(a) Técnico(a) em Segurança, com cargo e registro. O certificado sai com "ASSINADO DIGITALMENTE POR" + nome, cargo, registro e a assinatura. As assinaturas ficam em Cursos › Assinaturas.
+              Opcional: sem assinatura o certificado sai sem assinatura. Se tiver, tem que ser de um(a) Técnico(a) em Segurança, com cargo e registro. O certificado sai com "ASSINADO DIGITALMENTE POR" + nome, cargo, registro e a assinatura. As assinaturas ficam em Cursos › Assinaturas.
             </div>
           </div>
         )}
