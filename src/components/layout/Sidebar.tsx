@@ -284,6 +284,13 @@ const suprimentosModule: ModuleDef = {
   status: "active",
   groups: [
     {
+      label: "Gestão",
+      defaultOpen: true,
+      items: [
+        { label: "Dashboard de Compras", to: "/app/suprimentos/dashboard", icon: BarChart3, badge: "Novo" },
+      ],
+    },
+    {
       label: "Materiais & Catálogo",
       defaultOpen: true,
       items: [
