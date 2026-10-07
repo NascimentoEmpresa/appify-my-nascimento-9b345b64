@@ -1,7 +1,7 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import type { RelatorioDados, RelatorioGeralDados } from "@/pages/diretoria/relatorios/sistemas";
-import type { PainelTurnover } from "@/lib/diretoria/turnover";
+import type { PainelTurnover, RescisoesTurnover } from "@/lib/diretoria/turnover";
 
 // =====================================================================
 // Diretoria › Relatórios — acesso a dados (mig 20261005000006).
@@ -49,6 +49,21 @@ export function useTurnoverPainel(f: { ano: number; meses: number[] | null; cont
       const { data, error } = await sb.rpc("dir_turnover_painel", { _ano: f.ano, _meses: f.meses, _contrato: f.contrato, _causas: f.causas });
       if (error) throw error;
       return data as PainelTurnover;
+    },
+  });
+}
+
+/** Aba "Turnover em Valores" — por enquanto quantidades e perfil das rescisões (mig 20261007000006). */
+export function useTurnoverRescisoes(f: { ano: number; meses: number[] | null; contrato: string | null }, ativo: boolean) {
+  return useQuery({
+    queryKey: [CHAVE, "turnover-rescisoes", f.ano, f.meses?.slice().sort((a, b) => a - b).join(",") ?? null, f.contrato],
+    enabled: ativo,
+    staleTime: 5 * 60_000,
+    placeholderData: (anterior) => anterior,
+    queryFn: async (): Promise<RescisoesTurnover> => {
+      const { data, error } = await sb.rpc("dir_turnover_rescisoes", { _ano: f.ano, _meses: f.meses, _contrato: f.contrato });
+      if (error) throw error;
+      return data as RescisoesTurnover;
     },
   });
 }

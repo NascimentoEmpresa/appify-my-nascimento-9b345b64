@@ -11,10 +11,10 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { SearchableSelect } from "@/components/ui/searchable-select";
-import { useTurnoverPainel } from "@/hooks/useRelatoriosDiretoria";
+import { useTurnoverPainel, useTurnoverRescisoes } from "@/hooks/useRelatoriosDiretoria";
 import {
-  LIMITES, META_ANUAL, META_MENSAL, analistas, dozeMeses, nomeContrato, rotuloMeses, totalAnalistas, turnoverDoAno, turnoverPorContrato,
-  type LinhaAnalista, type PainelTurnover, type TipoLimite,
+  LIMITES, META_ANUAL, META_MENSAL, analistas, dozeMeses, nomeContrato, pctDe, rotuloMeses, tempoDeCasa, totalAnalistas, turnoverDoAno, turnoverPorContrato,
+  type LinhaAnalista, type PainelTurnover, type RescisoesTurnover, type TipoLimite,
 } from "@/lib/diretoria/turnover";
 import { AcessoGate } from "@/components/auth/AcessoGate";
 import { MENU_IA, rotuloMes } from "./sistemas";
@@ -30,7 +30,9 @@ import { PainelIA } from "./componentes";
 //     desligamento ("Selecione o que deve ser considerado no Turnover");
 //   · Analistas — aviso trabalhado (até 23%), indenizado (até 5%) e
 //     demissões (até 100%) por contrato, acumulado e projeção do ano.
-//   · Valores (rescisões) — depende das verbas da Senior; aba avisa.
+//   · Valores (rescisões) — a Senior manda as verbas sem valor; desde
+//     07/10/2026 (mig 20261007000006) a aba mostra QUANTIDADES: perfil das
+//     rescisões (tempo de casa, contrato, causa, aviso) e verbas de férias.
 // Filtro de meses (07/10/2026, mig 20261007000003): era "Até <mês>"; agora
 // marca um ou vários meses soltos (FiltroMeses) e a RPC recebe _meses.
 // Contas em src/lib/diretoria/turnover.ts (com teste).
@@ -54,6 +56,8 @@ export default function TurnoverPainel() {
   // Analistas olha sempre o ano inteiro (limites anuais, pedido de 07/10/2026).
   // Com "Ano inteiro" no filtro a chave é a mesma da consulta acima — uma só ida ao banco.
   const qAno = useTurnoverPainel({ ano, meses: null, contrato, causas });
+  const [aba, setAba] = useState("resumo");
+  const qResc = useTurnoverRescisoes({ ano, meses, contrato }, aba === "valores");
 
   return (
     <div className="space-y-4">
@@ -79,7 +83,7 @@ export default function TurnoverPainel() {
       ) : q.error || !p ? (
         <Card className="flex items-center gap-3 p-6 text-sm text-muted-foreground"><ShieldAlert className="h-5 w-5 text-warning" /> {(q.error as Error)?.message ?? "Não foi possível carregar."}</Card>
       ) : (
-        <Tabs defaultValue="resumo" className={q.isFetching ? "opacity-70 transition-opacity" : ""}>
+        <Tabs value={aba} onValueChange={setAba} className={q.isFetching ? "opacity-70 transition-opacity" : ""}>
           <TabsList>
             <TabsTrigger value="resumo">Resumo Turnover</TabsTrigger>
             <TabsTrigger value="analistas">Analistas</TabsTrigger>
@@ -93,14 +97,10 @@ export default function TurnoverPainel() {
             {qAno.data ? <Analistas p={qAno.data} filtrado={meses != null} />
               : <Card className="flex items-center gap-2 p-6 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Montando o ano inteiro…</Card>}
           </TabsContent>
-          <TabsContent value="valores">
-            <Card className="flex items-start gap-3 p-6 text-sm text-muted-foreground">
-              <Info className="mt-0.5 h-5 w-5 shrink-0 text-info" />
-              <div>
-                <p className="font-semibold text-foreground">Ainda não disponível no ERP</p>
-                <p>Os valores gastos em rescisões (tabela × prejuízo, por verba, por contrato e por tempo de empresa) vêm das verbas de rescisão da folha na Senior, que o ERP ainda não importa. Esta aba entra quando essa importação existir.</p>
-              </div>
-            </Card>
+          <TabsContent value="valores" className="space-y-4">
+            {qResc.data ? <Rescisoes r={qResc.data} carregando={qResc.isFetching} />
+              : qResc.error ? <Card className="flex items-center gap-3 p-6 text-sm text-muted-foreground"><ShieldAlert className="h-5 w-5 text-warning" /> {(qResc.error as Error).message}</Card>
+              : <Card className="flex items-center gap-2 p-6 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Montando as rescisões…</Card>}
           </TabsContent>
         </Tabs>
       )}
@@ -303,6 +303,152 @@ function RankingContratos({ titulo, subtitulo, itens, cor }: {
                 <span className="shrink-0 font-semibold tabular-nums">{pct(i.valor)}</span>
               </div>
               <div className="h-2 rounded-sm bg-muted"><div className="h-full rounded-sm" style={{ width: `${(i.valor / max) * 100}%`, background: cor(i.valor) }} /></div>
+            </div>
+          ))}
+        </div>
+      )}
+    </Card>
+  );
+}
+
+// ---- Turnover em Valores (por enquanto, quantidades) -------------------------------
+
+function Rescisoes({ r, carregando }: { r: RescisoesTurnover; carregando: boolean }) {
+  const ate3 = r.por_faixa.find((f) => f.ordem === 1)?.n ?? 0;
+  const faixas = r.por_faixa.filter((f) => f.ordem > 0 || f.n > 0);
+  const contratos = r.por_contrato.slice(0, 15);
+  return (
+    <div className={`space-y-4 ${carregando ? "opacity-70 transition-opacity" : ""}`}>
+      <div className="flex items-start gap-2 rounded-lg border border-info/30 bg-info/5 px-3 py-2 text-xs text-muted-foreground">
+        <Info className="mt-0.5 h-4 w-4 shrink-0 text-info" />
+        <p>
+          <b className="text-foreground">Ainda sem valores em R$:</b> a Senior envia as verbas da rescisão e o holerite com o valor em branco.
+          Por enquanto esta aba mostra <b className="text-foreground">quantidades</b> — quantas rescisões, de que perfil e com quais verbas de férias.
+          Os valores entram aqui quando a exportação da Senior passar a mandá-los.
+        </p>
+      </div>
+
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <Numero titulo="Rescisões no período" valor={r.total.toLocaleString("pt-BR")} dica={`${rotuloMeses(r.meses)} de ${r.ano}`} />
+        <Numero titulo="Tempo de casa médio" valor={tempoDeCasa(r.tempo_medio_dias)} dica="da admissão ao afastamento" />
+        <Numero titulo="Tempo de casa mediano" valor={tempoDeCasa(r.tempo_mediano_dias)} dica="metade saiu antes disso" />
+        <Numero titulo="Saíram com até 3 meses" valor={`${pctDe(ate3, r.total).toLocaleString("pt-BR")}%`} dica={`${ate3.toLocaleString("pt-BR")} rescisões`} destaque={pctDe(ate3, r.total) >= 30} />
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-2">
+        <Card className="p-4">
+          <p className="text-sm font-semibold">Rescisões por tempo de empresa</p>
+          <p className="text-xs text-muted-foreground">Da admissão ao afastamento</p>
+          <ResponsiveContainer width="100%" height={230}>
+            <BarChart data={faixas} margin={{ top: 22, right: 8, left: -18, bottom: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" vertical={false} />
+              <XAxis dataKey="faixa" tick={{ fontSize: 10 }} interval={0} />
+              <YAxis tick={{ fontSize: 11 }} allowDecimals={false} />
+              <Tooltip formatter={(v: number) => [`${v} rescisões (${pctDe(v, r.total).toLocaleString("pt-BR")}%)`, ""]} />
+              <Bar dataKey="n" radius={[4, 4, 0, 0]}>
+                {faixas.map((f) => <Cell key={f.faixa} fill={f.ordem === 1 ? VERMELHO : AZUL} />)}
+                <LabelList dataKey="n" position="top" fontSize={11} />
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
+        </Card>
+        <Card className="p-4">
+          <p className="text-sm font-semibold">Rescisões por mês</p>
+          <p className="text-xs text-muted-foreground">Pela data de afastamento</p>
+          <ResponsiveContainer width="100%" height={230}>
+            <BarChart data={r.por_mes} margin={{ top: 22, right: 8, left: -18, bottom: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" vertical={false} />
+              <XAxis dataKey="mes" tick={{ fontSize: 11 }} tickFormatter={rotuloMes} />
+              <YAxis tick={{ fontSize: 11 }} allowDecimals={false} />
+              <Tooltip formatter={(v: number) => [`${v} rescisões`, ""]} labelFormatter={(l) => rotuloMes(String(l))} />
+              <Bar dataKey="n" fill={AZUL} radius={[4, 4, 0, 0]}><LabelList dataKey="n" position="top" fontSize={11} /></Bar>
+            </BarChart>
+          </ResponsiveContainer>
+        </Card>
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-3">
+        <ListaQtd titulo="Por tipo de desligamento" subtitulo="Descrição da causa na Senior" itens={r.por_causa.map((c) => ({ nome: c.causa, n: c.n }))} total={r.total} />
+        <ListaQtd titulo="Por tipo de aviso" subtitulo="Pedidos em Solicitar Demissão no ERP (desde ago/2026)" itens={r.avisos.map((a) => ({ nome: a.modelo, n: a.n }))}
+          total={r.avisos.reduce((s, a) => s + a.n, 0)} vazio="Nenhum pedido com aviso no período." />
+        <Card className="p-4">
+          <p className="text-sm font-semibold">Verbas de férias na rescisão</p>
+          <p className="mb-3 text-xs text-muted-foreground">Quantas rescisões tiveram cada verba (cálculo da Senior)</p>
+          <div className="space-y-2">
+            {r.verbas.map((v) => (
+              <div key={v.codigo} className="text-[11px]">
+                <div className="flex items-baseline justify-between gap-2">
+                  <span className="text-muted-foreground">{v.verba}</span>
+                  <span className="font-semibold tabular-nums">{v.n.toLocaleString("pt-BR")} <span className="font-normal text-muted-foreground">({pctDe(v.n, r.total).toLocaleString("pt-BR")}%)</span></span>
+                </div>
+                <div className="h-2 rounded-sm bg-muted"><div className="h-full rounded-sm" style={{ width: `${pctDe(v.n, r.total)}%`, background: AZUL }} /></div>
+              </div>
+            ))}
+          </div>
+          <p className="mt-3 text-[10px] text-muted-foreground">As outras verbas da rescisão chegam da Senior só com o código, sem nome — ficam de fora até o catálogo vir completo.</p>
+        </Card>
+      </div>
+
+      <Card className="overflow-hidden p-0">
+        <div className="px-4 pt-4">
+          <p className="text-sm font-semibold">Rescisões por contrato</p>
+          <p className="text-xs text-muted-foreground">Os 15 contratos com mais rescisões no período{r.por_contrato.length > 15 ? ` (de ${r.por_contrato.length})` : ""}</p>
+        </div>
+        <div className="mt-3 max-h-[420px] overflow-auto">
+          <table className="w-full text-xs">
+            <thead className="sticky top-0 bg-muted/80 text-left text-muted-foreground backdrop-blur">
+              <tr>
+                <th className="px-4 py-2 font-medium">Contrato</th>
+                <th className="px-2 py-2 text-right font-medium">Rescisões</th>
+                <th className="px-2 py-2 text-right font-medium">Com até 3 meses</th>
+                <th className="px-4 py-2 text-right font-medium">Tempo de casa médio</th>
+              </tr>
+            </thead>
+            <tbody>
+              {contratos.map((c) => (
+                <tr key={c.contrato} className="border-t">
+                  <td className="px-4 py-1.5">{nomeContrato(c.contrato)}</td>
+                  <td className="px-2 py-1.5 text-right font-semibold tabular-nums">{c.n}</td>
+                  <td className={`px-2 py-1.5 text-right tabular-nums ${pctDe(c.ate_3m, c.n) >= 50 ? "font-bold text-destructive" : ""}`}>
+                    {c.ate_3m} <span className="font-normal text-muted-foreground">({pctDe(c.ate_3m, c.n).toLocaleString("pt-BR")}%)</span>
+                  </td>
+                  <td className="px-4 py-1.5 text-right tabular-nums">{tempoDeCasa(c.tempo_medio_dias)}</td>
+                </tr>
+              ))}
+              {contratos.length === 0 && <tr><td colSpan={4} className="px-4 py-6 text-center text-muted-foreground">Sem rescisões no período.</td></tr>}
+            </tbody>
+          </table>
+        </div>
+      </Card>
+    </div>
+  );
+}
+
+function Numero({ titulo, valor, dica, destaque }: { titulo: string; valor: string; dica: string; destaque?: boolean }) {
+  return (
+    <Card className="p-4">
+      <p className="text-xs font-medium text-muted-foreground">{titulo}</p>
+      <p className={`mt-1 text-2xl font-black tabular-nums ${destaque ? "text-destructive" : ""}`}>{valor}</p>
+      <p className="text-[11px] text-muted-foreground">{dica}</p>
+    </Card>
+  );
+}
+
+function ListaQtd({ titulo, subtitulo, itens, total, vazio }: { titulo: string; subtitulo: string; itens: { nome: string; n: number }[]; total: number; vazio?: string }) {
+  const max = Math.max(...itens.map((i) => i.n), 1);
+  return (
+    <Card className="p-4">
+      <p className="text-sm font-semibold">{titulo}</p>
+      <p className="mb-3 text-xs text-muted-foreground">{subtitulo}</p>
+      {itens.length === 0 ? <p className="text-xs text-muted-foreground">{vazio ?? "Nada no período."}</p> : (
+        <div className="max-h-72 space-y-1.5 overflow-auto pr-1">
+          {itens.map((i) => (
+            <div key={i.nome} className="text-[11px]" title={`${i.nome}: ${i.n}`}>
+              <div className="flex items-baseline justify-between gap-2">
+                <span className="truncate text-muted-foreground">{i.nome}</span>
+                <span className="shrink-0 font-semibold tabular-nums">{i.n} <span className="font-normal text-muted-foreground">({pctDe(i.n, total).toLocaleString("pt-BR")}%)</span></span>
+              </div>
+              <div className="h-2 rounded-sm bg-muted"><div className="h-full rounded-sm" style={{ width: `${(i.n / max) * 100}%`, background: AZUL }} /></div>
             </div>
           ))}
         </div>

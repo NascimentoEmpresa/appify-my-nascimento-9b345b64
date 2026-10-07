@@ -123,3 +123,34 @@ export function totalAnalistas(p: Pick<PainelTurnover, "por_contrato" | "fator_p
   const pct = efetivo > 0 ? r2((qtd * 100) / efetivo) : 0;
   return { efetivo, qtd, pct, projecao: r2(pct * (p.fator_projecao || 1)), limite: LIMITES[tipo] };
 }
+
+// ---- Aba "Turnover em Valores" — por enquanto em quantidades (mig 20261007000006) ----
+// A Senior manda as verbas e o holerite com o valor vazio; até isso mudar, a
+// aba mostra quantas rescisões, de que perfil e com quais verbas de férias.
+
+export interface RescisoesTurnover {
+  ano: number; meses: number[]; total: number;
+  tempo_medio_dias: number | null; tempo_mediano_dias: number | null;
+  por_faixa: { ordem: number; faixa: string; n: number }[];
+  por_mes: { mes: string; n: number }[];
+  por_empresa: { empresa: string; n: number }[];
+  por_causa: { causa: string; n: number }[];
+  por_contrato: { contrato: string; n: number; ate_3m: number; tempo_medio_dias: number | null }[];
+  avisos: { modelo: string; n: number }[];
+  verbas: { codigo: number; verba: string; n: number }[];
+}
+
+/** Tempo de casa legível: 45 → "45 dias"; 170 → "5 meses"; 391 → "1 ano"; 453 → "1 ano e 2 meses". */
+export function tempoDeCasa(dias: number | null | undefined): string {
+  if (dias == null || !Number.isFinite(dias)) return "—";
+  const d = Math.round(dias);
+  if (d < 60) return `${d} dia${d === 1 ? "" : "s"}`;
+  const mesesTot = Math.floor(d / 30.4375);
+  const anos = Math.floor(mesesTot / 12), meses = mesesTot % 12;
+  const a = anos ? `${anos} ano${anos > 1 ? "s" : ""}` : "";
+  const m = meses ? `${meses} ${meses > 1 ? "meses" : "mês"}` : "";
+  return [a, m].filter(Boolean).join(" e ") || "1 ano";
+}
+
+/** % de uma parte sobre o total, 1 casa (0 quando não há total). */
+export const pctDe = (parte: number, total: number) => (total > 0 ? Math.round((parte * 1000) / total) / 10 : 0);

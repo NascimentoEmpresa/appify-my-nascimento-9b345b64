@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
-  META_MENSAL, analistas, dozeMeses, limiteQuantidade, nomeContrato, rotuloMeses, totalAnalistas, turnoverDoAno, turnoverPorContrato,
+  META_MENSAL, analistas, dozeMeses, limiteQuantidade, nomeContrato, pctDe, rotuloMeses, tempoDeCasa, totalAnalistas, turnoverDoAno, turnoverPorContrato,
   type ContratoTurnover,
 } from "@/lib/diretoria/turnover";
 
@@ -87,5 +87,21 @@ describe("rotuloMeses (filtro de meses, 07/10/2026)", () => {
   it("soltos: lista curta ou contagem", () => {
     expect(rotuloMeses([7, 1, 3])).toBe("Jan, mar, jul");
     expect(rotuloMeses([1, 3, 5, 7, 9])).toBe("5 meses");
+  });
+});
+
+describe("aba Turnover em Valores — quantidades (07/10/2026)", () => {
+  it("tempo de casa legível", () => {
+    expect(tempoDeCasa(null)).toBe("—");
+    expect(tempoDeCasa(1)).toBe("1 dia");
+    expect(tempoDeCasa(45)).toBe("45 dias");
+    expect(tempoDeCasa(170)).toBe("5 meses");
+    expect(tempoDeCasa(391)).toBe("1 ano");
+    expect(tempoDeCasa(453)).toBe("1 ano e 2 meses");
+    expect(tempoDeCasa(800)).toBe("2 anos e 2 meses");
+  });
+  it("porcentagem de uma parte", () => {
+    expect(pctDe(388, 962)).toBe(40.3);
+    expect(pctDe(3, 0)).toBe(0);
   });
 });
