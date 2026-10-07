@@ -3,10 +3,12 @@ import { useNavigate } from "react-router-dom";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { KpiTile } from "@/components/financeiro/KpiTile";
 import { PieChart, Pie, Cell, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from "recharts";
+import { Tooltip as UiTooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { ListChecks, CheckCircle2, AlertTriangle, FileWarning, Wallet, TrendingUp, Percent } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useEmpresasGrupo } from "@/hooks/useMaloteDespesa";
@@ -84,6 +86,9 @@ export default function ControleFaturamento() {
   const { data: empresas = [] } = useEmpresasGrupo();
 
   const [filtroEmpresa, setFiltroEmpresa] = useState("");
+  // Busca por nome do contrato (ou cliente), sem acento e sem diferenciar
+  // maiúsculas — vale nas 3 abas, pois todas partem de contratosFiltrados.
+  const [filtroNome, setFiltroNome] = useState("");
   const [ano, setAno] = useState(() => new Date().getFullYear());
   const meses = useMemo(() => Array.from({ length: 12 }, (_, i) => mesId(ano, i + 1)), [ano]);
 
@@ -106,10 +111,13 @@ export default function ControleFaturamento() {
   const competencia = competenciaSel && meses.includes(competenciaSel) ? competenciaSel : competenciaDefault;
 
   const empresaNomePorId = useMemo(() => new Map(empresas.map((e) => [e.id, e.nome])), [empresas]);
-  const contratosFiltrados = useMemo(
-    () => (filtroEmpresa ? contratos.filter((c) => c.empresa_id === filtroEmpresa) : contratos),
-    [contratos, filtroEmpresa]
-  );
+  const contratosFiltrados = useMemo(() => {
+    const semAcento = (s: string | null | undefined) => (s ?? "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
+    const termo = semAcento(filtroNome).trim();
+    return contratos.filter(
+      (c) => (!filtroEmpresa || c.empresa_id === filtroEmpresa) && (!termo || semAcento(`${c.nome} ${c.cliente ?? ""}`).includes(termo))
+    );
+  }, [contratos, filtroEmpresa, filtroNome]);
 
   const planilhaPorContrato = useMemo(() => {
     const mapa = new Map<string, typeof planilha>();
@@ -149,9 +157,17 @@ export default function ControleFaturamento() {
 
   function linhaDoContrato(c: ContratoERP, mesAlvo: string): LinhaFaturamento {
     const rowsDoContrato = planilhaPorContrato.get(c.id) ?? [];
-    const linhasVigentes = resolverLinhasPorPeriodo(rowsDoContrato, c.id, fimDoMes(mesAlvo));
-    const executavel = somarCamposEmLinhas(linhasVigentes, ["total_por_empregado"]);
     const agg = nfAggPorContratoCompetencia.get(`${c.id}|${mesAlvo}`) ?? { execRel: 0, contabil: 0, liquido: 0, recebido: 0, cv: 0, count: 0 };
+    let linhasVigentes = resolverLinhasPorPeriodo(rowsDoContrato, c.id, fimDoMes(mesAlvo));
+    let executavel = somarCamposEmLinhas(linhasVigentes, ["total_por_empregado"]);
+    // Mês COM nota lançada e sem executável porque todas as linhas da planilha
+    // estão marcadas "encerrado" (ex. SEMAE - 3038/2020, encerrado, 2 NFs Código N
+    // por mês de jan a ago/2026): usa essas linhas só neste mês. Sem isso o
+    // contrato virava "sem vigência" e sumia da tela mesmo faturando.
+    if (agg.count > 0 && executavel === 0) {
+      linhasVigentes = resolverLinhasPorPeriodo(rowsDoContrato, c.id, fimDoMes(mesAlvo), true);
+      executavel = somarCamposEmLinhas(linhasVigentes, ["total_por_empregado"]);
+    }
     // SIS-2026-0605 (Iury): a planilha de um contrato encerrado segue com
     // valor depois do fim (Caxias 162, fim 28/02/2026, aparecia "sem
     // lançamento" de mar a set). Depois da data fim do contrato, competência
@@ -297,6 +313,12 @@ export default function ControleFaturamento() {
           {meses.map((m, i) => <SelectItem key={m} value={m}>{MESES_LABEL[i]}/{ano}</SelectItem>)}
         </SelectContent>
       </Select>
+      <Input
+        value={filtroNome}
+        onChange={(e) => setFiltroNome(e.target.value)}
+        placeholder="Buscar contrato ou cliente..."
+        className="h-8 w-56 text-xs"
+      />
     </>
   );
 
@@ -513,12 +535,33 @@ export default function ControleFaturamento() {
                           </TableCell>
                           {l.celulas.map((c) => (
                             <TableCell key={c.mes} className="p-1 text-center">
-                              <div
-                                className={cn("h-7 rounded flex items-center justify-center text-[10px] font-medium", STATUS_INFO[c.status].className)}
-                                title={`${STATUS_INFO[c.status].label} — executável ${fmtMoney(c.executavel)}`}
-                              >
-                                {c.executavel > 0 ? fmtMoney(c.executavel).replace("R$", "").trim() : ""}
-                              </div>
+                              {c.status === "SEM_VIGENCIA" ? (
+                                <div className={cn("h-7 rounded flex items-center justify-center text-[10px] font-medium", STATUS_INFO[c.status].className)} />
+                              ) : (
+                                // Iury: ao passar o mouse em cada mês, mostrar executável,
+                                // faturado (bruto das NFs Código N), líquido e faltante.
+                                <UiTooltip>
+                                  <TooltipTrigger asChild>
+                                    <div
+                                      tabIndex={0}
+                                      className={cn("h-7 rounded flex items-center justify-center text-[10px] font-medium cursor-default", STATUS_INFO[c.status].className)}
+                                    >
+                                      {c.executavel > 0 ? fmtMoney(c.executavel).replace("R$", "").trim() : ""}
+                                    </div>
+                                  </TooltipTrigger>
+                                  <TooltipContent className="text-xs space-y-1 min-w-[210px]">
+                                    <p className="font-semibold">{l.contrato.nome} · {labelMes(c.mes)}</p>
+                                    <p className="text-muted-foreground">{STATUS_INFO[c.status].label}</p>
+                                    <dl className="grid grid-cols-[1fr_auto] gap-x-4 gap-y-0.5 tabular-nums">
+                                      <dt>Executável</dt><dd className="text-right">{fmtMoney(c.executavel)}</dd>
+                                      <dt>Faturado (bruto)</dt><dd className="text-right">{fmtMoney(c.contabil)}</dd>
+                                      <dt>Líquido</dt><dd className="text-right">{fmtMoney(c.liquido)}</dd>
+                                      <dt>Faltante</dt><dd className={cn("text-right", c.naoEmitido > 0 && "text-red-600 font-medium")}>{fmtMoney(c.naoEmitido)}</dd>
+                                      {c.excesso > 0 && (<><dt>Faturado a mais</dt><dd className="text-right text-amber-600 font-medium">{fmtMoney(c.excesso)}</dd></>)}
+                                    </dl>
+                                  </TooltipContent>
+                                </UiTooltip>
+                              )}
                             </TableCell>
                           ))}
                         </TableRow>
