@@ -137,7 +137,7 @@ function Afastados({ pessoas, mostrarPosto = false }: { pessoas: PessoaContrato[
 export default function AtivosContratos() {
   const { data: access } = useAccessibleMenus("visualizar");
   const podeVincular = !!access?.codes.has("rh_ativos_contratos_vincular");
-  const { data, isLoading, error } = usePainelAtivosContratos();
+  const { data, isLoading, error, isFetching, refetch } = usePainelAtivosContratos();
 
   const [busca, setBusca] = useState("");
   const [filtro, setFiltro] = useState<Filtro>("todos");
@@ -176,7 +176,10 @@ export default function AtivosContratos() {
     };
   }, [linhas, data]);
 
-  if (error) {
+  // 07/10/2026: só troca a tela pelo erro quando não há nada para mostrar. Antes,
+  // uma recarga em segundo plano que falhava (depois de mover alguém, por
+  // ex.) apagava a tela de quem estava editando ("tá caindo toda hora").
+  if (error && !data) {
     return (
       <div>
         <PageHeader title="Ativos/Contratos" module="Recursos Humanos" breadcrumb={["Recursos Humanos", "Ativos/Contratos"]} />
@@ -196,6 +199,13 @@ export default function AtivosContratos() {
         breadcrumb={["Recursos Humanos", "Ativos/Contratos"]}
       />
 
+      {error && data && (
+        <div className="mb-3 flex items-center gap-2 rounded-lg border border-warning/40 bg-warning/5 px-3 py-2 text-xs text-muted-foreground">
+          <AlertTriangle className="h-4 w-4 shrink-0 text-warning" />
+          <span>Não deu para atualizar agora — mostrando os últimos dados carregados.</span>
+          <Button size="sm" variant="outline" className="ml-auto h-7 text-xs" disabled={isFetching} onClick={() => refetch()}>Tentar de novo</Button>
+        </div>
+      )}
       {isLoading || !data ? (
         <Card className="flex items-center gap-2 p-6 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Carregando…</Card>
       ) : (

@@ -26,19 +26,24 @@ export default function RelatorioSistema({ slug }: { slug: string }) {
 function RelatorioPadrao({ slug }: { slug: string }) {
   const s = sistemaPorSlug(slug)!;
   const periodo = usePeriodo();
-  const q = useRelatorio(s.rpc, periodo.de, periodo.ate);
+  const q = useRelatorio(s.rpc, periodo.filtro);
   const r = q.data;
   const Icone = s.icone;
 
   return (
     <div className="space-y-4">
-      <PageHeader title={s.titulo} subtitle={s.descricao} module="Diretoria e Presidência" breadcrumb={["Diretoria", "Relatórios", s.titulo]} />
+      <PageHeader title={s.titulo} subtitle={s.descricao} module="Relatórios" breadcrumb={[s.titulo]} />
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <Link to="/app/diretoria/relatorios" className="inline-flex items-center gap-1 text-sm font-medium text-primary hover:underline">
+        <Link to="/app/relatorios" className="inline-flex items-center gap-1 text-sm font-medium text-primary hover:underline">
           <ArrowLeft className="h-4 w-4" /> Relatório Geral
         </Link>
         <SeletorPeriodo periodo={periodo} />
       </div>
+      {periodo.contrato && (slug === "chamados" || slug === "orientacoes") && (
+        <Card className="p-3 text-xs text-muted-foreground">
+          <b className="text-foreground">{s.titulo}</b> não é ligado a contrato — com um contrato escolhido, este relatório fica vazio. Limpe o filtro de contrato para ver tudo.
+        </Card>
+      )}
 
       {q.isLoading ? (
         <Card className="flex items-center gap-2 p-6 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Montando o relatório…</Card>
@@ -61,7 +66,7 @@ function RelatorioPadrao({ slug }: { slug: string }) {
             {r.rankings.map((rk) => <GraficoRanking key={rk.titulo} titulo={rk.titulo} itens={rk.itens} cor={s.cor} />)}
           </div>
           <AcessoGate menu={MENU_IA} acao="visualizar">
-            <PainelIA sistema={s.slug} de={periodo.de} ate={periodo.ate} titulo={s.titulo} />
+            <PainelIA sistema={s.slug} de={periodo.de} ate={periodo.ate} contrato={periodo.contrato} meses={periodo.meses} titulo={s.titulo} />
           </AcessoGate>
           <TabelaRecentes r={r} />
         </>

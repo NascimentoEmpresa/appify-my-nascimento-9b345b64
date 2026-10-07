@@ -39678,3 +39678,1922 @@ NOTIFY pgrst, 'reload schema';
 
 -- >>> 20261007000001_empregados_remover_duplicados_fora_senior.sql
 -- ==================================================================
+
+-- >>> 20261007000003_diretoria_turnover_meses_selecionaveis.sql
+-- =========================================================================
+-- DIRETORIA › RELATÓRIOS › TURN-OVER — meses selecionáveis (07/10/2026)
+--
+-- PEDIDO (Pablo): "consegue deixar selecionável os meses? tipo se eu quiser
+-- ver mais de um ou só um". O filtro era "Ano inteiro / Até <mês>" (sempre
+-- de janeiro até o mês). Agora a tela manda a LISTA de meses (_meses), em
+-- qualquer combinação: só março, jan+jul, ago–out…
+--
+-- O QUE MUDA em dir_turnover_painel (mig 20261006000003):
+--   · _meses int[]: os meses que entram. NULL = o comportamento antigo
+--     (_mes NULL → ano inteiro; _mes N → janeiro até N). A tela publicada
+--     antes desta mudança continua funcionando igual.
+--   · Meses que ainda não começaram são ignorados (como antes, corte em
+--     current_date).
+--   · Tudo que era "entre v_ini e v_ult" passa a ser "num mês escolhido":
+--     demissões, efetivo de fim de mês, efetivo médio (média só dos meses
+--     escolhidos), causas, avisos da página Analistas.
+--   · efetivo_atual = efetivo no fim do ÚLTIMO mês escolhido.
+--   · Projeção = acumulado × (dias do ano ÷ dias dos meses escolhidos já
+--     decorridos). Para "janeiro até N" dá exatamente o fator antigo.
+--   · Devolve 'meses' (os meses efetivamente usados).
+--
+-- Assinatura nova (int, int, text, text[], int[]); a de 4 argumentos sai —
+-- chamada antiga com argumentos nomeados cai nesta pelo DEFAULT de _meses.
+-- Idempotente. Aplicar no banco do app — não se auto-aplica.
+-- =========================================================================
+
+DROP FUNCTION IF EXISTS public.dir_turnover_painel(int, int, text, text[]);
+
+CREATE OR REPLACE FUNCTION public.dir_turnover_painel(_ano int DEFAULT NULL, _mes int DEFAULT NULL, _contrato text DEFAULT NULL,
+                                                      _causas text[] DEFAULT NULL, _meses int[] DEFAULT NULL)
+RETURNS jsonb LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public, pg_temp AS $$
+DECLARE
+  v_ano int := COALESCE(_ano, extract(year FROM current_date)::int);
+  v_meses int[];
+  v_ini date;
+  v_ult date;
+  v_dias int;
+  v_fator numeric;
+  v_out jsonb;
+BEGIN
+  PERFORM public.dir_rel_exige('diretoria_rel_turnover');
+  IF _mes IS NOT NULL AND (_mes < 1 OR _mes > 12) THEN RAISE EXCEPTION 'Mês inválido'; END IF;
+  IF EXISTS (SELECT 1 FROM unnest(_meses) m WHERE m IS NULL OR m < 1 OR m > 12) THEN RAISE EXCEPTION 'Mês inválido'; END IF;
+
+  -- Meses escolhidos, sem repetição, só os que já começaram.
+  SELECT array_agg(DISTINCT m ORDER BY m) INTO v_meses
+    FROM unnest(COALESCE(NULLIF(_meses, '{}'), CASE WHEN _mes IS NULL THEN ARRAY(SELECT generate_series(1, 12))
+                                                    ELSE ARRAY(SELECT generate_series(1, _mes)) END)) m
+   WHERE make_date(v_ano, m, 1) <= current_date;
+  IF v_meses IS NULL THEN RAISE EXCEPTION 'Esse período ainda não começou.'; END IF;
+
+  v_ini := make_date(v_ano, v_meses[1], 1);
+  v_ult := LEAST((make_date(v_ano, v_meses[array_length(v_meses, 1)], 1) + interval '1 month' - interval '1 day')::date, current_date);
+  SELECT sum(LEAST((make_date(v_ano, m, 1) + interval '1 month' - interval '1 day')::date, current_date) - make_date(v_ano, m, 1) + 1)
+    INTO v_dias FROM unnest(v_meses) m;
+  -- Projeção para o ano inteiro a partir dos dias escolhidos que já passaram.
+  v_fator := (make_date(v_ano, 12, 31) - make_date(v_ano, 1, 1) + 1)::numeric / v_dias;
+
+  WITH e AS MATERIALIZED (
+    SELECT public.data_universal(x."Admissão") adm,
+           CASE WHEN x."Situação" = 'Demitido' THEN public.data_universal(x."Data Afastamento") END dem,
+           (public.esp_col_esta_ativo(x."Situação") OR x."Situação" = 'Demitido') conta,
+           COALESCE(NULLIF(btrim(x."Nome Filial"), ''), '(sem contrato)') contrato,
+           CASE x."Empresa" WHEN 1 THEN 'HAGG' WHEN 2 THEN 'SN' WHEN 3 THEN 'CANAÃ' WHEN 4 THEN 'LF' WHEN 5 THEN 'NH' ELSE '(sem empresa)' END empresa,
+           COALESCE(NULLIF(btrim(x."Descrição (Causa)"), ''), '(não informado)') causa
+      FROM public."EMPREGADOS" x
+     WHERE COALESCE(btrim(x."Nome"), '') <> ''
+       AND (_contrato IS NULL OR x."Nome Filial" = _contrato)
+  ),
+  -- Demitido num mês escolhido (todas as causas) — base de causas e Analistas.
+  dt_all AS MATERIALIZED (
+    SELECT * FROM e WHERE e.dem BETWEEN v_ini AND v_ult AND extract(month FROM e.dem)::int = ANY(v_meses)
+  ),
+  -- Demissões que entram na conta (recorte por tipo de desligamento).
+  d AS MATERIALIZED (
+    SELECT * FROM dt_all WHERE _causas IS NULL OR dt_all.causa = ANY(_causas)
+  ),
+  mm AS MATERIALIZED (
+    SELECT make_date(v_ano, m, 1) ini,
+           LEAST((make_date(v_ano, m, 1) + interval '1 month' - interval '1 day')::date, v_ult) fim
+      FROM unnest(v_meses) m
+  ),
+  ef AS MATERIALIZED (   -- efetivo no fim de cada mês, por contrato/empresa
+    SELECT mm.ini, e.contrato, e.empresa, count(*) n
+      FROM mm JOIN e ON e.conta AND e.adm <= mm.fim AND (e.dem IS NULL OR e.dem > mm.fim)
+     GROUP BY 1, 2, 3
+  ),
+  mes AS (
+    SELECT mm.ini,
+           (SELECT COALESCE(sum(n), 0) FROM ef WHERE ef.ini = mm.ini) efetivo,
+           (SELECT count(*) FROM d WHERE d.dem BETWEEN mm.ini AND mm.fim) demissoes
+      FROM mm
+  ),
+  nmes AS (SELECT count(*)::numeric n FROM mm),
+  ef_medio_grupo AS (SELECT COALESCE(sum(n), 0) / (SELECT n FROM nmes) n FROM ef),
+  por_contrato AS (
+    SELECT c.contrato, c.empresa, c.efetivo_medio, COALESCE(dd.n, 0) demissoes, COALESCE(at.n, 0) efetivo_atual,
+           COALESCE(dt.n, 0) demissoes_todas
+      FROM (SELECT contrato, max(empresa) empresa, sum(n)::numeric / count(DISTINCT ini) efetivo_medio FROM ef GROUP BY 1) c
+      LEFT JOIN (SELECT contrato, count(*) n FROM d GROUP BY 1) dd USING (contrato)
+      LEFT JOIN (SELECT contrato, sum(n) n FROM ef WHERE ef.ini = (SELECT max(ini) FROM mm) GROUP BY 1) at USING (contrato)
+      LEFT JOIN (SELECT contrato, count(*) n FROM dt_all GROUP BY 1) dt USING (contrato)
+  ),
+  av AS (
+    SELECT s.contrato,
+           count(*) FILTER (WHERE s.modelo_aviso = 'Aviso Prévio Trabalhado') trabalhado,
+           count(*) FILTER (WHERE s.modelo_aviso = 'Aviso Prévio Indenizado') indenizado
+      FROM public."SISTEMA_SOLICITACOES_DEMISSAO" s
+     WHERE s.status NOT IN ('Cancelada', 'Reprovada')
+       AND s.modelo_aviso IN ('Aviso Prévio Trabalhado', 'Aviso Prévio Indenizado')
+       AND COALESCE(s.data_aviso, s.data_solicitacao, s.criado_em::date) BETWEEN v_ini AND v_ult
+       AND extract(month FROM COALESCE(s.data_aviso, s.data_solicitacao, s.criado_em::date))::int = ANY(v_meses)
+       AND (_contrato IS NULL OR s.contrato = _contrato)
+     GROUP BY 1
+  )
+  SELECT jsonb_build_object(
+    'ano', v_ano, 'mes', _mes, 'meses', to_jsonb(v_meses), 'de', v_ini, 'ate', v_ult, 'fator_projecao', round(v_fator, 4),
+    'efetivo_medio', round((SELECT n FROM ef_medio_grupo), 1),
+    'mensal', (SELECT COALESCE(jsonb_agg(jsonb_build_object('mes', to_char(ini, 'YYYY-MM'), 'efetivo', efetivo, 'demissoes', demissoes,
+                 'taxa', CASE WHEN efetivo > 0 THEN round(demissoes * 100.0 / efetivo, 2) END) ORDER BY ini), '[]'::jsonb) FROM mes),
+    'por_empresa', (SELECT COALESCE(jsonb_agg(jsonb_build_object('empresa', x.empresa, 'efetivo_medio', round(x.ef, 1), 'demissoes', x.dem,
+                     'taxa', CASE WHEN x.ef > 0 THEN round(x.dem * 100.0 / x.ef, 2) END) ORDER BY x.dem * 1.0 / NULLIF(x.ef, 0) DESC NULLS LAST), '[]'::jsonb)
+                      FROM (SELECT ee.empresa, ee.ef, COALESCE(dd.dem, 0) dem FROM (SELECT empresa, sum(n) / (SELECT n FROM nmes) ef FROM ef GROUP BY 1) ee LEFT JOIN (SELECT empresa, count(*) dem FROM d GROUP BY 1) dd USING (empresa)) x
+                     WHERE x.ef > 0 OR x.dem > 0),
+    'por_contrato', (SELECT COALESCE(jsonb_agg(jsonb_build_object(
+                       'contrato', pc.contrato, 'empresa', pc.empresa, 'efetivo_medio', round(pc.efetivo_medio, 1), 'efetivo_atual', pc.efetivo_atual,
+                       'demissoes', pc.demissoes, 'demissoes_todas', pc.demissoes_todas,
+                       'aviso_trabalhado', COALESCE(av.trabalhado, 0), 'aviso_indenizado', COALESCE(av.indenizado, 0))
+                       ORDER BY pc.demissoes DESC, pc.contrato), '[]'::jsonb)
+                       FROM por_contrato pc LEFT JOIN av USING (contrato)),
+    'causas', (SELECT COALESCE(jsonb_agg(jsonb_build_object('causa', x.causa, 'n', x.n) ORDER BY x.n DESC, x.causa), '[]'::jsonb)
+                 FROM (SELECT causa, count(*) n FROM dt_all GROUP BY 1) x),
+    'contratos', (SELECT COALESCE(jsonb_agg(x.c ORDER BY x.c), '[]'::jsonb) FROM (
+                    SELECT DISTINCT btrim(y."Nome Filial") c FROM public."EMPREGADOS" y
+                     WHERE COALESCE(btrim(y."Nome Filial"), '') <> ''
+                       AND (public.esp_col_esta_ativo(y."Situação") OR public.data_universal(y."Data Afastamento") >= v_ini)) x)
+  ) INTO v_out;
+  RETURN v_out;
+END $$;
+
+REVOKE ALL ON FUNCTION public.dir_turnover_painel(int, int, text, text[], int[]) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.dir_turnover_painel(int, int, text, text[], int[]) TO authenticated;
+
+NOTIFY pgrst, 'reload schema';
+
+-- ROLLBACK
+-- DROP FUNCTION IF EXISTS public.dir_turnover_painel(int, int, text, text[], int[]);
+-- Reaplicar dir_turnover_painel(int, int, text, text[]) da mig 20261006000003.
+
+
+-- >>> 20261007000004_rh_ativos_contratos_rapido.sql
+-- =========================================================================
+-- RH › Ativos/Contratos — carregar rápido (07/10/2026)
+--
+-- PEDIDO (Pablo): "tá dando erro no ativos/contratos algumas vezes, e tá
+-- demorando demais pra carregar, tem que ficar quase instantâneo". O erro é
+-- "canceling statement due to statement timeout" (print do José Ferreira):
+-- o rh_ac_painel levava ~5,6 s e o limite do papel authenticated é 8 s —
+-- bastava o banco estar um pouco ocupado para estourar.
+--
+-- CAUSA: rh_ac_ativos (mig 20261005000001) levava 5,4 s dos 5,6 s. Para
+-- cada uma das ~2.300 pessoas ativas, quatro subconsultas correlacionadas
+-- comparavam rh_norm_contrato(<campo da pessoa>) com cada contrato — a
+-- normalização (três regexp) rodava milhares de vezes por pessoa. Ler as
+-- pessoas sozinho leva 18 ms.
+--
+-- CORREÇÃO: normaliza "Nome Filial" e "Descrição do Local" UMA vez por
+-- pessoa e casa com contratos/depara por LEFT JOIN (hash). Mesma ordem de
+-- preferência do COALESCE antigo: depara pelo nome exato → contrato pelo
+-- nome normalizado → depara normalizado → contrato pelo local. Resultado
+-- idêntico (conferido linha a linha contra a versão antiga): o depara não
+-- tem filial nem nome normalizado apontando para dois contratos, e ct já
+-- era um por nome normalizado — os LIMIT 1 nunca escolhiam entre dois.
+--
+-- rh_ac_painel e rh_ac_pessoas não mudam: leem rh_ac_ativos.
+-- Idempotente. Aplicar no banco do app — não se auto-aplica.
+-- =========================================================================
+
+CREATE OR REPLACE FUNCTION public.rh_ac_ativos()
+ RETURNS TABLE(empregado_id bigint, cadastro text, nome text, cargo text, posto_senior text, situacao text, admissao text, filial text, local text, contrato_id uuid, empresa bigint)
+ LANGUAGE sql
+ STABLE SECURITY DEFINER
+ SET search_path TO 'public', 'pg_temp'
+AS $function$
+  WITH ct AS MATERIALIZED (
+    SELECT DISTINCT ON (public.rh_norm_contrato(c.nome))
+           public.rh_norm_contrato(c.nome) AS nn, c.id
+      FROM public.contratos c
+     WHERE public.rh_norm_contrato(c.nome) IS NOT NULL
+     ORDER BY public.rh_norm_contrato(c.nome),
+              (COALESCE(c.status, 'ativo') = 'encerrado'), c.created_at DESC
+  ),
+  dp_nome AS MATERIALIZED (
+    SELECT DISTINCT ON (d.filial_nome) d.filial_nome, d.contrato_id
+      FROM public.sup_empregado_contrato_depara d
+     ORDER BY d.filial_nome, d.contrato_id
+  ),
+  dp_nn AS MATERIALIZED (
+    SELECT DISTINCT ON (public.rh_norm_contrato(d.filial_nome)) public.rh_norm_contrato(d.filial_nome) AS nn, d.contrato_id
+      FROM public.sup_empregado_contrato_depara d
+     WHERE public.rh_norm_contrato(d.filial_nome) IS NOT NULL
+     ORDER BY public.rh_norm_contrato(d.filial_nome), d.contrato_id
+  ),
+  -- 07/10/2026: normaliza uma vez por pessoa (antes: por pessoa × contrato).
+  e AS MATERIALIZED (
+    SELECT x.*, public.rh_norm_contrato(x."Nome Filial") AS nn_filial,
+           public.rh_norm_contrato(x."Descrição do Local") AS nn_local
+      FROM public."EMPREGADOS" x
+     WHERE public.esp_col_esta_ativo(x."Situação")
+       AND COALESCE(btrim(x."Nome"), '') <> ''
+  )
+  SELECT e."ID"::bigint,
+         e."Cadastro"::text,
+         e."Nome",
+         e."Título do Cargo",
+         btrim(COALESCE(e."Nome do Posto", '')),
+         e."Situação",
+         e."Admissão"::text,
+         e."Nome Filial",
+         e."Descrição do Local",
+         COALESCE(d1.contrato_id, c1.id, d2.contrato_id, c2.id),
+         e."Empresa"::bigint
+    FROM e
+    LEFT JOIN dp_nome d1 ON d1.filial_nome = e."Nome Filial"
+    LEFT JOIN ct c1      ON c1.nn = e.nn_filial
+    LEFT JOIN dp_nn d2   ON d2.nn = e.nn_filial
+    LEFT JOIN ct c2      ON c2.nn = e.nn_local;
+$function$;
+
+REVOKE ALL ON FUNCTION public.rh_ac_ativos() FROM PUBLIC, anon, authenticated;
+
+NOTIFY pgrst, 'reload schema';
+
+-- ROLLBACK
+-- Reaplicar rh_ac_ativos da mig 20261005000001 (subconsultas correlacionadas).
+
+
+-- >>> 20261007000005_diretoria_turnover_avisos_futuros.sql
+-- =========================================================================
+-- DIRETORIA › TURN-OVER › ANALISTAS — avisos já pedidos com data futura
+-- (07/10/2026)
+--
+-- PEDIDO (Pablo): a aba Analistas "só funciona com o ano inteiro". Decidido
+-- com ele: (1) a aba Analistas passa a olhar SEMPRE o ano inteiro (os
+-- limites de 23% / 5% / 100% são anuais) — isso é na tela, que pede o ano
+-- inteiro à parte; (2) contar os avisos já pedidos com data de aviso
+-- FUTURA — são decisões tomadas, e o corte em current_date deixava 25 avisos
+-- trabalhados de fora até no "Ano inteiro" (27 contados × 52 pedidos).
+--
+-- MUDANÇA em dir_turnover_painel (mig 20261007000003): os avisos (CTE av)
+-- contam pela data do aviso dentro dos meses PEDIDOS do ano (v_meses_req),
+-- sem o corte em hoje. Demissões, efetivo e projeção não mudam.
+-- Idempotente. Aplicar no banco do app — não se auto-aplica.
+-- =========================================================================
+
+CREATE OR REPLACE FUNCTION public.dir_turnover_painel(_ano int DEFAULT NULL, _mes int DEFAULT NULL, _contrato text DEFAULT NULL,
+                                                      _causas text[] DEFAULT NULL, _meses int[] DEFAULT NULL)
+RETURNS jsonb LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public, pg_temp AS $$
+DECLARE
+  v_ano int := COALESCE(_ano, extract(year FROM current_date)::int);
+  v_meses int[];
+  v_meses_req int[];  -- meses pedidos, inclusive os que ainda não começaram (avisos)
+  v_ini date;
+  v_ult date;
+  v_dias int;
+  v_fator numeric;
+  v_out jsonb;
+BEGIN
+  PERFORM public.dir_rel_exige('diretoria_rel_turnover');
+  IF _mes IS NOT NULL AND (_mes < 1 OR _mes > 12) THEN RAISE EXCEPTION 'Mês inválido'; END IF;
+  IF EXISTS (SELECT 1 FROM unnest(_meses) m WHERE m IS NULL OR m < 1 OR m > 12) THEN RAISE EXCEPTION 'Mês inválido'; END IF;
+
+  SELECT array_agg(DISTINCT m ORDER BY m) INTO v_meses_req
+    FROM unnest(COALESCE(NULLIF(_meses, '{}'), CASE WHEN _mes IS NULL THEN ARRAY(SELECT generate_series(1, 12))
+                                                    ELSE ARRAY(SELECT generate_series(1, _mes)) END)) m;
+
+  -- Meses escolhidos, sem repetição, só os que já começaram.
+  SELECT array_agg(DISTINCT m ORDER BY m) INTO v_meses
+    FROM unnest(COALESCE(NULLIF(_meses, '{}'), CASE WHEN _mes IS NULL THEN ARRAY(SELECT generate_series(1, 12))
+                                                    ELSE ARRAY(SELECT generate_series(1, _mes)) END)) m
+   WHERE make_date(v_ano, m, 1) <= current_date;
+  IF v_meses IS NULL THEN RAISE EXCEPTION 'Esse período ainda não começou.'; END IF;
+
+  v_ini := make_date(v_ano, v_meses[1], 1);
+  v_ult := LEAST((make_date(v_ano, v_meses[array_length(v_meses, 1)], 1) + interval '1 month' - interval '1 day')::date, current_date);
+  SELECT sum(LEAST((make_date(v_ano, m, 1) + interval '1 month' - interval '1 day')::date, current_date) - make_date(v_ano, m, 1) + 1)
+    INTO v_dias FROM unnest(v_meses) m;
+  -- Projeção para o ano inteiro a partir dos dias escolhidos que já passaram.
+  v_fator := (make_date(v_ano, 12, 31) - make_date(v_ano, 1, 1) + 1)::numeric / v_dias;
+
+  WITH e AS MATERIALIZED (
+    SELECT public.data_universal(x."Admissão") adm,
+           CASE WHEN x."Situação" = 'Demitido' THEN public.data_universal(x."Data Afastamento") END dem,
+           (public.esp_col_esta_ativo(x."Situação") OR x."Situação" = 'Demitido') conta,
+           COALESCE(NULLIF(btrim(x."Nome Filial"), ''), '(sem contrato)') contrato,
+           CASE x."Empresa" WHEN 1 THEN 'HAGG' WHEN 2 THEN 'SN' WHEN 3 THEN 'CANAÃ' WHEN 4 THEN 'LF' WHEN 5 THEN 'NH' ELSE '(sem empresa)' END empresa,
+           COALESCE(NULLIF(btrim(x."Descrição (Causa)"), ''), '(não informado)') causa
+      FROM public."EMPREGADOS" x
+     WHERE COALESCE(btrim(x."Nome"), '') <> ''
+       AND (_contrato IS NULL OR x."Nome Filial" = _contrato)
+  ),
+  -- Demitido num mês escolhido (todas as causas) — base de causas e Analistas.
+  dt_all AS MATERIALIZED (
+    SELECT * FROM e WHERE e.dem BETWEEN v_ini AND v_ult AND extract(month FROM e.dem)::int = ANY(v_meses)
+  ),
+  -- Demissões que entram na conta (recorte por tipo de desligamento).
+  d AS MATERIALIZED (
+    SELECT * FROM dt_all WHERE _causas IS NULL OR dt_all.causa = ANY(_causas)
+  ),
+  mm AS MATERIALIZED (
+    SELECT make_date(v_ano, m, 1) ini,
+           LEAST((make_date(v_ano, m, 1) + interval '1 month' - interval '1 day')::date, v_ult) fim
+      FROM unnest(v_meses) m
+  ),
+  ef AS MATERIALIZED (   -- efetivo no fim de cada mês, por contrato/empresa
+    SELECT mm.ini, e.contrato, e.empresa, count(*) n
+      FROM mm JOIN e ON e.conta AND e.adm <= mm.fim AND (e.dem IS NULL OR e.dem > mm.fim)
+     GROUP BY 1, 2, 3
+  ),
+  mes AS (
+    SELECT mm.ini,
+           (SELECT COALESCE(sum(n), 0) FROM ef WHERE ef.ini = mm.ini) efetivo,
+           (SELECT count(*) FROM d WHERE d.dem BETWEEN mm.ini AND mm.fim) demissoes
+      FROM mm
+  ),
+  nmes AS (SELECT count(*)::numeric n FROM mm),
+  ef_medio_grupo AS (SELECT COALESCE(sum(n), 0) / (SELECT n FROM nmes) n FROM ef),
+  por_contrato AS (
+    SELECT c.contrato, c.empresa, c.efetivo_medio, COALESCE(dd.n, 0) demissoes, COALESCE(at.n, 0) efetivo_atual,
+           COALESCE(dt.n, 0) demissoes_todas
+      FROM (SELECT contrato, max(empresa) empresa, sum(n)::numeric / count(DISTINCT ini) efetivo_medio FROM ef GROUP BY 1) c
+      LEFT JOIN (SELECT contrato, count(*) n FROM d GROUP BY 1) dd USING (contrato)
+      LEFT JOIN (SELECT contrato, sum(n) n FROM ef WHERE ef.ini = (SELECT max(ini) FROM mm) GROUP BY 1) at USING (contrato)
+      LEFT JOIN (SELECT contrato, count(*) n FROM dt_all GROUP BY 1) dt USING (contrato)
+  ),
+  av AS (
+    SELECT s.contrato,
+           count(*) FILTER (WHERE s.modelo_aviso = 'Aviso Prévio Trabalhado') trabalhado,
+           count(*) FILTER (WHERE s.modelo_aviso = 'Aviso Prévio Indenizado') indenizado
+      FROM public."SISTEMA_SOLICITACOES_DEMISSAO" s
+     WHERE s.status NOT IN ('Cancelada', 'Reprovada')
+       AND s.modelo_aviso IN ('Aviso Prévio Trabalhado', 'Aviso Prévio Indenizado')
+       -- 07/10/2026: aviso já pedido com data futura conta (sem corte em hoje).
+       AND extract(year FROM COALESCE(s.data_aviso, s.data_solicitacao, s.criado_em::date))::int = v_ano
+       AND extract(month FROM COALESCE(s.data_aviso, s.data_solicitacao, s.criado_em::date))::int = ANY(v_meses_req)
+       AND (_contrato IS NULL OR s.contrato = _contrato)
+     GROUP BY 1
+  )
+  SELECT jsonb_build_object(
+    'ano', v_ano, 'mes', _mes, 'meses', to_jsonb(v_meses), 'de', v_ini, 'ate', v_ult, 'fator_projecao', round(v_fator, 4),
+    'efetivo_medio', round((SELECT n FROM ef_medio_grupo), 1),
+    'mensal', (SELECT COALESCE(jsonb_agg(jsonb_build_object('mes', to_char(ini, 'YYYY-MM'), 'efetivo', efetivo, 'demissoes', demissoes,
+                 'taxa', CASE WHEN efetivo > 0 THEN round(demissoes * 100.0 / efetivo, 2) END) ORDER BY ini), '[]'::jsonb) FROM mes),
+    'por_empresa', (SELECT COALESCE(jsonb_agg(jsonb_build_object('empresa', x.empresa, 'efetivo_medio', round(x.ef, 1), 'demissoes', x.dem,
+                     'taxa', CASE WHEN x.ef > 0 THEN round(x.dem * 100.0 / x.ef, 2) END) ORDER BY x.dem * 1.0 / NULLIF(x.ef, 0) DESC NULLS LAST), '[]'::jsonb)
+                      FROM (SELECT ee.empresa, ee.ef, COALESCE(dd.dem, 0) dem FROM (SELECT empresa, sum(n) / (SELECT n FROM nmes) ef FROM ef GROUP BY 1) ee LEFT JOIN (SELECT empresa, count(*) dem FROM d GROUP BY 1) dd USING (empresa)) x
+                     WHERE x.ef > 0 OR x.dem > 0),
+    'por_contrato', (SELECT COALESCE(jsonb_agg(jsonb_build_object(
+                       'contrato', pc.contrato, 'empresa', pc.empresa, 'efetivo_medio', round(pc.efetivo_medio, 1), 'efetivo_atual', pc.efetivo_atual,
+                       'demissoes', pc.demissoes, 'demissoes_todas', pc.demissoes_todas,
+                       'aviso_trabalhado', COALESCE(av.trabalhado, 0), 'aviso_indenizado', COALESCE(av.indenizado, 0))
+                       ORDER BY pc.demissoes DESC, pc.contrato), '[]'::jsonb)
+                       FROM por_contrato pc LEFT JOIN av USING (contrato)),
+    'causas', (SELECT COALESCE(jsonb_agg(jsonb_build_object('causa', x.causa, 'n', x.n) ORDER BY x.n DESC, x.causa), '[]'::jsonb)
+                 FROM (SELECT causa, count(*) n FROM dt_all GROUP BY 1) x),
+    'contratos', (SELECT COALESCE(jsonb_agg(x.c ORDER BY x.c), '[]'::jsonb) FROM (
+                    SELECT DISTINCT btrim(y."Nome Filial") c FROM public."EMPREGADOS" y
+                     WHERE COALESCE(btrim(y."Nome Filial"), '') <> ''
+                       AND (public.esp_col_esta_ativo(y."Situação") OR public.data_universal(y."Data Afastamento") >= v_ini)) x)
+  ) INTO v_out;
+  RETURN v_out;
+END $$;
+
+REVOKE ALL ON FUNCTION public.dir_turnover_painel(int, int, text, text[], int[]) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.dir_turnover_painel(int, int, text, text[], int[]) TO authenticated;
+
+NOTIFY pgrst, 'reload schema';
+
+-- ROLLBACK
+-- Reaplicar dir_turnover_painel da mig 20261007000003 (avisos cortados em current_date).
+
+
+-- >>> 20261007000006_diretoria_turnover_rescisoes_quantidades.sql
+-- =========================================================================
+-- DIRETORIA › TURN-OVER › aba "Turnover em Valores" — por enquanto em
+-- QUANTIDADES (07/10/2026)
+--
+-- PEDIDO (Pablo): "faz a aba turnover em valores" → decidido com ele: a
+-- opção 3, quantidades e perfil das rescisões, sem dinheiro.
+--
+-- POR QUE SEM R$: a exportação da Senior para o MySQL hagg manda as verbas
+-- (R046VER) e o holerite (R046HOL) com o VALOR vazio — conferido na origem
+-- em 07/10 (cadastro 7037, set/2026: valeve NULL em todas as verbas;
+-- totven/totdes/valliq NULL em 18.503 de 19.276 holerites). O espelho só
+-- copia. BiAssinalamentos também foi olhado: é atribuição de vale
+-- (valor unitário × dias), não verba de folha. Quando a exportação passar a
+-- mandar valeve/totven, esta aba ganha os valores.
+--
+-- O QUE A RPC DEVOLVE (demissões com "Data Afastamento" nos meses
+-- escolhidos do ano; contrato opcional):
+--   · total, tempo de empresa médio e mediano (dias, admissão → afastamento);
+--   · por faixa de tempo de empresa, por mês, por empresa, por tipo de
+--     desligamento ("Descrição (Causa)") e por contrato (com quantas saíram
+--     com até 3 meses de casa);
+--   · avisos pedidos pelo ERP (SISTEMA_SOLICITACOES_DEMISSAO.modelo_aviso),
+--     pela data do aviso nos meses escolhidos;
+--   · verbas de férias da rescisão na Senior — QUANTAS rescisões tiveram
+--     cada uma (650 vencidas, 651 proporcionais, 1400 indenizadas). Só essas
+--     três têm nome no catálogo de eventos que vem da Senior (R008EVC tem 25
+--     eventos); as demais verbas só chegam como código e ficam de fora.
+--     A rescisão é o cálculo mensal (R044CAL.tipcal 11) do mês do afastamento.
+--
+-- Índice parcial em espelho."R046VER" só das três verbas (poucos milhares de
+-- linhas): o espelho recarrega com TRUNCATE + COPY, então o índice fica.
+-- Acesso: o do relatório Turn-over (dir_rel_exige).
+-- Idempotente. Aplicar no banco do app — não se auto-aplica.
+-- =========================================================================
+
+CREATE INDEX IF NOT EXISTS r046ver_ferias_rescisao_idx
+  ON espelho."R046VER" (numemp, numcad, codcal, codeve)
+  WHERE codeve IN (650, 651, 1400);
+
+CREATE OR REPLACE FUNCTION public.dir_turnover_rescisoes(_ano int DEFAULT NULL, _meses int[] DEFAULT NULL, _contrato text DEFAULT NULL)
+RETURNS jsonb LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public, pg_temp AS $$
+DECLARE
+  v_ano int := COALESCE(_ano, extract(year FROM current_date)::int);
+  v_meses int[];
+  v_out jsonb;
+BEGIN
+  PERFORM public.dir_rel_exige('diretoria_rel_turnover');
+  IF EXISTS (SELECT 1 FROM unnest(_meses) m WHERE m IS NULL OR m < 1 OR m > 12) THEN RAISE EXCEPTION 'Mês inválido'; END IF;
+  v_meses := COALESCE(NULLIF(_meses, '{}'), ARRAY(SELECT generate_series(1, 12)));
+
+  WITH r AS MATERIALIZED (   -- uma linha por rescisão
+    SELECT x."Empresa"::int emp, x."Cadastro"::int cad,
+           public.data_universal(x."Admissão") adm,
+           public.data_universal(x."Data Afastamento") dem,
+           COALESCE(NULLIF(btrim(x."Nome Filial"), ''), '(sem contrato)') contrato,
+           CASE x."Empresa" WHEN 1 THEN 'HAGG' WHEN 2 THEN 'SN' WHEN 3 THEN 'CANAÃ' WHEN 4 THEN 'LF' WHEN 5 THEN 'NH' ELSE '(sem empresa)' END empresa,
+           COALESCE(NULLIF(btrim(x."Descrição (Causa)"), ''), '(não informado)') causa
+      FROM public."EMPREGADOS" x
+     WHERE x."Situação" = 'Demitido'
+       AND COALESCE(btrim(x."Nome"), '') <> ''
+       AND (_contrato IS NULL OR x."Nome Filial" = _contrato)
+  ),
+  d AS MATERIALIZED (
+    SELECT r.*, CASE WHEN r.adm IS NOT NULL AND r.adm <= r.dem THEN r.dem - r.adm END dias
+      FROM r
+     WHERE extract(year FROM r.dem)::int = v_ano AND extract(month FROM r.dem)::int = ANY(v_meses)
+  ),
+  f AS (
+    SELECT d.*,
+           CASE WHEN d.dias IS NULL THEN 0 WHEN d.dias <= 90 THEN 1 WHEN d.dias <= 182 THEN 2 WHEN d.dias <= 365 THEN 3
+                WHEN d.dias <= 730 THEN 4 WHEN d.dias <= 1826 THEN 5 ELSE 6 END ordem
+      FROM d
+  ),
+  -- Verbas de férias da rescisão (cálculo mensal do mês do afastamento).
+  vb AS (
+    SELECT v.codeve, count(DISTINCT (d.emp, d.cad)) n
+      FROM d
+      JOIN espelho."R044CAL" c ON c.numemp = d.emp AND c.tipcal = 11 AND c.perref = date_trunc('month', d.dem)
+      JOIN espelho."R046VER" v ON v.numemp = d.emp AND v.numcad = d.cad AND v.codcal = c.codcal
+                              AND v.codeve IN (650, 651, 1400)
+     GROUP BY 1
+  ),
+  av AS (
+    SELECT s.modelo_aviso modelo, count(*) n
+      FROM public."SISTEMA_SOLICITACOES_DEMISSAO" s
+     WHERE s.status NOT IN ('Cancelada', 'Reprovada')
+       AND COALESCE(btrim(s.modelo_aviso), '') <> ''
+       AND extract(year FROM COALESCE(s.data_aviso, s.data_solicitacao, s.criado_em::date))::int = v_ano
+       AND extract(month FROM COALESCE(s.data_aviso, s.data_solicitacao, s.criado_em::date))::int = ANY(v_meses)
+       AND (_contrato IS NULL OR s.contrato = _contrato)
+     GROUP BY 1
+  )
+  SELECT jsonb_build_object(
+    'ano', v_ano, 'meses', to_jsonb(v_meses),
+    'total', (SELECT count(*) FROM d),
+    'tempo_medio_dias', (SELECT round(avg(dias)) FROM d),
+    'tempo_mediano_dias', (SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY dias) FROM d WHERE dias IS NOT NULL),
+    'por_faixa', (SELECT COALESCE(jsonb_agg(jsonb_build_object('ordem', o.ordem, 'faixa', o.faixa, 'n', COALESCE(x.n, 0)) ORDER BY o.ordem), '[]'::jsonb)
+                    FROM (VALUES (1, 'Até 3 meses'), (2, '3 a 6 meses'), (3, '6 meses a 1 ano'), (4, '1 a 2 anos'),
+                                 (5, '2 a 5 anos'), (6, 'Mais de 5 anos'), (0, 'Sem data de admissão')) o(ordem, faixa)
+                    LEFT JOIN (SELECT ordem, count(*) n FROM f GROUP BY 1) x USING (ordem)
+                   WHERE o.ordem > 0 OR x.n > 0),
+    'por_mes', (SELECT COALESCE(jsonb_agg(jsonb_build_object('mes', x.mes, 'n', x.n) ORDER BY x.mes), '[]'::jsonb)
+                  FROM (SELECT to_char(dem, 'YYYY-MM') mes, count(*) n FROM d GROUP BY 1) x),
+    'por_empresa', (SELECT COALESCE(jsonb_agg(jsonb_build_object('empresa', x.empresa, 'n', x.n) ORDER BY x.n DESC), '[]'::jsonb)
+                      FROM (SELECT empresa, count(*) n FROM d GROUP BY 1) x),
+    'por_causa', (SELECT COALESCE(jsonb_agg(jsonb_build_object('causa', x.causa, 'n', x.n) ORDER BY x.n DESC, x.causa), '[]'::jsonb)
+                    FROM (SELECT causa, count(*) n FROM d GROUP BY 1) x),
+    'por_contrato', (SELECT COALESCE(jsonb_agg(jsonb_build_object('contrato', x.contrato, 'n', x.n, 'ate_3m', x.ate_3m,
+                                                                'tempo_medio_dias', x.medio) ORDER BY x.n DESC, x.contrato), '[]'::jsonb)
+                       FROM (SELECT contrato, count(*) n, count(*) FILTER (WHERE ordem = 1) ate_3m, round(avg(dias)) medio
+                               FROM f GROUP BY 1) x),
+    'avisos', (SELECT COALESCE(jsonb_agg(jsonb_build_object('modelo', modelo, 'n', n) ORDER BY n DESC, modelo), '[]'::jsonb) FROM av),
+    'verbas', (SELECT COALESCE(jsonb_agg(jsonb_build_object('codigo', o.codeve, 'verba', o.verba, 'n', COALESCE(vb.n, 0)) ORDER BY o.ordem), '[]'::jsonb)
+                 FROM (VALUES (1, 651, 'Férias proporcionais'), (2, 650, 'Férias vencidas'), (3, 1400, 'Férias indenizadas')) o(ordem, codeve, verba)
+                 LEFT JOIN vb USING (codeve))
+  ) INTO v_out;
+  RETURN v_out;
+END $$;
+
+REVOKE ALL ON FUNCTION public.dir_turnover_rescisoes(int, int[], text) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.dir_turnover_rescisoes(int, int[], text) TO authenticated;
+
+NOTIFY pgrst, 'reload schema';
+
+-- ROLLBACK
+-- DROP FUNCTION IF EXISTS public.dir_turnover_rescisoes(int, int[], text);
+-- DROP INDEX IF EXISTS espelho.r046ver_ferias_rescisao_idx;
+
+
+-- >>> 20261007000007_sistemas_login_bloqueio_por_situacao.sql
+-- =========================================================================
+-- SISTEMAS › LOGINS — login da ERP bloqueado AUTOMATICAMENTE por situação
+-- na Senior, sem exceção (07/10/2026)
+--
+-- PEDIDO (Pablo): "não só Já excluí, tem que desabilitar o login
+-- automaticamente: se o usuário tá demitido, desabilita o login da ERP e
+-- pronto. Só deixa um botão de OK. O sistema vai puxar o CPF do colaborador
+-- se está como trabalhando ou não; se estiver de atestado OK, férias não
+-- pode acessar também, afastamentos longos não podem deixar o usuário
+-- entrar, tipo aux. doença etc."
+--
+-- REGRA (erp_login_bloqueado, usada por has_screen_access desde a mig
+-- 20261006160000 — régua de toda a RLS de tela e dos menus):
+--   · Usuário SEM cadastro vinculado na EMPREGADOS → nada muda (admin
+--     antigo, externo, automação).
+--   · Com vínculo: junta TODOS os cadastros do mesmo CPF (quem tem dois
+--     vínculos e um está Trabalhando continua entrando). Libera se algum
+--     deles está numa situação que libera (erp_situacao_libera_login):
+--       Trabalhando · Atestado (dias, filho, noturno, acidente…) ·
+--       Aviso Prévio Trabalhado.
+--     Qualquer outra bloqueia: Férias, Auxílio Doença, Licença
+--     Maternidade/Paternidade, Aposentadoria, Cárcere, Demitido…
+--   · ACABA a exceção "mantido" (SIS_LOGIN_DESLIGAMENTO) — era o botão
+--     "Manter". Medido em 07/10: 1 caso (MILENY DE OLIVEIRA DA ROSA,
+--     demitida 28/09, "Foi promoção") passa a ficar bloqueado até a nova
+--     admissão aparecer na Senior — aí o CPF libera sozinho.
+--   · Passam a ficar bloqueados em 07/10: 5 de Férias, 4 de Licença
+--     Maternidade e 1 de Auxílio Doença (com login). Voltando a
+--     Trabalhando na Senior, o acesso volta sozinho no próximo sync.
+--
+-- TELA (Sistemas › Logins): a aba vira "Logins bloqueados" — todos os
+-- bloqueados, com o motivo (situação), e um botão OK que só registra a
+-- ciência (acao 'ciente', com a situação vista). Se a situação mudar (ex.:
+-- voltou das férias e depois foi demitido), aparece de novo.
+-- sis_logins_demitidos / sis_login_desligamento_tratar continuam existindo
+-- para a tela antiga até a publicação; 'mantido' não libera mais nada.
+--
+-- Idempotente. Aplicar no banco do app — não se auto-aplica.
+-- =========================================================================
+
+-- Busca por CPF roda em toda checagem de acesso.
+CREATE INDEX IF NOT EXISTS idx_empregados_cpf ON public."EMPREGADOS" ("CPF");
+
+ALTER TABLE public."SIS_LOGIN_DESLIGAMENTO" ADD COLUMN IF NOT EXISTS situacao text;
+ALTER TABLE public."SIS_LOGIN_DESLIGAMENTO" DROP CONSTRAINT IF EXISTS "SIS_LOGIN_DESLIGAMENTO_acao_check";
+ALTER TABLE public."SIS_LOGIN_DESLIGAMENTO" ADD CONSTRAINT "SIS_LOGIN_DESLIGAMENTO_acao_check"
+  CHECK (acao IN ('excluido', 'mantido', 'ciente'));
+
+-- ── Situação que deixa entrar na ERP ─────────────────────────────────────
+CREATE OR REPLACE FUNCTION public.erp_situacao_libera_login(_situacao text)
+RETURNS boolean LANGUAGE sql IMMUTABLE SET search_path = public, pg_temp AS $$
+  SELECT btrim(coalesce(_situacao, '')) ~* '^(Trabalhando|Atestado|Aviso Pr.vio Trab)'
+$$;
+
+-- ── Bloqueio ─────────────────────────────────────────────────────────────
+CREATE OR REPLACE FUNCTION public.erp_login_bloqueado(_user uuid)
+RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, pg_temp AS $$
+  -- 07/10/2026 (mig 20261007000007): por situação, pelo CPF, sem exceção.
+  SELECT _user IS NOT NULL
+     AND EXISTS (SELECT 1 FROM public."EMPREGADOS" e WHERE e.auth_user_id = _user)
+     -- duas buscas separadas (sem OR na junção) para cada uma usar o seu índice:
+     -- isto roda em TODA checagem de acesso (has_screen_access).
+     AND NOT EXISTS (SELECT 1 FROM public."EMPREGADOS" e
+                      WHERE e.auth_user_id = _user AND public.erp_situacao_libera_login(e."Situação"))
+     AND NOT EXISTS (SELECT 1 FROM public."EMPREGADOS" e
+                       JOIN public."EMPREGADOS" x ON x."CPF" = e."CPF"
+                      WHERE e.auth_user_id = _user AND e."CPF" IS NOT NULL
+                        AND public.erp_situacao_libera_login(x."Situação"));
+$$;
+REVOKE ALL ON FUNCTION public.erp_login_bloqueado(uuid) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.erp_login_bloqueado(uuid) TO authenticated;
+
+-- ── Lista da tela: todos os logins bloqueados ────────────────────────────
+CREATE OR REPLACE FUNCTION public.sis_logins_bloqueados()
+RETURNS TABLE(empregado_id bigint, auth_user_id uuid, nome text, cargo text, contrato text, empresa text,
+              situacao text, desde date, login_email text, ultimo_acesso timestamptz,
+              ciente boolean, ciente_em timestamptz, ciente_por text)
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public, pg_temp AS $$
+BEGIN
+  IF NOT public.sis_logins_pode('visualizar') THEN RAISE EXCEPTION 'Sem permissão.' USING ERRCODE = '42501'; END IF;
+  RETURN QUERY
+  SELECT e."ID"::bigint, u.id, e."Nome"::text, e."Título do Cargo"::text, e."Nome Filial"::text, e."Nome da Empresa"::text,
+         e."Situação"::text, public.data_universal(e."Data Afastamento"::text), u.email::text, u.last_sign_in_at,
+         (d.acao = 'ciente' AND d.situacao IS NOT DISTINCT FROM e."Situação") IS TRUE,
+         CASE WHEN d.acao = 'ciente' AND d.situacao IS NOT DISTINCT FROM e."Situação" THEN d.tratado_em END,
+         CASE WHEN d.acao = 'ciente' AND d.situacao IS NOT DISTINCT FROM e."Situação" THEN d.tratado_por_nome END
+    FROM public."EMPREGADOS" e
+    JOIN auth.users u ON u.id = e.auth_user_id
+    LEFT JOIN public."SIS_LOGIN_DESLIGAMENTO" d ON d.auth_user_id = u.id
+   WHERE public.erp_login_bloqueado(u.id)
+   ORDER BY 11, public.data_universal(e."Data Afastamento"::text) DESC NULLS LAST, e."Nome";
+END $$;
+
+-- ── OK: ciência do bloqueio (não libera nada) ────────────────────────────
+CREATE OR REPLACE FUNCTION public.sis_login_bloqueio_ciente(p_auth_user_id uuid)
+RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
+DECLARE v_quem text; v_emp bigint; v_sit text;
+BEGIN
+  IF NOT public.sis_logins_pode('alterar') THEN RAISE EXCEPTION 'Sem permissão.' USING ERRCODE = '42501'; END IF;
+  SELECT e."ID", e."Situação" INTO v_emp, v_sit FROM public."EMPREGADOS" e WHERE e.auth_user_id = p_auth_user_id;
+  IF v_emp IS NULL THEN RAISE EXCEPTION 'Login sem colaborador vinculado.'; END IF;
+  SELECT coalesce(nullif(btrim(display_name), ''), email) INTO v_quem FROM public.profiles WHERE id = auth.uid();
+  INSERT INTO public."SIS_LOGIN_DESLIGAMENTO" (auth_user_id, empregado_id, acao, situacao, obs, tratado_por, tratado_por_nome)
+  VALUES (p_auth_user_id, v_emp, 'ciente', v_sit, NULL, auth.uid(), v_quem)
+  ON CONFLICT (auth_user_id) DO UPDATE SET empregado_id = EXCLUDED.empregado_id, acao = 'ciente', situacao = EXCLUDED.situacao,
+    obs = NULL, tratado_por = EXCLUDED.tratado_por, tratado_por_nome = EXCLUDED.tratado_por_nome, tratado_em = now();
+END $$;
+
+DO $$
+DECLARE f text;
+BEGIN
+  FOREACH f IN ARRAY ARRAY['sis_logins_bloqueados()', 'sis_login_bloqueio_ciente(uuid)'] LOOP
+    EXECUTE format('REVOKE ALL ON FUNCTION public.%s FROM PUBLIC, anon', f);
+    EXECUTE format('GRANT EXECUTE ON FUNCTION public.%s TO authenticated', f);
+  END LOOP;
+END $$;
+
+-- ── Bolinha de Sistemas › Logins: bloqueados sem OK ─────────────────────
+DO $$
+DECLARE v_def text; v_novo text;
+  velho constant text := $v$(SELECT count(*) FROM public."EMPREGADOS" e
+              JOIN auth.users u ON u.id = e.auth_user_id
+              LEFT JOIN public."SIS_LOGIN_DESLIGAMENTO" d ON d.auth_user_id = u.id
+             WHERE e."Situação" = 'Demitido' AND d.auth_user_id IS NULL
+               AND NOT EXISTS (SELECT 1 FROM public."EMPREGADOS" o
+                                WHERE o.auth_user_id = e.auth_user_id AND public.esp_col_esta_ativo(o."Situação")))$v$;
+  novo constant text := $n$(SELECT count(*) FROM public."EMPREGADOS" e
+              LEFT JOIN public."SIS_LOGIN_DESLIGAMENTO" d ON d.auth_user_id = e.auth_user_id
+             WHERE e.auth_user_id IS NOT NULL AND public.erp_login_bloqueado(e.auth_user_id)
+               AND NOT (d.acao = 'ciente' AND d.situacao IS NOT DISTINCT FROM e."Situação") IS TRUE)$n$;
+BEGIN
+  v_def := pg_get_functiondef('public.minhas_pendencias_aprovacao()'::regprocedure);
+  IF position('erp_login_bloqueado(e.auth_user_id)' IN v_def) > 0 THEN RETURN; END IF;   -- já aplicado
+  v_novo := replace(v_def, velho, novo);
+  IF v_novo = v_def THEN
+    RAISE NOTICE 'minhas_pendencias_aprovacao: contagem de demitidos não encontrada — bolinha ficou como estava.';
+    RETURN;
+  END IF;
+  EXECUTE v_novo;
+END $$;
+
+NOTIFY pgrst, 'reload schema';
+
+-- ROLLBACK
+-- erp_login_bloqueado: reaplicar a da mig 20261006160000 (só demitido + exceção 'mantido').
+-- minhas_pendencias_aprovacao: replace inverso do bloco acima.
+-- DROP FUNCTION IF EXISTS public.sis_logins_bloqueados(), public.sis_login_bloqueio_ciente(uuid), public.erp_situacao_libera_login(text);
+-- (a coluna situacao e o 'ciente' no CHECK podem ficar.)
+
+
+-- >>> 20261007000008_sistemas_logins_painel_uso.sql
+-- =========================================================================
+-- SISTEMAS › LOGINS — painel de uso (07/10/2026)
+--
+-- PEDIDO (Pablo): "faz alguns dashboards nesse sistema de logins, tipo
+-- quais setores têm mais logins, quais setores mais acessam etc."
+--
+-- FONTES
+--   · Logins = auth.users (159 em 07/10). Setor = public.user_setor
+--     (Administração › Setores) — cobre TODOS os usuários; o Setor_ERP da
+--     EMPREGADOS só cobre 73. Um usuário pode ter mais de um setor: conta
+--     em cada um (por isso a soma por setor pode passar do total).
+--   · Acesso = uma linha em public.sessoes_ativas — o Topbar grava uma por
+--     abertura do ERP (por aba/navegador, sessionStorage), desde mai/2026.
+--     Não mede tempo nem tela visitada.
+--   · Telas negadas = public.access_audit_log (allowed = false): alguém
+--     tentou abrir uma tela sem liberação — mostra onde falta permissão.
+--   · Bloqueados = erp_login_bloqueado (mig 20261007000007).
+--   Horas e dias em America/Sao_Paulo.
+--
+-- sis_logins_painel(_dias): _dias = janela dos acessos (7, 30, 90…);
+-- NULL = desde o início do registro. Acesso: sis_logins_pode('visualizar').
+-- Idempotente. Aplicar no banco do app — não se auto-aplica.
+-- =========================================================================
+
+CREATE INDEX IF NOT EXISTS idx_sessoes_ativas_iniciada_em ON public.sessoes_ativas (iniciada_em);
+
+CREATE OR REPLACE FUNCTION public.sis_logins_painel(_dias int DEFAULT 30)
+RETURNS jsonb LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public, pg_temp AS $$
+DECLARE
+  v_de timestamptz;
+  v_out jsonb;
+BEGIN
+  IF NOT public.sis_logins_pode('visualizar') THEN RAISE EXCEPTION 'Sem permissão.' USING ERRCODE = '42501'; END IF;
+  IF _dias IS NOT NULL AND (_dias < 1 OR _dias > 3650) THEN RAISE EXCEPTION 'Período inválido.'; END IF;
+  v_de := CASE WHEN _dias IS NULL THEN '-infinity'::timestamptz
+               ELSE (date_trunc('day', now() AT TIME ZONE 'America/Sao_Paulo') - make_interval(days => _dias - 1)) AT TIME ZONE 'America/Sao_Paulo' END;
+
+  WITH u AS MATERIALIZED (
+    SELECT x.id, coalesce(nullif(btrim(p.display_name), ''), x.email::text) nome, x.email::text email,
+           x.created_at, public.erp_login_bloqueado(x.id) bloqueado
+      FROM auth.users x LEFT JOIN public.profiles p ON p.id = x.id
+  ),
+  st AS MATERIALIZED (   -- setor(es) de cada usuário; sem setor vira "(sem setor)"
+    SELECT u.id, coalesce(s.setor, '(sem setor)') setor
+      FROM u LEFT JOIN public.user_setor s ON s.user_id = u.id
+  ),
+  se AS MATERIALIZED (   -- acessos no período
+    SELECT s.user_id, s.iniciada_em, s.iniciada_em AT TIME ZONE 'America/Sao_Paulo' local,
+           CASE WHEN s.user_agent ~* '(Android|iPhone|iPad|Mobile)' THEN 'Celular / tablet' ELSE 'Computador' END dispositivo
+      FROM public.sessoes_ativas s
+     WHERE s.iniciada_em >= v_de AND s.user_id IN (SELECT id FROM u)
+  ),
+  ult AS (               -- último acesso de cada usuário (todo o histórico)
+    SELECT u.id, greatest(max(s.iniciada_em), max(a.last_sign_in_at)) ultimo
+      FROM u LEFT JOIN public.sessoes_ativas s ON s.user_id = u.id
+             LEFT JOIN auth.users a ON a.id = u.id
+     GROUP BY u.id
+  ),
+  pu AS MATERIALIZED (   -- por usuário
+    SELECT u.*, ult.ultimo, (SELECT count(*) FROM se WHERE se.user_id = u.id) acessos,
+           (SELECT count(DISTINCT se.local::date) FROM se WHERE se.user_id = u.id) dias_ativos
+      FROM u JOIN ult USING (id)
+  )
+  SELECT jsonb_build_object(
+    'dias', _dias, 'de', CASE WHEN _dias IS NULL THEN (SELECT min(iniciada_em) FROM public.sessoes_ativas) ELSE v_de END,
+    'gerado_em', now(),
+    'total_logins', (SELECT count(*) FROM pu),
+    'ativos', (SELECT count(*) FROM pu WHERE acessos > 0),
+    'acessos', (SELECT count(*) FROM se),
+    'bloqueados', (SELECT count(*) FROM pu WHERE bloqueado),
+    'nunca_acessaram', (SELECT count(*) FROM pu WHERE ultimo IS NULL),
+    'sem_acesso_30d', (SELECT count(*) FROM pu WHERE NOT bloqueado AND (ultimo IS NULL OR ultimo < now() - interval '30 days')),
+    'por_setor', (SELECT coalesce(jsonb_agg(jsonb_build_object(
+                     'setor', x.setor, 'logins', x.logins, 'ativos', x.ativos, 'acessos', x.acessos, 'bloqueados', x.bloq)
+                     ORDER BY x.logins DESC, x.setor), '[]'::jsonb)
+                    FROM (SELECT st.setor, count(*) logins, count(*) FILTER (WHERE pu.acessos > 0) ativos,
+                                 sum(pu.acessos) acessos, count(*) FILTER (WHERE pu.bloqueado) bloq
+                            FROM st JOIN pu ON pu.id = st.id GROUP BY 1) x),
+    'por_dia', (SELECT coalesce(jsonb_agg(jsonb_build_object('dia', x.dia, 'acessos', x.n, 'usuarios', x.us) ORDER BY x.dia), '[]'::jsonb)
+                  FROM (SELECT local::date dia, count(*) n, count(DISTINCT user_id) us FROM se GROUP BY 1) x),
+    'por_hora', (SELECT jsonb_agg(jsonb_build_object('hora', h, 'acessos', coalesce(x.n, 0)) ORDER BY h)
+                   FROM generate_series(0, 23) h
+                   LEFT JOIN (SELECT extract(hour FROM local)::int hr, count(*) n FROM se GROUP BY 1) x ON x.hr = h),
+    'por_semana', (SELECT jsonb_agg(jsonb_build_object('dow', d, 'acessos', coalesce(x.n, 0)) ORDER BY d)
+                     FROM generate_series(0, 6) d
+                     LEFT JOIN (SELECT extract(dow FROM local)::int dw, count(*) n FROM se GROUP BY 1) x ON x.dw = d),
+    'dispositivos', (SELECT coalesce(jsonb_agg(jsonb_build_object('dispositivo', x.dispositivo, 'acessos', x.n) ORDER BY x.n DESC), '[]'::jsonb)
+                       FROM (SELECT dispositivo, count(*) n FROM se GROUP BY 1) x),
+    'top_usuarios', (SELECT coalesce(jsonb_agg(x ORDER BY x.acessos DESC, x.nome), '[]'::jsonb) FROM (
+                       SELECT pu.nome, pu.email, pu.acessos, pu.dias_ativos, pu.ultimo,
+                              (SELECT string_agg(st.setor, ', ' ORDER BY st.setor) FROM st WHERE st.id = pu.id) setores
+                         FROM pu WHERE pu.acessos > 0 ORDER BY pu.acessos DESC, pu.nome LIMIT 15) x),
+    'sem_acesso', (SELECT coalesce(jsonb_agg(x ORDER BY x.ultimo NULLS FIRST, x.nome), '[]'::jsonb) FROM (
+                     SELECT pu.nome, pu.email, pu.ultimo, pu.created_at criado_em,
+                            (SELECT string_agg(st.setor, ', ' ORDER BY st.setor) FROM st WHERE st.id = pu.id) setores
+                       FROM pu WHERE NOT pu.bloqueado AND (pu.ultimo IS NULL OR pu.ultimo < now() - interval '30 days')) x),
+    'telas_negadas', (SELECT coalesce(jsonb_agg(jsonb_build_object('tela', x.tela, 'tentativas', x.n, 'usuarios', x.us) ORDER BY x.n DESC), '[]'::jsonb)
+                        FROM (SELECT coalesce(nullif(a.rota, ''), a.menu_codigo) tela, count(*) n, count(DISTINCT a.user_id) us
+                                FROM public.access_audit_log a
+                               WHERE NOT a.allowed AND a.created_at >= v_de
+                               GROUP BY 1 ORDER BY 2 DESC LIMIT 10) x)
+  ) INTO v_out;
+  RETURN v_out;
+END $$;
+
+REVOKE ALL ON FUNCTION public.sis_logins_painel(int) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.sis_logins_painel(int) TO authenticated;
+
+NOTIFY pgrst, 'reload schema';
+
+-- ROLLBACK
+-- DROP FUNCTION IF EXISTS public.sis_logins_painel(int);
+-- DROP INDEX IF EXISTS public.idx_sessoes_ativas_iniciada_em;
+
+
+-- >>> 20261007000009_sistemas_login_excecao_afastado.sql
+-- =========================================================================
+-- SISTEMAS › LOGINS — exceção para AFASTADO (férias, licença…) (07/10/2026)
+--
+-- PEDIDO (Pablo): "deixa abrir exceção no sistema, pra liberar os que estão
+-- de férias ou licença maternidade etc. Tem que aparecer lá o status >
+-- Travado por > Licença maternidade, e opção de liberar e informar o porquê."
+--
+-- REGRA (em cima da mig 20261007000007)
+--   · Sistemas pode LIBERAR o login de quem está travado por afastamento
+--     (qualquer situação que não libera e não é desligamento). Motivo
+--     obrigatório. DEMITIDO continua sem exceção — "desabilita e pronto".
+--   · A liberação vale para a situação em que foi dada: fica gravada
+--     (SIS_LOGIN_DESLIGAMENTO.situacao) e só vale enquanto o cadastro
+--     vinculado estiver nessa mesma situação. Voltou a Trabalhando → nem
+--     precisa; entrou em outro afastamento ou foi demitido → trava de novo.
+--   · "Travar de novo" desfaz a liberação (vira ciência, acao 'ciente').
+--
+-- O QUE MUDA
+--   · erp_login_travado(user): a regra pura da situação (a antiga
+--     erp_login_bloqueado da mig 20261007000007).
+--   · erp_login_excecao_vigente(user): liberação válida agora.
+--   · erp_login_bloqueado(user) = travado E sem exceção vigente.
+--   · sis_logins_bloqueados() passa a listar TODOS os travados, com a
+--     liberação (se houver) — a tela mostra "Travado por <situação>" ou
+--     "Liberado". Muda o retorno → DROP + CREATE (tela nova ainda não
+--     publicada).
+--   · sis_login_liberar(user, motivo) / sis_login_travar(user).
+--
+-- Idempotente. Aplicar no banco do app — não se auto-aplica.
+-- =========================================================================
+
+ALTER TABLE public."SIS_LOGIN_DESLIGAMENTO" DROP CONSTRAINT IF EXISTS "SIS_LOGIN_DESLIGAMENTO_acao_check";
+ALTER TABLE public."SIS_LOGIN_DESLIGAMENTO" ADD CONSTRAINT "SIS_LOGIN_DESLIGAMENTO_acao_check"
+  CHECK (acao IN ('excluido', 'mantido', 'ciente', 'liberado'));
+
+-- ── Regra pura da situação (sem exceção) ─────────────────────────────────
+CREATE OR REPLACE FUNCTION public.erp_login_travado(_user uuid)
+RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, pg_temp AS $$
+  -- duas buscas separadas (sem OR na junção) para cada uma usar o seu índice:
+  -- isto roda em TODA checagem de acesso (has_screen_access).
+  SELECT _user IS NOT NULL
+     AND EXISTS (SELECT 1 FROM public."EMPREGADOS" e WHERE e.auth_user_id = _user)
+     AND NOT EXISTS (SELECT 1 FROM public."EMPREGADOS" e
+                      WHERE e.auth_user_id = _user AND public.erp_situacao_libera_login(e."Situação"))
+     AND NOT EXISTS (SELECT 1 FROM public."EMPREGADOS" e
+                       JOIN public."EMPREGADOS" x ON x."CPF" = e."CPF"
+                      WHERE e.auth_user_id = _user AND e."CPF" IS NOT NULL
+                        AND public.erp_situacao_libera_login(x."Situação"));
+$$;
+
+-- ── Exceção válida agora: liberada para a situação atual, e não é desligamento
+CREATE OR REPLACE FUNCTION public.erp_login_excecao_vigente(_user uuid)
+RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, pg_temp AS $$
+  SELECT EXISTS (
+    SELECT 1 FROM public."SIS_LOGIN_DESLIGAMENTO" d
+      JOIN public."EMPREGADOS" e ON e.auth_user_id = d.auth_user_id
+     WHERE d.auth_user_id = _user AND d.acao = 'liberado'
+       AND d.situacao IS NOT DISTINCT FROM e."Situação"
+       AND btrim(coalesce(e."Situação", '')) !~* '^(DEMIT|DESLIG|RESCIS)');
+$$;
+
+CREATE OR REPLACE FUNCTION public.erp_login_bloqueado(_user uuid)
+RETURNS boolean LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public, pg_temp AS $$
+BEGIN
+  -- 07/10/2026 (migs 20261007000007 e 09): pela situação, pelo CPF; afastado
+  -- pode ter exceção liberada por Sistemas; desligado não. A exceção só é
+  -- olhada para quem está travado — roda em TODA checagem de acesso.
+  IF NOT public.erp_login_travado(_user) THEN RETURN false; END IF;
+  RETURN NOT public.erp_login_excecao_vigente(_user);
+END $$;
+
+DO $$
+DECLARE f text;
+BEGIN
+  FOREACH f IN ARRAY ARRAY['erp_login_travado(uuid)', 'erp_login_excecao_vigente(uuid)', 'erp_login_bloqueado(uuid)'] LOOP
+    EXECUTE format('REVOKE ALL ON FUNCTION public.%s FROM PUBLIC, anon', f);
+    EXECUTE format('GRANT EXECUTE ON FUNCTION public.%s TO authenticated', f);
+  END LOOP;
+END $$;
+
+-- ── Lista da tela: todos os travados, com a liberação ────────────────────
+DROP FUNCTION IF EXISTS public.sis_logins_bloqueados();
+CREATE FUNCTION public.sis_logins_bloqueados()
+RETURNS TABLE(empregado_id bigint, auth_user_id uuid, nome text, cargo text, contrato text, empresa text,
+              situacao text, desde date, desligado boolean, login_email text, ultimo_acesso timestamptz,
+              ciente boolean, ciente_em timestamptz, ciente_por text,
+              liberado boolean, liberado_motivo text, liberado_em timestamptz, liberado_por text)
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public, pg_temp AS $$
+BEGIN
+  IF NOT public.sis_logins_pode('visualizar') THEN RAISE EXCEPTION 'Sem permissão.' USING ERRCODE = '42501'; END IF;
+  RETURN QUERY
+  WITH t AS (
+    SELECT e.*, u.id uid, u.email::text uemail, u.last_sign_in_at, d.acao, d.situacao dsit, d.obs, d.tratado_em, d.tratado_por_nome,
+           (btrim(coalesce(e."Situação", '')) ~* '^(DEMIT|DESLIG|RESCIS)') desl,
+           public.erp_login_excecao_vigente(u.id) lib
+      FROM public."EMPREGADOS" e
+      JOIN auth.users u ON u.id = e.auth_user_id
+      LEFT JOIN public."SIS_LOGIN_DESLIGAMENTO" d ON d.auth_user_id = u.id
+     WHERE public.erp_login_travado(u.id)
+  )
+  SELECT t."ID"::bigint, t.uid, t."Nome"::text, t."Título do Cargo"::text, t."Nome Filial"::text, t."Nome da Empresa"::text,
+         t."Situação"::text, public.data_universal(t."Data Afastamento"::text), t.desl, t.uemail, t.last_sign_in_at,
+         (t.acao = 'ciente' AND t.dsit IS NOT DISTINCT FROM t."Situação") IS TRUE,
+         CASE WHEN t.acao = 'ciente' AND t.dsit IS NOT DISTINCT FROM t."Situação" THEN t.tratado_em END,
+         CASE WHEN t.acao = 'ciente' AND t.dsit IS NOT DISTINCT FROM t."Situação" THEN t.tratado_por_nome END,
+         t.lib,
+         CASE WHEN t.lib THEN t.obs END, CASE WHEN t.lib THEN t.tratado_em END, CASE WHEN t.lib THEN t.tratado_por_nome END
+    FROM t
+   ORDER BY t.lib, (t.acao = 'ciente' AND t.dsit IS NOT DISTINCT FROM t."Situação") IS TRUE,
+            public.data_universal(t."Data Afastamento"::text) DESC NULLS LAST, t."Nome";
+END $$;
+
+-- ── Liberar (exceção) / travar de novo ───────────────────────────────────
+CREATE OR REPLACE FUNCTION public.sis_login_liberar(p_auth_user_id uuid, p_motivo text)
+RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
+DECLARE v_quem text; v_emp bigint; v_sit text;
+BEGIN
+  IF NOT public.sis_logins_pode('alterar') THEN RAISE EXCEPTION 'Sem permissão.' USING ERRCODE = '42501'; END IF;
+  IF length(btrim(coalesce(p_motivo, ''))) < 5 THEN RAISE EXCEPTION 'Informe o motivo da liberação.'; END IF;
+  SELECT e."ID", e."Situação" INTO v_emp, v_sit FROM public."EMPREGADOS" e WHERE e.auth_user_id = p_auth_user_id;
+  IF v_emp IS NULL THEN RAISE EXCEPTION 'Login sem colaborador vinculado.'; END IF;
+  IF btrim(coalesce(v_sit, '')) ~* '^(DEMIT|DESLIG|RESCIS)' THEN
+    RAISE EXCEPTION 'Desligado não tem exceção: o login de quem foi demitido fica bloqueado.';
+  END IF;
+  IF NOT public.erp_login_travado(p_auth_user_id) THEN RAISE EXCEPTION 'Este login não está travado.'; END IF;
+  SELECT coalesce(nullif(btrim(display_name), ''), email) INTO v_quem FROM public.profiles WHERE id = auth.uid();
+  INSERT INTO public."SIS_LOGIN_DESLIGAMENTO" (auth_user_id, empregado_id, acao, situacao, obs, tratado_por, tratado_por_nome)
+  VALUES (p_auth_user_id, v_emp, 'liberado', v_sit, btrim(p_motivo), auth.uid(), v_quem)
+  ON CONFLICT (auth_user_id) DO UPDATE SET empregado_id = EXCLUDED.empregado_id, acao = 'liberado', situacao = EXCLUDED.situacao,
+    obs = EXCLUDED.obs, tratado_por = EXCLUDED.tratado_por, tratado_por_nome = EXCLUDED.tratado_por_nome, tratado_em = now();
+END $$;
+
+CREATE OR REPLACE FUNCTION public.sis_login_travar(p_auth_user_id uuid)
+RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
+BEGIN
+  IF NOT public.sis_logins_pode('alterar') THEN RAISE EXCEPTION 'Sem permissão.' USING ERRCODE = '42501'; END IF;
+  -- Desfaz a liberação; fica como "visto" para não voltar a acender a bolinha.
+  PERFORM public.sis_login_bloqueio_ciente(p_auth_user_id);
+END $$;
+
+DO $$
+DECLARE f text;
+BEGIN
+  FOREACH f IN ARRAY ARRAY['sis_logins_bloqueados()', 'sis_login_liberar(uuid, text)', 'sis_login_travar(uuid)'] LOOP
+    EXECUTE format('REVOKE ALL ON FUNCTION public.%s FROM PUBLIC, anon', f);
+    EXECUTE format('GRANT EXECUTE ON FUNCTION public.%s TO authenticated', f);
+  END LOOP;
+END $$;
+
+NOTIFY pgrst, 'reload schema';
+
+-- ROLLBACK
+-- erp_login_bloqueado: reaplicar a da mig 20261007000007 (sem exceção).
+-- sis_logins_bloqueados: reaplicar a da mig 20261007000007 (DROP + CREATE, retorno antigo).
+-- DROP FUNCTION IF EXISTS public.sis_login_liberar(uuid, text), public.sis_login_travar(uuid),
+--   public.erp_login_excecao_vigente(uuid), public.erp_login_travado(uuid);
+-- UPDATE "SIS_LOGIN_DESLIGAMENTO" SET acao = 'ciente' WHERE acao = 'liberado';  (antes de voltar o CHECK)
+
+
+-- >>> 20261007000010_relatorios_modulo_proprio.sql
+-- =========================================================================
+-- RELATÓRIOS — sai da Diretoria e vira MÓDULO PRÓPRIO (07/10/2026)
+--
+-- PEDIDO (Pablo): "tira o submódulo RELATÓRIOS da diretoria, move ele pra
+-- um módulo real separado, as permissões também".
+--
+-- O QUE MUDA
+--   · app_modulo 'relatorios' (Relatórios), logo depois da Diretoria.
+--   · Os 13 menus dos relatórios (mig 20261005000006: Relatório Geral, os 10
+--     relatórios e a Análise com I.A) MUDAM DE MÓDULO para Relatórios, com
+--     rota nova /app/relatorios/... e nome sem o prefixo "Relatórios — ".
+--   · PERMISSÕES: a liberação é por CÓDIGO de menu (screen_permission_user e
+--     perfil_acesso_permissao.menu_codigo; has_screen_access não olha
+--     módulo). Os códigos ficam os MESMOS — então cada pessoa continua com
+--     exatamente o acesso que tem hoje, agora listado em Acesso por Usuário
+--     dentro do módulo Relatórios. As RPCs dir_rel_* / dir_turnover_* não
+--     mudam (checam os mesmos códigos).
+--
+-- TRANSIÇÃO (a tela publicada usa /app/diretoria/relatorios até o Lovable
+-- publicar a nova; o RouteGuard nega rota fora do app_menu): ficam, NA
+-- DIRETORIA, cópias ATIVAS com a rota antiga e o nome "(rota antiga)",
+-- mesmos códigos. app_menu só proíbe
+-- código repetido no MESMO módulo. Liberar/negar em qualquer uma das duas
+-- linhas é a mesma permissão (é por código). Depois que a tela nova estiver
+-- no ar, aplicar 20261007000011_relatorios_limpa_rotas_antigas.sql.
+--
+-- Idempotente. Aplicar no banco do app — não se auto-aplica.
+-- =========================================================================
+
+INSERT INTO public.app_modulo (codigo, nome, descricao, icone, ordem, ativo)
+VALUES ('relatorios', 'Relatórios', 'Relatórios de todos os sistemas de solicitação, quadro e turn-over', 'BarChart3', 143, true)
+ON CONFLICT (codigo) DO UPDATE SET nome = EXCLUDED.nome, descricao = EXCLUDED.descricao, icone = EXCLUDED.icone, ativo = true;
+
+DO $$
+DECLARE
+  v_dir uuid := (SELECT id FROM public.app_modulo WHERE codigo = 'diretoria');
+  v_rel uuid := (SELECT id FROM public.app_modulo WHERE codigo = 'relatorios');
+  r record;
+BEGIN
+  IF v_dir IS NULL OR v_rel IS NULL THEN RAISE EXCEPTION 'Módulo diretoria/relatorios não encontrado.'; END IF;
+
+  FOR r IN
+    SELECT * FROM public.app_menu
+     WHERE modulo_id = v_dir
+       AND (codigo LIKE 'diretoria\_rel\_%' OR codigo IN ('diretoria_relatorio_geral', 'diretoria_relatorios_ia'))
+       AND nome NOT LIKE '%(rota antiga)'
+  LOOP
+    -- 1) a linha "de verdade" vai para Relatórios, com rota e nome novos
+    IF NOT EXISTS (SELECT 1 FROM public.app_menu WHERE modulo_id = v_rel AND codigo = r.codigo) THEN
+      INSERT INTO public.app_menu (modulo_id, codigo, nome, rota, ordem, ativo)
+      VALUES (v_rel, r.codigo,
+              regexp_replace(r.nome, '^Relatórios\s*—\s*', ''),
+              CASE WHEN r.rota IS NULL THEN NULL ELSE replace(r.rota, '/app/diretoria/relatorios', '/app/relatorios') END,
+              r.ordem - 39, r.ativo);
+    END IF;
+    -- 2) a linha antiga fica na Diretoria só como ponte da rota antiga
+    IF r.rota IS NULL THEN
+      DELETE FROM public.app_menu WHERE id = r.id;   -- menu-fantasma (I.A) não tem rota a preservar
+    ELSE
+      UPDATE public.app_menu SET nome = r.nome || ' (rota antiga)' WHERE id = r.id;
+    END IF;
+  END LOOP;
+END $$;
+
+NOTIFY pgrst, 'reload schema';
+
+-- ROLLBACK
+-- DELETE FROM app_menu WHERE modulo_id = (SELECT id FROM app_modulo WHERE codigo = 'relatorios');
+-- UPDATE app_menu SET nome = replace(nome, ' (rota antiga)', '') WHERE nome LIKE '%(rota antiga)';
+-- INSERT da linha 'diretoria_relatorios_ia' (rota NULL, ordem 51) de volta na Diretoria.
+-- DELETE FROM app_modulo WHERE codigo = 'relatorios';
+
+
+-- >>> 20261007000011_relatorios_limpa_rotas_antigas.sql (aplicada em 07/10/2026, depois da publicação)
+-- =========================================================================
+-- RELATÓRIOS — limpa as rotas antigas da Diretoria (pós-publicação)
+--
+-- ⚠ APLICAR SÓ DEPOIS que a tela nova (rotas /app/relatorios/...) estiver
+-- publicada pelo Lovable. Antes disso, apagar estas linhas faz o RouteGuard
+-- da tela antiga negar /app/diretoria/relatorios.
+--
+-- Complementa a mig 20261007000010: as linhas da Diretoria com nome
+-- "... (rota antiga)" eram só a ponte da transição. A tela nova redireciona
+-- /app/diretoria/relatorios/* para /app/relatorios/*. Permissões não mudam
+-- (são por código, e as linhas do módulo Relatórios ficam).
+-- Idempotente.
+-- =========================================================================
+
+DELETE FROM public.app_menu
+ WHERE modulo_id = (SELECT id FROM public.app_modulo WHERE codigo = 'diretoria')
+   AND nome LIKE '%(rota antiga)'
+   AND (codigo LIKE 'diretoria\_rel\_%' OR codigo = 'diretoria_relatorio_geral');
+
+NOTIFY pgrst, 'reload schema';
+
+-- ROLLBACK: reaplicar o passo 2 da mig 20261007000010 (recriar as linhas com a rota antiga).
+
+
+
+-- >>> 20261007000012_sistemas_tvs.sql
+-- =========================================================================
+-- SISTEMAS › TV's — controlar tudo o que passa nas TVs da empresa
+-- (07/10/2026)
+--
+-- PEDIDO (Pablo): "um módulo pra conectar TODAS as TVs da empresa no
+-- sistema ERP… Submódulo TV's pra controlar tudo o que passa nas TVs".
+--
+-- COMO FUNCIONA (sinalização digital, sem instalar nada na TV)
+--   1. Na TV (navegador da Smart TV, Fire TV/Chromecast, mini PC) abre-se
+--      <app>/tv. A tela se registra sozinha (tv_registrar) e mostra um
+--      CÓDIGO de 6 dígitos. O token do aparelho fica só no navegador dela
+--      (localStorage); no banco vai só o hash.
+--   2. Em Sistemas › TV's alguém digita o código (tv_parear), dá nome/local
+--      e escolhe a PLAYLIST. A TV pega isso na próxima consulta.
+--   3. A TV consulta tv_estado(token) a cada ~15 s: playlist, aviso geral
+--      ativo e comando pendente (recarregar). Cada consulta é o "ping" que
+--      faz a TV aparecer online.
+--
+-- CONTEÚDO (TV_ITEM): imagem, vídeo (arquivo no bucket público tv-midia),
+-- página web (iframe — site que bloqueia iframe não aparece), YouTube e
+-- aviso em texto. Duração e janela de validade por item.
+-- AVISO GERAL (TV_ALERTA): texto que cobre a tela em todas as TVs (ou nas
+-- escolhidas) até a hora de fim — comunicado urgente.
+--
+-- SEGURANÇA: as RPCs da TV (tv_registrar, tv_estado) são as ÚNICAS liberadas
+-- ao anon; só devolvem a playlist daquele aparelho, por token. Registro tem
+-- teto (60 aparelhos não pareados por hora) e aparelho não pareado some em
+-- 2 dias. O bucket tv-midia é PÚBLICO de leitura (a TV não tem login) — não
+-- subir nada sigiloso. Gestão: menu sistemas_tvs (Acesso por Usuário).
+-- Idempotente. Aplicar no banco do app — não se auto-aplica.
+-- =========================================================================
+
+-- ── Menu ─────────────────────────────────────────────────────────────────
+INSERT INTO public.app_menu (modulo_id, codigo, nome, rota, ordem, ativo)
+SELECT id, 'sistemas_tvs', 'TV''s', '/app/sistemas/tvs', 60, true
+  FROM public.app_modulo WHERE codigo = 'sistemas'
+ON CONFLICT (modulo_id, codigo) DO UPDATE SET nome = EXCLUDED.nome, rota = EXCLUDED.rota, ativo = true;
+
+-- ── Tabelas ──────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS public."TV_PLAYLIST" (
+  id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  nome        text NOT NULL,
+  descricao   text,
+  created_at  timestamptz NOT NULL DEFAULT now(),
+  created_by  uuid DEFAULT auth.uid(),
+  updated_at  timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS public."TV_ITEM" (
+  id           uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  playlist_id  uuid NOT NULL REFERENCES public."TV_PLAYLIST"(id) ON DELETE CASCADE,
+  ordem        int NOT NULL DEFAULT 0,
+  tipo         text NOT NULL CHECK (tipo IN ('imagem', 'video', 'url', 'youtube', 'aviso')),
+  titulo       text,
+  url          text,          -- url / youtube
+  arquivo      text,          -- caminho no bucket tv-midia (imagem / vídeo)
+  texto        text,          -- aviso
+  cor          text,          -- fundo do aviso (#hex)
+  duracao_seg  int NOT NULL DEFAULT 15 CHECK (duracao_seg BETWEEN 3 AND 3600),
+  valido_de    timestamptz,
+  valido_ate   timestamptz,
+  ativo        boolean NOT NULL DEFAULT true,
+  created_at   timestamptz NOT NULL DEFAULT now(),
+  created_by   uuid DEFAULT auth.uid()
+);
+CREATE INDEX IF NOT EXISTS idx_tv_item_playlist ON public."TV_ITEM" (playlist_id, ordem);
+
+CREATE TABLE IF NOT EXISTS public."TV_DISPOSITIVO" (
+  id             uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  token_hash     text NOT NULL UNIQUE,
+  codigo         text,                       -- 6 dígitos enquanto não pareada
+  nome           text,
+  local          text,
+  playlist_id    uuid REFERENCES public."TV_PLAYLIST"(id) ON DELETE SET NULL,
+  pareado_em     timestamptz,
+  pareado_por    uuid,
+  ultimo_ping    timestamptz,
+  user_agent     text,
+  tela           text,                       -- ex.: 1920x1080
+  comando        text CHECK (comando IN ('recarregar')),
+  comando_em     timestamptz,
+  ativo          boolean NOT NULL DEFAULT true,
+  created_at     timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_tv_dispositivo_codigo ON public."TV_DISPOSITIVO" (codigo) WHERE codigo IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS public."TV_ALERTA" (
+  id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  texto         text NOT NULL,
+  cor           text NOT NULL DEFAULT '#dc2626',
+  inicio        timestamptz NOT NULL DEFAULT now(),
+  fim           timestamptz NOT NULL,
+  todas         boolean NOT NULL DEFAULT true,
+  dispositivos  uuid[] NOT NULL DEFAULT '{}',
+  encerrado_em  timestamptz,
+  created_at    timestamptz NOT NULL DEFAULT now(),
+  created_by    uuid DEFAULT auth.uid(),
+  created_by_nome text
+);
+
+-- ── RLS (gestão pela tela; a TV usa só as RPCs) ─────────────────────────
+DO $$
+DECLARE t text;
+BEGIN
+  FOREACH t IN ARRAY ARRAY['TV_PLAYLIST', 'TV_ITEM', 'TV_DISPOSITIVO', 'TV_ALERTA'] LOOP
+    EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', t);
+    EXECUTE format('REVOKE ALL ON public.%I FROM anon', t);
+  END LOOP;
+END $$;
+
+DROP POLICY IF EXISTS tv_playlist_select ON public."TV_PLAYLIST";
+CREATE POLICY tv_playlist_select ON public."TV_PLAYLIST" FOR SELECT TO authenticated USING (public.has_screen_access(auth.uid(), 'sistemas_tvs', 'visualizar'));
+DROP POLICY IF EXISTS tv_playlist_insert ON public."TV_PLAYLIST";
+CREATE POLICY tv_playlist_insert ON public."TV_PLAYLIST" FOR INSERT TO authenticated WITH CHECK (public.has_screen_access(auth.uid(), 'sistemas_tvs', 'incluir'));
+DROP POLICY IF EXISTS tv_playlist_update ON public."TV_PLAYLIST";
+CREATE POLICY tv_playlist_update ON public."TV_PLAYLIST" FOR UPDATE TO authenticated USING (public.has_screen_access(auth.uid(), 'sistemas_tvs', 'alterar'));
+DROP POLICY IF EXISTS tv_playlist_delete ON public."TV_PLAYLIST";
+CREATE POLICY tv_playlist_delete ON public."TV_PLAYLIST" FOR DELETE TO authenticated USING (public.has_screen_access(auth.uid(), 'sistemas_tvs', 'excluir'));
+
+DROP POLICY IF EXISTS tv_item_select ON public."TV_ITEM";
+CREATE POLICY tv_item_select ON public."TV_ITEM" FOR SELECT TO authenticated USING (public.has_screen_access(auth.uid(), 'sistemas_tvs', 'visualizar'));
+DROP POLICY IF EXISTS tv_item_insert ON public."TV_ITEM";
+CREATE POLICY tv_item_insert ON public."TV_ITEM" FOR INSERT TO authenticated WITH CHECK (public.has_screen_access(auth.uid(), 'sistemas_tvs', 'incluir'));
+DROP POLICY IF EXISTS tv_item_update ON public."TV_ITEM";
+CREATE POLICY tv_item_update ON public."TV_ITEM" FOR UPDATE TO authenticated USING (public.has_screen_access(auth.uid(), 'sistemas_tvs', 'alterar'));
+DROP POLICY IF EXISTS tv_item_delete ON public."TV_ITEM";
+CREATE POLICY tv_item_delete ON public."TV_ITEM" FOR DELETE TO authenticated USING (public.has_screen_access(auth.uid(), 'sistemas_tvs', 'excluir'));
+
+-- Dispositivo: a tela lê, renomeia/troca playlist/manda comando (alterar) e
+-- remove (excluir). Criar é só pela TV (tv_registrar) e parear por tv_parear.
+DROP POLICY IF EXISTS tv_dispositivo_select ON public."TV_DISPOSITIVO";
+CREATE POLICY tv_dispositivo_select ON public."TV_DISPOSITIVO" FOR SELECT TO authenticated USING (public.has_screen_access(auth.uid(), 'sistemas_tvs', 'visualizar'));
+DROP POLICY IF EXISTS tv_dispositivo_update ON public."TV_DISPOSITIVO";
+CREATE POLICY tv_dispositivo_update ON public."TV_DISPOSITIVO" FOR UPDATE TO authenticated USING (public.has_screen_access(auth.uid(), 'sistemas_tvs', 'alterar'));
+DROP POLICY IF EXISTS tv_dispositivo_delete ON public."TV_DISPOSITIVO";
+CREATE POLICY tv_dispositivo_delete ON public."TV_DISPOSITIVO" FOR DELETE TO authenticated USING (public.has_screen_access(auth.uid(), 'sistemas_tvs', 'excluir'));
+-- token_hash nunca sai para a tela: leitura por coluna (revogar só a coluna
+-- não adianta com o SELECT da tabela inteira concedido).
+REVOKE SELECT ON public."TV_DISPOSITIVO" FROM authenticated;
+GRANT SELECT (id, codigo, nome, local, playlist_id, pareado_em, pareado_por, ultimo_ping, user_agent, tela, comando, comando_em, ativo, created_at)
+  ON public."TV_DISPOSITIVO" TO authenticated;
+
+DROP POLICY IF EXISTS tv_alerta_select ON public."TV_ALERTA";
+CREATE POLICY tv_alerta_select ON public."TV_ALERTA" FOR SELECT TO authenticated USING (public.has_screen_access(auth.uid(), 'sistemas_tvs', 'visualizar'));
+DROP POLICY IF EXISTS tv_alerta_insert ON public."TV_ALERTA";
+CREATE POLICY tv_alerta_insert ON public."TV_ALERTA" FOR INSERT TO authenticated WITH CHECK (public.has_screen_access(auth.uid(), 'sistemas_tvs', 'incluir'));
+DROP POLICY IF EXISTS tv_alerta_update ON public."TV_ALERTA";
+CREATE POLICY tv_alerta_update ON public."TV_ALERTA" FOR UPDATE TO authenticated USING (public.has_screen_access(auth.uid(), 'sistemas_tvs', 'alterar'));
+
+-- ── Bucket público de mídia ──────────────────────────────────────────────
+INSERT INTO storage.buckets (id, name, public, file_size_limit)
+VALUES ('tv-midia', 'tv-midia', true, 209715200)   -- 200 MB (vídeo)
+ON CONFLICT (id) DO UPDATE SET public = true, file_size_limit = EXCLUDED.file_size_limit;
+
+DROP POLICY IF EXISTS "tv midia insert" ON storage.objects;
+CREATE POLICY "tv midia insert" ON storage.objects FOR INSERT TO authenticated
+  WITH CHECK (bucket_id = 'tv-midia' AND public.has_screen_access(auth.uid(), 'sistemas_tvs', 'incluir'));
+DROP POLICY IF EXISTS "tv midia delete" ON storage.objects;
+CREATE POLICY "tv midia delete" ON storage.objects FOR DELETE TO authenticated
+  USING (bucket_id = 'tv-midia' AND public.has_screen_access(auth.uid(), 'sistemas_tvs', 'excluir'));
+
+-- ── RPCs da TV (anon) ────────────────────────────────────────────────────
+CREATE OR REPLACE FUNCTION public.tv_registrar(p_user_agent text DEFAULT NULL, p_tela text DEFAULT NULL)
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, extensions, pg_temp AS $$
+DECLARE v_token text; v_codigo text; v_id uuid; i int := 0;
+BEGIN
+  -- Faxina: aparelho que nunca foi pareado some em 2 dias.
+  DELETE FROM public."TV_DISPOSITIVO" WHERE pareado_em IS NULL AND created_at < now() - interval '2 days';
+  IF (SELECT count(*) FROM public."TV_DISPOSITIVO" WHERE pareado_em IS NULL AND created_at > now() - interval '1 hour') >= 60 THEN
+    RAISE EXCEPTION 'Muitas TVs aguardando pareamento. Tente de novo mais tarde.';
+  END IF;
+  LOOP
+    v_codigo := lpad((floor(random() * 1000000))::int::text, 6, '0');
+    EXIT WHEN NOT EXISTS (SELECT 1 FROM public."TV_DISPOSITIVO" WHERE codigo = v_codigo);
+    i := i + 1; IF i > 20 THEN RAISE EXCEPTION 'Não foi possível gerar o código.'; END IF;
+  END LOOP;
+  v_token := encode(gen_random_bytes(32), 'hex');
+  INSERT INTO public."TV_DISPOSITIVO" (token_hash, codigo, user_agent, tela)
+  VALUES (encode(digest(v_token, 'sha256'), 'hex'), v_codigo, left(p_user_agent, 300), left(p_tela, 30))
+  RETURNING id INTO v_id;
+  RETURN jsonb_build_object('token', v_token, 'codigo', v_codigo);
+END $$;
+
+CREATE OR REPLACE FUNCTION public.tv_estado(p_token text, p_tela text DEFAULT NULL)
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, extensions, pg_temp AS $$
+DECLARE d public."TV_DISPOSITIVO"; v_cmd text;
+BEGIN
+  SELECT * INTO d FROM public."TV_DISPOSITIVO"
+   WHERE token_hash = encode(digest(coalesce(p_token, ''), 'sha256'), 'hex');
+  IF NOT FOUND THEN RETURN jsonb_build_object('desconhecida', true); END IF;
+
+  v_cmd := CASE WHEN d.comando IS NOT NULL AND d.comando_em > now() - interval '10 minutes' THEN d.comando END;
+  UPDATE public."TV_DISPOSITIVO"
+     SET ultimo_ping = now(), tela = coalesce(left(p_tela, 30), tela), comando = NULL, comando_em = NULL
+   WHERE id = d.id;
+
+  IF d.pareado_em IS NULL THEN
+    RETURN jsonb_build_object('pareada', false, 'codigo', d.codigo);
+  END IF;
+
+  RETURN jsonb_build_object(
+    'pareada', true, 'nome', d.nome, 'local', d.local, 'ativa', d.ativo, 'comando', v_cmd,
+    'itens', CASE WHEN NOT d.ativo THEN '[]'::jsonb ELSE (
+      SELECT coalesce(jsonb_agg(jsonb_build_object('id', i.id, 'tipo', i.tipo, 'titulo', i.titulo, 'url', i.url, 'arquivo', i.arquivo,
+                                                   'texto', i.texto, 'cor', i.cor, 'duracao_seg', i.duracao_seg) ORDER BY i.ordem, i.created_at), '[]'::jsonb)
+        FROM public."TV_ITEM" i
+       WHERE i.playlist_id = d.playlist_id AND i.ativo
+         AND (i.valido_de IS NULL OR i.valido_de <= now()) AND (i.valido_ate IS NULL OR i.valido_ate > now())) END,
+    'alerta', (SELECT jsonb_build_object('id', a.id, 'texto', a.texto, 'cor', a.cor, 'fim', a.fim)
+                 FROM public."TV_ALERTA" a
+                WHERE a.encerrado_em IS NULL AND a.inicio <= now() AND a.fim > now()
+                  AND (a.todas OR d.id = ANY (a.dispositivos))
+                ORDER BY a.created_at DESC LIMIT 1));
+END $$;
+
+-- ── RPC da gestão: parear pelo código ────────────────────────────────────
+CREATE OR REPLACE FUNCTION public.tv_parear(p_codigo text, p_nome text, p_local text DEFAULT NULL, p_playlist_id uuid DEFAULT NULL)
+RETURNS uuid LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
+DECLARE v_id uuid;
+BEGIN
+  IF NOT public.has_screen_access(auth.uid(), 'sistemas_tvs', 'incluir') THEN RAISE EXCEPTION 'Sem permissão.' USING ERRCODE = '42501'; END IF;
+  IF length(btrim(coalesce(p_nome, ''))) < 2 THEN RAISE EXCEPTION 'Dê um nome para a TV.'; END IF;
+  UPDATE public."TV_DISPOSITIVO"
+     SET codigo = NULL, nome = btrim(p_nome), local = nullif(btrim(coalesce(p_local, '')), ''), playlist_id = p_playlist_id,
+         pareado_em = now(), pareado_por = auth.uid()
+   WHERE codigo = regexp_replace(coalesce(p_codigo, ''), '\D', '', 'g') AND pareado_em IS NULL
+  RETURNING id INTO v_id;
+  IF v_id IS NULL THEN RAISE EXCEPTION 'Código não encontrado. Confira o número que aparece na TV (ele muda se a TV recarregar sem parear).'; END IF;
+  RETURN v_id;
+END $$;
+
+REVOKE ALL ON FUNCTION public.tv_registrar(text, text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.tv_estado(text, text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.tv_parear(text, text, text, uuid) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.tv_registrar(text, text) TO anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.tv_estado(text, text) TO anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.tv_parear(text, text, text, uuid) TO authenticated;
+
+-- ── Liberação inicial: quem já cuida de Sistemas › Logins (07/10: só o
+-- Pablo). O resto, em Acesso por Usuário.
+INSERT INTO public.screen_permission_user (user_id, menu_codigo, acao, allow, motivo)
+SELECT DISTINCT s.user_id, 'sistemas_tvs', a.acao::public.app_acao, true, 'Mesmo acesso de Sistemas › Logins (mig 20261007000012)'
+  FROM public.screen_permission_user s
+ CROSS JOIN (VALUES ('visualizar'), ('incluir'), ('alterar'), ('excluir')) a(acao)
+ WHERE s.menu_codigo = 'sistemas_logins' AND s.acao = 'alterar' AND s.allow
+   AND NOT EXISTS (SELECT 1 FROM public.screen_permission_user x
+                    WHERE x.user_id = s.user_id AND x.menu_codigo = 'sistemas_tvs' AND x.acao = a.acao::public.app_acao);
+
+NOTIFY pgrst, 'reload schema';
+
+-- ROLLBACK
+-- DROP FUNCTION IF EXISTS public.tv_registrar(text, text), public.tv_estado(text, text), public.tv_parear(text, text, text, uuid);
+-- DROP POLICY IF EXISTS "tv midia insert" ON storage.objects; DROP POLICY IF EXISTS "tv midia delete" ON storage.objects;
+-- DROP TABLE IF EXISTS public."TV_ALERTA", public."TV_DISPOSITIVO", public."TV_ITEM", public."TV_PLAYLIST";
+-- DELETE FROM app_menu WHERE codigo = 'sistemas_tvs';   (o bucket tv-midia pode ficar; apagar só vazio)
+
+
+-- >>> 20261007000013_relatorios_filtro_contrato_meses.sql
+-- =========================================================================
+-- RELATÓRIOS — filtro por CONTRATO e por MÊS/ANO em todos (07/10/2026)
+--
+-- PEDIDO (Pablo): "em todos esses relatórios preciso conseguir filtrar por
+-- contrato e mês/ano". E, para as TVs, cada TV poder passar um relatório —
+-- a TV não tem login, então a conta precisa existir separada da checagem de
+-- acesso de quem está logado.
+--
+-- O QUE MUDA (em cima da mig 20261005000006)
+--   · dir_rel_montar ganha _contrato (uuid de contratos) e _meses (1–12).
+--     Cada sistema devolve, além das 8 colunas de antes, cid (contrato_id
+--     quando a tabela tem) e ct (texto do contrato). Casamento: cid = id OU,
+--     sem cid, rh_norm_contrato(ct) = rh_norm_contrato(contratos.nome) — a
+--     mesma régua do Ativos/Contratos (tira "1050 - " e zeros à esquerda).
+--     Demissões e Medida Disciplinar têm contrato_id BIGINT (outro cadastro,
+--     não contratos.id): nelas vale só o nome. Medido em 07/10: casa 94–98%; o Recrutamento ANTIGO usa
+--     apelidos ("BENTO HIG/AUX ADM", "SAMU") e só entra no filtro quando a
+--     vaga tem contrato_id ou o nome oficial. Chamados e Orientações não têm
+--     contrato: com contrato escolhido, voltam vazios (a tela avisa).
+--   · Colaboradores e Turn-over: contrato pelo "Nome Filial" da EMPREGADOS.
+--   · _meses: só os meses escolhidos dentro do período (a tela manda o ano
+--     inteiro como período e os meses marcados).
+--   · dir_rel_dados(slug, de, ate, contrato, meses): a CONTA, sem checagem
+--     de acesso, INTERNA (sem grant para ninguém). As dir_rel_<sistema> da
+--     tela = dir_rel_exige(menu) + dir_rel_dados. A TV (mig seguinte) chama
+--     dir_rel_dados depois de validar o token dela.
+--   · Assinaturas novas: (date, date, uuid, int[]) com defaults — a chamada
+--     antiga com {_de, _ate} (tela publicada, Edge diretoria-ia) continua
+--     funcionando. As de (date, date) saem: com as duas, o PostgREST ficaria
+--     em dúvida entre elas.
+-- Idempotente. Aplicar no banco do app — não se auto-aplica.
+-- =========================================================================
+
+-- ── 0) Saem as assinaturas antigas ───────────────────────────────────────
+DROP FUNCTION IF EXISTS public.dir_rel_geral(date, date);
+DROP FUNCTION IF EXISTS public.dir_rel_recrutamento(date, date);
+DROP FUNCTION IF EXISTS public.dir_rel_demissoes(date, date);
+DROP FUNCTION IF EXISTS public.dir_rel_materiais(date, date);
+DROP FUNCTION IF EXISTS public.dir_rel_ferias(date, date);
+DROP FUNCTION IF EXISTS public.dir_rel_medida_disciplinar(date, date);
+DROP FUNCTION IF EXISTS public.dir_rel_chamados(date, date);
+DROP FUNCTION IF EXISTS public.dir_rel_orientacoes(date, date);
+DROP FUNCTION IF EXISTS public.dir_rel_mudanca_funcao(date, date);
+DROP FUNCTION IF EXISTS public.dir_rel_colaboradores(date, date);
+DROP FUNCTION IF EXISTS public.dir_rel_turnover(date, date);
+DROP FUNCTION IF EXISTS public.dir_rel_montar(text, text, date, date, jsonb, text);
+
+-- ── 1) Ajudantes ─────────────────────────────────────────────────────────
+-- Contrato escolhido, normalizado (NULL = sem filtro).
+CREATE OR REPLACE FUNCTION public.dir_rel_contrato_nn(_contrato uuid)
+RETURNS text LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, pg_temp AS $$
+  SELECT public.rh_norm_contrato(c.nome) FROM public.contratos c WHERE c.id = _contrato
+$$;
+
+-- A linha entra no contrato escolhido?
+CREATE OR REPLACE FUNCTION public.dir_rel_no_contrato(_cid uuid, _ct text, _contrato uuid, _nn text)
+RETURNS boolean LANGUAGE sql IMMUTABLE SET search_path = public, pg_temp AS $$
+  -- COALESCE: contrato vazio na linha dá NULL na comparação, e NOT NULL não
+  -- exclui a linha (a 1ª versão deixava tudo passar em Demissões/Chamados…).
+  SELECT _contrato IS NULL
+      OR COALESCE(_cid = _contrato, false)
+      OR (_cid IS NULL AND _nn IS NOT NULL AND COALESCE(public.rh_norm_contrato(_ct) = _nn, false))
+$$;
+
+-- A data cai num dos meses escolhidos? (sem meses = todos)
+CREATE OR REPLACE FUNCTION public.dir_rel_no_mes(_d date, _meses int[])
+RETURNS boolean LANGUAGE sql IMMUTABLE SET search_path = public, pg_temp AS $$
+  SELECT _meses IS NULL OR cardinality(_meses) = 0 OR extract(month FROM _d)::int = ANY (_meses)
+$$;
+
+-- ── 2) Montagem padrão (8 sistemas de solicitação) ───────────────────────
+-- _sql devolve UMA linha por solicitação: dt, titulo, status, grupo, d1, d2,
+-- d3, dias, cid (uuid do contrato ou NULL), ct (texto do contrato).
+CREATE OR REPLACE FUNCTION public.dir_rel_montar(
+  _titulo text, _sql text, _de date, _ate date, _dims jsonb, _rotulo_item text DEFAULT 'solicitações',
+  _contrato uuid DEFAULT NULL, _meses int[] DEFAULT NULL)
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
+DECLARE
+  v_ate date := COALESCE(_ate, current_date);
+  v_de  date := COALESCE(_de, (date_trunc('month', COALESCE(_ate, current_date)) - interval '11 months')::date);
+  v_nn  text := public.dir_rel_contrato_nn(_contrato);
+  v_dur int;
+  v_out jsonb;
+BEGIN
+  v_dur := (v_ate - v_de) + 1;
+  EXECUTE 'CREATE TEMP TABLE IF NOT EXISTS _dir_base2 (dt date, titulo text, status text, grupo text, d1 text, d2 text, d3 text, dias numeric, cid uuid, ct text) ON COMMIT DROP';
+  EXECUTE 'TRUNCATE _dir_base2';
+  EXECUTE 'INSERT INTO _dir_base2 ' || _sql;
+  IF _contrato IS NOT NULL THEN
+    DELETE FROM _dir_base2 WHERE NOT public.dir_rel_no_contrato(cid, ct, _contrato, v_nn);
+  END IF;
+
+  WITH p AS (SELECT * FROM _dir_base2 WHERE dt BETWEEN v_de AND v_ate AND public.dir_rel_no_mes(dt, _meses)),
+  ant AS (SELECT count(*) n FROM _dir_base2 WHERE dt BETWEEN v_de - v_dur AND v_de - 1 AND public.dir_rel_no_mes(dt, _meses)),
+  meses AS (
+    SELECT to_char(g, 'YYYY-MM') mes FROM generate_series(date_trunc('month', v_de), date_trunc('month', v_ate), interval '1 month') g
+     WHERE public.dir_rel_no_mes(g::date, _meses)
+  ),
+  k AS (
+    SELECT count(*) total,
+           count(*) FILTER (WHERE grupo = 'aberto') abertos,
+           count(*) FILTER (WHERE grupo = 'concluido') concluidos,
+           count(*) FILTER (WHERE grupo = 'recusado') recusados,
+           round(avg(dias) FILTER (WHERE grupo = 'concluido' AND dias >= 0), 1) tempo
+      FROM p
+  )
+  SELECT jsonb_build_object(
+    'titulo', _titulo,
+    'periodo', jsonb_build_object('de', v_de, 'ate', v_ate),
+    'filtro', jsonb_build_object('contrato', _contrato, 'meses', to_jsonb(_meses)),
+    'kpis', jsonb_build_array(
+      jsonb_build_object('rotulo', 'Total no período', 'valor', k.total, 'formato', 'n', 'tom', 'primary',
+                         'dica', CASE WHEN ant.n > 0 THEN round((k.total - ant.n) * 100.0 / ant.n)::text || '% vs período anterior (' || ant.n || ')' ELSE 'sem período anterior para comparar' END,
+                         'variacao', CASE WHEN ant.n > 0 THEN round((k.total - ant.n) * 100.0 / ant.n, 1) END),
+      jsonb_build_object('rotulo', 'Em andamento', 'valor', k.abertos, 'formato', 'n', 'tom', 'warning', 'dica', 'ainda não concluídas'),
+      jsonb_build_object('rotulo', 'Concluídas', 'valor', k.concluidos, 'formato', 'n', 'tom', 'success',
+                         'dica', CASE WHEN k.total > 0 THEN round(k.concluidos * 100.0 / k.total) || '% do total' END),
+      jsonb_build_object('rotulo', 'Recusadas / canceladas', 'valor', k.recusados, 'formato', 'n', 'tom', 'destructive',
+                         'dica', CASE WHEN k.total > 0 THEN round(k.recusados * 100.0 / k.total) || '% do total' END),
+      jsonb_build_object('rotulo', 'Tempo médio até concluir', 'valor', k.tempo, 'formato', 'dias', 'tom', 'info', 'dica', 'da abertura à conclusão')
+    ),
+    'mensal', jsonb_build_object(
+      'series', jsonb_build_array(
+        jsonb_build_object('chave', 'total', 'rotulo', 'Abertas'),
+        jsonb_build_object('chave', 'concluidos', 'rotulo', 'Concluídas'),
+        jsonb_build_object('chave', 'recusados', 'rotulo', 'Recusadas')),
+      'dados', (SELECT COALESCE(jsonb_agg(jsonb_build_object(
+                  'mes', m.mes,
+                  'total', (SELECT count(*) FROM p WHERE to_char(p.dt, 'YYYY-MM') = m.mes),
+                  'concluidos', (SELECT count(*) FROM p WHERE to_char(p.dt, 'YYYY-MM') = m.mes AND grupo = 'concluido'),
+                  'recusados', (SELECT count(*) FROM p WHERE to_char(p.dt, 'YYYY-MM') = m.mes AND grupo = 'recusado'))
+                  ORDER BY m.mes), '[]'::jsonb) FROM meses m)),
+    'por_status', (SELECT COALESCE(jsonb_agg(jsonb_build_object('nome', s.status, 'n', s.n, 'grupo', s.grupo) ORDER BY s.n DESC), '[]'::jsonb)
+                     FROM (SELECT COALESCE(NULLIF(btrim(status), ''), '(sem status)') status, max(grupo) grupo, count(*) n FROM p GROUP BY 1) s),
+    'rankings', (SELECT COALESCE(jsonb_agg(r.obj ORDER BY r.ordem), '[]'::jsonb) FROM (
+       SELECT 1 ordem, jsonb_build_object('titulo', _dims->>0, 'itens', (SELECT COALESCE(jsonb_agg(jsonb_build_object('nome', x.nome, 'n', x.n) ORDER BY x.n DESC), '[]'::jsonb)
+              FROM (SELECT COALESCE(NULLIF(btrim(d1), ''), '(não informado)') nome, count(*) n FROM p GROUP BY 1 ORDER BY 2 DESC LIMIT 12) x)) obj
+        WHERE _dims->>0 IS NOT NULL
+       UNION ALL
+       SELECT 2, jsonb_build_object('titulo', _dims->>1, 'itens', (SELECT COALESCE(jsonb_agg(jsonb_build_object('nome', x.nome, 'n', x.n) ORDER BY x.n DESC), '[]'::jsonb)
+              FROM (SELECT COALESCE(NULLIF(btrim(d2), ''), '(não informado)') nome, count(*) n FROM p GROUP BY 1 ORDER BY 2 DESC LIMIT 12) x))
+        WHERE _dims->>1 IS NOT NULL
+       UNION ALL
+       SELECT 3, jsonb_build_object('titulo', _dims->>2, 'itens', (SELECT COALESCE(jsonb_agg(jsonb_build_object('nome', x.nome, 'n', x.n) ORDER BY x.n DESC), '[]'::jsonb)
+              FROM (SELECT COALESCE(NULLIF(btrim(d3), ''), '(não informado)') nome, count(*) n FROM p GROUP BY 1 ORDER BY 2 DESC LIMIT 12) x))
+        WHERE _dims->>2 IS NOT NULL) r),
+    'recentes', jsonb_build_object(
+      'colunas', jsonb_build_array('Data', 'Solicitação', 'Status', COALESCE(_dims->>0, '—')),
+      'linhas', (SELECT COALESCE(jsonb_agg(jsonb_build_array(to_char(x.dt, 'DD/MM/YYYY'), x.titulo, x.status, x.d1)), '[]'::jsonb)
+                   FROM (SELECT * FROM p ORDER BY dt DESC NULLS LAST LIMIT 15) x)),
+    'rotulo_item', _rotulo_item
+  ) INTO v_out
+  FROM k, ant;
+
+  RETURN v_out;
+END $$;
+REVOKE ALL ON FUNCTION public.dir_rel_montar(text, text, date, date, jsonb, text, uuid, int[]) FROM PUBLIC, anon, authenticated;
+
+-- ── 3) Colaboradores (filtro: Nome Filial) ───────────────────────────────
+CREATE OR REPLACE FUNCTION public.dir_rel_colaboradores_dados(_de date, _ate date, _contrato uuid, _meses int[])
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
+DECLARE
+  v_ate date := COALESCE(_ate, current_date);
+  v_de  date := COALESCE(_de, (date_trunc('month', COALESCE(_ate, current_date)) - interval '11 months')::date);
+  v_nn  text := public.dir_rel_contrato_nn(_contrato);
+  v_out jsonb;
+BEGIN
+  WITH e AS MATERIALIZED (
+    SELECT e."Nome" nome, e."Situação" sit, e."Título do Cargo" cargo, e."Nome Filial" filial, e."Empresa"::text empresa,
+           e."Sexo" sexo, COALESCE(NULLIF(btrim(e."Setor_ERP"), ''), '(sem setor)') setor,
+           public.data_universal(e."Admissão") adm,
+           CASE WHEN e."Situação" = 'Demitido' THEN public.data_universal(e."Data Afastamento") END dem,
+           public.esp_col_esta_ativo(e."Situação") ativo
+      FROM public."EMPREGADOS" e
+     WHERE COALESCE(btrim(e."Nome"), '') <> ''
+       AND public.dir_rel_no_contrato(NULL, e."Nome Filial", _contrato, v_nn)
+  ),
+  meses AS (SELECT g::date ini, (g + interval '1 month' - interval '1 day')::date fim, to_char(g, 'YYYY-MM') mes
+              FROM generate_series(date_trunc('month', v_de), date_trunc('month', v_ate), interval '1 month') g
+             WHERE public.dir_rel_no_mes(g::date, _meses)),
+  a AS (SELECT count(*) FILTER (WHERE ativo) ativos,
+               count(*) FILTER (WHERE sit = 'Trabalhando') trabalhando,
+               count(*) FILTER (WHERE ativo AND sit <> 'Trabalhando' AND sit NOT ILIKE 'atestado%') afastados,
+               count(*) FILTER (WHERE adm BETWEEN v_de AND v_ate AND public.dir_rel_no_mes(adm, _meses)) admitidos,
+               count(*) FILTER (WHERE dem BETWEEN v_de AND v_ate AND public.dir_rel_no_mes(dem, _meses)) desligados
+          FROM e)
+  SELECT jsonb_build_object(
+    'titulo', 'Colaboradores',
+    'periodo', jsonb_build_object('de', v_de, 'ate', v_ate),
+    'filtro', jsonb_build_object('contrato', _contrato, 'meses', to_jsonb(_meses)),
+    'kpis', jsonb_build_array(
+      jsonb_build_object('rotulo', 'Colaboradores ativos', 'valor', a.ativos, 'formato', 'n', 'tom', 'primary', 'dica', 'hoje, na EMPREGADOS'),
+      jsonb_build_object('rotulo', 'Trabalhando', 'valor', a.trabalhando, 'formato', 'n', 'tom', 'success',
+                         'dica', CASE WHEN a.ativos > 0 THEN round(a.trabalhando * 100.0 / a.ativos) || '% dos ativos' END),
+      jsonb_build_object('rotulo', 'Afastados', 'valor', a.afastados, 'formato', 'n', 'tom', 'warning', 'dica', 'auxílio-doença, licença, férias…'),
+      jsonb_build_object('rotulo', 'Admitidos no período', 'valor', a.admitidos, 'formato', 'n', 'tom', 'info'),
+      jsonb_build_object('rotulo', 'Desligados no período', 'valor', a.desligados, 'formato', 'n', 'tom', 'destructive')
+    ),
+    'mensal', jsonb_build_object(
+      'series', jsonb_build_array(
+        jsonb_build_object('chave', 'ativos', 'rotulo', 'Ativos no fim do mês'),
+        jsonb_build_object('chave', 'admitidos', 'rotulo', 'Admitidos'),
+        jsonb_build_object('chave', 'desligados', 'rotulo', 'Desligados')),
+      'dados', (SELECT COALESCE(jsonb_agg(jsonb_build_object(
+                  'mes', m.mes,
+                  'ativos', (SELECT count(*) FROM e WHERE e.adm <= m.fim AND (e.dem IS NULL OR e.dem > m.fim) AND (e.ativo OR e.dem IS NOT NULL)),
+                  'admitidos', (SELECT count(*) FROM e WHERE e.adm BETWEEN m.ini AND m.fim),
+                  'desligados', (SELECT count(*) FROM e WHERE e.dem BETWEEN m.ini AND m.fim))
+                  ORDER BY m.mes), '[]'::jsonb) FROM meses m)),
+    'por_status', (SELECT COALESCE(jsonb_agg(jsonb_build_object('nome', x.sit, 'n', x.n, 'grupo', CASE WHEN x.sit = 'Trabalhando' THEN 'concluido' ELSE 'aberto' END) ORDER BY x.n DESC), '[]'::jsonb)
+                     FROM (SELECT sit, count(*) n FROM e WHERE ativo GROUP BY 1) x),
+    'rankings', jsonb_build_array(
+      jsonb_build_object('titulo', 'Ativos por contrato (filial)', 'itens', (SELECT COALESCE(jsonb_agg(jsonb_build_object('nome', x.nome, 'n', x.n) ORDER BY x.n DESC), '[]'::jsonb)
+         FROM (SELECT COALESCE(filial, '(sem filial)') nome, count(*) n FROM e WHERE ativo GROUP BY 1 ORDER BY 2 DESC LIMIT 12) x)),
+      jsonb_build_object('titulo', 'Ativos por cargo', 'itens', (SELECT COALESCE(jsonb_agg(jsonb_build_object('nome', x.nome, 'n', x.n) ORDER BY x.n DESC), '[]'::jsonb)
+         FROM (SELECT COALESCE(cargo, '(sem cargo)') nome, count(*) n FROM e WHERE ativo GROUP BY 1 ORDER BY 2 DESC LIMIT 12) x)),
+      jsonb_build_object('titulo', 'Ativos por setor', 'itens', (SELECT COALESCE(jsonb_agg(jsonb_build_object('nome', x.nome, 'n', x.n) ORDER BY x.n DESC), '[]'::jsonb)
+         FROM (SELECT setor nome, count(*) n FROM e WHERE ativo GROUP BY 1 ORDER BY 2 DESC LIMIT 12) x)),
+      jsonb_build_object('titulo', 'Ativos por sexo', 'itens', (SELECT COALESCE(jsonb_agg(jsonb_build_object('nome', x.nome, 'n', x.n) ORDER BY x.n DESC), '[]'::jsonb)
+         FROM (SELECT CASE upper(left(COALESCE(sexo, ''), 1)) WHEN 'M' THEN 'Masculino' WHEN 'F' THEN 'Feminino' ELSE '(não informado)' END nome, count(*) n FROM e WHERE ativo GROUP BY 1) x))
+    ),
+    'recentes', jsonb_build_object(
+      'colunas', jsonb_build_array('Admissão', 'Colaborador', 'Situação', 'Contrato (filial)'),
+      'linhas', (SELECT COALESCE(jsonb_agg(jsonb_build_array(to_char(x.adm, 'DD/MM/YYYY'), x.nome || COALESCE(' — ' || x.cargo, ''), x.sit, x.filial)), '[]'::jsonb)
+                   FROM (SELECT * FROM e WHERE adm BETWEEN v_de AND v_ate AND public.dir_rel_no_mes(adm, _meses) ORDER BY adm DESC LIMIT 15) x)),
+    'rotulo_item', 'colaboradores'
+  ) INTO v_out FROM a;
+  RETURN v_out;
+END $$;
+REVOKE ALL ON FUNCTION public.dir_rel_colaboradores_dados(date, date, uuid, int[]) FROM PUBLIC, anon, authenticated;
+
+-- ── 4) Turn-over (período; filtro: Nome Filial) ──────────────────────────
+CREATE OR REPLACE FUNCTION public.dir_rel_turnover_dados(_de date, _ate date, _contrato uuid, _meses int[])
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
+DECLARE
+  v_ate date := COALESCE(_ate, current_date);
+  v_de  date := COALESCE(_de, (date_trunc('month', COALESCE(_ate, current_date)) - interval '11 months')::date);
+  v_nn  text := public.dir_rel_contrato_nn(_contrato);
+  v_out jsonb;
+BEGIN
+  WITH e AS MATERIALIZED (
+    SELECT e."Nome" nome, e."Título do Cargo" cargo, e."Nome Filial" filial,
+           public.data_universal(e."Admissão") adm,
+           CASE WHEN e."Situação" = 'Demitido' THEN public.data_universal(e."Data Afastamento") END dem,
+           public.esp_col_esta_ativo(e."Situação") ativo
+      FROM public."EMPREGADOS" e
+     WHERE COALESCE(btrim(e."Nome"), '') <> ''
+       AND public.dir_rel_no_contrato(NULL, e."Nome Filial", _contrato, v_nn)
+  ),
+  m AS MATERIALIZED (
+    SELECT to_char(g, 'YYYY-MM') mes, g::date ini, (g + interval '1 month' - interval '1 day')::date fim,
+           (SELECT count(*) FROM e WHERE e.adm < g::date AND (e.dem IS NULL OR e.dem >= g::date) AND (e.ativo OR e.dem IS NOT NULL)) base,
+           (SELECT count(*) FROM e WHERE e.adm BETWEEN g::date AND (g + interval '1 month' - interval '1 day')::date) adm,
+           (SELECT count(*) FROM e WHERE e.dem BETWEEN g::date AND (g + interval '1 month' - interval '1 day')::date) dem
+      FROM generate_series(date_trunc('month', v_de), date_trunc('month', v_ate), interval '1 month') g
+     WHERE public.dir_rel_no_mes(g::date, _meses)
+  ),
+  sai AS MATERIALIZED (SELECT * FROM e WHERE e.dem BETWEEN v_de AND v_ate AND public.dir_rel_no_mes(e.dem, _meses)),
+  t AS (SELECT sum(adm) adm, sum(dem) dem,
+               round(avg(CASE WHEN base > 0 THEN (adm + dem) / 2.0 / base * 100 END), 2) taxa,
+               (SELECT count(*) FROM sai WHERE sai.adm IS NOT NULL AND sai.dem - sai.adm <= 90) precoce
+          FROM m)
+  SELECT jsonb_build_object(
+    'titulo', 'Turn-over',
+    'periodo', jsonb_build_object('de', v_de, 'ate', v_ate),
+    'filtro', jsonb_build_object('contrato', _contrato, 'meses', to_jsonb(_meses)),
+    'kpis', jsonb_build_array(
+      jsonb_build_object('rotulo', 'Turn-over médio mensal', 'valor', t.taxa, 'formato', 'pct', 'tom', 'primary', 'dica', '((admitidos + desligados) ÷ 2) ÷ quadro do início do mês'),
+      jsonb_build_object('rotulo', 'Admitidos', 'valor', t.adm, 'formato', 'n', 'tom', 'success'),
+      jsonb_build_object('rotulo', 'Desligados', 'valor', t.dem, 'formato', 'n', 'tom', 'destructive'),
+      jsonb_build_object('rotulo', 'Saldo (admitidos − desligados)', 'valor', t.adm - t.dem, 'formato', 'n', 'tom', CASE WHEN t.adm >= t.dem THEN 'success' ELSE 'destructive' END),
+      jsonb_build_object('rotulo', 'Desligados em até 90 dias', 'valor', t.precoce, 'formato', 'n', 'tom', 'warning',
+                         'dica', CASE WHEN t.dem > 0 THEN round(t.precoce * 100.0 / t.dem) || '% dos desligamentos — contratação que não firmou' END)
+    ),
+    'mensal', jsonb_build_object(
+      'series', jsonb_build_array(
+        jsonb_build_object('chave', 'admitidos', 'rotulo', 'Admitidos'),
+        jsonb_build_object('chave', 'desligados', 'rotulo', 'Desligados'),
+        jsonb_build_object('chave', 'taxa', 'rotulo', 'Turn-over (%)', 'eixo', 'direita')),
+      'dados', (SELECT COALESCE(jsonb_agg(jsonb_build_object('mes', mes, 'admitidos', adm, 'desligados', dem,
+                  'taxa', CASE WHEN base > 0 THEN round((adm + dem) / 2.0 / base * 100, 2) END) ORDER BY mes), '[]'::jsonb) FROM m)),
+    'por_status', jsonb_build_array(
+      jsonb_build_object('nome', 'Admitidos', 'n', t.adm, 'grupo', 'concluido'),
+      jsonb_build_object('nome', 'Desligados', 'n', t.dem, 'grupo', 'recusado')),
+    'rankings', jsonb_build_array(
+      jsonb_build_object('titulo', 'Desligamentos por contrato (filial)', 'itens', (SELECT COALESCE(jsonb_agg(jsonb_build_object('nome', x.nome, 'n', x.n) ORDER BY x.n DESC), '[]'::jsonb)
+         FROM (SELECT COALESCE(filial, '(sem filial)') nome, count(*) n FROM sai GROUP BY 1 ORDER BY 2 DESC LIMIT 12) x)),
+      jsonb_build_object('titulo', 'Desligamentos por cargo', 'itens', (SELECT COALESCE(jsonb_agg(jsonb_build_object('nome', x.nome, 'n', x.n) ORDER BY x.n DESC), '[]'::jsonb)
+         FROM (SELECT COALESCE(cargo, '(sem cargo)') nome, count(*) n FROM sai GROUP BY 1 ORDER BY 2 DESC LIMIT 12) x)),
+      jsonb_build_object('titulo', 'Tempo de casa de quem saiu', 'itens', (SELECT COALESCE(jsonb_agg(jsonb_build_object('nome', x.nome, 'n', x.n) ORDER BY x.ord), '[]'::jsonb)
+         FROM (SELECT CASE WHEN dem - adm <= 90 THEN 'Até 3 meses' WHEN dem - adm <= 180 THEN '3 a 6 meses' WHEN dem - adm <= 365 THEN '6 meses a 1 ano'
+                           WHEN dem - adm <= 730 THEN '1 a 2 anos' ELSE 'Mais de 2 anos' END nome,
+                      min(CASE WHEN dem - adm <= 90 THEN 1 WHEN dem - adm <= 180 THEN 2 WHEN dem - adm <= 365 THEN 3 WHEN dem - adm <= 730 THEN 4 ELSE 5 END) ord,
+                      count(*) n
+                 FROM sai WHERE adm IS NOT NULL GROUP BY 1) x))
+    ),
+    'recentes', jsonb_build_object(
+      'colunas', jsonb_build_array('Desligamento', 'Colaborador', 'Tempo de casa', 'Contrato (filial)'),
+      'linhas', (SELECT COALESCE(jsonb_agg(jsonb_build_array(to_char(x.dem, 'DD/MM/YYYY'), x.nome || COALESCE(' — ' || x.cargo, ''),
+                          CASE WHEN x.adm IS NULL THEN '—' ELSE (x.dem - x.adm) || ' dias' END, x.filial)), '[]'::jsonb)
+                   FROM (SELECT * FROM sai ORDER BY dem DESC LIMIT 15) x)),
+    'rotulo_item', 'movimentações'
+  ) INTO v_out FROM t;
+  RETURN v_out;
+END $$;
+REVOKE ALL ON FUNCTION public.dir_rel_turnover_dados(date, date, uuid, int[]) FROM PUBLIC, anon, authenticated;
+
+-- ── 5) A conta de cada relatório, sem checagem de acesso (INTERNA) ───────
+CREATE OR REPLACE FUNCTION public.dir_rel_dados(_slug text, _de date DEFAULT NULL, _ate date DEFAULT NULL, _contrato uuid DEFAULT NULL, _meses int[] DEFAULT NULL)
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
+BEGIN
+  CASE _slug
+  WHEN 'recrutamento' THEN RETURN public.dir_rel_montar('Gestão Recrutamento', $q$
+    SELECT created_at::date, '#' || id || ' · ' || COALESCE(cargo, 'vaga') || COALESCE(' — ' || contrato, ''), status,
+           CASE WHEN status IN ('Concluído', 'Contratado') THEN 'concluido'
+                WHEN status IN ('Reprovada', 'Cancelada') THEN 'recusado' ELSE 'aberto' END,
+           contrato, cargo, motivo_vaga,
+           CASE WHEN status IN ('Concluído', 'Contratado') AND status_changed_at IS NOT NULL
+                THEN extract(epoch FROM status_changed_at - created_at) / 86400 END,
+           contrato_id, contrato
+      FROM public."SISTEMA_RECRUTAMENTO" $q$,
+    _de, _ate, '["Vagas por contrato", "Vagas por cargo", "Motivo da vaga"]'::jsonb, 'vagas', _contrato, _meses);
+
+  WHEN 'demissoes' THEN RETURN public.dir_rel_montar('Demissões', $q$
+    SELECT COALESCE(data_solicitacao, criado_em::date), COALESCE(colaborador_nome, 'colaborador') || COALESCE(' — ' || colaborador_cargo, ''), status,
+           CASE WHEN status IN ('Concluída', 'ASO válido', 'Agendamento concluído') THEN 'concluido'
+                WHEN status IN ('Reprovada', 'Cancelada') THEN 'recusado' ELSE 'aberto' END,
+           contrato, COALESCE(motivo_solicitacao, motivo_pedido), colaborador_cargo,
+           CASE WHEN status IN ('Concluída', 'ASO válido', 'Agendamento concluído')
+                THEN extract(epoch FROM atualizado_em - criado_em) / 86400 END,
+           NULL::uuid, COALESCE(contrato, colaborador_filial)   -- contrato_id aqui é bigint (outro cadastro): casa pelo nome
+      FROM public."SISTEMA_SOLICITACOES_DEMISSAO" $q$,
+    _de, _ate, '["Demissões por contrato", "Motivo da demissão", "Cargo"]'::jsonb, 'demissões', _contrato, _meses);
+
+  WHEN 'materiais' THEN RETURN public.dir_rel_montar('Materiais', $q$
+    SELECT COALESCE(data_solicitacao, created_at::date), 'Pedido ' || COALESCE(pedido_id::text, id::text) || COALESCE(' — ' || nome_colaborador, ''), status,
+           CASE WHEN status IN ('DESPACHADO', 'RETIRADO PARA ENTREGA') THEN 'concluido'
+                WHEN status = 'CANCELADO' THEN 'recusado' ELSE 'aberto' END,
+           contrato_nome, tipo_pedido, funcao_nome,
+           CASE WHEN data_despachado IS NOT NULL
+                THEN extract(epoch FROM data_despachado - COALESCE(data_solicitacao::timestamptz, created_at)) / 86400 END,
+           contrato_id, contrato_nome
+      FROM public.sup_pedido $q$,
+    _de, _ate, '["Pedidos por contrato", "Tipo de pedido", "Função"]'::jsonb, 'pedidos', _contrato, _meses);
+
+  WHEN 'ferias' THEN RETURN public.dir_rel_montar('Férias', $q$
+    SELECT criado_em::date, COALESCE(colaborador_nome, 'colaborador') || COALESCE(' · ' || dias_ferias || ' dias', ''), status,
+           CASE WHEN status = 'Aprovada' THEN 'concluido'
+                WHEN status IN ('Reprovada', 'Cancelada') THEN 'recusado' ELSE 'aberto' END,
+           colaborador_filial, colaborador_cargo, COALESCE(dias_ferias::text || ' dias', NULL),
+           CASE WHEN status = 'Aprovada' AND aprovado_em IS NOT NULL THEN extract(epoch FROM aprovado_em - criado_em) / 86400 END,
+           NULL::uuid, colaborador_filial
+      FROM public."SISTEMA_SOLICITACOES_FERIAS" $q$,
+    _de, _ate, '["Férias por filial/contrato", "Cargo", "Dias de férias"]'::jsonb, 'solicitações', _contrato, _meses);
+
+  WHEN 'medida-disciplinar' THEN RETURN public.dir_rel_montar('Medida Disciplinar', $q$
+    SELECT created_at::date, COALESCE(colaborador_nome, 'colaborador') || COALESCE(' — ' || tipo_advertencia, ''), status,
+           CASE WHEN status IN ('Concluída', 'Registrada') THEN 'concluido'
+                WHEN status IN ('Reprovada', 'Cancelada') THEN 'recusado' ELSE 'aberto' END,
+           contrato, tipo_advertencia, grau,
+           CASE WHEN status IN ('Concluída', 'Registrada') AND status_changed_at IS NOT NULL
+                THEN extract(epoch FROM status_changed_at - created_at) / 86400 END,
+           NULL::uuid, COALESCE(contrato, colaborador_filial)   -- contrato_id aqui é bigint (outro cadastro): casa pelo nome
+      FROM public."SISTEMA_SOLICITACOES_ADVERTENCIA" $q$,
+    _de, _ate, '["Medidas por contrato", "Tipo de medida", "Grau"]'::jsonb, 'medidas', _contrato, _meses);
+
+  WHEN 'chamados' THEN RETURN public.dir_rel_montar('Chamados', $q$
+    SELECT created_at::date, COALESCE(numero, '#' || id::text) || ' · ' || COALESCE(assunto, ''), status,
+           CASE WHEN status = 'concluido' THEN 'concluido'
+                WHEN status IN ('reprovado', 'cancelado') THEN 'recusado' ELSE 'aberto' END,
+           COALESCE(NULLIF(modulo_sistema, ''), modulo_sistema_outro), prioridade, setor,
+           CASE WHEN status = 'concluido' AND concluido_em IS NOT NULL THEN extract(epoch FROM concluido_em - created_at) / 86400 END,
+           NULL::uuid, NULL::text
+      FROM public."CHAMADO_SISTEMA" $q$,
+    _de, _ate, '["Chamados por módulo", "Prioridade", "Setor"]'::jsonb, 'chamados', _contrato, _meses);
+
+  WHEN 'orientacoes' THEN RETURN public.dir_rel_montar('Orientações Jurídicas', $q$
+    SELECT created_at::date, COALESCE(titulo, left(pergunta, 80)), status,
+           CASE WHEN status = 'Respondida' THEN 'concluido'
+                WHEN status IN ('Reprovada', 'Recusada', 'Oculta', 'Cancelada') THEN 'recusado' ELSE 'aberto' END,
+           categoria, origem, autor_nome,
+           CASE WHEN respondido_em IS NOT NULL THEN extract(epoch FROM respondido_em - created_at) / 86400 END,
+           NULL::uuid, NULL::text
+      FROM public."JUR_DUVIDAS" $q$,
+    _de, _ate, '["Orientações por categoria", "Origem", "Quem perguntou"]'::jsonb, 'orientações', _contrato, _meses);
+
+  WHEN 'mudanca-funcao' THEN RETURN public.dir_rel_montar('Mudança de Função', $q$
+    SELECT criado_em::date, COALESCE(colaborador_nome, 'colaborador') || ': ' || COALESCE(cargo_atual, '?') || ' → ' || COALESCE(cargo_novo, '?'), status,
+           CASE WHEN status = 'Concluída' THEN 'concluido'
+                WHEN status IN ('Reprovada', 'Cancelada') THEN 'recusado' ELSE 'aberto' END,
+           COALESCE(NULLIF(setor, ''), filial), COALESCE(cargo_atual, '?') || ' → ' || COALESCE(cargo_novo, '?'),
+           CASE WHEN e_escritorio THEN 'Escritório' ELSE 'Operação' END,
+           CASE WHEN status = 'Concluída' THEN extract(epoch FROM atualizado_em - criado_em) / 86400 END,
+           NULL::uuid, filial
+      FROM public."SISTEMA_SOLICITACOES_TROCA_FUNCAO" $q$,
+    _de, _ate, '["Por setor/filial", "De → para", "Escritório × operação"]'::jsonb, 'mudanças', _contrato, _meses);
+
+  WHEN 'colaboradores' THEN RETURN public.dir_rel_colaboradores_dados(_de, _ate, _contrato, _meses);
+  WHEN 'turnover' THEN RETURN public.dir_rel_turnover_dados(_de, _ate, _contrato, _meses);
+  ELSE RAISE EXCEPTION 'Relatório desconhecido: %', _slug;
+  END CASE;
+END $$;
+REVOKE ALL ON FUNCTION public.dir_rel_dados(text, date, date, uuid, int[]) FROM PUBLIC, anon, authenticated;
+
+-- ── 6) As funções da tela: acesso de quem está logado + a conta ─────────
+DO $$
+DECLARE r record;
+BEGIN
+  FOR r IN SELECT * FROM (VALUES
+      ('dir_rel_recrutamento', 'recrutamento', 'diretoria_rel_recrutamento'),
+      ('dir_rel_demissoes', 'demissoes', 'diretoria_rel_demissoes'),
+      ('dir_rel_materiais', 'materiais', 'diretoria_rel_materiais'),
+      ('dir_rel_ferias', 'ferias', 'diretoria_rel_ferias'),
+      ('dir_rel_medida_disciplinar', 'medida-disciplinar', 'diretoria_rel_medida_disciplinar'),
+      ('dir_rel_chamados', 'chamados', 'diretoria_rel_chamados'),
+      ('dir_rel_orientacoes', 'orientacoes', 'diretoria_rel_orientacoes'),
+      ('dir_rel_mudanca_funcao', 'mudanca-funcao', 'diretoria_rel_mudanca_funcao'),
+      ('dir_rel_colaboradores', 'colaboradores', 'diretoria_rel_colaboradores'),
+      ('dir_rel_turnover', 'turnover', 'diretoria_rel_turnover')) v(fn, slug, menu)
+  LOOP
+    EXECUTE format($f$
+      CREATE OR REPLACE FUNCTION public.%I(_de date DEFAULT NULL, _ate date DEFAULT NULL, _contrato uuid DEFAULT NULL, _meses int[] DEFAULT NULL)
+      RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $b$
+      BEGIN
+        PERFORM public.dir_rel_exige(%L);
+        RETURN public.dir_rel_dados(%L, _de, _ate, _contrato, _meses);
+      END $b$;$f$, r.fn, r.menu, r.slug);
+    EXECUTE format('REVOKE ALL ON FUNCTION public.%I(date, date, uuid, int[]) FROM PUBLIC, anon', r.fn);
+    EXECUTE format('GRANT EXECUTE ON FUNCTION public.%I(date, date, uuid, int[]) TO authenticated', r.fn);
+  END LOOP;
+END $$;
+
+-- Relatório Geral: os 10 com o mesmo filtro.
+CREATE OR REPLACE FUNCTION public.dir_rel_geral(_de date DEFAULT NULL, _ate date DEFAULT NULL, _contrato uuid DEFAULT NULL, _meses int[] DEFAULT NULL)
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
+DECLARE v jsonb := '{}'::jsonb; s text;
+BEGIN
+  PERFORM public.dir_rel_exige('diretoria_relatorio_geral');
+  FOREACH s IN ARRAY ARRAY['recrutamento', 'demissoes', 'materiais', 'ferias', 'medida-disciplinar', 'chamados',
+                           'orientacoes', 'mudanca-funcao', 'colaboradores', 'turnover'] LOOP
+    v := v || jsonb_build_object(s, public.dir_rel_dados(s, _de, _ate, _contrato, _meses));
+  END LOOP;
+  RETURN v;
+END $$;
+REVOKE ALL ON FUNCTION public.dir_rel_geral(date, date, uuid, int[]) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.dir_rel_geral(date, date, uuid, int[]) TO authenticated;
+
+-- Lista de contratos para o filtro (só nome/id; quem tem algum relatório).
+CREATE OR REPLACE FUNCTION public.dir_rel_contratos()
+RETURNS TABLE(id uuid, nome text, encerrado boolean) LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public, pg_temp AS $$
+BEGIN
+  IF auth.uid() IS NULL THEN RAISE EXCEPTION 'Não autenticado' USING ERRCODE = '42501'; END IF;
+  RETURN QUERY SELECT c.id, c.nome::text, COALESCE(c.status, 'ativo') = 'encerrado'
+                 FROM public.contratos c WHERE COALESCE(btrim(c.nome), '') <> ''
+                ORDER BY (COALESCE(c.status, 'ativo') = 'encerrado'), c.nome;
+END $$;
+REVOKE ALL ON FUNCTION public.dir_rel_contratos() FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.dir_rel_contratos() TO authenticated;
+
+NOTIFY pgrst, 'reload schema';
+
+-- ROLLBACK
+-- Reaplicar a mig 20261005000006 inteira (assinaturas (date, date)) depois de:
+-- DROP FUNCTION public.dir_rel_geral(date, date, uuid, int[]) e as 10 dir_rel_<sistema>(date, date, uuid, int[]);
+-- DROP FUNCTION public.dir_rel_dados(text, date, date, uuid, int[]), public.dir_rel_colaboradores_dados(date, date, uuid, int[]),
+--   public.dir_rel_turnover_dados(date, date, uuid, int[]), public.dir_rel_montar(text, text, date, date, jsonb, text, uuid, int[]),
+--   public.dir_rel_contratos(), public.dir_rel_contrato_nn(uuid), public.dir_rel_no_contrato(uuid, text, uuid, text), public.dir_rel_no_mes(date, int[]);
+
+
+-- >>> 20261007000014_sistemas_tvs_relatorios_link_fixo.sql
+-- =========================================================================
+-- SISTEMAS › TV's — relatórios na TV e link fixo (07/10/2026)
+--
+-- PEDIDO (Pablo): "precisa ser algo bem completo, mais forte: elas ficam
+-- desligando, e ao ligar, só de abrir o navegador já teria que conectar
+-- automaticamente, nem que seja necessário baixar algo. E em cada TV tem que
+-- ser possível selecionar qual relatório vai passar, compatível com TV —
+-- tela cheia, sem precisar mexer nem descer."
+--
+-- O QUE MUDA (em cima da mig 20261007000012)
+--   · LINK FIXO: tv_gerar_link(tv) cria uma CHAVE curta (12 caracteres, sem
+--     letras que se confundem) para <app>/tv/<chave>. É o endereço que fica
+--     como página inicial do navegador / app de quiosque da TV: ao ligar, a
+--     TV já entra conectada, mesmo que o navegador tenha apagado os dados.
+--     Gerar de novo troca a chave (a anterior para de funcionar). Vai para o
+--     mesmo token_hash: a chave É o token do aparelho.
+--   · RELATÓRIO como item de playlist: tipo 'relatorio' + relatorio (slug:
+--     geral, recrutamento, demissoes, materiais, ferias, medida-disciplinar,
+--     chamados, orientacoes, mudanca-funcao, colaboradores, turnover),
+--     rel_periodo (mes, 3m, 6m, 12m, ano) e rel_contrato (opcional).
+--   · tv_relatorio(token, item): a TV busca os números do relatório daquele
+--     item — só se o item é de um relatório, está ativo e é da playlist DELA.
+--     Usa dir_rel_dados (mig 20261007000013), a mesma conta da tela.
+--     "geral" devolve o resumo dos 8 sistemas de solicitação.
+-- Idempotente. Aplicar no banco do app — não se auto-aplica.
+-- =========================================================================
+
+ALTER TABLE public."TV_ITEM" ADD COLUMN IF NOT EXISTS relatorio text;
+ALTER TABLE public."TV_ITEM" ADD COLUMN IF NOT EXISTS rel_periodo text;
+ALTER TABLE public."TV_ITEM" ADD COLUMN IF NOT EXISTS rel_contrato uuid;
+ALTER TABLE public."TV_ITEM" DROP CONSTRAINT IF EXISTS "TV_ITEM_tipo_check";
+ALTER TABLE public."TV_ITEM" ADD CONSTRAINT "TV_ITEM_tipo_check"
+  CHECK (tipo IN ('imagem', 'video', 'url', 'youtube', 'aviso', 'relatorio'));
+ALTER TABLE public."TV_ITEM" DROP CONSTRAINT IF EXISTS tv_item_relatorio_check;
+ALTER TABLE public."TV_ITEM" ADD CONSTRAINT tv_item_relatorio_check CHECK (
+  tipo <> 'relatorio' OR (
+    relatorio IN ('geral', 'recrutamento', 'demissoes', 'materiais', 'ferias', 'medida-disciplinar', 'chamados',
+                  'orientacoes', 'mudanca-funcao', 'colaboradores', 'turnover')
+    AND COALESCE(rel_periodo, '12m') IN ('mes', '3m', '6m', '12m', 'ano')));
+
+-- ── tv_estado devolve também os campos de relatório ──────────────────────
+CREATE OR REPLACE FUNCTION public.tv_estado(p_token text, p_tela text DEFAULT NULL)
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, extensions, pg_temp AS $$
+DECLARE d public."TV_DISPOSITIVO"; v_cmd text;
+BEGIN
+  SELECT * INTO d FROM public."TV_DISPOSITIVO"
+   WHERE token_hash = encode(digest(coalesce(p_token, ''), 'sha256'), 'hex');
+  IF NOT FOUND THEN RETURN jsonb_build_object('desconhecida', true); END IF;
+
+  v_cmd := CASE WHEN d.comando IS NOT NULL AND d.comando_em > now() - interval '10 minutes' THEN d.comando END;
+  UPDATE public."TV_DISPOSITIVO"
+     SET ultimo_ping = now(), tela = coalesce(left(p_tela, 30), tela), comando = NULL, comando_em = NULL
+   WHERE id = d.id;
+
+  IF d.pareado_em IS NULL THEN
+    RETURN jsonb_build_object('pareada', false, 'codigo', d.codigo);
+  END IF;
+
+  RETURN jsonb_build_object(
+    'pareada', true, 'nome', d.nome, 'local', d.local, 'ativa', d.ativo, 'comando', v_cmd,
+    'itens', CASE WHEN NOT d.ativo THEN '[]'::jsonb ELSE (
+      SELECT coalesce(jsonb_agg(jsonb_build_object('id', i.id, 'tipo', i.tipo, 'titulo', i.titulo, 'url', i.url, 'arquivo', i.arquivo,
+                                                   'texto', i.texto, 'cor', i.cor, 'duracao_seg', i.duracao_seg,
+                                                   'relatorio', i.relatorio, 'rel_periodo', i.rel_periodo) ORDER BY i.ordem, i.created_at), '[]'::jsonb)
+        FROM public."TV_ITEM" i
+       WHERE i.playlist_id = d.playlist_id AND i.ativo
+         AND (i.valido_de IS NULL OR i.valido_de <= now()) AND (i.valido_ate IS NULL OR i.valido_ate > now())) END,
+    'alerta', (SELECT jsonb_build_object('id', a.id, 'texto', a.texto, 'cor', a.cor, 'fim', a.fim)
+                 FROM public."TV_ALERTA" a
+                WHERE a.encerrado_em IS NULL AND a.inicio <= now() AND a.fim > now()
+                  AND (a.todas OR d.id = ANY (a.dispositivos))
+                ORDER BY a.created_at DESC LIMIT 1));
+END $$;
+
+-- ── Período do item de relatório ─────────────────────────────────────────
+CREATE OR REPLACE FUNCTION public.tv_rel_periodo(_p text, OUT de date, OUT ate date)
+LANGUAGE sql IMMUTABLE SET search_path = public, pg_temp AS $$
+  SELECT CASE COALESCE(_p, '12m')
+           WHEN 'mes' THEN date_trunc('month', current_date)::date
+           WHEN 'ano' THEN date_trunc('year', current_date)::date
+           WHEN '3m'  THEN (date_trunc('month', current_date) - interval '2 months')::date
+           WHEN '6m'  THEN (date_trunc('month', current_date) - interval '5 months')::date
+           ELSE (date_trunc('month', current_date) - interval '11 months')::date END,
+         current_date
+$$;
+
+-- ── A TV busca o relatório de um item da playlist dela ───────────────────
+CREATE OR REPLACE FUNCTION public.tv_relatorio(p_token text, p_item uuid)
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, extensions, pg_temp AS $$
+DECLARE d public."TV_DISPOSITIVO"; i public."TV_ITEM"; v_de date; v_ate date; v_out jsonb; s text;
+BEGIN
+  SELECT * INTO d FROM public."TV_DISPOSITIVO"
+   WHERE token_hash = encode(digest(coalesce(p_token, ''), 'sha256'), 'hex') AND pareado_em IS NOT NULL AND ativo;
+  IF NOT FOUND THEN RAISE EXCEPTION 'TV não autorizada.'; END IF;
+  SELECT * INTO i FROM public."TV_ITEM" WHERE id = p_item AND playlist_id = d.playlist_id AND ativo AND tipo = 'relatorio';
+  IF NOT FOUND THEN RAISE EXCEPTION 'Relatório não está na playlist desta TV.'; END IF;
+
+  SELECT p.de, p.ate INTO v_de, v_ate FROM public.tv_rel_periodo(i.rel_periodo) p;
+
+  IF i.relatorio = 'geral' THEN
+    v_out := jsonb_build_object('tipo', 'geral', 'periodo', jsonb_build_object('de', v_de, 'ate', v_ate), 'sistemas', '[]'::jsonb);
+    FOREACH s IN ARRAY ARRAY['recrutamento', 'demissoes', 'materiais', 'ferias', 'medida-disciplinar', 'mudanca-funcao', 'chamados', 'orientacoes'] LOOP
+      v_out := jsonb_set(v_out, '{sistemas}', (v_out->'sistemas') || jsonb_build_array(
+        (SELECT jsonb_build_object('slug', s, 'titulo', r->>'titulo', 'kpis', r->'kpis', 'rotulo_item', r->>'rotulo_item',
+                                   'mensal', r->'mensal')
+           FROM (SELECT public.dir_rel_dados(s, v_de, v_ate, i.rel_contrato, NULL) r) x)));
+    END LOOP;
+  ELSE
+    v_out := jsonb_build_object('tipo', 'sistema', 'slug', i.relatorio) || public.dir_rel_dados(i.relatorio, v_de, v_ate, i.rel_contrato, NULL);
+  END IF;
+
+  RETURN v_out || jsonb_build_object('contrato', (SELECT c.nome FROM public.contratos c WHERE c.id = i.rel_contrato), 'gerado_em', now());
+END $$;
+
+-- ── Link fixo: chave curta, fácil de digitar no controle da TV ───────────
+CREATE OR REPLACE FUNCTION public.tv_gerar_link(p_id uuid)
+RETURNS text LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, extensions, pg_temp AS $$
+DECLARE
+  v_alfa constant text := 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';   -- 32 símbolos, sem 0/O/1/I
+  v_bytes bytea := gen_random_bytes(12);
+  v_chave text := '';
+  k int;
+BEGIN
+  IF NOT public.has_screen_access(auth.uid(), 'sistemas_tvs', 'alterar') THEN RAISE EXCEPTION 'Sem permissão.' USING ERRCODE = '42501'; END IF;
+  FOR k IN 0..11 LOOP
+    v_chave := v_chave || substr(v_alfa, (get_byte(v_bytes, k) % 32) + 1, 1);
+  END LOOP;
+  UPDATE public."TV_DISPOSITIVO" SET token_hash = encode(digest(v_chave, 'sha256'), 'hex')
+   WHERE id = p_id AND pareado_em IS NOT NULL;
+  IF NOT FOUND THEN RAISE EXCEPTION 'TV não encontrada.'; END IF;
+  RETURN v_chave;
+END $$;
+
+REVOKE ALL ON FUNCTION public.tv_relatorio(text, uuid) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.tv_gerar_link(uuid) FROM PUBLIC, anon;
+REVOKE ALL ON FUNCTION public.tv_rel_periodo(text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.tv_relatorio(text, uuid) TO anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.tv_gerar_link(uuid) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.tv_rel_periodo(text) TO anon, authenticated;
+
+NOTIFY pgrst, 'reload schema';
+
+-- ROLLBACK
+-- DROP FUNCTION IF EXISTS public.tv_relatorio(text, uuid), public.tv_gerar_link(uuid), public.tv_rel_periodo(text);
+-- tv_estado: reaplicar a da mig 20261007000012.
+-- DELETE FROM "TV_ITEM" WHERE tipo = 'relatorio'; e o CHECK de tipo sem 'relatorio'.
+-- ALTER TABLE "TV_ITEM" DROP COLUMN relatorio, DROP COLUMN rel_periodo, DROP COLUMN rel_contrato;

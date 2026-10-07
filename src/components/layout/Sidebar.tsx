@@ -77,7 +77,7 @@ import { useJuridicoNotif } from "@/hooks/useJuridicoNotif";
 import { useReembolsoNotif } from "@/hooks/useReembolsoNotif";
 import { useAprovacoesNotif } from "@/hooks/useAprovacoesNotif";
 import { Inbox, type LucideIcon } from "lucide-react";
-import { Target, MessagesSquare, KeyRound } from "lucide-react";
+import { Target, MessagesSquare, KeyRound, MonitorPlay } from "lucide-react";
 import { GitBranch, GitMerge } from "lucide-react";
 import { MessageSquare } from "lucide-react";
 import { Banknote } from "lucide-react";
@@ -92,7 +92,7 @@ import { Network } from "lucide-react";
 import { useNovidades } from "@/hooks/useNovidades";
 import { cn } from "@/lib/utils";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { SISTEMAS as DIRETORIA_RELATORIOS } from "@/pages/diretoria/relatorios/sistemas";
+import { SISTEMAS as RELATORIOS } from "@/pages/relatorios/sistemas";
 
 interface NavItem {
   label: string;
@@ -283,6 +283,13 @@ const suprimentosModule: ModuleDef = {
   basePath: "/app/suprimentos",
   status: "active",
   groups: [
+    {
+      label: "Gestão",
+      defaultOpen: true,
+      items: [
+        { label: "Dashboard de Compras", to: "/app/suprimentos/dashboard", icon: BarChart3, badge: "Novo" },
+      ],
+    },
     {
       label: "Materiais & Catálogo",
       defaultOpen: true,
@@ -793,6 +800,9 @@ const sistemasModule: ModuleDef = {
         // encarregado) e de demitidos a excluir. A bolinha vem da
         // minhas_pendencias_aprovacao (mig 20261006000010).
         { label: "Logins — Admissão e Demissão", to: "/app/sistemas/logins", icon: KeyRound },
+        // TVs da empresa (07/10/2026, mig 20261007000012): conectar as TVs pelo
+        // código que aparece em /tv, playlists e aviso geral. Liberação: sistemas_tvs.
+        { label: "TV's", to: "/app/sistemas/tvs", icon: MonitorPlay },
       ],
     },
     {
@@ -1214,13 +1224,29 @@ const diretoriaModule: ModuleDef = {
         { label: "Dashboard de Recrutamento", to: "/app/diretoria/recrutamento-dashboard", icon: BarChart3 },
       ],
     },
+  ],
+};
+
+// Relatórios — módulo próprio desde 07/10/2026 (mig 20261007000010). Era um
+// grupo dentro da Diretoria (mig 20261005000006); o Pablo pediu "módulo real
+// separado, as permissões também". Os menus mudaram de módulo mantendo os
+// códigos (diretoria_rel_*), então quem tinha acesso continua tendo — agora
+// listado em Acesso por Usuário › Relatórios.
+const relatoriosModule: ModuleDef = {
+  id: "relatorios",
+  label: "Relatórios",
+  description: "Relatórios de todos os sistemas de solicitação, quadro e turn-over",
+  icon: BarChart3,
+  basePath: "/app/relatorios",
+  headerLink: "/app/relatorios",
+  status: "active",
+  groups: [
     {
-      // Relatórios (05/10/2026, mig 20261005000006): o geral + um por sistema.
       label: "Relatórios",
       defaultOpen: true,
       items: [
-        { label: "Relatório Geral", to: "/app/diretoria/relatorios", icon: BarChart3 },
-        ...DIRETORIA_RELATORIOS.map((s) => ({ label: s.titulo, to: `/app/diretoria/relatorios/${s.slug}`, icon: s.icone })),
+        { label: "Relatório Geral", to: "/app/relatorios", icon: BarChart3 },
+        ...RELATORIOS.map((s) => ({ label: s.titulo, to: `/app/relatorios/${s.slug}`, icon: s.icone })),
       ],
     },
   ],
@@ -1256,6 +1282,7 @@ const erpModules: ModuleDef[] = [
   financeiroModule,
   maloteModule,
   diretoriaModule,
+  relatoriosModule,
   fiscalModule,
   contabilModule,
   rhModule,

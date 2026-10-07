@@ -26,6 +26,8 @@ import Novidades from "./pages/Novidades";
 import Presidencia from "./pages/Presidencia";
 import Organograma from "./pages/organograma/Organograma";
 import ChamadosDesenvolvimentoPresidencia from "./pages/presidencia/ChamadosDesenvolvimento";
+import TvPlayer from "./pages/tv/TvPlayer";
+import TvsSistemas from "./pages/sistemas/Tvs";
 import Pipeline from "./pages/Pipeline";
 import CadastroEdital from "./pages/CadastroEdital";
 import Documentos from "./pages/Documentos";
@@ -77,6 +79,7 @@ import Classificadores from "./pages/controladoria/Classificadores";
 import PlanejadorOBZ from "./pages/controladoria/PlanejadorOBZ";
 import Orcamento from "./pages/Orcamento";
 import Fornecedores from "./pages/suprimentos/Fornecedores";
+import DashboardComprasEstoque from "./pages/suprimentos/DashboardComprasEstoque";
 import ProdutosServicos from "./pages/suprimentos/ProdutosServicos";
 import Requisicoes from "./pages/suprimentos/Requisicoes";
 import PedidosCompra from "./pages/suprimentos/PedidosCompra";
@@ -211,9 +214,9 @@ import AnalistasSolicitacoesDemissao from "./pages/licitacoes/analistas/Solicita
 import RhTrocaFuncaoEscritorio from "./pages/rh/TrocaFuncaoEscritorio";
 import DiretoriaSolicitacoesDemissao from "./pages/diretoria/SolicitacoesDemissao";
 import DiretoriaRecrutamento from "./pages/diretoria/Recrutamento";
-import DiretoriaRelatorioGeral from "./pages/diretoria/relatorios/RelatorioGeral";
-import DiretoriaRelatorioSistema from "./pages/diretoria/relatorios/RelatorioSistema";
-import { SISTEMAS as DIRETORIA_RELATORIOS } from "./pages/diretoria/relatorios/sistemas";
+import RelatorioGeral from "./pages/relatorios/RelatorioGeral";
+import RelatorioSistema from "./pages/relatorios/RelatorioSistema";
+import { SISTEMAS as RELATORIOS } from "./pages/relatorios/sistemas";
 import SstTrocaFuncao from "./pages/sst/TrocaFuncao";
 import RhTrocaFuncao from "./pages/rh/TrocaFuncao";
 import AsoCandidatos from "./pages/sst/AsoCandidatos";
@@ -420,6 +423,10 @@ const App = () => (
           <Route path="/admissao/enxoval/:token" element={<EnxovalAdmissao />} />
           {/* Canal de Ética — registro e acompanhamento de denúncia, sem login */}
           <Route path="/denuncia" element={<Denuncia />} />
+          {/* Player das TVs da empresa (Sistemas › TV's, mig 20261007000012): público,
+              a TV não tem login — pareia por código e usa um token próprio. */}
+          <Route path="/tv" element={<TvPlayer />} />
+          <Route path="/tv/:chave" element={<TvPlayer />} />
           <Route path="/denuncia/acompanhar" element={<Navigate to="/denuncia?acompanhar" replace />} />
           {/* Portal do Colaborador — o colaborador de campo entra com o CPF,
               sem conta no Supabase Auth: fora do ProtectedRoute e do AppShell
@@ -484,6 +491,7 @@ const App = () => (
             {/* Checklist de Módulos (02/10/2026, mig 291): status, uso, bugs e chamados de cada módulo/tela. */}
             <Route path="sistemas/checklist-modulos" element={<ChecklistModulos />} />
             <Route path="sistemas/logins" element={<LoginsSistemas />} />
+            <Route path="sistemas/tvs" element={<TvsSistemas />} />
             <Route path="sistemas/checklist-modulos/:moduloId" element={<ChecklistModuloDetalhe />} />
             <Route path="sistemas/hora-extra" element={<SolicitacoesHoraExtra />} />
             <Route path="sistemas/hora-extra/liberacao" element={<LiberacaoHoraExtra />} />
@@ -677,16 +685,23 @@ const App = () => (
             {/* Diretoria (16/09/2026): demissão e vaga do escritório / com setor. */}
             <Route path="diretoria/solicitacoes-demissao" element={<DiretoriaSolicitacoesDemissao />} />
             <Route path="diretoria/recrutamento" element={<DiretoriaRecrutamento />} />
-            {/* Diretoria › Relatórios (05/10/2026, mig 20261005000006): uma rota por
-                relatório, cada uma com menu próprio em Acesso por Usuário. */}
-            <Route path="diretoria/relatorios" element={<DiretoriaRelatorioGeral />} />
-            {DIRETORIA_RELATORIOS.map((s) => (
-              <Route key={s.slug} path={`diretoria/relatorios/${s.slug}`} element={<DiretoriaRelatorioSistema key={s.slug} slug={s.slug} />} />
+            {/* Relatórios — módulo próprio desde 07/10/2026 (mig 20261007000010; antes
+                ficava dentro da Diretoria, mig 20261005000006). Uma rota por relatório,
+                cada uma com menu próprio em Acesso por Usuário (mesmos códigos de antes).
+                As rotas antigas /app/diretoria/relatorios/* redirecionam para cá. */}
+            <Route path="relatorios" element={<RelatorioGeral />} />
+            {RELATORIOS.map((s) => (
+              <Route key={s.slug} path={`relatorios/${s.slug}`} element={<RelatorioSistema key={s.slug} slug={s.slug} />} />
+            ))}
+            <Route path="diretoria/relatorios" element={<Navigate to="/app/relatorios" replace />} />
+            {RELATORIOS.map((s) => (
+              <Route key={`antiga-${s.slug}`} path={`diretoria/relatorios/${s.slug}`} element={<Navigate to={`/app/relatorios/${s.slug}`} replace />} />
             ))}
             {/* O MESMO dashboard do RH, com menu próprio na Diretoria (17/09/2026). */}
             <Route path="diretoria/recrutamento-dashboard" element={<RecrutamentoDashboard />} />
             <Route path="orcamento" element={<Orcamento />} />
             {/* Suprimentos */}
+            <Route path="suprimentos/dashboard" element={<DashboardComprasEstoque />} />
             {/* Mais específica primeiro: o React Router casa na ordem declarada,
                 e o matchMenuCode resolve pelo prefixo mais longo — aqui o menu é
                 sup_fornecedor_aprovacao, não `fornecedores` (SIS-2026-0209). */}
