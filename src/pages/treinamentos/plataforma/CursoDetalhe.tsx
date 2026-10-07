@@ -33,9 +33,10 @@ import { AssinaturaTraco, assinaturaValeParaPublicar, cargoERegistro } from "./a
 // aula +" por módulo e "Adicionar módulo +" no fim.
 //
 // Assinatura (06/10/2026, mig 20261006000001): "Adicionar assinatura" nos
-// três pontinhos (do curso, de cada módulo e de cada aula). Sem assinatura
-// de Técnico(a) em Segurança com registro o curso não publica — o toggle
-// avisa e abre o diálogo, e o banco barra também.
+// três pontinhos (do curso, de cada módulo e de cada aula). Desde 07/10/2026
+// (mig 20261007000002) a assinatura é opcional: sem ela o curso publica e o
+// certificado sai sem assinatura. Com ela, tem que ser de Técnico(a) em
+// Segurança com registro — o toggle avisa e abre o diálogo, e o banco barra.
 // =====================================================================
 
 export default function CursoDetalhe() {
@@ -69,11 +70,12 @@ export default function CursoDetalhe() {
 
   const assinatura = assinaturas.find((a) => a.id === curso?.assinatura_id) ?? null;
   const assinaturaOk = !!assinatura?.ativo && assinaturaValeParaPublicar(assinatura);
+  const assinaturaBarra = !!curso?.assinatura_id && !assinaturaOk;
 
   const toggle = async (campo: "publicado" | "em_breve" | "comentarios_habilitados", v: boolean) => {
     if (!curso) return;
-    if (campo === "publicado" && v && !assinaturaOk) {
-      toast.error("Para publicar, adicione a assinatura de um(a) Técnico(a) em Segurança (com cargo e registro).");
+    if (campo === "publicado" && v && assinaturaBarra) {
+      toast.error("A assinatura deste curso não é de um(a) Técnico(a) em Segurança com registro — troque ou remova a assinatura para publicar.");
       setAssinaturaAberta(true);
       return;
     }
@@ -167,7 +169,7 @@ export default function CursoDetalhe() {
               </div>
             </AcessoGate>
 
-            <div className={`mt-4 flex flex-wrap items-center gap-3 rounded-xl border px-3 py-2 ${assinaturaOk ? "bg-white" : "border-amber-300 bg-amber-50"}`}>
+            <div className={`mt-4 flex flex-wrap items-center gap-3 rounded-xl border px-3 py-2 ${assinaturaBarra ? "border-amber-300 bg-amber-50" : "bg-white"}`}>
               {assinatura ? (
                 <>
                   <div className="h-12 w-40 shrink-0 overflow-hidden"><AssinaturaTraco a={assinatura} altura="48px" /></div>
@@ -179,8 +181,8 @@ export default function CursoDetalhe() {
                   </div>
                 </>
               ) : (
-                <div className="min-w-0 flex-1 text-sm text-amber-800">
-                  <b>Sem assinatura.</b> O curso só pode ser publicado com a assinatura de um(a) Técnico(a) em Segurança (cargo e registro).
+                <div className="min-w-0 flex-1 text-sm text-slate-600">
+                  <b>Sem assinatura.</b> O certificado sai sem assinatura. Para assinar, use os três pontinhos (Técnico(a) em Segurança, com cargo e registro).
                 </div>
               )}
               <AcessoGate menu={MENU.cursos} acao="alterar">

@@ -102,7 +102,6 @@ export function DialogAssinaturaCurso({ curso, onClose }: {
   const opcoes = lista.filter((a) => a.ativo || a.id === curso?.assinatura_id);
   const gravar = async (id: string | null) => {
     if (!curso) return;
-    if (curso.publicado && !id) return toast.error("Curso publicado não pode ficar sem assinatura — despublique antes.");
     try {
       await salvarCurso.mutateAsync({ id: curso.id, nome: curso.nome, assinatura_id: id });
       toast.success(id ? "Assinatura do curso salva — sai nos próximos certificados." : "Assinatura removida do curso.");
@@ -143,7 +142,7 @@ export function DialogAssinaturaCurso({ curso, onClose }: {
               <Button type="button" variant="outline" onClick={() => setCriando(true)}><Plus className="mr-1 h-4 w-4" /> Nova assinatura</Button>
             </AcessoGate>
             <div className="flex gap-2">
-              {curso?.assinatura_id && !curso.publicado && <Button variant="ghost" className="text-rose-600" disabled={salvarCurso.isPending} onClick={() => gravar(null)}>Remover</Button>}
+              {curso?.assinatura_id && <Button variant="ghost" className="text-rose-600" disabled={salvarCurso.isPending} onClick={() => gravar(null)}>Remover</Button>}
               <Button variant="outline" onClick={onClose}>Cancelar</Button>
               <Button disabled={!escolhida || escolhida === curso?.assinatura_id || salvarCurso.isPending} onClick={() => gravar(escolhida)}><Save className="mr-2 h-4 w-4" /> Salvar</Button>
             </div>
