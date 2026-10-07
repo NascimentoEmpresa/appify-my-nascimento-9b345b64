@@ -8,6 +8,7 @@ import { useOrcadoClassificacaoMultiMes } from "@/hooks/useOrcadoClassificacao";
 import type { FluxoCaixaMaloteLinha } from "@/hooks/useFluxoCaixaMalote";
 import { formatBRL } from "@/hooks/usePlanilhaCusto";
 import { calcularImpactoTroca } from "./impactoTrocaContrato";
+import { SEM_CONTRATO } from "./motivosRevisar";
 
 // SIS-2026-0552 — campo "Contrato" dentro do diálogo de edição (lápis) do
 // Fluxo de Caixa. Diferente dos outros campos (que só ajustam a cópia do Fluxo),
@@ -89,6 +90,9 @@ export function ContratoTrocaCampo({
           <SelectTrigger className="h-9"><SelectValue placeholder="Manter o contrato atual" /></SelectTrigger>
           <SelectContent>
             <SelectItem value="_">Manter o contrato atual</SelectItem>
+            {linha.origem === "importacao_historica" && !linha.contrato_id && (
+              <SelectItem value={SEM_CONTRATO}>Sem contrato (administrativo)</SelectItem>
+            )}
             {opcoes.map((c) => (
               <SelectItem key={c.id} value={c.id}>{c.nome}{c.status !== "ativo" ? ` (${c.status})` : ""}</SelectItem>
             ))}
