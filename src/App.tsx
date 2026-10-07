@@ -27,6 +27,7 @@ import Presidencia from "./pages/Presidencia";
 import Organograma from "./pages/organograma/Organograma";
 import ChamadosDesenvolvimentoPresidencia from "./pages/presidencia/ChamadosDesenvolvimento";
 import TvPlayer from "./pages/tv/TvPlayer";
+import TvPrevia from "./pages/tv/TvPrevia";
 import TvsSistemas from "./pages/sistemas/Tvs";
 import Pipeline from "./pages/Pipeline";
 import CadastroEdital from "./pages/CadastroEdital";
@@ -427,6 +428,7 @@ const App = () => (
           {/* Player das TVs da empresa (Sistemas › TV's, mig 20261007000012): público,
               a TV não tem login — pareia por código e usa um token próprio. */}
           <Route path="/tv" element={<TvPlayer />} />
+          <Route path="/tv/previa" element={<TvPrevia />} />
           <Route path="/tv/:chave" element={<TvPlayer />} />
           <Route path="/denuncia/acompanhar" element={<Navigate to="/denuncia?acompanhar" replace />} />
           {/* Portal do Colaborador — o colaborador de campo entra com o CPF,

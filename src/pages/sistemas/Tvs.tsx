@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import {
   AlertTriangle, ArrowDown, ArrowUp, BarChart3, Copy, Eye, EyeOff, Image as ImageIcon, Link2, ListVideo, Loader2, Megaphone, MonitorPlay, Power,
@@ -25,7 +25,7 @@ import {
 } from "@/hooks/useTvs";
 import {
   PERIODOS_TV, RELATORIOS_TV, TIPOS_ITEM, corAviso, duracaoTotal, haQuanto, rotuloPeriodoTv, statusTv, tituloRelatorioTv, urlValida, youtubeEmbed,
-  type TipoItem,
+  type ItemTv, type TipoItem,
 } from "@/lib/tv/tv";
 
 // =====================================================================
@@ -392,6 +392,21 @@ function NovoItem({ playlistId, proximaOrdem }: { playlistId: string; proximaOrd
   const precisaArquivo = f.tipo === "imagem" || f.tipo === "video";
   const dica = TIPOS_ITEM.find((t) => t.valor === f.tipo)?.dica;
 
+  // Prévia (07/10/2026): arquivo ainda não enviado vira blob: para a prévia.
+  const [urlLocal, setUrlLocal] = useState<string | null>(null);
+  useEffect(() => {
+    if (!arquivo) { setUrlLocal(null); return; }
+    const u = URL.createObjectURL(arquivo);
+    setUrlLocal(u);
+    return () => URL.revokeObjectURL(u);
+  }, [arquivo]);
+  const itemPrevia = useMemo<ItemTv>(() => ({
+    id: "previa", tipo: f.tipo, titulo: f.titulo.trim() || null, url: f.url.trim() || null, arquivo: null,
+    texto: f.texto, cor: f.cor, duracao_seg: Number(f.duracao) || 15,
+    relatorio: f.relatorio, rel_periodo: f.periodo as ItemTv["rel_periodo"], rel_contrato: f.contrato || null,
+    rel_contrato_nome: contratos.find((c) => c.id === f.contrato)?.nome ?? null, url_previa: urlLocal,
+  }), [f, urlLocal, contratos]);
+
   const invalido = useMemo(() => {
     if (precisaArquivo && !arquivo) return "Escolha o arquivo.";
     if (f.tipo === "url" && !urlValida(f.url)) return "Informe um endereço começando com http:// ou https://";
@@ -485,10 +500,58 @@ function NovoItem({ playlistId, proximaOrdem }: { playlistId: string; proximaOrd
         <div><Label className="text-xs">Passa a partir de (opcional)</Label><Input type="datetime-local" value={f.de} onChange={(e) => setF({ ...f, de: e.target.value })} /></div>
         <div><Label className="text-xs">Para de passar em (opcional)</Label><Input type="datetime-local" value={f.ate} onChange={(e) => setF({ ...f, ate: e.target.value })} /></div>
       </div>
+      <PreviaTv item={itemPrevia} />
       <div className="flex justify-end">
         <Button disabled={enviando} onClick={adicionar}>{enviando ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : precisaArquivo ? <Upload className="mr-1 h-4 w-4" /> : <Plus className="mr-1 h-4 w-4" />} Adicionar</Button>
       </div>
     </Card>
+  );
+}
+
+/**
+ * Prévia (pedido de 07/10/2026): a própria tela da TV (/tv/previa) num iframe
+ * de 1920×1080 reduzido para caber aqui — o que aparece é o que a TV mostra.
+ * O item vai por postMessage a cada mudança (sem recarregar o iframe).
+ */
+function PreviaTv({ item }: { item: ItemTv }) {
+  const caixa = useRef<HTMLDivElement>(null);
+  const quadro = useRef<HTMLIFrameElement>(null);
+  const [largura, setLargura] = useState(0);
+  const [pronta, setPronta] = useState(false);
+
+  useEffect(() => {
+    const el = caixa.current;
+    if (!el) return;
+    const ro = new ResizeObserver(([e]) => setLargura(e.contentRect.width));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  useEffect(() => {
+    const ouvir = (e: MessageEvent) => {
+      if (e.origin === window.location.origin && e.data?.tipo === "tv-previa-pronta" && e.source === quadro.current?.contentWindow) setPronta(true);
+    };
+    window.addEventListener("message", ouvir);
+    return () => window.removeEventListener("message", ouvir);
+  }, []);
+  // Manda o item com um respiro (digitar não recarrega a prévia a cada letra).
+  useEffect(() => {
+    if (!pronta) return;
+    const t = window.setTimeout(() => quadro.current?.contentWindow?.postMessage({ tipo: "tv-previa", item }, window.location.origin), 400);
+    return () => window.clearTimeout(t);
+  }, [item, pronta]);
+
+  const escala = largura ? largura / 1920 : 0;
+  return (
+    <div>
+      <p className="mb-1.5 flex items-center gap-1.5 text-xs font-semibold text-muted-foreground"><Eye className="h-3.5 w-3.5" /> Prévia — como fica na TV (tela Full HD 16:9)</p>
+      <div ref={caixa} className="relative w-full overflow-hidden rounded-lg border bg-black" style={{ height: largura * 9 / 16 }}>
+        {largura > 0 && (
+          <iframe ref={quadro} src="/tv/previa" title="Prévia da TV" className="absolute left-0 top-0 border-0"
+            style={{ width: 1920, height: 1080, transform: `scale(${escala})`, transformOrigin: "top left", pointerEvents: "none" }} />
+        )}
+        {!pronta && <div className="absolute inset-0 flex items-center justify-center text-xs text-white/60"><Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" /> Preparando a prévia…</div>}
+      </div>
+    </div>
   );
 }
 

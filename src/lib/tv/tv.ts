@@ -18,6 +18,9 @@ export interface ItemTv {
   id: string; tipo: TipoItem; titulo: string | null; url: string | null; arquivo: string | null;
   texto: string | null; cor: string | null; duracao_seg: number;
   relatorio?: string | null; rel_periodo?: PeriodoTv | null;
+  // Só na PRÉVIA da gestão (Sistemas › TV's): contrato do relatório, o nome
+  // dele para o cabeçalho e o arquivo local ainda não enviado (blob:).
+  rel_contrato?: string | null; rel_contrato_nome?: string | null; url_previa?: string | null;
 }
 
 // ---- Relatórios na TV (mig 20261007000014) ----------------------------------
@@ -44,6 +47,13 @@ export const PERIODOS_TV: { valor: PeriodoTv; rotulo: string }[] = [
   { valor: "12m", rotulo: "Últimos 12 meses" }, { valor: "ano", rotulo: "Este ano" },
 ];
 export const rotuloPeriodoTv = (p: string | null | undefined) => PERIODOS_TV.find((x) => x.valor === p)?.rotulo ?? "Últimos 12 meses";
+
+/** De/até do período do item — a MESMA conta de tv_rel_periodo no banco (usada na prévia). */
+export function periodoTv(p: string | null | undefined, hoje: Date = new Date()): { de: string; ate: string } {
+  const iso = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  const voltaMeses = p === "mes" ? 0 : p === "3m" ? 2 : p === "6m" ? 5 : p === "ano" ? hoje.getMonth() : 11;
+  return { de: iso(new Date(hoje.getFullYear(), hoje.getMonth() - voltaMeses, 1)), ate: iso(hoje) };
+}
 
 /** Chave do link fixo: 12 caracteres do alfabeto sem 0/O/1/I (tv_gerar_link). Aceita com espaço/traço e minúscula. */
 export function normalizarChaveTv(c: string | null | undefined): string | null {

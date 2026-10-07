@@ -33,7 +33,7 @@ const rpc = supabase.rpc.bind(supabase) as unknown as (fn: string, args?: Record
 const tela = () => `${window.screen?.width ?? window.innerWidth}x${window.screen?.height ?? window.innerHeight}`;
 const lerToken = () => { try { return localStorage.getItem(CHAVE_TOKEN); } catch { return null; } };
 const gravarToken = (t: string | null) => { try { t ? localStorage.setItem(CHAVE_TOKEN, t) : localStorage.removeItem(CHAVE_TOKEN); } catch { /* modo privado */ } };
-const midia = (arquivo: string | null) => (arquivo ? supabase.storage.from("tv-midia").getPublicUrl(arquivo).data.publicUrl : "");
+const midiaPublica = (arquivo: string | null) => (arquivo ? supabase.storage.from("tv-midia").getPublicUrl(arquivo).data.publicUrl : "");
 
 const SEM_CONTATO_RECARREGA_MS = 3 * 60_000;
 const ABERTA_EM = Date.now();
@@ -132,7 +132,7 @@ function Pareamento({ codigo, erro }: { codigo: string; erro: string | null }) {
   );
 }
 
-function Alerta({ texto, cor }: { texto: string; cor: string }) {
+export function Alerta({ texto, cor }: { texto: string; cor: string }) {
   return (
     <div className="absolute inset-0 z-20 flex items-center justify-center p-[6vmin] text-center" style={{ background: corAviso(cor) }}>
       <p className="whitespace-pre-wrap text-[7vmin] font-black leading-tight">{texto}</p>
@@ -164,13 +164,15 @@ function Reprodutor({ itens, nome, ativa, token }: { itens: ItemTv[]; nome: stri
     <>
       <Item key={`${atual.id}-${idx}`} item={atual} sozinho={itens.length === 1} aoAcabar={proximo} token={token} />
       {/* pré-carrega a próxima imagem para a troca não piscar */}
-      {prox?.tipo === "imagem" && prox.arquivo && <link rel="preload" as="image" href={midia(prox.arquivo)} />}
+      {prox?.tipo === "imagem" && prox.arquivo && <link rel="preload" as="image" href={midiaPublica(prox.arquivo)} />}
     </>
   );
 }
 
-function Item({ item, sozinho, aoAcabar, token }: { item: ItemTv; sozinho: boolean; aoAcabar: () => void; token: string }) {
-  if (item.tipo === "relatorio") return <TvRelatorio item={item} token={token} />;
+/** Um item da playlist em tela cheia. Exportado para a prévia da gestão (TvPrevia). */
+export function Item({ item, sozinho, aoAcabar, token, previa = false }: { item: ItemTv; sozinho: boolean; aoAcabar: () => void; token: string; previa?: boolean }) {
+  if (item.tipo === "relatorio") return <TvRelatorio item={item} token={token} previa={previa} />;
+  const midia = (arquivo: string | null) => item.url_previa || midiaPublica(arquivo);
   if (item.tipo === "imagem") {
     return <img src={midia(item.arquivo)} alt={item.titulo ?? ""} className="h-full w-full object-contain" onError={aoAcabar} />;
   }

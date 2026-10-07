@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
 import { Bar, BarChart, CartesianGrid, LabelList, Legend, ResponsiveContainer, XAxis, YAxis } from "recharts";
 import { supabase } from "@/integrations/supabase/client";
-import { fmtKpi, rotuloMes, type Kpi, type RelatorioDados } from "@/pages/relatorios/sistemas";
-import { rotuloPeriodoTv, tituloRelatorioTv, type ItemTv } from "@/lib/tv/tv";
+import { SISTEMAS, fmtKpi, rotuloMes, type Kpi, type RelatorioDados, type RelatorioGeralDados } from "@/pages/relatorios/sistemas";
+import { periodoTv, rotuloPeriodoTv, tituloRelatorioTv, type ItemTv } from "@/lib/tv/tv";
 
 // =====================================================================
 // Relatório do ERP na TV (Sistemas › TV's, mig 20261007000014)
@@ -13,6 +13,9 @@ import { rotuloPeriodoTv, tituloRelatorioTv, type ItemTv } from "@/lib/tv/tv";
 // Os números vêm de tv_relatorio(token, item) — a mesma conta dos Relatórios
 // (dir_rel_dados), só da playlist desta TV. Cache de 5 min por item: a
 // playlist gira sem reconsultar a cada volta.
+// PRÉVIA (Sistemas › TV's, sem token de TV): os mesmos números vêm das RPCs
+// dos Relatórios com o login de quem está montando a playlist (dir_rel_*),
+// com o mesmo período (periodoTv = tv_rel_periodo) e contrato.
 // =====================================================================
 
 type Sistema = { slug: string; titulo: string; kpis: Kpi[]; rotulo_item: string; mensal: RelatorioDados["mensal"] };
@@ -25,14 +28,41 @@ const SERIE = ["#3b82f6", "#22c55e", "#ef4444"];
 const TOM: Record<string, string> = { primary: "#60a5fa", success: "#4ade80", warning: "#fbbf24", destructive: "#f87171", info: "#38bdf8" };
 const rpc = supabase.rpc.bind(supabase) as unknown as (fn: string, args?: Record<string, unknown>) => Promise<{ data: any; error: { message: string } | null }>;
 
-export function TvRelatorio({ item, token }: { item: ItemTv; token: string }) {
+const ORDEM_GERAL = ["recrutamento", "demissoes", "materiais", "ferias", "medida-disciplinar", "mudanca-funcao", "chamados", "orientacoes"];
+
+/** Prévia: busca com o login de quem está na gestão, no formato que a TV recebe. */
+async function carregarPrevia(item: ItemTv): Promise<Resp> {
+  const { de, ate } = periodoTv(item.rel_periodo);
+  const args = { _de: de, _ate: ate, _contrato: item.rel_contrato ?? null, _meses: null };
+  const contrato = item.rel_contrato_nome ?? null;
+  if (item.relatorio === "geral") {
+    const { data, error } = await rpc("dir_rel_geral", args);
+    if (error) throw new Error(error.message);
+    const g = data as RelatorioGeralDados;
+    return { tipo: "geral", periodo: { de, ate }, contrato,
+             sistemas: ORDEM_GERAL.filter((s) => g[s]).map((s) => ({ slug: s, titulo: g[s].titulo, kpis: g[s].kpis, rotulo_item: g[s].rotulo_item, mensal: g[s].mensal })) };
+  }
+  const s = SISTEMAS.find((x) => x.slug === item.relatorio);
+  if (!s) throw new Error("Relatório desconhecido.");
+  const { data, error } = await rpc(s.rpc, args);
+  if (error) throw new Error(error.message);
+  return { ...(data as RelatorioDados), tipo: "sistema", slug: s.slug, contrato };
+}
+
+export function TvRelatorio({ item, token, previa = false }: { item: ItemTv; token: string; previa?: boolean }) {
   const [dados, setDados] = useState<Resp | null>(CACHE.get(item.id)?.dados ?? null);
   const [erro, setErro] = useState<string | null>(null);
 
+  const chavePrevia = previa ? `${item.relatorio}|${item.rel_periodo}|${item.rel_contrato ?? ""}` : "";
   useEffect(() => {
+    let vivo = true;
+    if (previa) {
+      setDados(null); setErro(null);
+      carregarPrevia(item).then((d) => { if (vivo) setDados(d); }, (e) => { if (vivo) setErro((e as Error).message); });
+      return () => { vivo = false; };
+    }
     const c = CACHE.get(item.id);
     if (c && Date.now() - c.em < VALIDADE_MS) { setDados(c.dados); return; }
-    let vivo = true;
     rpc("tv_relatorio", { p_token: token, p_item: item.id }).then(({ data, error }) => {
       if (!vivo) return;
       if (error) { setErro(error.message); return; }
@@ -40,7 +70,8 @@ export function TvRelatorio({ item, token }: { item: ItemTv; token: string }) {
       setDados(data as Resp); setErro(null);
     });
     return () => { vivo = false; };
-  }, [item.id, token]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [item.id, token, previa, chavePrevia]);
 
   const titulo = item.titulo || tituloRelatorioTv(item.relatorio);
   return (
