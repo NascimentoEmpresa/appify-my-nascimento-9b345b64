@@ -37,7 +37,7 @@ function MiniGrafico({ r, cor }: { r: RelatorioDados; cor: string }) {
 
 export default function RelatorioGeral() {
   const periodo = usePeriodo();
-  const q = useRelatorioGeral(periodo.de, periodo.ate);
+  const q = useRelatorioGeral(periodo.filtro);
   const g = q.data;
 
   // Comparativo: concluídas, em andamento, recusadas e tempo de cada sistema de solicitação.
@@ -93,7 +93,7 @@ export default function RelatorioGeral() {
           </div>
 
           <AcessoGate menu={MENU_IA} acao="visualizar">
-            <PainelIA sistema="geral" de={periodo.de} ate={periodo.ate} titulo="Relatório Geral" />
+            <PainelIA sistema="geral" de={periodo.de} ate={periodo.ate} contrato={periodo.contrato} meses={periodo.meses} titulo="Relatório Geral" />
           </AcessoGate>
 
           <div className="grid gap-4 lg:grid-cols-2">

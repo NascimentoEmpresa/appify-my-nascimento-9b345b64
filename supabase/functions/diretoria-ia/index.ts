@@ -171,7 +171,10 @@ Deno.serve(async (req) => {
     const provs = provedores();
     if (!provs.length) return respostaJson({ error: "A chave da IA não está configurada. Avise o time de Sistemas." }, 500);
 
-    const { data: rel, error: relErr } = await supa.rpc(rpc, { _de: data(corpo?.de), _ate: data(corpo?.ate) });
+    // Mesmo filtro da tela (mig 20261007000013): contrato (uuid) e meses (1–12).
+    const contrato = typeof corpo?.contrato === "string" && /^[0-9a-f-]{36}$/i.test(corpo.contrato) ? corpo.contrato : null;
+    const meses = Array.isArray(corpo?.meses) ? corpo.meses.map(Number).filter((m: number) => Number.isInteger(m) && m >= 1 && m <= 12) : [];
+    const { data: rel, error: relErr } = await supa.rpc(rpc, { _de: data(corpo?.de), _ate: data(corpo?.ate), _contrato: contrato, _meses: meses.length ? meses : null });
     if (relErr) return respostaJson({ error: relErr.message }, relErr.code === "42501" ? 403 : 500);
 
     const contexto = `RELATÓRIO (${sistema === "geral" ? "Relatório Geral — todos os sistemas" : sistema}), hoje é ${new Date().toISOString().slice(0, 10)}:\n` +
