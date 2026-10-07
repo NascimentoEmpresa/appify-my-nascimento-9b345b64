@@ -32,9 +32,9 @@ function RelatorioPadrao({ slug }: { slug: string }) {
 
   return (
     <div className="space-y-4">
-      <PageHeader title={s.titulo} subtitle={s.descricao} module="Diretoria e Presidência" breadcrumb={["Diretoria", "Relatórios", s.titulo]} />
+      <PageHeader title={s.titulo} subtitle={s.descricao} module="Relatórios" breadcrumb={[s.titulo]} />
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <Link to="/app/diretoria/relatorios" className="inline-flex items-center gap-1 text-sm font-medium text-primary hover:underline">
+        <Link to="/app/relatorios" className="inline-flex items-center gap-1 text-sm font-medium text-primary hover:underline">
           <ArrowLeft className="h-4 w-4" /> Relatório Geral
         </Link>
         <SeletorPeriodo periodo={periodo} />

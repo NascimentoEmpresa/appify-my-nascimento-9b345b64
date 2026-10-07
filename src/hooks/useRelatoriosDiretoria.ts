@@ -1,6 +1,6 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
-import type { RelatorioDados, RelatorioGeralDados } from "@/pages/diretoria/relatorios/sistemas";
+import type { RelatorioDados, RelatorioGeralDados } from "@/pages/relatorios/sistemas";
 import type { PainelTurnover, RescisoesTurnover } from "@/lib/diretoria/turnover";
 
 // =====================================================================

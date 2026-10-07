@@ -21,7 +21,7 @@ import { MENU_IA, rotuloMes } from "./sistemas";
 import { PainelIA } from "./componentes";
 
 // =====================================================================
-// DIRETORIA › RELATÓRIOS › TURN-OVER (mig 20261006000003, 06/10/2026)
+// RELATÓRIOS › TURN-OVER (mig 20261006000003, 06/10/2026)
 //
 // No formato do Power BI "TURNOVER GRUPO NASCIMENTO", no visual do ERP:
 //   · Resumo Turnover — turnover do ano × meta de 41%, mês a mês × 3,42%,
@@ -61,9 +61,9 @@ export default function TurnoverPainel() {
 
   return (
     <div className="space-y-4">
-      <PageHeader title="Turn-over" subtitle="Turnover do Grupo Nascimento — metas, contratos e avisos" module="Diretoria e Presidência" breadcrumb={["Diretoria", "Relatórios", "Turn-over"]} />
+      <PageHeader title="Turn-over" subtitle="Turnover do Grupo Nascimento — metas, contratos e avisos" module="Relatórios" breadcrumb={["Turn-over"]} />
       <div className="flex flex-wrap items-center gap-2">
-        <Link to="/app/diretoria/relatorios" className="mr-auto inline-flex items-center gap-1 text-sm font-medium text-primary hover:underline">
+        <Link to="/app/relatorios" className="mr-auto inline-flex items-center gap-1 text-sm font-medium text-primary hover:underline">
           <ArrowLeft className="h-4 w-4" /> Relatório Geral
         </Link>
         <Select value={String(ano)} onValueChange={(v) => { setAno(Number(v)); setMeses(null); }}>
