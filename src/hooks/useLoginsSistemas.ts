@@ -21,7 +21,18 @@ export interface PedidoLogin {
   solicitante_email: string | null; solicitante_nome: string | null; status: StatusPedido;
   login_email: string | null; criado_por_nome: string | null; criado_em: string | null; entregue_em: string | null;
   obs: string | null; created_at: string;
+  /** Vínculo gravado ao marcar criado (mig 20261006160000). */
+  empregado_id: number | null; auth_user_id: string | null;
+  /**
+   * A admissão Trabalhando na Senior com o CPF do pedido (null = ainda não
+   * admitido). O login só pode ser liberado — e vinculado — com ela.
+   */
+  senior_id: number | null; senior_cadastro: string | null; senior_nome: string | null; senior_cargo: string | null;
+  senior_filial: string | null; senior_admissao: string | null; senior_login: string | null;
 }
+
+/** Pedido em aberto que já pode virar login: admitido na Senior (Trabalhando). */
+export const pedidoPronto = (p: Pick<PedidoLogin, "status" | "senior_id">) => p.status === "pendente" && p.senior_id != null;
 export interface DemitidoComLogin {
   empregado_id: number; auth_user_id: string; nome: string; cargo: string | null; contrato: string | null; empresa: string | null;
   desligamento: string | null; login_email: string; ultimo_acesso: string | null;
@@ -40,11 +51,23 @@ const invalidar = (qc: ReturnType<typeof useQueryClient>) => {
 export const usePedidosLogin = () => useQuery({
   queryKey: [K, "pedidos"], staleTime: 30_000,
   queryFn: async (): Promise<PedidoLogin[]> => {
-    const { data, error } = await sb.from("SIS_LOGIN_PEDIDO").select("*").order("created_at", { ascending: false }).limit(500);
+    // RPC (mig 20261006160000): os pedidos + a admissão encontrada na Senior.
+    const { data, error } = await sb.rpc("sis_login_pedidos_lista");
     if (error) throw error;
     return data ?? [];
   },
 });
+
+export function useDefinirCpfPedido() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (p: { id: string; cpf: string }) => {
+      const { error } = await sb.rpc("sis_login_definir_cpf", { p_id: p.id, p_cpf: p.cpf });
+      if (error) throw error;
+    },
+    onSuccess: () => invalidar(qc),
+  });
+}
 
 export const useDemitidosComLogin = () => useQuery({
   queryKey: [K, "demitidos"], staleTime: 30_000,
@@ -58,8 +81,12 @@ export const useDemitidosComLogin = () => useQuery({
 export function useMarcarLoginCriado() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (p: { id: string; login: string; senha: string }) => {
-      const { error } = await sb.rpc("sis_login_marcar_criado", { p_id: p.id, p_login: p.login, p_senha: p.senha });
+    // Marcar criado = VINCULAR: o banco grava EMPREGADOS.auth_user_id do
+    // colaborador Trabalhando com o usuário daquele e-mail.
+    mutationFn: async (p: { id: string; login: string; senha: string; empregadoId: number }) => {
+      const { error } = await sb.rpc("sis_login_marcar_criado", {
+        p_id: p.id, p_login: p.login, p_senha: p.senha, p_empregado_id: p.empregadoId,
+      });
       if (error) throw error;
     },
     onSuccess: () => invalidar(qc),

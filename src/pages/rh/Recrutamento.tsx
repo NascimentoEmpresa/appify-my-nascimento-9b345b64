@@ -1216,11 +1216,33 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
 
   // ADMISSÃO → efetiva o candidato no módulo de Admissão (RH).
   const enviarAdmissao = async (cv: Curriculo) => {
+    // Vaga que precisa de login no ERP (PR #811): o CPF é obrigatório, porque
+    // é por ele que Sistemas acha a admissão Trabalhando na Senior para
+    // liberar e VINCULAR o login (mig 20261006160000). Sem CPF o pedido de
+    // login nasce travado.
+    let cpfAdmissao: string | null = null;
+    if (drawerId) {
+      const { data: vagaLogin } = await sb.from("SISTEMA_RECRUTAMENTO").select("precisa_login_erp").eq("id", drawerId).maybeSingle();
+      if (vagaLogin?.precisa_login_erp) {
+        const atual = String(cv.cpf ?? "").replace(/\D/g, "");
+        if (atual.length !== 11) {
+          const digitado = window.prompt(`Esta vaga precisa de login no ERP.\n\nInforme o CPF de ${cv.nome || "o candidato"} (11 dígitos) — o login só é liberado quando a admissão dele aparecer na Senior com este CPF:`, "");
+          if (digitado === null) return;
+          const d = digitado.replace(/\D/g, "");
+          if (d.length !== 11) { toast("CPF inválido: informe os 11 dígitos.", "err"); return; }
+          cpfAdmissao = d;
+        }
+      }
+    }
     if (!confirm(`Contratar ${cv.nome || "o candidato"}?\n\nEle vai para a Admissão (RH), a vaga é ENCERRADA como "Contratado" e sai do portal público /vagas.`)) return;
     const nowIso = new Date().toISOString();
     const nome = user?.user_metadata?.nome ?? user?.email ?? "";
     const { error } = await sb.from("WA_CURRICULOS")
-      .update({ enviado_admissao_por: nome, enviado_admissao_em: nowIso }).eq("id", cv.id);
+      .update({
+        enviado_admissao_por: nome, enviado_admissao_em: nowIso,
+        // O gatilho do pedido de login lê o CPF desta mesma linha.
+        ...(cpfAdmissao ? { cpf: cpfAdmissao } : {}),
+      }).eq("id", cv.id);
     if (error) { toast("Erro: " + error.message, "err"); return; }
     if (drawerId) await logHistorico(drawerId, "Contratado — enviado à Admissão (RH)", {
       papel: "Recrutamento", para: "Contratado", candidatoId: cv.id, candidatoNome: cv.nome,
