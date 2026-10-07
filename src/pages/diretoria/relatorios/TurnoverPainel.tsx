@@ -3,16 +3,17 @@ import { Link } from "react-router-dom";
 import {
   Bar, BarChart, CartesianGrid, Cell, LabelList, Pie, PieChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from "recharts";
-import { ArrowLeft, Info, Loader2, ShieldAlert } from "lucide-react";
+import { ArrowLeft, CalendarDays, ChevronDown, Info, Loader2, ShieldAlert } from "lucide-react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { useTurnoverPainel } from "@/hooks/useRelatoriosDiretoria";
 import {
-  LIMITES, META_ANUAL, META_MENSAL, analistas, dozeMeses, nomeContrato, totalAnalistas, turnoverDoAno, turnoverPorContrato,
+  LIMITES, META_ANUAL, META_MENSAL, analistas, dozeMeses, nomeContrato, rotuloMeses, totalAnalistas, turnoverDoAno, turnoverPorContrato,
   type LinhaAnalista, type PainelTurnover, type TipoLimite,
 } from "@/lib/diretoria/turnover";
 import { AcessoGate } from "@/components/auth/AcessoGate";
@@ -30,6 +31,8 @@ import { PainelIA } from "./componentes";
 //   · Analistas — aviso trabalhado (até 23%), indenizado (até 5%) e
 //     demissões (até 100%) por contrato, acumulado e projeção do ano.
 //   · Valores (rescisões) — depende das verbas da Senior; aba avisa.
+// Filtro de meses (07/10/2026, mig 20261007000003): era "Até <mês>"; agora
+// marca um ou vários meses soltos (FiltroMeses) e a RPC recebe _meses.
 // Contas em src/lib/diretoria/turnover.ts (com teste).
 // =====================================================================
 
@@ -41,11 +44,12 @@ const pct = (n: number | null | undefined) => (n == null ? "—" : `${n.toLocale
 
 export default function TurnoverPainel() {
   const [ano, setAno] = useState(ANO_ATUAL);
-  const [mes, setMes] = useState<number | null>(null);
+  // null = ano inteiro; senão os meses marcados.
+  const [meses, setMeses] = useState<number[] | null>(null);
   const [contrato, setContrato] = useState<string | null>(null);
   // null = todos os tipos de desligamento.
   const [causas, setCausas] = useState<string[] | null>(null);
-  const q = useTurnoverPainel({ ano, mes, contrato, causas });
+  const q = useTurnoverPainel({ ano, meses, contrato, causas });
   const p = q.data;
 
   return (
@@ -55,17 +59,11 @@ export default function TurnoverPainel() {
         <Link to="/app/diretoria/relatorios" className="mr-auto inline-flex items-center gap-1 text-sm font-medium text-primary hover:underline">
           <ArrowLeft className="h-4 w-4" /> Relatório Geral
         </Link>
-        <Select value={String(ano)} onValueChange={(v) => setAno(Number(v))}>
+        <Select value={String(ano)} onValueChange={(v) => { setAno(Number(v)); setMeses(null); }}>
           <SelectTrigger className="h-9 w-24"><SelectValue /></SelectTrigger>
           <SelectContent>{ANOS.map((a) => <SelectItem key={a} value={String(a)}>{a}</SelectItem>)}</SelectContent>
         </Select>
-        <Select value={mes == null ? "todos" : String(mes)} onValueChange={(v) => setMes(v === "todos" ? null : Number(v))}>
-          <SelectTrigger className="h-9 w-40"><SelectValue /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="todos">Ano inteiro</SelectItem>
-            {MESES.map((m, i) => <SelectItem key={m} value={String(i + 1)}>Até {m}</SelectItem>)}
-          </SelectContent>
-        </Select>
+        <FiltroMeses ano={ano} meses={meses} onChange={setMeses} />
         <SearchableSelect
           value={contrato ?? ""} onChange={(v) => setContrato(v || null)} allowClear clearValue=""
           options={(p?.contratos ?? []).map((c) => ({ value: c, label: nomeContrato(c) }))}
@@ -106,6 +104,49 @@ export default function TurnoverPainel() {
         </AcessoGate>
       )}
     </div>
+  );
+}
+
+// ---- Meses -----------------------------------------------------------------------
+
+/** Um, vários ou todos os meses; os que ainda não chegaram ficam desligados. */
+function FiltroMeses({ ano, meses, onChange }: { ano: number; meses: number[] | null; onChange: (m: number[] | null) => void }) {
+  const hoje = new Date();
+  const ultimo = ano < hoje.getFullYear() ? 12 : ano > hoje.getFullYear() ? 0 : hoje.getMonth() + 1;
+  const marcado = (m: number) => meses == null || meses.includes(m);
+  const alternar = (m: number) => {
+    const atual = meses ?? Array.from({ length: ultimo }, (_, i) => i + 1);
+    const prox = atual.includes(m) ? atual.filter((x) => x !== m) : [...atual, m].sort((a, b) => a - b);
+    onChange(prox.length === 0 || prox.length >= ultimo ? null : prox);
+  };
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <Button variant="outline" className="h-9 w-44 justify-between font-normal">
+          <span className="flex items-center gap-2 truncate"><CalendarDays className="h-4 w-4 shrink-0 text-muted-foreground" />{rotuloMeses(meses)}</span>
+          <ChevronDown className="h-4 w-4 shrink-0 opacity-50" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent align="end" className="w-72 p-3">
+        <div className="mb-2 flex items-center justify-between">
+          <p className="text-xs font-semibold text-muted-foreground">Clique para marcar um ou mais meses</p>
+          <Button size="sm" variant={meses == null ? "default" : "outline"} className="h-7 text-xs" onClick={() => onChange(null)}>Ano inteiro</Button>
+        </div>
+        <div className="grid grid-cols-3 gap-1.5">
+          {MESES.map((nome, i) => {
+            const m = i + 1, futuro = m > ultimo;
+            return (
+              <button key={nome} type="button" disabled={futuro} onClick={() => (meses == null ? onChange([m]) : alternar(m))}
+                title={futuro ? "Mês ainda não começou" : undefined}
+                className={`rounded-md border px-2 py-1.5 text-xs capitalize transition ${futuro ? "cursor-not-allowed opacity-40" : meses != null && marcado(m) ? "border-primary bg-primary/10 font-semibold text-primary" : "hover:bg-muted"}`}>
+                {nome.slice(0, 3)}
+              </button>
+            );
+          })}
+        </div>
+        <p className="mt-2 text-[11px] text-muted-foreground">{meses == null ? "Mostrando o ano inteiro. O primeiro clique escolhe só aquele mês." : `Selecionado: ${rotuloMeses(meses)}.`}</p>
+      </PopoverContent>
+    </Popover>
   );
 }
 
@@ -152,7 +193,7 @@ function Resumo({ p }: { p: PainelTurnover }) {
     <>
       <div className="grid gap-4 lg:grid-cols-3">
         <Card className="p-4">
-          <p className="text-sm font-semibold">Turnover geral {p.ano}</p>
+          <p className="text-sm font-semibold">Turnover geral {p.meses?.length && p.meses.length < 12 ? `${rotuloMeses(p.meses)} ${p.ano}` : p.ano}</p>
           <p className="text-xs text-muted-foreground">Turnover aceitável no ano é de {META_ANUAL}%</p>
           <div className="mt-3 flex items-end gap-4">
             <p className={`text-4xl font-black tabular-nums ${ano.acimaDaMeta ? "text-destructive" : "text-foreground"}`}>{pct(ano.taxa)}</p>

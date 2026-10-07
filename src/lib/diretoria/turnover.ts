@@ -30,7 +30,10 @@ export interface ContratoTurnover {
   aviso_trabalhado: number; aviso_indenizado: number;
 }
 export interface PainelTurnover {
-  ano: number; mes: number | null; de: string; ate: string; fator_projecao: number; efetivo_medio: number;
+  ano: number; mes: number | null;
+  /** Meses que entraram na conta (mig 20261007000003) — 1 a 12, em ordem. */
+  meses: number[];
+  de: string; ate: string; fator_projecao: number; efetivo_medio: number;
   mensal: MesTurnover[]; por_empresa: EmpresaTurnover[]; por_contrato: ContratoTurnover[];
   causas: { causa: string; n: number }[]; contratos: string[];
 }
@@ -39,6 +42,25 @@ const r2 = (n: number) => Math.round(n * 100) / 100;
 
 /** "1050 - UFRGS - LIMPEZA GERAL - 047/2022" → "UFRGS - LIMPEZA GERAL - 047/2022" (o código da filial só polui o gráfico). */
 export const nomeContrato = (c: string) => c.replace(/^\s*\d+\s*-\s*/, "");
+
+const MESES_CURTOS = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"];
+const MESES_LONGOS = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"];
+
+/**
+ * Texto do filtro de meses (07/10/2026, "deixar selecionável os meses — ver
+ * mais de um ou só um"). null/vazio = ano inteiro; um mês = nome por extenso;
+ * meses seguidos = "Mar a jul"; soltos = "Jan, mar, jul" (até 4) ou "N meses".
+ */
+export function rotuloMeses(meses: number[] | null | undefined): string {
+  const m = [...new Set(meses ?? [])].filter((x) => x >= 1 && x <= 12).sort((a, b) => a - b);
+  if (m.length === 0 || m.length === 12) return "Ano inteiro";
+  if (m.length === 1) return MESES_LONGOS[m[0] - 1];
+  const seguidos = m.every((x, i) => i === 0 || x === m[i - 1] + 1);
+  const cap = (s: string) => s[0].toUpperCase() + s.slice(1);
+  if (seguidos) return `${cap(MESES_CURTOS[m[0] - 1])} a ${MESES_CURTOS[m[m.length - 1] - 1]}`;
+  if (m.length <= 4) return cap(m.map((x) => MESES_CURTOS[x - 1]).join(", "));
+  return `${m.length} meses`;
+}
 
 /** Turnover do ano (soma das taxas mensais) e a projeção para o ano inteiro. */
 export function turnoverDoAno(p: Pick<PainelTurnover, "mensal" | "fator_projecao">) {

@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
-  META_MENSAL, analistas, dozeMeses, limiteQuantidade, nomeContrato, totalAnalistas, turnoverDoAno, turnoverPorContrato,
+  META_MENSAL, analistas, dozeMeses, limiteQuantidade, nomeContrato, rotuloMeses, totalAnalistas, turnoverDoAno, turnoverPorContrato,
   type ContratoTurnover,
 } from "@/lib/diretoria/turnover";
 
@@ -71,5 +71,21 @@ describe("analistas", () => {
   it("total do grupo soma efetivos e quantidades", () => {
     const t = totalAnalistas({ fator_projecao: 1, por_contrato: [contrato({ efetivo_atual: 30, demissoes_todas: 3 }), contrato({ efetivo_atual: 70, demissoes_todas: 2 })] }, "demissao");
     expect(t).toMatchObject({ efetivo: 100, qtd: 5, pct: 5, limite: 100 });
+  });
+});
+
+describe("rotuloMeses (filtro de meses, 07/10/2026)", () => {
+  it("nenhum ou todos = ano inteiro", () => {
+    expect(rotuloMeses(null)).toBe("Ano inteiro");
+    expect(rotuloMeses([])).toBe("Ano inteiro");
+    expect(rotuloMeses([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12])).toBe("Ano inteiro");
+  });
+  it("um mês por extenso; seguidos viram faixa", () => {
+    expect(rotuloMeses([3])).toBe("Março");
+    expect(rotuloMeses([7, 3, 4, 5, 6])).toBe("Mar a jul");
+  });
+  it("soltos: lista curta ou contagem", () => {
+    expect(rotuloMeses([7, 1, 3])).toBe("Jan, mar, jul");
+    expect(rotuloMeses([1, 3, 5, 7, 9])).toBe("5 meses");
   });
 });

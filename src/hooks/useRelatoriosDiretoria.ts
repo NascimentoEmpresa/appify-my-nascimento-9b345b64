@@ -39,13 +39,14 @@ export function useRelatorioGeral(de: string, ate: string) {
 }
 
 /** Turn-over no formato do Power BI (mig 20261006000003). Filtros vão todos para a RPC. */
-export function useTurnoverPainel(f: { ano: number; mes: number | null; contrato: string | null; causas: string[] | null }) {
+/** meses: null = ano inteiro; senão os meses escolhidos (1–12), em qualquer combinação (mig 20261007000003). */
+export function useTurnoverPainel(f: { ano: number; meses: number[] | null; contrato: string | null; causas: string[] | null }) {
   return useQuery({
-    queryKey: [CHAVE, "turnover-painel", f.ano, f.mes, f.contrato, f.causas?.slice().sort().join("|") ?? null],
+    queryKey: [CHAVE, "turnover-painel", f.ano, f.meses?.slice().sort((a, b) => a - b).join(",") ?? null, f.contrato, f.causas?.slice().sort().join("|") ?? null],
     staleTime: 5 * 60_000,
     placeholderData: (anterior) => anterior,
     queryFn: async (): Promise<PainelTurnover> => {
-      const { data, error } = await sb.rpc("dir_turnover_painel", { _ano: f.ano, _mes: f.mes, _contrato: f.contrato, _causas: f.causas });
+      const { data, error } = await sb.rpc("dir_turnover_painel", { _ano: f.ano, _meses: f.meses, _contrato: f.contrato, _causas: f.causas });
       if (error) throw error;
       return data as PainelTurnover;
     },
