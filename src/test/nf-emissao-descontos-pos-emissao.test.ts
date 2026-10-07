@@ -103,3 +103,23 @@ describe("SIS-2026-0591: total PIS + COFINS + CSLL", () => {
     expect(somaRetencoesPisCofinsCsll({ pis_total: 0, cofins_total: 0, csll_total: 0 })).toBe(0);
   });
 });
+
+describe("[SEM-CHAMADO]: INSS 'Não reter' (NF de material do SEMAE)", () => {
+  it("zera o INSS do item e o líquido deixa de descontá-lo", async () => {
+    const { calcularItem, INSS_CATEGORIAS } = await import("@/pages/financeiro/nf-emissao/calculos");
+    const pct = { issqn_pct: 0.05, ir_pct: 0.048, cofins_pct: 0, pis_pct: 0, csll_pct: 0 };
+    const base = {
+      valor_contrato_exec: 10000, vlr_va: 0, vlr_vt: 0, vlr_materiais: 0,
+      faltas: 0, posto_nao_implementado: 0, multas: 0, glosas: 0, outros_descontos: 0,
+      multas_pos_emissao: 0, glosas_pos_emissao: 0, outros_descontos_pos_emissao: 0, qtd_colaboradores: 0,
+    };
+    const normal = calcularItem({ ...base, inss_categoria: "normais" }, pct);
+    const semInss = calcularItem({ ...base, inss_categoria: "nao_reter" }, pct);
+    expect(INSS_CATEGORIAS.nao_reter.pct).toBe(0);
+    expect(normal.inss).toBe(1100);
+    expect(semInss.inss).toBe(0);
+    expect(semInss.vlr_liquido).toBeCloseTo(normal.vlr_liquido + 1100, 2);
+    // as categorias de risco continuam com as mesmas alíquotas
+    expect(INSS_CATEGORIAS.insalubridade_40.pct).toBe(0.15);
+  });
+});
