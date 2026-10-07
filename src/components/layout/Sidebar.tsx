@@ -77,7 +77,7 @@ import { useJuridicoNotif } from "@/hooks/useJuridicoNotif";
 import { useReembolsoNotif } from "@/hooks/useReembolsoNotif";
 import { useAprovacoesNotif } from "@/hooks/useAprovacoesNotif";
 import { Inbox, type LucideIcon } from "lucide-react";
-import { Target, MessagesSquare, KeyRound } from "lucide-react";
+import { Target, MessagesSquare, KeyRound, MonitorPlay } from "lucide-react";
 import { GitBranch, GitMerge } from "lucide-react";
 import { MessageSquare } from "lucide-react";
 import { Banknote } from "lucide-react";
@@ -800,6 +800,9 @@ const sistemasModule: ModuleDef = {
         // encarregado) e de demitidos a excluir. A bolinha vem da
         // minhas_pendencias_aprovacao (mig 20261006000010).
         { label: "Logins — Admissão e Demissão", to: "/app/sistemas/logins", icon: KeyRound },
+        // TVs da empresa (07/10/2026, mig 20261007000012): conectar as TVs pelo
+        // código que aparece em /tv, playlists e aviso geral. Liberação: sistemas_tvs.
+        { label: "TV's", to: "/app/sistemas/tvs", icon: MonitorPlay },
       ],
     },
     {
