@@ -21,7 +21,7 @@ import { MENU_IA, rotuloMes } from "./sistemas";
 import { PainelIA } from "./componentes";
 
 // =====================================================================
-// DIRETORIA › RELATÓRIOS › TURN-OVER (mig 20261006000003, 06/10/2026)
+// RELATÓRIOS › TURN-OVER (mig 20261006000003, 06/10/2026)
 //
 // No formato do Power BI "TURNOVER GRUPO NASCIMENTO", no visual do ERP:
 //   · Resumo Turnover — turnover do ano × meta de 41%, mês a mês × 3,42%,
@@ -53,17 +53,16 @@ export default function TurnoverPainel() {
   const [causas, setCausas] = useState<string[] | null>(null);
   const q = useTurnoverPainel({ ano, meses, contrato, causas });
   const p = q.data;
-  // Analistas olha sempre o ano inteiro (limites anuais, pedido de 07/10/2026).
-  // Com "Ano inteiro" no filtro a chave é a mesma da consulta acima — uma só ida ao banco.
-  const qAno = useTurnoverPainel({ ano, meses: null, contrato, causas });
+  // Analistas segue o filtro de meses, como no Power BI (07/10/2026 — chegou a
+  // olhar sempre o ano inteiro, e o Pablo viu as porcentagens "não mudando").
   const [aba, setAba] = useState("resumo");
   const qResc = useTurnoverRescisoes({ ano, meses, contrato }, aba === "valores");
 
   return (
     <div className="space-y-4">
-      <PageHeader title="Turn-over" subtitle="Turnover do Grupo Nascimento — metas, contratos e avisos" module="Diretoria e Presidência" breadcrumb={["Diretoria", "Relatórios", "Turn-over"]} />
+      <PageHeader title="Turn-over" subtitle="Turnover do Grupo Nascimento — metas, contratos e avisos" module="Relatórios" breadcrumb={["Turn-over"]} />
       <div className="flex flex-wrap items-center gap-2">
-        <Link to="/app/diretoria/relatorios" className="mr-auto inline-flex items-center gap-1 text-sm font-medium text-primary hover:underline">
+        <Link to="/app/relatorios" className="mr-auto inline-flex items-center gap-1 text-sm font-medium text-primary hover:underline">
           <ArrowLeft className="h-4 w-4" /> Relatório Geral
         </Link>
         <Select value={String(ano)} onValueChange={(v) => { setAno(Number(v)); setMeses(null); }}>
@@ -94,8 +93,7 @@ export default function TurnoverPainel() {
             <Resumo p={p} />
           </TabsContent>
           <TabsContent value="analistas" className="space-y-4">
-            {qAno.data ? <Analistas p={qAno.data} filtrado={meses != null} />
-              : <Card className="flex items-center gap-2 p-6 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Montando o ano inteiro…</Card>}
+            <Analistas p={p} />
           </TabsContent>
           <TabsContent value="valores" className="space-y-4">
             {qResc.data ? <Rescisoes r={qResc.data} carregando={qResc.isFetching} />
@@ -461,7 +459,7 @@ function ListaQtd({ titulo, subtitulo, itens, total, vazio }: { titulo: string; 
 
 const TITULO: Record<TipoLimite, string> = { trabalhado: "% Aviso trabalhado", indenizado: "% Aviso indenizado", demissao: "% De demissão" };
 
-function Analistas({ p, filtrado }: { p: PainelTurnover; filtrado: boolean }) {
+function Analistas({ p }: { p: PainelTurnover }) {
   const tipos: TipoLimite[] = ["trabalhado", "indenizado", "demissao"];
   const linhas = useMemo(() => Object.fromEntries(tipos.map((t) => [t, analistas(p, t)])) as Record<TipoLimite, LinhaAnalista[]>, [p]);
   const tabela = useMemo(() => [...p.por_contrato].filter((c) => c.efetivo_atual > 0).sort((a, b) => nomeContrato(a.contrato).localeCompare(nomeContrato(b.contrato))), [p]);
@@ -473,8 +471,7 @@ function Analistas({ p, filtrado }: { p: PainelTurnover; filtrado: boolean }) {
         <Info className="mt-0.5 h-4 w-4 shrink-0 text-info" />
         <p>
           O tipo de aviso vem das solicitações feitas em <b className="text-foreground">Solicitar Demissão</b> no ERP (sem canceladas e reprovadas) — demissões anteriores ao ERP não têm aviso registrado.
-          Os limites são sobre o efetivo atual de cada contrato, no ano. Avisos já pedidos com data futura entram na conta.
-          {filtrado && <> <b className="text-foreground">Esta aba mostra sempre o ano inteiro de {p.ano}</b> — o filtro de meses vale só para o Resumo.</>}
+          Os limites são sobre o efetivo atual de cada contrato, no período escolhido. Avisos já pedidos com data futura entram na conta (nos meses escolhidos).
         </p>
       </div>
       <div className="grid gap-4 md:grid-cols-3">

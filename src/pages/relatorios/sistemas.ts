@@ -3,10 +3,10 @@ import {
 } from "lucide-react";
 
 // =====================================================================
-// DIRETORIA E PRESIDÊNCIA › RELATÓRIOS (mig 20261005000006)
+// RELATÓRIOS (mig 20261005000006) — módulo próprio desde 07/10/2026 (mig 20261007000010)
 //
 // Os 10 relatórios. Cada um tem menu próprio (Acesso por Usuário ›
-// Diretoria) e RPC própria, e todas as RPCs devolvem o MESMO formato
+// Relatórios — os códigos continuam diretoria_rel_*) e RPC própria, e todas as RPCs devolvem o MESMO formato
 // (RelatorioDados) — por isso uma tela só (RelatorioSistema) desenha
 // qualquer um, e o Relatório Geral junta os 10 (dir_rel_geral).
 // =====================================================================

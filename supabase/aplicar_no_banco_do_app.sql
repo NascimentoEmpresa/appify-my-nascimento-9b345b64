@@ -40192,3 +40192,508 @@ NOTIFY pgrst, 'reload schema';
 -- ROLLBACK
 -- DROP FUNCTION IF EXISTS public.dir_turnover_rescisoes(int, int[], text);
 -- DROP INDEX IF EXISTS espelho.r046ver_ferias_rescisao_idx;
+
+
+-- >>> 20261007000007_sistemas_login_bloqueio_por_situacao.sql
+-- =========================================================================
+-- SISTEMAS › LOGINS — login da ERP bloqueado AUTOMATICAMENTE por situação
+-- na Senior, sem exceção (07/10/2026)
+--
+-- PEDIDO (Pablo): "não só Já excluí, tem que desabilitar o login
+-- automaticamente: se o usuário tá demitido, desabilita o login da ERP e
+-- pronto. Só deixa um botão de OK. O sistema vai puxar o CPF do colaborador
+-- se está como trabalhando ou não; se estiver de atestado OK, férias não
+-- pode acessar também, afastamentos longos não podem deixar o usuário
+-- entrar, tipo aux. doença etc."
+--
+-- REGRA (erp_login_bloqueado, usada por has_screen_access desde a mig
+-- 20261006160000 — régua de toda a RLS de tela e dos menus):
+--   · Usuário SEM cadastro vinculado na EMPREGADOS → nada muda (admin
+--     antigo, externo, automação).
+--   · Com vínculo: junta TODOS os cadastros do mesmo CPF (quem tem dois
+--     vínculos e um está Trabalhando continua entrando). Libera se algum
+--     deles está numa situação que libera (erp_situacao_libera_login):
+--       Trabalhando · Atestado (dias, filho, noturno, acidente…) ·
+--       Aviso Prévio Trabalhado.
+--     Qualquer outra bloqueia: Férias, Auxílio Doença, Licença
+--     Maternidade/Paternidade, Aposentadoria, Cárcere, Demitido…
+--   · ACABA a exceção "mantido" (SIS_LOGIN_DESLIGAMENTO) — era o botão
+--     "Manter". Medido em 07/10: 1 caso (MILENY DE OLIVEIRA DA ROSA,
+--     demitida 28/09, "Foi promoção") passa a ficar bloqueado até a nova
+--     admissão aparecer na Senior — aí o CPF libera sozinho.
+--   · Passam a ficar bloqueados em 07/10: 5 de Férias, 4 de Licença
+--     Maternidade e 1 de Auxílio Doença (com login). Voltando a
+--     Trabalhando na Senior, o acesso volta sozinho no próximo sync.
+--
+-- TELA (Sistemas › Logins): a aba vira "Logins bloqueados" — todos os
+-- bloqueados, com o motivo (situação), e um botão OK que só registra a
+-- ciência (acao 'ciente', com a situação vista). Se a situação mudar (ex.:
+-- voltou das férias e depois foi demitido), aparece de novo.
+-- sis_logins_demitidos / sis_login_desligamento_tratar continuam existindo
+-- para a tela antiga até a publicação; 'mantido' não libera mais nada.
+--
+-- Idempotente. Aplicar no banco do app — não se auto-aplica.
+-- =========================================================================
+
+-- Busca por CPF roda em toda checagem de acesso.
+CREATE INDEX IF NOT EXISTS idx_empregados_cpf ON public."EMPREGADOS" ("CPF");
+
+ALTER TABLE public."SIS_LOGIN_DESLIGAMENTO" ADD COLUMN IF NOT EXISTS situacao text;
+ALTER TABLE public."SIS_LOGIN_DESLIGAMENTO" DROP CONSTRAINT IF EXISTS "SIS_LOGIN_DESLIGAMENTO_acao_check";
+ALTER TABLE public."SIS_LOGIN_DESLIGAMENTO" ADD CONSTRAINT "SIS_LOGIN_DESLIGAMENTO_acao_check"
+  CHECK (acao IN ('excluido', 'mantido', 'ciente'));
+
+-- ── Situação que deixa entrar na ERP ─────────────────────────────────────
+CREATE OR REPLACE FUNCTION public.erp_situacao_libera_login(_situacao text)
+RETURNS boolean LANGUAGE sql IMMUTABLE SET search_path = public, pg_temp AS $$
+  SELECT btrim(coalesce(_situacao, '')) ~* '^(Trabalhando|Atestado|Aviso Pr.vio Trab)'
+$$;
+
+-- ── Bloqueio ─────────────────────────────────────────────────────────────
+CREATE OR REPLACE FUNCTION public.erp_login_bloqueado(_user uuid)
+RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, pg_temp AS $$
+  -- 07/10/2026 (mig 20261007000007): por situação, pelo CPF, sem exceção.
+  SELECT _user IS NOT NULL
+     AND EXISTS (SELECT 1 FROM public."EMPREGADOS" e WHERE e.auth_user_id = _user)
+     -- duas buscas separadas (sem OR na junção) para cada uma usar o seu índice:
+     -- isto roda em TODA checagem de acesso (has_screen_access).
+     AND NOT EXISTS (SELECT 1 FROM public."EMPREGADOS" e
+                      WHERE e.auth_user_id = _user AND public.erp_situacao_libera_login(e."Situação"))
+     AND NOT EXISTS (SELECT 1 FROM public."EMPREGADOS" e
+                       JOIN public."EMPREGADOS" x ON x."CPF" = e."CPF"
+                      WHERE e.auth_user_id = _user AND e."CPF" IS NOT NULL
+                        AND public.erp_situacao_libera_login(x."Situação"));
+$$;
+REVOKE ALL ON FUNCTION public.erp_login_bloqueado(uuid) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.erp_login_bloqueado(uuid) TO authenticated;
+
+-- ── Lista da tela: todos os logins bloqueados ────────────────────────────
+CREATE OR REPLACE FUNCTION public.sis_logins_bloqueados()
+RETURNS TABLE(empregado_id bigint, auth_user_id uuid, nome text, cargo text, contrato text, empresa text,
+              situacao text, desde date, login_email text, ultimo_acesso timestamptz,
+              ciente boolean, ciente_em timestamptz, ciente_por text)
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public, pg_temp AS $$
+BEGIN
+  IF NOT public.sis_logins_pode('visualizar') THEN RAISE EXCEPTION 'Sem permissão.' USING ERRCODE = '42501'; END IF;
+  RETURN QUERY
+  SELECT e."ID"::bigint, u.id, e."Nome"::text, e."Título do Cargo"::text, e."Nome Filial"::text, e."Nome da Empresa"::text,
+         e."Situação"::text, public.data_universal(e."Data Afastamento"::text), u.email::text, u.last_sign_in_at,
+         (d.acao = 'ciente' AND d.situacao IS NOT DISTINCT FROM e."Situação") IS TRUE,
+         CASE WHEN d.acao = 'ciente' AND d.situacao IS NOT DISTINCT FROM e."Situação" THEN d.tratado_em END,
+         CASE WHEN d.acao = 'ciente' AND d.situacao IS NOT DISTINCT FROM e."Situação" THEN d.tratado_por_nome END
+    FROM public."EMPREGADOS" e
+    JOIN auth.users u ON u.id = e.auth_user_id
+    LEFT JOIN public."SIS_LOGIN_DESLIGAMENTO" d ON d.auth_user_id = u.id
+   WHERE public.erp_login_bloqueado(u.id)
+   ORDER BY 11, public.data_universal(e."Data Afastamento"::text) DESC NULLS LAST, e."Nome";
+END $$;
+
+-- ── OK: ciência do bloqueio (não libera nada) ────────────────────────────
+CREATE OR REPLACE FUNCTION public.sis_login_bloqueio_ciente(p_auth_user_id uuid)
+RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
+DECLARE v_quem text; v_emp bigint; v_sit text;
+BEGIN
+  IF NOT public.sis_logins_pode('alterar') THEN RAISE EXCEPTION 'Sem permissão.' USING ERRCODE = '42501'; END IF;
+  SELECT e."ID", e."Situação" INTO v_emp, v_sit FROM public."EMPREGADOS" e WHERE e.auth_user_id = p_auth_user_id;
+  IF v_emp IS NULL THEN RAISE EXCEPTION 'Login sem colaborador vinculado.'; END IF;
+  SELECT coalesce(nullif(btrim(display_name), ''), email) INTO v_quem FROM public.profiles WHERE id = auth.uid();
+  INSERT INTO public."SIS_LOGIN_DESLIGAMENTO" (auth_user_id, empregado_id, acao, situacao, obs, tratado_por, tratado_por_nome)
+  VALUES (p_auth_user_id, v_emp, 'ciente', v_sit, NULL, auth.uid(), v_quem)
+  ON CONFLICT (auth_user_id) DO UPDATE SET empregado_id = EXCLUDED.empregado_id, acao = 'ciente', situacao = EXCLUDED.situacao,
+    obs = NULL, tratado_por = EXCLUDED.tratado_por, tratado_por_nome = EXCLUDED.tratado_por_nome, tratado_em = now();
+END $$;
+
+DO $$
+DECLARE f text;
+BEGIN
+  FOREACH f IN ARRAY ARRAY['sis_logins_bloqueados()', 'sis_login_bloqueio_ciente(uuid)'] LOOP
+    EXECUTE format('REVOKE ALL ON FUNCTION public.%s FROM PUBLIC, anon', f);
+    EXECUTE format('GRANT EXECUTE ON FUNCTION public.%s TO authenticated', f);
+  END LOOP;
+END $$;
+
+-- ── Bolinha de Sistemas › Logins: bloqueados sem OK ─────────────────────
+DO $$
+DECLARE v_def text; v_novo text;
+  velho constant text := $v$(SELECT count(*) FROM public."EMPREGADOS" e
+              JOIN auth.users u ON u.id = e.auth_user_id
+              LEFT JOIN public."SIS_LOGIN_DESLIGAMENTO" d ON d.auth_user_id = u.id
+             WHERE e."Situação" = 'Demitido' AND d.auth_user_id IS NULL
+               AND NOT EXISTS (SELECT 1 FROM public."EMPREGADOS" o
+                                WHERE o.auth_user_id = e.auth_user_id AND public.esp_col_esta_ativo(o."Situação")))$v$;
+  novo constant text := $n$(SELECT count(*) FROM public."EMPREGADOS" e
+              LEFT JOIN public."SIS_LOGIN_DESLIGAMENTO" d ON d.auth_user_id = e.auth_user_id
+             WHERE e.auth_user_id IS NOT NULL AND public.erp_login_bloqueado(e.auth_user_id)
+               AND NOT (d.acao = 'ciente' AND d.situacao IS NOT DISTINCT FROM e."Situação") IS TRUE)$n$;
+BEGIN
+  v_def := pg_get_functiondef('public.minhas_pendencias_aprovacao()'::regprocedure);
+  IF position('erp_login_bloqueado(e.auth_user_id)' IN v_def) > 0 THEN RETURN; END IF;   -- já aplicado
+  v_novo := replace(v_def, velho, novo);
+  IF v_novo = v_def THEN
+    RAISE NOTICE 'minhas_pendencias_aprovacao: contagem de demitidos não encontrada — bolinha ficou como estava.';
+    RETURN;
+  END IF;
+  EXECUTE v_novo;
+END $$;
+
+NOTIFY pgrst, 'reload schema';
+
+-- ROLLBACK
+-- erp_login_bloqueado: reaplicar a da mig 20261006160000 (só demitido + exceção 'mantido').
+-- minhas_pendencias_aprovacao: replace inverso do bloco acima.
+-- DROP FUNCTION IF EXISTS public.sis_logins_bloqueados(), public.sis_login_bloqueio_ciente(uuid), public.erp_situacao_libera_login(text);
+-- (a coluna situacao e o 'ciente' no CHECK podem ficar.)
+
+
+-- >>> 20261007000008_sistemas_logins_painel_uso.sql
+-- =========================================================================
+-- SISTEMAS › LOGINS — painel de uso (07/10/2026)
+--
+-- PEDIDO (Pablo): "faz alguns dashboards nesse sistema de logins, tipo
+-- quais setores têm mais logins, quais setores mais acessam etc."
+--
+-- FONTES
+--   · Logins = auth.users (159 em 07/10). Setor = public.user_setor
+--     (Administração › Setores) — cobre TODOS os usuários; o Setor_ERP da
+--     EMPREGADOS só cobre 73. Um usuário pode ter mais de um setor: conta
+--     em cada um (por isso a soma por setor pode passar do total).
+--   · Acesso = uma linha em public.sessoes_ativas — o Topbar grava uma por
+--     abertura do ERP (por aba/navegador, sessionStorage), desde mai/2026.
+--     Não mede tempo nem tela visitada.
+--   · Telas negadas = public.access_audit_log (allowed = false): alguém
+--     tentou abrir uma tela sem liberação — mostra onde falta permissão.
+--   · Bloqueados = erp_login_bloqueado (mig 20261007000007).
+--   Horas e dias em America/Sao_Paulo.
+--
+-- sis_logins_painel(_dias): _dias = janela dos acessos (7, 30, 90…);
+-- NULL = desde o início do registro. Acesso: sis_logins_pode('visualizar').
+-- Idempotente. Aplicar no banco do app — não se auto-aplica.
+-- =========================================================================
+
+CREATE INDEX IF NOT EXISTS idx_sessoes_ativas_iniciada_em ON public.sessoes_ativas (iniciada_em);
+
+CREATE OR REPLACE FUNCTION public.sis_logins_painel(_dias int DEFAULT 30)
+RETURNS jsonb LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public, pg_temp AS $$
+DECLARE
+  v_de timestamptz;
+  v_out jsonb;
+BEGIN
+  IF NOT public.sis_logins_pode('visualizar') THEN RAISE EXCEPTION 'Sem permissão.' USING ERRCODE = '42501'; END IF;
+  IF _dias IS NOT NULL AND (_dias < 1 OR _dias > 3650) THEN RAISE EXCEPTION 'Período inválido.'; END IF;
+  v_de := CASE WHEN _dias IS NULL THEN '-infinity'::timestamptz
+               ELSE (date_trunc('day', now() AT TIME ZONE 'America/Sao_Paulo') - make_interval(days => _dias - 1)) AT TIME ZONE 'America/Sao_Paulo' END;
+
+  WITH u AS MATERIALIZED (
+    SELECT x.id, coalesce(nullif(btrim(p.display_name), ''), x.email::text) nome, x.email::text email,
+           x.created_at, public.erp_login_bloqueado(x.id) bloqueado
+      FROM auth.users x LEFT JOIN public.profiles p ON p.id = x.id
+  ),
+  st AS MATERIALIZED (   -- setor(es) de cada usuário; sem setor vira "(sem setor)"
+    SELECT u.id, coalesce(s.setor, '(sem setor)') setor
+      FROM u LEFT JOIN public.user_setor s ON s.user_id = u.id
+  ),
+  se AS MATERIALIZED (   -- acessos no período
+    SELECT s.user_id, s.iniciada_em, s.iniciada_em AT TIME ZONE 'America/Sao_Paulo' local,
+           CASE WHEN s.user_agent ~* '(Android|iPhone|iPad|Mobile)' THEN 'Celular / tablet' ELSE 'Computador' END dispositivo
+      FROM public.sessoes_ativas s
+     WHERE s.iniciada_em >= v_de AND s.user_id IN (SELECT id FROM u)
+  ),
+  ult AS (               -- último acesso de cada usuário (todo o histórico)
+    SELECT u.id, greatest(max(s.iniciada_em), max(a.last_sign_in_at)) ultimo
+      FROM u LEFT JOIN public.sessoes_ativas s ON s.user_id = u.id
+             LEFT JOIN auth.users a ON a.id = u.id
+     GROUP BY u.id
+  ),
+  pu AS MATERIALIZED (   -- por usuário
+    SELECT u.*, ult.ultimo, (SELECT count(*) FROM se WHERE se.user_id = u.id) acessos,
+           (SELECT count(DISTINCT se.local::date) FROM se WHERE se.user_id = u.id) dias_ativos
+      FROM u JOIN ult USING (id)
+  )
+  SELECT jsonb_build_object(
+    'dias', _dias, 'de', CASE WHEN _dias IS NULL THEN (SELECT min(iniciada_em) FROM public.sessoes_ativas) ELSE v_de END,
+    'gerado_em', now(),
+    'total_logins', (SELECT count(*) FROM pu),
+    'ativos', (SELECT count(*) FROM pu WHERE acessos > 0),
+    'acessos', (SELECT count(*) FROM se),
+    'bloqueados', (SELECT count(*) FROM pu WHERE bloqueado),
+    'nunca_acessaram', (SELECT count(*) FROM pu WHERE ultimo IS NULL),
+    'sem_acesso_30d', (SELECT count(*) FROM pu WHERE NOT bloqueado AND (ultimo IS NULL OR ultimo < now() - interval '30 days')),
+    'por_setor', (SELECT coalesce(jsonb_agg(jsonb_build_object(
+                     'setor', x.setor, 'logins', x.logins, 'ativos', x.ativos, 'acessos', x.acessos, 'bloqueados', x.bloq)
+                     ORDER BY x.logins DESC, x.setor), '[]'::jsonb)
+                    FROM (SELECT st.setor, count(*) logins, count(*) FILTER (WHERE pu.acessos > 0) ativos,
+                                 sum(pu.acessos) acessos, count(*) FILTER (WHERE pu.bloqueado) bloq
+                            FROM st JOIN pu ON pu.id = st.id GROUP BY 1) x),
+    'por_dia', (SELECT coalesce(jsonb_agg(jsonb_build_object('dia', x.dia, 'acessos', x.n, 'usuarios', x.us) ORDER BY x.dia), '[]'::jsonb)
+                  FROM (SELECT local::date dia, count(*) n, count(DISTINCT user_id) us FROM se GROUP BY 1) x),
+    'por_hora', (SELECT jsonb_agg(jsonb_build_object('hora', h, 'acessos', coalesce(x.n, 0)) ORDER BY h)
+                   FROM generate_series(0, 23) h
+                   LEFT JOIN (SELECT extract(hour FROM local)::int hr, count(*) n FROM se GROUP BY 1) x ON x.hr = h),
+    'por_semana', (SELECT jsonb_agg(jsonb_build_object('dow', d, 'acessos', coalesce(x.n, 0)) ORDER BY d)
+                     FROM generate_series(0, 6) d
+                     LEFT JOIN (SELECT extract(dow FROM local)::int dw, count(*) n FROM se GROUP BY 1) x ON x.dw = d),
+    'dispositivos', (SELECT coalesce(jsonb_agg(jsonb_build_object('dispositivo', x.dispositivo, 'acessos', x.n) ORDER BY x.n DESC), '[]'::jsonb)
+                       FROM (SELECT dispositivo, count(*) n FROM se GROUP BY 1) x),
+    'top_usuarios', (SELECT coalesce(jsonb_agg(x ORDER BY x.acessos DESC, x.nome), '[]'::jsonb) FROM (
+                       SELECT pu.nome, pu.email, pu.acessos, pu.dias_ativos, pu.ultimo,
+                              (SELECT string_agg(st.setor, ', ' ORDER BY st.setor) FROM st WHERE st.id = pu.id) setores
+                         FROM pu WHERE pu.acessos > 0 ORDER BY pu.acessos DESC, pu.nome LIMIT 15) x),
+    'sem_acesso', (SELECT coalesce(jsonb_agg(x ORDER BY x.ultimo NULLS FIRST, x.nome), '[]'::jsonb) FROM (
+                     SELECT pu.nome, pu.email, pu.ultimo, pu.created_at criado_em,
+                            (SELECT string_agg(st.setor, ', ' ORDER BY st.setor) FROM st WHERE st.id = pu.id) setores
+                       FROM pu WHERE NOT pu.bloqueado AND (pu.ultimo IS NULL OR pu.ultimo < now() - interval '30 days')) x),
+    'telas_negadas', (SELECT coalesce(jsonb_agg(jsonb_build_object('tela', x.tela, 'tentativas', x.n, 'usuarios', x.us) ORDER BY x.n DESC), '[]'::jsonb)
+                        FROM (SELECT coalesce(nullif(a.rota, ''), a.menu_codigo) tela, count(*) n, count(DISTINCT a.user_id) us
+                                FROM public.access_audit_log a
+                               WHERE NOT a.allowed AND a.created_at >= v_de
+                               GROUP BY 1 ORDER BY 2 DESC LIMIT 10) x)
+  ) INTO v_out;
+  RETURN v_out;
+END $$;
+
+REVOKE ALL ON FUNCTION public.sis_logins_painel(int) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.sis_logins_painel(int) TO authenticated;
+
+NOTIFY pgrst, 'reload schema';
+
+-- ROLLBACK
+-- DROP FUNCTION IF EXISTS public.sis_logins_painel(int);
+-- DROP INDEX IF EXISTS public.idx_sessoes_ativas_iniciada_em;
+
+
+-- >>> 20261007000009_sistemas_login_excecao_afastado.sql
+-- =========================================================================
+-- SISTEMAS › LOGINS — exceção para AFASTADO (férias, licença…) (07/10/2026)
+--
+-- PEDIDO (Pablo): "deixa abrir exceção no sistema, pra liberar os que estão
+-- de férias ou licença maternidade etc. Tem que aparecer lá o status >
+-- Travado por > Licença maternidade, e opção de liberar e informar o porquê."
+--
+-- REGRA (em cima da mig 20261007000007)
+--   · Sistemas pode LIBERAR o login de quem está travado por afastamento
+--     (qualquer situação que não libera e não é desligamento). Motivo
+--     obrigatório. DEMITIDO continua sem exceção — "desabilita e pronto".
+--   · A liberação vale para a situação em que foi dada: fica gravada
+--     (SIS_LOGIN_DESLIGAMENTO.situacao) e só vale enquanto o cadastro
+--     vinculado estiver nessa mesma situação. Voltou a Trabalhando → nem
+--     precisa; entrou em outro afastamento ou foi demitido → trava de novo.
+--   · "Travar de novo" desfaz a liberação (vira ciência, acao 'ciente').
+--
+-- O QUE MUDA
+--   · erp_login_travado(user): a regra pura da situação (a antiga
+--     erp_login_bloqueado da mig 20261007000007).
+--   · erp_login_excecao_vigente(user): liberação válida agora.
+--   · erp_login_bloqueado(user) = travado E sem exceção vigente.
+--   · sis_logins_bloqueados() passa a listar TODOS os travados, com a
+--     liberação (se houver) — a tela mostra "Travado por <situação>" ou
+--     "Liberado". Muda o retorno → DROP + CREATE (tela nova ainda não
+--     publicada).
+--   · sis_login_liberar(user, motivo) / sis_login_travar(user).
+--
+-- Idempotente. Aplicar no banco do app — não se auto-aplica.
+-- =========================================================================
+
+ALTER TABLE public."SIS_LOGIN_DESLIGAMENTO" DROP CONSTRAINT IF EXISTS "SIS_LOGIN_DESLIGAMENTO_acao_check";
+ALTER TABLE public."SIS_LOGIN_DESLIGAMENTO" ADD CONSTRAINT "SIS_LOGIN_DESLIGAMENTO_acao_check"
+  CHECK (acao IN ('excluido', 'mantido', 'ciente', 'liberado'));
+
+-- ── Regra pura da situação (sem exceção) ─────────────────────────────────
+CREATE OR REPLACE FUNCTION public.erp_login_travado(_user uuid)
+RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, pg_temp AS $$
+  -- duas buscas separadas (sem OR na junção) para cada uma usar o seu índice:
+  -- isto roda em TODA checagem de acesso (has_screen_access).
+  SELECT _user IS NOT NULL
+     AND EXISTS (SELECT 1 FROM public."EMPREGADOS" e WHERE e.auth_user_id = _user)
+     AND NOT EXISTS (SELECT 1 FROM public."EMPREGADOS" e
+                      WHERE e.auth_user_id = _user AND public.erp_situacao_libera_login(e."Situação"))
+     AND NOT EXISTS (SELECT 1 FROM public."EMPREGADOS" e
+                       JOIN public."EMPREGADOS" x ON x."CPF" = e."CPF"
+                      WHERE e.auth_user_id = _user AND e."CPF" IS NOT NULL
+                        AND public.erp_situacao_libera_login(x."Situação"));
+$$;
+
+-- ── Exceção válida agora: liberada para a situação atual, e não é desligamento
+CREATE OR REPLACE FUNCTION public.erp_login_excecao_vigente(_user uuid)
+RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, pg_temp AS $$
+  SELECT EXISTS (
+    SELECT 1 FROM public."SIS_LOGIN_DESLIGAMENTO" d
+      JOIN public."EMPREGADOS" e ON e.auth_user_id = d.auth_user_id
+     WHERE d.auth_user_id = _user AND d.acao = 'liberado'
+       AND d.situacao IS NOT DISTINCT FROM e."Situação"
+       AND btrim(coalesce(e."Situação", '')) !~* '^(DEMIT|DESLIG|RESCIS)');
+$$;
+
+CREATE OR REPLACE FUNCTION public.erp_login_bloqueado(_user uuid)
+RETURNS boolean LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public, pg_temp AS $$
+BEGIN
+  -- 07/10/2026 (migs 20261007000007 e 09): pela situação, pelo CPF; afastado
+  -- pode ter exceção liberada por Sistemas; desligado não. A exceção só é
+  -- olhada para quem está travado — roda em TODA checagem de acesso.
+  IF NOT public.erp_login_travado(_user) THEN RETURN false; END IF;
+  RETURN NOT public.erp_login_excecao_vigente(_user);
+END $$;
+
+DO $$
+DECLARE f text;
+BEGIN
+  FOREACH f IN ARRAY ARRAY['erp_login_travado(uuid)', 'erp_login_excecao_vigente(uuid)', 'erp_login_bloqueado(uuid)'] LOOP
+    EXECUTE format('REVOKE ALL ON FUNCTION public.%s FROM PUBLIC, anon', f);
+    EXECUTE format('GRANT EXECUTE ON FUNCTION public.%s TO authenticated', f);
+  END LOOP;
+END $$;
+
+-- ── Lista da tela: todos os travados, com a liberação ────────────────────
+DROP FUNCTION IF EXISTS public.sis_logins_bloqueados();
+CREATE FUNCTION public.sis_logins_bloqueados()
+RETURNS TABLE(empregado_id bigint, auth_user_id uuid, nome text, cargo text, contrato text, empresa text,
+              situacao text, desde date, desligado boolean, login_email text, ultimo_acesso timestamptz,
+              ciente boolean, ciente_em timestamptz, ciente_por text,
+              liberado boolean, liberado_motivo text, liberado_em timestamptz, liberado_por text)
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public, pg_temp AS $$
+BEGIN
+  IF NOT public.sis_logins_pode('visualizar') THEN RAISE EXCEPTION 'Sem permissão.' USING ERRCODE = '42501'; END IF;
+  RETURN QUERY
+  WITH t AS (
+    SELECT e.*, u.id uid, u.email::text uemail, u.last_sign_in_at, d.acao, d.situacao dsit, d.obs, d.tratado_em, d.tratado_por_nome,
+           (btrim(coalesce(e."Situação", '')) ~* '^(DEMIT|DESLIG|RESCIS)') desl,
+           public.erp_login_excecao_vigente(u.id) lib
+      FROM public."EMPREGADOS" e
+      JOIN auth.users u ON u.id = e.auth_user_id
+      LEFT JOIN public."SIS_LOGIN_DESLIGAMENTO" d ON d.auth_user_id = u.id
+     WHERE public.erp_login_travado(u.id)
+  )
+  SELECT t."ID"::bigint, t.uid, t."Nome"::text, t."Título do Cargo"::text, t."Nome Filial"::text, t."Nome da Empresa"::text,
+         t."Situação"::text, public.data_universal(t."Data Afastamento"::text), t.desl, t.uemail, t.last_sign_in_at,
+         (t.acao = 'ciente' AND t.dsit IS NOT DISTINCT FROM t."Situação") IS TRUE,
+         CASE WHEN t.acao = 'ciente' AND t.dsit IS NOT DISTINCT FROM t."Situação" THEN t.tratado_em END,
+         CASE WHEN t.acao = 'ciente' AND t.dsit IS NOT DISTINCT FROM t."Situação" THEN t.tratado_por_nome END,
+         t.lib,
+         CASE WHEN t.lib THEN t.obs END, CASE WHEN t.lib THEN t.tratado_em END, CASE WHEN t.lib THEN t.tratado_por_nome END
+    FROM t
+   ORDER BY t.lib, (t.acao = 'ciente' AND t.dsit IS NOT DISTINCT FROM t."Situação") IS TRUE,
+            public.data_universal(t."Data Afastamento"::text) DESC NULLS LAST, t."Nome";
+END $$;
+
+-- ── Liberar (exceção) / travar de novo ───────────────────────────────────
+CREATE OR REPLACE FUNCTION public.sis_login_liberar(p_auth_user_id uuid, p_motivo text)
+RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
+DECLARE v_quem text; v_emp bigint; v_sit text;
+BEGIN
+  IF NOT public.sis_logins_pode('alterar') THEN RAISE EXCEPTION 'Sem permissão.' USING ERRCODE = '42501'; END IF;
+  IF length(btrim(coalesce(p_motivo, ''))) < 5 THEN RAISE EXCEPTION 'Informe o motivo da liberação.'; END IF;
+  SELECT e."ID", e."Situação" INTO v_emp, v_sit FROM public."EMPREGADOS" e WHERE e.auth_user_id = p_auth_user_id;
+  IF v_emp IS NULL THEN RAISE EXCEPTION 'Login sem colaborador vinculado.'; END IF;
+  IF btrim(coalesce(v_sit, '')) ~* '^(DEMIT|DESLIG|RESCIS)' THEN
+    RAISE EXCEPTION 'Desligado não tem exceção: o login de quem foi demitido fica bloqueado.';
+  END IF;
+  IF NOT public.erp_login_travado(p_auth_user_id) THEN RAISE EXCEPTION 'Este login não está travado.'; END IF;
+  SELECT coalesce(nullif(btrim(display_name), ''), email) INTO v_quem FROM public.profiles WHERE id = auth.uid();
+  INSERT INTO public."SIS_LOGIN_DESLIGAMENTO" (auth_user_id, empregado_id, acao, situacao, obs, tratado_por, tratado_por_nome)
+  VALUES (p_auth_user_id, v_emp, 'liberado', v_sit, btrim(p_motivo), auth.uid(), v_quem)
+  ON CONFLICT (auth_user_id) DO UPDATE SET empregado_id = EXCLUDED.empregado_id, acao = 'liberado', situacao = EXCLUDED.situacao,
+    obs = EXCLUDED.obs, tratado_por = EXCLUDED.tratado_por, tratado_por_nome = EXCLUDED.tratado_por_nome, tratado_em = now();
+END $$;
+
+CREATE OR REPLACE FUNCTION public.sis_login_travar(p_auth_user_id uuid)
+RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
+BEGIN
+  IF NOT public.sis_logins_pode('alterar') THEN RAISE EXCEPTION 'Sem permissão.' USING ERRCODE = '42501'; END IF;
+  -- Desfaz a liberação; fica como "visto" para não voltar a acender a bolinha.
+  PERFORM public.sis_login_bloqueio_ciente(p_auth_user_id);
+END $$;
+
+DO $$
+DECLARE f text;
+BEGIN
+  FOREACH f IN ARRAY ARRAY['sis_logins_bloqueados()', 'sis_login_liberar(uuid, text)', 'sis_login_travar(uuid)'] LOOP
+    EXECUTE format('REVOKE ALL ON FUNCTION public.%s FROM PUBLIC, anon', f);
+    EXECUTE format('GRANT EXECUTE ON FUNCTION public.%s TO authenticated', f);
+  END LOOP;
+END $$;
+
+NOTIFY pgrst, 'reload schema';
+
+-- ROLLBACK
+-- erp_login_bloqueado: reaplicar a da mig 20261007000007 (sem exceção).
+-- sis_logins_bloqueados: reaplicar a da mig 20261007000007 (DROP + CREATE, retorno antigo).
+-- DROP FUNCTION IF EXISTS public.sis_login_liberar(uuid, text), public.sis_login_travar(uuid),
+--   public.erp_login_excecao_vigente(uuid), public.erp_login_travado(uuid);
+-- UPDATE "SIS_LOGIN_DESLIGAMENTO" SET acao = 'ciente' WHERE acao = 'liberado';  (antes de voltar o CHECK)
+
+
+-- >>> 20261007000010_relatorios_modulo_proprio.sql
+-- =========================================================================
+-- RELATÓRIOS — sai da Diretoria e vira MÓDULO PRÓPRIO (07/10/2026)
+--
+-- PEDIDO (Pablo): "tira o submódulo RELATÓRIOS da diretoria, move ele pra
+-- um módulo real separado, as permissões também".
+--
+-- O QUE MUDA
+--   · app_modulo 'relatorios' (Relatórios), logo depois da Diretoria.
+--   · Os 13 menus dos relatórios (mig 20261005000006: Relatório Geral, os 10
+--     relatórios e a Análise com I.A) MUDAM DE MÓDULO para Relatórios, com
+--     rota nova /app/relatorios/... e nome sem o prefixo "Relatórios — ".
+--   · PERMISSÕES: a liberação é por CÓDIGO de menu (screen_permission_user e
+--     perfil_acesso_permissao.menu_codigo; has_screen_access não olha
+--     módulo). Os códigos ficam os MESMOS — então cada pessoa continua com
+--     exatamente o acesso que tem hoje, agora listado em Acesso por Usuário
+--     dentro do módulo Relatórios. As RPCs dir_rel_* / dir_turnover_* não
+--     mudam (checam os mesmos códigos).
+--
+-- TRANSIÇÃO (a tela publicada usa /app/diretoria/relatorios até o Lovable
+-- publicar a nova; o RouteGuard nega rota fora do app_menu): ficam, NA
+-- DIRETORIA, cópias ATIVAS com a rota antiga e o nome "(rota antiga)",
+-- mesmos códigos. app_menu só proíbe
+-- código repetido no MESMO módulo. Liberar/negar em qualquer uma das duas
+-- linhas é a mesma permissão (é por código). Depois que a tela nova estiver
+-- no ar, aplicar 20261007000011_relatorios_limpa_rotas_antigas.sql.
+--
+-- Idempotente. Aplicar no banco do app — não se auto-aplica.
+-- =========================================================================
+
+INSERT INTO public.app_modulo (codigo, nome, descricao, icone, ordem, ativo)
+VALUES ('relatorios', 'Relatórios', 'Relatórios de todos os sistemas de solicitação, quadro e turn-over', 'BarChart3', 143, true)
+ON CONFLICT (codigo) DO UPDATE SET nome = EXCLUDED.nome, descricao = EXCLUDED.descricao, icone = EXCLUDED.icone, ativo = true;
+
+DO $$
+DECLARE
+  v_dir uuid := (SELECT id FROM public.app_modulo WHERE codigo = 'diretoria');
+  v_rel uuid := (SELECT id FROM public.app_modulo WHERE codigo = 'relatorios');
+  r record;
+BEGIN
+  IF v_dir IS NULL OR v_rel IS NULL THEN RAISE EXCEPTION 'Módulo diretoria/relatorios não encontrado.'; END IF;
+
+  FOR r IN
+    SELECT * FROM public.app_menu
+     WHERE modulo_id = v_dir
+       AND (codigo LIKE 'diretoria\_rel\_%' OR codigo IN ('diretoria_relatorio_geral', 'diretoria_relatorios_ia'))
+       AND nome NOT LIKE '%(rota antiga)'
+  LOOP
+    -- 1) a linha "de verdade" vai para Relatórios, com rota e nome novos
+    IF NOT EXISTS (SELECT 1 FROM public.app_menu WHERE modulo_id = v_rel AND codigo = r.codigo) THEN
+      INSERT INTO public.app_menu (modulo_id, codigo, nome, rota, ordem, ativo)
+      VALUES (v_rel, r.codigo,
+              regexp_replace(r.nome, '^Relatórios\s*—\s*', ''),
+              CASE WHEN r.rota IS NULL THEN NULL ELSE replace(r.rota, '/app/diretoria/relatorios', '/app/relatorios') END,
+              r.ordem - 39, r.ativo);
+    END IF;
+    -- 2) a linha antiga fica na Diretoria só como ponte da rota antiga
+    IF r.rota IS NULL THEN
+      DELETE FROM public.app_menu WHERE id = r.id;   -- menu-fantasma (I.A) não tem rota a preservar
+    ELSE
+      UPDATE public.app_menu SET nome = r.nome || ' (rota antiga)' WHERE id = r.id;
+    END IF;
+  END LOOP;
+END $$;
+
+NOTIFY pgrst, 'reload schema';
+
+-- ROLLBACK
+-- DELETE FROM app_menu WHERE modulo_id = (SELECT id FROM app_modulo WHERE codigo = 'relatorios');
+-- UPDATE app_menu SET nome = replace(nome, ' (rota antiga)', '') WHERE nome LIKE '%(rota antiga)';
+-- INSERT da linha 'diretoria_relatorios_ia' (rota NULL, ordem 51) de volta na Diretoria.
+-- DELETE FROM app_modulo WHERE codigo = 'relatorios';
+
+
+-- >>> 20261007000011_relatorios_limpa_rotas_antigas.sql  (PENDENTE: aplicar SO depois que o Lovable publicar a tela nova)
+-- ver supabase/migrations/20261007000011_relatorios_limpa_rotas_antigas.sql
