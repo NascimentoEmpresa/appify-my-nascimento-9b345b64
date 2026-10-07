@@ -36,6 +36,7 @@ import { BancoBadge } from "@/components/financeiro/BancoBadge";
 import { urlLogoCartao, useCartaoBancos } from "@/hooks/useMaloteCartaoCredito";
 import { ContratoTrocaCampo } from "@/pages/financeiro/fluxo-caixa/ContratoTrocaCampo";
 import { camposComPendencia, motivosRevisar, SEM_CONTRATO } from "@/pages/financeiro/fluxo-caixa/motivosRevisar";
+import { parseValorBR, valorConfere } from "@/pages/financeiro/fluxo-caixa/filtroValor";
 
 // Campo do lápis que resolve o selo "revisar".
 const DESTAQUE_REVISAR = "rounded-md ring-2 ring-red-400 ring-offset-2 ring-offset-background p-1.5 -m-1.5";
@@ -74,13 +75,14 @@ interface FiltrosExport {
   contratoId: string;
   classificacaoId: string;
   formaPagamento: string;
+  valor: string;
   tipo: "todos" | "entrada" | "saida";
   origem: "todas" | FluxoCaixaMaloteLinha["origem"];
   soRevisar: boolean;
 }
 
 const FILTROS_EXPORT_VAZIOS: FiltrosExport = {
-  dataDe: "", dataAte: "", competencia: "", empresaId: "", bancoId: "", contratoId: "", classificacaoId: "", formaPagamento: "",
+  dataDe: "", dataAte: "", competencia: "", empresaId: "", bancoId: "", contratoId: "", classificacaoId: "", formaPagamento: "", valor: "",
   tipo: "todos", origem: "todas", soRevisar: false,
 };
 
@@ -301,6 +303,8 @@ export default function FluxoCaixaGestao() {
   // SIS-2026-0307: "após o pagamento alimentamos o fluxo de caixa" (usuário)
   // — Banco entra aqui, não em Pagamento Malote/Meus Itens.
   const [bancoId, setBancoId] = useState("");
+  // Valor exato digitado como a pessoa fala ("1.066,65"); ver fluxo-caixa/filtroValor.ts.
+  const [valor, setValor] = useState("");
   // SIS-2026-0569: linhas importadas da planilha que subiram sem vínculo
   // (contrato/classificação não mapeados, possível duplicidade).
   const [soInconsistentes, setSoInconsistentes] = useState(false);
@@ -372,6 +376,7 @@ export default function FluxoCaixaGestao() {
     setClassificacaoId("");
     setFormaPagamento("");
     setBancoId("");
+    setValor("");
     setSoInconsistentes(false);
     setBusca("");
     setPage(1);
@@ -379,7 +384,9 @@ export default function FluxoCaixaGestao() {
 
   const filtradas = useMemo(() => {
     const buscaNorm = busca.trim().toLowerCase();
+    const valorNum = parseValorBR(valor);
     return linhas.filter((l) => {
+      if (!valorConfere(l.valor, valorNum)) return false;
       if (dataDe && (!l.data_pagamento || l.data_pagamento < dataDe)) return false;
       if (dataAte && (!l.data_pagamento || l.data_pagamento > dataAte)) return false;
       if (competencia && l.competencia?.slice(0, 7) !== competencia) return false;
@@ -396,7 +403,7 @@ export default function FluxoCaixaGestao() {
       ) return false;
       return true;
     });
-  }, [linhas, dataDe, dataAte, competencia, empresaId, contratoId, classificacaoId, formaPagamento, bancoId, soInconsistentes, busca]);
+  }, [linhas, dataDe, dataAte, competencia, empresaId, contratoId, classificacaoId, formaPagamento, bancoId, soInconsistentes, busca, valor]);
 
   // SIS-2026-0256: com o Débito Automático somado à fonte, "Saídas" precisa
   // filtrar por tipo — antes só existia saída (Malote), então somar tudo
@@ -412,7 +419,7 @@ export default function FluxoCaixaGestao() {
 
   function abrirExportacao() {
     setFx({
-      dataDe, dataAte, competencia, empresaId, bancoId, contratoId, classificacaoId, formaPagamento,
+      dataDe, dataAte, competencia, empresaId, bancoId, contratoId, classificacaoId, formaPagamento, valor,
       tipo: "todos", origem: "todas", soRevisar: soInconsistentes,
     });
     setExportando(true);
@@ -420,7 +427,9 @@ export default function FluxoCaixaGestao() {
 
   const linhasExport = useMemo(() => {
     if (!exportando) return [] as typeof linhas;
+    const valorNum = parseValorBR(fx.valor);
     return linhas.filter((l) => {
+      if (!valorConfere(l.valor, valorNum)) return false;
       if (fx.dataDe && (!l.data_pagamento || l.data_pagamento < fx.dataDe)) return false;
       if (fx.dataAte && (!l.data_pagamento || l.data_pagamento > fx.dataAte)) return false;
       if (fx.competencia && l.competencia?.slice(0, 7) !== fx.competencia) return false;
@@ -474,6 +483,7 @@ export default function FluxoCaixaGestao() {
       ["Contrato", fx.contratoId ? nomeDe(contratosDisponiveis, fx.contratoId) : "Todos"],
       ["Classificação", fx.classificacaoId ? nomeDe(classificacoesDisponiveis, fx.classificacaoId) : "Todas"],
       ["Forma de pagamento", fx.formaPagamento || "Todas"],
+      ["Valor (exato)", parseValorBR(fx.valor) !== null ? fx.valor.trim() : "Todos"],
       ["Tipo", fx.tipo === "todos" ? "Entradas e saídas" : fx.tipo === "entrada" ? "Só entradas" : "Só saídas"],
       ["Origem", fx.origem === "todas" ? "Todas" : LABEL_ORIGEM[fx.origem]],
       ["Só linhas com selo \"revisar\"", fx.soRevisar ? "Sim" : "Não"],
@@ -547,6 +557,10 @@ export default function FluxoCaixaGestao() {
             <div className="space-y-1">
               <Label className="text-xs">Competência</Label>
               <Input type="month" className="h-9" value={fx.competencia} onChange={(e) => setFx((f) => ({ ...f, competencia: e.target.value }))} />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Valor (exato)</Label>
+              <Input className="h-9" inputMode="decimal" placeholder="Ex.: 1.066,65" value={fx.valor} onChange={(e) => setFx((f) => ({ ...f, valor: e.target.value }))} />
             </div>
             <div className="space-y-1">
               <Label className="text-xs">Tipo</Label>
@@ -673,6 +687,17 @@ export default function FluxoCaixaGestao() {
           </div>
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             <div>
+              <Label className="text-xs">Dia (um dia só)</Label>
+              {/* Atalho: preenche Data de e Data até com o mesmo dia. Não tem estado
+                  próprio — vale enquanto as duas datas forem iguais. */}
+              <Input
+                type="date"
+                className="h-8 text-xs"
+                value={dataDe && dataDe === dataAte ? dataDe : ""}
+                onChange={(e) => { setDataDe(e.target.value); setDataAte(e.target.value); setPage(1); }}
+              />
+            </div>
+            <div>
               <Label className="text-xs">Data de</Label>
               <Input type="date" className="h-8 text-xs" value={dataDe} onChange={(e) => setDataDe(e.target.value)} />
             </div>
@@ -743,6 +768,16 @@ export default function FluxoCaixaGestao() {
                   ))}
                 </SelectContent>
               </Select>
+            </div>
+            <div>
+              <Label className="text-xs">Valor (exato)</Label>
+              <Input
+                className="h-8 text-xs"
+                inputMode="decimal"
+                placeholder="Ex.: 1.066,65"
+                value={valor}
+                onChange={(e) => { setValor(e.target.value); setPage(1); }}
+              />
             </div>
             <div>
               <Label className="text-xs">Buscar por ID ou descrição</Label>
