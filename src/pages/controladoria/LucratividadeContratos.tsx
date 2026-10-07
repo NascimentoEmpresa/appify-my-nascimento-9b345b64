@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -8,9 +8,14 @@ import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, Table
 import { KpiTile } from "@/components/financeiro/KpiTile";
 import { FileDown, Percent, Printer, TrendingUp, Wallet, Receipt } from "lucide-react";
 import { toast } from "sonner";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { useScreenAccess } from "@/hooks/useScreenAccess";
 import { useCustosContratoMes } from "./faturamento/useCustosContratoMes";
 import { fmtMoney } from "@/pages/financeiro/nf-emissao/shared";
-import { agruparFaturamento, custosPorContratoMes, custosVazios, CustosPorRubrica, lucroBruto, RUBRICAS, totaisVazios, totalCustos } from "./faturamento/regras";
+import { agruparFaturamento, custosPorContratoMes, custosVazios, CustosPorRubrica, lucroBruto, RUBRICAS, semClassificacao, totaisVazios, totalCustos } from "./faturamento/regras";
+import { RubricasCusto } from "./faturamento/RubricasCusto";
+import { FaixasTexto, pillDaMargem, TituloComFormula } from "./faturamento/Rentabilidade";
+import { useLigacoesRubrica } from "./faturamento/useLigacoesRubrica";
 import { rotuloMes, useBaseFaturamento } from "./faturamento/useBaseFaturamento";
 import { BannerAuditoria } from "./auditoria/BannerAuditoria";
 
@@ -21,6 +26,10 @@ import { BannerAuditoria } from "./auditoria/BannerAuditoria";
 
 const TODOS = "todos";
 const pctTxt = (m: number | null) => (m === null ? "—" : `${(m * 100).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%`);
+const num2 = (n: number) => new Intl.NumberFormat("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n || 0);
+const CAB = "h-auto px-1.5 py-1.5 text-right align-bottom whitespace-normal leading-tight";
+const CEL = "px-1.5 py-1.5 align-middle";
+const CEL_NUM = `${CEL} text-right whitespace-nowrap`;
 const corMargem = (m: number | null) => (m === null ? "" : m < 0 ? "text-red-600 font-medium" : m < 0.15 ? "text-orange-600 font-medium" : "text-emerald-600 font-medium");
 
 interface Linha {
@@ -47,6 +56,9 @@ export default function LucratividadeContratos() {
   const [cliente, setCliente] = useState(TODOS);
   const [situacao, setSituacao] = useState(TODOS);
   const [busca, setBusca] = useState("");
+  const [detalhar, setDetalhar] = useState(true);
+  const [pagina, setPagina] = useState(0);
+  const [porPagina, setPorPagina] = useState(10);
 
   // Meses com nota emitida (mais o mês atual) — o custo é buscado do mês escolhido.
   const mesesDisponiveis = useMemo(() => {
@@ -55,7 +67,12 @@ export default function LucratividadeContratos() {
     return [...s].sort().reverse();
   }, [nfs, mes]);
 
-  const custos = useMemo(() => custosPorContratoMes(fluxo), [fluxo]);
+  // Painel "Rubricas de custo": ligações manuais Classificação × coluna de custo.
+  const { data: ligacoes } = useLigacoesRubrica();
+  const { data: podeVerRubricas } = useScreenAccess("lucratividade-rubricas", "visualizar");
+  const { data: podeAlterarRubricas } = useScreenAccess("lucratividade-rubricas", "alterar");
+  const custos = useMemo(() => custosPorContratoMes(fluxo, ligacoes), [fluxo, ligacoes]);
+  const semClass = useMemo(() => semClassificacao(fluxo), [fluxo]);
   const fat = useMemo(() => agruparFaturamento(nfs.filter((n) => n.competencia.startsWith(mes)), (n) => n.contrato_id), [nfs, mes]);
   const clientes = useMemo(() => [...new Set(contratos.map((c) => c.cliente).filter(Boolean))].sort((a, b) => a.localeCompare(b, "pt-BR")), [contratos]);
 
@@ -87,6 +104,12 @@ export default function LucratividadeContratos() {
     }
     return { ...t, ...lucroBruto(t.liquido, t.totalCusto) };
   }, [linhas]);
+
+  useEffect(() => { setPagina(0); }, [mes, empresaId, cliente, situacao, busca]);
+  const totalPaginas = Math.max(1, Math.ceil(linhas.length / porPagina));
+  const paginaAtual = Math.min(pagina, totalPaginas - 1);
+  const inicio = paginaAtual * porPagina;
+  const paginaLinhas = linhas.slice(inicio, inicio + porPagina);
 
   // Custo pago no mês em contrato que não tem nada além disso é comum (ex.:
   // pagamento adiantado); mostra quantos contratos estão no prejuízo.
@@ -127,6 +150,14 @@ export default function LucratividadeContratos() {
       {/* SIS-2026-0553: checkpoint da Controladoria (alerta, sem bloquear). */}
       <BannerAuditoria mes={mes} empresaId={empresaId === TODOS ? null : empresaId} />
 
+      <Tabs defaultValue="lucratividade" className="space-y-4">
+        {podeVerRubricas && (
+          <TabsList className="print:hidden">
+            <TabsTrigger value="lucratividade">Lucratividade</TabsTrigger>
+            <TabsTrigger value="rubricas">Rubricas de custo</TabsTrigger>
+          </TabsList>
+        )}
+        <TabsContent value="lucratividade" className="space-y-6 mt-0">
       <div className="card-elevated p-3 flex items-center gap-2 flex-wrap text-xs print:hidden">
         <Select value={mes} onValueChange={setMes}>
           <SelectTrigger className="h-8 w-[110px] text-xs"><SelectValue /></SelectTrigger>
@@ -172,52 +203,92 @@ export default function LucratividadeContratos() {
             <KpiTile label="Margem Bruta" valor={pctTxt(total.margem)} sub="sobre o valor líquido" icon={<Percent />} cor="sky" />
           </div>
 
+          <div className="flex items-center justify-between gap-2 flex-wrap print:hidden">
+            <p className="text-[11px] text-muted-foreground">
+              Mostrando {linhas.length === 0 ? 0 : inicio + 1} a {Math.min(inicio + porPagina, linhas.length)} de {linhas.length} registros
+            </p>
+            <div className="flex items-center gap-2">
+              <label className="flex items-center gap-1.5 text-[11px] cursor-pointer select-none">
+                <input type="checkbox" checked={detalhar} onChange={(e) => setDetalhar(e.target.checked)} />
+                Detalhar custos por rubrica
+              </label>
+              <Select value={String(porPagina)} onValueChange={(v) => { setPorPagina(Number(v)); setPagina(0); }}>
+                <SelectTrigger className="h-7 w-[110px] text-[11px]"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {[10, 25, 50, 100].map((n) => <SelectItem key={n} value={String(n)}>{n} por página</SelectItem>)}
+                </SelectContent>
+              </Select>
+              <Button variant="outline" size="sm" className="h-7 px-2 text-[11px]" disabled={paginaAtual === 0} onClick={() => setPagina(paginaAtual - 1)}>Anterior</Button>
+              <span className="text-[11px] text-muted-foreground">{paginaAtual + 1} / {totalPaginas}</span>
+              <Button variant="outline" size="sm" className="h-7 px-2 text-[11px]" disabled={paginaAtual >= totalPaginas - 1} onClick={() => setPagina(paginaAtual + 1)}>Próxima</Button>
+            </div>
+          </div>
+
+          {/* Tabela compacta (SIS-2026-0556, ajuste de layout): nomes quebram em duas
+              linhas, "R$" vai para o cabeçalho e a 1ª coluna fica fixa — a ideia é
+              caber na tela sem rolagem horizontal em monitores comuns. */}
           <div className="card-elevated overflow-x-auto">
-            <Table className="text-xs">
+            <Table className="text-[11px] tabular-nums">
               <TableHeader>
                 <TableRow>
-                  <TableHead>Contrato</TableHead>
-                  <TableHead>Cliente</TableHead>
-                  <TableHead className="text-right">Valor Exec. (Planilha)</TableHead>
-                  <TableHead className="text-right">Valor Bruto</TableHead>
-                  <TableHead className="text-right">Valor Líquido</TableHead>
-                  <TableHead className="text-right">Desc. Contrato</TableHead>
-                  {RUBRICAS.map((r) => <TableHead key={r.id} className="text-right">{r.label}</TableHead>)}
-                  <TableHead className="text-right">Total de Custos</TableHead>
-                  <TableHead className="text-right">Lucro Bruto</TableHead>
-                  <TableHead className="text-right">Margem</TableHead>
-                  <TableHead>Situação</TableHead>
+                  <TableHead className={`${CAB} text-left sticky left-0 z-10 bg-background min-w-[150px]`}>Contrato / Cliente</TableHead>
+                  <TableHead className={CAB}><TituloComFormula titulo="Valor Exec. Planilha (R$)" formula="Valor executável do contrato no mês, segundo a planilha de custo vigente. Zero depois do fim do contrato." /></TableHead>
+                  <TableHead className={CAB}><TituloComFormula titulo="Valor Bruto (R$)" formula="Soma do valor bruto das NFs Código N da competência (já validadas; fora de canceladas e substituídas)." /></TableHead>
+                  <TableHead className={CAB}><TituloComFormula titulo="Valor Líquido (R$)" formula="Soma do valor líquido das mesmas NFs: o bruto depois dos descontos." /></TableHead>
+                  <TableHead className={CAB}><TituloComFormula titulo="Desc. Contrato (R$)" formula="Valor Bruto − Valor Líquido: o que foi descontado nas notas da competência." /></TableHead>
+                  {detalhar && RUBRICAS.map((r) => (
+                    <TableHead key={r.id} className={CAB}>
+                      <TituloComFormula titulo={`${r.label} (R$)`} formula={`Saídas do Fluxo de Caixa com contrato, pagas no mês, cuja classificação está ligada a “${r.label}”. A ligação é feita na aba “Rubricas de custo”${r.id === "outras" ? "; o que não casa com nenhuma outra coluna cai aqui" : ""}.`} />
+                    </TableHead>
+                  ))}
+                  <TableHead className={CAB}><TituloComFormula titulo="Total de Custos (R$)" formula="Soma de todas as colunas de custo (Salários … Outras Despesas), mesmo com o detalhe escondido." /></TableHead>
+                  <TableHead className={CAB}><TituloComFormula titulo="Lucro Bruto (R$)" formula="Valor Líquido − Total de Custos." /></TableHead>
+                  <TableHead className={CAB}>
+                    <TituloComFormula
+                      titulo="Margem (%)"
+                      formula={<><p>Lucro Bruto ÷ Valor Líquido × 100. Fica em branco quando não há faturamento no mês.</p><p className="font-medium pt-1">A cor segue a faixa:</p><FaixasTexto /></>}
+                    />
+                  </TableHead>
+                  <TableHead className={`${CAB} text-center`}><TituloComFormula alinhar="center" titulo="Situação" formula="Situação do contrato no ERP (ativo, encerrado ou suspenso). Não mede rentabilidade." /></TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {linhas.map((l) => (
+                {paginaLinhas.map((l) => (
                   <TableRow key={l.id}>
-                    <TableCell className="font-medium whitespace-nowrap">{l.contrato}</TableCell>
-                    <TableCell className="whitespace-nowrap">{l.cliente}</TableCell>
-                    <TableCell className="text-right">{l.exec ? fmtMoney(l.exec) : "—"}</TableCell>
-                    <TableCell className="text-right">{l.bruto ? fmtMoney(l.bruto) : "—"}</TableCell>
-                    <TableCell className="text-right">{l.liquido ? fmtMoney(l.liquido) : "—"}</TableCell>
-                    <TableCell className="text-right">{l.descontos ? fmtMoney(l.descontos) : "—"}</TableCell>
-                    {RUBRICAS.map((r) => <TableCell key={r.id} className="text-right">{l.custos[r.id] ? fmtMoney(l.custos[r.id]) : "—"}</TableCell>)}
-                    <TableCell className="text-right">{fmtMoney(l.totalCusto)}</TableCell>
-                    <TableCell className={`text-right ${l.lucro < 0 ? "text-red-600" : ""}`}>{fmtMoney(l.lucro)}</TableCell>
-                    <TableCell className={`text-right ${corMargem(l.margem)}`}>{pctTxt(l.margem)}</TableCell>
-                    <TableCell><Badge variant="outline" className="capitalize">{l.status}</Badge></TableCell>
+                    <TableCell className={`${CEL} sticky left-0 z-10 bg-background max-w-[170px]`}>
+                      <span className="block font-medium leading-tight line-clamp-2">{l.contrato}</span>
+                      <span className="block text-[10px] text-muted-foreground leading-tight line-clamp-1">{l.cliente}</span>
+                    </TableCell>
+                    <TableCell className={CEL_NUM}>{l.exec ? num2(l.exec) : "—"}</TableCell>
+                    <TableCell className={CEL_NUM}>{l.bruto ? num2(l.bruto) : "—"}</TableCell>
+                    <TableCell className={CEL_NUM}>{l.liquido ? num2(l.liquido) : "—"}</TableCell>
+                    <TableCell className={CEL_NUM}>{l.descontos ? num2(l.descontos) : "—"}</TableCell>
+                    {detalhar && RUBRICAS.map((r) => <TableCell key={r.id} className={CEL_NUM}>{l.custos[r.id] ? num2(l.custos[r.id]) : "—"}</TableCell>)}
+                    <TableCell className={CEL_NUM}>{num2(l.totalCusto)}</TableCell>
+                    <TableCell className={`${CEL_NUM} ${l.lucro < 0 ? "text-red-600" : ""}`}>{num2(l.lucro)}</TableCell>
+                    <TableCell className={`${CEL} text-right`}>
+                      <span className={`inline-block rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${pillDaMargem(l.margem)}`}>{pctTxt(l.margem)}</span>
+                    </TableCell>
+                    <TableCell className={`${CEL} text-center`}>
+                      <span className={`inline-block rounded-full px-1.5 py-0.5 text-[10px] font-medium capitalize ${l.status === "ativo" ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300" : "bg-muted text-muted-foreground"}`}>{l.status}</span>
+                    </TableCell>
                   </TableRow>
                 ))}
-                {linhas.length === 0 && <TableRow><TableCell colSpan={17} className="text-center text-muted-foreground py-8">Nenhum contrato com faturamento, custo ou valor executável em {rotuloMes(mes)}.</TableCell></TableRow>}
+                {linhas.length === 0 && <TableRow><TableCell colSpan={detalhar ? 17 : 9} className="text-center text-muted-foreground py-8">Nenhum contrato com faturamento, custo ou valor executável em {rotuloMes(mes)}.</TableCell></TableRow>}
               </TableBody>
               <TableFooter>
                 <TableRow>
-                  <TableCell colSpan={2} className="font-semibold">Total Geral ({linhas.length})</TableCell>
-                  <TableCell className="text-right font-semibold">{fmtMoney(total.exec)}</TableCell>
-                  <TableCell className="text-right font-semibold">{fmtMoney(total.bruto)}</TableCell>
-                  <TableCell className="text-right font-semibold">{fmtMoney(total.liquido)}</TableCell>
-                  <TableCell className="text-right font-semibold">{fmtMoney(total.descontos)}</TableCell>
-                  {RUBRICAS.map((r) => <TableCell key={r.id} className="text-right font-semibold">{fmtMoney(total.custos[r.id])}</TableCell>)}
-                  <TableCell className="text-right font-semibold">{fmtMoney(total.totalCusto)}</TableCell>
-                  <TableCell className="text-right font-semibold">{fmtMoney(total.lucro)}</TableCell>
-                  <TableCell className={`text-right font-semibold ${corMargem(total.margem)}`}>{pctTxt(total.margem)}</TableCell>
+                  <TableCell className={`${CEL} font-semibold sticky left-0 z-10 bg-muted`}>Total Geral ({linhas.length})</TableCell>
+                  <TableCell className={`${CEL_NUM} font-semibold`}>{num2(total.exec)}</TableCell>
+                  <TableCell className={`${CEL_NUM} font-semibold`}>{num2(total.bruto)}</TableCell>
+                  <TableCell className={`${CEL_NUM} font-semibold`}>{num2(total.liquido)}</TableCell>
+                  <TableCell className={`${CEL_NUM} font-semibold`}>{num2(total.descontos)}</TableCell>
+                  {detalhar && RUBRICAS.map((r) => <TableCell key={r.id} className={`${CEL_NUM} font-semibold`}>{num2(total.custos[r.id])}</TableCell>)}
+                  <TableCell className={`${CEL_NUM} font-semibold`}>{num2(total.totalCusto)}</TableCell>
+                  <TableCell className={`${CEL_NUM} font-semibold`}>{num2(total.lucro)}</TableCell>
+                  <TableCell className={`${CEL} text-right`}>
+                    <span className={`inline-block rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${pillDaMargem(total.margem)}`}>{pctTxt(total.margem)}</span>
+                  </TableCell>
                   <TableCell />
                 </TableRow>
               </TableFooter>
@@ -226,8 +297,27 @@ export default function LucratividadeContratos() {
           <p className="text-[11px] text-muted-foreground">
             Custos em regime de caixa: saídas do Fluxo de Caixa pagas em {rotuloMes(mes)} e vinculadas ao contrato. Transferências entre contas, aplicações, empréstimos, financiamentos e distribuições ficam de fora. Pagamentos sem contrato não entram em nenhuma linha.
           </p>
+          {semClass.linhas > 0 && (
+            <p className="text-[11px] text-amber-700 dark:text-amber-400">
+              {semClass.linhas} lançamento(s) de contrato sem classificação ({fmtMoney(semClass.valor)}) em {rotuloMes(mes)} ficam fora das colunas de custo. Classifique-os no Fluxo de Caixa para entrarem na conta.
+            </p>
+          )}
         </>
       )}
+        </TabsContent>
+        {podeVerRubricas && (
+          <TabsContent value="rubricas" className="space-y-4 mt-0">
+            <div className="card-elevated p-3 flex items-center gap-2 text-xs">
+              <Select value={mes} onValueChange={setMes}>
+                <SelectTrigger className="h-8 w-[110px] text-xs"><SelectValue /></SelectTrigger>
+                <SelectContent>{mesesDisponiveis.map((m) => <SelectItem key={m} value={m}>{rotuloMes(m)}</SelectItem>)}</SelectContent>
+              </Select>
+              <span className="text-muted-foreground">Mês usado para mostrar o gasto de cada classificação.</span>
+            </div>
+            <RubricasCusto linhasMes={fluxo} ligacoes={ligacoes ?? new Map()} podeEditar={!!podeAlterarRubricas} rotuloMes={rotuloMes(mes)} />
+          </TabsContent>
+        )}
+      </Tabs>
     </div>
   );
 }

@@ -10,8 +10,11 @@ import { KpiTile } from "@/components/financeiro/KpiTile";
 import { Bar, BarChart, CartesianGrid, Cell, Legend, Line, LineChart, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { CheckCircle2, Clock, Printer, TrendingUp, Wallet } from "lucide-react";
 import { fmtMoney } from "@/pages/financeiro/nf-emissao/shared";
-import { agruparFaturamento, totaisVazios, TotaisFaturamento } from "./faturamento/regras";
+import { agruparFaturamento, custosPorContratoMes, lucroBruto, lucroRecebido, totaisVazios, totalCustos, TotaisFaturamento } from "./faturamento/regras";
 import { rotuloMes, useBaseFaturamento } from "./faturamento/useBaseFaturamento";
+import { useCustosContratoAno } from "./faturamento/useCustosContratoMes";
+import { useLigacoesRubrica } from "./faturamento/useLigacoesRubrica";
+import { FaixasTexto, pillDaMargem, StatusRentabilidade, TituloComFormula } from "./faturamento/Rentabilidade";
 
 // SIS-2026-0556: Faturamento da Empresa (Controladoria). Mesma base do
 // Controle de Faturamento: NFs Código N validadas do Relatório de Serviços,
@@ -21,6 +24,13 @@ const TODOS = "todos";
 const CORES = ["#1e3a8a", "#f97316", "#38bdf8", "#64748b", "#10b981", "#a855f7", "#eab308"];
 const pct = (parte: number, todo: number) => (todo > 0 ? `${((parte / todo) * 100).toLocaleString("pt-BR", { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%` : "—");
 const milhoes = (v: number) => `${(v / 1_000_000).toLocaleString("pt-BR", { maximumFractionDigits: 1 })}M`;
+
+// Sem "R$" nas células (o cabeçalho diz "(R$)"): é o que faz as colunas caberem.
+const num2 = (n: number) => new Intl.NumberFormat("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n || 0);
+const pctTxt = (m: number | null) => (m === null ? "—" : `${(m * 100).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%`);
+const CAB = "h-auto px-2 py-1.5 text-right align-bottom whitespace-normal leading-tight";
+const CEL = "px-2 py-1.5 align-middle";
+const CEL_NUM = `${CEL} text-right whitespace-nowrap`;
 
 function Num({ v, negativoVermelho }: { v: number; negativoVermelho?: boolean }) {
   return <span className={negativoVermelho && v < 0 ? "text-red-600 font-medium" : undefined}>{fmtMoney(v)}</span>;
@@ -35,6 +45,19 @@ export default function FaturamentoEmpresa() {
   const [contratoId, setContratoId] = useState(TODOS);
   const [cliente, setCliente] = useState(TODOS);
   const [busca, setBusca] = useState("");
+  const [aba, setAba] = useState("mensal");
+  // Custos do ano só são buscados quando a aba "Por Contrato" (que tem lucro e
+  // margem) é aberta: as outras abas não precisam do Fluxo de Caixa.
+  const { data: custosAno = [], isLoading: carregandoCustos, error: erroCustos } = useCustosContratoAno(ano, aba === "contrato");
+  const { data: ligacoes } = useLigacoesRubrica();
+  const custoPorContrato = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const [chave, c] of custosPorContratoMes(custosAno, ligacoes)) {
+      const id = chave.split("|")[0];
+      m.set(id, (m.get(id) ?? 0) + totalCustos(c));
+    }
+    return m;
+  }, [custosAno, ligacoes]);
 
   const anos = useMemo(() => {
     const s = new Set<number>([anoAtual]);
@@ -118,31 +141,38 @@ export default function FaturamentoEmpresa() {
 
   const Rodape = ({ t }: { t: TotaisFaturamento }) => (
     <>
-      <TableCell className="text-right font-semibold">{fmtMoney(t.bruto)}</TableCell>
-      <TableCell className="text-right font-semibold">{fmtMoney(t.descontos)}</TableCell>
-      <TableCell className="text-right font-semibold">{fmtMoney(t.liquido)}</TableCell>
-      <TableCell className="text-right font-semibold">{fmtMoney(t.recebido)}</TableCell>
-      <TableCell className="text-right font-semibold">{fmtMoney(t.aReceber)}</TableCell>
+      <TableCell className={`${CEL_NUM} font-semibold`}>{num2(t.bruto)}</TableCell>
+      <TableCell className={`${CEL_NUM} font-semibold`}>{num2(t.descontos)}</TableCell>
+      <TableCell className={`${CEL_NUM} font-semibold`}>{num2(t.liquido)}</TableCell>
+      <TableCell className={`${CEL_NUM} font-semibold`}>{num2(t.recebido)}</TableCell>
+      <TableCell className={`${CEL_NUM} font-semibold`}>{num2(t.aReceber)}</TableCell>
     </>
   );
   const Celulas = ({ t }: { t: TotaisFaturamento }) => (
     <>
-      <TableCell className="text-right">{fmtMoney(t.bruto)}</TableCell>
-      <TableCell className="text-right">{fmtMoney(t.descontos)}</TableCell>
-      <TableCell className="text-right">{fmtMoney(t.liquido)}</TableCell>
-      <TableCell className="text-right">{fmtMoney(t.recebido)}</TableCell>
-      <TableCell className="text-right">{fmtMoney(t.aReceber)}</TableCell>
+      <TableCell className={CEL_NUM}>{num2(t.bruto)}</TableCell>
+      <TableCell className={CEL_NUM}>{num2(t.descontos)}</TableCell>
+      <TableCell className={CEL_NUM}>{num2(t.liquido)}</TableCell>
+      <TableCell className={CEL_NUM}>{num2(t.recebido)}</TableCell>
+      <TableCell className={CEL_NUM}>{num2(t.aReceber)}</TableCell>
     </>
   );
   const Cabecalho = () => (
     <>
-      <TableHead className="text-right">Valor Bruto</TableHead>
-      <TableHead className="text-right">Descontos</TableHead>
-      <TableHead className="text-right">Valor Líquido</TableHead>
-      <TableHead className="text-right">Recebido</TableHead>
-      <TableHead className="text-right">A Receber</TableHead>
+      <TableHead className={CAB}><TituloComFormula titulo="Valor Bruto (R$)" formula="Soma do valor bruto das NFs Código N da competência (já validadas; fora de canceladas e substituídas)." /></TableHead>
+      <TableHead className={CAB}><TituloComFormula titulo="Descontos (R$)" formula="Valor Bruto − Valor Líquido: o que foi descontado nas notas." /></TableHead>
+      <TableHead className={CAB}><TituloComFormula titulo="Valor Líquido (R$)" formula="Soma do valor líquido das mesmas NFs: o bruto depois dos descontos." /></TableHead>
+      <TableHead className={CAB}><TituloComFormula titulo="Recebido (R$)" formula="Soma do valor pago das notas (pagamento registrado no Relatório de Serviços). É o “Notas Recebidas”." /></TableHead>
+      <TableHead className={CAB}><TituloComFormula titulo="A Receber (R$)" formula="Valor Líquido − já pago − desconto de conta vinculada, por nota. Nota paga não tem saldo." /></TableHead>
     </>
   );
+
+  // Lucro por contrato (aba "Por Contrato"): custos do ano em regime de caixa,
+  // as mesmas saídas do Fluxo com contrato usadas na Lucratividade.
+  const custoDe = (id: string) => custoPorContrato.get(id) ?? 0;
+  const custoTotalContratos = useMemo(() => [...porContrato.keys()].reduce((s, id) => s + (custoPorContrato.get(id) ?? 0), 0), [porContrato, custoPorContrato]);
+  const totalLucro = lucroBruto(total.liquido, custoTotalContratos);
+  const custosPendentes = carregandoCustos || !!erroCustos;
 
   return (
     <div className="space-y-6">
@@ -252,7 +282,7 @@ export default function FaturamentoEmpresa() {
             </Card>
           </div>
 
-          <Tabs defaultValue="mensal">
+          <Tabs value={aba} onValueChange={setAba}>
             <div className="flex items-center gap-2 flex-wrap">
               <TabsList>
                 <TabsTrigger value="mensal">Resumo Mensal</TabsTrigger>
@@ -264,12 +294,12 @@ export default function FaturamentoEmpresa() {
 
             <TabsContent value="mensal" className="mt-3">
               <div className="card-elevated overflow-x-auto">
-                <Table>
+                <Table className="text-[11px] tabular-nums">
                   <TableHeader>
                     <TableRow>
-                      <TableHead>Mês</TableHead>
-                      <TableHead className="text-right">Valor Exec. (Planilha)</TableHead>
-                      <TableHead className="text-right">Diferença Exec. × Fat.</TableHead>
+                      <TableHead className={`${CAB} text-left`}>Mês</TableHead>
+                      <TableHead className={CAB}><TituloComFormula titulo="Valor Exec. Planilha (R$)" formula="Valor executável dos contratos do recorte no mês, segundo a planilha de custo vigente. Zero depois do fim do contrato." /></TableHead>
+                      <TableHead className={CAB}><TituloComFormula titulo="Diferença Exec. × Fat. (R$)" formula="Valor Exec. Planilha − Valor Bruto faturado no mês. Positivo = faturou menos do que o executável." /></TableHead>
                       <Cabecalho />
                     </TableRow>
                   </TableHeader>
@@ -279,9 +309,9 @@ export default function FaturamentoEmpresa() {
                       const exec = execPorMes.get(m) ?? 0;
                       return (
                         <TableRow key={m}>
-                          <TableCell className="font-medium">{rotuloMes(m)}</TableCell>
-                          <TableCell className="text-right">{exec ? fmtMoney(exec) : "—"}</TableCell>
-                          <TableCell className="text-right">{exec && t.notas ? <Num v={exec - t.bruto} /> : "—"}</TableCell>
+                          <TableCell className={`${CEL} font-medium`}>{rotuloMes(m)}</TableCell>
+                          <TableCell className={CEL_NUM}>{exec ? num2(exec) : "—"}</TableCell>
+                          <TableCell className={CEL_NUM}>{exec && t.notas ? <Num v={exec - t.bruto} /> : "—"}</TableCell>
                           <Celulas t={t} />
                         </TableRow>
                       );
@@ -289,8 +319,8 @@ export default function FaturamentoEmpresa() {
                   </TableBody>
                   <TableFooter>
                     <TableRow>
-                      <TableCell className="font-semibold">Total</TableCell>
-                      <TableCell className="text-right font-semibold">{fmtMoney(execTotal)}</TableCell>
+                      <TableCell className={`${CEL} font-semibold`}>Total</TableCell>
+                      <TableCell className={`${CEL_NUM} font-semibold`}>{num2(execTotal)}</TableCell>
                       <TableCell />
                       <Rodape t={total} />
                     </TableRow>
@@ -301,43 +331,92 @@ export default function FaturamentoEmpresa() {
 
             <TabsContent value="contrato" className="mt-3">
               <div className="card-elevated overflow-x-auto">
-                <Table>
+                <Table className="text-[11px] tabular-nums">
                   <TableHeader>
-                    <TableRow><TableHead>Contrato</TableHead><TableHead>Cliente</TableHead><TableHead className="text-right">Notas</TableHead><Cabecalho /></TableRow>
+                    <TableRow>
+                      <TableHead className={`${CAB} text-left min-w-[150px]`}>Contrato / Cliente</TableHead>
+                      <TableHead className={CAB}><TituloComFormula titulo="Notas" formula="Quantidade de NFs Código N do contrato na competência do ano." /></TableHead>
+                      <Cabecalho />
+                      <TableHead className={CAB}>
+                        <TituloComFormula titulo="Lucro Faturamento (R$)" formula="Valor Líquido − custos do contrato no ano (saídas do Fluxo de Caixa com contrato, em regime de caixa, sem transferências, aplicações e empréstimos)." />
+                      </TableHead>
+                      <TableHead className={CAB}>
+                        <TituloComFormula titulo="Lucro Recebido (R$)" formula="Recebido − os mesmos custos do contrato. A diferença para o Lucro Faturamento é só o que ainda falta receber." />
+                      </TableHead>
+                      <TableHead className={CAB}>
+                        <TituloComFormula titulo="Margem Bruta (%)" formula={<><p>Lucro Faturamento ÷ Valor Líquido × 100. Em branco quando não há faturamento.</p><p className="font-medium pt-1">A cor e o Status seguem a faixa:</p><FaixasTexto /></>} />
+                      </TableHead>
+                      <TableHead className={`${CAB} text-left`}>
+                        <TituloComFormula alinhar="left" titulo="Status" formula={<><p>Rentabilidade do contrato, pela Margem Bruta. A barra enche até 30% de margem.</p><FaixasTexto /></>} />
+                      </TableHead>
+                      <TableHead className={`${CAB} text-center`}>
+                        <TituloComFormula alinhar="center" titulo="Situação" formula="Situação do contrato no ERP (ativo, encerrado ou suspenso). Não mede rentabilidade." />
+                      </TableHead>
+                    </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {linhasContrato.map((l) => (
-                      <TableRow key={l.id}>
-                        <TableCell className="font-medium">{l.c?.nome ?? "(contrato removido)"}</TableCell>
-                        <TableCell>{l.c?.cliente ?? "—"}</TableCell>
-                        <TableCell className="text-right">{l.t.notas}</TableCell>
-                        <Celulas t={l.t} />
-                      </TableRow>
-                    ))}
-                    {linhasContrato.length === 0 && <TableRow><TableCell colSpan={8} className="text-center text-muted-foreground py-6">Nenhuma nota no recorte.</TableCell></TableRow>}
+                    {linhasContrato.map((l) => {
+                      const custo = custoDe(l.id);
+                      const lucro = lucroBruto(l.t.liquido, custo);
+                      const status = l.c?.status ?? "—";
+                      return (
+                        <TableRow key={l.id}>
+                          <TableCell className={`${CEL} max-w-[190px]`}>
+                            <span className="block font-medium leading-tight line-clamp-2">{l.c?.nome ?? "(contrato removido)"}</span>
+                            <span className="block text-[10px] text-muted-foreground leading-tight line-clamp-1">{l.c?.cliente ?? "—"}</span>
+                          </TableCell>
+                          <TableCell className={CEL_NUM}>{l.t.notas}</TableCell>
+                          <Celulas t={l.t} />
+                          <TableCell className={`${CEL_NUM} ${!custosPendentes && lucro.lucro < 0 ? "text-red-600" : ""}`}>{custosPendentes ? "…" : num2(lucro.lucro)}</TableCell>
+                          <TableCell className={`${CEL_NUM} ${!custosPendentes && lucroRecebido(l.t.recebido, custo) < 0 ? "text-red-600" : ""}`}>{custosPendentes ? "…" : num2(lucroRecebido(l.t.recebido, custo))}</TableCell>
+                          <TableCell className={`${CEL} text-right`}>
+                            {custosPendentes ? "…" : <span className={`inline-block rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${pillDaMargem(lucro.margem)}`}>{pctTxt(lucro.margem)}</span>}
+                          </TableCell>
+                          <TableCell className={CEL}>{custosPendentes ? "…" : <StatusRentabilidade margem={lucro.margem} />}</TableCell>
+                          <TableCell className={`${CEL} text-center`}>
+                            <span className={`inline-block rounded-full px-1.5 py-0.5 text-[10px] font-medium capitalize ${status === "ativo" ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300" : "bg-muted text-muted-foreground"}`}>{status}</span>
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
+                    {linhasContrato.length === 0 && <TableRow><TableCell colSpan={13} className="text-center text-muted-foreground py-6">Nenhuma nota no recorte.</TableCell></TableRow>}
                   </TableBody>
-                  <TableFooter><TableRow><TableCell colSpan={2} className="font-semibold">Total</TableCell><TableCell className="text-right font-semibold">{total.notas}</TableCell><Rodape t={total} /></TableRow></TableFooter>
+                  <TableFooter>
+                    <TableRow>
+                      <TableCell className={`${CEL} font-semibold`}>Total</TableCell>
+                      <TableCell className={`${CEL_NUM} font-semibold`}>{total.notas}</TableCell>
+                      <Rodape t={total} />
+                      <TableCell className={`${CEL_NUM} font-semibold`}>{custosPendentes ? "…" : num2(totalLucro.lucro)}</TableCell>
+                      <TableCell className={`${CEL_NUM} font-semibold`}>{custosPendentes ? "…" : num2(lucroRecebido(total.recebido, custoTotalContratos))}</TableCell>
+                      <TableCell className={`${CEL} text-right`}>
+                        {custosPendentes ? "…" : <span className={`inline-block rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${pillDaMargem(totalLucro.margem)}`}>{pctTxt(totalLucro.margem)}</span>}
+                      </TableCell>
+                      <TableCell className={CEL}>{custosPendentes ? "…" : <StatusRentabilidade margem={totalLucro.margem} />}</TableCell>
+                      <TableCell />
+                    </TableRow>
+                  </TableFooter>
                 </Table>
+                {erroCustos && <p className="text-xs text-red-600 p-3">Não foi possível carregar os custos do ano: {(erroCustos as { message?: string }).message ?? "erro desconhecido"}.</p>}
               </div>
             </TabsContent>
 
             <TabsContent value="cliente" className="mt-3">
               <div className="card-elevated overflow-x-auto">
-                <Table>
+                <Table className="text-[11px] tabular-nums">
                   <TableHeader>
-                    <TableRow><TableHead>Cliente</TableHead><TableHead className="text-right">Notas</TableHead><Cabecalho /></TableRow>
+                    <TableRow><TableHead className={`${CAB} text-left`}>Cliente</TableHead><TableHead className={CAB}><TituloComFormula titulo="Notas" formula="Quantidade de NFs Código N do cliente na competência do ano." /></TableHead><Cabecalho /></TableRow>
                   </TableHeader>
                   <TableBody>
                     {linhasCliente.map(([nome, t]) => (
                       <TableRow key={nome}>
-                        <TableCell className="font-medium">{nome}</TableCell>
-                        <TableCell className="text-right">{t.notas}</TableCell>
+                        <TableCell className={`${CEL} font-medium`}>{nome}</TableCell>
+                        <TableCell className={CEL_NUM}>{t.notas}</TableCell>
                         <Celulas t={t} />
                       </TableRow>
                     ))}
                     {linhasCliente.length === 0 && <TableRow><TableCell colSpan={7} className="text-center text-muted-foreground py-6">Nenhuma nota no recorte.</TableCell></TableRow>}
                   </TableBody>
-                  <TableFooter><TableRow><TableCell className="font-semibold">Total</TableCell><TableCell className="text-right font-semibold">{total.notas}</TableCell><Rodape t={total} /></TableRow></TableFooter>
+                  <TableFooter><TableRow><TableCell className={`${CEL} font-semibold`}>Total</TableCell><TableCell className={`${CEL_NUM} font-semibold`}>{total.notas}</TableCell><Rodape t={total} /></TableRow></TableFooter>
                 </Table>
               </div>
             </TabsContent>
