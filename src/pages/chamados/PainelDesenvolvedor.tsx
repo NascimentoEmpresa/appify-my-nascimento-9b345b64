@@ -306,9 +306,15 @@ export default function PainelDesenvolvedor() {
         module="Sistemas"
         breadcrumb={["Chamados de Sistemas", "Painel do Desenvolvedor"]}
         actions={
-          <Button onClick={() => nav("/app/sistemas/chamados/dev/dashboard")} className="gap-1.5">
-            <LayoutDashboard className="h-4 w-4" /> Meu Dashboard
-          </Button>
+          <div className="flex gap-2">
+            {/* GitHub (07/10/2026, mig 20261007000015): PRs, commits e linhas de cada dev. */}
+            <Button variant="outline" onClick={() => nav("/app/sistemas/chamados/dev/github")} className="gap-1.5">
+              <GitPullRequest className="h-4 w-4" /> GitHub
+            </Button>
+            <Button onClick={() => nav("/app/sistemas/chamados/dev/dashboard")} className="gap-1.5">
+              <LayoutDashboard className="h-4 w-4" /> Meu Dashboard
+            </Button>
+          </div>
         }
       />
 
