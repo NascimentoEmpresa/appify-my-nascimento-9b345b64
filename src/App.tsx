@@ -26,6 +26,8 @@ import Novidades from "./pages/Novidades";
 import Presidencia from "./pages/Presidencia";
 import Organograma from "./pages/organograma/Organograma";
 import ChamadosDesenvolvimentoPresidencia from "./pages/presidencia/ChamadosDesenvolvimento";
+import TvPlayer from "./pages/tv/TvPlayer";
+import TvsSistemas from "./pages/sistemas/Tvs";
 import Pipeline from "./pages/Pipeline";
 import CadastroEdital from "./pages/CadastroEdital";
 import Documentos from "./pages/Documentos";
@@ -421,6 +423,10 @@ const App = () => (
           <Route path="/admissao/enxoval/:token" element={<EnxovalAdmissao />} />
           {/* Canal de Ética — registro e acompanhamento de denúncia, sem login */}
           <Route path="/denuncia" element={<Denuncia />} />
+          {/* Player das TVs da empresa (Sistemas › TV's, mig 20261007000012): público,
+              a TV não tem login — pareia por código e usa um token próprio. */}
+          <Route path="/tv" element={<TvPlayer />} />
+          <Route path="/tv/:chave" element={<TvPlayer />} />
           <Route path="/denuncia/acompanhar" element={<Navigate to="/denuncia?acompanhar" replace />} />
           {/* Portal do Colaborador — o colaborador de campo entra com o CPF,
               sem conta no Supabase Auth: fora do ProtectedRoute e do AppShell
@@ -485,6 +491,7 @@ const App = () => (
             {/* Checklist de Módulos (02/10/2026, mig 291): status, uso, bugs e chamados de cada módulo/tela. */}
             <Route path="sistemas/checklist-modulos" element={<ChecklistModulos />} />
             <Route path="sistemas/logins" element={<LoginsSistemas />} />
+            <Route path="sistemas/tvs" element={<TvsSistemas />} />
             <Route path="sistemas/checklist-modulos/:moduloId" element={<ChecklistModuloDetalhe />} />
             <Route path="sistemas/hora-extra" element={<SolicitacoesHoraExtra />} />
             <Route path="sistemas/hora-extra/liberacao" element={<LiberacaoHoraExtra />} />
