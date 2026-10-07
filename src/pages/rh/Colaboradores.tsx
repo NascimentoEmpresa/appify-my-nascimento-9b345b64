@@ -126,7 +126,9 @@ type Linha = {
 type Filtro = { ini: Date; fim: Date; empresa: string[]; contrato: string[]; situacao: string[]; cargo: string[]; busca: string };
 const SEP = "\u001F";
 const paraRpc = (v: string[]) => v.join(SEP);
-const EH_SAIDA = /DEMIT|DESLIG|RESCIS|APOSENT/i;
+// 06/10/2026 (mig 20261006000011): saída = demissão. "Aposentadoria" é
+// afastamento na Senior, não desligamento — saiu da regra.
+const EH_SAIDA = /^(DEMIT|DESLIG|RESCIS)/i;
 
 const DASH_VAZIO: Dash = {
   kpis: { ativos_mes: 0, no_recorte: 0, total: 0, folha: 0, admitidos: 0, desligados: 0 },
@@ -136,7 +138,28 @@ const DASH_VAZIO: Dash = {
   opcoes: { empresas: [], contratos: [], situacoes: [], setores: [], cargos: [] },
 };
 
-const ehSaidaDe = (e: any) => /DEMIT|DESLIG|RESCIS|APOSENT/i.test(String(e?.["Situação"] ?? ""));
+/**
+ * Ao lado de cada situação em "Por situação" (06/10/2026, pedido do Pablo):
+ * Demitido é quem SAIU NO MÊS (data de afastamento no mês); as demais são o
+ * TOTAL de ativos naquela situação — "não teve 90 pessoas que foram pro
+ * auxílio-doença nesse mês, é a soma total".
+ */
+function SeloEscopo({ situacao }: { situacao: string }) {
+  const doMes = EH_SAIDA.test(situacao.trim());
+  return (
+    <span style={{ fontSize: 10, fontWeight: 600, color: doMes ? "#b91c1c" : "#64748b", whiteSpace: "nowrap" }}>
+      ({doMes ? "no mês" : "total ativo"})
+    </span>
+  );
+}
+
+const ehSaidaDe = (e: any) => EH_SAIDA.test(String(e?.["Situação"] ?? "").trim());
+/** Situação NO MÊS olhado: quem foi demitido depois do mês ainda trabalhava nele (= RPC, mig 20261006000011). */
+const situacaoNoMes = (e: any, fim: Date) => {
+  const s = String(e?.["Situação"] ?? "").trim();
+  const afa = ehSaidaDe(e) ? parseData(e["Data Afastamento"]) : null;
+  return afa && afa.getTime() > fim.getTime() ? "Trabalhando" : s;
+};
 
 const linhaDe = (e: any, contratoDe: (e: any) => string): Linha => ({
   id: e["ID"], nome: String(e["Nome"] ?? ""), cpf: String(e["CPF"] ?? ""),
@@ -176,16 +199,12 @@ const recortesClient = (rows: any[], contratoDe: (e: any) => string, f: Filtro) 
   const casaEmp = (e: any) => !f.empresa.length || f.empresa.includes(empresaDe(e));
   const casaCtr = (e: any) => !f.contrato.length || f.contrato.includes(contratoDe(e));
   const casaCar = (e: any) => !f.cargo.length || f.cargo.includes(nomeCargoDe(e));
-  const casaSit = (e: any) => !f.situacao.length || f.situacao.includes(String(e["Situação"] ?? "").trim());
+  const casaSit = (e: any) => !f.situacao.length || f.situacao.includes(situacaoNoMes(e, f.fim));
 
   const semsit = rows.filter(e => noMesQuadro(e) && casaEmp(e) && casaCtr(e) && casaCar(e) && casaBusca(e));
-  // Filtrar por uma situação de SAÍDA = navegar TODOS com aquela situação
-  // (consulta/edição do histórico), sem o recorte de presença no mês. O
-  // dashboard usa `semsit`, então continua com a régua de presença.
-  const ehSaidaSit = f.situacao.some(s => EH_SAIDA.test(s));
-  const fil = ehSaidaSit
-    ? rows.filter(e => casaEmp(e) && casaCtr(e) && casaCar(e) && casaBusca(e) && casaSit(e))
-    : semsit.filter(casaSit);
+  // 06/10/2026: filtrar "Demitido" trazia TODO demitido da história; agora
+  // segue o mês como o resto — os demitidos com afastamento no mês.
+  const fil = semsit.filter(casaSit);
   const tempo = rows.filter(e => casaEmp(e) && casaCtr(e) && casaCar(e));
   return { fil, semsit, tempo };
 };
@@ -210,7 +229,7 @@ const calcDashClient = (rows: any[], contratoDe: (e: any) => string, f: Filtro, 
     },
     por_empresa: agrupar(fil, empresaDe),
     folha_empresa: agrupar(fil, empresaDe, e => parseSalario(e["Valor Salário"])),
-    por_situacao: agrupar(semsit, e => String(e["Situação"] ?? "").trim() || "—"),
+    por_situacao: agrupar(semsit, e => situacaoNoMes(e, f.fim) || "—"),
     por_cargo: agrupar(semsit, nomeCargoDe),
     por_contrato: agrupar(fil, contratoDe).slice(0, 10),
     por_contrato_todos: agrupar(fil, contratoDe),
@@ -663,7 +682,7 @@ export default function Colaboradores() {
           <>
             {!ehMesAtual && (
               <div style={{ fontSize: 11, color: "#b45309", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 8, padding: "6px 9px", marginBottom: 10 }}>
-                ⚠ Situação = status <b>atual</b> (a folha não guarda histórico por mês). Para o quadro do mês use "Ativos no mês".
+                ⚠ Situação = status <b>atual</b> (a folha não guarda histórico por mês). Só "Demitido" é do mês — quem saiu depois aparece como Trabalhando.
               </div>
             )}
             {sitAtual && (
@@ -671,7 +690,7 @@ export default function Colaboradores() {
                 style={{ cursor: "pointer", marginBottom: 14, padding: "12px 14px", borderRadius: 12, background: corSituacao(sitAtual.k) + "12", border: "1px solid " + corSituacao(sitAtual.k) + "33", animation: "col-fade .5s ease, col-float 4.5s ease-in-out infinite" }}>
                 <div style={{ fontSize: 10, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase", letterSpacing: ".5px" }}>Em destaque · alterna a cada 3s</div>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginTop: 4 }}>
-                  <span style={{ fontSize: 14.5, fontWeight: 800, color: corSituacao(sitAtual.k) }}>{sitAtual.k}</span>
+                  <span style={{ fontSize: 14.5, fontWeight: 800, color: corSituacao(sitAtual.k) }}>{sitAtual.k} <SeloEscopo situacao={sitAtual.k} /></span>
                   <span style={{ fontSize: 26, fontWeight: 800, color: "#0f172a" }}>{sitAtual.v}</span>
                 </div>
                 <div style={{ fontSize: 10.5, color: "#94a3b8", marginTop: 2 }}>clique para filtrar por esta situação</div>
@@ -682,7 +701,7 @@ export default function Colaboradores() {
               return (
                 <div key={x.k} className="col-sit-row" onClick={() => alternar(setFSituacao, x.k)} title="Clique para filtrar (pode marcar mais de uma)">
                   <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 3 }}>
-                    <span style={{ color: fSituacao.includes(x.k) ? "#0f172a" : "#334155", fontWeight: fSituacao.includes(x.k) ? 800 : 600 }}>{x.k}{fSituacao.includes(x.k) ? " ✓" : ""}</span>
+                    <span style={{ color: fSituacao.includes(x.k) ? "#0f172a" : "#334155", fontWeight: fSituacao.includes(x.k) ? 800 : 600 }}>{x.k}{fSituacao.includes(x.k) ? " ✓" : ""} <SeloEscopo situacao={x.k} /></span>
                     <span style={{ color: "#0f172a", fontWeight: 800 }}>{x.v}</span>
                   </div>
                   <div style={{ height: 8, background: "#eef2f7", borderRadius: 20, overflow: "hidden" }}>

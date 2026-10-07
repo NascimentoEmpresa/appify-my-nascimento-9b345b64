@@ -6,7 +6,7 @@
 //   · os postos VIGENTES da Planilha de Custo, com as vagas ("QT. PESSOAS");
 //   · os colaboradores ativos, cada um já com o posto da planilha em que está
 //     (pelo posto da Senior ligado, ou movido individualmente) e se CONTA no
-//     posto — só "Trabalhando" e atestado contam; auxílio-doença, licença,
+//     posto — só "Trabalhando" conta (atestado saiu em 06/10/2026); atestado, auxílio-doença, licença,
 //     férias etc. deixam o posto descoberto (rh_ac_conta_no_posto).
 //
 // Aqui: (1) sugerir o posto da planilha de um posto da Senior, porque os
@@ -30,7 +30,7 @@ export interface PessoaContrato {
   nome: string;
   cargo: string | null;
   situacao: string | null;
-  /** Ocupa o posto hoje (Trabalhando ou atestado). */
+  /** Ocupa o posto hoje (só "Trabalhando" — mig 20261006000011). */
   conta: boolean;
   /** "Nome do Posto" como vem da Senior; "" = sem posto no cadastro. */
   posto_senior: string;
@@ -189,7 +189,7 @@ export const situacaoDe = (saldo: number): Situacao => (saldo === 0 ? "ok" : sal
 export interface ConferenciaPosto {
   nome: string;
   previsto: number;
-  /** Pessoas no posto que contam (trabalhando/atestado). */
+  /** Pessoas no posto que contam (trabalhando). */
   tem: number;
   /** tem − previsto (negativo = falta gente). */
   saldo: number;
