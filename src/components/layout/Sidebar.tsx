@@ -1247,6 +1247,7 @@ const relatoriosModule: ModuleDef = {
       items: [
         { label: "Relatório Geral", to: "/app/relatorios", icon: BarChart3 },
         ...RELATORIOS.map((s) => ({ label: s.titulo, to: `/app/relatorios/${s.slug}`, icon: s.icone })),
+        { label: "Vagas — Dashboard", to: "/app/relatorios/vagas", icon: Briefcase },
       ],
     },
   ],

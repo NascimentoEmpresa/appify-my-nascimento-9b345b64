@@ -2,6 +2,7 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import type { RelatorioDados, RelatorioGeralDados } from "@/pages/relatorios/sistemas";
 import type { PainelTurnover, RescisoesTurnover } from "@/lib/diretoria/turnover";
+import type { DetalheVaga, PainelVagas } from "@/lib/relatorios/vagasPainel";
 
 // =====================================================================
 // Diretoria › Relatórios — acesso a dados (mig 20261005000006).
@@ -103,6 +104,34 @@ export function useAnaliseIA() {
       }
       if (data?.error) throw new Error(data.error);
       return String(data?.texto ?? "");
+    },
+  });
+}
+
+/** Relatórios › Vagas — Dashboard (mig 20261007000020): uma linha por vaga, contas no front. */
+export function useVagasPainel(f: FiltroRelatorio) {
+  return useQuery({
+    queryKey: [CHAVE, "vagas-painel", ...chaveFiltro(f)],
+    staleTime: 5 * 60_000,
+    placeholderData: (anterior) => anterior,
+    queryFn: async (): Promise<PainelVagas> => {
+      const { data, error } = await sb.rpc("dir_vagas_painel", argsFiltro(f));
+      if (error) throw error;
+      return data as PainelVagas;
+    },
+  });
+}
+
+/** Detalhe de uma vaga: trilha completa e candidatos. */
+export function useVagaDetalhe(id: number | null) {
+  return useQuery({
+    queryKey: [CHAVE, "vaga-detalhe", id],
+    enabled: id != null,
+    staleTime: 60_000,
+    queryFn: async (): Promise<DetalheVaga> => {
+      const { data, error } = await sb.rpc("dir_vagas_detalhe", { _id: id });
+      if (error) throw error;
+      return data as DetalheVaga;
     },
   });
 }
