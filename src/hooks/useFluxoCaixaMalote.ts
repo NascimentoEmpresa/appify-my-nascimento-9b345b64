@@ -276,6 +276,20 @@ export function useTrocarContratoFluxoCaixa() {
   });
 }
 
+// Confirma (ou desfaz) que um lançamento importado não pertence a contrato:
+// o selo "contrato não mapeado" some, o contrato continua nulo. Ver a migration
+// 20261007000005_fluxo_caixa_importado_sem_contrato.sql.
+export function useSemContratoImportado() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ linhaId, confirmado = true }: { linhaId: string; confirmado?: boolean }) => {
+      const { error } = await (supabase as any).rpc("fluxo_caixa_importado_sem_contrato", { _linha_id: linhaId, _confirmado: confirmado });
+      if (error) throw error;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["fluxo_caixa_combinado"] }),
+  });
+}
+
 // Apaga a linha de ajuste inteira — a linha volta a mostrar 100% do valor
 // original (não dá pra reverter campo a campo por aqui; quem editou um
 // campo errado edita ele de novo, com o valor certo).
