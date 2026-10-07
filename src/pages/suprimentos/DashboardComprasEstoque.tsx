@@ -40,6 +40,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useEmpresaAtiva } from "@/context/EmpresaAtivaContext";
 import { useDashboardComprasEstoque } from "@/hooks/useDashboardComprasEstoque";
+import { useEmpresaId } from "@/hooks/useEmpresaId";
 import {
   classeSituacaoEstoque,
   formatarMoeda,
@@ -320,12 +321,30 @@ function Carregando() {
 }
 
 export default function DashboardComprasEstoque() {
-  const { empresa } = useEmpresaAtiva();
+  const { empresas } = useEmpresaAtiva();
+  // Suprimentos trabalha com a empresa fixa do perfil (`profiles.empresa_id`).
+  // A empresa ativa global pode ser outra (ex.: AGPS), mas Pedidos, Estoque,
+  // Catálogo, Cotações e Fornecedores continuam operando na empresa do perfil.
+  // Usar a empresa global aqui deixava o dashboard zerado enquanto todas as
+  // telas operacionais exibiam os dados da HAGG.
+  const { data: empresaOperacionalId } = useEmpresaId();
+  const [empresaSelecionadaId, setEmpresaSelecionadaId] = useState<string | null>(null);
   const [filtros, setFiltros] = useState<FiltroDashboardCompras>(filtrosIniciais);
-  const consulta = useDashboardComprasEstoque(empresa?.id, filtros);
+  const empresaId = empresaSelecionadaId ?? empresaOperacionalId ?? null;
+  const empresa = empresas.find((item) => item.id === empresaId);
+  const consulta = useDashboardComprasEstoque(empresaId, filtros);
   const dados = consulta.data;
   const atualizado = useMemo(() => dados?.atualizado_em ? new Date(dados.atualizado_em).toLocaleString("pt-BR") : "—", [dados?.atualizado_em]);
   const trocar = <K extends keyof FiltroDashboardCompras>(campo: K, valor: FiltroDashboardCompras[K]) => setFiltros((f) => ({ ...f, [campo]: valor }));
+  const trocarEmpresa = (id: string) => {
+    setEmpresaSelecionadaId(id);
+    setFiltros((atuais) => ({
+      ...atuais,
+      contratoId: null,
+      categoria: null,
+      comprador: null,
+    }));
+  };
 
   return (
     <AcessoGate menu="sup_dashboard_compras_estoque" acao="visualizar" fallback={<Alert><AlertTitle>Acesso não liberado</AlertTitle><AlertDescription>Solicite acesso ao Dashboard de Compras, Estoque e Saving no Gerenciamento de Acesso.</AlertDescription></Alert>}>
@@ -333,13 +352,14 @@ export default function DashboardComprasEstoque() {
         <div className="rounded-xl bg-gradient-to-r from-[#062b53] via-[#0a4d88] to-[#0d75c5] p-5 text-white shadow-lg">
           <div className="flex flex-wrap items-center justify-between gap-4">
             <div className="flex items-center gap-3"><div className="rounded-xl bg-white/15 p-3"><ShoppingCart className="h-8 w-8" /></div><div><h1 className="text-2xl font-extrabold tracking-tight md:text-3xl">Compras, Estoque e Solicitações</h1><p className="mt-1 text-sm text-blue-100">Visão executiva com dados reais do Suprimentos, Malote e Licitações</p></div></div>
-            <div className="text-right text-xs text-blue-100"><p>Última atualização</p><p className="font-semibold text-white">{atualizado}</p><p className="mt-1">{empresa?.razao}</p></div>
+            <div className="text-right text-xs text-blue-100"><p>Última atualização</p><p className="font-semibold text-white">{atualizado}</p><p className="mt-1">{empresa?.razao ?? "Empresa operacional"}</p></div>
           </div>
         </div>
 
-        <Card className="border-slate-200 shadow-sm"><CardContent className="p-3"><div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
+        <Card className="border-slate-200 shadow-sm"><CardContent className="p-3"><div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-7">
           <div><label className="mb-1 block text-xs font-semibold text-slate-700">Início</label><Input type="date" value={filtros.inicio} max={filtros.fim} onChange={(e) => trocar("inicio", e.target.value)} /></div>
           <div><label className="mb-1 block text-xs font-semibold text-slate-700">Fim</label><Input type="date" value={filtros.fim} min={filtros.inicio} onChange={(e) => trocar("fim", e.target.value)} /></div>
+          <div><label className="mb-1 block text-xs font-semibold text-slate-700">Empresa</label><Select value={empresaId ?? undefined} onValueChange={trocarEmpresa} disabled={!empresaId}><SelectTrigger><SelectValue placeholder="Carregando..." /></SelectTrigger><SelectContent>{empresas.map((item) => <SelectItem key={item.id} value={item.id}>{item.sigla}</SelectItem>)}</SelectContent></Select></div>
           <div><label className="mb-1 block text-xs font-semibold text-slate-700">Contrato</label><Select value={filtros.contratoId ?? "todos"} onValueChange={(v) => trocar("contratoId", v === "todos" ? null : v)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="todos">Todos</SelectItem>{dados?.filtros.contratos.map((c) => <SelectItem key={c.id} value={c.id}>{c.nome}</SelectItem>)}</SelectContent></Select></div>
           <div><label className="mb-1 block text-xs font-semibold text-slate-700">Categoria</label><Select value={filtros.categoria ?? "todas"} onValueChange={(v) => trocar("categoria", v === "todas" ? null : v)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="todas">Todas</SelectItem>{dados?.filtros.categorias.map((c) => <SelectItem key={c.valor} value={c.valor}>{c.nome}</SelectItem>)}</SelectContent></Select></div>
           <div><label className="mb-1 block text-xs font-semibold text-slate-700">Comprador responsável</label><Select value={filtros.comprador ?? "todos"} onValueChange={(v) => trocar("comprador", v === "todos" ? null : v)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="todos">Todos</SelectItem>{dados?.filtros.compradores.map((nome) => <SelectItem key={nome} value={nome}>{nome}</SelectItem>)}</SelectContent></Select></div>
