@@ -77,6 +77,7 @@ import Classificadores from "./pages/controladoria/Classificadores";
 import PlanejadorOBZ from "./pages/controladoria/PlanejadorOBZ";
 import Orcamento from "./pages/Orcamento";
 import Fornecedores from "./pages/suprimentos/Fornecedores";
+import DashboardComprasEstoque from "./pages/suprimentos/DashboardComprasEstoque";
 import ProdutosServicos from "./pages/suprimentos/ProdutosServicos";
 import Requisicoes from "./pages/suprimentos/Requisicoes";
 import PedidosCompra from "./pages/suprimentos/PedidosCompra";
@@ -685,6 +686,7 @@ const App = () => (
             <Route path="diretoria/recrutamento-dashboard" element={<RecrutamentoDashboard />} />
             <Route path="orcamento" element={<Orcamento />} />
             {/* Suprimentos */}
+            <Route path="suprimentos/dashboard" element={<DashboardComprasEstoque />} />
             {/* Mais específica primeiro: o React Router casa na ordem declarada,
                 e o matchMenuCode resolve pelo prefixo mais longo — aqui o menu é
                 sup_fornecedor_aprovacao, não `fornecedores` (SIS-2026-0209). */}
