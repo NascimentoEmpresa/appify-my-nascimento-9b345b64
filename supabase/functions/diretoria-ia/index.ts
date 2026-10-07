@@ -16,6 +16,13 @@
 // Provedor: o mesmo de bi-ia / painel-formularios-chat — Gemini
 // (GEMINI_API_KEY) primeiro; sem ela, Groq (GROQ_API_KEY). Modelo por
 // variável de ambiente (IA_DIRETORIA_MODELO), porque nome de modelo muda.
+//
+// 07/10/2026: o Gemini respondeu 503 (sobrecarregado) e a tela mostrava
+// "Falha ao chamar a IA (HTTP 503)". Agora: erro passageiro (5xx) tenta o
+// mesmo provedor mais uma vez; persistindo — ou acabando os tokens (429) ou
+// a chave sendo recusada — passa para o próximo provedor configurado (Groq).
+// IA_DIRETORIA_MODELO só vale para o Gemini; o Groq usa GROQ_MODEL ou o
+// padrão, senão um nome de modelo do Gemini iria parar no Groq.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 
 const corsHeaders = {
@@ -45,18 +52,60 @@ const RPC: Record<string, string> = {
 
 type Msg = { role: "user" | "assistant"; content: string };
 
-function provedor() {
+type Provedor = { nome: string; url: string; chave: string; modelo: string };
+
+function provedores(): Provedor[] {
+  const lista: Provedor[] = [];
   const gemini = Deno.env.get("GEMINI_API_KEY");
   if (gemini) {
-    return { url: "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions", chave: gemini,
-             modelo: Deno.env.get("IA_DIRETORIA_MODELO") ?? Deno.env.get("IA_CHAT_MODELO") ?? "gemini-3.6-flash" };
+    lista.push({ nome: "gemini", url: "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions", chave: gemini,
+                 modelo: Deno.env.get("IA_DIRETORIA_MODELO") ?? Deno.env.get("IA_CHAT_MODELO") ?? "gemini-3.6-flash" });
   }
   const groq = Deno.env.get("GROQ_API_KEY");
   if (groq) {
-    return { url: "https://api.groq.com/openai/v1/chat/completions", chave: groq,
-             modelo: Deno.env.get("IA_DIRETORIA_MODELO") ?? Deno.env.get("GROQ_MODEL") ?? "openai/gpt-oss-120b" };
+    lista.push({ nome: "groq", url: "https://api.groq.com/openai/v1/chat/completions", chave: groq,
+                 modelo: Deno.env.get("GROQ_MODEL") ?? "openai/gpt-oss-120b" });
   }
-  return null;
+  return lista;
+}
+
+const esperar = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * Chama os provedores em ordem. Devolve o texto ou o erro para a tela (o do
+ * ÚLTIMO provedor tentado — se até o Groq falhou, é o que vale contar).
+ */
+async function chamarIA(provs: Provedor[], messages: { role: string; content: string }[]): Promise<{ texto?: string; erro?: string; status?: number }> {
+  let ultimo: { erro: string; status: number } = { erro: "Não foi possível gerar a análise agora.", status: 502 };
+  for (const prov of provs) {
+    for (let tentativa = 1; tentativa <= 2; tentativa++) {
+      const r = await fetch(prov.url, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${prov.chave}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ model: prov.modelo, temperature: 0.3, messages }),
+      }).catch((e) => { console.error("IA rede", prov.nome, e); return null; });
+      if (r && r.ok) {
+        const dados = await r.json().catch(() => null);
+        if (/quota|rate limit|resource_exhausted/i.test(String(dados?.error?.message ?? ""))) {
+          ultimo = { erro: ERRO_SEM_TOKENS, status: 429 };
+          break;                                   // sem tokens: próximo provedor
+        }
+        const texto = String(dados?.choices?.[0]?.message?.content ?? "").trim();
+        if (texto) return { texto };
+        ultimo = { erro: "A IA devolveu resposta vazia. Tente de novo.", status: 502 };
+        break;
+      }
+      const status = r?.status ?? 0;
+      console.error("IA erro", prov.nome, prov.modelo, status, r ? (await r.text()).slice(0, 300) : "sem resposta");
+      if (status === 413) return { erro: "O relatório ficou grande demais para a IA — diminua o período.", status: 413 };
+      if (status === 429 || status === 402) { ultimo = { erro: ERRO_SEM_TOKENS, status: 429 }; break; }
+      if (status === 401 || status === 403) { ultimo = { erro: "A chave da IA foi recusada. Avise o time de Sistemas.", status: 502 }; break; }
+      ultimo = { erro: `Falha ao chamar a IA (HTTP ${status || "sem resposta"}).`, status: 502 };
+      if (!(status === 0 || status >= 500) || tentativa === 2) break;   // 4xx não melhora repetindo
+      await esperar(1200);                         // 5xx/rede: mais uma vez no mesmo provedor
+    }
+  }
+  return ultimo;
 }
 
 /** Enxuga o relatório para o prompt: tira a tabela de recentes (nomes de pessoas, e não ajuda a análise). */
@@ -119,8 +168,8 @@ Deno.serve(async (req) => {
       .filter((m: any) => m && (m.role === "user" || m.role === "assistant") && typeof m.content === "string")
       .slice(-8).map((m: any) => ({ role: m.role, content: String(m.content).slice(0, 4000) }));
 
-    const prov = provedor();
-    if (!prov) return respostaJson({ error: "A chave da IA não está configurada. Avise o time de Sistemas." }, 500);
+    const provs = provedores();
+    if (!provs.length) return respostaJson({ error: "A chave da IA não está configurada. Avise o time de Sistemas." }, 500);
 
     const { data: rel, error: relErr } = await supa.rpc(rpc, { _de: data(corpo?.de), _ate: data(corpo?.ate) });
     if (relErr) return respostaJson({ error: relErr.message }, relErr.code === "42501" ? 403 : 500);
@@ -132,27 +181,9 @@ Deno.serve(async (req) => {
       ? [{ role: "user", content: PEDIDO_ANALISE }]
       : [...historico, { role: "user", content: pergunta }];
 
-    const r = await fetch(prov.url, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${prov.chave}`, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model: prov.modelo, temperature: 0.3,
-        messages: [{ role: "system", content: SYSTEM + "\n\n" + contexto }, ...mensagens],
-      }),
-    });
-    if (!r.ok) {
-      const txt = await r.text();
-      console.error("IA erro", r.status, txt.slice(0, 300));
-      if (r.status === 429 || r.status === 402) return respostaJson({ error: ERRO_SEM_TOKENS }, 429);
-      if (r.status === 401 || r.status === 403) return respostaJson({ error: "A chave da IA foi recusada. Avise o time de Sistemas." }, 502);
-      if (r.status === 413) return respostaJson({ error: "O relatório ficou grande demais para a IA — diminua o período." }, 413);
-      return respostaJson({ error: `Falha ao chamar a IA (HTTP ${r.status}).` }, 502);
-    }
-    const dados = await r.json();
-    if (/quota|rate limit|resource_exhausted/i.test(String(dados?.error?.message ?? ""))) return respostaJson({ error: ERRO_SEM_TOKENS }, 429);
-    const texto = String(dados?.choices?.[0]?.message?.content ?? "").trim();
-    if (!texto) return respostaJson({ error: "A IA devolveu resposta vazia. Tente de novo." }, 502);
-    return respostaJson({ texto });
+    const res = await chamarIA(provs, [{ role: "system", content: SYSTEM + "\n\n" + contexto }, ...mensagens]);
+    if (!res.texto) return respostaJson({ error: res.erro }, res.status ?? 502);
+    return respostaJson({ texto: res.texto });
   } catch (e) {
     console.error(e);
     return respostaJson({ error: e instanceof Error ? e.message : "Não foi possível gerar a análise agora." }, 500);
