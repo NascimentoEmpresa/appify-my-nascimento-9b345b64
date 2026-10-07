@@ -74,7 +74,11 @@ export interface RespostaLogin {
 
 export interface PerfilColaborador {
   empregado_id: number; nome: string; matricula: string | null; cpf: string | null; nascimento: string | null;
-  sexo: string | null; estado_civil: string | null; instrucao: string | null; nacionalidade: string | null;
+  /** Sexo e estado civil INFORMADOS pelo colaborador no portal (mig 20261006000007) — vazios até ele preencher. */
+  sexo: string | null; estado_civil: string | null;
+  /** Só dígitos, com DDD (ex.: 51999998888). */
+  celular_whatsapp: string | null; dados_pessoais_atualizados_em: string | null;
+  instrucao: string | null; nacionalidade: string | null;
   email: string | null; pis: string | null; ctps: string | null;
   cargo: string | null; setor: string | null; posto: string | null; local: string | null; filial: string | null;
   empresa: string | null; centro_custo: string | null; situacao: string | null; admissao: string | null;
@@ -390,6 +394,16 @@ export function useAlterarSenhaColaborador() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (p: { atual: string; nova: string }) => chamarPortal<{ ok: boolean; error?: string }>("alterar_senha", p),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["colaborador", "perfil"] }),
+  });
+}
+
+/** Sexo, estado civil, celular/WhatsApp e e-mail que o próprio colaborador informa (migs 20261006000007/08). */
+export function useAtualizarDadosColaborador() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (p: { sexo: string | null; estado_civil: string | null; celular: string | null; email: string | null }) =>
+      chamarPortal<PerfilColaborador>("atualizar_dados", p),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["colaborador", "perfil"] }),
   });
 }

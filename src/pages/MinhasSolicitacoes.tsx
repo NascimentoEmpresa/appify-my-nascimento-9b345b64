@@ -123,6 +123,7 @@ const VAGA_RESET = {
   contrato_id: "", posto_id: "", funcao_id: "",
   estado: "", cidade: "", quantidade_vagas: "1", data_inicio_prevista: "",
   escala: "", salario: "", insalubridade_recebe: "Não", reserva_tecnica: "Não",
+  vaga_encarregado: "Não", precisa_login_erp: "Não",
   insalubridade_quanto: "", beneficios: "",
   tem_recomendacao: "Não", recomendacao_nome: "", recomendacao_cpf: "", recomendacao_whatsapp: "",
   grau_urgencia: "", alta_rotatividade: "Não", req_obrigatorios: "",
@@ -133,6 +134,8 @@ const VAGA_RESET = {
 import { DetalheSolicitacao, type TipoSolicitacao } from "./encarregados/DetalheSolicitacao";
 import { AVISO_REFAZER, podeRefazerFerias } from "@/lib/solicitacoes/feriasRefazer";
 import { BotaoCancelarDemissao } from "@/components/demissao/CancelarDemissao";
+import { CredenciaisProntas } from "@/components/sistemas/CredenciaisProntas";
+import { PerguntaLoginErp, loginErpParaBanco } from "@/components/recrutamento/PerguntaLoginErp";
 import {
   MEDIDAS, erroDaMedida, exigeChecarVerbal, medidaPor, statusDaMedida,
   type MedidaDisciplinar, type VerbaisDoColaborador,
@@ -644,6 +647,7 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
       quantidade_vagas: quantidadeValida(vaga.motivo_vaga, vaga.quantidade_vagas),
       ...recomendacaoParaBanco(vaga),
       reserva_tecnica: vaga.reserva_tecnica === "Sim",
+      ...loginErpParaBanco(vaga),
       // Grau e CNH saem das regras, não do que a pessoa digitou (o banco
       // recalcula os dois no trigger — aqui é só p/ a tela não mentir).
       grau_urgencia: prazo.grau ?? "",
@@ -665,7 +669,7 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
     let { error, data } = await db.from("SISTEMA_RECRUTAMENTO").insert(payload).select("id").single();
     // Banco ainda sem as colunas novas: reenvia sem elas.
     if (error && /column|schema cache/i.test(error.message)) {
-      const { cnh_obrigatoria, substituido_id, demissao_id, contrato_id, posto_id, funcao_id, administrativa, reserva_tecnica, tem_recomendacao, recomendacao_nome, recomendacao_cpf, recomendacao_whatsapp, ...semColunasNovas } = payload as Record<string, unknown>;
+      const { cnh_obrigatoria, substituido_id, demissao_id, contrato_id, posto_id, funcao_id, administrativa, reserva_tecnica, vaga_encarregado, precisa_login_erp, tem_recomendacao, recomendacao_nome, recomendacao_cpf, recomendacao_whatsapp, ...semColunasNovas } = payload as Record<string, unknown>;
       ({ error, data } = await db.from("SISTEMA_RECRUTAMENTO").insert(semColunasNovas).select("id").single());
     }
     if (error) { toast("Erro ao solicitar vaga: " + error.message, "err"); return; }
@@ -1032,6 +1036,9 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
             ruído do que ajuda. */}
         <ResumoDeFuncoes fluxo={["vaga", "ferias", "advertencia", "demissao"]} />
       </div>
+
+      {/* SIS-2026-0598: login do encarregado novo, para quem pediu a vaga. */}
+      <CredenciaisProntas />
 
       {/* Botões de criação */}
       <div className="ini-card">
@@ -1499,6 +1506,10 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
                   <option>Não</option><option>Sim</option>
                 </select>
               </div>
+              {/* SIS-2026-0598: encarregado + login na ERP. */}
+              <PerguntaLoginErp classeGrupo="ini-fg" classeCampo="ini-fi"
+                valor={{ vaga_encarregado: vaga.vaga_encarregado, precisa_login_erp: vaga.precisa_login_erp }}
+                onChange={(r) => setVaga(v => ({ ...v, ...r }))} />
             </>)}
 
             {vagaStep === 3 && (<>
