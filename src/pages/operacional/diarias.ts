@@ -1,8 +1,15 @@
 // Domínio do Controle de Diárias (módulo Operacional).
 
+import {
+  STATUS_BADGE_CLASS as STATUS_BADGE_MALOTE,
+  STATUS_LABEL as STATUS_LABEL_MALOTE,
+  type StatusDespesa,
+} from "@/lib/maloteStatus";
+
 export type TurnoDiaria = "manha" | "tarde" | "noite" | "dia_inteiro";
-// "paga" NÃO existe no banco: é "aprovada" cuja despesa do Malote já está
-// despesa_paga, derivado na leitura (ver 20260930000151_diaria_status_paga.sql).
+// "paga" NÃO existe no banco: permanece neste tipo compartilhado porque a
+// tela UFRGS ainda o deriva do Malote. A diária operacional comum usa
+// `maloteStatus` para mostrar qualquer etapa real da despesa, não só pagamento.
 //
 // "em_ajuste" e "excluida" são do banco (20260930000153): a solicitação
 // devolvida a quem a criou, e a excluída logicamente — que continua existindo
@@ -34,6 +41,40 @@ export const STATUS_SOLICITACAO: Record<StatusSolicitacao, { label: string; cls:
     label: "Excluída",
     cls: "border-muted-foreground/40 bg-muted text-muted-foreground line-through",
   },
+};
+
+export interface StatusExibicaoDiaria {
+  chave: string;
+  label: string;
+  cls: string;
+  origem: "diaria" | "malote";
+}
+
+/**
+ * Depois da aprovação, o andamento pertence ao Malote. A diária conserva o
+ * próprio status para as regras de ação, mas mostra exatamente o status atual
+ * da despesa vinculada (mesmo rótulo e mesma cor das telas do Malote).
+ */
+export const statusExibicaoDiaria = (s: {
+  status: StatusSolicitacao;
+  maloteStatus?: StatusDespesa | null;
+}): StatusExibicaoDiaria => {
+  if (s.maloteStatus) {
+    return {
+      chave: `malote:${s.maloteStatus}`,
+      label: STATUS_LABEL_MALOTE[s.maloteStatus],
+      cls: STATUS_BADGE_MALOTE[s.maloteStatus],
+      origem: "malote",
+    };
+  }
+
+  const status = STATUS_SOLICITACAO[s.status];
+  return {
+    chave: `diaria:${s.status}`,
+    label: status.label,
+    cls: status.cls,
+    origem: "diaria",
+  };
 };
 
 /**
@@ -69,6 +110,8 @@ export interface SolicitacaoDiaria {
   id: string; // número legível gerado no banco: SD-2026-000123
   criadoEm: string; // 18/05/2025 às 09:24
   status: StatusSolicitacao;
+  /** Status atual da despesa vinculada, derivado do Malote na leitura. */
+  maloteStatus?: StatusDespesa | null;
   contratoId: string;
   /**
    * Nome e cliente do contrato ficam GRAVADOS na leitura, não resolvidos por

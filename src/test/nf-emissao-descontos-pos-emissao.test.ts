@@ -95,3 +95,11 @@ describe("ajustarValoresNfConcluida — VA/VT/materiais", () => {
     expect(r.vlr_liquido).toBe(9533.79);
   });
 });
+
+describe("SIS-2026-0591: total PIS + COFINS + CSLL", () => {
+  it("soma as três retenções e arredonda em centavos", async () => {
+    const { somaRetencoesPisCofinsCsll } = await import("@/pages/financeiro/nf-emissao/calculos");
+    expect(somaRetencoesPisCofinsCsll({ pis_total: 65.1, cofins_total: 300.2, csll_total: 100.05 })).toBe(465.35);
+    expect(somaRetencoesPisCofinsCsll({ pis_total: 0, cofins_total: 0, csll_total: 0 })).toBe(0);
+  });
+});

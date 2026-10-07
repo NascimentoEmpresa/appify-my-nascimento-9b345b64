@@ -267,6 +267,8 @@ const controladoriaOrcModule: ModuleDef = {
         // SIS-2026-0556: mesma regra do item acima — precisa existir aqui E em app_menu.
         { label: "Faturamento da Empresa", to: "/app/controladoria/faturamento-empresa", icon: TrendingUp },
         { label: "Lucratividade de Contratos", to: "/app/controladoria/lucratividade-contratos", icon: TrendingUp },
+        // SIS-2026-0553: checkpoint da Controladoria antes da Lucratividade.
+        { label: "Auditoria da Controladoria", to: "/app/controladoria/auditoria", icon: ListChecks },
       ],
     },
   ],

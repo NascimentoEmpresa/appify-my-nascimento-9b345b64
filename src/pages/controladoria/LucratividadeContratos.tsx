@@ -12,6 +12,7 @@ import { useCustosContratoMes } from "./faturamento/useCustosContratoMes";
 import { fmtMoney } from "@/pages/financeiro/nf-emissao/shared";
 import { agruparFaturamento, custosPorContratoMes, custosVazios, CustosPorRubrica, lucroBruto, RUBRICAS, totaisVazios, totalCustos } from "./faturamento/regras";
 import { rotuloMes, useBaseFaturamento } from "./faturamento/useBaseFaturamento";
+import { BannerAuditoria } from "./auditoria/BannerAuditoria";
 
 // SIS-2026-0556: Lucratividade de Contratos (Controladoria). Faturamento vem
 // das NFs Código N (competência); custo realizado vem das SAÍDAS do Fluxo de
@@ -122,6 +123,9 @@ export default function LucratividadeContratos() {
           </div>
         }
       />
+
+      {/* SIS-2026-0553: checkpoint da Controladoria (alerta, sem bloquear). */}
+      <BannerAuditoria mes={mes} empresaId={empresaId === TODOS ? null : empresaId} />
 
       <div className="card-elevated p-3 flex items-center gap-2 flex-wrap text-xs print:hidden">
         <Select value={mes} onValueChange={setMes}>
