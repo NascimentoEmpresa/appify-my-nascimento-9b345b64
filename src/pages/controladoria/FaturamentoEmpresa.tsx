@@ -48,7 +48,7 @@ export default function FaturamentoEmpresa() {
   const [aba, setAba] = useState("mensal");
   // Custos do ano só são buscados quando a aba "Por Contrato" (que tem lucro e
   // margem) é aberta: as outras abas não precisam do Fluxo de Caixa.
-  const { data: custosAno = [], isLoading: carregandoCustos, error: erroCustos } = useCustosContratoAno(ano, aba === "contrato");
+  const { data: custosAno = [], isLoading: carregandoCustos, error: erroCustos } = useCustosContratoAno(ano, aba === "contrato" || aba === "mensal");
   const { data: ligacoes } = useLigacoesRubrica();
   const custoPorContrato = useMemo(() => {
     const m = new Map<string, number>();
@@ -90,6 +90,19 @@ export default function FaturamentoEmpresa() {
   const contratosDoRecorte = useMemo(() => contratos.filter((c) => contratoPassa(c.id)),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [contratos, empresaId, contratoId, cliente]);
+
+  // Custos por mês de pagamento dos contratos do recorte filtrado (todos eles, com
+  // ou sem nota no mês): é o custo da empresa naquele mês.
+  const custoPorMes = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const [chave, c] of custosPorContratoMes(custosAno, ligacoes)) {
+      const [id, mes] = chave.split("|");
+      if (!contratoPassa(id)) continue;
+      m.set(mes, (m.get(mes) ?? 0) + totalCustos(c));
+    }
+    return m;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [custosAno, ligacoes, empresaId, contratoId, cliente, contratoPorId]);
 
   const execPorMes = useMemo(() => {
     const m = new Map<string, number>();
@@ -173,6 +186,9 @@ export default function FaturamentoEmpresa() {
   const custoTotalContratos = useMemo(() => [...porContrato.keys()].reduce((s, id) => s + (custoPorContrato.get(id) ?? 0), 0), [porContrato, custoPorContrato]);
   const totalLucro = lucroBruto(total.liquido, custoTotalContratos);
   const custosPendentes = carregandoCustos || !!erroCustos;
+  // Total do ano no Resumo Mensal: soma dos custos mensais do recorte.
+  const custoAno = useMemo(() => [...custoPorMes.values()].reduce((s, v) => s + v, 0), [custoPorMes]);
+  const lucroAno = lucroBruto(total.liquido, custoAno);
 
   return (
     <div className="space-y-6">
@@ -301,18 +317,32 @@ export default function FaturamentoEmpresa() {
                       <TableHead className={CAB}><TituloComFormula titulo="Valor Exec. Planilha (R$)" formula="Valor executável dos contratos do recorte no mês, segundo a planilha de custo vigente. Zero depois do fim do contrato." /></TableHead>
                       <TableHead className={CAB}><TituloComFormula titulo="Diferença Exec. × Fat. (R$)" formula="Valor Exec. Planilha − Valor Bruto faturado no mês. Positivo = faturou menos do que o executável." /></TableHead>
                       <Cabecalho />
+                      <TableHead className={CAB}><TituloComFormula titulo="Lucro Faturamento (R$)" formula="Valor Líquido do mês − custos pagos no mês (saídas do Fluxo de Caixa com contrato dos contratos do recorte, em regime de caixa, sem transferências, aplicações e empréstimos)." /></TableHead>
+                      <TableHead className={CAB}><TituloComFormula titulo="Lucro Recebido (R$)" formula="Recebido do mês − os mesmos custos. A diferença para o Lucro Faturamento é só o que ainda falta receber." /></TableHead>
+                      <TableHead className={CAB}><TituloComFormula titulo="Margem Bruta (%)" formula={<><p>Lucro Faturamento ÷ Valor Líquido × 100. Em branco quando não há faturamento no mês.</p><p className="font-medium pt-1">A cor e o Status seguem a faixa:</p><FaixasTexto /></>} /></TableHead>
+                      <TableHead className={`${CAB} text-left`}><TituloComFormula alinhar="left" titulo="Status" formula={<><p>Rentabilidade do mês, pela Margem Bruta. A barra enche até 30% de margem.</p><FaixasTexto /></>} /></TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {meses.map((m) => {
                       const t = porMes.get(m) ?? totaisVazios();
                       const exec = execPorMes.get(m) ?? 0;
+                      const custo = custoPorMes.get(m) ?? 0;
+                      // Mês sem nota e sem custo (ex.: futuro) não mostra lucro.
+                      const temDado = t.notas > 0 || custo > 0;
+                      const lucro = lucroBruto(t.liquido, custo);
                       return (
                         <TableRow key={m}>
                           <TableCell className={`${CEL} font-medium`}>{rotuloMes(m)}</TableCell>
                           <TableCell className={CEL_NUM}>{exec ? num2(exec) : "—"}</TableCell>
                           <TableCell className={CEL_NUM}>{exec && t.notas ? <Num v={exec - t.bruto} /> : "—"}</TableCell>
                           <Celulas t={t} />
+                          <TableCell className={`${CEL_NUM} ${temDado && !custosPendentes && lucro.lucro < 0 ? "text-red-600" : ""}`}>{custosPendentes ? "…" : temDado ? num2(lucro.lucro) : "—"}</TableCell>
+                          <TableCell className={`${CEL_NUM} ${temDado && !custosPendentes && lucroRecebido(t.recebido, custo) < 0 ? "text-red-600" : ""}`}>{custosPendentes ? "…" : temDado ? num2(lucroRecebido(t.recebido, custo)) : "—"}</TableCell>
+                          <TableCell className={`${CEL} text-right`}>
+                            {custosPendentes ? "…" : temDado ? <span className={`inline-block rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${pillDaMargem(lucro.margem)}`}>{pctTxt(lucro.margem)}</span> : "—"}
+                          </TableCell>
+                          <TableCell className={CEL}>{custosPendentes ? "…" : temDado ? <StatusRentabilidade margem={lucro.margem} /> : "—"}</TableCell>
                         </TableRow>
                       );
                     })}
@@ -323,6 +353,12 @@ export default function FaturamentoEmpresa() {
                       <TableCell className={`${CEL_NUM} font-semibold`}>{num2(execTotal)}</TableCell>
                       <TableCell />
                       <Rodape t={total} />
+                      <TableCell className={`${CEL_NUM} font-semibold`}>{custosPendentes ? "…" : num2(lucroAno.lucro)}</TableCell>
+                      <TableCell className={`${CEL_NUM} font-semibold`}>{custosPendentes ? "…" : num2(lucroRecebido(total.recebido, custoAno))}</TableCell>
+                      <TableCell className={`${CEL} text-right`}>
+                        {custosPendentes ? "…" : <span className={`inline-block rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${pillDaMargem(lucroAno.margem)}`}>{pctTxt(lucroAno.margem)}</span>}
+                      </TableCell>
+                      <TableCell className={CEL}>{custosPendentes ? "…" : <StatusRentabilidade margem={lucroAno.margem} />}</TableCell>
                     </TableRow>
                   </TableFooter>
                 </Table>
