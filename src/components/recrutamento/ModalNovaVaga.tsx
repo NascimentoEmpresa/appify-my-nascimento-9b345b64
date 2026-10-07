@@ -44,6 +44,7 @@ import {
   substituidosComVagaViva, avisoSubstituidoPreso, FILTRO_EMPREGADO_VAGA,
 } from "@/lib/recrutamento/vagaRegras";
 import { maskFone } from "@/lib/telefone";
+import { PerguntaLoginErp, loginErpDoBanco, loginErpParaBanco } from "./PerguntaLoginErp";
 import { AlertTriangle, CheckCircle2, Undo2, PenLine, Ban, Link2, Car } from "lucide-react";
 
 // EMPREGADOS, CONTRATOS, CARGOS e SISTEMA_* não estão no types.ts gerado;
@@ -69,6 +70,7 @@ const VAGA_RESET = {
   contrato_id: "", posto_id: "", funcao_id: "",
   estado: "", cidade: "", quantidade_vagas: "1", data_inicio_prevista: "",
   escala: "", salario: "", insalubridade_recebe: "Não", reserva_tecnica: "Não",
+  vaga_encarregado: "Não", precisa_login_erp: "Não",
   insalubridade_quanto: "", beneficios: "", local_exato: "",
   tem_recomendacao: "Não", recomendacao_nome: "", recomendacao_cpf: "", recomendacao_whatsapp: "",
   grau_urgencia: "", alta_rotatividade: "Não", req_obrigatorios: "",
@@ -224,6 +226,7 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
       // campo é um <select>, igual ao da insalubridade logo acima.
       preenchido.reserva_tecnica = dados.reserva_tecnica ? "Sim" : "Não";
       preenchido.tem_recomendacao = dados.tem_recomendacao ? "Sim" : "Não";
+      Object.assign(preenchido, loginErpDoBanco(dados));
       setVaga(preenchido as unknown as typeof VAGA_RESET);
       // Vaga já gravada sem vínculo com o catálogo continua sem ele: exigir o
       // posto agora travaria a correção de uma vaga que foi criada à mão.
@@ -565,6 +568,7 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
       quantidade_vagas: quantidadeValida(vaga.motivo_vaga, vaga.quantidade_vagas),
       ...recomendacaoParaBanco(vaga),
       reserva_tecnica: vaga.reserva_tecnica === "Sim",
+      ...loginErpParaBanco(vaga),
       // Grau e CNH saem das regras (o trigger recalcula os dois no banco).
       grau_urgencia: prazo.grau ?? "",
       req_obrigatorios: aplicarReqCnh(vaga.req_obrigatorios, vaga.cargo),
@@ -599,7 +603,7 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
     let { error, data } = await gravar(payload);
     // Banco ainda sem as colunas novas: reenvia sem elas.
     if (error && /column|schema cache/i.test(error.message)) {
-      const { cnh_obrigatoria, substituido_id, demissao_id, contrato_id, posto_id, funcao_id, reserva_tecnica, tem_recomendacao, recomendacao_nome, recomendacao_cpf, recomendacao_whatsapp, ...semColunasNovas } = payload;
+      const { cnh_obrigatoria, substituido_id, demissao_id, contrato_id, posto_id, funcao_id, reserva_tecnica, vaga_encarregado, precisa_login_erp, tem_recomendacao, recomendacao_nome, recomendacao_cpf, recomendacao_whatsapp, ...semColunasNovas } = payload;
       ({ error, data } = await gravar(semColunasNovas));
     }
     setSalvando(false);
@@ -880,6 +884,11 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
               </select>
             </div>
           </div>
+
+          {/* SIS-2026-0598: encarregado + login na ERP. */}
+          <PerguntaLoginErp classeGrupo="nvg-fg" classeCampo="nvg-fi"
+            valor={{ vaga_encarregado: vaga.vaga_encarregado, precisa_login_erp: vaga.precisa_login_erp }}
+            onChange={(r) => setVaga(v => ({ ...v, ...r }))} />
 
           {/* Vaga administrativa + setor (18/09/2026): igual à demissão — SÓ o
               contrato ADM E ESTAGIÁRIOS é escritório, marca sozinho pelo contrato

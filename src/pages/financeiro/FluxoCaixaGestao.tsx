@@ -20,6 +20,7 @@ import {
   useFluxoCaixaCombinado,
   useAjustarLinhaFluxoCaixa,
   useTrocarContratoFluxoCaixa,
+  useSemContratoImportado,
   useReverterAjusteFluxoCaixa,
   type FluxoCaixaMaloteLinha,
 } from "@/hooks/useFluxoCaixaMalote";
@@ -34,6 +35,10 @@ import { KpiTile } from "@/components/financeiro/KpiTile";
 import { BancoBadge } from "@/components/financeiro/BancoBadge";
 import { urlLogoCartao, useCartaoBancos } from "@/hooks/useMaloteCartaoCredito";
 import { ContratoTrocaCampo } from "@/pages/financeiro/fluxo-caixa/ContratoTrocaCampo";
+import { camposComPendencia, motivosRevisar, SEM_CONTRATO } from "@/pages/financeiro/fluxo-caixa/motivosRevisar";
+
+// Campo do lápis que resolve o selo "revisar".
+const DESTAQUE_REVISAR = "rounded-md ring-2 ring-red-400 ring-offset-2 ring-offset-background p-1.5 -m-1.5";
 
 // SIS-2026-0413: menu_codigo de cada origem, pra gatear o botão Excluir de
 // cada linha (não existe um menu_codigo próprio do Fluxo de Caixa pra
@@ -179,9 +184,12 @@ export default function FluxoCaixaGestao() {
   const { data: bancosCartao = [] } = useCartaoBancos();
   const { data: classificacoesCatalogo = [] } = useClassificacoesOrcamentoAdmin();
   const [itemEditar, setItemEditar] = useState<FluxoCaixaMaloteLinha | null>(null);
+  const motivosEdicao = useMemo(() => motivosRevisar(itemEditar?.inconsistencia), [itemEditar]);
+  const camposEdicao = useMemo(() => camposComPendencia(motivosEdicao), [motivosEdicao]);
   // SIS-2026-0552: troca de contrato dentro da edição — grava na ORIGEM (RPC) e
   // repassa o valor no Orçamento; os demais campos continuam só no Fluxo.
   const trocarContrato = useTrocarContratoFluxoCaixa();
+  const semContrato = useSemContratoImportado();
   const [editNovoContratoId, setEditNovoContratoId] = useState("");
   const [editCienteEstouro, setEditCienteEstouro] = useState(false);
   const [editExigeCiencia, setEditExigeCiencia] = useState(false);
@@ -220,7 +228,9 @@ export default function FluxoCaixaGestao() {
     try {
       // 1º a troca de contrato (valida empresa/rateio no banco e pode falhar);
       // só depois o ajuste dos outros campos.
-      if (editNovoContratoId) {
+      if (editNovoContratoId === SEM_CONTRATO) {
+        await semContrato.mutateAsync({ linhaId: itemEditar.despesa_id });
+      } else if (editNovoContratoId) {
         await trocarContrato.mutateAsync({ origem: itemEditar.origem, despesaId: itemEditar.despesa_id, contratoId: editNovoContratoId });
       }
       await ajustarLinha.mutateAsync({
@@ -237,8 +247,10 @@ export default function FluxoCaixaGestao() {
         bancoId: editBancoId || null,
       });
       toast.success(
-        editNovoContratoId
-          ? "Contrato alterado na origem" + (itemEditar.origem === "malote" ? " (valor repassado no Orçamento)" : "") + "; os demais campos valem só neste Fluxo de Caixa."
+        editNovoContratoId === SEM_CONTRATO
+          ? "Confirmado: lançamento sem contrato (administrativo); os demais campos valem só neste Fluxo de Caixa."
+          : editNovoContratoId
+          ?"Contrato alterado na origem" + (itemEditar.origem === "malote" ? " (valor repassado no Orçamento)" : "") + "; os demais campos valem só neste Fluxo de Caixa."
           : "Atualizado só neste Fluxo de Caixa — o lançamento original não muda."
       );
       setItemEditar(null);
@@ -1041,6 +1053,21 @@ export default function FluxoCaixaGestao() {
             {itemEditar?.id_malote} — {LABEL_ORIGEM[itemEditar?.origem ?? "malote"]}. Os campos abaixo mudam só neste Fluxo de Caixa; o
             <strong> Contrato</strong> muda no lançamento de origem.
           </p>
+          {motivosEdicao.length > 0 && (
+            <div className="rounded-md border border-red-300 bg-red-50 p-2.5 text-xs text-red-900 dark:border-red-900 dark:bg-red-950/30 dark:text-red-200">
+              <p className="font-medium mb-1">O que precisa ser conferido para sair o selo “revisar”:</p>
+              <ul className="space-y-0.5">
+                {motivosEdicao.map((m) => (
+                  <li key={m.texto}>
+                    • {m.texto}
+                    {m.campo === "contrato" && <strong> → campo Contrato (abaixo)</strong>}
+                    {m.campo === "classificacao" && <strong> → campo Classificação</strong>}
+                    {m.dica && <span className="block pl-3 text-red-800/80 dark:text-red-300/80">{m.dica}</span>}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
           <div className="space-y-3">
             <div>
               <Label className="text-xs">Data de Pagamento</Label>
@@ -1056,7 +1083,7 @@ export default function FluxoCaixaGestao() {
                 </SelectContent>
               </Select>
             </div>
-            <div>
+            <div className={camposEdicao.has("classificacao") ? DESTAQUE_REVISAR : undefined}>
               <Label className="text-xs">Classificação</Label>
               <Select value={editClassificacaoId || "_"} onValueChange={(v) => setEditClassificacaoId(v === "_" ? "" : v)}>
                 <SelectTrigger className="h-9"><SelectValue placeholder="Selecione…" /></SelectTrigger>
@@ -1113,14 +1140,16 @@ export default function FluxoCaixaGestao() {
               </Select>
             </div>
             {itemEditar && (
-              <ContratoTrocaCampo
-                linha={itemEditar}
-                novoId={editNovoContratoId}
-                onNovoId={setEditNovoContratoId}
-                ciente={editCienteEstouro}
-                onCiente={setEditCienteEstouro}
-                onExigeCiencia={setEditExigeCiencia}
-              />
+              <div className={camposEdicao.has("contrato") ? DESTAQUE_REVISAR : undefined}>
+                <ContratoTrocaCampo
+                  linha={itemEditar}
+                  novoId={editNovoContratoId}
+                  onNovoId={setEditNovoContratoId}
+                  ciente={editCienteEstouro}
+                  onCiente={setEditCienteEstouro}
+                  onExigeCiencia={setEditExigeCiencia}
+                />
+              </div>
             )}
           </div>
           <DialogFooter className="flex-wrap gap-2 sm:justify-between">
