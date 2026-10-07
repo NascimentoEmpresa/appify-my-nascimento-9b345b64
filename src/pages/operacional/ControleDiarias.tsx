@@ -15,6 +15,7 @@ import {
   RotateCcw,
   Search,
   Wallet,
+  UserX,
 } from "lucide-react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Badge } from "@/components/ui/badge";
@@ -59,10 +60,12 @@ import {
   usePostosDiaria,
   useRegistrarVisualizacaoDiaria,
   useSolicitacoesDiaria,
+  useConflitosPontoDiarias,
   useSolicitarAjusteDiaria,
   useVisualizacoesDiaria,
 } from "@/hooks/useDiarias";
 import { ModoModalDiaria, SolicitacaoDiariaModal } from "./SolicitacaoDiariaModal";
+import { conflitosPorSolicitacao } from "@/lib/diariaPonto";
 import {
   LinhaDiaria,
   STATUS_SOLICITACAO,
@@ -181,6 +184,9 @@ export default function ControleDiarias({
     error: erroSolicitacoes,
   } = useSolicitacoesDiaria(apenasMinhas);
   const { data: contratos = [] } = useContratosDiaria();
+  // Faltante que bateu ponto no dia da diária (mig 20261007000021).
+  const { data: pontoConflitos } = useConflitosPontoDiarias();
+  const pontoPorSolicitacao = useMemo(() => conflitosPorSolicitacao(pontoConflitos), [pontoConflitos]);
   const criar = useCriarSolicitacaoDiaria();
   const decidir = useDecidirSolicitacaoDiaria();
   const ajustar = useAjustarSolicitacaoDiaria();
@@ -580,6 +586,31 @@ export default function ControleDiarias({
           <StatCard icon={Wallet} label="Valor total aprovado" value={`R$ ${fmtBRL(resumo.valorAprovado)}`} tone="muted" />
         </div>
 
+        {/* Faltante que bateu ponto (mig 20261007000021): as pendentes não passam na aprovação. */}
+        {(() => {
+          const pend = solicitacoes.filter((x) => (x.status === "solicitada" || x.status === "em_ajuste") && pontoPorSolicitacao.has(x.uuid));
+          const pagas = solicitacoes.filter((x) => x.status !== "solicitada" && x.status !== "em_ajuste" && pontoPorSolicitacao.has(x.uuid));
+          if (!pend.length && !pagas.length) return null;
+          return (
+            <Card className="flex items-start gap-3 border-destructive/40 bg-destructive/5 p-4">
+              <UserX className="mt-0.5 h-5 w-5 shrink-0 text-destructive" />
+              <div className="text-sm">
+                <p className="font-semibold text-destructive">Faltante bateu ponto no dia da diária</p>
+                {pend.length > 0 && (
+                  <p className="text-xs text-muted-foreground">
+                    <b className="text-foreground">{pend.length}</b> pendente(s) — {pend.map((x) => x.id).join(", ")} — não podem ser aprovadas: reprove ou devolva para ajuste.
+                  </p>
+                )}
+                {pagas.length > 0 && (
+                  <p className="text-xs text-muted-foreground">
+                    <b className="text-foreground">{pagas.length}</b> já decidida(s) antes da conferência com o ponto — {pagas.map((x) => x.id).join(", ")}. Linhas marcadas com “Bateu ponto”.
+                  </p>
+                )}
+              </div>
+            </Card>
+          );
+        })()}
+
         {/* Filtros */}
         <Card className="p-4">
           <div className="flex flex-wrap items-end gap-4">
@@ -802,6 +833,14 @@ export default function ControleDiarias({
                           >
                             {st.label}
                           </Badge>
+                          {(() => {
+                            const batida = pontoPorSolicitacao.get(l.solicitacao.uuid)?.find((x) => x.data === String(l.data).slice(0, 10));
+                            return batida ? (
+                              <Badge variant="outline" className="border-destructive/50 bg-destructive/10 text-[10px] font-semibold text-destructive" title={`Faltante bateu ponto neste dia: ${batida.horarios.join(", ")}`}>
+                                Bateu ponto
+                              </Badge>
+                            ) : null;
+                          })()}
                           {l.solicitacao.comprovantesPagamento.length > 0 && (
                             <Paperclip
                               className="h-3 w-3 shrink-0 text-success"
