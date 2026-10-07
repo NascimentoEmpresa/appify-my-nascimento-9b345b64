@@ -3,6 +3,9 @@ export const INSS_CATEGORIAS = {
   insalubridade_20: { label: "Insalubridade 20%", pct: 0.13 },
   periculosidade_30: { label: "Periculosidade 30%", pct: 0.14 },
   insalubridade_40: { label: "Insalubridade 40%", pct: 0.15 },
+  // [SEM-CHAMADO] (pedido urgente do Ruan): nota fiscal de material do SEMAE não retém INSS.
+  // Última da lista (as categorias de risco seguem como estavam); 0% zera o INSS do item.
+  nao_reter: { label: "Não reter", pct: 0 },
 } as const;
 
 export type InssCategoria = keyof typeof INSS_CATEGORIAS;
