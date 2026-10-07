@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
-import { Check, Clock, Copy, ExternalLink, IdCard, KeyRound, Link2, UserCheck, UserMinus, UserPlus, X } from "lucide-react";
+import { BarChart3, Check, Clock, Copy, ExternalLink, IdCard, KeyRound, Link2, UserCheck, UserMinus, UserPlus, X } from "lucide-react";
+import { LoginsPainel } from "./LoginsPainel";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -34,6 +35,8 @@ import {
 //     férias, auxílio-doença, licença… não. Sem exceção ("Manter" saiu, a
 //     pedido do Pablo). A aba lista quem está bloqueado e o motivo; o botão
 //     OK só registra que Sistemas viu. Voltando a Trabalhando, libera sozinho.
+//   · Painel de uso (07/10/2026, mig 20261007000008): logins e acessos por
+//     setor, por dia, horário, dispositivo, quem mais usa e quem não entra.
 // =====================================================================
 
 const MENU = "sistemas_logins";
@@ -74,8 +77,10 @@ export default function Logins() {
           <TabsList>
             <TabsTrigger value="novos" className="gap-1.5"><UserPlus className="h-4 w-4" /> Logins novos (Admissão) {pendentes.length > 0 && <Badge variant="destructive" className="h-5 px-1.5 text-[10px]">{pendentes.length}</Badge>}</TabsTrigger>
             <TabsTrigger value="bloqueados" className="gap-1.5"><UserMinus className="h-4 w-4" /> Logins bloqueados {semOk.length > 0 && <Badge variant="destructive" className="h-5 px-1.5 text-[10px]">{semOk.length}</Badge>}</TabsTrigger>
+            <TabsTrigger value="painel" className="gap-1.5"><BarChart3 className="h-4 w-4" /> Painel de uso</TabsTrigger>
           </TabsList>
           <TabsContent value="novos"><LoginsNovos pedidos={pedidos} carregando={carregandoP} /></TabsContent>
+          <TabsContent value="painel"><LoginsPainel /></TabsContent>
           <TabsContent value="bloqueados"><Bloqueados lista={bloqueados} carregando={carregandoB} /></TabsContent>
         </Tabs>
       </AcessoGate>

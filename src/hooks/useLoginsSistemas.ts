@@ -1,3 +1,4 @@
+import type { PainelLogins } from "@/lib/sistemas/loginsPainel";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 
@@ -74,6 +75,17 @@ export function useDefinirCpfPedido() {
     onSuccess: () => invalidar(qc),
   });
 }
+
+/** Painel de uso (mig 20261007000008). dias null = desde o início do registro. */
+export const useLoginsPainel = (dias: number | null) => useQuery({
+  queryKey: [K, "painel", dias], staleTime: 5 * 60_000, gcTime: 30 * 60_000,
+  placeholderData: (anterior: PainelLogins | undefined) => anterior,
+  queryFn: async (): Promise<PainelLogins> => {
+    const { data, error } = await sb.rpc("sis_logins_painel", { _dias: dias });
+    if (error) throw error;
+    return data as PainelLogins;
+  },
+});
 
 export const useLoginsBloqueados = () => useQuery({
   queryKey: [K, "bloqueados"], staleTime: 30_000,
