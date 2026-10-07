@@ -44,6 +44,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
+import { STATUS_LABEL as STATUS_LABEL_MALOTE, type StatusDespesa } from "@/lib/maloteStatus";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
 import { AcessoGate } from "@/components/auth/AcessoGate";
@@ -72,6 +73,7 @@ import {
   labelTipoPix,
   labelTurno,
   soDigitos,
+  statusExibicaoDiaria,
   valorTotalLinha,
   valorTotalSolicitacao,
   visivelNaLista,
@@ -94,6 +96,19 @@ interface LinhaTabela {
   valorDiaria: number;
   valorTotal: number;
 }
+
+const STATUS_FILTRO_DIARIA = [
+  ...(Object.keys(STATUS_SOLICITACAO) as StatusSolicitacao[])
+    .filter((status) => status !== "paga")
+    .map((status) => ({
+      value: `diaria:${status}`,
+      label: STATUS_SOLICITACAO[status].label,
+    })),
+  ...(Object.keys(STATUS_LABEL_MALOTE) as StatusDespesa[]).map((status) => ({
+    value: `malote:${status}`,
+    label: STATUS_LABEL_MALOTE[status],
+  })),
+];
 
 function StatCard({
   icon: Icon,
@@ -316,11 +331,11 @@ export default function ControleDiarias({
     for (const s of solicitacoes) {
       // Exclusão lógica: some da lista de trabalho e só reaparece quando
       // alguém filtra por "Excluída" de propósito.
-      if (!visivelNaLista(s, status)) continue;
+      if (!visivelNaLista(s, status === "diaria:excluida" ? "excluida" : status)) continue;
       if (!casaBusca(s)) continue;
       if (contrato !== "todos" && s.contratoId !== contrato) continue;
       if (posto !== "todos" && s.posto !== posto) continue;
-      if (status !== "todos" && s.status !== status) continue;
+      if (status !== "todos" && statusExibicaoDiaria(s).chave !== status) continue;
       for (const l of s.diarias) {
         if (de && l.data < de) continue;
         if (ate && l.data > ate) continue;
@@ -645,9 +660,9 @@ export default function ControleDiarias({
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="todos">Todos</SelectItem>
-                  {(Object.keys(STATUS_SOLICITACAO) as StatusSolicitacao[]).map((k) => (
-                    <SelectItem key={k} value={k}>
-                      {STATUS_SOLICITACAO[k].label}
+                  {STATUS_FILTRO_DIARIA.map((item) => (
+                    <SelectItem key={item.value} value={item.value}>
+                      {item.label}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -751,7 +766,7 @@ export default function ControleDiarias({
                   </TableRow>
                 )}
                 {visiveis.map((l) => {
-                  const st = STATUS_SOLICITACAO[l.solicitacao.status];
+                  const st = statusExibicaoDiaria(l.solicitacao);
                   return (
                     <TableRow
                       key={l.chave}
@@ -781,7 +796,10 @@ export default function ControleDiarias({
                       <TableCell className="text-right font-medium">{fmtBRL(l.valorTotal)}</TableCell>
                       <TableCell>
                         <span className="flex items-center gap-1">
-                          <Badge variant="outline" className={cn("text-[10px] font-semibold", st.cls)}>
+                          <Badge
+                            variant={st.origem === "diaria" ? "outline" : "default"}
+                            className={cn("text-[10px] font-semibold", st.cls)}
+                          >
                             {st.label}
                           </Badge>
                           {l.solicitacao.comprovantesPagamento.length > 0 && (

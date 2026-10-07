@@ -2,11 +2,16 @@ import { Navigate, useLocation } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
 import { useDemoMode } from "@/context/DemoModeContext";
 import { useMustChangePassword } from "@/hooks/useMustChangePassword";
+import { useLoginErpBloqueado } from "@/hooks/useLoginErpBloqueado";
+import { AcessoEncerrado } from "@/components/auth/AcessoEncerrado";
 
 export function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth();
   const { isDemo } = useDemoMode();
   const { mustChange, loading: mcLoading } = useMustChangePassword(user?.id);
+  // Login vinculado a colaborador demitido (06/10/2026, mig 20261006160000).
+  // Sessão anônima (encarregado externo) e demo não têm vínculo.
+  const { data: estadoLogin } = useLoginErpBloqueado(user?.id, !!user && !user.is_anonymous && !isDemo);
   const location = useLocation();
 
   // Only block on the very first auth check (loading=true once at startup).
@@ -28,6 +33,13 @@ export function ProtectedRoute({ children }: { children: React.ReactNode }) {
     // precisa voltar para o pedido — não para o painel geral.
     const destino = location.pathname + location.search;
     return <Navigate to={destino === "/app" ? "/login" : `/login?next=${encodeURIComponent(destino)}`} replace />;
+  }
+
+  // Demitido: o ERP não abre (o banco já nega tudo em has_screen_access);
+  // a tela explica e leva ao Portal do Colaborador. Vem antes da troca de
+  // senha — não faz sentido pedir senha nova para um acesso encerrado.
+  if (estadoLogin?.bloqueado) {
+    return <AcessoEncerrado nome={estadoLogin.nome} situacao={estadoLogin.situacao} />;
   }
 
   // Usuário real precisa trocar a senha (reset feito por admin).

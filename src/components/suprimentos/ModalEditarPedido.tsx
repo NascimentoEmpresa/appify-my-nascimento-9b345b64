@@ -11,7 +11,7 @@ import { ColaboradorCombobox, type Colaborador } from "@/components/encarregados
 import { useItensEnxoval, useEditarPedido, type ItemEnxoval } from "@/hooks/useSupPedidos";
 import { useTagsDoPedido } from "@/hooks/useSupEstoque";
 import {
-  edicaoReduzida, itensTravados, montarItensPayload, resumoAlteracoes, validarEdicao,
+  edicaoReduzida, exigeTamanhoItem, itensTravados, montarItensPayload, resumoAlteracoes, validarEdicao,
   type LinhaEditavel,
 } from "@/lib/suprimentos/pedidoEdicao";
 import { Lock, Plus, Trash2, AlertTriangle, Loader2, Package } from "lucide-react";
@@ -191,8 +191,12 @@ export function ModalEditarPedido({
         nomeJaGravado: pedido.nome_colaborador,
         tipoPedido,
         linhas,
-        exigeTamanho: (itemId) =>
-          !!(itemId && porCatalogo.get(itemId)?.opcao_tamanho?.length),
+        // Todo uniforme exige tamanho, com grade ou sem (SIS-2026-0481); sem
+        // grade o CampoItem já vira texto livre. Insumo só exige se tiver grade.
+        exigeTamanho: (itemId) => {
+          const it = itemId ? porCatalogo.get(itemId) : undefined;
+          return !!it && exigeTamanhoItem(it.tipo, !!it.opcao_tamanho?.length);
+        },
       });
       if (erro) { toast.error(erro); return; }
     }
