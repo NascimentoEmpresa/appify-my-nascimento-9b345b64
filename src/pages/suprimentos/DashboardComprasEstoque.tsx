@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import {
   Area,
+  AreaChart,
   Bar,
   BarChart,
   CartesianGrid,
@@ -197,7 +198,7 @@ function TabelaCotacoes({ dados }: { dados: DashboardComprasEstoqueDados }) {
                 <td className="whitespace-nowrap px-3 py-2">{linha.comprador ?? "—"}</td>
                 <td className="text-center px-3 py-2">{linha.qtd_cotacoes}</td>
                 <td className="px-3 py-2"><Badge variant="outline">{linha.licitacao ? "Licitação" : "Malote"}</Badge></td>
-                <td className="whitespace-nowrap px-3 py-2">{linha.status.replaceAll("_", " ")}</td>
+                <td className="whitespace-nowrap px-3 py-2">{linha.status.replace(/_/g, " ")}</td>
               </tr>
             ))}
           </tbody>
