@@ -2,6 +2,7 @@ import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import logoGN from "@/assets/logo-nascimento-icon.png";
 import {
   LayoutDashboard,
+  Fingerprint,
   Briefcase,
   FileText,
   Sparkles,
@@ -542,6 +543,9 @@ const rhModule: ModuleDef = {
         // nome "Conferência de Ponto"). A mesma tela está no Financeiro e no
         // Operacional, cada um com o seu menu (mig 274).
         { label: "Dashboard de Pontos", to: "/app/rh/conferencia-ponto/painel", icon: BarChart3 },
+        // Gestão de Ponto (branch local gestaoponto, mig 20261007000001): o mês
+        // de cada colaborador pelas marcações da Senior.
+        { label: "Gestão de Ponto", to: "/app/rh/gestao-ponto", icon: Fingerprint },
         // Uma só, desde 02/09/2026: a etapa do RH é ALTERAR NA SENIOR. A
         // aprovação do administrativo, que era o segundo item aqui, foi para o
         // analista junto com a de contrato. A rota
