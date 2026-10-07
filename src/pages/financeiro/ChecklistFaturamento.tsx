@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { useEstadoPersistido } from "@/hooks/useEstadoPersistido";
 import JSZip from "jszip";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Card, CardContent } from "@/components/ui/card";
@@ -427,7 +428,11 @@ function ModalDocumentosPendentes({
 }
 
 export default function ChecklistFaturamento() {
-  const [competencia, setCompetencia] = useState(mesAtualISO());
+  // SIS-2026-0597: a competência escolhida fica guardada enquanto a aba estiver
+  // aberta (sessionStorage) — antes era useState(mesAtualISO()) e, ao sair para
+  // outra tela (ex. Malote) e voltar, a tela remontava e pulava para o mês atual.
+  // Só muda quando o próprio usuário troca o mês/ano.
+  const [competencia, setCompetencia] = useEstadoPersistido("checklist-faturamento", "competencia", mesAtualISO());
   const [ano, mes] = competencia.split("-");
   const competenciaISO = `${competencia}-01`;
   const { data: contratos = [] } = useContratosAtivosChecklist();
