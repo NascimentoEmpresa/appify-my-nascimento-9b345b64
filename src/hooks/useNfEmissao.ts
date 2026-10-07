@@ -2,6 +2,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import type { ItemCalculado, TotaisNf, PercentuaisFiscais, InssCategoria } from "@/pages/financeiro/nf-emissao/calculos";
 import { itemParaGravar, substituirItensNf } from "@/pages/financeiro/nf-emissao/itemParaGravar";
+import { ordenarPorConclusao } from "@/pages/financeiro/nf-emissao/ordemConclusao";
 
 const BUCKET = "nf-emissao";
 
@@ -54,6 +55,9 @@ export interface NfEmissaoRow {
   pis_pct: number;
   csll_pct: number;
   created_at: string;
+  // SIS-2026-0614: quando o Financeiro concluiu/cancelou a validação (ordem dos relatórios). Ausente
+  // enquanto a migration 20261007000003 não foi aplicada; nulo em rascunho/enviada.
+  concluida_em?: string | null;
   // null = linha importada da planilha legada (SIS-2026-0540), sem autor no app.
   created_by: string | null;
   // Lixeira do Relatório Geral: != null = NF na lixeira (fora de todos os totais).
@@ -95,7 +99,12 @@ export function useNfsEmissao(empresaId: string | null | undefined, opts?: { tod
   return useQuery({
     queryKey: todasEmpresas ? [NF_EMISSAO_KEY, "todas"] : [NF_EMISSAO_KEY, empresaId],
     enabled: todasEmpresas || !!empresaId,
-    queryFn: () => buscarTodasNfsEmissao(todasEmpresas, empresaId),
+    // Todas as empresas = base dos relatórios: ordem de CONCLUSÃO pelo Financeiro (SIS-2026-0614).
+    // A lista por empresa é a do analista (Emissão) e segue pela data de criação.
+    queryFn: async () => {
+      const linhas = await buscarTodasNfsEmissao(todasEmpresas, empresaId);
+      return todasEmpresas ? ordenarPorConclusao(linhas) : linhas;
+    },
   });
 }
 
