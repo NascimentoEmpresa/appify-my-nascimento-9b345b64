@@ -38404,3 +38404,1114 @@ NOTIFY pgrst, 'reload schema';
 -- DROP FUNCTION IF EXISTS public.ctrl_reuniao_registro_revisao();
 -- DROP FUNCTION IF EXISTS public.ctrl_reuniao_pode(text);
 -- DELETE FROM public.app_menu WHERE codigo = 'ctrl_reunioes_encarregados';
+
+-- ===== 20261006000006_pendencias_aprovacao_menu (JA APLICADA 06/10) =====
+-- =========================================================================
+-- BOLINHA DE PENDÊNCIA DE APROVAÇÃO NO MENU (06/10/2026)
+--
+-- PEDIDO: "seria possível aparecer uma notificação de pendência de
+-- aprovação, só uma bolinha vermelha, como aparece no Jurídico — tenho
+-- várias situações que dependem da minha aprovação; se o pessoal não me
+-- avisar ou eu ficar entrando a todo momento pra ver, fica lá parado".
+-- Escolhidos: Malote, Recrutamento (vagas), Demissões, Plano de Ações e
+-- Suprimentos (Jurídico, Reembolso, Mudança de Função e Chamados já tinham).
+--
+-- minhas_pendencias_aprovacao() devolve { "<rota do menu>": quantidade } só
+-- do que está parado NA ETAPA QUE EU DECIDO — a mesma regra que cada tela e
+-- cada trigger usam para deixar aprovar. Uma chamada só para o menu inteiro,
+-- em vez de cada bolinha baixar a tabela toda (o Malote calculava a alçada
+-- no navegador com milhares de despesas). O menu (useAprovacoesNotif)
+-- acende a bolinha onde a contagem > 0; a sidebar já esconde o que a pessoa
+-- não enxerga.
+--
+--   Malote › Aprovações (e Diretoria › Aprovações do Malote)
+--     pendente_aprovacao no nível atual em que sou aprovador — forma de
+--     pagamento com fluxo especial manda (aprovador_especial_user_id); sem
+--     classificação na despesa, vale a das linhas do rateio
+--     (= souAprovadorDoNivelComRateio, useMaloteDespesa.ts); e a fase de
+--     solicitação (aguardando_aprovacao_inicial / cotacao_realizada) para
+--     o "Aprovador da solicitação" da classificação.
+--   Recrutamento
+--     'Pendente Analista' → quem tem APROVA VAGAS (Operacional e/ou
+--     Licitações — rec_aprova_vagas, separado por tela);
+--     'Pendente Diretoria' → diretoria_recrutamento aprovar + setor
+--     (aprova_setor, o mesmo do rec_guard_aprovador_setor).
+--   Demissões (STATUS_DE_ACAO de PainelDemissoes)
+--     Operacional 'Pendente Operacional'; Diretoria 'Pendente Diretoria'
+--     (+ aprova_setor, como ssd_guard_aprovador_setor); RH 'Pendente RH' e
+--     'Cancelamento solicitado'; SST 'Pendente SST' e a recebida.
+--   Plano de Ações › Aprovações
+--     'aguardando_validacao' para quem pode_aprovar ou é quem validaria
+--     (podeValidarPlanoAcao: o criador; sem criador, o responsável).
+--   Suprimentos
+--     Aprovação de Catálogo: lotes PENDENTE (sup_cat_decidir_lote);
+--     Cadastros de Fornecedor: 'pendente' (sup_forn_aprovar).
+--   Votação de cotações (sup_aprov_*) ficou de fora: tabela vazia e sem
+--   item no menu.
+--
+-- Só conta — não devolve nenhum dado das linhas.
+-- Idempotente. Aplicar no banco do app (SQL Editor) — não se auto-aplica.
+-- =========================================================================
+
+CREATE OR REPLACE FUNCTION public.minhas_pendencias_aprovacao()
+RETURNS jsonb LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public, pg_temp AS $$
+DECLARE
+  v_uid uuid := auth.uid();
+  v_out jsonb := '{}'::jsonb;
+  n int;
+BEGIN
+  IF v_uid IS NULL THEN RETURN v_out; END IF;
+
+  -- ── Malote ─────────────────────────────────────────────────────────────
+  SELECT count(*) INTO n
+    FROM public.malote_despesa d
+    LEFT JOIN public.planejamento_orcamentario_classificacao c ON c.id = d.classificacao_id
+    LEFT JOIN LATERAL (
+      SELECT true AS tem, f.aprovador_especial_user_id FROM public.malote_forma_pagamento f
+       WHERE f.nome = d.forma_pagamento AND f.fluxo_aprovacao = 'especial' LIMIT 1
+    ) esp ON true
+   WHERE d.deleted_at IS NULL
+     AND (
+       (d.status = 'pendente_aprovacao' AND d.nivel_aprovacao_atual IS NOT NULL AND (
+          CASE
+            WHEN esp.tem THEN esp.aprovador_especial_user_id IS NOT DISTINCT FROM v_uid AND v_uid IS NOT NULL
+            WHEN d.classificacao_id IS NOT NULL THEN
+              v_uid = ANY (CASE d.nivel_aprovacao_atual WHEN 1 THEN c.aprovador1_user_ids WHEN 2 THEN c.aprovador2_user_ids ELSE c.aprovador3_user_ids END)
+            ELSE EXISTS (
+              SELECT 1 FROM public.malote_despesa_rateio_linha r
+                JOIN public.planejamento_orcamentario_classificacao c2 ON c2.id = r.classificacao_id
+               WHERE r.despesa_id = d.id
+                 AND v_uid = ANY (CASE d.nivel_aprovacao_atual WHEN 1 THEN c2.aprovador1_user_ids WHEN 2 THEN c2.aprovador2_user_ids ELSE c2.aprovador3_user_ids END))
+          END))
+       OR (d.status IN ('aguardando_aprovacao_inicial', 'cotacao_realizada') AND c.aprovador_solicitacao_user_id = v_uid)
+     );
+  IF n > 0 THEN
+    v_out := v_out || jsonb_build_object('/app/malote/aprovacoes', n, '/app/diretoria/malote-aprovacoes', n);
+  END IF;
+
+  -- ── Recrutamento (vagas) ──────────────────────────────────────────────
+  IF public.has_screen_access(v_uid, 'operacional_aprova_vagas', 'aprovar'::public.app_acao)
+     OR public.has_screen_access(v_uid, 'licitacoes_aprova_vagas', 'aprovar'::public.app_acao) THEN
+    SELECT count(*) INTO n FROM public."SISTEMA_RECRUTAMENTO" WHERE status = 'Pendente Analista';
+    IF n > 0 THEN
+      IF public.has_screen_access(v_uid, 'operacional_aprova_vagas', 'aprovar'::public.app_acao) THEN
+        v_out := v_out || jsonb_build_object('/app/operacional/recrutamento', n);
+      END IF;
+      IF public.has_screen_access(v_uid, 'licitacoes_aprova_vagas', 'aprovar'::public.app_acao) THEN
+        v_out := v_out || jsonb_build_object('/app/licitacoes/analistas/recrutamento', n);
+      END IF;
+    END IF;
+  END IF;
+  IF public.has_screen_access(v_uid, 'diretoria_recrutamento', 'aprovar'::public.app_acao) THEN
+    SELECT count(*) INTO n FROM public."SISTEMA_RECRUTAMENTO" WHERE status = 'Pendente Diretoria' AND public.aprova_setor(setor);
+    IF n > 0 THEN v_out := v_out || jsonb_build_object('/app/diretoria/recrutamento', n); END IF;
+  END IF;
+
+  -- ── Demissões ─────────────────────────────────────────────────────────
+  IF public.has_screen_access(v_uid, 'operacional_demissoes', 'visualizar'::public.app_acao) THEN
+    SELECT count(*) INTO n FROM public."SISTEMA_SOLICITACOES_DEMISSAO" WHERE status = 'Pendente Operacional';
+    IF n > 0 THEN v_out := v_out || jsonb_build_object('/app/operacional/solicitacoes-demissao', n); END IF;
+  END IF;
+  IF public.has_screen_access(v_uid, 'diretoria_solicitacoes_demissao', 'visualizar'::public.app_acao) THEN
+    SELECT count(*) INTO n FROM public."SISTEMA_SOLICITACOES_DEMISSAO" WHERE status = 'Pendente Diretoria' AND public.aprova_setor(setor);
+    IF n > 0 THEN v_out := v_out || jsonb_build_object('/app/diretoria/solicitacoes-demissao', n); END IF;
+  END IF;
+  IF public.has_screen_access(v_uid, 'rh_demissoes', 'visualizar'::public.app_acao) THEN
+    SELECT count(*) INTO n FROM public."SISTEMA_SOLICITACOES_DEMISSAO" WHERE status IN ('Pendente RH', 'Cancelamento solicitado');
+    IF n > 0 THEN v_out := v_out || jsonb_build_object('/app/rh/solicitacoes-demissao', n); END IF;
+  END IF;
+  IF public.has_screen_access(v_uid, 'sst_aso_demissional', 'visualizar'::public.app_acao) THEN
+    SELECT count(*) INTO n FROM public."SISTEMA_SOLICITACOES_DEMISSAO"
+     WHERE status IN ('Pendente SST', 'Solicitação de agendamento de DEMISSIONAL recebida');
+    IF n > 0 THEN v_out := v_out || jsonb_build_object('/app/sst/aso-demissional', n); END IF;
+  END IF;
+
+  -- ── Plano de Ações ────────────────────────────────────────────────────
+  SELECT count(*) INTO n FROM public.plano_acao p
+   WHERE p.deleted_at IS NULL AND p.status_normalizado = 'aguardando_validacao'
+     AND (COALESCE((public.minha_permissao_plano_acao(p.empresa_id) ->> 'pode_aprovar')::boolean, false)
+          OR p.criado_por = v_uid
+          OR (p.criado_por IS NULL AND p.responsavel_profile_id = v_uid));
+  IF n > 0 THEN v_out := v_out || jsonb_build_object('/app/plano-acoes/aprovacoes', n); END IF;
+
+  -- ── Suprimentos ───────────────────────────────────────────────────────
+  IF public.can_access(v_uid, 'sup_catalogo_aprovacao', 'alterar') THEN
+    SELECT count(*) INTO n FROM public.sup_cat_lote WHERE status = 'PENDENTE';
+    IF n > 0 THEN v_out := v_out || jsonb_build_object('/app/suprimentos/catalogo/aprovacoes', n); END IF;
+  END IF;
+  IF public.can_access(v_uid, 'sup_fornecedor_aprovacao', 'alterar') THEN
+    SELECT count(*) INTO n FROM public.fornecedor_cadastro_pendente WHERE status = 'pendente';
+    IF n > 0 THEN v_out := v_out || jsonb_build_object('/app/suprimentos/fornecedores/pendentes', n); END IF;
+  END IF;
+
+  RETURN v_out;
+END $$;
+
+REVOKE ALL ON FUNCTION public.minhas_pendencias_aprovacao() FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.minhas_pendencias_aprovacao() TO authenticated;
+
+NOTIFY pgrst, 'reload schema';
+
+-- ROLLBACK
+-- DROP FUNCTION IF EXISTS public.minhas_pendencias_aprovacao();
+
+-- ===== 20261006000007_portal_colaborador_dados_proprios (JA APLICADA 06/10) =====
+-- =========================================================================
+-- PORTAL DO COLABORADOR › Meu perfil: SEXO, ESTADO CIVIL e CELULAR/WHATSAPP
+-- informados pelo próprio colaborador (06/10/2026)
+--
+-- PEDIDO (Pablo): "deixa opção do colaborador editar o seu usuário, mas pode
+-- editar apenas o sexo, estado civil e adicionar número de celular/WhatsApp.
+-- Isso vai atualizar na tabela EMPREGADOS. Deixa os 3 zerados — se os
+-- colaboradores quiserem, eles acessam e editam. Atualmente tá puxando
+-- errado: essa mulher (MARGARETE SILVEIRA SANTOS) tá como M de masculino e
+-- solteira, e na verdade é viúva."
+--
+-- POR QUE COLUNAS NOVAS, e não o "Sexo"/"Estado Civil" da Senior: o erro
+-- está NA SENIOR (a linha da Margarete veio "M / Solteiro" de lá), e o
+-- rh_sync_senior_empregados reescreve "Sexo" a cada rodada (mig 275 —
+-- EMPREGADOS igual à Senior). Apagar ou corrigir ali voltaria errado na
+-- próxima sincronização. Então a EMPREGADOS ganha três colunas que são DO
+-- COLABORADOR — nascem vazias ("zerados"), só ele preenche pelo portal, e a
+-- sincronização não as toca. O "Sexo" da Senior fica como está para quem
+-- já o usa (relatórios, eSocial); o portal passa a mostrar só o informado.
+--
+-- Única interferência do sync: quando a Senior reaproveita a matrícula para
+-- OUTRA pessoa (v_outra), as três são limpas junto com login e telefone —
+-- senão a pessoa nova herdaria o celular da antiga.
+--
+-- Idempotente. Aplicar no banco do app (SQL Editor) — não se auto-aplica.
+-- A Edge colaborador-portal ganha a ação "atualizar_dados" (redeploy).
+-- =========================================================================
+
+-- ── 1) Colunas do colaborador ────────────────────────────────────────────
+ALTER TABLE public."EMPREGADOS"
+  ADD COLUMN IF NOT EXISTS sexo_informado            text,
+  ADD COLUMN IF NOT EXISTS estado_civil_informado    text,
+  ADD COLUMN IF NOT EXISTS celular_whatsapp          text,
+  ADD COLUMN IF NOT EXISTS dados_pessoais_atualizados_em timestamptz;
+
+ALTER TABLE public."EMPREGADOS" DROP CONSTRAINT IF EXISTS empregados_sexo_informado_chk;
+ALTER TABLE public."EMPREGADOS" ADD CONSTRAINT empregados_sexo_informado_chk
+  CHECK (sexo_informado IS NULL OR sexo_informado IN ('Feminino', 'Masculino'));
+ALTER TABLE public."EMPREGADOS" DROP CONSTRAINT IF EXISTS empregados_estado_civil_informado_chk;
+ALTER TABLE public."EMPREGADOS" ADD CONSTRAINT empregados_estado_civil_informado_chk
+  CHECK (estado_civil_informado IS NULL OR estado_civil_informado IN
+         ('Solteiro(a)', 'Casado(a)', 'União estável', 'Divorciado(a)', 'Separado(a)', 'Viúvo(a)'));
+-- Só dígitos, com DDD: 10 (fixo) ou 11 (celular); 12/13 com o 55 do Brasil.
+ALTER TABLE public."EMPREGADOS" DROP CONSTRAINT IF EXISTS empregados_celular_whatsapp_chk;
+ALTER TABLE public."EMPREGADOS" ADD CONSTRAINT empregados_celular_whatsapp_chk
+  CHECK (celular_whatsapp IS NULL OR celular_whatsapp ~ '^\d{10,13}$');
+
+-- ── 2) O portal grava (só a Edge, com o empregado da sessão) ─────────────
+CREATE OR REPLACE FUNCTION public.col_atualizar_dados(p_emp bigint, p_sexo text, p_estado_civil text, p_celular text)
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
+DECLARE v_cel text := nullif(regexp_replace(coalesce(p_celular, ''), '\D', '', 'g'), '');
+BEGIN
+  IF p_emp IS NULL THEN RAISE EXCEPTION 'Sessão inválida.'; END IF;
+  -- Valida antes do UPDATE: o erro do CHECK traz a linha inteira da
+  -- EMPREGADOS (conta bancária inclusive) e a Edge repassa a mensagem à tela.
+  IF nullif(btrim(p_sexo), '') IS NOT NULL AND btrim(p_sexo) NOT IN ('Feminino', 'Masculino') THEN
+    RAISE EXCEPTION 'Sexo inválido.';
+  END IF;
+  IF nullif(btrim(p_estado_civil), '') IS NOT NULL AND btrim(p_estado_civil) NOT IN
+     ('Solteiro(a)', 'Casado(a)', 'União estável', 'Divorciado(a)', 'Separado(a)', 'Viúvo(a)') THEN
+    RAISE EXCEPTION 'Estado civil inválido.';
+  END IF;
+  IF v_cel IS NOT NULL AND length(v_cel) NOT BETWEEN 10 AND 13 THEN
+    RAISE EXCEPTION 'Celular inválido — informe com DDD, ex.: (51) 99999-9999.';
+  END IF;
+  UPDATE public."EMPREGADOS"
+     SET sexo_informado = nullif(btrim(p_sexo), ''),
+         estado_civil_informado = nullif(btrim(p_estado_civil), ''),
+         celular_whatsapp = v_cel,
+         dados_pessoais_atualizados_em = now()
+   WHERE "ID" = p_emp;
+  IF NOT FOUND THEN RAISE EXCEPTION 'Cadastro não encontrado.'; END IF;
+  RETURN public.col_perfil(p_emp);
+END $$;
+REVOKE ALL ON FUNCTION public.col_atualizar_dados(bigint, text, text, text) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.col_atualizar_dados(bigint, text, text, text) TO service_role;
+
+-- ── 3) O perfil mostra o que o colaborador informou ──────────────────────
+-- Mesmo corpo da col_perfil vigente; sexo/estado_civil passam a ser os
+-- informados (vazios até ele preencher) + celular_whatsapp.
+CREATE OR REPLACE FUNCTION public.col_perfil(p_emp bigint)
+ RETURNS jsonb
+ LANGUAGE plpgsql
+ STABLE SECURITY DEFINER
+ SET search_path TO 'public', 'pg_temp'
+AS $function$
+DECLARE e record; r jsonb; v_cpf text;
+BEGIN
+  SELECT * INTO e FROM public."EMPREGADOS" x WHERE x."ID" = p_emp;
+  IF NOT FOUND THEN RETURN NULL; END IF;
+  v_cpf := public.col_digitos(e."CPF");
+  r := jsonb_build_object(
+    'empregado_id',   e."ID",
+    'nome',           e."Nome",
+    'matricula',      nullif(btrim(e."Cadastro"::text), ''),
+    'cpf',            CASE WHEN length(v_cpf) = 11
+                        THEN substr(v_cpf,1,3) || '.' || substr(v_cpf,4,3) || '.' || substr(v_cpf,7,3) || '-' || substr(v_cpf,10,2)
+                        ELSE e."CPF" END,
+    'nascimento',     public.rh_data(e."Nascimento"::text),
+    'sexo',           e.sexo_informado,
+    'estado_civil',   e.estado_civil_informado,
+    'celular_whatsapp', e.celular_whatsapp,
+    'dados_pessoais_atualizados_em', e.dados_pessoais_atualizados_em,
+    'instrucao',      e."Descrição (Instrução)",
+    'nacionalidade',  e."Descrição (Nacionalidade)",
+    'email',          e."email",
+    'pis',            e."PIS",
+    'ctps',           CASE WHEN e."CTPS" IS NOT NULL THEN e."CTPS"::text || coalesce('-' || e."Dígito Carteira Trabalho", '') END,
+    'cargo',          e."Título do Cargo",
+    'setor',          e."Setor_ERP",
+    'posto',          e."Nome do Posto",
+    'local',          e."Descrição do Local",
+    'filial',         e."Nome Filial",
+    'empresa',        e."Nome da Empresa",
+    'centro_custo',   e."Titulo C.Custo",
+    'situacao',       e."Situação",
+    'admissao',       public.rh_data(e."Admissão"::text),
+    'data_cargo',     public.rh_data(e."Data Cargo"::text),
+    'data_afastamento', public.rh_data(e."Data Afastamento"::text),
+    'escala',         e."Escala",
+    'escala_codigo',  e."Escala_1",
+    'tipo_contrato',  coalesce(e."Descrição (T. Contrato)", e."TIPO DE CONTRATO"),
+    'categoria',      e."Descrição (Cat. eSocial)",
+    'lider',          e."LIDER",
+    'tem_conta_erp',  e.auth_user_id IS NOT NULL,
+    'senha_propria',  EXISTS (SELECT 1 FROM public."COL_PORTAL_CREDENCIAL" c WHERE c.empregado_id = e."ID")
+  );
+  RETURN r;
+END $function$;
+
+-- ── 4) Sync da Senior: matrícula reaproveitada limpa os dados da antiga ──
+-- Troca só a linha do telefone no corpo vigente (8,9 mil caracteres —
+-- reescrever a função inteira aqui arriscaria desfazer ajuste mais novo).
+DO $$
+DECLARE v_def text; v_novo text;
+BEGIN
+  v_def := pg_get_functiondef('public.rh_sync_senior_empregados(jsonb)'::regprocedure);
+  IF v_def LIKE '%sexo_informado%' THEN RETURN; END IF;  -- já aplicado
+  v_novo := replace(v_def,
+    'telefone           = CASE WHEN v_outra THEN NULL ELSE x.telefone END,',
+    'telefone           = CASE WHEN v_outra THEN NULL ELSE x.telefone END,
+           sexo_informado     = CASE WHEN v_outra THEN NULL ELSE x.sexo_informado END,
+           estado_civil_informado = CASE WHEN v_outra THEN NULL ELSE x.estado_civil_informado END,
+           celular_whatsapp   = CASE WHEN v_outra THEN NULL ELSE x.celular_whatsapp END,
+           dados_pessoais_atualizados_em = CASE WHEN v_outra THEN NULL ELSE x.dados_pessoais_atualizados_em END,');
+  IF v_novo = v_def THEN
+    RAISE EXCEPTION 'rh_sync_senior_empregados mudou: não achei a linha do telefone para incluir as colunas novas.';
+  END IF;
+  EXECUTE v_novo;
+END $$;
+
+NOTIFY pgrst, 'reload schema';
+
+-- ROLLBACK
+-- Reaplicar col_perfil da mig 20260930000196 (sexo/estado civil da Senior) e
+-- rh_sync_senior_empregados da mig 20260930000275.
+-- DROP FUNCTION IF EXISTS public.col_atualizar_dados(bigint, text, text, text);
+-- ALTER TABLE public."EMPREGADOS" DROP COLUMN IF EXISTS sexo_informado, DROP COLUMN IF EXISTS estado_civil_informado,
+--   DROP COLUMN IF EXISTS celular_whatsapp, DROP COLUMN IF EXISTS dados_pessoais_atualizados_em;
+
+-- ===== 20261006000008_portal_colaborador_email (JA APLICADA 06/10) =====
+-- =========================================================================
+-- PORTAL DO COLABORADOR › Seus dados: E-MAIL também (06/10/2026)
+--
+-- PEDIDO (Pablo): "deixa opção de atualizar o e-mail também" — junto de
+-- sexo, estado civil e celular/WhatsApp (mig 20261006000007).
+--
+-- Aqui NÃO precisa de coluna nova: EMPREGADOS.email já é do ERP — o
+-- rh_sync_senior_empregados preserva (só limpa quando a matrícula vira
+-- outra pessoa). Ele não é o login do ERP (esse mora em auth.users); o
+-- gatilho trg_trn_aluno_do_empregado leva o e-mail novo para o aluno dos
+-- Treinamentos, como já fazia com o RH.
+--
+-- Barra e-mail que já é de OUTRO colaborador ativo: Recrutamento e
+-- Treinamentos procuram o nome pelo e-mail, e dois donos dariam o nome
+-- errado.
+--
+-- col_atualizar_dados ganha p_email (assinatura nova → a de 4 parâmetros
+-- sai; a Edge colaborador-portal é publicada junto).
+-- Idempotente. Aplicar no banco do app (SQL Editor) — não se auto-aplica.
+-- =========================================================================
+
+DROP FUNCTION IF EXISTS public.col_atualizar_dados(bigint, text, text, text);
+
+CREATE OR REPLACE FUNCTION public.col_atualizar_dados(p_emp bigint, p_sexo text, p_estado_civil text, p_celular text, p_email text)
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
+DECLARE
+  v_cel   text := nullif(regexp_replace(coalesce(p_celular, ''), '\D', '', 'g'), '');
+  v_email text := nullif(lower(btrim(coalesce(p_email, ''))), '');
+BEGIN
+  IF p_emp IS NULL THEN RAISE EXCEPTION 'Sessão inválida.'; END IF;
+  -- Valida antes do UPDATE: o erro do CHECK traz a linha inteira da
+  -- EMPREGADOS (conta bancária inclusive) e a Edge repassa a mensagem à tela.
+  IF nullif(btrim(p_sexo), '') IS NOT NULL AND btrim(p_sexo) NOT IN ('Feminino', 'Masculino') THEN
+    RAISE EXCEPTION 'Sexo inválido.';
+  END IF;
+  IF nullif(btrim(p_estado_civil), '') IS NOT NULL AND btrim(p_estado_civil) NOT IN
+     ('Solteiro(a)', 'Casado(a)', 'União estável', 'Divorciado(a)', 'Separado(a)', 'Viúvo(a)') THEN
+    RAISE EXCEPTION 'Estado civil inválido.';
+  END IF;
+  IF v_cel IS NOT NULL AND length(v_cel) NOT BETWEEN 10 AND 13 THEN
+    RAISE EXCEPTION 'Celular inválido — informe com DDD, ex.: (51) 99999-9999.';
+  END IF;
+  IF v_email IS NOT NULL AND (length(v_email) > 254 OR v_email !~ '^[^@\s]+@[^@\s]+\.[^@\s]+$') THEN
+    RAISE EXCEPTION 'E-mail inválido.';
+  END IF;
+  IF v_email IS NOT NULL AND EXISTS (
+       SELECT 1 FROM public."EMPREGADOS" o
+        WHERE o."ID" <> p_emp AND lower(btrim(o.email)) = v_email AND public.esp_col_esta_ativo(o."Situação")) THEN
+    RAISE EXCEPTION 'Este e-mail já está no cadastro de outro colaborador. Use um e-mail só seu.';
+  END IF;
+
+  UPDATE public."EMPREGADOS"
+     SET sexo_informado = nullif(btrim(p_sexo), ''),
+         estado_civil_informado = nullif(btrim(p_estado_civil), ''),
+         celular_whatsapp = v_cel,
+         email = v_email,
+         dados_pessoais_atualizados_em = now()
+   WHERE "ID" = p_emp;
+  IF NOT FOUND THEN RAISE EXCEPTION 'Cadastro não encontrado.'; END IF;
+  RETURN public.col_perfil(p_emp);
+END $$;
+REVOKE ALL ON FUNCTION public.col_atualizar_dados(bigint, text, text, text, text) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.col_atualizar_dados(bigint, text, text, text, text) TO service_role;
+
+NOTIFY pgrst, 'reload schema';
+
+-- ROLLBACK: reaplicar col_atualizar_dados de 4 parâmetros (mig 20261006000007)
+-- DROP FUNCTION IF EXISTS public.col_atualizar_dados(bigint, text, text, text, text);
+
+-- ===== 20261006000009_sistemas_logins_admissao_demissao (JA APLICADA 06/10) =====
+-- =========================================================================
+-- SIS-2026-0598 — SISTEMAS › LOGINS (ADMISSÃO E DEMISSÃO) (06/10/2026)
+--
+-- Chamado (Iury, 02/10/2026): "Criar um submódulo para nos avisar caso
+-- alguém que tenha login seja demitido, a gente poder saber para excluir os
+-- logins. No caso de Admissão, fazer com que o recrutamento informe se a
+-- pessoa precisará de login, assim quando ela for admitida já estará com
+-- tudo pronto."
+-- Detalhado pelo Pablo: na vaga, "É encarregado?" → "Precisa de login para
+-- a ERP?"; concluída no kanban, vai para Logins Novos com nome completo,
+-- e-mail que será dele e senha aleatória, prontos para copiar; quando
+-- Sistemas informa login e senha, aparece em Minhas Solicitações SÓ para
+-- quem pediu a vaga.
+--
+-- ADMISSÃO
+--   · "SISTEMA_RECRUTAMENTO".vaga_encarregado / precisa_login_erp.
+--   · Gatilho em "WA_CURRICULOS": o candidato ENVIADO À ADMISSÃO
+--     (enviado_admissao_em — é o que fecha a vaga como "Contratado", pelo
+--     kanban ou pelo "Concluir direto") de vaga com precisa_login_erp gera
+--     um "SIS_LOGIN_PEDIDO" (um por candidato), com e-mail sugerido no
+--     padrão dos encarregados (primeiro.segundo@gmail.com, sem repetir) e
+--     senha aleatória (gen_random_bytes).
+--   · Sistemas cria a conta em Administração › Usuários e marca "criado"
+--     (sis_login_marcar_criado) com o login e a senha finais.
+--   · Quem pediu a vaga (SISTEMA_RECRUTAMENTO.solicitante_cpf — que na
+--     prática guarda o E-MAIL do solicitante, é por ele que Minhas
+--     Solicitações filtra) vê em minhas_credenciais_login() e confirma que
+--     repassou; aí a senha é APAGADA do banco (sis_login_confirmar_entrega).
+--     Senha guardada em texto é só a provisória, e só até ser entregue.
+--
+-- DEMISSÃO
+--   · sis_logins_demitidos(): EMPREGADOS demitido cujo login (auth_user_id)
+--     ainda existe e não está ligado a outro cadastro ativo (recontratado).
+--   · "SIS_LOGIN_DESLIGAMENTO": quem já foi tratado (excluído/mantido).
+--
+-- ACESSO: menu sistemas_logins (nasce fechado). visualizar lê; alterar
+-- marca criado / tratado. A tabela de pedidos não tem policy para o
+-- solicitante: ele só enxerga pelas RPCs, que filtram pelo e-mail do login.
+--
+-- Idempotente. Aplicar no banco do app (SQL Editor) — não se auto-aplica.
+-- =========================================================================
+
+-- ── 1) Menu ──────────────────────────────────────────────────────────────
+INSERT INTO public.app_menu (modulo_id, codigo, nome, rota, ordem, ativo)
+SELECT m.id, 'sistemas_logins', 'Logins — Admissão e Demissão', '/app/sistemas/logins', 7, true
+  FROM public.app_modulo m WHERE m.codigo = 'sistemas'
+ON CONFLICT (modulo_id, codigo) DO NOTHING;
+
+CREATE OR REPLACE FUNCTION public.sis_logins_pode(_acao text)
+RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, pg_temp AS $$
+  SELECT auth.uid() IS NOT NULL AND public.has_screen_access(auth.uid(), 'sistemas_logins', _acao::public.app_acao)
+$$;
+REVOKE ALL ON FUNCTION public.sis_logins_pode(text) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.sis_logins_pode(text) TO authenticated;
+
+-- ── 2) A vaga pergunta ───────────────────────────────────────────────────
+ALTER TABLE public."SISTEMA_RECRUTAMENTO"
+  ADD COLUMN IF NOT EXISTS vaga_encarregado  boolean NOT NULL DEFAULT false,
+  ADD COLUMN IF NOT EXISTS precisa_login_erp boolean NOT NULL DEFAULT false;
+ALTER TABLE public."SISTEMA_RECRUTAMENTO" DROP CONSTRAINT IF EXISTS sistema_recrutamento_login_so_encarregado_chk;
+ALTER TABLE public."SISTEMA_RECRUTAMENTO" ADD CONSTRAINT sistema_recrutamento_login_so_encarregado_chk
+  CHECK (NOT precisa_login_erp OR vaga_encarregado);
+
+-- ── 3) Pedido de login da admissão ───────────────────────────────────────
+CREATE TABLE IF NOT EXISTS public."SIS_LOGIN_PEDIDO" (
+  id                uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  vaga_id           bigint REFERENCES public."SISTEMA_RECRUTAMENTO"(id) ON DELETE SET NULL,
+  candidato_id      bigint UNIQUE,
+  nome              text NOT NULL,
+  cpf               text,
+  contrato          text,
+  cargo             text,
+  email_sugerido    text NOT NULL,
+  -- Provisória; apagada quando o solicitante confirma que repassou.
+  senha             text,
+  solicitante_email text,
+  solicitante_nome  text,
+  status            text NOT NULL DEFAULT 'pendente' CHECK (status IN ('pendente', 'criado', 'entregue', 'cancelado')),
+  login_email       text,
+  criado_por        uuid,
+  criado_por_nome   text,
+  criado_em         timestamptz,
+  entregue_em       timestamptz,
+  obs               text,
+  created_at        timestamptz NOT NULL DEFAULT now(),
+  updated_at        timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_sis_login_pedido_solicitante ON public."SIS_LOGIN_PEDIDO" (lower(solicitante_email)) WHERE status = 'criado';
+
+DROP TRIGGER IF EXISTS trg_sis_login_pedido_updated_at ON public."SIS_LOGIN_PEDIDO";
+CREATE TRIGGER trg_sis_login_pedido_updated_at BEFORE UPDATE ON public."SIS_LOGIN_PEDIDO"
+  FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+ALTER TABLE public."SIS_LOGIN_PEDIDO" ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS sis_login_pedido_select ON public."SIS_LOGIN_PEDIDO";
+CREATE POLICY sis_login_pedido_select ON public."SIS_LOGIN_PEDIDO" FOR SELECT TO authenticated USING (public.sis_logins_pode('visualizar'));
+-- Escrita só pelas RPCs abaixo (SECURITY DEFINER).
+
+-- Senha provisória: 10 caracteres sem os ambíguos (0/O, 1/l/I), com pelo
+-- menos uma maiúscula, minúscula e dígito.
+CREATE OR REPLACE FUNCTION public.sis_login_senha_aleatoria()
+RETURNS text LANGUAGE plpgsql VOLATILE SET search_path = public, extensions, pg_temp AS $$
+DECLARE
+  alfabeto constant text := 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789';
+  b bytea; s text;
+BEGIN
+  LOOP
+    b := extensions.gen_random_bytes(10); s := '';
+    FOR i IN 0..9 LOOP s := s || substr(alfabeto, (get_byte(b, i) % length(alfabeto)) + 1, 1); END LOOP;
+    EXIT WHEN s ~ '[A-Z]' AND s ~ '[a-z]' AND s ~ '[0-9]';
+  END LOOP;
+  RETURN s;
+END $$;
+REVOKE ALL ON FUNCTION public.sis_login_senha_aleatoria() FROM PUBLIC, anon, authenticated;
+
+-- E-mail no padrão dos encarregados: primeiro.segundo@gmail.com (sem
+-- "de/da/dos…"), sem acento; se já existe login ou pedido com ele, tenta
+-- primeiro.último, depois primeiro.segundo2, 3…
+CREATE OR REPLACE FUNCTION public.sis_login_email_sugerido(p_nome text)
+RETURNS text LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public, pg_temp AS $$
+DECLARE
+  partes text[]; base text; cand text; n int := 1;
+  livre boolean;
+BEGIN
+  partes := ARRAY(
+    SELECT p FROM unnest(string_to_array(
+      regexp_replace(lower(translate(btrim(coalesce(p_nome, '')),
+        'ÁÀÂÃÄÉÈÊËÍÌÎÏÓÒÔÕÖÚÙÛÜÇÑáàâãäéèêëíìîïóòôõöúùûüçñ', 'AAAAAEEEEIIIIOOOOOUUUUCNaaaaaeeeeiiiiooooouuuucn')), '[^a-z ]', '', 'g'), ' ')) p
+     WHERE p <> '' AND p NOT IN ('de', 'da', 'do', 'dos', 'das', 'e'));
+  IF coalesce(array_length(partes, 1), 0) = 0 THEN partes := ARRAY['colaborador']; END IF;
+  base := partes[1] || CASE WHEN array_length(partes, 1) > 1 THEN '.' || partes[2] ELSE '' END;
+  cand := base;
+  LOOP
+    SELECT NOT EXISTS (SELECT 1 FROM auth.users u WHERE lower(u.email) = cand || '@gmail.com')
+       AND NOT EXISTS (SELECT 1 FROM public."SIS_LOGIN_PEDIDO" p WHERE lower(p.email_sugerido) = cand || '@gmail.com' AND p.status <> 'cancelado')
+      INTO livre;
+    EXIT WHEN livre;
+    n := n + 1;
+    cand := CASE WHEN n = 2 AND array_length(partes, 1) > 2 THEN partes[1] || '.' || partes[array_length(partes, 1)] ELSE base || n END;
+  END LOOP;
+  RETURN cand || '@gmail.com';
+END $$;
+REVOKE ALL ON FUNCTION public.sis_login_email_sugerido(text) FROM PUBLIC, anon, authenticated;
+
+CREATE OR REPLACE FUNCTION public.sis_login_pedido_da_admissao()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
+DECLARE v record; v_nome text;
+BEGIN
+  IF NEW.enviado_admissao_em IS NULL OR NEW.vaga_id IS NULL THEN RETURN NEW; END IF;
+  IF TG_OP = 'UPDATE' AND OLD.enviado_admissao_em IS NOT NULL THEN RETURN NEW; END IF;
+  SELECT id, contrato, cargo, solicitante_cpf, solicitante_nome, precisa_login_erp
+    INTO v FROM public."SISTEMA_RECRUTAMENTO" WHERE id = NEW.vaga_id;
+  IF NOT coalesce(v.precisa_login_erp, false) THEN RETURN NEW; END IF;
+  v_nome := upper(btrim(coalesce(public.rh_nome_oficial_por_cpf(coalesce(NEW.cpf, NEW.cpf_cand)), NEW.nome, '')));
+  IF v_nome = '' THEN RETURN NEW; END IF;
+  -- Este gatilho roda dentro do kanban do Recrutamento: falhar aqui não pode
+  -- travar a admissão. Erro vira aviso no log e o pedido fica de fora.
+  BEGIN
+    INSERT INTO public."SIS_LOGIN_PEDIDO"
+      (vaga_id, candidato_id, nome, cpf, contrato, cargo, email_sugerido, senha, solicitante_email, solicitante_nome)
+    VALUES
+      (v.id, NEW.id, v_nome, coalesce(NEW.cpf, NEW.cpf_cand), v.contrato, v.cargo,
+       public.sis_login_email_sugerido(v_nome), public.sis_login_senha_aleatoria(),
+       CASE WHEN v.solicitante_cpf LIKE '%@%' THEN lower(btrim(v.solicitante_cpf)) END, v.solicitante_nome)
+    ON CONFLICT (candidato_id) DO NOTHING;
+  EXCEPTION WHEN others THEN
+    RAISE WARNING 'sis_login_pedido_da_admissao (candidato %): %', NEW.id, SQLERRM;
+  END;
+  RETURN NEW;
+END $$;
+
+DROP TRIGGER IF EXISTS trg_sis_login_pedido_da_admissao ON public."WA_CURRICULOS";
+CREATE TRIGGER trg_sis_login_pedido_da_admissao AFTER INSERT OR UPDATE OF enviado_admissao_em ON public."WA_CURRICULOS"
+  FOR EACH ROW EXECUTE FUNCTION public.sis_login_pedido_da_admissao();
+
+-- Sistemas: login criado (e-mail e senha finais, se mudaram).
+CREATE OR REPLACE FUNCTION public.sis_login_marcar_criado(p_id uuid, p_login text, p_senha text)
+RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
+DECLARE v_login text := lower(btrim(coalesce(p_login, ''))); v_quem text;
+BEGIN
+  IF NOT public.sis_logins_pode('alterar') THEN RAISE EXCEPTION 'Sem permissão.' USING ERRCODE = '42501'; END IF;
+  IF v_login !~ '^[^@\s]+@[^@\s]+\.[^@\s]+$' THEN RAISE EXCEPTION 'Informe o login (e-mail) criado.'; END IF;
+  IF length(btrim(coalesce(p_senha, ''))) < 6 THEN RAISE EXCEPTION 'Informe a senha (mínimo 6 caracteres).'; END IF;
+  SELECT coalesce(nullif(btrim(display_name), ''), email) INTO v_quem FROM public.profiles WHERE id = auth.uid();
+  UPDATE public."SIS_LOGIN_PEDIDO"
+     SET status = 'criado', login_email = v_login, senha = btrim(p_senha),
+         criado_por = auth.uid(), criado_por_nome = v_quem, criado_em = now()
+   WHERE id = p_id AND status IN ('pendente', 'criado');
+  IF NOT FOUND THEN RAISE EXCEPTION 'Pedido não encontrado ou já entregue.'; END IF;
+END $$;
+
+CREATE OR REPLACE FUNCTION public.sis_login_cancelar(p_id uuid, p_obs text)
+RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
+BEGIN
+  IF NOT public.sis_logins_pode('alterar') THEN RAISE EXCEPTION 'Sem permissão.' USING ERRCODE = '42501'; END IF;
+  UPDATE public."SIS_LOGIN_PEDIDO" SET status = 'cancelado', senha = NULL, obs = nullif(btrim(p_obs), '')
+   WHERE id = p_id AND status IN ('pendente', 'criado');
+  IF NOT FOUND THEN RAISE EXCEPTION 'Pedido não encontrado ou já entregue.'; END IF;
+END $$;
+
+-- Quem pediu a vaga: só os logins prontos das vagas DELE (pelo e-mail do login).
+CREATE OR REPLACE FUNCTION public.minhas_credenciais_login()
+RETURNS TABLE (id uuid, vaga_id bigint, nome text, cargo text, contrato text, login_email text, senha text, criado_em timestamptz)
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, pg_temp AS $$
+  SELECT p.id, p.vaga_id, p.nome, p.cargo, p.contrato, p.login_email, p.senha, p.criado_em
+    FROM public."SIS_LOGIN_PEDIDO" p
+   WHERE p.status = 'criado'
+     AND p.solicitante_email IS NOT NULL
+     AND p.solicitante_email = (SELECT lower(u.email) FROM auth.users u WHERE u.id = auth.uid())
+   ORDER BY p.criado_em DESC
+$$;
+
+CREATE OR REPLACE FUNCTION public.sis_login_confirmar_entrega(p_id uuid)
+RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
+BEGIN
+  UPDATE public."SIS_LOGIN_PEDIDO"
+     SET status = 'entregue', entregue_em = now(), senha = NULL
+   WHERE id = p_id AND status = 'criado'
+     AND solicitante_email = (SELECT lower(u.email) FROM auth.users u WHERE u.id = auth.uid());
+  IF NOT FOUND THEN RAISE EXCEPTION 'Login não encontrado.'; END IF;
+END $$;
+
+-- ── 4) Demitidos com login ───────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS public."SIS_LOGIN_DESLIGAMENTO" (
+  auth_user_id    uuid PRIMARY KEY,
+  empregado_id    bigint,
+  acao            text NOT NULL CHECK (acao IN ('excluido', 'mantido')),
+  obs             text,
+  tratado_por     uuid DEFAULT auth.uid(),
+  tratado_por_nome text,
+  tratado_em      timestamptz NOT NULL DEFAULT now()
+);
+ALTER TABLE public."SIS_LOGIN_DESLIGAMENTO" ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS sis_login_desligamento_select ON public."SIS_LOGIN_DESLIGAMENTO";
+CREATE POLICY sis_login_desligamento_select ON public."SIS_LOGIN_DESLIGAMENTO" FOR SELECT TO authenticated USING (public.sis_logins_pode('visualizar'));
+
+-- Demitido cujo login ainda existe e não serve a outro cadastro ativo.
+-- Login que Sistemas marcou "mantido" sai da lista; "excluído" sai porque o
+-- usuário some de auth.users.
+CREATE OR REPLACE FUNCTION public.sis_logins_demitidos()
+RETURNS TABLE (empregado_id bigint, auth_user_id uuid, nome text, cargo text, contrato text, empresa text,
+               desligamento date, login_email text, ultimo_acesso timestamptz, tratado text, tratado_em timestamptz, tratado_por text)
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public, pg_temp AS $$
+BEGIN
+  IF NOT public.sis_logins_pode('visualizar') THEN RAISE EXCEPTION 'Sem permissão.' USING ERRCODE = '42501'; END IF;
+  RETURN QUERY
+  SELECT e."ID", u.id, e."Nome", e."Título do Cargo", e."Nome Filial", e."Nome da Empresa",
+         public.data_universal(e."Data Afastamento"), u.email::text, u.last_sign_in_at,
+         d.acao, d.tratado_em, d.tratado_por_nome
+    FROM public."EMPREGADOS" e
+    JOIN auth.users u ON u.id = e.auth_user_id
+    LEFT JOIN public."SIS_LOGIN_DESLIGAMENTO" d ON d.auth_user_id = u.id
+   WHERE e."Situação" = 'Demitido'
+     AND NOT EXISTS (SELECT 1 FROM public."EMPREGADOS" o
+                      WHERE o.auth_user_id = e.auth_user_id AND public.esp_col_esta_ativo(o."Situação"))
+   ORDER BY (d.acao IS NOT NULL), public.data_universal(e."Data Afastamento") DESC NULLS LAST;
+END $$;
+
+CREATE OR REPLACE FUNCTION public.sis_login_desligamento_tratar(p_auth_user_id uuid, p_empregado_id bigint, p_acao text, p_obs text)
+RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
+DECLARE v_quem text;
+BEGIN
+  IF NOT public.sis_logins_pode('alterar') THEN RAISE EXCEPTION 'Sem permissão.' USING ERRCODE = '42501'; END IF;
+  IF p_acao NOT IN ('excluido', 'mantido') THEN RAISE EXCEPTION 'Ação inválida.'; END IF;
+  IF p_acao = 'mantido' AND length(btrim(coalesce(p_obs, ''))) < 5 THEN
+    RAISE EXCEPTION 'Diga por que o login vai ser mantido.';
+  END IF;
+  SELECT coalesce(nullif(btrim(display_name), ''), email) INTO v_quem FROM public.profiles WHERE id = auth.uid();
+  INSERT INTO public."SIS_LOGIN_DESLIGAMENTO" (auth_user_id, empregado_id, acao, obs, tratado_por, tratado_por_nome)
+  VALUES (p_auth_user_id, p_empregado_id, p_acao, nullif(btrim(p_obs), ''), auth.uid(), v_quem)
+  ON CONFLICT (auth_user_id) DO UPDATE SET acao = EXCLUDED.acao, obs = EXCLUDED.obs,
+    tratado_por = EXCLUDED.tratado_por, tratado_por_nome = EXCLUDED.tratado_por_nome, tratado_em = now();
+END $$;
+
+DO $$
+DECLARE f text;
+BEGIN
+  FOREACH f IN ARRAY ARRAY['sis_login_marcar_criado(uuid, text, text)', 'sis_login_cancelar(uuid, text)',
+    'minhas_credenciais_login()', 'sis_login_confirmar_entrega(uuid)', 'sis_logins_demitidos()',
+    'sis_login_desligamento_tratar(uuid, bigint, text, text)'] LOOP
+    EXECUTE format('REVOKE ALL ON FUNCTION public.%s FROM PUBLIC, anon', f);
+    EXECUTE format('GRANT EXECUTE ON FUNCTION public.%s TO authenticated', f);
+  END LOOP;
+END $$;
+
+NOTIFY pgrst, 'reload schema';
+
+-- ROLLBACK
+-- DROP TRIGGER IF EXISTS trg_sis_login_pedido_da_admissao ON public."WA_CURRICULOS";
+-- DROP FUNCTION IF EXISTS public.sis_login_pedido_da_admissao(), public.sis_login_marcar_criado(uuid, text, text),
+--   public.sis_login_cancelar(uuid, text), public.minhas_credenciais_login(), public.sis_login_confirmar_entrega(uuid),
+--   public.sis_logins_demitidos(), public.sis_login_desligamento_tratar(uuid, bigint, text, text),
+--   public.sis_login_email_sugerido(text), public.sis_login_senha_aleatoria(), public.sis_logins_pode(text);
+-- DROP TABLE IF EXISTS public."SIS_LOGIN_PEDIDO", public."SIS_LOGIN_DESLIGAMENTO";
+-- ALTER TABLE public."SISTEMA_RECRUTAMENTO" DROP CONSTRAINT IF EXISTS sistema_recrutamento_login_so_encarregado_chk,
+--   DROP COLUMN IF EXISTS precisa_login_erp, DROP COLUMN IF EXISTS vaga_encarregado;
+-- DELETE FROM public.app_menu WHERE codigo = 'sistemas_logins';
+
+-- ===== 20261006000010_sistemas_logins_bolinha (JA APLICADA 06/10) =====
+-- =========================================================================
+-- SIS-2026-0598 — bolinha no menu para os Logins (06/10/2026)
+--
+-- Acrescenta à minhas_pendencias_aprovacao (mig 20261006000006) duas filas:
+--   · Sistemas › Logins (sistemas_logins alterar): login a criar
+--     ('pendente') + demitido com login ainda não tratado;
+--   · Minhas Solicitações (quem pediu a vaga): login pronto ('criado')
+--     esperando ser repassado.
+-- Troca só o final da função vigente (antes do RETURN), para não reescrever
+-- as regras de aprovação que já estão nela.
+-- Idempotente. Aplicar no banco do app (SQL Editor) — não se auto-aplica.
+-- =========================================================================
+
+DO $$
+DECLARE v_def text; v_novo text;
+BEGIN
+  v_def := pg_get_functiondef('public.minhas_pendencias_aprovacao()'::regprocedure);
+  IF v_def LIKE '%SIS_LOGIN_PEDIDO%' THEN RETURN; END IF;  -- já aplicado
+  v_novo := replace(v_def, E'  RETURN v_out;\nEND', $blk$
+  -- ── Sistemas › Logins (SIS-2026-0598) ─────────────────────────────────
+  IF public.has_screen_access(v_uid, 'sistemas_logins', 'alterar'::public.app_acao) THEN
+    SELECT (SELECT count(*) FROM public."SIS_LOGIN_PEDIDO" WHERE status = 'pendente')
+         + (SELECT count(*) FROM public."EMPREGADOS" e
+              JOIN auth.users u ON u.id = e.auth_user_id
+              LEFT JOIN public."SIS_LOGIN_DESLIGAMENTO" d ON d.auth_user_id = u.id
+             WHERE e."Situação" = 'Demitido' AND d.auth_user_id IS NULL
+               AND NOT EXISTS (SELECT 1 FROM public."EMPREGADOS" o
+                                WHERE o.auth_user_id = e.auth_user_id AND public.esp_col_esta_ativo(o."Situação")))
+      INTO n;
+    IF n > 0 THEN v_out := v_out || jsonb_build_object('/app/sistemas/logins', n); END IF;
+  END IF;
+  -- Login pronto da vaga que EU pedi (solicitante_email = e-mail do meu login).
+  SELECT count(*) INTO n FROM public."SIS_LOGIN_PEDIDO" p
+   WHERE p.status = 'criado'
+     AND p.solicitante_email = (SELECT lower(u.email) FROM auth.users u WHERE u.id = v_uid);
+  IF n > 0 THEN
+    v_out := v_out || jsonb_build_object('/app/encarregados/minhas-solicitacoes', n, '/app/central-servicos/solicitacoes', n);
+  END IF;
+
+  RETURN v_out;
+END$blk$);
+  IF v_novo = v_def THEN
+    RAISE EXCEPTION 'minhas_pendencias_aprovacao mudou: não achei o RETURN final.';
+  END IF;
+  EXECUTE v_novo;
+END $$;
+
+NOTIFY pgrst, 'reload schema';
+
+-- ROLLBACK: reaplicar minhas_pendencias_aprovacao da mig 20261006000006.
+
+-- ===== 20261006000011_rh_demitidos_do_mes_e_atestado_afastado (JA APLICADA 06/10) =====
+-- =========================================================================
+-- RH › Colaboradores: DEMITIDOS = demissão com data de afastamento no mês
+-- RH › Ativos/Contratos: ATESTADO também é afastado (06/10/2026)
+--
+-- PEDIDO (Pablo):
+--  1. "em Colaboradores os demitidos aparecem diferentes nos lugares, um tem
+--     que estar correto: tem que pegar quantos demitidos tem pelo afastamento
+--     da tabela EMPREGADOS, pela data do afastamento de demissão do mês".
+--     SET/2026 mostrava "Desligados no mês" 119 e, em Por situação,
+--     "Demitido" 123. Dois motivos:
+--       · Por situação usava a situação DE HOJE de quem esteve no mês: os 4
+--         demitidos em 01–06/10 trabalharam em setembro e já apareciam
+--         como "Demitido" lá (119 + 4 = 123);
+--       · a regra de saída (eh_saida) incluía "Aposentadoria", que na Senior
+--         é afastamento, não demissão (13 pessoas ativas).
+--     Agora: saída = Situação "Demitido" (DESLIG/RESCIS por garantia); e,
+--     no quadro do mês, quem foi demitido DEPOIS do mês aparece como
+--     "Trabalhando" naquele mês — então Demitido em Por situação = demissões
+--     com Data Afastamento dentro do mês = card "Desligados no mês".
+--     A lista (rh_colaboradores_lista) recebe a mesma regra, para o filtro
+--     de situação e os números baterem.
+--  2. "nos números em amarelo (afastados) do Ativos/Contratos deve aparecer
+--     quem está de atestado também — atestado filho, atestado, qualquer
+--     afastamento. Ex.: 318 trabalhando e 5 de atestado, os números têm que
+--     bater". rh_ac_conta_no_posto passa a contar SÓ "Trabalhando".
+--
+-- As duas funções do Colaboradores têm a troca feita no corpo vigente
+-- (replace), como em 20261006000007 — só os trechos da regra mudam.
+-- Idempotente. Aplicar no banco do app (SQL Editor) — não se auto-aplica.
+-- =========================================================================
+
+-- ── 1) Ativos/Contratos: só "Trabalhando" ocupa o posto ──────────────────
+CREATE OR REPLACE FUNCTION public.rh_ac_conta_no_posto(_situacao text)
+ RETURNS boolean
+ LANGUAGE sql
+ IMMUTABLE
+ SET search_path TO 'public', 'pg_temp'
+AS $function$
+  -- 06/10/2026: atestado (dias, filho…) deixou de contar — é afastamento
+  -- como auxílio-doença, licença e férias, e aparece na coluna Afastados.
+  SELECT COALESCE(btrim(_situacao), '') = 'Trabalhando';
+$function$;
+
+-- ── 2) Colaboradores: demitido do mês ────────────────────────────────────
+DO $$
+DECLARE
+  f text; v_def text; v_novo text;
+  saida_velha constant text := $s$(btrim(coalesce(e."Situação", '')) ~* '(DEMIT|DESLIG|RESCIS|APOSENT)') AS eh_saida,$s$;
+  saida_nova  constant text := $s$(btrim(coalesce(e."Situação", '')) ~* '^(DEMIT|DESLIG|RESCIS)') AS eh_saida,$s$;
+  sit_velha   constant text := $s$btrim(coalesce(e."Situação", ''))                                 AS situacao,$s$;
+  -- Demitido depois do mês olhado ainda trabalhava naquele mês.
+  sit_nova    constant text := $s$CASE WHEN btrim(coalesce(e."Situação", '')) ~* '^(DEMIT|DESLIG|RESCIS)'
+                AND public.rh_data(e."Data Afastamento"::text) > v_fim
+           THEN 'Trabalhando' ELSE btrim(coalesce(e."Situação", '')) END AS situacao,$s$;
+BEGIN
+  FOREACH f IN ARRAY ARRAY[
+    'public.rh_colaboradores_dashboard(integer,integer,text,text,text,text,text)',
+    'public.rh_colaboradores_lista(integer,integer,text,text,text,text,integer,integer,text,text)'] LOOP
+    v_def := pg_get_functiondef(f::regprocedure);
+    IF v_def LIKE '%^(DEMIT|DESLIG|RESCIS)%' THEN CONTINUE; END IF;  -- já aplicado
+    IF position(saida_velha IN v_def) = 0 OR position(sit_velha IN v_def) = 0 THEN
+      RAISE EXCEPTION '% mudou: não achei os trechos de situação/saída.', f;
+    END IF;
+    v_novo := replace(replace(v_def, saida_velha, saida_nova), sit_velha, sit_nova);
+    EXECUTE v_novo;
+  END LOOP;
+END $$;
+
+-- A lista tinha um atalho: filtrando uma situação de saída (Demitido), ela
+-- trazia TODO demitido da história (10.908), apesar do comentário dizer
+-- "quem saiu no mês". Com a situação do mês acima, o recorte normal já
+-- traz exatamente os demitidos com afastamento no mês — o atalho sai.
+DO $$
+DECLARE v_def text;
+  velho constant text := $s$v_saida boolean := EXISTS (SELECT 1 FROM unnest(v_sits) s WHERE s ~* '(DEMIT|DESLIG|RESCIS|APOSENT)');$s$;
+  novo  constant text := $s$v_saida boolean := false;  -- 06/10/2026 (mig 20261006000011): saída segue o mês como o resto.$s$;
+BEGIN
+  v_def := pg_get_functiondef('public.rh_colaboradores_lista(integer,integer,text,text,text,text,integer,integer,text,text)'::regprocedure);
+  IF position(novo IN v_def) > 0 THEN RETURN; END IF;
+  IF position(velho IN v_def) = 0 THEN RAISE EXCEPTION 'rh_colaboradores_lista mudou: não achei o v_saida.'; END IF;
+  EXECUTE replace(v_def, velho, novo);
+END $$;
+
+NOTIFY pgrst, 'reload schema';
+
+-- ROLLBACK
+-- rh_ac_conta_no_posto: voltar a "= 'Trabalhando' OR ILIKE 'atestado%'" (mig 20261005000001).
+-- rh_colaboradores_dashboard/lista: replace inverso dos dois trechos acima.
+
+-- ===== 20261006160000_sistemas_logins_vinculo_senior =====
+-- =========================================================================
+-- SISTEMAS › LOGINS — o login nasce VINCULADO ao colaborador da Senior, e
+-- demitido não entra mais no ERP (06/10/2026)
+--
+-- PEDIDO (Pablo, 06/10/2026, em cima da PR #811 / SIS-2026-0598)
+--   1. Quando Sistemas informa o login (e-mail) de um admitido, o login do
+--      ERP já fica VINCULADO ao cadastro dele na EMPREGADOS (auth_user_id).
+--   2. Só dá para liberar o login depois que a pessoa está admitida na
+--      Senior: o pedido tem o CPF (vem do Recrutamento) e o ERP procura na
+--      EMPREGADOS a admissão com Situação = 'Trabalhando'. Sem ela, o pedido
+--      fica "aguardando admissão na Senior".
+--   3. Para que, quando a pessoa for DEMITIDA, o login pare de funcionar:
+--      quem tem login vinculado e está demitido não acessa mais o ERP — só o
+--      Portal do Colaborador (/colaborador), que tem sessão própria por CPF e
+--      não passa por aqui.
+--
+-- O QUE MUDA
+--   a) "SIS_LOGIN_PEDIDO" ganha empregado_id / auth_user_id (o vínculo feito).
+--   b) sis_login_admitido_senior(cpf): a admissão Trabalhando daquele CPF.
+--   c) sis_login_pedidos_lista(): os pedidos + a admissão encontrada na Senior
+--      (a tela usa isto no lugar do select direto).
+--   d) sis_login_definir_cpf: Sistemas completa/corrige o CPF do pedido.
+--   e) sis_login_marcar_criado passa a exigir o colaborador Trabalhando e o
+--      usuário já criado com aquele e-mail; grava EMPREGADOS.auth_user_id
+--      (mesmo efeito do vincular_meu_empregado, mig 20260930000229).
+--   f) erp_login_bloqueado(user): tem vínculo na EMPREGADOS, nenhum vínculo
+--      ativo e Sistemas não marcou "mantido" em SIS_LOGIN_DESLIGAMENTO.
+--      · has_screen_access passa a negar tudo para esse usuário (é a régua de
+--        TODA a RLS de tela e dos menus) — patch na função VIVA, só inserindo
+--        a checagem logo depois do "_user IS NULL";
+--      · meu_login_erp_bloqueado(): o front (ProtectedRoute) mostra a tela de
+--        acesso encerrado e manda para o Portal do Colaborador.
+--      Usuário sem vínculo na EMPREGADOS (administrativo antigo, externo,
+--      automação) não muda em nada.
+--   g) Bolinha de Sistemas › Logins conta só pedido PRONTO (admitido na
+--      Senior) — pedido de quem ainda não foi admitido não é trabalho a fazer.
+--   h) Três avisos em Novidades do Sistema.
+--
+-- Idempotente. Aplicar no banco do app (SQL Editor) — não se auto-aplica.
+-- Depende de 20261006000009 / 20261006000010 (PR #811) e de rh_norm_doc
+-- (20260930000275).
+-- =========================================================================
+
+-- ── a) Vínculo gravado no pedido ─────────────────────────────────────────
+ALTER TABLE public."SIS_LOGIN_PEDIDO"
+  ADD COLUMN IF NOT EXISTS empregado_id bigint,
+  ADD COLUMN IF NOT EXISTS auth_user_id uuid;
+
+-- A busca por login vinculado roda em toda checagem de acesso (f).
+CREATE INDEX IF NOT EXISTS idx_empregados_auth_user_id
+  ON public."EMPREGADOS" (auth_user_id) WHERE auth_user_id IS NOT NULL;
+
+-- ── b) A admissão Trabalhando de um CPF ──────────────────────────────────
+-- Mais recente primeiro (a Senior pode ter readmissão do mesmo CPF).
+CREATE OR REPLACE FUNCTION public.sis_login_admitido_senior(p_cpf text)
+RETURNS TABLE (empregado_id bigint, cadastro text, nome text, cargo text, filial text,
+               admissao text, situacao text, auth_user_id uuid, login_vinculado text)
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, pg_temp AS $$
+  SELECT e."ID"::bigint, e."Cadastro"::text, e."Nome", e."Título do Cargo", e."Nome Filial",
+         e."Admissão"::text, e."Situação", e.auth_user_id, u.email::text
+    FROM public."EMPREGADOS" e
+    LEFT JOIN auth.users u ON u.id = e.auth_user_id
+   WHERE public.rh_norm_doc(p_cpf) IS NOT NULL
+     AND public.rh_norm_doc(e."CPF"::text) = public.rh_norm_doc(p_cpf)
+     AND e."Situação" = 'Trabalhando'
+   ORDER BY public.data_universal(e."Admissão"::text) DESC NULLS LAST, e."ID" DESC
+$$;
+REVOKE ALL ON FUNCTION public.sis_login_admitido_senior(text) FROM PUBLIC, anon, authenticated;
+
+-- ── c) Lista da tela ─────────────────────────────────────────────────────
+CREATE OR REPLACE FUNCTION public.sis_login_pedidos_lista()
+RETURNS TABLE (
+  id uuid, vaga_id bigint, candidato_id bigint, nome text, cpf text, contrato text, cargo text,
+  email_sugerido text, senha text, solicitante_email text, solicitante_nome text, status text,
+  login_email text, criado_por_nome text, criado_em timestamptz, entregue_em timestamptz, obs text,
+  created_at timestamptz, empregado_id bigint, auth_user_id uuid,
+  senior_id bigint, senior_cadastro text, senior_nome text, senior_cargo text, senior_filial text,
+  senior_admissao text, senior_login text)
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public, pg_temp AS $$
+BEGIN
+  IF NOT public.sis_logins_pode('visualizar') THEN RAISE EXCEPTION 'Sem permissão.' USING ERRCODE = '42501'; END IF;
+  RETURN QUERY
+  SELECT p.id, p.vaga_id, p.candidato_id, p.nome, p.cpf, p.contrato, p.cargo,
+         p.email_sugerido, p.senha, p.solicitante_email, p.solicitante_nome, p.status,
+         p.login_email, p.criado_por_nome, p.criado_em, p.entregue_em, p.obs,
+         p.created_at, p.empregado_id, p.auth_user_id,
+         s.empregado_id, s.cadastro, s.nome, s.cargo, s.filial, s.admissao, s.login_vinculado
+    FROM public."SIS_LOGIN_PEDIDO" p
+    LEFT JOIN LATERAL (SELECT * FROM public.sis_login_admitido_senior(p.cpf) LIMIT 1) s ON true
+   ORDER BY p.created_at DESC
+   LIMIT 500;
+END $$;
+
+-- ── d) Completar / corrigir o CPF ────────────────────────────────────────
+CREATE OR REPLACE FUNCTION public.sis_login_definir_cpf(p_id uuid, p_cpf text)
+RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
+DECLARE v_cpf text := regexp_replace(coalesce(p_cpf, ''), '\D', '', 'g');
+BEGIN
+  IF NOT public.sis_logins_pode('alterar') THEN RAISE EXCEPTION 'Sem permissão.' USING ERRCODE = '42501'; END IF;
+  IF length(v_cpf) <> 11 THEN RAISE EXCEPTION 'CPF inválido: informe os 11 dígitos.'; END IF;
+  UPDATE public."SIS_LOGIN_PEDIDO" SET cpf = v_cpf
+   WHERE id = p_id AND status IN ('pendente', 'criado');
+  IF NOT FOUND THEN RAISE EXCEPTION 'Pedido não encontrado ou já entregue.'; END IF;
+END $$;
+
+-- ── e) Marcar criado = vincular ──────────────────────────────────────────
+-- A assinatura antiga (3 argumentos) sai: login sem vínculo é exatamente o
+-- que este pedido proíbe.
+DROP FUNCTION IF EXISTS public.sis_login_marcar_criado(uuid, text, text);
+
+CREATE OR REPLACE FUNCTION public.sis_login_marcar_criado(p_id uuid, p_login text, p_senha text, p_empregado_id bigint)
+RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
+DECLARE
+  v_login  text := lower(btrim(coalesce(p_login, '')));
+  v_quem   text;
+  v_ped    public."SIS_LOGIN_PEDIDO"%ROWTYPE;
+  v_emp    record;
+  v_uid    uuid;
+  v_outro  text;
+BEGIN
+  IF NOT public.sis_logins_pode('alterar') THEN RAISE EXCEPTION 'Sem permissão.' USING ERRCODE = '42501'; END IF;
+  IF v_login !~ '^[^@\s]+@[^@\s]+\.[^@\s]+$' THEN RAISE EXCEPTION 'Informe o login (e-mail) criado.'; END IF;
+  IF length(btrim(coalesce(p_senha, ''))) < 6 THEN RAISE EXCEPTION 'Informe a senha (mínimo 6 caracteres).'; END IF;
+
+  SELECT * INTO v_ped FROM public."SIS_LOGIN_PEDIDO" WHERE id = p_id AND status IN ('pendente', 'criado') FOR UPDATE;
+  IF NOT FOUND THEN RAISE EXCEPTION 'Pedido não encontrado ou já entregue.'; END IF;
+  IF public.rh_norm_doc(v_ped.cpf) IS NULL THEN
+    RAISE EXCEPTION 'O pedido está sem CPF. Informe o CPF do admitido antes de liberar o login.';
+  END IF;
+
+  -- O colaborador tem que estar admitido na Senior AGORA, com o mesmo CPF.
+  SELECT e."ID" AS id, e."Nome" AS nome, e."Situação" AS situacao, e.auth_user_id, e."CPF"::text AS cpf
+    INTO v_emp
+    FROM public."EMPREGADOS" e WHERE e."ID" = p_empregado_id;
+  IF NOT FOUND THEN RAISE EXCEPTION 'Colaborador não encontrado na EMPREGADOS.'; END IF;
+  IF v_emp.situacao IS DISTINCT FROM 'Trabalhando' THEN
+    RAISE EXCEPTION 'O colaborador está "%" na Senior — o login só é liberado com a admissão Trabalhando.', coalesce(v_emp.situacao, 'sem situação');
+  END IF;
+  IF public.rh_norm_doc(v_emp.cpf) IS DISTINCT FROM public.rh_norm_doc(v_ped.cpf) THEN
+    RAISE EXCEPTION 'O CPF do colaborador escolhido não é o CPF do pedido.';
+  END IF;
+
+  -- O usuário já tem que existir (criado em Administração › Usuários).
+  SELECT u.id INTO v_uid FROM auth.users u WHERE lower(u.email) = v_login;
+  IF v_uid IS NULL THEN
+    RAISE EXCEPTION 'Não existe usuário com o login %. Crie a conta em Administração › Usuários e confirme de novo.', v_login;
+  END IF;
+
+  IF v_emp.auth_user_id IS NOT NULL AND v_emp.auth_user_id <> v_uid THEN
+    SELECT u.email INTO v_outro FROM auth.users u WHERE u.id = v_emp.auth_user_id;
+    RAISE EXCEPTION 'Este colaborador já está vinculado a outro login (%).', coalesce(v_outro, 'usuário excluído');
+  END IF;
+  SELECT e."Nome" INTO v_outro FROM public."EMPREGADOS" e
+   WHERE e.auth_user_id = v_uid AND e."ID" <> v_emp.id AND public.esp_col_esta_ativo(e."Situação") LIMIT 1;
+  IF v_outro IS NOT NULL THEN
+    RAISE EXCEPTION 'O login % já está vinculado a outro colaborador ativo (%).', v_login, v_outro;
+  END IF;
+
+  -- O vínculo.
+  UPDATE public."EMPREGADOS"
+     SET auth_user_id = v_uid,
+         "email" = CASE WHEN coalesce(btrim("email"), '') = '' THEN v_login ELSE "email" END
+   WHERE "ID" = v_emp.id;
+  UPDATE public.profiles SET display_name = v_emp.nome
+   WHERE id = v_uid AND coalesce(btrim(display_name), '') = '';
+  -- Se Sistemas tinha marcado este login como "excluído/mantido" num
+  -- desligamento antigo, o vínculo novo vale mais.
+  DELETE FROM public."SIS_LOGIN_DESLIGAMENTO" WHERE auth_user_id = v_uid;
+
+  SELECT coalesce(nullif(btrim(display_name), ''), email) INTO v_quem FROM public.profiles WHERE id = auth.uid();
+  UPDATE public."SIS_LOGIN_PEDIDO"
+     SET status = 'criado', login_email = v_login, senha = btrim(p_senha),
+         empregado_id = v_emp.id, auth_user_id = v_uid,
+         criado_por = auth.uid(), criado_por_nome = v_quem, criado_em = now()
+   WHERE id = p_id;
+END $$;
+
+-- ── f) Demitido não entra no ERP ─────────────────────────────────────────
+-- Bloqueia quando o login tem vínculo na EMPREGADOS e TODOS os vínculos estão
+-- demitidos/desligados/rescindidos. Afastado, férias e aposentado-por-
+-- invalidez seguem entrando (não são desligamento). "Mantido" pelo Sistemas
+-- em SIS_LOGIN_DESLIGAMENTO é a exceção explícita.
+CREATE OR REPLACE FUNCTION public.erp_login_bloqueado(_user uuid)
+RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, pg_temp AS $$
+  SELECT _user IS NOT NULL
+     AND EXISTS (SELECT 1 FROM public."EMPREGADOS" e WHERE e.auth_user_id = _user)
+     AND NOT EXISTS (SELECT 1 FROM public."EMPREGADOS" e
+                      WHERE e.auth_user_id = _user
+                        AND coalesce(e."Situação", '') !~* '(DEMIT|DESLIG|RESCIS)')
+     AND NOT EXISTS (SELECT 1 FROM public."SIS_LOGIN_DESLIGAMENTO" d
+                      WHERE d.auth_user_id = _user AND d.acao = 'mantido');
+$$;
+REVOKE ALL ON FUNCTION public.erp_login_bloqueado(uuid) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.erp_login_bloqueado(uuid) TO authenticated;
+
+-- Para o front: o usuário logado está bloqueado? (+ o nome para a mensagem)
+CREATE OR REPLACE FUNCTION public.meu_login_erp_bloqueado()
+RETURNS jsonb LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, pg_temp AS $$
+  SELECT jsonb_build_object(
+    'bloqueado', public.erp_login_bloqueado(auth.uid()),
+    'nome', (SELECT e."Nome" FROM public."EMPREGADOS" e WHERE e.auth_user_id = auth.uid()
+              ORDER BY public.data_universal(e."Admissão"::text) DESC NULLS LAST LIMIT 1),
+    'situacao', (SELECT e."Situação" FROM public."EMPREGADOS" e WHERE e.auth_user_id = auth.uid()
+              ORDER BY public.data_universal(e."Admissão"::text) DESC NULLS LAST LIMIT 1));
+$$;
+REVOKE ALL ON FUNCTION public.meu_login_erp_bloqueado() FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.meu_login_erp_bloqueado() TO authenticated;
+
+-- has_screen_access: insere "bloqueado → false" logo depois do teste de
+-- _user nulo, na definição VIVA (não reescreve as regras de perfil que já
+-- estão lá).
+DO $$
+DECLARE v_def text; v_novo text;
+BEGIN
+  v_def := pg_get_functiondef('public.has_screen_access(uuid, text, public.app_acao, uuid)'::regprocedure);
+  IF v_def LIKE '%erp_login_bloqueado%' THEN RETURN; END IF;   -- já aplicado
+  v_novo := regexp_replace(v_def,
+    '(IF\s+_user\s+IS\s+NULL\s+THEN\s+RETURN\s+false;\s+END\s+IF;)',
+    E'\\1\n\n  -- Login vinculado a colaborador demitido não acessa o ERP (mig 20261006160000).\n  IF public.erp_login_bloqueado(_user) THEN\n    RETURN false;\n  END IF;',
+    'i');
+  IF v_novo = v_def THEN
+    RAISE EXCEPTION 'has_screen_access mudou: não achei o "IF _user IS NULL THEN RETURN false; END IF;".';
+  END IF;
+  EXECUTE v_novo;
+END $$;
+
+-- ── g) Bolinha: só pedido pronto ─────────────────────────────────────────
+DO $$
+DECLARE v_def text; v_novo text;
+BEGIN
+  v_def := pg_get_functiondef('public.minhas_pendencias_aprovacao()'::regprocedure);
+  IF v_def LIKE '%sis_login_admitido_senior%' THEN RETURN; END IF;   -- já aplicado
+  v_novo := replace(v_def,
+    $a$(SELECT count(*) FROM public."SIS_LOGIN_PEDIDO" WHERE status = 'pendente')$a$,
+    $b$(SELECT count(*) FROM public."SIS_LOGIN_PEDIDO" p WHERE p.status = 'pendente' AND EXISTS (SELECT 1 FROM public.sis_login_admitido_senior(p.cpf)))$b$);
+  IF v_novo = v_def THEN
+    RAISE NOTICE 'minhas_pendencias_aprovacao: contagem de pedidos não encontrada — bolinha ficou como estava.';
+    RETURN;
+  END IF;
+  EXECUTE v_novo;
+END $$;
+
+-- ── Grants ───────────────────────────────────────────────────────────────
+DO $$
+DECLARE f text;
+BEGIN
+  FOREACH f IN ARRAY ARRAY['sis_login_pedidos_lista()', 'sis_login_definir_cpf(uuid, text)',
+    'sis_login_marcar_criado(uuid, text, text, bigint)'] LOOP
+    EXECUTE format('REVOKE ALL ON FUNCTION public.%s FROM PUBLIC, anon', f);
+    EXECUTE format('GRANT EXECUTE ON FUNCTION public.%s TO authenticated', f);
+  END LOOP;
+END $$;
+
+-- ── h) Novidades do Sistema ──────────────────────────────────────────────
+INSERT INTO public."SISTEMA_NOVIDADES" (titulo, descricao, tipo, rota, criado_por_nome)
+SELECT x.titulo, x.descricao, x.tipo, x.rota, 'Sistemas'
+  FROM (VALUES
+    ('Login do ERP agora nasce vinculado ao colaborador',
+     'Em Sistemas › Logins, ao informar o e-mail do novo login, o ERP já vincula a conta ao cadastro do colaborador na Senior (EMPREGADOS). O login só pode ser liberado depois que a admissão aparece na Senior com a situação Trabalhando — até lá o pedido fica "Aguardando admissão na Senior".',
+     'NOVO', '/app/sistemas/logins'),
+    ('Demitido não acessa mais o ERP',
+     'Quem tem login vinculado a um colaborador demitido perde o acesso ao ERP automaticamente e é encaminhado ao Portal do Colaborador (/colaborador), onde continua vendo holerite, ponto e histórico. Se for preciso manter o acesso (ex.: recontratação), Sistemas marca "Manter" em Logins › Demitidos com login.',
+     'AVISO', '/app/sistemas/logins'),
+    ('Contratar com login exige o CPF',
+     'No kanban do Recrutamento, ao contratar (enviar à Admissão) o candidato de uma vaga que precisa de login para o ERP, o CPF é obrigatório: é por ele que Sistemas encontra a admissão na Senior para liberar e vincular o login.',
+     'MELHORIA', '/app/rh/recrutamento')
+  ) AS x(titulo, descricao, tipo, rota)
+ WHERE NOT EXISTS (SELECT 1 FROM public."SISTEMA_NOVIDADES" n WHERE n.titulo = x.titulo);
+
+NOTIFY pgrst, 'reload schema';
+
+-- Conferência (antes de liberar, veja quem será bloqueado):
+-- SELECT u.email, max(e."Nome"), string_agg(DISTINCT e."Situação", ', ')
+--   FROM public."EMPREGADOS" e JOIN auth.users u ON u.id = e.auth_user_id
+--  WHERE public.erp_login_bloqueado(u.id) GROUP BY u.email ORDER BY 1;
+
+-- ROLLBACK
+-- has_screen_access: reaplicar a definição sem o bloco "erp_login_bloqueado"
+--   (regexp_replace inverso, ou a versão de 20260718000001).
+-- minhas_pendencias_aprovacao: reaplicar 20261006000010.
+-- DROP FUNCTION IF EXISTS public.meu_login_erp_bloqueado(), public.erp_login_bloqueado(uuid),
+--   public.sis_login_marcar_criado(uuid, text, text, bigint), public.sis_login_definir_cpf(uuid, text),
+--   public.sis_login_pedidos_lista(), public.sis_login_admitido_senior(text);
+-- reaplicar sis_login_marcar_criado(uuid, text, text) de 20261006000009.
+-- ALTER TABLE public."SIS_LOGIN_PEDIDO" DROP COLUMN IF EXISTS empregado_id, DROP COLUMN IF EXISTS auth_user_id;
+-- DELETE FROM public."SISTEMA_NOVIDADES" WHERE titulo IN ('Login do ERP agora nasce vinculado ao colaborador',
+--   'Demitido não acessa mais o ERP', 'Contratar com login exige o CPF');

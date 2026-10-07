@@ -6,6 +6,7 @@ import {
   cpfValido,
   erroChavePix,
   mascaraPix,
+  statusExibicaoDiaria,
   turnosConflitam,
   valorTotalLinha,
   visivelNaLista,
@@ -145,6 +146,25 @@ describe("visivelNaLista", () => {
   it("não mexe nos outros status", () => {
     expect(visivelNaLista({ status: "solicitada" }, "todos")).toBe(true);
     expect(visivelNaLista({ status: "em_ajuste" }, "excluida")).toBe(true);
+  });
+});
+
+describe("status exibido da diária", () => {
+  it("usa exatamente o status atual do Malote depois da aprovação", () => {
+    const status = statusExibicaoDiaria(
+      solicitacao({ status: "aprovada", maloteStatus: "cancelada" }),
+    );
+
+    expect(status).toEqual({
+      chave: "malote:cancelada",
+      label: "Cancelada",
+      cls: "bg-muted text-muted-foreground",
+      origem: "malote",
+    });
+  });
+
+  it("mantém o status próprio enquanto ainda não existe despesa no Malote", () => {
+    expect(statusExibicaoDiaria(solicitacao()).label).toBe("Solicitada");
   });
 });
 

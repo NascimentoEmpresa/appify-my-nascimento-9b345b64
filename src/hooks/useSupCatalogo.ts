@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { decidirInclusaoEnxoval, type CasoInclusaoEnxoval } from "@/lib/suprimentos/enxoval";
 import { toast } from "sonner";
 
 /**
@@ -392,9 +393,17 @@ async function descartarCriacaoPendente(tabela: string, entidade: TipoEntidade, 
   const temCriacaoPendente = (rasc ?? []).some((a: any) => a.tipo_acao === "criar");
   if (!temCriacaoPendente) return false;
 
-  await sb.from("sup_cat_alteracao").delete().eq("alvo_id", alvoId).eq("tipo_entidade", entidade).eq("status", "RASCUNHO");
-  const { error } = await sb.from(tabela).delete().eq("id", alvoId).eq("aprovado", false);
+  // Só conta como resolvido se a linha não aprovada saiu de fato. Desde o
+  // SIS-2026-0455 existe "criar" em rascunho sobre vínculo JÁ aprovado (o
+  // "Manter X no enxoval" de quem desfez uma remoção enviada): antes, o
+  // delete casava zero linhas, os rascunhos sumiam e a tela dizia
+  // "removido" com o material ainda no enxoval.
+  const { data: apagadas, error } = await sb.from(tabela).delete()
+    .eq("id", alvoId).eq("aprovado", false).select("id");
   if (error) throw error;
+  if (!apagadas?.length) return false;
+
+  await sb.from("sup_cat_alteracao").delete().eq("alvo_id", alvoId).eq("tipo_entidade", entidade).eq("status", "RASCUNHO");
   return true;
 }
 
@@ -531,18 +540,105 @@ export function useCatalogoMutations(empresaId: string | null) {
       funcaoId: string; itemId: string; itemNome: string; ordem: number; ctx: Record<string, string>;
     }) => {
       const emp = exigeEmpresa();
-      const { data, error } = await sb.from("sup_funcao_item")
-        .insert({ funcao_id: v.funcaoId, item_id: v.itemId, ordem: v.ordem })
-        .select("id").single();
-      if (error) throw error;
-      await registrarAlteracao({
-        empresaId: emp, tipoEntidade: "funcao_item", tipoAcao: "criar", alvoId: data.id,
-        descricao: `Incluir "${v.itemNome}" no enxoval de ${v.ctx.funcao ?? "função"}`,
-        dados: { funcao_id: v.funcaoId, item_id: v.itemId },
-        contexto: { ...v.ctx, item: v.itemNome },
-      });
+      const { data: vinculo, error: erroVinculo } = await sb.from("sup_funcao_item")
+        .select("id, ativo")
+        .eq("funcao_id", v.funcaoId)
+        .eq("item_id", v.itemId)
+        .maybeSingle();
+      if (erroVinculo) throw erroVinculo;
+
+      const { data: alteracoes, error: erroAlteracoes } = vinculo
+        ? await sb.from("sup_cat_alteracao")
+          .select("id, tipo_acao, status")
+          .eq("tipo_entidade", "funcao_item")
+          .eq("alvo_id", vinculo.id)
+          .in("status", ["RASCUNHO", "PENDENTE"])
+        : { data: [], error: null };
+      if (erroAlteracoes) throw erroAlteracoes;
+
+      const caso = decidirInclusaoEnxoval(vinculo, alteracoes ?? []);
+      const descricaoInclusao = `Incluir "${v.itemNome}" no enxoval de ${v.ctx.funcao ?? "função"}`;
+      const dados = { funcao_id: v.funcaoId, item_id: v.itemId };
+      const contexto = { ...v.ctx, item: v.itemNome };
+
+      if (caso === "ja_existe") {
+        throw new Error("Esse material já está no enxoval desta função.");
+      }
+
+      const inserir = async (): Promise<CasoInclusaoEnxoval> => {
+        const { data, error } = await sb.from("sup_funcao_item")
+          .insert({ funcao_id: v.funcaoId, item_id: v.itemId, ordem: v.ordem })
+          .select("id").single();
+        if (error) {
+          if (error.code === "23505" && error.message?.includes("sup_funcao_item_funcao_id_item_id_key")) {
+            throw new Error("Esse material já está no enxoval desta função.");
+          }
+          throw error;
+        }
+        await registrarAlteracao({
+          empresaId: emp, tipoEntidade: "funcao_item", tipoAcao: "criar", alvoId: data.id,
+          descricao: descricaoInclusao, dados, contexto,
+        });
+        return "inserir";
+      };
+
+      /**
+       * Reativa o vínculo e diz se a linha ainda existia. Entre a leitura
+       * acima e este update o aprovador pode ter aprovado a remoção — a linha
+       * some, o update casa zero linhas sem erro e, sem esta checagem, a tela
+       * diria "mantido" com o material já apagado. Nesse caso vira inclusão.
+       */
+      const reativar = async (campos: Record<string, unknown>) => {
+        const { data, error } = await sb.from("sup_funcao_item")
+          .update({ ...campos, ativo: true, ordem: v.ordem })
+          .eq("id", vinculo.id)
+          .select("id");
+        if (error) throw error;
+        return (data?.length ?? 0) > 0;
+      };
+
+      if (caso === "desfazer_rascunho") {
+        if (!(await reativar({}))) return inserir();
+        const { error: erroRascunhos } = await sb.from("sup_cat_alteracao").delete()
+          .eq("alvo_id", vinculo.id)
+          .eq("tipo_entidade", "funcao_item")
+          .eq("tipo_acao", "excluir")
+          .eq("status", "RASCUNHO");
+        if (erroRascunhos) throw erroRascunhos;
+        return caso;
+      }
+
+      if (caso === "desfazer_pendente") {
+        if (!(await reativar({}))) return inserir();
+        await registrarAlteracao({
+          empresaId: emp, tipoEntidade: "funcao_item", tipoAcao: "criar", alvoId: vinculo.id,
+          descricao: `Manter "${v.itemNome}" no enxoval de ${v.ctx.funcao ?? "função"} (desfaz remoção enviada para aprovação)`,
+          dados, contexto,
+        });
+        return caso;
+      }
+
+      if (caso === "reativar_orfao") {
+        if (!(await reativar({ aprovado: false }))) return inserir();
+        await registrarAlteracao({
+          empresaId: emp, tipoEntidade: "funcao_item", tipoAcao: "criar", alvoId: vinculo.id,
+          descricao: descricaoInclusao, dados, contexto,
+        });
+        return caso;
+      }
+
+      return inserir();
     },
-    onSuccess: () => { invalidar(); toast.success("Material incluído no enxoval."); },
+    onSuccess: (caso: CasoInclusaoEnxoval, v) => {
+      invalidar();
+      if (caso === "desfazer_rascunho") {
+        toast.success(`Remoção desfeita — "${v.itemNome}" voltou ao enxoval.`);
+      } else if (caso === "desfazer_pendente") {
+        toast.success("Material mantido no enxoval — envie para aprovação.");
+      } else {
+        toast.success("Material incluído no enxoval.");
+      }
+    },
     onError: onErro,
   });
 
@@ -550,8 +646,33 @@ export function useCatalogoMutations(empresaId: string | null) {
     mutationFn: async (v: { id: string; itemNome: string; ctx: Record<string, string> }) => {
       const emp = exigeEmpresa();
       if (await descartarCriacaoPendente("sup_funcao_item", "funcao_item", v.id)) return;
+
+      // Remover de novo quem acabou de desfazer uma remoção já enviada
+      // (SIS-2026-0455): a remoção original continua PENDENTE no lote, então
+      // basta jogar fora o rascunho "Manter" e voltar ao estado anterior — um
+      // segundo "excluir" só duplicaria a mesma decisão para o aprovador.
+      const { data: alteracoes, error: erroAlteracoes } = await sb.from("sup_cat_alteracao")
+        .select("id, tipo_acao, status")
+        .eq("tipo_entidade", "funcao_item")
+        .eq("alvo_id", v.id)
+        .in("status", ["RASCUNHO", "PENDENTE"]);
+      if (erroAlteracoes) throw erroAlteracoes;
+      const remocaoJaEnviada = (alteracoes ?? [])
+        .some((a: { tipo_acao: string; status: string }) => a.tipo_acao === "excluir" && a.status === "PENDENTE");
+
       const { error } = await sb.from("sup_funcao_item").update({ ativo: false }).eq("id", v.id);
       if (error) throw error;
+
+      if (remocaoJaEnviada) {
+        const { error: erroManter } = await sb.from("sup_cat_alteracao").delete()
+          .eq("alvo_id", v.id)
+          .eq("tipo_entidade", "funcao_item")
+          .eq("tipo_acao", "criar")
+          .eq("status", "RASCUNHO");
+        if (erroManter) throw erroManter;
+        return;
+      }
+
       await registrarAlteracao({
         empresaId: emp, tipoEntidade: "funcao_item", tipoAcao: "excluir", alvoId: v.id,
         descricao: `Remover "${v.itemNome}" do enxoval de ${v.ctx.funcao ?? "função"}`,

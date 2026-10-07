@@ -75,8 +75,9 @@ import { useChamadosNotif } from "@/hooks/useChamadosNotif";
 import { useTrocaFuncaoNotif } from "@/hooks/useTrocaFuncaoNotif";
 import { useJuridicoNotif } from "@/hooks/useJuridicoNotif";
 import { useReembolsoNotif } from "@/hooks/useReembolsoNotif";
+import { useAprovacoesNotif } from "@/hooks/useAprovacoesNotif";
 import { Inbox, type LucideIcon } from "lucide-react";
-import { Target, MessagesSquare } from "lucide-react";
+import { Target, MessagesSquare, KeyRound } from "lucide-react";
 import { GitBranch, GitMerge } from "lucide-react";
 import { MessageSquare } from "lucide-react";
 import { Banknote } from "lucide-react";
@@ -788,6 +789,10 @@ const sistemasModule: ModuleDef = {
       defaultOpen: true,
       items: [
         { label: "Checklist de Módulos", to: "/app/sistemas/checklist-modulos", icon: ListChecks },
+        // SIS-2026-0598 (mig 20261006000009): logins a criar (admissão de
+        // encarregado) e de demitidos a excluir. A bolinha vem da
+        // minhas_pendencias_aprovacao (mig 20261006000010).
+        { label: "Logins — Admissão e Demissão", to: "/app/sistemas/logins", icon: KeyRound },
       ],
     },
     {
@@ -1299,6 +1304,11 @@ export function Sidebar({ collapsed, mobileOpen = false, onMobileClose }: Sideba
   const trocaFuncaoNotif = useTrocaFuncaoNotif();
   const juridicoNotif = useJuridicoNotif();
   const reembolsoNotif = useReembolsoNotif();
+  // 06/10/2026 (mig 20261006000006): aprovação parada esperando a pessoa —
+  // Malote, Recrutamento, Demissões, Plano de Ações, Suprimentos. Vem por
+  // rota, então acende qualquer item cujo link tenha pendência, sem precisar
+  // marcar `notif` item a item.
+  const aprovacoesNotif = useAprovacoesNotif();
   // Contador das Novidades do Sistema: o mesmo número da bolinha do topo.
   const { naoLidasCount: novidadesNaoLidas } = useNovidades();
 
@@ -1349,7 +1359,8 @@ export function Sidebar({ collapsed, mobileOpen = false, onMobileClose }: Sideba
     // Função depende da ROTA: os quatro itens do fluxo compartilham o mesmo
     // `notif`, e cada um acende pelo status da própria etapa.
     const resolvedDot = (item: NavItem) =>
-      item.notif === "meus" ? chamadosNotif.meus
+      (aprovacoesNotif.porRota[item.to] ?? 0) > 0 ? true
+      : item.notif === "meus" ? chamadosNotif.meus
       : item.notif === "dev" ? chamadosNotif.dev
       : item.notif === "troca_funcao" ? (trocaFuncaoNotif.porRota[item.to] ?? false)
 
@@ -1375,7 +1386,7 @@ export function Sidebar({ collapsed, mobileOpen = false, onMobileClose }: Sideba
           .sort(porNome),
       }))
       .sort(porNome);
-  }, [allModules, canSee, gradeAtivaCount, chamadosNotif.meus, chamadosNotif.dev, trocaFuncaoNotif, juridicoNotif, reembolsoNotif.temPendente]);
+  }, [allModules, canSee, gradeAtivaCount, chamadosNotif.meus, chamadosNotif.dev, trocaFuncaoNotif, juridicoNotif, reembolsoNotif.temPendente, aprovacoesNotif]);
 
   // Módulo ativo = aquele cujo ITEM (link real) casa com a rota atual.
   // Detecção por basePath não serve porque o Licitações usa basePath "/app"
