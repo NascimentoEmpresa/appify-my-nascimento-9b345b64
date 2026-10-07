@@ -33,10 +33,16 @@ export interface PedidoLogin {
 
 /** Pedido em aberto que já pode virar login: admitido na Senior (Trabalhando). */
 export const pedidoPronto = (p: Pick<PedidoLogin, "status" | "senior_id">) => p.status === "pendente" && p.senior_id != null;
-export interface DemitidoComLogin {
+/**
+ * Login da ERP bloqueado pela situação na Senior (mig 20261007000007): demitido,
+ * férias, auxílio-doença, licença… — só Trabalhando, Atestado e Aviso Prévio
+ * Trabalhado entram (pelo CPF, qualquer vínculo). "ciente" = Sistemas deu OK
+ * para esta situação; se ela mudar, volta a aparecer.
+ */
+export interface LoginBloqueado {
   empregado_id: number; auth_user_id: string; nome: string; cargo: string | null; contrato: string | null; empresa: string | null;
-  desligamento: string | null; login_email: string; ultimo_acesso: string | null;
-  tratado: "excluido" | "mantido" | null; tratado_em: string | null; tratado_por: string | null;
+  situacao: string | null; desde: string | null; login_email: string; ultimo_acesso: string | null;
+  ciente: boolean; ciente_em: string | null; ciente_por: string | null;
 }
 export interface MinhaCredencial {
   id: string; vaga_id: number | null; nome: string; cargo: string | null; contrato: string | null;
@@ -69,10 +75,10 @@ export function useDefinirCpfPedido() {
   });
 }
 
-export const useDemitidosComLogin = () => useQuery({
-  queryKey: [K, "demitidos"], staleTime: 30_000,
-  queryFn: async (): Promise<DemitidoComLogin[]> => {
-    const { data, error } = await sb.rpc("sis_logins_demitidos");
+export const useLoginsBloqueados = () => useQuery({
+  queryKey: [K, "bloqueados"], staleTime: 30_000,
+  queryFn: async (): Promise<LoginBloqueado[]> => {
+    const { data, error } = await sb.rpc("sis_logins_bloqueados");
     if (error) throw error;
     return data ?? [];
   },
@@ -104,13 +110,12 @@ export function useCancelarPedidoLogin() {
   });
 }
 
-export function useTratarDesligamento() {
+/** OK = ciência do bloqueio. Não libera nada: o bloqueio é automático pela situação. */
+export function useCienteBloqueio() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (p: { auth_user_id: string; empregado_id: number; acao: "excluido" | "mantido"; obs: string }) => {
-      const { error } = await sb.rpc("sis_login_desligamento_tratar", {
-        p_auth_user_id: p.auth_user_id, p_empregado_id: p.empregado_id, p_acao: p.acao, p_obs: p.obs,
-      });
+    mutationFn: async (authUserId: string) => {
+      const { error } = await sb.rpc("sis_login_bloqueio_ciente", { p_auth_user_id: authUserId });
       if (error) throw error;
     },
     onSuccess: () => invalidar(qc),

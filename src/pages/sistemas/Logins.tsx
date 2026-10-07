@@ -13,8 +13,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { AcessoGate } from "@/components/auth/AcessoGate";
 import {
-  copiar, pedidoPronto, useCancelarPedidoLogin, useDefinirCpfPedido, useDemitidosComLogin, useMarcarLoginCriado, usePedidosLogin, useTratarDesligamento,
-  type DemitidoComLogin, type PedidoLogin,
+  copiar, pedidoPronto, useCancelarPedidoLogin, useCienteBloqueio, useDefinirCpfPedido, useLoginsBloqueados, useMarcarLoginCriado, usePedidosLogin,
+  type LoginBloqueado, type PedidoLogin,
 } from "@/hooks/useLoginsSistemas";
 
 // =====================================================================
@@ -28,9 +28,12 @@ import {
 //     aleatória, cada um com botão de copiar. Criada a conta em
 //     Administração › Usuários, "Marcar como criado" (com o login e a
 //     senha finais) libera para quem pediu a vaga, em Minhas Solicitações.
-//   · Demitidos com login: quem saiu e ainda tem acesso ao ERP. Excluído
-//     o usuário em Administração › Usuários, ele some daqui sozinho;
-//     "Manter" pede o motivo.
+//   · Logins bloqueados (07/10/2026, mig 20261007000007): o login da ERP é
+//     bloqueado AUTOMATICAMENTE pela situação na Senior, pelo CPF — só
+//     Trabalhando, Atestado e Aviso Prévio Trabalhado entram; demitido,
+//     férias, auxílio-doença, licença… não. Sem exceção ("Manter" saiu, a
+//     pedido do Pablo). A aba lista quem está bloqueado e o motivo; o botão
+//     OK só registra que Sistemas viu. Voltando a Trabalhando, libera sozinho.
 // =====================================================================
 
 const MENU = "sistemas_logins";
@@ -57,23 +60,23 @@ function Linha({ rotulo, valor, mono }: { rotulo: string; valor: string; mono?: 
 
 export default function Logins() {
   const { data: pedidos = [], isLoading: carregandoP } = usePedidosLogin();
-  const { data: demitidos = [], isLoading: carregandoD } = useDemitidosComLogin();
+  const { data: bloqueados = [], isLoading: carregandoB } = useLoginsBloqueados();
   // Badge = trabalho a fazer agora: admitido na Senior e login ainda não criado.
   const pendentes = pedidos.filter(pedidoPronto);
-  const naoTratados = demitidos.filter((d) => !d.tratado);
+  const semOk = bloqueados.filter((b) => !b.ciente);
 
   return (
     <div className="space-y-4">
-      <PageHeader title="Logins — Admissão e Demissão" subtitle="Logins a criar para encarregados admitidos e logins de quem foi desligado"
+      <PageHeader title="Logins — Admissão e Demissão" subtitle="Logins a criar para encarregados admitidos e logins bloqueados pela situação na Senior"
         module="Sistemas" breadcrumb={["Logins"]} />
       <AcessoGate menu={MENU} acao="visualizar" fallback={<Card className="p-6 text-sm text-muted-foreground">Você não tem liberação para esta tela.</Card>}>
-        <Tabs defaultValue={pendentes.length || !naoTratados.length ? "novos" : "demitidos"}>
+        <Tabs defaultValue={pendentes.length || !semOk.length ? "novos" : "bloqueados"}>
           <TabsList>
             <TabsTrigger value="novos" className="gap-1.5"><UserPlus className="h-4 w-4" /> Logins novos (Admissão) {pendentes.length > 0 && <Badge variant="destructive" className="h-5 px-1.5 text-[10px]">{pendentes.length}</Badge>}</TabsTrigger>
-            <TabsTrigger value="demitidos" className="gap-1.5"><UserMinus className="h-4 w-4" /> Demitidos com login {naoTratados.length > 0 && <Badge variant="destructive" className="h-5 px-1.5 text-[10px]">{naoTratados.length}</Badge>}</TabsTrigger>
+            <TabsTrigger value="bloqueados" className="gap-1.5"><UserMinus className="h-4 w-4" /> Logins bloqueados {semOk.length > 0 && <Badge variant="destructive" className="h-5 px-1.5 text-[10px]">{semOk.length}</Badge>}</TabsTrigger>
           </TabsList>
           <TabsContent value="novos"><LoginsNovos pedidos={pedidos} carregando={carregandoP} /></TabsContent>
-          <TabsContent value="demitidos"><Demitidos lista={demitidos} carregando={carregandoD} /></TabsContent>
+          <TabsContent value="bloqueados"><Bloqueados lista={bloqueados} carregando={carregandoB} /></TabsContent>
         </Tabs>
       </AcessoGate>
     </div>
@@ -291,71 +294,68 @@ function DialogCancelar({ pedido, onClose }: { pedido: PedidoLogin | null; onClo
   );
 }
 
-// ---- Demissão ----------------------------------------------------------------
+// ---- Logins bloqueados (demissão, férias, afastamentos) ------------------------
 
-function Demitidos({ lista, carregando }: { lista: DemitidoComLogin[]; carregando: boolean }) {
-  const tratar = useTratarDesligamento();
-  const [mantendo, setMantendo] = useState<DemitidoComLogin | null>(null);
-  const [motivo, setMotivo] = useState("");
-  const [verTratados, setVerTratados] = useState(false);
-  const visiveis = useMemo(() => lista.filter((d) => verTratados || !d.tratado), [lista, verTratados]);
+function Bloqueados({ lista, carregando }: { lista: LoginBloqueado[]; carregando: boolean }) {
+  const ciente = useCienteBloqueio();
+  const [verVistos, setVerVistos] = useState(false);
+  const visiveis = useMemo(() => lista.filter((b) => verVistos || !b.ciente), [lista, verVistos]);
 
-  const marcar = async (d: DemitidoComLogin, acao: "excluido" | "mantido", obs = "") => {
-    try { await tratar.mutateAsync({ auth_user_id: d.auth_user_id, empregado_id: d.empregado_id, acao, obs }); toast.success(acao === "excluido" ? "Marcado como excluído." : "Login mantido."); setMantendo(null); }
+  const ok = async (b: LoginBloqueado) => {
+    try { await ciente.mutateAsync(b.auth_user_id); toast.success(`OK — ${b.nome}`); }
     catch (e) { toast.error((e as Error).message); }
   };
 
   return (
     <div className="space-y-3">
       <Card className="flex flex-wrap items-center gap-3 p-3 text-xs text-muted-foreground">
-        <span>Colaboradores <b className="text-foreground">demitidos</b> que ainda têm login no ERP. O acesso já está <b className="text-foreground">bloqueado automaticamente</b> (só o Portal do Colaborador funciona); "Manter" libera de novo. Para apagar a conta, exclua o usuário em</span>
-        <Button asChild size="sm" variant="outline" className="h-7"><Link to="/app/administracao?tab=usuarios"><ExternalLink className="mr-1 h-3.5 w-3.5" /> Administração › Usuários</Link></Button>
-        <span>— ele sai desta lista sozinho.</span>
-        <label className="ml-auto flex items-center gap-1.5"><input type="checkbox" checked={verTratados} onChange={(e) => setVerTratados(e.target.checked)} /> Mostrar os já tratados</label>
+        <span className="min-w-0 flex-1">
+          O login da ERP é <b className="text-foreground">bloqueado automaticamente</b> pela situação na Senior (pelo CPF): só entra quem está
+          {" "}<b className="text-foreground">Trabalhando</b>, de <b className="text-foreground">Atestado</b> ou em <b className="text-foreground">Aviso Prévio Trabalhado</b>.
+          Demitido, férias, auxílio-doença, licença e outros afastamentos ficam de fora — o Portal do Colaborador continua funcionando.
+          Quem volta a Trabalhando é liberado sozinho. O <b className="text-foreground">OK</b> só tira o aviso desta lista.
+        </span>
+        <label className="flex items-center gap-1.5"><input type="checkbox" checked={verVistos} onChange={(e) => setVerVistos(e.target.checked)} /> Mostrar os já vistos</label>
       </Card>
       {carregando ? <Card className="p-6 text-sm text-muted-foreground">Carregando…</Card> : visiveis.length === 0 ? (
-        <Card className="p-6 text-center text-sm text-muted-foreground">Nenhum demitido com login ativo. 👍</Card>
+        <Card className="p-6 text-center text-sm text-muted-foreground">Nenhum login bloqueado para ver. 👍</Card>
       ) : (
         <Card className="overflow-x-auto p-0">
           <table className="w-full text-sm">
             <thead className="bg-muted/60 text-left text-xs text-muted-foreground">
-              <tr><th className="px-4 py-2 font-medium">Colaborador</th><th className="px-3 py-2 font-medium">Login</th><th className="px-3 py-2 font-medium">Desligamento</th><th className="px-3 py-2 font-medium">Último acesso</th><th className="px-3 py-2" /></tr>
+              <tr><th className="px-4 py-2 font-medium">Colaborador</th><th className="px-3 py-2 font-medium">Motivo do bloqueio</th><th className="px-3 py-2 font-medium">Login</th><th className="px-3 py-2 font-medium">Último acesso</th><th className="px-3 py-2" /></tr>
             </thead>
             <tbody>
-              {visiveis.map((d) => (
-                <tr key={d.auth_user_id} className="border-t align-top">
-                  <td className="px-4 py-2">
-                    <p className="font-semibold">{d.nome}</p>
-                    <p className="text-xs text-muted-foreground">{[d.cargo, d.contrato].filter(Boolean).join(" · ")}</p>
-                  </td>
-                  <td className="px-3 py-2"><div className="flex items-center gap-1.5"><span className="font-mono text-xs">{d.login_email}</span><BotaoCopiar texto={d.login_email} rotulo="Login" /></div></td>
-                  <td className="whitespace-nowrap px-3 py-2 text-xs">{fmtData(d.desligamento)}</td>
-                  <td className="whitespace-nowrap px-3 py-2 text-xs">{fmtData(d.ultimo_acesso)}</td>
-                  <td className="whitespace-nowrap px-3 py-2 text-right">
-                    {d.tratado ? (
-                      <span className="text-xs text-muted-foreground">{d.tratado === "excluido" ? "Marcado excluído" : "Mantido"} · {d.tratado_por} · {fmtData(d.tratado_em)}</span>
-                    ) : (
-                      <AcessoGate menu={MENU} acao="alterar">
-                        <div className="flex justify-end gap-1.5">
-                          <Button size="sm" variant="outline" onClick={() => { if (window.confirm(`Já excluiu o usuário ${d.login_email} em Administração › Usuários?`)) marcar(d, "excluido"); }}><Check className="mr-1 h-3.5 w-3.5" /> Já excluí</Button>
-                          <Button size="sm" variant="ghost" onClick={() => { setMantendo(d); setMotivo(""); }}>Manter</Button>
-                        </div>
-                      </AcessoGate>
-                    )}
-                  </td>
-                </tr>
-              ))}
+              {visiveis.map((b) => {
+                const desligado = !b.situacao || /DEMIT|DESLIG|RESCIS/i.test(b.situacao);
+                return (
+                  <tr key={b.auth_user_id} className="border-t align-top">
+                    <td className="px-4 py-2">
+                      <p className="font-semibold">{b.nome}</p>
+                      <p className="text-xs text-muted-foreground">{[b.cargo, b.contrato].filter(Boolean).join(" · ")}</p>
+                    </td>
+                    <td className="px-3 py-2">
+                      <Badge variant="outline" className={desligado ? "border-destructive/40 text-destructive" : "border-warning/50 text-warning"}>{b.situacao ?? "Sem situação"}</Badge>
+                      {desligado && b.desde && <p className="mt-0.5 text-[11px] text-muted-foreground">desde {fmtData(b.desde)}</p>}
+                    </td>
+                    <td className="px-3 py-2"><div className="flex items-center gap-1.5"><span className="font-mono text-xs">{b.login_email}</span><BotaoCopiar texto={b.login_email} rotulo="Login" /></div></td>
+                    <td className="whitespace-nowrap px-3 py-2 text-xs">{fmtData(b.ultimo_acesso)}</td>
+                    <td className="whitespace-nowrap px-3 py-2 text-right">
+                      {b.ciente ? (
+                        <span className="text-xs text-muted-foreground">Visto · {b.ciente_por} · {fmtData(b.ciente_em)}</span>
+                      ) : (
+                        <AcessoGate menu={MENU} acao="alterar">
+                          <Button size="sm" variant="outline" disabled={ciente.isPending} onClick={() => ok(b)}><Check className="mr-1 h-3.5 w-3.5" /> OK</Button>
+                        </AcessoGate>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </Card>
       )}
-      <Dialog open={!!mantendo} onOpenChange={(o) => !o && setMantendo(null)}>
-        <DialogContent className="max-w-md">
-          <DialogHeader><DialogTitle>Manter o login de {mantendo?.nome}?</DialogTitle></DialogHeader>
-          <div><Label className="text-xs">Por quê? *</Label><Textarea rows={2} value={motivo} onChange={(e) => setMotivo(e.target.value)} placeholder="Ex.: vai ser recontratado(a), presta serviço como terceiro…" /></div>
-          <DialogFooter><Button variant="outline" onClick={() => setMantendo(null)}>Voltar</Button><Button disabled={tratar.isPending} onClick={() => mantendo && marcar(mantendo, "mantido", motivo)}>Manter login</Button></DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }

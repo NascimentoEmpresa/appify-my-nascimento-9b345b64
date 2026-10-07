@@ -4,12 +4,15 @@ import { Button } from "@/components/ui/button";
 import { supabase } from "@/integrations/supabase/client";
 
 /**
- * Tela de quem tem login vinculado a colaborador demitido (mig
- * 20261006160000): o ERP não abre, mas o Portal do Colaborador continua —
- * holerite, ponto e histórico ficam lá, com o login por CPF.
+ * Tela de quem tem login bloqueado pela situação na Senior (migs
+ * 20261006160000 e 20261007000007): demitido, férias, auxílio-doença,
+ * licença… O ERP não abre, mas o Portal do Colaborador continua — holerite,
+ * ponto e histórico ficam lá, com o login por CPF. Afastado (não demitido)
+ * volta a entrar sozinho quando a Senior mostrar Trabalhando de novo.
  */
 export function AcessoEncerrado({ nome, situacao }: { nome: string | null; situacao: string | null }) {
   const [saindo, setSaindo] = useState(false);
+  const desligado = !situacao || /DEMIT|DESLIG|RESCIS/i.test(situacao);
   const sair = async (destino: string) => {
     setSaindo(true);
     try { await supabase.auth.signOut(); } finally { window.location.assign(destino); }
@@ -21,10 +24,10 @@ export function AcessoEncerrado({ nome, situacao }: { nome: string | null; situa
           <UserX className="h-7 w-7" />
         </div>
         <div className="space-y-1">
-          <h1 className="text-lg font-bold">Acesso ao ERP encerrado</h1>
+          <h1 className="text-lg font-bold">{desligado ? "Acesso ao ERP encerrado" : "Acesso ao ERP suspenso"}</h1>
           <p className="text-sm text-muted-foreground">
             {nome ? <><b className="text-foreground">{nome}</b>, o</> : "O"} seu cadastro consta como
-            {" "}<b className="text-foreground">{situacao ?? "desligado"}</b> na Senior, por isso este login não acessa mais o ERP.
+            {" "}<b className="text-foreground">{situacao ?? "desligado"}</b> na Senior, por isso este login {desligado ? "não acessa mais o ERP" : "não acessa o ERP enquanto durar o afastamento"}.
           </p>
           <p className="text-sm text-muted-foreground">
             Holerite, ponto e o seu histórico continuam disponíveis no <b className="text-foreground">Portal do Colaborador</b>, com o seu CPF.
@@ -38,7 +41,7 @@ export function AcessoEncerrado({ nome, situacao }: { nome: string | null; situa
             <LogOut className="h-4 w-4" /> Sair
           </Button>
         </div>
-        <p className="text-[11px] text-muted-foreground">Se você foi readmitido ou acha que é um engano, procure o RH ou o setor de Sistemas.</p>
+        <p className="text-[11px] text-muted-foreground">{desligado ? "Se você foi readmitido ou acha que é um engano, procure o RH ou o setor de Sistemas." : "O acesso volta sozinho quando a Senior registrar a sua volta (Trabalhando). Se acha que é um engano, procure o RH."}</p>
       </div>
     </div>
   );
