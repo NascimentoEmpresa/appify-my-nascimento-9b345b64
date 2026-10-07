@@ -17,6 +17,8 @@ export function useBaseFaturamento() {
 
   const nfs = useMemo(() => nfsTodas.filter(contaNoFaturamento), [nfsTodas]);
   const contratoPorId = useMemo(() => new Map(contratos.map((c) => [c.id, c])), [contratos]);
+  // contrato|YYYY-MM com ao menos uma NF que conta no faturamento.
+  const mesesComNota = useMemo(() => new Set(nfs.map((n) => `${n.contrato_id}|${n.competencia.slice(0, 7)}`)), [nfs]);
   const empresaNomePorId = useMemo(() => new Map(empresas.map((e) => [e.id, e.nome])), [empresas]);
   const planilhaPorContrato = useMemo(() => {
     const mapa = new Map<string, typeof planilha>();
@@ -33,8 +35,14 @@ export function useBaseFaturamento() {
   // 0 depois do fim do contrato (mesma regra do Controle de Faturamento).
   function executavelDoContrato(c: ContratoERP, anoMes: string): number {
     if (contratoEncerradoNaCompetencia(c, `${anoMes}-01`)) return 0;
-    const linhas = resolverLinhasPorPeriodo(planilhaPorContrato.get(c.id) ?? [], c.id, fimDoMes(anoMes));
-    return somarCamposEmLinhas(linhas, ["total_por_empregado"]);
+    const rows = planilhaPorContrato.get(c.id) ?? [];
+    const exec = somarCamposEmLinhas(resolverLinhasPorPeriodo(rows, c.id, fimDoMes(anoMes)), ["total_por_empregado"]);
+    // Mesmo critério do Controle de Faturamento: mês com nota e planilha toda
+    // "encerrada" usa as linhas encerradas só naquele mês (ex. SEMAE - 3038/2020).
+    if (exec === 0 && mesesComNota.has(`${c.id}|${anoMes}`)) {
+      return somarCamposEmLinhas(resolverLinhasPorPeriodo(rows, c.id, fimDoMes(anoMes), true), ["total_por_empregado"]);
+    }
+    return exec;
   }
 
   return { contratos, nfs, empresas, contratoPorId, empresaNomePorId, executavelDoContrato, carregando: c1 || c2 || c3 };

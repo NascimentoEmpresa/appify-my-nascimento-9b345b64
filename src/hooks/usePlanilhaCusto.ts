@@ -174,8 +174,13 @@ export function resolverLinhasVigentes(rows: PlanilhaCustoRow[], contratoId: str
 // pra achar a vigência que cobre o Ano/Mês selecionado no filtro, mesmo
 // que hoje ela já esteja Histórico ou ainda "Vai iniciar" (a Planilha de
 // Custo já tem vigências com data_vigencia futura de verdade).
-export function resolverLinhasPorPeriodo(rows: PlanilhaCustoRow[], contratoId: string, referencia: Date): PlanilhaCustoRow[] {
-  const doContrato = rows.filter((r) => r.contrato_id === contratoId && r.orexec === "EXECUTADO" && !r.encerrado && r.data_vigencia);
+//
+// `incluirEncerradas` (default false, comportamento de sempre): conta também as
+// linhas marcadas `encerrado`. Só o Controle de Faturamento/Faturamento da
+// Empresa usam, e só para mês com NF lançada — contrato encerrado (ex. SEMAE -
+// 3038/2020) segue com as linhas todas encerradas, mas tem nota emitida no ano.
+export function resolverLinhasPorPeriodo(rows: PlanilhaCustoRow[], contratoId: string, referencia: Date, incluirEncerradas = false): PlanilhaCustoRow[] {
+  const doContrato = rows.filter((r) => r.contrato_id === contratoId && r.orexec === "EXECUTADO" && (incluirEncerradas || !r.encerrado) && r.data_vigencia);
 
   const datasPorPosto = new Map<string, Date[]>();
   for (const r of doContrato) {

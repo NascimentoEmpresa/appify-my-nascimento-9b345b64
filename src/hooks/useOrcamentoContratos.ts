@@ -14,6 +14,22 @@ export interface OrcamentoContratoRubrica {
   // aprovadores no Orçamento Geral), nunca como filtro pra essa rubrica
   // aparecer ou não aqui.
   classificacaoMaloteId: string | null;
+  // false = a rubrica conta no orçamento da sua Classificação do Malote (ex.:
+  // Dedução VT no orçamento de VT), mas NÃO entra no valorTotal do contrato.
+  // Ausente = soma no total.
+  somaNoTotal?: boolean;
+}
+
+// SIS-2026-0505: a Dedução VT (transporte_desconto) não entra no total do posto
+// da Planilha de Custo. Aqui ela continua como rubrica (e vale para o orçamento
+// da classificação ligada, o de VT), mas fica de fora do total do contrato —
+// senão o total passava do total_por_empregado real (ex. SAMU: 245 mil em vez
+// de 240 mil). O Desc. Auxílio Alimentação (aux_alimentacao_desconto) segue
+// somando no total, por decisão do Iury/usuário.
+export const CAMPOS_FORA_DO_TOTAL: ReadonlySet<string> = new Set(["transporte_desconto"]);
+
+export function totalDoContrato(rubricas: Pick<OrcamentoContratoRubrica, "valor" | "somaNoTotal">[]): number {
+  return rubricas.reduce((s, r) => (r.somaNoTotal === false ? s : s + r.valor), 0);
 }
 
 export interface OrcamentoContratoGrupo {
@@ -115,11 +131,12 @@ export function computarGruposContrato(
           grupo: c.grupo,
           valor,
           classificacaoMaloteId: maloteIdPorCampo.get(c.campo) ?? null,
+          somaNoTotal: !CAMPOS_FORA_DO_TOTAL.has(c.campo),
         });
       }
     }
     rubricas.push(...coletarRubricasOutros(linhasVigentes, maloteIdPorCampo));
-    const valorTotal = rubricas.reduce((s, r) => s + r.valor, 0);
+    const valorTotal = totalDoContrato(rubricas);
     resultado.push({ contrato, rubricas, valorTotal });
   }
   return resultado;

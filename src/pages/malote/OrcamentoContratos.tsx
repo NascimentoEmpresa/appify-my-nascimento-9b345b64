@@ -134,7 +134,14 @@ export default function OrcamentoContratos() {
                       <TableBody>
                         {g.rubricas.map((r) => (
                           <TableRow key={r.campo}>
-                            <TableCell className="font-medium">{r.label}</TableCell>
+                            <TableCell className="font-medium">
+                              {r.label}
+                              {r.somaNoTotal === false && (
+                                <span className="ml-2 rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-normal text-muted-foreground" title="Conta no orçamento da classificação ligada, mas não entra no total do contrato (igual à Planilha de Custo).">
+                                  fora do total
+                                </span>
+                              )}
+                            </TableCell>
                             <TableCell className="text-muted-foreground">{r.grupo}</TableCell>
                             <TableCell className="text-right">{fmtMoney(r.valor)}</TableCell>
                           </TableRow>
