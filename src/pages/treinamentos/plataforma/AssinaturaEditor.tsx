@@ -51,11 +51,11 @@ export function AssinaturaEditor({ valor, onChange }: { valor: RascunhoAssinatur
         <div className="campo sm:col-span-2">
           <label>Registro *</label>
           <Input value={valor.registro ?? ""} onChange={(e) => set({ registro: e.target.value })} placeholder="ex.: 0031036 (registro profissional / MTE)" />
-          {/* Mig 20261006000001: curso só publica com assinatura de Técnico(a) em Segurança. */}
+          {/* Mig 20261006000001: curso com assinatura só publica se ela for de Técnico(a) em Segurança. */}
           <div className="ajuda">
             {assinaturaValeParaPublicar(valor)
               ? "✓ Vale para publicar cursos (Técnico(a) em Segurança com registro)."
-              : "Para publicar um curso, a assinatura tem que ser de Técnico(a) em Segurança, com o registro."}
+              : "Para ir num curso publicado, a assinatura tem que ser de Técnico(a) em Segurança, com o registro."}
           </div>
         </div>
       </div>
