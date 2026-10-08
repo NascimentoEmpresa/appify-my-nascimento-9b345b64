@@ -43,9 +43,18 @@ const NAO_CUSTO = [
   "DISTRIBUICAO",
 ];
 
+// Ligação manual feita no painel "Rubricas de custo" da Lucratividade: além das
+// 8 colunas, "nao_custo" tira a classificação do cálculo.
+export type RubricaLigacao = RubricaCusto | "nao_custo";
+export const ROTULO_NAO_CUSTO = "Não é custo";
+export type LigacoesRubrica = Map<string, RubricaLigacao>;
+
 // Devolve a rubrica do custo, ou null quando a classificação não é custo.
+// Sem classificação (nome vazio) também não é custo de rubrica nenhuma: antes
+// caía em "Outras" e levava ~R$ 23 mi de linhas importadas sem classificação.
 export function rubricaDeCusto(classificacaoNome: string | null | undefined): RubricaCusto | null {
   const n = normalizar(classificacaoNome);
+  if (!n) return null;
   if (NAO_CUSTO.some((t) => n.includes(t))) return null;
   // FGTS de rescisão vai junto com Rescisões (é o encargo daquela rescisão).
   if (n.includes("FGTS") && n.includes("RESCISAO")) return "rescisoes";
@@ -65,8 +74,29 @@ export interface LinhaFluxoCusto {
   tipo: "entrada" | "saida";
   data_pagamento: string | null;
   contrato_id: string | null;
+  classificacao_id?: string | null;
   classificacao_nome: string | null;
   valor: number;
+}
+
+// Rubrica final da linha: a ligação manual da classificação vale primeiro; sem
+// ligação, vale o automático por nome (e o que não casa é "Outras").
+export function rubricaDaLinha(l: Pick<LinhaFluxoCusto, "classificacao_id" | "classificacao_nome">, ligacoes?: LigacoesRubrica): RubricaCusto | null {
+  const manual = l.classificacao_id ? ligacoes?.get(l.classificacao_id) : undefined;
+  if (manual) return manual === "nao_custo" ? null : manual;
+  return rubricaDeCusto(l.classificacao_nome);
+}
+
+// Saídas de contrato sem classificação: ficam fora de qualquer coluna, mas
+// aparecem num aviso na tela para ninguém perder o valor de vista.
+export function semClassificacao(linhas: LinhaFluxoCusto[]): { linhas: number; valor: number } {
+  let n = 0, valor = 0;
+  for (const l of linhas) {
+    if (l.tipo !== "saida" || !l.contrato_id || (l.classificacao_nome ?? "").trim()) continue;
+    n += 1;
+    valor += l.valor || 0;
+  }
+  return { linhas: n, valor };
 }
 
 export type CustosPorRubrica = Record<RubricaCusto, number>;
@@ -80,11 +110,11 @@ export function totalCustos(c: CustosPorRubrica): number {
 }
 
 // Custos por contrato e mês ("YYYY-MM"). Só saídas com contrato e que sejam custo.
-export function custosPorContratoMes(linhas: LinhaFluxoCusto[]): Map<string, CustosPorRubrica> {
+export function custosPorContratoMes(linhas: LinhaFluxoCusto[], ligacoes?: LigacoesRubrica): Map<string, CustosPorRubrica> {
   const mapa = new Map<string, CustosPorRubrica>();
   for (const l of linhas) {
     if (l.tipo !== "saida" || !l.contrato_id || !l.data_pagamento) continue;
-    const rubrica = rubricaDeCusto(l.classificacao_nome);
+    const rubrica = rubricaDaLinha(l, ligacoes);
     if (!rubrica) continue;
     const chave = `${l.contrato_id}|${l.data_pagamento.slice(0, 7)}`;
     const atual = mapa.get(chave) ?? custosVazios();
@@ -167,4 +197,33 @@ export interface ResultadoLucro {
 export function lucroBruto(liquido: number, custos: number): ResultadoLucro {
   const lucro = liquido - custos;
   return { lucro, margem: liquido > 0 ? lucro / liquido : null };
+}
+
+// Lucro Recebido = o que efetivamente entrou (notas pagas) − os mesmos custos.
+// A diferença para o Lucro Faturamento é só o que ainda falta receber.
+export function lucroRecebido(recebido: number, custos: number): number {
+  return recebido - custos;
+}
+
+// Faixas de rentabilidade pela Margem Bruta (definição da Controladoria).
+export type FaixaRentabilidade = "excelente" | "bom" | "atencao" | "critico" | "prejuizo";
+
+export const FAIXAS_RENTABILIDADE: { id: FaixaRentabilidade; label: string; intervalo: string }[] = [
+  { id: "excelente", label: "Excelente", intervalo: "20% ou mais" },
+  { id: "bom", label: "Bom", intervalo: "15% a 19,99%" },
+  { id: "atencao", label: "Atenção", intervalo: "10% a 14,99%" },
+  { id: "critico", label: "Crítico", intervalo: "0% a 9,99%" },
+  { id: "prejuizo", label: "Prejuízo", intervalo: "abaixo de 0%" },
+];
+
+// Compara com a margem como aparece na tela (duas casas), para 19,996% não
+// aparecer "20,00%" e ficar em "Bom".
+export function faixaDaMargem(margem: number | null): FaixaRentabilidade | null {
+  if (margem === null) return null;
+  const m = Math.round(margem * 10000) / 10000;
+  if (m >= 0.2) return "excelente";
+  if (m >= 0.15) return "bom";
+  if (m >= 0.1) return "atencao";
+  if (m >= 0) return "critico";
+  return "prejuizo";
 }
