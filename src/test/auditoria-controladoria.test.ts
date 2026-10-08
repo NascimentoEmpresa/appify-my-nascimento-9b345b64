@@ -65,20 +65,21 @@ describe("descontosPorCategoria", () => {
     faltas: 0, posto_nao_implementado: 0, multas: 0, glosas: 0, outros_descontos: 0,
     multas_pos_emissao: 0, glosas_pos_emissao: 0, outros_descontos_pos_emissao: 0, vlr_materiais: 0, total_descontos: 0, ...o,
   });
-  it("agrupa por categoria, junta pós-emissão e não soma materiais no total", () => {
+  it("agrupa por categoria, mostra pós-emissão à parte (não soma) e não soma materiais no total", () => {
     const r = descontosPorCategoria([
-      item({ faltas: 10, multas: 5, multas_pos_emissao: 5, glosas_pos_emissao: 20, vlr_materiais: 999, total_descontos: 40 }),
+      item({ faltas: 10, multas: 5, multas_pos_emissao: 5, glosas_pos_emissao: 20, vlr_materiais: 999, total_descontos: 15 }),
       item({ posto_nao_implementado: 30, outros_descontos: 15, total_descontos: 45 }),
     ]);
     const v = (rotulo: string) => r.categorias.find((c) => c.rotulo.startsWith(rotulo))!.valor;
     expect(v("Faltas")).toBe(10);
-    expect(v("Multas")).toBe(10);
-    expect(v("Glosas")).toBe(20);
+    expect(v("Multas")).toBe(5);
+    expect(v("Glosas")).toBe(0);
+    expect(v("Descontos pós-emissão")).toBe(25);
     expect(v("Postos")).toBe(30);
     expect(v("Outros")).toBe(15);
     expect(v("Materiais")).toBe(999);
-    expect(r.totalCategorias).toBe(85);
-    expect(r.totalDescontado).toBe(85);
+    expect(r.totalCategorias).toBe(60);
+    expect(r.totalDescontado).toBe(60);
   });
 });
 

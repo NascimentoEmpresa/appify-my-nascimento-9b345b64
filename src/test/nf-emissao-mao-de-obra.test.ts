@@ -40,10 +40,10 @@ describe("vlr_mao_obra = Vlr Bruto - VA - VT - Materiais", () => {
     expect(calc.vlr_mao_obra).toBe(820);
   });
 
-  it("descontos pós-emissão reduzem o bruto antes do cálculo de mão de obra", () => {
+  it("descontos pós-emissão NÃO mexem no bruto nem na mão de obra (SIS-2026-0609)", () => {
     const calc = calcularItem(item({ valor_contrato_exec: 1000, multas_pos_emissao: 200, vlr_va: 50 }), PCT);
-    expect(calc.vlr_bruto).toBe(800);
-    expect(calc.vlr_mao_obra).toBe(750);
+    expect(calc.vlr_bruto).toBe(1000);
+    expect(calc.vlr_mao_obra).toBe(950);
   });
 });
 

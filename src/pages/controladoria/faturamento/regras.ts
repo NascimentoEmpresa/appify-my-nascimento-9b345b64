@@ -137,6 +137,8 @@ export interface NfFaturamento {
   vlr_liquido_total: number;
   valor_pago: number | null;
   desconto_conta_vinculada: number;
+  // SIS-2026-0609: descontos pós-emissão (fora do líquido); reduzem o que falta receber.
+  descontos_pos_emissao_total?: number | null;
 }
 
 // Nota que conta no faturamento: Código N, já validada, nem cancelada nem substituída.
@@ -157,12 +159,13 @@ export function totaisVazios(): TotaisFaturamento {
   return { bruto: 0, liquido: 0, descontos: 0, recebido: 0, aReceber: 0, notas: 0 };
 }
 
-// "A receber": o que falta entrar da nota. O líquido já embute os descontos
-// pós-emissão (SIS-2026-0592 ajusta direto sobre o líquido), por isso não se
-// abate de novo aqui. Nota paga (com data de pagamento) não tem saldo.
+// "A receber": o que falta entrar da nota. SIS-2026-0609: o líquido NÃO embute os
+// descontos pós-emissão (não mexem na NF, só no pagamento) — abate-se aqui, igual
+// ao valorPendenteNf do Relatório de Serviços. Nota paga (com data de pagamento)
+// não tem saldo.
 export function aReceberDaNf(n: NfFaturamento): number {
   if (statusDaNota(n) === "pago") return 0;
-  return Math.max(0, n.vlr_liquido_total - (n.valor_pago ?? 0) - (n.desconto_conta_vinculada || 0));
+  return Math.max(0, n.vlr_liquido_total - (n.valor_pago ?? 0) - (n.desconto_conta_vinculada || 0) - (n.descontos_pos_emissao_total || 0));
 }
 
 export function somarNf(t: TotaisFaturamento, n: NfFaturamento): TotaisFaturamento {

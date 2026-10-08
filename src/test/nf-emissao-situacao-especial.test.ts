@@ -86,3 +86,10 @@ describe("naoContabilizaKpi — gate de soma (cancelada/substituída fora, de qu
     expect(naoContabilizaKpi({ status: "concluida" })).toBe(false);
   });
 });
+
+describe("valorPendenteNf — descontos pós-emissão (SIS-2026-0609)", () => {
+  it("líquido menos os descontos pós-emissão (valor a pagar), sem tocar no líquido da nota", () => {
+    const itens = [{ multas_pos_emissao: 100, glosas_pos_emissao: 50, outros_descontos_pos_emissao: 25 }];
+    expect(valorPendenteNf(nf(null, 1000), itens)).toBe(825);
+  });
+});

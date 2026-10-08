@@ -37,6 +37,8 @@ export interface NfEmissaoRow {
   situacao_site_pmt: string | null;
   situacao_dominio: string | null;
   desconto_conta_vinculada: number;
+  // SIS-2026-0609: soma das multas/glosas/outros descontos pós-emissão dos itens (não está no líquido).
+  descontos_pos_emissao_total?: number | null;
   recebimento_extra: number;
   falta_receber: number;
   pago_a_mais: number;
@@ -393,6 +395,7 @@ export interface AjusteDescontosPosInput {
     cofins_total: number;
     pis_total: number;
     csll_total: number;
+    descontos_pos_emissao_total: number;
   };
 }
 
