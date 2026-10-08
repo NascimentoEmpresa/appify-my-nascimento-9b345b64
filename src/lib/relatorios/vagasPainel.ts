@@ -43,10 +43,12 @@ export interface DetalheVaga {
     contratado_inicio: string | null; req_obrigatorios: string | null; observacao: string | null;
   }) | null;
   log: LogStatus[];
-  historico: EventoHistorico[];
+  /** candidato_id vem desde a mig 20261008000001 (liga a trilha a cada candidato). */
+  historico: (EventoHistorico & { candidato_id?: number | null })[];
   candidatos: {
     id: number; nome: string | null; criado: string; etapa: string; etapa_em: string | null; origem: string | null;
     selecionado_em: string | null; enviado_em: string | null; desistiu: boolean; desistencia_motivo: string | null; motivo_reprovacao: string | null;
+    desistencia_em?: string | null;
   }[];
 }
 
@@ -374,3 +376,81 @@ export function aplicarFiltroLocal(p: PainelVagas, f: FiltroLocal): PainelVagas 
 
 export const opcoesDe = (p: PainelVagas | undefined, f: (v: VagaPainel) => string | null) =>
   [...new Set((p?.vagas ?? []).map((v) => limpo(f(v))).filter(Boolean))].sort((a, b) => a.localeCompare(b, "pt-BR"));
+
+// ---- Vaga aberta pelo número (fora do período / do painel) — 08/10/2026 -----------
+
+const EVENTOS_APROVACAO = ["Operação aprovou", "Aprovada pelo Operacional", "Aprovada pelo Analista", "Abertura de vaga confirmada"];
+
+/** Monta a linha do painel a partir do detalhe — para abrir QUALQUER vaga pelo número. */
+export function vagaDoDetalhe(d: DetalheVaga): VagaPainel | null {
+  const v = d.vaga;
+  if (!v) return null;
+  const cs = d.candidatos ?? [];
+  const etapas: Record<string, number> = {};
+  for (const c of cs) etapas[c.etapa] = (etapas[c.etapa] ?? 0) + 1;
+  const menor = (xs: (string | null | undefined)[]) => (xs.filter(Boolean) as string[]).sort()[0] ?? null;
+  const aprov = (d.historico ?? []).find((h) => EVENTOS_APROVACAO.includes(h.evento ?? ""));
+  const aberta = !["Contratado", "Reprovada", "Cancelada"].includes(v.status) && !v.status.startsWith("Concluído");
+  return {
+    ...v, administrativa: false, reserva: false, encarregado: false, no_periodo: true, aberta,
+    log: d.log ?? [], aprovada_em: aprov?.created_at ?? null,
+    cand: {
+      total: cs.length, desistiu: cs.filter((c) => c.desistiu).length, etapas,
+      primeiro_em: menor(cs.map((c) => c.criado)), selecionado_em: menor(cs.map((c) => c.selecionado_em)), enviado_em: menor(cs.map((c) => c.enviado_em)),
+    },
+  };
+}
+
+// ---- Kanban dos candidatos: quanto tempo cada um ficou em cada coluna ---------------
+
+/** Colunas do kanban de candidatos, na ordem do fluxo (cores na tela). */
+export const COLUNAS_CANDIDATO = ["ENTRADA", "TRIAGEM", "JURÍDICO", "ENTREVISTA", "ENTREVISTA GESTOR", "APROVADO", "DOCUMENTAÇÃO", "SST + COMPRAS", "ADMISSÃO", "CONTRATADO", "REPROVADO", "DESISTIU"];
+const FIM_CANDIDATO = new Set(["CONTRATADO", "REPROVADO", "DESISTIU"]);
+export const normEtapaCandidato = (s: string | null | undefined) => (s ?? "").trim().toUpperCase() || "ENTRADA";
+
+export interface TrechoCandidato { etapa: string; inicio: string; fim: string | null; dias: number; aberto: boolean }
+export interface LinhaKanbanCandidato { id: number; nome: string; trechos: TrechoCandidato[]; etapaAtual: string; total: number }
+
+/**
+ * Cada candidato vira uma sequência de trechos: entra em ENTRADA quando o
+ * currículo chega e muda de coluna a cada movimentação da trilha com o id
+ * dele. Termina em Contratado/Reprovado/Desistiu (trecho de duração zero,
+ * só a marca); senão o último fica aberto até agora.
+ */
+export function kanbanCandidatos(d: Pick<DetalheVaga, "historico" | "candidatos">, agora: string): LinhaKanbanCandidato[] {
+  const tAgora = ms(agora);
+  return (d.candidatos ?? []).map((c) => {
+    const evs = (d.historico ?? []).filter((h) => h.candidato_id === c.id && h.para_status)
+      .sort((a, b) => a.created_at.localeCompare(b.created_at));
+    const trechos: TrechoCandidato[] = [];
+    let etapa = evs[0]?.de_status ? normEtapaCandidato(evs[0].de_status) : "ENTRADA";
+    let t = c.criado;
+    const fecha = (fim: string) => { if (ms(fim) >= ms(t)) trechos.push({ etapa, inicio: t, fim, dias: diasEntreMs(ms(t), ms(fim)), aberto: false }); };
+    for (const e of evs) {
+      const para = normEtapaCandidato(e.para_status);
+      if (para === etapa) continue;
+      fecha(e.created_at);
+      etapa = para; t = e.created_at;
+    }
+    if (c.desistiu && etapa !== "DESISTIU") {
+      const quando = c.desistencia_em ?? agora;
+      fecha(quando);
+      etapa = "DESISTIU"; t = quando;
+    }
+    if (FIM_CANDIDATO.has(etapa)) trechos.push({ etapa, inicio: t, fim: t, dias: 0, aberto: false });
+    else trechos.push({ etapa, inicio: t, fim: null, dias: diasEntreMs(ms(t), tAgora), aberto: true });
+    return { id: c.id, nome: c.nome ?? "—", trechos, etapaAtual: etapa, total: trechos.reduce((s, x) => s + x.dias, 0) };
+  });
+}
+
+/** Dias somados por status (o mesmo status pode aparecer mais de uma vez). */
+export function diasPorStatus(trechos: { status?: string; etapa: string; dias: number }[]) {
+  const m = new Map<string, { status: string; etapa: string; dias: number }>();
+  for (const t of trechos) {
+    const k = t.status ?? t.etapa;
+    const e = m.get(k) ?? { status: k, etapa: t.etapa, dias: 0 };
+    e.dias += t.dias;
+    m.set(k, e);
+  }
+  return [...m.values()];
+}

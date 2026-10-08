@@ -1,5 +1,5 @@
 import { Fragment, useMemo, useState, type ReactNode } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import {
   Bar, BarChart, CartesianGrid, Cell, ComposedChart, LabelList, Legend, Line, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from "recharts";
@@ -14,13 +14,14 @@ import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { SearchableSelect } from "@/components/ui/searchable-select";
+import { cn } from "@/lib/utils";
 import { useVagaDetalhe, useVagasPainel } from "@/hooks/useRelatoriosDiretoria";
 import { PASSOS_FLUXO, estadosDosPassos, statusAntesDoFim } from "@/lib/recrutamento/fluxoStatus";
 import {
   DIMENSOES, ETAPAS, FILTRO_LOCAL_PADRAO, META_DIAS_CONTRATAR, agingAbertas, agruparVagas, aplicarFiltroLocal, corDias, desfechoVaga,
   diasEntreMs, diasNoStatus, diasPorEtapa, diasTotais, etapaDoStatus, fmtDias, funilVagas, mensalVagas, opcoesDe, resumoVagas, tempoAprovacao,
-  tempoPorEtapa, tituloEtapa, trechosDaVaga, vagaFechada,
+  tempoPorEtapa, tituloEtapa, trechosDaVaga, vagaFechada, vagaDoDetalhe, kanbanCandidatos, diasPorStatus, COLUNAS_CANDIDATO,
   type Dimensao, type FiltroLocal, type LinhaEtapa, type PainelVagas, type VagaPainel,
 } from "@/lib/relatorios/vagasPainel";
 import { rotuloMes, type Kpi } from "./sistemas";
@@ -58,8 +59,19 @@ export default function VagasPainel() {
   const periodo = usePeriodo();
   const q = useVagasPainel(periodo.filtro);
   const [filtro, setFiltro] = useState<FiltroLocal>(FILTRO_LOCAL_PADRAO);
-  const [aba, setAba] = useState("geral");
-  const [sel, setSel] = useState<VagaPainel | null>(null);
+  // Vaga escolhida (aba "Por vaga", 08/10/2026): pelo seletor, pelo número
+  // ou clicando numa linha das outras abas. ?vaga=<nº> abre direto.
+  const [params, setParams] = useSearchParams();
+  const vagaUrl = Number(params.get("vaga")) || null;
+  const [aba, setAba] = useState(vagaUrl ? "vaga" : "geral");
+  const [vagaId, setVagaIdSt] = useState<number | null>(vagaUrl);
+  const setVagaId = (id: number | null) => {
+    setVagaIdSt(id);
+    const n = new URLSearchParams(params);
+    if (id) n.set("vaga", String(id)); else n.delete("vaga");
+    setParams(n, { replace: true });
+  };
+  const abrirVaga = (v: VagaPainel) => { setVagaId(v.id); setAba("vaga"); };
 
   const bruto = q.data;
   const p = useMemo(() => (bruto ? aplicarFiltroLocal(bruto, filtro) : undefined), [bruto, filtro]);
@@ -88,15 +100,17 @@ export default function VagasPainel() {
             <TabsTrigger value="etapas">Tempo por etapa</TabsTrigger>
             <TabsTrigger value="abertas">Em aberto agora</TabsTrigger>
             <TabsTrigger value="vagas">Todas as vagas</TabsTrigger>
+            <TabsTrigger value="vaga" className="gap-1.5"><Briefcase className="h-3.5 w-3.5" /> Por vaga</TabsTrigger>
           </TabsList>
           <TabsContent value="geral" className="space-y-4"><AbaGeral p={p} meses={periodo.meses} /></TabsContent>
           <TabsContent value="etapas" className="space-y-4"><AbaEtapas p={p} etapas={etapas} /></TabsContent>
-          <TabsContent value="abertas" className="space-y-4"><AbaAbertas p={p} onAbrir={setSel} /></TabsContent>
-          <TabsContent value="vagas" className="space-y-4"><AbaVagas p={p} onAbrir={setSel} /></TabsContent>
+          <TabsContent value="abertas" className="space-y-4"><AbaAbertas p={p} onAbrir={abrirVaga} /></TabsContent>
+          <TabsContent value="vagas" className="space-y-4"><AbaVagas p={p} onAbrir={abrirVaga} /></TabsContent>
+          <TabsContent value="vaga" className="space-y-4">
+            <AbaPorVaga todas={bruto?.vagas ?? []} painel={p} etapas={etapas} vagaId={vagaId} onEscolher={setVagaId} />
+          </TabsContent>
         </Tabs>
       )}
-
-      {p && <DashboardVaga vaga={sel} painel={p} etapas={etapas} onClose={() => setSel(null)} />}
     </div>
   );
 }
@@ -581,13 +595,60 @@ function SemDados({ texto = "Sem dados no período." }: { texto?: string }) {
 
 // ---- Dashboard de UMA vaga -----------------------------------------------------------
 
-function DashboardVaga({ vaga, painel, etapas, onClose }: { vaga: VagaPainel | null; painel: PainelVagas; etapas: LinhaEtapa[]; onClose: () => void }) {
-  const q = useVagaDetalhe(vaga?.id ?? null);
+// ---- Por vaga: escolher UMA vaga e ver o dashboard dela -------------------------------
+
+function AbaPorVaga({ todas, painel, etapas, vagaId, onEscolher }: {
+  todas: VagaPainel[]; painel: PainelVagas; etapas: LinhaEtapa[]; vagaId: number | null; onEscolher: (id: number | null) => void;
+}) {
+  const [numero, setNumero] = useState("");
+  const q = useVagaDetalhe(vagaId);
+  // A vaga vem do painel (período/contrato atuais) ou, se estiver fora dele,
+  // é montada a partir do detalhe — qualquer vaga do sistema abre pelo número.
+  const vaga = useMemo(() => (vagaId ? todas.find((v) => v.id === vagaId) ?? (q.data ? vagaDoDetalhe(q.data) : null) : null), [vagaId, todas, q.data]);
+  const opcoes = useMemo(() => [...todas].sort((a, b) => b.id - a.id).map((v) => ({
+    value: String(v.id),
+    label: `#${v.id} · ${v.cargo ?? "Vaga"} — ${v.contrato ?? "sem contrato"} · ${v.status}`,
+  })), [todas]);
+  const abrirNumero = () => { const n = Number(numero.replace(/\D/g, "")); if (n) onEscolher(n); };
+  return (
+    <>
+      <Card className="flex flex-wrap items-end gap-3 p-4">
+        <div className="min-w-[320px] flex-1 space-y-1">
+          <p className="text-xs font-medium text-muted-foreground">Escolha a vaga ({todas.length} no período + abertas)</p>
+          <SearchableSelect value={vagaId ? String(vagaId) : ""} onChange={(v) => onEscolher(v ? Number(v) : null)} options={opcoes}
+            placeholder="Buscar por nº, cargo, contrato ou status…" searchPlaceholder="Digite nº, cargo ou contrato…" triggerClassName="h-9 w-full" allowClear clearValue="" />
+        </div>
+        <div className="space-y-1">
+          <p className="text-xs font-medium text-muted-foreground">Ou abra qualquer vaga do sistema pelo número</p>
+          <div className="flex gap-2">
+            <Input value={numero} onChange={(e) => setNumero(e.target.value)} onKeyDown={(e) => e.key === "Enter" && abrirNumero()} placeholder="Nº da vaga" className="h-9 w-32" inputMode="numeric" />
+            <Button className="h-9" onClick={abrirNumero}>Abrir</Button>
+          </div>
+        </div>
+      </Card>
+      {!vagaId ? (
+        <Card className="p-10 text-center text-sm text-muted-foreground">
+          <Briefcase className="mx-auto mb-2 h-8 w-8 opacity-50" />
+          Escolha uma vaga acima — ou clique numa vaga nas abas "Em aberto agora" e "Todas as vagas".
+        </Card>
+      ) : q.isLoading && !vaga ? (
+        <Card className="flex items-center gap-2 p-6 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Carregando a vaga #{vagaId}…</Card>
+      ) : !vaga ? (
+        <Card className="p-6 text-sm text-muted-foreground">{q.error ? (q.error as Error).message : `A vaga #${vagaId} não existe.`}</Card>
+      ) : (
+        <DashboardVaga vaga={vaga} painel={painel} etapas={etapas} />
+      )}
+    </>
+  );
+}
+
+function DashboardVaga({ vaga, painel, etapas }: { vaga: VagaPainel; painel: PainelVagas; etapas: LinhaEtapa[] }) {
+  const q = useVagaDetalhe(vaga.id);
   const d = q.data;
   const agora = painel.agora;
-  const trechos = useMemo(() => (vaga ? trechosDaVaga(vaga, agora) : []), [vaga, agora]);
+  const trechos = useMemo(() => trechosDaVaga(vaga, agora), [vaga, agora]);
   const porEtapa = useMemo(() => diasPorEtapa(trechos, true), [trechos]);
-  if (!vaga) return null;
+  const candidatosKanban = useMemo(() => (d ? kanbanCandidatos(d, agora) : []), [d, agora]);
 
   const desf = desfechoVaga(vaga);
   const estados = estadosDosPassos(vaga.status, d ? statusAntesDoFim(d.historico) : null);
@@ -609,20 +670,19 @@ function DashboardVaga({ vaga, painel, etapas, onClose }: { vaga: VagaPainel | n
   ];
 
   return (
-    <Dialog open={!!vaga} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-h-[92vh] max-w-6xl overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle className="flex flex-wrap items-center gap-2">
-            <Briefcase className="h-5 w-5 text-primary" /> {tituloVaga(vaga)}
-            <Badge variant="outline" style={{ borderColor: COR_DESFECHO[desf], color: COR_DESFECHO[desf] }}>{vaga.status}</Badge>
-            {vaga.legado && <Badge variant="secondary">Sistema antigo</Badge>}
-            {vaga.encarregado && <Badge variant="secondary">Encarregado</Badge>}
-            {vaga.reserva && <Badge variant="secondary">Reserva técnica</Badge>}
-          </DialogTitle>
-          <DialogDescription>
-            {vaga.contrato ?? "Sem contrato"}{vaga.cidade ? ` · ${vaga.cidade}` : ""} · pedida em {fmtDataHora(vaga.criada)}{vaga.solicitante ? ` por ${vaga.solicitante}` : ""}
-          </DialogDescription>
-        </DialogHeader>
+    <div className="space-y-4">
+      <Card className="p-4">
+        <p className="flex flex-wrap items-center gap-2 text-lg font-semibold">
+          <Briefcase className="h-5 w-5 text-primary" /> {tituloVaga(vaga)}
+          <Badge variant="outline" style={{ borderColor: COR_DESFECHO[desf], color: COR_DESFECHO[desf] }}>{vaga.status}</Badge>
+          {vaga.legado && <Badge variant="secondary">Sistema antigo</Badge>}
+          {vaga.encarregado && <Badge variant="secondary">Encarregado</Badge>}
+          {vaga.reserva && <Badge variant="secondary">Reserva técnica</Badge>}
+        </p>
+        <p className="text-sm text-muted-foreground">
+          {vaga.contrato ?? "Sem contrato"}{vaga.cidade ? ` · ${vaga.cidade}` : ""} · pedida em {fmtDataHora(vaga.criada)}{vaga.solicitante ? ` por ${vaga.solicitante}` : ""}
+        </p>
+      </Card>
 
         {/* Régua do fluxo */}
         <div className="grid grid-cols-4 gap-1 sm:grid-cols-8">
@@ -647,6 +707,86 @@ function DashboardVaga({ vaga, painel, etapas, onClose }: { vaga: VagaPainel | n
           <MiniKpi icone={Users} rotulo="Candidatos" valor={String(vaga.cand.total)} />
           <MiniKpi icone={XCircle} rotulo="Desistências" valor={String(vaga.cand.desistiu)} />
         </div>
+
+        {/* Tempo nos status do kanban (08/10/2026) */}
+        <Card className="p-4">
+          <p className="mb-1 text-sm font-semibold">Linha do tempo da vaga no kanban</p>
+          <p className="mb-3 text-[11px] text-muted-foreground">Cada barra é o período em que a vaga ficou naquele status, do pedido até {vagaFechada(vaga) ? "fechar" : "hoje"}. Passe o mouse para ver as datas.</p>
+          {trechos.length ? (
+            <Gantt
+              agora={agora}
+              linhas={trechos.map((t, i) => ({
+                chave: `${i}`, rotulo: t.status, sub: fmtDias(t.dias) + (t.aberto ? " · agora" : ""),
+                segmentos: [{ inicio: t.inicio, fim: t.fim, cor: COR_ETAPA[t.etapa], titulo: `${t.status}: ${fmtDataHora(t.inicio)} → ${t.fim ? fmtDataHora(t.fim) : "hoje"} (${fmtDias(t.dias)})`, aberto: t.aberto }],
+              }))}
+            />
+          ) : <SemDados texto="Sem trechos medidos para esta vaga." />}
+          {vaga.legado && !vaga.log.length && <p className="mt-2 text-[11px] text-muted-foreground">Vaga do sistema antigo (Discord): o log por status começou em 19/08/2026; só o tempo total é conhecido.</p>}
+        </Card>
+
+        <div className="grid gap-4 lg:grid-cols-2">
+          <Card className="p-4">
+            <p className="mb-2 text-sm font-semibold">Dias em cada status do kanban</p>
+            {trechos.length ? (() => {
+              const dados = diasPorStatus(trechos).map((x) => ({ ...x, dias: n1(x.dias) }));
+              return (
+                <ResponsiveContainer width="100%" height={Math.max(180, dados.length * 34)}>
+                  <BarChart data={dados} layout="vertical" margin={{ top: 0, right: 48, left: 8, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" horizontal={false} />
+                    <XAxis type="number" tick={{ fontSize: 10 }} unit=" d" />
+                    <YAxis type="category" dataKey="status" width={190} tick={{ fontSize: 10 }} />
+                    <Tooltip formatter={(v: number) => fmtDias(v)} />
+                    <Bar dataKey="dias" name="Dias" radius={[0, 3, 3, 0]}>
+                      {dados.map((x) => <Cell key={x.status} fill={COR_ETAPA[x.etapa]} />)}
+                      <LabelList dataKey="dias" position="right" fontSize={10} formatter={(v: number) => fmtDias(v)} />
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              );
+            })() : <SemDados texto="Sem trechos medidos." />}
+          </Card>
+          <Card className="p-4">
+            <p className="mb-2 text-sm font-semibold">Tempo médio dos candidatos em cada coluna</p>
+            {candidatosKanban.length ? (() => {
+              const soma = new Map<string, number[]>();
+              for (const c of candidatosKanban) for (const t of c.trechos) if (t.dias > 0) (soma.get(t.etapa) ?? soma.set(t.etapa, []).get(t.etapa)!).push(t.dias);
+              const dados = COLUNAS_CANDIDATO.filter((e) => soma.has(e)).map((e) => ({ etapa: e, dias: n1(soma.get(e)!.reduce((a, b) => a + b, 0) / soma.get(e)!.length), n: soma.get(e)!.length }));
+              return dados.length ? (
+                <ResponsiveContainer width="100%" height={Math.max(180, dados.length * 34)}>
+                  <BarChart data={dados} layout="vertical" margin={{ top: 0, right: 48, left: 8, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" horizontal={false} />
+                    <XAxis type="number" tick={{ fontSize: 10 }} unit=" d" />
+                    <YAxis type="category" dataKey="etapa" width={130} tick={{ fontSize: 10 }} />
+                    <Tooltip formatter={(v: number, _k, it) => [`${fmtDias(v)} (média de ${(it?.payload as { n: number }).n} candidato(s))`, "Média"]} />
+                    <Bar dataKey="dias" radius={[0, 3, 3, 0]}>
+                      {dados.map((x) => <Cell key={x.etapa} fill={COR_COLUNA[x.etapa] ?? "#64748b"} />)}
+                      <LabelList dataKey="dias" position="right" fontSize={10} formatter={(v: number) => fmtDias(v)} />
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              ) : <SemDados texto="Os candidatos ainda não mudaram de coluna." />;
+            })() : <SemDados texto={q.isLoading ? "Carregando…" : "Nenhum candidato ligado a esta vaga."} />}
+          </Card>
+        </div>
+
+        {candidatosKanban.length > 0 && (
+          <Card className="p-4">
+            <p className="mb-1 text-sm font-semibold">Kanban dos candidatos — quanto tempo cada um ficou em cada coluna</p>
+            <div className="mb-3 flex flex-wrap gap-2 text-[10px] text-muted-foreground">
+              {COLUNAS_CANDIDATO.map((e) => <span key={e} className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-sm" style={{ background: COR_COLUNA[e] }} />{e}</span>)}
+            </div>
+            <Gantt
+              agora={agora}
+              linhas={candidatosKanban.map((c) => ({
+                chave: String(c.id), rotulo: c.nome, sub: `${c.etapaAtual} · ${fmtDias(c.total)}`,
+                segmentos: c.trechos.map((t) => ({
+                  inicio: t.inicio, fim: t.fim, cor: COR_COLUNA[t.etapa] ?? "#64748b", aberto: t.aberto, marco: t.dias === 0 && !t.aberto,
+                  titulo: `${t.etapa}: ${fmtDataHora(t.inicio)}${t.dias || t.aberto ? ` → ${t.fim ? fmtDataHora(t.fim) : "hoje"} (${fmtDias(t.dias)})` : ""}`,
+                })),
+              }))}
+            />
+          </Card>
+        )}
 
         <div className="grid gap-4 lg:grid-cols-2">
           <Card className="p-4">
@@ -757,8 +897,58 @@ function DashboardVaga({ vaga, painel, etapas, onClose }: { vaga: VagaPainel | n
               </ol>
             ) : <SemDados texto="Sem histórico registrado." />}
         </Card>
-      </DialogContent>
-    </Dialog>
+    </div>
+  );
+}
+
+// ---- Gantt simples (barras posicionadas numa escala de datas) ---------------------
+
+const COR_COLUNA: Record<string, string> = {
+  ENTRADA: "#94a3b8", TRIAGEM: "#7c3aed", "JURÍDICO": "#0891b2", ENTREVISTA: "#db2777", "ENTREVISTA GESTOR": "#be185d",
+  APROVADO: "#ea580c", "DOCUMENTAÇÃO": "#f59e0b", "SST + COMPRAS": "#ca8a04", "ADMISSÃO": "#16a34a", CONTRATADO: "#15803d",
+  REPROVADO: "#dc2626", DESISTIU: "#6b7280",
+};
+
+interface SegmentoGantt { inicio: string; fim: string | null; cor: string; titulo: string; aberto?: boolean; marco?: boolean }
+
+function Gantt({ linhas, agora }: { linhas: { chave: string; rotulo: string; sub?: string; segmentos: SegmentoGantt[] }[]; agora: string }) {
+  const t = (s: string | null) => new Date(s ?? agora).getTime();
+  const todos = linhas.flatMap((l) => l.segmentos);
+  if (!todos.length) return null;
+  const ini = Math.min(...todos.map((s) => t(s.inicio)));
+  const fim = Math.max(ini + 3_600_000, ...todos.map((s) => t(s.fim)));
+  const pos = (x: number) => ((x - ini) / (fim - ini)) * 100;
+  const marcas = Array.from({ length: 6 }, (_, i) => ini + ((fim - ini) * i) / 5);
+  return (
+    <div className="overflow-x-auto">
+      <div className="min-w-[640px]">
+        <div className="relative ml-[220px] h-5 border-b border-border text-[10px] text-muted-foreground">
+          {marcas.map((m, i) => (
+            <span key={i} className="absolute -translate-x-1/2 whitespace-nowrap" style={{ left: `${(i / 5) * 100}%` }}>
+              {new Date(m).toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" })}
+            </span>
+          ))}
+        </div>
+        <div className="max-h-[420px] overflow-y-auto">
+          {linhas.map((l) => (
+            <div key={l.chave} className="flex items-center border-b border-border/40 py-1">
+              <div className="w-[220px] shrink-0 truncate pr-2 text-[11px]" title={l.rotulo}>
+                <span className="font-medium">{l.rotulo}</span>{l.sub && <span className="text-muted-foreground"> · {l.sub}</span>}
+              </div>
+              <div className="relative h-4 flex-1 rounded bg-muted/40">
+                {marcas.slice(1, -1).map((_, i) => <span key={i} className="absolute top-0 h-full border-l border-dashed border-border/60" style={{ left: `${((i + 1) / 5) * 100}%` }} />)}
+                {l.segmentos.map((s, i) => s.marco ? (
+                  <span key={i} title={s.titulo} className="absolute top-0 h-full w-1 rounded" style={{ left: `calc(${pos(t(s.inicio))}% - 2px)`, background: s.cor }} />
+                ) : (
+                  <span key={i} title={s.titulo} className={cn("absolute top-0 h-full rounded", s.aberto && "animate-pulse")}
+                    style={{ left: `${pos(t(s.inicio))}%`, width: `${Math.max(0.6, pos(t(s.fim)) - pos(t(s.inicio)))}%`, background: s.cor }} />
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
   );
 }
 
