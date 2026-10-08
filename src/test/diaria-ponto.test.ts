@@ -62,3 +62,15 @@ describe("diárias × ponto do faltante", () => {
     expect(datasSemPonto(["2026-10-01"], null)).toEqual(["2026-10-01"]);
   });
 });
+
+describe("horas trabalhadas pelas batidas", () => {
+  it("soma os pares entrada→saída e avisa batida ímpar", async () => {
+    const { horasTrabalhadas, fmtDuracao, batidasPorSolicitacao } = await import("@/lib/diariaPonto");
+    expect(horasTrabalhadas([780, 420, 1020, 720])).toEqual({ minutos: 540, incompleto: false });
+    expect(fmtDuracao(540)).toBe("9h00");
+    expect(horasTrabalhadas([1140])).toEqual({ minutos: 0, incompleto: true });
+    expect(horasTrabalhadas([1320, 1800])).toEqual({ minutos: 480, incompleto: false });   // 22:00 → 06:00 do dia seguinte
+    const b = batidasPorSolicitacao({ sincronizado_ate: null, conflitos: [{ solicitacao_id: "a", data: "2026-09-01", minutos: [420, 720] }] });
+    expect(b.get("a")!.get("2026-09-01")).toEqual([420, 720]);
+  });
+});

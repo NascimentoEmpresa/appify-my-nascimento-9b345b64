@@ -65,7 +65,8 @@ import {
   useVisualizacoesDiaria,
 } from "@/hooks/useDiarias";
 import { ModoModalDiaria, SolicitacaoDiariaModal } from "./SolicitacaoDiariaModal";
-import { conflitosPorSolicitacao } from "@/lib/diariaPonto";
+import { batidasPorSolicitacao, conflitosPorSolicitacao } from "@/lib/diariaPonto";
+import { DiariasPontoDialog } from "./DiariasPontoDialog";
 import {
   LinhaDiaria,
   STATUS_SOLICITACAO,
@@ -187,6 +188,10 @@ export default function ControleDiarias({
   // Faltante que bateu ponto no dia da diária (mig 20261007000021).
   const { data: pontoConflitos } = useConflitosPontoDiarias();
   const pontoPorSolicitacao = useMemo(() => conflitosPorSolicitacao(pontoConflitos), [pontoConflitos]);
+  const batidasPonto = useMemo(() => batidasPorSolicitacao(pontoConflitos), [pontoConflitos]);
+  // "Ver marcações" (detalhe) e "Mostrar só essas" (filtro da tabela) — 08/10/2026.
+  const [verPonto, setVerPonto] = useState(false);
+  const [soPonto, setSoPonto] = useState(false);
   const criar = useCriarSolicitacaoDiaria();
   const decidir = useDecidirSolicitacaoDiaria();
   const ajustar = useAjustarSolicitacaoDiaria();
@@ -343,6 +348,7 @@ export default function ControleDiarias({
       if (posto !== "todos" && s.posto !== posto) continue;
       if (status !== "todos" && statusExibicaoDiaria(s).chave !== status) continue;
       for (const l of s.diarias) {
+        if (soPonto && !batidasPonto.get(s.uuid)?.has(l.data)) continue;
         if (de && l.data < de) continue;
         if (ate && l.data > ate) continue;
         out.push({
@@ -359,7 +365,7 @@ export default function ControleDiarias({
       }
     }
     return out;
-  }, [solicitacoes, busca, contrato, posto, status, de, ate]);
+  }, [solicitacoes, busca, contrato, posto, status, de, ate, soPonto, batidasPonto]);
 
   /**
    * O que "Exportar filtrado" leva: exatamente as linhas que a tabela mostra.
@@ -592,9 +598,9 @@ export default function ControleDiarias({
           const pagas = solicitacoes.filter((x) => x.status !== "solicitada" && x.status !== "em_ajuste" && pontoPorSolicitacao.has(x.uuid));
           if (!pend.length && !pagas.length) return null;
           return (
-            <Card className="flex items-start gap-3 border-destructive/40 bg-destructive/5 p-4">
+            <Card className="flex flex-wrap items-start gap-3 border-destructive/40 bg-destructive/5 p-4">
               <UserX className="mt-0.5 h-5 w-5 shrink-0 text-destructive" />
-              <div className="text-sm">
+              <div className="min-w-0 flex-1 text-sm">
                 <p className="font-semibold text-destructive">Faltante bateu ponto no dia da diária</p>
                 {pend.length > 0 && (
                   <p className="text-xs text-muted-foreground">
@@ -607,9 +613,26 @@ export default function ControleDiarias({
                   </p>
                 )}
               </div>
+              <div className="flex shrink-0 flex-wrap gap-2">
+                <Button size="sm" variant="destructive" className="h-8" onClick={() => setVerPonto(true)}>
+                  <Eye className="mr-1.5 h-3.5 w-3.5" /> Ver marcações
+                </Button>
+                <Button size="sm" variant={soPonto ? "default" : "outline"} className="h-8" onClick={() => { setSoPonto((v) => !v); setPagina(1); }}>
+                  {soPonto ? "Mostrar todas na lista" : "Mostrar só essas na lista"}
+                </Button>
+              </div>
             </Card>
           );
         })()}
+
+        <DiariasPontoDialog
+          aberto={verPonto}
+          onFechar={() => setVerPonto(false)}
+          solicitacoes={solicitacoes}
+          batidas={batidasPonto}
+          sincronizadoAte={pontoConflitos?.sincronizado_ate}
+          onAbrir={(s) => { setVerPonto(false); abrir(s); }}
+        />
 
         {/* Filtros */}
         <Card className="p-4">
