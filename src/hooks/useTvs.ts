@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
-import type { TipoItem } from "@/lib/tv/tv";
+import type { AoVivoTv, TipoItem } from "@/lib/tv/tv";
 
 // =====================================================================
 // Sistemas › TV's — gestão (mig 20261007000012). Tabelas TV_* com RLS por
@@ -49,6 +49,22 @@ export const useTvPlaylists = () => useQuery({
     const { data, error } = await sb.from("TV_PLAYLIST").select("id, nome, descricao, itens:TV_ITEM(*)").order("nome");
     if (error) throw error;
     return (data ?? []).map((p: TvPlaylist) => ({ ...p, itens: [...(p.itens ?? [])].sort((a, b) => a.ordem - b.ordem) }));
+  },
+});
+
+/**
+ * AO VIVO (mig 20261008000003): o item que a TV disse que está mostrando.
+ * Consulta curta e frequente (só enquanto o painel está aberto). Banco sem a
+ * migration = coluna inexistente → `suportado: false` e a gestão simula.
+ */
+export const useTvAoVivo = (tvId: string | null) => useQuery({
+  queryKey: [K, "ao-vivo", tvId], enabled: !!tvId,
+  // Sem a migration não adianta insistir: para de consultar (a gestão simula).
+  refetchInterval: (q) => (q.state.data?.suportado === false ? false : 4_000), staleTime: 3_000, retry: false,
+  queryFn: async (): Promise<AoVivoTv> => {
+    const { data, error } = await sb.from("TV_DISPOSITIVO").select("atual_item_id, atual_desde").eq("id", tvId).maybeSingle();
+    if (error) return { suportado: false, atual_item_id: null, atual_desde: null };
+    return { suportado: true, atual_item_id: data?.atual_item_id ?? null, atual_desde: data?.atual_desde ?? null };
   },
 });
 

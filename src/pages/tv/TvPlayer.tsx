@@ -26,6 +26,11 @@ import { TvRelatorio } from "./TvRelatorio";
 //   · cão de guarda: 3 min sem conseguir falar com o ERP → recarrega; e uma
 //     recarga limpa por dia, de madrugada (navegador de TV vaza memória);
 //   · item "relatório": números do ERP em tela cheia (TvRelatorio).
+//
+// 08/10/2026 (mig 20261008000003) — AO VIVO na gestão: a cada troca de item
+// a TV avisa qual entrou (tv_reportar), e Sistemas › TV's desenha a mesma
+// coisa. É só um aviso: se falhar, a TV segue tocando; se o banco ainda não
+// tem a função, ela para de tentar até a próxima recarga.
 // =====================================================================
 
 const CHAVE_TOKEN = "gn:tv:token";
@@ -33,7 +38,7 @@ const rpc = supabase.rpc.bind(supabase) as unknown as (fn: string, args?: Record
 const tela = () => `${window.screen?.width ?? window.innerWidth}x${window.screen?.height ?? window.innerHeight}`;
 const lerToken = () => { try { return localStorage.getItem(CHAVE_TOKEN); } catch { return null; } };
 const gravarToken = (t: string | null) => { try { t ? localStorage.setItem(CHAVE_TOKEN, t) : localStorage.removeItem(CHAVE_TOKEN); } catch { /* modo privado */ } };
-const midia = (arquivo: string | null) => (arquivo ? supabase.storage.from("tv-midia").getPublicUrl(arquivo).data.publicUrl : "");
+const midiaPublica = (arquivo: string | null) => (arquivo ? supabase.storage.from("tv-midia").getPublicUrl(arquivo).data.publicUrl : "");
 
 const SEM_CONTATO_RECARREGA_MS = 3 * 60_000;
 const ABERTA_EM = Date.now();
@@ -76,6 +81,17 @@ export default function TvPlayer() {
     return () => window.clearInterval(t);
   }, [consultar]);
 
+  // AO VIVO: avisa o ERP do item que entrou na tela (null = relógio/pausada).
+  // Fogo e esquece — nunca atrapalha a reprodução.
+  const reportarLigado = useRef(true);
+  const reportar = useCallback((itemId: string | null) => {
+    if (!reportarLigado.current || !tokenRef.current) return;
+    rpc("tv_reportar", { p_token: tokenRef.current, p_item: itemId }).then(({ error }) => {
+      // Banco sem a mig 20261008000003: não insiste até recarregar.
+      if (error && /tv_reportar|function|PGRST202/i.test(error.message)) reportarLigado.current = false;
+    }, () => { /* sem rede: o próximo item tenta de novo */ });
+  }, []);
+
   // Cão de guarda: sem falar com o ERP há 3 min, ou de madrugada depois de
   // 20 h no ar, recarrega a página inteira (rede caiu, navegador travou).
   useEffect(() => {
@@ -104,14 +120,14 @@ export default function TvPlayer() {
     <div className="fixed inset-0 overflow-hidden bg-black text-white" onDoubleClick={() => document.documentElement.requestFullscreen?.().catch(() => {})}>
       {!estado ? <Centro titulo="Conectando ao ERP…" sub={erro ?? undefined} />
         : !estado.pareada ? <Pareamento codigo={estado.codigo ?? "------"} erro={erro} />
-        : <Reprodutor itens={estado.itens ?? []} nome={estado.nome ?? ""} ativa={estado.ativa !== false} token={tokenRef.current ?? ""} />}
+        : <Reprodutor itens={estado.itens ?? []} nome={estado.nome ?? ""} ativa={estado.ativa !== false} token={tokenRef.current ?? ""} aoMostrar={reportar} />}
       {estado?.pareada && estado.alerta && <Alerta texto={estado.alerta.texto} cor={estado.alerta.cor} />}
       {erro && estado?.pareada && <div className="absolute bottom-2 right-3 rounded bg-black/60 px-2 py-1 text-xs text-white/70">sem conexão — tentando de novo</div>}
     </div>
   );
 }
 
-function Centro({ titulo, sub }: { titulo: string; sub?: string }) {
+export function Centro({ titulo, sub }: { titulo: string; sub?: string }) {
   return (
     <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
       <p className="text-3xl font-bold">{titulo}</p>
@@ -132,7 +148,7 @@ function Pareamento({ codigo, erro }: { codigo: string; erro: string | null }) {
   );
 }
 
-function Alerta({ texto, cor }: { texto: string; cor: string }) {
+export function Alerta({ texto, cor }: { texto: string; cor: string }) {
   return (
     <div className="absolute inset-0 z-20 flex items-center justify-center p-[6vmin] text-center" style={{ background: corAviso(cor) }}>
       <p className="whitespace-pre-wrap text-[7vmin] font-black leading-tight">{texto}</p>
@@ -140,7 +156,7 @@ function Alerta({ texto, cor }: { texto: string; cor: string }) {
   );
 }
 
-function Reprodutor({ itens, nome, ativa, token }: { itens: ItemTv[]; nome: string; ativa: boolean; token: string }) {
+function Reprodutor({ itens, nome, ativa, token, aoMostrar }: { itens: ItemTv[]; nome: string; ativa: boolean; token: string; aoMostrar: (itemId: string | null) => void }) {
   const [idx, setIdx] = useState(0);
   const assinatura = useMemo(() => itens.map((i) => `${i.id}:${i.duracao_seg}`).join("|"), [itens]);
   const atual = itens.length ? itens[idx % itens.length] : null;
@@ -148,6 +164,10 @@ function Reprodutor({ itens, nome, ativa, token }: { itens: ItemTv[]; nome: stri
 
   // Playlist mudou no ERP: recomeça do primeiro.
   useEffect(() => { setIdx(0); }, [assinatura]);
+
+  // AO VIVO da gestão: a cada troca do que está na tela.
+  const naTela = ativa && atual ? `${atual.id}#${idx}` : null;
+  useEffect(() => { aoMostrar(naTela ? naTela.split("#")[0] : null); }, [naTela, aoMostrar]);
 
   // Tudo, menos vídeo, troca pelo tempo cadastrado (vídeo troca ao acabar).
   useEffect(() => {
@@ -164,22 +184,29 @@ function Reprodutor({ itens, nome, ativa, token }: { itens: ItemTv[]; nome: stri
     <>
       <Item key={`${atual.id}-${idx}`} item={atual} sozinho={itens.length === 1} aoAcabar={proximo} token={token} />
       {/* pré-carrega a próxima imagem para a troca não piscar */}
-      {prox?.tipo === "imagem" && prox.arquivo && <link rel="preload" as="image" href={midia(prox.arquivo)} />}
+      {prox?.tipo === "imagem" && prox.arquivo && <link rel="preload" as="image" href={midiaPublica(prox.arquivo)} />}
     </>
   );
 }
 
-function Item({ item, sozinho, aoAcabar, token }: { item: ItemTv; sozinho: boolean; aoAcabar: () => void; token: string }) {
-  if (item.tipo === "relatorio") return <TvRelatorio item={item} token={token} />;
+/**
+ * Um item da playlist em tela cheia. Exportado para a prévia/ao vivo da
+ * gestão (TvPrevia). `inicioS` (só ao vivo): há quanto tempo o item está na
+ * TV — vídeo e YouTube começam desse ponto, para bater com a tela da TV.
+ */
+export function Item({ item, sozinho, aoAcabar, token, previa = false, inicioS = 0 }: { item: ItemTv; sozinho: boolean; aoAcabar: () => void; token: string; previa?: boolean; inicioS?: number }) {
+  if (item.tipo === "relatorio") return <TvRelatorio item={item} token={token} previa={previa} />;
+  const midia = (arquivo: string | null) => item.url_previa || midiaPublica(arquivo);
   if (item.tipo === "imagem") {
     return <img src={midia(item.arquivo)} alt={item.titulo ?? ""} className="h-full w-full object-contain" onError={aoAcabar} />;
   }
   if (item.tipo === "video") {
-    return <video src={midia(item.arquivo)} className="h-full w-full object-contain" autoPlay muted playsInline loop={sozinho} onEnded={aoAcabar} onError={aoAcabar} />;
+    return <video src={midia(item.arquivo)} className="h-full w-full object-contain" autoPlay muted playsInline loop={sozinho} onEnded={aoAcabar} onError={aoAcabar}
+      onLoadedMetadata={(e) => { const v = e.currentTarget; if (inicioS > 1 && Number.isFinite(v.duration) && v.duration > 0) v.currentTime = inicioS % v.duration; }} />;
   }
   if (item.tipo === "youtube") {
     const src = youtubeEmbed(item.url);
-    return src ? <iframe src={src} title={item.titulo ?? "YouTube"} className="h-full w-full border-0" allow="autoplay; encrypted-media" /> : <Centro titulo="Link do YouTube inválido" sub={item.url ?? ""} />;
+    return src ? <iframe src={inicioS > 1 ? `${src}&start=${Math.floor(inicioS)}` : src} title={item.titulo ?? "YouTube"} className="h-full w-full border-0" allow="autoplay; encrypted-media" /> : <Centro titulo="Link do YouTube inválido" sub={item.url ?? ""} />;
   }
   if (item.tipo === "url") {
     return <iframe src={item.url ?? "about:blank"} title={item.titulo ?? "Página"} className="h-full w-full border-0 bg-white" referrerPolicy="no-referrer" />;
@@ -192,7 +219,7 @@ function Item({ item, sozinho, aoAcabar, token }: { item: ItemTv; sozinho: boole
   );
 }
 
-function Ocioso({ nome }: { nome: string }) {
+export function Ocioso({ nome }: { nome: string }) {
   const [agora, setAgora] = useState(new Date());
   useEffect(() => { const t = window.setInterval(() => setAgora(new Date()), 1000); return () => window.clearInterval(t); }, []);
   return (
