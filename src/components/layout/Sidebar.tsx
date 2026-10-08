@@ -564,6 +564,8 @@ const rhModule: ModuleDef = {
       defaultOpen: true,
       items: [
         { label: "Ativos/Contratos", to: "/app/rh/ativos-contratos", icon: ClipboardCheck },
+        // Hierarquia de postos da Senior (mig 20261007000024): quem responde por quem e por qual contrato.
+        { label: "Hierarquia de Postos", to: "/app/rh/hierarquia-postos", icon: Network },
       ],
     },
   ],
@@ -642,6 +644,9 @@ const encarregadosModule: ModuleDef = {
         // aparece no bloco certo e o Operacional continua invisível para quem
         // não tem menu nenhum dele.
         { label: "Controle de Diárias", to: "/app/encarregados/diarias", icon: CalendarCheck2 },
+        // Envio do ponto do mês ao Operacional (mig 20261007000023) — sem
+        // permissão para ninguém por enquanto (pedido de 07/10/2026).
+        { label: "Conferência de Ponto", to: "/app/encarregados/conferencia-ponto", icon: ClipboardCheck },
       ],
     },
     {
@@ -1247,6 +1252,7 @@ const relatoriosModule: ModuleDef = {
       items: [
         { label: "Relatório Geral", to: "/app/relatorios", icon: BarChart3 },
         ...RELATORIOS.map((s) => ({ label: s.titulo, to: `/app/relatorios/${s.slug}`, icon: s.icone })),
+        { label: "Vagas — Dashboard", to: "/app/relatorios/vagas", icon: Briefcase },
       ],
     },
   ],

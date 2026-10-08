@@ -5,6 +5,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { NovaParcela, RateioLinha, uploadAnexoMalote } from "@/hooks/useMaloteDespesa";
 import type { StatusDespesa } from "@/lib/maloteStatus";
+import type { ConflitosPonto, PontoFaltante } from "@/lib/diariaPonto";
 import {
   AnexoDiaria,
   LinhaDiaria,
@@ -874,4 +875,39 @@ function mapearSolicitacao(s: SolicitacaoDiariaBanco): SolicitacaoDiaria {
         observacao: c.observacao ?? "",
       })),
   };
+}
+
+/**
+ * Ponto do faltante nas datas digitadas (mig 20261007000021): o modal mostra,
+ * linha a linha, se ele bateu ponto no dia — e não deixa salvar se bateu. O
+ * banco recusa do mesmo jeito (trigger em DIARIA_LINHA); aqui é o aviso antes.
+ * Sem a migration a RPC não existe: devolve null e a tela segue sem o aviso.
+ */
+export function usePontoFaltanteDiaria(cpf: string, datas: string[]) {
+  const digitos = cpf.replace(/\D/g, "");
+  const chave = [...new Set(datas.filter(Boolean))].sort();
+  return useQuery({
+    queryKey: ["diaria_ponto_faltante", digitos, chave.join(",")],
+    enabled: digitos.length === 11 && chave.length > 0,
+    staleTime: 60_000,
+    placeholderData: (anterior) => anterior,
+    queryFn: async (): Promise<PontoFaltante | null> => {
+      const { data, error } = await sb.rpc("diaria_ponto_faltante", { p_cpf: digitos, p_datas: chave });
+      if (error) return null;
+      return data as PontoFaltante;
+    },
+  });
+}
+
+/** Lista: solicitações em que o faltante bateu ponto em algum dia da diária. */
+export function useConflitosPontoDiarias() {
+  return useQuery({
+    queryKey: ["diaria_ponto_conflitos"],
+    staleTime: 5 * 60_000,
+    queryFn: async (): Promise<ConflitosPonto | null> => {
+      const { data, error } = await sb.rpc("diaria_ponto_conflitos");
+      if (error) return null;
+      return data as ConflitosPonto;
+    },
+  });
 }
