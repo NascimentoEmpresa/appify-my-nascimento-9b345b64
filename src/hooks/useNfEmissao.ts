@@ -523,6 +523,24 @@ export function useEnviarNfEmissao() {
   });
 }
 
+// A analista reabre uma NF cancelada pelo Financeiro (a validação rejeitou) para
+// corrigir e reenviar — volta para 'rascunho' na MESMA nota (itens, anexos e
+// histórico ficam). Regras e exceção do guard: migration
+// 20261007000020_nf_emissao_reabrir_cancelada.sql.
+export function useReabrirNfCancelada() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) => {
+      const { error } = await (supabase as any).rpc("nf_emissao_reabrir_cancelada", { _id: id });
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: [NF_EMISSAO_KEY] });
+      qc.invalidateQueries({ queryKey: ["nf_emissao_historico"] });
+    },
+  });
+}
+
 export interface NfEmissaoItemRow {
   id: string;
   nf_emissao_id: string;
