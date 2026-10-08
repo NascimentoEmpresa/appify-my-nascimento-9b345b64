@@ -69,6 +69,7 @@ export interface AplicacaoFinanceiraEvento {
 
 export interface AplicacaoFinanceiraResgateCaixa {
   id: string;
+  numero: string | null;
   empresa_id: string;
   data_resgate: string;
   valor_principal: number;

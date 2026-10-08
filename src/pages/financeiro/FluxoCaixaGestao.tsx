@@ -926,9 +926,15 @@ export default function FluxoCaixaGestao() {
                     <TableCell className="text-center text-sm font-medium">{formatBRL(l.valor)}</TableCell>
                     <TableCell className="text-center">
                       {l.origem === "aplicacao_financeira" ? (
-                        <span className="text-xs text-muted-foreground" title="Gerencie em Aplicações Financeiras">
-                          ver em Aplicações
-                        </span>
+                        <Button
+                          variant="link"
+                          size="sm"
+                          className="h-auto p-0 text-xs"
+                          title="Gerencie em Aplicações Financeiras"
+                          onClick={() => navigate("/app/financeiro/gestao-financeira/aplicacoes-financeiras")}
+                        >
+                          Ver em Aplicações
+                        </Button>
                       ) : (
                         <div className="flex items-center justify-center gap-0.5">
                           {/* SIS-2026-0038 (achado do usuário): "e vice versa,

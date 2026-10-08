@@ -13,50 +13,58 @@ const base: ItemInput = {
 };
 const zero = { multas_pos_emissao: 0, glosas_pos_emissao: 0, outros_descontos_pos_emissao: 0 };
 
-describe("ajustarDescontosPosEmissao", () => {
-  it("nota do ERP: o desconto entra no cálculo (bruto, retenções e líquido mudam)", () => {
+describe("ajustarDescontosPosEmissao (SIS-2026-0609: pós-emissão não mexe na NF)", () => {
+  it("nota do ERP: o desconto NÃO entra no cálculo — bruto, retenções e líquido ficam iguais", () => {
     const antes = calcularItem(base, pct);
     const depois = ajustarDescontosPosEmissao(base, pct, { ...zero, glosas_pos_emissao: 1000 });
-    expect(depois.vlr_bruto).toBe(9000);
     expect(depois.glosas_pos_emissao).toBe(1000);
-    expect(depois.total_descontos).toBe(1000);
-    expect(depois.vlr_liquido).toBeLessThan(antes.vlr_liquido);
-    expect(depois.issqn).toBeCloseTo(180, 2);
+    expect(depois.vlr_bruto).toBe(antes.vlr_bruto);
+    expect(depois.total_descontos).toBe(antes.total_descontos);
+    expect(depois.vlr_liquido).toBeCloseTo(antes.vlr_liquido, 6);
+    expect(depois.issqn).toBeCloseTo(antes.issqn, 6);
+  });
+
+  it("os três campos pós-emissão juntos também não mudam o líquido", () => {
+    const antes = calcularItem(base, pct);
+    const depois = calcularItem({ ...base, multas_pos_emissao: 100, glosas_pos_emissao: 200, outros_descontos_pos_emissao: 300 }, pct);
+    expect(depois.vlr_liquido).toBeCloseTo(antes.vlr_liquido, 6);
+    expect(depois.vlr_bruto).toBe(antes.vlr_bruto);
   });
 
   it("sem mudança, devolve o mesmo cálculo", () => {
     expect(ajustarDescontosPosEmissao(base, pct, zero).vlr_liquido).toBeCloseTo(calcularItem(base, pct).vlr_liquido, 6);
   });
 
-  it("remover um desconto devolve o valor ao bruto e ao líquido", () => {
+  it("remover um desconto pós-emissão também não mexe no bruto", () => {
     const comDesconto: ItemInput = { ...base, multas_pos_emissao: 500 };
     const sem = ajustarDescontosPosEmissao(comDesconto, pct, zero);
     expect(sem.vlr_bruto).toBe(10000);
   });
 
-  it("nota legada: a diferença vai direto sobre bruto e líquido gravados, retenções ficam", () => {
+  it("nota legada: os valores gravados (bruto, retenções, líquido) não mudam", () => {
     const linha = {
       vlr_va: 0, vlr_vt: 0, vlr_materiais: 0, vlr_mao_obra: 0, vlr_bruto: 11424.32,
       issqn: 228.49, inss: 1113.68, ir: 548.37, cofins: 0, pis: 0, csll: 0, vlr_liquido: 9533.79,
     };
     const legada: ItemInput = { ...base, valor_contrato_exec: 11424.32, valores_legados: valoresLegadosDoItem(linha) };
     const r = ajustarDescontosPosEmissao(legada, pct, { ...zero, multas_pos_emissao: 300.5 });
-    expect(r.vlr_liquido).toBe(9233.29);
-    expect(r.vlr_bruto).toBe(11123.82);
+    expect(r.vlr_liquido).toBe(9533.79);
+    expect(r.vlr_bruto).toBe(11424.32);
     expect(r.inss).toBe(1113.68);
     expect(r.issqn).toBe(228.49);
     expect(r.ir).toBe(548.37);
+    expect(r.multas_pos_emissao).toBe(300.5);
   });
 
-  it("nota legada: reduzir o desconto devolve o valor (delta negativo)", () => {
+  it("nota legada: reduzir o desconto também não devolve nada ao bruto/líquido", () => {
     const linha = {
       vlr_va: 0, vlr_vt: 0, vlr_materiais: 0, vlr_mao_obra: 0, vlr_bruto: 1000,
       issqn: 20, inss: 0, ir: 48, cofins: 0, pis: 0, csll: 0, vlr_liquido: 932,
     };
     const legada: ItemInput = { ...base, multas_pos_emissao: 100, valores_legados: valoresLegadosDoItem(linha) };
     const r = ajustarDescontosPosEmissao(legada, pct, zero);
-    expect(r.vlr_liquido).toBe(1032);
-    expect(r.vlr_bruto).toBe(1100);
+    expect(r.vlr_liquido).toBe(932);
+    expect(r.vlr_bruto).toBe(1000);
   });
 
   it("soma dos três campos", () => {

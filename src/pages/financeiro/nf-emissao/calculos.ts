@@ -143,7 +143,9 @@ export function pctEfetivo(
 
 // Reproduz o cálculo real da planilha "Modelo" (SAMU.xlsm / TJRS.xlsm):
 // total_descontos = faltas + posto não implementado + multas + glosas + outros descontos
-//   (+ multas/glosas/outros descontos pós-emissão, lançados pelo Financeiro no Controle de Notas)
+// SIS-2026-0609: multas/glosas/outros descontos PÓS-emissão (lançados pelo Financeiro)
+//   NÃO entram aqui — a NF já foi emitida e eles não mudam bruto, retenções nem
+//   líquido da nota. Só reduzem o que será PAGO (líquido − pós), ver valorPendenteNf.
 // vlr_bruto = valor contrato exec. - total_descontos
 // vlr_mao_obra = vlr_bruto - VA - VT - materiais
 // ISSQN/IR/COFINS/PIS/CSLL = vlr_bruto * percentual do contrato
@@ -154,11 +156,8 @@ export function calcularItem(input: ItemInput, pct: PercentuaisFiscais): ItemCal
     input.faltas +
     input.posto_nao_implementado +
     input.multas +
-    input.multas_pos_emissao +
     input.glosas +
-    input.glosas_pos_emissao +
-    input.outros_descontos +
-    input.outros_descontos_pos_emissao;
+    input.outros_descontos;
   if (input.valores_legados) {
     // Nota importada da planilha: valem os valores gravados (ver ItemInput).
     // A mão de obra mostrada é a implícita no INSS (INSS ÷ alíquota); sem INSS,
@@ -257,8 +256,9 @@ export function calcularTotaisNf(itens: ItemCalculado[]): TotaisNf {
 // importada da planilha (valores_legados) tem os valores gravados como
 // referência, e as retenções não podem ser refeitas sem VA/VT/materiais
 // (a planilha os discriminava e eles não vieram):
-//  - só descontos pós-emissão mudaram: a diferença é aplicada direto sobre o
-//    bruto e o líquido gravados, e as retenções ficam como estão;
+//  - só descontos pós-emissão mudaram: SIS-2026-0609 — nada muda no bruto,
+//    retenções e líquido (o desconto só reduz o valor a pagar); só os campos
+//    pós-emissão são gravados;
 //  - o Financeiro informou VA/VT/materiais: a nota deixa de ser "legada" e
 //    passa a ser recalculada pela regra do ERP (INSS sobre bruto − VA − VT −
 //    materiais). Informando os valores certos da planilha, o INSS e o líquido
@@ -288,14 +288,8 @@ export function ajustarValoresNfConcluida(
   if (base.valores_legados) {
     if (novos.vlr_va + novos.vlr_vt + novos.vlr_materiais > 0) {
       item.valores_legados = null;
-    } else {
-      const delta = Math.round((somaDescontosPosEmissao(novos) - somaDescontosPosEmissao(base)) * 100) / 100;
-      item.valores_legados = {
-        ...base.valores_legados,
-        vlr_bruto: Math.round((base.valores_legados.vlr_bruto - delta) * 100) / 100,
-        vlr_liquido: Math.round((base.valores_legados.vlr_liquido - delta) * 100) / 100,
-      };
     }
+    // senão: valores_legados fica como está (descontos pós-emissão não o alteram).
   }
   return calcularItem(item, pct);
 }

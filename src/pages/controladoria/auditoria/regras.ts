@@ -209,9 +209,11 @@ export function descontosPorCategoria(itens: ItemDesconto[]): { categorias: NonN
   const categorias = [
     { rotulo: "Faltas", valor: soma((i) => i.faltas), somaNoTotal: true },
     { rotulo: "Postos não implementados", valor: soma((i) => i.posto_nao_implementado), somaNoTotal: true },
-    { rotulo: "Multas (inclui pós-emissão)", valor: soma((i) => i.multas + i.multas_pos_emissao), somaNoTotal: true },
-    { rotulo: "Glosas (inclui pós-emissão)", valor: soma((i) => i.glosas + i.glosas_pos_emissao), somaNoTotal: true },
-    { rotulo: "Outros descontos (inclui pós-emissão)", valor: soma((i) => i.outros_descontos + i.outros_descontos_pos_emissao), somaNoTotal: true },
+    { rotulo: "Multas", valor: soma((i) => i.multas), somaNoTotal: true },
+    { rotulo: "Glosas", valor: soma((i) => i.glosas), somaNoTotal: true },
+    { rotulo: "Outros descontos", valor: soma((i) => i.outros_descontos), somaNoTotal: true },
+    // SIS-2026-0609: pós-emissão não muda a NF (só o valor pago): aparece, não soma.
+    { rotulo: "Descontos pós-emissão (reduzem o pagamento, não a NF — não soma)", valor: soma((i) => i.multas_pos_emissao + i.glosas_pos_emissao + i.outros_descontos_pos_emissao), somaNoTotal: false },
     // Materiais abatem a base do INSS, não o valor da nota: aparece, mas não soma.
     { rotulo: "Materiais (abate a base do INSS — não soma)", valor: soma((i) => i.vlr_materiais), somaNoTotal: false },
   ];
