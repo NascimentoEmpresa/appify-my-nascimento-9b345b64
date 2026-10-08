@@ -175,6 +175,7 @@ import ConciliacaoEventos from "./pages/contabil/ConciliacaoEventos";
 import Contabilidade from "./pages/Contabilidade";
 import Colaboradores from "./pages/rh/Colaboradores";
 import AtivosContratos from "./pages/rh/AtivosContratos";
+import HierarquiaPostos from "./pages/rh/HierarquiaPostos";
 import Recrutamento from "./pages/rh/Recrutamento";
 import Patrimonios from "./pages/juridico/Patrimonios";
 import JuridicoNotificacoes from "./pages/juridico/Notificacoes";
@@ -810,6 +811,8 @@ const App = () => (
             <Route path="rh/colaboradores" element={<Colaboradores />} />
             {/* Ativos/Contratos (mig 279): efetivo da EMPREGADOS × QT. PESSOAS da Planilha de Custo, por posto. */}
             <Route path="rh/ativos-contratos" element={<AtivosContratos />} />
+            {/* Hierarquia de postos da Senior (mig 20261007000024). */}
+            <Route path="rh/hierarquia-postos" element={<HierarquiaPostos />} />
             {/* RH > Hierarquia removido (jul/2026) — feature descontinuada. A tabela
                 RH_CONTRATO_ENCARREGADO pode ser dropada; a RPC rh_hierarquia_dados
                 CONTINUA (usada por Líderes por setor / Painel Gerencial). */}

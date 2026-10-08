@@ -112,3 +112,28 @@ export function conflitosPorSolicitacao(c: ConflitosPonto | null | undefined): M
 /** Datas da solicitação que o relógio ainda não cobre (aprovar agora seria às cegas para elas). */
 export const datasSemPonto = (datas: string[], sincronizadoAte: string | null | undefined) =>
   [...new Set(datas.filter((d) => d && (!sincronizadoAte || d >= sincronizadoAte)))].sort();
+
+/**
+ * Tempo trabalhado no dia a partir das batidas (minuto do dia): pares
+ * entrada→saída em ordem (07:00–12:00 + 13:00–17:00 = 9h). Batida ímpar
+ * (esqueceu de bater a saída) não fecha o último par — `incompleto` avisa.
+ */
+export function horasTrabalhadas(minutos: number[] | null | undefined): { minutos: number; incompleto: boolean } {
+  const m = [...(minutos ?? [])].sort((a, b) => a - b);
+  let total = 0;
+  for (let i = 0; i + 1 < m.length; i += 2) total += m[i + 1] - m[i];
+  return { minutos: total, incompleto: m.length % 2 === 1 };
+}
+
+export const fmtDuracao = (min: number) => `${Math.floor(min / 60)}h${String(min % 60).padStart(2, "0")}`;
+
+/** Batidas por solicitação, com os minutos crus (para somar horas). */
+export function batidasPorSolicitacao(c: ConflitosPonto | null | undefined): Map<string, Map<string, number[]>> {
+  const m = new Map<string, Map<string, number[]>>();
+  for (const x of c?.conflitos ?? []) {
+    const d = m.get(x.solicitacao_id) ?? new Map<string, number[]>();
+    d.set(x.data, x.minutos);
+    m.set(x.solicitacao_id, d);
+  }
+  return m;
+}

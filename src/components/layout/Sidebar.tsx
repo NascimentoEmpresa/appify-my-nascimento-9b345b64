@@ -564,6 +564,8 @@ const rhModule: ModuleDef = {
       defaultOpen: true,
       items: [
         { label: "Ativos/Contratos", to: "/app/rh/ativos-contratos", icon: ClipboardCheck },
+        // Hierarquia de postos da Senior (mig 20261007000024): quem responde por quem e por qual contrato.
+        { label: "Hierarquia de Postos", to: "/app/rh/hierarquia-postos", icon: Network },
       ],
     },
   ],
