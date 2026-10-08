@@ -245,20 +245,31 @@ export function tempoPorEtapa(p: PainelVagas): LinhaEtapa[] {
 
 export interface DegrauFunil { chave: string; titulo: string; n: number; pct: number }
 
+/** Os degraus do funil: título e a etapa do fluxo que a vaga precisa ter alcançado (null = todas / só contratadas). */
+const DEGRAUS_FUNIL = [
+  { chave: "solicitadas", titulo: "Solicitadas", etapa: null },
+  { chave: "aprovadas", titulo: "Aprovadas", etapa: "recrutamento" },
+  { chave: "abertas", titulo: "Abertas p/ seleção", etapa: "selecao" },
+  { chave: "entrevistas", titulo: "Em entrevistas", etapa: "entrevistas" },
+  { chave: "aprovado", titulo: "Candidato aprovado", etapa: "aprovado" },
+  { chave: "contratadas", titulo: "Contratadas", etapa: null },
+] as const;
+
+/** A vaga (do período) chegou a este degrau do funil? */
+function noDegrau(v: VagaPainel, chave: string): boolean {
+  if (chave === "contratadas") return desfechoVaga(v) === "contratada";
+  const d = DEGRAUS_FUNIL.find((x) => x.chave === chave);
+  if (!d) return false;
+  return d.etapa == null || etapaAlcancada(v) >= indiceEtapa(d.etapa);
+}
+
 export function funilVagas(p: PainelVagas): DegrauFunil[] {
   const per = p.vagas.filter((v) => v.no_periodo);
   const total = per.length;
-  const alc = per.map((v) => ({ v, i: etapaAlcancada(v) }));
-  const ate = (chave: string) => alc.filter((x) => x.i >= indiceEtapa(chave)).length;
-  const degraus = [
-    { chave: "solicitadas", titulo: "Solicitadas", n: total },
-    { chave: "aprovadas", titulo: "Aprovadas", n: ate("recrutamento") },
-    { chave: "abertas", titulo: "Abertas p/ seleção", n: ate("selecao") },
-    { chave: "entrevistas", titulo: "Em entrevistas", n: ate("entrevistas") },
-    { chave: "aprovado", titulo: "Candidato aprovado", n: ate("aprovado") },
-    { chave: "contratadas", titulo: "Contratadas", n: per.filter((v) => desfechoVaga(v) === "contratada").length },
-  ];
-  return degraus.map((d) => ({ ...d, pct: total ? (d.n / total) * 100 : 0 }));
+  return DEGRAUS_FUNIL.map((d) => {
+    const n = per.filter((v) => noDegrau(v, d.chave)).length;
+    return { chave: d.chave, titulo: d.titulo, n, pct: total ? (n / total) * 100 : 0 };
+  });
 }
 
 // ---- Mês a mês --------------------------------------------------------------
@@ -308,13 +319,16 @@ export type Dimensao = keyof typeof DIMENSOES;
 
 const limpo = (s: string | null | undefined) => (s ?? "").trim().replace(/\s+/g, " ");
 
+/** Nome do grupo da vaga numa dimensão, e a chave que junta grafias (caixa) diferentes. */
+const nomeNoGrupo = (v: VagaPainel, dim: Dimensao) => limpo(DIMENSOES[dim].f(v)) || "(não informado)";
+const chaveDoGrupo = (nome: string) => nome.toLocaleUpperCase("pt-BR");
+
 export function agruparVagas(p: PainelVagas, dim: Dimensao): LinhaGrupo[] {
-  const f = DIMENSOES[dim].f;
   const g = new Map<string, { nome: string; vs: VagaPainel[] }>();
   for (const v of p.vagas) {
     if (!v.no_periodo && vagaFechada(v)) continue;
-    const nome = limpo(f(v)) || "(não informado)";
-    const k = nome.toLocaleUpperCase("pt-BR");
+    const nome = nomeNoGrupo(v, dim);
+    const k = chaveDoGrupo(nome);
     if (!g.has(k)) g.set(k, { nome, vs: [] });
     g.get(k)!.vs.push(v);
   }
@@ -339,11 +353,17 @@ export const FAIXAS_AGING = [
   { rotulo: "+60 d", ate: Infinity, cor: "#dc2626" },
 ];
 
+/** As vagas abertas agora que estão na faixa `i` de FAIXAS_AGING (por dias desde o pedido). */
+export function vagasDaFaixa(p: PainelVagas, i: number): VagaPainel[] {
+  const f = FAIXAS_AGING[i];
+  if (!f) return [];
+  const de = i === 0 ? -1 : FAIXAS_AGING[i - 1].ate;
+  return p.vagas.filter((v) => { if (vagaFechada(v)) return false; const d = diasTotais(v, p.agora); return d > de && d <= f.ate; });
+}
+
 export function agingAbertas(p: PainelVagas) {
-  const ab = p.vagas.filter((v) => !vagaFechada(v));
   return FAIXAS_AGING.map((f, i) => {
-    const de = i === 0 ? -1 : FAIXAS_AGING[i - 1].ate;
-    const vs = ab.filter((v) => { const d = diasTotais(v, p.agora); return d > de && d <= f.ate; });
+    const vs = vagasDaFaixa(p, i);
     return { ...f, vagas: vs.length, posicoes: vs.reduce((s, v) => s + (v.qtd || 1), 0) };
   });
 }
@@ -376,6 +396,115 @@ export function aplicarFiltroLocal(p: PainelVagas, f: FiltroLocal): PainelVagas 
 
 export const opcoesDe = (p: PainelVagas | undefined, f: (v: VagaPainel) => string | null) =>
   [...new Set((p?.vagas ?? []).map((v) => limpo(f(v))).filter(Boolean))].sort((a, b) => a.localeCompare(b, "pt-BR"));
+
+// ---- Recorte: as vagas por trás de um número do painel (08/10/2026) ---------------
+//
+// Pedido do Pablo: "ao clicar em um gráfico apareça as vagas referentes ao
+// gráfico — cliquei em 16–30 d, então aparecem as que estão abertas nesse
+// período". Cada recorte usa o MESMO critério da conta que desenhou o
+// gráfico (vagasDaFaixa, noDegrau, nomeNoGrupo…), para a lista ter sempre o
+// número que a barra mostra.
+
+export type KpiRecorte = "solicitadas" | "contratadas" | "reprovadas" | "abertas" | "no_prazo" | "desistencias";
+export type ColunaGrupo = "vagas" | "abertas" | "contratadas" | "reprovadas";
+
+export type Recorte =
+  | { tipo: "kpi"; kpi: KpiRecorte }
+  | { tipo: "aging"; faixa: number }
+  | { tipo: "mes"; mes: string; desfecho?: "contratadas" | "andamento" | "reprovadas" }
+  | { tipo: "funil"; degrau: string }
+  | { tipo: "desfecho"; desfecho: Desfecho }
+  | { tipo: "grupo"; dim: Dimensao; nome: string; coluna?: ColunaGrupo }
+  | { tipo: "etapa_parada"; etapa: string }
+  | { tipo: "etapa_passou"; etapa: string };
+
+const ROTULO_KPI: Record<KpiRecorte, string> = {
+  solicitadas: "Vagas solicitadas no período", contratadas: "Contratadas", reprovadas: "Reprovadas / canceladas",
+  abertas: "Em aberto agora", no_prazo: `Contratadas em até ${META_DIAS_CONTRATAR} dias`, desistencias: "Vagas com desistência de candidato",
+};
+const ROTULO_DESFECHO_RECORTE: Record<Desfecho, string> = { contratada: "Contratadas", andamento: "Em andamento", reprovada: "Reprovadas", cancelada: "Canceladas" };
+const ROTULO_COLUNA: Record<ColunaGrupo, string> = { vagas: "solicitadas", abertas: "abertas agora", contratadas: "contratadas", reprovadas: "reprovadas/canceladas" };
+const MESES_CURTOS = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"];
+const reprovOuCanc = (v: VagaPainel) => ["reprovada", "cancelada"].includes(desfechoVaga(v));
+
+/** O título da lista ("Abertas agora há 16–30 d", "Contratadas · jun/26"…). */
+export function tituloRecorte(r: Recorte): string {
+  switch (r.tipo) {
+    case "kpi": return ROTULO_KPI[r.kpi];
+    case "aging": return `Abertas agora há ${FAIXAS_AGING[r.faixa]?.rotulo ?? "?"}`;
+    case "mes": {
+      const [a, m] = r.mes.split("-");
+      const mes = `${MESES_CURTOS[Number(m) - 1] ?? m}/${a.slice(2)}`;
+      const o = r.desfecho === "contratadas" ? "Contratadas" : r.desfecho === "andamento" ? "Em andamento" : r.desfecho === "reprovadas" ? "Reprovadas/canceladas" : "Pedidas";
+      return `${o} · vagas pedidas em ${mes}`;
+    }
+    case "funil": return `Funil · ${DEGRAUS_FUNIL.find((d) => d.chave === r.degrau)?.titulo ?? r.degrau}`;
+    case "desfecho": return `Desfecho · ${ROTULO_DESFECHO_RECORTE[r.desfecho]}`;
+    case "grupo": return `${DIMENSOES[r.dim].titulo}: ${r.nome}${r.coluna ? ` · ${ROTULO_COLUNA[r.coluna]}` : ""}`;
+    case "etapa_parada": return `Paradas agora em ${tituloEtapa(r.etapa)}`;
+    case "etapa_passou": return `Passaram por ${tituloEtapa(r.etapa)} (vagas do período)`;
+  }
+}
+
+/** As vagas do recorte, com o mesmo critério do gráfico/número de onde ele veio. */
+export function vagasDoRecorte(p: PainelVagas, r: Recorte): VagaPainel[] {
+  const per = () => p.vagas.filter((v) => v.no_periodo);
+  switch (r.tipo) {
+    case "kpi":
+      switch (r.kpi) {
+        case "solicitadas": return per();
+        case "contratadas": return per().filter((v) => desfechoVaga(v) === "contratada");
+        case "reprovadas": return per().filter(reprovOuCanc);
+        case "abertas": return p.vagas.filter((v) => !vagaFechada(v));
+        case "no_prazo": return per().filter((v) => desfechoVaga(v) === "contratada" && diasTotais(v, p.agora) <= META_DIAS_CONTRATAR);
+        case "desistencias": return per().filter((v) => v.cand.desistiu > 0);
+      }
+      return [];
+    case "aging": return vagasDaFaixa(p, r.faixa);
+    case "mes": {
+      const doMes = per().filter((v) => v.criada.slice(0, 7) === r.mes);
+      if (r.desfecho === "contratadas") return doMes.filter((v) => desfechoVaga(v) === "contratada");
+      if (r.desfecho === "andamento") return doMes.filter((v) => !vagaFechada(v));
+      if (r.desfecho === "reprovadas") return doMes.filter(reprovOuCanc);
+      return doMes;
+    }
+    case "funil": return per().filter((v) => noDegrau(v, r.degrau));
+    case "desfecho": return per().filter((v) => desfechoVaga(v) === r.desfecho);
+    case "grupo": {
+      const k = chaveDoGrupo(r.nome);
+      const doGrupo = p.vagas.filter((v) => (v.no_periodo || !vagaFechada(v)) && chaveDoGrupo(nomeNoGrupo(v, r.dim)) === k);
+      if (r.coluna === "vagas") return doGrupo.filter((v) => v.no_periodo);
+      if (r.coluna === "abertas") return doGrupo.filter((v) => !vagaFechada(v));
+      if (r.coluna === "contratadas") return doGrupo.filter((v) => v.no_periodo && desfechoVaga(v) === "contratada");
+      if (r.coluna === "reprovadas") return doGrupo.filter((v) => v.no_periodo && reprovOuCanc(v));
+      return doGrupo;
+    }
+    case "etapa_parada": return p.vagas.filter((v) => trechosDaVaga(v, p.agora).find((t) => t.aberto)?.etapa === r.etapa);
+    case "etapa_passou": return per().filter((v) => diasPorEtapa(trechosDaVaga(v, p.agora))[r.etapa] != null);
+  }
+}
+
+export type OrdemRecorte = "antigas" | "recentes" | "demoradas" | "candidatos";
+
+/** Ordena a lista do recorte (padrão: as abertas há mais tempo / mais demoradas primeiro). */
+export function ordenarRecorte(vs: VagaPainel[], agora: string, ordem: OrdemRecorte): VagaPainel[] {
+  const t = new Map(vs.map((v) => [v.id, diasTotais(v, agora)]));
+  return [...vs].sort((a, b) =>
+    ordem === "recentes" ? b.id - a.id
+      : ordem === "antigas" ? +new Date(a.criada) - +new Date(b.criada) || a.id - b.id
+      : ordem === "candidatos" ? b.cand.total - a.cand.total || b.id - a.id
+      : (t.get(b.id) ?? 0) - (t.get(a.id) ?? 0) || b.id - a.id);
+}
+
+/** Filtro dentro da lista: texto (nº, cargo, contrato, cidade, solicitante…) e desfecho. */
+export function filtrarRecorte(vs: VagaPainel[], busca: string, desfecho: Desfecho | null): VagaPainel[] {
+  const termo = norm(busca.trim());
+  return vs.filter((v) => {
+    if (desfecho && desfechoVaga(v) !== desfecho) return false;
+    if (!termo) return true;
+    return norm([`#${v.id}`, v.cargo, v.contrato, v.cidade, v.solicitante, v.contratado, v.analista, v.setor, v.status].join(" ")).includes(termo);
+  });
+}
 
 // ---- Vaga aberta pelo número (fora do período / do painel) — 08/10/2026 -----------
 
