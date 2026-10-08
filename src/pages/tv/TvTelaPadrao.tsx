@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import bigodinho from "@/assets/bigodinho-em-pe.webp";
+import bigodinhoProgramador from "@/assets/bigodinho-programador.webm";
 import logoBranco from "@/assets/logo-nascimento-branco.webp";
 import { VERSICULOS, indiceDoDia } from "@/lib/versiculos";
 
@@ -16,6 +17,17 @@ import { VERSICULOS, indiceDoDia } from "@/lib/versiculos";
 // um carrossel; o bigodinho entra, respira, flutua e dá um pulo de tempos em
 // tempos, com um balão de fala. Quem prefere menos movimento
 // (prefers-reduced-motion) vê tudo parado.
+//
+// 08/10/2026 — "quero colocar esse vídeo (bigodon programador) na tela de
+// desenvolvimento da TV, sem o fundo, compatível com a tela, bem no canto
+// inferior direito". O vídeo original tem fundo preto com manchas cinza e um
+// brilho branco em volta do boneco; o recorte foi feito quadro a quadro
+// (preenchimento a partir das bordas pelo que é liso e sem cor — o fundo — e
+// parando no contorno do desenho) e salvo como WebM VP9 COM transparência
+// (960×540, 30 fps, 15 s em laço; começa e termina no mesmo plano).
+// VP9 com transparência é coisa do Chrome/Android — o navegador das TVs
+// (Fully Kiosk) e da gestão. Safari mostraria o fundo preto: lá (ou se o
+// vídeo falhar) fica o bigodinho em pé de antes.
 // =====================================================================
 
 const TROCA_MS = 12_000;
@@ -26,7 +38,19 @@ const PARTICULAS = Array.from({ length: 26 }, (_, i) => ({
   left: (i * 37) % 100, tam: 0.35 + ((i * 7) % 5) * 0.12, atraso: (i * 1.7) % 14, dur: 12 + ((i * 3) % 9),
 }));
 
+/** O navegador mostra WebM VP9 com transparência? (Chrome/Edge/Android sim; Safari não.) */
+function suportaVideoTransparente(): boolean {
+  if (typeof document === "undefined") return false;
+  // NÃO depende de prefers-reduced-motion: o vídeo é o conteúdo pedido, e o
+  // Windows com "animações desligadas" faria a PRÉVIA da gestão mostrar outra
+  // coisa que a TV (as animações de CSS continuam respeitando a preferência).
+  const ua = navigator.userAgent;
+  const safari = /Safari/.test(ua) && !/Chrome|Chromium|CriOS|Android|Edg/.test(ua);
+  return !safari && !!document.createElement("video").canPlayType('video/webm; codecs="vp9"');
+}
+
 export function TvTelaPadrao({ nome }: { nome: string }) {
+  const [comVideo, setComVideo] = useState(suportaVideoTransparente);
   const [agora, setAgora] = useState(new Date());
   useEffect(() => { const t = window.setInterval(() => setAgora(new Date()), 1000); return () => window.clearInterval(t); }, []);
 
@@ -88,20 +112,37 @@ export function TvTelaPadrao({ nome }: { nome: string }) {
         </section>
 
         <section className="tvp-boneco-area">
-          <div className="tvp-anel" />
+          {!comVideo && <div className="tvp-anel" />}
           <svg className="tvp-engrenagem tvp-e1" viewBox="0 0 24 24" aria-hidden><path d={ENGRENAGEM} /></svg>
           <svg className="tvp-engrenagem tvp-e2" viewBox="0 0 24 24" aria-hidden><path d={ENGRENAGEM} /></svg>
-          <div key={`f${passo}`} className="tvp-balao">{fala}</div>
-          <div className="tvp-boneco-pos">
-            <div className="tvp-sombra" />
-            <img src={bigodinho} alt="Mascote do Grupo Nascimento" draggable={false} className="tvp-boneco" />
-          </div>
+          {!comVideo && (
+            <>
+              <div key={`f${passo}`} className="tvp-balao">{fala}</div>
+              <div className="tvp-boneco-pos">
+                <div className="tvp-sombra" />
+                <img src={bigodinho} alt="Mascote do Grupo Nascimento" draggable={false} className="tvp-boneco" />
+              </div>
+            </>
+          )}
         </section>
       </main>
 
+      {/* O bigodinho programando, colado no canto inferior direito da tela. */}
+      {comVideo && (
+        <div className="tvp-video-area">
+          <div className="tvp-video-luz" />
+          <div key={`f${passo}`} className="tvp-balao tvp-balao-video">{fala}</div>
+          <video className="tvp-video" src={bigodinhoProgramador} autoPlay muted loop playsInline disablePictureInPicture
+            aria-label="Mascote do Grupo Nascimento programando" onError={() => setComVideo(false)} />
+        </div>
+      )}
+
       <footer className="tvp-rodape">
         <span>Grupo Nascimento · Soluções em Serviços</span>
-        <span className="tvp-rodape-dir">Tela padrão — a playlist desta TV ainda está vazia</span>
+        {/* Com o vídeo no canto, o aviso vai para a esquerda (senão ficaria por baixo dele). */}
+        {comVideo
+          ? <span className="tvp-rodape-dir">· Tela padrão — a playlist desta TV ainda está vazia</span>
+          : <span className="tvp-rodape-dir">Tela padrão — a playlist desta TV ainda está vazia</span>}
       </footer>
     </div>
   );
@@ -202,11 +243,24 @@ const CSS = `
 .tvp-rodape{position:relative;z-index:3;display:flex;justify-content:space-between;gap:2vmin;padding:1.6vmin 4.5vmin 2.6vmin;font-size:1.6vmin;
   color:rgba(255,255,255,.55);letter-spacing:.06em;animation:tvp-entra .8s ease 1.4s both}
 .tvp-rodape-dir{text-transform:uppercase}
+.tvp-video-area ~ .tvp-rodape{justify-content:flex-start}
+
+/* Vídeo do bigodinho programador: quadro 16:9 encostado no canto inferior
+   direito. Só transform na entrada (sem opacidade: navegador de TV fraco às
+   vezes congela a animação no 1º quadro). */
+.tvp-video-area{position:absolute;z-index:2;right:0;bottom:0;width:54vw;aspect-ratio:16/9;pointer-events:none;
+  animation:tvp-video-entra 1.2s cubic-bezier(.2,.9,.25,1.1) .5s both}
+@keyframes tvp-video-entra{from{transform:translate(8vmin,10vmin)}to{transform:none}}
+.tvp-video{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;object-position:right bottom}
+.tvp-video-luz{position:absolute;right:-10%;bottom:-25%;width:95%;height:120%;border-radius:50%;
+  background:radial-gradient(closest-side,rgba(255,138,61,.38),rgba(255,138,61,.1) 55%,transparent);animation:tvp-respira-anel 5s ease-in-out infinite}
+.tvp-balao-video{left:8%;top:2%;z-index:3}
 
 @media (orientation:portrait){
   .tvp-corpo{grid-template-columns:1fr;grid-template-rows:auto 1fr}
   .tvp-boneco-pos{height:48vh}
   .tvp-titulo{font-size:11vmin}
+  .tvp-video-area{width:100vw}
 }
 @media (prefers-reduced-motion:reduce){
   .tvp *,.tvp *::before,.tvp *::after{animation:none!important;transition:none!important}
