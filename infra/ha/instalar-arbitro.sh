@@ -28,7 +28,9 @@ if [ ! -x /usr/local/bin/etcd ]; then
   rm -rf "$tmp"
 fi
 id etcd >/dev/null 2>&1 || useradd --system --home /var/lib/etcd --shell /usr/sbin/nologin etcd
-install -d -o etcd -g etcd /var/lib/etcd
+# 0700 porque o proprio etcd avisa no boot que drwxr-xr-x deixa o
+# diretorio de dados legivel por usuario sem privilegio.
+install -d -m 0700 -o etcd -g etcd /var/lib/etcd
 
 cat > /etc/default/etcd <<FIM
 ETCD_NAME=arbitro
@@ -40,13 +42,25 @@ ETCD_INITIAL_ADVERTISE_PEER_URLS=http://${IP_PROPRIO}:2380
 ETCD_INITIAL_CLUSTER=banco1=http://${IP_BANCO1}:2380,banco2=http://${IP_BANCO2}:2380,arbitro=http://${IP_PROPRIO}:2380
 ETCD_INITIAL_CLUSTER_STATE=new
 ETCD_INITIAL_CLUSTER_TOKEN=erp-ha
+# MEDIDO em 08/10/2026: o arbitro esta a ~132 ms dos dois bancos (ele vive em
+# Ohio porque a conta AWS e travada nessa regiao; ver docs). Nos valores padrao
+# -- heartbeat 100 ms, election 1000 ms -- um membro a 132 ms perde batimentos
+# e dispara eleicao sem ninguem ter caido. A regra do etcd e heartbeat >= RTT e
+# election = 10x heartbeat. Isto NAO atrasa o failover: quem manda nele e o
+# ttl minimo de 20 s do Patroni.
+ETCD_HEARTBEAT_INTERVAL=250
+ETCD_ELECTION_TIMEOUT=2500
 FIM
 
 cat > /etc/systemd/system/etcd.service <<'FIM'
 [Unit]
 Description=etcd (arbitro da eleicao)
-After=network-online.target
+# O endereco em que o etcd escuta (10.77.0.x) so existe depois que o tunel
+# WireGuard sobe. Sem esta dependencia o etcd falha no boot com
+# "bind: cannot assign requested address" e o no some do quorum.
+After=network-online.target wg-quick@wg0.service
 Wants=network-online.target
+Requires=wg-quick@wg0.service
 [Service]
 User=etcd
 EnvironmentFile=/etc/default/etcd
