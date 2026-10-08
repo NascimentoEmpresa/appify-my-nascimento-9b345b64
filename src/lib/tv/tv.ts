@@ -25,20 +25,28 @@ export interface ItemTv {
 
 // ---- Relatórios na TV (mig 20261007000014) ----------------------------------
 
-/** Relatórios que a TV sabe mostrar em tela cheia (mesmos slugs de src/pages/relatorios/sistemas.ts + "geral"). */
-export const RELATORIOS_TV: { slug: string; titulo: string }[] = [
-  { slug: "geral", titulo: "Visão geral — todos os sistemas" },
-  { slug: "recrutamento", titulo: "Gestão Recrutamento" },
-  { slug: "demissoes", titulo: "Demissões" },
-  { slug: "materiais", titulo: "Materiais" },
-  { slug: "ferias", titulo: "Férias" },
-  { slug: "medida-disciplinar", titulo: "Medida Disciplinar" },
-  { slug: "mudanca-funcao", titulo: "Mudança de Função" },
-  { slug: "chamados", titulo: "Chamados" },
-  { slug: "orientacoes", titulo: "Orientações Jurídicas" },
-  { slug: "colaboradores", titulo: "Colaboradores" },
-  { slug: "turnover", titulo: "Turn-over" },
+/**
+ * Relatórios que a TV sabe mostrar em tela cheia — TODOS os do módulo
+ * Relatórios (08/10/2026, mig 20261008000004): o Geral, os 9 padrão
+ * (slugs de src/pages/relatorios/sistemas.ts), o Turn-over no formato do
+ * painel e o Vagas — Dashboard. `paginas` = quantas telas se revezam no
+ * tempo do item (o máximo; some a que não tem dado).
+ */
+export const RELATORIOS_TV: { slug: string; titulo: string; paginas: number }[] = [
+  { slug: "geral", titulo: "Visão geral — todos os sistemas", paginas: 1 },
+  { slug: "vagas", titulo: "Vagas — Dashboard", paginas: 3 },
+  { slug: "recrutamento", titulo: "Gestão Recrutamento", paginas: 2 },
+  { slug: "demissoes", titulo: "Demissões", paginas: 2 },
+  { slug: "materiais", titulo: "Materiais", paginas: 2 },
+  { slug: "ferias", titulo: "Férias", paginas: 2 },
+  { slug: "medida-disciplinar", titulo: "Medida Disciplinar", paginas: 2 },
+  { slug: "mudanca-funcao", titulo: "Mudança de Função", paginas: 2 },
+  { slug: "chamados", titulo: "Chamados", paginas: 2 },
+  { slug: "orientacoes", titulo: "Orientações Jurídicas", paginas: 2 },
+  { slug: "colaboradores", titulo: "Colaboradores", paginas: 2 },
+  { slug: "turnover", titulo: "Turn-over", paginas: 3 },
 ];
+export const paginasRelatorioTv = (slug: string | null | undefined) => RELATORIOS_TV.find((r) => r.slug === slug)?.paginas ?? 1;
 export const tituloRelatorioTv = (slug: string | null | undefined) => RELATORIOS_TV.find((r) => r.slug === slug)?.titulo ?? "Relatório";
 
 export type PeriodoTv = "mes" | "3m" | "6m" | "12m" | "ano";

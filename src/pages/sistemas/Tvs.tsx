@@ -24,9 +24,10 @@ import {
   useTvPlaylists, type TvAlerta, type TvDispositivo, type TvItem, type TvPlaylist,
 } from "@/hooks/useTvs";
 import {
-  PERIODOS_TV, RELATORIOS_TV, TIPOS_ITEM, corAviso, duracaoTotal, haQuanto, itensNoAr, rotuloPeriodoTv, statusTv, telaAoVivo, tituloRelatorioTv,
+  PERIODOS_TV, RELATORIOS_TV, TIPOS_ITEM, corAviso, duracaoTotal, haQuanto, itensNoAr, paginasRelatorioTv, rotuloPeriodoTv, statusTv, telaAoVivo, tituloRelatorioTv,
   urlValida, youtubeEmbed, type ItemTv, type TelaTv, type TipoItem,
 } from "@/lib/tv/tv";
+import { corDoRelatorioTv, duracaoRecomendada } from "@/lib/tv/relatorioTv";
 
 // =====================================================================
 // SISTEMAS › TV's (07/10/2026, mig 20261007000012)
@@ -404,7 +405,19 @@ function Miniatura({ item }: { item: TvItem }) {
   const cls = "h-12 w-20 shrink-0 overflow-hidden rounded border bg-muted";
   if (item.tipo === "imagem" && item.arquivo) return <img src={urlMidia(item.arquivo)} alt="" className={`${cls} object-cover`} loading="lazy" />;
   if (item.tipo === "video" && item.arquivo) return <video src={urlMidia(item.arquivo)} className={`${cls} object-cover`} muted preload="metadata" />;
-  if (item.tipo === "relatorio") return <div className={`${cls} flex flex-col items-center justify-center bg-[#0b1220] p-1 text-center text-[8px] font-bold leading-tight text-white`}><BarChart3 className="mb-0.5 h-3.5 w-3.5 text-blue-400" />{tituloRelatorioTv(item.relatorio).slice(0, 24)}</div>;
+  if (item.tipo === "relatorio") {
+    const cor = corDoRelatorioTv(item.relatorio);
+    return (
+      <div className={`${cls} flex flex-col bg-zinc-100`}>
+        <div className="flex items-center gap-0.5 px-1 py-0.5 text-[7px] font-extrabold leading-tight text-white" style={{ background: cor }}>
+          <BarChart3 className="h-2.5 w-2.5 shrink-0" /><span className="truncate">{tituloRelatorioTv(item.relatorio)}</span>
+        </div>
+        <div className="grid flex-1 grid-cols-3 gap-0.5 p-1">
+          {[0, 1, 2].map((k) => <span key={k} className="rounded-sm bg-white shadow-sm" style={{ borderTop: `2px solid ${cor}` }} />)}
+        </div>
+      </div>
+    );
+  }
   if (item.tipo === "aviso") return <div className={`${cls} flex items-center justify-center p-1 text-center text-[8px] font-bold leading-tight text-white`} style={{ background: corAviso(item.cor) }}>{(item.texto ?? "").slice(0, 40)}</div>;
   const Ic = ICONE[item.tipo];
   return <div className={`${cls} flex items-center justify-center`}><Ic className="h-5 w-5 text-muted-foreground" /></div>;
@@ -516,10 +529,18 @@ function NovoItem({ playlistId, proximaOrdem, onRascunho }: { playlistId: string
         {f.tipo === "relatorio" && (
           <>
             <div><Label className="text-xs">Relatório *</Label>
-              <Select value={f.relatorio} onValueChange={(v) => setF({ ...f, relatorio: v })}>
+              {/* Relatório com mais páginas pede mais tempo: sobe o tempo na tela até o recomendado (nunca baixa). */}
+              <Select value={f.relatorio} onValueChange={(v) => setF({ ...f, relatorio: v, duracao: String(Math.max(Number(f.duracao) || 0, duracaoRecomendada(paginasRelatorioTv(v)))) })}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>{RELATORIOS_TV.map((r) => <SelectItem key={r.slug} value={r.slug}>{r.titulo}</SelectItem>)}</SelectContent>
-              </Select></div>
+                <SelectContent>{RELATORIOS_TV.map((r) => <SelectItem key={r.slug} value={r.slug}>{r.titulo}{r.paginas > 1 ? ` · ${r.paginas} páginas` : ""}</SelectItem>)}</SelectContent>
+              </Select>
+              {paginasRelatorioTv(f.relatorio) > 1 && (
+                <p className="mt-1 text-[11px] text-muted-foreground">
+                  {paginasRelatorioTv(f.relatorio)} páginas se revezam no tempo do item — com {f.duracao || "?"} s, cada uma fica ~{Math.max(8, Math.floor((Number(f.duracao) || 0) / paginasRelatorioTv(f.relatorio)))} s
+                  {Number(f.duracao) < duracaoRecomendada(paginasRelatorioTv(f.relatorio)) ? ` (recomendado: ${duracaoRecomendada(paginasRelatorioTv(f.relatorio))} s)` : ""}.
+                </p>
+              )}
+            </div>
             <div><Label className="text-xs">Período</Label>
               <Select value={f.periodo} onValueChange={(v) => setF({ ...f, periodo: v })}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
