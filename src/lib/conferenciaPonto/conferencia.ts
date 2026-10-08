@@ -43,6 +43,7 @@ export const TABELA_EVENTOS = "SISTEMA_CONFERENCIA_PONTO_EVENTOS";
 
 // ── Status ───────────────────────────────────────────────────────────
 export type StatusPonto =
+  | "Pendente Encarregados"
   | "Pendente Operacional"
   | "Em Andamento Operacional"
   | "Pendente RH"
@@ -54,10 +55,15 @@ export type StatusPonto =
   | "Devolvido RH"
   | "Problema";
 
-export const STATUS_INICIAL: StatusPonto = "Pendente Operacional";
+// 07/10/2026 (mig 20261007000023): a etapa agora COMEÇA nos Encarregados —
+// eles enviam o ponto do contrato e a linha vira "Pendente Operacional".
+// Contrato sem envio aparece aqui. O Operacional continua podendo conferir
+// a partir dele (ver ORIGENS) para o fluxo não travar enquanto a tela dos
+// encarregados não estiver liberada.
+export const STATUS_INICIAL: StatusPonto = "Pendente Encarregados";
 
 export const STATUS_TODOS: StatusPonto[] = [
-  "Pendente Operacional", "Em Andamento Operacional",
+  "Pendente Encarregados", "Pendente Operacional", "Em Andamento Operacional",
   "Pendente RH", "Em Andamento RH", "Conferido RH",
   "Liberado Financeiro", "Pago",
   "Devolvido Operacional", "Devolvido RH", "Problema",
@@ -118,8 +124,8 @@ const DESTINO: Record<Acao, StatusPonto> = {
  * é trabalho do Operacional de novo, então ele reaparece na origem.
  */
 const ORIGENS: Record<Acao, StatusPonto[]> = {
-  andamento_op:   ["Pendente Operacional", "Devolvido Operacional", "Problema"],
-  aprovar:        ["Pendente Operacional", "Em Andamento Operacional", "Devolvido Operacional", "Problema"],
+  andamento_op:   ["Pendente Encarregados", "Pendente Operacional", "Devolvido Operacional", "Problema"],
+  aprovar:        ["Pendente Encarregados", "Pendente Operacional", "Em Andamento Operacional", "Devolvido Operacional", "Problema"],
   andamento_rh:   ["Pendente RH", "Devolvido RH"],
   confirmar:      ["Pendente RH", "Em Andamento RH", "Devolvido RH"],
   // Informar o valor exige a conferência feita: é o número que vai virar
@@ -184,11 +190,13 @@ export function podeAgir(
 }
 
 // ── Quem é o dono da bola ────────────────────────────────────────────
-export type Etapa = "operacional" | "rh" | "financeiro" | "fim";
+export type Etapa = "encarregados" | "operacional" | "rh" | "financeiro" | "fim";
 
 /** De quem é o trabalho agora — usado nos contadores e no recorte da fila. */
 export function etapaDoStatus(s: StatusPonto): Etapa {
   switch (s) {
+    case "Pendente Encarregados":
+      return "encarregados";
     case "Pendente Operacional":
     case "Em Andamento Operacional":
     case "Devolvido Operacional":
@@ -235,6 +243,7 @@ export const pct = (parte: number, total: number) =>
 // ── Aparência ────────────────────────────────────────────────────────
 export function corDoStatus(s: string): string {
   const cores: Record<string, string> = {
+    "Pendente Encarregados":    "bg-zinc-100 text-zinc-600 border-zinc-200",
     "Pendente Operacional":     "bg-slate-100 text-slate-700 border-slate-200",
     "Em Andamento Operacional": "bg-amber-100 text-amber-800 border-amber-200",
     "Pendente RH":              "bg-orange-100 text-orange-800 border-orange-200",
@@ -258,6 +267,7 @@ export function corDoStatus(s: string): string {
  */
 export function corDaBorda(s: string): string {
   const cores: Record<string, string> = {
+    "Pendente Encarregados":    "border-l-zinc-300",
     "Pendente Operacional":     "border-l-slate-400",
     "Em Andamento Operacional": "border-l-amber-500",
     "Pendente RH":              "border-l-orange-500",
@@ -274,6 +284,7 @@ export function corDaBorda(s: string): string {
 
 export function explicaStatus(s: string): string {
   const t: Record<string, string> = {
+    "Pendente Encarregados":    "Aguardando os encarregados enviarem o ponto do contrato.",
     "Pendente Operacional":     "Aguardando o Operacional conferir o ponto.",
     "Em Andamento Operacional": "O Operacional está conferindo.",
     "Pendente RH":              "Aprovado pelo Operacional. Aguardando o RH confirmar.",
@@ -293,7 +304,7 @@ const PRIORIDADE: Record<string, number> = {
   "Problema": 1, "Devolvido Operacional": 2, "Devolvido RH": 3,
   "Pendente RH": 4, "Em Andamento RH": 5, "Conferido RH": 5,
   "Liberado Financeiro": 6, "Em Andamento Operacional": 7,
-  "Pendente Operacional": 8, "Pago": 9,
+  "Pendente Operacional": 8, "Pendente Encarregados": 8.5, "Pago": 9,
 };
 export const ordemDoStatus = (s: string) => PRIORIDADE[s] ?? 99;
 

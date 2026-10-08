@@ -156,3 +156,8 @@ verify_jwt = true
 
 [functions.diretoria-ia]
 verify_jwt = true
+
+# Painel do Desenvolvedor › GitHub (mig 20261007000022): só usuário logado;
+# a function confere o acesso ao painel antes de usar o GITHUB_TOKEN.
+[functions.dev-github-sync]
+verify_jwt = true

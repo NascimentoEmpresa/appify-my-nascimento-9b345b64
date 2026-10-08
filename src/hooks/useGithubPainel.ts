@@ -1,68 +1,55 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
-import type { DevGithub, PrGithub, SemanaCommits } from "@/lib/sistemas/githubPainel";
+import { normalizarPainel, type PainelGithub, type PainelGithubBruto } from "@/lib/sistemas/githubPainel";
 
 // =====================================================================
-// Painel do Desenvolvedor › GitHub (mig 20261007000015). Lê do banco (abre na
-// hora); a Edge github-painel-sync atualiza a partir do GitHub (no máximo a
-// cada 15 min, ou na hora com "forcar").
+// Painel do Desenvolvedor › GitHub (mig 20261007000022 + Edge dev-github-sync).
+// A leitura vem do cache no banco (RPC dev_github_painel); "Sincronizar"
+// chama a Edge em lotes até não sobrar PR pendente de detalhe.
 // =====================================================================
 
-// Tabelas novas ainda não estão nos tipos gerados.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 const sb = supabase as any;
-const K = "github-painel";
+const K = ["dev-github-painel"];
 
-export interface SyncGithub { id: string; sincronizado_em: string | null; info: Record<string, unknown> | null }
-
-export const useGithubDados = () => useQuery({
-  queryKey: [K, "dados"],
-  staleTime: 5 * 60_000, gcTime: 30 * 60_000,
-  queryFn: async () => {
-    // PRs paginadas: o PostgREST corta em 1.000 linhas por resposta.
-    const prs: PrGithub[] = [];
-    for (let de = 0; ; de += 1000) {
-      const { data, error } = await sb.from("GITHUB_PR")
-        .select("numero, titulo, estado, autor, branch, criado_em, mergeado_em, fechado_em, adicoes, remocoes, arquivos, commits")
-        .order("numero", { ascending: false }).range(de, de + 999);
-      if (error) throw error;
-      prs.push(...(data ?? []));
-      if (!data || data.length < 1000) break;
-    }
-    const [sem, sync, devs] = await Promise.all([
-      sb.from("GITHUB_COMMITS_SEMANA").select("autor, semana, commits, adicoes, remocoes").order("semana").then((r: any) => r),
-      sb.from("GITHUB_SYNC").select("*").then((r: any) => r),
-      sb.from("GITHUB_DEV").select("login, nome, ativo").order("nome").then((r: any) => r),
-    ]);
-    for (const r of [sem, sync, devs]) if (r.error) throw r.error;
-    return {
-      prs, semanas: (sem.data ?? []) as SemanaCommits[], sync: (sync.data ?? []) as SyncGithub[], devs: (devs.data ?? []) as DevGithub[],
-    };
+export const useGithubPainel = () => useQuery({
+  queryKey: K, staleTime: 5 * 60_000,
+  queryFn: async (): Promise<PainelGithub> => {
+    const { data, error } = await sb.rpc("dev_github_painel");
+    if (error) throw error;
+    return normalizarPainel(data as PainelGithubBruto);
   },
 });
 
-export function useSincronizarGithub() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: async (forcar: boolean) => {
-      const { data, error } = await supabase.functions.invoke("github-painel-sync", { body: { forcar } });
-      if (error) {
-        let msg = error.message;
-        try { const corpo = await (error as { context?: Response }).context?.json(); if (corpo?.error) msg = corpo.error; } catch { /* sem corpo */ }
-        throw new Error(msg);
-      }
-      return data as Record<string, string>;
-    },
-    onSuccess: () => qc.invalidateQueries({ queryKey: [K] }),
-  });
+export interface ProgressoSync { lote: number; detalhadas: number; pendentes: number }
+
+async function chamarSync(): Promise<{ novas: number; detalhadas: number; pendentes: number }> {
+  const { data, error } = await supabase.functions.invoke("dev-github-sync", { body: {} });
+  if (error) {
+    let msg = error.message;
+    try { const corpo = await (error as { context?: Response }).context?.json(); if (corpo?.error) msg = corpo.error; } catch { /* sem corpo */ }
+    throw new Error(msg);
+  }
+  if (data?.error) throw new Error(data.error);
+  return data;
 }
 
-export function useSalvarNomeDev() {
+/** Sincroniza até zerar (ou até `maxLotes`, para não prender a tela). */
+export function useSincronizarGithub(onProgresso?: (p: ProgressoSync) => void) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (p: { login: string; nome: string }) => {
-      const { error } = await sb.from("GITHUB_DEV").update({ nome: p.nome }).eq("login", p.login);
-      if (error) throw error;
+    mutationFn: async (maxLotes: number = 60) => {
+      let detalhadas = 0, pendentes = 0, novas = 0;
+      for (let lote = 1; lote <= maxLotes; lote++) {
+        const r = await chamarSync();
+        if (lote === 1) novas = r.novas;
+        detalhadas += r.detalhadas; pendentes = r.pendentes;
+        onProgresso?.({ lote, detalhadas, pendentes });
+        if (lote % 3 === 0) qc.invalidateQueries({ queryKey: K });   // mostra chegando
+        if (!pendentes || !r.detalhadas) break;
+      }
+      return { novas, detalhadas, pendentes };
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: [K] }),
+    onSettled: () => qc.invalidateQueries({ queryKey: K }),
   });
 }

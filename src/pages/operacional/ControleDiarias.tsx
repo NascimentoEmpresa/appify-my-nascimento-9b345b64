@@ -15,6 +15,7 @@ import {
   RotateCcw,
   Search,
   Wallet,
+  UserX,
 } from "lucide-react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Badge } from "@/components/ui/badge";
@@ -59,10 +60,13 @@ import {
   usePostosDiaria,
   useRegistrarVisualizacaoDiaria,
   useSolicitacoesDiaria,
+  useConflitosPontoDiarias,
   useSolicitarAjusteDiaria,
   useVisualizacoesDiaria,
 } from "@/hooks/useDiarias";
 import { ModoModalDiaria, SolicitacaoDiariaModal } from "./SolicitacaoDiariaModal";
+import { batidasPorSolicitacao, conflitosPorSolicitacao } from "@/lib/diariaPonto";
+import { DiariasPontoDialog } from "./DiariasPontoDialog";
 import {
   LinhaDiaria,
   STATUS_SOLICITACAO,
@@ -181,6 +185,13 @@ export default function ControleDiarias({
     error: erroSolicitacoes,
   } = useSolicitacoesDiaria(apenasMinhas);
   const { data: contratos = [] } = useContratosDiaria();
+  // Faltante que bateu ponto no dia da diária (mig 20261007000021).
+  const { data: pontoConflitos } = useConflitosPontoDiarias();
+  const pontoPorSolicitacao = useMemo(() => conflitosPorSolicitacao(pontoConflitos), [pontoConflitos]);
+  const batidasPonto = useMemo(() => batidasPorSolicitacao(pontoConflitos), [pontoConflitos]);
+  // "Ver marcações" (detalhe) e "Mostrar só essas" (filtro da tabela) — 08/10/2026.
+  const [verPonto, setVerPonto] = useState(false);
+  const [soPonto, setSoPonto] = useState(false);
   const criar = useCriarSolicitacaoDiaria();
   const decidir = useDecidirSolicitacaoDiaria();
   const ajustar = useAjustarSolicitacaoDiaria();
@@ -337,6 +348,7 @@ export default function ControleDiarias({
       if (posto !== "todos" && s.posto !== posto) continue;
       if (status !== "todos" && statusExibicaoDiaria(s).chave !== status) continue;
       for (const l of s.diarias) {
+        if (soPonto && !batidasPonto.get(s.uuid)?.has(l.data)) continue;
         if (de && l.data < de) continue;
         if (ate && l.data > ate) continue;
         out.push({
@@ -353,7 +365,7 @@ export default function ControleDiarias({
       }
     }
     return out;
-  }, [solicitacoes, busca, contrato, posto, status, de, ate]);
+  }, [solicitacoes, busca, contrato, posto, status, de, ate, soPonto, batidasPonto]);
 
   /**
    * O que "Exportar filtrado" leva: exatamente as linhas que a tabela mostra.
@@ -580,6 +592,48 @@ export default function ControleDiarias({
           <StatCard icon={Wallet} label="Valor total aprovado" value={`R$ ${fmtBRL(resumo.valorAprovado)}`} tone="muted" />
         </div>
 
+        {/* Faltante que bateu ponto (mig 20261007000021): as pendentes não passam na aprovação. */}
+        {(() => {
+          const pend = solicitacoes.filter((x) => (x.status === "solicitada" || x.status === "em_ajuste") && pontoPorSolicitacao.has(x.uuid));
+          const pagas = solicitacoes.filter((x) => x.status !== "solicitada" && x.status !== "em_ajuste" && pontoPorSolicitacao.has(x.uuid));
+          if (!pend.length && !pagas.length) return null;
+          return (
+            <Card className="flex flex-wrap items-start gap-3 border-destructive/40 bg-destructive/5 p-4">
+              <UserX className="mt-0.5 h-5 w-5 shrink-0 text-destructive" />
+              <div className="min-w-0 flex-1 text-sm">
+                <p className="font-semibold text-destructive">Faltante bateu ponto no dia da diária</p>
+                {pend.length > 0 && (
+                  <p className="text-xs text-muted-foreground">
+                    <b className="text-foreground">{pend.length}</b> pendente(s) — {pend.map((x) => x.id).join(", ")} — não podem ser aprovadas: reprove ou devolva para ajuste.
+                  </p>
+                )}
+                {pagas.length > 0 && (
+                  <p className="text-xs text-muted-foreground">
+                    <b className="text-foreground">{pagas.length}</b> já decidida(s) antes da conferência com o ponto — {pagas.map((x) => x.id).join(", ")}. Linhas marcadas com “Bateu ponto”.
+                  </p>
+                )}
+              </div>
+              <div className="flex shrink-0 flex-wrap gap-2">
+                <Button size="sm" variant="destructive" className="h-8" onClick={() => setVerPonto(true)}>
+                  <Eye className="mr-1.5 h-3.5 w-3.5" /> Ver marcações
+                </Button>
+                <Button size="sm" variant={soPonto ? "default" : "outline"} className="h-8" onClick={() => { setSoPonto((v) => !v); setPagina(1); }}>
+                  {soPonto ? "Mostrar todas na lista" : "Mostrar só essas na lista"}
+                </Button>
+              </div>
+            </Card>
+          );
+        })()}
+
+        <DiariasPontoDialog
+          aberto={verPonto}
+          onFechar={() => setVerPonto(false)}
+          solicitacoes={solicitacoes}
+          batidas={batidasPonto}
+          sincronizadoAte={pontoConflitos?.sincronizado_ate}
+          onAbrir={(s) => { setVerPonto(false); abrir(s); }}
+        />
+
         {/* Filtros */}
         <Card className="p-4">
           <div className="flex flex-wrap items-end gap-4">
@@ -802,6 +856,14 @@ export default function ControleDiarias({
                           >
                             {st.label}
                           </Badge>
+                          {(() => {
+                            const batida = pontoPorSolicitacao.get(l.solicitacao.uuid)?.find((x) => x.data === String(l.data).slice(0, 10));
+                            return batida ? (
+                              <Badge variant="outline" className="border-destructive/50 bg-destructive/10 text-[10px] font-semibold text-destructive" title={`Faltante bateu ponto neste dia: ${batida.horarios.join(", ")}`}>
+                                Bateu ponto
+                              </Badge>
+                            ) : null;
+                          })()}
                           {l.solicitacao.comprovantesPagamento.length > 0 && (
                             <Paperclip
                               className="h-3 w-3 shrink-0 text-success"
