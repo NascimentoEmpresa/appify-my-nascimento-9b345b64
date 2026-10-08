@@ -36,8 +36,11 @@ import {
 } from "./horaExtraUtils";
 import { Campo, DropzoneAnexos, SecaoForm, TotalHoras } from "./HoraExtraUI";
 import {
+  contarRelatorioPr,
+  linhaSemChamado,
   normalizarNumeroPr,
   removerLinhaRelatorioPr,
+  textoChamadosRelatorioPr,
   totalizarLinhasRelatorioPr,
 } from "./prHoraExtraUtils";
 import type { ChamadoHoraExtra, SolicitacaoHoraExtra, StatusExecucao } from "./types";
@@ -54,6 +57,8 @@ interface LinhaConclusao {
   status: StatusExecucao;
   observacao: string;
   adicional: boolean;
+  /** PR sem chamado no título ([SEM-CHAMADO]) — só como linha adicional. */
+  sem_chamado: boolean;
   pr_texto: string;
   pr_numero: number | null;
   pr_url: string | null;
@@ -110,8 +115,8 @@ export default function ConcluirHoraExtraDialog({
     const converter = (c: ChamadoHoraExtra): LinhaConclusao => ({
       id: c.id,
       chave: c.id,
-      chamado_id: c.chamado_id,
-      numero: c.chamado_numero,
+      chamado_id: c.chamado_id ?? "",
+      numero: linhaSemChamado(c) ? "" : c.chamado_numero,
       assunto: c.chamado_assunto,
       setor: c.chamado_setor,
       previsto: c.percentual_previsto,
@@ -119,6 +124,7 @@ export default function ConcluirHoraExtraDialog({
       status: c.status_execucao || "nao_iniciado",
       observacao: c.observacao || "",
       adicional: c.adicional,
+      sem_chamado: linhaSemChamado(c),
       pr_texto: c.pr_numero ? `#${c.pr_numero}` : "",
       pr_numero: c.pr_numero ?? null,
       pr_url: c.pr_url ?? null,
@@ -179,6 +185,7 @@ export default function ConcluirHoraExtraDialog({
         status: "concluido",
         observacao: "",
         adicional: true,
+        sem_chamado: false,
         pr_texto: "",
         pr_numero: null,
         pr_url: null,
@@ -202,35 +209,37 @@ export default function ConcluirHoraExtraDialog({
       return;
     }
     if ([...linhas, ...adicionais].some((outra) => outra.chave !== linha.chave && outra.pr_numero === numeroPr)) {
-      toast.error(`A PR #${numeroPr} já está vinculada a outro chamado nesta HE.`);
+      toast.error(`A PR #${numeroPr} já está em outra linha desta HE.`);
       return;
     }
     setPrsCarregando((atual) => ({ ...atual, [linha.chave]: true }));
     try {
       const dados = await buscarInformacoesPrHoraExtra(solicitacao.id, numeroPr);
-      if (grupo === "originais" && dados.chamado.id !== linha.chamado_id) {
+      // O chamado planejado precisa de uma PR DELE. PR de outro chamado, uma
+      // segunda PR do mesmo chamado ou PR sem chamado entram pelo "Adicionar
+      // Chamado" — o mesmo chamado pode ter quantas linhas (PRs) precisar.
+      if (grupo === "originais" && !dados.chamado) {
+        throw new Error(
+          `A PR #${numeroPr} não tem chamado no título. PR sem chamado entra como linha adicional (botão Adicionar Chamado).`,
+        );
+      }
+      if (grupo === "originais" && dados.chamado && dados.chamado.id !== linha.chamado_id) {
         throw new Error(
           `A PR #${numeroPr} pertence ao chamado #${dados.chamado.numero}, diferente deste chamado da solicitação.`,
         );
       }
-      if (
-        grupo === "adicionais" &&
-        [...linhas, ...adicionais].some(
-          (outra) => outra.chave !== linha.chave && outra.chamado_id === dados.chamado.id,
-        )
-      ) {
-        throw new Error(`O chamado #${dados.chamado.numero} já está listado nesta HE.`);
-      }
+      const semChamado = !dados.chamado;
       const setter = grupo === "originais" ? setLinhas : setAdicionais;
       setter((xs) =>
         xs.map((atual, i) =>
           i === indice
             ? {
                 ...atual,
-                chamado_id: dados.chamado.id,
-                numero: dados.chamado.numero,
-                assunto: dados.chamado.assunto,
-                setor: dados.chamado.setor,
+                chamado_id: dados.chamado?.id ?? "",
+                numero: dados.chamado?.numero ?? "",
+                assunto: dados.chamado?.assunto ?? dados.pr.titulo,
+                setor: dados.chamado?.setor ?? null,
+                sem_chamado: semChamado,
                 pr_texto: `#${dados.pr.numero}`,
                 pr_numero: dados.pr.numero,
                 pr_url: dados.pr.url,
@@ -316,7 +325,7 @@ export default function ConcluirHoraExtraDialog({
       toast.error("Informe e valide uma PR do GitHub para cada chamado realizado na HE.");
       return;
     }
-    if (adicionais.some((linha) => !linha.chamado_id)) {
+    if (adicionais.some((linha) => !linha.chamado_id && !linha.sem_chamado)) {
       toast.error("Aguarde a validação do chamado encontrado no título da PR.");
       return;
     }
@@ -343,7 +352,7 @@ export default function ConcluirHoraExtraDialog({
             pr_arquivos_adicionados: l.pr_arquivos_adicionados,
           })),
           adicionais: adicionais.map((l) => ({
-            chamado_id: l.chamado_id,
+            chamado_id: l.chamado_id || null,
             percentual_concluido: l.concluido,
             status_execucao: l.status,
             observacao: l.observacao,
@@ -511,8 +520,10 @@ export default function ConcluirHoraExtraDialog({
                 <Resumo rotulo="Total de hora extra" valor={formatarDuracao(minutos)} />
                 <Resumo rotulo="Chamados originais" valor={formatarQuantidadeChamados(linhas.length)} />
                 <Resumo
-                  rotulo="Chamados adicionais"
-                  valor={`${adicionais.length} ${adicionais.length === 1 ? "chamado" : "chamados"}`}
+                  rotulo="Linhas adicionais"
+                  valor={`${adicionais.length} ${adicionais.length === 1 ? "PR" : "PRs"}${
+                    adicionais.some((l) => l.sem_chamado) ? ` · ${adicionais.filter((l) => l.sem_chamado).length} sem chamado` : ""
+                  }`}
                 />
                 <Resumo rotulo="Média de conclusão" valor={`${media}%`} />
               </div>
@@ -533,6 +544,12 @@ export default function ConcluirHoraExtraDialog({
                   <li>Digite a PR no formato <strong>#624</strong> para preencher suas métricas automaticamente.</li>
                   <li>O título da PR precisa começar pelo ID do chamado, como <strong>SIS-2026-0459:</strong>.</li>
                   <li>É possível incluir PRs de chamados adicionais realizados durante a hora extra.</li>
+                  <li>
+                    Mais de uma PR para o mesmo chamado: uma linha para cada PR (botão <strong>Adicionar Chamado</strong>).
+                  </li>
+                  <li>
+                    PR <strong>sem chamado</strong> ([SEM-CHAMADO]) também entra, como linha adicional.
+                  </li>
                   <li>
                     Chamado que você <strong>não realizou</strong> pode sair da tabela pela lixeira: ele
                     continua aberto para entrar em outra HE.
@@ -612,7 +629,7 @@ function TabelaRelatorioPr({
   aoExcluir: (chave: string) => void;
 }) {
   const totais = totalizarLinhasRelatorioPr(linhas);
-  const totalChamados = new Set(linhas.filter((linha) => linha.chamado_id).map((linha) => linha.chamado_id)).size;
+  const contagem = contarRelatorioPr(linhas);
   const colunas = 6;
   return (
     <div className="overflow-x-auto rounded-lg border">
@@ -684,7 +701,14 @@ function TabelaRelatorioPr({
               </td>
               <td className="p-2 text-center font-medium tabular-nums">{l.pr_url ? l.pr_commits ?? 0 : "—"}</td>
               <td className="p-2">
-                {l.numero ? (
+                {l.sem_chamado && l.pr_url ? (
+                  <>
+                    <div className="font-semibold text-slate-500">Sem chamado</div>
+                    <div className="max-w-56 truncate text-slate-500" title={l.assunto}>
+                      {l.assunto}
+                    </div>
+                  </>
+                ) : l.numero ? (
                   <>
                     <div className="font-semibold text-[#07194b]">#{l.numero}</div>
                     <div className="max-w-56 truncate text-slate-500" title={l.assunto}>
@@ -728,10 +752,10 @@ function TabelaRelatorioPr({
         </tbody>
         <tfoot>
           <tr className="bg-slate-100 font-bold text-red-600">
-            <td className="p-2">TOTAL</td>
+            <td className="p-2">TOTAL · {contagem.prs} {contagem.prs === 1 ? "PR" : "PRs"}</td>
             <td className="p-2 text-center tabular-nums">{totais.linhas_adicionadas.toLocaleString("pt-BR")}</td>
             <td className="p-2 text-center tabular-nums">{totais.commits.toLocaleString("pt-BR")}</td>
-            <td className="p-2">{totalChamados} {totalChamados === 1 ? "chamado" : "chamados"}</td>
+            <td className="p-2">{textoChamadosRelatorioPr(contagem)}</td>
             <td className="p-2 text-center tabular-nums">{totais.arquivos_adicionados.toLocaleString("pt-BR")}</td>
             <td />
           </tr>

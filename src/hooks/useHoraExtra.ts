@@ -19,7 +19,9 @@ export interface InformacoesPrHoraExtra {
     commits: number;
     arquivos_adicionados: number;
   };
-  chamado: ChamadoDisponivel;
+  /** Nulo quando o título da PR não traz SIS-AAAA-NNNN (PR sem chamado, mig 20261008000009). */
+  chamado: ChamadoDisponivel | null;
+  sem_chamado?: boolean;
 }
 
 // Os tipos gerados serão atualizados somente depois da aplicação da migration.
@@ -176,7 +178,7 @@ export async function buscarInformacoesPrHoraExtra(
     const corpo = resposta ? await resposta.json().catch(() => null) : null;
     throw new Error(corpo?.error || error.message);
   }
-  if (!data?.pr || !data?.chamado) throw new Error("A consulta da PR retornou dados incompletos.");
+  if (!data?.pr || (!data?.chamado && !data?.sem_chamado)) throw new Error("A consulta da PR retornou dados incompletos.");
   return data as InformacoesPrHoraExtra;
 }
 
