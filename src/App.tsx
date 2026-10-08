@@ -300,6 +300,7 @@ import DashboardChamados from "./pages/chamados/DashboardChamados";
 import CoordenarChamado from "./pages/chamados/CoordenarChamado";
 import PainelDesenvolvedorChamados from "./pages/chamados/PainelDesenvolvedor";
 import DashboardDesenvolvedorChamados from "./pages/chamados/DashboardDesenvolvedor";
+import GithubPainelDev from "./pages/chamados/GithubPainel";
 import ExecutarChamado from "./pages/chamados/ExecutarChamado";
 import AcompanharChamado from "./pages/chamados/AcompanharChamado";
 import WhatsAppInbox from "./pages/whatsapp/WhatsAppInbox";
@@ -514,6 +515,8 @@ const App = () => (
                 dentro do Painel, que já é gateado; dados vêm filtrados por
                 responsavel_id = auth.uid(), então não vaza chamado de outro dev. */}
             <Route path="sistemas/chamados/dev/dashboard" element={<DashboardDesenvolvedorChamados />} />
+            {/* GitHub do repositório (mig 20261007000022 + Edge dev-github-sync). */}
+            <Route path="sistemas/chamados/dev/github" element={<GithubPainelDev />} />
             <Route path="sistemas/chamados/:id/coordenar" element={<CoordenarChamado />} />
             {/* Não vira redirect por causa do :id, que o Navigate não interpola.
                 Renderiza a mesma tela, mas com o "voltar" apontando para a
