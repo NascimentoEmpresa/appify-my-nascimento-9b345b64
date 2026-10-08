@@ -18,16 +18,16 @@ import { VERSICULOS, indiceDoDia } from "@/lib/versiculos";
 // tempos, com um balão de fala. Quem prefere menos movimento
 // (prefers-reduced-motion) vê tudo parado.
 //
-// 08/10/2026 — "quero colocar esse vídeo (bigodon programador) na tela de
-// desenvolvimento da TV, sem o fundo, compatível com a tela, bem no canto
-// inferior direito". O vídeo original tem fundo preto com manchas cinza e um
-// brilho branco em volta do boneco; o recorte foi feito quadro a quadro
-// (preenchimento a partir das bordas pelo que é liso e sem cor — o fundo — e
-// parando no contorno do desenho) e salvo como WebM VP9 COM transparência
-// (960×540, 30 fps, 15 s em laço; começa e termina no mesmo plano).
-// VP9 com transparência é coisa do Chrome/Android — o navegador das TVs
-// (Fully Kiosk) e da gestão. Safari mostraria o fundo preto: lá (ou se o
-// vídeo falhar) fica o bigodinho em pé de antes.
+// 08/10/2026 — "quero colocar esse vídeo (bigodinho programador) na tela de
+// desenvolvimento da TV, bem no canto inferior direito". A 1ª versão recortou
+// o fundo preto do vídeo quadro a quadro (WebM transparente) e ficou com a
+// borda borrada; o Pablo trocou por um vídeo com fundo claro (estúdio
+// branco) pedindo "fundo branco, num card assim": o vídeo vai INTEIRO dentro
+// de um card branco arredondado no canto, sem recorte nenhum. WebM VP9
+// (1024×576 — múltiplo de 16: em 960×540 o VP9 sujava as 8 linhas de cima —,
+// 30 fps, sem áudio, ~15 s em laço — começa e termina no mesmo plano; 4 MB
+// contra 15 MB do original), que o Chrome/Android das TVs e da
+// gestão tocam; se falhar (Safari antigo), volta o bigodinho em pé.
 // =====================================================================
 
 const TROCA_MS = 12_000;
@@ -38,19 +38,11 @@ const PARTICULAS = Array.from({ length: 26 }, (_, i) => ({
   left: (i * 37) % 100, tam: 0.35 + ((i * 7) % 5) * 0.12, atraso: (i * 1.7) % 14, dur: 12 + ((i * 3) % 9),
 }));
 
-/** O navegador mostra WebM VP9 com transparência? (Chrome/Edge/Android sim; Safari não.) */
-function suportaVideoTransparente(): boolean {
-  if (typeof document === "undefined") return false;
-  // NÃO depende de prefers-reduced-motion: o vídeo é o conteúdo pedido, e o
+export function TvTelaPadrao({ nome }: { nome: string }) {
+  // O vídeo NÃO depende de prefers-reduced-motion: é o conteúdo pedido, e o
   // Windows com "animações desligadas" faria a PRÉVIA da gestão mostrar outra
   // coisa que a TV (as animações de CSS continuam respeitando a preferência).
-  const ua = navigator.userAgent;
-  const safari = /Safari/.test(ua) && !/Chrome|Chromium|CriOS|Android|Edg/.test(ua);
-  return !safari && !!document.createElement("video").canPlayType('video/webm; codecs="vp9"');
-}
-
-export function TvTelaPadrao({ nome }: { nome: string }) {
-  const [comVideo, setComVideo] = useState(suportaVideoTransparente);
+  const [comVideo, setComVideo] = useState(true);
   const [agora, setAgora] = useState(new Date());
   useEffect(() => { const t = window.setInterval(() => setAgora(new Date()), 1000); return () => window.clearInterval(t); }, []);
 
@@ -127,10 +119,9 @@ export function TvTelaPadrao({ nome }: { nome: string }) {
         </section>
       </main>
 
-      {/* O bigodinho programando, colado no canto inferior direito da tela. */}
+      {/* O bigodinho programando, num card branco no canto inferior direito da tela. */}
       {comVideo && (
         <div className="tvp-video-area">
-          <div className="tvp-video-luz" />
           <div key={`f${passo}`} className="tvp-balao tvp-balao-video">{fala}</div>
           <video className="tvp-video" src={bigodinhoProgramador} autoPlay muted loop playsInline disablePictureInPicture
             aria-label="Mascote do Grupo Nascimento programando" onError={() => setComVideo(false)} />
@@ -245,16 +236,16 @@ const CSS = `
 .tvp-rodape-dir{text-transform:uppercase}
 .tvp-video-area ~ .tvp-rodape{justify-content:flex-start}
 
-/* Vídeo do bigodinho programador: quadro 16:9 encostado no canto inferior
-   direito. Só transform na entrada (sem opacidade: navegador de TV fraco às
-   vezes congela a animação no 1º quadro). */
-.tvp-video-area{position:absolute;z-index:2;right:0;bottom:0;width:54vw;aspect-ratio:16/9;pointer-events:none;
+/* Card do bigodinho programador: branco, arredondado, encostado no canto
+   inferior direito (como o desenho do Pablo), o vídeo inteiro dentro. Só
+   transform na entrada (sem opacidade: navegador de TV fraco às vezes congela
+   a animação no 1º quadro). */
+.tvp-video-area{position:absolute;z-index:2;right:0;bottom:0;width:42vw;aspect-ratio:16/9;pointer-events:none;
+  border-radius:2.6vmin;background:#fff;padding:.7vmin;box-shadow:0 2.4vmin 6vmin rgba(0,0,0,.45),0 0 0 1px rgba(255,255,255,.6);
   animation:tvp-video-entra 1.2s cubic-bezier(.2,.9,.25,1.1) .5s both}
 @keyframes tvp-video-entra{from{transform:translate(8vmin,10vmin)}to{transform:none}}
-.tvp-video{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;object-position:right bottom}
-.tvp-video-luz{position:absolute;right:-10%;bottom:-25%;width:95%;height:120%;border-radius:50%;
-  background:radial-gradient(closest-side,rgba(255,138,61,.38),rgba(255,138,61,.1) 55%,transparent);animation:tvp-respira-anel 5s ease-in-out infinite}
-.tvp-balao-video{left:8%;top:2%;z-index:3}
+.tvp-video{display:block;width:100%;height:100%;object-fit:cover;border-radius:2vmin;background:#fff}
+.tvp-balao-video{left:-6%;top:-6%;z-index:3}
 
 @media (orientation:portrait){
   .tvp-corpo{grid-template-columns:1fr;grid-template-rows:auto 1fr}
