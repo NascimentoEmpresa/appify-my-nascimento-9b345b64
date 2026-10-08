@@ -15,6 +15,7 @@ import {
   ArrowRight, ChevronUp, Settings2, Check, LayoutGrid,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
+import { versiculoDoDia } from "@/lib/versiculos";
 
 // =====================================================================
 // INÍCIO (/app) — primeira tela de todo mundo, todo dia.
@@ -42,21 +43,7 @@ import type { LucideIcon } from "lucide-react";
 /* Versículo do dia — gira sozinho pelo dia do ano, então a tela muda   */
 /* de manhã sem ninguém publicar nada.                                  */
 /* ------------------------------------------------------------------ */
-const VERSICULOS = [
-  { frase: "Consagre o seu trabalho.",   texto: "Consagre ao Senhor tudo o que você faz, e os seus planos serão bem-sucedidos.", ref: "Provérbios 16:3" },
-  { frase: "Tudo posso naquele que me fortalece.", texto: "Posso todas as coisas naquele que me fortalece.", ref: "Filipenses 4:13" },
-  { frase: "Faça de todo o coração.",    texto: "Tudo o que fizerem, façam de todo o coração, como para o Senhor, e não para os homens.", ref: "Colossenses 3:23" },
-  { frase: "Seja forte e corajoso.",     texto: "Não se apavore nem desanime, pois o Senhor, o seu Deus, estará com você por onde você andar.", ref: "Josué 1:9" },
-  { frase: "Entregue o seu caminho.",    texto: "Entregue o seu caminho ao Senhor; confie nele, e ele agirá.", ref: "Salmos 37:5" },
-  { frase: "Planeje com sabedoria.",     texto: "Os planos bem elaborados levam à fartura; mas o apressado sempre acaba na pobreza.", ref: "Provérbios 21:5" },
-  { frase: "Trabalho feito com esmero.", texto: "Você já observou o homem habilidoso em seu trabalho? Será promovido ao serviço real.", ref: "Provérbios 22:29" },
-];
-
-function versiculoDoDia(hoje: Date) {
-  const inicio = new Date(hoje.getFullYear(), 0, 0);
-  const dia = Math.floor((hoje.getTime() - inicio.getTime()) / 86_400_000);
-  return VERSICULOS[dia % VERSICULOS.length];
-}
+// Lista e regra em src/lib/versiculos.ts (a tela padrão das TVs usa a mesma).
 
 function saudacao(hora: number) {
   if (hora < 12) return "Bom dia";

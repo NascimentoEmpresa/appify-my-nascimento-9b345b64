@@ -3,6 +3,7 @@ import { useParams } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { corAviso, INTERVALO_PING_S, normalizarChaveTv, youtubeEmbed, type EstadoTv, type ItemTv } from "@/lib/tv/tv";
 import { TvRelatorio } from "./TvRelatorio";
+import { TvTelaPadrao } from "./TvTelaPadrao";
 
 // =====================================================================
 // /tv — PLAYER das TVs da empresa (Sistemas › TV's, mig 20261007000012)
@@ -219,14 +220,10 @@ export function Item({ item, sozinho, aoAcabar, token, previa = false, inicioS =
   );
 }
 
+/**
+ * Sem playlist: a tela padrão animada (bigodinho, versículo do dia e
+ * "Painel em desenvolvimento") — 08/10/2026. Antes era só o relógio.
+ */
 export function Ocioso({ nome }: { nome: string }) {
-  const [agora, setAgora] = useState(new Date());
-  useEffect(() => { const t = window.setInterval(() => setAgora(new Date()), 1000); return () => window.clearInterval(t); }, []);
-  return (
-    <div className="flex h-full flex-col items-center justify-center gap-4 bg-gradient-to-br from-[#0b1f4d] to-[#1e3a8a] text-center">
-      <p className="font-mono text-[16vmin] font-black leading-none">{agora.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}</p>
-      <p className="text-[4vmin] capitalize text-white/80">{agora.toLocaleDateString("pt-BR", { weekday: "long", day: "2-digit", month: "long" })}</p>
-      <p className="mt-6 text-[2.5vmin] text-white/50">{nome} · sem conteúdo na playlist</p>
-    </div>
-  );
+  return <TvTelaPadrao nome={nome} />;
 }
