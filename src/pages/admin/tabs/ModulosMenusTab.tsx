@@ -2102,6 +2102,12 @@ function PerfisAtribuidosSection({ userId, podeGerenciar, expanded, onToggleExpa
                     {p.nome}
                   </p>
                   {p.descricao && <p className="text-[11px] text-muted-foreground">{p.descricao}</p>}
+                  {/* mig 20261008000006: o "concede tudo" não alcança tela nova. */}
+                  {p.concede_tudo && (
+                    <p className="text-[11px] text-muted-foreground">
+                      Libera as telas que existiam até 08/10/2026. Tela criada depois nasce sem ninguém — libere pessoa a pessoa.
+                    </p>
+                  )}
                 </div>
                 <Switch
                   checked={on}

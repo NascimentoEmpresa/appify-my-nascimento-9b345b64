@@ -79,3 +79,24 @@ export function rotaSempreLiberada(pathname: string): boolean {
   return ROTAS_SEMPRE_LIBERADAS.some((r) => normalizada === r || normalizada.startsWith(r + "/"));
 }
 
+/**
+ * Telas que o perfil "concede tudo" (Administrador Geral) NÃO alcança —
+ * mig 20261008000006, 08/10/2026. Pedido do Pablo: "quando é desenvolvido um
+ * módulo novo, o Administrador Geral já tem permissão, mas não pode: todos
+ * devem ficar sem permissão e depois colocamos manualmente". Tela que existia
+ * em 08/10/2026 está marcada SIM; tela nova nasce NÃO.
+ *
+ * O código só é único POR MÓDULO (ver useAccessibleMenus): fica de fora só o
+ * código em que TODAS as linhas estão NÃO — a mesma conta de
+ * concede_tudo_alcanca() no banco. Código que não é tela (não está na lista)
+ * nunca fica de fora.
+ */
+export function menusForaDoConcedeTudo(menus: { codigo: string; concede_tudo_alcanca: boolean | null }[]): Set<string> {
+  const alcancados = new Set<string>();
+  const candidatos = new Set<string>();
+  for (const m of menus) {
+    if (m.concede_tudo_alcanca === false) candidatos.add(m.codigo); else alcancados.add(m.codigo);
+  }
+  return new Set([...candidatos].filter((c) => !alcancados.has(c)));
+}
+
