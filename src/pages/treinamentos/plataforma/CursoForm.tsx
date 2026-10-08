@@ -11,7 +11,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { uploadMidia, urlMidia, useTrnAssinaturas, useTrnCategorias, useTrnCurso, useTrnModelosCertificado, useTrnSalvarCurso } from "@/hooks/useTreinamentosPlataforma";
 import { MENU, type CapaFormato } from "./tipos";
-import { AssinaturaTraco, assinaturaValeParaPublicar, cargoERegistro } from "./assinaturaFolha";
+import { AssinaturaTraco, ConfirmarSemAssinatura, assinaturaValeParaPublicar, cargoERegistro, pedeConfirmacaoSemAssinatura } from "./assinaturaFolha";
 import { DialogAssinatura } from "./Assinaturas";
 import { TrnCarregando, TrnEstilo, TrnHero } from "./ui";
 
@@ -87,7 +87,9 @@ export default function CursoForm() {
     finally { setSubindo(false); }
   };
 
-  const gravar = async () => {
+  // 08/10/2026: passar a liberar certificado SEM assinatura pede confirmação.
+  const [confirmarSemAssinatura, setConfirmarSemAssinatura] = useState(false);
+  const gravar = async (confirmado = false) => {
     if (!f.nome.trim()) return toast.error("Informe o nome do curso.");
     if (!f.descricao.trim()) return toast.error("Informe a descrição.");
     const prazo = f.prazo === "outros" ? Number(f.prazoOutro) : f.prazo ? Number(f.prazo) : null;
@@ -100,6 +102,13 @@ export default function CursoForm() {
     const ass = f.com_assinatura ? assinaturas.find((a) => a.id === f.assinatura_id) : null;
     if (f.publicado && ass && !(ass.ativo && assinaturaValeParaPublicar(ass)))
       return toast.error("A assinatura escolhida não é de um(a) Técnico(a) em Segurança com registro — troque ou desligue a assinatura para publicar.");
+    // Curso publicado, com certificado e sem assinatura: confirma — só quando
+    // ele PASSA a ficar assim (publicando agora ou tirando a assinatura).
+    const depois = { publicado: f.publicado, certificado_modelo_id: f.certificado_modelo_id || null, assinatura_id: f.com_assinatura ? f.assinatura_id : null };
+    if (!confirmado && pedeConfirmacaoSemAssinatura(editando ? data?.curso : null, depois)) {
+      setConfirmarSemAssinatura(true);
+      return;
+    }
     try {
       const novoId = await salvar.mutateAsync({
         id: editando ? id : undefined,
@@ -289,7 +298,10 @@ export default function CursoForm() {
               </div>
 
               <AcessoGate menu={menuTela} acao={editando ? "alterar" : "incluir"} fallback={<p className="text-xs text-muted-foreground">Você pode ver, mas não tem a ação de {editando ? "alterar" : "incluir"} curso.</p>}>
-                <div><Button disabled={salvar.isPending || subindo} onClick={gravar}><Save className="mr-2 h-4 w-4" /> {editando ? "Salvar alterações" : "Criar curso"}</Button></div>
+                <div><Button disabled={salvar.isPending || subindo} onClick={() => gravar()}><Save className="mr-2 h-4 w-4" /> {editando ? "Salvar alterações" : "Criar curso"}</Button></div>
+                <ConfirmarSemAssinatura aberto={confirmarSemAssinatura}
+                  onCancelar={() => setConfirmarSemAssinatura(false)}
+                  onConfirmar={() => { setConfirmarSemAssinatura(false); void gravar(true); }} />
               </AcessoGate>
             </div>
 
