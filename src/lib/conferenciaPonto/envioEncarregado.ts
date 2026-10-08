@@ -28,7 +28,7 @@ export const corSituacao = (s: string) => SITUACOES.find((x) => x.valor === s)?.
 
 export const STATUS_ENVIO: Record<StatusEnvio, { rotulo: string; cor: string; explica: string }> = {
   rascunho:  { rotulo: "Rascunho",  cor: "bg-slate-100 text-slate-700 border-slate-200", explica: "Ainda não enviado ao Operacional." },
-  enviado:   { rotulo: "Enviado",   cor: "bg-sky-100 text-sky-800 border-sky-200", explica: "Com o Operacional, aguardando o recebimento." },
+  enviado:   { rotulo: "Enviado",   cor: "bg-sky-100 text-sky-800 border-sky-200", explica: "OK dado: com o Operacional, aguardando o recebimento." },
   devolvido: { rotulo: "Devolvido", cor: "bg-red-100 text-red-800 border-red-200", explica: "O Operacional devolveu — corrija e reenvie." },
   recebido:  { rotulo: "Recebido",  cor: "bg-emerald-100 text-emerald-800 border-emerald-200", explica: "Recebido pelo Operacional. Segue para a conferência." },
 };

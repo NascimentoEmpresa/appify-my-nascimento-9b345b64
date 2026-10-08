@@ -36,6 +36,11 @@ import {
 // linha do contrato na Conferência de Ponto vira "Pendente Operacional".
 // Devolvido pelo Operacional, volta editável com o motivo.
 // Regras em src/lib/conferenciaPonto/envioEncarregado.ts (com teste).
+//
+// 08/10/2026 (mig 20261008000005) — "ele só vai ver o seu contrato": a
+// lista de contratos é só a de que ele é o RESPONSÁVEL na Hierarquia de
+// Postos (RH), e só ele dá o OK — enviar é o OK do encarregado que o
+// Operacional vê ("OK do FULANO"). O banco confere de novo em cada RPC.
 // =====================================================================
 
 export default function ConferenciaPontoEncarregado() {
@@ -44,11 +49,16 @@ export default function ConferenciaPontoEncarregado() {
   const [mes, setMes] = useState(mesPadrao());
   const [contrato, setContrato] = useState<string>("");   // "empresa__filial"
   const [posto, setPosto] = useState<string>("");
+  const meusContratos = ctx.data?.contratos ?? [];
 
-  // Começa no contrato do próprio encarregado (cadastro dele na Senior).
+  // Começa no contrato dele: o do cadastro, se ele responde por esse; senão o primeiro.
   useEffect(() => {
-    if (!contrato && ctx.data?.eu) setContrato(`${ctx.data.eu.empresa}__${ctx.data.eu.filial}`);
-  }, [ctx.data, contrato]);
+    if (contrato || !meusContratos.length) return;
+    const eu = ctx.data?.eu;
+    const doCadastro = eu ? meusContratos.find((c) => c.empresa === eu.empresa && c.filial === eu.filial) : undefined;
+    const c = doCadastro ?? meusContratos[0];
+    setContrato(`${c.empresa}__${c.filial}`);
+  }, [ctx.data, meusContratos, contrato]);
 
   const meus = useEnviosPonto({ meus: true });
   // Link da notificação de devolução: ?envio=<id> abre direto naquele envio.
@@ -70,7 +80,7 @@ export default function ConferenciaPontoEncarregado() {
     <div className="mx-auto max-w-7xl space-y-4">
       <PageHeader
         title="Conferência de Ponto"
-        subtitle="Confira o ponto da sua equipe no mês, anexe as folhas e envie para o Operacional."
+        subtitle="Confira o ponto do seu contrato no mês, anexe as folhas e dê o OK para o Operacional."
         module="Encarregados"
         breadcrumb={["Conferência de Ponto"]}
       />
@@ -85,12 +95,19 @@ export default function ConferenciaPontoEncarregado() {
           </div>
         </div>
         <div className="min-w-[280px] flex-1 space-y-1">
-          <p className="text-xs font-medium text-muted-foreground">Contrato</p>
-          <SearchableSelect
-            value={contrato} onChange={(v) => { setContrato(v); setPosto(""); }}
-            options={(ctx.data?.contratos ?? []).map((c) => ({ value: `${c.empresa}__${c.filial}`, label: `${c.nome ?? "—"} · filial ${c.filial}` }))}
-            placeholder={ctx.isLoading ? "Carregando…" : "Escolha o contrato"} searchPlaceholder="Buscar contrato…" triggerClassName="h-9 w-full"
-          />
+          <p className="text-xs font-medium text-muted-foreground">Contrato {meusContratos.length > 1 ? `(você responde por ${meusContratos.length})` : ""}</p>
+          {meusContratos.length === 1 ? (
+            <div className="flex h-9 items-center rounded-md border bg-muted/30 px-3 text-sm font-medium">
+              {meusContratos[0].nome ?? "—"} · filial {meusContratos[0].filial}
+            </div>
+          ) : (
+            <SearchableSelect
+              value={contrato} onChange={(v) => { setContrato(v); setPosto(""); }}
+              options={meusContratos.map((c) => ({ value: `${c.empresa}__${c.filial}`, label: `${c.nome ?? "—"} · filial ${c.filial}` }))}
+              placeholder={ctx.isLoading ? "Carregando…" : meusContratos.length ? "Escolha o contrato" : "Nenhum contrato seu"}
+              searchPlaceholder="Buscar contrato…" triggerClassName="h-9 w-full" disabled={!meusContratos.length}
+            />
+          )}
         </div>
         <div className="ml-auto text-right text-xs">
           <p className="text-muted-foreground">Prazo da folha de {mesLegivel(mes)}</p>
@@ -102,7 +119,19 @@ export default function ConferenciaPontoEncarregado() {
 
       {ctx.error && <Card className="p-4 text-sm text-destructive">{(ctx.error as Error).message}</Card>}
 
-      {empresa != null && filial != null ? (
+      {ctx.data && !meusContratos.length && !contrato ? (
+        <Card className="flex items-start gap-3 p-6 text-sm">
+          <Info className="mt-0.5 h-5 w-5 shrink-0 text-muted-foreground" />
+          <div className="space-y-1">
+            <p className="font-semibold">Você não é o responsável por nenhum contrato.</p>
+            <p className="text-muted-foreground">
+              {ctx.data.tem_cadastro === false
+                ? "Seu login ainda não está vinculado ao seu cadastro de colaborador — peça ao RH/Administração para vincular."
+                : "Quem envia o ponto de um contrato é quem ocupa o posto de liderança daquele contrato na Hierarquia de Postos (RH). Se você deveria estar lá, peça ao RH para ajustar a hierarquia."}
+            </p>
+          </div>
+        </Card>
+      ) : empresa != null && filial != null ? (
         <EditorEnvio key={`${mes}-${contrato}-${posto}`} mes={mes} empresa={empresa} filial={filial}
           posto={posto} setPosto={setPosto} envio={envio} relogioAte={ctx.data?.relogio_ate ?? null} />
       ) : (
@@ -185,7 +214,7 @@ function EditorEnvio({ mes, empresa, filial, posto, setPosto, envio, relogioAte 
     if (pend.length) { toast.error(pend[0]); return; }
     const id = sujo || !envio ? await gravar() : envio.id;
     if (!id) return;
-    try { await enviar.mutateAsync(id); toast.success("Ponto enviado ao Operacional."); }
+    try { await enviar.mutateAsync(id); toast.success("OK dado: ponto enviado ao Operacional."); }
     catch (e) { toast.error((e as Error).message); }
   };
 
@@ -365,7 +394,7 @@ function EditorEnvio({ mes, empresa, filial, posto, setPosto, envio, relogioAte 
               {salvar.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />} Salvar rascunho
             </Button>
             <Button className="gap-1.5" disabled={!!pend.length || enviar.isPending || salvar.isPending} onClick={enviarAgora}>
-              {enviar.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />} {envio?.status === "devolvido" ? "Reenviar ao Operacional" : "Enviar ao Operacional"}
+              {enviar.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />} {envio?.status === "devolvido" ? "Dar OK e reenviar ao Operacional" : "Dar OK e enviar ao Operacional"}
             </Button>
           </div>
         </Card>
