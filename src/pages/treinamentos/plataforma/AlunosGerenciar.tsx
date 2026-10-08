@@ -1,10 +1,16 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
-import { Building2, Mail, Search, UserCheck, UserMinus, UserX, Users } from "lucide-react";
+import { Building2, FileDown, Loader2, Mail, Search, UserCheck, UserMinus, UserX, Users } from "lucide-react";
+import { toast } from "sonner";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { supabase } from "@/integrations/supabase/client";
+import { useAuth } from "@/hooks/useAuth";
 import { AcessoGate } from "@/components/auth/AcessoGate";
+import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { baixar, excelBlob } from "@/lib/exportarRelatorio";
+import { montarExcelAlunos, nomeArquivoAlunos, type AlunoRelatorio } from "@/lib/treinamentos/relatorioAlunos";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { FiltroContratos } from "@/components/solicitacoes/FiltroContratos";
@@ -29,6 +35,11 @@ import { Paginacao, StatusAlunoBadge, TrnCarregando, TrnEstilo, TrnHero, TrnKpi,
 // A rota (/app/treinamentos/alunos/novo) e o menu (treinamentos_alunos_novo)
 // ficaram os mesmos de propósito: é o código que carrega a permissão de quem
 // já tinha, e trocá-lo obrigaria a remarcar pessoa por pessoa.
+//
+// 08/10/2026 — "Exportar relatório": um Excel com TODOS os alunos do filtro
+// atual (contratos, status, situação e busca), não só a página aberta. Vem de
+// trn_alunos_gerenciar_exportar (mig 20261008000011, mesmos filtros e mesma
+// porta da lista); o desenho está em src/lib/treinamentos/relatorioAlunos.ts.
 // =====================================================================
 
 interface AlunoGerenciar {
@@ -91,6 +102,30 @@ export default function AlunosGerenciar() {
   const totalFiltrado = itens[0]?.total ?? 0;
   const totalPaginas = Math.max(1, Math.ceil(totalFiltrado / porPagina));
 
+  // Relatório do filtro atual: o mesmo filtro da lista, todas as linhas.
+  const { user } = useAuth();
+  const [exportando, setExportando] = useState(false);
+  const exportar = async () => {
+    setExportando(true);
+    try {
+      const filtros = { busca: buscaLenta, status: fStatus, situacao: fSituacao, contratos: fContratos };
+      const { data, error } = await (supabase as unknown as SupabaseClient).rpc("trn_alunos_gerenciar_exportar", {
+        _busca: buscaLenta || null, _status: fStatus || null, _situacao: fSituacao || null,
+        _contratos: fContratos.length ? fContratos : null,
+      });
+      if (error) throw error;
+      const alunos = (data ?? []) as AlunoRelatorio[];
+      if (!alunos.length) { toast.info("Nenhum aluno no filtro atual."); return; }
+      const autor = user?.user_metadata?.nome || user?.email || "Usuário";
+      baixar(excelBlob(montarExcelAlunos(alunos, filtros, autor)), nomeArquivoAlunos(filtros));
+      toast.success(`Relatório gerado com ${alunos.length.toLocaleString("pt-BR")} aluno(s).`);
+    } catch (e) {
+      toast.error(`Não foi possível gerar o relatório: ${(e as Error).message}`);
+    } finally {
+      setExportando(false);
+    }
+  };
+
   // O dropdown de contratos conta por linha; aqui as "linhas" são o resumo
   // (uma por aluno, só com o contrato) — barato e não puxa a lista inteira.
   const linhasContrato = useMemo(
@@ -143,6 +178,11 @@ export default function AlunosGerenciar() {
                 {(resumo?.situacoes ?? []).map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}
               </SelectContent>
             </Select>
+            <Button variant="outline" onClick={exportar} disabled={exportando || isLoading || totalFiltrado === 0}
+              title="Baixa um Excel com todos os alunos do filtro atual (não só a página aberta)">
+              {exportando ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <FileDown className="mr-2 h-4 w-4" />}
+              {exportando ? "Gerando…" : "Exportar relatório"}
+            </Button>
           </div>
         </div>
 
