@@ -1,14 +1,17 @@
 import { useEffect, useMemo, useState } from "react";
-import { Briefcase, LayoutDashboard, type LucideIcon } from "lucide-react";
+import { Briefcase, Gavel, GraduationCap, LayoutDashboard, type LucideIcon } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { SISTEMAS, sistemaPorSlug, type RelatorioDados, type RelatorioGeralDados } from "@/pages/relatorios/sistemas";
-import { periodoTv, rotuloPeriodoTv, tituloRelatorioTv, type ItemTv } from "@/lib/tv/tv";
+import { periodoTv, relatorioTemFiltros, rotuloPeriodoTv, tituloRelatorioTv, type ItemTv } from "@/lib/tv/tv";
 import { rotuloMeses } from "@/lib/diretoria/turnover";
+import type { LinhaLicitacaoTv } from "@/lib/tv/licitacaoTv";
 import { corDoRelatorioTv, mesesTurnoverTv, paginasDoRelatorio, tempoDaPaginaMs, type DadosRelTv } from "@/lib/tv/relatorioTv";
 import { Aviso, Moldura, Palco } from "./relatorio/base";
 import { PaginaDestaques, PaginaGeral, PaginaResumo } from "./relatorio/paginasPadrao";
 import { PaginaVagasAndamento, PaginaVagasContratos, PaginaVagasResumo } from "./relatorio/paginasVagas";
 import { PaginaTurnoverContratos, PaginaTurnoverLimites, PaginaTurnoverResumo } from "./relatorio/paginasTurnover";
+import { PaginaLicitacaoAberturas, PaginaLicitacaoMapa, PaginaLicitacaoResponsaveis, PaginaLicitacaoResumo } from "./relatorio/paginasLicitacao";
+import { PaginaTrnCursos, PaginaTrnEngajamento, PaginaTrnGeral } from "./relatorio/paginasTreinamentos";
 
 // =====================================================================
 // Relatório do ERP na TV (Sistemas › TV's)
@@ -33,6 +36,13 @@ import { PaginaTurnoverContratos, PaginaTurnoverLimites, PaginaTurnoverResumo } 
 //   · visual novo: faixa da cor do relatório, cartões brancos com sombra,
 //     selos, números grandes, Sofia Sans.
 // Regras em src/lib/tv/relatorioTv.ts (com teste).
+//
+// 08/10/2026 (mig 20261008000007): LICITAÇÕES (o Painel Executivo de
+// /app/painel-executivo/tv refeito para cá — o original não mudou; contas
+// em src/lib/tv/licitacaoTv.ts) e TREINAMENTOS (o Dashboard do módulo).
+// Os dois mostram o todo, como as telas de origem: sem período nem
+// contrato. Na prévia, cada um exige a liberação da tela de origem
+// (tv_licitacao_previa → Painel Executivo; trn_dashboard → Treinamentos).
 // =====================================================================
 
 const CACHE = new Map<string, { em: number; dados: DadosRelTv }>();
@@ -43,7 +53,8 @@ const ORDEM_GERAL = ["recrutamento", "demissoes", "materiais", "ferias", "medida
 
 /** Cor e ícone de cada relatório na TV. */
 function aparencia(slug: string | null | undefined): { cor: string; Icone: LucideIcon } {
-  const Icone = slug === "geral" ? LayoutDashboard : slug === "vagas" ? Briefcase : sistemaPorSlug(slug ?? "")?.icone ?? LayoutDashboard;
+  const Icone = slug === "geral" ? LayoutDashboard : slug === "vagas" ? Briefcase : slug === "licitacoes" ? Gavel : slug === "treinamentos" ? GraduationCap
+    : sistemaPorSlug(slug ?? "")?.icone ?? LayoutDashboard;
   return { cor: corDoRelatorioTv(slug), Icone };
 }
 
@@ -62,6 +73,12 @@ async function carregarPrevia(item: ItemTv): Promise<DadosRelTv> {
   if (item.relatorio === "vagas") {
     return { tipo: "vagas", periodo: { de, ate }, contrato, painel: ok(await rpc("dir_vagas_painel", args)) };
   }
+  if (item.relatorio === "licitacoes") {
+    return { tipo: "licitacoes", contrato: null, ...(ok(await rpc("tv_licitacao_previa")) as { itens: LinhaLicitacaoTv[]; gerado_em?: string }) };
+  }
+  if (item.relatorio === "treinamentos") {
+    return { tipo: "treinamentos", contrato: null, painel: ok(await rpc("trn_dashboard", { _curso: null, _de: null, _ate: null })) };
+  }
   if (item.relatorio === "turnover") {
     const { ano, meses } = mesesTurnoverTv(de, ate);
     const filial = item.rel_contrato ? (ok(await rpc("dir_turnover_filial", { _contrato: item.rel_contrato })) as string | null) : null;
@@ -77,7 +94,8 @@ export function TvRelatorio({ item, token, previa = false }: { item: ItemTv; tok
   const [dados, setDados] = useState<DadosRelTv | null>(CACHE.get(item.id)?.dados ?? null);
   const [erro, setErro] = useState<string | null>(null);
 
-  const chavePrevia = previa ? `${item.relatorio}|${item.rel_periodo}|${item.rel_contrato ?? ""}` : "";
+  const comFiltros = relatorioTemFiltros(item.relatorio);
+  const chavePrevia = previa ? (comFiltros ? `${item.relatorio}|${item.rel_periodo}|${item.rel_contrato ?? ""}` : item.relatorio ?? "") : "";
   useEffect(() => {
     let vivo = true;
     if (previa) {
@@ -112,12 +130,14 @@ export function TvRelatorio({ item, token, previa = false }: { item: ItemTv; tok
 
   const titulo = item.titulo || tituloRelatorioTv(item.relatorio);
   const contratoNome = dados?.contrato ?? null;
-  const selos = [
-    dados?.tipo === "turnover" ? `${dados.painel.ano} · ${rotuloMeses(dados.painel.meses)}` : rotuloPeriodoTv(item.rel_periodo),
-    contratoNome
-      ? (dados?.tipo === "turnover" && !dados.filial ? `${contratoNome} — sem dados de turn-over, mostrando o grupo` : contratoNome)
-      : "Todos os contratos",
-  ];
+  const selos = !comFiltros
+    ? (item.relatorio === "licitacoes" ? ["Todas as empresas do grupo", "Grade completa"] : ["Toda a base de alunos", "Desde o início"])
+    : [
+      dados?.tipo === "turnover" ? `${dados.painel.ano} · ${rotuloMeses(dados.painel.meses)}` : rotuloPeriodoTv(item.rel_periodo),
+      contratoNome
+        ? (dados?.tipo === "turnover" && !dados.filial ? `${contratoNome} — sem dados de turn-over, mostrando o grupo` : contratoNome)
+        : "Todos os contratos",
+    ];
   const atualizado = dados?.gerado_em ? new Date(dados.gerado_em).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })
     : dados ? new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }) : null;
   const atual = paginas[Math.min(pagina, Math.max(0, paginas.length - 1))]?.chave;
@@ -136,6 +156,13 @@ export function TvRelatorio({ item, token, previa = false }: { item: ItemTv; tok
           : atual === "turnover-resumo" && dados.tipo === "turnover" ? <PaginaTurnoverResumo p={dados.painel} cor={cor} />
           : atual === "turnover-contratos" && dados.tipo === "turnover" ? <PaginaTurnoverContratos p={dados.painel} cor={cor} />
           : atual === "turnover-limites" && dados.tipo === "turnover" ? <PaginaTurnoverLimites p={dados.painel} cor={cor} />
+          : atual === "lic-resumo" && dados.tipo === "licitacoes" ? <PaginaLicitacaoResumo itens={dados.itens} cor={cor} />
+          : atual === "lic-mapa" && dados.tipo === "licitacoes" ? <PaginaLicitacaoMapa itens={dados.itens} cor={cor} />
+          : atual === "lic-responsaveis" && dados.tipo === "licitacoes" ? <PaginaLicitacaoResponsaveis itens={dados.itens} cor={cor} />
+          : atual === "lic-aberturas" && dados.tipo === "licitacoes" ? <PaginaLicitacaoAberturas itens={dados.itens} cor={cor} />
+          : atual === "trn-geral" && dados.tipo === "treinamentos" ? <PaginaTrnGeral p={dados.painel} cor={cor} />
+          : atual === "trn-engajamento" && dados.tipo === "treinamentos" ? <PaginaTrnEngajamento p={dados.painel} cor={cor} />
+          : atual === "trn-cursos" && dados.tipo === "treinamentos" ? <PaginaTrnCursos p={dados.painel} cor={cor} />
           : atual === "sistema-detalhe" && dados.tipo === "sistema" ? <PaginaDestaques d={dados} cor={cor} />
           : dados.tipo === "sistema" ? <PaginaResumo d={dados} cor={cor} />
           : <Aviso cor={cor} titulo="Relatório sem página" girando={false} />}

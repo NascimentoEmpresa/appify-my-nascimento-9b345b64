@@ -24,7 +24,7 @@ import {
   useTvPlaylists, type TvAlerta, type TvDispositivo, type TvItem, type TvPlaylist,
 } from "@/hooks/useTvs";
 import {
-  PERIODOS_TV, RELATORIOS_TV, TIPOS_ITEM, corAviso, duracaoTotal, haQuanto, itensNoAr, paginasRelatorioTv, rotuloPeriodoTv, statusTv, telaAoVivo, tituloRelatorioTv,
+  PERIODOS_TV, RELATORIOS_TV, TIPOS_ITEM, corAviso, duracaoTotal, haQuanto, itensNoAr, nomeRelatorioTv, paginasRelatorioTv, relatorioTemFiltros, statusTv, telaAoVivo, tituloRelatorioTv,
   urlValida, youtubeEmbed, type ItemTv, type TelaTv, type TipoItem,
 } from "@/lib/tv/tv";
 import { corDoRelatorioTv, duracaoRecomendada } from "@/lib/tv/relatorioTv";
@@ -364,7 +364,7 @@ function EditorPlaylist({ p, tvs, playlists, onRenomear, onExcluir }: {
                 <li key={i.id} className={`flex items-center gap-3 border-t px-3 py-2 first:border-t-0 ${i.ativo && !fora ? "" : "opacity-50"}`}>
                   <Miniatura item={i} />
                   <div className="min-w-0 flex-1">
-                    <p className="flex items-center gap-1.5 truncate text-sm font-medium"><Ic className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />{i.titulo || (i.tipo === "relatorio" ? `${tituloRelatorioTv(i.relatorio)} · ${rotuloPeriodoTv(i.rel_periodo)}` : null) || i.texto || i.url || TIPOS_ITEM.find((t) => t.valor === i.tipo)?.rotulo}</p>
+                    <p className="flex items-center gap-1.5 truncate text-sm font-medium"><Ic className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />{i.titulo || (i.tipo === "relatorio" ? nomeRelatorioTv(i.relatorio, i.rel_periodo) : null) || i.texto || i.url || TIPOS_ITEM.find((t) => t.valor === i.tipo)?.rotulo}</p>
                     <p className="text-[11px] text-muted-foreground">
                       {i.tipo === "video" ? "toca até o fim" : `${i.duracao_seg} s`}
                       {(i.valido_de || i.valido_ate) && <> · {i.valido_de ? `de ${fmtDataHora(i.valido_de)}` : ""} {i.valido_ate ? `até ${fmtDataHora(i.valido_ate)}` : ""}</>}
@@ -440,6 +440,7 @@ function NovoItem({ playlistId, proximaOrdem, onRascunho }: { playlistId: string
   const [enviando, setEnviando] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const precisaArquivo = f.tipo === "imagem" || f.tipo === "video";
+  const comFiltros = relatorioTemFiltros(f.relatorio);
   const dica = TIPOS_ITEM.find((t) => t.valor === f.tipo)?.dica;
 
   // Prévia (07/10/2026): arquivo ainda não enviado vira blob: para a prévia.
@@ -486,8 +487,9 @@ function NovoItem({ playlistId, proximaOrdem, onRascunho }: { playlistId: string
         playlist_id: playlistId, ordem: proximaOrdem, tipo: f.tipo, titulo: f.titulo.trim() || null,
         url: f.tipo === "url" || f.tipo === "youtube" ? f.url.trim() : null, arquivo: caminho,
         texto: f.tipo === "aviso" ? f.texto.trim() : null, cor: f.tipo === "aviso" ? f.cor : null,
-        relatorio: f.tipo === "relatorio" ? f.relatorio : null, rel_periodo: f.tipo === "relatorio" ? f.periodo : null,
-        rel_contrato: f.tipo === "relatorio" && f.contrato ? f.contrato : null,
+        // Licitações e Treinamentos não usam período nem contrato: não grava (a lista não mostra um filtro que não vale).
+        relatorio: f.tipo === "relatorio" ? f.relatorio : null, rel_periodo: f.tipo === "relatorio" && comFiltros ? f.periodo : null,
+        rel_contrato: f.tipo === "relatorio" && comFiltros && f.contrato ? f.contrato : null,
         duracao_seg: f.tipo === "video" ? 15 : Number(f.duracao),
         valido_de: f.de ? new Date(f.de).toISOString() : null, valido_ate: f.ate ? new Date(f.ate).toISOString() : null,
       } });
@@ -541,6 +543,7 @@ function NovoItem({ playlistId, proximaOrdem, onRascunho }: { playlistId: string
                 </p>
               )}
             </div>
+            {comFiltros ? (<>
             <div><Label className="text-xs">Período</Label>
               <Select value={f.periodo} onValueChange={(v) => setF({ ...f, periodo: v })}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
@@ -555,6 +558,11 @@ function NovoItem({ playlistId, proximaOrdem, onRascunho }: { playlistId: string
                 </SelectContent>
               </Select>
               <p className="mt-1 text-[11px] text-muted-foreground">Ex.: na TV do contrato UFRGS, só os números da UFRGS. Os números se atualizam sozinhos.</p></div>
+            </>) : (
+              <p className="self-end pb-2 text-[11px] text-muted-foreground">
+                {f.relatorio === "licitacoes" ? "Mostra a grade inteira, de todas as empresas do grupo — como o Painel Executivo." : "Mostra a base toda de alunos, como o Dashboard de Treinamentos abre."} Sem período nem contrato; os números se atualizam sozinhos.
+              </p>
+            )}
           </>
         )}
         {f.tipo === "aviso" && (
@@ -589,7 +597,7 @@ function paraItemTv(i: TvItem, contratos: { id: string; nome: string }[]): ItemT
   };
 }
 const nomeDoItem = (i: Pick<ItemTv, "tipo" | "titulo" | "texto" | "url" | "relatorio" | "rel_periodo">) =>
-  i.titulo || (i.tipo === "relatorio" ? `${tituloRelatorioTv(i.relatorio)} · ${rotuloPeriodoTv(i.rel_periodo)}` : null) || i.texto || i.url || TIPOS_ITEM.find((t) => t.valor === i.tipo)?.rotulo || "Item";
+  i.titulo || (i.tipo === "relatorio" ? nomeRelatorioTv(i.relatorio, i.rel_periodo) : null) || i.texto || i.url || TIPOS_ITEM.find((t) => t.valor === i.tipo)?.rotulo || "Item";
 
 /**
  * Uma tela de TV: o próprio player (/tv/previa) num iframe de 1920×1080
