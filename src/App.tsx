@@ -301,6 +301,7 @@ import CoordenarChamado from "./pages/chamados/CoordenarChamado";
 import PainelDesenvolvedorChamados from "./pages/chamados/PainelDesenvolvedor";
 import DashboardDesenvolvedorChamados from "./pages/chamados/DashboardDesenvolvedor";
 import GithubPainelDev from "./pages/chamados/GithubPainel";
+import ConferenciaPontoEncarregado from "./pages/encarregados/ConferenciaPontoEncarregado";
 import ExecutarChamado from "./pages/chamados/ExecutarChamado";
 import AcompanharChamado from "./pages/chamados/AcompanharChamado";
 import WhatsAppInbox from "./pages/whatsapp/WhatsAppInbox";
@@ -485,6 +486,8 @@ const App = () => (
                 menu manda no botão de lançar; aprovar continua sendo só do
                 Operacional. */}
             <Route path="encarregados/diarias" element={<ControleDiarias menuCodigo="encarregados_diarias" />} />
+            {/* Conferência de Ponto dos encarregados (mig 20261007000023): a etapa começa aqui. */}
+            <Route path="encarregados/conferencia-ponto" element={<ConferenciaPontoEncarregado />} />
             {/* Operacional — Controle de Diárias */}
             <Route path="operacional" element={<Navigate to="/app/operacional/diarias" replace />} />
             <Route path="operacional/diarias" element={<ControleDiarias />} />

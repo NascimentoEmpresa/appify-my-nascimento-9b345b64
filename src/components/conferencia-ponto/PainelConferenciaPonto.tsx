@@ -23,6 +23,7 @@ import {
   STATUS_INICIAL, STATUS_TODOS,
   type Acao, type EventoConferencia, type LinhaConferencia, type Modulo, type StatusPonto,
 } from "@/lib/conferenciaPonto/conferencia";
+import { EnviosEncarregados } from "./EnviosEncarregados";
 import { toast } from "sonner";
 import { EtiquetaConferencia, TABELA_ETIQUETA, type Etiqueta } from "./EtiquetaConferencia";
 import { cn } from "@/lib/utils";
@@ -35,7 +36,8 @@ const sb = supabase as any;
  * Porte do dashboard Flask (`sistema_rh/conferencia_ponto`). A lista é a
  * junção de duas coisas: os CONTRATOS ativos (cadastro, fonte única) e o
  * andamento do mês em SISTEMA_CONFERENCIA_PONTO. Contrato sem linha do mês
- * aparece como "Pendente Operacional" mesmo sem existir no banco — a linha
+ * aparece como "Pendente Encarregados" (desde 07/10/2026, mig 20261007000023;
+ * antes "Pendente Operacional") mesmo sem existir no banco — a linha
  * nasce na primeira ação, e é por isso que `id` pode ser null aqui.
  *
  * Preparar o mês inteiro de antemão era um botão no sistema antigo; aqui não
@@ -586,6 +588,11 @@ function DetalheContrato({ linha, pode, modulo, salvando, onFechar, onAgir }: {
             <h3 className="mb-1 text-sm font-semibold text-destructive">Motivo da devolução</h3>
             <p className="whitespace-pre-wrap text-sm">{l.devolucao_motivo}</p>
           </div>
+        )}
+
+        {/* Envios dos encarregados (mig 20261007000023) — a etapa agora começa neles. */}
+        {modulo === "operacional" && (
+          <EnviosEncarregados empresa={l.contrato_empresa} filial={l.contrato_filial} mes={l.mes_referencia} podeReceber={pode("ponto_receber_encarregados")} />
         )}
 
         {/* Trilha das quatro etapas */}

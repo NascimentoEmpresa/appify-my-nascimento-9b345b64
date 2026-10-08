@@ -642,6 +642,9 @@ const encarregadosModule: ModuleDef = {
         // aparece no bloco certo e o Operacional continua invisível para quem
         // não tem menu nenhum dele.
         { label: "Controle de Diárias", to: "/app/encarregados/diarias", icon: CalendarCheck2 },
+        // Envio do ponto do mês ao Operacional (mig 20261007000023) — sem
+        // permissão para ninguém por enquanto (pedido de 07/10/2026).
+        { label: "Conferência de Ponto", to: "/app/encarregados/conferencia-ponto", icon: ClipboardCheck },
       ],
     },
     {

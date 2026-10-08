@@ -42,6 +42,8 @@ const FALLBACK_POR_TIPO: Record<string, string> = {
   // rota é a de ENCARREGADOS de propósito: é lá que quem criou a diária a
   // ajusta e reenvia.
   diaria_ajuste: "/app/encarregados/diarias",
+  // Ponto do encarregado devolvido pelo Operacional (mig 20261007000023).
+  ponto_envio_devolvido: "/app/encarregados/conferencia-ponto",
   // Reembolso novo na alçada (trigger cs_reembolso_notifica_novo, 17/09/2026).
   // A trigger grava o link; isto só cobre linha sem link.
   reembolso_pendente: "/app/central-servicos/reembolso/aprovacao",
