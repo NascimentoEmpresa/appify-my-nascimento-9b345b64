@@ -18,6 +18,7 @@ import {
   somenteHora,
 } from "./horaExtraUtils";
 import { BadgeExecucao, BadgeStatus, ListaAnexos } from "./HoraExtraUI";
+import { linhaSemChamado } from "./prHoraExtraUtils";
 import type { SolicitacaoHoraExtra } from "./types";
 
 const CAMPOS_PONTO = [
@@ -249,9 +250,14 @@ export default function DetalhesHoraExtraDialog({
                 {dados.chamados?.map((c) => (
                   <tr key={c.id} className="border-t">
                     <td className="p-2 font-semibold text-blue-700">
-                      <Link className="underline underline-offset-2 hover:text-blue-900" to={`/app/sistemas/chamados/${c.chamado_id}`}>
-                        #{c.chamado_numero}
-                      </Link>
+                      {/* PR sem chamado (mig 20261008000009): não há chamado para abrir. */}
+                      {linhaSemChamado(c) ? (
+                        <span className="text-slate-500">Sem chamado{c.pr_numero ? ` · PR #${c.pr_numero}` : ""}</span>
+                      ) : (
+                        <Link className="underline underline-offset-2 hover:text-blue-900" to={`/app/sistemas/chamados/${c.chamado_id}`}>
+                          #{c.chamado_numero}
+                        </Link>
+                      )}
                       {c.adicional && <span className="ml-1 text-[10px] text-slate-400">adicional</span>}
                     </td>
                     <td className="p-2">{c.percentual_previsto == null ? "—" : `${c.percentual_previsto}%`}</td>

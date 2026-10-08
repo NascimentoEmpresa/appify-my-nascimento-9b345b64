@@ -27,7 +27,8 @@ export interface EscalaHoraExtra extends PontoDia {
 export interface ChamadoHoraExtra {
   id: string;
   solicitacao_id?: string;
-  chamado_id: string;
+  /** Nulo na linha de PR sem chamado (adicional; mig 20261008000009). */
+  chamado_id: string | null;
   chamado_numero: string;
   chamado_assunto: string;
   chamado_setor?: string | null;

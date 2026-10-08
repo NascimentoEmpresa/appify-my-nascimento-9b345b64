@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { corAviso, duracaoTotal, haQuanto, normalizarChaveTv, rotuloPeriodoTv, statusTv, tituloRelatorioTv, urlValida, youtubeEmbed } from "@/lib/tv/tv";
+import { corAviso, duracaoTotal, haQuanto, normalizarChaveTv, periodoTv, rotuloPeriodoTv, statusTv, tituloRelatorioTv, urlValida, youtubeEmbed } from "@/lib/tv/tv";
 
 // Sistemas › TV's (mig 20261007000012).
 
@@ -53,5 +53,17 @@ describe("TVs — link fixo e relatórios (mig 20261007000014)", () => {
     expect(tituloRelatorioTv("xyz")).toBe("Relatório");
     expect(rotuloPeriodoTv("mes")).toBe("Este mês");
     expect(rotuloPeriodoTv(null)).toBe("Últimos 12 meses");
+  });
+});
+
+describe("TVs — prévia", () => {
+  it("período do relatório igual ao do banco (tv_rel_periodo)", () => {
+    const hoje = new Date(2026, 9, 7); // 07/10/2026
+    expect(periodoTv("mes", hoje)).toEqual({ de: "2026-10-01", ate: "2026-10-07" });
+    expect(periodoTv("3m", hoje)).toEqual({ de: "2026-08-01", ate: "2026-10-07" });
+    expect(periodoTv("6m", hoje)).toEqual({ de: "2026-05-01", ate: "2026-10-07" });
+    expect(periodoTv("12m", hoje)).toEqual({ de: "2025-11-01", ate: "2026-10-07" });
+    expect(periodoTv("ano", hoje)).toEqual({ de: "2026-01-01", ate: "2026-10-07" });
+    expect(periodoTv(null, hoje)).toEqual({ de: "2025-11-01", ate: "2026-10-07" });
   });
 });

@@ -1,11 +1,13 @@
-import { Fragment, useMemo, useState, type ReactNode } from "react";
+import { Fragment, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import {
   Bar, BarChart, CartesianGrid, Cell, ComposedChart, LabelList, Legend, Line, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from "recharts";
 import {
-  AlertTriangle, ArrowLeft, ArrowUpDown, Briefcase, CheckCircle2, Clock, Hourglass, Info, Loader2, Search, ShieldAlert, Timer, Users, XCircle,
+  AlertTriangle, ArrowLeft, ArrowUpDown, Briefcase, CheckCircle2, Clock, Hourglass, Info, ListFilter, Loader2, MousePointerClick, Search, ShieldAlert, Timer, Users, XCircle,
 } from "lucide-react";
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import type { Desfecho } from "@/lib/recrutamento/fluxoStatus";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -22,7 +24,8 @@ import {
   DIMENSOES, ETAPAS, FILTRO_LOCAL_PADRAO, META_DIAS_CONTRATAR, agingAbertas, agruparVagas, aplicarFiltroLocal, corDias, desfechoVaga,
   diasEntreMs, diasNoStatus, diasPorEtapa, diasTotais, etapaDoStatus, fmtDias, funilVagas, mensalVagas, opcoesDe, resumoVagas, tempoAprovacao,
   tempoPorEtapa, tituloEtapa, trechosDaVaga, vagaFechada, vagaDoDetalhe, kanbanCandidatos, diasPorStatus, COLUNAS_CANDIDATO,
-  type Dimensao, type FiltroLocal, type LinhaEtapa, type PainelVagas, type VagaPainel,
+  filtrarRecorte, ordenarRecorte, tituloRecorte, vagasDoRecorte,
+  type ColunaGrupo, type Dimensao, type FiltroLocal, type LinhaEtapa, type OrdemRecorte, type PainelVagas, type Recorte, type VagaPainel,
 } from "@/lib/relatorios/vagasPainel";
 import { rotuloMes, type Kpi } from "./sistemas";
 import { LinhaKpis, SeletorPeriodo, usePeriodo } from "./componentes";
@@ -42,6 +45,15 @@ import { LinhaKpis, SeletorPeriodo, usePeriodo } from "./componentes";
 //     etapa; clicar abre o dashboard da vaga (trechos, comparação com a
 //     média, candidatos e a trilha completa).
 // Contas em src/lib/relatorios/vagasPainel.ts (com teste).
+//
+// 08/10/2026 — pedido do Pablo: "ao clicar em um gráfico apareça as vagas
+// referentes ao gráfico (cliquei em 16–30 d, aparecem as abertas nesse
+// período), e outros filtros". Todo número do painel abre a lista por trás
+// dele (ListaRecorte, painel lateral): KPIs, mês a mês (o mês ou o pedaço
+// da barra), funil, desfecho, aging, urgência, a tabela por contrato/cargo/…
+// e os gráficos de etapa. A lista tem busca, filtro por desfecho e ordem;
+// clicar numa vaga abre o dashboard dela. Critério de cada recorte em
+// vagasDoRecorte — o mesmo da conta que desenhou o gráfico.
 // =====================================================================
 
 const COR_ETAPA: Record<string, string> = {
@@ -72,6 +84,8 @@ export default function VagasPainel() {
     setParams(n, { replace: true });
   };
   const abrirVaga = (v: VagaPainel) => { setVagaId(v.id); setAba("vaga"); };
+  // A lista por trás do número clicado (08/10/2026).
+  const [recorte, setRecorte] = useState<Recorte | null>(null);
 
   const bruto = q.data;
   const p = useMemo(() => (bruto ? aplicarFiltroLocal(bruto, filtro) : undefined), [bruto, filtro]);
@@ -102,8 +116,8 @@ export default function VagasPainel() {
             <TabsTrigger value="vagas">Todas as vagas</TabsTrigger>
             <TabsTrigger value="vaga" className="gap-1.5"><Briefcase className="h-3.5 w-3.5" /> Por vaga</TabsTrigger>
           </TabsList>
-          <TabsContent value="geral" className="space-y-4"><AbaGeral p={p} meses={periodo.meses} /></TabsContent>
-          <TabsContent value="etapas" className="space-y-4"><AbaEtapas p={p} etapas={etapas} /></TabsContent>
+          <TabsContent value="geral" className="space-y-4"><AbaGeral p={p} meses={periodo.meses} onRecorte={setRecorte} onAbrir={abrirVaga} /></TabsContent>
+          <TabsContent value="etapas" className="space-y-4"><AbaEtapas p={p} etapas={etapas} onRecorte={setRecorte} /></TabsContent>
           <TabsContent value="abertas" className="space-y-4"><AbaAbertas p={p} onAbrir={abrirVaga} /></TabsContent>
           <TabsContent value="vagas" className="space-y-4"><AbaVagas p={p} onAbrir={abrirVaga} /></TabsContent>
           <TabsContent value="vaga" className="space-y-4">
@@ -111,8 +125,118 @@ export default function VagasPainel() {
           </TabsContent>
         </Tabs>
       )}
+      {p && <ListaRecorte p={p} recorte={recorte} onFechar={() => setRecorte(null)} onAbrir={(v) => { setRecorte(null); abrirVaga(v); }} />}
     </div>
   );
+}
+
+// ---- Lista por trás de um número (clique nos gráficos) ------------------------------
+
+const DESFECHOS: Desfecho[] = ["andamento", "contratada", "reprovada", "cancelada"];
+
+function ListaRecorte({ p, recorte, onFechar, onAbrir }: {
+  p: PainelVagas; recorte: Recorte | null; onFechar: () => void; onAbrir: (v: VagaPainel) => void;
+}) {
+  return (
+    <Sheet open={!!recorte} onOpenChange={(o) => !o && onFechar()}>
+      <SheetContent className="w-full overflow-y-auto sm:max-w-4xl">
+        {/* key: trocar de recorte zera busca/filtro/ordem. */}
+        {recorte && <ConteudoRecorte key={JSON.stringify(recorte)} p={p} recorte={recorte} onAbrir={onAbrir} />}
+      </SheetContent>
+    </Sheet>
+  );
+}
+
+function ConteudoRecorte({ p, recorte, onAbrir }: { p: PainelVagas; recorte: Recorte; onAbrir: (v: VagaPainel) => void }) {
+  const [busca, setBusca] = useState("");
+  const [desf, setDesf] = useState<Desfecho | null>(null);
+  const [ordem, setOrdem] = useState<OrdemRecorte>("demoradas");
+  const [limite, setLimite] = useState(100);
+  const todas = useMemo(() => vagasDoRecorte(p, recorte), [p, recorte]);
+  const porDesfecho = useMemo(() => {
+    const c: Record<Desfecho, number> = { andamento: 0, contratada: 0, reprovada: 0, cancelada: 0 };
+    for (const v of todas) c[desfechoVaga(v)]++;
+    return c;
+  }, [todas]);
+  const lista = useMemo(() => ordenarRecorte(filtrarRecorte(todas, busca, desf), p.agora, ordem), [todas, busca, desf, ordem, p.agora]);
+  const posicoes = lista.reduce((s, v) => s + (v.qtd || 1), 0);
+  const filtrando = !!busca.trim() || desf != null;
+
+  return (
+    <>
+      <SheetHeader>
+        <SheetTitle className="flex items-center gap-2"><ListFilter className="h-5 w-5 text-primary" /> {tituloRecorte(recorte)}</SheetTitle>
+        <SheetDescription>
+          {filtrando ? `${lista.length} de ${todas.length} vagas` : `${todas.length} vaga(s)`} · {posicoes} posição(ões) — clique numa vaga para abrir o dashboard dela.
+        </SheetDescription>
+      </SheetHeader>
+      <div className="mt-4 space-y-3">
+        <div className="flex flex-wrap gap-1.5">
+          <Button size="sm" variant={desf == null ? "default" : "outline"} className="h-7 text-xs" onClick={() => setDesf(null)}>Todas ({todas.length})</Button>
+          {DESFECHOS.filter((d) => porDesfecho[d] > 0).map((d) => (
+            <Button key={d} size="sm" variant={desf === d ? "default" : "outline"} className="h-7 gap-1.5 text-xs" onClick={() => setDesf(desf === d ? null : d)}>
+              <span className="h-2 w-2 rounded-full" style={{ background: COR_DESFECHO[d] }} /> {ROTULO_DESFECHO[d]} ({porDesfecho[d]})
+            </Button>
+          ))}
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="relative flex-1">
+            <Search className="absolute left-2 top-2 h-4 w-4 text-muted-foreground" />
+            <Input value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Nº, cargo, contrato, cidade, solicitante, status…" className="h-8 min-w-[220px] pl-8 text-xs" />
+          </div>
+          <Select value={ordem} onValueChange={(v) => setOrdem(v as OrdemRecorte)}>
+            <SelectTrigger className="h-8 w-52 text-xs"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="demoradas">Mais tempo primeiro</SelectItem>
+              <SelectItem value="antigas">Pedidas há mais tempo</SelectItem>
+              <SelectItem value="recentes">Mais recentes primeiro</SelectItem>
+              <SelectItem value="candidatos">Mais candidatos primeiro</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        {lista.length ? (
+          <div className="overflow-x-auto rounded-md border border-border">
+            <table className="w-full text-xs">
+              <thead><tr className="bg-muted/40 text-left text-[10px] uppercase tracking-wider text-muted-foreground">
+                <th className="px-3 py-2">Vaga</th><th className="px-3 py-2">Situação</th><th className="px-3 py-2">Pedida em</th>
+                <th className="px-3 py-2 text-right" title="Aberta: desde o pedido até hoje · fechada: até fechar">Tempo</th>
+                <th className="px-3 py-2 text-right">Cand.</th><th className="px-3 py-2">Urgência</th><th className="px-3 py-2">Solicitante</th>
+              </tr></thead>
+              <tbody>
+                {lista.slice(0, limite).map((v) => {
+                  const total = diasTotais(v, p.agora);
+                  return (
+                    <tr key={v.id} className="cursor-pointer border-t border-border/60 hover:bg-muted/40" onClick={() => onAbrir(v)}>
+                      <td className="max-w-[300px] px-3 py-1.5">
+                        <p className="truncate font-medium text-primary">{tituloVaga(v)}{v.qtd > 1 && <span className="text-muted-foreground"> ×{v.qtd}</span>}</p>
+                        <p className="truncate text-[10px] text-muted-foreground" title={v.contrato ?? ""}>{v.contrato ?? "—"}{v.cidade ? ` · ${v.cidade}` : ""}</p>
+                      </td>
+                      <td className="px-3 py-1.5"><SeloDesfecho v={v} /></td>
+                      <td className="whitespace-nowrap px-3 py-1.5 tabular-nums text-muted-foreground">{fmtData(v.criada)}</td>
+                      <td className="whitespace-nowrap px-3 py-1.5 text-right font-semibold tabular-nums" style={vagaFechada(v) ? undefined : { color: corDias(total) }}>{fmtDias(total, 0)}</td>
+                      <td className="px-3 py-1.5 text-right tabular-nums">{v.cand.total || "—"}</td>
+                      <td className="max-w-[140px] truncate px-3 py-1.5 text-muted-foreground">{v.urgencia ?? "—"}</td>
+                      <td className="max-w-[140px] truncate px-3 py-1.5 text-muted-foreground">{v.solicitante ?? "—"}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+            {lista.length > limite && (
+              <div className="border-t border-border p-2 text-center">
+                <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => setLimite((l) => l + 200)}>Mostrar mais ({lista.length - limite} restantes)</Button>
+              </div>
+            )}
+          </div>
+        ) : <SemDados texto={filtrando ? "Nenhuma vaga com esses filtros." : "Nenhuma vaga aqui."} />}
+      </div>
+    </>
+  );
+}
+
+/** Aviso discreto de que os gráficos abrem a lista. */
+function DicaClique() {
+  return <p className="flex items-center gap-1.5 text-[11px] text-muted-foreground"><MousePointerClick className="h-3.5 w-3.5" /> Clique nos números, barras e fatias para ver as vagas por trás deles.</p>;
 }
 
 // ---- Filtros da tela (por cima do período/contrato) -----------------------------
@@ -159,15 +283,29 @@ function FiltrosLocais({ bruto, filtro, onChange }: { bruto?: PainelVagas; filtr
 
 // ---- Visão geral ------------------------------------------------------------------
 
-function AbaGeral({ p, meses }: { p: PainelVagas; meses: number[] | null }) {
+/** O evento de clique dos gráficos do recharts (2.x): a coluna sob o mouse. */
+type CliqueGrafico = { activeTooltipIndex?: number; activeLabel?: string | number } | null;
+
+function AbaGeral({ p, meses, onRecorte, onAbrir }: { p: PainelVagas; meses: number[] | null; onRecorte: (r: Recorte) => void; onAbrir: (v: VagaPainel) => void }) {
   const r = useMemo(() => resumoVagas(p), [p]);
+  // No mês a mês, o clique no PEDAÇO da barra (contratadas/andamento/
+  // reprovadas) chega antes do clique na coluna (o mês inteiro) — a trava
+  // impede o segundo de apagar o primeiro.
+  const cliqueNaBarra = useRef(false);
+  const cliqueMes = (desfecho: "contratadas" | "andamento" | "reprovadas") => (d: { mes?: string; payload?: { mes?: string } }) => {
+    const mes = d?.mes ?? d?.payload?.mes;
+    if (!mes) return;
+    cliqueNaBarra.current = true;
+    setTimeout(() => { cliqueNaBarra.current = false; }, 0);   // não sobra trava se a coluna não receber o clique
+    onRecorte({ tipo: "mes", mes, desfecho });
+  };
   const mensal = useMemo(() => mensalVagas(p).filter((m) => !meses || m.solicitadas > 0).map((m) => ({ ...m, rotulo: rotuloMes(m.mes), tempoMedio: n1(m.tempoMedio) })), [p, meses]);
   const funil = useMemo(() => funilVagas(p), [p]);
   const aging = useMemo(() => agingAbertas(p), [p]);
   const desfechos = useMemo(() => {
     const c = { contratada: 0, andamento: 0, reprovada: 0, cancelada: 0 };
     for (const v of p.vagas) if (v.no_periodo) c[desfechoVaga(v)]++;
-    return (Object.keys(c) as (keyof typeof c)[]).filter((k) => c[k] > 0).map((k) => ({ nome: ROTULO_DESFECHO[k], n: c[k], cor: COR_DESFECHO[k] }));
+    return (Object.keys(c) as (keyof typeof c)[]).filter((k) => c[k] > 0).map((k) => ({ chave: k, nome: ROTULO_DESFECHO[k], n: c[k], cor: COR_DESFECHO[k] }));
   }, [p]);
   const porUrgencia = useMemo(() => agruparVagas(p, "urgencia").filter((g) => g.tempoMedioContratar != null)
     .map((g) => ({ nome: g.nome, dias: n1(g.tempoMedioContratar), n: g.contratadas })), [p]);
@@ -185,9 +323,22 @@ function AbaGeral({ p, meses }: { p: PainelVagas; meses: number[] | null }) {
     { rotulo: "Aberta mais antiga", valor: r.abertaMaisAntiga ? Math.floor(diasTotais(r.abertaMaisAntiga, p.agora)) : null, formato: "dias", tom: "warning", dica: r.abertaMaisAntiga ? tituloVaga(r.abertaMaisAntiga) : null },
   ];
 
+  const kpi = (k: Extract<Recorte, { tipo: "kpi" }>) => () => onRecorte(k);
+  const aoClicar: Record<string, () => void> = {
+    "Vagas solicitadas": kpi({ tipo: "kpi", kpi: "solicitadas" }),
+    "Contratadas": kpi({ tipo: "kpi", kpi: "contratadas" }),
+    "Reprovadas / canceladas": kpi({ tipo: "kpi", kpi: "reprovadas" }),
+    "Em aberto agora": kpi({ tipo: "kpi", kpi: "abertas" }),
+    "Tempo médio até contratar": kpi({ tipo: "kpi", kpi: "contratadas" }),
+    [`Contratadas em até ${META_DIAS_CONTRATAR} dias`]: kpi({ tipo: "kpi", kpi: "no_prazo" }),
+    "Desistências de candidatos": kpi({ tipo: "kpi", kpi: "desistencias" }),
+  };
+  if (r.abertaMaisAntiga) { const v = r.abertaMaisAntiga; aoClicar["Aberta mais antiga"] = () => onAbrir(v); }
+
   return (
     <>
-      <LinhaKpis kpis={kpis} />
+      <LinhaKpis kpis={kpis} aoClicar={aoClicar} />
+      <DicaClique />
       {r.legado > 0 && (
         <p className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
           <Info className="h-3.5 w-3.5" /> {r.legado} vaga(s) do sistema antigo (Discord) no período: entram no tempo total, mas não têm o tempo por etapa (o log de etapas começou em {fmtData(p.log_desde)}).
@@ -199,25 +350,30 @@ function AbaGeral({ p, meses }: { p: PainelVagas; meses: number[] | null }) {
           <p className="mb-1 text-sm font-semibold">Mês a mês — pelas vagas pedidas no mês</p>
           <p className="mb-2 text-[11px] text-muted-foreground">Das solicitadas em cada mês, quantas já foram contratadas, reprovadas ou seguem em andamento; a linha é o tempo médio até contratar.</p>
           <ResponsiveContainer width="100%" height={290}>
-            <ComposedChart data={mensal} margin={{ top: 8, right: 8, left: -12, bottom: 0 }}>
+            <ComposedChart data={mensal} margin={{ top: 8, right: 8, left: -12, bottom: 0 }} className="cursor-pointer"
+              onClick={(e: CliqueGrafico) => {
+                if (cliqueNaBarra.current) { cliqueNaBarra.current = false; return; }
+                const m = e?.activeTooltipIndex != null ? mensal[e.activeTooltipIndex] : undefined;
+                if (m) onRecorte({ tipo: "mes", mes: m.mes });
+              }}>
               <CartesianGrid strokeDasharray="3 3" vertical={false} />
               <XAxis dataKey="rotulo" tick={{ fontSize: 11 }} />
               <YAxis yAxisId="n" tick={{ fontSize: 11 }} allowDecimals={false} />
               <YAxis yAxisId="d" orientation="right" tick={{ fontSize: 11 }} unit=" d" />
               <Tooltip formatter={(v: number, k: string) => (k === "Tempo médio (dias)" ? fmtDias(v) : v)} />
               <Legend wrapperStyle={{ fontSize: 11 }} />
-              <Bar yAxisId="n" dataKey="contratadas" name="Contratadas" stackId="a" fill={COR_DESFECHO.contratada} />
-              <Bar yAxisId="n" dataKey="andamento" name="Em andamento" stackId="a" fill={COR_DESFECHO.andamento} />
-              <Bar yAxisId="n" dataKey="reprovadas" name="Reprovadas/canceladas" stackId="a" fill={COR_DESFECHO.reprovada} radius={[3, 3, 0, 0]} />
+              <Bar yAxisId="n" dataKey="contratadas" name="Contratadas" stackId="a" fill={COR_DESFECHO.contratada} onClick={cliqueMes("contratadas")} />
+              <Bar yAxisId="n" dataKey="andamento" name="Em andamento" stackId="a" fill={COR_DESFECHO.andamento} onClick={cliqueMes("andamento")} />
+              <Bar yAxisId="n" dataKey="reprovadas" name="Reprovadas/canceladas" stackId="a" fill={COR_DESFECHO.reprovada} radius={[3, 3, 0, 0]} onClick={cliqueMes("reprovadas")} />
               <Line yAxisId="d" dataKey="tempoMedio" name="Tempo médio (dias)" stroke="#1d4ed8" strokeWidth={2} dot={{ r: 3 }} connectNulls />
             </ComposedChart>
           </ResponsiveContainer>
         </Card>
         <Card className="p-4">
           <p className="mb-3 text-sm font-semibold">Funil das vagas do período</p>
-          <div className="space-y-2.5">
+          <div className="space-y-1.5">
             {funil.map((d, i) => (
-              <div key={d.chave}>
+              <button key={d.chave} type="button" className="block w-full rounded-md p-1 text-left transition-colors hover:bg-muted/60" onClick={() => onRecorte({ tipo: "funil", degrau: d.chave })}>
                 <div className="mb-0.5 flex items-center justify-between text-xs">
                   <span className="font-medium">{d.titulo}</span>
                   <span className="tabular-nums text-muted-foreground"><b className="text-foreground">{d.n.toLocaleString("pt-BR")}</b> · {d.pct.toFixed(0)}%</span>
@@ -225,7 +381,7 @@ function AbaGeral({ p, meses }: { p: PainelVagas; meses: number[] | null }) {
                 <div className="h-5 overflow-hidden rounded bg-muted">
                   <div className="h-full rounded" style={{ width: `${Math.max(d.pct, d.n ? 2 : 0)}%`, background: i === funil.length - 1 ? "#16a34a" : `hsl(217 91% ${40 + i * 7}%)` }} />
                 </div>
-              </div>
+              </button>
             ))}
           </div>
           <p className="mt-3 text-[11px] text-muted-foreground">"Até onde chegou": uma vaga reprovada na entrevista conta em Aprovadas, Abertas e Em entrevistas.</p>
@@ -237,7 +393,8 @@ function AbaGeral({ p, meses }: { p: PainelVagas; meses: number[] | null }) {
           <p className="mb-2 text-sm font-semibold">Desfecho das vagas do período</p>
           <ResponsiveContainer width="100%" height={240}>
             <PieChart>
-              <Pie data={desfechos} dataKey="n" nameKey="nome" innerRadius={55} outerRadius={90} paddingAngle={2}>
+              <Pie data={desfechos} dataKey="n" nameKey="nome" innerRadius={55} outerRadius={90} paddingAngle={2} className="cursor-pointer"
+                onClick={(_: unknown, i: number) => { const d = desfechos[i]; if (d) onRecorte({ tipo: "desfecho", desfecho: d.chave }); }}>
                 {desfechos.map((d) => <Cell key={d.nome} fill={d.cor} />)}
               </Pie>
               <Tooltip />
@@ -248,7 +405,8 @@ function AbaGeral({ p, meses }: { p: PainelVagas; meses: number[] | null }) {
         <Card className="p-4">
           <p className="mb-2 text-sm font-semibold">Abertas agora — há quanto tempo</p>
           <ResponsiveContainer width="100%" height={240}>
-            <BarChart data={aging} margin={{ top: 16, right: 8, left: -18, bottom: 0 }}>
+            <BarChart data={aging} margin={{ top: 16, right: 8, left: -18, bottom: 0 }} className="cursor-pointer"
+              onClick={(e: CliqueGrafico) => { if (e?.activeTooltipIndex != null) onRecorte({ tipo: "aging", faixa: e.activeTooltipIndex }); }}>
               <CartesianGrid strokeDasharray="3 3" vertical={false} />
               <XAxis dataKey="rotulo" tick={{ fontSize: 11 }} />
               <YAxis tick={{ fontSize: 11 }} allowDecimals={false} />
@@ -264,7 +422,11 @@ function AbaGeral({ p, meses }: { p: PainelVagas; meses: number[] | null }) {
           <p className="mb-2 text-sm font-semibold">Tempo até contratar por urgência</p>
           {porUrgencia.length ? (
             <ResponsiveContainer width="100%" height={240}>
-              <BarChart data={porUrgencia} layout="vertical" margin={{ top: 0, right: 40, left: 8, bottom: 0 }}>
+              <BarChart data={porUrgencia} layout="vertical" margin={{ top: 0, right: 40, left: 8, bottom: 0 }} className="cursor-pointer"
+                onClick={(e: CliqueGrafico) => {
+                  const g = e?.activeTooltipIndex != null ? porUrgencia[e.activeTooltipIndex] : undefined;
+                  if (g) onRecorte({ tipo: "grupo", dim: "urgencia", nome: g.nome, coluna: "contratadas" });
+                }}>
                 <XAxis type="number" hide />
                 <YAxis type="category" dataKey="nome" width={130} tick={{ fontSize: 10 }} />
                 <Tooltip formatter={(v: number) => fmtDias(v)} />
@@ -277,14 +439,14 @@ function AbaGeral({ p, meses }: { p: PainelVagas; meses: number[] | null }) {
         </Card>
       </div>
 
-      <TabelaGrupos p={p} />
+      <TabelaGrupos p={p} onRecorte={onRecorte} />
     </>
   );
 }
 
 type ColGrupo = "nome" | "vagas" | "abertas" | "contratadas" | "reprovadas" | "tempoMedioContratar" | "mediaDiasAbertas";
 
-function TabelaGrupos({ p }: { p: PainelVagas }) {
+function TabelaGrupos({ p, onRecorte }: { p: PainelVagas; onRecorte: (r: Recorte) => void }) {
   const [dim, setDim] = useState<Dimensao>("contrato");
   const [ord, setOrd] = useState<{ col: ColGrupo; desc: boolean }>({ col: "vagas", desc: true });
   const [todos, setTodos] = useState(false);
@@ -325,17 +487,26 @@ function TabelaGrupos({ p }: { p: PainelVagas }) {
             <Th col="mediaDiasAbertas" className="text-right">Abertas há (média)</Th>
           </tr></thead>
           <tbody>
-            {visiveis.map((l) => (
-              <tr key={l.nome} className="border-t border-border/60">
+            {visiveis.map((l) => {
+              // Linha = todas do grupo; cada número abre só aquela coluna.
+              const abrir = (coluna?: ColunaGrupo) => (e: { stopPropagation: () => void }) => { e.stopPropagation(); onRecorte({ tipo: "grupo", dim, nome: l.nome, coluna }); };
+              const Num = ({ coluna, n, children, className = "" }: { coluna: ColunaGrupo; n: number; children: ReactNode; className?: string }) => (
+                <td className={`px-3 py-1.5 text-right tabular-nums ${className}`}>
+                  {n ? <button type="button" className="rounded px-1 hover:bg-primary/10 hover:underline" onClick={abrir(coluna)}>{children}</button> : "—"}
+                </td>
+              );
+              return (
+              <tr key={l.nome} className="cursor-pointer border-t border-border/60 hover:bg-muted/40" onClick={abrir()} title="Clique para ver as vagas">
                 <td className="max-w-[280px] truncate px-3 py-1.5 font-medium" title={l.nome}>{l.nome}</td>
-                <td className="px-3 py-1.5 text-right tabular-nums">{l.vagas}{l.posicoes > l.vagas && <span className="text-muted-foreground"> ({l.posicoes} pos.)</span>}</td>
-                <td className="px-3 py-1.5 text-right tabular-nums text-success">{l.contratadas || "—"}</td>
-                <td className="px-3 py-1.5 text-right tabular-nums text-destructive">{l.reprovadas || "—"}</td>
-                <td className="px-3 py-1.5 text-right tabular-nums">{l.abertas ? <b className="text-warning">{l.abertas}</b> : "—"}</td>
+                <Num coluna="vagas" n={l.vagas}>{l.vagas}{l.posicoes > l.vagas && <span className="text-muted-foreground"> ({l.posicoes} pos.)</span>}</Num>
+                <Num coluna="contratadas" n={l.contratadas} className="text-success">{l.contratadas}</Num>
+                <Num coluna="reprovadas" n={l.reprovadas} className="text-destructive">{l.reprovadas}</Num>
+                <Num coluna="abertas" n={l.abertas}><b className="text-warning">{l.abertas}</b></Num>
                 <td className="px-3 py-1.5 text-right tabular-nums">{fmtDias(l.tempoMedioContratar)}</td>
                 <td className="px-3 py-1.5 text-right tabular-nums">{l.mediaDiasAbertas != null ? <span style={{ color: corDias(l.mediaDiasAbertas) }} className="font-semibold">{fmtDias(l.mediaDiasAbertas)}</span> : "—"}</td>
               </tr>
-            ))}
+              );
+            })}
           </tbody>
         </table>
       </div>
@@ -350,7 +521,7 @@ function TabelaGrupos({ p }: { p: PainelVagas }) {
 
 // ---- Tempo por etapa ------------------------------------------------------------------
 
-function AbaEtapas({ p, etapas }: { p: PainelVagas; etapas: LinhaEtapa[] }) {
+function AbaEtapas({ p, etapas, onRecorte }: { p: PainelVagas; etapas: LinhaEtapa[]; onRecorte: (r: Recorte) => void }) {
   const fluxo = etapas.filter((e) => e.chave !== "legado" && e.chave !== "outros");
   const gargalo = [...fluxo].filter((e) => e.media != null).sort((a, b) => (b.media ?? 0) - (a.media ?? 0))[0];
   const travada = [...etapas].sort((a, b) => b.paradasAgora - a.paradasAgora)[0];
@@ -386,12 +557,14 @@ function AbaEtapas({ p, etapas }: { p: PainelVagas; etapas: LinhaEtapa[] }) {
         </Card>
       </div>
 
+      <DicaClique />
       <div className="grid gap-4 lg:grid-cols-2">
         <Card className="p-4">
           <p className="mb-2 text-sm font-semibold">Tempo médio em cada etapa (vagas do período)</p>
           {dados.length ? (
             <ResponsiveContainer width="100%" height={Math.max(220, dados.length * 42)}>
-              <BarChart data={dados} layout="vertical" margin={{ top: 0, right: 48, left: 8, bottom: 0 }}>
+              <BarChart data={dados} layout="vertical" margin={{ top: 0, right: 48, left: 8, bottom: 0 }} className="cursor-pointer"
+                onClick={(e: CliqueGrafico) => { const d = e?.activeTooltipIndex != null ? dados[e.activeTooltipIndex] : undefined; if (d) onRecorte({ tipo: "etapa_passou", etapa: d.chave }); }}>
                 <CartesianGrid strokeDasharray="3 3" horizontal={false} />
                 <XAxis type="number" tick={{ fontSize: 11 }} unit=" d" />
                 <YAxis type="category" dataKey="nome" width={150} tick={{ fontSize: 11 }} />
@@ -410,7 +583,8 @@ function AbaEtapas({ p, etapas }: { p: PainelVagas; etapas: LinhaEtapa[] }) {
           <p className="mb-2 text-sm font-semibold">Vagas abertas paradas em cada etapa agora</p>
           {paradas.length ? (
             <ResponsiveContainer width="100%" height={Math.max(220, paradas.length * 42)}>
-              <BarChart data={paradas} layout="vertical" margin={{ top: 0, right: 48, left: 8, bottom: 0 }}>
+              <BarChart data={paradas} layout="vertical" margin={{ top: 0, right: 48, left: 8, bottom: 0 }} className="cursor-pointer"
+                onClick={(e: CliqueGrafico) => { const d = e?.activeTooltipIndex != null ? paradas[e.activeTooltipIndex] : undefined; if (d) onRecorte({ tipo: "etapa_parada", etapa: d.chave }); }}>
                 <CartesianGrid strokeDasharray="3 3" horizontal={false} />
                 <XAxis type="number" tick={{ fontSize: 11 }} allowDecimals={false} />
                 <YAxis type="category" dataKey="nome" width={150} tick={{ fontSize: 11 }} />
@@ -440,11 +614,15 @@ function AbaEtapas({ p, etapas }: { p: PainelVagas; etapas: LinhaEtapa[] }) {
                 <tr key={e.chave} className="border-t border-border/60">
                   <td className="px-3 py-1.5 font-medium"><span className="mr-1.5 inline-block h-2.5 w-2.5 rounded-sm align-middle" style={{ background: COR_ETAPA[e.chave] }} />{e.titulo}</td>
                   <td className="px-3 py-1.5 text-muted-foreground">{PASSOS_FLUXO.find((x) => x.chave === e.chave)?.quem ?? (e.chave === "legado" ? "Vagas do Discord: só o tempo total" : "Status fora do fluxo")}</td>
-                  <td className="px-3 py-1.5 text-right tabular-nums">{e.vagas || "—"}</td>
+                  <td className="px-3 py-1.5 text-right tabular-nums">
+                    {e.vagas ? <button type="button" className="rounded px-1 hover:bg-primary/10 hover:underline" onClick={() => onRecorte({ tipo: "etapa_passou", etapa: e.chave })}>{e.vagas}</button> : "—"}
+                  </td>
                   <td className="px-3 py-1.5 text-right font-semibold tabular-nums">{fmtDias(e.media)}</td>
                   <td className="px-3 py-1.5 text-right tabular-nums">{fmtDias(e.mediana)}</td>
                   <td className="px-3 py-1.5 text-right tabular-nums">{fmtDias(e.maximo)}</td>
-                  <td className="px-3 py-1.5 text-right tabular-nums">{e.paradasAgora ? <b className="text-warning">{e.paradasAgora}</b> : "—"}</td>
+                  <td className="px-3 py-1.5 text-right tabular-nums">
+                    {e.paradasAgora ? <button type="button" className="rounded px-1 hover:bg-primary/10 hover:underline" onClick={() => onRecorte({ tipo: "etapa_parada", etapa: e.chave })}><b className="text-warning">{e.paradasAgora}</b></button> : "—"}
+                  </td>
                   <td className="px-3 py-1.5 text-right tabular-nums">{fmtDias(e.mediaParadas)}</td>
                   <td className="px-3 py-1.5 text-right tabular-nums">{e.maiorParada != null ? <span style={{ color: corDias(e.maiorParada) }} className="font-semibold">{fmtDias(e.maiorParada)}</span> : "—"}</td>
                 </tr>

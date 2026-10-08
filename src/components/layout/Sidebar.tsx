@@ -786,6 +786,30 @@ const treinamentosModule: ModuleDef = {
 };
 
 // Sistemas — demandas de sistemas (kanban de 13 etapas, acesso livre)
+// TV's — módulo próprio desde 07/10/2026 (mig 20261007000016). Nasceu como
+// item de Sistemas (mig 20261007000012) e "não aparecia" para quem procurava
+// o módulo. Mesmo arranjo dos Relatórios: o menu mudou de módulo mantendo
+// código (sistemas_tvs) e rota (/app/sistemas/tvs), então as liberações
+// continuam valendo.
+const tvsModule: ModuleDef = {
+  id: "tvs",
+  label: "TV's",
+  description: "TVs da empresa: conexão, playlists, relatórios e avisos",
+  icon: MonitorPlay,
+  basePath: "/app/sistemas/tvs",
+  headerLink: "/app/sistemas/tvs",
+  status: "active",
+  groups: [
+    {
+      label: "TV's",
+      defaultOpen: true,
+      items: [
+        { label: "Gestão das TVs", to: "/app/sistemas/tvs", icon: MonitorPlay },
+      ],
+    },
+  ],
+};
+
 const sistemasModule: ModuleDef = {
   id: "sistemas",
   label: "Sistemas",
@@ -805,9 +829,6 @@ const sistemasModule: ModuleDef = {
         // encarregado) e de demitidos a excluir. A bolinha vem da
         // minhas_pendencias_aprovacao (mig 20261006000010).
         { label: "Logins — Admissão e Demissão", to: "/app/sistemas/logins", icon: KeyRound },
-        // TVs da empresa (07/10/2026, mig 20261007000012): conectar as TVs pelo
-        // código que aparece em /tv, playlists e aviso geral. Liberação: sistemas_tvs.
-        { label: "TV's", to: "/app/sistemas/tvs", icon: MonitorPlay },
       ],
     },
     {
@@ -1296,6 +1317,7 @@ const erpModules: ModuleDef[] = [
   encarregadosModule,
   operacionalModule,
   sistemasModule,
+  tvsModule,
   juridicoModule,
   sstModule,
   centralServicosModule,

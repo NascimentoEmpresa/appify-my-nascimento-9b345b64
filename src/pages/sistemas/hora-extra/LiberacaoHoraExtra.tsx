@@ -19,9 +19,9 @@ import {
   formatarDataHora,
   formatarDuracao,
   minutosHeEfetivos,
-  formatarQuantidadeChamados,
   resumirLiberacaoHoraExtra,
 } from "./horaExtraUtils";
+import { contarRelatorioPr, textoChamadosRelatorioPr } from "./prHoraExtraUtils";
 import { BadgeStatus, BreadcrumbHoraExtra, CartaoMetrica, PaginacaoHoraExtra } from "./HoraExtraUI";
 import DecisaoHoraExtraDialog from "./DecisaoHoraExtraDialog";
 import DetalhesHoraExtraDialog from "./DetalhesHoraExtraDialog";
@@ -261,7 +261,7 @@ export default function LiberacaoHoraExtra() {
                       <td className="p-3">
                         <button className="text-blue-600 underline" onClick={() => setDetalhes(s)}>
                           <FileText className="mr-1 inline h-3.5 w-3.5" />
-                          {formatarQuantidadeChamados(s.chamados?.length ?? 0)}
+                          {textoChamadosRelatorioPr(contarRelatorioPr(s.chamados ?? []))}
                         </button>
                       </td>
                       <td className="p-3">
