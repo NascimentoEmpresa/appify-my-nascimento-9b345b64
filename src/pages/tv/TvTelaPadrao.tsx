@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import bigodinho from "@/assets/bigodinho-em-pe.webp";
+import bigodinhoProgramador from "@/assets/bigodinho-programador.webm";
 import logoBranco from "@/assets/logo-nascimento-branco.webp";
 import { VERSICULOS, indiceDoDia } from "@/lib/versiculos";
 
@@ -16,6 +17,17 @@ import { VERSICULOS, indiceDoDia } from "@/lib/versiculos";
 // um carrossel; o bigodinho entra, respira, flutua e dá um pulo de tempos em
 // tempos, com um balão de fala. Quem prefere menos movimento
 // (prefers-reduced-motion) vê tudo parado.
+//
+// 08/10/2026 — "quero colocar esse vídeo (bigodinho programador) na tela de
+// desenvolvimento da TV, bem no canto inferior direito". A 1ª versão recortou
+// o fundo preto do vídeo quadro a quadro (WebM transparente) e ficou com a
+// borda borrada; o Pablo trocou por um vídeo com fundo claro (estúdio
+// branco) pedindo "fundo branco, num card assim": o vídeo vai INTEIRO dentro
+// de um card branco arredondado no canto, sem recorte nenhum. WebM VP9
+// (1024×576 — múltiplo de 16: em 960×540 o VP9 sujava as 8 linhas de cima —,
+// 30 fps, sem áudio, ~15 s em laço — começa e termina no mesmo plano; 4 MB
+// contra 15 MB do original), que o Chrome/Android das TVs e da
+// gestão tocam; se falhar (Safari antigo), volta o bigodinho em pé.
 // =====================================================================
 
 const TROCA_MS = 12_000;
@@ -27,6 +39,10 @@ const PARTICULAS = Array.from({ length: 26 }, (_, i) => ({
 }));
 
 export function TvTelaPadrao({ nome }: { nome: string }) {
+  // O vídeo NÃO depende de prefers-reduced-motion: é o conteúdo pedido, e o
+  // Windows com "animações desligadas" faria a PRÉVIA da gestão mostrar outra
+  // coisa que a TV (as animações de CSS continuam respeitando a preferência).
+  const [comVideo, setComVideo] = useState(true);
   const [agora, setAgora] = useState(new Date());
   useEffect(() => { const t = window.setInterval(() => setAgora(new Date()), 1000); return () => window.clearInterval(t); }, []);
 
@@ -88,23 +104,60 @@ export function TvTelaPadrao({ nome }: { nome: string }) {
         </section>
 
         <section className="tvp-boneco-area">
-          <div className="tvp-anel" />
+          {!comVideo && <div className="tvp-anel" />}
           <svg className="tvp-engrenagem tvp-e1" viewBox="0 0 24 24" aria-hidden><path d={ENGRENAGEM} /></svg>
           <svg className="tvp-engrenagem tvp-e2" viewBox="0 0 24 24" aria-hidden><path d={ENGRENAGEM} /></svg>
-          <div key={`f${passo}`} className="tvp-balao">{fala}</div>
-          <div className="tvp-boneco-pos">
-            <div className="tvp-sombra" />
-            <img src={bigodinho} alt="Mascote do Grupo Nascimento" draggable={false} className="tvp-boneco" />
-          </div>
+          {!comVideo && (
+            <>
+              <div key={`f${passo}`} className="tvp-balao">{fala}</div>
+              <div className="tvp-boneco-pos">
+                <div className="tvp-sombra" />
+                <img src={bigodinho} alt="Mascote do Grupo Nascimento" draggable={false} className="tvp-boneco" />
+              </div>
+            </>
+          )}
         </section>
       </main>
 
+      {/* O bigodinho em pé, flutuando acima do card (onde o Pablo marcou o círculo). */}
+      {comVideo && (
+        <div className="tvp-bigode" aria-hidden>
+          <img src={bigodinho} alt="" draggable={false} />
+        </div>
+      )}
+
+      {/* O bigodinho programando, num card branco no canto inferior direito da tela. */}
+      {comVideo && (
+        <div className="tvp-video-area">
+          <div key={`f${passo}`} className="tvp-balao tvp-balao-video">{fala}</div>
+          <video ref={prepararVideo} className="tvp-video" src={bigodinhoProgramador} autoPlay muted loop playsInline disablePictureInPicture
+            aria-label="Mascote do Grupo Nascimento programando" onError={() => setComVideo(false)} />
+        </div>
+      )}
+
       <footer className="tvp-rodape">
         <span>Grupo Nascimento · Soluções em Serviços</span>
-        <span className="tvp-rodape-dir">Tela padrão — a playlist desta TV ainda está vazia</span>
+        {/* Com o vídeo no canto, o aviso vai para a esquerda (senão ficaria por baixo dele). */}
+        {comVideo
+          ? <span className="tvp-rodape-dir">· Tela padrão — a playlist desta TV ainda está vazia</span>
+          : <span className="tvp-rodape-dir">Tela padrão — a playlist desta TV ainda está vazia</span>}
       </footer>
     </div>
   );
+}
+
+/**
+ * Nenhum botão do navegador por cima do vídeo: sem "transmitir" (Chrome e
+ * Android mostram o ícone de Cast quando há Chromecast na rede) e com o
+ * `muted` também como ATRIBUTO — o React só liga a propriedade, e TV com
+ * WebView mais rígida só dá autoplay com o atributo. O picture-in-picture
+ * já sai pelo disablePictureInPicture.
+ */
+function prepararVideo(v: HTMLVideoElement | null) {
+  if (!v) return;
+  v.disableRemotePlayback = true;
+  v.muted = true;
+  v.setAttribute("muted", "");
 }
 
 const ENGRENAGEM = "M19.4 13a7.5 7.5 0 0 0 0-2l2.1-1.6-2-3.5-2.5 1a7.6 7.6 0 0 0-1.7-1L15 3h-4l-.4 2.9a7.6 7.6 0 0 0-1.7 1l-2.5-1-2 3.5L6.6 11a7.5 7.5 0 0 0 0 2l-2.1 1.6 2 3.5 2.5-1a7.6 7.6 0 0 0 1.7 1L11 21h4l.4-2.9a7.6 7.6 0 0 0 1.7-1l2.5 1 2-3.5zM13 15.5a3.5 3.5 0 1 1 0-7 3.5 3.5 0 0 1 0 7z";
@@ -202,11 +255,38 @@ const CSS = `
 .tvp-rodape{position:relative;z-index:3;display:flex;justify-content:space-between;gap:2vmin;padding:1.6vmin 4.5vmin 2.6vmin;font-size:1.6vmin;
   color:rgba(255,255,255,.55);letter-spacing:.06em;animation:tvp-entra .8s ease 1.4s both}
 .tvp-rodape-dir{text-transform:uppercase}
+.tvp-video-area ~ .tvp-rodape{justify-content:flex-start}
+
+/* Card do bigodinho programador: branco, arredondado, no canto inferior
+   direito (como o desenho do Pablo), o vídeo inteiro dentro, com a MESMA
+   folga da borda de baixo e da direita (1,1vmin ≈ 5 px na prévia da gestão
+   — ajustado a olho pelo Pablo: "sobe uns 5 px", depois "uns 10 px pra
+   esquerda, aí fica perfeito"). Só transform na entrada (sem opacidade:
+   navegador de TV fraco às vezes congela a animação no 1º quadro). */
+.tvp-video-area{position:absolute;z-index:2;right:1.1vmin;bottom:1.1vmin;width:42vw;aspect-ratio:16/9;pointer-events:none;
+  border-radius:2.6vmin;background:#fff;padding:.7vmin;box-shadow:0 2.4vmin 6vmin rgba(0,0,0,.45),0 0 0 1px rgba(255,255,255,.6);
+  animation:tvp-video-entra 1.2s cubic-bezier(.2,.9,.25,1.1) .5s both}
+@keyframes tvp-video-entra{from{transform:translate(8vmin,10vmin)}to{transform:none}}
+.tvp-video{display:block;width:100%;height:100%;object-fit:cover;border-radius:2vmin;background:#fff}
+.tvp-balao-video{left:-6%;top:-6%;z-index:3}
+
+/* Bigodinho em pé acima do card, entre as duas engrenagens — no centro do
+   círculo que o Pablo marcou (≈75% da largura, ≈32% da altura), com 40vmin
+   ("o personagem 2d maior" — era 30): cabe entre o relógio e o balão do card. Entra
+   subindo (só transform), flutua e respira como o da tela sem vídeo. */
+.tvp-bigode{position:absolute;z-index:2;left:calc(74.6vw - 10.5vmin);top:calc(32vh - 20vmin);height:40vmin;pointer-events:none;
+  animation:tvp-flutua 6s ease-in-out 2s infinite}
+.tvp-bigode img{display:block;height:100%;width:auto;user-select:none;transform-origin:50% 100%;
+  filter:drop-shadow(0 1.6vmin 2.4vmin rgba(0,0,0,.45));
+  animation:tvp-bigode-entra 1.1s cubic-bezier(.2,.9,.25,1.15) .8s both,tvp-respira 4.8s ease-in-out 2s infinite}
+@keyframes tvp-bigode-entra{from{transform:translateY(10vmin) scale(.85)}to{transform:none}}
 
 @media (orientation:portrait){
   .tvp-corpo{grid-template-columns:1fr;grid-template-rows:auto 1fr}
   .tvp-boneco-pos{height:48vh}
   .tvp-titulo{font-size:11vmin}
+  .tvp-video-area{width:calc(100vw - 2.2vmin)}
+  .tvp-bigode{display:none}
 }
 @media (prefers-reduced-motion:reduce){
   .tvp *,.tvp *::before,.tvp *::after{animation:none!important;transition:none!important}

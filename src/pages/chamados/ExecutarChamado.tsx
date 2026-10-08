@@ -16,8 +16,9 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { CheckCircle2, MessageSquare, XCircle, Paperclip, ArrowLeft, Trash2, Star, RotateCcw } from "lucide-react";
+import { CheckCircle2, MessageSquare, XCircle, Paperclip, ArrowLeft, Trash2, Star, RotateCcw, GitPullRequest } from "lucide-react";
 import { ExcluirChamadoDialog } from "./ExcluirChamadoDialog";
+import { abrirPrGithub } from "./abrirPrGithub";
 import { ReabrirChamadoDialog } from "./ReabrirChamadoDialog";
 import { ChatChamado } from "./ChatChamado";
 import { BotaoStatusChamado, CardTreinamento, CardValidacaoPresidencia, useValidacaoChamado } from "./StatusValidacao";
@@ -321,6 +322,17 @@ export default function ExecutarChamado() {
                   <CheckCircle2 className="h-4 w-4" /> {agindo === "concluido" ? "Concluindo…" : "Concluir chamado"}
                 </Button>
               )}
+              {/* Mesmo "Abrir PR" da fila do Painel do Desenvolvedor: GitHub já
+                  com título (número do chamado) e descrição preenchidos. Fica
+                  visível mesmo concluído — a 2ª PR de uma entrega sai daqui. */}
+              <Button
+                variant="outline"
+                className="w-full justify-start gap-2 transition-transform active:scale-95"
+                onClick={() => abrirPrGithub(chamado, null, user?.id, toast)}
+                title="Abrir PR no GitHub já preenchida com os dados deste chamado"
+              >
+                <GitPullRequest className="h-4 w-4 text-primary" /> Abrir PR
+              </Button>
               {/* Logo abaixo do selo de concluído: é ali que se percebe que o
                   chamado fechou cedo demais — ex.: falta a 2ª PR da entrega. */}
               {podeReabrirChamado(chamado, { canCoordenar, canAprovar, canDev, userId: user?.id }) && (

@@ -584,10 +584,11 @@ const recrutamentoModule: ModuleDef = {
       label: "Gestão",
       defaultOpen: true,
       items: [
-        // Dashboard Recrutamento (02/10/2026, mig 288): o painel completo — vagas
-        // atrasadas/em atenção/no prazo, andamento, tempos e candidatos.
-        { label: "Dashboard Recrutamento", to: "/app/rh/recrutamento/dashboard", icon: LayoutDashboard },
-        { label: "Dashboard", to: "/app/rh/recrutamento-dashboard", icon: BarChart3 },
+        // "Dashboard Recrutamento" (/app/rh/recrutamento/dashboard) e "Dashboard"
+        // (/app/rh/recrutamento-dashboard) saíram daqui em 08/10/2026: "tem
+        // muitos dashboards de recrutamento… deixa só em relatórios". Viraram
+        // dois botões em Relatórios › Gestão Recrutamento; rotas e menus
+        // (rh_recrutamento_dashboard, recrutamento_dashboard) seguem os mesmos.
         { label: "Gestão Recrutamento", to: "/app/rh/recrutamento", icon: UserCog },
         { label: "Banco de Talentos", to: "/app/rh/banco-talentos", icon: Users2 },
       ],

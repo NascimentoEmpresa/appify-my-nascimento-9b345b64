@@ -10,26 +10,47 @@
 //
 // LÍDER = posto que tem postos abaixo dele. Quem ocupa um posto de líder
 // "responde" por todo o ramo — é isso que vai dar acesso a contrato e ponto.
+//
+// 08/10/2026 (mig 20261008000005): a hierarquia virou editável. Trocar quem
+// está num posto grava um AJUSTE do ERP (RH_POSTO_OCUPANTE_ERP) — o posto
+// que chega aqui já é o efetivo, e `ajustado`/`postoSenior` dizem quando
+// difere da Senior. O RESPONSÁVEL de cada contrato (quem dá o OK do ponto)
+// vem pronto do banco em `responsaveis` — a mesma conta que trava as RPCs
+// do ponto, para a tela nunca mostrar um responsável que o banco não aceita.
 // =====================================================================
 
 /** [codigo, descricao, titulo, empresa, filial, cargo_cod, vagas, pai, ordem, na_hierarquia, origem] */
 export type PostoBruto = [string, string, string | null, number | null, number | null, string | null, number | null, string | null, number, boolean, string | null];
-/** [id, nome, cadastro, cargo, situação, posto, tem_login, empresa, filial, nome do posto] */
-export type OcupanteBruto = [number, string, number | null, string | null, string | null, string | null, boolean, number | null, number | null, string | null];
+/** [id, nome, cadastro, cargo, situação, posto, tem_login, empresa, filial, nome do posto, ajustado no ERP?, posto da Senior?] */
+export type OcupanteBruto = [number, string, number | null, string | null, string | null, string | null, boolean, number | null, number | null, string | null, boolean?, (string | null)?];
 /** [empresa, filial, nome, ativo] */
 export type ContratoBruto = [number, number, string | null, boolean];
+/** [empresa, filial, posto_lider, empregado_id] */
+export type ResponsavelBruto = [number, number, string, number];
 
-export interface HistoricoHierarquia { id: number; posto_codigo: string; pai_antes: string | null; pai_depois: string | null; motivo: string | null; autor_nome: string | null; created_at: string }
+export interface HistoricoHierarquia {
+  id: number; posto_codigo: string; pai_antes: string | null; pai_depois: string | null; motivo: string | null; autor_nome: string | null; created_at: string;
+  /** 'posto' (mudou o lugar do posto) | 'ocupante' (trocou a pessoa) | 'vagas'. Ausente = 'posto' (antes da mig 20261008000005). */
+  tipo?: "posto" | "ocupante" | "vagas"; empregado_id?: number | null; empregado_nome?: string | null; valor_antes?: string | null; valor_depois?: string | null;
+}
 
 export interface PainelHierarquiaBruto {
   postos: PostoBruto[]; ocupantes: OcupanteBruto[]; contratos: ContratoBruto[];
+  responsaveis?: ResponsavelBruto[];
   historico: HistoricoHierarquia[]; pode_alterar: boolean;
 }
 
 export interface Ocupante {
   id: number; nome: string; cadastro: number | null; cargo: string | null; situacao: string | null;
   posto: string | null; temLogin: boolean; empresa: number | null; filial: number | null; nomePosto: string | null;
+  /** O posto foi trocado no ERP (difere do que a Senior diz). */
+  ajustado: boolean;
+  /** O posto que a Senior dá (igual a `posto` quando não há ajuste). */
+  postoSenior: string | null;
 }
+
+/** Quem dá o OK do ponto de um contrato: o ocupante de um posto líder. */
+export interface Responsavel { posto: string; ocupante: Ocupante }
 
 export interface NoPosto {
   codigo: string; descricao: string; titulo: string; empresa: number | null; filial: number | null; cargoCod: string | null;
@@ -49,6 +70,10 @@ export interface Hierarquia {
   semPosto: Ocupante[];          // ativos sem posto da estrutura
   ocupantes: Ocupante[];
   contratos: Map<string, string>;
+  /** Chaves (empresa-filial) dos contratos ativos no cadastro. */
+  contratosAtivos: Set<string>;
+  /** Por contrato (empresa-filial): quem responde por ele no ponto. */
+  responsaveis: Map<string, Responsavel[]>;
   historico: HistoricoHierarquia[];
   podeAlterar: boolean;
 }
@@ -67,9 +92,19 @@ export const tituloDeLideranca = (titulo: string) => /SUPERVIS|ENCARREG|L[IÍ]DE
 
 export function montarHierarquia(b: PainelHierarquiaBruto): Hierarquia {
   const contratos = new Map(b.contratos.map(([e, f, n]) => [chaveContrato(e, f), n ?? `Filial ${f}`]));
-  const ocupantes: Ocupante[] = b.ocupantes.map(([id, nome, cadastro, cargo, situacao, posto, temLogin, empresa, filial, nomePosto]) => ({
+  const contratosAtivos = new Set(b.contratos.filter(([, , , ativo]) => ativo).map(([e, f]) => chaveContrato(e, f)));
+  const ocupantes: Ocupante[] = b.ocupantes.map(([id, nome, cadastro, cargo, situacao, posto, temLogin, empresa, filial, nomePosto, ajustado, postoSenior]) => ({
     id, nome, cadastro, cargo, situacao, posto, temLogin, empresa, filial, nomePosto,
+    ajustado: !!ajustado, postoSenior: postoSenior === undefined ? posto : postoSenior,
   }));
+  const porId = new Map(ocupantes.map((o) => [o.id, o]));
+  const responsaveis = new Map<string, Responsavel[]>();
+  for (const [e, f, posto, empregadoId] of b.responsaveis ?? []) {
+    const o = porId.get(empregadoId);
+    if (!o) continue;
+    const k = chaveContrato(e, f);
+    responsaveis.set(k, [...(responsaveis.get(k) ?? []), { posto, ocupante: o }]);
+  }
   const porCodigo = new Map<string, NoPosto>();
   for (const [codigo, descricao, titulo, empresa, filial, cargoCod, vagas, pai, ordem, naHierarquia, origem] of b.postos) {
     porCodigo.set(codigo, {
@@ -110,7 +145,41 @@ export function montarHierarquia(b: PainelHierarquiaBruto): Hierarquia {
   };
   ordenar(raizes).forEach((r) => percorrer(r, 0));
   fora.sort((a, b) => b.ocupantes.length - a.ocupantes.length || a.codigo.localeCompare(b.codigo));
-  return { raizes, porCodigo, fora, semPosto, ocupantes, contratos, historico: b.historico ?? [], podeAlterar: !!b.pode_alterar };
+  return {
+    raizes, porCodigo, fora, semPosto, ocupantes, contratos, contratosAtivos, responsaveis,
+    historico: b.historico ?? [], podeAlterar: !!b.pode_alterar,
+  };
+}
+
+/** Os contratos (chave → nome) de que os ocupantes deste posto são responsáveis no ponto. */
+export function contratosDoPosto(h: Hierarquia, codigo: string): { chave: string; nome: string }[] {
+  const out: { chave: string; nome: string }[] = [];
+  for (const [chave, rs] of h.responsaveis) {
+    if (rs.some((r) => r.posto === codigo)) out.push({ chave, nome: h.contratos.get(chave) ?? chave });
+  }
+  return out.sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"));
+}
+
+/** Contratos ativos que ninguém responde no ponto (ninguém consegue dar o OK do encarregado). */
+export function contratosSemResponsavel(h: Hierarquia): { chave: string; nome: string }[] {
+  return [...h.contratosAtivos].filter((k) => !h.responsaveis.get(k)?.length)
+    .map((chave) => ({ chave, nome: h.contratos.get(chave) ?? chave }))
+    .sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"));
+}
+
+/**
+ * Busca de colaborador para pôr num posto: por nome, cadastro ou cargo, sem
+ * acento. Só seleciona — a pessoa vem da EMPREGADOS, nada é digitado.
+ */
+export function buscarOcupantes(h: Hierarquia, termo: string, limite = 30): Ocupante[] {
+  const t = norm(termo.trim());
+  if (t.length < 2) return [];
+  const out: Ocupante[] = [];
+  for (const o of h.ocupantes) {
+    if (norm(`${o.nome} ${o.cadastro ?? ""} ${o.cargo ?? ""}`).includes(t)) out.push(o);
+    if (out.length >= limite) break;
+  }
+  return out;
 }
 
 /** Do posto até a raiz: [raiz, ..., pai, posto]. */
@@ -151,21 +220,28 @@ export function lideres(h: Hierarquia): Lider[] {
   return out;
 }
 
-/** Quem responde por cada contrato: os líderes mais próximos dos postos daquele contrato. */
+/**
+ * Por contrato: postos e colaboradores na árvore, os líderes diretos dos
+ * postos e — `responsaveis` — quem dá o OK do ponto, como o banco calcula.
+ * Chave = empresa-filial (dois contratos podem ter o mesmo nome).
+ */
 export function responsaveisPorContrato(h: Hierarquia) {
-  const m = new Map<string, { contrato: string; postos: number; colaboradores: number; lideres: Map<string, NoPosto> }>();
+  const m = new Map<string, { chave: string; contrato: string; postos: number; colaboradores: number; lideres: Map<string, NoPosto> }>();
   const visitar = (n: NoPosto, cadeia: NoPosto[]) => {
     if (n.contrato) {
-      const e = m.get(n.contrato) ?? { contrato: n.contrato, postos: 0, colaboradores: 0, lideres: new Map() };
+      const chave = chaveContrato(n.empresa, n.filial);
+      const e = m.get(chave) ?? { chave, contrato: n.contrato, postos: 0, colaboradores: 0, lideres: new Map() };
       e.postos++; e.colaboradores += n.ocupantes.length;
       const lider = [...cadeia].reverse().find((x) => x.filhos.length && x.codigo !== n.codigo) ?? null;
       if (lider) e.lideres.set(lider.codigo, lider);
-      m.set(n.contrato, e);
+      m.set(chave, e);
     }
     n.filhos.forEach((f) => visitar(f, [...cadeia, n]));
   };
   h.raizes.forEach((r) => visitar(r, []));
-  return [...m.values()].map((e) => ({ ...e, lideres: [...e.lideres.values()] })).sort((a, b) => b.colaboradores - a.colaboradores);
+  return [...m.values()]
+    .map((e) => ({ ...e, lideres: [...e.lideres.values()], responsaveis: h.responsaveis.get(e.chave) ?? [] }))
+    .sort((a, b) => b.colaboradores - a.colaboradores);
 }
 
 export interface ResumoHierarquia {

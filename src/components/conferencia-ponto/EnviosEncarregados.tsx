@@ -14,8 +14,13 @@ import { STATUS_ENVIO, corSituacao, resumoItens, rotuloSituacao } from "@/lib/co
  * 20261007000023) — aparece no detalhe do contrato da Conferência de Ponto.
  * Receber/devolver exige o menu fantasma `ponto_receber_encarregados`
  * (`podeReceber`); quem só confere vê, mas não decide.
+ *
+ * Desde a mig 20261008000005 o envio é o OK do encarregado na linha do
+ * contrato, e devolver tira esse OK — `onDecidiu` recarrega a linha.
  */
-export function EnviosEncarregados({ empresa, filial, mes, podeReceber }: { empresa: number; filial: number; mes: string; podeReceber: boolean }) {
+export function EnviosEncarregados({ empresa, filial, mes, podeReceber, onDecidiu }: {
+  empresa: number; filial: number; mes: string; podeReceber: boolean; onDecidiu?: () => void;
+}) {
   const q = useEnviosPonto({ mes, empresa, filial });
   const envios = (q.data ?? []).filter((e) => e.status !== "rascunho");
   return (
@@ -24,12 +29,12 @@ export function EnviosEncarregados({ empresa, filial, mes, podeReceber }: { empr
       {q.isLoading ? <p className="flex items-center gap-2 text-xs text-muted-foreground"><Loader2 className="h-3.5 w-3.5 animate-spin" /> Carregando…</p>
         : q.error ? <p className="text-xs text-muted-foreground">Envios dos encarregados indisponíveis ({(q.error as Error).message}).</p>
         : !envios.length ? <p className="text-xs text-muted-foreground">Nenhum encarregado enviou o ponto deste contrato no mês ainda.</p>
-        : envios.map((e) => <CartaoEnvio key={e.id} envio={e} podeReceber={podeReceber} />)}
+        : envios.map((e) => <CartaoEnvio key={e.id} envio={e} podeReceber={podeReceber} onDecidiu={onDecidiu} />)}
     </div>
   );
 }
 
-function CartaoEnvio({ envio, podeReceber }: { envio: EnvioPonto; podeReceber: boolean }) {
+function CartaoEnvio({ envio, podeReceber, onDecidiu }: { envio: EnvioPonto; podeReceber: boolean; onDecidiu?: () => void }) {
   const [aberto, setAberto] = useState(envio.status === "enviado");
   const [motivo, setMotivo] = useState("");
   const det = useDetalheEnvio(aberto ? envio.id : null);
@@ -40,7 +45,7 @@ function CartaoEnvio({ envio, podeReceber }: { envio: EnvioPonto; podeReceber: b
   const agir = (acao: "receber" | "devolver") => {
     if (acao === "devolver" && motivo.trim().length < 10) { toast.error("Escreva o motivo da devolução (mín. 10 caracteres)."); return; }
     decidir.mutate({ id: envio.id, acao, motivo: motivo.trim() || undefined }, {
-      onSuccess: () => toast.success(acao === "receber" ? "Envio recebido." : "Devolvido ao encarregado."),
+      onSuccess: () => { toast.success(acao === "receber" ? "Envio recebido." : "Devolvido ao encarregado — o OK dele saiu do contrato."); onDecidiu?.(); },
       onError: (e) => toast.error((e as Error).message),
     });
   };
