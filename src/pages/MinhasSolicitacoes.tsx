@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { rotasSolicitacoes, type BaseSolicitacoes } from "@/lib/solicitacoes/rotas";
 import { supabase } from "@/integrations/supabase/client";
@@ -15,8 +15,10 @@ import {
   cargoExigeCnh, aplicarReqCnh, REQ_CNH_TEXTO, MIN_DIAS_UTEIS, fmtBr,
   rotuloReferencia, ajudaReferencia, mostraNomeReferencia, contratoDoEmpregado, rotuloContrato,
   SALARIO_MASCARA, substituidosComVagaViva, avisoSubstituidoPreso,
-  podeVagaAdministrativa, statusInicialVaga, rotuloStatusVaga, contratoEhAdministrativo, setorDoCatalogo,
+  podeVagaAdministrativa, statusInicialVaga, contratoEhAdministrativo, setorDoCatalogo,
 } from "@/lib/recrutamento/vagaRegras";
+import { StatusVagaBadge } from "@/components/recrutamento/StatusVagaBadge";
+import { useEtapasDasVagas } from "@/hooks/useEtapasDasVagas";
 import { maskFone } from "@/lib/telefone";
 import { dataParaIso, tempoDeEmpresa } from "@/lib/rh/colaboradoresUtils";
 import { BUCKET_ANEXOS, caminhoAnexo, erroDoAnexo, fmtTamanho } from "@/lib/solicitacoes/anexos";
@@ -409,6 +411,14 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
   }, [user?.email, user?.id, rotas.meusPedidos]);
 
   useEffect(() => { carregarMinhasSols(); }, [carregarMinhasSols]);
+
+  // Status detalhado da vaga (08/10/2026): quem pediu acompanha a etapa do
+  // kanban ("Recrutamento: TRIAGEM") sem ver os candidatos.
+  const minhasVagas = useMemo(
+    () => minhasSols.filter(s => s.tipo === "Vaga").map(s => ({ id: Number(s.id), status: s.status })),
+    [minhasSols],
+  );
+  const { etapas: etapasVagas } = useEtapasDasVagas(minhasVagas);
 
   // ── Contratos ───────────────────────────────────────────────────────
   const carregarContratos = async () => {
@@ -1137,7 +1147,9 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
                       <div className="ini-sol-meta">{s.tipo} · #{s.id} · {fmtDt(s.data)}</div>
                     </div>
                     <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4 }}>
-                      <span className={`ini-badge ${badgeStatusCls(s.status)}`}>{s.tipo === "Vaga" ? rotuloStatusVaga(s.status) : s.status}</span>
+                      {s.tipo === "Vaga"
+                        ? <StatusVagaBadge status={s.status} etapa={etapasVagas[Number(s.id)]} classe="ini-badge" classeCor={badgeStatusCls(s.status)} />
+                        : <span className={`ini-badge ${badgeStatusCls(s.status)}`}>{s.status}</span>}
                       {s.excecao && <span className="ini-badge" style={{ background: "#fef3c7", color: "#b45309", borderColor: "#fde68a" }}>EXCEÇÃO</span>}
                       {dias !== null && (
                         <span className="ini-sol-dias" title={`Tempo parado no status atual: ${s.status}`}>

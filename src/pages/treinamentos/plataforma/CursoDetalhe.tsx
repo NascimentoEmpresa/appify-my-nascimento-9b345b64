@@ -21,7 +21,7 @@ import { ReacoesVideoMini } from "@/components/treinamentos/ReacoesVideo";
 import CursoPublico from "./CursoPublico";
 import { AVISO_QR_CURSO, BotaoQrCode, urlCursoPortal } from "./QrCodeDialog";
 import { DialogAssinaturaCurso } from "./Assinaturas";
-import { AssinaturaTraco, assinaturaValeParaPublicar, cargoERegistro } from "./assinaturaFolha";
+import { AssinaturaTraco, ConfirmarSemAssinatura, assinaturaValeParaPublicar, cargoERegistro, pedeConfirmacaoSemAssinatura } from "./assinaturaFolha";
 
 // =====================================================================
 // TREINAMENTOS — Cursos › Visualização do curso.
@@ -37,6 +37,8 @@ import { AssinaturaTraco, assinaturaValeParaPublicar, cargoERegistro } from "./a
 // (mig 20261007000002) a assinatura é opcional: sem ela o curso publica e o
 // certificado sai sem assinatura. Com ela, tem que ser de Técnico(a) em
 // Segurança com registro — o toggle avisa e abre o diálogo, e o banco barra.
+// 08/10/2026: publicar curso que emite certificado SEM assinatura pergunta
+// "TEM CERTEZA QUE DESEJA DISPONIBILIZAR O CERTIFICADO SEM ASSINATURA?".
 // =====================================================================
 
 export default function CursoDetalhe() {
@@ -72,11 +74,17 @@ export default function CursoDetalhe() {
   const assinaturaOk = !!assinatura?.ativo && assinaturaValeParaPublicar(assinatura);
   const assinaturaBarra = !!curso?.assinatura_id && !assinaturaOk;
 
-  const toggle = async (campo: "publicado" | "em_breve" | "comentarios_habilitados", v: boolean) => {
+  // 08/10/2026: publicar curso que emite certificado SEM assinatura pede confirmação.
+  const [confirmarSemAssinatura, setConfirmarSemAssinatura] = useState(false);
+  const toggle = async (campo: "publicado" | "em_breve" | "comentarios_habilitados", v: boolean, confirmado = false) => {
     if (!curso) return;
     if (campo === "publicado" && v && assinaturaBarra) {
       toast.error("A assinatura deste curso não é de um(a) Técnico(a) em Segurança com registro — troque ou remova a assinatura para publicar.");
       setAssinaturaAberta(true);
+      return;
+    }
+    if (campo === "publicado" && v && !confirmado && pedeConfirmacaoSemAssinatura(curso, { ...curso, publicado: true })) {
+      setConfirmarSemAssinatura(true);
       return;
     }
     try { await salvarCurso.mutateAsync({ id: curso.id, nome: curso.nome, [campo]: v }); }
@@ -198,6 +206,9 @@ export default function CursoDetalhe() {
 
             {/* Publicar não libera para todos (24/09/2026): quem vê é definido aqui. */}
             <CursoPublico cursoId={curso.id} publicado={curso.publicado} />
+            <ConfirmarSemAssinatura aberto={confirmarSemAssinatura}
+              onCancelar={() => setConfirmarSemAssinatura(false)}
+              onConfirmar={() => { setConfirmarSemAssinatura(false); void toggle("publicado", true, true); }} />
 
             <div className="mt-6 space-y-4">
               {modulos.length === 0 && <div className="trn-vazio">Este curso ainda não tem módulos. Adicione o primeiro.</div>}

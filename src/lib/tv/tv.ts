@@ -31,8 +31,13 @@ export interface ItemTv {
  * (slugs de src/pages/relatorios/sistemas.ts), o Turn-over no formato do
  * painel e o Vagas — Dashboard. `paginas` = quantas telas se revezam no
  * tempo do item (o máximo; some a que não tem dado).
+ *
+ * 08/10/2026 (mig 20261008000007): Licitações (o Painel Executivo de
+ * /app/painel-executivo/tv, refeito para a TV — o original não mudou) e
+ * Treinamentos (o Dashboard do módulo). `semFiltros`: as telas de origem
+ * abrem sem período nem contrato — o item também não pede.
  */
-export const RELATORIOS_TV: { slug: string; titulo: string; paginas: number }[] = [
+export const RELATORIOS_TV: { slug: string; titulo: string; paginas: number; semFiltros?: boolean }[] = [
   { slug: "geral", titulo: "Visão geral — todos os sistemas", paginas: 1 },
   { slug: "vagas", titulo: "Vagas — Dashboard", paginas: 3 },
   { slug: "recrutamento", titulo: "Gestão Recrutamento", paginas: 2 },
@@ -45,9 +50,13 @@ export const RELATORIOS_TV: { slug: string; titulo: string; paginas: number }[] 
   { slug: "orientacoes", titulo: "Orientações Jurídicas", paginas: 2 },
   { slug: "colaboradores", titulo: "Colaboradores", paginas: 2 },
   { slug: "turnover", titulo: "Turn-over", paginas: 3 },
+  { slug: "licitacoes", titulo: "Licitações — Painel Executivo", paginas: 4, semFiltros: true },
+  { slug: "treinamentos", titulo: "Treinamentos — Dashboard", paginas: 3, semFiltros: true },
 ];
 export const paginasRelatorioTv = (slug: string | null | undefined) => RELATORIOS_TV.find((r) => r.slug === slug)?.paginas ?? 1;
 export const tituloRelatorioTv = (slug: string | null | undefined) => RELATORIOS_TV.find((r) => r.slug === slug)?.titulo ?? "Relatório";
+/** O relatório usa período e contrato do item? (Licitações e Treinamentos não.) */
+export const relatorioTemFiltros = (slug: string | null | undefined) => !RELATORIOS_TV.find((r) => r.slug === slug)?.semFiltros;
 
 export type PeriodoTv = "mes" | "3m" | "6m" | "12m" | "ano";
 export const PERIODOS_TV: { valor: PeriodoTv; rotulo: string }[] = [
@@ -55,6 +64,9 @@ export const PERIODOS_TV: { valor: PeriodoTv; rotulo: string }[] = [
   { valor: "12m", rotulo: "Últimos 12 meses" }, { valor: "ano", rotulo: "Este ano" },
 ];
 export const rotuloPeriodoTv = (p: string | null | undefined) => PERIODOS_TV.find((x) => x.valor === p)?.rotulo ?? "Últimos 12 meses";
+/** "Demissões · Últimos 12 meses" — sem o período nos que não têm filtro. */
+export const nomeRelatorioTv = (slug: string | null | undefined, periodo: string | null | undefined) =>
+  relatorioTemFiltros(slug) ? `${tituloRelatorioTv(slug)} · ${rotuloPeriodoTv(periodo)}` : tituloRelatorioTv(slug);
 
 /** De/até do período do item — a MESMA conta de tv_rel_periodo no banco (usada na prévia). */
 export function periodoTv(p: string | null | undefined, hoje: Date = new Date()): { de: string; ate: string } {

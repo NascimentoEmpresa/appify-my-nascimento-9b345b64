@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   ERRO_RELATORIO_SEM_CHAMADO,
+  NUMERO_SEM_CHAMADO,
+  contarRelatorioPr,
+  linhaSemChamado,
+  textoChamadosRelatorioPr,
   normalizarNumeroPr,
   removerLinhaRelatorioPr,
   totalizarLinhasRelatorioPr,
@@ -75,5 +79,32 @@ describe("remoção de linhas do relatório da hora extra", () => {
     expect(r.erro).toBeUndefined();
     expect(r.originais).toBe(originais);
     expect(r.adicionais).toBe(adicionais);
+  });
+});
+
+// 08/10/2026 (mig 20261008000009): uma linha por PR — o mesmo chamado pode
+// ter várias PRs, e PR sem chamado entra como linha adicional.
+describe("relatório de PRs da hora extra — várias PRs por chamado e PR sem chamado", () => {
+  it("conta chamados sem repetir e separa as PRs sem chamado", () => {
+    const c = contarRelatorioPr([
+      { chamado_id: "a", pr_numero: 825 },
+      { chamado_id: "b", pr_numero: 827 },
+      { chamado_id: "b", pr_numero: 826 }, // segunda PR do mesmo chamado
+      { chamado_id: "", pr_numero: 830, sem_chamado: true },
+      { chamado_id: "", pr_numero: null }, // linha ainda em branco
+    ]);
+    expect(c).toEqual({ prs: 4, chamados: 2, semChamado: 1 });
+    expect(textoChamadosRelatorioPr(c)).toBe("2 chamados · 1 sem chamado");
+    expect(textoChamadosRelatorioPr({ chamados: 1, semChamado: 0 })).toBe("1 chamado");
+  });
+
+  it("linha gravada sem chamado: chamado_id nulo ou número SEM-CHAMADO", () => {
+    expect(linhaSemChamado({ chamado_id: null, chamado_numero: NUMERO_SEM_CHAMADO })).toBe(true);
+    expect(linhaSemChamado({ chamado_id: null, chamado_numero: "" })).toBe(true);
+    expect(linhaSemChamado({ chamado_id: "x", chamado_numero: "SIS-2026-0544" })).toBe(false);
+  });
+
+  it("lista do banco (antes da conclusão, sem PR): conta só os chamados", () => {
+    expect(textoChamadosRelatorioPr(contarRelatorioPr([{ chamado_id: "a" }, { chamado_id: "b" }]))).toBe("2 chamados");
   });
 });

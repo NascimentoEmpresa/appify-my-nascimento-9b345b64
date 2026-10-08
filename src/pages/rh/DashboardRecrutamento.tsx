@@ -18,6 +18,8 @@ import { StatusSolicitacao, type SolicitacaoStatus } from "@/components/recrutam
 import { usePermissoes } from "@/context/PermissoesContext";
 import { useDashboardRecrutamento } from "@/hooks/useDashboardRecrutamento";
 import { rotuloStatusVaga } from "@/lib/recrutamento/vagaRegras";
+import { statusDetalhadoVaga } from "@/lib/recrutamento/statusDetalhado";
+import { useEtapasDasVagas } from "@/hooks/useEtapasDasVagas";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import {
@@ -300,6 +302,8 @@ export default function DashboardRecrutamento() {
 
   // 1. Situação agora
   const abertas = useMemo(() => vagasAbertas(vagas, candidatos, hoje), [vagas, candidatos, hoje]);
+  // Status detalhado (08/10/2026): "Recrutamento: TRIAGEM" na cor da etapa.
+  const { etapas: etapasVagas } = useEtapasDasVagas(abertas);
   const agora = useMemo(() => indicadoresAgora(abertas), [abertas]);
   const funil = useMemo(() => funilAberto(abertas), [abertas]);
   const porContrato = useMemo(() => prazoPorContrato(abertas, 10), [abertas]);
@@ -585,7 +589,13 @@ export default function DashboardRecrutamento() {
                           <td className="px-3 py-2.5"><PilulaPrazo v={v} /></td>
                           <td className="px-3 py-2.5">
                             <span className={cn("whitespace-nowrap rounded-md border px-2 py-0.5 text-xs font-semibold", COR_ANDAMENTO[v.andamento])}>{v.andamento}</span>
-                            <p className="mt-0.5 line-clamp-1 text-[11px] text-muted-foreground" title={rotuloStatusVaga(v.status)}>{rotuloStatusVaga(v.status)}</p>
+                            {(() => {
+                              const d = statusDetalhadoVaga(v.status, etapasVagas[v.id]);
+                              return (
+                                <p className={cn("mt-0.5 line-clamp-1 text-[11px]", d.detalhado ? "font-bold" : "text-muted-foreground")}
+                                  style={d.detalhado ? { color: d.tinta } : undefined} title={d.dica ?? d.texto}>{d.texto}</p>
+                              );
+                            })()}
                           </td>
                           <td className="max-w-[200px] px-3 py-2.5">
                             {v.candidato ? (

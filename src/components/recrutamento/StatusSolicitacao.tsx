@@ -1,5 +1,7 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
+import { statusDetalhadoVaga } from "@/lib/recrutamento/statusDetalhado";
+import { useEtapasDasVagas } from "@/hooks/useEtapasDasVagas";
 import { rotuloStatusVaga } from "@/lib/recrutamento/vagaRegras";
 import { supabase } from "@/integrations/supabase/client";
 import type { SupabaseClient } from "@supabase/supabase-js";
@@ -85,6 +87,12 @@ export function StatusSolicitacao({ sol, onClose }: { sol: SolicitacaoStatus; on
   }, [sol.id]);
 
   const fechar = () => { setSaindo(true); setTimeout(onClose, 220); };
+
+  // Status detalhado (08/10/2026): a etapa do kanban do candidato mais
+  // adiantado — "Recrutamento: TRIAGEM", na cor da coluna.
+  const vagaEtapa = useMemo(() => [{ id: sol.id, status: sol.status }], [sol.id, sol.status]);
+  const { etapas } = useEtapasDasVagas(vagaEtapa);
+  const detalhe = statusDetalhadoVaga(sol.status, etapas[sol.id]);
 
   const desfecho = desfechoDoStatus(sol.status);
   const antes = statusAntesDoFim(eventos ?? []);
@@ -185,7 +193,10 @@ export function StatusSolicitacao({ sol, onClose }: { sol: SolicitacaoStatus; on
             <p>{[sol.cidade, sol.solicitante_nome ? `pedida por ${sol.solicitante_nome}` : null, sol.created_at ? `em ${fmtDt(sol.created_at)}` : null].filter(Boolean).join(" · ")}</p>
           </div>
           <div className="sts-up" style={{ animationDelay: ".18s", display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginTop: 14 }}>
-            <span className="sts-status" style={{ "--c": corDesfecho } as React.CSSProperties}><i />{rotuloStatusVaga(sol.status)}</span>
+            <span className="sts-status" title={detalhe.dica}
+              style={{ "--c": detalhe.detalhado ? detalhe.cor : corDesfecho, color: detalhe.detalhado ? detalhe.tinta : undefined } as React.CSSProperties}>
+              <i />{detalhe.texto}
+            </span>
             <span style={{ fontSize: 12.5, fontWeight: 800, background: "rgba(255,255,255,.16)", border: "1px solid rgba(255,255,255,.3)", borderRadius: 999, padding: "7px 13px" }}>{rotuloDesfecho}</span>
             {sol.grau_urgencia?.startsWith("Alta") && <span style={{ fontSize: 12.5, fontWeight: 900, background: "#fff", color: "#b91c1c", borderRadius: 999, padding: "7px 13px" }}><Zap size={12} strokeWidth={2} aria-hidden style={{ display: "inline-block", verticalAlign: "-2px", marginRight: 5, flexShrink: 0 }} />Urgente</span>}
           </div>

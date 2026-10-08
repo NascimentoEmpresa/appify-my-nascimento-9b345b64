@@ -92,23 +92,22 @@ Deno.serve(async (req) => {
       commits: number;
       changed_files: number;
     } = await respostaPr.json();
+    // 08/10/2026 (mig 20261008000009): PR sem chamado no título (as
+    // [SEM-CHAMADO]) também entra no relatório da HE — como linha adicional,
+    // sem chamado. Com SIS-AAAA-NNNN no começo do título, a regra de sempre.
     const chamadoNoTitulo = pr.title.match(/^SIS-\d{4}-\d+/)?.[0];
-    if (!chamadoNoTitulo) {
-      return json(
-        { error: "O título da PR deve começar com o ID do chamado, por exemplo: SIS-2026-0459: resumo." },
-        422,
-      );
+    let chamado: { id: string } | null = null;
+    if (chamadoNoTitulo) {
+      // A mesma regra da CI é usada aqui, mas a RPC também confirma que o
+      // chamado pertence ao colaborador e é elegível para esta data de HE.
+      const { data: chamados, error: erroChamado } = await usuario.rpc("hora_extra_pr_chamado", {
+        p_solicitacao_id: solicitacaoId,
+        p_numero: chamadoNoTitulo,
+      });
+      if (erroChamado) return json({ error: erroChamado.message }, 422);
+      chamado = Array.isArray(chamados) ? chamados[0] ?? null : null;
+      if (!chamado) return json({ error: `O chamado ${chamadoNoTitulo} não está disponível para esta HE.` }, 422);
     }
-
-    // A mesma regra da CI é usada aqui, mas a RPC também confirma que o
-    // chamado pertence ao colaborador e é elegível para esta data de HE.
-    const { data: chamados, error: erroChamado } = await usuario.rpc("hora_extra_pr_chamado", {
-      p_solicitacao_id: solicitacaoId,
-      p_numero: chamadoNoTitulo,
-    });
-    if (erroChamado) return json({ error: erroChamado.message }, 422);
-    const chamado = Array.isArray(chamados) ? chamados[0] : null;
-    if (!chamado) return json({ error: `O chamado ${chamadoNoTitulo} não está disponível para esta HE.` }, 422);
 
     // `changed_files` é o mesmo total exibido pelo GitHub na aba “Files changed”.
     // O nome da coluna foi mantido por compatibilidade com os registros já criados.
@@ -123,7 +122,7 @@ Deno.serve(async (req) => {
         pr_numero: pr.number,
         pr_url: pr.html_url,
         pr_titulo: pr.title,
-        chamado_id: chamado.id,
+        chamado_id: chamado?.id ?? null,
         pr_linhas_adicionadas: pr.additions,
         pr_commits: pr.commits,
         pr_arquivos_adicionados: arquivosAlterados,
@@ -145,6 +144,7 @@ Deno.serve(async (req) => {
         arquivos_adicionados: arquivosAlterados,
       },
       chamado,
+      sem_chamado: !chamado,
     });
   } catch (erro) {
     if (erro instanceof ErroGithub) return json({ error: erro.message }, erro.status >= 400 && erro.status < 500 ? erro.status : 502);

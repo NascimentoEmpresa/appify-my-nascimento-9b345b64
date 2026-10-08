@@ -26,6 +26,9 @@ import { AvisoProcessos, processosDe, useProcessosDosCandidatos } from "@/compon
 import { FichaAso } from "@/components/recrutamento/FichaAso";
 import { CandidatoManualDialog } from "@/components/recrutamento/CandidatoManualDialog";
 import { StatusSolicitacao } from "@/components/recrutamento/StatusSolicitacao";
+import { StatusVagaBadge } from "@/components/recrutamento/StatusVagaBadge";
+import { useEtapasDasVagas } from "@/hooks/useEtapasDasVagas";
+import { vagaTemEtapa } from "@/lib/recrutamento/statusDetalhado";
 import { EnxovalAdmissao, type EnxovalAdmissaoHandle } from "@/components/recrutamento/EnxovalAdmissao";
 
 // ── Tipos ──────────────────────────────────────────────────────────
@@ -941,6 +944,16 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
     () => (view === "tabela" ? items : Object.values(kanbanData).flat()),
     [view, items, kanbanData],
   );
+
+  // Status detalhado (08/10/2026, mig 20261008000008): a etapa do kanban do
+  // candidato mais adiantado de cada vaga na tela — "Recrutamento: TRIAGEM".
+  // Toda movimentação de candidato termina em loadCandidatos, então reler a
+  // etapa da vaga aberta quando a lista de candidatos muda mantém o selo
+  // da tabela e do drawer em dia sem recarregar a página.
+  const { etapas: etapasVagas, recarregar: recarregarEtapas } = useEtapasDasVagas(listaNavegavel);
+  useEffect(() => {
+    if (drawerSol && vagaTemEtapa(drawerSol.status)) recarregarEtapas([drawerSol.id]);
+  }, [drawerSol?.id, drawerSol?.status, candidatos, recarregarEtapas]); // eslint-disable-line react-hooks/exhaustive-deps
   const posNaLista = drawerId == null ? -1 : listaNavegavel.findIndex((x) => x.id === drawerId);
   const vagaAnterior = posNaLista > 0 ? listaNavegavel[posNaLista - 1] : null;
   const vagaSeguinte = posNaLista >= 0 && posNaLista < listaNavegavel.length - 1 ? listaNavegavel[posNaLista + 1] : null;
@@ -2698,7 +2711,7 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
                         <td style={{ fontWeight: 600, color: "#0f172a" }}>{item.contrato || "—"}</td>
                         <td>{item.cargo || "—"}</td>
                         <td>{item.cidade || "—"}</td>
-                        <td><span className={`rec-badge ${badgeStatusCls(item.status)}`}>{rotuloStatusVaga(item.status) || "—"}</span></td>
+                        <td><StatusVagaBadge status={item.status} etapa={etapasVagas[item.id]} classe="rec-badge" classeCor={badgeStatusCls(item.status)} /></td>
                         <td>{renderEtiquetas(item)}</td>
                         <td>{item.grau_urgencia ? <span className={`rec-badge ${badgeUrgCls(item.grau_urgencia)}`}>{item.grau_urgencia.startsWith("Alta") ? <><Ic i={Zap} />Alta</> : item.grau_urgencia}</span> : "—"}</td>
                         <td>{item.solicitante_nome || "—"}</td>
@@ -2766,7 +2779,7 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
                     <ChevronRight size={16} aria-hidden />
                   </button>
                 </span>
-                {drawerSol && <span className={`rec-badge ${badgeStatusCls(drawerSol.status)}`}>{rotuloStatusVaga(drawerSol.status)}</span>}
+                {drawerSol && <StatusVagaBadge status={drawerSol.status} etapa={etapasVagas[drawerSol.id]} classe="rec-badge" classeCor={badgeStatusCls(drawerSol.status)} />}
                 {drawerSol?.grau_urgencia && <span className={`rec-badge ${badgeUrgCls(drawerSol.grau_urgencia)}`}>{drawerSol.grau_urgencia.startsWith("Alta") ? <><Ic i={Zap} />Alta</> : drawerSol.grau_urgencia}</span>}
                 {drawerSol && renderEtiquetas(drawerSol)}
               </div>

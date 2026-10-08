@@ -110,7 +110,8 @@ export default function NovaSolicitacaoDialog({
         (solicitacao.chamados ?? [])
           .filter((c) => !c.adicional)
           .map((c) => ({
-            id: c.chamado_id,
+            // Planejado sempre tem chamado (só a linha adicional pode vir sem).
+            id: c.chamado_id ?? "",
             numero: c.chamado_numero,
             assunto: c.chamado_assunto,
             setor: c.chamado_setor,

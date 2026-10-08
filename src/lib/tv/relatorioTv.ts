@@ -19,11 +19,16 @@
 import { sistemaPorSlug, type RelatorioDados } from "@/pages/relatorios/sistemas";
 import type { PainelTurnover } from "@/lib/diretoria/turnover";
 import type { PainelVagas } from "@/lib/relatorios/vagasPainel";
+import type { Dashboard as DashboardTreinamentos } from "@/pages/treinamentos/plataforma/tipos";
+import type { LinhaLicitacaoTv } from "@/lib/tv/licitacaoTv";
 
-/** A cor da faixa de cada relatório: a dos Relatórios; Geral e Vagas têm a sua. */
+/** A cor da faixa de cada relatório: a dos Relatórios; Geral, Vagas, Licitações e Treinamentos têm a sua. */
 export function corDoRelatorioTv(slug: string | null | undefined): string {
   if (slug === "geral") return "#1e3a8a";
   if (slug === "vagas") return "#4338ca";
+  if (slug === "licitacoes") return "#0e7490";
+  if (slug === "treinamentos") return "#f26522"; // o laranja do módulo
+
   return sistemaPorSlug(slug ?? "")?.cor ?? "#1e3a8a";
 }
 
@@ -54,7 +59,9 @@ export type DadosRelTv =
   | (RelatorioDados & { tipo: "sistema"; slug: string; contrato: string | null; gerado_em?: string })
   | { tipo: "geral"; sistemas: SistemaGeral[]; periodo: { de: string; ate: string }; contrato: string | null; gerado_em?: string }
   | { tipo: "vagas"; painel: PainelVagas; periodo: { de: string; ate: string }; contrato: string | null; gerado_em?: string }
-  | { tipo: "turnover"; painel: PainelTurnover; filial: string | null; contrato: string | null; gerado_em?: string };
+  | { tipo: "turnover"; painel: PainelTurnover; filial: string | null; contrato: string | null; gerado_em?: string }
+  | { tipo: "licitacoes"; itens: LinhaLicitacaoTv[]; contrato: null; gerado_em?: string }
+  | { tipo: "treinamentos"; painel: DashboardTreinamentos; contrato: null; gerado_em?: string };
 
 export type SistemaGeral = Pick<RelatorioDados, "titulo" | "kpis" | "rotulo_item" | "mensal"> & { slug: string };
 
@@ -69,6 +76,17 @@ export function paginasDoRelatorio(d: DadosRelTv): { chave: string; titulo: stri
         { chave: "vagas-andamento", titulo: "Em andamento" },
         { chave: "vagas-contratos", titulo: "Por contrato" },
       ];
+    case "licitacoes": {
+      const ps = [{ chave: "lic-resumo", titulo: "Resumo" }];
+      if (d.itens.some((i) => i[5])) ps.push({ chave: "lic-mapa", titulo: "Onde estamos" });
+      if (d.itens.length) ps.push({ chave: "lic-responsaveis", titulo: "Por responsável" }, { chave: "lic-aberturas", titulo: "Aberturas e resultados" });
+      return ps;
+    }
+    case "treinamentos": {
+      const ps = [{ chave: "trn-geral", titulo: "Visão geral" }, { chave: "trn-engajamento", titulo: "Engajamento" }];
+      if ((d.painel.por_curso ?? []).length || (d.painel.por_contrato ?? []).length) ps.push({ chave: "trn-cursos", titulo: "Cursos e contratos" });
+      return ps;
+    }
     case "turnover": {
       const ps = [{ chave: "turnover-resumo", titulo: "Resumo do ano" }];
       if (d.painel.por_contrato.some((c) => c.demissoes > 0)) ps.push({ chave: "turnover-contratos", titulo: "Por contrato" });

@@ -1,5 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { assinaturaValeParaPublicar, cargoERegistro, problemaAssinatura, FONTES_ASSINATURA } from "@/pages/treinamentos/plataforma/assinaturaFolha";
+import {
+  assinaturaValeParaPublicar, cargoERegistro, problemaAssinatura, FONTES_ASSINATURA, liberaCertificadoSemAssinatura, pedeConfirmacaoSemAssinatura,
+} from "@/pages/treinamentos/plataforma/assinaturaFolha";
 
 // =====================================================================
 // Treinamentos › Assinaturas (mig 20261005000003): o que a tela cobra antes
@@ -60,5 +62,28 @@ describe("letras e tamanho (06/10/2026)", () => {
     expect(problemaAssinatura({ ...ok, tamanho: 1.4 })).toBeNull();
     expect(problemaAssinatura({ ...ok, tamanho: 0.5 })).toMatch(/Tamanho/);
     expect(problemaAssinatura({ ...ok, tamanho: 1.5 })).toMatch(/Tamanho/);
+  });
+});
+
+// 08/10/2026: certificado sem assinatura é permitido, mas pergunta "TEM
+// CERTEZA QUE DESEJA DISPONIBILIZAR O CERTIFICADO SEM ASSINATURA?" — só no
+// momento em que o curso PASSA a liberar certificado sem assinatura.
+describe("aviso de certificado sem assinatura", () => {
+  const curso = (o: Partial<{ publicado: boolean; certificado_modelo_id: string | null; assinatura_id: string | null }>) =>
+    ({ publicado: false, certificado_modelo_id: "modelo", assinatura_id: null, ...o });
+
+  it("só vale para curso publicado, com certificado e sem assinatura", () => {
+    expect(liberaCertificadoSemAssinatura(curso({ publicado: true }))).toBe(true);
+    expect(liberaCertificadoSemAssinatura(curso({ publicado: true, assinatura_id: "a1" }))).toBe(false);
+    expect(liberaCertificadoSemAssinatura(curso({ publicado: true, certificado_modelo_id: null }))).toBe(false);
+    expect(liberaCertificadoSemAssinatura(curso({ publicado: false }))).toBe(false);
+  });
+
+  it("pergunta ao publicar e ao tirar a assinatura; não pergunta de novo a cada salvar", () => {
+    expect(pedeConfirmacaoSemAssinatura(curso({}), curso({ publicado: true }))).toBe(true);                           // publicando
+    expect(pedeConfirmacaoSemAssinatura(curso({ publicado: true, assinatura_id: "a1" }), curso({ publicado: true }))).toBe(true); // tirou a assinatura
+    expect(pedeConfirmacaoSemAssinatura(null, curso({ publicado: true }))).toBe(true);                                 // curso novo já publicado
+    expect(pedeConfirmacaoSemAssinatura(curso({ publicado: true }), curso({ publicado: true }))).toBe(false);           // já estava assim
+    expect(pedeConfirmacaoSemAssinatura(curso({}), curso({ publicado: true, certificado_modelo_id: null }))).toBe(false); // não emite certificado
   });
 });
