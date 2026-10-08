@@ -157,6 +157,12 @@ describe("faturamento", () => {
     expect(aReceberDaNf(nf({ valor_pago: 300, desconto_conta_vinculada: 100 }))).toBe(500);
     expect(aReceberDaNf(nf({ valor_pago: 2000 }))).toBe(0);
   });
+
+  it("SIS-2026-0609: descontos pós-emissão não estão no líquido — abatem o que falta receber", () => {
+    expect(aReceberDaNf(nf({ descontos_pos_emissao_total: 150 }))).toBe(750);
+    expect(aReceberDaNf(nf({ valor_pago: 300, descontos_pos_emissao_total: 100 }))).toBe(500);
+    expect(aReceberDaNf(nf({ descontos_pos_emissao_total: null }))).toBe(900);
+  });
 });
 
 describe("lucroBruto", () => {

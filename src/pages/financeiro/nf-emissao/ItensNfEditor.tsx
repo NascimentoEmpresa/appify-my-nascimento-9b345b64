@@ -234,6 +234,12 @@ export function ItensNfEditor({
                               </div>
                             )
                           )}
+                          {mostrarPosEmissao && (
+                            <p className="col-span-4 text-[11px] text-muted-foreground">
+                              Descontos pós-emissão são só informativos: não alteram o bruto, as retenções nem o líquido da nota. Reduzem o valor a pagar
+                              (líquido − multas, glosas e outros descontos pós-emissão).
+                            </p>
+                          )}
                           <div className="col-span-2">
                             <div className="flex flex-wrap items-center gap-2">
                               <Label className="text-xs">Categoria de risco (INSS)</Label>

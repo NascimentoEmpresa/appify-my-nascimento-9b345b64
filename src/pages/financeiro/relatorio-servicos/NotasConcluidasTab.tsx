@@ -615,6 +615,17 @@ function NfPagamentoDialog({ nf, onClose }: { nf: NfEmissaoRow | null; onClose: 
     setMotivoAjuste("");
   }, [nf?.id]);
 
+  // SIS-2026-0609: sugestão de pagamento = valor a pagar (líquido − conta vinculada −
+  // descontos pós-emissão). Os itens chegam depois da nota, por isso efeito próprio
+  // (só enquanto não há pagamento registrado, para não sobrescrever o que o usuário digitou).
+  useEffect(() => {
+    if (!nf || nf.valor_pago != null || itensExistentes.length === 0) return;
+    const pos = itensExistentes.reduce(
+      (a: number, it: any) => a + Number(it.multas_pos_emissao || 0) + Number(it.glosas_pos_emissao || 0) + Number(it.outros_descontos_pos_emissao || 0), 0);
+    const aPagar = Math.max(0, Math.round(((nf.vlr_liquido_total ?? 0) - Number(nf.desconto_conta_vinculada ?? 0) - pos) * 100) / 100);
+    setValorPago(String(aPagar));
+  }, [nf?.id, itensExistentes]);
+
   const itensBase: ItemForm[] = useMemo(() => itensExistentes.map(itemRowParaForm), [itensExistentes]);
   // No modo de ajuste, os 3 campos pós-emissão editados sobrepõem os salvos.
   const itens: ItemForm[] = useMemo(
@@ -644,6 +655,10 @@ function NfPagamentoDialog({ nf, onClose }: { nf: NfEmissaoRow | null; onClose: 
   // Ajuste de valores de NF concluída (SIS-2026-0592): o que mudou frente ao salvo.
   const posAntes = itensBase.reduce((s, it) => s + somaDescontosPosEmissao(it), 0);
   const posDepois = itens.reduce((s, it) => s + somaDescontosPosEmissao(it), 0);
+  // SIS-2026-0609: pós-emissão não mexe no líquido da nota; é ele que reduz o valor a pagar.
+  const contaVinculada = nf?.desconto_conta_vinculada ?? 0;
+  const valorAPagarAntes = Math.max(0, r2c((nf?.vlr_liquido_total ?? 0) - contaVinculada - posAntes));
+  const valorAPagarDepois = Math.max(0, r2c(totais.vlr_liquido_total - contaVinculada - posDepois));
   const ajusteMudou = modoAjuste && itensBase.some((it, i) => CAMPOS_AJUSTE.some(({ chave }) => r2c(itens[i][chave] - it[chave]) !== 0));
   // Nota importada da planilha que ganha VA/VT/materiais passa a ser recalculada pelo ERP.
   const legadaConvertida =
@@ -707,6 +722,7 @@ function NfPagamentoDialog({ nf, onClose }: { nf: NfEmissaoRow | null; onClose: 
           cofins_total: totais.cofins_total,
           pis_total: totais.pis_total,
           csll_total: totais.csll_total,
+          descontos_pos_emissao_total: posDepois,
         },
       });
       const motivo = motivoAjuste.trim();
@@ -867,7 +883,10 @@ function NfPagamentoDialog({ nf, onClose }: { nf: NfEmissaoRow | null; onClose: 
                   Abra o item e edite <strong>VA, VT, Materiais</strong> ou os campos <strong>pós-emissão</strong>. Bruto, INSS e líquido são recalculados.
                   {legadaConvertida && " Nota importada da planilha: com VA/VT/materiais informados, ela passa a ser recalculada pelo ERP."}
                   {ajusteMudou && (
-                    <> Líquido: <strong>{fmtMoney(nf.vlr_liquido_total)}</strong> → <strong>{fmtMoney(totais.vlr_liquido_total)}</strong>.</>
+                    <>
+                      {" "}Líquido da nota: <strong>{fmtMoney(nf.vlr_liquido_total)}</strong> → <strong>{fmtMoney(totais.vlr_liquido_total)}</strong>.
+                      {" "}Valor a pagar (líquido − descontos pós-emissão): <strong>{fmtMoney(valorAPagarAntes)}</strong> → <strong>{fmtMoney(valorAPagarDepois)}</strong>.
+                    </>
                   )}
                 </span>
                 <Button size="sm" variant="ghost" onClick={() => { setModoAjuste(false); setPosEdit({}); setMotivoAjuste(""); }} disabled={ajustarDescontosPos.isPending}>

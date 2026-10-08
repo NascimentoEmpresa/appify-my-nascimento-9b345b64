@@ -129,6 +129,9 @@ export function pendenteHaMaisDe30Dias(n: { situacao_site_pmt?: string | null; s
 // o total. `situacaoEspecial` já existe pro badge visual; centralizando a
 // checagem aqui corrige os 4 lugares que chamam esta função de uma vez, em
 // vez de repetir a mesma condição em cada um.
+// SIS-2026-0609: os descontos pós-emissão NÃO estão no líquido da nota (não mexem
+// em bruto/retenções) — é aqui que eles reduzem o que falta pagar: líquido − pago −
+// conta vinculada − pós-emissão.
 export function valorPendenteNf(
   nf: {
     vlr_liquido_total: number;

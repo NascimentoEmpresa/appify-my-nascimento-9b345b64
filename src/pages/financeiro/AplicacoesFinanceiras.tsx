@@ -155,7 +155,7 @@ export default function AplicacoesFinanceiras() {
     for (const r of resgatesCaixa) {
       itens.push({
         chave: `r-${r.id}`, data: r.data_resgate, tipo: "resgate", empresa_id: r.empresa_id,
-        empresa: nomeEmpresa.get(r.empresa_id) ?? "—", descricao: "Resgate de aplicação",
+        empresa: nomeEmpresa.get(r.empresa_id) ?? "—", descricao: `${r.numero ?? "—"} · Resgate`,
         principal: Number(r.valor_principal), rendimento: Number(r.valor_rendimento), observacao: r.observacao,
         resgate: r,
       } as any);
