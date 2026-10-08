@@ -271,9 +271,10 @@ const CSS = `
 .tvp-balao-video{left:-6%;top:-6%;z-index:3}
 
 /* Bigodinho em pé acima do card, entre as duas engrenagens — no centro do
-   círculo que o Pablo marcou (≈75% da largura, ≈33% da altura). Entra
+   círculo que o Pablo marcou (≈75% da largura, ≈32% da altura), com 40vmin
+   ("o personagem 2d maior" — era 30): cabe entre o relógio e o balão do card. Entra
    subindo (só transform), flutua e respira como o da tela sem vídeo. */
-.tvp-bigode{position:absolute;z-index:2;left:calc(74.6vw - 7.9vmin);top:calc(33vh - 15vmin);height:30vmin;pointer-events:none;
+.tvp-bigode{position:absolute;z-index:2;left:calc(74.6vw - 10.5vmin);top:calc(32vh - 20vmin);height:40vmin;pointer-events:none;
   animation:tvp-flutua 6s ease-in-out 2s infinite}
 .tvp-bigode img{display:block;height:100%;width:auto;user-select:none;transform-origin:50% 100%;
   filter:drop-shadow(0 1.6vmin 2.4vmin rgba(0,0,0,.45));
