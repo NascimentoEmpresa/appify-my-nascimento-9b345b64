@@ -32,12 +32,14 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card";
 import {
   AlertTriangle, Building2, CheckCircle2, ChevronDown, ChevronRight, Loader2, Search,
-  ShieldAlert, Sparkles, UserMinus, Users, UserX,
+  ShieldAlert, Sparkles, UserMinus, Users, UserX, MessageSquare, Trash2, Send,
 } from "lucide-react";
+import { Textarea } from "@/components/ui/textarea";
 import { useAccessibleMenus } from "@/hooks/useAccessibleMenus";
 import {
   usePainelAtivosContratos, usePessoasAtivas, useVincularPostos, useVincularFilial,
-  useMoverColaborador,
+  useMoverColaborador, useObservacoesAtivos, useSalvarObservacaoAtivos, useExcluirObservacaoAtivos,
+  type ObservacaoAtivos,
 } from "@/hooks/useAtivosContratos";
 import {
   conferirContrato, limparPostoSenior, fmtSaldo, sugerirContrato,
@@ -310,7 +312,7 @@ function LinhaContrato({ c, conf, aberto, podeVincular, onToggle }: {
       <tr className={`cursor-pointer border-b border-border/60 hover:bg-muted/30 ${aberto ? "bg-muted/30" : ""}`} onClick={onToggle}>
         <td className="py-2.5 pl-3 text-muted-foreground">{aberto ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}</td>
         <td className="py-2.5 pr-3">
-          <p className="font-medium">{c.nome}</p>
+          <p className="flex items-center gap-1.5 font-medium">{c.nome}<SeloObservacoes contratoId={c.id} /></p>
           {c.cliente && <p className="text-[11px] text-muted-foreground">{c.cliente}</p>}
         </td>
         <td className="py-2.5 pr-3 text-right tabular-nums">{temPlanilha ? conf.previsto : "—"}</td>
@@ -351,11 +353,13 @@ function DetalheContrato({ c, conf, podeVincular }: { c: ContratoAtivos; conf: C
           Este contrato não tem posto EXECUTADO vigente na Planilha de Custo — não há quantidade prevista para comparar.
         </p>
         <ListaPessoas pessoas={c.pessoas} />
+        <ObservacoesContrato c={c} />
       </div>
     );
   }
   return (
     <div className="space-y-4">
+      <ObservacoesContrato c={c} />
       {conf.pendentes.length > 0 && <DefinirPostos c={c} conf={conf} podeVincular={podeVincular} />}
       <TabelaPostos c={c} conf={conf} podeVincular={podeVincular} />
       {conf.fora.length > 0 && <ForaDaConta c={c} pessoas={conf.fora} podeVincular={podeVincular} />}
@@ -549,7 +553,7 @@ function LinhaPosto({ c, p, aberto, podeVincular, onToggle }: {
         <td className="py-2 pl-3 text-muted-foreground">
           {p.pessoas.length > 0 && (aberto ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />)}
         </td>
-        <td className="py-2 pr-3 font-medium">{p.nome}</td>
+        <td className="py-2 pr-3 font-medium"><span className="inline-flex items-center gap-1.5">{p.nome}<SeloObservacoes contratoId={c.id} posto={p.nome} /></span></td>
         <td className="py-2 pr-3 text-right tabular-nums">{p.previsto}</td>
         <td className="py-2 pr-3 text-right font-medium tabular-nums">{p.tem}</td>
         <td className={`py-2 pr-3 text-right font-bold tabular-nums ${corSaldo(p.saldo)}`}>{fmtSaldo(p.saldo)}</td>
@@ -749,5 +753,95 @@ function DialogPessoasFilial({ filial, onClose }: { filial: string | null; onClo
         </div>
       </DialogContent>
     </Dialog>
+  );
+}
+
+// ---- Observações (mig 20261008000010, 08/10/2026) --------------------------
+// "Por que tem gente a mais/a menos aqui": recado datado e assinado no
+// contrato inteiro ou num posto. Selo com a contagem nas linhas (passe o
+// mouse para ler) e a lista com o campo de escrever ao abrir o contrato.
+
+function useObservacoesDe(contratoId: string, posto?: string) {
+  const { data = [] } = useObservacoesAtivos();
+  return useMemo(() => data.filter((o) => o.contrato_id === contratoId && (posto === undefined || o.posto === posto)), [data, contratoId, posto]);
+}
+
+const fmtQuando = (iso: string) => new Date(iso).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" });
+
+function SeloObservacoes({ contratoId, posto }: { contratoId: string; posto?: string }) {
+  const obs = useObservacoesDe(contratoId, posto);
+  if (!obs.length) return null;
+  return (
+    <HoverCard openDelay={150}>
+      <HoverCardTrigger asChild>
+        <span onClick={(e) => e.stopPropagation()}
+          className="inline-flex cursor-help items-center gap-0.5 rounded-full border border-amber-300 bg-amber-50 px-1.5 py-px text-[10px] font-semibold text-amber-700 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-300">
+          <MessageSquare className="h-3 w-3" /> {obs.length}
+        </span>
+      </HoverCardTrigger>
+      <HoverCardContent className="w-96 space-y-2 p-3" align="start">
+        <p className="text-xs font-semibold">{posto === undefined ? "Observações do contrato" : `Observações do posto ${posto}`}</p>
+        {obs.slice(0, 4).map((o) => <ItemObservacao key={o.id} o={o} compacto />)}
+        {obs.length > 4 && <p className="text-[11px] text-muted-foreground">+{obs.length - 4} — abra o contrato para ver todas.</p>}
+      </HoverCardContent>
+    </HoverCard>
+  );
+}
+
+function ItemObservacao({ o, compacto = false }: { o: ObservacaoAtivos; compacto?: boolean }) {
+  const excluir = useExcluirObservacaoAtivos();
+  return (
+    <div className="rounded-md border border-border bg-background px-2.5 py-1.5 text-xs">
+      <div className="flex items-start gap-2">
+        <p className="flex-1 whitespace-pre-wrap">{o.texto}</p>
+        {!compacto && o.pode_apagar && (
+          <button type="button" title="Apagar observação" disabled={excluir.isPending}
+            className="text-muted-foreground hover:text-destructive"
+            onClick={() => window.confirm("Apagar esta observação?") && excluir.mutate(o.id, { onError: (e) => toast.error((e as Error).message) })}>
+            <Trash2 className="h-3.5 w-3.5" />
+          </button>
+        )}
+      </div>
+      <p className="mt-0.5 text-[10px] text-muted-foreground">
+        {o.posto ? <span className="font-medium text-foreground">Posto {o.posto} · </span> : <span className="font-medium text-foreground">Contrato · </span>}
+        {o.autor_nome ?? "—"} · {fmtQuando(o.created_at)}
+      </p>
+    </div>
+  );
+}
+
+function ObservacoesContrato({ c }: { c: ContratoAtivos }) {
+  const obs = useObservacoesDe(c.id);
+  const salvar = useSalvarObservacaoAtivos();
+  const [texto, setTexto] = useState("");
+  const [posto, setPosto] = useState("");   // "" = contrato inteiro
+  const enviar = () => {
+    if (texto.trim().length < 3) { toast.error("Escreva a observação."); return; }
+    salvar.mutate({ contratoId: c.id, posto, texto: texto.trim() }, {
+      onSuccess: () => { setTexto(""); toast.success("Observação salva."); },
+      onError: (e) => toast.error((e as Error).message),
+    });
+  };
+  return (
+    <div className="rounded-lg border border-amber-200 bg-amber-50/50 p-3 dark:border-amber-900 dark:bg-amber-950/20">
+      <p className="mb-2 flex items-center gap-1.5 text-xs font-semibold"><MessageSquare className="h-3.5 w-3.5 text-amber-600" /> Observações {obs.length > 0 && `(${obs.length})`}
+        <span className="font-normal text-muted-foreground">— por que este contrato ou posto está com gente a mais ou a menos</span></p>
+      {obs.length > 0 && <div className="mb-2 max-h-60 space-y-1.5 overflow-y-auto">{obs.map((o) => <ItemObservacao key={o.id} o={o} />)}</div>}
+      <div className="flex flex-wrap items-start gap-2">
+        <Select value={posto || "__contrato"} onValueChange={(v) => setPosto(v === "__contrato" ? "" : v)}>
+          <SelectTrigger className="h-9 w-56 text-xs"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="__contrato" className="text-xs">Contrato inteiro</SelectItem>
+            {c.postos.map((p) => <SelectItem key={p.nome} value={p.nome} className="text-xs">Posto: {p.nome}</SelectItem>)}
+          </SelectContent>
+        </Select>
+        <Textarea value={texto} onChange={(e) => setTexto(e.target.value)} rows={2} maxLength={2000}
+          placeholder="Ex.: +3 serventes cobrindo férias até 30/10; reforço pedido pelo cliente no evento de novembro…"
+          className="min-h-9 flex-1 text-xs" onKeyDown={(e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) enviar(); }} />
+        <Button size="sm" className="h-9 gap-1.5" disabled={salvar.isPending || texto.trim().length < 3} onClick={enviar}>
+          {salvar.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />} Salvar
+        </Button>
+      </div>
+    </div>
   );
 }
