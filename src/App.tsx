@@ -216,6 +216,7 @@ import DiretoriaSolicitacoesDemissao from "./pages/diretoria/SolicitacoesDemissa
 import DiretoriaRecrutamento from "./pages/diretoria/Recrutamento";
 import RelatorioGeral from "./pages/relatorios/RelatorioGeral";
 import RelatorioSistema from "./pages/relatorios/RelatorioSistema";
+import VagasPainel from "./pages/relatorios/VagasPainel";
 import { SISTEMAS as RELATORIOS } from "./pages/relatorios/sistemas";
 import SstTrocaFuncao from "./pages/sst/TrocaFuncao";
 import RhTrocaFuncao from "./pages/rh/TrocaFuncao";
@@ -690,6 +691,8 @@ const App = () => (
                 cada uma com menu próprio em Acesso por Usuário (mesmos códigos de antes).
                 As rotas antigas /app/diretoria/relatorios/* redirecionam para cá. */}
             <Route path="relatorios" element={<RelatorioGeral />} />
+            {/* Vagas — Dashboard (mig 20261007000020): painel próprio, fora de SISTEMAS (o Relatório Geral itera SISTEMAS). */}
+            <Route path="relatorios/vagas" element={<VagasPainel />} />
             {RELATORIOS.map((s) => (
               <Route key={s.slug} path={`relatorios/${s.slug}`} element={<RelatorioSistema key={s.slug} slug={s.slug} />} />
             ))}
