@@ -53,6 +53,35 @@ export function totalizarLinhasRelatorioPr(linhas: LinhaRelatorioPrHoraExtra[]) 
   );
 }
 
+/**
+ * PR sem chamado (08/10/2026, mig 20261008000009): "às vezes eu lanço mais
+ * de uma PR pro mesmo chamado; tem que aceitar PRs sem chamado também".
+ * O relatório é UMA LINHA POR PR: o mesmo chamado pode aparecer em várias
+ * linhas, e a PR sem chamado entra como linha adicional com chamado_id nulo
+ * (no banco, chamado_numero = 'SEM-CHAMADO').
+ */
+export const NUMERO_SEM_CHAMADO = "SEM-CHAMADO";
+
+export const linhaSemChamado = (l: { chamado_id?: string | null; chamado_numero?: string | null }) =>
+  !l.chamado_id || l.chamado_numero === NUMERO_SEM_CHAMADO;
+
+/** O que a TOTAL da tabela diz: quantas PRs, quantos chamados (sem repetir) e quantas sem chamado. */
+export function contarRelatorioPr(linhas: Array<{ chamado_id?: string | null; pr_numero?: number | null; sem_chamado?: boolean }>) {
+  const comPr = linhas.filter((l) => l.pr_numero);
+  return {
+    prs: comPr.length,
+    chamados: new Set(linhas.filter((l) => l.chamado_id && !l.sem_chamado).map((l) => l.chamado_id)).size,
+    semChamado: comPr.filter((l) => l.sem_chamado || !l.chamado_id).length,
+  };
+}
+
+/** "3 chamados · 1 sem chamado" — sem chamado só aparece quando há. */
+export function textoChamadosRelatorioPr(c: { chamados: number; semChamado: number }): string {
+  const partes = [`${c.chamados} ${c.chamados === 1 ? "chamado" : "chamados"}`];
+  if (c.semChamado) partes.push(`${c.semChamado} sem chamado`);
+  return partes.join(" · ");
+}
+
 export const ERRO_RELATORIO_SEM_CHAMADO =
   "A hora extra precisa de pelo menos um chamado no relatório.";
 

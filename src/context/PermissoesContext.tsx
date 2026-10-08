@@ -4,6 +4,15 @@
 // usado pra decidir acesso. `can()` resolve por: exceção individual
 // (screen_permission_user) > perfil de acesso atribuído (usuario_perfil_acesso
 // + perfil_acesso_permissao, com "concede_tudo" liberando tudo) > nega.
+//
+// 08/10/2026 (mig 20261008000006) — "quando é desenvolvido um módulo novo,
+// o Administrador Geral já tem permissão, mas não pode: todos devem ficar
+// sem permissão e depois colocamos manualmente". O "concede_tudo" passou a
+// valer só para as telas que existiam até 08/10/2026
+// (app_menu.concede_tudo_alcanca); tela nova nasce fora dele. Aqui a mesma
+// regra do banco: quem tem concede_tudo NÃO ganha as telas da lista
+// `foraDoConcedeTudo`. Se a coluna ainda não existir no banco, a lista vem
+// vazia e o comportamento é o antigo.
 // O banco continua sendo a autoridade final via RLS/can_access/has_screen_access
 // — isto aqui é só heurística de UI (esconder botão), nunca a proteção real.
 
@@ -11,6 +20,7 @@ import { createContext, useContext, useEffect, useMemo, useState, type ReactNode
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { useDemoMode } from "@/context/DemoModeContext";
+import { menusForaDoConcedeTudo } from "@/lib/acesso";
 
 export type Role =
   | "admin"
@@ -109,6 +119,8 @@ export function PermissoesProvider({ children }: { children: ReactNode }) {
   const [userOverrides, setUserOverrides] = useState<UserOverride[]>([]);
   const [perfilPermissoes, setPerfilPermissoes] = useState<PerfilPermission[]>([]);
   const [concedeTudo, setConcedeTudo] = useState(false);
+  // Telas cadastradas que o "concede tudo" NÃO alcança (as criadas a partir de 08/10/2026).
+  const [foraDoConcedeTudo, setForaDoConcedeTudo] = useState<Set<string>>(() => new Set());
   const [empresaId, setEmpresaId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [demoRole, setDemoRole] = useState<Role>(() => {
@@ -128,6 +140,7 @@ export function PermissoesProvider({ children }: { children: ReactNode }) {
           setUserOverrides([]);
           setPerfilPermissoes([]);
           setConcedeTudo(false);
+          setForaDoConcedeTudo(new Set());
           setEmpresaId(null);
           setLoading(false);
         }
@@ -172,6 +185,16 @@ export function PermissoesProvider({ children }: { children: ReactNode }) {
       const jaConcedeTudo = perfisAtivos.some((p) => p.concede_tudo);
       const perfilIds = perfisAtivos.map((p) => p.id as string);
 
+      // Só para quem tem "concede tudo": quais telas ficam de fora dele
+      // (menusForaDoConcedeTudo, src/lib/acesso.ts — a mesma conta do banco).
+      // Erro (coluna ainda não criada) = lista vazia = comportamento antigo.
+      let fora = new Set<string>();
+      if (jaConcedeTudo) {
+        const { data: menusFlag, error: errFlag } = await (supabase as any)
+          .from("app_menu").select("codigo, concede_tudo_alcanca");
+        if (!errFlag) fora = menusForaDoConcedeTudo(menusFlag ?? []);
+      }
+
       // Idem: um perfil amplo passa fácil de 1000 linhas de permissão.
       const permissoesPerfil = perfilIds.length
         ? await lerTodasAsLinhas<{ menu_codigo: string; acao: string; allow: boolean }>((de, ate) =>
@@ -192,6 +215,7 @@ export function PermissoesProvider({ children }: { children: ReactNode }) {
           })),
         );
         setConcedeTudo(jaConcedeTudo);
+        setForaDoConcedeTudo(fora);
         setPerfilPermissoes(
           permissoesPerfil.map((permission: any) => ({
             menu: permission.menu_codigo,
@@ -234,12 +258,13 @@ export function PermissoesProvider({ children }: { children: ReactNode }) {
       const override = findOverride(userOverrides, acao, menu);
       if (override) return override.allow;
 
-      if (concedeTudo) return true;
+      // Tela nova (fora do concede tudo) só com exceção individual ou perfil comum.
+      if (concedeTudo && !(menu && foraDoConcedeTudo.has(menu))) return true;
       if (hasPerfilPermission(perfilPermissoes, acao, menu)) return true;
 
       return false;
     },
-  }), [concedeTudo, demoRole, empresaId, isDemo, loading, perfilPermissoes, roles, user, userOverrides]);
+  }), [concedeTudo, foraDoConcedeTudo, demoRole, empresaId, isDemo, loading, perfilPermissoes, roles, user, userOverrides]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

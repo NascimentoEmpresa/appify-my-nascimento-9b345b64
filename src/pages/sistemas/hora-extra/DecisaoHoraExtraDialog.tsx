@@ -23,6 +23,7 @@ import {
   somenteHora,
 } from "./horaExtraUtils";
 import { BadgeStatus, ListaAnexos } from "./HoraExtraUI";
+import { linhaSemChamado } from "./prHoraExtraUtils";
 import type { SolicitacaoHoraExtra } from "./types";
 
 export default function DecisaoHoraExtraDialog({
@@ -193,7 +194,14 @@ export default function DecisaoHoraExtraDialog({
                     <td className="p-3 text-blue-600">
                       <Link2 className="h-4 w-4" />
                     </td>
-                    <td className="p-3 font-semibold"><Link className="text-blue-700 underline underline-offset-2 hover:text-blue-900" to={`/app/sistemas/chamados/${c.chamado_id}`}>{c.chamado_numero}</Link></td>
+                    <td className="p-3 font-semibold">
+                      {/* PR sem chamado (mig 20261008000009): não há chamado para abrir. */}
+                      {linhaSemChamado(c) ? (
+                        <span className="text-slate-500">Sem chamado{c.pr_numero ? ` · PR #${c.pr_numero}` : ""}</span>
+                      ) : (
+                        <Link className="text-blue-700 underline underline-offset-2 hover:text-blue-900" to={`/app/sistemas/chamados/${c.chamado_id}`}>{c.chamado_numero}</Link>
+                      )}
+                    </td>
                     <td className="break-words p-3">{c.chamado_assunto}</td>
                     <td className="p-3">
                       <div className="flex items-center gap-3">

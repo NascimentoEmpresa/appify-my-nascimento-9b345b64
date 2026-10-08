@@ -168,15 +168,17 @@ export function Selo({ cor, children, claro = false, tamanho = 18 }: { cor: stri
 }
 
 /** Um número grande com rótulo, dica e (opcional) variação. */
-export function CartaoKpi({ rotulo, valor, dica, cor, selo, destaque = false }: {
+export function CartaoKpi({ rotulo, valor, dica, cor, selo, destaque = false, tamanho = 72 }: {
   rotulo: string; valor: string; dica?: string | null; cor: string; selo?: { texto: string; cor: string } | null; destaque?: boolean;
+  /** Tamanho do número (px do palco) — menor para valores em R$, que são mais largos. */
+  tamanho?: number;
 }) {
   return (
     <div className="relative flex min-w-0 flex-col justify-between overflow-hidden rounded-[28px] bg-white"
       style={{ padding: "24px 28px", boxShadow: "0 10px 15px -3px rgba(0,0,0,0.08), 0 4px 6px -4px rgba(0,0,0,0.08)", outline: destaque ? `3px solid ${cor}` : undefined }}>
       <span className="absolute inset-x-0 top-0 h-2" style={{ background: cor }} />
       <p className="truncate font-bold uppercase tracking-wide" style={{ fontSize: 20, color: TINTA_SUAVE }}>{rotulo}</p>
-      <p className="truncate font-black leading-none tabular-nums" style={{ fontSize: 72, color: cor, marginTop: 10 }}>{valor}</p>
+      <p className="truncate font-black leading-none tabular-nums" style={{ fontSize: tamanho, color: cor, marginTop: 10 }}>{valor}</p>
       <div className="mt-3 flex min-h-[30px] items-center gap-2">
         {selo && <Selo cor={selo.cor} claro tamanho={17}>{selo.texto}</Selo>}
         {dica && <p className="truncate font-semibold" style={{ fontSize: 19, color: TINTA_SUAVE }}>{dica}</p>}
