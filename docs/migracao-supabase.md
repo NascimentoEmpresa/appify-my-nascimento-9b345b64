@@ -60,7 +60,7 @@ A causa não é dificuldade, é **ordem**: o dump referencia 2.556 vezes o schem
 `auth` e 1.397 vezes o papel `authenticated`, que não existem num Postgres
 comum. Faltando o papel, o `CREATE POLICY` inteiro falha.
 
-## Ordem correta do restore
+## Ordem correta do restore (RESOLVIDO em 08/10/2026)
 
 1. **Papéis**, antes de tudo: `anon`, `authenticated`, `service_role`,
    `authenticator`, `supabase_admin`, `supabase_auth_admin`,
@@ -75,6 +75,9 @@ comum. Faltando o papel, o `CREATE POLICY` inteiro falha.
 5. **O dump**, e depois **o dump de novo**: o segundo passe resolve os 728
    `relation does not exist`, que são dependências em ordem inconveniente.
 6. Conferir o placar: `select count(*) from pg_policies` tem que bater **1.416**.
+
+Esta ordem está automatizada em [`../infra/ha/restaurar-schema.sh`](../infra/ha/restaurar-schema.sh),
+com a preparação em [`../infra/ha/preparar-destino.sql`](../infra/ha/preparar-destino.sql).
 
 ## Replicação lógica — o que precisa ser resolvido antes
 
@@ -114,3 +117,57 @@ RAM, que já caiu três vezes por falta de recurso** (ver
 engasgar.
 
 O plano de aborto está em [`migracao-rollback.md`](migracao-rollback.md).
+
+## Resultado: o schema já restaura idêntico
+
+Executado em 08/10/2026 com a ordem acima. Conferência contra a produção,
+consulta a consulta:
+
+| | Supabase | Cluster novo | |
+|---|---|---|---|
+| Tabelas em `public` | 647 | 647 | ✅ |
+| **Políticas de RLS** | **1.416** | **1.416** | ✅ |
+| Funções em `public` | 1.449 | 1.449 | ✅ |
+| Views | 30 | 30 | ✅ |
+| Tipos | 786 | 786 | ✅ |
+| Sequences | 126 | 126 | ✅ |
+| Triggers | 493 | 493 | ✅ |
+| Tabelas com RLS ligada | 643 | 643 | ✅ |
+| Tabelas faltando | — | nenhuma | ✅ |
+
+`has_screen_access`, `can_access` e `tem_acesso_menu` conferem assinatura por
+assinatura com a produção — incluindo o terceiro argumento ser o enum
+`app_acao`, não `text`.
+
+Com a preparação no lugar, **a primeira passada do dump do `public` dá 1 erro**.
+Sem ela, dá 2.436 e entra uma política de 1.416.
+
+### Onde cada extensão mora — lido da produção, não suposto
+
+| Extensão | Schema no Supabase |
+|---|---|
+| `btree_gist`, `pg_trgm`, `pg_net` | `public` |
+| `pgcrypto`, `uuid-ossp`, `pg_stat_statements` | `extensions` |
+| `pg_cron` | `pg_catalog` |
+| `supabase_vault` | `vault` |
+
+Isto importa: o schema do ERP chama essas funções **sem qualificar o schema**.
+Instalar `pg_trgm` em `extensions` em vez de `public` já fez 31 funções
+"sumirem" da conferência.
+
+## O que ainda falta antes da cópia de dados
+
+1. **`pg_cron`** — a produção tem 5 agendamentos (todos `enfileirar_tick`). No
+   cluster novo exige o pacote `postgresql-17-cron` e entrada em
+   `shared_preload_libraries`, que no Patroni se configura pelo DCS, não pelo
+   `postgresql.conf` na mão.
+2. **`pg_net`** — instalado na produção, mas o inventário de 06/10 não achou
+   nenhum uso (`docs/ha-inventario.md`). Confirmar e, se for mesmo zero, não
+   migrar.
+3. **`supabase_vault`** — substituído por um arquivo equivalente em
+   `preparar-destino.sql`, com o segredo em claro. Aceitável só porque o banco
+   não é alcançável fora do túnel; trocar por um cofre de verdade antes da
+   virada definitiva. Os 5 segredos migram à parte, nunca por dump.
+4. **`REPLICA IDENTITY FULL`** nas três tabelas sem chave primária.
+5. **A camada de API** (PostgREST + GoTrue). Enquanto ela não existir e for
+   ensaiada, não há virada — ver `migracao-rollback.md`.
