@@ -50,7 +50,7 @@ interface PrDetalhe extends PrLista {
   commits: number; additions: number; deletions: number; changed_files: number; merged_by: { login: string } | null;
 }
 interface CommitGh {
-  sha: string; author: { login: string } | null;
+  sha: string; author: { login: string } | null; parents?: { sha: string }[];
   commit: { message: string; author: { name: string; date: string } | null; committer: { date: string } | null };
 }
 interface ArquivoGh { filename: string; status: string; additions: number }
@@ -103,6 +103,31 @@ Deno.serve(async (req) => {
       if (mudaram.length < lista.length) break;
     }
 
+    // ── 1b) História da main ───────────────────────────────────────────
+    // O GitHub conta os commits da MAIN — inclusive merges e o que o Lovable
+    // commita direto nela, que não aparecem em nenhuma PR (mig 20261009000002).
+    // Mais novos primeiro: a primeira página toda já marcada = o resto também.
+    let daMain = 0;
+    for (let pg = 1; pg <= 80; pg++) {               // até 8.000 commits numa execução
+      const lista = await gh<CommitGh[]>(`/commits?sha=main&per_page=100&page=${pg}`);
+      if (!lista.length) break;
+      const shas = lista.map((c) => c.sha);
+      const { data: vistos } = await admin.from("DEV_GITHUB_COMMIT").select("sha").in("sha", shas).eq("na_main", true);
+      const jaVistos = new Set((vistos ?? []).map((v) => v.sha as string));
+      const novos = lista.filter((c) => !jaVistos.has(c.sha));
+      if (novos.length) {
+        // Sem pr_numero no payload: commit que já veio de uma PR continua ligado a ela.
+        const { error } = await admin.from("DEV_GITHUB_COMMIT").upsert(novos.map((c) => ({
+          sha: c.sha, autor_login: c.author?.login ?? null, autor_nome: c.commit.author?.name ?? null,
+          data: c.commit.author?.date ?? c.commit.committer?.date, mensagem: c.commit.message,
+          na_main: true, merge: (c.parents?.length ?? 0) > 1,
+        })), { onConflict: "sha" });
+        if (error) throw new Error(error.message);
+        daMain += novos.length;
+      }
+      if (!novos.length || lista.length < 100) break;
+    }
+
     // ── 2) Detalha um lote ─────────────────────────────────────────────
     const { data: pend } = await admin.from("DEV_GITHUB_PR").select("numero")
       .is("detalhado_em", null).order("numero", { ascending: false }).limit(LOTE);
@@ -129,6 +154,7 @@ Deno.serve(async (req) => {
         const { error } = await admin.from("DEV_GITHUB_COMMIT").upsert(commits.map((c) => ({
           sha: c.sha, pr_numero: n, autor_login: c.author?.login ?? null, autor_nome: c.commit.author?.name ?? null,
           data: c.commit.author?.date ?? c.commit.committer?.date ?? d.created_at, mensagem: c.commit.message,
+          merge: (c.parents?.length ?? 0) > 1,
         })), { onConflict: "sha", ignoreDuplicates: true });   // commit já visto em PR anterior fica com ela
         if (error) throw new Error(error.message);
       }
@@ -148,7 +174,7 @@ Deno.serve(async (req) => {
     await admin.from("DEV_GITHUB_SYNC").update({
       ultima_em: new Date().toISOString(), ultima_por: sessao.user.email ?? null, ultimo_erro: null,
     }).eq("id", 1);
-    return json({ novas, detalhadas: numeros.length, pendentes: count ?? 0 });
+    return json({ novas, daMain, detalhadas: numeros.length, pendentes: count ?? 0 });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     await admin.from("DEV_GITHUB_SYNC").update({ ultimo_erro: msg }).eq("id", 1);

@@ -65,7 +65,7 @@ export default function GithubPainel() {
     <div className="space-y-4">
       <PageHeader
         title="GitHub — Repositório do ERP"
-        subtitle="Commits, pull requests, contribuidores e quem mais mexe no banco"
+        subtitle="Histórico de commits, pull requests, contribuidores e migrations do repositório"
         module="Sistemas"
         breadcrumb={["Chamados de Sistemas", "Painel do Desenvolvedor", "GitHub"]}
         actions={
@@ -121,7 +121,8 @@ function Conteudo({ p }: { p: PainelGithub }) {
   const c = useMemo(() => contadores(p), [p]);
   const autores = useMemo(() => porAutor(p), [p]);
   const kpis: { icone: typeof Users; rotulo: string; valor: string; dica?: string; cor?: string }[] = [
-    { icone: GitCommitHorizontal, rotulo: "Commits", valor: fmtN(c.commits), dica: `${fmtN(c.diasComCommit)} dias com commit` },
+    { icone: GitCommitHorizontal, rotulo: "Commits", valor: fmtN(c.commits),
+      dica: `${fmtN(c.commitsMerge)} merges · ${fmtN(c.commitsBot)} de bots · ${fmtN(c.diasComCommit)} dias com commit` },
     { icone: GitPullRequest, rotulo: "Pull requests", valor: fmtN(c.prs), dica: `${fmtN(c.abertas)} abertas${c.rascunhos ? ` (${c.rascunhos} rascunho)` : ""}`, cor: COR_ESTADO.open },
     { icone: GitMerge, rotulo: "Mergeadas", valor: fmtN(c.mergeadas), dica: `${c.prs ? Math.round((c.mergeadas / c.prs) * 100) : 0}% das PRs`, cor: COR_ESTADO.merged },
     { icone: GitPullRequestClosed, rotulo: "Fechadas sem merge", valor: fmtN(c.fechadasSemMerge), cor: COR_ESTADO.closed },

@@ -15,9 +15,11 @@ export interface PrGithub {
   commits: number | null; adicoes: number | null; remocoes: number | null; arquivos: number | null;
   migrations: number | null; linhas_sql: number | null; migrations_lista: string[] | null;
 }
-/** [sha7, pr, login, nome, data, 1ª linha da mensagem] — compacto, vem da RPC. */
-export type CommitBruto = [string, number | null, string | null, string | null, string, string];
-export interface CommitGithub { sha: string; pr: number | null; login: string | null; nome: string | null; autor: string; data: string; mensagem: string }
+/** [sha7, pr, login, nome, data, 1ª linha da mensagem, merge?] — compacto, vem da RPC.
+ *  Desde a mig 20261009000002 inclui a história da main (merges e commits
+ *  do Lovable, que não passam por PR) — o mesmo total que o GitHub mostra. */
+export type CommitBruto = [string, number | null, string | null, string | null, string, string, boolean?];
+export interface CommitGithub { sha: string; pr: number | null; login: string | null; nome: string | null; autor: string; data: string; mensagem: string; merge: boolean }
 
 export interface PainelGithubBruto {
   sync: { ultima_em: string | null; ultima_por: string | null; ultimo_erro: string | null } | null;
@@ -33,8 +35,8 @@ export const autorDoCommit = (login: string | null, nome: string | null) => logi
 export function normalizarPainel(b: PainelGithubBruto): PainelGithub {
   return {
     sync: b.sync, pendentes: b.pendentes ?? 0, prs: b.prs ?? [],
-    commits: (b.commits ?? []).map(([sha, pr, login, nome, data, mensagem]) => ({
-      sha, pr, login, nome, autor: autorDoCommit(login, nome), data, mensagem,
+    commits: (b.commits ?? []).map(([sha, pr, login, nome, data, mensagem, merge]) => ({
+      sha, pr, login, nome, autor: autorDoCommit(login, nome), data, mensagem, merge: merge === true,
     })),
   };
 }
@@ -42,7 +44,9 @@ export function normalizarPainel(b: PainelGithubBruto): PainelGithub {
 // ---- Filtro ------------------------------------------------------------------
 
 export interface FiltroGithub { dias: number | null; autor: string | null; semBots: boolean }
-export const FILTRO_GITHUB_PADRAO: FiltroGithub = { dias: null, autor: null, semBots: true };
+// semBots começa desligado: o Lovable (gpt-engineer-app[bot]) é ~1/4 dos
+// commits da main, e escondê-lo de saída deixava o total longe do GitHub.
+export const FILTRO_GITHUB_PADRAO: FiltroGithub = { dias: null, autor: null, semBots: false };
 
 export function filtrarPainel(p: PainelGithub, f: FiltroGithub, agora = new Date()): PainelGithub {
   const desde = f.dias ? agora.getTime() - f.dias * 86_400_000 : -Infinity;
@@ -65,7 +69,7 @@ export function mediana(xs: number[]): number | null {
 const horasEntre = (a: string, b: string) => (new Date(b).getTime() - new Date(a).getTime()) / 3_600_000;
 
 export interface ContadoresGithub {
-  commits: number; prs: number; mergeadas: number; abertas: number; fechadasSemMerge: number; rascunhos: number;
+  commits: number; commitsMerge: number; commitsBot: number; prs: number; mergeadas: number; abertas: number; fechadasSemMerge: number; rascunhos: number;
   adicoes: number; remocoes: number; arquivos: number; migrations: number; linhasSql: number;
   contribuidores: number; comChamado: number; semChamado: number;
   medianaHorasAteMerge: number | null; diasComCommit: number; mediaCommitsPorPr: number | null;
@@ -78,6 +82,8 @@ export function contadores(p: PainelGithub): ContadoresGithub {
   const detalhadas = p.prs.filter((x) => x.commits != null);
   return {
     commits: p.commits.length, prs: p.prs.length, mergeadas: merg.length,
+    commitsMerge: p.commits.filter((c) => c.merge).length,
+    commitsBot: p.commits.filter((c) => ehBot(c.autor)).length,
     abertas: p.prs.filter((x) => x.estado === "open").length,
     fechadasSemMerge: p.prs.filter((x) => x.estado === "closed").length,
     rascunhos: p.prs.filter((x) => x.rascunho && x.estado === "open").length,
