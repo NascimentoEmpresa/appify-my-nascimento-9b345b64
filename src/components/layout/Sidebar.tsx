@@ -3,6 +3,7 @@ import logoGN from "@/assets/logo-nascimento-icon.png";
 import {
   LayoutDashboard,
   Fingerprint,
+  UserCheck,
   Briefcase,
   FileText,
   Sparkles,
@@ -1152,7 +1153,13 @@ const operacionalModule: ModuleDef = {
     {
       label: "Operacional",
       defaultOpen: true,
-      items: [{ label: "Controle de Diárias", to: "/app/operacional/diarias", icon: CalendarCheck2 }],
+      items: [
+        { label: "Controle de Diárias", to: "/app/operacional/diarias", icon: CalendarCheck2 },
+        // Efetividade e Coberturas (branch local efetividade, mig 20261008000030):
+        // quem faltou pelo ponto da Senior e o acionamento de diaristas. As 5
+        // telas ficam em abas dentro dela; menu ope_efetividade.
+        { label: "Efetividade e Coberturas", to: "/app/operacional/efetividade", icon: UserCheck },
+      ],
     },
     {
       label: "Recrutamento e Seleção",
