@@ -157,10 +157,16 @@ Instalar `pg_trgm` em `extensions` em vez de `public` já fez 31 funções
 
 ## O que ainda falta antes da cópia de dados
 
-1. **`pg_cron`** — a produção tem 5 agendamentos (todos `enfileirar_tick`). No
-   cluster novo exige o pacote `postgresql-17-cron` e entrada em
-   `shared_preload_libraries`, que no Patroni se configura pelo DCS, não pelo
-   `postgresql.conf` na mão.
+1. ~~`pg_cron`~~ — **resolvido em 09/10/2026.** `postgresql-17-cron` instalado
+   nos dois nós, `shared_preload_libraries=pg_cron` e `cron.database_name=postgres`
+   no DCS do Patroni (nunca no `postgresql.conf`, que o Patroni reescreve), e a
+   extensão criada. Os 5 agendamentos reais são `whatsapp-retomada-tick` (a cada
+   5 min), `sla-escalonamento-tick`, `regua-cobranca-tick`,
+   `plano-acao-marcar-atrasadas` e `comite-etica-alertas`.
+
+   ⚠️ **Três deles mandam WhatsApp e e-mail de verdade.** Enquanto o Supabase
+   estiver no ar, criá-los no cluster novo faz o usuário receber tudo em dobro.
+   `cron.job` tem que ficar **vazio** até a virada.
 2. **`pg_net`** — instalado na produção, mas o inventário de 06/10 não achou
    nenhum uso (`docs/ha-inventario.md`). Confirmar e, se for mesmo zero, não
    migrar.
