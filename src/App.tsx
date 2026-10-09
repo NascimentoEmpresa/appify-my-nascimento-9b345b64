@@ -177,6 +177,7 @@ import Contabilidade from "./pages/Contabilidade";
 import Colaboradores from "./pages/rh/Colaboradores";
 import AtivosContratos from "./pages/rh/AtivosContratos";
 import HierarquiaPostos from "./pages/rh/HierarquiaPostos";
+import GestaoPonto from "./pages/rh/GestaoPonto";
 import Recrutamento from "./pages/rh/Recrutamento";
 import Patrimonios from "./pages/juridico/Patrimonios";
 import JuridicoNotificacoes from "./pages/juridico/Notificacoes";
@@ -227,6 +228,11 @@ import AsoDemissional from "./pages/sst/AsoDemissional";
 import ConferenciaPonto from "./pages/rh/ConferenciaPonto";
 import ConferenciaPontoPainel from "./pages/rh/ConferenciaPontoPainel";
 import OperacionalConferenciaPonto from "./pages/operacional/ConferenciaPonto";
+import EfetividadePainelDia from "./pages/operacional/efetividade/PainelDia";
+import EfetividadeControlePostos from "./pages/operacional/efetividade/ControlePostos";
+import EfetividadeDetalhePosto from "./pages/operacional/efetividade/DetalhePosto";
+import EfetividadeFaltasCoberturas from "./pages/operacional/efetividade/FaltasCoberturas";
+import EfetividadeHistorico from "./pages/operacional/efetividade/HistoricoIndicadores";
 import FinanceiroConferenciaPonto from "./pages/financeiro/ConferenciaPonto";
 import LaudosEpi from "./pages/sst/LaudosEpi";
 import ControleCa from "./pages/sst/ControleCa";
@@ -815,6 +821,8 @@ const App = () => (
             <Route path="rh/ativos-contratos" element={<AtivosContratos />} />
             {/* Hierarquia de postos da Senior (mig 20261007000024). */}
             <Route path="rh/hierarquia-postos" element={<HierarquiaPostos />} />
+            {/* Gestão de Ponto (branch local gestaoponto, mig 20261007000001): marcações da Senior por colaborador. */}
+            <Route path="rh/gestao-ponto" element={<GestaoPonto />} />
             {/* RH > Hierarquia removido (jul/2026) — feature descontinuada. A tabela
                 RH_CONTRATO_ENCARREGADO pode ser dropada; a RPC rh_hierarquia_dados
                 CONTINUA (usada por Líderes por setor / Painel Gerencial). */}
@@ -837,6 +845,13 @@ const App = () => (
             {/* As outras duas portas do MESMO sistema — o fluxo atravessa os
                 três setores e ninguém troca de módulo para ver o seu. */}
             <Route path="operacional/conferencia-ponto" element={<OperacionalConferenciaPonto />} />
+            {/* Efetividade e Coberturas (branch local efetividade, mig 20261008000030): 5 telas sob
+                um menu só (ope_efetividade), casadas pelo prefixo da rota. */}
+            <Route path="operacional/efetividade" element={<EfetividadePainelDia />} />
+            <Route path="operacional/efetividade/postos" element={<EfetividadeControlePostos />} />
+            <Route path="operacional/efetividade/posto" element={<EfetividadeDetalhePosto />} />
+            <Route path="operacional/efetividade/faltas" element={<EfetividadeFaltasCoberturas />} />
+            <Route path="operacional/efetividade/historico" element={<EfetividadeHistorico />} />
             <Route path="financeiro/conferencia-ponto" element={<FinanceiroConferenciaPonto />} />
             {/* Dashboard de Pontos (mig 274): a mesma tela do painel do RH, com
                 menu próprio em cada módulo (financeiro_/operacional_dashboard_pontos). */}
