@@ -565,6 +565,8 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
   // tem overflow:hidden e um absolute na linha de baixo sairia cortado.
   const [etiquetaMenu, setEtiquetaMenu]             = useState<{ id: number; x: number; y: number } | null>(null);
   const [search, setSearch]           = useState("");
+  // Busca pelo nº da vaga (o "#" da 1ª coluna) — 09/10/2026.
+  const [buscaId, setBuscaId]         = useState("");
   const [stats, setStats]             = useState({ total: 0, pendentes: 0, ag_treinamentos: 0, em_processo: 0, contratados: 0, reprovadas: 0 });
   const [kanbanData, setKanbanData]   = useState<Record<string, Solicitacao[]>>({});
 
@@ -711,6 +713,14 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
   // dois aplicam exatamente os mesmos filtros (aba/status/busca).
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- builder do PostgREST; o tipo exato muda a cada .select()
   const aplicarFiltros = useCallback((q: any) => {
+    // Nº da vaga digitado: vai direto nela, sem chip de status nem período —
+    // senão um "Pendente…" marcado escondia a vaga que se procurou pelo #.
+    // A aba "Minhas" continua valendo (não abre vaga de outro solicitante).
+    if (buscaId) {
+      q = q.eq("id", Number(buscaId));
+      if (tab === "minha" && user?.email) q = q.eq("solicitante_cpf", user.email);
+      return q;
+    }
     if (statusFilter === "em_processo") {
       q = q.in("status", STATUS_EM_PROCESSO);
     } else if (statusFilter === FILTRO_SELECAO) {
@@ -736,7 +746,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
     if (dataDe)  q = q.gte("created_at", `${dataDe}T00:00:00-03:00`);
     if (dataAte) q = q.lt("created_at", `${diaSeguinte(dataAte)}T00:00:00-03:00`);
     return q;
-  }, [statusFilter, tab, search, user, dataDe, dataAte, STATUS_EM_PROCESSO]);
+  }, [statusFilter, tab, search, buscaId, user, dataDe, dataAte, STATUS_EM_PROCESSO]);
 
   // ── Carregar Lista ────────────────────────────────────────────
   const listaReq = useRef(0);
@@ -748,8 +758,8 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
       .from("SISTEMA_RECRUTAMENTO")
       .select("*", { count: "exact" });
     q = aplicarFiltros(q);
-    if (contratoFiltro.length) q = q.in("contrato", contratoFiltro);
-    if (etiquetaFiltro.length) q = q.overlaps("etiquetas", etiquetaFiltro);
+    if (contratoFiltro.length && !buscaId) q = q.in("contrato", contratoFiltro);
+    if (etiquetaFiltro.length && !buscaId) q = q.overlaps("etiquetas", etiquetaFiltro);
 
     const from = (page - 1) * PER;
     const to   = from + PER - 1;
@@ -763,7 +773,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
     const ct = count ?? 0;
     setTotal(ct);
     setPages(Math.max(1, Math.ceil(ct / PER)));
-  }, [aplicarFiltros, contratoFiltro, etiquetaFiltro, page, toast, noEscopoLista, podeAdministrativa]);
+  }, [aplicarFiltros, buscaId, contratoFiltro, etiquetaFiltro, page, toast, noEscopoLista, podeAdministrativa]);
 
   // ── Carregar Kanban ───────────────────────────────────────────
   const kanbanReq = useRef(0);
@@ -775,8 +785,8 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
     const kbQuery = (cols: string) => {
       let q = sb.from("SISTEMA_RECRUTAMENTO").select(cols);
       q = aplicarFiltros(q);
-      if (contratoFiltro.length) q = q.in("contrato", contratoFiltro);
-      if (etiquetaFiltro.length) q = q.overlaps("etiquetas", etiquetaFiltro);
+      if (contratoFiltro.length && !buscaId) q = q.in("contrato", contratoFiltro);
+      if (etiquetaFiltro.length && !buscaId) q = q.overlaps("etiquetas", etiquetaFiltro);
       return q.order("created_at", { ascending: false });
     };
     let { data, error } = await lerTudo<Solicitacao>(() => kbQuery("id,cargo,contrato,cidade,status,grau_urgencia,quantidade_vagas,analista_nome,solicitante_nome,created_at,status_changed_at,administrativa,setor"));
@@ -790,7 +800,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
       grouped[row.status].push(row);
     }
     setKanbanData(grouped);
-  }, [aplicarFiltros, contratoFiltro, etiquetaFiltro, noEscopo]);
+  }, [aplicarFiltros, buscaId, contratoFiltro, etiquetaFiltro, noEscopo]);
 
   // Contagem de solicitações por contrato e por etiqueta (respeita
   // aba/status/busca; ignora os dois filtros de faceta — o menu mostra quanto
@@ -2684,10 +2694,22 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
             </div>
 
             {/* Busca */}
-            <div style={{ marginBottom: 10 }}>
+            <div style={{ marginBottom: 10, display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
               <input style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 12, color: "#0f172a", fontSize: 12, padding: "9px 12px", outline: "none", width: "100%", maxWidth: 400, boxShadow: "0 8px 24px rgba(15,23,42,.06)" }}
                 placeholder="Buscar por cargo, contrato, cidade..."
                 onChange={e => debounceSearch(e.target.value)} />
+              <div style={{ position: "relative" }}>
+                <span style={{ position: "absolute", left: 11, top: "50%", transform: "translateY(-50%)", color: "#94a3b8", fontSize: 12, fontWeight: 700 }}>#</span>
+                <input inputMode="numeric" value={buscaId} title="Número da vaga (o # da primeira coluna)"
+                  style={{ background: "#fff", border: `1px solid ${buscaId ? "#0f3171" : "#e2e8f0"}`, borderRadius: 12, color: "#0f172a", fontSize: 12, padding: "9px 30px 9px 24px", outline: "none", width: 150, boxShadow: "0 8px 24px rgba(15,23,42,.06)" }}
+                  placeholder="Nº da vaga"
+                  onChange={e => { setBuscaId(e.target.value.replace(/\D/g, "").slice(0, 9)); setPage(1); }} />
+                {buscaId && (
+                  <button onClick={() => { setBuscaId(""); setPage(1); }} title="Limpar"
+                    style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", border: "none", background: "transparent", color: "#94a3b8", fontSize: 14, cursor: "pointer", lineHeight: 1 }}>×</button>
+                )}
+              </div>
+              {buscaId && <span style={{ fontSize: 11, color: "#64748b" }}>buscando só a vaga #{buscaId} — status e período ignorados</span>}
             </div>
 
             {/* Tabela */}
