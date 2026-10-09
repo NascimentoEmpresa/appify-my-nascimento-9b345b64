@@ -23,7 +23,9 @@ set -euo pipefail
 : "${SENHA_SUPABASE:?senha do postgres da producao}"
 : "${SENHA_DESTINO:?senha do postgres do cluster novo}"
 DESTINO_HOST="${DESTINO_HOST:-10.77.0.12}"   # o LIDER do cluster
-BANCO="${BANCO:-erp}"
+# "postgres" de proposito: e o nome que o Supabase usa, entao as strings de
+# conexao nao mudam de forma nenhuma na virada.
+BANCO="${BANCO:-postgres}"
 REF="${REF:-fwmzeaztjxrxxzxzxmgc}"
 # aws-1, nao aws-0: o aws-0 responde na porta mas recusa o tenant.
 ORIGEM_HOST="${ORIGEM_HOST:-aws-1-sa-east-1.pooler.supabase.com}"

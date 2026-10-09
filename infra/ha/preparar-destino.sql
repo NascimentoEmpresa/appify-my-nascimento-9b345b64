@@ -61,7 +61,20 @@ CREATE EXTENSION IF NOT EXISTS pg_trgm;
 -- (docs/migracao-rollback.md) acusar diferenca sem haver problema nenhum.
 CREATE EXTENSION IF NOT EXISTS pg_stat_statements WITH SCHEMA extensions;
 
--- ── 4. vault ───────────────────────────────────────────────────────────────
+-- ── 4. pg_cron ─────────────────────────────────────────────────────────────
+-- Exige pg_cron em shared_preload_libraries e cron.database_name no DCS do
+-- Patroni -- NAO no postgresql.conf na mao, porque o Patroni reescreve o
+-- arquivo e a alteracao some no proximo restart.
+--
+-- PERIGO: a producao tem 5 agendamentos, e TRES mandam mensagem de verdade
+-- para gente de verdade (whatsapp-retomada-tick, regua-cobranca-tick,
+-- comite-etica-alertas). Enquanto o Supabase estiver no ar, criar esses
+-- agendamentos aqui faz o usuario receber TUDO EM DOBRO -- uma vez de cada
+-- banco. Eles so nascem na virada, depois que o Supabase for desligado.
+-- Nunca antes, nem "so para testar".
+CREATE EXTENSION IF NOT EXISTS pg_cron;
+
+-- ── 5. vault ───────────────────────────────────────────────────────────────
 -- O supabase_vault não existe fora do Supabase. O ERP lê de
 -- vault.decrypted_secrets em uma função. Aqui fica a mesma forma, com o
 -- segredo em claro -- o que é ACEITÁVEL só porque o banco não é alcançável
@@ -80,6 +93,6 @@ CREATE OR REPLACE VIEW vault.decrypted_secrets AS
          created_at, updated_at
     FROM vault.secrets;
 
--- ── 5. permissões de uso ───────────────────────────────────────────────────
+-- ── 6. permissões de uso ───────────────────────────────────────────────────
 GRANT USAGE ON SCHEMA public, auth, storage, extensions, vault
   TO anon, authenticated, service_role;
