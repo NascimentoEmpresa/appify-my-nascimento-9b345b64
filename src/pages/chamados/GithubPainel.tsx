@@ -4,8 +4,8 @@ import {
   Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, ComposedChart, LabelList, Legend, Line, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from "recharts";
 import {
-  ArrowLeft, Database, ExternalLink, FileCode2, Flame, GitBranch, GitCommitHorizontal, GitMerge, GitPullRequest, GitPullRequestClosed,
-  Loader2, Minus, Plus, RefreshCw, Search, ShieldAlert, Timer, Trophy, Users,
+  ArrowLeft, Database, ExternalLink, FileCode2, GitBranch, GitCommitHorizontal, GitMerge, GitPullRequest, GitPullRequestClosed,
+  Loader2, Minus, Plus, RefreshCw, Search, ShieldAlert, Timer, Users,
 } from "lucide-react";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/layout/PageHeader";
@@ -19,7 +19,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { useGithubPainel, useSincronizarGithub, type ProgressoSync } from "@/hooks/useGithubPainel";
 import {
   calendario, contadores, ehBot, filtrarPainel, FILTRO_GITHUB_PADRAO, fmtHoras, fmtN, mensalPrs, porAutor, porBranch, punchcard, semanal,
-  sequencias, type FiltroGithub, type LinhaAutor, type PainelGithub, type PrGithub,
+  type FiltroGithub, type LinhaAutor, type PainelGithub, type PrGithub,
 } from "@/lib/sistemas/githubPainel";
 
 // =====================================================================
@@ -120,7 +120,6 @@ export default function GithubPainel() {
 function Conteudo({ p }: { p: PainelGithub }) {
   const c = useMemo(() => contadores(p), [p]);
   const autores = useMemo(() => porAutor(p), [p]);
-  const seq = useMemo(() => sequencias(p.commits), [p]);
   const kpis: { icone: typeof Users; rotulo: string; valor: string; dica?: string; cor?: string }[] = [
     { icone: GitCommitHorizontal, rotulo: "Commits", valor: fmtN(c.commits), dica: `${fmtN(c.diasComCommit)} dias com commit` },
     { icone: GitPullRequest, rotulo: "Pull requests", valor: fmtN(c.prs), dica: `${fmtN(c.abertas)} abertas${c.rascunhos ? ` (${c.rascunhos} rascunho)` : ""}`, cor: COR_ESTADO.open },
@@ -131,7 +130,6 @@ function Conteudo({ p }: { p: PainelGithub }) {
     { icone: Minus, rotulo: "Linhas removidas", valor: fmtN(c.remocoes), cor: "#cf222e" },
     { icone: Database, rotulo: "Migrations criadas", valor: fmtN(c.migrations), dica: `${fmtN(c.linhasSql)} linhas de SQL` },
     { icone: Users, rotulo: "Contribuidores", valor: fmtN(c.contribuidores), dica: `${fmtN(c.arquivos)} arquivos alterados` },
-    { icone: Flame, rotulo: "Sequência de commits", valor: `${seq.atual} d`, dica: `maior: ${seq.maior} dias seguidos` },
   ];
   return (
     <>
@@ -156,7 +154,7 @@ function Conteudo({ p }: { p: PainelGithub }) {
         <GraficoMensalPrs p={p} />
       </div>
 
-      <Ranking autores={autores} />
+      <Contribuidores autores={autores} />
 
       <div className="grid gap-4 lg:grid-cols-3">
         <QuemMexeNoBanco autores={autores} p={p} />
@@ -262,9 +260,10 @@ function GraficoMensalPrs({ p }: { p: PainelGithub }) {
   );
 }
 
-// ---- Ranking -------------------------------------------------------------------------------------
-
-type ColRank = "commits" | "prs" | "mergeadas" | "adicoes" | "remocoes" | "migrations" | "diasAtivos" | "sequenciaMaior";
+// ---- Contribuidores ------------------------------------------------------------------------------
+// Histórico por pessoa, em ordem alfabética — sem posição, medalha, barra
+// nem "maior sequência": o painel é registro do trabalho, não competição
+// (pedido do Pablo, 09/10/2026).
 
 function Avatar({ autor, avatar }: { autor: string; avatar?: string | null }) {
   const src = avatarDe(autor, avatar);
@@ -273,42 +272,35 @@ function Avatar({ autor, avatar }: { autor: string; avatar?: string | null }) {
     : <span className="grid h-6 w-6 place-items-center rounded-full bg-muted text-[10px] font-bold">{autor.slice(0, 2).toUpperCase()}</span>;
 }
 
-function Ranking({ autores }: { autores: LinhaAutor[] }) {
-  const [col, setCol] = useState<ColRank>("commits");
-  const linhas = [...autores].sort((a, b) => (b[col] as number) - (a[col] as number));
-  const max = Math.max(1, ...linhas.map((l) => l[col] as number));
-  const cols: [ColRank, string][] = [["commits", "Commits"], ["prs", "PRs"], ["mergeadas", "Mergeadas"], ["adicoes", "+ linhas"], ["remocoes", "− linhas"], ["migrations", "Migrations"], ["diasAtivos", "Dias ativos"], ["sequenciaMaior", "Maior sequência"]];
+function Contribuidores({ autores }: { autores: LinhaAutor[] }) {
+  const linhas = [...autores].sort((a, b) => a.autor.localeCompare(b.autor, "pt-BR", { sensitivity: "base" }));
   return (
     <Card className="overflow-hidden">
-      <p className="flex items-center gap-1.5 border-b border-border px-4 py-2.5 text-sm font-semibold"><Trophy className="h-4 w-4 text-warning" /> Contribuidores <span className="font-normal text-muted-foreground">— clique na coluna para ordenar</span></p>
+      <p className="flex items-center gap-1.5 border-b border-border px-4 py-2.5 text-sm font-semibold"><Users className="h-4 w-4 text-muted-foreground" /> Contribuidores <span className="font-normal text-muted-foreground">— histórico por pessoa</span></p>
       <div className="overflow-x-auto">
         <table className="w-full text-xs">
           <thead><tr className="bg-muted/40 text-left text-[10px] uppercase tracking-wider text-muted-foreground">
-            <th className="px-3 py-2">#</th><th className="px-3 py-2">Contribuidor</th>
-            {cols.map(([k, r]) => <th key={k} onClick={() => setCol(k)} className={`cursor-pointer px-3 py-2 text-right hover:text-foreground ${col === k ? "text-foreground" : ""}`}>{r}{col === k ? " ▾" : ""}</th>)}
-            <th className="px-3 py-2">Último commit</th>
+            <th className="px-3 py-2">Contribuidor</th>
+            {["Commits", "PRs", "Mergeadas", "+ linhas", "− linhas", "Migrations", "Dias com commit"].map((r) => <th key={r} className="px-3 py-2 text-right">{r}</th>)}
+            <th className="px-3 py-2">Primeiro commit</th><th className="px-3 py-2">Último commit</th>
           </tr></thead>
           <tbody>
-            {linhas.map((l, i) => (
+            {linhas.map((l) => (
               <tr key={l.autor} className="border-t border-border/60">
-                <td className="px-3 py-1.5 font-bold text-muted-foreground">{i < 3 ? ["🥇", "🥈", "🥉"][i] : i + 1}</td>
                 <td className="px-3 py-1.5">
                   <div className="flex items-center gap-2">
                     <Avatar autor={l.autor} avatar={l.avatar} />
-                    <div className="min-w-[140px]">
-                      <p className="font-medium">{l.autor}{l.bot && <Badge variant="secondary" className="ml-1 text-[9px]">bot</Badge>}</p>
-                      <div className="mt-0.5 h-1.5 rounded bg-muted"><div className="h-full rounded bg-primary" style={{ width: `${((l[col] as number) / max) * 100}%` }} /></div>
-                    </div>
+                    <p className="font-medium">{l.autor}{l.bot && <Badge variant="secondary" className="ml-1 text-[9px]">bot</Badge>}</p>
                   </div>
                 </td>
-                <td className="px-3 py-1.5 text-right font-semibold tabular-nums">{fmtN(l.commits)}</td>
+                <td className="px-3 py-1.5 text-right tabular-nums">{fmtN(l.commits)}</td>
                 <td className="px-3 py-1.5 text-right tabular-nums">{fmtN(l.prs)}</td>
-                <td className="px-3 py-1.5 text-right tabular-nums" style={{ color: COR_ESTADO.merged }}>{fmtN(l.mergeadas)}</td>
-                <td className="px-3 py-1.5 text-right tabular-nums text-[#1a7f37]">+{fmtN(l.adicoes)}</td>
-                <td className="px-3 py-1.5 text-right tabular-nums text-[#cf222e]">−{fmtN(l.remocoes)}</td>
+                <td className="px-3 py-1.5 text-right tabular-nums">{fmtN(l.mergeadas)}</td>
+                <td className="px-3 py-1.5 text-right tabular-nums">+{fmtN(l.adicoes)}</td>
+                <td className="px-3 py-1.5 text-right tabular-nums">−{fmtN(l.remocoes)}</td>
                 <td className="px-3 py-1.5 text-right tabular-nums">{fmtN(l.migrations)}</td>
                 <td className="px-3 py-1.5 text-right tabular-nums">{fmtN(l.diasAtivos)}</td>
-                <td className="px-3 py-1.5 text-right tabular-nums">{l.sequenciaMaior} d</td>
+                <td className="px-3 py-1.5 text-muted-foreground">{fmtDataHora(l.primeiro)}</td>
                 <td className="px-3 py-1.5 text-muted-foreground">{fmtDataHora(l.ultimo)}</td>
               </tr>
             ))}
@@ -323,14 +315,14 @@ function Ranking({ autores }: { autores: LinhaAutor[] }) {
 // ---- Banco de dados ------------------------------------------------------------------------------
 
 function QuemMexeNoBanco({ autores, p }: { autores: LinhaAutor[]; p: PainelGithub }) {
-  const dados = autores.filter((a) => a.migrations > 0).sort((a, b) => b.migrations - a.migrations).slice(0, 10)
+  const dados = autores.filter((a) => a.migrations > 0).sort((a, b) => a.autor.localeCompare(b.autor, "pt-BR", { sensitivity: "base" }))
     .map((a) => ({ nome: a.autor, migrations: a.migrations, linhas: a.linhasSql }));
   const recentes = useMemo(() => p.prs.filter((x) => x.migrations_lista?.length)
     .flatMap((x) => (x.migrations_lista ?? []).map((m) => ({ m, pr: x.numero, autor: x.autor_login ?? "?", data: x.mergeado_em ?? x.criado_em, url: x.url })))
     .sort((a, b) => b.m.localeCompare(a.m)).slice(0, 40), [p]);
   return (
     <Card className="p-4 lg:col-span-2">
-      <p className="mb-1 flex items-center gap-1.5 text-sm font-semibold"><Database className="h-4 w-4 text-primary" /> Quem mais movimenta o banco</p>
+      <p className="mb-1 flex items-center gap-1.5 text-sm font-semibold"><Database className="h-4 w-4 text-primary" /> Migrations por pessoa</p>
       <p className="mb-3 text-[11px] text-muted-foreground">Migrations (.sql em supabase/migrations) adicionadas nas PRs de cada pessoa, e as linhas de SQL escritas.</p>
       <div className="grid gap-4 md:grid-cols-2">
         {dados.length ? (
