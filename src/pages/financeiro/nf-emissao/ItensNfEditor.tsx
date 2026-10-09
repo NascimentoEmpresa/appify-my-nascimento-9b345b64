@@ -82,6 +82,10 @@ export function ItensNfEditor({
   onQtdColaboradoresChange,
 }: ItensNfEditorProps) {
   const campos = mostrarPosEmissao ? [...CAMPOS_BASE, ...CAMPOS_POS_EMISSAO] : CAMPOS_BASE;
+  // SIS-2026-0639: nota com mais de um item mostra a Mão de Obra de cada um (a analista
+  // coloca esses valores na descrição da NF); com um item só, o total já diz tudo.
+  const mostrarMaoObra = itens.length > 1;
+  const colunas = mostrarMaoObra ? 8 : 7;
   // Postos marcados no seletor de cada item, só pra manter os checkboxes
   // marcados enquanto o popover está aberto — o vínculo em si não é
   // persistido no item, só o valor já somado que ele preenche.
@@ -106,6 +110,7 @@ export function ItensNfEditor({
               <TableHead className="min-w-[160px] px-2">Posto / Identificação</TableHead>
               <TableHead className="min-w-[110px] px-2">Contrato Exec.</TableHead>
               <TableHead className="min-w-[110px] px-2">Vlr Bruto</TableHead>
+              {mostrarMaoObra && <TableHead className="min-w-[110px] px-2">Mão de Obra</TableHead>}
               <TableHead className="min-w-[110px] px-2">Vlr Líquido</TableHead>
               <TableHead className="w-8 px-1" />
               <TableHead className="w-8 px-1" />
@@ -135,6 +140,14 @@ export function ItensNfEditor({
                     </TableCell>
                     <TableCell className="px-2 py-1 text-sm">{fmtMoney(it.valor_contrato_exec)}</TableCell>
                     <TableCell className="px-2 py-1 text-sm">{calc ? fmtMoney(calc.vlr_bruto) : "-"}</TableCell>
+                    {mostrarMaoObra && (
+                      <TableCell className="px-2 py-1 text-sm" title="Bruto − VA − VT − materiais">
+                        {/* Mesmo badge do total da nota, por item (mesmo cálculo: bruto − VA − VT − materiais). */}
+                        <span className="inline-flex items-center rounded-full bg-violet-100 px-2.5 py-0.5 font-semibold text-violet-800 dark:bg-violet-950/40 dark:text-violet-300">
+                          {calc ? fmtMoney(calc.vlr_mao_obra) : "-"}
+                        </span>
+                      </TableCell>
+                    )}
                     <TableCell className="px-2 py-1 text-sm font-medium">{calc ? fmtMoney(calc.vlr_liquido) : "-"}</TableCell>
                     <TableCell className="px-1 py-1">
                       {calc && efetivo && (
@@ -179,7 +192,7 @@ export function ItensNfEditor({
                   </TableRow>
                   {expandido && (
                     <TableRow>
-                      <TableCell colSpan={7} className="bg-muted/20 px-4 py-3">
+                      <TableCell colSpan={colunas} className="bg-muted/20 px-4 py-3">
                         <div className="grid grid-cols-4 gap-3">
                           <div className="col-span-2">
                             <Label className="text-xs">
@@ -251,7 +264,7 @@ export function ItensNfEditor({
                                   materiais), não o bruto cheio — o title mostra a conta. */}
                               {calc && (
                                 <span
-                                  className="inline-flex items-center rounded-full bg-violet-100 px-2 py-0.5 text-[11px] font-semibold text-violet-800 dark:bg-violet-950/40 dark:text-violet-300"
+                                  className="text-[11px] font-semibold text-blue-600 dark:text-blue-400"
                                   title={`${fmtPct(INSS_CATEGORIAS[it.inss_categoria].pct)} sobre a mão de obra de ${fmtMoney(calc.vlr_mao_obra)} (bruto ${fmtMoney(calc.vlr_bruto)} − VA − VT − materiais)`}
                                 >
                                   INSS: {fmtMoney(calc.inss)}

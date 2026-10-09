@@ -17,6 +17,7 @@ export const VARIAVEIS_DESCRICAO: VariavelDescricao[] = [
   { chave: "valor_exec", rotulo: "Valor do contrato executado", tipo: "dinheiro" },
   { chave: "valor_bruto", rotulo: "Valor bruto da NF", tipo: "dinheiro" },
   { chave: "mao_obra", rotulo: "Mão de obra", tipo: "dinheiro" },
+  { chave: "mao_obra_por_item", rotulo: "Mão de obra por item (um por linha)", tipo: "texto" },
   { chave: "va", rotulo: "Vale alimentação", tipo: "dinheiro" },
   { chave: "vt", rotulo: "Vale transporte", tipo: "dinheiro" },
   { chave: "materiais", rotulo: "Materiais", tipo: "dinheiro" },
@@ -77,6 +78,10 @@ export function valoresDasVariaveis(ctx: ContextoDescricao): Record<string, numb
     valor_exec: soma((i) => i.valor_contrato_exec),
     valor_bruto: soma((i) => i.vlr_bruto),
     mao_obra: soma((i) => i.vlr_mao_obra),
+    // SIS-2026-0639: nota com vários itens — uma linha por item com a mão de obra dele.
+    mao_obra_por_item: ctx.itens
+      .map((i, k) => `${(i.identificacao ?? "").trim() || `Item ${k + 1}`}: ${fmtBRL(i.vlr_mao_obra)}`)
+      .join("\n"),
     va: soma((i) => i.vlr_va),
     vt: soma((i) => i.vlr_vt),
     materiais: soma((i) => i.vlr_materiais),

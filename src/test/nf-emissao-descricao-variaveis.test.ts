@@ -54,4 +54,20 @@ describe("preencherVariaveis", () => {
     expect(temVariaveis("a {va} b")).toBe(true);
     expect(temVariaveis("sem nada")).toBe(false);
   });
+
+  it("{mao_obra_por_item} escreve uma linha por item com a mão de obra dele (SIS-2026-0639)", () => {
+    const r = preencherVariaveis(
+      "MÃO DE OBRA:\n{mao_obra_por_item}",
+      ctx([
+        item({ identificacao: "ESCOLA A", vlr_mao_obra: 1000 }),
+        item({ identificacao: "ESCOLA B", vlr_mao_obra: 2500.5 }),
+        item({ vlr_mao_obra: 10 }),
+      ])
+    );
+    const linhas = r.split("\n");
+    expect(linhas).toHaveLength(4);
+    expect(linhas[1]).toBe("ESCOLA A: R$ 1.000,00");
+    expect(linhas[2]).toBe("ESCOLA B: R$ 2.500,50");
+    expect(linhas[3]).toBe("Item 3: R$ 10,00");
+  });
 });
