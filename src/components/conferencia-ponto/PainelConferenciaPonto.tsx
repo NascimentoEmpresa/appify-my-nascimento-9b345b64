@@ -14,13 +14,13 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Checkbox } from "@/components/ui/checkbox";
 import {
   AlertTriangle, ArrowLeft, ArrowRight, BadgeCheck, Banknote, CheckCircle2,
-  ClipboardCheck, Clock, DollarSign, Filter, History, Loader2, Search, Undo2,
+  ClipboardCheck, Clock, DollarSign, Filter, HardHat, History, Loader2, Search, Undo2,
 } from "lucide-react";
 import {
   MENU, TABELA, TABELA_EVENTOS, addMeses, contaAvanco, corDoStatus,
   explicaStatus, faltaPara, fmtBRL, fmtDataHora, mesLegivel,
   mesPadrao, ordemDoStatus, pct, podeAgir, prazoDoMes, proximoStatus,
-  STATUS_INICIAL, STATUS_TODOS,
+  STATUS_INICIAL, STATUS_TODOS, aprovarEsperaOk, rotuloOkEncarregado, temOkEncarregado,
   type Acao, type EventoConferencia, type LinhaConferencia, type Modulo, type StatusPonto,
 } from "@/lib/conferenciaPonto/conferencia";
 import { EnviosEncarregados } from "./EnviosEncarregados";
@@ -186,12 +186,19 @@ export function PainelConferenciaPonto({ modulo }: { modulo: Modulo }) {
         valor_por: null, valor_em: null,
         pago_por: null, pago_em: null,
         atualizado_em: null, atualizado_por: null,
+        ok_encarregado_por: null, ok_encarregado_em: null, ok_encarregado_pelo_operacional: false,
       };
     }).sort((a, b) =>
       ordemDoStatus(a.status) - ordemDoStatus(b.status) ||
       String(a.contrato_nome ?? "").localeCompare(String(b.contrato_nome ?? "")),
     );
   }, [contratos, linhas, mes]);
+
+  // O diálogo aberto acompanha o recarregamento: marcar o OK do encarregado
+  // não fecha a tela, e o botão "Aprovar e enviar ao RH" precisa ver o OK.
+  useEffect(() => {
+    setAberta(a => (a ? juntas.find(j => chaveDoContrato(j) === chaveDoContrato(a)) ?? a : a));
+  }, [juntas]);
 
   const filtradas = useMemo(() => {
     const q = busca.trim().toLowerCase();
@@ -249,6 +256,10 @@ export function PainelConferenciaPonto({ modulo }: { modulo: Modulo }) {
     if (!destino) { toast.error("Esta ação não vale no estado atual do contrato."); return false; }
     if (!podeAgir(linha.status, acao, pode, modulo)) {
       toast.error("Esta ação não é deste módulo, ou você não tem a permissão.");
+      return false;
+    }
+    if (aprovarEsperaOk(linha, acao)) {
+      toast.error("Falta o OK do encarregado. Marque o OK antes de enviar ao RH.");
       return false;
     }
 
@@ -310,6 +321,25 @@ export function PainelConferenciaPonto({ modulo }: { modulo: Modulo }) {
     toast.success(`${linha.contrato_nome ?? "Contrato"} → ${destino}`);
     setAberta(null);
     carregar();
+    return true;
+  };
+
+  /**
+   * Operacional marca (ou desfaz) o OK no lugar do encarregado — mig
+   * 20261008000005. Vai por RPC: o banco confere a chave
+   * ponto_aprovar_contrato e se o contrato ainda está no Operacional.
+   */
+  const okEncarregado = async (linha: LinhaConferencia, desfazer = false) => {
+    setSalvando(true);
+    const { error } = desfazer
+      ? await sb.rpc("ponto_ok_encarregado_desfazer", { p_id: linha.id })
+      : await sb.rpc("ponto_ok_encarregado_operacional", {
+          p_empresa: linha.contrato_empresa, p_filial: linha.contrato_filial, p_mes: linha.mes_referencia, p_observacao: null,
+        });
+    setSalvando(false);
+    if (error) { toast.error(error.message); return false; }
+    toast.success(desfazer ? "OK do encarregado desfeito." : "OK do encarregado marcado. Agora dá para enviar ao RH.");
+    await carregar();
     return true;
   };
 
@@ -455,6 +485,7 @@ export function PainelConferenciaPonto({ modulo }: { modulo: Modulo }) {
                     <TableHead>Contrato</TableHead>
                     <TableHead className="hidden lg:table-cell">Empresa</TableHead>
                     <TableHead>Status</TableHead>
+                    <TableHead className="hidden md:table-cell">OK do encarregado</TableHead>
                     {(pode(MENU.valor) || pode(MENU.pagar)) && <TableHead className="text-right">Valor</TableHead>}
                     <TableHead className="hidden md:table-cell text-right">Atualizado</TableHead>
                     <TableHead className="w-24" />
@@ -485,6 +516,9 @@ export function PainelConferenciaPonto({ modulo }: { modulo: Modulo }) {
                             {l.status}
                           </span>
                         </TableCell>
+                        <TableCell className="hidden md:table-cell">
+                          <SeloOk linha={l} />
+                        </TableCell>
                         {(pode(MENU.valor) || pode(MENU.pagar)) && (
                           <TableCell className="text-right tabular-nums">
                             {l.valor_folha != null ? fmtBRL(l.valor_folha) : "—"}
@@ -511,20 +545,22 @@ export function PainelConferenciaPonto({ modulo }: { modulo: Modulo }) {
 
       <DetalheContrato
         linha={aberta} pode={pode} modulo={modulo} salvando={salvando}
-        onFechar={() => setAberta(null)} onAgir={agir}
+        onFechar={() => setAberta(null)} onAgir={agir} onOk={okEncarregado} onRecarregar={carregar}
       />
     </div>
   );
 }
 
 // ── Detalhe + ações ──────────────────────────────────────────────────
-function DetalheContrato({ linha, pode, modulo, salvando, onFechar, onAgir }: {
+function DetalheContrato({ linha, pode, modulo, salvando, onFechar, onAgir, onOk, onRecarregar }: {
   linha: LinhaConferencia | null;
   pode: (menu: string) => boolean;
   modulo: Modulo;
   salvando: boolean;
   onFechar: () => void;
   onAgir: (l: LinhaConferencia, a: Acao, extra?: { observacao?: string; valor?: number }) => Promise<boolean>;
+  onOk: (l: LinhaConferencia, desfazer?: boolean) => Promise<boolean>;
+  onRecarregar: () => void;
 }) {
   const [valor, setValor] = useState("");
   const [motivo, setMotivo] = useState("");
@@ -540,7 +576,7 @@ function DetalheContrato({ linha, pode, modulo, salvando, onFechar, onAgir }: {
         .select("*").eq("conferencia_id", linha.id).order("criado_em", { ascending: false }).limit(50);
       setEventos(data ?? []);
     })();
-  }, [linha?.id, linha?.valor_folha]);
+  }, [linha?.id, linha?.valor_folha, linha?.ok_encarregado_em]);
 
   if (!linha) return null;
   const l = linha;
@@ -590,13 +626,21 @@ function DetalheContrato({ linha, pode, modulo, salvando, onFechar, onAgir }: {
           </div>
         )}
 
+        {/* OK do encarregado (mig 20261008000005): o envio do responsável pelo
+            contrato dá o OK; sem ele, o Operacional marca no lugar e só então
+            envia ao RH. Quem pode marcar é quem aprova contrato. */}
+        <OkEncarregado linha={l} podeMarcar={p("aprovar")} salvando={salvando} onOk={onOk} />
+
         {/* Envios dos encarregados (mig 20261007000023) — a etapa agora começa neles. */}
         {modulo === "operacional" && (
-          <EnviosEncarregados empresa={l.contrato_empresa} filial={l.contrato_filial} mes={l.mes_referencia} podeReceber={pode("ponto_receber_encarregados")} />
+          <EnviosEncarregados empresa={l.contrato_empresa} filial={l.contrato_filial} mes={l.mes_referencia} podeReceber={pode("ponto_receber_encarregados")}
+                              onDecidiu={onRecarregar} />
         )}
 
         {/* Trilha das quatro etapas */}
         <div className="space-y-2 rounded-lg border p-4 text-sm">
+          <Etapa rotulo="OK do encarregado" quem={l.ok_encarregado_por} quando={l.ok_encarregado_em}
+                 extra={l.ok_encarregado_pelo_operacional ? "marcado pelo Operacional" : null} />
           <Etapa rotulo="Aprovado (Operacional)" quem={l.aprovado_por} quando={l.aprovado_em} />
           <Etapa rotulo="Confirmado (RH)" quem={l.confirmado_por} quando={l.confirmado_em} />
           <Etapa rotulo="Valor informado" quem={l.valor_por} quando={l.valor_em}
@@ -630,7 +674,8 @@ function DetalheContrato({ linha, pode, modulo, salvando, onFechar, onAgir }: {
 
             <div className="flex flex-wrap gap-2">
               {p("aprovar") && (
-                <Button disabled={salvando} onClick={() => onAgir(l, "aprovar")}>
+                <Button disabled={salvando || !temOkEncarregado(l)} onClick={() => onAgir(l, "aprovar")}
+                        title={temOkEncarregado(l) ? undefined : "Falta o OK do encarregado — marque acima"}>
                   <BadgeCheck className="mr-2 h-4 w-4" /> Aprovar e enviar ao RH
                 </Button>
               )}
@@ -697,6 +742,71 @@ function DetalheContrato({ linha, pode, modulo, salvando, onFechar, onAgir }: {
         </div>
       </DialogContent>
     </Dialog>
+  );
+}
+
+/** O selo da lista: verde = OK do encarregado; âmbar = marcado pelo Operacional. */
+function SeloOk({ linha }: { linha: LinhaConferencia }) {
+  const r = rotuloOkEncarregado(linha);
+  if (!r) return <span className="text-xs text-muted-foreground">—</span>;
+  return (
+    <span title={fmtDataHora(linha.ok_encarregado_em)}
+          className={cn("inline-flex max-w-[220px] items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-medium",
+                        linha.ok_encarregado_pelo_operacional
+                          ? "border-amber-200 bg-amber-50 text-amber-800"
+                          : "border-emerald-200 bg-emerald-50 text-emerald-800")}>
+      <CheckCircle2 className="h-3 w-3 shrink-0" /> <span className="truncate">{r}</span>
+    </span>
+  );
+}
+
+/**
+ * O quadro do OK no detalhe do contrato. Com OK: de quem e quando (âmbar
+ * quando foi o Operacional, com "Desfazer" para engano). Sem OK: quem aprova
+ * contrato ganha "Marcar OK do encarregado".
+ */
+function OkEncarregado({ linha: l, podeMarcar, salvando, onOk }: {
+  linha: LinhaConferencia; podeMarcar: boolean; salvando: boolean;
+  onOk: (l: LinhaConferencia, desfazer?: boolean) => Promise<boolean>;
+}) {
+  if (temOkEncarregado(l)) {
+    const peloOp = !!l.ok_encarregado_pelo_operacional;
+    return (
+      <div className={cn("flex flex-wrap items-center gap-2 rounded-lg border p-3 text-sm",
+                         peloOp ? "border-amber-200 bg-amber-50/60 dark:bg-amber-950/20" : "border-emerald-200 bg-emerald-50/60 dark:bg-emerald-950/20")}>
+        <CheckCircle2 className={cn("h-4 w-4 shrink-0", peloOp ? "text-amber-700" : "text-emerald-700")} />
+        <div className="min-w-0 flex-1">
+          <p className="font-semibold">{rotuloOkEncarregado(l)}</p>
+          <p className="text-xs text-muted-foreground">
+            {fmtDataHora(l.ok_encarregado_em)}
+            {peloOp ? " · o encarregado não enviou; o Operacional deu o OK no lugar dele" : " · enviado pelo responsável do contrato"}
+          </p>
+        </div>
+        {peloOp && podeMarcar && l.id && l.status !== "Pendente Encarregados" && (
+          <Button size="sm" variant="ghost" disabled={salvando} onClick={() => onOk(l, true)}>
+            <Undo2 className="mr-1.5 h-3.5 w-3.5" /> Desfazer
+          </Button>
+        )}
+      </div>
+    );
+  }
+  return (
+    <div className="flex flex-wrap items-center gap-2 rounded-lg border border-dashed p-3 text-sm">
+      <HardHat className="h-4 w-4 shrink-0 text-muted-foreground" />
+      <div className="min-w-0 flex-1">
+        <p className="font-semibold">Sem OK do encarregado</p>
+        <p className="text-xs text-muted-foreground">
+          {podeMarcar
+            ? "O responsável pelo contrato ainda não enviou. Para seguir, marque o OK no lugar dele — fica registrado que foi o Operacional."
+            : "O responsável pelo contrato ainda não enviou o ponto."}
+        </p>
+      </div>
+      {podeMarcar && (
+        <Button size="sm" variant="outline" disabled={salvando} onClick={() => onOk(l)}>
+          <CheckCircle2 className="mr-1.5 h-3.5 w-3.5" /> Marcar OK do encarregado
+        </Button>
+      )}
+    </div>
   );
 }
 

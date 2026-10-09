@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
-  calendario, contadores, diaLocal, ehBot, filtrarPainel, FILTRO_GITHUB_PADRAO, inicioSemana, mensalPrs, normalizarPainel,
-  porAutor, porBranch, punchcard, semanal, sequencias, type PainelGithubBruto, type PrGithub,
+  calendario, contadores, diaLocal, ehBot, filtrarPainel, FILTRO_GITHUB_PADRAO, inicioSemana, mensal, mensalPorAutor, mensalPrs, mesesEntre, normalizarPainel,
+  porAutor, porBranch, punchcard, semanal, sequencias, tamanhoPrs, tiposCommit, type PainelGithubBruto, type PrGithub,
 } from "@/lib/sistemas/githubPainel";
 
 const pr = (o: Partial<PrGithub>): PrGithub => ({
@@ -27,6 +27,7 @@ const bruto: PainelGithubBruto = {
 };
 const p = normalizarPainel(bruto);
 const HOJE = new Date(2026, 9, 7, 12);
+const SEM_BOTS = { ...FILTRO_GITHUB_PADRAO, semBots: true };
 
 describe("painel GitHub", () => {
   it("autor do commit cai para o nome do git sem login, e reconhece bots", () => {
@@ -36,17 +37,26 @@ describe("painel GitHub", () => {
   });
 
   it("filtro tira bots e respeita autor/período", () => {
-    const f = filtrarPainel(p, FILTRO_GITHUB_PADRAO, HOJE);
+    const f = filtrarPainel(p, SEM_BOTS, HOJE);
     expect(f.commits).toHaveLength(3);
     expect(f.prs.map((x) => x.numero)).toEqual([3, 4]);
-    expect(filtrarPainel(p, { ...FILTRO_GITHUB_PADRAO, dias: 10 }, HOJE).commits).toHaveLength(2);
-    expect(filtrarPainel(p, { ...FILTRO_GITHUB_PADRAO, autor: "eduardo" }, HOJE).prs).toHaveLength(1);
+    expect(filtrarPainel(p, { ...SEM_BOTS, dias: 10 }, HOJE).commits).toHaveLength(2);
+    expect(filtrarPainel(p, { ...SEM_BOTS, autor: "eduardo" }, HOJE).prs).toHaveLength(1);
   });
 
   it("contadores", () => {
-    const c = contadores(filtrarPainel(p, FILTRO_GITHUB_PADRAO, HOJE));
+    const c = contadores(filtrarPainel(p, SEM_BOTS, HOJE));
     expect(c).toMatchObject({ commits: 3, prs: 2, mergeadas: 1, abertas: 1, migrations: 4, linhasSql: 350, comChamado: 1, semChamado: 1 });
     expect(c.medianaHorasAteMerge).toBe(6);
+  });
+
+  it("história da main: merges e bots entram no total por padrão (igual ao GitHub)", () => {
+    expect(FILTRO_GITHUB_PADRAO.semBots).toBe(false);
+    const comMain = normalizarPainel({ ...bruto, commits: [...bruto.commits, ["eeeeeee", null, "haggltda", null, "2026-10-06T16:00:00", "Merge pull request #3", true]] });
+    expect(comMain.commits.find((x) => x.sha === "eeeeeee")?.merge).toBe(true);
+    expect(comMain.commits.find((x) => x.sha === "aaaaaaa")?.merge).toBe(false);   // array antigo, sem o 7º item
+    const c = contadores(filtrarPainel(comMain, FILTRO_GITHUB_PADRAO, HOJE));
+    expect(c).toMatchObject({ commits: 5, commitsMerge: 1, commitsBot: 1 });
   });
 
   it("calendário de 53 semanas com níveis", () => {
@@ -64,7 +74,7 @@ describe("painel GitHub", () => {
   });
 
   it("ranking por autor junta commits e PRs", () => {
-    const r = porAutor(filtrarPainel(p, FILTRO_GITHUB_PADRAO, HOJE));
+    const r = porAutor(filtrarPainel(p, SEM_BOTS, HOJE));
     const pablo = r.find((x) => x.autor === "Tasuyuk1")!;
     expect(pablo).toMatchObject({ commits: 2, prs: 1, mergeadas: 1, migrations: 1, diasAtivos: 2, sequenciaMaior: 2, avatar: "a.png" });
     expect(r.find((x) => x.autor === "eduardo")!.migrations).toBe(3);
@@ -79,5 +89,30 @@ describe("painel GitHub", () => {
     expect(pc.flat().reduce((a, b) => a + b, 0)).toBe(4);
     expect(porBranch(p.prs)[0]).toMatchObject({ branch: "pablo", prs: 1 });
     expect(mensalPrs(p.prs).map((m) => m.mes)).toEqual(["2026-09", "2026-10"]);
+  });
+
+  it("mês a mês: preenche meses vazios, acumula e separa merges/bots", () => {
+    expect(mesesEntre("2025-11", "2026-02")).toEqual(["2025-11", "2025-12", "2026-01", "2026-02"]);
+    const comMerge = normalizarPainel({ ...bruto, commits: [...bruto.commits,
+      ["fffffff", null, "haggltda", null, "2026-07-10T12:00:00", "Merge pull request #1", true]] });
+    const m = mensal(comMerge);
+    expect(m.map((x) => x.mes)).toEqual(["2026-07", "2026-08", "2026-09", "2026-10"]);
+    expect(m[1]).toMatchObject({ commits: 0, prs: 0, rotulo: "ago/26" });       // agosto vazio aparece zerado
+    expect(m[0]).toMatchObject({ commits: 1, commitsMerge: 1, commitsPessoas: 0 });
+    expect(m[3]).toMatchObject({ commits: 3, commitsBot: 1, commitsPessoas: 2, commitsAcumulados: 5, prs: 2, mergeadas: 1, comChamado: 1, diasAtivos: 3 });
+    expect(m[3].medianaHorasAteMerge).toBe(6);
+    const pp = mensalPorAutor(comMerge.commits);
+    expect(pp.autores).toEqual(["dependabot[bot]", "Eduardo", "haggltda", "Tasuyuk1"]);
+    expect(pp.dados.find((d) => d.mes === "2026-10")).toMatchObject({ Tasuyuk1: 2, "dependabot[bot]": 1, Eduardo: 0 });
+  });
+
+  it("tamanho das PRs e tipos de commit", () => {
+    const t = tamanhoPrs([...p.prs, pr({ numero: 9, adicoes: 3000, remocoes: 0 }), pr({ numero: 10, adicoes: null, remocoes: null })]);
+    expect(t.map((x) => x.prs)).toEqual([0, 0, 3, 0, 1]);   // 110 linhas cai em Média (101–500); sem detalhe fica fora
+    const tipos = tiposCommit(normalizarPainel({ ...bruto, commits: [
+      ["1", null, "a", null, "2026-10-01T10:00:00", "SIS-2026-0001: x"], ["2", null, "a", null, "2026-10-01T10:00:00", "[SEM-CHAMADO] y"],
+      ["3", null, "a", null, "2026-10-01T10:00:00", "Merge branch main", true], ["4", null, "gpt-engineer-app[bot]", null, "2026-10-01T10:00:00", "Changes"],
+      ["5", null, "a", null, "2026-10-01T10:00:00", "ajuste"]] }).commits);
+    expect(Object.fromEntries(tipos.map((x) => [x.tipo, x.n]))).toEqual({ "Com chamado (SIS-…)": 1, "Sem chamado": 1, "Merge": 1, "Bots (Lovable etc.)": 1, "Outros": 1 });
   });
 });

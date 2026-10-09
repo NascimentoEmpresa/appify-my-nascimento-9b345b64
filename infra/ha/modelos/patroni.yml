@@ -5,7 +5,14 @@ namespace: /db/
 name: __NOME__
 
 restapi:
-  listen: 0.0.0.0:8008
+  # So no tunel e no localhost. A API REST do Patroni diz quem e o primario e
+  # aceita comandos de troca de papel -- exposta na internet, e um controle
+  # remoto do cluster para qualquer um. O ufw ja barra, mas nao se deve
+  # depender de uma unica camada.
+  # ATENCAO AO FORMATO: aqui cabe UM unico endereco:porta. Uma lista faz o
+  # Patroni tentar resolver a string toda como nome de maquina e morrer com
+  # "socket.gaierror: Name or service not known".
+  listen: __IP__:8008
   # Endereço por IP, nunca por nome: quando o nó morre, resolver nome falha
   # devagar e atrasa a troca. IP falha na hora.
   connect_address: __IP__:8008
@@ -59,7 +66,11 @@ bootstrap:
     - host  replication replicator __IP_BANCO2__/32 scram-sha-256
 
 postgresql:
-  listen: 0.0.0.0:5432
+  # Idem: o Postgres atende so pelo endereco do tunel e pelo localhost. Quem
+  # fala com ele e o HAProxy da maquina da API, atraves da wg0.
+  # FORMATO DIFERENTE do restapi acima: aqui sao varios enderecos separados
+  # por virgula e a porta UMA vez so, no fim.
+  listen: __IP__,127.0.0.1:5432
   connect_address: __IP__:5432
   data_dir: /var/lib/postgresql/dados
   bin_dir: /usr/lib/postgresql/__VERSAO_PG__/bin

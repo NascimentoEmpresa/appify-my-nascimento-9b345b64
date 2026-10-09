@@ -3,10 +3,11 @@ import {
   Bar, BarChart, CartesianGrid, LabelList, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from "recharts";
 import {
-  AlertOctagon, AlertTriangle, ArrowRight, Briefcase, CalendarClock, CheckCircle2, ClipboardCheck, Clock,
+  AlertOctagon, AlertTriangle, ArrowLeft, ArrowRight, Briefcase, CalendarClock, CheckCircle2, ClipboardCheck, Clock,
   FileSpreadsheet, Gauge, HelpCircle, Hourglass, Loader2, Maximize2, Minimize2, RefreshCw, Search, Target, Timer,
   TrendingUp, UserCheck, UserMinus, UserPlus, Users, UserX, XCircle,
 } from "lucide-react";
+import { Link } from "react-router-dom";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -404,6 +405,12 @@ export default function DashboardRecrutamento() {
         breadcrumb={["Dashboard Recrutamento"]}
         actions={
           <>
+            {/* Desde 08/10/2026 a entrada é o botão em Relatórios › Gestão Recrutamento (saiu do menu). */}
+            {!telaCheia && (
+              <Link to="/app/relatorios/recrutamento" className="inline-flex items-center gap-1 text-sm font-medium text-primary hover:underline">
+                <ArrowLeft className="h-4 w-4" /> Gestão Recrutamento
+              </Link>
+            )}
             {atualizadoAs && (
               <span className="flex items-center gap-1.5 text-xs text-muted-foreground" title="Atualiza sozinho a cada 5 minutos">
                 <span className={cn("h-2 w-2 rounded-full", q.isFetching ? "animate-pulse bg-amber-500" : "bg-emerald-500")} />

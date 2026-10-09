@@ -32,6 +32,47 @@ export function useMoverPosto() {
   });
 }
 
+/**
+ * Trocar quem está no posto (mig 20261008000005): `entra` vai para o posto,
+ * `sai` sai dele (fica sem posto no ERP); os dois juntos = trocar. Grava
+ * ajuste do ERP — a EMPREGADOS (Senior) não é tocada.
+ */
+export function useOcupantePosto() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (p: { posto: string; entra?: number | null; sai?: number | null; motivo?: string }) => {
+      const { error } = await sb.rpc("rh_hier_ocupante", {
+        p_posto: p.posto, p_entra: p.entra ?? null, p_sai: p.sai ?? null, p_motivo: p.motivo?.trim() || null,
+      });
+      if (error) throw new Error(error.message);
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: K }),
+  });
+}
+
+/** Desfaz o ajuste: a pessoa volta ao posto que a Senior dá. */
+export function useVoltarPostoSenior() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (p: { empregado: number; motivo?: string }) => {
+      const { error } = await sb.rpc("rh_hier_ocupante_senior", { p_empregado: p.empregado, p_motivo: p.motivo?.trim() || null });
+      if (error) throw new Error(error.message);
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: K }),
+  });
+}
+
+export function useVagasPosto() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (p: { posto: string; vagas: number | null; motivo?: string }) => {
+      const { error } = await sb.rpc("rh_hier_vagas", { p_posto: p.posto, p_vagas: p.vagas, p_motivo: p.motivo?.trim() || null });
+      if (error) throw new Error(error.message);
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: K }),
+  });
+}
+
 export function useSincronizarPostos() {
   const qc = useQueryClient();
   return useMutation({

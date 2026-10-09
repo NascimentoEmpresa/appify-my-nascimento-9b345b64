@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import {
-  AlertTriangle, ArrowRightLeft, Briefcase, Building2, ChevronDown, ChevronRight, ChevronsDownUp, ChevronsUpDown, Crown, GitBranch,
-  History, Loader2, Network, RefreshCw, Search, ShieldAlert, UserX, Users,
+  AlertTriangle, ArrowRightLeft, Briefcase, Building2, CheckCircle2, ChevronDown, ChevronRight, ChevronsDownUp, ChevronsUpDown, Crown, GitBranch,
+  History, Loader2, Network, RefreshCw, RotateCcw, Search, ShieldAlert, UserMinus, UserPlus, UserX, Users, X,
 } from "lucide-react";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/layout/PageHeader";
@@ -14,10 +14,12 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { cn } from "@/lib/utils";
-import { useHierarquiaPostos, useMoverPosto, useSincronizarPostos } from "@/hooks/useHierarquiaPostos";
 import {
-  caminho, filtrarArvore, lideres, podeMover, responsaveisPorContrato, resumo, tituloDeLideranca,
-  type Hierarquia, type NoPosto, type Ocupante,
+  useHierarquiaPostos, useMoverPosto, useOcupantePosto, useSincronizarPostos, useVagasPosto, useVoltarPostoSenior,
+} from "@/hooks/useHierarquiaPostos";
+import {
+  buscarOcupantes, caminho, contratosDoPosto, contratosSemResponsavel, filtrarArvore, lideres, podeMover, responsaveisPorContrato, resumo,
+  tituloDeLideranca, type Hierarquia, type NoPosto, type Ocupante,
 } from "@/lib/rh/hierarquiaPostos";
 
 // =====================================================================
@@ -35,6 +37,15 @@ import {
 //   · Pendências — postos fora da hierarquia, ativos sem posto, postos
 //     vazios / acima das vagas, líderes sem ninguém.
 // Contas em src/lib/rh/hierarquiaPostos.ts (com teste).
+//
+// 08/10/2026 (mig 20261008000005) — pedido do Pablo: "tem que ser possível
+// editar as informações da hierarquia, ajustar tudo, trocar os encarregados
+// etc., tudo conectado com a EMPREGADOS — as pessoas selecionadas, nada
+// digitado". No detalhe do posto: colocar, trocar e tirar pessoas
+// (escolhidas da EMPREGADOS), voltar ao posto da Senior, vagas e o lugar do
+// posto. Trocar pessoa é AJUSTE do ERP (a sincronia reescreve o posto da
+// Senior). E a hierarquia passou a valer no ponto: o responsável de cada
+// contrato (aba Contratos) é quem dá o OK na Conferência de Ponto.
 // =====================================================================
 
 const COR_NIVEL = ["#7c3aed", "#2563eb", "#0891b2", "#16a34a", "#ca8a04", "#ea580c"];
@@ -220,16 +231,27 @@ function Contratos({ h, onAbrir }: { h: Hierarquia; onAbrir: (c: string) => void
         <table className="w-full text-xs">
           <thead><tr className="bg-muted/40 text-left text-[10px] uppercase tracking-wider text-muted-foreground">
             <th className="px-3 py-2">Contrato</th><th className="px-3 py-2 text-right">Postos</th><th className="px-3 py-2 text-right">Colaboradores</th>
+            <th className="px-3 py-2" title="Quem dá o OK do ponto do contrato na Conferência de Ponto">Responsável pelo ponto</th>
             <th className="px-3 py-2">Líder(es) direto(s)</th><th className="px-3 py-2">Cadeia acima</th>
           </tr></thead>
           <tbody>
             {rs.map((c) => {
               const cadeia = c.lideres[0] ? caminho(h, c.lideres[0].codigo).slice(0, -1) : [];
               return (
-                <tr key={c.contrato} className="border-t border-border/60">
+                <tr key={c.chave} className="border-t border-border/60 align-top">
                   <td className="px-3 py-1.5 font-medium">{c.contrato}</td>
                   <td className="px-3 py-1.5 text-right tabular-nums">{c.postos}</td>
                   <td className="px-3 py-1.5 text-right font-semibold tabular-nums">{fmt(c.colaboradores)}</td>
+                  <td className="px-3 py-1.5">
+                    {c.responsaveis.length ? c.responsaveis.map((r) => (
+                      <button key={`${r.posto}-${r.ocupante.id}`} type="button" className="flex items-center gap-1 text-left hover:underline" onClick={() => onAbrir(r.posto)}
+                        title={`${r.posto} · ${h.porCodigo.get(r.posto)?.titulo ?? ""}`}>
+                        <CheckCircle2 className="h-3 w-3 shrink-0 text-emerald-600" />
+                        <span className="font-medium">{r.ocupante.nome}</span>
+                        {!r.ocupante.temLogin && <Badge variant="outline" className="border-warning/50 text-[9px] text-warning" title="Sem login vinculado: não consegue dar o OK no ERP">sem login</Badge>}
+                      </button>
+                    )) : <span className="text-destructive">ninguém</span>}
+                  </td>
                   <td className="px-3 py-1.5">
                     {c.lideres.map((l) => (
                       <button key={l.codigo} type="button" className="mr-2 text-primary hover:underline" onClick={() => onAbrir(l.codigo)}>
@@ -246,7 +268,11 @@ function Contratos({ h, onAbrir }: { h: Hierarquia; onAbrir: (c: string) => void
           </tbody>
         </table>
       </div>
-      <p className="border-t border-border px-3 py-2 text-[11px] text-muted-foreground">Líder direto = o posto de liderança mais próximo acima dos postos daquele contrato. Contrato pelo código empresa + filial do posto (cadastro CONTRATOS).</p>
+      <p className="border-t border-border px-3 py-2 text-[11px] text-muted-foreground">
+        Responsável pelo ponto = quem ocupa o posto de liderança mais próximo acima dos postos do contrato (posto vago passa para o de cima); é quem dá o OK na Conferência de Ponto dos encarregados.
+        Os postos de liderança do próprio contrato só contam se ele não tiver outros postos ocupados. Líder direto = o posto de liderança logo acima de cada posto.
+        Contrato pelo código empresa + filial do posto (cadastro CONTRATOS).
+      </p>
     </Card>
   );
 }
@@ -259,8 +285,21 @@ function Pendencias({ h, onAbrir }: { h: Hierarquia; onAbrir: (c: string) => voi
   const vazios = arv.filter((n) => !n.ocupantes.length && (n.vagas ?? 0) > 0);
   const lideresVagos = lideres(h).filter((l) => !l.ocupantes.length);
   const foraComGente = h.fora.filter((n) => n.ocupantes.length);
+  const semResp = contratosSemResponsavel(h);
   return (
     <div className="grid gap-4 lg:grid-cols-2">
+      <Card className="overflow-hidden">
+        <div className="border-b border-border px-3 py-2">
+          <p className="flex items-center gap-1.5 text-sm font-semibold"><AlertTriangle className="h-4 w-4 text-destructive" /> Contratos ativos sem responsável pelo ponto ({semResp.length})</p>
+          <p className="text-[11px] text-muted-foreground">Nenhum posto do contrato está abaixo de um líder ocupado: ninguém dá o OK do encarregado — o Operacional terá que marcar no lugar.</p>
+        </div>
+        <div className="max-h-80 overflow-auto">
+          <table className="w-full text-xs"><tbody>
+            {semResp.map((c) => <tr key={c.chave} className="border-t border-border/60"><td className="px-3 py-1">{c.nome}</td><td className="px-3 py-1 text-right font-mono text-[10px] text-muted-foreground">{c.chave}</td></tr>)}
+            {!semResp.length && <tr><td className="px-3 py-6 text-center text-muted-foreground">Todo contrato ativo tem responsável.</td></tr>}
+          </tbody></table>
+        </div>
+      </Card>
       <BlocoPostos titulo="Postos fora da hierarquia, com gente" dica="A Senior não põe estes postos debaixo de ninguém: ninguém responde por estes colaboradores no ponto." postos={foraComGente} onAbrir={onAbrir} mostrarFora />
       <Card className="overflow-hidden">
         <p className="flex items-center gap-1.5 border-b border-border px-3 py-2 text-sm font-semibold"><UserX className="h-4 w-4 text-destructive" /> Ativos sem posto da estrutura ({h.semPosto.length})</p>
@@ -307,14 +346,17 @@ function Historico({ h }: { h: Hierarquia }) {
   return (
     <Card className="overflow-hidden">
       <table className="w-full text-xs">
-        <thead><tr className="bg-muted/40 text-left text-[10px] uppercase tracking-wider text-muted-foreground"><th className="px-3 py-2">Quando</th><th className="px-3 py-2">Posto</th><th className="px-3 py-2">De → Para</th><th className="px-3 py-2">Motivo</th><th className="px-3 py-2">Quem</th></tr></thead>
+        <thead><tr className="bg-muted/40 text-left text-[10px] uppercase tracking-wider text-muted-foreground"><th className="px-3 py-2">Quando</th><th className="px-3 py-2">Posto</th><th className="px-3 py-2">O que mudou</th><th className="px-3 py-2">Motivo</th><th className="px-3 py-2">Quem</th></tr></thead>
         <tbody>
           {h.historico.map((x) => {
-            const t = (c: string | null) => (c ? `${c} ${h.porCodigo.get(c)?.titulo ?? ""}` : "fora da hierarquia");
+            const t = (c: string | null | undefined, vazio = "fora da hierarquia") => (c ? `${c} ${h.porCodigo.get(c)?.titulo ?? ""}` : vazio);
+            const mudou = x.tipo === "ocupante" ? <><b>{x.empregado_nome ?? `#${x.empregado_id}`}</b>: {t(x.valor_antes, "sem posto")} → {t(x.valor_depois, "sem posto")}</>
+              : x.tipo === "vagas" ? <>Vagas: {x.valor_antes ?? "—"} → {x.valor_depois ?? "—"}</>
+              : <>Lugar: abaixo de {t(x.pai_antes)} → {t(x.pai_depois)}</>;
             return (
               <tr key={x.id} className="border-t border-border/60">
                 <td className="px-3 py-1.5 text-muted-foreground">{new Date(x.created_at).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" })}</td>
-                <td className="px-3 py-1.5">{t(x.posto_codigo)}</td><td className="px-3 py-1.5">{t(x.pai_antes)} → {t(x.pai_depois)}</td>
+                <td className="px-3 py-1.5">{t(x.posto_codigo)}</td><td className="px-3 py-1.5">{mudou}</td>
                 <td className="px-3 py-1.5">{x.motivo}</td><td className="px-3 py-1.5 text-muted-foreground">{x.autor_nome}</td>
               </tr>
             );
@@ -336,6 +378,7 @@ function DetalhePosto({ h, codigo, onFechar, onAbrir }: { h: Hierarquia; codigo:
     .map((x) => ({ value: x.codigo, label: `${x.codigo} · ${x.titulo}${x.ocupantes[0] ? ` — ${x.ocupantes[0].nome}` : ""}` })), [h]);
   if (!n) return null;
   const cam = caminho(h, n.codigo);
+  const respPor = contratosDoPosto(h, n.codigo);
   const salvar = (remover = false) => {
     if (!motivo.trim()) { toast.error("Informe o motivo da mudança."); return; }
     if (!remover && !novoPai) { toast.error("Escolha o novo posto acima."); return; }
@@ -378,7 +421,15 @@ function DetalhePosto({ h, codigo, onFechar, onAbrir }: { h: Hierarquia; codigo:
             <p className="mb-1 text-xs font-semibold text-muted-foreground">Contrato{n.ramo.contratos.length > 1 ? "s do ramo" : ""}</p>
             <div className="flex flex-wrap gap-1">{(n.ramo.contratos.length ? n.ramo.contratos : [n.contrato ?? `filial ${n.filial}`]).map((c) => <Badge key={c} variant="outline" className="text-[10px]">{c}</Badge>)}</div>
           </div>
-          <ListaOcupantes titulo="Quem está neste posto" ocupantes={n.ocupantes} />
+          {respPor.length > 0 && (
+            <div className="rounded-md border border-emerald-200 bg-emerald-50/60 p-2 dark:bg-emerald-950/20">
+              <p className="mb-1 flex items-center gap-1 text-xs font-semibold text-emerald-800 dark:text-emerald-300"><CheckCircle2 className="h-3.5 w-3.5" /> Responsável pelo ponto de</p>
+              <div className="flex flex-wrap gap-1">{respPor.map((c) => <Badge key={c.chave} variant="outline" className="border-emerald-300 text-[10px]">{c.nome}</Badge>)}</div>
+              <p className="mt-1 text-[10px] text-muted-foreground">Quem está neste posto dá o OK do encarregado na Conferência de Ponto destes contratos.</p>
+            </div>
+          )}
+          <OcupantesEditaveis key={`oc-${n.codigo}`} h={h} n={n} />
+          {h.podeAlterar && <EditarVagas key={`vg-${n.codigo}-${n.vagas}`} n={n} />}
           {n.filhos.length > 0 && (
             <div>
               <p className="mb-1 text-xs font-semibold text-muted-foreground">Postos diretamente abaixo ({n.filhos.length})</p>
@@ -410,23 +461,165 @@ function DetalhePosto({ h, codigo, onFechar, onAbrir }: { h: Hierarquia; codigo:
   );
 }
 
-function ListaOcupantes({ titulo, ocupantes }: { titulo: string; ocupantes: Ocupante[] }) {
+// ---- Quem está no posto (com edição) --------------------------------------------------
+
+type ModoOcupante = { tipo: "colocar" } | { tipo: "trocar"; sai: Ocupante } | { tipo: "tirar"; sai: Ocupante };
+
+/**
+ * A lista de quem ocupa o posto e, para quem pode alterar a hierarquia, as
+ * três mudanças: colocar alguém, trocar alguém por outro (o caso do
+ * "trocar o encarregado") e tirar alguém. A pessoa sempre vem da EMPREGADOS
+ * (SeletorColaborador) — não há campo de nome livre. Tudo vira ajuste do
+ * ERP; "voltar ao da Senior" desfaz.
+ */
+function OcupantesEditaveis({ h, n }: { h: Hierarquia; n: NoPosto }) {
+  const [modo, setModo] = useState<ModoOcupante | null>(null);
+  const [entra, setEntra] = useState<Ocupante | null>(null);
+  const [motivo, setMotivo] = useState("");
+  const ocupante = useOcupantePosto();
+  const voltar = useVoltarPostoSenior();
+  const ocupado = ocupante.isPending || voltar.isPending;
+  const fechar = () => { setModo(null); setEntra(null); setMotivo(""); };
+  const abrir = (m: ModoOcupante) => { setModo(m); setEntra(null); setMotivo(""); };
+
+  const confirmar = () => {
+    if (!modo) return;
+    if (modo.tipo !== "tirar" && !entra) { toast.error("Escolha o colaborador."); return; }
+    const sai = modo.tipo === "colocar" ? null : modo.sai.id;
+    ocupante.mutate({ posto: n.codigo, entra: modo.tipo === "tirar" ? null : entra!.id, sai, motivo }, {
+      onSuccess: () => {
+        toast.success(modo.tipo === "trocar" ? `${modo.sai.nome} trocado por ${entra!.nome}.` : modo.tipo === "tirar" ? `${modo.sai.nome} saiu do posto.` : `${entra!.nome} colocado no posto.`);
+        fechar();
+      },
+      onError: (e) => toast.error((e as Error).message),
+    });
+  };
+
+  const tituloPosto = (c: string | null) => (c ? `${c}${h.porCodigo.get(c) ? ` · ${h.porCodigo.get(c)!.titulo}` : ""}` : "sem posto");
+
   return (
-    <div>
-      <p className="mb-1 text-xs font-semibold text-muted-foreground">{titulo} ({ocupantes.length})</p>
-      {ocupantes.length ? (
-        <ul className="max-h-60 space-y-0.5 overflow-auto">
-          {ocupantes.map((o) => (
-            <li key={o.id} className="flex items-center justify-between gap-2 text-xs">
-              <span className="truncate">{o.nome} <span className="text-muted-foreground">· cad. {o.cadastro ?? "—"}</span></span>
-              <span className="flex shrink-0 items-center gap-1">
-                {o.situacao && o.situacao !== "Trabalhando" && <Badge variant="outline" className="text-[9px]">{o.situacao}</Badge>}
-                {o.temLogin && <Badge variant="secondary" className="text-[9px]">login ERP</Badge>}
-              </span>
+    <div className="space-y-2">
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-xs font-semibold text-muted-foreground">Quem está neste posto ({n.ocupantes.length})</p>
+        {h.podeAlterar && !modo && (
+          <Button size="sm" variant="outline" className="h-7 gap-1 text-[11px]" onClick={() => abrir({ tipo: "colocar" })}><UserPlus className="h-3.5 w-3.5" /> Colocar pessoa</Button>
+        )}
+      </div>
+      {n.ocupantes.length ? (
+        <ul className="max-h-72 space-y-1 overflow-auto">
+          {n.ocupantes.map((o) => (
+            <li key={o.id} className="rounded-md border border-border/60 px-2 py-1.5 text-xs">
+              <div className="flex items-center justify-between gap-2">
+                <span className="min-w-0 truncate">{o.nome} <span className="text-muted-foreground">· cad. {o.cadastro ?? "—"}</span></span>
+                <span className="flex shrink-0 items-center gap-1">
+                  {o.situacao && o.situacao !== "Trabalhando" && <Badge variant="outline" className="text-[9px]">{o.situacao}</Badge>}
+                  {o.temLogin ? <Badge variant="secondary" className="text-[9px]">login ERP</Badge> : null}
+                  {h.podeAlterar && !modo && (
+                    <>
+                      <Button size="sm" variant="ghost" className="h-6 gap-1 px-1.5 text-[10px]" title="Trocar por outra pessoa" onClick={() => abrir({ tipo: "trocar", sai: o })}><ArrowRightLeft className="h-3 w-3" /> Trocar</Button>
+                      <Button size="sm" variant="ghost" className="h-6 gap-1 px-1.5 text-[10px] text-destructive" title="Tirar deste posto" onClick={() => abrir({ tipo: "tirar", sai: o })}><UserMinus className="h-3 w-3" /></Button>
+                    </>
+                  )}
+                </span>
+              </div>
+              {o.ajustado && (
+                <div className="mt-1 flex items-center justify-between gap-2 rounded bg-amber-50 px-1.5 py-0.5 text-[10px] text-amber-800 dark:bg-amber-950/30 dark:text-amber-300">
+                  <span className="truncate">Ajustado no ERP · na Senior: {tituloPosto(o.postoSenior)}</span>
+                  {h.podeAlterar && (
+                    <button type="button" className="flex shrink-0 items-center gap-0.5 font-semibold hover:underline" disabled={ocupado}
+                      onClick={() => voltar.mutate({ empregado: o.id }, { onSuccess: () => toast.success(`${o.nome} voltou ao posto da Senior.`), onError: (e) => toast.error((e as Error).message) })}>
+                      <RotateCcw className="h-3 w-3" /> voltar ao da Senior
+                    </button>
+                  )}
+                </div>
+              )}
             </li>
           ))}
         </ul>
       ) : <p className="text-xs text-muted-foreground">Ninguém neste posto.</p>}
+
+      {modo && (
+        <div className="space-y-2 rounded-md border border-primary/40 bg-primary/5 p-3">
+          <div className="flex items-center justify-between">
+            <p className="text-xs font-semibold">
+              {modo.tipo === "colocar" ? "Colocar pessoa neste posto" : modo.tipo === "trocar" ? `Trocar ${modo.sai.nome} por…` : `Tirar ${modo.sai.nome} deste posto?`}
+            </p>
+            <Button size="icon" variant="ghost" className="h-6 w-6" onClick={fechar} aria-label="Cancelar"><X className="h-3.5 w-3.5" /></Button>
+          </div>
+          {modo.tipo === "tirar" ? (
+            <p className="text-[11px] text-muted-foreground">Fica sem posto no ERP{modo.sai.postoSenior ? ` (a Senior continua dizendo ${modo.sai.postoSenior})` : ""}. Dá para desfazer com "voltar ao da Senior".</p>
+          ) : (
+            <SeletorColaborador h={h} escolhido={entra} onEscolher={setEntra} postoAtual={n.codigo} />
+          )}
+          {modo.tipo === "trocar" && <p className="text-[11px] text-muted-foreground">{modo.sai.nome} sai do posto e fica sem posto no ERP; quem entra deixa o posto em que está hoje.</p>}
+          <Textarea value={motivo} onChange={(e) => setMotivo(e.target.value)} rows={2} placeholder="Motivo (opcional, fica no histórico)" className="text-xs" />
+          <div className="flex justify-end gap-2">
+            <Button size="sm" variant="outline" className="h-8 text-xs" onClick={fechar}>Cancelar</Button>
+            <Button size="sm" className="h-8 text-xs" variant={modo.tipo === "tirar" ? "destructive" : "default"} disabled={ocupado || (modo.tipo !== "tirar" && !entra)} onClick={confirmar}>
+              {ocupado ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : modo.tipo === "colocar" ? "Colocar no posto" : modo.tipo === "trocar" ? "Trocar" : "Tirar do posto"}
+            </Button>
+          </div>
+          <p className="text-[10px] text-muted-foreground">Vale no ERP (hierarquia e ponto) e fica no histórico. Na Senior, ajuste também quando for oficial.</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Escolha de colaborador ativo da EMPREGADOS: busca por nome/cadastro/cargo e clique — sem nome digitado à mão. */
+function SeletorColaborador({ h, escolhido, onEscolher, postoAtual }: {
+  h: Hierarquia; escolhido: Ocupante | null; onEscolher: (o: Ocupante | null) => void; postoAtual: string;
+}) {
+  const [busca, setBusca] = useState("");
+  const achados = useMemo(() => buscarOcupantes(h, busca), [h, busca]);
+  if (escolhido) {
+    return (
+      <div className="flex items-center justify-between gap-2 rounded-md border bg-background px-2 py-1.5 text-xs">
+        <div className="min-w-0">
+          <p className="truncate font-semibold">{escolhido.nome}</p>
+          <p className="truncate text-[10px] text-muted-foreground">cad. {escolhido.cadastro ?? "—"} · {escolhido.cargo ?? "—"} · hoje em {escolhido.posto ? `${escolhido.posto} ${h.porCodigo.get(escolhido.posto)?.titulo ?? ""}` : "nenhum posto"}</p>
+        </div>
+        <Button size="sm" variant="ghost" className="h-6 text-[10px]" onClick={() => onEscolher(null)}>trocar</Button>
+      </div>
+    );
+  }
+  return (
+    <div className="space-y-1">
+      <div className="relative"><Search className="absolute left-2 top-2 h-4 w-4 text-muted-foreground" />
+        <Input autoFocus value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Buscar colaborador ativo (nome, cadastro, cargo)…" className="h-8 pl-8 text-xs" />
+      </div>
+      {busca.trim().length >= 2 && (
+        <ul className="max-h-56 overflow-auto rounded-md border bg-background">
+          {achados.map((o) => (
+            <li key={o.id}>
+              <button type="button" disabled={o.posto === postoAtual} onClick={() => onEscolher(o)}
+                className="flex w-full items-center justify-between gap-2 px-2 py-1 text-left text-xs hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50">
+                <span className="min-w-0 truncate">{o.nome} <span className="text-muted-foreground">· cad. {o.cadastro ?? "—"} · {o.cargo ?? "—"}</span></span>
+                <span className="shrink-0 font-mono text-[10px] text-muted-foreground">{o.posto === postoAtual ? "já está aqui" : o.posto ?? "sem posto"}</span>
+              </button>
+            </li>
+          ))}
+          {!achados.length && <li className="px-2 py-2 text-xs text-muted-foreground">Ninguém ativo com esse nome.</li>}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+function EditarVagas({ n }: { n: NoPosto }) {
+  const [vagas, setVagas] = useState(n.vagas != null ? String(n.vagas) : "");
+  const salvar = useVagasPosto();
+  const novo = vagas.trim() === "" ? null : Number(vagas);
+  const mudou = novo !== (n.vagas ?? null);
+  return (
+    <div className="flex flex-wrap items-center gap-2 rounded-md border border-border p-2 text-xs">
+      <span className="font-semibold text-muted-foreground">Vagas do posto</span>
+      <Input type="number" min={0} value={vagas} onChange={(e) => setVagas(e.target.value)} className="h-7 w-20 text-xs" />
+      <Button size="sm" variant="outline" className="h-7 text-[11px]" disabled={!mudou || salvar.isPending || (novo != null && (!Number.isInteger(novo) || novo < 0))}
+        onClick={() => salvar.mutate({ posto: n.codigo, vagas: novo }, { onSuccess: () => toast.success("Vagas atualizadas."), onError: (e) => toast.error((e as Error).message) })}>
+        {salvar.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : "Salvar"}
+      </Button>
+      <span className="text-[10px] text-muted-foreground">vieram da planilha da Senior; a busca de postos novos não reescreve</span>
     </div>
   );
 }

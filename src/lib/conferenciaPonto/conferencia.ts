@@ -328,6 +328,37 @@ export interface LinhaConferencia {
   pago_por: string | null;       pago_em: string | null;
   atualizado_em: string | null;
   atualizado_por: string | null;
+  /**
+   * OK do encarregado (mig 20261008000005): o envio do responsável pelo
+   * contrato preenche; o Operacional pode preencher no lugar dele
+   * (`ok_encarregado_pelo_operacional`). Opcionais porque a linha "virtual"
+   * (contrato sem registro no mês) e bancos sem a migration não têm.
+   */
+  ok_encarregado_por?: string | null;
+  ok_encarregado_em?: string | null;
+  ok_encarregado_pelo_operacional?: boolean | null;
+}
+
+// ── OK do encarregado (08/10/2026, mig 20261008000005) ───────────────
+// Pedido do Pablo: "vamos permitir o operacional enviar ao RH mesmo os
+// encarregados não aprovando — ele vai poder marcar como OK do Encarregado
+// e depois ENVIAR PARA RH. Se o encarregado marcar como OK, vai aparecer pro
+// operacional OK do (encarregado tal)". Então "Aprovar e enviar ao RH" pede
+// o OK antes, venha ele do encarregado ou do próprio Operacional.
+
+/** A linha já tem o OK do encarregado (dele ou marcado pelo Operacional)? */
+export const temOkEncarregado = (l: Pick<LinhaConferencia, "ok_encarregado_em">) => !!l.ok_encarregado_em;
+
+/** "Aprovar e enviar ao RH" ainda espera o OK? Só a ação `aprovar` depende dele. */
+export const aprovarEsperaOk = (l: Pick<LinhaConferencia, "ok_encarregado_em">, acao: Acao) =>
+  acao === "aprovar" && !temOkEncarregado(l);
+
+/** O texto curto da lista: "OK do FULANO" / "OK pelo Operacional (FULANO)" / null. */
+export function rotuloOkEncarregado(l: Pick<LinhaConferencia, "ok_encarregado_por" | "ok_encarregado_em" | "ok_encarregado_pelo_operacional">): string | null {
+  if (!l.ok_encarregado_em) return null;
+  return l.ok_encarregado_pelo_operacional
+    ? `OK pelo Operacional (${l.ok_encarregado_por ?? "—"})`
+    : `OK do ${l.ok_encarregado_por ?? "encarregado"}`;
 }
 
 export interface EventoConferencia {

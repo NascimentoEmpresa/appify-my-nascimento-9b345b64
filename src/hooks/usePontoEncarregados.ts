@@ -13,9 +13,13 @@ const sb = supabase as any;
 const K = "ponto-encarregados";
 export const BUCKET_PONTO_ENC = "ponto-encarregados";
 
-export interface ContratoPonto { empresa: number; filial: number; nome: string | null; empresa_nome: string | null }
+/** `postos_lider`: o(s) posto(s) da Hierarquia que fazem dele o responsável (mig 20261008000005). */
+export interface ContratoPonto { empresa: number; filial: number; nome: string | null; empresa_nome: string | null; postos_lider?: string[] }
 export interface ContextoPonto {
   eu: { nome: string; empresa: number; filial: number; posto: string | null } | null;
+  /** O login está vinculado a algum cadastro de EMPREGADOS? Sem isso a Hierarquia não acha a pessoa. */
+  tem_cadastro?: boolean;
+  /** Só os contratos de que o usuário é o responsável na Hierarquia de Postos. */
   contratos: ContratoPonto[];
   relogio_ate: string | null;
 }

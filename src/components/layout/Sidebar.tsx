@@ -2,6 +2,8 @@ import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import logoGN from "@/assets/logo-nascimento-icon.png";
 import {
   LayoutDashboard,
+  Fingerprint,
+  UserCheck,
   Briefcase,
   FileText,
   Sparkles,
@@ -549,6 +551,9 @@ const rhModule: ModuleDef = {
         // nome "Conferência de Ponto"). A mesma tela está no Financeiro e no
         // Operacional, cada um com o seu menu (mig 274).
         { label: "Dashboard de Pontos", to: "/app/rh/conferencia-ponto/painel", icon: BarChart3 },
+        // Gestão de Ponto (branch local gestaoponto, mig 20261007000001): o mês
+        // de cada colaborador pelas marcações da Senior.
+        { label: "Gestão de Ponto", to: "/app/rh/gestao-ponto", icon: Fingerprint },
         // Uma só, desde 02/09/2026: a etapa do RH é ALTERAR NA SENIOR. A
         // aprovação do administrativo, que era o segundo item aqui, foi para o
         // analista junto com a de contrato. A rota
@@ -584,10 +589,11 @@ const recrutamentoModule: ModuleDef = {
       label: "Gestão",
       defaultOpen: true,
       items: [
-        // Dashboard Recrutamento (02/10/2026, mig 288): o painel completo — vagas
-        // atrasadas/em atenção/no prazo, andamento, tempos e candidatos.
-        { label: "Dashboard Recrutamento", to: "/app/rh/recrutamento/dashboard", icon: LayoutDashboard },
-        { label: "Dashboard", to: "/app/rh/recrutamento-dashboard", icon: BarChart3 },
+        // "Dashboard Recrutamento" (/app/rh/recrutamento/dashboard) e "Dashboard"
+        // (/app/rh/recrutamento-dashboard) saíram daqui em 08/10/2026: "tem
+        // muitos dashboards de recrutamento… deixa só em relatórios". Viraram
+        // dois botões em Relatórios › Gestão Recrutamento; rotas e menus
+        // (rh_recrutamento_dashboard, recrutamento_dashboard) seguem os mesmos.
         { label: "Gestão Recrutamento", to: "/app/rh/recrutamento", icon: UserCog },
         { label: "Banco de Talentos", to: "/app/rh/banco-talentos", icon: Users2 },
       ],
@@ -1147,7 +1153,13 @@ const operacionalModule: ModuleDef = {
     {
       label: "Operacional",
       defaultOpen: true,
-      items: [{ label: "Controle de Diárias", to: "/app/operacional/diarias", icon: CalendarCheck2 }],
+      items: [
+        { label: "Controle de Diárias", to: "/app/operacional/diarias", icon: CalendarCheck2 },
+        // Efetividade e Coberturas (branch local efetividade, mig 20261008000030):
+        // quem faltou pelo ponto da Senior e o acionamento de diaristas. As 5
+        // telas ficam em abas dentro dela; menu ope_efetividade.
+        { label: "Efetividade e Coberturas", to: "/app/operacional/efetividade", icon: UserCheck },
+      ],
     },
     {
       label: "Recrutamento e Seleção",
