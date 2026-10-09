@@ -37,6 +37,8 @@ import { urlLogoCartao, useCartaoBancos } from "@/hooks/useMaloteCartaoCredito";
 import { ContratoTrocaCampo } from "@/pages/financeiro/fluxo-caixa/ContratoTrocaCampo";
 import { camposComPendencia, motivosRevisar, SEM_CONTRATO } from "@/pages/financeiro/fluxo-caixa/motivosRevisar";
 import { parseValorBR, valorConfere } from "@/pages/financeiro/fluxo-caixa/filtroValor";
+import { useFaturasInformadas } from "@/hooks/useCartaoFaturaConsolidada";
+import { chaveFatura, compararFatura } from "@/pages/financeiro/cartao-credito/faturaConsolidada";
 
 // Campo do lápis que resolve o selo "revisar".
 const DESTAQUE_REVISAR = "rounded-md ring-2 ring-red-400 ring-offset-2 ring-offset-background p-1.5 -m-1.5";
@@ -90,6 +92,12 @@ interface RateioDetalheItem {
   id: string;
   nome: string;
   valor: number;
+  // SIS-2026-0632: só na abertura da fatura do cartão (1 item por despesa).
+  idMalote?: string | null;
+  dataCompra?: string | null;
+  descricao?: string | null;
+  parcela?: string | null;
+  classificacao?: string | null;
 }
 
 const LABEL_ORIGEM: Record<FluxoCaixaMaloteLinha["origem"], string> = {
@@ -112,6 +120,8 @@ export default function FluxoCaixaGestao() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const { data: linhasBrutas = [], isLoading } = useFluxoCaixaCombinado();
+  // SIS-2026-0632: valor real da fatura (digitado no Cartão de Crédito) p/ comparar com a linha consolidada.
+  const { data: faturasInformadas } = useFaturasInformadas();
 
   // SIS-2026-0464: a view de origem já entrega 1 linha por linha de RATEIO
   // (JOIN com malote_despesa_rateio_linha) — uma despesa dividida entre
@@ -127,16 +137,34 @@ export default function FluxoCaixaGestao() {
   const linhas = useMemo(() => {
     const grupos = new Map<
       string,
-      { base: FluxoCaixaMaloteLinha; valor: number; contratos: Map<string, { nome: string; valor: number }> }
+      { base: FluxoCaixaMaloteLinha; valor: number; contratos: Map<string, { nome: string; valor: number }>; classes: Set<string>; despesas: Map<string, RateioDetalheItem> }
     >();
     for (const l of linhasBrutas) {
       const chave = `${l.despesa_id}::${l.numero_parcela ?? ""}`;
       let grupo = grupos.get(chave);
       if (!grupo) {
-        grupo = { base: l, valor: 0, contratos: new Map() };
+        grupo = { base: l, valor: 0, contratos: new Map(), classes: new Set(), despesas: new Map() };
         grupos.set(chave, grupo);
       }
       grupo.valor += Number(l.valor) || 0;
+      if (l.classificacao_id) grupo.classes.add(l.classificacao_id);
+      // SIS-2026-0632: na fatura do cartão a abertura mostra as DESPESAS (DM-xxx, descrição, valor),
+      // não os contratos (cada despesa já traz o seu rateio no Malote).
+      if (l.fatura_cartao_id) {
+        const chaveDesp = `${l.despesa_id_origem}::${l.numero_parcela_origem ?? ""}`;
+        const parcela = l.numero_parcela_origem ? `parcela ${l.numero_parcela_origem}/${l.numero_parcelas_origem ?? "?"}` : null;
+        const atualDesp = grupo.despesas.get(chaveDesp);
+        grupo.despesas.set(chaveDesp, {
+          id: chaveDesp,
+          nome: `${l.id_malote_origem ?? "—"} · ${l.descricao_origem ?? ""}`,
+          valor: (atualDesp?.valor ?? 0) + (Number(l.valor) || 0),
+          idMalote: l.id_malote_origem ?? null,
+          dataCompra: l.data_compra_origem ?? null,
+          descricao: l.descricao_origem ?? null,
+          parcela,
+          classificacao: l.classificacao_nome ?? null,
+        });
+      }
       // Rateio importado da planilha pode ter cota em contrato não cadastrado
       // (ex.: "ADMINISTRATIVO"): sem contrato_id, entra pelo nome.
       const chaveContrato = l.contrato_id ?? (l.contrato_nome ? `nome:${l.contrato_nome}` : null);
@@ -145,7 +173,14 @@ export default function FluxoCaixaGestao() {
         grupo.contratos.set(chaveContrato, { nome: l.contrato_nome, valor: (atual?.valor ?? 0) + (Number(l.valor) || 0) });
       }
     }
-    return Array.from(grupos.values()).map(({ base, valor, contratos }) => {
+    return Array.from(grupos.values()).map(({ base, valor, contratos, classes, despesas }) => {
+      // SIS-2026-0632: fatura consolidada junta despesas de classificações diferentes numa linha só.
+      if (base.fatura_cartao_id && classes.size > 1) base = { ...base, classificacao_id: null, classificacao_nome: "Diversas" };
+      if (base.fatura_cartao_id && despesas.size > 0) {
+        const rateioDetalhe = Array.from(despesas.values())
+          .sort((a, b) => (a.dataCompra ?? "").localeCompare(b.dataCompra ?? "") || a.nome.localeCompare(b.nome, "pt-BR", { numeric: true }));
+        return { ...base, valor, contrato_id: null, contrato_nome: contratos.size > 1 ? "Rateio" : (base.contrato_nome ?? null), rateioDetalhe };
+      }
       if (contratos.size > 1) {
         const rateioDetalhe = Array.from(contratos.entries())
           .map(([id, { nome, valor: valorContrato }]) => ({ id, nome, valor: valorContrato }))
@@ -467,7 +502,7 @@ export default function FluxoCaixaGestao() {
         Competência: mesAno(l.competencia),
         Empresa: l.empresa_nome ?? "",
         Contrato: l.contrato_nome ?? "",
-        "Rateio (contrato: valor)": l.rateioDetalhe ? l.rateioDetalhe.map((r) => `${r.nome}: ${formatBRL(r.valor)}`).join(" | ") : "",
+        "Rateio (contrato ou despesa: valor)": l.rateioDetalhe ? l.rateioDetalhe.map((r) => `${r.nome}: ${formatBRL(r.valor)}`).join(" | ") : "",
         "Forma de pagamento": l.forma_pagamento ?? "",
         Banco: l.banco_nome ?? "",
         Parcela: l.numero_parcela ? (l.numero_parcelas ? `${l.numero_parcela}/${l.numero_parcelas}` : String(l.numero_parcela)) : "",
@@ -810,7 +845,9 @@ export default function FluxoCaixaGestao() {
             <p className="text-xs text-muted-foreground">Dados alimentados pelo Pagamento Malote e pelo Débito Automático.</p>
           </div>
           <div className="overflow-x-auto">
-            <Table>
+            {/* Compacto para caber sem rolagem lateral (Ações sempre visíveis): padding menor,
+                fonte menor e textos longos (descrição, contrato, forma de pagamento) quebram em 2 linhas. */}
+            <Table className="[&_th]:h-10 [&_th]:px-1.5 [&_th]:text-[11px] [&_td]:px-1.5 [&_td]:py-2 [&_td]:text-xs">
               <TableHeader>
                 {/* SIS-2026-0306 (Iury): ordem das colunas ajustada — ID,
                     Data de Pagamento, Tipo, Classificação, Descrição,
@@ -856,7 +893,7 @@ export default function FluxoCaixaGestao() {
                   // de 1 linha (1 por parcela paga) com o mesmo
                   // despesa_id — key precisa incluir o número da parcela.
                   const chave = `${l.despesa_id}-${l.numero_parcela ?? "unica"}`;
-                  const temRateio = l.contrato_nome === "Rateio" && !!l.rateioDetalhe?.length;
+                  const temRateio = (l.contrato_nome === "Rateio" || !!l.fatura_cartao_id) && !!l.rateioDetalhe?.length;
                   const expandida = linhasExpandidas.has(chave);
                   return (
                   <>
@@ -873,7 +910,9 @@ export default function FluxoCaixaGestao() {
                         </button>
                       )}
                     </TableCell>
-                    <TableCell className="text-center font-mono text-xs">{l.id_malote}</TableCell>
+                    <TableCell className="text-center font-mono text-[11px]">
+                      <span className="mx-auto block max-w-[110px] break-words">{l.id_malote}</span>
+                    </TableCell>
                     <TableCell className="text-center text-sm">{l.data_pagamento ? new Date(l.data_pagamento + "T00:00:00").toLocaleDateString("pt-BR") : "—"}</TableCell>
                     <TableCell className="text-center">
                       {l.tipo === "entrada" ? (
@@ -884,7 +923,7 @@ export default function FluxoCaixaGestao() {
                     </TableCell>
                     <TableCell className="text-center text-sm">{l.classificacao_nome ?? "—"}</TableCell>
                     <TableCell className="text-center text-sm">
-                      <span className="inline-flex items-center gap-1">
+                      <span className="inline-flex max-w-[190px] flex-wrap items-center justify-center gap-1" title={l.descricao}>
                         {l.descricao}
                         {l.ajustado && (
                           <span
@@ -911,21 +950,53 @@ export default function FluxoCaixaGestao() {
                         <button
                           type="button"
                           className="underline decoration-dotted hover:text-foreground"
+                          title={l.fatura_cartao_id ? "Ver as despesas desta fatura" : undefined}
                           onClick={() => alternarExpansao(chave)}
                         >
-                          Rateio
+                          {l.fatura_cartao_id && l.contrato_nome !== "Rateio" ? (l.contrato_nome ?? "Despesas") : "Rateio"}
                         </button>
                       ) : (
-                        l.contrato_nome ?? "—"
+                        <span className="mx-auto line-clamp-2 max-w-[130px] leading-tight" title={l.contrato_nome ?? undefined}>{l.contrato_nome ?? "—"}</span>
                       )}
                     </TableCell>
                     <TableCell className="text-center text-sm">
                       {l.banco_nome ? <BancoBadge nome={l.banco_nome} logoUrl={urlLogoCartao(l.banco_logo_path)} /> : "—"}
                     </TableCell>
-                    <TableCell className="text-center text-sm">{l.forma_pagamento ?? "—"}</TableCell>
-                    <TableCell className="text-center text-sm font-medium">{formatBRL(l.valor)}</TableCell>
+                    <TableCell className="text-center text-sm">
+                      <span className="mx-auto line-clamp-3 max-w-[120px] text-[11px] leading-tight" title={l.forma_pagamento ?? undefined}>
+                        {l.forma_pagamento ?? "—"}
+                      </span>
+                    </TableCell>
+                    <TableCell className="text-center text-sm font-medium">
+                      {formatBRL(l.valor)}
+                      {l.fatura_cartao_id && l.fatura_mes && (() => {
+                        // SIS-2026-0632: comparação da linha da fatura com o valor real (boleto).
+                        const informado = faturasInformadas?.get(chaveFatura(l.fatura_cartao_id, l.fatura_mes));
+                        const cmp = compararFatura(Number(l.valor), informado);
+                        if (cmp.status === "sem_valor") {
+                          return <div className="text-[10px] font-normal text-muted-foreground" title="Informe o valor da fatura em Cartão de Crédito">fatura não informada</div>;
+                        }
+                        return cmp.status === "confere" ? (
+                          <div className="text-[10px] font-normal text-emerald-700 dark:text-emerald-400" title={`Valor da fatura: ${formatBRL(informado!)}`}>confere com a fatura</div>
+                        ) : (
+                          <div className="text-[10px] font-normal text-amber-700 dark:text-amber-400" title={`Fatura ${formatBRL(informado!)} − despesas ${formatBRL(Number(l.valor))}`}>
+                            fatura {formatBRL(informado!)} · dif. {formatBRL(cmp.diferenca)}
+                          </div>
+                        );
+                      })()}
+                    </TableCell>
                     <TableCell className="text-center">
-                      {l.origem === "aplicacao_financeira" ? (
+                      {l.fatura_cartao_id ? (
+                        <Button
+                          variant="link"
+                          size="sm"
+                          className="h-auto whitespace-nowrap p-0 text-xs"
+                          title="Fatura consolidada: as despesas estão no Malote; valor da fatura e boleto ficam em Cartão de Crédito"
+                          onClick={() => navigate("/app/financeiro/gestao-financeira/cartao-credito")}
+                        >
+                          Ver no Cartão
+                        </Button>
+                      ) : l.origem === "aplicacao_financeira" ? (
                         <Button
                           variant="link"
                           size="sm"
@@ -990,7 +1061,27 @@ export default function FluxoCaixaGestao() {
                       )}
                     </TableCell>
                   </TableRow>
-                  {temRateio && expandida && l.rateioDetalhe!.map((c) => (
+                  {temRateio && expandida && l.fatura_cartao_id && l.rateioDetalhe!.map((c) => (
+                    // SIS-2026-0632: despesa da fatura do cartão — ID (DM/SD), data da compra, classificação, descrição e valor.
+                    <TableRow key={`${chave}-${c.id}`} className="bg-muted/30 hover:bg-muted/30">
+                      <TableCell />
+                      <TableCell className="text-center font-mono text-[11px] text-muted-foreground">{c.idMalote ?? "—"}</TableCell>
+                      <TableCell className="text-center text-xs text-muted-foreground" title="Data da compra">
+                        {c.dataCompra ? new Date(c.dataCompra + "T00:00:00").toLocaleDateString("pt-BR") : "—"}
+                      </TableCell>
+                      <TableCell />
+                      <TableCell className="text-center text-xs text-muted-foreground">{c.classificacao ?? "—"}</TableCell>
+                      <TableCell colSpan={4} className="text-center text-xs text-muted-foreground">
+                        {c.descricao}
+                        {c.parcela && <span className="ml-1 rounded-full bg-muted px-1.5 py-0.5 text-[10px]">{c.parcela}</span>}
+                      </TableCell>
+                      <TableCell />
+                      <TableCell />
+                      <TableCell className="text-center text-xs font-medium text-muted-foreground">{formatBRL(c.valor)}</TableCell>
+                      <TableCell />
+                    </TableRow>
+                  ))}
+                  {temRateio && expandida && !l.fatura_cartao_id && l.rateioDetalhe!.map((c) => (
                     <TableRow key={`${chave}-${c.id}`} className="bg-muted/30 hover:bg-muted/30">
                       <TableCell />
                       <TableCell colSpan={7} className="text-right text-xs text-muted-foreground pr-4">
