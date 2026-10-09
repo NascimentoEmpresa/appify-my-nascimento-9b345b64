@@ -13,7 +13,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import {
-  AlertTriangle, BarChart3, Download, FileText, LayoutGrid, Phone, RefreshCw, Search, Stethoscope, UserCheck, UserMinus, UserX, Users,
+  AlertTriangle, BarChart3, Download, Eye, FileText, LayoutGrid, Phone, RefreshCw, Search, Stethoscope, UserCheck, UserMinus, UserX, Users,
 } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { usePodeAlterarEfetividade } from "@/hooks/useEfetividade";
@@ -112,7 +112,10 @@ export default function ControlePostos() {
             <Kpi icon={AlertTriangle} rotulo="Postos descobertos" valor={descobertos.length} tom="destructive" melhorSobe={false} onClick={() => setSituacao("ausencias")} ativo={situacao === "ausencias"} />
           </div>
 
-          <div className="grid gap-4 xl:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
+          {/* A lista tem 8 colunas: ao lado do painel só cabe em tela bem larga
+              (2xl). Abaixo disso ela ocupa a largura toda e os três quadros
+              laterais descem para uma linha própria. */}
+          <div className="grid gap-4 2xl:grid-cols-[minmax(0,1fr)_400px]">
             <Secao titulo="Lista de Postos" icone={FileText} sub={`${visiveis.length} colaborador(es) — ${r.semRegistro} sem registro de ponto ficam no fim da lista`}
               acoes={<Button size="sm" variant="outline" className="gap-1" onClick={exportar}><Download className="h-4 w-4" />Exportar</Button>}>
               <div className="flex flex-wrap gap-2 border-b p-3">
@@ -129,43 +132,44 @@ export default function ControlePostos() {
                     <tr>
                       <th className="p-2 text-left">Posto</th><th className="p-2 text-left">Turno</th><th className="p-2 text-left">Colaborador previsto</th>
                       <th className="p-2">Situação</th><th className="p-2">Cobertura</th><th className="p-2 text-left">Substituto</th>
-                      <th className="p-2">Status da cobertura</th><th className="p-2">Ponto</th><th className="p-2">Ações</th>
+                      <th className="p-2">Ponto</th><th className="sticky right-0 bg-muted p-2 shadow-[-6px_0_6px_-6px_rgba(0,0,0,0.15)]">Ações</th>
                     </tr>
                   </thead>
                   <tbody>
                     {pag.map((l) => {
                       const aus = AUSENCIAS.includes(l.dia.situacao);
                       return (
-                        <tr key={l.p.c.id} className="border-t hover:bg-muted/30">
-                          <td className="max-w-[180px] p-2">
-                            <Link to={linkPosto(l, d.data)} className="block truncate font-semibold text-primary hover:underline">{l.p.c.posto_nome}</Link>
-                            {!filtros.contrato && <p className="truncate text-[11px] text-muted-foreground">{l.p.c.contrato}</p>}
+                        <tr key={l.p.c.id} className="group border-t hover:bg-muted/30">
+                          <td className="max-w-[200px] p-2">
+                            <Link to={linkPosto(l, d.data)} title={l.p.c.posto_nome} className="block truncate font-semibold text-primary hover:underline">{l.p.c.posto_nome}</Link>
+                            {!filtros.contrato && <p className="truncate text-[11px] text-muted-foreground" title={l.p.c.contrato}>{l.p.c.contrato}</p>}
                           </td>
                           <td className="whitespace-nowrap p-2 text-xs tabular-nums">
                             {l.p.jornada.inicio != null ? `${fmtMin(l.p.jornada.inicio)} – ${fmtMin(l.p.jornada.fim)}` : ROTULO_TURNO[l.p.turno]}
                           </td>
                           <td className="max-w-[200px] p-2"><p className="truncate">{l.p.c.nome}</p><p className="truncate text-[11px] text-muted-foreground">{l.p.c.cargo}</p></td>
                           <td className="p-2 text-center"><BadgeSituacao s={l.dia.situacao} /></td>
-                          <td className="p-2 text-center text-xs font-semibold">
-                            {!aus ? "—" : l.cobertura === "coberto" || l.cobertura === "em_andamento"
-                              ? <span className="rounded bg-success/10 px-2 py-0.5 text-success">Sim</span>
-                              : <span className="rounded bg-destructive/10 px-2 py-0.5 text-destructive">Não</span>}
-                          </td>
-                          <td className="max-w-[160px] truncate p-2 text-xs">{l.ocorrencia?.substituto_nome ?? "—"}</td>
+                          {/* Cobertura + status numa coluna só: "Sim/Não" sozinho repetia o status. */}
                           <td className="p-2 text-center">{aus ? <BadgeStatus s={l.ocorrencia?.status} /> : <span className="text-muted-foreground">—</span>}</td>
+                          <td className="max-w-[150px] truncate p-2 text-xs" title={l.ocorrencia?.substituto_nome ?? undefined}>{l.ocorrencia?.substituto_nome ?? "—"}</td>
                           <td className={cn("p-2 text-center text-xs font-semibold tabular-nums", l.dia.atraso > 0 ? "text-warning" : "text-success")}>
                             {l.dia.entrada != null ? fmtMin(l.dia.entrada) : "—"}
                           </td>
-                          <td className="whitespace-nowrap p-2 text-center">
-                            <Button size="sm" variant="outline" asChild><Link to={linkPosto(l, d.data)}>Ver</Link></Button>
-                            {pode && aus && l.cobertura === "descoberto" && (
-                              <Button size="sm" className="ml-1 gap-1" onClick={() => setAcionar(l)}><Phone className="h-3 w-3" />Acionar</Button>
-                            )}
+                          {/* Fixa à direita: com a tabela rolando de lado, o Acionar nunca some. */}
+                          <td className="sticky right-0 whitespace-nowrap bg-card p-2 text-center shadow-[-6px_0_6px_-6px_rgba(0,0,0,0.15)] group-hover:bg-muted">
+                            <div className="flex justify-center gap-1">
+                              <Button size="icon" variant="outline" className="h-8 w-8" title="Detalhar o posto" asChild>
+                                <Link to={linkPosto(l, d.data)}><Eye className="h-4 w-4" /></Link>
+                              </Button>
+                              {pode && aus && l.cobertura === "descoberto" && (
+                                <Button size="sm" className="h-8 gap-1 px-2" onClick={() => setAcionar(l)}><Phone className="h-3 w-3" />Acionar</Button>
+                              )}
+                            </div>
                           </td>
                         </tr>
                       );
                     })}
-                    {!pag.length && <tr><td colSpan={9}><Vazio texto="Ninguém com esses filtros." /></td></tr>}
+                    {!pag.length && <tr><td colSpan={8}><Vazio texto="Ninguém com esses filtros." /></td></tr>}
                   </tbody>
                 </table>
               </div>
@@ -177,7 +181,7 @@ export default function ControlePostos() {
               </div>
             </Secao>
 
-            <div className="space-y-4">
+            <div className="grid content-start gap-4 lg:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-1">
               <Secao titulo="Mapa de Postos" icone={LayoutGrid} sub="Cada bloco é um posto — clique para detalhar">
                 <div className="flex max-h-64 flex-wrap gap-1.5 overflow-auto p-3">
                   {porPosto.slice(0, 120).map((g) => {
@@ -201,7 +205,8 @@ export default function ControlePostos() {
               </Secao>
 
               <Secao titulo="Resumo por Turno" icone={BarChart3}>
-                <table className="w-full text-xs">
+                <div className="overflow-x-auto">
+                <table className="w-full whitespace-nowrap text-xs">
                   <thead className="bg-muted/50"><tr><th className="p-2 text-left">Turno</th><th className="p-2">Previstos</th><th className="p-2">Presentes</th><th className="p-2">Faltas</th><th className="p-2">Atest.</th><th className="p-2">Afast.</th><th className="p-2">Cobert.</th><th className="p-2">Efetividade</th></tr></thead>
                   <tbody>
                     {porTurno.map(({ t, g }) => (
@@ -218,11 +223,12 @@ export default function ControlePostos() {
                     ))}
                   </tbody>
                 </table>
+                </div>
               </Secao>
 
               <Secao titulo="Postos em Atenção" icone={AlertTriangle}>
                 <table className="w-full text-xs">
-                  <thead className="bg-muted/50"><tr><th className="p-2 text-left">Posto</th><th className="p-2 text-left">Turno</th><th className="p-2">Sem cobertura</th><th className="p-2 text-left">Motivo</th></tr></thead>
+                  <thead className="bg-muted/50"><tr><th className="p-2 text-left">Posto</th><th className="p-2 text-left">Turno</th><th className="whitespace-nowrap p-2">Sem cobertura</th><th className="p-2 text-left">Motivo</th></tr></thead>
                   <tbody>
                     {descobertos.slice(0, 8).map((l) => {
                       const t = tempoSemCobertura(l.dia.data, l.dia.horarioPrevisto, l.ocorrencia);
