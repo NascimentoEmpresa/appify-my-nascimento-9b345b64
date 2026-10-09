@@ -97,7 +97,8 @@ export function avaliacaoLiberada(
 /** Linha de chamados_meus_avaliacoes_pendentes (mig 269): o que trava abrir outro chamado. */
 export interface PendenciaSolicitante {
   id: string; numero: string; assunto: string; concluido_em: string | null;
-  pendencia: "avaliacao";
+  /** avaliacao_participante: participante extra (mig 20261009000003) — mesma trava. */
+  pendencia: "avaliacao" | "avaliacao_participante";
 }
 
 // ---- Linha do tempo do botão "Status" ---------------------------------
