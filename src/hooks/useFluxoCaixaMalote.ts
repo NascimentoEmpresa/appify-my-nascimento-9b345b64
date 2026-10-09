@@ -24,6 +24,9 @@ const CONCORRENCIA_PAGINAS = 4;
 // a migration não subiu, cai na ordenação sem ele em vez de quebrar a tela.
 const ORDEM_FONTES = ["despesa_id", "numero_parcela", "contrato_id", "valor"];
 const ORDEM_IMPORTACAO = ["despesa_id", "linha_id"];
+// SIS-2026-0632: na view consolidada várias despesas dividem o mesmo despesa_id (a
+// fatura), então o desempate precisa incluir a despesa e a parcela de ORIGEM.
+const ORDEM_CONSOLIDADA = ["despesa_id", "despesa_id_origem", "numero_parcela_origem", "contrato_id", "valor"];
 
 async function buscarPagina(tabela: string, ordenarPor: string[], pagina: number): Promise<any[]> {
   let q = (supabase as any).from(tabela).select("*");
@@ -107,6 +110,16 @@ export interface FluxoCaixaMaloteLinha {
   inconsistencia?: string | null;
   // Só a view da importação: id único da linha (desempate da paginação).
   linha_id?: string;
+  // SIS-2026-0632: só a view consolidada devolve. Preenchidos quando a linha é a
+  // fatura consolidada de um cartão (várias despesas num despesa_id só).
+  fatura_cartao_id?: string | null;
+  fatura_mes?: string | null; // yyyy-mm-01 da fatura (competência da fatura)
+  despesa_id_origem?: string;
+  numero_parcela_origem?: number | null;
+  id_malote_origem?: string | null;
+  descricao_origem?: string | null;
+  numero_parcelas_origem?: number | null;
+  data_compra_origem?: string | null;
 }
 
 export function useFluxoCaixaMalote() {
@@ -145,7 +158,13 @@ export function useFluxoCaixaCombinado() {
       // linha só (datas e tipos diferentes), mesma ideia da Movimentação
       // Financeira do Débito Automático (2 linhas ligadas por par).
       const [malote, debitoAutomatico, cartaoFatura, aplicacaoFinanceira, resgateAplicacao, importacaoHistorica] = await Promise.all([
-        buscarTodasLinhas("v_malote_pagamento_fluxo_caixa"),
+        // SIS-2026-0632: cartão com "fatura consolidada no Fluxo" (2719) vira 1 linha
+        // por fatura, no vencimento. Migration 20261008000005 ainda não aplicada
+        // (view/coluna ausente) -> cai na view de sempre, 1 linha por despesa.
+        buscarTodasLinhas("v_malote_pagamento_fluxo_caixa_consolidado", ORDEM_CONSOLIDADA).catch((e: any) => {
+          if (e?.code === "PGRST205" || e?.code === "42P01" || e?.code === "42703") return buscarTodasLinhas("v_malote_pagamento_fluxo_caixa");
+          throw e;
+        }),
         buscarTodasLinhas("v_debito_automatico_fluxo_caixa"),
         buscarTodasLinhas("v_cartao_fatura_fluxo_caixa"),
         buscarTodasLinhas("v_aplicacao_financeira_fluxo_caixa"),
