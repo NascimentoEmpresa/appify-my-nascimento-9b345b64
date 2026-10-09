@@ -113,3 +113,52 @@ export function useMoverColaborador() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["rh-ativos-contratos"] }),
   });
 }
+
+// ---- Observações (mig 20261008000010) --------------------------------------
+// Recado datado e assinado no contrato inteiro (posto "") ou num posto da
+// planilha — o "por que tem gente a mais/a menos aqui".
+
+export interface ObservacaoAtivos {
+  id: number;
+  contrato_id: string;
+  /** "" = o contrato inteiro. */
+  posto: string;
+  texto: string;
+  autor_nome: string | null;
+  created_at: string;
+  pode_apagar: boolean;
+}
+
+export function useObservacoesAtivos() {
+  return useQuery({
+    queryKey: ["rh-ativos-contratos", "observacoes"],
+    staleTime: 60_000,
+    queryFn: async (): Promise<ObservacaoAtivos[]> => {
+      const { data, error } = await sb.rpc<ObservacaoAtivos[]>("rh_ac_observacoes");
+      if (error) return []; // banco sem a migration: a tela segue sem observações
+      return data ?? [];
+    },
+  });
+}
+
+export function useSalvarObservacaoAtivos() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (p: { contratoId: string; posto: string; texto: string }) => {
+      const { error } = await sb.rpc<number>("rh_ac_observacao_salvar", { p_contrato_id: p.contratoId, p_posto: p.posto, p_texto: p.texto });
+      if (error) throw new Error(error.message);
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["rh-ativos-contratos", "observacoes"] }),
+  });
+}
+
+export function useExcluirObservacaoAtivos() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: number) => {
+      const { error } = await sb.rpc<null>("rh_ac_observacao_excluir", { p_id: id });
+      if (error) throw new Error(error.message);
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["rh-ativos-contratos", "observacoes"] }),
+  });
+}

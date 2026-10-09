@@ -134,9 +134,10 @@ function FiltroContrato({ periodo }: { periodo: ReturnType<typeof usePeriodo> })
 
 // ---- KPIs --------------------------------------------------------------------
 
-export function CartaoKpi({ k }: { k: Kpi }) {
+export function CartaoKpi({ k, onClick }: { k: Kpi; onClick?: () => void }) {
   return (
-    <Card className="p-4">
+    <Card className={onClick ? "cursor-pointer p-4 transition-colors hover:border-primary/50 hover:bg-muted/30" : "p-4"}
+          onClick={onClick} role={onClick ? "button" : undefined} title={onClick ? "Clique para ver as vagas" : undefined}>
       <p className="text-xs font-medium text-muted-foreground">{k.rotulo}</p>
       <p className={`mt-1 inline-block rounded-md px-1.5 text-2xl font-bold tabular-nums ${TOM[k.tom] ?? ""}`}>{fmtKpi(k.valor, k.formato)}</p>
       {k.dica && <p className="mt-1 text-[11px] text-muted-foreground">{k.dica}</p>}
@@ -144,8 +145,9 @@ export function CartaoKpi({ k }: { k: Kpi }) {
   );
 }
 
-export function LinhaKpis({ kpis }: { kpis: Kpi[] }) {
-  return <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">{kpis.map((k) => <CartaoKpi key={k.rotulo} k={k} />)}</div>;
+/** `aoClicar` (opcional, pelo rótulo do KPI): o cartão vira botão — o Vagas — Dashboard abre a lista por trás do número. */
+export function LinhaKpis({ kpis, aoClicar }: { kpis: Kpi[]; aoClicar?: Partial<Record<string, () => void>> }) {
+  return <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">{kpis.map((k) => <CartaoKpi key={k.rotulo} k={k} onClick={aoClicar?.[k.rotulo]} />)}</div>;
 }
 
 // ---- Gráficos ------------------------------------------------------------------

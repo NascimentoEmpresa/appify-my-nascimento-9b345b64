@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -33,6 +33,9 @@ import {
   useAtualizarRendimento,
   useResgatarMontanteAplicacao,
   useResgatesCaixa,
+  useEditarResgate,
+  useExcluirResgate,
+  type AplicacaoFinanceiraResgateCaixa,
   useExcluirAplicacao,
   useHistoricoAplicacao,
   type AplicacaoFinanceiraLinha,
@@ -73,6 +76,9 @@ export default function AplicacoesFinanceiras() {
 
   const [dialogNova, setDialogNova] = useState(false);
   const [dialogResgate, setDialogResgate] = useState(false);
+  const [resgateEditar, setResgateEditar] = useState<AplicacaoFinanceiraResgateCaixa | null>(null);
+  const [resgateExcluir, setResgateExcluir] = useState<AplicacaoFinanceiraResgateCaixa | null>(null);
+  const excluirResgate = useExcluirResgate();
   const [registroEditar, setRegistroEditar] = useState<AplicacaoFinanceiraLinha | null>(null);
   const [registroRendimento, setRegistroRendimento] = useState<AplicacaoFinanceiraLinha | null>(null);
   const [registroHistorico, setRegistroHistorico] = useState<AplicacaoFinanceiraLinha | null>(null);
@@ -112,7 +118,11 @@ export default function AplicacoesFinanceiras() {
 
   const kpis = useMemo(() => {
     const ativas = linhas.filter((l) => l.status === "ativa");
-    const totalAplicado = ativas.reduce((s, l) => s + Number(l.saldo_principal), 0);
+    // SIS-2026-0588: resgate novo não mexe na linha (saldo_principal da view só
+    // desconta os resgates antigos, por linha) — o principal já resgatado pela
+    // tabela do caixa sai daqui para o card acompanhar o resgate lançado.
+    const principalResgatadoCaixa = resgatesCaixa.reduce((s, r) => s + Number(r.valor_principal), 0);
+    const totalAplicado = ativas.reduce((s, l) => s + Number(l.saldo_principal), 0) - principalResgatadoCaixa;
     const rendimentoAcumulado = ativas.reduce((s, l) => s + Number(l.rendimento_acumulado), 0);
     // Resgate não é mais por linha (entra no caixa da empresa, ver
     // useResgatarMontanteAplicacao) — soma vem da tabela própria, não das
@@ -122,6 +132,43 @@ export default function AplicacoesFinanceiras() {
     const vencidas = ativas.filter((l) => l.status_exibicao === "vencida").length;
     return { totalAplicado, rendimentoAcumulado, totalResgatado, vencidas };
   }, [linhas, resgatesCaixa]);
+
+  // SIS-2026-0588: o resgate não mexe na linha da carteira (decisão da Cálita:
+  // cada linha bate 1:1 com o extrato), então ele só aparecia no KPI e no Fluxo.
+  // Esta lista junta as duas pontas — aplicar (saída) e resgatar (entrada) — por
+  // data. Respeita Empresa e Data dos filtros da tela; Banco/Produto/Status/
+  // Vencimento são da linha da carteira e não existem no resgate.
+  const movimentacoes = useMemo(() => {
+    const nomeEmpresa = new Map(linhas.map((l) => [l.empresa_id, l.empresa_nome]));
+    const itens: {
+      chave: string; data: string; tipo: "aplicacao" | "resgate"; empresa: string; descricao: string;
+      principal: number; rendimento: number; observacao: string | null;
+      resgate?: AplicacaoFinanceiraResgateCaixa;
+    }[] = [];
+    for (const l of linhas) {
+      itens.push({
+        chave: `a-${l.id}`, data: l.data_aplicacao, tipo: "aplicacao", empresa_id: l.empresa_id,
+        empresa: l.empresa_nome ?? "—", descricao: `${l.numero} · ${l.produto}`,
+        principal: Number(l.valor_aplicado), rendimento: 0, observacao: l.descricao || null,
+      } as any);
+    }
+    for (const r of resgatesCaixa) {
+      itens.push({
+        chave: `r-${r.id}`, data: r.data_resgate, tipo: "resgate", empresa_id: r.empresa_id,
+        empresa: nomeEmpresa.get(r.empresa_id) ?? "—", descricao: `${r.numero ?? "—"} · Resgate`,
+        principal: Number(r.valor_principal), rendimento: Number(r.valor_rendimento), observacao: r.observacao,
+        resgate: r,
+      } as any);
+    }
+    return itens
+      .filter((m: any) => {
+        if (empresaFiltro && m.empresa_id !== empresaFiltro) return false;
+        if (dataDe && m.data < dataDe) return false;
+        if (dataAte && m.data > dataAte) return false;
+        return true;
+      })
+      .sort((a, b) => b.data.localeCompare(a.data));
+  }, [linhas, resgatesCaixa, empresaFiltro, dataDe, dataAte]);
 
   async function confirmarExcluir() {
     if (!registroExcluir) return;
@@ -324,12 +371,119 @@ export default function AplicacoesFinanceiras() {
             )}
           </CardContent>
         </Card>
+
+        <Card>
+          <CardContent className="p-4 space-y-3">
+            <p className="text-sm font-semibold">Movimentações</p>
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Data</TableHead>
+                    <TableHead>Movimento</TableHead>
+                    <TableHead>Empresa</TableHead>
+                    <TableHead>Referência</TableHead>
+                    <TableHead className="text-right">Principal</TableHead>
+                    <TableHead className="text-right">Rendimento</TableHead>
+                    <TableHead className="text-right">Valor no caixa</TableHead>
+                    <TableHead>Observação</TableHead>
+                    <TableHead className="text-center">Ações</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {movimentacoes.length === 0 && (
+                    <TableRow><TableCell colSpan={9} className="text-center text-muted-foreground py-8">Nenhuma movimentação no período.</TableCell></TableRow>
+                  )}
+                  {movimentacoes.map((m) => {
+                    const entrada = m.tipo === "resgate";
+                    return (
+                      <TableRow key={m.chave} className="[&>td]:px-2 [&>td]:py-2">
+                        <TableCell className="text-xs whitespace-nowrap">{fmtData(m.data)}</TableCell>
+                        <TableCell>
+                          <Badge className={entrada ? "bg-sky-100 text-sky-800 dark:bg-sky-950/40 dark:text-sky-300" : "bg-slate-100 text-slate-700 dark:bg-slate-800/60 dark:text-slate-300"}>
+                            {entrada ? "Resgate (entrada)" : "Aplicação (saída)"}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="text-xs">{m.empresa}</TableCell>
+                        <TableCell className="text-xs whitespace-nowrap">{m.descricao}</TableCell>
+                        <TableCell className="text-right text-xs whitespace-nowrap">{formatBRL(m.principal)}</TableCell>
+                        <TableCell className="text-right text-xs whitespace-nowrap text-emerald-600 dark:text-emerald-400">{entrada ? formatBRL(m.rendimento) : "—"}</TableCell>
+                        <TableCell className={`text-right text-xs font-semibold whitespace-nowrap ${entrada ? "text-emerald-600 dark:text-emerald-400" : ""}`}>
+                          {entrada ? "+" : "−"} {formatBRL(m.principal + m.rendimento)}
+                        </TableCell>
+                        <TableCell className="text-xs max-w-[220px] truncate" title={m.observacao ?? ""}>{m.observacao ?? "—"}</TableCell>
+                        <TableCell className="text-center">
+                          {m.resgate ? (
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <Button variant="ghost" size="icon" className="h-7 w-7"><MoreHorizontal className="h-4 w-4" /></Button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="end">
+                                <AcessoGate menu={MENU_CODIGO} acao="alterar">
+                                  <DropdownMenuItem onClick={() => setResgateEditar(m.resgate!)}>
+                                    <Pencil className="mr-2 h-3.5 w-3.5" /> Editar
+                                  </DropdownMenuItem>
+                                </AcessoGate>
+                                <AcessoGate menu={MENU_CODIGO} acao="excluir">
+                                  <DropdownMenuItem className="text-destructive focus:text-destructive" onClick={() => setResgateExcluir(m.resgate!)}>
+                                    <Trash2 className="mr-2 h-3.5 w-3.5" /> Excluir
+                                  </DropdownMenuItem>
+                                </AcessoGate>
+                              </DropdownMenuContent>
+                            </DropdownMenu>
+                          ) : (
+                            <span className="text-xs text-muted-foreground" title="Gerencie na Carteira de Aplicações">—</span>
+                          )}
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            </div>
+            {movimentacoes.length > 0 && (
+              <p className="text-xs text-muted-foreground pt-1">
+                Mostrando {movimentacoes.length} movimentaç{movimentacoes.length === 1 ? "ão" : "ões"} (filtros de Empresa e Data).
+              </p>
+            )}
+          </CardContent>
+        </Card>
       </div>
 
       <DialogNovaAplicacao open={dialogNova} onClose={() => setDialogNova(false)} />
       <DialogEditarAplicacao registro={registroEditar} onClose={() => setRegistroEditar(null)} />
       <DialogAtualizarRendimento registro={registroRendimento} onClose={() => setRegistroRendimento(null)} />
       <DialogResgatarMontante open={dialogResgate} onClose={() => setDialogResgate(false)} />
+      <DialogEditarResgate resgate={resgateEditar} onClose={() => setResgateEditar(null)} />
+      <AlertDialog open={!!resgateExcluir} onOpenChange={(o) => !o && setResgateExcluir(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Excluir resgate?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Resgate de {resgateExcluir ? formatBRL(Number(resgateExcluir.valor_principal) + Number(resgateExcluir.valor_rendimento)) : ""} em{" "}
+              {fmtData(resgateExcluir?.data_resgate ?? null)}. O valor volta para o montante aplicado e a entrada sai do Fluxo de Caixa.
+              Essa ação não pode ser desfeita.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={async () => {
+                if (!resgateExcluir) return;
+                try {
+                  await excluirResgate.mutateAsync(resgateExcluir.id);
+                  toast.success("Resgate excluído.");
+                } catch (e: any) {
+                  toast.error(e.message ?? "Erro ao excluir resgate.");
+                }
+                setResgateExcluir(null);
+              }}
+            >
+              Excluir
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
       <DialogHistoricoAplicacao registro={registroHistorico} onClose={() => setRegistroHistorico(null)} />
 
       <AlertDialog open={!!registroExcluir} onOpenChange={(o) => !o && setRegistroExcluir(null)}>
@@ -701,8 +855,7 @@ function DialogResgatarMontante({ open, onClose }: { open: boolean; onClose: () 
           </div>
           {montanteEmpresa && (
             <p className="text-xs text-muted-foreground">
-              Montante ativo disponível: {formatBRL(montanteEmpresa.principal)} de principal +{" "}
-              {formatBRL(montanteEmpresa.rendimento)} de rendimento.
+              Montante aplicado disponível para resgate: {formatBRL(montanteEmpresa.principal)} de principal.
             </p>
           )}
           <div>
@@ -722,13 +875,84 @@ function DialogResgatarMontante({ open, onClose }: { open: boolean; onClose: () 
             <Textarea value={observacao} onChange={(e) => setObservacao(e.target.value.slice(0, 300))} placeholder="Ex: resgate para pagamento de fornecedor X" />
           </div>
           <p className="text-xs text-muted-foreground">
-            O valor é retirado das aplicações ativas dessa empresa, começando pelas mais antigas, até completar
-            o total pedido — não é possível escolher uma aplicação específica.
+            O resgate é do montante aplicado da empresa (não de uma aplicação específica): o principal sai do total
+            aplicado e o principal + rendimento entram como ENTRADA no Fluxo de Caixa. O rendimento é o que o banco
+            pagou no resgate, não precisa estar lançado nas aplicações.
           </p>
         </div>
         <DialogFooter>
           <Button variant="outline" size="sm" onClick={onClose} disabled={resgatar.isPending}>Cancelar</Button>
           <Button size="sm" onClick={confirmar} disabled={resgatar.isPending}>{resgatar.isPending ? "Salvando..." : "Registrar resgate"}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ── Dialog: Editar resgate ───────────────────────────────────────────────
+
+const numBR = (n: number) => String(n).replace(".", ",");
+
+function DialogEditarResgate({ resgate, onClose }: { resgate: AplicacaoFinanceiraResgateCaixa | null; onClose: () => void }) {
+  const editar = useEditarResgate();
+  const [dataResgate, setDataResgate] = useState("");
+  const [valorPrincipal, setValorPrincipal] = useState("");
+  const [valorRendimento, setValorRendimento] = useState("");
+  const [observacao, setObservacao] = useState("");
+
+  useEffect(() => {
+    if (!resgate) return;
+    setDataResgate(resgate.data_resgate);
+    setValorPrincipal(numBR(Number(resgate.valor_principal)));
+    setValorRendimento(numBR(Number(resgate.valor_rendimento)));
+    setObservacao(resgate.observacao ?? "");
+  }, [resgate]);
+
+  async function confirmar() {
+    if (!resgate) return;
+    const principal = Number(valorPrincipal.replace(/\./g, "").replace(",", "."));
+    const rendimento = Number(valorRendimento.replace(/\./g, "").replace(",", ".") || 0);
+    if (!dataResgate || !principal || principal <= 0 || rendimento < 0 || Number.isNaN(rendimento)) {
+      toast.error("Informe a data e o valor do principal resgatado.");
+      return;
+    }
+    try {
+      await editar.mutateAsync({ id: resgate.id, dataResgate, valorPrincipal: principal, valorRendimento: rendimento, observacao: observacao.trim() || null });
+      toast.success("Resgate atualizado.");
+      onClose();
+    } catch (e: any) {
+      toast.error(e.message ?? "Erro ao atualizar resgate.");
+    }
+  }
+
+  return (
+    <Dialog open={!!resgate} onOpenChange={(v) => { if (!v) onClose(); }}>
+      <DialogContent className="sm:max-w-sm p-5">
+        <DialogHeader>
+          <DialogTitle>Editar Resgate</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-3">
+          <div>
+            <Label className="text-xs">Data do Resgate *</Label>
+            <Input type="date" className="h-9" value={dataResgate} onChange={(e) => setDataResgate(e.target.value)} />
+          </div>
+          <div>
+            <Label className="text-xs">Valor do Principal Resgatado (R$) *</Label>
+            <Input className="h-9" value={valorPrincipal} onChange={(e) => setValorPrincipal(e.target.value)} placeholder="0,00" />
+          </div>
+          <div>
+            <Label className="text-xs">Valor do Rendimento Resgatado (R$)</Label>
+            <Input className="h-9" value={valorRendimento} onChange={(e) => setValorRendimento(e.target.value)} placeholder="0,00" />
+          </div>
+          <div>
+            <Label className="text-xs">Observação (opcional)</Label>
+            <Textarea value={observacao} onChange={(e) => setObservacao(e.target.value.slice(0, 300))} />
+          </div>
+          <p className="text-xs text-muted-foreground">A empresa do resgate não muda. A alteração vale também para a entrada no Fluxo de Caixa.</p>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" size="sm" onClick={onClose} disabled={editar.isPending}>Cancelar</Button>
+          <Button size="sm" onClick={confirmar} disabled={editar.isPending}>{editar.isPending ? "Salvando..." : "Salvar"}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

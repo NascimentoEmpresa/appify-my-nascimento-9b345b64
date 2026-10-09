@@ -69,6 +69,7 @@ export interface AplicacaoFinanceiraEvento {
 
 export interface AplicacaoFinanceiraResgateCaixa {
   id: string;
+  numero: string | null;
   empresa_id: string;
   data_resgate: string;
   valor_principal: number;
@@ -244,7 +245,51 @@ export function useResgatarMontanteAplicacao() {
         _observacao: input.observacao ?? null,
       });
       if (error) throw error;
-      return data as { aplicacao_id: string }[];
+      return data as string;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: [RESGATES_CAIXA_KEY] });
+      qc.invalidateQueries({ queryKey: [LISTA_KEY] });
+      qc.invalidateQueries({ queryKey: ["fluxo_caixa_combinado"] });
+    },
+  });
+}
+
+export interface EditarResgateInput {
+  id: string;
+  dataResgate: string;
+  valorPrincipal: number;
+  valorRendimento: number;
+  observacao?: string | null;
+}
+
+// SIS-2026-0588: editar/excluir resgate direto nas Movimentações da tela.
+export function useEditarResgate() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: EditarResgateInput) => {
+      const { error } = await (supabase as any).rpc("aplicacao_financeira_resgate_editar", {
+        _id: input.id,
+        _data_resgate: input.dataResgate,
+        _valor_principal: input.valorPrincipal,
+        _valor_rendimento: input.valorRendimento,
+        _observacao: input.observacao ?? null,
+      });
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: [RESGATES_CAIXA_KEY] });
+      qc.invalidateQueries({ queryKey: ["fluxo_caixa_combinado"] });
+    },
+  });
+}
+
+export function useExcluirResgate() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) => {
+      const { error } = await (supabase as any).rpc("aplicacao_financeira_resgate_excluir", { _id: id });
+      if (error) throw error;
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: [RESGATES_CAIXA_KEY] });

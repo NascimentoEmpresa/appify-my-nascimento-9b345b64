@@ -3,10 +3,11 @@ import {
   Bar, BarChart, CartesianGrid, LabelList, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from "recharts";
 import {
-  AlertOctagon, AlertTriangle, ArrowRight, Briefcase, CalendarClock, CheckCircle2, ClipboardCheck, Clock,
+  AlertOctagon, AlertTriangle, ArrowLeft, ArrowRight, Briefcase, CalendarClock, CheckCircle2, ClipboardCheck, Clock,
   FileSpreadsheet, Gauge, HelpCircle, Hourglass, Loader2, Maximize2, Minimize2, RefreshCw, Search, Target, Timer,
   TrendingUp, UserCheck, UserMinus, UserPlus, Users, UserX, XCircle,
 } from "lucide-react";
+import { Link } from "react-router-dom";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -18,6 +19,8 @@ import { StatusSolicitacao, type SolicitacaoStatus } from "@/components/recrutam
 import { usePermissoes } from "@/context/PermissoesContext";
 import { useDashboardRecrutamento } from "@/hooks/useDashboardRecrutamento";
 import { rotuloStatusVaga } from "@/lib/recrutamento/vagaRegras";
+import { statusDetalhadoVaga } from "@/lib/recrutamento/statusDetalhado";
+import { useEtapasDasVagas } from "@/hooks/useEtapasDasVagas";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import {
@@ -300,6 +303,8 @@ export default function DashboardRecrutamento() {
 
   // 1. Situação agora
   const abertas = useMemo(() => vagasAbertas(vagas, candidatos, hoje), [vagas, candidatos, hoje]);
+  // Status detalhado (08/10/2026): "Recrutamento: TRIAGEM" na cor da etapa.
+  const { etapas: etapasVagas } = useEtapasDasVagas(abertas);
   const agora = useMemo(() => indicadoresAgora(abertas), [abertas]);
   const funil = useMemo(() => funilAberto(abertas), [abertas]);
   const porContrato = useMemo(() => prazoPorContrato(abertas, 10), [abertas]);
@@ -400,6 +405,12 @@ export default function DashboardRecrutamento() {
         breadcrumb={["Dashboard Recrutamento"]}
         actions={
           <>
+            {/* Desde 08/10/2026 a entrada é o botão em Relatórios › Gestão Recrutamento (saiu do menu). */}
+            {!telaCheia && (
+              <Link to="/app/relatorios/recrutamento" className="inline-flex items-center gap-1 text-sm font-medium text-primary hover:underline">
+                <ArrowLeft className="h-4 w-4" /> Gestão Recrutamento
+              </Link>
+            )}
             {atualizadoAs && (
               <span className="flex items-center gap-1.5 text-xs text-muted-foreground" title="Atualiza sozinho a cada 5 minutos">
                 <span className={cn("h-2 w-2 rounded-full", q.isFetching ? "animate-pulse bg-amber-500" : "bg-emerald-500")} />
@@ -585,7 +596,13 @@ export default function DashboardRecrutamento() {
                           <td className="px-3 py-2.5"><PilulaPrazo v={v} /></td>
                           <td className="px-3 py-2.5">
                             <span className={cn("whitespace-nowrap rounded-md border px-2 py-0.5 text-xs font-semibold", COR_ANDAMENTO[v.andamento])}>{v.andamento}</span>
-                            <p className="mt-0.5 line-clamp-1 text-[11px] text-muted-foreground" title={rotuloStatusVaga(v.status)}>{rotuloStatusVaga(v.status)}</p>
+                            {(() => {
+                              const d = statusDetalhadoVaga(v.status, etapasVagas[v.id]);
+                              return (
+                                <p className={cn("mt-0.5 line-clamp-1 text-[11px]", d.detalhado ? "font-bold" : "text-muted-foreground")}
+                                  style={d.detalhado ? { color: d.tinta } : undefined} title={d.dica ?? d.texto}>{d.texto}</p>
+                              );
+                            })()}
                           </td>
                           <td className="max-w-[200px] px-3 py-2.5">
                             {v.candidato ? (

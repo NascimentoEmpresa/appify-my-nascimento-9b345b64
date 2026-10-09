@@ -27,6 +27,7 @@ import Presidencia from "./pages/Presidencia";
 import Organograma from "./pages/organograma/Organograma";
 import ChamadosDesenvolvimentoPresidencia from "./pages/presidencia/ChamadosDesenvolvimento";
 import TvPlayer from "./pages/tv/TvPlayer";
+import TvPrevia from "./pages/tv/TvPrevia";
 import TvsSistemas from "./pages/sistemas/Tvs";
 import Pipeline from "./pages/Pipeline";
 import CadastroEdital from "./pages/CadastroEdital";
@@ -175,6 +176,7 @@ import ConciliacaoEventos from "./pages/contabil/ConciliacaoEventos";
 import Contabilidade from "./pages/Contabilidade";
 import Colaboradores from "./pages/rh/Colaboradores";
 import AtivosContratos from "./pages/rh/AtivosContratos";
+import HierarquiaPostos from "./pages/rh/HierarquiaPostos";
 import Recrutamento from "./pages/rh/Recrutamento";
 import Patrimonios from "./pages/juridico/Patrimonios";
 import JuridicoNotificacoes from "./pages/juridico/Notificacoes";
@@ -216,6 +218,7 @@ import DiretoriaSolicitacoesDemissao from "./pages/diretoria/SolicitacoesDemissa
 import DiretoriaRecrutamento from "./pages/diretoria/Recrutamento";
 import RelatorioGeral from "./pages/relatorios/RelatorioGeral";
 import RelatorioSistema from "./pages/relatorios/RelatorioSistema";
+import VagasPainel from "./pages/relatorios/VagasPainel";
 import { SISTEMAS as RELATORIOS } from "./pages/relatorios/sistemas";
 import SstTrocaFuncao from "./pages/sst/TrocaFuncao";
 import RhTrocaFuncao from "./pages/rh/TrocaFuncao";
@@ -299,6 +302,8 @@ import DashboardChamados from "./pages/chamados/DashboardChamados";
 import CoordenarChamado from "./pages/chamados/CoordenarChamado";
 import PainelDesenvolvedorChamados from "./pages/chamados/PainelDesenvolvedor";
 import DashboardDesenvolvedorChamados from "./pages/chamados/DashboardDesenvolvedor";
+import GithubPainelDev from "./pages/chamados/GithubPainel";
+import ConferenciaPontoEncarregado from "./pages/encarregados/ConferenciaPontoEncarregado";
 import ExecutarChamado from "./pages/chamados/ExecutarChamado";
 import AcompanharChamado from "./pages/chamados/AcompanharChamado";
 import WhatsAppInbox from "./pages/whatsapp/WhatsAppInbox";
@@ -426,6 +431,7 @@ const App = () => (
           {/* Player das TVs da empresa (Sistemas › TV's, mig 20261007000012): público,
               a TV não tem login — pareia por código e usa um token próprio. */}
           <Route path="/tv" element={<TvPlayer />} />
+          <Route path="/tv/previa" element={<TvPrevia />} />
           <Route path="/tv/:chave" element={<TvPlayer />} />
           <Route path="/denuncia/acompanhar" element={<Navigate to="/denuncia?acompanhar" replace />} />
           {/* Portal do Colaborador — o colaborador de campo entra com o CPF,
@@ -483,6 +489,8 @@ const App = () => (
                 menu manda no botão de lançar; aprovar continua sendo só do
                 Operacional. */}
             <Route path="encarregados/diarias" element={<ControleDiarias menuCodigo="encarregados_diarias" />} />
+            {/* Conferência de Ponto dos encarregados (mig 20261007000023): a etapa começa aqui. */}
+            <Route path="encarregados/conferencia-ponto" element={<ConferenciaPontoEncarregado />} />
             {/* Operacional — Controle de Diárias */}
             <Route path="operacional" element={<Navigate to="/app/operacional/diarias" replace />} />
             <Route path="operacional/diarias" element={<ControleDiarias />} />
@@ -513,6 +521,8 @@ const App = () => (
                 dentro do Painel, que já é gateado; dados vêm filtrados por
                 responsavel_id = auth.uid(), então não vaza chamado de outro dev. */}
             <Route path="sistemas/chamados/dev/dashboard" element={<DashboardDesenvolvedorChamados />} />
+            {/* GitHub do repositório (mig 20261007000022 + Edge dev-github-sync). */}
+            <Route path="sistemas/chamados/dev/github" element={<GithubPainelDev />} />
             <Route path="sistemas/chamados/:id/coordenar" element={<CoordenarChamado />} />
             {/* Não vira redirect por causa do :id, que o Navigate não interpola.
                 Renderiza a mesma tela, mas com o "voltar" apontando para a
@@ -690,6 +700,8 @@ const App = () => (
                 cada uma com menu próprio em Acesso por Usuário (mesmos códigos de antes).
                 As rotas antigas /app/diretoria/relatorios/* redirecionam para cá. */}
             <Route path="relatorios" element={<RelatorioGeral />} />
+            {/* Vagas — Dashboard (mig 20261007000020): painel próprio, fora de SISTEMAS (o Relatório Geral itera SISTEMAS). */}
+            <Route path="relatorios/vagas" element={<VagasPainel />} />
             {RELATORIOS.map((s) => (
               <Route key={s.slug} path={`relatorios/${s.slug}`} element={<RelatorioSistema key={s.slug} slug={s.slug} />} />
             ))}
@@ -801,6 +813,8 @@ const App = () => (
             <Route path="rh/colaboradores" element={<Colaboradores />} />
             {/* Ativos/Contratos (mig 279): efetivo da EMPREGADOS × QT. PESSOAS da Planilha de Custo, por posto. */}
             <Route path="rh/ativos-contratos" element={<AtivosContratos />} />
+            {/* Hierarquia de postos da Senior (mig 20261007000024). */}
+            <Route path="rh/hierarquia-postos" element={<HierarquiaPostos />} />
             {/* RH > Hierarquia removido (jul/2026) — feature descontinuada. A tabela
                 RH_CONTRATO_ENCARREGADO pode ser dropada; a RPC rh_hierarquia_dados
                 CONTINUA (usada por Líderes por setor / Painel Gerencial). */}

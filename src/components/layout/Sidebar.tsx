@@ -564,6 +564,8 @@ const rhModule: ModuleDef = {
       defaultOpen: true,
       items: [
         { label: "Ativos/Contratos", to: "/app/rh/ativos-contratos", icon: ClipboardCheck },
+        // Hierarquia de postos da Senior (mig 20261007000024): quem responde por quem e por qual contrato.
+        { label: "Hierarquia de Postos", to: "/app/rh/hierarquia-postos", icon: Network },
       ],
     },
   ],
@@ -582,10 +584,11 @@ const recrutamentoModule: ModuleDef = {
       label: "Gestão",
       defaultOpen: true,
       items: [
-        // Dashboard Recrutamento (02/10/2026, mig 288): o painel completo — vagas
-        // atrasadas/em atenção/no prazo, andamento, tempos e candidatos.
-        { label: "Dashboard Recrutamento", to: "/app/rh/recrutamento/dashboard", icon: LayoutDashboard },
-        { label: "Dashboard", to: "/app/rh/recrutamento-dashboard", icon: BarChart3 },
+        // "Dashboard Recrutamento" (/app/rh/recrutamento/dashboard) e "Dashboard"
+        // (/app/rh/recrutamento-dashboard) saíram daqui em 08/10/2026: "tem
+        // muitos dashboards de recrutamento… deixa só em relatórios". Viraram
+        // dois botões em Relatórios › Gestão Recrutamento; rotas e menus
+        // (rh_recrutamento_dashboard, recrutamento_dashboard) seguem os mesmos.
         { label: "Gestão Recrutamento", to: "/app/rh/recrutamento", icon: UserCog },
         { label: "Banco de Talentos", to: "/app/rh/banco-talentos", icon: Users2 },
       ],
@@ -642,6 +645,9 @@ const encarregadosModule: ModuleDef = {
         // aparece no bloco certo e o Operacional continua invisível para quem
         // não tem menu nenhum dele.
         { label: "Controle de Diárias", to: "/app/encarregados/diarias", icon: CalendarCheck2 },
+        // Envio do ponto do mês ao Operacional (mig 20261007000023) — sem
+        // permissão para ninguém por enquanto (pedido de 07/10/2026).
+        { label: "Conferência de Ponto", to: "/app/encarregados/conferencia-ponto", icon: ClipboardCheck },
       ],
     },
     {
@@ -781,6 +787,30 @@ const treinamentosModule: ModuleDef = {
 };
 
 // Sistemas — demandas de sistemas (kanban de 13 etapas, acesso livre)
+// TV's — módulo próprio desde 07/10/2026 (mig 20261007000016). Nasceu como
+// item de Sistemas (mig 20261007000012) e "não aparecia" para quem procurava
+// o módulo. Mesmo arranjo dos Relatórios: o menu mudou de módulo mantendo
+// código (sistemas_tvs) e rota (/app/sistemas/tvs), então as liberações
+// continuam valendo.
+const tvsModule: ModuleDef = {
+  id: "tvs",
+  label: "TV's",
+  description: "TVs da empresa: conexão, playlists, relatórios e avisos",
+  icon: MonitorPlay,
+  basePath: "/app/sistemas/tvs",
+  headerLink: "/app/sistemas/tvs",
+  status: "active",
+  groups: [
+    {
+      label: "TV's",
+      defaultOpen: true,
+      items: [
+        { label: "Gestão das TVs", to: "/app/sistemas/tvs", icon: MonitorPlay },
+      ],
+    },
+  ],
+};
+
 const sistemasModule: ModuleDef = {
   id: "sistemas",
   label: "Sistemas",
@@ -800,9 +830,6 @@ const sistemasModule: ModuleDef = {
         // encarregado) e de demitidos a excluir. A bolinha vem da
         // minhas_pendencias_aprovacao (mig 20261006000010).
         { label: "Logins — Admissão e Demissão", to: "/app/sistemas/logins", icon: KeyRound },
-        // TVs da empresa (07/10/2026, mig 20261007000012): conectar as TVs pelo
-        // código que aparece em /tv, playlists e aviso geral. Liberação: sistemas_tvs.
-        { label: "TV's", to: "/app/sistemas/tvs", icon: MonitorPlay },
       ],
     },
     {
@@ -1247,6 +1274,7 @@ const relatoriosModule: ModuleDef = {
       items: [
         { label: "Relatório Geral", to: "/app/relatorios", icon: BarChart3 },
         ...RELATORIOS.map((s) => ({ label: s.titulo, to: `/app/relatorios/${s.slug}`, icon: s.icone })),
+        { label: "Vagas — Dashboard", to: "/app/relatorios/vagas", icon: Briefcase },
       ],
     },
   ],
@@ -1290,6 +1318,7 @@ const erpModules: ModuleDef[] = [
   encarregadosModule,
   operacionalModule,
   sistemasModule,
+  tvsModule,
   juridicoModule,
   sstModule,
   centralServicosModule,

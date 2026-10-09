@@ -29,6 +29,7 @@ import {
   ChevronDown,
   CheckCircle2,
   AlertTriangle,
+  Ban,
   Wand2,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -39,6 +40,7 @@ import {
   useSalvarNfEmissao,
   useAtualizarNfEmissao,
   useEnviarNfEmissao,
+  useReabrirNfCancelada,
   useExcluirNfEmissao,
   useItensNfEmissao,
   useAnexosNfEmissao,
@@ -63,6 +65,7 @@ import {
   Linha,
   itemVazio,
 } from "./shared";
+import { podeReabrirNfCancelada } from "./reabrirCancelada";
 import { ItensNfEditor } from "./ItensNfEditor";
 import { ModeloNfDialog } from "./ModeloNfDialog";
 import { registrarLogNf } from "./registrarLogNf";
@@ -632,6 +635,10 @@ function ContratoNfsPanel({
                 <TableCell>{fmtMoney(nf.vlr_liquido_total)}</TableCell>
                 <TableCell>
                   <Badge className={STATUS_CLASS[nf.status]}>{STATUS_LABEL[nf.status]}</Badge>
+                  {/* Cancelada pelo Financeiro pode ser corrigida e reenviada (abrir a nota). */}
+                  {podeReabrirNfCancelada(nf) && (
+                    <span className="ml-2 text-[11px] font-medium text-amber-700 dark:text-amber-400">pode corrigir e reenviar</span>
+                  )}
                 </TableCell>
               </TableRow>
             ))}
@@ -997,6 +1004,18 @@ function NovaNfDialog({ open, onOpenChange, contratos, nfParaEditar, contratoIdI
           </DialogDescription>
         </DialogHeader>
 
+        {/* NF reaberta após o Financeiro cancelar: o motivo fica à vista enquanto a
+            analista corrige (observacoes_financeiro só existe depois de uma validação). */}
+        {editando && nfParaEditar?.observacoes_financeiro?.trim() && (
+          <div className="flex gap-3 rounded-xl border border-amber-400/60 bg-amber-50 p-3 text-sm dark:bg-amber-950/20">
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
+            <div>
+              <p className="font-semibold text-amber-800 dark:text-amber-300">Corrija o que o Financeiro apontou</p>
+              <p>{nfParaEditar.observacoes_financeiro}</p>
+            </div>
+          </div>
+        )}
+
         <section className="rounded-xl border bg-card p-3 space-y-3">
           <div className="grid grid-cols-4 gap-3">
             <div className="col-span-2">
@@ -1304,8 +1323,25 @@ function DetalhesNfDialog({
   const { data: itens = [] } = useItensNfEmissao(nf?.id);
   const { data: anexos = [] } = useAnexosNfEmissao(nf?.id);
   const enviar = useEnviarNfEmissao();
+  const reabrir = useReabrirNfCancelada();
   const excluir = useExcluirNfEmissao();
   const [confirmandoExclusao, setConfirmandoExclusao] = useState(false);
+  const [confirmandoReabertura, setConfirmandoReabertura] = useState(false);
+  // Cancelada pelo Financeiro (validação rejeitou) e ainda sem pagamento nem
+  // cancelamento/substituição no site/Domínio: a analista pode corrigir e reenviar.
+  const podeReabrir = !!nf && podeReabrirNfCancelada(nf);
+
+  async function handleReabrir() {
+    if (!nf) return;
+    try {
+      await reabrir.mutateAsync(nf.id);
+      toast.success("NF reaberta como rascunho. Corrija o que o Financeiro apontou e envie de novo.");
+      setConfirmandoReabertura(false);
+      onEditar({ ...nf, status: "rascunho" });
+    } catch (e: any) {
+      toast.error(e.message ?? "Não foi possível reabrir a NF.");
+    }
+  }
   // [SEM-CHAMADO] (pedido do usuário): informativo de Mão de Obra em
   // destaque — vlr_mao_obra já é persistido por item (calculos.ts), só
   // faltava o total da nota aqui na visualização.
@@ -1355,9 +1391,28 @@ function DetalhesNfDialog({
           <DialogDescription>
             {nf?.status === "rascunho"
               ? "Rascunho — pode ser editado antes de enviar para o Financeiro."
-              : "Visualização somente leitura."}
+              : podeReabrir
+                ? "Cancelada pelo Financeiro — você pode corrigir e reenviar."
+                : "Visualização somente leitura."}
           </DialogDescription>
         </DialogHeader>
+
+        {nf && podeReabrir && (
+          <div className="flex gap-3 rounded-xl border border-destructive/40 bg-destructive/5 p-3 text-sm">
+            <Ban className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
+            <div className="space-y-1">
+              <p className="font-semibold text-destructive">Esta NF foi cancelada pelo Financeiro</p>
+              <p>
+                <span className="text-muted-foreground">Motivo informado: </span>
+                {nf.observacoes_financeiro?.trim() || "(o Financeiro não registrou o motivo)"}
+              </p>
+              <p className="text-xs text-muted-foreground">
+                Use “Corrigir e reenviar” para reabrir a mesma nota como rascunho (itens e anexos ficam), ajustar o que foi apontado e enviar de novo.
+                A reabertura fica registrada no histórico.
+              </p>
+            </div>
+          </div>
+        )}
 
         {nf && (
           <>
@@ -1536,6 +1591,11 @@ function DetalhesNfDialog({
           <Button variant="outline" onClick={onClose}>
             Fechar
           </Button>
+          {podeReabrir && (
+            <Button onClick={() => setConfirmandoReabertura(true)} disabled={reabrir.isPending}>
+              {reabrir.isPending ? "Reabrindo..." : "Corrigir e reenviar"}
+            </Button>
+          )}
           {nf?.status === "rascunho" && (
             <>
               <Button variant="destructive" onClick={() => setConfirmandoExclusao(true)}>
@@ -1551,6 +1611,22 @@ function DetalhesNfDialog({
           )}
         </DialogFooter>
       </DialogContent>
+
+      <AlertDialog open={confirmandoReabertura} onOpenChange={setConfirmandoReabertura}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Reabrir esta NF para correção?</AlertDialogTitle>
+            <AlertDialogDescription>
+              A nota volta para <strong>rascunho</strong>, com os mesmos itens e anexos. O motivo do Financeiro continua visível
+              enquanto você edita. Depois de corrigir, envie de novo para o Financeiro. A reabertura fica registrada no histórico.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogAction onClick={handleReabrir}>Reabrir e editar</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <AlertDialog open={confirmandoExclusao} onOpenChange={setConfirmandoExclusao}>
         <AlertDialogContent>

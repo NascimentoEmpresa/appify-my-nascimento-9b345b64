@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, type CSSProperties, type ReactNode } from "react";
+import { Link, useLocation } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import {
@@ -58,6 +59,8 @@ const qtd = (v: Vaga) => { const n = Number(v.quantidade_vagas); return Number.i
 const MESES = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"];
 
 export default function RecrutamentoDashboard() {
+  // A mesma tela serve o RH (/app/rh/…) e a Diretoria (/app/diretoria/…).
+  const noRh = useLocation().pathname.startsWith("/app/rh/");
   const [loading, setLoading] = useState(true);
   const [sols, setSols] = useState<Vaga[]>([]);
   const [curs, setCurs] = useState<Curriculo[]>([]);
@@ -222,6 +225,8 @@ export default function RecrutamentoDashboard() {
         .rdb-hero::before{content:"";position:absolute;right:-60px;top:-80px;width:320px;height:320px;border-radius:50%;background:rgba(255,255,255,.07)}
         .rdb-hero::after{content:"";position:absolute;right:160px;bottom:-150px;width:260px;height:260px;border-radius:50%;background:rgba(255,255,255,.05)}
         .rdb-hero-in{position:relative;display:flex;justify-content:space-between;align-items:flex-start;gap:18px;flex-wrap:wrap}
+        .rdb-voltar{display:inline-block;margin-bottom:6px;font-size:12.5px;font-weight:800;color:#fff;opacity:.85;text-decoration:none}
+        .rdb-voltar:hover{opacity:1;text-decoration:underline}
         .rdb-eyebrow{font-size:11.5px;font-weight:800;letter-spacing:1.2px;text-transform:uppercase;opacity:.8}
         .rdb-hero h1{margin:5px 0 6px;font-size:30px;font-weight:900;letter-spacing:-.5px;line-height:1.1}
         .rdb-hero p{margin:0;font-size:14px;opacity:.9;max-width:720px;line-height:1.5}
@@ -261,6 +266,9 @@ export default function RecrutamentoDashboard() {
       <div className="rdb-hero">
         <div className="rdb-hero-in">
           <div>
+            {/* Desde 08/10/2026 a entrada do RH é o botão em Relatórios › Gestão
+                Recrutamento (saiu do menu). A Diretoria segue com o item dela. */}
+            {noRh && <Link to="/app/relatorios/recrutamento" className="rdb-voltar">← Gestão Recrutamento</Link>}
             <div className="rdb-eyebrow">Recursos Humanos · Recrutamento e Seleção</div>
             <h1>📊 Dashboard de Recrutamento</h1>
             <p>Vagas em aberto por contrato, fases do funil, candidaturas e tempo por etapa. Tudo responde ao recorte de período e aos filtros abaixo.</p>

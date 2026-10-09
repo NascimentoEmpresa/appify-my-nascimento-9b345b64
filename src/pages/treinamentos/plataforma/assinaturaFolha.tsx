@@ -1,5 +1,8 @@
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
 import type { AssinaturaCertificado } from "./tipos";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 // =====================================================================
 // TREINAMENTOS — assinatura do treinador no certificado (mig 20261005000003)
@@ -86,6 +89,42 @@ export function assinaturaValeParaPublicar(a: { cargo?: string | null; registro?
   if (!a) return false;
   const cargo = (a.cargo ?? "").normalize("NFD").replace(/\p{Diacritic}/gu, "").toLowerCase();
   return /tec.*seguranc/.test(cargo) && (a.registro ?? "").trim().length >= 2;
+}
+
+/**
+ * Certificado SEM assinatura (08/10/2026). Pedido do Pablo: "tira a
+ * obrigatoriedade de assinatura nos certificados, mas deixa um aviso: TEM
+ * CERTEZA QUE DESEJA DISPONIBILIZAR O CERTIFICADO SEM ASSINATURA?". A
+ * obrigatoriedade já tinha saído (mig 20261007000002); o aviso aparece no
+ * MOMENTO em que o curso passa a liberar certificado sem assinatura —
+ * publicado, com modelo de certificado e sem assinatura — e não a cada
+ * salvar de um curso que já estava assim.
+ */
+export type SituacaoCertificado = { publicado: boolean; certificado_modelo_id: string | null | undefined; assinatura_id: string | null | undefined };
+export const liberaCertificadoSemAssinatura = (c: SituacaoCertificado | null | undefined) =>
+  !!c && c.publicado && !!c.certificado_modelo_id && !c.assinatura_id;
+export const pedeConfirmacaoSemAssinatura = (antes: SituacaoCertificado | null | undefined, depois: SituacaoCertificado) =>
+  liberaCertificadoSemAssinatura(depois) && !liberaCertificadoSemAssinatura(antes);
+
+/** A pergunta (o texto pedido, como foi pedido). Confirmar = segue; cancelar = não salva. */
+export function ConfirmarSemAssinatura({ aberto, onConfirmar, onCancelar }: { aberto: boolean; onConfirmar: () => void; onCancelar: () => void }) {
+  return (
+    <AlertDialog open={aberto} onOpenChange={(o) => { if (!o) onCancelar(); }}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>TEM CERTEZA QUE DESEJA DISPONIBILIZAR O CERTIFICADO SEM ASSINATURA?</AlertDialogTitle>
+          <AlertDialogDescription>
+            Este curso emite certificado e não tem assinatura: quem concluir recebe o certificado sem o "Assinado digitalmente por".
+            Para assinar, use "Adicionar assinatura" (Técnico(a) em Segurança, com cargo e registro).
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel onClick={onCancelar}>Cancelar</AlertDialogCancel>
+          <AlertDialogAction onClick={onConfirmar}>Sim, disponibilizar sem assinatura</AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  );
 }
 
 /** "Cargo · Registro: X" — a linha embaixo do nome nas listas e seletores. */

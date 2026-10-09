@@ -1,6 +1,7 @@
 import { Link } from "react-router-dom";
-import { ArrowLeft, Loader2, ShieldAlert } from "lucide-react";
+import { ArrowLeft, BarChart3, LayoutDashboard, Loader2, ShieldAlert } from "lucide-react";
 import { PageHeader } from "@/components/layout/PageHeader";
+import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { AcessoGate } from "@/components/auth/AcessoGate";
 import { useRelatorio } from "@/hooks/useRelatoriosDiretoria";
@@ -23,6 +24,30 @@ export default function RelatorioSistema({ slug }: { slug: string }) {
   return slug === "turnover" ? <TurnoverPainel /> : <RelatorioPadrao slug={slug} />;
 }
 
+/**
+ * Os dois dashboards do Recrutamento moram aqui desde 08/10/2026 — saíram do
+ * menu lateral de Recrutamento e Seleção ("tem muitos dashboards de
+ * recrutamento… deixa só em relatórios, dentro do Gestão Recrutamento, 2
+ * botões"). Telas, rotas e menus seguem os mesmos: cada botão só aparece
+ * para quem já tem o acesso daquele dashboard (Acesso por Usuário).
+ */
+function BotoesDashboardsRecrutamento() {
+  return (
+    <>
+      <AcessoGate menu="rh_recrutamento_dashboard" acao="visualizar">
+        <Button asChild variant="outline" size="sm">
+          <Link to="/app/rh/recrutamento-dashboard"><BarChart3 className="mr-1.5 h-4 w-4" /> Dashboard</Link>
+        </Button>
+      </AcessoGate>
+      <AcessoGate menu="recrutamento_dashboard" acao="visualizar">
+        <Button asChild size="sm">
+          <Link to="/app/rh/recrutamento/dashboard"><LayoutDashboard className="mr-1.5 h-4 w-4" /> Dashboard Recrutamento</Link>
+        </Button>
+      </AcessoGate>
+    </>
+  );
+}
+
 function RelatorioPadrao({ slug }: { slug: string }) {
   const s = sistemaPorSlug(slug)!;
   const periodo = usePeriodo();
@@ -32,7 +57,8 @@ function RelatorioPadrao({ slug }: { slug: string }) {
 
   return (
     <div className="space-y-4">
-      <PageHeader title={s.titulo} subtitle={s.descricao} module="Relatórios" breadcrumb={[s.titulo]} />
+      <PageHeader title={s.titulo} subtitle={s.descricao} module="Relatórios" breadcrumb={[s.titulo]}
+        actions={slug === "recrutamento" ? <BotoesDashboardsRecrutamento /> : undefined} />
       <div className="flex flex-wrap items-center justify-between gap-2">
         <Link to="/app/relatorios" className="inline-flex items-center gap-1 text-sm font-medium text-primary hover:underline">
           <ArrowLeft className="h-4 w-4" /> Relatório Geral

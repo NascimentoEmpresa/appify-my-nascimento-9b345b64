@@ -1,0 +1,585 @@
+import { PASSOS_FLUXO, desfechoDoStatus, type Desfecho, type EventoHistorico } from "@/lib/recrutamento/fluxoStatus";
+
+// =====================================================================
+// RELATÓRIOS › VAGAS — DASHBOARD (mig 20261007000020, 07/10/2026)
+//
+// A RPC dir_vagas_painel manda UMA linha por vaga (as solicitadas no
+// período + todas as que ainda estão abertas) com o log de status. Aqui
+// viram: quanto tempo cada vaga ficou em cada etapa (os 8 passos de
+// fluxoStatus.ts), tempo até contratar, funil, rankings, mês a mês e aging.
+//
+// Como o tempo por etapa é medido: a vaga nasce em created_at no status de
+// antes da 1ª troca do log (ou no status atual, se nunca trocou); cada
+// troca fecha um trecho. O trecho atual de uma vaga aberta fica "aberto"
+// (conta até agora, mas não entra nas médias de etapa — só no "parado
+// agora"). O log começou em 19/08/2026: vaga do sistema antigo (Discord)
+// sem log vira um trecho único "Sistema antigo" e só entra no tempo total.
+// =====================================================================
+
+export type LogStatus = [string | null, string | null, string];
+
+export interface CandidatosVaga {
+  total: number; desistiu: number; etapas: Record<string, number>;
+  primeiro_em: string | null; selecionado_em: string | null; enviado_em: string | null;
+}
+
+export interface VagaPainel {
+  id: number; criada: string; status: string; status_em: string | null;
+  cargo: string | null; cidade: string | null; uf: string | null; contrato: string | null; setor: string | null;
+  motivo: string | null; urgencia: string | null; qtd: number;
+  solicitante: string | null; analista: string | null; aprovado_por: string | null; contratado: string | null;
+  inicio_previsto: string | null; substituido: string | null; motivo_reprovacao: string | null;
+  legado: boolean; administrativa: boolean; reserva: boolean; encarregado: boolean;
+  /** Solicitada dentro do período/meses escolhidos (as abertas de fora vêm só para o "parado agora"). */
+  no_periodo: boolean; aberta: boolean;
+  log: LogStatus[]; aprovada_em: string | null; cand: CandidatosVaga;
+}
+
+export interface PainelVagas { de: string; ate: string; agora: string; log_desde: string | null; vagas: VagaPainel[] }
+
+export interface DetalheVaga {
+  vaga: (Omit<VagaPainel, "log" | "cand" | "no_periodo" | "aberta" | "aprovada_em" | "administrativa" | "reserva" | "encarregado"> & {
+    escala: string | null; horario: string | null; salario: string | null; local: string | null;
+    contratado_inicio: string | null; req_obrigatorios: string | null; observacao: string | null;
+  }) | null;
+  log: LogStatus[];
+  /** candidato_id vem desde a mig 20261008000001 (liga a trilha a cada candidato). */
+  historico: (EventoHistorico & { candidato_id?: number | null })[];
+  candidatos: {
+    id: number; nome: string | null; criado: string; etapa: string; etapa_em: string | null; origem: string | null;
+    selecionado_em: string | null; enviado_em: string | null; desistiu: boolean; desistencia_motivo: string | null; motivo_reprovacao: string | null;
+    desistencia_em?: string | null;
+  }[];
+}
+
+/** Referência para "contratada no prazo" (dias corridos da solicitação ao Contratado). */
+export const META_DIAS_CONTRATAR = 15;
+
+export const PASSO_LEGADO = { chave: "legado", titulo: "Sistema antigo" } as const;
+export const PASSO_OUTROS = { chave: "outros", titulo: "Outros status" } as const;
+/** As 8 etapas do fluxo + as duas sobras, na ordem de exibição. */
+export const ETAPAS = [...PASSOS_FLUXO.map((p) => ({ chave: p.chave, titulo: p.titulo })), PASSO_OUTROS, PASSO_LEGADO];
+export const tituloEtapa = (chave: string) => ETAPAS.find((e) => e.chave === chave)?.titulo ?? chave;
+
+const DIA = 86_400_000;
+const ms = (s: string | null | undefined) => (s ? new Date(s).getTime() : NaN);
+export const diasEntreMs = (a: number, b: number) => (Number.isFinite(a) && Number.isFinite(b) ? Math.max(0, (b - a) / DIA) : 0);
+
+/** Etapa (chave de PASSOS_FLUXO) do status do banco. Concluído… = contratado. */
+export function etapaDoStatus(status: string | null | undefined): string {
+  const s = String(status ?? "").trim();
+  if (s === "Contratado" || s.startsWith("Concluído")) return "contratado";
+  return PASSOS_FLUXO.find((p) => p.status.includes(s))?.chave ?? PASSO_OUTROS.chave;
+}
+const indiceEtapa = (chave: string) => PASSOS_FLUXO.findIndex((p) => p.chave === chave);
+
+export const desfechoVaga = (v: Pick<VagaPainel, "status">): Desfecho => desfechoDoStatus(v.status);
+export const vagaFechada = (v: Pick<VagaPainel, "status">) => desfechoVaga(v) !== "andamento";
+
+export interface Trecho { status: string; etapa: string; inicio: string; fim: string | null; dias: number; aberto: boolean }
+
+/** Os trechos da vaga, do pedido até agora (ou até fechar). */
+export function trechosDaVaga(v: Pick<VagaPainel, "criada" | "status" | "status_em" | "log" | "legado">, agora: string): Trecho[] {
+  const tAgora = ms(agora);
+  const fechada = vagaFechada(v);
+  const mk = (status: string, etapa: string, inicio: string, fim: string | null): Trecho => ({
+    status, etapa, inicio, fim, aberto: fim == null, dias: diasEntreMs(ms(inicio), fim ? ms(fim) : tAgora),
+  });
+  if (!v.log.length) {
+    if (v.legado && fechada) return [mk("Sistema antigo", PASSO_LEGADO.chave, v.criada, v.status_em ?? v.criada)];
+    if (fechada) return [];   // fechou sem log nem legado (raro): sem trecho medível
+    return [mk(v.status, etapaDoStatus(v.status), v.criada, null)];
+  }
+  const out: Trecho[] = [];
+  let atual = v.log[0][0] ?? v.status;
+  let t = v.criada;
+  for (const [de, para, em] of v.log) {
+    const st = de ?? atual;
+    // Troca registrada antes da criação (relógio/ajuste manual): ignora o trecho negativo.
+    if (ms(em) >= ms(t)) out.push(mk(st, etapaDoStatus(st), t, em));
+    atual = para ?? atual;
+    t = em;
+  }
+  if (!fechada) out.push(mk(atual, etapaDoStatus(atual), t, null));
+  return out;
+}
+
+/** Dias somados em cada etapa (só trechos fechados, ou todos com incluirAberto). */
+export function diasPorEtapa(trechos: Trecho[], incluirAberto = false): Record<string, number> {
+  const r: Record<string, number> = {};
+  for (const t of trechos) {
+    if (t.aberto && !incluirAberto) continue;
+    r[t.etapa] = (r[t.etapa] ?? 0) + t.dias;
+  }
+  return r;
+}
+
+/** Data em que a vaga fechou (contratada/reprovada/cancelada). */
+export function fechadaEm(v: Pick<VagaPainel, "status" | "status_em" | "log">): string | null {
+  if (!vagaFechada(v)) return null;
+  const ult = v.log[v.log.length - 1];
+  return v.status_em ?? ult?.[2] ?? null;
+}
+
+/** Dias corridos da solicitação até fechar (ou até agora, se aberta). */
+export function diasTotais(v: Pick<VagaPainel, "criada" | "status" | "status_em" | "log">, agora: string): number {
+  return diasEntreMs(ms(v.criada), ms(fechadaEm(v) ?? agora));
+}
+
+/** Dias no status atual (vaga aberta). */
+export const diasNoStatus = (v: Pick<VagaPainel, "criada" | "status_em">, agora: string) => diasEntreMs(ms(v.status_em ?? v.criada), ms(agora));
+
+/** Até onde a vaga chegou no fluxo (índice de PASSOS_FLUXO; -1 = nada além do pedido). */
+export function etapaAlcancada(v: Pick<VagaPainel, "status" | "log" | "legado" | "aprovada_em" | "cand">): number {
+  const d = desfechoVaga(v);
+  if (d === "contratada") return PASSOS_FLUXO.length - 1;
+  let max = -1;
+  const ver = (s: string | null) => {
+    if (!s || s === "Reprovada" || s === "Cancelada") return;
+    const i = indiceEtapa(etapaDoStatus(s));
+    if (i > max) max = i;
+  };
+  ver(v.status);
+  for (const [de, para] of v.log) { ver(de); ver(para); }
+  if (v.legado && !v.log.length && v.aprovada_em) max = Math.max(max, indiceEtapa("selecao"));
+  if (v.cand.total > 0) max = Math.max(max, indiceEtapa("selecao"));
+  if (v.cand.selecionado_em) max = Math.max(max, indiceEtapa("aprovado"));
+  return max;
+}
+
+// ---- Estatística -------------------------------------------------------------
+
+export const media = (xs: number[]) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : null);
+export function mediana(xs: number[]): number | null {
+  if (!xs.length) return null;
+  const o = [...xs].sort((a, b) => a - b);
+  const m = Math.floor(o.length / 2);
+  return o.length % 2 ? o[m] : (o[m - 1] + o[m]) / 2;
+}
+export const fmtDias = (d: number | null | undefined, casas = 1) =>
+  d == null ? "—" : d < 1 && d > 0 ? `${Math.round(d * 24)} h` : `${d.toLocaleString("pt-BR", { maximumFractionDigits: casas })} d`;
+
+// ---- Resumo ------------------------------------------------------------------
+
+export interface ResumoVagas {
+  solicitadas: number; posicoes: number; contratadas: number; reprovadas: number; canceladas: number; andamento: number;
+  abertasAgora: number; posicoesAbertasAgora: number;
+  tempoMedioContratar: number | null; medianaContratar: number | null; noPrazoPct: number | null;
+  tempoMedioAprovacao: number | null; aproveitamentoPct: number | null;
+  candidatosPorVaga: number | null; desistencias: number; abertaMaisAntiga: VagaPainel | null; legado: number;
+}
+
+export function resumoVagas(p: PainelVagas): ResumoVagas {
+  const per = p.vagas.filter((v) => v.no_periodo);
+  const abertas = p.vagas.filter((v) => !vagaFechada(v));
+  const contr = per.filter((v) => desfechoVaga(v) === "contratada");
+  const tempos = contr.map((v) => diasTotais(v, p.agora));
+  const aprov = per.map((v) => tempoAprovacao(v)).filter((x): x is number => x != null);
+  const decididas = per.filter((v) => vagaFechada(v)).length;
+  const comCand = per.filter((v) => !v.legado);
+  const maisAntiga = abertas.reduce<VagaPainel | null>((a, v) => (!a || ms(v.criada) < ms(a.criada) ? v : a), null);
+  return {
+    solicitadas: per.length,
+    posicoes: per.reduce((s, v) => s + (v.qtd || 1), 0),
+    contratadas: contr.length,
+    reprovadas: per.filter((v) => desfechoVaga(v) === "reprovada").length,
+    canceladas: per.filter((v) => desfechoVaga(v) === "cancelada").length,
+    andamento: per.filter((v) => !vagaFechada(v)).length,
+    abertasAgora: abertas.length,
+    posicoesAbertasAgora: abertas.reduce((s, v) => s + (v.qtd || 1), 0),
+    tempoMedioContratar: media(tempos),
+    medianaContratar: mediana(tempos),
+    noPrazoPct: tempos.length ? (tempos.filter((t) => t <= META_DIAS_CONTRATAR).length / tempos.length) * 100 : null,
+    tempoMedioAprovacao: media(aprov),
+    aproveitamentoPct: decididas ? (contr.length / decididas) * 100 : null,
+    candidatosPorVaga: comCand.length ? media(comCand.map((v) => v.cand.total)) : null,
+    desistencias: per.reduce((s, v) => s + v.cand.desistiu, 0),
+    abertaMaisAntiga: maisAntiga,
+    legado: per.filter((v) => v.legado).length,
+  };
+}
+
+/**
+ * Dias do pedido até sair da aprovação (Operacional/Analista/Diretoria →
+ * Recrutamento). Legado: até "Operação aprovou". null = ainda não aprovada
+ * ou sem registro.
+ */
+export function tempoAprovacao(v: Pick<VagaPainel, "criada" | "log" | "legado" | "aprovada_em">): number | null {
+  const sai = v.log.find(([de, para]) => etapaDoStatus(de) === "aprovacao" && para != null && etapaDoStatus(para) !== "aprovacao" && para !== "Reprovada" && para !== "Cancelada");
+  if (sai) return diasEntreMs(ms(v.criada), ms(sai[2]));
+  if (v.legado && !v.log.length && v.aprovada_em) return diasEntreMs(ms(v.criada), ms(v.aprovada_em));
+  return null;
+}
+
+// ---- Tempo por etapa ------------------------------------------------------------
+
+export interface LinhaEtapa {
+  chave: string; titulo: string;
+  /** Vagas que passaram (trecho fechado) pela etapa. */
+  vagas: number; media: number | null; mediana: number | null; maximo: number | null;
+  /** Vagas paradas nela agora, e há quanto tempo (média / maior). */
+  paradasAgora: number; mediaParadas: number | null; maiorParada: number | null;
+}
+
+export function tempoPorEtapa(p: PainelVagas): LinhaEtapa[] {
+  const passaram: Record<string, number[]> = {};
+  const paradas: Record<string, number[]> = {};
+  for (const v of p.vagas) {
+    const tr = trechosDaVaga(v, p.agora);
+    if (v.no_periodo) {
+      for (const [k, d] of Object.entries(diasPorEtapa(tr))) (passaram[k] ??= []).push(d);
+    }
+    const ab = tr.find((t) => t.aberto);
+    if (ab) (paradas[ab.etapa] ??= []).push(ab.dias);
+  }
+  return ETAPAS.filter((e) => e.chave !== "contratado").map((e) => {
+    const xs = passaram[e.chave] ?? [], ps = paradas[e.chave] ?? [];
+    return {
+      chave: e.chave, titulo: e.titulo, vagas: xs.length, media: media(xs), mediana: mediana(xs), maximo: xs.length ? Math.max(...xs) : null,
+      paradasAgora: ps.length, mediaParadas: media(ps), maiorParada: ps.length ? Math.max(...ps) : null,
+    };
+  }).filter((l) => l.vagas > 0 || l.paradasAgora > 0);
+}
+
+// ---- Funil ------------------------------------------------------------------
+
+export interface DegrauFunil { chave: string; titulo: string; n: number; pct: number }
+
+/** Os degraus do funil: título e a etapa do fluxo que a vaga precisa ter alcançado (null = todas / só contratadas). */
+const DEGRAUS_FUNIL = [
+  { chave: "solicitadas", titulo: "Solicitadas", etapa: null },
+  { chave: "aprovadas", titulo: "Aprovadas", etapa: "recrutamento" },
+  { chave: "abertas", titulo: "Abertas p/ seleção", etapa: "selecao" },
+  { chave: "entrevistas", titulo: "Em entrevistas", etapa: "entrevistas" },
+  { chave: "aprovado", titulo: "Candidato aprovado", etapa: "aprovado" },
+  { chave: "contratadas", titulo: "Contratadas", etapa: null },
+] as const;
+
+/** A vaga (do período) chegou a este degrau do funil? */
+function noDegrau(v: VagaPainel, chave: string): boolean {
+  if (chave === "contratadas") return desfechoVaga(v) === "contratada";
+  const d = DEGRAUS_FUNIL.find((x) => x.chave === chave);
+  if (!d) return false;
+  return d.etapa == null || etapaAlcancada(v) >= indiceEtapa(d.etapa);
+}
+
+export function funilVagas(p: PainelVagas): DegrauFunil[] {
+  const per = p.vagas.filter((v) => v.no_periodo);
+  const total = per.length;
+  return DEGRAUS_FUNIL.map((d) => {
+    const n = per.filter((v) => noDegrau(v, d.chave)).length;
+    return { chave: d.chave, titulo: d.titulo, n, pct: total ? (n / total) * 100 : 0 };
+  });
+}
+
+// ---- Mês a mês --------------------------------------------------------------
+
+export interface LinhaMes { mes: string; solicitadas: number; contratadas: number; reprovadas: number; andamento: number; tempoMedio: number | null }
+
+/** Por mês da SOLICITAÇÃO (coorte): das pedidas no mês, quantas já viraram o quê. */
+export function mensalVagas(p: PainelVagas): LinhaMes[] {
+  const m = new Map<string, VagaPainel[]>();
+  const ini = new Date(`${p.de}T12:00:00`), fim = new Date(`${p.ate}T12:00:00`);
+  for (let d = new Date(ini.getFullYear(), ini.getMonth(), 1); d <= fim; d = new Date(d.getFullYear(), d.getMonth() + 1, 1)) {
+    m.set(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`, []);
+  }
+  for (const v of p.vagas) {
+    if (!v.no_periodo) continue;
+    const k = v.criada.slice(0, 7);
+    if (m.has(k)) m.get(k)!.push(v);
+  }
+  return [...m.entries()].map(([mes, vs]) => {
+    const c = vs.filter((v) => desfechoVaga(v) === "contratada");
+    return {
+      mes, solicitadas: vs.length, contratadas: c.length,
+      reprovadas: vs.filter((v) => ["reprovada", "cancelada"].includes(desfechoVaga(v))).length,
+      andamento: vs.filter((v) => !vagaFechada(v)).length,
+      tempoMedio: media(c.map((v) => diasTotais(v, p.agora))),
+    };
+  });
+}
+
+// ---- Agrupamentos -----------------------------------------------------------
+
+export interface LinhaGrupo {
+  nome: string; vagas: number; posicoes: number; abertas: number; contratadas: number; reprovadas: number;
+  tempoMedioContratar: number | null; mediaDiasAbertas: number | null;
+}
+
+export const DIMENSOES = {
+  contrato: { titulo: "Contrato", f: (v: VagaPainel) => v.contrato },
+  cargo: { titulo: "Cargo", f: (v: VagaPainel) => v.cargo },
+  cidade: { titulo: "Cidade", f: (v: VagaPainel) => (v.cidade ? `${v.cidade}${v.uf ? `/${v.uf}` : ""}` : null) },
+  solicitante: { titulo: "Solicitante", f: (v: VagaPainel) => v.solicitante },
+  analista: { titulo: "Analista", f: (v: VagaPainel) => v.analista },
+  motivo: { titulo: "Motivo", f: (v: VagaPainel) => v.motivo },
+  urgencia: { titulo: "Urgência", f: (v: VagaPainel) => v.urgencia },
+} as const;
+export type Dimensao = keyof typeof DIMENSOES;
+
+const limpo = (s: string | null | undefined) => (s ?? "").trim().replace(/\s+/g, " ");
+
+/** Nome do grupo da vaga numa dimensão, e a chave que junta grafias (caixa) diferentes. */
+const nomeNoGrupo = (v: VagaPainel, dim: Dimensao) => limpo(DIMENSOES[dim].f(v)) || "(não informado)";
+const chaveDoGrupo = (nome: string) => nome.toLocaleUpperCase("pt-BR");
+
+export function agruparVagas(p: PainelVagas, dim: Dimensao): LinhaGrupo[] {
+  const g = new Map<string, { nome: string; vs: VagaPainel[] }>();
+  for (const v of p.vagas) {
+    if (!v.no_periodo && vagaFechada(v)) continue;
+    const nome = nomeNoGrupo(v, dim);
+    const k = chaveDoGrupo(nome);
+    if (!g.has(k)) g.set(k, { nome, vs: [] });
+    g.get(k)!.vs.push(v);
+  }
+  return [...g.values()].map(({ nome, vs }) => {
+    const per = vs.filter((v) => v.no_periodo);
+    const ab = vs.filter((v) => !vagaFechada(v));
+    const c = per.filter((v) => desfechoVaga(v) === "contratada");
+    return {
+      nome, vagas: per.length, posicoes: per.reduce((s, v) => s + (v.qtd || 1), 0), abertas: ab.length,
+      contratadas: c.length, reprovadas: per.filter((v) => ["reprovada", "cancelada"].includes(desfechoVaga(v))).length,
+      tempoMedioContratar: media(c.map((v) => diasTotais(v, p.agora))),
+      mediaDiasAbertas: media(ab.map((v) => diasTotais(v, p.agora))),
+    };
+  }).sort((a, b) => b.vagas - a.vagas || b.abertas - a.abertas || a.nome.localeCompare(b.nome));
+}
+
+// ---- Aging das abertas --------------------------------------------------------
+
+export const FAIXAS_AGING = [
+  { rotulo: "até 7 d", ate: 7, cor: "#16a34a" }, { rotulo: "8–15 d", ate: 15, cor: "#84cc16" },
+  { rotulo: "16–30 d", ate: 30, cor: "#f59e0b" }, { rotulo: "31–60 d", ate: 60, cor: "#ea580c" },
+  { rotulo: "+60 d", ate: Infinity, cor: "#dc2626" },
+];
+
+/** As vagas abertas agora que estão na faixa `i` de FAIXAS_AGING (por dias desde o pedido). */
+export function vagasDaFaixa(p: PainelVagas, i: number): VagaPainel[] {
+  const f = FAIXAS_AGING[i];
+  if (!f) return [];
+  const de = i === 0 ? -1 : FAIXAS_AGING[i - 1].ate;
+  return p.vagas.filter((v) => { if (vagaFechada(v)) return false; const d = diasTotais(v, p.agora); return d > de && d <= f.ate; });
+}
+
+export function agingAbertas(p: PainelVagas) {
+  return FAIXAS_AGING.map((f, i) => {
+    const vs = vagasDaFaixa(p, i);
+    return { ...f, vagas: vs.length, posicoes: vs.reduce((s, v) => s + (v.qtd || 1), 0) };
+  });
+}
+
+/** Cor do semáforo de dias em aberto. */
+export const corDias = (d: number) => FAIXAS_AGING.find((f) => d <= f.ate)?.cor ?? "#dc2626";
+
+// ---- Filtro local (na tela) ------------------------------------------------------
+
+export interface FiltroLocal { busca: string; fase: "todas" | Desfecho; motivo: string | null; urgencia: string | null; legado: boolean }
+export const FILTRO_LOCAL_PADRAO: FiltroLocal = { busca: "", fase: "todas", motivo: null, urgencia: null, legado: true };
+
+const norm = (s: string | null | undefined) => (s ?? "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
+
+export function aplicarFiltroLocal(p: PainelVagas, f: FiltroLocal): PainelVagas {
+  const termo = norm(f.busca.trim());
+  const vagas = p.vagas.filter((v) => {
+    if (!f.legado && v.legado) return false;
+    if (f.fase !== "todas" && desfechoVaga(v) !== f.fase) return false;
+    if (f.motivo && limpo(v.motivo) !== f.motivo) return false;
+    if (f.urgencia && limpo(v.urgencia) !== f.urgencia) return false;
+    if (termo) {
+      const alvo = norm([`#${v.id}`, v.cargo, v.contrato, v.cidade, v.solicitante, v.contratado, v.analista, v.setor].join(" "));
+      if (!alvo.includes(termo)) return false;
+    }
+    return true;
+  });
+  return { ...p, vagas };
+}
+
+export const opcoesDe = (p: PainelVagas | undefined, f: (v: VagaPainel) => string | null) =>
+  [...new Set((p?.vagas ?? []).map((v) => limpo(f(v))).filter(Boolean))].sort((a, b) => a.localeCompare(b, "pt-BR"));
+
+// ---- Recorte: as vagas por trás de um número do painel (08/10/2026) ---------------
+//
+// Pedido do Pablo: "ao clicar em um gráfico apareça as vagas referentes ao
+// gráfico — cliquei em 16–30 d, então aparecem as que estão abertas nesse
+// período". Cada recorte usa o MESMO critério da conta que desenhou o
+// gráfico (vagasDaFaixa, noDegrau, nomeNoGrupo…), para a lista ter sempre o
+// número que a barra mostra.
+
+export type KpiRecorte = "solicitadas" | "contratadas" | "reprovadas" | "abertas" | "no_prazo" | "desistencias";
+export type ColunaGrupo = "vagas" | "abertas" | "contratadas" | "reprovadas";
+
+export type Recorte =
+  | { tipo: "kpi"; kpi: KpiRecorte }
+  | { tipo: "aging"; faixa: number }
+  | { tipo: "mes"; mes: string; desfecho?: "contratadas" | "andamento" | "reprovadas" }
+  | { tipo: "funil"; degrau: string }
+  | { tipo: "desfecho"; desfecho: Desfecho }
+  | { tipo: "grupo"; dim: Dimensao; nome: string; coluna?: ColunaGrupo }
+  | { tipo: "etapa_parada"; etapa: string }
+  | { tipo: "etapa_passou"; etapa: string };
+
+const ROTULO_KPI: Record<KpiRecorte, string> = {
+  solicitadas: "Vagas solicitadas no período", contratadas: "Contratadas", reprovadas: "Reprovadas / canceladas",
+  abertas: "Em aberto agora", no_prazo: `Contratadas em até ${META_DIAS_CONTRATAR} dias`, desistencias: "Vagas com desistência de candidato",
+};
+const ROTULO_DESFECHO_RECORTE: Record<Desfecho, string> = { contratada: "Contratadas", andamento: "Em andamento", reprovada: "Reprovadas", cancelada: "Canceladas" };
+const ROTULO_COLUNA: Record<ColunaGrupo, string> = { vagas: "solicitadas", abertas: "abertas agora", contratadas: "contratadas", reprovadas: "reprovadas/canceladas" };
+const MESES_CURTOS = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"];
+const reprovOuCanc = (v: VagaPainel) => ["reprovada", "cancelada"].includes(desfechoVaga(v));
+
+/** O título da lista ("Abertas agora há 16–30 d", "Contratadas · jun/26"…). */
+export function tituloRecorte(r: Recorte): string {
+  switch (r.tipo) {
+    case "kpi": return ROTULO_KPI[r.kpi];
+    case "aging": return `Abertas agora há ${FAIXAS_AGING[r.faixa]?.rotulo ?? "?"}`;
+    case "mes": {
+      const [a, m] = r.mes.split("-");
+      const mes = `${MESES_CURTOS[Number(m) - 1] ?? m}/${a.slice(2)}`;
+      const o = r.desfecho === "contratadas" ? "Contratadas" : r.desfecho === "andamento" ? "Em andamento" : r.desfecho === "reprovadas" ? "Reprovadas/canceladas" : "Pedidas";
+      return `${o} · vagas pedidas em ${mes}`;
+    }
+    case "funil": return `Funil · ${DEGRAUS_FUNIL.find((d) => d.chave === r.degrau)?.titulo ?? r.degrau}`;
+    case "desfecho": return `Desfecho · ${ROTULO_DESFECHO_RECORTE[r.desfecho]}`;
+    case "grupo": return `${DIMENSOES[r.dim].titulo}: ${r.nome}${r.coluna ? ` · ${ROTULO_COLUNA[r.coluna]}` : ""}`;
+    case "etapa_parada": return `Paradas agora em ${tituloEtapa(r.etapa)}`;
+    case "etapa_passou": return `Passaram por ${tituloEtapa(r.etapa)} (vagas do período)`;
+  }
+}
+
+/** As vagas do recorte, com o mesmo critério do gráfico/número de onde ele veio. */
+export function vagasDoRecorte(p: PainelVagas, r: Recorte): VagaPainel[] {
+  const per = () => p.vagas.filter((v) => v.no_periodo);
+  switch (r.tipo) {
+    case "kpi":
+      switch (r.kpi) {
+        case "solicitadas": return per();
+        case "contratadas": return per().filter((v) => desfechoVaga(v) === "contratada");
+        case "reprovadas": return per().filter(reprovOuCanc);
+        case "abertas": return p.vagas.filter((v) => !vagaFechada(v));
+        case "no_prazo": return per().filter((v) => desfechoVaga(v) === "contratada" && diasTotais(v, p.agora) <= META_DIAS_CONTRATAR);
+        case "desistencias": return per().filter((v) => v.cand.desistiu > 0);
+      }
+      return [];
+    case "aging": return vagasDaFaixa(p, r.faixa);
+    case "mes": {
+      const doMes = per().filter((v) => v.criada.slice(0, 7) === r.mes);
+      if (r.desfecho === "contratadas") return doMes.filter((v) => desfechoVaga(v) === "contratada");
+      if (r.desfecho === "andamento") return doMes.filter((v) => !vagaFechada(v));
+      if (r.desfecho === "reprovadas") return doMes.filter(reprovOuCanc);
+      return doMes;
+    }
+    case "funil": return per().filter((v) => noDegrau(v, r.degrau));
+    case "desfecho": return per().filter((v) => desfechoVaga(v) === r.desfecho);
+    case "grupo": {
+      const k = chaveDoGrupo(r.nome);
+      const doGrupo = p.vagas.filter((v) => (v.no_periodo || !vagaFechada(v)) && chaveDoGrupo(nomeNoGrupo(v, r.dim)) === k);
+      if (r.coluna === "vagas") return doGrupo.filter((v) => v.no_periodo);
+      if (r.coluna === "abertas") return doGrupo.filter((v) => !vagaFechada(v));
+      if (r.coluna === "contratadas") return doGrupo.filter((v) => v.no_periodo && desfechoVaga(v) === "contratada");
+      if (r.coluna === "reprovadas") return doGrupo.filter((v) => v.no_periodo && reprovOuCanc(v));
+      return doGrupo;
+    }
+    case "etapa_parada": return p.vagas.filter((v) => trechosDaVaga(v, p.agora).find((t) => t.aberto)?.etapa === r.etapa);
+    case "etapa_passou": return per().filter((v) => diasPorEtapa(trechosDaVaga(v, p.agora))[r.etapa] != null);
+  }
+}
+
+export type OrdemRecorte = "antigas" | "recentes" | "demoradas" | "candidatos";
+
+/** Ordena a lista do recorte (padrão: as abertas há mais tempo / mais demoradas primeiro). */
+export function ordenarRecorte(vs: VagaPainel[], agora: string, ordem: OrdemRecorte): VagaPainel[] {
+  const t = new Map(vs.map((v) => [v.id, diasTotais(v, agora)]));
+  return [...vs].sort((a, b) =>
+    ordem === "recentes" ? b.id - a.id
+      : ordem === "antigas" ? +new Date(a.criada) - +new Date(b.criada) || a.id - b.id
+      : ordem === "candidatos" ? b.cand.total - a.cand.total || b.id - a.id
+      : (t.get(b.id) ?? 0) - (t.get(a.id) ?? 0) || b.id - a.id);
+}
+
+/** Filtro dentro da lista: texto (nº, cargo, contrato, cidade, solicitante…) e desfecho. */
+export function filtrarRecorte(vs: VagaPainel[], busca: string, desfecho: Desfecho | null): VagaPainel[] {
+  const termo = norm(busca.trim());
+  return vs.filter((v) => {
+    if (desfecho && desfechoVaga(v) !== desfecho) return false;
+    if (!termo) return true;
+    return norm([`#${v.id}`, v.cargo, v.contrato, v.cidade, v.solicitante, v.contratado, v.analista, v.setor, v.status].join(" ")).includes(termo);
+  });
+}
+
+// ---- Vaga aberta pelo número (fora do período / do painel) — 08/10/2026 -----------
+
+const EVENTOS_APROVACAO = ["Operação aprovou", "Aprovada pelo Operacional", "Aprovada pelo Analista", "Abertura de vaga confirmada"];
+
+/** Monta a linha do painel a partir do detalhe — para abrir QUALQUER vaga pelo número. */
+export function vagaDoDetalhe(d: DetalheVaga): VagaPainel | null {
+  const v = d.vaga;
+  if (!v) return null;
+  const cs = d.candidatos ?? [];
+  const etapas: Record<string, number> = {};
+  for (const c of cs) etapas[c.etapa] = (etapas[c.etapa] ?? 0) + 1;
+  const menor = (xs: (string | null | undefined)[]) => (xs.filter(Boolean) as string[]).sort()[0] ?? null;
+  const aprov = (d.historico ?? []).find((h) => EVENTOS_APROVACAO.includes(h.evento ?? ""));
+  const aberta = !["Contratado", "Reprovada", "Cancelada"].includes(v.status) && !v.status.startsWith("Concluído");
+  return {
+    ...v, administrativa: false, reserva: false, encarregado: false, no_periodo: true, aberta,
+    log: d.log ?? [], aprovada_em: aprov?.created_at ?? null,
+    cand: {
+      total: cs.length, desistiu: cs.filter((c) => c.desistiu).length, etapas,
+      primeiro_em: menor(cs.map((c) => c.criado)), selecionado_em: menor(cs.map((c) => c.selecionado_em)), enviado_em: menor(cs.map((c) => c.enviado_em)),
+    },
+  };
+}
+
+// ---- Kanban dos candidatos: quanto tempo cada um ficou em cada coluna ---------------
+
+/** Colunas do kanban de candidatos, na ordem do fluxo (cores na tela). */
+export const COLUNAS_CANDIDATO = ["ENTRADA", "TRIAGEM", "JURÍDICO", "ENTREVISTA", "ENTREVISTA GESTOR", "APROVADO", "DOCUMENTAÇÃO", "SST + COMPRAS", "ADMISSÃO", "CONTRATADO", "REPROVADO", "DESISTIU"];
+const FIM_CANDIDATO = new Set(["CONTRATADO", "REPROVADO", "DESISTIU"]);
+export const normEtapaCandidato = (s: string | null | undefined) => (s ?? "").trim().toUpperCase() || "ENTRADA";
+
+export interface TrechoCandidato { etapa: string; inicio: string; fim: string | null; dias: number; aberto: boolean }
+export interface LinhaKanbanCandidato { id: number; nome: string; trechos: TrechoCandidato[]; etapaAtual: string; total: number }
+
+/**
+ * Cada candidato vira uma sequência de trechos: entra em ENTRADA quando o
+ * currículo chega e muda de coluna a cada movimentação da trilha com o id
+ * dele. Termina em Contratado/Reprovado/Desistiu (trecho de duração zero,
+ * só a marca); senão o último fica aberto até agora.
+ */
+export function kanbanCandidatos(d: Pick<DetalheVaga, "historico" | "candidatos">, agora: string): LinhaKanbanCandidato[] {
+  const tAgora = ms(agora);
+  return (d.candidatos ?? []).map((c) => {
+    const evs = (d.historico ?? []).filter((h) => h.candidato_id === c.id && h.para_status)
+      .sort((a, b) => a.created_at.localeCompare(b.created_at));
+    const trechos: TrechoCandidato[] = [];
+    let etapa = evs[0]?.de_status ? normEtapaCandidato(evs[0].de_status) : "ENTRADA";
+    let t = c.criado;
+    const fecha = (fim: string) => { if (ms(fim) >= ms(t)) trechos.push({ etapa, inicio: t, fim, dias: diasEntreMs(ms(t), ms(fim)), aberto: false }); };
+    for (const e of evs) {
+      const para = normEtapaCandidato(e.para_status);
+      if (para === etapa) continue;
+      fecha(e.created_at);
+      etapa = para; t = e.created_at;
+    }
+    if (c.desistiu && etapa !== "DESISTIU") {
+      const quando = c.desistencia_em ?? agora;
+      fecha(quando);
+      etapa = "DESISTIU"; t = quando;
+    }
+    if (FIM_CANDIDATO.has(etapa)) trechos.push({ etapa, inicio: t, fim: t, dias: 0, aberto: false });
+    else trechos.push({ etapa, inicio: t, fim: null, dias: diasEntreMs(ms(t), tAgora), aberto: true });
+    return { id: c.id, nome: c.nome ?? "—", trechos, etapaAtual: etapa, total: trechos.reduce((s, x) => s + x.dias, 0) };
+  });
+}
+
+/** Dias somados por status (o mesmo status pode aparecer mais de uma vez). */
+export function diasPorStatus(trechos: { status?: string; etapa: string; dias: number }[]) {
+  const m = new Map<string, { status: string; etapa: string; dias: number }>();
+  for (const t of trechos) {
+    const k = t.status ?? t.etapa;
+    const e = m.get(k) ?? { status: k, etapa: t.etapa, dias: 0 };
+    e.dias += t.dias;
+    m.set(k, e);
+  }
+  return [...m.values()];
+}

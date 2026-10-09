@@ -23,6 +23,8 @@ vi.mock("@/hooks/useDiarias", async () => {
   const real = await vi.importActual<typeof import("@/hooks/useDiarias")>("@/hooks/useDiarias");
   return {
     ...real,
+    // Ponto do faltante (mig 20261007000021): sem RPC no teste, nada a conferir.
+    usePontoFaltanteDiaria: () => ({ data: null, isFetching: false }),
     useContratosDiaria: () => ({
       data: [{ id: "c1", nome: "Contrato 1", cliente: "Cliente", empresa: "Empresa" }],
       isLoading: false,

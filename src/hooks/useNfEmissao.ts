@@ -37,6 +37,8 @@ export interface NfEmissaoRow {
   situacao_site_pmt: string | null;
   situacao_dominio: string | null;
   desconto_conta_vinculada: number;
+  // SIS-2026-0609: soma das multas/glosas/outros descontos pós-emissão dos itens (não está no líquido).
+  descontos_pos_emissao_total?: number | null;
   recebimento_extra: number;
   falta_receber: number;
   pago_a_mais: number;
@@ -393,6 +395,7 @@ export interface AjusteDescontosPosInput {
     cofins_total: number;
     pis_total: number;
     csll_total: number;
+    descontos_pos_emissao_total: number;
   };
 }
 
@@ -520,6 +523,24 @@ export function useEnviarNfEmissao() {
       if (error) throw error;
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: [NF_EMISSAO_KEY] }),
+  });
+}
+
+// A analista reabre uma NF cancelada pelo Financeiro (a validação rejeitou) para
+// corrigir e reenviar — volta para 'rascunho' na MESMA nota (itens, anexos e
+// histórico ficam). Regras e exceção do guard: migration
+// 20261007000020_nf_emissao_reabrir_cancelada.sql.
+export function useReabrirNfCancelada() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) => {
+      const { error } = await (supabase as any).rpc("nf_emissao_reabrir_cancelada", { _id: id });
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: [NF_EMISSAO_KEY] });
+      qc.invalidateQueries({ queryKey: ["nf_emissao_historico"] });
+    },
   });
 }
 

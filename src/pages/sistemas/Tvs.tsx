@@ -1,8 +1,8 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import {
   AlertTriangle, ArrowDown, ArrowUp, BarChart3, Copy, Eye, EyeOff, Image as ImageIcon, Link2, ListVideo, Loader2, Megaphone, MonitorPlay, Power,
-  Pause, Play, Plus, RefreshCw, Trash2, Tv, Type, Upload, Video, Clapperboard, Globe,
+  Pause, Play, Plus, RefreshCw, Trash2, Tv, Type, Upload, Video, Clapperboard, Globe, Radio, SkipBack, SkipForward,
 } from "lucide-react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Card } from "@/components/ui/card";
@@ -20,13 +20,14 @@ import { useAuth } from "@/hooks/useAuth";
 import { useContratosRelatorio } from "@/hooks/useRelatoriosDiretoria";
 import {
   MENU_TVS, enviarMidia, urlMidia, useAtualizarTv, useGerarLinkTv, useCriarAlerta, useEncerrarAlerta, useExcluirItem, useExcluirPlaylist,
-  useMoverItem, useParearTv, useRecarregarTv, useRemoverTv, useSalvarItem, useSalvarPlaylist, useTvAlertas, useTvDispositivos,
-  useTvPlaylists, type TvDispositivo, type TvItem, type TvPlaylist,
+  useMoverItem, useParearTv, useRecarregarTv, useRemoverTv, useSalvarItem, useSalvarPlaylist, useTvAlertas, useTvAoVivo, useTvDispositivos,
+  useTvPlaylists, type TvAlerta, type TvDispositivo, type TvItem, type TvPlaylist,
 } from "@/hooks/useTvs";
 import {
-  PERIODOS_TV, RELATORIOS_TV, TIPOS_ITEM, corAviso, duracaoTotal, haQuanto, rotuloPeriodoTv, statusTv, tituloRelatorioTv, urlValida, youtubeEmbed,
-  type TipoItem,
+  PERIODOS_TV, RELATORIOS_TV, TIPOS_ITEM, corAviso, duracaoTotal, haQuanto, itensNoAr, nomeRelatorioTv, paginasRelatorioTv, relatorioTemFiltros, statusTv, telaAoVivo, tituloRelatorioTv,
+  urlValida, youtubeEmbed, type ItemTv, type TelaTv, type TipoItem,
 } from "@/lib/tv/tv";
+import { corDoRelatorioTv, duracaoRecomendada } from "@/lib/tv/relatorioTv";
 
 // =====================================================================
 // SISTEMAS › TV's (07/10/2026, mig 20261007000012)
@@ -43,6 +44,14 @@ import {
 // 07/10/2026 (mig 20261007000014): item "Relatório do ERP" (qual relatório,
 // período e contrato — tela cheia na TV) e LINK FIXO por TV (<app>/tv/<chave>)
 // para a TV abrir já conectada ao ligar, com o guia do app de quiosque.
+// 08/10/2026 (mig 20261008000003) — "ao criar a playlist, ter um PREVIEW e
+// um AO VIVO que mostre exatamente como está a tela da TV e como vai ficar
+// após atualizar": ao lado da playlist, AO VIVO (o item que a TV escolhida
+// diz que está mostrando, com aviso geral, pausa, relógio e offline) e
+// PRÉVIA (a playlist depois de atualizar, com o item que está sendo montado
+// marcado como NOVO, tocando com os mesmos tempos). As duas telas são o
+// próprio player (/tv/previa) num iframe Full HD reduzido. Também há "Ao
+// vivo" em cada TV da aba TVs.
 // Liberação: sistemas_tvs (Acesso por Usuário). Regras em src/lib/tv/tv.ts.
 // =====================================================================
 
@@ -79,6 +88,7 @@ export default function Tvs() {
 function AbaTvs({ tvs, carregando, playlists }: { tvs: TvDispositivo[]; carregando: boolean; playlists: TvPlaylist[] }) {
   const [adicionando, setAdicionando] = useState(false);
   const [linkDe, setLinkDe] = useState<TvDispositivo | null>(null);
+  const [aoVivoDe, setAoVivoDe] = useState<TvDispositivo | null>(null);
   const atualizar = useAtualizarTv();
   const recarregar = useRecarregarTv();
   const remover = useRemoverTv();
@@ -147,6 +157,7 @@ function AbaTvs({ tvs, carregando, playlists }: { tvs: TvDispositivo[]; carregan
                       </td>
                       <td className="px-3 py-2 text-xs text-muted-foreground">{t.tela ?? "—"}</td>
                       <td className="whitespace-nowrap px-3 py-2 text-right">
+                        <Button size="sm" variant="ghost" className="h-8 text-xs" title="Ver o que esta TV está mostrando agora" onClick={() => setAoVivoDe(t)}><Radio className="mr-1 h-3.5 w-3.5 text-red-500" /> Ao vivo</Button>
                         <AcessoGate menu={MENU_TVS} acao="alterar">
                           <Button size="sm" variant="ghost" className="h-8 text-xs" title="Endereço fixo desta TV, para ela abrir já conectada ao ligar" onClick={() => setLinkDe(t)}><Link2 className="mr-1 h-3.5 w-3.5" /> Link fixo</Button>
                           <Button size="icon" variant="ghost" title="Recarregar a TV" onClick={() => recarregar.mutateAsync([t.id]).then(() => toast.success(`${t.nome} recarrega em até 15 s.`))}><RefreshCw className="h-4 w-4" /></Button>
@@ -171,6 +182,12 @@ function AbaTvs({ tvs, carregando, playlists }: { tvs: TvDispositivo[]; carregan
       <GuiaAutomatico />
       <DialogAdicionar aberto={adicionando} onClose={() => setAdicionando(false)} playlists={playlists} />
       <DialogLinkFixo tv={linkDe} onClose={() => setLinkDe(null)} />
+      <Dialog open={!!aoVivoDe} onOpenChange={(o) => !o && setAoVivoDe(null)}>
+        <DialogContent className="max-w-4xl">
+          <DialogHeader><DialogTitle className="flex items-center gap-2"><Radio className="h-4 w-4 text-red-500" /> Ao vivo — {aoVivoDe?.nome}</DialogTitle></DialogHeader>
+          {aoVivoDe && <PainelAoVivo tvs={tvs} playlists={playlists} tvInicial={aoVivoDe.id} />}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -308,17 +325,21 @@ function AbaPlaylists({ playlists, carregando, tvs }: { playlists: TvPlaylist[];
           <Button size="sm" variant="outline" className="mt-2 w-full" onClick={nova}><Plus className="mr-1 h-4 w-4" /> Nova playlist</Button>
         </AcessoGate>
       </Card>
-      {sel ? <EditorPlaylist key={sel.id} p={sel} onRenomear={() => renomear(sel)} onExcluir={() => apagar(sel)} />
+      {sel ? <EditorPlaylist key={sel.id} p={sel} tvs={tvs} playlists={playlists} onRenomear={() => renomear(sel)} onExcluir={() => apagar(sel)} />
         : <Card className="p-8 text-center text-sm text-muted-foreground">Crie uma playlist para escolher o que passa nas TVs.</Card>}
     </div>
   );
 }
 
-function EditorPlaylist({ p, onRenomear, onExcluir }: { p: TvPlaylist; onRenomear: () => void; onExcluir: () => void }) {
+function EditorPlaylist({ p, tvs, playlists, onRenomear, onExcluir }: {
+  p: TvPlaylist; tvs: TvDispositivo[]; playlists: TvPlaylist[]; onRenomear: () => void; onExcluir: () => void;
+}) {
   const salvarItem = useSalvarItem();
   const excluirItem = useExcluirItem();
   const mover = useMoverItem();
   const ativos = p.itens.filter((i) => i.ativo);
+  // O item que está sendo montado no formulário — entra na PRÉVIA como NOVO.
+  const [rascunho, setRascunho] = useState<ItemTv | null>(null);
 
   return (
     <div className="space-y-3">
@@ -331,6 +352,8 @@ function EditorPlaylist({ p, onRenomear, onExcluir }: { p: TvPlaylist; onRenomea
         <AcessoGate menu={MENU_TVS} acao="excluir"><Button size="sm" variant="ghost" className="text-destructive" onClick={onExcluir}><Trash2 className="mr-1 h-3.5 w-3.5" /> Excluir</Button></AcessoGate>
       </Card>
 
+      <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_minmax(360px,460px)]">
+      <div className="min-w-0 space-y-3">
       <Card className="overflow-hidden p-0">
         {p.itens.length === 0 ? <p className="p-6 text-center text-sm text-muted-foreground">Playlist vazia — adicione o primeiro item abaixo.</p> : (
           <ul>
@@ -341,7 +364,7 @@ function EditorPlaylist({ p, onRenomear, onExcluir }: { p: TvPlaylist; onRenomea
                 <li key={i.id} className={`flex items-center gap-3 border-t px-3 py-2 first:border-t-0 ${i.ativo && !fora ? "" : "opacity-50"}`}>
                   <Miniatura item={i} />
                   <div className="min-w-0 flex-1">
-                    <p className="flex items-center gap-1.5 truncate text-sm font-medium"><Ic className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />{i.titulo || (i.tipo === "relatorio" ? `${tituloRelatorioTv(i.relatorio)} · ${rotuloPeriodoTv(i.rel_periodo)}` : null) || i.texto || i.url || TIPOS_ITEM.find((t) => t.valor === i.tipo)?.rotulo}</p>
+                    <p className="flex items-center gap-1.5 truncate text-sm font-medium"><Ic className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />{i.titulo || (i.tipo === "relatorio" ? nomeRelatorioTv(i.relatorio, i.rel_periodo) : null) || i.texto || i.url || TIPOS_ITEM.find((t) => t.valor === i.tipo)?.rotulo}</p>
                     <p className="text-[11px] text-muted-foreground">
                       {i.tipo === "video" ? "toca até o fim" : `${i.duracao_seg} s`}
                       {(i.valido_de || i.valido_ate) && <> · {i.valido_de ? `de ${fmtDataHora(i.valido_de)}` : ""} {i.valido_ate ? `até ${fmtDataHora(i.valido_ate)}` : ""}</>}
@@ -365,7 +388,15 @@ function EditorPlaylist({ p, onRenomear, onExcluir }: { p: TvPlaylist; onRenomea
         )}
       </Card>
 
-      <AcessoGate menu={MENU_TVS} acao="incluir"><NovoItem playlistId={p.id} proximaOrdem={(p.itens.at(-1)?.ordem ?? 0) + 10} /></AcessoGate>
+      <AcessoGate menu={MENU_TVS} acao="incluir"><NovoItem playlistId={p.id} proximaOrdem={(p.itens.at(-1)?.ordem ?? 0) + 10} onRascunho={setRascunho} /></AcessoGate>
+      </div>
+
+      {/* AO VIVO × PRÉVIA (08/10/2026): fixas ao lado enquanto a playlist é editada. */}
+      <div className="h-fit space-y-3 xl:sticky xl:top-4">
+        <Card className="p-3"><PainelAoVivo tvs={tvs} playlists={playlists} playlistId={p.id} /></Card>
+        <Card className="p-3"><PainelPrevia p={p} rascunho={rascunho} /></Card>
+      </div>
+      </div>
     </div>
   );
 }
@@ -374,23 +405,67 @@ function Miniatura({ item }: { item: TvItem }) {
   const cls = "h-12 w-20 shrink-0 overflow-hidden rounded border bg-muted";
   if (item.tipo === "imagem" && item.arquivo) return <img src={urlMidia(item.arquivo)} alt="" className={`${cls} object-cover`} loading="lazy" />;
   if (item.tipo === "video" && item.arquivo) return <video src={urlMidia(item.arquivo)} className={`${cls} object-cover`} muted preload="metadata" />;
-  if (item.tipo === "relatorio") return <div className={`${cls} flex flex-col items-center justify-center bg-[#0b1220] p-1 text-center text-[8px] font-bold leading-tight text-white`}><BarChart3 className="mb-0.5 h-3.5 w-3.5 text-blue-400" />{tituloRelatorioTv(item.relatorio).slice(0, 24)}</div>;
+  if (item.tipo === "relatorio") {
+    const cor = corDoRelatorioTv(item.relatorio);
+    return (
+      <div className={`${cls} flex flex-col bg-zinc-100`}>
+        <div className="flex items-center gap-0.5 px-1 py-0.5 text-[7px] font-extrabold leading-tight text-white" style={{ background: cor }}>
+          <BarChart3 className="h-2.5 w-2.5 shrink-0" /><span className="truncate">{tituloRelatorioTv(item.relatorio)}</span>
+        </div>
+        <div className="grid flex-1 grid-cols-3 gap-0.5 p-1">
+          {[0, 1, 2].map((k) => <span key={k} className="rounded-sm bg-white shadow-sm" style={{ borderTop: `2px solid ${cor}` }} />)}
+        </div>
+      </div>
+    );
+  }
   if (item.tipo === "aviso") return <div className={`${cls} flex items-center justify-center p-1 text-center text-[8px] font-bold leading-tight text-white`} style={{ background: corAviso(item.cor) }}>{(item.texto ?? "").slice(0, 40)}</div>;
   const Ic = ICONE[item.tipo];
   return <div className={`${cls} flex items-center justify-center`}><Ic className="h-5 w-5 text-muted-foreground" /></div>;
 }
 
+const SEM_CONTRATOS: { id: string; nome: string; encerrado: boolean }[] = [];
+const SEM_ALERTAS: TvAlerta[] = [];
 const VAZIO = { tipo: "relatorio" as TipoItem, titulo: "", url: "", texto: "", cor: "#1d4ed8", duracao: "30", de: "", ate: "", relatorio: "geral", periodo: "12m", contrato: "" };
 
-function NovoItem({ playlistId, proximaOrdem }: { playlistId: string; proximaOrdem: number }) {
+function NovoItem({ playlistId, proximaOrdem, onRascunho }: { playlistId: string; proximaOrdem: number; onRascunho: (item: ItemTv | null) => void }) {
   const salvar = useSalvarItem();
-  const { data: contratos = [] } = useContratosRelatorio();
+  // Constante estável: `= []` criaria um array novo a cada render e o rascunho
+  // da prévia (que depende dele) mudaria sem parar.
+  const contratos = useContratosRelatorio().data ?? SEM_CONTRATOS;
   const [f, setF] = useState(VAZIO);
+  // O formulário "limpo" (o padrão, ou o que sobrou depois de adicionar): só
+  // vira rascunho na PRÉVIA quando alguém mexe nele.
+  const [base, setBase] = useState(VAZIO);
   const [arquivo, setArquivo] = useState<File | null>(null);
   const [enviando, setEnviando] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const precisaArquivo = f.tipo === "imagem" || f.tipo === "video";
+  const comFiltros = relatorioTemFiltros(f.relatorio);
   const dica = TIPOS_ITEM.find((t) => t.valor === f.tipo)?.dica;
+
+  // Prévia (07/10/2026): arquivo ainda não enviado vira blob: para a prévia.
+  const [urlLocal, setUrlLocal] = useState<string | null>(null);
+  useEffect(() => {
+    if (!arquivo) { setUrlLocal(null); return; }
+    const u = URL.createObjectURL(arquivo);
+    setUrlLocal(u);
+    return () => URL.revokeObjectURL(u);
+  }, [arquivo]);
+  const itemPrevia = useMemo<ItemTv>(() => ({
+    id: "previa", tipo: f.tipo, titulo: f.titulo.trim() || null, url: f.url.trim() || null, arquivo: null,
+    texto: f.texto, cor: f.cor, duracao_seg: Number(f.duracao) || 15,
+    relatorio: f.relatorio, rel_periodo: f.periodo as ItemTv["rel_periodo"], rel_contrato: f.contrato || null,
+    rel_contrato_nome: contratos.find((c) => c.id === f.contrato)?.nome ?? null, url_previa: urlLocal,
+  }), [f, urlLocal, contratos]);
+
+  // Vai para a PRÉVIA (como NOVO) quando foi mexido e já dá para desenhar —
+  // imagem sem arquivo ou link inválido apareceriam quebrados.
+  const mexido = !!arquivo || JSON.stringify(f) !== JSON.stringify(base);
+  const desenhavel = f.tipo === "imagem" || f.tipo === "video" ? !!urlLocal
+    : f.tipo === "url" ? urlValida(f.url) : f.tipo === "youtube" ? !!youtubeEmbed(f.url) : f.tipo === "aviso" ? !!f.texto.trim() : true;
+  const rascunho = mexido && desenhavel ? itemPrevia : null;
+  useEffect(() => { onRascunho(rascunho); }, [rascunho, onRascunho]);
+  useEffect(() => () => onRascunho(null), [onRascunho]);
 
   const invalido = useMemo(() => {
     if (precisaArquivo && !arquivo) return "Escolha o arquivo.";
@@ -412,13 +487,15 @@ function NovoItem({ playlistId, proximaOrdem }: { playlistId: string; proximaOrd
         playlist_id: playlistId, ordem: proximaOrdem, tipo: f.tipo, titulo: f.titulo.trim() || null,
         url: f.tipo === "url" || f.tipo === "youtube" ? f.url.trim() : null, arquivo: caminho,
         texto: f.tipo === "aviso" ? f.texto.trim() : null, cor: f.tipo === "aviso" ? f.cor : null,
-        relatorio: f.tipo === "relatorio" ? f.relatorio : null, rel_periodo: f.tipo === "relatorio" ? f.periodo : null,
-        rel_contrato: f.tipo === "relatorio" && f.contrato ? f.contrato : null,
+        // Licitações e Treinamentos não usam período nem contrato: não grava (a lista não mostra um filtro que não vale).
+        relatorio: f.tipo === "relatorio" ? f.relatorio : null, rel_periodo: f.tipo === "relatorio" && comFiltros ? f.periodo : null,
+        rel_contrato: f.tipo === "relatorio" && comFiltros && f.contrato ? f.contrato : null,
         duracao_seg: f.tipo === "video" ? 15 : Number(f.duracao),
         valido_de: f.de ? new Date(f.de).toISOString() : null, valido_ate: f.ate ? new Date(f.ate).toISOString() : null,
       } });
-      toast.success("Item adicionado — as TVs pegam na próxima consulta (até 15 s).");
-      setF({ ...VAZIO, tipo: f.tipo }); setArquivo(null); if (inputRef.current) inputRef.current.value = "";
+      toast.success("Item adicionado — as TVs pegam na próxima consulta (até 15 s). Acompanhe no AO VIVO.");
+      const limpo = { ...VAZIO, tipo: f.tipo };
+      setF(limpo); setBase(limpo); setArquivo(null); if (inputRef.current) inputRef.current.value = "";
     } catch (e) { toast.error((e as Error).message); } finally { setEnviando(false); }
   };
 
@@ -454,10 +531,19 @@ function NovoItem({ playlistId, proximaOrdem }: { playlistId: string; proximaOrd
         {f.tipo === "relatorio" && (
           <>
             <div><Label className="text-xs">Relatório *</Label>
-              <Select value={f.relatorio} onValueChange={(v) => setF({ ...f, relatorio: v })}>
+              {/* Relatório com mais páginas pede mais tempo: sobe o tempo na tela até o recomendado (nunca baixa). */}
+              <Select value={f.relatorio} onValueChange={(v) => setF({ ...f, relatorio: v, duracao: String(Math.max(Number(f.duracao) || 0, duracaoRecomendada(paginasRelatorioTv(v)))) })}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>{RELATORIOS_TV.map((r) => <SelectItem key={r.slug} value={r.slug}>{r.titulo}</SelectItem>)}</SelectContent>
-              </Select></div>
+                <SelectContent>{RELATORIOS_TV.map((r) => <SelectItem key={r.slug} value={r.slug}>{r.titulo}{r.paginas > 1 ? ` · ${r.paginas} páginas` : ""}</SelectItem>)}</SelectContent>
+              </Select>
+              {paginasRelatorioTv(f.relatorio) > 1 && (
+                <p className="mt-1 text-[11px] text-muted-foreground">
+                  {paginasRelatorioTv(f.relatorio)} páginas se revezam no tempo do item — com {f.duracao || "?"} s, cada uma fica ~{Math.max(8, Math.floor((Number(f.duracao) || 0) / paginasRelatorioTv(f.relatorio)))} s
+                  {Number(f.duracao) < duracaoRecomendada(paginasRelatorioTv(f.relatorio)) ? ` (recomendado: ${duracaoRecomendada(paginasRelatorioTv(f.relatorio))} s)` : ""}.
+                </p>
+              )}
+            </div>
+            {comFiltros ? (<>
             <div><Label className="text-xs">Período</Label>
               <Select value={f.periodo} onValueChange={(v) => setF({ ...f, periodo: v })}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
@@ -472,6 +558,11 @@ function NovoItem({ playlistId, proximaOrdem }: { playlistId: string; proximaOrd
                 </SelectContent>
               </Select>
               <p className="mt-1 text-[11px] text-muted-foreground">Ex.: na TV do contrato UFRGS, só os números da UFRGS. Os números se atualizam sozinhos.</p></div>
+            </>) : (
+              <p className="self-end pb-2 text-[11px] text-muted-foreground">
+                {f.relatorio === "licitacoes" ? "Mostra a grade inteira, de todas as empresas do grupo — como o Painel Executivo." : "Mostra a base toda de alunos, como o Dashboard de Treinamentos abre."} Sem período nem contrato; os números se atualizam sozinhos.
+              </p>
+            )}
           </>
         )}
         {f.tipo === "aviso" && (
@@ -485,10 +576,218 @@ function NovoItem({ playlistId, proximaOrdem }: { playlistId: string; proximaOrd
         <div><Label className="text-xs">Passa a partir de (opcional)</Label><Input type="datetime-local" value={f.de} onChange={(e) => setF({ ...f, de: e.target.value })} /></div>
         <div><Label className="text-xs">Para de passar em (opcional)</Label><Input type="datetime-local" value={f.ate} onChange={(e) => setF({ ...f, ate: e.target.value })} /></div>
       </div>
+      <p className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+        <Eye className="h-3.5 w-3.5" /> {rascunho ? "O item aparece na PRÉVIA ao lado, marcado como NOVO — confira antes de adicionar." : "Preencha o item: ele aparece na PRÉVIA ao lado antes de ir para as TVs."}
+      </p>
       <div className="flex justify-end">
         <Button disabled={enviando} onClick={adicionar}>{enviando ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : precisaArquivo ? <Upload className="mr-1 h-4 w-4" /> : <Plus className="mr-1 h-4 w-4" />} Adicionar</Button>
       </div>
     </Card>
+  );
+}
+
+// ---- AO VIVO × PRÉVIA (08/10/2026) ----------------------------------------------
+
+/** Item da gestão → o formato que o player toca (com o nome do contrato para o cabeçalho do relatório). */
+function paraItemTv(i: TvItem, contratos: { id: string; nome: string }[]): ItemTv {
+  return {
+    id: i.id, tipo: i.tipo, titulo: i.titulo, url: i.url, arquivo: i.arquivo, texto: i.texto, cor: i.cor, duracao_seg: i.duracao_seg,
+    relatorio: i.relatorio, rel_periodo: i.rel_periodo as ItemTv["rel_periodo"], rel_contrato: i.rel_contrato,
+    rel_contrato_nome: i.rel_contrato ? contratos.find((c) => c.id === i.rel_contrato)?.nome ?? null : null,
+  };
+}
+const nomeDoItem = (i: Pick<ItemTv, "tipo" | "titulo" | "texto" | "url" | "relatorio" | "rel_periodo">) =>
+  i.titulo || (i.tipo === "relatorio" ? nomeRelatorioTv(i.relatorio, i.rel_periodo) : null) || i.texto || i.url || TIPOS_ITEM.find((t) => t.valor === i.tipo)?.rotulo || "Item";
+
+/**
+ * Uma tela de TV: o próprio player (/tv/previa) num iframe de 1920×1080
+ * reduzido para caber aqui. Recebe a TELA inteira por postMessage, e só
+ * reenvia quando a `chave` muda (o vídeo não recomeça a cada atualização).
+ * Vídeo que acaba lá dentro chama `onFim`.
+ */
+function QuadroTv({ tela, onFim, rotulo }: { tela: TelaTv; onFim?: () => void; rotulo: string }) {
+  const caixa = useRef<HTMLDivElement>(null);
+  const quadro = useRef<HTMLIFrameElement>(null);
+  const [largura, setLargura] = useState(0);
+  const [pronta, setPronta] = useState(false);
+  const telaRef = useRef(tela);
+  telaRef.current = tela;
+  const fimRef = useRef(onFim);
+  fimRef.current = onFim;
+
+  useEffect(() => {
+    const el = caixa.current;
+    if (!el) return;
+    const ro = new ResizeObserver(([e]) => setLargura(e.contentRect.width));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  useEffect(() => {
+    const ouvir = (e: MessageEvent) => {
+      if (e.origin !== window.location.origin || e.source !== quadro.current?.contentWindow) return;
+      if (e.data?.tipo === "tv-previa-pronta") setPronta(true);
+      if (e.data?.tipo === "tv-previa-fim") fimRef.current?.();
+    };
+    window.addEventListener("message", ouvir);
+    return () => window.removeEventListener("message", ouvir);
+  }, []);
+  useEffect(() => {
+    if (pronta) quadro.current?.contentWindow?.postMessage({ tipo: "tv-tela", tela: telaRef.current }, window.location.origin);
+  }, [pronta, tela.chave]);
+
+  return (
+    <div ref={caixa} className="relative w-full overflow-hidden rounded-lg border bg-black" style={{ height: largura * 9 / 16 }}>
+      {largura > 0 && (
+        <iframe ref={quadro} src="/tv/previa" title={rotulo} className="absolute left-0 top-0 border-0"
+          style={{ width: 1920, height: 1080, transform: `scale(${largura / 1920})`, transformOrigin: "top left", pointerEvents: "none" }} />
+      )}
+      {!pronta && <div className="absolute inset-0 flex items-center justify-center text-xs text-white/60"><Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" /> Ligando a tela…</div>}
+    </div>
+  );
+}
+
+/**
+ * AO VIVO: o que a TV escolhida está mostrando agora. Com a mig
+ * 20261008000003, a própria TV informa o item a cada troca (EXATO); sem ela,
+ * ou com a TV numa versão antiga, a tela é simulada pelos tempos dos itens
+ * (APROXIMADO). Aviso geral por cima, pausa, relógio e offline como na TV.
+ */
+function PainelAoVivo({ tvs, playlists, playlistId, tvInicial }: { tvs: TvDispositivo[]; playlists: TvPlaylist[]; playlistId?: string; tvInicial?: string }) {
+  const alertas = useTvAlertas().data ?? SEM_ALERTAS;
+  const contratos = useContratosRelatorio().data ?? SEM_CONTRATOS;
+  // Começa numa TV desta playlist (online primeiro); senão, na primeira.
+  const padrao = useMemo(() => {
+    const desta = tvs.filter((t) => t.playlist_id === playlistId);
+    return (desta.find((t) => statusTv(t.ultimo_ping) === "online") ?? desta[0] ?? tvs[0])?.id ?? null;
+  }, [tvs, playlistId]);
+  const [escolhida, setEscolhida] = useState<string | null>(tvInicial ?? null);
+  const tvId = escolhida ?? padrao;
+  const tv = tvs.find((t) => t.id === tvId) ?? null;
+  const aoVivo = useTvAoVivo(tvId);
+  const [agora, setAgora] = useState(() => new Date());
+  useEffect(() => { const t = window.setInterval(() => setAgora(new Date()), 1000); return () => window.clearInterval(t); }, []);
+  const simulacaoDesde = useRef(Date.now());
+
+  const playlistDaTv = playlists.find((x) => x.id === tv?.playlist_id) ?? null;
+  const itens = useMemo(() => (playlistDaTv ? itensNoAr(playlistDaTv.itens, agora).map((i) => paraItemTv(i, contratos)) : []),
+    // agora só importa quando um item entra/sai da validade: o minuto basta.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [playlistDaTv, contratos, Math.floor(agora.getTime() / 60_000)]);
+
+  if (!tvs.length) return <p className="text-xs text-muted-foreground"><Radio className="mr-1 inline h-3.5 w-3.5" /> Nenhuma TV conectada ainda — o AO VIVO aparece quando houver uma.</p>;
+  if (!tv) return null;
+
+  const r = telaAoVivo({ tv, itens, alertas, aoVivo: aoVivo.data ?? null, agora, simulacaoDesde: simulacaoDesde.current });
+  const online = statusTv(tv.ultimo_ping, agora) === "online";
+  const desde = aoVivo.data?.atual_desde ? Math.max(0, Math.round((agora.getTime() - new Date(aoVivo.data.atual_desde).getTime()) / 1000)) : null;
+
+  return (
+    <div className="space-y-2">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className={`inline-flex items-center gap-1.5 rounded px-1.5 py-0.5 text-[11px] font-bold uppercase tracking-wide ${online ? "bg-red-600 text-white" : "bg-muted text-muted-foreground"}`}>
+          <span className={`h-1.5 w-1.5 rounded-full ${online ? "animate-pulse bg-white" : "bg-muted-foreground"}`} /> Ao vivo
+        </span>
+        {tvs.length > 1 ? (
+          <Select value={tvId ?? ""} onValueChange={(v) => { setEscolhida(v); simulacaoDesde.current = Date.now(); }}>
+            <SelectTrigger className="h-7 min-w-0 flex-1 text-xs"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              {tvs.map((t) => (
+                <SelectItem key={t.id} value={t.id}>
+                  {t.nome} {statusTv(t.ultimo_ping) === "online" ? "· online" : "· offline"}{t.playlist_id === playlistId ? " · esta playlist" : ""}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        ) : <span className="text-xs font-semibold">{tv.nome}</span>}
+      </div>
+      <QuadroTv tela={r.tela} rotulo={`Ao vivo — ${tv.nome}`} />
+      <div className="space-y-0.5 text-[11px] text-muted-foreground">
+        {r.tela.modo === "item" && r.indice != null && (
+          <p className="truncate"><b className="text-foreground">Na tela:</b> {nomeDoItem(r.tela.item)} <span>({r.indice + 1} de {itens.length}{r.exata && desde != null ? ` · há ${desde} s` : ""})</span></p>
+        )}
+        {r.tela.modo === "relogio" && <p>Mostrando o relógio — {playlistDaTv ? "a playlist não tem item no ar agora" : "a TV está sem playlist"}.</p>}
+        {r.tela.modo === "pausada" && <p>TV pausada no ERP — mostra só o nome.</p>}
+        {r.tela.alerta && r.tela.modo !== "offline" && <p className="font-semibold text-destructive">Aviso geral no ar cobrindo a tela.</p>}
+        {playlistId && tv.playlist_id !== playlistId && <p>Esta TV está com outra playlist: <b className="text-foreground">{playlistDaTv?.nome ?? "nenhuma (relógio)"}</b>.</p>}
+        {r.tela.modo === "item" && !r.exata && (
+          <p className="text-warning">
+            Aproximado: {aoVivo.data?.suportado === false ? "o banco ainda não recebe o item que a TV mostra (mig 20261008000003)" : "a TV ainda não informou o item — ela passa a informar depois da próxima recarga"}. A sequência e os tempos são os da playlist.
+          </p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * PRÉVIA: a playlist como vai ficar depois de atualizar — os itens no ar, na
+ * ordem, mais o item que está sendo montado no formulário (NOVO, no fim),
+ * tocando com os mesmos tempos da TV. Mexeu no formulário, ela pula para o
+ * NOVO. ◀ ▶ e pausa para conferir item a item.
+ */
+function PainelPrevia({ p, rascunho }: { p: TvPlaylist; rascunho: ItemTv | null }) {
+  const contratos = useContratosRelatorio().data ?? SEM_CONTRATOS;
+  const itens = useMemo<(ItemTv & { novo?: boolean })[]>(() => [
+    ...itensNoAr(p.itens).map((i) => paraItemTv(i, contratos)),
+    ...(rascunho ? [{ ...rascunho, id: "novo", novo: true }] : []),
+  ], [p.itens, contratos, rascunho]);
+  const [idx, setIdx] = useState(0);
+  const [tocando, setTocando] = useState(true);
+  // Remonta o mesmo item quando a volta passa por ele de novo (playlist de 1 item, vídeo que acabou…).
+  const [volta, setVolta] = useState(0);
+  const atual = itens.length ? itens[Math.min(idx, itens.length - 1)] : null;
+  const ir = (n: number) => { if (!itens.length) return; setIdx(((n % itens.length) + itens.length) % itens.length); setVolta((v) => v + 1); };
+  const proximo = () => ir(idx + 1);
+
+  // Mexeu no item NOVO: mostra ele (com um respiro, para não remontar a cada letra).
+  const assinaturaNovo = rascunho ? JSON.stringify(rascunho) : "";
+  const [novoVisto, setNovoVisto] = useState("");
+  useEffect(() => {
+    if (!assinaturaNovo) return;
+    const t = window.setTimeout(() => { setNovoVisto(assinaturaNovo); setIdx(itens.length - 1); setVolta((v) => v + 1); }, 400);
+    return () => window.clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [assinaturaNovo]);
+
+  // Passa sozinho pelo tempo de cada item (vídeo: até acabar, com teto de 10 min).
+  useEffect(() => {
+    if (!tocando || !atual || itens.length < 2) return;
+    const ms = atual.tipo === "video" ? 600_000 : Math.max(3, atual.duracao_seg) * 1000;
+    const t = window.setTimeout(proximo, ms);
+    return () => window.clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tocando, atual?.id, volta, itens.length]);
+
+  const tela: TelaTv = atual
+    ? { modo: "item", item: atual, chave: `${atual.id}|${volta}|${atual.novo ? novoVisto : ""}` }
+    : { modo: "relogio", nome: p.nome, chave: "relogio" };
+
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center gap-2">
+        <span className="inline-flex items-center gap-1.5 rounded bg-primary px-1.5 py-0.5 text-[11px] font-bold uppercase tracking-wide text-primary-foreground"><Eye className="h-3 w-3" /> Prévia</span>
+        <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">como fica depois de atualizar</span>
+        <Button size="icon" variant="ghost" className="h-7 w-7" disabled={itens.length < 2} onClick={() => ir(idx - 1)} title="Item anterior"><SkipBack className="h-3.5 w-3.5" /></Button>
+        <Button size="icon" variant="ghost" className="h-7 w-7" disabled={itens.length < 2} onClick={() => setTocando((x) => !x)} title={tocando ? "Pausar a prévia" : "Tocar a prévia"}>
+          {tocando ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
+        </Button>
+        <Button size="icon" variant="ghost" className="h-7 w-7" disabled={itens.length < 2} onClick={proximo} title="Próximo item"><SkipForward className="h-3.5 w-3.5" /></Button>
+      </div>
+      <QuadroTv tela={tela} rotulo="Prévia da playlist" onFim={() => (itens.length > 1 ? proximo() : setVolta((v) => v + 1))} />
+      {itens.length > 0 ? (
+        <div className="flex flex-wrap gap-1">
+          {itens.map((i, n) => (
+            <button key={i.id} type="button" onClick={() => ir(n)} title={nomeDoItem(i)}
+              className={`max-w-[150px] truncate rounded border px-1.5 py-0.5 text-[10px] transition ${n === Math.min(idx, itens.length - 1) ? "border-primary bg-primary/10 font-semibold text-primary" : "hover:bg-muted"} ${i.novo ? "border-dashed border-success text-success" : ""}`}>
+              {n + 1}. {i.novo ? "NOVO · " : ""}{nomeDoItem(i)} · {i.tipo === "video" ? "vídeo" : `${i.duracao_seg}s`}
+            </button>
+          ))}
+        </div>
+      ) : <p className="text-[11px] text-muted-foreground">Playlist vazia: a TV mostra o relógio.</p>}
+      <p className="text-[11px] text-muted-foreground">
+        Ordem, ocultar e excluir valem na hora; o item NOVO entra quando você clicar em <b>Adicionar</b>. As TVs pegam a mudança em até 15 s — confira no AO VIVO.
+      </p>
+    </div>
   );
 }
 
