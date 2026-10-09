@@ -4,10 +4,11 @@ import {
   Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, ComposedChart, LabelList, Legend, Line, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from "recharts";
 import {
-  ArrowLeft, Database, ExternalLink, FileCode2, GitBranch, GitCommitHorizontal, GitMerge, GitPullRequest, GitPullRequestClosed,
+  ArrowLeft, CalendarRange, Database, Download, ExternalLink, FileCode2, FileSpreadsheet, GitBranch, GitCommitHorizontal, GitMerge, GitPullRequest, GitPullRequestClosed,
   Loader2, Minus, Plus, RefreshCw, Search, ShieldAlert, Timer, Users,
 } from "lucide-react";
 import { toast } from "sonner";
+import * as XLSX from "xlsx";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -18,8 +19,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useGithubPainel, useSincronizarGithub, type ProgressoSync } from "@/hooks/useGithubPainel";
 import {
-  calendario, contadores, ehBot, filtrarPainel, FILTRO_GITHUB_PADRAO, fmtHoras, fmtN, mensalPrs, porAutor, porBranch, punchcard, semanal,
-  type FiltroGithub, type LinhaAutor, type PainelGithub, type PrGithub,
+  calendario, contadores, ehBot, filtrarPainel, FILTRO_GITHUB_PADRAO, fmtHoras, fmtN, mensal, mensalPorAutor, mensalPrs, porAutor, porBranch, punchcard, semanal, tamanhoPrs, tiposCommit,
+  type FiltroGithub, type LinhaAutor, type LinhaMes, type PainelGithub, type PrGithub,
 } from "@/lib/sistemas/githubPainel";
 
 // =====================================================================
@@ -154,6 +155,8 @@ function Conteudo({ p }: { p: PainelGithub }) {
         <GraficoSemanal p={p} />
         <GraficoMensalPrs p={p} />
       </div>
+
+      <MesAMes p={p} autores={autores} />
 
       <Contribuidores autores={autores} />
 
@@ -309,6 +312,254 @@ function Contribuidores({ autores }: { autores: LinhaAutor[] }) {
         </table>
       </div>
       <p className="border-t border-border px-4 py-2 text-[11px] text-muted-foreground">Commits contam pelo autor do commit (login do GitHub; sem login, o nome do git). PRs, linhas e migrations contam pelo autor da PR.</p>
+    </Card>
+  );
+}
+
+// ---- Mês a mês: gráficos + relatório mensal (09/10/2026) -------------------------------------
+// Pedido do Pablo: "mais gráficos e relatórios sobre o GitHub, gráficos por
+// meses também". Tudo respeita o filtro do topo (período, pessoa, bots).
+
+const COR_ADD = "#1a7f37", COR_DEL = "#cf222e";
+const fmtMesLongo = (mes: string) => new Date(`${mes}-15T12:00:00`).toLocaleDateString("pt-BR", { month: "long", year: "numeric" });
+
+function CardGrafico({ titulo, sub, children, className }: { titulo: string; sub?: string; children: React.ReactNode; className?: string }) {
+  return (
+    <Card className={`p-4 ${className ?? ""}`}>
+      <p className="text-sm font-semibold">{titulo}</p>
+      {sub && <p className="mb-2 text-[11px] text-muted-foreground">{sub}</p>}
+      {children}
+    </Card>
+  );
+}
+
+function MesAMes({ p, autores }: { p: PainelGithub; autores: LinhaAutor[] }) {
+  const meses = useMemo(() => mensal(p), [p]);
+  const porPessoa = useMemo(() => mensalPorAutor(p.commits), [p]);
+  const tamanhos = useMemo(() => tamanhoPrs(p.prs), [p]);
+  const tipos = useMemo(() => tiposCommit(p.commits), [p]);
+  const tempos = meses.filter((m) => m.medianaHorasAteMerge != null).map((m) => ({ ...m, horas: Math.round(m.medianaHorasAteMerge! * 10) / 10 }));
+  const eixo = { tick: { fontSize: 10 } };
+  if (!meses.length) return null;
+
+  return (
+    <>
+      <div className="flex items-center gap-2 pt-2">
+        <CalendarRange className="h-4 w-4 text-primary" />
+        <p className="font-semibold">Mês a mês</p>
+        <span className="text-xs text-muted-foreground">— {fmtMesLongo(meses[0].mes)} a {fmtMesLongo(meses[meses.length - 1].mes)}</span>
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-2">
+        <CardGrafico titulo="Commits por mês" sub="Feitos por pessoas, merges e bots (Lovable), empilhados; a linha é quantas pessoas commitaram no mês.">
+          <ResponsiveContainer width="100%" height={260}>
+            <ComposedChart data={meses} margin={{ top: 8, right: 8, left: -16, bottom: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" vertical={false} />
+              <XAxis dataKey="rotulo" {...eixo} />
+              <YAxis yAxisId="c" {...eixo} allowDecimals={false} />
+              <YAxis yAxisId="p" orientation="right" {...eixo} allowDecimals={false} />
+              <Tooltip />
+              <Legend wrapperStyle={{ fontSize: 11 }} />
+              <Bar yAxisId="c" dataKey="commitsPessoas" name="Pessoas" stackId="c" fill="#2563eb" />
+              <Bar yAxisId="c" dataKey="commitsMerge" name="Merges" stackId="c" fill={COR_ESTADO.merged} />
+              <Bar yAxisId="c" dataKey="commitsBot" name="Bots" stackId="c" fill="#94a3b8" radius={[3, 3, 0, 0]} />
+              <Line yAxisId="p" dataKey="contribuidores" name="Contribuidores" stroke="#f59e0b" strokeWidth={2} dot={{ r: 2 }} />
+            </ComposedChart>
+          </ResponsiveContainer>
+        </CardGrafico>
+
+        <CardGrafico titulo="Commits por mês, por pessoa" sub="Quanto cada um commitou em cada mês.">
+          <ResponsiveContainer width="100%" height={260}>
+            <BarChart data={porPessoa.dados} margin={{ top: 8, right: 8, left: -16, bottom: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" vertical={false} />
+              <XAxis dataKey="rotulo" {...eixo} />
+              <YAxis {...eixo} allowDecimals={false} />
+              <Tooltip />
+              <Legend wrapperStyle={{ fontSize: 10 }} />
+              {porPessoa.autores.map((a, i) => <Bar key={a} dataKey={a} stackId="a" fill={CORES_PESSOAS[i % CORES_PESSOAS.length]} />)}
+            </BarChart>
+          </ResponsiveContainer>
+        </CardGrafico>
+
+        <CardGrafico titulo="Linhas de código por mês" sub="Adicionadas e removidas nas PRs abertas no mês.">
+          <ResponsiveContainer width="100%" height={260}>
+            <BarChart data={meses.map((m) => ({ ...m, remocoesNeg: -m.remocoes }))} margin={{ top: 8, right: 8, left: 4, bottom: 0 }} stackOffset="sign">
+              <CartesianGrid strokeDasharray="3 3" vertical={false} />
+              <XAxis dataKey="rotulo" {...eixo} />
+              <YAxis {...eixo} tickFormatter={(v: number) => fmtN(Math.abs(v))} />
+              <Tooltip formatter={(v: number, k: string) => [fmtN(Math.abs(v)), k]} />
+              <Legend wrapperStyle={{ fontSize: 11 }} />
+              <Bar dataKey="adicoes" name="Adicionadas" stackId="l" fill={COR_ADD} radius={[3, 3, 0, 0]} />
+              <Bar dataKey="remocoesNeg" name="Removidas" stackId="l" fill={COR_DEL} radius={[0, 0, 3, 3]} />
+            </BarChart>
+          </ResponsiveContainer>
+        </CardGrafico>
+
+        <CardGrafico titulo="Crescimento do repositório" sub="Commits acumulados mês a mês.">
+          <ResponsiveContainer width="100%" height={260}>
+            <AreaChart data={meses} margin={{ top: 8, right: 8, left: -8, bottom: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" vertical={false} />
+              <XAxis dataKey="rotulo" {...eixo} />
+              <YAxis {...eixo} tickFormatter={(v: number) => fmtN(v)} />
+              <Tooltip formatter={(v: number) => [fmtN(v), "Commits acumulados"]} />
+              <Area type="monotone" dataKey="commitsAcumulados" stroke="#2563eb" fill="#2563eb" fillOpacity={0.25} strokeWidth={2} />
+            </AreaChart>
+          </ResponsiveContainer>
+        </CardGrafico>
+
+        <CardGrafico titulo="PRs com e sem chamado, por mês" sub="Pelo título: SIS-AAAA-NNNN ou [SEM-CHAMADO].">
+          <ResponsiveContainer width="100%" height={240}>
+            <BarChart data={meses} margin={{ top: 8, right: 8, left: -16, bottom: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" vertical={false} />
+              <XAxis dataKey="rotulo" {...eixo} />
+              <YAxis {...eixo} allowDecimals={false} />
+              <Tooltip />
+              <Legend wrapperStyle={{ fontSize: 11 }} />
+              <Bar dataKey="comChamado" name="Com chamado" stackId="p" fill="#2563eb" />
+              <Bar dataKey="semChamado" name="Sem chamado" stackId="p" fill="#94a3b8" radius={[3, 3, 0, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        </CardGrafico>
+
+        <CardGrafico titulo="Migrations e dias com commit, por mês" sub="Barras: migrations criadas. Linha: em quantos dias do mês houve commit.">
+          <ResponsiveContainer width="100%" height={240}>
+            <ComposedChart data={meses} margin={{ top: 8, right: 8, left: -16, bottom: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" vertical={false} />
+              <XAxis dataKey="rotulo" {...eixo} />
+              <YAxis yAxisId="m" {...eixo} allowDecimals={false} />
+              <YAxis yAxisId="d" orientation="right" {...eixo} allowDecimals={false} domain={[0, 31]} />
+              <Tooltip />
+              <Legend wrapperStyle={{ fontSize: 11 }} />
+              <Bar yAxisId="m" dataKey="migrations" name="Migrations" fill="#f59e0b" radius={[3, 3, 0, 0]} />
+              <Line yAxisId="d" dataKey="diasAtivos" name="Dias com commit" stroke="#16a34a" strokeWidth={2} dot={{ r: 2 }} />
+            </ComposedChart>
+          </ResponsiveContainer>
+        </CardGrafico>
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-3">
+        <CardGrafico titulo="Tempo até o merge, por mês" sub="Mediana, da abertura ao merge (mês do merge).">
+          <ResponsiveContainer width="100%" height={220}>
+            <AreaChart data={tempos} margin={{ top: 8, right: 8, left: -16, bottom: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" vertical={false} />
+              <XAxis dataKey="rotulo" {...eixo} />
+              <YAxis {...eixo} />
+              <Tooltip formatter={(v: number) => [fmtHoras(v), "Mediana"]} />
+              <Area type="monotone" dataKey="horas" stroke={COR_ESTADO.merged} fill={COR_ESTADO.merged} fillOpacity={0.2} strokeWidth={2} />
+            </AreaChart>
+          </ResponsiveContainer>
+        </CardGrafico>
+
+        <CardGrafico titulo="Tamanho das PRs" sub="Linhas adicionadas + removidas em cada PR.">
+          <ResponsiveContainer width="100%" height={220}>
+            <BarChart data={tamanhos} margin={{ top: 16, right: 8, left: -16, bottom: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" vertical={false} />
+              <XAxis dataKey="faixa" tick={{ fontSize: 10 }} />
+              <YAxis {...eixo} allowDecimals={false} />
+              <Tooltip formatter={(v: number) => [fmtN(v), "PRs"]} labelFormatter={(f: string) => `${f} (${tamanhos.find((t) => t.faixa === f)?.dica ?? ""})`} />
+              <Bar dataKey="prs" fill="#2563eb" radius={[3, 3, 0, 0]}><LabelList dataKey="prs" position="top" style={{ fontSize: 10 }} /></Bar>
+            </BarChart>
+          </ResponsiveContainer>
+        </CardGrafico>
+
+        <CardGrafico titulo="De onde vêm os commits" sub="Pela mensagem do commit.">
+          <ResponsiveContainer width="100%" height={220}>
+            <PieChart>
+              <Pie data={tipos} dataKey="n" nameKey="tipo" innerRadius={45} outerRadius={75} paddingAngle={2}>
+                {tipos.map((t, i) => <Cell key={t.tipo} fill={CORES[i % CORES.length]} />)}
+              </Pie>
+              <Tooltip formatter={(v: number, n: string) => [fmtN(v), n]} />
+              <Legend wrapperStyle={{ fontSize: 10 }} />
+            </PieChart>
+          </ResponsiveContainer>
+        </CardGrafico>
+      </div>
+
+      <RelatorioMensal meses={meses} autores={autores} p={p} />
+    </>
+  );
+}
+
+const CORES_PESSOAS = ["#2563eb", "#16a34a", "#db2777", "#f59e0b", "#7c3aed", "#0891b2", "#dc2626", "#65a30d", "#9333ea", "#94a3b8"];
+
+function RelatorioMensal({ meses, autores, p }: { meses: LinhaMes[]; autores: LinhaAutor[]; p: PainelGithub }) {
+  const linhas = [...meses].reverse();
+  const total = meses.reduce((t, m) => ({
+    commits: t.commits + m.commits, prs: t.prs + m.prs, mergeadas: t.mergeadas + m.mergeadas, adicoes: t.adicoes + m.adicoes,
+    remocoes: t.remocoes + m.remocoes, migrations: t.migrations + m.migrations, diasAtivos: t.diasAtivos + m.diasAtivos,
+  }), { commits: 0, prs: 0, mergeadas: 0, adicoes: 0, remocoes: 0, migrations: 0, diasAtivos: 0 });
+
+  const exportar = () => {
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(meses.map((m) => ({
+      Mês: fmtMesLongo(m.mes), Commits: m.commits, "Commits de pessoas": m.commitsPessoas, Merges: m.commitsMerge, "Commits de bots": m.commitsBot,
+      "Commits acumulados": m.commitsAcumulados, "Dias com commit": m.diasAtivos, Contribuidores: m.contribuidores,
+      PRs: m.prs, Mergeadas: m.mergeadas, "Fechadas sem merge": m.fechadasSemMerge, "Com chamado": m.comChamado, "Sem chamado": m.semChamado,
+      "Linhas adicionadas": m.adicoes, "Linhas removidas": m.remocoes, "Arquivos alterados": m.arquivos,
+      Migrations: m.migrations, "Linhas de SQL": m.linhasSql, "Tempo até o merge (mediana)": fmtHoras(m.medianaHorasAteMerge),
+    }))), "Mês a mês");
+    const pp = mensalPorAutor(p.commits);
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(pp.dados.map(({ mes, rotulo, ...r }) => ({ Mês: fmtMesLongo(String(mes)), ...r }))), "Commits por pessoa");
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet([...autores].sort((a, b) => a.autor.localeCompare(b.autor, "pt-BR")).map((a) => ({
+      Contribuidor: a.autor, Commits: a.commits, PRs: a.prs, Mergeadas: a.mergeadas, "Linhas adicionadas": a.adicoes, "Linhas removidas": a.remocoes,
+      Migrations: a.migrations, "Linhas de SQL": a.linhasSql, "Dias com commit": a.diasAtivos,
+      "Primeiro commit": a.primeiro ? fmtDataHora(a.primeiro) : "", "Último commit": a.ultimo ? fmtDataHora(a.ultimo) : "",
+    }))), "Contribuidores");
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(p.prs.map((x) => ({
+      Número: x.numero, Título: x.titulo, Autor: x.autor_login ?? "", Estado: x.estado, Branch: x.branch_origem ?? "", Chamado: x.chamado ?? "",
+      Aberta: fmtDataHora(x.criado_em), Mergeada: x.mergeado_em ? fmtDataHora(x.mergeado_em) : "", Commits: x.commits ?? "",
+      "Linhas adicionadas": x.adicoes ?? "", "Linhas removidas": x.remocoes ?? "", Arquivos: x.arquivos ?? "", Migrations: x.migrations ?? "", Link: x.url ?? "",
+    }))), "Pull requests");
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(p.commits.map((c) => ({
+      SHA: c.sha, Data: fmtDataHora(c.data), Autor: c.autor, PR: c.pr ?? "", Merge: c.merge ? "sim" : "", Mensagem: c.mensagem,
+    }))), "Commits");
+    XLSX.writeFile(wb, `github-relatorio-${new Date().toISOString().slice(0, 10)}.xlsx`);
+  };
+
+  const th = "px-3 py-2 text-right";
+  const td = "px-3 py-1.5 text-right tabular-nums";
+  return (
+    <Card className="overflow-hidden">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-4 py-2.5">
+        <p className="flex items-center gap-1.5 text-sm font-semibold"><FileSpreadsheet className="h-4 w-4 text-primary" /> Relatório mensal <span className="font-normal text-muted-foreground">— mais recente primeiro</span></p>
+        <Button size="sm" variant="outline" className="gap-1.5" onClick={exportar}><Download className="h-4 w-4" /> Exportar Excel</Button>
+      </div>
+      <div className="max-h-[420px] overflow-auto">
+        <table className="w-full whitespace-nowrap text-xs">
+          <thead className="sticky top-0 bg-card"><tr className="bg-muted/40 text-left text-[10px] uppercase tracking-wider text-muted-foreground">
+            <th className="px-3 py-2">Mês</th><th className={th}>Commits</th><th className={th}>Pessoas</th><th className={th}>Merges</th><th className={th}>Bots</th>
+            <th className={th}>Dias c/ commit</th><th className={th}>Contribuidores</th><th className={th}>PRs</th><th className={th}>Mergeadas</th>
+            <th className={th}>Com chamado</th><th className={th}>+ linhas</th><th className={th}>− linhas</th><th className={th}>Migrations</th><th className={th}>Até o merge</th>
+          </tr></thead>
+          <tbody>
+            {linhas.map((m) => (
+              <tr key={m.mes} className="border-t border-border/60">
+                <td className="px-3 py-1.5 font-medium capitalize">{fmtMesLongo(m.mes)}</td>
+                <td className={`${td} font-semibold`}>{fmtN(m.commits)}</td>
+                <td className={td}>{fmtN(m.commitsPessoas)}</td>
+                <td className={td}>{fmtN(m.commitsMerge)}</td>
+                <td className={td}>{fmtN(m.commitsBot)}</td>
+                <td className={td}>{fmtN(m.diasAtivos)}</td>
+                <td className={td}>{fmtN(m.contribuidores)}</td>
+                <td className={td}>{fmtN(m.prs)}</td>
+                <td className={td}>{fmtN(m.mergeadas)}</td>
+                <td className={td}>{fmtN(m.comChamado)}</td>
+                <td className={td} style={{ color: COR_ADD }}>+{fmtN(m.adicoes)}</td>
+                <td className={td} style={{ color: COR_DEL }}>−{fmtN(m.remocoes)}</td>
+                <td className={td}>{fmtN(m.migrations)}</td>
+                <td className={td}>{fmtHoras(m.medianaHorasAteMerge)}</td>
+              </tr>
+            ))}
+          </tbody>
+          <tfoot className="sticky bottom-0 bg-muted font-semibold"><tr className="border-t border-border">
+            <td className="px-3 py-2">Total</td><td className={td}>{fmtN(total.commits)}</td><td className={td} colSpan={3} />
+            <td className={td}>{fmtN(total.diasAtivos)}</td><td className={td} /><td className={td}>{fmtN(total.prs)}</td><td className={td}>{fmtN(total.mergeadas)}</td><td className={td} />
+            <td className={td} style={{ color: COR_ADD }}>+{fmtN(total.adicoes)}</td><td className={td} style={{ color: COR_DEL }}>−{fmtN(total.remocoes)}</td>
+            <td className={td}>{fmtN(total.migrations)}</td><td className={td} />
+          </tr></tfoot>
+        </table>
+      </div>
+      <p className="border-t border-border px-4 py-2 text-[11px] text-muted-foreground">Commits contam pelo mês do commit; PRs, linhas e migrations pelo mês em que a PR foi aberta; tempo até o merge pelo mês do merge. O Excel traz também commits por pessoa, contribuidores, todas as PRs e todos os commits do recorte.</p>
     </Card>
   );
 }

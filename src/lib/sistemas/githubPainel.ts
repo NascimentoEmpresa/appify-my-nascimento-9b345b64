@@ -244,6 +244,110 @@ export function mensalPrs(prs: PrGithub[]) {
   return [...m.values()].sort((a, b) => a.mes.localeCompare(b.mes));
 }
 
+// ---- Mês a mês (relatório, 09/10/2026) -----------------------------------------
+// Commits contam pelo mês do commit; PRs pelo mês em que foram abertas;
+// tempo até o merge pelo mês do merge. Meses sem nada no meio do período
+// aparecem zerados (o gráfico não "pula" mês).
+
+export const MESES_CURTOS = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"];
+export const rotuloMes = (mes: string) => `${MESES_CURTOS[Number(mes.slice(5, 7)) - 1]}/${mes.slice(2, 4)}`;
+const mesLocal = (iso: string) => diaLocal(iso).slice(0, 7);
+
+/** Todos os meses de `ini` a `fim` (YYYY-MM), inclusive. */
+export function mesesEntre(ini: string, fim: string): string[] {
+  const r: string[] = [];
+  let [a, m] = ini.split("-").map(Number);
+  const [af, mf] = fim.split("-").map(Number);
+  while (a < af || (a === af && m <= mf)) { r.push(`${a}-${String(m).padStart(2, "0")}`); m++; if (m > 12) { m = 1; a++; } }
+  return r;
+}
+
+export interface LinhaMes {
+  mes: string; rotulo: string;
+  commits: number; commitsMerge: number; commitsBot: number; commitsPessoas: number; commitsAcumulados: number;
+  diasAtivos: number; contribuidores: number;
+  prs: number; mergeadas: number; fechadasSemMerge: number; comChamado: number; semChamado: number;
+  adicoes: number; remocoes: number; arquivos: number; migrations: number; linhasSql: number;
+  medianaHorasAteMerge: number | null;
+}
+
+export function mensal(p: PainelGithub): LinhaMes[] {
+  const meses = [...p.commits.map((c) => mesLocal(c.data)), ...p.prs.map((x) => mesLocal(x.criado_em))].sort();
+  if (!meses.length) return [];
+  const linhas = new Map<string, LinhaMes & { _dias: Set<string>; _autores: Set<string>; _tempos: number[] }>();
+  for (const mes of mesesEntre(meses[0], meses[meses.length - 1])) {
+    linhas.set(mes, {
+      mes, rotulo: rotuloMes(mes), commits: 0, commitsMerge: 0, commitsBot: 0, commitsPessoas: 0, commitsAcumulados: 0,
+      diasAtivos: 0, contribuidores: 0, prs: 0, mergeadas: 0, fechadasSemMerge: 0, comChamado: 0, semChamado: 0,
+      adicoes: 0, remocoes: 0, arquivos: 0, migrations: 0, linhasSql: 0, medianaHorasAteMerge: null,
+      _dias: new Set(), _autores: new Set(), _tempos: [],
+    });
+  }
+  for (const c of p.commits) {
+    const l = linhas.get(mesLocal(c.data))!;
+    l.commits++;
+    if (c.merge) l.commitsMerge++;
+    if (ehBot(c.autor)) l.commitsBot++;
+    if (!c.merge && !ehBot(c.autor)) l.commitsPessoas++;
+    l._dias.add(diaLocal(c.data)); l._autores.add(c.autor);
+  }
+  for (const x of p.prs) {
+    const l = linhas.get(mesLocal(x.criado_em))!;
+    l.prs++;
+    if (x.estado === "merged") l.mergeadas++;
+    if (x.estado === "closed") l.fechadasSemMerge++;
+    if (x.chamado) l.comChamado++; else l.semChamado++;
+    l.adicoes += x.adicoes ?? 0; l.remocoes += x.remocoes ?? 0; l.arquivos += x.arquivos ?? 0;
+    l.migrations += x.migrations ?? 0; l.linhasSql += x.linhas_sql ?? 0;
+    if (x.mergeado_em) linhas.get(mesLocal(x.mergeado_em))?._tempos.push(horasEntre(x.criado_em, x.mergeado_em));
+  }
+  let acc = 0;
+  return [...linhas.values()].map(({ _dias, _autores, _tempos, ...l }) => {
+    acc += l.commits;
+    return { ...l, commitsAcumulados: acc, diasAtivos: _dias.size, contribuidores: _autores.size, medianaHorasAteMerge: mediana(_tempos) };
+  });
+}
+
+/** Commits por mês empilhados por pessoa (todas, em ordem alfabética). */
+export function mensalPorAutor(commits: CommitGithub[]) {
+  const autores = [...new Set(commits.map((c) => c.autor))].sort((a, b) => a.localeCompare(b, "pt-BR", { sensitivity: "base" }));
+  const meses = commits.map((c) => mesLocal(c.data)).sort();
+  if (!meses.length) return { autores, dados: [] as Record<string, number | string>[] };
+  const linhas = new Map(mesesEntre(meses[0], meses[meses.length - 1]).map((m) => [m, { mes: m, rotulo: rotuloMes(m), ...Object.fromEntries(autores.map((a) => [a, 0])) } as Record<string, number | string>]));
+  for (const c of commits) { const l = linhas.get(mesLocal(c.data))!; l[c.autor] = (l[c.autor] as number) + 1; }
+  return { autores, dados: [...linhas.values()] };
+}
+
+/** Tamanho das PRs (linhas adicionadas + removidas), só as já detalhadas. */
+export const FAIXAS_TAMANHO = [
+  { faixa: "Mínima", ate: 10 }, { faixa: "Pequena", ate: 100 }, { faixa: "Média", ate: 500 },
+  { faixa: "Grande", ate: 2000 }, { faixa: "Muito grande", ate: Infinity },
+] as const;
+export function tamanhoPrs(prs: PrGithub[]) {
+  const r = FAIXAS_TAMANHO.map((f, i) => ({
+    faixa: f.faixa, dica: i === 0 ? `até ${f.ate} linhas` : f.ate === Infinity ? `mais de ${FAIXAS_TAMANHO[i - 1].ate}` : `${FAIXAS_TAMANHO[i - 1].ate + 1} a ${f.ate}`, prs: 0,
+  }));
+  for (const x of prs) {
+    if (x.adicoes == null && x.remocoes == null) continue;
+    const n = (x.adicoes ?? 0) + (x.remocoes ?? 0);
+    r[FAIXAS_TAMANHO.findIndex((f) => n <= f.ate)].prs++;
+  }
+  return r;
+}
+
+/** De onde vêm os commits: chamado, sem chamado, merge, Lovable/bots, outros. */
+export function tiposCommit(commits: CommitGithub[]) {
+  const t = { "Com chamado (SIS-…)": 0, "Sem chamado": 0, "Merge": 0, "Bots (Lovable etc.)": 0, "Outros": 0 };
+  for (const c of commits) {
+    if (c.merge) t["Merge"]++;
+    else if (ehBot(c.autor)) t["Bots (Lovable etc.)"]++;
+    else if (/SIS-\d{4}-\d+/i.test(c.mensagem)) t["Com chamado (SIS-…)"]++;
+    else if (/SEM-CHAMADO/i.test(c.mensagem)) t["Sem chamado"]++;
+    else t["Outros"]++;
+  }
+  return Object.entries(t).map(([tipo, n]) => ({ tipo, n })).filter((x) => x.n > 0);
+}
+
 export const fmtHoras = (h: number | null | undefined) =>
   h == null ? "—" : h < 1 ? `${Math.round(h * 60)} min` : h < 48 ? `${h.toLocaleString("pt-BR", { maximumFractionDigits: 1 })} h` : `${(h / 24).toLocaleString("pt-BR", { maximumFractionDigits: 1 })} d`;
 export const fmtN = (n: number | null | undefined) => (n == null ? "—" : n.toLocaleString("pt-BR"));
