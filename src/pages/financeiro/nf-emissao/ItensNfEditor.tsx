@@ -24,6 +24,8 @@ interface ItensNfEditorProps {
   contratoId: string;
   expandidos: Set<number>;
   mostrarPosEmissao?: boolean;
+  // SIS-2026-0633: itens cujas Faltas vêm da seção "Faltas — cálculo por dias" da nota (campo só leitura).
+  faltasCalculadas?: ReadonlySet<number>;
   // SIS-2026-0592: libera só estes campos (chaves do ItemForm) numa tela readOnly.
   camposEditaveis?: ReadonlySet<string>;
   readOnly?: boolean;
@@ -69,6 +71,7 @@ export function ItensNfEditor({
   contratoId,
   expandidos,
   mostrarPosEmissao,
+  faltasCalculadas,
   camposEditaveis,
   readOnly,
   onUpdateItem,
@@ -229,7 +232,7 @@ export function ItensNfEditor({
                                   className="h-8"
                                   value={String(it[key] || "")}
                                   onChange={(v) => onUpdateItem(i, { [key]: parseFloat(v) || 0 } as any)}
-                                  disabled={readOnly && !camposEditaveis?.has(key)}
+                                  disabled={(readOnly && !camposEditaveis?.has(key)) || (key === "faltas" && !!faltasCalculadas?.has(i))}
                                 />
                               </div>
                             )
