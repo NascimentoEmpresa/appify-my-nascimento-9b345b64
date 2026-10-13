@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   PAINEIS_GERENCIAIS, colunasDaTela, dadosDoGrafico, desvio, formatarValor, frase, graficoDo, indicadoresDaTela, indicadoresDaTv, lancamentoAtrasado, nomeCurto,
-  notaSubindicadores, ordenarParaTv, paginasPainel, visualDoItem,
+  notaSubindicadores, ordenarParaTv, paginasPainel, visualDoItem, destaquesDoDashboard, ondeAgir, tendenciaValida, codigoDoIndicador, ehIndicadorAvulso,
   placar, situacao, subindicadores, textoMeta, type IndicadorGerencial, type PainelGerencial,
 } from "@/lib/tv/gerencial";
-import { RELATORIOS_TV, relatorioTemFiltros } from "@/lib/tv/tv";
+import { RELATORIOS_TV, relatorioTemFiltros, tituloRelatorioTv } from "@/lib/tv/tv";
 import { corDoRelatorioTv, paginasDoRelatorio } from "@/lib/tv/relatorioTv";
 
 // TVs gerenciais por diretoria (mig 20261012000001, SIS-2026-0635): as regras
@@ -102,7 +102,7 @@ describe("páginas da TV e subindicadores", () => {
     expect(subindicadores(p, "rh_obrigacoes").map((i) => i.codigo)).toEqual(["rh_ob_folhas"]);
     expect(subindicadores(p, null).map((i) => i.codigo)).toEqual(["op_feedbacks"]);
   });
-  it("visual do HTML: o painel inteiro numa tela (até 8); gráficos grandes, 4 por tela (7 → 4 + 3); item antigo/vazio toca o painel claro (padrão)", () => {
+  it("visual do HTML: o painel inteiro numa tela (até 8); gráficos grandes, 4 por tela (7 → 4 + 3); item antigo/vazio toca o dashboard (padrão desde 14/10)", () => {
     const sete = painel(Array.from({ length: 7 }, (_, k) => ind({ codigo: `i${k}`, valor: k, ordem: k })));
     expect(paginasPainel(sete, "painel")).toEqual([{ chave: "painel-1", titulo: "Indicadores" }]);
     expect(indicadoresDaTela(sete, "painel", "painel-1")).toHaveLength(7);
@@ -113,8 +113,9 @@ describe("páginas da TV e subindicadores", () => {
     expect(indicadoresDaTela(sete, "graficos", "painel-1")).toHaveLength(4);
     expect(indicadoresDaTela(sete, "graficos", "painel-2")).toHaveLength(3);
     expect(paginasPainel(painel([ind({}), ind({})]), "painel")).toEqual([{ chave: "painel-1", titulo: "Indicadores" }]);
-    expect(visualDoItem(null)).toBe("painel-claro");
-    expect(visualDoItem("classico")).toBe("painel-claro");
+    expect(visualDoItem(null)).toBe("dashboard");
+    expect(visualDoItem("classico")).toBe("dashboard");
+    expect(visualDoItem("painel-claro")).toBe("painel-claro");
     expect(visualDoItem("graficos")).toBe("graficos");
     expect(paginasDoRelatorio({ tipo: "gerencial", contrato: null, visual: "graficos", ...sete })).toHaveLength(2);
   });
@@ -156,5 +157,49 @@ describe("lançamento em atraso (a mesma tolerância do ctl_nao_atualizados)", (
     expect(lancamentoAtrasado(manual("semanal", "2026-10-03T12:00:00"), agora)).toBe(true);
     expect(lancamentoAtrasado(manual("mensal", "2026-09-20T12:00:00"), agora)).toBe(false);
     expect(lancamentoAtrasado({ fonte: "auto", periodicidade: "diaria", resultado: { atualizado_em: null } }, agora)).toBe(false);
+  });
+});
+
+// 14/10/2026 (mig 20261014000010): "seja um dashboard pra TV, não cada um no seu
+// quadrado — dashboard completo com gráficos e números reais".
+describe("dashboard completo", () => {
+  const painel = (indicadores: IndicadorGerencial[]): PainelGerencial => ({ painel: { slug: "ger-rh", titulo: "RH", diretoria: "Diretora Administrativa", pergunta: "?" }, indicadores });
+  it("uma tela só, com todos os números", () => {
+    const p = painel(Array.from({ length: 7 }, (_, k) => ind({ codigo: `d${k}`, valor: k, ordem: k })));
+    expect(paginasPainel(p, "dashboard")).toEqual([{ chave: "dashboard", titulo: "Dashboard" }]);
+    expect(paginasPainel(p, "dashboard-escuro")).toHaveLength(1);
+    expect(paginasDoRelatorio({ tipo: "gerencial", contrato: null, visual: null, ...p })).toEqual([{ chave: "dashboard", titulo: "Dashboard" }]);
+  });
+  it("onde agir: só fora da meta e atenção, na ordem da TV; gráficos: os piores com detalhamento", () => {
+    const ok = ind({ codigo: "ok", valor: 0, detalhe: [{ nome: "A", valor: 1 }] });
+    const atencao = ind({ codigo: "at", valor: 3, detalhe: [{ nome: "B", valor: 3 }] });
+    const critico = ind({ codigo: "cr", valor: 9, detalhe: [{ nome: "C", valor: 9 }] });
+    const semGrafico = ind({ codigo: "sg", valor: 20 });
+    const p = painel([ok, atencao, critico, semGrafico]);
+    expect(ondeAgir(p).map((i) => i.codigo)).toEqual(["sg", "cr", "at"]);
+    // o vermelho sem detalhamento não ocupa gráfico; completa com quem tem
+    expect(destaquesDoDashboard(p, 3).map((i) => i.codigo)).toEqual(["cr", "at", "ok"]);
+  });
+  it("tendência só vale com 2+ meses e algum valor", () => {
+    const base = { titulo: "x", series: ["A", "B"] as [string, string], unidade: "qtd" as const };
+    expect(tendenciaValida(null)).toBe(false);
+    expect(tendenciaValida({ ...base, meses: [{ mes: "10/26", a: 3, b: 1 }] })).toBe(false);
+    expect(tendenciaValida({ ...base, meses: [{ mes: "09/26", a: 0, b: 0 }, { mes: "10/26", a: 0, b: 0 }] })).toBe(false);
+    expect(tendenciaValida({ ...base, meses: [{ mes: "09/26", a: 0, b: 2 }, { mes: "10/26", a: 1, b: 0 }] })).toBe(true);
+    expect(tendenciaValida({ ...base, erro: "falhou", meses: [{ mes: "09/26", a: 1, b: 2 }, { mes: "10/26", a: 1, b: 0 }] })).toBe(false);
+  });
+});
+
+// 14/10/2026 (mig 20261014000012): gráfico gerencial sozinho e B.I na playlist.
+describe("itens novos da playlist", () => {
+  it("ind:<codigo> e bi:<id>: sem período nem contrato, uma página, rótulo genérico", () => {
+    expect(ehIndicadorAvulso("ind:fin_fluxo")).toBe(true);
+    expect(codigoDoIndicador("ind:fin_fluxo")).toBe("fin_fluxo");
+    expect(codigoDoIndicador("ger-rh")).toBeNull();
+    for (const slug of ["ind:fin_fluxo", "bi:3"]) expect(relatorioTemFiltros(slug)).toBe(false);
+    expect(tituloRelatorioTv("ind:fin_fluxo")).toBe("Gráfico gerencial");
+    expect(tituloRelatorioTv("bi:3")).toBe("Painel de B.I");
+    expect(paginasDoRelatorio({ tipo: "bi", contrato: null, painel: { id: 3, nome: "x", descricao: null }, widgets: [] })).toHaveLength(1);
+    expect(paginasDoRelatorio({ tipo: "indicador", contrato: null, painel: null, indicador: null })).toHaveLength(1);
   });
 });
