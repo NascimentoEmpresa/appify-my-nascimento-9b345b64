@@ -7,15 +7,28 @@ import {
   useRespostas,
   useRespostaUpsert,
   useImplantacaoOrigem,
+  useTreinamentosImplantacao,
   calcPrazo,
 } from "@/hooks/useImplantacao";
 import { PainelOrigemContrato } from "@/components/contratos/PainelOrigemContrato";
 import { ROW_INDEX_NO_TOPO } from "@/lib/implantacao/camposOrigem";
+import {
+  OPCOES_EMISSAO_NOTA,
+  OPCOES_FORMA_ENVIO,
+  ROW_INDEX_SIM_NAO_DETALHE,
+  lerLista,
+  lerListaComOutro,
+  lerSimNaoDetalhe,
+  resumoResposta,
+  salvarLista,
+  salvarListaComOutro,
+  salvarSimNaoDetalhe,
+  type OpcaoSimNao,
+} from "@/lib/implantacao/camposResposta";
 import type { ImplantacaoContrato, ChecklistItem, Resposta, HistoricoEntry } from "@/hooks/useImplantacao";
-import { CheckCircle2, Circle, ChevronDown, Trash2, MapPin, X as XIcon, CheckCircle, History } from "lucide-react";
+import { CheckCircle2, Circle, ChevronDown, Trash2, X as XIcon, CheckCircle, History, Plus } from "lucide-react";
 import { useUsuariosEmpresa } from "@/hooks/useUsuariosEmpresa";
 import { useDocTipos } from "@/hooks/useDocumentos";
-import { usePlanilhaCustos } from "@/hooks/usePlanilhaCusto";
 import { usePermissoes } from "@/context/PermissoesContext";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel,
@@ -318,10 +331,6 @@ export default function Implantacao() {
 function isDocsItem(item: { categoria?: string | null; item: string }) {
   return item.categoria?.toLowerCase().includes("document") || item.item.toLowerCase().includes("document");
 }
-function isEnderecosItem(item: { item: string }) {
-  return item.item.toLowerCase().includes("endere");
-}
-
 function DocMultiSelect({ value, onChange }: { value: string; onChange: (v: string) => void }) {
   const { data: tipos = [] } = useDocTipos();
   const [expanded, setExpanded] = useState(false);
@@ -385,27 +394,205 @@ function DocMultiSelect({ value, onChange }: { value: string; onChange: (v: stri
   );
 }
 
-function EnderecosPostos({ contratoNome }: { contratoNome: string }) {
-  const { data: planilhaRows = [] } = usePlanilhaCustos();
-  const postos = useMemo(() => {
-    const seen = new Set<string>();
-    return planilhaRows
-      .filter((r) => r.orexec === "EXECUTADO" && r.contrato === contratoNome && r.posto)
-      .filter((r) => { if (seen.has(r.posto)) return false; seen.add(r.posto); return true; })
-      .map((r) => r.posto).sort();
-  }, [planilhaRows, contratoNome]);
+function SelecaoMultiplaComOutro({
+  value,
+  onChange,
+  opcoes,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  opcoes: readonly string[];
+}) {
+  const selecionadas = useMemo(() => lerLista(value), [value]);
+  const [outro, setOutro] = useState("");
+  const ehOpcaoPadrao = (item: string) => opcoes.some((opcao) => opcao === item);
 
-  if (postos.length === 0)
-    return <p className="text-xs text-muted-foreground italic">Nenhum posto encontrado para este contrato na Planilha de Custo.</p>;
+  function toggle(opcao: string) {
+    onChange(salvarLista(
+      selecionadas.includes(opcao)
+        ? selecionadas.filter((item) => item !== opcao)
+        : [...selecionadas, opcao],
+    ));
+  }
+
+  function adicionarOutro() {
+    const limpo = outro.trim();
+    if (!limpo) return;
+    onChange(salvarLista([...selecionadas, limpo]));
+    setOutro("");
+  }
 
   return (
-    <div className="rounded-md border border-border divide-y divide-border max-h-48 overflow-y-auto">
-      {postos.map((p) => (
-        <div key={p} className="flex items-center gap-2 px-3 py-2 text-xs">
-          <MapPin className="h-3 w-3 shrink-0 text-muted-foreground" />
-          <span>{p}</span>
+    <div className="space-y-2">
+      <div className="flex flex-wrap gap-2">
+        {opcoes.map((opcao) => {
+          const ativa = selecionadas.includes(opcao);
+          return (
+            <button
+              key={opcao}
+              type="button"
+              onClick={() => toggle(opcao)}
+              className={cn(
+                "rounded-md border px-2.5 py-1.5 text-xs font-medium transition-colors",
+                ativa
+                  ? "border-primary bg-primary/10 text-primary"
+                  : "border-border bg-card text-muted-foreground hover:bg-muted/50",
+              )}
+            >
+              {ativa ? "✓ " : ""}{opcao}
+            </button>
+          );
+        })}
+      </div>
+      {selecionadas.filter((item) => !ehOpcaoPadrao(item)).length > 0 && (
+        <div className="flex flex-wrap gap-1">
+          {selecionadas.filter((item) => !ehOpcaoPadrao(item)).map((item) => (
+            <span key={item} className="inline-flex items-center gap-1 rounded-full bg-primary/10 px-2 py-1 text-[11px] text-primary">
+              {item}
+              <button type="button" onClick={() => toggle(item)} title={`Remover ${item}`}>
+                <XIcon className="h-3 w-3" />
+              </button>
+            </span>
+          ))}
         </div>
-      ))}
+      )}
+      <div className="flex max-w-lg gap-2">
+        <Input
+          value={outro}
+          onChange={(e) => setOutro(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              adicionarOutro();
+            }
+          }}
+          placeholder="Adicionar outra forma"
+          className="h-8 text-xs"
+        />
+        <Button type="button" size="sm" variant="outline" className="h-8 gap-1 text-xs" disabled={!outro.trim()} onClick={adicionarOutro}>
+          <Plus className="h-3 w-3" /> Adicionar
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function ListaComOutro({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+}) {
+  const atual = lerListaComOutro(value, OPCOES_EMISSAO_NOTA);
+  return (
+    <div className="grid max-w-lg gap-2 sm:grid-cols-2">
+      <Select
+        value={atual.opcao}
+        onValueChange={(opcao) => onChange(salvarListaComOutro(opcao, atual.outro))}
+      >
+        <SelectTrigger className="h-9 text-xs">
+          <SelectValue placeholder="Selecione como a nota será emitida" />
+        </SelectTrigger>
+        <SelectContent>
+          {OPCOES_EMISSAO_NOTA.map((opcao) => (
+            <SelectItem key={opcao} value={opcao}>{opcao}</SelectItem>
+          ))}
+          <SelectItem value="Outro">Outro</SelectItem>
+        </SelectContent>
+      </Select>
+      {atual.opcao === "Outro" && (
+        <Input
+          autoFocus
+          value={atual.outro}
+          onChange={(e) => onChange(salvarListaComOutro("Outro", e.target.value))}
+          placeholder="Informe a outra forma"
+          className="h-9 text-xs"
+        />
+      )}
+    </div>
+  );
+}
+
+function SimNaoComDetalhe({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const atual = lerSimNaoDetalhe(value);
+  const opcoes: OpcaoSimNao[] = ["Sim", "Não", "N/A"];
+  return (
+    <div className="space-y-2">
+      <div className="flex max-w-md gap-2">
+        {opcoes.map((opcao) => (
+          <button
+            key={opcao}
+            type="button"
+            onClick={() => onChange(salvarSimNaoDetalhe(opcao, atual.detalhe))}
+            className={cn(
+              "flex-1 rounded-lg border py-1.5 text-xs font-semibold transition-all",
+              atual.opcao === opcao && opcao === "Sim" && "border-emerald-500 bg-emerald-50 text-emerald-700",
+              atual.opcao === opcao && opcao === "Não" && "border-red-500 bg-red-50 text-red-700",
+              atual.opcao === opcao && opcao === "N/A" && "border-muted-foreground/40 bg-muted text-muted-foreground",
+              atual.opcao !== opcao && "border-border bg-card text-foreground hover:bg-muted/50",
+            )}
+          >
+            {opcao}
+          </button>
+        ))}
+      </div>
+      {atual.opcao === "Sim" && (
+        <Input
+          autoFocus
+          value={atual.detalhe}
+          onChange={(e) => onChange(salvarSimNaoDetalhe("Sim", e.target.value))}
+          placeholder="Quais?"
+          className="h-9 max-w-lg text-xs"
+        />
+      )}
+    </div>
+  );
+}
+
+function TreinamentosMultiSelect({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const { data: treinamentos = [], isLoading, error } = useTreinamentosImplantacao();
+  const selecionados = useMemo(() => lerLista(value), [value]);
+
+  function toggle(nome: string) {
+    onChange(salvarLista(
+      selecionados.includes(nome)
+        ? selecionados.filter((item) => item !== nome)
+        : [...selecionados, nome],
+    ));
+  }
+
+  if (isLoading) return <p className="text-xs text-muted-foreground">Carregando treinamentos…</p>;
+  if (error) return <p className="text-xs text-destructive">Não foi possível carregar os cursos.</p>;
+  if (treinamentos.length === 0) {
+    return <p className="text-xs italic text-muted-foreground">Nenhum curso cadastrado em Treinamentos › Cursos.</p>;
+  }
+
+  return (
+    <div className="max-h-56 overflow-y-auto rounded-md border border-border divide-y divide-border">
+      {treinamentos.map((curso) => {
+        const ativo = selecionados.includes(curso.nome);
+        return (
+          <button
+            key={curso.id}
+            type="button"
+            onClick={() => toggle(curso.nome)}
+            className={cn(
+              "flex w-full items-center gap-2 px-3 py-2 text-left text-xs transition-colors hover:bg-muted/50",
+              ativo && "bg-primary/5 text-primary",
+            )}
+          >
+            <span className={cn(
+              "flex h-4 w-4 shrink-0 items-center justify-center rounded border",
+              ativo ? "border-primary bg-primary text-primary-foreground" : "border-border",
+            )}>
+              {ativo && <CheckCircle className="h-3 w-3" />}
+            </span>
+            <span className="flex-1">{curso.nome}</span>
+            {!curso.publicado && <span className="text-[10px] text-muted-foreground">Rascunho</span>}
+          </button>
+        );
+      })}
     </div>
   );
 }
@@ -423,11 +610,15 @@ function LinhaChecklist({
   usuariosMap: Record<string, string>;
   onSave: (resposta: string, obs: string) => Promise<unknown>;
 }) {
-  const isSimNao    = item.tipo_resposta === "simnao";
-  const isDocs      = isDocsItem(item);
-  const isEnderecos = isEnderecosItem(item);
-  const prazo       = calcPrazo(item, contrato);
-  const answered    = !!savedResp?.resposta;
+  const isSimNao         = item.tipo_resposta === "simnao";
+  const isDocs           = isDocsItem(item);
+  const isFormaEnvio     = item.row_index === 8;
+  const isEmissaoNota    = item.row_index === 13;
+  const isTreinamentos   = item.row_index === 22;
+  const isSimNaoDetalhe  = ROW_INDEX_SIM_NAO_DETALHE.has(item.row_index);
+  const prazo            = calcPrazo(item, contrato);
+  const answered         = !!savedResp?.resposta;
+  const rotuloItem       = item.row_index === 22 ? "Marque quais treinamentos exigidos" : item.item;
 
   const [localResp, setLocalResp] = useState<string>(savedResp?.resposta ?? "");
   const [localObs,  setLocalObs]  = useState<string>(savedResp?.obs ?? "");
@@ -470,8 +661,19 @@ function LinhaChecklist({
         return `${lista.length} documento${lista.length !== 1 ? "s" : ""}`;
       } catch { return r; }
     }
-    return r;
-  }, [savedResp, isDocs]);
+    return resumoResposta(item.row_index, r);
+  }, [savedResp, isDocs, item.row_index]);
+
+  const respostaValida = useMemo(() => {
+    if (!localResp) return false;
+    if (isEmissaoNota) {
+      const resposta = lerListaComOutro(localResp, OPCOES_EMISSAO_NOTA);
+      return !!resposta.opcao && (resposta.opcao !== "Outro" || !!resposta.outro.trim());
+    }
+    if (!isSimNaoDetalhe) return true;
+    const resposta = lerSimNaoDetalhe(localResp);
+    return !!resposta.opcao && (resposta.opcao !== "Sim" || !!resposta.detalhe.trim());
+  }, [localResp, isEmissaoNota, isSimNaoDetalhe]);
 
   return (
     <div className={cn("transition-colors", answered && "bg-emerald-500/[0.04]")}>
@@ -481,7 +683,7 @@ function LinhaChecklist({
           {answered
             ? <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600" />
             : <Circle className="h-4 w-4 shrink-0 text-muted-foreground/50" />}
-          <span className="min-w-0 flex-1 truncate text-sm font-medium">{item.item}</span>
+          <span className="min-w-0 flex-1 truncate text-sm font-medium">{rotuloItem}</span>
         </button>
 
         <div className="hidden shrink-0 items-center gap-1.5 lg:flex">
@@ -496,7 +698,7 @@ function LinhaChecklist({
         </div>
 
         {/* Sim/Não/N/A direto na linha: um clique salva, sem precisar abrir. */}
-        {isSimNao && !isDocs && !isEnderecos ? (
+        {isSimNao && !isDocs && !isFormaEnvio && !isEmissaoNota && !isTreinamentos && !isSimNaoDetalhe ? (
           <div className="flex shrink-0 gap-1">
             {(["Sim", "Não", "N/A"] as const).map((op) => (
               <button key={op} disabled={state === "saving"} onClick={() => salvar(op, localObs)}
@@ -525,8 +727,14 @@ function LinhaChecklist({
         <div className="space-y-3 border-t border-border/60 bg-muted/20 px-3 py-3">
           <div className="space-y-1">
             <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Resposta</span>
-            {isEnderecos ? (
-              <EnderecosPostos contratoNome={contrato.nome} />
+            {isTreinamentos ? (
+              <TreinamentosMultiSelect value={localResp} onChange={setLocalResp} />
+            ) : isFormaEnvio ? (
+              <SelecaoMultiplaComOutro value={localResp} onChange={setLocalResp} opcoes={OPCOES_FORMA_ENVIO} />
+            ) : isEmissaoNota ? (
+              <ListaComOutro value={localResp} onChange={setLocalResp} />
+            ) : isSimNaoDetalhe ? (
+              <SimNaoComDetalhe value={localResp} onChange={setLocalResp} />
             ) : isDocs ? (
               <DocMultiSelect value={localResp} onChange={setLocalResp} />
             ) : isSimNao ? (
@@ -563,7 +771,7 @@ function LinhaChecklist({
                 state === "saved"  && "bg-emerald-600 hover:bg-emerald-600",
                 state === "failed" && "bg-destructive hover:bg-destructive",
               )}
-              disabled={state === "saving" || !localResp}
+              disabled={state === "saving" || !respostaValida}
               onClick={() => salvar(localResp, localObs)}>
               {state === "saving" ? "Salvando…" : state === "saved" ? "✓ Salvo" : state === "failed" ? "✗ Falhou" : "Salvar"}
             </Button>

@@ -11,8 +11,8 @@ import {
 } from "@/lib/implantacao/camposOrigem";
 
 /**
- * SIS-2026-0559 — os 11 itens do checklist que vêm prontos da Capa de Edital e
- * da Grade de Licitações.
+ * Campos do checklist que vêm prontos da Capa de Edital, Grade de Licitações
+ * e Planilha de Custo.
  *
  * O vínculo é o `row_index` de `checklist_items`. Se a planilha do checklist for
  * reimportada e os índices andarem, o painel do topo passaria a gravar a
@@ -20,29 +20,49 @@ import {
  * contra o texto real dos itens lido do banco em 30/09/2026.
  */
 const ITENS_NO_BANCO: Record<number, string> = {
+  3: "Locais de cada posto de trabalho (Endereço)",
+  4: "Escala de horário de postos",
+  25: "Prazo envio treinamentos",
+  27: "EPIs especificados",
+  28: "Insalubridade/periculosidade",
   31: "Data de início do contrato",
+  48: "Data da homologação",
   49: "Data de abertura",
+  50: "Data captação",
   51: "EDITAL",
   52: "Horário",
   53: "Cidade",
   54: "Objeto",
   55: "Empresa",
   56: "Responsável",
+  57: "Posição",
   58: "UF",
+  59: "Status",
+  60: "Fase",
   61: "Valor global",
   62: "Nº pessoas (Quantidade de postos)",
 };
 
 const ORIGEM_COMPLETA: OrigemContrato = {
+  locais_postos: "PORTO ALEGRE: Rua Exemplo, 100",
+  escalas_postos: "SERVENTE 44H 5X2",
+  prazo_envio_treinamentos: "2026-02-15",
+  epis_especificados: "Luva nitrílica e óculos de proteção",
+  insalubridade_periculosidade: "SERVENTE: Insalubridade R$ 320,00",
   data_inicio: "2026-01-31",
+  data_homologacao: "2026-01-20",
   abertura: "2026-01-28 08H30",
+  data_captacao: "2026-01-10",
   edital: "PE 19/2024",
   horario: "08H30",
   cidade: "BENTO GONÇALVES",
   objeto: "SERVIÇOS DE LIMPEZA (NOSSO)",
   empresa: "NASCIMENTO SERVICOS DE LIMPEZA LTDA",
   responsavel: "Lucas de Jesus Silva",
+  posicao: "1º",
   uf: "RS",
+  status: "Ganhamos",
+  fase: "Finalizada",
   valor_global: "3989986.56",
   qtd_postos: 72,
 };
@@ -67,9 +87,9 @@ describe("semDado", () => {
 
 describe("formatarMoeda", () => {
   it("formata o TEXT do banco como real", () => {
-    //   = espaço não separável, que é o que o Intl usa entre R$ e o número
-    expect(formatarMoeda("3989986.56")).toBe("R$ 3.989.986,56");
-    expect(formatarMoeda("1265688.12")).toBe("R$ 1.265.688,12");
+    // O Intl usa um espaço não separável entre R$ e o número.
+    expect(formatarMoeda("3989986.56")).toBe("R$\u00a03.989.986,56");
+    expect(formatarMoeda("1265688.12")).toBe("R$\u00a01.265.688,12");
   });
 
   it("devolve vazio quando não há valor", () => {
@@ -119,7 +139,7 @@ describe("formatarInteiro", () => {
 });
 
 describe("valorFormatado", () => {
-  it("resolve os 11 campos de um contrato com Capa e Grade completas", () => {
+  it("resolve os 21 campos de um contrato com todas as origens completas", () => {
     const valores = CAMPOS_ORIGEM.map((c) => valorFormatado(c, ORIGEM_COMPLETA));
     expect(valores.every((v) => v !== "")).toBe(true);
   });
@@ -141,9 +161,9 @@ describe("valorFormatado", () => {
 });
 
 describe("integridade do mapa de campos", () => {
-  it("cobre exatamente os 11 itens marcados na planilha do chamado", () => {
-    expect(CAMPOS_ORIGEM).toHaveLength(11);
-    expect(ROW_INDEX_NO_TOPO.size).toBe(11);
+  it("cobre os 11 campos anteriores e os 10 da nova planilha", () => {
+    expect(CAMPOS_ORIGEM).toHaveLength(21);
+    expect(ROW_INDEX_NO_TOPO.size).toBe(21);
   });
 
   it("cada row_index aponta pro item que o banco tem nesse índice", () => {
@@ -157,9 +177,11 @@ describe("integridade do mapa de campos", () => {
     expect(new Set(CAMPOS_ORIGEM.map((c) => c.chave)).size).toBe(CAMPOS_ORIGEM.length);
   });
 
-  it("puxa EDITAL, Horário e Cidade da Grade; o resto da Capa", () => {
+  it("distribui os campos pelas três fontes corretas", () => {
     const daGrade = CAMPOS_ORIGEM.filter((c) => c.fonte === "grade").map((c) => c.chave);
-    expect(daGrade.sort()).toEqual(["cidade", "edital", "horario"]);
-    expect(CAMPOS_ORIGEM.filter((c) => c.fonte === "capa")).toHaveLength(8);
+    expect(daGrade.sort()).toEqual(["cidade", "data_captacao", "edital", "fase", "horario", "posicao"]);
+    expect(CAMPOS_ORIGEM.filter((c) => c.fonte === "capa")).toHaveLength(12);
+    expect(CAMPOS_ORIGEM.filter((c) => c.fonte === "planilha").map((c) => c.chave).sort())
+      .toEqual(["escalas_postos", "insalubridade_periculosidade", "locais_postos"]);
   });
 });

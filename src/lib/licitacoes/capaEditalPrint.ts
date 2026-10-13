@@ -86,6 +86,8 @@ export function gerarHtmlCapaEdital(c: CapaEdital, empresaNome?: string): string
     ["Diluição de verbas (meses)", c.diluicao_meses],
     ["Conta vinculada", c.conta_vinculada],
     ["Conta vinculada — quem abre", c.conta_vinculada_quem_abre],
+    ["Prazo para envio dos treinamentos", c.prazo_envio_treinamentos],
+    ["EPIs especificados no edital", c.epis_especificados],
   ];
 
   const resultado: Campo[] = [

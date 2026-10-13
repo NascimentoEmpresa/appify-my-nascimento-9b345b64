@@ -24,15 +24,25 @@ import {
 import type { Resposta } from "@/hooks/useImplantacao";
 
 const ICONES: Record<number, typeof FileText> = {
+  3: MapPin,
+  4: Clock,
+  25: CalendarClock,
+  27: FileText,
+  28: FileSignature,
   31: CalendarDays,
+  48: CalendarDays,
   49: CalendarClock,
+  50: CalendarDays,
   51: FileText,
   52: Clock,
   53: MapPin,
   54: FileSignature,
   55: Building2,
   56: User,
+  57: Users,
   58: MapIcon,
+  59: CheckCircle2,
+  60: Clock,
   61: CircleDollarSign,
   62: Users,
 };
@@ -84,7 +94,7 @@ export function PainelOrigemContrato({
         <div>
           <h2 className="text-sm font-bold">Dados do processo</h2>
           <p className="text-xs text-muted-foreground">
-            Já preenchidos pela Capa de Edital e pela Grade de Licitações — confira e confirme.
+            Preenchidos pela Capa de Edital, Grade de Licitações e Planilha de Custo — confira e confirme.
           </p>
         </div>
         <div className="ml-auto flex items-center gap-3">
@@ -195,7 +205,7 @@ function BlocoOrigem({
           ) : (
             <p
               className={cn(
-                "break-words text-sm font-semibold leading-snug",
+                "whitespace-pre-line break-words text-sm font-semibold leading-snug",
                 !confirmado && !temOrigem && "font-normal italic text-muted-foreground"
               )}
             >
