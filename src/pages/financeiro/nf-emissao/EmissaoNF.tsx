@@ -67,6 +67,16 @@ import {
 } from "./shared";
 import { podeReabrirNfCancelada } from "./reabrirCancelada";
 import { ItensNfEditor } from "./ItensNfEditor";
+import { FaltasPorDiasSecao } from "./FaltasPorDiasSecao";
+import {
+  LinhaFaltaDias,
+  aplicarFaltasNosItens,
+  itensComFaltasCalculadas,
+  linhaFaltaVazia,
+  linhasParaGravar,
+  reindexarLinhasAoRemoverItem,
+  valorDaLinha,
+} from "./faltasPorDias";
 import { ModeloNfDialog } from "./ModeloNfDialog";
 import { registrarLogNf } from "./registrarLogNf";
 import { HistoricoNfPainel } from "./HistoricoNfPainel";
@@ -680,6 +690,8 @@ function NovaNfDialog({ open, onOpenChange, contratos, nfParaEditar, contratoIdI
   const [cnae, setCnae] = useState("");
   const [nbs, setNbs] = useState("");
   const [observacoes, setObservacoes] = useState("");
+  // SIS-2026-0633: seção "Faltas — cálculo por dias" (só contratos com nf_faltas_por_dias).
+  const [faltasLinhas, setFaltasLinhas] = useState<LinhaFaltaDias[]>([]);
   const [itens, setItens] = useState<(ItemInput & { identificacao: string })[]>([itemVazio(1)]);
   const [anexos, setAnexos] = useState<File[]>([]);
   const [anexosParaRemover, setAnexosParaRemover] = useState<Set<string>>(new Set());
@@ -705,6 +717,7 @@ function NovaNfDialog({ open, onOpenChange, contratos, nfParaEditar, contratoIdI
       setCnae(nfParaEditar.cnae ?? cEdit?.codigo_servico_municipal_cnae ?? "");
       setNbs(nfParaEditar.nbs ?? "");
       setObservacoes(nfParaEditar.observacoes ?? "");
+      setFaltasLinhas(Array.isArray(nfParaEditar.faltas_calculo) ? nfParaEditar.faltas_calculo : []);
       setAnexosParaRemover(new Set());
       setPctFiscais(pctFiscaisDaNf(nfParaEditar));
       // NF já emitida — os percentuais gravados são a fonte, não importa se
@@ -763,6 +776,12 @@ function NovaNfDialog({ open, onOpenChange, contratos, nfParaEditar, contratoIdI
   }, [open, nfParaEditar?.id, itensExistentes]);
 
   const contratoSelecionado = contratos.find((c) => c.id === contratoId) ?? null;
+  const faltasPorDias = !!contratoSelecionado?.nf_faltas_por_dias;
+  // A seção começa com uma linha (item 1), como a tabela da planilha.
+  useEffect(() => {
+    if (open && faltasPorDias && faltasLinhas.length === 0) setFaltasLinhas([linhaFaltaVazia(0)]);
+  }, [open, faltasPorDias, faltasLinhas.length]);
+  const faltasCalculadas = useMemo(() => (faltasPorDias ? itensComFaltasCalculadas(faltasLinhas) : new Set<number>()), [faltasPorDias, faltasLinhas]);
 
   const postosVigentes = useMemo(
     () => (contratoId ? resolverPostosVigentes(planilha, contratoId) : []),
@@ -793,6 +812,11 @@ function NovaNfDialog({ open, onOpenChange, contratos, nfParaEditar, contratoIdI
       setUnitariosPorItem((arr) => arr.map((u, k) => (k === i ? null : u)));
     }
   }
+  // SIS-2026-0633: a soma das linhas de cada item vai para o Faltas do item.
+  function alterarFaltasLinhas(novas: LinhaFaltaDias[]) {
+    setItens((arr) => aplicarFaltasNosItens(arr, faltasLinhas, novas));
+    setFaltasLinhas(novas);
+  }
   function addItem() {
     setItens((arr) => {
       setExpandidos((exp) => new Set(exp).add(arr.length));
@@ -801,6 +825,7 @@ function NovaNfDialog({ open, onOpenChange, contratos, nfParaEditar, contratoIdI
     setUnitariosPorItem((arr) => [...arr, null]);
   }
   function removeItem(i: number) {
+    if (itens.length > 1) setFaltasLinhas((l) => reindexarLinhasAoRemoverItem(l, i));
     setItens((arr) => (arr.length > 1 ? arr.filter((_, k) => k !== i) : arr));
     setUnitariosPorItem((arr) => (arr.length > 1 ? arr.filter((_, k) => k !== i) : arr));
   }
@@ -845,6 +870,7 @@ function NovaNfDialog({ open, onOpenChange, contratos, nfParaEditar, contratoIdI
     setTipoNota("N");
     setDescricao("");
     setObservacoes("");
+    setFaltasLinhas([]);
     setItens([itemVazio(1)]);
     setAnexos([]);
     setAnexosParaRemover(new Set());
@@ -880,6 +906,13 @@ function NovaNfDialog({ open, onOpenChange, contratos, nfParaEditar, contratoIdI
     if (!dataEmissao) return "Informe a Data de Emissão.";
     if (!descricao.trim()) return "Informe a Descrição.";
     if (itensCalculados.length === 0) return "Adicione ao menos um item.";
+    // SIS-2026-0633: linha de faltas por dias precisa de item (local) e de valor do posto.
+    if (faltasPorDias) {
+      for (const l of faltasLinhas) {
+        if (l.dias > 0 && l.item == null) return "Faltas por dias: escolha o local (item da nota) de cada linha com dias.";
+        if (l.dias > 0 && valorDaLinha(l) === 0) return "Faltas por dias: informe o posto (ou o valor do posto) de cada linha com dias.";
+      }
+    }
     if (status === "enviada") {
       // SIS-2026-0578: desconto sem motivo obriga a Controladoria a ligar pro
       // supervisor do contrato — pede a justificativa antes de enviar.
@@ -900,7 +933,7 @@ function NovaNfDialog({ open, onOpenChange, contratos, nfParaEditar, contratoIdI
 
   function preencherDescricao() {
     setDescricao(
-      preencherVariaveis(descricao, { competencia, itens: itensCalculados, codigo_servico: codigoServico, cnae, nbs })
+      preencherVariaveis(descricao, { competencia, itens: itensCalculados.map((c, k) => ({ ...c, identificacao: itens[k]?.identificacao })), codigo_servico: codigoServico, cnae, nbs })
     );
   }
 
@@ -944,6 +977,7 @@ function NovaNfDialog({ open, onOpenChange, contratos, nfParaEditar, contratoIdI
           tipo_nota: tipoNota,
           descricao: descricao || null,
           observacoes: observacoes || null,
+          faltas_calculo: faltasPorDias ? linhasParaGravar(faltasLinhas) : null,
           itens: itensCalculados,
           totais,
           pctFiscais: pctFiscaisParaSalvar,
@@ -969,6 +1003,7 @@ function NovaNfDialog({ open, onOpenChange, contratos, nfParaEditar, contratoIdI
           tipo_nota: tipoNota,
           descricao: descricao || null,
           observacoes: observacoes || null,
+          faltas_calculo: faltasPorDias ? linhasParaGravar(faltasLinhas) : null,
           itens: itensCalculados,
           totais,
           pctFiscais: pctFiscaisParaSalvar,
@@ -1197,6 +1232,7 @@ function NovaNfDialog({ open, onOpenChange, contratos, nfParaEditar, contratoIdI
           postosVigentes={postosVigentes}
           contratoId={contratoId}
           expandidos={expandidos}
+          faltasCalculadas={faltasCalculadas}
           onUpdateItem={updateItem}
           onAddItem={addItem}
           onRemoveItem={removeItem}
@@ -1217,6 +1253,10 @@ function NovaNfDialog({ open, onOpenChange, contratos, nfParaEditar, contratoIdI
               </p>
             </div>
           </div>
+        )}
+
+        {faltasPorDias && (
+          <FaltasPorDiasSecao linhas={faltasLinhas} itens={itens} postosVigentes={postosVigentes} onChange={alterarFaltasLinhas} />
         )}
 
         <section className="rounded-xl border bg-card p-3 space-y-2">
