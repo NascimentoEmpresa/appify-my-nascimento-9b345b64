@@ -384,6 +384,15 @@ const MENU_APROVA_VAGAS_LICITACOES  = "licitacoes_aprova_vagas";
 // como Contratado e manda quem foi contratado (nome + CPF) direto para a
 // Admissão, sem o kanban. Menu fantasma em Recrutamento e Seleção.
 const MENU_CONCLUIR_DIRETO = "recrutamento_concluir_direto";
+// "PODE CANCELAR ADMISSÃO" (14/10/2026, mig 20261014000019): desfaz o fim do
+// processo — o candidato em ADMISSÃO (contratado ou não) vai para Reprovado
+// com o motivo e a vaga Contratado/Concluída volta a ficar aberta. Menu
+// fantasma em Recrutamento e Seleção; a RPC rec_cancelar_admissao repete a regra.
+const MENU_CANCELAR_ADMISSAO = "recrutamento_cancelar_admissao";
+// Vaga encerrada com alguém contratado: é onde o kanban some do drawer e
+// só quem pode cancelar a admissão ainda precisa dele.
+const vagaFechadaComContratado = (st?: string | null) =>
+  st === "Contratado" || st === "Concluída" || String(st ?? "").startsWith("Concluído");
 const MENU_FILTRO_PEND_SELECAO      = "recrutamento_filtro_pend_selecao";
 // Status da Solicitação dirigidos pelo candidato (etapas 3–10).
 const STATUS_PROCESSO = [
@@ -538,6 +547,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
   const podePularSstCompras = can("aprovar", undefined, "recrutamento_pular_sst_compras");
   // Só na tela do Recrutamento (escopo rh): é o fim do processo dele.
   const podeConcluirDireto = escopo === "rh" && can("aprovar", undefined, MENU_CONCLUIR_DIRETO);
+  const podeCancelarAdmissao = escopo === "rh" && can("aprovar", undefined, MENU_CANCELAR_ADMISSAO);
 
   // ── Estado ─────────────────────────────────────────────────────
   const [view, setView]               = useState<"tabela" | "kanban">("tabela");
@@ -1664,6 +1674,29 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
     if (drawerId) loadCandidatos(drawerId);
   };
 
+  // ── Cancelar admissão (14/10/2026, mig 20261014000019) ─────────────
+  // Tudo numa RPC: o candidato vai para Reprovado, sai das Novas Admissões
+  // (RH), o pedido de login não entregue é cancelado e a vaga reabre — passos
+  // que, soltos pela tela, esbarrariam na trava da vaga no meio do caminho.
+  const [cancelAdmModal, setCancelAdmModal] = useState<{ id: number; nome: string; contratado: boolean } | null>(null);
+  const [cancelAdmMotivo, setCancelAdmMotivo] = useState("");
+  const [cancelandoAdm, setCancelandoAdm] = useState(false);
+
+  const confirmarCancelarAdmissao = async () => {
+    if (!cancelAdmModal) return;
+    if (cancelAdmMotivo.trim().length < 10) { toast("Informe o motivo do cancelamento (mínimo 10 caracteres).", "err"); return; }
+    setCancelandoAdm(true);
+    const { error } = await sb.rpc("rec_cancelar_admissao", { p_candidato: cancelAdmModal.id, p_motivo: cancelAdmMotivo.trim() });
+    setCancelandoAdm(false);
+    if (error) { toast("Erro ao cancelar a admissão: " + error.message, "err"); return; }
+    setCancelAdmModal(null); setCancelAdmMotivo("");
+    toast("Admissão cancelada — candidato em Reprovado e vaga reaberta.", "ok");
+    // Recarrega a vaga (status reaberto) e os candidatos de uma vez.
+    if (drawerId) verDetalhe(drawerId);
+    loadStats();
+    loadLista();
+  };
+
   // ── Jurídico: "OK e passar" (14/10/2026, mig 20261014000004) ─────────
   // O Jurídico não aprova nem reprova mais: dá o parecer e o candidato segue
   // para a Entrevista. Sem nada a apontar, um clique: "Tudo certo".
@@ -2246,6 +2279,15 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
         </button>,
       );
     }
+    // Vaga concluída: o kanban (onde fica o "Cancelar admissão") só abre por aqui.
+    if (podeCancelarAdmissao && vagaFechadaComContratado(s.status)) {
+      btns.push(
+        <button key="cadm" onClick={abrirKanbanCand}
+          style={{ padding: "5px 12px", borderRadius: 8, border: "1px solid #fecaca", background: "#fef2f2", color: "#b91c1c", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+          <Ic i={Ban} />Cancelar admissão…
+        </button>,
+      );
+    }
     // Editar e apagar a solicitação. Ficam antes do histórico e valem em
     // QUALQUER status: a correção de um pedido errado (cargo trocado, contrato
     // errado) costuma chegar justamente depois de ele ter andado.
@@ -2584,7 +2626,17 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
                                 <button onClick={() => pedirMoverCand(c, "ENTREVISTA GESTOR")} style={{ ...avancaBtn, background: "#6366f1" }}>Entrevista c/ Gestor</button>
                                 <button onClick={() => pedirMoverCand(c, "APROVADO")} style={bSkip}>Pular Gestor →</button>
                               </>) : etapa === "ADMISSÃO" ? (
-                                podeRecrutar && !c.enviado_admissao_em && <button onClick={() => enviarAdmissao(c)} style={{ ...avancaBtn, background: "#16a34a" }}>✓ Contratar (enviar à Admissão)</button>
+                                <>
+                                  {podeRecrutar && !c.enviado_admissao_em && <button onClick={() => enviarAdmissao(c)} style={{ ...avancaBtn, background: "#16a34a" }}>✓ Contratar (enviar à Admissão)</button>}
+                                  {/* Cancelar admissão (mig 20261014000019): vale mesmo depois de
+                                      contratado e com a vaga concluída — volta a pessoa para
+                                      Reprovado e reabre a vaga. */}
+                                  {podeCancelarAdmissao && (
+                                    <button onClick={() => { setCancelAdmMotivo(""); setCancelAdmModal({ id: c.id, nome: c.nome || "Candidato", contratado: !!c.enviado_admissao_em }); }}
+                                      title="Cancelar a admissão: o candidato vai para Reprovado e a vaga volta a ficar aberta"
+                                      style={{ ...bSkip, color: "#b91c1c", borderColor: "#fecaca" }}><Ic i={Ban} />Cancelar admissão</button>
+                                  )}
+                                </>
                               ) : etapa === ETAPA_SST_COMPRAS ? (
                                 // Aqui o Recrutamento só ACOMPANHA. Quem aprova é
                                 // cada setor no SEU módulo (SST › ASO/Admissão e
@@ -3075,7 +3127,9 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
               <div style={{ flex: 1, overflowY: "auto", minWidth: 0 }}>
                 {drawerSol ? (<>
                   {renderDetalhe(drawerSol)}
-                  {STATUS_PROCESSO.includes(drawerSol.status) && (
+                  {/* Vaga já concluída: o kanban só volta para quem pode
+                      cancelar a admissão (mig 20261014000019). */}
+                  {(STATUS_PROCESSO.includes(drawerSol.status) || (podeCancelarAdmissao && vagaFechadaComContratado(drawerSol.status))) && (
                     <div style={{ padding: "0 20px 20px" }}>
                       <div style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 12, padding: "12px 14px" }}>
                         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
@@ -3610,6 +3664,31 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
             <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 8 }}>
               <button onClick={() => setBlockModal(null)} style={{ padding: "8px 14px", borderRadius: 10, border: "1px solid #e2e8f0", background: "#fff", color: "#475569", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Cancelar</button>
               <button onClick={confirmarBloqueio} style={{ padding: "8px 14px", borderRadius: 10, border: "none", background: "#dc2626", color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Bloquear CPF</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {cancelAdmModal && (
+        <div className="rec-modal-ov" style={{ zIndex: 950 }} onClick={e => { if (e.target === e.currentTarget && !cancelandoAdm) setCancelAdmModal(null); }}>
+          <div className="rec-modal" style={{ maxWidth: 480 }} onClick={e => e.stopPropagation()}>
+            <div style={{ fontSize: 17, fontWeight: 800, marginBottom: 2, color: "#b91c1c" }}><Ic i={Ban} />Cancelar admissão</div>
+            <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 12 }}>
+              {cancelAdmModal.nome} · {cancelAdmModal.contratado ? "já contratado (na Admissão do RH)" : "na coluna Admissão"}
+            </div>
+            <div style={{ fontSize: 12, color: "#475569", background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 8, padding: "8px 10px", marginBottom: 12, lineHeight: 1.5 }}>
+              O candidato vai para <b>Reprovado / Desistência</b> e sai das Novas Admissões (RH). Se a vaga estava concluída, ela <b>volta a ficar aberta</b> para seleção. O pedido de login do ERP ainda não entregue é cancelado junto.
+            </div>
+            <label style={{ fontSize: 11, fontWeight: 700, color: "#475569" }}>Motivo do cancelamento *</label>
+            <textarea value={cancelAdmMotivo} onChange={e => setCancelAdmMotivo(e.target.value)} rows={3}
+              placeholder="Ex.: não compareceu para assinar o contrato, reprovado no exame admissional…"
+              style={{ width: "100%", marginTop: 6, padding: "8px 10px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: 13, resize: "vertical" }} />
+            <div style={{ fontSize: 10.5, color: "#94a3b8", marginTop: 6 }}>
+              Fica no card do candidato e no histórico da vaga.
+            </div>
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 16 }}>
+              <button onClick={() => setCancelAdmModal(null)} disabled={cancelandoAdm} style={{ padding: "7px 14px", borderRadius: 8, background: "#fff", border: "1px solid #e2e8f0", color: "#475569", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Voltar</button>
+              <button onClick={confirmarCancelarAdmissao} disabled={cancelandoAdm} style={{ padding: "7px 14px", borderRadius: 8, background: "#dc2626", border: "none", color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer", opacity: cancelandoAdm ? .6 : 1 }}>{cancelandoAdm ? "Cancelando…" : "Cancelar admissão"}</button>
             </div>
           </div>
         </div>
