@@ -265,3 +265,6 @@ Medido em 13/10/2026, com a pilha de pé nos **dois** bancos:
   daqui.
 - **A janela de 1 minuto do espelho de anexos.** O banco tem perda zero; o
   anexo tem até um minuto. Ver `docs/ha-anexos-entre-nos.md`.
+
+O roteiro do corte (fases, comandos e volta atrás) está em
+[`docs/ha-corte-roteiro.md`](../../docs/ha-corte-roteiro.md).
