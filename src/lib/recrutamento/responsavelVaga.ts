@@ -21,6 +21,18 @@ export const STATUS_COM_RESPONSAVEL = [
   "Encaminhado para SST (ASO)", "ASO Aprovado - Aguardando Informe de EPIs", "Aguardando Confirmação Compras",
 ] as const;
 
+/**
+ * Filas de aprovação (antes do Recrutamento): vaga aqui não tem responsável
+ * nem entra no filtro por pessoa. 14/10/2026 — "pesquiso a vaga 261 e aparece
+ * a Giovana, mas filtrando a Giovana ela não aparece": o filtro por pessoa
+ * prendia nas vagas EM ANDAMENTO e escondia as que ela já fechou (Contratado,
+ * Concluído). Por pessoa vale tudo menos estas filas; "sem responsável" segue
+ * só nas em andamento (senão entra todo o legado anterior ao responsável).
+ */
+export const STATUS_FILA_APROVACAO = ["Pendente Operacional", "Pendente Analista", "Pendente Diretoria"] as const;
+export const vagaForaDaFila = (status: string | null | undefined) =>
+  !!status && !(STATUS_FILA_APROVACAO as readonly string[]).includes(status);
+
 export const vagaTemResponsavel = (status: string | null | undefined) =>
   !!status && (STATUS_COM_RESPONSAVEL as readonly string[]).includes(status);
 
@@ -44,8 +56,9 @@ export function passaNoFiltro(
 ): boolean {
   const alvo = alvoDoFiltro(filtro, meuId);
   if (alvo.tipo === "todos") return true;
-  if (!vagaTemResponsavel(vaga.status)) return false; // Operacional e encerradas não entram
-  return alvo.tipo === "sem" ? !responsavelId : responsavelId === alvo.id;
+  // "Sem responsável": só em andamento. Por pessoa: tudo o que ela cuidou, menos as filas de aprovação.
+  if (alvo.tipo === "sem") return vagaTemResponsavel(vaga.status) && !responsavelId;
+  return vagaForaDaFila(vaga.status) && responsavelId === alvo.id;
 }
 
 /**

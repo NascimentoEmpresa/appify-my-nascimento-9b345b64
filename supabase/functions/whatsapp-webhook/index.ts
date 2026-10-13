@@ -355,6 +355,45 @@ async function enviarInterativo(to: string, interactive: any): Promise<string | 
   return data?.messages?.[0]?.id ?? null;
 }
 
+// Mensagens do atendente guardadas como 'pendente' por estarem fora da janela
+// de 24h (whatsapp-enviar, mig 20261014000015): o contato acabou de escrever,
+// a janela abriu — saem agora, na ordem. Mais de 7 dias esperando: expira
+// ('cancelada'), a conversa já esfriou. Devolve quantas saíram.
+async function enviarPendentes(conversaId: string, to: string): Promise<number> {
+  const limite = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+  await admin.from("WA_MENSAGEM").update({ status: "cancelada" })
+    .eq("conversa_id", conversaId).eq("status", "pendente").lt("criada_em", limite);
+  const { data: pend } = await admin.from("WA_MENSAGEM")
+    .select("id, texto, payload").eq("conversa_id", conversaId).eq("status", "pendente")
+    .order("criada_em", { ascending: true }).limit(10);
+  let enviadas = 0;
+  for (const m of pend ?? []) {
+    // Reserva antes de mandar: duas entregas do webhook não mandam em dobro.
+    const { data: reservada } = await admin.from("WA_MENSAGEM").update({ status: "enviada" })
+      .eq("id", m.id).eq("status", "pendente").select("id").maybeSingle();
+    if (!reservada) continue;
+    const botoes = Array.isArray((m.payload as any)?.botoes) ? (m.payload as any).botoes : [];
+    const corpo = botoes.length
+      ? { messaging_product: "whatsapp", to, type: "interactive", interactive: { type: "button", body: { text: m.texto ?? "" },
+          action: { buttons: botoes.slice(0, 3).map((b: any) => ({ type: "reply", reply: { id: String(b.id), title: String(b.titulo).slice(0, 20) } })) } } }
+      : { messaging_product: "whatsapp", to, type: "text", text: { body: m.texto ?? "" } };
+    const res = await fetch(`${GRAPH}/${PHONE_NUMBER_ID}/messages`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${WA_TOKEN}`, "Content-Type": "application/json" },
+      body: JSON.stringify(corpo),
+    });
+    const data = await res.json().catch(() => ({}));
+    const waId = res.ok ? data?.messages?.[0]?.id ?? null : null;
+    const { pendente: _p, ...resto } = (m.payload as Record<string, unknown>) ?? {};
+    await admin.from("WA_MENSAGEM").update({
+      status: waId ? "enviada" : "erro", wa_message_id: waId, criada_em: new Date().toISOString(),
+      payload: waId ? resto : { ...resto, erro: { codigo: data?.error?.code ?? null, titulo: data?.error?.message ?? "falha ao enviar", detalhe: data?.error?.error_data?.details ?? null } },
+    }).eq("id", m.id);
+    if (waId) enviadas++;
+  }
+  return enviadas;
+}
+
 // Monta e envia o menu: até 3 opções viram botões; 4–10 viram lista.
 // URL temporária da imagem configurada no menu. A Meta busca o arquivo na
 // hora do envio, então não precisa subir mídia a cada mensagem — e o bucket
@@ -618,9 +657,13 @@ Deno.serve(async (req) => {
         // conversa. Ele não é `interactive` (aquele é do menu do bot) e vinha
         // sendo gravado sem resposta nenhuma: a pessoa clicava "Olá, Bom dia!"
         // e ficava falando sozinha até um humano ver.
-        if (conversa.bot_ativo && (((msg.type === "text" || msg.type === "button") && texto) || (msg.type === "interactive" && replyId))) {
-          tarefas.push(processarBot(conversa.id, contato.id, from, msg.type, texto, replyId));
-        }
+        // Primeiro o que o atendente deixou pendente (fora da janela); se saiu
+        // alguma, quem conduz é o atendente — o bot não manda o menu por cima.
+        const vaiProBot = conversa.bot_ativo && (((msg.type === "text" || msg.type === "button") && texto) || (msg.type === "interactive" && replyId));
+        tarefas.push((async () => {
+          const saiu = await enviarPendentes(conversa.id, from).catch((e) => { console.error("pendentes:", e); return 0; });
+          if (saiu === 0 && vaiProBot) await processarBot(conversa.id, contato.id, from, msg.type, texto, replyId);
+        })());
       }
 
       // Status de mensagens enviadas. Em `failed` a Meta diz POR QUE falhou em
