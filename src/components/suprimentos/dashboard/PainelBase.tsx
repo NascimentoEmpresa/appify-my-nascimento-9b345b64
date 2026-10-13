@@ -38,6 +38,118 @@ export const SERIES = {
 /** Cinza recessivo de grade e eixo — nunca compete com a marca de dado. */
 export const CINZA_GRADE = "#e2e8f0";
 
+/**
+ * Encurta rótulo de categoria para caber em UMA linha.
+ *
+ * Por que não cortar simplesmente o fim: os contratos compartilham o começo e
+ * se distinguem pelo número. "UFRGS - LIMPEZA GERAL - 047/2022",
+ * "UFRGS - LIMPEZA - 020/2022" e "UFRGS - JARDINAGEM - 062/2025" cortados no
+ * fim viram três rótulos iguais. Então a cauda `NNN/AAAA` é preservada inteira
+ * e a elipse entra no meio.
+ */
+export function abreviarRotulo(texto: string, maximo: number): string {
+  const t = String(texto ?? "").replace(/\s+/g, " ").trim();
+  if (t.length <= maximo) return t;
+
+  // Número do contrato no fim: "- 047/2022", "- 98672/2025", "- 2026/02".
+  const m = /[\s-]([\w.]*\d+[/-]\d{2,4})\s*$/.exec(t);
+  const cauda = m ? m[1] : "";
+  const inicio = maximo - cauda.length - 1;
+
+  if (cauda && inicio >= 6) {
+    return `${t.slice(0, inicio).replace(/[\s-]+$/, "")}…${cauda}`;
+  }
+  return `${t.slice(0, Math.max(1, maximo - 1)).replace(/[\s-]+$/, "")}…`;
+}
+
+/**
+ * Tick de eixo de categoria em UMA linha.
+ *
+ * O tick padrão do recharts quebra rótulo longo em várias linhas; com muitas
+ * categorias numa altura fixa, as linhas de um rótulo invadem o rótulo de
+ * cima. Forçar uma linha só elimina a colisão por construção, em vez de
+ * depender de acertar largura e altura para cada gráfico.
+ *
+ * O nome completo continua acessível: no `<title>` (tooltip nativa do
+ * navegador ao parar o mouse) e no tooltip do próprio gráfico.
+ */
+export function TickCategoria({
+  x,
+  y,
+  payload,
+  maximo = 30,
+  tamanhoFonte = 10,
+}: {
+  x?: number;
+  y?: number;
+  payload?: { value?: string | number };
+  maximo?: number;
+  tamanhoFonte?: number;
+}) {
+  const completo = String(payload?.value ?? "");
+  return (
+    <text
+      x={x}
+      y={y}
+      dy={4}
+      textAnchor="end"
+      fill="#334155"
+      fontSize={tamanhoFonte}
+    >
+      <title>{completo}</title>
+      {abreviarRotulo(completo, maximo)}
+    </text>
+  );
+}
+
+/** Mesma ideia no eixo horizontal: uma linha só, inclinada para caber. */
+export function TickCategoriaInclinado({
+  x,
+  y,
+  payload,
+  maximo = 22,
+  tamanhoFonte = 9,
+  inclinacao = -35,
+}: {
+  x?: number;
+  y?: number;
+  payload?: { value?: string | number };
+  maximo?: number;
+  tamanhoFonte?: number;
+  inclinacao?: number;
+}) {
+  const completo = String(payload?.value ?? "");
+  return (
+    <text
+      x={x}
+      y={y}
+      dy={10}
+      textAnchor="end"
+      fill="#334155"
+      fontSize={tamanhoFonte}
+      transform={`rotate(${inclinacao}, ${x}, ${y})`}
+    >
+      <title>{completo}</title>
+      {abreviarRotulo(completo, maximo)}
+    </text>
+  );
+}
+
+/**
+ * Eixo de valor em reais, compacto e sem mentir sobre a escala.
+ *
+ * `Math.round(v / 1000) + "k"` zera todo valor abaixo de R$ 500 — era por isso
+ * que o eixo do "Saving por Contrato" mostrava "0k" em todas as marcas, com
+ * barras visivelmente diferentes entre si.
+ */
+export function formatarEixoMoeda(valor: number | string): string {
+  const n = Number(valor) || 0;
+  const abs = Math.abs(n);
+  if (abs >= 1_000_000) return `${(n / 1_000_000).toLocaleString("pt-BR", { maximumFractionDigits: 1 })} mi`;
+  if (abs >= 1_000) return `${(n / 1_000).toLocaleString("pt-BR", { maximumFractionDigits: abs >= 10_000 ? 0 : 1 })} mil`;
+  return n.toLocaleString("pt-BR", { maximumFractionDigits: 0 });
+}
+
 export function CartaoIndicador({
   titulo,
   valor,
