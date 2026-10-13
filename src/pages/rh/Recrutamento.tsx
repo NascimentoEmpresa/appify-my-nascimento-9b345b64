@@ -30,7 +30,7 @@ import { StatusVagaBadge } from "@/components/recrutamento/StatusVagaBadge";
 import { useEtapasDasVagas } from "@/hooks/useEtapasDasVagas";
 import { useResponsaveisDasVagas, listarResponsaveisPossiveis, definirResponsavelVaga, assumirVaga, contarVagasPorResponsavel } from "@/hooks/useResponsaveisDasVagas";
 import { NIVEIS_JURIDICO, NIVEL_OK, eventoParecerJuridico, nivelJuridico, seloJuridico } from "@/lib/recrutamento/parecerJuridico";
-import { STATUS_COM_RESPONSAVEL, alvoDoFiltro, devePerguntarAssumir, textoConfirmarAssumir, vagaTemResponsavel, type FiltroResponsavel } from "@/lib/recrutamento/responsavelVaga";
+import { STATUS_COM_RESPONSAVEL, STATUS_FILA_APROVACAO, alvoDoFiltro, devePerguntarAssumir, textoConfirmarAssumir, vagaTemResponsavel, type FiltroResponsavel } from "@/lib/recrutamento/responsavelVaga";
 import { vagaTemEtapa } from "@/lib/recrutamento/statusDetalhado";
 import { EnxovalAdmissao, type EnxovalAdmissaoHandle } from "@/components/recrutamento/EnxovalAdmissao";
 
@@ -784,8 +784,10 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const aplicarResp = useCallback((q: any) => {
     if (alvoResp.tipo === "todos") return q;
-    q = q.in("status", [...STATUS_COM_RESPONSAVEL]);
-    return alvoResp.tipo === "sem" ? q.is("resp_vaga", null) : q.eq("resp_vaga.responsavel_id", alvoResp.id);
+    // Sem responsável: só em andamento. Por pessoa: inclusive as que ela já fechou (Contratado,
+    // Concluído…) — só as filas de aprovação ficam de fora (responsavelVaga.ts).
+    if (alvoResp.tipo === "sem") return q.in("status", [...STATUS_COM_RESPONSAVEL]).is("resp_vaga", null);
+    return q.not("status", "in", `(${STATUS_FILA_APROVACAO.map((s) => `"${s}"`).join(",")})`).eq("resp_vaga.responsavel_id", alvoResp.id);
   }, [alvoResp]);
 
   const loadLista = useCallback(async () => {
