@@ -20,6 +20,8 @@ export interface ItemTv {
   id: string; tipo: TipoItem; titulo: string | null; url: string | null; arquivo: string | null;
   texto: string | null; cor: string | null; duracao_seg: number;
   relatorio?: string | null; rel_periodo?: PeriodoTv | null;
+  /** TVs gerenciais: o visual (painel escuro igual ao HTML, claro, gráficos grandes) — mig 20261014000002. */
+  rel_visual?: string | null;
   // Só na PRÉVIA da gestão (Sistemas › TV's): contrato do relatório, o nome
   // dele para o cabeçalho e o arquivo local ainda não enviado (blob:).
   rel_contrato?: string | null; rel_contrato_nome?: string | null; url_previa?: string | null;
@@ -58,7 +60,7 @@ export const RELATORIOS_TV: { slug: string; titulo: string; paginas: number; sem
   // diretoria do documento "Indicadores das TVs" — indicadores com meta e
   // semáforo (src/lib/tv/gerencial.ts). Sem período nem contrato: cada
   // indicador tem a sua janela, parametrizada em TV's › Indicadores gerenciais.
-  ...PAINEIS_GERENCIAIS.map((p) => ({ slug: p.slug, titulo: `TV ${p.titulo}`, paginas: 3, semFiltros: true, grupo: p.diretoria })),
+  ...PAINEIS_GERENCIAIS.map((p) => ({ slug: p.slug, titulo: `TV ${p.titulo}`, paginas: 2, semFiltros: true, grupo: p.diretoria })),
 ];
 export const paginasRelatorioTv = (slug: string | null | undefined) => RELATORIOS_TV.find((r) => r.slug === slug)?.paginas ?? 1;
 export const tituloRelatorioTv = (slug: string | null | undefined) => RELATORIOS_TV.find((r) => r.slug === slug)?.titulo ?? "Relatório";

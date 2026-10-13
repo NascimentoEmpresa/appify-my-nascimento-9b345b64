@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
-  PAINEIS_GERENCIAIS, desvio, detalhesDaPagina, formatarValor, frase, indicadoresDaTv, lancamentoAtrasado, ordenarParaTv, paginasGerencial,
+  PAINEIS_GERENCIAIS, colunasDaTela, dadosDoGrafico, desvio, formatarValor, frase, graficoDo, indicadoresDaTela, indicadoresDaTv, lancamentoAtrasado, nomeCurto,
+  notaSubindicadores, ordenarParaTv, paginasPainel, visualDoItem,
   placar, situacao, subindicadores, textoMeta, type IndicadorGerencial, type PainelGerencial,
 } from "@/lib/tv/gerencial";
 import { RELATORIOS_TV, relatorioTemFiltros } from "@/lib/tv/tv";
@@ -101,16 +102,42 @@ describe("páginas da TV e subindicadores", () => {
     expect(subindicadores(p, "rh_obrigacoes").map((i) => i.codigo)).toEqual(["rh_ob_folhas"]);
     expect(subindicadores(p, null).map((i) => i.codigo)).toEqual(["op_feedbacks"]);
   });
-  it("'Onde agir' só existe para os fora da meta com detalhamento, 2 por página", () => {
-    const tudoBem = painel([ind({ valor: 0, detalhe: [{ nome: "X", valor: 1 }] })]);
-    expect(paginasGerencial(tudoBem).map((p) => p.chave)).toEqual(["ger-resumo"]);
-
-    const ruins = [1, 2, 3].map((k) => ind({ codigo: `r${k}`, valor: 10 * k, detalhe: [{ nome: "Contrato", valor: k }] }));
-    const p = painel([...ruins, ind({ codigo: "semdet", valor: 99 })]);
-    expect(paginasGerencial(p).map((x) => x.chave)).toEqual(["ger-resumo", "ger-detalhe-1", "ger-detalhe-2"]);
-    expect(detalhesDaPagina(p, "ger-detalhe-1").map((i) => i.codigo)).toEqual(["r3", "r2"]);
-    expect(detalhesDaPagina(p, "ger-detalhe-2").map((i) => i.codigo)).toEqual(["r1"]);
-    expect(paginasDoRelatorio({ tipo: "gerencial", contrato: null, ...p })).toHaveLength(3);
+  it("visual do HTML: o painel inteiro numa tela (até 8); gráficos grandes, 4 por tela (7 → 4 + 3); item antigo/vazio toca o painel escuro", () => {
+    const sete = painel(Array.from({ length: 7 }, (_, k) => ind({ codigo: `i${k}`, valor: k, ordem: k })));
+    expect(paginasPainel(sete, "painel")).toEqual([{ chave: "painel-1", titulo: "Indicadores" }]);
+    expect(indicadoresDaTela(sete, "painel", "painel-1")).toHaveLength(7);
+    expect(colunasDaTela("painel", 7)).toBe(4);
+    expect(colunasDaTela("painel", 5)).toBe(3);
+    expect(colunasDaTela("graficos", 4)).toBe(2);
+    expect(paginasPainel(sete, "graficos").map((x) => x.titulo)).toEqual(["Tela 1 de 2", "Tela 2 de 2"]);
+    expect(indicadoresDaTela(sete, "graficos", "painel-1")).toHaveLength(4);
+    expect(indicadoresDaTela(sete, "graficos", "painel-2")).toHaveLength(3);
+    expect(paginasPainel(painel([ind({}), ind({})]), "painel")).toEqual([{ chave: "painel-1", titulo: "Indicadores" }]);
+    expect(visualDoItem(null)).toBe("painel");
+    expect(visualDoItem("classico")).toBe("painel");
+    expect(visualDoItem("graficos")).toBe("graficos");
+    expect(paginasDoRelatorio({ tipo: "gerencial", contrato: null, visual: "graficos", ...sete })).toHaveLength(2);
+  });
+  it("cada indicador com o tipo de gráfico do HTML", () => {
+    const postos = ind({ codigo: "op_postos", detalhe: [{ nome: "IRGA", valor: 39, a: 91, b: 52 } as never] });
+    expect(graficoDo(postos)).toEqual({ tipo: "agrupado", series: ["Contratados", "Cobertos"] });
+    // agrupado sem as duas séries (lançado à mão) cai para colunas
+    expect(graficoDo(ind({ codigo: "op_postos", detalhe: [{ nome: "X", valor: 1 }] })).tipo).toBe("colunas");
+    expect(graficoDo(ind({ codigo: "op_turnover" })).tipo).toBe("linha");
+    expect(graficoDo(ind({ codigo: "lic_perdidas" })).tipo).toBe("rosca");
+    expect(graficoDo(ind({ codigo: "op_lucratividade" })).tipo).toBe("combo");
+    expect(graficoDo(ind({ codigo: "sup_compras_vencidas" })).tipo).toBe("colunas");
+  });
+  it("rosca: só fatias positivas e o resto em Outros", () => {
+    const i = ind({ codigo: "fin_glosas", detalhe: [1, 2, 3, 4, 5, 6, 7, 0].map((v, k) => ({ nome: `f${k}`, valor: v })) });
+    const d = dadosDoGrafico(i, 4);
+    expect(d.map((x) => x.nome)).toEqual(["f0", "f1", "f2", "Outros"]);
+    expect(d[3].valor).toBe(4 + 5 + 6 + 7);
+  });
+  it("nome curto no eixo e a nota dos subindicadores", () => {
+    expect(nomeCurto("1108 - TRIUNFO COLETA DE LIXO 89.2026")).toBe("TRIUNFO COLETA DE LIXO");
+    expect(nomeCurto("UFRGS - LIMPEZA - 020/2022")).toBe("UFRGS - LIMPEZA");
+    expect(notaSubindicadores(painel([ind({ nome: "A" }), ind({ nome: "Feedbacks em atraso", na_tv: false })]))).toMatch(/Feedbacks em atraso/);
   });
   it("placar por situação", () => {
     const pl = placar([ind({ valor: 0 }), ind({ valor: 9 }), ind({ valor: 9 }), ind({ valor: null })]);

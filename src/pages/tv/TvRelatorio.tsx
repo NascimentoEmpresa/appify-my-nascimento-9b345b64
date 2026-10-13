@@ -12,8 +12,8 @@ import { PaginaVagasAndamento, PaginaVagasContratos, PaginaVagasResumo } from ".
 import { PaginaTurnoverContratos, PaginaTurnoverLimites, PaginaTurnoverResumo } from "./relatorio/paginasTurnover";
 import { PaginaLicitacaoAberturas, PaginaLicitacaoMapa, PaginaLicitacaoResponsaveis, PaginaLicitacaoResumo } from "./relatorio/paginasLicitacao";
 import { PaginaTrnCursos, PaginaTrnEngajamento, PaginaTrnGeral } from "./relatorio/paginasTreinamentos";
-import { PaginaGerencialDetalhe, PaginaGerencialResumo } from "./relatorio/paginasGerencial";
-import { ehPainelGerencial, indicadoresDaTv, painelGerencial, placar, type PainelGerencial } from "@/lib/tv/gerencial";
+import { TelaPainelGerencial, fundoDoPainel } from "./relatorio/paginasGerencialPainel";
+import { ehPainelGerencial, indicadoresDaTv, painelGerencial, placar, visualDoItem, type PainelGerencial } from "@/lib/tv/gerencial";
 
 // =====================================================================
 // Relatório do ERP na TV (Sistemas › TV's)
@@ -131,7 +131,9 @@ export function TvRelatorio({ item, token, previa = false }: { item: ItemTv; tok
   // A TV antiga (antes da mig 20261008000004) mandava o Turn-over como sistema padrão: segue funcionando.
   const slug = item.relatorio ?? (dados?.tipo === "sistema" ? dados.slug : null);
   const { cor, Icone } = aparencia(slug);
-  const paginas = useMemo(() => (dados ? paginasDoRelatorio(dados) : []), [dados]);
+  // TVs gerenciais: o visual do item (mig 20261014000002) decide quantos indicadores por tela.
+  const visual = visualDoItem(item.rel_visual);
+  const paginas = useMemo(() => (dados ? paginasDoRelatorio(dados.tipo === "gerencial" ? { ...dados, visual } : dados) : []), [dados, visual]);
   const duracaoMs = tempoDaPaginaMs(item.duracao_seg, paginas.length);
   const [pagina, setPagina] = useState(0);
   useEffect(() => { setPagina(0); }, [paginas.length, item.id]);
@@ -158,6 +160,16 @@ export function TvRelatorio({ item, token, previa = false }: { item: ItemTv; tok
     : dados ? new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }) : null;
   const atual = paginas[Math.min(pagina, Math.max(0, paginas.length - 1))]?.chave;
 
+  // TVs gerenciais (SIS-2026-0635): o painel no estilo do protótipo HTML, tela inteira com cabeçalho próprio.
+  if (dados?.tipo === "gerencial" && atual) {
+    return (
+      <Palco fundo={fundoDoPainel(visual)}>
+        <TelaPainelGerencial p={dados} cor={cor} visual={visual} chave={atual} paginas={paginas}
+          pagina={Math.min(pagina, Math.max(0, paginas.length - 1))} duracaoMs={duracaoMs} atualizado={atualizado} />
+      </Palco>
+    );
+  }
+
   return (
     <Palco>
       <Moldura cor={cor} Icone={Icone} titulo={titulo} selos={selos} paginas={paginas.length ? paginas : [{ chave: "-", titulo: "Carregando" }]}
@@ -179,8 +191,6 @@ export function TvRelatorio({ item, token, previa = false }: { item: ItemTv; tok
           : atual === "trn-geral" && dados.tipo === "treinamentos" ? <PaginaTrnGeral p={dados.painel} cor={cor} />
           : atual === "trn-engajamento" && dados.tipo === "treinamentos" ? <PaginaTrnEngajamento p={dados.painel} cor={cor} />
           : atual === "trn-cursos" && dados.tipo === "treinamentos" ? <PaginaTrnCursos p={dados.painel} cor={cor} />
-          : atual === "ger-resumo" && dados.tipo === "gerencial" ? <PaginaGerencialResumo p={dados} cor={cor} />
-          : atual?.startsWith("ger-detalhe") && dados.tipo === "gerencial" ? <PaginaGerencialDetalhe p={dados} chave={atual} />
           : atual === "sistema-detalhe" && dados.tipo === "sistema" ? <PaginaDestaques d={dados} cor={cor} />
           : dados.tipo === "sistema" ? <PaginaResumo d={dados} cor={cor} />
           : <Aviso cor={cor} titulo="Relatório sem página" girando={false} />}
