@@ -87,7 +87,24 @@ services:
       PGRST_DB_USE_LEGACY_GUCS: "false"
 
   storage:
-    image: supabase/storage-api:v1.11.13
+    # A VERSAO AQUI E AMARRADA AO NIVEL DE MIGRATION DA PRODUCAO, nao e "pegar
+    # a mais nova". Medido em 13/10/2026: storage.migrations da producao esta
+    # na 73 (revoke-grants-to-unused-operations), e a de numero 72 chama-se
+    # "drop-bucketid-objname-index" -- a producao DERRUBOU o indice unico
+    # (bucket_id, name) porque os objetos agora sao versionados.
+    #
+    # Com a v1.11.13 (que esperava aquele indice) todo upload morria com
+    #   42P10 there is no unique or exclusion constraint matching the
+    #   ON CONFLICT specification
+    # e o storage-api devolvia na API a frase "insert into objects ... " num
+    # erro 500 generico. Listar e criar bucket funcionavam -- so o upload caia,
+    # que e o caminho que ninguem testa primeiro.
+    #
+    # v1.78.0 ate v1.80.2 trazem exatamente 73 migrations: a imagem nao aplica
+    # NADA no banco restaurado. Ja a v1.81.0 traz a 74
+    # ("unlock-object-versioning") e mudaria o schema para alem da producao.
+    # Ao atualizar: conferir a contagem de migrations da tag ANTES de subir.
+    image: supabase/storage-api:v1.80.2
     restart: unless-stopped
     # host.docker.internal nao existe por padrao no Linux; host-gateway o
     # aponta para o gateway DESTA rede. Sem isto, o endereco do HAProxy
