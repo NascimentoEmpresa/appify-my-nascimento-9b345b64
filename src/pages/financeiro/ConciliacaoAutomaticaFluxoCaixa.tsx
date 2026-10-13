@@ -823,7 +823,18 @@ function DialogCriarLancamento({
     if (!linha) return;
     setEmpresaId(empresaInicial);
     setBancoId(bancoInicial);
+    // O memo do extrato já vem como descrição (editável). Antes era só placeholder: parecia
+    // preenchido, mas o campo estava vazio e o botão ficava bloqueado sem explicação.
+    setDescricao(linha.detalhe.slice(0, 60));
   }, [linha?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const faltando = [
+    !empresaId && "Empresa",
+    !classificacaoId && "Classificação",
+    !descricao.trim() && "Descrição",
+    !formaPagamento && "Forma de Pagamento",
+    !bancoId && "Banco",
+  ].filter(Boolean) as string[];
 
   if (!linha) return null;
   return (
@@ -890,11 +901,14 @@ function DialogCriarLancamento({
             </Select>
           </div>
         </div>
+        {faltando.length > 0 && (
+          <p className="text-xs text-amber-700 dark:text-amber-400">Para criar, preencha: {faltando.join(", ")}.</p>
+        )}
         <DialogFooter>
           <Button variant="outline" size="sm" onClick={onClose} disabled={salvando}>Cancelar</Button>
           <Button
             size="sm"
-            disabled={salvando || !empresaId || !classificacaoId || !descricao.trim() || !formaPagamento || !bancoId}
+            disabled={salvando || faltando.length > 0}
             onClick={() => onConfirmar({ empresaId, classificacaoId, descricao: descricao.trim(), formaPagamento, bancoId })}
           >
             {salvando ? "Criando..." : "Criar lançamento"}
