@@ -393,6 +393,10 @@ const MENU_CANCELAR_ADMISSAO = "recrutamento_cancelar_admissao";
 // só quem pode cancelar a admissão ainda precisa dele.
 const vagaFechadaComContratado = (st?: string | null) =>
   st === "Contratado" || st === "Concluída" || String(st ?? "").startsWith("Concluído");
+// Vaga encerrada de qualquer jeito (14/10/2026): o kanban continua visível
+// para consulta — só leitura, sem mover nem incluir candidato.
+const vagaEncerrada = (st?: string | null) =>
+  vagaFechadaComContratado(st) || st === "Cancelada" || st === "Reprovada";
 const MENU_FILTRO_PEND_SELECAO      = "recrutamento_filtro_pend_selecao";
 // Status da Solicitação dirigidos pelo candidato (etapas 3–10).
 const STATUS_PROCESSO = [
@@ -996,7 +1000,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
       if (precisaSolic) setNomeSolicitante(nomes[emailSolicitante(sol)] ?? "");
       if (precisaAprov) setNomeAprovador(nomes[emailAprov] ?? "");
     }
-    if (sol && (STATUS_PROCESSO.includes(sol.status) || sol.status === "Contratado" || String(sol.status ?? "").startsWith("Concluído"))) loadCandidatos(id);
+    if (sol && (STATUS_PROCESSO.includes(sol.status) || vagaEncerrada(sol.status))) loadCandidatos(id);
     if (mensagens) setMsgs(mensagens);
 
     pollTimer.current = setInterval(async () => {
@@ -1697,6 +1701,28 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
     loadLista();
   };
 
+  // ── Reabrir vaga concluída sem ninguém na Admissão (mig 20261014000021) ──
+  // A vaga migrada do Discord chegou "Concluída" sem candidato nenhum: não
+  // há card para cancelar. Reabrir devolve a vaga ao início do processo.
+  const [reabrirModal, setReabrirModal] = useState(false);
+  const [reabrirMotivo, setReabrirMotivo] = useState("");
+  const [reabrindo, setReabrindo] = useState(false);
+  const temNaAdmissao = candidatos.some(c => normalizarEtapa(c.etapa_processo) === "ADMISSÃO");
+
+  const confirmarReabrirVaga = async () => {
+    if (!drawerId) return;
+    if (reabrirMotivo.trim().length < 10) { toast("Informe o motivo da reabertura (mínimo 10 caracteres).", "err"); return; }
+    setReabrindo(true);
+    const { error } = await sb.rpc("rec_reabrir_vaga", { p_vaga: drawerId, p_motivo: reabrirMotivo.trim() });
+    setReabrindo(false);
+    if (error) { toast("Erro ao reabrir a vaga: " + error.message, "err"); return; }
+    setReabrirModal(false); setReabrirMotivo("");
+    toast("Vaga reaberta — de volta ao início do processo.", "ok");
+    verDetalhe(drawerId);
+    loadStats();
+    loadLista();
+  };
+
   // ── Jurídico: "OK e passar" (14/10/2026, mig 20261014000004) ─────────
   // O Jurídico não aprova nem reprova mais: dá o parecer e o candidato segue
   // para a Entrevista. Sem nada a apontar, um clique: "Tudo certo".
@@ -2279,10 +2305,26 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
         </button>,
       );
     }
-    // Vaga concluída: o kanban (onde fica o "Cancelar admissão") só abre por aqui.
+    // Vaga encerrada (14/10/2026): o kanban continua aberto para consulta a
+    // quem enxerga a solicitação — só leitura (renderCandidatosKanban).
+    if (vagaEncerrada(s.status)) {
+      btns.push(
+        <button key="kbv" onClick={abrirKanbanCand}
+          style={{ padding: "5px 12px", borderRadius: 8, border: "1px solid rgba(59,130,246,.35)", background: "rgba(59,130,246,.12)", color: "#2563eb", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+          <Ic i={Users} />Ver kanban ({candidatos.length})
+        </button>,
+      );
+    }
+    // Vaga concluída: com alguém na Admissão, o cancelamento é no card dele
+    // (abre o kanban); sem ninguém — a vaga importada do Discord, concluída
+    // sem candidato —, reabre a vaga direto (mig 20261014000021).
     if (podeCancelarAdmissao && vagaFechadaComContratado(s.status)) {
       btns.push(
-        <button key="cadm" onClick={abrirKanbanCand}
+        <button key="cadm" onClick={() => {
+            if (temNaAdmissao) abrirKanbanCand();
+            else { setReabrirMotivo(""); setReabrirModal(true); }
+          }}
+          title={temNaAdmissao ? "Abre o kanban: cancele no card de quem está na Admissão" : "Ninguém na Admissão: reabre a vaga no início do processo"}
           style={{ padding: "5px 12px", borderRadius: 8, border: "1px solid #fecaca", background: "#fef2f2", color: "#b91c1c", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
           <Ic i={Ban} />Cancelar admissão…
         </button>,
@@ -2498,6 +2540,10 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
       const e = c.etapa_processo || "Selecionado";
       (grupos[normalizarEtapa(e)] = grupos[normalizarEtapa(e)] || []).push(c);
     }
+    // Vaga encerrada (14/10/2026): o kanban abre para consulta, sem incluir
+    // nem mover candidato — mexer num processo fechado mudaria o status da
+    // vaga pelo sr_sync_status_solicitacao. Fica só o "Cancelar admissão".
+    const somenteLeitura = vagaEncerrada(drawerSol?.status);
     return (
       <div style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, margin: "0 0 12px", flexWrap: "wrap", flexShrink: 0 }}>
@@ -2509,24 +2555,39 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
             <input value={buscaCand} onChange={e => setBuscaCand(e.target.value)} placeholder="Buscar candidato (nome, CPF, fone)…"
               style={{ height: 30, width: 240, border: "1px solid #e2e8f0", borderRadius: 8, padding: "0 10px", fontSize: 12, outline: "none", background: "#fff", color: "#0f172a" }} />
             {q && <button onClick={() => setBuscaCand("")} style={{ height: 30, padding: "0 10px", borderRadius: 8, border: "1px solid #e2e8f0", background: "#f8fafc", color: "#475569", fontSize: 11.5, fontWeight: 700, cursor: "pointer" }}>Limpar</button>}
-            {podeRecrutar && (
+            {somenteLeitura && podeCancelarAdmissao && vagaFechadaComContratado(drawerSol?.status) && !temNaAdmissao && (
+              <button onClick={() => { setReabrirMotivo(""); setReabrirModal(true); }}
+                title="Ninguém na Admissão: reabre a vaga no início do processo"
+                style={{ padding: "5px 12px", borderRadius: 8, border: "1px solid #fecaca", background: "#fef2f2", color: "#b91c1c", fontSize: 12, fontWeight: 700, cursor: "pointer" }}><Ic i={Ban} />Cancelar conclusão e reabrir vaga</button>
+            )}
+            {podeRecrutar && !somenteLeitura && (
               <button onClick={abrirMsgConfig} title="Definir a mensagem de WhatsApp que o sistema envia em cada etapa"
                 style={{ padding: "5px 12px", borderRadius: 8, border: "1px solid rgba(37,211,102,.3)", background: "rgba(37,211,102,.1)", color: "#128c7e", fontSize: 12, fontWeight: 700, cursor: "pointer" }}><Ic i={Settings} />Mensagens automáticas</button>
             )}
-            {podeRecrutar && (
+            {podeRecrutar && !somenteLeitura && (
               <button onClick={abrirCurriculos} style={{ padding: "5px 12px", borderRadius: 8, border: "1px solid rgba(34,197,94,.25)", background: "rgba(34,197,94,.1)", color: "#22c55e", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>+ Selecionar dos currículos</button>
             )}
-            {podeRecrutar && (
+            {podeRecrutar && !somenteLeitura && (
               <button onClick={() => setShowCandManual(true)} title="Cadastrar um candidato que não veio pelo portal (só nome completo e CPF são obrigatórios)"
                 style={{ padding: "5px 12px", borderRadius: 8, border: "1px solid rgba(15,49,113,.25)", background: "rgba(15,49,113,.08)", color: "#0f3171", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>+ Inserir manualmente</button>
             )}
           </div>
         </div>
-        {candidatos.length === 0 ? (
-          <div style={{ border: "1px dashed #cbd5e1", borderRadius: 12, padding: "26px 16px", textAlign: "center", color: "#94a3b8", fontSize: 12.5 }}>
-            Nenhum candidato selecionado ainda. Abra <b>Currículos</b> e clique em <b>Selecionar candidato</b> (ou use <b>Inserir manualmente</b>) para iniciar o processo (Triagem → Jurídico → Entrevistas → Aprovado → Documentação → Exame SST → Compras → Admissão).
+        {somenteLeitura && (
+          <div style={{ border: "1px solid #e2e8f0", background: "#f8fafc", borderRadius: 10, padding: "8px 12px", color: "#475569", fontSize: 12, marginBottom: 10, flexShrink: 0 }}>
+            Vaga encerrada (<b>{rotuloStatusVaga(drawerSol?.status ?? "")}</b>) — o kanban fica só para consulta.
           </div>
-        ) : (
+        )}
+        {/* As colunas aparecem mesmo sem candidato (14/10/2026): o aviso
+            fica em cima, e o quadro mostra as etapas vazias. */}
+        {candidatos.length === 0 && (
+          <div style={{ border: "1px dashed #cbd5e1", borderRadius: 12, padding: "10px 16px", textAlign: "center", color: "#94a3b8", fontSize: 12, marginBottom: 10, flexShrink: 0 }}>
+            {somenteLeitura
+              ? <>Esta vaga não tem candidatos registrados no processo.</>
+              : <>Nenhum candidato selecionado ainda. Abra <b>Currículos</b> e clique em <b>Selecionar candidato</b> (ou use <b>Inserir manualmente</b>) para iniciar o processo.</>}
+          </div>
+        )}
+        {(
           <div style={{ display: "flex", gap: 6, flex: 1, minHeight: 0, paddingBottom: 4, alignItems: "stretch" }}>
             {CAND_ETAPAS.map(etapa => {
               const cards = grupos[etapa] ?? [];
@@ -2610,9 +2671,19 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
                                 Recrutamento vê o que o SST vai receber e completa
                                 o que o automático não achou (PIS, mãe, posto…). */}
                             {["APROVADO", "DOCUMENTAÇÃO", ETAPA_SST_COMPRAS, "EXAME SST", "ADMISSÃO"].includes(etapa) && (
-                              <div style={{ marginTop: 6 }}><FichaAso candidatoId={c.id} compacto editar={podeRecrutar} /></div>
+                              <div style={{ marginTop: 6 }}><FichaAso candidatoId={c.id} compacto editar={podeRecrutar && !somenteLeitura} /></div>
                             )}
                             {etapa === "ADMISSÃO" && c.enviado_admissao_em && <div style={{ fontSize: 9.5, color: "#15803d", marginTop: 4, fontWeight: 700 }}>✓ Contratado — na Admissão (RH)</div>}
+                            {somenteLeitura ? (
+                              // Vaga encerrada: só consulta; o único gesto é cancelar a admissão.
+                              etapa === "ADMISSÃO" && podeCancelarAdmissao && (
+                                <div style={{ display: "flex", flexDirection: "column", gap: 5, marginTop: 10 }}>
+                                  <button onClick={() => { setCancelAdmMotivo(""); setCancelAdmModal({ id: c.id, nome: c.nome || "Candidato", contratado: !!c.enviado_admissao_em }); }}
+                                    title="Cancelar a admissão: o candidato vai para Reprovado e a vaga volta a ficar aberta"
+                                    style={{ ...bSkip, color: "#b91c1c", borderColor: "#fecaca" }}><Ic i={Ban} />Cancelar admissão</button>
+                                </div>
+                              )
+                            ) : (
                             <div style={{ display: "flex", flexDirection: "column", gap: 5, marginTop: 10 }}>
                               {/* ENTREVISTA/GESTOR: roteiro de entrevista */}
                               {(etapa === "ENTREVISTA" || etapa === "ENTREVISTA GESTOR") && podeRecrutar && <button onClick={() => abrirRoteiro(c, etapa)} style={{ ...bFull, background: "rgba(59,130,246,.1)", color: "#2563eb", border: "1px solid rgba(59,130,246,.3)" }}><Ic i={ClipboardList} />Roteiro de entrevista</button>}
@@ -2667,6 +2738,7 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
                                   style={{ width: "100%", fontSize: 10, fontWeight: 700, padding: "3px", borderRadius: 7, background: "transparent", border: "none", color: "#cbd5e1", cursor: "pointer" }}><Ic i={LogOut} />Desistiu</button>
                               )}
                             </div>
+                            )}
                           </div>
                         </div>
                       );
@@ -3127,9 +3199,9 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
               <div style={{ flex: 1, overflowY: "auto", minWidth: 0 }}>
                 {drawerSol ? (<>
                   {renderDetalhe(drawerSol)}
-                  {/* Vaga já concluída: o kanban só volta para quem pode
-                      cancelar a admissão (mig 20261014000019). */}
-                  {(STATUS_PROCESSO.includes(drawerSol.status) || (podeCancelarAdmissao && vagaFechadaComContratado(drawerSol.status))) && (
+                  {/* Vaga encerrada: o resumo e o kanban seguem visíveis, só
+                      para consulta (14/10/2026). */}
+                  {(STATUS_PROCESSO.includes(drawerSol.status) || vagaEncerrada(drawerSol.status)) && (
                     <div style={{ padding: "0 20px 20px" }}>
                       <div style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 12, padding: "12px 14px" }}>
                         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
@@ -3664,6 +3736,29 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
             <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 8 }}>
               <button onClick={() => setBlockModal(null)} style={{ padding: "8px 14px", borderRadius: 10, border: "1px solid #e2e8f0", background: "#fff", color: "#475569", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Cancelar</button>
               <button onClick={confirmarBloqueio} style={{ padding: "8px 14px", borderRadius: 10, border: "none", background: "#dc2626", color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Bloquear CPF</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {reabrirModal && (
+        <div className="rec-modal-ov" style={{ zIndex: 950 }} onClick={e => { if (e.target === e.currentTarget && !reabrindo) setReabrirModal(false); }}>
+          <div className="rec-modal" style={{ maxWidth: 480 }} onClick={e => e.stopPropagation()}>
+            <div style={{ fontSize: 17, fontWeight: 800, marginBottom: 2, color: "#b91c1c" }}><Ic i={Ban} />Cancelar conclusão e reabrir vaga</div>
+            <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 12 }}>
+              Solicitação #{drawerId} · {drawerSol?.cargo} · {rotuloStatusVaga(drawerSol?.status ?? "")}
+            </div>
+            <div style={{ fontSize: 12, color: "#475569", background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 8, padding: "8px 10px", marginBottom: 12, lineHeight: 1.5 }}>
+              Ninguém está na Admissão desta vaga. Ela volta para <b>Vaga aberta - Seleção de Currículos</b> (o início do processo), sem candidato, e o contratado registrado{drawerSol?.contratado_nome ? <> (<b>{drawerSol.contratado_nome}</b>)</> : null} é apagado da vaga.
+            </div>
+            <label style={{ fontSize: 11, fontWeight: 700, color: "#475569" }}>Motivo *</label>
+            <textarea value={reabrirMotivo} onChange={e => setReabrirMotivo(e.target.value)} rows={3}
+              placeholder="Ex.: vaga importada do Discord como concluída, mas ninguém foi contratado…"
+              style={{ width: "100%", marginTop: 6, padding: "8px 10px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: 13, resize: "vertical" }} />
+            <div style={{ fontSize: 10.5, color: "#94a3b8", marginTop: 6 }}>Fica no histórico da vaga.</div>
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 16 }}>
+              <button onClick={() => setReabrirModal(false)} disabled={reabrindo} style={{ padding: "7px 14px", borderRadius: 8, background: "#fff", border: "1px solid #e2e8f0", color: "#475569", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Voltar</button>
+              <button onClick={confirmarReabrirVaga} disabled={reabrindo} style={{ padding: "7px 14px", borderRadius: 8, background: "#dc2626", border: "none", color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer", opacity: reabrindo ? .6 : 1 }}>{reabrindo ? "Reabrindo…" : "Reabrir vaga"}</button>
             </div>
           </div>
         </div>
