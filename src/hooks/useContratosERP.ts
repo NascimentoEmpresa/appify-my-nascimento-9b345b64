@@ -26,6 +26,8 @@ export interface ContratoERP {
   csll_pct: number;
   prazo_pagamento: string | null;
   codigo_servico_lc116: string | null;
+  // SIS-2026-0633: emissão de NF calcula faltas por dias (valor do posto ÷ 30 × dias).
+  nf_faltas_por_dias?: boolean | null;
   codigo_servico_municipal_cnae: string | null;
   conta_pagamento: string | null;
   email_envio_nf: string | null;
