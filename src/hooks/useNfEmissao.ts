@@ -1,4 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import type { LinhaFaltaDias } from "@/pages/financeiro/nf-emissao/faltasPorDias";
 import { supabase } from "@/integrations/supabase/client";
 import type { ItemCalculado, TotaisNf, PercentuaisFiscais, InssCategoria } from "@/pages/financeiro/nf-emissao/calculos";
 import { itemParaGravar, substituirItensNf } from "@/pages/financeiro/nf-emissao/itemParaGravar";
@@ -31,6 +32,8 @@ export interface NfEmissaoRow {
   tipo_nota: TipoNota;
   descricao: string | null;
   observacoes: string | null;
+  // SIS-2026-0633: linhas da seção "Faltas — cálculo por dias" (contratos com nf_faltas_por_dias).
+  faltas_calculo?: LinhaFaltaDias[] | null;
   observacoes_financeiro: string | null;
   data_pagamento: string | null;
   valor_pago: number | null;
@@ -136,6 +139,7 @@ interface SalvarNfEmissaoInput {
   tipo_nota: TipoNota;
   descricao: string | null;
   observacoes: string | null;
+  faltas_calculo?: LinhaFaltaDias[] | null;
   itens: ItemCalculado[];
   totais: TotaisNf;
   pctFiscais: PercentuaisFiscais;
@@ -165,6 +169,7 @@ export function useSalvarNfEmissao() {
           tipo_nota: input.tipo_nota,
           descricao: input.descricao,
           observacoes: input.observacoes,
+          ...(input.faltas_calculo !== undefined ? { faltas_calculo: input.faltas_calculo } : {}),
           status: input.status,
           nf_emissao_modelo_id: input.nf_emissao_modelo_id ?? null,
           ...input.totais,
@@ -221,6 +226,7 @@ interface AtualizarNfEmissaoInput {
   tipo_nota: TipoNota;
   descricao: string | null;
   observacoes: string | null;
+  faltas_calculo?: LinhaFaltaDias[] | null;
   itens: ItemCalculado[];
   totais: TotaisNf;
   pctFiscais: PercentuaisFiscais;
@@ -249,6 +255,7 @@ export function useAtualizarNfEmissao() {
           tipo_nota: input.tipo_nota,
           descricao: input.descricao,
           observacoes: input.observacoes,
+          ...(input.faltas_calculo !== undefined ? { faltas_calculo: input.faltas_calculo } : {}),
           status: input.status,
           ...(input.nf_emissao_modelo_id !== undefined ? { nf_emissao_modelo_id: input.nf_emissao_modelo_id } : {}),
           ...input.totais,
@@ -565,6 +572,8 @@ export interface NfEmissaoItemRow {
   justificativa_glosas: string | null;
   justificativa_outros_descontos: string | null;
   qtd_colaboradores: number;
+  faltas_dias: number | null;
+  faltas_valor_posto: number | null;
   vlr_bruto: number;
   total_descontos: number;
   vlr_mao_obra: number;

@@ -609,8 +609,12 @@ function QuemMexeNoBanco({ autores, p }: { autores: LinhaAutor[]; p: PainelGithu
   );
 }
 
+const BRANCHES_PESSOAIS = ["eduardo", "pablo", "joao"];
+
 function Branches({ p }: { p: PainelGithub }) {
-  const br = useMemo(() => porBranch(p.prs).slice(0, 8), [p]);
+  // Só as branches pessoais (as "originais"): as avulsas de 1–2 PRs
+  // (EduardoJeiel007-patch-1, SIS-…, ponto-…) poluíam a lista — 09/10/2026.
+  const br = useMemo(() => porBranch(p.prs).filter((b) => BRANCHES_PESSOAIS.includes(b.branch)), [p]);
   const est = ["merged", "open", "closed"].map((e) => ({ nome: ROTULO_ESTADO[e], n: p.prs.filter((x) => x.estado === e).length, cor: COR_ESTADO[e] })).filter((x) => x.n);
   return (
     <Card className="p-4">

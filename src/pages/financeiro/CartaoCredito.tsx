@@ -30,6 +30,7 @@ import { BandeiraBadge } from "@/components/financeiro/BandeiraBadge";
 import { useFluxoCaixaMalote } from "@/hooks/useFluxoCaixaMalote";
 import { useFaturasResumoPorCartao } from "@/hooks/useCartaoFatura";
 import { ImportarFaturaModal } from "./cartao-credito/ImportarFaturaModal";
+import { FaturasConsolidadasCard } from "./cartao-credito/FaturasConsolidadasCard";
 import { useEmpresasGrupo } from "@/hooks/useMaloteDespesa";
 import { useTiposFormaPagamento } from "@/hooks/useMaloteFormaPagamento";
 import { useUsuariosAtivos } from "@/hooks/useNfEmissao";
@@ -785,6 +786,9 @@ export default function CartaoCredito() {
           </div>
         </CardContent>
       </Card>
+
+      {/* SIS-2026-0632: faturas consolidadas no Fluxo (Sicredi 2719): valor real da fatura, boleto e conferência. */}
+      <FaturasConsolidadasCard cartoes={cartoes} />
 
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
