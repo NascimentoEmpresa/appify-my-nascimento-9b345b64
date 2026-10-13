@@ -17,6 +17,8 @@ describe("status detalhado da vaga pela etapa do kanban", () => {
     expect(statusDetalhadoVaga("Aguardando SST e Compras", etapa("SST + COMPRAS")).texto).toBe("SST + Compras: EXAME E EPIs");
     expect(statusDetalhadoVaga("Aguardando SST e Compras", etapa("ADMISSÃO")).texto).toBe("Recrutamento: ADMISSÃO");
     expect(statusDetalhadoVaga("Entrevista com Gestor", etapa("ENTREVISTA GESTOR")).texto).toBe("Recrutamento: ENTREVISTA GESTOR");
+    // 13/10/2026: aprovado é nas entrevistas — "Recrutamento: APROVADO" dizia pouco.
+    expect(statusDetalhadoVaga("Aprovado - Aguardando SST", etapa("APROVADO")).texto).toBe("Entrevista: APROVADO");
   });
 
   it("toda coluna do kanban (menos Reprovado) tem área, texto e cor", () => {
