@@ -18,6 +18,7 @@ import { AcessoGate } from "@/components/auth/AcessoGate";
 import {
   parseOFX,
   reconciliar,
+  transacoesNoPeriodo,
   fmtBRL,
   type OFXTransaction,
   type ReconciliacaoResult,
@@ -200,9 +201,14 @@ function ConciliarTab() {
       bancos.find((b) => b.id === bancoId)?.nome ?? "—"
     );
     const planRows = [...linhasFluxoParaPlanilhaRow(linhasPeriodoBanco), ...saldoLinhas.plan];
-    const res = reconciliar(planRows, [...trns, ...saldoLinhas.ofx]);
+    // SIS-2026-0637: só entra do extrato o que está no período escolhido (igual ao lado Fluxo).
+    const { dentro, fora } = transacoesNoPeriodo(trns, dataDe, dataAte);
+    const res = reconciliar(planRows, [...dentro, ...saldoLinhas.ofx]);
     setResultado(res);
-    toast.success(`Conciliação processada — ${res.totalDias} dias, ${res.divergencias} dia(s) com divergência.`);
+    toast.success(
+      `Conciliação processada — ${res.totalDias} dias, ${res.divergencias} dia(s) com divergência.` +
+        (fora > 0 ? ` ${fora} lançamento(s) do extrato fora do período foram desconsiderados.` : "")
+    );
   }
 
   async function executar() {
