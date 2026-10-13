@@ -16,7 +16,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { AcessoGate } from "@/components/auth/AcessoGate";
 import { TvRelatorio } from "@/pages/tv/TvRelatorio";
 import {
-  COR_SITUACAO, PAINEIS_GERENCIAIS, ROTULO_FONTE, ROTULO_PERIODICIDADE, ROTULO_SITUACAO, formatarValor, frase, indicadoresDaTv,
+  COR_SITUACAO, PAINEIS_GERENCIAIS, VISUAIS_GERENCIAIS, type VisualGerencial, ROTULO_FONTE, ROTULO_PERIODICIDADE, ROTULO_SITUACAO, formatarValor, frase, indicadoresDaTv,
   lancamentoAtrasado, placar, situacao, subindicadores, textoMeta, type IndicadorGerencial, type LinhaDetalhe, type PainelGerencial,
 } from "@/lib/tv/gerencial";
 
@@ -71,6 +71,7 @@ export default function TvsIndicadores() {
   const [slug, setSlug] = useState(PAINEIS_GERENCIAIS[0].slug);
   const [aberto, setAberto] = useState<string | null>(null);
   const [verTv, setVerTv] = useState(false);
+  const [visual, setVisual] = useState<VisualGerencial>("painel-claro");
   const painel = usePainel(slug);
   const qc = useQueryClient();
   const info = PAINEIS_GERENCIAIS.find((p) => p.slug === slug)!;
@@ -144,11 +145,19 @@ export default function TvsIndicadores() {
 
         <Dialog open={verTv} onOpenChange={setVerTv}>
           <DialogContent className="max-w-6xl p-3">
-            <DialogHeader className="px-1"><DialogTitle>TV {info.titulo} — como aparece na TV</DialogTitle></DialogHeader>
+            <DialogHeader className="px-1">
+              <DialogTitle className="flex flex-wrap items-center gap-3 pr-8">
+                <span className="flex-1">TV {info.titulo} — como aparece na TV</span>
+                <Select value={visual} onValueChange={(v) => setVisual(v as VisualGerencial)}>
+                  <SelectTrigger className="h-8 w-[300px] text-xs font-normal"><SelectValue /></SelectTrigger>
+                  <SelectContent>{VISUAIS_GERENCIAIS.map((v) => <SelectItem key={v.valor} value={v.valor} className="text-xs">{v.rotulo}</SelectItem>)}</SelectContent>
+                </Select>
+              </DialogTitle>
+            </DialogHeader>
             <div className="relative aspect-video w-full overflow-hidden rounded-lg bg-black">
-              {verTv && <TvRelatorio previa token="" item={{ id: `previa-${slug}`, tipo: "relatorio", relatorio: slug, titulo: null, url: null, arquivo: null, texto: null, cor: null, duracao_seg: 45 }} />}
+              {verTv && <TvRelatorio key={visual} previa token="" item={{ id: `previa-${slug}`, tipo: "relatorio", relatorio: slug, rel_visual: visual, titulo: null, url: null, arquivo: null, texto: null, cor: null, duracao_seg: 45 }} />}
             </div>
-            <p className="px-1 text-xs text-muted-foreground">Para colocar numa TV: TV's › Gestão das TVs › Playlists › adicionar item “Relatório do ERP” e escolher <b>TV {info.titulo}</b>.</p>
+            <p className="px-1 text-xs text-muted-foreground">Para colocar numa TV: TV's › Gestão das TVs › Playlists › adicionar item “Relatório do ERP” e escolher <b>TV {info.titulo}</b> e o visual.</p>
           </DialogContent>
         </Dialog>
       </AcessoGate>

@@ -47,6 +47,8 @@ export interface VagaDash {
   legado: boolean;
   aprovada_em: string | null;
   aberta_em: string | null;
+  /** Responsável pela vaga (mig 20261013000003) — quem a move no Recrutamento, ou fixado à mão. */
+  responsavel?: string | null;
 }
 
 export interface CandidatoDash {

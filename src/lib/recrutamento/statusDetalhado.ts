@@ -50,7 +50,9 @@ export const ETAPA_KANBAN: Record<string, Aparencia> = {
   "JURÍDICO":          { area: "Jurídico",      texto: "ANÁLISE JURÍDICA",  cor: "#8b5cf6", tinta: "#7c3aed" },
   ENTREVISTA:          { area: "Recrutamento",  texto: "ENTREVISTA",        cor: "#0ea5e9", tinta: "#0369a1" },
   "ENTREVISTA GESTOR": { area: "Recrutamento",  texto: "ENTREVISTA GESTOR", cor: "#6366f1", tinta: "#4f46e5" },
-  APROVADO:            { area: "Recrutamento",  texto: "APROVADO",          cor: "#14b8a6", tinta: "#0f766e" },
+  // "Recrutamento: APROVADO" dizia pouco (13/10/2026, Pablo: "tem que ficar
+  // mais específico — ENTREVISTA: APROVADO"): aprovado é nas entrevistas.
+  APROVADO:            { area: "Entrevista",    texto: "APROVADO",          cor: "#14b8a6", tinta: "#0f766e" },
   "DOCUMENTAÇÃO":      { area: "Recrutamento",  texto: "DOCUMENTAÇÃO",      cor: "#0891b2", tinta: "#0e7490" },
   "SST + COMPRAS":     { area: "SST + Compras", texto: "EXAME E EPIs",      cor: "#f59e0b", tinta: "#b45309" },
   "ADMISSÃO":          { area: "Recrutamento",  texto: "ADMISSÃO",          cor: "#16a34a", tinta: "#15803d" },

@@ -19,7 +19,7 @@ export type Sentido = "menor" | "maior";
 export type Fonte = "auto" | "manual" | "espelho" | "soma";
 export type Situacao = "vermelho" | "amarelo" | "verde" | "neutro" | "sem_dado";
 
-export interface LinhaDetalhe { nome: string; valor: number | null; rotulo?: string | null }
+export interface LinhaDetalhe { nome: string; valor: number | null; rotulo?: string | null; /** duas séries (postos: contratados × cobertos; quadro: ativos × necessários) */ a?: number | null; b?: number | null }
 
 export interface ResultadoIndicador {
   valor: number | string | null;
@@ -179,21 +179,111 @@ export function placar(itens: IndicadorGerencial[]): Record<Situacao, number> {
   return p;
 }
 
-/**
- * As páginas da TV: 1 com os indicadores (até 8) e até 2 "por contrato" com o
- * detalhamento dos fora da meta que têm detalhe (o documento: "detalhes no
- * sistema"; na TV só o essencial de quem está vermelho).
- */
-export function paginasGerencial(p: PainelGerencial): { chave: string; titulo: string }[] {
-  const ps = [{ chave: "ger-resumo", titulo: "Indicadores" }];
-  const comDetalhe = indicadoresDaTv(p).filter((i) => (situacao(i) === "vermelho" || situacao(i) === "amarelo") && (i.resultado?.detalhe ?? []).length > 0);
-  if (comDetalhe.length) ps.push({ chave: "ger-detalhe-1", titulo: "Onde agir" });
-  if (comDetalhe.length > 2) ps.push({ chave: "ger-detalhe-2", titulo: "Onde agir (2)" });
-  return ps;
+// ---- Visual do protótipo HTML (14/10/2026, mig 20261014000002) ---------------
+//
+// Pedido do Pablo: "desenvolve igual ao HTML, deixa várias opções, não
+// precisa tirar as já desenvolvidas". O protótipo anexado ao chamado
+// (TVs_Gerenciais_10_Telas_CONFORME_WORD.html) tem fundo escuro e um GRÁFICO
+// em cada indicador, com as caixas Meta / Contrato-Setor afetado / Causa
+// principal / Responsável. Vira uma opção por item da playlist
+// (TV_ITEM.rel_visual); o "clássico" de 12/10 continua sendo o padrão.
+
+// 14/10/2026 — "tira essas telas anteriores e coloca essas novas só": o visual
+// clássico (cartões com o número, de 12/10) saiu. "classico"/vazio no banco
+// (itens antigos) tocam o painel padrão (claro).
+export type VisualGerencial = "painel" | "painel-claro" | "graficos";
+export const VISUAIS_GERENCIAIS: { valor: VisualGerencial; rotulo: string; dica: string; porTela: number; colunas: number; escuro: boolean }[] = [
+  // 14/10/2026 — "visual parecido com o HTML, mas mais bonito, na qualidade de carmed.vercel.app": o claro (faixa de cor, cartões brancos com sombra) é o padrão.
+  { valor: "painel-claro", rotulo: "Painel com gráficos — claro (padrão)", dica: "O painel inteiro numa tela: gráfico por indicador, resultado × meta, onde, causa e responsável — fundo claro, cartões brancos", porTela: 8, colunas: 0, escuro: false },
+  { valor: "painel", rotulo: "Painel com gráficos — escuro (como o HTML)", dica: "O mesmo painel no fundo escuro do protótipo HTML", porTela: 8, colunas: 0, escuro: true },
+  { valor: "graficos", rotulo: "Gráficos grandes — claro", dica: "4 indicadores por tela, gráfico maior — para TV longe de quem olha", porTela: 4, colunas: 2, escuro: false },
+];
+/** Colunas da grade: fixa no "gráficos grandes" (2×2); no painel, cabe tudo numa tela (até 3 → uma linha; até 6 → 3; senão 4). */
+export const colunasDaTela = (visual: VisualGerencial, n: number) => {
+  const c = visualGerencial(visual).colunas;
+  return c || (n <= 3 ? Math.max(1, n) : n <= 6 ? 3 : 4);
+};
+export const visualGerencial = (v: string | null | undefined) => VISUAIS_GERENCIAIS.find((x) => x.valor === v) ?? VISUAIS_GERENCIAIS[0];
+/** O visual que a TV toca: o do item, ou o padrão (o primeiro da lista: o painel claro). */
+export const visualDoItem = (v: string | null | undefined): VisualGerencial => visualGerencial(v).valor;
+
+export type TipoGrafico = "colunas" | "agrupado" | "linha" | "rosca" | "combo";
+/** O tipo de gráfico de cada indicador — o mesmo do protótipo HTML quando o dado do ERP permite. */
+const GRAFICO: Record<string, { tipo: TipoGrafico; series?: [string, string]; /** unidade do detalhe quando difere da do indicador */ unidade?: Unidade }> = {
+  fin_notas_pendentes: { tipo: "colunas", unidade: "brl" }, sup_valor_estoque: { tipo: "colunas", unidade: "brl" }, sup_sem_mov: { tipo: "colunas", unidade: "brl" },
+  rh_ob_rescisoes: { tipo: "colunas", unidade: "qtd" }, fin_recebimentos: { tipo: "colunas", unidade: "brl" },
+  lic_prazo: { tipo: "colunas", unidade: "dias" }, lic_implantacao: { tipo: "colunas", unidade: "dias" }, lic_propostas: { tipo: "colunas", unidade: "dias" },
+  jur_prazos: { tipo: "colunas", unidade: "dias" }, fro_manutencoes: { tipo: "colunas", unidade: "dias" }, jur_audiencias: { tipo: "linha", unidade: "dias" },
+  op_postos: { tipo: "agrupado", series: ["Contratados", "Cobertos"] }, pre_postos: { tipo: "agrupado", series: ["Contratados", "Cobertos"] },
+  rh_quadro: { tipo: "agrupado", series: ["Ativos", "Necessários"] },
+  op_lucratividade: { tipo: "combo" }, pre_lucratividade: { tipo: "combo" }, op_reclamacoes: { tipo: "combo" }, ctl_margem: { tipo: "combo" },
+  op_faltas: { tipo: "linha" }, op_turnover: { tipo: "linha" }, rh_turnover: { tipo: "linha" }, sst_afastamentos: { tipo: "linha" },
+  sup_contratos_sem_entrega: { tipo: "linha" }, fin_fluxo: { tipo: "linha" },
+  lic_risco: { tipo: "rosca" }, lic_perdidas: { tipo: "rosca" }, rec_desistencias: { tipo: "rosca" }, sst_aso: { tipo: "rosca" },
+  sst_epi: { tipo: "rosca" }, fin_glosas: { tipo: "rosca" }, jur_risco: { tipo: "rosca" }, ctl_vermelhos: { tipo: "rosca" },
+  pre_vermelhos: { tipo: "rosca" }, ti_integracoes: { tipo: "rosca" }, fro_sem_responsavel: { tipo: "rosca" },
+};
+export function graficoDo(i: Pick<IndicadorGerencial, "codigo" | "resultado">): { tipo: TipoGrafico; series?: [string, string]; unidade?: Unidade } {
+  const g = GRAFICO[i.codigo] ?? { tipo: "colunas" as TipoGrafico };
+  // Agrupado sem as duas séries (detalhe lançado à mão) cai para colunas.
+  if (g.tipo === "agrupado" && !(i.resultado?.detalhe ?? []).some((l) => l.a != null && l.b != null)) return { tipo: "colunas" };
+  return g;
 }
 
-/** Os indicadores de cada página de detalhe (2 por página). */
-export function detalhesDaPagina(p: PainelGerencial, chave: string): IndicadorGerencial[] {
-  const comDetalhe = indicadoresDaTv(p).filter((i) => (situacao(i) === "vermelho" || situacao(i) === "amarelo") && (i.resultado?.detalhe ?? []).length > 0);
-  return chave === "ger-detalhe-2" ? comDetalhe.slice(2, 4) : comDetalhe.slice(0, 2);
+/** Os pontos do gráfico: o detalhamento real (os N maiores; rosca só fatias > 0). */
+export function dadosDoGrafico(i: Pick<IndicadorGerencial, "codigo" | "resultado">, max = 6): LinhaDetalhe[] {
+  const g = graficoDo(i);
+  const linhas = (i.resultado?.detalhe ?? []).filter((l) => l && l.nome && (l.valor != null || (l.a != null && l.b != null)));
+  if (g.tipo === "rosca") {
+    const pos = linhas.filter((l) => Number(l.valor) > 0);
+    if (pos.length <= max) return pos;
+    const resto = pos.slice(max - 1).reduce((s, l) => s + Number(l.valor), 0);
+    return [...pos.slice(0, max - 1), { nome: "Outros", valor: resto }];
+  }
+  return linhas.slice(0, max);
 }
+
+/** Nome curto para eixo de gráfico: sem o código do contrato e sem o nº do edital. */
+export function nomeCurto(s: string, max = 22): string {
+  const t = s.replace(/^\s*\d+\s*-\s*/, "").replace(/\s*(?:[-–]\s*)?\d+[./]\d+\s*$/, "").replace(/\s+/g, " ").trim();
+  return t.length > max ? `${t.slice(0, max - 1).trimEnd()}…` : t;
+}
+
+/** As telas do painel: os indicadores da TV (na ordem de gravidade) em telas equilibradas (7 → 4 + 3). */
+export function paginasPainel(p: PainelGerencial, visual: VisualGerencial): { chave: string; titulo: string }[] {
+  const n = indicadoresDaTv(p).length;
+  const porTela = visualGerencial(visual).porTela;
+  const telas = Math.max(1, Math.ceil(n / porTela));
+  return Array.from({ length: telas }, (_, k) => ({ chave: `painel-${k + 1}`, titulo: telas > 1 ? `Tela ${k + 1} de ${telas}` : "Indicadores" }));
+}
+export function indicadoresDaTela(p: PainelGerencial, visual: VisualGerencial, chave: string): IndicadorGerencial[] {
+  const itens = indicadoresDaTv(p);
+  const telas = paginasPainel(p, visual).length;
+  const porTela = Math.ceil(itens.length / telas);
+  const k = Math.max(0, Number(chave.replace("painel-", "")) - 1);
+  return itens.slice(k * porTela, (k + 1) * porTela);
+}
+
+/** As notas do topo da tela (como no HTML): subindicadores que ficam no sistema. */
+export function notaSubindicadores(p: PainelGerencial): string | null {
+  const nomes = (p.indicadores ?? []).filter((i) => !i.na_tv).map((i) => i.nome);
+  return nomes.length ? `Subindicadores disponíveis no sistema: ${nomes.join(", ")}.` : null;
+}
+
+/** A cor de cada gráfico, a mesma do protótipo HTML (cada painel com a sua cara). Sem cor: a do status. */
+const COR_GRAFICO: Record<string, string> = {
+  op_custo_direto: "#ef4444", op_glosas: "#f59e0b", op_faltas: "#38bdf8", op_turnover: "#a78bfa",
+  lic_prazo: "#ef4444", lic_implantacao: "#f97316", lic_valor: "#38bdf8", lic_propostas: "#60a5fa", lic_documentos: "#ef4444",
+  sup_compras_vencidas: "#ef4444", sup_abaixo_minimo: "#fb7185", sup_valor_estoque: "#60a5fa", sup_sem_mov: "#a855f7", sup_fornecedor: "#fb7185", sup_contratos_sem_entrega: "#22c55e",
+  fro_indisponiveis: "#ef4444", fro_manutencoes: "#f97316", fro_documentos: "#f59e0b", fro_combustivel: "#a855f7", fro_nao_localizados: "#fb7185",
+  rec_risco: "#ef4444", rec_abertas: "#60a5fa", rec_prazo: "#f97316", rec_admissoes: "#22c55e",
+  rh_salarios: "#ef4444", rh_turnover: "#a78bfa", rh_absenteismo: "#f59e0b", rh_obrigacoes: "#ef4444",
+  sst_impedidos: "#ef4444", sst_treinamentos: "#f97316", sst_afastamentos: "#38bdf8", sst_acidentes: "#facc15",
+  trn_integracoes: "#f97316", trn_contratuais: "#60a5fa", trn_vencidos: "#ef4444", trn_programados: "#22c55e", trn_sem_comprovacao: "#a855f7",
+  fin_notas_pendentes: "#ef4444", fin_valor_pendente: "#fb7185", fin_recebimentos: "#ef4444", fin_inadimplencia: "#f59e0b", fin_fluxo: "#22c55e",
+  jur_prazos: "#ef4444", jur_sem_resposta: "#ef4444", jur_audiencias: "#60a5fa", jur_contratos_analise: "#f97316", jur_reincidentes: "#a855f7",
+  ctl_desvio: "#ef4444", ctl_planos: "#fb7185", ctl_nao_atualizados: "#38bdf8", ctl_reincidentes: "#ef4444",
+  ti_indisponiveis: "#ef4444", ti_erros: "#fb7185", ti_backups: "#f59e0b", ti_demandas: "#f97316", ti_acessos: "#a855f7",
+  pre_glosas: "#ef4444", pre_salarios: "#f97316", pre_caixa: "#ef4444", pre_clientes: "#38bdf8", pre_planos: "#a855f7",
+};
+export const corDoGrafico = (codigo: string): string | null => COR_GRAFICO[codigo] ?? null;
