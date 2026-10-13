@@ -94,15 +94,18 @@ COMMENT ON TABLE public.sup_levantamento_uniforme IS
 
 ALTER TABLE public.sup_levantamento_uniforme ENABLE ROW LEVEL SECURITY;
 
+-- `CREATE POLICY <nome> ON <tabela>` fica na MESMA linha de propósito: a
+-- portaria do CI (.github/scripts/portaria-pr.mjs, regra R3) confere o saldo
+-- entre DROP e CREATE de policy com um regex linha a linha. Quebrando o `ON`
+-- para a linha seguinte, o CREATE não é reconhecido e a R3 reprova a PR
+-- achando que a policy foi removida e nunca recriada.
 DROP POLICY IF EXISTS sup_levantamento_uniforme_select ON public.sup_levantamento_uniforme;
-CREATE POLICY sup_levantamento_uniforme_select
-  ON public.sup_levantamento_uniforme
+CREATE POLICY sup_levantamento_uniforme_select ON public.sup_levantamento_uniforme
   FOR SELECT
   USING ((SELECT public.can_access(auth.uid(), 'sup_dashboard_compras_estoque', 'visualizar'::public.app_acao)));
 
 DROP POLICY IF EXISTS sup_levantamento_uniforme_write ON public.sup_levantamento_uniforme;
-CREATE POLICY sup_levantamento_uniforme_write
-  ON public.sup_levantamento_uniforme
+CREATE POLICY sup_levantamento_uniforme_write ON public.sup_levantamento_uniforme
   FOR ALL
   USING ((SELECT public.can_access(auth.uid(), 'sup_dashboard_compras_estoque', 'alterar'::public.app_acao)))
   WITH CHECK ((SELECT public.can_access(auth.uid(), 'sup_dashboard_compras_estoque', 'alterar'::public.app_acao)));
