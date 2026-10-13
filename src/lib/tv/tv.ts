@@ -62,10 +62,16 @@ export const RELATORIOS_TV: { slug: string; titulo: string; paginas: number; sem
   // indicador tem a sua janela, parametrizada em TV's › Indicadores gerenciais.
   ...PAINEIS_GERENCIAIS.map((p) => ({ slug: p.slug, titulo: `TV ${p.titulo}`, paginas: 2, semFiltros: true, grupo: p.diretoria })),
 ];
+// 14/10/2026 (mig 20261014000012): além da lista fixa, a playlist aceita
+// "ind:<codigo>" (um indicador gerencial sozinho) e "bi:<id>" (um painel do
+// Estúdio de BI). Os nomes vêm do catálogo do banco (tv_catalogo) e ficam no
+// título do item; aqui só o rótulo genérico, sem filtros, uma página.
+export const ehRelatorioDinamico = (slug: string | null | undefined) => !!slug && (slug.startsWith("ind:") || slug.startsWith("bi:"));
 export const paginasRelatorioTv = (slug: string | null | undefined) => RELATORIOS_TV.find((r) => r.slug === slug)?.paginas ?? 1;
-export const tituloRelatorioTv = (slug: string | null | undefined) => RELATORIOS_TV.find((r) => r.slug === slug)?.titulo ?? "Relatório";
-/** O relatório usa período e contrato do item? (Licitações e Treinamentos não.) */
-export const relatorioTemFiltros = (slug: string | null | undefined) => !RELATORIOS_TV.find((r) => r.slug === slug)?.semFiltros;
+export const tituloRelatorioTv = (slug: string | null | undefined) =>
+  RELATORIOS_TV.find((r) => r.slug === slug)?.titulo ?? (slug?.startsWith("ind:") ? "Gráfico gerencial" : slug?.startsWith("bi:") ? "Painel de B.I" : "Relatório");
+/** O relatório usa período e contrato do item? (Licitações, Treinamentos, gerenciais e BI não.) */
+export const relatorioTemFiltros = (slug: string | null | undefined) => !ehRelatorioDinamico(slug) && !RELATORIOS_TV.find((r) => r.slug === slug)?.semFiltros;
 
 export type PeriodoTv = "mes" | "3m" | "6m" | "12m" | "ano";
 export const PERIODOS_TV: { valor: PeriodoTv; rotulo: string }[] = [

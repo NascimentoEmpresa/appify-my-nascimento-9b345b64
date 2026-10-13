@@ -13,7 +13,9 @@ import { PaginaTurnoverContratos, PaginaTurnoverLimites, PaginaTurnoverResumo } 
 import { PaginaLicitacaoAberturas, PaginaLicitacaoMapa, PaginaLicitacaoResponsaveis, PaginaLicitacaoResumo } from "./relatorio/paginasLicitacao";
 import { PaginaTrnCursos, PaginaTrnEngajamento, PaginaTrnGeral } from "./relatorio/paginasTreinamentos";
 import { TelaPainelGerencial, fundoDoPainel } from "./relatorio/paginasGerencialPainel";
-import { ehPainelGerencial, indicadoresDaTv, painelGerencial, placar, visualDoItem, type PainelGerencial } from "@/lib/tv/gerencial";
+import { TelaDashboardGerencial, TelaIndicadorGerencial } from "./relatorio/paginasGerencialDashboard";
+import { TelaBiTv, type PainelBiTv, type WidgetBiTv } from "./relatorio/paginasBi";
+import { codigoDoIndicador, ehDashboard, ehIndicadorAvulso, ehPainelGerencial, indicadoresDaTv, painelGerencial, placar, visualDoItem, type IndicadorGerencial, type PainelGerencial } from "@/lib/tv/gerencial";
 
 // =====================================================================
 // Relatório do ERP na TV (Sistemas › TV's)
@@ -78,6 +80,25 @@ async function carregarPrevia(item: ItemTv): Promise<DadosRelTv> {
   if (ehPainelGerencial(item.relatorio)) {
     return { tipo: "gerencial", contrato: null, ...(ok(await rpc("tvg_painel", { p_painel: item.relatorio })) as PainelGerencial) };
   }
+  if (ehIndicadorAvulso(item.relatorio)) {
+    const d = ok(await rpc("tvg_indicador", { p_codigo: codigoDoIndicador(item.relatorio) })) as { painel: PainelGerencial["painel"]; indicador: IndicadorGerencial } | null;
+    if (!d) throw new Error("Indicador não existe mais ou foi desativado.");
+    return { tipo: "indicador", contrato: null, painel: d.painel, indicador: d.indicador };
+  }
+  if (item.relatorio?.startsWith("bi:")) {
+    // Prévia com o login de quem edita: o mesmo caminho do Estúdio (bi_widget_dados).
+    const id = Number(item.relatorio.slice(3));
+    const sb = supabase as unknown as { from: (t: string) => any }; // eslint-disable-line @typescript-eslint/no-explicit-any
+    const { data: painel, error } = await sb.from("BI_PAINEL").select("id,nome,descricao,config").eq("id", id).maybeSingle();
+    if (error || !painel) throw new Error(error?.message ?? "Painel de BI não encontrado.");
+    const { data: ws } = await sb.from("BI_WIDGET").select("id,titulo,subtitulo,tipo,config,largura,altura").eq("painel_id", id).order("ordem").order("id");
+    const widgets: WidgetBiTv[] = await Promise.all(((ws ?? []) as Omit<WidgetBiTv, "dados">[]).map(async (w) => {
+      const r = await rpc("bi_widget_dados", { p_widget_id: w.id, p_params: {} });
+      return { ...w, dados: r.error ? { colunas: [], linhas: [], erro: r.error.message } as unknown as WidgetBiTv["dados"] : r.data };
+    }));
+    const d: PainelBiTv = { painel: { id: painel.id, nome: painel.nome, descricao: painel.descricao, tema: painel.config?.tema ?? null }, widgets };
+    return { tipo: "bi", contrato: null, ...d };
+  }
   if (item.relatorio === "geral") {
     const g = ok(await rpc("dir_rel_geral", args)) as RelatorioGeralDados;
     return { tipo: "geral", periodo: { de, ate }, contrato,
@@ -130,7 +151,8 @@ export function TvRelatorio({ item, token, previa = false }: { item: ItemTv; tok
 
   // A TV antiga (antes da mig 20261008000004) mandava o Turn-over como sistema padrão: segue funcionando.
   const slug = item.relatorio ?? (dados?.tipo === "sistema" ? dados.slug : null);
-  const { cor, Icone } = aparencia(slug);
+  const ap = aparencia(dados?.tipo === "indicador" ? dados.painel?.slug : slug);
+  const { cor, Icone } = ap;
   // TVs gerenciais: o visual do item (mig 20261014000002) decide quantos indicadores por tela.
   const visual = visualDoItem(item.rel_visual);
   const paginas = useMemo(() => (dados ? paginasDoRelatorio(dados.tipo === "gerencial" ? { ...dados, visual } : dados) : []), [dados, visual]);
@@ -146,7 +168,8 @@ export function TvRelatorio({ item, token, previa = false }: { item: ItemTv; tok
   const titulo = item.titulo || tituloRelatorioTv(item.relatorio);
   const contratoNome = dados?.contrato ?? null;
   const pl = dados?.tipo === "gerencial" ? placar(indicadoresDaTv(dados)) : null;
-  const selos = ehPainelGerencial(item.relatorio)
+  const selos = dados?.tipo === "indicador" || dados?.tipo === "bi" ? []
+    : ehPainelGerencial(item.relatorio)
     ? [painelGerencial(item.relatorio)?.diretoria ?? "", pl ? (pl.vermelho ? `${pl.vermelho} fora da meta` : "Tudo na meta") : ""]
     : !comFiltros
     ? (item.relatorio === "licitacoes" ? ["Todas as empresas do grupo", "Grade completa"] : ["Toda a base de alunos", "Desde o início"])
@@ -161,6 +184,30 @@ export function TvRelatorio({ item, token, previa = false }: { item: ItemTv; tok
   const atual = paginas[Math.min(pagina, Math.max(0, paginas.length - 1))]?.chave;
 
   // TVs gerenciais (SIS-2026-0635): o painel no estilo do protótipo HTML, tela inteira com cabeçalho próprio.
+  // Dashboard completo (14/10/2026): o padrão das TVs gerenciais.
+  if (dados?.tipo === "gerencial" && atual === "dashboard") {
+    return (
+      <Palco fundo={fundoDoPainel(visual)}>
+        <TelaDashboardGerencial p={dados} cor={cor} visual={visual} atualizado={atualizado} />
+      </Palco>
+    );
+  }
+  if (dados?.tipo === "indicador") {
+    return (
+      <Palco fundo={fundoDoPainel(visual)}>
+        {dados.indicador
+          ? <TelaIndicadorGerencial painel={dados.painel} i={dados.indicador} cor={cor} visual={visual} atualizado={atualizado} />
+          : <Aviso cor={cor} titulo="Indicador desativado" sub="Ele saiu do catálogo em TV's › Indicadores gerenciais — tire o item da playlist." girando={false} />}
+      </Palco>
+    );
+  }
+  if (dados?.tipo === "bi") {
+    return (
+      <Palco fundo={dados.painel.tema === "escuro" ? "#0b0b0a" : "#f4f4f5"}>
+        <TelaBiTv d={dados} cor={cor} atualizado={atualizado} />
+      </Palco>
+    );
+  }
   if (dados?.tipo === "gerencial" && atual) {
     return (
       <Palco fundo={fundoDoPainel(visual)}>

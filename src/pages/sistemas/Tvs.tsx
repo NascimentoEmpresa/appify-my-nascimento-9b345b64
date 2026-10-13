@@ -21,7 +21,7 @@ import { useContratosRelatorio } from "@/hooks/useRelatoriosDiretoria";
 import {
   MENU_TVS, enviarMidia, urlMidia, useAtualizarTv, useGerarLinkTv, useCriarAlerta, useEncerrarAlerta, useExcluirItem, useExcluirPlaylist,
   useMoverItem, useParearTv, useRecarregarTv, useRemoverTv, useSalvarItem, useSalvarPlaylist, useTvAlertas, useTvAoVivo, useTvDispositivos,
-  useTvPlaylists, type TvAlerta, type TvDispositivo, type TvItem, type TvPlaylist,
+  useTvPlaylists, useCatalogoTv, type TvAlerta, type TvDispositivo, type TvItem, type TvPlaylist,
 } from "@/hooks/useTvs";
 import {
   PERIODOS_TV, RELATORIOS_TV, TIPOS_ITEM, corAviso, duracaoTotal, haQuanto, itensNoAr, nomeRelatorioTv, paginasRelatorioTv, relatorioTemFiltros, statusTv, telaAoVivo, tituloRelatorioTv,
@@ -436,14 +436,38 @@ function Miniatura({ item }: { item: TvItem }) {
 
 const SEM_CONTRATOS: { id: string; nome: string; encerrado: boolean }[] = [];
 const SEM_ALERTAS: TvAlerta[] = [];
-const VAZIO = { tipo: "relatorio" as TipoItem, titulo: "", url: "", texto: "", cor: "#1d4ed8", duracao: "30", de: "", ate: "", relatorio: "geral", periodo: "12m", contrato: "", visual: "painel-claro" };
+const VAZIO = { tipo: "relatorio" as TipoItem, titulo: "", url: "", texto: "", cor: "#1d4ed8", duracao: "30", de: "", ate: "", relatorio: "geral", periodo: "12m", contrato: "", visual: "dashboard" };
 
 function NovoItem({ playlistId, proximaOrdem, onRascunho }: { playlistId: string; proximaOrdem: number; onRascunho: (item: ItemTv | null) => void }) {
   const salvar = useSalvarItem();
   // Constante estável: `= []` criaria um array novo a cada render e o rascunho
   // da prévia (que depende dele) mudaria sem parar.
   const contratos = useContratosRelatorio().data ?? SEM_CONTRATOS;
+  // Gráficos gerenciais avulsos, painéis do Estúdio de BI e links de BI (mig 20261014000012).
+  const catalogo = useCatalogoTv().data;
+  const gruposIndicadores = useMemo(() => {
+    const m = new Map<string, { titulo: string; itens: { codigo: string; nome: string }[] }>();
+    for (const i of catalogo?.indicadores ?? []) {
+      if (!m.has(i.painel)) m.set(i.painel, { titulo: i.painel_titulo, itens: [] });
+      m.get(i.painel)!.itens.push(i);
+    }
+    return [...m.entries()];
+  }, [catalogo]);
   const [f, setF] = useState(VAZIO);
+  const escolherRelatorio = (v: string) => {
+    // Link de BI (Power BI…): vira item "Página web" com o endereço dele.
+    if (v.startsWith("link:")) {
+      const l = catalogo?.bi_links.find((x) => `link:${x.id}` === v);
+      if (l) setF({ ...f, tipo: "url", url: l.url, titulo: f.titulo || l.titulo });
+      return;
+    }
+    // Gráfico avulso / painel de BI: o nome vira o título (a lista mostra o título).
+    const nome = v.startsWith("ind:") ? catalogo?.indicadores.find((i) => `ind:${i.codigo}` === v)?.nome
+      : v.startsWith("bi:") ? catalogo?.bi_paineis.find((b) => `bi:${b.id}` === v)?.nome : null;
+    const nomesAuto = new Set([...(catalogo?.indicadores ?? []).map((i) => i.nome), ...(catalogo?.bi_paineis ?? []).map((b) => b.nome)]);
+    const titulo = nome ? (!f.titulo || nomesAuto.has(f.titulo) ? nome : f.titulo) : (nomesAuto.has(f.titulo) ? "" : f.titulo);
+    setF({ ...f, relatorio: v, titulo, duracao: String(Math.max(Number(f.duracao) || 0, duracaoRecomendada(paginasRelatorioTv(v)))) });
+  };
   // O formulário "limpo" (o padrão, ou o que sobrou depois de adicionar): só
   // vira rascunho na PRÉVIA quando alguém mexe nele.
   const [base, setBase] = useState(VAZIO);
@@ -544,18 +568,38 @@ function NovoItem({ playlistId, proximaOrdem, onRascunho }: { playlistId: string
           <>
             <div><Label className="text-xs">Relatório *</Label>
               {/* Relatório com mais páginas pede mais tempo: sobe o tempo na tela até o recomendado (nunca baixa). */}
-              <Select value={f.relatorio} onValueChange={(v) => setF({ ...f, relatorio: v, duracao: String(Math.max(Number(f.duracao) || 0, duracaoRecomendada(paginasRelatorioTv(v)))) })}>
+              <Select value={f.relatorio} onValueChange={escolherRelatorio}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
+                <SelectContent className="max-h-[420px]">
                   {/* Os relatórios do módulo e, separadas por diretoria, as TVs gerenciais (mig 20261012000001). */}
                   {[...new Set(RELATORIOS_TV.map((r) => r.grupo ?? ""))].map((g) => (
                     <SelectGroup key={g || "relatorios"}>
                       <SelectLabel className="text-xs text-muted-foreground">{g ? `TVs gerenciais — ${g}` : "Relatórios do ERP"}</SelectLabel>
                       {RELATORIOS_TV.filter((r) => (r.grupo ?? "") === g).map((r) => (
-                        <SelectItem key={r.slug} value={r.slug}>{r.titulo}{!r.grupo && r.paginas > 1 ? ` · ${r.paginas} páginas` : ""}</SelectItem>
+                        <SelectItem key={r.slug} value={r.slug}>{r.titulo}{!r.grupo && r.paginas > 1 ? ` · ${r.paginas} páginas` : ""}{r.grupo ? " — dashboard" : ""}</SelectItem>
                       ))}
                     </SelectGroup>
                   ))}
+                  {/* Cada gráfico gerencial sozinho, em tela cheia (14/10/2026). */}
+                  {gruposIndicadores.map(([painel, g]) => (
+                    <SelectGroup key={painel}>
+                      <SelectLabel className="text-xs text-muted-foreground">Gráfico avulso — TV {g.titulo}</SelectLabel>
+                      {g.itens.map((i) => <SelectItem key={i.codigo} value={`ind:${i.codigo}`}>{i.nome}</SelectItem>)}
+                    </SelectGroup>
+                  ))}
+                  {/* B.I nas TVs (14/10/2026): painéis do Estúdio e links de BI. */}
+                  {(catalogo?.bi_paineis.length ?? 0) > 0 && (
+                    <SelectGroup>
+                      <SelectLabel className="text-xs text-muted-foreground">B.I — Estúdio de BI</SelectLabel>
+                      {catalogo!.bi_paineis.map((b) => <SelectItem key={b.id} value={`bi:${b.id}`}>{b.nome}{b.widgets ? ` · ${b.widgets} gráfico(s)` : " · sem gráficos ainda"}</SelectItem>)}
+                    </SelectGroup>
+                  )}
+                  {(catalogo?.bi_links.length ?? 0) > 0 && (
+                    <SelectGroup>
+                      <SelectLabel className="text-xs text-muted-foreground">B.I — Links (entra como página web)</SelectLabel>
+                      {catalogo!.bi_links.map((l) => <SelectItem key={l.id} value={`link:${l.id}`}>{l.titulo}</SelectItem>)}
+                    </SelectGroup>
+                  )}
                 </SelectContent>
               </Select>
               {paginasRelatorioTv(f.relatorio) > 1 && (
@@ -591,8 +635,12 @@ function NovoItem({ playlistId, proximaOrdem, onRascunho }: { playlistId: string
               <p className="mt-1 text-[11px] text-muted-foreground">Ex.: na TV do contrato UFRGS, só os números da UFRGS. Os números se atualizam sozinhos.</p></div>
             </>) : (
               <p className="self-end pb-2 text-[11px] text-muted-foreground">
-                {f.relatorio?.startsWith("ger-")
-                  ? <>Painel no estilo do protótipo do chamado: um gráfico por indicador, meta, contrato/setor, causa e responsável; fora da meta primeiro. Metas, prazos e lançamentos em <a href="/app/sistemas/tvs/indicadores" className="font-semibold text-primary underline">TV's › Indicadores gerenciais</a>.</>
+                {f.relatorio?.startsWith("ind:")
+                  ? <>Um gráfico gerencial sozinho, em tela cheia: o número, a meta, o detalhamento por contrato, causa e responsável — tudo calculado do ERP.</>
+                  : f.relatorio?.startsWith("bi:")
+                  ? <>O painel do Estúdio de BI inteiro numa tela, com os filtros no valor padrão. Os gráficos se montam em <a href="/app/bi/estudio" className="font-semibold text-primary underline">B.I › Estúdio</a>.</>
+                  : f.relatorio?.startsWith("ger-")
+                  ? <>Dashboard completo da área: todos os números com semáforo, a tendência de 12 meses, onde agir agora e os gráficos dos mais críticos — tudo calculado do ERP, nada a lançar. Metas e regras em <a href="/app/sistemas/tvs/indicadores" className="font-semibold text-primary underline">TV's › Indicadores gerenciais</a>.</>
                   : f.relatorio === "licitacoes" ? "Mostra a grade inteira, de todas as empresas do grupo — como o Painel Executivo." : "Mostra a base toda de alunos, como o Dashboard de Treinamentos abre."} Sem período nem contrato; os números se atualizam sozinhos.
               </p>
             )}
