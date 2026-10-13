@@ -189,6 +189,13 @@ export interface SolicitacaoAjuste {
 
 const SOLICITACOES_KEY = "sol_ajuste_lista";
 
+// Código da solicitação no formato do legado: SOL-001, SOL-002... É a iteração do contrato +
+// competência (reinicia em SOL-001 a cada par), por isso NÃO é único sozinho: a tela sempre o
+// mostra ao lado das colunas Contrato e Competência.
+export function codigoSolicitacaoAjuste(iteracao: number | null | undefined): string {
+  return `SOL-${String(iteracao && iteracao > 0 ? iteracao : 1).padStart(3, "0")}`;
+}
+
 // Só as ativas (fora arquivada) — Histórico da Competência busca as
 // arquivadas separadamente, por contrato+competência.
 export function useSolicitacoesAjuste() {

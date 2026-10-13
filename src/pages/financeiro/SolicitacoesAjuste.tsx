@@ -10,7 +10,7 @@ import { AcessoGate } from "@/components/auth/AcessoGate";
 import { Plus, Settings, ClipboardList, History, Clock, CheckCircle2, Archive, AlertTriangle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
-  SolicitacaoAjuste, STATUS_BADGE_CLASSE_SOLICITACAO_AJUSTE, STATUS_LABEL_SOLICITACAO_AJUSTE, StatusSolicitacaoAjuste,
+  SolicitacaoAjuste, STATUS_BADGE_CLASSE_SOLICITACAO_AJUSTE, codigoSolicitacaoAjuste, STATUS_LABEL_SOLICITACAO_AJUSTE, StatusSolicitacaoAjuste,
   useContratosSolicitacaoAjuste, useSolicitacoesAjuste,
 } from "@/hooks/useSolicitacaoAjuste";
 import { NovaSolicitacaoModal } from "./solicitacoes-ajuste/NovaSolicitacaoModal";
@@ -55,7 +55,11 @@ export default function SolicitacoesAjuste() {
       if (filtroStatus === "todas" && s.status === "enviado") return false;
       if (filtroStatus === "despacho_atrasado" && !despachoAtrasado(s)) return false;
       if (filtroStatus !== "todas" && filtroStatus !== "despacho_atrasado" && s.status !== filtroStatus) return false;
-      if (busca && !s.contrato?.nome.toLowerCase().includes(busca.toLowerCase())) return false;
+      // Busca por contrato ou pelo código (ex.: "SOL-002").
+      if (busca) {
+        const q = busca.toLowerCase();
+        if (!s.contrato?.nome.toLowerCase().includes(q) && !codigoSolicitacaoAjuste(s.iteracao).toLowerCase().includes(q)) return false;
+      }
       return true;
     });
   }, [solicitacoes, filtroStatus, busca]);
@@ -99,7 +103,7 @@ export default function SolicitacoesAjuste() {
       <Card>
         <CardContent className="p-4">
           <div className="mb-3 flex flex-wrap items-center gap-2">
-            <Input placeholder="Buscar por contrato..." value={busca} onChange={(e) => setBusca(e.target.value)} className="max-w-xs" />
+            <Input placeholder="Buscar por contrato ou SOL-..." value={busca} onChange={(e) => setBusca(e.target.value)} className="max-w-xs" />
             {filtroStatus !== "todas" && (
               <Button variant="ghost" size="sm" onClick={() => setFiltroStatus("todas")}>Limpar filtro</Button>
             )}
@@ -109,6 +113,7 @@ export default function SolicitacoesAjuste() {
             <Table>
               <TableHeader>
                 <TableRow>
+                  <TableHead>Nº</TableHead>
                   <TableHead>Contrato</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead>Competência</TableHead>
@@ -120,12 +125,12 @@ export default function SolicitacoesAjuste() {
               <TableBody>
                 {filtradas.map((s) => (
                   <TableRow key={s.id} className="cursor-pointer" onClick={() => setDetalheId(s.id)}>
+                    <TableCell className="whitespace-nowrap font-mono text-xs">{codigoSolicitacaoAjuste(s.iteracao)}</TableCell>
                     <TableCell className="font-medium">{s.contrato?.nome ?? "—"}</TableCell>
                     <TableCell>
                       <Badge variant="outline" className={cn("border", STATUS_BADGE_CLASSE_SOLICITACAO_AJUSTE[s.status])}>
                         {STATUS_LABEL_SOLICITACAO_AJUSTE[s.status]}
                       </Badge>
-                      {s.iteracao > 1 && <Badge variant="secondary" className="ml-1">{s.iteracao}ª</Badge>}
                     </TableCell>
                     <TableCell>{s.competencia?.slice(0, 7)}</TableCell>
                     <TableCell className={despachoAtrasado(s) ? "text-destructive font-medium" : undefined}>
@@ -146,7 +151,7 @@ export default function SolicitacoesAjuste() {
                   </TableRow>
                 ))}
                 {!isLoading && filtradas.length === 0 && (
-                  <TableRow><TableCell colSpan={6} className="text-center text-muted-foreground py-8">Nenhuma solicitação encontrada.</TableCell></TableRow>
+                  <TableRow><TableCell colSpan={7} className="text-center text-muted-foreground py-8">Nenhuma solicitação encontrada.</TableCell></TableRow>
                 )}
               </TableBody>
             </Table>

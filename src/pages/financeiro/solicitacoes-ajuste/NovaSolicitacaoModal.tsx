@@ -14,6 +14,7 @@ import {
   SETORES_SOLICITACAO_AJUSTE,
   useCriarSolicitacaoAjuste,
   useItensSolicitacaoAjuste,
+  codigoSolicitacaoAjuste,
   useSolicitacaoAtivaPorCompetencia,
   useTiposSolicitacaoAjuste,
   useUploadDocPedidoSolicitacaoAjuste,
@@ -119,7 +120,7 @@ export function NovaSolicitacaoModal({ open, onOpenChange, contratos }: Props) {
         itens: itensValidos,
         itensImportarIds: emReabertura ? Array.from(itensImportar) : undefined,
       });
-      toast.success(proxima > 1 ? `Solicitação criada (${proxima}ª da competência).` : "Solicitação criada.");
+      toast.success(proxima > 1 ? `Solicitação ${codigoSolicitacaoAjuste(proxima)} criada.` : "Solicitação criada.");
       resetar();
       onOpenChange(false);
     } catch (e: any) {
@@ -133,11 +134,11 @@ export function NovaSolicitacaoModal({ open, onOpenChange, contratos }: Props) {
     <Dialog open={open} onOpenChange={(v) => { if (!v) resetar(); onOpenChange(v); }}>
       <DialogContent className="max-h-[85vh] max-w-2xl overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>{proxima > 1 ? `Nova Solicitação — ${proxima}ª deste contrato e competência` : "Nova Solicitação"}</DialogTitle>
+          <DialogTitle>{proxima > 1 ? `Nova Solicitação — ${codigoSolicitacaoAjuste(proxima)} deste contrato e competência` : "Nova Solicitação"}</DialogTitle>
           {emReabertura && (
             <DialogDescription>
-              Já existe a {solAtiva!.iteracao}ª solicitação para este contrato e competência
-              {anteriorSeraArquivada ? " (enviada): ela será arquivada" : " (em andamento): ela continua ativa"} e esta será a {proxima}ª —
+              Já existe a {codigoSolicitacaoAjuste(solAtiva!.iteracao)} para este contrato e competência
+              {anteriorSeraArquivada ? " (enviada): ela será arquivada" : " (em andamento): ela continua ativa"} e esta será a {codigoSolicitacaoAjuste(proxima)} —
               marque abaixo os itens que quer reaproveitar.
             </DialogDescription>
           )}
@@ -157,7 +158,7 @@ export function NovaSolicitacaoModal({ open, onOpenChange, contratos }: Props) {
 
           {proxima > 1 && !emReabertura && (
             <p className="rounded border bg-muted/40 p-2 text-sm text-muted-foreground">
-              Este contrato e competência já tiveram {proxima - 1} solicitação(ões) (arquivadas). Esta será a {proxima}ª.
+              Este contrato e competência já tiveram {proxima - 1} solicitação(ões) (arquivadas). Esta será a {codigoSolicitacaoAjuste(proxima)}.
             </p>
           )}
 
@@ -238,7 +239,7 @@ export function NovaSolicitacaoModal({ open, onOpenChange, contratos }: Props) {
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>Cancelar</Button>
           <Button onClick={handleSalvar} disabled={enviando}>
-            {enviando ? "Salvando..." : proxima > 1 ? `Criar ${proxima}ª solicitação` : "Criar solicitação"}
+            {enviando ? "Salvando..." : proxima > 1 ? `Criar ${codigoSolicitacaoAjuste(proxima)}` : "Criar solicitação"}
           </Button>
         </DialogFooter>
       </DialogContent>
