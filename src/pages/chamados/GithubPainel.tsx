@@ -55,8 +55,8 @@ export default function GithubPainel() {
 
   const sincronizar = () => {
     setProg(null);
-    sync.mutate(60, {
-      onSuccess: (r) => toast.success(`GitHub sincronizado: ${r.novas} PR(s) novas/alteradas, ${r.detalhadas} detalhadas${r.pendentes ? ` — faltam ${r.pendentes}, clique de novo` : ""}.`),
+    sync.mutate(undefined, {
+      onSuccess: (r) => toast.success(`GitHub sincronizado: ${r.novas} PR(s) novas/alteradas, ${r.detalhadas} detalhadas${r.pendentes ? ` — faltam ${r.pendentes}; a próxima parte libera em 10 min` : ""}.`),
       onError: (e) => toast.error((e as Error).message),
       onSettled: () => setProg(null),
     });
@@ -94,7 +94,7 @@ export default function GithubPainel() {
         </Select>
         <label className="flex items-center gap-2 text-muted-foreground"><Switch checked={filtro.semBots} onCheckedChange={(c) => setFiltro((f) => ({ ...f, semBots: c }))} /> Esconder bots</label>
         <span className="ml-auto text-muted-foreground">
-          {sync.isPending && prog ? `Sincronizando… lote ${prog.lote}: ${prog.detalhadas} PRs detalhadas, faltam ${prog.pendentes}` :
+          {sync.isPending ? "Sincronizando… (no máximo 30 consultas ao GitHub, uma por segundo)" :
             q.data?.sync?.ultima_em ? `Última sincronização: ${fmtDataHora(q.data.sync.ultima_em)}${q.data.sync.ultima_por ? ` por ${q.data.sync.ultima_por}` : ""}` : "Ainda não sincronizado"}
           {q.data?.pendentes ? ` · ${q.data.pendentes} PR(s) sem detalhe` : ""}
         </span>

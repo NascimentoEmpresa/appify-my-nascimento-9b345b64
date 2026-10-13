@@ -19,6 +19,19 @@ export interface OFXTransaction {
   origem: string;
 }
 
+// SIS-2026-0637: o OFX do banco costuma passar do período pedido (o extrato "de janeiro"
+// exportado em 04/02 traz 02/02 e 03/02). O lado Fluxo já é recortado pelo período; o
+// extrato precisa ser recortado igual, senão os dias de fora viram divergência falsa
+// ("no extrato, sem par no Fluxo"). Datas yyyy-mm-dd, comparação de texto.
+export function transacoesNoPeriodo(
+  trns: OFXTransaction[],
+  dataDe: string,
+  dataAte: string,
+): { dentro: OFXTransaction[]; fora: number } {
+  const dentro = trns.filter((t) => (!dataDe || t.dia >= dataDe) && (!dataAte || t.dia <= dataAte));
+  return { dentro, fora: trns.length - dentro.length };
+}
+
 export interface PlanilhaRow {
   dia: string;
   valor: number;
