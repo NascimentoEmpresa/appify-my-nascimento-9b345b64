@@ -56,6 +56,23 @@ const LIGADO = process.env.SAUDE_BANCO_LIGADO !== "0";
 const ultimoAviso = new Map();   // indicador -> timestamp do último envio
 const acimaDoLimite = new Set(); // indicadores que estão em alerta agora
 
+// ── Slot de replicação do corte para o cluster próprio (SIS-2026-0276) ─────
+//
+// Slot é o único objeto deste banco capaz de derrubar a produção sozinho:
+// enquanto ele não é consumido, o Postgres não pode apagar o WAL que o
+// assinante ainda não leu. Assinatura travada = disco enchendo = banco fora.
+//
+// 1 GB de atraso é folgado de propósito. Medido em 13/10/2026, a produção
+// gera cerca de 400 MB de WAL por hora em dia útil — então 1 GB é umas duas
+// horas e meia de atraso, tempo de sobra para agir, e alto o bastante para a
+// carga inicial dos 2,3 GB não disparar alarme falso.
+const LIMITE_SLOT_BYTES = Number(process.env.SAUDE_SLOT_LIMITE_MB || 1024) * 1048576;
+
+// Slot inativo por instantes é normal (reconexão). Cinco minutos não é.
+const SLOT_INATIVO_TOLERADO_MS = 5 * 60 * 1000;
+
+const slotInativoDesde = new Map(); // slot -> desde quando está inativo
+
 /**
  * Soma todas as linhas de uma métrica no formato Prometheus.
  *
@@ -225,7 +242,115 @@ async function verificarSaudeBanco() {
     }
   }
 
+  // O slot vem depois das métricas de máquina de propósito: ele é o indicador
+  // da fase do corte, não da saúde do dia a dia, e só existe enquanto a
+  // replicação para o cluster estiver de pé.
+  await verificarSlotReplicacao(url, chave, linhas);
+
   gravarStatus(linhas, projeto);
+}
+
+/**
+ * Vigia dos slots de replicação (SIS-2026-0276).
+ *
+ * Lê o RPC `ha_slot_replicacao_estado` (migration 20261014000020). Enquanto a
+ * migration não estiver aplicada, o PostgREST devolve 404 — e isso NÃO vira
+ * alerta: fora da fase do corte não há slot nenhum, e aviso que grita sem
+ * motivo é aviso que ninguém lê.
+ *
+ * Avisa em dois casos, cada um com a providência no corpo da mensagem:
+ *   - atraso acima do limite (padrão 1 GB);
+ *   - slot inativo por mais de 5 minutos.
+ */
+async function verificarSlotReplicacao(url, chave, linhas) {
+  let slots;
+  try {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
+    const res = await fetch(`${url}/rest/v1/rpc/ha_slot_replicacao_estado`, {
+      method: "POST",
+      headers: {
+        apikey: chave,
+        Authorization: `Bearer ${chave}`,
+        "Content-Type": "application/json",
+      },
+      body: "{}",
+      signal: ctrl.signal,
+    });
+    clearTimeout(t);
+    if (res.status === 404) {
+      linhas.push("  SLOT      migration 20261014000020 ainda nao aplicada");
+      return;
+    }
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    slots = await res.json();
+  } catch (e) {
+    // Não conseguir ler o slot não é o mesmo que o slot estar mal: pode ser
+    // rede daqui. Fica no arquivo de status e não acorda ninguém.
+    linhas.push(`  SLOT      nao consegui ler: ${e.message}`);
+    return;
+  }
+
+  if (!Array.isArray(slots) || slots.length === 0) {
+    linhas.push("  SLOT      nenhum slot na producao (normal fora do corte)");
+    return;
+  }
+
+  for (const s of slots) {
+    const nome = s.slot || "?";
+    const atraso = Number(s.atraso_bytes || 0);
+    const indicador = `slot ${nome}`;
+    const pct = Math.min(100, (100 * atraso) / LIMITE_SLOT_BYTES);
+
+    let inativoHa = 0;
+    if (s.ativo === false) {
+      if (!slotInativoDesde.has(nome)) slotInativoDesde.set(nome, Date.now());
+      inativoHa = Date.now() - slotInativoDesde.get(nome);
+    } else {
+      slotInativoDesde.delete(nome);
+    }
+
+    linhas.push(
+      `  SLOT      [${barra(pct)}] ${String(Math.round(pct)).padStart(3)}%   ` +
+        `${nome}: ${s.atraso_legivel || "?"} atrasado, ${s.ativo ? "ativo" : "INATIVO"}`,
+    );
+
+    const demais =
+      `Slot: \`${nome}\` (${s.tipo})\n` +
+      `Atraso: **${s.atraso_legivel}**\n` +
+      `Ativo: ${s.ativo ? "sim" : "**não**"}\n\n` +
+      "O que isso significa: o banco de produção **não pode apagar** o WAL que " +
+      "este slot ainda não leu. Se o atraso continuar subindo, o disco enche e " +
+      "a Supabase sai do ar.\n" +
+      "Providência: ver `docs/ha-corte-roteiro.md`, passo 1.5. Se não resolver " +
+      "em poucos minutos, soltar o slot é o caminho — `DROP SUBSCRIPTION` no " +
+      "cluster e `DROP PUBLICATION` na produção.";
+
+    if (atraso >= LIMITE_SLOT_BYTES) {
+      acimaDoLimite.add(indicador);
+      if (deveAvisar(indicador)) {
+        await enviarAlertaDiscord(
+          `\u{1F6A8} **Replicação — slot atrasado ${s.atraso_legivel}**\n${demais}`,
+          { forcar: true },
+        );
+      }
+    } else if (inativoHa > SLOT_INATIVO_TOLERADO_MS) {
+      acimaDoLimite.add(indicador);
+      if (deveAvisar(indicador)) {
+        await enviarAlertaDiscord(
+          `\u{1F6A8} **Replicação — slot inativo há ${Math.round(inativoHa / 60000)} min**\n${demais}`,
+          { forcar: true },
+        );
+      }
+    } else if (acimaDoLimite.has(indicador)) {
+      acimaDoLimite.delete(indicador);
+      ultimoAviso.delete(indicador);
+      await enviarAlertaDiscord(
+        `✅ **Replicação — slot \`${nome}\` normalizou** (${s.atraso_legivel} de atraso, ativo)`,
+        { forcar: true },
+      );
+    }
+  }
 }
 
 function gravarStatus(linhas, projeto) {
@@ -257,4 +382,6 @@ function gravarStatus(linhas, projeto) {
   }
 }
 
-module.exports = { verificarSaudeBanco };
+// verificarSlotReplicacao sai exportada para poder ser testada sozinha,
+// sem disparar o vigia inteiro (que fala com o endpoint de metricas).
+module.exports = { verificarSaudeBanco, verificarSlotReplicacao };
