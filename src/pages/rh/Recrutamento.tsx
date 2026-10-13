@@ -120,6 +120,8 @@ interface Curriculo {
   // Nível do parecer (14/10/2026, mig 20261014000004): o Jurídico não aprova
   // nem reprova mais — só dá o parecer e o candidato segue para a Entrevista.
   juridico_nivel?: string | null;
+  /** Seguiu sem o parecer do Jurídico (mig 20261014000016). */
+  juridico_pulado?: boolean | null;
   // SST e Compras correm em PARALELO: os dois precisam estar true para o
   // candidato seguir sozinho para a Admissão.
   sst_ok?: boolean | null;
@@ -523,6 +525,10 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
   const podeExcluirSolicitacao = can("excluir", undefined, "recrutamento_solicitacao_excluir");
 
   const podeMoverJuridico = can("aprovar", undefined, "recrutamento_etapa_juridico");
+  // Quem É do Jurídico (tem a Verificação de Candidatos). Só ele carimba o
+  // parecer; os outros que tiram o candidato da coluna marcam "pulado"
+  // (14/10/2026, mig 20261014000016 — os "Jurídico: OK" eram do Recrutamento).
+  const ehDoJuridico = can("alterar", undefined, "candidatos");
   const podeMoverSst      = can("aprovar", undefined, "recrutamento_etapa_sst");
   const podeMoverCompras  = can("aprovar", undefined, "recrutamento_etapa_compras");
   // Atalho DOCUMENTAÇÃO → ADMISSÃO sem passar por SST + COMPRAS (29/09/2026,
@@ -1569,7 +1575,10 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
     const pulouSstCompras = origem === "DOCUMENTAÇÃO" && novaEtapa === "ADMISSÃO";
     const payload: Record<string, unknown> = { etapa_processo: novaEtapa, etapa_changed_at: nowIso, ...extra };
     // Carimba quem completou a etapa de ORIGEM (e decisão do Jurídico colore o card).
-    if (origem === "JURÍDICO")  { payload.juridico_ok = !reprovado; payload.juridico_por = nome; payload.juridico_em = nowIso; }
+    if (origem === "JURÍDICO" && (ehDoJuridico || reprovado)) { payload.juridico_ok = !reprovado; payload.juridico_por = nome; payload.juridico_em = nowIso; }
+    // Saiu do Jurídico sem parecer do Jurídico, ou pulou a etapa na Triagem.
+    const pulouJuridico = !reprovado && ((origem === "JURÍDICO" && !ehDoJuridico) || (origem === "TRIAGEM" && novaEtapa === "ENTREVISTA"));
+    if (pulouJuridico) { payload.juridico_pulado = true; delete payload.juridico_nivel; delete payload.juridico_obs; }
     // Na etapa paralela quem carimba é aprovarParalelo, setor por setor —
     // aqui só passa a movimentação final para ADMISSÃO.
     const { error } = await sb.from("WA_CURRICULOS").update(payload).eq("id", id);
@@ -1586,7 +1595,8 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
     const eventoTxt: Record<string, string> = {
       TRIAGEM: "Movido para Triagem",
       "JURÍDICO": "Enviado ao Jurídico",
-      ENTREVISTA: origem === "JURÍDICO" ? eventoParecerJuridico(extra.juridico_nivel as string | undefined) : "Liberado para Entrevista",
+      ENTREVISTA: pulouJuridico ? (origem === "JURÍDICO" ? "Jurídico pulado — retirado da análise sem parecer" : "Jurídico pulado → Entrevista")
+        : origem === "JURÍDICO" ? eventoParecerJuridico(extra.juridico_nivel as string | undefined) : "Liberado para Entrevista",
       "ENTREVISTA GESTOR": "Enviado à Entrevista com Gestor",
       APROVADO: "Aprovado nas entrevistas",
       "DOCUMENTAÇÃO": "Aprovado → Documentação",
@@ -1751,7 +1761,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
   const pulandoSstCompras = !!candModal && candModal.novaEtapa === "ADMISSÃO"
     && candidatos.find(c => c.id === candModal.id)?.etapa_processo === "DOCUMENTAÇÃO";
   // Modal aberto do JURÍDICO para a frente: é o parecer (mig 20261014000004).
-  const parecerJuridico = !!candModal && candModal.novaEtapa !== "Reprovado"
+  const parecerJuridico = ehDoJuridico && !!candModal && candModal.novaEtapa !== "Reprovado"
     && candidatos.find(c => c.id === candModal.id)?.etapa_processo === "JURÍDICO";
 
   // ── Kanban Mover ──────────────────────────────────────────────
@@ -2589,7 +2599,7 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
                               {etapa === "DOCUMENTAÇÃO" && podeRecrutar && podePularSstCompras && (
                                 <button onClick={() => pedirMoverCand(c, "ADMISSÃO")} style={bSkip}>Pular SST e Compras →</button>
                               )}
-                              {etapa === "JURÍDICO" && podeMoverJuridico && (
+                              {etapa === "JURÍDICO" && podeMoverJuridico && ehDoJuridico && (
                                 <button onClick={() => okJuridico(c)} title="Nada a apontar: parecer Tudo certo e segue para a Entrevista" style={{ ...bSkip, color: "#15803d", borderColor: "#bbf7d0" }}>✓ OK, tudo certo → Entrevista</button>
                               )}
                               {/* No Jurídico não tem Reprovar: ele só dá parecer (mig 20261014000004). */}

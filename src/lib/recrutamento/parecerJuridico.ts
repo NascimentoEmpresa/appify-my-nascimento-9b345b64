@@ -28,9 +28,12 @@ export const eventoParecerJuridico = (nivel: string | null | undefined) =>
   `Parecer do Jurídico: ${nivelJuridico(nivel)?.rotulo ?? "OK"} → Entrevista`;
 
 /** Selo do card: o nível do parecer; parecer antigo (antes do nível) aparece como "Jurídico OK". */
-export function seloJuridico(c: { juridico_nivel?: string | null; juridico_ok?: boolean | null }): { texto: string; cor: string; fundo: string; borda: string } | null {
+export function seloJuridico(c: { juridico_nivel?: string | null; juridico_ok?: boolean | null; juridico_pulado?: boolean | null }): { texto: string; cor: string; fundo: string; borda: string } | null {
   const n = nivelJuridico(c.juridico_nivel);
   if (n) return { texto: `Jurídico: ${n.rotulo}`, cor: n.cor, fundo: n.fundo, borda: n.borda };
+  // 14/10/2026 (mig 20261014000016): seguiu sem o parecer do Jurídico — pulado
+  // na Triagem ou retirado da coluna pelo Recrutamento. Antes saía "OK".
+  if (c.juridico_pulado) return { texto: "Jurídico pulado", cor: "#92400e", fundo: "#fffbeb", borda: "#fde68a" };
   if (c.juridico_ok === true) return { texto: "Jurídico: OK", cor: "#15803d", fundo: "#f0fdf4", borda: "#bbf7d0" };
   if (c.juridico_ok === false) return { texto: "Restrição do Jurídico", cor: "#b91c1c", fundo: "#fef2f2", borda: "#fecaca" };
   return null;
