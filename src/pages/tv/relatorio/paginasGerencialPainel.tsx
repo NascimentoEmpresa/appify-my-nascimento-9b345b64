@@ -30,31 +30,75 @@ import { misturarCor } from "@/lib/tv/relatorioTv";
 // nítidos e leves para navegador de TV.
 // =====================================================================
 
-interface Tema {
+export interface Tema {
   fundo: string; cartao: string; sombra: string; texto: string; suave: string; caixa: string; rotulo: string; grade: string; eixo: string; nota: string;
 }
-const CLARO: Tema = {
+export const CLARO: Tema = {
   fundo: "#f4f4f5", cartao: "#ffffff", sombra: "0 10px 15px -3px rgba(0,0,0,0.08), 0 4px 6px -4px rgba(0,0,0,0.08)",
   texto: "#18181b", suave: "#71717a", caixa: "#f4f4f5", rotulo: "#a1a1aa", grade: "#ececef", eixo: "#d4d4d8", nota: "#ffffff",
 };
-const ESCURO: Tema = {
+export const ESCURO: Tema = {
   fundo: "linear-gradient(135deg,#06121f 0%,#091a2c 55%,#0c223b 100%)", cartao: "linear-gradient(180deg,#10233a,#0b1b2e)",
   sombra: "0 14px 30px -8px rgba(0,0,0,0.55), inset 0 1px 0 rgba(255,255,255,0.06)",
   texto: "#eef4ff", suave: "#a8bed6", caixa: "rgba(255,255,255,0.05)", rotulo: "#7f9bbb", grade: "rgba(255,255,255,0.07)", eixo: "rgba(255,255,255,0.16)", nota: "rgba(255,255,255,0.04)",
 };
 export const fundoDoPainel = (visual: VisualGerencial) => (visualGerencial(visual).escuro ? ESCURO.fundo : CLARO.fundo);
+export const temaDoVisual = (visual: VisualGerencial): Tema => (visualGerencial(visual).escuro ? ESCURO : CLARO);
 
 /** Status no vocabulário do protótipo: crítico / atenção / dentro da meta. */
-const STATUS: Record<Situacao, { cor: string; rotulo: string; Icone: LucideIcon }> = {
+export const STATUS: Record<Situacao, { cor: string; rotulo: string; Icone: LucideIcon }> = {
   vermelho: { cor: "#dc2626", rotulo: "Crítico", Icone: AlertTriangle },
   amarelo: { cor: "#d97706", rotulo: "Atenção", Icone: Eye },
   verde: { cor: "#16a34a", rotulo: "Dentro da meta", Icone: CheckCircle2 },
   neutro: { cor: "#2563eb", rotulo: "Acompanhar", Icone: Target },
   sem_dado: { cor: "#71717a", rotulo: "Sem dado", Icone: CircleDashed },
 };
-const PALETA = ["#ef4444", "#f59e0b", "#3b82f6", "#22c55e", "#a855f7", "#94a3b8", "#fb7185", "#06b6d4"];
+export const PALETA = ["#ef4444", "#f59e0b", "#3b82f6", "#22c55e", "#a855f7", "#94a3b8", "#fb7185", "#06b6d4"];
 
 const inicialMaiuscula = (s: string) => (s ? s[0].toUpperCase() + s.slice(1) : s);
+
+/** A faixa de cor do topo (diretoria, a TV, a pergunta, relógio e placar) — também a do dashboard. */
+export function FaixaGerencial({ cor, sobre, titulo, pergunta, placarTv, altura = 168 }: {
+  cor: string; sobre: string; titulo: string; pergunta: string | null | undefined;
+  placarTv: Record<Situacao, number> | null; altura?: number;
+}) {
+  const [agora, setAgora] = useState(() => new Date());
+  useEffect(() => { const id = window.setInterval(() => setAgora(new Date()), 15_000); return () => window.clearInterval(id); }, []);
+  const corEscura = misturarCor(cor, "#000000", 0.3);
+  return (
+    <div className="relative flex shrink-0 items-center gap-8 overflow-hidden px-12" style={{ height: altura, background: `linear-gradient(115deg, ${cor} 0%, ${corEscura} 100%)`, color: "#fff" }}>
+      <div className="pointer-events-none absolute -right-24 -top-32 h-[440px] w-[440px] rounded-full" style={{ background: "rgba(255,255,255,0.07)" }} />
+      <div className="pointer-events-none absolute right-80 -bottom-44 h-[300px] w-[300px] rounded-full" style={{ background: "rgba(255,255,255,0.05)" }} />
+      <div className="relative min-w-0 flex-1">
+        <p className="font-extrabold uppercase" style={{ fontSize: 17, letterSpacing: ".16em", opacity: 0.85 }}>{sobre}</p>
+        <p className="truncate font-black leading-none tracking-tight" style={{ fontSize: 52, marginTop: 6 }}>{titulo}</p>
+        {pergunta && (
+          <p className="mt-3 font-semibold leading-snug" style={{ fontSize: 22, opacity: 0.95, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>“{pergunta}”</p>
+        )}
+      </div>
+      <div className="relative flex shrink-0 flex-col items-end gap-3">
+        <div className="flex items-end gap-5">
+          <div className="text-right">
+            <p className="font-black leading-none tabular-nums" style={{ fontSize: 62 }}>{agora.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}</p>
+            <p className="mt-1.5 font-semibold" style={{ fontSize: 18, opacity: 0.9 }}>{inicialMaiuscula(agora.toLocaleDateString("pt-BR", { weekday: "long", day: "2-digit", month: "long" }))}</p>
+          </div>
+          <div className="rounded-2xl px-4 py-2.5 text-center font-black uppercase leading-tight tracking-wider" style={{ fontSize: 17, background: "#f97316", color: "#fff", boxShadow: "0 10px 15px -3px rgba(0,0,0,0.2)" }}>
+            Grupo<br />Nascimento
+          </div>
+        </div>
+        {placarTv && (
+          <div className="flex gap-2">
+            {(["vermelho", "amarelo", "verde"] as const).map((s) => (
+              <span key={s} className="inline-flex items-center gap-1.5 rounded-full bg-white px-3.5 py-1 font-extrabold uppercase" style={{ fontSize: 15, color: STATUS[s].cor, opacity: placarTv[s] ? 1 : 0.55 }}>
+                <span className="tabular-nums" style={{ fontSize: 18 }}>{placarTv[s]}</span> {STATUS[s].rotulo}
+              </span>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
 
 export function TelaPainelGerencial({ p, cor, visual, chave, paginas, pagina, duracaoMs, atualizado }: {
   p: PainelGerencial; cor: string; visual: VisualGerencial; chave: string;
@@ -182,7 +226,7 @@ function CartaoPainel({ i, t, grande, compacto }: { i: IndicadorGerencial; t: Te
   );
 }
 
-function Info({ t, Icone, rotulo, texto, grande, forte = false }: { t: Tema; Icone: LucideIcon; rotulo: string; texto: string | null | undefined; grande: boolean; forte?: boolean }) {
+export function Info({ t, Icone, rotulo, texto, grande, forte = false }: { t: Tema; Icone: LucideIcon; rotulo: string; texto: string | null | undefined; grande: boolean; forte?: boolean }) {
   return (
     <div className="flex min-w-0 items-start gap-2 rounded-xl" style={{ background: t.caixa, padding: "7px 11px" }}>
       <Icone className="mt-0.5 shrink-0" style={{ width: 15, height: 15, color: t.rotulo }} />
@@ -198,7 +242,7 @@ function Info({ t, Icone, rotulo, texto, grande, forte = false }: { t: Tema; Ico
 
 // ---- Gráficos (SVG) ----------------------------------------------------------
 
-function useTamanho<T extends HTMLElement>() {
+export function useTamanho<T extends HTMLElement>() {
   const ref = useRef<T>(null);
   const [tam, setTam] = useState({ w: 0, h: 0 });
   useLayoutEffect(() => {
@@ -213,7 +257,7 @@ function useTamanho<T extends HTMLElement>() {
   return { ref, ...tam };
 }
 
-function Grafico({ i, t, grande }: { i: IndicadorGerencial; t: Tema; grande: boolean }) {
+export function Grafico({ i, t, grande }: { i: IndicadorGerencial; t: Tema; grande: boolean }) {
   const { ref, w, h } = useTamanho<HTMLDivElement>();
   const g = graficoDo(i);
   const dados = dadosDoGrafico(i, grande ? 8 : 6);
@@ -241,9 +285,9 @@ function Grafico({ i, t, grande }: { i: IndicadorGerencial; t: Tema; grande: boo
   return <div ref={ref} className="absolute inset-0">{corpo}</div>;
 }
 
-const M = { l: 6, r: 6, t: 24, b: 36 };
+export const M = { l: 6, r: 6, t: 24, b: 36 };
 
-function Rotulo({ x, y, texto, largura, t, fonte }: { x: number; y: number; texto: string; largura: number; t: Tema; fonte: number }) {
+export function Rotulo({ x, y, texto, largura, t, fonte }: { x: number; y: number; texto: string; largura: number; t: Tema; fonte: number }) {
   // Duas linhas no máximo, quebrando por palavra, sem o código do contrato.
   const porLinha = Math.max(6, Math.floor(largura / (fonte * 0.55)));
   const palavras = nomeCurto(texto, porLinha * 2).split(" ");
@@ -256,12 +300,12 @@ function Rotulo({ x, y, texto, largura, t, fonte }: { x: number; y: number; text
 }
 
 /** Linhas de grade suaves (carmed: tracejado discreto, sem eixo pesado). */
-function Grade({ w, y0, ch, t }: { w: number; y0: number; ch: number; t: Tema }) {
+export function Grade({ w, y0, ch, t }: { w: number; y0: number; ch: number; t: Tema }) {
   return <>{[0.33, 0.66].map((f) => <line key={f} x1={M.l} x2={w - M.r} y1={y0 + ch * f} y2={y0 + ch * f} stroke={t.grade} strokeDasharray="5 7" />)}<line x1={M.l} x2={w - M.r} y1={y0 + ch} y2={y0 + ch} stroke={t.eixo} strokeWidth={1.5} /></>;
 }
 
 /** Barra com só o topo arredondado. */
-const barra = (x: number, y: number, bw: number, bh: number, r: number) => {
+export const barra = (x: number, y: number, bw: number, bh: number, r: number) => {
   const rr = Math.min(r, bw / 2, bh);
   return `M ${x} ${y + bh} V ${y + rr} Q ${x} ${y} ${x + rr} ${y} H ${x + bw - rr} Q ${x + bw} ${y} ${x + bw} ${y + rr} V ${y + bh} Z`;
 };

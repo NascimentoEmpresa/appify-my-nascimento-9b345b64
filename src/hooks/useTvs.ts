@@ -142,3 +142,28 @@ export const useCriarAlerta = () => useMut(async (p: { texto: string; cor: strin
 
 export const useEncerrarAlerta = () => useMut(async (id: string) =>
   ok(await sb.from("TV_ALERTA").update({ encerrado_em: new Date().toISOString() }).eq("id", id)));
+
+// ---- Catálogo da playlist (14/10/2026, mig 20261014000012) -------------------
+// "Tem que ter bem mais relatório pra selecionar, pra eu colocar qualquer um
+// que eu quiser nas TVs; também tem que ser possível colocar B.I": cada
+// indicador gerencial sozinho, os painéis do Estúdio de BI que a pessoa
+// enxerga e os links de BI (estes pela RLS do BI_LINK, com o login dela).
+export interface CatalogoTv {
+  indicadores: { codigo: string; nome: string; painel: string; painel_titulo: string }[];
+  bi_paineis: { id: number; nome: string; publico: boolean; widgets: number }[];
+  bi_links: { id: string; titulo: string; url: string; grupo: string | null }[];
+}
+export function useCatalogoTv() {
+  return useQuery({
+    queryKey: [K, "catalogo"],
+    staleTime: 5 * 60_000,
+    queryFn: async (): Promise<CatalogoTv> => {
+      const [c, l] = await Promise.all([
+        sb.rpc("tv_catalogo"),
+        sb.from("BI_LINK").select("id,titulo,url,grupo,ativo").eq("ativo", true).order("grupo").order("titulo"),
+      ]);
+      if (c.error) throw c.error;
+      return { indicadores: c.data?.indicadores ?? [], bi_paineis: c.data?.bi_paineis ?? [], bi_links: l.error ? [] : (l.data ?? []) };
+    },
+  });
+}

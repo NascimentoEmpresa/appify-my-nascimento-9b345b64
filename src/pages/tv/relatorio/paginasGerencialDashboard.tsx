@@ -1,0 +1,241 @@
+import { AlertTriangle, CheckCircle2, Info as InfoIcone, MapPin, TrendingUp, UserCheck } from "lucide-react";
+import {
+  destaquesDoDashboard, formatarValor, indicadoresDaTv, ondeAgir, placar, situacao, tendenciaValida, textoMeta,
+  type IndicadorGerencial, type PainelGerencial, type TendenciaPainel, type VisualGerencial,
+} from "@/lib/tv/gerencial";
+import { misturarCor } from "@/lib/tv/relatorioTv";
+import { FaixaGerencial, Grafico, Grade, Info, M, STATUS, barra, temaDoVisual, useTamanho, type Tema } from "./paginasGerencialPainel";
+
+// =====================================================================
+// TVs gerenciais — DASHBOARD COMPLETO (14/10/2026, mig 20261014000010)
+//
+// Pedido do Pablo: "por que tá tudo zerado? Preciso que os indicadores
+// puxem AUTOMATICAMENTE, nada a preencher. E seja um dashboard pra TV, não
+// cada um no seu quadrado — dashboard completo com gráficos e números reais."
+//
+// Uma tela só, no palco 1920×1080:
+//   · faixa de cor com a pergunta da TV, relógio e o placar (crítico/atenção/ok);
+//   · FAIXA DE NÚMEROS: todos os indicadores da TV lado a lado — resultado em
+//     destaque na cor do semáforo e a meta;
+//   · TENDÊNCIA: 12 meses com dado real da área (tvg_tendencia — admissões ×
+//     demissões, faturado × recebido, receita × custo do DRE…);
+//   · ONDE AGIR AGORA: os que estão fora da meta/atenção, com contrato/setor,
+//     causa e responsável (o formato obrigatório do Word);
+//   · os GRÁFICOS dos indicadores mais críticos, com o detalhamento real.
+// E o indicador SOZINHO (item "ind:<codigo>" da playlist): o gráfico grande.
+// =====================================================================
+
+export function TelaDashboardGerencial({ p, cor, visual, atualizado }: {
+  p: PainelGerencial; cor: string; visual: VisualGerencial; atualizado: string | null;
+}) {
+  const t = temaDoVisual(visual);
+  const itens = indicadoresDaTv(p);
+  const agir = ondeAgir(p, 5);
+  const destaques = destaquesDoDashboard(p, 3);
+  const tendencia = tendenciaValida(p.tendencia) ? p.tendencia : null;
+
+  return (
+    <div className="flex h-full w-full flex-col" style={{ color: t.texto }}>
+      <FaixaGerencial cor={cor} sobre={`Dashboard gerencial · ${p.painel?.diretoria ?? ""}`} titulo={`TV ${p.painel?.titulo ?? ""}`}
+        pergunta={p.painel?.pergunta} placarTv={placar(itens)} altura={150} />
+
+      <div className="flex min-h-0 flex-1 flex-col" style={{ padding: "18px 34px 12px", gap: 16 }}>
+        {/* Faixa de números: todos os indicadores da TV */}
+        <div className="grid shrink-0" style={{ gap: 12, gridTemplateColumns: `repeat(${Math.max(1, Math.min(itens.length, 8))}, minmax(0,1fr))`, height: 138 }}>
+          {itens.slice(0, 8).map((i) => <Numero key={i.codigo} i={i} t={t} />)}
+        </div>
+
+        {/* Tendência de 12 meses + onde agir */}
+        <div className="grid min-h-0" style={{ flex: 1.15, gap: 16, gridTemplateColumns: "minmax(0,1.6fr) minmax(0,1fr)" }}>
+          <Cartao t={t}>
+            <Titulo t={t} Icone={TrendingUp} cor={cor} texto={tendencia?.titulo ?? "Tendência"} sub="Últimos 12 meses · dado do ERP" />
+            <div className="relative min-h-0 flex-1">
+              {tendencia ? <GraficoTendencia tendencia={tendencia} t={t} cor={cor} />
+                : destaques[0] ? <Grafico i={destaques[0]} t={t} grande />
+                : <Vazio t={t} texto="Sem histórico mensal para esta área" />}
+            </div>
+          </Cartao>
+          <Cartao t={t}>
+            <Titulo t={t} Icone={AlertTriangle} cor={agir.length ? STATUS.vermelho.cor : STATUS.verde.cor} texto="Onde agir agora"
+              sub={agir.length ? "Fora da meta primeiro, pelo impacto" : "Nenhum indicador fora da meta"} />
+            <div className="flex min-h-0 flex-1 flex-col" style={{ gap: 9 }}>
+              {agir.length ? agir.map((i) => <LinhaAgir key={i.codigo} i={i} t={t} />) : (
+                <div className="flex flex-1 flex-col items-center justify-center gap-3 rounded-2xl" style={{ background: misturarCor(STATUS.verde.cor, "#ffffff", 0.9) }}>
+                  <CheckCircle2 style={{ width: 64, height: 64, color: STATUS.verde.cor }} />
+                  <p className="font-black" style={{ fontSize: 30, color: STATUS.verde.cor }}>Tudo dentro da meta</p>
+                </div>
+              )}
+            </div>
+          </Cartao>
+        </div>
+
+        {/* Os gráficos dos mais críticos, com o detalhamento real */}
+        {destaques.length > 0 && (
+          <div className="grid min-h-0" style={{ flex: 1, gap: 16, gridTemplateColumns: `repeat(${destaques.length}, minmax(0,1fr))` }}>
+            {destaques.map((i) => (
+              <Cartao key={i.codigo} t={t}>
+                <div className="flex shrink-0 items-start gap-3">
+                  <p className="min-w-0 flex-1 font-extrabold leading-tight" style={{ fontSize: 21, display: "-webkit-box", WebkitLineClamp: 1, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{i.nome}</p>
+                  <p className="shrink-0 font-black tabular-nums leading-none" style={{ fontSize: 30, color: STATUS[situacao(i)].cor }}>{formatarValor(i.resultado?.valor, i.unidade)}</p>
+                </div>
+                <p className="shrink-0 truncate font-semibold" style={{ fontSize: 15, color: t.suave }}>{i.resultado?.afetado || textoMeta(i)}</p>
+                <div className="relative min-h-0 flex-1"><Grafico i={i} t={t} grande={false} /></div>
+              </Cartao>
+            ))}
+          </div>
+        )}
+
+        <div className="flex shrink-0 items-center gap-4" style={{ height: 24, fontSize: 15, color: t.suave }}>
+          <span className="h-2 w-2 rounded-full" style={{ background: cor }} />
+          <p className="font-semibold">Tudo calculado do ERP, sem lançamento · regras e metas em <b style={{ color: t.texto }}>TV's › Indicadores gerenciais</b></p>
+          <p className="ml-auto font-semibold">{atualizado ? `Atualizado às ${atualizado}` : "ERP Grupo Nascimento"}</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Um indicador sozinho na TV (item "ind:<codigo>"): número, meta, o gráfico grande e as informações do Word. */
+export function TelaIndicadorGerencial({ painel, i, cor, visual, atualizado }: {
+  painel: PainelGerencial["painel"]; i: IndicadorGerencial; cor: string; visual: VisualGerencial; atualizado: string | null;
+}) {
+  const t = temaDoVisual(visual);
+  const s = situacao(i);
+  const st = STATUS[s];
+  const r = i.resultado ?? { valor: null };
+  return (
+    <div className="flex h-full w-full flex-col" style={{ color: t.texto }}>
+      <FaixaGerencial cor={cor} sobre={`${painel?.diretoria ?? ""} · TV ${painel?.titulo ?? ""}`} titulo={i.nome}
+        pergunta={i.identificar || painel?.pergunta} placarTv={null} altura={150} />
+      <div className="grid min-h-0 flex-1" style={{ padding: "24px 36px 16px", gap: 22, gridTemplateColumns: "minmax(0,1fr) minmax(0,2.3fr)" }}>
+        <div className="flex min-h-0 flex-col" style={{ gap: 14 }}>
+          <Cartao t={t}>
+            <span className="inline-flex w-fit items-center gap-2 rounded-full px-4 py-1.5 font-extrabold uppercase" style={{ fontSize: 17, color: st.cor, background: misturarCor(st.cor, "#ffffff", 0.86) }}>
+              <st.Icone style={{ width: 20, height: 20 }} strokeWidth={2.6} />{st.rotulo}
+            </span>
+            <p className="font-black leading-none tabular-nums" style={{ fontSize: r.valor == null ? 44 : 104, color: r.valor == null ? t.suave : st.cor, marginTop: 10 }}>
+              {r.valor == null ? "Sem dado" : formatarValor(r.valor, i.unidade)}
+            </p>
+            <span className="w-fit rounded-full px-4 py-1 font-bold" style={{ fontSize: 20, background: t.caixa, color: t.suave }}>{textoMeta(i)}</span>
+          </Cartao>
+          <div className="flex min-h-0 flex-1 flex-col" style={{ gap: 10 }}>
+            <Info t={t} Icone={MapPin} rotulo="Contrato / setor" texto={r.afetado} grande />
+            <Info t={t} Icone={AlertTriangle} rotulo="Causa principal" texto={r.causa} grande />
+            <Info t={t} Icone={UserCheck} rotulo="Responsável" texto={i.responsavel} grande forte />
+            <Info t={t} Icone={InfoIcone} rotulo="Como é calculado" texto={r.base || i.regra} grande />
+          </div>
+        </div>
+        <Cartao t={t}>
+          <Titulo t={t} Icone={TrendingUp} cor={cor} texto="Detalhamento" sub="Dado do ERP, atualizado sozinho" />
+          <div className="relative min-h-0 flex-1"><Grafico i={i} t={t} grande /></div>
+          <p className="shrink-0 text-right font-semibold" style={{ fontSize: 15, color: t.suave }}>{atualizado ? `Atualizado às ${atualizado}` : ""}</p>
+        </Cartao>
+      </div>
+    </div>
+  );
+}
+
+// ---- Peças ------------------------------------------------------------------
+
+function Cartao({ t, children }: { t: Tema; children: React.ReactNode }) {
+  return <div className="flex min-h-0 min-w-0 flex-col" style={{ background: t.cartao, boxShadow: t.sombra, borderRadius: 24, padding: "18px 22px", gap: 10 }}>{children}</div>;
+}
+
+function Titulo({ t, Icone, cor, texto, sub }: { t: Tema; Icone: typeof TrendingUp; cor: string; texto: string; sub?: string }) {
+  return (
+    <div className="flex shrink-0 items-center gap-3">
+      <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl" style={{ background: misturarCor(cor, "#ffffff", 0.85) }}><Icone style={{ width: 22, height: 22, color: cor }} /></span>
+      <div className="min-w-0">
+        <p className="truncate font-extrabold leading-tight" style={{ fontSize: 23 }}>{texto}</p>
+        {sub && <p className="truncate font-semibold" style={{ fontSize: 14, color: t.suave }}>{sub}</p>}
+      </div>
+    </div>
+  );
+}
+
+function Vazio({ t, texto }: { t: Tema; texto: string }) {
+  return <div className="flex h-full items-center justify-center rounded-2xl font-semibold" style={{ background: t.caixa, color: t.suave, fontSize: 18 }}>{texto}</div>;
+}
+
+/** Um número da faixa do topo: nome, resultado na cor do semáforo e a meta. */
+function Numero({ i, t }: { i: IndicadorGerencial; t: Tema }) {
+  const s = situacao(i);
+  const st = STATUS[s];
+  const v = i.resultado?.valor;
+  return (
+    <div className="relative flex min-w-0 flex-col justify-between overflow-hidden" style={{ background: t.cartao, boxShadow: t.sombra, borderRadius: 20, padding: "14px 16px 12px" }}>
+      <span className="absolute inset-x-0 top-0" style={{ height: 5, background: st.cor }} />
+      <p className="font-bold leading-tight" style={{ fontSize: 15.5, color: t.suave, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{i.nome}</p>
+      <p className="truncate font-black leading-none tabular-nums" style={{ fontSize: 38, color: v == null ? t.suave : st.cor }}>{formatarValor(v, i.unidade)}</p>
+      <p className="truncate font-bold" style={{ fontSize: 13, color: t.rotulo }}>{textoMeta(i).replace(" · acompanhamento", "")}</p>
+    </div>
+  );
+}
+
+/** Uma linha do "Onde agir agora": o formato do Word numa linha só. */
+function LinhaAgir({ i, t }: { i: IndicadorGerencial; t: Tema }) {
+  const st = STATUS[situacao(i)];
+  const r = i.resultado ?? { valor: null };
+  return (
+    <div className="flex min-h-0 items-center gap-3 rounded-2xl" style={{ background: t.caixa, padding: "8px 14px", flex: 1, maxHeight: 92 }}>
+      <span className="h-full w-1.5 shrink-0 rounded-full" style={{ background: st.cor }} />
+      <div className="min-w-0 flex-1">
+        <div className="flex items-baseline gap-2">
+          <p className="min-w-0 flex-1 truncate font-extrabold" style={{ fontSize: 18 }}>{i.nome}</p>
+          <p className="shrink-0 font-black tabular-nums" style={{ fontSize: 22, color: st.cor }}>{formatarValor(r.valor, i.unidade)}</p>
+        </div>
+        <p className="truncate font-semibold" style={{ fontSize: 14, color: t.suave }}>
+          {[r.afetado, r.causa].filter(Boolean).join(" · ") || "—"}
+        </p>
+        <p className="truncate font-extrabold" style={{ fontSize: 13, color: t.rotulo }}>Responsável: <span style={{ color: t.texto }}>{i.responsavel || "—"}</span></p>
+      </div>
+    </div>
+  );
+}
+
+/** 12 meses, duas séries lado a lado (a × b), valores sobre as barras. */
+function GraficoTendencia({ tendencia, t, cor }: { tendencia: TendenciaPainel; t: Tema; cor: string }) {
+  const { ref, w, h } = useTamanho<HTMLDivElement>();
+  const cores = [cor, "#94a3b8"];
+  const meses = tendencia.meses;
+  const vals = meses.flatMap((m) => [Number(m.a) || 0, Number(m.b) || 0]);
+  const max = Math.max(1, ...vals) * 1.12;
+  const fonte = 15;
+  const top = M.t + 18;
+  const ch = h - top - M.b, n = meses.length, slot = n ? (w - M.l - M.r) / n : 0, bw = Math.min(34, (slot - 14) / 2);
+  const curto = (v: number) => formatarValor(v, tendencia.unidade);
+  return (
+    <div ref={ref} className="absolute inset-0">
+      {w > 0 && h > 0 && (
+        <svg width={w} height={h}>
+          {tendencia.series.map((s, k) => (
+            <g key={s}>
+              <rect x={w - M.r - (2 - k) * 170} y={0} width={14} height={14} rx={4} fill={cores[k]} />
+              <text x={w - M.r - (2 - k) * 170 + 20} y={12} fill={t.suave} fontSize={fonte} fontWeight={700}>{s}</text>
+            </g>
+          ))}
+          <Grade w={w} y0={top} ch={ch} t={t} />
+          {meses.map((m, k) => {
+            const cx = M.l + k * slot + slot / 2;
+            return (
+              <g key={m.mes}>
+                {[Number(m.a) || 0, Number(m.b) || 0].map((v, j) => {
+                  const bh = Math.max(2, (v / max) * ch), x = cx - bw - 2 + j * (bw + 4), y = top + ch - bh;
+                  return (
+                    <g key={j}>
+                      <path d={barra(x, y, bw, bh, 7)} fill={cores[j]} />
+                      {/* Rótulo na série principal; a segunda só com folga (senão os dois se atropelam). */}
+                      {v > 0 && (j === 0 || slot >= 150) && <text x={j === 0 && slot < 150 ? cx : x + bw / 2} y={y - 6} textAnchor="middle" fill={t.texto} fontSize={fonte - 2} fontWeight={800}>{curto(v)}</text>}
+                    </g>
+                  );
+                })}
+                {/* Texto simples: o Rotulo apaga "10/26" (feito para tirar o nº do edital). */}
+                <text x={cx} y={top + ch + fonte + 6} textAnchor="middle" fill={t.suave} fontSize={fonte} fontWeight={700}>{m.mes}</text>
+              </g>
+            );
+          })}
+        </svg>
+      )}
+    </div>
+  );
+}

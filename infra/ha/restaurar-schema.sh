@@ -36,18 +36,32 @@ log(){ echo "[$(date +%H:%M:%S)] $*"; }
 D(){ PGPASSWORD="$SENHA_DESTINO" psql -h "$DESTINO_HOST" -p 5432 -U postgres "$@"; }
 
 # ── 1. dump da producao (leitura pura) ──────────────────────────────────────
+# SEM --no-privileges, de proposito. Com ele o dump sai limpo e bonito -- e
+# SEM UM UNICO GRANT. O resultado: o PostgREST conecta, enxerga o schema e
+# responde 42501 "permission denied for table" em tudo; o GoTrue nao consegue
+# nem criar a propria tabela de controle ("permission denied for schema
+# public") e fica em laco de reinicio; o storage morre com "relation
+# migrations does not exist". Medido em 09-13/10/2026.
+#
+# Os GRANTs sao parte do modelo de acesso, nao enfeite: no Supabase o padrao
+# e GRANT amplo para anon/authenticated e a RLS decidindo linha a linha. Sem
+# os GRANTs, a RLS nem chega a ser consultada.
+#
+# --no-owner CONTINUA: os objetos passam a pertencer a quem restaura, o que
+# evita erro de troca de dono e nao muda em nada o acesso -- quem manda e a
+# combinacao GRANT + politica de RLS.
 export PGPASSWORD="$SENHA_SUPABASE"
 if [ ! -s schema-public.sql ]; then
   log "dump do schema public"
   "$PGB/pg_dump" -h "$ORIGEM_HOST" -p 5432 -U "postgres.$REF" -d postgres \
-    --schema-only --schema=public --no-owner --no-privileges -f schema-public.sql
+    --schema-only --schema=public --no-owner -f schema-public.sql
 fi
 if [ ! -s schema-auth-storage.sql ]; then
   # auth e storage vem da producao em vez de serem reescritos a mao: e o
   # contrato real que as 1.416 politicas assumem, nao uma reconstrucao.
   log "dump dos schemas auth e storage"
   "$PGB/pg_dump" -h "$ORIGEM_HOST" -p 5432 -U "postgres.$REF" -d postgres \
-    --schema-only --schema=auth --schema=storage --no-owner --no-privileges \
+    --schema-only --schema=auth --schema=storage --no-owner \
     -f schema-auth-storage.sql
 fi
 
@@ -76,20 +90,53 @@ echo "       erros: $(grep -c 'ERROR' passo5.log || echo 0)"
 log "auth/storage (2 de 2) -- aqui so deve sobrar 'already exists'"
 D -d "$BANCO" -f schema-auth-storage.sql >/dev/null 2>passo6.log || true
 
+# ── 6b. historico de migracoes do GoTrue e do Storage ───────────────────────
+# O dump e schema-only, entao auth.schema_migrations e storage.migrations vem
+# VAZIAS. O GoTrue e o Storage leem essas tabelas para saber o que ja rodou --
+# vazias, eles concluem que nada foi aplicado e tentam criar tudo do zero por
+# cima do schema restaurado. O GoTrue entra em laco de reinicio em
+# 00_init_auth_schema.up.sql; o Storage morre em "relation migrations does not
+# exist". Medido em 13/10/2026.
+log "historico de migracoes do GoTrue e do Storage"
+PGPASSWORD="$SENHA_SUPABASE" "$PGB/pg_dump" -h "$ORIGEM_HOST" -p 5432 -U "postgres.$REF" -d postgres \
+  --data-only --table=auth.schema_migrations --table=storage.migrations \
+  -f historico-migracoes.sql
+D -d "$BANCO" -q -c "truncate auth.schema_migrations, storage.migrations" >/dev/null 2>&1 || true
+D -d "$BANCO" -q -f historico-migracoes.sql >/dev/null 2>&1 || true
+
+# ── 6c. donos, search_path e limites de tempo ───────────────────────────────
+log "pos-restauracao (donos de auth/storage, search_path, timeouts)"
+D -d "$BANCO" -q -f "$(dirname "$0")/pos-restauracao.sql" 2>&1 | grep -vi notice || true
+
+# ── 6d. atributos e participacoes de papel ──────────────────────────────────
+# NAO e detalhe de acabamento: sem isto o storage recusa TODA chamada e o
+# service_role nao passa pela RLS. E nao vem no dump -- ver o cabecalho de
+# papeis-atributos.sql, que explica por que pg_dump nao carrega isso.
+log "atributos e participacoes de papel (o que o dump nao carrega)"
+D -d "$BANCO" -q -f "$(dirname "$0")/papeis-atributos.sql" 2>&1 | grep -vi notice || true
+
 # ── 7. conferencia ──────────────────────────────────────────────────────────
+# A conferencia agora e um script proprio que le a PRODUCAO VIVA e compara
+# objeto por objeto -- contagens, indices, restricoes e papeis.
+#
+# A versao antiga comparava contagens contra numeros fixos anotados no dia do
+# desenho. Ela envelheceu em tres dias (a producao foi de 647 para 656 tabelas
+# e toda linha passou a dizer DIFERE sem nada estar errado) e, pior, nao olhava
+# indice nem atributo de papel -- as duas portas por onde os defeitos do
+# storage entraram.
 echo
-echo "=============== CONFERENCIA ==============="
-conf(){ printf "  %-22s %6s   (esperado %s)%s\n" "$1" "$3" "$2" "$([ "$2" = "$3" ] && echo "" || echo "   <<< DIFERE")"; }
-conf "tabelas em public" 647  "$(D -d "$BANCO" -At -c "select count(*) from pg_tables where schemaname='public'")"
-conf "politicas de RLS"  1416 "$(D -d "$BANCO" -At -c "select count(*) from pg_policies where schemaname='public'")"
-conf "funcoes em public" 1449 "$(D -d "$BANCO" -At -c "select count(*) from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.prokind='f'")"
-conf "views"             30   "$(D -d "$BANCO" -At -c "select count(*) from pg_views where schemaname='public'")"
-conf "tipos"             786  "$(D -d "$BANCO" -At -c "select count(*) from pg_type t join pg_namespace n on n.oid=t.typnamespace where n.nspname='public' and t.typtype in ('e','c','d')")"
-conf "sequences"         126  "$(D -d "$BANCO" -At -c "select count(*) from pg_sequences where schemaname='public'")"
-conf "triggers"          493  "$(D -d "$BANCO" -At -c "select count(*) from pg_trigger g join pg_class c on c.oid=g.tgrelid join pg_namespace n on n.oid=c.relnamespace where not g.tgisinternal and n.nspname='public'")"
-conf "tabelas com RLS"   643  "$(D -d "$BANCO" -At -c "select count(*) from pg_class c join pg_namespace n on n.oid=c.relnamespace where n.nspname='public' and c.relrowsecurity")"
-echo "==========================================="
+if [ -n "${SENHA_SUPABASE:-}" ]; then
+  SENHA_DESTINO="$SENHA_DESTINO" DESTINO_HOST="$DESTINO_HOST" DESTINO_PORTA=5432 \
+    "$(dirname "$0")/conferir-contra-producao.sh" || true
+else
+  echo "  SENHA_SUPABASE nao esta no ambiente: rode a conferencia a parte"
+  echo "  ./infra/ha/conferir-contra-producao.sh"
+fi
+
 echo
-echo "  Qualquer linha com DIFERE: NAO seguir para a copia de dados."
-echo "  As contagens vem de docs/migracao-supabase.md; se a producao mudou,"
-echo "  conferir os numeros novos antes de culpar o restore."
+echo "  PRAZO DE VALIDADE DESTE RESTORE"
+echo "  O schema envelhece: a producao recebe migration quase todo dia. Entre"
+echo "  09/10 e 13/10 ela ganhou 2 funcoes, 1 indice e mudou 1 CHECK -- quatro"
+echo "  dias, quatro mudancas. No dia da virada, rodar a conferencia ANTES de"
+echo "  comecar; se acusar diferenca, refazer o restore (apagar os .sql de"
+echo "  $SAIDA primeiro, senao o script reusa o dump velho)."
