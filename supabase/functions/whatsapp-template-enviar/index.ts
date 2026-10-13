@@ -18,6 +18,11 @@
 // Enviar exige a Caixa de Entrada (a RLS da conversa autoriza); criar
 // template exige o menu do Chatbot, porque mexe na conta da empresa.
 //
+// 14/10/2026 (mig 20261014000015): template com BOTÕES de resposta rápida
+// (WA_TEMPLATE.botoes) e template ANTERIOR (template_nome_anterior): a
+// Saudação virou UTILITY com botão — a MARKETING antiga tomava 131049 da Meta —
+// e, enquanto a nova não é aprovada, o envio cai na anterior em vez de falhar.
+//
 // Secrets: WHATSAPP_TOKEN, WHATSAPP_PHONE_NUMBER_ID.
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
@@ -117,7 +122,7 @@ Deno.serve(async (req) => {
 
     const codigo = String(body.codigo ?? "").trim();
     const { data: tpl } = await db.from("WA_TEMPLATE")
-      .select("codigo, texto, variaveis, template_nome, idioma, categoria")
+      .select("codigo, texto, variaveis, template_nome, idioma, categoria, botoes")
       .eq("codigo", codigo).maybeSingle();
     if (!tpl) return json({ error: "mensagem não encontrada na biblioteca" }, 404);
     if (!tpl.template_nome) return json({ error: "esta mensagem não tem nome de template na Meta" }, 400);
@@ -152,7 +157,12 @@ Deno.serve(async (req) => {
           // A Meta exige uma amostra de cada {{n}} para revisar, e recusa a
           // criação sem isso. O rótulo da variável serve de exemplo.
           ...(variaveis.length ? { example: { body_text: [variaveis] } } : {}),
-        }],
+        },
+        // Botões de resposta rápida (até 3, 25 caracteres): o clique volta
+        // como mensagem do contato e abre a janela de 24h.
+        ...(Array.isArray(tpl.botoes) && tpl.botoes.length
+          ? [{ type: "BUTTONS", buttons: tpl.botoes.slice(0, 3).map((t: string) => ({ type: "QUICK_REPLY", text: String(t).slice(0, 25) })) }]
+          : [])],
       }),
     });
     const d = await res.json().catch(() => ({}));
@@ -168,7 +178,7 @@ Deno.serve(async (req) => {
   if (!conversaId || !codigo) return json({ error: "conversa_id e codigo são obrigatórios" }, 400);
 
   const { data: tpl } = await db.from("WA_TEMPLATE")
-    .select("codigo, titulo, texto, variaveis, template_nome, idioma")
+    .select("codigo, titulo, texto, variaveis, template_nome, template_nome_anterior, idioma, botoes")
     .eq("codigo", codigo).eq("ativo", true).maybeSingle();
   if (!tpl) return json({ error: "mensagem não encontrada na biblioteca" }, 404);
 
@@ -204,25 +214,40 @@ Deno.serve(async (req) => {
   }
 
   const base = { messaging_product: "whatsapp", to: contato.wa_id };
+  const botoesTpl: string[] = Array.isArray(tpl.botoes) ? tpl.botoes.slice(0, 3) : [];
+  const comoTemplate = (nome: string) => ({
+    ...base, type: "template",
+    template: {
+      name: nome, language: { code: tpl.idioma || "pt_BR" },
+      // Sem variável não vai `components`: a Meta usa o texto aprovado.
+      ...(variaveis.length
+        ? { components: [{ type: "body", parameters: valores.map((v) => ({ type: "text", text: v })) }] }
+        : {}),
+    },
+  });
+  // Dentro da janela: texto livre — com os botões da biblioteca, se houver.
   const mensagem: Record<string, unknown> = dentroJanela
-    ? { ...base, type: "text", text: { body: texto } }
-    : {
-        ...base, type: "template",
-        template: {
-          name: tpl.template_nome, language: { code: tpl.idioma || "pt_BR" },
-          // Sem variável não vai `components`: a Meta usa o texto aprovado.
-          ...(variaveis.length
-            ? { components: [{ type: "body", parameters: valores.map((v) => ({ type: "text", text: v })) }] }
-            : {}),
-        },
-      };
+    ? (botoesTpl.length
+        ? { ...base, type: "interactive", interactive: { type: "button", body: { text: texto },
+            action: { buttons: botoesTpl.map((t, i) => ({ type: "reply", reply: { id: `tpl_${tpl.codigo}_${i}`, title: t.slice(0, 20) } })) } } }
+        : { ...base, type: "text", text: { body: texto } })
+    : comoTemplate(tpl.template_nome);
 
-  const res = await fetch(`${GRAPH}/${PHONE_NUMBER_ID}/messages`, {
+  const enviarGraph = (m: Record<string, unknown>) => fetch(`${GRAPH}/${PHONE_NUMBER_ID}/messages`, {
     method: "POST",
     headers: { Authorization: `Bearer ${WA_TOKEN}`, "Content-Type": "application/json" },
-    body: JSON.stringify(mensagem),
+    body: JSON.stringify(m),
   });
-  const data = await res.json().catch(() => ({}));
+  let res = await enviarGraph(mensagem);
+  let data = await res.json().catch(() => ({}));
+  // O template novo ainda não está aprovado (1320xx)? Cai no anterior, que já
+  // estava em uso — a conversa não fica sem a mensagem enquanto a Meta revisa.
+  let usouAnterior = false;
+  if (!res.ok && !dentroJanela && tpl.template_nome_anterior && problemaDeTemplate(data?.error?.code)) {
+    res = await enviarGraph(comoTemplate(tpl.template_nome_anterior));
+    data = await res.json().catch(() => ({}));
+    usouAnterior = res.ok;
+  }
 
   if (!res.ok) {
     if (problemaDeTemplate(data?.error?.code)) {
@@ -235,11 +260,14 @@ Deno.serve(async (req) => {
   }
 
   const waId = data?.messages?.[0]?.id ?? null;
+  // Os botões que a pessoa vê (o template anterior não tem): a Caixa desenha.
+  const comBotoes = botoesTpl.length && !usouAnterior;
   await db.from("WA_MENSAGEM").insert({
     conversa_id: conversa.id, contato_id: conversa.contato_id, direcao: "saida",
-    tipo: dentroJanela ? "text" : "template",
+    tipo: dentroJanela ? (comBotoes ? "interactive" : "text") : "template",
     texto, wa_message_id: waId, status: waId ? "enviada" : "erro",
     origem: "atendente", autor_id: userData.user.id,
+    ...(comBotoes ? { payload: { tipo: "button", botoes: botoesTpl.map((t, i) => ({ id: `tpl_${tpl.codigo}_${i}`, titulo: t })) } } : {}),
   });
   await db.from("WA_CONVERSA").update({
     ultima_mensagem_em: new Date().toISOString(),
@@ -248,5 +276,5 @@ Deno.serve(async (req) => {
     nao_lidas: 0,
   }).eq("id", conversa.id);
 
-  return json({ ok: true, wa_message_id: waId, via: dentroJanela ? "texto" : "template" });
+  return json({ ok: true, wa_message_id: waId, via: dentroJanela ? "texto" : "template", template_anterior: usouAnterior });
 });
