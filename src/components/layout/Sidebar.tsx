@@ -79,7 +79,7 @@ import { useJuridicoNotif } from "@/hooks/useJuridicoNotif";
 import { useReembolsoNotif } from "@/hooks/useReembolsoNotif";
 import { useAprovacoesNotif } from "@/hooks/useAprovacoesNotif";
 import { Inbox, type LucideIcon } from "lucide-react";
-import { Target, MessagesSquare, KeyRound, MonitorPlay } from "lucide-react";
+import { Target, MessagesSquare, KeyRound, MonitorPlay, Gauge } from "lucide-react";
 import { GitBranch, GitMerge } from "lucide-react";
 import { MessageSquare } from "lucide-react";
 import { Banknote } from "lucide-react";
@@ -811,6 +811,8 @@ const tvsModule: ModuleDef = {
       defaultOpen: true,
       items: [
         { label: "Gestão das TVs", to: "/app/sistemas/tvs", icon: MonitorPlay },
+        // TVs gerenciais por diretoria (mig 20261012000001, SIS-2026-0635).
+        { label: "Indicadores gerenciais", to: "/app/sistemas/tvs/indicadores", icon: Gauge },
       ],
     },
   ],
