@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { History, Loader2, MonitorPlay, Pencil, Plus, RefreshCw, Settings2, Trash2, X } from "lucide-react";
+import { History, Loader2, MonitorPlay, Pencil, Plus, RefreshCw, Settings2, Sparkles, Trash2, X } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Card } from "@/components/ui/card";
@@ -15,6 +15,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { AcessoGate } from "@/components/auth/AcessoGate";
 import { TvRelatorio } from "@/pages/tv/TvRelatorio";
+import { IaIndicadorDialog } from "@/components/tv/IaIndicador";
 import {
   COR_SITUACAO, PAINEIS_GERENCIAIS, VISUAIS_GERENCIAIS, type VisualGerencial, ROTULO_FONTE, ROTULO_PERIODICIDADE, ROTULO_SITUACAO, formatarValor, frase, indicadoresDaTv,
   lancamentoAtrasado, placar, situacao, subindicadores, textoMeta, type IndicadorGerencial, type LinhaDetalhe, type PainelGerencial,
@@ -71,7 +72,9 @@ export default function TvsIndicadores() {
   const [slug, setSlug] = useState(PAINEIS_GERENCIAIS[0].slug);
   const [aberto, setAberto] = useState<string | null>(null);
   const [verTv, setVerTv] = useState(false);
-  const [visual, setVisual] = useState<VisualGerencial>("painel-claro");
+  const [visual, setVisual] = useState<VisualGerencial>("dashboard");
+  // I.A "de onde vem este número?" (14/10/2026, Edge tvg-ia): clique na prévia ou no detalhe.
+  const [ia, setIa] = useState<{ codigo: string; nome: string } | null>(null);
   const painel = usePainel(slug);
   const qc = useQueryClient();
   const info = PAINEIS_GERENCIAIS.find((p) => p.slug === slug)!;
@@ -140,8 +143,9 @@ export default function TvsIndicadores() {
 
         {selecionado && painel.data && (
           <DetalheIndicador i={selecionado} painel={painel.data} onClose={() => setAberto(null)} onAbrir={setAberto}
-            onMudou={() => qc.invalidateQueries({ queryKey: [K] })} />
+            onMudou={() => qc.invalidateQueries({ queryKey: [K] })} onIa={() => setIa({ codigo: selecionado.codigo, nome: selecionado.nome })} />
         )}
+        {ia && <IaIndicadorDialog codigo={ia.codigo} nome={ia.nome} onClose={() => setIa(null)} />}
 
         <Dialog open={verTv} onOpenChange={setVerTv}>
           <DialogContent className="max-w-6xl p-3">
@@ -155,8 +159,10 @@ export default function TvsIndicadores() {
               </DialogTitle>
             </DialogHeader>
             <div className="relative aspect-video w-full overflow-hidden rounded-lg bg-black">
-              {verTv && <TvRelatorio key={visual} previa token="" item={{ id: `previa-${slug}`, tipo: "relatorio", relatorio: slug, rel_visual: visual, titulo: null, url: null, arquivo: null, texto: null, cor: null, duracao_seg: 45 }} />}
+              {verTv && <TvRelatorio key={visual} previa token="" onIndicador={(i) => setIa({ codigo: i.codigo, nome: i.nome })}
+                item={{ id: `previa-${slug}`, tipo: "relatorio", relatorio: slug, rel_visual: visual, titulo: null, url: null, arquivo: null, texto: null, cor: null, duracao_seg: 45 }} />}
             </div>
+            <p className="flex items-center gap-1.5 px-1 text-xs font-medium text-violet-700 dark:text-violet-300"><Sparkles className="h-3.5 w-3.5" /> Clique em qualquer indicador: a I.A explica de onde vem cada informação e responde suas perguntas.</p>
             <p className="px-1 text-xs text-muted-foreground">Para colocar numa TV: TV's › Gestão das TVs › Playlists › adicionar item “Relatório do ERP” e escolher <b>TV {info.titulo}</b> e o visual.</p>
           </DialogContent>
         </Dialog>
@@ -195,8 +201,8 @@ function CartaoGestao({ i, onClick, compacto = false }: { i: IndicadorGerencial;
   );
 }
 
-function DetalheIndicador({ i, painel, onClose, onAbrir, onMudou }: {
-  i: IndicadorGerencial; painel: PainelGerencial; onClose: () => void; onAbrir: (c: string) => void; onMudou: () => void;
+function DetalheIndicador({ i, painel, onClose, onAbrir, onMudou, onIa }: {
+  i: IndicadorGerencial; painel: PainelGerencial; onClose: () => void; onAbrir: (c: string) => void; onMudou: () => void; onIa: () => void;
 }) {
   const s = situacao(i);
   const cor = COR_SITUACAO[s];
@@ -313,9 +319,12 @@ function DetalheIndicador({ i, painel, onClose, onAbrir, onMudou }: {
         )}
 
         <DialogFooter className="gap-2 sm:justify-between">
-          <AcessoGate menu={MENU} acao="alterar">
-            <Button variant="outline" onClick={() => setConfigurando(true)}><Settings2 className="mr-1 h-4 w-4" /> Meta e parâmetros</Button>
-          </AcessoGate>
+          <div className="flex flex-wrap gap-2">
+            <AcessoGate menu={MENU} acao="alterar">
+              <Button variant="outline" onClick={() => setConfigurando(true)}><Settings2 className="mr-1 h-4 w-4" /> Meta e parâmetros</Button>
+            </AcessoGate>
+            <Button variant="outline" className="border-violet-300 text-violet-700 hover:bg-violet-50" onClick={onIa}><Sparkles className="mr-1 h-4 w-4" /> De onde vem? (I.A)</Button>
+          </div>
           {i.fonte === "manual" && (
             <AcessoGate menu={MENU} acao="incluir">
               <Button onClick={() => setLancando(true)}><Plus className="mr-1 h-4 w-4" /> Lançar valor</Button>

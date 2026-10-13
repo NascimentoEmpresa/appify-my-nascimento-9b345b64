@@ -124,7 +124,11 @@ async function carregarPrevia(item: ItemTv): Promise<DadosRelTv> {
   return { ...(ok(await rpc(s.rpc, args)) as RelatorioDados), tipo: "sistema", slug: s.slug, contrato };
 }
 
-export function TvRelatorio({ item, token, previa = false }: { item: ItemTv; token: string; previa?: boolean }) {
+export function TvRelatorio({ item, token, previa = false, onIndicador }: {
+  item: ItemTv; token: string; previa?: boolean;
+  /** Prévia da gestão (14/10/2026): clicar num indicador gerencial abre a I.A "de onde vem". */
+  onIndicador?: (i: IndicadorGerencial) => void;
+}) {
   const [dados, setDados] = useState<DadosRelTv | null>(CACHE.get(item.id)?.dados ?? null);
   const [erro, setErro] = useState<string | null>(null);
 
@@ -188,7 +192,7 @@ export function TvRelatorio({ item, token, previa = false }: { item: ItemTv; tok
   if (dados?.tipo === "gerencial" && atual === "dashboard") {
     return (
       <Palco fundo={fundoDoPainel(visual)}>
-        <TelaDashboardGerencial p={dados} cor={cor} visual={visual} atualizado={atualizado} />
+        <TelaDashboardGerencial p={dados} cor={cor} visual={visual} atualizado={atualizado} onIndicador={previa ? onIndicador : undefined} />
       </Palco>
     );
   }
@@ -212,7 +216,7 @@ export function TvRelatorio({ item, token, previa = false }: { item: ItemTv; tok
     return (
       <Palco fundo={fundoDoPainel(visual)}>
         <TelaPainelGerencial p={dados} cor={cor} visual={visual} chave={atual} paginas={paginas}
-          pagina={Math.min(pagina, Math.max(0, paginas.length - 1))} duracaoMs={duracaoMs} atualizado={atualizado} />
+          pagina={Math.min(pagina, Math.max(0, paginas.length - 1))} duracaoMs={duracaoMs} atualizado={atualizado} onIndicador={previa ? onIndicador : undefined} />
       </Palco>
     );
   }

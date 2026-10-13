@@ -147,6 +147,52 @@ Deno.serve(async (req) => {
     return json({ ok: true, reagiu: true, emoji });
   }
 
+  // ── Fora da janela de 24h (14/10/2026, mig 20261014000015) ─────────────
+  // A Meta só aceita TEMPLATE para quem não escreve há mais de 24h: texto livre
+  // e botões (interativa) eram aceitos na hora e falhavam depois (131047), e
+  // na Caixa sobrava a bolha com "Fora da janela de 24h". Agora: manda a
+  // Saudação (template, com botão "Pode falar!") e guarda esta mensagem como
+  // 'pendente' — o whatsapp-webhook envia assim que o contato responder.
+  const limiteJanela = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+  const { count: entradasNaJanela } = await db.from("WA_MENSAGEM")
+    .select("id", { count: "exact", head: true })
+    .eq("conversa_id", conversa.id).eq("direcao", "entrada").gt("criada_em", limiteJanela);
+  if ((entradasNaJanela ?? 0) === 0) {
+    if (anexoPath) {
+      return json({
+        error: "Fora da janela de 24h o WhatsApp não aceita arquivo. Mande uma mensagem de texto (ela sai sozinha quando o contato responder) e envie o arquivo depois.",
+        fora_da_janela: true,
+      }, 400);
+    }
+    // Saudação só uma vez por espera: se já há pendente das últimas 24h, ela já foi.
+    const { count: jaPendentes } = await db.from("WA_MENSAGEM")
+      .select("id", { count: "exact", head: true })
+      .eq("conversa_id", conversa.id).eq("status", "pendente").gt("criada_em", limiteJanela);
+    if ((jaPendentes ?? 0) === 0) {
+      const r = await fetch(`${SUPABASE_URL}/functions/v1/whatsapp-template-enviar`, {
+        method: "POST",
+        headers: { Authorization: authHeader, apikey: ANON_KEY, "Content-Type": "application/json" },
+        body: JSON.stringify({ conversa_id: conversa.id, codigo: "saudacao" }),
+      });
+      const rd = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        return json({ error: `Fora da janela de 24h, e a mensagem de saudação (template) não saiu: ${rd?.error ?? "erro da Meta"}`, detalhe: rd, fora_da_janela: true }, 502);
+      }
+    }
+    await db.from("WA_MENSAGEM").insert({
+      conversa_id: conversa.id, contato_id: conversa.contato_id, direcao: "saida",
+      tipo: temBotoes ? "interactive" : "text", texto: textoEnviado, status: "pendente",
+      origem: "atendente", autor_id: userData.user.id,
+      payload: { pendente: true, ...(temBotoes ? { tipo: "button", botoes } : {}) },
+    });
+    await db.from("WA_CONVERSA").update({
+      ultima_mensagem_em: new Date().toISOString(),
+      ultima_mensagem_preview: `⏳ ${texto}`.slice(0, 120),
+      ultima_direcao: "saida",
+    }).eq("id", conversa.id);
+    return json({ ok: true, pendente: true });
+  }
+
   // Anexo: o front já subiu o arquivo pro bucket; aqui a function baixa com
   // service_role, repassa pra Graph (que devolve um media_id próprio) e manda
   // a mensagem apontando pra ele. O arquivo fica no bucket pra bolha enviada
