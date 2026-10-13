@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from "react";
+import { useMemo, useState } from "react";
 import {
   BarChart3,
   Boxes,
@@ -8,6 +8,7 @@ import {
   PackageCheck,
   PiggyBank,
   RefreshCw,
+  Repeat,
   ShoppingCart,
   TrendingDown,
   TrendingUp,
@@ -33,11 +34,23 @@ import { AcessoGate } from "@/components/auth/AcessoGate";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+// Cartões, painéis e cabeçalhos de tabela saíram deste arquivo para
+// components/suprimentos/dashboard/PainelBase quando a aba de Rotatividade do
+// Estoque passou a usar os mesmos — as quatro abas compartilham a linguagem
+// visual, e mexer no estilo lá muda as quatro de uma vez.
+import {
+  CabecalhoTabela,
+  CartaoIndicador,
+  EstadoVazio,
+  PainelGrafico,
+  TooltipMoeda,
+} from "@/components/suprimentos/dashboard/PainelBase";
+import { RotatividadeEstoque } from "@/components/suprimentos/dashboard/RotatividadeEstoque";
 import { useEmpresaAtiva } from "@/context/EmpresaAtivaContext";
 import { useDashboardComprasEstoque } from "@/hooks/useDashboardComprasEstoque";
 import { useEmpresaId } from "@/hooks/useEmpresaId";
@@ -77,73 +90,6 @@ function filtrosIniciais(): FiltroDashboardCompras {
     categoria: null,
     comprador: null,
   };
-}
-
-function CartaoIndicador({
-  titulo,
-  valor,
-  detalhe,
-  icone,
-  tom = "blue",
-}: {
-  titulo: string;
-  valor: ReactNode;
-  detalhe?: ReactNode;
-  icone: ReactNode;
-  tom?: "blue" | "green" | "amber" | "red" | "violet";
-}) {
-  const tons = {
-    blue: "border-blue-100 bg-gradient-to-br from-white to-blue-50 text-blue-700",
-    green: "border-emerald-100 bg-gradient-to-br from-white to-emerald-50 text-emerald-700",
-    amber: "border-amber-100 bg-gradient-to-br from-white to-amber-50 text-amber-700",
-    red: "border-rose-100 bg-gradient-to-br from-white to-rose-50 text-rose-700",
-    violet: "border-violet-100 bg-gradient-to-br from-white to-violet-50 text-violet-700",
-  };
-  return (
-    <Card className={cn("overflow-hidden border shadow-sm", tons[tom])}>
-      <CardContent className="flex min-h-[116px] items-start gap-3 p-4">
-        <div className="mt-0.5 rounded-xl bg-current/10 p-2.5">{icone}</div>
-        <div className="min-w-0">
-          <p className="text-xs font-semibold text-slate-600">{titulo}</p>
-          <p className="mt-1 break-words text-2xl font-extrabold tracking-tight text-slate-950">{valor}</p>
-          {detalhe && <div className="mt-1.5 text-xs text-slate-500">{detalhe}</div>}
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
-
-function PainelGrafico({ titulo, children, className }: { titulo: string; children: ReactNode; className?: string }) {
-  return (
-    <Card className={cn("border-slate-200 shadow-sm", className)}>
-      <CardHeader className="pb-2">
-        <CardTitle className="text-base font-bold text-blue-950">{titulo}</CardTitle>
-      </CardHeader>
-      <CardContent>{children}</CardContent>
-    </Card>
-  );
-}
-
-function TooltipMoeda({ active, payload, label }: {
-  active?: boolean;
-  payload?: { dataKey?: string; name?: string; value?: number; color?: string }[];
-  label?: string;
-}) {
-  if (!active || !payload?.length) return null;
-  return (
-    <div className="rounded-lg border bg-white p-2 text-xs shadow-lg">
-      {label && <p className="mb-1 font-semibold">{label}</p>}
-      {payload.map((p) => <p key={p.dataKey} style={{ color: p.color }}>{p.name}: {formatarMoeda(p.value)}</p>)}
-    </div>
-  );
-}
-
-function EstadoVazio({ texto }: { texto: string }) {
-  return <div className="flex h-[220px] items-center justify-center text-sm text-slate-500">{texto}</div>;
-}
-
-function CabecalhoTabela({ children }: { children: ReactNode }) {
-  return <th className="whitespace-nowrap border-b bg-slate-50 px-3 py-2 text-left text-[11px] font-bold text-slate-600">{children}</th>;
 }
 
 function statusPedido(status: string) {
@@ -369,10 +315,15 @@ export default function DashboardComprasEstoque() {
         {consulta.isLoading && <Carregando />}
         {consulta.error && <Alert variant="destructive"><AlertTitle>Não foi possível carregar o dashboard</AlertTitle><AlertDescription>{(consulta.error as Error).message}. Se a migration do SIS-2026-0607 ainda não foi aplicada no Supabase, execute-a antes de abrir esta tela.</AlertDescription></Alert>}
         {dados && <Tabs defaultValue="geral" className="space-y-3">
-          <TabsList className="grid h-auto w-full grid-cols-3 rounded-xl bg-white p-1 shadow-sm"><TabsTrigger value="geral" className="gap-2 py-2.5"><BarChart3 className="h-4 w-4" /><span className="hidden sm:inline">Visão Geral</span></TabsTrigger><TabsTrigger value="solicitacoes" className="gap-2 py-2.5"><FileText className="h-4 w-4" /><span className="hidden sm:inline">Solicitações e Compras</span></TabsTrigger><TabsTrigger value="estoque" className="gap-2 py-2.5"><Boxes className="h-4 w-4" /><span className="hidden sm:inline">Estoque e Saving</span></TabsTrigger></TabsList>
+          <TabsList className="grid h-auto w-full grid-cols-4 rounded-xl bg-white p-1 shadow-sm"><TabsTrigger value="geral" className="gap-2 py-2.5"><BarChart3 className="h-4 w-4" /><span className="hidden sm:inline">Visão Geral</span></TabsTrigger><TabsTrigger value="solicitacoes" className="gap-2 py-2.5"><FileText className="h-4 w-4" /><span className="hidden sm:inline">Solicitações e Compras</span></TabsTrigger><TabsTrigger value="estoque" className="gap-2 py-2.5"><Boxes className="h-4 w-4" /><span className="hidden sm:inline">Estoque e Saving</span></TabsTrigger><TabsTrigger value="rotatividade" className="gap-2 py-2.5"><Repeat className="h-4 w-4" /><span className="hidden sm:inline">Rotatividade do Estoque</span></TabsTrigger></TabsList>
           <TabsContent value="geral" className="space-y-3"><div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4 2xl:grid-cols-8"><CartaoIndicador titulo="Solicitações" valor={formatarNumero(dados.resumo.solicitacoes)} icone={<FileText className="h-6 w-6" />} /><CartaoIndicador titulo="Pendentes" valor={formatarNumero(dados.resumo.pendentes)} icone={<Clock3 className="h-6 w-6" />} tom="amber" /><CartaoIndicador titulo="Despachadas" valor={formatarNumero(dados.resumo.despachadas)} icone={<PackageCheck className="h-6 w-6" />} tom="green" /><CartaoIndicador titulo="Tempo médio" valor={`${formatarNumero(dados.resumo.tempo_medio_dias, 1)} dias`} icone={<Clock3 className="h-6 w-6" />} /><CartaoIndicador titulo="Cotações" valor={formatarNumero(dados.resumo.cotacoes)} icone={<FileCheck2 className="h-6 w-6" />} tom="violet" /><CartaoIndicador titulo="Saving" valor={formatarMoeda(dados.saving_resumo.total)} icone={<PiggyBank className="h-6 w-6" />} tom="green" /><CartaoIndicador titulo="Saving %" valor={`${formatarNumero(percentual(dados.saving_resumo.total, dados.saving_por_contrato.reduce((s, x) => s + Number(x.valor_inicial), 0)), 1)}%`} icone={<TrendingUp className="h-6 w-6" />} tom="green" /><CartaoIndicador titulo="Estoque" valor={formatarMoeda(dados.estoque_resumo.valor_total)} icone={<Boxes className="h-6 w-6" />} /></div><div className="grid gap-3 xl:grid-cols-3"><PainelGrafico titulo="Solicitações por Contrato"><div className="h-[260px]"><ResponsiveContainer width="100%" height="100%"><BarChart data={dados.solicitacoes_por_contrato.slice(0, 6)}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="nome" tick={{ fontSize: 9 }} interval={0} angle={-15} height={54} /><YAxis /><Tooltip /><Legend /><Bar dataKey="quantidade" name="Solicitações" fill="#0969da" /><Bar dataKey="despachadas" name="Despachadas" fill="#60a5fa" /><Bar dataKey="pendentes" name="Pendentes" fill="#94a3b8" /></BarChart></ResponsiveContainer></div></PainelGrafico><PainelGrafico titulo="Saving por Contrato"><div className="h-[260px]"><ResponsiveContainer width="100%" height="100%"><BarChart data={dados.saving_por_contrato.slice(0, 6)}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="contrato" tick={{ fontSize: 9 }} interval={0} angle={-15} height={54} /><YAxis tickFormatter={(v) => `${Math.round(v / 1000)}k`} /><Tooltip content={<TooltipMoeda />} /><Bar dataKey="saving" name="Saving" fill="#0969da" radius={[4, 4, 0, 0]} /></BarChart></ResponsiveContainer></div></PainelGrafico><PainelGrafico titulo="Motivos das Pendências"><div className="h-[260px]"><ResponsiveContainer width="100%" height="100%"><PieChart><Pie data={dados.motivos_pendencias} dataKey="quantidade" nameKey="nome" innerRadius={60} outerRadius={90}>{dados.motivos_pendencias.map((_, i) => <Cell key={i} fill={AZUIS[i % AZUIS.length]} />)}</Pie><Tooltip /><Legend /></PieChart></ResponsiveContainer></div></PainelGrafico></div><div className="grid gap-3 xl:grid-cols-[1.3fr_0.7fr]"><PainelGrafico titulo="Movimentação de Estoque (Entradas x Saídas)"><div className="h-[250px]"><ResponsiveContainer width="100%" height="100%"><BarChart data={dados.evolucao}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="rotulo" /><YAxis /><Tooltip /><Legend /><Bar dataKey="entradas" name="Entradas" fill="#0969da" /><Bar dataKey="saidas" name="Saídas" fill="#60a5fa" /></BarChart></ResponsiveContainer></div></PainelGrafico><PainelGrafico titulo="Resumo do Estoque"><div className="grid h-[250px] grid-cols-2 items-center gap-3"><div className="rounded-xl border bg-blue-50 p-4 text-center"><Boxes className="mx-auto h-7 w-7 text-blue-600" /><p className="mt-2 text-xs text-slate-500">Itens disponíveis</p><p className="text-2xl font-extrabold text-blue-950">{formatarNumero(dados.estoque_resumo.quantidade_itens)}</p></div><div className="rounded-xl border bg-emerald-50 p-4 text-center"><PiggyBank className="mx-auto h-7 w-7 text-emerald-600" /><p className="mt-2 text-xs text-slate-500">Valor total</p><p className="text-xl font-extrabold text-blue-950">{formatarMoeda(dados.estoque_resumo.valor_total)}</p></div></div></PainelGrafico></div></TabsContent>
           <TabsContent value="solicitacoes" className="space-y-3"><div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-7"><CardsSolicitacoes dados={dados} /><CardsCotacoes dados={dados} /></div><GraficosSolicitacoes dados={dados} /><div className="grid gap-3 xl:grid-cols-2"><TabelaSolicitacoes dados={dados} /><TabelaCotacoes dados={dados} /></div></TabsContent>
           <TabsContent value="estoque"><TelaEstoqueSaving dados={dados} /></TabsContent>
+          {/* A aba de Rotatividade tem RPC própria (sup_dashboard_rotatividade_estoque)
+              e recebe só período/empresa/contrato do filtro acima; a categoria é
+              escolhida dentro dela. Montar só quando a aba abre evita disparar a
+              consulta pesada de giro em quem nunca entra aqui. */}
+          <TabsContent value="rotatividade"><RotatividadeEstoque empresaId={empresaId} inicio={filtros.inicio} fim={filtros.fim} contratoId={filtros.contratoId} /></TabsContent>
         </Tabs>}
       </div>
     </AcessoGate>
