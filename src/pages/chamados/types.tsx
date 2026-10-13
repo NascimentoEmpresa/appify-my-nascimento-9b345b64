@@ -391,3 +391,15 @@ export function Estrelas({ valor, size = 16 }: { valor: number; size?: number })
     </span>
   );
 }
+
+/**
+ * Anexo que o navegador NÃO deve abrir: o Storage do Supabase serve HTML/SVG/XML
+ * como text/plain (proteção contra XSS), então abrir o link mostrava o código
+ * em vez do arquivo — "tem um arquivo html que não consigo baixar" (SIS-2026-0635,
+ * 12/10/2026). Para esses, o link assinado vem com download forçado, com o nome
+ * original (sem o carimbo de tempo do caminho).
+ */
+export function opcoesDownloadAnexo(path: string): { download: string } | undefined {
+  const nome = (path.split("/").pop() ?? path).replace(/^\d+-/, "");
+  return /\.(html?|svg|xml)$/i.test(nome) ? { download: nome } : undefined;
+}

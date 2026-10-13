@@ -21,6 +21,7 @@ import type { PainelTurnover } from "@/lib/diretoria/turnover";
 import type { PainelVagas } from "@/lib/relatorios/vagasPainel";
 import type { Dashboard as DashboardTreinamentos } from "@/pages/treinamentos/plataforma/tipos";
 import type { LinhaLicitacaoTv } from "@/lib/tv/licitacaoTv";
+import { painelGerencial, paginasPainel, visualDoItem, type PainelGerencial } from "@/lib/tv/gerencial";
 
 /** A cor da faixa de cada relatório: a dos Relatórios; Geral, Vagas, Licitações e Treinamentos têm a sua. */
 export function corDoRelatorioTv(slug: string | null | undefined): string {
@@ -28,6 +29,8 @@ export function corDoRelatorioTv(slug: string | null | undefined): string {
   if (slug === "vagas") return "#4338ca";
   if (slug === "licitacoes") return "#0e7490";
   if (slug === "treinamentos") return "#f26522"; // o laranja do módulo
+  const ger = painelGerencial(slug);
+  if (ger) return ger.cor; // TVs gerenciais (mig 20261012000001)
 
   return sistemaPorSlug(slug ?? "")?.cor ?? "#1e3a8a";
 }
@@ -61,7 +64,8 @@ export type DadosRelTv =
   | { tipo: "vagas"; painel: PainelVagas; periodo: { de: string; ate: string }; contrato: string | null; gerado_em?: string }
   | { tipo: "turnover"; painel: PainelTurnover; filial: string | null; contrato: string | null; gerado_em?: string }
   | { tipo: "licitacoes"; itens: LinhaLicitacaoTv[]; contrato: null; gerado_em?: string }
-  | { tipo: "treinamentos"; painel: DashboardTreinamentos; contrato: null; gerado_em?: string };
+  | { tipo: "treinamentos"; painel: DashboardTreinamentos; contrato: null; gerado_em?: string }
+  | ({ tipo: "gerencial"; contrato: null; /** visual do item da playlist (mig 20261014000002) */ visual?: string | null } & PainelGerencial);
 
 export type SistemaGeral = Pick<RelatorioDados, "titulo" | "kpis" | "rotulo_item" | "mensal"> & { slug: string };
 
@@ -87,6 +91,8 @@ export function paginasDoRelatorio(d: DadosRelTv): { chave: string; titulo: stri
       if ((d.painel.por_curso ?? []).length || (d.painel.por_contrato ?? []).length) ps.push({ chave: "trn-cursos", titulo: "Cursos e contratos" });
       return ps;
     }
+    case "gerencial":
+      return paginasPainel(d, visualDoItem(d.visual));
     case "turnover": {
       const ps = [{ chave: "turnover-resumo", titulo: "Resumo do ano" }];
       if (d.painel.por_contrato.some((c) => c.demissoes > 0)) ps.push({ chave: "turnover-contratos", titulo: "Por contrato" });

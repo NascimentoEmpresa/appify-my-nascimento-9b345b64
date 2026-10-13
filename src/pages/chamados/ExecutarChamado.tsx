@@ -27,7 +27,7 @@ import {
   StatusBadge, PrioridadeBadge, STATUS_CHAMADO, CardAvaliacao,
   CATEGORIAS, TIPOS, IMPACTOS, URGENCIAS, AMBIENTES,
   labelDe, moduloLabel, fmtData, fmtDataHora, podeReabrirChamado, chamadoEncerrado,
-  BUCKET_CHAMADOS, type Chamado, type Anexo, type Evento, type AvaliacaoChamado,
+  BUCKET_CHAMADOS, opcoesDownloadAnexo, type Chamado, type Anexo, type Evento, type AvaliacaoChamado,
 } from "./types";
 
 export default function ExecutarChamado() {
@@ -143,7 +143,7 @@ export default function ExecutarChamado() {
   };
 
   const baixarAnexo = async (path: string) => {
-    const { data, error } = await supabase.storage.from(BUCKET_CHAMADOS).createSignedUrl(path, 3600);
+    const { data, error } = await supabase.storage.from(BUCKET_CHAMADOS).createSignedUrl(path, 3600, opcoesDownloadAnexo(path));
     if (error || !data?.signedUrl) { toast({ title: "Erro ao abrir anexo", variant: "destructive" }); return; }
     window.open(data.signedUrl, "_blank", "noopener,noreferrer");
   };

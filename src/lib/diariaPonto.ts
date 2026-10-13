@@ -137,3 +137,45 @@ export function batidasPorSolicitacao(c: ConflitosPonto | null | undefined): Map
   }
   return m;
 }
+
+// ---- Malote › Aprovações (mig 20261014000001, SIS-2026-0626) ----------------
+//
+// Gustavo (Operacional): "no meu login, assim como para os supervisores, um
+// campo que informe se o colaborador está com o ponto batido no dia das
+// diárias". A diária aprovada vira despesa do Malote e é aprovada lá — agora
+// a despesa mostra, dia a dia, o ponto do faltante (diaria_ponto_malote).
+// Só avisa: quem aprova decide (mesma regra do Controle de Diárias).
+
+export interface PontoDiariaMalote {
+  despesa_id: string; solicitacao_id: string; numero: string | null;
+  faltante_nome: string | null; contrato_nome: string | null; posto_nome: string | null;
+  tem_vinculo: boolean;
+  dias: { data: string; turno: string; minutos: number[] | null }[];
+}
+export interface RespostaPontoMalote { sincronizado_ate: string | null; itens: PontoDiariaMalote[] }
+
+export interface ResumoPontoDiaria {
+  dias: (ResultadoPontoDia & { turno: string })[];
+  /** Dias em que o faltante bateu ponto (a diária não caberia). */
+  trabalhou: number;
+  /** Dias que o relógio ainda não cobre por inteiro (hoje/futuro/último dia sincronizado). */
+  aConferir: number;
+  /** Dias confirmados sem batida. */
+  semMarcacao: number;
+  semVinculo: boolean;
+}
+
+/** O ponto de cada dia da diária e a contagem para o selo da lista. */
+export function resumoPontoDiaria(item: PontoDiariaMalote, sincronizadoAte: string | null | undefined): ResumoPontoDiaria {
+  const dias = item.dias.map((d) => ({
+    data: d.data, turno: d.turno, minutos: d.minutos ?? [], horarios: horariosDoPonto(d.minutos),
+    estado: estadoDoDia(d.data, d.minutos, sincronizadoAte, item.tem_vinculo),
+  }));
+  return {
+    dias,
+    trabalhou: dias.filter((d) => d.estado === "trabalhou").length,
+    aConferir: dias.filter((d) => d.estado === "parcial" || d.estado === "nao_sincronizado").length,
+    semMarcacao: dias.filter((d) => d.estado === "sem_marcacao").length,
+    semVinculo: !item.tem_vinculo,
+  };
+}

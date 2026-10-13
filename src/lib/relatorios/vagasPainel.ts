@@ -28,6 +28,8 @@ export interface VagaPainel {
   cargo: string | null; cidade: string | null; uf: string | null; contrato: string | null; setor: string | null;
   motivo: string | null; urgencia: string | null; qtd: number;
   solicitante: string | null; analista: string | null; aprovado_por: string | null; contratado: string | null;
+  /** Responsável pela vaga (mig 20261013000003): quem a move no Recrutamento, ou fixado à mão. */
+  responsavel?: string | null; responsavel_origem?: "automatico" | "manual" | null;
   inicio_previsto: string | null; substituido: string | null; motivo_reprovacao: string | null;
   legado: boolean; administrativa: boolean; reserva: boolean; encarregado: boolean;
   /** Solicitada dentro do período/meses escolhidos (as abertas de fora vêm só para o "parado agora"). */
@@ -312,6 +314,7 @@ export const DIMENSOES = {
   cidade: { titulo: "Cidade", f: (v: VagaPainel) => (v.cidade ? `${v.cidade}${v.uf ? `/${v.uf}` : ""}` : null) },
   solicitante: { titulo: "Solicitante", f: (v: VagaPainel) => v.solicitante },
   analista: { titulo: "Analista", f: (v: VagaPainel) => v.analista },
+  responsavel: { titulo: "Responsável pela vaga", f: (v: VagaPainel) => v.responsavel ?? null },
   motivo: { titulo: "Motivo", f: (v: VagaPainel) => v.motivo },
   urgencia: { titulo: "Urgência", f: (v: VagaPainel) => v.urgencia },
 } as const;
@@ -386,7 +389,7 @@ export function aplicarFiltroLocal(p: PainelVagas, f: FiltroLocal): PainelVagas 
     if (f.motivo && limpo(v.motivo) !== f.motivo) return false;
     if (f.urgencia && limpo(v.urgencia) !== f.urgencia) return false;
     if (termo) {
-      const alvo = norm([`#${v.id}`, v.cargo, v.contrato, v.cidade, v.solicitante, v.contratado, v.analista, v.setor].join(" "));
+      const alvo = norm([`#${v.id}`, v.cargo, v.contrato, v.cidade, v.solicitante, v.contratado, v.analista, v.responsavel, v.setor].join(" "));
       if (!alvo.includes(termo)) return false;
     }
     return true;
@@ -502,7 +505,7 @@ export function filtrarRecorte(vs: VagaPainel[], busca: string, desfecho: Desfec
   return vs.filter((v) => {
     if (desfecho && desfechoVaga(v) !== desfecho) return false;
     if (!termo) return true;
-    return norm([`#${v.id}`, v.cargo, v.contrato, v.cidade, v.solicitante, v.contratado, v.analista, v.setor, v.status].join(" ")).includes(termo);
+    return norm([`#${v.id}`, v.cargo, v.contrato, v.cidade, v.solicitante, v.contratado, v.analista, v.responsavel, v.setor, v.status].join(" ")).includes(termo);
   });
 }
 

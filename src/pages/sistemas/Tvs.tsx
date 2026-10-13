@@ -13,7 +13,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { AcessoGate } from "@/components/auth/AcessoGate";
 import { useAuth } from "@/hooks/useAuth";
@@ -28,6 +28,7 @@ import {
   urlValida, youtubeEmbed, type ItemTv, type TelaTv, type TipoItem,
 } from "@/lib/tv/tv";
 import { corDoRelatorioTv, duracaoRecomendada } from "@/lib/tv/relatorioTv";
+import { VISUAIS_GERENCIAIS } from "@/lib/tv/gerencial";
 
 // =====================================================================
 // SISTEMAS › TV's (07/10/2026, mig 20261007000012)
@@ -371,6 +372,16 @@ function EditorPlaylist({ p, tvs, playlists, onRenomear, onExcluir }: {
                       {fora && <b className="text-warning"> · fora da validade</b>}
                     </p>
                   </div>
+                  {i.tipo === "relatorio" && i.relatorio?.startsWith("ger-") && (
+                    // Visual da TV gerencial (mig 20261014000002): troca sem recriar o item.
+                    <AcessoGate menu={MENU_TVS} acao="alterar">
+                      <Select value={VISUAIS_GERENCIAIS.find((v) => v.valor === i.rel_visual)?.valor ?? VISUAIS_GERENCIAIS[0].valor}
+                        onValueChange={(v) => salvarItem.mutate({ id: i.id, item: { rel_visual: v } })}>
+                        <SelectTrigger className="h-7 w-[150px] text-xs" title="Visual da TV"><SelectValue /></SelectTrigger>
+                        <SelectContent>{VISUAIS_GERENCIAIS.map((v) => <SelectItem key={v.valor} value={v.valor} className="text-xs">{v.rotulo}</SelectItem>)}</SelectContent>
+                      </Select>
+                    </AcessoGate>
+                  )}
                   <AcessoGate menu={MENU_TVS} acao="alterar">
                     <Button size="icon" variant="ghost" className="h-7 w-7" disabled={n === 0} onClick={() => mover.mutate({ a: i, b: p.itens[n - 1] })}><ArrowUp className="h-3.5 w-3.5" /></Button>
                     <Button size="icon" variant="ghost" className="h-7 w-7" disabled={n === p.itens.length - 1} onClick={() => mover.mutate({ a: i, b: p.itens[n + 1] })}><ArrowDown className="h-3.5 w-3.5" /></Button>
@@ -425,7 +436,7 @@ function Miniatura({ item }: { item: TvItem }) {
 
 const SEM_CONTRATOS: { id: string; nome: string; encerrado: boolean }[] = [];
 const SEM_ALERTAS: TvAlerta[] = [];
-const VAZIO = { tipo: "relatorio" as TipoItem, titulo: "", url: "", texto: "", cor: "#1d4ed8", duracao: "30", de: "", ate: "", relatorio: "geral", periodo: "12m", contrato: "" };
+const VAZIO = { tipo: "relatorio" as TipoItem, titulo: "", url: "", texto: "", cor: "#1d4ed8", duracao: "30", de: "", ate: "", relatorio: "geral", periodo: "12m", contrato: "", visual: "painel-claro" };
 
 function NovoItem({ playlistId, proximaOrdem, onRascunho }: { playlistId: string; proximaOrdem: number; onRascunho: (item: ItemTv | null) => void }) {
   const salvar = useSalvarItem();
@@ -454,7 +465,7 @@ function NovoItem({ playlistId, proximaOrdem, onRascunho }: { playlistId: string
   const itemPrevia = useMemo<ItemTv>(() => ({
     id: "previa", tipo: f.tipo, titulo: f.titulo.trim() || null, url: f.url.trim() || null, arquivo: null,
     texto: f.texto, cor: f.cor, duracao_seg: Number(f.duracao) || 15,
-    relatorio: f.relatorio, rel_periodo: f.periodo as ItemTv["rel_periodo"], rel_contrato: f.contrato || null,
+    relatorio: f.relatorio, rel_periodo: f.periodo as ItemTv["rel_periodo"], rel_contrato: f.contrato || null, rel_visual: f.visual,
     rel_contrato_nome: contratos.find((c) => c.id === f.contrato)?.nome ?? null, url_previa: urlLocal,
   }), [f, urlLocal, contratos]);
 
@@ -490,6 +501,7 @@ function NovoItem({ playlistId, proximaOrdem, onRascunho }: { playlistId: string
         // Licitações e Treinamentos não usam período nem contrato: não grava (a lista não mostra um filtro que não vale).
         relatorio: f.tipo === "relatorio" ? f.relatorio : null, rel_periodo: f.tipo === "relatorio" && comFiltros ? f.periodo : null,
         rel_contrato: f.tipo === "relatorio" && comFiltros && f.contrato ? f.contrato : null,
+        rel_visual: f.tipo === "relatorio" && f.relatorio.startsWith("ger-") ? f.visual : null,
         duracao_seg: f.tipo === "video" ? 15 : Number(f.duracao),
         valido_de: f.de ? new Date(f.de).toISOString() : null, valido_ate: f.ate ? new Date(f.ate).toISOString() : null,
       } });
@@ -534,7 +546,17 @@ function NovoItem({ playlistId, proximaOrdem, onRascunho }: { playlistId: string
               {/* Relatório com mais páginas pede mais tempo: sobe o tempo na tela até o recomendado (nunca baixa). */}
               <Select value={f.relatorio} onValueChange={(v) => setF({ ...f, relatorio: v, duracao: String(Math.max(Number(f.duracao) || 0, duracaoRecomendada(paginasRelatorioTv(v)))) })}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>{RELATORIOS_TV.map((r) => <SelectItem key={r.slug} value={r.slug}>{r.titulo}{r.paginas > 1 ? ` · ${r.paginas} páginas` : ""}</SelectItem>)}</SelectContent>
+                <SelectContent>
+                  {/* Os relatórios do módulo e, separadas por diretoria, as TVs gerenciais (mig 20261012000001). */}
+                  {[...new Set(RELATORIOS_TV.map((r) => r.grupo ?? ""))].map((g) => (
+                    <SelectGroup key={g || "relatorios"}>
+                      <SelectLabel className="text-xs text-muted-foreground">{g ? `TVs gerenciais — ${g}` : "Relatórios do ERP"}</SelectLabel>
+                      {RELATORIOS_TV.filter((r) => (r.grupo ?? "") === g).map((r) => (
+                        <SelectItem key={r.slug} value={r.slug}>{r.titulo}{!r.grupo && r.paginas > 1 ? ` · ${r.paginas} páginas` : ""}</SelectItem>
+                      ))}
+                    </SelectGroup>
+                  ))}
+                </SelectContent>
               </Select>
               {paginasRelatorioTv(f.relatorio) > 1 && (
                 <p className="mt-1 text-[11px] text-muted-foreground">
@@ -543,6 +565,15 @@ function NovoItem({ playlistId, proximaOrdem, onRascunho }: { playlistId: string
                 </p>
               )}
             </div>
+            {f.relatorio.startsWith("ger-") && (
+              <div className="sm:col-span-2"><Label className="text-xs">Visual da TV</Label>
+                <Select value={f.visual} onValueChange={(v) => setF({ ...f, visual: v })}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>{VISUAIS_GERENCIAIS.map((v) => <SelectItem key={v.valor} value={v.valor}>{v.rotulo}</SelectItem>)}</SelectContent>
+                </Select>
+                <p className="mt-1 text-[11px] text-muted-foreground">{VISUAIS_GERENCIAIS.find((v) => v.valor === f.visual)?.dica}</p>
+              </div>
+            )}
             {comFiltros ? (<>
             <div><Label className="text-xs">Período</Label>
               <Select value={f.periodo} onValueChange={(v) => setF({ ...f, periodo: v })}>
@@ -560,7 +591,9 @@ function NovoItem({ playlistId, proximaOrdem, onRascunho }: { playlistId: string
               <p className="mt-1 text-[11px] text-muted-foreground">Ex.: na TV do contrato UFRGS, só os números da UFRGS. Os números se atualizam sozinhos.</p></div>
             </>) : (
               <p className="self-end pb-2 text-[11px] text-muted-foreground">
-                {f.relatorio === "licitacoes" ? "Mostra a grade inteira, de todas as empresas do grupo — como o Painel Executivo." : "Mostra a base toda de alunos, como o Dashboard de Treinamentos abre."} Sem período nem contrato; os números se atualizam sozinhos.
+                {f.relatorio?.startsWith("ger-")
+                  ? <>Painel no estilo do protótipo do chamado: um gráfico por indicador, meta, contrato/setor, causa e responsável; fora da meta primeiro. Metas, prazos e lançamentos em <a href="/app/sistemas/tvs/indicadores" className="font-semibold text-primary underline">TV's › Indicadores gerenciais</a>.</>
+                  : f.relatorio === "licitacoes" ? "Mostra a grade inteira, de todas as empresas do grupo — como o Painel Executivo." : "Mostra a base toda de alunos, como o Dashboard de Treinamentos abre."} Sem período nem contrato; os números se atualizam sozinhos.
               </p>
             )}
           </>
@@ -592,7 +625,7 @@ function NovoItem({ playlistId, proximaOrdem, onRascunho }: { playlistId: string
 function paraItemTv(i: TvItem, contratos: { id: string; nome: string }[]): ItemTv {
   return {
     id: i.id, tipo: i.tipo, titulo: i.titulo, url: i.url, arquivo: i.arquivo, texto: i.texto, cor: i.cor, duracao_seg: i.duracao_seg,
-    relatorio: i.relatorio, rel_periodo: i.rel_periodo as ItemTv["rel_periodo"], rel_contrato: i.rel_contrato,
+    relatorio: i.relatorio, rel_periodo: i.rel_periodo as ItemTv["rel_periodo"], rel_contrato: i.rel_contrato, rel_visual: i.rel_visual,
     rel_contrato_nome: i.rel_contrato ? contratos.find((c) => c.id === i.rel_contrato)?.nome ?? null : null,
   };
 }

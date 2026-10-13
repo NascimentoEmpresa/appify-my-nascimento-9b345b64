@@ -16,7 +16,8 @@ import { usePlanoAcaoPermissao } from "@/hooks/usePlanoAcaoPermissao";
 import { STATUS_LABELS, STATUS_ORDEM, STATUS_COR, PRIORIDADES, PRIORIDADE_LABEL, VISIBILIDADE_OPTIONS, VISIBILIDADE_LABEL, type VisibilidadeType, TIPO_ACAO_OPTIONS, TIPO_ACAO_LABEL } from "@/types/planoAcao";
 import { ForbiddenCard } from "./Lista";
 import { useToast } from "@/hooks/use-toast";
-import { Trash2, Paperclip, Download } from "lucide-react";
+import { Trash2, Paperclip, Download, Pencil, History } from "lucide-react";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useComitesMap } from "@/hooks/useComitesMap";
 import { useSetoresEmpresa } from "@/hooks/useSetoresEmpresa";
 import { acharUsuarioPorNome } from "@/lib/acharUsuarioPorNome";
@@ -30,6 +31,67 @@ import { useUsuariosEmpresa } from "@/hooks/useUsuariosEmpresa";
 const TIPOS_REUNIAO = ["Reunião Extraordinária", "Reunião Ordinária"];
 // Opções sintéticas de Comitê que não vêm da tabela comite — líder é fixo por nome.
 const COMITE_LIDER_FIXO: Record<string, string> = { Gestor: "helena nascimento", Sistemas: "iury de jesus silva" };
+
+// Histórico (mig 20261013000002): toda edição de conteúdo e de encaminhamento
+// grava antes/depois em plano_acao_historico — aqui só se traduz para a tela.
+const EVENTO_LABEL: Record<string, string> = {
+  status_alterado: "Status alterado",
+  responsavel_alterado: "Responsável alterado",
+  excluida_logicamente: "Ação excluída",
+  campo_editado: "Campo editado",
+  encaminhamento_editado: "Encaminhamento editado",
+  encaminhamento_excluido: "Encaminhamento excluído",
+};
+const CAMPO_LABEL: Record<string, string> = {
+  status_normalizado: "Status", responsavel_profile_id: "Responsável", deleted_at: "Exclusão",
+  tipo_acao: "Tipo de Ação", titulo: "Título", problema: "Problema", acao: "Ação", comite: "Comitê",
+  tipo_reuniao: "Tipo de Reunião", area: "Setor", setor: "Setor (texto)", prioridade_normalizada: "Prioridade",
+  data_inicio_planejado: "Data de início", data_fim_planejado: "Data de conclusão",
+  lider_comite_profile_id: "Líder do Comitê", comentarios: "Comentários", visibilidade: "Visibilidade",
+  encaminhamento: "Encaminhamento",
+};
+const CAMPOS_PESSOA = new Set(["responsavel_profile_id", "lider_comite_profile_id"]);
+const fmtValorHistorico = (campo: string, v: string | null): string | null => {
+  if (v == null || v === "") return null;
+  if (campo === "status_normalizado") return STATUS_LABELS[v] ?? v;
+  if (campo === "prioridade_normalizada") return (PRIORIDADE_LABEL as Record<string, string>)[v] ?? v;
+  if (campo === "tipo_acao") return (TIPO_ACAO_LABEL as Record<string, string>)[v] ?? v;
+  if (campo === "visibilidade") return (VISIBILIDADE_LABEL as Record<string, string>)[v] ?? v;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(v)) return v.split("-").reverse().join("/");
+  return v;
+};
+
+function ItemHistorico({ h, completo }: { h: any; completo?: boolean }) {
+  const campo = CAMPO_LABEL[h.campo] ?? h.campo;
+  const antes = h._valor_anterior;
+  const depois = h._valor_novo;
+  // Texto longo (problema, ação, encaminhamento) vai em bloco; o resto numa linha.
+  const longo = (antes?.length ?? 0) + (depois?.length ?? 0) > 60;
+  return (
+    <div className="border-l-2 border-primary/40 pl-2">
+      <p className="font-medium">
+        {EVENTO_LABEL[h.evento] ?? h.evento}
+        {h.evento === "campo_editado" && <span className="font-normal text-muted-foreground"> · {campo}</span>}
+      </p>
+      {longo ? (
+        <div className={`mt-1 space-y-1 ${completo ? "" : "line-clamp-4"}`}>
+          <p className="whitespace-pre-wrap rounded bg-destructive/5 px-1.5 py-1 text-muted-foreground line-through decoration-destructive/40">{antes ?? "∅"}</p>
+          {h.evento !== "encaminhamento_excluido" && (
+            <p className="whitespace-pre-wrap rounded bg-success/10 px-1.5 py-1">{depois ?? "∅"}</p>
+          )}
+        </div>
+      ) : (
+        <p className="text-muted-foreground">
+          {h.evento !== "campo_editado" && `${campo}: `}{antes ?? "∅"} → {depois ?? "∅"}
+        </p>
+      )}
+      <p className="text-[10px] text-muted-foreground">
+        <span className="font-medium">{(h.autor as any)?.display_name ?? "Sistema"}</span>
+        {" · "}{new Date(h.created_at).toLocaleString("pt-BR")}
+      </p>
+    </div>
+  );
+}
 
 export default function PlanoAcaoDetalhe() {
   const { id } = useParams<{ id: string }>();
@@ -60,6 +122,9 @@ export default function PlanoAcaoDetalhe() {
   const [historico, setHistorico] = useState<any[]>([]);
   const [comentarios, setComentarios] = useState<any[]>([]);
   const [novoComent, setNovoComent] = useState("");
+  const [editandoEnc, setEditandoEnc] = useState<string | null>(null);
+  const [textoEnc, setTextoEnc] = useState("");
+  const [historicoAberto, setHistoricoAberto] = useState(false);
   const [anexos, setAnexos] = useState<any[]>([]);
   const [pendingFile, setPendingFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
@@ -84,7 +149,7 @@ export default function PlanoAcaoDetalhe() {
         .select("*")
         .eq("plano_acao_id", planId)
         .order("created_at", { ascending: false })
-        .limit(50),
+        .limit(300),
       supabase.from("plano_acao_anexo")
         .select("*")
         .eq("plano_acao_id", planId)
@@ -100,9 +165,9 @@ export default function PlanoAcaoDetalhe() {
 
     // Busca nomes dos autores e responsáveis referenciados no histórico em lote
     const allItems = [...(csRes.data ?? []), ...(hsRes.data ?? [])];
-    const authorIds = allItems.map((x: any) => x.criado_por).filter(Boolean);
+    const authorIds = allItems.flatMap((x: any) => [x.criado_por, x.editado_por]).filter(Boolean);
     const responsavelIds = (hsRes.data ?? [])
-      .filter((h: any) => h.campo === "responsavel_profile_id")
+      .filter((h: any) => CAMPOS_PESSOA.has(h.campo))
       .flatMap((h: any) => [h.valor_anterior, h.valor_novo].filter(Boolean));
     const ids = [...new Set([...authorIds, ...responsavelIds])];
     const profileMap: Record<string, string> = {};
@@ -115,17 +180,19 @@ export default function PlanoAcaoDetalhe() {
     }
 
     setComentarios((csRes.data ?? []).map((c: any) => ({
-      ...c, autor: { display_name: profileMap[c.criado_por] ?? "Usuário" },
+      ...c,
+      autor: { display_name: profileMap[c.criado_por] ?? "Usuário" },
+      editor: c.editado_por ? profileMap[c.editado_por] ?? "Usuário" : null,
     })));
     setHistorico((hsRes.data ?? []).map((h: any) => {
       const resolveVal = (uuid: string | null) =>
         uuid ? (profileMap[uuid] ?? uuid) : null;
-      const isResp = h.campo === "responsavel_profile_id";
+      const isPessoa = CAMPOS_PESSOA.has(h.campo);
       return {
         ...h,
         autor: { display_name: profileMap[h.criado_por] ?? "Sistema" },
-        _valor_anterior: isResp ? resolveVal(h.valor_anterior) : h.valor_anterior,
-        _valor_novo: isResp ? resolveVal(h.valor_novo) : h.valor_novo,
+        _valor_anterior: isPessoa ? resolveVal(h.valor_anterior) : fmtValorHistorico(h.campo, h.valor_anterior),
+        _valor_novo: isPessoa ? resolveVal(h.valor_novo) : fmtValorHistorico(h.campo, h.valor_novo),
       };
     }));
     setAnexos(axRes.data ?? []);
@@ -396,6 +463,23 @@ export default function PlanoAcaoDetalhe() {
     else { setNovoComent(""); await loadExtras(id!); }
   };
 
+  // Edita só o texto; o banco trava autor/data e grava antes/depois no
+  // histórico (mig 20261013000002). Quem pode: quem escreveu, quem tem
+  // "editar" no Plano de Ações, ou admin — a RLS decide.
+  const podeEditarEnc = (c: any) => c.criado_por === user?.id || can("editar");
+  const salvarEdicaoEnc = async (c: any) => {
+    const texto = textoEnc.trim();
+    if (!texto) return toast({ title: "O encaminhamento não pode ficar vazio", variant: "destructive" });
+    if (texto === c.comentario) { setEditandoEnc(null); return; }
+    const { data: atualizado, error } = await (supabase as any).from("plano_acao_comentario")
+      .update({ comentario: texto }).eq("id", c.id).select("id");
+    if (error) return toast({ title: "Erro ao editar", description: error.message, variant: "destructive" });
+    if (!atualizado?.length) return toast({ title: "Sem permissão para editar este encaminhamento", variant: "destructive" });
+    setEditandoEnc(null);
+    toast({ title: "Encaminhamento editado", description: "A alteração ficou registrada no histórico." });
+    await loadExtras(id!);
+  };
+
   const handleDownloadAnexo = async (path: string) => {
     const { data, error } = await supabase.storage.from("anexos").createSignedUrl(path, 60);
     if (error || !data?.signedUrl) {
@@ -427,6 +511,11 @@ export default function PlanoAcaoDetalhe() {
         actions={
           <div className="flex gap-2">
             <Button variant="outline" size="sm" onClick={() => nav(backUrl)}>← Lista</Button>
+            {!isNew && (
+              <Button variant="outline" size="sm" onClick={() => setHistoricoAberto(true)}>
+                <History className="mr-1 h-3.5 w-3.5" />Histórico
+              </Button>
+            )}
             {!isNew && can("editar") && form.status_normalizado !== "concluida_validada" && (
               <Button size="sm" variant="secondary" onClick={concluir}>
                 {podeValidarPlanoAcao(form, user?.id) ? "Validar conclusão" : "Marcar como concluída"}
@@ -682,11 +771,38 @@ export default function PlanoAcaoDetalhe() {
               )}
               <div className="max-h-48 space-y-2 overflow-auto">
                 {comentarios.map(c => (
-                  <div key={c.id} className="rounded border border-border p-2 text-xs">
-                    <p>{c.comentario}</p>
+                  <div key={c.id} className="group rounded border border-border p-2 text-xs">
+                    {editandoEnc === c.id ? (
+                      <div className="space-y-1.5">
+                        <Textarea rows={4} value={textoEnc} onChange={e => setTextoEnc(e.target.value)} className="text-xs" autoFocus />
+                        <div className="flex justify-end gap-1.5">
+                          <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => setEditandoEnc(null)}>Cancelar</Button>
+                          <Button size="sm" className="h-7 text-xs" onClick={() => salvarEdicaoEnc(c)}>Salvar</Button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="flex items-start gap-2">
+                        <p className="flex-1 whitespace-pre-wrap">{c.comentario}</p>
+                        {podeEditarEnc(c) && (
+                          <button
+                            type="button"
+                            title="Editar encaminhamento"
+                            onClick={() => { setEditandoEnc(c.id); setTextoEnc(c.comentario ?? ""); }}
+                            className="shrink-0 rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+                          >
+                            <Pencil className="h-3.5 w-3.5" />
+                          </button>
+                        )}
+                      </div>
+                    )}
                     <p className="mt-1 text-[10px] text-muted-foreground">
                       <span className="font-medium">{(c.autor as any)?.display_name ?? "Usuário"}</span>
                       {" · "}{new Date(c.created_at).toLocaleString("pt-BR")}
+                      {c.editado_em && (
+                        <span title={`Editado por ${c.editor ?? "Usuário"} em ${new Date(c.editado_em).toLocaleString("pt-BR")}`}>
+                          {" · "}<span className="italic">editado</span>
+                        </span>
+                      )}
                     </p>
                   </div>
                 ))}
@@ -698,23 +814,34 @@ export default function PlanoAcaoDetalhe() {
           {!isNew && (
             <Card className="p-4">
               <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Histórico</h3>
-              <div className="max-h-64 space-y-1 overflow-auto text-xs">
-                {historico.map(h => (
-                  <div key={h.id} className="border-l-2 border-primary/40 pl-2">
-                    <p className="font-medium">{h.evento}</p>
-                    <p className="text-muted-foreground">{h.campo}: {h._valor_anterior ?? "∅"} → {h._valor_novo ?? "∅"}</p>
-                    <p className="text-[10px] text-muted-foreground">
-                      <span className="font-medium">{(h.autor as any)?.display_name ?? "Sistema"}</span>
-                      {" · "}{new Date(h.created_at).toLocaleString("pt-BR")}
-                    </p>
-                  </div>
-                ))}
+              <div className="max-h-64 space-y-2 overflow-auto text-xs">
+                {historico.map(h => <ItemHistorico key={h.id} h={h} />)}
                 {historico.length === 0 && <p className="text-muted-foreground">Sem alterações registradas.</p>}
               </div>
+              {historico.length > 0 && (
+                <Button variant="link" size="sm" className="mt-1 h-auto p-0 text-xs" onClick={() => setHistoricoAberto(true)}>
+                  Ver histórico completo
+                </Button>
+              )}
             </Card>
           )}
         </div>
       </div>
+
+      <Dialog open={historicoAberto} onOpenChange={setHistoricoAberto}>
+        <DialogContent className="max-h-[85vh] max-w-2xl overflow-hidden">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2"><History className="h-5 w-5" /> Histórico da ação</DialogTitle>
+            <DialogDescription>
+              Toda alteração de campo e de encaminhamento, com o texto antes e depois, quem fez e quando.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="max-h-[65vh] space-y-3 overflow-auto pr-1 text-xs">
+            {historico.map(h => <ItemHistorico key={h.id} h={h} completo />)}
+            {historico.length === 0 && <p className="text-muted-foreground">Sem alterações registradas.</p>}
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

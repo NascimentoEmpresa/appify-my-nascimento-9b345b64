@@ -200,7 +200,7 @@ function ConteudoRecorte({ p, recorte, onAbrir }: { p: PainelVagas; recorte: Rec
               <thead><tr className="bg-muted/40 text-left text-[10px] uppercase tracking-wider text-muted-foreground">
                 <th className="px-3 py-2">Vaga</th><th className="px-3 py-2">Situação</th><th className="px-3 py-2">Pedida em</th>
                 <th className="px-3 py-2 text-right" title="Aberta: desde o pedido até hoje · fechada: até fechar">Tempo</th>
-                <th className="px-3 py-2 text-right">Cand.</th><th className="px-3 py-2">Urgência</th><th className="px-3 py-2">Solicitante</th>
+                <th className="px-3 py-2 text-right">Cand.</th><th className="px-3 py-2">Urgência</th><th className="px-3 py-2">Solicitante</th><th className="px-3 py-2">Responsável</th>
               </tr></thead>
               <tbody>
                 {lista.slice(0, limite).map((v) => {
@@ -217,6 +217,7 @@ function ConteudoRecorte({ p, recorte, onAbrir }: { p: PainelVagas; recorte: Rec
                       <td className="px-3 py-1.5 text-right tabular-nums">{v.cand.total || "—"}</td>
                       <td className="max-w-[140px] truncate px-3 py-1.5 text-muted-foreground">{v.urgencia ?? "—"}</td>
                       <td className="max-w-[140px] truncate px-3 py-1.5 text-muted-foreground">{v.solicitante ?? "—"}</td>
+                      <CelulaResponsavel v={v} />
                     </tr>
                   );
                 })}
@@ -235,6 +236,13 @@ function ConteudoRecorte({ p, recorte, onAbrir }: { p: PainelVagas; recorte: Rec
 }
 
 /** Aviso discreto de que os gráficos abrem a lista. */
+/** Responsável pela vaga (mig 20261013000003) — vazio aparece em vermelho: a etiqueta é obrigatória. */
+function CelulaResponsavel({ v }: { v: VagaPainel }) {
+  return v.responsavel
+    ? <td className="max-w-[160px] truncate px-3 py-1.5 font-medium text-foreground" title={`${v.responsavel}${v.responsavel_origem === "manual" ? " — definido manualmente" : ""}`}>{v.responsavel}</td>
+    : <td className="px-3 py-1.5 text-rose-600">sem responsável</td>;
+}
+
 function DicaClique() {
   return <p className="flex items-center gap-1.5 text-[11px] text-muted-foreground"><MousePointerClick className="h-3.5 w-3.5" /> Clique nos números, barras e fatias para ver as vagas por trás deles.</p>;
 }
@@ -653,7 +661,7 @@ function AbaAbertas({ p, onAbrir }: { p: PainelVagas; onAbrir: (v: VagaPainel) =
           <thead><tr className="bg-muted/40 text-left text-[10px] uppercase tracking-wider text-muted-foreground">
             <th className="px-3 py-2">Vaga</th><th className="px-3 py-2">Contrato · cidade</th><th className="px-3 py-2">Etapa atual</th>
             <th className="px-3 py-2 text-right">Na etapa há</th><th className="px-3 py-2 text-right">Aberta há</th>
-            <th className="px-3 py-2 text-right">Candidatos</th><th className="px-3 py-2">Urgência</th><th className="px-3 py-2">Solicitante</th>
+            <th className="px-3 py-2 text-right">Candidatos</th><th className="px-3 py-2">Urgência</th><th className="px-3 py-2">Solicitante</th><th className="px-3 py-2">Responsável</th>
           </tr></thead>
           <tbody>
             {abertas.map(({ v, total, noStatus, etapa }) => (
@@ -666,6 +674,7 @@ function AbaAbertas({ p, onAbrir }: { p: PainelVagas; onAbrir: (v: VagaPainel) =
                 <td className="px-3 py-1.5 text-right tabular-nums">{v.cand.total || "—"}</td>
                 <td className="max-w-[160px] truncate px-3 py-1.5 text-muted-foreground">{v.urgencia ?? "—"}</td>
                 <td className="max-w-[160px] truncate px-3 py-1.5 text-muted-foreground">{v.solicitante ?? "—"}</td>
+                <CelulaResponsavel v={v} />
               </tr>
             ))}
           </tbody>
@@ -708,7 +717,7 @@ function AbaVagas({ p, onAbrir }: { p: PainelVagas; onAbrir: (v: VagaPainel) => 
         <table className="w-full text-xs">
           <thead><tr className="bg-muted/40 text-left text-[10px] uppercase tracking-wider text-muted-foreground">
             <th className="px-3 py-2">Vaga</th><th className="px-3 py-2">Pedida em</th><th className="px-3 py-2">Desfecho</th>
-            <th className="w-[32%] px-3 py-2">Tempo em cada etapa</th><th className="px-3 py-2 text-right">Total</th><th className="px-3 py-2 text-right">Cand.</th>
+            <th className="w-[32%] px-3 py-2">Tempo em cada etapa</th><th className="px-3 py-2 text-right">Total</th><th className="px-3 py-2 text-right">Cand.</th><th className="px-3 py-2">Responsável</th>
           </tr></thead>
           <tbody>
             {linhas.slice(0, limite).map(({ v, total, porEtapa }) => (
@@ -722,6 +731,7 @@ function AbaVagas({ p, onAbrir }: { p: PainelVagas; onAbrir: (v: VagaPainel) => 
                 <td className="px-3 py-1.5"><BarraEtapas porEtapa={porEtapa} /></td>
                 <td className="px-3 py-1.5 text-right font-semibold tabular-nums">{fmtDias(total, 0)}</td>
                 <td className="px-3 py-1.5 text-right tabular-nums">{v.cand.total || "—"}</td>
+                <CelulaResponsavel v={v} />
               </tr>
             ))}
           </tbody>
@@ -842,7 +852,7 @@ function DashboardVaga({ vaga, painel, etapas }: { vaga: VagaPainel; painel: Pai
   const ficha: [string, string | null | undefined][] = [
     ["Contrato", vaga.contrato], ["Cidade", vaga.cidade ? `${vaga.cidade}${vaga.uf ? `/${vaga.uf}` : ""}` : null], ["Setor", vaga.setor],
     ["Motivo", vaga.motivo], ["Substituindo", vaga.substituido], ["Urgência", vaga.urgencia], ["Quantidade", String(vaga.qtd)],
-    ["Solicitante", vaga.solicitante], ["Analista", vaga.analista], ["Aprovada por", vaga.aprovado_por],
+    ["Solicitante", vaga.solicitante], ["Responsável pela vaga", vaga.responsavel ? `${vaga.responsavel}${vaga.responsavel_origem === "manual" ? " (definido manualmente)" : ""}` : "sem responsável"], ["Analista", vaga.analista], ["Aprovada por", vaga.aprovado_por],
     ["Escala", d?.vaga?.escala], ["Horário", d?.vaga?.horario], ["Salário", d?.vaga?.salario], ["Início previsto", vaga.inicio_previsto],
     ["Contratado", vaga.contratado], ["Início do contratado", d?.vaga?.contratado_inicio], ["Motivo da reprovação", vaga.motivo_reprovacao],
   ];

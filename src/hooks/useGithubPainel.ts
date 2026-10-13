@@ -34,21 +34,20 @@ async function chamarSync(): Promise<{ novas: number; detalhadas: number; penden
   return data;
 }
 
-/** Sincroniza até zerar (ou até `maxLotes`, para não prender a tela). */
+/**
+ * UMA chamada por clique (13/10/2026). Antes repetia até 60 lotes seguidos e a
+ * carga inteira saía de uma vez — depois de uma sincronização as duas contas
+ * do GitHub do Pablo foram suspensas. Agora a Edge faz no máximo 30
+ * requisições em série e recusa outra execução por 10 min; o resto vem nos
+ * próximos cliques.
+ */
 export function useSincronizarGithub(onProgresso?: (p: ProgressoSync) => void) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (maxLotes: number = 60) => {
-      let detalhadas = 0, pendentes = 0, novas = 0;
-      for (let lote = 1; lote <= maxLotes; lote++) {
-        const r = await chamarSync();
-        if (lote === 1) novas = r.novas;
-        detalhadas += r.detalhadas; pendentes = r.pendentes;
-        onProgresso?.({ lote, detalhadas, pendentes });
-        if (lote % 3 === 0) qc.invalidateQueries({ queryKey: K });   // mostra chegando
-        if (!pendentes || !r.detalhadas) break;
-      }
-      return { novas, detalhadas, pendentes };
+    mutationFn: async () => {
+      const r = await chamarSync();
+      onProgresso?.({ lote: 1, detalhadas: r.detalhadas, pendentes: r.pendentes });
+      return r;
     },
     onSettled: () => qc.invalidateQueries({ queryKey: K }),
   });

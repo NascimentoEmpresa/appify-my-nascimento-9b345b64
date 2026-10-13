@@ -342,7 +342,7 @@ export default function DashboardRecrutamento() {
     return abertas.filter((v) =>
       (!fPrazo || v.situacao === fPrazo)
       && (!fAndamento || v.andamento === fAndamento)
-      && (!t || [v.id, v.cargo, v.contrato, v.cidade, v.local, v.solicitante, v.candidato?.nome, v.substituido]
+      && (!t || [v.id, v.cargo, v.contrato, v.cidade, v.local, v.solicitante, v.responsavel, v.candidato?.nome, v.substituido]
         .some((x) => String(x ?? "").toLowerCase().includes(t))));
   }, [abertas, fPrazo, fAndamento, busca]);
 
@@ -371,7 +371,7 @@ export default function DashboardRecrutamento() {
       Contrato: v.contrato ?? "", Cidade: v.cidade ?? "", "Qtd. vagas": v.qtd, Motivo: v.motivo ?? "", "Urgência": urgencia(v.urgencia),
       "Data projetada": v.prazo.data ? dataBr(v.prazo.data) : "", Imediato: v.prazo.imediato ? "Sim" : "",
       "Dias que faltam": v.faltam ?? "", Prazo: ROTULO_PRAZO[v.situacao], Andamento: v.andamento, Status: rotuloStatusVaga(v.status),
-      Candidato: v.candidato?.nome ?? "", "Etapa do candidato": v.candidato?.etapa ?? "", "Candidatos ativos": v.candidato?.total ?? 0,
+      Candidato: v.candidato?.nome ?? "", "Etapa do candidato": v.candidato?.etapa ?? "", "Candidatos ativos": v.candidato?.total ?? 0, "Responsável pela vaga": v.responsavel ?? "",
       "Aberta há (dias)": v.abertaHa, "Solicitada em": dataBr(v.criada), Solicitante: v.solicitante ?? "", "Substituído": v.substituido ?? "",
     }));
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(linhasAbertas), "Vagas em aberto");
@@ -568,6 +568,7 @@ export default function DashboardRecrutamento() {
                         <th className="px-3 py-2.5">Data projetada</th>
                         <th className="px-3 py-2.5">Dias que faltam</th>
                         <th className="px-3 py-2.5">Andamento</th>
+                        <th className="px-3 py-2.5">Responsável</th>
                         <th className="px-3 py-2.5">Candidato</th>
                         <th className="px-3 py-2.5 text-right">Aberta há</th>
                       </tr>
@@ -604,6 +605,11 @@ export default function DashboardRecrutamento() {
                               );
                             })()}
                           </td>
+                          <td className="max-w-[160px] px-3 py-2.5">
+                            {v.responsavel
+                              ? <p className="line-clamp-2 text-xs font-semibold text-foreground" title={v.responsavel}>{v.responsavel}</p>
+                              : <span className="text-xs font-semibold text-rose-600">sem responsável</span>}
+                          </td>
                           <td className="max-w-[200px] px-3 py-2.5">
                             {v.candidato ? (
                               <>
@@ -618,7 +624,7 @@ export default function DashboardRecrutamento() {
                         </tr>
                       ))}
                       {tabela.length === 0 && (
-                        <tr><td colSpan={10} className="px-3 py-12 text-center text-sm text-muted-foreground">Nenhuma vaga em aberto neste recorte.</td></tr>
+                        <tr><td colSpan={11} className="px-3 py-12 text-center text-sm text-muted-foreground">Nenhuma vaga em aberto neste recorte.</td></tr>
                       )}
                     </tbody>
                   </table>

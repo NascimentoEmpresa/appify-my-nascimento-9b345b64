@@ -3,6 +3,8 @@
 // (mig 20261007000012). Com teste em src/test/sistemas-tvs.test.ts.
 // =====================================================================
 
+import { PAINEIS_GERENCIAIS } from "./gerencial";
+
 export type TipoItem = "imagem" | "video" | "url" | "youtube" | "aviso" | "relatorio";
 
 export const TIPOS_ITEM: { valor: TipoItem; rotulo: string; dica: string }[] = [
@@ -18,6 +20,8 @@ export interface ItemTv {
   id: string; tipo: TipoItem; titulo: string | null; url: string | null; arquivo: string | null;
   texto: string | null; cor: string | null; duracao_seg: number;
   relatorio?: string | null; rel_periodo?: PeriodoTv | null;
+  /** TVs gerenciais: o visual (painel escuro igual ao HTML, claro, gráficos grandes) — mig 20261014000002. */
+  rel_visual?: string | null;
   // Só na PRÉVIA da gestão (Sistemas › TV's): contrato do relatório, o nome
   // dele para o cabeçalho e o arquivo local ainda não enviado (blob:).
   rel_contrato?: string | null; rel_contrato_nome?: string | null; url_previa?: string | null;
@@ -37,7 +41,7 @@ export interface ItemTv {
  * Treinamentos (o Dashboard do módulo). `semFiltros`: as telas de origem
  * abrem sem período nem contrato — o item também não pede.
  */
-export const RELATORIOS_TV: { slug: string; titulo: string; paginas: number; semFiltros?: boolean }[] = [
+export const RELATORIOS_TV: { slug: string; titulo: string; paginas: number; semFiltros?: boolean; grupo?: string }[] = [
   { slug: "geral", titulo: "Visão geral — todos os sistemas", paginas: 1 },
   { slug: "vagas", titulo: "Vagas — Dashboard", paginas: 3 },
   { slug: "recrutamento", titulo: "Gestão Recrutamento", paginas: 2 },
@@ -52,6 +56,11 @@ export const RELATORIOS_TV: { slug: string; titulo: string; paginas: number; sem
   { slug: "turnover", titulo: "Turn-over", paginas: 3 },
   { slug: "licitacoes", titulo: "Licitações — Painel Executivo", paginas: 4, semFiltros: true },
   { slug: "treinamentos", titulo: "Treinamentos — Dashboard", paginas: 3, semFiltros: true },
+  // 12/10/2026 (mig 20261012000001, SIS-2026-0635): as 13 TVs gerenciais por
+  // diretoria do documento "Indicadores das TVs" — indicadores com meta e
+  // semáforo (src/lib/tv/gerencial.ts). Sem período nem contrato: cada
+  // indicador tem a sua janela, parametrizada em TV's › Indicadores gerenciais.
+  ...PAINEIS_GERENCIAIS.map((p) => ({ slug: p.slug, titulo: `TV ${p.titulo}`, paginas: 2, semFiltros: true, grupo: p.diretoria })),
 ];
 export const paginasRelatorioTv = (slug: string | null | undefined) => RELATORIOS_TV.find((r) => r.slug === slug)?.paginas ?? 1;
 export const tituloRelatorioTv = (slug: string | null | undefined) => RELATORIOS_TV.find((r) => r.slug === slug)?.titulo ?? "Relatório";

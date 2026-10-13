@@ -29,7 +29,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import {
   Check, CheckCheck, Paperclip, Send, X, Lock, Users, Download, ImageIcon, Loader2,
 } from "lucide-react";
-import { BUCKET_CHAMADOS, fmtDataHora, type Anexo, type Evento } from "./types";
+import { BUCKET_CHAMADOS, fmtDataHora, opcoesDownloadAnexo, type Anexo, type Evento } from "./types";
 import { imagensDoClipboard } from "@/lib/imagensColadas";
 
 export interface Participante {
@@ -378,7 +378,7 @@ export function ChatChamado({
   };
 
   const baixarAnexo = async (path: string) => {
-    const { data, error } = await supabase.storage.from(BUCKET_CHAMADOS).createSignedUrl(path, 3600);
+    const { data, error } = await supabase.storage.from(BUCKET_CHAMADOS).createSignedUrl(path, 3600, opcoesDownloadAnexo(path));
     if (error || !data?.signedUrl) { toast({ title: "Erro ao abrir anexo", variant: "destructive" }); return; }
     window.open(data.signedUrl, "_blank", "noopener,noreferrer");
   };

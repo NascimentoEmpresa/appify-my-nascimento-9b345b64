@@ -42,6 +42,9 @@ import { ordenarPor } from "@/lib/ordenarTabela";
 import { abreviarNome } from "./JustificativaPendenteBadge";
 import { EmpresaContratoBadge } from "./EmpresaContratoBadge";
 import { ClassificacaoRateioCell } from "./ClassificacaoRateioCell";
+import { SeloPontoDiaria } from "./PontoDiariaMalote";
+import { useDiariaPontoMalote } from "@/hooks/useDiariaPontoMalote";
+import type { PontoDiariaMalote } from "@/lib/diariaPonto";
 
 // SIS-2026-0316: colunas ordenáveis. Fora: Empresa/Contrato (fica só como
 // Empresa pra ordenar, o badge continua mostrando os dois), Parcela
@@ -570,6 +573,8 @@ export default function Aprovacoes({ base = "/app/malote" }: { base?: string } =
   const totalPaginas = Math.max(1, Math.ceil(ordenados.length / PAGE_SIZE));
   const paginaAtual = Math.min(pagina, totalPaginas);
   const visiveis = ordenados.slice((paginaAtual - 1) * PAGE_SIZE, paginaAtual * PAGE_SIZE);
+  // SIS-2026-0626: despesa que veio de diária mostra se o faltante bateu ponto no dia (mig 20261014000001).
+  const { data: pontoDiarias } = useDiariaPontoMalote(visiveis.map((i) => i.despesa.id));
 
   function contar(s: StatusDespesa) {
     return itensComFiltrosDoPainel.filter((item) => statusEfetivo(item) === s).length;
@@ -940,6 +945,8 @@ export default function Aprovacoes({ base = "/app/malote" }: { base?: string } =
                     formaEspecialPorNome={formaEspecialPorNome}
                     classificacaoIdsRateio={classificacaoIdsRateio?.get(item.despesa.id)}
                     nomePorClassificacaoId={nomePorClassificacaoId}
+                    pontoDiaria={pontoDiarias?.porDespesa.get(item.despesa.id)}
+                    pontoSincronizadoAte={pontoDiarias?.sincronizadoAte}
                     onAbrir={() => abrirItem(item.despesa)}
                     onVerFluxoCaixa={() => navigate(`/app/financeiro/gestao-financeira/fluxo-caixa?busca=${encodeURIComponent(item.despesa.numero)}`)}
                   />
@@ -978,6 +985,8 @@ function LinhaItem({
   formaEspecialPorNome,
   classificacaoIdsRateio,
   nomePorClassificacaoId,
+  pontoDiaria,
+  pontoSincronizadoAte,
   onAbrir,
   onVerFluxoCaixa,
 }: {
@@ -989,6 +998,8 @@ function LinhaItem({
   formaEspecialPorNome: Map<string, MaloteFormaPagamento>;
   classificacaoIdsRateio: Set<string> | undefined;
   nomePorClassificacaoId: Map<string, string>;
+  pontoDiaria?: PontoDiariaMalote[];
+  pontoSincronizadoAte?: string | null;
   onAbrir: () => void;
   onVerFluxoCaixa: () => void;
 }) {
@@ -1024,7 +1035,10 @@ function LinhaItem({
       <TableCell className="text-sm">
         {parcela ? `${parcela.numero_parcela}/${despesa.numero_parcelas}` : <span className="text-muted-foreground">—</span>}
       </TableCell>
-      <TableCell className="text-sm">{despesa.nome}</TableCell>
+      <TableCell className="text-sm">
+        {despesa.nome}
+        {pontoDiaria && <div className="mt-1"><SeloPontoDiaria itens={pontoDiaria} sincronizadoAte={pontoSincronizadoAte} /></div>}
+      </TableCell>
       <TableCell className="text-sm">
         <ClassificacaoRateioCell
           despesa={despesa}

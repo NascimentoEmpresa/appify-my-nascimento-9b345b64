@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Briefcase, Gavel, GraduationCap, LayoutDashboard, type LucideIcon } from "lucide-react";
+import { Briefcase, Calculator, Crown, Gavel, GraduationCap, HardHat, LayoutDashboard, Package, Scale, Server, Truck, UserPlus, Users, Wallet, type LucideIcon } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { SISTEMAS, sistemaPorSlug, type RelatorioDados, type RelatorioGeralDados } from "@/pages/relatorios/sistemas";
 import { periodoTv, relatorioTemFiltros, rotuloPeriodoTv, tituloRelatorioTv, type ItemTv } from "@/lib/tv/tv";
@@ -12,6 +12,8 @@ import { PaginaVagasAndamento, PaginaVagasContratos, PaginaVagasResumo } from ".
 import { PaginaTurnoverContratos, PaginaTurnoverLimites, PaginaTurnoverResumo } from "./relatorio/paginasTurnover";
 import { PaginaLicitacaoAberturas, PaginaLicitacaoMapa, PaginaLicitacaoResponsaveis, PaginaLicitacaoResumo } from "./relatorio/paginasLicitacao";
 import { PaginaTrnCursos, PaginaTrnEngajamento, PaginaTrnGeral } from "./relatorio/paginasTreinamentos";
+import { TelaPainelGerencial, fundoDoPainel } from "./relatorio/paginasGerencialPainel";
+import { ehPainelGerencial, indicadoresDaTv, painelGerencial, placar, visualDoItem, type PainelGerencial } from "@/lib/tv/gerencial";
 
 // =====================================================================
 // Relatório do ERP na TV (Sistemas › TV's)
@@ -43,7 +45,13 @@ import { PaginaTrnCursos, PaginaTrnEngajamento, PaginaTrnGeral } from "./relator
 // Os dois mostram o todo, como as telas de origem: sem período nem
 // contrato. Na prévia, cada um exige a liberação da tela de origem
 // (tv_licitacao_previa → Painel Executivo; trn_dashboard → Treinamentos).
+//
+// 12/10/2026 (mig 20261012000001, SIS-2026-0635): as 13 TVs GERENCIAIS por
+// diretoria (ger-*) — indicadores com meta, semáforo, afetado, causa e
+// responsável (src/lib/tv/gerencial.ts). Prévia: tvg_painel (login).
 // =====================================================================
+
+const ICONE_GERENCIAL: Record<string, LucideIcon> = { Briefcase, Gavel, Package, Truck, UserPlus, Users, HardHat, GraduationCap, Wallet, Scale, Calculator, Server, Crown };
 
 const CACHE = new Map<string, { em: number; dados: DadosRelTv }>();
 const VALIDADE_MS = 5 * 60_000;
@@ -53,6 +61,8 @@ const ORDEM_GERAL = ["recrutamento", "demissoes", "materiais", "ferias", "medida
 
 /** Cor e ícone de cada relatório na TV. */
 function aparencia(slug: string | null | undefined): { cor: string; Icone: LucideIcon } {
+  const ger = painelGerencial(slug);
+  if (ger) return { cor: corDoRelatorioTv(slug), Icone: ICONE_GERENCIAL[ger.icone] ?? LayoutDashboard };
   const Icone = slug === "geral" ? LayoutDashboard : slug === "vagas" ? Briefcase : slug === "licitacoes" ? Gavel : slug === "treinamentos" ? GraduationCap
     : sistemaPorSlug(slug ?? "")?.icone ?? LayoutDashboard;
   return { cor: corDoRelatorioTv(slug), Icone };
@@ -65,6 +75,9 @@ async function carregarPrevia(item: ItemTv): Promise<DadosRelTv> {
   const contrato = item.rel_contrato_nome ?? null;
   const ok = <T,>({ data, error }: { data: T; error: { message: string } | null }) => { if (error) throw new Error(error.message); return data; };
 
+  if (ehPainelGerencial(item.relatorio)) {
+    return { tipo: "gerencial", contrato: null, ...(ok(await rpc("tvg_painel", { p_painel: item.relatorio })) as PainelGerencial) };
+  }
   if (item.relatorio === "geral") {
     const g = ok(await rpc("dir_rel_geral", args)) as RelatorioGeralDados;
     return { tipo: "geral", periodo: { de, ate }, contrato,
@@ -118,7 +131,9 @@ export function TvRelatorio({ item, token, previa = false }: { item: ItemTv; tok
   // A TV antiga (antes da mig 20261008000004) mandava o Turn-over como sistema padrão: segue funcionando.
   const slug = item.relatorio ?? (dados?.tipo === "sistema" ? dados.slug : null);
   const { cor, Icone } = aparencia(slug);
-  const paginas = useMemo(() => (dados ? paginasDoRelatorio(dados) : []), [dados]);
+  // TVs gerenciais: o visual do item (mig 20261014000002) decide quantos indicadores por tela.
+  const visual = visualDoItem(item.rel_visual);
+  const paginas = useMemo(() => (dados ? paginasDoRelatorio(dados.tipo === "gerencial" ? { ...dados, visual } : dados) : []), [dados, visual]);
   const duracaoMs = tempoDaPaginaMs(item.duracao_seg, paginas.length);
   const [pagina, setPagina] = useState(0);
   useEffect(() => { setPagina(0); }, [paginas.length, item.id]);
@@ -130,7 +145,10 @@ export function TvRelatorio({ item, token, previa = false }: { item: ItemTv; tok
 
   const titulo = item.titulo || tituloRelatorioTv(item.relatorio);
   const contratoNome = dados?.contrato ?? null;
-  const selos = !comFiltros
+  const pl = dados?.tipo === "gerencial" ? placar(indicadoresDaTv(dados)) : null;
+  const selos = ehPainelGerencial(item.relatorio)
+    ? [painelGerencial(item.relatorio)?.diretoria ?? "", pl ? (pl.vermelho ? `${pl.vermelho} fora da meta` : "Tudo na meta") : ""]
+    : !comFiltros
     ? (item.relatorio === "licitacoes" ? ["Todas as empresas do grupo", "Grade completa"] : ["Toda a base de alunos", "Desde o início"])
     : [
       dados?.tipo === "turnover" ? `${dados.painel.ano} · ${rotuloMeses(dados.painel.meses)}` : rotuloPeriodoTv(item.rel_periodo),
@@ -141,6 +159,16 @@ export function TvRelatorio({ item, token, previa = false }: { item: ItemTv; tok
   const atualizado = dados?.gerado_em ? new Date(dados.gerado_em).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })
     : dados ? new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }) : null;
   const atual = paginas[Math.min(pagina, Math.max(0, paginas.length - 1))]?.chave;
+
+  // TVs gerenciais (SIS-2026-0635): o painel no estilo do protótipo HTML, tela inteira com cabeçalho próprio.
+  if (dados?.tipo === "gerencial" && atual) {
+    return (
+      <Palco fundo={fundoDoPainel(visual)}>
+        <TelaPainelGerencial p={dados} cor={cor} visual={visual} chave={atual} paginas={paginas}
+          pagina={Math.min(pagina, Math.max(0, paginas.length - 1))} duracaoMs={duracaoMs} atualizado={atualizado} />
+      </Palco>
+    );
+  }
 
   return (
     <Palco>
