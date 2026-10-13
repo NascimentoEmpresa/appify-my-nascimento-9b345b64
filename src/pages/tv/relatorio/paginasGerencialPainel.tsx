@@ -100,9 +100,11 @@ export function FaixaGerencial({ cor, sobre, titulo, pergunta, placarTv, altura 
   );
 }
 
-export function TelaPainelGerencial({ p, cor, visual, chave, paginas, pagina, duracaoMs, atualizado }: {
+export function TelaPainelGerencial({ p, cor, visual, chave, paginas, pagina, duracaoMs, atualizado, onIndicador }: {
   p: PainelGerencial; cor: string; visual: VisualGerencial; chave: string;
   paginas: { chave: string; titulo: string }[]; pagina: number; duracaoMs: number; atualizado: string | null;
+  /** Só na prévia da gestão (14/10/2026): clicar no indicador abre a I.A "de onde vem". A TV não passa. */
+  onIndicador?: (i: IndicadorGerencial) => void;
 }) {
   const escuro = visualGerencial(visual).escuro;
   const t = escuro ? ESCURO : CLARO;
@@ -159,7 +161,7 @@ export function TelaPainelGerencial({ p, cor, visual, chave, paginas, pagina, du
 
         {/* O painel inteiro (como no HTML) — cartões brancos com sombra suave (carmed) */}
         <div key={chave} className="grid min-h-0 flex-1" style={{ gap: 18, gridTemplateColumns: `repeat(${colunas}, minmax(0,1fr))`, gridTemplateRows: `repeat(${linhas}, minmax(0,1fr))`, animation: "tvg-entra 600ms ease-out" }}>
-          {itens.map((i) => <CartaoPainel key={i.codigo} i={i} t={t} grande={colunas <= 2} compacto={compacto} />)}
+          {itens.map((i) => <CartaoPainel key={i.codigo} i={i} t={t} grande={colunas <= 2} compacto={compacto} onClick={onIndicador ? () => onIndicador(i) : undefined} />)}
         </div>
 
         {/* Rodapé: telas, tempo da tela e onde está o detalhe */}
@@ -183,14 +185,15 @@ export function TelaPainelGerencial({ p, cor, visual, chave, paginas, pagina, du
   );
 }
 
-function CartaoPainel({ i, t, grande, compacto }: { i: IndicadorGerencial; t: Tema; grande: boolean; compacto: boolean }) {
+function CartaoPainel({ i, t, grande, compacto, onClick }: { i: IndicadorGerencial; t: Tema; grande: boolean; compacto: boolean; onClick?: () => void }) {
   const s = situacao(i);
   const st = STATUS[s];
   const r = i.resultado ?? { valor: null };
   const semValor = r.valor == null;
   const destaque = s === "vermelho";
   return (
-    <div className="relative flex min-h-0 min-w-0 flex-col overflow-hidden" style={{ background: t.cartao, boxShadow: t.sombra, borderRadius: 26, padding: grande ? "22px 26px 20px" : "18px 20px 16px", gap: 10, outline: destaque ? `3px solid ${misturarCor(st.cor, "#ffffff", 0.55)}` : undefined }}>
+    <div onClick={onClick} title={onClick ? "Clique: a I.A explica de onde vem este número" : undefined}
+      className={`relative flex min-h-0 min-w-0 flex-col overflow-hidden ${onClick ? "cursor-pointer transition hover:brightness-[0.98]" : ""}`} style={{ background: t.cartao, boxShadow: t.sombra, borderRadius: 26, padding: grande ? "22px 26px 20px" : "18px 20px 16px", gap: 10, outline: destaque ? `3px solid ${misturarCor(st.cor, "#ffffff", 0.55)}` : undefined }}>
       <span className="absolute inset-x-0 top-0" style={{ height: 6, background: st.cor }} />
 
       {/* Indicador + status */}
