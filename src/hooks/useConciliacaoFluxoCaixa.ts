@@ -12,23 +12,59 @@ import type { FluxoCaixaMaloteLinha } from "@/hooks/useFluxoCaixaMalote";
 // bloqueada, não aparece no extrato da conta corrente — acusava "FLUXO - NÃO
 // ENCONTRADO" à toa. Só SAÍDA: a entrada ("RECEBIMENTO DE NOTA - CONTA
 // VINCULADA") continua na conciliação.
-export function ignoraNaConciliacao(l: Pick<FluxoCaixaMaloteLinha, "tipo" | "descricao"> & { classificacao_nome?: string | null }): boolean {
-  // O SALDO ANTERIOR (abertura) nunca é ignorado: tem tratamento próprio.
-  if ((l.classificacao_nome ?? "").trim().toUpperCase() === "SALDO ANTERIOR") return false;
-  return l.tipo === "saida" && (l.descricao ?? "").toUpperCase().includes("CONTA VINCULADA");
+// SIS-2026-0637: o resgate da conta vinculada do Banco do Brasil e da Caixa também fica
+// de fora quando está lançado como ENTRADA (o dinheiro sai da conta vinculada e a
+// movimentação não aparece no extrato da conta corrente desses bancos). No Banrisul o
+// resgate é dinheiro que cai de verdade na conta: continua na conciliação.
+const semAcento = (s: string) => s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase();
+function bancoDeContaVinculada(banco: string | null | undefined): boolean {
+  const b = semAcento((banco ?? "").trim());
+  return b === "BB" || b.includes("BANCO DO BRASIL") || b.includes("CAIXA");
 }
 
+export function ignoraNaConciliacao(
+  l: Pick<FluxoCaixaMaloteLinha, "tipo" | "descricao"> & { classificacao_nome?: string | null; banco_nome?: string | null },
+): boolean {
+  // O SALDO ANTERIOR (abertura) nunca é ignorado: tem tratamento próprio.
+  if ((l.classificacao_nome ?? "").trim().toUpperCase() === "SALDO ANTERIOR") return false;
+  const desc = (l.descricao ?? "").toUpperCase();
+  if (l.tipo === "saida" && desc.includes("CONTA VINCULADA")) return true;
+  return desc.includes("RESGATE") && desc.includes("VINCULADA") && bancoDeContaVinculada(l.banco_nome);
+}
+
+// SIS-2026-0637: o rateio existe só para organização interna (um lançamento dividido por
+// contrato) — no extrato cai UM valor, o total. A conciliação compara o total da despesa
+// (e da parcela), não cada pedaço do rateio. Mesma chave do Fluxo de Caixa
+// (despesa_id + parcela), e só junta o que é do mesmo dia, banco, tipo e origem.
 export function linhasFluxoParaPlanilhaRow(linhas: FluxoCaixaMaloteLinha[]): PlanilhaRow[] {
-  return linhas.filter((l) => !ignoraNaConciliacao(l)).map((l) => ({
-    dia: l.data_pagamento ?? "",
-    valor: l.valor,
-    tipo: l.tipo === "entrada" ? "ENTRADA" : "SAÍDA",
-    banco: l.banco_nome ?? "—",
-    despesaId: l.despesa_id,
-    numeroParcela: l.numero_parcela,
-    origemFluxo: l.origem,
-    empresaNome: l.empresa_nome,
-  }));
+  const saida: PlanilhaRow[] = [];
+  const porChave = new Map<string, PlanilhaRow>();
+  for (const l of linhas) {
+    if (ignoraNaConciliacao(l)) continue;
+    const row: PlanilhaRow = {
+      dia: l.data_pagamento ?? "",
+      valor: l.valor,
+      tipo: l.tipo === "entrada" ? "ENTRADA" : "SAÍDA",
+      banco: l.banco_nome ?? "—",
+      despesaId: l.despesa_id,
+      numeroParcela: l.numero_parcela,
+      origemFluxo: l.origem,
+      empresaNome: l.empresa_nome,
+    };
+    if (!l.despesa_id) {
+      saida.push(row);
+      continue;
+    }
+    const chave = [l.origem, l.despesa_id, l.numero_parcela ?? "", row.dia, row.tipo, row.banco].join("|");
+    const existente = porChave.get(chave);
+    if (existente) {
+      existente.valor = Math.round((existente.valor + row.valor) * 100) / 100;
+    } else {
+      porChave.set(chave, row);
+      saida.push(row);
+    }
+  }
+  return saida;
 }
 
 export interface ConciliacaoFluxoCaixaSalva {

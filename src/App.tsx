@@ -29,6 +29,7 @@ import ChamadosDesenvolvimentoPresidencia from "./pages/presidencia/ChamadosDese
 import TvPlayer from "./pages/tv/TvPlayer";
 import TvPrevia from "./pages/tv/TvPrevia";
 import TvsSistemas from "./pages/sistemas/Tvs";
+import TvsIndicadores from "./pages/sistemas/TvsIndicadores";
 import Pipeline from "./pages/Pipeline";
 import CadastroEdital from "./pages/CadastroEdital";
 import Documentos from "./pages/Documentos";
@@ -506,6 +507,8 @@ const App = () => (
             <Route path="sistemas/checklist-modulos" element={<ChecklistModulos />} />
             <Route path="sistemas/logins" element={<LoginsSistemas />} />
             <Route path="sistemas/tvs" element={<TvsSistemas />} />
+            {/* TVs gerenciais por diretoria (mig 20261012000001, SIS-2026-0635). */}
+            <Route path="sistemas/tvs/indicadores" element={<TvsIndicadores />} />
             <Route path="sistemas/checklist-modulos/:moduloId" element={<ChecklistModuloDetalhe />} />
             <Route path="sistemas/hora-extra" element={<SolicitacoesHoraExtra />} />
             <Route path="sistemas/hora-extra/liberacao" element={<LiberacaoHoraExtra />} />

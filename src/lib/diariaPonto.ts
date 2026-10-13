@@ -8,7 +8,7 @@ import { minutosParaHora } from "@/lib/ponto";
 // solicitação é conferida no espelho do relógio (espelho."BiMarcacoes"):
 //
 //   trabalhou        — o faltante bateu ponto no dia → a diária NÃO pode
-//                      (o banco recusa a linha e a aprovação);
+//                      (o banco recusa a linha; a aprovação só avisa — mig 20261013000001);
 //   sem_marcacao     — o dia já está no espelho e não há batida → ok;
 //   parcial          — é o último dia sincronizado: pode faltar batida da
 //                      tarde/noite. Passa, mas a aprovação confere de novo;
