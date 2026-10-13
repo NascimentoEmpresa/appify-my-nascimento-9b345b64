@@ -1,6 +1,6 @@
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
-import { useHistoricoCompetenciaSolicitacaoAjuste, useItensSolicitacaoAjuste } from "@/hooks/useSolicitacaoAjuste";
+import { codigoSolicitacaoAjuste, useHistoricoCompetenciaSolicitacaoAjuste, useItensSolicitacaoAjuste } from "@/hooks/useSolicitacaoAjuste";
 
 // SIS-2026-0305: lista as solicitações arquivadas (reaberturas anteriores)
 // do mesmo contrato+competência — espelha aju_historico_comp (main.py:3053-3078).
@@ -16,7 +16,7 @@ function LinhaHistorico({ solicitacaoId, iteracao }: { solicitacaoId: string; it
   const { data: itens = [] } = useItensSolicitacaoAjuste(solicitacaoId);
   return (
     <div className="rounded border p-3">
-      <Badge variant="secondary" className="mb-2">{iteracao}ª abertura</Badge>
+      <Badge variant="secondary" className="mb-2 font-mono">{codigoSolicitacaoAjuste(iteracao)}</Badge>
       <ul className="space-y-1 text-sm">
         {itens.map((item) => (
           <li key={item.id} className="flex items-center justify-between">

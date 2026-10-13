@@ -40,6 +40,7 @@ import {
   useRegistrarDespachoSolicitacaoAjuste,
   useResponderItemSolicitacaoAjuste,
   useTiposSolicitacaoAjuste,
+  codigoSolicitacaoAjuste,
 } from "@/hooks/useSolicitacaoAjuste";
 import { HistoricoCompetenciaModal } from "./HistoricoCompetenciaModal";
 import { ComboSugestao } from "./ComboSugestao";
@@ -252,11 +253,11 @@ export function DetalheSolicitacaoModal({ solicitacao, onOpenChange }: Props) {
         <DialogContent className="max-h-[85vh] max-w-3xl overflow-y-auto">
           <DialogHeader>
             <div className="flex flex-wrap items-center gap-1.5">
+              <Badge variant="secondary" className="font-mono">{codigoSolicitacaoAjuste(solicitacao.iteracao)}</Badge>
               <DialogTitle className="mr-1">{solicitacao.contrato?.nome}</DialogTitle>
               <Badge variant="outline" className={cn("border", STATUS_BADGE_CLASSE_SOLICITACAO_AJUSTE[solicitacao.status])}>
                 {STATUS_LABEL_SOLICITACAO_AJUSTE[solicitacao.status]}
               </Badge>
-              {solicitacao.iteracao > 1 && <Badge variant="secondary">{solicitacao.iteracao}ª abertura</Badge>}
             </div>
           </DialogHeader>
 
