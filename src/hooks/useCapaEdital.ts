@@ -51,6 +51,10 @@ export interface CapaEdital {
   conta_vinculada_quem_abre: string | null;
   ponto_eletronico: string[] | null;
 
+  // Fontes diretas do checklist de Implantação (planilha de ajustes 13/10/2026).
+  prazo_envio_treinamentos: string | null;
+  epis_especificados: string | null;
+
   observacoes: string | null;
 
   status: CapaStatus;
@@ -190,6 +194,7 @@ export function useCapaUpdate() {
       const formFields = new Set([
         "cidade","objeto","modalidade","abertura","local","prazo_contrato",
         "qtd_postos","valor_estimado","observacoes","data_inicio","escritorio",
+        "prazo_envio_treinamentos","epis_especificados",
       ]);
       if (Object.keys(changes).some((k) => formFields.has(k))) {
         changes.preenchido_em = new Date().toISOString().slice(0, 10);

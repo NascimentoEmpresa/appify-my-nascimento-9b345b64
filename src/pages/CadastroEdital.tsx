@@ -490,6 +490,7 @@ const EMPTY: Partial<CapaEdital> = {
   reajuste: [],
   trabalho_escolar: false, emergencial: false, diluicao_meses: 12,
   conta_vinculada: "", conta_vinculada_quem_abre: "",
+  prazo_envio_treinamentos: "", epis_especificados: "",
   responsavel: "", observacoes: "",
 };
 
@@ -737,7 +738,22 @@ function CapaSheet({
               </F>
               <F label="Conta vinculada">{txt("conta_vinculada")}</F>
               <F label="Conta vinculada — quem abre">{txt("conta_vinculada_quem_abre")}</F>
+              <F label="Prazo para envio dos treinamentos">
+                <PrazoInput
+                  value={(f.prazo_envio_treinamentos as string) ?? ""}
+                  onChange={(v) => setF((p) => ({ ...p, prazo_envio_treinamentos: v }))}
+                />
+              </F>
             </Grid2>
+
+            <F label="EPIs especificados no edital">
+              <Textarea
+                value={(f.epis_especificados as string) ?? ""}
+                onChange={(e) => setF((p) => ({ ...p, epis_especificados: e.target.value }))}
+                rows={2}
+                placeholder="Informe os EPIs exigidos pelo edital"
+              />
+            </F>
 
             {/* Reajuste (item 6) */}
             <F label="Reajuste">
@@ -830,6 +846,8 @@ function ViewModal({ capa, onClose }: { capa: CapaEdital; onClose: () => void })
               ["Garantia", capa.garantia],
               ["Material", capa.material],
               ["Conta vinculada", capa.conta_vinculada],
+              ["Prazo envio treinamentos", capa.prazo_envio_treinamentos],
+              ["EPIs especificados", capa.epis_especificados],
               ["Escritório", capa.escritorio],
               ["Reunião alinhamento", capa.reuniao_alinhamento],
               ["Homologação", capa.data_homologacao],
