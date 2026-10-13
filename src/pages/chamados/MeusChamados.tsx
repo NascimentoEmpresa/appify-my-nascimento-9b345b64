@@ -46,7 +46,7 @@ export default function MeusChamados({ base = "/app/central-servicos/chamados" }
     queryKey: ["chamados-avaliacoes-pendentes"],
     queryFn: async () => {
       const { data } = await (supabase as any).rpc("chamados_meus_avaliacoes_pendentes");
-      return (data ?? []) as Array<{ id: string; numero: string; assunto: string }>;
+      return (data ?? []) as Array<{ id: string; numero: string; assunto: string; pendencia: "avaliacao" | "avaliacao_participante" }>;
     },
   });
 
@@ -76,7 +76,7 @@ export default function MeusChamados({ base = "/app/central-servicos/chamados" }
   const { data: naoLidos = {} } = useChamadosNaoLidos();
 
   const pendentesIds = useMemo(() => new Set(avaliacoesPendentes.map((p) => p.id)), [avaliacoesPendentes]);
-  const [avaliarAlvo, setAvaliarAlvo] = useState<{ id: string; numero: string } | null>(null);
+  const [avaliarAlvo, setAvaliarAlvo] = useState<{ id: string; numero: string; participante?: boolean } | null>(null);
   const [pagina, setPagina] = useState(1);
 
   const { data: stats } = useQuery({
@@ -155,7 +155,7 @@ export default function MeusChamados({ base = "/app/central-servicos/chamados" }
           </p>
           <div className="flex flex-wrap gap-1.5">
             {avaliacoesPendentes.map((p) => (
-              <button key={p.id} onClick={() => setAvaliarAlvo({ id: p.id, numero: p.numero })}
+              <button key={p.id} onClick={() => setAvaliarAlvo({ id: p.id, numero: p.numero, participante: p.pendencia === "avaliacao_participante" })}
                 className="flex items-center gap-1 rounded border border-warning/40 bg-background px-2 py-1 text-xs transition-transform hover:border-warning hover:bg-warning/5 active:scale-90">
                 <Star className="h-3 w-3 text-warning" /> <span className="font-mono font-semibold">#{p.numero}</span> avaliar
               </button>
@@ -340,6 +340,7 @@ export default function MeusChamados({ base = "/app/central-servicos/chamados" }
         open={!!avaliarAlvo}
         onOpenChange={(v) => { if (!v) setAvaliarAlvo(null); }}
         chamado={avaliarAlvo}
+        comoParticipante={!!avaliarAlvo?.participante}
       />
     </div>
   );

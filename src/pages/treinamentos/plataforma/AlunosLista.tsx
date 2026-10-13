@@ -15,6 +15,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { SearchableMultiSelect } from "@/components/ui/searchable-multi-select";
 import { useQuery } from "@tanstack/react-query";
 import { useTrnAcaoMassa, useTrnAlunos, useTrnCursos, useTrnExcluirAluno } from "@/hooks/useTreinamentosPlataforma";
 import { DESCRICAO_STATUS_ALUNO, MENU, ROTULO_STATUS_ALUNO, type AlunoLista, type StatusAluno } from "./tipos";
@@ -71,6 +72,14 @@ export default function AlunosLista() {
   const incluirInativos = fStatus === "todos" || fStatus === "demitido";
   const { data: alunos = [], isLoading } = useTrnAlunos(incluirInativos);
   const [fExpira, setFExpira] = useState<"" | "vitalicio" | "expira" | "expirado">("");
+  // Filtro por contrato (09/10/2026): o contrato vem na própria
+  // trn_alunos_lista (mig 20261009000001) — vale para quem só visualiza.
+  const [fContratos, setFContratos] = useState<string[]>([]);
+  const opcoesContrato = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const a of alunos) if (a.contrato) m.set(a.contrato, (m.get(a.contrato) ?? 0) + 1);
+    return [...m.entries()].sort((x, y) => x[0].localeCompare(y[0], "pt-BR")).map(([c, n]) => ({ value: c, label: c, hint: `${n}` }));
+  }, [alunos]);
   const [colunas, setColunas] = useState<Set<ColunaOpcional>>(new Set(COLUNAS.filter((c) => c.padrao).map((c) => c.k)));
   const [selecionados, setSelecionados] = useState<Set<string>>(new Set());
 
@@ -96,9 +105,10 @@ export default function AlunosLista() {
       if (fExpira === "expira" && (!a.expira_em || a.expira_em < hoje)) return false;
       if (fExpira === "expirado" && (!a.expira_em || a.expira_em >= hoje)) return false;
       if (alunosDoCurso && !alunosDoCurso.has(a.id)) return false;
+      if (fContratos.length && !fContratos.includes(a.contrato ?? "")) return false;
       return true;
     });
-  }, [alunos, busca, fStatus, fExpira, alunosDoCurso, hoje]);
+  }, [alunos, busca, fStatus, fExpira, alunosDoCurso, hoje, fContratos]);
 
   const pag = usePaginacao(filtrados, 20);
   const todosDaPagina = pag.itens.length > 0 && pag.itens.every((a) => selecionados.has(a.id));
@@ -111,7 +121,7 @@ export default function AlunosLista() {
 
   const exportar = () => {
     const linhas = filtrados.map((a) => ({
-      Nome: a.nome, "E-mail": a.email, Telefone: a.telefone ?? "", Documento: a.documento ?? "",
+      Nome: a.nome, "E-mail": a.email, Telefone: a.telefone ?? "", Documento: a.documento ?? "", Contrato: a.contrato ?? "",
       Status: ROTULO_STATUS_ALUNO[a.status], "Expira em": a.expira_em ? fmtData(a.expira_em) : "Vitalício",
       Cursos: a.cursos, "Aulas concluídas": a.aulas_concluidas,
       Cadastro: fmtData(a.created_at), "Último acesso": a.ultimo_acesso_em ? fmtDataHora(a.ultimo_acesso_em) : "",
@@ -286,6 +296,8 @@ export default function AlunosLista() {
                   <SelectItem value="expirado">Expirado</SelectItem>
                 </SelectContent>
               </Select>
+              <SearchableMultiSelect value={fContratos} onChange={setFContratos} maxBadges={1}
+                placeholder="Todos os contratos" searchPlaceholder="Buscar contrato…" options={opcoesContrato} />
             </div>
           )}
         </div>

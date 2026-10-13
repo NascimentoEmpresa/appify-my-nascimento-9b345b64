@@ -35,7 +35,7 @@ import { imagensDoClipboard } from "@/lib/imagensColadas";
 export interface Participante {
   user_id: string;
   nome: string;
-  papel: "solicitante" | "responsavel" | "gestao";
+  papel: "solicitante" | "responsavel" | "gestao" | "participante";
   ve_interno: boolean;
   /** Solicitante e responsável — de quem se espera resposta. Ver PAPEL_LABEL. */
   principal: boolean;
@@ -46,6 +46,7 @@ const PAPEL_LABEL: Record<string, string> = {
   solicitante: "solicitante",
   responsavel: "responsável",
   gestao: "gestão",
+  participante: "participante",
 };
 
 /** Estado de leitura de uma mensagem, no vocabulário do WhatsApp. */

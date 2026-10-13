@@ -16,6 +16,7 @@ import { Label } from "@/components/ui/label";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
+import { AvaliarChamadoDialog } from "./AvaliarChamadoDialog";
 import { Flag, UploadCloud, Info, XCircle, CheckCircle2, Lightbulb, Clock, X, Star, ClipboardPaste, FileText, ListChecks } from "lucide-react";
 import type { PendenciaSolicitante } from "./validacaoPresidencia";
 import {
@@ -66,6 +67,7 @@ export default function AbrirChamado({ base = "/app/central-servicos/chamados" }
   const nome = empregado?.nome || (user?.user_metadata as any)?.nome || user?.email || "—";
   const setor = empregado?.setor || "—";
 
+  const [avaliarParticipante, setAvaliarParticipante] = useState<{ id: string; numero: string } | null>(null);
   const [assunto, setAssunto] = useState("");
   const [categorias, setCategorias] = useState<string[]>([]);
   const [tipo, setTipo] = useState("");
@@ -227,14 +229,20 @@ export default function AbrirChamado({ base = "/app/central-servicos/chamados" }
           </p>
           <div className="space-y-1.5">
             {avaliacoesPendentes.map((p) => (
-              <button key={p.id} onClick={() => nav(`${base}/${p.id}/acompanhar`)}
+              // Participante extra avalia aqui mesmo: a tela de acompanhamento é do solicitante.
+              <button key={p.id} onClick={() => p.pendencia === "avaliacao_participante" ? setAvaliarParticipante({ id: p.id, numero: p.numero }) : nav(`${base}/${p.id}/acompanhar`)}
                 className="flex w-full items-center justify-between gap-2 rounded border border-border px-3 py-2 text-left text-sm hover:border-warning/50">
                 <span className="min-w-0 flex-1 truncate"><span className="font-mono text-xs font-semibold">#{p.numero}</span> {p.assunto}</span>
-                <span className="flex shrink-0 items-center gap-1 text-warning"><Star className="h-4 w-4" /> Avaliar</span>
+                <span className="flex shrink-0 items-center gap-1 text-warning">
+                  {p.pendencia === "avaliacao_participante" && <span className="text-[11px] text-muted-foreground">você participou ·</span>}
+                  <Star className="h-4 w-4" /> Avaliar
+                </span>
               </button>
             ))}
           </div>
         </Card>
+        <AvaliarChamadoDialog open={!!avaliarParticipante} onOpenChange={(v) => { if (!v) setAvaliarParticipante(null); }}
+          chamado={avaliarParticipante} comoParticipante />
       </div>
     );
   }
