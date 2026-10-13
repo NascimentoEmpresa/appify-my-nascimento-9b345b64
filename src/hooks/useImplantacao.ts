@@ -53,6 +53,19 @@ export interface ImplantacaoContrato {
   updated_at: string;
 }
 
+export interface TreinamentoImplantacao {
+  id: string;
+  nome: string;
+  publicado: boolean;
+}
+
+type ImplantacaoTreinamentosRpc = {
+  rpc: (fn: "implantacao_treinamentos_disponiveis") => Promise<{
+    data: TreinamentoImplantacao[] | null;
+    error: { message: string } | null;
+  }>;
+};
+
 // Balizadores por Momento (conforme planilha Base de dados)
 const BALIZADORES: Record<string, { base: keyof ImplantacaoContrato; dias: number; sufixo?: string }[]> = {
   "Captação":               [{ base: "abertura",          dias: -4 }],
@@ -271,6 +284,26 @@ export function useImplantacaoOrigem(contratoId: string | null) {
       if (error) throw error;
       // RETURNS TABLE devolve array; o filtro é por PK, então é 0 ou 1 linha.
       return ((data ?? [])[0] ?? null) as OrigemContrato | null;
+    },
+  });
+}
+
+/**
+ * Cursos disponíveis para "Marque quais treinamentos exigidos".
+ *
+ * A RPC devolve somente id/nome/publicado e é gateada por Implantação. Não usa
+ * `trn_cursos_lista`, que exigiria acesso ao menu de Cursos e exporia métricas
+ * que não fazem parte deste checklist.
+ */
+export function useTreinamentosImplantacao() {
+  return useQuery({
+    queryKey: ["implantacao-treinamentos-disponiveis"],
+    staleTime: 60_000,
+    queryFn: async () => {
+      const client = supabase as unknown as ImplantacaoTreinamentosRpc;
+      const { data, error } = await client.rpc("implantacao_treinamentos_disponiveis");
+      if (error) throw error;
+      return data ?? [];
     },
   });
 }

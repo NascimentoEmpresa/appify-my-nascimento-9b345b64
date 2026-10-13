@@ -1,12 +1,12 @@
 /**
- * SIS-2026-0559 — os campos do checklist de Implantação que já existem na Capa
- * de Edital e na Grade de Licitações, e por isso chegam prontos pro usuário só
- * confirmar, no topo da tela.
+ * Campos do checklist de Implantação que já existem na Capa de Edital, Grade
+ * de Licitações ou Planilha de Custo e, por isso, chegam prontos pro usuário
+ * apenas conferir e confirmar no topo da tela.
  *
- * A lista dos 11 itens e a fonte de cada um vieram da planilha que o Iury
- * anexou ao chamado (`2 - Informações.png`, coluna "Ajuste"): ali estão os 64
- * itens do checklist, com 11 marcados em verde como "Puxar da Capa do Edital"
- * ou "Puxar da Grade de Licitações" + "Subir para o topo? Sim".
+ * A lista original de 11 itens veio da SIS-2026-0559. Em 13/10/2026, a planilha
+ * "Ajustes_para_Desenvolvedor" acrescentou os campos vindos da Planilha de
+ * Custo e os campos Data da homologação, Data captação, Posição, Status, Fase,
+ * prazo de treinamentos e EPIs.
  *
  * O vínculo com o checklist é o `row_index` de `checklist_items` — NÃO o texto
  * do item, que tem erro de digitação em várias linhas e muda se a planilha for
@@ -18,19 +18,29 @@
 /** Uma linha de `implantacao_origem_contrato(uuid)` (migration 20260930000275). */
 export interface OrigemContrato {
   data_inicio: string | null;
+  locais_postos: string | null;
+  escalas_postos: string | null;
+  prazo_envio_treinamentos: string | null;
+  epis_especificados: string | null;
+  insalubridade_periculosidade: string | null;
+  data_homologacao: string | null;
   abertura: string | null;
+  data_captacao: string | null;
   edital: string | null;
   horario: string | null;
   cidade: string | null;
   objeto: string | null;
   empresa: string | null;
   responsavel: string | null;
+  posicao: string | null;
   uf: string | null;
+  status: string | null;
+  fase: string | null;
   valor_global: string | null;
   qtd_postos: number | null;
 }
 
-export type FonteOrigem = "capa" | "grade";
+export type FonteOrigem = "capa" | "grade" | "planilha";
 export type FormatoOrigem = "texto" | "data" | "moeda" | "inteiro";
 
 export interface CampoOrigem {
@@ -45,15 +55,25 @@ export interface CampoOrigem {
 }
 
 export const CAMPOS_ORIGEM: readonly CampoOrigem[] = [
+  { rowIndex: 3,  chave: "locais_postos",                rotulo: "Locais de cada posto de trabalho (Endereço)", fonte: "planilha", formato: "texto" },
+  { rowIndex: 4,  chave: "escalas_postos",               rotulo: "Escala de horário de postos",                 fonte: "planilha", formato: "texto" },
+  { rowIndex: 25, chave: "prazo_envio_treinamentos",     rotulo: "Prazo envio treinamentos",                   fonte: "capa",     formato: "data"  },
+  { rowIndex: 27, chave: "epis_especificados",           rotulo: "EPIs especificados",                         fonte: "capa",     formato: "texto" },
+  { rowIndex: 28, chave: "insalubridade_periculosidade", rotulo: "Insalubridade/periculosidade",               fonte: "planilha", formato: "texto" },
   { rowIndex: 31, chave: "data_inicio",  rotulo: "Data de início do contrato",      fonte: "capa",  formato: "data"    },
+  { rowIndex: 48, chave: "data_homologacao", rotulo: "Data da homologação",         fonte: "capa",  formato: "data"    },
   { rowIndex: 49, chave: "abertura",     rotulo: "Data de abertura",                fonte: "capa",  formato: "data"    },
+  { rowIndex: 50, chave: "data_captacao", rotulo: "Data captação",                  fonte: "grade", formato: "data"    },
   { rowIndex: 51, chave: "edital",       rotulo: "EDITAL",                          fonte: "grade", formato: "texto"   },
   { rowIndex: 52, chave: "horario",      rotulo: "Horário",                         fonte: "grade", formato: "texto"   },
   { rowIndex: 53, chave: "cidade",       rotulo: "Cidade",                          fonte: "grade", formato: "texto"   },
   { rowIndex: 54, chave: "objeto",       rotulo: "Objeto",                          fonte: "capa",  formato: "texto"   },
   { rowIndex: 55, chave: "empresa",      rotulo: "Empresa",                         fonte: "capa",  formato: "texto"   },
   { rowIndex: 56, chave: "responsavel",  rotulo: "Responsável",                     fonte: "capa",  formato: "texto"   },
+  { rowIndex: 57, chave: "posicao",      rotulo: "Posição",                         fonte: "grade", formato: "texto"   },
   { rowIndex: 58, chave: "uf",           rotulo: "UF",                              fonte: "capa",  formato: "texto"   },
+  { rowIndex: 59, chave: "status",       rotulo: "Status",                          fonte: "capa",  formato: "texto"   },
+  { rowIndex: 60, chave: "fase",         rotulo: "Fase",                            fonte: "grade", formato: "texto"   },
   { rowIndex: 61, chave: "valor_global", rotulo: "Valor global",                    fonte: "capa",  formato: "moeda"   },
   { rowIndex: 62, chave: "qtd_postos",   rotulo: "Nº pessoas (Quantidade de postos)", fonte: "capa", formato: "inteiro" },
 ] as const;
@@ -66,6 +86,7 @@ export const ROW_INDEX_NO_TOPO: ReadonlySet<number> = new Set(
 export const ROTULO_FONTE: Record<FonteOrigem, string> = {
   capa: "Capa de Edital",
   grade: "Grade de Licitações",
+  planilha: "Planilha de Custo",
 };
 
 /**
