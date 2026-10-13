@@ -108,20 +108,35 @@ D -d "$BANCO" -q -f historico-migracoes.sql >/dev/null 2>&1 || true
 log "pos-restauracao (donos de auth/storage, search_path, timeouts)"
 D -d "$BANCO" -q -f "$(dirname "$0")/pos-restauracao.sql" 2>&1 | grep -vi notice || true
 
+# ── 6d. atributos e participacoes de papel ──────────────────────────────────
+# NAO e detalhe de acabamento: sem isto o storage recusa TODA chamada e o
+# service_role nao passa pela RLS. E nao vem no dump -- ver o cabecalho de
+# papeis-atributos.sql, que explica por que pg_dump nao carrega isso.
+log "atributos e participacoes de papel (o que o dump nao carrega)"
+D -d "$BANCO" -q -f "$(dirname "$0")/papeis-atributos.sql" 2>&1 | grep -vi notice || true
+
 # ── 7. conferencia ──────────────────────────────────────────────────────────
+# A conferencia agora e um script proprio que le a PRODUCAO VIVA e compara
+# objeto por objeto -- contagens, indices, restricoes e papeis.
+#
+# A versao antiga comparava contagens contra numeros fixos anotados no dia do
+# desenho. Ela envelheceu em tres dias (a producao foi de 647 para 656 tabelas
+# e toda linha passou a dizer DIFERE sem nada estar errado) e, pior, nao olhava
+# indice nem atributo de papel -- as duas portas por onde os defeitos do
+# storage entraram.
 echo
-echo "=============== CONFERENCIA ==============="
-conf(){ printf "  %-22s %6s   (esperado %s)%s\n" "$1" "$3" "$2" "$([ "$2" = "$3" ] && echo "" || echo "   <<< DIFERE")"; }
-conf "tabelas em public" 647  "$(D -d "$BANCO" -At -c "select count(*) from pg_tables where schemaname='public'")"
-conf "politicas de RLS"  1416 "$(D -d "$BANCO" -At -c "select count(*) from pg_policies where schemaname='public'")"
-conf "funcoes em public" 1449 "$(D -d "$BANCO" -At -c "select count(*) from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.prokind='f'")"
-conf "views"             30   "$(D -d "$BANCO" -At -c "select count(*) from pg_views where schemaname='public'")"
-conf "tipos"             786  "$(D -d "$BANCO" -At -c "select count(*) from pg_type t join pg_namespace n on n.oid=t.typnamespace where n.nspname='public' and t.typtype in ('e','c','d')")"
-conf "sequences"         126  "$(D -d "$BANCO" -At -c "select count(*) from pg_sequences where schemaname='public'")"
-conf "triggers"          493  "$(D -d "$BANCO" -At -c "select count(*) from pg_trigger g join pg_class c on c.oid=g.tgrelid join pg_namespace n on n.oid=c.relnamespace where not g.tgisinternal and n.nspname='public'")"
-conf "tabelas com RLS"   643  "$(D -d "$BANCO" -At -c "select count(*) from pg_class c join pg_namespace n on n.oid=c.relnamespace where n.nspname='public' and c.relrowsecurity")"
-echo "==========================================="
+if [ -n "${SENHA_SUPABASE:-}" ]; then
+  SENHA_DESTINO="$SENHA_DESTINO" DESTINO_HOST="$DESTINO_HOST" DESTINO_PORTA=5432 \
+    "$(dirname "$0")/conferir-contra-producao.sh" || true
+else
+  echo "  SENHA_SUPABASE nao esta no ambiente: rode a conferencia a parte"
+  echo "  ./infra/ha/conferir-contra-producao.sh"
+fi
+
 echo
-echo "  Qualquer linha com DIFERE: NAO seguir para a copia de dados."
-echo "  As contagens vem de docs/migracao-supabase.md; se a producao mudou,"
-echo "  conferir os numeros novos antes de culpar o restore."
+echo "  PRAZO DE VALIDADE DESTE RESTORE"
+echo "  O schema envelhece: a producao recebe migration quase todo dia. Entre"
+echo "  09/10 e 13/10 ela ganhou 2 funcoes, 1 indice e mudou 1 CHECK -- quatro"
+echo "  dias, quatro mudancas. No dia da virada, rodar a conferencia ANTES de"
+echo "  comecar; se acusar diferenca, refazer o restore (apagar os .sql de"
+echo "  $SAIDA primeiro, senao o script reusa o dump velho)."
