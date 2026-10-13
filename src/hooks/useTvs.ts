@@ -23,6 +23,8 @@ export interface TvItem {
   arquivo: string | null; texto: string | null; cor: string | null; duracao_seg: number;
   valido_de: string | null; valido_ate: string | null; ativo: boolean;
   relatorio: string | null; rel_periodo: string | null; rel_contrato: string | null;
+  /** TVs gerenciais: visual do painel (mig 20261014000002). */
+  rel_visual?: string | null;
 }
 export interface TvPlaylist { id: string; nome: string; descricao: string | null; itens: TvItem[] }
 export interface TvAlerta {

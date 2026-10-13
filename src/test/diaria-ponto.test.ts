@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
-  avaliarPontoFaltante, bloqueia, conflitosPorSolicitacao, datasSemPonto, estadoDoDia, horariosDoPonto, type PontoFaltante,
+  avaliarPontoFaltante, bloqueia, conflitosPorSolicitacao, datasSemPonto, estadoDoDia, horariosDoPonto, resumoPontoDiaria,
+  type PontoDiariaMalote, type PontoFaltante,
 } from "@/lib/diariaPonto";
 
 const vinc = [{ id: 1, nome: "JOÃO", cadastro: "6983", empresa: "1", situacao: "Trabalhando" }];
@@ -72,5 +73,32 @@ describe("horas trabalhadas pelas batidas", () => {
     expect(horasTrabalhadas([1320, 1800])).toEqual({ minutos: 480, incompleto: false });   // 22:00 → 06:00 do dia seguinte
     const b = batidasPorSolicitacao({ sincronizado_ate: null, conflitos: [{ solicitacao_id: "a", data: "2026-09-01", minutos: [420, 720] }] });
     expect(b.get("a")!.get("2026-09-01")).toEqual([420, 720]);
+  });
+});
+
+// Malote › Aprovações (mig 20261014000001, SIS-2026-0626): o ponto do faltante na despesa de diária.
+
+describe("ponto do faltante na despesa de diária do Malote", () => {
+  const item = (dias: PontoDiariaMalote["dias"], tem_vinculo = true): PontoDiariaMalote => ({
+    despesa_id: "d1", solicitacao_id: "s1", numero: "SD-2026-000006", faltante_nome: "X", contrato_nome: null, posto_nome: null, tem_vinculo, dias,
+  });
+  it("conta os dias em que bateu ponto, os confirmados sem batida e os ainda a conferir", () => {
+    const r = resumoPontoDiaria(item([
+      { data: "2026-08-25", turno: "dia_inteiro", minutos: [478, 722, 778, 1022] },
+      { data: "2026-08-26", turno: "dia_inteiro", minutos: null },
+      { data: "2026-10-12", turno: "manha", minutos: null },
+      { data: "2026-10-13", turno: "manha", minutos: null },
+    ]), "2026-10-12");
+    expect(r.trabalhou).toBe(1);
+    expect(r.semMarcacao).toBe(1);
+    expect(r.aConferir).toBe(2);
+    expect(r.dias[0].horarios).toEqual(["07:58", "12:02", "12:58", "17:02"]);
+    expect(r.dias.map((d) => d.estado)).toEqual(["trabalhou", "sem_marcacao", "parcial", "nao_sincronizado"]);
+  });
+  it("faltante sem matrícula no relógio: não afirma nada", () => {
+    const r = resumoPontoDiaria(item([{ data: "2026-08-26", turno: "tarde", minutos: null }], false), "2026-10-12");
+    expect(r.semVinculo).toBe(true);
+    expect(r.trabalhou).toBe(0);
+    expect(r.dias[0].estado).toBe("sem_vinculo");
   });
 });

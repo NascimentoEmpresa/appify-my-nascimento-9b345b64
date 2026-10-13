@@ -47,7 +47,7 @@ export function useFonteTv() {
  * da TV ou o iframe da prévia), centralizado, com margem contra o overscan.
  * Mede o próprio contêiner — funciona igual na TV e na gestão.
  */
-export function Palco({ children }: { children: ReactNode }) {
+export function Palco({ children, fundo = FUNDO }: { children: ReactNode; /** Fundo do palco (cor ou gradiente) — o painel escuro das TVs gerenciais usa outro. */ fundo?: string }) {
   useFonteTv();
   const caixa = useRef<HTMLDivElement>(null);
   const [tam, setTam] = useState({ w: 0, h: 0 });
@@ -62,10 +62,10 @@ export function Palco({ children }: { children: ReactNode }) {
   }, []);
   const escala = escalaDoPalco(tam.w, tam.h);
   return (
-    <div ref={caixa} className="relative h-full w-full overflow-hidden" style={{ background: FUNDO }}>
+    <div ref={caixa} className="relative h-full w-full overflow-hidden" style={{ background: fundo }}>
       {tam.w > 0 && (
         <div className="absolute left-1/2 top-1/2 overflow-hidden"
-          style={{ width: PALCO.largura, height: PALCO.altura, transform: `translate(-50%, -50%) scale(${escala})`, transformOrigin: "center", fontFamily: FONTE, color: TINTA, background: FUNDO, borderRadius: 18 }}>
+          style={{ width: PALCO.largura, height: PALCO.altura, transform: `translate(-50%, -50%) scale(${escala})`, transformOrigin: "center", fontFamily: FONTE, color: TINTA, background: fundo, borderRadius: 18 }}>
           {children}
         </div>
       )}

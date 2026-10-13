@@ -19,6 +19,7 @@ import {
 } from "@/lib/recrutamento/vagaRegras";
 import { StatusVagaBadge } from "@/components/recrutamento/StatusVagaBadge";
 import { useEtapasDasVagas } from "@/hooks/useEtapasDasVagas";
+import { useResponsaveisDasVagas } from "@/hooks/useResponsaveisDasVagas";
 import { maskFone } from "@/lib/telefone";
 import { dataParaIso, tempoDeEmpresa } from "@/lib/rh/colaboradoresUtils";
 import { BUCKET_ANEXOS, caminhoAnexo, erroDoAnexo, fmtTamanho } from "@/lib/solicitacoes/anexos";
@@ -419,6 +420,8 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
     [minhasSols],
   );
   const { etapas: etapasVagas } = useEtapasDasVagas(minhasVagas);
+  // Quem cuida da vaga no Recrutamento (mig 20261013000003) — o solicitante sabe a quem perguntar.
+  const { responsaveis: responsaveisVagas } = useResponsaveisDasVagas(minhasVagas);
 
   // ── Contratos ───────────────────────────────────────────────────────
   const carregarContratos = async () => {
@@ -1150,6 +1153,15 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
                       {s.tipo === "Vaga"
                         ? <StatusVagaBadge status={s.status} etapa={etapasVagas[Number(s.id)]} classe="ini-badge" classeCor={badgeStatusCls(s.status)} />
                         : <span className={`ini-badge ${badgeStatusCls(s.status)}`}>{s.status}</span>}
+                      {s.tipo === "Vaga" && (() => {
+                        const r = responsaveisVagas[Number(s.id)];
+                        return (
+                          <span className="ini-badge" title={r ? "Responsável pela vaga no Recrutamento" : "A vaga ainda não foi movida pelo Recrutamento"}
+                            style={r ? { background: "#0f3171", color: "#fff", borderColor: "#0f3171" } : { background: "#fff1f2", color: "#be123c", borderColor: "#fda4af" }}>
+                            👤 {r ? r.responsavel_nome : "Sem responsável"}
+                          </span>
+                        );
+                      })()}
                       {s.excecao && <span className="ini-badge" style={{ background: "#fef3c7", color: "#b45309", borderColor: "#fde68a" }}>EXCEÇÃO</span>}
                       {dias !== null && (
                         <span className="ini-sol-dias" title={`Tempo parado no status atual: ${s.status}`}>

@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo, useRef, useCallback, type MouseEvent as R
 import {
   Activity, AlertTriangle, Ban, Building2, CalendarDays, Check, CheckCircle2, ChevronLeft, ChevronRight, ClipboardList, Clock, Copy, Eye, FileText,
   FolderOpen, GraduationCap, History, IdCard, Landmark, Link2, LogOut, Mail, MapPin, MessageSquare, Paperclip,
-  Pencil, Phone, Search, Settings, Tags, Target, Trash2, UserSearch, Users, X, XCircle, Zap, type LucideIcon,
+  Pencil, Phone, Search, Settings, Tags, Target, Trash2, UserCheck, UserSearch, Users, X, XCircle, Zap, type LucideIcon,
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
@@ -28,6 +28,8 @@ import { CandidatoManualDialog } from "@/components/recrutamento/CandidatoManual
 import { StatusSolicitacao } from "@/components/recrutamento/StatusSolicitacao";
 import { StatusVagaBadge } from "@/components/recrutamento/StatusVagaBadge";
 import { useEtapasDasVagas } from "@/hooks/useEtapasDasVagas";
+import { useResponsaveisDasVagas, listarResponsaveisPossiveis, definirResponsavelVaga, assumirVaga, contarVagasPorResponsavel } from "@/hooks/useResponsaveisDasVagas";
+import { STATUS_COM_RESPONSAVEL, alvoDoFiltro, devePerguntarAssumir, textoConfirmarAssumir, vagaTemResponsavel, type FiltroResponsavel } from "@/lib/recrutamento/responsavelVaga";
 import { vagaTemEtapa } from "@/lib/recrutamento/statusDetalhado";
 import { EnxovalAdmissao, type EnxovalAdmissaoHandle } from "@/components/recrutamento/EnxovalAdmissao";
 
@@ -564,6 +566,15 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
   // O popover é position:fixed ancorado no botão (x/y da tela): a tabela
   // tem overflow:hidden e um absolute na linha de baixo sairia cortado.
   const [etiquetaMenu, setEtiquetaMenu]             = useState<{ id: number; x: number; y: number } | null>(null);
+  // Responsável pela vaga (mig 20261013000003): mesmo desenho de popover.
+  const [respMenu, setRespMenu]                     = useState<{ id: number; x: number; y: number } | null>(null);
+  const [respPossiveis, setRespPossiveis]           = useState<{ id: string; nome: string }[] | null>(null);
+  const [respSalvando, setRespSalvando]             = useState(false);
+  // Filtro "Responsável da vaga" (14/10/2026, mig 20261014000003): só vagas no
+  // Recrutamento/Seleção. "" = todos · "eu" · "sem" · id de uma pessoa.
+  const [respFiltro, setRespFiltro]                 = useState<FiltroResponsavel>("");
+  const [showRespFiltro, setShowRespFiltro]         = useState(false);
+  const [respContagem, setRespContagem]             = useState<{ responsavel_id: string | null; responsavel_nome: string; vagas: number }[]>([]);
   const [search, setSearch]           = useState("");
   // Busca pelo nº da vaga (o "#" da 1ª coluna) — 09/10/2026.
   const [buscaId, setBuscaId]         = useState("");
@@ -750,16 +761,32 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
 
   // ── Carregar Lista ────────────────────────────────────────────
   const listaReq = useRef(0);
+  // Filtro "Responsável da vaga" na própria consulta (a lista é paginada no
+  // banco): junta o responsável pela FK (inner para uma pessoa; left + is null
+  // para "sem responsável") e fica só com vagas de Recrutamento/Seleção.
+  const alvoResp = useMemo(() => (buscaId ? { tipo: "todos" as const } : alvoDoFiltro(respFiltro, user?.id)), [buscaId, respFiltro, user?.id]);
+  const colsComResp = useCallback((cols: string) => (
+    alvoResp.tipo === "todos" ? cols
+      : `${cols},resp_vaga:SISTEMA_RECRUTAMENTO_RESPONSAVEL${alvoResp.tipo === "pessoa" ? "!inner" : ""}(responsavel_id)`
+  ), [alvoResp]);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const aplicarResp = useCallback((q: any) => {
+    if (alvoResp.tipo === "todos") return q;
+    q = q.in("status", [...STATUS_COM_RESPONSAVEL]);
+    return alvoResp.tipo === "sem" ? q.is("resp_vaga", null) : q.eq("resp_vaga.responsavel_id", alvoResp.id);
+  }, [alvoResp]);
+
   const loadLista = useCallback(async () => {
     const myReq = ++listaReq.current;   // descarta respostas antigas (race ao trocar de aba/filtro)
     setLoading(true);
     const PER = 20;
     let q = sb
       .from("SISTEMA_RECRUTAMENTO")
-      .select("*", { count: "exact" });
+      .select(colsComResp("*") as "*", { count: "exact" });  // texto montado: o tipo é o mesmo do "*"
     q = aplicarFiltros(q);
     if (contratoFiltro.length && !buscaId) q = q.in("contrato", contratoFiltro);
     if (etiquetaFiltro.length && !buscaId) q = q.overlaps("etiquetas", etiquetaFiltro);
+    q = aplicarResp(q);
 
     const from = (page - 1) * PER;
     const to   = from + PER - 1;
@@ -773,7 +800,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
     const ct = count ?? 0;
     setTotal(ct);
     setPages(Math.max(1, Math.ceil(ct / PER)));
-  }, [aplicarFiltros, buscaId, contratoFiltro, etiquetaFiltro, page, toast, noEscopoLista, podeAdministrativa]);
+  }, [aplicarFiltros, buscaId, contratoFiltro, etiquetaFiltro, page, toast, noEscopoLista, podeAdministrativa, colsComResp, aplicarResp]);
 
   // ── Carregar Kanban ───────────────────────────────────────────
   const kanbanReq = useRef(0);
@@ -783,10 +810,11 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
     // Tenta trazer status_changed_at (tempo na etapa atual); se a coluna ainda
     // não existir no ambiente, refaz a consulta sem ela.
     const kbQuery = (cols: string) => {
-      let q = sb.from("SISTEMA_RECRUTAMENTO").select(cols);
+      let q = sb.from("SISTEMA_RECRUTAMENTO").select(colsComResp(cols));
       q = aplicarFiltros(q);
       if (contratoFiltro.length && !buscaId) q = q.in("contrato", contratoFiltro);
       if (etiquetaFiltro.length && !buscaId) q = q.overlaps("etiquetas", etiquetaFiltro);
+      q = aplicarResp(q);
       return q.order("created_at", { ascending: false });
     };
     let { data, error } = await lerTudo<Solicitacao>(() => kbQuery("id,cargo,contrato,cidade,status,grau_urgencia,quantidade_vagas,analista_nome,solicitante_nome,created_at,status_changed_at,administrativa,setor"));
@@ -800,7 +828,13 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
       grouped[row.status].push(row);
     }
     setKanbanData(grouped);
-  }, [aplicarFiltros, buscaId, contratoFiltro, etiquetaFiltro, noEscopo]);
+  }, [aplicarFiltros, buscaId, contratoFiltro, etiquetaFiltro, noEscopo, colsComResp, aplicarResp]);
+
+  // Quantas vagas de Recrutamento/Seleção cada pessoa cuida (menu do filtro).
+  const loadRespContagem = useCallback(() => {
+    contarVagasPorResponsavel().then(setRespContagem).catch(() => { /* banco sem a mig: o filtro mostra só "Minhas"/"Sem" */ });
+  }, []);
+  useEffect(() => { loadRespContagem(); }, [loadRespContagem]);
 
   // Contagem de solicitações por contrato e por etiqueta (respeita
   // aba/status/busca; ignora os dois filtros de faceta — o menu mostra quanto
@@ -964,6 +998,47 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
   useEffect(() => {
     if (drawerSol && vagaTemEtapa(drawerSol.status)) recarregarEtapas([drawerSol.id]);
   }, [drawerSol?.id, drawerSol?.status, candidatos, recarregarEtapas]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Responsável pela vaga (13/10/2026, mig 20261013000003): quem move a vaga
+  // ou um candidato vira o responsável (gatilho no histórico) — relê junto
+  // com a etapa, quando os candidatos da vaga aberta mudam.
+  const { responsaveis: responsaveisVagas, recarregar: recarregarResponsaveis } = useResponsaveisDasVagas(listaNavegavel);
+  useEffect(() => {
+    if (drawerSol) recarregarResponsaveis([drawerSol.id]);
+  }, [drawerSol?.id, drawerSol?.status, candidatos, recarregarResponsaveis]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /**
+   * "Tornar-me responsável" (14/10/2026, mig 20261014000003). Com OUTRA
+   * pessoa cuidando da vaga, confirma antes ("tem certeza que deseja assumir
+   * a vaga?"). `perguntar` = false quando a pergunta já foi feita ao mover.
+   */
+  const assumir = async (vaga: Pick<Solicitacao, "id" | "status">, perguntar = true): Promise<boolean> => {
+    const atual = responsaveisVagas[vaga.id];
+    if (perguntar && atual?.responsavel_id && atual.responsavel_id !== user?.id && !confirm(textoConfirmarAssumir(vaga.id, atual.responsavel_nome))) return false;
+    try {
+      await assumirVaga(vaga.id);
+      await recarregarResponsaveis([vaga.id]);
+      loadRespContagem();
+      if (drawerSol?.id === vaga.id) loadHistorico(vaga.id);
+      toast(`Você é o responsável pela vaga #${vaga.id}.`, "ok");
+      return true;
+    } catch (err) {
+      toast("Não foi possível assumir a vaga: " + (err as Error).message, "err");
+      return false;
+    }
+  };
+
+  /**
+   * Antes de passar uma etapa: com outra pessoa responsável, pergunta se quer
+   * assumir. Sem ninguém, o banco já marca quem moveu (automático). Cancelar =
+   * a etapa anda e o responsável continua o mesmo.
+   */
+  const perguntarAssumirAoMover = (vaga: Pick<Solicitacao, "id" | "status"> | null | undefined): boolean => {
+    if (!vaga || !podeRecrutar) return false;
+    const atual = responsaveisVagas[vaga.id];
+    if (!devePerguntarAssumir(vaga, atual, user?.id)) return false;
+    return confirm(`${textoConfirmarAssumir(vaga.id, atual!.responsavel_nome)}\n\nOK = você vira o responsável · Cancelar = a etapa avança e ${atual!.responsavel_nome} continua responsável.`);
+  };
   const posNaLista = drawerId == null ? -1 : listaNavegavel.findIndex((x) => x.id === drawerId);
   const vagaAnterior = posNaLista > 0 ? listaNavegavel[posNaLista - 1] : null;
   const vagaSeguinte = posNaLista >= 0 && posNaLista < listaNavegavel.length - 1 ? listaNavegavel[posNaLista + 1] : null;
@@ -1018,6 +1093,8 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
     const ehAbertura = drawerSol.status === "Pendente Recrutamento";
     const label = ehAbertura ? "Confirmar abertura da vaga" : "Aprovar";
     if (!confirm(`${label} (#${drawerId})?`)) return;
+    // Abrir a vaga é passar etapa do Recrutamento: com outra pessoa responsável, pergunta (mig 20261014000003).
+    const vaiAssumir = ehAbertura && perguntarAssumirAoMover(drawerSol);
 
     // Analista e Diretoria mandam pro Recrutamento; o Recrutamento abre a vaga.
     const novoStatus = ehAbertura ? "Vaga aberta - Seleção de Currículos" : "Pendente Recrutamento";
@@ -1033,6 +1110,8 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
     // 20260930000225) — gravado daqui, batia na RLS na tela do analista e
     // sumia calado.
     toast(ehAbertura ? "Vaga aberta — já aparece no portal de candidaturas!" : "Aprovado e encaminhado ao Recrutamento!", "ok");
+    if (vaiAssumir) await assumir({ id: drawerId, status: "Vaga aberta - Seleção de Currículos" }, false);
+    loadRespContagem();
     fecharDrawer();
     loadStats();
     loadLista();
@@ -1472,6 +1551,9 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
   };
 
   const executarMoverCand = async (id: number, novaEtapa: string, extra: Record<string, unknown> = {}, detalheHist?: string) => {
+    // Passar etapa com outra pessoa responsável: pergunta se quer assumir (mig 20261014000003).
+    const vagaMovida = drawerSol;
+    const vaiAssumir = perguntarAssumirAoMover(vagaMovida);
     const nowIso = new Date().toISOString();
     const nome = user?.user_metadata?.nome ?? user?.email ?? "";
     const cand = candidatos.find(c => c.id === id);
@@ -1512,6 +1594,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
       detalhe: detalheHist || String(extra.motivo_reprovacao || extra.juridico_obs || extra.sst_obs || "") || undefined,
     });
     toast(`Candidato movido para "${novaEtapa}".`, "ok");
+    if (vaiAssumir && vagaMovida) await assumir(vagaMovida, false);
     if (!reprovado) await dispararMensagemEtapa(id, novaEtapa, cand?.nome);
     if (drawerId) loadCandidatos(drawerId);
   };
@@ -1834,6 +1917,94 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
    * Tudo aqui para o clique: a linha da tabela abre o drawer no onClick, e
    * marcar uma etiqueta não pode abrir a solicitação junto.
    */
+  /**
+   * Etiqueta OBRIGATÓRIA do responsável pela vaga (13/10/2026, mig
+   * 20261013000003) — sempre a primeira, antes das etiquetas de trabalho.
+   * Automática: quem move a vaga/candidato no Recrutamento. Quem conduz o
+   * Recrutamento clica e fixa outra pessoa (fixada, o automático não troca)
+   * ou devolve ao automático. Toda troca vai para o histórico da vaga.
+   */
+  const renderResponsavel = (s: Solicitacao) => {
+    const r = responsaveisVagas[s.id];
+    const aberto = respMenu?.id === s.id;
+    const abrir = (e: ReactMouseEvent<HTMLButtonElement>) => {
+      if (!podeRecrutar) return;
+      if (aberto) { setRespMenu(null); return; }
+      const b = e.currentTarget.getBoundingClientRect();
+      setRespMenu({ id: s.id, x: Math.max(8, Math.min(b.left, window.innerWidth - 276)), y: b.bottom + 6 });
+      if (!respPossiveis) listarResponsaveisPossiveis().then(setRespPossiveis).catch((err) => toast("Erro ao listar responsáveis: " + err.message, "err"));
+    };
+    const definir = async (usuarioId: string | null) => {
+      setRespSalvando(true);
+      try {
+        await definirResponsavelVaga(s.id, usuarioId);
+        await recarregarResponsaveis([s.id]);
+        setRespMenu(null);
+        toast(usuarioId ? "Responsável pela vaga definido." : "Responsável volta a ser automático.", "ok");
+        if (drawerSol?.id === s.id) loadHistorico(s.id);
+      } catch (err) {
+        toast("Erro ao definir responsável: " + (err as Error).message, "err");
+      } finally {
+        setRespSalvando(false);
+      }
+    };
+    const titulo = r
+      ? `Responsável pela vaga: ${r.responsavel_nome} — ${r.origem === "manual" ? "definido manualmente" : "automático (quem moveu a vaga por último)"}${podeRecrutar ? ". Clique para trocar." : ""}`
+      : `Sem responsável ainda — vira responsável quem mover a vaga no Recrutamento${podeRecrutar ? ". Clique para definir." : ""}`;
+    return (
+      <>
+        <button type="button" onClick={abrir} title={titulo}
+          style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 10.5, fontWeight: 800, padding: "2px 8px", borderRadius: 20, whiteSpace: "nowrap", fontFamily: "inherit", lineHeight: 1.4,
+                   cursor: podeRecrutar ? "pointer" : "default",
+                   background: r ? "#0f3171" : "#fff1f2", border: `1px solid ${r ? "#0f3171" : "#fda4af"}`, color: r ? "#fff" : "#be123c" }}>
+          👤 {r ? r.responsavel_nome : "Sem responsável"}{r?.origem === "manual" && <span title="Definido manualmente" style={{ opacity: .8 }}> 📌</span>}
+        </button>
+        {/* "Tornar-me responsável" (mig 20261014000003): só em vaga de Recrutamento/Seleção e se ainda não é a pessoa. */}
+        {podeRecrutar && vagaTemResponsavel(s.status) && r?.responsavel_id !== user?.id && (
+          <button type="button" onClick={(e) => { e.stopPropagation(); assumir(s); }}
+            title={r ? `Assumir a vaga no lugar de ${r.responsavel_nome}` : "Tornar-me responsável por esta vaga"}
+            style={{ display: "inline-flex", alignItems: "center", gap: 3, marginLeft: 4, fontSize: 10.5, fontWeight: 800, padding: "2px 8px", borderRadius: 20, whiteSpace: "nowrap", fontFamily: "inherit", lineHeight: 1.4,
+                     cursor: "pointer", background: "#fff", border: "1px dashed #0f3171", color: "#0f3171" }}>
+            ✋ Tornar-me responsável
+          </button>
+        )}
+        {aberto && (
+          <>
+            <div onClick={() => setRespMenu(null)} style={{ position: "fixed", inset: 0, zIndex: 40 }} />
+            <div style={{ position: "fixed", top: respMenu!.y, left: respMenu!.x, zIndex: 50, background: "#fff", border: "1px solid #e2e8f0", borderRadius: 12, boxShadow: "0 16px 40px rgba(15,23,42,.16)", padding: 8, width: 260, maxHeight: 340, overflowY: "auto" }}>
+              <div style={{ fontSize: 10.5, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase", letterSpacing: ".5px", padding: "2px 6px 6px" }}>Responsável pela vaga #{s.id}</div>
+              {vagaTemResponsavel(s.status) && r?.responsavel_id !== user?.id && (
+                <button type="button" disabled={respSalvando} onClick={async () => { if (await assumir(s)) setRespMenu(null); }}
+                  style={{ display: "flex", width: "100%", alignItems: "center", gap: 8, padding: "7px 8px", marginBottom: 6, borderRadius: 8, border: "1px solid #0f3171", background: "#0f3171", color: "#fff", fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", textAlign: "left" }}>
+                  ✋ Tornar-me responsável
+                </button>
+              )}
+              {!respPossiveis && <div style={{ fontSize: 12, color: "#94a3b8", padding: "6px" }}>Carregando…</div>}
+              {respPossiveis?.map(p => {
+                const atual = r?.responsavel_id === p.id;
+                return (
+                  <button key={p.id} type="button" disabled={respSalvando} onClick={() => definir(p.id)}
+                    style={{ display: "flex", width: "100%", alignItems: "center", gap: 8, padding: "6px 8px", borderRadius: 8, border: "none", background: atual ? "#eef4ff" : "transparent", color: "#0f172a", fontSize: 12, fontWeight: atual ? 800 : 600, cursor: "pointer", fontFamily: "inherit", textAlign: "left" }}>
+                    {atual ? "●" : "○"} {p.nome}
+                  </button>
+                );
+              })}
+              {r?.origem === "manual" && (
+                <button type="button" disabled={respSalvando} onClick={() => definir(null)}
+                  style={{ marginTop: 6, width: "100%", background: "none", border: "1px dashed #cbd5e1", borderRadius: 8, color: "#475569", fontSize: 11, fontWeight: 700, cursor: "pointer", padding: "6px 0", fontFamily: "inherit" }}>
+                  Voltar ao automático (quem mover a vaga)
+                </button>
+              )}
+              <div style={{ fontSize: 10.5, color: "#94a3b8", padding: "6px 6px 2px", lineHeight: 1.4 }}>
+                Escolhido aqui fica fixo; sem isso, vira responsável quem mover a vaga. Toda troca vai para o histórico.
+              </div>
+            </div>
+          </>
+        )}
+      </>
+    );
+  };
+
   const renderEtiquetas = (s: Solicitacao) => {
     const marcadas = etiquetasValidas(s.etiquetas);
     const aberto = etiquetaMenu?.id === s.id;
@@ -1844,6 +2015,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
     };
     return (
       <div onClick={e => e.stopPropagation()} style={{ position: "relative", display: "inline-flex", alignItems: "center", gap: 4, flexWrap: "wrap" }}>
+        {renderResponsavel(s)}
         {marcadas.map(v => {
           const c = corDaEtiqueta(v);
           return (
@@ -1858,7 +2030,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
             {marcadas.length === 0 ? "+ Etiqueta" : "✎"}
           </button>
         )}
-        {!podeEtiquetar && marcadas.length === 0 && <span style={{ color: "#cbd5e1", fontSize: 11 }}>—</span>}
+        {/* Sem etiqueta e sem botão: o chip do responsável (sempre presente) já ocupa a célula. */}
         {aberto && (
           <>
             <div onClick={() => setEtiquetaMenu(null)} style={{ position: "fixed", inset: 0, zIndex: 40 }} />
@@ -2629,6 +2801,49 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
           {etiquetaFiltro.length > 0 && (
             <button onClick={() => { setEtiquetaFiltro([]); setPage(1); }} style={{ background: "none", border: "none", color: "#94a3b8", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>limpar</button>
           )}
+
+          {/* Filtro "Responsável da vaga" (14/10/2026, mig 20261014000003): só
+              vagas no Recrutamento/Seleção — Operacional e encerradas não entram. */}
+          {!soEtapa1 && (() => {
+            const meus = respContagem.find(x => x.responsavel_id && x.responsavel_id === user?.id)?.vagas ?? 0;
+            const sem = respContagem.find(x => !x.responsavel_id)?.vagas ?? 0;
+            const outros = respContagem.filter(x => x.responsavel_id && x.responsavel_id !== user?.id);
+            const rotulo = respFiltro === "eu" ? "Minhas vagas" : respFiltro === "sem" ? "Sem responsável"
+              : respFiltro ? (respContagem.find(x => x.responsavel_id === respFiltro)?.responsavel_nome ?? "1 pessoa") : "";
+            const escolher = (v: FiltroResponsavel) => { setRespFiltro(v); setPage(1); setShowRespFiltro(false); };
+            const opcao = (v: FiltroResponsavel, nome: string, n: number, destaque = false) => (
+              <button key={v || "todos"} type="button" onClick={() => escolher(v)}
+                style={{ display: "flex", width: "100%", alignItems: "center", gap: 9, padding: "7px 8px", borderRadius: 8, border: "none", cursor: "pointer", fontFamily: "inherit", textAlign: "left",
+                         background: respFiltro === v ? "#eef4ff" : "transparent", color: "#0f172a", fontSize: 12.5, fontWeight: respFiltro === v || destaque ? 800 : 600 }}>
+                <span style={{ width: 14, color: "#0f3171" }}>{respFiltro === v ? "●" : "○"}</span>
+                <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{nome}</span>
+                {v !== "" && <span style={{ fontSize: 11, fontWeight: 800, color: "#0f3171", background: "#fff", border: "1px solid #dbe4f0", borderRadius: 20, padding: "1px 9px", minWidth: 22, textAlign: "center" }}>{n}</span>}
+              </button>
+            );
+            return (
+              <div style={{ position: "relative" }}>
+                <button onClick={() => setShowRespFiltro(v => !v)} style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "7px 14px", borderRadius: 10, border: "1px solid #e2e8f0", background: respFiltro ? "#0f3171" : "#fff", color: respFiltro ? "#fff" : "#475569", fontSize: 12, fontWeight: 700, cursor: "pointer", boxShadow: "0 8px 24px rgba(15,23,42,.06)" }}>
+                  <Ic i={UserCheck} />Responsável da vaga{rotulo ? `: ${rotulo}` : ""} ▾
+                </button>
+                {showRespFiltro && (
+                  <>
+                    <div onClick={() => setShowRespFiltro(false)} style={{ position: "fixed", inset: 0, zIndex: 40 }} />
+                    <div style={{ position: "absolute", top: "100%", left: 0, zIndex: 50, marginTop: 6, background: "#fff", border: "1px solid #e2e8f0", borderRadius: 12, boxShadow: "0 16px 40px rgba(15,23,42,.16)", padding: 10, width: 290, maxWidth: "90vw", maxHeight: 380, overflowY: "auto" }}>
+                      <div style={{ fontSize: 11, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase", letterSpacing: ".5px", padding: "0 4px 8px" }}>Vagas no Recrutamento e na Seleção</div>
+                      {opcao("", "Todas (sem filtro)", 0)}
+                      {opcao("eu", "Minhas vagas", meus, true)}
+                      {opcao("sem", "Sem responsável", sem)}
+                      {outros.length > 0 && <div style={{ borderTop: "1px solid #eef2f7", margin: "6px 0" }} />}
+                      {outros.map(x => opcao(x.responsavel_id!, x.responsavel_nome, x.vagas))}
+                    </div>
+                  </>
+                )}
+              </div>
+            );
+          })()}
+          {respFiltro && (
+            <button onClick={() => { setRespFiltro(""); setPage(1); }} style={{ background: "none", border: "none", color: "#94a3b8", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>limpar</button>
+          )}
           {showContratoFiltro && (
             <>
               <div onClick={() => setShowContratoFiltro(false)} style={{ position: "fixed", inset: 0, zIndex: 40 }} />
@@ -2723,7 +2938,7 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
                   <thead>
                     <tr>
                       <th>#</th><th>Contrato</th><th>Cargo</th><th>Cidade</th>
-                      <th>Status</th><th>Etiquetas</th><th>Urgência</th><th>Solicitante</th><th>Data</th><th></th>
+                      <th>Status</th><th>Responsável · Etiquetas</th><th>Urgência</th><th>Solicitante</th><th>Data</th><th></th>
                     </tr>
                   </thead>
                   <tbody>
