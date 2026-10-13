@@ -37,6 +37,29 @@ END $$;
 -- aplica RLS por usuário.
 GRANT anon, authenticated, service_role TO authenticator;
 
+-- Tres desses papeis PRECISAM conectar, os outros nao -- e a diferenca nao e
+-- detalhe:
+--
+--   authenticator           o PostgREST conecta como ele e, depois de validar
+--                           o token, faz SET ROLE para anon/authenticated.
+--   supabase_auth_admin     o GoTrue, dono das tabelas de login.
+--   supabase_storage_admin  a API de arquivos.
+--
+--   anon / authenticated / service_role NUNCA conectam. Existem so para o SET
+--   ROLE acima e para as politicas de RLS citarem. Deixa-los NOLOGIN e o que
+--   impede alguem de se conectar direto como "authenticated" e pular a
+--   validacao do token -- nao e descuido, e a tranca.
+--
+-- ALTER ROLE solto, um por linha, e NAO dentro de um bloco DO: o psql
+-- substitui :'variavel' antes de enviar o comando, mas NAO dentro de texto
+-- entre cifroes duplos -- la a variavel chegaria ao banco como literal e a
+-- senha viraria a string ":'senha_servicos'". Falha silenciosa: o ALTER
+-- funciona, e so o container descobre muito depois que a senha esta errada.
+ALTER ROLE authenticator          LOGIN PASSWORD :'senha_servicos';
+ALTER ROLE supabase_auth_admin    LOGIN PASSWORD :'senha_servicos';
+ALTER ROLE supabase_storage_admin LOGIN PASSWORD :'senha_servicos';
+
+
 -- ── 2. schemas ─────────────────────────────────────────────────────────────
 CREATE SCHEMA IF NOT EXISTS auth;        -- preenchido pelo dump de auth
 CREATE SCHEMA IF NOT EXISTS storage;     -- idem
