@@ -17,7 +17,7 @@ export interface ResponsavelVaga {
   vaga_id: number;
   responsavel_id: string | null;
   responsavel_nome: string;
-  origem: "automatico" | "manual";
+  origem: "automatico" | "manual" | "assumido";
   atualizado_em: string;
 }
 
@@ -67,4 +67,18 @@ export async function listarResponsaveisPossiveis(): Promise<{ id: string; nome:
 export async function definirResponsavelVaga(vagaId: number, usuarioId: string | null): Promise<void> {
   const { error } = await db.rpc("rec_responsavel_definir", { p_vaga: vagaId, p_usuario: usuarioId });
   if (error) throw error;
+}
+
+/** "Tornar-me responsável" (mig 20261014000003): a própria pessoa assume a vaga. */
+export async function assumirVaga(vagaId: number): Promise<void> {
+  const { error } = await db.rpc("rec_responsavel_assumir", { p_vaga: vagaId });
+  if (error) throw error;
+}
+
+/** Quantas vagas de Recrutamento/Seleção cada pessoa cuida (null = sem responsável). */
+export async function contarVagasPorResponsavel(): Promise<{ responsavel_id: string | null; responsavel_nome: string; vagas: number }[]> {
+  const { data, error } = await db.rpc("rec_responsaveis_contagem");
+  if (error) throw error;
+  return ((data ?? []) as { responsavel_id: string | null; responsavel_nome: string; vagas: number | string }[])
+    .map((r) => ({ ...r, vagas: Number(r.vagas) }));
 }
