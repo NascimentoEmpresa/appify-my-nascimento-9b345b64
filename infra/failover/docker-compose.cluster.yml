@@ -1,0 +1,216 @@
+# ============================================================================
+#  A pilha do ERP apontada para o CLUSTER Patroni -- nao para um container.
+#
+#  Diferenca para o docker-compose.yml ao lado: la o banco e um container que
+#  vive e morre com a pilha. Aqui o banco sao as tres maquinas em tres
+#  provedores, com failover automatico. O container de banco foi REMOVIDO.
+#
+#  COMO OS SERVICOS CHEGAM NO BANCO
+#  Todos passam por host.docker.internal:5000 -- o HAProxy da propria maquina, na ponte
+#  do Docker. Ele pergunta ao Patroni quem e o primario (GET /primary devolve
+#  200 so no lider) e so manda escrita para la. Se o primario trocar, os
+#  containers nem ficam sabendo: a conexao cai, o driver reconecta e o
+#  HAProxy ja esta apontando para o novo lider.
+#
+#  Por isso o endereco do banco aqui NUNCA e 10.77.0.11 nem .12 direto: isso
+#  amarraria a pilha a um no especifico e jogaria fora o failover.
+#
+#  DUAS SENHAS, NAO UMA
+#  O compose original usava POSTGRES_PASSWORD para tudo. Aqui os papeis de
+#  servico (authenticator, supabase_auth_admin, supabase_storage_admin) tem a
+#  sua propria senha, separada da do superusuario -- que so as Edge Functions
+#  usam.
+#
+#  COMO SUBIR
+#    node gerar-chaves.mjs          > gera .env com JWT_SECRET e as chaves
+#    docker compose -f docker-compose.cluster.yml up -d
+# ============================================================================
+
+name: erp-pilha
+
+services:
+  auth:
+    # GoTrue: o mesmo servico que valida as senhas hoje. O JWT_SECRET tem que
+    # ser o MESMO usado para gerar ANON_KEY e SERVICE_ROLE_KEY, senao nenhum
+    # token e aceito.
+    image: supabase/gotrue:v2.158.1
+    restart: unless-stopped
+    # host.docker.internal nao existe por padrao no Linux; host-gateway o
+    # aponta para o gateway DESTA rede. Sem isto, o endereco do HAProxy
+    # dependeria do IP que o Docker sortear para a ponte -- e ele muda.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      GOTRUE_API_HOST: 0.0.0.0
+      GOTRUE_API_PORT: 9999
+      API_EXTERNAL_URL: ${URL_EXTERNA}
+      GOTRUE_DB_DRIVER: postgres
+      GOTRUE_DB_DATABASE_URL: postgres://supabase_auth_admin:${PG_SENHA_SERVICOS}@host.docker.internal:5000/postgres
+      GOTRUE_SITE_URL: ${URL_SITE}
+      GOTRUE_URI_ALLOW_LIST: ${URL_SITE}
+      GOTRUE_JWT_SECRET: ${JWT_SECRET}
+      GOTRUE_JWT_EXP: 3600
+      GOTRUE_JWT_DEFAULT_GROUP_NAME: authenticated
+      # SEM ESTA LINHA NENHUM USUARIO DA PRODUCAO CONSEGUE ENTRAR.
+      # O GoTrue procura o usuario por e-mail E audiencia (a coluna
+      # auth.users.aud). Na Supabase gerenciada todo mundo e gravado com
+      # aud='authenticated' - os 154 logins restaurados vieram assim. Sem
+      # GOTRUE_JWT_AUD definido, o GoTrue procura por audiencia VAZIA, nao
+      # encontra ninguem e responde:
+      #     invalid_grant: Invalid login credentials
+      # Medido em 30/09/2026: e o pior tipo de falha que existe aqui, porque
+      # tudo mais funciona. O banco esta completo, a RLS filtra certo, a API
+      # responde - e a tela de login recusa todo mundo com "credenciais
+      # invalidas", que parece senha errada. Um usuario criado NA replica
+      # logava (nasce com aud vazio, casando com a config vazia), o que fazia
+      # o problema parecer ser dos dados restaurados.
+      GOTRUE_JWT_AUD: authenticated
+      GOTRUE_DISABLE_SIGNUP: "true"
+      GOTRUE_EXTERNAL_EMAIL_ENABLED: "true"
+      GOTRUE_MAILER_AUTOCONFIRM: "true"
+
+  rest:
+    # PostgREST: transforma o schema do Postgres em API REST. E ele que aplica
+    # a RLS - por isso a replica precisa das policies carregadas.
+    image: postgrest/postgrest:v12.2.3
+    restart: unless-stopped
+    # host.docker.internal nao existe por padrao no Linux; host-gateway o
+    # aponta para o gateway DESTA rede. Sem isto, o endereco do HAProxy
+    # dependeria do IP que o Docker sortear para a ponte -- e ele muda.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      PGRST_DB_URI: postgres://authenticator:${PG_SENHA_SERVICOS}@host.docker.internal:5000/postgres
+      PGRST_DB_SCHEMAS: public,storage
+      PGRST_DB_ANON_ROLE: anon
+      PGRST_JWT_SECRET: ${JWT_SECRET}
+      PGRST_DB_USE_LEGACY_GUCS: "false"
+
+  storage:
+    # A VERSAO AQUI E AMARRADA AO NIVEL DE MIGRATION DA PRODUCAO, nao e "pegar
+    # a mais nova". Medido em 13/10/2026: storage.migrations da producao esta
+    # na 73 (revoke-grants-to-unused-operations), e a de numero 72 chama-se
+    # "drop-bucketid-objname-index" -- a producao DERRUBOU o indice unico
+    # (bucket_id, name) porque os objetos agora sao versionados.
+    #
+    # Com a v1.11.13 (que esperava aquele indice) todo upload morria com
+    #   42P10 there is no unique or exclusion constraint matching the
+    #   ON CONFLICT specification
+    # e o storage-api devolvia na API a frase "insert into objects ... " num
+    # erro 500 generico. Listar e criar bucket funcionavam -- so o upload caia,
+    # que e o caminho que ninguem testa primeiro.
+    #
+    # v1.78.0 ate v1.80.2 trazem exatamente 73 migrations: a imagem nao aplica
+    # NADA no banco restaurado. Ja a v1.81.0 traz a 74
+    # ("unlock-object-versioning") e mudaria o schema para alem da producao.
+    # Ao atualizar: conferir a contagem de migrations da tag ANTES de subir.
+    image: supabase/storage-api:v1.80.2
+    restart: unless-stopped
+    # host.docker.internal nao existe por padrao no Linux; host-gateway o
+    # aponta para o gateway DESTA rede. Sem isto, o endereco do HAProxy
+    # dependeria do IP que o Docker sortear para a ponte -- e ele muda.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      rest: { condition: service_started }
+    environment:
+      ANON_KEY: ${ANON_KEY}
+      SERVICE_KEY: ${SERVICE_ROLE_KEY}
+      POSTGREST_URL: http://rest:3000
+      PGRST_JWT_SECRET: ${JWT_SECRET}
+      DATABASE_URL: postgres://supabase_storage_admin:${PG_SENHA_SERVICOS}@host.docker.internal:5000/postgres
+      FILE_SIZE_LIMIT: 52428800
+      STORAGE_BACKEND: file
+      FILE_STORAGE_BACKEND_PATH: /var/lib/storage
+      TENANT_ID: stub
+      REGION: stub
+      GLOBAL_S3_BUCKET: stub
+    volumes:
+      - storage-arquivos:/var/lib/storage
+
+  functions:
+    # As 59 Edge Functions do ERP. Sem este servico, tudo que o front chama em
+    # /functions/v1/* volta 404 - e no navegador o erro aparece como CORS, que
+    # manda investigar o lado errado. Medido em 30/09/2026 na tela inicial:
+    # "blocked by CORS policy" para /functions/v1/discord-vincular.
+    #
+    # O runtime NAO descobre as funcoes sozinho: sobe um "main service" que
+    # recebe tudo e decide qual carregar. Esse roteador e o functions-main/,
+    # e ele le o MESMO supabase/config.toml da producao para saber quais
+    # funcoes sao publicas - por isso o config.toml e montado aqui.
+    image: supabase/edge-runtime:v1.77.2
+    restart: unless-stopped
+    # host.docker.internal nao existe por padrao no Linux; host-gateway o
+    # aponta para o gateway DESTA rede. Sem isto, o endereco do HAProxy
+    # dependeria do IP que o Docker sortear para a ponte -- e ele muda.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      JWT_SECRET: ${JWT_SECRET}
+      # As funcoes falam com o banco PELO GATEWAY, nao direto - mesmo caminho
+      # da producao, entao passam pela RLS igual.
+      SUPABASE_URL: http://kong:8000
+      SUPABASE_ANON_KEY: ${ANON_KEY}
+      SUPABASE_SERVICE_ROLE_KEY: ${SERVICE_ROLE_KEY}
+      SUPABASE_PUBLISHABLE_KEY: ${ANON_KEY}
+      SUPABASE_DB_URL: postgres://postgres:${PG_SENHA_SUPER}@host.docker.internal:5000/postgres
+      # A verificacao de JWT e feita POR FUNCAO no roteador, lendo o
+      # config.toml. Deixar o runtime verificar globalmente quebraria as 14
+      # funcoes publicas (Canal de Etica, Portal do Colaborador, webhook da
+      # Meta, chamadas do CI).
+      VERIFY_JWT: "false"
+    volumes:
+      - ../../supabase/functions:/home/deno/functions:ro
+      - ../../supabase/config.toml:/home/deno/config.toml:ro
+      - ./functions-main:/home/deno/main:ro
+    command: ["start", "--main-service", "/home/deno/main"]
+
+  kong:
+    # O gateway. E a UNICA porta que o frontend conhece: ele publica
+    # /auth/v1, /rest/v1 e /storage/v1 sob um endereco so - exatamente como a
+    # URL da Supabase hoje. E por isso que trocar de backend um dia sera
+    # trocar UM endereco, nao reescrever o frontend.
+    image: kong:2.8.1
+    restart: unless-stopped
+    depends_on: [auth, rest, storage, functions]
+    ports:
+      - "${PORTA_API:-8000}:8000"
+    environment:
+      KONG_DATABASE: "off"
+      KONG_DECLARATIVE_CONFIG: /home/kong/kong.yml
+      KONG_DNS_ORDER: LAST,A,CNAME
+      KONG_PLUGINS: request-transformer,cors,key-auth,acl
+      # Entram no kong.yml pelo entrypoint abaixo, nao pelo Kong.
+      SUPABASE_ANON_KEY: ${ANON_KEY}
+      SUPABASE_SERVICE_KEY: ${SERVICE_ROLE_KEY}
+      # Onde o Kong encontra cada servico. Aqui sao os nomes do compose; na
+      # Render sao erp-rest, erp-auth... (ver render.yaml na raiz).
+      ALVO_AUTH: auth:9999
+      ALVO_REST: rest:3000
+      ALVO_STORAGE: storage:5000
+      ALVO_FUNCTIONS: functions:9000
+    volumes:
+      # Monta como TEMPLATE. O arquivo final nasce dentro do container.
+      - ./kong.yml:/home/kong/kong.template.yml:ro
+    # O Kong nao substitui variavel de ambiente em config declarativo. Sem
+    # este render a chave esperada no header apikey seria a string literal
+    # "$SUPABASE_ANON_KEY" e TODA chamada a /rest/v1 voltaria 401.
+    entrypoint:
+      - bash
+      - -c
+      - |
+        eval "echo \"$(cat /home/kong/kong.template.yml)\"" > /home/kong/kong.yml
+        exec /docker-entrypoint.sh kong docker-start
+
+networks:
+  default:
+    # Faixa FIXA de proposito. Por padrao o Docker sorteia (172.17, 172.18,
+    # 172.19...) conforme o que ja existe na maquina, e o gateway muda junto.
+    # O HAProxy precisa escutar num endereco que nao se mexa.
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16
+          gateway: 172.28.0.1
+
+volumes:
+  storage-arquivos:

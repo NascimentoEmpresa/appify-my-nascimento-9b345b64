@@ -130,6 +130,61 @@ Tem que aparecer um `Leader` e um `Sync Standby` com `Lag 0`. **Se aparecer
 `Replica` em vez de `Sync Standby`, a replicação síncrona não subiu e a
 garantia de não perder transação não vale** — não seguir adiante assim.
 
+### 5. Restaurar o schema da produção
+
+```bash
+SENHA_SUPABASE=... SENHA_DESTINO=... DESTINO_HOST=10.77.0.12 \
+  bash restaurar-schema.sh
+```
+
+Ele já chama, na ordem, o `preparar-destino.sql`, o `pos-restauracao.sql`, o
+**`papeis-atributos.sql`** e a conferência contra a produção viva. Os três
+primeiros não são opcionais nem intercambiáveis:
+
+| Arquivo | O que carrega | O que acontece sem ele |
+|---|---|---|
+| `preparar-destino.sql` | os 16 papéis, schemas e extensões | entra **1 política de RLS de 1.432** e o banco sobe sem controle de acesso, em silêncio |
+| `pos-restauracao.sql` | donos de `auth`/`storage`, `search_path`, timeouts | GoTrue e Storage em laço de reinício |
+| `papeis-atributos.sql` | `BYPASSRLS` e participações de papel | o storage recusa **toda** chamada, culpando a RLS por um erro que é de `set_config` |
+
+O terceiro existe porque **`pg_dump` não carrega atributo de papel**: ele
+exporta objetos e GRANTs; `pg_authid` e `pg_auth_members` ficam fora.
+
+### 6. Subir a pilha do ERP nos dois nós
+
+```bash
+# em cada banco, com /opt/erp/infra/failover/.env já no lugar
+cd /opt/erp/infra/failover
+docker compose -p erp-pilha -f docker-compose.cluster.yml up -d
+```
+
+**A versão das imagens é amarrada ao nível de migration do banco restaurado**,
+não é "pegar a mais nova" — conferir a contagem de migrations da tag antes de
+atualizar qualquer uma. O caso real está em
+[`docs/ha-pilha-nos-dois-nos.md`](../../docs/ha-pilha-nos-dois-nos.md).
+
+### 7. Ligar o espelho de anexos
+
+```bash
+bash instalar-espelho-anexos.sh <ip público banco1> <ip público banco2>
+```
+
+O banco é replicado; **os arquivos de anexo não**. Sem este passo, anexo
+enviado num nó responde 500 no outro depois de uma troca de primário — com a
+linha presente no banco para acusar que o arquivo deveria existir. Por quê e o
+que isso não resolve: [`docs/ha-anexos-entre-nos.md`](../../docs/ha-anexos-entre-nos.md).
+
+### 8. Conferir contra a produção, sempre antes de virar
+
+```bash
+SENHA_SUPABASE=... SENHA_DESTINO=... bash conferir-contra-producao.sh
+```
+
+Compara contagens, **índices**, **restrições** e **atributos de papel** com a
+produção viva. Não usa número anotado: lê os dois lados na hora, porque a
+produção recebe migration quase todo dia — em quatro dias de outubro ela ganhou
+2 funções, 1 índice e mudou 1 CHECK.
+
 ## O que foi medido, não prometido
 
 Ensaios de 06/10/2026: cluster real, cliente gravando a cada 50 ms, queda seca
@@ -180,10 +235,27 @@ passa pelo túnel cifrado. Depois **derruba um provedor inteiro** (banco, etcd e
 API de uma vez) e mede quanto tempo até o outro estar gravando, e se perdeu
 alguma transação.
 
+## O que já está provado em cima do cluster
+
+Medido em 13/10/2026, com a pilha de pé nos **dois** bancos:
+
+- **O schema é idêntico ao da produção**: 656 tabelas, 1.432 políticas de RLS,
+  1.487 funções, 558 tabelas em que o `anon` tem SELECT, **1.874 índices**,
+  **2.514 restrições**, 28 papéis. Comparado contra a produção viva, não contra
+  número anotado.
+- **Login de verdade**: usuário criado pela API de admin, login com senha
+  devolvendo token, `/auth/v1/user` aceitando o token, e `auth.uid()`,
+  `auth.role()` e `auth.email()` respondendo certo dentro do banco — é o elo
+  que sustenta as 1.432 políticas.
+- **Os dois nós respondem igual** na bateria de seis chamadas pelo Kong.
+- **Anexo atravessa de um nó para o outro** com `content-type` preservado.
+- **4 dias sem um único reinício do Patroni** depois da correção das
+  atualizações automáticas (antes: 7 reinícios e um failover às 3h50).
+
 ## O que ainda NÃO está provado
 
-- O corte em si (carregar o schema da Supabase, ligar a replicação lógica,
-  virar a chave). Fase seguinte, com ensaio e plano de volta atrás.
+- O corte em si (copiar os dados, ligar a replicação lógica, virar a chave).
+  Fase seguinte, com ensaio e plano de volta atrás.
 - `synchronous_mode_strict`. Com ele o banco prefere **recusar escrita** a
   aceitar sem réplica confirmada. É mais seguro contra perda e mais frágil
   contra indisponibilidade: se a standby cair, o sistema para de gravar.
@@ -191,3 +263,5 @@ alguma transação.
   (há um caso de borda com backend cancelado). Decidir junto antes de ligar.
 - Backup. Hoje o backup cifrado continua valendo; no corte ele passa a sair
   daqui.
+- **A janela de 1 minuto do espelho de anexos.** O banco tem perda zero; o
+  anexo tem até um minuto. Ver `docs/ha-anexos-entre-nos.md`.
