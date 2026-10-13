@@ -2864,7 +2864,7 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
                   <>
                     <div onClick={() => setShowRespFiltro(false)} style={{ position: "fixed", inset: 0, zIndex: 40 }} />
                     <div style={{ position: "absolute", top: "100%", left: 0, zIndex: 50, marginTop: 6, background: "#fff", border: "1px solid #e2e8f0", borderRadius: 12, boxShadow: "0 16px 40px rgba(15,23,42,.16)", padding: 10, width: 290, maxWidth: "90vw", maxHeight: 380, overflowY: "auto" }}>
-                      <div style={{ fontSize: 11, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase", letterSpacing: ".5px", padding: "0 4px 8px" }}>Vagas no Recrutamento e na Seleção</div>
+                      <div style={{ fontSize: 11, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase", letterSpacing: ".5px", padding: "0 4px 8px" }}>Vagas de cada responsável (inclui as encerradas)</div>
                       {opcao("", "Todas (sem filtro)", 0)}
                       {opcao("eu", "Minhas vagas", meus, true)}
                       {opcao("sem", "Sem responsável", sem)}
@@ -2876,9 +2876,16 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
               </div>
             );
           })()}
-          {respFiltro && (
+          {respFiltro && (<>
+            {/* O total do filtro à vista (14/10/2026): a tabela pagina de 20 em 20 e
+                "28 no menu × 20 na tela" parecia número errado. */}
+            {view === "tabela" && !loading && (
+              <span style={{ fontSize: 12, fontWeight: 700, color: "#0f3171", background: "#eef4ff", border: "1px solid #c7d7f5", borderRadius: 20, padding: "4px 11px" }}>
+                {total} vaga{total === 1 ? "" : "s"}{pages > 1 ? ` · página ${page} de ${pages}` : ""}
+              </span>
+            )}
             <button onClick={() => { setRespFiltro(""); setPage(1); }} style={{ background: "none", border: "none", color: "#94a3b8", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>limpar</button>
-          )}
+          </>)}
           {showContratoFiltro && (
             <>
               <div onClick={() => setShowContratoFiltro(false)} style={{ position: "fixed", inset: 0, zIndex: 40 }} />
