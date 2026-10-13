@@ -33,6 +33,11 @@ describe("filtro", () => {
     expect(passaNoFiltro(rec, eu, "eu", eu)).toBe(true);
     expect(passaNoFiltro(rec, "u-ana", "eu", eu)).toBe(false);
     expect(passaNoFiltro(rec, "u-ana", "u-ana", eu)).toBe(true);
+    // 14/10/2026: vaga encerrada continua na lista de quem cuidou (a #261 da Giovana, Contratado).
+    expect(passaNoFiltro({ status: "Contratado" }, eu, "eu", eu)).toBe(true);
+    expect(passaNoFiltro({ status: "Concluído" }, "u-ana", "u-ana", eu)).toBe(true);
+    expect(passaNoFiltro({ status: "Contratado" }, null, "sem", eu)).toBe(false);
+    expect(passaNoFiltro({ status: "Pendente Operacional" }, eu, "eu", eu)).toBe(false);
   });
 });
 

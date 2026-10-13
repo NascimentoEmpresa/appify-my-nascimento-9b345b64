@@ -161,3 +161,6 @@ verify_jwt = true
 # a function confere o acesso ao painel antes de usar o GITHUB_TOKEN.
 [functions.dev-github-sync]
 verify_jwt = true
+
+[functions.tvg-ia]
+verify_jwt = true

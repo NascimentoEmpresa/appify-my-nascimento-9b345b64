@@ -25,9 +25,12 @@ import { FaixaGerencial, Grafico, Grade, Info, M, STATUS, barra, temaDoVisual, u
 // E o indicador SOZINHO (item "ind:<codigo>" da playlist): o gráfico grande.
 // =====================================================================
 
-export function TelaDashboardGerencial({ p, cor, visual, atualizado }: {
+export function TelaDashboardGerencial({ p, cor, visual, atualizado, onIndicador }: {
   p: PainelGerencial; cor: string; visual: VisualGerencial; atualizado: string | null;
+  /** Só na prévia da gestão: clicar abre a I.A "de onde vem este número". A TV não passa. */
+  onIndicador?: (i: IndicadorGerencial) => void;
 }) {
+  const clicar = (i: IndicadorGerencial) => (onIndicador ? () => onIndicador(i) : undefined);
   const t = temaDoVisual(visual);
   const itens = indicadoresDaTv(p);
   const agir = ondeAgir(p, 5);
@@ -42,7 +45,7 @@ export function TelaDashboardGerencial({ p, cor, visual, atualizado }: {
       <div className="flex min-h-0 flex-1 flex-col" style={{ padding: "18px 34px 12px", gap: 16 }}>
         {/* Faixa de números: todos os indicadores da TV */}
         <div className="grid shrink-0" style={{ gap: 12, gridTemplateColumns: `repeat(${Math.max(1, Math.min(itens.length, 8))}, minmax(0,1fr))`, height: 138 }}>
-          {itens.slice(0, 8).map((i) => <Numero key={i.codigo} i={i} t={t} />)}
+          {itens.slice(0, 8).map((i) => <Numero key={i.codigo} i={i} t={t} onClick={clicar(i)} />)}
         </div>
 
         {/* Tendência de 12 meses + onde agir */}
@@ -59,7 +62,7 @@ export function TelaDashboardGerencial({ p, cor, visual, atualizado }: {
             <Titulo t={t} Icone={AlertTriangle} cor={agir.length ? STATUS.vermelho.cor : STATUS.verde.cor} texto="Onde agir agora"
               sub={agir.length ? "Fora da meta primeiro, pelo impacto" : "Nenhum indicador fora da meta"} />
             <div className="flex min-h-0 flex-1 flex-col" style={{ gap: 9 }}>
-              {agir.length ? agir.map((i) => <LinhaAgir key={i.codigo} i={i} t={t} />) : (
+              {agir.length ? agir.map((i) => <LinhaAgir key={i.codigo} i={i} t={t} onClick={clicar(i)} />) : (
                 <div className="flex flex-1 flex-col items-center justify-center gap-3 rounded-2xl" style={{ background: misturarCor(STATUS.verde.cor, "#ffffff", 0.9) }}>
                   <CheckCircle2 style={{ width: 64, height: 64, color: STATUS.verde.cor }} />
                   <p className="font-black" style={{ fontSize: 30, color: STATUS.verde.cor }}>Tudo dentro da meta</p>
@@ -73,7 +76,7 @@ export function TelaDashboardGerencial({ p, cor, visual, atualizado }: {
         {destaques.length > 0 && (
           <div className="grid min-h-0" style={{ flex: 1, gap: 16, gridTemplateColumns: `repeat(${destaques.length}, minmax(0,1fr))` }}>
             {destaques.map((i) => (
-              <Cartao key={i.codigo} t={t}>
+              <Cartao key={i.codigo} t={t} onClick={clicar(i)}>
                 <div className="flex shrink-0 items-start gap-3">
                   <p className="min-w-0 flex-1 font-extrabold leading-tight" style={{ fontSize: 21, display: "-webkit-box", WebkitLineClamp: 1, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{i.nome}</p>
                   <p className="shrink-0 font-black tabular-nums leading-none" style={{ fontSize: 30, color: STATUS[situacao(i)].cor }}>{formatarValor(i.resultado?.valor, i.unidade)}</p>
@@ -137,8 +140,11 @@ export function TelaIndicadorGerencial({ painel, i, cor, visual, atualizado }: {
 
 // ---- Peças ------------------------------------------------------------------
 
-function Cartao({ t, children }: { t: Tema; children: React.ReactNode }) {
-  return <div className="flex min-h-0 min-w-0 flex-col" style={{ background: t.cartao, boxShadow: t.sombra, borderRadius: 24, padding: "18px 22px", gap: 10 }}>{children}</div>;
+const DICA_IA = "Clique: a I.A explica de onde vem este número";
+const clicavel = (onClick?: () => void) => (onClick ? "cursor-pointer transition hover:brightness-[0.98]" : "");
+
+function Cartao({ t, children, onClick }: { t: Tema; children: React.ReactNode; onClick?: () => void }) {
+  return <div onClick={onClick} title={onClick ? DICA_IA : undefined} className={`flex min-h-0 min-w-0 flex-col ${clicavel(onClick)}`} style={{ background: t.cartao, boxShadow: t.sombra, borderRadius: 24, padding: "18px 22px", gap: 10 }}>{children}</div>;
 }
 
 function Titulo({ t, Icone, cor, texto, sub }: { t: Tema; Icone: typeof TrendingUp; cor: string; texto: string; sub?: string }) {
@@ -158,12 +164,12 @@ function Vazio({ t, texto }: { t: Tema; texto: string }) {
 }
 
 /** Um número da faixa do topo: nome, resultado na cor do semáforo e a meta. */
-function Numero({ i, t }: { i: IndicadorGerencial; t: Tema }) {
+function Numero({ i, t, onClick }: { i: IndicadorGerencial; t: Tema; onClick?: () => void }) {
   const s = situacao(i);
   const st = STATUS[s];
   const v = i.resultado?.valor;
   return (
-    <div className="relative flex min-w-0 flex-col justify-between overflow-hidden" style={{ background: t.cartao, boxShadow: t.sombra, borderRadius: 20, padding: "14px 16px 12px" }}>
+    <div onClick={onClick} title={onClick ? DICA_IA : undefined} className={`relative flex min-w-0 flex-col justify-between overflow-hidden ${clicavel(onClick)}`} style={{ background: t.cartao, boxShadow: t.sombra, borderRadius: 20, padding: "14px 16px 12px" }}>
       <span className="absolute inset-x-0 top-0" style={{ height: 5, background: st.cor }} />
       <p className="font-bold leading-tight" style={{ fontSize: 15.5, color: t.suave, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{i.nome}</p>
       <p className="truncate font-black leading-none tabular-nums" style={{ fontSize: 38, color: v == null ? t.suave : st.cor }}>{formatarValor(v, i.unidade)}</p>
@@ -173,11 +179,11 @@ function Numero({ i, t }: { i: IndicadorGerencial; t: Tema }) {
 }
 
 /** Uma linha do "Onde agir agora": o formato do Word numa linha só. */
-function LinhaAgir({ i, t }: { i: IndicadorGerencial; t: Tema }) {
+function LinhaAgir({ i, t, onClick }: { i: IndicadorGerencial; t: Tema; onClick?: () => void }) {
   const st = STATUS[situacao(i)];
   const r = i.resultado ?? { valor: null };
   return (
-    <div className="flex min-h-0 items-center gap-3 rounded-2xl" style={{ background: t.caixa, padding: "8px 14px", flex: 1, maxHeight: 92 }}>
+    <div onClick={onClick} title={onClick ? DICA_IA : undefined} className={`flex min-h-0 items-center gap-3 rounded-2xl ${clicavel(onClick)}`} style={{ background: t.caixa, padding: "8px 14px", flex: 1, maxHeight: 92 }}>
       <span className="h-full w-1.5 shrink-0 rounded-full" style={{ background: st.cor }} />
       <div className="min-w-0 flex-1">
         <div className="flex items-baseline gap-2">
