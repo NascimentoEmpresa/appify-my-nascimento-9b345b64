@@ -19,6 +19,7 @@ import { fmtMoney, foraDoRelatorio, naoContabilizaKpi } from "@/pages/financeiro
 import { contratoEncerradoNaCompetencia } from "./vigenciaContrato";
 import { StatusCelula, excessoDeFaturamento, faltaDeFaturamento, resumirFaturamento, statusCelula } from "./faturamentoStatus";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { NfsNaoEmitidasTab } from "./NfsNaoEmitidasTab";
 
 // SIS-2026-0562 (Iury): "Base de Contratos Vigentes × Relatório de
 // Serviços", igual ao protótipo em anexo (Dashboard_Controle_Faturamento_
@@ -291,6 +292,14 @@ export default function ControleFaturamento() {
   }
 
   const carregando = carregandoContratos || carregandoPlanilha || carregandoNfs;
+
+  // SIS-2026-0650: volta empresa, busca, ano e competência ao padrão.
+  function limparFiltros() {
+    setFiltroEmpresa("");
+    setFiltroNome("");
+    setAno(new Date().getFullYear());
+    setCompetenciaSel(null);
+  }
 
   const FiltroEmpresaAno = (
     <>
@@ -574,35 +583,23 @@ export default function ControleFaturamento() {
           </TabsContent>
 
           <TabsContent value="pendentes" className="space-y-4 mt-4">
-            <div className="card-elevated p-3 flex items-center gap-2 flex-wrap text-xs">
-              {FiltroEmpresaAno}
-            </div>
-            <p className="text-sm text-muted-foreground">Contratos vigentes em {labelMes(competencia)} sem nenhuma NF Código N lançada — priorizados pelo maior valor executável.</p>
-            <Card>
-              <CardContent className="p-0">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Empresa</TableHead>
-                      <TableHead>Contrato</TableHead>
-                      <TableHead className="text-right">Valor Executável (Base)</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {pendentesCompetencia.length === 0 && (
-                      <TableRow><TableCell colSpan={3} className="text-center text-muted-foreground py-8">Nenhum contrato pendente — tudo faturado nessa competência.</TableCell></TableRow>
-                    )}
-                    {pendentesCompetencia.map((l) => (
-                      <TableRow key={l.contrato.id}>
-                        <TableCell className="text-sm">{empresaNomePorId.get(l.contrato.empresa_id) ?? "—"}</TableCell>
-                        <TableCell className="text-sm font-medium">{l.contrato.nome}</TableCell>
-                        <TableCell className="text-right text-sm font-medium text-red-600 dark:text-red-400">{fmtMoney(l.executavel)}</TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </CardContent>
-            </Card>
+            {/* SIS-2026-0650: layout do mockup do Ruan (KPIs, tabela priorizada e resumo do impacto). */}
+            <NfsNaoEmitidasTab
+              pendentes={pendentesCompetencia.map((l) => ({
+                contratoId: l.contrato.id,
+                empresaId: l.contrato.empresa_id,
+                contratoNome: l.contrato.nome,
+                executavel: l.executavel,
+                naoEmitido: l.naoEmitido,
+              }))}
+              executavelTotal={kpis.executavel}
+              competenciaLabel={labelMes(competencia)}
+              competenciaISO={competencia}
+              nfs={nfs}
+              empresaNomePorId={empresaNomePorId}
+              filtros={FiltroEmpresaAno}
+              onLimparFiltros={limparFiltros}
+            />
           </TabsContent>
         </Tabs>
       )}
