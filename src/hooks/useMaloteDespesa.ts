@@ -1672,6 +1672,26 @@ export function useAnexarComprovanteMalote() {
   });
 }
 
+// SIS-2026-0644: troca o comprovante de uma despesa/parcela JÁ paga e com comprovante (arquivo
+// anexado errado). A função do banco deixa quem registrou o pagamento ou quem pode pagar o Malote;
+// o arquivo antigo fica no storage e o nome dele vai pra linha do tempo.
+export function useTrocarComprovanteMalote() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: AnexarComprovanteInput) => {
+      const { error } = await comRetentativaRede<{ error: any }>(() =>
+        (supabase as any).rpc("malote_trocar_comprovante", {
+          _despesa_id: input.despesaId,
+          _comprovante_path: input.comprovante_path,
+          _parcela_id: input.parcelaId ?? null,
+        }),
+      );
+      if (error) throw error;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: [DESPESA_KEY] }),
+  });
+}
+
 // ── Aprovação Inicial da Solicitação (SIS-2026-0132 Fase 2) ─────────────
 // Gate único (não sequencial como N1/N2/N3 da despesa): qualquer um dos 3
 // aprovadores configurados na Classificação Malote pode aprovar/reprovar.
