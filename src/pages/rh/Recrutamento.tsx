@@ -29,6 +29,7 @@ import { StatusSolicitacao } from "@/components/recrutamento/StatusSolicitacao";
 import { StatusVagaBadge } from "@/components/recrutamento/StatusVagaBadge";
 import { useEtapasDasVagas } from "@/hooks/useEtapasDasVagas";
 import { useResponsaveisDasVagas, listarResponsaveisPossiveis, definirResponsavelVaga, assumirVaga, contarVagasPorResponsavel } from "@/hooks/useResponsaveisDasVagas";
+import { NIVEIS_JURIDICO, NIVEL_OK, eventoParecerJuridico, nivelJuridico, seloJuridico } from "@/lib/recrutamento/parecerJuridico";
 import { STATUS_COM_RESPONSAVEL, alvoDoFiltro, devePerguntarAssumir, textoConfirmarAssumir, vagaTemResponsavel, type FiltroResponsavel } from "@/lib/recrutamento/responsavelVaga";
 import { vagaTemEtapa } from "@/lib/recrutamento/statusDetalhado";
 import { EnxovalAdmissao, type EnxovalAdmissaoHandle } from "@/components/recrutamento/EnxovalAdmissao";
@@ -116,6 +117,9 @@ interface Curriculo {
   // significa "reprovado mas devolvido ao RH" — ver devolverDoJuridico.
   juridico_ok?: boolean | null;
   juridico_obs?: string;
+  // Nível do parecer (14/10/2026, mig 20261014000004): o Jurídico não aprova
+  // nem reprova mais — só dá o parecer e o candidato segue para a Entrevista.
+  juridico_nivel?: string | null;
   // SST e Compras correm em PARALELO: os dois precisam estar true para o
   // candidato seguir sozinho para a Admissão.
   sst_ok?: boolean | null;
@@ -628,6 +632,8 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
   const [buscaCand, setBuscaCand]           = useState(""); // busca no kanban de candidatos
   const [candModal, setCandModal]           = useState<{ id: number; novaEtapa: string; nome: string } | null>(null);
   const [candObs, setCandObs]               = useState("");
+  // Nível do parecer do Jurídico no modal (mig 20261014000004).
+  const [candNivel, setCandNivel]           = useState<string>(NIVEL_OK);
   // Materiais/EPIs que o Compras precisa providenciar. Obrigatório ao enviar
   // para a etapa paralela: sem a lista o pedido chega vazio no módulo de
   // Suprimentos e alguém volta perguntando.
@@ -1310,7 +1316,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
   };
   const labelProx = (etapa: string) => ({
     ENTRADA: "→ Triagem",
-    "JURÍDICO": "Liberar → Entrevista",
+    "JURÍDICO": "Dar parecer → Entrevista",
     "ENTREVISTA GESTOR": "→ Aprovado",
     APROVADO: "→ Documentação",
     "DOCUMENTAÇÃO": "→ SST + Compras",
@@ -1546,6 +1552,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
 
   const pedirMoverCand = (cv: Curriculo, novaEtapa: string) => {
     setCandObs("");
+    setCandNivel(NIVEL_OK);
     setCandMateriais("");
     setCandModal({ id: cv.id, novaEtapa, nome: cv.nome || "Candidato" });
   };
@@ -1579,7 +1586,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
     const eventoTxt: Record<string, string> = {
       TRIAGEM: "Movido para Triagem",
       "JURÍDICO": "Enviado ao Jurídico",
-      ENTREVISTA: origem === "JURÍDICO" ? "Liberado pelo Jurídico → Entrevista" : "Liberado para Entrevista",
+      ENTREVISTA: origem === "JURÍDICO" ? eventoParecerJuridico(extra.juridico_nivel as string | undefined) : "Liberado para Entrevista",
       "ENTREVISTA GESTOR": "Enviado à Entrevista com Gestor",
       APROVADO: "Aprovado nas entrevistas",
       "DOCUMENTAÇÃO": "Aprovado → Documentação",
@@ -1645,10 +1652,13 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
     if (drawerId) loadCandidatos(drawerId);
   };
 
-  // ── Jurídico: reprovar porém devolver ao RH ───────────────────────
-  // O parecer negativo fica gravado, mas o candidato NÃO vai para Reprovado:
-  // volta à Triagem com alerta para o RH decidir. Sem coluna nova — a
-  // combinação juridico_ok = false + etapa <> 'Reprovado' já descreve isso.
+  // ── Jurídico: "OK e passar" (14/10/2026, mig 20261014000004) ─────────
+  // O Jurídico não aprova nem reprova mais: dá o parecer e o candidato segue
+  // para a Entrevista. Sem nada a apontar, um clique: "Tudo certo".
+  const okJuridico = (cv: Curriculo) => executarMoverCand(cv.id, "ENTREVISTA", { juridico_nivel: NIVEL_OK });
+
+  // Antigo "Reprovar e devolver ao RH" — o botão saiu (o Jurídico só dá
+  // parecer); fica só para pareceres antigos que ainda estejam assim.
   const devolverDoJuridico = async (cv: Curriculo) => {
     const motivo = window.prompt("Parecer do Jurídico (fica registrado no card):", "");
     if (motivo === null) return;
@@ -1724,9 +1734,12 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
       if (candObs.trim()) extra.sst_obs = candObs.trim();
     } else if (novaEtapa === "Reprovado") {
       extra.motivo_reprovacao = candObs.trim();
+    } else if (origem === "JURÍDICO") {
+      // Parecer do Jurídico (mig 20261014000004): nível + observação opcional.
+      extra.juridico_nivel = candNivel || NIVEL_OK;
+      if (candObs.trim()) extra.juridico_obs = candObs.trim();
     } else if (candObs.trim()) {
-      if (origem === "JURÍDICO")               extra.juridico_obs = candObs.trim();
-      else if (origem === ETAPA_SST_COMPRAS)   extra.sst_obs = candObs.trim();
+      if (origem === ETAPA_SST_COMPRAS)        extra.sst_obs = candObs.trim();
     }
     setCandModal(null);
     setCandObs("");
@@ -1737,6 +1750,9 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
   // Modal aberto pelo botão "Pular SST e Compras" (DOCUMENTAÇÃO → ADMISSÃO).
   const pulandoSstCompras = !!candModal && candModal.novaEtapa === "ADMISSÃO"
     && candidatos.find(c => c.id === candModal.id)?.etapa_processo === "DOCUMENTAÇÃO";
+  // Modal aberto do JURÍDICO para a frente: é o parecer (mig 20261014000004).
+  const parecerJuridico = !!candModal && candModal.novaEtapa !== "Reprovado"
+    && candidatos.find(c => c.id === candModal.id)?.etapa_processo === "JURÍDICO";
 
   // ── Kanban Mover ──────────────────────────────────────────────
   const executarMover = async (id: number, novoStatus: string, oldSt: string, extra: Record<string, unknown>) => {
@@ -2477,10 +2493,11 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
                       const bFull = { width: "100%", fontSize: 11, fontWeight: 700 as const, padding: "6px 8px", borderRadius: 8, border: "none", color: "#fff", cursor: "pointer", textAlign: "center" as const };
                       const bSkip = { ...bFull, background: "#fff", color: "#475569", border: "1px solid #e2e8f0" };
                       const avancaBtn = bFull;
-                      // Cor do card pela decisão do Jurídico (cinza=pendente, verde=ok, vermelho=reprovado).
-                      const cor = c.juridico_ok === true ? "#16a34a" : c.juridico_ok === false ? "#dc2626" : meta.accent;
+                      // Cor do card pelo parecer do Jurídico (mig 20261014000004): o nível dá a cor.
+                      const selo = seloJuridico(c);
+                      const cor = selo ? selo.cor : meta.accent;
                       return (
-                        <div key={c.id} className="kb-card" style={{ cursor: "default", borderColor: c.juridico_ok === true ? "#bbf7d0" : c.juridico_ok === false ? "#fecaca" : undefined }}>
+                        <div key={c.id} className="kb-card" style={{ cursor: "default", borderColor: selo ? selo.borda : undefined }}>
                           <div style={{ height: 3, background: cor }} />
                           <div style={{ padding: "9px 10px 8px" }}>
                             <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
@@ -2503,8 +2520,13 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
                                 )}
                               </div>
                             )}
-                            {c.juridico_ok === true && <div style={{ fontSize: 9.5, color: "#15803d", marginTop: 3, fontWeight: 700 }}>✓ Jurídico aprovado</div>}
-                            {c.juridico_ok === false && <div style={{ fontSize: 9.5, color: "#b91c1c", marginTop: 3, fontWeight: 700 }}><Ic i={Ban} />Restrito (Jurídico)</div>}
+                            {selo && (
+                              <div title={c.juridico_obs ? `Observação do Jurídico: ${c.juridico_obs}` : undefined}
+                                style={{ marginTop: 4, fontSize: 9.5, fontWeight: 800, color: selo.cor, background: selo.fundo, border: `1px solid ${selo.borda}`, borderRadius: 6, padding: "2px 6px" }}>
+                                ⚖ {selo.texto}
+                                {c.juridico_obs && <div style={{ fontWeight: 600, color: "#475569", marginTop: 1, overflow: "hidden", textOverflow: "ellipsis", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>{c.juridico_obs}</div>}
+                              </div>
+                            )}
                             {c.sst_ok === true && <div style={{ fontSize: 9.5, color: "#15803d", marginTop: 3, fontWeight: 700 }}>✓ SST aprovou</div>}
                             {c.sst_ok === false && <div style={{ fontSize: 9.5, color: "#b91c1c", marginTop: 3, fontWeight: 700 }}><Ic i={Ban} />Reprovado no SST</div>}
                             {c.compras_ok === true && <div style={{ fontSize: 9.5, color: "#15803d", marginTop: 3, fontWeight: 700 }}>✓ Compras aprovou</div>}
@@ -2568,9 +2590,10 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
                                 <button onClick={() => pedirMoverCand(c, "ADMISSÃO")} style={bSkip}>Pular SST e Compras →</button>
                               )}
                               {etapa === "JURÍDICO" && podeMoverJuridico && (
-                                <button onClick={() => devolverDoJuridico(c)} style={{ ...bSkip, color: "#b45309", borderColor: "#fde68a" }}><Ic i={AlertTriangle} />Reprovar e devolver ao RH</button>
+                                <button onClick={() => okJuridico(c)} title="Nada a apontar: parecer Tudo certo e segue para a Entrevista" style={{ ...bSkip, color: "#15803d", borderColor: "#bbf7d0" }}>✓ OK, tudo certo → Entrevista</button>
                               )}
-                              {etapa !== "ADMISSÃO" && etapa !== "Reprovado" && podeAqui && <button onClick={() => pedirMoverCand(c, "Reprovado")} style={{ width: "100%", fontSize: 10.5, fontWeight: 700, padding: "4px", borderRadius: 7, background: "transparent", border: "none", color: "#94a3b8", cursor: "pointer" }}>Reprovar</button>}
+                              {/* No Jurídico não tem Reprovar: ele só dá parecer (mig 20261014000004). */}
+                              {etapa !== "ADMISSÃO" && etapa !== "Reprovado" && etapa !== "JURÍDICO" && podeAqui && <button onClick={() => pedirMoverCand(c, "Reprovado")} style={{ width: "100%", fontSize: 10.5, fontWeight: 700, padding: "4px", borderRadius: 7, background: "transparent", border: "none", color: "#94a3b8", cursor: "pointer" }}>Reprovar</button>}
                               {/* Desistência: cabe em QUALQUER etapa, porque
                                   desistir é decisão do candidato e ele pode
                                   tomá-la a qualquer momento. */}
@@ -3185,7 +3208,7 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
           <div className="rec-modal" style={{ maxWidth: candModal.novaEtapa === ETAPA_SST_COMPRAS ? 620 : 420 }}>
             <button onClick={() => { setCandModal(null); setCandObs(""); setCandMateriais(""); }} style={{ position: "absolute", top: 14, right: 14, background: "none", border: "none", color: "#94a3b8", fontSize: 20, cursor: "pointer" }}>✕</button>
             <div style={{ fontSize: 17, fontWeight: 800, marginBottom: 4 }}>
-              {candModal.novaEtapa === "Reprovado" ? "Reprovar candidato" : pulandoSstCompras ? "Pular SST e Compras" : `Mover para "${candModal.novaEtapa}"`}
+              {candModal.novaEtapa === "Reprovado" ? "Reprovar candidato" : pulandoSstCompras ? "Pular SST e Compras" : parecerJuridico ? "Parecer do Jurídico" : `Mover para "${candModal.novaEtapa}"`}
             </div>
             <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 14 }}>{candModal.nome}</div>
             {pulandoSstCompras && (
@@ -3196,16 +3219,37 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
             {candModal.novaEtapa === ETAPA_SST_COMPRAS && (
               <EnxovalAdmissao ref={enxovalRef} candidatoId={candModal.id} />
             )}
+            {/* Parecer do Jurídico (mig 20261014000004): o nível + observação; o candidato segue para a Entrevista. */}
+            {parecerJuridico && (
+              <div className="rec-fg">
+                <label>Nível do parecer</label>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
+                  {NIVEIS_JURIDICO.map(n => {
+                    const ativo = candNivel === n.valor;
+                    return (
+                      <button key={n.valor} type="button" onClick={() => setCandNivel(n.valor)} title={n.dica}
+                        style={{ padding: "8px 10px", borderRadius: 10, cursor: "pointer", fontFamily: "inherit", textAlign: "left", fontSize: 12, fontWeight: 800,
+                                 color: n.cor, background: ativo ? n.fundo : "#fff", border: `${ativo ? 2 : 1}px solid ${ativo ? n.cor : n.borda}` }}>
+                        {ativo ? "● " : "○ "}{n.rotulo}
+                        <div style={{ fontSize: 10.5, fontWeight: 600, color: "#64748b", marginTop: 2 }}>{n.dica}</div>
+                      </button>
+                    );
+                  })}
+                </div>
+                <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 6 }}>O Jurídico não aprova nem reprova: o parecer fica no card e o Recrutamento decide.</div>
+              </div>
+            )}
             <div className="rec-fg">
               <label>{candModal.novaEtapa === "Reprovado" ? "Motivo *"
                 : pulandoSstCompras ? "Motivo para pular SST e Compras *"
                 : candModal.novaEtapa === ETAPA_SST_COMPRAS ? "Observação para o SST (opcional)"
+                : parecerJuridico ? "Observação do Jurídico (opcional)"
                 : "Observação (opcional)"}</label>
               <textarea className="rec-fi" rows={3} placeholder={candModal.novaEtapa === "Reprovado" ? "Descreva o motivo..." : "Observação da etapa..."} value={candObs} onChange={e => setCandObs(e.target.value)} />
             </div>
             <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 4 }}>
               <button onClick={() => { setCandModal(null); setCandObs(""); setCandMateriais(""); }} style={{ padding: "7px 14px", borderRadius: 10, border: "1px solid #e2e8f0", background: "#fff", color: "#475569", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Cancelar</button>
-              <button onClick={confirmarMoverCand} disabled={enviandoEnxoval} style={{ padding: "7px 14px", borderRadius: 10, border: "none", background: candModal.novaEtapa === "Reprovado" ? "#dc2626" : "#0f3171", color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer", opacity: enviandoEnxoval ? .6 : 1 }}>{enviandoEnxoval ? "Enviando…" : candModal.novaEtapa === ETAPA_SST_COMPRAS ? "Enviar ao SST e ao Compras" : "Confirmar"}</button>
+              <button onClick={confirmarMoverCand} disabled={enviandoEnxoval} style={{ padding: "7px 14px", borderRadius: 10, border: "none", background: candModal.novaEtapa === "Reprovado" ? "#dc2626" : "#0f3171", color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer", opacity: enviandoEnxoval ? .6 : 1 }}>{enviandoEnxoval ? "Enviando…" : candModal.novaEtapa === ETAPA_SST_COMPRAS ? "Enviar ao SST e ao Compras" : parecerJuridico ? "Registrar parecer → Entrevista" : "Confirmar"}</button>
             </div>
           </div>
         </div>
