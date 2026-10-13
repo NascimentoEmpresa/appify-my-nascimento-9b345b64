@@ -19,7 +19,11 @@ import { NIVEIS_JURIDICO, NIVEL_OK, eventoParecerJuridico, seloJuridico } from "
 // certo, Alguns processos mas OK, Muitos processos, Alto risco); pode só dar
 // um OK e passar". Saíram Reprovar e Restringir da etapa: o parecer leva o
 // candidato para a Entrevista e o Recrutamento decide. Tirar restrição antiga
-// e Realocar na Triagem continuam.
+// continua.
+// 14/10/2026 (2º ajuste) — "deveria aparecer apenas o botão Dar parecer pro
+// jurídico": saíram o atalho "OK, tudo certo" e o "Realocar na Triagem" (mover
+// para a Triagem é decisão do Recrutamento). "Tudo certo" segue sendo o nível
+// já marcado ao abrir o parecer.
 // Fonte: VW_RECRUTAMENTO_CANDIDATOS.
 // =====================================================================
 
@@ -224,19 +228,15 @@ export default function VerificacaoCandidatos() {
                     {c.etapa_processo !== "JURÍDICO" && <span style={{ fontSize: 11, color: "#94a3b8" }}>Situação atual: <EtapaChip etapa={c.etapa_processo} /></span>}
                     <HistoricoCandidato candidatoId={c.candidato_id} nome={c.nome} />
                     <BotaoProcessosCpf cpf={c.cpf} nome={c.nome} />
-                    {podeAgir && c.etapa_processo === "JURÍDICO" && <>
-                      <button onClick={() => darParecer(c, NIVEL_OK, "")} title="Nada a apontar: parecer Tudo certo" style={btn("#16a34a", "none", "#fff")}>✓ OK, tudo certo → Entrevista</button>
+                    {podeAgir && c.etapa_processo === "JURÍDICO" && (
                       <button onClick={() => { setObs(""); setNivel(NIVEL_OK); setAcao({ cand: c, tipo: "parecer" }); }} style={btn("#ede9fe", "1px solid #ddd6fe", "#6d28d9")}>⚖ Dar parecer → Entrevista</button>
-                    </>}
+                    )}
                     {/* Fora do bloco acima de propósito: desfazer restrição e
                         trazer o candidato de volta não são ações da etapa
                         JURÍDICO — o caso típico é justamente alguém que já foi
                         reprovado e está em outra coluna. */}
                     {podeAgir && c.possui_restricao && (
                       <button onClick={() => { setObs(""); setAcao({ cand: c, tipo: "tirar_restricao" }); }} style={btn("#f1f5f9", "1px solid #e2e8f0", "#475569")}>🔓 Tirar restrição</button>
-                    )}
-                    {podeAgir && c.etapa_processo !== "TRIAGEM" && (
-                      <button onClick={() => { setObs(""); setAcao({ cand: c, tipo: "realocar" }); }} style={btn("rgba(59,130,246,.08)", "1px solid rgba(59,130,246,.25)", "#2563eb")}>↩ Realocar na Triagem</button>
                     )}
                   </div>
                 </div>
