@@ -9,10 +9,12 @@
 -- as caixas Meta / Contrato-Setor afetado / Causa principal / Responsável.
 --
 -- Cada item "relatório" da playlist ganha o VISUAL (rel_visual):
---   NULL / 'classico'  as telas de 12/10 (cartões com o número) — padrão;
---   'painel'           igual ao HTML: escuro, 6 indicadores por tela (3×2);
---   'painel-claro'     o mesmo layout em fundo claro;
---   'graficos'         escuro, 4 indicadores por tela (2×2), gráfico maior.
+--   NULL / painel-claro  o painel no acabamento de carmed.vercel.app (fundo
+--                          claro, faixa de cor, cartões brancos) — PADRÃO;
+--   painel               o mesmo painel no fundo escuro do protótipo HTML;
+--   graficos             4 indicadores por tela (2×2), gráfico maior.
+-- ("tira as telas anteriores e coloca só essas": o visual de cartões de
+-- 12/10 saiu; classico, aceito pelo CHECK, toca o padrão.)
 -- tv_estado passa a entregar o rel_visual para a TV.
 --
 -- Os gráficos usam o detalhamento real de cada indicador; postos e quadro

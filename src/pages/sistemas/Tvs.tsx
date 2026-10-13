@@ -375,7 +375,7 @@ function EditorPlaylist({ p, tvs, playlists, onRenomear, onExcluir }: {
                   {i.tipo === "relatorio" && i.relatorio?.startsWith("ger-") && (
                     // Visual da TV gerencial (mig 20261014000002): troca sem recriar o item.
                     <AcessoGate menu={MENU_TVS} acao="alterar">
-                      <Select value={VISUAIS_GERENCIAIS.find((v) => v.valor === i.rel_visual)?.valor ?? "painel"}
+                      <Select value={VISUAIS_GERENCIAIS.find((v) => v.valor === i.rel_visual)?.valor ?? VISUAIS_GERENCIAIS[0].valor}
                         onValueChange={(v) => salvarItem.mutate({ id: i.id, item: { rel_visual: v } })}>
                         <SelectTrigger className="h-7 w-[150px] text-xs" title="Visual da TV"><SelectValue /></SelectTrigger>
                         <SelectContent>{VISUAIS_GERENCIAIS.map((v) => <SelectItem key={v.valor} value={v.valor} className="text-xs">{v.rotulo}</SelectItem>)}</SelectContent>
@@ -436,7 +436,7 @@ function Miniatura({ item }: { item: TvItem }) {
 
 const SEM_CONTRATOS: { id: string; nome: string; encerrado: boolean }[] = [];
 const SEM_ALERTAS: TvAlerta[] = [];
-const VAZIO = { tipo: "relatorio" as TipoItem, titulo: "", url: "", texto: "", cor: "#1d4ed8", duracao: "30", de: "", ate: "", relatorio: "geral", periodo: "12m", contrato: "", visual: "painel" };
+const VAZIO = { tipo: "relatorio" as TipoItem, titulo: "", url: "", texto: "", cor: "#1d4ed8", duracao: "30", de: "", ate: "", relatorio: "geral", periodo: "12m", contrato: "", visual: "painel-claro" };
 
 function NovoItem({ playlistId, proximaOrdem, onRascunho }: { playlistId: string; proximaOrdem: number; onRascunho: (item: ItemTv | null) => void }) {
   const salvar = useSalvarItem();

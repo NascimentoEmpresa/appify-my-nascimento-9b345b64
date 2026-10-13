@@ -71,7 +71,7 @@ export default function TvsIndicadores() {
   const [slug, setSlug] = useState(PAINEIS_GERENCIAIS[0].slug);
   const [aberto, setAberto] = useState<string | null>(null);
   const [verTv, setVerTv] = useState(false);
-  const [visual, setVisual] = useState<VisualGerencial>("painel");
+  const [visual, setVisual] = useState<VisualGerencial>("painel-claro");
   const painel = usePainel(slug);
   const qc = useQueryClient();
   const info = PAINEIS_GERENCIAIS.find((p) => p.slug === slug)!;

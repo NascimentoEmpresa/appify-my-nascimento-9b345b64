@@ -102,7 +102,7 @@ describe("páginas da TV e subindicadores", () => {
     expect(subindicadores(p, "rh_obrigacoes").map((i) => i.codigo)).toEqual(["rh_ob_folhas"]);
     expect(subindicadores(p, null).map((i) => i.codigo)).toEqual(["op_feedbacks"]);
   });
-  it("visual do HTML: o painel inteiro numa tela (até 8); gráficos grandes, 4 por tela (7 → 4 + 3); item antigo/vazio toca o painel escuro", () => {
+  it("visual do HTML: o painel inteiro numa tela (até 8); gráficos grandes, 4 por tela (7 → 4 + 3); item antigo/vazio toca o painel claro (padrão)", () => {
     const sete = painel(Array.from({ length: 7 }, (_, k) => ind({ codigo: `i${k}`, valor: k, ordem: k })));
     expect(paginasPainel(sete, "painel")).toEqual([{ chave: "painel-1", titulo: "Indicadores" }]);
     expect(indicadoresDaTela(sete, "painel", "painel-1")).toHaveLength(7);
@@ -113,8 +113,8 @@ describe("páginas da TV e subindicadores", () => {
     expect(indicadoresDaTela(sete, "graficos", "painel-1")).toHaveLength(4);
     expect(indicadoresDaTela(sete, "graficos", "painel-2")).toHaveLength(3);
     expect(paginasPainel(painel([ind({}), ind({})]), "painel")).toEqual([{ chave: "painel-1", titulo: "Indicadores" }]);
-    expect(visualDoItem(null)).toBe("painel");
-    expect(visualDoItem("classico")).toBe("painel");
+    expect(visualDoItem(null)).toBe("painel-claro");
+    expect(visualDoItem("classico")).toBe("painel-claro");
     expect(visualDoItem("graficos")).toBe("graficos");
     expect(paginasDoRelatorio({ tipo: "gerencial", contrato: null, visual: "graficos", ...sete })).toHaveLength(2);
   });
