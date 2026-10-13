@@ -13,9 +13,12 @@ import {
 } from "lucide-react";
 import {
   temConteudo, validarProva, caminhoNoBucket, embedDeVideo, validarTamanho, formatarMB,
-  LIMITE_UPLOAD_BYTES, ESCOPOS_TREINAMENTO,
+  LIMITE_UPLOAD_BYTES, ESCOPOS_TREINAMENTO, TIPOS_TREINAMENTO, PADRAO_NOTA_MINIMA, PADRAO_MAX_TENTATIVAS,
+  acertosMinimos, juntarGabarito,
   type EscopoTreinamento, type PerguntaProva, type Treinamento,
 } from "./core";
+import { MODULOS_ERP } from "@/pages/chamados/types";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 // =====================================================================
 // TREINAMENTOS — criar e editar um card.
@@ -59,6 +62,12 @@ export function TreinamentoEditor({ aberto, treinamento, escopoPadrao, meuNome, 
   const [anexoArquivo, setAnexoArquivo] = useState<File | null>(null);
   const [prova, setProva] = useState<PerguntaProva[]>([]);
   const [notaMinima, setNotaMinima] = useState(70);
+  // Classificação e regra de tentativas (14/10/2026, mig 20261014000020).
+  const [tipo, setTipo] = useState("");
+  const [moduloSistema, setModuloSistema] = useState<string>("");
+  const [maxTentativas, setMaxTentativas] = useState<number | null>(null);
+  const [tiposUsados, setTiposUsados] = useState<string[]>([...TIPOS_TREINAMENTO]);
+  const [carregandoGabarito, setCarregandoGabarito] = useState(false);
   const [publicado, setPublicado] = useState(true);
   const [escopos, setEscopos] = useState<EscopoTreinamento[]>([escopoPadrao]);
   const [capaPath, setCapaPath] = useState<string | null>(null);
@@ -99,7 +108,13 @@ export function TreinamentoEditor({ aberto, treinamento, escopoPadrao, meuNome, 
     setAnexoPath(t?.anexo_path ?? null);
     setAnexoNome(t?.anexo_nome ?? null);
     setProva(Array.isArray(t?.prova) ? t!.prova! : []);
-    setNotaMinima(t?.nota_minima ?? 70);
+    // Card novo de Treinamentos Sistemas nasce com a regra do pedido: 8 de 10
+    // e 3 tentativas. Nos outros módulos o padrão segue o de antes (70%, sem limite).
+    const novoSistemas = !t && escopoPadrao === "sistemas";
+    setNotaMinima(t?.nota_minima ?? (novoSistemas ? PADRAO_NOTA_MINIMA : 70));
+    setTipo(t?.tipo ?? (novoSistemas ? "Sistema" : ""));
+    setModuloSistema(t?.modulo_sistema ?? "");
+    setMaxTentativas(t ? (t.max_tentativas ?? null) : (novoSistemas ? PADRAO_MAX_TENTATIVAS : null));
     setPublicado(t?.publicado ?? true);
     // Card novo já nasce no módulo de onde o editor foi aberto; editando, vale
     // o que está gravado (que pode ser os dois).
@@ -108,6 +123,41 @@ export function TreinamentoEditor({ aberto, treinamento, escopoPadrao, meuNome, 
     setVideoArquivo(null); setAnexoArquivo(null); setCapaArquivo(null); setCapaPreview(null);
     setAba("video");
   }, [aberto, treinamento, escopoPadrao]);
+
+  // O gabarito não vem no card (a prova chega com correta = -1 para todo
+  // mundo): quem gerencia o lê de TREINAMENTO_GABARITO e ele é juntado aqui.
+  // Sem isto, salvar sem tocar nas respostas marcaria a 1ª alternativa em todas.
+  useEffect(() => {
+    let vivo = true;
+    const t = treinamento;
+    if (!aberto || !t?.id || !Array.isArray(t.prova) || t.prova.length === 0) return;
+    setCarregandoGabarito(true);
+    (async () => {
+      const { data, error } = await (supabase as any).from("TREINAMENTO_GABARITO")
+        .select("respostas").eq("treinamento_id", t.id).maybeSingle();
+      if (!vivo) return;
+      setCarregandoGabarito(false);
+      if (error) {
+        toast({ title: "Não consegui carregar o gabarito", description: error.message, variant: "destructive" });
+        return;
+      }
+      setProva(p => juntarGabarito(p, (data?.respostas ?? null) as Record<string, number> | null));
+    })();
+    return () => { vivo = false; };
+  }, [aberto, treinamento, toast]);
+
+  // Tipos já usados entram nas sugestões junto dos padrões.
+  useEffect(() => {
+    if (!aberto) return;
+    let vivo = true;
+    (async () => {
+      const { data } = await (supabase as any).from("TREINAMENTOS").select("tipo").not("tipo", "is", null);
+      if (!vivo) return;
+      const usados = (data ?? []).map((r: { tipo: string | null }) => String(r.tipo ?? "").trim()).filter(Boolean);
+      setTiposUsados([...new Set<string>([...TIPOS_TREINAMENTO, ...usados])]);
+    })();
+    return () => { vivo = false; };
+  }, [aberto]);
 
   // Capa que já está salva: bucket é privado, então precisa de URL assinada
   // para aparecer no formulário de edição.
@@ -174,10 +224,11 @@ export function TreinamentoEditor({ aberto, treinamento, escopoPadrao, meuNome, 
     if (problema) { toast({ title: "Revise a prova", description: problema, variant: "destructive" }); return; }
     // Sem módulo nenhum o card não apareceria em grade alguma — some do
     // sistema sem erro. O CHECK do banco recusa, mas o aviso tem que ser aqui.
+    if (carregandoGabarito) { toast({ title: "Aguarde o gabarito carregar", variant: "destructive" }); return; }
     if (escopos.length === 0) {
       toast({
         title: "Escolha onde o treinamento aparece",
-        description: "Marque pelo menos um módulo: Encarregados ou Central de Serviços.",
+        description: "Marque pelo menos um módulo: Encarregados, Central de Serviços ou Treinamentos Sistemas.",
         variant: "destructive",
       });
       return;
@@ -238,6 +289,9 @@ export function TreinamentoEditor({ aberto, treinamento, escopoPadrao, meuNome, 
         capa_path: cPath,
         prova: prova.length ? prova : null,
         nota_minima: notaMinima,
+        tipo: tipo.trim() || null,
+        modulo_sistema: moduloSistema || null,
+        max_tentativas: prova.length ? maxTentativas : null,
         publicado,
         escopos,
       };
@@ -314,6 +368,31 @@ export function TreinamentoEditor({ aberto, treinamento, escopoPadrao, meuNome, 
             <Label>Descrição</Label>
             <Textarea value={descricao} onChange={e => setDescricao(e.target.value)} rows={3}
                       placeholder="Sobre o que é este treinamento, para quem serve e o que a pessoa vai saber fazer no fim." />
+          </div>
+
+          {/* Classificação (14/10/2026): o tipo agrupa a grade e o módulo diz de
+              que parte do ERP o vídeo trata — "um vídeo por módulo". */}
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="space-y-1.5">
+              <Label>Tipo de treinamento</Label>
+              <Input list="trn-tipos" value={tipo} onChange={e => setTipo(e.target.value)}
+                     placeholder="Sistema, Segurança do Trabalho…" />
+              <datalist id="trn-tipos">
+                {tiposUsados.map(x => <option key={x} value={x} />)}
+              </datalist>
+            </div>
+            <div className="space-y-1.5">
+              <Label>Módulo do sistema</Label>
+              <Select value={moduloSistema || "_nenhum"} onValueChange={v => setModuloSistema(v === "_nenhum" ? "" : v)}>
+                <SelectTrigger><SelectValue placeholder="Nenhum" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="_nenhum">Nenhum (não é de um módulo)</SelectItem>
+                  {MODULOS_ERP.filter(m => m.value !== "outro").map(m => (
+                    <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
           </div>
 
           {/* Abas do conteúdo. A bolinha verde marca a peça já preenchida. */}
@@ -453,15 +532,49 @@ export function TreinamentoEditor({ aberto, treinamento, escopoPadrao, meuNome, 
                 <Button type="button" variant="outline" onClick={() => setProva(p => [...p, novaQuestao()])}>
                   <Plus className="mr-2 h-4 w-4" /> Adicionar questão
                 </Button>
-                {prova.length > 0 && (
-                  <div className="flex items-center gap-2">
-                    <Label className="text-sm">Nota mínima</Label>
-                    <Input type="number" min={0} max={100} className="w-20" value={notaMinima}
-                           onChange={e => setNotaMinima(Math.max(0, Math.min(100, Number(e.target.value) || 0)))} />
-                    <span className="text-sm text-muted-foreground">% para aprovar</span>
-                  </div>
-                )}
               </div>
+
+              {prova.length > 0 && (
+                <div className="grid gap-3 rounded-lg border p-3 sm:grid-cols-2">
+                  <div className="space-y-1.5">
+                    <Label className="text-sm font-semibold">Nota mínima</Label>
+                    <div className="flex items-center gap-2">
+                      <Input type="number" min={0} max={100} className="w-20" value={notaMinima}
+                             onChange={e => setNotaMinima(Math.max(0, Math.min(100, Number(e.target.value) || 0)))} />
+                      <span className="text-sm text-muted-foreground">% para aprovar</span>
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      = acertar <b className="text-foreground">{acertosMinimos(prova.length, notaMinima)} de {prova.length}</b>{" "}
+                      {prova.length === 1 ? "questão" : "questões"}.
+                    </p>
+                  </div>
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between gap-2">
+                      <Label className="text-sm font-semibold">Limitar tentativas</Label>
+                      <Switch checked={maxTentativas != null}
+                              onCheckedChange={v => setMaxTentativas(v ? PADRAO_MAX_TENTATIVAS : null)} />
+                    </div>
+                    {maxTentativas != null ? (
+                      <>
+                        <div className="flex items-center gap-2">
+                          <Input type="number" min={1} max={20} className="w-20" value={maxTentativas}
+                                 onChange={e => setMaxTentativas(Math.max(1, Math.min(20, Number(e.target.value) || 1)))} />
+                          <span className="text-sm text-muted-foreground">tentativas</span>
+                        </div>
+                        <p className="text-xs text-muted-foreground">
+                          Reprovou: assiste o vídeo de novo e refaz. Reprovou {maxTentativas}x seguidas: a prova trava e
+                          quem recebe alertas de treinamento é avisado para verificar e liberar.
+                        </p>
+                      </>
+                    ) : (
+                      <p className="text-xs text-muted-foreground">Sem limite: a pessoa refaz quantas vezes precisar (revendo o vídeo a cada reprovação).</p>
+                    )}
+                  </div>
+                </div>
+              )}
+              {carregandoGabarito && (
+                <p className="flex items-center gap-2 text-xs text-muted-foreground"><Loader2 className="h-3.5 w-3.5 animate-spin" /> Carregando o gabarito…</p>
+              )}
             </div>
           )}
 
@@ -472,8 +585,9 @@ export function TreinamentoEditor({ aberto, treinamento, escopoPadrao, meuNome, 
           <div className="rounded-lg border p-3">
             <Label className="text-sm font-semibold">Aparece em</Label>
             <p className="text-xs text-muted-foreground">
-              Cada módulo tem a sua grade. Marque os dois para o mesmo treinamento
-              valer nos dois — continua sendo um só, com uma prova e um histórico.
+              Cada módulo tem a sua grade. Marque mais de um para o mesmo treinamento
+              valer em todos — continua sendo um só, com uma prova e um histórico.
+              Treinamentos Sistemas aparece para todo usuário logado.
             </p>
             <div className="mt-3 flex flex-wrap gap-2">
               {ESCOPOS_TREINAMENTO.map(e => {
