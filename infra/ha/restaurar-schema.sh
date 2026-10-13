@@ -36,18 +36,32 @@ log(){ echo "[$(date +%H:%M:%S)] $*"; }
 D(){ PGPASSWORD="$SENHA_DESTINO" psql -h "$DESTINO_HOST" -p 5432 -U postgres "$@"; }
 
 # ── 1. dump da producao (leitura pura) ──────────────────────────────────────
+# SEM --no-privileges, de proposito. Com ele o dump sai limpo e bonito -- e
+# SEM UM UNICO GRANT. O resultado: o PostgREST conecta, enxerga o schema e
+# responde 42501 "permission denied for table" em tudo; o GoTrue nao consegue
+# nem criar a propria tabela de controle ("permission denied for schema
+# public") e fica em laco de reinicio; o storage morre com "relation
+# migrations does not exist". Medido em 09-13/10/2026.
+#
+# Os GRANTs sao parte do modelo de acesso, nao enfeite: no Supabase o padrao
+# e GRANT amplo para anon/authenticated e a RLS decidindo linha a linha. Sem
+# os GRANTs, a RLS nem chega a ser consultada.
+#
+# --no-owner CONTINUA: os objetos passam a pertencer a quem restaura, o que
+# evita erro de troca de dono e nao muda em nada o acesso -- quem manda e a
+# combinacao GRANT + politica de RLS.
 export PGPASSWORD="$SENHA_SUPABASE"
 if [ ! -s schema-public.sql ]; then
   log "dump do schema public"
   "$PGB/pg_dump" -h "$ORIGEM_HOST" -p 5432 -U "postgres.$REF" -d postgres \
-    --schema-only --schema=public --no-owner --no-privileges -f schema-public.sql
+    --schema-only --schema=public --no-owner -f schema-public.sql
 fi
 if [ ! -s schema-auth-storage.sql ]; then
   # auth e storage vem da producao em vez de serem reescritos a mao: e o
   # contrato real que as 1.416 politicas assumem, nao uma reconstrucao.
   log "dump dos schemas auth e storage"
   "$PGB/pg_dump" -h "$ORIGEM_HOST" -p 5432 -U "postgres.$REF" -d postgres \
-    --schema-only --schema=auth --schema=storage --no-owner --no-privileges \
+    --schema-only --schema=auth --schema=storage --no-owner \
     -f schema-auth-storage.sql
 fi
 
@@ -75,6 +89,24 @@ echo "       erros: $(grep -c 'ERROR' passo5.log || echo 0)"
 # passada sao todos "already exists" -- sinal de que nada ficou faltando.
 log "auth/storage (2 de 2) -- aqui so deve sobrar 'already exists'"
 D -d "$BANCO" -f schema-auth-storage.sql >/dev/null 2>passo6.log || true
+
+# ── 6b. historico de migracoes do GoTrue e do Storage ───────────────────────
+# O dump e schema-only, entao auth.schema_migrations e storage.migrations vem
+# VAZIAS. O GoTrue e o Storage leem essas tabelas para saber o que ja rodou --
+# vazias, eles concluem que nada foi aplicado e tentam criar tudo do zero por
+# cima do schema restaurado. O GoTrue entra em laco de reinicio em
+# 00_init_auth_schema.up.sql; o Storage morre em "relation migrations does not
+# exist". Medido em 13/10/2026.
+log "historico de migracoes do GoTrue e do Storage"
+PGPASSWORD="$SENHA_SUPABASE" "$PGB/pg_dump" -h "$ORIGEM_HOST" -p 5432 -U "postgres.$REF" -d postgres \
+  --data-only --table=auth.schema_migrations --table=storage.migrations \
+  -f historico-migracoes.sql
+D -d "$BANCO" -q -c "truncate auth.schema_migrations, storage.migrations" >/dev/null 2>&1 || true
+D -d "$BANCO" -q -f historico-migracoes.sql >/dev/null 2>&1 || true
+
+# ── 6c. donos, search_path e limites de tempo ───────────────────────────────
+log "pos-restauracao (donos de auth/storage, search_path, timeouts)"
+D -d "$BANCO" -q -f "$(dirname "$0")/pos-restauracao.sql" 2>&1 | grep -vi notice || true
 
 # ── 7. conferencia ──────────────────────────────────────────────────────────
 echo
