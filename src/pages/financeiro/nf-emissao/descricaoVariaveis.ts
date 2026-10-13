@@ -17,10 +17,12 @@ export const VARIAVEIS_DESCRICAO: VariavelDescricao[] = [
   { chave: "valor_exec", rotulo: "Valor do contrato executado", tipo: "dinheiro" },
   { chave: "valor_bruto", rotulo: "Valor bruto da NF", tipo: "dinheiro" },
   { chave: "mao_obra", rotulo: "Mão de obra", tipo: "dinheiro" },
+  { chave: "mao_obra_por_item", rotulo: "Mão de obra por item (um por linha)", tipo: "texto" },
   { chave: "va", rotulo: "Vale alimentação", tipo: "dinheiro" },
   { chave: "vt", rotulo: "Vale transporte", tipo: "dinheiro" },
   { chave: "materiais", rotulo: "Materiais", tipo: "dinheiro" },
   { chave: "faltas", rotulo: "Desconto de faltas", tipo: "dinheiro" },
+  { chave: "faltas_por_local", rotulo: "Faltas por local (escola: valor − faltas = líquido)", tipo: "texto" },
   { chave: "posto_nao_implementado", rotulo: "Posto não implementado", tipo: "dinheiro" },
   { chave: "multas", rotulo: "Multas", tipo: "dinheiro" },
   { chave: "glosas", rotulo: "Glosas", tipo: "dinheiro" },
@@ -42,6 +44,7 @@ export interface ContextoDescricao {
     justificativa_multas?: string | null;
     justificativa_glosas?: string | null;
     justificativa_outros_descontos?: string | null;
+    identificacao?: string | null;
   })[];
   codigo_servico?: string | null;
   cnae?: string | null;
@@ -75,10 +78,20 @@ export function valoresDasVariaveis(ctx: ContextoDescricao): Record<string, numb
     valor_exec: soma((i) => i.valor_contrato_exec),
     valor_bruto: soma((i) => i.vlr_bruto),
     mao_obra: soma((i) => i.vlr_mao_obra),
+    // SIS-2026-0639: nota com vários itens — uma linha por item com a mão de obra dele.
+    mao_obra_por_item: ctx.itens
+      .map((i, k) => `${(i.identificacao ?? "").trim() || `Item ${k + 1}`}: ${fmtBRL(i.vlr_mao_obra)}`)
+      .join("\n"),
     va: soma((i) => i.vlr_va),
     vt: soma((i) => i.vlr_vt),
     materiais: soma((i) => i.vlr_materiais),
     faltas: soma((i) => i.faltas),
+    // SIS-2026-0633: uma linha por local com falta, como o texto da planilha do Veranópolis:
+    // "E.M.E.I. ANITA (R$ 17.219,91 - R$ 382,66 DE FALTAS = R$ 16.837,25)".
+    faltas_por_local: ctx.itens
+      .filter((i) => i.faltas > 0)
+      .map((i) => `${(i.identificacao ?? "").trim() || "Item"} (${fmtBRL(i.valor_contrato_exec)} - ${fmtBRL(i.faltas)} DE FALTAS = ${fmtBRL(i.valor_contrato_exec - i.faltas)})`)
+      .join("\n"),
     posto_nao_implementado: soma((i) => i.posto_nao_implementado),
     multas: soma((i) => i.multas),
     glosas: soma((i) => i.glosas),

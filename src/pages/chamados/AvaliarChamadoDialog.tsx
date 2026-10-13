@@ -17,11 +17,14 @@ export function AvaliarChamadoDialog({
   onOpenChange,
   chamado,
   onAvaliado,
+  comoParticipante = false,
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
   chamado: { id: string; numero?: string | null } | null;
   onAvaliado?: () => void;
+  /** Avaliação de participante extra (pendencia "avaliacao_participante"). */
+  comoParticipante?: boolean;
 }) {
   const qc = useQueryClient();
   const { user } = useAuth();
@@ -79,12 +82,16 @@ export function AvaliarChamadoDialog({
       return;
     }
     setEnviando(true);
-    const { error } = await (supabase as any).from("CHAMADO_SISTEMA_AVALIACAO").insert({
-      chamado_id: chamado.id,
-      solicitante_id: user?.id,
-      ...Object.fromEntries(CRITERIOS_AVALIACAO.map((c) => [c.key, notas[c.key]])),
-      comentario: comentario.trim() || null,
-    });
+    // Participante extra (mig 20261009000003) grava na tabela própria — a
+    // CHAMADO_SISTEMA_AVALIACAO é uma por chamado, a do solicitante.
+    const notasCriterios = Object.fromEntries(CRITERIOS_AVALIACAO.map((c) => [c.key, notas[c.key]]));
+    const { error } = comoParticipante
+      ? await (supabase as any).from("CHAMADO_SISTEMA_PARTICIPANTE_AVALIACAO").insert({
+          chamado_id: chamado.id, user_id: user?.id, ...notasCriterios, comentario: comentario.trim() || null,
+        })
+      : await (supabase as any).from("CHAMADO_SISTEMA_AVALIACAO").insert({
+          chamado_id: chamado.id, solicitante_id: user?.id, ...notasCriterios, comentario: comentario.trim() || null,
+        });
     setEnviando(false);
     if (error) {
       // O CHECK do banco é a última barreira; traduz pra não vazar SQL na tela.

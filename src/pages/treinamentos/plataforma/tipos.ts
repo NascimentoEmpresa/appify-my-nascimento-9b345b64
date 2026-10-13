@@ -52,6 +52,7 @@ export interface AlunoLista {
   status: StatusAluno; acesso_completo: boolean; expira_em: string | null;
   created_at: string; ultimo_acesso_em: string | null;
   tags: string[]; tag_ids: string[]; cursos: number; aulas_concluidas: number;
+  contrato: string | null;   // mig 20261009000001
 }
 
 export interface Matricula {

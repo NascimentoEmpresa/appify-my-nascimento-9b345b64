@@ -19,6 +19,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { CheckCircle2, MessageSquare, XCircle, Paperclip, ArrowLeft, Trash2, Star, RotateCcw, GitPullRequest } from "lucide-react";
 import { ExcluirChamadoDialog } from "./ExcluirChamadoDialog";
 import { abrirPrGithub } from "./abrirPrGithub";
+import { BotaoAdicionarParticipante } from "./ParticipantesChamado";
 import { ReabrirChamadoDialog } from "./ReabrirChamadoDialog";
 import { ChatChamado } from "./ChatChamado";
 import { BotaoStatusChamado, CardTreinamento, CardValidacaoPresidencia, useValidacaoChamado } from "./StatusValidacao";
@@ -333,6 +334,9 @@ export default function ExecutarChamado() {
               >
                 <GitPullRequest className="h-4 w-4 text-primary" /> Abrir PR
               </Button>
+              {/* Participantes extras (mig 20261009000003): veem o chamado e,
+                  concluído, também avaliam antes de abrir outro chamado. */}
+              <BotaoAdicionarParticipante chamado={chamado} />
               {/* Logo abaixo do selo de concluído: é ali que se percebe que o
                   chamado fechou cedo demais — ex.: falta a 2ª PR da entrega. */}
               {podeReabrirChamado(chamado, { canCoordenar, canAprovar, canDev, userId: user?.id }) && (
