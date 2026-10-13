@@ -45,9 +45,13 @@ export function NovaSolicitacaoModal({ open, onOpenChange, contratos }: Props) {
   const [enviando, setEnviando] = useState(false);
 
   const competenciaISO = competencia ? `${competencia}-01` : null;
-  const { data: solAtiva } = useSolicitacaoAtivaPorCompetencia(contratoId, competenciaISO);
-  const emReabertura = solAtiva?.status === "enviado";
-  const bloqueadoOutraAtiva = !!solAtiva && solAtiva.status !== "enviado";
+  const { data: referencia } = useSolicitacaoAtivaPorCompetencia(contratoId, competenciaISO);
+  // SIS-2026-0621: já existe solicitação desse contrato nessa competência? A nova vira a próxima
+  // (2ª, 3ª...) em qualquer status; só a "Enviada" é arquivada ao criar (ver função do banco).
+  const solAtiva = referencia?.ativa ?? null;
+  const proxima = referencia?.proxima ?? 1;
+  const emReabertura = !!solAtiva;
+  const anteriorSeraArquivada = solAtiva?.status === "enviado";
 
   const { data: itensAnteriores = [] } = useItensSolicitacaoAjuste(emReabertura ? solAtiva!.id : null);
   const { data: tipos = [] } = useTiposSolicitacaoAjuste();
@@ -115,7 +119,7 @@ export function NovaSolicitacaoModal({ open, onOpenChange, contratos }: Props) {
         itens: itensValidos,
         itensImportarIds: emReabertura ? Array.from(itensImportar) : undefined,
       });
-      toast.success(emReabertura ? "Solicitação reaberta." : "Solicitação criada.");
+      toast.success(proxima > 1 ? `Solicitação criada (${proxima}ª da competência).` : "Solicitação criada.");
       resetar();
       onOpenChange(false);
     } catch (e: any) {
@@ -129,11 +133,12 @@ export function NovaSolicitacaoModal({ open, onOpenChange, contratos }: Props) {
     <Dialog open={open} onOpenChange={(v) => { if (!v) resetar(); onOpenChange(v); }}>
       <DialogContent className="max-h-[85vh] max-w-2xl overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>{emReabertura ? "Reabrir Solicitação" : "Nova Solicitação"}</DialogTitle>
+          <DialogTitle>{proxima > 1 ? `Nova Solicitação — ${proxima}ª deste contrato e competência` : "Nova Solicitação"}</DialogTitle>
           {emReabertura && (
             <DialogDescription>
-              Já existe uma solicitação enviada para este contrato e competência (iteração {solAtiva!.iteracao}). Ela será
-              arquivada e uma nova será criada — marque abaixo os itens que quer reaproveitar.
+              Já existe a {solAtiva!.iteracao}ª solicitação para este contrato e competência
+              {anteriorSeraArquivada ? " (enviada): ela será arquivada" : " (em andamento): ela continua ativa"} e esta será a {proxima}ª —
+              marque abaixo os itens que quer reaproveitar.
             </DialogDescription>
           )}
         </DialogHeader>
@@ -150,9 +155,9 @@ export function NovaSolicitacaoModal({ open, onOpenChange, contratos }: Props) {
             </div>
           </div>
 
-          {bloqueadoOutraAtiva && (
-            <p className="rounded border border-destructive/30 bg-destructive/5 p-2 text-sm text-destructive">
-              Já existe uma solicitação em conferência para este contrato e competência — conclua-a antes de criar outra.
+          {proxima > 1 && !emReabertura && (
+            <p className="rounded border bg-muted/40 p-2 text-sm text-muted-foreground">
+              Este contrato e competência já tiveram {proxima - 1} solicitação(ões) (arquivadas). Esta será a {proxima}ª.
             </p>
           )}
 
@@ -232,8 +237,8 @@ export function NovaSolicitacaoModal({ open, onOpenChange, contratos }: Props) {
 
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>Cancelar</Button>
-          <Button onClick={handleSalvar} disabled={enviando || bloqueadoOutraAtiva}>
-            {enviando ? "Salvando..." : emReabertura ? "Reabrir" : "Criar solicitação"}
+          <Button onClick={handleSalvar} disabled={enviando}>
+            {enviando ? "Salvando..." : proxima > 1 ? `Criar ${proxima}ª solicitação` : "Criar solicitação"}
           </Button>
         </DialogFooter>
       </DialogContent>

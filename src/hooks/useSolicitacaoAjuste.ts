@@ -224,22 +224,32 @@ export function useHistoricoCompetenciaSolicitacaoAjuste(contratoId: string | nu
   });
 }
 
-// Pré-checagem pro front decidir entre "Nova Solicitação" e "Reabertura"
-// antes de chamar o RPC (que valida tudo de novo server-side).
+// SIS-2026-0621: pré-checagem do par contrato+competência. Qualquer pedido novo vira a próxima
+// iteração (2ª, 3ª...), seja qual for o status da anterior; `ativa` é a de maior iteração
+// ainda não arquivada (de onde vêm os itens importáveis) e `proxima` o número que a nova terá.
+// A função do banco (solicitacao_ajuste_criar) decide tudo de novo server-side.
+export interface ReferenciaCompetenciaSolicitacao {
+  ativa: { id: string; status: StatusSolicitacaoAjuste; iteracao: number } | null;
+  proxima: number;
+}
+
 export function useSolicitacaoAtivaPorCompetencia(contratoId: string | null, competencia: string | null) {
   return useQuery({
     queryKey: ["sol_ajuste_ativa_comp", contratoId, competencia],
     enabled: !!contratoId && !!competencia,
-    queryFn: async () => {
+    queryFn: async (): Promise<ReferenciaCompetenciaSolicitacao> => {
       const { data, error } = await (supabase as any)
         .from("SOLICITACAO_AJUSTE")
         .select("id, status, iteracao")
         .eq("contrato_id", contratoId)
         .eq("competencia", competencia)
-        .neq("status", "arquivada")
-        .maybeSingle();
+        .order("iteracao", { ascending: false });
       if (error) throw error;
-      return data as { id: string; status: StatusSolicitacaoAjuste; iteracao: number } | null;
+      const linhas = (data ?? []) as { id: string; status: StatusSolicitacaoAjuste; iteracao: number }[];
+      return {
+        ativa: linhas.find((l) => l.status !== "arquivada") ?? null,
+        proxima: (linhas[0]?.iteracao ?? 0) + 1,
+      };
     },
   });
 }
