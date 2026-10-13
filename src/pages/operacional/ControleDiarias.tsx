@@ -592,7 +592,7 @@ export default function ControleDiarias({
           <StatCard icon={Wallet} label="Valor total aprovado" value={`R$ ${fmtBRL(resumo.valorAprovado)}`} tone="muted" />
         </div>
 
-        {/* Faltante que bateu ponto (mig 20261007000021): as pendentes não passam na aprovação. */}
+        {/* Faltante que bateu ponto (mig 20261007000021): aviso — desde a mig 20261013000001 a aprovação é liberada e quem aprova decide. */}
         {(() => {
           const pend = solicitacoes.filter((x) => (x.status === "solicitada" || x.status === "em_ajuste") && pontoPorSolicitacao.has(x.uuid));
           const pagas = solicitacoes.filter((x) => x.status !== "solicitada" && x.status !== "em_ajuste" && pontoPorSolicitacao.has(x.uuid));
@@ -604,7 +604,7 @@ export default function ControleDiarias({
                 <p className="font-semibold text-destructive">Faltante bateu ponto no dia da diária</p>
                 {pend.length > 0 && (
                   <p className="text-xs text-muted-foreground">
-                    <b className="text-foreground">{pend.length}</b> pendente(s) — {pend.map((x) => x.id).join(", ")} — não podem ser aprovadas: reprove ou devolva para ajuste.
+                    <b className="text-foreground">{pend.length}</b> pendente(s) — {pend.map((x) => x.id).join(", ")} — confira antes de aprovar.
                   </p>
                 )}
                 {pagas.length > 0 && (
