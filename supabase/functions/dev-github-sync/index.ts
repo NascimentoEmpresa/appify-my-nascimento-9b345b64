@@ -10,6 +10,21 @@
 //   2) detalha até LOTE PRs pendentes e devolve quantas ainda faltam.
 // A tela chama de novo enquanto `pendentes > 0`.
 //
+// FREIO (13/10/2026): depois de uma sincronização as DUAS contas do GitHub do
+// Pablo foram suspensas. A versão anterior detalhava 20 PRs por chamada, 5 em
+// paralelo, e a tela repetia a chamada até 60 vezes seguidas — a carga
+// completa (833 PRs × detalhe+commits+arquivos, mais a história da main) virava
+// milhares de requisições em poucos minutos com o token PESSOAL de alguém.
+// Não dá para afirmar que foi isso que causou a suspensão, mas a função não
+// pode mais conseguir fazer rajada nenhuma:
+//   · uma execução por vez no sistema inteiro e no máximo uma a cada
+//     INTERVALO_MIN (trava atômica em DEV_GITHUB_SYNC.ultima_em);
+//   · no máximo MAX_REQ requisições por execução, uma de cada vez, com
+//     PAUSA_MS entre elas (o GitHub pede chamadas em série, sem paralelo);
+//   · para na primeira resposta 403/429 ou com pouca cota restante — sem
+//     tentar de novo;
+//   · a tela chama UMA vez por clique (sem laço). O resto vem nas próximas.
+//
 // Secrets: GITHUB_TOKEN (o mesmo de hora-extra-pr-info — Metadata e Pull
 // requests = Read-only bastam: commits e arquivos são lidos PELA PR),
 // SUPABASE_URL, SUPABASE_ANON_KEY e SUPABASE_SERVICE_ROLE_KEY.
@@ -22,8 +37,11 @@ const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const GITHUB_TOKEN = Deno.env.get("GITHUB_TOKEN") ?? "";
 const REPOSITORIO = "NascimentoEmpresa/appify-my-nascimento-9b345b64";
 const API = `https://api.github.com/repos/${REPOSITORIO}`;
-const LOTE = 20;
-const PARALELO = 5;
+const LOTE = 5;              // PRs detalhadas por execução
+const MAX_REQ = 30;          // requisições ao GitHub por execução, no total
+const PAUSA_MS = 1000;       // entre uma requisição e a próxima
+const INTERVALO_MIN = 10;    // minutos entre execuções (o sistema inteiro)
+const COTA_MINIMA = 1000;    // x-ratelimit-remaining abaixo disso = para
 
 const cors = {
   "Access-Control-Allow-Origin": "*",
@@ -33,11 +51,24 @@ const cors = {
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { ...cors, "Content-Type": "application/json" } });
 
+const esperar = (ms: number) => new Promise((ok) => setTimeout(ok, ms));
+class OrcamentoEsgotado extends Error {}
+
+// Contador por execução (zerado depois da trava; a trava garante uma por vez).
+let feitas = 0;
 const gh = async <T>(caminho: string): Promise<T> => {
+  if (feitas >= MAX_REQ) throw new OrcamentoEsgotado();
+  if (feitas > 0) await esperar(PAUSA_MS);
+  feitas++;
   const r = await fetch(`${API}${caminho}`, {
     headers: { Accept: "application/vnd.github+json", "User-Agent": "erp-dev-github", Authorization: `Bearer ${GITHUB_TOKEN}` },
   });
+  if (r.status === 403 || r.status === 429) {
+    throw new Error(`GitHub recusou (${r.status}) em ${caminho} — limite de uso ou token bloqueado. Nada foi repetido.`);
+  }
   if (!r.ok) throw new Error(`GitHub ${r.status} em ${caminho}`);
+  const resta = Number(r.headers.get("x-ratelimit-remaining") ?? "99999");
+  if (resta < COTA_MINIMA) feitas = MAX_REQ;      // esta resposta vale; as próximas não saem
   return r.json() as Promise<T>;
 };
 
@@ -74,12 +105,28 @@ Deno.serve(async (req) => {
 
   const admin = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false } });
 
+  // Trava atômica: só passa quem conseguir marcar ultima_em e a anterior for
+  // mais velha que INTERVALO_MIN — dois cliques (ou duas pessoas) não somam.
+  const limite = new Date(Date.now() - INTERVALO_MIN * 60_000).toISOString();
+  const { data: trava, error: erroTrava } = await admin.from("DEV_GITHUB_SYNC")
+    .update({ ultima_em: new Date().toISOString(), ultima_por: sessao.user.email ?? null })
+    .eq("id", 1).or(`ultima_em.is.null,ultima_em.lt.${limite}`).select("id");
+  if (erroTrava) return json({ error: erroTrava.message }, 500);
+  if (!trava?.length) {
+    const { data: s } = await admin.from("DEV_GITHUB_SYNC").select("ultima_em").eq("id", 1).maybeSingle();
+    const libera = s?.ultima_em ? new Date(s.ultima_em).getTime() + INTERVALO_MIN * 60_000 : Date.now();
+    const min = Math.max(1, Math.ceil((libera - Date.now()) / 60_000));
+    return json({ error: `Sincronizado há pouco. Para não sobrecarregar o GitHub, a próxima fica liberada em ${min} min.` }, 429);
+  }
+  feitas = 0;
+
+  let novas = 0, daMain = 0;
+  const detalhadasOk: number[] = [];
   try {
     // ── 1) Lista incremental ───────────────────────────────────────────
     const { data: cache } = await admin.from("DEV_GITHUB_PR").select("numero, atualizado_em");
     const conhecido = new Map<number, string>((cache ?? []).map((c) => [c.numero as number, c.atualizado_em as string]));
-    let novas = 0;
-    for (let pagina = 1; pagina <= 30; pagina++) {
+    for (let pagina = 1; pagina <= 3; pagina++) {
       const lista = await gh<PrLista[]>(`/pulls?state=all&sort=updated&direction=desc&per_page=100&page=${pagina}`);
       if (!lista.length) break;
       const mudaram = lista.filter((p) => {
@@ -107,8 +154,7 @@ Deno.serve(async (req) => {
     // O GitHub conta os commits da MAIN — inclusive merges e o que o Lovable
     // commita direto nela, que não aparecem em nenhuma PR (mig 20261009000002).
     // Mais novos primeiro: a primeira página toda já marcada = o resto também.
-    let daMain = 0;
-    for (let pg = 1; pg <= 80; pg++) {               // até 8.000 commits numa execução
+    for (let pg = 1; pg <= 3; pg++) {                // o resto vem nas próximas execuções
       const lista = await gh<CommitGh[]>(`/commits?sha=main&per_page=100&page=${pg}`);
       if (!lista.length) break;
       const shas = lista.map((c) => c.sha);
@@ -142,7 +188,7 @@ Deno.serve(async (req) => {
         if (c.length < 100) break;
       }
       const arquivos: ArquivoGh[] = [];
-      for (let pg = 1; pg <= 30; pg++) {           // até 3.000 arquivos
+      for (let pg = 1; pg <= 3; pg++) {            // até 300 arquivos (migrations da PR)
         const a = await gh<ArquivoGh[]>(`/pulls/${n}/files?per_page=100&page=${pg}`);
         arquivos.push(...a);
         if (a.length < 100) break;
@@ -166,15 +212,23 @@ Deno.serve(async (req) => {
       if (error) throw new Error(error.message);
     };
 
-    for (let i = 0; i < numeros.length; i += PARALELO) {
-      await Promise.all(numeros.slice(i, i + PARALELO).map(detalhar));
+    // Uma de cada vez — nada de paralelo contra a API do GitHub.
+    for (const n of numeros) {
+      await detalhar(n);
+      detalhadasOk.push(n);
     }
-
+  } catch (e) {
+    if (!(e instanceof OrcamentoEsgotado)) {
+      const msg = e instanceof Error ? e.message : String(e);
+      await admin.from("DEV_GITHUB_SYNC").update({ ultimo_erro: msg }).eq("id", 1);
+      return json({ error: `Falha ao sincronizar com o GitHub: ${msg}` }, 502);
+    }
+    // Orçamento da execução acabou: o que já foi gravado fica; o resto vem depois.
+  }
+  try {
     const { count } = await admin.from("DEV_GITHUB_PR").select("numero", { count: "exact", head: true }).is("detalhado_em", null);
-    await admin.from("DEV_GITHUB_SYNC").update({
-      ultima_em: new Date().toISOString(), ultima_por: sessao.user.email ?? null, ultimo_erro: null,
-    }).eq("id", 1);
-    return json({ novas, daMain, detalhadas: numeros.length, pendentes: count ?? 0 });
+    await admin.from("DEV_GITHUB_SYNC").update({ ultimo_erro: null }).eq("id", 1);
+    return json({ novas, daMain, detalhadas: detalhadasOk.length, pendentes: count ?? 0, requisicoes: feitas, intervalo_min: INTERVALO_MIN });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     await admin.from("DEV_GITHUB_SYNC").update({ ultimo_erro: msg }).eq("id", 1);
