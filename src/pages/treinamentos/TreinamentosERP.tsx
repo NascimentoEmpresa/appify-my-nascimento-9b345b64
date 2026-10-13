@@ -8,8 +8,9 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
   GraduationCap, Video, Paperclip, ListChecks, Plus, Search, Pencil, Trash2,
-  CheckCircle2, EyeOff, PlayCircle, Loader2, Award, BarChart3,
+  CheckCircle2, EyeOff, PlayCircle, Loader2, Award, BarChart3, Lock, RotateCcw, Tag, Boxes,
 } from "lucide-react";
+import { MODULOS_ERP, labelDe } from "@/pages/chamados/types";
 import { AcessoGate } from "@/components/auth/AcessoGate";
 import { TreinamentoEditor } from "./treinamento/TreinamentoEditor";
 import { TreinamentoVisor } from "./treinamento/TreinamentoVisor";
@@ -41,12 +42,24 @@ interface Conclusao {
   aprovado: boolean | null;
 }
 
+/** Situação da pessoa na prova (TREINAMENTO_PROVA_ESTADO, mig 20261014000020). */
+interface EstadoCard {
+  treinamento_id: string;
+  falhas_seguidas: number;
+  bloqueado: boolean;
+}
+
 interface Props {
   /** De qual porta a pessoa entrou. Define a grade e o padrão do editor. */
   escopo: EscopoTreinamento;
+  /**
+   * Dentro de outra página (Treinamentos Sistemas, que já tem o próprio
+   * título e abas): troca o cabeçalho grande por uma barra de ferramentas.
+   */
+  embutido?: boolean;
 }
 
-export default function TreinamentosERP({ escopo }: Props) {
+export default function TreinamentosERP({ escopo, embutido = false }: Props) {
   const { user } = useAuth();
   const meuNome = useMeuNome();
   const { can } = usePermissoes();
@@ -59,6 +72,10 @@ export default function TreinamentosERP({ escopo }: Props) {
   const [lista, setLista] = useState<Treinamento[]>([]);
   const [capas, setCapas] = useState<Record<string, string>>({});
   const [conclusoes, setConclusoes] = useState<Record<string, Conclusao>>({});
+  const [estados, setEstados] = useState<Record<string, EstadoCard>>({});
+  // Filtros por tipo e módulo (14/10/2026): "" = todos.
+  const [filtroTipo, setFiltroTipo] = useState("");
+  const [filtroModulo, setFiltroModulo] = useState("");
   const [carregando, setCarregando] = useState(true);
   const [busca, setBusca] = useState("");
   const [editorAberto, setEditorAberto] = useState(false);
@@ -75,7 +92,7 @@ export default function TreinamentosERP({ escopo }: Props) {
   const carregar = useCallback(async () => {
     // Os dois blocos em paralelo: a grade não precisa esperar o histórico
     // para desenhar, e serializar aqui dobrava o tempo de abertura à toa.
-    const [t, c] = await Promise.all([
+    const [t, c, e] = await Promise.all([
       (supabase as any).from("TREINAMENTOS")
         .select("*")
         // `contains` = o array da linha contém este escopo. Traz também os
@@ -84,6 +101,8 @@ export default function TreinamentosERP({ escopo }: Props) {
         .order("ordem", { ascending: true }).order("created_at", { ascending: false }),
       (supabase as any).from("TREINAMENTO_CONCLUSAO")
         .select("treinamento_id, prova_nota, aprovado").eq("user_id", user?.id ?? ""),
+      (supabase as any).from("TREINAMENTO_PROVA_ESTADO")
+        .select("treinamento_id, falhas_seguidas, bloqueado").eq("user_id", user?.id ?? ""),
     ]);
     if (t.error) {
       toast({ title: "Não deu para carregar os treinamentos", description: t.error.message, variant: "destructive" });
@@ -93,6 +112,9 @@ export default function TreinamentosERP({ escopo }: Props) {
     const mapa: Record<string, Conclusao> = {};
     for (const row of (c.data ?? []) as Conclusao[]) mapa[row.treinamento_id] = row;
     setConclusoes(mapa);
+    const mapaEst: Record<string, EstadoCard> = {};
+    for (const row of (e.data ?? []) as EstadoCard[]) mapaEst[row.treinamento_id] = row;
+    setEstados(mapaEst);
     setCarregando(false);
 
     // As capas depois da grade, e numa chamada só: o bucket é privado, então
@@ -120,15 +142,27 @@ export default function TreinamentosERP({ escopo }: Props) {
   // Visualizações e curtidas de cada vídeo, numa chamada só (mig 20261005000004).
   const numeros = useNumerosTreinamentos(useMemo(() => lista.map(x => x.id), [lista]));
 
+  // Os tipos e módulos que existem na grade viram os filtros.
+  const tipos = useMemo(
+    () => [...new Set(lista.map(t => (t.tipo ?? "").trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b, "pt-BR")),
+    [lista]);
+  const modulos = useMemo(
+    () => [...new Set(lista.map(t => t.modulo_sistema ?? "").filter(Boolean))],
+    [lista]);
+
   const filtrados = useMemo(() => {
     const q = busca.trim().toLowerCase();
-    if (!q) return lista;
     return lista.filter(t =>
-      t.titulo.toLowerCase().includes(q) || (t.descricao ?? "").toLowerCase().includes(q));
-  }, [lista, busca]);
+      (!filtroTipo || (t.tipo ?? "").trim() === filtroTipo)
+      && (!filtroModulo || t.modulo_sistema === filtroModulo)
+      && (!q || t.titulo.toLowerCase().includes(q) || (t.descricao ?? "").toLowerCase().includes(q)
+             || (t.tipo ?? "").toLowerCase().includes(q)
+             || labelDe(MODULOS_ERP, t.modulo_sistema).toLowerCase().includes(q)));
+  }, [lista, busca, filtroTipo, filtroModulo]);
 
+  // Reprovado não conta como feito: com prova, feito é aprovado.
   const feitos = useMemo(
-    () => lista.filter(t => conclusoes[t.id]).length, [lista, conclusoes]);
+    () => lista.filter(t => conclusoes[t.id] && conclusoes[t.id].aprovado !== false).length, [lista, conclusoes]);
 
   const excluir = async (t: Treinamento) => {
     if (!window.confirm(
@@ -144,10 +178,17 @@ export default function TreinamentosERP({ escopo }: Props) {
     carregar();
   };
 
+  const resumo = carregando ? "Carregando…"
+    : lista.length === 0 ? "Nenhum treinamento publicado ainda"
+    : `${lista.length} ${lista.length === 1 ? "treinamento" : "treinamentos"} · você concluiu ${feitos}`;
+
   return (
-    <div className="space-y-6 p-4 md:p-6">
+    <div className={embutido ? "space-y-6" : "space-y-6 p-4 md:p-6"}>
       {/* ---- cabeçalho ---- */}
       <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+        {embutido ? (
+          <p className="text-sm text-muted-foreground">{resumo}</p>
+        ) : (
         <div className="flex items-center gap-3">
           <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-br from-primary to-primary/60 text-primary-foreground shadow-lg">
             <GraduationCap className="h-6 w-6" />
@@ -156,13 +197,10 @@ export default function TreinamentosERP({ escopo }: Props) {
             <h1 className="text-2xl font-bold tracking-tight">
               {escopo === "central_servicos" ? "Treinamentos" : "Treinamentos ERP"}
             </h1>
-            <p className="text-sm text-muted-foreground">
-              {carregando ? "Carregando…"
-                : lista.length === 0 ? "Nenhum treinamento publicado ainda"
-                : `${lista.length} ${lista.length === 1 ? "treinamento" : "treinamentos"} · você concluiu ${feitos}`}
-            </p>
+            <p className="text-sm text-muted-foreground">{resumo}</p>
           </div>
         </div>
+        )}
 
         <div className="flex items-center gap-2">
           <div className="relative">
@@ -188,6 +226,36 @@ export default function TreinamentosERP({ escopo }: Props) {
       </div>
 
       {comSistemas && <AbasTreinamentos atual="videos" />}
+
+      {/* ---- filtros por tipo e módulo (só aparecem quando há o que filtrar) ---- */}
+      {!carregando && (tipos.length > 1 || modulos.length > 1) && (
+        <div className="space-y-2">
+          {tipos.length > 1 && (
+            <div className="flex flex-wrap items-center gap-1.5">
+              <Tag className="mr-1 h-3.5 w-3.5 text-muted-foreground" />
+              {["", ...tipos].map(x => (
+                <button key={x || "_todos"} type="button" onClick={() => setFiltroTipo(x)}
+                  className={`rounded-full border px-3 py-1 text-xs font-semibold transition-colors ${
+                    filtroTipo === x ? "border-primary bg-primary/10 text-primary" : "border-input text-muted-foreground hover:bg-muted"}`}>
+                  {x || "Todos os tipos"}
+                </button>
+              ))}
+            </div>
+          )}
+          {modulos.length > 1 && (
+            <div className="flex flex-wrap items-center gap-1.5">
+              <Boxes className="mr-1 h-3.5 w-3.5 text-muted-foreground" />
+              {["", ...modulos].map(x => (
+                <button key={x || "_todos"} type="button" onClick={() => setFiltroModulo(x)}
+                  className={`rounded-full border px-3 py-1 text-xs font-semibold transition-colors ${
+                    filtroModulo === x ? "border-primary bg-primary/10 text-primary" : "border-input text-muted-foreground hover:bg-muted"}`}>
+                  {x ? labelDe(MODULOS_ERP, x) : "Todos os módulos"}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* ---- barra de progresso ---- */}
       {!carregando && lista.length > 0 && (
@@ -226,7 +294,12 @@ export default function TreinamentosERP({ escopo }: Props) {
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {filtrados.map((t, i) => {
             const r = recursosDe(t);
-            const feito = conclusoes[t.id];
+            const conc = conclusoes[t.id];
+            // Com a prova corrigida no banco (mig 20261014000020), a conclusão
+            // também guarda a reprovação — e reprovado não é "feito".
+            const feito = conc && conc.aprovado !== false ? conc : undefined;
+            const reprovado = conc?.aprovado === false ? conc : undefined;
+            const travado = !!estados[t.id]?.bloqueado;
             return (
               <div key={t.id}
                 // O delay escalonado dá a entrada em cascata da grade. Teto de
@@ -248,6 +321,15 @@ export default function TreinamentosERP({ escopo }: Props) {
                       {feito.prova_nota != null ? `${feito.prova_nota}%` : "Concluído"}
                     </span>
                   )}
+                  {travado ? (
+                    <span className="absolute right-2 top-2 flex items-center gap-1 rounded-full bg-red-600 px-2 py-0.5 text-[11px] font-bold text-white shadow">
+                      <Lock className="h-3 w-3" /> Prova travada
+                    </span>
+                  ) : reprovado && (
+                    <span className="absolute right-2 top-2 flex items-center gap-1 rounded-full bg-amber-500 px-2 py-0.5 text-[11px] font-bold text-white shadow">
+                      <RotateCcw className="h-3 w-3" /> {reprovado.prova_nota}% · refazer
+                    </span>
+                  )}
                   {!t.publicado && (
                     // Fundo sólido escuro, e não bg-muted: sobre uma capa
                     // clara o selo translúcido sumia.
@@ -267,6 +349,16 @@ export default function TreinamentosERP({ escopo }: Props) {
 
                   {/* selos do que o card oferece */}
                   <div className="flex flex-wrap gap-1.5">
+                    {t.tipo && (
+                      <span className="flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-700 dark:bg-slate-800 dark:text-slate-300">
+                        <Tag className="h-3 w-3" /> {t.tipo}
+                      </span>
+                    )}
+                    {t.modulo_sistema && (
+                      <span className="flex items-center gap-1 rounded-full bg-teal-50 px-2 py-0.5 text-[11px] font-semibold text-teal-700 dark:bg-teal-950/40 dark:text-teal-300">
+                        <Boxes className="h-3 w-3" /> {labelDe(MODULOS_ERP, t.modulo_sistema)}
+                      </span>
+                    )}
                     {r.video && (
                       <span className="flex items-center gap-1 rounded-full bg-blue-50 px-2 py-0.5 text-[11px] font-semibold text-blue-700 dark:bg-blue-950/40 dark:text-blue-300">
                         <Video className="h-3 w-3" /> Vídeo
@@ -280,6 +372,7 @@ export default function TreinamentosERP({ escopo }: Props) {
                     {r.prova && (
                       <span className="flex items-center gap-1 rounded-full bg-violet-50 px-2 py-0.5 text-[11px] font-semibold text-violet-700 dark:bg-violet-950/40 dark:text-violet-300">
                         <ListChecks className="h-3 w-3" /> {r.questoes} {r.questoes === 1 ? "questão" : "questões"}
+                        {t.max_tentativas != null && ` · ${t.max_tentativas} tentativa${t.max_tentativas === 1 ? "" : "s"}`}
                       </span>
                     )}
                   </div>
@@ -289,7 +382,7 @@ export default function TreinamentosERP({ escopo }: Props) {
                   <div className="mt-auto flex items-center gap-2 pt-1">
                     <Button className="flex-1" size="sm" onClick={() => setAssistindo(t)}>
                       <PlayCircle className="mr-2 h-4 w-4" />
-                      {feito ? "Rever" : "Começar"}
+                      {feito ? "Rever" : reprovado ? "Continuar" : "Começar"}
                     </Button>
                     {podeGerenciar && (
                       <Button variant="ghost" size="icon" title="Editar"
@@ -326,7 +419,7 @@ export default function TreinamentosERP({ escopo }: Props) {
         meuNome={meuNome}
         meuId={user?.id}
         escopo={escopo}
-        jaFeito={assistindo ? conclusoes[assistindo.id] ?? null : null}
+        jaFeito={assistindo && conclusoes[assistindo.id]?.aprovado !== false ? conclusoes[assistindo.id] ?? null : null}
         onFechar={() => setAssistindo(null)}
         onConcluido={carregar}
       />

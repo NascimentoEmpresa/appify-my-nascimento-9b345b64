@@ -26,12 +26,29 @@ export interface PerguntaProva {
  * `central_servicos` ↔ `central_servicos_treinamentos`. O banco cobra a
  * mesma lista no CHECK `trn_escopos_validos`.
  */
-export type EscopoTreinamento = "encarregados" | "central_servicos";
+export type EscopoTreinamento = "encarregados" | "central_servicos" | "sistemas";
 
 export const ESCOPOS_TREINAMENTO: { id: EscopoTreinamento; label: string }[] = [
   { id: "encarregados", label: "Encarregados" },
   { id: "central_servicos", label: "Central de Serviços" },
+  // 14/10/2026 (mig 20261014000020): a grade de Treinamentos Sistemas. A
+  // rota é liberada a todo usuário logado, e o banco segue a mesma regra.
+  { id: "sistemas", label: "Treinamentos Sistemas" },
 ];
+
+/**
+ * Sugestões de tipo de treinamento. O campo é texto livre (o editor oferece
+ * estas e as que já foram usadas), para ninguém depender de dev para criar
+ * um tipo novo.
+ */
+export const TIPOS_TREINAMENTO = [
+  "Sistema", "Segurança do Trabalho", "Integração", "Operacional", "Qualidade",
+  "Compliance", "Atendimento", "Liderança",
+] as const;
+
+/** Padrões do pedido original: prova de 10 questões, 8 acertos, 3 tentativas. */
+export const PADRAO_NOTA_MINIMA = 80;
+export const PADRAO_MAX_TENTATIVAS = 3;
 
 export interface Treinamento {
   id: string;
@@ -45,8 +62,18 @@ export interface Treinamento {
   anexo_nome: string | null;
   /** Imagem de capa do card. Opcional — sem ela o card usa o gradiente. */
   capa_path: string | null;
+  /**
+   * Para quem faz a prova o `correta` chega -1: o gabarito mora em
+   * TREINAMENTO_GABARITO, que só quem gerencia lê (mig 20261014000020).
+   */
   prova: PerguntaProva[] | null;
   nota_minima: number;
+  /** Tipo livre ("Sistema", "Segurança do Trabalho"…). */
+  tipo?: string | null;
+  /** Módulo do ERP de que o treinamento trata (MODULOS_ERP dos chamados). */
+  modulo_sistema?: string | null;
+  /** Reprovações seguidas até travar e alertar. null = ilimitado. */
+  max_tentativas?: number | null;
   publicado: boolean;
   ordem: number;
   criado_por: string | null;
@@ -151,6 +178,62 @@ export function corrigirProva(
   // Arredonda para inteiro: "66,66%" não ajuda ninguém a entender se passou.
   const nota = Math.round((acertos / qs.length) * 100);
   return { acertos, total: qs.length, nota, aprovado: nota >= notaMinima, porQuestao };
+}
+
+/**
+ * Quantos acertos a nota mínima exige numa prova de `total` questões — é como
+ * a regra é falada ("8 de 10"), e o editor mostra as duas formas.
+ */
+export function acertosMinimos(total: number, notaMinima: number): number {
+  if (total <= 0) return 0;
+  // Mesmo arredondamento do banco: nota = round(acertos * 100 / total).
+  for (let a = 0; a <= total; a++) {
+    if (Math.round((a / total) * 100) >= notaMinima) return a;
+  }
+  return total + 1; // nota mínima inatingível (não acontece com 0–100)
+}
+
+/** O que trn_prova_enviar devolve (a correção é feita no banco). */
+export interface ResultadoProvaServidor {
+  acertos: number;
+  total: number;
+  nota: number;
+  nota_minima: number;
+  aprovado: boolean;
+  por_questao: boolean[];
+  /** Só vem para quem foi aprovado: questão → alternativa certa. */
+  gabarito: Record<string, number> | null;
+  tentativa: number;
+  falhas_seguidas: number;
+  max_tentativas: number | null;
+  restantes: number | null;
+  bloqueado: boolean;
+  precisa_ver_video: boolean;
+}
+
+/** O que trn_prova_estado devolve. */
+export interface EstadoProva {
+  max_tentativas: number | null;
+  falhas_seguidas: number;
+  restantes: number | null;
+  bloqueado: boolean;
+  precisa_ver_video: boolean;
+  video_rastreavel: boolean;
+  ultima_aprovada: boolean | null;
+  tentativas_total: number;
+}
+
+/**
+ * Junta o gabarito (TREINAMENTO_GABARITO) à prova que chega com `correta` -1,
+ * para o editor mostrar a alternativa certa marcada. Questão sem gabarito
+ * fica na primeira alternativa — o mesmo padrão de uma questão nova.
+ */
+export function juntarGabarito(prova: PerguntaProva[], gabarito: Record<string, number> | null | undefined): PerguntaProva[] {
+  return prova.map((q) => {
+    const g = gabarito?.[q.id];
+    const correta = typeof g === "number" && g >= 0 ? g : q.correta >= 0 ? q.correta : 0;
+    return { ...q, correta };
+  });
 }
 
 /**

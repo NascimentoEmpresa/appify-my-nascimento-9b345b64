@@ -1,8 +1,10 @@
 import { useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAccessibleMenus } from "@/hooks/useAccessibleMenus";
-import { CheckCircle2, ChevronDown, ChevronUp, GraduationCap, Loader2, MonitorCog, Users } from "lucide-react";
+import { AlertTriangle, CheckCircle2, ChevronDown, ChevronUp, GraduationCap, Loader2, MonitorCog, Users, Video } from "lucide-react";
+import TreinamentosERP from "./TreinamentosERP";
+import { AlertasTreinamento, useAlertasTreinamento, usePodeVerAlertasTreinamento } from "@/components/treinamentos/AlertasTreinamento";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { useToast } from "@/hooks/use-toast";
@@ -61,6 +63,32 @@ export const ROTA_TREINAMENTOS_SISTEMAS = "/app/central-servicos/treinamentos-si
 export default function TreinamentosSistemasPagina() {
   const { data: access } = useAccessibleMenus("visualizar");
   const temVideos = !!access?.codes.has("central_servicos_treinamentos");
+  // Três partes (14/10/2026, mig 20261014000020): os vídeos com prova da
+  // grade `sistemas` (um por módulo, por tipo), a confirmação dos
+  // treinamentos de chamados (o que esta tela era) e, para quem cuida, os
+  // alertas de quem travou a prova. A aba vem da URL: a notificação do
+  // alerta abre direto em ?aba=alertas.
+  const [params, setParams] = useSearchParams();
+  const podeAlertas = usePodeVerAlertasTreinamento();
+  const confirmacoes = useTreinamentosSistemas();
+  const pendentes = (confirmacoes.data ?? []).filter((t) => !t.confirmado_em).length;
+  const alertas = useAlertasTreinamento(podeAlertas);
+  const alertasAbertos = (alertas.data ?? []).filter((a) => a.status === "aberto").length;
+  const pedida = params.get("aba");
+  const aba: AbaSistemas =
+    pedida === "alertas" && podeAlertas ? "alertas"
+    : pedida === "confirmar" || pedida === "videos" ? pedida
+    // Sem aba na URL: quem tem treinamento de chamado para confirmar cai lá
+    // (é para isso que os links de Chamados apontam); os demais, nos vídeos.
+    : pendentes > 0 ? "confirmar" : "videos";
+  const irPara = (k: AbaSistemas) => setParams((p) => { const n = new URLSearchParams(p); n.set("aba", k); return n; }, { replace: true });
+
+  const abas: { k: AbaSistemas; rotulo: string; icone: typeof Video; contador?: number }[] = [
+    { k: "videos", rotulo: "Vídeos e provas", icone: Video },
+    { k: "confirmar", rotulo: "Confirmar recebimento", icone: GraduationCap, contador: pendentes },
+    ...(podeAlertas ? [{ k: "alertas" as const, rotulo: "Alertas", icone: AlertTriangle, contador: alertasAbertos }] : []),
+  ];
+
   return (
     <div className="space-y-6 p-4 md:p-6">
       <div className="flex items-center gap-3">
@@ -69,14 +97,32 @@ export default function TreinamentosSistemasPagina() {
         </div>
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Treinamentos Sistemas</h1>
-          <p className="text-sm text-muted-foreground">Confirme os treinamentos das novidades do ERP que você recebeu.</p>
+          <p className="text-sm text-muted-foreground">Assista os vídeos de cada módulo, faça as provas e confirme os treinamentos que você recebeu.</p>
         </div>
       </div>
       {temVideos && <AbasTreinamentos atual="sistemas" />}
-      <TreinamentosSistemas />
+
+      <div className="flex flex-wrap gap-1 rounded-lg bg-muted p-1">
+        {abas.map((a) => (
+          <button key={a.k} type="button" onClick={() => irPara(a.k)}
+            className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
+              aba === a.k ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}>
+            <a.icone className="h-4 w-4" /> {a.rotulo}
+            {!!a.contador && (
+              <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-bold text-white ${a.k === "alertas" ? "bg-red-600" : "bg-primary"}`}>{a.contador}</span>
+            )}
+          </button>
+        ))}
+      </div>
+
+      {aba === "videos" && <TreinamentosERP escopo="sistemas" embutido />}
+      {aba === "confirmar" && <TreinamentosSistemas />}
+      {aba === "alertas" && <AlertasTreinamento />}
     </div>
   );
 }
+
+type AbaSistemas = "videos" | "confirmar" | "alertas";
 
 /** As duas abas da Central de Serviços › Treinamentos (vídeos | sistemas). */
 export function AbasTreinamentos({ atual }: { atual: "videos" | "sistemas" }) {

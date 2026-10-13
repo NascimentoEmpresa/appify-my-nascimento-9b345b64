@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   embedDeVideo, corrigirProva, temConteudo, recursosDe, validarProva, caminhoNoBucket,
-  validarTamanho, LIMITE_UPLOAD_BYTES, resumirDashboard,
+  validarTamanho, LIMITE_UPLOAD_BYTES, resumirDashboard, acertosMinimos, juntarGabarito,
   type PerguntaProva,
 } from "@/pages/treinamentos/treinamento/core";
 
@@ -200,5 +200,41 @@ describe("resumirDashboard", () => {
   it("não divide por zero quando ninguém viu nada", () => {
     expect(resumirDashboard([], []).taxa).toBe(0);
     expect(resumirDashboard([{ pessoas_viram: 0, visualizacoes: 0, conclusoes: 0, aprovados: 0 }], []).taxa).toBe(0);
+  });
+});
+
+describe("acertosMinimos", () => {
+  it("traduz a nota mínima em acertos, como a regra é falada", () => {
+    // O pedido: prova de 10 questões, aprovar com 8.
+    expect(acertosMinimos(10, 80)).toBe(8);
+    expect(acertosMinimos(10, 70)).toBe(7);
+    expect(acertosMinimos(10, 0)).toBe(0);
+    expect(acertosMinimos(10, 100)).toBe(10);
+  });
+
+  it("usa o mesmo arredondamento do banco (nota = round(acertos*100/total))", () => {
+    // 2/3 = 66,67% → 67%: com mínimo 67, 2 acertos bastam.
+    expect(acertosMinimos(3, 67)).toBe(2);
+    expect(acertosMinimos(3, 68)).toBe(3);
+  });
+
+  it("prova vazia não exige nada", () => {
+    expect(acertosMinimos(0, 80)).toBe(0);
+  });
+});
+
+describe("juntarGabarito", () => {
+  it("devolve ao editor a alternativa certa que o banco guardou à parte", () => {
+    const prova = [q("a", -1), q("b", -1)];
+    expect(juntarGabarito(prova, { a: 2, b: 1 }).map((x) => x.correta)).toEqual([2, 1]);
+  });
+
+  it("sem gabarito, a questão fica na primeira alternativa (padrão de questão nova)", () => {
+    expect(juntarGabarito([q("a", -1)], null)[0].correta).toBe(0);
+    expect(juntarGabarito([q("a", -1)], {})[0].correta).toBe(0);
+  });
+
+  it("não sobrescreve uma resposta já marcada quando o gabarito não tem a questão", () => {
+    expect(juntarGabarito([q("a", 2)], {})[0].correta).toBe(2);
   });
 });

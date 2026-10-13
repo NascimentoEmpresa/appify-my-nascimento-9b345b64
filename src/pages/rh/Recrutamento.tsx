@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useRef, useCallback, type MouseEvent as ReactMouseEvent, type CSSProperties, type ReactNode } from "react";
 import {
-  Activity, AlertTriangle, Ban, Building2, CalendarDays, Check, CheckCircle2, ChevronLeft, ChevronRight, ClipboardList, Clock, Copy, Eye, FileText,
+  Activity, AlertTriangle, Ban, Building2, CalendarDays, Check, CheckCircle2, ChevronLeft, ChevronRight, ClipboardList, Clock, Copy, Eye, FileSpreadsheet, FileText,
   FolderOpen, GraduationCap, History, IdCard, Landmark, Link2, LogOut, Mail, MapPin, MessageSquare, Paperclip,
   Pencil, Phone, Search, Settings, Tags, Target, Trash2, UserCheck, UserSearch, Users, X, XCircle, Zap, type LucideIcon,
 } from "lucide-react";
@@ -18,6 +18,7 @@ import {
   vagaConcluiDireto,
 } from "@/lib/recrutamento/vagaRegras";
 import { ModalConcluirDireto } from "@/components/recrutamento/ModalConcluirDireto";
+import { baixarPlanilhaVagas, type CandidatoExport, type VagaExport } from "@/lib/recrutamento/exportarVagas";
 import { TABELA_APROVADOR_SETOR } from "@/components/admin/TrocaFuncaoSetoresUsuario";
 import {
   ETIQUETAS_RECRUTAMENTO, alternarEtiqueta, corDaEtiqueta, etiquetasValidas,
@@ -857,6 +858,84 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
     }
     setKanbanData(grouped);
   }, [aplicarFiltros, buscaId, contratoFiltro, etiquetaFiltro, noEscopo, colsComResp, aplicarResp]);
+
+  // ── Exportar Excel (14/10/2026) ───────────────────────────────
+  // "Com os filtros da tela" usa a MESMA consulta da tabela/kanban
+  // (aplicarFiltros + contrato + etiqueta + responsável), sem paginar; "Todas"
+  // ignora os filtros. Nos dois, o recorte de quem vê o quê é o da lista
+  // (vaga administrativa, escopo da tela) — e por baixo, a RLS.
+  const [exportModal, setExportModal] = useState(false);
+  const [exportTodas, setExportTodas] = useState(false);
+  const [exportCandidatos, setExportCandidatos] = useState(true);
+  const [exportando, setExportando] = useState(false);
+
+  const filtrosDescritos = useCallback((): [string, string][] => {
+    const f: [string, string][] = [];
+    const aba = tabs.find(t => t.tab === tab)?.label;
+    if (aba) f.push(["Aba", aba]);
+    if (statusFilter) f.push(["Status", statusFilter === FILTRO_SELECAO ? "Pendente Seleção" : rotuloStatusVaga(statusFilter)]);
+    if (search) f.push(["Busca", search]);
+    if (mes) f.push(["Mês da solicitação", mes.split("-").reverse().join("/")]);
+    if (contratoFiltro.length) f.push(["Contratos", contratoFiltro.join(", ")]);
+    if (etiquetaFiltro.length) f.push(["Etiquetas", etiquetaFiltro.join(", ")]);
+    if (respFiltro) f.push(["Responsável da vaga", respFiltro === "eu" ? "Minhas" : respFiltro === "sem" ? "Sem responsável"
+      : respContagem.find(r => r.responsavel_id === respFiltro)?.responsavel_nome ?? "Pessoa escolhida"]);
+    return f;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, statusFilter, search, mes, contratoFiltro, etiquetaFiltro, respFiltro, respContagem]);
+
+  const exportarExcel = async () => {
+    setExportando(true);
+    try {
+      const montar = () => {
+        if (exportTodas) return sb.from("SISTEMA_RECRUTAMENTO").select("*").order("created_at", { ascending: false });
+        let q = sb.from("SISTEMA_RECRUTAMENTO").select(colsComResp("*") as "*");
+        q = aplicarFiltros(q);
+        if (contratoFiltro.length && !buscaId) q = q.in("contrato", contratoFiltro);
+        if (etiquetaFiltro.length && !buscaId) q = q.overlaps("etiquetas", etiquetaFiltro);
+        q = aplicarResp(q);
+        return q.order("created_at", { ascending: false });
+      };
+      const { data, error } = await lerTudo<Solicitacao>(montar);
+      if (error) { toast("Erro ao buscar as vagas: " + error.message, "err"); return; }
+      const vagas = exportTodas
+        ? filtrarPorEscopo(filtrarAdministrativas(data ?? [], podeAdministrativa), escopo, meusSetores)
+        : noEscopoLista(filtrarAdministrativas(data ?? [], podeAdministrativa));
+      if (!vagas.length) { toast("Nenhuma vaga para exportar com esses filtros.", "err"); return; }
+
+      // Candidatos e responsáveis em lotes: .in() com milhares de ids estoura a URL.
+      const ids = vagas.map(v => v.id);
+      const lotes: number[][] = [];
+      for (let i = 0; i < ids.length; i += 200) lotes.push(ids.slice(i, i + 200));
+      const responsaveis: Record<number, string> = {};
+      const candidatos: CandidatoExport[] = [];
+      for (const lote of lotes) {
+        const [r, c] = await Promise.all([
+          sb.from("SISTEMA_RECRUTAMENTO_RESPONSAVEL").select("vaga_id,responsavel_nome").in("vaga_id", lote),
+          exportCandidatos
+            ? lerTudo<CandidatoExport>(() => sb.from("WA_CURRICULOS")
+                .select("vaga_id,nome,cpf,telefone,etapa_processo,desistiu,motivo_reprovacao,desistencia_motivo,enviado_admissao_em")
+                .in("vaga_id", lote).not("etapa_processo", "is", null).order("id"))
+            : Promise.resolve({ data: [] as CandidatoExport[], error: null }),
+        ]);
+        for (const x of (r.data ?? []) as { vaga_id: number; responsavel_nome: string }[]) responsaveis[x.vaga_id] = x.responsavel_nome;
+        if (c.error) { toast("Erro ao buscar os candidatos: " + c.error.message, "err"); return; }
+        candidatos.push(...(c.data ?? []).map(x => ({ ...x, etapa_processo: x.etapa_processo ? normalizarEtapa(x.etapa_processo) : x.etapa_processo })));
+      }
+
+      baixarPlanilhaVagas(vagas as unknown as VagaExport[], {
+        rotuloStatus: rotuloStatusVaga,
+        rotuloMotivo: (m) => motivoLabel(m ?? ""),
+        responsaveis,
+        candidatos: exportCandidatos ? candidatos : undefined,
+        filtros: exportTodas ? [] : filtrosDescritos(),
+      });
+      setExportModal(false);
+      toast(`Excel gerado com ${vagas.length} vaga${vagas.length === 1 ? "" : "s"}.`, "ok");
+    } finally {
+      setExportando(false);
+    }
+  };
 
   // Quantas vagas de Recrutamento/Seleção cada pessoa cuida (menu do filtro).
   const loadRespContagem = useCallback(() => {
@@ -2828,6 +2907,11 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
               <Ic i={Link2} />{portalCopiado ? "Link copiado!" : "Copiar link de candidatura"}
             </button>
           )}
+          {/* Exportar Excel (14/10/2026): com os filtros da tela ou todas. */}
+          <button onClick={() => setExportModal(true)} title="Baixar as vagas em Excel — com os filtros aplicados na tela ou todas"
+            style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "10px 16px", borderRadius: 12, border: "1.5px solid rgba(255,255,255,.4)", background: "rgba(255,255,255,.14)", color: "#fff", fontSize: 12.5, fontWeight: 800, cursor: "pointer" }}>
+            <Ic i={FileSpreadsheet} />Exportar Excel
+          </button>
           {canNovaVaga && (
             <button onClick={abrirModalVaga} style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "11px 18px", borderRadius: 12, border: "none", background: "#fff", color: "#0f3171", fontSize: 13, fontWeight: 900, cursor: "pointer", boxShadow: "0 12px 28px rgba(0,0,0,.18)" }}>
               + Nova Solicitação
@@ -3740,6 +3824,49 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
           </div>
         </div>
       )}
+
+      {exportModal && (() => {
+        const filtros = filtrosDescritos();
+        const opcao = (todas: boolean, titulo: string, sub: ReactNode) => (
+          <button type="button" onClick={() => setExportTodas(todas)}
+            style={{ display: "flex", gap: 10, alignItems: "flex-start", width: "100%", textAlign: "left", padding: "10px 12px", borderRadius: 10, cursor: "pointer",
+              border: `1.5px solid ${exportTodas === todas ? "#0f3171" : "#e2e8f0"}`, background: exportTodas === todas ? "#eef4ff" : "#fff" }}>
+            <span style={{ marginTop: 2, width: 14, height: 14, borderRadius: "50%", flexShrink: 0, border: `2px solid ${exportTodas === todas ? "#0f3171" : "#cbd5e1"}`, background: exportTodas === todas ? "#0f3171" : "#fff", boxShadow: "inset 0 0 0 2px #fff" }} />
+            <span>
+              <span style={{ display: "block", fontSize: 13, fontWeight: 800, color: "#0f172a" }}>{titulo}</span>
+              <span style={{ display: "block", fontSize: 11.5, color: "#64748b", marginTop: 2 }}>{sub}</span>
+            </span>
+          </button>
+        );
+        return (
+          <div className="rec-modal-ov" style={{ zIndex: 950 }} onClick={e => { if (e.target === e.currentTarget && !exportando) setExportModal(false); }}>
+            <div className="rec-modal" style={{ maxWidth: 500 }} onClick={e => e.stopPropagation()}>
+              <div style={{ fontSize: 17, fontWeight: 800, marginBottom: 2 }}><Ic i={FileSpreadsheet} />Exportar vagas em Excel</div>
+              <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 14 }}>
+                Para exportar um recorte, ajuste os filtros da tela (aba, status, mês, contrato, etiqueta, responsável, busca) e volte aqui.
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                {opcao(false, "Com os filtros da tela",
+                  filtros.length ? filtros.map(([k, v]) => `${k}: ${v}`).join(" · ") : "Nenhum filtro aplicado — sai o mesmo que a tela mostra.")}
+                {opcao(true, "Todas as vagas", "Ignora os filtros: todas as solicitações que você pode ver.")}
+              </div>
+              <label style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 14, fontSize: 12.5, color: "#334155", cursor: "pointer" }}>
+                <input type="checkbox" checked={exportCandidatos} onChange={e => setExportCandidatos(e.target.checked)} />
+                Incluir candidatos (aba "Candidatos" e contagem por vaga)
+              </label>
+              <div style={{ fontSize: 10.5, color: "#94a3b8", marginTop: 8 }}>
+                A planilha sai com as abas Vagas{exportCandidatos ? ", Candidatos" : ""} e Resumo (filtros usados e contagem por status e por contrato).
+              </div>
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 16 }}>
+                <button onClick={() => setExportModal(false)} disabled={exportando} style={{ padding: "7px 14px", borderRadius: 8, background: "#fff", border: "1px solid #e2e8f0", color: "#475569", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Cancelar</button>
+                <button onClick={exportarExcel} disabled={exportando} style={{ padding: "7px 14px", borderRadius: 8, background: "#16a34a", border: "none", color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer", opacity: exportando ? .6 : 1 }}>
+                  {exportando ? "Gerando…" : "Baixar Excel"}
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {reabrirModal && (
         <div className="rec-modal-ov" style={{ zIndex: 950 }} onClick={e => { if (e.target === e.currentTarget && !reabrindo) setReabrirModal(false); }}>
