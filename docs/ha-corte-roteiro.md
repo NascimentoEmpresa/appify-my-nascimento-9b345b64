@@ -287,13 +287,49 @@ desfazível, e **nada aqui para o ERP** — o sistema segue atendendo normalment
 enquanto os 2,3 GB atravessam. Só pede horário de menos movimento por causa do
 peso do passo 1.3 na instância Small.
 
-### 1.1 As três tabelas sem chave primária
+### 1.1 As três tabelas sem chave primária — e o `lock_timeout`
 
 ```sql
--- na PRODUÇÃO. Instantâneo; elas são pequenas.
+-- na PRODUÇÃO, uma transação por tabela, SEMPRE com lock_timeout.
+SET lock_timeout = '3s';
 ALTER TABLE public."CONTRATOS" REPLICA IDENTITY FULL;
-ALTER TABLE public."ESCALAS"   REPLICA IDENTITY FULL;
-ALTER TABLE public."SETORES"   REPLICA IDENTITY FULL;
+```
+
+**"Instantâneo porque a tabela é pequena" é falso, e custou uma lição em
+13/10/2026, 23:12 UTC.** Os três `ALTER` rodaram sem `lock_timeout` e ficaram
+**63 segundos** esperando. O tamanho da tabela não importa: `ALTER TABLE` pede
+`ACCESS EXCLUSIVE`, e **enquanto espera, ele entra na fila** — todo pedido
+posterior de leitura da mesma tabela espera atrás dele. Duas consultas do ERP,
+pelo PostgREST, ficaram presas **43s e 19s**. Usuário real esperando tela, numa
+operação que o roteiro descrevia como inofensiva.
+
+Quem segurava o lock não era nosso script: uma sessão `idle in transaction` com
+5 minutos de vida, entrando pelo pooler como `postgres`, de um endereço IPv6 da
+AWS, fazendo introspecção de dump — a plataforma Supabase. **Isso vai acontecer
+de novo**: não se controla quando a plataforma abre uma transação longa.
+
+O que ficou no `ligar-replicacao.sh`:
+
+- `lock_timeout = '3s'` — o pior caso vira 3 segundos de fila, não 63;
+- cada `ALTER` em sua própria transação, para o lock de um não segurar o outro;
+- 10 tentativas com 20s de espera, e na primeira falha ele **diz quem está
+  segurando o lock**;
+- tabela que já está `FULL` é pulada, então repetir é seguro.
+
+**Regra que vale para qualquer DDL deste banco, não só esta:** em tabela viva,
+sempre com `lock_timeout`. Sem ele, o seu comando que espera vira o comando que
+derruba a tela dos outros.
+
+Como ver a fila, do outro lado, enquanto um DDL roda:
+
+```sql
+select pid, state, wait_event_type||'/'||coalesce(wait_event,'-') as espera,
+       round(extract(epoch from now()-query_start))||'s' as ha,
+       left(regexp_replace(query,'\s+',' ','g'), 60) as consulta
+  from pg_stat_activity
+ where datname = current_database() and pid <> pg_backend_pid()
+   and (state <> 'idle' or wait_event_type = 'Lock')
+ order by query_start;
 ```
 
 Volta atrás: `REPLICA IDENTITY DEFAULT` nas três.
