@@ -20,7 +20,7 @@ import {
   StatusBadge, PrioridadeBadge, CardAvaliacao,
   CATEGORIAS, TIPOS, IMPACTOS, URGENCIAS, AMBIENTES,
   labelDe, moduloLabel, fmtData, fmtDataHora, chamadoEncerrado,
-  BUCKET_CHAMADOS, type Chamado, type Anexo, type AvaliacaoChamado,
+  BUCKET_CHAMADOS, opcoesDownloadAnexo, type Chamado, type Anexo, type AvaliacaoChamado,
 } from "./types";
 
 // Tela do SOLICITANTE: acompanha o próprio chamado e, quando o time pede mais
@@ -90,7 +90,7 @@ export default function AcompanharChamado({ base = "/app/central-servicos/chamad
   };
 
   const baixarAnexo = async (path: string) => {
-    const { data, error } = await supabase.storage.from(BUCKET_CHAMADOS).createSignedUrl(path, 3600);
+    const { data, error } = await supabase.storage.from(BUCKET_CHAMADOS).createSignedUrl(path, 3600, opcoesDownloadAnexo(path));
     if (error || !data?.signedUrl) { toast({ title: "Erro ao abrir anexo", variant: "destructive" }); return; }
     window.open(data.signedUrl, "_blank", "noopener,noreferrer");
   };

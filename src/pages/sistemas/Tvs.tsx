@@ -13,7 +13,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { AcessoGate } from "@/components/auth/AcessoGate";
 import { useAuth } from "@/hooks/useAuth";
@@ -534,7 +534,17 @@ function NovoItem({ playlistId, proximaOrdem, onRascunho }: { playlistId: string
               {/* Relatório com mais páginas pede mais tempo: sobe o tempo na tela até o recomendado (nunca baixa). */}
               <Select value={f.relatorio} onValueChange={(v) => setF({ ...f, relatorio: v, duracao: String(Math.max(Number(f.duracao) || 0, duracaoRecomendada(paginasRelatorioTv(v)))) })}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>{RELATORIOS_TV.map((r) => <SelectItem key={r.slug} value={r.slug}>{r.titulo}{r.paginas > 1 ? ` · ${r.paginas} páginas` : ""}</SelectItem>)}</SelectContent>
+                <SelectContent>
+                  {/* Os relatórios do módulo e, separadas por diretoria, as TVs gerenciais (mig 20261012000001). */}
+                  {[...new Set(RELATORIOS_TV.map((r) => r.grupo ?? ""))].map((g) => (
+                    <SelectGroup key={g || "relatorios"}>
+                      <SelectLabel className="text-xs text-muted-foreground">{g ? `TVs gerenciais — ${g}` : "Relatórios do ERP"}</SelectLabel>
+                      {RELATORIOS_TV.filter((r) => (r.grupo ?? "") === g).map((r) => (
+                        <SelectItem key={r.slug} value={r.slug}>{r.titulo}{!r.grupo && r.paginas > 1 ? ` · ${r.paginas} páginas` : ""}</SelectItem>
+                      ))}
+                    </SelectGroup>
+                  ))}
+                </SelectContent>
               </Select>
               {paginasRelatorioTv(f.relatorio) > 1 && (
                 <p className="mt-1 text-[11px] text-muted-foreground">
@@ -560,7 +570,9 @@ function NovoItem({ playlistId, proximaOrdem, onRascunho }: { playlistId: string
               <p className="mt-1 text-[11px] text-muted-foreground">Ex.: na TV do contrato UFRGS, só os números da UFRGS. Os números se atualizam sozinhos.</p></div>
             </>) : (
               <p className="self-end pb-2 text-[11px] text-muted-foreground">
-                {f.relatorio === "licitacoes" ? "Mostra a grade inteira, de todas as empresas do grupo — como o Painel Executivo." : "Mostra a base toda de alunos, como o Dashboard de Treinamentos abre."} Sem período nem contrato; os números se atualizam sozinhos.
+                {f.relatorio?.startsWith("ger-")
+                  ? <>Indicadores com meta e semáforo, fora da meta primeiro. Metas, prazos e lançamentos em <a href="/app/sistemas/tvs/indicadores" className="font-semibold text-primary underline">TV's › Indicadores gerenciais</a>.</>
+                  : f.relatorio === "licitacoes" ? "Mostra a grade inteira, de todas as empresas do grupo — como o Painel Executivo." : "Mostra a base toda de alunos, como o Dashboard de Treinamentos abre."} Sem período nem contrato; os números se atualizam sozinhos.
               </p>
             )}
           </>
