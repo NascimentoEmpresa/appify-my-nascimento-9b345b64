@@ -1442,7 +1442,7 @@ export function SolicitacaoDiariaModal({
                   <p className="text-destructive/80">
                     {editavel
                       ? "Trabalhou nesse dia — não cabe diária no lugar dele(a). Remova ou corrija a data para salvar."
-                      : "Trabalhou nesse dia — a aprovação é recusada. Reprove ou devolva para ajuste."}
+                      : "Confira antes de aprovar — a aprovação continua liberada, quem aprova decide."}
                   </p>
                 </div>
               </div>
@@ -1866,8 +1866,10 @@ export function SolicitacaoDiariaModal({
                   <Button
                     type="submit"
                     form={FORM_ID_PAINEL_DESPESA_DIARIA}
-                    disabled={salvando || !empresaContratoId || !classificacaoDiaria || temPontoBatido}
-                    title={temPontoBatido ? "O faltante bateu ponto num dia da diária — não dá para aprovar." : undefined}
+                    // Ponto batido não trava mais a aprovação (mig 20261013000001):
+                    // o aviso fica na tela e quem aprova decide.
+                    disabled={salvando || !empresaContratoId || !classificacaoDiaria}
+                    title={temPontoBatido ? "Atenção: o faltante bateu ponto num dia da diária — confira antes de aprovar." : undefined}
                   >
                     <Send className="mr-2 h-4 w-4" /> Aprovar e enviar para malote
                   </Button>
