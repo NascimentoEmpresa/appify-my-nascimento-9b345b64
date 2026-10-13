@@ -59,7 +59,7 @@ export function DiariasPontoDialog({ aberto, onFechar, solicitacoes, batidas, si
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="font-mono text-sm font-semibold">{s.id}</span>
                   <Badge variant="outline" className={cn("text-[10px]", st.cls)}>{st.label}</Badge>
-                  {pendente(s) && <Badge variant="destructive" className="gap-1 text-[10px]"><AlertTriangle className="h-3 w-3" /> não pode ser aprovada</Badge>}
+                  {pendente(s) && <Badge variant="destructive" className="gap-1 text-[10px]"><AlertTriangle className="h-3 w-3" /> conferir antes de aprovar</Badge>}
                   <Button size="sm" variant="outline" className="ml-auto h-7 gap-1 text-xs" onClick={() => onAbrir(s)}>
                     <ExternalLink className="h-3.5 w-3.5" /> Abrir solicitação
                   </Button>
