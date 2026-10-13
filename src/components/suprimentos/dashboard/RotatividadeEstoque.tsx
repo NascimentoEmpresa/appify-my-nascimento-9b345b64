@@ -36,6 +36,8 @@ import {
   AZUL_MAGNITUDE,
   CINZA_GRADE,
   CabecalhoTabela,
+  TickCategoria,
+  formatarEixoMoeda,
   CartaoDestaque,
   CartaoIndicador,
   EstadoVazio,
@@ -816,7 +818,7 @@ export function RotatividadeEstoque({ empresaId, inicio, fim, contratoId }: Prop
                   <XAxis dataKey="rotulo" tick={{ fontSize: 10, fill: "#64748b" }} />
                   <YAxis
                     tick={{ fontSize: 10, fill: "#64748b" }}
-                    tickFormatter={(v) => `${Math.round(Number(v) / 1000)} mil`}
+                    tickFormatter={formatarEixoMoeda}
                   />
                   <Tooltip
                     content={({ active, payload, label }) =>
@@ -866,7 +868,8 @@ export function RotatividadeEstoque({ empresaId, inicio, fim, contratoId }: Prop
                     type="category"
                     dataKey="contrato"
                     width={210}
-                    tick={{ fontSize: 10, fill: "#334155" }}
+                    interval={0}
+                    tick={<TickCategoria maximo={32} />}
                   />
                   <Tooltip
                     content={({ active, payload, label }) =>

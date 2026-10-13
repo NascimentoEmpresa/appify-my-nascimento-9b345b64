@@ -48,6 +48,7 @@ import {
   usePagarDespesa,
   usePagarParcela,
   useAnexarComprovanteMalote,
+  useTrocarComprovanteMalote,
   useAtualizarDatasParcelas,
   useAtualizarValoresParcelas,
   validarOrdemParcelas,
@@ -352,6 +353,7 @@ export default function DespesaVisualizar() {
   const pagar = usePagarDespesa();
   const pagarParcela = usePagarParcela();
   const anexarComprovante = useAnexarComprovanteMalote();
+  const trocarComprovante = useTrocarComprovanteMalote();
 
   const [valorAprovado, setValorAprovado] = useState("");
   // SIS-2026-0292 (Iury): "Dados da Despesa" (Nome/Classificação/Arquivos)
@@ -397,6 +399,8 @@ export default function DespesaVisualizar() {
   // Anexar o comprovante depois (só quem registrou o pagamento).
   const [anexarAberto, setAnexarAberto] = useState(false);
   const [anexarParcela, setAnexarParcela] = useState<Parcela | null>(null);
+  // SIS-2026-0644: o mesmo diálogo serve para trocar um comprovante já anexado.
+  const [trocandoComprovante, setTrocandoComprovante] = useState(false);
   const [arquivoAnexar, setArquivoAnexar] = useState<File | null>(null);
   const [anexando, setAnexando] = useState(false);
   const [dataPagamentoConfirmado, setDataPagamentoConfirmado] = useState("");
@@ -1259,8 +1263,10 @@ export default function DespesaVisualizar() {
     setAnexando(true);
     try {
       const [path] = await uploadAnexosMalote([arquivoAnexar], despesa!.id, `${despesa!.nome} - Comprovante`);
-      await anexarComprovante.mutateAsync({ despesaId: despesa!.id, comprovante_path: path, parcelaId: anexarParcela?.id ?? null });
-      toast.success("Comprovante anexado.");
+      const input = { despesaId: despesa!.id, comprovante_path: path, parcelaId: anexarParcela?.id ?? null };
+      if (trocandoComprovante) await trocarComprovante.mutateAsync(input);
+      else await anexarComprovante.mutateAsync(input);
+      toast.success(trocandoComprovante ? "Comprovante substituído." : "Comprovante anexado.");
       setAnexarAberto(false);
     } catch (e: any) {
       toast.error(e.message ?? "Erro ao anexar o comprovante.");
@@ -1269,8 +1275,9 @@ export default function DespesaVisualizar() {
     }
   }
 
-  function abrirAnexarComprovante(parcela: Parcela | null) {
+  function abrirAnexarComprovante(parcela: Parcela | null, trocar = false) {
     setAnexarParcela(parcela);
+    setTrocandoComprovante(trocar);
     setArquivoAnexar(null);
     setAnexarAberto(true);
   }
@@ -1814,6 +1821,13 @@ export default function DespesaVisualizar() {
                     label={despesa.comprovante_pagamento_path.split("/").pop() ?? "Comprovante"}
                     onClick={() => abrirAnexo(despesa.comprovante_pagamento_path!)}
                   />
+                  {/* SIS-2026-0644: anexou o arquivo errado? Quem pagou (ou quem pode pagar o Malote) troca. */}
+                  {despesa.status === "despesa_paga" && !despesa.parcelado && !despesa.comprovante_pendente &&
+                    ((!!user?.id && despesa.pago_por === user.id) || !!podePagarMalote) && (
+                      <Button size="sm" variant="outline" className="h-7 gap-1.5 text-xs" onClick={() => abrirAnexarComprovante(null, true)}>
+                        <Upload className="h-3 w-3" /> Trocar comprovante
+                      </Button>
+                    )}
                   <p className="text-xs text-muted-foreground">
                     {despesa.pago_em && <>Pago em {new Date(despesa.pago_em).toLocaleDateString("pt-BR")}. </>}
                     {pagoPorNome && <>Pago por {pagoPorNome}. </>}
@@ -1993,9 +2007,17 @@ export default function DespesaVisualizar() {
                       <TableCell className="text-sm">{p.pago_em ? fmtDataResumo(p.data_pagamento_real) : "—"}</TableCell>
                       <TableCell>
                         {p.comprovante_pagamento_path ? (
-                          <button type="button" onClick={() => abrirAnexo(p.comprovante_pagamento_path!)} className="text-xs text-primary underline">
-                            Abrir
-                          </button>
+                          <span className="inline-flex items-center gap-2">
+                            <button type="button" onClick={() => abrirAnexo(p.comprovante_pagamento_path!)} className="text-xs text-primary underline">
+                              Abrir
+                            </button>
+                            {/* SIS-2026-0644: troca o comprovante da parcela (quem pagou ou quem pode pagar o Malote). */}
+                            {p.status === "paga" && ((!!user?.id && p.pago_por === user.id) || !!podePagarMalote) && (
+                              <button type="button" onClick={() => abrirAnexarComprovante(p, true)} className="text-xs text-muted-foreground underline hover:text-foreground">
+                                Trocar
+                              </button>
+                            )}
+                          </span>
                         ) : p.status === "paga" && p.comprovante_pendente ? (
                           user?.id && p.pago_por === user.id ? (
                             <Button size="sm" variant="outline" className="h-7 gap-1 text-xs" onClick={() => abrirAnexarComprovante(p)}>
@@ -2702,7 +2724,13 @@ export default function DespesaVisualizar() {
         <DialogContent className="sm:max-w-sm p-5">
           <DialogHeader>
             <DialogTitle className="text-base">
-              {anexarParcela ? `Anexar comprovante — parcela ${anexarParcela.numero_parcela}/${despesa.numero_parcelas}` : "Anexar comprovante de pagamento"}
+              {trocandoComprovante
+                ? anexarParcela
+                  ? `Trocar comprovante — parcela ${anexarParcela.numero_parcela}/${despesa.numero_parcelas}`
+                  : "Trocar comprovante de pagamento"
+                : anexarParcela
+                  ? `Anexar comprovante — parcela ${anexarParcela.numero_parcela}/${despesa.numero_parcelas}`
+                  : "Anexar comprovante de pagamento"}
             </DialogTitle>
           </DialogHeader>
           <div>
@@ -2712,12 +2740,16 @@ export default function DespesaVisualizar() {
               <span className="truncate text-muted-foreground">{arquivoAnexar ? arquivoAnexar.name : "Selecionar arquivo (PDF, JPG, PNG)"}</span>
               <input type="file" className="hidden" accept=".pdf,.jpg,.jpeg,.png" onChange={(e) => setArquivoAnexar(e.target.files?.[0] ?? null)} />
             </label>
-            <p className="mt-1.5 text-[11px] text-muted-foreground">Ao anexar, a marca "aguardando comprovante" sai e a ação fica na linha do tempo da despesa.</p>
+            <p className="mt-1.5 text-[11px] text-muted-foreground">
+              {trocandoComprovante
+                ? "O novo arquivo substitui o atual. O nome do arquivo anterior fica registrado na linha do tempo da despesa."
+                : 'Ao anexar, a marca "aguardando comprovante" sai e a ação fica na linha do tempo da despesa.'}
+            </p>
           </div>
           <DialogFooter>
             <Button variant="outline" size="sm" onClick={() => setAnexarAberto(false)} disabled={anexando}>Cancelar</Button>
             <Button size="sm" onClick={handleAnexarComprovante} disabled={anexando || !arquivoAnexar}>
-              {anexando ? "Anexando..." : "Anexar comprovante"}
+              {anexando ? (trocandoComprovante ? "Trocando..." : "Anexando...") : trocandoComprovante ? "Trocar comprovante" : "Anexar comprovante"}
             </Button>
           </DialogFooter>
         </DialogContent>
