@@ -84,7 +84,7 @@ export function TelaDashboardGerencial({ p, cor, visual, atualizado, onIndicador
               <Cartao key={i.codigo} t={t} onClick={clicar(i)}>
                 <div className="flex shrink-0 items-start gap-3">
                   <p className="min-w-0 flex-1 font-extrabold leading-tight" style={{ fontSize: 21, display: "-webkit-box", WebkitLineClamp: 1, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{i.resultado?.grafico_titulo || i.nome}</p>
-                  <p className="shrink-0 font-black tabular-nums leading-none" style={{ fontSize: 30, color: STATUS[situacao(i)].cor }}>{formatarValor(i.resultado?.valor, i.unidade)}</p>
+                  <p className="shrink-0 font-black tabular-nums leading-none" style={{ fontSize: 30, color: STATUS[situacao(i)].cor }}>{formatarValor(i.resultado?.valor, i.unidade, true, i.resultado?.casas)}</p>
                 </div>
                 <p className="shrink-0 truncate font-semibold" style={{ fontSize: 15, color: t.suave }}>{i.resultado?.afetado || textoMeta(i)}</p>
                 <div className="relative min-h-0 flex-1"><Grafico i={i} t={t} grande={false} /></div>
@@ -122,7 +122,7 @@ export function TelaIndicadorGerencial({ painel, i, cor, visual, atualizado }: {
               <st.Icone style={{ width: 20, height: 20 }} strokeWidth={2.6} />{st.rotulo}
             </span>
             <p className="font-black leading-none tabular-nums" style={{ fontSize: r.valor == null ? 44 : 104, color: r.valor == null ? t.suave : st.cor, marginTop: 10 }}>
-              {r.valor == null ? "Sem dado" : formatarValor(r.valor, i.unidade)}
+              {r.valor == null ? "Sem dado" : formatarValor(r.valor, i.unidade, true, r.casas)}
             </p>
             <span className="w-fit rounded-full px-4 py-1 font-bold" style={{ fontSize: 20, background: t.caixa, color: t.suave }}>{textoMeta(i)}</span>
           </Cartao>
@@ -173,7 +173,7 @@ function Numero({ i, t, colunas, onClick }: { i: IndicadorGerencial; t: Tema; co
   const s = situacao(i);
   const st = STATUS[s];
   const v = i.resultado?.valor;
-  const texto = formatarValor(v, i.unidade);
+  const texto = formatarValor(v, i.unidade, true, i.resultado?.casas);
   // Largura útil do cartão no palco de 1920 (padding 34+34, gap 12, padding
   // interno 16+16): com 8 cartões ~190 px, e "R$ 968 mil" em 38 px saía cortado
   // ("R$ 968 …"). A fonte encolhe com o tamanho do texto (≈0,6 em por caractere).
@@ -228,13 +228,70 @@ function LinhaAgir({ i, t, compacta, onClick }: { i: IndicadorGerencial; t: Tema
         </p>
         {!compacta && <p className="truncate font-extrabold leading-tight" style={{ fontSize: 13, color: t.rotulo }}>{responsavel}</p>}
       </div>
-      <p className="shrink-0 font-black leading-none tabular-nums" style={{ fontSize: compacta ? 22 : 26, color: st.cor }}>{formatarValor(r.valor, i.unidade)}</p>
+      <p className="shrink-0 font-black leading-none tabular-nums" style={{ fontSize: compacta ? 22 : 26, color: st.cor }}>{formatarValor(r.valor, i.unidade, true, r.casas)}</p>
     </div>
   );
 }
 
 /** 12 meses, duas séries lado a lado (a × b), valores sobre as barras. */
 function GraficoTendencia({ tendencia, t, cor }: { tendencia: TendenciaPainel; t: Tema; cor: string }) {
+  if (tendencia.modo === "meta") return <GraficoTendenciaMeta tendencia={tendencia} t={t} />;
+  return <GraficoTendenciaPar tendencia={tendencia} t={t} cor={cor} />;
+}
+
+/**
+ * Mês a mês contra a META (14/10/2026, Pablo: "tem que ficar IGUAL esse do
+ * turnover"): o desenho de Relatórios › Turnover — uma barra por mês, vermelha
+ * acima da meta e verde abaixo, a meta como linha tracejada. Com duas barras
+ * (taxa × meta cinza) o mês corrente, pela metade, parecia uma queda.
+ */
+function GraficoTendenciaMeta({ tendencia, t }: { tendencia: TendenciaPainel; t: Tema }) {
+  const { ref, w, h } = useTamanho<HTMLDivElement>();
+  const meses = tendencia.meses;
+  const meta = Number(meses.find((m) => m.b != null)?.b ?? 0);
+  const max = Math.max(1, meta, ...meses.map((m) => Number(m.a) || 0)) * 1.15;
+  const fonte = 15;
+  const top = M.t + 18;
+  const ch = h - top - M.b, n = meses.length, slot = n ? (w - M.l - M.r) / n : 0, bw = Math.min(56, slot - 14);
+  const yMeta = top + ch - (meta / max) * ch;
+  const VERMELHO = "#dc2626", VERDE = "#16a34a";
+  return (
+    <div ref={ref} className="absolute inset-0">
+      {w > 0 && h > 0 && (
+        <svg width={w} height={h}>
+          {[[VERMELHO, "Acima da meta"], [VERDE, "Dentro da meta"]].map(([c, s], k) => (
+            <g key={s}>
+              <rect x={w - M.r - (2 - k) * 170} y={0} width={14} height={14} rx={4} fill={c} />
+              <text x={w - M.r - (2 - k) * 170 + 20} y={12} fill={t.suave} fontSize={fonte} fontWeight={700}>{s}</text>
+            </g>
+          ))}
+          <Grade w={w} y0={top} ch={ch} t={t} />
+          {meses.map((m, k) => {
+            const v = Number(m.a) || 0;
+            const cx = M.l + k * slot + slot / 2;
+            const bh = Math.max(2, (v / max) * ch), y = top + ch - bh;
+            const acima = m.a != null && v > meta;
+            return (
+              <g key={m.mes}>
+                {m.a != null && <path d={barra(cx - bw / 2, y, bw, bh, 7)} fill={acima ? VERMELHO : VERDE} />}
+                {m.a != null && <text x={cx} y={y - 6} textAnchor="middle" fill={acima ? VERMELHO : VERDE} fontSize={fonte - 2} fontWeight={800}>{formatarValor(v, tendencia.unidade, true, 2)}</text>}
+                <text x={cx} y={top + ch + fonte + 6} textAnchor="middle" fill={t.suave} fontSize={fonte} fontWeight={700}>{m.mes}</text>
+              </g>
+            );
+          })}
+          {meta > 0 && (
+            <g>
+              <line x1={M.l} x2={w - M.r} y1={yMeta} y2={yMeta} stroke="#f59e0b" strokeWidth={2} strokeDasharray="7 6" />
+              <text x={w - M.r} y={yMeta - 6} textAnchor="end" fill="#d97706" fontSize={fonte - 1} fontWeight={800}>{tendencia.series[1] || `meta ${formatarValor(meta, tendencia.unidade, true, 2)}`}</text>
+            </g>
+          )}
+        </svg>
+      )}
+    </div>
+  );
+}
+
+function GraficoTendenciaPar({ tendencia, t, cor }: { tendencia: TendenciaPainel; t: Tema; cor: string }) {
   const { ref, w, h } = useTamanho<HTMLDivElement>();
   const cores = [cor, "#94a3b8"];
   const meses = tendencia.meses;
