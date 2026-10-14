@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
+  fmtPercentual, relatorioSemCentro, semCentroDetalhe, totaisCentrosMalote,
   divergenciasMaloteFluxo, maloteDiretoPorDespesa, relatorioDivergencias, totalMaloteDireto,
   centrosAcimaDoOrcado, entradasSaidas, linkFluxoCaixa, linksDoCard, periodoDoMes, saidasFinanceiro, situacaoComparacao,
   totaisFluxoExtrato, totaisMaloteFinanceiro, VALIDACOES, type LinhaFluxoAud,
@@ -213,5 +214,49 @@ describe("Auditoria — card 1: relatório das despesas divergentes", () => {
     expect(txt).toContain("DM-1");
     expect(txt).toContain("Valor ajustado só no Fluxo de Caixa");
     expect(txt).toContain("ajustado por Fulana");
+  });
+});
+
+describe("Auditoria — card 3: lançamentos sem centro e formato da cobertura", () => {
+  const tipos = new Map<string, string | null>([["ADM", "administrativo"], ["CONTRATO", "contrato"]]);
+  const L3 = (o: Partial<import("@/pages/controladoria/auditoria/regras").LinhaCentroMalote> & { valor: number }) =>
+    ({ empresa_id: "E1", contrato_id: null, classificacao_id: "CONTRATO", origem: "malote", despesa_id: null, id_malote: null, descricao: "", classificacao_nome: null, data_pagamento: "2026-09-10", ...o });
+  const linhas = [
+    L3({ valor: 1000, contrato_id: "C1", despesa_id: "d1", id_malote: "DM-1" }), // tem centro (contrato)
+    L3({ valor: 300, classificacao_id: "ADM", despesa_id: "d2", id_malote: "DM-2" }), // centro administrativo
+    L3({ valor: 50, despesa_id: "d3", id_malote: "DM-3", descricao: "sem contrato" }), // sem centro
+    L3({ valor: 20, despesa_id: "d3", id_malote: "DM-3", descricao: "sem contrato" }), // 2ª fatia do mesmo lançamento
+    L3({ valor: 700, classificacao_id: null, origem: "debito_automatico", despesa_id: "d4", id_malote: "DA-4", descricao: "financeiro" }), // sem classificação
+  ];
+
+  it("o relatório fecha com o 'sem centro' do total (a mesma conta do card)", () => {
+    const tot = totaisCentrosMalote(linhas, tipos, SEM);
+    const det = semCentroDetalhe(linhas, tipos, SEM);
+    expect(det.reduce((s, l) => s + l.valor, 0)).toBe(tot.pendente);
+    expect(tot.pendente).toBe(770);
+  });
+
+  it("junta as fatias do mesmo lançamento, ordena do maior e diz o motivo", () => {
+    const det = semCentroDetalhe(linhas, tipos, SEM);
+    expect(det.map((l) => [l.numero, l.valor, l.motivo])).toEqual([
+      ["DA-4", 700, "sem_classificacao"],
+      ["DM-3", 70, "contrato_nao_informado"],
+    ]);
+  });
+
+  it("respeita o filtro de empresa e o relatório em texto traz ID, origem e motivo", () => {
+    expect(semCentroDetalhe(linhas, tipos, { empresaId: "E2", contratoId: null })).toEqual([]);
+    const txt = relatorioSemCentro(semCentroDetalhe(linhas, tipos, SEM));
+    expect(txt).toContain("DA-4");
+    expect(txt).toContain("Débito Automático");
+    expect(txt).toContain("Sem classificação");
+    expect(relatorioSemCentro([])).toMatch(/Nenhum lançamento/);
+  });
+
+  it("cobertura pequena não vira 0%: abaixo de 10% mostra uma casa decimal", () => {
+    expect(fmtPercentual(0.0029)).toBe("0,3%");
+    expect(fmtPercentual(0.06)).toBe("6%");
+    expect(fmtPercentual(0.456)).toBe("46%");
+    expect(fmtPercentual(1)).toBe("100%");
   });
 });

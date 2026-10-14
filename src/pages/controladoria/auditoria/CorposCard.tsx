@@ -7,8 +7,8 @@ import { AlertTriangle, ArrowDown, ArrowUp, BarChart3, Briefcase, CheckCircle2, 
 import { cn } from "@/lib/utils";
 import { fmtMoney } from "@/pages/financeiro/nf-emissao/shared";
 import {
-  diferenca, DivergenciaMalote, EntradasSaidas, LABEL_MOTIVO_DIVERGENCIA, LABEL_ORIGEM_FINANCEIRO, LinkCard, PainelFluxoExtrato, PainelMaloteFluxo,
-  PainelOrcadoRealizado, relatorioDivergencias, SituacaoComparacao, TotaisCard,
+  diferenca, DivergenciaMalote, EntradasSaidas, fmtPercentual, LABEL_MOTIVO_DIVERGENCIA, LABEL_MOTIVO_SEM_CENTRO, LABEL_ORIGEM_FINANCEIRO, LABEL_ORIGEM_LANCAMENTO,
+  LancamentoSemCentro, LinkCard, PainelFluxoExtrato, PainelMaloteFluxo, PainelOrcadoRealizado, relatorioDivergencias, relatorioSemCentro, SituacaoComparacao, TotaisCard,
 } from "./regras";
 import { AjusteRegistrado, useAjustesDasDespesas } from "./useAuditoriaDados";
 
@@ -229,7 +229,7 @@ function ColunaEntradasSaidas({ v }: { v: EntradasSaidas }) {
 }
 
 export function CorpoFluxoExtrato({ p, situacao, semDados, links }: { p: PainelFluxoExtrato; situacao: SituacaoComparacao | null; semDados: boolean; links: { malote: LinkCard; fluxo: LinkCard; banco: LinkCard } }) {
-  const pct = p.cobertura === null ? null : Math.round(p.cobertura * 100);
+  const pct = p.cobertura === null ? null : fmtPercentual(p.cobertura);
   return (
     <div className="space-y-3">
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -250,7 +250,7 @@ export function CorpoFluxoExtrato({ p, situacao, semDados, links }: { p: PainelF
         <div className="space-y-1 rounded-md bg-muted/40 p-2.5 text-[11px] text-muted-foreground">
           <p>
             <span className="font-semibold text-foreground">Cobertura:</span> {p.conciliacoes} conta(s)/empresa(s) conciliada(s){p.bancos.length > 0 ? ` (${p.bancos.join(", ")})` : ""}
-            {pct !== null ? ` — ${pct}% das saídas do Fluxo do mês` : ""}.
+            {pct !== null ? ` — ${pct} das saídas do Fluxo do mês` : ""}.
           </p>
           <p>Fluxo do mês inteiro (todos os bancos): entradas {fmtMoney(p.fluxoMes.entradas)} · saídas {fmtMoney(p.fluxoMes.saidas)}. Bancos sem conciliação salva ficam fora da comparação.</p>
           {p.semTotais > 0 && <p className="text-amber-700 dark:text-amber-400">{p.semTotais} conciliação(ões) sem o total do extrato registrado — aplique a migration 20261014000006.</p>}
@@ -265,6 +265,60 @@ export function CorpoFluxoExtrato({ p, situacao, semDados, links }: { p: PainelF
         <Link to={links.banco.to} className="text-primary hover:underline">{links.banco.rotulo}</Link>
       </p>
     </div>
+  );
+}
+
+// ── 3. Lançamentos sem centro de custo ──────────────────────────────────────
+// SIS-2026-0657: o card 3 só mostrava o valor "sem centro"; aqui a Controladoria vê QUAIS lançamentos são.
+export function CorpoSemCentro({ pendentes, linkFluxo }: { pendentes: LancamentoSemCentro[]; linkFluxo: string }) {
+  const [aberto, setAberto] = useState(false);
+  if (pendentes.length === 0) return null;
+  const total = pendentes.reduce((s, l) => s + l.valor, 0);
+  const dia = (iso: string | null) => (iso ? iso.split("-").reverse().join("/") : "—");
+  const destino = (l: LancamentoSemCentro) =>
+    l.origem === "malote" && l.despesaId ? `/app/malote/despesa/${l.despesaId}` : `${linkFluxo}${l.numero ? `&busca=${encodeURIComponent(l.numero)}` : ""}`;
+
+  async function copiar() {
+    try {
+      await navigator.clipboard.writeText(relatorioSemCentro(pendentes));
+      toast.success("Relatório copiado.");
+    } catch {
+      toast.error("Não foi possível copiar.");
+    }
+  }
+
+  return (
+    <>
+      <Button type="button" variant="outline" size="sm" className="w-full justify-between" onClick={() => setAberto(true)}>
+        <span>Ver {pendentes.length} lançamento{pendentes.length === 1 ? "" : "s"} sem centro</span>
+        <span className="font-semibold">{fmtMoney(total)} →</span>
+      </Button>
+      <Dialog open={aberto} onOpenChange={setAberto}>
+        <DialogContent className="max-w-3xl">
+          <DialogHeader>
+            <DialogTitle>Lançamentos sem centro de custo</DialogTitle>
+            <DialogDescription>Gasto sem contrato nem classificação administrativa: não dá para atribuir a um centro. Clique no ID para abrir o lançamento de origem.</DialogDescription>
+          </DialogHeader>
+          <div className="flex justify-end">
+            <Button type="button" variant="ghost" size="sm" className="h-7 gap-1 text-[11px]" onClick={copiar}><ClipboardCopy className="h-3.5 w-3.5" />Copiar relatório</Button>
+          </div>
+          <ul className="max-h-[55vh] divide-y overflow-y-auto rounded-lg border text-xs">
+            {pendentes.map((l, i) => (
+              <li key={`${l.origem}-${l.despesaId ?? i}-${i}`} className="space-y-0.5 px-3 py-2">
+                <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5">
+                  <Link to={destino(l)} className="font-mono text-primary hover:underline">{l.numero ?? "sem ID"}</Link>
+                  <span className="text-muted-foreground">{LABEL_ORIGEM_LANCAMENTO[l.origem] ?? l.origem} · {dia(l.data)}</span>
+                  <span className="font-semibold">{fmtMoney(l.valor)}</span>
+                </div>
+                <p className="truncate" title={l.descricao}>{l.descricao || "sem descrição"}</p>
+                <p className="text-muted-foreground">{LABEL_MOTIVO_SEM_CENTRO[l.motivo]}{l.classificacao ? ` · ${l.classificacao}` : ""}</p>
+              </li>
+            ))}
+          </ul>
+          <p className="text-[11px] text-muted-foreground">Total: <span className="font-medium text-foreground">{fmtMoney(total)}</span> em {pendentes.length} lançamento(s).</p>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }
 

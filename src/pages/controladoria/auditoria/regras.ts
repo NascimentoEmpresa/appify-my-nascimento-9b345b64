@@ -105,7 +105,18 @@ export interface PainelOrcadoRealizado {
   outrosQtd: number;
   totalAcima: number;
 }
-export type PainelCard = PainelMaloteFluxo | PainelFluxoExtrato | PainelOrcadoRealizado;
+export interface LancamentoSemCentro {
+  origem: string;
+  despesaId: string | null;
+  numero: string | null;
+  descricao: string;
+  classificacao: string | null;
+  data: string | null;
+  valor: number;
+  motivo: "sem_classificacao" | "contrato_nao_informado";
+}
+export interface PainelCentros { kind: "centros"; pendentes: LancamentoSemCentro[] }
+export type PainelCard = PainelMaloteFluxo | PainelFluxoExtrato | PainelOrcadoRealizado | PainelCentros;
 
 
 export function diferenca(t: Pick<TotaisCard, "a" | "b">): { valor: number; percentual: number | null } {
@@ -250,7 +261,19 @@ export function maloteDiretoPorDespesa(
 // pertencem aos centros administrativos. Então todo gasto do Malote deveria cair
 // em uma das duas. O que sobra é pendência real: classificação de CONTRATO
 // lançada sem contrato (ou sem classificação) — não dá para atribuir a centro.
-export interface LinhaCentroMalote { valor: number; empresa_id: string | null; contrato_id: string | null; classificacao_id: string | null }
+export interface LinhaCentroMalote {
+  valor: number;
+  empresa_id: string | null;
+  contrato_id: string | null;
+  classificacao_id: string | null;
+  // Identificação do lançamento (só para o relatório dos "sem centro"; os totais não usam).
+  origem?: string;
+  despesa_id?: string | null;
+  id_malote?: string | null;
+  descricao?: string | null;
+  classificacao_nome?: string | null;
+  data_pagamento?: string | null;
+}
 
 export function totaisCentrosMalote(
   linhas: LinhaCentroMalote[],
@@ -323,6 +346,8 @@ export interface LinhaFluxoAud {
   despesa_id?: string | null;
   id_malote?: string | null;
   ajustado?: boolean | null;
+  descricao?: string | null;
+  data_pagamento?: string | null;
 }
 
 export const ORIGEM_MALOTE = "malote";
@@ -554,4 +579,52 @@ export function relatorioDivergencias(divs: DivergenciaMalote[], autores?: Map<s
     return `- ${d.numero ?? d.despesaId}: Malote ${brl(d.malote)} · Fluxo ${brl(d.fluxo)} · diferença ${brl(d.diferenca)} — ${LABEL_MOTIVO_DIVERGENCIA[d.motivo]}${autor ? ` (${autor})` : ""}`;
   });
   return `Despesas divergentes entre Malote e Fluxo de Caixa (${divs.length}):\n${linhas.join("\n")}`;
+}
+
+// ── SIS-2026-0657: lançamentos "sem centro" do card 3 e formato da cobertura ─
+export const LABEL_ORIGEM_LANCAMENTO: Record<string, string> = { malote: "Malote", ...LABEL_ORIGEM_FINANCEIRO };
+export const LABEL_MOTIVO_SEM_CENTRO: Record<LancamentoSemCentro["motivo"], string> = {
+  sem_classificacao: "Sem classificação",
+  contrato_nao_informado: "Classificação de contrato, mas sem contrato informado",
+};
+
+// Mesma regra de totaisCentrosMalote, só que devolvendo QUAIS lançamentos ficaram sem centro (maiores primeiro).
+// Um lançamento rateado entra uma vez só, com as fatias somadas.
+export function semCentroDetalhe(linhas: LinhaCentroMalote[], tipoPorClassificacao: Map<string, string | null>, filtro: FiltroAuditoria): LancamentoSemCentro[] {
+  const por = new Map<string, LancamentoSemCentro>();
+  linhas.forEach((l, i) => {
+    if (!passaFiltro(filtro, l.empresa_id, l.contrato_id)) return;
+    if (l.contrato_id) return;
+    if (l.classificacao_id && tipoPorClassificacao.get(l.classificacao_id) === "administrativo") return;
+    const origem = l.origem ?? "malote";
+    const chave = l.despesa_id ? `${origem}|${l.despesa_id}|${l.data_pagamento ?? ""}` : `${origem}|#${i}`;
+    const atual = por.get(chave);
+    const v = Number(l.valor) || 0;
+    if (atual) { atual.valor = r2(atual.valor + v); return; }
+    por.set(chave, {
+      origem,
+      despesaId: l.despesa_id ?? null,
+      numero: l.id_malote ?? null,
+      descricao: l.descricao ?? "",
+      classificacao: l.classificacao_nome ?? null,
+      data: l.data_pagamento ?? null,
+      valor: r2(v),
+      motivo: l.classificacao_id ? "contrato_nao_informado" : "sem_classificacao",
+    });
+  });
+  return Array.from(por.values()).sort((a, b) => b.valor - a.valor);
+}
+
+export function relatorioSemCentro(lista: LancamentoSemCentro[]): string {
+  if (lista.length === 0) return "Nenhum lançamento sem centro de custo.";
+  const brl = (n: number) => n.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+  const dia = (iso: string | null) => (iso ? iso.split("-").reverse().join("/") : "sem data");
+  const linhas = lista.map((l) => `- ${l.numero ?? "sem ID"} (${LABEL_ORIGEM_LANCAMENTO[l.origem] ?? l.origem}, ${dia(l.data)}): ${l.descricao || "sem descrição"} — ${brl(l.valor)} — ${LABEL_MOTIVO_SEM_CENTRO[l.motivo]}${l.classificacao ? ` [${l.classificacao}]` : ""}`);
+  return `Lançamentos sem centro de custo (${lista.length}, total ${brl(lista.reduce((s, l) => s + l.valor, 0))}):\n${linhas.join("\n")}`;
+}
+
+// Percentual da cobertura da conciliação: abaixo de 10% mostra uma casa decimal, senão 0,3% aparecia como "0%".
+export function fmtPercentual(frac: number): string {
+  const p = frac * 100;
+  return `${(p < 10 ? Math.round(p * 10) / 10 : Math.round(p)).toLocaleString("pt-BR", { maximumFractionDigits: 1 })}%`;
 }

@@ -5,7 +5,7 @@ import { faltaDeFaturamento } from "../faturamentoStatus";
 import { agruparFaturamento, totaisVazios } from "../faturamento/regras";
 import { useBaseFaturamento } from "../faturamento/useBaseFaturamento";
 import {
-  centrosAcimaDoOrcado, conciliacaoDaEmpresa, descontosPorCategoria, divergenciasMaloteFluxo, maloteDiretoPorDespesa, FiltroAuditoria, ItemDesconto, LinhaCentroMalote, saidasFinanceiro, TipoValidacao, TotaisCard,
+  centrosAcimaDoOrcado, conciliacaoDaEmpresa, descontosPorCategoria, divergenciasMaloteFluxo, maloteDiretoPorDespesa, FiltroAuditoria, ItemDesconto, LinhaCentroMalote, saidasFinanceiro, semCentroDetalhe, TipoValidacao, TotaisCard,
   totaisCentrosMalote, totaisFluxoExtrato, totaisMaloteFinanceiro, totalMaloteDireto,
 } from "./regras";
 import { linhasMalote, useConciliadoMes, useMaloteCentrosMes, useFluxoMes, useMaloteDiretoMes, useOrcadoRealizado } from "./useAuditoriaDados";
@@ -87,9 +87,15 @@ export function useTotaisAuditoria(f: FiltrosPainel): Record<TipoValidacao, Esta
     let t3: TotaisCard | null = null;
     if (centrosQ.data && fluxoQ.data) {
       // SIS-2026-0657: Malote + lançamentos do Financeiro (mesma definição do card 1, sem aplicação).
-      const financeiro: LinhaCentroMalote[] = saidasFinanceiro(fluxoQ.data, f).map((l) => ({ valor: Number(l.valor) || 0, empresa_id: l.empresa_id, contrato_id: l.contrato_id, classificacao_id: l.classificacao_id ?? null }));
-      const r = totaisCentrosMalote([...centrosQ.data.linhas, ...financeiro], centrosQ.data.tipoPorClassificacao, f);
+      const financeiro: LinhaCentroMalote[] = saidasFinanceiro(fluxoQ.data, f).map((l) => ({
+        valor: Number(l.valor) || 0, empresa_id: l.empresa_id, contrato_id: l.contrato_id, classificacao_id: l.classificacao_id ?? null,
+        origem: l.origem, despesa_id: l.despesa_id ?? null, id_malote: l.id_malote ?? null, descricao: l.descricao ?? null,
+        classificacao_nome: l.classificacao_nome, data_pagamento: l.data_pagamento ?? null,
+      }));
+      const todasAsLinhas = [...centrosQ.data.linhas, ...financeiro];
+      const r = totaisCentrosMalote(todasAsLinhas, centrosQ.data.tipoPorClassificacao, f);
       t3 = {
+        painel: { kind: "centros", pendentes: semCentroDetalhe(todasAsLinhas, centrosQ.data.tipoPorClassificacao, f) },
         a: r.total,
         b: r2(r.comContrato + r.administrativo),
         aviso: "Centro de custo = contrato do rateio. A diferença é gasto de contrato ou lançamento financeiro sem centro (ou sem classificação).",

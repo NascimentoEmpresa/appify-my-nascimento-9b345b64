@@ -40,16 +40,17 @@ export interface LinhaFluxoMes {
   banco_id: string | null;
   banco_nome: string | null;
   descricao: string | null;
+  data_pagamento: string | null;
+  despesa_id: string | null;
+  id_malote: string | null;
   // Só a view do Malote devolve (relatório de divergências do card 1).
-  despesa_id?: string | null;
-  id_malote?: string | null;
   ajustado?: boolean | null;
 }
 
 // A origem é conhecida pela própria view — nem todas têm a coluna `origem`
 // (a de resgate de aplicação não tem; pedir a coluna derrubava o card inteiro).
 const VIEWS_FLUXO: { view: string; origem: string; ordem: string[]; extra?: string }[] = [
-  { view: "v_malote_pagamento_fluxo_caixa", origem: "malote", ordem: ["despesa_id", "numero_parcela", "contrato_id", "valor"], extra: "despesa_id, id_malote, ajustado" },
+  { view: "v_malote_pagamento_fluxo_caixa", origem: "malote", ordem: ["despesa_id", "numero_parcela", "contrato_id", "valor"], extra: "ajustado" },
   { view: "v_debito_automatico_fluxo_caixa", origem: "debito_automatico", ordem: ["despesa_id", "numero_parcela", "contrato_id", "valor"] },
   { view: "v_cartao_fatura_fluxo_caixa", origem: "cartao_fatura", ordem: ["despesa_id", "numero_parcela", "contrato_id", "valor"] },
   { view: "v_aplicacao_financeira_fluxo_caixa", origem: "aplicacao_financeira", ordem: ["despesa_id", "numero_parcela", "contrato_id", "valor"] },
@@ -59,7 +60,7 @@ const VIEWS_FLUXO: { view: string; origem: string; ordem: string[]; extra?: stri
 
 async function lerView(view: string, origem: string, ordem: string[], mes: string, extra?: string): Promise<LinhaFluxoMes[]> {
   const linhas = await paginar<Omit<LinhaFluxoMes, "origem">>(() => {
-    let q = dentroDoMes((supabase as any).from(view).select(`tipo, valor, empresa_id, contrato_id, classificacao_id, classificacao_nome, banco_id, banco_nome, descricao${extra ? `, ${extra}` : ""}`), "data_pagamento", mes);
+    let q = dentroDoMes((supabase as any).from(view).select(`tipo, valor, empresa_id, contrato_id, classificacao_id, classificacao_nome, banco_id, banco_nome, descricao, data_pagamento, despesa_id, id_malote${extra ? `, ${extra}` : ""}`), "data_pagamento", mes);
     for (const c of ordem) q = q.order(c, { ascending: true });
     return q;
   });
@@ -133,11 +134,11 @@ export function useMaloteCentrosMes(mes: string) {
     queryFn: async () => {
       const db = supabase as any;
       const linhas = await paginar<LinhaCentroMalote>(() =>
-        dentroDoMes(db.from("v_malote_pagamento_fluxo_caixa").select("valor, empresa_id, contrato_id, classificacao_id").eq("tipo", "saida"), "data_pagamento", mes)
+        dentroDoMes(db.from("v_malote_pagamento_fluxo_caixa").select("valor, empresa_id, contrato_id, classificacao_id, despesa_id, id_malote, descricao, classificacao_nome, data_pagamento").eq("tipo", "saida"), "data_pagamento", mes)
           .order("despesa_id").order("numero_parcela").order("contrato_id").order("valor")
       );
       const classificacoes = await paginar<{ id: string; tipo: string | null }>(() => db.from("planejamento_orcamentario_classificacao").select("id, tipo").order("id"));
-      return { linhas, tipoPorClassificacao: new Map(classificacoes.map((c) => [c.id, c.tipo])) };
+      return { linhas: linhas.map((l) => ({ ...l, origem: "malote" })), tipoPorClassificacao: new Map(classificacoes.map((c) => [c.id, c.tipo])) };
     },
   });
 }

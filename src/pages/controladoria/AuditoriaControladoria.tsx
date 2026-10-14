@@ -24,7 +24,7 @@ import {
   DefValidacao, diferenca, linksDoCard, STATUS_LABEL, statusGeral, situacaoComparacao, TipoValidacao, valoresMudaramDesdeDecisao, VALIDACOES,
 } from "./auditoria/regras";
 import { EstadoCard, useTotaisAuditoria } from "./auditoria/useTotaisAuditoria";
-import { CorpoFluxoExtrato, CorpoMaloteFluxo, CorpoOrcadoRealizado } from "./auditoria/CorposCard";
+import { CorpoFluxoExtrato, CorpoMaloteFluxo, CorpoOrcadoRealizado, CorpoSemCentro } from "./auditoria/CorposCard";
 import {
   HistoricoRow, useHistoricoPeriodo, useRegistrarAuditoria, useResponsaveisAuditoria, useSalvarResponsaveis, useValidacoesPeriodo, ValidacaoRow,
 } from "./auditoria/useAuditoriaValidacoes";
@@ -375,6 +375,7 @@ function CardValidacao(props: {
                 ))}
               </ul>
             )}
+            {t.painel?.kind === "centros" && <CorpoSemCentro pendentes={t.painel.pendentes} linkFluxo={link("Lançamentos financeiros").to} />}
             {t.aviso && <p className="text-[11px] text-muted-foreground">{t.aviso}</p>}
           </>
         )}
