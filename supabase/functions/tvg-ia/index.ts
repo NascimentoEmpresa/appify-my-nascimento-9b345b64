@@ -15,7 +15,10 @@
 // 20261014000023): o custo de cada contrato do gráfico aberto por conta, mês a
 // mês. Sem ele a I.A só via o total e respondia "consulte a Controladoria" à
 // pergunta "o que provocou a alta?" (Pablo, 14/10/2026) — a resposta estava
-// nos lançamentos.
+// nos lançamentos. Na mig 20261014000024 o DETALHE passou a valer para todos
+// os indicadores calculados: os registros por trás do número (notificações,
+// vagas, pedidos, NFs, processos, chamados, folha por situação/cargo…), sem
+// nome de pessoa. Indicador sem detalhe segue só com resultado + fonte.
 //
 // Provedor: o mesmo de diretoria-ia — Gemini (GEMINI_API_KEY) primeiro; erro
 // passageiro tenta de novo; sem tokens ou chave recusada, passa ao Groq
@@ -87,7 +90,7 @@ Você explica UM indicador que aparece na TV para um gestor (não técnico).
 Você recebe:
 - o RESULTADO atual do indicador (valor, meta, "onde"/afetado, causa, detalhe por contrato que vira o gráfico, base);
 - a FONTE: a regra escrita e o SQL real que calcula o número no banco, mais as funções de apoio que ele usa;
-- às vezes o DETALHE: os lançamentos do DRE de cada contrato do gráfico abertos por conta contábil e competência (valor em R$ e nº de lançamentos).
+- quase sempre o DETALHE: os registros por trás do número, com o mesmo filtro do cálculo (ex.: lançamentos do DRE por conta e competência; colaboradores por situação e cargo; notificações, vagas, pedidos, NFs, processos, chamados). "observacao" diz o que é cada campo; listas longas vêm cortadas nos primeiros registros e "total_registros" diz quantos existem.
 
 Como traduzir o SQL em tela do ERP (use estes nomes, não o nome da tabela, mas cite a tabela entre parênteses uma vez):
 - EMPREGADOS / espelho."Bi…" = folha da Senior (cadastro de colaboradores, situação, salário, ponto) sincronizada todo dia;
@@ -103,7 +106,8 @@ Como traduzir o SQL em tela do ERP (use estes nomes, não o nome da tabela, mas 
 Regras:
 - Português do Brasil, direto, frases curtas. Nada de mostrar SQL (a não ser que perguntem explicitamente).
 - Use só o que está nos dados recebidos. Não invente número, tabela, nome ou causa. Se o dado não mostra, diga isso.
-- Quando houver DETALHE e perguntarem a causa de uma alta/queda: compare conta por conta a competência atual com a média das anteriores e diga quais contas explicam a diferença, em R$, da maior para a menor. Responda com os números — não mande o gestor procurar a Controladoria ou outro módulo se a resposta está no DETALHE.
+- Quando houver DETALHE, responda "por quê", "qual", "onde" e "quanto" com ele: cite os registros (contrato, número do documento/vaga/NF/processo/chamado, datas, valores, status) e agrupe para mostrar onde se concentra. Não mande o gestor procurar outro módulo ou área se a resposta está no DETALHE — só diga que o dado não existe quando ele de fato não aparece ali (e, se a lista veio cortada, diga que mostra os primeiros de "total_registros").
+- No DRE: compare conta por conta a competência atual com a média das anteriores e diga quais contas explicam a diferença, em R$, da maior para a menor.
 - Conta que aparece só na competência atual (ex. "Salários operacionais" sem nenhum lançamento nos meses anteriores) quase sempre é lançamento que faltou antes, contrato que começou agora ou carga incompleta — não um aumento real. Aponte isso com clareza, porque infla o percentual. Note também quando a média usa menos de 3 meses (contrato novo).
 - O parâmetro do indicador (janela de dias, limite %) vem em "parametro" (null = o padrão escrito no SQL com coalesce).
 - Nomes de pessoas não aparecem nos dados — se perguntarem "quem", explique que a TV é área comum e mostra contrato/setor.
@@ -160,7 +164,7 @@ Deno.serve(async (req) => {
     const contexto = `HOJE: ${new Date().toISOString().slice(0, 10)}\n` +
       `RESULTADO (o que a TV mostra):\n${JSON.stringify(ind.data).slice(0, 9000)}\n\n` +
       `FONTE (regra e cálculo no banco):\n${JSON.stringify(fonte.data).slice(0, 14000)}` +
-      (detalhe.data ? `\n\nDETALHE (DRE por conta e competência, contratos do gráfico):\n${JSON.stringify(detalhe.data).slice(0, 24000)}` : "");
+      (detalhe.data ? `\n\nDETALHE (registros por trás do número):\n${JSON.stringify(detalhe.data).slice(0, 32000)}` : "");
 
     const mensagens: Msg[] = modo === "origem"
       ? [{ role: "user", content: PEDIDO_ORIGEM }]
