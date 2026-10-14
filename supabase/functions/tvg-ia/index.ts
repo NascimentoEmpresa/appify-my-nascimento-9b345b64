@@ -12,7 +12,7 @@
 // o calcula (tvg_fonte, recortado da tvg_calc em produção) são lidos com o
 // JWT de quem pediu — o mesmo portão da tela (tvs_gerenciais/sistemas_tvs).
 // Nos indicadores do DRE vai junto o DETALHE (tvg_ia_detalhe, mig
-// 20261014000020): o custo de cada contrato do gráfico aberto por conta, mês a
+// 20261014000023): o custo de cada contrato do gráfico aberto por conta, mês a
 // mês. Sem ele a I.A só via o total e respondia "consulte a Controladoria" à
 // pergunta "o que provocou a alta?" (Pablo, 14/10/2026) — a resposta estava
 // nos lançamentos.
