@@ -19,7 +19,11 @@ export type Sentido = "menor" | "maior";
 export type Fonte = "auto" | "manual" | "espelho" | "soma";
 export type Situacao = "vermelho" | "amarelo" | "verde" | "neutro" | "sem_dado";
 
-export interface LinhaDetalhe { nome: string; valor: number | null; rotulo?: string | null; /** duas séries (postos: contratados × cobertos; quadro: ativos × necessários) */ a?: number | null; b?: number | null }
+export interface LinhaDetalhe {
+  nome: string; valor: number | null; rotulo?: string | null; /** duas séries (postos: contratados × cobertos; quadro: ativos × necessários) */ a?: number | null; b?: number | null;
+  /** Gráfico "lista" (alertas): data (AAAA-MM-DD), linha principal e linha de apoio. */
+  data?: string | null; titulo?: string | null; sub?: string | null;
+}
 
 export interface ResultadoIndicador {
   valor: number | string | null;
@@ -225,12 +229,13 @@ export const visualGerencial = (v: string | null | undefined) => VISUAIS_GERENCI
 export const ehDashboard = (v: VisualGerencial) => v === "dashboard" || v === "dashboard-escuro";
 export const visualDoItem = (v: string | null | undefined): VisualGerencial => visualGerencial(v).valor;
 
-export type TipoGrafico = "colunas" | "agrupado" | "linha" | "rosca" | "combo";
+/** "lista": linhas de alerta com data, título e apoio (lic_prazo — o slide Alertas da TV de Licitações, 14/10/2026). */
+export type TipoGrafico = "colunas" | "agrupado" | "linha" | "rosca" | "combo" | "lista";
 /** O tipo de gráfico de cada indicador — o mesmo do protótipo HTML quando o dado do ERP permite. */
 const GRAFICO: Record<string, { tipo: TipoGrafico; series?: [string, string]; /** unidade do detalhe quando difere da do indicador */ unidade?: Unidade }> = {
   fin_notas_pendentes: { tipo: "colunas", unidade: "brl" }, sup_valor_estoque: { tipo: "colunas", unidade: "brl" }, sup_sem_mov: { tipo: "colunas", unidade: "brl" },
   rh_ob_rescisoes: { tipo: "colunas", unidade: "qtd" }, fin_recebimentos: { tipo: "colunas", unidade: "brl" },
-  lic_prazo: { tipo: "colunas", unidade: "dias" }, lic_implantacao: { tipo: "colunas", unidade: "dias" }, lic_propostas: { tipo: "colunas", unidade: "dias" },
+  lic_prazo: { tipo: "lista", unidade: "dias" }, lic_implantacao: { tipo: "colunas", unidade: "dias" }, lic_propostas: { tipo: "colunas", unidade: "dias" },
   jur_prazos: { tipo: "colunas", unidade: "dias" }, fro_manutencoes: { tipo: "colunas", unidade: "dias" }, jur_audiencias: { tipo: "linha", unidade: "dias" },
   op_postos: { tipo: "agrupado", series: ["Contratados", "Cobertos"] }, pre_postos: { tipo: "agrupado", series: ["Contratados", "Cobertos"] },
   rh_quadro: { tipo: "agrupado", series: ["Ativos", "Necessários"] },
@@ -245,6 +250,8 @@ export function graficoDo(i: Pick<IndicadorGerencial, "codigo" | "resultado">): 
   const g = GRAFICO[i.codigo] ?? { tipo: "colunas" as TipoGrafico };
   // Agrupado sem as duas séries (detalhe lançado à mão) cai para colunas.
   if (g.tipo === "agrupado" && !(i.resultado?.detalhe ?? []).some((l) => l.a != null && l.b != null)) return { tipo: "colunas" };
+  // Lista sem os campos (banco antes da mig 20261014000027) cai para colunas.
+  if (g.tipo === "lista" && !(i.resultado?.detalhe ?? []).some((l) => l.titulo)) return { tipo: "colunas", unidade: g.unidade };
   return g;
 }
 

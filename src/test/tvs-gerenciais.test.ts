@@ -130,6 +130,11 @@ describe("páginas da TV e subindicadores", () => {
     expect(graficoDo(ind({ codigo: "op_postos", detalhe: [{ nome: "X", valor: 1 }] })).tipo).toBe("colunas");
     expect(graficoDo(ind({ codigo: "op_turnover" })).tipo).toBe("linha");
     expect(graficoDo(ind({ codigo: "lic_perdidas" })).tipo).toBe("rosca");
+    // Licitações com prazo próximo: lista de alertas quando o banco manda título; senão, colunas.
+    const alerta = ind({ codigo: "lic_prazo", detalhe: [{ nome: "PE 1/2026", valor: 0 }] });
+    expect(graficoDo(alerta).tipo).toBe("colunas");
+    alerta.resultado.detalhe = [{ nome: "PE 1/2026", valor: 0, data: "2026-10-14", titulo: "PE 1/2026 · Limpeza", sub: "Fulana · Iniciado" }];
+    expect(graficoDo(alerta).tipo).toBe("lista");
     expect(graficoDo(ind({ codigo: "op_lucratividade" })).tipo).toBe("combo");
     expect(graficoDo(ind({ codigo: "sup_compras_vencidas" })).tipo).toBe("colunas");
   });
