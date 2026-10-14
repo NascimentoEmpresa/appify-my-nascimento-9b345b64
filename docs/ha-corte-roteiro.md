@@ -571,6 +571,70 @@ olhado à mão todo dia — não é opcional.
 
 ---
 
+### 1.8 ✅ A API do cluster em HTTPS, e o que já foi aceito (14/10/2026)
+
+Sem isto o Marco B entrega tela branca: o frontend serve de
+`https://app.grpnascimento.com.br`, e **um site HTTPS não pode chamar uma API
+em HTTP** — o navegador bloqueia antes de sair, e nenhum teste de `curl`
+mostra isso. O Kong escutava HTTP puro na 8000, com `URL_EXTERNA` em
+`localhost`.
+
+**O problema da porta.** A 443 dos nós estava ocupada pelo `sshd`, porque a
+rede da empresa bloqueia a 22. Medido do escritório: saída **80 OK, 443 OK,
+8443 OK, 8000 bloqueada, 2222 bloqueada**. Então o **SSH foi para a 8443** — que
+só nós usamos — e a 443 ficou para o usuário, que é a porta que funciona em
+qualquer rede, inclusive no 4G de quem está em campo.
+
+Feito por `infra/ha/expor-api-https.sh`, em etapas que nunca tiram o acesso
+antes da próxima estar provada. **Anote: o SSH dos nós agora é
+`ssh -p 8443`.**
+
+#### O que foi medido, e o que cada medida prova
+
+| Medida | Resultado | O que prova |
+|---|---|---|
+| certificado | `Let's Encrypt YE2 ← ISRG Root YE ← ISRG Root X2`, `Verify return code: 0` | TLS real, renovação automática, válido até 12/01/2027 |
+| `/auth/v1/health` | `200` | GoTrue de pé |
+| preflight `OPTIONS` com `Origin` do frontend | `200` com `Access-Control-Allow-Origin` | **o navegador vai deixar passar** — é o teste que o `curl` simples não faz, e que reprovou 4 vezes na contingência |
+| login com senha errada | `400 invalid_grant / Invalid login credentials` | a cadeia de autenticação inteira lê a tabela de usuários replicada |
+| `anon` lendo `EMPREGADOS` | `200` com `[]` | a RLS barra, e barra devolvendo lista vazia (não erro) |
+| `service_role` lendo | `200`, 4.384 bytes | dados reais sendo servidos |
+| `CHAMADO_SISTEMA` por PostgREST | `content-range: 0-0/640` | contagem igual à da produção, pela API |
+| **download de anexo** | `200`, 43.584 bytes, content-type correto, conteúdo começando em `PK` | o byte está no disco **e** o xattr sobreviveu — é aqui que o nó sem o arquivo responde 500 |
+
+#### A trava de leitura durante o teste
+
+O cluster é **assinante** da replicação: uma escrita local pode tomar uma PK
+que a produção ainda vai replicar, e o conflito de chave duplicada **para a
+replicação**. Por isso o teste rodou com a escrita revogada no cluster
+(`REVOKE INSERT, UPDATE, DELETE ... FROM anon, authenticated`, o mesmo padrão
+da seção 2.1, só que do lado do cluster), e os `GRANT` foram devolvidos ao
+final. **Escrita pelo ERP ainda não foi aceita** — isso só acontece na janela,
+depois que a produção estiver congelada.
+
+#### O que falta para a aceitação pelo navegador
+
+O build local apontando para o cluster depende da chave `anon` do cluster
+entrar num `.env` da máquina de quem builda. Com ele pronto, o login é feito
+com a **senha real**: o dump de `auth` já carregou os 159 usuários no cluster,
+com os hashes da produção.
+
+#### A diferença que o teste expôs
+
+| | produção | cluster |
+|---|---|---|
+| `CHAMADO_SISTEMA` | 640 | 640 |
+| `EMPREGADOS` | 13.404 | 13.404 |
+| `mz_32_fato_razao_contabil` | 215.210 | 215.210 |
+| **`storage.objects`** | **11.568** | **11.252** |
+
+Faltam **316 anexos**, enviados depois da carga de 13/10. É esperado —
+`storage` não entra na publicação —, mas agora tem ritmo: **~316 por dia**.
+Confirma que o passo 2.5 (delta final dos anexos) não é formalidade e precisa
+rodar **imediatamente antes** da virada.
+
+---
+
 ## Fase 2 — a virada
 
 Daqui até o fim, o ERP fica fora do ar para escrita. Alvo: **minutos**, não

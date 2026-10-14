@@ -24,9 +24,9 @@ PW=$(grep -m1 '^SENHA_ACESSO_SUPABASE=' .env.local | cut -d= -f2- | tr -d '\r\n'
 [ -n "$PW" ] || { echo "nao achei SENHA_ACESSO_SUPABASE em .env.local" >&2; exit 1; }
 
 echo "== levando a versao atual do script para o $NO"
-scp -P 443 -o BatchMode=yes infra/ha/sincronizar-colunas.sh "root@$NO:/root/sincronizar-colunas.sh" >/dev/null
+scp -P 8443 -o BatchMode=yes infra/ha/sincronizar-colunas.sh "root@$NO:/root/sincronizar-colunas.sh" >/dev/null
 
-ssh -p 443 -o BatchMode=yes "root@$NO" "sed -i 's/\r\$//' /root/sincronizar-colunas.sh
+ssh -p 8443 -o BatchMode=yes "root@$NO" "sed -i 's/\r\$//' /root/sincronizar-colunas.sh
 SENHA_SUPABASE='$PW' bash /root/sincronizar-colunas.sh $ACAO
 rc=\$?
 # A bandeira so some quando o conserto foi aplicado E deu certo.
