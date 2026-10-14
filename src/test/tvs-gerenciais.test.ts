@@ -83,6 +83,7 @@ describe("formato do documento", () => {
   it("valores curtos para a TV", () => {
     expect(formatarValor(80000, "brl")).toBe("R$ 80 mil");
     expect(formatarValor(1_049_403, "brl")).toBe("R$ 1 mi");
+    expect(formatarValor(1_140_149_803, "brl")).toBe("R$ 1,1 bi");
     expect(formatarValor(3.24, "pct")).toBe("3,2%");
     expect(formatarValor(138, "qtd")).toBe("138");
     expect(formatarValor(null, "qtd")).toBe("—");

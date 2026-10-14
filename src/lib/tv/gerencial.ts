@@ -148,6 +148,8 @@ export function formatarValor(v: number | string | null | undefined, unidade: Un
   if (unidade === "dias") return `${n.toLocaleString("pt-BR", { maximumFractionDigits: 1 })} d`;
   if (unidade === "brl") {
     const a = Math.abs(n);
+    // Bilhão (14/10/2026): "R$ 1.140,1 mi" (valor participado das licitações) não cabia no cartão.
+    if (curto && a >= 1_000_000_000) return `R$ ${(n / 1_000_000_000).toLocaleString("pt-BR", { maximumFractionDigits: 1 })} bi`;
     if (curto && a >= 1_000_000) return `R$ ${(n / 1_000_000).toLocaleString("pt-BR", { maximumFractionDigits: 1 })} mi`;
     if (curto && a >= 10_000) return `R$ ${(n / 1000).toLocaleString("pt-BR", { maximumFractionDigits: 0 })} mil`;
     const casas = a >= 1000 || Number.isInteger(n) ? 0 : 2; // mínimo explícito: navegador de TV antigo recusa máximo < mínimo padrão
