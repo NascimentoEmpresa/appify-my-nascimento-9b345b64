@@ -31,7 +31,7 @@ export interface ResultadoIndicador {
   detalhe?: LinhaDetalhe[] | null; erro?: string | null; origem?: string | null;
   referencia?: string | null; atualizado_em?: string | null; observacao?: string | null;
   /** TV que espelha um relatório (mig 20261014000030): o gráfico da tela de origem — tipo, título e a ordem embaixo. */
-  grafico?: TipoGrafico | null; grafico_titulo?: string | null; destaque?: number | null;
+  grafico?: TipoGrafico | null; grafico_titulo?: string | null; grafico_series?: [string, string] | null; destaque?: number | null;
 }
 
 export interface IndicadorGerencial {
@@ -256,7 +256,7 @@ const GRAFICO: Record<string, { tipo: TipoGrafico; series?: [string, string]; /*
 };
 export function graficoDo(i: Pick<IndicadorGerencial, "codigo" | "resultado">): { tipo: TipoGrafico; series?: [string, string]; unidade?: Unidade } {
   // Espelho de relatório: o tipo do gráfico vem da tela de origem.
-  const g = i.resultado?.grafico ? { tipo: i.resultado.grafico } : GRAFICO[i.codigo] ?? { tipo: "colunas" as TipoGrafico };
+  const g = i.resultado?.grafico ? { tipo: i.resultado.grafico, series: i.resultado.grafico_series ?? undefined } : GRAFICO[i.codigo] ?? { tipo: "colunas" as TipoGrafico };
   // Agrupado sem as duas séries (detalhe lançado à mão) cai para colunas.
   if (g.tipo === "agrupado" && !(i.resultado?.detalhe ?? []).some((l) => l.a != null && l.b != null)) return { tipo: "colunas" };
   // Lista sem os campos (banco antes da mig 20261014000027) cai para colunas.
