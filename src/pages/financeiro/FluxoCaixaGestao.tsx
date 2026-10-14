@@ -13,11 +13,18 @@ import {
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  ABAS_FLUXO, SITUACOES_FLUXO, filtrarPorAbaFluxo, filtrarPorSituacaoFluxo, hojeISO, situacaoFluxo,
+  type AbaFluxo, type SituacaoFluxo,
+} from "@/pages/financeiro/fluxo-caixa/abasFluxo";
+import { agruparKpi, explicacaoKpi, linhasDoKpi, totalKpi, type KpiFluxo } from "@/pages/financeiro/fluxo-caixa/kpiFluxo";
 import { TrendingDown, TrendingUp, Wallet, LineChart, X, Trash2, RotateCcw, Pencil, Eye, ChevronRight, ChevronDown, FileDown } from "lucide-react";
 import { toast } from "sonner";
 import { AcessoGate } from "@/components/auth/AcessoGate";
 import {
   useFluxoCaixaCombinado,
+  useFluxoCaixaPrevisto,
   useAjustarLinhaFluxoCaixa,
   useTrocarContratoFluxoCaixa,
   useSemContratoImportado,
@@ -112,6 +119,14 @@ const LABEL_ORIGEM: Record<FluxoCaixaMaloteLinha["origem"], string> = {
 // filtradas de uma vez — mesmo padrão de paginação de PlanilhaCusto.tsx.
 const PAGE_SIZE = 50;
 
+// SIS-2026-0611: cor do selo de situação (aba Projetado/Consolidado).
+const SITUACAO_CLASSE: Record<SituacaoFluxo, string> = {
+  vencido: "text-red-600 dark:text-red-400",
+  a_vencer: "text-amber-600 dark:text-amber-400",
+  previsto: "text-sky-600 dark:text-sky-400",
+  cancelado: "text-slate-500 dark:text-slate-400",
+};
+
 // SIS-2026-0160: início do Fluxo de Caixa. SIS-2026-0256 somou o Débito
 // Automático (entrada e saída) ao Pagamento Malote (só saída) como segunda
 // fonte — os cards de Entradas/Saldo ainda ficam zerados (nenhuma das duas
@@ -119,7 +134,10 @@ const PAGE_SIZE = 50;
 export default function FluxoCaixaGestao() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const { data: linhasBrutas = [], isLoading } = useFluxoCaixaCombinado();
+  const { data: linhasRealizadas = [], isLoading } = useFluxoCaixaCombinado();
+  // SIS-2026-0611: compromissos ainda não pagos (só esta tela usa; a Conciliação não).
+  const { data: linhasPrevistas = [] } = useFluxoCaixaPrevisto();
+  const linhasBrutas = useMemo(() => [...linhasRealizadas, ...linhasPrevistas], [linhasRealizadas, linhasPrevistas]);
   // SIS-2026-0632: valor real da fatura (digitado no Cartão de Crédito) p/ comparar com a linha consolidada.
   const { data: faturasInformadas } = useFaturasInformadas();
 
@@ -134,7 +152,7 @@ export default function FluxoCaixaGestao() {
   // SIS-2026-0537 (Iury): guarda o detalhe por contrato (nome + fatia do
   // valor) em `rateioDetalhe`, pra tela poder expandir a linha e mostrar
   // como o rateio foi feito, em vez de só o rótulo "Rateio".
-  const linhas = useMemo(() => {
+  const linhasTodas = useMemo(() => {
     const grupos = new Map<
       string,
       { base: FluxoCaixaMaloteLinha; valor: number; contratos: Map<string, { nome: string; valor: number }>; classes: Set<string>; despesas: Map<string, RateioDetalheItem> }
@@ -190,6 +208,14 @@ export default function FluxoCaixaGestao() {
       return { ...base, valor, rateioDetalhe: undefined as RateioDetalheItem[] | undefined };
     });
   }, [linhasBrutas]);
+
+  // SIS-2026-0611: três visões do mesmo Fluxo. Realizado = o que já aconteceu (data de
+  // pagamento até hoje); Projetado = datas futuras (ex.: parcelas de cartão ainda por
+  // vencer); Consolidado = os dois juntos. Padrão é Realizado, que é o que o Fluxo
+  // sempre representou. Tudo abaixo (filtros, totais, exportação) trabalha sobre `linhas`.
+  const [aba, setAba] = useState<AbaFluxo>("realizado");
+  const hoje = hojeISO();
+  const linhas = useMemo(() => filtrarPorAbaFluxo(linhasTodas, aba, hoje), [linhasTodas, aba, hoje]);
   // SIS-2026-0221/0439: "Forma de pagamento" vem do catálogo nomeado
   // cadastrável em Configurações do Malote → Formas de Pagamento.
   const { data: formasPagamento = [] } = useFormasPagamento();
@@ -335,6 +361,8 @@ export default function FluxoCaixaGestao() {
   const [contratoId, setContratoId] = useState("");
   const [classificacaoId, setClassificacaoId] = useState("");
   const [formaPagamento, setFormaPagamento] = useState("");
+  const [situacao, setSituacao] = useState<SituacaoFluxo | "">("");
+  const [kpiAberto, setKpiAberto] = useState<KpiFluxo | null>(null);
   // SIS-2026-0307: "após o pagamento alimentamos o fluxo de caixa" (usuário)
   // — Banco entra aqui, não em Pagamento Malote/Meus Itens.
   const [bancoId, setBancoId] = useState("");
@@ -410,6 +438,7 @@ export default function FluxoCaixaGestao() {
     setContratoId("");
     setClassificacaoId("");
     setFormaPagamento("");
+    setSituacao("");
     setBancoId("");
     setValor("");
     setSoInconsistentes(false);
@@ -420,7 +449,7 @@ export default function FluxoCaixaGestao() {
   const filtradas = useMemo(() => {
     const buscaNorm = busca.trim().toLowerCase();
     const valorNum = parseValorBR(valor);
-    return linhas.filter((l) => {
+    return filtrarPorSituacaoFluxo(linhas, situacao, hoje).filter((l) => {
       if (!valorConfere(l.valor, valorNum)) return false;
       if (dataDe && (!l.data_pagamento || l.data_pagamento < dataDe)) return false;
       if (dataAte && (!l.data_pagamento || l.data_pagamento > dataAte)) return false;
@@ -438,13 +467,19 @@ export default function FluxoCaixaGestao() {
       ) return false;
       return true;
     });
-  }, [linhas, dataDe, dataAte, competencia, empresaId, contratoId, classificacaoId, formaPagamento, bancoId, soInconsistentes, busca, valor]);
+  }, [linhas, hoje, situacao, dataDe, dataAte, competencia, empresaId, contratoId, classificacaoId, formaPagamento, bancoId, soInconsistentes, busca, valor]);
 
   // SIS-2026-0256: com o Débito Automático somado à fonte, "Saídas" precisa
   // filtrar por tipo — antes só existia saída (Malote), então somar tudo
   // dava no mesmo.
   const totalSaidas = useMemo(() => filtradas.filter((l) => l.tipo === "saida").reduce((s, l) => s + Number(l.valor), 0), [filtradas]);
   const totalEntradas = useMemo(() => filtradas.filter((l) => l.tipo === "entrada").reduce((s, l) => s + Number(l.valor), 0), [filtradas]);
+  // SIS-2026-0611: saldo = entradas − saídas do filtro atual; vencidas = saídas previstas com data anterior a hoje.
+  const saldoFiltro = totalEntradas - totalSaidas;
+  const totalVencidas = useMemo(
+    () => filtradas.filter((l) => l.tipo === "saida" && situacaoFluxo(l, hoje) === "vencido").reduce((s, l) => s + Number(l.valor), 0),
+    [filtradas, hoje],
+  );
 
   // Exportação com escolha do recorte: o diálogo já abre com os filtros que a
   // tela está usando, e a pessoa ajusta o que quiser (período, empresa, banco,
@@ -464,6 +499,7 @@ export default function FluxoCaixaGestao() {
     if (!exportando) return [] as typeof linhas;
     const valorNum = parseValorBR(fx.valor);
     return linhas.filter((l) => {
+      if (situacaoFluxo(l, hoje) === "cancelado") return false;
       if (!valorConfere(l.valor, valorNum)) return false;
       if (fx.dataDe && (!l.data_pagamento || l.data_pagamento < fx.dataDe)) return false;
       if (fx.dataAte && (!l.data_pagamento || l.data_pagamento > fx.dataAte)) return false;
@@ -478,7 +514,7 @@ export default function FluxoCaixaGestao() {
       if (fx.soRevisar && !l.inconsistencia) return false;
       return true;
     });
-  }, [exportando, linhas, fx]);
+  }, [exportando, linhas, fx, hoje]);
   const exportEntradas = useMemo(() => linhasExport.filter((l) => l.tipo === "entrada").reduce((t, l) => t + Number(l.valor), 0), [linhasExport]);
   const exportSaidas = useMemo(() => linhasExport.filter((l) => l.tipo === "saida").reduce((t, l) => t + Number(l.valor), 0), [linhasExport]);
 
@@ -571,6 +607,17 @@ export default function FluxoCaixaGestao() {
           </div>
         }
       />
+
+      <Tabs value={aba} onValueChange={(v) => { setAba(v as AbaFluxo); setPage(1); }}>
+        <TabsList className="grid h-auto w-full grid-cols-3 gap-1 p-1">
+          {ABAS_FLUXO.map((a) => (
+            <TabsTrigger key={a.valor} value={a.valor} className="flex flex-col items-center gap-0 px-4 py-2 text-center">
+              <span className="text-sm font-semibold">{a.titulo}</span>
+              <span className="text-[11px] font-normal opacity-80">{a.descricao}</span>
+            </TabsTrigger>
+          ))}
+        </TabsList>
+      </Tabs>
 
       <Dialog open={exportando} onOpenChange={setExportando}>
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
@@ -688,28 +735,154 @@ export default function FluxoCaixaGestao() {
         </DialogContent>
       </Dialog>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <KpiTile label="Saldo Atual" valor="—" icon={<Wallet />} cor="slate" valorClass="text-muted-foreground" />
+      {/* SIS-2026-0611: o que é cada card e o que o alimenta (respeita os filtros atuais). */}
+      <Dialog open={!!kpiAberto} onOpenChange={(o) => !o && setKpiAberto(null)}>
+        <DialogContent className="max-h-[85vh] max-w-2xl overflow-y-auto">
+          {kpiAberto && (() => {
+            const exp = explicacaoKpi(kpiAberto, aba);
+            const doKpi = linhasDoKpi(filtradas, kpiAberto, hoje);
+            const total = totalKpi(doKpi, kpiAberto);
+            const porOrigem = agruparKpi(doKpi, (l) => LABEL_ORIGEM[l.origem]);
+            const porSituacao = agruparKpi(doKpi, (l) => {
+              const s = situacaoFluxo(l, hoje);
+              return s ? (SITUACOES_FLUXO.find((x) => x.valor === s)?.curto ?? s) : "Realizado";
+            });
+            const mostrarSaldoPorGrupo = kpiAberto === "saldo";
+            const maiores = [...doKpi].sort((a, b) => Math.abs(Number(b.valor)) - Math.abs(Number(a.valor))).slice(0, 8);
+            const dia = (iso: string | null) => (iso ? new Date(iso + "T00:00:00").toLocaleDateString("pt-BR") : "—");
+            return (
+              <>
+                <DialogHeader>
+                  <DialogTitle>{exp.titulo}</DialogTitle>
+                </DialogHeader>
+                <div className="space-y-4 text-sm">
+                  <div className="rounded-md border bg-muted/30 px-3 py-2">
+                    <p className="text-2xl font-bold">{formatBRL(total)}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {doKpi.length.toLocaleString("pt-BR")} lançamento(s) no filtro atual
+                    </p>
+                  </div>
+                  <p>{exp.oQueE}</p>
+                  <div>
+                    <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">O que alimenta</p>
+                    <ul className="list-disc space-y-0.5 pl-5 text-xs text-muted-foreground">
+                      {exp.fontes.map((f) => <li key={f}>{f}</li>)}
+                    </ul>
+                    {exp.aviso && <p className="mt-2 rounded-md bg-amber-50 px-2 py-1.5 text-xs text-amber-800 dark:bg-amber-950/30 dark:text-amber-300">{exp.aviso}</p>}
+                  </div>
+                  {doKpi.length > 0 && (
+                    <>
+                      <div>
+                        <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Por origem (filtro atual)</p>
+                        <Table>
+                          <TableHeader>
+                            <TableRow>
+                              <TableHead>Origem</TableHead>
+                              <TableHead className="text-right">Lançamentos</TableHead>
+                              <TableHead className="text-right">{mostrarSaldoPorGrupo ? "Saldo" : "Valor"}</TableHead>
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            {porOrigem.map((g) => (
+                              <TableRow key={g.chave}>
+                                <TableCell className="text-xs">{g.chave}</TableCell>
+                                <TableCell className="text-right text-xs">{g.qtd.toLocaleString("pt-BR")}</TableCell>
+                                <TableCell className="text-right text-xs font-medium">
+                                  {formatBRL(mostrarSaldoPorGrupo ? g.total : kpiAberto === "entradas" ? g.entradas : g.saidas)}
+                                </TableCell>
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
+                      </div>
+                      {aba !== "realizado" && (
+                        <div>
+                          <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Por situação</p>
+                          <Table>
+                            <TableBody>
+                              {porSituacao.map((g) => (
+                                <TableRow key={g.chave}>
+                                  <TableCell className="text-xs">{g.chave}</TableCell>
+                                  <TableCell className="text-right text-xs">{g.qtd.toLocaleString("pt-BR")}</TableCell>
+                                  <TableCell className="text-right text-xs font-medium">
+                                    {formatBRL(mostrarSaldoPorGrupo ? g.total : kpiAberto === "entradas" ? g.entradas : g.saidas)}
+                                  </TableCell>
+                                </TableRow>
+                              ))}
+                            </TableBody>
+                          </Table>
+                        </div>
+                      )}
+                      <div>
+                        <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Maiores lançamentos</p>
+                        <Table>
+                          <TableBody>
+                            {maiores.map((l, i) => (
+                              <TableRow key={`${l.despesa_id}-${l.numero_parcela ?? ""}-${i}`}>
+                                <TableCell className="font-mono text-[11px]">{l.id_malote}</TableCell>
+                                <TableCell className="text-xs">{dia(l.data_pagamento)}</TableCell>
+                                <TableCell className="max-w-[220px] truncate text-xs" title={l.descricao}>{l.descricao}</TableCell>
+                                <TableCell className={`text-right text-xs font-medium ${l.tipo === "entrada" ? "text-emerald-600" : ""}`}>
+                                  {l.tipo === "entrada" ? "+" : "−"} {formatBRL(Number(l.valor))}
+                                </TableCell>
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
+                      </div>
+                    </>
+                  )}
+                </div>
+                <DialogFooter>
+                  <Button variant="outline" onClick={() => setKpiAberto(null)}>Fechar</Button>
+                </DialogFooter>
+              </>
+            );
+          })()}
+        </DialogContent>
+      </Dialog>
+
+      <div className={`grid grid-cols-1 sm:grid-cols-2 gap-4 ${aba === "projetado" ? "lg:grid-cols-4" : "lg:grid-cols-3"}`}>
+        {aba === "projetado" && (
+          <KpiTile label="Vencidas não pagas (saídas)" valor={formatBRL(totalVencidas)} icon={<Wallet />} cor="amber" valorClass="text-amber-600 dark:text-amber-400" onClick={() => setKpiAberto("vencidas")} />
+        )}
         <KpiTile
-          label="Entradas (filtro atual)"
+          label={aba === "projetado" ? "Entradas previstas (filtro atual)" : "Entradas (filtro atual)"}
           valor={formatBRL(totalEntradas)}
           icon={<TrendingUp />}
           cor="emerald"
           valorClass="text-emerald-600 dark:text-emerald-400"
+          onClick={() => setKpiAberto("entradas")}
         />
         <KpiTile
-          label="Saídas (filtro atual)"
+          label={aba === "projetado" ? "Saídas previstas (filtro atual)" : "Saídas (filtro atual)"}
           valor={formatBRL(totalSaidas)}
           icon={<TrendingDown />}
           cor="red"
           valorClass="text-red-600 dark:text-red-400"
+          onClick={() => setKpiAberto("saidas")}
         />
-        <KpiTile label="Saldo Projetado" valor="—" icon={<LineChart />} cor="sky" valorClass="text-muted-foreground" />
+        <KpiTile
+          label={aba === "projetado" ? "Saldo projetado (entradas − saídas)" : "Saldo (entradas − saídas)"}
+          valor={formatBRL(saldoFiltro)}
+          icon={<LineChart />}
+          cor="sky"
+          valorClass={saldoFiltro < 0 ? "text-red-600 dark:text-red-400" : "text-sky-700 dark:text-sky-400"}
+          onClick={() => setKpiAberto("saldo")}
+        />
       </div>
 
       <p className="text-xs text-muted-foreground -mt-2">
-        Saldo Atual e Saldo Projetado ainda não têm fonte de dado. Entradas e Saídas somam Pagamento Malote (só saída)
-        e Débito Automático (entrada e saída).
+        Clique em um card para ver o que ele é e o que o alimenta. O saldo é entradas menos saídas do filtro atual (o Fluxo não tem saldo bancário).
+        {aba !== "realizado" && (
+          <span className="mt-0.5 block">
+            Situação:{" "}
+            <span className={`font-semibold ${SITUACAO_CLASSE.vencido}`}>Vencido</span> = previsto com data anterior a hoje e ainda não pago ·{" "}
+            <span className={`font-semibold ${SITUACAO_CLASSE.a_vencer}`}>A vencer</span> = vence em até 7 dias ·{" "}
+            <span className={`font-semibold ${SITUACAO_CLASSE.previsto}`}>Previsto</span> = vence depois disso ·{" "}
+            <span className={`font-semibold ${SITUACAO_CLASSE.cancelado}`}>Cancelado</span> = só aparece no filtro Situação e não entra nos totais.
+          </span>
+        )}
       </p>
 
       <Card>
@@ -768,6 +941,20 @@ export default function FluxoCaixaGestao() {
                 </SelectContent>
               </Select>
             </div>
+            {aba !== "realizado" && (
+              <div>
+                <Label className="text-xs">Situação</Label>
+                <Select value={situacao || "todas"} onValueChange={(v) => { setSituacao(v === "todas" ? "" : (v as SituacaoFluxo)); setPage(1); }}>
+                  <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="todas">Todas (sem canceladas)</SelectItem>
+                    {SITUACOES_FLUXO.map((s) => (
+                      <SelectItem key={s.valor} value={s.valor}>{s.rotulo}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
             <div>
               <Label className="text-xs">Classificação</Label>
               <Select value={classificacaoId || "todas"} onValueChange={(v) => setClassificacaoId(v === "todas" ? "" : v)}>
@@ -895,6 +1082,7 @@ export default function FluxoCaixaGestao() {
                   const chave = `${l.despesa_id}-${l.numero_parcela ?? "unica"}`;
                   const temRateio = (l.contrato_nome === "Rateio" || !!l.fatura_cartao_id) && !!l.rateioDetalhe?.length;
                   const expandida = linhasExpandidas.has(chave);
+                  const situacaoLinha = situacaoFluxo(l, hoje);
                   return (
                   <>
                   <TableRow key={chave}>
@@ -919,6 +1107,11 @@ export default function FluxoCaixaGestao() {
                         <Badge className="bg-emerald-100 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300">Entrada</Badge>
                       ) : (
                         <Badge className="bg-red-100 text-red-800 dark:bg-red-950/40 dark:text-red-300">Saída</Badge>
+                      )}
+                      {situacaoLinha && (
+                        <div className={`mt-1 text-[11px] font-semibold leading-tight ${SITUACAO_CLASSE[situacaoLinha]}`}>
+                          {SITUACOES_FLUXO.find((s) => s.valor === situacaoLinha)?.curto}
+                        </div>
                       )}
                     </TableCell>
                     <TableCell className="text-center text-sm">{l.classificacao_nome ?? "—"}</TableCell>
@@ -995,6 +1188,17 @@ export default function FluxoCaixaGestao() {
                           onClick={() => navigate("/app/financeiro/gestao-financeira/cartao-credito")}
                         >
                           Ver no Cartão
+                        </Button>
+                      ) : l.situacao_base ? (
+                        // Compromisso ainda não pago: aqui só se consulta; pagar/editar/excluir é na tela de origem.
+                        <Button
+                          variant="link"
+                          size="sm"
+                          className="h-auto whitespace-nowrap p-0 text-xs"
+                          title={l.origem === "malote" ? "Ver despesa no Malote" : "Ver em Débito Automático"}
+                          onClick={() => navigate(l.origem === "malote" ? `/app/malote/despesa/${l.despesa_id}` : "/app/financeiro/gestao-financeira/debito-automatico")}
+                        >
+                          {l.origem === "malote" ? "Ver no Malote" : "Ver no Débito"}
                         </Button>
                       ) : l.origem === "aplicacao_financeira" ? (
                         <Button
