@@ -136,7 +136,7 @@ export default function DecisaoHoraExtraDialog({
           <InfoItem
             icone={<CalendarDays />}
             rotulo="Data da HE"
-            valor={`${formatarData(dados.data_he)} (${diaSemana(dados.data_he)})`}
+            valor={`${formatarData(dados.data_he)} (${diaSemana(dados.data_he)})${dados.feriado ? " · Feriado" : ""}`}
           />
           {podeEditarHorarios ? (
             <div className="rounded-lg border border-blue-200 bg-blue-50 p-3">

@@ -74,6 +74,8 @@ export interface SolicitacaoHoraExtra {
   escala_id?: string | null;
   escala_nome?: string | null;
   jornada_minutos?: number | null;
+  /** No feriado, todo o período efetivamente trabalhado é hora extra. */
+  feriado?: boolean | null;
   /** No fim de semana elegível, define se a jornada da escala foi aplicada. */
   seguir_escala?: boolean | null;
   /** Sem intervalo, os dois registros intermediários representam a entrada. */

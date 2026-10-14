@@ -64,6 +64,34 @@ select n.nspname||'.'||t.relname||' :: '||pg_get_constraintdef(c.oid)
   from pg_constraint c join pg_class t on t.oid=c.conrelid join pg_namespace n on n.oid=t.relnamespace
  where n.nspname in ('public','auth','storage');
 SQL
+# COLUNAS: o buraco que esta conferencia tinha e que custou a noite de
+# 13/10/2026. Ela dizia "TUDO IGUAL" enquanto o cluster estava sem OITO colunas
+# que a producao tinha ganhado no mesmo dia (migrations de recrutamento e
+# malote). Contagem de tabela nao ve coluna. O preco apareceu na replicacao
+# logica, que para a tabela inteira com:
+#
+#   ERROR: logical replication target relation "public.WA_TEMPLATE" is missing
+#          replicated columns: "botoes", "template_nome_anterior"
+#
+# Cinco tabelas ficaram presas em "copiando dados", repetindo a cada 5s, sem
+# nenhum trabalhador vivo para a gente ver -- o sintoma era "637 de 642 e nao
+# anda". Views entram de proposito ('v'): uma delas tambem estava atrasada.
+#
+# O `replace(...,'extensions.','')` tira um ruido conhecido e inofensivo: o
+# mesmo default aparece como gen_random_bytes aqui e extensions.gen_random_bytes
+# la, por causa do search_path de quem restaurou.
+cat > "$T/colunas.sql" <<'SQL'
+select n.nspname||'.'||c.relname||'.'||a.attname||' :: '||format_type(a.atttypid, a.atttypmod)
+       ||case when a.attnotnull then ' NOT NULL' else '' end
+       ||coalesce(' DEFAULT '||replace(pg_get_expr(d.adbin, d.adrelid), 'extensions.', ''), '')
+  from pg_attribute a
+  join pg_class c on c.oid = a.attrelid
+  join pg_namespace n on n.oid = c.relnamespace
+  left join pg_attrdef d on d.adrelid = c.oid and d.adnum = a.attnum
+ where n.nspname in ('public','auth','storage')
+   and c.relkind in ('r','p','v','m')
+   and a.attnum > 0 and not a.attisdropped;
+SQL
 cat > "$T/papeis.sql" <<'SQL'
 select rolname||' :: login='||rolcanlogin::text||' inherit='||rolinherit::text
        ||' bypassrls='||rolbypassrls::text||' createrole='||rolcreaterole::text
@@ -101,7 +129,7 @@ DELIBERADO='^(cli_login_postgres|dashboard_user|pgbouncer|supabase_admin|supabas
 # aparecia como uma linha "falta" + uma linha "sobra" para a MESMA restricao.
 mapa(){ awk '{ n=$0; gsub(/[()[:space:]]/,"",n); print n "\t" $0 }' "$1" | sort -u; }
 
-for par in "INDICES indices" "RESTRICOES restricoes" "PAPEIS papeis"; do
+for par in "COLUNAS colunas" "INDICES indices" "RESTRICOES restricoes" "PAPEIS papeis"; do
   set -- $par
   echo
   echo "=========== $1 ==========="
@@ -132,4 +160,24 @@ else
   echo "$falhas bloco(s) com diferenca. NAO seguir para a copia de dados antes de entender cada uma."
   echo "Diferenca de DONO de objeto e esperada e inofensiva: --no-owner e proposital."
 fi
+
+# O QUE ESTA CONFERENCIA NAO PEGA, E NAO TEM COMO PEGAR
+#
+# Restricao CHECK marcada NOT VALID bate aqui como identica -- e e identica.
+# Mas NOT VALID so perdoa as linhas que JA EXISTIAM quando ela foi criada. Na
+# replicacao logica, aquelas mesmas linhas antigas chegam ao cluster como
+# INSERCAO NOVA, e a restricao as recusa:
+#
+#   ERROR: new row for relation "CHAMADO_SISTEMA_AVALIACAO" violates check
+#          constraint "chamado_avaliacao_comentario_obrigatorio"
+#
+# Aconteceu em 13/10/2026 com CHAMADO_SISTEMA_AVALIACAO e SIS_CHECKLIST. A
+# saida: soltar a restricao no CLUSTER, deixar a tabela sincronizar, e recriar
+# com NOT VALID depois -- o estado final fica igual ao da producao, com as
+# mesmas linhas antigas perdoadas. As NOT VALID deste banco hoje:
+#   "CHAMADO_SISTEMA_AVALIACAO".chamado_avaliacao_comentario_obrigatorio
+#   "SISTEMA_RECRUTAMENTO".sistema_recrutamento_recomendacao_completa
+#   "SIS_CHECKLIST".sis_checklist_treinamento_responsavel_ck
+#   cotacoes_licitacao.cotacoes_contrato_tamanho
+#   cs_veiculo_agendamento.cs_veic_km_coerente / cs_veic_km_final_maior
 exit 0

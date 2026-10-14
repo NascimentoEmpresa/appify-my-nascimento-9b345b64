@@ -13,20 +13,23 @@ import {
 } from "lucide-react";
 import {
   temConteudo, validarProva, caminhoNoBucket, embedDeVideo, validarTamanho, formatarMB,
-  LIMITE_UPLOAD_BYTES, ESCOPOS_TREINAMENTO,
+  LIMITE_UPLOAD_BYTES, ESCOPOS_TREINAMENTO, TIPOS_TREINAMENTO, PADRAO_NOTA_MINIMA, PADRAO_MAX_TENTATIVAS,
+  acertosMinimos, juntarGabarito,
   type EscopoTreinamento, type PerguntaProva, type Treinamento,
 } from "./core";
+import { MODULOS_ERP } from "@/pages/chamados/types";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 // =====================================================================
 // TREINAMENTOS — criar e editar um card.
 //
-// As três peças (vídeo, anexo, prova) são opcionais e ficam em abas, mas o
+// As três peças (vídeo, prova, material) ficam empilhadas, na ordem em que a
+// pessoa passa por elas (eram abas até 14/10/2026 — parecia "vídeo OU
+// prova"). Cada uma é opcional, mas o
 // botão de salvar só libera quando pelo menos uma existe — a mesma regra do
 // CHECK `trn_precisa_de_conteudo`. O aviso aparece o tempo todo em vez de
 // só no submit, para ninguém preencher a prova inteira e descobrir no fim.
 // =====================================================================
-
-type Aba = "video" | "anexo" | "prova";
 
 const novaQuestao = (): PerguntaProva => ({
   id: crypto.randomUUID(), enunciado: "", opcoes: ["", ""], correta: 0,
@@ -38,16 +41,21 @@ interface Props {
   treinamento: Treinamento | null;
   /** Módulo da tela que abriu o editor — é o que já vem marcado no card novo. */
   escopoPadrao: EscopoTreinamento;
+  /**
+   * Quem só pode gerenciar a grade de um módulo (ex.: "Pode adicionar
+   * treinamentos" da Central de Serviços, mig 20261014000022): o treinamento
+   * fica preso a ele. null = escolhe livremente.
+   */
+  escopoTravado?: EscopoTreinamento | null;
   meuNome: string;
   meuId: string | undefined;
   onFechar: () => void;
   onSalvo: () => void;
 }
 
-export function TreinamentoEditor({ aberto, treinamento, escopoPadrao, meuNome, meuId, onFechar, onSalvo }: Props) {
+export function TreinamentoEditor({ aberto, treinamento, escopoPadrao, escopoTravado = null, meuNome, meuId, onFechar, onSalvo }: Props) {
   const { toast } = useToast();
   const [salvando, setSalvando] = useState(false);
-  const [aba, setAba] = useState<Aba>("video");
 
   const [titulo, setTitulo] = useState("");
   const [descricao, setDescricao] = useState("");
@@ -59,6 +67,12 @@ export function TreinamentoEditor({ aberto, treinamento, escopoPadrao, meuNome, 
   const [anexoArquivo, setAnexoArquivo] = useState<File | null>(null);
   const [prova, setProva] = useState<PerguntaProva[]>([]);
   const [notaMinima, setNotaMinima] = useState(70);
+  // Classificação e regra de tentativas (14/10/2026, mig 20261014000020).
+  const [tipo, setTipo] = useState("");
+  const [moduloSistema, setModuloSistema] = useState<string>("");
+  const [maxTentativas, setMaxTentativas] = useState<number | null>(null);
+  const [tiposUsados, setTiposUsados] = useState<string[]>([...TIPOS_TREINAMENTO]);
+  const [carregandoGabarito, setCarregandoGabarito] = useState(false);
   const [publicado, setPublicado] = useState(true);
   const [escopos, setEscopos] = useState<EscopoTreinamento[]>([escopoPadrao]);
   const [capaPath, setCapaPath] = useState<string | null>(null);
@@ -99,15 +113,54 @@ export function TreinamentoEditor({ aberto, treinamento, escopoPadrao, meuNome, 
     setAnexoPath(t?.anexo_path ?? null);
     setAnexoNome(t?.anexo_nome ?? null);
     setProva(Array.isArray(t?.prova) ? t!.prova! : []);
-    setNotaMinima(t?.nota_minima ?? 70);
+    // Card novo nasce com a regra do pedido: 8 de 10 e 3 tentativas. O que já
+    // existia mantém o que tinha (os antigos ficaram sem limite de tentativas).
+    setNotaMinima(t?.nota_minima ?? PADRAO_NOTA_MINIMA);
+    setTipo(t?.tipo ?? "");
+    setModuloSistema(t?.modulo_sistema ?? "");
+    setMaxTentativas(t ? (t.max_tentativas ?? null) : PADRAO_MAX_TENTATIVAS);
     setPublicado(t?.publicado ?? true);
     // Card novo já nasce no módulo de onde o editor foi aberto; editando, vale
     // o que está gravado (que pode ser os dois).
-    setEscopos(t?.escopos?.length ? t.escopos : [escopoPadrao]);
+    setEscopos(escopoTravado ? [escopoTravado] : t?.escopos?.length ? t.escopos : [escopoPadrao]);
     setCapaPath(t?.capa_path ?? null);
     setVideoArquivo(null); setAnexoArquivo(null); setCapaArquivo(null); setCapaPreview(null);
-    setAba("video");
-  }, [aberto, treinamento, escopoPadrao]);
+  }, [aberto, treinamento, escopoPadrao, escopoTravado]);
+
+  // O gabarito não vem no card (a prova chega com correta = -1 para todo
+  // mundo): quem gerencia o lê de TREINAMENTO_GABARITO e ele é juntado aqui.
+  // Sem isto, salvar sem tocar nas respostas marcaria a 1ª alternativa em todas.
+  useEffect(() => {
+    let vivo = true;
+    const t = treinamento;
+    if (!aberto || !t?.id || !Array.isArray(t.prova) || t.prova.length === 0) return;
+    setCarregandoGabarito(true);
+    (async () => {
+      const { data, error } = await (supabase as any).from("TREINAMENTO_GABARITO")
+        .select("respostas").eq("treinamento_id", t.id).maybeSingle();
+      if (!vivo) return;
+      setCarregandoGabarito(false);
+      if (error) {
+        toast({ title: "Não consegui carregar o gabarito", description: error.message, variant: "destructive" });
+        return;
+      }
+      setProva(p => juntarGabarito(p, (data?.respostas ?? null) as Record<string, number> | null));
+    })();
+    return () => { vivo = false; };
+  }, [aberto, treinamento, toast]);
+
+  // Tipos já usados entram nas sugestões junto dos padrões.
+  useEffect(() => {
+    if (!aberto) return;
+    let vivo = true;
+    (async () => {
+      const { data } = await (supabase as any).from("TREINAMENTOS").select("tipo").not("tipo", "is", null);
+      if (!vivo) return;
+      const usados = (data ?? []).map((r: { tipo: string | null }) => String(r.tipo ?? "").trim()).filter(Boolean);
+      setTiposUsados([...new Set<string>([...TIPOS_TREINAMENTO, ...usados])]);
+    })();
+    return () => { vivo = false; };
+  }, [aberto]);
 
   // Capa que já está salva: bucket é privado, então precisa de URL assinada
   // para aparecer no formulário de edição.
@@ -174,10 +227,11 @@ export function TreinamentoEditor({ aberto, treinamento, escopoPadrao, meuNome, 
     if (problema) { toast({ title: "Revise a prova", description: problema, variant: "destructive" }); return; }
     // Sem módulo nenhum o card não apareceria em grade alguma — some do
     // sistema sem erro. O CHECK do banco recusa, mas o aviso tem que ser aqui.
+    if (carregandoGabarito) { toast({ title: "Aguarde o gabarito carregar", variant: "destructive" }); return; }
     if (escopos.length === 0) {
       toast({
         title: "Escolha onde o treinamento aparece",
-        description: "Marque pelo menos um módulo: Encarregados ou Central de Serviços.",
+        description: "Marque pelo menos um módulo: Encarregados, Central de Serviços ou Treinamentos Sistemas.",
         variant: "destructive",
       });
       return;
@@ -238,6 +292,9 @@ export function TreinamentoEditor({ aberto, treinamento, escopoPadrao, meuNome, 
         capa_path: cPath,
         prova: prova.length ? prova : null,
         nota_minima: notaMinima,
+        tipo: tipo.trim() || null,
+        modulo_sistema: moduloSistema || null,
+        max_tentativas: prova.length ? maxTentativas : null,
         publicado,
         escopos,
       };
@@ -260,12 +317,6 @@ export function TreinamentoEditor({ aberto, treinamento, escopoPadrao, meuNome, 
       setSalvando(false);
     }
   };
-
-  const abas: Array<{ id: Aba; nome: string; icone: typeof Video; ativo: boolean }> = [
-    { id: "video", nome: "Vídeo", icone: Video, ativo: !!(videoUrl.trim() || videoPath || videoArquivo) },
-    { id: "anexo", nome: "Anexo", icone: Paperclip, ativo: !!(anexoPath || anexoArquivo) },
-    { id: "prova", nome: "Prova", icone: ListChecks, ativo: prova.length > 0 },
-  ];
 
   return (
     <Dialog open={aberto} onOpenChange={o => !o && onFechar()}>
@@ -316,22 +367,45 @@ export function TreinamentoEditor({ aberto, treinamento, escopoPadrao, meuNome, 
                       placeholder="Sobre o que é este treinamento, para quem serve e o que a pessoa vai saber fazer no fim." />
           </div>
 
-          {/* Abas do conteúdo. A bolinha verde marca a peça já preenchida. */}
-          <div className="flex gap-2 border-b">
-            {abas.map(a => (
-              <button key={a.id} type="button" onClick={() => setAba(a.id)}
-                className={`relative flex items-center gap-2 px-4 py-2 text-sm font-semibold transition-all
-                  ${aba === a.id
-                    ? "border-b-2 border-primary text-primary"
-                    : "border-b-2 border-transparent text-muted-foreground hover:text-foreground"}`}>
-                <a.icone className="h-4 w-4" />
-                {a.nome}
-                {a.ativo && <span className="h-2 w-2 rounded-full bg-emerald-500 animate-in zoom-in" />}
-              </button>
-            ))}
+          {/* Classificação (14/10/2026): o tipo agrupa a grade e o módulo diz de
+              que parte do ERP o vídeo trata — "um vídeo por módulo". */}
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="space-y-1.5">
+              <Label>Tipo de treinamento</Label>
+              <Input list="trn-tipos" value={tipo} onChange={e => setTipo(e.target.value)}
+                     placeholder="Sistema, Segurança do Trabalho…" />
+              <datalist id="trn-tipos">
+                {tiposUsados.map(x => <option key={x} value={x} />)}
+              </datalist>
+            </div>
+            <div className="space-y-1.5">
+              <Label>Módulo do sistema</Label>
+              <Select value={moduloSistema || "_nenhum"} onValueChange={v => setModuloSistema(v === "_nenhum" ? "" : v)}>
+                <SelectTrigger><SelectValue placeholder="Nenhum" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="_nenhum">Nenhum (não é de um módulo)</SelectItem>
+                  {MODULOS_ERP.filter(m => m.value !== "outro").map(m => (
+                    <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
           </div>
 
-          {aba === "video" && (
+
+
+          {/* Vídeo → Prova → Material (14/10/2026). Eram abas, e parecia que
+              dava para pôr só vídeo OU só prova. Agora as três peças ficam à
+              vista, na ordem em que a pessoa passa por elas: assiste o vídeo
+              inteiro, depois faz a prova de marcar. */}
+          <section className="space-y-3 rounded-xl border p-4">
+            <div className="flex items-start gap-3">
+              <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary text-xs font-bold text-primary-foreground">1</span>
+              <div>
+                <p className="flex items-center gap-1.5 font-semibold"><Video className="h-4 w-4 text-primary" /> Vídeo</p>
+                <p className="text-xs text-muted-foreground">A pessoa precisa assistir até o fim, sem adiantar, para liberar a prova. Se reprovar, assiste inteiro de novo antes de refazer.</p>
+              </div>
+            </div>
             <div className="space-y-3 animate-in fade-in slide-in-from-bottom-1 duration-200">
               <div className="space-y-1.5">
                 <Label>Link do vídeo</Label>
@@ -371,37 +445,19 @@ export function TreinamentoEditor({ aberto, treinamento, escopoPadrao, meuNome, 
                 </p>
               </div>
             </div>
-          )}
-
-          {aba === "anexo" && (
-            <div className="space-y-3 animate-in fade-in slide-in-from-bottom-1 duration-200">
-              <Label>Material de apoio</Label>
-              <input ref={refAnexo} type="file" className="hidden"
-                     accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.png,.jpg,.jpeg,.zip"
-                     onChange={e => { escolherArquivo(e.target.files?.[0] ?? null, setAnexoArquivo); e.target.value = ""; }} />
-              <div className="flex items-center gap-2">
-                <Button type="button" variant="outline" onClick={() => refAnexo.current?.click()}>
-                  <Upload className="mr-2 h-4 w-4" /> Escolher arquivo
-                </Button>
-                {(anexoArquivo || anexoNome) && (
-                  <span className="flex items-center gap-2 text-sm text-muted-foreground">
-                    {anexoArquivo?.name ?? anexoNome}
-                    <button type="button" onClick={() => { setAnexoArquivo(null); setAnexoPath(null); setAnexoNome(null); }}
-                            className="text-destructive hover:underline"><X className="h-4 w-4" /></button>
-                  </span>
-                )}
+          </section>
+          <section className="space-y-3 rounded-xl border p-4">
+            <div className="flex items-start gap-3">
+              <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary text-xs font-bold text-primary-foreground">2</span>
+              <div>
+                <p className="flex items-center gap-1.5 font-semibold"><ListChecks className="h-4 w-4 text-primary" /> Prova de múltipla escolha</p>
+                <p className="text-xs text-muted-foreground">Cada questão tem alternativas; clique no círculo para marcar a correta. Sem questões, o treinamento conclui ao terminar o vídeo.</p>
               </div>
-              <p className="text-xs text-muted-foreground">
-                PDF, Word, Excel, PowerPoint, imagem ou zip. Até {formatarMB(LIMITE_UPLOAD_BYTES)}.
-              </p>
             </div>
-          )}
-
-          {aba === "prova" && (
             <div className="space-y-4 animate-in fade-in slide-in-from-bottom-1 duration-200">
               {prova.length === 0 && (
                 <div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">
-                  Sem prova. O treinamento é concluído assim que a pessoa abre o material.
+                  Nenhuma questão ainda. Clique em <b>Adicionar questão</b> para montar a prova (ex.: 10 questões).
                 </div>
               )}
 
@@ -453,17 +509,81 @@ export function TreinamentoEditor({ aberto, treinamento, escopoPadrao, meuNome, 
                 <Button type="button" variant="outline" onClick={() => setProva(p => [...p, novaQuestao()])}>
                   <Plus className="mr-2 h-4 w-4" /> Adicionar questão
                 </Button>
-                {prova.length > 0 && (
-                  <div className="flex items-center gap-2">
-                    <Label className="text-sm">Nota mínima</Label>
-                    <Input type="number" min={0} max={100} className="w-20" value={notaMinima}
-                           onChange={e => setNotaMinima(Math.max(0, Math.min(100, Number(e.target.value) || 0)))} />
-                    <span className="text-sm text-muted-foreground">% para aprovar</span>
+              </div>
+
+              {prova.length > 0 && (
+                <div className="grid gap-3 rounded-lg border p-3 sm:grid-cols-2">
+                  <div className="space-y-1.5">
+                    <Label className="text-sm font-semibold">Nota mínima</Label>
+                    <div className="flex items-center gap-2">
+                      <Input type="number" min={0} max={100} className="w-20" value={notaMinima}
+                             onChange={e => setNotaMinima(Math.max(0, Math.min(100, Number(e.target.value) || 0)))} />
+                      <span className="text-sm text-muted-foreground">% para aprovar</span>
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      = acertar <b className="text-foreground">{acertosMinimos(prova.length, notaMinima)} de {prova.length}</b>{" "}
+                      {prova.length === 1 ? "questão" : "questões"}.
+                    </p>
                   </div>
-                )}
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between gap-2">
+                      <Label className="text-sm font-semibold">Limitar tentativas</Label>
+                      <Switch checked={maxTentativas != null}
+                              onCheckedChange={v => setMaxTentativas(v ? PADRAO_MAX_TENTATIVAS : null)} />
+                    </div>
+                    {maxTentativas != null ? (
+                      <>
+                        <div className="flex items-center gap-2">
+                          <Input type="number" min={1} max={20} className="w-20" value={maxTentativas}
+                                 onChange={e => setMaxTentativas(Math.max(1, Math.min(20, Number(e.target.value) || 1)))} />
+                          <span className="text-sm text-muted-foreground">tentativas</span>
+                        </div>
+                        <p className="text-xs text-muted-foreground">
+                          Reprovou: assiste o vídeo de novo e refaz. Reprovou {maxTentativas}x seguidas: a prova trava e
+                          quem recebe alertas de treinamento é avisado para verificar e liberar.
+                        </p>
+                      </>
+                    ) : (
+                      <p className="text-xs text-muted-foreground">Sem limite: a pessoa refaz quantas vezes precisar (revendo o vídeo a cada reprovação).</p>
+                    )}
+                  </div>
+                </div>
+              )}
+              {carregandoGabarito && (
+                <p className="flex items-center gap-2 text-xs text-muted-foreground"><Loader2 className="h-3.5 w-3.5 animate-spin" /> Carregando o gabarito…</p>
+              )}
+            </div>
+          </section>
+          <section className="space-y-3 rounded-xl border p-4">
+            <div className="flex items-start gap-3">
+              <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary text-xs font-bold text-primary-foreground">+</span>
+              <div>
+                <p className="flex items-center gap-1.5 font-semibold"><Paperclip className="h-4 w-4 text-primary" /> Material de apoio (opcional)</p>
+                <p className="text-xs text-muted-foreground">Um arquivo para baixar junto: PDF, apresentação, planilha…</p>
               </div>
             </div>
-          )}
+            <div className="space-y-3 animate-in fade-in slide-in-from-bottom-1 duration-200">
+              <Label>Material de apoio</Label>
+              <input ref={refAnexo} type="file" className="hidden"
+                     accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.png,.jpg,.jpeg,.zip"
+                     onChange={e => { escolherArquivo(e.target.files?.[0] ?? null, setAnexoArquivo); e.target.value = ""; }} />
+              <div className="flex items-center gap-2">
+                <Button type="button" variant="outline" onClick={() => refAnexo.current?.click()}>
+                  <Upload className="mr-2 h-4 w-4" /> Escolher arquivo
+                </Button>
+                {(anexoArquivo || anexoNome) && (
+                  <span className="flex items-center gap-2 text-sm text-muted-foreground">
+                    {anexoArquivo?.name ?? anexoNome}
+                    <button type="button" onClick={() => { setAnexoArquivo(null); setAnexoPath(null); setAnexoNome(null); }}
+                            className="text-destructive hover:underline"><X className="h-4 w-4" /></button>
+                  </span>
+                )}
+              </div>
+              <p className="text-xs text-muted-foreground">
+                PDF, Word, Excel, PowerPoint, imagem ou zip. Até {formatarMB(LIMITE_UPLOAD_BYTES)}.
+              </p>
+            </div>
+          </section>
 
           {/* Onde o card aparece. Marcar os dois é o jeito de aproveitar um
               treinamento que já existe no outro módulo, sem duplicar a linha
@@ -472,11 +592,12 @@ export function TreinamentoEditor({ aberto, treinamento, escopoPadrao, meuNome, 
           <div className="rounded-lg border p-3">
             <Label className="text-sm font-semibold">Aparece em</Label>
             <p className="text-xs text-muted-foreground">
-              Cada módulo tem a sua grade. Marque os dois para o mesmo treinamento
-              valer nos dois — continua sendo um só, com uma prova e um histórico.
+              {escopoTravado
+                ? "Você gerencia os treinamentos só deste módulo, então o card fica nele."
+                : "Cada módulo tem a sua grade. Marque os dois para o mesmo treinamento valer nos dois — continua sendo um só, com uma prova e um histórico."}
             </p>
             <div className="mt-3 flex flex-wrap gap-2">
-              {ESCOPOS_TREINAMENTO.map(e => {
+              {ESCOPOS_TREINAMENTO.filter(e => !escopoTravado || e.id === escopoTravado).map(e => {
                 const marcado = escopos.includes(e.id);
                 return (
                   <button
