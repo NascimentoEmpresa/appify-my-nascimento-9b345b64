@@ -95,12 +95,17 @@ import { useNovidades } from "@/hooks/useNovidades";
 import { cn } from "@/lib/utils";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { SISTEMAS as RELATORIOS } from "@/pages/relatorios/sistemas";
+import { selNovoVigente } from "@/lib/selNovo";
 
 interface NavItem {
   label: string;
   to: string;
   icon: LucideIcon;
   badge?: string;
+  // Selo "Novo" que expira sozinho: data (AAAA-MM-DD) em que a tela foi liberada. O selo
+  // aparece por NOVO_DIAS (15) dias a partir dela e some depois, sem precisar de PR para remover.
+  // Ao lançar uma tela de verdade, basta preencher a data de hoje.
+  novoDesde?: string;
   // Bolinha de notificação (novidade). Resolvida em runtime pelo useChamadosNotif.
   notif?: "meus" | "dev" | "troca_funcao" | "juridico" | "reembolso";
   dot?: boolean;
@@ -397,13 +402,13 @@ const financeiroModule: ModuleDef = {
       defaultOpen: true,
       items: [
         { label: "Fluxo de Caixa", to: "/app/financeiro/gestao-financeira/fluxo-caixa", icon: TrendingDown },
-        { label: "Débito Automático", to: "/app/financeiro/gestao-financeira/debito-automatico", icon: ArrowLeftRight, badge: "Novo" },
-        { label: "Cartão de Crédito", to: "/app/financeiro/gestao-financeira/cartao-credito", icon: CreditCard, badge: "Novo" },
-        { label: "Classificar Lançamentos", to: "/app/financeiro/gestao-financeira/cartao-credito/classificar", icon: ListTree, badge: "Novo" },
-        { label: "Extrator de Benefícios (VA/VT)", to: "/app/financeiro/gestao-financeira/extrator-beneficios", icon: FileSpreadsheet, badge: "Novo" },
+        { label: "Débito Automático", to: "/app/financeiro/gestao-financeira/debito-automatico", icon: ArrowLeftRight },
+        { label: "Cartão de Crédito", to: "/app/financeiro/gestao-financeira/cartao-credito", icon: CreditCard },
+        { label: "Classificar Lançamentos", to: "/app/financeiro/gestao-financeira/cartao-credito/classificar", icon: ListTree },
+        { label: "Extrator de Benefícios (VA/VT)", to: "/app/financeiro/gestao-financeira/extrator-beneficios", icon: FileSpreadsheet },
         // SIS-2026-0473: registra aplicações (CDB/Fundo DI/etc.) e resgates,
         // alimenta o Fluxo de Caixa igual ao Débito Automático.
-        { label: "Aplicações Financeiras", to: "/app/financeiro/gestao-financeira/aplicacoes-financeiras", icon: Landmark, badge: "Novo" },
+        { label: "Aplicações Financeiras", to: "/app/financeiro/gestao-financeira/aplicacoes-financeiras", icon: Landmark },
         // O item saiu da sidebar no SIS-2026-0317 (menus obsoletos) e foi
         // reexposto só no Gerenciamento de Acesso (dc0d7389) — a tela
         // continuou viva e acessível só por URL. Volta aqui, na rota atual.
@@ -417,21 +422,21 @@ const financeiroModule: ModuleDef = {
         // SIS-2026-0492: as duas convivem aqui em Ferramentas (pedido do
         // usuário, "vou concentrando tudo ali") — a nova puxa o lado "Fluxo"
         // direto do Fluxo de Caixa interno; a antiga continua manual/planilha.
-        { label: "Conciliação Bancária", to: "/app/financeiro/gestao-financeira/conciliacao-fluxo-caixa", icon: GitMerge, badge: "Novo" },
+        { label: "Conciliação Bancária", to: "/app/financeiro/gestao-financeira/conciliacao-fluxo-caixa", icon: GitMerge },
         { label: "Conciliação Bancária (Planilha Manual)", to: "/app/financeiro/conciliacao-bancaria", icon: GitMerge },
         // SIS-2026-0304: Checklist de Faturamento (e a futura Solicitação
         // de Ajuste, SIS-2026-0305) ficam aqui em "Ferramentas" — decisão
         // do usuário, são módulos migrados de sistema externo, não fazem
         // parte da Gestão Financeira "nativa" do ERP.
-        { label: "Checklist de Faturamento", to: "/app/financeiro/checklist-faturamento", icon: ListChecks, badge: "Novo" },
-        { label: "Solicitações de Ajuste", to: "/app/financeiro/solicitacoes-ajuste", icon: ClipboardList, badge: "Novo" },
+        { label: "Checklist de Faturamento", to: "/app/financeiro/checklist-faturamento", icon: ListChecks },
+        { label: "Solicitações de Ajuste", to: "/app/financeiro/solicitacoes-ajuste", icon: ClipboardList },
         // SIS-2026-0524: juros informado no pagamento do Malote, controle
         // de cobrança do responsável — não gera lançamento no Fluxo de Caixa.
-        { label: "Controle de Juros", to: "/app/financeiro/controle-juros", icon: Percent, badge: "Novo" },
+        { label: "Controle de Juros", to: "/app/financeiro/controle-juros", icon: Percent },
         // DOC CANAA: gestão de documentos da Escola Canaã, migrada do
         // blueprint Flask legado `sistema_canaa` — módulo migrado de sistema
         // externo, por isso aqui em Ferramentas junto do Checklist/Ajustes.
-        { label: "DOC CANAA", to: "/app/financeiro/doc-canaa", icon: FolderOpen, badge: "Novo" },
+        { label: "DOC CANAA", to: "/app/financeiro/doc-canaa", icon: FolderOpen },
       ],
     },
   ],
@@ -1449,7 +1454,11 @@ export function Sidebar({ collapsed, mobileOpen = false, onMobileClose }: Sideba
           ?.map((g) => ({
             ...g,
             items: g.items
-              .map((item) => ({ ...item, badge: resolvedBadge(item.badge), dot: resolvedDot(item) }))
+              .map((item) => ({
+                ...item,
+                badge: selNovoVigente(item.novoDesde) ? "Novo" : resolvedBadge(item.badge),
+                dot: resolvedDot(item),
+              }))
               .sort(porNome),
           }))
           .sort(porNome),

@@ -337,6 +337,23 @@ export default function Configuracoes() {
                         </span>
                       </span>
                     </label>
+                    <label className="flex items-start gap-2 text-sm cursor-pointer">
+                      <Checkbox
+                        checked={form.excecao_gerente_financeiro_ativo}
+                        onCheckedChange={(checked) =>
+                          setForm((f) => (f ? { ...f, excecao_gerente_financeiro_ativo: checked === true } : f))
+                        }
+                        disabled={!podeEditar}
+                      />
+                      <span>
+                        <span className="font-medium">Reforço do Gerente Financeiro nas exceções</span>
+                        <br />
+                        <span className="text-xs text-muted-foreground">
+                          Quem tem o cargo GERENTE FINANCEIRO pode aprovar, reprovar e ajustar exceções do Nível 2 em diante.
+                          Desligado por padrão.
+                        </span>
+                      </span>
+                    </label>
                   </div>
                 </div>
               </div>
