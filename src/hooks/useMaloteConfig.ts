@@ -24,6 +24,8 @@ export interface MaloteConfig {
   excecao_exigir_justificativa_aprovador: boolean;
   // Reforço do cargo GERENTE FINANCEIRO nas exceções (Nível 2 em diante). Desligado por padrão.
   excecao_gerente_financeiro_ativo: boolean;
+  // SIS-2026-0664: reagenda p/ o próximo dia útil a data das despesas pendentes de aprovação (N2+) que passam do prazo 1.2.
+  rolagem_data_pagamento_ativa: boolean;
   updated_at: string;
 }
 
@@ -50,7 +52,7 @@ const CONFIG_COLUMNS =
   "conferencia_aprovacao_horario, conferencia_aprovacao_pagamento_modo, conferencia_aprovacao_pagamento_dias, conferencia_aprovacao_pagamento_unidade, " +
   "bloqueio_regra, bloqueio_impedir_lancamento, bloqueio_fins_de_semana, " +
   "excecao_limite_inclusao_horario, excecao_limite_aprovacao_horario, " +
-  "excecao_exigir_justificativa_solicitante, excecao_exigir_justificativa_aprovador, excecao_gerente_financeiro_ativo, updated_at";
+  "excecao_exigir_justificativa_solicitante, excecao_exigir_justificativa_aprovador, excecao_gerente_financeiro_ativo, rolagem_data_pagamento_ativa, updated_at";
 
 // SIS-2026-0250: hora atual já passou de um horário-limite (formato
 // "HH:MM"). Genérico — usado pro corte 2.1 (inclusão de exceção pro mesmo

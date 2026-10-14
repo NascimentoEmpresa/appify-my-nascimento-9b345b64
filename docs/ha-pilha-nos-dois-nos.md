@@ -189,7 +189,7 @@ senão o script reusa o dump velho.
 ✅ auth + storage           infra/ha/carregar-auth-storage.sh (159 logins no cluster)
 ✅ alerta do slot           migration 20261014000020 + worker/src/saudeBanco.js
 ⬜ replicação lógica        REPLICA IDENTITY FULL + publicação + assinatura
-⬜ domínio + HTTPS          api.gprnascimento.com.br (adiado: sai da Render/Vercel)
+⬜ domínio + HTTPS          api.grpnascimento.com.br (adiado: sai da Render/Vercel)
 ⬜ troca de DNS pelo árbitro
 ✅ banco2 continua 1 vCPU / 2 GB — orçamento de infra fechado em 13/10/2026.
    A folga sai de dentro: parar a pilha dele durante a carga (378 MB) e capar o
