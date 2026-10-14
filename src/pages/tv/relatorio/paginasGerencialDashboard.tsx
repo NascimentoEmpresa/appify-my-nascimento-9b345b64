@@ -34,8 +34,12 @@ export function TelaDashboardGerencial({ p, cor, visual, atualizado, onIndicador
   const t = temaDoVisual(visual);
   const itens = indicadoresDaTv(p);
   const agir = ondeAgir(p, 5);
-  const destaques = destaquesDoDashboard(p, 3);
   const tendencia = tendenciaValida(p.tendencia) ? p.tendencia : null;
+  // Sem mês a mês (a tela de origem não tem — ex. Plano de Ações), o 1º gráfico vai
+  // para o espaço grande e os de baixo são os seguintes, sem repetir.
+  const graficos = destaquesDoDashboard(p, tendencia ? 3 : 4);
+  const grandeSemTendencia = tendencia ? null : graficos[0] ?? null;
+  const destaques = tendencia ? graficos : graficos.slice(1);
 
   return (
     <div className="flex h-full w-full flex-col" style={{ color: t.texto }}>
@@ -53,10 +57,11 @@ export function TelaDashboardGerencial({ p, cor, visual, atualizado, onIndicador
         {/* Tendência de 12 meses + onde agir */}
         <div className="grid min-h-0" style={{ flex: 1.15, gap: 16, gridTemplateColumns: "minmax(0,1.6fr) minmax(0,1fr)" }}>
           <Cartao t={t}>
-            <Titulo t={t} Icone={TrendingUp} cor={cor} texto={tendencia?.titulo ?? "Tendência"} sub={tendencia ? `${tendencia.meses[0]?.mes} a ${tendencia.meses[tendencia.meses.length - 1]?.mes} · dado do ERP` : "Dado do ERP"} />
+            <Titulo t={t} Icone={TrendingUp} cor={cor} texto={tendencia?.titulo ?? grandeSemTendencia?.resultado?.grafico_titulo ?? grandeSemTendencia?.nome ?? "Tendência"}
+              sub={tendencia ? `${tendencia.meses[0]?.mes} a ${tendencia.meses[tendencia.meses.length - 1]?.mes} · dado do ERP` : "Dado do ERP"} />
             <div className="relative min-h-0 flex-1">
               {tendencia ? <GraficoTendencia tendencia={tendencia} t={t} cor={cor} />
-                : destaques[0] ? <Grafico i={destaques[0]} t={t} grande />
+                : grandeSemTendencia ? <Grafico i={grandeSemTendencia} t={t} grande />
                 : <Vazio t={t} texto="Sem histórico mensal para esta área" />}
             </div>
           </Cartao>
