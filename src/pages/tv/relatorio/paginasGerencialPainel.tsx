@@ -263,7 +263,7 @@ export function useTamanho<T extends HTMLElement>() {
 export function Grafico({ i, t, grande }: { i: IndicadorGerencial; t: Tema; grande: boolean }) {
   const { ref, w, h } = useTamanho<HTMLDivElement>();
   const g = graficoDo(i);
-  const dados = dadosDoGrafico(i, grande ? 8 : 6);
+  const dados = dadosDoGrafico(i, g.tipo === "lista" ? 12 : grande ? 8 : 6);
   const s = situacao(i);
   const cor = corDoGrafico(i.codigo) ?? STATUS[s].cor;
   const unidade = g.unidade ?? i.unidade;
@@ -280,12 +280,54 @@ export function Grafico({ i, t, grande }: { i: IndicadorGerencial; t: Tema; gran
       </div>
     );
   } else if (w > 0 && h > 0) {
-    corpo = g.tipo === "rosca" ? <Rosca dados={dados} w={w} h={h} t={t} fonte={fonte} unidade={unidade} />
+    corpo = g.tipo === "lista" ? <Lista dados={dados} h={h} t={t} grande={grande} />
+      : g.tipo === "rosca" ? <Rosca dados={dados} w={w} h={h} t={t} fonte={fonte} unidade={unidade} />
       : g.tipo === "linha" ? <Linha dados={dados} w={w} h={h} t={t} fonte={fonte} cor={corDoGrafico(i.codigo) ?? "#06b6d4"} unidade={unidade} id={i.codigo} />
       : g.tipo === "agrupado" ? <Agrupado dados={dados} w={w} h={h} t={t} fonte={fonte} series={g.series ?? ["A", "B"]} />
       : <Colunas dados={dados} w={w} h={h} t={t} fonte={fonte} cor={g.tipo === "combo" ? "#3b82f6" : cor} unidade={unidade} meta={g.tipo === "combo" && i.meta != null ? Number(i.meta) : null} id={i.codigo} />;
   }
   return <div ref={ref} className="absolute inset-0">{corpo}</div>;
+}
+
+// Lista de alertas (lic_prazo, 14/10/2026). Pablo, mostrando o gráfico de
+// barras "0 d / 1 d / 2 d" ao lado do slide Alertas da TV de Licitações:
+// "consegue trocar esse gráfico por algo assim? seria a mesma informação mas
+// com mais detalhes". Selo com a data (vermelho até 3 dias, âmbar até 7 — a
+// mesma régua de aberturaUrgencia), "edital · objeto" e "responsável · fase ·
+// cidade · horário". Mostra quantas linhas cabem; o resto vira "+N".
+const COR_PRAZO = { critica: "#dc2626", proxima: "#d97706", normal: "#16a34a" };
+
+function Lista({ dados, h, t, grande }: { dados: LinhaDetalhe[]; h: number; t: Tema; grande: boolean }) {
+  const alto = grande ? 76 : 38, gap = grande ? 10 : 5;
+  const cabem = Math.max(1, Math.floor((h + gap) / (alto + gap)));
+  const mostra = dados.length > cabem ? dados.slice(0, cabem - 1) : dados;
+  const resto = dados.length - mostra.length;
+  // Tema escuro: o cartão é gradiente (misturarCor só mistura hex) — base sólida próxima.
+  const base = /^#[0-9a-f]{6}$/i.test(t.cartao) ? t.cartao : "#0e1f33";
+  const hoje = new Date(); hoje.setHours(0, 0, 0, 0);
+  return (
+    <div className="flex h-full flex-col overflow-hidden" style={{ gap }}>
+      {mostra.map((l, k) => {
+        const d = l.data ? new Date(`${l.data.slice(0, 10)}T00:00:00`) : null;
+        const dias = d ? Math.round((d.getTime() - hoje.getTime()) / 86_400_000) : null;
+        const cor = dias == null || dias <= 3 ? COR_PRAZO.critica : dias <= 7 ? COR_PRAZO.proxima : COR_PRAZO.normal;
+        return (
+          <div key={k} className={`flex shrink-0 items-center gap-3 overflow-hidden ${grande ? "rounded-2xl" : "rounded-xl"}`}
+            style={{ height: alto, padding: grande ? "0 18px" : "0 12px", background: misturarCor(cor, base, 0.93), border: `1.5px solid ${misturarCor(cor, base, 0.7)}` }}>
+            <span className="shrink-0 rounded-lg font-black tabular-nums" style={{ fontSize: grande ? 17 : 12, padding: grande ? "6px 12px" : "3px 7px", color: cor, background: misturarCor(cor, base, 0.82) }}>
+              {d ? d.toLocaleDateString("pt-BR") : "—"}
+            </span>
+            <div className="min-w-0 flex-1">
+              <p className="truncate font-extrabold leading-tight" style={{ fontSize: grande ? 19 : 13.5, color: t.texto }}>{l.titulo || l.nome}</p>
+              {l.sub && <p className="truncate font-semibold leading-tight" style={{ fontSize: grande ? 15 : 11, color: t.suave }}>{l.sub}</p>}
+            </div>
+            {l.rotulo && <span className="shrink-0 font-extrabold" style={{ fontSize: grande ? 16 : 12.5, color: cor }}>{l.rotulo}</span>}
+          </div>
+        );
+      })}
+      {resto > 0 && <p className="shrink-0 text-center font-bold" style={{ fontSize: grande ? 15 : 12, color: t.suave }}>+{resto} edital(is)</p>}
+    </div>
+  );
 }
 
 export const M = { l: 6, r: 6, t: 24, b: 36 };
