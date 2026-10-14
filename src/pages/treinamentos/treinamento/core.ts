@@ -26,14 +26,13 @@ export interface PerguntaProva {
  * `central_servicos` ↔ `central_servicos_treinamentos`. O banco cobra a
  * mesma lista no CHECK `trn_escopos_validos`.
  */
-export type EscopoTreinamento = "encarregados" | "central_servicos" | "sistemas";
+export type EscopoTreinamento = "encarregados" | "central_servicos";
 
+// A grade `sistemas` (Treinamentos Sistemas, mig 20261014000020) viveu um
+// dia: "é a mesma coisa que Treinamentos" — saiu na mig 20261014000022.
 export const ESCOPOS_TREINAMENTO: { id: EscopoTreinamento; label: string }[] = [
   { id: "encarregados", label: "Encarregados" },
   { id: "central_servicos", label: "Central de Serviços" },
-  // 14/10/2026 (mig 20261014000020): a grade de Treinamentos Sistemas. A
-  // rota é liberada a todo usuário logado, e o banco segue a mesma regra.
-  { id: "sistemas", label: "Treinamentos Sistemas" },
 ];
 
 /**
