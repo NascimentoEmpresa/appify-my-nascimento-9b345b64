@@ -131,6 +131,7 @@ export default function DetalhesHoraExtraDialog({
           <Info rotulo="Colaborador" valor={dados.colaborador_nome} />
           <Info rotulo="Data da HE" valor={formatarData(dados.data_he)} />
           <Info rotulo="Tipo" valor={dados.tipo === "normal" ? "Normal" : "Emergencial"} />
+          <Info rotulo="Feriado" valor={dados.feriado ? "Sim — todo o período é HE" : "Não"} />
           <Info rotulo="Escala de trabalho" valor={dados.escala_nome || "—"} />
           <Info
             rotulo="Jornada / trabalhado no dia"

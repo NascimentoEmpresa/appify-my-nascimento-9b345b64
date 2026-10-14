@@ -507,7 +507,7 @@ export default function ConcluirHoraExtraDialog({
                 <Resumo rotulo="Setor" valor={solicitacao.setor || "—"} />
                 <Resumo
                   rotulo="Data"
-                  valor={`${formatarData(solicitacao.data_he)} (${diaSemana(solicitacao.data_he)})`}
+                  valor={`${formatarData(solicitacao.data_he)} (${diaSemana(solicitacao.data_he)})${solicitacao.feriado ? " · Feriado" : ""}`}
                 />
                 <Resumo rotulo="Tipo de HE" valor={solicitacao.tipo === "normal" ? "Normal" : "Emergencial"} />
                 <hr className="my-4 border-blue-200" />

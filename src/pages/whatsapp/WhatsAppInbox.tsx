@@ -20,7 +20,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Bot, Send, Search, ShieldAlert, Settings, User, MessageCircle, MousePointerClick, FileText, Inbox, AlertTriangle, Loader2, Check, CheckCheck, Paperclip, X, SmilePlus, CheckCircle2, History, MessageCirclePlus, Tag } from "lucide-react";
+import { Bot, Send, Search, ShieldAlert, Settings, User, MessageCircle, MousePointerClick, FileText, Inbox, AlertTriangle, Loader2, Check, CheckCheck, Paperclip, X, SmilePlus, CheckCircle2, History, MessageCirclePlus, Tag, Clock, Ban } from "lucide-react";
 import {
   fmtHora, fmtTelefone, iniciais, motivoFalha, nomeContato, MENU_TODAS, EMOJIS_REACAO,
   type WaConversa, type WaContato, type WaMensagem, type WaMidia, type WaPasta,
@@ -280,10 +280,11 @@ export default function WhatsAppInbox() {
         if (erroUp) throw new Error(`Falha ao subir o arquivo: ${erroUp.message}`);
         midia = { storage_path: caminho, mime_type: anexo.type || "application/octet-stream", filename: nome };
       }
-      const { error } = await supabase.functions.invoke("whatsapp-enviar", {
+      const { data, error } = await supabase.functions.invoke("whatsapp-enviar", {
         body: { conversa_id: sel.id, texto: texto.trim(), ...(midia ? { midia } : {}) },
       });
       if (error) throw new Error(await erroDaFunction(error));
+      if (data?.pendente) toast({ title: "Fora da janela de 24h", description: "Enviamos a saudação (modelo aprovado). Sua mensagem sai sozinha, com os botões, assim que o contato responder." });
       setTexto("");
       setAnexo(null);
       qc.invalidateQueries({ queryKey: ["wa-mensagens", sel.id] });
@@ -327,10 +328,11 @@ export default function WhatsAppInbox() {
     if (!sel || enviando) return;
     setEnviando(true);
     try {
-      const { error } = await supabase.functions.invoke("whatsapp-enviar", {
+      const { data, error } = await supabase.functions.invoke("whatsapp-enviar", {
         body: { conversa_id: sel.id, texto: b.texto, ...(b.botoes.length ? { botoes: b.botoes } : {}) },
       });
       if (error) throw new Error(await erroDaFunction(error));
+      if (data?.pendente) toast({ title: "Fora da janela de 24h", description: "Enviamos a saudação (modelo aprovado). Sua mensagem sai sozinha, com os botões, assim que o contato responder." });
       setTexto("");
       qc.invalidateQueries({ queryKey: ["wa-mensagens", sel.id] });
       qc.invalidateQueries({ queryKey: ["wa-conversas"] });
@@ -654,6 +656,17 @@ export default function WhatsAppInbox() {
                           ))}
                         </div>
                       ) : null}
+                      {m.status === "pendente" && (
+                        <p className="mt-1 flex items-start gap-1 rounded bg-black/10 px-1.5 py-1 text-[10px] leading-snug">
+                          <Clock className="mt-px h-3 w-3 shrink-0" />
+                          <span>Fora da janela de 24h: enviamos a saudação. Esta mensagem sai sozinha (com os botões) assim que o contato responder.</span>
+                        </p>
+                      )}
+                      {m.status === "cancelada" && (
+                        <p className="mt-1 flex items-start gap-1 rounded bg-black/10 px-1.5 py-1 text-[10px] leading-snug">
+                          <Ban className="mt-px h-3 w-3 shrink-0" /><span>Não saiu: o contato não respondeu em 7 dias.</span>
+                        </p>
+                      )}
                       {m.status === "erro" && motivoFalha(m.payload?.erro) && (
                         <p className="mt-1 flex items-start gap-1 rounded bg-destructive/15 px-1.5 py-1 text-[10px] leading-snug text-destructive-foreground/90">
                           <AlertTriangle className="mt-px h-3 w-3 shrink-0" />
@@ -825,6 +838,9 @@ const TIQUES: Record<string, { icone: typeof Check; classe: string; titulo: stri
   entregue: { icone: CheckCheck, classe: "opacity-70",     titulo: "Entregue no aparelho" },
   lida:     { icone: CheckCheck, classe: "text-info",      titulo: "Visualizada" },
   erro:     { icone: AlertTriangle, classe: "text-destructive", titulo: "Falhou — não foi entregue" },
+  // Fora da janela de 24h (mig 20261014000015): sai quando o contato responder.
+  pendente: { icone: Clock, classe: "opacity-80", titulo: "Aguardando o contato responder — sai sozinha" },
+  cancelada: { icone: Ban, classe: "opacity-60", titulo: "Não saiu — o contato não respondeu em 7 dias" },
 };
 
 function TiqueStatus({ status }: { status: string }) {

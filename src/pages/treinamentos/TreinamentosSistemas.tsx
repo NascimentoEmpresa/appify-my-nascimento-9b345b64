@@ -1,7 +1,5 @@
 import { useMemo, useState } from "react";
-import { Link } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useAccessibleMenus } from "@/hooks/useAccessibleMenus";
 import { CheckCircle2, ChevronDown, ChevronUp, GraduationCap, Loader2, MonitorCog, Users } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
@@ -55,12 +53,17 @@ export function useTreinamentosSistemas() {
 export const ROTA_TREINAMENTOS_SISTEMAS = "/app/central-servicos/treinamentos-sistemas";
 
 /**
- * A página (/app/central-servicos/treinamentos-sistemas). Quem também tem o
- * menu de Treinamentos vê as duas abas; quem não tem, só esta.
+ * A página (/app/central-servicos/treinamentos-sistemas).
+ *
+ * 14/10/2026: saiu do menu e as abas sumiram — "Treinamentos Sistemas é a
+ * mesma coisa que Treinamentos". Os vídeos com prova ficam todos em
+ * Central de Serviços › Treinamentos, e os pendentes daqui aparecem lá também
+ * (TreinamentosERP). Esta rota continua viva só como a tela de CONFIRMAR o
+ * treinamento de um chamado: é para cá que Meus Chamados e o Status da
+ * validação mandam quem recebeu, e ela é liberada a todos (muita gente que
+ * recebe treinamento não tem o menu de Treinamentos).
  */
 export default function TreinamentosSistemasPagina() {
-  const { data: access } = useAccessibleMenus("visualizar");
-  const temVideos = !!access?.codes.has("central_servicos_treinamentos");
   return (
     <div className="space-y-6 p-4 md:p-6">
       <div className="flex items-center gap-3">
@@ -68,36 +71,11 @@ export default function TreinamentosSistemasPagina() {
           <MonitorCog className="h-6 w-6" />
         </div>
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">Treinamentos Sistemas</h1>
+          <h1 className="text-2xl font-bold tracking-tight">Confirmar treinamento</h1>
           <p className="text-sm text-muted-foreground">Confirme os treinamentos das novidades do ERP que você recebeu.</p>
         </div>
       </div>
-      {temVideos && <AbasTreinamentos atual="sistemas" />}
       <TreinamentosSistemas />
-    </div>
-  );
-}
-
-/** As duas abas da Central de Serviços › Treinamentos (vídeos | sistemas). */
-export function AbasTreinamentos({ atual }: { atual: "videos" | "sistemas" }) {
-  const { data = [] } = useTreinamentosSistemas();
-  const pendentes = data.filter((t) => !t.confirmado_em).length;
-  const abas = [
-    { k: "videos", rotulo: "Treinamentos", to: "/app/central-servicos/treinamentos" },
-    { k: "sistemas", rotulo: "Treinamentos Sistemas", to: ROTA_TREINAMENTOS_SISTEMAS },
-  ] as const;
-  return (
-    <div className="flex gap-1 border-b">
-      {abas.map((a) => (
-        <Link key={a.k} to={a.to}
-          className={`-mb-px flex items-center gap-1.5 border-b-2 px-4 py-2 text-sm font-medium transition-colors ${
-            atual === a.k ? "border-primary text-primary" : "border-transparent text-muted-foreground hover:text-foreground"}`}>
-          {a.rotulo}
-          {a.k === "sistemas" && pendentes > 0 && (
-            <span className="rounded-full bg-primary px-1.5 py-0.5 text-[10px] font-bold text-primary-foreground">{pendentes}</span>
-          )}
-        </Link>
-      ))}
     </div>
   );
 }
