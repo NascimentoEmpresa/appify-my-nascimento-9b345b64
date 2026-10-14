@@ -635,6 +635,41 @@ rodar **imediatamente antes** da virada.
 
 ---
 
+### 1.9 O cluster fica com a escrita REVOGADA até a virada
+
+Enquanto o cluster é **assinante** da replicação, uma escrita local pode tomar
+uma chave primária que a produção ainda vai replicar — e o conflito de chave
+duplicada **para a replicação**, exatamente como a coluna faltando da seção
+1.7, só que sem erro óbvio no log.
+
+Por isso, desde 14/10/2026, o cluster está assim:
+
+```sql
+-- no CLUSTER (não na produção)
+REVOKE INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public FROM anon, authenticated;
+NOTIFY pgrst, 'reload schema';
+```
+
+O ERP apontado para o cluster **abre, loga e consulta, e recusa salvar**. Isso
+é o estado correto de espera, não um defeito a consertar.
+
+> ⚠️ **A virada tem que desfazer isso.** Depois de parar a assinatura (passo
+> 2.2) e antes de liberar os usuários, rode no cluster:
+> ```sql
+> GRANT INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO anon, authenticated;
+> NOTIFY pgrst, 'reload schema';
+> ```
+> Esquecer isto entrega um ERP que abre, mostra tudo e não deixa salvar nada —
+> e o sintoma na tela não fala de permissão, fala de erro ao gravar.
+
+Para a aceitação pelo navegador: `infra/ha/testar-cluster-local.sh` sobe o ERP
+em `localhost:4173` apontando para o cluster, sem publicar nada. A senha é
+digitada no navegador pelo próprio usuário — o dump de `auth` já carregou os
+159 logins no cluster **com os hashes da produção**, então a senha real
+funciona lá.
+
+---
+
 ## Fase 2 — a virada
 
 Daqui até o fim, o ERP fica fora do ar para escrita. Alvo: **minutos**, não
