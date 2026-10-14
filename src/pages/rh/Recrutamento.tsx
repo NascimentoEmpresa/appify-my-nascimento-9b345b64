@@ -659,6 +659,9 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
   // para a etapa paralela: sem a lista o pedido chega vazio no módulo de
   // Suprimentos e alguém volta perguntando.
   const [candMateriais, setCandMateriais]   = useState("");
+  // Urgente ao mandar pra SST + COMPRAS (14/10/2026, mig 20261014000045): cada
+  // setor marcado recebe um card tremendo na tela até dar "visto".
+  const [candUrgente, setCandUrgente] = useState({ sst: false, compras: false, motivo: "" });
   // Enxoval da função (25/09/2026, mig 246): o card de tamanhos do modal de
   // SST + COMPRAS — o Confirmar grava por ele antes de mover o candidato.
   const enxovalRef = useRef<EnxovalAdmissaoHandle>(null);
@@ -1881,7 +1884,17 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
       setEnviandoEnxoval(false);
       if (!r.ok) { toast(r.erro, "err"); return; }
       if (r.resumo) extra.compras_necessidades = r.resumo;
+      if (r.foto) extra.cracha_foto_path = r.foto;
       if (candObs.trim()) extra.sst_obs = candObs.trim();
+      // Entrada nova na etapa: o visto de uma passagem anterior não vale mais.
+      extra.sst_visto_em = null; extra.sst_visto_por = null;
+      extra.compras_visto_em = null; extra.compras_visto_por = null;
+      extra.urgente_sst = candUrgente.sst; extra.urgente_compras = candUrgente.compras;
+      const algumUrgente = candUrgente.sst || candUrgente.compras;
+      extra.urgente_em = algumUrgente ? new Date().toISOString() : null;
+      extra.urgente_por = algumUrgente ? (user?.user_metadata?.nome ?? user?.email ?? "") : null;
+      extra.urgente_motivo = algumUrgente ? (candUrgente.motivo.trim() || null) : null;
+      setCandUrgente({ sst: false, compras: false, motivo: "" });
     } else if (novaEtapa === "Reprovado") {
       extra.motivo_reprovacao = candObs.trim();
     } else if (origem === "JURÍDICO") {
@@ -3435,7 +3448,7 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
       {candModal && (
         <div className="rec-modal-ov" style={{ zIndex: 850 }}>
           <div className="rec-modal" style={{ maxWidth: candModal.novaEtapa === ETAPA_SST_COMPRAS ? 620 : 420 }}>
-            <button onClick={() => { setCandModal(null); setCandObs(""); setCandMateriais(""); }} style={{ position: "absolute", top: 14, right: 14, background: "none", border: "none", color: "#94a3b8", fontSize: 20, cursor: "pointer" }}>✕</button>
+            <button onClick={() => { setCandModal(null); setCandObs(""); setCandMateriais(""); setCandUrgente({ sst: false, compras: false, motivo: "" }); }} style={{ position: "absolute", top: 14, right: 14, background: "none", border: "none", color: "#94a3b8", fontSize: 20, cursor: "pointer" }}>✕</button>
             <div style={{ fontSize: 17, fontWeight: 800, marginBottom: 4 }}>
               {candModal.novaEtapa === "Reprovado" ? "Reprovar candidato" : pulandoSstCompras ? "Pular SST e Compras" : parecerJuridico ? "Parecer do Jurídico" : `Mover para "${candModal.novaEtapa}"`}
             </div>
@@ -3447,6 +3460,26 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
             )}
             {candModal.novaEtapa === ETAPA_SST_COMPRAS && (
               <EnxovalAdmissao ref={enxovalRef} candidatoId={candModal.id} />
+            )}
+            {/* Urgente (14/10/2026): o setor marcado vê um card tremendo em qualquer tela até dar "visto". */}
+            {candModal.novaEtapa === ETAPA_SST_COMPRAS && (
+              <div style={{ border: `1px solid ${candUrgente.sst || candUrgente.compras ? "#fca5a5" : "#e2e8f0"}`, background: candUrgente.sst || candUrgente.compras ? "#fef2f2" : "#fff", borderRadius: 12, padding: 12, marginBottom: 14 }}>
+                <div style={{ fontSize: 12.5, fontWeight: 800, color: "#b91c1c", textTransform: "uppercase", letterSpacing: ".4px" }}>🚨 Marcar como urgente</div>
+                <div style={{ fontSize: 12, color: "#64748b", margin: "3px 0 8px" }}>O setor marcado recebe um aviso na tela, que só some quando alguém de lá der "visto".</div>
+                <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
+                  {([["sst", "Urgente para o SST"], ["compras", "Urgente para o Compras"]] as const).map(([k, rot]) => (
+                    <label key={k} style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 13, fontWeight: 700, color: "#0f172a", cursor: "pointer" }}>
+                      <input type="checkbox" checked={candUrgente[k]} onChange={e => setCandUrgente(u => ({ ...u, [k]: e.target.checked }))} />
+                      {rot}
+                    </label>
+                  ))}
+                </div>
+                {(candUrgente.sst || candUrgente.compras) && (
+                  <input value={candUrgente.motivo} onChange={e => setCandUrgente(u => ({ ...u, motivo: e.target.value }))}
+                    placeholder="Por que é urgente? (opcional) Ex.: início na segunda-feira"
+                    style={{ width: "100%", marginTop: 8, padding: "8px 10px", borderRadius: 8, border: "1px solid #fca5a5", fontSize: 13 }} />
+                )}
+              </div>
             )}
             {/* Parecer do Jurídico (mig 20261014000004): o nível + observação; o candidato segue para a Entrevista. */}
             {parecerJuridico && (

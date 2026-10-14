@@ -11,6 +11,7 @@ import { VinculoGate } from "@/components/auth/VinculoEmpregado";
 import { VinculoDiscordGate } from "@/components/auth/VinculoDiscordGate";
 import { GateNotificacoes } from "@/components/notificacoes/GateNotificacoes";
 import { useModoExterno } from "@/hooks/useModoExterno";
+import { AlertaUrgenteAdmissao } from "@/components/recrutamento/AlertaUrgenteAdmissao";
 
 export function AppShell() {
   // Encarregado externo (sessão anônima) não tem cadastro em EMPREGADOS para
@@ -98,6 +99,8 @@ export function AppShell() {
         </main>
       </div>
       {!externo && <ChamadoFab />}
+      {/* Admissão urgente (14/10/2026): card tremendo pro SST e pro Compras, em qualquer tela. */}
+      {!externo && <AlertaUrgenteAdmissao />}
       {!externo && <VinculoGate />}
       {/* Notificação com ciência: para a tela em qualquer rota até a pessoa
           responder. Fica aqui, e não numa página, porque o aviso é do

@@ -3,6 +3,8 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { supabase } from "@/integrations/supabase/client";
 import { useContratosCatalogo, useFuncoes, usePostos } from "@/hooks/useSupCatalogo";
 import { NAO_PRECISA, faltandoTamanho, resumoLivre, type ItemEnxoval } from "@/lib/recrutamento/enxoval";
+import { enviarFotoCracha } from "@/hooks/useSupPedidos";
+import { BUCKET_CRACHAS } from "@/lib/suprimentos/fotoCracha";
 
 // =====================================================================
 // Enxoval da função ao mandar o candidato pra SST + COMPRAS
@@ -20,6 +22,11 @@ import { NAO_PRECISA, faltandoTamanho, resumoLivre, type ItemEnxoval } from "@/l
 //
 // O pai (modal de mover candidato) chama `enviar()` no Confirmar: grava via
 // rec_enxoval_informar e recebe o resumo que vai para compras_necessidades.
+//
+// 14/10/2026 (mig 20261014000045, Pablo: "tem que ser anexado a imagem do
+// candidato pro crachá e a quantidade de itens"): FOTO DO CRACHÁ obrigatória
+// (bucket sup-crachas, vai junto no pedido de materiais) e QUANTIDADE de cada
+// item — antes todo item ia com 1.
 // =====================================================================
 
 const db = supabase as unknown as SupabaseClient;
@@ -29,12 +36,13 @@ interface Preview {
   contrato_id: string | null; posto_id: string | null; funcao_id: string | null;
   contrato_nome: string | null; posto_nome: string | null; funcao_nome: string | null;
   itens: ItemEnxoval[]; observacoes: string | null; ja_informado: boolean; tem_pedido: boolean;
+  foto_cracha_path?: string | null;
 }
 
 export interface EnxovalAdmissaoHandle {
   /** Grava o enxoval. `resumo` vai para compras_necessidades (null = não mexer). */
   // Sem união discriminada: o projeto roda sem strict, e o TS não estreita por `ok`.
-  enviar: () => Promise<{ ok: boolean; resumo?: string | null; erro?: string }>;
+  enviar: () => Promise<{ ok: boolean; resumo?: string | null; erro?: string; foto?: string | null }>;
 }
 
 const fi: CSSProperties = { width: "100%", marginTop: 4, padding: "8px 10px", borderRadius: 8, border: "1px solid #cbd5e1", background: "#fff", fontSize: 13 };
@@ -51,6 +59,9 @@ export const EnxovalAdmissao = forwardRef<EnxovalAdmissaoHandle, { candidatoId: 
   const [tamanhos, setTamanhos] = useState<Record<string, string>>({});
   const [obs, setObs] = useState("");
   const [livre, setLivre] = useState("");
+  const [qtds, setQtds] = useState<Record<string, number>>({});
+  const [foto, setFoto] = useState<File | null>(null);
+  const [fotoUrl, setFotoUrl] = useState<string | null>(null);
 
   const { data: contratos = [] } = useContratosCatalogo(!!prev && !prev.vaga_tem_catalogo);
   const { data: postos = [] } = usePostos(escolha.contrato_id || null);
@@ -68,9 +79,21 @@ export const EnxovalAdmissao = forwardRef<EnxovalAdmissaoHandle, { candidatoId: 
     setPrev(p);
     setEscolha({ contrato_id: p.contrato_id ?? "", posto_id: p.posto_id ?? "", funcao_id: p.funcao_id ?? "" });
     setTamanhos(Object.fromEntries((p.itens ?? []).filter((i) => i.tamanho).map((i) => [i.item_id, i.tamanho as string])));
+    setQtds(Object.fromEntries((p.itens ?? []).map((i) => [i.item_id, Math.max(1, Number(i.quantidade) || 1)])));
     setObs(p.observacoes ?? "");
   }, [candidatoId]);
   useEffect(() => { carregar(); }, [carregar]);
+
+  // Prévia da foto: a nova escolhida agora, senão a que já estava anexada.
+  useEffect(() => {
+    if (foto) { const u = URL.createObjectURL(foto); setFotoUrl(u); return () => URL.revokeObjectURL(u); }
+    const caminho = prev?.foto_cracha_path;
+    if (!caminho) { setFotoUrl(null); return; }
+    let vivo = true;
+    db.storage.from(BUCKET_CRACHAS).createSignedUrl(caminho, 600)
+      .then(({ data }) => { if (vivo) setFotoUrl(data?.signedUrl ?? null); });
+    return () => { vivo = false; };
+  }, [foto, prev?.foto_cracha_path]);
 
   const itens = prev?.itens ?? [];
   const semEnxoval = !!prev?.funcao_id && itens.length === 0;
@@ -82,22 +105,28 @@ export const EnxovalAdmissao = forwardRef<EnxovalAdmissaoHandle, { candidatoId: 
       if (!escolha.contrato_id || !escolha.posto_id || !escolha.funcao_id) {
         return { ok: false, erro: "Escolha o contrato, o posto e a função do Catálogo para puxar o enxoval." };
       }
-      if (semEnxoval) {
-        if (!livre.trim()) return { ok: false, erro: "A função não tem enxoval no Catálogo — descreva os materiais/EPIs para o Compras." };
-        return { ok: true, resumo: resumoLivre(prev.funcao_nome, livre) };
-      }
-      const faltam = faltandoTamanho(itens, tamanhos);
+      if (!foto && !prev.foto_cracha_path) return { ok: false, erro: "Anexe a foto do candidato para o crachá." };
+      if (semEnxoval && !livre.trim()) return { ok: false, erro: "A função não tem enxoval no Catálogo — descreva os materiais/EPIs para o Compras." };
+      const faltam = semEnxoval ? [] : faltandoTamanho(itens, tamanhos);
       if (faltam.length) return { ok: false, erro: `Informe o tamanho de: ${faltam.join(", ")}.` };
-      if (itens.every((i) => tamanhos[i.item_id] === NAO_PRECISA)) return { ok: false, erro: "Marque ao menos um item do enxoval." };
+      if (!semEnxoval && itens.every((i) => tamanhos[i.item_id] === NAO_PRECISA)) return { ok: false, erro: "Marque ao menos um item do enxoval." };
+      // A foto sobe só depois de tudo validado — senão cada tentativa deixava um arquivo solto no bucket.
+      let caminhoFoto = prev.foto_cracha_path ?? null;
+      if (foto) {
+        try { caminhoFoto = await enviarFotoCracha(foto); }
+        catch (e) { return { ok: false, erro: "Não consegui enviar a foto do crachá: " + ((e as Error)?.message ?? e) }; }
+      }
+      if (semEnxoval) return { ok: true, resumo: resumoLivre(prev.funcao_nome, livre), foto: caminhoFoto };
       const { data, error } = await db.rpc("rec_enxoval_informar", {
         p_candidato_id: candidatoId, p_contrato_id: escolha.contrato_id, p_posto_id: escolha.posto_id, p_funcao_id: escolha.funcao_id,
-        p_itens: itens.map((i) => ({ item_id: i.item_id, tamanho: tamanhos[i.item_id] ?? null })),
+        p_itens: itens.map((i) => ({ item_id: i.item_id, tamanho: tamanhos[i.item_id] ?? null, quantidade: qtds[i.item_id] ?? 1 })),
         p_obs: obs.trim() || null,
+        p_foto_path: caminhoFoto,
       });
       if (error) return { ok: false, erro: error.message };
-      return { ok: true, resumo: (data as { resumo?: string } | null)?.resumo ?? null };
+      return { ok: true, resumo: (data as { resumo?: string } | null)?.resumo ?? null, foto: caminhoFoto };
     },
-  }), [prev, erro, escolha, semEnxoval, livre, itens, tamanhos, obs, candidatoId]);
+  }), [prev, erro, escolha, semEnxoval, livre, itens, tamanhos, qtds, foto, obs, candidatoId]);
 
   if (carregando && !prev) return <div style={{ padding: 16, textAlign: "center", color: "#64748b", fontSize: 13 }}>Carregando o enxoval da função…</div>;
   if (erro && !prev) return <div style={{ padding: 12, color: "#b91c1c", fontSize: 13, background: "#fef2f2", borderRadius: 8 }}>Não consegui carregar o enxoval: {erro}</div>;
@@ -138,6 +167,24 @@ export const EnxovalAdmissao = forwardRef<EnxovalAdmissaoHandle, { candidatoId: 
         </div>
       )}
 
+      {/* Foto do crachá (14/10/2026): obrigatória — vai no pedido de materiais. */}
+      {!prev.tem_pedido && (
+        <div style={{ marginTop: 10, display: "flex", alignItems: "center", gap: 10, background: "#fff", border: `1px solid ${fotoUrl ? "#e2e8f0" : "#fdba74"}`, borderRadius: 10, padding: "8px 10px" }}>
+          <div style={{ width: 52, height: 64, flexShrink: 0, borderRadius: 8, overflow: "hidden", background: "#f1f5f9", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22 }}>
+            {fotoUrl ? <img src={fotoUrl} alt="Foto do crachá" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : "🪪"}
+          </div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: "#0f172a" }}>Foto do candidato para o crachá *</div>
+            <div style={{ fontSize: 11.5, color: "#64748b" }}>{foto ? foto.name : prev.foto_cracha_path ? "Foto já anexada — troque se precisar." : "Foto de rosto, fundo claro (JPG ou PNG)."}</div>
+          </div>
+          <label style={{ ...chip(false), padding: "6px 10px", display: "inline-flex", alignItems: "center", cursor: "pointer" }}>
+            {fotoUrl ? "Trocar" : "Anexar foto"}
+            <input type="file" accept="image/*" style={{ display: "none" }}
+              onChange={(e) => { const f = e.target.files?.[0]; if (f) setFoto(f); e.target.value = ""; }} />
+          </label>
+        </div>
+      )}
+
       {carregando && <div style={{ fontSize: 12, color: "#64748b", marginTop: 8 }}>Atualizando…</div>}
 
       {!prev.tem_pedido && itens.length > 0 && (
@@ -154,6 +201,17 @@ export const EnxovalAdmissao = forwardRef<EnxovalAdmissaoHandle, { candidatoId: 
                     <div style={{ fontSize: 13, fontWeight: 700, color: "#0f172a", textDecoration: naoPrecisa ? "line-through" : "none" }}>{it.nome}</div>
                     <div style={{ fontSize: 10.5, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase" }}>{it.tipo}{!temGrade && !naoPrecisa ? " · sem tamanho" : ""}</div>
                   </div>
+                  {!naoPrecisa && (
+                    <div style={{ display: "inline-flex", alignItems: "center", gap: 4, marginLeft: "auto" }} title="Quantidade">
+                      <button type="button" style={{ ...chip(false), minWidth: 26, padding: "2px 6px" }}
+                        onClick={() => setQtds((q) => ({ ...q, [it.item_id]: Math.max(1, (q[it.item_id] ?? 1) - 1) }))}>−</button>
+                      <input type="number" min={1} max={99} value={qtds[it.item_id] ?? 1} aria-label={`Quantidade de ${it.nome}`}
+                        onChange={(e) => { const v = Math.max(1, Math.min(99, Number(e.target.value) || 1)); setQtds((q) => ({ ...q, [it.item_id]: v })); }}
+                        style={{ width: 44, padding: "3px 4px", textAlign: "center", border: "1px solid #cbd5e1", borderRadius: 7, fontSize: 13, fontWeight: 700 }} />
+                      <button type="button" style={{ ...chip(false), minWidth: 26, padding: "2px 6px" }}
+                        onClick={() => setQtds((q) => ({ ...q, [it.item_id]: Math.min(99, (q[it.item_id] ?? 1) + 1) }))}>+</button>
+                    </div>
+                  )}
                   <button type="button" onClick={() => setTamanhos((s) => { const n = { ...s }; if (naoPrecisa) delete n[it.item_id]; else n[it.item_id] = NAO_PRECISA; return n; })}
                     style={{ ...chip(naoPrecisa, "#64748b"), fontWeight: 600, fontSize: 11 }} title="Este candidato não leva este item">
                     Não precisa
