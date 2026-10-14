@@ -9,14 +9,18 @@ import { Input } from "@/components/ui/input";
 import {
   GraduationCap, Video, Paperclip, ListChecks, Plus, Search, Pencil, Trash2,
   CheckCircle2, EyeOff, PlayCircle, Loader2, Award, BarChart3, Lock, RotateCcw, Tag, Boxes,
+  AlertTriangle, MonitorCog,
 } from "lucide-react";
+import { Link, useSearchParams } from "react-router-dom";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { AlertasTreinamento, useAlertasTreinamento, usePodeVerAlertasTreinamento } from "@/components/treinamentos/AlertasTreinamento";
 import { MODULOS_ERP, labelDe } from "@/pages/chamados/types";
 import { AcessoGate } from "@/components/auth/AcessoGate";
 import { TreinamentoEditor } from "./treinamento/TreinamentoEditor";
 import { TreinamentoVisor } from "./treinamento/TreinamentoVisor";
 import { DashboardVideos } from "./treinamento/DashboardVideos";
 import { recursosDe, type EscopoTreinamento, type Treinamento } from "./treinamento/core";
-import { AbasTreinamentos } from "./TreinamentosSistemas";
+import { ROTA_TREINAMENTOS_SISTEMAS, useTreinamentosSistemas } from "./TreinamentosSistemas";
 import { ReacoesVideoMini } from "@/components/treinamentos/ReacoesVideo";
 import { useNumerosTreinamentos } from "@/hooks/useVideoNumeros";
 
@@ -52,22 +56,52 @@ interface EstadoCard {
 interface Props {
   /** De qual porta a pessoa entrou. Define a grade e o padrão do editor. */
   escopo: EscopoTreinamento;
-  /**
-   * Dentro de outra página (Treinamentos Sistemas, que já tem o próprio
-   * título e abas): troca o cabeçalho grande por uma barra de ferramentas.
-   */
-  embutido?: boolean;
 }
 
-export default function TreinamentosERP({ escopo, embutido = false }: Props) {
+// "Quem pode adicionar treinamentos" na Central de Serviços (14/10/2026, mig
+// 20261014000022): menu fantasma no módulo Central de Serviços, em
+// Gerenciamento de Acesso. Vale só para a grade da Central — quem tem o
+// `treinamentos_gerenciar` (módulo Treinamentos) segue gerenciando tudo.
+const MENU_GERENCIAR_CENTRAL = "central_servicos_treinamentos_gerenciar";
+
+export default function TreinamentosERP({ escopo }: Props) {
   const { user } = useAuth();
   const meuNome = useMeuNome();
   const { can } = usePermissoes();
   const { toast } = useToast();
+  const [params, setParams] = useSearchParams();
 
-  const podeGerenciar = can("incluir", undefined, "treinamentos_gerenciar")
-                     || can("alterar", undefined, "treinamentos_gerenciar");
-  const podeExcluir = can("excluir", undefined, "treinamentos_gerenciar");
+  const gerenciaTudo = can("incluir", undefined, "treinamentos_gerenciar")
+                    || can("alterar", undefined, "treinamentos_gerenciar");
+  const gerenciaCentral = escopo === "central_servicos"
+    && (can("incluir", undefined, MENU_GERENCIAR_CENTRAL) || can("alterar", undefined, MENU_GERENCIAR_CENTRAL));
+  const podeGerenciar = gerenciaTudo || gerenciaCentral;
+  const podeExcluirAlgum = can("excluir", undefined, "treinamentos_gerenciar")
+    || (escopo === "central_servicos" && can("excluir", undefined, MENU_GERENCIAR_CENTRAL));
+  // Quem gerencia só a Central mexe só no que é só da Central: o banco recusa
+  // editar um treinamento que também está na grade dos Encarregados.
+  const soDaCentral = (t: Treinamento) => (t.escopos ?? []).every(e => e === "central_servicos");
+  const podeEditar = (t: Treinamento) => gerenciaTudo || (gerenciaCentral && soDaCentral(t));
+  const podeExcluir = (t: Treinamento) => podeExcluirAlgum && (can("excluir", undefined, "treinamentos_gerenciar") || soDaCentral(t));
+
+  // Alertas de quem travou a prova (mig 20261014000020): a notificação abre
+  // esta tela com ?alertas=1.
+  const podeAlertas = usePodeVerAlertasTreinamento();
+  const alertas = useAlertasTreinamento(podeAlertas);
+  const alertasAbertos = (alertas.data ?? []).filter(a => a.status === "aberto").length;
+  const alertasVisiveis = podeAlertas && params.get("alertas") === "1";
+  const abrirAlertas = (abrir: boolean) => setParams(p => {
+    const n = new URLSearchParams(p);
+    if (abrir) n.set("alertas", "1"); else n.delete("alertas");
+    return n;
+  }, { replace: true });
+
+  // Treinamentos de chamados para confirmar (mig 273). A aba "Treinamentos
+  // Sistemas" saiu (14/10/2026); quem tem pendência vê o aviso aqui, que
+  // leva para a tela de confirmar.
+  const confirmacoes = useTreinamentosSistemas();
+  const confirmacoesPendentes = escopo === "central_servicos"
+    ? (confirmacoes.data ?? []).filter(x => !x.confirmado_em).length : 0;
 
   const [lista, setLista] = useState<Treinamento[]>([]);
   const [capas, setCapas] = useState<Record<string, string>>({});
@@ -82,12 +116,6 @@ export default function TreinamentosERP({ escopo, embutido = false }: Props) {
   const [emEdicao, setEmEdicao] = useState<Treinamento | null>(null);
   const [assistindo, setAssistindo] = useState<Treinamento | null>(null);
   const [dashboardAberto, setDashboardAberto] = useState(false);
-
-  // Central de Serviços ganha a aba "Treinamentos Sistemas" (30/09/2026, mig
-  // 273): treinamento dos desenvolvimentos do ERP aprovados pela Presidência,
-  // que cada participante confirma. Rota própria e liberada a todos
-  // (TreinamentosSistemas.tsx) — aqui é só a aba que leva até lá.
-  const comSistemas = escopo === "central_servicos";
 
   const carregar = useCallback(async () => {
     // Os dois blocos em paralelo: a grade não precisa esperar o histórico
@@ -183,12 +211,9 @@ export default function TreinamentosERP({ escopo, embutido = false }: Props) {
     : `${lista.length} ${lista.length === 1 ? "treinamento" : "treinamentos"} · você concluiu ${feitos}`;
 
   return (
-    <div className={embutido ? "space-y-6" : "space-y-6 p-4 md:p-6"}>
+    <div className="space-y-6 p-4 md:p-6">
       {/* ---- cabeçalho ---- */}
       <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-        {embutido ? (
-          <p className="text-sm text-muted-foreground">{resumo}</p>
-        ) : (
         <div className="flex items-center gap-3">
           <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-br from-primary to-primary/60 text-primary-foreground shadow-lg">
             <GraduationCap className="h-6 w-6" />
@@ -200,7 +225,6 @@ export default function TreinamentosERP({ escopo, embutido = false }: Props) {
             <p className="text-sm text-muted-foreground">{resumo}</p>
           </div>
         </div>
-        )}
 
         <div className="flex items-center gap-2">
           <div className="relative">
@@ -217,6 +241,14 @@ export default function TreinamentosERP({ escopo, embutido = false }: Props) {
               <BarChart3 className="mr-2 h-4 w-4" /> Dashboard de vídeos
             </Button>
           </AcessoGate>
+          {podeAlertas && (
+            <Button variant="outline" onClick={() => abrirAlertas(true)} className="gap-2">
+              <AlertTriangle className="h-4 w-4 text-amber-600" /> Alertas
+              {alertasAbertos > 0 && (
+                <span className="rounded-full bg-red-600 px-1.5 py-0.5 text-[10px] font-bold text-white">{alertasAbertos}</span>
+              )}
+            </Button>
+          )}
           {podeGerenciar && (
             <Button onClick={() => { setEmEdicao(null); setEditorAberto(true); }}>
               <Plus className="mr-2 h-4 w-4" /> Novo
@@ -225,7 +257,16 @@ export default function TreinamentosERP({ escopo, embutido = false }: Props) {
         </div>
       </div>
 
-      {comSistemas && <AbasTreinamentos atual="videos" />}
+      {confirmacoesPendentes > 0 && (
+        <Link to={ROTA_TREINAMENTOS_SISTEMAS}
+          className="flex items-center gap-3 rounded-xl border border-primary/40 bg-primary/5 p-4 text-sm transition-colors hover:bg-primary/10">
+          <MonitorCog className="h-5 w-5 shrink-0 text-primary" />
+          <span className="flex-1">
+            Você tem <b>{confirmacoesPendentes}</b> treinamento{confirmacoesPendentes > 1 ? "s" : ""} de novidade do ERP para confirmar o recebimento.
+          </span>
+          <span className="font-semibold text-primary">Confirmar →</span>
+        </Link>
+      )}
 
       {/* ---- filtros por tipo e módulo (só aparecem quando há o que filtrar) ---- */}
       {!carregando && (tipos.length > 1 || modulos.length > 1) && (
@@ -384,13 +425,13 @@ export default function TreinamentosERP({ escopo, embutido = false }: Props) {
                       <PlayCircle className="mr-2 h-4 w-4" />
                       {feito ? "Rever" : reprovado ? "Continuar" : "Começar"}
                     </Button>
-                    {podeGerenciar && (
+                    {podeEditar(t) && (
                       <Button variant="ghost" size="icon" title="Editar"
                               onClick={() => { setEmEdicao(t); setEditorAberto(true); }}>
                         <Pencil className="h-4 w-4" />
                       </Button>
                     )}
-                    {podeExcluir && (
+                    {podeExcluir(t) && (
                       <Button variant="ghost" size="icon" title="Excluir" className="text-destructive"
                               onClick={() => excluir(t)}>
                         <Trash2 className="h-4 w-4" />
@@ -408,6 +449,7 @@ export default function TreinamentosERP({ escopo, embutido = false }: Props) {
         aberto={editorAberto}
         treinamento={emEdicao}
         escopoPadrao={escopo}
+        escopoTravado={gerenciaTudo ? null : escopo}
         meuNome={meuNome}
         meuId={user?.id}
         onFechar={() => setEditorAberto(false)}
@@ -429,6 +471,13 @@ export default function TreinamentosERP({ escopo, embutido = false }: Props) {
         onFechar={() => setDashboardAberto(false)}
         escopo={escopo}
       />
+
+      <Dialog open={alertasVisiveis} onOpenChange={o => abrirAlertas(o)}>
+        <DialogContent className="max-h-[90vh] max-w-5xl overflow-y-auto">
+          <DialogHeader><DialogTitle>Alertas de treinamento</DialogTitle></DialogHeader>
+          <AlertasTreinamento />
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

@@ -158,6 +158,25 @@ export default function Configuracoes() {
                 onUnidadeChange={(v) => setForm((f) => (f ? { ...f, conferencia_aprovacao_pagamento_unidade: v } : f))}
                 disabled={!podeEditar}
               />
+              {/* SIS-2026-0664: rolagem automática da data de pagamento das despesas paradas no N2+. */}
+              <label className="flex items-start gap-2 text-sm cursor-pointer sm:col-span-2">
+                <Checkbox
+                  checked={form.rolagem_data_pagamento_ativa}
+                  onCheckedChange={(checked) =>
+                    setForm((f) => (f ? { ...f, rolagem_data_pagamento_ativa: checked === true } : f))
+                  }
+                  disabled={!podeEditar}
+                />
+                <span>
+                  <span className="font-medium">Reagendar automaticamente despesas paradas na aprovação</span>
+                  <br />
+                  <span className="text-xs text-muted-foreground">
+                    Despesa pendente de aprovação do Nível 2 em diante que passar do horário do item 1.2 (ou já estiver com data vencida)
+                    tem o pagamento reagendado para o próximo dia útil. O solicitante é avisado e o histórico da despesa registra a mudança.
+                    Vale também para exceções; não vale para despesas parceladas.
+                  </span>
+                </span>
+              </label>
             </CardContent>
           </Card>
 
@@ -334,6 +353,23 @@ export default function Configuracoes() {
                         <br />
                         <span className="text-xs text-muted-foreground">
                           Exigir que o responsável pela aprovação registre a justificativa da exceção.
+                        </span>
+                      </span>
+                    </label>
+                    <label className="flex items-start gap-2 text-sm cursor-pointer">
+                      <Checkbox
+                        checked={form.excecao_gerente_financeiro_ativo}
+                        onCheckedChange={(checked) =>
+                          setForm((f) => (f ? { ...f, excecao_gerente_financeiro_ativo: checked === true } : f))
+                        }
+                        disabled={!podeEditar}
+                      />
+                      <span>
+                        <span className="font-medium">Reforço do Gerente Financeiro nas exceções</span>
+                        <br />
+                        <span className="text-xs text-muted-foreground">
+                          Quem tem o cargo GERENTE FINANCEIRO pode aprovar, reprovar e ajustar exceções do Nível 2 em diante.
+                          Desligado por padrão.
                         </span>
                       </span>
                     </label>

@@ -22,6 +22,10 @@ export interface MaloteConfig {
   excecao_limite_aprovacao_horario: string;
   excecao_exigir_justificativa_solicitante: boolean;
   excecao_exigir_justificativa_aprovador: boolean;
+  // Reforço do cargo GERENTE FINANCEIRO nas exceções (Nível 2 em diante). Desligado por padrão.
+  excecao_gerente_financeiro_ativo: boolean;
+  // SIS-2026-0664: reagenda p/ o próximo dia útil a data das despesas pendentes de aprovação (N2+) que passam do prazo 1.2.
+  rolagem_data_pagamento_ativa: boolean;
   updated_at: string;
 }
 
@@ -48,7 +52,7 @@ const CONFIG_COLUMNS =
   "conferencia_aprovacao_horario, conferencia_aprovacao_pagamento_modo, conferencia_aprovacao_pagamento_dias, conferencia_aprovacao_pagamento_unidade, " +
   "bloqueio_regra, bloqueio_impedir_lancamento, bloqueio_fins_de_semana, " +
   "excecao_limite_inclusao_horario, excecao_limite_aprovacao_horario, " +
-  "excecao_exigir_justificativa_solicitante, excecao_exigir_justificativa_aprovador, updated_at";
+  "excecao_exigir_justificativa_solicitante, excecao_exigir_justificativa_aprovador, excecao_gerente_financeiro_ativo, rolagem_data_pagamento_ativa, updated_at";
 
 // SIS-2026-0250: hora atual já passou de um horário-limite (formato
 // "HH:MM"). Genérico — usado pro corte 2.1 (inclusão de exceção pro mesmo
@@ -101,10 +105,13 @@ export function usePrazoNormalInclusao() {
   });
 }
 
-// SIS-2026-0250: cargo "GERENTE FINANCEIRO" (Carol) pode aprovar/reprovar
+// SIS-2026-0250: cargo "GERENTE FINANCEIRO" pode aprovar/reprovar
 // qualquer despesa de Exceção como reforço, mesmo sem estar configurada
 // como Aprovadora Nível 2 daquela Classificação — reaproveita o mesmo
 // padrão de useSouSupervisorMalote (RPC de cargo já usada pela RLS).
+// Só vale com a chave "excecao_gerente_financeiro_ativo" ligada em
+// Configurações (desligada por padrão): a própria função do banco devolve
+// false quando está desligada, então a tela esconde o reforço sozinha.
 export function useSouGerenteFinanceiroMalote() {
   return useQuery({
     queryKey: ["malote_gerente_financeiro"],
