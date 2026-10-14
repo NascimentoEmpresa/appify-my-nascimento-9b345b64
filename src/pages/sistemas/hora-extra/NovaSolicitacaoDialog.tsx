@@ -48,6 +48,7 @@ const estadoInicial = {
   ponto_saida_intervalo: "12:00",
   ponto_retorno_intervalo: "13:00",
   ponto_saida: "17:18",
+  feriado: false,
   seguir_escala: true,
   sem_intervalo: false,
   justificativa: "",
@@ -102,6 +103,7 @@ export default function NovaSolicitacaoDialog({
         ponto_saida_intervalo: solicitacao.ponto_saida_intervalo.slice(0, 5),
         ponto_retorno_intervalo: solicitacao.ponto_retorno_intervalo.slice(0, 5),
         ponto_saida: solicitacao.ponto_saida.slice(0, 5),
+        feriado: solicitacao.feriado ?? false,
         seguir_escala: solicitacao.seguir_escala ?? true,
         sem_intervalo: solicitacao.sem_intervalo ?? false,
         justificativa: solicitacao.justificativa,
@@ -167,7 +169,7 @@ export default function NovaSolicitacaoDialog({
   useEffect(() => {
     if (!aberto) return;
     setForm((atual) => {
-      if (!opcaoFimDeSemana && (!atual.seguir_escala || atual.sem_intervalo)) {
+      if (!opcaoFimDeSemana && !atual.feriado && (!atual.seguir_escala || atual.sem_intervalo)) {
         return { ...atual, seguir_escala: true, sem_intervalo: false };
       }
       // A escolha padrão em fim de semana é não usar a jornada da escala. A
@@ -178,6 +180,8 @@ export default function NovaSolicitacaoDialog({
       return atual;
     });
   }, [aberto, opcaoFimDeSemana, solicitacao]);
+  const todoPeriodoEhHoraExtra = form.feriado || (opcaoFimDeSemana && !form.seguir_escala);
+  const permiteSemIntervalo = form.feriado || opcaoFimDeSemana;
   const ponto = normalizarPontoSemIntervalo(
     {
       entrada: form.ponto_entrada,
@@ -185,9 +189,13 @@ export default function NovaSolicitacaoDialog({
       retorno_intervalo: form.ponto_retorno_intervalo,
       saida: form.ponto_saida,
     },
-    opcaoFimDeSemana && form.sem_intervalo,
+    permiteSemIntervalo && form.sem_intervalo,
   );
-  const jornadaCalculo = jornadaParaCalculoHoraExtra(jornada, !opcaoFimDeSemana || form.seguir_escala);
+  const jornadaCalculo = jornadaParaCalculoHoraExtra(
+    jornada,
+    !opcaoFimDeSemana || form.seguir_escala,
+    form.feriado,
+  );
   const calculo = calcularHoraExtra(
     ponto,
     jornadaCalculo,
@@ -223,8 +231,8 @@ export default function NovaSolicitacaoDialog({
           ponto_saida_intervalo: ponto.saida_intervalo,
           ponto_retorno_intervalo: ponto.retorno_intervalo,
           ponto_saida: ponto.saida,
-          seguir_escala: !opcaoFimDeSemana || form.seguir_escala,
-          sem_intervalo: opcaoFimDeSemana && form.sem_intervalo,
+          seguir_escala: !todoPeriodoEhHoraExtra,
+          sem_intervalo: permiteSemIntervalo && form.sem_intervalo,
           he_inicio_previsto: calculo.inicio,
           he_fim_previsto: calculo.fim,
           chamados: chamados.map((c) => ({
@@ -331,7 +339,26 @@ export default function NovaSolicitacaoDialog({
                     </div>
                   </Campo>
                   <Campo rotulo="Data da HE" obrigatorio>
-                    <Input type="date" value={form.data_he} onChange={(e) => alterar("data_he", e.target.value)} />
+                    <div className="flex gap-2">
+                      <Input
+                        type="date"
+                        value={form.data_he}
+                        onChange={(e) => alterar("data_he", e.target.value)}
+                      />
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant={form.feriado ? "default" : "outline"}
+                        aria-pressed={form.feriado}
+                        onClick={() => alterar("feriado", !form.feriado)}
+                        className={cn(
+                          "h-10 shrink-0 px-2.5",
+                          form.feriado && "bg-orange-500 hover:bg-orange-600",
+                        )}
+                      >
+                        Feriado
+                      </Button>
+                    </div>
                   </Campo>
                   <Campo rotulo="Tipo de HE">
                     <select
@@ -348,7 +375,9 @@ export default function NovaSolicitacaoDialog({
               <SecaoForm
                 titulo="2. Horário de ponto do dia"
                 subtitulo={
-                  opcaoFimDeSemana
+                  form.feriado
+                    ? "No feriado, todo o período efetivamente trabalhado é considerado hora extra."
+                    : opcaoFimDeSemana
                     ? "No fim de semana, você pode considerar todo o período trabalhado como hora extra."
                     : "A hora extra é calculada sozinha: conta só o tempo que passar da jornada da escala de trabalho."
                 }
@@ -372,7 +401,7 @@ export default function NovaSolicitacaoDialog({
                   <div className="pb-2 text-xs text-slate-500">
                     Jornada: <strong className="text-[#07194b]">{formatarDuracao(jornada, true)}</strong> por dia
                   </div>
-                  {opcaoFimDeSemana && (
+                  {opcaoFimDeSemana && !form.feriado && (
                     <label className="flex cursor-pointer items-center gap-2 pb-2 text-sm font-medium text-[#07194b]">
                       <input
                         type="checkbox"
@@ -383,17 +412,17 @@ export default function NovaSolicitacaoDialog({
                     </label>
                   )}
                 </div>
-                {opcaoFimDeSemana && !form.seguir_escala && (
+                {todoPeriodoEhHoraExtra && (
                   <p className="-mt-1 mb-3 text-xs font-medium text-blue-700">
-                    Todo o tempo trabalhado será considerado hora extra.
+                    {form.feriado ? "Feriado: " : ""}Todo o tempo trabalhado será considerado hora extra.
                   </p>
                 )}
                 <div className="grid gap-3 lg:grid-cols-[1.45fr_.85fr_.55fr]">
                   <div className="grid grid-cols-2 gap-3 rounded-lg bg-slate-50 p-3 md:grid-cols-4">
                     {campoHora("Entrada", "ponto_entrada")}
                     <div>
-                      {campoHora("Saída (intervalo)", "ponto_saida_intervalo", opcaoFimDeSemana && form.sem_intervalo)}
-                      {opcaoFimDeSemana && (
+                      {campoHora("Saída (intervalo)", "ponto_saida_intervalo", permiteSemIntervalo && form.sem_intervalo)}
+                      {permiteSemIntervalo && (
                         <label className="mt-1 flex cursor-pointer items-center gap-1 text-[11px] text-slate-600">
                           <input
                             type="checkbox"
@@ -405,8 +434,8 @@ export default function NovaSolicitacaoDialog({
                       )}
                     </div>
                     <div>
-                      {campoHora("Retorno (intervalo)", "ponto_retorno_intervalo", opcaoFimDeSemana && form.sem_intervalo)}
-                      {opcaoFimDeSemana && (
+                      {campoHora("Retorno (intervalo)", "ponto_retorno_intervalo", permiteSemIntervalo && form.sem_intervalo)}
+                      {permiteSemIntervalo && (
                         <label className="mt-1 flex cursor-pointer items-center gap-1 text-[11px] text-slate-600">
                           <input
                             type="checkbox"
@@ -567,6 +596,7 @@ export default function NovaSolicitacaoDialog({
                     rotulo="Data"
                     valor={form.data_he ? `${formatarData(form.data_he)} (${diaSemana(form.data_he)})` : "—"}
                   />
+                  <Resumo rotulo="Feriado" valor={form.feriado ? "Sim — todo o período é HE" : "Não"} />
                   <Resumo rotulo="Escala de trabalho" valor={escala?.nome || "Padrão (07:30 às 17:18)"} />
                   <Resumo
                     rotulo="Horário da HE"
@@ -595,8 +625,10 @@ export default function NovaSolicitacaoDialog({
                     A expectativa de cada chamado vai de <strong>0 a 100%</strong>; o total é a média entre eles.
                   </li>
                   <li>
-                    {opcaoFimDeSemana && !form.seguir_escala ? (
-                      <>Neste fim de semana, <strong>todo o período trabalhado</strong> conta como hora extra.</>
+                    {todoPeriodoEhHoraExtra ? (
+                      <>
+                        {form.feriado ? "No feriado" : "Neste fim de semana"}, <strong>todo o período trabalhado</strong> conta como hora extra.
+                      </>
                     ) : (
                       <>Só conta como hora extra o tempo que passar da <strong>jornada da escala</strong>.</>
                     )}
