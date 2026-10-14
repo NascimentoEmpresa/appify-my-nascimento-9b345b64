@@ -101,7 +101,9 @@ export function situacao(i: Pick<IndicadorGerencial, "meta" | "alerta" | "sentid
   return alerta != null && v <= alerta ? "amarelo" : "vermelho";
 }
 
-const PESO: Record<Situacao, number> = { vermelho: 0, amarelo: 1, sem_dado: 2, neutro: 3, verde: 4 };
+// Neutro e verde empatam: o que não está ruim segue a ordem do cadastro — assim a TV
+// Supply mostra os cartões na ordem do Dashboard de Compras (14/10/2026).
+const PESO: Record<Situacao, number> = { vermelho: 0, amarelo: 1, sem_dado: 2, neutro: 3, verde: 3 };
 
 /** Quanto o indicador está fora da meta, em valor absoluto (0 se dentro ou sem meta). */
 export function desvio(i: Pick<IndicadorGerencial, "meta" | "sentido"> & { resultado: Pick<ResultadoIndicador, "valor"> }): number {
@@ -140,7 +142,8 @@ export function formatarValor(v: number | string | null | undefined, unidade: Un
   const n = num(v);
   if (n == null) return "—";
   if (unidade === "pct") return `${n.toLocaleString("pt-BR", { maximumFractionDigits: 1 })}%`;
-  if (unidade === "dias") return `${n.toLocaleString("pt-BR", { maximumFractionDigits: 0 })} d`;
+  // Uma casa, como os dashboards dos módulos ("7,5 dias" no Dashboard de Compras; antes saía "8 d").
+  if (unidade === "dias") return `${n.toLocaleString("pt-BR", { maximumFractionDigits: 1 })} d`;
   if (unidade === "brl") {
     const a = Math.abs(n);
     if (curto && a >= 1_000_000) return `R$ ${(n / 1_000_000).toLocaleString("pt-BR", { maximumFractionDigits: 1 })} mi`;
@@ -241,7 +244,7 @@ const GRAFICO: Record<string, { tipo: TipoGrafico; series?: [string, string]; /*
   rh_quadro: { tipo: "agrupado", series: ["Ativos", "Necessários"] },
   // TV Supply = Dashboard de Compras (mig 20261014000028): os mesmos gráficos de lá.
   sup_solicitacoes: { tipo: "agrupado", series: ["Solicitações", "Despachadas"] }, sup_pendentes: { tipo: "rosca" },
-  sup_cotacoes: { tipo: "rosca" }, sup_tempo_atendimento: { tipo: "colunas", unidade: "dias" }, sup_despachados: { tipo: "colunas", unidade: "qtd" },
+  sup_cotacoes: { tipo: "rosca" }, sup_saving: { tipo: "colunas", unidade: "brl" }, sup_saving_pct: { tipo: "colunas", unidade: "pct" }, sup_tempo_atendimento: { tipo: "colunas", unidade: "dias" }, sup_despachados: { tipo: "colunas", unidade: "qtd" },
   op_lucratividade: { tipo: "combo" }, pre_lucratividade: { tipo: "combo" }, op_reclamacoes: { tipo: "combo" }, ctl_margem: { tipo: "combo" },
   op_faltas: { tipo: "linha" }, op_turnover: { tipo: "linha" }, rh_turnover: { tipo: "linha" }, sst_afastamentos: { tipo: "linha" },
   sup_contratos_sem_entrega: { tipo: "linha" }, fin_fluxo: { tipo: "linha" },
@@ -320,8 +323,19 @@ export const corDoGrafico = (codigo: string): string | null => COR_GRAFICO[codig
 // ---- Dashboard completo (14/10/2026) -----------------------------------------
 
 /** Os gráficos de baixo do dashboard: os piores com detalhamento (até `n`), na ordem da TV. */
+/** TV que espelha o dashboard do módulo: os gráficos de baixo são os mesmos da tela de lá, nessa ordem. */
+const GRAFICOS_DO_DASHBOARD: Record<string, string[]> = {
+  // Suprimentos › Dashboard de Compras: Solicitações por Contrato · Saving por Contrato · Motivos das Pendências.
+  "ger-supply": ["sup_solicitacoes", "sup_saving", "sup_pendentes"],
+};
+
 export function destaquesDoDashboard(p: PainelGerencial, n = 3): IndicadorGerencial[] {
   const comGrafico = indicadoresDaTv(p).filter((i) => dadosDoGrafico(i).length > 0);
+  const fixos = GRAFICOS_DO_DASHBOARD[p.painel?.slug ?? ""];
+  if (fixos) {
+    const escolhidos = fixos.map((c) => comGrafico.find((i) => i.codigo === c)).filter((i): i is IndicadorGerencial => !!i);
+    if (escolhidos.length) return escolhidos.slice(0, n);
+  }
   const ruins = comGrafico.filter((i) => ["vermelho", "amarelo"].includes(situacao(i)));
   return [...ruins, ...comGrafico.filter((i) => !ruins.includes(i))].slice(0, n);
 }

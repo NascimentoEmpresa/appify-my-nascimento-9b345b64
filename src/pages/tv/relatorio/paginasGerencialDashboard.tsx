@@ -53,7 +53,7 @@ export function TelaDashboardGerencial({ p, cor, visual, atualizado, onIndicador
         {/* Tendência de 12 meses + onde agir */}
         <div className="grid min-h-0" style={{ flex: 1.15, gap: 16, gridTemplateColumns: "minmax(0,1.6fr) minmax(0,1fr)" }}>
           <Cartao t={t}>
-            <Titulo t={t} Icone={TrendingUp} cor={cor} texto={tendencia?.titulo ?? "Tendência"} sub="Últimos 12 meses · dado do ERP" />
+            <Titulo t={t} Icone={TrendingUp} cor={cor} texto={tendencia?.titulo ?? "Tendência"} sub={tendencia ? `${tendencia.meses[0]?.mes} a ${tendencia.meses[tendencia.meses.length - 1]?.mes} · dado do ERP` : "Dado do ERP"} />
             <div className="relative min-h-0 flex-1">
               {tendencia ? <GraficoTendencia tendencia={tendencia} t={t} cor={cor} />
                 : destaques[0] ? <Grafico i={destaques[0]} t={t} grande />
