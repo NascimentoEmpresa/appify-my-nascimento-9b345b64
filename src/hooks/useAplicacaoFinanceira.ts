@@ -83,6 +83,7 @@ const LISTA_KEY = "aplicacao_financeira_lista";
 const RESGATES_KEY = "aplicacao_financeira_resgates";
 const RESGATES_CAIXA_KEY = "aplicacao_financeira_resgates_caixa";
 const EVENTO_KEY = "aplicacao_financeira_evento";
+const HISTORICO_IMPORTADO_KEY = "aplicacao_financeira_historico_importado";
 
 // Resgate entra no caixa da empresa (achado real da Cálita: não pode
 // alterar/fechar a linha de aplicação original, precisa bater com o
@@ -98,6 +99,40 @@ export function useResgatesCaixa() {
         .order("data_resgate", { ascending: false });
       if (error) throw error;
       return (data ?? []) as AplicacaoFinanceiraResgateCaixa[];
+    },
+  });
+}
+
+// SIS-2026-0651: histórico da planilha de Fluxo 2026 (importação, até 08/09) nas
+// classificações Aplicação Financeira / Rendimento Aplicação. Só leitura: a correção
+// continua sendo feita no Fluxo de Caixa. Migration 20261014000002 ainda não aplicada
+// (função ausente) -> lista vazia, a tela segue como antes.
+export type MovimentoHistorico = "aplicacao" | "resgate" | "rendimento";
+
+export interface AplicacaoHistoricoImportado {
+  linha_id: string;
+  id_malote: string;
+  data_pagamento: string;
+  empresa_id: string;
+  empresa_nome: string | null;
+  banco_nome: string | null;
+  banco_logo_path: string | null;
+  descricao: string | null;
+  valor: number;
+  movimento: MovimentoHistorico;
+  ajustado: boolean;
+}
+
+export function useHistoricoImportadoAplicacao() {
+  return useQuery({
+    queryKey: [HISTORICO_IMPORTADO_KEY],
+    queryFn: async () => {
+      const { data, error } = await (supabase as any).rpc("aplicacao_financeira_historico_importado");
+      if (error) {
+        if (error.code === "PGRST202" || error.code === "42883") return [] as AplicacaoHistoricoImportado[];
+        throw error;
+      }
+      return ((data ?? []) as AplicacaoHistoricoImportado[]).map((r) => ({ ...r, valor: Number(r.valor) }));
     },
   });
 }
