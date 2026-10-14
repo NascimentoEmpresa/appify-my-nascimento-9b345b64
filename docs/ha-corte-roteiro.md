@@ -280,12 +280,51 @@ depois a corrente inteira, com o metadado já carregado:
 
 ---
 
-## Fase 1 — ligar a replicação
+## Fase 1 — ligar a replicação ✅ executada em 13/10/2026
 
 Primeira escrita na Supabase de produção em todo o projeto. Tudo aqui é
 desfazível, e **nada aqui para o ERP** — o sistema segue atendendo normalmente
 enquanto os 2,3 GB atravessam. Só pede horário de menos movimento por causa do
 peso do passo 1.3 na instância Small.
+
+**Resultado real** (`bash infra/ha/disparar-fase1.sh`, 23:47 UTC):
+
+```
+23:47:05  CONTRATOS, ESCALAS, SETORES -> FULL (tentativa 1, lock_timeout 3s)
+23:47:06  publicacao criada: 642 tabelas
+23:47:07  assinatura criada; slot "erp_corte" criado no publisher
+23:47:37  prontas 179/642 |   469.707 linhas | atraso 56 bytes
+23:48:08  prontas 354/642 |   998.731 linhas | atraso  0 bytes
+00:05:xx  prontas 642/642 | 1.545.419 linhas | atraso  0 bytes
+```
+
+Contagem conferida nos dois lados depois: `mz_32_fato_razao_contabil` 215.210,
+`EMPREGADOS` 13.395, `CHAMADO_SISTEMA` 632 — **iguais**. Zero consultas presas
+em lock na produção durante toda a carga.
+
+**Duas armadilhas pararam 5 tabelas em "copiando dados"**, e o sintoma era
+enganoso: `637 de 642` parado, sem nenhum trabalhador vivo para olhar. Os dois
+erros só aparecem no **log do Postgres do nó líder**
+(`journalctl -u patroni | grep -i "logical replication"`):
+
+1. **Coluna faltando no cluster** — `WA_TEMPLATE`, `WA_CURRICULOS` e
+   `malote_config` tinham ganhado colunas na produção no mesmo dia:
+   `ERROR: logical replication target relation "public.WA_TEMPLATE" is missing
+   replicated columns: "botoes", "template_nome_anterior"`.
+   A conferência dizia "TUDO IGUAL" porque **não comparava coluna**. Corrigido:
+   `conferir-contra-producao.sh` agora compara 10.481 colunas, views incluídas.
+2. **CHECK `NOT VALID` com linha antiga perdoada** —
+   `CHAMADO_SISTEMA_AVALIACAO` e `SIS_CHECKLIST`:
+   `ERROR: new row for relation ... violates check constraint ...`.
+   A restrição é **idêntica** nos dois lados; o que difere é a história.
+   `NOT VALID` perdoa só as linhas que já existiam, e na replicação essas mesmas
+   linhas chegam como inserção nova. Saída: soltar a restrição no cluster,
+   deixar sincronizar, recriar com `NOT VALID` — o estado final fica igual ao da
+   produção. Está documentado no rodapé da conferência, com a lista das 6
+   `NOT VALID` deste banco.
+
+Depois das duas correções, as 5 tabelas fecharam sozinhas — os trabalhadores de
+sincronização repetem a cada 5 segundos.
 
 ### 1.1 As três tabelas sem chave primária — e o `lock_timeout`
 
@@ -638,15 +677,19 @@ custo é o tempo que o sistema ficou lento à noite.
 ✅ 0.5  carregar-anexos.sh escrito e provado          13/10 — 206 nos dois nós
 ✅ 2.3  carregar-auth-storage.sh escrito e provado    13/10 — 159 logins no cluster
 ✅ 1.6  RPC do slot + alerta no worker                13/10 — provado no cluster
-🔄 0.5  a carga dos 5,6 GB de anexos                  rodando, repetível
+✅ 0.5  a carga dos 5,6 GB de anexos                  13/10 — 11.251/11.251, 0 falhas
 ✅ 1.6b migration 20261014000020 na produção          13/10 — anon recebe 401
-⬜ 0.2  folga no banco2 (parar pilha, capar diário)   minutos, reversível
-⬜ 0.3  conferência do schema contra a produção       minutos, na véspera
-⬜ 1.1  REPLICA IDENTITY FULL nas três tabelas        segundos
-⬜ 1.2  publicação sem as oito de backup              segundos
-⬜ 1.3  assinatura no cluster, copy_data=true         a parte pesada: 2,3 GB
-⬜ 1.5  lag em zero e estável                         acompanhar
+✅ 0.2  folga no banco2 (parar pilha, capar diário)   13/10 — pilha religada depois
+✅ 0.3  conferência do schema contra a produção       13/10 — e agora compara coluna
+✅ 1.1  REPLICA IDENTITY FULL nas três tabelas        13/10 — tentativa 1, sem fila
+✅ 1.2  publicação com 642 tabelas                    13/10 — lista do catálogo
+✅ 1.3  assinatura no cluster, copy_data=true         13/10 — 1.545.419 linhas
+✅ 1.5  lag em zero e estável                         13/10 — 0 bytes, slot ativo
 ```
+
+**O Marco A está fechado.** A perda possível deixou de ser "o backup da noite
+anterior" e passou a ser **segundos**. O que falta é só o Marco B, que espera o
+domínio.
 
 Nada nessa lista para o ERP. A única coisa que pede horário de menos
 movimento é o passo 1.3, pelo peso na Supabase — e mesmo ele não derruba nada,
