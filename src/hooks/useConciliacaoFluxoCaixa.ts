@@ -88,6 +88,10 @@ export interface ConciliacaoFluxoCaixaSalva {
   // pessoa não informou o do extrato.
   saldo_anterior_fluxo: number | null;
   saldo_anterior_extrato: number | null;
+  // SIS-2026-0657: totais do extrato (OFX) dentro do período. null nas conciliações anteriores à migration
+  // 20261014000006 que ainda não receberam a carga.
+  extrato_entradas?: number | null;
+  extrato_saidas?: number | null;
 }
 
 export interface ConciliacaoFluxoCaixaArquivo {
@@ -174,6 +178,9 @@ export interface SalvarConciliacaoInput {
   contaExtrato: string | null;
   saldoAnteriorFluxo: number | null;
   saldoAnteriorExtrato: number | null;
+  // SIS-2026-0657: soma do extrato dentro do período. A Auditoria da Controladoria lê daqui (quando tudo bate, nenhuma linha é gravada).
+  extratoEntradas?: number | null;
+  extratoSaidas?: number | null;
   arquivosOfx: File[];
   linhas: Omit<ConciliacaoFluxoCaixaLinha, "id" | "conciliacao_id">[];
 }
@@ -191,25 +198,33 @@ export function useSalvarConciliacaoFluxoCaixa() {
         else if (l.status === "ignorado") contagem.ignorado++;
       }
 
-      const { data: conciliacao, error: errHeader } = await (supabase as any)
-        .from("financeiro_conciliacao_fluxo_caixa")
-        .insert({
-          data_inicio: input.dataInicio,
-          data_fim: input.dataFim,
-          observacoes: input.observacoes,
-          banco_id: input.bancoId,
-          todas_empresas: input.todasEmpresas,
-          empresa_ids: input.todasEmpresas ? [] : input.empresaIds,
-          conta_extrato: input.contaExtrato,
-          saldo_anterior_fluxo: input.saldoAnteriorFluxo,
-          saldo_anterior_extrato: input.saldoAnteriorExtrato,
-          total_linhas: input.linhas.length,
-          linhas_ajustadas: contagem.ajustado,
-          linhas_criadas: contagem.criado,
-          linhas_ignoradas: contagem.ignorado,
-        })
-        .select("id")
-        .single();
+      const cabecalho = {
+        data_inicio: input.dataInicio,
+        data_fim: input.dataFim,
+        observacoes: input.observacoes,
+        banco_id: input.bancoId,
+        todas_empresas: input.todasEmpresas,
+        empresa_ids: input.todasEmpresas ? [] : input.empresaIds,
+        conta_extrato: input.contaExtrato,
+        saldo_anterior_fluxo: input.saldoAnteriorFluxo,
+        saldo_anterior_extrato: input.saldoAnteriorExtrato,
+        total_linhas: input.linhas.length,
+        linhas_ajustadas: contagem.ajustado,
+        linhas_criadas: contagem.criado,
+        linhas_ignoradas: contagem.ignorado,
+      };
+      const inserir = (dados: Record<string, unknown>) =>
+        (supabase as any).from("financeiro_conciliacao_fluxo_caixa").insert(dados).select("id").single();
+      // SIS-2026-0657: guarda os totais do extrato. Migration 20261014000006 ainda não aplicada (coluna
+      // ausente): salva sem eles, para a conciliação não deixar de salvar.
+      let { data: conciliacao, error: errHeader } = await inserir({
+        ...cabecalho,
+        extrato_entradas: input.extratoEntradas ?? null,
+        extrato_saidas: input.extratoSaidas ?? null,
+      });
+      if (errHeader && (errHeader.code === "PGRST204" || errHeader.code === "42703")) {
+        ({ data: conciliacao, error: errHeader } = await inserir(cabecalho));
+      }
       if (errHeader) throw errHeader;
       const conciliacaoId = conciliacao.id as string;
 
