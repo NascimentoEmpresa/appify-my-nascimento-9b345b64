@@ -306,7 +306,7 @@ export default function NovaSolicitacaoDialog({
                 </div>
               )}
               <SecaoForm titulo="1. Colaborador e data" icone={<UserRound className="h-5 w-5" />}>
-                <div className="grid gap-3 md:grid-cols-4">
+                <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
                   <Campo rotulo="Colaborador" obrigatorio>
                     <select
                       className="h-10 w-full rounded-md border bg-white px-3 text-sm disabled:bg-slate-100"
@@ -338,12 +338,13 @@ export default function NovaSolicitacaoDialog({
                       </datalist>
                     </div>
                   </Campo>
-                  <Campo rotulo="Data da HE" obrigatorio>
-                    <div className="flex gap-2">
+                  <Campo rotulo="Data da HE" obrigatorio className="min-w-0">
+                    <div className="flex min-w-0 gap-2">
                       <Input
                         type="date"
                         value={form.data_he}
                         onChange={(e) => alterar("data_he", e.target.value)}
+                        className="min-w-0 flex-1"
                       />
                       <Button
                         type="button"
@@ -360,7 +361,7 @@ export default function NovaSolicitacaoDialog({
                       </Button>
                     </div>
                   </Campo>
-                  <Campo rotulo="Tipo de HE">
+                  <Campo rotulo="Tipo de HE" className="min-w-0">
                     <select
                       className="h-10 w-full rounded-md border bg-white px-3 text-sm"
                       value={form.tipo}
