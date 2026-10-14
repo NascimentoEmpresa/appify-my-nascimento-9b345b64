@@ -181,6 +181,36 @@ são novas de ontem.
 
 ---
 
+## 🟡 4. O worker morreu — e eu deixei desligado de propósito
+
+O worker de alertas parou em algum momento depois das **17h16** de 14/10 (é a
+hora do último `scripts/status-banco.txt`). Nenhum processo dele estava vivo
+às 21h40.
+
+**Consequência de ontem:** nenhum alerta por DM no Discord durante a noite —
+inclusive o do slot, que é exatamente o que avisaria sobre o item 1.
+Compensei com uma notificação direta para você.
+
+**Por que não religuei:** fila com 11 itens pendentes, e um deles manda
+mensagem de verdade:
+
+| Destino | Pendentes | O que faz |
+|---|---|---|
+| `novidade-ia-chamado` | 9 (desde 06/10) | só insere em `SISTEMA_NOVIDADES`, não envia nada |
+| `whatsapp-retomada-tick` | 1 (14/10 20:20) | **pode disparar WhatsApp de verdade** |
+| `comite-etica-nova-denuncia` | 1 (13/10 10:41) | morre em `500 — SMTP não configurado` |
+
+Eram 21h40. Religar poderia mandar WhatsApp noturno para um colaborador, e
+isso é decisão sua, não minha. Para religar:
+
+```
+worker\worker-servico.bat
+```
+
+(no PowerShell, na pasta do projeto)
+
+---
+
 ## Pendências menores, sem pressa
 
 - **SMTP do comitê de ética quebrado.** `HTTP 500 — SMTP não configurado
