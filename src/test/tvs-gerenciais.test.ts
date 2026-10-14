@@ -48,6 +48,10 @@ describe("semáforo", () => {
   });
   it("sem meta = acompanhamento; sem valor = sem dado; o banco manda numérico como texto", () => {
     expect(situacao(ind({ meta: null, valor: 999 }))).toBe("neutro");
+    // "Quanto mais, melhor" sem meta = entrega do setor (chamados concluídos, vagas preenchidas): verde.
+    expect(situacao(ind({ meta: null, sentido: "maior", valor: 83 }))).toBe("verde");
+    expect(situacao(ind({ meta: null, sentido: "maior", valor: 0 }))).toBe("neutro");
+    expect(textoMeta({ meta: null, sentido: "maior", unidade: "qtd" })).toBe("Entregue no período");
     expect(situacao(ind({ valor: null }))).toBe("sem_dado");
     expect(situacao({ meta: "0", alerta: "5", sentido: "menor", resultado: { valor: "138" } })).toBe("vermelho");
   });
@@ -79,6 +83,7 @@ describe("formato do documento", () => {
   it("valores curtos para a TV", () => {
     expect(formatarValor(80000, "brl")).toBe("R$ 80 mil");
     expect(formatarValor(1_049_403, "brl")).toBe("R$ 1 mi");
+    expect(formatarValor(1_140_149_803, "brl")).toBe("R$ 1,1 bi");
     expect(formatarValor(3.24, "pct")).toBe("3,2%");
     expect(formatarValor(138, "qtd")).toBe("138");
     expect(formatarValor(null, "qtd")).toBe("—");
@@ -126,6 +131,11 @@ describe("páginas da TV e subindicadores", () => {
     expect(graficoDo(ind({ codigo: "op_postos", detalhe: [{ nome: "X", valor: 1 }] })).tipo).toBe("colunas");
     expect(graficoDo(ind({ codigo: "op_turnover" })).tipo).toBe("linha");
     expect(graficoDo(ind({ codigo: "lic_perdidas" })).tipo).toBe("rosca");
+    // Licitações com prazo próximo: lista de alertas quando o banco manda título; senão, colunas.
+    const alerta = ind({ codigo: "lic_prazo", detalhe: [{ nome: "PE 1/2026", valor: 0 }] });
+    expect(graficoDo(alerta).tipo).toBe("colunas");
+    alerta.resultado.detalhe = [{ nome: "PE 1/2026", valor: 0, data: "2026-10-14", titulo: "PE 1/2026 · Limpeza", sub: "Fulana · Iniciado" }];
+    expect(graficoDo(alerta).tipo).toBe("lista");
     expect(graficoDo(ind({ codigo: "op_lucratividade" })).tipo).toBe("combo");
     expect(graficoDo(ind({ codigo: "sup_compras_vencidas" })).tipo).toBe("colunas");
   });
