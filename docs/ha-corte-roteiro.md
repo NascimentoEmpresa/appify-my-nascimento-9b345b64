@@ -25,7 +25,7 @@ anterior. Com o Marco A pronto, a perda possível cai de **horas para segundos**
 
 **Marco B — virar o endereço.** É o que exige domínio com HTTPS, chave nova,
 rebuild do frontend e uma janela curta. Fica para quando o
-`gprnascimento.com.br` sair da Render/Vercel.
+`grpnascimento.com.br` sair da Render/Vercel.
 
 Fases 0 e 1 deste documento são o Marco A. A Fase 2 é o Marco B.
 
@@ -275,7 +275,7 @@ depois a corrente inteira, com o metadado já carregado:
 | Decisão | Recomendação |
 |---|---|
 | `synchronous_mode_strict` | **deixar desligado no corte.** Ligado, o banco recusa escrita se a standby cair — é mais seguro contra perda e mais frágil contra indisponibilidade. Não se estreia isso na noite da virada. |
-| `api.gprnascimento.com.br` | **adiado de propósito.** O domínio é do registro.br e está hoje apontado para Render e Vercel; tirá-lo de lá é assunto separado, para depois da infraestrutura pronta. Isso **não atrasa o Marco A** — só o B. O certificado em si é grátis (Let's Encrypt no Kong). |
+| `api.grpnascimento.com.br` | **adiado de propósito.** O domínio é do registro.br e está hoje apontado para Render e Vercel; tirá-lo de lá é assunto separado, para depois da infraestrutura pronta. Isso **não atrasa o Marco A** — só o B. O certificado em si é grátis (Let's Encrypt no Kong). |
 | Rebuild do frontend | publicado pelo **Lovable, espelhando a branch `main`**. O endereço da API é compilado dentro do JavaScript (`VITE_SUPABASE_URL`), então a virada é um PR na `main` mexendo no `.env` — e o Lovable reconstrói. DNS sozinho não resolve. |
 
 ---
@@ -496,6 +496,81 @@ risco não é perder a replicação; é encher o WAL da Supabase sem ninguém ve
 
 ---
 
+### 1.7 ⚠️ O que aconteceu em 14/10/2026 — a deriva de coluna para a replicação
+
+O aviso acima não era teórico. **No dia seguinte a ligar a replicação, ela
+parou, e ninguém viu por 1h50.**
+
+Às 10h40 (13:40 UTC) uma migration aplicada na produção acrescentou quatro
+colunas em `TVG_INDICADOR`. A partir daí, o processo de aplicação do cluster
+passou a morrer e renascer a cada 5 segundos:
+
+```
+ERROR: logical replication target relation "public.TVG_INDICADOR" is missing
+       replicated columns: "espelho_fonte", "espelho_item",
+                           "espelho_grafico", "espelho_destaque"
+```
+
+884 tentativas. O slot parou de ser consumido e **840 MB de WAL ficaram
+presos na produção**, crescendo a ~11 MB/min — cerca de 16 GB por dia se
+ninguém tocasse. Nada disso apareceu em lugar nenhum: o worker de alertas
+estava desligado, então o vigia do slot da seção 1.6 não estava de pé.
+
+Levantamento completo no momento do conserto: **11 colunas** faltando em 6
+tabelas (`HORA_EXTRA_SOLICITACAO`, `TREINAMENTOS`, `TVG_INDICADOR`,
+`TVG_PAINEL`, `malote_config`) e 4 tabelas inteiras novas
+(`TREINAMENTO_ALERTA`, `TREINAMENTO_GABARITO`, `TREINAMENTO_PROVA_ESTADO`,
+`TREINAMENTO_TENTATIVA`). Tabela inteira ausente **não** quebra a replicação
+— ela não está na publicação —, mas precisa existir antes do Marco B.
+
+**A segunda armadilha, que custou mais tempo que a primeira:** corrigir as
+colunas não religou nada. O processo ficou pendurado numa conexão morta
+(`SSL error: unexpected eof while reading`) com `received_lsn` nulo por 30
+minutos, e **`ALTER SUBSCRIPTION ... DISABLE` seguido de `ENABLE` não o
+derrubou** — o PID continuou idêntico. Só `pg_terminate_backend` resolveu.
+Depois disso o atraso saiu de 840 MB para 0 bytes em segundos.
+
+#### A trava: `infra/ha/sincronizar-colunas.sh`
+
+```bash
+# no banco1, que alcança a produção e o cluster
+SENHA_SUPABASE=... bash /root/sincronizar-colunas.sh --conferir   # só olha
+SENHA_SUPABASE=... bash /root/sincronizar-colunas.sh --aplicar    # corrige
+```
+
+O `--conferir` não escreve nada e sai com código 1 quando acha divergência,
+para servir de alerta em rotina. O `--aplicar` recria as colunas com o tipo,
+o `NOT NULL` e o `DEFAULT` da produção, e **termina reiniciando o worker à
+força**, pela armadilha acima.
+
+Duas armadilhas que o próprio script documenta, descobertas ao escrevê-lo:
+
+- **Comparar a linha inteira (tipo + default) dá falso positivo.** O mesmo
+  default aparece como `gen_random_bytes` na produção e
+  `extensions.gen_random_bytes` no cluster, porque o `search_path` do restore
+  qualificou a função. O que para a replicação é a coluna **não existir**.
+- **`DEFAULT` não pode entrar na tabela de comparação.** Existe coluna cujo
+  default é um texto com quebra de linha e `|` dentro ("Precisamos entrar em
+  contato com você..."), e isso destrói qualquer formato de uma-linha-por-coluna.
+  A comparação usa só `tabela|coluna|tipo|notnull`; o default é buscado
+  individualmente, só para as poucas colunas que faltam.
+
+#### O que isso significa para o roteiro
+
+Enquanto a replicação estiver ligada e a equipe continuar aplicando migrations
+na produção, **toda coluna nova é uma parada em potencial**. Duas defesas, e
+elas se somam:
+
+1. **Ligar o worker**, para o alerta do slot da seção 1.6 existir de verdade.
+   Hoje essa é a única coisa que teria avisado.
+2. **Rodar `sincronizar-colunas.sh --conferir` de rotina** (ou depois de cada
+   migration aplicada na produção) e `--aplicar` quando acusar.
+
+Enquanto nenhuma das duas estiver no lugar, o estado do slot precisa ser
+olhado à mão todo dia — não é opcional.
+
+---
+
 ## Fase 2 — a virada
 
 Daqui até o fim, o ERP fica fora do ar para escrita. Alvo: **minutos**, não
@@ -609,7 +684,7 @@ Conferir que `select count(*) from storage.objects` bate com a produção.
 
 ### 2.6 Virar o endereço
 
-1. `api.gprnascimento.com.br` apontando para o `banco1`, com HTTPS válido.
+1. `api.grpnascimento.com.br` apontando para o `banco1`, com HTTPS válido.
 2. PR na `main` trocando no `.env` o endereço e a **chave anônima** — ela é um
    JWT assinado com o segredo do cluster; a chave antiga não serve. (As duas
    são públicas por natureza: tudo que começa com `VITE_` vai compilado para o
@@ -698,7 +773,7 @@ só pesa.
 **Marco B — espera decisão, não dinheiro:**
 
 ```
-⬜ domínio: tirar gprnascimento.com.br da Render/Vercel, DNS no registro.br
+⬜ domínio: tirar grpnascimento.com.br da Render/Vercel, DNS no registro.br
 ⬜ HTTPS no Kong dos dois nós (Let's Encrypt, grátis)
 ⬜ gerar as chaves anon/service_role do cluster
 ⬜ a noite curta: passos 2.1 a 2.7
