@@ -90,6 +90,13 @@ const ehMigration = (f: string) => /^supabase\/migrations\/[^/]+\.sql$/i.test(f)
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: cors });
+  // ⛔ DESLIGADA em 14/10/2026 (Pablo: "desliga as duas"). As contas GitHub do
+  // Pablo (pablotasuyuki@gmail.com e senior@haggltda.com.br) foram suspensas em
+  // 13/10, provavelmente pelo volume de chamadas das sincronizações do Painel do
+  // Desenvolvedor com o GITHUB_TOKEN pessoal (dev-github-sync e github-painel-sync,
+  // 07–09/10). Nenhuma chamada ao GitHub sai daqui até trocar o token por um
+  // GitHub App da organização — o código abaixo fica para religar.
+  return json({ error: "Sincronização com o GitHub desligada (14/10/2026) até a integração ganhar um token da organização. Os dados já sincronizados continuam no painel." }, 410);
   if (req.method !== "POST") return json({ error: "method not allowed" }, 405);
   if (!GITHUB_TOKEN) return json({ error: "A integração do GitHub ainda não foi configurada (secret GITHUB_TOKEN)." }, 503);
 
