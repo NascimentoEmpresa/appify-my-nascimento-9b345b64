@@ -44,8 +44,10 @@ export function TelaDashboardGerencial({ p, cor, visual, atualizado, onIndicador
 
       <div className="flex min-h-0 flex-1 flex-col" style={{ padding: "18px 34px 12px", gap: 16 }}>
         {/* Faixa de números: todos os indicadores da TV */}
-        <div className="grid shrink-0" style={{ gap: 12, gridTemplateColumns: `repeat(${Math.max(1, Math.min(itens.length, 8))}, minmax(0,1fr))`, height: 138 }}>
-          {itens.slice(0, 8).map((i) => <Numero key={i.codigo} i={i} t={t} onClick={clicar(i)} />)}
+        {/* Até 10: com os indicadores do que vai bem (14/10/2026) a TV TI/ERP e a
+            Presidência passaram de 8 — a fonte do número já encolhe para caber. */}
+        <div className="grid shrink-0" style={{ gap: 12, gridTemplateColumns: `repeat(${Math.max(1, Math.min(itens.length, 10))}, minmax(0,1fr))`, height: 138 }}>
+          {itens.slice(0, 10).map((i) => <Numero key={i.codigo} i={i} t={t} colunas={Math.min(itens.length, 10)} onClick={clicar(i)} />)}
         </div>
 
         {/* Tendência de 12 meses + onde agir */}
@@ -162,14 +164,16 @@ function Vazio({ t, texto }: { t: Tema; texto: string }) {
 }
 
 /** Um número da faixa do topo: nome, resultado na cor do semáforo e a meta. */
-function Numero({ i, t, onClick }: { i: IndicadorGerencial; t: Tema; onClick?: () => void }) {
+function Numero({ i, t, colunas, onClick }: { i: IndicadorGerencial; t: Tema; colunas: number; onClick?: () => void }) {
   const s = situacao(i);
   const st = STATUS[s];
   const v = i.resultado?.valor;
   const texto = formatarValor(v, i.unidade);
-  // O cartão tem ~190 px de largura útil: "R$ 968 mil" em 38 px saía cortado
+  // Largura útil do cartão no palco de 1920 (padding 34+34, gap 12, padding
+  // interno 16+16): com 8 cartões ~190 px, e "R$ 968 mil" em 38 px saía cortado
   // ("R$ 968 …"). A fonte encolhe com o tamanho do texto (≈0,6 em por caractere).
-  const fonte = Math.max(24, Math.min(38, Math.floor(190 / (texto.length * 0.6))));
+  const util = (1920 - 68 - (colunas - 1) * 12) / Math.max(1, colunas) - 32;
+  const fonte = Math.max(22, Math.min(38, Math.floor(util / (texto.length * 0.6))));
   return (
     <div onClick={onClick} title={onClick ? DICA_IA : undefined} className={`relative flex min-w-0 flex-col justify-between overflow-hidden ${clicavel(onClick)}`} style={{ background: t.cartao, boxShadow: t.sombra, borderRadius: 20, padding: "14px 16px 12px" }}>
       <span className="absolute inset-x-0 top-0" style={{ height: 5, background: st.cor }} />

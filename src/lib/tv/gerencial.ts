@@ -84,7 +84,10 @@ export function situacao(i: Pick<IndicadorGerencial, "meta" | "alerta" | "sentid
   const v = num(i.resultado?.valor);
   if (v == null) return "sem_dado";
   const meta = num(i.meta);
-  if (meta == null) return "neutro";
+  // "Quanto mais, melhor" sem meta = o que o setor entregou (chamados concluídos,
+  // vagas preenchidas, recebido no mês…): é notícia boa, vai em verde. Pablo,
+  // 14/10/2026: "só tá aparecendo coisa ruim, tem que aparecer coisas boas".
+  if (meta == null) return i.sentido === "maior" && v > 0 ? "verde" : "neutro";
   const alerta = num(i.alerta);
   if (i.sentido === "maior") {
     if (v >= meta) return "verde";
@@ -147,7 +150,7 @@ export function formatarValor(v: number | string | null | undefined, unidade: Un
 /** "Meta ≤ 0" / "Meta ≥ 95%" / "Sem meta" — o texto da comparação com a meta. */
 export function textoMeta(i: Pick<IndicadorGerencial, "meta" | "sentido" | "unidade">): string {
   const meta = num(i.meta);
-  if (meta == null) return "Sem meta · acompanhamento";
+  if (meta == null) return i.sentido === "maior" ? "Entregue no período" : "Sem meta · acompanhamento";
   return `Meta ${i.sentido === "maior" ? "≥" : "≤"} ${formatarValor(meta, i.unidade)}`;
 }
 

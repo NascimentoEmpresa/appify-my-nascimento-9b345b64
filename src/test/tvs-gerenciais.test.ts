@@ -48,6 +48,10 @@ describe("semáforo", () => {
   });
   it("sem meta = acompanhamento; sem valor = sem dado; o banco manda numérico como texto", () => {
     expect(situacao(ind({ meta: null, valor: 999 }))).toBe("neutro");
+    // "Quanto mais, melhor" sem meta = entrega do setor (chamados concluídos, vagas preenchidas): verde.
+    expect(situacao(ind({ meta: null, sentido: "maior", valor: 83 }))).toBe("verde");
+    expect(situacao(ind({ meta: null, sentido: "maior", valor: 0 }))).toBe("neutro");
+    expect(textoMeta({ meta: null, sentido: "maior", unidade: "qtd" })).toBe("Entregue no período");
     expect(situacao(ind({ valor: null }))).toBe("sem_dado");
     expect(situacao({ meta: "0", alerta: "5", sentido: "menor", resultado: { valor: "138" } })).toBe("vermelho");
   });
