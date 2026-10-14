@@ -571,6 +571,73 @@ olhado à mão todo dia — não é opcional.
 
 ---
 
+#### A quarta deriva, no mesmo dia — e o que ela provou (14/10/2026, 19h)
+
+A rotina acima foi exercitada de verdade poucas horas depois, e desta vez
+**nada precisou ser descoberto à mão**. O cron do vigia pegou às 19h00 e
+escreveu a causa no log, de 10 em 10 minutos:
+
+```
+14/10 19:00:02 [banco2] ALERTA: replicacao parada (received_lsn='', sem mensagem ha 999999s).
+14/10 19:00:02 [banco2] CAUSA: coluna faltando no cluster. Rode da maquina do Eduardo:
+14/10 19:00:02 [banco2]        bash infra/ha/disparar-sincronia.sh --aplicar
+14/10 19:00:02 [banco2]        logical replication target relation
+                               "public.financeiro_conciliacao_fluxo_caixa" is
+                               missing replicated columns: "extrato_entradas", "extrato_saidas"
+```
+
+Levantamento do `--conferir`: **14 colunas** em 3 tabelas e **1 tabela
+inteira**.
+
+| Tabela | O que faltava |
+|---|---|
+| `WA_CURRICULOS` | 11 colunas (`urgente_*`, `sst_visto_*`, `compras_visto_*`, `cracha_foto_path`) |
+| `financeiro_conciliacao_fluxo_caixa` | `extrato_entradas`, `extrato_saidas` — as que pararam a replicação |
+| `financeiro_fluxo_caixa_ajuste` | `created_by` |
+| `financeiro_fluxo_caixa_ajuste_log` | a tabela inteira (39 linhas) |
+
+Conserto em um comando, e o slot saiu de **353 MB presos** para **0 bytes**:
+
+```
+=== estado do slot na producao ===
+erp_corte|ativo=true|353 MB      <- antes
+erp_corte|ativo=true|0 bytes     <- menos de um minuto depois
+```
+
+**Três coisas que este episódio fixou:**
+
+1. **O ritmo é real, não anedota: quatro derivas em dois dias.** A pergunta
+   "será que vai acontecer de novo até a virada?" está respondida — vai. O
+   `--conferir` entra no passo 2.1, imediatamente antes de congelar a
+   escrita, e o resultado tem que ser `nenhuma faltando`.
+2. **A tabela nova chega com `GRANT ALL ON TABLE ... TO anon, authenticated`**
+   no `pg_dump`, o que **furaria a trava da seção 1.9** para ela. Toda tabela
+   trazida depois da trava exige reaplicar o `REVOKE` em seguida — foi feito,
+   e a conferência voltou a `escrita: 0 / leitura: 1.229` (1.227 + as duas
+   leituras da tabela nova).
+3. **A bandeira mora no líder, e o líder muda.** O `disparar-sincronia.sh`
+   apagava `/var/run/replicacao-precisa-coluna` só no `banco1`, mas quem a
+   escreve é o líder — hoje o `banco2`. O conserto deu certo e a bandeira
+   ficou de pé, afirmando um problema que já não existia. A vigia a limpa
+   sozinha no ciclo seguinte, então nunca passaria de 10 minutos, mas
+   bandeira que mente é bandeira que se aprende a ignorar. Agora o gatilho
+   limpa **nos dois nós** — ele é o único lugar com chave para ambos, porque
+   o `banco1` não tem chave para o `banco2`.
+
+A publicação passou de **646 para 647 tabelas**, e a assinatura está `647 de
+647` em estado `r`. Paridade conferida nas cinco tabelas envolvidas:
+
+| Tabela | Produção | Cluster |
+|---|---|---|
+| `WA_CURRICULOS` | 773 | 773 |
+| `financeiro_conciliacao_fluxo_caixa` | 24 | 24 |
+| `financeiro_fluxo_caixa_ajuste` | 39 | 39 |
+| `financeiro_fluxo_caixa_ajuste_log` | 39 | 39 |
+| `CHAMADO_SISTEMA` | 640 | 640 |
+
+---
+
+
 ### 1.8 ✅ A API do cluster em HTTPS, e o que já foi aceito (14/10/2026)
 
 Sem isto o Marco B entrega tela branca: o frontend serve de
@@ -653,6 +720,19 @@ NOTIFY pgrst, 'reload schema';
 O ERP apontado para o cluster **abre, loga e consulta, e recusa salvar**. Isso
 é o estado correto de espera, não um defeito a consertar.
 
+> ⚠️ **A trava vaza por tabela nova.** `REVOKE ... ON ALL TABLES` age sobre as
+> tabelas que existiam no momento em que rodou — não é uma regra permanente.
+> Toda tabela trazida da produção depois disso chega com
+> `GRANT ALL ON TABLE ... TO anon, authenticated` no `pg_dump` e entra
+> **gravável**. Aconteceu em 14/10 com `financeiro_fluxo_caixa_ajuste_log`.
+> Depois de trazer qualquer tabela, rode o `REVOKE` de novo e confira:
+> ```sql
+> select count(*) from information_schema.role_table_grants
+>   where grantee in ('anon','authenticated') and table_schema = 'public'
+>     and privilege_type in ('INSERT','UPDATE','DELETE','TRUNCATE');
+> -- tem que ser 0
+> ```
+
 > ⚠️ **A virada tem que desfazer isso.** Depois de parar a assinatura (passo
 > 2.2) e antes de liberar os usuários, rode no cluster:
 > ```sql
@@ -676,6 +756,21 @@ Daqui até o fim, o ERP fica fora do ar para escrita. Alvo: **minutos**, não
 horas — a cópia pesada já aconteceu na Fase 1.
 
 ### 2.1 Congelar a escrita na Supabase
+
+> **Antes de congelar, rodar a conferência de deriva.** Foram quatro derivas de
+> coluna em dois dias (seção 1.7), então a pergunta não é *se* haverá uma
+> pendente na noite da virada:
+>
+> ```bash
+> bash infra/ha/disparar-sincronia.sh --conferir     # tem que dizer "nenhuma faltando"
+> bash infra/ha/disparar-sincronia.sh --aplicar      # se acusar
+> ```
+>
+> Congelar com uma coluna faltando trava a virada no pior momento: a assinatura
+> não consegue chegar a lag zero, e o passo 2.2 fica esperando um número que
+> nunca vem. Se o `--aplicar` trouxer **tabela nova**, reaplicar o `REVOKE` da
+> seção 1.9 depois — o `pg_dump` traz `GRANT ALL` para `anon`/`authenticated`.
+
 
 Não é tela de manutenção: é no banco, e funciona com o PostgREST (o
 `default_transaction_read_only` **não** funciona, já medido):
@@ -857,6 +952,7 @@ custo é o tempo que o sistema ficou lento à noite.
 ✅ 0.3  conferência do schema contra a produção       13/10 — e agora compara coluna
 ✅ 1.1  REPLICA IDENTITY FULL nas três tabelas        13/10 — tentativa 1, sem fila
 ✅ 1.2  publicação com 642 tabelas                    13/10 — lista do catálogo
+        → 647 em 14/10 (TREINAMENTO_* e financeiro_fluxo_caixa_ajuste_log)
 ✅ 1.3  assinatura no cluster, copy_data=true         13/10 — 1.545.419 linhas
 ✅ 1.5  lag em zero e estável                         13/10 — 0 bytes, slot ativo
 ```
