@@ -54,7 +54,9 @@ export function usePodeVerAlertasTreinamento() {
   const { can } = usePermissoes();
   return can("visualizar", undefined, "treinamentos_alertas")
       || can("incluir", undefined, "treinamentos_gerenciar")
-      || can("alterar", undefined, "treinamentos_gerenciar");
+      || can("alterar", undefined, "treinamentos_gerenciar")
+      || can("incluir", undefined, "central_servicos_treinamentos_gerenciar")
+      || can("alterar", undefined, "central_servicos_treinamentos_gerenciar");
 }
 
 export function useAlertasTreinamento(ativo: boolean) {
@@ -74,7 +76,9 @@ export function AlertasTreinamento() {
   const { can } = usePermissoes();
   const podeTratar = can("alterar", undefined, "treinamentos_alertas")
                   || can("incluir", undefined, "treinamentos_gerenciar")
-                  || can("alterar", undefined, "treinamentos_gerenciar");
+                  || can("alterar", undefined, "treinamentos_gerenciar")
+      || can("incluir", undefined, "central_servicos_treinamentos_gerenciar")
+      || can("alterar", undefined, "central_servicos_treinamentos_gerenciar");
   const q = useAlertasTreinamento(true);
   const [filtro, setFiltro] = useState<"aberto" | "tratados">("aberto");
   const lista = q.data ?? [];
