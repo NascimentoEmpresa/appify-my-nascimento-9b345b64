@@ -239,6 +239,9 @@ const GRAFICO: Record<string, { tipo: TipoGrafico; series?: [string, string]; /*
   jur_prazos: { tipo: "colunas", unidade: "dias" }, fro_manutencoes: { tipo: "colunas", unidade: "dias" }, jur_audiencias: { tipo: "linha", unidade: "dias" },
   op_postos: { tipo: "agrupado", series: ["Contratados", "Cobertos"] }, pre_postos: { tipo: "agrupado", series: ["Contratados", "Cobertos"] },
   rh_quadro: { tipo: "agrupado", series: ["Ativos", "Necessários"] },
+  // TV Supply = Dashboard de Compras (mig 20261014000028): os mesmos gráficos de lá.
+  sup_solicitacoes: { tipo: "agrupado", series: ["Solicitações", "Despachadas"] }, sup_pendentes: { tipo: "rosca" },
+  sup_cotacoes: { tipo: "rosca" }, sup_tempo_atendimento: { tipo: "colunas", unidade: "dias" }, sup_despachados: { tipo: "colunas", unidade: "qtd" },
   op_lucratividade: { tipo: "combo" }, pre_lucratividade: { tipo: "combo" }, op_reclamacoes: { tipo: "combo" }, ctl_margem: { tipo: "combo" },
   op_faltas: { tipo: "linha" }, op_turnover: { tipo: "linha" }, rh_turnover: { tipo: "linha" }, sst_afastamentos: { tipo: "linha" },
   sup_contratos_sem_entrega: { tipo: "linha" }, fin_fluxo: { tipo: "linha" },
