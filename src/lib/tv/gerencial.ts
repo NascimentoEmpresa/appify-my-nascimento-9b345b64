@@ -30,6 +30,8 @@ export interface ResultadoIndicador {
   afetado?: string | null; causa?: string | null; impacto?: number | string | null; base?: string | null;
   detalhe?: LinhaDetalhe[] | null; erro?: string | null; origem?: string | null;
   referencia?: string | null; atualizado_em?: string | null; observacao?: string | null;
+  /** TV que espelha um relatório (mig 20261014000030): o gráfico da tela de origem — tipo, título e a ordem embaixo. */
+  grafico?: TipoGrafico | null; grafico_titulo?: string | null; destaque?: number | null;
 }
 
 export interface IndicadorGerencial {
@@ -253,7 +255,8 @@ const GRAFICO: Record<string, { tipo: TipoGrafico; series?: [string, string]; /*
   pre_vermelhos: { tipo: "rosca" }, ti_integracoes: { tipo: "rosca" }, fro_sem_responsavel: { tipo: "rosca" },
 };
 export function graficoDo(i: Pick<IndicadorGerencial, "codigo" | "resultado">): { tipo: TipoGrafico; series?: [string, string]; unidade?: Unidade } {
-  const g = GRAFICO[i.codigo] ?? { tipo: "colunas" as TipoGrafico };
+  // Espelho de relatório: o tipo do gráfico vem da tela de origem.
+  const g = i.resultado?.grafico ? { tipo: i.resultado.grafico } : GRAFICO[i.codigo] ?? { tipo: "colunas" as TipoGrafico };
   // Agrupado sem as duas séries (detalhe lançado à mão) cai para colunas.
   if (g.tipo === "agrupado" && !(i.resultado?.detalhe ?? []).some((l) => l.a != null && l.b != null)) return { tipo: "colunas" };
   // Lista sem os campos (banco antes da mig 20261014000027) cai para colunas.
@@ -331,6 +334,9 @@ const GRAFICOS_DO_DASHBOARD: Record<string, string[]> = {
 
 export function destaquesDoDashboard(p: PainelGerencial, n = 3): IndicadorGerencial[] {
   const comGrafico = indicadoresDaTv(p).filter((i) => dadosDoGrafico(i).length > 0);
+  // Espelho de relatório: os gráficos da tela, na ordem marcada no cadastro (espelho_destaque).
+  const marcados = comGrafico.filter((i) => i.resultado?.destaque != null).sort((a, b) => Number(a.resultado?.destaque) - Number(b.resultado?.destaque));
+  if (marcados.length) return marcados.slice(0, n);
   const fixos = GRAFICOS_DO_DASHBOARD[p.painel?.slug ?? ""];
   if (fixos) {
     const escolhidos = fixos.map((c) => comGrafico.find((i) => i.codigo === c)).filter((i): i is IndicadorGerencial => !!i);

@@ -78,7 +78,7 @@ export function TelaDashboardGerencial({ p, cor, visual, atualizado, onIndicador
             {destaques.map((i) => (
               <Cartao key={i.codigo} t={t} onClick={clicar(i)}>
                 <div className="flex shrink-0 items-start gap-3">
-                  <p className="min-w-0 flex-1 font-extrabold leading-tight" style={{ fontSize: 21, display: "-webkit-box", WebkitLineClamp: 1, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{i.nome}</p>
+                  <p className="min-w-0 flex-1 font-extrabold leading-tight" style={{ fontSize: 21, display: "-webkit-box", WebkitLineClamp: 1, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{i.resultado?.grafico_titulo || i.nome}</p>
                   <p className="shrink-0 font-black tabular-nums leading-none" style={{ fontSize: 30, color: STATUS[situacao(i)].cor }}>{formatarValor(i.resultado?.valor, i.unidade)}</p>
                 </div>
                 <p className="shrink-0 truncate font-semibold" style={{ fontSize: 15, color: t.suave }}>{i.resultado?.afetado || textoMeta(i)}</p>
