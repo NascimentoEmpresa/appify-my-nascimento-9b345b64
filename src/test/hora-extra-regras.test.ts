@@ -104,6 +104,13 @@ describe("regras de hora extra", () => {
     expect(calculo.excedente).toBe(240);
     expect(calculo.inicio).toBe("08:00");
   });
+  it("considera todas as horas trabalhadas como HE quando o dia é feriado", () => {
+    const calculo = calcularHoraExtra(ESCALA, jornadaParaCalculoHoraExtra(JORNADA, true, true));
+    expect(calculo.trabalhado).toBe(528);
+    expect(calculo.excedente).toBe(528);
+    expect(calculo.inicio).toBe("07:30");
+    expect(calculo.fim).toBe("17:18");
+  });
   it("conta 1h42 de HE em 08:00-12:00-13:00-19:30", () => {
     const calculo = calcularHoraExtra(
       { entrada: "08:00", saida_intervalo: "12:00", retorno_intervalo: "13:00", saida: "19:30" },
