@@ -4,7 +4,7 @@ import {
   FolderOpen, GraduationCap, History, IdCard, Landmark, Link2, LogOut, Mail, MapPin, MessageSquare, Paperclip,
   Pencil, Phone, Search, Settings, Tags, Target, Trash2, UserCheck, UserSearch, Users, X, XCircle, Zap, type LucideIcon,
 } from "lucide-react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { useAuth } from "@/hooks/useAuth";
@@ -29,7 +29,7 @@ import { CandidatoManualDialog } from "@/components/recrutamento/CandidatoManual
 import { StatusSolicitacao } from "@/components/recrutamento/StatusSolicitacao";
 import { StatusVagaBadge } from "@/components/recrutamento/StatusVagaBadge";
 import { useEtapasDasVagas } from "@/hooks/useEtapasDasVagas";
-import { useResponsaveisDasVagas, listarResponsaveisPossiveis, definirResponsavelVaga, assumirVaga, contarVagasPorResponsavel } from "@/hooks/useResponsaveisDasVagas";
+import { useResponsaveisDasVagas, listarResponsaveisPossiveis, definirResponsavelVaga, assumirVaga, contarVagasPorResponsavel, marcarCienteVaga, novaDemanda } from "@/hooks/useResponsaveisDasVagas";
 import { NIVEIS_JURIDICO, NIVEL_OK, eventoParecerJuridico, nivelJuridico, seloJuridico } from "@/lib/recrutamento/parecerJuridico";
 import { STATUS_COM_RESPONSAVEL, STATUS_FILA_APROVACAO, alvoDoFiltro, devePerguntarAssumir, textoConfirmarAssumir, vagaTemResponsavel, type FiltroResponsavel } from "@/lib/recrutamento/responsavelVaga";
 import { vagaTemEtapa } from "@/lib/recrutamento/statusDetalhado";
@@ -659,6 +659,9 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
   // para a etapa paralela: sem a lista o pedido chega vazio no módulo de
   // Suprimentos e alguém volta perguntando.
   const [candMateriais, setCandMateriais]   = useState("");
+  // Urgente ao mandar pra SST + COMPRAS (14/10/2026, mig 20261014000045): cada
+  // setor marcado recebe um card tremendo na tela até dar "visto".
+  const [candUrgente, setCandUrgente] = useState({ sst: false, compras: false, motivo: "" });
   // Enxoval da função (25/09/2026, mig 246): o card de tamanhos do modal de
   // SST + COMPRAS — o Confirmar grava por ele antes de mover o candidato.
   const enxovalRef = useRef<EnxovalAdmissaoHandle>(null);
@@ -1089,6 +1092,17 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
     }, 5000);
   }, [loadCandidatos]);
 
+  // Link direto para uma vaga (?vaga=ID, 14/10/2026): é para onde a
+  // notificação "vaga transferida para você" leva. Abre o detalhe e tira o
+  // parâmetro, para recarregar a página não reabrir.
+  const [paramsUrl, setParamsUrl] = useSearchParams();
+  useEffect(() => {
+    const id = Number(paramsUrl.get("vaga"));
+    if (!Number.isFinite(id) || id <= 0) return;
+    verDetalhe(id);
+    setParamsUrl(p => { const n = new URLSearchParams(p); n.delete("vaga"); return n; }, { replace: true });
+  }, [paramsUrl, setParamsUrl, verDetalhe]);
+
   // ‹ › no topo do detalhe (24/09/2026): passa as vagas uma a uma, na MESMA
   // ordem da tela aberta (tabela da página atual ou colunas do kanban).
   const listaNavegavel = useMemo<Solicitacao[]>(
@@ -1110,6 +1124,22 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
   // ou um candidato vira o responsável (gatilho no histórico) — relê junto
   // com a etapa, quando os candidatos da vaga aberta mudam.
   const { responsaveis: responsaveisVagas, recarregar: recarregarResponsaveis } = useResponsaveisDasVagas(listaNavegavel);
+
+  // Vagas transferidas PARA MIM ainda sem ciente (mig 20261014000047) — o
+  // aviso do topo, que vale para todas as páginas da tabela. Banco sem a
+  // migration: a consulta falha e o aviso simplesmente não aparece.
+  type MinhaNova = { vaga_id: number; transferida_em: string | null; transferida_por_nome: string | null; ciente_em: string | null; vaga?: { cargo?: string | null; contrato?: string | null } | null };
+  const [minhasNovas, setMinhasNovas] = useState<MinhaNova[]>([]);
+  const loadMinhasNovas = useCallback(async () => {
+    if (!user?.id) return;
+    const { data, error } = await sb.from("SISTEMA_RECRUTAMENTO_RESPONSAVEL")
+      .select("vaga_id,transferida_em,transferida_por_nome,ciente_em,vaga:SISTEMA_RECRUTAMENTO(cargo,contrato)")
+      .eq("responsavel_id", user.id).not("transferida_em", "is", null)
+      .order("transferida_em", { ascending: false });
+    if (error) return;
+    setMinhasNovas(((data ?? []) as unknown as MinhaNova[]).filter(x => novaDemanda({ ...x, responsavel_id: user.id, responsavel_nome: "", origem: "manual", atualizado_em: "" })));
+  }, [user?.id]);
+  useEffect(() => { loadMinhasNovas(); }, [loadMinhasNovas, items, kanbanData]);
   useEffect(() => {
     if (drawerSol) recarregarResponsaveis([drawerSol.id]);
   }, [drawerSol?.id, drawerSol?.status, candidatos, recarregarResponsaveis]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -1881,7 +1911,17 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
       setEnviandoEnxoval(false);
       if (!r.ok) { toast(r.erro, "err"); return; }
       if (r.resumo) extra.compras_necessidades = r.resumo;
+      if (r.foto) extra.cracha_foto_path = r.foto;
       if (candObs.trim()) extra.sst_obs = candObs.trim();
+      // Entrada nova na etapa: o visto de uma passagem anterior não vale mais.
+      extra.sst_visto_em = null; extra.sst_visto_por = null;
+      extra.compras_visto_em = null; extra.compras_visto_por = null;
+      extra.urgente_sst = candUrgente.sst; extra.urgente_compras = candUrgente.compras;
+      const algumUrgente = candUrgente.sst || candUrgente.compras;
+      extra.urgente_em = algumUrgente ? new Date().toISOString() : null;
+      extra.urgente_por = algumUrgente ? (user?.user_metadata?.nome ?? user?.email ?? "") : null;
+      extra.urgente_motivo = algumUrgente ? (candUrgente.motivo.trim() || null) : null;
+      setCandUrgente({ sst: false, compras: false, motivo: "" });
     } else if (novaEtapa === "Reprovado") {
       extra.motivo_reprovacao = candObs.trim();
     } else if (origem === "JURÍDICO") {
@@ -1980,6 +2020,9 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
       .rec-table td{padding:12px 14px;border-bottom:1px solid #f1f5f9;font-size:12.5px;color:#475569;vertical-align:middle}
       .rec-table tbody tr:nth-child(even) td{background:#fbfcfe}
       .rec-table tr:hover td{background:#eef4ff;cursor:pointer}
+      .rec-table tbody tr.rec-nova td{background:#fee2e2}
+      .rec-table tbody tr.rec-nova:hover td{background:#fecaca}
+      .rec-table tbody tr.rec-nova td:first-child{box-shadow:inset 4px 0 0 #dc2626;color:#b91c1c;font-weight:800}
       .rec-btn-status{display:inline-flex;align-items:center;gap:6px;padding:6px 12px;border-radius:999px;border:1.5px solid #c7d7f5;background:#fff;color:#0f3171;font-size:11.5px;font-weight:800;cursor:pointer;font-family:inherit;white-space:nowrap;transition:.15s;box-shadow:0 4px 12px rgba(15,49,113,.08)}
       .rec-btn-status:hover{background:#0f3171;color:#fff;border-color:#0f3171;transform:translateY(-1px);box-shadow:0 10px 22px rgba(15,49,113,.22)}
       .rec-btn-status i{width:7px;height:7px;border-radius:50%;background:#2563eb;animation:rec-ping 1.8s ease-out infinite}
@@ -2090,6 +2133,18 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
    * Recrutamento clica e fixa outra pessoa (fixada, o automático não troca)
    * ou devolve ao automático. Toda troca vai para o histórico da vaga.
    */
+  const cienteVaga = async (vagaId: number) => {
+    try {
+      await marcarCienteVaga(vagaId);
+      await recarregarResponsaveis([vagaId]);
+      loadMinhasNovas();
+      if (drawerSol?.id === vagaId) loadHistorico(vagaId);
+      toast("Pronto — a vaga deixou de aparecer como nova.", "ok");
+    } catch (err) {
+      toast("Erro ao marcar ciente: " + (err as Error).message, "err");
+    }
+  };
+
   const renderResponsavel = (s: Solicitacao) => {
     const r = responsaveisVagas[s.id];
     const aberto = respMenu?.id === s.id;
@@ -2125,6 +2180,22 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
                    background: r ? "#0f3171" : "#fff1f2", border: `1px solid ${r ? "#0f3171" : "#fda4af"}`, color: r ? "#fff" : "#be123c" }}>
           👤 {r ? r.responsavel_nome : "Sem responsável"}{r?.origem === "manual" && <span title="Definido manualmente" style={{ opacity: .8 }}> 📌</span>}
         </button>
+        {/* Vaga transferida (mig 20261014000047): a "linha vermelha" do Excel.
+            Fica até a própria responsável dar ciente. */}
+        {novaDemanda(r) && (
+          <span title={`Transferida por ${r!.transferida_por_nome ?? "—"} em ${fmtDt(r!.transferida_em ?? "")} — aguardando ${r!.responsavel_nome} dar ciente`}
+            style={{ display: "inline-flex", alignItems: "center", gap: 3, marginLeft: 4, fontSize: 10, fontWeight: 900, padding: "2px 7px", borderRadius: 20, whiteSpace: "nowrap", background: "#dc2626", color: "#fff", letterSpacing: ".3px" }}>
+            NOVA · de {r!.transferida_por_nome ?? "—"}
+          </span>
+        )}
+        {novaDemanda(r) && r?.responsavel_id === user?.id && (
+          <button type="button" onClick={(e) => { e.stopPropagation(); cienteVaga(s.id); }}
+            title="Marcar que você viu esta vaga transferida (tira o vermelho)"
+            style={{ display: "inline-flex", alignItems: "center", gap: 3, marginLeft: 4, fontSize: 10.5, fontWeight: 800, padding: "2px 8px", borderRadius: 20, whiteSpace: "nowrap", fontFamily: "inherit", lineHeight: 1.4,
+                     cursor: "pointer", background: "#fff", border: "1px solid #dc2626", color: "#b91c1c" }}>
+            ✓ Ciente
+          </button>
+        )}
         {/* "Tornar-me responsável" (mig 20261014000003): só em vaga de Recrutamento/Seleção e se ainda não é a pessoa. */}
         {podeRecrutar && vagaTemResponsavel(s.status) && r?.responsavel_id !== user?.id && (
           <button type="button" onClick={(e) => { e.stopPropagation(); assumir(s); }}
@@ -2924,6 +2995,31 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
       {/* Content */}
       <div style={{ flex: 1, overflowY: "auto", padding: "20px 24px 24px" }}>
 
+        {/* Vagas que colegas passaram para mim (mig 20261014000047). */}
+        {minhasNovas.length > 0 && (
+          <div style={{ display: "flex", gap: 10, alignItems: "flex-start", padding: "12px 16px", marginBottom: 16, border: "1px solid #fca5a5", borderLeft: "5px solid #dc2626", borderRadius: 12, background: "#fef2f2", fontSize: 13, color: "#7f1d1d" }}>
+            <span style={{ fontSize: 18, lineHeight: 1 }}>🔴</span>
+            <div style={{ flex: 1 }}>
+              <b>{minhasNovas.length === 1 ? "1 vaga nova foi transferida para você" : `${minhasNovas.length} vagas novas foram transferidas para você`}</b>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 8 }}>
+                {minhasNovas.map(n => (
+                  <span key={n.vaga_id} style={{ display: "inline-flex", alignItems: "center", gap: 6, background: "#fff", border: "1px solid #fecaca", borderRadius: 20, padding: "3px 4px 3px 10px", fontSize: 12 }}>
+                    <button type="button" onClick={() => verDetalhe(n.vaga_id)} title="Abrir a vaga"
+                      style={{ background: "none", border: "none", padding: 0, color: "#991b1b", fontWeight: 800, cursor: "pointer", fontFamily: "inherit", fontSize: 12 }}>
+                      #{n.vaga_id}{n.vaga?.cargo ? ` · ${n.vaga.cargo}` : ""}
+                    </button>
+                    <span style={{ color: "#b91c1c", fontSize: 11 }}>de {n.transferida_por_nome ?? "—"}</span>
+                    <button type="button" onClick={() => cienteVaga(n.vaga_id)} title="Marcar que você viu (tira o vermelho)"
+                      style={{ background: "#dc2626", border: "none", color: "#fff", borderRadius: 20, padding: "2px 8px", fontSize: 11, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
+                      ✓ Ciente
+                    </button>
+                  </span>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* O Operacional acompanha, não decide. Dizer isso é melhor do que
             simplesmente não desenhar botão: sem a frase, quem abre o card fica
             procurando onde clicar para aprovar. */}
@@ -3193,7 +3289,9 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
                   </thead>
                   <tbody>
                     {items.map(item => (
-                      <tr key={item.id} onClick={() => verDetalhe(item.id)}>
+                      <tr key={item.id} onClick={() => verDetalhe(item.id)}
+                        // Vaga transferida e ainda sem ciente: linha vermelha, como no Excel.
+                        className={novaDemanda(responsaveisVagas[item.id]) ? "rec-nova" : undefined}>
                         <td style={{ color: "#94a3b8", fontSize: 11 }}>#{item.id}</td>
                         <td style={{ fontWeight: 600, color: "#0f172a" }}>{item.contrato || "—"}</td>
                         <td>{item.cargo || "—"}</td>
@@ -3435,7 +3533,7 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
       {candModal && (
         <div className="rec-modal-ov" style={{ zIndex: 850 }}>
           <div className="rec-modal" style={{ maxWidth: candModal.novaEtapa === ETAPA_SST_COMPRAS ? 620 : 420 }}>
-            <button onClick={() => { setCandModal(null); setCandObs(""); setCandMateriais(""); }} style={{ position: "absolute", top: 14, right: 14, background: "none", border: "none", color: "#94a3b8", fontSize: 20, cursor: "pointer" }}>✕</button>
+            <button onClick={() => { setCandModal(null); setCandObs(""); setCandMateriais(""); setCandUrgente({ sst: false, compras: false, motivo: "" }); }} style={{ position: "absolute", top: 14, right: 14, background: "none", border: "none", color: "#94a3b8", fontSize: 20, cursor: "pointer" }}>✕</button>
             <div style={{ fontSize: 17, fontWeight: 800, marginBottom: 4 }}>
               {candModal.novaEtapa === "Reprovado" ? "Reprovar candidato" : pulandoSstCompras ? "Pular SST e Compras" : parecerJuridico ? "Parecer do Jurídico" : `Mover para "${candModal.novaEtapa}"`}
             </div>
@@ -3447,6 +3545,26 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
             )}
             {candModal.novaEtapa === ETAPA_SST_COMPRAS && (
               <EnxovalAdmissao ref={enxovalRef} candidatoId={candModal.id} />
+            )}
+            {/* Urgente (14/10/2026): o setor marcado vê um card tremendo em qualquer tela até dar "visto". */}
+            {candModal.novaEtapa === ETAPA_SST_COMPRAS && (
+              <div style={{ border: `1px solid ${candUrgente.sst || candUrgente.compras ? "#fca5a5" : "#e2e8f0"}`, background: candUrgente.sst || candUrgente.compras ? "#fef2f2" : "#fff", borderRadius: 12, padding: 12, marginBottom: 14 }}>
+                <div style={{ fontSize: 12.5, fontWeight: 800, color: "#b91c1c", textTransform: "uppercase", letterSpacing: ".4px" }}>🚨 Marcar como urgente</div>
+                <div style={{ fontSize: 12, color: "#64748b", margin: "3px 0 8px" }}>O setor marcado recebe um aviso na tela, que só some quando alguém de lá der "visto".</div>
+                <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
+                  {([["sst", "Urgente para o SST"], ["compras", "Urgente para o Compras"]] as const).map(([k, rot]) => (
+                    <label key={k} style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 13, fontWeight: 700, color: "#0f172a", cursor: "pointer" }}>
+                      <input type="checkbox" checked={candUrgente[k]} onChange={e => setCandUrgente(u => ({ ...u, [k]: e.target.checked }))} />
+                      {rot}
+                    </label>
+                  ))}
+                </div>
+                {(candUrgente.sst || candUrgente.compras) && (
+                  <input value={candUrgente.motivo} onChange={e => setCandUrgente(u => ({ ...u, motivo: e.target.value }))}
+                    placeholder="Por que é urgente? (opcional) Ex.: início na segunda-feira"
+                    style={{ width: "100%", marginTop: 8, padding: "8px 10px", borderRadius: 8, border: "1px solid #fca5a5", fontSize: 13 }} />
+                )}
+              </div>
             )}
             {/* Parecer do Jurídico (mig 20261014000004): o nível + observação; o candidato segue para a Entrevista. */}
             {parecerJuridico && (

@@ -1,4 +1,6 @@
 import { useState, useCallback, useEffect } from "react";
+import { useNavigate, useSearchParams } from "react-router-dom";
+import { FotoCrachaCandidato } from "@/components/recrutamento/AlertaUrgenteAdmissao";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { usePermissoes } from "@/context/PermissoesContext";
@@ -23,6 +25,13 @@ import {
 // carimba `compras_ok`. Quem passa para ADMISSÃO é o trigger
 // rec_paralelo_admissao, quando o segundo setor aprovar — a primeira tela a
 // assinar não tem como saber se é a última.
+//
+// 14/10/2026 (mig 20261014000045, Pablo: "quando for enviado ao compras e ser
+// aprovado no EPIs admissões, ir direto pro PEDIDOS DE MATERIAIS"): o
+// "Materiais providenciados" chama sup_adm_aprovar_compras, que GERA o pedido
+// de materiais (com a foto do crachá e as quantidades que o Recrutamento
+// mandou) e carimba o Compras numa operação só. Urgente e visto: ver
+// AlertaUrgenteAdmissao.
 // =====================================================================
 
 const ETAPAS_PARALELO = ["SST + COMPRAS", "EXAME SST", "COMPRAS"];
@@ -51,6 +60,10 @@ export default function EpisAdmissoes() {
   const { user } = useAuth();
   const { can } = usePermissoes();
   const podeAgir = can("alterar", undefined, "sup_epis_admissao");
+  const navigate = useNavigate();
+  // Veio do card de urgente (?abrir=<candidato>): destaca o card dele.
+  const [params] = useSearchParams();
+  const destaque = Number(params.get("abrir") ?? "") || null;
   const nome = user?.user_metadata?.nome ?? user?.email ?? "";
 
   const [rows, setRows] = useState<any[]>([]);
@@ -197,15 +210,15 @@ export default function EpisAdmissoes() {
     const nowIso = new Date().toISOString();
 
     if (acao.tipo === "providenciar") {
-      // Só carimba o Compras. A etapa NÃO muda aqui — ver o cabeçalho.
-      const { error } = await (supabase as any).from("WA_CURRICULOS").update({
-        compras_ok: true, compras_por: nome, compras_em: nowIso, compras_obs: obs.trim() || null,
-      }).eq("id", c.candidato_id);
+      // Gera o pedido de materiais e carimba o Compras (a etapa NÃO muda aqui — ver o cabeçalho).
+      const { data, error } = await sb.rpc("sup_adm_aprovar_compras", { p_candidato_id: c.candidato_id, p_obs: obs.trim() || null });
       if (error) { toast("Erro: " + error.message, "err"); return; }
-      await logHist(c, "Materiais/EPIs providenciados — Compras aprovado", "SST + COMPRAS", "SST + COMPRAS", obs.trim() || null);
-      toast(c.sst_ok === true
-        ? "Compras aprovado — candidato liberado para a Admissão."
-        : "Compras aprovado — aguardando o SST.", "ok");
+      const r = (data ?? {}) as { pedido_novo?: boolean; protocolo?: string | null; pedido_id?: string | null };
+      await logHist(c, "Materiais/EPIs aprovados — Compras aprovado" + (r.pedido_novo ? ` · pedido ${r.protocolo ?? ""} gerado` : ""), "SST + COMPRAS", "SST + COMPRAS", obs.trim() || null);
+      toast((r.pedido_novo ? `Pedido de materiais ${r.protocolo ?? ""} gerado em Pedidos de Materiais. ` : r.pedido_id ? "" : "Sem enxoval do Catálogo — nenhum pedido gerado. ")
+        + (c.sst_ok === true ? "Compras aprovado — candidato liberado para a Admissão." : "Compras aprovado — aguardando o SST."), "ok");
+      setAcao(null); setObs("");
+      if (r.pedido_id) { navigate("/app/suprimentos/pedidos-materiais"); return; }
     } else {
       if (!obs.trim()) { toast("Informe o motivo.", "err"); return; }
       const { error } = await (supabase as any).from("WA_CURRICULOS").update({
@@ -253,10 +266,26 @@ export default function EpisAdmissoes() {
         ) : (
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(360px,1fr))", gap: 14, alignItems: "start" }}>
             {filtrados.map(c => (
-              <div key={c.candidato_id} style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 14, overflow: "hidden", boxShadow: "0 8px 24px rgba(15,23,42,.06)" }}>
-                <div style={{ height: 3, background: "#f97316" }} />
+              <div key={c.candidato_id} style={{ background: "#fff", border: destaque === Number(c.candidato_id) ? "2px solid #dc2626" : "1px solid #e2e8f0", borderRadius: 14, overflow: "hidden", boxShadow: "0 8px 24px rgba(15,23,42,.06)" }}>
+                <div style={{ height: 3, background: c.urgente_compras ? "#dc2626" : "#f97316" }} />
                 <div style={{ padding: "14px 16px" }}>
-                  <CandidatoInfo cand={c} hideCurriculo />
+                  {c.urgente_compras && (
+                    <div style={{ marginBottom: 8, fontSize: 12, fontWeight: 700, color: "#b91c1c", background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 8, padding: "6px 10px" }}>
+                      🚨 URGENTE{c.urgente_por ? ` — marcado por ${c.urgente_por}` : ""}{c.urgente_motivo ? `: ${c.urgente_motivo}` : ""}
+                    </div>
+                  )}
+                  <div style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
+                    <div style={{ flex: 1, minWidth: 0 }}><CandidatoInfo cand={c} hideCurriculo /></div>
+                    <FotoCrachaCandidato caminho={c.cracha_foto_path} />
+                  </div>
+                  {c.compras_visto_em
+                    ? <div style={{ marginTop: 6, fontSize: 11.5, color: "#0369a1" }}>👁 Visto por {c.compras_visto_por || "—"}</div>
+                    : podeAgir && ETAPAS_PARALELO.includes(c.etapa_processo) && c.compras_ok !== true && (
+                      <button onClick={async () => {
+                        const { error } = await sb.from("WA_CURRICULOS").update({ compras_visto_em: new Date().toISOString(), compras_visto_por: nome }).eq("id", c.candidato_id);
+                        if (error) toast("Erro: " + error.message, "err"); else { toast("Marcado como visto.", "ok"); load(); }
+                      }} style={{ ...btnStyle("#e0f2fe", "1px solid #7dd3fc", "#0369a1"), marginTop: 6 }}>👁 Marcar como visto</button>
+                    )}
 
                   {/* O que o Recrutamento pediu — informação central desta tela.
                       Sem ela o Compras não sabe o que providenciar, e é por isso
@@ -313,7 +342,7 @@ export default function EpisAdmissoes() {
                       Enxoval e tamanhos
                     </button>
                     {podeAgir && ETAPAS_PARALELO.includes(c.etapa_processo) && c.compras_ok !== true && <>
-                      <button onClick={() => { setObs(""); setAcao({ cand: c, tipo: "providenciar" }); }} style={btnStyle("#16a34a", "none", "#fff")}>✓ Materiais providenciados</button>
+                      <button onClick={() => { setObs(""); setAcao({ cand: c, tipo: "providenciar" }); }} style={btnStyle("#16a34a", "none", "#fff")}>✓ Aprovar e gerar pedido</button>
                       <button onClick={() => { setObs(""); setAcao({ cand: c, tipo: "reprovar" }); }} style={btnStyle("rgba(220,38,38,.08)", "1px solid rgba(220,38,38,.25)", "#dc2626")}>Reprovar</button>
                     </>}
                   </div>
@@ -326,11 +355,16 @@ export default function EpisAdmissoes() {
 
       {acao && (
         <Modal onClose={() => { setAcao(null); setObs(""); }}
-          title={acao.tipo === "providenciar" ? "Confirmar materiais providenciados" : "Reprovar candidato"}
+          title={acao.tipo === "providenciar" ? "Aprovar e gerar o pedido de materiais" : "Reprovar candidato"}
           sub={`${acao.cand.nome} · ${acao.cand.cargo || ""}${acao.cand.cidade ? " · " + acao.cand.cidade : ""}`}>
           {acao.tipo === "providenciar" && acao.cand.compras_necessidades && (
             <div style={{ marginBottom: 12, fontSize: 12.5, color: "#7c2d12", background: "#fff7ed", border: "1px solid #fed7aa", borderRadius: 8, padding: "8px 11px", whiteSpace: "pre-wrap" }}>
               <b>Solicitado:</b> {acao.cand.compras_necessidades}
+            </div>
+          )}
+          {acao.tipo === "providenciar" && (
+            <div style={{ marginBottom: 12, fontSize: 12.5, color: "#14532d", background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: 8, padding: "8px 11px" }}>
+              O pedido vai direto para <b>Suprimentos › Pedidos de Materiais</b>, com a foto do crachá e as quantidades informadas pelo Recrutamento.
             </div>
           )}
           <Campo label={acao.tipo === "providenciar" ? "Observação (opcional)" : "Motivo *"} value={obs} onChange={setObs}

@@ -32,6 +32,8 @@ export interface ResultadoIndicador {
   referencia?: string | null; atualizado_em?: string | null; observacao?: string | null;
   /** TV que espelha um relatório (mig 20261014000030): o gráfico da tela de origem — tipo, título e a ordem embaixo. */
   grafico?: TipoGrafico | null; grafico_titulo?: string | null; grafico_series?: [string, string] | null; destaque?: number | null;
+  /** Casas decimais pedidas pelo relatório de origem (mig 20261014000046: turnover em 42,70%, como a tela). */
+  casas?: number | null;
 }
 
 export interface IndicadorGerencial {
@@ -46,6 +48,8 @@ export interface IndicadorGerencial {
 export interface TendenciaPainel {
   titulo: string; series: [string, string]; unidade: Unidade;
   meses: { mes: string; a: number | null; b: number | null }[];
+  /** "meta" (mig 20261014000046): `b` é a meta — uma barra por mês, vermelha acima e verde abaixo, meta tracejada (Relatórios › Turnover). */
+  modo?: "meta" | null;
   erro?: string;
 }
 
@@ -140,9 +144,11 @@ export const subindicadores = (p: PainelGerencial | null | undefined, pai: strin
   (p?.indicadores ?? []).filter((i) => !i.na_tv && (pai ? i.pai === pai : !i.pai));
 
 /** Número curto para a TV: R$ 1,2 mi / R$ 80 mil / 12,5% / 138. */
-export function formatarValor(v: number | string | null | undefined, unidade: Unidade, curto = true): string {
+export function formatarValor(v: number | string | null | undefined, unidade: Unidade, curto = true, casas?: number | null): string {
   const n = num(v);
   if (n == null) return "—";
+  // `casas` vem do relatório espelhado: 42,70% como em Relatórios › Turnover (14/10/2026).
+  if (unidade === "pct" && casas != null) return `${n.toLocaleString("pt-BR", { minimumFractionDigits: casas, maximumFractionDigits: casas })}%`;
   if (unidade === "pct") return `${n.toLocaleString("pt-BR", { maximumFractionDigits: 1 })}%`;
   // Uma casa, como os dashboards dos módulos ("7,5 dias" no Dashboard de Compras; antes saía "8 d").
   if (unidade === "dias") return `${n.toLocaleString("pt-BR", { maximumFractionDigits: 1 })} d`;
@@ -162,7 +168,9 @@ export function formatarValor(v: number | string | null | undefined, unidade: Un
 export function textoMeta(i: Pick<IndicadorGerencial, "meta" | "sentido" | "unidade">): string {
   const meta = num(i.meta);
   if (meta == null) return i.sentido === "maior" ? "Entregue no período" : "Sem meta · acompanhamento";
-  return `Meta ${i.sentido === "maior" ? "≥" : "≤"} ${formatarValor(meta, i.unidade)}`;
+  // Meta quebrada vai inteira ("3,42%", aceitável do turnover mensal), não arredondada para "3,4%".
+  const casas = i.unidade === "pct" && !Number.isInteger(meta) ? 2 : null;
+  return `Meta ${i.sentido === "maior" ? "≥" : "≤"} ${formatarValor(meta, i.unidade, true, casas)}`;
 }
 
 export const ROTULO_SITUACAO: Record<Situacao, string> = {
@@ -187,7 +195,7 @@ export function lancamentoAtrasado(i: Pick<IndicadorGerencial, "fonte" | "period
 
 /** O resumo da TV numa linha, no formato "adequado" do documento. */
 export function frase(i: IndicadorGerencial): string {
-  const partes = [`${i.nome}: ${formatarValor(i.resultado?.valor, i.unidade)}`];
+  const partes = [`${i.nome}: ${formatarValor(i.resultado?.valor, i.unidade, true, i.resultado?.casas)}`];
   if (i.resultado?.afetado) partes.push(i.resultado.afetado);
   if (i.resultado?.causa) partes.push(`maior causa: ${i.resultado.causa}`);
   if (i.responsavel) partes.push(`responsável: ${i.responsavel}`);
