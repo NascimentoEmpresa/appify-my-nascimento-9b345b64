@@ -83,6 +83,7 @@ import { Target, MessagesSquare, KeyRound, MonitorPlay, Gauge } from "lucide-rea
 import { GitBranch, GitMerge } from "lucide-react";
 import { MessageSquare } from "lucide-react";
 import { Banknote } from "lucide-react";
+import { Database } from "lucide-react"; // SIS-2026-0599 — Base Mestre
 import { Crown, Landmark } from "lucide-react";
 import { Percent } from "lucide-react";
 import { FolderOpen } from "lucide-react";
@@ -152,6 +153,10 @@ const licitacoesModule: ModuleDef = {
       items: [
         { label: "Capa de Edital Licitações", to: "/app/editais", icon: FileText },
         { label: "Implantação de Contratos", to: "/app/licitacoes/implantacao", icon: ListChecks },
+        // SIS-2026-0599: cadastro único que alimenta os quatro resumos
+        // setoriais (Financeiro, RH, Operacional e Compras). Menu próprio,
+        // `implantacao.base` — quem preenche o checklist não ganha a base junto.
+        { label: "Base Mestre de Contrato", to: "/app/licitacoes/implantacao/base", icon: Database },
         { label: "Planilha de Custo", to: "/app/licitacoes/planilha-custo", icon: TableProperties },
         { label: "Contratos", to: "/app/licitacoes/contratos", icon: Building2 },
         { label: "Cotações", to: "/app/licitacoes/cotacoes", icon: MessageSquare },
@@ -295,6 +300,8 @@ const suprimentosModule: ModuleDef = {
       defaultOpen: true,
       items: [
         { label: "Dashboard de Compras", to: "/app/suprimentos/dashboard", icon: BarChart3, badge: "Novo" },
+        // SIS-2026-0599: o que comprar para um contrato que está começando.
+        { label: "Início de Contrato", to: "/app/suprimentos/inicio-de-contrato", icon: ShoppingCart },
       ],
     },
     {
@@ -387,6 +394,8 @@ const financeiroModule: ModuleDef = {
       label: "Operação Financeira",
       defaultOpen: true,
       items: [
+        // SIS-2026-0599: resumo financeiro do contrato que vai começar.
+        { label: "Início de Contrato", to: "/app/financeiro/inicio-de-contrato", icon: Banknote },
         { label: "Conferência de Ponto", to: "/app/financeiro/conferencia-ponto", icon: ClipboardCheck },
         // Dashboard de Pontos (30/09/2026, mig 274): o painel do RH, com menu
         // próprio do Financeiro (financeiro_dashboard_pontos).
@@ -542,6 +551,8 @@ const rhModule: ModuleDef = {
       defaultOpen: true,
       items: [
         { label: "Colaboradores", to: "/app/rh/colaboradores", icon: Users2 },
+        // SIS-2026-0599: dimensionamento de pessoas do contrato novo.
+        { label: "Início de Contrato", to: "/app/rh/inicio-de-contrato", icon: Database },
         { label: "Novas Admissões", to: "/app/rh/novas-admissoes", icon: ClipboardCheck },
         // "Alocações em Contratos" e "Folha de Pagamento" saíram em
         // 04/09/2026. Eram as duas telas genéricas que sobraram do modelo
@@ -1161,6 +1172,8 @@ const operacionalModule: ModuleDef = {
       label: "Operacional",
       defaultOpen: true,
       items: [
+        // SIS-2026-0599: locais, cidades e cobertura do contrato que inicia.
+        { label: "Início de Contrato", to: "/app/operacional/inicio-de-contrato", icon: Building2 },
         { label: "Controle de Diárias", to: "/app/operacional/diarias", icon: CalendarCheck2 },
         // Efetividade e Coberturas (branch local efetividade, mig 20261008000030):
         // quem faltou pelo ponto da Senior e o acionamento de diaristas. As 5
