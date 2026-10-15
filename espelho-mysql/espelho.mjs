@@ -37,6 +37,8 @@ import { fileURLToPath } from 'node:url';
 const AQUI = path.dirname(fileURLToPath(import.meta.url));
 const COMANDO = process.argv[2];
 const COMMIT = process.argv.includes('--commit');
+// --completo: recarrega inteiras também as tabelas incrementais (ver "incremental" em tabelas.json).
+const COMPLETO = process.argv.includes('--completo');
 
 // --limite N: traz só as N primeiras linhas de cada tabela. É para o teste de
 // ponta a ponta — provar que o caminho inteiro funciona sem esperar uma tabela
@@ -51,7 +53,7 @@ if (argLimite && (!Number.isInteger(LIMITE) || LIMITE <= 0)) {
   process.exit(1);
 }
 
-const COMANDOS = ['testar', 'descobrir', 'perfilar', 'sincronizar'];
+const COMANDOS = ['testar', 'descobrir', 'perfilar', 'sincronizar', 'conferir'];
 if (!COMANDOS.includes(COMANDO)) {
   console.error(`comando inválido. use um de: ${COMANDOS.join(' | ')}`);
   process.exit(1);
@@ -163,6 +165,35 @@ const aspas = (nome) => `"${String(nome).replace(/"/g, '""')}"`;        // Postg
 const crase = (nome) => '`' + String(nome).replace(/`/g, '``') + '`';   // MySQL
 
 // ── leitura do schema de origem ──────────────────────────────────────
+// A origem muda o tipo de coluna sem avisar: em 15/10/2026 a Flex passou
+// BiMarcacoes.numcra para bigint (crachá 5000000115) e a carga quebrou com
+// "out of range for type integer" — o CREATE TABLE IF NOT EXISTS daqui não
+// revisita o tipo. Alarga o que a origem alargou (nunca estreita).
+async function alargarColunas(pgc, tabela, cols) {
+  const { rows } = await pgc.query(
+    `SELECT column_name, data_type FROM information_schema.columns WHERE table_schema = $1 AND table_name = $2`,
+    [SCHEMA, tabela]
+  );
+  const atual = new Map(rows.map((r) => [r.column_name, r.data_type]));
+  for (const c of cols) {
+    const quer = tipoPg(c);
+    const tem = atual.get(c.COLUMN_NAME);
+    if (tem === 'integer' && (quer === 'bigint' || quer === 'numeric')) {
+      await pgc.query(`ALTER TABLE ${aspas(SCHEMA)}.${aspas(tabela)} ALTER COLUMN ${aspas(c.COLUMN_NAME)} TYPE ${quer}`);
+      console.log(`  (${tabela}.${c.COLUMN_NAME}: integer -> ${quer}, como na origem)`);
+    }
+  }
+}
+
+// Data de corte (AAAA-MM-DD, horário de Brasília) para a carga incremental.
+// Calculada UMA vez aqui e usada como literal nos dois bancos: CURDATE() do
+// MySQL e current_date do Postgres podem estar em fusos diferentes, e a
+// diferença viraria um buraco ou uma duplicata na virada do dia.
+function dataDeCorte(dias) {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo', year: 'numeric', month: '2-digit', day: '2-digit' })
+    .format(new Date(Date.now() - dias * 86_400_000));
+}
+
 async function colunasDe(my, tabela) {
   const [linhas] = await my.query(
     `SELECT COLUMN_NAME, DATA_TYPE, COLUMN_KEY
@@ -330,6 +361,80 @@ async function registrar(pgc, { ok, inicio, resumo, erro = null }) {
   );
 }
 
+// ── conferir (15/10/2026) ─────────────────────────────────────────────
+// "A Flex diz que os pontos entram a cada 15 minutos — entram mesmo?"
+// Só LÊ a origem: batidas por dia (primeira e última hora), duplicadas
+// exatas, a última modificação da tabela segundo o MySQL. Cada conferência
+// fica em espelho.conferencias, e a saída compara com a anterior — rodando
+// de 15 em 15 minutos, mostra se chegaram batidas novas e de quando.
+const hhmm = (min) => (min == null ? '—' : `${String(Math.floor(min / 60)).padStart(2, '0')}:${String(min % 60).padStart(2, '0')}`);
+
+async function cmdConferir() {
+  const argDias = process.argv.find((a) => a.startsWith('--dias'));
+  const dias = argDias ? Number(argDias.includes('=') ? argDias.split('=')[1] : process.argv[process.argv.indexOf(argDias) + 1]) || 10 : 10;
+  const ssh = await abrirSsh();
+  const my = await abrirMysql(ssh);
+  const todas = ['institution_id', 'empresa', 'matricula', 'numcra', 'data_hora', 'situacao', 'hora'].map(crase).join(', ');
+  try {
+    const [[relogio]] = await my.query('SELECT NOW() AS agora, CURDATE() AS hoje, @@system_time_zone AS fuso');
+    const [[tab]] = await my.query(
+      `SELECT UPDATE_TIME AS modificada, CREATE_TIME AS criada, TABLE_ROWS AS estimadas
+         FROM information_schema.TABLES WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'BiMarcacoes'`, [cred.mysql.banco]);
+    const [[tot]] = await my.query(`SELECT COUNT(*) AS total, MAX(data_hora) AS ultimo_dia FROM BiMarcacoes`);
+    const [porDia] = await my.query(
+      `SELECT DATE_FORMAT(data_hora, '%Y-%m-%d') AS dia, COUNT(*) AS batidas,
+              COUNT(*) - COUNT(DISTINCT ${todas}) AS duplicadas, MIN(hora) AS primeira, MAX(hora) AS ultima
+         FROM BiMarcacoes WHERE data_hora >= CURDATE() - INTERVAL ? DAY
+        GROUP BY 1 ORDER BY 1`, [dias]);
+    // Duplicada exata = mesma linha inteira repetida (a tabela não tem chave).
+    const [[dup]] = await my.query(`SELECT COUNT(*) - COUNT(DISTINCT ${todas}) AS duplicadas FROM BiMarcacoes`);
+
+    const foto = {
+      agora_origem: relogio.agora, hoje_origem: relogio.hoje, fuso_origem: relogio.fuso,
+      tabela_modificada: tab?.modificada ?? null, tabela_criada: tab?.criada ?? null,
+      total: Number(tot.total), ultimo_dia: tot.ultimo_dia, duplicadas_total: Number(dup.duplicadas),
+      por_dia: porDia.map((d) => ({ dia: d.dia, batidas: Number(d.batidas), duplicadas: Number(d.duplicadas), primeira: d.primeira == null ? null : Number(d.primeira), ultima: d.ultima == null ? null : Number(d.ultima) })),
+    };
+
+    console.log(`relógio da origem: ${foto.agora_origem} (${foto.fuso_origem})`);
+    console.log(`tabela modificada pela última vez: ${foto.tabela_modificada ?? '(o MySQL não informa)'} · criada em ${foto.tabela_criada ?? '—'}`);
+    console.log(`total: ${foto.total.toLocaleString('pt-BR')} batidas · duplicadas exatas: ${foto.duplicadas_total.toLocaleString('pt-BR')} · último dia com batida: ${foto.ultimo_dia}`);
+    console.log(`\nbatidas por dia (últimos ${dias} dias):`);
+    console.log('  dia          batidas  duplicadas  primeira  última');
+    for (const d of foto.por_dia) {
+      console.log(`  ${d.dia}  ${String(d.batidas).padStart(8)}  ${String(d.duplicadas).padStart(10)}  ${hhmm(d.primeira).padStart(8)}  ${hhmm(d.ultima).padStart(6)}`);
+    }
+
+    // Guarda e compara com a conferência anterior (fora de transação; não mexe em dado do espelho).
+    const pgc = await abrirSupabase();
+    try {
+      await pgc.query(`CREATE TABLE IF NOT EXISTS ${aspas(SCHEMA)}.conferencias (
+        id bigserial PRIMARY KEY, conferida_em timestamptz NOT NULL DEFAULT now(), tabela text NOT NULL, foto jsonb NOT NULL)`);
+      const { rows: [ant] } = await pgc.query(
+        `SELECT conferida_em, foto FROM ${aspas(SCHEMA)}.conferencias WHERE tabela = 'BiMarcacoes' ORDER BY id DESC LIMIT 1`);
+      await pgc.query(`INSERT INTO ${aspas(SCHEMA)}.conferencias (tabela, foto) VALUES ('BiMarcacoes', $1)`, [foto]);
+      if (ant) {
+        const min = Math.round((Date.now() - new Date(ant.conferida_em).getTime()) / 60000);
+        const antDia = new Map((ant.foto.por_dia || []).map((d) => [d.dia, d]));
+        console.log(`\ndesde a conferência anterior (há ${min} min):`);
+        console.log(`  total: ${(foto.total - ant.foto.total >= 0 ? '+' : '') + (foto.total - ant.foto.total).toLocaleString('pt-BR')} batidas`);
+        for (const d of foto.por_dia) {
+          const a = antDia.get(d.dia);
+          const delta = d.batidas - (a?.batidas ?? 0);
+          if (delta || (a && a.ultima !== d.ultima)) {
+            console.log(`  ${d.dia}: ${delta >= 0 ? '+' : ''}${delta} batidas · última batida ${hhmm(a?.ultima ?? null)} -> ${hhmm(d.ultima)}`);
+          }
+        }
+        if (foto.total === ant.foto.total) console.log('  nenhuma batida nova chegou nesse intervalo.');
+      } else {
+        console.log('\n(primeira conferência — rode de novo daqui a 15 minutos para comparar)');
+      }
+    } finally { await pgc.end(); }
+  } finally {
+    await my.end(); ssh.end();
+  }
+}
+
 async function cmdSincronizar() {
   const inicio = Date.now();
   const arqTabelas = path.join(AQUI, 'tabelas.json');
@@ -337,7 +442,9 @@ async function cmdSincronizar() {
     console.error('não achei tabelas.json — rode "node espelho.mjs descobrir" primeiro.');
     process.exit(1);
   }
-  const alvo = JSON.parse(fs.readFileSync(arqTabelas, 'utf8')).tabelas;
+  const config = JSON.parse(fs.readFileSync(arqTabelas, 'utf8'));
+  const alvo = config.tabelas;
+  const incrementais = config.incremental || {};
   if (!Array.isArray(alvo) || !alvo.length) {
     console.error('tabelas.json está vazio. Liste ao menos uma tabela.');
     process.exit(1);
@@ -357,7 +464,11 @@ async function cmdSincronizar() {
   const pgc = await abrirSupabase();
 
   await pgc.query('BEGIN');
+  // A carga leva minutos; o statement_timeout padrão do papel derrubava a
+  // rodada no meio ("canceling statement due to statement timeout").
+  await pgc.query(`SET LOCAL statement_timeout = '20min'`);
   await pgc.query(`CREATE SCHEMA IF NOT EXISTS ${aspas(SCHEMA)}`);
+  if (COMPLETO) console.log('=== COMPLETA — as tabelas incrementais também serão recarregadas inteiras ===\n');
 
   const resumo = [];
   try {
@@ -369,13 +480,32 @@ async function cmdSincronizar() {
 
       const defs = cols.map((c) => `${aspas(c.COLUMN_NAME)} ${tipoPg(c)}`).join(', ');
       await pgc.query(`CREATE TABLE IF NOT EXISTS ${aspas(SCHEMA)}.${aspas(tabela)} (${defs})`);
+      await alargarColunas(pgc, tabela, cols);
 
+      // INCREMENTAL (15/10/2026): BiMarcacoes passou de 6 milhões de linhas e
+      // a recarga inteira dentro da transação precisava do dobro do espaço
+      // (a versão velha só sai no COMMIT) — encheu o disco do Supabase, que é
+      // o mesmo do ERP. Para as tabelas em "incremental" (tabelas.json) só os
+      // últimos N dias são apagados e trazidos de novo; o resto fica. Tabela
+      // vazia (primeira carga) e --completo recarregam inteira.
+      const regra = incrementais[tabela];
+      let filtro = '';
+      if (regra && !COMPLETO && !LIMITE) {
+        if (!nomes.includes(regra.coluna)) throw new Error(`incremental de ${tabela}: coluna "${regra.coluna}" não existe na origem`);
+        const { rows: [{ tem }] } = await pgc.query(`SELECT EXISTS (SELECT 1 FROM ${aspas(SCHEMA)}.${aspas(tabela)}) AS tem`);
+        if (tem) {
+          const corte = dataDeCorte(Number(regra.dias) || 45);
+          await pgc.query(`DELETE FROM ${aspas(SCHEMA)}.${aspas(tabela)} WHERE ${aspas(regra.coluna)} >= $1`, [corte]);
+          filtro = ` WHERE ${crase(regra.coluna)} >= '${corte}'`;
+          console.log(`  ${tabela}: incremental desde ${corte} (${regra.coluna})`);
+        }
+      }
       // Recarga inteira dentro da transação: some qualquer linha que o
       // cliente apagou na origem, sem precisar rastrear exclusão.
-      await pgc.query(`TRUNCATE ${aspas(SCHEMA)}.${aspas(tabela)}`);
+      if (!filtro) await pgc.query(`TRUNCATE ${aspas(SCHEMA)}.${aspas(tabela)}`);
 
       // Origem é MySQL: crase, não aspas.
-      const sql = `SELECT ${nomes.map(crase).join(', ')} FROM ${crase(tabela)}` +
+      const sql = `SELECT ${nomes.map(crase).join(', ')} FROM ${crase(tabela)}` + filtro +
                   (LIMITE ? ` LIMIT ${LIMITE}` : '');
 
       // Streaming + COPY, e não "carrega tudo e insere em lotes". Com 3,5
@@ -436,6 +566,7 @@ try {
   if (COMANDO === 'testar') await cmdTestar();
   else if (COMANDO === 'descobrir') await cmdDescobrir();
   else if (COMANDO === 'perfilar') await cmdPerfilar();
+  else if (COMANDO === 'conferir') await cmdConferir();
   else await cmdSincronizar();
   process.exit(0);
 } catch (e) {
