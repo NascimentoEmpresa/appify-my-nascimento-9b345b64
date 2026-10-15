@@ -351,10 +351,11 @@ export default function FluxoCaixaGestao() {
     }
   }
 
-  const [dataDe, setDataDe] = useState("");
-  const [dataAte, setDataAte] = useState("");
+  // SIS-2026-0657: a Auditoria da Controladoria abre o Fluxo já no período/empresa do painel (?de=&ate=&empresa=).
+  const [dataDe, setDataDe] = useState(searchParams.get("de") ?? "");
+  const [dataAte, setDataAte] = useState(searchParams.get("ate") ?? "");
   const [competencia, setCompetencia] = useState("");
-  const [empresaId, setEmpresaId] = useState("");
+  const [empresaId, setEmpresaId] = useState(searchParams.get("empresa") ?? "");
   // SIS-2026-0537 (Iury): "retornar a coluna de Centro de custo" — filtro
   // removido no SIS-2026-0489, pedido de volta — a coluna na view nunca
   // saiu (CartaoCredito.tsx já dependia dela).

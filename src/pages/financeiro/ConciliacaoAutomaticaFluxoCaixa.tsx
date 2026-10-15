@@ -123,6 +123,8 @@ function ConciliarTab() {
   const [resultado, setResultado] = useState<ReconciliacaoResult | null>(null);
   const [processando, setProcessando] = useState(false);
   const [resolvidos, setResolvidos] = useState<Record<string, Resolucao>>({});
+  // SIS-2026-0657: total do extrato dentro do período, guardado ao salvar (a Auditoria da Controladoria lê daqui).
+  const [totaisExtrato, setTotaisExtrato] = useState<{ entradas: number; saidas: number } | null>(null);
   const [observacoes, setObservacoes] = useState("");
 
   const [dialogAjustar, setDialogAjustar] = useState<LancamentoRow | null>(null);
@@ -204,6 +206,11 @@ function ConciliarTab() {
     // SIS-2026-0637: só entra do extrato o que está no período escolhido (igual ao lado Fluxo).
     const { dentro, fora } = transacoesNoPeriodo(trns, dataDe, dataAte);
     const res = reconciliar(planRows, [...dentro, ...saldoLinhas.ofx]);
+    const r2 = (n: number) => Math.round(n * 100) / 100;
+    setTotaisExtrato({
+      entradas: r2(dentro.filter((t) => t.tipo === "ENTRADA").reduce((s, t) => s + t.valor, 0)),
+      saidas: r2(dentro.filter((t) => t.tipo === "SAÍDA").reduce((s, t) => s + t.valor, 0)),
+    });
     setResultado(res);
     toast.success(
       `Conciliação processada — ${res.totalDias} dias, ${res.divergencias} dia(s) com divergência.` +
@@ -394,6 +401,8 @@ function ConciliarTab() {
         bancoId, todasEmpresas, empresaIds, contaExtrato, arquivosOfx, linhas,
         saldoAnteriorFluxo: saldoAnteriorFluxo.qtd > 0 ? saldoFluxoTotal : null,
         saldoAnteriorExtrato: saldoExtrato,
+        extratoEntradas: totaisExtrato?.entradas ?? null,
+        extratoSaidas: totaisExtrato?.saidas ?? null,
       });
       toast.success("Conciliação salva.");
       reiniciar();
