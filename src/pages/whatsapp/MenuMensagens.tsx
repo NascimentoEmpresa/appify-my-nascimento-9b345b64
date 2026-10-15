@@ -271,18 +271,21 @@ export function MenuMensagens({ filtro, itens, status, onEscolher, onFechar, reg
  * Formulário das variáveis. Só aparece para mensagem que tem {{n}} —
  * mensagem fixa vai direto, sem diálogo no meio do caminho.
  */
-export function PreencherVariaveis({ mensagem, enviando, onCancelar, onConfirmar }: {
+export function PreencherVariaveis({ mensagem, enviando, onCancelar, onConfirmar, sugestao }: {
   mensagem: WaTemplate | null;
   enviando: boolean;
   onCancelar: () => void;
   onConfirmar: (valores: string[]) => void;
+  /** Valor já preenchido para uma pergunta ("Primeiro nome", "Cargo"…) — vem do contato/candidato; dá para editar. */
+  sugestao?: (rotulo: string) => string | undefined;
 }) {
   const [valores, setValores] = useState<string[]>([]);
   const primeiro = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    setValores(new Array(mensagem?.variaveis.length ?? 0).fill(""));
+    setValores((mensagem?.variaveis ?? []).map((r) => sugestao?.(r) ?? ""));
     if (mensagem) setTimeout(() => primeiro.current?.focus(), 50);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mensagem]);
 
   if (!mensagem) return null;
