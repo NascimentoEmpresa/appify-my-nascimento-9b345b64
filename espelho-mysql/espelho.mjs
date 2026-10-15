@@ -435,6 +435,55 @@ async function cmdConferir() {
   }
 }
 
+// Recarga COMPLETA de tabela incremental, fatiada por mês (15/10/2026).
+//
+// Dentro de uma transação só, a versão velha e a nova coexistem até o COMMIT:
+// para BiMarcacoes (6 mi de linhas, ~800 MB) isso pedia mais espaço do que o
+// disco do Supabase tinha livre. Aqui o TRUNCATE vale na hora e cada mês é
+// gravado e confirmado sozinho — o pico de espaço é um mês, não a tabela.
+// Se uma fatia falhar, a tabela é ESVAZIADA de novo: vazia, a próxima carga
+// refaz o completo; meio carregada, o incremental cobriria só os dias recentes
+// e o buraco do histórico ficaria escondido.
+async function cargaFatiada(my, pgc, tabela, cols, coluna) {
+  const nomes = cols.map((c) => c.COLUMN_NAME);
+  const alvoPg = `${aspas(SCHEMA)}.${aspas(tabela)}`;
+  const [[faixa]] = await my.query(
+    `SELECT DATE_FORMAT(MIN(${crase(coluna)}), '%Y-%m-01') AS de, DATE_FORMAT(MAX(${crase(coluna)}), '%Y-%m-01') AS ate FROM ${crase(tabela)}`);
+  await pgc.query(`TRUNCATE ${alvoPg}`);
+  let total = 0;
+  try {
+    // Linhas sem data primeiro (não caem em mês nenhum).
+    const fatias = [{ rotulo: 'sem data', onde: `${crase(coluna)} IS NULL` }];
+    if (faixa.de) {
+      for (let d = new Date(`${faixa.de}T00:00:00Z`); d <= new Date(`${faixa.ate}T00:00:00Z`); d.setUTCMonth(d.getUTCMonth() + 1)) {
+        const ini = d.toISOString().slice(0, 10);
+        const prox = new Date(d); prox.setUTCMonth(prox.getUTCMonth() + 1);
+        fatias.push({ rotulo: ini.slice(0, 7), onde: `${crase(coluna)} >= '${ini}' AND ${crase(coluna)} < '${prox.toISOString().slice(0, 10)}'` });
+      }
+    }
+    for (const fatia of fatias) {
+      await pgc.query('BEGIN');
+      await pgc.query(`SET LOCAL statement_timeout = '20min'`);
+      const destino = pgc.query(copyFrom(`COPY ${alvoPg} (${nomes.map(aspas).join(', ')}) FROM STDIN WITH (FORMAT csv, NULL '\\N')`));
+      let linhas = 0;
+      const origem = my.connection.query(`SELECT ${nomes.map(crase).join(', ')} FROM ${crase(tabela)} WHERE ${fatia.onde}`).stream();
+      const paraCsv = new Transform({
+        objectMode: true,
+        transform(linha, _cod, pronto) { linhas++; pronto(null, nomes.map((n) => csv(linha[n])).join(',') + '\n'); },
+      });
+      await pipeline(origem, paraCsv, destino);
+      await pgc.query('COMMIT');
+      total += linhas;
+      if (linhas) console.log(`    ${tabela} ${fatia.rotulo.padEnd(8)} ${String(linhas).padStart(9)} linhas`);
+    }
+  } catch (e) {
+    await pgc.query('ROLLBACK').catch(() => {});
+    await pgc.query(`TRUNCATE ${alvoPg}`).catch(() => {});
+    throw new Error(`recarga fatiada de ${tabela} parou (tabela esvaziada; a próxima carga refaz o completo): ${e.message}`);
+  }
+  return total;
+}
+
 async function cmdSincronizar() {
   const inicio = Date.now();
   const arqTabelas = path.join(AQUI, 'tabelas.json');
@@ -471,6 +520,7 @@ async function cmdSincronizar() {
   if (COMPLETO) console.log('=== COMPLETA — as tabelas incrementais também serão recarregadas inteiras ===\n');
 
   const resumo = [];
+  const fatiadas = []; // incrementais que precisam de recarga completa (vazias ou --completo)
   try {
     for (const tabela of alvo) {
       const t0 = Date.now();
@@ -490,15 +540,19 @@ async function cmdSincronizar() {
       // vazia (primeira carga) e --completo recarregam inteira.
       const regra = incrementais[tabela];
       let filtro = '';
-      if (regra && !COMPLETO && !LIMITE) {
+      if (regra && !LIMITE) {
         if (!nomes.includes(regra.coluna)) throw new Error(`incremental de ${tabela}: coluna "${regra.coluna}" não existe na origem`);
         const { rows: [{ tem }] } = await pgc.query(`SELECT EXISTS (SELECT 1 FROM ${aspas(SCHEMA)}.${aspas(tabela)}) AS tem`);
-        if (tem) {
-          const corte = dataDeCorte(Number(regra.dias) || 45);
-          await pgc.query(`DELETE FROM ${aspas(SCHEMA)}.${aspas(tabela)} WHERE ${aspas(regra.coluna)} >= $1`, [corte]);
-          filtro = ` WHERE ${crase(regra.coluna)} >= '${corte}'`;
-          console.log(`  ${tabela}: incremental desde ${corte} (${regra.coluna})`);
+        if (COMPLETO || !tem) {
+          // Completo fica para DEPOIS do COMMIT, fatiado por mês (cargaFatiada).
+          fatiadas.push({ tabela, cols, coluna: regra.coluna, pk });
+          console.log(`  ${tabela}: recarga completa fatiada por mês, depois das demais`);
+          continue;
         }
+        const corte = dataDeCorte(Number(regra.dias) || 45);
+        await pgc.query(`DELETE FROM ${aspas(SCHEMA)}.${aspas(tabela)} WHERE ${aspas(regra.coluna)} >= $1`, [corte]);
+        filtro = ` WHERE ${crase(regra.coluna)} >= '${corte}'`;
+        console.log(`  ${tabela}: incremental desde ${corte} (${regra.coluna})`);
       }
       // Recarga inteira dentro da transação: some qualquer linha que o
       // cliente apagou na origem, sem precisar rastrear exclusão.
@@ -546,6 +600,13 @@ async function cmdSincronizar() {
     }
 
     await pgc.query(COMMIT ? 'COMMIT' : 'ROLLBACK');
+    for (const f of fatiadas) {
+      if (!COMMIT) { console.log(`  ${f.tabela.padEnd(34)} (recarga fatiada não roda em simulação)`); continue; }
+      const t0 = Date.now();
+      const linhas = await cargaFatiada(my, pgc, f.tabela, f.cols, f.coluna);
+      resumo.push({ tabela: f.tabela, linhas, pk: f.pk.join('+') || '(sem PK)' });
+      console.log(`  ${f.tabela.padEnd(34)} ${String(linhas).padStart(9)} linhas  ${((Date.now() - t0) / 1000).toFixed(1).padStart(6)}s  (fatiada)`);
+    }
     if (COMMIT) await registrar(pgc, { ok: true, inicio, resumo });
   } catch (e) {
     await pgc.query('ROLLBACK');
