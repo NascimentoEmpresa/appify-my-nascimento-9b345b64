@@ -120,7 +120,8 @@ export const EnxovalAdmissao = forwardRef<EnxovalAdmissaoHandle, { candidatoId: 
       const { data, error } = await db.rpc("rec_enxoval_informar", {
         p_candidato_id: candidatoId, p_contrato_id: escolha.contrato_id, p_posto_id: escolha.posto_id, p_funcao_id: escolha.funcao_id,
         p_itens: itens.map((i) => ({ item_id: i.item_id, tamanho: tamanhos[i.item_id] ?? null, quantidade: qtds[i.item_id] ?? 1 })),
-        p_obs: obs.trim() || null,
+        // A observação para o Compras vem do modal (rec_enxoval_gerar_pedido, 15/10/2026).
+        p_obs: null,
         p_foto_path: caminhoFoto,
       });
       if (error) return { ok: false, erro: error.message };
@@ -238,11 +239,8 @@ export const EnxovalAdmissao = forwardRef<EnxovalAdmissaoHandle, { candidatoId: 
         </div>
       )}
 
-      {!prev.tem_pedido && itens.length > 0 && (
-        <textarea rows={2} style={{ ...fi, marginTop: 10, resize: "vertical" }} value={obs} onChange={(e) => setObs(e.target.value)}
-          placeholder="Observação para o Compras (opcional)" />
-      )}
-      <div style={{ fontSize: 10.5, color: "#94a3b8", marginTop: 6 }}>Vai para Suprimentos › EPIs — Admissões, que gera o pedido de materiais.</div>
+      {/* A observação para o Compras está no modal (15/10/2026) — vai no pedido. */}
+      <div style={{ fontSize: 10.5, color: "#94a3b8", marginTop: 6 }}>Ao enviar, o pedido de materiais é gerado na hora em Suprimentos › Pedidos de Materiais.</div>
     </div>
   );
 });
