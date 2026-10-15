@@ -130,6 +130,84 @@ function VigenciaStatusBadge({ status }: { status: string }) {
 
 const PAGE_SIZE = 50;
 
+// SIS-2026-0662: normaliza texto de contrato/posto pra comparar igualdade exata
+// (diferente da busca livre, que casa por trecho e traz "BENTO GONÇALVES - AUX
+// ADM" junto com "BENTO GONÇALVES - LIMPEZA").
+const normFiltro = (s: string | null | undefined) => (s ?? "").trim().toUpperCase();
+
+type OpcaoFiltro = { key: string; label: string; sub?: string };
+
+// Filtro por seleção exata (combobox com busca), no estilo dos filtros do Excel.
+function FiltroCombobox({
+  placeholder, todosLabel, value, options, onChange, className,
+}: {
+  placeholder: string;
+  todosLabel: string;
+  value: string;
+  options: OpcaoFiltro[];
+  onChange: (key: string) => void;
+  className?: string;
+}) {
+  const [aberto, setAberto] = useState(false);
+  const selecionada = options.find((o) => o.key === value);
+
+  return (
+    <Popover open={aberto} onOpenChange={setAberto}>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          role="combobox"
+          aria-expanded={aberto}
+          title={selecionada?.label}
+          className={cn(
+            "flex h-9 items-center justify-between rounded-md border bg-background px-3 text-xs outline-none focus:border-primary",
+            selecionada ? "border-primary/60 text-foreground" : "border-border text-muted-foreground",
+            className,
+          )}
+        >
+          <span className="truncate">{selecionada ? selecionada.label : placeholder}</span>
+          <ChevronsUpDown className="ml-2 h-3.5 w-3.5 shrink-0 opacity-50" />
+        </button>
+      </PopoverTrigger>
+      <PopoverContent className="w-[30rem] max-w-[92vw] p-0" align="start">
+        <Command>
+          <CommandInput placeholder="Buscar…" />
+          <CommandList>
+            <CommandEmpty>Nada encontrado.</CommandEmpty>
+            <CommandGroup>
+              <CommandItem
+                value="__todos__"
+                onSelect={() => { onChange(""); setAberto(false); }}
+              >
+                <Check className={cn("mr-2 h-4 w-4 shrink-0", !value ? "opacity-100" : "opacity-0")} />
+                <span className="font-medium">{todosLabel}</span>
+              </CommandItem>
+              {options.map((o) => (
+                <CommandItem
+                  key={o.key}
+                  // o key entra no value pra dois itens de mesmo nome não colidirem no cmdk
+                  value={`${o.label} ${o.sub ?? ""} ${o.key}`}
+                  onSelect={() => { onChange(o.key); setAberto(false); }}
+                >
+                  <Check className={cn("mr-2 h-4 w-4 shrink-0", value === o.key ? "opacity-100" : "opacity-0")} />
+                  {/* title = nome completo ao passar o mouse (a linha trunca com reticências) */}
+                  <span
+                    className="flex min-w-0 flex-1 flex-col"
+                    title={o.sub ? `${o.label}\n${o.sub}` : o.label}
+                  >
+                    <span className="truncate">{o.label}</span>
+                    {o.sub && <span className="truncate text-xs text-muted-foreground">{o.sub}</span>}
+                  </span>
+                </CommandItem>
+              ))}
+            </CommandGroup>
+          </CommandList>
+        </Command>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
 export default function PlanilhaCusto() {
   const [q, setQ] = useState("");
   const [page, setPage] = useState(1);
@@ -146,6 +224,9 @@ export default function PlanilhaCusto() {
   const [showHistorico, setShowHistorico] = useState(false);
   const [filtroOrexec, setFiltroOrexec] = useState<"" | "ORÇADO" | "EXECUTADO">("");
   const [filtroVigencia, setFiltroVigencia] = useState<"" | "EM VIGÊNCIA" | "HISTÓRICO" | "A INICIAR">("");
+  // SIS-2026-0662: filtros de Contrato e Posto (seleção exata, em cascata).
+  const [filtroContrato, setFiltroContrato] = useState<string>("");
+  const [filtroPosto, setFiltroPosto] = useState<string>("");
   const [updateFromRow, setUpdateFromRow] = useState<PlanilhaCustoRow | undefined>();
   const [postosRow, setPostosRow] = useState<PlanilhaCustoRow | null>(null);
 
@@ -179,12 +260,59 @@ export default function PlanilhaCusto() {
   // Computa status de vigência para cada linha (client-side)
   const statusMap = React.useMemo(() => computeVigenciaStatus(rows), [rows]);
 
-  const filtered = rows.filter((r) => {
-    const status = statusMap.get(r.id) ?? "";
-    if (!showHistorico && status === "HISTÓRICO" && !filtroVigencia) return false;
-    if (filtroVigencia && status !== filtroVigencia) return false;
-    if (filtroOrexec && r.orexec !== filtroOrexec) return false;
-    if (filtroEmpresaId && r.empresa_id !== filtroEmpresaId) return false;
+  // Linhas que passam nos filtros "de visão" (vigência, histórico, orçado/executado,
+  // empresa). É a base de onde saem as opções de Contrato e Posto e a lista final.
+  const baseRows = React.useMemo(
+    () =>
+      rows.filter((r) => {
+        const status = statusMap.get(r.id) ?? "";
+        if (!showHistorico && status === "HISTÓRICO" && !filtroVigencia) return false;
+        if (filtroVigencia && status !== filtroVigencia) return false;
+        if (filtroOrexec && r.orexec !== filtroOrexec) return false;
+        if (filtroEmpresaId && r.empresa_id !== filtroEmpresaId) return false;
+        return true;
+      }),
+    [rows, statusMap, showHistorico, filtroVigencia, filtroOrexec, filtroEmpresaId],
+  );
+
+  // SIS-2026-0662: contrato é identificado pelo contrato_id (linhas legadas sem id
+  // caem no texto normalizado). Seleção exata — não é busca por trecho.
+  const chaveContrato = (r: PlanilhaCustoRow) => r.contrato_id ?? `txt:${normFiltro(r.contrato)}`;
+
+  const contratoOpcoes = React.useMemo<OpcaoFiltro[]>(() => {
+    const m = new Map<string, OpcaoFiltro>();
+    for (const r of baseRows) {
+      const k = chaveContrato(r);
+      if (m.has(k)) continue;
+      const emp = empresasGrupo.find((e) => e.id === r.empresa_id)?.nome;
+      m.set(k, { key: k, label: r.contrato || "(sem nome)", sub: [r.cliente, emp].filter(Boolean).join(" · ") });
+    }
+    return [...m.values()].sort((a, b) => a.label.localeCompare(b.label, "pt-BR"));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [baseRows, empresasGrupo]);
+
+  // Se a opção escolhida sumiu (ex.: ocultou o histórico), o filtro deixa de valer
+  // em vez de esvaziar a tabela sem explicação.
+  const contratoEfetivo = contratoOpcoes.some((o) => o.key === filtroContrato) ? filtroContrato : "";
+
+  // Postos só do contrato escolhido (todos, se nenhum) — "como no Excel, um filtro
+  // afeta os demais".
+  const postoOpcoes = React.useMemo<OpcaoFiltro[]>(() => {
+    const m = new Map<string, OpcaoFiltro>();
+    for (const r of baseRows) {
+      if (contratoEfetivo && chaveContrato(r) !== contratoEfetivo) continue;
+      const k = normFiltro(r.posto);
+      if (!k || m.has(k)) continue;
+      m.set(k, { key: k, label: r.posto });
+    }
+    return [...m.values()].sort((a, b) => a.label.localeCompare(b.label, "pt-BR"));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [baseRows, contratoEfetivo]);
+  const postoEfetivo = postoOpcoes.some((o) => o.key === filtroPosto) ? filtroPosto : "";
+
+  const filtered = baseRows.filter((r) => {
+    if (contratoEfetivo && chaveContrato(r) !== contratoEfetivo) return false;
+    if (postoEfetivo && normFiltro(r.posto) !== postoEfetivo) return false;
     return (
       r.cliente.toLowerCase().includes(q.toLowerCase()) ||
       r.contrato.toLowerCase().includes(q.toLowerCase()) ||
@@ -301,6 +429,23 @@ export default function PlanilhaCusto() {
               className="h-9 w-full rounded-md border border-border bg-background pl-9 pr-3 text-sm outline-none focus:border-primary"
             />
           </div>
+          {/* SIS-2026-0662: filtros de seleção exata, em cascata (Posto depende do Contrato). */}
+          <FiltroCombobox
+            className="w-64"
+            placeholder="Contrato"
+            todosLabel="Todos os contratos"
+            value={contratoEfetivo}
+            options={contratoOpcoes}
+            onChange={(k) => { setFiltroContrato(k); setFiltroPosto(""); setPage(1); }}
+          />
+          <FiltroCombobox
+            className="w-56"
+            placeholder="Posto"
+            todosLabel={contratoEfetivo ? "Todos os postos do contrato" : "Todos os postos"}
+            value={postoEfetivo}
+            options={postoOpcoes}
+            onChange={(k) => { setFiltroPosto(k); setPage(1); }}
+          />
           <select
             value={filtroOrexec}
             onChange={(e) => { setFiltroOrexec(e.target.value as typeof filtroOrexec); setPage(1); }}
