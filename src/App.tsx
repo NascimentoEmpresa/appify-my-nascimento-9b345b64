@@ -53,6 +53,15 @@ import ParecerControladoria from "./pages/pareceres/ParecerControladoria";
 import ParecerDiretorOperacional from "./pages/pareceres/ParecerDiretorOperacional";
 import ParecerDiretorAdministrativo from "./pages/pareceres/ParecerDiretorAdministrativo";
 import Implantacao from "./pages/contratos/Implantacao";
+// SIS-2026-0599 — Base Mestre de Início de Contrato e os quatro recortes
+// setoriais. Cada recorte mora no módulo do setor dono, como nos mockups do
+// chamado, e não dentro de Licitações.
+import BaseMestre from "./pages/implantacao/BaseMestre";
+import BaseMestreHub from "./pages/implantacao/BaseMestreHub";
+import FinanceiroInicioContrato from "./pages/implantacao/setor/FinanceiroInicioContrato";
+import RhInicioContrato from "./pages/implantacao/setor/RhInicioContrato";
+import OperacionalInicioContrato from "./pages/implantacao/setor/OperacionalInicioContrato";
+import ComprasInicioContrato from "./pages/implantacao/setor/ComprasInicioContrato";
 import PlanilhaCusto from "./pages/licitacoes/PlanilhaCusto";
 import ContratosERP from "./pages/licitacoes/ContratosERP";
 import CotacoesLicitacao from "./pages/licitacoes/CotacoesLicitacao";
@@ -636,6 +645,14 @@ const App = () => (
             <Route path="contratos/implantacao" element={<Implantacao />} />
             <Route path="licitacoes/planilha-custo" element={<PlanilhaCusto />} />
             <Route path="licitacoes/implantacao" element={<Implantacao />} />
+            {/* SIS-2026-0599: a base mestre é tela separada do checklist de
+                Implantação — e as quatro setoriais leem dela. */}
+            <Route path="licitacoes/implantacao/base" element={<BaseMestre />} />
+            <Route path="licitacoes/implantacao/base/hub" element={<BaseMestreHub />} />
+            <Route path="financeiro/inicio-de-contrato" element={<FinanceiroInicioContrato />} />
+            <Route path="rh/inicio-de-contrato" element={<RhInicioContrato />} />
+            <Route path="operacional/inicio-de-contrato" element={<OperacionalInicioContrato />} />
+            <Route path="suprimentos/inicio-de-contrato" element={<ComprasInicioContrato />} />
             <Route path="licitacoes/contratos" element={<ContratosERP />} />
             <Route path="licitacoes/cotacoes" element={<CotacoesLicitacao />} />
             {/* Consulta somente-leitura do banco de preços que o Compras
