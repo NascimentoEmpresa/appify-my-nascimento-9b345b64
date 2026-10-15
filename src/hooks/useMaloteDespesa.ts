@@ -699,6 +699,9 @@ export interface SalvarDespesaInput {
   // bloqueio de dia (data_pagamento em dia bloqueado), só pra ela.
   excecao?: boolean;
   justificativa_excecao?: string | null;
+  // SIS-2026-0668: a exceção só vale com a senha de uma solicitação aprovada (Malote › Solicitar Exceção). O banco
+  // consome a senha e marca excecao=true; mandar excecao=true sem este id é recusado.
+  excecao_solicitacao_id?: string | null;
   // [SEM-CHAMADO] (achado real, DM-2026-0246 — complemento ao SIS-2026-0339):
   // mesma coluna usada por necessidade_de_ajuste (aprovação) e por
   // ajuste_pagamento (pagamento, malote_solicitar_ajuste_pagamento_despesa).
