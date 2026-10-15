@@ -1,9 +1,12 @@
 import { useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import {
   Briefcase, Building2, ChevronRight, FolderOpen, GitBranch, HelpCircle, Loader2,
-  MapPin, Search, ShieldCheck, UserCog, UserRound, Users,
+  MapPin, Network, Search, ShieldCheck, UserCog, UserRound, Users,
 } from "lucide-react";
+import { useVinculoEmpregado } from "@/hooks/useVinculoEmpregado";
+import { useFichaColaborador } from "@/hooks/useEspacoColaborador";
+import { PerfilColaborador } from "./FichaColaborador";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { AcessoGate } from "@/components/auth/AcessoGate";
 import { Card } from "@/components/ui/card";
@@ -91,7 +94,61 @@ export default function EspacoColaborador() {
   );
 }
 
+/**
+ * MEU PERFIL primeiro (15/10/2026, Pablo: "ao clicar em espaço do colaborador,
+ * vai aparecer o meu perfil"). A árvore da operação continua aqui, na segunda
+ * aba; `?aba=operacao` abre direto nela (é para onde a ficha volta).
+ */
 function Conteudo() {
+  const [params, setParams] = useSearchParams();
+  const aba = params.get("aba") === "operacao" ? "operacao" : "perfil";
+  const trocar = (v: "perfil" | "operacao") => {
+    const p = new URLSearchParams(params);
+    if (v === "perfil") p.delete("aba"); else p.set("aba", v);
+    setParams(p, { replace: true });
+  };
+  return (
+    <div className="p-6">
+      <div className="mb-4 inline-flex items-center gap-1 rounded-lg border bg-muted/40 p-1">
+        {([["perfil", "Meu perfil", UserRound], ["operacao", "Operação (contratos e pessoas)", Network]] as const).map(([v, rot, Icone]) => (
+          <button key={v} type="button" onClick={() => trocar(v)}
+            className={cn("inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
+              aba === v ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground")}>
+            <Icone className="h-4 w-4" /> {rot}
+          </button>
+        ))}
+      </div>
+      {aba === "perfil" ? <MeuPerfil onVerOperacao={() => trocar("operacao")} /> : <Operacao />}
+    </div>
+  );
+}
+
+function MeuPerfil({ onVerOperacao }: { onVerOperacao: () => void }) {
+  const { empregado, loading } = useVinculoEmpregado();
+  const { data: ficha, isLoading, error } = useFichaColaborador(empregado ? String(empregado.id) : undefined);
+  if (loading || (empregado && isLoading)) {
+    return (
+      <Card className="flex items-center gap-2 p-6 text-sm text-muted-foreground">
+        <Loader2 className="h-4 w-4 animate-spin" /> Carregando o seu perfil…
+      </Card>
+    );
+  }
+  if (!empregado) {
+    return (
+      <Card className="p-6 text-sm text-muted-foreground">
+        Seu login ainda não está vinculado a um cadastro de colaborador, então não há perfil para mostrar.
+        Peça ao RH para vincular em Administração › Acesso por Usuário.{" "}
+        <button type="button" className="font-medium text-primary underline" onClick={onVerOperacao}>Ver a operação</button>
+      </Card>
+    );
+  }
+  if (error || !ficha) {
+    return <Card className="p-6 text-sm text-destructive">Não foi possível carregar o seu perfil{error ? `: ${(error as Error).message}` : "."}</Card>;
+  }
+  return <PerfilColaborador ficha={ficha} proprio />;
+}
+
+function Operacao() {
   const [modo, setModo] = useState<Modo>("fluxograma");
   const [termo, setTermo] = useState("");
   const [abertos, setAbertos] = useState<Set<string>>(new Set());
@@ -110,7 +167,7 @@ function Conteudo() {
     });
 
   return (
-    <div className="p-6">
+    <div>
       <PageHeader
         title="Espaço do Colaborador"
         subtitle="A operação de ponta a ponta: contrato, posto, função e as pessoas."
