@@ -63,13 +63,36 @@ nela**.
 
 ## O risco que manda em todo o roteiro
 
-**Um slot de replicação que para de ser consumido enche o WAL da produção e
-derruba a Supabase.** É assim que uma migração mata o sistema que ela deveria
-proteger. Duas consequências práticas:
+**Um slot de replicação que para de ser consumido tem sete horas de vida.**
+
+> 🔴 **Corrigido em 15/10/2026.** Este trecho dizia, até hoje, que o slot
+> parado *"enche o WAL da produção e derruba a Supabase"*. **Está errado, e eu
+> repeti o erro ao Eduardo em relatório e em notificação.** A produção tem
+> `max_slot_wal_keep_size = 2GB`: o Postgres invalida o slot para proteger o
+> disco, e o disco nunca enche por essa via. Medido depois de 14 h de parada
+> real: WAL em 1296 MB de um teto de 4 GB, ERP respondendo 200. Detalhe,
+> aritmética e o caminho de volta na **seção 1.12**.
+
+O risco verdadeiro é o outro lado da mesma moeda: a ~300 MB/h, o slot parado
+chega aos 2 GB em **cerca de 7 horas** e é **invalidado**. O preço de uma
+parada muda de categoria nesse momento:
+
+| Parada percebida em… | Preço |
+|---|---|
+| menos de 7 h | um comando (`disparar-sincronia` ou `disparar-conflito`) |
+| mais de 7 h | **recopiar o banco inteiro** (`disparar-religar`) |
+
+Três consequências práticas:
 
 1. Enquanto existir slot nosso na produção, **alguém tem que estar olhando**.
    A consulta de vigilância está no passo 1.5 e roda a cada poucos minutos.
-2. Em qualquer passo que der errado, a primeira coisa a fazer é **soltar o
+2. **O vigia só vale se o worker estiver vivo.** O alerta por DM dispara com
+   1 GB no slot (~3,5 h de folga), e quem envia DM é o `worker/`. Em 14/10 o
+   worker estava morto desde 17h16, a replicação parou às 20h09, e o aviso que
+   existia exatamente para isso não saiu. Conferir
+   `scripts/status-banco.txt` com data de agora **antes** de deixar a
+   replicação ligada da noite para o dia.
+3. Em qualquer passo que der errado, a primeira coisa a fazer é **soltar o
    slot** — não investigar com o slot de pé.
 
 E a causa número um de slot travado neste banco já é conhecida: **11 tabelas
@@ -463,9 +486,16 @@ O que foi escrito em 13/10/2026:
    `pg_replication_slots` é view sobre função de sistema e o PostgREST não a
    expõe, então a leitura precisa do RPC. Só `service_role` executa.
 2. **o indicador no `saudeBanco.js`**, com limite de **1 GB** de atraso ou slot
-   inativo por mais de **5 minutos**. 1 GB é folgado de propósito: a produção
-   gera ~400 MB de WAL por hora em dia útil, então é mais de duas horas de
-   margem, e alto o bastante para a carga inicial não dar alarme falso.
+   inativo por mais de **5 minutos**. 1 GB é **metade do limite que mata o
+   slot** (`max_slot_wal_keep_size = 2GB`, seção 1.12): a produção gera
+   ~300 MB de WAL por hora, então o alerta sai com cerca de 3,5 h de folga
+   antes de a parada passar a custar uma recópia integral — e alto o bastante
+   para a carga inicial não dar alarme falso.
+
+   ⚠️ **O alerta só existe se o worker estiver vivo.** Quem envia a DM é o
+   `worker/`. Em 14/10 ele estava morto desde 17h16, a replicação parou às
+   20h09, e o slot foi invalidado de madrugada sem que ninguém soubesse. O
+   vigia estava certo e calado.
 
 Provado antes de entrar em produção:
 
@@ -917,6 +947,111 @@ TUDO IGUAL. Pode seguir.
 obrigatórios no passo 2.1:** o de colunas responde "a replicação vai parar?";
 o de schema responde "o cluster está igual à produção?". Em 14/10 o primeiro
 dizia *"nenhuma faltando"* enquanto faltavam 44 funções, 5 triggers e 2 views.
+
+---
+
+### 1.12 🔴 O slot tem prazo de validade: 2 GB (15/10/2026)
+
+A parada de 14/10 às 20h09 (seção 1.10) não foi destravada naquela noite. Na
+manhã de 15/10 o log do líder repetia, de 5 em 5 segundos:
+
+```
+ERROR:  could not start WAL streaming: ERROR:  can no longer get changes
+        from replication slot "erp_corte"
+DETAIL:  This slot has been invalidated because it exceeded the maximum
+         reserved size.
+```
+
+E o catálogo da produção:
+
+```
+ slot_name | active | restart_lsn | confirmed_flush_lsn | wal_status
+ erp_corte |   f    |   (vazio)   |    E7/3B13A1C0      |    lost
+```
+
+#### Duas correções a este roteiro, de uma vez
+
+**1. A produção nunca ia encher o disco.** Este roteiro dizia — e eu repeti ao
+Eduardo em relatório e em notificação — que slot parado enche o disco e põe a
+produção fora do ar. **Na Supabase, não.** `max_slot_wal_keep_size = 2GB`: o
+Postgres se recusa a guardar mais que isso para um slot parado e **invalida o
+slot** para proteger o disco. Medido depois de 14 h de parada: WAL em 1296 MB,
+teto `max_wal_size` de 4 GB, ERP respondendo 200. O risco que eu anunciei
+estava coberto pelo próprio banco.
+
+**2. Em troca, a parada tem um cronômetro — e ele é curto.**
+
+| | |
+|---|---|
+| WAL que a produção gera | ~300 MB/h (medido em 3 min, confirmado em 14 h) |
+| teto por slot parado | 2 GB |
+| **prazo para destravar** | **~7 horas** |
+| alerta do vigia (1 GB) | ~3,5 h de folga |
+
+Dentro das 7 h, destravar custa um comando. Passando delas, o preço vira
+**recopiar o banco inteiro** — de "3 minutos" para "a noite".
+
+Os valores a conferir antes de confiar nesta aritmética, porque são da
+instância e podem mudar:
+
+```sql
+select name, setting from pg_settings
+ where name in ('max_slot_wal_keep_size','max_wal_size','wal_keep_size');
+```
+
+#### O que mata o slot é a falta do aviso, não a parada
+
+O vigia da migration `20261014000020` alerta por DM com 1 GB no slot — metade
+do limite, de propósito. Em 14/10 ele **não avisou ninguém**, porque quem envia
+DM é o `worker/`, e o worker estava morto desde 17h16. A parada foi às 20h09.
+
+**Consequência operacional:** o worker não é um acessório deste roteiro, é
+parte da proteção. Antes de deixar a replicação ligada da noite para o dia,
+conferir que ele está vivo — `scripts/status-banco.txt` com data de agora — e
+não só que o vigia existe.
+
+#### `infra/ha/religar-replicacao.sh`
+
+Para slot perdido não existe conserto incremental: o WAL que a assinatura
+precisava **foi apagado**. O único caminho é copiar tudo de novo.
+
+O `ligar-replicacao.sh` não serve para isto: um dos pré-requisitos dele é
+`public` do cluster **vazio**, porque com `copy_data=true` dado preexistente
+viraria conflito de chave na carga inicial. Daí o script novo.
+
+```bash
+bash infra/ha/disparar-religar.sh              # só diz o que faria
+bash infra/ha/disparar-religar.sh --aplicar    # recopia
+```
+
+Seis passos: `DROP` da assinatura (DISABLE → `slot_name=none` → DROP, nessa
+ordem, senão o DROP fica pendurado tentando falar com um slot que já não
+existe), soltar o slot órfão na produção, `TRUNCATE` nas 657 tabelas de
+`public`, `CREATE SUBSCRIPTION` com `copy_data=true`, acompanhar até
+`647/647 PRONTA`, reaplicar a trava da seção 1.9.
+
+Três decisões que valem registro:
+
+- **Uma `TRUNCATE` só, com as 657 tabelas na mesma lista.** Assim as chaves
+  estrangeiras entre elas ficam satisfeitas **sem `CASCADE`** — e `CASCADE`
+  aqui poderia levar tabela de fora de `public` sem aparecer no log. Partição
+  não entra na lista: o `TRUNCATE` do pai já leva as filhas.
+- **A trava de recusa.** Se o `wal_status` não for `lost` (e o slot não for
+  inexistente), o script **se recusa a rodar**. Sem isso, um `--aplicar`
+  digitado na hora errada apagaria 1,5 milhão de linhas de um cluster
+  perfeitamente saudável para recopiá-las. Os cinco estados foram testados:
+  só `lost` e slot ausente liberam.
+- **O `TRUNCATE` não toca em schema.** Função, view, trigger e política
+  continuam lá — mas a produção andou desde a última conferência, então rodar
+  `disparar-schema.sh` e `disparar-sincronia.sh` depois da recopia é parte do
+  procedimento, não zelo extra.
+
+#### A ordem entre o teste de failover e a recopia
+
+Trocar o líder **no meio da cópia inicial** derruba a cópia: o processo que
+copia roda no líder. Teste de failover **antes** do `--aplicar`, ou depois do
+`647/647 PRONTA` — nunca no meio.
+
 
 ---
 
