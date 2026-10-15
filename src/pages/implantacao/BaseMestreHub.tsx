@@ -128,11 +128,23 @@ function Conteudo() {
         <>
           <div className="mb-5 grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
             <CartaoIndicador titulo="Contrato" valor={resumo.contrato_nome ?? "—"} icone={<Database className="h-5 w-5" />} tom="blue" />
-            <CartaoIndicador titulo="Postos" valor={num(resumo.qt_postos)} icone={<Layers className="h-5 w-5" />} tom="green" />
+            {/* Postos = linhas vigentes da Planilha de Custo, a mesma conta de
+                /app/licitacoes/planilha-custo ("48 postos · 177 pessoas"). */}
+            <CartaoIndicador titulo="Postos" valor={num(resumo.qt_postos)} detalhe={resumo.qt_postos_orcados ? `${num(resumo.qt_postos_orcados)} orçados` : undefined} icone={<Layers className="h-5 w-5" />} tom="green" />
             <CartaoIndicador titulo="Colaboradores" valor={num(resumo.qt_colaboradores)} icone={<Users className="h-5 w-5" />} tom="amber" />
             <CartaoIndicador titulo="Locais" valor={num(resumo.qt_locais)} icone={<MapPin className="h-5 w-5" />} tom="violet" />
             <CartaoIndicador titulo="Cidades" valor={num(resumo.qt_cidades)} icone={<Building2 className="h-5 w-5" />} tom="slate" />
-            <CartaoIndicador titulo="Valor Mensal" valor={brl(resumo.valor_mensal)} icone={<Coins className="h-5 w-5" />} tom="blue" />
+            <CartaoIndicador
+              titulo="Valor Mensal"
+              valor={brl(resumo.valor_mensal)}
+              detalhe={
+                resumo.valor_mensal_contrato && Math.abs((resumo.valor_mensal ?? 0) - resumo.valor_mensal_contrato) >= 0.01
+                  ? `Contrato: ${brl(resumo.valor_mensal_contrato)}`
+                  : "Pela Planilha de Custo"
+              }
+              icone={<Coins className="h-5 w-5" />}
+              tom="blue"
+            />
           </div>
 
           <div className="mb-5 grid gap-4 lg:grid-cols-3">
