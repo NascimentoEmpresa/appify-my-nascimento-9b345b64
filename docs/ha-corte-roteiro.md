@@ -1051,6 +1051,173 @@ Três decisões que valem registro:
 Trocar o líder **no meio da cópia inicial** derruba a cópia: o processo que
 copia roda no líder. Teste de failover **antes** do `--aplicar`, ou depois do
 `647/647 PRONTA` — nunca no meio.
+---
+
+### 1.13 Backup do cluster — o que a Supabase fazia por nós (15/10/2026)
+
+Hoje quem faz cópia do banco é a Supabase, e os dois workflows do GitHub
+(`backup_banco.yml`, `backup_storage.yml`) apontam para ela. **No dia seguinte
+à virada, o cluster passa a ser a produção — e, até 15/10, sem backup nenhum.**
+Era o item mais fácil de esquecer e o mais caro de esquecer.
+
+#### `infra/ha/backup-cluster.sh`, com timer nos dois nós
+
+```
+banco1  03h10 UTC (00h10 BRT)
+banco2  05h10 UTC (02h10 BRT)
+```
+
+Os dois tiram a cópia do **líder** (via HAProxy em `127.0.0.1:5000`), em
+horários diferentes para não se atropelarem. Resultado: duas cópias
+independentes, **em dois provedores**, sem custo novo.
+
+Tirar do standby local pareceria mais gentil com o líder, mas `pg_dump` longo
+em standby morre com `canceling statement due to conflict with recovery`. No
+líder é snapshot: **não trava escrita**.
+
+#### São dois arquivos, e o segundo não é detalhe
+
+| | |
+|---|---|
+| `banco.dump` | `pg_dump -Fc` do `postgres` inteiro — `public`, `auth`, `storage` |
+| `globais.sql` | `pg_dumpall --globals-only`: **os papéis e as senhas deles** |
+
+`pg_dump` **não leva papel nenhum**. Restaurar sem os papéis prontos já nos
+custou um susto documentado: entra 1 política de RLS de 1.416 e o banco sobe
+sem controle de acesso, em silêncio. A ordem de restauração é `globais.sql`
+**primeiro**, `pg_restore` depois.
+
+E **nunca `--no-privileges`**: ele apaga todos os `GRANT` do dump e o storage
+passa a mentir dizendo `violates row-level security policy`. A frase está no
+cabeçalho do script porque a tentação de "limpar o dump" já apareceu antes.
+
+#### Medido na primeira execução
+
+```
+18 papeis
+68,1 MB de dump  ->  61,8 MB cifrados      (46 s)
+pg_restore -l enxerga 698 tabelas com dados
+cifrado para a chave E1AB789FA3F1159F (Eduardo, backup ERP)
+gpg --list-secret-keys nos dois nos:  0
+```
+
+A última linha é a que importa: **o servidor não consegue abrir o próprio
+backup.** Isso é o que permite levar o arquivo para fora sem medo.
+
+O script se recusa a publicar um arquivo com menos de 100 tabelas com dados —
+o caso real que isso pega é disco cheio ou conexão cortada no meio, que gera
+um arquivo truncado de tamanho convincente.
+
+#### Levar para fora: `.github/workflows/backup_cluster.yml`
+
+Dois backups em dois provedores ainda são dois servidores nossos. O workflow
+diário (04h00 UTC) puxa o `.gpg` e guarda como artefato no GitHub.
+
+O runner **não faz o dump**: o Postgres do cluster não atende na internet —
+só escuta no IP do túnel e no HAProxy local, e abrir a 5432 para fora seria
+desfazer metade do trabalho. Ele **puxa** o arquivo que o nó já fez, por uma
+chave SSH amarrada a um comando único (`backup-cluster.sh --enviar`), sem
+shell, sem pty, sem port-forward. No pior caso — secret do GitHub vazado — o
+que vaza é um arquivo que o vazador não abre.
+
+**Falta um passo que só o Eduardo pode dar** (o secret):
+
+```bash
+ssh-keygen -t ed25519 -f backup-cluster -N "" -C "backup-github"
+ssh -p 8443 root@216.238.120.171 \
+  "useradd -m -s /bin/bash backup 2>/dev/null; mkdir -p /home/backup/.ssh
+   echo 'command=\"/usr/local/sbin/backup-cluster.sh --enviar\",no-pty,no-port-forwarding,no-agent-forwarding,no-X11-forwarding $(cat backup-cluster.pub)' \
+     >> /home/backup/.ssh/authorized_keys
+   chown -R backup:backup /home/backup/.ssh && chmod 700 /home/backup/.ssh
+   chmod 600 /home/backup/.ssh/authorized_keys
+   usermod -aG \$(stat -c %G /var/backups/erp-cluster) backup 2>/dev/null || true"
+gh secret set CLUSTER_BACKUP_SSH_KEY < backup-cluster
+rm backup-cluster backup-cluster.pub      # a copia que vale e a do GitHub
+```
+
+#### O que ainda não está coberto
+
+Os **arquivos** dos anexos (5,8 GB). Eles vivem nos dois nós pelo espelho de
+1 minuto — dois provedores —, mas **isso é redundância, não backup**: apagou
+dos dois, apagou. O `backup_storage.yml` hoje baixa da Supabase e precisa ser
+reapontado para o cluster depois da virada.
+
+---
+
+### 1.14 O segundo nó atendendo o mesmo endereço (15/10/2026)
+
+O banco trocava de líder sozinho, mas `api.grpnascimento.com.br` resolvia **só
+para o banco1**. O nó que morresse inteiro levava o ERP junto, com o banco
+intacto do outro lado — metade da alta disponibilidade que montamos.
+
+O que tornou isto barato, medido em 15/10:
+
+| | |
+|---|---|
+| banco1 | Vultr, **Osasco/SP** |
+| banco2 | Linode, **São Paulo/SP** |
+| RTT do túnel | **1,5 ms** |
+
+Dividir o tráfego entre os dois **não custa latência nenhuma**. E o banco2 já
+tinha a pilha inteira de pé (Kong, PostgREST, GoTrue, Storage, Functions) e o
+HAProxy dele já enxergava o líder corretamente — faltava só o HTTPS.
+
+#### Por que o certificado é copiado, e não emitido
+
+O Let's Encrypt valida por HTTP-01: ele bate no próprio domínio. Com **um**
+registro A (banco1), o banco2 nunca seria alcançado e o Caddy ficaria em retry
+eterno — servindo, nesse meio-tempo, um certificado interno que o navegador
+recusa. Com **dois** registros A, a validação cai num dos dois por sorteio e
+falha em metade das vezes.
+
+A saída é a ordem certa: copiar o certificado que o banco1 já tem, subir o
+banco2 **já servindo certificado válido**, e só então publicar o segundo
+registro A. É a mesma lição do domínio na Lovable — serviço pronto primeiro,
+DNS depois.
+
+`bash infra/ha/expor-api-https.sh --caddy-banco2` faz isso, e é repetível: é
+ele também que leva a cópia depois de cada renovação.
+
+#### O que foi provado antes de pedir o DNS
+
+```
+https pelo nome, resolvendo no banco2:
+  /auth/v1/health                 -> 200
+  /rest/v1/CHAMADO_SISTEMA?...    -> 200
+  tls_verify_result = 0  (o navegador aceitaria), 93 ms
+  issuer: Let's Encrypt YE2,  vence 12/01/2027
+  fingerprint SHA256 IDENTICA a do banco1
+```
+
+E a conferência que decidia se round-robin era seguro ou desastre:
+
+```
+JWT_SECRET        banco1 = banco2   IGUAL
+ANON_KEY          banco1 = banco2   IGUAL
+SERVICE_ROLE_KEY  banco1 = banco2   IGUAL
+URL_EXTERNA/SITE  banco1 = banco2   IGUAL
+```
+
+Se o `JWT_SECRET` diferisse, um token emitido por um nó seria recusado pelo
+outro e **metade dos usuários seria deslogada a cada requisição**. Era a
+pergunta que tinha que ser respondida antes de publicar o DNS, não depois.
+
+#### Falta um passo, e é no registro.br
+
+```
+acrescentar   A   api   172.237.48.8      (mantendo o 216.238.120.171)
+```
+
+Com os dois registros, o navegador tenta um e, em falha de conexão, cai no
+outro. **Não é um balanceador** — não há verificação de saúde, e um nó que
+responda errado (em vez de não responder) continua recebendo metade. É o que
+dá para fazer sem balanceador pago, e é muito melhor do que um endereço só.
+
+⚠️ **Renovação:** quem renova é o banco1. O certificado atual vence em
+**12/01/2027** e nada automatiza a cópia ainda — rodar o `--caddy-banco2` de
+novo depois da renovação. Esta frase existe para ninguém descobrir isso pelo
+navegador.
+
 
 
 ---
@@ -1292,11 +1459,11 @@ começarmos. É o motivo de a recópia vir antes de qualquer outra coisa.
 
 ```
 ⬜ recopiar (disparar-religar.sh --aplicar) e conferir os três conferidores
-⬜ anexos: delta de 368 arquivos (produção 11.620 x cluster 11.252)
-⬜ auth/storage: produção com 156 logins; o cluster tem a carga de 13/10
-⬜ Edge Functions: falta `tvg-ia` no cluster (63 de 64)
-⬜ backup cifrado passando a sair do cluster, não da Supabase
-⬜ endpoint HTTP: api.grpnascimento.com.br aponta só para o banco1
+✅ anexos: 12.041 de 12.041 no disco, 5.806 MB, 0 sem xattr   15/10 16h
+✅ auth/storage: 157 logins e 12.053 objetos, tudo batendo    15/10 16h
+✅ Edge Functions: 64 de 64 nos DOIS nós, idênticas ao repo   15/10 16h
+✅ backup cifrado do cluster, timer diário nos dois nós       15/10 16h
+🔸 endpoint HTTP: banco2 pronto e servindo; falta o 2º registro A
 ⬜ a noite curta: passos 2.1 a 2.7
 ⬜ conferir client.ts depois do build do Lovable
 ⬜ só então: desligar Render e Supabase

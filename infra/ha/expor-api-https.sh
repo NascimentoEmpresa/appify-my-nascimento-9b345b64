@@ -29,6 +29,9 @@
 #    --liberar-443   so entao tira a 443 do sshd. Ele proprio reconfere a 8443
 #                    antes de mexer, e recusa se ela nao estiver respondendo.
 #    --caddy         instala o Caddy e sobe o HTTPS. Exige o DNS ja apontando.
+#    --caddy-banco2  poe o SEGUNDO no atendendo o mesmo endereco, com o
+#                    certificado copiado do banco1. Rodar ANTES de publicar o
+#                    segundo registro A.
 #    --conferir      mede o resultado de fora.
 #
 #  DNS: antes do --caddy, `A api.grpnascimento.com.br -> 216.238.120.171` tem
@@ -233,6 +236,101 @@ CADDY
     echo -n 'caddy: '; systemctl is-active caddy
   "
   echo "Agora: bash infra/ha/expor-api-https.sh --conferir"
+  ;;
+
+--caddy-banco2)
+  # O SEGUNDO NO ATENDENDO O MESMO ENDERECO.
+  #
+  # Problema que isto resolve: o banco troca de lider sozinho, mas
+  # `api.grpnascimento.com.br` resolvia so para o banco1. O no que morresse
+  # inteiro levava o ERP junto, com o banco intacto do outro lado -- metade da
+  # alta disponibilidade que montamos.
+  #
+  # Medido em 15/10/2026, e e o que torna isto barato: os dois nos estao em Sao
+  # Paulo (Vultr Osasco e Linode SP) e o tunel entre eles tem 1,5 ms. Dividir o
+  # trafego entre os dois nao custa latencia nenhuma.
+  #
+  # POR QUE AQUI O CERTIFICADO E COPIADO, E NAO EMITIDO
+  # O Let's Encrypt valida por HTTP-01: ele bate no proprio dominio. Com um
+  # registro A so (banco1), o banco2 nunca seria alcancado e o Caddy ficaria em
+  # retry eterno -- servindo, nesse meio tempo, um certificado interno que o
+  # navegador recusa. Com DOIS registros A, a validacao cai em um dos dois por
+  # sorteio e falha na metade das vezes.
+  #
+  # A saida e a ordem certa: copiar o certificado que o banco1 ja tem, subir o
+  # banco2 JA servindo um certificado valido, e so depois publicar o segundo
+  # registro A. E a mesma licao do dominio na Lovable: DNS primeiro, servico
+  # depois -- ou, aqui, servico PRONTO primeiro, DNS depois.
+  #
+  # RENOVACAO: quem renova e o banco1, sozinho, e este comando e quem leva a
+  # copia. Rodar de novo depois de cada renovacao (o atual vence em
+  # 12/01/2027). Nao ha automacao para isso ainda, e esta frase existe para
+  # ninguem descobrir pelo navegador.
+  CERT="/var/lib/caddy/.local/share/caddy/certificates/acme-v02.api.letsencrypt.org-directory/$DOMINIO"
+  echo "== copiando o certificado do banco1 para o banco2 (sem tocar o disco daqui)"
+  ssh -p 8443 -o BatchMode=yes "root@$BANCO2" "mkdir -p /etc/caddy/cert-api && chmod 700 /etc/caddy/cert-api"
+  for F in "$DOMINIO.crt" "$DOMINIO.key"; do
+    ssh -p 8443 -o BatchMode=yes "root@$BANCO1" "cat '$CERT/$F'" \
+      | ssh -p 8443 -o BatchMode=yes "root@$BANCO2" "cat > /etc/caddy/cert-api/$F && chmod 600 /etc/caddy/cert-api/$F" \
+      || { echo "falhou copiar $F" >&2; exit 1; }
+    printf '   %s ok\n' "$F"
+  done
+
+  em "$BANCO2" 8443 "
+    set -e
+    if ! command -v caddy >/dev/null; then
+      apt-get update -qq
+      apt-get install -y -qq debian-keyring debian-archive-keyring apt-transport-https curl
+      curl -fsSL https://dl.cloudsmith.io/public/caddy/stable/gpg.key | gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+      echo 'deb [signed-by=/usr/share/keyrings/caddy-stable-archive-keyring.gpg] https://dl.cloudsmith.io/public/caddy/stable/deb/debian any-version main' > /etc/apt/sources.list.d/caddy-stable.list
+      apt-get update -qq && apt-get install -y -qq caddy
+    fi
+    id caddy >/dev/null 2>&1 && chown -R caddy:caddy /etc/caddy/cert-api || true
+    cat > /etc/caddy/Caddyfile <<'CADDY'
+# A API do ERP, no SEGUNDO no. Identico ao banco1 em tudo menos uma linha: o
+# certificado vem de arquivo, nao do Let's Encrypt.
+#
+# CORS NAO e tratado aqui, de proposito: quem responde ao preflight e o Kong,
+# que conhece as rotas. Tratar nos dois duplicaria Access-Control-Allow-Origin
+# e o navegador recusa cabecalho repetido -- falha que so aparece no navegador,
+# nunca no curl.
+api.grpnascimento.com.br {
+	tls /etc/caddy/cert-api/api.grpnascimento.com.br.crt /etc/caddy/cert-api/api.grpnascimento.com.br.key
+	encode gzip
+	reverse_proxy 127.0.0.1:8000 {
+		header_up X-Forwarded-For {remote_host}
+		header_up X-Forwarded-Proto {scheme}
+	}
+}
+CADDY
+    caddy validate --config /etc/caddy/Caddyfile
+    command -v ufw >/dev/null && ufw allow 443/tcp >/dev/null 2>&1 || true
+    systemctl enable --now caddy
+    systemctl restart caddy
+    sleep 6
+    echo -n '   caddy no banco2: '; systemctl is-active caddy
+  "
+
+  echo
+  # A chave anon nao e gravada em arquivo nenhum: vem do no, em tempo de uso.
+  ANON=$(ssh -p 8443 -o BatchMode=yes "root@$BANCO1" "grep -m1 '^ANON_KEY=' /opt/erp/infra/failover/.env | cut -d= -f2-" | tr -d '
+')
+
+  echo "== provando o banco2 pelo nome, antes de qualquer mudanca de DNS"
+  echo "   (--resolve finge que o DNS ja aponta para la; o resto e real)"
+  for P in /auth/v1/health '/rest/v1/CHAMADO_SISTEMA?select=id&limit=1'; do
+    printf '   %-44s -> %s\n' "$P" \
+      "$(curl -s -o /dev/null -w '%{http_code}' -m 15 --resolve "$DOMINIO:443:$BANCO2" \
+           -H "apikey: $ANON" -H "Authorization: Bearer $ANON" "https://$DOMINIO$P")"
+  done
+  echo -n '   certificado servido pelo banco2: '
+  curl -sv --resolve "$DOMINIO:443:$BANCO2" "https://$DOMINIO/" 2>&1 \
+    | grep -E 'subject:|expire date' | tr '\n' ' ' | sed 's/^ *//'
+  echo
+  echo
+  echo "Se as duas linhas acima vieram 200 e o certificado e o do dominio, o"
+  echo "banco2 ja atende. Falta so o DNS, no registro.br:"
+  echo "   acrescentar  A  api  $BANCO2   (mantendo o do $BANCO1)"
   ;;
 
 --conferir)
