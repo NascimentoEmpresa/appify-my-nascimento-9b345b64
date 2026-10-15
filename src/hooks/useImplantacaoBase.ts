@@ -4,12 +4,19 @@
 // Nenhuma delas calcula nada no cliente: os números vêm das RPCs criadas na
 // migration 20261015000001, que já aplicam o gate de acesso por menu.
 //
-// POR QUE NÃO É "AO VIVO": a tela abre lendo o que está gravado em
-// IMPLANTACAO_BASE_*, e só o botão "Atualizar da base" (semear) repuxa de
-// contratos / planilha_custo / sup_posto / sup_funcao_item. A instância do
-// Supabase é Small e já caiu três vezes por CPU, conexão e memória
-// (23/09/2026) — recalcular agregado a cada abertura de tela era custo
-// recorrente sem ninguém pedindo. Decidido com o Eduardo em 15/10/2026.
+// O QUE É CALCULADO E O QUE É GUARDADO: o DETALHE (postos, locais, enxoval)
+// fica gravado em IMPLANTACAO_BASE_* e só muda no botão "Atualizar da base"
+// (semear) — a instância do Supabase é Small e já caiu três vezes por CPU,
+// conexão e memória (23/09/2026), e é no detalhe que mora o custo. Já a LISTA
+// de contratos sai calculada da RPC `implantacao_base_contratos_painel`: é uma
+// agregada só, sobre as 1.868 linhas da planilha_custo, e é o que garante que
+// a tela mostre todos os contratos e nunca divirja de
+// /app/licitacoes/planilha-custo. Decidido com o Eduardo em 15/10/2026.
+//
+// POSTO x PESSOA: a Licitação chama de "posto" a LINHA da planilha de custo
+// ("48 postos · 177 pessoas" em PlanilhaCusto.tsx), e `planilha_custo.qt_postos`
+// conta GENTE. Quem confundir os dois mostra 177 onde a Licitação mostra 48 —
+// foi exatamente o que aconteceu antes da migration 20261015000006.
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "@/hooks/use-toast";
@@ -27,9 +34,14 @@ export interface ResumoBase {
   cliente: string | null;
   cnpj_contratante: string | null;
   objeto: string | null;
+  /** Custo mensal pela Planilha de Custo (linhas vigentes EXECUTADO). */
   valor_mensal: number | null;
+  /** O valor digitado no cabeçalho do contrato. Divergiu da planilha. */
+  valor_mensal_contrato: number | null;
+  /** POSTOS = linhas vigentes da planilha, não gente. Ver `qt_colaboradores`. */
   qt_postos: number;
   qt_colaboradores: number;
+  qt_postos_orcados: number;
   qt_locais: number;
   qt_cidades: number;
   qt_tipos_servico: number;
@@ -76,8 +88,11 @@ export interface ReuniaoCandidata {
 
 export interface LinhaFinanceiro {
   posto: string;
+  /** Custo mensal de UMA pessoa naquele posto (planilha_custo.total_por_empregado). */
   valor_posto: number | null;
   qt_postos: number;
+  qt_funcionarios: number;
+  /** valor_posto × qt_funcionarios — o multiplicador é gente, não linha. */
   valor_mensal_postos: number | null;
   faixa_custo: "alta" | "media" | "baixa";
   participacao: number | null;
@@ -242,29 +257,46 @@ export function useDesvincularReuniao() {
   });
 }
 
-export interface BaseCadastrada {
-  id: string;
+/**
+ * Uma linha da lista da Base Mestre: um CONTRATO, cadastrado ou não.
+ *
+ * Antes a lista lia a tabela IMPLANTACAO_BASE direto, e por isso só mostrava
+ * contrato já carregado — um, o do chamado (reclamado em 15/10/2026). Agora
+ * vem da RPC, que parte de `contratos` e agrega `planilha_custo` pela mesma
+ * regra de /app/licitacoes/planilha-custo.
+ */
+export interface ContratoPainel {
   contrato_id: string;
-  cnpj_contratante: string | null;
-  valor_mensal: number | null;
-  qt_postos: number;
-  qt_colaboradores: number;
+  contrato_nome: string;
+  cliente: string | null;
+  data_inicio: string | null;
+  status_contrato: string;
+  base_id: string | null;
   situacao: string;
   sincronizado_em: string | null;
-  contratos: { nome: string; cliente: string | null; data_inicio: string | null; quant_func_estipulado: number | null } | null;
+  cadastrada: boolean;
+  /** POSTOS: linhas vigentes EXECUTADO. Para o piloto, 48 — não 177. */
+  qt_postos: number;
+  /** PESSOAS: soma de planilha_custo.qt_postos, que lá conta gente. */
+  qt_colaboradores: number;
+  valor_mensal: number;
+  qt_postos_orcados: number;
+  qt_colaboradores_orcados: number;
+  valor_mensal_orcado: number;
+  /** contratos.valor_mensal_contratado — digitado no cabeçalho do contrato. */
+  valor_mensal_contrato: number | null;
+  quant_func_estipulado: number | null;
 }
 
-/** Todas as bases já cadastradas — a tabela da tela de cadastro. */
-export function useBasesCadastradas() {
+/** A tabela da tela de cadastro: todo contrato, com os números da Licitação. */
+export function usePainelContratos() {
   return useQuery({
-    queryKey: ["implantacao-base", "lista"],
-    queryFn: async (): Promise<BaseCadastrada[]> => {
-      const { data, error } = await sb
-        .from("IMPLANTACAO_BASE")
-        .select("id, contrato_id, cnpj_contratante, valor_mensal, qt_postos, qt_colaboradores, situacao, sincronizado_em, contratos(nome, cliente, data_inicio, quant_func_estipulado)")
-        .order("created_at", { ascending: false });
-      if (error) throw error;
-      return (data ?? []) as BaseCadastrada[];
+    queryKey: ["implantacao-base", "painel"],
+    staleTime: 5 * 60 * 1000,
+    queryFn: async (): Promise<ContratoPainel[]> => {
+      const { data, error } = await sb.rpc("implantacao_base_contratos_painel");
+      if (error) throw new Error(error.message);
+      return (data ?? []) as ContratoPainel[];
     },
   });
 }

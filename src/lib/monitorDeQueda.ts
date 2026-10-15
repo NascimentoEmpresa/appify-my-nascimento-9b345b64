@@ -14,8 +14,8 @@ import { SUPABASE_ANON_KEY, SUPABASE_URL } from "@/integrations/supabase/env";
 // Como detecta, sem falso alarme:
 //   1. envolve o window.fetch e observa SÓ as chamadas ao Supabase (REST,
 //      Auth, Storage). Falha de rede ou resposta 5xx vira SUSPEITA;
-//   2. suspeita não derruba nada: dispara o teste de saúde — GET no
-//      /rest/v1/ (o PostgREST responde 503 quando não alcança o banco).
+//   2. suspeita não derruba nada: dispara o teste de saúde — RPC
+//      sistema_saude() (o PostgREST responde 503 quando não alcança o banco).
 //      Só com DUAS falhas seguidas, 3 s de intervalo, o estado vira "fora".
 //      Um 500 de uma RPC com bug não passa daqui, porque a saúde responde ok;
 //   3. com o estado "fora", testa de novo a cada 15 s e, quando responde,
@@ -60,14 +60,25 @@ export const monitorDeQueda = {
 const ehSupabase = (url: string) =>
   url.startsWith(SUPABASE_URL) && !url.startsWith(`${SUPABASE_URL}/functions/`);
 
-/** O banco responde? true = sim (qualquer status < 500). */
+/**
+ * O banco responde? true = sim (qualquer status < 500).
+ *
+ * 15/10/2026: era GET /rest/v1/ — a Supabase passou a devolver 401 ("só
+ * service_role") nesse endereço SEM tocar no banco, então o teste dizia "de
+ * pé" com o Postgres caído e a tela de queda nunca entrava (o ERP ficava na
+ * tela de início vazia). Agora é a RPC sistema_saude() (mig
+ * 20261015000013): obriga o PostgREST a pegar conexão e rodar SQL — banco
+ * fora ou lotado responde 503/504.
+ */
 export async function servidorRespondendo(): Promise<boolean> {
   const f = fetchOriginal ?? window.fetch.bind(window);
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), TEMPO_LIMITE_SAUDE_MS);
   try {
-    const r = await f(`${SUPABASE_URL}/rest/v1/`, {
-      headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}` },
+    const r = await f(`${SUPABASE_URL}/rest/v1/rpc/sistema_saude`, {
+      method: "POST",
+      headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}`, "Content-Type": "application/json" },
+      body: "{}",
       cache: "no-store",
       signal: ctrl.signal,
     });

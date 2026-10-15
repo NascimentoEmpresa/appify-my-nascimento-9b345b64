@@ -171,11 +171,16 @@ function Reprodutor({ itens, nome, ativa, token, aoMostrar }: { itens: ItemTv[];
   useEffect(() => { aoMostrar(naTela ? naTela.split("#")[0] : null); }, [naTela, aoMostrar]);
 
   // Tudo, menos vídeo, troca pelo tempo cadastrado (vídeo troca ao acabar).
+  // 15/10/2026: o cronômetro depende do ID/tempo do item, NÃO do objeto `atual` —
+  // a consulta ao ERP a cada 15 s (INTERVALO_PING_S) devolve uma lista nova, o
+  // objeto mudava e o timer recomeçava do zero: item de 30 s nunca trocava
+  // (a gestão mostrava "2 de 2 · há 1513 s").
+  const tempoAtual = atual && atual.tipo !== "video" ? Math.max(3, atual.duracao_seg) : null;
   useEffect(() => {
-    if (!atual || itens.length < 2 || atual.tipo === "video") return;
-    const t = window.setTimeout(proximo, Math.max(3, atual.duracao_seg) * 1000);
+    if (tempoAtual == null || itens.length < 2) return;
+    const t = window.setTimeout(proximo, tempoAtual * 1000);
     return () => window.clearTimeout(t);
-  }, [atual, itens.length, proximo]);
+  }, [atual?.id, idx, tempoAtual, itens.length, proximo]);
 
   if (!ativa) return <Centro titulo={nome} sub="TV pausada no ERP" />;
   if (!atual) return <Ocioso nome={nome} />;

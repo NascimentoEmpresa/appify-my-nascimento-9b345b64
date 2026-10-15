@@ -34,6 +34,7 @@ import { NIVEIS_JURIDICO, NIVEL_OK, eventoParecerJuridico, nivelJuridico, seloJu
 import { STATUS_COM_RESPONSAVEL, STATUS_FILA_APROVACAO, alvoDoFiltro, devePerguntarAssumir, textoConfirmarAssumir, vagaTemResponsavel, type FiltroResponsavel } from "@/lib/recrutamento/responsavelVaga";
 import { vagaTemEtapa } from "@/lib/recrutamento/statusDetalhado";
 import { EnxovalAdmissao, type EnxovalAdmissaoHandle } from "@/components/recrutamento/EnxovalAdmissao";
+import { PedidoComprasCandidato } from "@/components/recrutamento/PedidoComprasCandidato";
 
 // ── Tipos ──────────────────────────────────────────────────────────
 interface Solicitacao {
@@ -129,6 +130,9 @@ interface Curriculo {
   sst_obs?: string;
   compras_ok?: boolean | null;
   compras_obs?: string;
+  /** 15/10/2026 (mig 20261015000011): admissão sem pedido do Compras (o Compras só dá ciência). */
+  compras_dispensado?: boolean | null;
+  compras_dispensa_motivo?: string | null;
   motivo_reprovacao?: string;
   // Desistência é do CANDIDATO (reprovação é da empresa). `desistencia_etapa`
   // guarda onde ele estava, senão o indicador de perda fica cego.
@@ -662,6 +666,13 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
   // Urgente ao mandar pra SST + COMPRAS (14/10/2026, mig 20261014000045): cada
   // setor marcado recebe um card tremendo na tela até dar "visto".
   const [candUrgente, setCandUrgente] = useState({ sst: false, compras: false, motivo: "" });
+  // Envio pra SST + COMPRAS (15/10/2026, mig 20261015000011): observação para o
+  // Compras (vai no pedido) e "não precisa de pedido" — o Compras recebe igual,
+  // só para ficar ciente, com o motivo.
+  const [candCompras, setCandCompras] = useState({ obs: "", dispensa: false, motivo: "" });
+  // Pedido de materiais de cada candidato do quadro (ID + status) e o aberto no "Compras" do card.
+  const [pedidosVaga, setPedidosVaga] = useState<Record<string, { protocolo: string; status: string }>>({});
+  const [pedidoAberto, setPedidoAberto] = useState<{ id: number; nome: string } | null>(null);
   // Enxoval da função (25/09/2026, mig 246): o card de tamanhos do modal de
   // SST + COMPRAS — o Confirmar grava por ele antes de mover o candidato.
   const enxovalRef = useRef<EnxovalAdmissaoHandle>(null);
@@ -1008,6 +1019,8 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
       .order("etapa_changed_at", { ascending: false });
     const lista = (data ?? []).map(mapCurriculo);
     setCandidatos(lista);
+    // ID e status do pedido de materiais de quem está (ou passou) em SST + COMPRAS.
+    sb.rpc("rec_pedidos_da_vaga", { p_vaga_id: vagaId }).then(({ data: ps }) => setPedidosVaga((ps as Record<string, { protocolo: string; status: string }>) ?? {}));
     // Contador de documentos no card: uma consulta só para todos os candidatos
     // do quadro, senão seriam N chamadas a cada render do kanban.
     const ids = lista.map((c: Curriculo) => c.id);
@@ -1905,13 +1918,30 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
     const extra: Record<string, unknown> = {};
     const origem = candidatos.find(c => c.id === id)?.etapa_processo;
     if (novaEtapa === ETAPA_SST_COMPRAS) {
-      if (!enxovalRef.current) { toast("O enxoval ainda está carregando.", "err"); return; }
-      setEnviandoEnxoval(true);
-      const r = await enxovalRef.current.enviar();
-      setEnviandoEnxoval(false);
-      if (!r.ok) { toast(r.erro, "err"); return; }
-      if (r.resumo) extra.compras_necessidades = r.resumo;
-      if (r.foto) extra.cracha_foto_path = r.foto;
+      const obsCompras = candCompras.obs.trim();
+      if (candCompras.dispensa) {
+        // Sem pedido: o Compras recebe o candidato só para ficar ciente.
+        if (candCompras.motivo.trim().length < 5) { toast("Diga por que não precisa de pedido do Compras.", "err"); return; }
+        extra.compras_dispensado = true;
+        extra.compras_dispensa_motivo = candCompras.motivo.trim();
+        extra.compras_necessidades = `Nova admissão — não precisa de pedido do Compras: ${candCompras.motivo.trim()}`;
+        extra.compras_obs_rh = obsCompras || null;
+      } else {
+        if (!enxovalRef.current) { toast("O enxoval ainda está carregando.", "err"); return; }
+        setEnviandoEnxoval(true);
+        const r = await enxovalRef.current.enviar();
+        if (!r.ok) { setEnviandoEnxoval(false); toast(r.erro, "err"); return; }
+        // O pedido nasce aqui (antes era no "Aprovar" do Compras) — com a observação do RH dentro.
+        const { data: ped, error: ePed } = await sb.rpc("rec_enxoval_gerar_pedido", { p_candidato_id: id, p_obs_rh: obsCompras });
+        setEnviandoEnxoval(false);
+        if (ePed) { toast("Enxoval salvo, mas o pedido não foi gerado: " + ePed.message, "err"); return; }
+        if (ped?.protocolo) toast(`Pedido ${ped.protocolo} gerado em Pedidos de Materiais.`, "ok");
+        if (r.resumo) extra.compras_necessidades = r.resumo;
+        if (r.foto) extra.cracha_foto_path = r.foto;
+        extra.compras_dispensado = false; extra.compras_dispensa_motivo = null;
+        extra.compras_obs_rh = obsCompras || null;
+      }
+      setCandCompras({ obs: "", dispensa: false, motivo: "" });
       if (candObs.trim()) extra.sst_obs = candObs.trim();
       // Entrada nova na etapa: o visto de uma passagem anterior não vale mais.
       extra.sst_visto_em = null; extra.sst_visto_por = null;
@@ -2808,12 +2838,18 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
                                 informação que importa enquanto os dois correm. */}
                             {etapa === ETAPA_SST_COMPRAS && (
                               <div style={{ display: "flex", gap: 6, marginTop: 5, flexWrap: "wrap" }}>
-                                {([["SST", c.sst_ok === true], ["Compras", c.compras_ok === true]] as [string, boolean][]).map(([rot, ok]) => (
-                                  <span key={rot} style={{ fontSize: 9.5, fontWeight: 700, padding: "1px 7px", borderRadius: 20,
-                                    background: ok ? "#dcfce7" : "#fef3c7", color: ok ? "#15803d" : "#b45309" }}>
-                                    {ok ? <Ic i={CheckCircle2} /> : <Ic i={Clock} />}{rot}
-                                  </span>
-                                ))}
+                                <span style={{ fontSize: 9.5, fontWeight: 700, padding: "1px 7px", borderRadius: 20,
+                                  background: c.sst_ok === true ? "#dcfce7" : "#fef3c7", color: c.sst_ok === true ? "#15803d" : "#b45309" }}>
+                                  {c.sst_ok === true ? <Ic i={CheckCircle2} /> : <Ic i={Clock} />}SST
+                                </span>
+                                {/* Compras (15/10/2026): clicável — abre o pedido (ID, status, itens, histórico). */}
+                                <button type="button" title="Ver o pedido de materiais"
+                                  onClick={(e) => { e.stopPropagation(); setPedidoAberto({ id: c.id, nome: c.nome }); }}
+                                  style={{ fontSize: 9.5, fontWeight: 700, padding: "1px 7px", borderRadius: 20, border: "1px solid transparent", cursor: "pointer", fontFamily: "inherit",
+                                    background: c.compras_ok === true ? "#dcfce7" : "#fef3c7", color: c.compras_ok === true ? "#15803d" : "#b45309", textDecoration: "underline dotted" }}>
+                                  {c.compras_ok === true ? <Ic i={CheckCircle2} /> : <Ic i={Clock} />}Compras
+                                  {pedidosVaga[String(c.id)] ? ` · ${pedidosVaga[String(c.id)].protocolo}` : c.compras_dispensado ? " · sem pedido" : ""}
+                                </button>
                               </div>
                             )}
                             {etapa === "DOCUMENTAÇÃO" && (docsCount[c.id] ?? 0) > 0 && <div style={{ fontSize: 9.5, color: "#0e7490", marginTop: 4, fontWeight: 700 }}><Ic i={Paperclip} />{docsCount[c.id]} documento{docsCount[c.id] > 1 ? "s" : ""}</div>}
@@ -3543,8 +3579,30 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
                 O candidato vai direto para <strong>Admissão</strong>, sem passar pelo exame admissional (SST) nem pelo enxoval (Compras).
               </div>
             )}
+            {/* Não precisa de pedido (15/10/2026): o Compras recebe só para ficar ciente. */}
             {candModal.novaEtapa === ETAPA_SST_COMPRAS && (
+              <div style={{ border: `1px solid ${candCompras.dispensa ? "#fdba74" : "#e2e8f0"}`, background: candCompras.dispensa ? "#fff7ed" : "#fff", borderRadius: 12, padding: 12, marginBottom: 12 }}>
+                <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, fontWeight: 800, color: "#9a3412", cursor: "pointer" }}>
+                  <input type="checkbox" checked={candCompras.dispensa} onChange={e => setCandCompras(s => ({ ...s, dispensa: e.target.checked }))} />
+                  Não precisa de pedido do Compras
+                </label>
+                <div style={{ fontSize: 11.5, color: "#64748b", marginTop: 3 }}>O Compras recebe a admissão do mesmo jeito, só para ficar ciente — sem pedido de materiais.</div>
+                {candCompras.dispensa && (
+                  <input value={candCompras.motivo} onChange={e => setCandCompras(s => ({ ...s, motivo: e.target.value }))}
+                    placeholder="Por quê? Ex.: já tem uniforme e EPI do contrato anterior *"
+                    style={{ width: "100%", marginTop: 8, padding: "8px 10px", borderRadius: 8, border: "1px solid #fdba74", fontSize: 13 }} />
+                )}
+              </div>
+            )}
+            {candModal.novaEtapa === ETAPA_SST_COMPRAS && !candCompras.dispensa && (
               <EnxovalAdmissao ref={enxovalRef} candidatoId={candModal.id} />
+            )}
+            {candModal.novaEtapa === ETAPA_SST_COMPRAS && (
+              <div className="rec-fg">
+                <label>Observação para o Compras (opcional)</label>
+                <textarea className="rec-fi" rows={2} value={candCompras.obs} onChange={e => setCandCompras(s => ({ ...s, obs: e.target.value }))}
+                  placeholder={candCompras.dispensa ? "Algo que o Compras precisa saber…" : "Vai junto no pedido de materiais. Ex.: entregar no posto até sexta"} />
+              </div>
             )}
             {/* Urgente (14/10/2026): o setor marcado vê um card tremendo em qualquer tela até dar "visto". */}
             {candModal.novaEtapa === ETAPA_SST_COMPRAS && (
@@ -3595,12 +3653,14 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
               <textarea className="rec-fi" rows={3} placeholder={candModal.novaEtapa === "Reprovado" ? "Descreva o motivo..." : "Observação da etapa..."} value={candObs} onChange={e => setCandObs(e.target.value)} />
             </div>
             <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 4 }}>
-              <button onClick={() => { setCandModal(null); setCandObs(""); setCandMateriais(""); }} style={{ padding: "7px 14px", borderRadius: 10, border: "1px solid #e2e8f0", background: "#fff", color: "#475569", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Cancelar</button>
+              <button onClick={() => { setCandModal(null); setCandObs(""); setCandMateriais(""); setCandCompras({ obs: "", dispensa: false, motivo: "" }); }} style={{ padding: "7px 14px", borderRadius: 10, border: "1px solid #e2e8f0", background: "#fff", color: "#475569", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Cancelar</button>
               <button onClick={confirmarMoverCand} disabled={enviandoEnxoval} style={{ padding: "7px 14px", borderRadius: 10, border: "none", background: candModal.novaEtapa === "Reprovado" ? "#dc2626" : "#0f3171", color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer", opacity: enviandoEnxoval ? .6 : 1 }}>{enviandoEnxoval ? "Enviando…" : candModal.novaEtapa === ETAPA_SST_COMPRAS ? "Enviar ao SST e ao Compras" : parecerJuridico ? "Registrar parecer → Entrevista" : "Confirmar"}</button>
             </div>
           </div>
         </div>
       )}
+
+      <PedidoComprasCandidato candidatoId={pedidoAberto?.id ?? null} nome={pedidoAberto?.nome} onFechar={() => setPedidoAberto(null)} />
 
       {/* ── Modal: Roteiro de Entrevista ── */}
       {roteiroModal && (
