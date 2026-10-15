@@ -96,7 +96,9 @@ export const motivoFalha = (erro?: WaPayload["erro"]) => {
     return "Fora da janela de 24h: o contato precisa escrever primeiro para você poder responder.";
   }
   if (erro.codigo === 131026) return "Número não recebe mensagens no WhatsApp.";
-  if (erro.codigo === 131049 || erro.codigo === 130472) return "A Meta limitou a entrega para este contato.";
+  // 131049/130472 só acontecem com template de MARKETING (14/10/2026: a saudação
+  // caía no template anterior, marketing, enquanto o novo UTILITY não era aprovado).
+  if (erro.codigo === 131049 || erro.codigo === 130472) return "A Meta limitou a entrega para este contato (mensagem classificada como marketing). Tente de novo amanhã ou peça para a pessoa escrever primeiro.";
   return erro.detalhe || erro.titulo || `Erro ${erro.codigo ?? ""}`.trim();
 };
 

@@ -40,6 +40,9 @@ interface Linha {
   ordem: number;
 }
 
+/** O que a Meta devolve por mensagem (categoria = a que ELA deu; anterior = o reserva). */
+interface StatusMeta { status: string; motivo?: string; categoria?: string; anterior?: { nome: string; status: string; categoria?: string } }
+
 const STATUS: Record<string, { txt: string; cls: string; ajuda: string }> = {
   APPROVED:     { txt: "aprovada",    cls: "bg-success/15 text-success",              ajuda: "Pode ser enviada para qualquer contato." },
   PENDING:      { txt: "em revisão",  cls: "bg-warning/15 text-warning-foreground",   ajuda: "A Meta ainda está revisando. Só funciona dentro das 24h." },
@@ -76,11 +79,11 @@ export function MensagensProntasCard() {
   const { data: status = {}, isFetching: conferindo, refetch: reconferir } = useQuery({
     queryKey: ["wa-templates-status"],
     staleTime: 60 * 1000,
-    queryFn: async (): Promise<Record<string, { status: string; motivo?: string }>> => {
+    queryFn: async (): Promise<Record<string, StatusMeta>> => {
       const { data, error } = await supabase.functions.invoke("whatsapp-template-enviar", { body: { acao: "status" } });
       if (error) return {};
-      const mapa: Record<string, { status: string; motivo?: string }> = {};
-      ((data as any)?.templates ?? []).forEach((t: any) => { mapa[t.codigo] = { status: t.status, motivo: t.motivo }; });
+      const mapa: Record<string, StatusMeta> = {};
+      ((data as any)?.templates ?? []).forEach((t: any) => { mapa[t.codigo] = { status: t.status, motivo: t.motivo, categoria: t.categoria, anterior: t.anterior }; });
       return mapa;
     },
   });
@@ -189,6 +192,13 @@ export function MensagensProntasCard() {
                 <span className="text-sm font-medium">{l.titulo}</span>
                 <code className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">/{l.codigo}</code>
                 <Badge variant="secondary" className={`text-[10px] ${st.cls}`} title={st.ajuda}>{st.txt}</Badge>
+                {/* Marketing (14/10/2026): a Meta limita por pessoa (131049/130472) — explica o "não chega pra ninguém". */}
+                {status[l.codigo]?.categoria === "MARKETING" && (
+                  <Badge variant="secondary" className="bg-warning/15 text-[10px] text-warning-foreground"
+                    title="A Meta classificou como marketing: ela limita quantas mensagens assim cada pessoa recebe (erro 131049). Reescreva como aviso de serviço (UTILITY).">
+                    marketing na Meta
+                  </Badge>
+                )}
                 {!l.ativo && <Badge variant="outline" className="text-[10px]">desligada</Badge>}
                 <div className="ml-auto flex shrink-0 items-center gap-1">
                   {st.txt !== "aprovada" && l.template_nome && (
@@ -210,6 +220,14 @@ export function MensagensProntasCard() {
                 <p className="text-[11px] text-muted-foreground">Pergunta antes de enviar: {l.variaveis.join(", ")}</p>
               )}
               {motivo && <p className="text-[11px] text-destructive">Motivo da recusa: {motivo}</p>}
+              {/* Enquanto o novo não é aprovado, sai o reserva — e se ele é marketing, a Meta barra (131049). */}
+              {status[l.codigo]?.anterior && status[l.codigo]?.status !== "APPROVED" && (
+                <p className="text-[11px] text-warning-foreground">
+                  Enquanto esta não é aprovada, sai a versão anterior (<code>{status[l.codigo]!.anterior!.nome}</code>
+                  {status[l.codigo]!.anterior!.categoria ? `, ${status[l.codigo]!.anterior!.categoria === "MARKETING" ? "marketing" : status[l.codigo]!.anterior!.categoria!.toLowerCase()}` : ""})
+                  {status[l.codigo]!.anterior!.categoria === "MARKETING" ? " — a Meta limita a entrega dela por pessoa, por isso parte não chega." : "."}
+                </p>
+              )}
             </div>
           );
         })}
