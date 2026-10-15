@@ -19,6 +19,7 @@ import { IaIndicadorDialog } from "@/components/tv/IaIndicador";
 import {
   COR_SITUACAO, PAINEIS_GERENCIAIS, VISUAIS_GERENCIAIS, type VisualGerencial, ROTULO_FONTE, ROTULO_PERIODICIDADE, ROTULO_SITUACAO, formatarValor, frase, indicadoresDaTv,
   lancamentoAtrasado, placar, situacao, subindicadores, textoMeta, type IndicadorGerencial, type LinhaDetalhe, type PainelGerencial,
+  CORES_EQUIPE, formatarMetaEquipe, type MetaEquipe,
 } from "@/lib/tv/gerencial";
 
 // =====================================================================
@@ -140,6 +141,9 @@ export default function TvsIndicadores() {
               </div>
             )}
         </Card>
+
+        {/* Meta por pessoa da equipe (15/10/2026, mig 20261015000003): hoje só a TV Licitações. */}
+        {slug === "ger-licitacoes" && <MetasEquipe slug={slug} equipe={painel.data?.equipe ?? []} onMudou={() => qc.invalidateQueries({ queryKey: [K, "painel", slug] })} />}
 
         {selecionado && painel.data && (
           <DetalheIndicador i={selecionado} painel={painel.data} onClose={() => setAberto(null)} onAbrir={setAberto}
@@ -450,5 +454,221 @@ function DialogParametros({ i, onClose, onSalvo }: { i: IndicadorGerencial; onCl
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+// ---- Metas da equipe (TV Licitações, 15/10/2026, mig 20261015000003) -------------
+// Chamado: "ser possível colocar as pessoas que vão ter que cumprir as metas;
+// ser possível definir as metas; o acompanhamento pela Capa de Edital, só os
+// contratos ganhos a partir de 01/09/2026, pelo responsável, valor estimado ÷
+// prazo do contrato; meta por contrato soma a quantidade de contratos ganhos".
+// O responsável da Capa é texto livre e aparece de vários jeitos — por isso a
+// pessoa tem a lista de "nomes na Capa de Edital" que contam para ela.
+
+interface MetaCadastro {
+  id: string; painel: string; nome: string; nomes_capa: string[]; user_id: string | null; tipo: "valor" | "contratos";
+  meta: number; ganhos_desde: string; cor: string | null; ordem: number; ativo: boolean;
+}
+type FormMeta = { id?: string; nome: string; nomes_capa: string[]; user_id: string; tipo: "valor" | "contratos"; meta: string; ganhos_desde: string; cor: string; ordem: string };
+const FORM_VAZIO: FormMeta = { nome: "", nomes_capa: [], user_id: "", tipo: "valor", meta: "", ganhos_desde: "2026-09-01", cor: "", ordem: "100" };
+
+function MetasEquipe({ slug, equipe, onMudou }: { slug: string; equipe: MetaEquipe[]; onMudou: () => void }) {
+  const qc = useQueryClient();
+  const cadastro = useQuery({
+    queryKey: [K, "metas-equipe", slug],
+    queryFn: async (): Promise<MetaCadastro[]> => {
+      const { data, error } = await sb.from("TVG_META_EQUIPE").select("*").eq("painel", slug).order("ordem").order("nome");
+      if (error) throw error;
+      return data ?? [];
+    },
+  });
+  const responsaveis = useQuery({
+    queryKey: [K, "responsaveis-capa"], staleTime: 5 * 60_000,
+    queryFn: async (): Promise<{ nome: string; editais: number; ganhos: number }[]> => {
+      const { data, error } = await sb.rpc("tvg_responsaveis_capa");
+      if (error) throw error;
+      return data ?? [];
+    },
+  });
+  const pessoasComFoto = useQuery({
+    queryKey: [K, "perfis-com-foto"], staleTime: 10 * 60_000,
+    queryFn: async (): Promise<{ id: string; display_name: string | null; avatar_url: string }[]> => {
+      const { data } = await sb.from("profiles").select("id, display_name, avatar_url").not("avatar_url", "is", null).order("display_name").limit(500);
+      return data ?? [];
+    },
+  });
+  const [form, setForm] = useState<FormMeta | null>(null);
+  const [aberto, setAberto] = useState<string | null>(null);
+  const atualizar = () => { qc.invalidateQueries({ queryKey: [K, "metas-equipe", slug] }); onMudou(); };
+
+  const salvar = useMutation({
+    mutationFn: async (f: FormMeta) => {
+      const meta = numOuNull(f.meta);
+      const { error } = await sb.rpc("tvg_meta_equipe_salvar", { p: {
+        id: f.id ?? null, painel: slug, nome: f.nome.trim(), nomes_capa: f.nomes_capa, user_id: f.user_id || null,
+        tipo: f.tipo, meta, ganhos_desde: f.ganhos_desde, cor: f.cor || null, ordem: Number(f.ordem) || 100,
+      } });
+      if (error) throw error;
+    },
+    onSuccess: () => { toast.success("Meta salva."); setForm(null); atualizar(); },
+    onError: (e) => toast.error((e as Error).message),
+  });
+  const excluir = useMutation({
+    mutationFn: async (id: string) => { const { error } = await sb.rpc("tvg_meta_equipe_excluir", { p_id: id }); if (error) throw error; },
+    onSuccess: () => { toast.success("Pessoa removida das metas."); atualizar(); },
+    onError: (e) => toast.error((e as Error).message),
+  });
+
+  const porId = new Map(equipe.map((m) => [m.id, m]));
+  const editar = (m: MetaCadastro) => setForm({
+    id: m.id, nome: m.nome, nomes_capa: m.nomes_capa ?? [], user_id: m.user_id ?? "", tipo: m.tipo,
+    meta: String(m.meta).replace(".", ","), ganhos_desde: m.ganhos_desde, cor: m.cor ?? "", ordem: String(m.ordem),
+  });
+
+  return (
+    <Card className="space-y-3 p-4">
+      <div className="flex flex-wrap items-start gap-3">
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-bold">Metas da equipe — aparecem na TV no quadro “Desempenho da equipe”</p>
+          <p className="text-xs text-muted-foreground">
+            Conta os editais com status <b>Ganhamos</b> na Capa de Edital a partir da data de cada pessoa (padrão 01/09/2026), pelo
+            responsável. Meta em valor: valor estimado ÷ meses do prazo do contrato (sem prazo informado, 12 meses). Meta por contratos: a quantidade ganha.
+          </p>
+        </div>
+        <AcessoGate menu={MENU} acao="alterar">
+          <Button size="sm" onClick={() => setForm({ ...FORM_VAZIO })}><Plus className="mr-1 h-4 w-4" /> Adicionar pessoa</Button>
+        </AcessoGate>
+      </div>
+
+      {cadastro.isLoading ? <p className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Carregando…</p>
+        : !(cadastro.data ?? []).length ? <p className="rounded-lg border border-dashed p-4 text-center text-sm text-muted-foreground">Ninguém com meta ainda. Enquanto não houver, a TV mostra o quadro “Onde agir agora”.</p>
+        : (
+          <div className="divide-y rounded-lg border">
+            {(cadastro.data ?? []).map((m, k) => {
+              const r = porId.get(m.id);
+              const pct = Math.min(100, Math.max(0, Number(r?.pct) || 0));
+              const cor = m.cor || CORES_EQUIPE[k % CORES_EQUIPE.length];
+              return (
+                <div key={m.id} className="px-3 py-2.5">
+                  <div className="flex flex-wrap items-center gap-3">
+                    <span className="h-3 w-3 shrink-0 rounded-full" style={{ background: cor }} />
+                    <div className="min-w-[180px] flex-1">
+                      <p className="text-sm font-semibold">{m.nome} {!m.ativo && <Badge variant="outline" className="ml-1 text-[10px]">inativa</Badge>}</p>
+                      <p className="text-[11px] text-muted-foreground">
+                        Na Capa: {m.nomes_capa?.length ? m.nomes_capa.join(" · ") : <span className="text-amber-600">nenhum nome ligado — só conta se o responsável for “{m.nome}”</span>} · desde {fmtData(m.ganhos_desde)}
+                      </p>
+                    </div>
+                    <div className="w-56">
+                      <div className="h-2 overflow-hidden rounded-full bg-muted"><div className="h-full rounded-full" style={{ width: `${pct}%`, background: cor }} /></div>
+                      <p className="mt-1 text-[11px] text-muted-foreground">
+                        <b className="text-foreground">{formatarMetaEquipe(r?.realizado ?? 0, m.tipo)}</b> de {formatarMetaEquipe(m.meta, m.tipo)} · {Math.round(Number(r?.pct) || 0)}%
+                      </p>
+                    </div>
+                    <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => setAberto(aberto === m.id ? null : m.id)}>
+                      {r?.contratos ?? 0} contrato(s) {aberto === m.id ? "▲" : "▼"}
+                    </Button>
+                    <AcessoGate menu={MENU} acao="alterar">
+                      <Button size="icon" variant="ghost" className="h-7 w-7" title="Editar" onClick={() => editar(m)}><Pencil className="h-3.5 w-3.5" /></Button>
+                      <Button size="icon" variant="ghost" className="h-7 w-7 text-muted-foreground hover:text-destructive" title="Remover"
+                        onClick={() => window.confirm(`Tirar ${m.nome} das metas?`) && excluir.mutate(m.id)}><Trash2 className="h-3.5 w-3.5" /></Button>
+                    </AcessoGate>
+                  </div>
+                  {aberto === m.id && (
+                    <div className="mt-2 rounded-md bg-muted/40 p-2 text-xs">
+                      {!r?.itens?.length ? <p className="text-muted-foreground">Nenhum edital ganho contando para esta pessoa.</p> : (
+                        <table className="w-full">
+                          <thead><tr className="text-left text-[10px] uppercase text-muted-foreground"><th className="py-1">Edital</th><th>Ganho em</th><th className="text-right">Valor estimado</th><th className="text-right">Prazo</th><th className="text-right">Por mês</th></tr></thead>
+                          <tbody>
+                            {r.itens.map((x, j) => (
+                              <tr key={j} className="border-t border-border/50">
+                                <td className="py-1 pr-2">{x.objeto}{x.cidade ? <span className="text-muted-foreground"> · {x.cidade}</span> : null}</td>
+                                <td>{fmtData(x.ganho_em)}</td>
+                                <td className="text-right tabular-nums">{x.valor_estimado != null ? formatarValor(x.valor_estimado, "brl", false) : "—"}</td>
+                                <td className="text-right">{x.prazo_meses} m{x.prazo_assumido && <span className="text-amber-600" title="Prazo do contrato não informado na Capa — 12 meses assumidos">*</span>}</td>
+                                <td className="text-right font-semibold tabular-nums">{formatarValor(x.mensal, "brl", false)}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      )}
+                      {r?.itens?.some((x) => x.prazo_assumido) && <p className="mt-1 text-[10px] text-amber-700">* prazo do contrato vazio na Capa de Edital — contados 12 meses. Preencha o prazo na Capa para a conta ficar exata.</p>}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+      <Dialog open={!!form} onOpenChange={(v) => !v && setForm(null)}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>{form?.id ? "Editar meta" : "Adicionar pessoa à meta"}</DialogTitle>
+            <DialogDescription>Quem cumpre a meta, de quanto e quais nomes da Capa de Edital contam para ela.</DialogDescription>
+          </DialogHeader>
+          {form && (
+            <div className="space-y-3">
+              <div className="grid grid-cols-2 gap-3">
+                <div className="col-span-2 space-y-1"><Label>Nome na TV *</Label><Input value={form.nome} onChange={(e) => setForm({ ...form, nome: e.target.value })} placeholder="Ex.: Xaiane" /></div>
+                <div className="space-y-1">
+                  <Label>Tipo de meta</Label>
+                  <Select value={form.tipo} onValueChange={(v) => setForm({ ...form, tipo: v as FormMeta["tipo"] })}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="valor">Valor (R$ por mês dos contratos)</SelectItem>
+                      <SelectItem value="contratos">Quantidade de contratos</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1"><Label>Meta *</Label><Input value={form.meta} inputMode="decimal" onChange={(e) => setForm({ ...form, meta: e.target.value })} placeholder={form.tipo === "valor" ? "Ex.: 766000" : "Ex.: 1"} /></div>
+                <div className="space-y-1"><Label>Contar ganhos desde</Label><Input type="date" value={form.ganhos_desde} onChange={(e) => setForm({ ...form, ganhos_desde: e.target.value })} /></div>
+                <div className="space-y-1"><Label>Ordem na TV</Label><Input value={form.ordem} inputMode="numeric" onChange={(e) => setForm({ ...form, ordem: e.target.value })} /></div>
+              </div>
+              <div className="space-y-1">
+                <Label>Nomes na Capa de Edital que contam para esta pessoa</Label>
+                <div className="max-h-44 space-y-0.5 overflow-y-auto rounded-md border p-2">
+                  {(responsaveis.data ?? []).map((r) => (
+                    <label key={r.nome} className="flex cursor-pointer items-center gap-2 rounded px-1 py-0.5 text-xs hover:bg-muted">
+                      <input type="checkbox" checked={form.nomes_capa.includes(r.nome)}
+                        onChange={(e) => setForm({ ...form, nomes_capa: e.target.checked ? [...form.nomes_capa, r.nome] : form.nomes_capa.filter((x) => x !== r.nome) })} />
+                      <span className="flex-1">{r.nome}</span>
+                      <span className="text-muted-foreground">{r.editais} edital(is) · {r.ganhos} ganho(s)</span>
+                    </label>
+                  ))}
+                </div>
+                <p className="text-[11px] text-muted-foreground">O mesmo responsável aparece escrito de jeitos diferentes — marque todos que são desta pessoa.</p>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <Label>Foto (login da pessoa, opcional)</Label>
+                  <Select value={form.user_id || "__nenhum"} onValueChange={(v) => setForm({ ...form, user_id: v === "__nenhum" ? "" : v })}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent className="max-h-72">
+                      <SelectItem value="__nenhum">Sem foto (iniciais)</SelectItem>
+                      {(pessoasComFoto.data ?? []).map((p) => <SelectItem key={p.id} value={p.id}>{p.display_name ?? p.id}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1">
+                  <Label>Cor</Label>
+                  <div className="flex flex-wrap gap-1.5 pt-1">
+                    {CORES_EQUIPE.map((c) => (
+                      <button key={c} type="button" title={c} onClick={() => setForm({ ...form, cor: form.cor === c ? "" : c })}
+                        className="h-7 w-7 rounded-full border-2" style={{ background: c, borderColor: form.cor === c ? "#0f172a" : "transparent" }} />
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setForm(null)}>Cancelar</Button>
+            <Button disabled={salvar.isPending || !form?.nome.trim() || !form?.meta.trim()} onClick={() => form && salvar.mutate(form)}>
+              {salvar.isPending && <Loader2 className="mr-1 h-4 w-4 animate-spin" />} Salvar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </Card>
   );
 }
