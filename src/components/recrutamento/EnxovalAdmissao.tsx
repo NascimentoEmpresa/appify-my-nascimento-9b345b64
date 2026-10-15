@@ -65,7 +65,7 @@ export const EnxovalAdmissao = forwardRef<EnxovalAdmissaoHandle, { candidatoId: 
 
   const { data: contratos = [] } = useContratosCatalogo(!!prev && !prev.vaga_tem_catalogo);
   const { data: postos = [] } = usePostos(escolha.contrato_id || null);
-  const { data: funcoes = [] } = useFuncoes(escolha.posto_id || null);
+  const { data: funcoes = [], isSuccess: funcoesCarregadas } = useFuncoes(escolha.posto_id || null);
 
   const carregar = useCallback(async (ids?: { contrato_id: string; posto_id: string; funcao_id: string }) => {
     setCarregando(true); setErro(null);
@@ -159,6 +159,13 @@ export const EnxovalAdmissao = forwardRef<EnxovalAdmissaoHandle, { candidatoId: 
             <option value="">Função…</option>
             {funcoes.map((f) => <option key={f.id} value={f.id}>{f.nome}</option>)}
           </select>
+          {/* 15/10/2026: posto sem função no Catálogo deixava o select vazio, sem explicar nada. */}
+          {escolha.posto_id && funcoesCarregadas && funcoes.length === 0 && (
+            <div style={{ fontSize: 12, color: "#9a3412", background: "#fff7ed", border: "1px solid #fdba74", borderRadius: 8, padding: "7px 10px" }}>
+              Este posto não tem função cadastrada no Catálogo (Suprimentos), então não há enxoval para puxar.
+              Se a função não usa EPI/uniforme, marque <b>"Não precisa de pedido do Compras"</b> acima e diga o motivo.
+            </div>
+          )}
         </div>
       )}
 
