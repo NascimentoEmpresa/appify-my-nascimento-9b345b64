@@ -1,4 +1,6 @@
 import { Component, ReactNode } from "react";
+import { ehErroDePermissao } from "@/lib/erroDePermissao";
+import { SemAcesso } from "./SemAcesso";
 import { SistemaIndisponivel } from "./SistemaIndisponivel";
 
 /**
@@ -72,6 +74,16 @@ export class ErroDeTela extends Component<Props, State> {
   render() {
     const { erro } = this.state;
     if (!erro) return this.props.children;
+
+    // Falta de permissão não é queda: mostra "Sem acesso" (403), não "indisponível".
+    if (ehErroDePermissao(erro)) {
+      return (
+        <SemAcesso
+          modo="tela"
+          detalhe={`${this.props.rota ? `Rota: ${this.props.rota}\n` : ""}${erro.message || String(erro)}`}
+        />
+      );
+    }
 
     return (
       <SistemaIndisponivel
