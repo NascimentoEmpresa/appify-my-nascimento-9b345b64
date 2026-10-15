@@ -21,9 +21,10 @@ import { KpiTile } from "@/components/financeiro/KpiTile";
 import { fmtMoney } from "@/pages/financeiro/nf-emissao/shared";
 import { rotuloMes } from "./faturamento/useBaseFaturamento";
 import {
-  DefValidacao, diferenca, STATUS_LABEL, statusGeral, situacaoComparacao, TipoValidacao, valoresMudaramDesdeDecisao, VALIDACOES,
+  DefValidacao, diferenca, linksDoCard, STATUS_LABEL, statusGeral, situacaoComparacao, TipoValidacao, valoresMudaramDesdeDecisao, VALIDACOES,
 } from "./auditoria/regras";
 import { EstadoCard, useTotaisAuditoria } from "./auditoria/useTotaisAuditoria";
+import { CorpoFluxoExtrato, CorpoMaloteFluxo, CorpoOrcadoRealizado, CorpoSemCentro } from "./auditoria/CorposCard";
 import {
   HistoricoRow, useHistoricoPeriodo, useRegistrarAuditoria, useResponsaveisAuditoria, useSalvarResponsaveis, useValidacoesPeriodo, ValidacaoRow,
 } from "./auditoria/useAuditoriaValidacoes";
@@ -176,11 +177,14 @@ export default function AuditoriaControladoria() {
         <KpiTile label="Total Orçado" valor={kpi(resumo("orcado_realizado")?.a)} icon={<Target />} cor="sky" />
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
-        {VALIDACOES.map((def) => (
+      {[VALIDACOES.slice(0, 4), VALIDACOES.slice(4)].map((grupo, g) => (
+      <div key={g} className={cn("grid grid-cols-1 gap-4", g === 0 ? "lg:grid-cols-2" : "lg:grid-cols-4")}>
+        {grupo.map((def) => (
           <CardValidacao
             key={def.tipo}
             def={def}
+            mes={mes}
+            empresaId={empresa}
             estado={totais[def.tipo]}
             validacao={porTipo.get(def.tipo)}
             podeAprovar={podeAprovar && !recorteParcial}
@@ -194,6 +198,7 @@ export default function AuditoriaControladoria() {
           />
         ))}
       </div>
+      ))}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <Card>
@@ -281,6 +286,8 @@ export default function AuditoriaControladoria() {
 
 function CardValidacao(props: {
   def: DefValidacao;
+  mes: string;
+  empresaId: string | null;
   estado: EstadoCard;
   validacao?: ValidacaoRow;
   podeAprovar: boolean;
@@ -299,6 +306,9 @@ function CardValidacao(props: {
   const dif = t && !indisponivel ? diferenca(t) : null;
   const situacao = t && !indisponivel ? situacaoComparacao(def, t) : null;
   const mudou = status === "aprovado" && t ? valoresMudaramDesdeDecisao(validacao?.valores, t) : false;
+  // SIS-2026-0657: cards 1 a 4 mostram de onde vem o valor (Malote, Fluxo, Conciliação, Orçamento...).
+  const links = linksDoCard(def.tipo, props.mes, props.empresaId);
+  const link = (rotulo: string) => links.find((l) => l.rotulo === rotulo) ?? { rotulo, to: def.link };
 
   return (
     <Card className={cn("flex flex-col", props.className)}>
@@ -306,16 +316,32 @@ function CardValidacao(props: {
         <div className="flex items-start gap-2">
           <span className="h-6 w-6 shrink-0 rounded bg-slate-900 text-white text-xs font-bold flex items-center justify-center dark:bg-slate-100 dark:text-slate-900">{def.numero}</span>
           <CardTitle className="text-sm font-semibold leading-snug flex-1">{def.titulo}</CardTitle>
-          <Link to={def.link} className="text-[11px] text-primary whitespace-nowrap hover:underline inline-flex items-center gap-0.5">
-            {def.linkRotulo}<ArrowRight className="h-3 w-3" />
-          </Link>
+          {links.length === 0 && (
+            <Link to={def.link} className="text-[11px] text-primary whitespace-nowrap hover:underline inline-flex items-center gap-0.5">
+              {def.linkRotulo}<ArrowRight className="h-3 w-3" />
+            </Link>
+          )}
         </div>
+        {links.length > 0 && (
+          <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 pl-8 text-[11px]">
+            <span className="text-muted-foreground">Ver origem:</span>
+            {links.map((l) => (
+              <Link key={l.rotulo} to={l.to} className="text-primary hover:underline inline-flex items-center gap-0.5">{l.rotulo}<ArrowRight className="h-3 w-3" /></Link>
+            ))}
+          </div>
+        )}
       </CardHeader>
       <CardContent className="flex-1 flex flex-col gap-3">
         {estado.erro ? (
           <p className="text-xs text-red-600">Não foi possível calcular: {estado.erro}</p>
         ) : estado.carregando || !t ? (
           <p className="text-xs text-muted-foreground py-6 text-center">Calculando...</p>
+        ) : t.painel?.kind === "malote_fluxo" ? (
+          <CorpoMaloteFluxo p={t.painel} t={t} situacao={situacao} linkMalote={link("Malote")} linkFluxo={link("Fluxo de Caixa")} />
+        ) : t.painel?.kind === "fluxo_extrato" ? (
+          <CorpoFluxoExtrato p={t.painel} situacao={situacao} semDados={!!indisponivel} links={{ malote: link("Malote"), fluxo: link("Fluxo de Caixa"), banco: link("Conciliação Bancária") }} />
+        ) : t.painel?.kind === "orcado_realizado" ? (
+          <CorpoOrcadoRealizado p={t.painel} t={t} />
         ) : (
           <>
             <div className="grid grid-cols-2 gap-2 text-center">
@@ -327,7 +353,7 @@ function CardValidacao(props: {
                 <Construction className="h-3.5 w-3.5 shrink-0 mt-0.5" /><span>{indisponivel}</span>
               </p>
             )}
-            {!indisponivel && <ResponsiveContainer width="100%" height={70}>
+            {!indisponivel && def.tipo !== "centros_malote" && <ResponsiveContainer width="100%" height={70}>
               <BarChart data={[{ n: def.rotuloA, v: Math.abs(t.a) }, { n: def.rotuloB, v: Math.abs(t.b) }]} layout="vertical" margin={{ left: 0, right: 8, top: 0, bottom: 0 }}>
                 <XAxis type="number" hide />
                 <YAxis type="category" dataKey="n" hide />
@@ -349,6 +375,7 @@ function CardValidacao(props: {
                 ))}
               </ul>
             )}
+            {t.painel?.kind === "centros" && <CorpoSemCentro pendentes={t.painel.pendentes} linkFluxo={link("Lançamentos financeiros").to} />}
             {t.aviso && <p className="text-[11px] text-muted-foreground">{t.aviso}</p>}
           </>
         )}

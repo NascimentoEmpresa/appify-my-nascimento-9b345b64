@@ -7,7 +7,7 @@ import { useOrcamentoContratos } from "@/hooks/useOrcamentoContratos";
 import { useUtilizadoOrcamento } from "@/hooks/useUtilizadoOrcamento";
 import { fimDoMes } from "@/hooks/usePlanilhaCusto";
 import { getStatusVigencia, competenciaNoPeriodo } from "@/pages/malote/orcamentoUtils";
-import { DespesaMalote, FiltroAuditoria, LinhaCentroMalote, LinhaMaloteFluxo, ParcelaPaga, RateioMalote, proximoMesData } from "./regras";
+import { CentroOrcamento, ConciliacaoAud, DespesaMalote, FiltroAuditoria, LinhaCentroMalote, LinhaMaloteFluxo, ParcelaPaga, RateioMalote, proximoMesData } from "./regras";
 
 // SIS-2026-0553: leitura dos totais de cada validação. Cada uma é uma query
 // própria (o card carrega sozinho). Tudo é limitado ao mês pedido — nunca baixa
@@ -35,13 +35,22 @@ export interface LinhaFluxoMes {
   valor: number;
   empresa_id: string | null;
   contrato_id: string | null;
+  classificacao_id: string | null;
   classificacao_nome: string | null;
+  banco_id: string | null;
+  banco_nome: string | null;
+  descricao: string | null;
+  data_pagamento: string | null;
+  despesa_id: string | null;
+  id_malote: string | null;
+  // Só a view do Malote devolve (relatório de divergências do card 1).
+  ajustado?: boolean | null;
 }
 
 // A origem é conhecida pela própria view — nem todas têm a coluna `origem`
 // (a de resgate de aplicação não tem; pedir a coluna derrubava o card inteiro).
-const VIEWS_FLUXO: { view: string; origem: string; ordem: string[] }[] = [
-  { view: "v_malote_pagamento_fluxo_caixa", origem: "malote", ordem: ["despesa_id", "numero_parcela", "contrato_id", "valor"] },
+const VIEWS_FLUXO: { view: string; origem: string; ordem: string[]; extra?: string }[] = [
+  { view: "v_malote_pagamento_fluxo_caixa", origem: "malote", ordem: ["despesa_id", "numero_parcela", "contrato_id", "valor"], extra: "ajustado" },
   { view: "v_debito_automatico_fluxo_caixa", origem: "debito_automatico", ordem: ["despesa_id", "numero_parcela", "contrato_id", "valor"] },
   { view: "v_cartao_fatura_fluxo_caixa", origem: "cartao_fatura", ordem: ["despesa_id", "numero_parcela", "contrato_id", "valor"] },
   { view: "v_aplicacao_financeira_fluxo_caixa", origem: "aplicacao_financeira", ordem: ["despesa_id", "numero_parcela", "contrato_id", "valor"] },
@@ -49,9 +58,9 @@ const VIEWS_FLUXO: { view: string; origem: string; ordem: string[] }[] = [
   { view: "v_fluxo_caixa_importado_fluxo_caixa", origem: "importacao_historica", ordem: ["despesa_id", "linha_id"] },
 ];
 
-async function lerView(view: string, origem: string, ordem: string[], mes: string): Promise<LinhaFluxoMes[]> {
+async function lerView(view: string, origem: string, ordem: string[], mes: string, extra?: string): Promise<LinhaFluxoMes[]> {
   const linhas = await paginar<Omit<LinhaFluxoMes, "origem">>(() => {
-    let q = dentroDoMes((supabase as any).from(view).select("tipo, valor, empresa_id, contrato_id, classificacao_nome"), "data_pagamento", mes);
+    let q = dentroDoMes((supabase as any).from(view).select(`tipo, valor, empresa_id, contrato_id, classificacao_id, classificacao_nome, banco_id, banco_nome, descricao, data_pagamento, despesa_id, id_malote${extra ? `, ${extra}` : ""}`), "data_pagamento", mes);
     for (const c of ordem) q = q.order(c, { ascending: true });
     return q;
   });
@@ -65,7 +74,7 @@ export function useFluxoMes(mes: string) {
     queryFn: async () => {
       const partes = await Promise.all(
         VIEWS_FLUXO.map((f) =>
-          lerView(f.view, f.origem, f.ordem, mes)
+          lerView(f.view, f.origem, f.ordem, mes, f.extra)
             .catch((e: any) => (e?.code === "42703" && f.view.includes("importado") ? lerView(f.view, f.origem, ["despesa_id"], mes) : Promise.reject(e)))
             .catch((e: any) => {
               if (e?.code === "PGRST205" || e?.code === "42P01") return [] as LinhaFluxoMes[];
@@ -85,7 +94,7 @@ export function useMaloteDiretoMes(mes: string) {
     staleTime: STALE,
     queryFn: async () => {
       const db = supabase as any;
-      const colunasDespesa = "id, empresa_id, contrato_id, valor_aprovado, valor_total, parcelado";
+      const colunasDespesa = "id, numero, empresa_id, contrato_id, valor_aprovado, valor_total, parcelado";
       const naoParceladas = await paginar<DespesaMalote>(() =>
         dentroDoMes(db.from("malote_despesa").select(colunasDespesa).eq("status", "despesa_paga").eq("parcelado", false).is("deleted_at", null), "data_pagamento", mes).order("id")
       );
@@ -125,16 +134,18 @@ export function useMaloteCentrosMes(mes: string) {
     queryFn: async () => {
       const db = supabase as any;
       const linhas = await paginar<LinhaCentroMalote>(() =>
-        dentroDoMes(db.from("v_malote_pagamento_fluxo_caixa").select("valor, empresa_id, contrato_id, classificacao_id").eq("tipo", "saida"), "data_pagamento", mes)
+        dentroDoMes(db.from("v_malote_pagamento_fluxo_caixa").select("valor, empresa_id, contrato_id, classificacao_id, despesa_id, id_malote, descricao, classificacao_nome, data_pagamento").eq("tipo", "saida"), "data_pagamento", mes)
           .order("despesa_id").order("numero_parcela").order("contrato_id").order("valor")
       );
       const classificacoes = await paginar<{ id: string; tipo: string | null }>(() => db.from("planejamento_orcamentario_classificacao").select("id, tipo").order("id"));
-      return { linhas, tipoPorClassificacao: new Map(classificacoes.map((c) => [c.id, c.tipo])) };
+      return { linhas: linhas.map((l) => ({ ...l, origem: "malote" })), tipoPorClassificacao: new Map(classificacoes.map((c) => [c.id, c.tipo])) };
     },
   });
 }
 
 // ── Conciliações salvas que cobrem o mês ────────────────────────────────────
+// SIS-2026-0657: o total do extrato vem do cabeçalho (extrato_entradas/extrato_saidas); a conciliação não
+// grava as linhas que bateram sozinhas, então não há como somar linha a linha.
 export function useConciliadoMes(mes: string) {
   return useQuery({
     queryKey: ["auditoria_conciliado_mes", mes],
@@ -144,25 +155,23 @@ export function useConciliadoMes(mes: string) {
       // Conciliação que se sobrepõe ao mês.
       const ler = (colunas: string) =>
         db.from("financeiro_conciliacao_fluxo_caixa").select(colunas).lt("data_inicio", proximoMesData(mes)).gte("data_fim", `${mes}-01`);
-      let { data: cabs, error } = await ler("id, empresa_ids, todas_empresas");
+      const COMPLETA = "id, banco_id, empresa_ids, todas_empresas, data_inicio, data_fim, created_at, extrato_entradas, extrato_saidas";
+      let { data: cabs, error } = await ler(COMPLETA);
+      // Migration 20261014000006 (totais do extrato) ainda não aplicada.
+      if (error?.code === "42703") ({ data: cabs, error } = await ler("id, banco_id, empresa_ids, todas_empresas, data_inicio, data_fim, created_at"));
       // Migration 20261005000010 (empresa/banco da conciliação) ainda não aplicada:
       // sem as colunas, toda conciliação vale para todas as empresas.
       if (error?.code === "42703") {
-        ({ data: cabs, error } = await ler("id"));
-        cabs = (cabs ?? []).map((c: any) => ({ ...c, empresa_ids: [], todas_empresas: true }));
+        ({ data: cabs, error } = await ler("id, data_inicio, data_fim, created_at"));
+        cabs = (cabs ?? []).map((c: any) => ({ ...c, banco_id: null, empresa_ids: [], todas_empresas: true }));
       }
       if (error) throw error;
-      const ids = (cabs ?? []).map((c: any) => c.id);
-      const linhas: { conciliacao_id: string; origem: "fluxo" | "extrato"; valor: number }[] = [];
-      for (let i = 0; i < ids.length; i += 50) {
-        const bloco = ids.slice(i, i + 50);
-        linhas.push(
-          ...(await paginar<any>(() =>
-            dentroDoMes(db.from("financeiro_conciliacao_fluxo_caixa_linha").select("id, conciliacao_id, origem, valor").in("conciliacao_id", bloco), "dia", mes).order("id")
-          ))
-        );
-      }
-      return { cabecalhos: (cabs ?? []) as { id: string; empresa_ids: string[] | null; todas_empresas: boolean }[], linhas };
+      const cabecalhos = (cabs ?? []).map((c: any) => ({
+        ...c,
+        extrato_entradas: c.extrato_entradas === null || c.extrato_entradas === undefined ? null : Number(c.extrato_entradas),
+        extrato_saidas: c.extrato_saidas === null || c.extrato_saidas === undefined ? null : Number(c.extrato_saidas),
+      })) as ConciliacaoAud[];
+      return { cabecalhos };
     },
   });
 }
@@ -203,6 +212,13 @@ export function useOrcadoRealizado(mes: string, filtro: FiltroAuditoria) {
     }
 
     let orcado = 0, realizado = 0;
+    // SIS-2026-0657: orçado × realizado por centro de custo (classificação administrativa ou contrato),
+    // para listar quem mais estourou o orçado.
+    const centros: CentroOrcamento[] = [];
+    const nomeAdmPorMalote = new Map<string, string>();
+    for (const l of ligacoesAdm) {
+      if (!nomeAdmPorMalote.has(l.classificacao_malote_id)) nomeAdmPorMalote.set(l.classificacao_malote_id, l.classificacao_administrativa?.nome ?? l.classificacao_malote?.nome ?? "Administrativo");
+    }
     // Administrativo: só entra sem filtro de contrato.
     if (!filtro.contratoId) {
       const porClassificacao = new Map<string, number>();
@@ -216,6 +232,7 @@ export function useOrcadoRealizado(mes: string, filtro: FiltroAuditoria) {
       porClassificacao.forEach((valor, maloteId) => {
         orcado += valor;
         realizado += utilAdm.get(maloteId) ?? 0;
+        centros.push({ nome: nomeAdmPorMalote.get(maloteId) ?? "Administrativo", orcado: valor, realizado: utilAdm.get(maloteId) ?? 0 });
       });
     }
     for (const g of gruposContrato) {
@@ -226,13 +243,70 @@ export function useOrcadoRealizado(mes: string, filtro: FiltroAuditoria) {
         if (!r.classificacaoMaloteId) continue;
         porClassificacao.set(r.classificacaoMaloteId, (porClassificacao.get(r.classificacaoMaloteId) ?? 0) + r.valor);
       }
+      let orcadoDoContrato = 0, realizadoDoContrato = 0;
       porClassificacao.forEach((valor, maloteId) => {
         orcado += valor;
         realizado += utilContrato.get(`${maloteId}|${g.contrato.id}`) ?? 0;
+        orcadoDoContrato += valor;
+        realizadoDoContrato += utilContrato.get(`${maloteId}|${g.contrato.id}`) ?? 0;
       });
+      if (orcadoDoContrato > 0 || realizadoDoContrato > 0) centros.push({ nome: g.contrato.nome, orcado: orcadoDoContrato, realizado: realizadoDoContrato });
     }
-    return { orcado: Math.round(orcado * 100) / 100, realizado: Math.round(realizado * 100) / 100 };
+    return { orcado: Math.round(orcado * 100) / 100, realizado: Math.round(realizado * 100) / 100, centros };
   }, [mes, filtro.empresaId, filtro.contratoId, orcamentosAdm, gruposContrato, ligacoesAdm, utilizadoLinhas]);
 
   return { data: resultado, isLoading: c1 || c2 || c3 || c4 };
+}
+
+// ── Quem ajustou o valor no Fluxo (relatório de divergências do card 1) ─────
+// Lê o histórico gravado por gatilho (migration 20261014000005). Sem a migration aplicada, ou para
+// ajustes anteriores a ela, não há autor: a tela diz "autor não registrado" em vez de inventar.
+export interface AjusteRegistrado {
+  acao: "criado" | "alterado" | "revertido" | "anterior_ao_registro";
+  usuario: string | null;
+  em: string;
+  valorAntes: number | null;
+  valorDepois: number | null;
+}
+
+export function useAjustesDasDespesas(despesaIds: string[]) {
+  const chave = [...despesaIds].sort().join(",");
+  return useQuery({
+    queryKey: ["auditoria_ajustes_despesas", chave],
+    enabled: despesaIds.length > 0,
+    staleTime: STALE,
+    queryFn: async () => {
+      const db = supabase as any;
+      const porDespesa = new Map<string, AjusteRegistrado[]>();
+      const { data, error } = await db
+        .from("financeiro_fluxo_caixa_ajuste_log")
+        .select("despesa_id, acao, antes, depois, user_id, created_at")
+        .eq("origem", "malote")
+        .in("despesa_id", despesaIds.slice(0, 200))
+        .order("created_at", { ascending: false });
+      if (error) {
+        if (error.code === "PGRST205" || error.code === "42P01") return porDespesa;
+        throw error;
+      }
+      const userIds = [...new Set((data ?? []).map((r: any) => r.user_id).filter(Boolean))] as string[];
+      const nomes = new Map<string, string>();
+      if (userIds.length > 0) {
+        const { data: perfis } = await db.from("profiles").select("id, display_name").in("id", userIds);
+        for (const p of perfis ?? []) nomes.set(p.id, p.display_name);
+      }
+      const num = (v: unknown) => (v === null || v === undefined || Number.isNaN(Number(v)) ? null : Number(v));
+      for (const r of data ?? []) {
+        const lista = porDespesa.get(r.despesa_id) ?? [];
+        lista.push({
+          acao: r.acao,
+          usuario: r.user_id ? (nomes.get(r.user_id) ?? null) : null,
+          em: r.created_at,
+          valorAntes: num(r.antes?.valor),
+          valorDepois: num(r.depois?.valor),
+        });
+        porDespesa.set(r.despesa_id, lista);
+      }
+      return porDespesa;
+    },
+  });
 }
