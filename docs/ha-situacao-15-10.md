@@ -221,6 +221,40 @@ Ordem da noite, com a recopia entrando na frente:
 
 Impacto nos usuários nessa noite: **um relogin**.
 
+---
+
+## "É a última coisa antes de migrar tudo?" — não, e aqui está o que falta
+
+Levantado em 15/10, depois da sua pergunta. **Nada disto estava na lista**, e
+todos são o mesmo tipo de armadilha da seção 1.11 do roteiro: **uma cópia feita
+num dia e tratada como se fosse viva.**
+
+| | Medido agora | O que fazer |
+|---|---|---|
+| **anexos** | produção 11.620 × cluster **11.252** → **368 de diferença**, +39 só desde ontem à noite | `carregar-anexos.sh` imediatamente antes da virada |
+| **auth/storage** | produção com **156** logins; o cluster tem a carga de 13/10 (159 — já houve exclusão depois) | `carregar-auth-storage.sh` no passo 2.3 |
+| **Edge Functions** | **63 de 64** no container; falta `tvg-ia` | subir a que falta e comparar `ls` antes da virada |
+| **backup do cluster** | **não existe** | apontar `backup_banco.yml` e `backup_storage.yml` para o cluster |
+| **endereço HTTP** | `api.grpnascimento.com.br` → só `banco1` | decisão de HA do endpoint |
+
+Duas merecem destaque:
+
+**O espelho de anexos não traz nada da produção.** Ele roda de 1 em 1 minuto e
+está funcionando — mas é **entre os dois nós** (banco1 ↔ banco2), para o nó que
+não recebeu o arquivo não responder 500. Quem traz da produção é o
+`carregar-anexos.sh`, à mão, e a última vez foi 13/10. Eu estava olhando um
+timer verde e concluindo a coisa errada; o número é que conta.
+
+**O cluster não tem backup.** Hoje quem faz backup é a Supabase, e os dois
+workflows do GitHub apontam para ela. No dia seguinte à virada, o cluster passa
+a ser a produção **sem backup nenhum**. É o item mais fácil de esquecer e o
+mais caro de esquecer — e eu recomendo resolver **antes** da virada, não
+depois.
+
+E a `tvg-ia` conta uma história: é do **mesmo módulo TVG** cujas 21 funções de
+banco faltavam ontem. As Edge Functions derivam igual ao schema, e para elas
+não existe conferidor nenhum ainda.
+
 Roteiro completo: [`docs/ha-corte-roteiro.md`](ha-corte-roteiro.md) — a seção
 **1.12** é nova e é sobre o limite de 2 GB.
 

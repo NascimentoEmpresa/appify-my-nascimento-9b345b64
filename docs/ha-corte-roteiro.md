@@ -1257,7 +1257,12 @@ custo é o tempo que o sistema ficou lento à noite.
 
 ## O que falta, em ordem
 
-**Marco A — sem custo novo, sem parada, sem domínio:**
+> Revisado em 15/10/2026. A versão anterior desta lista dizia **"O Marco A está
+> fechado"** e marcava domínio e HTTPS como pendentes. As duas coisas
+> envelheceram ao contrário: domínio e HTTPS **ficaram prontos**, e o Marco A
+> **reabriu** quando o slot foi invalidado (seção 1.12).
+
+**Marco A — sem custo novo, sem parada:**
 
 ```
 ✅ 0.1  viabilidade: IPv6 + protocolo de replicação   13/10 — aceito nos dois nós
@@ -1265,36 +1270,62 @@ custo é o tempo que o sistema ficou lento à noite.
 ✅ 0.5  carregar-anexos.sh escrito e provado          13/10 — 206 nos dois nós
 ✅ 2.3  carregar-auth-storage.sh escrito e provado    13/10 — 159 logins no cluster
 ✅ 1.6  RPC do slot + alerta no worker                13/10 — provado no cluster
-✅ 0.5  a carga dos 5,6 GB de anexos                  13/10 — 11.251/11.251, 0 falhas
 ✅ 1.6b migration 20261014000020 na produção          13/10 — anon recebe 401
 ✅ 0.2  folga no banco2 (parar pilha, capar diário)   13/10 — pilha religada depois
 ✅ 0.3  conferência do schema contra a produção       13/10 — e agora compara coluna
 ✅ 1.1  REPLICA IDENTITY FULL nas três tabelas        13/10 — tentativa 1, sem fila
-✅ 1.2  publicação com 642 tabelas                    13/10 — lista do catálogo
-        → 647 em 14/10 (TREINAMENTO_* e financeiro_fluxo_caixa_ajuste_log)
-✅ 1.3  assinatura no cluster, copy_data=true         13/10 — 1.545.419 linhas
-✅ 1.5  lag em zero e estável                         13/10 — 0 bytes, slot ativo
+✅ 1.2  publicação com 642 tabelas                    13/10 → 647 em 14/10
+✅ 1.11 sincronizar-schema.sh (função/view/trigger)   14/10 — "TUDO IGUAL"
+✅ dom  grpnascimento.com.br fora da Vercel, no .br   14/10 — app. e api. de pé
+✅ 1.8  HTTPS no cluster (Caddy + Let's Encrypt)      14/10 — válido até 12/01/2027
+✅ ---  chaves anon/service_role do cluster           em uso (ANON_KEY, 169 car.)
+✅ ---  aceitação pelo navegador em localhost         14/10 — aprovada pelo Eduardo
+🔁 1.3  assinatura com copy_data=true                 REABRIU — slot perdido 15/10
+🔁 1.5  lag em zero e estável                         REABRIU — depende do 1.3
 ```
 
-**O Marco A está fechado.** A perda possível deixou de ser "o backup da noite
-anterior" e passou a ser **segundos**. O que falta é só o Marco B, que espera o
-domínio.
+**O Marco A deixou de estar fechado em 15/10.** Enquanto o 1.3 não voltar, a
+perda possível não é "segundos": é o backup da noite anterior, como antes de
+começarmos. É o motivo de a recópia vir antes de qualquer outra coisa.
 
-Nada nessa lista para o ERP. A única coisa que pede horário de menos
-movimento é o passo 1.3, pelo peso na Supabase — e mesmo ele não derruba nada,
-só pesa.
-
-**Marco B — espera decisão, não dinheiro:**
+**Antes da noite do Marco B — levantado em 15/10, nada disso estava na lista:**
 
 ```
-⬜ domínio: tirar grpnascimento.com.br da Render/Vercel, DNS no registro.br
-⬜ HTTPS no Kong dos dois nós (Let's Encrypt, grátis)
-⬜ gerar as chaves anon/service_role do cluster
+⬜ recopiar (disparar-religar.sh --aplicar) e conferir os três conferidores
+⬜ anexos: delta de 368 arquivos (produção 11.620 x cluster 11.252)
+⬜ auth/storage: produção com 156 logins; o cluster tem a carga de 13/10
+⬜ Edge Functions: falta `tvg-ia` no cluster (63 de 64)
+⬜ backup cifrado passando a sair do cluster, não da Supabase
+⬜ endpoint HTTP: api.grpnascimento.com.br aponta só para o banco1
 ⬜ a noite curta: passos 2.1 a 2.7
 ⬜ conferir client.ts depois do build do Lovable
-⬜ backup cifrado passando a sair do cluster
 ⬜ só então: desligar Render e Supabase
 ```
 
-**Decisões ainda abertas:** a noite do Marco B (depois do domínio) e o
-`synchronous_mode_strict` (recomendação: continuar desligado).
+Quatro dessas merecem explicação, porque são do mesmo tipo de erro que a
+seção 1.11 descreve — **uma cópia feita num dia e tratada como se fosse viva:**
+
+- **Anexos.** O espelho de 1 minuto é **entre os nós** (banco1 ↔ banco2), para
+  o nó que não recebeu o byte não responder 500. Ele **não traz nada da
+  produção**. Quem faz isso é o `carregar-anexos.sh`, à mão, e a última vez foi
+  13/10. Medido em 15/10: produção 11.620, cluster 11.252 — **368 de diferença,
+  +39 só desde a noite de 14/10.** Rodar imediatamente antes da virada, e
+  conferir o número, não a sensação de que o espelho "está rodando".
+- **auth e storage.** Não vêm por replicação lógica (seção 1.4). A carga de
+  13/10 trouxe 159 logins; a produção tem **156** agora — ou seja, já houve
+  exclusão de usuário depois. Reexecutar no passo 2.3 não é zelo, é o que
+  mantém quem entra no sistema.
+- **Edge Functions.** O container `erp-pilha-functions-1` tem **63** das 64 do
+  repositório. Falta `tvg-ia` — e é do **mesmo módulo TVG** cujas 21 funções de
+  banco faltavam na seção 1.11. A cópia das functions deriva igual à do schema,
+  e não existe conferidor para ela. Comparar `ls` no container com
+  `ls supabase/functions` faz parte do passo 2.1.
+- **Backup.** Hoje `backup_banco.yml` e `backup_storage.yml` apontam para a
+  Supabase. No dia seguinte à virada, **o cluster não tem backup nenhum** —
+  e o cluster passa a ser a produção. Isto é o item mais fácil de esquecer e o
+  mais caro de esquecer.
+
+**Decisões ainda abertas:** a noite do Marco B, o `synchronous_mode_strict`
+(recomendação: continuar desligado) e a alta disponibilidade do **endereço
+HTTP** — hoje o banco troca de líder sozinho, mas `api.grpnascimento.com.br`
+resolve só para o banco1, então o nó que cai inteiro leva o ERP com ele.
