@@ -474,6 +474,16 @@ const maloteModule: ModuleDef = {
         { label: "Pagamento Malote", to: "/app/malote/pagamento", icon: Banknote },
       ],
     },
+    // SIS-2026-0668: exceção pedida ANTES de lançar a despesa; o N2 aprova e a senha é digitada em Criar Despesa.
+    {
+      label: "Exceções",
+      defaultOpen: true,
+      items: [
+        { label: "Autorizações de Exceção", to: "/app/malote/excecao/autorizacoes", icon: ClipboardList },
+        { label: "Solicitar Exceção", to: "/app/malote/excecao/solicitar", icon: KeyRound },
+        { label: "Minhas Solicitações", to: "/app/malote/excecao/minhas", icon: ListChecks },
+      ],
+    },
     // SIS-2026-0125: Classificação/Orçamento saem de Controladoria e passam
     // a viver aqui — Classificação Administrativo (simples) e Orçamento
     // Administrativo continuam separados de Classificações Malote (rica,
