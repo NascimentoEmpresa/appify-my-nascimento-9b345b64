@@ -61,7 +61,12 @@ function Conteudo() {
 
   const totalMensal = filtradas.reduce((s, l) => s + (l.valor_mensal_postos ?? 0), 0);
   const totalPostos = filtradas.reduce((s, l) => s + l.qt_postos, 0);
+  const totalColaboradores = filtradas.reduce((s, l) => s + l.qt_funcionarios, 0);
   const ticketMedio = totalPostos ? totalMensal / totalPostos : 0;
+  // Custo por pessoa é o número que não muda quando a planilha do Yuri entra:
+  // ela traz o "Nº DE POSTOS" físico (170 no piloto) e o ticket por posto cai,
+  // mas o custo por colaborador continua o mesmo.
+  const custoPorColaborador = totalColaboradores ? totalMensal / totalColaboradores : 0;
 
   const topPostos = useMemo(
     () =>
@@ -127,9 +132,18 @@ function Conteudo() {
               Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-24" />)
             ) : (
               <>
-                <CartaoIndicador titulo="Valor Mensal do Contrato" valor={brl(resumo?.valor_mensal)} icone={<Coins className="h-5 w-5" />} tom="blue" />
+                <CartaoIndicador
+                  titulo="Valor Mensal do Contrato"
+                  valor={brl(resumo?.valor_mensal)}
+                  detalhe={
+                    resumo?.valor_mensal_contrato && Math.abs((resumo.valor_mensal ?? 0) - resumo.valor_mensal_contrato) >= 0.01
+                      ? `Contratado: ${brl(resumo.valor_mensal_contrato)}`
+                      : "Pela Planilha de Custo"
+                  }
+                  icone={<Coins className="h-5 w-5" />} tom="blue"
+                />
                 <CartaoIndicador titulo="Quantidade de Postos" valor={num(totalPostos)} icone={<Layers className="h-5 w-5" />} tom="green" />
-                <CartaoIndicador titulo="Tipos de Posto" valor={num(filtradas.length)} icone={<Building2 className="h-5 w-5" />} tom="amber" />
+                <CartaoIndicador titulo="Colaboradores" valor={num(totalColaboradores)} detalhe={`${brl(custoPorColaborador)} por pessoa`} icone={<Building2 className="h-5 w-5" />} tom="amber" />
                 <CartaoIndicador titulo="Ticket Médio por Posto" valor={brl(ticketMedio)} icone={<Banknote className="h-5 w-5" />} tom="violet" />
                 <CartaoIndicador titulo="Cidades Atendidas" valor={num(resumo?.qt_cidades)} icone={<MapPin className="h-5 w-5" />} tom="slate" />
               </>
@@ -286,8 +300,9 @@ function TabelaPostos({ linhas, total }: { linhas: LinhaFinanceiro[]; total: num
         <thead>
           <tr>
             <CabecalhoTabela>Posto</CabecalhoTabela>
-            <CabecalhoTabela alinhar="right">Valor do Posto (R$)</CabecalhoTabela>
+            <CabecalhoTabela alinhar="right">Custo por Pessoa (R$)</CabecalhoTabela>
             <CabecalhoTabela alinhar="right">Qtde de Postos</CabecalhoTabela>
+            <CabecalhoTabela alinhar="right">Colaboradores</CabecalhoTabela>
             <CabecalhoTabela alinhar="right">Valor Mensal dos Postos (R$)</CabecalhoTabela>
             <CabecalhoTabela alinhar="center">Faixa de Custo</CabecalhoTabela>
             <CabecalhoTabela alinhar="right">Participação %</CabecalhoTabela>
@@ -299,6 +314,7 @@ function TabelaPostos({ linhas, total }: { linhas: LinhaFinanceiro[]; total: num
               <td className="px-3 py-2 font-medium text-slate-800">{l.posto}</td>
               <td className="px-3 py-2 text-right tabular-nums">{brl(l.valor_posto)}</td>
               <td className="px-3 py-2 text-right tabular-nums">{num(l.qt_postos)}</td>
+              <td className="px-3 py-2 text-right tabular-nums">{num(l.qt_funcionarios)}</td>
               <td className="px-3 py-2 text-right tabular-nums">{brl(l.valor_mensal_postos)}</td>
               <td className="px-3 py-2 text-center">
                 <span className={`rounded px-2 py-0.5 text-[11px] font-semibold ${faixaSelo[l.faixa_custo]}`}>
@@ -312,6 +328,7 @@ function TabelaPostos({ linhas, total }: { linhas: LinhaFinanceiro[]; total: num
             <td className="px-3 py-2">Total Geral</td>
             <td className="px-3 py-2 text-right">—</td>
             <td className="px-3 py-2 text-right tabular-nums">{num(linhas.reduce((s, l) => s + l.qt_postos, 0))}</td>
+            <td className="px-3 py-2 text-right tabular-nums">{num(linhas.reduce((s, l) => s + l.qt_funcionarios, 0))}</td>
             <td className="px-3 py-2 text-right tabular-nums">{brl(total)}</td>
             <td className="px-3 py-2 text-center">—</td>
             <td className="px-3 py-2 text-right tabular-nums">100,00%</td>

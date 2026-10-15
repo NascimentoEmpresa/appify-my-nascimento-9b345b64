@@ -14,6 +14,9 @@ import { Save, Shield, Lock, FileText, Plus, Pencil, Trash2, AlertTriangle, Down
 import { toast } from "sonner";
 import { usePermissoes } from "@/context/PermissoesContext";
 import { SearchableMultiSelect } from "@/components/ui/searchable-multi-select";
+import { SearchableSelect } from "@/components/ui/searchable-select";
+import { useUsuariosAtivos } from "@/hooks/useNfEmissao";
+import { useExcecaoAprovador, useSalvarExcecaoAprovador } from "@/hooks/useMaloteExcecao";
 import { useClassificacoesOrcamentoAdmin } from "@/hooks/usePlanejamentoOrcamentario";
 import {
   useMaloteConfig,
@@ -55,6 +58,10 @@ export default function Configuracoes() {
   const podeExportarRelatorio = can("exportar", "malote", "malote_relatorio_despesas");
 
   const { data: config, isLoading } = useMaloteConfig();
+  // SIS-2026-0668: único aprovador das Solicitações de Exceção (grava na hora, como as demais chaves desta tela não: tem botão próprio).
+  const { data: usuariosAtivos = [] } = useUsuariosAtivos();
+  const { data: aprovadorExcecaoId, isError: aprovadorExcecaoIndisponivel } = useExcecaoAprovador();
+  const salvarAprovadorExcecao = useSalvarExcecaoAprovador();
   const salvar = useSalvarMaloteConfig();
 
   const [form, setForm] = useState<MaloteConfig | null>(null);
@@ -374,6 +381,33 @@ export default function Configuracoes() {
                       </span>
                     </label>
                   </div>
+                </div>
+              </div>
+
+              <div>
+                <Label className="text-sm font-semibold">2.4 Aprovador das exceções</Label>
+                <p className="text-xs text-muted-foreground mt-1 mb-2">
+                  Única pessoa que aprova ou reprova as Solicitações de Exceção (Malote › Autorizações de Exceção) e, ao aprovar, libera a senha.
+                  Hoje é quem responde pelo caixa do financeiro.
+                </p>
+                <div className="max-w-sm">
+                  <SearchableSelect
+                    value={aprovadorExcecaoId ?? ""}
+                    onChange={async (id) => {
+                      try {
+                        await salvarAprovadorExcecao.mutateAsync(id || null);
+                        toast.success("Aprovador das exceções atualizado.");
+                      } catch (e) {
+                        toast.error(e instanceof Error ? e.message : "Não foi possível salvar o aprovador.");
+                      }
+                    }}
+                    options={usuariosAtivos.map((u) => ({ value: u.id, label: u.display_name }))}
+                    placeholder="Selecione o aprovador"
+                    disabled={!podeEditar || salvarAprovadorExcecao.isPending || aprovadorExcecaoIndisponivel}
+                  />
+                  {aprovadorExcecaoIndisponivel && (
+                    <p className="text-xs text-destructive mt-1">Aplique a migration 20261015000004 para configurar o aprovador.</p>
+                  )}
                 </div>
               </div>
 
