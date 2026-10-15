@@ -183,7 +183,7 @@ function CartaoGestao({ i, onClick, compacto = false }: { i: IndicadorGerencial;
         <span className="shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase" style={{ color: cor, background: `${cor}1a` }}>{ROTULO_SITUACAO[s]}</span>
       </div>
       <p className={`mt-1 font-black tabular-nums ${compacto ? "text-xl" : "text-3xl"}`} style={{ color: i.resultado?.valor == null ? undefined : cor }}>
-        {i.resultado?.valor == null ? <span className="text-base font-semibold text-muted-foreground">{i.resultado?.erro ? "Erro no cálculo" : "Aguardando lançamento"}</span> : formatarValor(i.resultado.valor, i.unidade)}
+        {i.resultado?.valor == null ? <span className="text-base font-semibold text-muted-foreground">{i.resultado?.erro ? "Erro no cálculo" : "Aguardando lançamento"}</span> : formatarValor(i.resultado.valor, i.unidade, true, i.resultado.casas)}
       </p>
       <p className="text-[11px] text-muted-foreground">{textoMeta(i)}</p>
       {!compacto && (
@@ -230,7 +230,7 @@ function DetalheIndicador({ i, painel, onClose, onAbrir, onMudou, onIa }: {
 
         <div className="grid gap-3 sm:grid-cols-[auto_1fr]">
           <div className="rounded-xl border p-4 text-center" style={{ borderColor: cor }}>
-            <p className="text-4xl font-black tabular-nums" style={{ color: cor }}>{r.valor == null ? "—" : formatarValor(r.valor, i.unidade, false)}</p>
+            <p className="text-4xl font-black tabular-nums" style={{ color: cor }}>{r.valor == null ? "—" : formatarValor(r.valor, i.unidade, false, r.casas)}</p>
             <p className="text-xs text-muted-foreground">{textoMeta(i)}{i.alerta != null ? ` · atenção até ${formatarValor(i.alerta, i.unidade, false)}` : ""}</p>
             <p className="mt-1 text-xs font-bold uppercase" style={{ color: cor }}>{ROTULO_SITUACAO[s]}</p>
           </div>
@@ -281,7 +281,7 @@ function DetalheIndicador({ i, painel, onClose, onAbrir, onMudou, onIa }: {
                   <button key={x.codigo} type="button" onClick={() => onAbrir(x.codigo)} className="flex items-center gap-2 rounded-lg border p-2 text-left text-sm hover:bg-muted/50">
                     <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: COR_SITUACAO[sx] }} />
                     <span className="min-w-0 flex-1">{x.nome}</span>
-                    <span className="font-bold tabular-nums">{x.resultado?.valor == null ? "—" : formatarValor(x.resultado.valor, x.unidade)}</span>
+                    <span className="font-bold tabular-nums">{x.resultado?.valor == null ? "—" : formatarValor(x.resultado.valor, x.unidade, true, x.resultado.casas)}</span>
                   </button>
                 );
               })}

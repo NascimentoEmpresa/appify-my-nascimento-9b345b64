@@ -60,14 +60,17 @@ async function wabaId(): Promise<string | null> {
 }
 
 /** Status de cada template da conta, por nome. */
-async function statusNaMeta(waba: string): Promise<Record<string, { status: string; motivo?: string }>> {
-  const out: Record<string, { status: string; motivo?: string }> = {};
-  let url = `${GRAPH}/${waba}/message_templates?limit=200&fields=name,status,rejected_reason`;
+// categoria (14/10/2026): a que a META deu, não a que pedimos. A Meta
+// reclassifica UTILITY → MARKETING sozinha, e marketing toma 131049/130472
+// (limite por pessoa) — a saudação "não chegava pra ninguém" por isso.
+async function statusNaMeta(waba: string): Promise<Record<string, { status: string; motivo?: string; categoria?: string }>> {
+  const out: Record<string, { status: string; motivo?: string; categoria?: string }> = {};
+  let url = `${GRAPH}/${waba}/message_templates?limit=200&fields=name,status,category,rejected_reason`;
   for (let pagina = 0; pagina < 10 && url; pagina++) {
     const r = await fetch(url, { headers: { Authorization: `Bearer ${WA_TOKEN}` } });
     const d = await r.json().catch(() => ({}));
     if (!r.ok) break;
-    for (const t of d?.data ?? []) out[t.name] = { status: t.status, motivo: t.rejected_reason };
+    for (const t of d?.data ?? []) out[t.name] = { status: t.status, motivo: t.rejected_reason, categoria: t.category };
     url = d?.paging?.next ?? "";
   }
   return out;
@@ -101,7 +104,7 @@ Deno.serve(async (req) => {
     const waba = await wabaId();
     if (!waba) return json({ error: (await descobrirWaba(WA_TOKEN, PHONE_NUMBER_ID)).erro ?? "não consegui identificar a conta do WhatsApp" }, 502);
     const { data: linhas } = await db.from("WA_TEMPLATE")
-      .select("codigo, template_nome").eq("ativo", true);
+      .select("codigo, template_nome, template_nome_anterior").eq("ativo", true);
     const naMeta = await statusNaMeta(waba);
     return json({
       ok: true,
@@ -111,6 +114,8 @@ Deno.serve(async (req) => {
         // Sem nome de template a mensagem só existe como texto livre: dentro
         // da janela funciona, fora não há o que aprovar.
         ...(l.template_nome ? (naMeta[l.template_nome] ?? { status: "NAO_CRIADO" }) : { status: "SEM_TEMPLATE" }),
+        // O reserva: é ele que sai enquanto o novo não é aprovado.
+        ...(l.template_nome_anterior ? { anterior: { nome: l.template_nome_anterior, ...(naMeta[l.template_nome_anterior] ?? { status: "NAO_CRIADO" }) } } : {}),
       })),
     });
   }
@@ -262,12 +267,15 @@ Deno.serve(async (req) => {
   const waId = data?.messages?.[0]?.id ?? null;
   // Os botões que a pessoa vê (o template anterior não tem): a Caixa desenha.
   const comBotoes = botoesTpl.length && !usouAnterior;
+  // Qual template saiu de fato (14/10/2026): sem isso não dava para ver que
+  // TODAS as saudações caíam no anterior (MARKETING) e tomavam 131049.
+  const viaTemplate = dentroJanela ? {} : { template: usouAnterior ? tpl.template_nome_anterior : tpl.template_nome, template_anterior: usouAnterior };
   await db.from("WA_MENSAGEM").insert({
     conversa_id: conversa.id, contato_id: conversa.contato_id, direcao: "saida",
     tipo: dentroJanela ? (comBotoes ? "interactive" : "text") : "template",
     texto, wa_message_id: waId, status: waId ? "enviada" : "erro",
     origem: "atendente", autor_id: userData.user.id,
-    ...(comBotoes ? { payload: { tipo: "button", botoes: botoesTpl.map((t, i) => ({ id: `tpl_${tpl.codigo}_${i}`, titulo: t })) } } : {}),
+    ...(comBotoes || !dentroJanela ? { payload: { ...viaTemplate, ...(comBotoes ? { tipo: "button", botoes: botoesTpl.map((t, i) => ({ id: `tpl_${tpl.codigo}_${i}`, titulo: t })) } : {}) } } : {}),
   });
   await db.from("WA_CONVERSA").update({
     ultima_mensagem_em: new Date().toISOString(),
