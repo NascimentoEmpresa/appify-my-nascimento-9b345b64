@@ -635,6 +635,8 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
   const [curriculos, setCurriculos]         = useState<Curriculo[]>([]);
   // Candidato inserido à mão (CandidatoManualDialog, 30/09/2026).
   const [showCandManual, setShowCandManual] = useState(false);
+  // Editar quem foi inserido à mão (15/10/2026): o ✎ do card abre o mesmo formulário.
+  const [editarCandId, setEditarCandId] = useState<number | null>(null);
   const [showCurriculos, setShowCurriculos] = useState(false);
   const [empCpf, setEmpCpf]                 = useState<Record<string, EmpCadastro[]>>({});   // CPF dígitos → cadastros EMPREGADOS
   const [blacklist, setBlacklist]           = useState<Record<string, { motivo: string; criado_em?: string }>>({});
@@ -1776,6 +1778,39 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
   // indicador e para reaproveitar a pessoa no banco de talentos. Por isso
   // campos próprios, e a etapa de origem fica guardada (senão o "onde
   // perdemos candidato" fica cego, já que a etapa passa a ser Reprovado).
+  // ── Retornar ao processo (15/10/2026) ─────────────────────────────
+  // Reprovado / Desistência não é mais caminho sem volta: o Recrutamento
+  // escolhe a etapa e o motivo, que fica no histórico da vaga. Os campos de
+  // reprovação/desistência são limpos (o histórico guarda o que houve), senão
+  // uma reprovação futura apareceria no card como "Desistiu". Não dispara a
+  // mensagem automática da etapa — voltar é exceção, quem avisa é a pessoa.
+  const [retornoModal, setRetornoModal] = useState<{ id: number; nome: string; etapa: string; motivo: string } | null>(null);
+  const [retornando, setRetornando] = useState(false);
+  const confirmarRetorno = async () => {
+    if (!retornoModal) return;
+    const { id, nome: nomeCand, etapa: alvo, motivo } = retornoModal;
+    if (!alvo) { toast("Escolha a etapa.", "err"); return; }
+    if (motivo.trim().length < 5) { toast("Informe o motivo do retorno.", "err"); return; }
+    setRetornando(true);
+    const cand = candidatos.find(c => c.id === id);
+    const nowIso = new Date().toISOString();
+    const { error } = await sb.from("WA_CURRICULOS").update({
+      etapa_processo: alvo, etapa_changed_at: nowIso, motivo_reprovacao: null,
+      desistiu: false, desistencia_motivo: null, desistencia_em: null, desistencia_por: null, desistencia_etapa: null,
+    }).eq("id", id);
+    setRetornando(false);
+    if (error) { toast("Erro ao retornar o candidato: " + error.message, "err"); return; }
+    const antes = cand?.desistiu ? `desistência${cand.desistencia_etapa ? ` em ${cand.desistencia_etapa}` : ""}: ${cand.desistencia_motivo ?? ""}`
+      : cand?.motivo_reprovacao ? `reprovação: ${cand.motivo_reprovacao}` : "";
+    if (drawerId) await logHistorico(drawerId, `Candidato retornou ao processo → ${alvo}`, {
+      de: "Reprovado", para: alvo, papel: "Recrutamento", candidatoId: id, candidatoNome: nomeCand,
+      detalhe: motivo.trim() + (antes ? ` (antes — ${antes.trim()})` : ""),
+    });
+    setRetornoModal(null);
+    toast(`${nomeCand} voltou para "${alvo}".`, "ok");
+    if (drawerId) loadCandidatos(drawerId);
+  };
+
   const [desistModal, setDesistModal] = useState<{ id: number; nome: string; etapa: string } | null>(null);
   const [desistMotivo, setDesistMotivo] = useState("");
 
@@ -2798,6 +2833,10 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
                             <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
                               <div style={{ fontSize: 12, fontWeight: 800, color: "#0f172a", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", flex: 1 }}>{c.nome || "Sem nome"}</div>
                               <AvisoProcessos processos={processosDe(processosCand, c)} compacto />
+                              {c.origem === "Manual" && podeRecrutar && !somenteLeitura && (
+                                <button onClick={() => setEditarCandId(c.id)} title="Editar os dados do candidato (inserido manualmente)"
+                                  style={{ flexShrink: 0, width: 20, height: 20, padding: 0, display: "inline-flex", alignItems: "center", justifyContent: "center", borderRadius: 6, border: "1px solid #e2e8f0", background: "#f8fafc", cursor: "pointer", color: "#475569" }}><Pencil size={11} aria-hidden /></button>
+                              )}
                               <button onClick={() => abrirDetalheCandidato(c)} title="Ver detalhes e procurar cadastro dele na empresa"
                                 style={{ flexShrink: 0, width: 20, height: 20, padding: 0, display: "inline-flex", alignItems: "center", justifyContent: "center", borderRadius: 6, border: "1px solid #e2e8f0", background: "#f8fafc", cursor: "pointer", color: "#475569" }}><Search size={12} aria-hidden /></button>
                             </div>
@@ -2912,6 +2951,11 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
                               )}
                               {etapa === "JURÍDICO" && podeMoverJuridico && ehDoJuridico && (
                                 <button onClick={() => okJuridico(c)} title="Nada a apontar: parecer Tudo certo e segue para a Entrevista" style={{ ...bSkip, color: "#15803d", borderColor: "#bbf7d0" }}>✓ OK, tudo certo → Entrevista</button>
+                              )}
+                              {etapa === "Reprovado" && podeRecrutar && !somenteLeitura && (
+                                <button onClick={() => setRetornoModal({ id: c.id, nome: c.nome || "Candidato", etapa: normalizarEtapa(c.desistencia_etapa) || "", motivo: "" })}
+                                  title="Voltar o candidato para uma etapa do processo (o motivo fica no histórico)"
+                                  style={{ ...bSkip, color: "#0f3171", borderColor: "#c7d2fe", marginTop: 6 }}>↩ Retornar ao processo</button>
                               )}
                               {/* No Jurídico não tem Reprovar: ele só dá parecer (mig 20261014000004). */}
                               {etapa !== "ADMISSÃO" && etapa !== "Reprovado" && etapa !== "JURÍDICO" && podeAqui && <button onClick={() => pedirMoverCand(c, "Reprovado")} style={{ width: "100%", fontSize: 10.5, fontWeight: 700, padding: "4px", borderRadius: 7, background: "transparent", border: "none", color: "#94a3b8", cursor: "pointer" }}>Reprovar</button>}
@@ -4092,6 +4136,47 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
             </div>
           </div>
         </div>
+      )}
+
+      {/* ── Modal: retornar candidato reprovado/desistente ao processo ── */}
+      {retornoModal && (
+        <div className="rec-modal-ov" style={{ zIndex: 950 }} onClick={e => { if (e.target === e.currentTarget && !retornando) setRetornoModal(null); }}>
+          <div className="rec-modal" style={{ maxWidth: 460 }} onClick={e => e.stopPropagation()}>
+            <div style={{ fontSize: 17, fontWeight: 800, marginBottom: 2, color: "#0f3171" }}>↩ Retornar ao processo</div>
+            <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 12 }}>{retornoModal.nome}</div>
+            <label style={{ fontSize: 11, fontWeight: 700, color: "#475569" }}>Voltar para a etapa *</label>
+            <select value={retornoModal.etapa} onChange={e => setRetornoModal(m => m && { ...m, etapa: e.target.value })}
+              style={{ width: "100%", marginTop: 6, marginBottom: 12, padding: "8px 10px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: 13, background: "#fff" }}>
+              <option value="">Escolha a etapa…</option>
+              {CAND_ETAPAS.filter(e => e !== "Reprovado").map(e => <option key={e} value={e}>{ETAPA_LABEL[e] ?? e}</option>)}
+            </select>
+            <label style={{ fontSize: 11, fontWeight: 700, color: "#475569" }}>Motivo *</label>
+            <textarea value={retornoModal.motivo} onChange={e => setRetornoModal(m => m && { ...m, motivo: e.target.value })} rows={3}
+              placeholder="Ex.: candidata reconsiderou e aceitou assinar a carteira"
+              style={{ width: "100%", marginTop: 6, padding: "8px 10px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: 13, resize: "vertical" }} />
+            <div style={{ fontSize: 10.5, color: "#94a3b8", marginTop: 6 }}>
+              O motivo fica no histórico da vaga, junto com a reprovação/desistência anterior. Nenhuma mensagem automática é enviada.
+            </div>
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 16 }}>
+              <button onClick={() => setRetornoModal(null)} disabled={retornando} style={{ padding: "7px 14px", borderRadius: 8, background: "#fff", border: "1px solid #e2e8f0", color: "#475569", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Cancelar</button>
+              <button onClick={confirmarRetorno} disabled={retornando} style={{ padding: "7px 14px", borderRadius: 8, background: "#0f3171", border: "none", color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer", opacity: retornando ? .6 : 1 }}>{retornando ? "Movendo…" : "Retornar"}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Editar candidato inserido manualmente ── */}
+      {editarCandId != null && drawerId && (
+        <CandidatoManualDialog
+          vagaId={drawerId} cargo={drawerSol?.cargo} autor={user?.user_metadata?.nome ?? user?.email ?? ""} editarId={editarCandId}
+          onFechar={() => setEditarCandId(null)}
+          onSalvo={async ({ id, nome }) => {
+            setEditarCandId(null);
+            await logHistorico(drawerId, "Dados do candidato editados", { papel: "Recrutamento", candidatoId: id, candidatoNome: nome });
+            toast(`Dados de ${nome} atualizados.`, "ok");
+            loadCandidatos(drawerId);
+          }}
+        />
       )}
 
       {/* ── Modal: detalhes dos cadastros em EMPREGADOS ── */}
