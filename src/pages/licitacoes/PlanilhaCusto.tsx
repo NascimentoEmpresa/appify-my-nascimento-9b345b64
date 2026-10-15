@@ -310,15 +310,44 @@ export default function PlanilhaCusto() {
   }, [baseRows, contratoEfetivo]);
   const postoEfetivo = postoOpcoes.some((o) => o.key === filtroPosto) ? filtroPosto : "";
 
+  const casaBusca = (r: PlanilhaCustoRow) =>
+    r.cliente.toLowerCase().includes(q.toLowerCase()) ||
+    r.contrato.toLowerCase().includes(q.toLowerCase()) ||
+    r.posto.toLowerCase().includes(q.toLowerCase());
+
   const filtered = baseRows.filter((r) => {
     if (contratoEfetivo && chaveContrato(r) !== contratoEfetivo) return false;
     if (postoEfetivo && normFiltro(r.posto) !== postoEfetivo) return false;
-    return (
-      r.cliente.toLowerCase().includes(q.toLowerCase()) ||
-      r.contrato.toLowerCase().includes(q.toLowerCase()) ||
-      r.posto.toLowerCase().includes(q.toLowerCase())
-    );
+    return casaBusca(r);
   });
+
+  // SIS-2026-0662: os KPIs (e as janelas que eles abrem) acompanham a SELEÇÃO —
+  // Empresa + Contrato + Posto + busca por texto. Orçado/Executado, Vigência e
+  // Histórico ficam de fora de propósito: são formas de ver a lista, e alguns
+  // cartões já têm definição própria (ex.: "Postos cadastrados" só conta
+  // EM VIGÊNCIA + EXECUTADO; somar o filtro Orçado zeraria o cartão).
+  // Sem nenhuma seleção, os números são exatamente os de antes.
+  const escopoAtivo = !!(contratoEfetivo || postoEfetivo || q.trim());
+  const rowsEscopo = React.useMemo(
+    () =>
+      escopoAtivo
+        ? rowsEmpresa.filter(
+            (r) =>
+              (!contratoEfetivo || chaveContrato(r) === contratoEfetivo) &&
+              (!postoEfetivo || normFiltro(r.posto) === postoEfetivo) &&
+              casaBusca(r),
+          )
+        : rowsEmpresa,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [escopoAtivo, rowsEmpresa, contratoEfetivo, postoEfetivo, q],
+  );
+  // Contratos ativos que aparecem no recorte (por id; linhas legadas sem id, pelo nome).
+  const contratosAtivosEscopo = React.useMemo(() => {
+    if (!escopoAtivo) return contratosAtivosEmpresa;
+    const ids = new Set(rowsEscopo.map((r) => r.contrato_id).filter(Boolean) as string[]);
+    const nomes = new Set(rowsEscopo.filter((r) => !r.contrato_id).map((r) => normFiltro(r.contrato)));
+    return contratosAtivosEmpresa.filter((c) => ids.has(c.id) || nomes.has(normFiltro(c.nome)));
+  }, [escopoAtivo, rowsEscopo, contratosAtivosEmpresa]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const currentPage = Math.min(page, totalPages);
@@ -390,7 +419,7 @@ export default function PlanilhaCusto() {
 
       {/* KPIs */}
       <div className="grid gap-4 md:grid-cols-5">
-        <Kpi label="Total de registros" v={String(rowsEmpresa.length)} />
+        <Kpi label="Total de registros" v={String(rowsEscopo.length)} filtrado={escopoAtivo} />
         <Kpi
           label="Empresa"
           v={filtroEmpresaId ? (empresasGrupo.find((e) => e.id === filtroEmpresaId)?.nome ?? "—") : "Grupo (todas)"}
@@ -399,21 +428,24 @@ export default function PlanilhaCusto() {
         />
         <Kpi
           label="Contratos ativos"
-          v={String(contratosAtivosEmpresa.length)}
+          v={String(contratosAtivosEscopo.length)}
           onClick={() => setContratosOpen(true)}
           clickable
+          filtrado={escopoAtivo}
         />
         <Kpi
           label="Postos cadastrados"
-          v={String(rowsEmpresa.filter((r) => statusMap.get(r.id) === "EM VIGÊNCIA" && r.orexec === "EXECUTADO").length)}
+          v={String(rowsEscopo.filter((r) => statusMap.get(r.id) === "EM VIGÊNCIA" && r.orexec === "EXECUTADO").length)}
           onClick={() => setPostosViewOpen(true)}
           clickable
+          filtrado={escopoAtivo}
         />
         <Kpi
           label="Clientes distintos"
-          v={String(new Set(rowsEmpresa.map((r) => r.cliente)).size)}
+          v={String(new Set(rowsEscopo.map((r) => r.cliente)).size)}
           onClick={() => setClientesOpen(true)}
           clickable
+          filtrado={escopoAtivo}
         />
       </div>
 
@@ -681,14 +713,14 @@ export default function PlanilhaCusto() {
       {/* Modal de breakdown por contrato */}
       <Dialog open={contratosOpen} onOpenChange={(o) => !o && setContratosOpen(false)}>
         <DialogContent className="max-w-5xl max-h-[85vh] overflow-y-auto">
-          <ContratosModal rows={rowsEmpresa} statusMap={statusMap} contratosAtivos={contratosAtivosEmpresa} />
+          <ContratosModal rows={rowsEscopo} statusMap={statusMap} contratosAtivos={contratosAtivosEscopo} />
         </DialogContent>
       </Dialog>
 
       {/* Modal de visão de postos */}
       <Dialog open={postosViewOpen} onOpenChange={(o) => !o && setPostosViewOpen(false)}>
         <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
-          {postosViewOpen && <PostosViewModal rows={rowsEmpresa} statusMap={statusMap} />}
+          {postosViewOpen && <PostosViewModal rows={rowsEscopo} statusMap={statusMap} />}
         </DialogContent>
       </Dialog>
 
@@ -733,7 +765,7 @@ export default function PlanilhaCusto() {
       {/* Modal de breakdown por cliente */}
       <Dialog open={clientesOpen} onOpenChange={(o) => !o && setClientesOpen(false)}>
         <DialogContent className="max-w-4xl max-h-[85vh] overflow-y-auto">
-          <ClientesModal rows={rowsEmpresa} statusMap={statusMap} />
+          <ClientesModal rows={rowsEscopo} statusMap={statusMap} />
         </DialogContent>
       </Dialog>
 
@@ -3686,7 +3718,7 @@ function CompRow({
   );
 }
 
-function Kpi({ label, v, onClick, clickable }: { label: string; v: string; onClick?: () => void; clickable?: boolean }) {
+function Kpi({ label, v, onClick, clickable, filtrado }: { label: string; v: string; onClick?: () => void; clickable?: boolean; filtrado?: boolean }) {
   return (
     <div
       className={`card-elevated p-5 ${clickable ? "cursor-pointer transition-shadow hover:shadow-md hover:border-primary/30 group" : ""}`}
@@ -3695,6 +3727,12 @@ function Kpi({ label, v, onClick, clickable }: { label: string; v: string; onCli
       <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
         {label}
         {clickable && <span className="ml-1 text-primary opacity-0 group-hover:opacity-100 transition-opacity">↗</span>}
+        {/* SIS-2026-0662: o número acompanha o filtro de contrato/posto/busca */}
+        {filtrado && (
+          <span className="ml-2 rounded-full bg-primary/10 px-1.5 py-0.5 text-[9px] font-semibold normal-case tracking-normal text-primary">
+            filtrado
+          </span>
+        )}
       </p>
       <p className="mt-2 font-display text-2xl font-bold text-primary">{v}</p>
     </div>

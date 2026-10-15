@@ -166,6 +166,9 @@ import MaloteMeusItens from "./pages/malote/MeusItens";
 import MaloteDespesaVisualizar from "./pages/malote/DespesaVisualizar";
 import MaloteSolicitacaoVisualizar from "./pages/malote/SolicitacaoVisualizar";
 import MaloteArquivos from "./pages/malote/ArquivosMalote";
+import MaloteExcecaoSolicitar from "./pages/malote/ExcecaoSolicitar";
+import MaloteExcecaoAutorizacoes from "./pages/malote/ExcecaoAutorizacoes";
+import MaloteExcecaoMinhas from "./pages/malote/ExcecaoMinhas";
 import MovimentosBancarios from "./pages/financeiro/MovimentosBancarios";
 import ContasBancariasEmpresa from "./pages/financeiro/ContasBancariasEmpresa";
 import IntegracaoBancaria from "./pages/financeiro/IntegracaoBancaria";
@@ -695,6 +698,11 @@ const App = () => (
             {/* Malote */}
             <Route path="malote/aprovacoes" element={<MaloteAprovacoes />} />
             <Route path="malote/arquivos" element={<MaloteArquivos />} />
+            <Route path="malote/excecao/solicitar" element={<MaloteExcecaoSolicitar />} />
+            {/* SIS-2026-0668: Aprovar Exceções foi unificada em Autorizações de Exceção; a rota antiga só redireciona. */}
+            <Route path="malote/excecao/aprovar" element={<Navigate to="/app/malote/excecao/autorizacoes" replace />} />
+            <Route path="malote/excecao/autorizacoes" element={<MaloteExcecaoAutorizacoes />} />
+            <Route path="malote/excecao/minhas" element={<MaloteExcecaoMinhas />} />
             <Route path="malote/pagamento" element={<MalotePagamento />} />
             <Route path="malote/configuracoes" element={<MaloteConfiguracoes />} />
             <Route path="malote/criar-despesa" element={<MaloteCriarDespesa />} />

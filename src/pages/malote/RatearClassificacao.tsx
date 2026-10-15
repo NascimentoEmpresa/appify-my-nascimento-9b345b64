@@ -21,7 +21,8 @@ import { RateioGrid, DimensoesRateio } from "./RateioGrid";
 import { erroFornecedorNoRateio, erroEmpresaNoRateio } from "./rateioValidacao";
 import { AnexosField } from "./AnexosField";
 import { DiaPagamentoPicker } from "./DiaPagamentoPicker";
-import { ExcecaoDiaBloqueadoField } from "./ExcecaoDiaBloqueadoField";
+import { ExcecaoSenhaField } from "./ExcecaoSenhaField";
+import { conferirExcecaoComDespesa, type ExcecaoValidada } from "./excecao/regras";
 
 // SIS-2026-0263 (Iury): mesmo ajuste de CriarDespesa.tsx — dia do desconto
 // 1 a 30, quantidade de parcelas até 420 (Input numérico, não Select).
@@ -64,8 +65,10 @@ export default function RatearClassificacao() {
   const [formaPagamento, setFormaPagamento] = useState("");
   const [dadosPagamento, setDadosPagamento] = useState("");
   const [dataPagamento, setDataPagamento] = useState("");
-  const [excecao, setExcecao] = useState(false);
-  const [justificativaExcecao, setJustificativaExcecao] = useState("");
+  // SIS-2026-0668: a exceção vem da senha de uma solicitação aprovada, não de um checkbox.
+  const [excecaoVal, setExcecaoVal] = useState<ExcecaoValidada | null>(null);
+  const excecao = !!excecaoVal;
+  const justificativaExcecao = excecaoVal?.justificativa ?? "";
   const [dataCompetencia, setDataCompetencia] = useState("");
   const [dimensoes, setDimensoes] = useState<DimensoesRateio>({ empresa: false, contrato: false, fornecedor: false, integrante: false });
   const [ratearPor, setRatearPor] = useState<"percentual" | "valor">("percentual");
@@ -156,13 +159,15 @@ export default function RatearClassificacao() {
     // cima — mesma regra do trigger malote_bloqueia_dia_pagamento.
     if (dataPagamento < hoje) return "Data de pagamento é anterior a hoje — não é permitido, nem como exceção.";
     if (paraEnviar && exigeExcecao && !excecao) {
-      return `Data de pagamento fora do prazo normal de inclusão (regra 1.1 — hoje o prazo normal é ${prazoNormal}) — marque "Lançar como exceção" para continuar.`;
+      return `Data de pagamento fora do prazo normal de inclusão (regra 1.1 — hoje o prazo normal é ${prazoNormal}) — peça uma exceção em Malote › Solicitar Exceção e informe a senha aqui.`;
     }
     if (paraEnviar && excecao && dataPagamento === hoje && horaAtualPassouDe(maloteConfig?.excecao_limite_inclusao_horario)) {
       return `Já passou do horário limite (${maloteConfig?.excecao_limite_inclusao_horario}) para incluir exceção com pagamento hoje (regra 2.1).`;
     }
-    if (excecao && (maloteConfig?.excecao_exigir_justificativa_solicitante ?? true) && !justificativaExcecao.trim()) {
-      return "Informe a justificativa da exceção.";
+    if (excecaoVal) {
+      // Despesa rateada: o cabeçalho não tem classificação única (cada linha tem a sua); o banco confere o resto.
+      const erroExc = conferirExcecaoComDespesa(excecaoVal, { classificacaoId: null, dataPagamento, valor: Number(valorTotal) });
+      if (erroExc) return erroExc;
     }
     if (!dataCompetencia) return "Informe a data de competência.";
     if (paraEnviar) {
@@ -231,6 +236,7 @@ export default function RatearClassificacao() {
         valor_total: Number(valorTotal),
         data_pagamento: dataPagamento,
         excecao,
+        excecao_solicitacao_id: excecaoVal?.id ?? null,
         justificativa_excecao: excecao ? justificativaExcecao.trim() || null : null,
         competencia: dataCompetencia + "-01",
         forma_pagamento: formaPagamento,
@@ -398,11 +404,9 @@ export default function RatearClassificacao() {
             </div>
           </div>
 
-          <ExcecaoDiaBloqueadoField
-            checked={excecao}
-            onCheckedChange={setExcecao}
-            justificativa={justificativaExcecao}
-            onJustificativaChange={setJustificativaExcecao}
+          <ExcecaoSenhaField
+            validada={excecaoVal}
+            onValidada={(e) => { setExcecaoVal(e); if (e) setDataPagamento(e.data_pagamento); }}
             foraDoPrazoInclusao={exigeExcecao}
             prazoNormal={prazoNormal}
           />

@@ -607,6 +607,14 @@ async function cmdSincronizar() {
       resumo.push({ tabela: f.tabela, linhas, pk: f.pk.join('+') || '(sem PK)' });
       console.log(`  ${f.tabela.padEnd(34)} ${String(linhas).padStart(9)} linhas  ${((Date.now() - t0) / 1000).toFixed(1).padStart(6)}s  (fatiada)`);
     }
+    // Escala do colaborador (15/10/2026, mig 20261015000004): a integração da
+    // Senior nunca mandou a escala para EMPREGADOS — quem trocava de escala na
+    // Senior continuava com a antiga no ERP. Acerta depois de cada carga.
+    if (COMMIT) {
+      const { rows: [esc] } = await pgc.query(
+        "SELECT CASE WHEN to_regprocedure('public.rh_sync_escala_espelho()') IS NULL THEN NULL ELSE public.rh_sync_escala_espelho() END AS n");
+      if (esc?.n != null) console.log(`  escala do colaborador (EMPREGADOS ← Senior): ${esc.n} cadastro(s) acertado(s)`);
+    }
     if (COMMIT) await registrar(pgc, { ok: true, inicio, resumo });
   } catch (e) {
     await pgc.query('ROLLBACK');
