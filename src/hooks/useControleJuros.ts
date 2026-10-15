@@ -24,6 +24,8 @@ export interface ControleJurosLinha {
   juros_cobrado_em: string | null;
   numero_parcela: number | null;
   numero_parcelas: number | null;
+  /** 15/10/2026 (mig 20261015000002): "planilha" = importado da planilha de juros (FIN_JUROS_IMPORTADO), sem despesa no Malote. */
+  origem?: "despesa" | "parcela" | "planilha";
 }
 
 const LISTA_KEY = "controle_juros_malote";
@@ -45,7 +47,7 @@ export function useControleJurosLista() {
 export function useMarcarJurosCobrado() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async ({ origem, id }: { origem: "despesa" | "parcela"; id: string }) => {
+    mutationFn: async ({ origem, id }: { origem: "despesa" | "parcela" | "planilha"; id: string }) => {
       const { error } = await (supabase as any).rpc("malote_juros_marcar_cobrado", { _origem: origem, _id: id });
       if (error) throw error;
     },
