@@ -63,13 +63,36 @@ nela**.
 
 ## O risco que manda em todo o roteiro
 
-**Um slot de replicação que para de ser consumido enche o WAL da produção e
-derruba a Supabase.** É assim que uma migração mata o sistema que ela deveria
-proteger. Duas consequências práticas:
+**Um slot de replicação que para de ser consumido tem sete horas de vida.**
+
+> 🔴 **Corrigido em 15/10/2026.** Este trecho dizia, até hoje, que o slot
+> parado *"enche o WAL da produção e derruba a Supabase"*. **Está errado, e eu
+> repeti o erro ao Eduardo em relatório e em notificação.** A produção tem
+> `max_slot_wal_keep_size = 2GB`: o Postgres invalida o slot para proteger o
+> disco, e o disco nunca enche por essa via. Medido depois de 14 h de parada
+> real: WAL em 1296 MB de um teto de 4 GB, ERP respondendo 200. Detalhe,
+> aritmética e o caminho de volta na **seção 1.12**.
+
+O risco verdadeiro é o outro lado da mesma moeda: a ~300 MB/h, o slot parado
+chega aos 2 GB em **cerca de 7 horas** e é **invalidado**. O preço de uma
+parada muda de categoria nesse momento:
+
+| Parada percebida em… | Preço |
+|---|---|
+| menos de 7 h | um comando (`disparar-sincronia` ou `disparar-conflito`) |
+| mais de 7 h | **recopiar o banco inteiro** (`disparar-religar`) |
+
+Três consequências práticas:
 
 1. Enquanto existir slot nosso na produção, **alguém tem que estar olhando**.
    A consulta de vigilância está no passo 1.5 e roda a cada poucos minutos.
-2. Em qualquer passo que der errado, a primeira coisa a fazer é **soltar o
+2. **O vigia só vale se o worker estiver vivo.** O alerta por DM dispara com
+   1 GB no slot (~3,5 h de folga), e quem envia DM é o `worker/`. Em 14/10 o
+   worker estava morto desde 17h16, a replicação parou às 20h09, e o aviso que
+   existia exatamente para isso não saiu. Conferir
+   `scripts/status-banco.txt` com data de agora **antes** de deixar a
+   replicação ligada da noite para o dia.
+3. Em qualquer passo que der errado, a primeira coisa a fazer é **soltar o
    slot** — não investigar com o slot de pé.
 
 E a causa número um de slot travado neste banco já é conhecida: **11 tabelas
@@ -463,9 +486,16 @@ O que foi escrito em 13/10/2026:
    `pg_replication_slots` é view sobre função de sistema e o PostgREST não a
    expõe, então a leitura precisa do RPC. Só `service_role` executa.
 2. **o indicador no `saudeBanco.js`**, com limite de **1 GB** de atraso ou slot
-   inativo por mais de **5 minutos**. 1 GB é folgado de propósito: a produção
-   gera ~400 MB de WAL por hora em dia útil, então é mais de duas horas de
-   margem, e alto o bastante para a carga inicial não dar alarme falso.
+   inativo por mais de **5 minutos**. 1 GB é **metade do limite que mata o
+   slot** (`max_slot_wal_keep_size = 2GB`, seção 1.12): a produção gera
+   ~300 MB de WAL por hora, então o alerta sai com cerca de 3,5 h de folga
+   antes de a parada passar a custar uma recópia integral — e alto o bastante
+   para a carga inicial não dar alarme falso.
+
+   ⚠️ **O alerta só existe se o worker estiver vivo.** Quem envia a DM é o
+   `worker/`. Em 14/10 ele estava morto desde 17h16, a replicação parou às
+   20h09, e o slot foi invalidado de madrugada sem que ninguém soubesse. O
+   vigia estava certo e calado.
 
 Provado antes de entrar em produção:
 
@@ -920,6 +950,111 @@ dizia *"nenhuma faltando"* enquanto faltavam 44 funções, 5 triggers e 2 views.
 
 ---
 
+### 1.12 🔴 O slot tem prazo de validade: 2 GB (15/10/2026)
+
+A parada de 14/10 às 20h09 (seção 1.10) não foi destravada naquela noite. Na
+manhã de 15/10 o log do líder repetia, de 5 em 5 segundos:
+
+```
+ERROR:  could not start WAL streaming: ERROR:  can no longer get changes
+        from replication slot "erp_corte"
+DETAIL:  This slot has been invalidated because it exceeded the maximum
+         reserved size.
+```
+
+E o catálogo da produção:
+
+```
+ slot_name | active | restart_lsn | confirmed_flush_lsn | wal_status
+ erp_corte |   f    |   (vazio)   |    E7/3B13A1C0      |    lost
+```
+
+#### Duas correções a este roteiro, de uma vez
+
+**1. A produção nunca ia encher o disco.** Este roteiro dizia — e eu repeti ao
+Eduardo em relatório e em notificação — que slot parado enche o disco e põe a
+produção fora do ar. **Na Supabase, não.** `max_slot_wal_keep_size = 2GB`: o
+Postgres se recusa a guardar mais que isso para um slot parado e **invalida o
+slot** para proteger o disco. Medido depois de 14 h de parada: WAL em 1296 MB,
+teto `max_wal_size` de 4 GB, ERP respondendo 200. O risco que eu anunciei
+estava coberto pelo próprio banco.
+
+**2. Em troca, a parada tem um cronômetro — e ele é curto.**
+
+| | |
+|---|---|
+| WAL que a produção gera | ~300 MB/h (medido em 3 min, confirmado em 14 h) |
+| teto por slot parado | 2 GB |
+| **prazo para destravar** | **~7 horas** |
+| alerta do vigia (1 GB) | ~3,5 h de folga |
+
+Dentro das 7 h, destravar custa um comando. Passando delas, o preço vira
+**recopiar o banco inteiro** — de "3 minutos" para "a noite".
+
+Os valores a conferir antes de confiar nesta aritmética, porque são da
+instância e podem mudar:
+
+```sql
+select name, setting from pg_settings
+ where name in ('max_slot_wal_keep_size','max_wal_size','wal_keep_size');
+```
+
+#### O que mata o slot é a falta do aviso, não a parada
+
+O vigia da migration `20261014000020` alerta por DM com 1 GB no slot — metade
+do limite, de propósito. Em 14/10 ele **não avisou ninguém**, porque quem envia
+DM é o `worker/`, e o worker estava morto desde 17h16. A parada foi às 20h09.
+
+**Consequência operacional:** o worker não é um acessório deste roteiro, é
+parte da proteção. Antes de deixar a replicação ligada da noite para o dia,
+conferir que ele está vivo — `scripts/status-banco.txt` com data de agora — e
+não só que o vigia existe.
+
+#### `infra/ha/religar-replicacao.sh`
+
+Para slot perdido não existe conserto incremental: o WAL que a assinatura
+precisava **foi apagado**. O único caminho é copiar tudo de novo.
+
+O `ligar-replicacao.sh` não serve para isto: um dos pré-requisitos dele é
+`public` do cluster **vazio**, porque com `copy_data=true` dado preexistente
+viraria conflito de chave na carga inicial. Daí o script novo.
+
+```bash
+bash infra/ha/disparar-religar.sh              # só diz o que faria
+bash infra/ha/disparar-religar.sh --aplicar    # recopia
+```
+
+Seis passos: `DROP` da assinatura (DISABLE → `slot_name=none` → DROP, nessa
+ordem, senão o DROP fica pendurado tentando falar com um slot que já não
+existe), soltar o slot órfão na produção, `TRUNCATE` nas 657 tabelas de
+`public`, `CREATE SUBSCRIPTION` com `copy_data=true`, acompanhar até
+`647/647 PRONTA`, reaplicar a trava da seção 1.9.
+
+Três decisões que valem registro:
+
+- **Uma `TRUNCATE` só, com as 657 tabelas na mesma lista.** Assim as chaves
+  estrangeiras entre elas ficam satisfeitas **sem `CASCADE`** — e `CASCADE`
+  aqui poderia levar tabela de fora de `public` sem aparecer no log. Partição
+  não entra na lista: o `TRUNCATE` do pai já leva as filhas.
+- **A trava de recusa.** Se o `wal_status` não for `lost` (e o slot não for
+  inexistente), o script **se recusa a rodar**. Sem isso, um `--aplicar`
+  digitado na hora errada apagaria 1,5 milhão de linhas de um cluster
+  perfeitamente saudável para recopiá-las. Os cinco estados foram testados:
+  só `lost` e slot ausente liberam.
+- **O `TRUNCATE` não toca em schema.** Função, view, trigger e política
+  continuam lá — mas a produção andou desde a última conferência, então rodar
+  `disparar-schema.sh` e `disparar-sincronia.sh` depois da recopia é parte do
+  procedimento, não zelo extra.
+
+#### A ordem entre o teste de failover e a recopia
+
+Trocar o líder **no meio da cópia inicial** derruba a cópia: o processo que
+copia roda no líder. Teste de failover **antes** do `--aplicar`, ou depois do
+`647/647 PRONTA` — nunca no meio.
+
+
+---
+
 ## Fase 2 — a virada
 
 Daqui até o fim, o ERP fica fora do ar para escrita. Alvo: **minutos**, não
@@ -1122,7 +1257,12 @@ custo é o tempo que o sistema ficou lento à noite.
 
 ## O que falta, em ordem
 
-**Marco A — sem custo novo, sem parada, sem domínio:**
+> Revisado em 15/10/2026. A versão anterior desta lista dizia **"O Marco A está
+> fechado"** e marcava domínio e HTTPS como pendentes. As duas coisas
+> envelheceram ao contrário: domínio e HTTPS **ficaram prontos**, e o Marco A
+> **reabriu** quando o slot foi invalidado (seção 1.12).
+
+**Marco A — sem custo novo, sem parada:**
 
 ```
 ✅ 0.1  viabilidade: IPv6 + protocolo de replicação   13/10 — aceito nos dois nós
@@ -1130,36 +1270,62 @@ custo é o tempo que o sistema ficou lento à noite.
 ✅ 0.5  carregar-anexos.sh escrito e provado          13/10 — 206 nos dois nós
 ✅ 2.3  carregar-auth-storage.sh escrito e provado    13/10 — 159 logins no cluster
 ✅ 1.6  RPC do slot + alerta no worker                13/10 — provado no cluster
-✅ 0.5  a carga dos 5,6 GB de anexos                  13/10 — 11.251/11.251, 0 falhas
 ✅ 1.6b migration 20261014000020 na produção          13/10 — anon recebe 401
 ✅ 0.2  folga no banco2 (parar pilha, capar diário)   13/10 — pilha religada depois
 ✅ 0.3  conferência do schema contra a produção       13/10 — e agora compara coluna
 ✅ 1.1  REPLICA IDENTITY FULL nas três tabelas        13/10 — tentativa 1, sem fila
-✅ 1.2  publicação com 642 tabelas                    13/10 — lista do catálogo
-        → 647 em 14/10 (TREINAMENTO_* e financeiro_fluxo_caixa_ajuste_log)
-✅ 1.3  assinatura no cluster, copy_data=true         13/10 — 1.545.419 linhas
-✅ 1.5  lag em zero e estável                         13/10 — 0 bytes, slot ativo
+✅ 1.2  publicação com 642 tabelas                    13/10 → 647 em 14/10
+✅ 1.11 sincronizar-schema.sh (função/view/trigger)   14/10 — "TUDO IGUAL"
+✅ dom  grpnascimento.com.br fora da Vercel, no .br   14/10 — app. e api. de pé
+✅ 1.8  HTTPS no cluster (Caddy + Let's Encrypt)      14/10 — válido até 12/01/2027
+✅ ---  chaves anon/service_role do cluster           em uso (ANON_KEY, 169 car.)
+✅ ---  aceitação pelo navegador em localhost         14/10 — aprovada pelo Eduardo
+🔁 1.3  assinatura com copy_data=true                 REABRIU — slot perdido 15/10
+🔁 1.5  lag em zero e estável                         REABRIU — depende do 1.3
 ```
 
-**O Marco A está fechado.** A perda possível deixou de ser "o backup da noite
-anterior" e passou a ser **segundos**. O que falta é só o Marco B, que espera o
-domínio.
+**O Marco A deixou de estar fechado em 15/10.** Enquanto o 1.3 não voltar, a
+perda possível não é "segundos": é o backup da noite anterior, como antes de
+começarmos. É o motivo de a recópia vir antes de qualquer outra coisa.
 
-Nada nessa lista para o ERP. A única coisa que pede horário de menos
-movimento é o passo 1.3, pelo peso na Supabase — e mesmo ele não derruba nada,
-só pesa.
-
-**Marco B — espera decisão, não dinheiro:**
+**Antes da noite do Marco B — levantado em 15/10, nada disso estava na lista:**
 
 ```
-⬜ domínio: tirar grpnascimento.com.br da Render/Vercel, DNS no registro.br
-⬜ HTTPS no Kong dos dois nós (Let's Encrypt, grátis)
-⬜ gerar as chaves anon/service_role do cluster
+⬜ recopiar (disparar-religar.sh --aplicar) e conferir os três conferidores
+⬜ anexos: delta de 368 arquivos (produção 11.620 x cluster 11.252)
+⬜ auth/storage: produção com 156 logins; o cluster tem a carga de 13/10
+⬜ Edge Functions: falta `tvg-ia` no cluster (63 de 64)
+⬜ backup cifrado passando a sair do cluster, não da Supabase
+⬜ endpoint HTTP: api.grpnascimento.com.br aponta só para o banco1
 ⬜ a noite curta: passos 2.1 a 2.7
 ⬜ conferir client.ts depois do build do Lovable
-⬜ backup cifrado passando a sair do cluster
 ⬜ só então: desligar Render e Supabase
 ```
 
-**Decisões ainda abertas:** a noite do Marco B (depois do domínio) e o
-`synchronous_mode_strict` (recomendação: continuar desligado).
+Quatro dessas merecem explicação, porque são do mesmo tipo de erro que a
+seção 1.11 descreve — **uma cópia feita num dia e tratada como se fosse viva:**
+
+- **Anexos.** O espelho de 1 minuto é **entre os nós** (banco1 ↔ banco2), para
+  o nó que não recebeu o byte não responder 500. Ele **não traz nada da
+  produção**. Quem faz isso é o `carregar-anexos.sh`, à mão, e a última vez foi
+  13/10. Medido em 15/10: produção 11.620, cluster 11.252 — **368 de diferença,
+  +39 só desde a noite de 14/10.** Rodar imediatamente antes da virada, e
+  conferir o número, não a sensação de que o espelho "está rodando".
+- **auth e storage.** Não vêm por replicação lógica (seção 1.4). A carga de
+  13/10 trouxe 159 logins; a produção tem **156** agora — ou seja, já houve
+  exclusão de usuário depois. Reexecutar no passo 2.3 não é zelo, é o que
+  mantém quem entra no sistema.
+- **Edge Functions.** O container `erp-pilha-functions-1` tem **63** das 64 do
+  repositório. Falta `tvg-ia` — e é do **mesmo módulo TVG** cujas 21 funções de
+  banco faltavam na seção 1.11. A cópia das functions deriva igual à do schema,
+  e não existe conferidor para ela. Comparar `ls` no container com
+  `ls supabase/functions` faz parte do passo 2.1.
+- **Backup.** Hoje `backup_banco.yml` e `backup_storage.yml` apontam para a
+  Supabase. No dia seguinte à virada, **o cluster não tem backup nenhum** —
+  e o cluster passa a ser a produção. Isto é o item mais fácil de esquecer e o
+  mais caro de esquecer.
+
+**Decisões ainda abertas:** a noite do Marco B, o `synchronous_mode_strict`
+(recomendação: continuar desligado) e a alta disponibilidade do **endereço
+HTTP** — hoje o banco troca de líder sozinho, mas `api.grpnascimento.com.br`
+resolve só para o banco1, então o nó que cai inteiro leva o ERP com ele.
