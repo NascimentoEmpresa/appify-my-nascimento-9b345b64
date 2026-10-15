@@ -454,6 +454,14 @@ function NovoItem({ playlistId, proximaOrdem, onRascunho }: { playlistId: string
     return [...m.entries()];
   }, [catalogo]);
   const [f, setF] = useState(VAZIO);
+  // Busca no seletor de relatório (14/10/2026, Pablo: "tá muito ruim de pesquisar
+  // aqui, coloca uma caixa de pesquisa aqui em cima") — ignora acento e maiúscula.
+  const [buscaRel, setBuscaRel] = useState("");
+  const semAcento = (t: string) => t.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+  const casaBusca = (...textos: (string | null | undefined)[]) => {
+    const q = semAcento(buscaRel.trim());
+    return !q || q.split(/\s+/).every((p) => textos.some((t) => t && semAcento(t).includes(p)));
+  };
   const escolherRelatorio = (v: string) => {
     // Link de BI (Power BI…): vira item "Página web" com o endereço dele.
     if (v.startsWith("link:")) {
@@ -568,37 +576,58 @@ function NovoItem({ playlistId, proximaOrdem, onRascunho }: { playlistId: string
           <>
             <div><Label className="text-xs">Relatório *</Label>
               {/* Relatório com mais páginas pede mais tempo: sobe o tempo na tela até o recomendado (nunca baixa). */}
-              <Select value={f.relatorio} onValueChange={escolherRelatorio}>
+              <Select value={f.relatorio} onValueChange={escolherRelatorio} onOpenChange={(aberto) => { if (!aberto) setBuscaRel(""); }}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent className="max-h-[420px]">
+                  {/* Busca no topo; as teclas não vão para o Select (senão ele "pula" para o item que começa com a letra). */}
+                  <div className="sticky top-0 z-10 -mx-1 -mt-1 mb-1 border-b bg-popover p-2">
+                    <Input autoFocus value={buscaRel} onChange={(e) => setBuscaRel(e.target.value)}
+                      onKeyDown={(e) => { if (e.key !== "Escape") e.stopPropagation(); }}
+                      placeholder="Buscar relatório, TV, gráfico ou B.I…" className="h-8 text-sm" />
+                  </div>
                   {/* Os relatórios do módulo e, separadas por diretoria, as TVs gerenciais (mig 20261012000001). */}
-                  {[...new Set(RELATORIOS_TV.map((r) => r.grupo ?? ""))].map((g) => (
-                    <SelectGroup key={g || "relatorios"}>
-                      <SelectLabel className="text-xs text-muted-foreground">{g ? `TVs gerenciais — ${g}` : "Relatórios do ERP"}</SelectLabel>
-                      {RELATORIOS_TV.filter((r) => (r.grupo ?? "") === g).map((r) => (
-                        <SelectItem key={r.slug} value={r.slug}>{r.titulo}{!r.grupo && r.paginas > 1 ? ` · ${r.paginas} páginas` : ""}{r.grupo ? " — dashboard" : ""}</SelectItem>
-                      ))}
-                    </SelectGroup>
-                  ))}
+                  {[...new Set(RELATORIOS_TV.map((r) => r.grupo ?? ""))].map((g) => {
+                    const grupoTitulo = g ? `TVs gerenciais — ${g}` : "Relatórios do ERP";
+                    const itens = RELATORIOS_TV.filter((r) => (r.grupo ?? "") === g && casaBusca(r.titulo, grupoTitulo));
+                    if (!itens.length) return null;
+                    return (
+                      <SelectGroup key={g || "relatorios"}>
+                        <SelectLabel className="text-xs text-muted-foreground">{grupoTitulo}</SelectLabel>
+                        {itens.map((r) => (
+                          <SelectItem key={r.slug} value={r.slug}>{r.titulo}{!r.grupo && r.paginas > 1 ? ` · ${r.paginas} páginas` : ""}{r.grupo ? " — dashboard" : ""}</SelectItem>
+                        ))}
+                      </SelectGroup>
+                    );
+                  })}
                   {/* Cada gráfico gerencial sozinho, em tela cheia (14/10/2026). */}
-                  {gruposIndicadores.map(([painel, g]) => (
-                    <SelectGroup key={painel}>
-                      <SelectLabel className="text-xs text-muted-foreground">Gráfico avulso — TV {g.titulo}</SelectLabel>
-                      {g.itens.map((i) => <SelectItem key={i.codigo} value={`ind:${i.codigo}`}>{i.nome}</SelectItem>)}
-                    </SelectGroup>
-                  ))}
+                  {gruposIndicadores.map(([painel, g]) => {
+                    const itens = g.itens.filter((i) => casaBusca(i.nome, `TV ${g.titulo}`, "gráfico avulso"));
+                    if (!itens.length) return null;
+                    return (
+                      <SelectGroup key={painel}>
+                        <SelectLabel className="text-xs text-muted-foreground">Gráfico avulso — TV {g.titulo}</SelectLabel>
+                        {itens.map((i) => <SelectItem key={i.codigo} value={`ind:${i.codigo}`}>{i.nome}</SelectItem>)}
+                      </SelectGroup>
+                    );
+                  })}
                   {/* B.I nas TVs (14/10/2026): painéis do Estúdio e links de BI. */}
-                  {(catalogo?.bi_paineis.length ?? 0) > 0 && (
+                  {(catalogo?.bi_paineis ?? []).some((b) => casaBusca(b.nome, "B.I BI Estúdio")) && (
                     <SelectGroup>
                       <SelectLabel className="text-xs text-muted-foreground">B.I — Estúdio de BI</SelectLabel>
-                      {catalogo!.bi_paineis.map((b) => <SelectItem key={b.id} value={`bi:${b.id}`}>{b.nome}{b.widgets ? ` · ${b.widgets} gráfico(s)` : " · sem gráficos ainda"}</SelectItem>)}
+                      {catalogo!.bi_paineis.filter((b) => casaBusca(b.nome, "B.I BI Estúdio")).map((b) => <SelectItem key={b.id} value={`bi:${b.id}`}>{b.nome}{b.widgets ? ` · ${b.widgets} gráfico(s)` : " · sem gráficos ainda"}</SelectItem>)}
                     </SelectGroup>
                   )}
-                  {(catalogo?.bi_links.length ?? 0) > 0 && (
+                  {(catalogo?.bi_links ?? []).some((l) => casaBusca(l.titulo, "B.I BI link")) && (
                     <SelectGroup>
                       <SelectLabel className="text-xs text-muted-foreground">B.I — Links (entra como página web)</SelectLabel>
-                      {catalogo!.bi_links.map((l) => <SelectItem key={l.id} value={`link:${l.id}`}>{l.titulo}</SelectItem>)}
+                      {catalogo!.bi_links.filter((l) => casaBusca(l.titulo, "B.I BI link")).map((l) => <SelectItem key={l.id} value={`link:${l.id}`}>{l.titulo}</SelectItem>)}
                     </SelectGroup>
+                  )}
+                  {buscaRel.trim() && !RELATORIOS_TV.some((r) => casaBusca(r.titulo, r.grupo ? `TVs gerenciais — ${r.grupo}` : "Relatórios do ERP"))
+                    && !gruposIndicadores.some(([, g]) => g.itens.some((i) => casaBusca(i.nome, `TV ${g.titulo}`, "gráfico avulso")))
+                    && !(catalogo?.bi_paineis ?? []).some((b) => casaBusca(b.nome, "B.I BI Estúdio"))
+                    && !(catalogo?.bi_links ?? []).some((l) => casaBusca(l.titulo, "B.I BI link")) && (
+                    <p className="px-3 py-4 text-center text-sm text-muted-foreground">Nada encontrado para “{buscaRel}”.</p>
                   )}
                 </SelectContent>
               </Select>

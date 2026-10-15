@@ -87,3 +87,6 @@ scripts/status-banco.txt
 
 # Credenciais da replica de failover (SERVICE_ROLE_KEY ignora RLS)
 infra/failover/.env
+
+# build local apontando para o cluster HA (infra/ha/testar-cluster-local.sh)
+dist-cluster

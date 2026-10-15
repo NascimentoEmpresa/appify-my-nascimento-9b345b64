@@ -111,7 +111,12 @@ const FERIAS_RESET = {
   colaborador_id: null as number | null, colaborador_nome: "", colaborador_cpf: "",
   colaborador_cargo: "", colaborador_filial: "", colaborador_admissao: "",
   data_saida: "", dias_ferias: "30", dias_vendidos: "0", observacoes: "",
+  // "venda" (14/10/2026, mig 20261014000043): vender dias SEM tirar as férias —
+  // só na Central de Serviços (o banco recusa de quem só tem o Encarregados).
+  tipo: "ferias" as "ferias" | "venda",
 };
+/** O que o colaborador já vendeu nos últimos 12 meses (ferias_saldo). */
+interface SaldoFerias { vendidos_12m: number; vendas_avulsas_12m: number; pode_vender: number; pode_tirar: number }
 const ADV_RESET = {
   colaborador_id: null as number | null, colaborador_nome: "", colaborador_cpf: "",
   colaborador_cargo: "", colaborador_filial: "", contrato: "", contrato_id: null as number | null,
@@ -269,6 +274,9 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
   // passar como EXCEÇÃO, mas só depois que a pessoa confirma no card
   // (Cancelar / Solicitar mesmo assim) sabendo que pode ser recusada.
   const [feriasExc, setFeriasExc] = useState(false);
+  const [feriasSaldo, setFeriasSaldo] = useState<SaldoFerias | null>(null);
+  // Vender sem tirar: só na Central de Serviços (Pablo, 14/10/2026: "os encarregados não podem").
+  const podeVenderSemTirar = base === "central";
 
   // Modal advertência
   const [modalAdv, setModalAdv] = useState(false);
@@ -335,7 +343,7 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
     if (vg.error) vg = await vagaQuery("id, cargo, contrato, status, created_at, nome_substituido, quantidade_vagas, motivo_vaga, status_changed_at");
     if (vg.error) vg = await vagaQuery("id, cargo, contrato, status, created_at, nome_substituido, quantidade_vagas, motivo_vaga");
 
-    const fr = await db.from("SISTEMA_SOLICITACOES_FERIAS").select("id, colaborador_nome, status, criado_em, excecao").eq("solicitante_email", email).order("criado_em", { ascending: false }).limit(30);
+    const fr = await db.from("SISTEMA_SOLICITACOES_FERIAS").select("id, colaborador_nome, status, criado_em, excecao, tipo").eq("solicitante_email", email).order("criado_em", { ascending: false }).limit(30);
     const ad = await db.from("SISTEMA_SOLICITACOES_ADVERTENCIA").select("id, colaborador_nome, tipo_advertencia, status, created_at, status_changed_at, excecao").eq("solicitante_email", email).order("created_at", { ascending: false }).limit(30);
     // Demissão morava só na tela dedicada: quem pedia não a via no histórico,
     // e por isso não tinha como acompanhar o andamento junto do resto.
@@ -371,7 +379,7 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
         dataInicio: r.data_inicio_prevista || "", grau: r.grau_urgencia || "",
         alteracoes: Array.isArray(r.data_inicio_alteracoes) ? r.data_inicio_alteracoes : [],
       })),
-      ...(fr.data ?? []).map(r => ({ tipo: "Férias", icon: "📅", id: r.id, titulo: `Férias — ${r.colaborador_nome || ""}`, status: r.status, data: r.criado_em, statusDesde: r.criado_em, excecao: !!r.excecao })),
+      ...(fr.data ?? []).map(r => ({ tipo: "Férias", icon: "📅", id: r.id, titulo: r.tipo === "venda" ? `Venda de férias (sem tirar) — ${r.colaborador_nome || ""}` : `Férias — ${r.colaborador_nome || ""}`, status: r.status, data: r.criado_em, statusDesde: r.criado_em, excecao: !!r.excecao })),
       ...(ad.data ?? []).map(r => ({ tipo: "Advertência", icon: "⚠️", id: r.id, titulo: `Advertência ${r.tipo_advertencia || ""} — ${r.colaborador_nome || ""}`, status: r.status, data: r.created_at, statusDesde: r.status_changed_at || r.created_at, excecao: r.excecao })),
       ...(tf.data ?? []).map(r => ({
         tipo: "Mudança de Função", icon: "🔀", id: r.id,
@@ -724,9 +732,33 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
   };
 
   // ── Férias ──────────────────────────────────────────────────────────
+  /** Quanto o colaborador já vendeu (sem tirar) e quanto sobra para tirar/vender. */
+  const carregarSaldoFerias = async (colaboradorId: number | null, excluir: number | null = null) => {
+    setFeriasSaldo(null);
+    if (!colaboradorId) return;
+    const { data } = await db.rpc("ferias_saldo", { p_colaborador: colaboradorId, p_excluir: excluir });
+    if (!data) return;
+    const saldo = data as SaldoFerias;
+    setFeriasSaldo(saldo);
+    // Deixa o que está escolhido dentro do que ainda pode.
+    setFerias(f => ({
+      ...f,
+      dias_ferias: (parseInt(f.dias_ferias) || 30) > saldo.pode_tirar ? String(saldo.pode_tirar) : f.dias_ferias,
+      dias_vendidos: f.tipo === "venda"
+        ? String(Math.min(Math.max(parseInt(f.dias_vendidos) || 10, 1), Math.max(saldo.pode_vender, 1)))
+        : (parseInt(f.dias_vendidos) || 0) > saldo.pode_vender ? "0" : f.dias_vendidos,
+    }));
+  };
+
+  /** Troca entre "tirar férias" e "só vender": recomeça o colaborador (a trava de duplicidade é outra). */
+  const trocarTipoFerias = (tipo: "ferias" | "venda") => {
+    setFerias(f => ({ ...FERIAS_RESET, tipo, dias_vendidos: tipo === "venda" ? "10" : "0", observacoes: f.observacoes }));
+    setFeriasSaldo(null); setEmpSearch(""); setShowEmpDrop(false); setEmpregados([]);
+  };
+
   const selecionarColabFerias = async (emp: EmpregadoRef) => {
     setShowEmpDrop(false);
-    const dup = await solicitacaoEmAberto(supabase, "ferias", emp.ID ?? null);
+    const dup = await solicitacaoEmAberto(supabase, ferias.tipo === "venda" ? "ferias_venda" : "ferias", emp.ID ?? null);
     if (dup) { setBloqueio(dup); setEmpSearch(""); setEmpregados([]); return; }
     setFerias(f => ({
       ...f,
@@ -738,10 +770,11 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
       colaborador_admissao: emp["Admissão"] ?? "",
     }));
     setEmpSearch(emp.Nome ?? ""); setShowEmpDrop(false);
+    void carregarSaldoFerias(emp.ID ?? null);
   };
 
   const abrirModalFerias = () => {
-    setFeriasRefazerId(null);
+    setFeriasRefazerId(null); setFeriasSaldo(null);
     setModalFerias(true); setFerias({ ...FERIAS_RESET }); setEmpSearch(""); setShowEmpDrop(false); setEmpregados([]);
   };
 
@@ -760,8 +793,10 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
       data_saida: String(ficha.data_saida ?? "").slice(0, 10),
       dias_ferias: String(ficha.dias_ferias ?? "30"), dias_vendidos: String(ficha.dias_vendidos ?? "0"),
       observacoes: String(ficha.observacoes ?? ""),
+      tipo: ficha.tipo === "venda" ? "venda" : "ferias",
     });
     setEmpSearch(String(ficha.colaborador_nome ?? "")); setShowEmpDrop(false); setEmpregados([]);
+    void carregarSaldoFerias(ficha.colaborador_id != null ? Number(ficha.colaborador_id) : null, Number(ficha.id));
     setModalFerias(true);
   };
 
@@ -769,6 +804,12 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
 
   const submitFerias = async () => {
     if (!ferias.colaborador_id) { toast("Selecione o colaborador.", "err"); return; }
+    if (ferias.tipo === "venda") {
+      // Venda sem tirar: não tem data de saída nem antecedência.
+      if ((parseInt(ferias.dias_vendidos) || 0) < 1) { toast("Escolha quantos dias vender.", "err"); return; }
+      if (feriasSaldo && feriasSaldo.pode_vender < 1) { toast("Este colaborador já vendeu o máximo (10 dias) nos últimos 12 meses.", "err"); return; }
+      await doSubmitFerias(false); return;
+    }
     if (!ferias.data_saida) { toast("Informe a data de saída.", "err"); return; }
     if (ferias.data_saida < hojeMaisDias(0)) { toast("A data de saída não pode ficar no passado.", "err"); return; }
     if (feriasForaDoPrazo()) { setFeriasExc(true); return; }  // card: Cancelar / Solicitar mesmo assim
@@ -776,7 +817,8 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
   };
 
   const doSubmitFerias = async (excecao: boolean) => {
-    const dias = parseInt(ferias.dias_ferias) || 30;
+    const venda = ferias.tipo === "venda";
+    const dias = venda ? 0 : parseInt(ferias.dias_ferias) || 30;
     const vend = parseInt(ferias.dias_vendidos) || 0;
     if (feriasRefazerId) { await doRefazerFerias(feriasRefazerId, dias, vend, excecao); return; }
     const payload = {
@@ -784,9 +826,9 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
       colaborador_id: ferias.colaborador_id, colaborador_nome: ferias.colaborador_nome, colaborador_cpf: ferias.colaborador_cpf,
       colaborador_cargo: ferias.colaborador_cargo, colaborador_filial: ferias.colaborador_filial,
       colaborador_admissao: dataParaIso(ferias.colaborador_admissao),
-      data_saida: ferias.data_saida, data_retorno: addDaysISO(ferias.data_saida, dias),
+      data_saida: venda ? null : ferias.data_saida, data_retorno: venda ? null : addDaysISO(ferias.data_saida, dias),
       dias_ferias: dias, dias_vendidos: vend, observacoes: ferias.observacoes.trim() || null, status: "Pendente",
-      excecao,
+      excecao, ...(venda ? { tipo: "venda" } : {}),
     };
     let { error, data } = await db.from("SISTEMA_SOLICITACOES_FERIAS").insert(payload).select("id").single();
     // Banco ainda sem a coluna excecao (mig 20260930000101): reenvia sem ela.
@@ -796,7 +838,9 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
     }
     if (error) { toast("Erro ao solicitar férias: " + error.message, "err"); return; }
     setFeriasExc(false);
-    toast(excecao
+    toast(venda
+      ? `Venda de ${vend} dia(s) de férias de ${ferias.colaborador_nome} enviada ao RH. (#${data?.id})`
+      : excecao
       ? `Férias solicitadas para ${ferias.colaborador_nome} como EXCEÇÃO (fora do prazo) — pode ser recusada. (#${data?.id})`
       : `Férias solicitadas para ${ferias.colaborador_nome}! (#${data?.id})`, "ok");
     setModalFerias(false); setFerias({ ...FERIAS_RESET }); setEmpSearch(""); carregarMinhasSols();
@@ -810,8 +854,9 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
   const doRefazerFerias = async (id: number, dias: number, vend: number, excecao: boolean) => {
     const agora = new Date().toISOString();
     const { data: atual } = await db.from("SISTEMA_SOLICITACOES_FERIAS").select("refeita_vezes, status").eq("id", id).maybeSingle();
+    const venda = ferias.tipo === "venda";
     const { error } = await db.from("SISTEMA_SOLICITACOES_FERIAS").update({
-      data_saida: ferias.data_saida, data_retorno: addDaysISO(ferias.data_saida, dias),
+      data_saida: venda ? null : ferias.data_saida, data_retorno: venda ? null : addDaysISO(ferias.data_saida, dias),
       dias_ferias: dias, dias_vendidos: vend, observacoes: ferias.observacoes.trim() || null,
       excecao,
       status: "Pendente", aprovado_por: null, aprovado_em: null, motivo_reprovacao: null,
@@ -824,7 +869,9 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
     // Fica na conversa também, pra quem aprova ver sem abrir o histórico.
     await db.from("SISTEMA_COMENTARIOS").insert({
       modulo: "ferias", entidade_id: String(id),
-      texto: `🔁 Solicitação refeita pelo encarregado: saída ${fmtDt(ferias.data_saida)}, ${dias} dias${vend ? `, abono de ${vend} dias` : ""}${excecao ? " (fora do prazo — exceção)" : ""}. Voltou para avaliação do RH.`,
+      texto: venda
+        ? `🔁 Venda de férias refeita: ${vend} dia(s), sem tirar as férias. Voltou para avaliação do RH.`
+        : `🔁 Solicitação refeita pelo encarregado: saída ${fmtDt(ferias.data_saida)}, ${dias} dias${vend ? `, abono de ${vend} dias` : ""}${excecao ? " (fora do prazo — exceção)" : ""}. Voltou para avaliação do RH.`,
       autor_nome: displayName || user?.email || "Encarregado", autor_cpf: user?.email ?? "",
     });
     setFeriasExc(false);
@@ -1603,8 +1650,28 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
         <div className="ini-modal-ov">
           <div className="ini-modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 520 }}>
             <button onClick={() => setModalFerias(false)} style={{ position: "absolute", top: 14, right: 14, background: "none", border: "none", color: "#64748b", fontSize: 20, cursor: "pointer" }}>✕</button>
-            <div style={{ fontSize: 20, fontWeight: 800, marginBottom: 4 }}>{feriasRefazerId ? `🔁 Refazer solicitação de férias #${feriasRefazerId}` : "📅 Solicitar Férias"}</div>
-            <div style={{ fontSize: 14.5, color: "#64748b", marginBottom: 16 }}>Antecedência mínima de 30 dias · abono (venda) de até 10 dias.</div>
+            <div style={{ fontSize: 20, fontWeight: 800, marginBottom: 4 }}>
+              {feriasRefazerId ? `🔁 Refazer ${ferias.tipo === "venda" ? "venda de férias" : "solicitação de férias"} #${feriasRefazerId}`
+                : ferias.tipo === "venda" ? "💰 Vender dias de férias" : "📅 Solicitar Férias"}
+            </div>
+            <div style={{ fontSize: 14.5, color: "#64748b", marginBottom: 16 }}>
+              {ferias.tipo === "venda"
+                ? "Vende até 10 dias sem tirar as férias agora. Fica no histórico do colaborador e desconta do que ele pode tirar."
+                : "Antecedência mínima de 30 dias · abono (venda) de até 10 dias."}
+            </div>
+            {/* Vender sem tirar (14/10/2026): só aqui na Central de Serviços. */}
+            {podeVenderSemTirar && !feriasRefazerId && (
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, marginBottom: 14, padding: 4, borderRadius: 12, background: "#f1f5f9" }}>
+                {([["ferias", "📅 Tirar férias"], ["venda", "💰 Só vender dias (sem tirar)"]] as const).map(([v, rot]) => (
+                  <button key={v} type="button" onClick={() => ferias.tipo !== v && trocarTipoFerias(v)}
+                    style={{ padding: "8px 10px", borderRadius: 9, border: "none", cursor: "pointer", fontSize: 14, fontWeight: 700,
+                             background: ferias.tipo === v ? "#fff" : "transparent", color: ferias.tipo === v ? "#0f172a" : "#64748b",
+                             boxShadow: ferias.tipo === v ? "0 1px 3px rgba(15,23,42,.12)" : "none" }}>
+                    {rot}
+                  </button>
+                ))}
+              </div>
+            )}
             {feriasRefazerId && (
               <div style={{ margin: "-6px 0 14px", padding: "9px 12px", borderRadius: 10, background: "#eef2ff", border: "1px solid #c7d2fe", fontSize: 14.5, color: "#3730a3", lineHeight: 1.5 }}>
                 ⚠️ {AVISO_REFAZER}
@@ -1635,6 +1702,30 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
                 {ferias.colaborador_cargo ? ` · ${ferias.colaborador_cargo}` : ""}{ferias.colaborador_filial ? ` · ${ferias.colaborador_filial}` : ""}
               </div>
             )}
+            {/* O que já vendeu nos últimos 12 meses — o banco confere o mesmo (ferias_valida_venda). */}
+            {ferias.colaborador_id && feriasSaldo && (ferias.tipo === "venda" || feriasSaldo.vendas_avulsas_12m > 0) && (
+              <div style={{ margin: "-6px 0 14px", padding: "8px 12px", borderRadius: 10, fontSize: 14, lineHeight: 1.5,
+                            background: feriasSaldo.pode_vender < 1 && ferias.tipo === "venda" ? "#fef2f2" : "#fffbeb",
+                            border: `1px solid ${feriasSaldo.pode_vender < 1 && ferias.tipo === "venda" ? "#fecaca" : "#fde68a"}`, color: "#78350f" }}>
+                {feriasSaldo.vendas_avulsas_12m > 0
+                  ? <>Já vendeu <b>{feriasSaldo.vendas_avulsas_12m} dia(s)</b> sem tirar nos últimos 12 meses — pode tirar até <b>{feriasSaldo.pode_tirar} dias</b> e vender mais <b>{feriasSaldo.pode_vender}</b>.</>
+                  : <>Nenhuma venda nos últimos 12 meses — pode vender até <b>{feriasSaldo.pode_vender} dias</b>.</>}
+              </div>
+            )}
+            {ferias.tipo === "venda" ? (
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                <div className="ini-fg"><label>Dias a vender *</label>
+                  <select className="ini-fi" value={ferias.dias_vendidos} onChange={e => setFerias(f => ({ ...f, dias_vendidos: e.target.value }))}>
+                    {Array.from({ length: 10 }, (_, i) => String(10 - i))
+                      .filter(o => !feriasSaldo || Number(o) <= feriasSaldo.pode_vender)
+                      .map(o => <option key={o} value={o}>{o} dias</option>)}
+                  </select>
+                </div>
+                <div className="ini-fg"><label>Ficam para tirar</label>
+                  <input className="ini-fi" readOnly value={`${Math.max(30 - (feriasSaldo?.vendas_avulsas_12m ?? 0) - (parseInt(ferias.dias_vendidos) || 0), 0)} dias`} style={{ background: "#f8fafc", color: "#475569" }} />
+                </div>
+              </div>
+            ) : (<>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
               <div className="ini-fg"><label>Data de Saída *</label><input className="ini-fi" type="date" min={hojeMaisDias(0)} value={ferias.data_saida} onChange={e => setFerias(f => ({ ...f, data_saida: e.target.value }))} />
                 {feriasForaDoPrazo() && (
@@ -1643,16 +1734,26 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
                   </div>
                 )}
               </div>
-              <div className="ini-fg"><label>Dias de Férias</label><select className="ini-fi" value={ferias.dias_ferias} onChange={e => setFerias(f => ({ ...f, dias_ferias: e.target.value }))}>{["30", "20", "15", "10"].map(o => <option key={o} value={o}>{o} dias</option>)}</select></div>
+              {/* Quem já vendeu sem tirar só tira o que sobrou (vendeu 10 → até 20). */}
+              <div className="ini-fg"><label>Dias de Férias</label><select className="ini-fi" value={ferias.dias_ferias} onChange={e => setFerias(f => ({ ...f, dias_ferias: e.target.value }))}>
+                {[...new Set(["30", "20", "15", "10", ...(feriasSaldo && feriasSaldo.pode_tirar < 30 ? [String(feriasSaldo.pode_tirar)] : [])])]
+                  .filter(o => !feriasSaldo || Number(o) <= feriasSaldo.pode_tirar)
+                  .sort((a, b) => Number(b) - Number(a))
+                  .map(o => <option key={o} value={o}>{o} dias</option>)}
+              </select></div>
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-              <div className="ini-fg"><label>Abono (vender dias)</label><select className="ini-fi" value={ferias.dias_vendidos} onChange={e => setFerias(f => ({ ...f, dias_vendidos: e.target.value }))}>{["0", "5", "10"].map(o => <option key={o} value={o}>{o} dias</option>)}</select></div>
+              <div className="ini-fg"><label>Abono (vender dias)</label><select className="ini-fi" value={ferias.dias_vendidos} onChange={e => setFerias(f => ({ ...f, dias_vendidos: e.target.value }))}>
+                {["0", "5", "10"].filter(o => !feriasSaldo || feriasSaldo.vendas_avulsas_12m === 0 || Number(o) <= feriasSaldo.pode_vender)
+                  .map(o => <option key={o} value={o}>{o} dias</option>)}
+              </select></div>
               <div className="ini-fg"><label>Retorno (previsto)</label><input className="ini-fi" readOnly value={ferias.data_saida ? fmtDt(addDaysISO(ferias.data_saida, parseInt(ferias.dias_ferias) || 30)) : "—"} style={{ background: "#f8fafc", color: "#475569" }} /></div>
             </div>
+            </>)}
             <div className="ini-fg"><label>Observações</label><textarea className="ini-fi" rows={2} value={ferias.observacoes} onChange={e => setFerias(f => ({ ...f, observacoes: e.target.value }))} placeholder="Opcional..." /></div>
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 8, paddingTop: 14, borderTop: "1px solid #e2e8f0" }}>
               <button onClick={() => setModalFerias(false)} style={{ padding: "7px 14px", borderRadius: 10, border: "1px solid #e2e8f0", background: "#fff", color: "#475569", fontSize: 14.5, fontWeight: 700, cursor: "pointer" }}>Cancelar</button>
-              <button onClick={submitFerias} style={{ padding: "7px 14px", borderRadius: 10, border: "none", background: feriasRefazerId ? "#4f46e5" : "#16a34a", color: "#fff", fontSize: 14.5, fontWeight: 700, cursor: "pointer" }}>{feriasRefazerId ? "🔁 Refazer e enviar ao RH" : "✓ Solicitar Férias"}</button>
+              <button onClick={submitFerias} style={{ padding: "7px 14px", borderRadius: 10, border: "none", background: feriasRefazerId ? "#4f46e5" : "#16a34a", color: "#fff", fontSize: 14.5, fontWeight: 700, cursor: "pointer" }}>{feriasRefazerId ? "🔁 Refazer e enviar ao RH" : ferias.tipo === "venda" ? "✓ Solicitar venda" : "✓ Solicitar Férias"}</button>
             </div>
           </div>
         </div>

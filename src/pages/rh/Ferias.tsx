@@ -23,6 +23,8 @@ interface SolicitacaoFerias {
   data_retorno?: string | null;
   dias_ferias?: number | null;
   dias_vendidos?: number | null;
+  /** "venda" (14/10/2026, mig 20261014000043): vende dias sem tirar as férias — não tem saída nem retorno. */
+  tipo?: string | null;
   excecao?: boolean | null;
   observacoes?: string | null;
   motivo_reprovacao?: string | null;
@@ -253,8 +255,14 @@ export default function Ferias() {
                   <div style={{ fontWeight: 600, color: "#0f172a" }}>{r.colaborador_nome}</div>
                   <div style={{ fontSize: 11, color: "#94a3b8" }}>{r.colaborador_cargo}{r.colaborador_filial ? ` · ${r.colaborador_filial}` : ""}</div>
                 </td>
-                <td style={{ padding: "11px 14px", fontSize: 12, color: "#475569" }}>{fmtDt(r.data_saida)} → {fmtDt(r.data_retorno)}</td>
-                <td style={{ padding: "11px 14px", fontSize: 12, color: "#475569" }}>{r.dias_ferias}d{r.dias_vendidos ? ` +${r.dias_vendidos} abono` : ""}</td>
+                <td style={{ padding: "11px 14px", fontSize: 12, color: "#475569" }}>
+                  {r.tipo === "venda"
+                    ? <span style={{ fontWeight: 700, color: "#b45309" }}>💰 Venda — sem tirar</span>
+                    : <>{fmtDt(r.data_saida)} → {fmtDt(r.data_retorno)}</>}
+                </td>
+                <td style={{ padding: "11px 14px", fontSize: 12, color: "#475569" }}>
+                  {r.tipo === "venda" ? `${r.dias_vendidos}d vendidos` : <>{r.dias_ferias}d{r.dias_vendidos ? ` +${r.dias_vendidos} abono` : ""}</>}
+                </td>
                 <td style={{ padding: "11px 14px", fontSize: 12, color: "#475569" }}>{r.solicitante_nome || "—"}</td>
                 <td style={{ padding: "11px 14px" }}>
                   <StatusBadge status={r.status} />
@@ -332,10 +340,10 @@ export default function Ferias() {
               {/* Resumo */}
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 18 }}>
                 {[
-                  ["Saída", fmtDt(sol.data_saida)],
-                  ["Retorno", fmtDt(sol.data_retorno)],
-                  ["Dias de férias", `${sol.dias_ferias} dias`],
-                  ["Abono (vendidos)", `${sol.dias_vendidos || 0} dias`],
+                  ...(sol.tipo === "venda"
+                    ? [["Tipo", "💰 Venda de dias — sem tirar as férias"], ["Dias vendidos", `${sol.dias_vendidos || 0} dias`]]
+                    : [["Saída", fmtDt(sol.data_saida)], ["Retorno", fmtDt(sol.data_retorno)],
+                       ["Dias de férias", `${sol.dias_ferias} dias`], ["Abono (vendidos)", `${sol.dias_vendidos || 0} dias`]]),
                   ["CPF", sol.colaborador_cpf || "—"],
                   ["Admissão", fmtDt(sol.colaborador_admissao)],
                   ["Solicitante", sol.solicitante_nome || "—"],
