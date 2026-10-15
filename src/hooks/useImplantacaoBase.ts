@@ -37,8 +37,41 @@ export interface ResumoBase {
   qt_itens_material: number;
   qt_prazos: number;
   qt_documentos: number;
+  qt_reunioes: number;
   situacao: string;
   sincronizado_em: string | null;
+}
+
+/**
+ * Reunião de implantação ligada ao contrato. O vínculo é escolhido por gente:
+ * as reuniões não guardam contrato_id — o que as amarra hoje é o nome do
+ * contrato escrito no título, e casar por texto erraria calado.
+ */
+export interface ReuniaoDaBase {
+  vinculo_id: string;
+  reuniao_id: string;
+  numero: string | null;
+  titulo: string | null;
+  data_hora: string | null;
+  etapa: string | null;
+  tipo_reuniao: string | null;
+  duracao_minutos: number | null;
+  qt_pauta: number;
+  qt_decisoes: number;
+  qt_acoes: number;
+  qt_acoes_pendentes: number;
+  qt_participantes: number;
+  tem_ata: boolean;
+  observacao: string | null;
+}
+
+export interface ReuniaoCandidata {
+  reuniao_id: string;
+  numero: string | null;
+  titulo: string | null;
+  data_hora: string | null;
+  etapa: string | null;
+  sugerida: boolean;
 }
 
 export interface LinhaFinanceiro {
@@ -153,6 +186,59 @@ export function useAtualizarDaBase() {
       });
     },
     onError: (e: Error) => toast({ title: "Não deu para atualizar", description: e.message, variant: "destructive" }),
+  });
+}
+
+export const useReunioesDaBase = (id: string | null) =>
+  useRecorte<ReuniaoDaBase>("implantacao_base_reunioes", id, "reunioes");
+
+/** Candidatas a vincular; `sugerida` marca a que parece ser deste contrato. */
+export function useReunioesDisponiveis(contratoId: string | null, busca: string) {
+  return useQuery({
+    queryKey: ["implantacao-base", "reunioes-disponiveis", contratoId, busca],
+    enabled: !!contratoId,
+    queryFn: async (): Promise<ReuniaoCandidata[]> => {
+      const { data, error } = await sb.rpc("implantacao_base_reunioes_disponiveis", {
+        p_contrato_id: contratoId,
+        p_busca: busca || null,
+      });
+      if (error) throw new Error(error.message);
+      return (data ?? []) as ReuniaoCandidata[];
+    },
+  });
+}
+
+export function useVincularReuniao() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ contratoId, reuniaoId, observacao }: { contratoId: string; reuniaoId: string; observacao?: string }) => {
+      const { error } = await sb.rpc("implantacao_base_reuniao_vincular", {
+        p_contrato_id: contratoId,
+        p_reuniao_id: reuniaoId,
+        p_observacao: observacao ?? null,
+      });
+      if (error) throw new Error(error.message);
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["implantacao-base"] });
+      toast({ title: "Reunião vinculada", description: "Ela passa a aparecer no resumo da implantação." });
+    },
+    onError: (e: Error) => toast({ title: "Não deu para vincular", description: e.message, variant: "destructive" }),
+  });
+}
+
+export function useDesvincularReuniao() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (vinculoId: string) => {
+      const { error } = await sb.rpc("implantacao_base_reuniao_desvincular", { p_vinculo_id: vinculoId });
+      if (error) throw new Error(error.message);
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["implantacao-base"] });
+      toast({ title: "Reunião desvinculada" });
+    },
+    onError: (e: Error) => toast({ title: "Não deu para desvincular", description: e.message, variant: "destructive" }),
   });
 }
 
