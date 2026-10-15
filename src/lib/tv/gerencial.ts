@@ -53,9 +53,32 @@ export interface TendenciaPainel {
   erro?: string;
 }
 
+/**
+ * Meta de uma pessoa da equipe (mig 20261015000003 › tvg_equipe_meta): os
+ * editais "Ganhamos" da Capa de Edital desde `ganhos_desde`, pelo responsável.
+ * valor = valor estimado ÷ meses do prazo do contrato; contratos = quantidade.
+ */
+export interface MetaEquipe {
+  id: string; nome: string; foto: string | null; cor: string | null;
+  tipo: "valor" | "contratos"; meta: number; ganhos_desde: string;
+  realizado: number; contratos: number; valor_mensal: number; pct: number;
+  itens: { objeto: string; cidade: string | null; cliente: string | null; ganho_em: string; valor_estimado: number | null;
+           prazo_meses: number; prazo_assumido: boolean; mensal: number }[];
+}
+
+export const CORES_EQUIPE = ["#16a34a", "#2563eb", "#f59e0b", "#8b5cf6", "#ec4899", "#0ea5e9", "#dc2626"];
+
+/** "R$ 612 mil" ou "1 contrato" / "3 contratos". */
+export function formatarMetaEquipe(v: number, tipo: MetaEquipe["tipo"]): string {
+  if (tipo === "contratos") { const n = Math.round(Number(v) || 0); return `${n} contrato${n === 1 ? "" : "s"}`; }
+  return formatarValor(v, "brl");
+}
+
 export interface PainelGerencial {
   painel: { slug: string; titulo: string; diretoria: string; pergunta: string } | null;
   indicadores: IndicadorGerencial[];
+  /** Meta por pessoa (só painéis com TVG_META_EQUIPE — hoje a TV Licitações). */
+  equipe?: MetaEquipe[];
   tendencia?: TendenciaPainel | null;
   gerado_em?: string;
 }

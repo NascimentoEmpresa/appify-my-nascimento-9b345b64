@@ -1,7 +1,7 @@
-import { AlertTriangle, CheckCircle2, Info as InfoIcone, MapPin, TrendingUp, UserCheck } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Info as InfoIcone, MapPin, Target, TrendingUp, UserCheck } from "lucide-react";
 import {
-  destaquesDoDashboard, formatarValor, indicadoresDaTv, ondeAgir, placar, situacao, tendenciaValida, textoMeta,
-  type IndicadorGerencial, type PainelGerencial, type TendenciaPainel, type VisualGerencial,
+  CORES_EQUIPE, destaquesDoDashboard, formatarMetaEquipe, formatarValor, indicadoresDaTv, ondeAgir, placar, situacao, tendenciaValida, textoMeta,
+  type IndicadorGerencial, type MetaEquipe, type PainelGerencial, type TendenciaPainel, type VisualGerencial,
 } from "@/lib/tv/gerencial";
 import { misturarCor } from "@/lib/tv/relatorioTv";
 import { FaixaGerencial, Grafico, Grade, Info, M, STATUS, barra, temaDoVisual, useTamanho, type Tema } from "./paginasGerencialPainel";
@@ -65,6 +65,8 @@ export function TelaDashboardGerencial({ p, cor, visual, atualizado, onIndicador
                 : <Vazio t={t} texto="Sem histórico mensal para esta área" />}
             </div>
           </Cartao>
+          {/* Painel com meta por pessoa (TV Licitações, 15/10/2026): o quadro da equipe ocupa o lugar do "Onde agir agora". */}
+          {p.equipe?.length ? <CartaoEquipe equipe={p.equipe} t={t} cor={cor} /> : (
           <Cartao t={t}>
             <Titulo t={t} Icone={AlertTriangle} cor={agir.length ? STATUS.vermelho.cor : STATUS.verde.cor} texto="Onde agir agora"
               sub={agir.length ? "Fora da meta primeiro, pelo impacto" : "Nenhum indicador fora da meta"} />
@@ -75,6 +77,7 @@ export function TelaDashboardGerencial({ p, cor, visual, atualizado, onIndicador
               </div>
             )}
           </Cartao>
+          )}
         </div>
 
         {/* Os gráficos dos mais críticos, com o detalhamento real */}
@@ -340,5 +343,64 @@ function GraficoTendenciaPar({ tendencia, t, cor }: { tendencia: TendenciaPainel
         </svg>
       )}
     </div>
+  );
+}
+
+/**
+ * "Desempenho da equipe — Meta por analista" (chamado com a imagem da TV
+ * Licitações, 15/10/2026): uma raia por pessoa, o cavalinho na ponta do que
+ * já entrou, a meta e o quanto falta à direita. O realizado vem dos editais
+ * "Ganhamos" da Capa de Edital (tvg_equipe_meta).
+ */
+function CartaoEquipe({ equipe, t, cor }: { equipe: MetaEquipe[]; t: Tema; cor: string }) {
+  // 4 raias cabem no quadro da TV (como na imagem do chamado); a ordem vem do cadastro.
+  const lista = equipe.slice(0, 4);
+  const desde = lista[0]?.ganhos_desde ? new Date(`${lista[0].ganhos_desde}T12:00:00`).toLocaleDateString("pt-BR") : "";
+  return (
+    <Cartao t={t}>
+      <Titulo t={t} Icone={Target} cor={cor} texto="Desempenho da equipe — Meta por analista"
+        sub={`Contratos ganhos na Capa de Edital desde ${desde} · valor estimado ÷ prazo do contrato`} />
+      <div className="flex min-h-0 flex-1 flex-col justify-around overflow-hidden" style={{ gap: 2 }}>
+        {lista.map((m, k) => {
+          const c = m.cor || CORES_EQUIPE[k % CORES_EQUIPE.length];
+          const pct = Math.max(0, Math.min(100, Number(m.pct) || 0));
+          const falta = Math.max(0, Number(m.meta) - Number(m.realizado));
+          const batida = falta <= 0;
+          const iniciais = m.nome.split(/\s+/).filter(Boolean).slice(0, 2).map((x) => x[0]).join("").toUpperCase();
+          return (
+            <div key={m.id} className="flex items-center" style={{ gap: 12 }}>
+              {m.foto
+                ? <img src={m.foto} alt="" className="shrink-0 rounded-full object-cover" style={{ width: 38, height: 38, border: `2px solid ${c}` }} />
+                : <span className="flex shrink-0 items-center justify-center rounded-full font-black text-white" style={{ width: 38, height: 38, background: c, fontSize: 15 }}>{iniciais}</span>}
+              <div className="min-w-0 flex-1">
+                <div className="flex items-baseline" style={{ gap: 8 }}>
+                  <p className="truncate font-extrabold" style={{ fontSize: 17, lineHeight: 1.1 }}>{m.nome}</p>
+                </div>
+                <div className="relative" style={{ height: 14, marginTop: 10, marginBottom: 4, borderRadius: 999, background: misturarCor(c, "#ffffff", 0.85) }}>
+                  <div style={{ width: `${pct}%`, height: "100%", borderRadius: 999, background: c, transition: "width .6s" }} />
+                  {/* O cavalinho na ponta do realizado, com o número ao lado. */}
+                  <div className="absolute flex items-center" style={{ left: `calc(${pct}% - 16px)`, top: -13, gap: 6, whiteSpace: "nowrap" }}>
+                    <span style={{ fontSize: 28, lineHeight: 1, transform: "scaleX(-1)", display: "inline-block", filter: "drop-shadow(0 1px 1px rgba(0,0,0,.25))" }}>🏇</span>
+                    <span className="font-black tabular-nums" style={{ fontSize: 18, color: c, display: pct > 70 ? "none" : undefined }}>{formatarMetaEquipe(m.realizado, m.tipo)}</span>
+                  </div>
+                </div>
+                <p className="text-right font-semibold" style={{ fontSize: 12, color: t.suave, marginTop: 1, lineHeight: 1.1 }}>
+                  {pct > 70 && <b style={{ color: c, marginRight: 8 }}>{formatarMetaEquipe(m.realizado, m.tipo)}</b>}
+                  {Math.round(Number(m.pct) || 0)}% da meta · {m.contratos} ganho{m.contratos === 1 ? "" : "s"}
+                </p>
+              </div>
+              <div className="shrink-0 text-left" style={{ width: 92 }}>
+                <p className="font-semibold" style={{ fontSize: 11, color: t.suave, lineHeight: 1.2 }}>Meta</p>
+                <p className="font-black tabular-nums" style={{ fontSize: 15, lineHeight: 1.2 }}>{formatarMetaEquipe(m.meta, m.tipo)}</p>
+              </div>
+              <div className="shrink-0 rounded-xl text-center" style={{ width: 104, padding: "3px 8px", background: misturarCor(batida ? STATUS.verde.cor : c, "#ffffff", 0.86), border: `1px solid ${misturarCor(batida ? STATUS.verde.cor : c, "#ffffff", 0.6)}` }}>
+                <p className="font-semibold" style={{ fontSize: 11, color: t.suave, lineHeight: 1.2 }}>{batida ? "Meta" : "Faltam"}</p>
+                <p className="font-black tabular-nums" style={{ fontSize: 15, lineHeight: 1.2, color: batida ? STATUS.verde.cor : c }}>{batida ? "batida ✓" : formatarMetaEquipe(falta, m.tipo)}</p>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </Cartao>
   );
 }
