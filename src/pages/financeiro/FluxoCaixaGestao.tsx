@@ -41,6 +41,8 @@ import { ExcluirPermanentementeButton } from "@/pages/malote/ExcluirPermanenteme
 import { useExcluirLinhaImportada, useImportadaLixeira, useRestaurarLinhaImportada } from "@/hooks/useFluxoCaixaImportado";
 import { RatearImportadoDialog, type LinhaParaRatear } from "./fluxo-caixa/RatearImportadoDialog";
 import { acaoDeRateio } from "./fluxo-caixa/rateioImportado";
+import { linhasDoExport, linhaTemContrato } from "./fluxo-caixa/exportRateio";
+import { linhaCasaBusca } from "./fluxo-caixa/buscaLinha";
 import { KpiTile } from "@/components/financeiro/KpiTile";
 import { BancoBadge } from "@/components/financeiro/BancoBadge";
 import { urlLogoCartao, useCartaoBancos } from "@/hooks/useMaloteCartaoCredito";
@@ -471,11 +473,8 @@ export default function FluxoCaixaGestao() {
       if (formaPagamento && l.forma_pagamento !== formaPagamento) return false;
       if (bancoId && l.banco_id !== bancoId) return false;
       if (soInconsistentes && !l.inconsistencia) return false;
-      if (
-        buscaNorm &&
-        !(l.id_malote ?? "").toLowerCase().includes(buscaNorm) &&
-        !(l.descricao ?? "").toLowerCase().includes(buscaNorm)
-      ) return false;
+      // Acha também a despesa que está dentro de uma fatura de cartão (ID e descrição moram no rateioDetalhe).
+      if (!linhaCasaBusca(l, buscaNorm)) return false;
       return true;
     });
   }, [linhas, hoje, situacao, dataDe, dataAte, competencia, empresaId, contratoId, classificacaoId, formaPagamento, bancoId, soInconsistentes, busca, valor]);
@@ -517,7 +516,7 @@ export default function FluxoCaixaGestao() {
       if (fx.competencia && l.competencia?.slice(0, 7) !== fx.competencia) return false;
       if (fx.empresaId && l.empresa_id !== fx.empresaId) return false;
       if (fx.bancoId && l.banco_id !== fx.bancoId) return false;
-      if (fx.contratoId && l.contrato_id !== fx.contratoId) return false;
+      if (fx.contratoId && !linhaTemContrato(l, fx.contratoId)) return false;
       if (fx.classificacaoId && l.classificacao_id !== fx.classificacaoId) return false;
       if (fx.formaPagamento && l.forma_pagamento !== fx.formaPagamento) return false;
       if (fx.tipo !== "todos" && l.tipo !== fx.tipo) return false;
@@ -526,8 +525,13 @@ export default function FluxoCaixaGestao() {
       return true;
     });
   }, [exportando, linhas, fx, hoje]);
-  const exportEntradas = useMemo(() => linhasExport.filter((l) => l.tipo === "entrada").reduce((t, l) => t + Number(l.valor), 0), [linhasExport]);
-  const exportSaidas = useMemo(() => linhasExport.filter((l) => l.tipo === "saida").reduce((t, l) => t + Number(l.valor), 0), [linhasExport]);
+  // Rateios abertos: uma linha da planilha por cota (contrato), para filtrar/somar por contrato no Excel.
+  const linhasPlanilhaBase = useMemo(
+    () => linhasExport.flatMap((l) => linhasDoExport(l, fx.contratoId || undefined)),
+    [linhasExport, fx.contratoId],
+  );
+  const exportEntradas = useMemo(() => linhasPlanilhaBase.filter((x) => x.linha.tipo === "entrada").reduce((t, x) => t + x.valor, 0), [linhasPlanilhaBase]);
+  const exportSaidas = useMemo(() => linhasPlanilhaBase.filter((x) => x.linha.tipo === "saida").reduce((t, x) => t + x.valor, 0), [linhasPlanilhaBase]);
 
   function gerarExcel() {
     if (linhasExport.length === 0) {
@@ -537,23 +541,24 @@ export default function FluxoCaixaGestao() {
     const nomeDe = (lista: [string, string][], id: string) => lista.find(([i]) => i === id)?.[1] ?? "";
     const dia = (iso: string | null) => (iso ? iso.slice(0, 10).split("-").reverse().join("/") : "");
     const mesAno = (iso: string | null) => (iso ? `${iso.slice(5, 7)}/${iso.slice(0, 4)}` : "");
-    const linhasPlanilha = [...linhasExport]
-      .sort((a, b) => (a.data_pagamento ?? "").localeCompare(b.data_pagamento ?? ""))
-      .map((l) => ({
+    const linhasPlanilha = [...linhasPlanilhaBase]
+      .sort((a, b) => (a.linha.data_pagamento ?? "").localeCompare(b.linha.data_pagamento ?? ""))
+      .map(({ linha: l, valor, contrato, descricao, rateado, valorLancamento }) => ({
         "Data pagamento": dia(l.data_pagamento),
         Tipo: l.tipo === "entrada" ? "Entrada" : "Saída",
         Origem: LABEL_ORIGEM[l.origem],
         "Nº": l.id_malote ?? "",
         Classificação: l.classificacao_nome ?? "",
-        Descrição: l.descricao ?? "",
+        Descrição: descricao,
         Competência: mesAno(l.competencia),
         Empresa: l.empresa_nome ?? "",
-        Contrato: l.contrato_nome ?? "",
-        "Rateio (contrato ou despesa: valor)": l.rateioDetalhe ? l.rateioDetalhe.map((r) => `${r.nome}: ${formatBRL(r.valor)}`).join(" | ") : "",
+        Contrato: contrato,
+        Rateado: rateado ? "Sim" : "",
+        "Valor do lançamento (rateado)": rateado ? (l.tipo === "entrada" ? valorLancamento : -valorLancamento) : "",
         "Forma de pagamento": l.forma_pagamento ?? "",
         Banco: l.banco_nome ?? "",
         Parcela: l.numero_parcela ? (l.numero_parcelas ? `${l.numero_parcela}/${l.numero_parcelas}` : String(l.numero_parcela)) : "",
-        Valor: l.tipo === "entrada" ? Number(l.valor) : -Number(l.valor),
+        Valor: l.tipo === "entrada" ? valor : -valor,
         Ajustado: l.ajustado ? "Sim" : "",
         "Revisar (motivo)": l.inconsistencia ?? "",
       }));
@@ -572,7 +577,7 @@ export default function FluxoCaixaGestao() {
     ];
     import("xlsx").then((XLSX) => {
       const ws = XLSX.utils.json_to_sheet(linhasPlanilha);
-      ws["!cols"] = [14, 9, 22, 16, 26, 42, 12, 14, 34, 40, 20, 18, 9, 16, 9, 40].map((wch) => ({ wch }));
+      ws["!cols"] = [14, 9, 22, 16, 26, 42, 12, 14, 34, 9, 18, 20, 18, 9, 16, 9, 40].map((wch) => ({ wch }));
       const resumo = [
         ["Fluxo de Caixa — exportação", ""],
         ["Gerado em", new Date().toLocaleString("pt-BR")],
@@ -585,6 +590,7 @@ export default function FluxoCaixaGestao() {
         ["Saldo (entradas − saídas)", exportEntradas - exportSaidas],
         ["", ""],
         ["Obs.: na planilha, saídas aparecem com valor negativo.", ""],
+        ["Obs.: lançamento rateado sai em uma linha por cota (coluna Rateado = Sim); a coluna Valor é a cota.", ""],
       ];
       const wsResumo = XLSX.utils.aoa_to_sheet(resumo);
       wsResumo["!cols"] = [{ wch: 34 }, { wch: 40 }];

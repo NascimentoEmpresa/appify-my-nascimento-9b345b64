@@ -186,9 +186,14 @@ export function useFluxoCaixaCombinado() {
             throw e;
           }),
       ]);
+      // Débito Automático no cartão com fatura consolidada já veio DENTRO da fatura (view consolidada):
+      // sai daqui para não somar duas vezes.
+      const debitosNaFatura = new Set(
+        (malote as FluxoCaixaMaloteLinha[]).filter((l) => l.fatura_cartao_id && l.despesa_id_origem).map((l) => l.despesa_id_origem as string),
+      );
       const linhas = [
         ...malote,
-        ...debitoAutomatico,
+        ...(debitoAutomatico as FluxoCaixaMaloteLinha[]).filter((l) => !debitosNaFatura.has(l.despesa_id)),
         ...cartaoFatura,
         ...aplicacaoFinanceira,
         ...resgateAplicacao,
