@@ -17,6 +17,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { SemAcesso } from "@/components/layout/SemAcesso";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { CartaoIndicador, PainelGrafico, EstadoVazio, CabecalhoTabela } from "@/components/suprimentos/dashboard/PainelBase";
+import { PainelReunioes } from "@/components/implantacao/ReunioesDaImplantacao";
+import { useScreenAccess } from "@/hooks/useScreenAccess";
 import { useContratosDaBase, useResumoBase, useAtualizarDaBase, brl, num } from "@/hooks/useImplantacaoBase";
 
 const CORES = ["#2f8fea", "#f0883e", "#4ec9a5", "#9b8cf5", "#f5b73d"];
@@ -35,6 +37,8 @@ function Conteudo() {
   const { data: contratos = [] } = useContratosDaBase();
   const { data: resumo, isLoading } = useResumoBase(contratoId || null);
   const atualizar = useAtualizarDaBase();
+  // Botão de vincular/desvincular só para quem edita a base — o resto vê.
+  const { data: podeEditar } = useScreenAccess("implantacao.base", "alterar");
 
   const composicao = useMemo(
     () =>
@@ -60,6 +64,9 @@ function Conteudo() {
         { icone: <ShoppingCart className="h-4 w-4" />, nome: "Compras", qtd: resumo.qt_itens_uniforme + resumo.qt_itens_material, area: "Compras", conteudo: "Itens e quantidades por cargo" },
         { icone: <CalendarCheck2 className="h-4 w-4" />, nome: "Controle de Prazos", qtd: resumo.qt_prazos, area: "Financeiro", conteudo: "Datas limite e responsáveis" },
         { icone: <FileText className="h-4 w-4" />, nome: "Documentação", qtd: resumo.qt_documentos, area: "Financeiro", conteudo: "Entregas e status documental" },
+        // Pedido da Helena (conversa do chamado): as reuniões de implantação
+        // que já existem no sistema entram como mais uma base.
+        { icone: <Users className="h-4 w-4" />, nome: "Reuniões de Implantação", qtd: resumo.qt_reunioes, area: "Implantação", conteudo: "Pauta, decisões, ações e ata" },
       ]
     : [];
 
@@ -71,7 +78,12 @@ function Conteudo() {
         breadcrumb={["Implantação", "Base Mestre"]}
         module="Licitações"
         actions={
-          <Button size="sm" variant="outline" disabled={!contratoId || atualizar.isPending} onClick={() => atualizar.mutate(contratoId)}>
+          <Button
+            size="sm" variant="outline"
+            disabled={!contratoId || atualizar.isPending || !podeEditar}
+            title={podeEditar ? undefined : "Você tem acesso de leitura nesta tela. Atualizar a base exige permissão de alterar."}
+            onClick={() => atualizar.mutate(contratoId)}
+          >
             <RefreshCw className={`mr-1.5 h-4 w-4 ${atualizar.isPending ? "animate-spin" : ""}`} /> Atualizar da base
           </Button>
         }
@@ -178,6 +190,13 @@ function Conteudo() {
               </div>
             </PainelGrafico>
           </div>
+
+          <Card className="mb-5">
+            <CardContent className="p-4">
+              <p className="mb-3 text-sm font-semibold text-slate-800">Reuniões de Implantação</p>
+              <PainelReunioes contratoId={contratoId} podeEditar={!!podeEditar} />
+            </CardContent>
+          </Card>
 
           <Card>
             <CardContent className="p-4">
