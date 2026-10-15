@@ -3,6 +3,11 @@
 
   "_ordem": "Pequenas primeiro, grandes por último: se um dia estourar o tempo, o log mostra exatamente onde parou.",
 
+  "_incremental": "Tabelas grandes que só ganham linhas por data: a carga diária apaga e traz de novo só os últimos 'dias' (pela 'coluna'), em vez de recarregar tudo — a recarga inteira de BiMarcacoes (6 mi de linhas) encheu o disco do Supabase em 15/10/2026. Tabela vazia e 'sincronizar --completo' recarregam inteira.",
+  "incremental": {
+    "BiMarcacoes": { "coluna": "data_hora", "dias": 45 }
+  },
+
   "tabelas": [
     "R008INC",
     "log_mail",

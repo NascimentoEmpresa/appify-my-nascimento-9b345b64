@@ -30,6 +30,7 @@ import {
 } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
   AlertTriangle, Building2, CheckCircle2, ChevronDown, ChevronRight, Loader2, Search,
   ShieldAlert, Sparkles, UserMinus, Users, UserX, MessageSquare, Trash2, Send,
@@ -261,6 +262,7 @@ export default function AtivosContratos() {
                     <th className="w-24 py-2 pr-3 text-right">Saldo</th>
                     <th className="w-24 py-2 pr-3 text-right">Afastados</th>
                     <th className="w-56 py-2 pr-3" />
+                    <th className="w-72 py-2 pr-3">Justificativa da diferença</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -272,7 +274,7 @@ export default function AtivosContratos() {
                     );
                   })}
                   {visiveis.length === 0 && (
-                    <tr><td colSpan={7} className="py-8 text-center text-sm text-muted-foreground">Nenhum contrato neste filtro.</td></tr>
+                    <tr><td colSpan={8} className="py-8 text-center text-sm text-muted-foreground">Nenhum contrato neste filtro.</td></tr>
                   )}
                 </tbody>
               </table>
@@ -331,10 +333,11 @@ function LinhaContrato({ c, conf, aberto, podeVincular, onToggle }: {
             )}
           </div>
         </td>
+        <td className="py-2 pr-3"><CelulaJustificativa c={c} diferenca={temPlanilha ? conf.saldo : 0} /></td>
       </tr>
       {aberto && (
         <tr className="border-b border-border">
-          <td colSpan={7} className="bg-muted/10 p-4">
+          <td colSpan={8} className="bg-muted/10 p-4">
             <DetalheContrato c={c} conf={conf} podeVincular={podeVincular} />
           </td>
         </tr>
@@ -503,6 +506,7 @@ function TabelaPostos({ c, conf, podeVincular }: { c: ContratoAtivos; conf: Conf
             <th className="w-20 py-2 pr-3 text-right">Saldo</th>
             <th className="w-20 py-2 pr-3 text-right">Afastados</th>
             <th className="w-32 py-2 pr-3" />
+            <th className="w-72 py-2 pr-3">Justificativa da diferença</th>
           </tr>
         </thead>
         <tbody>
@@ -522,6 +526,7 @@ function TabelaPostos({ c, conf, podeVincular }: { c: ContratoAtivos; conf: Conf
               {conf.sobra > 0 && <span className="text-warning"> / +{conf.sobra}</span>}
             </td>
             <td className="py-2 pr-3 text-right tabular-nums"><Afastados pessoas={conf.postos.flatMap((p) => p.afastados)} mostrarPosto /></td>
+            <td />
             <td />
           </tr>
         </tfoot>
@@ -559,10 +564,11 @@ function LinhaPosto({ c, p, aberto, podeVincular, onToggle }: {
         <td className={`py-2 pr-3 text-right font-bold tabular-nums ${corSaldo(p.saldo)}`}>{fmtSaldo(p.saldo)}</td>
         <td className="py-2 pr-3 text-right tabular-nums"><Afastados pessoas={p.afastados} /></td>
         <td className="py-2 pr-3"><SituacaoBadge situacao={p.situacao} saldo={p.saldo} /></td>
+        <td className="py-2 pr-3"><CelulaJustificativa c={c} posto={p.nome} diferenca={p.saldo} /></td>
       </tr>
       {aberto && (
         <tr className="border-b border-border/60">
-          <td colSpan={7} className="bg-muted/10 px-4 py-2">
+          <td colSpan={8} className="bg-muted/10 px-4 py-2">
             {grupos.map(([ps, pessoas]) => (
               <div key={ps} className="mb-2 last:mb-0">
                 <div className="flex flex-wrap items-center gap-2 py-1">
@@ -842,6 +848,72 @@ function ObservacoesContrato({ c }: { c: ContratoAtivos }) {
           {salvar.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />} Salvar
         </Button>
       </div>
+    </div>
+  );
+}
+
+// ---- Coluna "Justificativa da diferença" (15/10/2026) ---------------------------
+// Pablo: "criar uma coluna bem à direita em Ativos/Contratos para que o
+// supervisor possa justificar a diferença entre o que tinha que ter e o que
+// tem nos postos / contratos". Usa as MESMAS observações (rh_ac_observacao_*,
+// mig 20261008000010) — antes elas só apareciam como um selo ao lado do nome
+// e com o contrato aberto. Na linha do contrato a justificativa vale para o
+// contrato inteiro; na do posto, para aquele posto.
+
+function CelulaJustificativa({ c, posto, diferenca }: { c: ContratoAtivos; posto?: string; diferenca: number }) {
+  const todas = useObservacoesDe(c.id, posto);
+  // Na linha do contrato, a mais recente de qualquer nível (contrato ou posto) explica a linha.
+  const ultima = todas[0];
+  const salvar = useSalvarObservacaoAtivos();
+  const [aberto, setAberto] = useState(false);
+  const [texto, setTexto] = useState("");
+  const pendente = diferenca !== 0 && !ultima;
+  const enviar = () => {
+    if (texto.trim().length < 3) { toast.error("Escreva a justificativa."); return; }
+    salvar.mutate({ contratoId: c.id, posto: posto ?? "", texto: texto.trim() }, {
+      onSuccess: () => { setTexto(""); setAberto(false); toast.success("Justificativa salva."); },
+      onError: (e) => toast.error((e as Error).message),
+    });
+  };
+  return (
+    <div className="flex min-w-0 items-start gap-1.5" onClick={(e) => e.stopPropagation()}>
+      <div className="min-w-0 flex-1">
+        {ultima ? (
+          <>
+            <p className="line-clamp-2 text-xs" title={ultima.texto}>{ultima.texto}</p>
+            <p className="text-[10px] text-muted-foreground">
+              {ultima.autor_nome ?? "—"} · {fmtQuando(ultima.created_at)}{todas.length > 1 ? ` · +${todas.length - 1}` : ""}
+            </p>
+          </>
+        ) : pendente ? (
+          <p className="text-[11px] font-medium text-amber-700 dark:text-amber-400">Diferença de {fmtSaldo(diferenca)} sem justificativa</p>
+        ) : (
+          <p className="text-[11px] text-muted-foreground">—</p>
+        )}
+      </div>
+      <Popover open={aberto} onOpenChange={setAberto}>
+        <PopoverTrigger asChild>
+          <Button size="sm" variant={pendente ? "default" : "outline"} className="h-7 shrink-0 gap-1 px-2 text-[11px]">
+            <MessageSquare className="h-3 w-3" /> {ultima ? "Atualizar" : "Justificar"}
+          </Button>
+        </PopoverTrigger>
+        <PopoverContent align="end" className="w-80 space-y-2 p-3">
+          <p className="text-xs font-semibold">
+            {posto ? `Posto ${posto}` : `Contrato ${c.nome}`}
+            {diferenca !== 0 && <span className={`ml-1 ${corSaldo(diferenca)}`}>({fmtSaldo(diferenca)})</span>}
+          </p>
+          <p className="text-[11px] text-muted-foreground">Por que tem gente a mais ou a menos do que a planilha prevê? Fica registrado com o seu nome e a data.</p>
+          <Textarea value={texto} onChange={(e) => setTexto(e.target.value)} rows={3} maxLength={2000} autoFocus
+            placeholder="Ex.: 2 vagas em seleção, previsão de início em 20/10; 1 cobrindo férias até 30/10…"
+            className="text-xs" onKeyDown={(e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) enviar(); }} />
+          <div className="flex justify-end gap-2">
+            <Button size="sm" variant="ghost" className="h-8 text-xs" onClick={() => setAberto(false)}>Cancelar</Button>
+            <Button size="sm" className="h-8 gap-1.5 text-xs" disabled={salvar.isPending || texto.trim().length < 3} onClick={enviar}>
+              {salvar.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />} Salvar
+            </Button>
+          </div>
+        </PopoverContent>
+      </Popover>
     </div>
   );
 }

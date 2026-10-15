@@ -425,6 +425,12 @@ export default function DespesaVisualizar() {
   const [confirmarAprovarParceladoAberto, setConfirmarAprovarParceladoAberto] = useState(false);
 
   const despesa = data?.despesa;
+  // [SEM-CHAMADO] (15/10/2026, DM-2026-2492): despesa marcada como parcelada mas SEM nenhuma linha em
+  // malote_despesa_parcela (o salvamento foi cortado depois de criar a despesa) derrubava a tela inteira —
+  // RateioParceladoTable lia parcelas[-1].data_vencimento — e o ErroDeTela mostrava "Sistema indisponível" para
+  // quem abria (a Calita, aprovadora do fluxo especial). Agora a tela abre, avisa e não deixa aprovar.
+  const parceladaSemParcelas = !!despesa?.parcelado && (data?.parcelas.length ?? 0) === 0;
+  const despesaParceladaComParcelas = !!despesa?.parcelado && !parceladaSemParcelas;
   // SIS-2026-0626: despesa de diária — o ponto do faltante em cada dia (mig 20261014000001).
   const { data: pontoDiarias } = useDiariaPontoMalote(despesa?.id ? [despesa.id] : []);
 
@@ -950,6 +956,7 @@ export default function DespesaVisualizar() {
   const parcelasEmFaseDePagamento = ["aguardando_pagamento", "pronto_para_pagar", "ajuste_pagamento", "despesa_paga"].includes(despesa.status);
 
   function validarAcaoAprovador(): string | null {
+    if (parceladaSemParcelas) return "Esta despesa está marcada como parcelada, mas as parcelas não foram gravadas. Peça ao solicitante para reenviar a despesa ou avise o setor de Sistemas.";
     // SIS-2026-0261: mesmo achado do SIS-2026-0212 (comentário acima de
     // orcadoCarregando) — agora vale também pros dados usados pra checar
     // o orçado de CADA parcela/contrato do Rateio, não só do mês principal.
@@ -1931,6 +1938,16 @@ export default function DespesaVisualizar() {
         </Card>
       </div>
 
+      {parceladaSemParcelas && (
+        <div className="flex items-start gap-2 rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
+          <p className="text-destructive/90">
+            Esta despesa está marcada como parcelada ({despesa.numero_parcelas}x), mas <span className="font-medium">nenhuma parcela foi gravada</span> —
+            provavelmente o envio foi interrompido. Não é possível aprovar assim: peça ao solicitante para reenviar ou avise o setor de Sistemas.
+          </p>
+        </div>
+      )}
+
       {despesa.parcelado && (
         <Card>
           <CardContent className="p-4 space-y-3">
@@ -2408,7 +2425,7 @@ export default function DespesaVisualizar() {
               souSolicitante={souSolicitante}
               apenasValorEEmpresa={rateioRestritoEditavel}
             />
-          ) : despesa.parcelado ? (
+          ) : despesaParceladaComParcelas ? (
             <RateioParceladoTable
               despesaId={despesa.id}
               empresaId={despesa.empresa_id}
