@@ -15,6 +15,8 @@ export interface ItemEnxoval {
   grade: string[];
   /** Já informado (reabrindo) — ou NAO_PRECISA. */
   tamanho: string | null;
+  /** Quantidade (14/10/2026, mig 20261014000045) — 1 a 99, padrão 1. */
+  quantidade?: number;
 }
 
 /** Nomes dos itens com grade que ainda estão sem tamanho (e não foram dispensados). */

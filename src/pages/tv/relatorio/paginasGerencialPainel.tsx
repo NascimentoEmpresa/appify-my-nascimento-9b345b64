@@ -207,7 +207,7 @@ function CartaoPainel({ i, t, grande, compacto, onClick }: { i: IndicadorGerenci
       {/* Resultado atual × meta (Word: "resultado atual" e "comparação com a meta") */}
       <div className="flex shrink-0 items-baseline gap-3">
         <p className="truncate font-black leading-none tabular-nums" style={{ fontSize: semValor ? (grande ? 26 : 21) : grande ? 46 : compacto ? 34 : 38, color: semValor ? t.suave : st.cor }}>
-          {semValor ? (i.fonte === "manual" ? "Aguardando lançamento" : "Sem dado") : formatarValor(r.valor, i.unidade)}
+          {semValor ? (i.fonte === "manual" ? "Aguardando lançamento" : "Sem dado") : formatarValor(r.valor, i.unidade, true, r.casas)}
         </p>
         <span className="shrink-0 rounded-full px-3 py-0.5 font-bold" style={{ fontSize: grande ? 16 : 14, background: t.caixa, color: t.suave }}>{textoMeta(i)}</span>
       </div>

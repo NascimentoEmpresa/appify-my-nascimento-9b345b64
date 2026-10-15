@@ -19,17 +19,37 @@ export interface ResponsavelVaga {
   responsavel_nome: string;
   origem: "automatico" | "manual" | "assumido";
   atualizado_em: string;
+  /** Transferida por outra pessoa (mig 20261014000047). */
+  transferida_em?: string | null;
+  transferida_por_nome?: string | null;
+  /** Quando a responsável clicou em "Ciente". */
+  ciente_em?: string | null;
 }
+
+/**
+ * Vaga que outra pessoa passou para a responsável e ela ainda não deu
+ * "Ciente" — a "nova demanda" que no Excel era a linha pintada de vermelho.
+ */
+export function novaDemanda(r: ResponsavelVaga | null | undefined): boolean {
+  if (!r?.transferida_em) return false;
+  return !r.ciente_em || new Date(r.ciente_em) < new Date(r.transferida_em);
+}
+
+const COLS = "vaga_id,responsavel_id,responsavel_nome,origem,atualizado_em";
+const COLS_TRANSF = `${COLS},transferida_em,transferida_por_nome,ciente_em`;
 
 async function buscar(ids: number[]): Promise<ResponsavelVaga[] | null> {
   const blocos: number[][] = [];
   for (let i = 0; i < ids.length; i += BLOCO) blocos.push(ids.slice(i, i + BLOCO));
-  const res = await Promise.all(blocos.map((b) => db
+  const ler = (cols: string) => Promise.all(blocos.map((b) => db
     .from("SISTEMA_RECRUTAMENTO_RESPONSAVEL")
-    .select("vaga_id,responsavel_id,responsavel_nome,origem,atualizado_em")
+    .select(cols)
     .in("vaga_id", b)));
+  // Banco ainda sem a mig 20261014000047: lê sem as colunas da transferência.
+  let res = await ler(COLS_TRANSF);
+  if (res.some((r) => r.error)) res = await ler(COLS);
   if (res.some((r) => r.error)) return null;
-  return res.flatMap((r) => (r.data ?? []) as ResponsavelVaga[]);
+  return res.flatMap((r) => (r.data ?? []) as unknown as ResponsavelVaga[]);
 }
 
 export function useResponsaveisDasVagas(vagas: ReadonlyArray<{ id: number }> | null | undefined) {
@@ -66,6 +86,12 @@ export async function listarResponsaveisPossiveis(): Promise<{ id: string; nome:
 /** Fixa o responsável (manual) ou, com `usuarioId` null, devolve ao automático. */
 export async function definirResponsavelVaga(vagaId: number, usuarioId: string | null): Promise<void> {
   const { error } = await db.rpc("rec_responsavel_definir", { p_vaga: vagaId, p_usuario: usuarioId });
+  if (error) throw error;
+}
+
+/** "Ciente" da vaga transferida (mig 20261014000047): tira o vermelho. */
+export async function marcarCienteVaga(vagaId: number): Promise<void> {
+  const { error } = await db.rpc("rec_responsavel_ciente", { p_vaga: vagaId });
   if (error) throw error;
 }
 

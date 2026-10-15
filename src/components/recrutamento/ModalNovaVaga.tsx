@@ -484,6 +484,13 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
   // Prazo/grau da data escolhida — o grau não é mais escolhido na mão.
   const prazo = avaliarPrazo(vaga.data_inicio_prevista);
   const cnhDoCargo = cargoExigeCnh(vaga.cargo);
+  // Reserva Técnica (14/10/2026, Pablo): "se for RT tem que selecionar um
+  // colaborador de exemplo do mesmo posto, mas pode ser possível alterar as
+  // informações manualmente ainda". O exemplo é obrigatório (mesmo no modo
+  // manual) e só serve de molde: contrato, cargo e insalubridade continuam
+  // editáveis depois de escolhido.
+  const ehRT = vaga.reserva_tecnica === "Sim";
+  const camposEditaveis = vagaManual || ehRT;
 
   const vagaValidar = (step: number) => {
     if (step === 1) {
@@ -491,6 +498,10 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
 
       // No modo manual ninguém preenche por você: o que o cadastro daria vira
       // digitação, e o que era "escolha alguém" vira "informe o campo".
+      if (ehRT && !substituidoId) {
+        toast("Vaga de Reserva Técnica: escolha na lista um colaborador de exemplo do mesmo posto — depois dá para ajustar os dados.", "err");
+        return false;
+      }
       if (vagaManual) {
         const faltam = faltamCamposManuais(vaga);
         if (faltam.length) {
@@ -696,6 +707,22 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
               {MOTIVOS_VAGA.map(o => <option key={o}>{o}</option>)}
             </select>
           </div>
+          {/* RT subiu para a etapa 1 (14/10/2026): é ela que decide se o
+              colaborador de exemplo é obrigatório e se os campos destravam. */}
+          {!!vaga.motivo_vaga && (
+            <div className="nvg-fg">
+              <label>Essa é uma Vaga de Reserva Técnica (RT)?</label>
+              <select className="nvg-fi" value={vaga.reserva_tecnica}
+                onChange={e => setVaga(v => ({ ...v, reserva_tecnica: e.target.value }))}>
+                <option>Não</option><option>Sim</option>
+              </select>
+              {ehRT && (
+                <div style={{ marginTop: 6, fontSize: 13, color: "#0f3171", background: "#eef4ff", border: "1px solid #c7d7fe", borderRadius: 8, padding: "6px 9px" }}>
+                  Escolha abaixo um <b>colaborador de exemplo do mesmo posto</b>: os dados dele vêm prontos e você pode alterar o que precisar.
+                </div>
+              )}
+            </div>
+          )}
           {/* Aviso do modo manual: a pessoa precisa saber que trocou de
               regime, senão estranha os campos que antes vinham prontos. */}
           {vagaManual && (
@@ -708,10 +735,10 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
           )}
           {/* Em Substituição o colaborador continua obrigatório mesmo à
               mão: é o vínculo que impede duas vagas repondo a mesma pessoa. */}
-          {!!vaga.motivo_vaga && (!vagaManual || ehSubstituicao(vaga.motivo_vaga)) && (
+          {!!vaga.motivo_vaga && (!vagaManual || ehSubstituicao(vaga.motivo_vaga) || ehRT) && (
             <div className="nvg-fg" style={{ position: "relative" }}
               onBlur={() => setTimeout(() => setShowEmpDrop(false), 150)}>
-              <label>{rotuloReferencia(vaga.motivo_vaga)} *</label>
+              <label>{ehRT && !ehSubstituicao(vaga.motivo_vaga) ? "Colaborador de exemplo (mesmo posto)" : rotuloReferencia(vaga.motivo_vaga)} *</label>
               <input
                 className="nvg-fi"
                 placeholder="Buscar e escolher na lista..."
@@ -760,12 +787,12 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
                   })}
                 </div>
               )}
-              <div style={{ marginTop: 6, fontSize: 13, color: "#64748b" }}>{ajudaReferencia(vaga.motivo_vaga)}</div>
+              <div style={{ marginTop: 6, fontSize: 13, color: "#64748b" }}>{ehRT && !ehSubstituicao(vaga.motivo_vaga) ? "Reserva Técnica: escolha alguém do mesmo posto. Contrato, cargo, escala, salário e insalubridade vêm dele e podem ser alterados." : ajudaReferencia(vaga.motivo_vaga)}</div>
               {/* Sem nome: nos motivos que não são Substituição o escolhido
                   é só o molde da vaga, e é isso que a tela confirma. */}
               {!!substituidoId && !mostraNomeReferencia(vaga.motivo_vaga) && (
                 <div style={{ marginTop: 6, fontSize: 13, fontWeight: 700, color: "#15803d", background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: 8, padding: "6px 9px" }}>
-                  ✓ Colaborador escolhido — cargo, contrato, escala e salário já vieram do cadastro dele.
+                  ✓ Colaborador escolhido — cargo, contrato, escala e salário já vieram do cadastro dele{ehRT ? "; altere o que precisar" : ""}.
                 </div>
               )}
               {/* Substituição anda junto com a demissão de quem sai: a vaga
@@ -810,14 +837,14 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
               "ANALISTA ADM" e "Analista Administrativo" como coisas
               diferentes. */}
           <div className="nvg-fg">
-            <label>Contrato *{!vagaManual && <span style={{ color: "#64748b", fontWeight: 600 }}> — do colaborador escolhido</span>}</label>
+            <label>Contrato *{!vagaManual && <span style={{ color: "#64748b", fontWeight: 600 }}> — do colaborador escolhido{ehRT ? "; pode alterar" : ""}</span>}</label>
             <input className="nvg-fi"
-              list={vagaManual ? "nvg-contratos" : undefined}
+              list={camposEditaveis ? "nvg-contratos" : undefined}
               placeholder={vagaManual ? "Escolha na lista ou digite" : "Escolha o colaborador acima"}
-              value={vaga.contrato} readOnly={!vagaManual}
+              value={vaga.contrato} readOnly={!camposEditaveis}
               onChange={e => setVaga(v => ({ ...v, contrato: e.target.value }))}
-              style={vagaManual ? undefined : { background: "#f1f5f9", color: "#475569", cursor: "not-allowed" }} />
-            {vagaManual && (
+              style={camposEditaveis ? undefined : { background: "#f1f5f9", color: "#475569", cursor: "not-allowed" }} />
+            {camposEditaveis && (
               <>
                 <datalist id="nvg-contratos">
                   {contratosFull.map((c, i) => (
@@ -832,14 +859,14 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
             )}
           </div>
           <div className="nvg-fg">
-            <label>Cargo *{!vagaManual && <span style={{ color: "#64748b", fontWeight: 600 }}> — do colaborador escolhido</span>}</label>
+            <label>Cargo *{!vagaManual && <span style={{ color: "#64748b", fontWeight: 600 }}> — do colaborador escolhido{ehRT ? "; pode alterar" : ""}</span>}</label>
             <input className="nvg-fi"
-              list={vagaManual ? "nvg-cargos" : undefined}
+              list={camposEditaveis ? "nvg-cargos" : undefined}
               placeholder={vagaManual ? "Escolha na lista ou digite" : "Escolha o colaborador acima"}
-              value={vaga.cargo} readOnly={!vagaManual}
+              value={vaga.cargo} readOnly={!camposEditaveis}
               onChange={e => setVaga(v => ({ ...v, cargo: e.target.value }))}
-              style={vagaManual ? undefined : { background: "#f1f5f9", color: "#475569", cursor: "not-allowed" }} />
-            {vagaManual && (
+              style={camposEditaveis ? undefined : { background: "#f1f5f9", color: "#475569", cursor: "not-allowed" }} />
+            {camposEditaveis && (
               <>
                 <datalist id="nvg-cargos">
                   {cargosFull.map((c, i) => (
@@ -979,7 +1006,7 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
             <div className="nvg-fg"><label>Salário</label><input className="nvg-fi" placeholder="Ex: R$ 1.412,00" value={vaga.salario} onChange={e => setVaga(v => ({ ...v, salario: e.target.value }))} /></div>
-            {vagaManual ? (
+            {camposEditaveis ? (
               <div className="nvg-fg">
                 <label>Insalubridade</label>
                 <select className="nvg-fi" value={vaga.insalubridade_recebe} onChange={e => setVaga(v => ({ ...v, insalubridade_recebe: e.target.value }))}>
@@ -997,7 +1024,7 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
               </div>
             )}
           </div>
-          {vagaManual && vaga.insalubridade_recebe === "Sim" && (
+          {camposEditaveis && vaga.insalubridade_recebe === "Sim" && (
             <div className="nvg-fg"><label>Percentual de Insalubridade</label><input className="nvg-fi" placeholder="Ex: 20%, 40%" value={vaga.insalubridade_quanto} onChange={e => setVaga(v => ({ ...v, insalubridade_quanto: e.target.value }))} /></div>
           )}
           {/* Benefícios: o V.A e o V.T da Planilha de Custo continuam sendo
@@ -1020,13 +1047,6 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
             <textarea className="nvg-fi" rows={2}
               placeholder="Unidade, endereço, bloco/andar, ponto de referência — onde a pessoa vai trabalhar"
               value={vaga.local_exato} onChange={e => setVaga(v => ({ ...v, local_exato: e.target.value }))} />
-          </div>
-          <div className="nvg-fg">
-            <label>Essa é uma Vaga de Reserva Técnica (RT)?</label>
-            <select className="nvg-fi" value={vaga.reserva_tecnica}
-              onChange={e => setVaga(v => ({ ...v, reserva_tecnica: e.target.value }))}>
-              <option>Não</option><option>Sim</option>
-            </select>
           </div>
         </>)}
 
