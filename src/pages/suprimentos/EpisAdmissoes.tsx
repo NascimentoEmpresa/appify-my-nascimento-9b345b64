@@ -1,6 +1,8 @@
 import { useState, useCallback, useEffect } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { FotoCrachaCandidato } from "@/components/recrutamento/AlertaUrgenteAdmissao";
+import { PedidoComprasCandidato } from "@/components/recrutamento/PedidoComprasCandidato";
+import { ESTILO_STATUS } from "@/hooks/useSupPedidos";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { usePermissoes } from "@/context/PermissoesContext";
@@ -64,6 +66,9 @@ export default function EpisAdmissoes() {
   // Veio do card de urgente (?abrir=<candidato>): destaca o card dele.
   const [params] = useSearchParams();
   const destaque = Number(params.get("abrir") ?? "") || null;
+  // 15/10/2026 (mig 20261015000011): o pedido nasce no envio do Recrutamento — o card mostra ID e status.
+  const [pedidos, setPedidos] = useState<Map<string, { pedido_id: string; status: string }>>(new Map());
+  const [verPedido, setVerPedido] = useState<{ id: number; nome: string } | null>(null);
   const nome = user?.user_metadata?.nome ?? user?.email ?? "";
 
   const [rows, setRows] = useState<any[]>([]);
@@ -121,6 +126,11 @@ export default function EpisAdmissoes() {
         .select("id,candidato_id,token,expira_em,preenchido_em,pedido_id,contrato_id,posto_id,funcao_id,sup_admissao_enxoval_item(id,nome_item,tamanho,tamanho_informado,quantidade,ordem)")
         .in("candidato_id", ids);
       setEnxovais(new Map((enx ?? []).map((e: any) => [Number(e.candidato_id), e])));
+      const pids = (enx ?? []).map((e: any) => e.pedido_id).filter(Boolean);
+      if (pids.length) {
+        const { data: ps } = await sb.from("sup_pedido").select("id, pedido_id, status").in("id", pids);
+        setPedidos(new Map((ps ?? []).map((p: any) => [p.id, { pedido_id: p.pedido_id, status: p.status }])));
+      } else setPedidos(new Map());
     } else setEnxovais(new Map());
   }, [verTodos]);
   useEffect(() => { load(); }, [load]);
@@ -210,7 +220,8 @@ export default function EpisAdmissoes() {
     const nowIso = new Date().toISOString();
 
     if (acao.tipo === "providenciar") {
-      // Gera o pedido de materiais e carimba o Compras (a etapa NÃO muda aqui — ver o cabeçalho).
+      // Carimba o Compras (o pedido já nasceu no envio do Recrutamento; gera aqui só se faltar).
+      // Admissão "sem pedido": é a ciência do Compras. A etapa NÃO muda aqui — ver o cabeçalho.
       const { data, error } = await sb.rpc("sup_adm_aprovar_compras", { p_candidato_id: c.candidato_id, p_obs: obs.trim() || null });
       if (error) { toast("Erro: " + error.message, "err"); return; }
       const r = (data ?? {}) as { pedido_novo?: boolean; protocolo?: string | null; pedido_id?: string | null };
@@ -218,7 +229,7 @@ export default function EpisAdmissoes() {
       toast((r.pedido_novo ? `Pedido de materiais ${r.protocolo ?? ""} gerado em Pedidos de Materiais. ` : r.pedido_id ? "" : "Sem enxoval do Catálogo — nenhum pedido gerado. ")
         + (c.sst_ok === true ? "Compras aprovado — candidato liberado para a Admissão." : "Compras aprovado — aguardando o SST."), "ok");
       setAcao(null); setObs("");
-      if (r.pedido_id) { navigate("/app/suprimentos/pedidos-materiais"); return; }
+      if (r.pedido_novo) { navigate("/app/suprimentos/pedidos-materiais"); return; }
     } else {
       if (!obs.trim()) { toast("Informe o motivo.", "err"); return; }
       const { error } = await (supabase as any).from("WA_CURRICULOS").update({
@@ -290,7 +301,33 @@ export default function EpisAdmissoes() {
                   {/* O que o Recrutamento pediu — informação central desta tela.
                       Sem ela o Compras não sabe o que providenciar, e é por isso
                       que o campo é obrigatório do lado de lá. */}
+                  {/* Admissão sem pedido (15/10/2026): o Compras só fica ciente. */}
+                  {c.compras_dispensado && (
+                    <div style={{ marginTop: 10, fontSize: 12.5, color: "#9a3412", background: "#fff7ed", border: "1px solid #fdba74", borderRadius: 8, padding: "8px 11px" }}>
+                      <b>📦 Nova admissão — não precisa de pedido do Compras.</b>
+                      <div style={{ marginTop: 3 }}>Motivo (Recrutamento): {c.compras_dispensa_motivo || "—"}</div>
+                    </div>
+                  )}
+                  {c.compras_obs_rh && (
+                    <div style={{ marginTop: 8, fontSize: 12.5, color: "#1e3a8a", background: "#eff6ff", border: "1px solid #bfdbfe", borderRadius: 8, padding: "7px 10px" }}>
+                      <b>Observação do Recrutamento:</b> {c.compras_obs_rh}
+                    </div>
+                  )}
                   {(() => {
+                    const ex = enxovais.get(Number(c.candidato_id));
+                    const ped = ex?.pedido_id ? pedidos.get(ex.pedido_id) : null;
+                    if (!ped) return null;
+                    const est = ESTILO_STATUS[ped.status];
+                    return (
+                      <button type="button" onClick={() => setVerPedido({ id: Number(c.candidato_id), nome: c.nome })}
+                        style={{ marginTop: 8, width: "100%", display: "flex", alignItems: "center", gap: 8, padding: "7px 10px", borderRadius: 8, border: "1px solid #c7d2fe", background: "#eef2ff", cursor: "pointer", fontFamily: "inherit", textAlign: "left" }}>
+                        <span style={{ fontSize: 12.5, fontWeight: 800, color: "#1e1b4b", fontFamily: "monospace" }}>{ped.pedido_id}</span>
+                        <span className={est?.classe} style={{ fontSize: 11, fontWeight: 700, padding: "1px 8px", borderRadius: 20, border: "1px solid" }}>{est?.rotulo ?? ped.status}</span>
+                        <span style={{ marginLeft: "auto", fontSize: 11.5, fontWeight: 700, color: "#4338ca" }}>Ver pedido ›</span>
+                      </button>
+                    );
+                  })()}
+                  {!c.compras_dispensado && (() => {
                     const ex = enxovais.get(Number(c.candidato_id));
                     if (ex?.preenchido_em && ex.sup_admissao_enxoval_item?.length) {
                       return (
@@ -342,7 +379,7 @@ export default function EpisAdmissoes() {
                       Enxoval e tamanhos
                     </button>
                     {podeAgir && ETAPAS_PARALELO.includes(c.etapa_processo) && c.compras_ok !== true && <>
-                      <button onClick={() => { setObs(""); setAcao({ cand: c, tipo: "providenciar" }); }} style={btnStyle("#16a34a", "none", "#fff")}>✓ Aprovar e gerar pedido</button>
+                      <button onClick={() => { setObs(""); setAcao({ cand: c, tipo: "providenciar" }); }} style={btnStyle("#16a34a", "none", "#fff")}>{c.compras_dispensado ? "✓ Ciente — sem pedido" : "✓ Aprovar"}</button>
                       <button onClick={() => { setObs(""); setAcao({ cand: c, tipo: "reprovar" }); }} style={btnStyle("rgba(220,38,38,.08)", "1px solid rgba(220,38,38,.25)", "#dc2626")}>Reprovar</button>
                     </>}
                   </div>
@@ -355,7 +392,7 @@ export default function EpisAdmissoes() {
 
       {acao && (
         <Modal onClose={() => { setAcao(null); setObs(""); }}
-          title={acao.tipo === "providenciar" ? "Aprovar e gerar o pedido de materiais" : "Reprovar candidato"}
+          title={acao.tipo === "providenciar" ? (acao.cand.compras_dispensado ? "Dar ciência — admissão sem pedido" : "Aprovar o Compras") : "Reprovar candidato"}
           sub={`${acao.cand.nome} · ${acao.cand.cargo || ""}${acao.cand.cidade ? " · " + acao.cand.cidade : ""}`}>
           {acao.tipo === "providenciar" && acao.cand.compras_necessidades && (
             <div style={{ marginBottom: 12, fontSize: 12.5, color: "#7c2d12", background: "#fff7ed", border: "1px solid #fed7aa", borderRadius: 8, padding: "8px 11px", whiteSpace: "pre-wrap" }}>
@@ -364,7 +401,9 @@ export default function EpisAdmissoes() {
           )}
           {acao.tipo === "providenciar" && (
             <div style={{ marginBottom: 12, fontSize: 12.5, color: "#14532d", background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: 8, padding: "8px 11px" }}>
-              O pedido vai direto para <b>Suprimentos › Pedidos de Materiais</b>, com a foto do crachá e as quantidades informadas pelo Recrutamento.
+              {acao.cand.compras_dispensado
+                ? <>O Recrutamento informou que esta admissão <b>não precisa de pedido</b>. Confirmar registra que o Compras está ciente.</>
+                : <>O pedido de materiais já foi gerado no envio do Recrutamento e está em <b>Suprimentos › Pedidos de Materiais</b>. Aprovar libera o Compras nesta admissão.</>}
             </div>
           )}
           <Campo label={acao.tipo === "providenciar" ? "Observação (opcional)" : "Motivo *"} value={obs} onChange={setObs}
@@ -477,6 +516,7 @@ export default function EpisAdmissoes() {
         </Modal>
       )}
 
+      <PedidoComprasCandidato candidatoId={verPedido?.id ?? null} nome={verPedido?.nome} onFechar={() => { setVerPedido(null); load(); }} />
       <Toasts toasts={toasts} />
     </div>
   );
