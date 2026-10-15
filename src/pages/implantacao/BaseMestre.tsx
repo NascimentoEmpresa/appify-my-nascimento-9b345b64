@@ -7,7 +7,7 @@
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
-  Database, Upload, Plus, FileSpreadsheet, CheckCircle2, Clock3, AlertCircle, FileText, RefreshCw, Eye, Trash2,
+  Database, Upload, Plus, FileSpreadsheet, CheckCircle2, Clock3, AlertCircle, FileText, RefreshCw, Eye, CalendarDays,
 } from "lucide-react";
 import { AcessoGate } from "@/components/auth/AcessoGate";
 import { Button } from "@/components/ui/button";
@@ -24,6 +24,8 @@ import { BotaoExportar } from "@/components/implantacao/SetorShell";
 import {
   useBasesCadastradas, useContratosDaBase, useAtualizarDaBase, useImportarPlanilha, brl, num,
 } from "@/hooks/useImplantacaoBase";
+import { DialogVincular } from "@/components/implantacao/ReunioesDaImplantacao";
+import { useScreenAccess } from "@/hooks/useScreenAccess";
 import { lerPlanilhaOperacional, lerPlanilhaFinanceira } from "@/lib/implantacao/importarPlanilha";
 import { exportarCsv } from "@/lib/implantacao/exportarBase";
 import { toast } from "@/hooks/use-toast";
@@ -45,6 +47,10 @@ function Conteudo() {
   const { data: bases = [], isLoading } = useBasesCadastradas();
   const { data: contratos = [] } = useContratosDaBase();
   const atualizar = useAtualizarDaBase();
+  // Sem permissão de alterar, importar e atualizar são recusados pelo banco —
+  // melhor desabilitar e explicar do que deixar clicar e tomar "Sem acesso".
+  const { data: podeEditar } = useScreenAccess("implantacao.base", "alterar");
+  const [reunioesDe, setReunioesDe] = useState<string | null>(null);
 
   const filtradas = useMemo(
     () =>
@@ -70,7 +76,12 @@ function Conteudo() {
         module="Licitações"
         actions={
           <>
-            <Button variant="outline" size="sm" onClick={() => setImportando(true)}>
+            <Button
+              variant="outline" size="sm"
+              disabled={!podeEditar}
+              title={podeEditar ? undefined : "Você tem acesso de leitura nesta tela. Importar exige permissão de alterar."}
+              onClick={() => setImportando(true)}
+            >
               <Upload className="mr-1.5 h-4 w-4" /> Importar Planilha
             </Button>
             <BotaoExportar
@@ -88,7 +99,12 @@ function Conteudo() {
                 )
               }
             />
-            <Button size="sm" className="bg-slate-900 text-white hover:bg-slate-800" onClick={() => setImportando(true)}>
+            <Button
+              size="sm" className="bg-slate-900 text-white hover:bg-slate-800"
+              disabled={!podeEditar}
+              title={podeEditar ? undefined : "Você tem acesso de leitura nesta tela."}
+              onClick={() => setImportando(true)}
+            >
               <Plus className="mr-1.5 h-4 w-4" /> Novo Registro
             </Button>
           </>
@@ -161,8 +177,15 @@ function Conteudo() {
                             <Eye className="h-4 w-4" />
                           </Button>
                           <Button
+                            variant="ghost" size="icon" className="h-7 w-7" title="Reuniões de implantação"
+                            disabled={!podeEditar}
+                            onClick={() => setReunioesDe(b.contrato_id)}
+                          >
+                            <CalendarDays className="h-4 w-4" />
+                          </Button>
+                          <Button
                             variant="ghost" size="icon" className="h-7 w-7" title="Atualizar da base"
-                            disabled={atualizar.isPending}
+                            disabled={atualizar.isPending || !podeEditar}
                             onClick={() => atualizar.mutate(b.contrato_id)}
                           >
                             <RefreshCw className={`h-4 w-4 ${atualizar.isPending ? "animate-spin" : ""}`} />
@@ -179,6 +202,9 @@ function Conteudo() {
       </Card>
 
       <DialogImportar aberto={importando} aoFechar={() => setImportando(false)} contratos={contratos} />
+      {reunioesDe && (
+        <DialogVincular contratoId={reunioesDe} aberto aoFechar={() => setReunioesDe(null)} />
+      )}
     </div>
   );
 }
