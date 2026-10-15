@@ -19,7 +19,7 @@ import {
   type AbaFluxo, type SituacaoFluxo,
 } from "@/pages/financeiro/fluxo-caixa/abasFluxo";
 import { agruparKpi, explicacaoKpi, linhasDoKpi, totalKpi, type KpiFluxo } from "@/pages/financeiro/fluxo-caixa/kpiFluxo";
-import { TrendingDown, TrendingUp, Wallet, LineChart, X, Trash2, RotateCcw, Pencil, Eye, ChevronRight, ChevronDown, FileDown } from "lucide-react";
+import { TrendingDown, TrendingUp, Wallet, LineChart, X, Trash2, RotateCcw, Pencil, Eye, ChevronRight, ChevronDown, FileDown, Split } from "lucide-react";
 import { toast } from "sonner";
 import { AcessoGate } from "@/components/auth/AcessoGate";
 import {
@@ -38,6 +38,9 @@ import { useExcluirDebito, useRestaurarDebito, useDebitoAutomaticoLixeira } from
 import { useExcluirItemFatura, useRestaurarItemFatura, useCartaoFaturaLixeira } from "@/hooks/useCartaoFatura";
 import { useClassificacoesOrcamentoAdmin } from "@/hooks/usePlanejamentoOrcamentario";
 import { ExcluirPermanentementeButton } from "@/pages/malote/ExcluirPermanentementeButton";
+import { useExcluirLinhaImportada, useImportadaLixeira, useRestaurarLinhaImportada } from "@/hooks/useFluxoCaixaImportado";
+import { RatearImportadoDialog, type LinhaParaRatear } from "./fluxo-caixa/RatearImportadoDialog";
+import { acaoDeRateio } from "./fluxo-caixa/rateioImportado";
 import { KpiTile } from "@/components/financeiro/KpiTile";
 import { BancoBadge } from "@/components/financeiro/BancoBadge";
 import { urlLogoCartao, useCartaoBancos } from "@/hooks/useMaloteCartaoCredito";
@@ -229,6 +232,11 @@ export default function FluxoCaixaGestao() {
   const restaurarDespesa = useRestaurarDespesa();
   const restaurarDebito = useRestaurarDebito();
   const restaurarItemFatura = useRestaurarItemFatura();
+  // Linhas importadas da planilha: excluir (lixeira) e ratear — permissão de editar o Fluxo (alterar).
+  const excluirImportada = useExcluirLinhaImportada();
+  const restaurarImportada = useRestaurarLinhaImportada();
+  const { data: importadasLixeira = [] } = useImportadaLixeira();
+  const [itemRatear, setItemRatear] = useState<{ linha: LinhaParaRatear; refazendo: boolean } | null>(null);
 
   const [itemExcluir, setItemExcluir] = useState<FluxoCaixaMaloteLinha | null>(null);
   const [excluindo, setExcluindo] = useState(false);
@@ -330,6 +338,7 @@ export default function FluxoCaixaGestao() {
     try {
       if (itemExcluir.origem === "malote") await excluirDespesa.mutateAsync(itemExcluir.despesa_id);
       else if (itemExcluir.origem === "debito_automatico") await excluirDebito.mutateAsync(itemExcluir.despesa_id);
+      else if (itemExcluir.origem === "importacao_historica") await excluirImportada.mutateAsync(itemExcluir.despesa_id);
       else await excluirItemFatura.mutateAsync(itemExcluir.despesa_id);
       toast.success("Lançamento movido para a lixeira.");
       setItemExcluir(null);
@@ -344,6 +353,7 @@ export default function FluxoCaixaGestao() {
     try {
       if (origem === "malote") await restaurarDespesa.mutateAsync(id);
       else if (origem === "debito_automatico") await restaurarDebito.mutateAsync(id);
+      else if (origem === "importacao_historica") await restaurarImportada.mutateAsync(id);
       else await restaurarItemFatura.mutateAsync(id);
       toast.success("Restaurado.");
     } catch (e: any) {
@@ -1244,6 +1254,43 @@ export default function FluxoCaixaGestao() {
                               <Pencil className="h-3.5 w-3.5" />
                             </Button>
                           </AcessoGate>
+                          {/* Importada da planilha: ratear (ou refazer/desfazer um rateio feito aqui) e excluir. */}
+                          {l.origem === "importacao_historica" && (
+                            <AcessoGate menu="financeiro-fluxo-caixa-gestao" acao="alterar">
+                              {acaoDeRateio(l) && (
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-7 w-7 text-muted-foreground hover:text-foreground"
+                                  title={acaoDeRateio(l) === "refazer" ? "Refazer ou desfazer o rateio" : "Ratear entre contratos"}
+                                  onClick={() =>
+                                    setItemRatear({
+                                      linha: {
+                                        despesa_id: l.despesa_id,
+                                        id_malote: l.id_malote,
+                                        descricao: l.descricao,
+                                        valor: Number(l.valor) || 0,
+                                        contrato_id: l.contrato_id,
+                                        rateioDetalhe: l.rateioDetalhe?.map((r) => ({ id: r.id, nome: r.nome, valor: r.valor })),
+                                      },
+                                      refazendo: acaoDeRateio(l) === "refazer",
+                                    })
+                                  }
+                                >
+                                  <Split className="h-3.5 w-3.5" />
+                                </Button>
+                              )}
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-7 w-7 text-muted-foreground hover:text-destructive"
+                                title="Excluir (vai para a lixeira)"
+                                onClick={() => setItemExcluir(l)}
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </Button>
+                            </AcessoGate>
+                          )}
                           {l.origem !== "importacao_historica" && (
                             <AcessoGate menu={MENU_POR_ORIGEM[l.origem]} acao="excluir">
                               <Button
@@ -1524,7 +1571,9 @@ export default function FluxoCaixaGestao() {
         </DialogContent>
       </Dialog>
 
-      {/* Lixeira — itens excluídos das 3 origens, cada um com Restaurar */}
+      <RatearImportadoDialog linha={itemRatear?.linha ?? null} refazendo={!!itemRatear?.refazendo} onClose={() => setItemRatear(null)} />
+
+      {/* Lixeira — itens excluídos das origens (inclusive importadas da planilha), cada um com Restaurar */}
       <Dialog open={lixeiraAberta} onOpenChange={setLixeiraAberta}>
         <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
           <DialogHeader>
@@ -1536,7 +1585,7 @@ export default function FluxoCaixaGestao() {
               de algum item), inflando o modal antes do truncate interno
               ter chance de agir. */}
           <div className="space-y-5 min-w-0">
-            {despesasLixeira.length === 0 && debitosLixeira.length === 0 && itensFaturaLixeira.length === 0 && (
+            {despesasLixeira.length === 0 && debitosLixeira.length === 0 && itensFaturaLixeira.length === 0 && importadasLixeira.length === 0 && (
               <p className="text-sm text-muted-foreground py-6 text-center">A lixeira está vazia.</p>
             )}
 
@@ -1585,6 +1634,28 @@ export default function FluxoCaixaGestao() {
                       <span className="font-medium">{formatBRL(d.valor)}</span>
                       <AcessoGate menu="financeiro-debito-automatico" acao="excluir">
                         <Button variant="outline" size="icon" className="h-8 w-8" title="Restaurar" onClick={() => restaurar("debito_automatico", d.id)}>
+                          <RotateCcw className="h-3.5 w-3.5" />
+                        </Button>
+                      </AcessoGate>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {importadasLixeira.length > 0 && (
+              <div className="space-y-1.5">
+                <p className="text-xs font-semibold text-muted-foreground uppercase">Importadas da planilha</p>
+                {importadasLixeira.map((i) => (
+                  <div key={i.despesaId} className="flex items-center justify-between gap-2 rounded-md border border-border px-3 py-2 text-sm">
+                    <div className="flex-1 min-w-0">
+                      <p className="font-mono text-xs text-muted-foreground">{i.codigo}{i.cotas > 1 ? ` · rateio (${i.cotas} cotas)` : ""}</p>
+                      <p className="truncate">{i.descricao}</p>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <span className="font-medium">{formatBRL(i.valor)}</span>
+                      <AcessoGate menu="financeiro-fluxo-caixa-gestao" acao="alterar">
+                        <Button variant="outline" size="icon" className="h-8 w-8" title="Restaurar" onClick={() => restaurar("importacao_historica", i.despesaId)}>
                           <RotateCcw className="h-3.5 w-3.5" />
                         </Button>
                       </AcessoGate>
