@@ -15,7 +15,7 @@ on:
       comando:
         description: 'O que rodar'
         type: choice
-        options: [testar, descobrir, perfilar, sincronizar]
+        options: [testar, descobrir, perfilar, sincronizar, conferir]
         default: testar
       tabelas:
         description: 'Só para perfilar: tabelas separadas por espaço (vazio = as de tabelas.json)'
@@ -31,6 +31,12 @@ on:
         default: ''
       gravar:
         description: 'Gravar de verdade? Desmarcado = simulação com rollback'
+        type: boolean
+        default: false
+      completo:
+        # Só para sincronizar: as tabelas "incremental" de tabelas.json
+        # (BiMarcacoes) trazem só os últimos dias; marcado, recarrega inteira.
+        description: 'Recarga COMPLETA (inclusive BiMarcacoes)? Desmarcado = só os dias recentes nas tabelas grandes'
         type: boolean
         default: false
   schedule:
@@ -81,6 +87,7 @@ jobs:
           COMANDO: ${{ inputs.comando }}
           LIMITE: ${{ inputs.limite }}
           GRAVAR: ${{ inputs.gravar }}
+          COMPLETO: ${{ inputs.completo }}
           TABELAS: ${{ inputs.tabelas }}
         run: |
           set -euo pipefail
@@ -104,6 +111,9 @@ jobs:
               fi
               if [ -n "$LIMITE" ]; then
                 set -- "$@" --limite "$LIMITE"
+              fi
+              if [ "$COMPLETO" = "true" ]; then
+                set -- "$@" --completo
               fi
             fi
             echo "rodando: node espelho.mjs $*"
