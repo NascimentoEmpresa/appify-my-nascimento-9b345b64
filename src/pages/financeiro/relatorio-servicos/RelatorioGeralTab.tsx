@@ -67,8 +67,15 @@ export default function RelatorioGeralTab() {
   const [filtroEmpresa, setFiltroEmpresa] = useState(() => searchParams.get("empresa") ?? "");
   const [filtroCompetencia, setFiltroCompetencia] = useState(() => searchParams.get("competencia") ?? "");
   const [filtroContrato, setFiltroContrato] = useState(() => searchParams.get("contrato") ?? "");
-  const [filtroStatus, setFiltroStatus] = useState<StatusNota | "todos">("todos");
-  const [filtroCodigo, setFiltroCodigo] = useState<TipoNota | "todos">("todos");
+  // SIS-2026-0652: os KPIs do Controle de Faturamento abrem aqui já com Código N (e, no Recebido, só as pagas).
+  const [filtroStatus, setFiltroStatus] = useState<StatusNota | "todos">(() => {
+    const s = searchParams.get("status");
+    return s && s in STATUS_LABEL ? (s as StatusNota) : "todos";
+  });
+  const [filtroCodigo, setFiltroCodigo] = useState<TipoNota | "todos">(() => {
+    const c = searchParams.get("codigo");
+    return c && c in TIPOS_NOTA ? (c as TipoNota) : "todos";
+  });
   const [filtroEmissaoDe, setFiltroEmissaoDe] = useState("");
   const [filtroEmissaoAte, setFiltroEmissaoAte] = useState("");
   const [filtroOver30, setFiltroOver30] = useState(false);

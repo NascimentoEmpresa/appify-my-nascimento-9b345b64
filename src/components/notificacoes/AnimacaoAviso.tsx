@@ -4,7 +4,7 @@
 //
 // Um <canvas> por cima de tudo, sem biblioteca: confete/estrela/coração/fogos
 // são umas poucas dezenas de partículas, e trazer uma lib de animação para
-// isso pesaria no bundle de quem só quer ler o aviso. Toca uma vez (~4 s),
+// isso pesaria no bundle de quem só quer ler o aviso. Toca uma vez (10 s),
 // não recebe clique (pointer-events-none — o aviso continua respondível
 // durante a festa) e some.
 //
@@ -12,8 +12,15 @@
 // não tocava nada — e o Windows com "Efeitos de animação" desligado (o padrão
 // em muita máquina da empresa) faz o navegador dizer reduce, então o Pablo
 // não via confete nem na prévia. Versão reduzida: um terço das partículas,
-// ~1,8 s, sem balanço, sem giro e sem piscar — movimento simples e breve, que
+// sem balanço, sem giro e sem piscar — movimento simples, que
 // é o que a preferência pede, em vez de sumir com a comemoração.
+//
+// 10 SEGUNDOS (16/10/2026, pedido do Pablo: "deixa 10seg de animação dos
+// confetes e outros"), nas duas versões — a reduzida é a que ele vê, com os
+// efeitos do Windows desligados. Para durar sem nascer milhares de
+// partículas, quem sai da tela RENASCE do lado de onde vem (confete no topo,
+// estrela/coração embaixo) até faltar RENASCE_ATE_MS para o fim; daí a tela
+// esvazia sozinha e o último segundo esmaece.
 //
 // O canvas vai num portal no <body>: dentro do Dialog do mural (que usa
 // transform) o `fixed` ficava preso à caixa do diálogo.
@@ -21,8 +28,12 @@ import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { Animacao } from "@/lib/notificacoes";
 
-const DURACAO_MS = 4000;
-const DURACAO_REDUZIDA_MS = 1800;
+const DURACAO_MS = 10_000;
+const DURACAO_REDUZIDA_MS = 10_000;
+/** Até quanto antes do fim as partículas que saíram da tela voltam. */
+const RENASCE_ATE_MS = 2500;
+/** O esmaecimento final. */
+const ESMAECE_MS = 1000;
 const CORES = ["#f59e0b", "#ef4444", "#3b82f6", "#10b981", "#8b5cf6", "#ec4899", "#facc15"];
 
 interface Particula {
@@ -66,7 +77,7 @@ function nascer(tipo: Animacao, w: number, h: number, reduzido: boolean): Partic
   const n = (k: number) => Math.round((k * Math.min(1, w / 1200) + k * 0.4) * (reduzido ? 0.35 : 1));
   if (tipo === "confetes") {
     for (let i = 0; i < n(110); i++) {
-      // Reduzido: começa já na tela, para caber nos 1,8 s.
+      // Reduzido: começa já na tela, para a festa aparecer de cara.
       lista.push({ x: aleatorio(0, w), y: reduzido ? aleatorio(-h * 0.2, h * 0.3) : aleatorio(-h * 0.6, -10), vx: aleatorio(-1.2, 1.2), vy: aleatorio(2, 4.5),
         tam: aleatorio(6, 11), giro: aleatorio(0, Math.PI), vgiro: aleatorio(-0.2, 0.2), cor: cor(), vida: 1, fase: aleatorio(0, 6) });
     }
@@ -127,13 +138,14 @@ export function AnimacaoAviso({ tipo, chave }: { tipo: Animacao | null | undefin
     const passo = (agora: number) => {
       const t = agora - inicio;
       ctx.clearRect(0, 0, w, h);
-      // Os últimos 700 ms esmaecem tudo junto, em vez de cortar no meio.
-      const fim = Math.max(0, Math.min(1, (duracao - t) / 700));
+      // O último segundo esmaece tudo junto, em vez de cortar no meio.
+      const fim = Math.max(0, Math.min(1, (duracao - t) / ESMAECE_MS));
+      const renasce = t < duracao - RENASCE_ATE_MS;
 
-      // Reduzido: um estouro só, no começo.
-      if (tipo === "fogos" && t < duracao - 1200 && t >= proximoEstouro && (!calmo || proximoEstouro === 0)) {
+      // Reduzido: estouros mais espaçados (1 a cada 1,5 s).
+      if (tipo === "fogos" && t < duracao - 1200 && t >= proximoEstouro) {
         estouro(parts, w, h);
-        proximoEstouro = calmo ? Infinity : t + aleatorio(350, 650);
+        proximoEstouro = t + (calmo ? 1500 : aleatorio(350, 650));
       }
 
       for (const p of parts) {
@@ -143,6 +155,8 @@ export function AnimacaoAviso({ tipo, chave }: { tipo: Animacao | null | undefin
           p.vx += Math.sin((t / 300) + p.fase) * 0.03;
         }
         p.x += p.vx; p.y += p.vy; p.giro += p.vgiro;
+        if (renasce && tipo === "confetes" && p.y > h + 20) { p.y = aleatorio(-60, -10); p.x = aleatorio(0, w); }
+        else if (renasce && (tipo === "estrelas" || tipo === "coracoes") && p.y < -20) { p.y = h + aleatorio(10, 60); p.x = aleatorio(0, w); }
         if (p.vida <= 0) continue;
 
         const piscar = tipo === "estrelas" && !calmo ? 0.55 + 0.45 * Math.sin(t / 160 + p.fase) : 1;
@@ -158,6 +172,10 @@ export function AnimacaoAviso({ tipo, chave }: { tipo: Animacao | null | undefin
         ctx.restore();
       }
       ctx.globalAlpha = 1;
+      // Fogos: as faíscas apagadas saem da lista (são ~46 por estouro, por 10 s).
+      if (tipo === "fogos" && parts.length > 400) {
+        for (let i = parts.length - 1; i >= 0; i--) if (parts[i].vida <= 0) parts.splice(i, 1);
+      }
 
       if (t < duracao) quadro = requestAnimationFrame(passo);
       else setAtiva(false);
