@@ -10,7 +10,7 @@ export default function RelatorioServicos() {
   // cá com ?empresa=&competencia=&contrato= — nesse caso abre direto na
   // aba "Relatório Geral" (a única com esses 3 filtros), não na aba padrão.
   const [searchParams] = useSearchParams();
-  const abaInicial = searchParams.has("empresa") || searchParams.has("competencia") || searchParams.has("contrato") ? "geral" : "contrato";
+  const abaInicial = searchParams.has("empresa") || searchParams.has("competencia") || searchParams.has("contrato") || searchParams.has("codigo") || searchParams.has("status") ? "geral" : "contrato";
 
   return (
     <div className="space-y-6">
