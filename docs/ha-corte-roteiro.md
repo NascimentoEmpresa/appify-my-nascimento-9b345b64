@@ -1163,12 +1163,20 @@ dizendo só a palavra `anexos` (o `--enviar` lê `SSH_ORIGINAL_COMMAND` e escolh
 entre os dois pacotes — nada é executado). Medido na primeira execução:
 
 ```
-12.186 arquivos  ->  2,5 GB cifrados   em ~2 min
+[12:24:41] 12186 arquivos em /var/lib/docker/volumes/erp-pilha_storage-arquivos/_data
+[12:28:40] 12186 arquivos empacotados, 5048 MB cifrados
 ```
 
-(Eu havia estimado ~5,5 GB a partir dos 5,8 GB em disco; o `gzip` comprimiu
-melhor que isso. A guarda do workflow — recusar pacote abaixo de 1 GB — segue
-válida, e os 12 GB de folga exigidos no runner continuam de sobra.)
+**12.186 de 12.186, em 4 minutos.** A contagem não é um segundo `find`: o `tar`
+roda com `-v` e lista no stderr cada membro que entrou de verdade, enquanto os
+bytes seguem para o `gpg`. É o que pega pacote truncado — e truncado é
+exatamente o que eu quase relatei: olhei o arquivo **enquanto ele era escrito**,
+vi 2,5 GB e cheguei a registrar isso aqui como o tamanho final. Conferir
+tamanho de arquivo que ainda está sendo gerado não vale nada; o número que
+vale é o que o script imprime no fim.
+
+A guarda do workflow (recusar pacote abaixo de 1 GB) segue válida, e os 12 GB
+de folga exigidos no runner continuam de sobra para 5 GB.
 
 **Por que um workflow novo e não reapontar o `backup_storage.yml`:** aquele
 monta a lista de objetos com `psql` **contra a Supabase**, e o Postgres do
