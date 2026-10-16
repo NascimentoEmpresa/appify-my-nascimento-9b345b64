@@ -14,7 +14,7 @@ type Resp = { status: number } | "rede";
 function fetchFalso(saude: () => Resp, chamada: () => Resp) {
   return vi.fn(async (entrada: RequestInfo | URL) => {
     const url = String(entrada);
-    const r = url === "https://banco.teste/rest/v1/" ? saude() : chamada();
+    const r = url === "https://banco.teste/rest/v1/rpc/sistema_saude" ? saude() : chamada();
     if (r === "rede") throw new TypeError("Failed to fetch");
     return new Response(null, { status: r.status });
   });

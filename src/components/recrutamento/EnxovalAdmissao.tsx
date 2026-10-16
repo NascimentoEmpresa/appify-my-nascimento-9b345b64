@@ -65,7 +65,7 @@ export const EnxovalAdmissao = forwardRef<EnxovalAdmissaoHandle, { candidatoId: 
 
   const { data: contratos = [] } = useContratosCatalogo(!!prev && !prev.vaga_tem_catalogo);
   const { data: postos = [] } = usePostos(escolha.contrato_id || null);
-  const { data: funcoes = [] } = useFuncoes(escolha.posto_id || null);
+  const { data: funcoes = [], isSuccess: funcoesCarregadas } = useFuncoes(escolha.posto_id || null);
 
   const carregar = useCallback(async (ids?: { contrato_id: string; posto_id: string; funcao_id: string }) => {
     setCarregando(true); setErro(null);
@@ -120,7 +120,8 @@ export const EnxovalAdmissao = forwardRef<EnxovalAdmissaoHandle, { candidatoId: 
       const { data, error } = await db.rpc("rec_enxoval_informar", {
         p_candidato_id: candidatoId, p_contrato_id: escolha.contrato_id, p_posto_id: escolha.posto_id, p_funcao_id: escolha.funcao_id,
         p_itens: itens.map((i) => ({ item_id: i.item_id, tamanho: tamanhos[i.item_id] ?? null, quantidade: qtds[i.item_id] ?? 1 })),
-        p_obs: obs.trim() || null,
+        // A observação para o Compras vem do modal (rec_enxoval_gerar_pedido, 15/10/2026).
+        p_obs: null,
         p_foto_path: caminhoFoto,
       });
       if (error) return { ok: false, erro: error.message };
@@ -158,6 +159,13 @@ export const EnxovalAdmissao = forwardRef<EnxovalAdmissaoHandle, { candidatoId: 
             <option value="">Função…</option>
             {funcoes.map((f) => <option key={f.id} value={f.id}>{f.nome}</option>)}
           </select>
+          {/* 15/10/2026: posto sem função no Catálogo deixava o select vazio, sem explicar nada. */}
+          {escolha.posto_id && funcoesCarregadas && funcoes.length === 0 && (
+            <div style={{ fontSize: 12, color: "#9a3412", background: "#fff7ed", border: "1px solid #fdba74", borderRadius: 8, padding: "7px 10px" }}>
+              Este posto não tem função cadastrada no Catálogo (Suprimentos), então não há enxoval para puxar.
+              Se a função não usa EPI/uniforme, marque <b>"Não precisa de pedido do Compras"</b> acima e diga o motivo.
+            </div>
+          )}
         </div>
       )}
 
@@ -238,11 +246,8 @@ export const EnxovalAdmissao = forwardRef<EnxovalAdmissaoHandle, { candidatoId: 
         </div>
       )}
 
-      {!prev.tem_pedido && itens.length > 0 && (
-        <textarea rows={2} style={{ ...fi, marginTop: 10, resize: "vertical" }} value={obs} onChange={(e) => setObs(e.target.value)}
-          placeholder="Observação para o Compras (opcional)" />
-      )}
-      <div style={{ fontSize: 10.5, color: "#94a3b8", marginTop: 6 }}>Vai para Suprimentos › EPIs — Admissões, que gera o pedido de materiais.</div>
+      {/* A observação para o Compras está no modal (15/10/2026) — vai no pedido. */}
+      <div style={{ fontSize: 10.5, color: "#94a3b8", marginTop: 6 }}>Ao enviar, o pedido de materiais é gerado na hora em Suprimentos › Pedidos de Materiais.</div>
     </div>
   );
 });
