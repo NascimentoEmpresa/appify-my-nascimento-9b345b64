@@ -176,3 +176,67 @@ describe("montarLinhas (posição do pdf.js → linhas)", () => {
     expect(l).toEqual(["Nome", "MARIA  529.982.247-25  160,00"]);
   });
 });
+
+// Relatório de movimentação do seguro (Prudential "VG Express"), primeiro PDF
+// real recebido (16/10/2026) — linhas como o pdf.js devolve depois de
+// montarLinhas. Nomes e CPFs FICTÍCIOS (CPFs de teste válidos); o layout,
+// os cabeçalhos, os prêmios e a linha de TOTAL são os do arquivo real.
+const SEGURO_FIXTURE = [
+  "VG EXPRESS",
+  "RELATÓRIO DE MOVIMENTAÇÃO",
+  "Nº Contrato  Nº Subcontrato  Nº Apólice  Nº Aditamento  Ano/Mês Vigência",
+  "403267  1  1099300045636  63  2026/09",
+  "Estipulante:  CNPJ:",
+  "Inicio de Vigência do Faturamento: 24hs do dia 13/09/2026  Fim de Vigência do Faturamento: 24hs do dia 12/10/2026",
+  "Data de",
+  "Matrícula Nome Segurado  CPF Segurado  Nascimento  Data Início  Movimentação  IS Segurado  Prêmio",
+  "FULANA DE TAL  529.982.247-25  18/12/1997  13/07/2026  20.000,00  11,18",
+  "BELTRANO SOUZA  390.533.447-05  06/02/1967  13/08/2025  50.000,00  27,95",
+  "CICRANA LIMA  111.444.777-35  05/01/1982  13/09/2026  Inclusão  20.000,00  11,18",
+  "JOAO EXEMPLO  123.456.789-09  16/11/1980  13/07/2026  Exclusão  0,00  0,00",
+  "TOTAL:  90.000,00  50,31",
+  "436-7 PRUDENTIAL DO BRASIL SEGUROS SA - CNPJ 21.986.074/0001-19  1/111",
+];
+
+describe("PDF do seguro (relatório de movimentação)", () => {
+  it("reconhece o layout", async () => {
+    const { identificarLayoutPdf } = await import("@/lib/rh/rateioDespesas");
+    expect(identificarLayoutPdf(SEGURO_FIXTURE).layout).toBe("seguro_prudential");
+    expect(identificarLayoutPdf(["FATURA", "CPF 529.982.247-25 10,00"]).layout).toBe("generico");
+  });
+  it("uma linha por segurado, valor = prêmio (último), exclusão com 0", () => {
+    const r = extrairLinhasComCpf(SEGURO_FIXTURE);
+    expect(r.map((x) => [x.cpf, x.valor])).toEqual([
+      ["52998224725", 11.18],
+      ["39053344705", 27.95],
+      ["11144477735", 11.18],
+      ["12345678909", 0],
+    ]);
+  });
+  it("a soma das linhas bate com o TOTAL do PDF (prêmio, não IS)", async () => {
+    const { totalDeclaradoNoPdf } = await import("@/lib/rh/rateioDespesas");
+    const soma = extrairLinhasComCpf(SEGURO_FIXTURE).reduce((a, x) => a + x.valor, 0);
+    expect(totalDeclaradoNoPdf(SEGURO_FIXTURE)).toBe(50.31);
+    expect(Math.round(soma * 100) / 100).toBe(50.31);
+    expect(totalDeclaradoNoPdf(["sem total aqui 10,00"])).toBeNull();
+  });
+  it("página girada 90° (matriz [0,s,-s,0,e,f]): cada x da página é uma linha", async () => {
+    const { paraEixoDoTexto, montarLinhas } = await import("@/lib/rh/rateioPdf");
+    // Como vem do pdf.js no PDF real: o texto corre no y; linha 1 em x=303, linha 2 em x=316,5.
+    const t = (x: number, y: number) => [0, 8.2, -8.2, 0, x, y];
+    const itens = [
+      paraEixoDoTexto("FULANA DE TAL", t(303, 70.5), 117),
+      paraEixoDoTexto("529.982.247-25", t(303, 353.8), 58),
+      paraEixoDoTexto("11,18", t(303, 804.7), 21),
+      paraEixoDoTexto("BELTRANO SOUZA", t(316.5, 70.5), 106),
+      paraEixoDoTexto("390.533.447-05", t(316.5, 353.8), 58),
+      paraEixoDoTexto("27,95", t(316.5, 804.7), 21),
+    ];
+    expect(montarLinhas(itens)).toEqual([
+      "FULANA DE TAL  529.982.247-25  11,18",
+      "BELTRANO SOUZA  390.533.447-05  27,95",
+    ]);
+    // Página normal continua igual.
+    expect(paraEixoDoTexto("x", [1, 0, 0, 1, 40, 760], 5)).toEqual({ str: "x", x: 40, y: 760, w: 5 });
+  });
+});

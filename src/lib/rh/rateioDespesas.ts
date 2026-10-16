@@ -323,6 +323,44 @@ export function extrairLinhasComCpf(linhas: string[]): LinhaPdf[] {
   return out;
 }
 
+/**
+ * Total que o próprio PDF declara (linha "TOTAL:" — no relatório do seguro,
+ * "TOTAL:  45.030.000,00  25.171,71" = IS e Prêmio: vale o ÚLTIMO valor).
+ * Usa a última linha de total do arquivo; null se não houver.
+ */
+export function totalDeclaradoNoPdf(linhas: string[]): number | null {
+  for (let i = linhas.length - 1; i >= 0; i--) {
+    // "TOTAL:" em qualquer lugar, ou a linha começando com TOTAL/VALOR TOTAL
+    // ("sem total aqui 10,00" não é total).
+    if (!/\bTOTAL(\s+GERAL)?\s*:/i.test(linhas[i]) && !/^\s*(VALOR\s+)?TOTAL\b/i.test(linhas[i])) continue;
+    if (RE_CPF.test(linhas[i])) continue;
+    const v = valoresDaLinha(linhas[i]);
+    if (v.length) return v[v.length - 1];
+  }
+  return null;
+}
+
+export interface LayoutPdf {
+  /** "seguro_prudential" quando reconhece o relatório; "generico" no resto. */
+  layout: "seguro_prudential" | "generico";
+  rotulo: string;
+}
+
+/**
+ * Reconhece o RELATÓRIO DE MOVIMENTAÇÃO do seguro de vida (Prudential "VG
+ * Express", primeiro PDF real recebido em 16/10/2026): uma linha por
+ * segurado — Nome, CPF, Nascimento, Data Início, Movimentação
+ * (Inclusão/Exclusão), IS Segurado, Prêmio. O prêmio é o último valor da
+ * linha (é o que extrairLinhasComCpf já pega); exclusão vem com prêmio 0,00.
+ */
+export function identificarLayoutPdf(linhas: string[]): LayoutPdf {
+  const topo = normNome(linhas.slice(0, 40).join(" "));
+  if (topo.includes("RELATORIODEMOVIMENTACAO") && topo.includes("PREMIO") && topo.includes("ISSEGURADO")) {
+    return { layout: "seguro_prudential", rotulo: "Relatório de movimentação do seguro de vida (prêmio por segurado)" };
+  }
+  return { layout: "generico", rotulo: "Leitura genérica (CPF + último valor da linha)" };
+}
+
 export interface LinhaPdfContrato extends LinhaPdf {
   contrato: ContratoRef | null;
 }

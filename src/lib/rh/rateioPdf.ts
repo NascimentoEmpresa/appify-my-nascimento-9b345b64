@@ -11,7 +11,7 @@
 
 const PDFJS = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.0.379";
 
-interface ItemTexto {
+export interface ItemTexto {
   str: string;
   x: number;
   y: number;
@@ -31,13 +31,29 @@ export async function lerLinhasPdf(file: File): Promise<string[]> {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       .filter((it: any) => typeof it.str === "string" && it.str.trim() !== "")
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      .map((it: any) => ({ str: it.str, x: it.transform[4], y: it.transform[5], w: it.width ?? 0 }));
+      .map((it: any) => paraEixoDoTexto(it.str, it.transform, it.width ?? 0));
     linhas.push(...montarLinhas(itens));
   }
   if (!linhas.some((l) => l.trim())) {
     throw new Error("PDF sem texto (provavelmente escaneado) — não dá para ler. Mande um PDF gerado pelo sistema de origem.");
   }
   return linhas;
+}
+
+/**
+ * Põe o item no eixo do TEXTO, não no da página: x = posição ao longo da
+ * linha, y = qual linha (maior = mais acima). Numa página normal é o próprio
+ * (x, y). O relatório do seguro (Prudential, "RELATÓRIO DE MOVIMENTAÇÃO",
+ * out/2026) é paisagem desenhada numa página retrato girada 90°: a matriz
+ * vem [0, s, -s, 0, e, f] — o texto corre no y da página e cada linha da
+ * tabela é um x diferente. Sem isso, todos os CPFs de uma página saíam
+ * colados numa linha só e nada era lido.
+ */
+export function paraEixoDoTexto(str: string, t: number[], w: number): ItemTexto {
+  const n = Math.hypot(t[0], t[1]) || 1;
+  const ux = t[0] / n;
+  const uy = t[1] / n;
+  return { str, x: t[4] * ux + t[5] * uy, y: -t[4] * uy + t[5] * ux, w };
 }
 
 /** Agrupa itens com o mesmo y (tolerância de 2,5 pt), da esquerda para a direita. */

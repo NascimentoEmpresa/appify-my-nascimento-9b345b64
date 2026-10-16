@@ -41,6 +41,7 @@ import {
 import {
   TIPOS_RATEIO, ROTULO_CRITERIO, SEM_CONTRATO, acharContrato, calcularRateio, competenciaParaData,
   competenciaRotulo, criterioPadrao, extrairLinhasComCpf, extrairLinhasPorContrato, fmtMoeda, fmtPct,
+  identificarLayoutPdf, totalDeclaradoNoPdf,
   lerPlanilhaJusBrasil, resumirRateio, rotuloTipo, somarPorContrato, tipoUsaPdf,
   type ContratoRef, type CriterioRateio, type ItemRateio, type LinhaPlanilhaJus, type TipoRateio,
 } from "@/lib/rh/rateioDespesas";
@@ -49,6 +50,7 @@ import { lerLinhasPdf } from "@/lib/rh/rateioPdf";
 const MENU = "rh_rateio_despesas";
 const SEM = "__sem__";
 const chave = (id: string | null) => id ?? SEM;
+const LIMITE_LINHAS_TELA = 300;
 
 interface Base {
   contrato_id: string | null;
@@ -201,6 +203,9 @@ function Editor({ id, onFechar, onSalvo }: { id: string | null; onFechar: () => 
   const [planilha, setPlanilha] = useState<(LinhaPlanilhaJus & { contrato: ContratoRef | null })[] | null>(null);
   const [lendo, setLendo] = useState(false);
   const [avisoPdf, setAvisoPdf] = useState<string | null>(null);
+  // Do PDF lido agora (não é gravado): total que ele declara e qual layout foi reconhecido.
+  const [pdfInfo, setPdfInfo] = useState<{ total: number | null; rotulo: string } | null>(null);
+  const [soPendentes, setSoPendentes] = useState(false);
   const [confirmarExclusao, setConfirmarExclusao] = useState(false);
   const [soComBase, setSoComBase] = useState(false);
   const inputPdf = useRef<HTMLInputElement>(null);
@@ -361,9 +366,13 @@ function Editor({ id, onFechar, onSalvo }: { id: string | null; onFechar: () => 
     setArquivo(f);
     setAnexoNome(f.name);
     setAvisoPdf(null);
+    setPdfInfo(null);
     setLendo(true);
     try {
       const linhas = await lerLinhasPdf(f);
+      const declarado = totalDeclaradoNoPdf(linhas);
+      setPdfInfo({ total: declarado, rotulo: identificarLayoutPdf(linhas).rotulo });
+      let lido = 0;
       const comCpf = extrairLinhasComCpf(linhas);
       if (comCpf.length) {
         const casados = await casarCpfs([...new Set(comCpf.map((l) => l.cpf as string))]);
@@ -373,19 +382,26 @@ function Editor({ id, onFechar, onSalvo }: { id: string | null; onFechar: () => 
           return { n: l.n, texto: l.texto, cpf: l.cpf, nome: c?.nome ?? null, situacao: c?.situacao ?? null, valor: l.valor, contrato_id: c?.contrato_id ?? null };
         });
         setLinhasPdf(det);
+        lido = det.reduce((a, d) => a + d.valor, 0);
         const semCad = det.filter((d) => !d.nome).length;
         const semCt = det.filter((d) => d.nome && !d.contrato_id).length;
+        setSoPendentes(det.length > 200 && semCad + semCt > 0);
         if (semCad || semCt) setAvisoPdf(`${semCad ? `${semCad} CPF(s) não estão na EMPREGADOS` : ""}${semCad && semCt ? " e " : ""}${semCt ? `${semCt} colaborador(es) sem contrato` : ""} — escolha o contrato na lista abaixo.`);
       } else {
         const porContrato = extrairLinhasPorContrato(linhas, refs);
         if (porContrato.length) {
           setLinhasPdf(porContrato.map((l) => ({ n: l.n, texto: l.texto, cpf: null, nome: null, situacao: null, valor: l.valor, contrato_id: l.contrato?.id ?? null })));
+          lido = porContrato.reduce((a, l) => a + l.valor, 0);
         } else {
           setLinhasPdf([]);
           setAvisoPdf("Não achei neste PDF linhas com CPF e valor, nem com nome de contrato e valor. Preencha a base por contrato abaixo e mande este PDF ao TI para ajustarmos a leitura deste formato.");
         }
       }
       setAjustes({});
+      // Preenche o valor da despesa sozinho (o total que o PDF declara; sem
+      // linha de TOTAL, a soma lida) — só se ainda estiver em branco.
+      const sugerido = declarado ?? (lido > 0 ? Math.round(lido * 100) / 100 : null);
+      if (sugerido && !(Number(valorTxt) > 0)) setValorTxt(sugerido.toFixed(2));
     } catch (e) {
       setAvisoPdf((e as Error).message);
     } finally {
@@ -645,11 +661,23 @@ function Editor({ id, onFechar, onSalvo }: { id: string | null; onFechar: () => 
         {usaPdf && linhasPdf.length > 0 && (
           <div className="space-y-2">
             <div className="flex flex-wrap items-center gap-3 text-sm">
-              <span><FileText className="inline h-4 w-4 mr-1" />{linhasPdf.length} linha(s) lida(s) — total do PDF <b>{fmtMoeda(totalPdf)}</b></span>
+              <span><FileText className="inline h-4 w-4 mr-1" />{linhasPdf.length} linha(s) lida(s) — soma das linhas <b>{fmtMoeda(totalPdf)}</b></span>
+              {pdfInfo?.total != null && (Math.abs(pdfInfo.total - totalPdf) < 0.005 ? (
+                <Badge variant="outline" className="bg-success/15 text-success border-success/30 gap-1"><CheckCircle2 className="h-3.5 w-3.5" /> Bate com o TOTAL do PDF</Badge>
+              ) : (
+                <Badge variant="outline" className="bg-destructive/10 text-destructive border-destructive/30 gap-1">
+                  <AlertTriangle className="h-3.5 w-3.5" /> TOTAL do PDF {fmtMoeda(pdfInfo.total)} — diferença {fmtMoeda(Math.round((pdfInfo.total - totalPdf) * 100) / 100)}
+                </Badge>
+              ))}
+              {pdfInfo && <span className="text-xs text-muted-foreground">{pdfInfo.rotulo}</span>}
               {Math.abs(totalPdf - valor) >= 0.005 && !somenteLeitura && (
                 <Button size="sm" variant="outline" onClick={() => setValorTxt(totalPdf.toFixed(2))}>Usar o total do PDF como valor da despesa</Button>
               )}
             </div>
+            <label className="flex items-center gap-2 text-xs text-muted-foreground">
+              <input type="checkbox" checked={soPendentes} onChange={(e) => setSoPendentes(e.target.checked)} />
+              Mostrar só as linhas sem contrato ({linhasPdf.filter((l) => !l.contrato_id).length})
+            </label>
             <div className="max-h-[360px] overflow-auto border rounded-md">
               <table className="w-full text-xs">
                 <thead className="sticky top-0 bg-background border-b text-muted-foreground">
@@ -663,7 +691,9 @@ function Editor({ id, onFechar, onSalvo }: { id: string | null; onFechar: () => 
                   </tr>
                 </thead>
                 <tbody>
-                  {linhasPdf.map((l, i) => (
+                  {/* O PDF do seguro tem ~2.100 segurados: desenha no máximo 300 linhas
+                      (cada uma tem um seletor de contrato); o filtro acha as pendentes. */}
+                  {linhasPdf.map((l, i) => ({ l, i })).filter(({ l }) => !soPendentes || !l.contrato_id).slice(0, LIMITE_LINHAS_TELA).map(({ l, i }) => (
                     <tr key={`${l.n}-${i}`} className={`border-b ${l.contrato_id ? "" : "bg-warning/10"}`}>
                       <td className="p-1.5 text-muted-foreground">{l.n}</td>
                       <td className="p-1.5">
@@ -689,6 +719,11 @@ function Editor({ id, onFechar, onSalvo }: { id: string | null; onFechar: () => 
                 </tbody>
               </table>
             </div>
+            {linhasPdf.filter((l) => !soPendentes || !l.contrato_id).length > LIMITE_LINHAS_TELA && (
+              <p className="text-xs text-muted-foreground">
+                Mostrando {LIMITE_LINHAS_TELA} de {linhasPdf.filter((l) => !soPendentes || !l.contrato_id).length} linhas — todas entram no rateio; o Excel traz a lista completa.
+              </p>
+            )}
           </div>
         )}
 
