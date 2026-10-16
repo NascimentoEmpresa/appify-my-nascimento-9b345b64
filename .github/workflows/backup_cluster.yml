@@ -1,0 +1,134 @@
+# Backup do CLUSTER levado para fora do cluster.
+#
+# POR QUE EXISTE, SEPARADO DO backup_banco.yml
+# O `backup_banco.yml` copia a Supabase. Depois da virada, a Supabase deixa de
+# ser a producao e passa a nao ter nada que importe -- e o cluster, que passa a
+# ter tudo, nao tinha backup nenhum. Levantado em 15/10/2026.
+#
+# A DIFERENCA DE DESENHO EM RELACAO AO backup_banco.yml
+# Aquele conecta direto no Postgres da Supabase, que atende na internet. O
+# cluster NAO atende: o Postgres dele so escuta no IP do tunel (10.77.0.x) e no
+# HAProxy em 127.0.0.1. Isso e proposital e nao vai mudar -- abrir a 5432 para
+# a internet seria desfazer metade do trabalho.
+#
+# Entao aqui o runner nao faz o dump: ele PUXA o dump que o proprio no ja fez.
+#
+#   no, 03h10 UTC   backup-cluster.timer -> pg_dumpall + pg_dump + gpg
+#   runner, 04h00   ssh backup@no        -> recebe o .gpg e guarda como artefato
+#
+# A CHAVE SSH E RESTRITA, E ISSO E O QUE TORNA ISTO ACEITAVEL
+# O `authorized_keys` do no amarra esta chave a um comando unico
+# (`backup-cluster.sh --enviar`), sem shell, sem port-forward, sem pty. Quem
+# tiver a chave consegue UMA coisa: receber um arquivo cifrado.
+#
+# E o arquivo e cifrado com a chave publica do Eduardo (a mesma dos outros
+# backups, rsa4096 ...3595EC2), cuja PRIVADA nao existe em servidor nenhum --
+# conferido: `gpg --list-secret-keys` nos dois nos devolve zero. Entao, no pior
+# caso (secret do GitHub vazado), o que vaza e um arquivo que o vazador nao
+# abre.
+#
+# O QUE ESTE WORKFLOW NAO FAZ, E POR QUE
+# Nao testa a restauracao, como o `backup_banco.yml` faz. Nao tem como: ele nao
+# pode descriptografar, porque nao tem a chave privada -- e e exatamente assim
+# que tem que ser. A prova de que o dump se le acontece NO NO, antes de cifrar:
+# o `backup-cluster.sh` roda `pg_restore -l` e se recusa a publicar um arquivo
+# com menos de 100 tabelas com dados (o caso real: disco cheio ou conexao
+# cortada no meio, que gera um arquivo truncado de tamanho convincente).
+#
+# O QUE ELE NAO COBRE: os ARQUIVOS dos anexos (5,8 GB). Eles vivem nos dois
+# nos pelo espelho de 1 minuto -- dois provedores, dois continentes --, mas
+# isso e redundancia, nao backup. Ver `backup_storage.yml`, que hoje aponta
+# para a Supabase e precisa ser reapontado depois da virada.
+
+name: Backup do cluster
+
+on:
+  workflow_dispatch:
+    inputs:
+      retencao_dias:
+        description: 'Por quantos dias guardar este artefato'
+        type: string
+        default: '30'
+  schedule:
+    # 04h00 UTC = 01h00 de Brasilia, ~50 min depois do backup do banco1.
+    - cron: '0 4 * * *'
+
+permissions:
+  contents: read
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Preparar a chave restrita
+        env:
+          CHAVE: ${{ secrets.CLUSTER_BACKUP_SSH_KEY }}
+        run: |
+          if [ -z "$CHAVE" ]; then
+            echo "::error::Falta o secret CLUSTER_BACKUP_SSH_KEY."
+            echo "Como criar esta em docs/ha-corte-roteiro.md, secao 'Backup do cluster'."
+            exit 1
+          fi
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          printf '%s\n' "$CHAVE" > ~/.ssh/cluster
+          chmod 600 ~/.ssh/cluster
+          # Fixar a identidade do servidor: sem isto, um MITM poderia se passar
+          # pelo no. A chave publica do host entra junto com o secret.
+          ssh-keyscan -p 8443 -H "${{ vars.CLUSTER_BACKUP_HOST || '216.238.120.171' }}" \
+            > ~/.ssh/known_hosts 2>/dev/null
+          wc -l < ~/.ssh/known_hosts | xargs printf 'host conhecido: %s linha(s)\n'
+
+      - name: Puxar o backup cifrado do no
+        env:
+          NO: ${{ vars.CLUSTER_BACKUP_HOST || '216.238.120.171' }}
+        run: |
+          set -o pipefail
+          NOME="erp-cluster-$(date -u +%Y%m%d-%H%M).tar.gz.gpg"
+          # O `command=` no authorized_keys ignora o que for pedido aqui, entao
+          # nao adianta (nem e possivel) pedir outra coisa.
+          time ssh -p 8443 -i ~/.ssh/cluster -o BatchMode=yes \
+               -o ConnectTimeout=20 "backup@$NO" > "$NOME"
+          echo "ARQUIVO=$NOME" >> "$GITHUB_ENV"
+          ls -lh "$NOME"
+
+      - name: Conferir que veio um arquivo cifrado de verdade
+        run: |
+          TAM=$(stat -c %s "$ARQUIVO")
+          echo "tamanho: $((TAM/1048576)) MB"
+          # Um dump do ERP nao tem como ser menor que isso. Arquivo pequeno
+          # aqui significa erro cuspido no stdout, nao backup.
+          if [ "$TAM" -lt 10000000 ]; then
+            echo "::error::Backup com $((TAM/1024)) KB -- pequeno demais. Conteudo:"
+            head -c 400 "$ARQUIVO"; exit 1
+          fi
+          # Cabecalho OpenPGP: pacote de chave publica cifrada.
+          if ! gpg --list-packets --list-only "$ARQUIVO" 2>/dev/null | grep -q 'pubkey enc packet'; then
+            echo "::error::Nao parece um arquivo GPG. Cabecalho:"
+            head -c 64 "$ARQUIVO" | xxd; exit 1
+          fi
+          gpg --list-packets --list-only "$ARQUIVO" 2>/dev/null | grep 'keyid' | head -1
+
+      - name: Publicar o artefato
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.ARQUIVO }}
+          path: ${{ env.ARQUIVO }}
+          retention-days: ${{ github.event.inputs.retencao_dias || '30' }}
+          if-no-files-found: error
+
+      - name: Avisar o Eduardo por DM se falhou
+        # DM, nunca o canal: o canal tem outras pessoas e alerta de infra nao e
+        # assunto delas.
+        if: failure()
+        env:
+          DISCORD_TOKEN: ${{ secrets.DISCORD_TOKEN }}
+        run: |
+          [ -n "$DISCORD_TOKEN" ] || exit 0
+          CANAL=$(curl -s -X POST "https://discord.com/api/v10/users/@me/channels" \
+            -H "Authorization: Bot $DISCORD_TOKEN" -H "Content-Type: application/json" \
+            -d '{"recipient_id":"1384572666752663653"}' | jq -r '.id')
+          curl -s -X POST "https://discord.com/api/v10/channels/$CANAL/messages" \
+            -H "Authorization: Bot $DISCORD_TOKEN" -H "Content-Type: application/json" \
+            -d "{\"content\":\"**Backup do cluster FALHOU** - ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}" \
+            > /dev/null
