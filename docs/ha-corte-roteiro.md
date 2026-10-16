@@ -1357,6 +1357,27 @@ SEGREDOS=~/segredos.env bash infra/ha/configurar-secrets.sh --aplicar
 bash infra/ha/configurar-secrets.sh --provar
 ```
 
+#### ✅ 16/10/2026: 12 já estão no cluster, 13 continuam nos consoles
+
+Os 9 de `worker/.env` foram aplicados, e mais **três resolvidos sem console
+nenhum**, porque as duas pontas eram nossas:
+
+| | |
+|---|---|
+| `VAPID_PRIVATE_KEY` / `VAPID_PUBLIC_KEY` | par novo, gerado **dentro do nó** (`--girar-vapid`); a privada nunca passou por outra máquina. Custo conhecido: as **3** assinaturas de push atuais param até as 3 pessoas reativarem. A pública vai para `VITE_VAPID_PUBLIC_KEY` no build do Lovable, na virada. |
+| `CHAMADOS_CI_SECRET` | valor novo **só no cluster** (`--girar-ci-secret`). Não rotacionei na produção de propósito: haveria um instante com um lado novo e o outro velho, e — como ninguém conhece o valor atual — um erro no meio não teria volta. Vira o do GitHub na virada, junto com a URL. |
+
+O container saiu de **10** para **22** variáveis nos dois nós.
+
+⚠️ **O `--aplicar` MESCLA, não sobrescreve.** Isso foi corrigido no mesmo dia,
+e não é detalhe: as geradas no nó (VAPID, CI) não existem nesta máquina, então
+um `--aplicar` que sobrescrevesse as apagaria — e a privada do VAPID não tem
+cópia em lugar nenhum. O que vem daqui ganha; o que só existe lá é preservado,
+e a gravação é recusada se a mescla encolher o arquivo.
+
+O passo a passo clicável dos 13 restantes está em
+[`ha-segredos-consoles.md`](ha-segredos-consoles.md).
+
 O script grava `/opt/erp/infra/failover/segredos-functions.env` (chmod 600) nos
 **dois** nós, acrescenta `env_file:` ao serviço `functions` do compose e recria
 o container. `environment:` **ganha** de `env_file:`, e é por isso que
@@ -1501,6 +1522,47 @@ no boot e o ERP responde "connection refused" com o banco perfeito.
 E uma consequência agradável: o reboot do standby **é** um teste de failover de
 verdade, feito pela porta da frente. O `switchover` do passo 2 é exatamente o
 que o `testar-failover.sh` provaria.
+
+#### ✅ Executado em 16/10/2026 — e o número que faltava
+
+Os dois nós estão no **6.8.0-147**, sem reboot pendente, e o cluster passou da
+**timeline 6 para a 8**: a troca de líder aconteteu de verdade, duas vezes.
+`ip_nonlocal_bind` sobreviveu ao boot nos dois (era o risco anotado), e HAProxy,
+Caddy, Patroni, etcd, Docker e os dois timers voltaram sozinhos.
+
+Uma sonda ficou batendo no **endereço real** (sem `--resolve`, o caminho do
+navegador) a cada 2 s durante a manobra. 205 amostras:
+
+```
+13:13:33  banco1  200     <- normal
+13:13:35  banco1  503     <- o lider comeca a sair
+13:13:38  banco2  200     <- o ENDERECO virou sozinho, em 3 segundos
+13:13:40  banco2  503  ]
+   ...                ]   <- 30 s sem lider: a eleicao do Patroni (ttl 20)
+13:14:10  banco2  503  ]
+13:14:12  banco1  502  ]
+   ...                ]   <- a pilha do banco1 subindo
+13:14:21  banco1  503  ]
+13:14:23  banco1  200     <- normal de novo
+```
+
+**Duas lições, e a segunda corrige uma expectativa que estava errada:**
+
+1. **Reiniciar o standby não custa nada.** Zero erro na sonda. É por isso que
+   a ordem do script importa.
+2. **Trocar de líder custa ~48 segundos de erro para quem está usando.** O
+   endereço vira em 3 segundos — essa parte é excelente —, mas o nó que
+   assume passa ~30 s sem ter a quem perguntar, porque a eleição do Patroni
+   leva o `ttl` (20 s) e a pilha ainda precisa reconectar.
+
+Ou seja: **alta disponibilidade aqui não é "sem interrupção", é "um minuto e
+se cura sozinho"**. Perder um nó inteiro, de madrugada, com o banco intacto do
+outro lado e o ERP voltando sozinho em menos de um minuto, é um resultado bom —
+mas quem prometer "transparente" vai ser desmentido pelo usuário que estava
+salvando uma tela naquele minuto.
+
+Para a noite da virada isto significa uma coisa prática: **não trocar de líder
+de propósito com gente usando.** O reboot que sobrar, faça no standby.
 
 > Sobre `synchronous_mode_strict`: ele está **desligado**, e o passo 1 é a
 > razão prática para continuar assim. Com o strict ligado, derrubar o único
