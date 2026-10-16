@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
-  FORM_VAZIO, avisoDoFormulario, classeCaixaImagem, formDoAviso, larguraJanelaAviso,
+  FORM_VAZIO, avisoDoFormulario, botoesDoAviso, classeCaixaImagem, contagemPorBotao, erroDoFormulario,
+  formDoAviso, larguraJanelaAviso, respostaDe,
   tamanhoImagemDe, type Notificacao,
 } from "@/lib/notificacoes";
 
@@ -52,5 +53,45 @@ describe("avisoDoFormulario (pré-visualização)", () => {
     const a = avisoDoFormulario({ ...FORM_VAZIO, exigir_ciencia: false, bloquear_acesso: true }, null);
     expect(a.bloquear_acesso).toBe(false);
     expect(a.imagens_tamanho).toBeNull();
+  });
+});
+
+// Pedido do Pablo (16/10/2026): "escolher quais vão ser os botões, não só
+// concordo ou discordo". O botão apertado fica gravado (resposta = texto).
+describe("botões de resposta próprios", () => {
+  const base = { ...FORM_VAZIO, titulo: "Confraternização", mensagem: "Sexta, às 18h, no pátio." };
+
+  it("aviso antigo, sem botões, segue no Concordo/Discordo ou Estou ciente", () => {
+    expect(botoesDoAviso({ botoes: null })).toEqual([]);
+    expect(botoesDoAviso({ botoes: undefined })).toEqual([]);
+  });
+
+  it("botão sem texto some e estilo desconhecido vira principal", () => {
+    expect(botoesDoAviso({ botoes: [{ rotulo: " Vou ", estilo: "neon" as never }, { rotulo: " ", estilo: "perigo" }] }))
+      .toEqual([{ rotulo: "Vou", estilo: "principal" }]);
+  });
+
+  it("o formulário recusa texto vazio, repetido e mais que o máximo", () => {
+    expect(erroDoFormulario({ ...base, botoes: [{ rotulo: "", estilo: "principal" }] })).toMatch(/texto/);
+    expect(erroDoFormulario({ ...base, botoes: [{ rotulo: "Vou", estilo: "principal" }, { rotulo: "vou", estilo: "contorno" }] })).toMatch(/mesmo texto/);
+    expect(erroDoFormulario({ ...base, botoes: Array.from({ length: 5 }, (_, i) => ({ rotulo: `B${i}`, estilo: "principal" as const })) })).toMatch(/máximo/);
+    expect(erroDoFormulario({ ...base, botoes: [{ rotulo: "Vou", estilo: "principal" }, { rotulo: "Não vou", estilo: "perigo" }] })).toBeNull();
+  });
+
+  it("a prévia leva os botões; sem ciência, o formulário não reclama deles", () => {
+    expect(avisoDoFormulario({ ...base, botoes: [{ rotulo: "Vou", estilo: "principal" }] }, null).botoes)
+      .toEqual([{ rotulo: "Vou", estilo: "principal" }]);
+    expect(erroDoFormulario({ ...base, exigir_ciencia: false, bloquear_acesso: false, botoes: [{ rotulo: "", estilo: "principal" }] })).toBeNull();
+  });
+
+  it("conta por botão, na ordem dos botões, e não perde resposta de botão renomeado", () => {
+    const c = (resposta: string | null, escolha: "CIENTE" | "CONCORDO" = "CIENTE") =>
+      ({ notificacao_id: 1, user_id: Math.random().toString(), escolha, respondido_em: "", resposta });
+    const linhas = contagemPorBotao(
+      [{ rotulo: "Vou", estilo: "principal" }, { rotulo: "Não vou", estilo: "perigo" }],
+      [c("Não vou"), c("Vou"), c("Não vou"), c("Talvez")],
+    );
+    expect(linhas.map((l) => [l.rotulo, l.total])).toEqual([["Vou", 1], ["Não vou", 2], ["Talvez", 1]]);
+    expect(respostaDe(c(null, "CONCORDO"))).toBe("Concordo");
   });
 });

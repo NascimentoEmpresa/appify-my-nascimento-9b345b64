@@ -12,6 +12,8 @@
 //   exigir_ciencia   — a pessoa precisa confirmar que leu?
 //   bloquear_acesso  — enquanto não responder, fica presa no aviso?
 //   permitir_escolha — CONCORDO/DISCORDO, ou só "Estou ciente"?
+//   botoes           — (16/10/2026) ou botões com o texto que quem publica
+//                      quiser; preenchido, vence permitir_escolha.
 //
 //   Vinham grudadas ("apareceu, tem que responder"), e é justamente a
 //   distinção que o pedido trouxe: comunicado de recesso quer ciência sem
@@ -51,7 +53,8 @@ import { useNotificacoes } from "@/hooks/useNotificacoes";
 import { ConteudoAviso } from "@/components/notificacoes/ConteudoAviso";
 import { JanelaAviso } from "@/components/notificacoes/GateNotificacoes";
 import {
-  CATEGORIAS, FORM_VAZIO, TAMANHOS_IMAGEM, avisoDoFormulario, erroDoFormulario, estaVigente, fmtDataHora, formDoAviso,
+  CATEGORIAS, ESTILOS_BOTAO, FORM_VAZIO, MAX_BOTOES, MAX_ROTULO_BOTAO, TAMANHOS_IMAGEM,
+  botoesDoAviso, contagemPorBotao, respostaDe, varianteDoBotao, avisoDoFormulario, erroDoFormulario, estaVigente, fmtDataHora, formDoAviso,
   panoramaDe, respostasComNome, type CienciaNotificacao, type Escolha,
   type FormNotificacao, type Notificacao,
 } from "@/lib/notificacoes";
@@ -99,7 +102,8 @@ export default function QuadroAvisos() {
    * com o filtro do aviso anterior mostraria a lista certa sob o título errado.
    */
   const [verDetalhes, setVerDetalhes] = useState(false);
-  const [filtroEscolha, setFiltroEscolha] = useState<Escolha | "todas">("todas");
+  /** Escolha (CONCORDO…) ou, em aviso com botões próprios, o texto do botão. */
+  const [filtroEscolha, setFiltroEscolha] = useState<string>("todas");
 
   /** Respostas agrupadas por aviso — alimenta a contagem da lista. */
   const porAviso = useMemo(() => {
@@ -735,19 +739,73 @@ export default function QuadroAvisos() {
                     </span>
                   </label>
 
-                  <label className={cn("flex items-start gap-2", !form.exigir_ciencia && "opacity-50")}>
-                    <Checkbox
-                      checked={form.permitir_escolha}
-                      disabled={!form.exigir_ciencia}
-                      onCheckedChange={(v) => setForm({ ...form, permitir_escolha: v === true })}
-                    />
-                    <span>
-                      <span className="text-sm font-medium">Permitir opções Concordo / Discordo</span>
-                      <p className="text-xs text-muted-foreground">
-                        Desligado, o aviso pede só um “Estou ciente”.
-                      </p>
-                    </span>
-                  </label>
+                  {/* Os botões de resposta (16/10/2026, pedido do Pablo:
+                      "escolher quais vão ser os botões, não só concordo ou
+                      discordo"). Os dois de antes continuam como atalho; o
+                      terceiro abre a lista. Com botões próprios, a lista vence
+                      permitir_escolha — ver botoesDoAviso. */}
+                  <div className={cn(!form.exigir_ciencia && "pointer-events-none opacity-50")}>
+                    <span className="text-sm font-medium">Botões de resposta</span>
+                    <div className="mt-1 flex flex-wrap gap-2">
+                      {([
+                        ["concordo", "Concordo / Discordo"],
+                        ["ciente", "Só “Estou ciente”"],
+                        ["proprios", "Personalizados"],
+                      ] as const).map(([modo, rotulo]) => {
+                        const atual = form.botoes.length ? "proprios" : form.permitir_escolha ? "concordo" : "ciente";
+                        return (
+                          <button key={modo} type="button" disabled={!form.exigir_ciencia}
+                            onClick={() => setForm({
+                              ...form,
+                              permitir_escolha: modo === "concordo" ? true : modo === "ciente" ? false : form.permitir_escolha,
+                              botoes: modo !== "proprios" ? []
+                                : form.botoes.length ? form.botoes : [{ rotulo: "Estou ciente", estilo: "principal" }],
+                            })}
+                            className={cn("rounded-md border px-3 py-1 text-xs font-medium", atual === modo ? "border-primary bg-primary/10 text-primary" : "hover:bg-muted")}>
+                            {rotulo}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    {form.botoes.length > 0 && (
+                      <div className="mt-2 space-y-2">
+                        {form.botoes.map((b, k) => (
+                          <div key={k} className="flex flex-wrap items-center gap-2">
+                            <Input className="min-w-[180px] flex-1" placeholder="Texto do botão (ex.: Vou participar)"
+                              maxLength={MAX_ROTULO_BOTAO} value={b.rotulo}
+                              onChange={(e) => setForm({ ...form, botoes: form.botoes.map((x, j) => j === k ? { ...x, rotulo: e.target.value } : x) })} />
+                            <Select value={b.estilo}
+                              onValueChange={(v) => setForm({ ...form, botoes: form.botoes.map((x, j) => j === k ? { ...x, estilo: v as typeof b.estilo } : x) })}>
+                              <SelectTrigger className="w-32"><SelectValue /></SelectTrigger>
+                              <SelectContent>
+                                {ESTILOS_BOTAO.map((e) => <SelectItem key={e.valor} value={e.valor}>{e.rotulo}</SelectItem>)}
+                              </SelectContent>
+                            </Select>
+                            {/* Pelo menos um: aviso que pede ciência sem botão prenderia a pessoa. */}
+                            <Button variant="ghost" size="sm" disabled={form.botoes.length <= 1} aria-label="Remover botão"
+                              onClick={() => setForm({ ...form, botoes: form.botoes.filter((_, j) => j !== k) })}>
+                              <X className="h-3.5 w-3.5" />
+                            </Button>
+                          </div>
+                        ))}
+                        <div className="flex flex-wrap items-center gap-2">
+                          <Button type="button" variant="outline" size="sm" disabled={form.botoes.length >= MAX_BOTOES}
+                            onClick={() => setForm({ ...form, botoes: [...form.botoes, { rotulo: "", estilo: "contorno" }] })}>
+                            <Plus className="mr-1 h-3.5 w-3.5" /> Adicionar botão
+                          </Button>
+                          <span className="text-xs text-muted-foreground">
+                            Até {MAX_BOTOES}. O botão que a pessoa apertar fica gravado na resposta dela.
+                          </span>
+                        </div>
+                        {/* Como vai ficar, na ordem do modal. */}
+                        <div className="flex flex-wrap justify-end gap-2 rounded-md border bg-background p-2">
+                          {botoesDoAviso(form).map((x) => (
+                            <Button key={`${x.rotulo}-${x.estilo}`} size="sm" type="button" variant={varianteDoBotao(x.estilo)} tabIndex={-1}>{x.rotulo}</Button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
             </div>
@@ -798,7 +856,9 @@ export default function QuadroAvisos() {
                 <ul className="space-y-1 text-muted-foreground">
                   <li>Exigir ciência: <b>{vendo.exigir_ciencia ? "Sim" : "Não"}</b></li>
                   <li>Bloquear acesso até responder: <b>{vendo.bloquear_acesso ? "Sim" : "Não"}</b></li>
-                  <li>Permitir Concordo/Discordo: <b>{vendo.permitir_escolha ? "Sim" : "Não"}</b></li>
+                  <li>Botões de resposta: <b>{botoesDoAviso(vendo).length
+                    ? botoesDoAviso(vendo).map((b) => b.rotulo).join(" · ")
+                    : vendo.permitir_escolha ? "Concordo / Discordo" : "Estou ciente"}</b></li>
                   <li>Expira em: <b>{vendo.expira_em ? fmtDataHora(vendo.expira_em) : "não expira"}</b></li>
                   <li>Exibido para: <b>{publicoDe(vendo.id)}</b></li>
                 </ul>
@@ -811,18 +871,27 @@ export default function QuadroAvisos() {
                 // o único grupo que pede providência, e numa lista longa em
                 // ordem de data essa pessoa ficaria enterrada.
                 const detalhadas = respostasComNome(respostas, nomePorId);
+                // Botões próprios (16/10/2026): a conta é por texto do botão.
+                // Resposta gravada com texto também conta como "próprio", para
+                // o aviso que teve os botões tirados depois não sumir com elas.
+                const botoesV = botoesDoAviso(vendo);
+                const proprios = botoesV.length > 0 || respostas.some((r) => r.resposta);
+                const porBotao = proprios ? contagemPorBotao(botoesV, respostas) : [];
+                const perigo = new Set(porBotao.filter((b) => b.estilo === "perigo").map((b) => b.rotulo));
                 const visiveis = filtroEscolha === "todas"
                   ? detalhadas
-                  : detalhadas.filter((r) => r.escolha === filtroEscolha);
+                  : detalhadas.filter((r) => (proprios ? respostaDe(r) : r.escolha) === filtroEscolha);
                 return (
                   <div>
                     <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-                      {[
-                        { rotulo: "Responderam", valor: p.responderam },
-                        { rotulo: "Concordo", valor: p.concordaram },
-                        { rotulo: "Discordo", valor: p.discordaram },
-                        { rotulo: "Ciente", valor: p.cientes },
-                      ].map((c) => (
+                      {(proprios
+                        ? [{ rotulo: "Responderam", valor: p.responderam }, ...porBotao.map((b) => ({ rotulo: b.rotulo, valor: b.total }))]
+                        : [
+                          { rotulo: "Responderam", valor: p.responderam },
+                          { rotulo: "Concordo", valor: p.concordaram },
+                          { rotulo: "Discordo", valor: p.discordaram },
+                          { rotulo: "Ciente", valor: p.cientes },
+                        ]).map((c) => (
                         <div key={c.rotulo} className="rounded-lg border p-3 text-center">
                           <div className="text-xl font-bold">{c.valor}</div>
                           <div className="text-xs text-muted-foreground">{c.rotulo}</div>
@@ -848,12 +917,14 @@ export default function QuadroAvisos() {
                     {verDetalhes && p.responderam > 0 && (
                       <div className="mt-3 rounded-lg border">
                         <div className="flex flex-wrap gap-1.5 border-b p-2">
-                          {([
-                            ["todas", `Todas (${p.responderam})`],
-                            ["CONCORDO", `Concordo (${p.concordaram})`],
-                            ["DISCORDO", `Discordo (${p.discordaram})`],
-                            ["CIENTE", `Ciente (${p.cientes})`],
-                          ] as [Escolha | "todas", string][]).map(([valor, rotulo]) => (
+                          {(proprios
+                            ? [["todas", `Todas (${p.responderam})`], ...porBotao.map((b) => [b.rotulo, `${b.rotulo} (${b.total})`])]
+                            : [
+                              ["todas", `Todas (${p.responderam})`],
+                              ["CONCORDO", `Concordo (${p.concordaram})`],
+                              ["DISCORDO", `Discordo (${p.discordaram})`],
+                              ["CIENTE", `Ciente (${p.cientes})`],
+                            ] as [string, string][]).map(([valor, rotulo]) => (
                             <Button
                               key={valor}
                               size="sm"
@@ -886,10 +957,9 @@ export default function QuadroAvisos() {
                                     {fmtDataHora(r.respondido_em)}
                                   </span>
                                   <Badge
-                                    variant={r.escolha === "DISCORDO" ? "destructive" : "secondary"}
+                                    variant={r.escolha === "DISCORDO" || perigo.has(respostaDe(r)) ? "destructive" : "secondary"}
                                   >
-                                    {r.escolha === "CONCORDO" ? "Concordo"
-                                      : r.escolha === "DISCORDO" ? "Discordo" : "Ciente"}
+                                    {respostaDe(r)}
                                   </Badge>
                                 </div>
                               </li>

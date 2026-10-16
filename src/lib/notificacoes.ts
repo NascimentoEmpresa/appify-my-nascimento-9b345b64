@@ -88,6 +88,37 @@ export function larguraJanelaAviso(t: TamanhoImagem): string {
   return "max-w-lg";
 }
 
+/**
+ * Um botão de resposta escolhido por quem publica (16/10/2026, pedido do
+ * Pablo: "escolher quais vão ser os botões, não só concordo ou discordo").
+ * Sem nenhum, vale o de antes (CONCORDO/DISCORDO ou "Estou ciente").
+ * Ver a migration 20261016000002.
+ */
+export interface BotaoDoAviso { rotulo: string; estilo: EstiloBotao }
+export const ESTILOS_BOTAO = [
+  { valor: "principal", rotulo: "Cheio" },
+  { valor: "contorno", rotulo: "Contorno" },
+  { valor: "perigo", rotulo: "Vermelho" },
+] as const;
+export type EstiloBotao = (typeof ESTILOS_BOTAO)[number]["valor"];
+export const MAX_BOTOES = 4;
+export const MAX_ROTULO_BOTAO = 40;
+
+/** Os botões próprios do aviso, limpos; vazio = o comportamento de antes. */
+export function botoesDoAviso(n: Pick<Notificacao, "botoes">): BotaoDoAviso[] {
+  return (Array.isArray(n.botoes) ? n.botoes : [])
+    .map((b) => ({
+      rotulo: String(b?.rotulo ?? "").trim(),
+      estilo: (ESTILOS_BOTAO.some((e) => e.valor === b?.estilo) ? b.estilo : "principal") as EstiloBotao,
+    }))
+    .filter((b) => b.rotulo);
+}
+
+/** A variante do Button do shadcn para cada estilo. */
+export function varianteDoBotao(e: EstiloBotao): "default" | "outline" | "destructive" {
+  return e === "contorno" ? "outline" : e === "perigo" ? "destructive" : "default";
+}
+
 /** Um link clicável do aviso, com o nome que quem escreveu escolheu. */
 export interface LinkDoAviso { rotulo: string; url: string }
 
@@ -116,6 +147,8 @@ export interface Notificacao {
   imagens_tamanho?: string | null;
   /** Botões clicáveis abaixo do texto. */
   links?: LinkDoAviso[] | null;
+  /** Botões de resposta próprios (16/10/2026). Vazio = permitir_escolha decide. */
+  botoes?: BotaoDoAviso[] | null;
   /** Precisa confirmar que leu? Desligado, é mural: aparece na lista e pronto. */
   exigir_ciencia: boolean;
   /** Trava a tela até responder. Só faz sentido junto com exigir_ciencia. */
@@ -148,6 +181,8 @@ export interface CienciaNotificacao {
   lido_em?: string | null;
   /** O que a pessoa escreveu ao responder — normalmente por que discordou. */
   observacao?: string | null;
+  /** O rótulo do botão apertado, num aviso com botões próprios (escolha = CIENTE). */
+  resposta?: string | null;
 }
 
 /**
@@ -182,6 +217,8 @@ export interface FormNotificacao {
   imagens_tamanho: TamanhoImagem;
   /** Links com nome. */
   links: LinkDoAviso[];
+  /** Botões de resposta próprios; vazio = Concordo/Discordo ou "Estou ciente". */
+  botoes: BotaoDoAviso[];
   /** Setores que recebem o aviso. Vazio + sem pessoas = todo mundo. */
   setores: string[];
   /** Pessoas que recebem, por id do profile. */
@@ -194,7 +231,7 @@ export interface FormNotificacao {
 /** Um aviso novo, em branco — o mesmo estado inicial em toda tela que cria. */
 export const FORM_VAZIO: FormNotificacao = {
   titulo: "", mensagem: "", publicado: true, categoria: "Comunicado", resumo: "",
-  expira_em: "", anexo_url: "", anexo_nome: "", imagens: [], imagens_layout: "carrossel", imagens_tamanho: "", links: [],
+  expira_em: "", anexo_url: "", anexo_nome: "", imagens: [], imagens_layout: "carrossel", imagens_tamanho: "", links: [], botoes: [],
   setores: [], usuarios: [],
   exigir_ciencia: true, bloquear_acesso: true, permitir_escolha: true,
 };
@@ -238,6 +275,7 @@ export function formDoAviso(
     imagens_layout: n.imagens_layout === "grade" ? "grade" : "carrossel",
     imagens_tamanho: tamanhoImagemDe(n.imagens_tamanho),
     links: (Array.isArray(n.links) ? n.links : []).map((l) => ({ rotulo: String(l?.rotulo ?? ""), url: String(l?.url ?? "") })),
+    botoes: botoesDoAviso(n),
     setores: meus.filter((a) => a.setor).map((a) => a.setor as string),
     usuarios: meus.filter((a) => a.user_id).map((a) => a.user_id as string),
     exigir_ciencia: n.exigir_ciencia,
@@ -270,6 +308,7 @@ export function avisoDoFormulario(f: FormNotificacao, autor: string | null, agor
     imagens_layout: f.imagens_layout,
     imagens_tamanho: f.imagens_tamanho || null,
     links: f.links.filter((l) => l.url.trim()).map((l) => ({ rotulo: l.rotulo.trim() || "Link", url: l.url.trim() })),
+    botoes: botoesDoAviso(f),
     exigir_ciencia: f.exigir_ciencia,
     bloquear_acesso: f.exigir_ciencia && f.bloquear_acesso,
     permitir_escolha: f.permitir_escolha,
@@ -287,6 +326,16 @@ export function erroDoFormulario(f: FormNotificacao): string | null {
   // Link sem endereço não leva a lugar nenhum; o nome pode ficar em branco (vira "Link").
   if (f.links.some((l) => !l.url.trim())) return "Todo link precisa do endereço (URL). Tire o que ficou vazio.";
   if (f.imagens.length > 10) return "No máximo 10 imagens por aviso.";
+  if (f.exigir_ciencia && f.botoes.length) {
+    if (f.botoes.length > MAX_BOTOES) return `No máximo ${MAX_BOTOES} botões de resposta.`;
+    if (f.botoes.some((b) => !b.rotulo.trim())) return "Todo botão de resposta precisa de um texto.";
+    if (f.botoes.some((b) => b.rotulo.trim().length > MAX_ROTULO_BOTAO)) {
+      return `O texto do botão passou de ${MAX_ROTULO_BOTAO} caracteres.`;
+    }
+    // A resposta é gravada pelo texto do botão: dois iguais seriam a mesma resposta.
+    const textos = f.botoes.map((b) => b.rotulo.trim().toLocaleLowerCase("pt-BR"));
+    if (new Set(textos).size !== textos.length) return "Dois botões com o mesmo texto — a resposta ficaria igual.";
+  }
   // Travar a tela sem pedir ciência não quer dizer nada: não há o que
   // responder para destravar, e a pessoa ficaria presa num aviso sem botão.
   if (f.bloquear_acesso && !f.exigir_ciencia) {
@@ -340,6 +389,32 @@ export interface PanoramaRespostas {
   concordaram: number;
   discordaram: number;
   cientes: number;
+}
+
+/**
+ * Num aviso com botões próprios, quantos apertaram cada um — na ordem dos
+ * botões, com zero para o que ninguém apertou. Resposta de um botão que foi
+ * renomeado/removido depois continua contando, no fim, com o texto gravado.
+ */
+export function contagemPorBotao(
+  botoes: BotaoDoAviso[],
+  ciencias: CienciaNotificacao[],
+): { rotulo: string; estilo: EstiloBotao | null; total: number }[] {
+  const linhas: { rotulo: string; estilo: EstiloBotao | null; total: number }[] =
+    botoes.map((b) => ({ rotulo: b.rotulo, estilo: b.estilo, total: 0 }));
+  for (const c of ciencias) {
+    const rotulo = respostaDe(c);
+    const linha = linhas.find((l) => l.rotulo === rotulo);
+    if (linha) linha.total += 1;
+    else linhas.push({ rotulo, estilo: null, total: 1 });
+  }
+  return linhas;
+}
+
+/** O que a pessoa respondeu, em texto: o botão próprio, ou a escolha de sempre. */
+export function respostaDe(c: Pick<CienciaNotificacao, "escolha" | "resposta">): string {
+  if (c.resposta?.trim()) return c.resposta.trim();
+  return c.escolha === "CONCORDO" ? "Concordo" : c.escolha === "DISCORDO" ? "Discordo" : "Ciente";
 }
 
 export function panoramaDe(ciencias: CienciaNotificacao[]): PanoramaRespostas {

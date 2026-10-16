@@ -9,7 +9,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { useNotificacoes } from "@/hooks/useNotificacoes";
 import {
-  FORM_VAZIO, erroDoFormulario, fmtDataHora, formDoAviso, resumoDasRespostas,
+  FORM_VAZIO, erroDoFormulario, fmtDataHora, formDoAviso, respostaDe, resumoDasRespostas,
   type CienciaNotificacao, type FormNotificacao,
 } from "@/lib/notificacoes";
 
@@ -183,7 +183,8 @@ export function NotificacoesPainel() {
                               ? "border-green-300 text-green-700"
                               : "border-amber-300 text-amber-700"}
                           >
-                            {r.escolha}
+                            {/* Texto do botão próprio, quando houver (16/10/2026). */}
+                            {r.resposta ? respostaDe(r) : r.escolha}
                           </Badge>
                           <span className="font-mono">{r.user_id.slice(0, 8)}</span>
                           <span>{fmtDataHora(r.respondido_em)}</span>

@@ -5,7 +5,8 @@ import { ConteudoAviso } from "@/components/notificacoes/ConteudoAviso";
 import { useNotificacoes } from "@/hooks/useNotificacoes";
 import { cn } from "@/lib/utils";
 import {
-  fmtDataHora, larguraJanelaAviso, tamanhoImagemDe, type Escolha, type Notificacao,
+  botoesDoAviso, fmtDataHora, larguraJanelaAviso, tamanhoImagemDe, varianteDoBotao,
+  type Escolha, type Notificacao,
 } from "@/lib/notificacoes";
 import { toast } from "sonner";
 
@@ -36,7 +37,8 @@ import { toast } from "sonner";
  */
 export function GateNotificacoes() {
   const { pendentes, responder } = useNotificacoes();
-  const [enviando, setEnviando] = useState<Escolha | null>(null);
+  /** O que está sendo gravado: a escolha, ou o texto do botão próprio. */
+  const [enviando, setEnviando] = useState<string | null>(null);
 
   /**
    * Adiados NESTA sessão. Fica em estado, não no banco: "vou ler depois" não
@@ -48,10 +50,10 @@ export function GateNotificacoes() {
   const atual = fila[0];
   if (!atual) return null;
 
-  const escolher = async (escolha: Escolha) => {
-    setEnviando(escolha);
+  const escolher = async (escolha: Escolha, resposta?: string) => {
+    setEnviando(resposta ?? escolha);
     try {
-      await responder.mutateAsync({ id: atual.id, escolha });
+      await responder.mutateAsync({ id: atual.id, escolha, resposta });
     } catch (e) {
       const msg = e instanceof Error ? e.message : "erro desconhecido";
       toast.error(`Não deu para registrar a resposta: ${msg}`);
@@ -84,13 +86,15 @@ export function GateNotificacoes() {
  */
 export function JanelaAviso({ aviso, enviando = null, onEscolher, onAdiar, restantes = 0, previa }: {
   aviso: Notificacao;
-  enviando?: Escolha | null;
-  onEscolher: (escolha: Escolha) => void;
+  enviando?: string | null;
+  /** `resposta` = o texto do botão, quando o aviso tem botões próprios. */
+  onEscolher: (escolha: Escolha, resposta?: string) => void;
   onAdiar: () => void;
   restantes?: number;
   previa?: { aoFechar: () => void };
 }) {
   const tamanho = tamanhoImagemDe(aviso.imagens_tamanho);
+  const botoes = botoesDoAviso(aviso);
   // Imagem grande pede mais altura de leitura; o resto fica como sempre foi.
   const alturaCorpo = tamanho === "grande" || tamanho === "total" ? "max-h-[70vh]" : "max-h-[50vh]";
   return (
@@ -149,7 +153,18 @@ export function JanelaAviso({ aviso, enviando = null, onEscolher, onAdiar, resta
         </div>
 
         <div className="flex flex-col gap-2 border-t px-5 py-4 sm:flex-row sm:justify-end">
-          {aviso.permitir_escolha ? (
+          {botoes.length > 0 ? (
+            // Botões escolhidos por quem publicou (16/10/2026). Todos gravam
+            // CIENTE + o texto do botão: a escolha continua respondendo "quem
+            // respondeu?", e o texto responde "o quê".
+            botoes.map((b, k) => (
+              <Button key={k} variant={varianteDoBotao(b.estilo)} disabled={!!enviando}
+                      onClick={() => onEscolher("CIENTE", b.rotulo)}>
+                {enviando === b.rotulo && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                {b.rotulo}
+              </Button>
+            ))
+          ) : aviso.permitir_escolha ? (
             <>
               <Button
                 variant="outline"
