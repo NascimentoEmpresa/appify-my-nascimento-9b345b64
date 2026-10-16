@@ -3,6 +3,11 @@
 // Dispara a mensagem automática de WhatsApp de uma etapa do recrutamento
 // (TRIAGEM, ENTREVISTA, ENTREVISTA GESTOR, APROVADO).
 //
+// AGENDAMENTO ASO (16/10/2026, mig 20261016000031): a mesma via, mas MANUAL —
+// o botão "Enviar agendamento" do card em SST + COMPRAS manda ao candidato
+// data, horário, local e mapa do exame que o SST agendou. Não depende do
+// "Enviar automaticamente" (ativo), só do template configurado e aprovado.
+//
 // Por que TEMPLATE e não texto livre: a Cloud API só aceita texto livre
 // dentro de 24h da última mensagem DO CONTATO. Candidato que se inscreveu
 // pelo portal normalmente nunca escreveu no nosso número, então o texto
@@ -28,6 +33,25 @@ const PHONE_NUMBER_ID = Deno.env.get("WHATSAPP_PHONE_NUMBER_ID") ?? "";
 const GRAPH = "https://graph.facebook.com/v21.0";
 
 const ETAPAS_COM_MENSAGEM = ["TRIAGEM", "ENTREVISTA", "ENTREVISTA GESTOR", "APROVADO"];
+const ETAPA_AGENDAMENTO = "AGENDAMENTO ASO";
+const MANUAIS = [ETAPA_AGENDAMENTO];
+
+// Mesma régua de src/lib/recrutamento/agendamentoAso.ts (o Deno não importa
+// do src): "2026-10-19" → "19/10/2026 (segunda-feira)".
+const DIAS = ["domingo", "segunda-feira", "terça-feira", "quarta-feira", "quinta-feira", "sexta-feira", "sábado"];
+function dataExameBr(s: string): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(s ?? ""));
+  if (!m) return "";
+  const dia = DIAS[new Date(Date.UTC(+m[1], +m[2] - 1, +m[3])).getUTCDay()];
+  return `${m[3]}/${m[2]}/${m[1]} (${dia})`;
+}
+function mapaExame(url: string, local: string): string {
+  if (String(url ?? "").trim()) return String(url).trim();
+  const l = String(local ?? "").trim();
+  return l ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(l)}` : "";
+}
+// Parâmetro de template não aceita quebra de linha, tab nem 4+ espaços seguidos.
+const umaLinha = (s: string) => String(s ?? "").replace(/[\r\n\t]+/g, " ").replace(/ {2,}/g, " ").trim();
 
 const cors = {
   "Access-Control-Allow-Origin": "*",
@@ -75,7 +99,8 @@ Deno.serve(async (req) => {
   const candidatoId = Number(body.candidato_id ?? 0);
   const etapa = String(body.etapa ?? "").trim();
   if (!candidatoId || !etapa) return json({ error: "candidato_id e etapa são obrigatórios" }, 400);
-  if (!ETAPAS_COM_MENSAGEM.includes(etapa)) return json({ ok: true, enviado: false, motivo: "etapa_sem_mensagem" });
+  const manual = MANUAIS.includes(etapa);
+  if (!ETAPAS_COM_MENSAGEM.includes(etapa) && !manual) return json({ ok: true, enviado: false, motivo: "etapa_sem_mensagem" });
 
   // service_role: o log tem que ser gravável mesmo quando o envio falha, e a
   // tabela é só-leitura para o usuário de propósito.
@@ -85,7 +110,7 @@ Deno.serve(async (req) => {
 
   // ── Config da etapa ───────────────────────────────────────────────
   const { data: cfg } = await db.from("RECRUTAMENTO_MENSAGENS").select("*").eq("etapa", etapa).maybeSingle();
-  if (!cfg || !cfg.ativo) {
+  if (!cfg || (!cfg.ativo && !manual)) {
     await logar({ status: "desligado" });
     return json({ ok: true, enviado: false, motivo: "desligado" });
   }
@@ -96,8 +121,11 @@ Deno.serve(async (req) => {
 
   // ── Candidato + vaga (para resolver os {{n}}) ─────────────────────
   const { data: cand } = await db.from("WA_CURRICULOS")
-    .select("id, nome, telefone, vaga_id").eq("id", candidatoId).maybeSingle();
+    .select("id, nome, telefone, vaga_id, sst_data_exame, sst_hora_exame, sst_local_exame, sst_maps_url").eq("id", candidatoId).maybeSingle();
   if (!cand) return json({ error: "candidato não encontrado" }, 404);
+  if (etapa === ETAPA_AGENDAMENTO && !cand.sst_data_exame) {
+    return json({ ok: true, enviado: false, motivo: "sem_agendamento" });
+  }
 
   if (!temTelefone(cand.telefone ?? "")) {
     await logar({ status: "sem_telefone", telefone: cand.telefone ?? null });
@@ -118,6 +146,10 @@ Deno.serve(async (req) => {
     cidade: String(vaga?.cidade ?? "").trim(),
     contrato: String(vaga?.contrato ?? "").trim(),
     empresa: "Grupo Nascimento",
+    data_exame: dataExameBr(cand.sst_data_exame ?? ""),
+    hora_exame: umaLinha(cand.sst_hora_exame ?? ""),
+    local_exame: umaLinha(cand.sst_local_exame ?? ""),
+    mapa_exame: mapaExame(cand.sst_maps_url ?? "", cand.sst_local_exame ?? ""),
   };
   // A Meta recusa parâmetro vazio no template ("" quebra o envio inteiro),
   // então variável sem valor vira "-".
@@ -182,7 +214,7 @@ Deno.serve(async (req) => {
     conversa_id: conversa.id, contato_id: contato.id, direcao: "saida",
     tipo: "template", texto: textoBolha, wa_message_id: wamid, status: "enviada",
     origem: "recrutamento",
-    meta: { etapa, candidato_id: candidatoId, template: cfg.template_nome, automatica: true },
+    meta: { etapa, candidato_id: candidatoId, template: cfg.template_nome, automatica: !manual },
   });
   await admin.from("WA_CONVERSA").update({
     ultima_mensagem_em: new Date().toISOString(),

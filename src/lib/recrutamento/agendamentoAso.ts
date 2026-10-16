@@ -53,6 +53,45 @@ export function linkMapaAso(c: AgendamentoAso): string | null {
   return local ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(local)}` : null;
 }
 
+/** "2026-10-19" + "11:00" → "19/10 (seg) · 11:00" — a linha curta do card. */
+export function resumoAgendamentoAso(c: AgendamentoAso): string {
+  if (!c.sst_data_exame) return "";
+  const dia = diaDaSemana(c.sst_data_exame).slice(0, 3);
+  return `${dataBr(c.sst_data_exame).slice(0, 5)}${dia ? ` (${dia})` : ""}${c.sst_hora_exame ? ` · ${c.sst_hora_exame}` : ""}`;
+}
+
+/** Nome do template da Meta do botão "Enviar agendamento" (mig 20261016000031). */
+export const TEMPLATE_AGENDAMENTO_ASO = "recrutamento_agendamento_aso";
+
+/**
+ * Resposta da Edge recrutamento-mensagem (etapa AGENDAMENTO ASO) → o que dizer
+ * ao recrutador. O caso que mais vai aparecer no começo é o template ainda não
+ * aprovado na Meta (erro 132001): aí ensina onde mandar para aprovação e lembra
+ * do "Copiar agendamento", que funciona já.
+ */
+export function mensagemEnvioAgendamento(
+  r: { enviado?: boolean; motivo?: string; detalhe?: string } | null | undefined,
+  nome?: string | null,
+): { ok: boolean; texto: string } {
+  const quem = String(nome ?? "").trim().split(/\s+/)[0] || "o candidato";
+  if (r?.enviado) return { ok: true, texto: `Agendamento enviado no WhatsApp de ${quem}.` };
+  switch (r?.motivo) {
+    case "sem_agendamento": return { ok: false, texto: "O SST ainda não agendou o exame — não há o que enviar." };
+    case "sem_telefone": return { ok: false, texto: `${quem} está sem telefone válido.` };
+    case "sem_template": case "desligado":
+      return { ok: false, texto: "A mensagem de agendamento não está configurada. Use \"Copiar agendamento\" por enquanto." };
+    case "sem_conversa": return { ok: false, texto: `Não consegui abrir a conversa com ${quem}${r?.detalhe ? ` (${r.detalhe})` : ""}.` };
+  }
+  const detalhe = String(r?.detalhe ?? "");
+  if (/132001|does not exist|template/i.test(detalhe)) {
+    return {
+      ok: false,
+      texto: `O modelo "${TEMPLATE_AGENDAMENTO_ASO}" ainda não foi aprovado pela Meta. Em "Mensagens automáticas", clique em "Enviar textos para aprovação da Meta". Até lá, use "Copiar agendamento".`,
+    };
+  }
+  return { ok: false, texto: `O WhatsApp não saiu${detalhe ? `: ${detalhe}` : ""}. Use "Copiar agendamento".` };
+}
+
 /** Texto pronto para mandar ao candidato. Sem agendamento → null. */
 export function textoAgendamentoAso(c: AgendamentoAso): string | null {
   if (!c.sst_data_exame) return null;

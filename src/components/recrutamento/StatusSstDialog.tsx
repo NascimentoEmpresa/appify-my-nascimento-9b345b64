@@ -15,7 +15,8 @@
 // Camada 1100, como os outros diálogos da Gestão Recrutamento.
 // =====================================================================
 import { useEffect, useState, type ReactNode } from "react";
-import { CalendarDays, Check, Copy, MapPin, Stethoscope, X } from "lucide-react";
+import { CalendarDays, Check, Copy, Loader2, MapPin, Stethoscope, X } from "lucide-react";
+import { IconeWhatsApp } from "@/components/recrutamento/QuadrosSstCompras";
 import { dataBr, diaDaSemana, linkMapaAso, situacaoSst, textoAgendamentoAso, type AgendamentoAso } from "@/lib/recrutamento/agendamentoAso";
 
 const COR: Record<string, { cor: string; fundo: string; borda: string }> = {
@@ -45,7 +46,12 @@ async function copiar(texto: string): Promise<boolean> {
   }
 }
 
-export function StatusSstDialog({ candidato, onClose }: { candidato: AgendamentoAso & { cpf?: string | null }; onClose: () => void }) {
+// onEnviarWhatsApp (16/10/2026): "Enviar agendamento" pelo WhatsApp (template
+// recrutamento_agendamento_aso). Sem ele (sem telefone, sem permissão, vaga
+// encerrada) o botão não aparece — o "Copiar agendamento" continua.
+export function StatusSstDialog({ candidato, onClose, onEnviarWhatsApp, enviando }: {
+  candidato: AgendamentoAso & { cpf?: string | null }; onClose: () => void; onEnviarWhatsApp?: () => void; enviando?: boolean;
+}) {
   const [copiado, setCopiado] = useState<"" | "mapa" | "tudo" | "erro">("");
   useEffect(() => {
     const esc = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
@@ -119,6 +125,12 @@ export function StatusSstDialog({ candidato, onClose }: { candidato: Agendamento
                 <button onClick={() => acao("tudo", texto)} style={{ ...bt(true), background: "#15803d", color: "#fff", borderColor: "#15803d" }} title="Copia data, horário, local e mapa num texto pronto para o WhatsApp do candidato">
                   {copiado === "tudo" ? <Check size={14} /> : <Copy size={14} />}{copiado === "tudo" ? "Agendamento copiado!" : "Copiar agendamento"}
                 </button>
+                {onEnviarWhatsApp && (
+                  <button onClick={onEnviarWhatsApp} disabled={enviando} style={{ ...bt(!enviando), background: "#25d366", color: "#fff", borderColor: "#25d366" }}
+                    title="Envia data, horário, local e mapa para o WhatsApp do candidato (fica na Caixa de Entrada)">
+                    {enviando ? <Loader2 size={14} className="animate-spin" /> : <IconeWhatsApp tamanho={14} />}{enviando ? "Enviando…" : "Enviar agendamento"}
+                  </button>
+                )}
               </div>
               {copiado === "erro" && <div style={{ fontSize: 11.5, color: "#b91c1c", marginTop: 6 }}>Não deu para copiar neste navegador — selecione o texto abaixo.</div>}
               {texto && (
