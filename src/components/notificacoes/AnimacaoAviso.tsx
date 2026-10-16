@@ -8,12 +8,21 @@
 // não recebe clique (pointer-events-none — o aviso continua respondível
 // durante a festa) e some.
 //
-// prefers-reduced-motion: não toca nada. Quem pediu ao sistema operacional
-// menos movimento não deve ganhar uma chuva de confete por causa de um aviso.
+// prefers-reduced-motion: toca uma versão CURTA e calma (16/10/2026). Antes
+// não tocava nada — e o Windows com "Efeitos de animação" desligado (o padrão
+// em muita máquina da empresa) faz o navegador dizer reduce, então o Pablo
+// não via confete nem na prévia. Versão reduzida: um terço das partículas,
+// ~1,8 s, sem balanço, sem giro e sem piscar — movimento simples e breve, que
+// é o que a preferência pede, em vez de sumir com a comemoração.
+//
+// O canvas vai num portal no <body>: dentro do Dialog do mural (que usa
+// transform) o `fixed` ficava preso à caixa do diálogo.
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import type { Animacao } from "@/lib/notificacoes";
 
 const DURACAO_MS = 4000;
+const DURACAO_REDUZIDA_MS = 1800;
 const CORES = ["#f59e0b", "#ef4444", "#3b82f6", "#10b981", "#8b5cf6", "#ec4899", "#facc15"];
 
 interface Particula {
@@ -52,17 +61,18 @@ function coracao(ctx: CanvasRenderingContext2D, r: number) {
 }
 
 /** As partículas iniciais de cada tipo (os fogos ganham mais estouros no caminho). */
-function nascer(tipo: Animacao, w: number, h: number): Particula[] {
+function nascer(tipo: Animacao, w: number, h: number, reduzido: boolean): Particula[] {
   const lista: Particula[] = [];
-  const n = (k: number) => Math.round(k * Math.min(1, w / 1200) + k * 0.4);
+  const n = (k: number) => Math.round((k * Math.min(1, w / 1200) + k * 0.4) * (reduzido ? 0.35 : 1));
   if (tipo === "confetes") {
     for (let i = 0; i < n(110); i++) {
-      lista.push({ x: aleatorio(0, w), y: aleatorio(-h * 0.6, -10), vx: aleatorio(-1.2, 1.2), vy: aleatorio(2, 4.5),
+      // Reduzido: começa já na tela, para caber nos 1,8 s.
+      lista.push({ x: aleatorio(0, w), y: reduzido ? aleatorio(-h * 0.2, h * 0.3) : aleatorio(-h * 0.6, -10), vx: aleatorio(-1.2, 1.2), vy: aleatorio(2, 4.5),
         tam: aleatorio(6, 11), giro: aleatorio(0, Math.PI), vgiro: aleatorio(-0.2, 0.2), cor: cor(), vida: 1, fase: aleatorio(0, 6) });
     }
   } else if (tipo === "estrelas" || tipo === "coracoes") {
     for (let i = 0; i < n(55); i++) {
-      lista.push({ x: aleatorio(0, w), y: h + aleatorio(10, h * 0.5), vx: aleatorio(-0.6, 0.6), vy: -aleatorio(1.8, 3.6),
+      lista.push({ x: aleatorio(0, w), y: reduzido ? aleatorio(h * 0.5, h + 10) : h + aleatorio(10, h * 0.5), vx: aleatorio(-0.6, 0.6), vy: -aleatorio(1.8, 3.6),
         tam: aleatorio(7, 15), giro: aleatorio(0, Math.PI), vgiro: aleatorio(-0.04, 0.04),
         cor: tipo === "estrelas" ? (Math.random() < 0.7 ? "#facc15" : "#fde68a") : (Math.random() < 0.6 ? "#ef4444" : "#ec4899"),
         vida: 1, fase: aleatorio(0, 6) });
@@ -87,9 +97,11 @@ function estouro(lista: Particula[], w: number, h: number) {
 export function AnimacaoAviso({ tipo, chave }: { tipo: Animacao | null | undefined; chave?: string | number }) {
   const ref = useRef<HTMLCanvasElement>(null);
   const [ativa, setAtiva] = useState(false);
+  const reduzido = useRef(false);
 
   useEffect(() => {
-    if (!tipo || prefereMenosMovimento()) { setAtiva(false); return; }
+    if (!tipo) { setAtiva(false); return; }
+    reduzido.current = prefereMenosMovimento();
     setAtiva(true);
   }, [tipo, chave]);
 
@@ -104,7 +116,10 @@ export function AnimacaoAviso({ tipo, chave }: { tipo: Animacao | null | undefin
     canvas.width = w * dpr; canvas.height = h * dpr;
     ctx.scale(dpr, dpr);
 
-    const parts = nascer(tipo, w, h);
+    const calmo = reduzido.current;
+    const duracao = calmo ? DURACAO_REDUZIDA_MS : DURACAO_MS;
+    const parts = nascer(tipo, w, h, calmo);
+    if (calmo) for (const p of parts) { p.vgiro = 0; p.giro = 0; }
     const inicio = performance.now();
     let proximoEstouro = 0;
     let quadro = 0;
@@ -113,23 +128,24 @@ export function AnimacaoAviso({ tipo, chave }: { tipo: Animacao | null | undefin
       const t = agora - inicio;
       ctx.clearRect(0, 0, w, h);
       // Os últimos 700 ms esmaecem tudo junto, em vez de cortar no meio.
-      const fim = Math.max(0, Math.min(1, (DURACAO_MS - t) / 700));
+      const fim = Math.max(0, Math.min(1, (duracao - t) / 700));
 
-      if (tipo === "fogos" && t < DURACAO_MS - 1200 && t >= proximoEstouro) {
+      // Reduzido: um estouro só, no começo.
+      if (tipo === "fogos" && t < duracao - 1200 && t >= proximoEstouro && (!calmo || proximoEstouro === 0)) {
         estouro(parts, w, h);
-        proximoEstouro = t + aleatorio(350, 650);
+        proximoEstouro = calmo ? Infinity : t + aleatorio(350, 650);
       }
 
       for (const p of parts) {
         if (tipo === "fogos") {
           p.vy += 0.06; p.vx *= 0.985; p.vy *= 0.985; p.vida -= 0.012;
-        } else if (tipo === "confetes") {
+        } else if (tipo === "confetes" && !calmo) {
           p.vx += Math.sin((t / 300) + p.fase) * 0.03;
         }
         p.x += p.vx; p.y += p.vy; p.giro += p.vgiro;
         if (p.vida <= 0) continue;
 
-        const piscar = tipo === "estrelas" ? 0.55 + 0.45 * Math.sin(t / 160 + p.fase) : 1;
+        const piscar = tipo === "estrelas" && !calmo ? 0.55 + 0.45 * Math.sin(t / 160 + p.fase) : 1;
         ctx.globalAlpha = Math.max(0, p.vida * fim * piscar);
         ctx.fillStyle = p.cor;
         ctx.save();
@@ -143,14 +159,19 @@ export function AnimacaoAviso({ tipo, chave }: { tipo: Animacao | null | undefin
       }
       ctx.globalAlpha = 1;
 
-      if (t < DURACAO_MS) quadro = requestAnimationFrame(passo);
+      if (t < duracao) quadro = requestAnimationFrame(passo);
       else setAtiva(false);
     };
     quadro = requestAnimationFrame(passo);
     return () => cancelAnimationFrame(quadro);
   }, [ativa, tipo, chave]);
 
-  if (!ativa) return null;
-  // z acima do gate (z-[100]) e da faixa da prévia; não pega clique.
-  return <canvas ref={ref} aria-hidden="true" className="pointer-events-none fixed inset-0 z-[105] h-full w-full" />;
+  if (!ativa || typeof document === "undefined") return null;
+  // Portal no body, acima do gate (z-[100]), do Dialog (z-50) e da faixa da
+  // prévia; não pega clique.
+  return createPortal(
+    <canvas ref={ref} aria-hidden="true" data-animacao-aviso={tipo ?? ""}
+            className="pointer-events-none fixed inset-0 z-[200] h-full w-full" />,
+    document.body,
+  );
 }

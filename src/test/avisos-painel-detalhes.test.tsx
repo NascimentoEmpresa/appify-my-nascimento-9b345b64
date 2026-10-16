@@ -57,10 +57,15 @@ beforeEach(() => {
   });
 });
 
-/** Abre o Visualizar do único aviso da lista. */
+/**
+ * Abre as respostas do único aviso da lista. Desde 16/10/2026 o Visualizar
+ * mostra o aviso na mesma janela do colaborador (JanelaAviso), e as regras e
+ * respostas ficam um clique adiante, em "Regras e respostas".
+ */
 function abrirVisualizar() {
   render(<QuadroAvisos />);
   fireEvent.click(screen.getByRole("button", { name: /Visualizar/i }));
+  fireEvent.click(screen.getByRole("button", { name: /Regras e respostas/i }));
   return screen.getByRole("dialog");
 }
 

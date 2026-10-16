@@ -9,11 +9,11 @@
 //
 // Um componente só pelas mesmas razões da ImagemAviso: três telas com três
 // cópias divergiriam na primeira correção.
-import { useState } from "react";
+import { useState, type CSSProperties } from "react";
 import { ChevronLeft, ChevronRight, ExternalLink } from "lucide-react";
 import { ImagemAviso } from "@/components/notificacoes/ImagemAviso";
 import {
-  CAIXA_IMAGEM_LADO, classeCaixaImagem, imagensDoAviso, posicaoImagemDe, tamanhoImagemDe,
+  classeCaixaImagem, imagensDoAviso, larguraColunaImagem, posicaoImagemDe, tamanhoImagemDe,
   type ImagemDoAviso, type LinkDoAviso, type Notificacao, type TamanhoImagem,
 } from "@/lib/notificacoes";
 import { cn } from "@/lib/utils";
@@ -131,11 +131,95 @@ export function GaleriaAviso({ imagens, layout, tamanho = "", prioridade = false
   );
 }
 
-/** O texto e os links do aviso — a coluna da direita na imagem ao lado. */
-export function TextoAviso({ aviso }: { aviso: Notificacao }) {
+/**
+ * A coluna da imagem ao lado do texto (16/10/2026, print do Pablo: o cartaz
+ * quadrado ficava numa caixa cinza mais larga que ele, "cortado do lado").
+ *
+ *   · a imagem aparece no tamanho dela (encaixe "natural"), cantos
+ *     arredondados nela mesma, sem moldura;
+ *   · a coluna tem a largura da imagem: altura × proporção do arquivo,
+ *     medida no onLoad (larguraColunaImagem);
+ *   · quando a coluna não pode ter essa largura (paisagem muito larga, retrato
+ *     muito fino), o fundo é a própria imagem desfocada e escurecida — nunca
+ *     sobra cinza.
+ *
+ * Várias imagens viram carrossel aqui, mesmo que o aviso diga "grade": grade
+ * de cartazes numa coluna com altura de tela não cabe.
+ */
+export function PainelImagemAviso({ aviso, altura, prioridade = false, ajustarLargura = true, className }: {
+  aviso: Notificacao;
+  /** Altura da imagem (valor CSS) — ver alturaImagemLado. */
+  altura: string;
+  prioridade?: boolean;
+  /** false dentro de grade (o diálogo do mural), onde a coluna já tem largura. */
+  ajustarLargura?: boolean;
+  className?: string;
+}) {
+  const lista = imagensDoAviso(aviso);
+  const [i, setI] = useState(0);
+  const [proporcoes, setProporcoes] = useState<Record<string, number>>({});
+  if (!lista.length) return null;
+  const k = Math.min(i, lista.length - 1);
+  const atual = lista[k];
+  const estilo = {
+    "--altura-imagem": altura,
+    "--coluna-imagem": larguraColunaImagem(altura, proporcoes[atual.url]),
+  } as CSSProperties;
+
   return (
-    <div className="space-y-3">
-      <TextoComLinks texto={aviso.mensagem} />
+    <div style={estilo} data-coluna-imagem=""
+         className={cn("relative isolate shrink-0 overflow-hidden bg-slate-900",
+                       ajustarLargura && "sm:w-[var(--coluna-imagem)]", className)}>
+      {/* O fundo: a própria imagem, desfocada e escurecida. */}
+      <img src={atual.url} alt="" aria-hidden="true"
+           className="absolute inset-0 -z-10 h-full w-full scale-125 object-cover opacity-80 blur-2xl brightness-[0.45] saturate-150" />
+      <div className="flex h-full flex-col items-center justify-center gap-2 p-3">
+        <div className="relative w-full">
+          {/* key: trocar de slide reinicia o carregamento e a medida. */}
+          <ImagemAviso key={atual.url} url={atual.url} nome={atual.nome} prioridade={prioridade} encaixe="natural"
+                       aoCarregar={(r) => setProporcoes((m) => (m[atual.url] === r ? m : { ...m, [atual.url]: r }))}
+                       className="w-full" classeImagem="max-h-[38dvh] sm:max-h-[var(--altura-imagem)]" />
+          {lista.length > 1 && (
+            <>
+              <button type="button" aria-label="Imagem anterior"
+                      onClick={() => setI((v) => (v - 1 + lista.length) % lista.length)}
+                      className="absolute left-1 top-1/2 -translate-y-1/2 rounded-full bg-black/45 p-1.5 text-white backdrop-blur hover:bg-black/60">
+                <ChevronLeft className="h-4 w-4" />
+              </button>
+              <button type="button" aria-label="Próxima imagem"
+                      onClick={() => setI((v) => (v + 1) % lista.length)}
+                      className="absolute right-1 top-1/2 -translate-y-1/2 rounded-full bg-black/45 p-1.5 text-white backdrop-blur hover:bg-black/60">
+                <ChevronRight className="h-4 w-4" />
+              </button>
+            </>
+          )}
+        </div>
+        <div className="flex w-full items-center justify-between gap-2">
+          <a href={atual.url} target="_blank" rel="noreferrer"
+             className="inline-flex items-center gap-1 text-[11px] font-medium text-white/75 hover:text-white">
+            <ExternalLink className="h-3 w-3" /> Ver em tamanho real
+          </a>
+          {lista.length > 1 && (
+            <div className="flex gap-1">
+              {lista.map((_, j) => (
+                <button key={j} type="button" aria-label={`Imagem ${j + 1}`} onClick={() => setI(j)}
+                        className={cn("h-1.5 w-1.5 rounded-full", j === k ? "bg-white" : "bg-white/40")} />
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** O texto e os links do aviso — a coluna da direita na imagem ao lado. */
+export function TextoAviso({ aviso, destaque = false }: { aviso: Notificacao; destaque?: boolean }) {
+  return (
+    <div className="space-y-4">
+      {/* destaque: a coluna de texto do modal ao lado da imagem — letra um
+          pouco maior e entrelinha de leitura, é o "corpo" do cartaz. */}
+      <TextoComLinks texto={aviso.mensagem} className={destaque ? "text-[15px] leading-7 text-foreground/90" : undefined} />
       <LinksAviso links={aviso.links ?? []} />
     </div>
   );
@@ -161,8 +245,9 @@ export function ConteudoAviso({ aviso, prioridade = false }: { aviso: Notificaca
   const imagens = imagensDoAviso(aviso);
   if (imagens.length && posicaoImagemDe(aviso.imagens_posicao) === "lado") {
     return (
-      <div className="grid gap-4 sm:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">
-        <ImagensDoAviso aviso={aviso} prioridade={prioridade} classeCaixa={CAIXA_IMAGEM_LADO} />
+      <div className="grid items-start gap-5 sm:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">
+        <PainelImagemAviso aviso={aviso} prioridade={prioridade} altura="min(22rem, 50vh)" ajustarLargura={false}
+                           className="rounded-xl" />
         <TextoAviso aviso={aviso} />
       </div>
     );

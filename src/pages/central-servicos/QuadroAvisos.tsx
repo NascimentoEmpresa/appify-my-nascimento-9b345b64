@@ -53,8 +53,9 @@ import { useNotificacoes } from "@/hooks/useNotificacoes";
 import { ConteudoAviso } from "@/components/notificacoes/ConteudoAviso";
 import { JanelaAviso } from "@/components/notificacoes/GateNotificacoes";
 import { ComentariosAviso } from "@/components/notificacoes/ComentariosAviso";
+import { IconeCabecalho } from "@/components/notificacoes/IconeCabecalho";
 import {
-  ANIMACOES, CATEGORIAS, ESTILOS_BOTAO, FORM_VAZIO, MAX_BOTOES, MAX_ROTULO_BOTAO, POSICOES_IMAGEM, TAMANHOS_IMAGEM,
+  ANIMACOES, CATEGORIAS, CORES_CABECALHO, ICONES_CABECALHO, corCabecalhoDe, ESTILOS_BOTAO, FORM_VAZIO, MAX_BOTOES, MAX_ROTULO_BOTAO, POSICOES_IMAGEM, TAMANHOS_IMAGEM,
   botoesDoAviso, contagemPorBotao, respostaDe, varianteDoBotao, avisoDoFormulario, erroDoFormulario, estaVigente, fmtDataHora, formDoAviso,
   panoramaDe, respostasComNome, type CienciaNotificacao, type Escolha,
   type FormNotificacao, type Notificacao,
@@ -91,7 +92,15 @@ export default function QuadroAvisos() {
    * janela do gate, que mora fora do Dialog.
    */
   const [prevendo, setPrevendo] = useState(false);
+  /** As regras e respostas do aviso (o Dialog de quem publica). */
   const [vendo, setVendo] = useState<Notificacao | null>(null);
+  /**
+   * O aviso aberto como o colaborador vê (16/10/2026). Era um Dialog estreito
+   * com a imagem miúda e sem animação — "tem que aparecer exatamente como vai
+   * aparecer quando for publicado". Agora é a JanelaAviso, a mesma do gate e
+   * do Pré-visualizar; regras e respostas ficam num bloco à parte.
+   */
+  const [olhando, setOlhando] = useState<Notificacao | null>(null);
   const [apagando, setApagando] = useState<Notificacao | null>(null);
   const [subindo, setSubindo] = useState(false);
   // URL de imagem digitada (entra na lista com Enter) — 21/09/2026.
@@ -229,8 +238,14 @@ export default function QuadroAvisos() {
 
   /** Abrir um aviso sempre começa com o painel de respostas fechado. */
   const abrirVisualizar = (n: Notificacao) => {
+    setOlhando(n);
+  };
+
+  /** Das regras e respostas — o painel de respostas sempre começa fechado. */
+  const abrirRespostas = (n: Notificacao) => {
     setVerDetalhes(false);
     setFiltroEscolha("todas");
+    setOlhando(null);
     setVendo(n);
   };
 
@@ -716,6 +731,40 @@ export default function QuadroAvisos() {
                 </p>
               </div>
 
+              {/* Cor e ícone do cabeçalho (16/10/2026, Pablo: "deixa customizar
+                  essa cor e ícone aqui de cima"). Sem escolha, o amarelo com
+                  "!" de sempre. O ícone é desenhado já na cor escolhida, e a
+                  faixa de exemplo é o cabeçalho de verdade em miniatura. */}
+              <div>
+                <Label>Cabeçalho do aviso</Label>
+                <div className={cn("mt-1 flex items-center gap-3 rounded-lg border px-3 py-2", corCabecalhoDe(form.cabecalho_cor).faixa)}>
+                  <span className={cn("flex h-8 w-8 shrink-0 items-center justify-center rounded-lg", corCabecalhoDe(form.cabecalho_cor).quadrado)}>
+                    <IconeCabecalho icone={form.cabecalho_icone} className="h-4 w-4" />
+                  </span>
+                  <span className="truncate text-sm font-bold">{form.titulo.trim() || "Título do aviso"}</span>
+                </div>
+                <div className="mt-2 flex flex-wrap items-center gap-1.5" role="radiogroup" aria-label="Cor do cabeçalho">
+                  <span className="mr-1 text-xs text-muted-foreground">Cor:</span>
+                  {CORES_CABECALHO.map((c) => (
+                    <button key={c.valor || "amarelo"} type="button" role="radio" aria-checked={form.cabecalho_cor === c.valor}
+                      title={c.rotulo} aria-label={c.rotulo} onClick={() => setForm({ ...form, cabecalho_cor: c.valor })}
+                      className={cn("h-7 w-7 rounded-full ring-offset-2 ring-offset-background transition", c.quadrado,
+                        form.cabecalho_cor === c.valor ? "ring-2 ring-primary" : "hover:scale-110")} />
+                  ))}
+                </div>
+                <div className="mt-2 flex flex-wrap items-center gap-1.5" role="radiogroup" aria-label="Ícone do cabeçalho">
+                  <span className="mr-1 text-xs text-muted-foreground">Ícone:</span>
+                  {ICONES_CABECALHO.map((i) => (
+                    <button key={i.valor || "alerta"} type="button" role="radio" aria-checked={form.cabecalho_icone === i.valor}
+                      title={i.rotulo} aria-label={i.rotulo} onClick={() => setForm({ ...form, cabecalho_icone: i.valor })}
+                      className={cn("flex h-8 w-8 items-center justify-center rounded-lg border transition",
+                        form.cabecalho_icone === i.valor ? cn("border-transparent", corCabecalhoDe(form.cabecalho_cor).quadrado) : "hover:bg-muted")}>
+                      <IconeCabecalho icone={i.valor} className="h-4 w-4" />
+                    </button>
+                  ))}
+                </div>
+              </div>
+
               {/* Animação comemorativa (16/10/2026): toca quando o aviso abre
                   para quem recebe. Confira no Pré-visualizar. */}
               <div>
@@ -729,7 +778,7 @@ export default function QuadroAvisos() {
                   ))}
                 </div>
                 <p className="mt-1 text-xs text-muted-foreground">
-                  Para avisos de comemoração. Quem desligou animações no sistema operacional não vê.
+                  Para avisos de comemoração. Toca ao abrir o aviso (e no Pré-visualizar); quem desligou as animações do sistema vê uma versão curta e calma.
                 </p>
               </div>
 
@@ -904,7 +953,28 @@ export default function QuadroAvisos() {
         />
       )}
 
-      {/* ── Visualizar ─────────────────────────────────────────────── */}
+      {/* ── Visualizar: a mesma janela do colaborador ───────────────── */}
+      {olhando && (
+        <JanelaAviso
+          aviso={olhando}
+          onEscolher={() => toast.info("Visualização: a resposta não é gravada.")}
+          onAdiar={() => setOlhando(null)}
+          previa={{
+            aoFechar: () => setOlhando(null),
+            texto: "Visualizando — é assim que o colaborador vê. Nada é gravado.",
+            rotuloFechar: "Fechar",
+            comentariosAoVivo: true,
+            acoes: (
+              <Button size="sm" variant="outline" className="h-7 rounded-full border-white/40 bg-transparent text-primary-foreground hover:bg-white/10"
+                      onClick={() => abrirRespostas(olhando)}>
+                Regras e respostas
+              </Button>
+            ),
+          }}
+        />
+      )}
+
+      {/* ── Regras e respostas ─────────────────────────────────────── */}
       <Dialog open={!!vendo} onOpenChange={(o) => !o && setVendo(null)}>
         <DialogContent className="max-h-[90vh] max-w-2xl overflow-y-auto">
           <DialogHeader>
@@ -917,8 +987,8 @@ export default function QuadroAvisos() {
 
           {vendo && (
             <div className="space-y-4">
-              <ConteudoAviso aviso={vendo} prioridade />
-              <ComentariosAviso aviso={vendo} />
+              {/* O aviso em si abre na JanelaAviso ("Ver o aviso", no rodapé):
+                  aqui só o que interessa a quem publica. */}
 
               <div className="rounded-lg border p-3 text-sm">
                 <div className="mb-2 font-semibold">Regras aplicadas</div>
@@ -1051,6 +1121,11 @@ export default function QuadroAvisos() {
           )}
 
           <DialogFooter>
+            {vendo && (
+              <Button variant="outline" onClick={() => { const n = vendo; setVendo(null); setOlhando(n); }}>
+                <Eye className="mr-2 h-4 w-4" /> Ver o aviso
+              </Button>
+            )}
             <Button variant="outline" onClick={() => setVendo(null)}>Fechar</Button>
           </DialogFooter>
         </DialogContent>
