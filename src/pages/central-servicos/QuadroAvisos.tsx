@@ -54,7 +54,7 @@ import { ConteudoAviso } from "@/components/notificacoes/ConteudoAviso";
 import { JanelaAviso } from "@/components/notificacoes/GateNotificacoes";
 import { ComentariosAviso } from "@/components/notificacoes/ComentariosAviso";
 import {
-  ANIMACOES, CATEGORIAS, ESTILOS_BOTAO, FORM_VAZIO, MAX_BOTOES, MAX_ROTULO_BOTAO, TAMANHOS_IMAGEM,
+  ANIMACOES, CATEGORIAS, ESTILOS_BOTAO, FORM_VAZIO, MAX_BOTOES, MAX_ROTULO_BOTAO, POSICOES_IMAGEM, TAMANHOS_IMAGEM,
   botoesDoAviso, contagemPorBotao, respostaDe, varianteDoBotao, avisoDoFormulario, erroDoFormulario, estaVigente, fmtDataHora, formDoAviso,
   panoramaDe, respostasComNome, type CienciaNotificacao, type Escolha,
   type FormNotificacao, type Notificacao,
@@ -660,9 +660,24 @@ export default function QuadroAvisos() {
                 )}
                 {/* Tamanho no aviso (16/10/2026): cartaz quadrado na caixa
                     16:9 padrão saía pequeno. Confira no Pré-visualizar. */}
+                {/* Layout (16/10/2026): imagem inteira à esquerda e texto à
+                    direita cabe no notebook sem rolar; aviso novo nasce assim. */}
                 {form.imagens.length > 0 && (
                   <div className="mt-2 flex flex-wrap items-center gap-2 text-sm">
-                    <span className="text-muted-foreground">Tamanho no aviso:</span>
+                    <span className="text-muted-foreground">Layout:</span>
+                    {POSICOES_IMAGEM.map((p) => (
+                      <button key={p.valor} type="button" onClick={() => setForm({ ...form, imagens_posicao: p.valor })}
+                        className={cn("rounded-md border px-3 py-1 text-xs font-medium", form.imagens_posicao === p.valor ? "border-primary bg-primary/10 text-primary" : "hover:bg-muted")}>
+                        {p.rotulo}
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {form.imagens.length > 0 && (
+                  <div className="mt-2 flex flex-wrap items-center gap-2 text-sm">
+                    <span className="text-muted-foreground">
+                      {form.imagens_posicao === "lado" ? "Largura da imagem:" : "Tamanho no aviso:"}
+                    </span>
                     {TAMANHOS_IMAGEM.map((t) => (
                       <button key={t.valor || "padrao"} type="button" onClick={() => setForm({ ...form, imagens_tamanho: t.valor })}
                         className={cn("rounded-md border px-3 py-1 text-xs font-medium", form.imagens_tamanho === t.valor ? "border-primary bg-primary/10 text-primary" : "hover:bg-muted")}>

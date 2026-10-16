@@ -74,6 +74,39 @@ export function tamanhoImagemDe(v: unknown): TamanhoImagem {
 }
 
 /**
+ * Onde a imagem fica (16/10/2026, foto do Pablo do "3 Anos de Empresa" no
+ * notebook: cartaz quadrado em cima empurrava texto e botão para baixo da
+ * dobra). "lado" = imagem inteira à esquerda, texto à direita; "cima" = como
+ * sempre foi, e é o que aviso antigo (coluna NULL) recebe. Aviso NOVO nasce
+ * "lado" (FORM_VAZIO). Ver a migration 20261016000006.
+ */
+export const POSICOES_IMAGEM = [
+  { valor: "lado", rotulo: "Imagem ao lado do texto" },
+  { valor: "cima", rotulo: "Imagem em cima" },
+] as const;
+export type PosicaoImagem = (typeof POSICOES_IMAGEM)[number]["valor"];
+
+export function posicaoImagemDe(v: unknown): PosicaoImagem {
+  return v === "lado" ? "lado" : "cima";
+}
+
+/**
+ * Na imagem ao lado, o tamanho escolhido vira a LARGURA da coluna da imagem
+ * (a altura já é a da janela). No celular a coluna é a tela toda e empilha.
+ */
+export function larguraColunaImagem(t: TamanhoImagem): string {
+  switch (t) {
+    case "pequena": return "sm:w-2/5";
+    case "grande": return "sm:w-3/5";
+    case "total": return "sm:w-2/3";
+    default: return "sm:w-1/2";
+  }
+}
+
+/** A caixa da imagem ao lado: alta, mas presa à altura da tela (sem rolar no notebook). */
+export const CAIXA_IMAGEM_LADO = "h-[36vh] w-full sm:h-[min(36rem,60vh)]";
+
+/**
  * A caixa de cada imagem. O padrão continua `aspect-video`: altura reservada
  * ANTES de o arquivo chegar (ver ImagemAviso, 10/09/2026). Os fixos também
  * reservam; só "Largura total" segue a proporção da imagem, com um mínimo
@@ -81,16 +114,20 @@ export function tamanhoImagemDe(v: unknown): TamanhoImagem {
  */
 export function classeCaixaImagem(t: TamanhoImagem): string {
   switch (t) {
-    case "pequena": return "h-40 w-full";
-    case "media": return "h-64 w-full";
-    case "grande": return "h-96 w-full";
-    case "total": return "min-h-40 w-full";
+    // Alturas presas também à tela (vh): num notebook de ~700 px úteis o
+    // texto e o botão têm que caber junto com a imagem (16/10/2026).
+    case "pequena": return "h-[min(10rem,22vh)] w-full";
+    case "media": return "h-[min(16rem,32vh)] w-full";
+    case "grande": return "h-[min(24rem,40vh)] w-full";
+    case "total": return "h-[min(40rem,50vh)] w-full";
     default: return "aspect-video w-full";
   }
 }
 
 /** A largura do modal: imagem grande num modal estreito continuaria pequena. */
-export function larguraJanelaAviso(t: TamanhoImagem): string {
+export function larguraJanelaAviso(t: TamanhoImagem, posicao: PosicaoImagem = "cima"): string {
+  // Lado a lado precisa de largura para as duas colunas.
+  if (posicao === "lado") return t === "grande" || t === "total" ? "max-w-5xl" : "max-w-4xl";
   if (t === "total") return "max-w-3xl";
   if (t === "grande") return "max-w-2xl";
   return "max-w-lg";
@@ -171,6 +208,8 @@ export interface Notificacao {
   imagens_layout?: string | null;
   /** Tamanho da imagem no modal — NULL = padrão (ver TAMANHOS_IMAGEM). */
   imagens_tamanho?: string | null;
+  /** 'lado' | 'cima'; NULL = em cima, como sempre foi (16/10/2026). */
+  imagens_posicao?: string | null;
   /** Botões clicáveis abaixo do texto. */
   links?: LinkDoAviso[] | null;
   /** Botões de resposta próprios (16/10/2026). Vazio = permitir_escolha decide. */
@@ -247,6 +286,8 @@ export interface FormNotificacao {
   imagens_layout: "carrossel" | "grade";
   /** Tamanho da imagem no modal; "" = padrão. */
   imagens_tamanho: TamanhoImagem;
+  /** Imagem ao lado do texto ou em cima. */
+  imagens_posicao: PosicaoImagem;
   /** Links com nome. */
   links: LinkDoAviso[];
   /** Botões de resposta próprios; vazio = Concordo/Discordo ou "Estou ciente". */
@@ -267,7 +308,7 @@ export interface FormNotificacao {
 /** Um aviso novo, em branco — o mesmo estado inicial em toda tela que cria. */
 export const FORM_VAZIO: FormNotificacao = {
   titulo: "", mensagem: "", publicado: true, categoria: "Comunicado", resumo: "",
-  expira_em: "", anexo_url: "", anexo_nome: "", imagens: [], imagens_layout: "carrossel", imagens_tamanho: "", links: [], botoes: [],
+  expira_em: "", anexo_url: "", anexo_nome: "", imagens: [], imagens_layout: "carrossel", imagens_tamanho: "", imagens_posicao: "lado", links: [], botoes: [],
   permitir_comentarios: false, permitir_anonimo: false, animacao: "",
   setores: [], usuarios: [],
   exigir_ciencia: true, bloquear_acesso: true, permitir_escolha: true,
@@ -311,6 +352,7 @@ export function formDoAviso(
     imagens: imagensDoAviso(n),
     imagens_layout: n.imagens_layout === "grade" ? "grade" : "carrossel",
     imagens_tamanho: tamanhoImagemDe(n.imagens_tamanho),
+    imagens_posicao: posicaoImagemDe(n.imagens_posicao),
     links: (Array.isArray(n.links) ? n.links : []).map((l) => ({ rotulo: String(l?.rotulo ?? ""), url: String(l?.url ?? "") })),
     botoes: botoesDoAviso(n),
     permitir_comentarios: !!n.permitir_comentarios,
@@ -347,6 +389,7 @@ export function avisoDoFormulario(f: FormNotificacao, autor: string | null, agor
     imagens,
     imagens_layout: f.imagens_layout,
     imagens_tamanho: f.imagens_tamanho || null,
+    imagens_posicao: f.imagens_posicao,
     links: f.links.filter((l) => l.url.trim()).map((l) => ({ rotulo: l.rotulo.trim() || "Link", url: l.url.trim() })),
     botoes: botoesDoAviso(f),
     permitir_comentarios: f.permitir_comentarios,

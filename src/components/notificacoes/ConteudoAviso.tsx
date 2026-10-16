@@ -13,7 +13,7 @@ import { useState } from "react";
 import { ChevronLeft, ChevronRight, ExternalLink } from "lucide-react";
 import { ImagemAviso } from "@/components/notificacoes/ImagemAviso";
 import {
-  classeCaixaImagem, imagensDoAviso, tamanhoImagemDe,
+  CAIXA_IMAGEM_LADO, classeCaixaImagem, imagensDoAviso, posicaoImagemDe, tamanhoImagemDe,
   type ImagemDoAviso, type LinkDoAviso, type Notificacao, type TamanhoImagem,
 } from "@/lib/notificacoes";
 import { cn } from "@/lib/utils";
@@ -65,14 +65,16 @@ export function LinksAviso({ links, className }: { links: LinkDoAviso[]; classNa
  * `tamanho` (16/10/2026) é a caixa de cada imagem — ver classeCaixaImagem.
  * Sem ele, a caixa 16:9 de sempre.
  */
-export function GaleriaAviso({ imagens, layout, tamanho = "", prioridade = false, className }: {
+export function GaleriaAviso({ imagens, layout, tamanho = "", prioridade = false, className, classeCaixa }: {
   imagens: ImagemDoAviso[];
   layout: "carrossel" | "grade";
   tamanho?: TamanhoImagem;
   prioridade?: boolean;
   className?: string;
+  /** Troca a caixa de cada imagem (a imagem ao lado do texto usa a dela). */
+  classeCaixa?: string;
 }) {
-  const caixa = classeCaixaImagem(tamanho);
+  const caixa = classeCaixa ?? classeCaixaImagem(tamanho);
   const [i, setI] = useState(0);
   const lista = imagens.filter((im) => im.url);
   if (!lista.length) return null;
@@ -129,9 +131,42 @@ export function GaleriaAviso({ imagens, layout, tamanho = "", prioridade = false
   );
 }
 
-/** Imagens + texto + links, na ordem em que o aviso é lido. */
+/** O texto e os links do aviso — a coluna da direita na imagem ao lado. */
+export function TextoAviso({ aviso }: { aviso: Notificacao }) {
+  return (
+    <div className="space-y-3">
+      <TextoComLinks texto={aviso.mensagem} />
+      <LinksAviso links={aviso.links ?? []} />
+    </div>
+  );
+}
+
+/** As imagens do aviso como o aviso pede (layout e tamanho). */
+export function ImagensDoAviso({ aviso, prioridade = false, classeCaixa }: {
+  aviso: Notificacao; prioridade?: boolean; classeCaixa?: string;
+}) {
+  const imagens = imagensDoAviso(aviso);
+  if (!imagens.length) return null;
+  return (
+    <GaleriaAviso imagens={imagens} layout={aviso.imagens_layout === "grade" ? "grade" : "carrossel"}
+                  tamanho={tamanhoImagemDe(aviso.imagens_tamanho)} prioridade={prioridade} classeCaixa={classeCaixa} />
+  );
+}
+
+/**
+ * Imagens + texto + links, na ordem em que o aviso é lido. Com a imagem ao
+ * lado (16/10/2026), duas colunas — que empilham em tela estreita.
+ */
 export function ConteudoAviso({ aviso, prioridade = false }: { aviso: Notificacao; prioridade?: boolean }) {
   const imagens = imagensDoAviso(aviso);
+  if (imagens.length && posicaoImagemDe(aviso.imagens_posicao) === "lado") {
+    return (
+      <div className="grid gap-4 sm:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">
+        <ImagensDoAviso aviso={aviso} prioridade={prioridade} classeCaixa={CAIXA_IMAGEM_LADO} />
+        <TextoAviso aviso={aviso} />
+      </div>
+    );
+  }
   return (
     <div className="space-y-3">
       {imagens.length > 0 && (

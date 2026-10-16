@@ -1,13 +1,14 @@
 import { useState } from "react";
 import { AlertCircle, Loader2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { ConteudoAviso } from "@/components/notificacoes/ConteudoAviso";
+import { ImagensDoAviso, TextoAviso } from "@/components/notificacoes/ConteudoAviso";
 import { ComentariosAviso } from "@/components/notificacoes/ComentariosAviso";
 import { AnimacaoAviso } from "@/components/notificacoes/AnimacaoAviso";
 import { useNotificacoes } from "@/hooks/useNotificacoes";
 import { cn } from "@/lib/utils";
 import {
-  animacaoDe, botoesDoAviso, fmtDataHora, larguraJanelaAviso, tamanhoImagemDe, varianteDoBotao,
+  CAIXA_IMAGEM_LADO, animacaoDe, botoesDoAviso, fmtDataHora, imagensDoAviso, larguraColunaImagem,
+  larguraJanelaAviso, posicaoImagemDe, tamanhoImagemDe, varianteDoBotao,
   type Escolha, type Notificacao,
 } from "@/lib/notificacoes";
 import { toast } from "sonner";
@@ -97,8 +98,9 @@ export function JanelaAviso({ aviso, enviando = null, onEscolher, onAdiar, resta
 }) {
   const tamanho = tamanhoImagemDe(aviso.imagens_tamanho);
   const botoes = botoesDoAviso(aviso);
-  // Imagem grande pede mais altura de leitura; o resto fica como sempre foi.
-  const alturaCorpo = tamanho === "grande" || tamanho === "total" ? "max-h-[70vh]" : "max-h-[50vh]";
+  const temImagem = imagensDoAviso(aviso).length > 0;
+  const posicao = posicaoImagemDe(aviso.imagens_posicao);
+  const ladoALado = temImagem && posicao === "lado";
   return (
     <div
       className={cn("fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/70 p-4 backdrop-blur-sm", previa && "pt-16")}
@@ -115,8 +117,16 @@ export function JanelaAviso({ aviso, enviando = null, onEscolher, onAdiar, resta
           <Button size="sm" variant="secondary" onClick={previa.aoFechar}>Voltar à edição</Button>
         </div>
       )}
-      <div className={cn("w-full overflow-hidden rounded-xl bg-background shadow-2xl", larguraJanelaAviso(tamanho))}>
-        <div className="flex items-start gap-3 border-b bg-amber-50 px-5 py-4 dark:bg-amber-950/30">
+      {/* A janela inteira cabe na tela (16/10/2026, foto do Pablo no
+          notebook: tinha que rolar para chegar no botão). Coluna flexível
+          presa à altura da janela: cabeçalho e rodapé fixos, a imagem com
+          altura em vh, e SÓ o texto rola quando é longo. */}
+      <div className={cn(
+        "flex w-full flex-col overflow-hidden rounded-xl bg-background shadow-2xl",
+        previa ? "max-h-[calc(100dvh-5rem)]" : "max-h-[calc(100dvh-2rem)]",
+        larguraJanelaAviso(tamanho, temImagem ? posicao : "cima"),
+      )}>
+        <div className="flex shrink-0 items-start gap-3 border-b bg-amber-50 px-5 py-4 dark:bg-amber-950/30">
           <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-amber-500 text-white">
             <AlertCircle className="h-5 w-5" />
           </span>
@@ -143,24 +153,40 @@ export function JanelaAviso({ aviso, enviando = null, onEscolher, onAdiar, resta
           )}
         </div>
 
-        <div className={cn(alturaCorpo, "overflow-y-auto px-5 py-4")}>
-          {/* A imagem vem ANTES do texto: quando o aviso é um cartaz, ela é o
-              aviso, e o texto é a legenda. `object-contain` porque cartaz
-              cortado no meio deixa de comunicar o que veio comunicar.
+        {/* A imagem vem ANTES do texto (em cima ou à esquerda): quando o aviso
+            é um cartaz, ela é o aviso, e o texto é a legenda. `object-contain`
+            porque cartaz cortado no meio deixa de comunicar o que veio
+            comunicar. A caixa tem altura ANTES de o arquivo chegar — sem isso o
+            texto subia no lugar dela e, num aviso que bloqueia, a pessoa
+            respondia antes de o cartaz aparecer ("a imagem não aparece",
+            10/09/2026). */}
+        {ladoALado ? (
+          // Lado a lado: cada coluna rola sozinha (no celular empilha e rola tudo).
+          <div className="min-h-0 flex-1 overflow-y-auto sm:flex sm:overflow-hidden">
+            <div className={cn("shrink-0 border-b bg-muted/20 p-4 sm:overflow-y-auto sm:border-b-0 sm:border-r", larguraColunaImagem(tamanho))}>
+              <ImagensDoAviso aviso={aviso} prioridade classeCaixa={CAIXA_IMAGEM_LADO} />
+            </div>
+            <div className="min-w-0 flex-1 px-5 py-4 sm:overflow-y-auto">
+              <TextoAviso aviso={aviso} />
+              {/* Comentários e reações (16/10/2026). Na prévia, desligados. */}
+              <ComentariosAviso aviso={aviso} previa={!!previa} />
+            </div>
+          </div>
+        ) : (
+          <>
+            {temImagem && (
+              <div className="shrink-0 px-5 pt-4">
+                <ImagensDoAviso aviso={aviso} prioridade />
+              </div>
+            )}
+            <div className="min-h-[6rem] flex-1 overflow-y-auto px-5 py-4">
+              <TextoAviso aviso={aviso} />
+              <ComentariosAviso aviso={aviso} previa={!!previa} />
+            </div>
+          </>
+        )}
 
-              `aspect-video` reserva a altura ANTES de o arquivo chegar. Sem
-              isso o aviso abria sem imagem nenhuma, o texto subia no lugar
-              dela, e num aviso que bloqueia a tela a pessoa respondia antes de
-              o cartaz aparecer — foi o "a imagem não aparece" de 10/09/2026. */}
-          {/* Imagens (carrossel/grade), texto com URLs clicáveis e os links
-              com nome — o mesmo bloco do Quadro e do Início (ConteudoAviso). */}
-          <ConteudoAviso aviso={aviso} prioridade />
-          {/* Comentários e reações (16/10/2026). Na prévia, a área aparece
-              desligada: o aviso ainda não existe para ter comentário. */}
-          <ComentariosAviso aviso={aviso} previa={!!previa} />
-        </div>
-
-        <div className="flex flex-col gap-2 border-t px-5 py-4 sm:flex-row sm:justify-end">
+        <div className="flex shrink-0 flex-col gap-2 border-t px-5 py-4 sm:flex-row sm:justify-end">
           {botoes.length > 0 ? (
             // Botões escolhidos por quem publicou (16/10/2026). Todos gravam
             // CIENTE + o texto do botão: a escolha continua respondendo "quem
@@ -198,17 +224,17 @@ export function JanelaAviso({ aviso, enviando = null, onEscolher, onAdiar, resta
         </div>
 
         {aviso.bloquear_acesso ? (
-          <p className="border-t bg-muted/40 px-5 py-2 text-center text-xs text-muted-foreground">
+          <p className="shrink-0 border-t bg-muted/40 px-5 py-2 text-center text-xs text-muted-foreground">
             Você precisa registrar sua resposta para continuar utilizando o sistema.
           </p>
         ) : (
-          <p className="border-t px-5 py-2 text-center text-xs text-muted-foreground">
+          <p className="shrink-0 border-t px-5 py-2 text-center text-xs text-muted-foreground">
             Pode responder depois — o aviso volta na próxima vez que você entrar.
           </p>
         )}
 
         {restantes > 0 && (
-          <p className="border-t px-5 py-2 text-center text-xs text-muted-foreground">
+          <p className="shrink-0 border-t px-5 py-2 text-center text-xs text-muted-foreground">
             Mais {restantes} aviso(s) depois deste.
           </p>
         )}

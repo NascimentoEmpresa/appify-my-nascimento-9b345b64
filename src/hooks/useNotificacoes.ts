@@ -5,7 +5,7 @@ import { useMeuNome } from "@/hooks/useMeuNome";
 import { usePermissoes } from "@/context/PermissoesContext";
 import {
   BUCKET_ANEXOS, MENU_PUBLICAR, MENU_QUADRO, TABELA, TABELA_ALVO, TABELA_CIENCIA,
-  animacaoDe, bloqueantesDe, botoesDoAviso, pendentesDe, tamanhoImagemDe,
+  animacaoDe, bloqueantesDe, botoesDoAviso, pendentesDe, posicaoImagemDe, tamanhoImagemDe,
   type AlvoNotificacao, type CienciaNotificacao, type Escolha,
   type FormNotificacao, type Notificacao,
 } from "@/lib/notificacoes";
@@ -185,6 +185,7 @@ export function useNotificacoes() {
         imagens_layout: f.imagens_layout === "grade" ? "grade" : "carrossel",
         // "" (padrão) vai como NULL: é o que aviso antigo tem, e a CHECK aceita.
         imagens_tamanho: tamanhoImagemDe(f.imagens_tamanho) || null,
+        imagens_posicao: posicaoImagemDe(f.imagens_posicao),
         links: f.links.filter((l) => l.url.trim()).map((l) => ({ rotulo: l.rotulo.trim() || "Link", url: l.url.trim() })),
         // Botões próprios (16/10/2026). Sem ciência não há o que responder:
         // grava vazio para o aviso não carregar botão que nunca aparece.

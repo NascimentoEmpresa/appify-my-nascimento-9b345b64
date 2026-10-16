@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   FORM_VAZIO, avisoDoFormulario, botoesDoAviso, classeCaixaImagem, contagemPorBotao, erroDoFormulario,
-  formDoAviso, larguraJanelaAviso, respostaDe,
+  formDoAviso, larguraColunaImagem, larguraJanelaAviso, posicaoImagemDe, respostaDe,
   tamanhoImagemDe, type Notificacao,
 } from "@/lib/notificacoes";
 
@@ -93,5 +93,34 @@ describe("botões de resposta próprios", () => {
     );
     expect(linhas.map((l) => [l.rotulo, l.total])).toEqual([["Vou", 1], ["Não vou", 2], ["Talvez", 1]]);
     expect(respostaDe(c(null, "CONCORDO"))).toBe("Concordo");
+  });
+});
+
+// Pedido do Pablo (16/10/2026), foto no notebook: imagem quadrada em cima
+// obrigava a rolar. Imagem ao lado do texto, escolhível; aviso novo nasce assim.
+describe("posição da imagem", () => {
+  it("aviso antigo (NULL) fica com a imagem em cima; aviso novo nasce ao lado", () => {
+    expect(posicaoImagemDe(null)).toBe("cima");
+    expect(posicaoImagemDe("diagonal")).toBe("cima");
+    expect(posicaoImagemDe("lado")).toBe("lado");
+    expect(FORM_VAZIO.imagens_posicao).toBe("lado");
+  });
+
+  it("vai para a prévia e volta na edição", () => {
+    const a = avisoDoFormulario({ ...FORM_VAZIO, titulo: "t", mensagem: "mensagem longa", imagens_posicao: "cima" }, null);
+    expect(a.imagens_posicao).toBe("cima");
+    expect(formDoAviso({ ...a, id: 2, imagens_posicao: "lado" } as Notificacao).imagens_posicao).toBe("lado");
+    expect(formDoAviso({ ...a, id: 2, imagens_posicao: null } as Notificacao).imagens_posicao).toBe("cima");
+  });
+
+  it("ao lado, a janela alarga e o tamanho vira a largura da coluna da imagem", () => {
+    expect(larguraJanelaAviso("", "lado")).toBe("max-w-4xl");
+    expect(larguraJanelaAviso("grande", "lado")).toBe("max-w-5xl");
+    expect(larguraJanelaAviso("", "cima")).toBe("max-w-lg");
+    expect(larguraColunaImagem("pequena")).not.toBe(larguraColunaImagem("total"));
+  });
+
+  it("toda caixa fixa tem a altura presa à tela (vh), para caber no notebook", () => {
+    for (const t of ["pequena", "media", "grande", "total"] as const) expect(classeCaixaImagem(t)).toMatch(/vh/);
   });
 });
