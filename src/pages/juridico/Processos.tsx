@@ -950,7 +950,7 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
         /* Listagem (18/09/2026): hero azul, KPIs com ícone, tabela com respiro e hover. */
         .jpr-hero{position:relative;overflow:hidden;border-radius:22px;padding:26px 30px 22px;margin:18px 24px 0;background:linear-gradient(135deg,#0f3171 0%,#1d4ed8 60%,#2563eb 100%);color:#fff;box-shadow:0 22px 50px rgba(15,49,113,.25)}
         .jpr-hero::before{content:"";position:absolute;right:-70px;top:-90px;width:300px;height:300px;border-radius:50%;background:rgba(255,255,255,.07)}
-        .jpr-hero::after{content:"";position:absolute;right:140px;bottom:-140px;width:240px;height:240px;border-radius:50%;background:rgba(255,255,255,.05)}
+        .jpr-hero::after{content:"";pointer-events:none;position:absolute;right:140px;bottom:-140px;width:240px;height:240px;border-radius:50%;background:rgba(255,255,255,.05)}
         .jpr-hero-in{position:relative;display:flex;justify-content:space-between;align-items:flex-start;gap:16px;flex-wrap:wrap}
         .jpr-hero-eyebrow{font-size:11.5px;font-weight:800;letter-spacing:1.2px;text-transform:uppercase;opacity:.8}
         .jpr-hero h1{margin:4px 0 6px;font-size:28px;font-weight:900;letter-spacing:-.4px;line-height:1.1}

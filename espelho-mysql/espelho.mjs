@@ -53,6 +53,31 @@ if (argLimite && (!Number.isInteger(LIMITE) || LIMITE <= 0)) {
   process.exit(1);
 }
 
+// RODADA RÁPIDA DO PONTO (16/10/2026). Pedido do Pablo: "tem que rodar a
+// cada 10 min esse espelho pra puxar TODOS os pontos ao vivo praticamente".
+// A carga diária leva todas as tabelas e 45 dias de BiMarcacoes — rodar
+// isso a cada 10 min martelaria o banco que já andou caindo. A rápida é:
+//   sincronizar --commit --tabelas BiMarcacoes --dias 1
+// só as tabelas pedidas (têm que estar em tabelas.json) e, nas incrementais,
+// só desde ontem (data_hora é só a DATA; a hora fica em "hora").
+const argTabelas = process.argv.find((a) => a.startsWith('--tabelas'));
+const SO_TABELAS = argTabelas
+  ? String(argTabelas.includes('=') ? argTabelas.split('=')[1] : process.argv[process.argv.indexOf(argTabelas) + 1] ?? '')
+      .split(',').map((s) => s.trim()).filter(Boolean)
+  : null;
+if (argTabelas && !SO_TABELAS.length) {
+  console.error('--tabelas precisa de nomes separados por vírgula. Ex.: --tabelas BiMarcacoes');
+  process.exit(1);
+}
+const argDias = process.argv.find((a) => a.startsWith('--dias'));
+const DIAS = argDias
+  ? Number(argDias.includes('=') ? argDias.split('=')[1] : process.argv[process.argv.indexOf(argDias) + 1])
+  : null;
+if (argDias && (!Number.isInteger(DIAS) || DIAS < 0)) {
+  console.error('--dias precisa de um número inteiro (0 = só hoje). Ex.: --dias 1');
+  process.exit(1);
+}
+
 const COMANDOS = ['testar', 'descobrir', 'perfilar', 'sincronizar', 'conferir'];
 if (!COMANDOS.includes(COMANDO)) {
   console.error(`comando inválido. use um de: ${COMANDOS.join(' | ')}`);
@@ -492,12 +517,24 @@ async function cmdSincronizar() {
     process.exit(1);
   }
   const config = JSON.parse(fs.readFileSync(arqTabelas, 'utf8'));
-  const alvo = config.tabelas;
   const incrementais = config.incremental || {};
-  if (!Array.isArray(alvo) || !alvo.length) {
+  if (!Array.isArray(config.tabelas) || !config.tabelas.length) {
     console.error('tabelas.json está vazio. Liste ao menos uma tabela.');
     process.exit(1);
   }
+  const fora = (SO_TABELAS ?? []).filter((t) => !config.tabelas.includes(t));
+  if (fora.length) {
+    console.error(`--tabelas: ${fora.join(', ')} não está em tabelas.json`);
+    process.exit(1);
+  }
+  const alvo = SO_TABELAS ?? config.tabelas;
+  // Rodada rápida nunca vira recarga completa: tabela incremental vazia ou
+  // --completo ficam para a carga diária, que tem tempo e espaço para isso.
+  if (SO_TABELAS && COMPLETO) {
+    console.error('--completo não combina com --tabelas: a recarga completa é só na carga diária.');
+    process.exit(1);
+  }
+  if (SO_TABELAS) console.log(`=== RÁPIDA — só ${alvo.join(', ')}${DIAS != null ? `, desde ${dataDeCorte(DIAS)}` : ''} ===\n`);
 
   if (!COMMIT) console.log('=== SIMULAÇÃO — nada será gravado (use --commit para valer) ===\n');
   if (LIMITE) {
@@ -543,13 +580,14 @@ async function cmdSincronizar() {
       if (regra && !LIMITE) {
         if (!nomes.includes(regra.coluna)) throw new Error(`incremental de ${tabela}: coluna "${regra.coluna}" não existe na origem`);
         const { rows: [{ tem }] } = await pgc.query(`SELECT EXISTS (SELECT 1 FROM ${aspas(SCHEMA)}.${aspas(tabela)}) AS tem`);
+        if (!tem && SO_TABELAS) throw new Error(`${tabela} está vazia no Supabase: rode a carga diária (sem --tabelas) antes da rápida`);
         if (COMPLETO || !tem) {
           // Completo fica para DEPOIS do COMMIT, fatiado por mês (cargaFatiada).
           fatiadas.push({ tabela, cols, coluna: regra.coluna, pk });
           console.log(`  ${tabela}: recarga completa fatiada por mês, depois das demais`);
           continue;
         }
-        const corte = dataDeCorte(Number(regra.dias) || 45);
+        const corte = dataDeCorte(DIAS ?? (Number(regra.dias) || 45));
         await pgc.query(`DELETE FROM ${aspas(SCHEMA)}.${aspas(tabela)} WHERE ${aspas(regra.coluna)} >= $1`, [corte]);
         filtro = ` WHERE ${crase(regra.coluna)} >= '${corte}'`;
         console.log(`  ${tabela}: incremental desde ${corte} (${regra.coluna})`);
@@ -609,8 +647,9 @@ async function cmdSincronizar() {
     }
     // Escala do colaborador (15/10/2026, mig 20261015000004): a integração da
     // Senior nunca mandou a escala para EMPREGADOS — quem trocava de escala na
-    // Senior continuava com a antiga no ERP. Acerta depois de cada carga.
-    if (COMMIT) {
+    // Senior continuava com a antiga no ERP. Acerta depois de cada carga
+    // (menos a rápida do ponto, que não traz as tabelas de escala).
+    if (COMMIT && !SO_TABELAS) {
       const { rows: [esc] } = await pgc.query(
         "SELECT CASE WHEN to_regprocedure('public.rh_sync_escala_espelho()') IS NULL THEN NULL ELSE public.rh_sync_escala_espelho() END AS n");
       if (esc?.n != null) console.log(`  escala do colaborador (EMPREGADOS ← Senior): ${esc.n} cadastro(s) acertado(s)`);
