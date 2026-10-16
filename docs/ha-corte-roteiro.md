@@ -1222,6 +1222,287 @@ navegador.
 
 ---
 
+---
+
+### 1.15 🔴 As 54 variáveis das Edge Functions (16/10/2026)
+
+Na Supabase, cada Edge Function recebe os *secrets* do projeto. No cluster, o
+container `erp-pilha-functions-1` subiu com **dez** variáveis:
+
+```
+HOME HOSTNAME JWT_SECRET PATH SUPABASE_ANON_KEY SUPABASE_DB_URL
+SUPABASE_PUBLISHABLE_KEY SUPABASE_SERVICE_ROLE_KEY SUPABASE_URL VERIFY_JWT
+```
+
+As 64 functions leem **54 nomes**. Nenhum conferidor olhava para isto: não é
+tabela, não é função, não é arquivo — e a replicação continua verde do mesmo
+jeito. Na virada, quebrariam em silêncio o envio de WhatsApp (12 functions), as
+IAs, o push, os Correios, a régua de cobrança, o SMTP e o GitHub.
+
+#### A descoberta que transformou isto num problema resolvível
+
+`supabase secrets list` **não devolve valor nenhum** — devolve um *digest*. E
+esse digest é o **SHA256 cru do valor, sem sal**. Provado com as cinco
+variáveis que também existem em `worker/.env`: os cinco `sha256sum` bateram com
+os cinco digests, caractere por caractere.
+
+Isso muda a natureza da tarefa. Antes: "recuperei a chave no console da Meta,
+espero que seja a mesma". Agora: `configurar-secrets.sh --conferir` responde
+**CONFERIDO igual à produção** ou **DIFERENTE** — sem nunca ler o segredo da
+produção, que continua ilegível.
+
+#### O levantamento, de 16/10/2026
+
+```
+ 9  eu levo daqui, sem console nenhum   (worker/.env, 5 delas CONFERIDAS)
+16  só existem dentro da Supabase       <- estas bloqueiam a virada
+ 9  não existem em lugar nenhum         <- a function que as usa JÁ falha hoje
+```
+
+**As 9 que já temos:** `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`,
+`CORREIOS_API_CODIGO`, `CORREIOS_API_USUARIO`, `CORREIOS_CARTAO_POSTAGEM`,
+`WHATSAPP_TICK_SECRET`, `WORKER_NOTIFICAR_SECRET`.
+
+> **E as quatro do SMTP não estão na Supabase** — enquanto estão em
+> `worker/.env` há meses, do outro lado da parede. O worker manda e-mail
+> normalmente com elas; a Edge Function não.
+>
+> Quem paga por isso é a `comite-etica-nova-denuncia`, que avisa por e-mail
+> quem cuida do Canal de Ética quando entra uma denúncia nova. Medido em
+> 16/10/2026, na produção:
+>
+> ```
+> destinatarios ativos do aviso de denuncia : 2
+> avisos que falharam por falta de SMTP     : 3
+> denuncias no canal                        : 16
+> ```
+>
+> **Três denúncias entraram e ninguém foi avisado por e-mail**, com duas
+> pessoas cadastradas esperando o aviso. Isso não tem nada a ver com a virada
+> e deveria ter sido consertado meses atrás: `smtp-para-supabase.sh --aplicar`.
+>
+> Conferido antes de mexer: **não há disparo retroativo.** A function é
+> invocada por denúncia nova, não por cron — ligar o SMTP não reenvia as três
+> que falharam. (Era a pergunta certa a fazer: a regra da casa é mostrar a fila
+> antes de ligar qualquer coisa que fale com gente de verdade.)
+
+**As 16 presas:** `WHATSAPP_TOKEN`, `WHATSAPP_APP_SECRET`, `WHATSAPP_APP_ID`,
+`WHATSAPP_PHONE_NUMBER_ID`, `WHATSAPP_WABA_ID`, `WHATSAPP_VERIFY_TOKEN`,
+`GEMINI_API_KEY`, `GROQ_API_KEY`, `LOVABLE_API_KEY`, `GITHUB_TOKEN`,
+`DISCORD_CLIENT_ID`, `DISCORD_CLIENT_SECRET`, `DISCORD_REDIRECT_URIS`,
+`CHAMADOS_CI_SECRET`, `VAPID_PRIVATE_KEY`, `VAPID_PUBLIC_KEY`.
+
+Foi tentada a recuperação automática delas, e **não deu**: o `client_id` do
+Discord não sai do token do bot que temos, o token do `gh` não é o mesmo
+`GITHUB_TOKEN`, e nenhum dos valores aparece em log, dump ou documento local.
+A busca foi por hash contra os 30 digests — então o "não achei" aqui é
+conclusivo, não desistência.
+
+**As 9 que já estão quebradas hoje** (não são regressão da virada, e é
+importante não confundir as duas coisas): `ANTHROPIC_API_KEY`,
+`AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET`,
+`COBRANCA_EMAIL_JURIDICO`, `COBRANCA_EMAIL_FINANCEIRO`, `ESCAVADOR_API_TOKEN`,
+`NFEIO_API_KEY`, `WHATSAPP_TEMPLATE_DENUNCIA`.
+
+#### Como aplicar
+
+```bash
+bash infra/ha/configurar-secrets.sh --conferir
+SEGREDOS=~/segredos.env bash infra/ha/configurar-secrets.sh --aplicar
+bash infra/ha/configurar-secrets.sh --provar
+```
+
+O script grava `/opt/erp/infra/failover/segredos-functions.env` (chmod 600) nos
+**dois** nós, acrescenta `env_file:` ao serviço `functions` do compose e recria
+o container. `environment:` **ganha** de `env_file:`, e é por isso que
+`SUPABASE_URL` continua valendo `http://kong:8000` mesmo que o arquivo diga
+outra coisa. Nenhum valor é gravado nesta máquina nem aparece na tela.
+
+---
+
+### 1.16 🔴 Os sete jobs de cron dentro do banco (16/10/2026)
+
+A produção tem **sete** agendamentos de `pg_cron` rodando dentro do banco:
+
+| job | quando |
+|---|---|
+| `sla-escalonamento-tick` | de hora em hora |
+| `regua-cobranca-tick` | de hora em hora |
+| `whatsapp-retomada-tick` | de 5 em 5 minutos |
+| `malote-rolagem-data-pagamento` | de 15 em 15 minutos |
+| `tvg-dre-atualizar` | 4× ao dia |
+| `plano-acao-marcar-atrasadas` | 06h00 |
+| `comite-etica-alertas` | 08h00, dias de semana |
+
+O cluster tem a extensão `pg_cron` instalada e **zero jobs**.
+
+**Por que nenhum conferidor pegou isso.** `cron.job` pertence a uma *extensão*.
+`pg_dump` leva a extensão, não as linhas dela — então "mesmas tabelas, mesmas
+funções, mesmos dados em `public`" continuou verdadeiro o tempo todo. A agenda
+não é tabela nem função: ficou fora de todas as contagens.
+
+**O que aconteceria na virada.** Nada. Nenhum erro, nenhum 500, nenhum alerta —
+as sete automações simplesmente nunca mais rodariam. O primeiro a notar seria o
+Comitê de Ética na segunda sem o alerta das 8h. Isso é pior que quebrar:
+quebrar avisa.
+
+Uma boa notícia conferida no caminho: **nenhum job chama HTTP**. Todos são
+`SELECT public.enfileirar_tick(...)` ou função SQL — empilham em `fila_http` e
+quem executa é o `worker/`. E nenhuma função do banco tem `supabase.co` no
+corpo (`prosrc like '%supabase.co%'` devolve vazio). Então a agenda viaja sem
+reescrever URL nenhuma.
+
+```bash
+bash infra/ha/cron-no-cluster.sh --conferir
+bash infra/ha/cron-no-cluster.sh --aplicar    # cria os sete DESLIGADOS
+bash infra/ha/cron-no-cluster.sh --ligar      # na virada, depois do worker
+```
+
+Eles nascem **desligados** de propósito. `fila_http` tem dedupe por destino, de
+modo que a fila não viraria avalanche; o motivo é outro — um tick de
+`regua-cobranca` ou `whatsapp-retomada` entregue no momento errado é cobrança e
+WhatsApp para gente de verdade. Agenda pronta e parada é o estado seguro.
+
+---
+
+### 1.17 ✅ Os usuários NÃO precisam fazer login outra vez (16/10/2026)
+
+Esta seção corrige uma frase que estava no passo 2.6 desde o começo: *"todo
+mundo vai ter que fazer login outra vez"*. Era verdade pelo motivo errado, e a
+consequência prática é melhor do que se pensava — mas só por causa de **uma
+linha** que até hoje não existia.
+
+#### O que foi medido
+
+```
+chave anon da produção:  alg HS256, assinada com o segredo da Supabase
+JWKS do projeto:         uma chave ES256  <- os tokens de USUÁRIO são ES256
+JWT_SECRET do cluster:   DIFERENTE do da produção (conferido por HMAC)
+```
+
+A produção assina os tokens de acesso em **ES256**, com uma chave privada que
+existe só dentro da Supabase. Então não há como "copiar o segredo" para o
+cluster: o caminho de manter os tokens válidos **não existe**, e qualquer plano
+que dependa disso está errado desde o início.
+
+#### Mas o token de acesso não é a sessão
+
+O que o navegador guarda é um par: o *access token* (que morre) e o
+`refresh_token`, que é uma **string opaca conferida no banco**. E
+`auth.refresh_tokens` **é copiado para o cluster** (passo 2.3). Então o
+`autoRefreshToken` do supabase-js troca o token morto por um vivo contra o
+GoTrue do cluster, e o usuário não vê nada.
+
+#### A linha que decidia isso, e que faltava
+
+Sem `storageKey`, o supabase-js **inventa** a chave do `localStorage` a partir
+da URL — `sb-${primeiro rótulo do host}-auth-token`. Conferido no pacote
+instalado (`supabase-js` 2.108.2, `SupabaseClient`):
+
+```js
+const defaultStorageKey = `sb-${baseUrl.hostname.split(".")[0]}-auth-token`;
+```
+
+| URL | gaveta onde a sessão é procurada |
+|---|---|
+| `https://fwmzeaztjxrxxzxzxmgc.supabase.co` | `sb-fwmzeaztjxrxxzxzxmgc-auth-token` |
+| `https://api.grpnascimento.com.br` | `sb-api-auth-token` — **vazia** |
+
+Trocar a URL mudaria a gaveta. O navegador não acharia sessão nenhuma e os
+~157 usuários cairiam na tela de login no momento da virada, cada um com a
+senha que talvez não lembre — **com o `refresh_token` intacto na gaveta
+antiga**, a dois centímetros de distância.
+
+`src/integrations/supabase/client.ts` agora fixa
+`storageKey: 'sb-fwmzeaztjxrxxzxzxmgc-auth-token'`. **O valor é exatamente o
+que o padrão já produz hoje**, então a mudança é inócua na produção atual e
+decisiva na virada. Não é "o nome do projeto": é o endereço da gaveta onde a
+sessão das pessoas já está. Mudar = deslogar todo mundo. Se o Lovable regerar o
+arquivo, esta linha tem que voltar.
+
+---
+
+### 1.18 O reboot dos dois nós, e por que agora (16/10/2026)
+
+Os dois nós estão com `linux-image-6.8.0-147-generic` instalado e rodando o
+`6.8.0-146` — kernel novo esperando reboot desde que o
+`apt-daily-upgrade.timer` o trouxe.
+
+**O momento é hoje.** O cluster não atende usuário nenhum: um reboot errado
+hoje é contratempo. Depois da virada, o mesmo reboot é janela de manutenção com
+gente dentro do ERP.
+
+```bash
+bash infra/ha/reboot-controlado.sh --conferir
+bash infra/ha/reboot-controlado.sh --rodar
+```
+
+A ordem importa e `reboot` nos dois **não** serve: sem quorum no etcd (2 dos 3
+votos moram nos próprios bancos), ninguém assume. O script faz standby →
+espera `streaming` com lag 0 → `patronictl switchover` → o outro nó → confere.
+
+Três coisas conferidas antes de aceitar isto (16/10):
+
+```
+net.ipv4.ip_nonlocal_bind=1  persistido em /etc/sysctl.d/80-haproxy-bind.conf
+patroni haproxy caddy docker etcd wg-quick@wg0   enabled nos DOIS nós
+lag 0, TL 6, os dois em streaming
+```
+
+A primeira é a que já tinha mordido: o HAProxy se amarra num endereço que só
+existe depois dos containers subirem. Sem o `sysctl` persistido, ele não sobe
+no boot e o ERP responde "connection refused" com o banco perfeito.
+
+E uma consequência agradável: o reboot do standby **é** um teste de failover de
+verdade, feito pela porta da frente. O `switchover` do passo 2 é exatamente o
+que o `testar-failover.sh` provaria.
+
+> Sobre `synchronous_mode_strict`: ele está **desligado**, e o passo 1 é a
+> razão prática para continuar assim. Com o strict ligado, derrubar o único
+> standby sincronizado faria a escrita esperar para sempre. Desligado, o
+> Patroni tira o nome do standby de `synchronous_standby_names` e a escrita
+> segue até ele voltar.
+
+---
+
+### 1.19 🔴 Os endereços que não estão no nosso código (16/10/2026)
+
+Varredura de tudo que aponta para `fwmzeaztjxrxxzxzxmgc.supabase.co` e não é
+documento nem script de corte. O que **nós** controlamos já foi parametrizado;
+o que mora em console de terceiro é o que resta, e não dá para descobrir de
+fora que está errado.
+
+**Já resolvido no repositório** (a virada passa a ser uma variável, não um
+`git grep`):
+
+```
+.github/workflows/chamado_pr_sync.yml          -> vars.SUPABASE_FUNCTIONS_URL
+.github/workflows/chamado_concluir_no_merge.yml -> vars.SUPABASE_FUNCTIONS_URL
+.github/workflows/vigia_banco.yml               -> já usava vars.SUPABASE_PROJETO_REF
+```
+
+Com a variável de repositório `SUPABASE_FUNCTIONS_URL` apontando para
+`https://api.grpnascimento.com.br/functions/v1`, o CI troca de backend sem
+mexer em workflow. Sem ela, continua na Supabase — o padrão é o de hoje.
+
+**O que só existe em console de terceiro:**
+
+| Onde | O que aponta para a Supabase | Se não mudar |
+|---|---|---|
+| Meta / WhatsApp | URL do webhook (`/functions/v1/whatsapp-webhook`) | mensagem recebida vai para o projeto desligado: **chatbot cego** |
+| Discord | OAuth redirect URI | vincular conta para de funcionar |
+| `worker/.env` | `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY` | o worker continua trabalhando no banco antigo |
+| Lovable | `VITE_SUPABASE_URL` + `VITE_SUPABASE_ANON_KEY` | o ERP inteiro continua na Supabase |
+
+O do Meta é o mais traiçoeiro: **ninguém reclama de mensagem que não chega.**
+A fila não cresce, nenhum 500 aparece, o número continua recebendo. Só não há
+resposta.
+
+E ele amarra duas coisas: como a URL do webhook muda de qualquer forma, o
+`WHATSAPP_VERIFY_TOKEN` pode ser um valor **novo**, escolhido por nós — basta
+ser o mesmo nos dois lados, no mesmo momento. Isso tira uma das 16 da seção
+1.15 da categoria "preciso recuperar" e põe na categoria "preciso definir".
+
 ## Fase 2 — a virada
 
 Daqui até o fim, o ERP fica fora do ar para escrita. Alvo: **minutos**, não
@@ -1379,9 +1660,36 @@ Supabase sozinho** — e nada na tela avisa. Hoje o arquivo importa de `./env.ts
 (linha 7) e é isso que tem que continuar valendo. Conferir **depois** do build
 do Lovable, não antes.
 
-**Todo mundo vai ter que fazer login outra vez.** As sessões atuais estão
-assinadas com o segredo da Supabase e o GoTrue do cluster vai recusá-las. Isso
-não é defeito; é consequência de trocar o emissor dos tokens. Avisar antes.
+~~**Todo mundo vai ter que fazer login outra vez.**~~ **Corrigido em
+16/10/2026 — ver a seção 1.17.** A premissa estava certa (o token de acesso
+atual é assinado pela Supabase, em ES256, e o cluster vai recusá-lo), mas a
+conclusão estava errada: o que fica no navegador não é só o token, é o
+`refresh_token` ao lado dele — uma string opaca conferida **no banco**, e
+`auth.refresh_tokens` é copiado no passo 2.3. O supabase-js troca o token morto
+por um vivo e **ninguém precisa logar de novo**.
+
+Isso só vale por causa de uma linha que até 16/10 não existia:
+`storageKey: 'sb-fwmzeaztjxrxxzxzxmgc-auth-token'` no `client.ts`. Sem ela, a
+troca de URL mudaria a gaveta do `localStorage` (`sb-api-auth-token`, vazia) e
+o navegador não acharia a sessão — com o `refresh_token` intacto na gaveta
+antiga. **Conferir que essa linha sobreviveu ao build do Lovable** é parte do
+passo 2.7, junto com o `client.ts`.
+
+Mesmo assim, avisar antes: pode haver pessoas com janela aberta há horas, e um
+erro momentâneo durante a troca é possível. "Se der erro, recarregue a página"
+resolve o caso.
+
+5. **As variáveis das Edge Functions** (seção 1.15) e **os sete jobs de cron**
+   (seção 1.16):
+
+```bash
+bash infra/ha/configurar-secrets.sh --provar   # antes de virar: nada faltando?
+bash infra/ha/cron-no-cluster.sh --ligar       # DEPOIS de apontar o worker
+```
+
+6. **A URL do webhook da Meta e o redirect do Discord** (seção 1.19) — os dois
+   só existem em console de terceiro, e o da Meta não dá nenhum sinal de que
+   está errado: mensagem recebida simplesmente não é respondida.
 
 ### 2.7 Aceitação **pelo navegador**, não por `curl`
 
@@ -1469,8 +1777,38 @@ começarmos. É o motivo de a recópia vir antes de qualquer outra coisa.
 ⬜ só então: desligar Render e Supabase
 ```
 
+**Levantado em 16/10 — também não estava em lista nenhuma:**
+
+```
+🔴 1.15 as 54 variáveis das Edge Functions          9 em mãos, 16 presas na Supabase
+🔴 1.16 os 7 jobs de pg_cron, inexistentes no cluster      script pronto
+✅ 1.17 a sessão dos 157 usuários (storageKey)       resolvido no client.ts
+⬜ 1.18 reboot controlado dos dois nós (kernel novo)       script pronto
+🔴 1.19 webhook da Meta e redirect do Discord        só em console de terceiro
+✅ ---  CI parametrizado (vars.SUPABASE_FUNCTIONS_URL)     16/10
+✅ ---  renovação do certificado no banco2, automática     espelhar-cert.sh
+✅ ---  backup dos anexos fora dos nós (semanal)           backup-cluster.sh --anexos
+✅ ---  vigia do certificado por DM (<21 dias ou divergência)  backup_cluster.yml
+✅ ---  roteiro de restauração                             docs/ha-restauracao.md
+⬜ ---  o secret CLUSTER_BACKUP_SSH_KEY                    chave-backup-github.sh
+```
+
+**O que todos esses cinco itens de 16/10 têm em comum** merece ser dito, porque
+é a terceira vez que o mesmo tipo de coisa aparece (seções 1.11, 1.13 e agora):
+**nenhum deles é tabela, linha ou arquivo.** Variável de ambiente, agenda de
+`pg_cron`, chave do `localStorage`, kernel, URL em console de terceiro — nada
+disso entra numa contagem de tabelas, e todos os nossos conferidores contam
+tabelas. Um sistema não é só o seu banco de dados, e a parte que não é banco
+não tem conferidor nenhum.
+
 Quatro dessas merecem explicação, porque são do mesmo tipo de erro que a
-seção 1.11 descreve — **uma cópia feita num dia e tratada como se fosse viva:**
+seção 1.11 descreve — **uma cópia feita num dia e tratada como se fosse viva.**
+
+> Os quatro diagnósticos abaixo são de **15/10 de manhã** e os números deles
+> são os daquele momento. Todos foram fechados na tarde do mesmo dia (ver os
+> ✅ na lista acima) — ficam aqui porque o raciocínio continua valendo, e
+> porque apagar o diagnóstico depois de resolver faz o próximo caso parecer
+> inédito.
 
 - **Anexos.** O espelho de 1 minuto é **entre os nós** (banco1 ↔ banco2), para
   o nó que não recebeu o byte não responder 500. Ele **não traz nada da
@@ -1492,7 +1830,12 @@ seção 1.11 descreve — **uma cópia feita num dia e tratada como se fosse viv
   e o cluster passa a ser a produção. Isto é o item mais fácil de esquecer e o
   mais caro de esquecer.
 
-**Decisões ainda abertas:** a noite do Marco B, o `synchronous_mode_strict`
-(recomendação: continuar desligado) e a alta disponibilidade do **endereço
-HTTP** — hoje o banco troca de líder sozinho, mas `api.grpnascimento.com.br`
-resolve só para o banco1, então o nó que cai inteiro leva o ERP com ele.
+**Decisões ainda abertas:** a noite do Marco B e o `synchronous_mode_strict`
+(recomendação: continuar desligado — a seção 1.18 explica por quê, com um caso
+concreto).
+
+~~a alta disponibilidade do **endereço HTTP**~~ — **fechada em 15/10** (seção
+1.14): o banco2 serve o mesmo endereço, com o mesmo certificado, e a renovação
+dele deixou de ser manual em 16/10 (`espelhar-cert.sh`). Falta só publicar o
+segundo registro A no registro.br, que é passo de 2 minutos e não depende de
+mais nada nosso.

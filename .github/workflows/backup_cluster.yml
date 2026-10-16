@@ -132,3 +132,75 @@ jobs:
             -H "Authorization: Bot $DISCORD_TOKEN" -H "Content-Type: application/json" \
             -d "{\"content\":\"**Backup do cluster FALHOU** - ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}" \
             > /dev/null
+
+  # ==========================================================================
+  #  VIGIA DO CERTIFICADO
+  #
+  #  POR QUE ESTA AQUI, NO WORKFLOW DE BACKUP
+  #  Porque e o unico workflow que roda todo dia e so fala com o cluster. E
+  #  porque o que ele vigia tem a mesma natureza do backup: uma coisa que
+  #  funciona sozinha por meses e, no dia em que para, ja parou.
+  #
+  #  O QUE PODE DAR ERRADO SEM ISTO
+  #  Quem emite o certificado e o banco1 (o Let's Encrypt valida batendo no
+  #  dominio, e com um registro A so ele nunca alcancaria o banco2). O banco2
+  #  serve uma COPIA, levada pelo `espelho-cert.timer`. Se esse timer falhar
+  #  -- tunel fora no horario, Caddy do banco1 sem renovar, rsync recusado --
+  #  nada quebra no dia: o banco2 continua servindo o certificado velho, que
+  #  ainda e valido. Quebra quando ele vence, de uma vez, para metade dos
+  #  acessos, com os dois nos de pe e o banco intacto.
+  #
+  #  Daqui ele e visto de FORA, pelo mesmo caminho do navegador -- nao pelo
+  #  arquivo no disco, que pode estar certo com o Caddy servindo outro.
+  certificado:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Olhar o certificado dos dois nos
+        id: olhar
+        env:
+          B1: ${{ vars.CLUSTER_BACKUP_HOST || '216.238.120.171' }}
+          B2: ${{ vars.CLUSTER_BANCO2_HOST || '172.237.48.8' }}
+          DOMINIO: api.grpnascimento.com.br
+        run: |
+          set -uo pipefail
+          AVISO=""
+          declare -A FIM
+          for NO in "$B1" "$B2"; do
+            CRT=$(echo | timeout 25 openssl s_client -connect "$NO:443" \
+                    -servername "$DOMINIO" 2>/dev/null)
+            if [ -z "$CRT" ]; then
+              AVISO="$AVISO- o no \`$NO\` nao respondeu na 443.\n"
+              continue
+            fi
+            FIN=$(printf '%s' "$CRT" | openssl x509 -noout -fingerprint -sha256 2>/dev/null | cut -d= -f2)
+            ATE=$(printf '%s' "$CRT" | openssl x509 -noout -enddate 2>/dev/null | cut -d= -f2)
+            DIAS=$(( ( $(date -d "$ATE" +%s) - $(date +%s) ) / 86400 ))
+            FIM[$NO]="$FIN"
+            echo "$NO -> $DIAS dias, $ATE"
+            [ "$DIAS" -lt 21 ] && AVISO="$AVISO- \`$NO\` vence em **$DIAS dias** ($ATE).\n"
+          done
+          # Os dois servindo certificados diferentes = o espelho nao passou.
+          if [ -n "${FIM[$B1]:-}" ] && [ -n "${FIM[$B2]:-}" ] && [ "${FIM[$B1]}" != "${FIM[$B2]}" ]; then
+            AVISO="$AVISO- os dois nos servem certificados DIFERENTES: o espelho do banco2 nao passou (\`espelho-cert.timer\`).\n"
+          fi
+          if [ -n "$AVISO" ]; then
+            printf 'AVISO<<EOF\n%b\nEOF\n' "$AVISO" >> "$GITHUB_OUTPUT"
+            echo "::warning::certificado pedindo atencao"
+          fi
+
+      - name: Avisar o Eduardo por DM
+        if: steps.olhar.outputs.AVISO != ''
+        env:
+          DISCORD_TOKEN: ${{ secrets.DISCORD_TOKEN }}
+          TEXTO: ${{ steps.olhar.outputs.AVISO }}
+        run: |
+          [ -n "$DISCORD_TOKEN" ] || exit 0
+          CANAL=$(curl -s -X POST "https://discord.com/api/v10/users/@me/channels" \
+            -H "Authorization: Bot $DISCORD_TOKEN" -H "Content-Type: application/json" \
+            -d '{"recipient_id":"1384572666752663653"}' | jq -r '.id')
+          CORPO=$(jq -n --arg avisos "$TEXTO" '{content: ("**Certificado do cluster** (api.grpnascimento.com.br)\n" + $avisos + "\nConferir: `bash infra/ha/espelhar-cert.sh --conferir`")}')
+          curl -s -X POST "https://discord.com/api/v10/channels/$CANAL/messages" \
+            -H "Authorization: Bot $DISCORD_TOKEN" -H "Content-Type: application/json" \
+            -d "$CORPO" > /dev/null
+

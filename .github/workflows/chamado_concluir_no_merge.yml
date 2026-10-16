@@ -30,7 +30,11 @@ jobs:
           PR_TITLE: ${{ github.event.pull_request.title }}
           PR_URL: ${{ github.event.pull_request.html_url }}
           PR_AUTOR: ${{ github.event.pull_request.user.login }}
-          SUPABASE_FUNCTIONS_URL: https://fwmzeaztjxrxxzxzxmgc.supabase.co/functions/v1
+          # Um lugar so para a virada: criar a variavel de repositorio
+          # SUPABASE_FUNCTIONS_URL (Settings > Variables) apontando para
+          # https://api.grpnascimento.com.br/functions/v1 troca o CI de
+          # backend sem mexer em workflow. Sem ela, continua na Supabase.
+          SUPABASE_FUNCTIONS_URL: ${{ vars.SUPABASE_FUNCTIONS_URL || 'https://fwmzeaztjxrxxzxzxmgc.supabase.co/functions/v1' }}
           CHAMADOS_CI_SECRET: ${{ secrets.CHAMADOS_CI_SECRET }}
         run: |
           set -uo pipefail
