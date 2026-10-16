@@ -232,7 +232,7 @@ export default function LucratividadeContratos() {
               <TableHeader>
                 <TableRow>
                   <TableHead className={`${CAB} text-left sticky left-0 z-10 bg-background min-w-[150px]`}>Contrato / Cliente</TableHead>
-                  <TableHead className={CAB}><TituloComFormula titulo="Valor Exec. Planilha (R$)" formula="Valor executável do contrato no mês, segundo a planilha de custo vigente. Zero depois do fim do contrato." /></TableHead>
+                  <TableHead className={CAB}><TituloComFormula titulo="Valor Exec. Planilha (R$)" formula="Valor executável do contrato no mês, segundo a planilha de custo vigente (sem planilha, o Valor Executado Mensal do cadastro do contrato). Zero depois do fim do contrato." /></TableHead>
                   <TableHead className={CAB}><TituloComFormula titulo="Valor Bruto (R$)" formula="Soma do valor bruto das NFs Código N da competência (já validadas; fora de canceladas e substituídas)." /></TableHead>
                   <TableHead className={CAB}><TituloComFormula titulo="Valor Líquido (R$)" formula="Soma do valor líquido das mesmas NFs: o bruto depois dos descontos." /></TableHead>
                   <TableHead className={CAB}><TituloComFormula titulo="Desc. Contrato (R$)" formula="Valor Bruto − Valor Líquido: o que foi descontado nas notas da competência." /></TableHead>

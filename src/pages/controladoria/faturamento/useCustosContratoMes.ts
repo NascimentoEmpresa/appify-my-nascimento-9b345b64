@@ -28,7 +28,7 @@ async function buscarView(view: string, ordem: string[], de: string, ate: string
   for (let pagina = 0; ; pagina++) {
     let q = (supabase as any)
       .from(view)
-      .select("tipo, data_pagamento, contrato_id, classificacao_id, classificacao_nome, valor")
+      .select("tipo, data_pagamento, contrato_id, classificacao_id, classificacao_nome, valor, id_malote, descricao")
       .eq("tipo", "saida")
       .not("contrato_id", "is", null)
       .gte("data_pagamento", de)
