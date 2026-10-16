@@ -5,7 +5,7 @@ import { useMeuNome } from "@/hooks/useMeuNome";
 import { usePermissoes } from "@/context/PermissoesContext";
 import {
   BUCKET_ANEXOS, MENU_PUBLICAR, MENU_QUADRO, TABELA, TABELA_ALVO, TABELA_CIENCIA,
-  animacaoDe, bloqueantesDe, botoesDoAviso, pendentesDe, posicaoImagemDe, tamanhoImagemDe,
+  animacaoDe, bloqueantesDe, corCabecalhoDe, iconeCabecalhoDe, botoesDoAviso, pendentesDe, posicaoImagemDe, tamanhoImagemDe,
   type AlvoNotificacao, type CienciaNotificacao, type Escolha,
   type FormNotificacao, type Notificacao,
 } from "@/lib/notificacoes";
@@ -195,6 +195,9 @@ export function useNotificacoes() {
         permitir_anonimo: f.permitir_comentarios && f.permitir_anonimo,
         // "" (nenhuma) vai como NULL — o mesmo de aviso antigo.
         animacao: animacaoDe(f.animacao) || null,
+        // Cabeçalho (16/10/2026): "" (amarelo / "!") vai como NULL, igual aviso antigo.
+        cabecalho_cor: corCabecalhoDe(f.cabecalho_cor).valor || null,
+        cabecalho_icone: iconeCabecalhoDe(f.cabecalho_icone) || null,
         exigir_ciencia: f.exigir_ciencia,
         // publico_alvo saiu na 081: a verdade é a tabela de alvos, e ter as
         // duas era duas fontes para a mesma pergunta.

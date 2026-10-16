@@ -91,20 +91,28 @@ export function posicaoImagemDe(v: unknown): PosicaoImagem {
 }
 
 /**
- * Na imagem ao lado, o tamanho escolhido vira a LARGURA da coluna da imagem
- * (a altura já é a da janela). No celular a coluna é a tela toda e empilha.
+ * A altura da imagem ao lado do texto, como valor CSS.
+ *
+ * O tamanho escolhido é o TETO; o chão é a tela: 100dvh menos o que a janela
+ * gasta fora da imagem (margem, cabeçalho, rodapé com o botão, os avisos de
+ * rodapé e a linha do "ver em tamanho real") — assim a imagem nunca empurra o
+ * botão para fora num notebook de 768 px. A prévia tem a faixa azul no topo.
+ *
+ * A LARGURA da coluna sai da proporção do arquivo (altura × largura/altura),
+ * medida quando ele carrega — ver PainelImagemAviso. Antes (16/10/2026, print
+ * do Pablo) a coluna tinha largura fixa e sobrava faixa cinza dos lados.
  */
-export function larguraColunaImagem(t: TamanhoImagem): string {
-  switch (t) {
-    case "pequena": return "sm:w-2/5";
-    case "grande": return "sm:w-3/5";
-    case "total": return "sm:w-2/3";
-    default: return "sm:w-1/2";
-  }
+export function alturaImagemLado(t: TamanhoImagem, previa = false): string {
+  const teto = { pequena: "20rem", media: "28rem", "": "34rem", grande: "40rem", total: "48rem" }[t];
+  return `min(${teto}, calc(100dvh - ${previa ? "22.5rem" : "19.5rem"}))`;
 }
 
-/** A caixa da imagem ao lado: alta, mas presa à altura da tela (sem rolar no notebook). */
-export const CAIXA_IMAGEM_LADO = "h-[36vh] w-full sm:h-[min(36rem,60vh)]";
+/** Largura da coluna da imagem: a proporção da imagem, entre 15rem e 58% da janela. */
+export function larguraColunaImagem(altura: string, proporcao: number | null | undefined): string {
+  if (!proporcao || !isFinite(proporcao) || proporcao <= 0) return "45%";
+  // + 1.5rem = o respiro (p-3) dos dois lados da imagem.
+  return `clamp(15rem, calc(${altura} * ${proporcao.toFixed(4)} + 1.5rem), 58%)`;
+}
 
 /**
  * A caixa de cada imagem. O padrão continua `aspect-video`: altura reservada
@@ -127,7 +135,9 @@ export function classeCaixaImagem(t: TamanhoImagem): string {
 /** A largura do modal: imagem grande num modal estreito continuaria pequena. */
 export function larguraJanelaAviso(t: TamanhoImagem, posicao: PosicaoImagem = "cima"): string {
   // Lado a lado precisa de largura para as duas colunas.
-  if (posicao === "lado") return t === "grande" || t === "total" ? "max-w-5xl" : "max-w-4xl";
+  // Tela grande (≥1600 px) ganha mais largura: a coluna da imagem é limitada
+  // a 58% da janela, e o cartaz quadrado ficava menor que a altura permitia.
+  if (posicao === "lado") return t === "grande" || t === "total" ? "max-w-5xl min-[1600px]:max-w-6xl" : "max-w-4xl min-[1600px]:max-w-5xl";
   if (t === "total") return "max-w-3xl";
   if (t === "grande") return "max-w-2xl";
   return "max-w-lg";
@@ -182,6 +192,54 @@ export function animacaoDe(v: unknown): Animacao {
   return ANIMACOES.some((a) => a.valor === v) ? (v as Animacao) : "";
 }
 
+/**
+ * A cor do cabeçalho do aviso (16/10/2026, Pablo: "deixa customizar essa cor e
+ * ícone aqui de cima também onde tá amarelo"). "" = amarelo, o de sempre — é
+ * o que aviso antigo (coluna NULL) recebe. Ver a migration 20261016000011.
+ *
+ * Classes inteiras escritas aqui (o Tailwind só gera o que lê no código):
+ *   faixa     tom claro no tema claro, tom escuro translúcido no escuro — o
+ *             título continua em text-foreground e mantém o contraste;
+ *   quadrado  tom forte (600) com ícone branco; o amarelo segue no 500 de
+ *             antes para o aviso antigo não mudar de cara.
+ */
+export const CORES_CABECALHO = [
+  { valor: "", rotulo: "Amarelo", faixa: "bg-amber-50 dark:bg-amber-950/30", quadrado: "bg-amber-500 text-white" },
+  { valor: "azul", rotulo: "Azul", faixa: "bg-blue-50 dark:bg-blue-950/40", quadrado: "bg-blue-600 text-white" },
+  { valor: "verde", rotulo: "Verde", faixa: "bg-emerald-50 dark:bg-emerald-950/40", quadrado: "bg-emerald-600 text-white" },
+  { valor: "vermelho", rotulo: "Vermelho", faixa: "bg-red-50 dark:bg-red-950/40", quadrado: "bg-red-600 text-white" },
+  { valor: "roxo", rotulo: "Roxo", faixa: "bg-violet-50 dark:bg-violet-950/40", quadrado: "bg-violet-600 text-white" },
+  { valor: "rosa", rotulo: "Rosa", faixa: "bg-pink-50 dark:bg-pink-950/40", quadrado: "bg-pink-600 text-white" },
+  { valor: "cinza", rotulo: "Cinza", faixa: "bg-slate-100 dark:bg-slate-800/60", quadrado: "bg-slate-600 text-white" },
+  { valor: "laranja", rotulo: "Laranja", faixa: "bg-orange-50 dark:bg-orange-950/40", quadrado: "bg-orange-600 text-white" },
+] as const;
+export type CorCabecalho = (typeof CORES_CABECALHO)[number]["valor"];
+
+export function corCabecalhoDe(v: unknown): (typeof CORES_CABECALHO)[number] {
+  return CORES_CABECALHO.find((c) => c.valor === v && v !== "") ?? CORES_CABECALHO[0];
+}
+
+/** Os ícones do cabeçalho. "" = o "!" de sempre. O desenho de cada um fica em IconeCabecalho. */
+export const ICONES_CABECALHO = [
+  { valor: "", rotulo: "Alerta" },
+  { valor: "megafone", rotulo: "Megafone" },
+  { valor: "festa", rotulo: "Festa" },
+  { valor: "trofeu", rotulo: "Troféu" },
+  { valor: "coracao", rotulo: "Coração" },
+  { valor: "estrela", rotulo: "Estrela" },
+  { valor: "calendario", rotulo: "Calendário" },
+  { valor: "info", rotulo: "Informação" },
+  { valor: "escudo", rotulo: "Escudo" },
+  { valor: "presente", rotulo: "Presente" },
+  { valor: "bolo", rotulo: "Bolo" },
+  { valor: "sino", rotulo: "Sino" },
+] as const;
+export type IconeCabecalho = (typeof ICONES_CABECALHO)[number]["valor"];
+
+export function iconeCabecalhoDe(v: unknown): IconeCabecalho {
+  return ICONES_CABECALHO.some((i) => i.valor === v) ? (v as IconeCabecalho) : "";
+}
+
 /** Um link clicável do aviso, com o nome que quem escreveu escolheu. */
 export interface LinkDoAviso { rotulo: string; url: string }
 
@@ -216,6 +274,9 @@ export interface Notificacao {
   botoes?: BotaoDoAviso[] | null;
   /** Animação ao abrir (16/10/2026). NULL = nenhuma. */
   animacao?: string | null;
+  /** Cor e ícone do cabeçalho (16/10/2026). NULL = amarelo com "!". */
+  cabecalho_cor?: string | null;
+  cabecalho_icone?: string | null;
   /** Quem recebeu pode comentar e reagir (16/10/2026). */
   permitir_comentarios?: boolean | null;
   /** O comentário pode ir sem nome — o autor não é gravado. */
@@ -296,6 +357,9 @@ export interface FormNotificacao {
   permitir_anonimo: boolean;
   /** "" = nenhuma. */
   animacao: Animacao;
+  /** "" = amarelo / "!" — o cabeçalho de sempre. */
+  cabecalho_cor: CorCabecalho;
+  cabecalho_icone: IconeCabecalho;
   /** Setores que recebem o aviso. Vazio + sem pessoas = todo mundo. */
   setores: string[];
   /** Pessoas que recebem, por id do profile. */
@@ -309,7 +373,7 @@ export interface FormNotificacao {
 export const FORM_VAZIO: FormNotificacao = {
   titulo: "", mensagem: "", publicado: true, categoria: "Comunicado", resumo: "",
   expira_em: "", anexo_url: "", anexo_nome: "", imagens: [], imagens_layout: "carrossel", imagens_tamanho: "", imagens_posicao: "lado", links: [], botoes: [],
-  permitir_comentarios: false, permitir_anonimo: false, animacao: "",
+  permitir_comentarios: false, permitir_anonimo: false, animacao: "", cabecalho_cor: "", cabecalho_icone: "",
   setores: [], usuarios: [],
   exigir_ciencia: true, bloquear_acesso: true, permitir_escolha: true,
 };
@@ -358,6 +422,8 @@ export function formDoAviso(
     permitir_comentarios: !!n.permitir_comentarios,
     permitir_anonimo: !!n.permitir_comentarios && !!n.permitir_anonimo,
     animacao: animacaoDe(n.animacao),
+    cabecalho_cor: corCabecalhoDe(n.cabecalho_cor).valor,
+    cabecalho_icone: iconeCabecalhoDe(n.cabecalho_icone),
     setores: meus.filter((a) => a.setor).map((a) => a.setor as string),
     usuarios: meus.filter((a) => a.user_id).map((a) => a.user_id as string),
     exigir_ciencia: n.exigir_ciencia,
@@ -395,6 +461,8 @@ export function avisoDoFormulario(f: FormNotificacao, autor: string | null, agor
     permitir_comentarios: f.permitir_comentarios,
     permitir_anonimo: f.permitir_comentarios && f.permitir_anonimo,
     animacao: f.animacao || null,
+    cabecalho_cor: f.cabecalho_cor || null,
+    cabecalho_icone: f.cabecalho_icone || null,
     exigir_ciencia: f.exigir_ciencia,
     bloquear_acesso: f.exigir_ciencia && f.bloquear_acesso,
     permitir_escolha: f.permitir_escolha,

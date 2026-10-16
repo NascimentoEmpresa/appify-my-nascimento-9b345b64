@@ -191,6 +191,7 @@ import Contabilidade from "./pages/Contabilidade";
 import Colaboradores from "./pages/rh/Colaboradores";
 import AtivosContratos from "./pages/rh/AtivosContratos";
 import HierarquiaPostos from "./pages/rh/HierarquiaPostos";
+import RateioDespesas from "./pages/rh/RateioDespesas";
 import GestaoPonto from "./pages/rh/GestaoPonto";
 import Recrutamento from "./pages/rh/Recrutamento";
 import Patrimonios from "./pages/juridico/Patrimonios";
@@ -852,6 +853,8 @@ const App = () => (
             <Route path="rh/ativos-contratos" element={<AtivosContratos />} />
             {/* Hierarquia de postos da Senior (mig 20261007000024). */}
             <Route path="rh/hierarquia-postos" element={<HierarquiaPostos />} />
+            {/* Rateio de Despesas (mig 20261016000010, SIS-2026-0673): Jus Brasil, Senior e despesas lidas do PDF, por contrato. */}
+            <Route path="rh/rateio-despesas" element={<RateioDespesas />} />
             {/* Gestão de Ponto (branch local gestaoponto, mig 20261007000001): marcações da Senior por colaborador. */}
             <Route path="rh/gestao-ponto" element={<GestaoPonto />} />
             {/* RH > Hierarquia removido (jul/2026) — feature descontinuada. A tabela

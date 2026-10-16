@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   FORM_VAZIO, avisoDoFormulario, botoesDoAviso, classeCaixaImagem, contagemPorBotao, erroDoFormulario,
-  formDoAviso, larguraColunaImagem, larguraJanelaAviso, posicaoImagemDe, respostaDe,
+  formDoAviso, alturaImagemLado, larguraColunaImagem, larguraJanelaAviso, posicaoImagemDe, respostaDe,
   tamanhoImagemDe, type Notificacao,
 } from "@/lib/notificacoes";
 
@@ -113,11 +113,24 @@ describe("posição da imagem", () => {
     expect(formDoAviso({ ...a, id: 2, imagens_posicao: null } as Notificacao).imagens_posicao).toBe("cima");
   });
 
-  it("ao lado, a janela alarga e o tamanho vira a largura da coluna da imagem", () => {
-    expect(larguraJanelaAviso("", "lado")).toBe("max-w-4xl");
-    expect(larguraJanelaAviso("grande", "lado")).toBe("max-w-5xl");
+  it("ao lado, a janela alarga; o tamanho é o teto da altura e a tela é o chão", () => {
+    expect(larguraJanelaAviso("", "lado")).toContain("max-w-4xl");
+    expect(larguraJanelaAviso("grande", "lado")).toContain("max-w-5xl");
     expect(larguraJanelaAviso("", "cima")).toBe("max-w-lg");
-    expect(larguraColunaImagem("pequena")).not.toBe(larguraColunaImagem("total"));
+    expect(alturaImagemLado("pequena")).toContain("20rem");
+    expect(alturaImagemLado("total")).toContain("48rem");
+    // Sempre presa à altura da tela; a prévia desconta a faixa do topo.
+    expect(alturaImagemLado("")).toContain("100dvh - 19.5rem");
+    expect(alturaImagemLado("", true)).toContain("100dvh - 22.5rem");
+  });
+
+  // Print do Pablo (16/10/2026): cartaz quadrado com faixa cinza dos lados.
+  it("a coluna da imagem tem a largura da proporção da imagem, com limites", () => {
+    const h = alturaImagemLado("");
+    expect(larguraColunaImagem(h, null)).toBe("45%");
+    expect(larguraColunaImagem(h, 1)).toBe(`clamp(15rem, calc(${h} * 1.0000 + 1.5rem), 58%)`);
+    expect(larguraColunaImagem(h, 0.8)).toContain("* 0.8000");
+    expect(larguraColunaImagem(h, Infinity)).toBe("45%");
   });
 
   it("toda caixa fixa tem a altura presa à tela (vh), para caber no notebook", () => {
