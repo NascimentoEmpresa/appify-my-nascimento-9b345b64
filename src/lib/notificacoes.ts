@@ -127,6 +127,24 @@ export function varianteDoBotao(e: EstiloBotao): "default" | "outline" | "destru
   return e === "contorno" ? "outline" : e === "perigo" ? "destructive" : "default";
 }
 
+/**
+ * A animação comemorativa ao abrir o aviso (16/10/2026, pedido do Pablo:
+ * "confetes, estrelas, etc. quando for algo a comemorar"). "" = nenhuma, que
+ * é o que aviso antigo (coluna NULL) recebe. Ver a migration 20261016000005.
+ */
+export const ANIMACOES = [
+  { valor: "", rotulo: "Nenhuma" },
+  { valor: "confetes", rotulo: "🎊 Confetes" },
+  { valor: "estrelas", rotulo: "⭐ Estrelas" },
+  { valor: "coracoes", rotulo: "❤️ Corações" },
+  { valor: "fogos", rotulo: "🎆 Fogos" },
+] as const;
+export type Animacao = (typeof ANIMACOES)[number]["valor"];
+
+export function animacaoDe(v: unknown): Animacao {
+  return ANIMACOES.some((a) => a.valor === v) ? (v as Animacao) : "";
+}
+
 /** Um link clicável do aviso, com o nome que quem escreveu escolheu. */
 export interface LinkDoAviso { rotulo: string; url: string }
 
@@ -157,6 +175,8 @@ export interface Notificacao {
   links?: LinkDoAviso[] | null;
   /** Botões de resposta próprios (16/10/2026). Vazio = permitir_escolha decide. */
   botoes?: BotaoDoAviso[] | null;
+  /** Animação ao abrir (16/10/2026). NULL = nenhuma. */
+  animacao?: string | null;
   /** Quem recebeu pode comentar e reagir (16/10/2026). */
   permitir_comentarios?: boolean | null;
   /** O comentário pode ir sem nome — o autor não é gravado. */
@@ -233,6 +253,8 @@ export interface FormNotificacao {
   botoes: BotaoDoAviso[];
   permitir_comentarios: boolean;
   permitir_anonimo: boolean;
+  /** "" = nenhuma. */
+  animacao: Animacao;
   /** Setores que recebem o aviso. Vazio + sem pessoas = todo mundo. */
   setores: string[];
   /** Pessoas que recebem, por id do profile. */
@@ -246,7 +268,7 @@ export interface FormNotificacao {
 export const FORM_VAZIO: FormNotificacao = {
   titulo: "", mensagem: "", publicado: true, categoria: "Comunicado", resumo: "",
   expira_em: "", anexo_url: "", anexo_nome: "", imagens: [], imagens_layout: "carrossel", imagens_tamanho: "", links: [], botoes: [],
-  permitir_comentarios: false, permitir_anonimo: false,
+  permitir_comentarios: false, permitir_anonimo: false, animacao: "",
   setores: [], usuarios: [],
   exigir_ciencia: true, bloquear_acesso: true, permitir_escolha: true,
 };
@@ -293,6 +315,7 @@ export function formDoAviso(
     botoes: botoesDoAviso(n),
     permitir_comentarios: !!n.permitir_comentarios,
     permitir_anonimo: !!n.permitir_comentarios && !!n.permitir_anonimo,
+    animacao: animacaoDe(n.animacao),
     setores: meus.filter((a) => a.setor).map((a) => a.setor as string),
     usuarios: meus.filter((a) => a.user_id).map((a) => a.user_id as string),
     exigir_ciencia: n.exigir_ciencia,
@@ -328,6 +351,7 @@ export function avisoDoFormulario(f: FormNotificacao, autor: string | null, agor
     botoes: botoesDoAviso(f),
     permitir_comentarios: f.permitir_comentarios,
     permitir_anonimo: f.permitir_comentarios && f.permitir_anonimo,
+    animacao: f.animacao || null,
     exigir_ciencia: f.exigir_ciencia,
     bloquear_acesso: f.exigir_ciencia && f.bloquear_acesso,
     permitir_escolha: f.permitir_escolha,

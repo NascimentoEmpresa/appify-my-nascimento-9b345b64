@@ -5,7 +5,7 @@ import { useMeuNome } from "@/hooks/useMeuNome";
 import { usePermissoes } from "@/context/PermissoesContext";
 import {
   BUCKET_ANEXOS, MENU_PUBLICAR, MENU_QUADRO, TABELA, TABELA_ALVO, TABELA_CIENCIA,
-  bloqueantesDe, botoesDoAviso, pendentesDe, tamanhoImagemDe,
+  animacaoDe, bloqueantesDe, botoesDoAviso, pendentesDe, tamanhoImagemDe,
   type AlvoNotificacao, type CienciaNotificacao, type Escolha,
   type FormNotificacao, type Notificacao,
 } from "@/lib/notificacoes";
@@ -192,6 +192,8 @@ export function useNotificacoes() {
         // Comentários (16/10/2026). Anônimo só vale com comentários ligados.
         permitir_comentarios: f.permitir_comentarios,
         permitir_anonimo: f.permitir_comentarios && f.permitir_anonimo,
+        // "" (nenhuma) vai como NULL — o mesmo de aviso antigo.
+        animacao: animacaoDe(f.animacao) || null,
         exigir_ciencia: f.exigir_ciencia,
         // publico_alvo saiu na 081: a verdade é a tabela de alvos, e ter as
         // duas era duas fontes para a mesma pergunta.

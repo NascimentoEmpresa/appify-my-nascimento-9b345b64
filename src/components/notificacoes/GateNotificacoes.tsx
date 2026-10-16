@@ -3,10 +3,11 @@ import { AlertCircle, Loader2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ConteudoAviso } from "@/components/notificacoes/ConteudoAviso";
 import { ComentariosAviso } from "@/components/notificacoes/ComentariosAviso";
+import { AnimacaoAviso } from "@/components/notificacoes/AnimacaoAviso";
 import { useNotificacoes } from "@/hooks/useNotificacoes";
 import { cn } from "@/lib/utils";
 import {
-  botoesDoAviso, fmtDataHora, larguraJanelaAviso, tamanhoImagemDe, varianteDoBotao,
+  animacaoDe, botoesDoAviso, fmtDataHora, larguraJanelaAviso, tamanhoImagemDe, varianteDoBotao,
   type Escolha, type Notificacao,
 } from "@/lib/notificacoes";
 import { toast } from "sonner";
@@ -105,6 +106,9 @@ export function JanelaAviso({ aviso, enviando = null, onEscolher, onAdiar, resta
       aria-modal="true"
       aria-labelledby="notificacao-titulo"
     >
+      {/* Animação comemorativa (16/10/2026): toca ao abrir, e de novo a cada
+          aviso da fila (chave = id). A prévia mostra a mesma. */}
+      <AnimacaoAviso tipo={animacaoDe(aviso.animacao)} chave={aviso.id} />
       {previa && (
         <div className="absolute inset-x-0 top-0 flex items-center justify-center gap-3 bg-primary px-4 py-2 text-sm text-primary-foreground">
           <span>Pré-visualização — é assim que o colaborador vai ver. Nada é gravado.</span>

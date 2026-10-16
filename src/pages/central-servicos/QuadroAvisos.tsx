@@ -54,7 +54,7 @@ import { ConteudoAviso } from "@/components/notificacoes/ConteudoAviso";
 import { JanelaAviso } from "@/components/notificacoes/GateNotificacoes";
 import { ComentariosAviso } from "@/components/notificacoes/ComentariosAviso";
 import {
-  CATEGORIAS, ESTILOS_BOTAO, FORM_VAZIO, MAX_BOTOES, MAX_ROTULO_BOTAO, TAMANHOS_IMAGEM,
+  ANIMACOES, CATEGORIAS, ESTILOS_BOTAO, FORM_VAZIO, MAX_BOTOES, MAX_ROTULO_BOTAO, TAMANHOS_IMAGEM,
   botoesDoAviso, contagemPorBotao, respostaDe, varianteDoBotao, avisoDoFormulario, erroDoFormulario, estaVigente, fmtDataHora, formDoAviso,
   panoramaDe, respostasComNome, type CienciaNotificacao, type Escolha,
   type FormNotificacao, type Notificacao,
@@ -698,6 +698,23 @@ export default function QuadroAvisos() {
                 </div>
                 <p className="mt-1 text-xs text-muted-foreground">
                   O nome é o que a pessoa vê no botão (em branco vira “Link”). Endereço colado no meio do texto também fica clicável.
+                </p>
+              </div>
+
+              {/* Animação comemorativa (16/10/2026): toca quando o aviso abre
+                  para quem recebe. Confira no Pré-visualizar. */}
+              <div>
+                <Label>Animação ao abrir</Label>
+                <div className="mt-1 flex flex-wrap gap-2">
+                  {ANIMACOES.map((a) => (
+                    <button key={a.valor || "nenhuma"} type="button" onClick={() => setForm({ ...form, animacao: a.valor })}
+                      className={cn("rounded-md border px-3 py-1 text-xs font-medium", form.animacao === a.valor ? "border-primary bg-primary/10 text-primary" : "hover:bg-muted")}>
+                      {a.rotulo}
+                    </button>
+                  ))}
+                </div>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Para avisos de comemoração. Quem desligou animações no sistema operacional não vê.
                 </p>
               </div>
 
