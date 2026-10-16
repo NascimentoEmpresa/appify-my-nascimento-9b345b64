@@ -325,6 +325,66 @@ case "$ACAO" in
   ;;
 
 # ===========================================================================
+--derivados)
+  # Duas das "16 presas na Supabase" nao precisam de console nenhum, e so
+  # descobrimos isso lendo o codigo:
+  #
+  # DISCORD_REDIRECT_URIS -- nao e um segredo, e a LISTA BRANCA das URLs de
+  #   retorno que a function aceita. Quem manda o `redirect_uri` e o navegador,
+  #   e `useVinculoDiscord.ts` o monta como `origin + /app/meu-perfil/discord`.
+  #   Entao o valor correto se escreve a partir do codigo; nao ha o que
+  #   "encontrar" no painel do Discord. (Ele tambem precisa estar registrado
+  #   no app do Discord, em OAuth2 > Redirects -- mas isso e conferir, nao
+  #   copiar.)
+  #
+  # WHATSAPP_VERIFY_TOKEN -- e uma senha que NOS INVENTAMOS e repetimos no
+  #   painel da Meta. Nao existe em lugar nenhum para ser achada. Ter listado
+  #   ela junto das outras, em "onde obter", foi erro meu.
+  echo "== DISCORD_REDIRECT_URIS (montado do codigo, nao copiado de painel)"
+  CAMINHO=$(grep -m1 'DISCORD_REDIRECT_PATH *=' "$RAIZ/src/hooks/useVinculoDiscord.ts" \
+            | sed -E 's/.*"([^"]+)".*/\1/')
+  [ -n "$CAMINHO" ] || { echo "nao achei DISCORD_REDIRECT_PATH no codigo" >&2; exit 1; }
+  URIS="https://app.grpnascimento.com.br$CAMINHO,https://appify-my-nascimento.lovable.app$CAMINHO"
+  echo "   $URIS"
+
+  for NO in "$BANCO1" "$BANCO2"; do
+    em "$NO" "umask 077; touch $ARQ_NO
+      sed -i '/^DISCORD_REDIRECT_URIS=/d' $ARQ_NO
+      printf 'DISCORD_REDIRECT_URIS=%s\n' '$URIS' >> $ARQ_NO
+      chmod 600 $ARQ_NO" || exit 1
+  done
+  echo "   gravado nos dois nos"
+
+  echo
+  echo "== WHATSAPP_VERIFY_TOKEN (gerado; nao existe para ser 'encontrado')"
+  em "$BANCO1" "
+    set -e
+    grep -q '^WHATSAPP_VERIFY_TOKEN=' $ARQ_NO && { echo '   ja existe, mantido'; exit 0; }
+    umask 077
+    printf 'WHATSAPP_VERIFY_TOKEN=%s\n' \"nascimento-\$(openssl rand -hex 12)\" >> $ARQ_NO
+    chmod 600 $ARQ_NO
+    echo '   gerado no banco1'
+  " || exit 1
+  LINHA=$(em "$BANCO1" "grep -m1 '^WHATSAPP_VERIFY_TOKEN=' $ARQ_NO")
+  printf '%s\n' "$LINHA" | ssh -p "$PORTA_SSH" -o BatchMode=yes "root@$BANCO2" \
+    "umask 077; touch $ARQ_NO; sed -i '/^WHATSAPP_VERIFY_TOKEN=/d' $ARQ_NO
+     cat >> $ARQ_NO; chmod 600 $ARQ_NO; echo '   copiado para o banco2'" || exit 1
+
+  echo
+  echo "== recriando o runtime"
+  for NO in "$BANCO1" "$BANCO2"; do
+    em "$NO" "cd /opt/erp/infra/failover && docker compose -f docker-compose.cluster.yml --env-file .env up -d functions >/dev/null 2>&1; sleep 4; docker exec erp-pilha-functions-1 env 2>/dev/null | grep -c '^[A-Z]'" \
+      | sed "s/^/   $NO: /;s/\$/ variaveis/"
+  done
+  echo
+  echo "O verify token NAO e segredo de verdade: ele so prova a Meta que o"
+  echo "webhook e nosso. Na virada, ele vai no painel da Meta junto com a URL"
+  echo "nova. Para ver o valor na hora (ele nao aparece aqui):"
+  echo
+  echo "   ssh -p $PORTA_SSH root@$BANCO1 \"grep '^WHATSAPP_VERIFY_TOKEN=' $ARQ_NO | cut -d= -f2-\""
+  ;;
+
+# ===========================================================================
 --girar-ci-secret)
   # CHAMADOS_CI_SECRET e a senha combinada entre o CI do GitHub e as functions
   # `chamado-info` / `chamado-concluir-pr`. Ela nao da para recuperar da
