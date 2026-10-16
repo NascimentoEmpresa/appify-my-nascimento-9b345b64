@@ -195,7 +195,8 @@ functions. Nada é gravado nesta máquina e nenhum valor aparece na tela.
 
 ## 4. Qual parte é minha — **cinco dos seis, feitos**
 
-Atualizado às 12h50. Eu esperava ser bloqueado em todos (como no
+Atualizado às 09h40 de Porto Alegre (12h40 UTC -- os horários dos timers e
+dos arquivos nos nós estão todos em UTC, três horas à frente). Eu esperava ser bloqueado em todos (como no
 `testar-failover.sh`); o bloqueio foi só no último.
 
 ```
@@ -258,7 +259,7 @@ functions nos dois nós     chamado-info 401, tvg-ia 405
 VOCE   1. registro.br: acrescentar  A  api  172.237.48.8          2 min
 VOCE   2. recuperar os 16 segredos nos 5 consoles                 ~20 min
 VOCE   3. bash infra/ha/reboot-controlado.sh --rodar              ~6 min
-✅ EU  4. os outros cinco comandos, feitos e provados             12h50
+✅ EU  4. os outros cinco comandos, feitos e provados             09h40
 ```
 
 **São duas coisas suas de verdade** (o registro.br e os 16 segredos) **mais o
