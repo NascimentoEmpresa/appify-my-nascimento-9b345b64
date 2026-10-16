@@ -12,6 +12,8 @@
 //   exigir_ciencia   — a pessoa precisa confirmar que leu?
 //   bloquear_acesso  — enquanto não responder, fica presa no aviso?
 //   permitir_escolha — CONCORDO/DISCORDO, ou só "Estou ciente"?
+//   botoes           — (16/10/2026) ou botões com o texto que quem publica
+//                      quiser; preenchido, vence permitir_escolha.
 //
 //   Vinham grudadas ("apareceu, tem que responder"), e é justamente a
 //   distinção que o pedido trouxe: comunicado de recesso quer ciência sem
@@ -49,8 +51,12 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { useNotificacoes } from "@/hooks/useNotificacoes";
 import { ConteudoAviso } from "@/components/notificacoes/ConteudoAviso";
+import { JanelaAviso } from "@/components/notificacoes/GateNotificacoes";
+import { ComentariosAviso } from "@/components/notificacoes/ComentariosAviso";
+import { IconeCabecalho } from "@/components/notificacoes/IconeCabecalho";
 import {
-  CATEGORIAS, FORM_VAZIO, erroDoFormulario, estaVigente, fmtDataHora, formDoAviso,
+  ANIMACOES, CATEGORIAS, CORES_CABECALHO, ICONES_CABECALHO, corCabecalhoDe, ESTILOS_BOTAO, FORM_VAZIO, MAX_BOTOES, MAX_ROTULO_BOTAO, POSICOES_IMAGEM, TAMANHOS_IMAGEM,
+  botoesDoAviso, contagemPorBotao, respostaDe, varianteDoBotao, avisoDoFormulario, erroDoFormulario, estaVigente, fmtDataHora, formDoAviso,
   panoramaDe, respostasComNome, type CienciaNotificacao, type Escolha,
   type FormNotificacao, type Notificacao,
 } from "@/lib/notificacoes";
@@ -72,14 +78,29 @@ export default function QuadroAvisos() {
   const {
     notificacoes, historico, alvos, setores, pessoas, pessoasPorSetor, carregando,
     podeVerQuadro, podeCriar, podeEditar, podeExcluir,
-    salvar, excluir, subirAnexo,
+    salvar, excluir, subirAnexo, meuNome,
   } = useNotificacoes();
 
   const [aba, setAba] = useState<Aba>("todos");
   const [busca, setBusca] = useState("");
   const [categoria, setCategoria] = useState("todas");
   const [form, setForm] = useState<FormNotificacao | null>(null);
+  /**
+   * Pré-visualizando o formulário (16/10/2026). O Dialog de edição fecha
+   * enquanto isso — o `form` continua em estado, nada se perde — porque o
+   * Dialog do Radix trava clique e foco fora dele, e a prévia é a mesma
+   * janela do gate, que mora fora do Dialog.
+   */
+  const [prevendo, setPrevendo] = useState(false);
+  /** As regras e respostas do aviso (o Dialog de quem publica). */
   const [vendo, setVendo] = useState<Notificacao | null>(null);
+  /**
+   * O aviso aberto como o colaborador vê (16/10/2026). Era um Dialog estreito
+   * com a imagem miúda e sem animação — "tem que aparecer exatamente como vai
+   * aparecer quando for publicado". Agora é a JanelaAviso, a mesma do gate e
+   * do Pré-visualizar; regras e respostas ficam num bloco à parte.
+   */
+  const [olhando, setOlhando] = useState<Notificacao | null>(null);
   const [apagando, setApagando] = useState<Notificacao | null>(null);
   const [subindo, setSubindo] = useState(false);
   // URL de imagem digitada (entra na lista com Enter) — 21/09/2026.
@@ -91,7 +112,8 @@ export default function QuadroAvisos() {
    * com o filtro do aviso anterior mostraria a lista certa sob o título errado.
    */
   const [verDetalhes, setVerDetalhes] = useState(false);
-  const [filtroEscolha, setFiltroEscolha] = useState<Escolha | "todas">("todas");
+  /** Escolha (CONCORDO…) ou, em aviso com botões próprios, o texto do botão. */
+  const [filtroEscolha, setFiltroEscolha] = useState<string>("todas");
 
   /** Respostas agrupadas por aviso — alimenta a contagem da lista. */
   const porAviso = useMemo(() => {
@@ -216,8 +238,14 @@ export default function QuadroAvisos() {
 
   /** Abrir um aviso sempre começa com o painel de respostas fechado. */
   const abrirVisualizar = (n: Notificacao) => {
+    setOlhando(n);
+  };
+
+  /** Das regras e respostas — o painel de respostas sempre começa fechado. */
+  const abrirRespostas = (n: Notificacao) => {
     setVerDetalhes(false);
     setFiltroEscolha("todas");
+    setOlhando(null);
     setVendo(n);
   };
 
@@ -396,7 +424,7 @@ export default function QuadroAvisos() {
       </Card>
 
       {/* ── Criar / editar ─────────────────────────────────────────── */}
-      <Dialog open={!!form} onOpenChange={(o) => !o && setForm(null)}>
+      <Dialog open={!!form && !prevendo} onOpenChange={(o) => !o && setForm(null)}>
         <DialogContent className="max-h-[90vh] max-w-2xl overflow-y-auto">
           <DialogHeader>
             <DialogTitle>{form?.id ? "Editar aviso" : "Criar aviso"}</DialogTitle>
@@ -645,6 +673,34 @@ export default function QuadroAvisos() {
                     ))}
                   </div>
                 )}
+                {/* Tamanho no aviso (16/10/2026): cartaz quadrado na caixa
+                    16:9 padrão saía pequeno. Confira no Pré-visualizar. */}
+                {/* Layout (16/10/2026): imagem inteira à esquerda e texto à
+                    direita cabe no notebook sem rolar; aviso novo nasce assim. */}
+                {form.imagens.length > 0 && (
+                  <div className="mt-2 flex flex-wrap items-center gap-2 text-sm">
+                    <span className="text-muted-foreground">Layout:</span>
+                    {POSICOES_IMAGEM.map((p) => (
+                      <button key={p.valor} type="button" onClick={() => setForm({ ...form, imagens_posicao: p.valor })}
+                        className={cn("rounded-md border px-3 py-1 text-xs font-medium", form.imagens_posicao === p.valor ? "border-primary bg-primary/10 text-primary" : "hover:bg-muted")}>
+                        {p.rotulo}
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {form.imagens.length > 0 && (
+                  <div className="mt-2 flex flex-wrap items-center gap-2 text-sm">
+                    <span className="text-muted-foreground">
+                      {form.imagens_posicao === "lado" ? "Largura da imagem:" : "Tamanho no aviso:"}
+                    </span>
+                    {TAMANHOS_IMAGEM.map((t) => (
+                      <button key={t.valor || "padrao"} type="button" onClick={() => setForm({ ...form, imagens_tamanho: t.valor })}
+                        className={cn("rounded-md border px-3 py-1 text-xs font-medium", form.imagens_tamanho === t.valor ? "border-primary bg-primary/10 text-primary" : "hover:bg-muted")}>
+                        {t.rotulo}
+                      </button>
+                    ))}
+                  </div>
+                )}
                 <p className="mt-1 text-xs text-muted-foreground">
                   PNG, JPG, WEBP ou GIF, até 5 MB cada, até 10 imagens. Aparecem dentro do aviso, acima do texto; a primeira é a capa da lista.
                 </p>
@@ -672,6 +728,57 @@ export default function QuadroAvisos() {
                 </div>
                 <p className="mt-1 text-xs text-muted-foreground">
                   O nome é o que a pessoa vê no botão (em branco vira “Link”). Endereço colado no meio do texto também fica clicável.
+                </p>
+              </div>
+
+              {/* Cor e ícone do cabeçalho (16/10/2026, Pablo: "deixa customizar
+                  essa cor e ícone aqui de cima"). Sem escolha, o amarelo com
+                  "!" de sempre. O ícone é desenhado já na cor escolhida, e a
+                  faixa de exemplo é o cabeçalho de verdade em miniatura. */}
+              <div>
+                <Label>Cabeçalho do aviso</Label>
+                <div className={cn("mt-1 flex items-center gap-3 rounded-lg border px-3 py-2", corCabecalhoDe(form.cabecalho_cor).faixa)}>
+                  <span className={cn("flex h-8 w-8 shrink-0 items-center justify-center rounded-lg", corCabecalhoDe(form.cabecalho_cor).quadrado)}>
+                    <IconeCabecalho icone={form.cabecalho_icone} className="h-4 w-4" />
+                  </span>
+                  <span className="truncate text-sm font-bold">{form.titulo.trim() || "Título do aviso"}</span>
+                </div>
+                <div className="mt-2 flex flex-wrap items-center gap-1.5" role="radiogroup" aria-label="Cor do cabeçalho">
+                  <span className="mr-1 text-xs text-muted-foreground">Cor:</span>
+                  {CORES_CABECALHO.map((c) => (
+                    <button key={c.valor || "amarelo"} type="button" role="radio" aria-checked={form.cabecalho_cor === c.valor}
+                      title={c.rotulo} aria-label={c.rotulo} onClick={() => setForm({ ...form, cabecalho_cor: c.valor })}
+                      className={cn("h-7 w-7 rounded-full ring-offset-2 ring-offset-background transition", c.quadrado,
+                        form.cabecalho_cor === c.valor ? "ring-2 ring-primary" : "hover:scale-110")} />
+                  ))}
+                </div>
+                <div className="mt-2 flex flex-wrap items-center gap-1.5" role="radiogroup" aria-label="Ícone do cabeçalho">
+                  <span className="mr-1 text-xs text-muted-foreground">Ícone:</span>
+                  {ICONES_CABECALHO.map((i) => (
+                    <button key={i.valor || "alerta"} type="button" role="radio" aria-checked={form.cabecalho_icone === i.valor}
+                      title={i.rotulo} aria-label={i.rotulo} onClick={() => setForm({ ...form, cabecalho_icone: i.valor })}
+                      className={cn("flex h-8 w-8 items-center justify-center rounded-lg border transition",
+                        form.cabecalho_icone === i.valor ? cn("border-transparent", corCabecalhoDe(form.cabecalho_cor).quadrado) : "hover:bg-muted")}>
+                      <IconeCabecalho icone={i.valor} className="h-4 w-4" />
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Animação comemorativa (16/10/2026): toca quando o aviso abre
+                  para quem recebe. Confira no Pré-visualizar. */}
+              <div>
+                <Label>Animação ao abrir</Label>
+                <div className="mt-1 flex flex-wrap gap-2">
+                  {ANIMACOES.map((a) => (
+                    <button key={a.valor || "nenhuma"} type="button" onClick={() => setForm({ ...form, animacao: a.valor })}
+                      className={cn("rounded-md border px-3 py-1 text-xs font-medium", form.animacao === a.valor ? "border-primary bg-primary/10 text-primary" : "hover:bg-muted")}>
+                      {a.rotulo}
+                    </button>
+                  ))}
+                </div>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Para avisos de comemoração. Toca ao abrir o aviso (e no Pré-visualizar); quem desligou as animações do sistema vê uma versão curta e calma.
                 </p>
               </div>
 
@@ -714,26 +821,118 @@ export default function QuadroAvisos() {
                     </span>
                   </label>
 
-                  <label className={cn("flex items-start gap-2", !form.exigir_ciencia && "opacity-50")}>
-                    <Checkbox
-                      checked={form.permitir_escolha}
-                      disabled={!form.exigir_ciencia}
-                      onCheckedChange={(v) => setForm({ ...form, permitir_escolha: v === true })}
-                    />
-                    <span>
-                      <span className="text-sm font-medium">Permitir opções Concordo / Discordo</span>
-                      <p className="text-xs text-muted-foreground">
-                        Desligado, o aviso pede só um “Estou ciente”.
-                      </p>
-                    </span>
-                  </label>
+                  {/* Os botões de resposta (16/10/2026, pedido do Pablo:
+                      "escolher quais vão ser os botões, não só concordo ou
+                      discordo"). Os dois de antes continuam como atalho; o
+                      terceiro abre a lista. Com botões próprios, a lista vence
+                      permitir_escolha — ver botoesDoAviso. */}
+                  <div className={cn(!form.exigir_ciencia && "pointer-events-none opacity-50")}>
+                    <span className="text-sm font-medium">Botões de resposta</span>
+                    <div className="mt-1 flex flex-wrap gap-2">
+                      {([
+                        ["concordo", "Concordo / Discordo"],
+                        ["ciente", "Só “Estou ciente”"],
+                        ["proprios", "Personalizados"],
+                      ] as const).map(([modo, rotulo]) => {
+                        const atual = form.botoes.length ? "proprios" : form.permitir_escolha ? "concordo" : "ciente";
+                        return (
+                          <button key={modo} type="button" disabled={!form.exigir_ciencia}
+                            onClick={() => setForm({
+                              ...form,
+                              permitir_escolha: modo === "concordo" ? true : modo === "ciente" ? false : form.permitir_escolha,
+                              botoes: modo !== "proprios" ? []
+                                : form.botoes.length ? form.botoes : [{ rotulo: "Estou ciente", estilo: "principal" }],
+                            })}
+                            className={cn("rounded-md border px-3 py-1 text-xs font-medium", atual === modo ? "border-primary bg-primary/10 text-primary" : "hover:bg-muted")}>
+                            {rotulo}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    {form.botoes.length > 0 && (
+                      <div className="mt-2 space-y-2">
+                        {form.botoes.map((b, k) => (
+                          <div key={k} className="flex flex-wrap items-center gap-2">
+                            <Input className="min-w-[180px] flex-1" placeholder="Texto do botão (ex.: Vou participar)"
+                              maxLength={MAX_ROTULO_BOTAO} value={b.rotulo}
+                              onChange={(e) => setForm({ ...form, botoes: form.botoes.map((x, j) => j === k ? { ...x, rotulo: e.target.value } : x) })} />
+                            <Select value={b.estilo}
+                              onValueChange={(v) => setForm({ ...form, botoes: form.botoes.map((x, j) => j === k ? { ...x, estilo: v as typeof b.estilo } : x) })}>
+                              <SelectTrigger className="w-32"><SelectValue /></SelectTrigger>
+                              <SelectContent>
+                                {ESTILOS_BOTAO.map((e) => <SelectItem key={e.valor} value={e.valor}>{e.rotulo}</SelectItem>)}
+                              </SelectContent>
+                            </Select>
+                            {/* Pelo menos um: aviso que pede ciência sem botão prenderia a pessoa. */}
+                            <Button variant="ghost" size="sm" disabled={form.botoes.length <= 1} aria-label="Remover botão"
+                              onClick={() => setForm({ ...form, botoes: form.botoes.filter((_, j) => j !== k) })}>
+                              <X className="h-3.5 w-3.5" />
+                            </Button>
+                          </div>
+                        ))}
+                        <div className="flex flex-wrap items-center gap-2">
+                          <Button type="button" variant="outline" size="sm" disabled={form.botoes.length >= MAX_BOTOES}
+                            onClick={() => setForm({ ...form, botoes: [...form.botoes, { rotulo: "", estilo: "contorno" }] })}>
+                            <Plus className="mr-1 h-3.5 w-3.5" /> Adicionar botão
+                          </Button>
+                          <span className="text-xs text-muted-foreground">
+                            Até {MAX_BOTOES}. O botão que a pessoa apertar fica gravado na resposta dela.
+                          </span>
+                        </div>
+                        {/* Como vai ficar, na ordem do modal. */}
+                        <div className="flex flex-wrap justify-end gap-2 rounded-md border bg-background p-2">
+                          {botoesDoAviso(form).map((x) => (
+                            <Button key={`${x.rotulo}-${x.estilo}`} size="sm" type="button" variant={varianteDoBotao(x.estilo)} tabIndex={-1}>{x.rotulo}</Button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 </div>
+              </div>
+
+              {/* Comentários e reações (16/10/2026). Independente da ciência:
+                  um mural sem resposta obrigatória também pode ter conversa. */}
+              <div className="rounded-lg border bg-muted/30 p-3">
+                <div className="flex items-start gap-3">
+                  <Switch
+                    checked={form.permitir_comentarios}
+                    onCheckedChange={(v) => setForm({
+                      ...form,
+                      permitir_comentarios: v,
+                      // Anônimo sem comentário não quer dizer nada.
+                      permitir_anonimo: v ? form.permitir_anonimo : false,
+                    })}
+                  />
+                  <div>
+                    <div className="text-sm font-medium">Permitir comentários e reações</div>
+                    <p className="text-xs text-muted-foreground">
+                      Quem recebe o aviso comenta e reage com emoji; os comentários ficam no próprio aviso.
+                    </p>
+                  </div>
+                </div>
+                <label className={cn("mt-3 flex items-start gap-2 pl-10", !form.permitir_comentarios && "opacity-50")}>
+                  <Checkbox
+                    checked={form.permitir_anonimo}
+                    disabled={!form.permitir_comentarios}
+                    onCheckedChange={(v) => setForm({ ...form, permitir_anonimo: v === true })}
+                  />
+                  <span>
+                    <span className="text-sm font-medium">Permitir comentário anônimo</span>
+                    <p className="text-xs text-muted-foreground">
+                      O nome não é gravado — nem você vai saber quem foi. Quem gerencia o Quadro pode apagar o comentário.
+                    </p>
+                  </span>
+                </label>
               </div>
             </div>
           )}
 
           <DialogFooter>
             <Button variant="outline" onClick={() => setForm(null)}>Cancelar</Button>
+            <Button variant="secondary" onClick={() => setPrevendo(true)}>
+              <Eye className="mr-2 h-4 w-4" /> Pré-visualizar
+            </Button>
             <Button onClick={gravar} disabled={salvar.isPending}>
               {salvar.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               {form?.id ? "Salvar alterações" : "Publicar aviso"}
@@ -742,7 +941,40 @@ export default function QuadroAvisos() {
         </DialogContent>
       </Dialog>
 
-      {/* ── Visualizar ─────────────────────────────────────────────── */}
+      {/* ── Pré-visualizar ─────────────────────────────────────────── */}
+      {/* A MESMA janela do gate, com o aviso montado do formulário: nada vai
+          ao banco, os botões só explicam que é prévia. */}
+      {form && prevendo && (
+        <JanelaAviso
+          aviso={avisoDoFormulario(form, meuNome)}
+          onEscolher={() => toast.info("Pré-visualização: a resposta não é gravada.")}
+          onAdiar={() => setPrevendo(false)}
+          previa={{ aoFechar: () => setPrevendo(false) }}
+        />
+      )}
+
+      {/* ── Visualizar: a mesma janela do colaborador ───────────────── */}
+      {olhando && (
+        <JanelaAviso
+          aviso={olhando}
+          onEscolher={() => toast.info("Visualização: a resposta não é gravada.")}
+          onAdiar={() => setOlhando(null)}
+          previa={{
+            aoFechar: () => setOlhando(null),
+            texto: "Visualizando — é assim que o colaborador vê. Nada é gravado.",
+            rotuloFechar: "Fechar",
+            comentariosAoVivo: true,
+            acoes: (
+              <Button size="sm" variant="outline" className="h-7 rounded-full border-white/40 bg-transparent text-primary-foreground hover:bg-white/10"
+                      onClick={() => abrirRespostas(olhando)}>
+                Regras e respostas
+              </Button>
+            ),
+          }}
+        />
+      )}
+
+      {/* ── Regras e respostas ─────────────────────────────────────── */}
       <Dialog open={!!vendo} onOpenChange={(o) => !o && setVendo(null)}>
         <DialogContent className="max-h-[90vh] max-w-2xl overflow-y-auto">
           <DialogHeader>
@@ -755,14 +987,19 @@ export default function QuadroAvisos() {
 
           {vendo && (
             <div className="space-y-4">
-              <ConteudoAviso aviso={vendo} prioridade />
+              {/* O aviso em si abre na JanelaAviso ("Ver o aviso", no rodapé):
+                  aqui só o que interessa a quem publica. */}
 
               <div className="rounded-lg border p-3 text-sm">
                 <div className="mb-2 font-semibold">Regras aplicadas</div>
                 <ul className="space-y-1 text-muted-foreground">
                   <li>Exigir ciência: <b>{vendo.exigir_ciencia ? "Sim" : "Não"}</b></li>
+                  <li>Comentários: <b>{vendo.permitir_comentarios
+                    ? (vendo.permitir_anonimo ? "Sim, inclusive anônimos" : "Sim") : "Não"}</b></li>
                   <li>Bloquear acesso até responder: <b>{vendo.bloquear_acesso ? "Sim" : "Não"}</b></li>
-                  <li>Permitir Concordo/Discordo: <b>{vendo.permitir_escolha ? "Sim" : "Não"}</b></li>
+                  <li>Botões de resposta: <b>{botoesDoAviso(vendo).length
+                    ? botoesDoAviso(vendo).map((b) => b.rotulo).join(" · ")
+                    : vendo.permitir_escolha ? "Concordo / Discordo" : "Estou ciente"}</b></li>
                   <li>Expira em: <b>{vendo.expira_em ? fmtDataHora(vendo.expira_em) : "não expira"}</b></li>
                   <li>Exibido para: <b>{publicoDe(vendo.id)}</b></li>
                 </ul>
@@ -775,18 +1012,27 @@ export default function QuadroAvisos() {
                 // o único grupo que pede providência, e numa lista longa em
                 // ordem de data essa pessoa ficaria enterrada.
                 const detalhadas = respostasComNome(respostas, nomePorId);
+                // Botões próprios (16/10/2026): a conta é por texto do botão.
+                // Resposta gravada com texto também conta como "próprio", para
+                // o aviso que teve os botões tirados depois não sumir com elas.
+                const botoesV = botoesDoAviso(vendo);
+                const proprios = botoesV.length > 0 || respostas.some((r) => r.resposta);
+                const porBotao = proprios ? contagemPorBotao(botoesV, respostas) : [];
+                const perigo = new Set(porBotao.filter((b) => b.estilo === "perigo").map((b) => b.rotulo));
                 const visiveis = filtroEscolha === "todas"
                   ? detalhadas
-                  : detalhadas.filter((r) => r.escolha === filtroEscolha);
+                  : detalhadas.filter((r) => (proprios ? respostaDe(r) : r.escolha) === filtroEscolha);
                 return (
                   <div>
                     <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-                      {[
-                        { rotulo: "Responderam", valor: p.responderam },
-                        { rotulo: "Concordo", valor: p.concordaram },
-                        { rotulo: "Discordo", valor: p.discordaram },
-                        { rotulo: "Ciente", valor: p.cientes },
-                      ].map((c) => (
+                      {(proprios
+                        ? [{ rotulo: "Responderam", valor: p.responderam }, ...porBotao.map((b) => ({ rotulo: b.rotulo, valor: b.total }))]
+                        : [
+                          { rotulo: "Responderam", valor: p.responderam },
+                          { rotulo: "Concordo", valor: p.concordaram },
+                          { rotulo: "Discordo", valor: p.discordaram },
+                          { rotulo: "Ciente", valor: p.cientes },
+                        ]).map((c) => (
                         <div key={c.rotulo} className="rounded-lg border p-3 text-center">
                           <div className="text-xl font-bold">{c.valor}</div>
                           <div className="text-xs text-muted-foreground">{c.rotulo}</div>
@@ -812,12 +1058,14 @@ export default function QuadroAvisos() {
                     {verDetalhes && p.responderam > 0 && (
                       <div className="mt-3 rounded-lg border">
                         <div className="flex flex-wrap gap-1.5 border-b p-2">
-                          {([
-                            ["todas", `Todas (${p.responderam})`],
-                            ["CONCORDO", `Concordo (${p.concordaram})`],
-                            ["DISCORDO", `Discordo (${p.discordaram})`],
-                            ["CIENTE", `Ciente (${p.cientes})`],
-                          ] as [Escolha | "todas", string][]).map(([valor, rotulo]) => (
+                          {(proprios
+                            ? [["todas", `Todas (${p.responderam})`], ...porBotao.map((b) => [b.rotulo, `${b.rotulo} (${b.total})`])]
+                            : [
+                              ["todas", `Todas (${p.responderam})`],
+                              ["CONCORDO", `Concordo (${p.concordaram})`],
+                              ["DISCORDO", `Discordo (${p.discordaram})`],
+                              ["CIENTE", `Ciente (${p.cientes})`],
+                            ] as [string, string][]).map(([valor, rotulo]) => (
                             <Button
                               key={valor}
                               size="sm"
@@ -850,10 +1098,9 @@ export default function QuadroAvisos() {
                                     {fmtDataHora(r.respondido_em)}
                                   </span>
                                   <Badge
-                                    variant={r.escolha === "DISCORDO" ? "destructive" : "secondary"}
+                                    variant={r.escolha === "DISCORDO" || perigo.has(respostaDe(r)) ? "destructive" : "secondary"}
                                   >
-                                    {r.escolha === "CONCORDO" ? "Concordo"
-                                      : r.escolha === "DISCORDO" ? "Discordo" : "Ciente"}
+                                    {respostaDe(r)}
                                   </Badge>
                                 </div>
                               </li>
@@ -874,6 +1121,11 @@ export default function QuadroAvisos() {
           )}
 
           <DialogFooter>
+            {vendo && (
+              <Button variant="outline" onClick={() => { const n = vendo; setVendo(null); setOlhando(n); }}>
+                <Eye className="mr-2 h-4 w-4" /> Ver o aviso
+              </Button>
+            )}
             <Button variant="outline" onClick={() => setVendo(null)}>Fechar</Button>
           </DialogFooter>
         </DialogContent>

@@ -223,7 +223,7 @@ export default function RecrutamentoDashboard() {
       <style>{`
         .rdb-hero{position:relative;overflow:hidden;border-radius:24px;padding:28px 32px 24px;margin:18px 24px 0;background:linear-gradient(135deg,#0f3171 0%,#1d4ed8 60%,#2563eb 100%);color:#fff;box-shadow:0 24px 60px rgba(15,49,113,.28)}
         .rdb-hero::before{content:"";position:absolute;right:-60px;top:-80px;width:320px;height:320px;border-radius:50%;background:rgba(255,255,255,.07)}
-        .rdb-hero::after{content:"";position:absolute;right:160px;bottom:-150px;width:260px;height:260px;border-radius:50%;background:rgba(255,255,255,.05)}
+        .rdb-hero::after{content:"";pointer-events:none;position:absolute;right:160px;bottom:-150px;width:260px;height:260px;border-radius:50%;background:rgba(255,255,255,.05)}
         .rdb-hero-in{position:relative;display:flex;justify-content:space-between;align-items:flex-start;gap:18px;flex-wrap:wrap}
         .rdb-voltar{display:inline-block;margin-bottom:6px;font-size:12.5px;font-weight:800;color:#fff;opacity:.85;text-decoration:none}
         .rdb-voltar:hover{opacity:1;text-decoration:underline}

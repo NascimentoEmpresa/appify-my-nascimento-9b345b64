@@ -13,6 +13,7 @@ import { useDemoMode } from "@/context/DemoModeContext";
 import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
 import { ROTAS_EXTERNO } from "@/hooks/useModoExterno";
+import { ESPERAS_LOGIN_MS, erroLoginTransitorio, mensagemErroLogin } from "@/lib/loginErro";
 
 // =====================================================================
 // LOGIN (redesenho 01/10/2026)
@@ -121,15 +122,20 @@ export default function Login() {
     setError(null);
     setLoading(true);
     try {
-      const { error: signInError } = await supabase.auth.signInWithPassword({ email, password });
+      // Erro do banco ("Database error querying schema", 16/10/2026) tenta
+      // de novo sozinho; senha errada não (ver lib/loginErro.ts).
+      let { error: signInError } = await supabase.auth.signInWithPassword({ email, password });
+      for (const espera of ESPERAS_LOGIN_MS) {
+        if (!signInError || !erroLoginTransitorio(signInError)) break;
+        await new Promise((r) => setTimeout(r, espera));
+        ({ error: signInError } = await supabase.auth.signInWithPassword({ email, password }));
+      }
       if (signInError) throw signInError;
       gravarEmailLembrado(lembrar ? email.trim() : null);
       disableDemo();
       navigate(destino);
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Erro desconhecido";
-      if (msg.includes("Invalid login credentials")) setError("E-mail ou senha incorretos.");
-      else setError(msg);
+      setError(mensagemErroLogin(err));
     } finally {
       setLoading(false);
     }

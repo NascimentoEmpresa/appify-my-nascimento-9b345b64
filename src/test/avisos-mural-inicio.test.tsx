@@ -59,7 +59,8 @@ describe("Quadro de Avisos no Início", () => {
   it("clicar na linha abre o aviso inteiro, com a imagem", () => {
     render(<AvisosCard />);
     fireEvent.click(screen.getByText("Novo Quadro de Avisos"));
-    const dialogo = screen.getByRole("dialog");
+    // 16/10/2026: abre na MESMA janela do gate (JanelaAviso, modo leitura).
+    const dialogo = screen.getByRole("alertdialog");
     expect(within(dialogo).getByText(/Agora os comunicados importantes/)).toBeInTheDocument();
     expect(within(dialogo).getByRole("img")).toHaveAttribute("src", comImagem.anexo_url);
   });

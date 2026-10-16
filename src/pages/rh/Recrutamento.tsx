@@ -2066,8 +2066,8 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
     style.textContent = `
       /* Visual (18/09/2026): hero azul, KPIs com barra e ícone, tabela com respiro. */
       .rec-hero{position:relative;overflow:hidden;border-radius:24px;padding:24px 30px 20px;margin:18px 24px 0;background:linear-gradient(135deg,#0f3171 0%,#1d4ed8 60%,#2563eb 100%);color:#fff;box-shadow:0 22px 56px rgba(15,49,113,.26);flex-shrink:0}
-      .rec-hero::before{content:"";position:absolute;right:-70px;top:-90px;width:300px;height:300px;border-radius:50%;background:rgba(255,255,255,.07)}
-      .rec-hero::after{content:"";position:absolute;right:150px;bottom:-150px;width:240px;height:240px;border-radius:50%;background:rgba(255,255,255,.05)}
+      .rec-hero::before{content:"";pointer-events:none;position:absolute;right:-70px;top:-90px;width:300px;height:300px;border-radius:50%;background:rgba(255,255,255,.07)}
+      .rec-hero::after{content:"";pointer-events:none;position:absolute;right:150px;bottom:-150px;width:240px;height:240px;border-radius:50%;background:rgba(255,255,255,.05)}
       .rec-hero-in{position:relative;display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap}
       .rec-hero-eyebrow{font-size:11px;font-weight:800;letter-spacing:1.2px;text-transform:uppercase;opacity:.8}
       .rec-hero h1{margin:4px 0 4px;font-size:26px;font-weight:900;letter-spacing:-.4px;line-height:1.1}

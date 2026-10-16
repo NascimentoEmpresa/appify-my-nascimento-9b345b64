@@ -2,8 +2,9 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 import { AlertTriangle, ArrowRight, GraduationCap, Info, Megaphone, Settings } from "lucide-react";
 import { useNotificacoes } from "@/hooks/useNotificacoes";
-import { estaVigente, fmtDataHora, type Notificacao } from "@/lib/notificacoes";
+import { animacaoDe, estaVigente, fmtDataHora, type Notificacao } from "@/lib/notificacoes";
 import { ConteudoAviso } from "@/components/notificacoes/ConteudoAviso";
+import { JanelaAviso } from "@/components/notificacoes/GateNotificacoes";
 import {
   Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
@@ -121,21 +122,19 @@ export function AvisosCard({ limite = 4 }: { limite?: number }) {
 
       {/* O aviso inteiro, com o cartaz. Sem botão de responder: a ciência é
           do gate, e um segundo lugar para responder daria dois caminhos para o
-          mesmo registro. Aqui é releitura. */}
-      <Dialog open={!!aberto} onOpenChange={(o) => !o && setAberto(null)}>
-        <DialogContent className="max-h-[90vh] max-w-2xl overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>{aberto?.titulo}</DialogTitle>
-            <DialogDescription>
-              {aberto?.categoria} · publicado em {fmtDataHora(aberto?.publicado_em)}
-              {aberto?.criado_por_nome ? ` por ${aberto.criado_por_nome}` : ""}
-            </DialogDescription>
-          </DialogHeader>
-          {aberto && (
-            <ConteudoAviso aviso={aberto} prioridade />
-          )}
-        </DialogContent>
-      </Dialog>
+          mesmo registro. Aqui é releitura.
+
+          16/10/2026: a MESMA janela do gate (JanelaAviso, modo leitura) —
+          antes era um Dialog estreito, com a imagem miúda e sem a animação,
+          e o aviso relido não parecia o aviso publicado. */}
+      {aberto && (
+        <JanelaAviso
+          aviso={aberto}
+          onEscolher={() => {}}
+          onAdiar={() => setAberto(null)}
+          leitura={{ aoFechar: () => setAberto(null) }}
+        />
+      )}
     </section>
   );
 }
