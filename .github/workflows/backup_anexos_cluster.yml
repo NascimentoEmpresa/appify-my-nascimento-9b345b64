@@ -81,6 +81,10 @@ jobs:
       - name: Puxar o pacote cifrado dos anexos
         env:
           NO: ${{ vars.CLUSTER_BACKUP_HOST || '216.238.120.171' }}
+          # Ver o cabecalho de infra/ha/chave-backup-github.sh: `backup` ja
+          # existe no Debian com shell nologin, e o sintoma de usar esse nome
+          # e "0 bytes" entregues, sem erro.
+          USUARIO: ${{ vars.CLUSTER_BACKUP_USER || 'erpbackup' }}
         run: |
           set -o pipefail
           NOME="anexos-cluster-$(date -u +%Y%m%d).tar.gz.gpg"
@@ -88,7 +92,7 @@ jobs:
           # o pacote dos arquivos; sem ela, o do banco. Nada e executado no no.
           time ssh -p 8443 -i ~/.ssh/cluster -o BatchMode=yes \
                -o ConnectTimeout=20 -o ServerAliveInterval=30 \
-               "backup@$NO" anexos > "$NOME"
+               "$USUARIO@$NO" anexos > "$NOME"
           echo "ARQUIVO=$NOME" >> "$GITHUB_ENV"
           ls -lh "$NOME"
 
