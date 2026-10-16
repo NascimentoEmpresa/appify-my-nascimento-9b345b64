@@ -121,7 +121,7 @@ export function StatusSolicitacao({ sol, onClose }: { sol: SolicitacaoStatus; on
         .sts-hero{flex-shrink:0;position:relative;overflow:hidden;padding:26px 30px 22px;background:linear-gradient(135deg,#0f3171 0%,#1d4ed8 60%,#2563eb 100%);color:#fff;background-size:200% 200%;animation:sts-grad 16s ease-in-out infinite}
         @keyframes sts-grad{0%,100%{background-position:0% 0%}50%{background-position:100% 100%}}
         .sts-hero::before{content:"";position:absolute;right:-80px;top:-100px;width:320px;height:320px;border-radius:50%;background:rgba(255,255,255,.08);animation:sts-drift 14s ease-in-out infinite}
-        .sts-hero::after{content:"";position:absolute;left:30%;bottom:-160px;width:260px;height:260px;border-radius:50%;background:rgba(255,255,255,.05);animation:sts-drift 18s ease-in-out -6s infinite}
+        .sts-hero::after{content:"";pointer-events:none;position:absolute;left:30%;bottom:-160px;width:260px;height:260px;border-radius:50%;background:rgba(255,255,255,.05);animation:sts-drift 18s ease-in-out -6s infinite}
         @keyframes sts-drift{0%,100%{transform:translate(0,0)}50%{transform:translate(-30px,20px)}}
         .sts-hero > *{position:relative}
         .sts-up{opacity:0;transform:translateY(16px);animation:sts-up .6s cubic-bezier(.2,.8,.2,1) forwards}

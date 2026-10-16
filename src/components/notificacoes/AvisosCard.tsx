@@ -2,8 +2,10 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 import { AlertTriangle, ArrowRight, GraduationCap, Info, Megaphone, Settings } from "lucide-react";
 import { useNotificacoes } from "@/hooks/useNotificacoes";
-import { estaVigente, fmtDataHora, type Notificacao } from "@/lib/notificacoes";
+import { animacaoDe, estaVigente, fmtDataHora, type Notificacao } from "@/lib/notificacoes";
 import { ConteudoAviso } from "@/components/notificacoes/ConteudoAviso";
+import { ComentariosAviso } from "@/components/notificacoes/ComentariosAviso";
+import { AnimacaoAviso } from "@/components/notificacoes/AnimacaoAviso";
 import {
   Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
@@ -132,7 +134,12 @@ export function AvisosCard({ limite = 4 }: { limite?: number }) {
             </DialogDescription>
           </DialogHeader>
           {aberto && (
-            <ConteudoAviso aviso={aberto} prioridade />
+            <>
+              <AnimacaoAviso tipo={animacaoDe(aberto.animacao)} chave={aberto.id} />
+              <ConteudoAviso aviso={aberto} prioridade />
+              {/* Comentários e reações (16/10/2026) — só se o aviso aceita. */}
+              <ComentariosAviso aviso={aberto} />
+            </>
           )}
         </DialogContent>
       </Dialog>

@@ -12,7 +12,10 @@
 import { useState } from "react";
 import { ChevronLeft, ChevronRight, ExternalLink } from "lucide-react";
 import { ImagemAviso } from "@/components/notificacoes/ImagemAviso";
-import { imagensDoAviso, type ImagemDoAviso, type LinkDoAviso, type Notificacao } from "@/lib/notificacoes";
+import {
+  CAIXA_IMAGEM_LADO, classeCaixaImagem, imagensDoAviso, posicaoImagemDe, tamanhoImagemDe,
+  type ImagemDoAviso, type LinkDoAviso, type Notificacao, type TamanhoImagem,
+} from "@/lib/notificacoes";
 import { cn } from "@/lib/utils";
 
 /** URL http(s) ou www. no meio do texto. O `.`/`,`/`)` final fica fora do link. */
@@ -58,13 +61,20 @@ export function LinksAviso({ links, className }: { links: LinkDoAviso[]; classNa
 /**
  * As imagens do aviso. Uma só: igual a antes. Várias: carrossel com setas e
  * bolinhas, ou grade de duas colunas — escolha de quem publicou.
+ *
+ * `tamanho` (16/10/2026) é a caixa de cada imagem — ver classeCaixaImagem.
+ * Sem ele, a caixa 16:9 de sempre.
  */
-export function GaleriaAviso({ imagens, layout, prioridade = false, className }: {
+export function GaleriaAviso({ imagens, layout, tamanho = "", prioridade = false, className, classeCaixa }: {
   imagens: ImagemDoAviso[];
   layout: "carrossel" | "grade";
+  tamanho?: TamanhoImagem;
   prioridade?: boolean;
   className?: string;
+  /** Troca a caixa de cada imagem (a imagem ao lado do texto usa a dela). */
+  classeCaixa?: string;
 }) {
+  const caixa = classeCaixa ?? classeCaixaImagem(tamanho);
   const [i, setI] = useState(0);
   const lista = imagens.filter((im) => im.url);
   if (!lista.length) return null;
@@ -75,7 +85,7 @@ export function GaleriaAviso({ imagens, layout, prioridade = false, className }:
       <div className={cn(lista.length === 1 ? "" : "grid gap-2 sm:grid-cols-2", className)}>
         {lista.map((im, k) => (
           <div key={k}>
-            <ImagemAviso url={im.url} nome={im.nome} prioridade={prioridade && k === 0} className="aspect-video w-full" />
+            <ImagemAviso url={im.url} nome={im.nome} prioridade={prioridade && k === 0} className={caixa} />
             <a href={im.url} target="_blank" rel="noreferrer"
                className="mt-1 inline-block text-xs text-muted-foreground underline underline-offset-2">
               Ver imagem em tamanho real
@@ -90,7 +100,7 @@ export function GaleriaAviso({ imagens, layout, prioridade = false, className }:
     <div className={className}>
       <div className="relative">
         {/* key na imagem: trocar de slide reinicia o estado de carregamento. */}
-        <ImagemAviso key={atual.url} url={atual.url} nome={atual.nome} prioridade className="aspect-video w-full" />
+        <ImagemAviso key={atual.url} url={atual.url} nome={atual.nome} prioridade className={caixa} />
         <button type="button" aria-label="Imagem anterior"
                 onClick={() => setI((v) => (v - 1 + lista.length) % lista.length)}
                 className="absolute left-2 top-1/2 -translate-y-1/2 rounded-full bg-background/90 p-1.5 shadow hover:bg-background">
@@ -121,13 +131,47 @@ export function GaleriaAviso({ imagens, layout, prioridade = false, className }:
   );
 }
 
-/** Imagens + texto + links, na ordem em que o aviso é lido. */
+/** O texto e os links do aviso — a coluna da direita na imagem ao lado. */
+export function TextoAviso({ aviso }: { aviso: Notificacao }) {
+  return (
+    <div className="space-y-3">
+      <TextoComLinks texto={aviso.mensagem} />
+      <LinksAviso links={aviso.links ?? []} />
+    </div>
+  );
+}
+
+/** As imagens do aviso como o aviso pede (layout e tamanho). */
+export function ImagensDoAviso({ aviso, prioridade = false, classeCaixa }: {
+  aviso: Notificacao; prioridade?: boolean; classeCaixa?: string;
+}) {
+  const imagens = imagensDoAviso(aviso);
+  if (!imagens.length) return null;
+  return (
+    <GaleriaAviso imagens={imagens} layout={aviso.imagens_layout === "grade" ? "grade" : "carrossel"}
+                  tamanho={tamanhoImagemDe(aviso.imagens_tamanho)} prioridade={prioridade} classeCaixa={classeCaixa} />
+  );
+}
+
+/**
+ * Imagens + texto + links, na ordem em que o aviso é lido. Com a imagem ao
+ * lado (16/10/2026), duas colunas — que empilham em tela estreita.
+ */
 export function ConteudoAviso({ aviso, prioridade = false }: { aviso: Notificacao; prioridade?: boolean }) {
   const imagens = imagensDoAviso(aviso);
+  if (imagens.length && posicaoImagemDe(aviso.imagens_posicao) === "lado") {
+    return (
+      <div className="grid gap-4 sm:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">
+        <ImagensDoAviso aviso={aviso} prioridade={prioridade} classeCaixa={CAIXA_IMAGEM_LADO} />
+        <TextoAviso aviso={aviso} />
+      </div>
+    );
+  }
   return (
     <div className="space-y-3">
       {imagens.length > 0 && (
-        <GaleriaAviso imagens={imagens} layout={aviso.imagens_layout === "grade" ? "grade" : "carrossel"} prioridade={prioridade} />
+        <GaleriaAviso imagens={imagens} layout={aviso.imagens_layout === "grade" ? "grade" : "carrossel"}
+                      tamanho={tamanhoImagemDe(aviso.imagens_tamanho)} prioridade={prioridade} />
       )}
       <TextoComLinks texto={aviso.mensagem} />
       <LinksAviso links={aviso.links ?? []} />

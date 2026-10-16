@@ -146,6 +146,24 @@ mkdir -p "$BASE"
 export TEMPORARIOS="$MONTAGEM/.carga-tmp"
 mkdir -p "$TEMPORARIOS"
 
+# ── limpar o temporario que sobrou de execucao interrompida ────────────────
+# Em caminho normal cada `baixando.XXXXXX` e removido ou renomeado. Quando a
+# execucao e interrompida no meio (Ctrl+C, SSH caindo, o laco paralelo sendo
+# morto), o temporario fica. Medido em 16/10/2026: 140 arquivos, 119 deles
+# vazios, 16 MB -- e o pior nao e o espaco:
+#   . o espelho de 1 minuto copia esse lixo para o outro no, e nunca apaga
+#     (ele e --ignore-existing e sem --delete, de proposito)
+#   . o backup semanal dos anexos empacotaria tudo isso junto
+#   . e a contagem `find -type f` do volume passa a nao fechar com
+#     storage.objects, o que faz um conferidor honesto parecer errado
+# `-mmin +60` e a trava: um download vivo tem no maximo 15 min (--max-time
+# 900), entao nada que esteja em uso e apagado aqui.
+SOBROU=$(find "$TEMPORARIOS" -maxdepth 1 -type f -name 'baixando.*' -mmin +60 2>/dev/null | wc -l)
+if [ "$SOBROU" -gt 0 ]; then
+  find "$TEMPORARIOS" -maxdepth 1 -type f -name 'baixando.*' -mmin +60 -delete 2>/dev/null
+  echo "[limpeza] $SOBROU temporario(s) de execucao anterior apagados"
+fi
+
 TRABALHO="${TRABALHO:-/root/migracao/anexos}"
 mkdir -p "$TRABALHO"
 export TRABALHO
