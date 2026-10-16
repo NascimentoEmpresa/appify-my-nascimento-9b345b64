@@ -1,8 +1,8 @@
 import { useState, useEffect, useMemo, useRef, useCallback, type MouseEvent as ReactMouseEvent, type CSSProperties, type ReactNode } from "react";
 import {
   Activity, AlertTriangle, Ban, Building2, CalendarDays, Check, CheckCircle2, ChevronLeft, ChevronRight, ClipboardList, Clock, Copy, Eye, FileSpreadsheet, FileText,
-  FolderOpen, GraduationCap, History, IdCard, Landmark, Link2, LogOut, Mail, MapPin, MessageSquare, Paperclip,
-  Pencil, Phone, Search, Settings, Tags, Target, Trash2, UserCheck, UserSearch, Users, X, XCircle, Zap, type LucideIcon,
+  FolderOpen, GraduationCap, History, IdCard, Landmark, Link2, LogOut, Mail, MapPin, MessageSquare, Package, Paperclip,
+  Pencil, Phone, Scale, Search, Settings, Stethoscope, Tags, Target, Trash2, UserCheck, UserSearch, Users, X, XCircle, Zap, type LucideIcon,
 } from "lucide-react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
@@ -24,13 +24,19 @@ import {
   ETIQUETAS_RECRUTAMENTO, alternarEtiqueta, corDaEtiqueta, etiquetasValidas,
 } from "@/lib/recrutamento/etiquetas";
 import { AvisoProcessos, processosDe, useProcessosDosCandidatos } from "@/components/recrutamento/AvisoProcessos";
+import { ParecerJuridicoDialog } from "@/components/recrutamento/ParecerJuridicoDialog";
+import { StatusSstDialog } from "@/components/recrutamento/StatusSstDialog";
+import { mensagemEnvioAgendamento } from "@/lib/recrutamento/agendamentoAso";
+import { QuadrosSstCompras } from "@/components/recrutamento/QuadrosSstCompras";
+import { ConfirmarEnvioAgendamento } from "@/components/recrutamento/ConfirmarEnvioAgendamento";
+import { CamadaAlta } from "@/components/ui/camada";
 import { FichaAso } from "@/components/recrutamento/FichaAso";
 import { CandidatoManualDialog } from "@/components/recrutamento/CandidatoManualDialog";
 import { StatusSolicitacao } from "@/components/recrutamento/StatusSolicitacao";
 import { StatusVagaBadge } from "@/components/recrutamento/StatusVagaBadge";
 import { useEtapasDasVagas } from "@/hooks/useEtapasDasVagas";
 import { useResponsaveisDasVagas, listarResponsaveisPossiveis, definirResponsavelVaga, assumirVaga, contarVagasPorResponsavel, marcarCienteVaga, novaDemanda } from "@/hooks/useResponsaveisDasVagas";
-import { NIVEIS_JURIDICO, NIVEL_OK, eventoParecerJuridico, nivelJuridico, seloJuridico } from "@/lib/recrutamento/parecerJuridico";
+import { NIVEIS_JURIDICO, NIVEL_OK, eventoParecerJuridico, nivelJuridico, seloJuridico, statusJuridicoCard } from "@/lib/recrutamento/parecerJuridico";
 import { STATUS_COM_RESPONSAVEL, STATUS_FILA_APROVACAO, alvoDoFiltro, devePerguntarAssumir, textoConfirmarAssumir, vagaTemResponsavel, type FiltroResponsavel } from "@/lib/recrutamento/responsavelVaga";
 import { vagaTemEtapa } from "@/lib/recrutamento/statusDetalhado";
 import { EnxovalAdmissao, type EnxovalAdmissaoHandle } from "@/components/recrutamento/EnxovalAdmissao";
@@ -124,10 +130,23 @@ interface Curriculo {
   juridico_nivel?: string | null;
   /** Seguiu sem o parecer do Jurídico (mig 20261014000016). */
   juridico_pulado?: boolean | null;
+  /** Quem deu o parecer e quando — na janela "Ver parecer do Jurídico" (16/10/2026). */
+  juridico_por?: string | null;
+  juridico_em?: string | null;
   // SST e Compras correm em PARALELO: os dois precisam estar true para o
   // candidato seguir sozinho para a Admissão.
   sst_ok?: boolean | null;
   sst_obs?: string;
+  // O passo a passo do SST (AsoCandidatos): visto e agendamento do ASO. O
+  // Recrutamento lê no botão "SST" do card (16/10/2026, StatusSstDialog).
+  sst_visto_em?: string | null;
+  sst_visto_por?: string | null;
+  sst_data_exame?: string | null;
+  sst_hora_exame?: string | null;
+  sst_local_exame?: string | null;
+  sst_maps_url?: string | null;
+  sst_agendado_em?: string | null;
+  sst_agendado_por?: string | null;
   compras_ok?: boolean | null;
   compras_obs?: string;
   /** 15/10/2026 (mig 20261015000011): admissão sem pedido do Compras (o Compras só dá ciência). */
@@ -637,6 +656,10 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
   const [showCandManual, setShowCandManual] = useState(false);
   // Editar quem foi inserido à mão (15/10/2026): o ✎ do card abre o mesmo formulário.
   const [editarCandId, setEditarCandId] = useState<number | null>(null);
+  // "Ver parecer do Jurídico" (16/10/2026): o candidato cuja janela está aberta.
+  const [parecerCandId, setParecerCandId] = useState<number | null>(null);
+  // "Status do SST" (16/10/2026): o candidato cuja janela do agendamento está aberta.
+  const [sstCandId, setSstCandId] = useState<number | null>(null);
   const [showCurriculos, setShowCurriculos] = useState(false);
   const [empCpf, setEmpCpf]                 = useState<Record<string, EmpCadastro[]>>({});   // CPF dígitos → cadastros EMPREGADOS
   const [blacklist, setBlacklist]           = useState<Record<string, { motivo: string; criado_em?: string }>>({});
@@ -675,6 +698,8 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
   // Pedido de materiais de cada candidato do quadro (ID + status) e o aberto no "Compras" do card.
   const [pedidosVaga, setPedidosVaga] = useState<Record<string, { protocolo: string; status: string }>>({});
   const [pedidoAberto, setPedidoAberto] = useState<{ id: number; nome: string } | null>(null);
+  const [enviandoAgendamento, setEnviandoAgendamento] = useState<number | null>(null);
+  const [confirmarAgendamentoId, setConfirmarAgendamentoId] = useState<number | null>(null);
   // Enxoval da função (25/09/2026, mig 246): o card de tamanhos do modal de
   // SST + COMPRAS — o Confirmar grava por ele antes de mover o candidato.
   const enxovalRef = useRef<EnxovalAdmissaoHandle>(null);
@@ -723,7 +748,8 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
   const toast = useCallback((msg: string, type = "info") => {
     const id = ++toastId.current;
     setToasts(t => [...t, { id, msg, type }]);
-    setTimeout(() => setToasts(t => t.filter(x => x.id !== id)), 3500);
+    // Texto longo (ex.: "como mandar o modelo para a Meta") precisa de mais tempo para ler.
+    setTimeout(() => setToasts(t => t.filter(x => x.id !== id)), msg.length > 140 ? 9000 : 3500);
   }, []);
 
   // ── Tabs por perfil ───────────────────────────────────────────
@@ -1387,6 +1413,28 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
     const { data, error } = await sb.rpc("recrutamento_abrir_conversa", { p_candidato_id: c.id });
     if (error || !data) { toast("Não consegui abrir a conversa: " + (error?.message ?? "conversa não encontrada"), "err"); return; }
     navigate(`/app/whatsapp?conversa=${data}`);
+  };
+
+  // Enviar agendamento do ASO no WhatsApp (16/10/2026, mig 20261016000031):
+  // template recrutamento_agendamento_aso pela Edge recrutamento-mensagem — a
+  // mesma das mensagens por etapa, que grava na Caixa de Entrada e no log.
+  // Template, e não texto livre: o candidato raramente escreveu nas últimas 24h.
+  // O clique só abre a confirmação (ConfirmarEnvioAgendamento, com a prévia do
+  // texto); quem envia é o "Sim, enviar" de lá.
+  const enviarAgendamento = (c: Curriculo) => {
+    if (!temWhatsApp(c)) { toast("Candidato sem telefone válido.", "err"); return; }
+    if (!c.sst_data_exame) { toast("O SST ainda não agendou o exame.", "err"); return; }
+    setConfirmarAgendamentoId(c.id);
+  };
+  const confirmarEnvioAgendamento = async (c: Curriculo) => {
+    setEnviandoAgendamento(c.id);
+    try {
+      const { data, error } = await supabase.functions.invoke("recrutamento-mensagem", { body: { candidato_id: c.id, etapa: "AGENDAMENTO ASO" } });
+      const r = mensagemEnvioAgendamento(error ? { detalhe: error.message } : (data as { enviado?: boolean; motivo?: string; detalhe?: string }), c.nome);
+      toast(r.texto, r.ok ? "ok" : "err");
+    } catch (e) {
+      toast(mensagemEnvioAgendamento({ detalhe: (e as Error).message }, c.nome).texto, "err");
+    } finally { setEnviandoAgendamento(null); setConfirmarAgendamentoId(null); }
   };
 
   // Download do currículo: signed URL temporária no bucket privado 'curriculos'.
@@ -2808,6 +2856,8 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
               const cards = grupos[etapa] ?? [];
               const meta = CAND_COL_COLORS[etapa];
               return (
+                // Mesma largura para todas (16/10/2026: a SST + COMPRAS mais larga
+                // "ficou ruim" — Pablo); os quadros do SST/Compras são compactos.
                 <div key={etapa} className="kb-col" style={{ flex: "1 1 0", minWidth: 0, maxHeight: "100%" }}>
                   <div className="kb-col-head">
                     <span style={{ width: 7, height: 7, borderRadius: "50%", background: meta.dot, display: "inline-block" }} />
@@ -2854,17 +2904,32 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
                                 )}
                               </div>
                             )}
-                            {selo && (
-                              <div title={c.juridico_obs ? `Observação do Jurídico: ${c.juridico_obs}` : undefined}
-                                style={{ marginTop: 4, fontSize: 9.5, fontWeight: 800, color: selo.cor, background: selo.fundo, border: `1px solid ${selo.borda}`, borderRadius: 6, padding: "2px 6px" }}>
-                                ⚖ {selo.texto}
-                                {c.juridico_obs && <div style={{ fontWeight: 600, color: "#475569", marginTop: 1, overflow: "hidden", textOverflow: "ellipsis", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>{c.juridico_obs}</div>}
-                              </div>
-                            )}
-                            {c.sst_ok === true && <div style={{ fontSize: 9.5, color: "#15803d", marginTop: 3, fontWeight: 700 }}>✓ SST aprovou</div>}
-                            {c.sst_ok === false && <div style={{ fontSize: 9.5, color: "#b91c1c", marginTop: 3, fontWeight: 700 }}><Ic i={Ban} />Reprovado no SST</div>}
-                            {c.compras_ok === true && <div style={{ fontSize: 9.5, color: "#15803d", marginTop: 3, fontWeight: 700 }}>✓ Compras aprovou</div>}
-                            {c.compras_ok === false && <div style={{ fontSize: 9.5, color: "#b91c1c", marginTop: 3, fontWeight: 700 }}><Ic i={Ban} />Reprovado no Compras</div>}
+                            {/* Jurídico (16/10/2026): UMA linha fixa, sempre no mesmo lugar —
+                                parecer dado, "pulado" ou aguardando. Pablo: "pode ficar sempre
+                                o status ali, pra mostrar se foi pulada essa etapa ou se foi
+                                respondida pelo jurídico mesmo". Clicar abre o parecer inteiro
+                                (nível, observação sem corte, quem deu e quando, processos) —
+                                substitui o selo com a observação cortada + o botão "Ver parecer". */}
+                            {(() => {
+                              const sj = statusJuridicoCard(c, etapa);
+                              if (!sj) return null;
+                              return (
+                                <button type="button" onClick={() => setParecerCandId(c.id)}
+                                  title={`${sj.texto}${c.juridico_obs ? ` — ${c.juridico_obs}` : ""} · clique para ver o parecer completo`}
+                                  style={{ width: "100%", marginTop: 5, display: "flex", alignItems: "center", gap: 5, fontSize: 10.5, fontWeight: 800, color: sj.cor, background: sj.fundo, border: `1px solid ${sj.borda}`, borderRadius: 7, padding: "4px 7px", cursor: "pointer", textAlign: "left", fontFamily: "inherit" }}>
+                                  <Scale size={11} aria-hidden style={{ flexShrink: 0 }} />
+                                  <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{sj.texto}</span>
+                                  {c.juridico_obs && <span title="Tem observação" style={{ flexShrink: 0, fontSize: 9.5, color: "#475569" }}>obs.</span>}
+                                </button>
+                              );
+                            })()}
+                            {/* Em SST + COMPRAS os quadros abaixo já dizem isso. */}
+                            {etapa !== ETAPA_SST_COMPRAS && etapa !== "EXAME SST" && (<>
+                              {c.sst_ok === true && <div style={{ fontSize: 9.5, color: "#15803d", marginTop: 3, fontWeight: 700 }}>✓ SST aprovou</div>}
+                              {c.sst_ok === false && <div style={{ fontSize: 9.5, color: "#b91c1c", marginTop: 3, fontWeight: 700 }}><Ic i={Ban} />Reprovado no SST</div>}
+                              {c.compras_ok === true && <div style={{ fontSize: 9.5, color: "#15803d", marginTop: 3, fontWeight: 700 }}>✓ Compras aprovou</div>}
+                              {c.compras_ok === false && <div style={{ fontSize: 9.5, color: "#b91c1c", marginTop: 3, fontWeight: 700 }}><Ic i={Ban} />Reprovado no Compras</div>}
+                            </>)}
                             {etapa === "Reprovado" && c.desistiu && (
                               <div style={{ fontSize: 9.5, color: "#b45309", marginTop: 3, fontWeight: 700 }}>
                                 <Ic i={LogOut} />Desistiu{c.desistencia_etapa ? ` (em ${c.desistencia_etapa})` : ""}
@@ -2875,27 +2940,21 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
                               : etapa === "Reprovado" && c.motivo_reprovacao && <div style={{ fontSize: 10.5, color: "#b91c1c", marginTop: 4 }}>Motivo: {c.motivo_reprovacao}</div>}
                             {/* Etapa paralela: mostra QUEM falta, que é a única
                                 informação que importa enquanto os dois correm. */}
-                            {etapa === ETAPA_SST_COMPRAS && (
-                              <div style={{ display: "flex", gap: 6, marginTop: 5, flexWrap: "wrap" }}>
-                                <span style={{ fontSize: 9.5, fontWeight: 700, padding: "1px 7px", borderRadius: 20,
-                                  background: c.sst_ok === true ? "#dcfce7" : "#fef3c7", color: c.sst_ok === true ? "#15803d" : "#b45309" }}>
-                                  {c.sst_ok === true ? <Ic i={CheckCircle2} /> : <Ic i={Clock} />}SST
-                                </span>
-                                {/* Compras (15/10/2026): clicável — abre o pedido (ID, status, itens, histórico). */}
-                                <button type="button" title="Ver o pedido de materiais"
-                                  onClick={(e) => { e.stopPropagation(); setPedidoAberto({ id: c.id, nome: c.nome }); }}
-                                  style={{ fontSize: 9.5, fontWeight: 700, padding: "1px 7px", borderRadius: 20, border: "1px solid transparent", cursor: "pointer", fontFamily: "inherit",
-                                    background: c.compras_ok === true ? "#dcfce7" : "#fef3c7", color: c.compras_ok === true ? "#15803d" : "#b45309", textDecoration: "underline dotted" }}>
-                                  {c.compras_ok === true ? <Ic i={CheckCircle2} /> : <Ic i={Clock} />}Compras
-                                  {pedidosVaga[String(c.id)] ? ` · ${pedidosVaga[String(c.id)].protocolo}` : c.compras_dispensado ? " · sem pedido" : ""}
-                                </button>
-                              </div>
+                            {/* SST + COMPRAS (16/10/2026): um quadro para cada lado, com o
+                                botão do WhatsApp para mandar o agendamento ao candidato. */}
+                            {(etapa === ETAPA_SST_COMPRAS || etapa === "EXAME SST") && (
+                              <QuadrosSstCompras candidato={c} pedido={pedidosVaga[String(c.id)]}
+                                podeEnviar={podeRecrutar && !somenteLeitura && temWhatsApp(c)} enviando={enviandoAgendamento === c.id}
+                                onAbrirSst={() => setSstCandId(c.id)} onAbrirCompras={() => setPedidoAberto({ id: c.id, nome: c.nome })}
+                                onEnviarAgendamento={() => enviarAgendamento(c)} />
                             )}
                             {etapa === "DOCUMENTAÇÃO" && (docsCount[c.id] ?? 0) > 0 && <div style={{ fontSize: 9.5, color: "#0e7490", marginTop: 4, fontWeight: 700 }}><Ic i={Paperclip} />{docsCount[c.id]} documento{docsCount[c.id] > 1 ? "s" : ""}</div>}
                             {/* Ficha do ASO (18/09/2026): a partir de APROVADO o
                                 Recrutamento vê o que o SST vai receber e completa
-                                o que o automático não achou (PIS, mãe, posto…). */}
-                            {["APROVADO", "DOCUMENTAÇÃO", ETAPA_SST_COMPRAS, "EXAME SST", "ADMISSÃO"].includes(etapa) && (
+                                o que o automático não achou (PIS, mãe, posto…).
+                                Em SST + COMPRAS ela fica DENTRO do quadro do SST
+                                (StatusSstDialog) — pedido do Pablo, 16/10/2026. */}
+                            {["APROVADO", "DOCUMENTAÇÃO", "ADMISSÃO"].includes(etapa) && (
                               <div style={{ marginTop: 6 }}><FichaAso candidatoId={c.id} compacto editar={podeRecrutar && !somenteLeitura} /></div>
                             )}
                             {etapa === "ADMISSÃO" && c.enviado_admissao_em && <div style={{ fontSize: 9.5, color: "#15803d", marginTop: 4, fontWeight: 700 }}>✓ Contratado — na Admissão (RH)</div>}
@@ -2938,11 +2997,9 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
                                 // cada setor no SEU módulo (SST › ASO/Admissão e
                                 // Suprimentos › EPIs/Admissões), onde só ele entra.
                                 // Botão de aprovar neste kanban deixaria o
-                                // Recrutamento assinar etapa alheia.
-                                <div style={{ fontSize: 9.5, color: "#94a3b8", textAlign: "center", padding: "2px 0" }}>
-                                  Aguardando {c.sst_ok !== true && c.compras_ok !== true ? "SST e Compras"
-                                    : c.sst_ok !== true ? "SST" : "Compras"}
-                                </div>
+                                // Recrutamento assinar etapa alheia. O "Aguardando
+                                // SST/Compras" saiu (16/10/2026): os quadros já dizem.
+                                null
                               ) : (CAND_PROX[etapa] && podeAqui && (
                                 <button onClick={() => pedirMoverCand(c, CAND_PROX[etapa])} style={{ ...avancaBtn, background: "#16a34a" }}>{labelProx(etapa)}</button>
                               ))}
@@ -2965,7 +3022,7 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
                               {etapa !== "Reprovado" && podeRecrutar && (
                                 <button onClick={() => { setDesistMotivo(""); setDesistModal({ id: c.id, nome: c.nome || "Candidato", etapa }); }}
                                   title="Registrar que o candidato desistiu"
-                                  style={{ width: "100%", fontSize: 10, fontWeight: 700, padding: "3px", borderRadius: 7, background: "transparent", border: "none", color: "#cbd5e1", cursor: "pointer" }}><Ic i={LogOut} />Desistiu</button>
+                                  style={{ width: "100%", fontSize: 10, fontWeight: 700, padding: "3px", borderRadius: 7, background: "transparent", border: "none", color: "#dc2626", cursor: "pointer" }}><Ic i={LogOut} />Desistiu</button>
                               )}
                             </div>
                             )}
@@ -3704,7 +3761,10 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
         </div>
       )}
 
-      <PedidoComprasCandidato candidatoId={pedidoAberto?.id ?? null} nome={pedidoAberto?.nome} onFechar={() => setPedidoAberto(null)} />
+      {/* CamadaAlta (16/10/2026): abre por cima do kanban (z 800); em z-50 ficava atrás e "nada acontecia". */}
+      <CamadaAlta>
+        <PedidoComprasCandidato candidatoId={pedidoAberto?.id ?? null} nome={pedidoAberto?.nome} onFechar={() => setPedidoAberto(null)} />
+      </CamadaAlta>
 
       {/* ── Modal: Roteiro de Entrevista ── */}
       {roteiroModal && (
@@ -3877,6 +3937,21 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
                 );
               })}
             </div>
+
+            {/* Agendamento do ASO (mig 20261016000031): não é automático — sai pelo
+                botão "Enviar agendamento" do card em SST + COMPRAS —, mas o modelo
+                vai para a Meta junto com os outros, por este mesmo botão. */}
+            {(() => {
+              const st = msgStatus["AGENDAMENTO ASO"]?.status;
+              const txt = st === "APPROVED" ? "aprovado na Meta — o botão já envia" : st === "PENDING" ? "em revisão na Meta"
+                : st === "REJECTED" ? `reprovado na Meta${msgStatus["AGENDAMENTO ASO"]?.motivo ? ` (${msgStatus["AGENDAMENTO ASO"]?.motivo})` : ""}`
+                : st ? "ainda não enviado à Meta — clique em Enviar textos para aprovação" : "status na Meta indisponível";
+              return (
+                <div style={{ marginTop: 12, fontSize: 11.5, color: "#475569", background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: 10, padding: "8px 12px" }}>
+                  <b style={{ color: "#15803d" }}>Agendamento do ASO</b> (botão com o WhatsApp no card em SST + COMPRAS, envio manual) · modelo <code>recrutamento_agendamento_aso</code>: <b>{txt}</b>
+                </div>
+              );
+            })()}
 
             <div style={{ display: "flex", gap: 8, justifyContent: "space-between", alignItems: "center", marginTop: 16, flexWrap: "wrap" }}>
               <button onClick={criarTemplates} disabled={msgMetaBusy}
@@ -4166,6 +4241,24 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
       )}
 
       {/* ── Editar candidato inserido manualmente ── */}
+      {/* Status do SST (16/10/2026). */}
+      {sstCandId != null && (() => {
+        const cand = candidatos.find(x => x.id === sstCandId);
+        return cand ? <StatusSstDialog candidato={cand} onClose={() => setSstCandId(null)}
+          onEnviarWhatsApp={podeRecrutar && !vagaEncerrada(drawerSol?.status) && temWhatsApp(cand) ? () => enviarAgendamento(cand) : undefined}
+          enviando={enviandoAgendamento === cand.id}
+          ficha={<FichaAso candidatoId={cand.id} editar={podeRecrutar && !vagaEncerrada(drawerSol?.status)} />} /> : null;
+      })()}
+      {confirmarAgendamentoId != null && (() => {
+        const cand = candidatos.find(x => x.id === confirmarAgendamentoId);
+        return cand ? <ConfirmarEnvioAgendamento candidato={cand} cargo={drawerSol?.cargo} enviando={enviandoAgendamento === cand.id}
+          onConfirmar={() => confirmarEnvioAgendamento(cand)} onCancelar={() => setConfirmarAgendamentoId(null)} /> : null;
+      })()}
+      {/* Ver parecer do Jurídico (16/10/2026). */}
+      {parecerCandId != null && (() => {
+        const cand = candidatos.find(x => x.id === parecerCandId);
+        return cand ? <ParecerJuridicoDialog candidato={cand} processos={processosDe(processosCand, cand)} onClose={() => setParecerCandId(null)} /> : null;
+      })()}
       {editarCandId != null && drawerId && (
         <CandidatoManualDialog
           vagaId={drawerId} cargo={drawerSol?.cargo} autor={user?.user_metadata?.nome ?? user?.email ?? ""} editarId={editarCandId}

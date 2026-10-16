@@ -34,6 +34,11 @@ const EXEMPLOS: Record<string, string> = {
   cidade: "Porto Alegre",
   contrato: "UFRGS - Limpeza",
   empresa: "Grupo Nascimento",
+  // Agendamento do ASO (mig 20261016000031).
+  data_exame: "20/10/2026 (terça-feira)",
+  hora_exame: "08:30",
+  local_exame: "Clínica Exemplo - Rua dos Andradas, 1000 - Centro, Porto Alegre/RS",
+  mapa_exame: "https://www.google.com/maps/search/?api=1&query=Rua+dos+Andradas+1000+Porto+Alegre",
 };
 
 const cors = {
