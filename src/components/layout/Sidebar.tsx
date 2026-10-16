@@ -272,7 +272,6 @@ const controladoriaOrcModule: ModuleDef = {
         // app_menu pra decidir se o item aparece dado o acesso do usuário
         // (ver isAllowed logo abaixo). Sem esta linha, a rota funciona por
         // acesso direto mas nunca aparece pra ninguém clicar.
-        // SIS-2026-0652: o Controle de Faturamento foi para Financeiro > Ferramentas (a rota e o menu de acesso não mudam).
         // 06/10/2026 (mig 20261006000005): transcrições das reuniões dos
         // supervisores com os encarregados → dashboard de dificuldades.
         { label: "Reuniões com Encarregados", to: "/app/controladoria/reunioes-encarregados", icon: MessagesSquare, badge: "Novo" },
@@ -442,8 +441,8 @@ const financeiroModule: ModuleDef = {
         // do usuário, são módulos migrados de sistema externo, não fazem
         // parte da Gestão Financeira "nativa" do ERP.
         { label: "Checklist de Faturamento", to: "/app/financeiro/checklist-faturamento", icon: ListChecks },
-        // SIS-2026-0652: veio da Controladoria; a rota segue /app/controladoria/controle-faturamento e o acesso é o mesmo menu.
-        { label: "Controle de Faturamento", to: "/app/controladoria/controle-faturamento", icon: FileText },
+        // SIS-2026-0652: veio da Controladoria; o acesso é o mesmo menu (controle-faturamento), só módulo e rota mudaram (mig 20261016000001).
+        { label: "Controle de Faturamento", to: "/app/financeiro/controle-faturamento", icon: FileText },
         { label: "Solicitações de Ajuste", to: "/app/financeiro/solicitacoes-ajuste", icon: ClipboardList },
         // SIS-2026-0524: juros informado no pagamento do Malote, controle
         // de cobrança do responsável — não gera lançamento no Fluxo de Caixa.

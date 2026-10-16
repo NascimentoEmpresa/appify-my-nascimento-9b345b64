@@ -682,7 +682,9 @@ const App = () => (
                 só aceita redirecionar para endereços registrados no app. */}
             <Route path="meu-perfil/discord" element={<DiscordCallback />} />
             <Route path="controladoria/empresas" element={<Empresas />} />
-            <Route path="controladoria/controle-faturamento" element={<ControleFaturamento />} />
+            {/* SIS-2026-0652: o Controle de Faturamento é do Financeiro; a URL antiga redireciona (links salvos, notificações). */}
+            <Route path="financeiro/controle-faturamento" element={<ControleFaturamento />} />
+            <Route path="controladoria/controle-faturamento" element={<Navigate to="/app/financeiro/controle-faturamento" replace />} />
             <Route path="controladoria/reunioes-encarregados" element={<ReunioesEncarregados />} />
             <Route path="controladoria/faturamento-empresa" element={<FaturamentoEmpresa />} />
             <Route path="controladoria/lucratividade-contratos" element={<LucratividadeContratos />} />
