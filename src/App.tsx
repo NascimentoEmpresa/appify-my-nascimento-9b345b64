@@ -130,6 +130,8 @@ import Cobrancas from "./pages/cobrancas/Cobrancas";
 import RelatorioServicos from "./pages/financeiro/RelatorioServicos";
 import FluxoCaixa from "./pages/financeiro/FluxoCaixa";
 import FluxoCaixaGestao from "./pages/financeiro/FluxoCaixaGestao";
+import ConciliacaoOrigemFluxoCaixa from "./pages/financeiro/ConciliacaoOrigemFluxoCaixa";
+import ConciliacaoOrigemRelatorioServicos from "./pages/financeiro/ConciliacaoOrigemRelatorioServicos";
 import ConciliacaoAutomaticaFluxoCaixa from "./pages/financeiro/ConciliacaoAutomaticaFluxoCaixa";
 import CartaoCredito from "./pages/financeiro/CartaoCredito";
 import ClassificarLancamentos from "./pages/financeiro/cartao-credito/ClassificarLancamentos";
@@ -807,6 +809,9 @@ const App = () => (
             <Route path="financeiro/conta-garantida" element={<ContaGarantida />} />
             <Route path="financeiro/fluxo-caixa" element={<FluxoCaixa />} />
             <Route path="financeiro/gestao-financeira/fluxo-caixa" element={<FluxoCaixaGestao />} />
+            {/* SIS-2026-0658: conciliação da origem dos dados (Sistema × Excel antigo) */}
+            <Route path="financeiro/gestao-financeira/conciliacao-origem-fluxo-caixa" element={<ConciliacaoOrigemFluxoCaixa />} />
+            <Route path="financeiro/relatorio-servicos/conciliacao-origem" element={<ConciliacaoOrigemRelatorioServicos />} />
             <Route path="financeiro/gestao-financeira/conciliacao-fluxo-caixa" element={<ConciliacaoAutomaticaFluxoCaixa />} />
             <Route path="financeiro/gestao-financeira/debito-automatico" element={<DebitoAutomatico />} />
             <Route path="financeiro/gestao-financeira/aplicacoes-financeiras" element={<AplicacoesFinanceiras />} />
