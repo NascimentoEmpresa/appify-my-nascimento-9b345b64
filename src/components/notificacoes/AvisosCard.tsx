@@ -4,6 +4,7 @@ import { AlertTriangle, ArrowRight, GraduationCap, Info, Megaphone, Settings } f
 import { useNotificacoes } from "@/hooks/useNotificacoes";
 import { estaVigente, fmtDataHora, type Notificacao } from "@/lib/notificacoes";
 import { ConteudoAviso } from "@/components/notificacoes/ConteudoAviso";
+import { ComentariosAviso } from "@/components/notificacoes/ComentariosAviso";
 import {
   Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
@@ -132,7 +133,11 @@ export function AvisosCard({ limite = 4 }: { limite?: number }) {
             </DialogDescription>
           </DialogHeader>
           {aberto && (
-            <ConteudoAviso aviso={aberto} prioridade />
+            <>
+              <ConteudoAviso aviso={aberto} prioridade />
+              {/* Comentários e reações (16/10/2026) — só se o aviso aceita. */}
+              <ComentariosAviso aviso={aberto} />
+            </>
           )}
         </DialogContent>
       </Dialog>

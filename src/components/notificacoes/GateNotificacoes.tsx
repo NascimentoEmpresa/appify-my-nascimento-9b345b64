@@ -2,6 +2,7 @@ import { useState } from "react";
 import { AlertCircle, Loader2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ConteudoAviso } from "@/components/notificacoes/ConteudoAviso";
+import { ComentariosAviso } from "@/components/notificacoes/ComentariosAviso";
 import { useNotificacoes } from "@/hooks/useNotificacoes";
 import { cn } from "@/lib/utils";
 import {
@@ -150,6 +151,9 @@ export function JanelaAviso({ aviso, enviando = null, onEscolher, onAdiar, resta
           {/* Imagens (carrossel/grade), texto com URLs clicáveis e os links
               com nome — o mesmo bloco do Quadro e do Início (ConteudoAviso). */}
           <ConteudoAviso aviso={aviso} prioridade />
+          {/* Comentários e reações (16/10/2026). Na prévia, a área aparece
+              desligada: o aviso ainda não existe para ter comentário. */}
+          <ComentariosAviso aviso={aviso} previa={!!previa} />
         </div>
 
         <div className="flex flex-col gap-2 border-t px-5 py-4 sm:flex-row sm:justify-end">

@@ -189,6 +189,9 @@ export function useNotificacoes() {
         // Botões próprios (16/10/2026). Sem ciência não há o que responder:
         // grava vazio para o aviso não carregar botão que nunca aparece.
         botoes: f.exigir_ciencia ? botoesDoAviso(f) : [],
+        // Comentários (16/10/2026). Anônimo só vale com comentários ligados.
+        permitir_comentarios: f.permitir_comentarios,
+        permitir_anonimo: f.permitir_comentarios && f.permitir_anonimo,
         exigir_ciencia: f.exigir_ciencia,
         // publico_alvo saiu na 081: a verdade é a tabela de alvos, e ter as
         // duas era duas fontes para a mesma pergunta.

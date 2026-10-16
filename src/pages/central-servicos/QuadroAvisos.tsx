@@ -52,6 +52,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { useNotificacoes } from "@/hooks/useNotificacoes";
 import { ConteudoAviso } from "@/components/notificacoes/ConteudoAviso";
 import { JanelaAviso } from "@/components/notificacoes/GateNotificacoes";
+import { ComentariosAviso } from "@/components/notificacoes/ComentariosAviso";
 import {
   CATEGORIAS, ESTILOS_BOTAO, FORM_VAZIO, MAX_BOTOES, MAX_ROTULO_BOTAO, TAMANHOS_IMAGEM,
   botoesDoAviso, contagemPorBotao, respostaDe, varianteDoBotao, avisoDoFormulario, erroDoFormulario, estaVigente, fmtDataHora, formDoAviso,
@@ -808,6 +809,41 @@ export default function QuadroAvisos() {
                   </div>
                 </div>
               </div>
+
+              {/* Comentários e reações (16/10/2026). Independente da ciência:
+                  um mural sem resposta obrigatória também pode ter conversa. */}
+              <div className="rounded-lg border bg-muted/30 p-3">
+                <div className="flex items-start gap-3">
+                  <Switch
+                    checked={form.permitir_comentarios}
+                    onCheckedChange={(v) => setForm({
+                      ...form,
+                      permitir_comentarios: v,
+                      // Anônimo sem comentário não quer dizer nada.
+                      permitir_anonimo: v ? form.permitir_anonimo : false,
+                    })}
+                  />
+                  <div>
+                    <div className="text-sm font-medium">Permitir comentários e reações</div>
+                    <p className="text-xs text-muted-foreground">
+                      Quem recebe o aviso comenta e reage com emoji; os comentários ficam no próprio aviso.
+                    </p>
+                  </div>
+                </div>
+                <label className={cn("mt-3 flex items-start gap-2 pl-10", !form.permitir_comentarios && "opacity-50")}>
+                  <Checkbox
+                    checked={form.permitir_anonimo}
+                    disabled={!form.permitir_comentarios}
+                    onCheckedChange={(v) => setForm({ ...form, permitir_anonimo: v === true })}
+                  />
+                  <span>
+                    <span className="text-sm font-medium">Permitir comentário anônimo</span>
+                    <p className="text-xs text-muted-foreground">
+                      O nome não é gravado — nem você vai saber quem foi. Quem gerencia o Quadro pode apagar o comentário.
+                    </p>
+                  </span>
+                </label>
+              </div>
             </div>
           )}
 
@@ -850,11 +886,14 @@ export default function QuadroAvisos() {
           {vendo && (
             <div className="space-y-4">
               <ConteudoAviso aviso={vendo} prioridade />
+              <ComentariosAviso aviso={vendo} />
 
               <div className="rounded-lg border p-3 text-sm">
                 <div className="mb-2 font-semibold">Regras aplicadas</div>
                 <ul className="space-y-1 text-muted-foreground">
                   <li>Exigir ciência: <b>{vendo.exigir_ciencia ? "Sim" : "Não"}</b></li>
+                  <li>Comentários: <b>{vendo.permitir_comentarios
+                    ? (vendo.permitir_anonimo ? "Sim, inclusive anônimos" : "Sim") : "Não"}</b></li>
                   <li>Bloquear acesso até responder: <b>{vendo.bloquear_acesso ? "Sim" : "Não"}</b></li>
                   <li>Botões de resposta: <b>{botoesDoAviso(vendo).length
                     ? botoesDoAviso(vendo).map((b) => b.rotulo).join(" · ")

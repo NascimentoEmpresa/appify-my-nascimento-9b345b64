@@ -15,6 +15,14 @@
 export const TABELA = "SISTEMA_NOTIFICACOES";
 export const TABELA_CIENCIA = "SISTEMA_NOTIFICACAO_CIENCIA";
 export const TABELA_ALVO = "SISTEMA_NOTIFICACAO_ALVO";
+/** Comentários e reações do aviso (16/10/2026) — ver a migration 20261016000003. */
+export const TABELA_COMENTARIO = "SISTEMA_NOTIFICACAO_COMENTARIO";
+export const TABELA_REACAO = "SISTEMA_NOTIFICACAO_REACAO";
+/** Os emojis aceitos — a mesma lista do CHECK do banco. */
+export const EMOJIS = ["👍", "❤️", "😂", "😮", "😢", "👏", "🎉", "🙏"] as const;
+/** Quantos comentários um aviso carrega ao abrir. O banco andou caindo: nada de "todos". */
+export const LIMITE_COMENTARIOS = 50;
+export const MAX_COMENTARIO = 1000;
 /**
  * A imagem do aviso.
  *
@@ -149,6 +157,10 @@ export interface Notificacao {
   links?: LinkDoAviso[] | null;
   /** Botões de resposta próprios (16/10/2026). Vazio = permitir_escolha decide. */
   botoes?: BotaoDoAviso[] | null;
+  /** Quem recebeu pode comentar e reagir (16/10/2026). */
+  permitir_comentarios?: boolean | null;
+  /** O comentário pode ir sem nome — o autor não é gravado. */
+  permitir_anonimo?: boolean | null;
   /** Precisa confirmar que leu? Desligado, é mural: aparece na lista e pronto. */
   exigir_ciencia: boolean;
   /** Trava a tela até responder. Só faz sentido junto com exigir_ciencia. */
@@ -219,6 +231,8 @@ export interface FormNotificacao {
   links: LinkDoAviso[];
   /** Botões de resposta próprios; vazio = Concordo/Discordo ou "Estou ciente". */
   botoes: BotaoDoAviso[];
+  permitir_comentarios: boolean;
+  permitir_anonimo: boolean;
   /** Setores que recebem o aviso. Vazio + sem pessoas = todo mundo. */
   setores: string[];
   /** Pessoas que recebem, por id do profile. */
@@ -232,6 +246,7 @@ export interface FormNotificacao {
 export const FORM_VAZIO: FormNotificacao = {
   titulo: "", mensagem: "", publicado: true, categoria: "Comunicado", resumo: "",
   expira_em: "", anexo_url: "", anexo_nome: "", imagens: [], imagens_layout: "carrossel", imagens_tamanho: "", links: [], botoes: [],
+  permitir_comentarios: false, permitir_anonimo: false,
   setores: [], usuarios: [],
   exigir_ciencia: true, bloquear_acesso: true, permitir_escolha: true,
 };
@@ -276,6 +291,8 @@ export function formDoAviso(
     imagens_tamanho: tamanhoImagemDe(n.imagens_tamanho),
     links: (Array.isArray(n.links) ? n.links : []).map((l) => ({ rotulo: String(l?.rotulo ?? ""), url: String(l?.url ?? "") })),
     botoes: botoesDoAviso(n),
+    permitir_comentarios: !!n.permitir_comentarios,
+    permitir_anonimo: !!n.permitir_comentarios && !!n.permitir_anonimo,
     setores: meus.filter((a) => a.setor).map((a) => a.setor as string),
     usuarios: meus.filter((a) => a.user_id).map((a) => a.user_id as string),
     exigir_ciencia: n.exigir_ciencia,
@@ -309,10 +326,57 @@ export function avisoDoFormulario(f: FormNotificacao, autor: string | null, agor
     imagens_tamanho: f.imagens_tamanho || null,
     links: f.links.filter((l) => l.url.trim()).map((l) => ({ rotulo: l.rotulo.trim() || "Link", url: l.url.trim() })),
     botoes: botoesDoAviso(f),
+    permitir_comentarios: f.permitir_comentarios,
+    permitir_anonimo: f.permitir_comentarios && f.permitir_anonimo,
     exigir_ciencia: f.exigir_ciencia,
     bloquear_acesso: f.exigir_ciencia && f.bloquear_acesso,
     permitir_escolha: f.permitir_escolha,
   };
+}
+
+/** Um comentário do aviso. Anônimo chega sem user_id e sem autor_nome — o banco não guarda. */
+export interface ComentarioAviso {
+  id: number;
+  notificacao_id: number;
+  user_id: string | null;
+  autor_nome: string | null;
+  anonimo: boolean;
+  texto: string;
+  criado_em: string;
+}
+
+export interface ReacaoAviso {
+  id: number;
+  comentario_id: number | null;
+  user_id: string;
+  emoji: string;
+}
+
+/** Uma linha de reações: cada emoji usado, quantos, e se eu estou entre eles. */
+export interface ResumoReacao { emoji: string; total: number; minha: boolean }
+
+/**
+ * As reações de UM alvo (o aviso, com comentarioId null, ou um comentário),
+ * na ordem fixa de EMOJIS — a linha não pula de lugar a cada clique.
+ */
+export function resumoReacoes(
+  reacoes: Pick<ReacaoAviso, "comentario_id" | "user_id" | "emoji">[],
+  comentarioId: number | null,
+  eu: string | null | undefined,
+): ResumoReacao[] {
+  const doAlvo = reacoes.filter((r) => (r.comentario_id ?? null) === comentarioId);
+  return EMOJIS
+    .map((emoji) => {
+      const desse = doAlvo.filter((r) => r.emoji === emoji);
+      return { emoji, total: desse.length, minha: !!eu && desse.some((r) => r.user_id === eu) };
+    })
+    .filter((r) => r.total > 0);
+}
+
+/** Como o autor aparece. Anônimo é anônimo para todo mundo — inclusive para quem publicou. */
+export function autorDoComentario(c: Pick<ComentarioAviso, "anonimo" | "autor_nome">): string {
+  if (c.anonimo) return "Anônimo";
+  return c.autor_nome?.trim() || "(usuário removido)";
 }
 
 /** O mínimo para o aviso valer alguma coisa na tela. */
