@@ -67,6 +67,10 @@ export const ACOES_FORA_DO_TOGGLE: Readonly<Record<string, readonly AppAcao[]>> 
   // que já foi validada — ou seja, hora que já virou pagamento. Ligar a tela
   // para alguém conferir HE não pode dar junto o poder de mudar o passado.
   sistemas_hora_extra: ["editar_concluida"],
+  // Rateio de Despesas do RH (16/10/2026, SIS-2026-0673, mig
+  // 20261016000020): 'enviar_malote' lança despesa no Malote do Financeiro.
+  // Ligar a tela para alguém conferir rateio não dá junto esse poder.
+  rh_rateio_despesas: ["enviar_malote"],
 };
 
 /**

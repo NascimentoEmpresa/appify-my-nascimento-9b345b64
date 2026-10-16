@@ -142,6 +142,8 @@ export function PainelDespesaMalote({
   solicitacaoDispensadaManualmente,
   linhaRateioPadrao,
   fornecedorPadraoNome,
+  rateioInicial,
+  arquivosIniciais,
 }: {
   classificacaoId: string;
   classificacaoTipo?: TipoClassificacaoOrcamento | null;
@@ -165,6 +167,12 @@ export function PainelDespesaMalote({
   // rateioPadrao.ts para o porquê.
   linhaRateioPadrao?: Pick<PadraoLinhaRateio, "contrato_id" | "integrante_empregado_id">;
   fornecedorPadraoNome?: string;
+  // RH › Rateio de Despesas (SIS-2026-0673, 16/10/2026): o rateio chega
+  // pronto com VÁRIAS linhas (uma por contrato) e o PDF/planilha da despesa
+  // já anexado. Lido só na montagem, como o resto do "inicial": depois é da
+  // pessoa. Quem usa troca a key do painel para recomeçar.
+  rateioInicial?: RateioLinha[];
+  arquivosIniciais?: File[];
 }) {
   const [paramsUrl] = useSearchParams();
   const obrigacaoPatrimonio = paramsUrl.get(PARAM_ORIGEM);
@@ -215,7 +223,7 @@ export function PainelDespesaMalote({
   // telas de aprovação de diária (SIS-2026-0480).
   const [dimensoes, setDimensoes] = useState<DimensoesRateio>({ empresa: false, contrato: false, fornecedor: true, integrante: false });
   const [ratearPor, setRatearPor] = useState<"percentual" | "valor">("percentual");
-  const [linhasRateio, setLinhasRateio] = useState<RateioLinha[]>([]);
+  const [linhasRateio, setLinhasRateio] = useState<RateioLinha[]>(rateioInicial ?? []);
   const [parcelado, setParcelado] = useState<"nao" | "sim">("nao");
   const [diaDesconto, setDiaDesconto] = useState("");
   const [quantidadeParcelas, setQuantidadeParcelas] = useState("");
@@ -228,7 +236,7 @@ export function PainelDespesaMalote({
   // SIS-2026-0361 (complemento): valores de parcela ajustados na mão (só no
   // modo "compra"). Mesma régua de reset das datas.
   const [valoresManuais, setValoresManuais] = useState<Record<number, string>>({});
-  const [arquivos, setArquivos] = useState<File[]>([]);
+  const [arquivos, setArquivos] = useState<File[]>(arquivosIniciais ?? []);
   const [salvando, setSalvando] = useState<"rascunho" | "enviar" | null>(null);
 
   /**

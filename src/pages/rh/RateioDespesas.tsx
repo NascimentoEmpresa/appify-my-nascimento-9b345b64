@@ -30,17 +30,19 @@ import {
 } from "@/components/ui/alert-dialog";
 import {
   AlertTriangle, ArrowLeft, CheckCircle2, Download, FileSpreadsheet, FileText, History, Loader2,
-  Paperclip, Plus, RotateCcw, Save, Search, Trash2, Upload, Users,
+  Lock, Paperclip, Plus, RotateCcw, Save, Search, Send, Trash2, Upload, Users,
 } from "lucide-react";
+import { EnviarRateioMalote } from "./EnviarRateioMalote";
 import { useScreenAccess } from "@/hooks/useScreenAccess";
 import {
   carregarDespesaRateio, carregarUltimoDoTipo, casarCpfs, linkAnexoRateio, subirAnexoRateio,
-  useContratosRateio, useDespesasRateio, useExcluirRateio, useSalvarRateio,
+  useContratosRateio, useDespesasRateio, useExcluirRateio, useMaloteDosRateios, useSalvarRateio,
   type ContratoRateio, type DespesaRateio, type LinhaDetalhePdf,
 } from "@/hooks/useRateioDespesas";
 import {
   TIPOS_RATEIO, ROTULO_CRITERIO, SEM_CONTRATO, acharContrato, calcularRateio, competenciaParaData,
-  competenciaRotulo, criterioPadrao, extrairLinhasComCpf, extrairLinhasPorContrato, fmtMoeda, fmtPct,
+  competenciaRotulo, criterioPadrao, extrairLinhasPorContrato, fmtMoeda, fmtPct,
+  extrairLinhasDoPdf, identificarLayoutPdf, totalDoPdf,
   lerPlanilhaJusBrasil, resumirRateio, rotuloTipo, somarPorContrato, tipoUsaPdf,
   type ContratoRef, type CriterioRateio, type ItemRateio, type LinhaPlanilhaJus, type TipoRateio,
 } from "@/lib/rh/rateioDespesas";
@@ -49,6 +51,7 @@ import { lerLinhasPdf } from "@/lib/rh/rateioPdf";
 const MENU = "rh_rateio_despesas";
 const SEM = "__sem__";
 const chave = (id: string | null) => id ?? SEM;
+const LIMITE_LINHAS_TELA = 300;
 
 interface Base {
   contrato_id: string | null;
@@ -98,6 +101,7 @@ function Lista({ onAbrir }: { onAbrir: (id: string | "novo") => void }) {
       ),
     [q.data, tipo, mes, busca],
   );
+  const malote = useMaloteDosRateios((q.data ?? []).filter((d) => d.malote_despesa_id).map((d) => d.id)).data;
 
   return (
     <Card className="p-4 space-y-3">
@@ -162,6 +166,9 @@ function Lista({ onAbrir }: { onAbrir: (id: string | "novo") => void }) {
                     {d.status === "conferido"
                       ? <Badge className="bg-success/15 text-success border-success/30" variant="outline">Conferido</Badge>
                       : <Badge variant="outline">Rascunho</Badge>}
+                    {malote?.get(d.id)?.ativo && (
+                      <Badge variant="outline" className="ml-1 gap-1"><Send className="h-3 w-3" /> {malote.get(d.id)?.numero}</Badge>
+                    )}
                   </td>
                   <td className="px-2 text-xs text-muted-foreground">{d.alterado_por_nome ?? d.criado_por_nome ?? ""}</td>
                 </tr>
@@ -183,7 +190,14 @@ function Editor({ id, onFechar, onSalvo }: { id: string | null; onFechar: () => 
   const { data: podeAlterar } = useScreenAccess(MENU, "alterar");
   const { data: podeExcluir } = useScreenAccess(MENU, "excluir");
   const { data: podeExportar } = useScreenAccess(MENU, "exportar");
-  const podeGravar = id ? !!podeAlterar : !!podeIncluir;
+  const { data: podeEnviarMalote } = useScreenAccess(MENU, "enviar_malote");
+  // Enviado ao Malote (mig 20261016000020): enquanto a despesa de lá existir,
+  // o rateio fica travado (o banco também recusa salvar/excluir).
+  const maloteQ = useMaloteDosRateios(id ? [id] : []);
+  const noMalote = id ? maloteQ.data?.get(id) ?? null : null;
+  const travadoMalote = !!noMalote?.ativo;
+  const [enviandoMalote, setEnviandoMalote] = useState(false);
+  const podeGravar = (id ? !!podeAlterar : !!podeIncluir) && !travadoMalote;
 
   const [carregando, setCarregando] = useState(!!id);
   const [tipo, setTipo] = useState<TipoRateio>("jusbrasil");
@@ -201,6 +215,9 @@ function Editor({ id, onFechar, onSalvo }: { id: string | null; onFechar: () => 
   const [planilha, setPlanilha] = useState<(LinhaPlanilhaJus & { contrato: ContratoRef | null })[] | null>(null);
   const [lendo, setLendo] = useState(false);
   const [avisoPdf, setAvisoPdf] = useState<string | null>(null);
+  // Do PDF lido agora (não é gravado): total que ele declara e qual layout foi reconhecido.
+  const [pdfInfo, setPdfInfo] = useState<{ total: number | null; rotulo: string } | null>(null);
+  const [soPendentes, setSoPendentes] = useState(false);
   const [confirmarExclusao, setConfirmarExclusao] = useState(false);
   const [soComBase, setSoComBase] = useState(false);
   const inputPdf = useRef<HTMLInputElement>(null);
@@ -361,10 +378,15 @@ function Editor({ id, onFechar, onSalvo }: { id: string | null; onFechar: () => 
     setArquivo(f);
     setAnexoNome(f.name);
     setAvisoPdf(null);
+    setPdfInfo(null);
     setLendo(true);
     try {
       const linhas = await lerLinhasPdf(f);
-      const comCpf = extrairLinhasComCpf(linhas);
+      const layout = identificarLayoutPdf(linhas);
+      const declarado = totalDoPdf(linhas, layout.layout);
+      setPdfInfo({ total: declarado, rotulo: layout.rotulo });
+      let lido = 0;
+      const comCpf = extrairLinhasDoPdf(linhas, layout.layout);
       if (comCpf.length) {
         const casados = await casarCpfs([...new Set(comCpf.map((l) => l.cpf as string))]);
         const porCpf = new Map(casados.map((c) => [c.cpf, c]));
@@ -373,19 +395,26 @@ function Editor({ id, onFechar, onSalvo }: { id: string | null; onFechar: () => 
           return { n: l.n, texto: l.texto, cpf: l.cpf, nome: c?.nome ?? null, situacao: c?.situacao ?? null, valor: l.valor, contrato_id: c?.contrato_id ?? null };
         });
         setLinhasPdf(det);
+        lido = det.reduce((a, d) => a + d.valor, 0);
         const semCad = det.filter((d) => !d.nome).length;
         const semCt = det.filter((d) => d.nome && !d.contrato_id).length;
+        setSoPendentes(det.length > 200 && semCad + semCt > 0);
         if (semCad || semCt) setAvisoPdf(`${semCad ? `${semCad} CPF(s) não estão na EMPREGADOS` : ""}${semCad && semCt ? " e " : ""}${semCt ? `${semCt} colaborador(es) sem contrato` : ""} — escolha o contrato na lista abaixo.`);
       } else {
         const porContrato = extrairLinhasPorContrato(linhas, refs);
         if (porContrato.length) {
           setLinhasPdf(porContrato.map((l) => ({ n: l.n, texto: l.texto, cpf: null, nome: null, situacao: null, valor: l.valor, contrato_id: l.contrato?.id ?? null })));
+          lido = porContrato.reduce((a, l) => a + l.valor, 0);
         } else {
           setLinhasPdf([]);
           setAvisoPdf("Não achei neste PDF linhas com CPF e valor, nem com nome de contrato e valor. Preencha a base por contrato abaixo e mande este PDF ao TI para ajustarmos a leitura deste formato.");
         }
       }
       setAjustes({});
+      // Preenche o valor da despesa sozinho (o total que o PDF declara; sem
+      // linha de TOTAL, a soma lida) — só se ainda estiver em branco.
+      const sugerido = declarado ?? (lido > 0 ? Math.round(lido * 100) / 100 : null);
+      if (sugerido && !(Number(valorTxt) > 0)) setValorTxt(sugerido.toFixed(2));
     } catch (e) {
       setAvisoPdf((e as Error).message);
     } finally {
@@ -431,9 +460,17 @@ function Editor({ id, onFechar, onSalvo }: { id: string | null; onFechar: () => 
       setStatus(novoStatus);
       toast.success(novoStatus === "conferido" ? "Rateio conferido e salvo." : "Rascunho salvo.");
       if (!id) onSalvo(novoId);
+      return true;
     } catch (e) {
       toast.error((e as Error).message);
     }
+  };
+
+  // Enviar ao Malote parte do que está GRAVADO (a RPC confere o valor com o
+  // banco): quem pode gravar salva como conferido antes de abrir o envio.
+  const abrirEnvioMalote = async () => {
+    if (podeGravar && (await gravar("conferido")) !== true) return;
+    setEnviandoMalote(true);
   };
 
   const exportar = () => {
@@ -493,7 +530,12 @@ function Editor({ id, onFechar, onSalvo }: { id: string | null; onFechar: () => 
       <div className="flex flex-wrap items-center gap-2">
         <Button variant="ghost" className="gap-1.5" onClick={onFechar}><ArrowLeft className="h-4 w-4" /> Voltar</Button>
         <div className="flex-1" />
-        {id && podeExcluir && (
+        {travadoMalote && (
+          <Badge variant="outline" className="gap-1 h-9 px-3">
+            <Lock className="h-3.5 w-3.5" /> No Malote: {noMalote?.numero} — travado para edição
+          </Badge>
+        )}
+        {id && podeExcluir && !travadoMalote && (
           <Button variant="outline" className="gap-1.5 text-destructive" onClick={() => setConfirmarExclusao(true)}>
             <Trash2 className="h-4 w-4" /> Excluir
           </Button>
@@ -512,6 +554,11 @@ function Editor({ id, onFechar, onSalvo }: { id: string | null; onFechar: () => 
               <CheckCircle2 className="h-4 w-4" /> Salvar como conferido
             </Button>
           </>
+        )}
+        {id && podeEnviarMalote && !travadoMalote && (status === "conferido" || podeGravar) && (
+          <Button className="gap-1.5" disabled={salvar.isPending || !resumo.fecha || !itens.length || maloteQ.isLoading} onClick={abrirEnvioMalote}>
+            <Send className="h-4 w-4" /> Enviar ao Malote
+          </Button>
         )}
       </div>
 
@@ -645,11 +692,23 @@ function Editor({ id, onFechar, onSalvo }: { id: string | null; onFechar: () => 
         {usaPdf && linhasPdf.length > 0 && (
           <div className="space-y-2">
             <div className="flex flex-wrap items-center gap-3 text-sm">
-              <span><FileText className="inline h-4 w-4 mr-1" />{linhasPdf.length} linha(s) lida(s) — total do PDF <b>{fmtMoeda(totalPdf)}</b></span>
+              <span><FileText className="inline h-4 w-4 mr-1" />{linhasPdf.length} linha(s) lida(s) — soma das linhas <b>{fmtMoeda(totalPdf)}</b></span>
+              {pdfInfo?.total != null && (Math.abs(pdfInfo.total - totalPdf) < 0.005 ? (
+                <Badge variant="outline" className="bg-success/15 text-success border-success/30 gap-1"><CheckCircle2 className="h-3.5 w-3.5" /> Bate com o TOTAL do PDF</Badge>
+              ) : (
+                <Badge variant="outline" className="bg-destructive/10 text-destructive border-destructive/30 gap-1">
+                  <AlertTriangle className="h-3.5 w-3.5" /> TOTAL do PDF {fmtMoeda(pdfInfo.total)} — diferença {fmtMoeda(Math.round((pdfInfo.total - totalPdf) * 100) / 100)}
+                </Badge>
+              ))}
+              {pdfInfo && <span className="text-xs text-muted-foreground">{pdfInfo.rotulo}</span>}
               {Math.abs(totalPdf - valor) >= 0.005 && !somenteLeitura && (
                 <Button size="sm" variant="outline" onClick={() => setValorTxt(totalPdf.toFixed(2))}>Usar o total do PDF como valor da despesa</Button>
               )}
             </div>
+            <label className="flex items-center gap-2 text-xs text-muted-foreground">
+              <input type="checkbox" checked={soPendentes} onChange={(e) => setSoPendentes(e.target.checked)} />
+              Mostrar só as linhas sem contrato ({linhasPdf.filter((l) => !l.contrato_id).length})
+            </label>
             <div className="max-h-[360px] overflow-auto border rounded-md">
               <table className="w-full text-xs">
                 <thead className="sticky top-0 bg-background border-b text-muted-foreground">
@@ -663,7 +722,9 @@ function Editor({ id, onFechar, onSalvo }: { id: string | null; onFechar: () => 
                   </tr>
                 </thead>
                 <tbody>
-                  {linhasPdf.map((l, i) => (
+                  {/* O PDF do seguro tem ~2.100 segurados: desenha no máximo 300 linhas
+                      (cada uma tem um seletor de contrato); o filtro acha as pendentes. */}
+                  {linhasPdf.map((l, i) => ({ l, i })).filter(({ l }) => !soPendentes || !l.contrato_id).slice(0, LIMITE_LINHAS_TELA).map(({ l, i }) => (
                     <tr key={`${l.n}-${i}`} className={`border-b ${l.contrato_id ? "" : "bg-warning/10"}`}>
                       <td className="p-1.5 text-muted-foreground">{l.n}</td>
                       <td className="p-1.5">
@@ -689,6 +750,11 @@ function Editor({ id, onFechar, onSalvo }: { id: string | null; onFechar: () => 
                 </tbody>
               </table>
             </div>
+            {linhasPdf.filter((l) => !soPendentes || !l.contrato_id).length > LIMITE_LINHAS_TELA && (
+              <p className="text-xs text-muted-foreground">
+                Mostrando {LIMITE_LINHAS_TELA} de {linhasPdf.filter((l) => !soPendentes || !l.contrato_id).length} linhas — todas entram no rateio; o Excel traz a lista completa.
+              </p>
+            )}
           </div>
         )}
 
@@ -815,6 +881,16 @@ function Editor({ id, onFechar, onSalvo }: { id: string | null; onFechar: () => 
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {id && enviandoMalote && (
+        <EnviarRateioMalote
+          aberto
+          rateio={{ id, tipo, competencia: competenciaParaData(mes), valor, anexo_path: anexoPath, anexo_nome: anexoNome }}
+          itens={itens}
+          onFechar={() => setEnviandoMalote(false)}
+          onEnviado={() => setEnviandoMalote(false)}
+        />
+      )}
     </div>
   );
 }
