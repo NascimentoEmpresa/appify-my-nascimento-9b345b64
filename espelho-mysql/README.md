@@ -179,6 +179,29 @@ Para rodar na hora, sem esperar as 07:00: botão direito na tarefa → `Executar
 sincronização precisar acontecer com o PC desligado, o certo é mudar para um
 servidor com IP fixo — o script é o mesmo, muda só quem o chama.
 
+> **Hoje quem roda é o GitHub Actions** (`.github/workflows/espelho_mysql.yml`),
+> não um PC: a rede da empresa bloqueia a porta 22. A seção acima ficou como
+> histórico do Agendador.
+
+## Rodada rápida do ponto — a cada 10 min (16/10/2026)
+
+Além da diária das 07:00, o mesmo workflow roda **a cada 10 minutos** só a
+`BiMarcacoes`, desde ontem, para as batidas aparecerem no ERP quase ao vivo:
+
+```
+node espelho.mjs sincronizar --commit --tabelas BiMarcacoes --dias 1
+```
+
+- `--tabelas A,B`: só essas (precisam estar em `tabelas.json`); não roda o
+  acerto de escala do colaborador, que depende das outras tabelas.
+- `--dias N`: nas incrementais, apaga e traz de novo só desde N dias atrás
+  (0 = só hoje). A `data_hora` da BiMarcacoes é só a data; a hora fica em `hora`.
+- Não combina com `--completo`, e recusa tabela vazia: a recarga completa é
+  só da diária.
+- O GitHub **não garante o horário** do agendamento: em hora de pico ele
+  atrasa ou pula rodadas. "A cada 10 min" na prática é "a cada 10 a 30 min".
+- Falha ou cancelamento avisa no Discord, no máximo 1 vez por hora.
+
 ## Como a carga funciona
 
 Cada tabela é **recarregada inteira** dentro de uma transação. Isso significa:
