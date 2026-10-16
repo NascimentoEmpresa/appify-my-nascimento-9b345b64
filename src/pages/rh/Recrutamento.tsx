@@ -1,8 +1,8 @@
 import { useState, useEffect, useMemo, useRef, useCallback, type MouseEvent as ReactMouseEvent, type CSSProperties, type ReactNode } from "react";
 import {
   Activity, AlertTriangle, Ban, Building2, CalendarDays, Check, CheckCircle2, ChevronLeft, ChevronRight, ClipboardList, Clock, Copy, Eye, FileSpreadsheet, FileText,
-  FolderOpen, GraduationCap, History, IdCard, Landmark, Link2, LogOut, Mail, MapPin, MessageSquare, Paperclip,
-  Pencil, Phone, Scale, Search, Settings, Tags, Target, Trash2, UserCheck, UserSearch, Users, X, XCircle, Zap, type LucideIcon,
+  FolderOpen, GraduationCap, History, IdCard, Landmark, Link2, LogOut, Mail, MapPin, MessageSquare, Package, Paperclip,
+  Pencil, Phone, Scale, Search, Settings, Stethoscope, Tags, Target, Trash2, UserCheck, UserSearch, Users, X, XCircle, Zap, type LucideIcon,
 } from "lucide-react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
@@ -25,6 +25,8 @@ import {
 } from "@/lib/recrutamento/etiquetas";
 import { AvisoProcessos, processosDe, useProcessosDosCandidatos } from "@/components/recrutamento/AvisoProcessos";
 import { ParecerJuridicoDialog } from "@/components/recrutamento/ParecerJuridicoDialog";
+import { StatusSstDialog } from "@/components/recrutamento/StatusSstDialog";
+import { dataBr, situacaoSst } from "@/lib/recrutamento/agendamentoAso";
 import { FichaAso } from "@/components/recrutamento/FichaAso";
 import { CandidatoManualDialog } from "@/components/recrutamento/CandidatoManualDialog";
 import { StatusSolicitacao } from "@/components/recrutamento/StatusSolicitacao";
@@ -132,6 +134,16 @@ interface Curriculo {
   // candidato seguir sozinho para a Admissão.
   sst_ok?: boolean | null;
   sst_obs?: string;
+  // O passo a passo do SST (AsoCandidatos): visto e agendamento do ASO. O
+  // Recrutamento lê no botão "SST" do card (16/10/2026, StatusSstDialog).
+  sst_visto_em?: string | null;
+  sst_visto_por?: string | null;
+  sst_data_exame?: string | null;
+  sst_hora_exame?: string | null;
+  sst_local_exame?: string | null;
+  sst_maps_url?: string | null;
+  sst_agendado_em?: string | null;
+  sst_agendado_por?: string | null;
   compras_ok?: boolean | null;
   compras_obs?: string;
   /** 15/10/2026 (mig 20261015000011): admissão sem pedido do Compras (o Compras só dá ciência). */
@@ -643,6 +655,8 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
   const [editarCandId, setEditarCandId] = useState<number | null>(null);
   // "Ver parecer do Jurídico" (16/10/2026): o candidato cuja janela está aberta.
   const [parecerCandId, setParecerCandId] = useState<number | null>(null);
+  // "Status do SST" (16/10/2026): o candidato cuja janela do agendamento está aberta.
+  const [sstCandId, setSstCandId] = useState<number | null>(null);
   const [showCurriculos, setShowCurriculos] = useState(false);
   const [empCpf, setEmpCpf]                 = useState<Record<string, EmpCadastro[]>>({});   // CPF dígitos → cadastros EMPREGADOS
   const [blacklist, setBlacklist]           = useState<Record<string, { motivo: string; criado_em?: string }>>({});
@@ -2888,12 +2902,18 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
                               : etapa === "Reprovado" && c.motivo_reprovacao && <div style={{ fontSize: 10.5, color: "#b91c1c", marginTop: 4 }}>Motivo: {c.motivo_reprovacao}</div>}
                             {/* Etapa paralela: mostra QUEM falta, que é a única
                                 informação que importa enquanto os dois correm. */}
-                            {etapa === ETAPA_SST_COMPRAS && (
+                            {(etapa === ETAPA_SST_COMPRAS || etapa === "EXAME SST") && (
                               <div style={{ display: "flex", gap: 6, marginTop: 5, flexWrap: "wrap" }}>
-                                <span style={{ fontSize: 9.5, fontWeight: 700, padding: "1px 7px", borderRadius: 20,
-                                  background: c.sst_ok === true ? "#dcfce7" : "#fef3c7", color: c.sst_ok === true ? "#15803d" : "#b45309" }}>
+                                {/* SST (16/10/2026): clicável — abre o status e o agendamento do ASO, com "Copiar agendamento". */}
+                                <button type="button" title="Ver o status do SST e o agendamento do exame (copiar mapa e agendamento)"
+                                  onClick={(e) => { e.stopPropagation(); setSstCandId(c.id); }}
+                                  style={{ fontSize: 9.5, fontWeight: 700, padding: "1px 7px", borderRadius: 20, border: "1px solid transparent", cursor: "pointer", fontFamily: "inherit",
+                                    background: c.sst_ok === true ? "#dcfce7" : c.sst_ok === false ? "#fee2e2" : "#fef3c7",
+                                    color: c.sst_ok === true ? "#15803d" : c.sst_ok === false ? "#b91c1c" : "#b45309", textDecoration: "underline dotted" }}>
                                   {c.sst_ok === true ? <Ic i={CheckCircle2} /> : <Ic i={Clock} />}SST
-                                </span>
+                                  {c.sst_data_exame ? ` · ${dataBr(c.sst_data_exame).slice(0, 5)}${c.sst_hora_exame ? ` ${c.sst_hora_exame}` : ""}`
+                                    : situacaoSst(c) === "Recebido — a agendar" ? " · recebido" : ""}
+                                </button>
                                 {/* Compras (15/10/2026): clicável — abre o pedido (ID, status, itens, histórico). */}
                                 <button type="button" title="Ver o pedido de materiais"
                                   onClick={(e) => { e.stopPropagation(); setPedidoAberto({ id: c.id, nome: c.nome }); }}
@@ -2926,6 +2946,15 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
                               {/* ENTREVISTA/GESTOR: roteiro de entrevista */}
                               {(etapa === "ENTREVISTA" || etapa === "ENTREVISTA GESTOR") && podeRecrutar && <button onClick={() => abrirRoteiro(c, etapa)} style={{ ...bFull, background: "rgba(59,130,246,.1)", color: "#2563eb", border: "1px solid rgba(59,130,246,.3)" }}><Ic i={ClipboardList} />Roteiro de entrevista</button>}
                               {/* DOCUMENTAÇÃO: anexos do candidato (vários, cada um com título) */}
+                              {/* SST + COMPRAS (16/10/2026): um botão para cada lado ver o status — SST com o agendamento do ASO, Compras com o pedido. */}
+                              {(etapa === ETAPA_SST_COMPRAS || etapa === "EXAME SST") && (
+                                <div style={{ display: "flex", gap: 5 }}>
+                                  <button onClick={() => setSstCandId(c.id)} title="Status do SST e agendamento do exame (copiar mapa e agendamento)"
+                                    style={{ ...bFull, flex: 1, background: "rgba(245,158,11,.1)", color: "#b45309", border: "1px solid rgba(245,158,11,.35)" }}><Ic i={Stethoscope} />Status SST</button>
+                                  <button onClick={() => setPedidoAberto({ id: c.id, nome: c.nome })} title="Status do pedido de materiais do Compras"
+                                    style={{ ...bFull, flex: 1, background: "rgba(14,116,144,.08)", color: "#0e7490", border: "1px solid rgba(14,116,144,.3)" }}><Ic i={Package} />Status Compras</button>
+                                </div>
+                              )}
                               {etapa === "DOCUMENTAÇÃO" && podeRecrutar && <button onClick={() => abrirDocs(c)} style={{ ...bFull, background: "rgba(8,145,178,.1)", color: "#0e7490", border: "1px solid rgba(8,145,178,.3)" }}><Ic i={Paperclip} />Documentos ({docsCount[c.id] ?? 0})</button>}
                               {/* Avançar — com ramificação em TRIAGEM e ENTREVISTA */}
                               {etapa === "TRIAGEM" && podeAqui ? (<>
@@ -4179,6 +4208,11 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
       )}
 
       {/* ── Editar candidato inserido manualmente ── */}
+      {/* Status do SST (16/10/2026). */}
+      {sstCandId != null && (() => {
+        const cand = candidatos.find(x => x.id === sstCandId);
+        return cand ? <StatusSstDialog candidato={cand} onClose={() => setSstCandId(null)} /> : null;
+      })()}
       {/* Ver parecer do Jurídico (16/10/2026). */}
       {parecerCandId != null && (() => {
         const cand = candidatos.find(x => x.id === parecerCandId);
