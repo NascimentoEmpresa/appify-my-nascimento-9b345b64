@@ -16,7 +16,10 @@ import { usePermissoes } from "@/context/PermissoesContext";
 import { SearchableMultiSelect } from "@/components/ui/searchable-multi-select";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { useUsuariosAtivos } from "@/hooks/useNfEmissao";
-import { useExcecaoAprovador, useSalvarExcecaoAprovador } from "@/hooks/useMaloteExcecao";
+import {
+  ROTULO_MODO_APROVACAO, useExcecaoAprovacaoModo, useExcecaoAprovador, useSalvarExcecaoAprovacaoModo, useSalvarExcecaoAprovador,
+  type ModoAprovacaoExcecao,
+} from "@/hooks/useMaloteExcecao";
 import { useClassificacoesOrcamentoAdmin } from "@/hooks/usePlanejamentoOrcamentario";
 import {
   useMaloteConfig,
@@ -62,6 +65,9 @@ export default function Configuracoes() {
   const { data: usuariosAtivos = [] } = useUsuariosAtivos();
   const { data: aprovadorExcecaoId, isError: aprovadorExcecaoIndisponivel } = useExcecaoAprovador();
   const salvarAprovadorExcecao = useSalvarExcecaoAprovador();
+  // Quem aprova as exceções: a pessoa escolhida, a pessoa e o N2 da classificação, ou só o N2.
+  const { data: modoAprovacao = "pessoa", isError: modoAprovacaoIndisponivel } = useExcecaoAprovacaoModo();
+  const salvarModoAprovacao = useSalvarExcecaoAprovacaoModo();
   const salvar = useSalvarMaloteConfig();
 
   const [form, setForm] = useState<MaloteConfig | null>(null);
@@ -385,12 +391,46 @@ export default function Configuracoes() {
               </div>
 
               <div>
-                <Label className="text-sm font-semibold">2.4 Aprovador das exceções</Label>
+                <Label className="text-sm font-semibold">2.4 Quem aprova as exceções</Label>
                 <p className="text-xs text-muted-foreground mt-1 mb-2">
-                  Única pessoa que aprova ou reprova as Solicitações de Exceção (Malote › Autorizações de Exceção) e, ao aprovar, libera a senha.
-                  Hoje é quem responde pelo caixa do financeiro.
+                  Aprova ou reprova as Solicitações de Exceção (Malote › Autorizações de Exceção) e, ao aprovar, libera a senha.
                 </p>
-                <div className="max-w-sm">
+
+                <div className="max-w-sm space-y-1">
+                  <Label className="text-xs">Quem aprova</Label>
+                  <Select
+                    value={modoAprovacao}
+                    disabled={!podeEditar || salvarModoAprovacao.isPending || modoAprovacaoIndisponivel}
+                    onValueChange={async (v) => {
+                      try {
+                        await salvarModoAprovacao.mutateAsync(v as ModoAprovacaoExcecao);
+                        toast.success(`Quem aprova as exceções: ${ROTULO_MODO_APROVACAO[v as ModoAprovacaoExcecao].toLowerCase()}.`);
+                      } catch (e) {
+                        toast.error(e instanceof Error ? e.message : "Não foi possível salvar.");
+                      }
+                    }}
+                  >
+                    <SelectTrigger className="h-9 text-xs"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {(Object.keys(ROTULO_MODO_APROVACAO) as ModoAprovacaoExcecao[]).map((m) => (
+                        <SelectItem key={m} value={m}>{ROTULO_MODO_APROVACAO[m]}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">
+                    {modoAprovacao === "pessoa" && "Só a pessoa escolhida abaixo decide."}
+                    {modoAprovacao === "pessoa_e_n2" && "A pessoa escolhida abaixo e o N2 da classificação da solicitação: qualquer um dos dois aprova ou reprova (a primeira decisão vale)."}
+                    {modoAprovacao === "n2" && "Só o N2 da classificação decide. Classificação sem N2 cadastrado não aceita solicitação."}
+                    {modoAprovacao !== "pessoa" && " O N2 precisa ter o menu \"Malote — Autorizações de Exceção\" liberado em Administração."}
+                  </p>
+                  {modoAprovacaoIndisponivel && (
+                    <p className="text-xs text-destructive">Aplique a migration 20261016000010 para escolher quem aprova.</p>
+                  )}
+                </div>
+
+                {/* Só N2: a pessoa escolhida não decide, então o campo fica esmaecido e travado (o valor continua guardado). */}
+                <div className={`mt-3 max-w-sm space-y-1 transition-opacity ${modoAprovacao === "n2" ? "opacity-50" : ""}`}>
+                  <Label className="text-xs">Pessoa escolhida</Label>
                   <SearchableSelect
                     value={aprovadorExcecaoId ?? ""}
                     onChange={async (id) => {
@@ -403,10 +443,13 @@ export default function Configuracoes() {
                     }}
                     options={usuariosAtivos.map((u) => ({ value: u.id, label: u.display_name }))}
                     placeholder="Selecione o aprovador"
-                    disabled={!podeEditar || salvarAprovadorExcecao.isPending || aprovadorExcecaoIndisponivel}
+                    disabled={!podeEditar || salvarAprovadorExcecao.isPending || aprovadorExcecaoIndisponivel || modoAprovacao === "n2"}
                   />
+                  {modoAprovacao === "n2" && (
+                    <p className="text-xs text-muted-foreground">Não decide neste modo (só o N2 da classificação). O nome fica guardado para quando voltar a "pessoa".</p>
+                  )}
                   {aprovadorExcecaoIndisponivel && (
-                    <p className="text-xs text-destructive mt-1">Aplique a migration 20261015000004 para configurar o aprovador.</p>
+                    <p className="text-xs text-destructive">Aplique a migration 20261015000004 para configurar o aprovador.</p>
                   )}
                 </div>
               </div>
