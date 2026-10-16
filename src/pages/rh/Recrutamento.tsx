@@ -3022,7 +3022,7 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
                               {etapa !== "Reprovado" && podeRecrutar && (
                                 <button onClick={() => { setDesistMotivo(""); setDesistModal({ id: c.id, nome: c.nome || "Candidato", etapa }); }}
                                   title="Registrar que o candidato desistiu"
-                                  style={{ width: "100%", fontSize: 10, fontWeight: 700, padding: "3px", borderRadius: 7, background: "transparent", border: "none", color: "#cbd5e1", cursor: "pointer" }}><Ic i={LogOut} />Desistiu</button>
+                                  style={{ width: "100%", fontSize: 10, fontWeight: 700, padding: "3px", borderRadius: 7, background: "transparent", border: "none", color: "#dc2626", cursor: "pointer" }}><Ic i={LogOut} />Desistiu</button>
                               )}
                             </div>
                             )}
