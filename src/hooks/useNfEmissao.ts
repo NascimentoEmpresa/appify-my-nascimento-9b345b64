@@ -535,6 +535,26 @@ export function useEnviarNfEmissao() {
   });
 }
 
+// SIS-2026-0671: envio em lote pela Lista final. Só sai quem ainda é rascunho (o filtro vai na própria atualização: uma NF
+// que alguém já enviou/alterou nesse meio tempo não é tocada). Devolve os ids que de fato foram enviados.
+export function useEnviarNfsEmLote() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (ids: string[]) => {
+      if (ids.length === 0) return [] as string[];
+      const { data, error } = await (supabase as any)
+        .from("nf_emissao")
+        .update({ status: "enviada" })
+        .in("id", ids)
+        .eq("status", "rascunho")
+        .select("id");
+      if (error) throw error;
+      return ((data ?? []) as { id: string }[]).map((r) => r.id);
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: [NF_EMISSAO_KEY] }),
+  });
+}
+
 // A analista reabre uma NF cancelada pelo Financeiro (a validação rejeitou) para
 // corrigir e reenviar — volta para 'rascunho' na MESMA nota (itens, anexos e
 // histórico ficam). Regras e exceção do guard: migration

@@ -176,3 +176,125 @@ describe("montarLinhas (posição do pdf.js → linhas)", () => {
     expect(l).toEqual(["Nome", "MARIA  529.982.247-25  160,00"]);
   });
 });
+
+// Relatório de movimentação do seguro (Prudential "VG Express"), primeiro PDF
+// real recebido (16/10/2026) — linhas como o pdf.js devolve depois de
+// montarLinhas. Nomes e CPFs FICTÍCIOS (CPFs de teste válidos); o layout,
+// os cabeçalhos, os prêmios e a linha de TOTAL são os do arquivo real.
+const SEGURO_FIXTURE = [
+  "VG EXPRESS",
+  "RELATÓRIO DE MOVIMENTAÇÃO",
+  "Nº Contrato  Nº Subcontrato  Nº Apólice  Nº Aditamento  Ano/Mês Vigência",
+  "403267  1  1099300045636  63  2026/09",
+  "Estipulante:  CNPJ:",
+  "Inicio de Vigência do Faturamento: 24hs do dia 13/09/2026  Fim de Vigência do Faturamento: 24hs do dia 12/10/2026",
+  "Data de",
+  "Matrícula Nome Segurado  CPF Segurado  Nascimento  Data Início  Movimentação  IS Segurado  Prêmio",
+  "FULANA DE TAL  529.982.247-25  18/12/1997  13/07/2026  20.000,00  11,18",
+  "BELTRANO SOUZA  390.533.447-05  06/02/1967  13/08/2025  50.000,00  27,95",
+  "CICRANA LIMA  111.444.777-35  05/01/1982  13/09/2026  Inclusão  20.000,00  11,18",
+  "JOAO EXEMPLO  123.456.789-09  16/11/1980  13/07/2026  Exclusão  0,00  0,00",
+  "TOTAL:  90.000,00  50,31",
+  "436-7 PRUDENTIAL DO BRASIL SEGUROS SA - CNPJ 21.986.074/0001-19  1/111",
+];
+
+describe("PDF do seguro (relatório de movimentação)", () => {
+  it("reconhece o layout", async () => {
+    const { identificarLayoutPdf } = await import("@/lib/rh/rateioDespesas");
+    expect(identificarLayoutPdf(SEGURO_FIXTURE).layout).toBe("seguro_prudential");
+    expect(identificarLayoutPdf(["FATURA", "CPF 529.982.247-25 10,00"]).layout).toBe("generico");
+  });
+  it("uma linha por segurado, valor = prêmio (último), exclusão com 0", () => {
+    const r = extrairLinhasComCpf(SEGURO_FIXTURE);
+    expect(r.map((x) => [x.cpf, x.valor])).toEqual([
+      ["52998224725", 11.18],
+      ["39053344705", 27.95],
+      ["11144477735", 11.18],
+      ["12345678909", 0],
+    ]);
+  });
+  it("a soma das linhas bate com o TOTAL do PDF (prêmio, não IS)", async () => {
+    const { totalDeclaradoNoPdf } = await import("@/lib/rh/rateioDespesas");
+    const soma = extrairLinhasComCpf(SEGURO_FIXTURE).reduce((a, x) => a + x.valor, 0);
+    expect(totalDeclaradoNoPdf(SEGURO_FIXTURE)).toBe(50.31);
+    expect(Math.round(soma * 100) / 100).toBe(50.31);
+    expect(totalDeclaradoNoPdf(["sem total aqui 10,00"])).toBeNull();
+  });
+  it("página girada 90° (matriz [0,s,-s,0,e,f]): cada x da página é uma linha", async () => {
+    const { paraEixoDoTexto, montarLinhas } = await import("@/lib/rh/rateioPdf");
+    // Como vem do pdf.js no PDF real: o texto corre no y; linha 1 em x=303, linha 2 em x=316,5.
+    const t = (x: number, y: number) => [0, 8.2, -8.2, 0, x, y];
+    const itens = [
+      paraEixoDoTexto("FULANA DE TAL", t(303, 70.5), 117),
+      paraEixoDoTexto("529.982.247-25", t(303, 353.8), 58),
+      paraEixoDoTexto("11,18", t(303, 804.7), 21),
+      paraEixoDoTexto("BELTRANO SOUZA", t(316.5, 70.5), 106),
+      paraEixoDoTexto("390.533.447-05", t(316.5, 353.8), 58),
+      paraEixoDoTexto("27,95", t(316.5, 804.7), 21),
+    ];
+    expect(montarLinhas(itens)).toEqual([
+      "FULANA DE TAL  529.982.247-25  11,18",
+      "BELTRANO SOUZA  390.533.447-05  27,95",
+    ]);
+    // Página normal continua igual.
+    expect(paraEixoDoTexto("x", [1, 0, 0, 1, 40, 760], 5)).toEqual({ str: "x", x: 40, y: 760, w: 5 });
+  });
+});
+
+// Guia do FGTS Digital (GFD + Detalhe da Guia), segundo PDF real (FGTS MENSAL
+// 09/2026, 16/10/2026) — linhas como o pdf.js devolve. Nomes, matrículas e
+// CPFs FICTÍCIOS; cabeçalhos, seções e a regra de totais são os do arquivo.
+// O arquivo junta FGTS + CONSIGNADO (que também tem CPF e valor) + Relação
+// de Eventos da Senior: só a primeira seção entra.
+const FGTS_FIXTURE = [
+  "GFD - Guia do FGTS Digital",
+  "Competência  Trabalhadores  FGTS Mensal  FGTS Rescisório  Compensatória  Encargos FGTS  Total",
+  "09/2026  2  359,58  0,00  0,00  0,00  359,58",
+  "Total FGTS:  359,58  0,00  0,00  0,00  359,58",
+  "Total Consignado:  834,59  0,00  834,59",
+  "Total da Guia:  1.194,17",
+  "Detalhe da Guia Emitida",
+  "Empregador: 03.644.009  Nome Empregador: EMPRESA EXEMPLO LTDA  Qtd. Trabalhadores FGTS:  2  Origem: Gestão de Guias",
+  "Relação de Trabalhadores",
+  "Estabelecimento:  03.644.009/0001-23  Tomador:  00.058.163/0001-25",
+  "Total",
+  "SENASCIMEN000000000000000024",
+  "09/2026  FULANA DE TAL  529.982.247-25  101 20/10/2026 Mensal  2.247,46  179,79  0,00  0,00  0,00  179,79",
+  "44",
+  "SENASCIMEN000000000000000025",
+  "09/2026  BELTRANO SOUZA  390.533.447-05  101 20/10/2026 Mensal  2.247,46  179,79  0,00  0,00  0,00  179,79",
+  "Total do Tomador  00.058.163/0001-25  4.494,92  359,58  0,00  0,00  0,00  359,58",
+  "Total FGTS  4.494,92  359,58  0,00  0,00  0,00  359,58",
+  "Empregador: 03.644.009  Nome Empregador: EMPRESA EXEMPLO LTDA  Qtd. Trabalhadores Consignado: 2  Origem: Gestão de Guias",
+  "Relação de Trabalhadores",
+  "09/2026  20/10/2026  FULANA DE TAL  SENASCIMEN000000000000000024  529.982.247-25  90719806  531  107,93",
+  "09/2026  20/10/2026  CICRANA LIMA  SENASCIMEN000000000000000026  111.444.777-35  6059253338  626  726,66",
+  "Total Consignado  834,59",
+  "Relação de Eventos  UFFS CHAPECO 041.2021",
+  "000008359 FULANA DE TAL  001  09/2026  07/10/2026  35,00  388,28",
+  "Total de Colaboradores:  1  35,00  388,28",
+];
+
+describe("PDF do FGTS (Guia do FGTS Digital)", () => {
+  it("reconhece o layout", async () => {
+    const { identificarLayoutPdf } = await import("@/lib/rh/rateioDespesas");
+    expect(identificarLayoutPdf(FGTS_FIXTURE).layout).toBe("fgts_digital");
+  });
+  it("lê só a relação do FGTS — o consignado (também com CPF) fica de fora", async () => {
+    const { extrairLinhasDoPdf } = await import("@/lib/rh/rateioDespesas");
+    const r = extrairLinhasDoPdf(FGTS_FIXTURE, "fgts_digital");
+    expect(r.map((x) => [x.cpf, x.valor])).toEqual([
+      ["52998224725", 179.79],
+      ["39053344705", 179.79],
+    ]);
+    // A leitura genérica pegaria as linhas do consignado também.
+    expect(extrairLinhasComCpf(FGTS_FIXTURE).length).toBe(4);
+  });
+  it("total = 'Total FGTS', não o da guia (FGTS + consignado) nem o da Relação de Eventos", async () => {
+    const { totalDoPdf, totalDeclaradoNoPdf, extrairLinhasDoPdf } = await import("@/lib/rh/rateioDespesas");
+    const soma = extrairLinhasDoPdf(FGTS_FIXTURE, "fgts_digital").reduce((a, x) => a + x.valor, 0);
+    expect(totalDoPdf(FGTS_FIXTURE, "fgts_digital")).toBe(359.58);
+    expect(Math.round(soma * 100) / 100).toBe(359.58);
+    expect(totalDeclaradoNoPdf(FGTS_FIXTURE)).not.toBe(359.58); // o genérico pegaria o último TOTAL
+  });
+});

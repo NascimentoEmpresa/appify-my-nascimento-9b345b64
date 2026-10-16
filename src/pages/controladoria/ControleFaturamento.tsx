@@ -87,6 +87,7 @@ export default function ControleFaturamento() {
   const { data: empresas = [] } = useEmpresasGrupo();
 
   const [filtroEmpresa, setFiltroEmpresa] = useState("");
+  const [aba, setAba] = useState("geral");
   // Busca por nome do contrato (ou cliente), sem acento e sem diferenciar
   // maiúsculas — vale nas 3 abas, pois todas partem de contratosFiltrados.
   const [filtroNome, setFiltroNome] = useState("");
@@ -286,6 +287,13 @@ export default function ControleFaturamento() {
   // SIS-2026-0562 (Iury): clicar na linha leva pro Relatório de Serviços
   // (aba Relatório Geral) já com empresa/competência/contrato filtrados —
   // mesmo recorte que gerou os números daquela linha.
+  // SIS-2026-0652: clicar num KPI abre a tela de onde o número vem. Os de NFs vão para o Relatório de Serviços (aba Relatório
+  // Geral) no mesmo recorte do KPI: empresa e competência da tela, só Código N; o Recebido só com as notas pagas.
+  function abrirKpiNoRelatorioServicos(extra?: Record<string, string>) {
+    const params = new URLSearchParams({ competencia, codigo: "N", ...(filtroEmpresa ? { empresa: filtroEmpresa } : {}), ...extra });
+    navigate(`/app/financeiro/relatorio-servicos?${params.toString()}`);
+  }
+
   function abrirNoRelatorioServicos(l: LinhaFaturamento) {
     const params = new URLSearchParams({ empresa: l.contrato.empresa_id, competencia, contrato: l.contrato.id });
     navigate(`/app/financeiro/relatorio-servicos?${params.toString()}`);
@@ -343,7 +351,7 @@ export default function ControleFaturamento() {
       {carregando ? (
         <p className="text-sm text-muted-foreground py-10 text-center">Carregando...</p>
       ) : (
-        <Tabs defaultValue="geral">
+        <Tabs value={aba} onValueChange={setAba}>
           <TabsList>
             <TabsTrigger value="geral">Visão Geral</TabsTrigger>
             <TabsTrigger value="anual">Visão Anual</TabsTrigger>
@@ -357,14 +365,14 @@ export default function ControleFaturamento() {
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-              <KpiTile label="Executável (Base)" valor={fmtMoney(kpis.executavel)} icon={<ListChecks />} cor="slate" />
-              <KpiTile label="Valor Contábil (Código N)" valor={fmtMoney(kpis.contabil)} icon={<TrendingUp />} cor="sky" />
+              <KpiTile label="Executável (Base)" valor={fmtMoney(kpis.executavel)} sub="clique para abrir a Planilha de Custo" icon={<ListChecks />} cor="slate" onClick={() => navigate("/app/licitacoes/planilha-custo")} />
+              <KpiTile label="Valor Contábil (Código N)" valor={fmtMoney(kpis.contabil)} sub="clique para ver as notas no Relatório de Serviços" icon={<TrendingUp />} cor="sky" onClick={() => abrirKpiNoRelatorioServicos()} />
               <KpiTile label="Divergências" valor={fmtMoney(kpis.naoEmitido + kpis.excesso)} sub={`${fmtMoney(kpis.naoEmitido)} a emitir · ${fmtMoney(kpis.excesso)} emitidos a mais · clique para ver por contrato`} icon={<AlertTriangle />} cor="red" valorClass="text-red-600 dark:text-red-400" onClick={() => setAbrirNaoEmitido(true)} />
-              <KpiTile label="Contratos Pendentes" valor={kpis.pendentes.toLocaleString("pt-BR")} sub={`de ${kpis.vigentes} vigentes na competência`} icon={<FileWarning />} cor="amber" valorClass="text-amber-600 dark:text-amber-400" />
-              <KpiTile label="Valor Líquido" valor={fmtMoney(kpis.liquido)} icon={<Wallet />} cor="slate" />
-              <KpiTile label="Valor Recebido" valor={fmtMoney(kpis.recebido)} icon={<CheckCircle2 />} cor="emerald" valorClass="text-emerald-600 dark:text-emerald-400" />
-              <KpiTile label="% Recebido sobre Faturado" valor={`${kpis.pctRecebido.toFixed(1).replace(".", ",")}%`} sub={`${fmtMoney(kpis.recebido)} de ${fmtMoney(kpis.contabil)}`} icon={<Percent />} cor="emerald" valorClass="text-emerald-600 dark:text-emerald-400" />
-              <KpiTile label="Contratos Faturados" valor={kpis.lancadas.toLocaleString("pt-BR")} sub={kpis.vigentes ? `${((kpis.lancadas / kpis.vigentes) * 100).toFixed(0)}% dos vigentes${kpis.parciais > 0 ? ` · +${kpis.parciais} parcial(is)` : ""}` : undefined} icon={<CheckCircle2 />} cor="emerald" valorClass="text-emerald-600 dark:text-emerald-400" />
+              <KpiTile label="Contratos Pendentes" valor={kpis.pendentes.toLocaleString("pt-BR")} sub={`de ${kpis.vigentes} vigentes na competência · clique para ver quais`} icon={<FileWarning />} cor="amber" valorClass="text-amber-600 dark:text-amber-400" onClick={() => setAba("pendentes")} />
+              <KpiTile label="Valor Líquido" valor={fmtMoney(kpis.liquido)} sub="clique para ver as notas no Relatório de Serviços" icon={<Wallet />} cor="slate" onClick={() => abrirKpiNoRelatorioServicos()} />
+              <KpiTile label="Valor Recebido" valor={fmtMoney(kpis.recebido)} sub="clique para ver as notas pagas no Relatório de Serviços" icon={<CheckCircle2 />} cor="emerald" valorClass="text-emerald-600 dark:text-emerald-400" onClick={() => abrirKpiNoRelatorioServicos({ status: "pago" })} />
+              <KpiTile label="% Recebido sobre Faturado" valor={`${kpis.pctRecebido.toFixed(1).replace(".", ",")}%`} sub={`${fmtMoney(kpis.recebido)} de ${fmtMoney(kpis.contabil)} · clique para ver as notas`} icon={<Percent />} cor="emerald" valorClass="text-emerald-600 dark:text-emerald-400" onClick={() => abrirKpiNoRelatorioServicos()} />
+              <KpiTile label="Contratos Faturados" valor={kpis.lancadas.toLocaleString("pt-BR")} sub={kpis.vigentes ? `${((kpis.lancadas / kpis.vigentes) * 100).toFixed(0)}% dos vigentes${kpis.parciais > 0 ? ` · +${kpis.parciais} parcial(is)` : ""} · clique para ver as notas` : "clique para ver as notas"} icon={<CheckCircle2 />} cor="emerald" valorClass="text-emerald-600 dark:text-emerald-400" onClick={() => abrirKpiNoRelatorioServicos()} />
             </div>
 
             {kpis.executavel > 0 && kpis.naoEmitido > 0 && (

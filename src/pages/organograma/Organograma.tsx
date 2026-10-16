@@ -15,6 +15,10 @@ import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
+import {
+  chefeDoNo, lerValorChefe, mesmoChefe, montarArvore, podeSerPar, valorChefe,
+  type Arvore, type Chefe, type Grupo, type Item,
+} from "@/lib/organograma/arvore";
 
 // =====================================================================
 // ORGANOGRAMA (30/09/2026, mig 20260930000277)
@@ -30,6 +34,13 @@ import { cn } from "@/lib/utils";
 // outro para mudar o chefe, reordena entre irmãos e escreve a função. Tirar
 // pessoa (excluir) sobe os subordinados dela para o chefe dela — o banco faz.
 // O banco também recusa ciclo (A reporta a B que reporta a A).
+//
+// PARES NO MESMO NÍVEL (16/10/2026, mig 20261016000030) — "conectar ambos no
+// mesmo nível de hierarquia, o bigode, guiomar e helena" (Pablo). Em
+// "Editar", a seção "Mesmo nível" junta pessoas num grupo com nome (lado a
+// lado, ligadas por uma barra). Subordinado pode reportar a um dos pares ou
+// ao grupo inteiro ("Grupo …" no "Reporta a", ou soltar o card no quadro do
+// grupo). A regra de montar a árvore está em src/lib/organograma/arvore.ts.
 // =====================================================================
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -39,7 +50,7 @@ const MENU = "organograma";
 interface No {
   id: string; user_id: string; parent_id: string | null; ordem: number; funcao_manual: string | null;
   nome: string; email: string | null; avatar_url: string | null; cargo: string | null; setor: string | null; ativo: boolean;
-  cor: string | null;
+  cor: string | null; par_grupo: string | null; do_grupo: boolean;
 }
 interface Usuario {
   user_id: string; nome: string; email: string | null; avatar_url: string | null; cargo: string | null; setor: string | null; no_organograma: boolean;
@@ -105,7 +116,7 @@ export default function Organograma() {
       return (data ?? []) as No[];
     },
   });
-  const nos = nosQ.data ?? [];
+  const nos = useMemo(() => nosQ.data ?? [], [nosQ.data]);
 
   const [edicao, setEdicao] = useState(false);
   const [busca, setBusca] = useState("");
@@ -117,28 +128,14 @@ export default function Organograma() {
   const [alvoDrop, setAlvoDrop] = useState<string | null>(null);
 
   // ── Árvore ──────────────────────────────────────────────────────────
-  const porId = useMemo(() => new Map(nos.map((n) => [n.id, n])), [nos]);
-  const filhos = useMemo(() => {
-    const m = new Map<string | null, No[]>();
-    nos.forEach((n) => {
-      const pai = n.parent_id && porId.has(n.parent_id) ? n.parent_id : null;
-      m.set(pai, [...(m.get(pai) ?? []), n]);
-    });
-    m.forEach((l) => l.sort((a, b) => a.ordem - b.ordem || a.nome.localeCompare(b.nome, "pt-BR")));
-    return m;
-  }, [nos, porId]);
-  const raizes = filhos.get(null) ?? [];
-
-  const descendentes = (id: string): Set<string> => {
-    const out = new Set<string>();
-    const pilha = [id];
-    while (pilha.length) {
-      const atual = pilha.pop()!;
-      (filhos.get(atual) ?? []).forEach((f) => { if (!out.has(f.id)) { out.add(f.id); pilha.push(f.id); } });
-    }
-    return out;
-  };
-  const totalAbaixo = (id: string) => descendentes(id).size;
+  const arv = useMemo(() => montarArvore(nos), [nos]);
+  const { porId, descendentes } = arv;
+  // Contagem do botão de recolher: só o que desce daquele card (quem
+  // responde ao grupo conta no botão do grupo, não no do par).
+  const contar = (l: No[]) => l.reduce((s, f) => s + 1 + descendentes(f.id).size, 0);
+  const totalAbaixo = (id: string) => contar(arv.equipeDe(id));
+  const totalDoGrupo = (g: Grupo<No>) => contar(arv.equipeDoGrupo(g));
+  const alternar = (chave: string) => setRecolhidos((s) => { const x = new Set(s); if (x.has(chave)) x.delete(chave); else x.add(chave); return x; });
 
   // Busca: acha, abre os ramos até a pessoa e rola até ela.
   const termo = busca.trim().toLowerCase();
@@ -149,10 +146,7 @@ export default function Organograma() {
     if (!achados.size) return;
     const abrir = new Set(recolhidos);
     let mudou = false;
-    achados.forEach((id) => {
-      let p = porId.get(id)?.parent_id ?? null;
-      while (p) { if (abrir.delete(p)) mudou = true; p = porId.get(p)?.parent_id ?? null; }
-    });
+    achados.forEach((id) => arv.caminhoAte(id).forEach((k) => { if (abrir.delete(k)) mudou = true; }));
     if (mudou) setRecolhidos(abrir);
     const primeiro = [...achados][0];
     window.setTimeout(() => document.getElementById(`org-${primeiro}`)?.scrollIntoView({ behavior: "smooth", block: "center", inline: "center" }), 80);
@@ -181,17 +175,22 @@ export default function Organograma() {
 
   // ── Gravações ───────────────────────────────────────────────────────
   const recarregar = () => { qc.invalidateQueries({ queryKey: ["organograma-nos"] }); qc.invalidateQueries({ queryKey: ["organograma-usuarios"] }); };
-  const mudarChefe = async (id: string, parentId: string | null) => {
+  // Trocar o chefe arrastando tira a pessoa do grupo de pares em que estava
+  // (os pares dela ficam; a equipe que respondia ao grupo o banco repassa).
+  const mudarChefe = async (id: string, chefe: Chefe) => {
+    const { parentId, doGrupo } = chefe;
     if (parentId && (parentId === id || descendentes(id).has(parentId))) {
       toast.error("Essa pessoa não pode reportar a alguém que está abaixo dela."); return;
     }
-    const ordem = (filhos.get(parentId) ?? []).length;
-    const { error } = await sb.from("ORGANOGRAMA_NO").update({ parent_id: parentId, ordem }).eq("id", id);
+    const g = parentId && doGrupo ? arv.grupoDe(parentId) : undefined;
+    const ordem = g ? arv.equipeDoGrupo(g).length : parentId ? arv.equipeDe(parentId).length : arv.raiz.length;
+    const { error } = await sb.from("ORGANOGRAMA_NO")
+      .update({ parent_id: parentId, do_grupo: !!g, ordem, par_grupo: null }).eq("id", id);
     if (error) { toast.error(error.message); return; }
     recarregar();
   };
   const mover = async (n: No, d: -1 | 1) => {
-    const irmaos = [...(filhos.get(n.parent_id && porId.has(n.parent_id) ? n.parent_id : null) ?? [])];
+    const irmaos = [...arv.irmaosDe(n.id)];
     const i = irmaos.findIndex((x) => x.id === n.id); const j = i + d;
     if (i < 0 || j < 0 || j >= irmaos.length) return;
     [irmaos[i], irmaos[j]] = [irmaos[j], irmaos[i]];
@@ -203,17 +202,36 @@ export default function Organograma() {
 
   // ── Arrastar card sobre card (mudar o chefe) ────────────────────────
   const onDragStart = (e: DragEvent, id: string) => { e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", id); setArrastando(id); };
+  // stopPropagation: o card pode estar dentro do quadro de um grupo — o
+  // drop é do card, não do grupo.
   const onDragOver = (e: DragEvent, alvo: string | null) => {
+    e.stopPropagation();
     if (!arrastando || arrastando === alvo || (alvo && descendentes(arrastando).has(alvo))) return;
     e.preventDefault(); setAlvoDrop(alvo ?? "__topo");
   };
   const onDrop = (e: DragEvent, alvo: string | null) => {
-    e.preventDefault();
+    e.preventDefault(); e.stopPropagation();
     const id = arrastando; setArrastando(null); setAlvoDrop(null);
     if (!id || id === alvo) return;
-    const atual = porId.get(id)?.parent_id ?? null;
-    if (atual === alvo) return;
-    mudarChefe(id, alvo);
+    const n = porId.get(id); const chefe = { parentId: alvo, doGrupo: false };
+    if (!n || mesmoChefe(arv, n, chefe)) return;
+    mudarChefe(id, chefe);
+  };
+  // Soltar no quadro do grupo = passa a responder ao grupo inteiro.
+  const podeSoltarNoGrupo = (g: Grupo<No>, id: string | null) => !!id
+    && !g.membros.some((m) => m.id === id || descendentes(id).has(m.id));
+  const onDragOverGrupo = (e: DragEvent, g: Grupo<No>) => {
+    e.stopPropagation();
+    if (!podeSoltarNoGrupo(g, arrastando)) return;
+    e.preventDefault(); setAlvoDrop(g.chave);
+  };
+  const onDropGrupo = (e: DragEvent, g: Grupo<No>) => {
+    e.preventDefault(); e.stopPropagation();
+    const id = arrastando; setArrastando(null); setAlvoDrop(null);
+    if (!id || !podeSoltarNoGrupo(g, id)) return;
+    const n = porId.get(id); const chefe = { parentId: g.membros[0].id, doGrupo: true };
+    if (!n || mesmoChefe(arv, n, chefe)) return;
+    mudarChefe(id, chefe);
   };
 
   // ── Desenho ─────────────────────────────────────────────────────────
@@ -245,16 +263,16 @@ export default function Organograma() {
   // (flex) e os cards da grade de 2 colunas ficavam uns por cima dos outros,
   // com o nome do setor cortado ("S...", "TREINAMEN...").
   const CARD_PAINEL = 236, GAP_PAINEL = 10, PAD_PAINEL = 14;
-  const renderPainel = (setor: string, membros: No[], pai: No) => {
+  const renderPainel = (setor: string, membros: No[], chavePai: string, corPai: string | null) => {
     const contagem = new Map<string, number>();
     membros.forEach((m) => m.cor && contagem.set(m.cor, (contagem.get(m.cor) ?? 0) + 1));
     const corMembros = [...contagem.entries()].sort((a, b) => b[1] - a[1])[0]?.[0];
-    const cor = corMembros ?? pai.cor ?? corDe(setor);
+    const cor = corMembros ?? corPai ?? corDe(setor);
     const Icone = iconeSetor(setor);
     const colunas = membros.length > 4 ? 2 : 1;
     const largura = colunas * CARD_PAINEL + (colunas - 1) * GAP_PAINEL + PAD_PAINEL * 2;
     return (
-      <li key={`painel-${pai.id}-${setor}`}>
+      <li key={`painel-${chavePai}-${setor}`}>
         <div className="org-painel rounded-2xl border-2 shadow-sm"
              style={{ width: largura, padding: PAD_PAINEL, borderColor: `${cor}40`, background: `linear-gradient(${cor}0d, ${cor}0d), hsl(var(--card))` }}>
           <div className="mb-3 flex items-center gap-2 px-0.5">
@@ -286,21 +304,69 @@ export default function Organograma() {
     );
   };
 
-  const renderNo = (n: No) => {
-    const subs = filhos.get(n.id) ?? [];
-    const recolhido = recolhidos.has(n.id);
-    // Filhos com equipe seguem na árvore; os sem equipe vão para o painel do
-    // setor, na posição do primeiro deles.
-    const itens: ({ tipo: "no"; no: No } | { tipo: "painel"; setor: string; membros: No[] })[] = [];
-    const paineis = new Map<string, No[]>();
-    subs.forEach((f) => {
-      if ((filhos.get(f.id) ?? []).length) { itens.push({ tipo: "no", no: f }); return; }
-      const setor = f.setor?.trim() || "Sem setor";
-      if (!paineis.has(setor)) { const membros: No[] = []; paineis.set(setor, membros); itens.push({ tipo: "painel", setor, membros }); }
-      paineis.get(setor)!.push(f);
-    });
+  // Filhos com equipe seguem na árvore; os sem equipe vão para o painel do
+  // setor, na posição do primeiro deles (arv.itens); pares viram um grupo.
+  const renderItem = (it: Item<No>, chavePai: string, corPai: string | null) =>
+    it.tipo === "no" ? renderNo(it.no)
+      : it.tipo === "grupo" ? renderGrupo(it.grupo)
+      : renderPainel(it.setor, it.membros, chavePai, corPai);
+
+  const renderEquipe = (n: No) => {
+    const subs = arv.equipeDe(n.id);
+    if (!subs.length || recolhidos.has(n.id)) return null;
+    return <ul>{arv.itens(subs).map((it) => renderItem(it, n.id, n.cor))}</ul>;
+  };
+
+  const renderNo = (n: No) => (
+    <li key={n.id}>
+      {renderCartao(n)}
+      {renderEquipe(n)}
+    </li>
+  );
+
+  // Pares no mesmo nível: quadro com o nome do grupo, cards lado a lado
+  // ligados por uma barra (CSS .org-par); cada par leva a própria equipe
+  // embaixo dele e quem responde ao grupo desce do meio do quadro.
+  const renderGrupo = (g: Grupo<No>) => {
+    const equipe = arv.equipeDoGrupo(g);
+    const recolhido = recolhidos.has(g.chave);
+    const total = totalDoGrupo(g);
     return (
-      <li key={n.id}>
+      <li key={g.chave}>
+        <div data-grupo
+          onDragOver={(e) => onDragOverGrupo(e, g)} onDragLeave={() => setAlvoDrop((a) => (a === g.chave ? null : a))} onDrop={(e) => onDropGrupo(e, g)}
+          className={cn("org-grupo relative rounded-3xl border-2 border-dashed border-primary/30 bg-primary/[0.03] px-5 pb-5 pt-8 transition",
+            equipe.length > 0 && !recolhido && "org-grupo-com-equipe", alvoDrop === g.chave && "border-primary bg-primary/10 ring-4 ring-primary/30")}>
+          <span className="absolute left-5 top-2.5 flex items-center gap-1.5 text-[11px] font-extrabold uppercase tracking-wider text-primary/80">
+            <Users className="h-3.5 w-3.5" /> {g.nome}
+          </span>
+          <div className="org-grupo-membros">
+            {g.membros.map((m) => (
+              <div key={m.id} className="org-par">
+                {renderCartao(m)}
+                {renderEquipe(m)}
+              </div>
+            ))}
+          </div>
+          {equipe.length > 0 && (
+            <button type="button" data-card onClick={(e) => { e.stopPropagation(); alternar(g.chave); }}
+              title={recolhido ? `Mostrar quem responde ao grupo (${total})` : `Recolher quem responde ao grupo (${total})`}
+              className="absolute -bottom-3 left-1/2 z-[2] flex h-6 -translate-x-1/2 items-center gap-0.5 rounded-full border bg-background px-2 text-[10px] font-bold text-muted-foreground shadow-sm hover:text-foreground">
+              {recolhido ? <ChevronDown className="h-3 w-3" /> : <ChevronUp className="h-3 w-3" />} {total}
+            </button>
+          )}
+        </div>
+        {equipe.length > 0 && !recolhido && (
+          <ul>{arv.itens(equipe).map((it) => renderItem(it, g.chave, g.membros.find((m) => m.cor)?.cor ?? null))}</ul>
+        )}
+      </li>
+    );
+  };
+
+  const renderCartao = (n: No) => {
+    const subs = arv.equipeDe(n.id);
+    const recolhido = recolhidos.has(n.id);
+    return (
         <div {...eventosCard(n)} style={estiloCard(n.cor)}
           title={[n.nome, funcaoDe(n), n.setor].filter(Boolean).join(" · ")}
           className={cn("org-card relative flex min-h-[84px] w-[264px] items-center gap-3 rounded-2xl border-2 bg-card px-4 py-3 text-left shadow-sm transition", estadoCard(n))}>
@@ -314,17 +380,13 @@ export default function Organograma() {
           {edicao && podeMontar && <Pencil className="absolute right-2 top-2 h-3.5 w-3.5 text-muted-foreground" />}
           {subs.length > 0 && (
             <button type="button" data-card
-              onClick={(e) => { e.stopPropagation(); setRecolhidos((s) => { const x = new Set(s); x.has(n.id) ? x.delete(n.id) : x.add(n.id); return x; }); }}
+              onClick={(e) => { e.stopPropagation(); alternar(n.id); }}
               title={recolhido ? `Mostrar a equipe (${totalAbaixo(n.id)})` : `Recolher a equipe (${totalAbaixo(n.id)})`}
               className="absolute -bottom-3 left-1/2 flex h-6 -translate-x-1/2 items-center gap-0.5 rounded-full border bg-background px-2 text-[10px] font-bold text-muted-foreground shadow-sm hover:text-foreground">
               {recolhido ? <ChevronDown className="h-3 w-3" /> : <ChevronUp className="h-3 w-3" />} {totalAbaixo(n.id)}
             </button>
           )}
         </div>
-        {subs.length > 0 && !recolhido && (
-          <ul>{itens.map((it) => (it.tipo === "no" ? renderNo(it.no) : renderPainel(it.setor, it.membros, n)))}</ul>
-        )}
-      </li>
     );
   };
 
@@ -374,14 +436,14 @@ export default function Organograma() {
           <Button variant="ghost" size="icon" className="h-7 w-7" title="Caber na tela" onClick={ajustar}><Maximize className="h-3.5 w-3.5" /></Button>
         </div>
         <Button variant="ghost" size="sm" className="h-8 text-xs" onClick={() => setRecolhidos(new Set())}>Expandir tudo</Button>
-        <Button variant="ghost" size="sm" className="h-8 text-xs" onClick={() => setRecolhidos(new Set(nos.filter((n) => (filhos.get(n.id) ?? []).length).map((n) => n.id)))}>Recolher tudo</Button>
+        <Button variant="ghost" size="sm" className="h-8 text-xs" onClick={() => setRecolhidos(new Set(arv.recolhiveis()))}>Recolher tudo</Button>
       </div>
 
       {edicao && (
         <div className="mb-3 flex flex-wrap items-center gap-3 rounded-xl border border-primary/30 bg-primary/5 px-4 py-2.5 text-xs text-primary print:hidden">
           <Pencil className="h-4 w-4 shrink-0" />
           <span className="flex-1">
-            Modo de montagem: clique num card para editar{podeAlterar ? " · arraste um card sobre outro para mudar quem ele reporta a" : ""}.
+            Modo de montagem: clique num card para editar (em "Mesmo nível" junte pares lado a lado){podeAlterar ? " · arraste um card sobre outro para mudar quem ele reporta a, ou sobre o quadro de um grupo para responder ao grupo todo" : ""}.
           </span>
           {podeAlterar && (
             <div onDragOver={(e) => onDragOver(e, null)} onDragLeave={() => setAlvoDrop((a) => (a === "__topo" ? null : a))} onDrop={(e) => onDrop(e, null)}
@@ -407,20 +469,20 @@ export default function Organograma() {
         <div ref={caixaRef} onMouseDown={inicioPan} onMouseMove={movePan} onMouseUp={fimPan} onMouseLeave={fimPan}
              className="org-caixa relative h-[calc(100vh-270px)] min-h-[420px] cursor-grab overflow-auto rounded-2xl border bg-[radial-gradient(circle,_hsl(var(--muted))_1px,_transparent_1px)] [background-size:18px_18px] active:cursor-grabbing">
           <div data-arvore className="org-arvore inline-block min-w-full p-8" style={{ transform: `scale(${escala})`, transformOrigin: "top left" }}>
-            <ul className="org-raiz">{raizes.map(renderNo)}</ul>
+            <ul className="org-raiz">{arv.raiz.map((it) => renderItem(it, "topo", null))}</ul>
           </div>
         </div>
       )}
 
       {adicionar && (
         <AdicionarPessoa
-          nos={nos} parentInicial={adicionar.parentId} onFechar={() => setAdicionar(null)}
+          nos={nos} arv={arv} parentInicial={adicionar.parentId} onFechar={() => setAdicionar(null)}
           onSalvo={() => { setAdicionar(null); recarregar(); }}
         />
       )}
       {editando && (
         <EditarPessoa
-          no={editando} nos={nos} descendentes={descendentes(editando.id)}
+          no={editando} nos={nos} arv={arv} descendentes={descendentes(editando.id)}
           podeAlterar={podeAlterar} podeExcluir={podeExcluir} podeIncluir={podeIncluir}
           onMover={(d) => mover(editando, d)}
           onAdicionarAbaixo={() => { const id = editando.id; setEditando(null); setAdicionar({ parentId: id }); }}
@@ -436,21 +498,31 @@ export default function Organograma() {
 
 const SEM_CHEFE = "__topo";
 
-function SeletorChefe({ nos, valor, onValor, excluir }: { nos: No[]; valor: string | null; onValor: (v: string | null) => void; excluir?: Set<string> }) {
+// "Reporta a": uma pessoa, ou um grupo de pares inteiro (valor "grupo:<1º par>").
+function SeletorChefe({ nos, arv, valor, onValor, excluir }: {
+  nos: No[]; arv: Arvore<No>; valor: Chefe; onValor: (v: Chefe) => void; excluir?: Set<string>;
+}) {
   const opcoes = nos.filter((n) => !excluir?.has(n.id)).sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"));
+  const grupos = [...new Map(nos.map((n) => [arv.grupoDe(n.id)?.chave, arv.grupoDe(n.id)])).values()]
+    .filter((g): g is Grupo<No> => !!g && !g.membros.some((m) => excluir?.has(m.id)));
   return (
-    <Select value={valor ?? SEM_CHEFE} onValueChange={(v) => onValor(v === SEM_CHEFE ? null : v)}>
+    <Select value={valorChefe(valor) ?? SEM_CHEFE} onValueChange={(v) => onValor(lerValorChefe(v === SEM_CHEFE ? null : v))}>
       <SelectTrigger><SelectValue /></SelectTrigger>
       <SelectContent className="max-h-72">
         <SelectItem value={SEM_CHEFE}>Ninguém — fica no topo</SelectItem>
+        {grupos.map((g) => (
+          <SelectItem key={g.chave} value={valorChefe({ parentId: g.membros[0].id, doGrupo: true })!}>
+            Grupo «{g.nome}» — {g.membros.map((m) => m.nome.split(/\s+/)[0]).join(", ")}
+          </SelectItem>
+        ))}
         {opcoes.map((n) => <SelectItem key={n.id} value={n.id}>{n.nome}{funcaoDe(n) ? ` · ${funcaoDe(n)}` : ""}</SelectItem>)}
       </SelectContent>
     </Select>
   );
 }
 
-function AdicionarPessoa({ nos, parentInicial, onFechar, onSalvo }: {
-  nos: No[]; parentInicial: string | null; onFechar: () => void; onSalvo: () => void;
+function AdicionarPessoa({ nos, arv, parentInicial, onFechar, onSalvo }: {
+  nos: No[]; arv: Arvore<No>; parentInicial: string | null; onFechar: () => void; onSalvo: () => void;
 }) {
   const usuariosQ = useQuery({
     queryKey: ["organograma-usuarios"],
@@ -462,7 +534,7 @@ function AdicionarPessoa({ nos, parentInicial, onFechar, onSalvo }: {
   });
   const [busca, setBusca] = useState("");
   const [escolhido, setEscolhido] = useState<Usuario | null>(null);
-  const [chefe, setChefe] = useState<string | null>(parentInicial);
+  const [chefe, setChefe] = useState<Chefe>({ parentId: parentInicial, doGrupo: false });
   const [funcao, setFuncao] = useState("");
   const [salvando, setSalvando] = useState(false);
 
@@ -475,9 +547,10 @@ function AdicionarPessoa({ nos, parentInicial, onFechar, onSalvo }: {
   const salvar = async () => {
     if (!escolhido) { toast.error("Escolha a pessoa."); return; }
     setSalvando(true);
-    const irmaos = nos.filter((n) => (n.parent_id ?? null) === chefe).length;
+    const g = chefe.parentId && chefe.doGrupo ? arv.grupoDe(chefe.parentId) : undefined;
+    const irmaos = g ? arv.equipeDoGrupo(g).length : chefe.parentId ? arv.equipeDe(chefe.parentId).length : arv.raiz.length;
     const { error } = await sb.from("ORGANOGRAMA_NO").insert({
-      user_id: escolhido.user_id, parent_id: chefe, funcao: funcao.trim() || null, ordem: irmaos,
+      user_id: escolhido.user_id, parent_id: chefe.parentId, do_grupo: !!g, funcao: funcao.trim() || null, ordem: irmaos,
     });
     setSalvando(false);
     if (error) { toast.error(/duplicate|unique/i.test(error.message) ? "Essa pessoa já está no organograma." : error.message); return; }
@@ -527,7 +600,7 @@ function AdicionarPessoa({ nos, parentInicial, onFechar, onSalvo }: {
             </div>
             <div className="space-y-1.5">
               <p className="text-xs font-semibold">Reporta a</p>
-              <SeletorChefe nos={nos} valor={chefe} onValor={setChefe} />
+              <SeletorChefe nos={nos} arv={arv} valor={chefe} onValor={setChefe} />
             </div>
             <div className="space-y-1.5">
               <p className="text-xs font-semibold">Função no organograma <span className="font-normal text-muted-foreground">(opcional)</span></p>
@@ -545,11 +618,13 @@ function AdicionarPessoa({ nos, parentInicial, onFechar, onSalvo }: {
   );
 }
 
-function EditarPessoa({ no, nos, descendentes, podeAlterar, podeExcluir, podeIncluir, onMover, onAdicionarAbaixo, onFechar, onSalvo }: {
-  no: No; nos: No[]; descendentes: Set<string>; podeAlterar: boolean; podeExcluir: boolean; podeIncluir: boolean;
+const NOME_GRUPO_PADRAO = "Mesmo nível";
+
+function EditarPessoa({ no, nos, arv, descendentes, podeAlterar, podeExcluir, podeIncluir, onMover, onAdicionarAbaixo, onFechar, onSalvo }: {
+  no: No; nos: No[]; arv: Arvore<No>; descendentes: Set<string>; podeAlterar: boolean; podeExcluir: boolean; podeIncluir: boolean;
   onMover: (d: -1 | 1) => void; onAdicionarAbaixo: () => void; onFechar: () => void; onSalvo: () => void;
 }) {
-  const [chefe, setChefe] = useState<string | null>(no.parent_id);
+  const [chefe, setChefe] = useState<Chefe>(() => chefeDoNo(arv, no));
   const [funcao, setFuncao] = useState(no.funcao_manual ?? "");
   const [cor, setCor] = useState<string | null>(no.cor);
   const [corNaEquipe, setCorNaEquipe] = useState(false);
@@ -557,18 +632,53 @@ function EditarPessoa({ no, nos, descendentes, podeAlterar, podeExcluir, podeInc
   const excluir = new Set([no.id, ...descendentes]);
   const equipe = descendentes.size;
 
+  // Mesmo nível: pares atuais (grupo ativo) e os escolhidos agora.
+  const grupoAtual = arv.grupoDe(no.id);
+  const paresAtuais = useMemo(() => new Set((grupoAtual?.membros ?? []).filter((m) => m.id !== no.id).map((m) => m.id)), [grupoAtual, no.id]);
+  const [pares, setPares] = useState<Set<string>>(paresAtuais);
+  const [nomeGrupo, setNomeGrupo] = useState(grupoAtual?.nome ?? no.par_grupo ?? "");
+  const [equipeAoGrupo, setEquipeAoGrupo] = useState(false);
+  const [buscaPar, setBuscaPar] = useState("");
+  const chefeMudou = !mesmoChefe(arv, no, chefe);
+  // Valendo para todos os pares: mantém o parent_id de hoje se o chefe não mudou
+  // (quem responde ao grupo pode estar pendurado em outro par que não o 1º).
+  const efetivo: Chefe = chefeMudou ? chefe : { parentId: no.parent_id && arv.porId.has(no.parent_id) ? no.parent_id : null, doGrupo: no.do_grupo };
+  const candidatos = nos
+    .filter((n) => podeSerPar(arv, no.id, n.id, efetivo.parentId))
+    .filter((n) => !buscaPar.trim() || `${n.nome} ${funcaoDe(n)}`.toLowerCase().includes(buscaPar.trim().toLowerCase()))
+    .sort((a, b) => Number(pares.has(b.id)) - Number(pares.has(a.id))
+      || Number((b.parent_id ?? null) === efetivo.parentId) - Number((a.parent_id ?? null) === efetivo.parentId)
+      || a.nome.localeCompare(b.nome, "pt-BR"))
+    .slice(0, 80);
+  const paresValidos = [...pares].filter((id) => podeSerPar(arv, no.id, id, efetivo.parentId));
+  const membrosNovos = [no.id, ...paresValidos];
+  const equipeDosPares = nos.filter((n) => n.parent_id && membrosNovos.includes(n.parent_id) && !n.do_grupo).length;
+
   const salvar = async () => {
     setSalvando(true);
-    const patch: Record<string, unknown> = { funcao: funcao.trim() || null, cor };
-    if (chefe !== no.parent_id) {
-      patch.parent_id = chefe;
-      patch.ordem = nos.filter((n) => (n.parent_id ?? null) === chefe).length;
+    const falhou = (e: { message: string } | null) => { if (!e) return false; setSalvando(false); toast.error(e.message); return true; };
+    const nome = paresValidos.length ? (nomeGrupo.trim() || NOME_GRUPO_PADRAO).slice(0, 60) : null;
+    const g = efetivo.parentId && efetivo.doGrupo ? arv.grupoDe(efetivo.parentId) : undefined;
+    let proximaOrdem = g ? arv.equipeDoGrupo(g).length : efetivo.parentId ? arv.equipeDe(efetivo.parentId).length : arv.raiz.length;
+    const patch: Record<string, unknown> = { funcao: funcao.trim() || null, cor, par_grupo: nome };
+    if (chefeMudou) Object.assign(patch, { parent_id: efetivo.parentId, do_grupo: efetivo.doGrupo, ordem: proximaOrdem++ });
+    if (falhou((await sb.from("ORGANOGRAMA_NO").update(patch).eq("id", no.id)).error)) return;
+    // Pares: mesmo chefe (e mesmo do_grupo) que esta pessoa, mesmo nome de grupo.
+    for (const id of paresValidos) {
+      const p = arv.porId.get(id)!;
+      const patchPar: Record<string, unknown> = { par_grupo: nome };
+      if (p.parent_id !== efetivo.parentId || p.do_grupo !== efetivo.doGrupo) {
+        Object.assign(patchPar, { parent_id: efetivo.parentId, do_grupo: efetivo.doGrupo, ordem: proximaOrdem++ });
+      }
+      if (falhou((await sb.from("ORGANOGRAMA_NO").update(patchPar).eq("id", id)).error)) return;
     }
-    const { error } = await sb.from("ORGANOGRAMA_NO").update(patch).eq("id", no.id);
-    if (error) { setSalvando(false); toast.error(error.message); return; }
+    const saiu = [...paresAtuais].filter((id) => !paresValidos.includes(id));
+    if (saiu.length && falhou((await sb.from("ORGANOGRAMA_NO").update({ par_grupo: null }).in("id", saiu)).error)) return;
+    if (nome && equipeAoGrupo && equipeDosPares
+      && falhou((await sb.from("ORGANOGRAMA_NO").update({ do_grupo: true }).in("parent_id", membrosNovos).eq("do_grupo", false)).error)) return;
     if (corNaEquipe && descendentes.size) {
       const { error: e2 } = await sb.from("ORGANOGRAMA_NO").update({ cor }).in("id", [...descendentes]);
-      if (e2) { setSalvando(false); toast.error(e2.message); return; }
+      if (falhou(e2)) return;
     }
     setSalvando(false);
     toast.success("Organograma atualizado.");
@@ -584,7 +694,7 @@ function EditarPessoa({ no, nos, descendentes, podeAlterar, podeExcluir, podeInc
 
   return (
     <Dialog open onOpenChange={(v) => !v && onFechar()}>
-      <DialogContent className="max-w-lg">
+      <DialogContent className="max-h-[90vh] max-w-lg overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Editar no organograma</DialogTitle>
           <DialogDescription>Foto e nome vêm do perfil do usuário; o cargo, do cadastro.</DialogDescription>
@@ -602,7 +712,35 @@ function EditarPessoa({ no, nos, descendentes, podeAlterar, podeExcluir, podeInc
           <>
             <div className="space-y-1.5">
               <p className="text-xs font-semibold">Reporta a</p>
-              <SeletorChefe nos={nos} valor={chefe} onValor={setChefe} excluir={excluir} />
+              <SeletorChefe nos={nos} arv={arv} valor={chefe} onValor={setChefe} excluir={excluir} />
+            </div>
+            <div className="space-y-1.5 rounded-xl border border-dashed border-primary/30 p-3">
+              <p className="flex items-center gap-1.5 text-xs font-semibold"><Users className="h-3.5 w-3.5 text-primary" /> Mesmo nível <span className="font-normal text-muted-foreground">(pares lado a lado, ligados por uma barra)</span></p>
+              <p className="text-[11px] text-muted-foreground">
+                Quem você marcar passa a reportar ao mesmo chefe que {no.nome.split(/\s+/)[0]} e fica no mesmo grupo. Desmarque todos para desfazer o grupo.
+              </p>
+              <Input value={nomeGrupo} onChange={(e) => setNomeGrupo(e.target.value)} maxLength={60} placeholder={`Nome do grupo — ex.: Direção (em branco: ${NOME_GRUPO_PADRAO})`} className="h-8 text-xs" />
+              <div className="relative">
+                <Search className="absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+                <Input value={buscaPar} onChange={(e) => setBuscaPar(e.target.value)} placeholder="Buscar pessoa…" className="h-8 pl-7 text-xs" />
+              </div>
+              <div className="max-h-40 space-y-0.5 overflow-y-auto rounded-lg border p-1">
+                {candidatos.map((n) => (
+                  <label key={n.id} className="flex cursor-pointer items-center gap-2 rounded-md px-1.5 py-1 text-xs hover:bg-muted">
+                    <input type="checkbox" className="h-3.5 w-3.5 accent-primary" checked={pares.has(n.id)}
+                      onChange={(e) => setPares((s) => { const x = new Set(s); if (e.target.checked) x.add(n.id); else x.delete(n.id); return x; })} />
+                    <Avatar nome={n.nome} url={n.avatar_url} tamanho={22} />
+                    <span className="min-w-0 flex-1 truncate"><b>{n.nome}</b>{funcaoDe(n) ? ` · ${funcaoDe(n)}` : ""}</span>
+                  </label>
+                ))}
+                {!candidatos.length && <p className="p-2 text-xs text-muted-foreground">Ninguém encontrado.</p>}
+              </div>
+              {paresValidos.length > 0 && equipeDosPares > 0 && (
+                <label className="flex cursor-pointer items-center gap-2 text-xs text-muted-foreground">
+                  <input type="checkbox" checked={equipeAoGrupo} onChange={(e) => setEquipeAoGrupo(e.target.checked)} className="h-3.5 w-3.5 accent-primary" />
+                  A equipe de quem está no grupo ({equipeDosPares} pessoa(s)) passa a responder ao grupo todo
+                </label>
+              )}
             </div>
             <div className="space-y-1.5">
               <p className="text-xs font-semibold">Função no organograma <span className="font-normal text-muted-foreground">(opcional)</span></p>
@@ -677,6 +815,14 @@ const CSS_ORGANOGRAMA = `
 .org-arvore li:only-child::after{border-radius:0}
 .org-arvore ul ul::before{content:"";position:absolute;top:0;left:50%;height:32px;border-left:2px solid hsl(var(--border))}
 .org-arvore li>ul{padding-top:32px}
+.org-grupo-membros{position:relative;display:flex;align-items:flex-start;gap:48px}
+.org-par{position:relative;display:flex;flex-direction:column;align-items:center;flex-shrink:0}
+.org-par>.org-card{z-index:1}
+.org-par::before,.org-par::after{content:"";position:absolute;top:41px;border-top:3px solid hsl(var(--primary)/.45);z-index:0}
+.org-par::before{left:50%;right:-24px}
+.org-par::after{left:-24px;right:50%}
+.org-par:first-child::after,.org-par:last-child::before{display:none}
+.org-grupo-com-equipe .org-grupo-membros::after{content:"";position:absolute;left:50%;top:42px;bottom:-22px;border-left:2px solid hsl(var(--border));z-index:0}
 @media print{
   body *{visibility:hidden}
   .org-caixa,.org-caixa *{visibility:visible}

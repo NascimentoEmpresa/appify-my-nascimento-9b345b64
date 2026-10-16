@@ -95,7 +95,7 @@ export function ExcecaoSenhaField({ validada, onValidada, jaEhExcecao, disabled,
           <Label className="text-xs flex items-center gap-1.5"><KeyRound className="h-3.5 w-3.5" />Senha da exceção</Label>
           <p className="text-xs text-muted-foreground">
             Só preencha se esta despesa for uma exceção. Para pagar em dia bloqueado (feriado, recesso, fim de semana) ou fora do prazo normal a senha é <span className="font-medium">obrigatória</span>: peça a exceção em{" "}
-            <Link to="/app/malote/excecao/solicitar" className="text-primary hover:underline">Solicitar Exceção</Link>. Depois da aprovação da diretoria financeira, informe aqui a senha.
+            <Link to="/app/malote/excecao/solicitar" className="text-primary hover:underline">Solicitar Exceção</Link>. Depois da aprovação, informe aqui a senha.
           </p>
         </div>
         <div className="flex gap-2">

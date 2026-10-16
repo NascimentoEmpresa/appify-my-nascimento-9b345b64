@@ -74,14 +74,21 @@ describe("Diárias — 'aprovar' e 'enviar_malote' não pegam carona no toggle",
 });
 
 describe("catálogo de exceções", () => {
-  it("Diárias, Parecer Jurídico e Hora Extra são as exceções hoje", () => {
+  it("Diárias, Parecer Jurídico, Hora Extra e Rateio do RH são as exceções hoje", () => {
     expect(Object.keys(ACOES_FORA_DO_TOGGLE).sort()).toEqual([
       "duvidas",
       "encarregados_diarias",
       "financeiro_diarias",
       "operacional_diarias",
+      "rh_rateio_despesas",
       "sistemas_hora_extra",
     ]);
+  });
+
+  it("Rateio do RH: ligar a tela NÃO concede enviar_malote, desligar revoga", () => {
+    // Enviar o rateio cria despesa no Malote do Financeiro (mig 20261016000020).
+    expect(acoesGravadasPeloToggle("rh_rateio_despesas", true)).not.toContain("enviar_malote");
+    expect(acoesGravadasPeloToggle("rh_rateio_despesas", false)).toContain("enviar_malote");
   });
 
   it("Hora Extra: ligar a tela NÃO concede editar_concluida, desligar revoga", () => {
