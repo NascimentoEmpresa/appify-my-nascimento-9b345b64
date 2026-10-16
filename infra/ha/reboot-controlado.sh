@@ -69,6 +69,37 @@ estado_de() {
 
 mostrar() { em "$1" "$PCTL list 2>/dev/null" | sed 's/^/   /'; }
 
+# reiniciar_e_esperar <ip_do_alvo> <nome_do_alvo>
+#
+# Reinicia e so volta quando a maquina tiver REINICIADO DE FATO -- conferido
+# pelo horario de boot, nao por "o SSH respondeu" e muito menos por "o Patroni
+# diz que esta streaming". Em 16/10/2026 a versao anterior anunciou "voltou"
+# 25 segundos depois de mandar reiniciar, com o no ainda comecando a desligar:
+# a pergunta foi feita ao OUTRO no, que ainda via o estado antigo. A
+# conferencia seguinte mostrou o kernel velho e o reboot pendente intacto.
+# Um reboot que o script acha que fez e nao fez e pior do que nao ter script.
+reiniciar_e_esperar() {
+  local ALVO="$1" NOME="$2" ANTES DEPOIS FIM
+  ANTES=$(em "$ALVO" "uptime -s" | tr -d '\r')
+  [ -n "$ANTES" ] || { echo "   nao consegui ler o boot atual do $NOME" >&2; return 1; }
+  echo "   boot atual do $NOME: $ANTES"
+  em "$ALVO" "nohup sh -c 'sleep 2; systemctl reboot' >/dev/null 2>&1 &" || true
+  sleep 25
+  printf '   esperando o %s REINICIAR de fato' "$NOME"
+  FIM=$(( $(date +%s) + ESPERA_MAX ))
+  DEPOIS=""
+  while [ "$(date +%s)" -lt "$FIM" ]; do
+    DEPOIS=$(em "$ALVO" "uptime -s" 2>/dev/null | tr -d '\r')
+    [ -n "$DEPOIS" ] && [ "$DEPOIS" != "$ANTES" ] && break
+    printf '.'; sleep 10
+  done
+  echo
+  if [ -z "$DEPOIS" ] || [ "$DEPOIS" = "$ANTES" ]; then
+    echo "   o $NOME nao reiniciou (boot continua $ANTES)" >&2; return 1
+  fi
+  printf '   boot novo: %s   kernel: %s\n' "$DEPOIS" "$(em "$ALVO" "uname -r" | tr -d '\r')"
+}
+
 esperar_streaming() {  # esperar_streaming <ip_de_quem_pergunta> <membro>
   local fim=$(( $(date +%s) + ESPERA_MAX ))
   while [ "$(date +%s)" -lt "$fim" ]; do
@@ -139,33 +170,77 @@ case "$ACAO" in
   esac
   echo "   lider: $LIDER_N   standby: $STBY_N"
 
+  # Quem ainda PRECISA reiniciar. Sem isto, rodar o script de novo (depois de
+  # uma interrupcao no meio, que foi o que aconteceu em 16/10) reiniciaria um
+  # no que ja esta com o kernel novo -- uma parada a toa, e uma troca de lider
+  # a toa junto. Reiniciar maquina sem motivo nao e inofensivo.
+  precisa() { em "$1" "[ -f /var/run/reboot-required ] && echo sim || echo nao"; }
+  P_LIDER=$(precisa "$LIDER"); P_STBY=$(precisa "$STBY")
+  echo "   reboot pendente:  $LIDER_N=$P_LIDER  $STBY_N=$P_STBY"
+  if [ "$P_LIDER" = "nao" ] && [ "$P_STBY" = "nao" ]; then
+    echo
+    echo "   Os dois ja estao com o kernel novo. Nada a fazer."
+    conferir_tudo
+    exit 0
+  fi
+
   # Trava: lag tem que estar em 0 antes de mexer. Reiniciar com lag e perder
   # dado se o lider cair enquanto o standby sobe.
-  LAG=$(em "$LIDER" "$PCTL list -f json 2>/dev/null" | tr '{' '\n' \
-        | sed -nE "s/.*\"Member\": \"$STBY_N\".*\"Lag in MB\": ([0-9]+).*/\1/p" | head -1)
-  echo "   lag do standby: ${LAG:-?} MB"
-  [ "${LAG:-99}" = "0" ] || { echo "   lag diferente de 0 -- parando aqui" >&2; exit 1; }
+  #
+  # Os nomes das chaves sao "Receive Lag" e "Replay Lag" -- NAO "Lag in MB",
+  # que e o rotulo da tabela de texto. Procurar pelo nome errado devolvia vazio
+  # e a trava disparava sempre, como se houvesse lag. As duas tem que estar em
+  # zero: recebido sem aplicado nao protege de nada.
+  JSON=$(em "$LIDER" "$PCTL list -f json 2>/dev/null" | tr '{' '\n' | grep "\"Member\": \"$STBY_N\"")
+  LAG_R=$(printf '%s' "$JSON" | sed -nE 's/.*"Receive Lag": ([0-9]+).*/\1/p')
+  LAG_A=$(printf '%s' "$JSON" | sed -nE 's/.*"Replay Lag": ([0-9]+).*/\1/p')
+  echo "   lag do standby: recebido=${LAG_R:-?}  aplicado=${LAG_A:-?}"
+  [ "${LAG_R:-99}" = "0" ] && [ "${LAG_A:-99}" = "0" ] \
+    || { echo "   lag diferente de 0 (ou nao consegui ler) -- parando aqui" >&2; exit 1; }
 
-  echo
-  echo "== 1/4 reiniciando o STANDBY ($STBY_N). A escrita segue no lider."
-  em "$STBY" "nohup sh -c 'sleep 2; systemctl reboot' >/dev/null 2>&1 &" || true
-  sleep 25
-  printf '   esperando o %s voltar' "$STBY_N"
-  esperar_streaming "$LIDER" "$STBY_N" || exit 1
+  if [ "$P_STBY" = "sim" ]; then
+    echo
+    echo "== 1/4 reiniciando o STANDBY ($STBY_N). A escrita segue no lider."
+    reiniciar_e_esperar "$STBY" "$STBY_N" || exit 1
+    printf '   esperando voltar a replicar'
+    esperar_streaming "$LIDER" "$STBY_N" || exit 1
+  else
+    echo
+    echo "== 1/4 o standby ($STBY_N) ja esta com o kernel novo -- pulando"
+  fi
+
+  if [ "$P_LIDER" = "nao" ]; then
+    echo
+    echo "== 2/4 o lider ($LIDER_N) nao precisa reiniciar -- sem troca de lider"
+    echo
+    echo "== 4/4 conferindo tudo"
+    conferir_tudo
+    exit 0
+  fi
 
   echo
   echo "== 2/4 trocando de lider de proposito ($LIDER_N -> $STBY_N)"
   em "$LIDER" "$PCTL switchover --leader $LIDER_N --candidate $STBY_N --force" 2>&1 | sed 's/^/   /'
-  sleep 15
-  NOVO=$(papel_de "$STBY" "$STBY_N")
+  # O switchover reinicia o Postgres dos dois lados, e logo depois o SSH do no
+  # que acabou de assumir pode recusar conexao por alguns segundos (visto em
+  # 16/10: "connection refused" na 8443 com o Patroni ja respondendo normal
+  # pelo outro no). Perguntar uma vez so transformava isso em "o switchover
+  # nao passou" -- e abortava uma troca que tinha dado certo.
+  NOVO=""
+  for T in 1 2 3 4 5 6; do
+    sleep 10
+    NOVO=$(papel_de "$STBY" "$STBY_N" 2>/dev/null)
+    [ -z "$NOVO" ] && NOVO=$(papel_de "$LIDER" "$STBY_N" 2>/dev/null)
+    [ "$NOVO" = "Leader" ] && break
+    printf '   ainda nao consegui confirmar (tentativa %s de 6)\n' "$T"
+  done
   echo "   $STBY_N agora e: ${NOVO:-?}"
   [ "$NOVO" = "Leader" ] || { echo "   o switchover nao passou -- NAO vou reiniciar o outro no" >&2; exit 1; }
 
   echo
   echo "== 3/4 reiniciando o antigo lider ($LIDER_N), agora standby"
-  em "$LIDER" "nohup sh -c 'sleep 2; systemctl reboot' >/dev/null 2>&1 &" || true
-  sleep 25
-  printf '   esperando o %s voltar' "$LIDER_N"
+  reiniciar_e_esperar "$LIDER" "$LIDER_N" || exit 1
+  printf '   esperando voltar a replicar'
   esperar_streaming "$STBY" "$LIDER_N" || exit 1
 
   echo
