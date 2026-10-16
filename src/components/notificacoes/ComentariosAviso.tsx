@@ -37,8 +37,8 @@ function LinhaReacoes({ reacoes, comentarioId, eu, onReagir, desligado = false }
     <div className="flex flex-wrap items-center gap-1">
       {resumo.map((r) => (
         <button key={r.emoji} type="button" disabled={desligado} onClick={() => onReagir(r.emoji)}
-          className={cn("rounded-full border px-2 py-0.5 text-xs",
-            r.minha ? "border-primary bg-primary/10 text-primary" : "hover:bg-muted")}
+          className={cn("rounded-full px-2 py-0.5 text-xs transition-colors",
+            r.minha ? "bg-primary/10 text-primary ring-1 ring-primary/30" : "bg-muted/60 hover:bg-muted")}
           aria-label={`${r.emoji} ${r.total}${r.minha ? " (sua reação)" : ""}`}>
           {r.emoji} {r.total}
         </button>
@@ -46,7 +46,7 @@ function LinhaReacoes({ reacoes, comentarioId, eu, onReagir, desligado = false }
       <Popover>
         <PopoverTrigger asChild>
           <button type="button" disabled={desligado} aria-label="Reagir"
-            className="rounded-full border px-1.5 py-0.5 text-muted-foreground hover:bg-muted disabled:opacity-50">
+            className="rounded-full px-1.5 py-0.5 text-muted-foreground hover:bg-muted disabled:opacity-50">
             <SmilePlus className="h-3.5 w-3.5" />
           </button>
         </PopoverTrigger>
@@ -99,13 +99,15 @@ function AreaComentarios({ aviso, previa }: { aviso: Notificacao; previa: boolea
   };
 
   return (
-    <div className="mt-4 border-t pt-3">
+    <div className="mt-5 border-t border-border/60 pt-4">
+      {/* Mais leve (16/10/2026): sem caixas cinza por comentário, títulos
+          discretos — o aviso é o protagonista, a conversa vem embaixo. */}
       {/* Reação ao aviso em si. */}
       <LinhaReacoes reacoes={reacoes} comentarioId={null} eu={eu} desligado={previa}
                     onReagir={(e) => reagirCom(e, null)} />
 
-      <div className="mt-3 flex items-center gap-1.5 text-sm font-semibold">
-        <MessageCircle className="h-4 w-4" /> Comentários
+      <div className="mt-4 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+        <MessageCircle className="h-3.5 w-3.5" /> Comentários
         {!previa && comentarios.length > 0 && (
           <span className="font-normal text-muted-foreground">({comentarios.length})</span>
         )}
@@ -116,7 +118,7 @@ function AreaComentarios({ aviso, previa }: { aviso: Notificacao; previa: boolea
           Pré-visualização: os comentários e as reações aparecem aqui depois de publicado.
         </p>
       ) : (
-        <ul className="mt-2 space-y-2">
+        <ul className="mt-2 space-y-1">
           {carregando && (
             <li className="flex items-center gap-2 text-xs text-muted-foreground">
               <Loader2 className="h-3.5 w-3.5 animate-spin" /> Carregando comentários…
@@ -133,7 +135,7 @@ function AreaComentarios({ aviso, previa }: { aviso: Notificacao; previa: boolea
             // Anônimo não tem dono no banco: nem o autor apaga, só quem modera.
             const meu = !!eu && c.user_id === eu;
             return (
-              <li key={c.id} className="rounded-lg bg-muted/40 p-2.5">
+              <li key={c.id} className="rounded-xl px-3 py-2 transition-colors hover:bg-muted/40">
                 <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0">
                     <span className={cn("text-xs font-semibold", c.anonimo && "italic text-muted-foreground")}>
@@ -167,6 +169,7 @@ function AreaComentarios({ aviso, previa }: { aviso: Notificacao; previa: boolea
 
       <div className="mt-3 space-y-2">
         <Textarea rows={2} maxLength={MAX_COMENTARIO} disabled={previa || comentar.isPending}
+          className="min-h-[2.75rem] resize-none rounded-xl border-transparent bg-muted/40 focus-visible:bg-background"
           placeholder={previa ? "Comentários desligados na pré-visualização" : "Escreva um comentário…"}
           value={texto} onChange={(e) => setTexto(e.target.value)} />
         <div className="flex flex-wrap items-center justify-between gap-2">

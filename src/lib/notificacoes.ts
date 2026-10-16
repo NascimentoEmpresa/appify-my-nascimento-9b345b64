@@ -91,20 +91,27 @@ export function posicaoImagemDe(v: unknown): PosicaoImagem {
 }
 
 /**
- * Na imagem ao lado, o tamanho escolhido vira a LARGURA da coluna da imagem
- * (a altura já é a da janela). No celular a coluna é a tela toda e empilha.
+ * A altura da imagem ao lado do texto, como valor CSS.
+ *
+ * O tamanho escolhido é o TETO; o chão é a tela: 100dvh menos o que a janela
+ * gasta fora da imagem (margem, cabeçalho, rodapé com o botão, os avisos de
+ * rodapé e a linha do "ver em tamanho real") — assim a imagem nunca empurra o
+ * botão para fora num notebook de 768 px. A prévia tem a faixa azul no topo.
+ *
+ * A LARGURA da coluna sai da proporção do arquivo (altura × largura/altura),
+ * medida quando ele carrega — ver PainelImagemAviso. Antes (16/10/2026, print
+ * do Pablo) a coluna tinha largura fixa e sobrava faixa cinza dos lados.
  */
-export function larguraColunaImagem(t: TamanhoImagem): string {
-  switch (t) {
-    case "pequena": return "sm:w-2/5";
-    case "grande": return "sm:w-3/5";
-    case "total": return "sm:w-2/3";
-    default: return "sm:w-1/2";
-  }
+export function alturaImagemLado(t: TamanhoImagem, previa = false): string {
+  const teto = { pequena: "20rem", media: "28rem", "": "34rem", grande: "40rem", total: "48rem" }[t];
+  return `min(${teto}, calc(100dvh - ${previa ? "22.5rem" : "19.5rem"}))`;
 }
 
-/** A caixa da imagem ao lado: alta, mas presa à altura da tela (sem rolar no notebook). */
-export const CAIXA_IMAGEM_LADO = "h-[36vh] w-full sm:h-[min(36rem,60vh)]";
+/** Largura da coluna da imagem: a proporção da imagem, entre 15rem e 58% da janela. */
+export function larguraColunaImagem(altura: string, proporcao: number | null | undefined): string {
+  if (!proporcao || !isFinite(proporcao) || proporcao <= 0) return "45%";
+  return `clamp(15rem, calc(${altura} * ${proporcao.toFixed(4)} + 2rem), 58%)`;
+}
 
 /**
  * A caixa de cada imagem. O padrão continua `aspect-video`: altura reservada
@@ -127,7 +134,9 @@ export function classeCaixaImagem(t: TamanhoImagem): string {
 /** A largura do modal: imagem grande num modal estreito continuaria pequena. */
 export function larguraJanelaAviso(t: TamanhoImagem, posicao: PosicaoImagem = "cima"): string {
   // Lado a lado precisa de largura para as duas colunas.
-  if (posicao === "lado") return t === "grande" || t === "total" ? "max-w-5xl" : "max-w-4xl";
+  // Tela grande (≥1600 px) ganha mais largura: a coluna da imagem é limitada
+  // a 58% da janela, e o cartaz quadrado ficava menor que a altura permitia.
+  if (posicao === "lado") return t === "grande" || t === "total" ? "max-w-5xl min-[1600px]:max-w-6xl" : "max-w-4xl min-[1600px]:max-w-5xl";
   if (t === "total") return "max-w-3xl";
   if (t === "grande") return "max-w-2xl";
   return "max-w-lg";

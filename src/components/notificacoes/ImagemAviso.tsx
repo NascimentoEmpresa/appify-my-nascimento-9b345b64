@@ -23,11 +23,22 @@ export function ImagemAviso({
   className,
   /** O gate mostra a imagem como conteúdo principal; o resto pode adiar. */
   prioridade = false,
+  encaixe = "caixa",
+  aoCarregar,
 }: {
   url: string;
   nome?: string | null;
   className?: string;
   prioridade?: boolean;
+  /**
+   * "caixa" (o de sempre): moldura com borda e a imagem em object-contain.
+   * "natural" (16/10/2026, imagem ao lado do texto): sem moldura — a imagem
+   * ocupa só o tamanho dela dentro da área, com os cantos arredondados nela
+   * mesma. Na caixa, sobrava faixa cinza dos lados do cartaz quadrado.
+   */
+  encaixe?: "caixa" | "natural";
+  /** Largura ÷ altura do arquivo, quando ele chega — quem chama ajusta a coluna. */
+  aoCarregar?: (proporcao: number) => void;
 }) {
   const [estado, setEstado] = useState<"carregando" | "pronta" | "falhou">("carregando");
 
@@ -51,6 +62,34 @@ export function ImagemAviso({
         >
           Abrir em outra aba
         </a>
+      </div>
+    );
+  }
+
+  if (encaixe === "natural") {
+    return (
+      <div className={cn("relative flex items-center justify-center", className)}>
+        {estado === "carregando" && (
+          <div className="absolute inset-0 flex items-center justify-center gap-2 text-xs text-white/80">
+            <Loader2 className="h-4 w-4 animate-spin" /> Abrindo imagem…
+          </div>
+        )}
+        <img
+          src={url}
+          alt={nome ?? ""}
+          loading={prioridade ? "eager" : "lazy"}
+          decoding="async"
+          onLoad={(e) => {
+            setEstado("pronta");
+            const { naturalWidth: w, naturalHeight: h } = e.currentTarget;
+            if (w && h) aoCarregar?.(w / h);
+          }}
+          onError={() => setEstado("falhou")}
+          className={cn(
+            "block h-auto max-h-full w-auto max-w-full rounded-xl shadow-xl ring-1 ring-black/10 transition-opacity duration-200",
+            estado === "pronta" ? "opacity-100" : "opacity-0",
+          )}
+        />
       </div>
     );
   }

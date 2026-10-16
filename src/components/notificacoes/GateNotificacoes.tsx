@@ -1,13 +1,13 @@
 import { useState } from "react";
 import { AlertCircle, Loader2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { ImagensDoAviso, TextoAviso } from "@/components/notificacoes/ConteudoAviso";
+import { ImagensDoAviso, PainelImagemAviso, TextoAviso } from "@/components/notificacoes/ConteudoAviso";
 import { ComentariosAviso } from "@/components/notificacoes/ComentariosAviso";
 import { AnimacaoAviso } from "@/components/notificacoes/AnimacaoAviso";
 import { useNotificacoes } from "@/hooks/useNotificacoes";
 import { cn } from "@/lib/utils";
 import {
-  CAIXA_IMAGEM_LADO, animacaoDe, botoesDoAviso, fmtDataHora, imagensDoAviso, larguraColunaImagem,
+  alturaImagemLado, animacaoDe, botoesDoAviso, fmtDataHora, imagensDoAviso,
   larguraJanelaAviso, posicaoImagemDe, tamanhoImagemDe, varianteDoBotao,
   type Escolha, type Notificacao,
 } from "@/lib/notificacoes";
@@ -122,7 +122,7 @@ export function JanelaAviso({ aviso, enviando = null, onEscolher, onAdiar, resta
           presa à altura da janela: cabeçalho e rodapé fixos, a imagem com
           altura em vh, e SÓ o texto rola quando é longo. */}
       <div className={cn(
-        "flex w-full flex-col overflow-hidden rounded-xl bg-background shadow-2xl",
+        "flex w-full flex-col overflow-hidden rounded-2xl bg-background shadow-2xl ring-1 ring-black/5",
         previa ? "max-h-[calc(100dvh-5rem)]" : "max-h-[calc(100dvh-2rem)]",
         larguraJanelaAviso(tamanho, temImagem ? posicao : "cima"),
       )}>
@@ -162,12 +162,12 @@ export function JanelaAviso({ aviso, enviando = null, onEscolher, onAdiar, resta
             10/09/2026). */}
         {ladoALado ? (
           // Lado a lado: cada coluna rola sozinha (no celular empilha e rola tudo).
+          // A coluna da imagem tem a largura da imagem e fundo desfocado dela
+          // mesma (PainelImagemAviso) — sem faixa cinza dos lados.
           <div className="min-h-0 flex-1 overflow-y-auto sm:flex sm:overflow-hidden">
-            <div className={cn("shrink-0 border-b bg-muted/20 p-4 sm:overflow-y-auto sm:border-b-0 sm:border-r", larguraColunaImagem(tamanho))}>
-              <ImagensDoAviso aviso={aviso} prioridade classeCaixa={CAIXA_IMAGEM_LADO} />
-            </div>
-            <div className="min-w-0 flex-1 px-5 py-4 sm:overflow-y-auto">
-              <TextoAviso aviso={aviso} />
+            <PainelImagemAviso aviso={aviso} prioridade altura={alturaImagemLado(tamanho, !!previa)} />
+            <div className="min-w-0 flex-1 px-6 py-5 sm:overflow-y-auto">
+              <TextoAviso aviso={aviso} destaque />
               {/* Comentários e reações (16/10/2026). Na prévia, desligados. */}
               <ComentariosAviso aviso={aviso} previa={!!previa} />
             </div>

@@ -33,17 +33,24 @@ describe("animação do aviso", () => {
     expect(container.querySelector("canvas")).toBeNull();
   });
 
-  it("com prefers-reduced-motion não desenha nada", () => {
+  // 16/10/2026: com "Efeitos de animação" desligados no Windows o navegador
+  // diz reduce, e o Pablo não via confete nem na prévia. Agora toca a versão
+  // curta e calma em vez de nada.
+  it("com prefers-reduced-motion ainda toca (a versão reduzida)", () => {
     movimento(true);
-    const { container } = render(<AnimacaoAviso tipo="confetes" chave={1} />);
-    expect(container.querySelector("canvas")).toBeNull();
+    const { unmount } = render(<AnimacaoAviso tipo="confetes" chave={1} />);
+    expect(document.body.querySelector("canvas[data-animacao-aviso='confetes']")).not.toBeNull();
+    unmount();
   });
 
-  it("com movimento liberado, põe o canvas por cima sem pegar clique", () => {
+  it("o canvas vai no body (portal), por cima de tudo e sem pegar clique", () => {
     movimento(false);
-    const { container } = render(<AnimacaoAviso tipo="confetes" chave={1} />);
-    const c = container.querySelector("canvas");
+    const { container, unmount } = render(<AnimacaoAviso tipo="confetes" chave={1} />);
+    expect(container.querySelector("canvas")).toBeNull();
+    const c = document.body.querySelector("canvas[data-animacao-aviso]");
     expect(c).not.toBeNull();
     expect(c!.className).toContain("pointer-events-none");
+    expect(c!.className).toContain("z-[200]");
+    unmount();
   });
 });
