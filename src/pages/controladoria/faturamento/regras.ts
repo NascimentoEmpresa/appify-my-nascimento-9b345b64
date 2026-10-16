@@ -152,11 +152,15 @@ export interface TotaisFaturamento {
   descontos: number;
   recebido: number;
   aReceber: number;
+  // SIS-2026-0641: desconto de conta vinculada retido na nota (não entra em dinheiro) e descontos depois da NF
+  // (multas/glosas/outros pós-emissão); são o que separa Líquido − Recebido do A Receber.
+  contaVinculada: number;
+  posEmissao: number;
   notas: number;
 }
 
 export function totaisVazios(): TotaisFaturamento {
-  return { bruto: 0, liquido: 0, descontos: 0, recebido: 0, aReceber: 0, notas: 0 };
+  return { bruto: 0, liquido: 0, descontos: 0, recebido: 0, aReceber: 0, contaVinculada: 0, posEmissao: 0, notas: 0 };
 }
 
 // "A receber": o que falta entrar da nota. SIS-2026-0609: o líquido NÃO embute os
@@ -174,8 +178,44 @@ export function somarNf(t: TotaisFaturamento, n: NfFaturamento): TotaisFaturamen
   t.descontos += (n.vlr_bruto_total || 0) - (n.vlr_liquido_total || 0);
   t.recebido += n.valor_pago ?? 0;
   t.aReceber += aReceberDaNf(n);
+  t.contaVinculada += n.desconto_conta_vinculada || 0;
+  t.posEmissao += n.descontos_pos_emissao_total || 0;
   t.notas += 1;
   return t;
+}
+
+// SIS-2026-0641: a conta do A Receber, para quem confere "Líquido − Recebido" e não chega no saldo.
+//   Líquido − Recebido − Conta vinculada − Descontos depois da NF − Diferença em notas já baixadas = A Receber
+// A "diferença em notas já baixadas" é o resto: nota paga (com data de pagamento) não tem saldo mesmo que o valor
+// pago não feche com o devido (pago a menos = positivo; pago a mais = negativo).
+export interface PonteAReceber {
+  liquido: number;
+  recebido: number;
+  contaVinculada: number;
+  posEmissao: number;
+  diferencaBaixadas: number;
+  aReceber: number;
+}
+
+export function ponteAReceber(t: TotaisFaturamento): PonteAReceber {
+  const r2 = (v: number) => Math.round(v * 100) / 100;
+  return {
+    liquido: r2(t.liquido),
+    recebido: r2(t.recebido),
+    contaVinculada: r2(t.contaVinculada),
+    posEmissao: r2(t.posEmissao),
+    diferencaBaixadas: r2(t.liquido - t.recebido - t.contaVinculada - t.posEmissao - t.aReceber),
+    aReceber: r2(t.aReceber),
+  };
+}
+
+// Notas que ainda têm saldo a receber, do maior para o menor.
+export function notasComSaldo<T extends NfFaturamento>(nfs: T[]): { nf: T; saldo: number }[] {
+  return nfs
+    .filter(contaNoFaturamento)
+    .map((nf) => ({ nf, saldo: aReceberDaNf(nf) }))
+    .filter((x) => x.saldo > 0.005)
+    .sort((a, b) => b.saldo - a.saldo);
 }
 
 // Agrupa as NFs que contam por uma chave qualquer (mês, contrato, cliente...).
