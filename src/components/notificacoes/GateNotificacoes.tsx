@@ -4,10 +4,11 @@ import { Button } from "@/components/ui/button";
 import { ImagensDoAviso, PainelImagemAviso, TextoAviso } from "@/components/notificacoes/ConteudoAviso";
 import { ComentariosAviso } from "@/components/notificacoes/ComentariosAviso";
 import { AnimacaoAviso } from "@/components/notificacoes/AnimacaoAviso";
+import { IconeCabecalho } from "@/components/notificacoes/IconeCabecalho";
 import { useNotificacoes } from "@/hooks/useNotificacoes";
 import { cn } from "@/lib/utils";
 import {
-  alturaImagemLado, animacaoDe, botoesDoAviso, fmtDataHora, imagensDoAviso,
+  alturaImagemLado, animacaoDe, corCabecalhoDe, botoesDoAviso, fmtDataHora, imagensDoAviso,
   larguraJanelaAviso, posicaoImagemDe, tamanhoImagemDe, varianteDoBotao,
   type Escolha, type Notificacao,
 } from "@/lib/notificacoes";
@@ -167,9 +168,11 @@ export function JanelaAviso({ aviso, enviando = null, onEscolher, onAdiar, resta
         previa ? "max-h-[calc(100dvh-4rem)]" : "max-h-[calc(100dvh-2rem)]",
         larguraJanelaAviso(tamanho, temImagem ? posicao : "cima"),
       )}>
-        <div className="flex shrink-0 items-start gap-3 border-b bg-amber-50 px-5 py-4 dark:bg-amber-950/30">
-          <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-amber-500 text-white">
-            <AlertCircle className="h-5 w-5" />
+        {/* Cor e ícone escolhidos por quem publicou (16/10/2026); sem escolha,
+            o amarelo com "!" de sempre. */}
+        <div className={cn("flex shrink-0 items-start gap-3 border-b px-5 py-4", corCabecalhoDe(aviso.cabecalho_cor).faixa)}>
+          <span className={cn("mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg", corCabecalhoDe(aviso.cabecalho_cor).quadrado)}>
+            <IconeCabecalho icone={aviso.cabecalho_icone} className="h-5 w-5" />
           </span>
           <div className="min-w-0 flex-1">
             <h2 id="notificacao-titulo" className="text-base font-bold leading-tight">

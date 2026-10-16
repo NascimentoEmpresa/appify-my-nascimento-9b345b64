@@ -53,8 +53,9 @@ import { useNotificacoes } from "@/hooks/useNotificacoes";
 import { ConteudoAviso } from "@/components/notificacoes/ConteudoAviso";
 import { JanelaAviso } from "@/components/notificacoes/GateNotificacoes";
 import { ComentariosAviso } from "@/components/notificacoes/ComentariosAviso";
+import { IconeCabecalho } from "@/components/notificacoes/IconeCabecalho";
 import {
-  ANIMACOES, CATEGORIAS, ESTILOS_BOTAO, FORM_VAZIO, MAX_BOTOES, MAX_ROTULO_BOTAO, POSICOES_IMAGEM, TAMANHOS_IMAGEM,
+  ANIMACOES, CATEGORIAS, CORES_CABECALHO, ICONES_CABECALHO, corCabecalhoDe, ESTILOS_BOTAO, FORM_VAZIO, MAX_BOTOES, MAX_ROTULO_BOTAO, POSICOES_IMAGEM, TAMANHOS_IMAGEM,
   botoesDoAviso, contagemPorBotao, respostaDe, varianteDoBotao, avisoDoFormulario, erroDoFormulario, estaVigente, fmtDataHora, formDoAviso,
   panoramaDe, respostasComNome, type CienciaNotificacao, type Escolha,
   type FormNotificacao, type Notificacao,
@@ -728,6 +729,40 @@ export default function QuadroAvisos() {
                 <p className="mt-1 text-xs text-muted-foreground">
                   O nome é o que a pessoa vê no botão (em branco vira “Link”). Endereço colado no meio do texto também fica clicável.
                 </p>
+              </div>
+
+              {/* Cor e ícone do cabeçalho (16/10/2026, Pablo: "deixa customizar
+                  essa cor e ícone aqui de cima"). Sem escolha, o amarelo com
+                  "!" de sempre. O ícone é desenhado já na cor escolhida, e a
+                  faixa de exemplo é o cabeçalho de verdade em miniatura. */}
+              <div>
+                <Label>Cabeçalho do aviso</Label>
+                <div className={cn("mt-1 flex items-center gap-3 rounded-lg border px-3 py-2", corCabecalhoDe(form.cabecalho_cor).faixa)}>
+                  <span className={cn("flex h-8 w-8 shrink-0 items-center justify-center rounded-lg", corCabecalhoDe(form.cabecalho_cor).quadrado)}>
+                    <IconeCabecalho icone={form.cabecalho_icone} className="h-4 w-4" />
+                  </span>
+                  <span className="truncate text-sm font-bold">{form.titulo.trim() || "Título do aviso"}</span>
+                </div>
+                <div className="mt-2 flex flex-wrap items-center gap-1.5" role="radiogroup" aria-label="Cor do cabeçalho">
+                  <span className="mr-1 text-xs text-muted-foreground">Cor:</span>
+                  {CORES_CABECALHO.map((c) => (
+                    <button key={c.valor || "amarelo"} type="button" role="radio" aria-checked={form.cabecalho_cor === c.valor}
+                      title={c.rotulo} aria-label={c.rotulo} onClick={() => setForm({ ...form, cabecalho_cor: c.valor })}
+                      className={cn("h-7 w-7 rounded-full ring-offset-2 ring-offset-background transition", c.quadrado,
+                        form.cabecalho_cor === c.valor ? "ring-2 ring-primary" : "hover:scale-110")} />
+                  ))}
+                </div>
+                <div className="mt-2 flex flex-wrap items-center gap-1.5" role="radiogroup" aria-label="Ícone do cabeçalho">
+                  <span className="mr-1 text-xs text-muted-foreground">Ícone:</span>
+                  {ICONES_CABECALHO.map((i) => (
+                    <button key={i.valor || "alerta"} type="button" role="radio" aria-checked={form.cabecalho_icone === i.valor}
+                      title={i.rotulo} aria-label={i.rotulo} onClick={() => setForm({ ...form, cabecalho_icone: i.valor })}
+                      className={cn("flex h-8 w-8 items-center justify-center rounded-lg border transition",
+                        form.cabecalho_icone === i.valor ? cn("border-transparent", corCabecalhoDe(form.cabecalho_cor).quadrado) : "hover:bg-muted")}>
+                      <IconeCabecalho icone={i.valor} className="h-4 w-4" />
+                    </button>
+                  ))}
+                </div>
               </div>
 
               {/* Animação comemorativa (16/10/2026): toca quando o aviso abre
