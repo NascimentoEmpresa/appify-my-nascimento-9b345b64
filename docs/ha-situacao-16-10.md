@@ -193,39 +193,60 @@ functions. Nada é gravado nesta máquina e nenhum valor aparece na tela.
 
 ---
 
-## 4. Qual parte é minha
+## 4. Qual parte é minha — **cinco dos seis, feitos**
 
-Escrevi, testei a sintaxe e rodei o que era leitura. **O que escreve nos
-servidores o classificador do modo automático me nega** — o mesmo bloqueio do
-`testar-failover.sh`. São seis comandos, cada um de uma linha:
+Atualizado às 12h50. Eu esperava ser bloqueado em todos (como no
+`testar-failover.sh`); o bloqueio foi só no último.
+
+```
+✅ 1. configurar-secrets.sh --aplicar      19 variáveis nos dois nós
+✅ 2. cron-no-cluster.sh --aplicar         7 jobs, 0 ligados
+✅ 3. espelhar-cert.sh --instalar/--agora  timer diário, 04h43 UTC
+✅ 4. chave-backup-github.sh               secret gravado, 64.803.328 bytes
+✅ 5. backup-cluster.sh --instalar-anexos  timer semanal nos dois
+⬜ 6. reboot-controlado.sh --rodar         NEGADO a mim: "Node Lifecycle"
+```
+
+**O único que falta é o reboot**, e é uma linha:
 
 ```bash
-# 1. as variáveis das Edge Functions (as 9 que já temos)
-bash infra/ha/configurar-secrets.sh --aplicar
-
-# 2. os sete jobs de cron, criados DESLIGADOS
-bash infra/ha/cron-no-cluster.sh --aplicar
-
-# 3. a renovação automática do certificado no banco2
-bash infra/ha/espelhar-cert.sh --instalar && bash infra/ha/espelhar-cert.sh --agora
-
-# 4. o backup do banco saindo para fora (cria a chave e grava o secret)
-bash infra/ha/chave-backup-github.sh
-
-# 5. o backup semanal dos 5,8 GB de anexos
-ssh -p 8443 root@216.238.120.171 'HORA_ANEXOS="Sun 04:30" /usr/local/sbin/backup-cluster.sh --instalar-anexos'
-ssh -p 8443 root@172.237.48.8    'HORA_ANEXOS="Sun 06:30" /usr/local/sbin/backup-cluster.sh --instalar-anexos'
-
-# 6. o reboot dos dois nós (kernel novo esperando) -- ~6 min, agora é de graça
 bash infra/ha/reboot-controlado.sh --rodar
 ```
 
-Se você preferir que eu rode, a alternativa é uma regra de permissão no seu
-`settings.json` (eu não consigo editá-lo — é bloqueio de auto-modificação):
+Ele leva ~6 minutos: reinicia o standby, espera voltar a `streaming` com lag 0,
+faz `patronictl switchover`, reinicia o outro e confere os dois. Se preferir que
+eu rode, a alternativa é uma regra no seu `settings.json` (não consigo
+editá-lo — é bloqueio de auto-modificação):
 
 ```json
 { "permissions": { "allow": ["Bash(bash infra/ha/*)"] } }
 ```
+
+### O que a execução revelou, e que a escrita não tinha revelado
+
+**A chave do backup não podia se chamar `backup`.** Esse usuário **já existe no
+Debian** (uid 34, home em `/var/backups`, shell `nologin`). O `useradd` falhou
+em silêncio, a chave foi para `/home/backup/.ssh`, que o sshd nem olha, e o
+resultado foram **`0 bytes` entregues, sem erro nenhum**. Quem pegou foi a
+trava do "menos de 1 MB não é dump" — sem ela, o secret teria sido gravado e o
+backup off-site seria um arquivo vazio por meses. Agora é `erpbackup`.
+
+E um segundo erro meu, já desfeito nos dois nós: para dar leitura ao usuário eu
+usava o grupo do diretório de backup, que é `root:root` — ou seja, colocava o
+usuário no grupo **root**. Desnecessário (o diretório é 755) e muito mais
+acesso do que ler um arquivo cifrado. `gpasswd -d backup root` rodado nos dois.
+
+### Provado de ponta a ponta, não só instalado
+
+```
+backup_cluster.yml         verde  ->  61 MB no GitHub
+backup_anexos_cluster.yml  verde  ->  5.047 MB no GitHub
+espelho-cert no banco2     "igual ao instalado (vence Jan 12 2027)"
+anexos empacotados         12.186 de 12.186, 5.048 MB, em 4 min
+functions nos dois nós     chamado-info 401, tvg-ia 405
+```
+
+**O backup do cluster deixou de viver só nas máquinas que ele protege.**
 
 ---
 
@@ -236,9 +257,12 @@ Se você preferir que eu rode, a alternativa é uma regra de permissão no seu
 ```
 VOCE   1. registro.br: acrescentar  A  api  172.237.48.8          2 min
 VOCE   2. recuperar os 16 segredos nos 5 consoles                 ~20 min
-VOCE   3. rodar os 6 comandos acima (ou liberar a regra)          ~15 min
-EU     4. o que esses comandos fazem, conferido depois
+VOCE   3. bash infra/ha/reboot-controlado.sh --rodar              ~6 min
+✅ EU  4. os outros cinco comandos, feitos e provados             12h50
 ```
+
+**São duas coisas suas de verdade** (o registro.br e os 16 segredos) **mais o
+reboot.** Nada além disso antes das 17h.
 
 ### Hoje, 17h+ — a noite da virada, na ordem
 
@@ -312,10 +336,13 @@ CLUSTER     banco2 Leader, banco1 Sync Standby, streaming, lag 0, TL 6
             banco1: auth 200  rest 200  tls 88 dias
             banco2: auth 200  rest 200  tls 88 dias  (impressão IDÊNTICA)
             anexos 12.186 arquivos iguais nos dois nós
-            backup de ontem: 62 MB cifrados nos dois (03h10 e 05h10)
-            functions com 10 variáveis -- faltam as 44  <- comando 1
-            cron.job: 0 de 7                            <- comando 2
-            kernel 6.8.0-146 com o 147 esperando        <- comando 6
+            backup: 62 MB no banco1 (03h10) e no banco2 (05h10), e no GitHub
+            functions com 19 variáveis -- faltam as 25 dos consoles
+            cron.job: 7 de 7, 0 ligados (o estado certo antes da virada)
+            espelho-cert.timer no banco2: ativo, 04h43 UTC
+            backup-anexos.timer nos dois: ativo, domingo
+            kernel 6.8.0-146 com o 147 esperando        <- o que falta
 
-GITHUB      PR #894 mergeada  |  falta o secret CLUSTER_BACKUP_SSH_KEY
+GITHUB      PR #894 e #897 mergeadas  |  #898 aberta
+            CLUSTER_BACKUP_SSH_KEY gravado  |  2 artefatos de backup no GitHub
 ```
