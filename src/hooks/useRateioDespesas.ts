@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { uploadAnexosMalote } from "@/hooks/useMaloteDespesa";
 import type { CriterioRateio, ItemRateio, TipoRateio } from "@/lib/rh/rateioDespesas";
 
 // =====================================================================
@@ -51,6 +52,20 @@ export interface DespesaRateio {
   alterado_por_nome: string | null;
   created_at: string;
   updated_at: string;
+  // Envio ao Malote (mig 20261016000020).
+  malote_despesa_id: string | null;
+  enviado_malote_em: string | null;
+  enviado_malote_por_nome: string | null;
+}
+
+/** A despesa do Malote ligada ao rateio (rh_rateio_malote_info). */
+export interface MaloteDoRateio {
+  rateio_id: string;
+  malote_despesa_id: string;
+  numero: string;
+  status: string;
+  /** false = excluída/reprovada/cancelada no Malote: o rateio pode ser editado e reenviado. */
+  ativo: boolean;
 }
 
 export interface ItemRateioGravado extends ItemRateio {
@@ -88,7 +103,7 @@ export function useDespesasRateio() {
     queryFn: async () => {
       const { data, error } = await sb
         .from("RH_RATEIO_DESPESA")
-        .select("id,tipo,competencia,valor,descricao,criterio,status,anexo_path,anexo_nome,criado_por_nome,alterado_por_nome,created_at,updated_at")
+        .select("id,tipo,competencia,valor,descricao,criterio,status,anexo_path,anexo_nome,criado_por_nome,alterado_por_nome,created_at,updated_at,malote_despesa_id,enviado_malote_em,enviado_malote_por_nome")
         .order("competencia", { ascending: false })
         .order("created_at", { ascending: false })
         .limit(500);
@@ -167,6 +182,58 @@ export function useSalvarRateio() {
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ["rh_rateio_despesas"] }),
   });
+}
+
+/** Número/status no Malote dos rateios enviados (quem só tem o RH não lê malote_despesa). */
+export function useMaloteDosRateios(ids: string[]) {
+  return useQuery({
+    queryKey: ["rh_rateio_malote_info", [...ids].sort().join(",")],
+    enabled: ids.length > 0,
+    queryFn: async () => {
+      const { data, error } = await sb.rpc<MaloteDoRateio[]>("rh_rateio_malote_info", { p_ids: ids });
+      if (error) throw error;
+      return new Map((data ?? []).map((m) => [m.rateio_id, m]));
+    },
+  });
+}
+
+/**
+ * Envia o rateio conferido ao Malote como despesa nova (mig 20261016000020).
+ * O id da despesa nasce aqui para os anexos subirem ANTES em
+ * malote-anexos/<id>/ e entrarem no mesmo INSERT da RPC; se a RPC recusar,
+ * os arquivos que subiram são apagados.
+ */
+export function useEnviarRateioMalote() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: { rateioId: string; despesa: Record<string, unknown> & { nome: string }; arquivos: File[] }) => {
+      const despesaId = crypto.randomUUID();
+      const paths = await uploadAnexosMalote(input.arquivos, despesaId, input.despesa.nome);
+      const { error } = await sb.rpc("rh_rateio_enviar_malote", {
+        p_rateio_id: input.rateioId,
+        p_despesa_id: despesaId,
+        p_despesa: { ...input.despesa, arquivos: paths },
+      });
+      if (error) {
+        if (paths.length) await supabase.storage.from("malote-anexos").remove(paths).catch(() => undefined);
+        throw error;
+      }
+      // Número pela RPC do RH: quem só tem o RH não lê malote_despesa (RLS).
+      const { data: info } = await sb.rpc<MaloteDoRateio[]>("rh_rateio_malote_info", { p_ids: [input.rateioId] });
+      return { despesaId, numero: info?.[0]?.numero ?? null };
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["rh_rateio_despesas"] });
+      qc.invalidateQueries({ queryKey: ["rh_rateio_malote_info"] });
+    },
+  });
+}
+
+/** O anexo do rateio (bucket rh-rateio) como File, para seguir junto para o Malote. */
+export async function baixarAnexoRateio(path: string, nome: string): Promise<File> {
+  const { data, error } = await supabase.storage.from(BUCKET_RATEIO).download(path);
+  if (error) throw error;
+  return new File([data], nome, { type: data.type || undefined });
 }
 
 export function useExcluirRateio() {

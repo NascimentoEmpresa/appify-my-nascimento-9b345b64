@@ -30,12 +30,13 @@ import {
 } from "@/components/ui/alert-dialog";
 import {
   AlertTriangle, ArrowLeft, CheckCircle2, Download, FileSpreadsheet, FileText, History, Loader2,
-  Paperclip, Plus, RotateCcw, Save, Search, Trash2, Upload, Users,
+  Lock, Paperclip, Plus, RotateCcw, Save, Search, Send, Trash2, Upload, Users,
 } from "lucide-react";
+import { EnviarRateioMalote } from "./EnviarRateioMalote";
 import { useScreenAccess } from "@/hooks/useScreenAccess";
 import {
   carregarDespesaRateio, carregarUltimoDoTipo, casarCpfs, linkAnexoRateio, subirAnexoRateio,
-  useContratosRateio, useDespesasRateio, useExcluirRateio, useSalvarRateio,
+  useContratosRateio, useDespesasRateio, useExcluirRateio, useMaloteDosRateios, useSalvarRateio,
   type ContratoRateio, type DespesaRateio, type LinhaDetalhePdf,
 } from "@/hooks/useRateioDespesas";
 import {
@@ -100,6 +101,7 @@ function Lista({ onAbrir }: { onAbrir: (id: string | "novo") => void }) {
       ),
     [q.data, tipo, mes, busca],
   );
+  const malote = useMaloteDosRateios((q.data ?? []).filter((d) => d.malote_despesa_id).map((d) => d.id)).data;
 
   return (
     <Card className="p-4 space-y-3">
@@ -164,6 +166,9 @@ function Lista({ onAbrir }: { onAbrir: (id: string | "novo") => void }) {
                     {d.status === "conferido"
                       ? <Badge className="bg-success/15 text-success border-success/30" variant="outline">Conferido</Badge>
                       : <Badge variant="outline">Rascunho</Badge>}
+                    {malote?.get(d.id)?.ativo && (
+                      <Badge variant="outline" className="ml-1 gap-1"><Send className="h-3 w-3" /> {malote.get(d.id)?.numero}</Badge>
+                    )}
                   </td>
                   <td className="px-2 text-xs text-muted-foreground">{d.alterado_por_nome ?? d.criado_por_nome ?? ""}</td>
                 </tr>
@@ -185,7 +190,14 @@ function Editor({ id, onFechar, onSalvo }: { id: string | null; onFechar: () => 
   const { data: podeAlterar } = useScreenAccess(MENU, "alterar");
   const { data: podeExcluir } = useScreenAccess(MENU, "excluir");
   const { data: podeExportar } = useScreenAccess(MENU, "exportar");
-  const podeGravar = id ? !!podeAlterar : !!podeIncluir;
+  const { data: podeEnviarMalote } = useScreenAccess(MENU, "enviar_malote");
+  // Enviado ao Malote (mig 20261016000020): enquanto a despesa de lá existir,
+  // o rateio fica travado (o banco também recusa salvar/excluir).
+  const maloteQ = useMaloteDosRateios(id ? [id] : []);
+  const noMalote = id ? maloteQ.data?.get(id) ?? null : null;
+  const travadoMalote = !!noMalote?.ativo;
+  const [enviandoMalote, setEnviandoMalote] = useState(false);
+  const podeGravar = (id ? !!podeAlterar : !!podeIncluir) && !travadoMalote;
 
   const [carregando, setCarregando] = useState(!!id);
   const [tipo, setTipo] = useState<TipoRateio>("jusbrasil");
@@ -448,9 +460,17 @@ function Editor({ id, onFechar, onSalvo }: { id: string | null; onFechar: () => 
       setStatus(novoStatus);
       toast.success(novoStatus === "conferido" ? "Rateio conferido e salvo." : "Rascunho salvo.");
       if (!id) onSalvo(novoId);
+      return true;
     } catch (e) {
       toast.error((e as Error).message);
     }
+  };
+
+  // Enviar ao Malote parte do que está GRAVADO (a RPC confere o valor com o
+  // banco): quem pode gravar salva como conferido antes de abrir o envio.
+  const abrirEnvioMalote = async () => {
+    if (podeGravar && (await gravar("conferido")) !== true) return;
+    setEnviandoMalote(true);
   };
 
   const exportar = () => {
@@ -510,7 +530,12 @@ function Editor({ id, onFechar, onSalvo }: { id: string | null; onFechar: () => 
       <div className="flex flex-wrap items-center gap-2">
         <Button variant="ghost" className="gap-1.5" onClick={onFechar}><ArrowLeft className="h-4 w-4" /> Voltar</Button>
         <div className="flex-1" />
-        {id && podeExcluir && (
+        {travadoMalote && (
+          <Badge variant="outline" className="gap-1 h-9 px-3">
+            <Lock className="h-3.5 w-3.5" /> No Malote: {noMalote?.numero} — travado para edição
+          </Badge>
+        )}
+        {id && podeExcluir && !travadoMalote && (
           <Button variant="outline" className="gap-1.5 text-destructive" onClick={() => setConfirmarExclusao(true)}>
             <Trash2 className="h-4 w-4" /> Excluir
           </Button>
@@ -529,6 +554,11 @@ function Editor({ id, onFechar, onSalvo }: { id: string | null; onFechar: () => 
               <CheckCircle2 className="h-4 w-4" /> Salvar como conferido
             </Button>
           </>
+        )}
+        {id && podeEnviarMalote && !travadoMalote && (status === "conferido" || podeGravar) && (
+          <Button className="gap-1.5" disabled={salvar.isPending || !resumo.fecha || !itens.length || maloteQ.isLoading} onClick={abrirEnvioMalote}>
+            <Send className="h-4 w-4" /> Enviar ao Malote
+          </Button>
         )}
       </div>
 
@@ -851,6 +881,16 @@ function Editor({ id, onFechar, onSalvo }: { id: string | null; onFechar: () => 
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {id && enviandoMalote && (
+        <EnviarRateioMalote
+          aberto
+          rateio={{ id, tipo, competencia: competenciaParaData(mes), valor, anexo_path: anexoPath, anexo_nome: anexoNome }}
+          itens={itens}
+          onFechar={() => setEnviandoMalote(false)}
+          onEnviado={() => setEnviandoMalote(false)}
+        />
+      )}
     </div>
   );
 }
