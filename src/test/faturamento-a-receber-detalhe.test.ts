@@ -1,6 +1,6 @@
 // SIS-2026-0641: conta vinculada, descontos depois da NF e a "ponte" que explica o A Receber.
 import { describe, expect, it } from "vitest";
-import { agruparFaturamento, notasComSaldo, ponteAReceber, type NfFaturamento } from "@/pages/controladoria/faturamento/regras";
+import { agruparFaturamento, executavelSemPlanilha, notasComSaldo, ponteAReceber, type NfFaturamento } from "@/pages/controladoria/faturamento/regras";
 
 const nf = (o: Partial<NfFaturamento> = {}): NfFaturamento => ({
   contrato_id: "c1",
@@ -61,5 +61,22 @@ describe("notas com saldo", () => {
       nf({ vlr_liquido_total: 100, desconto_conta_vinculada: 100 }),
     ]);
     expect(lista.map((x) => x.saldo)).toEqual([900, 300]);
+  });
+});
+
+describe("executável de contrato sem planilha", () => {
+  it("usa o Valor Executado Mensal do cadastro a partir do mês de início", () => {
+    const c = { valor_executado_mensal: 1500, vigencia_inicial: "2026-03-10", data_inicio: null };
+    expect(executavelSemPlanilha(c, "2026-02")).toBe(0);
+    expect(executavelSemPlanilha(c, "2026-03")).toBe(1500);
+    expect(executavelSemPlanilha(c, "2026-09")).toBe(1500);
+  });
+  it("sem início cadastrado vale em todos os meses; sem valor ou zero não conta", () => {
+    expect(executavelSemPlanilha({ valor_executado_mensal: 800 }, "2026-01")).toBe(800);
+    expect(executavelSemPlanilha({ valor_executado_mensal: null }, "2026-01")).toBe(0);
+    expect(executavelSemPlanilha({ valor_executado_mensal: 0 }, "2026-01")).toBe(0);
+  });
+  it("início pela data_inicio quando não há vigencia_inicial", () => {
+    expect(executavelSemPlanilha({ valor_executado_mensal: 100, data_inicio: "2026-05-01" }, "2026-04")).toBe(0);
   });
 });

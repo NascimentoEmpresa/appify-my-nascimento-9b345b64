@@ -77,6 +77,9 @@ export interface LinhaFluxoCusto {
   classificacao_id?: string | null;
   classificacao_nome: string | null;
   valor: number;
+  // SIS-2026-0641: só para o modal "como é formado" listar o lançamento (ID e descrição do Fluxo).
+  id_malote?: string | null;
+  descricao?: string | null;
 }
 
 // Rubrica final da linha: a ligação manual da classificação vale primeiro; sem
@@ -207,6 +210,20 @@ export function ponteAReceber(t: TotaisFaturamento): PonteAReceber {
     diferencaBaixadas: r2(t.liquido - t.recebido - t.contaVinculada - t.posEmissao - t.aReceber),
     aReceber: r2(t.aReceber),
   };
+}
+
+// SIS-2026-0641: contrato SEM planilha de custo (ex.: contrato novo vindo da licitação, ainda sem planilha) ficava com
+// executável zero e a diferença para o faturado não aparecia. Nesse caso vale o "Valor Executado Mensal" digitado
+// no cadastro do contrato, a partir do mês de início da vigência. Quem tem planilha continua pela planilha.
+export function executavelSemPlanilha(
+  c: { valor_executado_mensal?: number | null; vigencia_inicial?: string | null; data_inicio?: string | null },
+  anoMes: string,
+): number {
+  const valor = Number(c.valor_executado_mensal) || 0;
+  if (valor <= 0) return 0;
+  const inicio = (c.vigencia_inicial || c.data_inicio || "").slice(0, 7);
+  if (inicio && anoMes < inicio) return 0;
+  return valor;
 }
 
 // Notas que ainda têm saldo a receber, do maior para o menor.
