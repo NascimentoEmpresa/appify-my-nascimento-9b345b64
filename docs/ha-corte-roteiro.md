@@ -1120,27 +1120,72 @@ chave SSH amarrada a um comando único (`backup-cluster.sh --enviar`), sem
 shell, sem pty, sem port-forward. No pior caso — secret do GitHub vazado — o
 que vaza é um arquivo que o vazador não abre.
 
-**Falta um passo que só o Eduardo pode dar** (o secret):
+✅ **Feito em 16/10/2026**, num comando, com conferência no fim:
 
 ```bash
-ssh-keygen -t ed25519 -f backup-cluster -N "" -C "backup-github"
-ssh -p 8443 root@216.238.120.171 \
-  "useradd -m -s /bin/bash backup 2>/dev/null; mkdir -p /home/backup/.ssh
-   echo 'command=\"/usr/local/sbin/backup-cluster.sh --enviar\",no-pty,no-port-forwarding,no-agent-forwarding,no-X11-forwarding $(cat backup-cluster.pub)' \
-     >> /home/backup/.ssh/authorized_keys
-   chown -R backup:backup /home/backup/.ssh && chmod 700 /home/backup/.ssh
-   chmod 600 /home/backup/.ssh/authorized_keys
-   usermod -aG \$(stat -c %G /var/backups/erp-cluster) backup 2>/dev/null || true"
-gh secret set CLUSTER_BACKUP_SSH_KEY < backup-cluster
-rm backup-cluster backup-cluster.pub      # a copia que vale e a do GitHub
+bash infra/ha/chave-backup-github.sh            # instala e grava o secret
+bash infra/ha/chave-backup-github.sh --conferir # só olha
 ```
 
-#### O que ainda não está coberto
+```
+chave ed25519 nova, só em diretório temporário (shred no fim)
+erpbackup nos dois nós, casa /home/erpbackup, 1 chave presa ao --enviar
+a chave entrega 64.803.328 bytes       <- a prova: abaixo de 1 MB ele recusa
+CLUSTER_BACKUP_SSH_KEY gravado         2026-10-16T12:23:51Z
+```
 
-Os **arquivos** dos anexos (5,8 GB). Eles vivem nos dois nós pelo espelho de
-1 minuto — dois provedores —, mas **isso é redundância, não backup**: apagou
-dos dois, apagou. O `backup_storage.yml` hoje baixa da Supabase e precisa ser
-reapontado para o cluster depois da virada.
+> ⚠️ **O usuário não pode se chamar `backup`.** A primeira versão deste passo
+> usou esse nome e falhou em silêncio: `backup` **já existe no Debian** (uid 34,
+> home em `/var/backups`, shell `nologin`). O `useradd` falhou e caiu no
+> `|| true`, a chave foi escrita em `/home/backup/.ssh/authorized_keys` — que o
+> sshd nem olha, porque a casa de verdade é outra — e o `nologin` recusaria o
+> `command=` de qualquer forma. **O sintoma foi `0 bytes` entregues, sem erro
+> nenhum.** Quem salvou foi a trava do "menos de 1 MB não é dump": sem ela, o
+> secret teria sido gravado e o backup off-site seria um arquivo vazio por
+> meses. O usuário agora é `erpbackup`, e a casa sai do `getent`, nunca de
+> `/home/<nome>` suposto.
+>
+> No caminho houve outro erro meu, já desfeito: pegar o grupo do diretório de
+> backup (`stat -c %G`) para dar leitura ao usuário colocava ele no grupo
+> **root**, porque o diretório é `root:root`. Era muito mais acesso do que ler
+> um arquivo cifrado — e desnecessário, já que o diretório é 755 e os arquivos
+> 644. Removido dos dois nós (`gpasswd -d backup root`).
+
+#### Os anexos: coberto em 16/10/2026
+
+```bash
+ssh ... '/usr/local/sbin/backup-cluster.sh --instalar-anexos'   # timer semanal
+```
+
+`backup-cluster.sh --anexos` empacota o volume com `tar --xattrs`, cifra e
+guarda; `backup_anexos_cluster.yml` puxa no domingo pela **mesma** chave,
+dizendo só a palavra `anexos` (o `--enviar` lê `SSH_ORIGINAL_COMMAND` e escolhe
+entre os dois pacotes — nada é executado). Medido na primeira execução:
+
+```
+[12:24:41] 12186 arquivos em /var/lib/docker/volumes/erp-pilha_storage-arquivos/_data
+[12:28:40] 12186 arquivos empacotados, 5048 MB cifrados
+```
+
+**12.186 de 12.186, em 4 minutos.** A contagem não é um segundo `find`: o `tar`
+roda com `-v` e lista no stderr cada membro que entrou de verdade, enquanto os
+bytes seguem para o `gpg`. É o que pega pacote truncado — e truncado é
+exatamente o que eu quase relatei: olhei o arquivo **enquanto ele era escrito**,
+vi 2,5 GB e cheguei a registrar isso aqui como o tamanho final. Conferir
+tamanho de arquivo que ainda está sendo gerado não vale nada; o número que
+vale é o que o script imprime no fim.
+
+A guarda do workflow (recusar pacote abaixo de 1 GB) segue válida, e os 12 GB
+de folga exigidos no runner continuam de sobra para 5 GB.
+
+**Por que um workflow novo e não reapontar o `backup_storage.yml`:** aquele
+monta a lista de objetos com `psql` **contra a Supabase**, e o Postgres do
+cluster não atende na internet para o runner. Reapontar seria reescrevê-lo.
+Depois da virada ele pode ser aposentado.
+
+Restaurar exige `--xattrs` nas **duas** pontas: o content-type de cada anexo
+mora num atributo estendido, e sem ele o download morre com `ENODATA` sem falar
+de arquivo. Está no passo B de `docs/ha-restauracao.md`.
 
 ---
 

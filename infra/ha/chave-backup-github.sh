@@ -39,6 +39,18 @@ PORTA_SSH="${PORTA_SSH:-8443}"
 REPO="${REPO:-NascimentoEmpresa/appify-my-nascimento-9b345b64}"
 ACAO="${1:-}"
 
+# ── POR QUE O USUARIO NAO SE CHAMA `backup` ────────────────────────────────
+# `backup` JA EXISTE no Debian: uid 34, home em /var/backups, shell nologin.
+# A primeira versao deste script usou esse nome e o resultado foi mudo:
+#   . `useradd` falhou (usuario existe) e caiu no `|| true`
+#   . a chave foi escrita em /home/backup/.ssh/authorized_keys, mas o sshd
+#     procura no home DE VERDADE, que e /var/backups -- ou seja, em lugar
+#     nenhum
+#   . e o shell `nologin` recusaria o `command=` de qualquer forma
+# O sintoma foi `0 bytes` entregues, sem erro nenhum na tela. Usuario proprio
+# resolve os tres de uma vez.
+USUARIO="${USUARIO:-erpbackup}"
+
 em() { ssh -p "$PORTA_SSH" -o BatchMode=yes -o ConnectTimeout=20 \
          -o StrictHostKeyChecking=accept-new "root@$1" "$2"; }
 
@@ -51,9 +63,11 @@ if [ "$ACAO" = "--conferir" ]; then
   for NO in "$BANCO1" "$BANCO2"; do
     printf '%-18s ' "$NO"
     em "$NO" "
-      id backup >/dev/null 2>&1 || { echo 'sem usuario backup'; exit 0; }
-      n=\$(grep -c 'backup-cluster.sh --enviar' /home/backup/.ssh/authorized_keys 2>/dev/null || echo 0)
-      echo \"usuario ok, \$n chave(s) presa(s) ao --enviar\"
+      CASA=\$(getent passwd $USUARIO | cut -d: -f6)
+      [ -n \"\$CASA\" ] || { echo 'sem usuario $USUARIO'; exit 0; }
+      SH=\$(getent passwd $USUARIO | cut -d: -f7)
+      n=\$(grep -c 'backup-cluster.sh --enviar' \"\$CASA/.ssh/authorized_keys\" 2>/dev/null || echo 0)
+      echo \"usuario ok, casa=\$CASA shell=\$SH, \$n chave(s) presa(s) ao --enviar\"
     " || echo "nao respondeu"
   done
   echo
@@ -81,30 +95,41 @@ ssh-keygen -q -t ed25519 -N '' -C 'backup-github' -f "$TMP/backup-cluster" || ex
 PUB=$(cat "$TMP/backup-cluster.pub")
 echo "   $(ssh-keygen -lf "$TMP/backup-cluster.pub" | awk '{print $1, $2}')"
 
-echo "== 2. o usuario 'backup' e a trava, nos dois nos"
+echo "== 2. o usuario '$USUARIO' e a trava, nos dois nos"
 for NO in "$BANCO1" "$BANCO2"; do
   printf '   %-18s ' "$NO"
   em "$NO" "
 set -e
-useradd -m -s /bin/bash backup 2>/dev/null || true
-mkdir -p /home/backup/.ssh
-touch /home/backup/.ssh/authorized_keys
+id $USUARIO >/dev/null 2>&1 || useradd --system --create-home --shell /bin/bash $USUARIO
+# A casa VEM DO getent, nunca de /home/<nome> suposto: o sshd le o
+# authorized_keys da casa de verdade, e supor errado da '0 bytes' sem erro.
+CASA=\$(getent passwd $USUARIO | cut -d: -f6)
+[ -n \"\$CASA\" ] || { echo 'usuario sem home'; exit 1; }
+# Shell que nao seja nologin, senao o sshd nem roda o command=
+case \$(getent passwd $USUARIO | cut -d: -f7) in
+  *nologin|*false) usermod -s /bin/bash $USUARIO ;;
+esac
+mkdir -p \"\$CASA/.ssh\"
+touch \"\$CASA/.ssh/authorized_keys\"
 # idempotente: a linha de 'backup-github' e refeita, nao duplicada
-sed -i '/backup-github/d' /home/backup/.ssh/authorized_keys
-echo 'command=\"/usr/local/sbin/backup-cluster.sh --enviar\",restrict $PUB' >> /home/backup/.ssh/authorized_keys
-chown -R backup:backup /home/backup/.ssh
-chmod 700 /home/backup/.ssh
-chmod 600 /home/backup/.ssh/authorized_keys
-# o grupo do diretorio de backup, para o usuario conseguir LER o .gpg
-G=\$(stat -c %G /var/backups/erp-cluster 2>/dev/null) && [ -n \"\$G\" ] && usermod -aG \"\$G\" backup || true
-echo \"ok (\$(grep -c 'backup-github' /home/backup/.ssh/authorized_keys) chave)\"
+sed -i '/backup-github/d' \"\$CASA/.ssh/authorized_keys\"
+echo 'command=\"/usr/local/sbin/backup-cluster.sh --enviar\",restrict $PUB' >> \"\$CASA/.ssh/authorized_keys\"
+chown -R $USUARIO: \"\$CASA/.ssh\"
+chmod 700 \"\$CASA/.ssh\"
+chmod 600 \"\$CASA/.ssh/authorized_keys\"
+# NAO ha usermod -aG aqui, de proposito. A versao anterior pegava o grupo do
+# diretorio de backup e, como ele e root:root, acabava colocando o usuario no
+# grupo ROOT -- muito mais acesso do que ler um arquivo cifrado. O diretorio
+# e 755 e os arquivos 644, entao qualquer usuario ja le. Se um dia deixarem de
+# ser, a prova do passo 3 falha e aparece aqui, em vez de passar calada.
+echo \"ok (casa \$CASA, \$(grep -c 'backup-github' \"\$CASA/.ssh/authorized_keys\") chave)\"
 " || { echo "FALHOU"; exit 1; }
 done
 
 echo "== 3. provando que a chave busca o arquivo e NAO abre shell"
 printf '   shell negado?   '
 if ssh -i "$TMP/backup-cluster" -p "$PORTA_SSH" -o BatchMode=yes -o ConnectTimeout=20 \
-       -o StrictHostKeyChecking=accept-new "backup@$BANCO1" "id" >/dev/null 2>&1; then
+       -o StrictHostKeyChecking=accept-new "$USUARIO@$BANCO1" "id" >/dev/null 2>&1; then
   # Com command= forcado, 'id' NAO roda: o que volta e o backup. Entao
   # "sucesso" aqui significa que o --enviar respondeu, nao que abriu shell.
   echo "a chave respondeu (o command= trocou o 'id' pelo --enviar, como deveria)"
@@ -113,7 +138,7 @@ else
 fi
 printf '   tamanho do que ela entrega: '
 BYTES=$(ssh -i "$TMP/backup-cluster" -p "$PORTA_SSH" -o BatchMode=yes -o ConnectTimeout=30 \
-          "backup@$BANCO1" 2>/dev/null | wc -c)
+          "$USUARIO@$BANCO1" 2>/dev/null | wc -c)
 echo "$BYTES bytes"
 if [ "$BYTES" -lt 1000000 ]; then
   echo "   MENOS DE 1 MB -- isso nao e o dump. Nao vou gravar o secret." >&2
