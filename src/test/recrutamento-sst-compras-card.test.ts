@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { mensagemEnvioAgendamento, resumoAgendamentoAso, TEMPLATE_AGENDAMENTO_ASO } from "@/lib/recrutamento/agendamentoAso";
+import { mensagemEnvioAgendamento, previaTemplateAgendamento, resumoAgendamentoAso, TEMPLATE_AGENDAMENTO_ASO } from "@/lib/recrutamento/agendamentoAso";
 import { statusJuridicoCard } from "@/lib/recrutamento/parecerJuridico";
 
 describe("card do kanban: linha fixa do Jurídico", () => {
@@ -43,5 +43,15 @@ describe("botão Enviar agendamento: o que dizer ao recrutador", () => {
     expect(mensagemEnvioAgendamento({ motivo: "sem_agendamento" }).texto).toMatch(/ainda não agendou/);
     expect(mensagemEnvioAgendamento({ motivo: "sem_telefone" }, "Ana").texto).toBe("Ana está sem telefone válido.");
     expect(mensagemEnvioAgendamento({ motivo: "falha_envio", detalhe: "Rate limit" }).texto).toContain("Rate limit");
+  });
+});
+
+describe("confirmação do envio: prévia igual ao template da Meta", () => {
+  it("resolve as 6 variáveis e põe '-' no que falta", () => {
+    const t = previaTemplateAgendamento({ nome: "YVONE NAIR", sst_data_exame: "2026-10-19", sst_hora_exame: "11:00", sst_local_exame: "APTIDÃO - Rua dos Andradas, 1755" }, "Recepcionista");
+    expect(t.split("\n")[0]).toBe("Olá Yvone! Seu exame admissional (ASO) para a vaga de Recepcionista está agendado.");
+    expect(t).toContain("📅 Data: 19/10/2026 (segunda-feira)");
+    expect(t).toContain("🗺 Mapa: https://www.google.com/maps/search/?api=1&query=");
+    expect(previaTemplateAgendamento({ nome: "Ana", sst_data_exame: "2026-10-19" }, null)).toContain("vaga de - está agendado");
   });
 });

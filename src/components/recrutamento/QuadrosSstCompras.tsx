@@ -18,7 +18,7 @@
 // tem — sem consulta nova.
 // =====================================================================
 import type { CSSProperties, MouseEvent, ReactNode } from "react";
-import { CalendarDays, CheckCircle2, ChevronRight, Clock, Loader2, MapPin, Package, Stethoscope, XCircle } from "lucide-react";
+import { ChevronRight, Loader2, Package, Stethoscope } from "lucide-react";
 import { resumoAgendamentoAso, situacaoSst, type AgendamentoAso } from "@/lib/recrutamento/agendamentoAso";
 
 export function IconeWhatsApp({ tamanho = 12, cor = "#fff" }: { tamanho?: number; cor?: string }) {
@@ -41,24 +41,27 @@ const ROTULO_PEDIDO: Record<string, string> = {
   "RETIRADO PARA ENTREGA": "Saiu para entrega", "AGUARDANDO COMPRA": "Aguardando compra", "DESPACHADO": "Despachado", "CANCELADO": "Cancelado",
 };
 
+// Compacto (16/10/2026, 2ª versão): a coluna voltou à largura das outras
+// (~130 px úteis no card), então título curto, chip pequeno e só o essencial —
+// o endereço e a ficha do ASO ficam no diálogo do SST.
 function Quadro({ titulo, icone, tom, chip, onAbrir, rotuloAbrir, children }: {
-  titulo: string; icone: ReactNode; tom: Tom; chip: string; onAbrir: () => void; rotuloAbrir: string; children: ReactNode;
+  titulo: string; icone: ReactNode; tom: Tom; chip: string; onAbrir: () => void; rotuloAbrir: string; children?: ReactNode;
 }) {
   return (
     <div role="button" tabIndex={0} onClick={onAbrir} onKeyDown={(e) => { if (e.key === "Enter") onAbrir(); }} title={rotuloAbrir}
-      style={{ background: "#fff", border: `1px solid ${tom.borda}`, borderLeft: `4px solid ${tom.cor}`, borderRadius: 10, padding: "9px 10px", cursor: "pointer", display: "flex", flexDirection: "column", gap: 6 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-        <span style={{ color: tom.cor, display: "inline-flex" }}>{icone}</span>
-        <span style={{ fontSize: 11.5, fontWeight: 800, color: "#0f172a", flex: 1 }}>{titulo}</span>
-        <ChevronRight size={14} color="#94a3b8" aria-hidden />
+      style={{ background: "#fff", border: `1px solid ${tom.borda}`, borderLeft: `3px solid ${tom.cor}`, borderRadius: 8, padding: "6px 7px", cursor: "pointer", display: "flex", flexDirection: "column", gap: 4, minWidth: 0 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+        <span style={{ color: tom.cor, display: "inline-flex", flexShrink: 0 }}>{icone}</span>
+        <span style={{ fontSize: 10.5, fontWeight: 800, color: "#0f172a", flex: 1, minWidth: 0 }}>{titulo}</span>
+        <ChevronRight size={12} color="#94a3b8" aria-hidden style={{ flexShrink: 0 }} />
       </div>
-      <span style={{ alignSelf: "flex-start", fontSize: 11, fontWeight: 800, color: tom.cor, background: tom.fundo, border: `1px solid ${tom.borda}`, borderRadius: 20, padding: "2px 9px" }}>{chip}</span>
+      <span style={{ alignSelf: "flex-start", maxWidth: "100%", fontSize: 9.5, fontWeight: 800, color: tom.cor, background: tom.fundo, border: `1px solid ${tom.borda}`, borderRadius: 20, padding: "1px 7px", lineHeight: 1.35, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }} title={chip}>{chip}</span>
       {children}
     </div>
   );
 }
 
-const linhaInfo: CSSProperties = { fontSize: 11.5, color: "#334155", display: "flex", alignItems: "flex-start", gap: 5, lineHeight: 1.35 };
+const linhaInfo: CSSProperties = { fontSize: 10, color: "#64748b", lineHeight: 1.3, overflowWrap: "anywhere" };
 
 export function QuadrosSstCompras({ candidato, pedido, podeEnviar, enviando, onAbrirSst, onAbrirCompras, onEnviarAgendamento }: {
   candidato: AgendamentoAso & { compras_ok?: boolean | null; compras_dispensado?: boolean | null };
@@ -68,59 +71,48 @@ export function QuadrosSstCompras({ candidato, pedido, podeEnviar, enviando, onA
   enviando: boolean;
   onAbrirSst: () => void;
   onAbrirCompras: () => void;
+  /** Abre a confirmação (ConfirmarEnvioAgendamento) — não envia direto. */
   onEnviarAgendamento: () => void;
 }) {
   const c = candidato;
   const sit = situacaoSst(c);
   const tomSst = sit === "Agendado" ? VERDE : sit === "Reprovado pelo SST" ? VERMELHO : sit === "Recebido — a agendar" ? AZUL : AMBAR;
-  const iconeSst = sit === "Agendado" ? <CheckCircle2 size={12} aria-hidden /> : sit === "Reprovado pelo SST" ? <XCircle size={12} aria-hidden /> : <Clock size={12} aria-hidden />;
+  const chipSst = sit === "Agendado" ? (c.sst_ok === true ? "Aprovado" : "Agendado") : sit === "Reprovado pelo SST" ? "Reprovado"
+    : sit === "Recebido — a agendar" ? "A agendar" : "A receber";
 
   const comprasOk = c.compras_ok === true;
   const comprasNao = c.compras_ok === false;
   const tomCompras = comprasOk ? VERDE : comprasNao ? VERMELHO : c.compras_dispensado ? CINZA : AMBAR;
-  const chipCompras = comprasOk ? "Compras aprovou" : comprasNao ? "Reprovado no Compras"
-    : pedido ? ROTULO_PEDIDO[pedido.status] ?? pedido.status : c.compras_dispensado ? "Sem pedido de materiais" : "Aguardando o Compras";
+  const chipCompras = comprasOk ? "Aprovado" : comprasNao ? "Reprovado"
+    : pedido ? ROTULO_PEDIDO[pedido.status] ?? pedido.status : c.compras_dispensado ? "Sem pedido" : "Aguardando";
 
   const enviar = (e: MouseEvent) => { e.stopPropagation(); onEnviarAgendamento(); };
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 7, marginTop: 8 }}>
-      <Quadro titulo="SST · Exame admissional" icone={<Stethoscope size={14} aria-hidden />} tom={tomSst}
-        chip={sit === "Agendado" && c.sst_ok === true ? "Agendado · SST aprovou" : sit}
-        onAbrir={onAbrirSst} rotuloAbrir="Ver o status do SST e o agendamento completo (copiar mapa e agendamento)">
+    <div style={{ display: "flex", flexDirection: "column", gap: 5, marginTop: 6 }}>
+      <Quadro titulo="SST" icone={<Stethoscope size={12} aria-hidden />} tom={tomSst} chip={chipSst}
+        onAbrir={onAbrirSst} rotuloAbrir="Ver o SST: agendamento completo (local, mapa, copiar) e a ficha do ASO">
         {c.sst_data_exame ? (
           <>
-            <div style={{ ...linhaInfo, fontWeight: 800, fontSize: 12.5, color: "#0f172a" }}><CalendarDays size={13} aria-hidden style={{ flexShrink: 0, marginTop: 1 }} />{resumoAgendamentoAso(c)}</div>
-            {c.sst_local_exame && (
-              <div style={linhaInfo} title={c.sst_local_exame}>
-                <MapPin size={13} aria-hidden style={{ flexShrink: 0, marginTop: 1 }} />
-                <span style={{ overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>{c.sst_local_exame}</span>
-              </div>
-            )}
+            <div style={{ fontSize: 11, fontWeight: 800, color: "#0f172a", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }} title={resumoAgendamentoAso(c)}>
+              {resumoAgendamentoAso(c)}
+            </div>
             <button type="button" onClick={enviar} disabled={!podeEnviar || enviando}
-              title={podeEnviar ? "Enviar data, horário, local e mapa do exame para o WhatsApp do candidato" : "Candidato sem telefone válido"}
-              style={{ marginTop: 2, display: "flex", alignItems: "center", justifyContent: "center", gap: 6, width: "100%", padding: "7px 8px", borderRadius: 8, border: "none",
-                background: podeEnviar ? "#25d366" : "#cbd5e1", color: "#fff", fontSize: 11.5, fontWeight: 800, cursor: podeEnviar && !enviando ? "pointer" : "default" }}>
-              {enviando ? <Loader2 size={13} className="animate-spin" aria-hidden /> : <IconeWhatsApp tamanho={13} />}
-              {enviando ? "Enviando…" : "Enviar agendamento"}
+              aria-label="Enviar agendamento no WhatsApp" title={podeEnviar ? "Enviar data, horário, local e mapa do exame para o WhatsApp do candidato (pede confirmação)" : "Candidato sem telefone válido"}
+              style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 4, width: "100%", padding: "4px 5px", borderRadius: 7, border: "none",
+                background: podeEnviar ? "#25d366" : "#cbd5e1", color: "#fff", fontSize: 10, fontWeight: 800, cursor: podeEnviar && !enviando ? "pointer" : "default", fontFamily: "inherit" }}>
+              {enviando ? <Loader2 size={11} className="animate-spin" aria-hidden /> : <IconeWhatsApp tamanho={12} />}
+              {enviando ? "Enviando…" : "Enviar"}
             </button>
           </>
-        ) : (
-          <div style={{ ...linhaInfo, color: "#64748b" }}>
-            {iconeSst}
-            {sit === "Reprovado pelo SST" ? (c.sst_obs || "O SST reprovou o candidato.")
-              : sit === "Recebido — a agendar" ? "O SST recebeu e vai agendar o exame."
-              : "Esperando o SST receber."}
-          </div>
-        )}
+        ) : sit === "Reprovado pelo SST" && c.sst_obs ? (
+          <div style={{ ...linhaInfo, overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>{c.sst_obs}</div>
+        ) : null}
       </Quadro>
 
-      <Quadro titulo="Compras · Materiais" icone={<Package size={14} aria-hidden />} tom={tomCompras} chip={chipCompras}
+      <Quadro titulo="Compras" icone={<Package size={12} aria-hidden />} tom={tomCompras} chip={chipCompras}
         onAbrir={onAbrirCompras} rotuloAbrir="Ver o pedido de materiais (itens, status e histórico)">
-        <div style={{ ...linhaInfo, color: "#64748b" }}>
-          {pedido ? <>Pedido <b style={{ color: "#0f172a", fontFamily: "ui-monospace, monospace" }}>{pedido.protocolo}</b></>
-            : c.compras_dispensado ? "Seguiu sem pedido de materiais." : "Pedido ainda não gerado."}
-        </div>
+        {pedido && <div style={{ ...linhaInfo, fontFamily: "ui-monospace, monospace", color: "#334155" }}>{pedido.protocolo}</div>}
       </Quadro>
     </div>
   );

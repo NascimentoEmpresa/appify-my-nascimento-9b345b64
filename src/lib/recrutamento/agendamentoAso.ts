@@ -64,6 +64,29 @@ export function resumoAgendamentoAso(c: AgendamentoAso): string {
 export const TEMPLATE_AGENDAMENTO_ASO = "recrutamento_agendamento_aso";
 
 /**
+ * Prévia do que o candidato vai receber pelo botão "Enviar agendamento": o
+ * texto do template da Meta (mig 20261016000031) com as variáveis resolvidas
+ * do mesmo jeito que a Edge recrutamento-mensagem (variável vazia vira "-").
+ * Mostrada na confirmação antes de enviar.
+ */
+export function previaTemplateAgendamento(c: AgendamentoAso, cargo?: string | null): string {
+  const primeiro = String(c.nome ?? "").trim().split(/\s+/)[0] ?? "";
+  const nome = primeiro ? primeiro.charAt(0).toUpperCase() + primeiro.slice(1).toLowerCase() : "";
+  const dia = diaDaSemana(c.sst_data_exame);
+  const v = (s?: string | null) => String(s ?? "").replace(/[\r\n\t]+/g, " ").replace(/ {2,}/g, " ").trim() || "-";
+  return [
+    `Olá ${v(nome)}! Seu exame admissional (ASO) para a vaga de ${v(cargo)} está agendado.`,
+    "",
+    `📅 Data: ${c.sst_data_exame ? `${dataBr(c.sst_data_exame)}${dia ? ` (${dia})` : ""}` : "-"}`,
+    `⏰ Horário: ${v(c.sst_hora_exame)}`,
+    `📍 Local: ${v(c.sst_local_exame)}`,
+    `🗺 Mapa: ${v(linkMapaAso(c))}`,
+    "",
+    "Leve um documento oficial com foto. Qualquer dúvida, é só responder esta mensagem.",
+  ].join("\n");
+}
+
+/**
  * Resposta da Edge recrutamento-mensagem (etapa AGENDAMENTO ASO) → o que dizer
  * ao recrutador. O caso que mais vai aparecer no começo é o template ainda não
  * aprovado na Meta (erro 132001): aí ensina onde mandar para aprovação e lembra

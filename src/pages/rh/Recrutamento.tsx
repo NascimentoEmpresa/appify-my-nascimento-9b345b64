@@ -28,6 +28,7 @@ import { ParecerJuridicoDialog } from "@/components/recrutamento/ParecerJuridico
 import { StatusSstDialog } from "@/components/recrutamento/StatusSstDialog";
 import { mensagemEnvioAgendamento } from "@/lib/recrutamento/agendamentoAso";
 import { QuadrosSstCompras } from "@/components/recrutamento/QuadrosSstCompras";
+import { ConfirmarEnvioAgendamento } from "@/components/recrutamento/ConfirmarEnvioAgendamento";
 import { CamadaAlta } from "@/components/ui/camada";
 import { FichaAso } from "@/components/recrutamento/FichaAso";
 import { CandidatoManualDialog } from "@/components/recrutamento/CandidatoManualDialog";
@@ -698,6 +699,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
   const [pedidosVaga, setPedidosVaga] = useState<Record<string, { protocolo: string; status: string }>>({});
   const [pedidoAberto, setPedidoAberto] = useState<{ id: number; nome: string } | null>(null);
   const [enviandoAgendamento, setEnviandoAgendamento] = useState<number | null>(null);
+  const [confirmarAgendamentoId, setConfirmarAgendamentoId] = useState<number | null>(null);
   // Enxoval da função (25/09/2026, mig 246): o card de tamanhos do modal de
   // SST + COMPRAS — o Confirmar grava por ele antes de mover o candidato.
   const enxovalRef = useRef<EnxovalAdmissaoHandle>(null);
@@ -1417,10 +1419,14 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
   // template recrutamento_agendamento_aso pela Edge recrutamento-mensagem — a
   // mesma das mensagens por etapa, que grava na Caixa de Entrada e no log.
   // Template, e não texto livre: o candidato raramente escreveu nas últimas 24h.
-  const enviarAgendamento = async (c: Curriculo) => {
+  // O clique só abre a confirmação (ConfirmarEnvioAgendamento, com a prévia do
+  // texto); quem envia é o "Sim, enviar" de lá.
+  const enviarAgendamento = (c: Curriculo) => {
     if (!temWhatsApp(c)) { toast("Candidato sem telefone válido.", "err"); return; }
     if (!c.sst_data_exame) { toast("O SST ainda não agendou o exame.", "err"); return; }
-    if (!confirm(`Enviar o agendamento do exame para o WhatsApp de ${c.nome || "candidato"} (${c.telefone})?`)) return;
+    setConfirmarAgendamentoId(c.id);
+  };
+  const confirmarEnvioAgendamento = async (c: Curriculo) => {
     setEnviandoAgendamento(c.id);
     try {
       const { data, error } = await supabase.functions.invoke("recrutamento-mensagem", { body: { candidato_id: c.id, etapa: "AGENDAMENTO ASO" } });
@@ -1428,7 +1434,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
       toast(r.texto, r.ok ? "ok" : "err");
     } catch (e) {
       toast(mensagemEnvioAgendamento({ detalhe: (e as Error).message }, c.nome).texto, "err");
-    } finally { setEnviandoAgendamento(null); }
+    } finally { setEnviandoAgendamento(null); setConfirmarAgendamentoId(null); }
   };
 
   // Download do currículo: signed URL temporária no bucket privado 'curriculos'.
@@ -2850,9 +2856,9 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
               const cards = grupos[etapa] ?? [];
               const meta = CAND_COL_COLORS[etapa];
               return (
-                // SST + COMPRAS mais larga quando tem gente (16/10/2026): quase sempre
-                // é um candidato só, e os dois quadros (SST e Compras) precisam de espaço.
-                <div key={etapa} className="kb-col" style={{ flex: etapa === ETAPA_SST_COMPRAS && cards.length ? "2.2 1 0" : "1 1 0", minWidth: etapa === ETAPA_SST_COMPRAS && cards.length ? 270 : 0, maxHeight: "100%" }}>
+                // Mesma largura para todas (16/10/2026: a SST + COMPRAS mais larga
+                // "ficou ruim" — Pablo); os quadros do SST/Compras são compactos.
+                <div key={etapa} className="kb-col" style={{ flex: "1 1 0", minWidth: 0, maxHeight: "100%" }}>
                   <div className="kb-col-head">
                     <span style={{ width: 7, height: 7, borderRadius: "50%", background: meta.dot, display: "inline-block" }} />
                     <span style={{ fontSize: 10, fontWeight: 800, letterSpacing: ".4px", flex: 1, textTransform: "uppercase", color: meta.label }}>{ETAPA_LABEL[etapa] ?? etapa}</span>
@@ -2945,8 +2951,10 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
                             {etapa === "DOCUMENTAÇÃO" && (docsCount[c.id] ?? 0) > 0 && <div style={{ fontSize: 9.5, color: "#0e7490", marginTop: 4, fontWeight: 700 }}><Ic i={Paperclip} />{docsCount[c.id]} documento{docsCount[c.id] > 1 ? "s" : ""}</div>}
                             {/* Ficha do ASO (18/09/2026): a partir de APROVADO o
                                 Recrutamento vê o que o SST vai receber e completa
-                                o que o automático não achou (PIS, mãe, posto…). */}
-                            {["APROVADO", "DOCUMENTAÇÃO", ETAPA_SST_COMPRAS, "EXAME SST", "ADMISSÃO"].includes(etapa) && (
+                                o que o automático não achou (PIS, mãe, posto…).
+                                Em SST + COMPRAS ela fica DENTRO do quadro do SST
+                                (StatusSstDialog) — pedido do Pablo, 16/10/2026. */}
+                            {["APROVADO", "DOCUMENTAÇÃO", "ADMISSÃO"].includes(etapa) && (
                               <div style={{ marginTop: 6 }}><FichaAso candidatoId={c.id} compacto editar={podeRecrutar && !somenteLeitura} /></div>
                             )}
                             {etapa === "ADMISSÃO" && c.enviado_admissao_em && <div style={{ fontSize: 9.5, color: "#15803d", marginTop: 4, fontWeight: 700 }}>✓ Contratado — na Admissão (RH)</div>}
@@ -4238,7 +4246,13 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
         const cand = candidatos.find(x => x.id === sstCandId);
         return cand ? <StatusSstDialog candidato={cand} onClose={() => setSstCandId(null)}
           onEnviarWhatsApp={podeRecrutar && !vagaEncerrada(drawerSol?.status) && temWhatsApp(cand) ? () => enviarAgendamento(cand) : undefined}
-          enviando={enviandoAgendamento === cand.id} /> : null;
+          enviando={enviandoAgendamento === cand.id}
+          ficha={<FichaAso candidatoId={cand.id} editar={podeRecrutar && !vagaEncerrada(drawerSol?.status)} />} /> : null;
+      })()}
+      {confirmarAgendamentoId != null && (() => {
+        const cand = candidatos.find(x => x.id === confirmarAgendamentoId);
+        return cand ? <ConfirmarEnvioAgendamento candidato={cand} cargo={drawerSol?.cargo} enviando={enviandoAgendamento === cand.id}
+          onConfirmar={() => confirmarEnvioAgendamento(cand)} onCancelar={() => setConfirmarAgendamentoId(null)} /> : null;
       })()}
       {/* Ver parecer do Jurídico (16/10/2026). */}
       {parecerCandId != null && (() => {

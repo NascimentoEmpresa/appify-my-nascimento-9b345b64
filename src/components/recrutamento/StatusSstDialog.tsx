@@ -49,8 +49,11 @@ async function copiar(texto: string): Promise<boolean> {
 // onEnviarWhatsApp (16/10/2026): "Enviar agendamento" pelo WhatsApp (template
 // recrutamento_agendamento_aso). Sem ele (sem telefone, sem permissão, vaga
 // encerrada) o botão não aparece — o "Copiar agendamento" continua.
-export function StatusSstDialog({ candidato, onClose, onEnviarWhatsApp, enviando }: {
-  candidato: AgendamentoAso & { cpf?: string | null }; onClose: () => void; onEnviarWhatsApp?: () => void; enviando?: boolean;
+// ficha (16/10/2026): a Ficha do ASO saiu do pé do card em SST + COMPRAS e
+// mora aqui — "ficha do aso completa tem que ficar dentro do card ao clicar
+// no SST" (Pablo). Vem pronta do kanban (FichaAso inline, com o editar dele).
+export function StatusSstDialog({ candidato, onClose, onEnviarWhatsApp, enviando, ficha }: {
+  candidato: AgendamentoAso & { cpf?: string | null }; onClose: () => void; onEnviarWhatsApp?: () => void; enviando?: boolean; ficha?: ReactNode;
 }) {
   const [copiado, setCopiado] = useState<"" | "mapa" | "tudo" | "erro">("");
   useEffect(() => {
@@ -86,7 +89,7 @@ export function StatusSstDialog({ candidato, onClose, onEnviarWhatsApp, enviando
     <div role="dialog" aria-modal="true" aria-label="Status do SST"
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
       style={{ position: "fixed", inset: 0, zIndex: 1100, background: "rgba(15,23,42,.45)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
-      <div style={{ background: "#fff", borderRadius: 16, width: "100%", maxWidth: 540, maxHeight: "90vh", overflow: "auto", boxShadow: "0 24px 60px rgba(15,23,42,.25)" }}>
+      <div style={{ background: "#fff", borderRadius: 16, width: "100%", maxWidth: 640, maxHeight: "90vh", overflow: "auto", boxShadow: "0 24px 60px rgba(15,23,42,.25)" }}>
         <div style={{ height: 4, background: cor.cor, borderRadius: "16px 16px 0 0" }} />
         <div style={{ padding: "16px 20px 18px" }}>
           <div style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
@@ -142,6 +145,8 @@ export function StatusSstDialog({ candidato, onClose, onEnviarWhatsApp, enviando
               Quando o SST agendar o exame, a data, o horário, o local e o mapa aparecem aqui, prontos para copiar e mandar ao candidato.
             </div>
           )}
+
+          {ficha && <div style={{ marginTop: 14 }}>{ficha}</div>}
 
           <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 16 }}>
             <button onClick={onClose} style={{ padding: "8px 16px", borderRadius: 8, background: "#fff", border: "1px solid #e2e8f0", color: "#475569", fontSize: 12.5, fontWeight: 700, cursor: "pointer" }}>Fechar</button>
