@@ -29,7 +29,11 @@ jobs:
           # interpolação direta em bash permitiria injeção de comando.
           PR_TITLE: ${{ github.event.pull_request.title }}
           PR_LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
-          SUPABASE_FUNCTIONS_URL: https://fwmzeaztjxrxxzxzxmgc.supabase.co/functions/v1
+          # Um lugar so para a virada: criar a variavel de repositorio
+          # SUPABASE_FUNCTIONS_URL (Settings > Variables) apontando para
+          # https://api.grpnascimento.com.br/functions/v1 troca o CI de
+          # backend sem mexer em workflow. Sem ela, continua na Supabase.
+          SUPABASE_FUNCTIONS_URL: ${{ vars.SUPABASE_FUNCTIONS_URL || 'https://fwmzeaztjxrxxzxzxmgc.supabase.co/functions/v1' }}
           CHAMADOS_CI_SECRET: ${{ secrets.CHAMADOS_CI_SECRET }}
         run: |
           set -euo pipefail
@@ -90,13 +94,15 @@ jobs:
         uses: actions/github-script@v7
         env:
           CHAMADOS_CI_SECRET: ${{ secrets.CHAMADOS_CI_SECRET }}
+          SUPABASE_FUNCTIONS_URL: ${{ vars.SUPABASE_FUNCTIONS_URL || 'https://fwmzeaztjxrxxzxzxmgc.supabase.co/functions/v1' }}
         with:
           script: |
             const title = context.payload.pull_request.title || "";
             const match = title.match(/^SIS-\d{4}-\d+/);
             if (!match) { core.info("Sem número de chamado no título — nada a sincronizar."); return; }
             const numero = match[0];
-            const FUNCS = "https://fwmzeaztjxrxxzxzxmgc.supabase.co/functions/v1";
+            const FUNCS = process.env.SUPABASE_FUNCTIONS_URL
+              || "https://fwmzeaztjxrxxzxzxmgc.supabase.co/functions/v1";
             const secret = process.env.CHAMADOS_CI_SECRET;
 
             const infoRes = await fetch(`${FUNCS}/chamado-info?numero=${encodeURIComponent(numero)}`, {
