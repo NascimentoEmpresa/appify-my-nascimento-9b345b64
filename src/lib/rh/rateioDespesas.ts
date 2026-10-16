@@ -341,8 +341,8 @@ export function totalDeclaradoNoPdf(linhas: string[]): number | null {
 }
 
 export interface LayoutPdf {
-  /** "seguro_prudential" quando reconhece o relatório; "generico" no resto. */
-  layout: "seguro_prudential" | "generico";
+  /** Layout reconhecido; "generico" quando nenhum bate. */
+  layout: "seguro_prudential" | "fgts_digital" | "generico";
   rotulo: string;
 }
 
@@ -355,10 +355,57 @@ export interface LayoutPdf {
  */
 export function identificarLayoutPdf(linhas: string[]): LayoutPdf {
   const topo = normNome(linhas.slice(0, 40).join(" "));
+  if (topo.includes("GUIADOFGTSDIGITAL") || (topo.includes("FGTSDIGITAL") && topo.includes("TOTALFGTS"))) {
+    return { layout: "fgts_digital", rotulo: "Guia do FGTS Digital (GFD) — FGTS por trabalhador, sem o consignado" };
+  }
   if (topo.includes("RELATORIODEMOVIMENTACAO") && topo.includes("PREMIO") && topo.includes("ISSEGURADO")) {
     return { layout: "seguro_prudential", rotulo: "Relatório de movimentação do seguro de vida (prêmio por segurado)" };
   }
   return { layout: "generico", rotulo: "Leitura genérica (CPF + último valor da linha)" };
+}
+
+/**
+ * GUIA DO FGTS DIGITAL (GFD + "Detalhe da Guia Emitida"), segundo PDF real
+ * (FGTS MENSAL 09/2026, 16/10/2026, ~180 páginas). O arquivo junta TRÊS
+ * relatórios, e só o primeiro é FGTS:
+ *   1. "Relação de Trabalhadores" do FGTS, por tomador — uma linha por
+ *      trabalhador: Nome, Matrícula, CPF, Categoria, Vencimento, Tipo
+ *      ("Mensal"), Base, Valor na guia, Juros, Atualiz., Multa, TOTAL (o
+ *      último valor). Cabeçalho de cada página: "Qtd. Trabalhadores FGTS:".
+ *      Fecha em "Total FGTS" (R$ 334.415,09 em 09/2026, 1.872 pessoas).
+ *   2. "Relação de Trabalhadores" do CONSIGNADO (empréstimo descontado em
+ *      folha, cabeçalho "Qtd. Trabalhadores Consignado:") — TAMBÉM tem CPF e
+ *      valor por linha. Não é FGTS: lido junto, inflaria o rateio em
+ *      R$ 362.025,99 (o "Total da Guia" de R$ 696.441,08 soma os dois).
+ *   3. "Relação de Eventos" da Senior por contrato (consignado de novo).
+ * Por isso as linhas fora da seção 1 viram "" (mantém a numeração de linha).
+ */
+export function linhasDaSecaoFgts(linhas: string[]): string[] {
+  let modo: "fgts" | "fora" = "fora";
+  return linhas.map((l) => {
+    const n = normNome(l);
+    if (n.includes("TRABALHADORESFGTS")) modo = "fgts";
+    else if (n.includes("TRABALHADORESCONSIGNADO") || n.includes("RELACAODEEVENTOS")) modo = "fora";
+    return modo === "fgts" ? l : "";
+  });
+}
+
+/** Linhas com CPF do PDF, aplicando a regra do layout reconhecido. */
+export function extrairLinhasDoPdf(linhas: string[], layout: LayoutPdf["layout"]): LinhaPdf[] {
+  return extrairLinhasComCpf(layout === "fgts_digital" ? linhasDaSecaoFgts(linhas) : linhas);
+}
+
+/** Total declarado conforme o layout (FGTS: "Total FGTS", nunca o da guia com consignado). */
+export function totalDoPdf(linhas: string[], layout: LayoutPdf["layout"]): number | null {
+  if (layout === "fgts_digital") {
+    for (let i = linhas.length - 1; i >= 0; i--) {
+      if (!/\bTotal\s+FGTS\b/i.test(linhas[i])) continue;
+      const v = valoresDaLinha(linhas[i]);
+      if (v.length) return v[v.length - 1];
+    }
+    return null;
+  }
+  return totalDeclaradoNoPdf(linhas);
 }
 
 export interface LinhaPdfContrato extends LinhaPdf {

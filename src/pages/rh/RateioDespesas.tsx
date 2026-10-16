@@ -40,8 +40,8 @@ import {
 } from "@/hooks/useRateioDespesas";
 import {
   TIPOS_RATEIO, ROTULO_CRITERIO, SEM_CONTRATO, acharContrato, calcularRateio, competenciaParaData,
-  competenciaRotulo, criterioPadrao, extrairLinhasComCpf, extrairLinhasPorContrato, fmtMoeda, fmtPct,
-  identificarLayoutPdf, totalDeclaradoNoPdf,
+  competenciaRotulo, criterioPadrao, extrairLinhasPorContrato, fmtMoeda, fmtPct,
+  extrairLinhasDoPdf, identificarLayoutPdf, totalDoPdf,
   lerPlanilhaJusBrasil, resumirRateio, rotuloTipo, somarPorContrato, tipoUsaPdf,
   type ContratoRef, type CriterioRateio, type ItemRateio, type LinhaPlanilhaJus, type TipoRateio,
 } from "@/lib/rh/rateioDespesas";
@@ -370,10 +370,11 @@ function Editor({ id, onFechar, onSalvo }: { id: string | null; onFechar: () => 
     setLendo(true);
     try {
       const linhas = await lerLinhasPdf(f);
-      const declarado = totalDeclaradoNoPdf(linhas);
-      setPdfInfo({ total: declarado, rotulo: identificarLayoutPdf(linhas).rotulo });
+      const layout = identificarLayoutPdf(linhas);
+      const declarado = totalDoPdf(linhas, layout.layout);
+      setPdfInfo({ total: declarado, rotulo: layout.rotulo });
       let lido = 0;
-      const comCpf = extrairLinhasComCpf(linhas);
+      const comCpf = extrairLinhasDoPdf(linhas, layout.layout);
       if (comCpf.length) {
         const casados = await casarCpfs([...new Set(comCpf.map((l) => l.cpf as string))]);
         const porCpf = new Map(casados.map((c) => [c.cpf, c]));
