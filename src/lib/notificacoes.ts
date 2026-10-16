@@ -44,6 +44,50 @@ export type Categoria = (typeof CATEGORIAS)[number];
 
 /** Uma imagem do aviso (21/09/2026: o aviso pode ter várias). */
 export interface ImagemDoAviso { url: string; nome: string }
+/**
+ * O tamanho da imagem no aviso (16/10/2026, pedido do Pablo com o print do
+ * "3 Anos de Empresa": cartaz quadrado saía pequeno na caixa 16:9 do modal).
+ *
+ * "" é o padrão de sempre — e é o que aviso antigo (coluna NULL) recebe, para
+ * nada que já foi publicado mudar de cara. Ver a migration 20261016000001.
+ */
+export const TAMANHOS_IMAGEM = [
+  { valor: "", rotulo: "Padrão" },
+  { valor: "pequena", rotulo: "Pequena" },
+  { valor: "media", rotulo: "Média" },
+  { valor: "grande", rotulo: "Grande" },
+  { valor: "total", rotulo: "Largura total" },
+] as const;
+export type TamanhoImagem = (typeof TAMANHOS_IMAGEM)[number]["valor"];
+
+/** Qualquer coisa do banco vira um tamanho conhecido; o desconhecido cai no padrão. */
+export function tamanhoImagemDe(v: unknown): TamanhoImagem {
+  return TAMANHOS_IMAGEM.some((t) => t.valor === v) ? (v as TamanhoImagem) : "";
+}
+
+/**
+ * A caixa de cada imagem. O padrão continua `aspect-video`: altura reservada
+ * ANTES de o arquivo chegar (ver ImagemAviso, 10/09/2026). Os fixos também
+ * reservam; só "Largura total" segue a proporção da imagem, com um mínimo
+ * enquanto ela desce.
+ */
+export function classeCaixaImagem(t: TamanhoImagem): string {
+  switch (t) {
+    case "pequena": return "h-40 w-full";
+    case "media": return "h-64 w-full";
+    case "grande": return "h-96 w-full";
+    case "total": return "min-h-40 w-full";
+    default: return "aspect-video w-full";
+  }
+}
+
+/** A largura do modal: imagem grande num modal estreito continuaria pequena. */
+export function larguraJanelaAviso(t: TamanhoImagem): string {
+  if (t === "total") return "max-w-3xl";
+  if (t === "grande") return "max-w-2xl";
+  return "max-w-lg";
+}
+
 /** Um link clicável do aviso, com o nome que quem escreveu escolheu. */
 export interface LinkDoAviso { rotulo: string; url: string }
 
@@ -68,6 +112,8 @@ export interface Notificacao {
   imagens?: ImagemDoAviso[] | null;
   /** 'carrossel' (passa pro lado) | 'grade' (todas de uma vez). */
   imagens_layout?: string | null;
+  /** Tamanho da imagem no modal — NULL = padrão (ver TAMANHOS_IMAGEM). */
+  imagens_tamanho?: string | null;
   /** Botões clicáveis abaixo do texto. */
   links?: LinkDoAviso[] | null;
   /** Precisa confirmar que leu? Desligado, é mural: aparece na lista e pronto. */
@@ -132,6 +178,8 @@ export interface FormNotificacao {
   /** Todas as imagens (21/09/2026). A primeira vira anexo_url/anexo_nome ao salvar. */
   imagens: ImagemDoAviso[];
   imagens_layout: "carrossel" | "grade";
+  /** Tamanho da imagem no modal; "" = padrão. */
+  imagens_tamanho: TamanhoImagem;
   /** Links com nome. */
   links: LinkDoAviso[];
   /** Setores que recebem o aviso. Vazio + sem pessoas = todo mundo. */
@@ -146,7 +194,7 @@ export interface FormNotificacao {
 /** Um aviso novo, em branco — o mesmo estado inicial em toda tela que cria. */
 export const FORM_VAZIO: FormNotificacao = {
   titulo: "", mensagem: "", publicado: true, categoria: "Comunicado", resumo: "",
-  expira_em: "", anexo_url: "", anexo_nome: "", imagens: [], imagens_layout: "carrossel", links: [],
+  expira_em: "", anexo_url: "", anexo_nome: "", imagens: [], imagens_layout: "carrossel", imagens_tamanho: "", links: [],
   setores: [], usuarios: [],
   exigir_ciencia: true, bloquear_acesso: true, permitir_escolha: true,
 };
@@ -188,12 +236,43 @@ export function formDoAviso(
     anexo_nome: n.anexo_nome ?? "",
     imagens: imagensDoAviso(n),
     imagens_layout: n.imagens_layout === "grade" ? "grade" : "carrossel",
+    imagens_tamanho: tamanhoImagemDe(n.imagens_tamanho),
     links: (Array.isArray(n.links) ? n.links : []).map((l) => ({ rotulo: String(l?.rotulo ?? ""), url: String(l?.url ?? "") })),
     setores: meus.filter((a) => a.setor).map((a) => a.setor as string),
     usuarios: meus.filter((a) => a.user_id).map((a) => a.user_id as string),
     exigir_ciencia: n.exigir_ciencia,
     bloquear_acesso: n.bloquear_acesso,
     permitir_escolha: n.permitir_escolha,
+  };
+}
+
+/**
+ * O formulário como aviso, para a Pré-visualização: o MESMO objeto que o modal
+ * recebe do banco, montado com as mesmas normalizações do salvar — senão a
+ * prévia mostraria uma coisa e o aviso publicado outra.
+ */
+export function avisoDoFormulario(f: FormNotificacao, autor: string | null, agora = new Date()): Notificacao {
+  const imagens = f.imagens.filter((i) => i.url.trim()).map((i) => ({ url: i.url.trim(), nome: i.nome ?? "" }));
+  return {
+    id: f.id ?? -1,
+    titulo: f.titulo.trim() || "(sem título)",
+    mensagem: f.mensagem.trim(),
+    publicado: true,
+    publicado_em: agora.toISOString(),
+    criado_por_nome: autor,
+    created_at: agora.toISOString(),
+    categoria: f.categoria || null,
+    resumo: f.resumo.trim() || null,
+    expira_em: null,
+    anexo_url: imagens[0]?.url ?? null,
+    anexo_nome: imagens[0]?.nome ?? null,
+    imagens,
+    imagens_layout: f.imagens_layout,
+    imagens_tamanho: f.imagens_tamanho || null,
+    links: f.links.filter((l) => l.url.trim()).map((l) => ({ rotulo: l.rotulo.trim() || "Link", url: l.url.trim() })),
+    exigir_ciencia: f.exigir_ciencia,
+    bloquear_acesso: f.exigir_ciencia && f.bloquear_acesso,
+    permitir_escolha: f.permitir_escolha,
   };
 }
 

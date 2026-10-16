@@ -12,7 +12,10 @@
 import { useState } from "react";
 import { ChevronLeft, ChevronRight, ExternalLink } from "lucide-react";
 import { ImagemAviso } from "@/components/notificacoes/ImagemAviso";
-import { imagensDoAviso, type ImagemDoAviso, type LinkDoAviso, type Notificacao } from "@/lib/notificacoes";
+import {
+  classeCaixaImagem, imagensDoAviso, tamanhoImagemDe,
+  type ImagemDoAviso, type LinkDoAviso, type Notificacao, type TamanhoImagem,
+} from "@/lib/notificacoes";
 import { cn } from "@/lib/utils";
 
 /** URL http(s) ou www. no meio do texto. O `.`/`,`/`)` final fica fora do link. */
@@ -58,13 +61,18 @@ export function LinksAviso({ links, className }: { links: LinkDoAviso[]; classNa
 /**
  * As imagens do aviso. Uma só: igual a antes. Várias: carrossel com setas e
  * bolinhas, ou grade de duas colunas — escolha de quem publicou.
+ *
+ * `tamanho` (16/10/2026) é a caixa de cada imagem — ver classeCaixaImagem.
+ * Sem ele, a caixa 16:9 de sempre.
  */
-export function GaleriaAviso({ imagens, layout, prioridade = false, className }: {
+export function GaleriaAviso({ imagens, layout, tamanho = "", prioridade = false, className }: {
   imagens: ImagemDoAviso[];
   layout: "carrossel" | "grade";
+  tamanho?: TamanhoImagem;
   prioridade?: boolean;
   className?: string;
 }) {
+  const caixa = classeCaixaImagem(tamanho);
   const [i, setI] = useState(0);
   const lista = imagens.filter((im) => im.url);
   if (!lista.length) return null;
@@ -75,7 +83,7 @@ export function GaleriaAviso({ imagens, layout, prioridade = false, className }:
       <div className={cn(lista.length === 1 ? "" : "grid gap-2 sm:grid-cols-2", className)}>
         {lista.map((im, k) => (
           <div key={k}>
-            <ImagemAviso url={im.url} nome={im.nome} prioridade={prioridade && k === 0} className="aspect-video w-full" />
+            <ImagemAviso url={im.url} nome={im.nome} prioridade={prioridade && k === 0} className={caixa} />
             <a href={im.url} target="_blank" rel="noreferrer"
                className="mt-1 inline-block text-xs text-muted-foreground underline underline-offset-2">
               Ver imagem em tamanho real
@@ -90,7 +98,7 @@ export function GaleriaAviso({ imagens, layout, prioridade = false, className }:
     <div className={className}>
       <div className="relative">
         {/* key na imagem: trocar de slide reinicia o estado de carregamento. */}
-        <ImagemAviso key={atual.url} url={atual.url} nome={atual.nome} prioridade className="aspect-video w-full" />
+        <ImagemAviso key={atual.url} url={atual.url} nome={atual.nome} prioridade className={caixa} />
         <button type="button" aria-label="Imagem anterior"
                 onClick={() => setI((v) => (v - 1 + lista.length) % lista.length)}
                 className="absolute left-2 top-1/2 -translate-y-1/2 rounded-full bg-background/90 p-1.5 shadow hover:bg-background">
@@ -127,7 +135,8 @@ export function ConteudoAviso({ aviso, prioridade = false }: { aviso: Notificaca
   return (
     <div className="space-y-3">
       {imagens.length > 0 && (
-        <GaleriaAviso imagens={imagens} layout={aviso.imagens_layout === "grade" ? "grade" : "carrossel"} prioridade={prioridade} />
+        <GaleriaAviso imagens={imagens} layout={aviso.imagens_layout === "grade" ? "grade" : "carrossel"}
+                      tamanho={tamanhoImagemDe(aviso.imagens_tamanho)} prioridade={prioridade} />
       )}
       <TextoComLinks texto={aviso.mensagem} />
       <LinksAviso links={aviso.links ?? []} />

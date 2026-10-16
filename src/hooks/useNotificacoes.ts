@@ -5,7 +5,7 @@ import { useMeuNome } from "@/hooks/useMeuNome";
 import { usePermissoes } from "@/context/PermissoesContext";
 import {
   BUCKET_ANEXOS, MENU_PUBLICAR, MENU_QUADRO, TABELA, TABELA_ALVO, TABELA_CIENCIA,
-  bloqueantesDe, pendentesDe,
+  bloqueantesDe, pendentesDe, tamanhoImagemDe,
   type AlvoNotificacao, type CienciaNotificacao, type Escolha,
   type FormNotificacao, type Notificacao,
 } from "@/lib/notificacoes";
@@ -183,6 +183,8 @@ export function useNotificacoes() {
         anexo_nome: (f.imagens[0]?.nome ?? f.anexo_nome).trim() || null,
         imagens: f.imagens.filter((i) => i.url.trim()).map((i) => ({ url: i.url.trim(), nome: i.nome ?? "" })),
         imagens_layout: f.imagens_layout === "grade" ? "grade" : "carrossel",
+        // "" (padrão) vai como NULL: é o que aviso antigo tem, e a CHECK aceita.
+        imagens_tamanho: tamanhoImagemDe(f.imagens_tamanho) || null,
         links: f.links.filter((l) => l.url.trim()).map((l) => ({ rotulo: l.rotulo.trim() || "Link", url: l.url.trim() })),
         exigir_ciencia: f.exigir_ciencia,
         // publico_alvo saiu na 081: a verdade é a tabela de alvos, e ter as
@@ -287,6 +289,8 @@ export function useNotificacoes() {
 
   return {
     notificacoes,
+    /** Quem está logado — o autor que a Pré-visualização mostra. */
+    meuNome: meuNome ?? null,
     historico: historicoQ.data ?? [],
     alvos: alvosQ.data ?? [],
     setores: setoresQ.data ?? [],

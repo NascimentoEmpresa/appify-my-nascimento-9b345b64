@@ -49,8 +49,9 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { useNotificacoes } from "@/hooks/useNotificacoes";
 import { ConteudoAviso } from "@/components/notificacoes/ConteudoAviso";
+import { JanelaAviso } from "@/components/notificacoes/GateNotificacoes";
 import {
-  CATEGORIAS, FORM_VAZIO, erroDoFormulario, estaVigente, fmtDataHora, formDoAviso,
+  CATEGORIAS, FORM_VAZIO, TAMANHOS_IMAGEM, avisoDoFormulario, erroDoFormulario, estaVigente, fmtDataHora, formDoAviso,
   panoramaDe, respostasComNome, type CienciaNotificacao, type Escolha,
   type FormNotificacao, type Notificacao,
 } from "@/lib/notificacoes";
@@ -72,13 +73,20 @@ export default function QuadroAvisos() {
   const {
     notificacoes, historico, alvos, setores, pessoas, pessoasPorSetor, carregando,
     podeVerQuadro, podeCriar, podeEditar, podeExcluir,
-    salvar, excluir, subirAnexo,
+    salvar, excluir, subirAnexo, meuNome,
   } = useNotificacoes();
 
   const [aba, setAba] = useState<Aba>("todos");
   const [busca, setBusca] = useState("");
   const [categoria, setCategoria] = useState("todas");
   const [form, setForm] = useState<FormNotificacao | null>(null);
+  /**
+   * Pré-visualizando o formulário (16/10/2026). O Dialog de edição fecha
+   * enquanto isso — o `form` continua em estado, nada se perde — porque o
+   * Dialog do Radix trava clique e foco fora dele, e a prévia é a mesma
+   * janela do gate, que mora fora do Dialog.
+   */
+  const [prevendo, setPrevendo] = useState(false);
   const [vendo, setVendo] = useState<Notificacao | null>(null);
   const [apagando, setApagando] = useState<Notificacao | null>(null);
   const [subindo, setSubindo] = useState(false);
@@ -396,7 +404,7 @@ export default function QuadroAvisos() {
       </Card>
 
       {/* ── Criar / editar ─────────────────────────────────────────── */}
-      <Dialog open={!!form} onOpenChange={(o) => !o && setForm(null)}>
+      <Dialog open={!!form && !prevendo} onOpenChange={(o) => !o && setForm(null)}>
         <DialogContent className="max-h-[90vh] max-w-2xl overflow-y-auto">
           <DialogHeader>
             <DialogTitle>{form?.id ? "Editar aviso" : "Criar aviso"}</DialogTitle>
@@ -645,6 +653,19 @@ export default function QuadroAvisos() {
                     ))}
                   </div>
                 )}
+                {/* Tamanho no aviso (16/10/2026): cartaz quadrado na caixa
+                    16:9 padrão saía pequeno. Confira no Pré-visualizar. */}
+                {form.imagens.length > 0 && (
+                  <div className="mt-2 flex flex-wrap items-center gap-2 text-sm">
+                    <span className="text-muted-foreground">Tamanho no aviso:</span>
+                    {TAMANHOS_IMAGEM.map((t) => (
+                      <button key={t.valor || "padrao"} type="button" onClick={() => setForm({ ...form, imagens_tamanho: t.valor })}
+                        className={cn("rounded-md border px-3 py-1 text-xs font-medium", form.imagens_tamanho === t.valor ? "border-primary bg-primary/10 text-primary" : "hover:bg-muted")}>
+                        {t.rotulo}
+                      </button>
+                    ))}
+                  </div>
+                )}
                 <p className="mt-1 text-xs text-muted-foreground">
                   PNG, JPG, WEBP ou GIF, até 5 MB cada, até 10 imagens. Aparecem dentro do aviso, acima do texto; a primeira é a capa da lista.
                 </p>
@@ -734,6 +755,9 @@ export default function QuadroAvisos() {
 
           <DialogFooter>
             <Button variant="outline" onClick={() => setForm(null)}>Cancelar</Button>
+            <Button variant="secondary" onClick={() => setPrevendo(true)}>
+              <Eye className="mr-2 h-4 w-4" /> Pré-visualizar
+            </Button>
             <Button onClick={gravar} disabled={salvar.isPending}>
               {salvar.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               {form?.id ? "Salvar alterações" : "Publicar aviso"}
@@ -741,6 +765,18 @@ export default function QuadroAvisos() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* ── Pré-visualizar ─────────────────────────────────────────── */}
+      {/* A MESMA janela do gate, com o aviso montado do formulário: nada vai
+          ao banco, os botões só explicam que é prévia. */}
+      {form && prevendo && (
+        <JanelaAviso
+          aviso={avisoDoFormulario(form, meuNome)}
+          onEscolher={() => toast.info("Pré-visualização: a resposta não é gravada.")}
+          onAdiar={() => setPrevendo(false)}
+          previa={{ aoFechar: () => setPrevendo(false) }}
+        />
+      )}
 
       {/* ── Visualizar ─────────────────────────────────────────────── */}
       <Dialog open={!!vendo} onOpenChange={(o) => !o && setVendo(null)}>

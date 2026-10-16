@@ -3,7 +3,10 @@ import { AlertCircle, Loader2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ConteudoAviso } from "@/components/notificacoes/ConteudoAviso";
 import { useNotificacoes } from "@/hooks/useNotificacoes";
-import { fmtDataHora, type Escolha } from "@/lib/notificacoes";
+import { cn } from "@/lib/utils";
+import {
+  fmtDataHora, larguraJanelaAviso, tamanhoImagemDe, type Escolha, type Notificacao,
+} from "@/lib/notificacoes";
 import { toast } from "sonner";
 
 /**
@@ -58,32 +61,71 @@ export function GateNotificacoes() {
   };
 
   return (
+    <JanelaAviso
+      aviso={atual}
+      enviando={enviando}
+      onEscolher={escolher}
+      onAdiar={() => setAdiados((a) => [...a, atual.id])}
+      restantes={fila.length - 1}
+    />
+  );
+}
+
+/**
+ * A janela do aviso, sem nada de banco — o gate acima liga ela à ciência.
+ *
+ * Separada em 16/10/2026 para a Pré-visualização do Quadro de Avisos mostrar
+ * EXATAMENTE o que o colaborador vai ver (pedido do Pablo: escolher o tamanho
+ * da imagem e conferir antes de lançar). Uma cópia da janela na tela de
+ * criação divergiria na primeira correção, e a prévia passaria a mentir.
+ *
+ * Com `previa`, ganha uma faixa por cima avisando que nada é gravado e um
+ * jeito de sair; os botões continuam lá, mas quem chama decide o que fazem.
+ */
+export function JanelaAviso({ aviso, enviando = null, onEscolher, onAdiar, restantes = 0, previa }: {
+  aviso: Notificacao;
+  enviando?: Escolha | null;
+  onEscolher: (escolha: Escolha) => void;
+  onAdiar: () => void;
+  restantes?: number;
+  previa?: { aoFechar: () => void };
+}) {
+  const tamanho = tamanhoImagemDe(aviso.imagens_tamanho);
+  // Imagem grande pede mais altura de leitura; o resto fica como sempre foi.
+  const alturaCorpo = tamanho === "grande" || tamanho === "total" ? "max-h-[70vh]" : "max-h-[50vh]";
+  return (
     <div
-      className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/70 p-4 backdrop-blur-sm"
+      className={cn("fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/70 p-4 backdrop-blur-sm", previa && "pt-16")}
       role="alertdialog"
       aria-modal="true"
       aria-labelledby="notificacao-titulo"
     >
-      <div className="w-full max-w-lg overflow-hidden rounded-xl bg-background shadow-2xl">
+      {previa && (
+        <div className="absolute inset-x-0 top-0 flex items-center justify-center gap-3 bg-primary px-4 py-2 text-sm text-primary-foreground">
+          <span>Pré-visualização — é assim que o colaborador vai ver. Nada é gravado.</span>
+          <Button size="sm" variant="secondary" onClick={previa.aoFechar}>Voltar à edição</Button>
+        </div>
+      )}
+      <div className={cn("w-full overflow-hidden rounded-xl bg-background shadow-2xl", larguraJanelaAviso(tamanho))}>
         <div className="flex items-start gap-3 border-b bg-amber-50 px-5 py-4 dark:bg-amber-950/30">
           <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-amber-500 text-white">
             <AlertCircle className="h-5 w-5" />
           </span>
           <div className="min-w-0 flex-1">
             <h2 id="notificacao-titulo" className="text-base font-bold leading-tight">
-              {atual.titulo}
+              {aviso.titulo}
             </h2>
             <p className="mt-0.5 text-xs text-muted-foreground">
-              Publicado em {fmtDataHora(atual.publicado_em)}
-              {atual.criado_por_nome ? ` · ${atual.criado_por_nome}` : ""}
+              Publicado em {fmtDataHora(aviso.publicado_em)}
+              {aviso.criado_por_nome ? ` · ${aviso.criado_por_nome}` : ""}
             </p>
           </div>
           {/* Sem bloqueio, dá para adiar. Com bloqueio não há X: uma saída
               que não registra ciência é exatamente o que o aviso evita. */}
-          {!atual.bloquear_acesso && (
+          {!aviso.bloquear_acesso && (
             <button
               type="button"
-              onClick={() => setAdiados((a) => [...a, atual.id])}
+              onClick={onAdiar}
               className="ml-auto rounded p-1 text-muted-foreground hover:bg-black/5"
               aria-label="Ver depois"
             >
@@ -92,7 +134,7 @@ export function GateNotificacoes() {
           )}
         </div>
 
-        <div className="max-h-[50vh] overflow-y-auto px-5 py-4">
+        <div className={cn(alturaCorpo, "overflow-y-auto px-5 py-4")}>
           {/* A imagem vem ANTES do texto: quando o aviso é um cartaz, ela é o
               aviso, e o texto é a legenda. `object-contain` porque cartaz
               cortado no meio deixa de comunicar o que veio comunicar.
@@ -103,21 +145,21 @@ export function GateNotificacoes() {
               o cartaz aparecer — foi o "a imagem não aparece" de 10/09/2026. */}
           {/* Imagens (carrossel/grade), texto com URLs clicáveis e os links
               com nome — o mesmo bloco do Quadro e do Início (ConteudoAviso). */}
-          <ConteudoAviso aviso={atual} prioridade />
+          <ConteudoAviso aviso={aviso} prioridade />
         </div>
 
         <div className="flex flex-col gap-2 border-t px-5 py-4 sm:flex-row sm:justify-end">
-          {atual.permitir_escolha ? (
+          {aviso.permitir_escolha ? (
             <>
               <Button
                 variant="outline"
                 disabled={!!enviando}
-                onClick={() => escolher("DISCORDO")}
+                onClick={() => onEscolher("DISCORDO")}
               >
                 {enviando === "DISCORDO" && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                 Discordo
               </Button>
-              <Button disabled={!!enviando} onClick={() => escolher("CONCORDO")}>
+              <Button disabled={!!enviando} onClick={() => onEscolher("CONCORDO")}>
                 {enviando === "CONCORDO" && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                 Concordo
               </Button>
@@ -125,14 +167,14 @@ export function GateNotificacoes() {
           ) : (
             // Sem escolha, um botão só. Dois botões que gravam a mesma coisa
             // seriam uma pergunta falsa.
-            <Button disabled={!!enviando} onClick={() => escolher("CIENTE")}>
+            <Button disabled={!!enviando} onClick={() => onEscolher("CIENTE")}>
               {enviando === "CIENTE" && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               Estou ciente
             </Button>
           )}
         </div>
 
-        {atual.bloquear_acesso ? (
+        {aviso.bloquear_acesso ? (
           <p className="border-t bg-muted/40 px-5 py-2 text-center text-xs text-muted-foreground">
             Você precisa registrar sua resposta para continuar utilizando o sistema.
           </p>
@@ -142,9 +184,9 @@ export function GateNotificacoes() {
           </p>
         )}
 
-        {fila.length > 1 && (
+        {restantes > 0 && (
           <p className="border-t px-5 py-2 text-center text-xs text-muted-foreground">
-            Mais {fila.length - 1} aviso(s) depois deste.
+            Mais {restantes} aviso(s) depois deste.
           </p>
         )}
       </div>
