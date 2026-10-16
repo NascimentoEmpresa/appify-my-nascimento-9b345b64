@@ -65,9 +65,76 @@ mkdir -p "$DESTINO"
 #  um .gpg que so a chave privada do Eduardo abre -- e ela nao esta em lugar
 #  nenhum deste servidor.
 if [ "$ACAO" = "--enviar" ]; then
-  A=$(ls -t "$DESTINO"/erp-cluster-*.tar.gz.gpg 2>/dev/null | head -1)
-  [ -n "$A" ] || { echo "sem backup em $DESTINO" >&2; exit 1; }
+  # Qual dos dois backups entregar. O `command=` do authorized_keys ignora o
+  # que o cliente pediu, mas o pedido original fica em SSH_ORIGINAL_COMMAND --
+  # entao o cliente diz "anexos" e nada mais. Qualquer outra coisa (inclusive
+  # tentativa de comando) cai no banco, que e o padrao: aqui nada e executado,
+  # so se escolhe entre dois arquivos.
+  case "${SSH_ORIGINAL_COMMAND:-}" in
+    *anexos*) PREFIXO=anexos ;;
+    *)        PREFIXO=erp-cluster ;;
+  esac
+  A=$(ls -t "$DESTINO/$PREFIXO"-*.tar.gz.gpg 2>/dev/null | head -1)
+  [ -n "$A" ] || { echo "sem backup de $PREFIXO em $DESTINO" >&2; exit 1; }
   exec cat "$A"
+fi
+
+# ── --anexos: os ARQUIVOS, nao o banco ─────────────────────────────────────
+#
+#  POR QUE ISTO EXISTE
+#  O banco tem backup diario cifrado desde 15/10. Os 5,8 GB de anexos nao
+#  tinham nenhum: eles vivem nos dois nos pelo espelho de 1 minuto, o que e
+#  REDUNDANCIA, nao backup. Apagou dos dois (ou um rsync ruim, ou uma faxina
+#  errada), apagou dos dois. E o `backup_storage.yml` nao serve aqui: ele
+#  monta a lista de objetos por psql contra a Supabase, e o Postgres do
+#  cluster nao atende na internet para o runner do GitHub.
+#
+#  A ARMADILHA DO XATTR
+#  O content-type de cada anexo mora num atributo estendido do arquivo, nao no
+#  banco. `tar` sem `--xattrs` NAO leva isso, e o sintoma de restaurar sem ele
+#  e cruel: o arquivo aparece na tela e o download morre com ENODATA, falando
+#  de coisa nenhuma. Por isso `--xattrs --xattrs-include='*'` nas duas pontas.
+if [ "$ACAO" = "--anexos" ]; then
+  VOLUME="${VOLUME:-erp-pilha_storage-arquivos}"
+  ORIGEM=$(docker volume inspect "$VOLUME" --format '{{.Mountpoint}}' 2>/dev/null)
+  [ -n "$ORIGEM" ] || { echo "volume $VOLUME nao existe nesta maquina" >&2; exit 1; }
+  CARIMBO=$(date +%Y%m%d-%H%M)
+  ALVO="$DESTINO/anexos-$CARIMBO.tar.gz.gpg"
+
+  NO_DISCO=$(find "$ORIGEM" -type f | wc -l)
+  log "$NO_DISCO arquivos em $ORIGEM"
+  [ "$NO_DISCO" -ge 1000 ] || { echo "menos de 1000 arquivos: isso nao parece o volume certo" >&2; exit 1; }
+
+  gpg --quiet --batch --import "$CHAVE_PUB" 2>/dev/null || true
+  gpg --list-keys "$IMPRESSAO" >/dev/null 2>&1 || {
+    echo "a chave $IMPRESSAO nao entrou no chaveiro" >&2; exit 1; }
+
+  LISTA=$(mktemp); trap 'rm -f "$LISTA"' EXIT
+  log "empacotando com xattr e cifrando (uma passada, sem arquivo intermediario)"
+  # `-v` faz o tar listar no stderr CADA membro que entrou de verdade, enquanto
+  # os bytes seguem pelo stdout para o gpg. Entao a contagem e do que foi
+  # realmente empacotado -- e nao de um segundo `find` que poderia discordar.
+  # Conferir depois seria impossivel: a chave privada nao existe neste
+  # servidor, e e exatamente isso que torna o arquivo seguro para sair daqui.
+  tar -C "$ORIGEM" --xattrs --xattrs-include='*' -czvf - . 2>"$LISTA" \
+    | gpg --batch --yes --trust-model always --recipient "$IMPRESSAO" \
+          --encrypt --compress-algo none --output "$ALVO" || {
+    echo "falhou empacotar ou cifrar" >&2; rm -f "$ALVO"; exit 1; }
+
+  [ -s "$ALVO" ] || { echo "nao gerou arquivo" >&2; rm -f "$ALVO"; exit 1; }
+  CONTADOS=$(grep -vc '/$' "$LISTA")
+  if [ "$CONTADOS" -lt $(( NO_DISCO * 95 / 100 )) ]; then
+    echo "o pacote tem $CONTADOS de $NO_DISCO arquivos -- truncado, apagando" >&2
+    rm -f "$ALVO"; exit 1
+  fi
+  log "$CONTADOS arquivos empacotados, $(du -m "$ALVO" | cut -f1) MB cifrados"
+
+  # Dois e o suficiente: o GitHub guarda o historico, aqui e so a ultima e a
+  # penultima -- e 5,8 GB por copia enche disco rapido.
+  ls -t "$DESTINO"/anexos-*.tar.gz.gpg 2>/dev/null | tail -n +3 | while read -r V; do
+    echo "    apagado: $V"; rm -f "$V"
+  done
+  exit 0
 fi
 
 # ── --conferir: so olha ────────────────────────────────────────────────────
@@ -113,6 +180,46 @@ UNIDADE
   systemctl daemon-reload
   systemctl enable --now backup-cluster.timer
   systemctl list-timers backup-cluster.timer --no-pager | sed 's/^/  /'
+  exit 0
+fi
+
+# ── --instalar-anexos: o mesmo, para os 5,8 GB de arquivos, SEMANAL ────────
+#
+#  Semanal e nao diario de proposito: sao ~5,5 GB cifrados por copia. Diario
+#  encheria o disco do no e o armazenamento do GitHub para copiar, de novo, os
+#  mesmos 12 mil arquivos -- anexo nao muda depois de enviado, so entra mais.
+#  O que uma semana de janela custa, no pior caso, e um anexo enviado depois
+#  da ultima copia; o banco (diario) continua sabendo que ele existiu.
+if [ "$ACAO" = "--instalar-anexos" ]; then
+  log "instalando o timer semanal dos anexos (${HORA_ANEXOS:-Sun 04:30} UTC)"
+  install -m 755 "$0" /usr/local/sbin/backup-cluster.sh
+  cat > /etc/systemd/system/backup-anexos.service <<'UNIDADE'
+[Unit]
+Description=Backup cifrado dos anexos do cluster (arquivos, com xattr)
+After=network-online.target docker.service
+
+[Service]
+Type=oneshot
+# IOSchedulingClass=idle: ler 5,8 GB nao pode competir com o Postgres do no.
+IOSchedulingClass=idle
+Nice=10
+ExecStart=/usr/local/sbin/backup-cluster.sh --anexos
+UNIDADE
+  cat > /etc/systemd/system/backup-anexos.timer <<UNIDADE
+[Unit]
+Description=Backup dos anexos, uma vez por semana
+
+[Timer]
+OnCalendar=${HORA_ANEXOS:-Sun 04:30}:00
+RandomizedDelaySec=900
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+UNIDADE
+  systemctl daemon-reload
+  systemctl enable --now backup-anexos.timer
+  systemctl list-timers backup-anexos.timer --no-pager | sed 's/^/  /'
   exit 0
 fi
 
