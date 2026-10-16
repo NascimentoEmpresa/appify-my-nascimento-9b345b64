@@ -99,9 +99,21 @@ C -c "select coalesce(string_agg(jobname||' ('||schedule||')', ', '), '(nenhum)'
   | sed 's/^/   /'
 
 if [ "$ACAO" = "--conferir" ]; then
+  CLUS=$(C -At -c "select count(*) from cron.job" 2>/dev/null || echo 0)
+  LIGADOS=$(C -At -c "select count(*) from cron.job where active" 2>/dev/null || echo 0)
   echo
-  echo "   Para criar as que faltam (desligadas):"
-  echo "      bash infra/ha/cron-no-cluster.sh --aplicar"
+  printf '   producao %s jobs   cluster %s jobs, %s ligado(s)\n' "$QTD" "$CLUS" "$LIGADOS"
+  if [ "$CLUS" != "$QTD" ]; then
+    echo "   FALTAM no cluster. Criar (desligadas):"
+    echo "      bash infra/ha/cron-no-cluster.sh --aplicar"
+    exit 1
+  elif [ "$LIGADOS" = "0" ]; then
+    echo "   Agenda completa e PARADA -- o estado certo antes da virada."
+    echo "   Na noite da virada, depois de apontar o worker:"
+    echo "      bash infra/ha/cron-no-cluster.sh --ligar"
+  else
+    echo "   Agenda completa e RODANDO ($LIGADOS de $QTD)."
+  fi
   exit 0
 fi
 
