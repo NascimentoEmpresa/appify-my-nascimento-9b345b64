@@ -91,7 +91,15 @@ export default function QuadroAvisos() {
    * janela do gate, que mora fora do Dialog.
    */
   const [prevendo, setPrevendo] = useState(false);
+  /** As regras e respostas do aviso (o Dialog de quem publica). */
   const [vendo, setVendo] = useState<Notificacao | null>(null);
+  /**
+   * O aviso aberto como o colaborador vê (16/10/2026). Era um Dialog estreito
+   * com a imagem miúda e sem animação — "tem que aparecer exatamente como vai
+   * aparecer quando for publicado". Agora é a JanelaAviso, a mesma do gate e
+   * do Pré-visualizar; regras e respostas ficam num bloco à parte.
+   */
+  const [olhando, setOlhando] = useState<Notificacao | null>(null);
   const [apagando, setApagando] = useState<Notificacao | null>(null);
   const [subindo, setSubindo] = useState(false);
   // URL de imagem digitada (entra na lista com Enter) — 21/09/2026.
@@ -229,8 +237,14 @@ export default function QuadroAvisos() {
 
   /** Abrir um aviso sempre começa com o painel de respostas fechado. */
   const abrirVisualizar = (n: Notificacao) => {
+    setOlhando(n);
+  };
+
+  /** Das regras e respostas — o painel de respostas sempre começa fechado. */
+  const abrirRespostas = (n: Notificacao) => {
     setVerDetalhes(false);
     setFiltroEscolha("todas");
+    setOlhando(null);
     setVendo(n);
   };
 
@@ -729,7 +743,7 @@ export default function QuadroAvisos() {
                   ))}
                 </div>
                 <p className="mt-1 text-xs text-muted-foreground">
-                  Para avisos de comemoração. Quem desligou animações no sistema operacional não vê.
+                  Para avisos de comemoração. Toca ao abrir o aviso (e no Pré-visualizar); quem desligou as animações do sistema vê uma versão curta e calma.
                 </p>
               </div>
 
@@ -904,7 +918,28 @@ export default function QuadroAvisos() {
         />
       )}
 
-      {/* ── Visualizar ─────────────────────────────────────────────── */}
+      {/* ── Visualizar: a mesma janela do colaborador ───────────────── */}
+      {olhando && (
+        <JanelaAviso
+          aviso={olhando}
+          onEscolher={() => toast.info("Visualização: a resposta não é gravada.")}
+          onAdiar={() => setOlhando(null)}
+          previa={{
+            aoFechar: () => setOlhando(null),
+            texto: "Visualizando — é assim que o colaborador vê. Nada é gravado.",
+            rotuloFechar: "Fechar",
+            comentariosAoVivo: true,
+            acoes: (
+              <Button size="sm" variant="outline" className="h-7 rounded-full border-white/40 bg-transparent text-primary-foreground hover:bg-white/10"
+                      onClick={() => abrirRespostas(olhando)}>
+                Regras e respostas
+              </Button>
+            ),
+          }}
+        />
+      )}
+
+      {/* ── Regras e respostas ─────────────────────────────────────── */}
       <Dialog open={!!vendo} onOpenChange={(o) => !o && setVendo(null)}>
         <DialogContent className="max-h-[90vh] max-w-2xl overflow-y-auto">
           <DialogHeader>
@@ -917,8 +952,8 @@ export default function QuadroAvisos() {
 
           {vendo && (
             <div className="space-y-4">
-              <ConteudoAviso aviso={vendo} prioridade />
-              <ComentariosAviso aviso={vendo} />
+              {/* O aviso em si abre na JanelaAviso ("Ver o aviso", no rodapé):
+                  aqui só o que interessa a quem publica. */}
 
               <div className="rounded-lg border p-3 text-sm">
                 <div className="mb-2 font-semibold">Regras aplicadas</div>
@@ -1051,6 +1086,11 @@ export default function QuadroAvisos() {
           )}
 
           <DialogFooter>
+            {vendo && (
+              <Button variant="outline" onClick={() => { const n = vendo; setVendo(null); setOlhando(n); }}>
+                <Eye className="mr-2 h-4 w-4" /> Ver o aviso
+              </Button>
+            )}
             <Button variant="outline" onClick={() => setVendo(null)}>Fechar</Button>
           </DialogFooter>
         </DialogContent>

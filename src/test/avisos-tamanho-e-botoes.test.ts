@@ -128,7 +128,7 @@ describe("posição da imagem", () => {
   it("a coluna da imagem tem a largura da proporção da imagem, com limites", () => {
     const h = alturaImagemLado("");
     expect(larguraColunaImagem(h, null)).toBe("45%");
-    expect(larguraColunaImagem(h, 1)).toBe(`clamp(15rem, calc(${h} * 1.0000 + 2rem), 58%)`);
+    expect(larguraColunaImagem(h, 1)).toBe(`clamp(15rem, calc(${h} * 1.0000 + 1.5rem), 58%)`);
     expect(larguraColunaImagem(h, 0.8)).toContain("* 0.8000");
     expect(larguraColunaImagem(h, Infinity)).toBe("45%");
   });

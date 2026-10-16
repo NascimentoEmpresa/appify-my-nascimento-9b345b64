@@ -110,7 +110,8 @@ export function alturaImagemLado(t: TamanhoImagem, previa = false): string {
 /** Largura da coluna da imagem: a proporção da imagem, entre 15rem e 58% da janela. */
 export function larguraColunaImagem(altura: string, proporcao: number | null | undefined): string {
   if (!proporcao || !isFinite(proporcao) || proporcao <= 0) return "45%";
-  return `clamp(15rem, calc(${altura} * ${proporcao.toFixed(4)} + 2rem), 58%)`;
+  // + 1.5rem = o respiro (p-3) dos dois lados da imagem.
+  return `clamp(15rem, calc(${altura} * ${proporcao.toFixed(4)} + 1.5rem), 58%)`;
 }
 
 /**

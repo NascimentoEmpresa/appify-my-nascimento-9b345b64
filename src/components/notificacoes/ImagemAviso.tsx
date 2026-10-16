@@ -25,6 +25,7 @@ export function ImagemAviso({
   prioridade = false,
   encaixe = "caixa",
   aoCarregar,
+  classeImagem,
 }: {
   url: string;
   nome?: string | null;
@@ -39,6 +40,11 @@ export function ImagemAviso({
   encaixe?: "caixa" | "natural";
   /** Largura ÷ altura do arquivo, quando ele chega — quem chama ajusta a coluna. */
   aoCarregar?: (proporcao: number) => void;
+  /**
+   * No encaixe "natural": os limites da imagem (ex.: max-h pela tela). A caixa
+   * fica do tamanho da imagem — sem altura fixa sobrando em cima e embaixo.
+   */
+  classeImagem?: string;
 }) {
   const [estado, setEstado] = useState<"carregando" | "pronta" | "falhou">("carregando");
 
@@ -68,7 +74,7 @@ export function ImagemAviso({
 
   if (encaixe === "natural") {
     return (
-      <div className={cn("relative flex items-center justify-center", className)}>
+      <div className={cn("relative flex items-center justify-center", estado === "carregando" && "min-h-40", className)}>
         {estado === "carregando" && (
           <div className="absolute inset-0 flex items-center justify-center gap-2 text-xs text-white/80">
             <Loader2 className="h-4 w-4 animate-spin" /> Abrindo imagem…
@@ -86,7 +92,8 @@ export function ImagemAviso({
           }}
           onError={() => setEstado("falhou")}
           className={cn(
-            "block h-auto max-h-full w-auto max-w-full rounded-xl shadow-xl ring-1 ring-black/10 transition-opacity duration-200",
+            "block h-auto w-auto max-w-full rounded-xl shadow-xl ring-1 ring-black/10 transition-opacity duration-200",
+            classeImagem ?? "max-h-full",
             estado === "pronta" ? "opacity-100" : "opacity-0",
           )}
         />

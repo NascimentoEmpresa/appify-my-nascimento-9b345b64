@@ -173,12 +173,12 @@ export function PainelImagemAviso({ aviso, altura, prioridade = false, ajustarLa
       {/* O fundo: a própria imagem, desfocada e escurecida. */}
       <img src={atual.url} alt="" aria-hidden="true"
            className="absolute inset-0 -z-10 h-full w-full scale-125 object-cover opacity-80 blur-2xl brightness-[0.45] saturate-150" />
-      <div className="flex h-full flex-col items-center justify-center gap-2 p-4">
+      <div className="flex h-full flex-col items-center justify-center gap-2 p-3">
         <div className="relative w-full">
           {/* key: trocar de slide reinicia o carregamento e a medida. */}
           <ImagemAviso key={atual.url} url={atual.url} nome={atual.nome} prioridade={prioridade} encaixe="natural"
                        aoCarregar={(r) => setProporcoes((m) => (m[atual.url] === r ? m : { ...m, [atual.url]: r }))}
-                       className="h-[38dvh] w-full sm:h-[var(--altura-imagem)]" />
+                       className="w-full" classeImagem="max-h-[38dvh] sm:max-h-[var(--altura-imagem)]" />
           {lista.length > 1 && (
             <>
               <button type="button" aria-label="Imagem anterior"
