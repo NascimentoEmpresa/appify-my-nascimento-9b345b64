@@ -65,6 +65,8 @@ export interface NfEmissaoRow {
   concluida_em?: string | null;
   // null = linha importada da planilha legada (SIS-2026-0540), sem autor no app.
   created_by: string | null;
+  // SIS-2026-0658: 'sistema' | 'excel_antigo'. Ausente enquanto a migration 20261015000020 não foi aplicada.
+  origem?: "sistema" | "excel_antigo";
   // Lixeira do Relatório Geral: != null = NF na lixeira (fora de todos os totais).
   deleted_at: string | null;
   deleted_by: string | null;

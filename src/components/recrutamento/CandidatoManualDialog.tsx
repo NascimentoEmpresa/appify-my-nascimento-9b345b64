@@ -1,4 +1,4 @@
-import { useState, type CSSProperties, type ReactNode } from "react";
+import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
 import { supabase } from "@/integrations/supabase/client";
 
 // =====================================================================
@@ -18,6 +18,11 @@ import { supabase } from "@/integrations/supabase/client";
 //
 // Os campos são os mesmos que o portal pede; o currículo em arquivo é
 // opcional e vai para o mesmo bucket/pasta do portal (curriculos/vaga/<id>/cv).
+//
+// EDITAR (15/10/2026, pedido do Pablo): o mesmo formulário abre com `editarId`
+// para corrigir os dados de quem foi inserido à mão (o ✎ do card no kanban).
+// Grava por UPDATE na mesma linha; a etapa do processo não muda. Trocar o CPF
+// passa pelas mesmas checagens da inserção (repetido na vaga, lista negra).
 // =====================================================================
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -97,9 +102,11 @@ function Marca({ rotulo, valor, onChange }: { rotulo: string; valor: boolean; on
   );
 }
 
-export function CandidatoManualDialog({ vagaId, cargo, autor, onFechar, onSalvo }: {
+export function CandidatoManualDialog({ vagaId, cargo, autor, onFechar, onSalvo, editarId }: {
   vagaId: number; cargo?: string; autor: string;
   onFechar: () => void;
+  /** Editar um candidato manual já inserido (WA_CURRICULOS.id). */
+  editarId?: number;
   /** `noProcesso`: já entrou no kanban (ENTRADA) — o pai registra o histórico e recarrega. */
   onSalvo: (c: { id: number; nome: string; noProcesso: boolean }) => void;
 }) {
@@ -109,6 +116,35 @@ export function CandidatoManualDialog({ vagaId, cargo, autor, onFechar, onSalvo 
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
   const set = <K extends keyof Form>(k: K, v: Form[K]) => setF(x => ({ ...x, [k]: v }));
+  const editando = editarId != null;
+  const [carregando, setCarregando] = useState(editando);
+  const [cpfOriginal, setCpfOriginal] = useState("");
+  const [arquivoAtual, setArquivoAtual] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!editando) return;
+    let vivo = true;
+    (async () => {
+      const { data, error } = await sb.from("WA_CURRICULOS").select("*").eq("id", editarId).maybeSingle();
+      if (!vivo) return;
+      if (error || !data) { setErro(error?.message ?? "Candidato não encontrado."); setCarregando(false); return; }
+      const t = (v: unknown) => (v == null ? "" : String(v));
+      const cpf = mascaraCpf(t(data.cpf ?? data.cpf_cand));
+      setCpfOriginal(digitos(cpf));
+      setArquivoAtual(data.storage_path ?? null);
+      setF({
+        nome: t(data.nome), cpf, telefone: mascaraFone(t(data.telefone)), email: t(data.email), data_nascimento: t(data.data_nascimento).slice(0, 10),
+        rg: t(data.rg), pis: t(data.pis), sexo: t(data.sexo), nome_mae: t(data.nome_mae), nome_pai: t(data.nome_pai),
+        escolaridade: t(data.escolaridade), estrangeiro: !!data.estrangeiro, cidade_residencia: t(data.cidade_residencia),
+        estado_desejado: t(data.estado_desejado), cidade_desejada: t(data.cidade_desejada), cargos_interesse: t(data.cargos_interesse),
+        disponibilidade_horarios: t(data.disponibilidade_horarios), disp_fim_semana: !!data.disp_fim_semana, possui_cnh: !!data.possui_cnh,
+        experiencia_previa: !!data.experiencia_previa, experiencia_1: t(data.experiencia_1), experiencia_2: t(data.experiencia_2),
+        experiencia_3: t(data.experiencia_3), mensagem: t(data.mensagem),
+      });
+      setCarregando(false);
+    })();
+    return () => { vivo = false; };
+  }, [editando, editarId]);
 
   const cpfOk = cpfValido(f.cpf);
 
@@ -123,11 +159,11 @@ export function CandidatoManualDialog({ vagaId, cargo, autor, onFechar, onSalvo 
       // Mesmo CPF já nesta vaga (portal ou manual): não duplica.
       const { data: naVaga, error: e0 } = await sb.from("WA_CURRICULOS").select("id, nome, cpf, cpf_cand").eq("vaga_id", vagaId);
       if (e0) throw e0;
-      const repetido = (naVaga ?? []).find((c: { cpf?: string; cpf_cand?: string }) => digitos(c.cpf ?? c.cpf_cand ?? "") === cpfDig);
+      const repetido = (naVaga ?? []).find((c: { id: number; cpf?: string; cpf_cand?: string }) => c.id !== editarId && digitos(c.cpf ?? c.cpf_cand ?? "") === cpfDig);
       if (repetido) { setErro(`Esse CPF já tem candidatura nesta vaga (${repetido.nome || "#" + repetido.id}). Use "Selecionar dos currículos".`); return; }
 
       // Lista negra do Jurídico: avisa, mas quem decide é o recrutador (igual ao "Selecionar candidato").
-      const { data: bl } = await sb.from("RECRUTAMENTO_CPF_BLACKLIST").select("motivo").eq("cpf_digits", cpfDig).maybeSingle();
+      const { data: bl } = cpfDig === cpfOriginal ? { data: null } : await sb.from("RECRUTAMENTO_CPF_BLACKLIST").select("motivo").eq("cpf_digits", cpfDig).maybeSingle();
       if (bl && !window.confirm(`Atenção: este CPF tem restrição do Jurídico.\nMotivo: ${bl.motivo || "não informado"}\n\nInserir mesmo assim?`)) return;
 
       let storage_path: string | null = null;
@@ -142,8 +178,7 @@ export function CandidatoManualDialog({ vagaId, cargo, autor, onFechar, onSalvo 
       const txt = (s: string) => s.trim() || null;
       const agora = new Date().toISOString();
       const cpf = mascaraCpf(cpfDig);
-      const { data, error } = await sb.from("WA_CURRICULOS").insert({
-        vaga_id: vagaId, origem: "Manual", tipo_candidatura: "vaga",
+      const dados = {
         nome: nome.toUpperCase(), cpf, cpf_cand: cpf,
         telefone: txt(f.telefone), email: txt(f.email.toLowerCase()), data_nascimento: f.data_nascimento || null,
         rg: txt(f.rg), pis: txt(f.pis), sexo: f.sexo || null, nome_mae: txt(f.nome_mae), nome_pai: txt(f.nome_pai),
@@ -152,14 +187,19 @@ export function CandidatoManualDialog({ vagaId, cargo, autor, onFechar, onSalvo 
         cargos_interesse: txt(f.cargos_interesse) ?? (cargo || null), disponibilidade_horarios: txt(f.disponibilidade_horarios),
         disp_fim_semana: f.disp_fim_semana, possui_cnh: f.possui_cnh, experiencia_previa: f.experiencia_previa,
         experiencia_1: txt(f.experiencia_1), experiencia_2: txt(f.experiencia_2), experiencia_3: txt(f.experiencia_3),
-        mensagem: txt(f.mensagem), storage_path,
-        ...(noProcesso ? { etapa_processo: "ENTRADA", etapa_changed_at: agora, selecionado_por: autor, selecionado_em: agora } : {}),
-      }).select("id, nome").single();
+        mensagem: txt(f.mensagem),
+      };
+      const { data, error } = editando
+        ? await sb.from("WA_CURRICULOS").update({ ...dados, ...(storage_path ? { storage_path } : {}) }).eq("id", editarId).select("id, nome").single()
+        : await sb.from("WA_CURRICULOS").insert({
+            vaga_id: vagaId, origem: "Manual", tipo_candidatura: "vaga", ...dados, storage_path,
+            ...(noProcesso ? { etapa_processo: "ENTRADA", etapa_changed_at: agora, selecionado_por: autor, selecionado_em: agora } : {}),
+          }).select("id, nome").single();
       if (error) {
         if (storage_path) await supabase.storage.from("curriculos").remove([storage_path]);
         throw error;
       }
-      onSalvo({ id: data.id, nome: data.nome ?? nome, noProcesso });
+      onSalvo({ id: data.id, nome: data.nome ?? nome, noProcesso: editando ? true : noProcesso });
     } catch (e) {
       setErro((e as Error).message || "Não deu para salvar o candidato.");
     } finally {
@@ -172,7 +212,7 @@ export function CandidatoManualDialog({ vagaId, cargo, autor, onFechar, onSalvo 
       <div className="rec-modal" style={{ maxWidth: 860, width: "calc(100vw - 32px)", maxHeight: "92vh", display: "flex", flexDirection: "column", padding: 0, overflow: "hidden" }}>
         <div style={{ padding: "16px 22px", borderBottom: "1px solid #e2e8f0", background: "#f8fafc", borderRadius: "inherit", borderBottomLeftRadius: 0, borderBottomRightRadius: 0, position: "relative" }}>
           <button onClick={onFechar} disabled={salvando} style={{ position: "absolute", top: 12, right: 14, background: "none", border: "none", color: "#94a3b8", fontSize: 20, cursor: "pointer" }}>✕</button>
-          <div style={{ fontSize: 17, fontWeight: 800, color: "#0f172a" }}>Inserir candidato manualmente</div>
+          <div style={{ fontSize: 17, fontWeight: 800, color: "#0f172a" }}>{editando ? "Editar candidato" : "Inserir candidato manualmente"}</div>
           <div style={{ fontSize: 12, color: "#64748b", marginTop: 2 }}>
             {cargo ? <>{cargo} · #{vagaId} — </> : null}Só <b>nome completo</b> e <b>CPF</b> são obrigatórios; o resto pode ser completado depois.
           </div>
@@ -228,7 +268,7 @@ export function CandidatoManualDialog({ vagaId, cargo, autor, onFechar, onSalvo 
           <Campo rotulo="Experiência 3" span={4}><input style={inp} value={f.experiencia_3} onChange={e => set("experiencia_3", e.target.value)} /></Campo>
 
           <Secao titulo="Currículo e observações" />
-          <Campo rotulo="Arquivo do currículo (PDF ou imagem, opcional)" span={2}>
+          <Campo rotulo={editando && arquivoAtual ? "Trocar o arquivo do currículo (já tem um)" : "Arquivo do currículo (PDF ou imagem, opcional)"} span={2}>
             <input type="file" accept=".pdf,image/*" onChange={e => setArquivo(e.target.files?.[0] ?? null)} style={{ fontSize: 12 }} />
           </Campo>
           <Campo rotulo="Observações" span={4}>
@@ -238,16 +278,17 @@ export function CandidatoManualDialog({ vagaId, cargo, autor, onFechar, onSalvo 
         </div>
 
         <div style={{ padding: "12px 22px", borderTop: "1px solid #e2e8f0", display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-          <label style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 12.5, fontWeight: 600, color: "#0f172a", cursor: "pointer" }}>
+          {editando && carregando && <span style={{ fontSize: 12.5, color: "#64748b" }}>Carregando os dados…</span>}
+          {!editando && <label style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 12.5, fontWeight: 600, color: "#0f172a", cursor: "pointer" }}>
             <input type="checkbox" checked={noProcesso} onChange={e => setNoProcesso(e.target.checked)} style={{ width: 15, height: 15, accentColor: "#16a34a" }} />
             Já colocar no processo seletivo (Triagem)
-          </label>
+          </label>}
           {erro && <div style={{ flexBasis: "100%", order: -1, fontSize: 12, color: "#b91c1c", background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 8, padding: "7px 10px" }}>{erro}</div>}
           <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
             <button onClick={onFechar} disabled={salvando} style={{ height: 34, padding: "0 14px", borderRadius: 8, border: "1px solid #e2e8f0", background: "#fff", color: "#475569", fontSize: 12.5, fontWeight: 700, cursor: "pointer" }}>Cancelar</button>
-            <button onClick={salvar} disabled={salvando || !f.nome.trim() || !cpfOk}
+            <button onClick={salvar} disabled={salvando || carregando || !f.nome.trim() || !cpfOk}
                     style={{ height: 34, padding: "0 16px", borderRadius: 8, border: "none", background: salvando || !f.nome.trim() || !cpfOk ? "#94a3b8" : "#16a34a", color: "#fff", fontSize: 12.5, fontWeight: 700, cursor: salvando ? "wait" : "pointer" }}>
-              {salvando ? "Salvando…" : "Inserir candidato"}
+              {salvando ? "Salvando…" : editando ? "Salvar alterações" : "Inserir candidato"}
             </button>
           </div>
         </div>
