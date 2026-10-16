@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo, useRef, useCallback, type MouseEvent as R
 import {
   Activity, AlertTriangle, Ban, Building2, CalendarDays, Check, CheckCircle2, ChevronLeft, ChevronRight, ClipboardList, Clock, Copy, Eye, FileSpreadsheet, FileText,
   FolderOpen, GraduationCap, History, IdCard, Landmark, Link2, LogOut, Mail, MapPin, MessageSquare, Paperclip,
-  Pencil, Phone, Search, Settings, Tags, Target, Trash2, UserCheck, UserSearch, Users, X, XCircle, Zap, type LucideIcon,
+  Pencil, Phone, Scale, Search, Settings, Tags, Target, Trash2, UserCheck, UserSearch, Users, X, XCircle, Zap, type LucideIcon,
 } from "lucide-react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
@@ -24,6 +24,7 @@ import {
   ETIQUETAS_RECRUTAMENTO, alternarEtiqueta, corDaEtiqueta, etiquetasValidas,
 } from "@/lib/recrutamento/etiquetas";
 import { AvisoProcessos, processosDe, useProcessosDosCandidatos } from "@/components/recrutamento/AvisoProcessos";
+import { ParecerJuridicoDialog } from "@/components/recrutamento/ParecerJuridicoDialog";
 import { FichaAso } from "@/components/recrutamento/FichaAso";
 import { CandidatoManualDialog } from "@/components/recrutamento/CandidatoManualDialog";
 import { StatusSolicitacao } from "@/components/recrutamento/StatusSolicitacao";
@@ -124,6 +125,9 @@ interface Curriculo {
   juridico_nivel?: string | null;
   /** Seguiu sem o parecer do Jurídico (mig 20261014000016). */
   juridico_pulado?: boolean | null;
+  /** Quem deu o parecer e quando — na janela "Ver parecer do Jurídico" (16/10/2026). */
+  juridico_por?: string | null;
+  juridico_em?: string | null;
   // SST e Compras correm em PARALELO: os dois precisam estar true para o
   // candidato seguir sozinho para a Admissão.
   sst_ok?: boolean | null;
@@ -637,6 +641,8 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
   const [showCandManual, setShowCandManual] = useState(false);
   // Editar quem foi inserido à mão (15/10/2026): o ✎ do card abre o mesmo formulário.
   const [editarCandId, setEditarCandId] = useState<number | null>(null);
+  // "Ver parecer do Jurídico" (16/10/2026): o candidato cuja janela está aberta.
+  const [parecerCandId, setParecerCandId] = useState<number | null>(null);
   const [showCurriculos, setShowCurriculos] = useState(false);
   const [empCpf, setEmpCpf]                 = useState<Record<string, EmpCadastro[]>>({});   // CPF dígitos → cadastros EMPREGADOS
   const [blacklist, setBlacklist]           = useState<Record<string, { motivo: string; criado_em?: string }>>({});
@@ -2861,6 +2867,13 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
                                 {c.juridico_obs && <div style={{ fontWeight: 600, color: "#475569", marginTop: 1, overflow: "hidden", textOverflow: "ellipsis", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>{c.juridico_obs}</div>}
                               </div>
                             )}
+                            {/* Ver parecer do Jurídico (16/10/2026): tudo o que o Jurídico deixou, sem corte. */}
+                            {(selo || processosDe(processosCand, c).length > 0) && (
+                              <button onClick={() => setParecerCandId(c.id)} title="Ver o parecer completo do Jurídico: nível, observação, quem deu e quando, e processos"
+                                style={{ ...bSkip, marginTop: 4, padding: "4px 8px", fontSize: 10.5, color: "#6d28d9", borderColor: "#ddd6fe", background: "#faf5ff", display: "flex", alignItems: "center", justifyContent: "center", gap: 4 }}>
+                                <Scale size={11} aria-hidden />Ver parecer do Jurídico
+                              </button>
+                            )}
                             {c.sst_ok === true && <div style={{ fontSize: 9.5, color: "#15803d", marginTop: 3, fontWeight: 700 }}>✓ SST aprovou</div>}
                             {c.sst_ok === false && <div style={{ fontSize: 9.5, color: "#b91c1c", marginTop: 3, fontWeight: 700 }}><Ic i={Ban} />Reprovado no SST</div>}
                             {c.compras_ok === true && <div style={{ fontSize: 9.5, color: "#15803d", marginTop: 3, fontWeight: 700 }}>✓ Compras aprovou</div>}
@@ -4166,6 +4179,11 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
       )}
 
       {/* ── Editar candidato inserido manualmente ── */}
+      {/* Ver parecer do Jurídico (16/10/2026). */}
+      {parecerCandId != null && (() => {
+        const cand = candidatos.find(x => x.id === parecerCandId);
+        return cand ? <ParecerJuridicoDialog candidato={cand} processos={processosDe(processosCand, cand)} onClose={() => setParecerCandId(null)} /> : null;
+      })()}
       {editarCandId != null && drawerId && (
         <CandidatoManualDialog
           vagaId={drawerId} cargo={drawerSol?.cargo} autor={user?.user_metadata?.nome ?? user?.email ?? ""} editarId={editarCandId}
