@@ -387,6 +387,8 @@ const financeiroModule: ModuleDef = {
         { label: "Emissão de NF", to: "/app/financeiro/emissao-nf/cadastro", icon: FileText },
         { label: "Validação de Notas", to: "/app/financeiro/emissao-nf/controle-notas", icon: ClipboardCheck },
         { label: "Relatório de Serviços", to: "/app/financeiro/relatorio-servicos", icon: TableProperties },
+        // SIS-2026-0658: Sistema × Excel antigo, só leitura
+        { label: "Conciliação da Origem (Serviços)", to: "/app/financeiro/relatorio-servicos/conciliacao-origem", icon: GitMerge },
         { label: "Cobranças", to: "/app/cobrancas", icon: Bell },
       ],
     },
@@ -432,6 +434,8 @@ const financeiroModule: ModuleDef = {
         // usuário, "vou concentrando tudo ali") — a nova puxa o lado "Fluxo"
         // direto do Fluxo de Caixa interno; a antiga continua manual/planilha.
         { label: "Conciliação Bancária", to: "/app/financeiro/gestao-financeira/conciliacao-fluxo-caixa", icon: GitMerge },
+        // SIS-2026-0658: Sistema × Excel antigo, só leitura
+        { label: "Conciliação da Origem (Fluxo)", to: "/app/financeiro/gestao-financeira/conciliacao-origem-fluxo-caixa", icon: GitMerge },
         { label: "Conciliação Bancária (Planilha Manual)", to: "/app/financeiro/conciliacao-bancaria", icon: GitMerge },
         // SIS-2026-0304: Checklist de Faturamento (e a futura Solicitação
         // de Ajuste, SIS-2026-0305) ficam aqui em "Ferramentas" — decisão
