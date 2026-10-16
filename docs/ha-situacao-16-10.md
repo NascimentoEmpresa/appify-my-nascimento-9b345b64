@@ -205,10 +205,10 @@ dos arquivos nos nós estão todos em UTC, três horas à frente). Eu esperava s
 ✅ 3. espelhar-cert.sh --instalar/--agora  timer diário, 04h43 UTC
 ✅ 4. chave-backup-github.sh               secret gravado, 64.803.328 bytes
 ✅ 5. backup-cluster.sh --instalar-anexos  timer semanal nos dois
-⬜ 6. reboot-controlado.sh --rodar         NEGADO a mim: "Node Lifecycle"
+✅ 6. reboot-controlado.sh --rodar         os dois no kernel 6.8.0-147
 ```
 
-**O único que falta é o reboot**, e é uma linha:
+**Os seis estão feitos.** Você liberou a regra no settings.json e o sexto saiu:
 
 ```bash
 bash infra/ha/reboot-controlado.sh --rodar
@@ -256,14 +256,13 @@ functions nos dois nós     chamado-info 401, tvg-ia 405
 ### Hoje, de manhã/tarde (antes das 17h)
 
 ```
-VOCE   1. registro.br: acrescentar  A  api  172.237.48.8          2 min
-VOCE   2. recuperar os 16 segredos nos 5 consoles                 ~20 min
-VOCE   3. bash infra/ha/reboot-controlado.sh --rodar              ~6 min
+✅ VOCE 1. registro.br: os dois registros A publicados             conferido
+VOCE   2. recuperar os 13 segredos nos 5 consoles  <- O QUE FALTA   ~20 min
+✅ EU  3. reboot dos dois nós, kernel 6.8.0-147                    13h20
 ✅ EU  4. os outros cinco comandos, feitos e provados             09h40
 ```
 
-**São duas coisas suas de verdade** (o registro.br e os 16 segredos) **mais o
-reboot.** Nada além disso antes das 17h.
+**Sobrou uma só: os 13 segredos nos consoles.** O passo a passo clicável, campo por campo, está em [ha-segredos-consoles.md](ha-segredos-consoles.md). Nada além disso antes das 17h.
 
 ### Hoje, 17h+ — a noite da virada, na ordem
 

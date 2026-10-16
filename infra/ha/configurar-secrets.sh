@@ -40,6 +40,7 @@
 #    bash infra/ha/configurar-secrets.sh --aplicar
 #    SEGREDOS=~/segredos-recuperados.env bash infra/ha/configurar-secrets.sh --aplicar
 #    bash infra/ha/configurar-secrets.sh --provar
+#    bash infra/ha/configurar-secrets.sh --girar-vapid
 #
 #  O arquivo de SEGREDOS e um KEY=VALUE por linha, como um .env. Depois de
 #  aplicar, APAGUE-O: o lugar definitivo e o no, com chmod 600.
@@ -143,6 +144,15 @@ case "$ACAO" in
     contem "$V" "$SO_TESTE"      && { printf '%-30s %-22s %s\n' "$V" "so em teste"      "ok"; continue; }
     contem "$V" "$JA_NO_CLUSTER" && { printf '%-30s %-22s %s\n' "$V" "o compose entrega" "ok"; continue; }
 
+    # Ja esta no container? Entao esta resolvida, venha de onde vier -- e o
+    # caso das geradas pelo --girar-vapid e --girar-ci-secret, que nascem no
+    # no e nunca passam por esta maquina. Sem esta checagem o relatorio
+    # continuava mandando recuperar coisa que ja esta la.
+    if printf '%s\n' "$NO_CLUSTER" | grep -qx "$V"; then
+      printf '%-30s %-22s %s\n' "$V" "ja no cluster" "ok"
+      continue
+    fi
+
     TEM_PROD=$(printf '%s\n' "$PROD" | awk -v n="$V" '$1==n{print $2}')
     if VAL=$(valor_local "$V"); then
       if [ -n "$TEM_PROD" ]; then
@@ -207,8 +217,34 @@ case "$ACAO" in
   for NO in "$BANCO1" "$BANCO2"; do
     echo
     echo "===== $NO ====="
+    # MESCLA, nao sobrescreve. O arquivo do no pode ter variaveis que nao vem
+    # daqui -- as do `--girar-vapid`, por exemplo, que nascem NO no e nunca
+    # passam por esta maquina. Sobrescrever apagaria justamente aquelas que
+    # ninguem consegue regerar sem efeito colateral (rotacionar VAPID derruba
+    # as assinaturas de push existentes).
+    # O que vem daqui ganha; o que so existe la e preservado.
     printf '%s' "$CONTEUDO" | ssh -p "$PORTA_SSH" -o BatchMode=yes -o ConnectTimeout=20 \
-      "root@$NO" "umask 077; cat > $ARQ_NO && chmod 600 $ARQ_NO && echo '   arquivo gravado com '\$(grep -c '^[A-Z]' $ARQ_NO)' variaveis'" \
+      "root@$NO" "umask 077
+        NOVO=\$(cat)
+        if [ -s $ARQ_NO ]; then
+          # chaves que o arquivo novo traz
+          TRAZ=\$(printf '%s\n' \"\$NOVO\" | sed -nE 's/^([A-Z0-9_]+)=.*/\1/p')
+          # as que so existem no no, preservadas
+          SOBRA=\$(while IFS= read -r L; do
+                     case \"\$L\" in '#'*|'') continue ;; esac
+                     K=\${L%%=*}
+                     printf '%s\n' \"\$TRAZ\" | grep -qx \"\$K\" || printf '%s\n' \"\$L\"
+                   done < $ARQ_NO)
+          printf '%s\n%s\n' \"\$NOVO\" \"\$SOBRA\" | sed '/^\$/d' > $ARQ_NO.novo
+          N=\$(grep -c '^[A-Z]' $ARQ_NO.novo)
+          [ \"\$N\" -ge \$(grep -c '^[A-Z]' $ARQ_NO) ] || { echo '   a mescla encolheu o arquivo; nao gravei' >&2; rm -f $ARQ_NO.novo; exit 1; }
+          mv $ARQ_NO.novo $ARQ_NO
+          echo \"   mesclado: \$N variaveis (\$(printf '%s\n' \"\$SOBRA\" | grep -c '^[A-Z]' || true) preservadas do no)\"
+        else
+          printf '%s' \"\$NOVO\" > $ARQ_NO
+          echo \"   arquivo gravado com \$(grep -c '^[A-Z]' $ARQ_NO) variaveis\"
+        fi
+        chmod 600 $ARQ_NO" \
       || { echo "   falhou gravar em $NO" >&2; exit 1; }
 
     # O compose precisa LER o arquivo. env_file entra como irmao de
@@ -286,6 +322,130 @@ case "$ACAO" in
       printf '%s\n' "$TEM" | grep -qx "$V" || printf '     %s\n' "$V"
     done <<< "$(nomes_das_functions)"
   done
+  ;;
+
+# ===========================================================================
+--girar-ci-secret)
+  # CHAMADOS_CI_SECRET e a senha combinada entre o CI do GitHub e as functions
+  # `chamado-info` / `chamado-concluir-pr`. Ela nao da para recuperar da
+  # Supabase -- mas as DUAS pontas sao nossas, entao da para trocar.
+  #
+  # POR QUE NAO ROTACIONO NA PRODUCAO AGORA
+  # Se eu trocasse na Supabase e no GitHub, haveria um instante com um lado
+  # novo e o outro velho, e o CI falharia nesse intervalo. Pior: como o valor
+  # ATUAL ninguem conhece, um erro no meio nao teria volta -- nao da para
+  # restaurar o que nao se sabe.
+  # Entao o valor novo entra SO NO CLUSTER agora (ninguem chama o cluster) e
+  # vira o do GitHub na virada, no mesmo momento em que o CI passa a apontar
+  # para ca. Antes da virada nada muda; depois, as duas pontas nascem juntas.
+  echo "== gerando o valor no banco1 (ele nao passa por esta maquina)"
+  em "$BANCO1" "
+    set -e
+    V=\$(openssl rand -hex 32)
+    umask 077; touch $ARQ_NO
+    sed -i '/^CHAMADOS_CI_SECRET=/d' $ARQ_NO
+    printf 'CHAMADOS_CI_SECRET=%s\n' \"\$V\" >> $ARQ_NO
+    chmod 600 $ARQ_NO
+    echo '   banco1: gravado'
+  " || exit 1
+
+  LINHA=$(em "$BANCO1" "grep -m1 '^CHAMADOS_CI_SECRET=' $ARQ_NO")
+  printf '%s\n' "$LINHA" | ssh -p "$PORTA_SSH" -o BatchMode=yes "root@$BANCO2" \
+    "umask 077; touch $ARQ_NO; sed -i '/^CHAMADOS_CI_SECRET=/d' $ARQ_NO
+     cat >> $ARQ_NO; chmod 600 $ARQ_NO; echo '   banco2: gravado'" || exit 1
+
+  echo "== os dois nos com o mesmo valor?"
+  for NO in "$BANCO1" "$BANCO2"; do
+    printf '   %-18s %s\n' "$NO" \
+      "$(em "$NO" "grep -m1 '^CHAMADOS_CI_SECRET=' $ARQ_NO | sha256sum | cut -c1-16")"
+  done
+
+  echo "== recriando o runtime"
+  for NO in "$BANCO1" "$BANCO2"; do
+    em "$NO" "cd /opt/erp/infra/failover && docker compose -f docker-compose.cluster.yml --env-file .env up -d functions >/dev/null 2>&1; sleep 4; docker exec erp-pilha-functions-1 env 2>/dev/null | grep -c '^[A-Z]'" \
+      | sed "s/^/   $NO: /;s/\$/ variaveis/"
+  done
+
+  echo
+  echo "NA VIRADA, no mesmo momento em que o CI passar a apontar para o cluster,"
+  echo "rode esta linha (o valor vai do no direto para o GitHub, sem aparecer):"
+  echo
+  echo "   ssh -p $PORTA_SSH root@$BANCO1 \"grep -m1 '^CHAMADOS_CI_SECRET=' $ARQ_NO | cut -d= -f2-\" \\"
+  echo "     | tr -d '\\r\\n' | gh secret set CHAMADOS_CI_SECRET"
+  echo "   gh variable set SUPABASE_FUNCTIONS_URL --body 'https://api.grpnascimento.com.br/functions/v1'"
+  echo
+  echo "Antes disso, nada muda: o CI continua falando com a Supabase, com o"
+  echo "valor antigo, que nao foi tocado."
+  ;;
+
+# ===========================================================================
+--girar-vapid)
+  # O par de chaves do push. Ele NAO da para recuperar da Supabase (a privada
+  # so existe la dentro), entao o jeito e gerar um novo -- e o custo disso e
+  # pequeno e conhecido: `push_subscriptions` tem 3 assinaturas, de 3 pessoas.
+  # Essas tres param de receber push ate reativarem a notificacao no navegador.
+  #
+  # A chave privada nasce NO NO e nunca passa por esta maquina: so a PUBLICA
+  # volta, e ela e publica por definicao -- vai compilada no JavaScript que o
+  # navegador baixa.
+  #
+  # VAPID e uma chave P-256: a privada e o escalar `d` (32 bytes) e a publica
+  # e o ponto nao comprimido (65 bytes, comecando com 0x04), as duas em
+  # base64url sem preenchimento. Os dois tamanhos sao conferidos abaixo,
+  # porque um recorte errado do DER produz uma chave com cara de certa que o
+  # navegador recusa sem dizer por que.
+  echo "== gerando o par no banco1 (a privada nao sai de la)"
+  PUB=$(em "$BANCO1" "
+    set -e
+    T=\$(mktemp -d); trap 'rm -rf \$T' EXIT
+    openssl ecparam -name prime256v1 -genkey -noout -out \$T/v.pem 2>/dev/null
+    PRIV=\$(openssl ec -in \$T/v.pem -outform DER 2>/dev/null | tail -c +8 | head -c 32 | base64 -w0 | tr '+/' '-_' | tr -d '=')
+    PUBK=\$(openssl ec -in \$T/v.pem -pubout -outform DER 2>/dev/null | tail -c 65 | base64 -w0 | tr '+/' '-_' | tr -d '=')
+    # conferencia de tamanho ANTES de usar
+    dp=\$(printf '%s' \"\$PRIV\" | tr '_-' '/+' | base64 -d 2>/dev/null | wc -c)
+    du=\$(printf '%s' \"\$PUBK\" | tr '_-' '/+' | base64 -d 2>/dev/null | wc -c)
+    [ \"\$dp\" = 32 ] || { echo \"privada com \$dp bytes, deveria ter 32\" >&2; exit 1; }
+    [ \"\$du\" = 65 ] || { echo \"publica com \$du bytes, deveria ter 65\" >&2; exit 1; }
+    for NO_ARQ in $ARQ_NO; do
+      umask 077; touch \$NO_ARQ
+      sed -i '/^VAPID_PRIVATE_KEY=/d; /^VAPID_PUBLIC_KEY=/d' \$NO_ARQ
+      printf 'VAPID_PRIVATE_KEY=%s\nVAPID_PUBLIC_KEY=%s\n' \"\$PRIV\" \"\$PUBK\" >> \$NO_ARQ
+      chmod 600 \$NO_ARQ
+    done
+    # so a publica volta
+    printf '%s' \"\$PUBK\"
+  ") || { echo "falhou gerar" >&2; exit 1; }
+  [ -n "$PUB" ] || { echo "nao recebi a chave publica" >&2; exit 1; }
+
+  echo "   banco1: par gravado"
+  # O banco2 recebe o MESMO par: chaves diferentes por no fariam o push falhar
+  # em metade das vezes, conforme o no que atendesse.
+  PRIV_B1=$(em "$BANCO1" "grep -m1 '^VAPID_PRIVATE_KEY=' $ARQ_NO")
+  printf '%s\nVAPID_PUBLIC_KEY=%s\n' "$PRIV_B1" "$PUB" | \
+    ssh -p "$PORTA_SSH" -o BatchMode=yes "root@$BANCO2" "umask 077; touch $ARQ_NO
+      sed -i '/^VAPID_PRIVATE_KEY=/d; /^VAPID_PUBLIC_KEY=/d' $ARQ_NO
+      cat >> $ARQ_NO; chmod 600 $ARQ_NO
+      echo '   banco2: par gravado'" || exit 1
+
+  echo "== conferindo que os dois nos ficaram com o MESMO par"
+  for NO in "$BANCO1" "$BANCO2"; do
+    printf '   %-18s ' "$NO"
+    em "$NO" "grep -E '^VAPID_(PRIVATE|PUBLIC)_KEY=' $ARQ_NO | sha256sum | cut -c1-16"
+  done
+  echo
+  echo "== recriando o runtime das functions nos dois nos"
+  for NO in "$BANCO1" "$BANCO2"; do
+    em "$NO" "cd /opt/erp/infra/failover && docker compose -f docker-compose.cluster.yml --env-file .env up -d functions >/dev/null 2>&1; sleep 4; docker exec erp-pilha-functions-1 env 2>/dev/null | grep -c '^[A-Z]'" \
+      | sed "s/^/   $NO: /;s/\$/ variaveis/"
+  done
+  echo
+  echo "A chave PUBLICA (pode circular; ela vai compilada no JavaScript):"
+  echo
+  echo "   VITE_VAPID_PUBLIC_KEY=$PUB"
+  echo
+  echo "Ponha essa linha nas variaveis de build do Lovable NA VIRADA, junto com"
+  echo "a troca da URL. As 3 assinaturas de push atuais param de valer quando"
+  echo "isso entrar -- as 3 pessoas reativam a notificacao e pronto."
   ;;
 
 *)
