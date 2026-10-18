@@ -41,7 +41,7 @@ on:
       retencao_dias:
         description: 'Dias de retencao do artefato'
         default: '14'
-  schedule:
+  # schedule:   <- APOSENTADO na virada de 17/10/2026
     # 07, 10, 13, 16 e 20h de Brasilia (UTC-3). SO NO EXPEDIENTE, de proposito:
     # de madrugada ninguem mexe no sistema, e copiar as 3h da manha produziria
     # exatamente o mesmo conteudo das 20h - gastando leitura numa instancia
@@ -50,7 +50,12 @@ on:
     # A janela descoberta e das 20h as 7h: uma mudanca feita as 21h so e
     # copiada no dia seguinte. Aceitavel porque fora do expediente, e e o
     # motivo de o ultimo horario ser 20h e nao 19h.
-    - cron: '0 10,13,16,19,23 * * *'
+    # APOSENTADO 17/10/2026 (virada): este workflow fala com a SUPABASE, que
+    # deixou de ser a producao. O agendamento sai para nao vigiar banco parado
+    # nem gerar alerta que parece ser do cluster. O workflow_dispatch fica: a
+    # Supabase ainda existe ate ser desligada, e pode ser preciso um ultimo
+    # backup dela. O substituto e vigia_cluster.yml / backup_cluster.yml.
+    # - cron: '0 10,13,16,19,23 * * *'
 
 permissions:
   contents: read
