@@ -77,21 +77,10 @@ if [ "$ACAO" = "--enviar" ]; then
   # Nenhum segredo sai: so contadores.
   case "${SSH_ORIGINAL_COMMAND:-}" in
     *status*)
-      SUP=$(grep -m1 '^PG_SENHA_SUPER=' /opt/erp/infra/failover/.env | cut -d= -f2-)
-      Q() { PGPASSWORD="$SUP" psql -h 127.0.0.1 -p 5000 -U postgres -d postgres -At -c "$1" 2>/dev/null; }
-      echo "no=$(hostname)"
-      echo "carga=$(cut -d' ' -f1 /proc/loadavg)"
-      echo "cpus=$(nproc)"
-      free -m | awk '/Mem:/{print "ram_total="$2"\nram_disp="$7} /Swap:/{print "swap_total="$2"\nswap_uso="$3}'
-      df -BM / | awk 'NR==2{gsub("M","",$2); gsub("M","",$4); print "disco_total="$2"\ndisco_livre="$4}'
-      echo "pg_conexoes=$(Q 'select count(*) from pg_stat_activity')"
-      echo "pg_teto=$(Q "select current_setting('max_connections')")"
-      echo "pg_tamanho_mb=$(Q "select (pg_database_size('postgres')/1048576)::int")"
-      echo "papel=$(/opt/patroni/bin/patronictl -c /etc/patroni/patroni.yml list -f json 2>/dev/null | tr '{' '\n' | sed -nE "s/.*\"Member\": \"$(hostname)\".*\"Role\": \"([^\"]+)\".*/\1/p" | head -1)"
-      echo "membros_streaming=$(/opt/patroni/bin/patronictl -c /etc/patroni/patroni.yml list -f json 2>/dev/null | grep -o '"State": "streaming"' | wc -l)"
-      echo "backup_mais_novo_h=$(( ( $(date +%s) - $(stat -c %Y "$(ls -t "$DESTINO"/erp-cluster-*.tar.gz.gpg 2>/dev/null | head -1)" 2>/dev/null || echo 0) ) / 3600 ))"
-      echo "anexos=$(find "$(docker volume inspect erp-pilha_storage-arquivos --format '{{.Mountpoint}}' 2>/dev/null)/stub/stub" -type f 2>/dev/null | wc -l)"
-      exit 0 ;;
+      # Saiu daqui em 18/10: lia o .env como erpbackup, e o .env estava 644.
+      # Agora e um script proprio, root por sudo, e o .env e 600.
+      if [ "$(id -u)" = "0" ]; then exec /usr/local/sbin/estado-cluster.sh
+      else exec sudo -n /usr/local/sbin/estado-cluster.sh; fi ;;
   esac
   # "functions": o no PUXA o `main` do repositorio publico e atualiza as Edge
   # Functions. Fica aqui, e nao numa chave propria, porque a alternativa seria
@@ -100,7 +89,21 @@ if [ "$ACAO" = "--enviar" ]; then
   # O que entra e sempre o que passou pela portaria e pelo merge.
   case "${SSH_ORIGINAL_COMMAND:-}" in
     *functions*)
-      exec /usr/local/sbin/atualizar-functions.sh ;;
+      # `sudo -n` com UMA entrada em /etc/sudoers.d, para este script e mais
+      # nada. A chave do CI entra como `erpbackup`, que nao escreve em
+      # /opt/erp nem fala com o Docker -- e nem deve. Sem isto o CI falha com
+      # `detected dubious ownership in repository` (o git recusa repositorio
+      # de outro dono), que foi como o defeito apareceu em 18/10.
+      #
+      # O que esta permissao concede, dito sem rodeio: quem tiver a chave
+      # consegue fazer o no baixar o `main` do repositorio PUBLICO e
+      # reiniciar o runtime das functions. Nao consegue rodar outra coisa,
+      # nao abre shell, nao toca no banco.
+      if [ "$(id -u)" = "0" ]; then
+        exec /usr/local/sbin/atualizar-functions.sh
+      else
+        exec sudo -n /usr/local/sbin/atualizar-functions.sh
+      fi ;;
   esac
   case "${SSH_ORIGINAL_COMMAND:-}" in
     *anexos*) PREFIXO=anexos ;;

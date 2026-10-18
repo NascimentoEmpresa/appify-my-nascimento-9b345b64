@@ -27,10 +27,15 @@
 name: Vigia do banco
 
 on:
-  schedule:
+  # schedule:   <- APOSENTADO na virada de 17/10/2026
     # A cada 30 min. Poderia ser 15, mas 30 ja pega qualquer subida de memoria
     # com folga e corta o ruido pela metade.
-    - cron: '*/30 * * * *'
+    # APOSENTADO 17/10/2026 (virada): este workflow fala com a SUPABASE, que
+    # deixou de ser a producao. O agendamento sai para nao vigiar banco parado
+    # nem gerar alerta que parece ser do cluster. O workflow_dispatch fica: a
+    # Supabase ainda existe ate ser desligada, e pode ser preciso um ultimo
+    # backup dela. O substituto e vigia_cluster.yml / backup_cluster.yml.
+    # - cron: '*/30 * * * *'
   workflow_dispatch:
     inputs:
       testar_aviso:
