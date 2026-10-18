@@ -186,7 +186,30 @@ CARGA="$SAIDA/carga-auth-storage.sql"
   # replica: desliga os gatilhos protect_* e tambem a checagem de chave
   # estrangeira, o que torna a ORDEM das tabelas irrelevante.
   echo "SET LOCAL session_replication_role = replica;"
-  echo "TRUNCATE $LISTA CASCADE;"
+  # ── DELETE, NUNCA `TRUNCATE ... CASCADE` ────────────────────────────────
+  #
+  # O QUE O CASCADE FEZ AQUI, EM 17/10/2026, NA NOITE DA VIRADA
+  # Esta linha era `TRUNCATE $LISTA CASCADE;`. O CASCADE do TRUNCATE **nao
+  # para no schema**: ele desce por TODA chave estrangeira que aponte para as
+  # tabelas limpas. Como meio ERP referencia `auth.users` (quem criou, quem
+  # aprovou, quem assinou), o comando esvaziou **269 tabelas de `public`** --
+  # Suprimentos inteiro, os 65 vinculos de Discord, e as tres tabelas de
+  # perfil, que tiraram o administrador do Eduardo.
+  #
+  # E foi calado: TRUNCATE CASCADE nao reclama, e a conferencia deste script
+  # so olha `auth` e `storage`, onde tudo batia. O defeito apareceu pelo
+  # unico caminho que sobrou -- uma pessoa entrando no ERP e vendo menos
+  # menus do que devia.
+  #
+  # `DELETE` nao tem CASCADE. Com `session_replication_role = replica` as
+  # checagens de FK estao desligadas, entao apagar `auth.users` sem mexer em
+  # quem o referencia e exatamente o que queremos: as linhas de `public`
+  # ficam, e o dump logo abaixo repoe `auth` e `storage`.
+  #
+  # Mais lento que TRUNCATE? Sim, alguns segundos em 50 mil linhas. Barato.
+  for T in $(echo "$LISTA" | tr ',' ' '); do
+    echo "DELETE FROM $T;"
+  done
   echo "\\i $DUMP"
   echo "SELECT setval('auth.refresh_tokens_id_seq', GREATEST((select coalesce(max(id),1) from auth.refresh_tokens), 1), true);"
   echo "COMMIT;"
