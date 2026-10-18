@@ -93,6 +93,15 @@ if [ "$ACAO" = "--enviar" ]; then
       echo "anexos=$(find "$(docker volume inspect erp-pilha_storage-arquivos --format '{{.Mountpoint}}' 2>/dev/null)/stub/stub" -type f 2>/dev/null | wc -l)"
       exit 0 ;;
   esac
+  # "functions": o no PUXA o `main` do repositorio publico e atualiza as Edge
+  # Functions. Fica aqui, e nao numa chave propria, porque a alternativa seria
+  # guardar no GitHub uma chave com permissao de ESCRITA nos nos -- enquanto
+  # esta so consegue DISPARAR um script que baixa de um repositorio publico.
+  # O que entra e sempre o que passou pela portaria e pelo merge.
+  case "${SSH_ORIGINAL_COMMAND:-}" in
+    *functions*)
+      exec /usr/local/sbin/atualizar-functions.sh ;;
+  esac
   case "${SSH_ORIGINAL_COMMAND:-}" in
     *anexos*) PREFIXO=anexos ;;
     *)        PREFIXO=erp-cluster ;;
