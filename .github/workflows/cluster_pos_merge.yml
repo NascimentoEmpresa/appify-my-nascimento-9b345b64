@@ -1,0 +1,99 @@
+# O que acontece no cluster quando uma PR entra na `main`.
+#
+# O PROBLEMA QUE ISTO RESOLVE
+# Na Supabase, a Edge Function subia junto com o deploy. No cluster ela e um
+# *bind mount* nos nos: se ninguem copiar, o frontend novo chama a funcao
+# velha. Depois da virada isso vira rotina -- todo dia um dev mergeia -- e uma
+# atualizacao que depende de alguem lembrar vai falhar numa terca qualquer,
+# com o dev descobrindo pelo usuario.
+#
+# A DIVISAO QUE ESTE ARQUIVO FAZ, E POR QUE
+#   Edge Function  -> automatico. E arquivo: copiar e idempotente, o
+#                     repositorio e a fonte, e o script nunca apaga.
+#   Migration      -> AVISA, nao aplica. DDL no banco que esta no ar e a
+#                     unica coisa desta infraestrutura que nao deve rodar
+#                     sozinha: um `ALTER TABLE` que espera entra na fila e
+#                     passa a barrar as leituras -- ja travou duas telas por
+#                     63 segundos aqui.
+#
+# O no PUXA do repositorio publico; o CI so dispara. A alternativa seria
+# guardar no GitHub uma chave com escrita nos nos.
+
+name: Cluster pós-merge
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  functions:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Preparar a chave restrita
+        env:
+          CHAVE: ${{ secrets.CLUSTER_BACKUP_SSH_KEY }}
+        run: |
+          [ -n "$CHAVE" ] || { echo "::error::Falta CLUSTER_BACKUP_SSH_KEY."; exit 1; }
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          printf '%s\n' "$CHAVE" > ~/.ssh/cluster && chmod 600 ~/.ssh/cluster
+          for H in "${{ vars.CLUSTER_BACKUP_HOST || '216.238.120.171' }}" \
+                   "${{ vars.CLUSTER_BANCO2_HOST || '172.237.48.8' }}"; do
+            ssh-keyscan -p 8443 -H "$H" >> ~/.ssh/known_hosts 2>/dev/null
+          done
+
+      - name: Mandar os dois nós puxarem o main
+        env:
+          B1: ${{ vars.CLUSTER_BACKUP_HOST || '216.238.120.171' }}
+          B2: ${{ vars.CLUSTER_BANCO2_HOST || '172.237.48.8' }}
+          USUARIO: ${{ vars.CLUSTER_BACKUP_USER || 'erpbackup' }}
+        run: |
+          set -uo pipefail
+          FALHOU=0
+          for NO in "$B1" "$B2"; do
+            echo "::group::$NO"
+            if ssh -p 8443 -i ~/.ssh/cluster -o BatchMode=yes -o ConnectTimeout=20 \
+                 "$USUARIO@$NO" functions; then :; else FALHOU=1; echo "::error::falhou em $NO"; fi
+            echo "::endgroup::"
+          done
+          # Os DOIS nós, sempre. Um nó com a função velha serve metade dos
+          # acessos com o código de ontem -- e isso não aparece em lugar nenhum.
+          exit $FALHOU
+
+  migrations:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 2 }
+
+      - name: Há migration nova neste merge?
+        id: ver
+        run: |
+          set -uo pipefail
+          NOVAS=$(git diff --name-only --diff-filter=A HEAD~1 HEAD -- 'supabase/migrations/*.sql' || true)
+          if [ -z "$NOVAS" ]; then echo "nenhuma"; exit 0; fi
+          echo "$NOVAS"
+          printf 'LISTA<<EOF\n%s\nEOF\n' "$NOVAS" >> "$GITHUB_OUTPUT"
+
+      - name: Avisar o Eduardo por DM
+        if: steps.ver.outputs.LISTA != ''
+        env:
+          DISCORD_TOKEN: ${{ secrets.DISCORD_TOKEN }}
+          LISTA: ${{ steps.ver.outputs.LISTA }}
+        run: |
+          [ -n "$DISCORD_TOKEN" ] || exit 0
+          CANAL=$(curl -s -X POST "https://discord.com/api/v10/users/@me/channels" \
+            -H "Authorization: Bot $DISCORD_TOKEN" -H "Content-Type: application/json" \
+            -d '{"recipient_id":"1384572666752663653"}' | jq -r '.id')
+          CMD=$(printf '%s\n' "$LISTA" | sed 's|^|bash infra/ha/aplicar-migration.sh |')
+          CORPO=$(jq -n --arg l "$LISTA" --arg c "$CMD" \
+            '{content: ("**Migration nova na `main`** — o banco do cluster ainda NÃO mudou.\n```\n" + $l + "\n```\nPara aplicar:\n```bash\n" + $c + "\n```\nEle usa `lock_timeout` e transação única: ou entra inteira, ou não entra nada.")}')
+          curl -s -X POST "https://discord.com/api/v10/channels/$CANAL/messages" \
+            -H "Authorization: Bot $DISCORD_TOKEN" -H "Content-Type: application/json" \
+            -d "$CORPO" > /dev/null
