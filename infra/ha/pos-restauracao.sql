@@ -58,3 +58,38 @@ BEGIN
         FROM pg_views WHERE schemaname = r.s);
   END LOOP;
 END $$;
+
+-- ===========================================================================
+--  O GoTrue DO CLUSTER E MAIS ANTIGO QUE O SCHEMA DE `auth` DA SUPABASE
+--  (achado em 18/10/2026, com o ERP ja rodando no cluster)
+--
+--  SINTOMA, e por que ele engana: o usuario abria o sistema, usava, saia da
+--  pagina e ao voltar era mandado para o login -- as vezes no meio de um
+--  processo. E as telas de dashboard vinham VAZIAS. Parecia dado faltando;
+--  nao era. Sem sessao valida a RLS nega, e a tela sem permissao fica em
+--  branco em vez de dar erro (ver rls_negada_devolve_lista_vazia_nao_erro).
+--
+--  CAUSA: a Supabase roda um GoTrue mais novo que o nosso (v2.158.1) e
+--  acrescentou quatro colunas a `auth.sessions`:
+--      oauth_client_id, refresh_token_hmac_key, refresh_token_counter, scopes
+--  O nosso GoTrue le a tabela para dentro de uma struct Go que nao tem esses
+--  campos, e toda renovacao de sessao morria com
+--      500 "missing destination name oauth_client_id in *models.Session"
+--  Foram 98 falhas antes de alguem perceber -- porque o front, ao receber a
+--  falha, simplesmente pede login de novo, sem dizer por que.
+--
+--  As quatro estavam 100% NULAS nas 314 sessoes: o nosso GoTrue nunca as
+--  escreveu. Entao removemos as colunas em vez de subir a imagem no meio da
+--  noite -- subir a imagem e o caminho certo, mas com risco proprio: um
+--  GoTrue mais novo roda as proprias migrations e empurra o schema adiante
+--  (ver imagem_supabase_amarrada_ao_nivel_de_migration).
+--
+--  ⚠ DEPOIS DE RODAR ISTO, REINICIE O CONTAINER `auth`. Sem o restart ele
+--  continua com as conexoes e os planos em cache e passa a falhar com
+--  "error finding refresh token: write failed" -- que parece outro defeito e
+--  nao e.
+-- ===========================================================================
+ALTER TABLE auth.sessions DROP COLUMN IF EXISTS oauth_client_id;
+ALTER TABLE auth.sessions DROP COLUMN IF EXISTS refresh_token_hmac_key;
+ALTER TABLE auth.sessions DROP COLUMN IF EXISTS refresh_token_counter;
+ALTER TABLE auth.sessions DROP COLUMN IF EXISTS scopes;
