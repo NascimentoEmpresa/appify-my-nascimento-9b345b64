@@ -1,0 +1,111 @@
+# O vigia do CLUSTER — substitui o vigia_banco.yml depois da virada.
+#
+# POR QUE UM NOVO, E NAO ADAPTAR O ANTIGO
+# O `vigia_banco.yml` fala com a API da Supabase e com o pooler dela: ele le
+# memoria e swap de um endpoint de metricas que o cluster nao tem, e conecta
+# num host que deixou de ser a producao. Depois da virada ele vigia um banco
+# morto -- e, pior, vigia bem: fica verde para sempre.
+#
+# O QUE MUDOU NA PERGUNTA
+# Na Supabase, "o banco esta apertado" se resolvia trocando o plano no painel.
+# Aqui as maquinas sao nossas, entao o vigia precisa responder outra coisa:
+# QUAL no, QUANTO falta e se ainda ha o segundo no de pe para assumir.
+#
+# COMO ELE ALCANCA O CLUSTER
+# Pela mesma chave restrita do backup, dizendo a palavra `status`. O
+# `backup-cluster.sh --enviar` devolve contadores -- nenhum segredo, nenhum
+# shell. Uma chave a mais para ler memoria livre seria mais superficie pelo
+# mesmo resultado.
+#
+# O ALERTA VAI POR DM, NUNCA NO CANAL: o canal tem outras pessoas e alerta de
+# infraestrutura nao e assunto delas.
+
+name: Vigia do cluster
+
+on:
+  workflow_dispatch:
+  schedule:
+    # A cada 30 min. O que queremos pegar (memoria subindo, disco enchendo,
+    # replicacao parada) leva horas para virar incidente; 30 min e de sobra e
+    # nao enche o historico de execucoes.
+    - cron: '*/30 * * * *'
+
+permissions:
+  contents: read
+
+jobs:
+  olhar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Preparar a chave restrita
+        env:
+          CHAVE: ${{ secrets.CLUSTER_BACKUP_SSH_KEY }}
+        run: |
+          [ -n "$CHAVE" ] || { echo "::error::Falta CLUSTER_BACKUP_SSH_KEY."; exit 1; }
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          printf '%s\n' "$CHAVE" > ~/.ssh/cluster && chmod 600 ~/.ssh/cluster
+          for H in "${{ vars.CLUSTER_BACKUP_HOST || '216.238.120.171' }}" \
+                   "${{ vars.CLUSTER_BANCO2_HOST || '172.237.48.8' }}"; do
+            ssh-keyscan -p 8443 -H "$H" >> ~/.ssh/known_hosts 2>/dev/null
+          done
+
+      - name: Olhar os dois nós
+        id: olhar
+        env:
+          B1: ${{ vars.CLUSTER_BACKUP_HOST || '216.238.120.171' }}
+          B2: ${{ vars.CLUSTER_BANCO2_HOST || '172.237.48.8' }}
+          USUARIO: ${{ vars.CLUSTER_BACKUP_USER || 'erpbackup' }}
+        run: |
+          set -uo pipefail
+          AVISO=""; LIDERES=0
+          for NO in "$B1" "$B2"; do
+            S=$(ssh -p 8443 -i ~/.ssh/cluster -o BatchMode=yes -o ConnectTimeout=20 \
+                  "$USUARIO@$NO" status 2>/dev/null)
+            if [ -z "$S" ]; then
+              AVISO="$AVISO- **\`$NO\` não respondeu.** Se o outro nó estiver de pé, o ERP continua; se os dois caírem, o sistema para.\n"
+              continue
+            fi
+            # shellcheck disable=SC2046
+            eval $(printf '%s\n' "$S" | sed -E 's/^([a-z_0-9]+)=(.*)$/\1="\2"/')
+            echo "$no: papel=$papel carga=$carga ram_disp=${ram_disp}MB disco_livre=${disco_livre}MB conexoes=$pg_conexoes/$pg_teto"
+            [ "$papel" = "Leader" ] && LIDERES=$((LIDERES+1))
+
+            # Memoria: abaixo de 300 MB o Postgres comeca a sofrer, e foi
+            # memoria que derrubou a Supabase tres vezes.
+            [ "${ram_disp:-9999}" -lt 300 ] && AVISO="$AVISO- \`$no\`: **${ram_disp} MB de RAM disponível** (de ${ram_total}). Era assim antes das quedas da Supabase.\n"
+            # Swap em uso nao e erro; swap acima de 60% quer dizer que a RAM
+            # acabou ha tempo e a maquina esta empurrando com a barriga.
+            if [ "${swap_total:-0}" -gt 0 ]; then
+              SP=$(( swap_uso * 100 / swap_total ))
+              [ "$SP" -gt 60 ] && AVISO="$AVISO- \`$no\`: swap em **${SP}%** — a RAM não está dando conta.\n"
+            fi
+            [ "${disco_livre:-99999}" -lt 5000 ] && AVISO="$AVISO- \`$no\`: **${disco_livre} MB livres em disco**. Os backups e os anexos crescem aqui.\n"
+            CP=$(( pg_conexoes * 100 / pg_teto ))
+            [ "$CP" -gt 80 ] && AVISO="$AVISO- \`$no\`: **${pg_conexoes} conexões de ${pg_teto}** (${CP}%).\n"
+            # Carga maior que 2x os nucleos por 30 min nao e pico, e fila.
+            CARGA_X10=$(printf '%.0f' "$(echo "$carga" | awk '{print $1*10}')")
+            [ "$CARGA_X10" -gt $(( cpus * 20 )) ] && AVISO="$AVISO- \`$no\`: carga **$carga** para $cpus vCPU.\n"
+            [ "${backup_mais_novo_h:-99}" -gt 30 ] && AVISO="$AVISO- \`$no\`: backup mais recente tem **${backup_mais_novo_h}h**. O timer diário não rodou.\n"
+            [ "${membros_streaming:-0}" -lt 1 ] && AVISO="$AVISO- \`$no\`: **nenhum membro replicando.** O segundo nó parou de acompanhar — a alta disponibilidade está desligada sem avisar.\n"
+          done
+          [ "$LIDERES" -eq 1 ] || AVISO="$AVISO- **$LIDERES líderes no cluster** (o certo é 1). Zero = ninguém aceita escrita; dois = cérebro dividido.\n"
+          if [ -n "$AVISO" ]; then
+            printf 'AVISO<<EOF\n%b\nEOF\n' "$AVISO" >> "$GITHUB_OUTPUT"
+            echo "::warning::cluster pedindo atenção"
+          fi
+
+      - name: Avisar o Eduardo por DM
+        if: steps.olhar.outputs.AVISO != ''
+        env:
+          DISCORD_TOKEN: ${{ secrets.DISCORD_TOKEN }}
+          TEXTO: ${{ steps.olhar.outputs.AVISO }}
+        run: |
+          [ -n "$DISCORD_TOKEN" ] || exit 0
+          CANAL=$(curl -s -X POST "https://discord.com/api/v10/users/@me/channels" \
+            -H "Authorization: Bot $DISCORD_TOKEN" -H "Content-Type: application/json" \
+            -d '{"recipient_id":"1384572666752663653"}' | jq -r '.id')
+          CORPO=$(jq -n --arg a "$TEXTO" '{content: ("**Cluster do ERP pedindo atenção**\n" + $a + "\nVer: `bash infra/ha/reboot-controlado.sh --conferir`")}')
+          curl -s -X POST "https://discord.com/api/v10/channels/$CANAL/messages" \
+            -H "Authorization: Bot $DISCORD_TOKEN" -H "Content-Type: application/json" \
+            -d "$CORPO" > /dev/null
