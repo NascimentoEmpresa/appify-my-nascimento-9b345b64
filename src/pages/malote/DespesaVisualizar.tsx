@@ -26,6 +26,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/hooks/useAuth";
 import { diasAguardandoComprovante, severidadeComprovante, textoDiasComprovante } from "./comprovantePendente";
+import { classificacaoPorRateio } from "./classificacaoRateio";
 import { AcessoGate } from "@/components/auth/AcessoGate";
 import { CardPontoDiaria } from "./PontoDiariaMalote";
 import { useDiariaPontoMalote } from "@/hooks/useDiariaPontoMalote";
@@ -526,6 +527,8 @@ export default function DespesaVisualizar() {
     () => new Set(linhasRateio.map((l) => l.classificacao_id).filter((id): id is string => !!id)),
     [linhasRateio],
   );
+  // SIS-2026-0682: despesa rateada em várias Classificações — a classificação é por linha do rateio, não do cabeçalho.
+  const classificacaoDefinidaPeloRateio = classificacaoPorRateio(despesa?.classificacao_id, classificacaoIdsRateioDespesa);
 
   useEffect(() => {
     if (!despesa) return;
@@ -1380,7 +1383,7 @@ export default function DespesaVisualizar() {
       toast.error("Informe o nome da despesa.");
       return;
     }
-    if (!classificacaoIdEditado) {
+    if (!classificacaoIdEditado && !classificacaoDefinidaPeloRateio) {
       toast.error("Selecione a Classificação.");
       return;
     }
@@ -1478,7 +1481,7 @@ export default function DespesaVisualizar() {
       const payloadBase = {
         id: despesa!.id,
         empresa_id: despesa!.empresa_id,
-        classificacao_id: classificacaoIdEditado,
+        classificacao_id: classificacaoIdEditado || null,
         origem: despesa!.origem,
         status: statusAlvoSalvar,
         ...(despesa!.status === "ajuste_pagamento" ? { motivo_ajuste: null } : {}),
@@ -1700,13 +1703,21 @@ export default function DespesaVisualizar() {
                   </div>
                   <div>
                     <Label className="text-xs">Classificação</Label>
-                    <SearchableSelect
-                      value={classificacaoIdEditado}
-                      onChange={setClassificacaoIdEditado}
-                      options={classificacoesOpcoes}
-                      placeholder="Selecione a Classificação..."
-                      searchPlaceholder="Buscar Classificação..."
-                    />
+                    {classificacaoDefinidaPeloRateio ? (
+                      <Input
+                        value={`${classificacaoIdsRateioDespesa.size} classificações (definidas no Rateio)`}
+                        disabled
+                        title="Despesa rateada em várias Classificações: cada linha do Rateio tem a sua."
+                      />
+                    ) : (
+                      <SearchableSelect
+                        value={classificacaoIdEditado}
+                        onChange={setClassificacaoIdEditado}
+                        options={classificacoesOpcoes}
+                        placeholder="Selecione a Classificação..."
+                        searchPlaceholder="Buscar Classificação..."
+                      />
+                    )}
                   </div>
                 </div>
               )}

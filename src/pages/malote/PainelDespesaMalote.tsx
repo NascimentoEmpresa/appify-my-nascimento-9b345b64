@@ -348,16 +348,16 @@ export function PainelDespesaMalote({
   const totalRateado = useMemo(() => linhasRateio.reduce((s, l) => s + (Number(l.valor) || 0), 0), [linhasRateio]);
   const { data: prazoNormal } = usePrazoNormalInclusao();
 
-  // [SEM-CHAMADO] Cartão com Fluxo Especial: Data de Pagamento e Competência = vencimento do cartão, sem exceção
+  // [SEM-CHAMADO] Cartão com Fluxo Especial: Data de Pagamento = dia do lançamento e Competência = mês de hoje, sem exceção
   // (a compra já foi feita). Ver cartaoEspecial.ts.
   const cartaoEspecial = useCartaoEspecialDaForma(formaPagamento);
   const exigeExcecao = !cartaoEspecial && !!dataPagamento && !!prazoNormal && dataPagamento < prazoNormal;
   useEffect(() => {
     if (!cartaoEspecial) return;
-    setDataPagamento(cartaoEspecial.vencimento);
+    setDataPagamento(cartaoEspecial.dataPagamento);
     setCompetencia(cartaoEspecial.competencia);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cartaoEspecial?.vencimento]);
+  }, [cartaoEspecial?.dataPagamento]);
   const hoje = useMemo(() => new Date().toLocaleDateString("sv-SE"), []);
 
   // SIS-2026-0361: sugere o Dia do desconto a partir da Data de pagamento
@@ -708,8 +708,8 @@ export function PainelDespesaMalote({
           </div>
           {cartaoEspecial && (
             <p className="text-xs text-muted-foreground">
-              Cartão com Fluxo Especial ({cartaoEspecial.cartao.nome_cartao}): a Data de Pagamento e a Competência são o vencimento da fatura
-              ({cartaoEspecial.vencimento.split("-").reverse().join("/")}) e não pedem exceção.
+              Cartão com Fluxo Especial ({cartaoEspecial.cartao.nome_cartao}): a Data de Pagamento é o dia do lançamento
+              ({cartaoEspecial.dataPagamento.split("-").reverse().join("/")}) e não pede exceção; vai direto ao aprovador do Fluxo Especial.
             </p>
           )}
           <ExcecaoSenhaField
@@ -723,7 +723,7 @@ export function PainelDespesaMalote({
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <div>
               <Label>Competência *</Label>
-              <Input type="month" value={competencia} onChange={(e) => setCompetencia(e.target.value)} disabled={!ativo || !!cartaoEspecial} />
+              <Input type="month" value={competencia} onChange={(e) => setCompetencia(e.target.value)} disabled={!ativo} />
             </div>
             <div>
               <Label>Forma de pagamento *</Label>
