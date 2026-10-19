@@ -14,10 +14,12 @@ import { ResumoDeFuncoes } from "@/components/fluxos/ResumoDeFuncoes";
  */
 export default function RhSolicitacoesDemissao() {
   return (
-    <div className="mx-auto max-w-6xl">
+    // Mais largo que as outras etapas (19/10/2026): a tabela de rescisões
+    // tem as ~20 colunas da planilha do RH.
+    <div className="mx-auto max-w-[1700px]">
       <PageHeader
         title="Solicitações de Demissão"
-        subtitle="Pedidos aprovados pelo analista e com o ASO demissional já marcado pelo SST. Confirme para concluir o desligamento."
+        subtitle="O controle das rescisões, no formato da planilha do RH (homologação, datas, tipo, programadas, malote, documentação e status). A fila do fluxo segue na segunda aba."
         module="Recursos Humanos"
         breadcrumb={["Solicitações de Demissão"]}
         actions={<ResumoDeFuncoes fluxo="demissao" />}
