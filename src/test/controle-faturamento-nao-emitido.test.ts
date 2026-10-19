@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { faltaDeFaturamento, excessoDeFaturamento, resumirFaturamento, statusCelula, type ParteFaturamento } from "@/pages/controladoria/faturamentoStatus";
+import { divergenciaEntre, faltaDeFaturamento, excessoDeFaturamento, resumirFaturamento, statusCelula, type ParteFaturamento } from "@/pages/controladoria/faturamentoStatus";
 
 const parte = (executavel: number, contabil: number, temNf = true): ParteFaturamento => ({
   executavel,
@@ -42,5 +42,27 @@ describe("Não Emitido — soma das faltas por contrato (sem abater excessos)", 
     expect(r.parciais).toBe(1);
     expect(r.pendentes).toBe(1);
     expect(r.naoEmitido).toBe(700 + 800);
+  });
+});
+
+describe("SIS-2026-0648 · divergências do Controle de Faturamento", () => {
+  it("referência − comparado: positivo quando ficou abaixo, negativo quando passou", () => {
+    expect(divergenciaEntre(1000, 700)).toBe(300);
+    expect(divergenciaEntre(1000, 1200)).toBe(-200);
+  });
+
+  it("centavos de arredondamento não contam como divergência", () => {
+    expect(divergenciaEntre(1000, 999.5)).toBe(0);
+    expect(divergenciaEntre(1000, 1000)).toBe(0);
+  });
+
+  it("resumirFaturamento soma o executado (Relatório N) junto com o resto", () => {
+    const r = resumirFaturamento([
+      { executavel: 1000, execRel: 900, contabil: 800, naoEmitido: 200, excesso: 0, status: "FATURADO_PARCIAL" },
+      { executavel: 500, execRel: 500, contabil: 500, naoEmitido: 0, excesso: 0, status: "NOTAS_LANCADAS" },
+    ]);
+    expect(r.execRel).toBe(1400);
+    expect(divergenciaEntre(r.executavel, r.execRel)).toBe(100);
+    expect(divergenciaEntre(r.execRel, r.contabil)).toBe(100);
   });
 });
