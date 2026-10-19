@@ -119,7 +119,7 @@ export default function ExcecaoSolicitar() {
     <div className="space-y-6 p-6">
       <PageHeader
         title="Solicitar Autorização de Exceção"
-        subtitle="Peça a exceção antes de lançar a despesa. Após a aprovação da diretoria financeira, será gerada uma senha única para a criação da despesa."
+        subtitle="Peça a exceção antes de lançar a despesa. Após a aprovação, será gerada uma senha única para a criação da despesa."
         module="Malote"
         breadcrumb={["Autorização de Exceção", "Nova Solicitação"]}
       />
@@ -213,7 +213,7 @@ export default function ExcecaoSolicitar() {
             </CardHeader>
             <CardContent className="space-y-3 text-sm">
               <p><span className="font-semibold">1. Você solicita</span><br /><span className="text-muted-foreground">Preencha os dados da despesa que necessita de exceção.</span></p>
-              <p><span className="font-semibold">2. A diretoria financeira aprova</span><br /><span className="text-muted-foreground">Quem responde pelo caixa analisa e, se aprovada, é gerada uma senha única.</span></p>
+              <p><span className="font-semibold">2. O aprovador analisa</span><br /><span className="text-muted-foreground">Quem responde pelo caixa (e, quando liberado, o N2 da classificação) analisa e, se aprovada, é gerada uma senha única.</span></p>
               <p><span className="font-semibold">3. Use a senha</span><br /><span className="text-muted-foreground">Informe-a em Criar Despesa. Depois de usada, é desconsiderada para as próximas inclusões.</span></p>
             </CardContent>
           </Card>

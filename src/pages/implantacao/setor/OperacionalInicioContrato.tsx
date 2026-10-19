@@ -49,8 +49,30 @@ function Conteudo() {
     [linhas, cidade, busca],
   );
 
-  const totalPostos = filtradas.reduce((s, l) => s + l.qt_postos, 0);
-  const totalFuncionarios = filtradas.reduce((s, l) => s + l.qt_funcionarios, 0);
+  // POR QUE ESTES DOIS NÃO SAEM SÓ DA SOMA DAS LINHAS (18/10/2026)
+  //
+  // As linhas aqui são LOCAIS de trabalho (151 no contrato da Polícia Civil) e
+  // vêm de `IMPLANTACAO_BASE_LOCAL`. Nessa tabela, `qt_postos` é gravado como
+  // ZERO pela própria semeadura — veja `implantacao_base_semear`, que insere
+  // `0` literal nessa coluna — e `qt_funcionarios` depende de
+  // `planilha_posto_localizacao`, que não tem linha para todo contrato.
+  //
+  // Resultado antes desta correção: a tela mostrava "Locais 151" (certo) e
+  // "Postos 0 / Colaboradores 0" (errado), enquanto os números existiam o
+  // tempo todo em `IMPLANTACAO_BASE_POSTO` — 48 postos e 177 pessoas — e o
+  // próprio `implantacao_base_resumo` já os devolvia. Era a tela somando a
+  // tabela errada, não dado faltando.
+  //
+  // A regra abaixo é conservadora de propósito: a soma por local continua
+  // mandando sempre que ela EXISTE (outros contratos têm o detalhe por local)
+  // e sempre que há filtro de cidade ou busca — porque aí o total do contrato
+  // seria mentira. O resumo só entra quando não há recorte e a soma deu zero.
+  const somaPostos = filtradas.reduce((s, l) => s + l.qt_postos, 0);
+  const somaFuncionarios = filtradas.reduce((s, l) => s + l.qt_funcionarios, 0);
+  const semRecorte = cidade === "todas" && !busca;
+  const totalPostos = somaPostos > 0 || !semRecorte ? somaPostos : (resumo?.qt_postos ?? 0);
+  const totalFuncionarios =
+    somaFuncionarios > 0 || !semRecorte ? somaFuncionarios : (resumo?.qt_colaboradores ?? 0);
 
   const porCidade = useMemo(() => {
     const mapa = new Map<string, number>();
@@ -67,8 +89,11 @@ function Conteudo() {
     [filtradas],
   );
 
-  const maiorConcentracao = topLocais[0];
-  const pctMaiorCidade = totalFuncionarios && porCidade[0] ? (100 * porCidade[0].quantidade) / totalFuncionarios : 0;
+  // "1ª DHPP PORTO ALEGRE — 0" é pior que um traço: afirma uma concentração
+  // que não foi medida. Só vale como maior concentração quem tem gente.
+  const maiorConcentracao = topLocais[0]?.quantidade ? topLocais[0] : undefined;
+  const pctMaiorCidade =
+    totalFuncionarios && porCidade[0]?.quantidade ? (100 * porCidade[0].quantidade) / totalFuncionarios : 0;
 
   return (
     <div className="mx-auto w-full max-w-[1600px] p-4 lg:p-6">
@@ -103,11 +128,23 @@ function Conteudo() {
           </FileiraIndicadores>
 
           <div className="mb-5 grid gap-4 lg:grid-cols-3">
+            {/* Lista cheia com todos os valores em zero desenha um gráfico de
+                barras invisíveis e eixo 0‑1‑2‑3‑4 — parece defeito e não diz
+                nada. Quando a soma é zero, o honesto é dizer POR QUE está
+                vazio: o número por local não foi preenchido na base. */}
             <PainelGrafico titulo="Colaboradores por cidade">
-              {porCidade.length ? <Grafico dados={porCidade} rotulo="Colaboradores" /> : <EstadoVazio texto="Sem cidade informada na base." />}
+              {porCidade.some((c) => c.quantidade > 0) ? (
+                <Grafico dados={porCidade} rotulo="Colaboradores" />
+              ) : (
+                <EstadoVazio texto="A base não tem cidade nem colaboradores por local. Cadastre a localização dos postos na Planilha de Custo e importe a base de novo." />
+              )}
             </PainelGrafico>
             <PainelGrafico titulo="Top locais por quantidade de postos">
-              {topLocais.length ? <Grafico dados={topLocais} rotulo="Colaboradores" cor="#4ec9a5" /> : <EstadoVazio texto="Sem locais na base." />}
+              {topLocais.some((l) => l.quantidade > 0) ? (
+                <Grafico dados={topLocais} rotulo="Colaboradores" cor="#4ec9a5" />
+              ) : (
+                <EstadoVazio texto="Os locais estão na base, mas sem quantidade por local. Os totais do contrato estão nos indicadores acima." />
+              )}
             </PainelGrafico>
             <PainelGrafico titulo="Cobertura operacional">
               <div className="space-y-3">

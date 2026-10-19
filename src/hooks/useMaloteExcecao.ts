@@ -127,6 +127,40 @@ export function useSalvarExcecaoAprovador() {
   });
 }
 
+// Quem aprova as exceções (malote_config.excecao_aprovacao_modo, migration 20261016000010): só a pessoa escolhida, a pessoa e o
+// N2 da classificação, ou só o N2. Lido à parte, como o aprovador: sem a coluna no banco só esta leitura falha e a tela
+// mostra o aviso de migration.
+export type ModoAprovacaoExcecao = "pessoa" | "pessoa_e_n2" | "n2";
+
+export const ROTULO_MODO_APROVACAO: Record<ModoAprovacaoExcecao, string> = {
+  pessoa: "Somente a pessoa escolhida",
+  pessoa_e_n2: "A pessoa escolhida e o N2 da classificação",
+  n2: "Somente o N2 da classificação",
+};
+
+export function useExcecaoAprovacaoModo() {
+  return useQuery({
+    queryKey: [KEY, "aprovacao_modo"],
+    staleTime: 60_000,
+    queryFn: async () => {
+      const { data, error } = await (supabase as any).from("malote_config").select("excecao_aprovacao_modo").eq("id", true).maybeSingle();
+      if (error) throw error;
+      return ((data?.excecao_aprovacao_modo as ModoAprovacaoExcecao | undefined) ?? "pessoa") as ModoAprovacaoExcecao;
+    },
+  });
+}
+
+export function useSalvarExcecaoAprovacaoModo() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (modo: ModoAprovacaoExcecao) => {
+      const { error } = await (supabase as any).from("malote_config").update({ excecao_aprovacao_modo: modo }).eq("id", true);
+      if (error) throw error;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: [KEY] }),
+  });
+}
+
 export interface EventoExcecao {
   id: string;
   solicitacao_id: string;

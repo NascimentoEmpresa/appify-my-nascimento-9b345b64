@@ -1,5 +1,25 @@
 # Os 13 segredos: onde clicar, campo por campo
 
+> ## ✅ FECHADO em 16/10/2026
+>
+> Os 11 que faltavam estão nos dois nós. O container das Edge Functions saiu de
+> **10 para 35 variáveis**, e o que ainda falta nele são exatamente as **9 que
+> também não existem na produção** — ou seja, **paridade**.
+>
+> O trio do WhatsApp foi provado contra a própria API da Meta, não por hash:
+>
+> ```
+> phone_number_id 1218636128000287 -> +55 51 9156-1344 "Recrutamento Nascimento", GREEN
+> waba_id         909474664895017  -> "Recrutamento Nascimento"
+> debug_token     type=SYSTEM_USER, expires_at=0 (nunca expira), is_valid=true
+>                 scopes: whatsapp_business_messaging, whatsapp_business_management
+> ```
+>
+> `expires_at: 0` é o que importa: é o token **permanente**, não o de 24 h.
+>
+> O texto abaixo fica porque ele erra em dois pontos que custaram tempo, e os
+> erros estão corrigidos no lugar — apagar não ensina ninguém.
+
 > Para a pergunta *"como faço? onde pego?"*. Cada item diz **onde clicar** e
 > **com que cara o valor aparece**, para você reconhecer que pegou o certo.
 
@@ -46,7 +66,16 @@ Pode trazer só algumas e conferir; o que faltar aparece como pendente.
 ## 1. Meta — WhatsApp (6 valores, a visita mais longa)
 
 **https://developers.facebook.com/apps** → entre → clique no app do WhatsApp do
-grupo.
+grupo (o nosso é o **"hagg"**, id `1751833982487578`).
+
+> ⚠️ **A Meta tirou "WhatsApp" do menu lateral.** Esta página mandava procurar
+> um item que não existe mais, e foi por isso que o Eduardo não achou nada em
+> 16/10. Na interface atual, o que era o menu *WhatsApp* virou **Casos de uso**:
+> no Painel do app, o card de baixo —
+> **"Casos de uso neste app → Conectar-se com clientes pelo WhatsApp ›"** — é a
+> porta de entrada. Clique nele (ou em **Casos de uso**, no menu da esquerda).
+> É lá dentro que ficam a *Identificação do número de telefone* e a
+> *Identificação da conta do WhatsApp Business*.
 
 | Valor | Onde |
 |---|---|
@@ -86,17 +115,31 @@ No painel da Lovable, menu da conta → **Settings** → **API Keys**. Se não
 houver essa seção no seu plano, me avise: as seis functions que usam essa chave
 são de I.A. e dá para medir exatamente o que para de funcionar sem ela.
 
-## 5. Discord (3 valores)
+## 5. Discord — ✅ resolvido em 16/10, e eu tinha complicado à toa
 
-**https://discord.com/developers/applications** → o aplicativo do grupo.
+**Qual aplicativo é o do ERP, sem precisar adivinhar:** o token do bot em
+`worker/.env` **carrega o id do aplicativo dentro dele** (um token do Discord é
+`base64url(app_id).carimbo.assinatura`). Decodificando o primeiro trecho sai
+`1524116324182396978` — que é o **"Notif de Erro Agend Reunião"**. O outro
+aplicativo da conta ("Prs Criadas") é o notificador de PR e não entra nisto.
 
-| Valor | Onde |
+```bash
+BT=$(grep -m1 '^DISCORD_BOT_TOKEN=' worker/.env | cut -d= -f2-)
+P=${BT%%.*}; case $(( ${#P} % 4 )) in 2) P="$P==";; 3) P="$P=";; esac
+printf '%s' "$P" | tr '_-' '/+' | base64 -d     # -> o id do aplicativo
+```
+
+| Valor | De onde veio |
 |---|---|
-| `DISCORD_CLIENT_ID` | **OAuth2** (ou *General Information*), campo **Client ID**. Não é segredo — é o número do aplicativo. |
-| `DISCORD_CLIENT_SECRET` | **OAuth2 → Client Secret → Reset Secret**. ⚠️ Resetar **invalida a atual**: o "vincular Discord" para de funcionar até a chave nova estar nos dois lados. Faça junto com o resto, não solto. |
-| `DISCORD_REDIRECT_URIS` | **OAuth2 → Redirects**. Copie a(s) URL(s) que já estão lá, exatamente como estão. Se houver mais de uma, separe por vírgula sem espaço. |
+| `DISCORD_CLIENT_ID` | **é esse id** — `1524116324182396978`. Não é segredo. |
+| `DISCORD_CLIENT_SECRET` | único que exige o painel: entre no **aplicativo** → menu da esquerda → **OAuth2** → *Client Secret*. ⚠️ **"OAuth2" não aparece na lista de aplicativos** — só dentro de um deles. Foi onde o Eduardo travou, e a culpa é desta página. |
+| `DISCORD_REDIRECT_URIS` | **não é segredo e não se copia de painel**: é a lista branca que a function aceita, e o navegador manda `origin + /app/meu-perfil/discord`. O `--derivados` monta. |
 
-> Na virada, acrescente aqui a URL nova (mantendo a antiga até ter certeza).
+> **"Se eu resetar o secret, perco as conexões?" — não.** Os vínculos moram na
+> tabela `public.usuario_discord`, no banco. Medido em 16/10: **65 pessoas, as
+> 65 verificadas por OAuth**. O secret só serve para vínculos **novos**;
+> resetar não apaga uma linha. O que para, até a chave nova estar nos dois
+> lados, é alguém vincular pela primeira vez ou atualizar o avatar.
 
 ## 6. GitHub — `GITHUB_TOKEN`
 

@@ -6,7 +6,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { KpiTile } from "@/components/financeiro/KpiTile";
-import { Search, FileDown, ListChecks, CheckCircle2, AlertTriangle, TrendingUp, Trash2, RotateCcw } from "lucide-react";
+import { Search, FileDown, ListChecks, CheckCircle2, AlertTriangle, TrendingUp, Trash2, RotateCcw, FileText, Wallet, Scale, Landmark } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { usePermissoes } from "@/context/PermissoesContext";
@@ -14,6 +14,8 @@ import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { useContratosERP } from "@/hooks/useContratosERP";
 import { useEmpresasGrupo } from "@/hooks/useMaloteDespesa";
+import { useBaseFaturamento } from "@/pages/controladoria/faturamento/useBaseFaturamento";
+import { totaisDoRelatorio } from "./totais";
 import { NfEmissaoRow, TipoNota, TIPOS_NOTA, useEnviarNfsParaLixeira, useExcluirNfsEmissaoEmLote, useItensNfEmissaoEmLote, useNfsEmissao, useNfsEmissaoLixeira, useRestaurarNfsDaLixeira } from "@/hooks/useNfEmissao";
 import { fmtMoney, fmtDate, statusDaNota, foraDoRelatorio, naoContabilizaKpi, pendenteHaMaisDe30Dias, valorPendenteNf, StatusNota } from "@/pages/financeiro/nf-emissao/shared";
 
@@ -45,6 +47,8 @@ export default function RelatorioGeralTab() {
   const isLoading = verLixeira ? carregandoLixeira : carregandoAtivas;
   const { data: contratos = [] } = useContratosERP({ todasEmpresas: true });
   const { data: empresas = [] } = useEmpresasGrupo();
+  // SIS-2026-0647: o Executável (valor da licitação) vem da planilha de custo, mesma base do Faturamento da Empresa.
+  const { contratoPorId: contratoBasePorId, executavelDoContrato } = useBaseFaturamento();
 
   // Exclusão de NFs pelo Relatório Geral (importadas da planilha ou criadas
   // pelo fluxo do app — achado do Ruan: sobraram notas que não valem mais).
@@ -183,19 +187,19 @@ export default function RelatorioGeralTab() {
     }
   }
 
-  const kpis = useMemo(() => {
-    let executado = 0, faturado = 0, recebido = 0, pendente = 0;
-    // Achado real (Ruan): Cancelada/Substituída continua aparecendo na
-    // lista, mas não deve entrar nos totais.
-    for (const n of linhas) {
-      if (naoContabilizaKpi(n)) continue;
-      executado += n.valor_contrato_exec_total;
-      faturado += n.vlr_bruto_total;
-      recebido += n.valor_pago ?? 0;
-      pendente += valorPendenteNf(n, itensPorNf?.get(n.id) ?? []);
-    }
-    return { executado, faturado, recebido, pendente };
-  }, [linhas, itensPorNf]);
+  // Achado real (Ruan): Cancelada/Substituída continua aparecendo na lista, mas não entra nos totais.
+  // SIS-2026-0647: Executável, Líquido, Divergência e Conta Vinculada; tudo recalculado sobre as linhas filtradas.
+  const kpis = useMemo(
+    () => totaisDoRelatorio(
+      linhas,
+      (contratoId, anoMes) => {
+        const c = contratoBasePorId.get(contratoId);
+        return c ? executavelDoContrato(c, anoMes) : 0;
+      },
+      (n) => valorPendenteNf(n, itensPorNf?.get(n.id) ?? []),
+    ),
+    [linhas, itensPorNf, contratoBasePorId, executavelDoContrato],
+  );
 
   function limparFiltros() {
     setFiltroEmpresa("");
@@ -252,10 +256,21 @@ export default function RelatorioGeralTab() {
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <KpiTile label="Valor Executado" valor={fmtMoney(kpis.executado)} icon={<ListChecks />} cor="slate" />
-        <KpiTile label="Valor Faturado" valor={fmtMoney(kpis.faturado)} icon={<TrendingUp />} cor="sky" />
-        <KpiTile label="Valor Recebido" valor={fmtMoney(kpis.recebido)} icon={<CheckCircle2 />} cor="emerald" valorClass="text-emerald-600 dark:text-emerald-400" />
-        <KpiTile label="Valor Pendente de Recebimento" valor={fmtMoney(kpis.pendente)} icon={<AlertTriangle />} cor="red" valorClass="text-red-600 dark:text-red-400" />
+        <KpiTile label="Valor Executável" valor={fmtMoney(kpis.executavel)} sub="Valor da licitação (contrato/mês)" icon={<FileText />} cor="slate" />
+        <KpiTile label="Valor Executado" valor={fmtMoney(kpis.executado)} sub="Executado pelo analista" icon={<ListChecks />} cor="slate" />
+        <KpiTile label="Valor Faturado" valor={fmtMoney(kpis.faturado)} sub="Bruto das notas" icon={<TrendingUp />} cor="sky" />
+        <KpiTile label="Valor Líquido" valor={fmtMoney(kpis.liquido)} sub="Faturado − retenções" icon={<Wallet />} cor="sky" />
+        <KpiTile
+          label="Divergência"
+          valor={fmtMoney(kpis.divergencia)}
+          sub="Executado − Faturado"
+          icon={<Scale />}
+          cor={kpis.divergencia === 0 ? "emerald" : "amber"}
+          valorClass={kpis.divergencia === 0 ? undefined : "text-amber-600 dark:text-amber-400"}
+        />
+        <KpiTile label="Conta Vinculada" valor={fmtMoney(kpis.contaVinculada)} sub="Retida nas notas" icon={<Landmark />} cor="amber" />
+        <KpiTile label="Valor Recebido" valor={fmtMoney(kpis.recebido)} sub="Pago nas notas" icon={<CheckCircle2 />} cor="emerald" valorClass="text-emerald-600 dark:text-emerald-400" />
+        <KpiTile label="Valor Pendente de Recebimento" valor={fmtMoney(kpis.pendente)} sub="A receber" icon={<AlertTriangle />} cor="red" valorClass="text-red-600 dark:text-red-400" />
       </div>
 
       <div className="card-elevated p-4 space-y-3 text-xs">

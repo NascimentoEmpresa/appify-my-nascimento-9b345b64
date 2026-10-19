@@ -70,6 +70,58 @@ if [ "$ACAO" = "--enviar" ]; then
   # entao o cliente diz "anexos" e nada mais. Qualquer outra coisa (inclusive
   # tentativa de comando) cai no banco, que e o padrao: aqui nada e executado,
   # so se escolhe entre dois arquivos.
+  # "status" nao entrega backup nenhum: devolve numeros de saude do no, em
+  # texto, para o vigia do GitHub. Entra aqui porque a chave restrita ja
+  # existe e ja esta amarrada a este script -- criar uma segunda chave so
+  # para ler memoria livre seria mais superficie para o mesmo resultado.
+  # Nenhum segredo sai: so contadores.
+  case "${SSH_ORIGINAL_COMMAND:-}" in
+    *status*)
+      # Saiu daqui em 18/10: lia o .env como erpbackup, e o .env estava 644.
+      # Agora e um script proprio, root por sudo, e o .env e 600.
+      if [ "$(id -u)" = "0" ]; then exec /usr/local/sbin/estado-cluster.sh
+      else exec sudo -n /usr/local/sbin/estado-cluster.sh; fi ;;
+  esac
+  # "functions": o no PUXA o `main` do repositorio publico e atualiza as Edge
+  # Functions. Fica aqui, e nao numa chave propria, porque a alternativa seria
+  # guardar no GitHub uma chave com permissao de ESCRITA nos nos -- enquanto
+  # esta so consegue DISPARAR um script que baixa de um repositorio publico.
+  # O que entra e sempre o que passou pela portaria e pelo merge.
+  case "${SSH_ORIGINAL_COMMAND:-}" in
+    *functions*)
+      # `sudo -n` com UMA entrada em /etc/sudoers.d, para este script e mais
+      # nada. A chave do CI entra como `erpbackup`, que nao escreve em
+      # /opt/erp nem fala com o Docker -- e nem deve. Sem isto o CI falha com
+      # `detected dubious ownership in repository` (o git recusa repositorio
+      # de outro dono), que foi como o defeito apareceu em 18/10.
+      #
+      # O que esta permissao concede, dito sem rodeio: quem tiver a chave
+      # consegue fazer o no baixar o `main` do repositorio PUBLICO e
+      # reiniciar o runtime das functions. Nao consegue rodar outra coisa,
+      # nao abre shell, nao toca no banco.
+      if [ "$(id -u)" = "0" ]; then
+        exec /usr/local/sbin/atualizar-functions.sh
+      else
+        exec sudo -n /usr/local/sbin/atualizar-functions.sh
+      fi ;;
+  esac
+  # "migrations": aplica no banco as migrations do `main` que ainda nao
+  # entraram. Entrou em 19/10/2026 a pedido do Eduardo -- antes disso o CI so
+  # avisava por DM e alguem rodava na mao.
+  #
+  # O que esta chave consegue mandar continua sendo UMA palavra. Ela nao
+  # carrega SQL: o conteudo vem do clone do `main` do repositorio publico,
+  # ou seja, do que passou pela portaria e pelo merge. A protecao contra a
+  # migration ruim nao esta aqui, esta no aplicador: lock_timeout, uma
+  # transacao por arquivo e parada no primeiro erro.
+  case "${SSH_ORIGINAL_COMMAND:-}" in
+    *migrations*)
+      if [ "$(id -u)" = "0" ]; then
+        exec /usr/local/sbin/aplicar-migrations.sh
+      else
+        exec sudo -n /usr/local/sbin/aplicar-migrations.sh
+      fi ;;
+  esac
   case "${SSH_ORIGINAL_COMMAND:-}" in
     *anexos*) PREFIXO=anexos ;;
     *)        PREFIXO=erp-cluster ;;
