@@ -144,6 +144,7 @@ export function PainelDespesaMalote({
   fornecedorPadraoNome,
   rateioInicial,
   arquivosIniciais,
+  rhRateioId,
 }: {
   classificacaoId: string;
   classificacaoTipo?: TipoClassificacaoOrcamento | null;
@@ -173,6 +174,11 @@ export function PainelDespesaMalote({
   // pessoa. Quem usa troca a key do painel para recomeçar.
   rateioInicial?: RateioLinha[];
   arquivosIniciais?: File[];
+  // Malote › Criar Despesa › "Importar rateio" (19/10/2026, mig
+  // 20261019000003): vai no INSERT como rh_rateio_id — o gatilho vincula e
+  // trava o rateio do RH. O total fica preso ao valor do rateio (o banco
+  // confere igual).
+  rhRateioId?: string;
 }) {
   const [paramsUrl] = useSearchParams();
   const obrigacaoPatrimonio = paramsUrl.get(PARAM_ORIGEM);
@@ -469,6 +475,7 @@ export function PainelDespesaMalote({
         parcelas,
         arquivosNovos: arquivos,
         solicitacao_dispensada_manualmente: !!solicitacaoDispensadaManualmente,
+        ...(rhRateioId ? { rh_rateio_id: rhRateioId } : {}),
       };
 
       if (paraEnviar && aoSalvar) {
@@ -659,7 +666,7 @@ export function PainelDespesaMalote({
                     ? "Valor da compra *"
                     : "Valor de cada parcela *"}
               </Label>
-              <Input type="number" step="0.01" value={totalMes} onChange={(e) => setTotalMes(e.target.value)} placeholder="Ex: R$ 5.000,00" disabled={!ativo || !!aoSalvar} />
+              <Input type="number" step="0.01" value={totalMes} onChange={(e) => setTotalMes(e.target.value)} placeholder="Ex: R$ 5.000,00" disabled={!ativo || !!aoSalvar || !!rhRateioId} />
               {parcelado === "sim" && Number(totalMes) > 0 && Number(quantidadeParcelas) >= QUANTIDADE_PARCELAS_MIN && (
                 <p className="text-[11px] text-muted-foreground mt-1">
                   {modoValorParcela === "compra" ? (

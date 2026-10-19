@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { SearchableSelect } from "@/components/ui/searchable-select";
-import { LayoutGrid, Package, Lock, ShoppingCart, ArrowLeft, Paperclip, ExternalLink } from "lucide-react";
+import { LayoutGrid, Package, Lock, ShoppingCart, ArrowLeft, Paperclip, ExternalLink, FileInput, X } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { useEmpresaId } from "@/hooks/useEmpresaId";
@@ -35,6 +35,10 @@ import { ItensSolicitacao } from "@/components/malote/ItensSolicitacao";
 import { LinksSolicitacao } from "@/components/malote/LinksSolicitacao";
 import { AnexosField } from "./AnexosField";
 import { Campo, PainelDespesaMalote, PainelHeader, PrefillDespesa } from "./PainelDespesaMalote";
+import { ImportarRateioRh, type RateioImportado } from "./ImportarRateioRh";
+import { useScreenAccess } from "@/hooks/useScreenAccess";
+import { competenciaRotulo, fmtMoeda, rotuloTipo } from "@/lib/rh/rateioDespesas";
+import { CLASSIFICACAO_SUGERIDA } from "@/lib/rh/rateioParaMalote";
 
 export default function CriarDespesa() {
   const [searchParams] = useSearchParams();
@@ -101,6 +105,22 @@ function CriarDespesaNova({ inicial }: { inicial?: PrefillDespesa }) {
 
   const classificacao = classificacoes.find((c) => c.id === classificacaoId) ?? null;
 
+  // "Importar rateio" do RH (19/10/2026, mig 20261019000003): mesma ação do
+  // "Enviar ao Malote" de lá — é o mesmo poder, por outra porta.
+  const { data: podeImportarRateio } = useScreenAccess("rh_rateio_despesas", "enviar_malote");
+  const [importando, setImportando] = useState(false);
+  const [importado, setImportado] = useState<RateioImportado | null>(null);
+  const aoImportar = (r: RateioImportado) => {
+    setImportado(r);
+    setImportando(false);
+    // Sugere a classificação pelo tipo do rateio, só se ainda não há uma.
+    if (!classificacaoId) {
+      const alvo = CLASSIFICACAO_SUGERIDA[r.rateio.tipo];
+      const achou = alvo && classificacoes.find((c) => c.ativo && semAcento(c.nome) === semAcento(alvo));
+      if (achou) setClassificacaoId(achou.id);
+    }
+  };
+
   // SIS-2026-0334 (Iury): "Criar um check que se marcado ele deixa a
   // classificação sem necessidade de solicitação, pulando direto para a
   // criação de despesa" — bypass só desta despesa, a Classificação
@@ -154,7 +174,27 @@ function CriarDespesaNova({ inicial }: { inicial?: PrefillDespesa }) {
                 <LayoutGrid className="h-4 w-4" /> Ratear classificação
               </Button>
             </div>
+            {podeImportarRateio && (
+              <div className="shrink-0">
+                <Label className="invisible hidden sm:block">Ação</Label>
+                <Button variant="outline" onClick={() => setImportando(true)} className="gap-2 w-full sm:w-auto">
+                  <FileInput className="h-4 w-4" /> Importar rateio
+                </Button>
+              </div>
+            )}
           </div>
+          {importado && (
+            <div className="flex items-center gap-2 rounded-md border border-primary/30 bg-primary/5 px-3 py-2 text-sm">
+              <FileInput className="h-4 w-4 text-primary shrink-0" />
+              <span className="flex-1">
+                Rateio do RH importado: <strong>{rotuloTipo(importado.rateio.tipo)} {competenciaRotulo(importado.rateio.competencia)}</strong>{" "}
+                — {fmtMoeda(importado.rateio.valor)}, {importado.linhas.length} linha(s). Ao criar a despesa, o rateio fica vinculado a ela.
+              </span>
+              <Button variant="ghost" size="sm" className="gap-1" onClick={() => setImportado(null)}>
+                <X className="h-3.5 w-3.5" /> Desfazer
+              </Button>
+            </div>
+          )}
           {classificacaoExigeSolicitacao && (
             <div className="flex items-center gap-2 pt-1">
               <Checkbox id="pular-solicitacao" checked={pularSolicitacao} onCheckedChange={(v) => setPularSolicitacao(!!v)} />
@@ -182,14 +222,29 @@ function CriarDespesaNova({ inicial }: { inicial?: PrefillDespesa }) {
           ativo={modo === "solicitacao"}
         />
         <PainelDespesaMalote
+          // Importar (ou desfazer) recomeça o painel: rateioInicial e o resto
+          // do "inicial" só são lidos na montagem.
+          key={importado?.rateio.id ?? "manual"}
           classificacaoId={classificacao?.id ?? ""}
           classificacaoTipo={classificacao?.tipo ?? null}
           empresaId={empresaId ?? null}
           ativo={modo === "despesa"}
-          inicial={inicial}
+          inicial={importado ? { ...inicial, competencia: importado.rateio.competencia.slice(0, 7) } : inicial}
+          nomeInicial={importado?.nome}
+          valorInicial={importado?.rateio.valor}
+          rateioInicial={importado?.linhas}
+          arquivosIniciais={importado?.anexo ? [importado.anexo] : undefined}
+          rhRateioId={importado?.rateio.id}
           solicitacaoDispensadaManualmente={modo === "despesa" && classificacaoExigeSolicitacao}
         />
       </div>
+
+      <ImportarRateioRh
+        aberto={importando}
+        empresaPadrao={empresaId ?? null}
+        onFechar={() => setImportando(false)}
+        onImportar={aoImportar}
+      />
 
       {!modo && (
         <p className="text-xs text-muted-foreground text-center">
