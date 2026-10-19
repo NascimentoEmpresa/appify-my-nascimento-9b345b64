@@ -67,6 +67,8 @@
 #    bash infra/ha/acesso-pgadmin.sh --conferir
 #    bash infra/ha/acesso-pgadmin.sh --criar eduardo --migracao
 #    bash infra/ha/acesso-pgadmin.sh --criar joao --leitura --chave ~/joao.pub
+#    bash infra/ha/acesso-pgadmin.sh --promover joao --migracao
+#    bash infra/ha/acesso-pgadmin.sh --promover joao --leitura   # volta atras
 #    bash infra/ha/acesso-pgadmin.sh --remover joao
 # ============================================================================
 set -uo pipefail
@@ -101,6 +103,60 @@ if [ "$MODO" = "--conferir" ]; then
   exit 0
 fi
 
+# ── --promover: troca SO o papel, sem tocar na senha nem na chave ──────────
+#
+#  POR QUE NAO E SO RODAR `--criar` DE NOVO
+#  O `--criar` gera uma senha nova. Quem ja configurou o pgAdmin teria que
+#  reconfigurar, e a senha nova teria que viajar outra vez. Trocar privilegio
+#  nao deveria custar isso.
+#
+#  O QUE `--migracao` CONCEDE, MEDIDO E NAO SUPOSTO
+#  `grant postgres to acesso_<nome>` com INHERIT da:
+#     has_schema_privilege(... ,'public','CREATE') = true
+#     pg_has_role(..., 'postgres', 'USAGE')        = true  (equivale a ser dono)
+#  Isso e o que falta para `CREATE POLICY` e `ALTER TABLE`, porque as 680
+#  tabelas do public pertencem ao postgres. E e tambem, dito sem rodeio, a
+#  chave do banco inteiro: com `SET ROLE postgres` a pessoa e superusuario.
+#
+#  O CAMINHO MELHOR, PARA UM DIA COM CALMA
+#  Existe um meio-termo de verdade: passar a posse das tabelas para um papel
+#  `erp_owner` que NAO seja superusuario, e dar esse papel aos devs. Eles
+#  ganhariam DDL sem ganhar superusuario. Mas isso e um REASSIGN OWNED em
+#  produção -- mexe em 680 tabelas, 1.600 funcoes e 1.497 policies de uma vez.
+#  Nao e coisa para fazer de passagem num pedido de acesso.
+if [ "$MODO" = "--promover" ]; then
+  [ -n "$NOME" ] || { echo "falta o nome" >&2; exit 2; }
+  case "$PAPEL" in --leitura|--migracao) ;; *) echo "falta --leitura ou --migracao" >&2; exit 2 ;; esac
+  EXISTE=$(psql_no "select count(*) from pg_roles where rolname='acesso_$NOME'")
+  [ "${EXISTE:-0}" != "0" ] || { echo "o papel acesso_$NOME nao existe -- use --criar" >&2; exit 1; }
+
+  if [ "$PAPEL" = "--migracao" ]; then
+    echo "== promovendo acesso_$NOME a MIGRATION"
+    echo "   ⚠ na pratica isto e superusuario: com SET ROLE postgres,"
+    echo "     da para apagar o banco inteiro."
+    SQL="grant postgres to acesso_$NOME;
+         alter role acesso_$NOME inherit;"
+  else
+    echo "== rebaixando acesso_$NOME para LEITURA"
+    SQL="revoke postgres from acesso_$NOME;
+         grant pg_read_all_data to acesso_$NOME;
+         alter role acesso_$NOME nosuperuser nocreatedb nocreaterole bypassrls inherit;"
+  fi
+  printf '%s\n' "$SQL" | no "SUP=\$(grep -m1 '^PG_SENHA_SUPER=' /opt/erp/infra/failover/.env | cut -d= -f2-)
+    PGPASSWORD=\"\$SUP\" psql -h 127.0.0.1 -p 5000 -U postgres -d postgres -q -v ON_ERROR_STOP=1 -f -" || exit 1
+
+  # Provar, nao anunciar: le o privilegio de verdade depois da mudanca.
+  echo "   conferindo o que o papel pode AGORA:"
+  psql_no "select '   CREATE no schema public: '||has_schema_privilege('acesso_$NOME','public','CREATE')::text
+             union all
+           select '   equivale ao dono das tabelas: '||pg_has_role('acesso_$NOME','postgres','USAGE')::text
+             union all
+           select '   escreve em CHAMADO_SISTEMA: '||has_table_privilege('acesso_$NOME','public.\\\"CHAMADO_SISTEMA\\\"','INSERT')::text"
+  echo
+  echo "   A senha e a chave NAO mudaram -- ninguem precisa reconfigurar o pgAdmin."
+  exit 0
+fi
+
 # ── --remover ──────────────────────────────────────────────────────────────
 if [ "$MODO" = "--remover" ]; then
   [ -n "$NOME" ] || { echo "falta o nome" >&2; exit 2; }
@@ -112,7 +168,7 @@ if [ "$MODO" = "--remover" ]; then
 fi
 
 # ── --criar ────────────────────────────────────────────────────────────────
-[ "$MODO" = "--criar" ] || { sed -n '2,66p' "$0"; exit 2; }
+[ "$MODO" = "--criar" ] || { sed -n '2,80p' "$0"; exit 2; }
 [ -n "$NOME" ] || { echo "falta o nome: --criar <nome> --leitura|--migracao" >&2; exit 2; }
 case "$PAPEL" in --leitura|--migracao) ;; *) echo "falta --leitura ou --migracao" >&2; exit 2 ;; esac
 case "$NOME" in *[!a-z0-9_]*) echo "nome so com minusculas, numeros e _" >&2; exit 2 ;; esac
