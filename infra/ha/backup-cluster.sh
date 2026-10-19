@@ -105,6 +105,23 @@ if [ "$ACAO" = "--enviar" ]; then
         exec sudo -n /usr/local/sbin/atualizar-functions.sh
       fi ;;
   esac
+  # "migrations": aplica no banco as migrations do `main` que ainda nao
+  # entraram. Entrou em 19/10/2026 a pedido do Eduardo -- antes disso o CI so
+  # avisava por DM e alguem rodava na mao.
+  #
+  # O que esta chave consegue mandar continua sendo UMA palavra. Ela nao
+  # carrega SQL: o conteudo vem do clone do `main` do repositorio publico,
+  # ou seja, do que passou pela portaria e pelo merge. A protecao contra a
+  # migration ruim nao esta aqui, esta no aplicador: lock_timeout, uma
+  # transacao por arquivo e parada no primeiro erro.
+  case "${SSH_ORIGINAL_COMMAND:-}" in
+    *migrations*)
+      if [ "$(id -u)" = "0" ]; then
+        exec /usr/local/sbin/aplicar-migrations.sh
+      else
+        exec sudo -n /usr/local/sbin/aplicar-migrations.sh
+      fi ;;
+  esac
   case "${SSH_ORIGINAL_COMMAND:-}" in
     *anexos*) PREFIXO=anexos ;;
     *)        PREFIXO=erp-cluster ;;
