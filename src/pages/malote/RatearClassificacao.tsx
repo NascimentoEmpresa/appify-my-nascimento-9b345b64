@@ -21,6 +21,7 @@ import { RateioGrid, DimensoesRateio } from "./RateioGrid";
 import { erroFornecedorNoRateio, erroEmpresaNoRateio } from "./rateioValidacao";
 import { AnexosField } from "./AnexosField";
 import { DiaPagamentoPicker } from "./DiaPagamentoPicker";
+import { useCartaoEspecialDaForma } from "./cartaoEspecial";
 import { ExcecaoSenhaField } from "./ExcecaoSenhaField";
 import { conferirExcecaoComDespesa, type ExcecaoValidada } from "./excecao/regras";
 
@@ -111,7 +112,17 @@ export default function RatearClassificacao() {
   // comentário lá): data mais cedo que o prazo normal calculado exige
   // exceção; exceção pra hoje depois do horário 2.1 bloqueia.
   const { data: prazoNormal } = usePrazoNormalInclusao();
-  const exigeExcecao = !!dataPagamento && !!prazoNormal && dataPagamento < prazoNormal;
+
+  // [SEM-CHAMADO] Cartão com Fluxo Especial: Data de Pagamento e Competência = vencimento do cartão, sem exceção
+  // (a compra já foi feita). Ver cartaoEspecial.ts.
+  const cartaoEspecial = useCartaoEspecialDaForma(formaPagamento);
+  const exigeExcecao = !cartaoEspecial && !!dataPagamento && !!prazoNormal && dataPagamento < prazoNormal;
+  useEffect(() => {
+    if (!cartaoEspecial) return;
+    setDataPagamento(cartaoEspecial.vencimento);
+    setDataCompetencia(cartaoEspecial.competencia);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cartaoEspecial?.vencimento]);
   const hoje = useMemo(() => new Date().toLocaleDateString("sv-SE"), []);
 
   // SIS-2026-0361: Dia do desconto sugerido da Data de pagamento; cronograma
@@ -388,11 +399,11 @@ export default function RatearClassificacao() {
             </div>
             <div>
               <Label>Data de Pagamento *</Label>
-              <DiaPagamentoPicker value={dataPagamento} onChange={setDataPagamento} permitirDiasBloqueados={excecao} />
+              <DiaPagamentoPicker value={dataPagamento} onChange={setDataPagamento} permitirDiasBloqueados={excecao || !!cartaoEspecial} disabled={!!cartaoEspecial} />
             </div>
             <div>
               <Label>Data Competência *</Label>
-              <Input type="month" value={dataCompetencia} onChange={(e) => setDataCompetencia(e.target.value)} />
+              <Input type="month" value={dataCompetencia} onChange={(e) => setDataCompetencia(e.target.value)} disabled={!!cartaoEspecial} />
             </div>
             <div>
               <Label className="text-xs text-muted-foreground">Total já lançado (R$)</Label>
@@ -403,6 +414,13 @@ export default function RatearClassificacao() {
               <p className="h-10 flex items-center text-sm">{faltaLancar.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}</p>
             </div>
           </div>
+
+          {cartaoEspecial && (
+            <p className="text-xs text-muted-foreground">
+              Cartão com Fluxo Especial ({cartaoEspecial.cartao.nome_cartao}): a Data de Pagamento e a Competência são o vencimento da fatura
+              ({cartaoEspecial.vencimento.split("-").reverse().join("/")}) e não pedem exceção.
+            </p>
+          )}
 
           <ExcecaoSenhaField
             validada={excecaoVal}
