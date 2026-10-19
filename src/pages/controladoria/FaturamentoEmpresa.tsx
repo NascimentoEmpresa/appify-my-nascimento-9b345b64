@@ -112,8 +112,7 @@ export default function FaturamentoEmpresa() {
     const m = new Map<string, number>();
     for (const mes of meses) m.set(mes, contratosDoRecorte.reduce((s, c) => s + executavelDoContrato(c, mes), 0));
     return m;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [meses, contratosDoRecorte]);
+  }, [meses, contratosDoRecorte, executavelDoContrato]);
 
   const total = useMemo(() => {
     const t = totaisVazios();

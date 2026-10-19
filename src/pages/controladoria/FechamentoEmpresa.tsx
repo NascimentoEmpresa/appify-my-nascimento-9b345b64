@@ -86,8 +86,7 @@ export default function FechamentoEmpresa() {
       g.set(c.id, m);
     }
     return g;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [contratos, meses]);
+  }, [contratos, meses, executavelDoContrato]);
 
   const nfsDoAno = useMemo(() => nfs.filter((n) => n.competencia.startsWith(`${ano}-`)), [nfs, ano]);
   const custosContratoPorMesContrato = useMemo(() => custosPorContratoMes(custosAno, ligacoes), [custosAno, ligacoes]);

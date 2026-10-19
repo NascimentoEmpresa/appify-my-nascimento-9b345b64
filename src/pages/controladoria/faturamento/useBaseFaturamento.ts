@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useCallback, useMemo } from "react";
 import { useContratosERP, ContratoERP } from "@/hooks/useContratosERP";
 import { usePlanilhaCustos, resolverLinhasPorPeriodo, somarCamposEmLinhas, fimDoMes } from "@/hooks/usePlanilhaCusto";
 import { useNfsEmissao } from "@/hooks/useNfEmissao";
@@ -35,7 +35,10 @@ export function useBaseFaturamento() {
   // Valor executável do contrato no mês ("YYYY-MM"): planilha_custo vigente,
   // 0 depois do fim do contrato (mesma regra do Controle de Faturamento).
   // SIS-2026-0641: além do valor, de onde ele vem (o modal "como é formado" mostra a origem).
-  function origemExecutavel(c: ContratoERP, anoMes: string): { valor: number; fonte: FonteExecutavel } {
+  // SIS-2026-0641 (reaberto): a função precisa ser estável e mudar só quando a planilha ou as notas mudam. Sem isso, quem a usa
+  // dentro de um useMemo (Faturamento da Empresa, Fechamento) guardava o valor calculado com a planilha ainda vazia (o contrato
+  // cai no Valor Executado Mensal do cadastro) e não recalculava quando a planilha terminava de carregar.
+  const origemExecutavel = useCallback((c: ContratoERP, anoMes: string): { valor: number; fonte: FonteExecutavel } => {
     if (contratoEncerradoNaCompetencia(c, `${anoMes}-01`)) return { valor: 0, fonte: "encerrado" };
     const rows = planilhaPorContrato.get(c.id) ?? [];
     // SIS-2026-0641: sem nenhuma planilha de custo, usa o Valor Executado Mensal do cadastro do contrato.
@@ -51,11 +54,9 @@ export function useBaseFaturamento() {
       return { valor: v, fonte: v > 0 ? "planilha" : "sem_valor" };
     }
     return { valor: exec, fonte: exec > 0 ? "planilha" : "sem_valor" };
-  }
+  }, [planilhaPorContrato, mesesComNota]);
 
-  function executavelDoContrato(c: ContratoERP, anoMes: string): number {
-    return origemExecutavel(c, anoMes).valor;
-  }
+  const executavelDoContrato = useCallback((c: ContratoERP, anoMes: string): number => origemExecutavel(c, anoMes).valor, [origemExecutavel]);
 
   return { contratos, nfs, empresas, contratoPorId, empresaNomePorId, executavelDoContrato, origemExecutavel, carregando: c1 || c2 || c3 };
 }
