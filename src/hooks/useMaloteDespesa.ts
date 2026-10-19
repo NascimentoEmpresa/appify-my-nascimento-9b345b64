@@ -1460,7 +1460,8 @@ export const RATEIO_E_PARCELAS_VAZIO: { linhas: RateioLinha[]; parcelas: Parcela
 // `.in(...)` vira querystring na URL do PostgREST, e um UUID ocupa ~37
 // caracteres com a vírgula. Uma lista de 300 despesas passaria do limite de
 // URL e a requisição falharia INTEIRA — por isso os ids vão em blocos.
-const BLOCO_IN = 100;
+// 19/10/2026: 100 ids (~3,9 KB) já passa do limite de ~4 KB da URL no gateway do cluster; 40 deixa folga (src/lib/emLotes.ts).
+const BLOCO_IN = 40;
 
 // O retorno é marcado com `despesa_id` porque é por ele que o agrupamento é
 // feito. A coluna existe nas duas tabelas, mas a interface RateioLinha não a
@@ -1842,13 +1843,11 @@ export function useClassificacaoIdsPorDespesaRateio(despesaIds: string[]) {
     enabled: despesaIds.length > 0,
     staleTime: 60_000,
     queryFn: async () => {
-      const { data, error } = await (supabase as any)
-        .from("malote_despesa_rateio_linha")
-        .select("despesa_id, classificacao_id")
-        .in("despesa_id", despesaIds);
-      if (error) throw error;
+      // Em lotes: todos os ids numa URL só estouram o limite do gateway do cluster (502). Ver src/lib/emLotes.ts.
+      const data = await emLotes<{ despesa_id: string; classificacao_id: string | null }>(despesaIds, 40, (lote) =>
+        (supabase as any).from("malote_despesa_rateio_linha").select("despesa_id, classificacao_id").in("despesa_id", lote));
       const mapa = new Map<string, Set<string>>();
-      for (const r of (data ?? []) as { despesa_id: string; classificacao_id: string | null }[]) {
+      for (const r of data) {
         if (!r.classificacao_id) continue;
         const atual = mapa.get(r.despesa_id) ?? new Set<string>();
         atual.add(r.classificacao_id);
@@ -1879,26 +1878,34 @@ export function useClassificacaoIdsPorDespesaRateio(despesaIds: string[]) {
 // (falha silenciosa, sem toast — só um Map vazio no client). Quebra em
 // lotes de ids também, não só a resposta.
 async function buscarTodasLinhasRateio<T>(colunas: string, campoNaoNulo: string, despesaIds: string[]): Promise<T[]> {
-  const TAMANHO_LOTE_IDS = 150;
+  // 19/10/2026: era 150 (~5,8 KB de URL) e o gateway do cluster devolve 502 acima de ~4 KB: a consulta inteira falhava,
+  // o Map vinha vazio e Pagamento Malote/Aprovações ficavam sem Contrato (DM-2026-2829). 40 ids = ~1,6 KB. Ver src/lib/emLotes.ts.
+  const TAMANHO_LOTE_IDS = 40;
   const TAMANHO_PAGINA = 1000;
-  const linhas: T[] = [];
-  for (let inicio = 0; inicio < despesaIds.length; inicio += TAMANHO_LOTE_IDS) {
-    const lote = despesaIds.slice(inicio, inicio + TAMANHO_LOTE_IDS);
-    for (let pagina = 0; ; pagina++) {
-      const { data, error } = await (supabase as any)
-        .from("malote_despesa_rateio_linha")
-        .select(colunas)
-        .in("despesa_id", lote)
-        .not(campoNaoNulo, "is", null)
-        .order("despesa_id")
-        .order("ordem")
-        .range(pagina * TAMANHO_PAGINA, pagina * TAMANHO_PAGINA + TAMANHO_PAGINA - 1);
-      if (error) throw error;
-      linhas.push(...((data ?? []) as T[]));
-      if (!data || data.length < TAMANHO_PAGINA) break;
-    }
-  }
-  return linhas;
+  // Lotes em paralelo (cada um pagina sozinho); a ordem por despesa_id/ordem vale dentro de cada lote, e uma despesa
+  // nunca está em dois lotes, então "a primeira linha" de cada despesa continua a mesma.
+  const lotes: string[][] = [];
+  for (let inicio = 0; inicio < despesaIds.length; inicio += TAMANHO_LOTE_IDS) lotes.push(despesaIds.slice(inicio, inicio + TAMANHO_LOTE_IDS));
+  const porLote = await Promise.all(
+    lotes.map(async (lote) => {
+      const doLote: T[] = [];
+      for (let pagina = 0; ; pagina++) {
+        const { data, error } = await (supabase as any)
+          .from("malote_despesa_rateio_linha")
+          .select(colunas)
+          .in("despesa_id", lote)
+          .not(campoNaoNulo, "is", null)
+          .order("despesa_id")
+          .order("ordem")
+          .range(pagina * TAMANHO_PAGINA, pagina * TAMANHO_PAGINA + TAMANHO_PAGINA - 1);
+        if (error) throw error;
+        doLote.push(...((data ?? []) as T[]));
+        if (!data || data.length < TAMANHO_PAGINA) break;
+      }
+      return doLote;
+    }),
+  );
+  return porLote.flat();
 }
 
 // SIS-2026-0288 (Iury): coluna/filtro de "Empresa" em Pagamento Malote —
