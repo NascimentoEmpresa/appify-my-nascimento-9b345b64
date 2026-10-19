@@ -25,6 +25,22 @@ describe("emLotes", () => {
     expect(chamadas).toBe(0);
   });
 
+  // Fila de Pedidos de Materiais: ~70 lotes não podem sair todos de uma vez.
+  it("respeita o limite de lotes simultâneos e mantém a ordem dos lotes", async () => {
+    let abertos = 0;
+    let pico = 0;
+    const ids = Array.from({ length: 10 }, (_, i) => String(i));
+    const linhas = await emLotes(ids, 1, async (lote) => {
+      abertos++;
+      pico = Math.max(pico, abertos);
+      await new Promise((ok) => setTimeout(ok, 10 - Number(lote[0])));
+      abertos--;
+      return { data: lote, error: null };
+    }, 3);
+    expect(pico).toBe(3);
+    expect(linhas).toEqual(ids);
+  });
+
   // Lista pela metade parece completa — melhor a tela mostrar o erro.
   it("erro em qualquer lote derruba a consulta inteira", async () => {
     await expect(emLotes(["a", "b"], 1, async (lote) =>

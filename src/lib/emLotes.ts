@@ -14,6 +14,10 @@
 // liberado (todas as classificações do setor numa URL só).
 //
 // Regra prática: lote de 40 com select curto; 20 com select comprido.
+//
+// `simultaneos` limita quantos lotes saem ao mesmo tempo: a fila de Pedidos de
+// Materiais tem ~2.800 pedidos = 70 lotes de 40, e 70 consultas de uma vez
+// pesam no banco tanto quanto a URL longa pesava no gateway.
 
 export function fatiar<T>(lista: T[], tamanho: number): T[][] {
   if (tamanho < 1) throw new Error("Tamanho do lote precisa ser ao menos 1");
@@ -23,16 +27,27 @@ export function fatiar<T>(lista: T[], tamanho: number): T[][] {
 }
 
 /**
- * Roda `consulta` para cada lote de `ids` e junta as linhas. Lista vazia não
- * consulta nada. O primeiro erro de qualquer lote é lançado — melhor a tela
- * mostrar o erro do que uma lista pela metade, que parece completa.
+ * Roda `consulta` para cada lote de `ids` e junta as linhas, na ordem dos
+ * lotes. Lista vazia não consulta nada. O primeiro erro de qualquer lote é
+ * lançado — melhor a tela mostrar o erro do que uma lista pela metade, que
+ * parece completa.
  */
 export async function emLotes<T>(
   ids: string[],
   tamanho: number,
   consulta: (lote: string[]) => PromiseLike<{ data: T[] | null; error: unknown }>,
+  simultaneos = Infinity,
 ): Promise<T[]> {
-  const respostas = await Promise.all(fatiar(ids, tamanho).map((lote) => consulta(lote)));
+  const lotes = fatiar(ids, tamanho);
+  const respostas: { data: T[] | null; error: unknown }[] = new Array(lotes.length);
+  let proximo = 0;
+  const trabalhador = async () => {
+    while (proximo < lotes.length) {
+      const i = proximo++;
+      respostas[i] = await consulta(lotes[i]);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(simultaneos, lotes.length) }, trabalhador));
   const linhas: T[] = [];
   for (const { data, error } of respostas) {
     if (error) throw error;
