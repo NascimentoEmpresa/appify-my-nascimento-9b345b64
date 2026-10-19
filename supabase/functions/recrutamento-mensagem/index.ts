@@ -1,25 +1,36 @@
 // Arquivo: supabase/functions/recrutamento-mensagem/index.ts
 //
-// Dispara a mensagem automática de WhatsApp de uma etapa do recrutamento
-// (TRIAGEM, ENTREVISTA, ENTREVISTA GESTOR, APROVADO).
+// Dispara as mensagens automáticas de WhatsApp de uma etapa do recrutamento.
 //
-// AGENDAMENTO ASO (16/10/2026, mig 20261016000031): a mesma via, mas MANUAL —
-// o botão "Enviar agendamento" do card em SST + COMPRAS manda ao candidato
-// data, horário, local e mapa do exame que o SST agendou. Não depende do
-// "Enviar automaticamente" (ativo), só do template configurado e aprovado.
+// 14/10/2026 (SIS-2026-0667, mig 20261014000049): as mensagens vêm da
+// BIBLIOTECA (WA_TEMPLATE — as mesmas da "/" e do "Enviar para aprovação"),
+// e cada etapa pode ter várias (RECRUTAMENTO_MENSAGEM_ETAPA). Antes era um
+// template solto por etapa (RECRUTAMENTO_MENSAGENS) que nunca foi criado na
+// Meta — o log só tinha "(#132001) Template name does not exist".
 //
-// Por que TEMPLATE e não texto livre: a Cloud API só aceita texto livre
-// dentro de 24h da última mensagem DO CONTATO. Candidato que se inscreveu
-// pelo portal normalmente nunca escreveu no nosso número, então o texto
-// livre voltaria 131047 na maioria das vezes. Template aprovado pela Meta
-// pode iniciar conversa a qualquer momento.
+// AGENDAMENTO ASO (16/10/2026, mig 20261016000031): MANUAL — o botão "Enviar
+// agendamento" do card em SST + COMPRAS manda ao candidato data, horário,
+// local e mapa do exame que o SST agendou. Continua na linha própria de
+// RECRUTAMENTO_MENSAGENS (template recrutamento_agendamento_aso) e não
+// depende do "Enviar automaticamente" (ativo); aqui ela vira uma mensagem
+// a mais no mesmo laço de envio.
 //
-// O texto de fato mora no Meta Business Manager. Aqui só resolvemos qual
-// template, em que idioma, e o que entra em cada {{n}}.
+// TEXTO x TEMPLATE: a Cloud API só aceita texto livre dentro de 24h da última
+// mensagem DO CONTATO. Dentro da janela vai texto (sai mesmo antes de a Meta
+// aprovar o template); fora dela, vai o template aprovado, que pode iniciar
+// conversa a qualquer momento. Sem template aprovado, fora da janela não sai —
+// fica no log e o RH é avisado.
+//
+// VARIÁVEIS: cada {{n}} tem um rótulo (WA_TEMPLATE.variaveis). O valor vem,
+// nesta ordem: do que a tela mandou (ex.: banco do salário, ao contratar) →
+// do candidato/vaga (nome, cargo, cidade, contrato, data de início, posto) →
+// dos valores fixos (RECRUTAMENTO_MENSAGEM_VALOR, ex.: link do formulário).
+// Faltou valor: a mensagem não sai (a Meta recusa parâmetro vazio, e mandar
+// "-" no lugar do banco ou do link é pior que não mandar) e o log diz o quê.
 //
 // A mensagem entra na Caixa de Entrada como qualquer envio nosso: cria/reusa
-// contato e conversa e grava em WA_MENSAGEM. Sem isso o RH responderia o
-// candidato sem ver o que o sistema já tinha dito a ele.
+// contato e conversa e grava em WA_MENSAGEM (origem 'sistema' — a antiga
+// gravava 'recrutamento', que o CHECK recusa, e a bolha nunca aparecia).
 //
 // Secrets: WHATSAPP_TOKEN, WHATSAPP_PHONE_NUMBER_ID.
 
@@ -32,9 +43,7 @@ const WA_TOKEN = Deno.env.get("WHATSAPP_TOKEN") ?? "";
 const PHONE_NUMBER_ID = Deno.env.get("WHATSAPP_PHONE_NUMBER_ID") ?? "";
 const GRAPH = "https://graph.facebook.com/v21.0";
 
-const ETAPAS_COM_MENSAGEM = ["TRIAGEM", "ENTREVISTA", "ENTREVISTA GESTOR", "APROVADO"];
 const ETAPA_AGENDAMENTO = "AGENDAMENTO ASO";
-const MANUAIS = [ETAPA_AGENDAMENTO];
 
 // Mesma régua de src/lib/recrutamento/agendamentoAso.ts (o Deno não importa
 // do src): "2026-10-19" → "19/10/2026 (segunda-feira)".
@@ -69,15 +78,32 @@ function primeiroNomeDe(nome: string): string {
 }
 
 // Telefone utilizável? Só o comprimento — quem resolve o wa_id é a RPC
-// recrutamento_abrir_conversa, no banco.
-//
-// Não montamos o wa_id aqui de propósito: a Cloud API guarda o número
-// brasileiro na forma legada, sem o 9º dígito (55 + DDD + 8), e montar o
-// E.164 completo faria a função falar com um contato que não existe,
-// duplicando a conversa que a pessoa já tem. Uma implementação só, no banco.
+// recrutamento_abrir_conversa, no banco (ela conhece a forma legada do número
+// brasileiro, sem o 9º dígito, que a Cloud API guarda).
 function temTelefone(telefone: string): boolean {
   return String(telefone ?? "").replace(/\D/g, "").length >= 10;
 }
+
+/** Rótulo de variável comparável: minúsculo, sem acento, sem espaço sobrando. */
+const chave = (s: string) =>
+  String(s ?? "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/\s+/g, " ").trim();
+
+/** "2026-10-22" → "22/10/2026"; o resto (ex.: "Imediato") passa como está. */
+function dataBr(v: unknown): string {
+  const s = String(v ?? "").trim();
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(s);
+  return m ? `${m[3]}/${m[2]}/${m[1]}` : s;
+}
+
+const preencher = (texto: string, valores: string[]) =>
+  texto.replace(/\{\{(\d+)\}\}/g, (_, n) => valores[Number(n) - 1] ?? "");
+
+const problemaDeTemplate = (codigo: unknown): boolean => {
+  const n = Number(codigo);
+  return Number.isFinite(n) && n >= 132000 && n < 133000;
+};
+
+interface Resultado { codigo: string; titulo: string; enviado: boolean; via?: "texto" | "template"; motivo?: string; detalhe?: string }
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: cors });
@@ -93,135 +119,176 @@ Deno.serve(async (req) => {
   const { data: userData, error: userErr } = await db.auth.getUser();
   if (userErr || !userData?.user) return json({ error: "sessão inválida" }, 401);
 
-  let body: { candidato_id?: number; etapa?: string };
+  let body: { candidato_id?: number; etapa?: string; valores?: Record<string, string> };
   try { body = await req.json(); } catch { return json({ error: "json inválido" }, 400); }
 
   const candidatoId = Number(body.candidato_id ?? 0);
   const etapa = String(body.etapa ?? "").trim();
   if (!candidatoId || !etapa) return json({ error: "candidato_id e etapa são obrigatórios" }, 400);
-  const manual = MANUAIS.includes(etapa);
-  if (!ETAPAS_COM_MENSAGEM.includes(etapa) && !manual) return json({ ok: true, enviado: false, motivo: "etapa_sem_mensagem" });
+  const manual = etapa === ETAPA_AGENDAMENTO;
 
-  // service_role: o log tem que ser gravável mesmo quando o envio falha, e a
-  // tabela é só-leitura para o usuário de propósito.
+  // service_role: configuração e log. A AUTORIZAÇÃO é a leitura do candidato
+  // abaixo, feita com a sessão de quem moveu (RLS do Recrutamento).
   const admin = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false } });
   const logar = (row: Record<string, unknown>) =>
     admin.from("RECRUTAMENTO_MENSAGENS_LOG").insert({ candidato_id: candidatoId, etapa, ...row });
 
-  // ── Config da etapa ───────────────────────────────────────────────
-  const { data: cfg } = await db.from("RECRUTAMENTO_MENSAGENS").select("*").eq("etapa", etapa).maybeSingle();
-  if (!cfg || (!cfg.ativo && !manual)) {
-    await logar({ status: "desligado" });
-    return json({ ok: true, enviado: false, motivo: "desligado" });
-  }
-  if (!cfg.template_nome) {
-    await logar({ status: "sem_config" });
-    return json({ ok: true, enviado: false, motivo: "sem_template" });
+  // ── Mensagens da etapa ────────────────────────────────────────────
+  let codigos: string[] = [];
+  let porCodigo = new Map<string, unknown>();
+  if (manual) {
+    // Agendamento do ASO: a linha própria de RECRUTAMENTO_MENSAGENS vira uma
+    // "mensagem" no formato da biblioteca (parametros = rótulos das variáveis).
+    const { data: cfg } = await admin.from("RECRUTAMENTO_MENSAGENS").select("*").eq("etapa", etapa).maybeSingle();
+    if (!cfg?.template_nome) {
+      await logar({ status: "sem_config" });
+      return json({ ok: true, enviados: 0, motivo: "sem_template", resultados: [] });
+    }
+    codigos = [cfg.template_nome];
+    porCodigo.set(cfg.template_nome, {
+      codigo: cfg.template_nome, titulo: "Agendamento do ASO", texto: cfg.texto_previa ?? "",
+      variaveis: Array.isArray(cfg.parametros) ? cfg.parametros : [],
+      template_nome: cfg.template_nome, idioma: cfg.template_idioma ?? "pt_BR",
+    });
+  } else {
+    const { data: mapa } = await admin.from("RECRUTAMENTO_MENSAGEM_ETAPA")
+      .select("codigo, ordem").eq("etapa", etapa).eq("ativo", true).order("ordem");
+    codigos = (mapa ?? []).map((m: { codigo: string }) => m.codigo);
+    if (!codigos.length) return json({ ok: true, enviados: 0, motivo: "etapa_sem_mensagem", resultados: [] });
+
+    const { data: tpls } = await admin.from("WA_TEMPLATE")
+      .select("codigo, titulo, texto, variaveis, template_nome, idioma").in("codigo", codigos).eq("ativo", true);
+    porCodigo = new Map((tpls ?? []).map((t: { codigo: string }) => [t.codigo, t]));
   }
 
-  // ── Candidato + vaga (para resolver os {{n}}) ─────────────────────
+  // ── Candidato + vaga ──────────────────────────────────────────────
   const { data: cand } = await db.from("WA_CURRICULOS")
-    .select("id, nome, telefone, vaga_id, sst_data_exame, sst_hora_exame, sst_local_exame, sst_maps_url").eq("id", candidatoId).maybeSingle();
-  if (!cand) return json({ error: "candidato não encontrado" }, 404);
-  if (etapa === ETAPA_AGENDAMENTO && !cand.sst_data_exame) {
-    return json({ ok: true, enviado: false, motivo: "sem_agendamento" });
+    .select("id, nome, telefone, vaga_id, aso_posto, sst_data_exame, sst_hora_exame, sst_local_exame, sst_maps_url")
+    .eq("id", candidatoId).maybeSingle();
+  if (!cand) return json({ error: "candidato não encontrado ou sem acesso" }, 404);
+  if (manual && !cand.sst_data_exame) {
+    return json({ ok: true, enviados: 0, motivo: "sem_agendamento", resultados: [] });
   }
 
   if (!temTelefone(cand.telefone ?? "")) {
     await logar({ status: "sem_telefone", telefone: cand.telefone ?? null });
-    return json({ ok: true, enviado: false, motivo: "sem_telefone" });
+    return json({ ok: true, enviados: 0, motivo: "sem_telefone", resultados: [] });
   }
+  if (!WA_TOKEN || !PHONE_NUMBER_ID) return json({ error: "WhatsApp não configurado no servidor" }, 500);
 
   let vaga: Record<string, unknown> | null = null;
   if (cand.vaga_id) {
-    const { data } = await db.from("SISTEMA_RECRUTAMENTO")
-      .select("cargo, cidade, contrato").eq("id", cand.vaga_id).maybeSingle();
+    const { data } = await admin.from("SISTEMA_RECRUTAMENTO")
+      .select("cargo, cidade, contrato, data_inicio_prevista, local_exato").eq("id", cand.vaga_id).maybeSingle();
     vaga = data ?? null;
   }
+  const { data: fixosRows } = await admin.from("RECRUTAMENTO_MENSAGEM_VALOR").select("variavel, valor");
 
-  const VARS: Record<string, string> = {
-    primeiro_nome: primeiroNomeDe(cand.nome ?? ""),
-    nome: String(cand.nome ?? "").trim(),
-    cargo: String(vaga?.cargo ?? "").trim(),
-    cidade: String(vaga?.cidade ?? "").trim(),
-    contrato: String(vaga?.contrato ?? "").trim(),
-    empresa: "Grupo Nascimento",
-    data_exame: dataExameBr(cand.sst_data_exame ?? ""),
-    hora_exame: umaLinha(cand.sst_hora_exame ?? ""),
-    local_exame: umaLinha(cand.sst_local_exame ?? ""),
-    mapa_exame: mapaExame(cand.sst_maps_url ?? "", cand.sst_local_exame ?? ""),
+  const automaticos: Record<string, string> = {
+    "primeiro nome": primeiroNomeDe(cand.nome ?? ""),
+    "nome": String(cand.nome ?? "").trim(),
+    "cargo": String(vaga?.cargo ?? "").trim(),
+    "cidade": String(vaga?.cidade ?? "").trim(),
+    "contrato": String(vaga?.contrato ?? "").trim(),
+    "empresa": "Grupo Nascimento",
+    "data de inicio": dataBr(vaga?.data_inicio_prevista),
+    "local / posto": String(cand.aso_posto ?? vaga?.local_exato ?? "").trim(),
+    // Agendamento do ASO (mig 20261016000031 — rótulos no formato antigo).
+    "primeiro_nome": primeiroNomeDe(cand.nome ?? ""),
+    "data_exame": dataExameBr(cand.sst_data_exame ?? ""),
+    "hora_exame": umaLinha(cand.sst_hora_exame ?? ""),
+    "local_exame": umaLinha(cand.sst_local_exame ?? ""),
+    "mapa_exame": mapaExame(cand.sst_maps_url ?? "", cand.sst_local_exame ?? ""),
   };
-  // A Meta recusa parâmetro vazio no template ("" quebra o envio inteiro),
-  // então variável sem valor vira "-".
-  const parametros: string[] = Array.isArray(cfg.parametros) ? cfg.parametros : [];
-  const valores = parametros.map((p) => VARS[String(p)] || "-");
+  const daTela: Record<string, string> = {};
+  for (const [k, v] of Object.entries(body.valores ?? {})) if (String(v ?? "").trim()) daTela[chave(k)] = String(v).trim();
+  const fixos: Record<string, string> = {};
+  for (const r of (fixosRows ?? []) as { variavel: string; valor: string | null }[]) {
+    if (String(r.valor ?? "").trim()) fixos[chave(r.variavel)] = String(r.valor).trim();
+  }
+  const valorDe = (rotulo: string) => daTela[chave(rotulo)] || automaticos[chave(rotulo)] || fixos[chave(rotulo)] || "";
 
   // ── Contato e conversa (a mensagem tem que aparecer na Caixa) ─────
-  // A RPC acha o contato existente pelo trecho estável do número (país +
-  // DDD + 8 últimos dígitos) e só cria se não houver. Ela também não
-  // nomeia o contato: nome de contato vem do profile.name da Meta.
   const { data: conversaId, error: erroConversa } =
     await admin.rpc("recrutamento_abrir_conversa", { p_candidato_id: candidatoId });
   if (erroConversa || !conversaId) {
     await logar({ status: "erro", telefone: cand.telefone ?? null, erro: erroConversa?.message ?? "conversa não resolvida" });
-    return json({ ok: false, enviado: false, motivo: "sem_conversa", detalhe: erroConversa?.message }, 200);
+    return json({ ok: false, enviados: 0, motivo: "sem_conversa", detalhe: erroConversa?.message, resultados: [] });
   }
-
-  const { data: conversa } = await admin.from("WA_CONVERSA")
-    .select("id, contato_id").eq("id", conversaId).maybeSingle();
+  const { data: conversa } = await admin.from("WA_CONVERSA").select("id, contato_id").eq("id", conversaId).maybeSingle();
   if (!conversa) return json({ error: "não consegui abrir a conversa" }, 500);
-  const { data: contato } = await admin.from("WA_CONTATO")
-    .select("id, wa_id").eq("id", conversa.contato_id).maybeSingle();
+  const { data: contato } = await admin.from("WA_CONTATO").select("id, wa_id").eq("id", conversa.contato_id).maybeSingle();
   if (!contato?.wa_id) return json({ error: "contato sem wa_id" }, 500);
-  // Manda para o wa_id que o WhatsApp de fato usa, não para um montado aqui.
   const waId = contato.wa_id;
 
-  // ── Envio ─────────────────────────────────────────────────────────
-  const componentes = valores.length
-    ? [{ type: "body", parameters: valores.map((v) => ({ type: "text", text: v })) }]
-    : [];
-  const res = await fetch(`${GRAPH}/${PHONE_NUMBER_ID}/messages`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${WA_TOKEN}`, "Content-Type": "application/json" },
-    body: JSON.stringify({
-      messaging_product: "whatsapp", to: waId, type: "template",
-      template: {
-        name: cfg.template_nome,
-        language: { code: cfg.template_idioma || "pt_BR" },
-        ...(componentes.length ? { components: componentes } : {}),
-      },
-    }),
-  });
-  const dataG = await res.json().catch(() => ({}));
+  // Janela de 24h: alguma mensagem DO candidato nas últimas 24h?
+  const limite = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+  const { count } = await admin.from("WA_MENSAGEM")
+    .select("id", { count: "exact", head: true })
+    .eq("conversa_id", conversa.id).eq("direcao", "entrada").gt("criada_em", limite);
+  const dentroJanela = (count ?? 0) > 0;
 
-  if (!res.ok) {
-    // Erro mais comum aqui é template inexistente/não aprovado no idioma
-    // pedido (132001) — daí a mensagem da Meta ir crua para o log.
-    const erro = dataG?.error?.message ?? JSON.stringify(dataG).slice(0, 500);
-    await logar({ status: "erro", telefone: waId, template_nome: cfg.template_nome, erro });
-    return json({ ok: false, enviado: false, motivo: "falha_envio", detalhe: erro }, 200);
+  // ── Envio, uma mensagem por vez, na ordem da etapa ─────────────────
+  const resultados: Resultado[] = [];
+  for (const codigo of codigos) {
+    const tpl = porCodigo.get(codigo) as { codigo: string; titulo: string; texto: string; variaveis: string[] | null; template_nome: string | null; idioma: string | null } | undefined;
+    if (!tpl) { resultados.push({ codigo, titulo: codigo, enviado: false, motivo: "mensagem_inativa" }); continue; }
+
+    const rotulos: string[] = Array.isArray(tpl.variaveis) ? tpl.variaveis : [];
+    const valores = rotulos.map(valorDe);
+    const faltam = rotulos.filter((_, i) => !valores[i]);
+    if (faltam.length) {
+      await logar({ status: "falta_valor", codigo, template_nome: tpl.template_nome, telefone: waId, erro: `falta: ${faltam.join(", ")}` });
+      resultados.push({ codigo, titulo: tpl.titulo, enviado: false, motivo: "falta_valor", detalhe: faltam.join(", ") });
+      continue;
+    }
+    const texto = preencher(String(tpl.texto ?? ""), valores);
+
+    if (!dentroJanela && !tpl.template_nome) {
+      await logar({ status: "erro", codigo, telefone: waId, erro: "sem template na Meta e fora da janela de 24h" });
+      resultados.push({ codigo, titulo: tpl.titulo, enviado: false, motivo: "sem_template" });
+      continue;
+    }
+
+    const base = { messaging_product: "whatsapp", to: waId };
+    const mensagem = dentroJanela
+      ? { ...base, type: "text", text: { body: texto } }
+      : { ...base, type: "template", template: {
+          name: tpl.template_nome, language: { code: tpl.idioma || "pt_BR" },
+          ...(valores.length ? { components: [{ type: "body", parameters: valores.map((v) => ({ type: "text", text: v })) }] } : {}),
+        } };
+    const res = await fetch(`${GRAPH}/${PHONE_NUMBER_ID}/messages`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${WA_TOKEN}`, "Content-Type": "application/json" },
+      body: JSON.stringify(mensagem),
+    });
+    const dataG = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const erro = dataG?.error?.message ?? JSON.stringify(dataG).slice(0, 500);
+      const motivo = problemaDeTemplate(dataG?.error?.code) ? "template_nao_aprovado" : "falha_envio";
+      await logar({ status: "erro", codigo, telefone: waId, template_nome: tpl.template_nome, erro });
+      resultados.push({ codigo, titulo: tpl.titulo, enviado: false, motivo, detalhe: erro });
+      continue;
+    }
+
+    const wamid = dataG?.messages?.[0]?.id ?? null;
+    await admin.from("WA_MENSAGEM").insert({
+      conversa_id: conversa.id, contato_id: contato.id, direcao: "saida",
+      tipo: dentroJanela ? "text" : "template", texto, wa_message_id: wamid, status: "enviada",
+      origem: "sistema", autor_id: userData.user.id,
+      meta: { etapa, candidato_id: candidatoId, codigo, automatica: !manual },
+      ...(dentroJanela ? {} : { payload: { template: tpl.template_nome } }),
+    });
+    await admin.from("WA_CONVERSA").update({
+      ultima_mensagem_em: new Date().toISOString(),
+      ultima_mensagem_preview: texto.slice(0, 120),
+      ultima_direcao: "saida",
+    }).eq("id", conversa.id);
+    await logar({ status: "enviado", codigo, telefone: waId, template_nome: tpl.template_nome, wa_message_id: wamid });
+    resultados.push({ codigo, titulo: tpl.titulo, enviado: true, via: dentroJanela ? "texto" : "template" });
   }
 
-  const wamid = dataG?.messages?.[0]?.id ?? null;
-
-  // Espelho legível na Caixa de Entrada. O template real está na Meta; aqui
-  // substituímos os {{n}} na prévia para o atendente ver o que o candidato leu.
-  let previa = String(cfg.texto_previa ?? "").trim();
-  valores.forEach((v, i) => { previa = previa.replaceAll(`{{${i + 1}}}`, v); });
-  const textoBolha = previa || `[template: ${cfg.template_nome}]`;
-
-  await admin.from("WA_MENSAGEM").insert({
-    conversa_id: conversa.id, contato_id: contato.id, direcao: "saida",
-    tipo: "template", texto: textoBolha, wa_message_id: wamid, status: "enviada",
-    origem: "recrutamento",
-    meta: { etapa, candidato_id: candidatoId, template: cfg.template_nome, automatica: !manual },
-  });
-  await admin.from("WA_CONVERSA").update({
-    ultima_mensagem_em: new Date().toISOString(),
-    ultima_mensagem_preview: textoBolha.slice(0, 120),
-    ultima_direcao: "saida",
-  }).eq("id", conversa.id);
-
-  await logar({ status: "enviado", telefone: waId, template_nome: cfg.template_nome, wa_message_id: wamid });
-  return json({ ok: true, enviado: true, wa_message_id: wamid });
+  // O botão do agendamento lê { enviado, motivo, detalhe } (mensagemEnvioAgendamento).
+  const unico = manual ? { enviado: !!resultados[0]?.enviado, motivo: resultados[0]?.motivo, detalhe: resultados[0]?.detalhe } : {};
+  return json({ ok: true, enviados: resultados.filter((r) => r.enviado).length, resultados, ...unico });
 });
