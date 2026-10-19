@@ -229,6 +229,44 @@ export function useEnviarRateioMalote() {
   });
 }
 
+/** Rateio conferido e livre, como o Malote › Criar Despesa lista para importar. */
+export interface RateioParaImportar {
+  id: string;
+  tipo: TipoRateio;
+  competencia: string;
+  valor: number;
+  descricao: string | null;
+  criterio: CriterioRateio;
+  anexo_path: string | null;
+  anexo_nome: string | null;
+  conferido_por: string | null;
+  atualizado_em: string;
+  itens: { contrato_id: string | null; contrato_nome: string; valor: number; percentual: number }[];
+}
+
+/**
+ * Rateios que o Malote pode importar (mig 20261019000003): conferidos e
+ * ainda não usados em despesa. RPC porque quem lança no Malote pode não ter
+ * a tela do RH. O vínculo e a trava acontecem no INSERT da despesa
+ * (malote_despesa.rh_rateio_id + gatilho).
+ */
+export function useRateiosParaImportarMalote(habilitado: boolean) {
+  return useQuery({
+    queryKey: ["malote_rateios_rh_para_importar"],
+    enabled: habilitado,
+    staleTime: 0,
+    queryFn: async () => {
+      const { data, error } = await sb.rpc<RateioParaImportar[]>("malote_rateios_rh_para_importar");
+      if (error) throw error;
+      return (data ?? []).map((r) => ({
+        ...r,
+        valor: Number(r.valor),
+        itens: (r.itens ?? []).map((i) => ({ ...i, valor: Number(i.valor), percentual: Number(i.percentual) })),
+      }));
+    },
+  });
+}
+
 /** O anexo do rateio (bucket rh-rateio) como File, para seguir junto para o Malote. */
 export async function baixarAnexoRateio(path: string, nome: string): Promise<File> {
   const { data, error } = await supabase.storage.from(BUCKET_RATEIO).download(path);
