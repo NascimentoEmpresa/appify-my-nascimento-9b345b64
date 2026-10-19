@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import { useFormasPagamento } from "@/hooks/useMaloteFormaPagamento";
-import { useCartoesCredito, type CartaoCredito } from "@/hooks/useMaloteCartaoCredito";
+import { useQuery } from "@tanstack/react-query";
+import { supabase } from "@/integrations/supabase/client";
 
 // [SEM-CHAMADO] Despesa de cartão de crédito com Fluxo Especial (SIS-2026-0439). A compra já foi feita no cartão, então a
 // despesa é paga no dia em que é lançada: Data de Pagamento = dia da criação, Competência = mês de hoje (editável), e ela
@@ -8,7 +9,7 @@ import { useCartoesCredito, type CartaoCredito } from "@/hooks/useMaloteCartaoCr
 // fluxo, porque pagar "hoje" fica antes do prazo normal de inclusão.
 
 export interface CartaoEspecialDaForma {
-  cartao: CartaoCredito;
+  rotulo: string; // nome da forma de pagamento (para o aviso)
   dataPagamento: string; // YYYY-MM-DD = hoje (dia em que a despesa entra no Malote)
   competencia: string; // YYYY-MM = mês de hoje
 }
@@ -18,19 +19,24 @@ export function datasDaDespesaDeCartao(hoje: string): { dataPagamento: string; c
   return { dataPagamento: hoje, competencia: hoje.slice(0, 7) };
 }
 
-// Forma de pagamento com Fluxo Especial e cartão ativo cadastrado. A despesa grava o NOME da forma (catálogo nomeado, ex.
-// "Cartão de Crédito Sicredi HAGG 119 - Final 2719 - (Usado no Malote)"); o cartão é ligado ao TIPO dela
-// (malote_cartao_credito.tipo_forma_pagamento, ex. "Sicredi Final 2719 - (Usado no Malote)"). Casa pelo tipo da forma (e,
-// por segurança, pelo próprio texto da despesa). Devolve null para qualquer outra forma.
+// Forma de pagamento com Fluxo Especial ligada a um cartão ativo. Quem lança a despesa (ex.: Compras) não tem o menu "Cartão de
+// Crédito" e a RLS esconde os cartões dele, então a pergunta vai a uma função do banco que devolve só um booleano
+// (malote_forma_e_cartao_fluxo_especial, migration 20261019000013). Devolve null para qualquer outra forma.
 export function useCartaoEspecialDaForma(formaPagamento: string): CartaoEspecialDaForma | null {
   const { data: formas = [] } = useFormasPagamento();
-  const { data: cartoes = [] } = useCartoesCredito();
+  const forma = formas.find((f) => f.nome === formaPagamento && f.fluxo_aprovacao === "especial");
+  const { data: ehCartao = false } = useQuery({
+    queryKey: ["malote_forma_e_cartao_fluxo_especial", forma?.nome ?? ""],
+    enabled: !!forma,
+    staleTime: 5 * 60_000,
+    queryFn: async () => {
+      const { data, error } = await (supabase as any).rpc("malote_forma_e_cartao_fluxo_especial", { _forma: forma!.nome });
+      if (error) throw error;
+      return !!data;
+    },
+  });
   return useMemo(() => {
-    if (!formaPagamento) return null;
-    const forma = formas.find((f) => f.nome === formaPagamento && f.fluxo_aprovacao === "especial");
-    if (!forma) return null;
-    const cartao = cartoes.find((c) => c.ativo && (c.tipo_forma_pagamento === forma.tipo || c.tipo_forma_pagamento === formaPagamento));
-    if (!cartao) return null;
-    return { cartao, ...datasDaDespesaDeCartao(new Date().toLocaleDateString("sv-SE")) };
-  }, [formaPagamento, formas, cartoes]);
+    if (!forma || !ehCartao) return null;
+    return { rotulo: forma.nome, ...datasDaDespesaDeCartao(new Date().toLocaleDateString("sv-SE")) };
+  }, [forma, ehCartao]);
 }

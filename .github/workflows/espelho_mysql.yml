@@ -89,6 +89,46 @@ jobs:
           node -e "JSON.parse(require('fs').readFileSync('credenciais.json','utf8'))" \
             || { echo "::error::ESPELHO_CREDENCIAIS não contém um JSON válido."; exit 1; }
 
+      # TÚNEL PARA O CLUSTER (19/10/2026)
+      #
+      # Até a virada o destino era a Supabase, que atendia na internet. O
+      # Postgres do cluster NÃO atende: o HAProxy escuta só em 127.0.0.1 e o
+      # Postgres só no IP do túnel WireGuard. Abrir a 5432 para o mundo seria
+      # o caminho curto e é justamente o que derruba gente: Postgres exposto
+      # apanha varredura de senha o dia inteiro.
+      #
+      # Então o runner abre um túnel SSH e escreve em 127.0.0.1:5433 — o
+      # mesmo arranjo que o pgAdmin dos devs usa. A chave é só de
+      # encaminhamento (`restrict,port-forwarding,permitopen="127.0.0.1:5000"`):
+      # quem a tiver não abre sessão, não roda comando, não lê arquivo.
+      #
+      # A porta 5000 do outro lado é o HAProxy, que sempre aponta para o
+      # líder. Apontar para o Postgres de um nó específico significaria, no
+      # dia do failover, escrever no standby e receber "cannot execute in a
+      # read-only transaction" às 07:00 da manhã.
+      - name: Abrir o túnel até o banco1
+        env:
+          CHAVE: ${{ secrets.CLUSTER_TUNEL_SSH_KEY }}
+          B1: ${{ vars.CLUSTER_BACKUP_HOST || '216.238.120.171' }}
+        run: |
+          set -euo pipefail
+          [ -n "$CHAVE" ] || { echo "::error::Falta CLUSTER_TUNEL_SSH_KEY."; exit 1; }
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          printf '%s\n' "$CHAVE" > ~/.ssh/tunel && chmod 600 ~/.ssh/tunel
+          ssh-keyscan -p 8443 -H "$B1" >> ~/.ssh/known_hosts 2>/dev/null
+          # ExitOnForwardFailure: sem isto o ssh sobe feliz mesmo com o
+          # encaminhamento recusado, e a falha só apareceria depois, como
+          # "connection refused" do pg — erro que não fala de túnel nenhum.
+          ssh -i ~/.ssh/tunel -p 8443 -o BatchMode=yes -o ExitOnForwardFailure=yes \
+              -o ServerAliveInterval=30 -f -N -L 5433:127.0.0.1:5000 "pgtunel@$B1"
+          for _ in $(seq 1 10); do
+            if (exec 3<>/dev/tcp/127.0.0.1/5433) 2>/dev/null; then
+              echo "túnel aberto: 127.0.0.1:5433 -> banco1 127.0.0.1:5000"; exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::O túnel não respondeu em 10 s."; exit 1
+
       - name: Rodar
         working-directory: espelho-mysql
         # Os inputs vão por env, nunca interpolados direto no shell: assim um
@@ -139,6 +179,46 @@ jobs:
       # congela com os dados de ontem, parecendo certo, e só se descobre por
       # acaso. Reaproveita o bot que o pr_notify_dm.yml já usa.
       #
+      # QUANTO CUSTOU A DIÁRIA, NO NÓ  (19/10/2026)
+      #
+      # A diária reescreve ~2,66 milhões de linhas numa tacada. Na Supabase
+      # isso era problema dela; no cluster é nosso, e vira WAL que precisa
+      # chegar ao banco2 — que hoje tem 1 vCPU e 2 GB e já vive em swap.
+      #
+      # Em vez de alguém "ficar de olho" às 07:00, o próprio workflow mede e
+      # conta. Vigilância que depende de alguém lembrar de olhar não é
+      # vigilância; é sorte com hora marcada.
+      #
+      # Só na diária: a rápida de 10 min move ~1.500 linhas e mandaria 144
+      # mensagens por dia sem conteúdo — e alarme que chega sempre é alarme
+      # que ninguém lê.
+      - name: Quanto custou, no nó
+        if: success() && github.event_name == 'schedule' && github.event.schedule == '0 10 * * *'
+        env:
+          CHAVE: ${{ secrets.CLUSTER_BACKUP_SSH_KEY }}
+          B1: ${{ vars.CLUSTER_BACKUP_HOST || '216.238.120.171' }}
+          B2: ${{ vars.CLUSTER_BANCO2_HOST || '172.237.48.8' }}
+          USUARIO: ${{ vars.CLUSTER_BACKUP_USER || 'erpbackup' }}
+          DISCORD_TOKEN: ${{ secrets.DISCORD_TOKEN }}
+        run: |
+          set -uo pipefail
+          [ -n "$CHAVE" ] && [ -n "$DISCORD_TOKEN" ] || exit 0
+          printf '%s\n' "$CHAVE" > ~/.ssh/cluster && chmod 600 ~/.ssh/cluster
+          for H in "$B1" "$B2"; do ssh-keyscan -p 8443 -H "$H" >> ~/.ssh/known_hosts 2>/dev/null; done
+          # "status" é a única palavra que esta chave sabe dizer além de
+          # pedir backup; devolve contadores, nunca segredo.
+          E1=$(ssh -p 8443 -i ~/.ssh/cluster -o BatchMode=yes -o ConnectTimeout=20 "$USUARIO@$B1" status 2>&1 | head -20)
+          E2=$(ssh -p 8443 -i ~/.ssh/cluster -o BatchMode=yes -o ConnectTimeout=20 "$USUARIO@$B2" status 2>&1 | head -20)
+          CANAL=$(curl -s -X POST "https://discord.com/api/v10/users/@me/channels" \
+            -H "Authorization: Bot $DISCORD_TOKEN" -H "Content-Type: application/json" \
+            -d '{"recipient_id":"1384572666752663653"}' | jq -r '.id')
+          CORPO=$(jq -n --arg a "$E1" --arg b "$E2" \
+            '{content: ("📊 **Espelho: carga diária concluída.** Estado dos nós logo depois:\n**banco1**\n```\n"+$a+"\n```\n**banco2**\n```\n"+$b+"\n```\nOlhar: `carga`, `swap_uso` e `membros_streaming` (tem que ser 1).")}')
+          curl -s -X POST "https://discord.com/api/v10/channels/$CANAL/messages" \
+            -H "Authorization: Bot $DISCORD_TOKEN" -H "Content-Type: application/json" \
+            -d "$CORPO" > /dev/null
+          echo "medição enviada por DM"
+
       # Vai pela API REST em vez do discord.js: são duas chamadas (abre o
       # canal de DM, manda a mensagem), sem instalar pacote nem esperar o
       # cliente conectar.

@@ -104,13 +104,28 @@ fi
 echo "== trazendo o schema espelho para o cluster (~1,3 GB)"
 echo "   Isto NAO toca em nada que ja existe: o schema nao existe aqui."
 echo
+# A checagem "ja existe?" tambem vai por arquivo. A primeira versao usava
+# `\x27` dentro de `psql -c` achando que viraria aspa -- nao vira, e o ERRO de
+# sintaxe fez o teste concluir "ja existe". Parou por seguranca, mas pelo
+# motivo errado: um teste que falha e da a resposta mais cautelosa parece
+# funcionar e nao esta funcionando.
+cat > "$TMP" <<'SQL'
+\pset format unaligned
+\pset tuples_only on
+select case when count(*) > 0 then 'EXISTE' else 'LIVRE' end
+  from pg_namespace where nspname = 'espelho';
+SQL
+JA=$(mandar_sql "$TMP" 'PGPASSWORD="$SUP" psql -h 127.0.0.1 -p 5000 -U postgres -d postgres -At' | tr -d '\r' | grep -E '^(EXISTE|LIVRE)$' | head -1)
+case "$JA" in
+  LIVRE) ;;
+  EXISTE) echo "   o schema espelho JA existe no cluster -- nao vou por nada por cima." >&2
+          echo "   Se quer recarregar, apague antes, com intencao." >&2; exit 1 ;;
+  *)      echo "   nao consegui conferir se o schema ja existe (resposta: '${JA:-vazia}')." >&2
+          echo "   Nao comeco sem saber." >&2; exit 1 ;;
+esac
+
 no "$PREAMBULO"'
   set -uo pipefail
-  if [ "$(L -c "select count(*) from pg_namespace where nspname = \x27espelho\x27")" != "0" ]; then
-    echo "   o schema espelho JA existe no cluster -- nao vou por nada por cima." >&2
-    echo "   Se quer recarregar, apague antes, com intencao." >&2
-    exit 1
-  fi
   LIVRE=$(df -BM / | awk "NR==2{gsub(\"M\",\"\",\$4); print \$4}")
   if [ "${LIVRE:-0}" -lt 6000 ]; then
     echo "   menos de 6 GB livres ($LIVRE MB) -- nao comeco." >&2; exit 1
