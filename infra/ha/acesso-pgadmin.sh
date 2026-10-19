@@ -178,16 +178,32 @@ echo "   papel criado"
 #
 #    Agora o desligamento e por ControlPath (`ssh -O exit`), que nao depende
 #    de PID nem de `pkill` -- o Git Bash nem sempre tem pkill.
-echo "== provando o tunel (porta local 55432)"
 SOCK="$HOME/.ssh/cm-pgadmin-$NOME"
 PROVA="nao"
+
+# Uma porta LIVRE, nao sempre a 55432.
+#
+# Em 19/10 a versao quebrada deste script deixou um tunel orfao segurando a
+# 55432. Na execucao seguinte o encaminhamento foi recusado por porta ocupada,
+# o `ExitOnForwardFailure` fez o ssh sair com erro, e o script anunciou
+# "o tunel NAO abriu" -- sobre um tunel que estava funcionando perfeitamente,
+# ali do lado. Diagnostico ao contrario e pior do que nenhum.
+PORTA_TESTE=0
+for P in $(seq 55432 55442); do
+  if ! (exec 3<>/dev/tcp/127.0.0.1/"$P") 2>/dev/null; then PORTA_TESTE=$P; break; fi
+done
+echo "== provando o tunel (porta local ${PORTA_TESTE:-nenhuma livre})"
+if [ "$PORTA_TESTE" = "0" ]; then
+  echo "   ⚠ nenhuma porta livre entre 55432 e 55442 -- teste pulado."
+fi
 # ExitOnForwardFailure: sem isto o ssh sobe feliz mesmo com o encaminhamento
 # recusado, e o teste daria "ok" para um tunel que nao serve.
-if ssh -i "$CHAVE" -p "$PORTA_SSH" -o BatchMode=yes -o StrictHostKeyChecking=accept-new \
+if [ "$PORTA_TESTE" != "0" ] && \
+   ssh -i "$CHAVE" -p "$PORTA_SSH" -o BatchMode=yes -o StrictHostKeyChecking=accept-new \
        -o ExitOnForwardFailure=yes -o ControlMaster=yes -o ControlPath="$SOCK" \
-       -f -N -L 55432:127.0.0.1:5000 "$USUARIO_TUNEL@$BANCO1" 2>/dev/null; then
+       -f -N -L "$PORTA_TESTE":127.0.0.1:5000 "$USUARIO_TUNEL@$BANCO1" 2>/dev/null; then
   sleep 2
-  if (exec 3<>/dev/tcp/127.0.0.1/55432) 2>/dev/null; then
+  if (exec 3<>/dev/tcp/127.0.0.1/"$PORTA_TESTE") 2>/dev/null; then
     echo "   tunel abriu e o banco atendeu do outro lado."
     PROVA="sim"
   else
