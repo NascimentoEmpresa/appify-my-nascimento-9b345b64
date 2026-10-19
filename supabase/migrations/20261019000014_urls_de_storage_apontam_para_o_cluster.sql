@@ -37,6 +37,30 @@
 -- uma linha que nao devia.
 -- ===========================================================================
 
+-- ---------------------------------------------------------------------------
+-- SET LOCAL ROLE postgres -- por que esta linha existe
+--
+-- A primeira tentativa desta migration falhou com `ERROR: sessão ausente`.
+-- A culpa e de `profiles_block_self_escalation`, um gatilho de seguranca que
+-- recusa UPDATE em `profiles` fora de uma sessao de usuario -- a trava que
+-- impede alguem de se promover a administrador por fora da tela.
+--
+-- Ele TEM uma saida para manutencao:
+--     IF v_uid IS NULL THEN
+--       IF v_effective_role IN ('service_role','supabase_admin','postgres')
+--         THEN RETURN NEW;
+--
+-- So que `v_effective_role` cai em `current_setting('role', true)`, e o psql
+-- conectado COMO postgres, sem nenhum `SET ROLE`, devolve `none` -- nao
+-- `postgres`. Ser o usuario postgres e ter o papel postgres ATIVO sao coisas
+-- diferentes, e e essa diferenca que derrubou a migration.
+--
+-- `SET LOCAL` vale so ate o fim desta transacao. Preferido a desligar o
+-- gatilho (`DISABLE TRIGGER`): aqui a trava continua inteira e nos passamos
+-- pela porta que ela mesma deixou aberta, em vez de arrombar a porta.
+-- ---------------------------------------------------------------------------
+SET LOCAL ROLE postgres;
+
 UPDATE public.profiles
    SET avatar_url = replace(avatar_url,
          'https://fwmzeaztjxrxxzxzxmgc.supabase.co/', 'https://api.grpnascimento.com.br/')
