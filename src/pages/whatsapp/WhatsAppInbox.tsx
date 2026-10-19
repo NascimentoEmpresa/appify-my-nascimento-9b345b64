@@ -108,9 +108,12 @@ export default function WhatsAppInbox() {
       const mapa: Record<string, WaContato> = {};
       // Em lotes: o .in() vira query string, e com todas as conversas de uma
       // vez a URL passou do limite (set/2026) — a consulta falhava calada e a
-      // lista inteira ficava "—", sem nome nem número. Lote de 100 uuids
-      // fica em ~4 KB, folgado para qualquer proxy.
-      const LOTE = 100;
+      // lista inteira ficava "—", sem nome nem número.
+      // 19/10/2026: aconteceu DE NOVO depois da virada para o cluster
+      // (api.grpnascimento.com.br) — o gateway de lá devolve 502 com 100 uuids
+      // (~3,8 KB de URL; 90 ainda passa). O "folgado para qualquer proxy" de
+      // antes não era. Lote de 40 fica em ~1,5 KB, longe do limite.
+      const LOTE = 40;
       const lotes = await Promise.all(
         Array.from({ length: Math.ceil(ids.length / LOTE) }, (_, i) =>
           (supabase as any).from("WA_CONTATO").select("*").in("id", ids.slice(i * LOTE, (i + 1) * LOTE))),
