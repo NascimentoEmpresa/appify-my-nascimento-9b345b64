@@ -32,6 +32,8 @@ import { ConversaSolicitacao } from "@/components/solicitacoes/ConversaSolicitac
 import { AvisoCancelada, AvisoPedidoCancelamento } from "@/components/demissao/CancelarDemissao";
 import { BlocoCancelarReconsideracaoRH, BlocoDecidirCancelamentoRH } from "@/components/demissao/CancelarReconsideracaoRH";
 import { TABELA_APROVADOR_SETOR } from "@/components/admin/TrocaFuncaoSetoresUsuario";
+import { TabelaRescisoes } from "@/components/demissao/TabelaRescisoes";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 
@@ -105,7 +107,9 @@ const STATUS_DA_ETAPA: Record<Etapa, string[]> = {
   // E as CANCELADAS (18/09/2026): desde que o próprio RH cancela por
   // reconsideração, sumir da fila sem rastro parecia erro.
   // E os PEDIDOS DE CANCELAMENTO do encarregado (25/09/2026), que só o RH decide.
-  rh: [STATUS_CANCELAMENTO_SOLICITADO, "Pendente RH", "Pendente SST", STATUS_SST_RECEBIDA, STATUS_SST_AGENDADO, STATUS_SST_ASO_VALIDO, "Cancelada"],
+  // E as "Concluída" do desenho antigo (19/10/2026): a tabela de rescisões
+  // do RH é o histórico inteiro, como a planilha que ela substitui.
+  rh: [STATUS_CANCELAMENTO_SOLICITADO, "Pendente RH", "Pendente SST", STATUS_SST_RECEBIDA, STATUS_SST_AGENDADO, STATUS_SST_ASO_VALIDO, "Concluída", "Cancelada"],
 };
 
 /**
@@ -173,13 +177,22 @@ export function PainelDemissoes({ etapa }: { etapa: Etapa }) {
   const [todas, setTodas] = useState<SolicitacaoDemissao[]>([]);
   const carregar = useCallback(async () => {
     setCarregando(true);
-    const { data, error } = await sb.from(TABELA)
-      .select("*").in("status", statusVisiveis)
-      .order("criado_em", { ascending: false }).limit(500);
-    if (error) toast.error("Erro ao carregar as solicitações: " + error.message);
-    setTodas(data ?? []);
+    // O RH lê TODAS (19/10/2026): a tabela de rescisões é o histórico, e o
+    // corte de 500 sumia com as mais antigas. Página de 1000, que é o teto
+    // de linhas por resposta do PostgREST.
+    const todasLidas: SolicitacaoDemissao[] = [];
+    const pagina = etapa === "rh" ? 1000 : 500;
+    for (let de = 0; ; de += pagina) {
+      const { data, error } = await sb.from(TABELA)
+        .select("*").in("status", statusVisiveis)
+        .order("criado_em", { ascending: false }).order("id", { ascending: false }).range(de, de + pagina - 1);
+      if (error) { toast.error("Erro ao carregar as solicitações: " + error.message); break; }
+      todasLidas.push(...(data ?? []));
+      if (etapa !== "rh" || !data || data.length < pagina) break;
+    }
+    setTodas(todasLidas);
     setCarregando(false);
-  }, [statusVisiveis]);
+  }, [statusVisiveis, etapa]);
   useEffect(() => { carregar(); }, [carregar]);
 
   // Veio do sino (25/09/2026): o link traz ?abrir=<id> — abre o card direto e
@@ -231,6 +244,95 @@ export function PainelDemissoes({ etapa }: { etapa: Etapa }) {
     return true;
   };
 
+  // A fila de sempre (a tabela simples). No RH ela vira a segunda aba.
+  const filaDoFluxo = (
+    <Card>
+      <CardHeader className="gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <CardTitle className="text-base">Solicitações</CardTitle>
+        <div className="flex flex-wrap items-center gap-2">
+          <FiltroContratos linhas={linhas} campo="contrato" selecionados={fContratos} onChange={setFContratos} />
+          <div className="relative">
+            <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+            <Input className="w-56 pl-8" placeholder="Colaborador, solicitante, contrato…"
+              value={busca} onChange={(e) => setBusca(e.target.value)} />
+          </div>
+          <Select value={fStatus || "todos"} onValueChange={(v) => setFStatus(v === "todos" ? "" : v)}>
+            <SelectTrigger className="w-52"><SelectValue placeholder="Todos os status" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="todos">Todos os status</SelectItem>
+              {statusVisiveis.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}
+            </SelectContent>
+          </Select>
+          <Button variant="outline" onClick={carregar} disabled={carregando}>
+            {carregando ? <Loader2 className="h-4 w-4 animate-spin" /> : "Atualizar"}
+          </Button>
+        </div>
+      </CardHeader>
+      <CardContent>
+        {carregando ? (
+          <p className="py-10 text-center text-sm text-muted-foreground">Carregando…</p>
+        ) : filtradas.length === 0 ? (
+          <p className="py-10 text-center text-sm text-muted-foreground">
+            {linhas.length === 0
+              ? "Nenhuma solicitação de demissão por aqui ainda."
+              : "Nada bate com o filtro atual."}
+          </p>
+        ) : (
+          <div className="overflow-x-auto">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="w-16">#</TableHead>
+                  <TableHead>Colaborador</TableHead>
+                  <TableHead className="hidden md:table-cell">Contrato</TableHead>
+                  <TableHead className="hidden lg:table-cell">Solicitante</TableHead>
+                  <TableHead className="hidden sm:table-cell">Aberta em</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead className="w-24" />
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {filtradas.map((s) => (
+                  <TableRow key={s.id} className="cursor-pointer" onClick={() => setAberta(s)}>
+                    <TableCell className="text-muted-foreground">{s.id}</TableCell>
+                    <TableCell>
+                      <div className="font-medium">{s.colaborador_nome}</div>
+                      <div className="text-xs text-muted-foreground">{s.colaborador_posto || "—"}</div>
+                    </TableCell>
+                    <TableCell className="hidden md:table-cell">{s.contrato || "—"}</TableCell>
+                    <TableCell className="hidden lg:table-cell">{s.solicitante_nome || "—"}</TableCell>
+                    <TableCell className="hidden sm:table-cell">{fmtData(s.criado_em)}</TableCell>
+                    <TableCell>
+                      <div className="flex flex-wrap items-center gap-1">
+                        <Badge variant="outline" className={corDoStatus(s.status)}>
+                          {s.status === STATUS_CANCELAMENTO_SOLICITADO && <Ban className="mr-1 h-3 w-3" />}
+                          {s.status}
+                        </Badge>
+                        {/* Um card devolvido está no MESMO status de um que
+                            nunca saiu do Operacional. Sem o selo, os dois se
+                            parecem na lista e o retrabalho some no meio. */}
+                        {s.devolvido_em && (
+                          <Badge variant="outline" className="border-amber-300 bg-amber-100 text-amber-800">
+                            <Undo2 className="mr-1 h-3 w-3" /> Devolvida
+                          </Badge>
+                        )}
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      <Button variant="ghost" size="sm" onClick={(e) => { e.stopPropagation(); setAberta(s); }}>
+                        {statusDeAcao.includes(s.status) || (etapa === "rh" && s.status === STATUS_CANCELAMENTO_SOLICITADO) ? "Analisar" : "Ver"}
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+
   return (
     <>
       {/* 5 cartões para quem vê o fluxo inteiro (Operacional e analista), 3 no
@@ -271,91 +373,21 @@ export function PainelDemissoes({ etapa }: { etapa: Etapa }) {
         )}
       </div>
 
-      <Card>
-        <CardHeader className="gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <CardTitle className="text-base">Solicitações</CardTitle>
-          <div className="flex flex-wrap items-center gap-2">
-            <FiltroContratos linhas={linhas} campo="contrato" selecionados={fContratos} onChange={setFContratos} />
-            <div className="relative">
-              <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-              <Input className="w-56 pl-8" placeholder="Colaborador, solicitante, contrato…"
-                value={busca} onChange={(e) => setBusca(e.target.value)} />
-            </div>
-            <Select value={fStatus || "todos"} onValueChange={(v) => setFStatus(v === "todos" ? "" : v)}>
-              <SelectTrigger className="w-52"><SelectValue placeholder="Todos os status" /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="todos">Todos os status</SelectItem>
-                {statusVisiveis.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}
-              </SelectContent>
-            </Select>
-            <Button variant="outline" onClick={carregar} disabled={carregando}>
-              {carregando ? <Loader2 className="h-4 w-4 animate-spin" /> : "Atualizar"}
-            </Button>
-          </div>
-        </CardHeader>
-        <CardContent>
-          {carregando ? (
-            <p className="py-10 text-center text-sm text-muted-foreground">Carregando…</p>
-          ) : filtradas.length === 0 ? (
-            <p className="py-10 text-center text-sm text-muted-foreground">
-              {linhas.length === 0
-                ? "Nenhuma solicitação de demissão por aqui ainda."
-                : "Nada bate com o filtro atual."}
-            </p>
-          ) : (
-            <div className="overflow-x-auto">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead className="w-16">#</TableHead>
-                    <TableHead>Colaborador</TableHead>
-                    <TableHead className="hidden md:table-cell">Contrato</TableHead>
-                    <TableHead className="hidden lg:table-cell">Solicitante</TableHead>
-                    <TableHead className="hidden sm:table-cell">Aberta em</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead className="w-24" />
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {filtradas.map((s) => (
-                    <TableRow key={s.id} className="cursor-pointer" onClick={() => setAberta(s)}>
-                      <TableCell className="text-muted-foreground">{s.id}</TableCell>
-                      <TableCell>
-                        <div className="font-medium">{s.colaborador_nome}</div>
-                        <div className="text-xs text-muted-foreground">{s.colaborador_posto || "—"}</div>
-                      </TableCell>
-                      <TableCell className="hidden md:table-cell">{s.contrato || "—"}</TableCell>
-                      <TableCell className="hidden lg:table-cell">{s.solicitante_nome || "—"}</TableCell>
-                      <TableCell className="hidden sm:table-cell">{fmtData(s.criado_em)}</TableCell>
-                      <TableCell>
-                        <div className="flex flex-wrap items-center gap-1">
-                          <Badge variant="outline" className={corDoStatus(s.status)}>
-                            {s.status === STATUS_CANCELAMENTO_SOLICITADO && <Ban className="mr-1 h-3 w-3" />}
-                            {s.status}
-                          </Badge>
-                          {/* Um card devolvido está no MESMO status de um que
-                              nunca saiu do Operacional. Sem o selo, os dois se
-                              parecem na lista e o retrabalho some no meio. */}
-                          {s.devolvido_em && (
-                            <Badge variant="outline" className="border-amber-300 bg-amber-100 text-amber-800">
-                              <Undo2 className="mr-1 h-3 w-3" /> Devolvida
-                            </Badge>
-                          )}
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <Button variant="ghost" size="sm" onClick={(e) => { e.stopPropagation(); setAberta(s); }}>
-                          {statusDeAcao.includes(s.status) || (etapa === "rh" && s.status === STATUS_CANCELAMENTO_SOLICITADO) ? "Analisar" : "Ver"}
-                        </Button>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
-          )}
-        </CardContent>
-      </Card>
+      {/* RH (19/10/2026): a tabela no formato da planilha de rescisão é a
+          principal; a fila do fluxo de antes continua na outra aba. */}
+      {etapa === "rh" ? (
+        <Tabs defaultValue="rescisoes">
+          <TabsList className="mb-3">
+            <TabsTrigger value="rescisoes">Rescisões</TabsTrigger>
+            <TabsTrigger value="fila">Fila do fluxo</TabsTrigger>
+          </TabsList>
+          <TabsContent value="rescisoes">
+            <TabelaRescisoes solicitacoes={linhas} carregandoSolicitacoes={carregando}
+              onAbrirSolicitacao={setAberta} quemSou={quemSou} onAtualizar={carregar} />
+          </TabsContent>
+          <TabsContent value="fila">{filaDoFluxo}</TabsContent>
+        </Tabs>
+      ) : filaDoFluxo}
 
       <DetalheSolicitacao
         solicitacao={aberta} etapa={etapa} quemSou={quemSou}

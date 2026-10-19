@@ -31,6 +31,7 @@ import {
   AlertTriangle,
   Ban,
   Wand2,
+  ListChecks,
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -78,6 +79,7 @@ import {
   valorDaLinha,
 } from "./faltasPorDias";
 import { ModeloNfDialog } from "./ModeloNfDialog";
+import { ListaFinalDialog } from "./ListaFinalDialog";
 import { registrarLogNf } from "./registrarLogNf";
 import { HistoricoNfPainel } from "./HistoricoNfPainel";
 
@@ -424,6 +426,8 @@ function ContratoNfsPanel({
   onSelecionar: (nf: NfEmissaoRow) => void;
 }) {
   const [popoverOpen, setPopoverOpen] = useState(false);
+  // SIS-2026-0671: Lista final (a primeira aba da planilha modelo) com envio em lote ao Financeiro.
+  const [listaFinalAberta, setListaFinalAberta] = useState(false);
   const [buscaNf, setBuscaNf] = useState("");
   const [filtroCompetencia, setFiltroCompetencia] = useState("TODAS");
   const [competenciaOverride, setCompetenciaOverride] = useState<string | null>(null);
@@ -480,6 +484,9 @@ function ContratoNfsPanel({
             <p className="text-xs text-muted-foreground">{contrato.cliente}</p>
           </div>
           <div className="flex shrink-0 items-center gap-2">
+            <Button size="sm" variant="outline" onClick={() => setListaFinalAberta(true)}>
+              <ListChecks className="h-4 w-4 mr-1" /> Lista final
+            </Button>
             <Button size="sm" variant="outline" onClick={onConfigurarModelo}>
               <Settings className="h-4 w-4 mr-1" /> Modelo de NFs
             </Button>
@@ -655,6 +662,17 @@ function ContratoNfsPanel({
           </TableBody>
         </Table>
       </div>
+
+      {listaFinalAberta && (
+        <ListaFinalDialog
+          open={listaFinalAberta}
+          onOpenChange={setListaFinalAberta}
+          contrato={contrato}
+          nfs={nfs}
+          modelosAtivos={modelosAtivos}
+          competenciaSugerida={competenciaSugerida}
+        />
+      )}
     </>
   );
 }

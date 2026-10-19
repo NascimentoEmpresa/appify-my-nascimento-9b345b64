@@ -110,6 +110,9 @@ export interface FluxoCaixaMaloteLinha {
   inconsistencia?: string | null;
   // Só a view da importação: id único da linha (desempate da paginação).
   linha_id?: string;
+  // Só a view da importação: true quando o rateio foi criado no ERP (esse dá para refazer/desfazer pela tela;
+  // o que veio rateado da planilha não é alterado).
+  rateio_erp?: boolean;
   // SIS-2026-0611: só a view de previstos (Fluxo Projetado) devolve — 'aberto' | 'cancelado'.
   // Linha com isto preenchido ainda NÃO aconteceu: não é pagamento realizado.
   situacao_base?: "aberto" | "cancelado" | null;
@@ -183,9 +186,14 @@ export function useFluxoCaixaCombinado() {
             throw e;
           }),
       ]);
+      // Débito Automático no cartão com fatura consolidada já veio DENTRO da fatura (view consolidada):
+      // sai daqui para não somar duas vezes.
+      const debitosNaFatura = new Set(
+        (malote as FluxoCaixaMaloteLinha[]).filter((l) => l.fatura_cartao_id && l.despesa_id_origem).map((l) => l.despesa_id_origem as string),
+      );
       const linhas = [
         ...malote,
-        ...debitoAutomatico,
+        ...(debitoAutomatico as FluxoCaixaMaloteLinha[]).filter((l) => !debitosNaFatura.has(l.despesa_id)),
         ...cartaoFatura,
         ...aplicacaoFinanceira,
         ...resgateAplicacao,

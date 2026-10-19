@@ -58,3 +58,75 @@ BEGIN
         FROM pg_views WHERE schemaname = r.s);
   END LOOP;
 END $$;
+
+-- ===========================================================================
+--  O GoTrue DO CLUSTER E MAIS ANTIGO QUE O SCHEMA DE `auth` DA SUPABASE
+--  (achado em 18/10/2026, com o ERP ja rodando no cluster)
+--
+--  SINTOMA, e por que ele engana: o usuario abria o sistema, usava, saia da
+--  pagina e ao voltar era mandado para o login -- as vezes no meio de um
+--  processo. E as telas de dashboard vinham VAZIAS. Parecia dado faltando;
+--  nao era. Sem sessao valida a RLS nega, e a tela sem permissao fica em
+--  branco em vez de dar erro (ver rls_negada_devolve_lista_vazia_nao_erro).
+--
+--  CAUSA: a Supabase roda um GoTrue mais novo que o nosso (v2.158.1) e
+--  acrescentou quatro colunas a `auth.sessions`:
+--      oauth_client_id, refresh_token_hmac_key, refresh_token_counter, scopes
+--  O nosso GoTrue le a tabela para dentro de uma struct Go que nao tem esses
+--  campos, e toda renovacao de sessao morria com
+--      500 "missing destination name oauth_client_id in *models.Session"
+--  Foram 98 falhas antes de alguem perceber -- porque o front, ao receber a
+--  falha, simplesmente pede login de novo, sem dizer por que.
+--
+--  As quatro estavam 100% NULAS nas 314 sessoes: o nosso GoTrue nunca as
+--  escreveu. Entao removemos as colunas em vez de subir a imagem no meio da
+--  noite -- subir a imagem e o caminho certo, mas com risco proprio: um
+--  GoTrue mais novo roda as proprias migrations e empurra o schema adiante
+--  (ver imagem_supabase_amarrada_ao_nivel_de_migration).
+--
+--  ⚠ DEPOIS DE RODAR ISTO, REINICIE O CONTAINER `auth`. Sem o restart ele
+--  continua com as conexoes e os planos em cache e passa a falhar com
+--  "error finding refresh token: write failed" -- que parece outro defeito e
+--  nao e.
+-- ===========================================================================
+ALTER TABLE auth.sessions DROP COLUMN IF EXISTS oauth_client_id;
+ALTER TABLE auth.sessions DROP COLUMN IF EXISTS refresh_token_hmac_key;
+ALTER TABLE auth.sessions DROP COLUMN IF EXISTS refresh_token_counter;
+ALTER TABLE auth.sessions DROP COLUMN IF EXISTS scopes;
+
+-- ===========================================================================
+--  O JIT DEIXAVA O SISTEMA 26x MAIS LENTO (18/10/2026)
+--
+--  SINTOMA: o dashboard de Compras/Estoque vinha em branco. No log do
+--  PostgREST, `POST /rpc/sup_dashboard_compras_estoque -> 500`; no log do
+--  Postgres, `canceling statement due to statement timeout`.
+--  O papel `authenticated` tem `statement_timeout=8s` (igual na Supabase).
+--
+--  MEDIDO, a mesma chamada, mesmo usuario, mesmos parametros:
+--      producao (Supabase)      255 ms
+--      cluster                12.590 ms      <- estourava os 8s
+--
+--  A causa nao era indice (1.796 nos dois), nem estatistica (ANALYZE nao
+--  mudou nada), nem dado (665 tabelas conferidas linha a linha). Era isto:
+--      jit                producao=off   cluster=on
+--      random_page_cost   producao=1.1   cluster=4
+--
+--  Isolando um de cada vez, o veredito foi claro:
+--      so random_page_cost=1.1  -> 19.029 ms  (nao ajudou)
+--      so jit=off               ->    480 ms  <<< era o JIT
+--
+--  O JIT compila a consulta antes de rodar. Em consulta com muitas
+--  expressoes -- que e o caso de um dashboard que agrega meia duzia de
+--  tabelas -- a compilacao custa mais que a execucao. A Supabase desliga por
+--  padrao, e e por isso que ninguem nunca viu isso la.
+--
+--  Depois: 342 ms no cluster contra 255 ms da producao. Equiparado -- e vale
+--  para TODA consulta do sistema, nao so para esse dashboard.
+--
+--  ⚠ O PostgREST mantem conexao aberta: depois de rodar isto, reinicie os
+--  containers `rest` e `auth`, senao a configuracao nova so vale para
+--  conexao nova e o sintoma continua.
+-- ===========================================================================
+ALTER DATABASE postgres SET jit = off;
+ALTER DATABASE postgres SET random_page_cost = 1.1;  -- disco SSD, igual a producao
+ALTER DATABASE postgres SET work_mem = '7MB';        -- igual a producao

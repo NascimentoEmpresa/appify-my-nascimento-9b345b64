@@ -63,13 +63,36 @@ nela**.
 
 ## O risco que manda em todo o roteiro
 
-**Um slot de replicação que para de ser consumido enche o WAL da produção e
-derruba a Supabase.** É assim que uma migração mata o sistema que ela deveria
-proteger. Duas consequências práticas:
+**Um slot de replicação que para de ser consumido tem sete horas de vida.**
+
+> 🔴 **Corrigido em 15/10/2026.** Este trecho dizia, até hoje, que o slot
+> parado *"enche o WAL da produção e derruba a Supabase"*. **Está errado, e eu
+> repeti o erro ao Eduardo em relatório e em notificação.** A produção tem
+> `max_slot_wal_keep_size = 2GB`: o Postgres invalida o slot para proteger o
+> disco, e o disco nunca enche por essa via. Medido depois de 14 h de parada
+> real: WAL em 1296 MB de um teto de 4 GB, ERP respondendo 200. Detalhe,
+> aritmética e o caminho de volta na **seção 1.12**.
+
+O risco verdadeiro é o outro lado da mesma moeda: a ~300 MB/h, o slot parado
+chega aos 2 GB em **cerca de 7 horas** e é **invalidado**. O preço de uma
+parada muda de categoria nesse momento:
+
+| Parada percebida em… | Preço |
+|---|---|
+| menos de 7 h | um comando (`disparar-sincronia` ou `disparar-conflito`) |
+| mais de 7 h | **recopiar o banco inteiro** (`disparar-religar`) |
+
+Três consequências práticas:
 
 1. Enquanto existir slot nosso na produção, **alguém tem que estar olhando**.
    A consulta de vigilância está no passo 1.5 e roda a cada poucos minutos.
-2. Em qualquer passo que der errado, a primeira coisa a fazer é **soltar o
+2. **O vigia só vale se o worker estiver vivo.** O alerta por DM dispara com
+   1 GB no slot (~3,5 h de folga), e quem envia DM é o `worker/`. Em 14/10 o
+   worker estava morto desde 17h16, a replicação parou às 20h09, e o aviso que
+   existia exatamente para isso não saiu. Conferir
+   `scripts/status-banco.txt` com data de agora **antes** de deixar a
+   replicação ligada da noite para o dia.
+3. Em qualquer passo que der errado, a primeira coisa a fazer é **soltar o
    slot** — não investigar com o slot de pé.
 
 E a causa número um de slot travado neste banco já é conhecida: **11 tabelas
@@ -463,9 +486,16 @@ O que foi escrito em 13/10/2026:
    `pg_replication_slots` é view sobre função de sistema e o PostgREST não a
    expõe, então a leitura precisa do RPC. Só `service_role` executa.
 2. **o indicador no `saudeBanco.js`**, com limite de **1 GB** de atraso ou slot
-   inativo por mais de **5 minutos**. 1 GB é folgado de propósito: a produção
-   gera ~400 MB de WAL por hora em dia útil, então é mais de duas horas de
-   margem, e alto o bastante para a carga inicial não dar alarme falso.
+   inativo por mais de **5 minutos**. 1 GB é **metade do limite que mata o
+   slot** (`max_slot_wal_keep_size = 2GB`, seção 1.12): a produção gera
+   ~300 MB de WAL por hora, então o alerta sai com cerca de 3,5 h de folga
+   antes de a parada passar a custar uma recópia integral — e alto o bastante
+   para a carga inicial não dar alarme falso.
+
+   ⚠️ **O alerta só existe se o worker estiver vivo.** Quem envia a DM é o
+   `worker/`. Em 14/10 ele estava morto desde 17h16, a replicação parou às
+   20h09, e o slot foi invalidado de madrugada sem que ninguém soubesse. O
+   vigia estava certo e calado.
 
 Provado antes de entrar em produção:
 
@@ -571,12 +601,1050 @@ olhado à mão todo dia — não é opcional.
 
 ---
 
+#### A quarta deriva, no mesmo dia — e o que ela provou (14/10/2026, 19h)
+
+A rotina acima foi exercitada de verdade poucas horas depois, e desta vez
+**nada precisou ser descoberto à mão**. O cron do vigia pegou às 19h00 e
+escreveu a causa no log, de 10 em 10 minutos:
+
+```
+14/10 19:00:02 [banco2] ALERTA: replicacao parada (received_lsn='', sem mensagem ha 999999s).
+14/10 19:00:02 [banco2] CAUSA: coluna faltando no cluster. Rode da maquina do Eduardo:
+14/10 19:00:02 [banco2]        bash infra/ha/disparar-sincronia.sh --aplicar
+14/10 19:00:02 [banco2]        logical replication target relation
+                               "public.financeiro_conciliacao_fluxo_caixa" is
+                               missing replicated columns: "extrato_entradas", "extrato_saidas"
+```
+
+Levantamento do `--conferir`: **14 colunas** em 3 tabelas e **1 tabela
+inteira**.
+
+| Tabela | O que faltava |
+|---|---|
+| `WA_CURRICULOS` | 11 colunas (`urgente_*`, `sst_visto_*`, `compras_visto_*`, `cracha_foto_path`) |
+| `financeiro_conciliacao_fluxo_caixa` | `extrato_entradas`, `extrato_saidas` — as que pararam a replicação |
+| `financeiro_fluxo_caixa_ajuste` | `created_by` |
+| `financeiro_fluxo_caixa_ajuste_log` | a tabela inteira (39 linhas) |
+
+Conserto em um comando, e o slot saiu de **353 MB presos** para **0 bytes**:
+
+```
+=== estado do slot na producao ===
+erp_corte|ativo=true|353 MB      <- antes
+erp_corte|ativo=true|0 bytes     <- menos de um minuto depois
+```
+
+**Três coisas que este episódio fixou:**
+
+1. **O ritmo é real, não anedota: quatro derivas em dois dias.** A pergunta
+   "será que vai acontecer de novo até a virada?" está respondida — vai. O
+   `--conferir` entra no passo 2.1, imediatamente antes de congelar a
+   escrita, e o resultado tem que ser `nenhuma faltando`.
+2. **A tabela nova chega com `GRANT ALL ON TABLE ... TO anon, authenticated`**
+   no `pg_dump`, o que **furaria a trava da seção 1.9** para ela. Toda tabela
+   trazida depois da trava exige reaplicar o `REVOKE` em seguida — foi feito,
+   e a conferência voltou a `escrita: 0 / leitura: 1.229` (1.227 + as duas
+   leituras da tabela nova).
+3. **A bandeira mora no líder, e o líder muda.** O `disparar-sincronia.sh`
+   apagava `/var/run/replicacao-precisa-coluna` só no `banco1`, mas quem a
+   escreve é o líder — hoje o `banco2`. O conserto deu certo e a bandeira
+   ficou de pé, afirmando um problema que já não existia. A vigia a limpa
+   sozinha no ciclo seguinte, então nunca passaria de 10 minutos, mas
+   bandeira que mente é bandeira que se aprende a ignorar. Agora o gatilho
+   limpa **nos dois nós** — ele é o único lugar com chave para ambos, porque
+   o `banco1` não tem chave para o `banco2`.
+
+A publicação passou de **646 para 647 tabelas**, e a assinatura está `647 de
+647` em estado `r`. Paridade conferida nas cinco tabelas envolvidas:
+
+| Tabela | Produção | Cluster |
+|---|---|---|
+| `WA_CURRICULOS` | 773 | 773 |
+| `financeiro_conciliacao_fluxo_caixa` | 24 | 24 |
+| `financeiro_fluxo_caixa_ajuste` | 39 | 39 |
+| `financeiro_fluxo_caixa_ajuste_log` | 39 | 39 |
+| `CHAMADO_SISTEMA` | 640 | 640 |
+
+---
+
+
+### 1.8 ✅ A API do cluster em HTTPS, e o que já foi aceito (14/10/2026)
+
+Sem isto o Marco B entrega tela branca: o frontend serve de
+`https://app.grpnascimento.com.br`, e **um site HTTPS não pode chamar uma API
+em HTTP** — o navegador bloqueia antes de sair, e nenhum teste de `curl`
+mostra isso. O Kong escutava HTTP puro na 8000, com `URL_EXTERNA` em
+`localhost`.
+
+**O problema da porta.** A 443 dos nós estava ocupada pelo `sshd`, porque a
+rede da empresa bloqueia a 22. Medido do escritório: saída **80 OK, 443 OK,
+8443 OK, 8000 bloqueada, 2222 bloqueada**. Então o **SSH foi para a 8443** — que
+só nós usamos — e a 443 ficou para o usuário, que é a porta que funciona em
+qualquer rede, inclusive no 4G de quem está em campo.
+
+Feito por `infra/ha/expor-api-https.sh`, em etapas que nunca tiram o acesso
+antes da próxima estar provada. **Anote: o SSH dos nós agora é
+`ssh -p 8443`.**
+
+#### O que foi medido, e o que cada medida prova
+
+| Medida | Resultado | O que prova |
+|---|---|---|
+| certificado | `Let's Encrypt YE2 ← ISRG Root YE ← ISRG Root X2`, `Verify return code: 0` | TLS real, renovação automática, válido até 12/01/2027 |
+| `/auth/v1/health` | `200` | GoTrue de pé |
+| preflight `OPTIONS` com `Origin` do frontend | `200` com `Access-Control-Allow-Origin` | **o navegador vai deixar passar** — é o teste que o `curl` simples não faz, e que reprovou 4 vezes na contingência |
+| login com senha errada | `400 invalid_grant / Invalid login credentials` | a cadeia de autenticação inteira lê a tabela de usuários replicada |
+| `anon` lendo `EMPREGADOS` | `200` com `[]` | a RLS barra, e barra devolvendo lista vazia (não erro) |
+| `service_role` lendo | `200`, 4.384 bytes | dados reais sendo servidos |
+| `CHAMADO_SISTEMA` por PostgREST | `content-range: 0-0/640` | contagem igual à da produção, pela API |
+| **download de anexo** | `200`, 43.584 bytes, content-type correto, conteúdo começando em `PK` | o byte está no disco **e** o xattr sobreviveu — é aqui que o nó sem o arquivo responde 500 |
+
+#### A trava de leitura durante o teste
+
+O cluster é **assinante** da replicação: uma escrita local pode tomar uma PK
+que a produção ainda vai replicar, e o conflito de chave duplicada **para a
+replicação**. Por isso o teste rodou com a escrita revogada no cluster
+(`REVOKE INSERT, UPDATE, DELETE ... FROM anon, authenticated`, o mesmo padrão
+da seção 2.1, só que do lado do cluster), e os `GRANT` foram devolvidos ao
+final. **Escrita pelo ERP ainda não foi aceita** — isso só acontece na janela,
+depois que a produção estiver congelada.
+
+#### O que falta para a aceitação pelo navegador
+
+O build local apontando para o cluster depende da chave `anon` do cluster
+entrar num `.env` da máquina de quem builda. Com ele pronto, o login é feito
+com a **senha real**: o dump de `auth` já carregou os 159 usuários no cluster,
+com os hashes da produção.
+
+#### A diferença que o teste expôs
+
+| | produção | cluster |
+|---|---|---|
+| `CHAMADO_SISTEMA` | 640 | 640 |
+| `EMPREGADOS` | 13.404 | 13.404 |
+| `mz_32_fato_razao_contabil` | 215.210 | 215.210 |
+| **`storage.objects`** | **11.568** | **11.252** |
+
+Faltam **316 anexos**, enviados depois da carga de 13/10. É esperado —
+`storage` não entra na publicação —, mas agora tem ritmo: **~316 por dia**.
+Confirma que o passo 2.5 (delta final dos anexos) não é formalidade e precisa
+rodar **imediatamente antes** da virada.
+
+---
+
+### 1.9 O cluster fica com a escrita REVOGADA até a virada
+
+Enquanto o cluster é **assinante** da replicação, uma escrita local pode tomar
+uma chave primária que a produção ainda vai replicar — e o conflito de chave
+duplicada **para a replicação**, exatamente como a coluna faltando da seção
+1.7, só que sem erro óbvio no log.
+
+Por isso, desde 14/10/2026, o cluster está assim:
+
+```sql
+-- no CLUSTER (não na produção)
+REVOKE INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public FROM anon, authenticated;
+NOTIFY pgrst, 'reload schema';
+```
+
+O ERP apontado para o cluster **abre, loga e consulta, e recusa salvar pelos
+caminhos diretos**. Isso é o estado correto de espera, não um defeito a
+consertar.
+
+> 🔴 **Correção de 14/10/2026, 20h: este REVOKE NÃO torna o cluster
+> somente-leitura.** A frase original desta seção dizia que dizia, e estava
+> errada.
+>
+> `REVOKE ... FROM anon, authenticated` fecha o acesso **direto** às tabelas.
+> Não fecha nada que passe por função `SECURITY DEFINER` — ela roda com os
+> privilégios do **dono**, não de quem chamou. Medido neste banco:
+>
+> | | |
+> |---|---|
+> | funções em `public` | 1.532 |
+> | `SECURITY DEFINER` | 1.124 |
+> | …que escrevem | 418 |
+> | …que escrevem **e** `anon`/`authenticated` podem chamar | **372** |
+>
+> São 372 portas que o REVOKE não encosta. E não há plano B fácil:
+> `default_transaction_read_only` também não serve, porque o PostgREST abre
+> transação `READ WRITE` explicitamente para todo verbo que modifica.
+>
+> **Consequência prática: abrir o ERP contra o cluster é uma operação de
+> escrita.** Vale fazer — a aceitação pelo navegador achou coisa que nenhum
+> `curl` acharia — mas não é um teste inócuo, e precisa do
+> `resolver-conflito.sh` da seção 1.10 à mão. Foi exatamente assim que a
+> replicação parou às 20h09 de 14/10.
+
+> ⚠️ **A trava vaza por tabela nova.** `REVOKE ... ON ALL TABLES` age sobre as
+> tabelas que existiam no momento em que rodou — não é uma regra permanente.
+> Toda tabela trazida da produção depois disso chega com
+> `GRANT ALL ON TABLE ... TO anon, authenticated` no `pg_dump` e entra
+> **gravável**. Aconteceu em 14/10 com `financeiro_fluxo_caixa_ajuste_log`.
+> Depois de trazer qualquer tabela, rode o `REVOKE` de novo e confira:
+> ```sql
+> select count(*) from information_schema.role_table_grants
+>   where grantee in ('anon','authenticated') and table_schema = 'public'
+>     and privilege_type in ('INSERT','UPDATE','DELETE','TRUNCATE');
+> -- tem que ser 0
+> ```
+
+> ⚠️ **A virada tem que desfazer isso.** Depois de parar a assinatura (passo
+> 2.2) e antes de liberar os usuários, rode no cluster:
+> ```sql
+> GRANT INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO anon, authenticated;
+> NOTIFY pgrst, 'reload schema';
+> ```
+> Esquecer isto entrega um ERP que abre, mostra tudo e não deixa salvar nada —
+> e o sintoma na tela não fala de permissão, fala de erro ao gravar.
+
+Para a aceitação pelo navegador: `infra/ha/testar-cluster-local.sh` sobe o ERP
+em `localhost:4173` apontando para o cluster, sem publicar nada. A senha é
+digitada no navegador pelo próprio usuário — o dump de `auth` já carregou os
+159 logins no cluster **com os hashes da produção**, então a senha real
+funciona lá.
+
+---
+
+### 1.10 ⚠️ Conflito de chave: o preço da aceitação pelo navegador (14/10/2026)
+
+Às 20h08 o Eduardo abriu três chamados no ERP apontado para o cluster. Cada
+abertura marca o chamado como lido, e a marcação passa por função
+`SECURITY DEFINER` — então escreveu, apesar do REVOKE da seção 1.9. Três linhas
+entraram em `CHAMADO_SISTEMA_LEITURA` às 20:08:23, 20:08:47 e 20:09:15.
+
+Às 20:09:41 a produção inseriu, de verdade, uma linha com a **mesma chave**
+`(chamado_id, user_id)`. A replicação tentou aplicar e morreu:
+
+```
+ERROR: duplicate key value violates unique constraint "CHAMADO_SISTEMA_LEITURA_pkey"
+```
+
+Daí em diante, o mesmo ciclo da coluna faltando: trabalhador morrendo a cada
+5 s, slot inativo, WAL preso na produção.
+
+**O diagnóstico que engana:** a contagem batia. 997 linhas na produção, 997 no
+cluster, e as 997 chaves idênticas — uma conferência por contagem ou por chave
+diria "tudo igual". A divergência estava no **conteúdo**: duas linhas de 07/10
+e 13/10 que o teste sobrescreveu via UPSERT, e uma terceira que o cluster
+criou antes da produção.
+
+| Chave | Produção | Cluster |
+|---|---|---|
+| `63f7f66d…` | `2026-10-07 17:15:08` | `2026-10-14 20:08:23` |
+| `bd210d42…` | `2026-10-13 11:43:49` | `2026-10-14 20:08:47` |
+| `d636884e…` | `2026-10-14 20:09:41` | `2026-10-14 20:09:15` |
+
+#### `infra/ha/resolver-conflito.sh` — e por que são duas fases
+
+```bash
+bash infra/ha/disparar-conflito.sh                   # mostra as divergentes
+bash infra/ha/disparar-conflito.sh --aplicar         # resolve
+bash infra/ha/disparar-conflito.sh --aplicar TABELA  # se o líder for o banco2
+```
+
+Ele descobre a tabela pela restrição citada no log, lê a chave primária do
+catálogo, compara **`md5` da linha inteira** nos dois lados — e não contagem,
+nem chave — e então:
+
+1. **Fase 1 — apaga do cluster as linhas divergentes.** Libera a chave e a
+   fila da replicação anda.
+2. **Fase 2 — recopia da produção o que ficou faltando**, por `COPY` em CSV
+   (respeita `jsonb`, array e fuso sem conversão escrita à mão).
+
+**A ordem não é intercambiável.** Recopiar antes de a fila andar reocuparia a
+chave e o conflito voltaria no mesmo lugar. E a Fase 2 não é opcional: a
+produção **não reenvia linha antiga**, então apagar sem recopiar deixaria um
+furo permanente nas duas linhas que o UPSERT sobrescreveu.
+
+#### O que isso muda no roteiro
+
+A aceitação pelo navegador da seção 2.7 acontece **depois** de parar a
+assinatura (passo 2.2) — lá não há conflito possível, e por isso ela está no
+lugar certo. O que custou caro foi a aceitação **antecipada**, feita com a
+replicação viva. Ela valeu a pena e deve ser repetida em outra ocasião, mas
+com três coisas combinadas antes:
+
+- rodar fora do horário em que a produção escreve muito (a colisão precisa de
+  escrita simultânea na mesma chave);
+- rodar o `disparar-conflito.sh --conferir` logo depois, sempre;
+- não confundir "a replicação está em 647 de 647" com "não há conflito": o
+  número fica perfeito até a primeira tentativa de aplicar.
+
+---
+
+### 1.11 ⚠️ O sincronizador de colunas não sincroniza schema (14/10/2026)
+
+Erro de leitura meu, e o mais consequente do dia. O `sincronizar-colunas.sh`
+foi escrito para uma pergunta — *"por que a replicação parou?"* — e passou a
+ser usado como se respondesse outra: *"o cluster está igual à produção?"*.
+
+Não responde. Ele acrescenta a **coluna crua** e vai embora. Fica para trás o
+`NOT NULL`, o `CHECK`, a `FOREIGN KEY`, o índice, a **view** que passou a
+expor a coluna, e a **função** e o **trigger** que dão sentido a ela. E a
+replicação continua verde, porque nada disso lhe interessa.
+
+Medido com a replicação em **"647 de 647, 0 bytes de atraso"** — aparentemente
+perfeita:
+
+| Faltando no cluster | Quantos |
+|---|---|
+| funções | **44** (12 `trn_*`, 21 `tvg_*`, 3 `ferias_*`, …) |
+| triggers | 5 |
+| views | 1 faltando + 1 desatualizada em 11 colunas |
+| restrições | 3 (1 FK, 2 CHECK) |
+| `NOT NULL` perdidos | 3 |
+| índices | 1 (parcial) |
+| função com assinatura **velha** | 1 (`rec_enxoval_informar`) |
+
+O caso das 12 funções `trn_*` é o mais ilustrativo: as quatro tabelas
+`TREINAMENTO_*` foram trazidas com cuidado, privilégio por privilégio — e as
+funções do módulo, não. **O módulo Treinamentos abriria quebrado na virada, e
+nenhum número da replicação reclamaria.**
+
+#### `infra/ha/sincronizar-schema.sh`
+
+```bash
+bash infra/ha/disparar-schema.sh              # só confere (sai 1 se achar)
+bash infra/ha/disparar-schema.sh --mostrar    # confere e imprime o DDL
+bash infra/ha/disparar-schema.sh --aplicar    # aplica no cluster
+```
+
+Seis blocos: **FUNÇÕES, VIEWS, TRIGGERS, RESTRIÇÕES, NOT NULL, ÍNDICES**.
+Quatro decisões que valem registro:
+
+- **ACL reconstruído função por função.** `pg_get_functiondef` devolve o corpo
+  e **não** devolve os GRANT. Sem isso, `trn_prova_enviar` — `SECURITY
+  DEFINER`, restrita a `authenticated` na produção — chegaria executável por
+  **PUBLIC**, o default do Postgres: o `anon` poderia enviar prova. O script
+  emite `REVOKE ALL` e reconstrói os GRANT a partir do `proacl` da produção.
+- **`SET check_function_bodies = off`.** Função chama função, e qualquer
+  ordenação fixa erra em algum par: por nome, `ferias_saldo` vem antes de
+  `ferias_vendas_12m` e o CREATE falha. É o mesmo interruptor que o `pg_dump`
+  emite, pelo mesmo motivo.
+- **Uma transação só.** Schema meio aplicado é o pior dos mundos — o
+  `--conferir` seguinte mostraria um resto sem explicação. Na primeira
+  execução isso salvou: a transação caiu inteira no erro de ordem.
+- **`DROP` sem `CASCADE`, em lugar nenhum.** Se um DROP falhar por
+  dependência, eu quero ver o erro, não descobrir depois o que foi levado
+  junto.
+
+Depois do `--aplicar`, a conferência independente
+(`conferir-contra-producao.sh`) fechou **TUDO IGUAL** pela primeira vez:
+
+```
+funcoes em public    1532 = 1532    politicas de RLS   1437 = 1437
+triggers              503 = 503     tabelas em public   661 = 661
+views                  32 = 32      tabelas que anon le  564 = 564
+COLUNAS      identico (10588 itens)
+INDICES      identico (1884 itens)
+RESTRICOES   identico (2533 itens)
+PAPEIS       identico (28 itens)
+TUDO IGUAL. Pode seguir.
+```
+
+**Os dois sincronizadores respondem perguntas diferentes e os dois são
+obrigatórios no passo 2.1:** o de colunas responde "a replicação vai parar?";
+o de schema responde "o cluster está igual à produção?". Em 14/10 o primeiro
+dizia *"nenhuma faltando"* enquanto faltavam 44 funções, 5 triggers e 2 views.
+
+---
+
+### 1.12 🔴 O slot tem prazo de validade: 2 GB (15/10/2026)
+
+A parada de 14/10 às 20h09 (seção 1.10) não foi destravada naquela noite. Na
+manhã de 15/10 o log do líder repetia, de 5 em 5 segundos:
+
+```
+ERROR:  could not start WAL streaming: ERROR:  can no longer get changes
+        from replication slot "erp_corte"
+DETAIL:  This slot has been invalidated because it exceeded the maximum
+         reserved size.
+```
+
+E o catálogo da produção:
+
+```
+ slot_name | active | restart_lsn | confirmed_flush_lsn | wal_status
+ erp_corte |   f    |   (vazio)   |    E7/3B13A1C0      |    lost
+```
+
+#### Duas correções a este roteiro, de uma vez
+
+**1. A produção nunca ia encher o disco.** Este roteiro dizia — e eu repeti ao
+Eduardo em relatório e em notificação — que slot parado enche o disco e põe a
+produção fora do ar. **Na Supabase, não.** `max_slot_wal_keep_size = 2GB`: o
+Postgres se recusa a guardar mais que isso para um slot parado e **invalida o
+slot** para proteger o disco. Medido depois de 14 h de parada: WAL em 1296 MB,
+teto `max_wal_size` de 4 GB, ERP respondendo 200. O risco que eu anunciei
+estava coberto pelo próprio banco.
+
+**2. Em troca, a parada tem um cronômetro — e ele é curto.**
+
+| | |
+|---|---|
+| WAL que a produção gera | ~300 MB/h (medido em 3 min, confirmado em 14 h) |
+| teto por slot parado | 2 GB |
+| **prazo para destravar** | **~7 horas** |
+| alerta do vigia (1 GB) | ~3,5 h de folga |
+
+Dentro das 7 h, destravar custa um comando. Passando delas, o preço vira
+**recopiar o banco inteiro** — de "3 minutos" para "a noite".
+
+Os valores a conferir antes de confiar nesta aritmética, porque são da
+instância e podem mudar:
+
+```sql
+select name, setting from pg_settings
+ where name in ('max_slot_wal_keep_size','max_wal_size','wal_keep_size');
+```
+
+#### O que mata o slot é a falta do aviso, não a parada
+
+O vigia da migration `20261014000020` alerta por DM com 1 GB no slot — metade
+do limite, de propósito. Em 14/10 ele **não avisou ninguém**, porque quem envia
+DM é o `worker/`, e o worker estava morto desde 17h16. A parada foi às 20h09.
+
+**Consequência operacional:** o worker não é um acessório deste roteiro, é
+parte da proteção. Antes de deixar a replicação ligada da noite para o dia,
+conferir que ele está vivo — `scripts/status-banco.txt` com data de agora — e
+não só que o vigia existe.
+
+#### `infra/ha/religar-replicacao.sh`
+
+Para slot perdido não existe conserto incremental: o WAL que a assinatura
+precisava **foi apagado**. O único caminho é copiar tudo de novo.
+
+O `ligar-replicacao.sh` não serve para isto: um dos pré-requisitos dele é
+`public` do cluster **vazio**, porque com `copy_data=true` dado preexistente
+viraria conflito de chave na carga inicial. Daí o script novo.
+
+```bash
+bash infra/ha/disparar-religar.sh              # só diz o que faria
+bash infra/ha/disparar-religar.sh --aplicar    # recopia
+```
+
+Seis passos: `DROP` da assinatura (DISABLE → `slot_name=none` → DROP, nessa
+ordem, senão o DROP fica pendurado tentando falar com um slot que já não
+existe), soltar o slot órfão na produção, `TRUNCATE` nas 657 tabelas de
+`public`, `CREATE SUBSCRIPTION` com `copy_data=true`, acompanhar até
+`647/647 PRONTA`, reaplicar a trava da seção 1.9.
+
+Três decisões que valem registro:
+
+- **Uma `TRUNCATE` só, com as 657 tabelas na mesma lista.** Assim as chaves
+  estrangeiras entre elas ficam satisfeitas **sem `CASCADE`** — e `CASCADE`
+  aqui poderia levar tabela de fora de `public` sem aparecer no log. Partição
+  não entra na lista: o `TRUNCATE` do pai já leva as filhas.
+- **A trava de recusa.** Se o `wal_status` não for `lost` (e o slot não for
+  inexistente), o script **se recusa a rodar**. Sem isso, um `--aplicar`
+  digitado na hora errada apagaria 1,5 milhão de linhas de um cluster
+  perfeitamente saudável para recopiá-las. Os cinco estados foram testados:
+  só `lost` e slot ausente liberam.
+- **O `TRUNCATE` não toca em schema.** Função, view, trigger e política
+  continuam lá — mas a produção andou desde a última conferência, então rodar
+  `disparar-schema.sh` e `disparar-sincronia.sh` depois da recopia é parte do
+  procedimento, não zelo extra.
+
+#### A ordem entre o teste de failover e a recopia
+
+Trocar o líder **no meio da cópia inicial** derruba a cópia: o processo que
+copia roda no líder. Teste de failover **antes** do `--aplicar`, ou depois do
+`647/647 PRONTA` — nunca no meio.
+---
+
+### 1.13 Backup do cluster — o que a Supabase fazia por nós (15/10/2026)
+
+Hoje quem faz cópia do banco é a Supabase, e os dois workflows do GitHub
+(`backup_banco.yml`, `backup_storage.yml`) apontam para ela. **No dia seguinte
+à virada, o cluster passa a ser a produção — e, até 15/10, sem backup nenhum.**
+Era o item mais fácil de esquecer e o mais caro de esquecer.
+
+#### `infra/ha/backup-cluster.sh`, com timer nos dois nós
+
+```
+banco1  03h10 UTC (00h10 BRT)
+banco2  05h10 UTC (02h10 BRT)
+```
+
+Os dois tiram a cópia do **líder** (via HAProxy em `127.0.0.1:5000`), em
+horários diferentes para não se atropelarem. Resultado: duas cópias
+independentes, **em dois provedores**, sem custo novo.
+
+Tirar do standby local pareceria mais gentil com o líder, mas `pg_dump` longo
+em standby morre com `canceling statement due to conflict with recovery`. No
+líder é snapshot: **não trava escrita**.
+
+#### São dois arquivos, e o segundo não é detalhe
+
+| | |
+|---|---|
+| `banco.dump` | `pg_dump -Fc` do `postgres` inteiro — `public`, `auth`, `storage` |
+| `globais.sql` | `pg_dumpall --globals-only`: **os papéis e as senhas deles** |
+
+`pg_dump` **não leva papel nenhum**. Restaurar sem os papéis prontos já nos
+custou um susto documentado: entra 1 política de RLS de 1.416 e o banco sobe
+sem controle de acesso, em silêncio. A ordem de restauração é `globais.sql`
+**primeiro**, `pg_restore` depois.
+
+E **nunca `--no-privileges`**: ele apaga todos os `GRANT` do dump e o storage
+passa a mentir dizendo `violates row-level security policy`. A frase está no
+cabeçalho do script porque a tentação de "limpar o dump" já apareceu antes.
+
+#### Medido na primeira execução
+
+```
+18 papeis
+68,1 MB de dump  ->  61,8 MB cifrados      (46 s)
+pg_restore -l enxerga 698 tabelas com dados
+cifrado para a chave E1AB789FA3F1159F (Eduardo, backup ERP)
+gpg --list-secret-keys nos dois nos:  0
+```
+
+A última linha é a que importa: **o servidor não consegue abrir o próprio
+backup.** Isso é o que permite levar o arquivo para fora sem medo.
+
+O script se recusa a publicar um arquivo com menos de 100 tabelas com dados —
+o caso real que isso pega é disco cheio ou conexão cortada no meio, que gera
+um arquivo truncado de tamanho convincente.
+
+#### Levar para fora: `.github/workflows/backup_cluster.yml`
+
+Dois backups em dois provedores ainda são dois servidores nossos. O workflow
+diário (04h00 UTC) puxa o `.gpg` e guarda como artefato no GitHub.
+
+O runner **não faz o dump**: o Postgres do cluster não atende na internet —
+só escuta no IP do túnel e no HAProxy local, e abrir a 5432 para fora seria
+desfazer metade do trabalho. Ele **puxa** o arquivo que o nó já fez, por uma
+chave SSH amarrada a um comando único (`backup-cluster.sh --enviar`), sem
+shell, sem pty, sem port-forward. No pior caso — secret do GitHub vazado — o
+que vaza é um arquivo que o vazador não abre.
+
+✅ **Feito em 16/10/2026**, num comando, com conferência no fim:
+
+```bash
+bash infra/ha/chave-backup-github.sh            # instala e grava o secret
+bash infra/ha/chave-backup-github.sh --conferir # só olha
+```
+
+```
+chave ed25519 nova, só em diretório temporário (shred no fim)
+erpbackup nos dois nós, casa /home/erpbackup, 1 chave presa ao --enviar
+a chave entrega 64.803.328 bytes       <- a prova: abaixo de 1 MB ele recusa
+CLUSTER_BACKUP_SSH_KEY gravado         2026-10-16T12:23:51Z
+```
+
+> ⚠️ **O usuário não pode se chamar `backup`.** A primeira versão deste passo
+> usou esse nome e falhou em silêncio: `backup` **já existe no Debian** (uid 34,
+> home em `/var/backups`, shell `nologin`). O `useradd` falhou e caiu no
+> `|| true`, a chave foi escrita em `/home/backup/.ssh/authorized_keys` — que o
+> sshd nem olha, porque a casa de verdade é outra — e o `nologin` recusaria o
+> `command=` de qualquer forma. **O sintoma foi `0 bytes` entregues, sem erro
+> nenhum.** Quem salvou foi a trava do "menos de 1 MB não é dump": sem ela, o
+> secret teria sido gravado e o backup off-site seria um arquivo vazio por
+> meses. O usuário agora é `erpbackup`, e a casa sai do `getent`, nunca de
+> `/home/<nome>` suposto.
+>
+> No caminho houve outro erro meu, já desfeito: pegar o grupo do diretório de
+> backup (`stat -c %G`) para dar leitura ao usuário colocava ele no grupo
+> **root**, porque o diretório é `root:root`. Era muito mais acesso do que ler
+> um arquivo cifrado — e desnecessário, já que o diretório é 755 e os arquivos
+> 644. Removido dos dois nós (`gpasswd -d backup root`).
+
+#### Os anexos: coberto em 16/10/2026
+
+```bash
+ssh ... '/usr/local/sbin/backup-cluster.sh --instalar-anexos'   # timer semanal
+```
+
+`backup-cluster.sh --anexos` empacota o volume com `tar --xattrs`, cifra e
+guarda; `backup_anexos_cluster.yml` puxa no domingo pela **mesma** chave,
+dizendo só a palavra `anexos` (o `--enviar` lê `SSH_ORIGINAL_COMMAND` e escolhe
+entre os dois pacotes — nada é executado). Medido na primeira execução:
+
+```
+[12:24:41] 12186 arquivos em /var/lib/docker/volumes/erp-pilha_storage-arquivos/_data
+[12:28:40] 12186 arquivos empacotados, 5048 MB cifrados
+```
+
+**12.186 de 12.186, em 4 minutos.** A contagem não é um segundo `find`: o `tar`
+roda com `-v` e lista no stderr cada membro que entrou de verdade, enquanto os
+bytes seguem para o `gpg`. É o que pega pacote truncado — e truncado é
+exatamente o que eu quase relatei: olhei o arquivo **enquanto ele era escrito**,
+vi 2,5 GB e cheguei a registrar isso aqui como o tamanho final. Conferir
+tamanho de arquivo que ainda está sendo gerado não vale nada; o número que
+vale é o que o script imprime no fim.
+
+A guarda do workflow (recusar pacote abaixo de 1 GB) segue válida, e os 12 GB
+de folga exigidos no runner continuam de sobra para 5 GB.
+
+**Por que um workflow novo e não reapontar o `backup_storage.yml`:** aquele
+monta a lista de objetos com `psql` **contra a Supabase**, e o Postgres do
+cluster não atende na internet para o runner. Reapontar seria reescrevê-lo.
+Depois da virada ele pode ser aposentado.
+
+Restaurar exige `--xattrs` nas **duas** pontas: o content-type de cada anexo
+mora num atributo estendido, e sem ele o download morre com `ENODATA` sem falar
+de arquivo. Está no passo B de `docs/ha-restauracao.md`.
+
+---
+
+### 1.14 O segundo nó atendendo o mesmo endereço (15/10/2026)
+
+O banco trocava de líder sozinho, mas `api.grpnascimento.com.br` resolvia **só
+para o banco1**. O nó que morresse inteiro levava o ERP junto, com o banco
+intacto do outro lado — metade da alta disponibilidade que montamos.
+
+O que tornou isto barato, medido em 15/10:
+
+| | |
+|---|---|
+| banco1 | Vultr, **Osasco/SP** |
+| banco2 | Linode, **São Paulo/SP** |
+| RTT do túnel | **1,5 ms** |
+
+Dividir o tráfego entre os dois **não custa latência nenhuma**. E o banco2 já
+tinha a pilha inteira de pé (Kong, PostgREST, GoTrue, Storage, Functions) e o
+HAProxy dele já enxergava o líder corretamente — faltava só o HTTPS.
+
+#### Por que o certificado é copiado, e não emitido
+
+O Let's Encrypt valida por HTTP-01: ele bate no próprio domínio. Com **um**
+registro A (banco1), o banco2 nunca seria alcançado e o Caddy ficaria em retry
+eterno — servindo, nesse meio-tempo, um certificado interno que o navegador
+recusa. Com **dois** registros A, a validação cai num dos dois por sorteio e
+falha em metade das vezes.
+
+A saída é a ordem certa: copiar o certificado que o banco1 já tem, subir o
+banco2 **já servindo certificado válido**, e só então publicar o segundo
+registro A. É a mesma lição do domínio na Lovable — serviço pronto primeiro,
+DNS depois.
+
+`bash infra/ha/expor-api-https.sh --caddy-banco2` faz isso, e é repetível: é
+ele também que leva a cópia depois de cada renovação.
+
+#### O que foi provado antes de pedir o DNS
+
+```
+https pelo nome, resolvendo no banco2:
+  /auth/v1/health                 -> 200
+  /rest/v1/CHAMADO_SISTEMA?...    -> 200
+  tls_verify_result = 0  (o navegador aceitaria), 93 ms
+  issuer: Let's Encrypt YE2,  vence 12/01/2027
+  fingerprint SHA256 IDENTICA a do banco1
+```
+
+E a conferência que decidia se round-robin era seguro ou desastre:
+
+```
+JWT_SECRET        banco1 = banco2   IGUAL
+ANON_KEY          banco1 = banco2   IGUAL
+SERVICE_ROLE_KEY  banco1 = banco2   IGUAL
+URL_EXTERNA/SITE  banco1 = banco2   IGUAL
+```
+
+Se o `JWT_SECRET` diferisse, um token emitido por um nó seria recusado pelo
+outro e **metade dos usuários seria deslogada a cada requisição**. Era a
+pergunta que tinha que ser respondida antes de publicar o DNS, não depois.
+
+#### Falta um passo, e é no registro.br
+
+```
+acrescentar   A   api   172.237.48.8      (mantendo o 216.238.120.171)
+```
+
+Com os dois registros, o navegador tenta um e, em falha de conexão, cai no
+outro. **Não é um balanceador** — não há verificação de saúde, e um nó que
+responda errado (em vez de não responder) continua recebendo metade. É o que
+dá para fazer sem balanceador pago, e é muito melhor do que um endereço só.
+
+⚠️ **Renovação:** quem renova é o banco1. O certificado atual vence em
+**12/01/2027** e nada automatiza a cópia ainda — rodar o `--caddy-banco2` de
+novo depois da renovação. Esta frase existe para ninguém descobrir isso pelo
+navegador.
+
+
+
+---
+
+---
+
+### 1.15 🔴 As 54 variáveis das Edge Functions (16/10/2026)
+
+Na Supabase, cada Edge Function recebe os *secrets* do projeto. No cluster, o
+container `erp-pilha-functions-1` subiu com **dez** variáveis:
+
+```
+HOME HOSTNAME JWT_SECRET PATH SUPABASE_ANON_KEY SUPABASE_DB_URL
+SUPABASE_PUBLISHABLE_KEY SUPABASE_SERVICE_ROLE_KEY SUPABASE_URL VERIFY_JWT
+```
+
+As 64 functions leem **54 nomes**. Nenhum conferidor olhava para isto: não é
+tabela, não é função, não é arquivo — e a replicação continua verde do mesmo
+jeito. Na virada, quebrariam em silêncio o envio de WhatsApp (12 functions), as
+IAs, o push, os Correios, a régua de cobrança, o SMTP e o GitHub.
+
+#### A descoberta que transformou isto num problema resolvível
+
+`supabase secrets list` **não devolve valor nenhum** — devolve um *digest*. E
+esse digest é o **SHA256 cru do valor, sem sal**. Provado com as cinco
+variáveis que também existem em `worker/.env`: os cinco `sha256sum` bateram com
+os cinco digests, caractere por caractere.
+
+Isso muda a natureza da tarefa. Antes: "recuperei a chave no console da Meta,
+espero que seja a mesma". Agora: `configurar-secrets.sh --conferir` responde
+**CONFERIDO igual à produção** ou **DIFERENTE** — sem nunca ler o segredo da
+produção, que continua ilegível.
+
+#### O levantamento, de 16/10/2026
+
+```
+ 9  eu levo daqui, sem console nenhum   (worker/.env, 5 delas CONFERIDAS)
+16  só existem dentro da Supabase       <- estas bloqueiam a virada
+ 9  não existem em lugar nenhum         <- a function que as usa JÁ falha hoje
+```
+
+**As 9 que já temos:** `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`,
+`CORREIOS_API_CODIGO`, `CORREIOS_API_USUARIO`, `CORREIOS_CARTAO_POSTAGEM`,
+`WHATSAPP_TICK_SECRET`, `WORKER_NOTIFICAR_SECRET`.
+
+> **E as quatro do SMTP não estão na Supabase** — enquanto estão em
+> `worker/.env` há meses, do outro lado da parede. O worker manda e-mail
+> normalmente com elas; a Edge Function não.
+>
+> Quem paga por isso é a `comite-etica-nova-denuncia`, que avisa por e-mail
+> quem cuida do Canal de Ética quando entra uma denúncia nova. Medido em
+> 16/10/2026, na produção:
+>
+> ```
+> destinatarios ativos do aviso de denuncia : 2
+> avisos que falharam por falta de SMTP     : 3
+> denuncias no canal                        : 16
+> ```
+>
+> **Três denúncias entraram e ninguém foi avisado por e-mail**, com duas
+> pessoas cadastradas esperando o aviso. Isso não tem nada a ver com a virada
+> e deveria ter sido consertado meses atrás: `smtp-para-supabase.sh --aplicar`.
+>
+> Conferido antes de mexer: **não há disparo retroativo.** A function é
+> invocada por denúncia nova, não por cron — ligar o SMTP não reenvia as três
+> que falharam. (Era a pergunta certa a fazer: a regra da casa é mostrar a fila
+> antes de ligar qualquer coisa que fale com gente de verdade.)
+
+**As 16 presas:** `WHATSAPP_TOKEN`, `WHATSAPP_APP_SECRET`, `WHATSAPP_APP_ID`,
+`WHATSAPP_PHONE_NUMBER_ID`, `WHATSAPP_WABA_ID`, `WHATSAPP_VERIFY_TOKEN`,
+`GEMINI_API_KEY`, `GROQ_API_KEY`, `LOVABLE_API_KEY`, `GITHUB_TOKEN`,
+`DISCORD_CLIENT_ID`, `DISCORD_CLIENT_SECRET`, `DISCORD_REDIRECT_URIS`,
+`CHAMADOS_CI_SECRET`, `VAPID_PRIVATE_KEY`, `VAPID_PUBLIC_KEY`.
+
+Foi tentada a recuperação automática delas, e **não deu**: o `client_id` do
+Discord não sai do token do bot que temos, o token do `gh` não é o mesmo
+`GITHUB_TOKEN`, e nenhum dos valores aparece em log, dump ou documento local.
+A busca foi por hash contra os 30 digests — então o "não achei" aqui é
+conclusivo, não desistência.
+
+**As 9 que já estão quebradas hoje** (não são regressão da virada, e é
+importante não confundir as duas coisas): `ANTHROPIC_API_KEY`,
+`AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET`,
+`COBRANCA_EMAIL_JURIDICO`, `COBRANCA_EMAIL_FINANCEIRO`, `ESCAVADOR_API_TOKEN`,
+`NFEIO_API_KEY`, `WHATSAPP_TEMPLATE_DENUNCIA`.
+
+#### Como aplicar
+
+```bash
+bash infra/ha/configurar-secrets.sh --conferir
+SEGREDOS=~/segredos.env bash infra/ha/configurar-secrets.sh --aplicar
+bash infra/ha/configurar-secrets.sh --provar
+```
+
+#### ✅ 16/10/2026: 12 já estão no cluster, 13 continuam nos consoles
+
+Os 9 de `worker/.env` foram aplicados, e mais **três resolvidos sem console
+nenhum**, porque as duas pontas eram nossas:
+
+| | |
+|---|---|
+| `VAPID_PRIVATE_KEY` / `VAPID_PUBLIC_KEY` | par novo, gerado **dentro do nó** (`--girar-vapid`); a privada nunca passou por outra máquina. Custo conhecido: as **3** assinaturas de push atuais param até as 3 pessoas reativarem. A pública vai para `VITE_VAPID_PUBLIC_KEY` no build do Lovable, na virada. |
+| `CHAMADOS_CI_SECRET` | valor novo **só no cluster** (`--girar-ci-secret`). Não rotacionei na produção de propósito: haveria um instante com um lado novo e o outro velho, e — como ninguém conhece o valor atual — um erro no meio não teria volta. Vira o do GitHub na virada, junto com a URL. |
+
+O container saiu de **10** para **22** variáveis nos dois nós.
+
+⚠️ **O `--aplicar` MESCLA, não sobrescreve.** Isso foi corrigido no mesmo dia,
+e não é detalhe: as geradas no nó (VAPID, CI) não existem nesta máquina, então
+um `--aplicar` que sobrescrevesse as apagaria — e a privada do VAPID não tem
+cópia em lugar nenhum. O que vem daqui ganha; o que só existe lá é preservado,
+e a gravação é recusada se a mescla encolher o arquivo.
+
+O passo a passo clicável dos 13 restantes está em
+[`ha-segredos-consoles.md`](ha-segredos-consoles.md).
+
+O script grava `/opt/erp/infra/failover/segredos-functions.env` (chmod 600) nos
+**dois** nós, acrescenta `env_file:` ao serviço `functions` do compose e recria
+o container. `environment:` **ganha** de `env_file:`, e é por isso que
+`SUPABASE_URL` continua valendo `http://kong:8000` mesmo que o arquivo diga
+outra coisa. Nenhum valor é gravado nesta máquina nem aparece na tela.
+
+---
+
+### 1.16 🔴 Os sete jobs de cron dentro do banco (16/10/2026)
+
+A produção tem **sete** agendamentos de `pg_cron` rodando dentro do banco:
+
+| job | quando |
+|---|---|
+| `sla-escalonamento-tick` | de hora em hora |
+| `regua-cobranca-tick` | de hora em hora |
+| `whatsapp-retomada-tick` | de 5 em 5 minutos |
+| `malote-rolagem-data-pagamento` | de 15 em 15 minutos |
+| `tvg-dre-atualizar` | 4× ao dia |
+| `plano-acao-marcar-atrasadas` | 06h00 |
+| `comite-etica-alertas` | 08h00, dias de semana |
+
+O cluster tem a extensão `pg_cron` instalada e **zero jobs**.
+
+**Por que nenhum conferidor pegou isso.** `cron.job` pertence a uma *extensão*.
+`pg_dump` leva a extensão, não as linhas dela — então "mesmas tabelas, mesmas
+funções, mesmos dados em `public`" continuou verdadeiro o tempo todo. A agenda
+não é tabela nem função: ficou fora de todas as contagens.
+
+**O que aconteceria na virada.** Nada. Nenhum erro, nenhum 500, nenhum alerta —
+as sete automações simplesmente nunca mais rodariam. O primeiro a notar seria o
+Comitê de Ética na segunda sem o alerta das 8h. Isso é pior que quebrar:
+quebrar avisa.
+
+Uma boa notícia conferida no caminho: **nenhum job chama HTTP**. Todos são
+`SELECT public.enfileirar_tick(...)` ou função SQL — empilham em `fila_http` e
+quem executa é o `worker/`. E nenhuma função do banco tem `supabase.co` no
+corpo (`prosrc like '%supabase.co%'` devolve vazio). Então a agenda viaja sem
+reescrever URL nenhuma.
+
+```bash
+bash infra/ha/cron-no-cluster.sh --conferir
+bash infra/ha/cron-no-cluster.sh --aplicar    # cria os sete DESLIGADOS
+bash infra/ha/cron-no-cluster.sh --ligar      # na virada, depois do worker
+```
+
+Eles nascem **desligados** de propósito. `fila_http` tem dedupe por destino, de
+modo que a fila não viraria avalanche; o motivo é outro — um tick de
+`regua-cobranca` ou `whatsapp-retomada` entregue no momento errado é cobrança e
+WhatsApp para gente de verdade. Agenda pronta e parada é o estado seguro.
+
+---
+
+### 1.17 ✅ Os usuários NÃO precisam fazer login outra vez (16/10/2026)
+
+Esta seção corrige uma frase que estava no passo 2.6 desde o começo: *"todo
+mundo vai ter que fazer login outra vez"*. Era verdade pelo motivo errado, e a
+consequência prática é melhor do que se pensava — mas só por causa de **uma
+linha** que até hoje não existia.
+
+#### O que foi medido
+
+```
+chave anon da produção:  alg HS256, assinada com o segredo da Supabase
+JWKS do projeto:         uma chave ES256  <- os tokens de USUÁRIO são ES256
+JWT_SECRET do cluster:   DIFERENTE do da produção (conferido por HMAC)
+```
+
+A produção assina os tokens de acesso em **ES256**, com uma chave privada que
+existe só dentro da Supabase. Então não há como "copiar o segredo" para o
+cluster: o caminho de manter os tokens válidos **não existe**, e qualquer plano
+que dependa disso está errado desde o início.
+
+#### Mas o token de acesso não é a sessão
+
+O que o navegador guarda é um par: o *access token* (que morre) e o
+`refresh_token`, que é uma **string opaca conferida no banco**. E
+`auth.refresh_tokens` **é copiado para o cluster** (passo 2.3). Então o
+`autoRefreshToken` do supabase-js troca o token morto por um vivo contra o
+GoTrue do cluster, e o usuário não vê nada.
+
+#### A linha que decidia isso, e que faltava
+
+Sem `storageKey`, o supabase-js **inventa** a chave do `localStorage` a partir
+da URL — `sb-${primeiro rótulo do host}-auth-token`. Conferido no pacote
+instalado (`supabase-js` 2.108.2, `SupabaseClient`):
+
+```js
+const defaultStorageKey = `sb-${baseUrl.hostname.split(".")[0]}-auth-token`;
+```
+
+| URL | gaveta onde a sessão é procurada |
+|---|---|
+| `https://fwmzeaztjxrxxzxzxmgc.supabase.co` | `sb-fwmzeaztjxrxxzxzxmgc-auth-token` |
+| `https://api.grpnascimento.com.br` | `sb-api-auth-token` — **vazia** |
+
+Trocar a URL mudaria a gaveta. O navegador não acharia sessão nenhuma e os
+~157 usuários cairiam na tela de login no momento da virada, cada um com a
+senha que talvez não lembre — **com o `refresh_token` intacto na gaveta
+antiga**, a dois centímetros de distância.
+
+`src/integrations/supabase/client.ts` agora fixa
+`storageKey: 'sb-fwmzeaztjxrxxzxzxmgc-auth-token'`. **O valor é exatamente o
+que o padrão já produz hoje**, então a mudança é inócua na produção atual e
+decisiva na virada. Não é "o nome do projeto": é o endereço da gaveta onde a
+sessão das pessoas já está. Mudar = deslogar todo mundo. Se o Lovable regerar o
+arquivo, esta linha tem que voltar.
+
+---
+
+### 1.18 O reboot dos dois nós, e por que agora (16/10/2026)
+
+Os dois nós estão com `linux-image-6.8.0-147-generic` instalado e rodando o
+`6.8.0-146` — kernel novo esperando reboot desde que o
+`apt-daily-upgrade.timer` o trouxe.
+
+**O momento é hoje.** O cluster não atende usuário nenhum: um reboot errado
+hoje é contratempo. Depois da virada, o mesmo reboot é janela de manutenção com
+gente dentro do ERP.
+
+```bash
+bash infra/ha/reboot-controlado.sh --conferir
+bash infra/ha/reboot-controlado.sh --rodar
+```
+
+A ordem importa e `reboot` nos dois **não** serve: sem quorum no etcd (2 dos 3
+votos moram nos próprios bancos), ninguém assume. O script faz standby →
+espera `streaming` com lag 0 → `patronictl switchover` → o outro nó → confere.
+
+Três coisas conferidas antes de aceitar isto (16/10):
+
+```
+net.ipv4.ip_nonlocal_bind=1  persistido em /etc/sysctl.d/80-haproxy-bind.conf
+patroni haproxy caddy docker etcd wg-quick@wg0   enabled nos DOIS nós
+lag 0, TL 6, os dois em streaming
+```
+
+A primeira é a que já tinha mordido: o HAProxy se amarra num endereço que só
+existe depois dos containers subirem. Sem o `sysctl` persistido, ele não sobe
+no boot e o ERP responde "connection refused" com o banco perfeito.
+
+E uma consequência agradável: o reboot do standby **é** um teste de failover de
+verdade, feito pela porta da frente. O `switchover` do passo 2 é exatamente o
+que o `testar-failover.sh` provaria.
+
+#### ✅ Executado em 16/10/2026 — e o número que faltava
+
+Os dois nós estão no **6.8.0-147**, sem reboot pendente, e o cluster passou da
+**timeline 6 para a 8**: a troca de líder aconteteu de verdade, duas vezes.
+`ip_nonlocal_bind` sobreviveu ao boot nos dois (era o risco anotado), e HAProxy,
+Caddy, Patroni, etcd, Docker e os dois timers voltaram sozinhos.
+
+Uma sonda ficou batendo no **endereço real** (sem `--resolve`, o caminho do
+navegador) a cada 2 s durante a manobra. 205 amostras:
+
+```
+13:13:33  banco1  200     <- normal
+13:13:35  banco1  503     <- o lider comeca a sair
+13:13:38  banco2  200     <- o ENDERECO virou sozinho, em 3 segundos
+13:13:40  banco2  503  ]
+   ...                ]   <- 30 s sem lider: a eleicao do Patroni (ttl 20)
+13:14:10  banco2  503  ]
+13:14:12  banco1  502  ]
+   ...                ]   <- a pilha do banco1 subindo
+13:14:21  banco1  503  ]
+13:14:23  banco1  200     <- normal de novo
+```
+
+**Duas lições, e a segunda corrige uma expectativa que estava errada:**
+
+1. **Reiniciar o standby não custa nada.** Zero erro na sonda. É por isso que
+   a ordem do script importa.
+2. **Trocar de líder custa ~48 segundos de erro para quem está usando.** O
+   endereço vira em 3 segundos — essa parte é excelente —, mas o nó que
+   assume passa ~30 s sem ter a quem perguntar, porque a eleição do Patroni
+   leva o `ttl` (20 s) e a pilha ainda precisa reconectar.
+
+Ou seja: **alta disponibilidade aqui não é "sem interrupção", é "um minuto e
+se cura sozinho"**. Perder um nó inteiro, de madrugada, com o banco intacto do
+outro lado e o ERP voltando sozinho em menos de um minuto, é um resultado bom —
+mas quem prometer "transparente" vai ser desmentido pelo usuário que estava
+salvando uma tela naquele minuto.
+
+Para a noite da virada isto significa uma coisa prática: **não trocar de líder
+de propósito com gente usando.** O reboot que sobrar, faça no standby.
+
+> Sobre `synchronous_mode_strict`: ele está **desligado**, e o passo 1 é a
+> razão prática para continuar assim. Com o strict ligado, derrubar o único
+> standby sincronizado faria a escrita esperar para sempre. Desligado, o
+> Patroni tira o nome do standby de `synchronous_standby_names` e a escrita
+> segue até ele voltar.
+
+---
+
+### 1.19 🔴 Os endereços que não estão no nosso código (16/10/2026)
+
+Varredura de tudo que aponta para `fwmzeaztjxrxxzxzxmgc.supabase.co` e não é
+documento nem script de corte. O que **nós** controlamos já foi parametrizado;
+o que mora em console de terceiro é o que resta, e não dá para descobrir de
+fora que está errado.
+
+**Já resolvido no repositório** (a virada passa a ser uma variável, não um
+`git grep`):
+
+```
+.github/workflows/chamado_pr_sync.yml          -> vars.SUPABASE_FUNCTIONS_URL
+.github/workflows/chamado_concluir_no_merge.yml -> vars.SUPABASE_FUNCTIONS_URL
+.github/workflows/vigia_banco.yml               -> já usava vars.SUPABASE_PROJETO_REF
+```
+
+Com a variável de repositório `SUPABASE_FUNCTIONS_URL` apontando para
+`https://api.grpnascimento.com.br/functions/v1`, o CI troca de backend sem
+mexer em workflow. Sem ela, continua na Supabase — o padrão é o de hoje.
+
+**O que só existe em console de terceiro:**
+
+| Onde | O que aponta para a Supabase | Se não mudar |
+|---|---|---|
+| Meta / WhatsApp | URL do webhook (`/functions/v1/whatsapp-webhook`) | mensagem recebida vai para o projeto desligado: **chatbot cego** |
+| Discord | OAuth redirect URI | vincular conta para de funcionar |
+| `worker/.env` | `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY` | o worker continua trabalhando no banco antigo |
+| Lovable | `VITE_SUPABASE_URL` + `VITE_SUPABASE_ANON_KEY` | o ERP inteiro continua na Supabase |
+
+O do Meta é o mais traiçoeiro: **ninguém reclama de mensagem que não chega.**
+A fila não cresce, nenhum 500 aparece, o número continua recebendo. Só não há
+resposta.
+
+E ele amarra duas coisas: como a URL do webhook muda de qualquer forma, o
+`WHATSAPP_VERIFY_TOKEN` pode ser um valor **novo**, escolhido por nós — basta
+ser o mesmo nos dois lados, no mesmo momento. Isso tira uma das 16 da seção
+1.15 da categoria "preciso recuperar" e põe na categoria "preciso definir".
+
 ## Fase 2 — a virada
 
 Daqui até o fim, o ERP fica fora do ar para escrita. Alvo: **minutos**, não
 horas — a cópia pesada já aconteceu na Fase 1.
 
 ### 2.1 Congelar a escrita na Supabase
+
+> **Antes de congelar, rodar a conferência de deriva.** Foram quatro derivas de
+> coluna em dois dias (seção 1.7), então a pergunta não é *se* haverá uma
+> pendente na noite da virada:
+>
+> ```bash
+> bash infra/ha/disparar-sincronia.sh --conferir     # "nenhuma faltando"
+> bash infra/ha/disparar-sincronia.sh --aplicar      # se acusar
+> bash infra/ha/disparar-schema.sh                   # "nada divergente"
+> bash infra/ha/disparar-schema.sh --aplicar         # se acusar
+> bash infra/ha/disparar-conflito.sh                 # "nenhuma linha divergente"
+> ```
+>
+> **Os três, não um.** Eles respondem perguntas diferentes e já se
+> contradisseram: em 14/10 o de colunas dizia *"nenhuma faltando"* enquanto
+> faltavam 44 funções, 5 triggers e 2 views (seção 1.11).
+>
+> | Script | Pergunta que responde |
+> |---|---|
+> | `disparar-sincronia.sh` | a replicação vai parar por coluna? |
+> | `disparar-schema.sh` | o cluster está igual à produção? |
+> | `disparar-conflito.sh` | sobrou linha escrita localmente? (seção 1.10) |
+>
+> Congelar com uma coluna faltando trava a virada no pior momento: a assinatura
+> não consegue chegar a lag zero, e o passo 2.2 fica esperando um número que
+> nunca vem. Se o `--aplicar` trouxer **tabela nova**, reaplicar o `REVOKE` da
+> seção 1.9 depois — o `pg_dump` traz `GRANT ALL` para `anon`/`authenticated`
+> (o `sincronizar-schema.sh` já reaplica sozinho no fim).
+
 
 Não é tela de manutenção: é no banco, e funciona com o PostgREST (o
 `default_transaction_read_only` **não** funciona, já medido):
@@ -699,9 +1767,36 @@ Supabase sozinho** — e nada na tela avisa. Hoje o arquivo importa de `./env.ts
 (linha 7) e é isso que tem que continuar valendo. Conferir **depois** do build
 do Lovable, não antes.
 
-**Todo mundo vai ter que fazer login outra vez.** As sessões atuais estão
-assinadas com o segredo da Supabase e o GoTrue do cluster vai recusá-las. Isso
-não é defeito; é consequência de trocar o emissor dos tokens. Avisar antes.
+~~**Todo mundo vai ter que fazer login outra vez.**~~ **Corrigido em
+16/10/2026 — ver a seção 1.17.** A premissa estava certa (o token de acesso
+atual é assinado pela Supabase, em ES256, e o cluster vai recusá-lo), mas a
+conclusão estava errada: o que fica no navegador não é só o token, é o
+`refresh_token` ao lado dele — uma string opaca conferida **no banco**, e
+`auth.refresh_tokens` é copiado no passo 2.3. O supabase-js troca o token morto
+por um vivo e **ninguém precisa logar de novo**.
+
+Isso só vale por causa de uma linha que até 16/10 não existia:
+`storageKey: 'sb-fwmzeaztjxrxxzxzxmgc-auth-token'` no `client.ts`. Sem ela, a
+troca de URL mudaria a gaveta do `localStorage` (`sb-api-auth-token`, vazia) e
+o navegador não acharia a sessão — com o `refresh_token` intacto na gaveta
+antiga. **Conferir que essa linha sobreviveu ao build do Lovable** é parte do
+passo 2.7, junto com o `client.ts`.
+
+Mesmo assim, avisar antes: pode haver pessoas com janela aberta há horas, e um
+erro momentâneo durante a troca é possível. "Se der erro, recarregue a página"
+resolve o caso.
+
+5. **As variáveis das Edge Functions** (seção 1.15) e **os sete jobs de cron**
+   (seção 1.16):
+
+```bash
+bash infra/ha/configurar-secrets.sh --provar   # antes de virar: nada faltando?
+bash infra/ha/cron-no-cluster.sh --ligar       # DEPOIS de apontar o worker
+```
+
+6. **A URL do webhook da Meta e o redirect do Discord** (seção 1.19) — os dois
+   só existem em console de terceiro, e o da Meta não dá nenhum sinal de que
+   está errado: mensagem recebida simplesmente não é respondida.
 
 ### 2.7 Aceitação **pelo navegador**, não por `curl`
 
@@ -744,7 +1839,12 @@ custo é o tempo que o sistema ficou lento à noite.
 
 ## O que falta, em ordem
 
-**Marco A — sem custo novo, sem parada, sem domínio:**
+> Revisado em 15/10/2026. A versão anterior desta lista dizia **"O Marco A está
+> fechado"** e marcava domínio e HTTPS como pendentes. As duas coisas
+> envelheceram ao contrário: domínio e HTTPS **ficaram prontos**, e o Marco A
+> **reabriu** quando o slot foi invalidado (seção 1.12).
+
+**Marco A — sem custo novo, sem parada:**
 
 ```
 ✅ 0.1  viabilidade: IPv6 + protocolo de replicação   13/10 — aceito nos dois nós
@@ -752,35 +1852,97 @@ custo é o tempo que o sistema ficou lento à noite.
 ✅ 0.5  carregar-anexos.sh escrito e provado          13/10 — 206 nos dois nós
 ✅ 2.3  carregar-auth-storage.sh escrito e provado    13/10 — 159 logins no cluster
 ✅ 1.6  RPC do slot + alerta no worker                13/10 — provado no cluster
-✅ 0.5  a carga dos 5,6 GB de anexos                  13/10 — 11.251/11.251, 0 falhas
 ✅ 1.6b migration 20261014000020 na produção          13/10 — anon recebe 401
 ✅ 0.2  folga no banco2 (parar pilha, capar diário)   13/10 — pilha religada depois
 ✅ 0.3  conferência do schema contra a produção       13/10 — e agora compara coluna
 ✅ 1.1  REPLICA IDENTITY FULL nas três tabelas        13/10 — tentativa 1, sem fila
-✅ 1.2  publicação com 642 tabelas                    13/10 — lista do catálogo
-✅ 1.3  assinatura no cluster, copy_data=true         13/10 — 1.545.419 linhas
-✅ 1.5  lag em zero e estável                         13/10 — 0 bytes, slot ativo
+✅ 1.2  publicação com 642 tabelas                    13/10 → 647 em 14/10
+✅ 1.11 sincronizar-schema.sh (função/view/trigger)   14/10 — "TUDO IGUAL"
+✅ dom  grpnascimento.com.br fora da Vercel, no .br   14/10 — app. e api. de pé
+✅ 1.8  HTTPS no cluster (Caddy + Let's Encrypt)      14/10 — válido até 12/01/2027
+✅ ---  chaves anon/service_role do cluster           em uso (ANON_KEY, 169 car.)
+✅ ---  aceitação pelo navegador em localhost         14/10 — aprovada pelo Eduardo
+🔁 1.3  assinatura com copy_data=true                 REABRIU — slot perdido 15/10
+🔁 1.5  lag em zero e estável                         REABRIU — depende do 1.3
 ```
 
-**O Marco A está fechado.** A perda possível deixou de ser "o backup da noite
-anterior" e passou a ser **segundos**. O que falta é só o Marco B, que espera o
-domínio.
+**O Marco A deixou de estar fechado em 15/10.** Enquanto o 1.3 não voltar, a
+perda possível não é "segundos": é o backup da noite anterior, como antes de
+começarmos. É o motivo de a recópia vir antes de qualquer outra coisa.
 
-Nada nessa lista para o ERP. A única coisa que pede horário de menos
-movimento é o passo 1.3, pelo peso na Supabase — e mesmo ele não derruba nada,
-só pesa.
-
-**Marco B — espera decisão, não dinheiro:**
+**Antes da noite do Marco B — levantado em 15/10, nada disso estava na lista:**
 
 ```
-⬜ domínio: tirar grpnascimento.com.br da Render/Vercel, DNS no registro.br
-⬜ HTTPS no Kong dos dois nós (Let's Encrypt, grátis)
-⬜ gerar as chaves anon/service_role do cluster
+⬜ recopiar (disparar-religar.sh --aplicar) e conferir os três conferidores
+✅ anexos: 12.041 de 12.041 no disco, 5.806 MB, 0 sem xattr   15/10 16h
+✅ auth/storage: 157 logins e 12.053 objetos, tudo batendo    15/10 16h
+✅ Edge Functions: 64 de 64 nos DOIS nós, idênticas ao repo   15/10 16h
+✅ backup cifrado do cluster, timer diário nos dois nós       15/10 16h
+🔸 endpoint HTTP: banco2 pronto e servindo; falta o 2º registro A
 ⬜ a noite curta: passos 2.1 a 2.7
 ⬜ conferir client.ts depois do build do Lovable
-⬜ backup cifrado passando a sair do cluster
 ⬜ só então: desligar Render e Supabase
 ```
 
-**Decisões ainda abertas:** a noite do Marco B (depois do domínio) e o
-`synchronous_mode_strict` (recomendação: continuar desligado).
+**Levantado em 16/10 — também não estava em lista nenhuma:**
+
+```
+🔴 1.15 as 54 variáveis das Edge Functions          9 em mãos, 16 presas na Supabase
+🔴 1.16 os 7 jobs de pg_cron, inexistentes no cluster      script pronto
+✅ 1.17 a sessão dos 157 usuários (storageKey)       resolvido no client.ts
+⬜ 1.18 reboot controlado dos dois nós (kernel novo)       script pronto
+🔴 1.19 webhook da Meta e redirect do Discord        só em console de terceiro
+✅ ---  CI parametrizado (vars.SUPABASE_FUNCTIONS_URL)     16/10
+✅ ---  renovação do certificado no banco2, automática     espelhar-cert.sh
+✅ ---  backup dos anexos fora dos nós (semanal)           backup-cluster.sh --anexos
+✅ ---  vigia do certificado por DM (<21 dias ou divergência)  backup_cluster.yml
+✅ ---  roteiro de restauração                             docs/ha-restauracao.md
+⬜ ---  o secret CLUSTER_BACKUP_SSH_KEY                    chave-backup-github.sh
+```
+
+**O que todos esses cinco itens de 16/10 têm em comum** merece ser dito, porque
+é a terceira vez que o mesmo tipo de coisa aparece (seções 1.11, 1.13 e agora):
+**nenhum deles é tabela, linha ou arquivo.** Variável de ambiente, agenda de
+`pg_cron`, chave do `localStorage`, kernel, URL em console de terceiro — nada
+disso entra numa contagem de tabelas, e todos os nossos conferidores contam
+tabelas. Um sistema não é só o seu banco de dados, e a parte que não é banco
+não tem conferidor nenhum.
+
+Quatro dessas merecem explicação, porque são do mesmo tipo de erro que a
+seção 1.11 descreve — **uma cópia feita num dia e tratada como se fosse viva.**
+
+> Os quatro diagnósticos abaixo são de **15/10 de manhã** e os números deles
+> são os daquele momento. Todos foram fechados na tarde do mesmo dia (ver os
+> ✅ na lista acima) — ficam aqui porque o raciocínio continua valendo, e
+> porque apagar o diagnóstico depois de resolver faz o próximo caso parecer
+> inédito.
+
+- **Anexos.** O espelho de 1 minuto é **entre os nós** (banco1 ↔ banco2), para
+  o nó que não recebeu o byte não responder 500. Ele **não traz nada da
+  produção**. Quem faz isso é o `carregar-anexos.sh`, à mão, e a última vez foi
+  13/10. Medido em 15/10: produção 11.620, cluster 11.252 — **368 de diferença,
+  +39 só desde a noite de 14/10.** Rodar imediatamente antes da virada, e
+  conferir o número, não a sensação de que o espelho "está rodando".
+- **auth e storage.** Não vêm por replicação lógica (seção 1.4). A carga de
+  13/10 trouxe 159 logins; a produção tem **156** agora — ou seja, já houve
+  exclusão de usuário depois. Reexecutar no passo 2.3 não é zelo, é o que
+  mantém quem entra no sistema.
+- **Edge Functions.** O container `erp-pilha-functions-1` tem **63** das 64 do
+  repositório. Falta `tvg-ia` — e é do **mesmo módulo TVG** cujas 21 funções de
+  banco faltavam na seção 1.11. A cópia das functions deriva igual à do schema,
+  e não existe conferidor para ela. Comparar `ls` no container com
+  `ls supabase/functions` faz parte do passo 2.1.
+- **Backup.** Hoje `backup_banco.yml` e `backup_storage.yml` apontam para a
+  Supabase. No dia seguinte à virada, **o cluster não tem backup nenhum** —
+  e o cluster passa a ser a produção. Isto é o item mais fácil de esquecer e o
+  mais caro de esquecer.
+
+**Decisões ainda abertas:** a noite do Marco B e o `synchronous_mode_strict`
+(recomendação: continuar desligado — a seção 1.18 explica por quê, com um caso
+concreto).
+
+~~a alta disponibilidade do **endereço HTTP**~~ — **fechada em 15/10** (seção
+1.14): o banco2 serve o mesmo endereço, com o mesmo certificado, e a renovação
+dele deixou de ser manual em 16/10 (`espelhar-cert.sh`). Falta só publicar o
+segundo registro A no registro.br, que é passo de 2 minutos e não depende de
+mais nada nosso.

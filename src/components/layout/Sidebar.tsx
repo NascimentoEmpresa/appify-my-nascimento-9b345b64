@@ -83,6 +83,7 @@ import { Target, MessagesSquare, KeyRound, MonitorPlay, Gauge } from "lucide-rea
 import { GitBranch, GitMerge } from "lucide-react";
 import { MessageSquare } from "lucide-react";
 import { Banknote } from "lucide-react";
+import { Database } from "lucide-react"; // SIS-2026-0599 — Base Mestre
 import { Crown, Landmark } from "lucide-react";
 import { Percent } from "lucide-react";
 import { FolderOpen } from "lucide-react";
@@ -152,6 +153,10 @@ const licitacoesModule: ModuleDef = {
       items: [
         { label: "Capa de Edital Licitações", to: "/app/editais", icon: FileText },
         { label: "Implantação de Contratos", to: "/app/licitacoes/implantacao", icon: ListChecks },
+        // SIS-2026-0599: cadastro único que alimenta os quatro resumos
+        // setoriais (Financeiro, RH, Operacional e Compras). Menu próprio,
+        // `implantacao.base` — quem preenche o checklist não ganha a base junto.
+        { label: "Base Mestre de Contrato", to: "/app/licitacoes/implantacao/base", icon: Database },
         { label: "Planilha de Custo", to: "/app/licitacoes/planilha-custo", icon: TableProperties },
         { label: "Contratos", to: "/app/licitacoes/contratos", icon: Building2 },
         { label: "Cotações", to: "/app/licitacoes/cotacoes", icon: MessageSquare },
@@ -267,12 +272,12 @@ const controladoriaOrcModule: ModuleDef = {
         // app_menu pra decidir se o item aparece dado o acesso do usuário
         // (ver isAllowed logo abaixo). Sem esta linha, a rota funciona por
         // acesso direto mas nunca aparece pra ninguém clicar.
-        { label: "Controle de Faturamento", to: "/app/controladoria/controle-faturamento", icon: FileText },
         // 06/10/2026 (mig 20261006000005): transcrições das reuniões dos
         // supervisores com os encarregados → dashboard de dificuldades.
         { label: "Reuniões com Encarregados", to: "/app/controladoria/reunioes-encarregados", icon: MessagesSquare, badge: "Novo" },
         // SIS-2026-0556: mesma regra do item acima — precisa existir aqui E em app_menu.
         { label: "Faturamento da Empresa", to: "/app/controladoria/faturamento-empresa", icon: TrendingUp },
+        { label: "Fechamento da Empresa", to: "/app/controladoria/fechamento-empresa", icon: TrendingUp, badge: "Novo" },
         { label: "Lucratividade de Contratos", to: "/app/controladoria/lucratividade-contratos", icon: TrendingUp },
         // SIS-2026-0553: checkpoint da Controladoria antes da Lucratividade.
         { label: "Auditoria da Controladoria", to: "/app/controladoria/auditoria", icon: ListChecks },
@@ -295,6 +300,8 @@ const suprimentosModule: ModuleDef = {
       defaultOpen: true,
       items: [
         { label: "Dashboard de Compras", to: "/app/suprimentos/dashboard", icon: BarChart3, badge: "Novo" },
+        // SIS-2026-0599: o que comprar para um contrato que está começando.
+        { label: "Início de Contrato", to: "/app/suprimentos/inicio-de-contrato", icon: ShoppingCart },
       ],
     },
     {
@@ -380,6 +387,8 @@ const financeiroModule: ModuleDef = {
         { label: "Emissão de NF", to: "/app/financeiro/emissao-nf/cadastro", icon: FileText },
         { label: "Validação de Notas", to: "/app/financeiro/emissao-nf/controle-notas", icon: ClipboardCheck },
         { label: "Relatório de Serviços", to: "/app/financeiro/relatorio-servicos", icon: TableProperties },
+        // SIS-2026-0658: Sistema × Excel antigo, só leitura
+        { label: "Conciliação da Origem (Serviços)", to: "/app/financeiro/relatorio-servicos/conciliacao-origem", icon: GitMerge },
         { label: "Cobranças", to: "/app/cobrancas", icon: Bell },
       ],
     },
@@ -387,6 +396,8 @@ const financeiroModule: ModuleDef = {
       label: "Operação Financeira",
       defaultOpen: true,
       items: [
+        // SIS-2026-0599: resumo financeiro do contrato que vai começar.
+        { label: "Início de Contrato", to: "/app/financeiro/inicio-de-contrato", icon: Banknote },
         { label: "Conferência de Ponto", to: "/app/financeiro/conferencia-ponto", icon: ClipboardCheck },
         // Dashboard de Pontos (30/09/2026, mig 274): o painel do RH, com menu
         // próprio do Financeiro (financeiro_dashboard_pontos).
@@ -423,12 +434,16 @@ const financeiroModule: ModuleDef = {
         // usuário, "vou concentrando tudo ali") — a nova puxa o lado "Fluxo"
         // direto do Fluxo de Caixa interno; a antiga continua manual/planilha.
         { label: "Conciliação Bancária", to: "/app/financeiro/gestao-financeira/conciliacao-fluxo-caixa", icon: GitMerge },
+        // SIS-2026-0658: Sistema × Excel antigo, só leitura
+        { label: "Conciliação da Origem (Fluxo)", to: "/app/financeiro/gestao-financeira/conciliacao-origem-fluxo-caixa", icon: GitMerge },
         { label: "Conciliação Bancária (Planilha Manual)", to: "/app/financeiro/conciliacao-bancaria", icon: GitMerge },
         // SIS-2026-0304: Checklist de Faturamento (e a futura Solicitação
         // de Ajuste, SIS-2026-0305) ficam aqui em "Ferramentas" — decisão
         // do usuário, são módulos migrados de sistema externo, não fazem
         // parte da Gestão Financeira "nativa" do ERP.
         { label: "Checklist de Faturamento", to: "/app/financeiro/checklist-faturamento", icon: ListChecks },
+        // SIS-2026-0652: veio da Controladoria; o acesso é o mesmo menu (controle-faturamento), só módulo e rota mudaram (mig 20261016000001).
+        { label: "Controle de Faturamento", to: "/app/financeiro/controle-faturamento", icon: FileText },
         { label: "Solicitações de Ajuste", to: "/app/financeiro/solicitacoes-ajuste", icon: ClipboardList },
         // SIS-2026-0524: juros informado no pagamento do Malote, controle
         // de cobrança do responsável — não gera lançamento no Fluxo de Caixa.
@@ -463,6 +478,16 @@ const maloteModule: ModuleDef = {
         { label: "Dashboard", to: "/app/malote/dashboard", icon: BarChart3 },
         { label: "Meus Itens", to: "/app/malote/meus-itens", icon: ListChecks },
         { label: "Pagamento Malote", to: "/app/malote/pagamento", icon: Banknote },
+      ],
+    },
+    // SIS-2026-0668: exceção pedida ANTES de lançar a despesa; o N2 aprova e a senha é digitada em Criar Despesa.
+    {
+      label: "Exceções",
+      defaultOpen: true,
+      items: [
+        { label: "Autorizações de Exceção", to: "/app/malote/excecao/autorizacoes", icon: ClipboardList },
+        { label: "Solicitar Exceção", to: "/app/malote/excecao/solicitar", icon: KeyRound },
+        { label: "Minhas Solicitações", to: "/app/malote/excecao/minhas", icon: ListChecks },
       ],
     },
     // SIS-2026-0125: Classificação/Orçamento saem de Controladoria e passam
@@ -542,6 +567,8 @@ const rhModule: ModuleDef = {
       defaultOpen: true,
       items: [
         { label: "Colaboradores", to: "/app/rh/colaboradores", icon: Users2 },
+        // SIS-2026-0599: dimensionamento de pessoas do contrato novo.
+        { label: "Início de Contrato", to: "/app/rh/inicio-de-contrato", icon: Database },
         { label: "Novas Admissões", to: "/app/rh/novas-admissoes", icon: ClipboardCheck },
         // "Alocações em Contratos" e "Folha de Pagamento" saíram em
         // 04/09/2026. Eram as duas telas genéricas que sobraram do modelo
@@ -576,6 +603,8 @@ const rhModule: ModuleDef = {
         { label: "Ativos/Contratos", to: "/app/rh/ativos-contratos", icon: ClipboardCheck },
         // Hierarquia de postos da Senior (mig 20261007000024): quem responde por quem e por qual contrato.
         { label: "Hierarquia de Postos", to: "/app/rh/hierarquia-postos", icon: Network },
+        // Rateio de Despesas (mig 20261016000010, SIS-2026-0673): Jus Brasil, Senior e FGTS/Bullla/seguro/BSF/PCD/SEEAC pelo PDF.
+        { label: "Rateio de Despesas", to: "/app/rh/rateio-despesas", icon: PieChart },
       ],
     },
   ],
@@ -1161,6 +1190,8 @@ const operacionalModule: ModuleDef = {
       label: "Operacional",
       defaultOpen: true,
       items: [
+        // SIS-2026-0599: locais, cidades e cobertura do contrato que inicia.
+        { label: "Início de Contrato", to: "/app/operacional/inicio-de-contrato", icon: Building2 },
         { label: "Controle de Diárias", to: "/app/operacional/diarias", icon: CalendarCheck2 },
         // Efetividade e Coberturas (branch local efetividade, mig 20261008000030):
         // quem faltou pelo ponto da Senior e o acionamento de diaristas. As 5

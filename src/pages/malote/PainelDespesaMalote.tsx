@@ -40,7 +40,11 @@ import {
 } from "@/lib/reembolso/vinculoMalote";
 import { AnexosField } from "./AnexosField";
 import { DiaPagamentoPicker } from "./DiaPagamentoPicker";
-import { ExcecaoDiaBloqueadoField } from "./ExcecaoDiaBloqueadoField";
+import { ExcecaoSenhaField } from "./ExcecaoSenhaField";
+import { useCartaoEspecialDaForma } from "./cartaoEspecial";
+import { conferirExcecaoComDespesa, PARAM_EXCECAO, type ExcecaoValidada } from "./excecao/regras";
+import { validarSenhaExcecao } from "@/hooks/useMaloteExcecao";
+import { supabase } from "@/integrations/supabase/client";
 import { DimensoesRateio, RateioGrid } from "./RateioGrid";
 import { erroFornecedorNoRateio, erroEmpresaNoRateio } from "./rateioValidacao";
 import { PadraoLinhaRateio, acharFornecedorPorNome, rateioInicialComPadrao } from "./rateioPadrao";
@@ -139,6 +143,9 @@ export function PainelDespesaMalote({
   solicitacaoDispensadaManualmente,
   linhaRateioPadrao,
   fornecedorPadraoNome,
+  rateioInicial,
+  arquivosIniciais,
+  rhRateioId,
 }: {
   classificacaoId: string;
   classificacaoTipo?: TipoClassificacaoOrcamento | null;
@@ -162,6 +169,17 @@ export function PainelDespesaMalote({
   // rateioPadrao.ts para o porquê.
   linhaRateioPadrao?: Pick<PadraoLinhaRateio, "contrato_id" | "integrante_empregado_id">;
   fornecedorPadraoNome?: string;
+  // RH › Rateio de Despesas (SIS-2026-0673, 16/10/2026): o rateio chega
+  // pronto com VÁRIAS linhas (uma por contrato) e o PDF/planilha da despesa
+  // já anexado. Lido só na montagem, como o resto do "inicial": depois é da
+  // pessoa. Quem usa troca a key do painel para recomeçar.
+  rateioInicial?: RateioLinha[];
+  arquivosIniciais?: File[];
+  // Malote › Criar Despesa › "Importar rateio" (19/10/2026, mig
+  // 20261019000003): vai no INSERT como rh_rateio_id — o gatilho vincula e
+  // trava o rateio do RH. O total fica preso ao valor do rateio (o banco
+  // confere igual).
+  rhRateioId?: string;
 }) {
   const [paramsUrl] = useSearchParams();
   const obrigacaoPatrimonio = paramsUrl.get(PARAM_ORIGEM);
@@ -175,8 +193,31 @@ export function PainelDespesaMalote({
   const [nome, setNome] = useState(nomeInicial ?? inicial?.nome ?? "");
   const [totalMes, setTotalMes] = useState(valorInicial != null ? String(valorInicial) : (inicial?.valor ?? ""));
   const [dataPagamento, setDataPagamento] = useState(inicial?.dataPagamento ?? "");
-  const [excecao, setExcecao] = useState(false);
-  const [justificativaExcecao, setJustificativaExcecao] = useState("");
+  // SIS-2026-0668: a exceção vem da senha de uma solicitação aprovada, não de um checkbox.
+  const [excecaoVal, setExcecaoVal] = useState<ExcecaoValidada | null>(null);
+  const excecao = !!excecaoVal;
+  // Vindo do botão "Criar despesa" de uma exceção aprovada (?excecao=<id>): busca a senha da própria solicitação e valida,
+  // para a pessoa não digitar. Se venceu/já foi usada, o banco recusa e o campo continua pedindo a senha.
+  const excecaoIdUrl = paramsUrl.get(PARAM_EXCECAO);
+  useEffect(() => {
+    if (!excecaoIdUrl || excecaoVal) return;
+    let vivo = true;
+    (async () => {
+      const { data } = await (supabase as any).from("malote_excecao_solicitacao").select("senha").eq("id", excecaoIdUrl).maybeSingle();
+      if (!vivo || !data?.senha) return;
+      try {
+        const e = await validarSenhaExcecao(data.senha);
+        if (!vivo) return;
+        setExcecaoVal(e);
+        setDataPagamento(e.data_pagamento);
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : "Não foi possível validar a exceção.");
+      }
+    })();
+    return () => { vivo = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [excecaoIdUrl]);
+  const justificativaExcecao = excecaoVal?.justificativa ?? "";
   const [competencia, setCompetencia] = useState(inicial?.competencia ?? "");
   const [formaPagamento, setFormaPagamento] = useState(inicial?.formaPagamento ?? "");
   const [informacoesPagamento, setInformacoesPagamento] = useState(inicial?.informacoesPagamento ?? "");
@@ -189,7 +230,7 @@ export function PainelDespesaMalote({
   // telas de aprovação de diária (SIS-2026-0480).
   const [dimensoes, setDimensoes] = useState<DimensoesRateio>({ empresa: false, contrato: false, fornecedor: true, integrante: false });
   const [ratearPor, setRatearPor] = useState<"percentual" | "valor">("percentual");
-  const [linhasRateio, setLinhasRateio] = useState<RateioLinha[]>([]);
+  const [linhasRateio, setLinhasRateio] = useState<RateioLinha[]>(rateioInicial ?? []);
   const [parcelado, setParcelado] = useState<"nao" | "sim">("nao");
   const [diaDesconto, setDiaDesconto] = useState("");
   const [quantidadeParcelas, setQuantidadeParcelas] = useState("");
@@ -202,7 +243,7 @@ export function PainelDespesaMalote({
   // SIS-2026-0361 (complemento): valores de parcela ajustados na mão (só no
   // modo "compra"). Mesma régua de reset das datas.
   const [valoresManuais, setValoresManuais] = useState<Record<number, string>>({});
-  const [arquivos, setArquivos] = useState<File[]>([]);
+  const [arquivos, setArquivos] = useState<File[]>(arquivosIniciais ?? []);
   const [salvando, setSalvando] = useState<"rascunho" | "enviar" | null>(null);
 
   /**
@@ -306,7 +347,17 @@ export function PainelDespesaMalote({
 
   const totalRateado = useMemo(() => linhasRateio.reduce((s, l) => s + (Number(l.valor) || 0), 0), [linhasRateio]);
   const { data: prazoNormal } = usePrazoNormalInclusao();
-  const exigeExcecao = !!dataPagamento && !!prazoNormal && dataPagamento < prazoNormal;
+
+  // [SEM-CHAMADO] Cartão com Fluxo Especial: Data de Pagamento = dia do lançamento e Competência = mês de hoje, sem exceção
+  // (a compra já foi feita). Ver cartaoEspecial.ts.
+  const cartaoEspecial = useCartaoEspecialDaForma(formaPagamento);
+  const exigeExcecao = !cartaoEspecial && !!dataPagamento && !!prazoNormal && dataPagamento < prazoNormal;
+  useEffect(() => {
+    if (!cartaoEspecial) return;
+    setDataPagamento(cartaoEspecial.dataPagamento);
+    setCompetencia(cartaoEspecial.competencia);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cartaoEspecial?.dataPagamento]);
   const hoje = useMemo(() => new Date().toLocaleDateString("sv-SE"), []);
 
   // SIS-2026-0361: sugere o Dia do desconto a partir da Data de pagamento
@@ -355,13 +406,14 @@ export function PainelDespesaMalote({
     // cima — mesma regra do trigger malote_bloqueia_dia_pagamento.
     if (dataPagamento < hoje) return "Data de pagamento é anterior a hoje — não é permitido, nem como exceção.";
     if (paraEnviar && exigeExcecao && !excecao) {
-      return `Data de pagamento fora do prazo normal de inclusão (regra 1.1 — hoje o prazo normal é ${prazoNormal}) — marque "Lançar como exceção" para continuar.`;
+      return `Data de pagamento fora do prazo normal de inclusão (regra 1.1 — hoje o prazo normal é ${prazoNormal}) — peça uma exceção em Malote › Solicitar Exceção e informe a senha aqui.`;
     }
     if (paraEnviar && excecao && dataPagamento === hoje && horaAtualPassouDe(maloteConfig?.excecao_limite_inclusao_horario)) {
       return `Já passou do horário limite (${maloteConfig?.excecao_limite_inclusao_horario}) para incluir exceção com pagamento hoje (regra 2.1).`;
     }
-    if (excecao && (maloteConfig?.excecao_exigir_justificativa_solicitante ?? true) && !justificativaExcecao.trim()) {
-      return "Informe a justificativa da exceção.";
+    if (excecaoVal) {
+      const erroExc = conferirExcecaoComDespesa(excecaoVal, { classificacaoId, dataPagamento, valor: Number(totalMes) });
+      if (erroExc) return erroExc;
     }
     if (!competencia) return "Informe a competência.";
     if (!formaPagamento) return "Selecione a forma de pagamento.";
@@ -422,6 +474,7 @@ export function PainelDespesaMalote({
         valor_total: Number(totalMes),
         data_pagamento: dataPagamento,
         excecao,
+        excecao_solicitacao_id: excecaoVal?.id ?? null,
         justificativa_excecao: excecao ? justificativaExcecao.trim() || null : null,
         competencia: competencia + "-01",
         forma_pagamento: formaPagamento,
@@ -433,6 +486,7 @@ export function PainelDespesaMalote({
         parcelas,
         arquivosNovos: arquivos,
         solicitacao_dispensada_manualmente: !!solicitacaoDispensadaManualmente,
+        ...(rhRateioId ? { rh_rateio_id: rhRateioId } : {}),
       };
 
       if (paraEnviar && aoSalvar) {
@@ -623,7 +677,7 @@ export function PainelDespesaMalote({
                     ? "Valor da compra *"
                     : "Valor de cada parcela *"}
               </Label>
-              <Input type="number" step="0.01" value={totalMes} onChange={(e) => setTotalMes(e.target.value)} placeholder="Ex: R$ 5.000,00" disabled={!ativo || !!aoSalvar} />
+              <Input type="number" step="0.01" value={totalMes} onChange={(e) => setTotalMes(e.target.value)} placeholder="Ex: R$ 5.000,00" disabled={!ativo || !!aoSalvar || !!rhRateioId} />
               {parcelado === "sim" && Number(totalMes) > 0 && Number(quantidadeParcelas) >= QUANTIDADE_PARCELAS_MIN && (
                 <p className="text-[11px] text-muted-foreground mt-1">
                   {modoValorParcela === "compra" ? (
@@ -646,17 +700,21 @@ export function PainelDespesaMalote({
               <DiaPagamentoPicker
                 value={dataPagamento}
                 onChange={setDataPagamento}
-                disabled={!ativo}
-                permitirDiasBloqueados={excecao}
+                disabled={!ativo || !!cartaoEspecial}
+                permitirDiasBloqueados={excecao || !!cartaoEspecial}
                 classificacaoId={classificacaoId}
               />
             </div>
           </div>
-          <ExcecaoDiaBloqueadoField
-            checked={excecao}
-            onCheckedChange={setExcecao}
-            justificativa={justificativaExcecao}
-            onJustificativaChange={setJustificativaExcecao}
+          {cartaoEspecial && (
+            <p className="text-xs text-muted-foreground">
+              Cartão com Fluxo Especial ({cartaoEspecial.rotulo}): a Data de Pagamento é o dia do lançamento
+              ({cartaoEspecial.dataPagamento.split("-").reverse().join("/")}) e não pede exceção; vai direto ao aprovador do Fluxo Especial.
+            </p>
+          )}
+          <ExcecaoSenhaField
+            validada={excecaoVal}
+            onValidada={(e) => { setExcecaoVal(e); if (e) setDataPagamento(e.data_pagamento); }}
             disabled={!ativo}
             foraDoPrazoInclusao={exigeExcecao}
             prazoNormal={prazoNormal}

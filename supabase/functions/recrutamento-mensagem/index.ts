@@ -8,6 +8,13 @@
 // template solto por etapa (RECRUTAMENTO_MENSAGENS) que nunca foi criado na
 // Meta — o log só tinha "(#132001) Template name does not exist".
 //
+// AGENDAMENTO ASO (16/10/2026, mig 20261016000031): MANUAL — o botão "Enviar
+// agendamento" do card em SST + COMPRAS manda ao candidato data, horário,
+// local e mapa do exame que o SST agendou. Continua na linha própria de
+// RECRUTAMENTO_MENSAGENS (template recrutamento_agendamento_aso) e não
+// depende do "Enviar automaticamente" (ativo); aqui ela vira uma mensagem
+// a mais no mesmo laço de envio.
+//
 // TEXTO x TEMPLATE: a Cloud API só aceita texto livre dentro de 24h da última
 // mensagem DO CONTATO. Dentro da janela vai texto (sai mesmo antes de a Meta
 // aprovar o template); fora dela, vai o template aprovado, que pode iniciar
@@ -35,6 +42,25 @@ const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const WA_TOKEN = Deno.env.get("WHATSAPP_TOKEN") ?? "";
 const PHONE_NUMBER_ID = Deno.env.get("WHATSAPP_PHONE_NUMBER_ID") ?? "";
 const GRAPH = "https://graph.facebook.com/v21.0";
+
+const ETAPA_AGENDAMENTO = "AGENDAMENTO ASO";
+
+// Mesma régua de src/lib/recrutamento/agendamentoAso.ts (o Deno não importa
+// do src): "2026-10-19" → "19/10/2026 (segunda-feira)".
+const DIAS = ["domingo", "segunda-feira", "terça-feira", "quarta-feira", "quinta-feira", "sexta-feira", "sábado"];
+function dataExameBr(s: string): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(s ?? ""));
+  if (!m) return "";
+  const dia = DIAS[new Date(Date.UTC(+m[1], +m[2] - 1, +m[3])).getUTCDay()];
+  return `${m[3]}/${m[2]}/${m[1]} (${dia})`;
+}
+function mapaExame(url: string, local: string): string {
+  if (String(url ?? "").trim()) return String(url).trim();
+  const l = String(local ?? "").trim();
+  return l ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(l)}` : "";
+}
+// Parâmetro de template não aceita quebra de linha, tab nem 4+ espaços seguidos.
+const umaLinha = (s: string) => String(s ?? "").replace(/[\r\n\t]+/g, " ").replace(/ {2,}/g, " ").trim();
 
 const cors = {
   "Access-Control-Allow-Origin": "*",
@@ -99,6 +125,7 @@ Deno.serve(async (req) => {
   const candidatoId = Number(body.candidato_id ?? 0);
   const etapa = String(body.etapa ?? "").trim();
   if (!candidatoId || !etapa) return json({ error: "candidato_id e etapa são obrigatórios" }, 400);
+  const manual = etapa === ETAPA_AGENDAMENTO;
 
   // service_role: configuração e log. A AUTORIZAÇÃO é a leitura do candidato
   // abaixo, feita com a sessão de quem moveu (RLS do Recrutamento).
@@ -107,19 +134,41 @@ Deno.serve(async (req) => {
     admin.from("RECRUTAMENTO_MENSAGENS_LOG").insert({ candidato_id: candidatoId, etapa, ...row });
 
   // ── Mensagens da etapa ────────────────────────────────────────────
-  const { data: mapa } = await admin.from("RECRUTAMENTO_MENSAGEM_ETAPA")
-    .select("codigo, ordem").eq("etapa", etapa).eq("ativo", true).order("ordem");
-  const codigos = (mapa ?? []).map((m: { codigo: string }) => m.codigo);
-  if (!codigos.length) return json({ ok: true, enviados: 0, motivo: "etapa_sem_mensagem", resultados: [] });
+  let codigos: string[] = [];
+  let porCodigo = new Map<string, unknown>();
+  if (manual) {
+    // Agendamento do ASO: a linha própria de RECRUTAMENTO_MENSAGENS vira uma
+    // "mensagem" no formato da biblioteca (parametros = rótulos das variáveis).
+    const { data: cfg } = await admin.from("RECRUTAMENTO_MENSAGENS").select("*").eq("etapa", etapa).maybeSingle();
+    if (!cfg?.template_nome) {
+      await logar({ status: "sem_config" });
+      return json({ ok: true, enviados: 0, motivo: "sem_template", resultados: [] });
+    }
+    codigos = [cfg.template_nome];
+    porCodigo.set(cfg.template_nome, {
+      codigo: cfg.template_nome, titulo: "Agendamento do ASO", texto: cfg.texto_previa ?? "",
+      variaveis: Array.isArray(cfg.parametros) ? cfg.parametros : [],
+      template_nome: cfg.template_nome, idioma: cfg.template_idioma ?? "pt_BR",
+    });
+  } else {
+    const { data: mapa } = await admin.from("RECRUTAMENTO_MENSAGEM_ETAPA")
+      .select("codigo, ordem").eq("etapa", etapa).eq("ativo", true).order("ordem");
+    codigos = (mapa ?? []).map((m: { codigo: string }) => m.codigo);
+    if (!codigos.length) return json({ ok: true, enviados: 0, motivo: "etapa_sem_mensagem", resultados: [] });
 
-  const { data: tpls } = await admin.from("WA_TEMPLATE")
-    .select("codigo, titulo, texto, variaveis, template_nome, idioma").in("codigo", codigos).eq("ativo", true);
-  const porCodigo = new Map((tpls ?? []).map((t: { codigo: string }) => [t.codigo, t]));
+    const { data: tpls } = await admin.from("WA_TEMPLATE")
+      .select("codigo, titulo, texto, variaveis, template_nome, idioma").in("codigo", codigos).eq("ativo", true);
+    porCodigo = new Map((tpls ?? []).map((t: { codigo: string }) => [t.codigo, t]));
+  }
 
   // ── Candidato + vaga ──────────────────────────────────────────────
   const { data: cand } = await db.from("WA_CURRICULOS")
-    .select("id, nome, telefone, vaga_id, aso_posto").eq("id", candidatoId).maybeSingle();
+    .select("id, nome, telefone, vaga_id, aso_posto, sst_data_exame, sst_hora_exame, sst_local_exame, sst_maps_url")
+    .eq("id", candidatoId).maybeSingle();
   if (!cand) return json({ error: "candidato não encontrado ou sem acesso" }, 404);
+  if (manual && !cand.sst_data_exame) {
+    return json({ ok: true, enviados: 0, motivo: "sem_agendamento", resultados: [] });
+  }
 
   if (!temTelefone(cand.telefone ?? "")) {
     await logar({ status: "sem_telefone", telefone: cand.telefone ?? null });
@@ -144,6 +193,12 @@ Deno.serve(async (req) => {
     "empresa": "Grupo Nascimento",
     "data de inicio": dataBr(vaga?.data_inicio_prevista),
     "local / posto": String(cand.aso_posto ?? vaga?.local_exato ?? "").trim(),
+    // Agendamento do ASO (mig 20261016000031 — rótulos no formato antigo).
+    "primeiro_nome": primeiroNomeDe(cand.nome ?? ""),
+    "data_exame": dataExameBr(cand.sst_data_exame ?? ""),
+    "hora_exame": umaLinha(cand.sst_hora_exame ?? ""),
+    "local_exame": umaLinha(cand.sst_local_exame ?? ""),
+    "mapa_exame": mapaExame(cand.sst_maps_url ?? "", cand.sst_local_exame ?? ""),
   };
   const daTela: Record<string, string> = {};
   for (const [k, v] of Object.entries(body.valores ?? {})) if (String(v ?? "").trim()) daTela[chave(k)] = String(v).trim();
@@ -221,7 +276,7 @@ Deno.serve(async (req) => {
       conversa_id: conversa.id, contato_id: contato.id, direcao: "saida",
       tipo: dentroJanela ? "text" : "template", texto, wa_message_id: wamid, status: "enviada",
       origem: "sistema", autor_id: userData.user.id,
-      meta: { etapa, candidato_id: candidatoId, codigo, automatica: true },
+      meta: { etapa, candidato_id: candidatoId, codigo, automatica: !manual },
       ...(dentroJanela ? {} : { payload: { template: tpl.template_nome } }),
     });
     await admin.from("WA_CONVERSA").update({
@@ -233,5 +288,7 @@ Deno.serve(async (req) => {
     resultados.push({ codigo, titulo: tpl.titulo, enviado: true, via: dentroJanela ? "texto" : "template" });
   }
 
-  return json({ ok: true, enviados: resultados.filter((r) => r.enviado).length, resultados });
+  // O botão do agendamento lê { enviado, motivo, detalhe } (mensagemEnvioAgendamento).
+  const unico = manual ? { enviado: !!resultados[0]?.enviado, motivo: resultados[0]?.motivo, detalhe: resultados[0]?.detalhe } : {};
+  return json({ ok: true, enviados: resultados.filter((r) => r.enviado).length, resultados, ...unico });
 });

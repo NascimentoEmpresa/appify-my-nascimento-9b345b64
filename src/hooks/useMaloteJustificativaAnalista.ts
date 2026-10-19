@@ -6,6 +6,7 @@ import { useOrcadoClassificacaoMultiMes } from "@/hooks/useOrcadoClassificacao";
 import { useUtilizadoOrcamento } from "@/hooks/useUtilizadoOrcamento";
 import { montarCombosAlcada, encontrarComboQueEstouraAlcada } from "@/pages/malote/orcamentoUtils";
 import { StatusDespesa } from "@/hooks/useMaloteDespesa";
+import { emLotes } from "@/lib/emLotes";
 
 // SIS-2026-0283 (Iury): "Justificativa Analistas" — submódulo em Licitações
 // que mostra os itens do malote que os analistas precisam justificar. Mesmo
@@ -88,13 +89,11 @@ function useParcelasDasDespesas(despesaIds: string[]) {
     enabled: despesaIds.length > 0,
     staleTime: 60_000,
     queryFn: async () => {
-      const { data, error } = await (supabase as any)
-        .from("malote_despesa_parcela")
-        .select("despesa_id, data_vencimento, valor")
-        .in("despesa_id", despesaIds);
-      if (error) throw error;
+      // Em lotes: todos os ids numa URL só passam do limite do gateway do cluster (502). Ver src/lib/emLotes.ts.
+      const data = await emLotes<any>(despesaIds, 40, (lote) =>
+        (supabase as any).from("malote_despesa_parcela").select("despesa_id, data_vencimento, valor").in("despesa_id", lote));
       const mapa = new Map<string, { data_vencimento: string; valor: number }[]>();
-      for (const p of (data ?? []) as any[]) {
+      for (const p of data) {
         const lst = mapa.get(p.despesa_id) ?? [];
         lst.push({ data_vencimento: p.data_vencimento, valor: p.valor });
         mapa.set(p.despesa_id, lst);

@@ -65,6 +65,8 @@ export interface NfEmissaoRow {
   concluida_em?: string | null;
   // null = linha importada da planilha legada (SIS-2026-0540), sem autor no app.
   created_by: string | null;
+  // SIS-2026-0658: 'sistema' | 'excel_antigo'. Ausente enquanto a migration 20261015000020 não foi aplicada.
+  origem?: "sistema" | "excel_antigo";
   // Lixeira do Relatório Geral: != null = NF na lixeira (fora de todos os totais).
   deleted_at: string | null;
   deleted_by: string | null;
@@ -528,6 +530,26 @@ export function useEnviarNfEmissao() {
     mutationFn: async (id: string) => {
       const { error } = await (supabase as any).from("nf_emissao").update({ status: "enviada" }).eq("id", id);
       if (error) throw error;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: [NF_EMISSAO_KEY] }),
+  });
+}
+
+// SIS-2026-0671: envio em lote pela Lista final. Só sai quem ainda é rascunho (o filtro vai na própria atualização: uma NF
+// que alguém já enviou/alterou nesse meio tempo não é tocada). Devolve os ids que de fato foram enviados.
+export function useEnviarNfsEmLote() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (ids: string[]) => {
+      if (ids.length === 0) return [] as string[];
+      const { data, error } = await (supabase as any)
+        .from("nf_emissao")
+        .update({ status: "enviada" })
+        .in("id", ids)
+        .eq("status", "rascunho")
+        .select("id");
+      if (error) throw error;
+      return ((data ?? []) as { id: string }[]).map((r) => r.id);
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: [NF_EMISSAO_KEY] }),
   });

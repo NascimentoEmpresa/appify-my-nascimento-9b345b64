@@ -26,6 +26,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/hooks/useAuth";
 import { diasAguardandoComprovante, severidadeComprovante, textoDiasComprovante } from "./comprovantePendente";
+import { classificacaoPorRateio } from "./classificacaoRateio";
 import { AcessoGate } from "@/components/auth/AcessoGate";
 import { CardPontoDiaria } from "./PontoDiariaMalote";
 import { useDiariaPontoMalote } from "@/hooks/useDiariaPontoMalote";
@@ -90,7 +91,8 @@ import { RateioParceladoTable } from "./RateioParceladoTable";
 import { FluxoAprovacaoVisual } from "./FluxoAprovacaoVisual";
 import { usePermissoes } from "@/context/PermissoesContext";
 import { DiaPagamentoPicker } from "./DiaPagamentoPicker";
-import { ExcecaoDiaBloqueadoField } from "./ExcecaoDiaBloqueadoField";
+import { ExcecaoSenhaField } from "./ExcecaoSenhaField";
+import { conferirExcecaoComDespesa, type ExcecaoValidada } from "./excecao/regras";
 import { montarCombosAlcada, encontrarComboQueEstouraAlcada, rescalarRateioPorTotal } from "./orcamentoUtils";
 
 const TIPO_SOLICITACAO_LABEL: Record<TipoSolicitacao, string> = {
@@ -385,6 +387,8 @@ export default function DespesaVisualizar() {
   const [dataPagamento, setDataPagamento] = useState("");
   const [excecao, setExcecao] = useState(false);
   const [justificativaExcecao, setJustificativaExcecao] = useState("");
+  // SIS-2026-0668: exceção marcada NESTA edição só vale com a senha de uma solicitação aprovada.
+  const [excecaoVal, setExcecaoVal] = useState<ExcecaoValidada | null>(null);
   const [competencia, setCompetencia] = useState("");
   const [dimensoes, setDimensoes] = useState<DimensoesRateio>({ empresa: false, contrato: false, fornecedor: false, integrante: false });
   const [ratearPor, setRatearPor] = useState<"percentual" | "valor">("percentual");
@@ -425,6 +429,12 @@ export default function DespesaVisualizar() {
   const [confirmarAprovarParceladoAberto, setConfirmarAprovarParceladoAberto] = useState(false);
 
   const despesa = data?.despesa;
+  // [SEM-CHAMADO] (15/10/2026, DM-2026-2492): despesa marcada como parcelada mas SEM nenhuma linha em
+  // malote_despesa_parcela (o salvamento foi cortado depois de criar a despesa) derrubava a tela inteira —
+  // RateioParceladoTable lia parcelas[-1].data_vencimento — e o ErroDeTela mostrava "Sistema indisponível" para
+  // quem abria (a Calita, aprovadora do fluxo especial). Agora a tela abre, avisa e não deixa aprovar.
+  const parceladaSemParcelas = !!despesa?.parcelado && (data?.parcelas.length ?? 0) === 0;
+  const despesaParceladaComParcelas = !!despesa?.parcelado && !parceladaSemParcelas;
   // SIS-2026-0626: despesa de diária — o ponto do faltante em cada dia (mig 20261014000001).
   const { data: pontoDiarias } = useDiariaPontoMalote(despesa?.id ? [despesa.id] : []);
 
@@ -517,6 +527,8 @@ export default function DespesaVisualizar() {
     () => new Set(linhasRateio.map((l) => l.classificacao_id).filter((id): id is string => !!id)),
     [linhasRateio],
   );
+  // SIS-2026-0682: despesa rateada em várias Classificações — a classificação é por linha do rateio, não do cabeçalho.
+  const classificacaoDefinidaPeloRateio = classificacaoPorRateio(despesa?.classificacao_id, classificacaoIdsRateioDespesa);
 
   useEffect(() => {
     if (!despesa) return;
@@ -532,6 +544,7 @@ export default function DespesaVisualizar() {
     setDataPagamento(despesa.data_pagamento ?? "");
     setExcecao(despesa.excecao);
     setJustificativaExcecao(despesa.justificativa_excecao ?? "");
+    setExcecaoVal(null);
     setCompetencia(despesa.competencia ? despesa.competencia.slice(0, 7) : "");
   }, [despesa?.id]);
 
@@ -928,16 +941,14 @@ export default function DespesaVisualizar() {
     const parcelaCorrespondente = despesa.parcelado ? data?.parcelas.find((p) => p.data_vencimento.slice(0, 7) === mes) : undefined;
     return { mes, orcadoDoMes, utilizadoAcumulado, percentual, nomeContrato, parcelaCorrespondente };
   })();
-  // SIS-2026-0250: N1 aprovando uma exceção sempre escala pro Nível 2 —
-  // não fica sujeito à alçada (Carol/Gerente Financeiro é o reforço do
-  // Nível 2 mesmo quando não há Aprovador 2 configurado na Classificação,
-  // então "próximo nível existe" vale mesmo com o array vazio). O RPC
-  // malote_aprovar_despesa reforça essa mesma regra no banco.
-  const escalaObrigatoriaPorExcecao = despesa.nivel_aprovacao_atual === 1 && despesa.excecao;
+  // SIS-2026-0668 (errata do usuário, 15/10/2026): a exceção agora é APROVADA ANTES pelo N2 da classificação (Solicitar
+  // Exceção + senha), então a despesa lançada com ela NÃO sobe ao Nível 2 só por ser exceção — segue a alçada normal:
+  // dentro do orçado, N1 aprova e vai para pagamento; estourou o orçado, escala para o N2 como qualquer despesa.
+  // (Antes, SIS-2026-0250, toda exceção escalava obrigatoriamente; o banco já não forçava, só esta tela.)
   // SIS-2026-0439: Fluxo Especial nunca escala — o RPC já ignora esse
   // parâmetro nesse caso, mas o client precisa refletir o mesmo resultado
   // (senão o toast/mensagem de sucesso mentiria "enviado pro próximo nível").
-  const proximoNivelConfigurado = !formaPagamentoEspecial && (escalaObrigatoriaPorExcecao || (proximoNivelExiste && !dentroDaAlcada));
+  const proximoNivelConfigurado = !formaPagamentoEspecial && proximoNivelExiste && !dentroDaAlcada;
 
   // Pagamento Malote (SIS-2026-0160) — elegibilidade resolvida só pelo
   // gerenciamento de acesso (usePodePagarMalote), não por linha da despesa.
@@ -950,6 +961,7 @@ export default function DespesaVisualizar() {
   const parcelasEmFaseDePagamento = ["aguardando_pagamento", "pronto_para_pagar", "ajuste_pagamento", "despesa_paga"].includes(despesa.status);
 
   function validarAcaoAprovador(): string | null {
+    if (parceladaSemParcelas) return "Esta despesa está marcada como parcelada, mas as parcelas não foram gravadas. Peça ao solicitante para reenviar a despesa ou avise o setor de Sistemas.";
     // SIS-2026-0261: mesmo achado do SIS-2026-0212 (comentário acima de
     // orcadoCarregando) — agora vale também pros dados usados pra checar
     // o orçado de CADA parcela/contrato do Rateio, não só do mês principal.
@@ -1371,7 +1383,7 @@ export default function DespesaVisualizar() {
       toast.error("Informe o nome da despesa.");
       return;
     }
-    if (!classificacaoIdEditado) {
+    if (!classificacaoIdEditado && !classificacaoDefinidaPeloRateio) {
       toast.error("Selecione a Classificação.");
       return;
     }
@@ -1425,22 +1437,17 @@ export default function DespesaVisualizar() {
       if (despesa!.valor_total !== valorTotalNovo) {
         partesResumo.push(`Valor Total: ${fmtMoneyResumo(despesa!.valor_total)} → ${fmtMoneyResumo(valorTotalNovo)}`);
       }
-      // SIS-2026-0339 (complemento pedido pelo Iury, confirmado após falar
-      // com ele): marcar o checkbox de Exceção nesta tela tem que respeitar
-      // a mesma regra do lançamento normal (SIS-2026-0250/0250-errata) — N1
-      // sempre revisa antes de qualquer exceção seguir. Se a despesa ainda
-      // não passou de N1 (pendente_aprovacao, nivel 1), não precisa fazer
-      // nada aqui: malote_aprovar_despesa já força a escalada pra N2 quando
-      // N1 aprovar (não depende de alçada) — comportamento existente, sem
-      // mudança. Mas se a despesa JÁ passou de N1 (nivel 2/3, ou já em
-      // aguardando_pagamento) e o solicitante marca a exceção agora nesta
-      // edição, ninguém mais vai reavaliar isso — força de volta pra N2
-      // (não N1: N1 já revisou essa despesa, só falta a exceção passar por
-      // uma segunda aprovação). Só dispara na transição false→true (marcar
-      // de novo uma exceção que já estava marcada não deve resetar nada).
-      const excecaoMarcadaAgora = excecao && !despesa!.excecao;
-      const despesaJaPassouDeN1 = !(despesa!.status === "pendente_aprovacao" && despesa!.nivel_aprovacao_atual === 1);
-      const excecaoVoltaParaN2 = excecaoMarcadaAgora && despesaJaPassouDeN1;
+      // SIS-2026-0668: exceção marcada nesta edição só vale com a senha de uma solicitação aprovada pelo N2 (a senha é validada
+      // no campo acima e conferida de novo pelo banco). Como o N2 já autorizou, a despesa NÃO volta ao Nível 2 por isso:
+      // segue o fluxo em que está (alçada normal).
+      if (excecaoVal) {
+        const erroExc = conferirExcecaoComDespesa(excecaoVal, {
+          classificacaoId: classificacaoIdEditado || despesa!.classificacao_id,
+          dataPagamento,
+          valor: valorTotalNovo,
+        });
+        if (erroExc) throw new Error(erroExc);
+      }
 
       // [SEM-CHAMADO] (achado real, DM-2026-0246): "ajuste_pagamento" nunca é
       // um destino válido pós-edição — é só o flag "precisa corrigir" que
@@ -1458,9 +1465,7 @@ export default function DespesaVisualizar() {
       if (despesa!.excecao !== excecao) {
         partesResumo.push(
           excecao
-            ? excecaoVoltaParaN2
-              ? "Marcada como Exceção (dia bloqueado) — devolvida para aprovação do Nível 2"
-              : "Marcada como Exceção (dia bloqueado)"
+            ? "Marcada como Exceção (dia bloqueado)"
             : "Exceção removida"
         );
       }
@@ -1476,15 +1481,9 @@ export default function DespesaVisualizar() {
       const payloadBase = {
         id: despesa!.id,
         empresa_id: despesa!.empresa_id,
-        classificacao_id: classificacaoIdEditado,
+        classificacao_id: classificacaoIdEditado || null,
         origem: despesa!.origem,
-        // excecaoVoltaParaN2 só é possível fora de rascunho/ajuste (só ali
-        // "já passou de N1" existe) — nesses 2 status "Reenviar" já reseta
-        // pra N1 por conta própria (e N1 aprovando exceção escala pra N2
-        // automaticamente, regra existente) — então esse override só tem
-        // efeito real no caminho "Salvar".
-        status: excecaoVoltaParaN2 ? "pendente_aprovacao" : statusAlvoSalvar,
-        ...(excecaoVoltaParaN2 ? { nivel_aprovacao_atual: 2 as const } : {}),
+        status: statusAlvoSalvar,
         ...(despesa!.status === "ajuste_pagamento" ? { motivo_ajuste: null } : {}),
         nome: nomeEditado.trim(),
         valor_total: valorTotalNovo,
@@ -1494,6 +1493,7 @@ export default function DespesaVisualizar() {
         informacoes_pagamento: informacoesPagamento || null,
         data_pagamento: dataPagamento || null,
         excecao,
+        ...(excecaoVal ? { excecao_solicitacao_id: excecaoVal.id } : {}),
         justificativa_excecao: excecao ? justificativaExcecao.trim() || null : null,
         competencia: competencia ? competencia + "-01" : null,
         arquivos: arquivosFinais,
@@ -1530,11 +1530,9 @@ export default function DespesaVisualizar() {
           rateioRestritoEditavel && !rateioValorMudouNestaEdicao ? { ...payloadBase, rateio: linhasRateio } : payloadBase
         );
         toast.success(
-          excecaoVoltaParaN2
-            ? "Alterações salvas. Como a Exceção foi marcada, a despesa voltou para aprovação do Nível 2."
-            : statusAlvoSalvar !== despesa!.status
-              ? "Alterações salvas. Ajuste de pagamento corrigido — devolvida para a fila de pagamento."
-              : "Alterações salvas (aprovação atual mantida)."
+          statusAlvoSalvar !== despesa!.status
+            ? "Alterações salvas. Ajuste de pagamento corrigido — devolvida para a fila de pagamento."
+            : "Alterações salvas (aprovação atual mantida)."
         );
       }
     } catch (e: any) {
@@ -1705,13 +1703,21 @@ export default function DespesaVisualizar() {
                   </div>
                   <div>
                     <Label className="text-xs">Classificação</Label>
-                    <SearchableSelect
-                      value={classificacaoIdEditado}
-                      onChange={setClassificacaoIdEditado}
-                      options={classificacoesOpcoes}
-                      placeholder="Selecione a Classificação..."
-                      searchPlaceholder="Buscar Classificação..."
-                    />
+                    {classificacaoDefinidaPeloRateio ? (
+                      <Input
+                        value={`${classificacaoIdsRateioDespesa.size} classificações (definidas no Rateio)`}
+                        disabled
+                        title="Despesa rateada em várias Classificações: cada linha do Rateio tem a sua."
+                      />
+                    ) : (
+                      <SearchableSelect
+                        value={classificacaoIdEditado}
+                        onChange={setClassificacaoIdEditado}
+                        options={classificacoesOpcoes}
+                        placeholder="Selecione a Classificação..."
+                        searchPlaceholder="Buscar Classificação..."
+                      />
+                    )}
                   </div>
                 </div>
               )}
@@ -1930,6 +1936,16 @@ export default function DespesaVisualizar() {
           </CardContent>
         </Card>
       </div>
+
+      {parceladaSemParcelas && (
+        <div className="flex items-start gap-2 rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
+          <p className="text-destructive/90">
+            Esta despesa está marcada como parcelada ({despesa.numero_parcelas}x), mas <span className="font-medium">nenhuma parcela foi gravada</span> —
+            provavelmente o envio foi interrompido. Não é possível aprovar assim: peça ao solicitante para reenviar ou avise o setor de Sistemas.
+          </p>
+        </div>
+      )}
 
       {despesa.parcelado && (
         <Card>
@@ -2189,7 +2205,7 @@ export default function DespesaVisualizar() {
                 {souAprovadorNivelAtual && despesa.nivel_aprovacao_atual === 1 && (
                   <span className="text-xs text-muted-foreground font-normal">
                     {" "}
-                    (obrigatória se escalar para N2{despesa.excecao && " — exceção sempre escala"}
+                    (obrigatória se escalar para N2
                     {maloteConfig?.conferencia_aprovacao_horario && (
                       <> ou se aprovar após {maloteConfig.conferencia_aprovacao_horario} com pagamento hoje ou vencido</>
                     )})
@@ -2306,11 +2322,15 @@ export default function DespesaVisualizar() {
               <Input type="month" value={competencia} onChange={(e) => setCompetencia(e.target.value)} disabled={!dadosDespesaPagamentoEditaveis} />
             </div>
           </div>
-          <ExcecaoDiaBloqueadoField
-            checked={excecao}
-            onCheckedChange={setExcecao}
-            justificativa={justificativaExcecao}
-            onJustificativaChange={setJustificativaExcecao}
+          <ExcecaoSenhaField
+            validada={excecaoVal}
+            jaEhExcecao={despesa.excecao}
+            onValidada={(e) => {
+              setExcecaoVal(e);
+              setExcecao(e ? true : despesa.excecao);
+              setJustificativaExcecao(e ? e.justificativa : despesa.justificativa_excecao ?? "");
+              if (e) setDataPagamento(e.data_pagamento);
+            }}
             disabled={!dadosDespesaPagamentoEditaveis}
             foraDoPrazoInclusao={!!dataPagamento && !!prazoNormal && dataPagamento < prazoNormal}
             prazoNormal={prazoNormal}
@@ -2408,7 +2428,7 @@ export default function DespesaVisualizar() {
               souSolicitante={souSolicitante}
               apenasValorEEmpresa={rateioRestritoEditavel}
             />
-          ) : despesa.parcelado ? (
+          ) : despesaParceladaComParcelas ? (
             <RateioParceladoTable
               despesaId={despesa.id}
               empresaId={despesa.empresa_id}

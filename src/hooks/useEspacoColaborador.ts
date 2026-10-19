@@ -591,3 +591,53 @@ export function montarPostos(
     return a.nome.localeCompare(b.nome, "pt-BR");
   });
 }
+
+// ── Meu perfil (15/10/2026, mig 20261015000001) ───────────────────────
+// O que a ficha não tinha: férias, treinamentos, cursos, afastamento atual,
+// admissão e a foto do crachá. A própria pessoa lê o próprio perfil sem a
+// tela do Espaço do Colaborador (esp_col_exige_acesso(p_empregado_id)).
+
+export interface FeriasPerfil {
+  id: number; tipo: "ferias" | "venda"; status: string | null;
+  data_saida: string | null; data_retorno: string | null;
+  dias_ferias: number | null; dias_vendidos: number | null;
+  criado_em: string; solicitante: string | null;
+}
+export interface TreinamentoPerfil {
+  id: string; titulo: string; tipo: string | null; tem_prova: boolean;
+  concluido_em: string | null; aprovado: boolean | null; nota: number | null;
+  tentativas: number | null; visto_em: string | null;
+}
+export interface CursoPerfil {
+  curso_id: string; curso: string; inscrito_em: string | null;
+  aulas: number; concluidas: number;
+  certificado_em: string | null; certificado_codigo: string | null; carga_horaria_min: number | null;
+}
+export interface AdmissaoPerfil {
+  candidato_id: number; vaga_id: number | null; cargo: string | null; contrato: string | null;
+  candidatura_em: string | null; admitido_em: string | null; etapa: string | null;
+}
+export interface PerfilExtra {
+  ferias: FeriasPerfil[];
+  ferias_saldo: { vendidos_12m: number; pode_vender: number; pode_tirar: number } | null;
+  treinamentos: TreinamentoPerfil[]; tem_login: boolean;
+  cursos: CursoPerfil[];
+  admissao: AdmissaoPerfil[];
+  /** Situação de HOJE na Senior; o histórico de afastamentos não é espelhado. */
+  afastamento: { codigo: number | null; desde: string | null; descricao: string | null; tipo: string | null } | null;
+  situacao_erp: string | null; data_afastamento: string | null;
+  cracha_foto_path: string | null; cracha_foto_origem: string | null;
+}
+
+export function usePerfilColaborador(empregadoId: number | null | undefined) {
+  return useQuery({
+    queryKey: ["esp-col", "perfil", empregadoId],
+    enabled: !!empregadoId,
+    staleTime: 60_000,
+    queryFn: async (): Promise<PerfilExtra | null> => {
+      const { data, error } = await sb.rpc<PerfilExtra | null>("esp_col_perfil", { p_empregado_id: empregadoId });
+      if (error) throw error;
+      return data ?? null;
+    },
+  });
+}

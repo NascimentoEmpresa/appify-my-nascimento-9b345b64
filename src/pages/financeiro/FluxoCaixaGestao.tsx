@@ -19,7 +19,7 @@ import {
   type AbaFluxo, type SituacaoFluxo,
 } from "@/pages/financeiro/fluxo-caixa/abasFluxo";
 import { agruparKpi, explicacaoKpi, linhasDoKpi, totalKpi, type KpiFluxo } from "@/pages/financeiro/fluxo-caixa/kpiFluxo";
-import { TrendingDown, TrendingUp, Wallet, LineChart, X, Trash2, RotateCcw, Pencil, Eye, ChevronRight, ChevronDown, FileDown } from "lucide-react";
+import { TrendingDown, TrendingUp, Wallet, LineChart, X, Trash2, RotateCcw, Pencil, Eye, ChevronRight, ChevronDown, FileDown, Split } from "lucide-react";
 import { toast } from "sonner";
 import { AcessoGate } from "@/components/auth/AcessoGate";
 import {
@@ -38,6 +38,11 @@ import { useExcluirDebito, useRestaurarDebito, useDebitoAutomaticoLixeira } from
 import { useExcluirItemFatura, useRestaurarItemFatura, useCartaoFaturaLixeira } from "@/hooks/useCartaoFatura";
 import { useClassificacoesOrcamentoAdmin } from "@/hooks/usePlanejamentoOrcamentario";
 import { ExcluirPermanentementeButton } from "@/pages/malote/ExcluirPermanentementeButton";
+import { useExcluirLinhaImportada, useImportadaLixeira, useRestaurarLinhaImportada } from "@/hooks/useFluxoCaixaImportado";
+import { RatearImportadoDialog, type LinhaParaRatear } from "./fluxo-caixa/RatearImportadoDialog";
+import { acaoDeRateio } from "./fluxo-caixa/rateioImportado";
+import { linhasDoExport, linhaTemContrato } from "./fluxo-caixa/exportRateio";
+import { linhaCasaBusca } from "./fluxo-caixa/buscaLinha";
 import { KpiTile } from "@/components/financeiro/KpiTile";
 import { BancoBadge } from "@/components/financeiro/BancoBadge";
 import { urlLogoCartao, useCartaoBancos } from "@/hooks/useMaloteCartaoCredito";
@@ -229,6 +234,11 @@ export default function FluxoCaixaGestao() {
   const restaurarDespesa = useRestaurarDespesa();
   const restaurarDebito = useRestaurarDebito();
   const restaurarItemFatura = useRestaurarItemFatura();
+  // Linhas importadas da planilha: excluir (lixeira) e ratear — permissão de editar o Fluxo (alterar).
+  const excluirImportada = useExcluirLinhaImportada();
+  const restaurarImportada = useRestaurarLinhaImportada();
+  const { data: importadasLixeira = [] } = useImportadaLixeira();
+  const [itemRatear, setItemRatear] = useState<{ linha: LinhaParaRatear; refazendo: boolean } | null>(null);
 
   const [itemExcluir, setItemExcluir] = useState<FluxoCaixaMaloteLinha | null>(null);
   const [excluindo, setExcluindo] = useState(false);
@@ -330,6 +340,7 @@ export default function FluxoCaixaGestao() {
     try {
       if (itemExcluir.origem === "malote") await excluirDespesa.mutateAsync(itemExcluir.despesa_id);
       else if (itemExcluir.origem === "debito_automatico") await excluirDebito.mutateAsync(itemExcluir.despesa_id);
+      else if (itemExcluir.origem === "importacao_historica") await excluirImportada.mutateAsync(itemExcluir.despesa_id);
       else await excluirItemFatura.mutateAsync(itemExcluir.despesa_id);
       toast.success("Lançamento movido para a lixeira.");
       setItemExcluir(null);
@@ -344,6 +355,7 @@ export default function FluxoCaixaGestao() {
     try {
       if (origem === "malote") await restaurarDespesa.mutateAsync(id);
       else if (origem === "debito_automatico") await restaurarDebito.mutateAsync(id);
+      else if (origem === "importacao_historica") await restaurarImportada.mutateAsync(id);
       else await restaurarItemFatura.mutateAsync(id);
       toast.success("Restaurado.");
     } catch (e: any) {
@@ -351,10 +363,11 @@ export default function FluxoCaixaGestao() {
     }
   }
 
-  const [dataDe, setDataDe] = useState("");
-  const [dataAte, setDataAte] = useState("");
+  // SIS-2026-0657: a Auditoria da Controladoria abre o Fluxo já no período/empresa do painel (?de=&ate=&empresa=).
+  const [dataDe, setDataDe] = useState(searchParams.get("de") ?? "");
+  const [dataAte, setDataAte] = useState(searchParams.get("ate") ?? "");
   const [competencia, setCompetencia] = useState("");
-  const [empresaId, setEmpresaId] = useState("");
+  const [empresaId, setEmpresaId] = useState(searchParams.get("empresa") ?? "");
   // SIS-2026-0537 (Iury): "retornar a coluna de Centro de custo" — filtro
   // removido no SIS-2026-0489, pedido de volta — a coluna na view nunca
   // saiu (CartaoCredito.tsx já dependia dela).
@@ -460,11 +473,8 @@ export default function FluxoCaixaGestao() {
       if (formaPagamento && l.forma_pagamento !== formaPagamento) return false;
       if (bancoId && l.banco_id !== bancoId) return false;
       if (soInconsistentes && !l.inconsistencia) return false;
-      if (
-        buscaNorm &&
-        !(l.id_malote ?? "").toLowerCase().includes(buscaNorm) &&
-        !(l.descricao ?? "").toLowerCase().includes(buscaNorm)
-      ) return false;
+      // Acha também a despesa que está dentro de uma fatura de cartão (ID e descrição moram no rateioDetalhe).
+      if (!linhaCasaBusca(l, buscaNorm)) return false;
       return true;
     });
   }, [linhas, hoje, situacao, dataDe, dataAte, competencia, empresaId, contratoId, classificacaoId, formaPagamento, bancoId, soInconsistentes, busca, valor]);
@@ -506,7 +516,7 @@ export default function FluxoCaixaGestao() {
       if (fx.competencia && l.competencia?.slice(0, 7) !== fx.competencia) return false;
       if (fx.empresaId && l.empresa_id !== fx.empresaId) return false;
       if (fx.bancoId && l.banco_id !== fx.bancoId) return false;
-      if (fx.contratoId && l.contrato_id !== fx.contratoId) return false;
+      if (fx.contratoId && !linhaTemContrato(l, fx.contratoId)) return false;
       if (fx.classificacaoId && l.classificacao_id !== fx.classificacaoId) return false;
       if (fx.formaPagamento && l.forma_pagamento !== fx.formaPagamento) return false;
       if (fx.tipo !== "todos" && l.tipo !== fx.tipo) return false;
@@ -515,8 +525,13 @@ export default function FluxoCaixaGestao() {
       return true;
     });
   }, [exportando, linhas, fx, hoje]);
-  const exportEntradas = useMemo(() => linhasExport.filter((l) => l.tipo === "entrada").reduce((t, l) => t + Number(l.valor), 0), [linhasExport]);
-  const exportSaidas = useMemo(() => linhasExport.filter((l) => l.tipo === "saida").reduce((t, l) => t + Number(l.valor), 0), [linhasExport]);
+  // Rateios abertos: uma linha da planilha por cota (contrato), para filtrar/somar por contrato no Excel.
+  const linhasPlanilhaBase = useMemo(
+    () => linhasExport.flatMap((l) => linhasDoExport(l, fx.contratoId || undefined)),
+    [linhasExport, fx.contratoId],
+  );
+  const exportEntradas = useMemo(() => linhasPlanilhaBase.filter((x) => x.linha.tipo === "entrada").reduce((t, x) => t + x.valor, 0), [linhasPlanilhaBase]);
+  const exportSaidas = useMemo(() => linhasPlanilhaBase.filter((x) => x.linha.tipo === "saida").reduce((t, x) => t + x.valor, 0), [linhasPlanilhaBase]);
 
   function gerarExcel() {
     if (linhasExport.length === 0) {
@@ -526,23 +541,24 @@ export default function FluxoCaixaGestao() {
     const nomeDe = (lista: [string, string][], id: string) => lista.find(([i]) => i === id)?.[1] ?? "";
     const dia = (iso: string | null) => (iso ? iso.slice(0, 10).split("-").reverse().join("/") : "");
     const mesAno = (iso: string | null) => (iso ? `${iso.slice(5, 7)}/${iso.slice(0, 4)}` : "");
-    const linhasPlanilha = [...linhasExport]
-      .sort((a, b) => (a.data_pagamento ?? "").localeCompare(b.data_pagamento ?? ""))
-      .map((l) => ({
+    const linhasPlanilha = [...linhasPlanilhaBase]
+      .sort((a, b) => (a.linha.data_pagamento ?? "").localeCompare(b.linha.data_pagamento ?? ""))
+      .map(({ linha: l, valor, contrato, descricao, rateado, valorLancamento }) => ({
         "Data pagamento": dia(l.data_pagamento),
         Tipo: l.tipo === "entrada" ? "Entrada" : "Saída",
         Origem: LABEL_ORIGEM[l.origem],
         "Nº": l.id_malote ?? "",
         Classificação: l.classificacao_nome ?? "",
-        Descrição: l.descricao ?? "",
+        Descrição: descricao,
         Competência: mesAno(l.competencia),
         Empresa: l.empresa_nome ?? "",
-        Contrato: l.contrato_nome ?? "",
-        "Rateio (contrato ou despesa: valor)": l.rateioDetalhe ? l.rateioDetalhe.map((r) => `${r.nome}: ${formatBRL(r.valor)}`).join(" | ") : "",
+        Contrato: contrato,
+        Rateado: rateado ? "Sim" : "",
+        "Valor do lançamento (rateado)": rateado ? (l.tipo === "entrada" ? valorLancamento : -valorLancamento) : "",
         "Forma de pagamento": l.forma_pagamento ?? "",
         Banco: l.banco_nome ?? "",
         Parcela: l.numero_parcela ? (l.numero_parcelas ? `${l.numero_parcela}/${l.numero_parcelas}` : String(l.numero_parcela)) : "",
-        Valor: l.tipo === "entrada" ? Number(l.valor) : -Number(l.valor),
+        Valor: l.tipo === "entrada" ? valor : -valor,
         Ajustado: l.ajustado ? "Sim" : "",
         "Revisar (motivo)": l.inconsistencia ?? "",
       }));
@@ -561,7 +577,7 @@ export default function FluxoCaixaGestao() {
     ];
     import("xlsx").then((XLSX) => {
       const ws = XLSX.utils.json_to_sheet(linhasPlanilha);
-      ws["!cols"] = [14, 9, 22, 16, 26, 42, 12, 14, 34, 40, 20, 18, 9, 16, 9, 40].map((wch) => ({ wch }));
+      ws["!cols"] = [14, 9, 22, 16, 26, 42, 12, 14, 34, 9, 18, 20, 18, 9, 16, 9, 40].map((wch) => ({ wch }));
       const resumo = [
         ["Fluxo de Caixa — exportação", ""],
         ["Gerado em", new Date().toLocaleString("pt-BR")],
@@ -574,6 +590,7 @@ export default function FluxoCaixaGestao() {
         ["Saldo (entradas − saídas)", exportEntradas - exportSaidas],
         ["", ""],
         ["Obs.: na planilha, saídas aparecem com valor negativo.", ""],
+        ["Obs.: lançamento rateado sai em uma linha por cota (coluna Rateado = Sim); a coluna Valor é a cota.", ""],
       ];
       const wsResumo = XLSX.utils.aoa_to_sheet(resumo);
       wsResumo["!cols"] = [{ wch: 34 }, { wch: 40 }];
@@ -1243,6 +1260,43 @@ export default function FluxoCaixaGestao() {
                               <Pencil className="h-3.5 w-3.5" />
                             </Button>
                           </AcessoGate>
+                          {/* Importada da planilha: ratear (ou refazer/desfazer um rateio feito aqui) e excluir. */}
+                          {l.origem === "importacao_historica" && (
+                            <AcessoGate menu="financeiro-fluxo-caixa-gestao" acao="alterar">
+                              {acaoDeRateio(l) && (
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-7 w-7 text-muted-foreground hover:text-foreground"
+                                  title={acaoDeRateio(l) === "refazer" ? "Refazer ou desfazer o rateio" : "Ratear entre contratos"}
+                                  onClick={() =>
+                                    setItemRatear({
+                                      linha: {
+                                        despesa_id: l.despesa_id,
+                                        id_malote: l.id_malote,
+                                        descricao: l.descricao,
+                                        valor: Number(l.valor) || 0,
+                                        contrato_id: l.contrato_id,
+                                        rateioDetalhe: l.rateioDetalhe?.map((r) => ({ id: r.id, nome: r.nome, valor: r.valor })),
+                                      },
+                                      refazendo: acaoDeRateio(l) === "refazer",
+                                    })
+                                  }
+                                >
+                                  <Split className="h-3.5 w-3.5" />
+                                </Button>
+                              )}
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-7 w-7 text-muted-foreground hover:text-destructive"
+                                title="Excluir (vai para a lixeira)"
+                                onClick={() => setItemExcluir(l)}
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </Button>
+                            </AcessoGate>
+                          )}
                           {l.origem !== "importacao_historica" && (
                             <AcessoGate menu={MENU_POR_ORIGEM[l.origem]} acao="excluir">
                               <Button
@@ -1523,7 +1577,9 @@ export default function FluxoCaixaGestao() {
         </DialogContent>
       </Dialog>
 
-      {/* Lixeira — itens excluídos das 3 origens, cada um com Restaurar */}
+      <RatearImportadoDialog linha={itemRatear?.linha ?? null} refazendo={!!itemRatear?.refazendo} onClose={() => setItemRatear(null)} />
+
+      {/* Lixeira — itens excluídos das origens (inclusive importadas da planilha), cada um com Restaurar */}
       <Dialog open={lixeiraAberta} onOpenChange={setLixeiraAberta}>
         <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
           <DialogHeader>
@@ -1535,7 +1591,7 @@ export default function FluxoCaixaGestao() {
               de algum item), inflando o modal antes do truncate interno
               ter chance de agir. */}
           <div className="space-y-5 min-w-0">
-            {despesasLixeira.length === 0 && debitosLixeira.length === 0 && itensFaturaLixeira.length === 0 && (
+            {despesasLixeira.length === 0 && debitosLixeira.length === 0 && itensFaturaLixeira.length === 0 && importadasLixeira.length === 0 && (
               <p className="text-sm text-muted-foreground py-6 text-center">A lixeira está vazia.</p>
             )}
 
@@ -1584,6 +1640,28 @@ export default function FluxoCaixaGestao() {
                       <span className="font-medium">{formatBRL(d.valor)}</span>
                       <AcessoGate menu="financeiro-debito-automatico" acao="excluir">
                         <Button variant="outline" size="icon" className="h-8 w-8" title="Restaurar" onClick={() => restaurar("debito_automatico", d.id)}>
+                          <RotateCcw className="h-3.5 w-3.5" />
+                        </Button>
+                      </AcessoGate>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {importadasLixeira.length > 0 && (
+              <div className="space-y-1.5">
+                <p className="text-xs font-semibold text-muted-foreground uppercase">Importadas da planilha</p>
+                {importadasLixeira.map((i) => (
+                  <div key={i.despesaId} className="flex items-center justify-between gap-2 rounded-md border border-border px-3 py-2 text-sm">
+                    <div className="flex-1 min-w-0">
+                      <p className="font-mono text-xs text-muted-foreground">{i.codigo}{i.cotas > 1 ? ` · rateio (${i.cotas} cotas)` : ""}</p>
+                      <p className="truncate">{i.descricao}</p>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <span className="font-medium">{formatBRL(i.valor)}</span>
+                      <AcessoGate menu="financeiro-fluxo-caixa-gestao" acao="alterar">
+                        <Button variant="outline" size="icon" className="h-8 w-8" title="Restaurar" onClick={() => restaurar("importacao_historica", i.despesaId)}>
                           <RotateCcw className="h-3.5 w-3.5" />
                         </Button>
                       </AcessoGate>

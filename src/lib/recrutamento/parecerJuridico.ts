@@ -27,6 +27,27 @@ export const NIVEL_OK: NivelJuridico = "tudo_certo";
 export const eventoParecerJuridico = (nivel: string | null | undefined) =>
   `Parecer do Jurídico: ${nivelJuridico(nivel)?.rotulo ?? "OK"} → Entrevista`;
 
+// Etapas que vêm DEPOIS do Jurídico: ali o card sempre diz o que houve com ele.
+const DEPOIS_DO_JURIDICO = ["ENTREVISTA", "ENTREVISTA GESTOR", "APROVADO", "DOCUMENTAÇÃO", "SST + COMPRAS", "EXAME SST", "ADMISSÃO"];
+
+/**
+ * Linha fixa "Jurídico" do card (16/10/2026). Pablo: "pode ficar sempre o
+ * status ali, pra mostrar se foi pulada essa etapa ou se foi respondida pelo
+ * jurídico mesmo". Antes de chegar ao Jurídico não aparece; na coluna do
+ * Jurídico é "aguardando parecer"; depois, o parecer, o "pulado" ou — cadastro
+ * antigo, de antes de registrar o pulo — "sem parecer registrado".
+ * Em Reprovado só aparece se houve parecer/pulo (ele pode ter saído antes).
+ */
+export function statusJuridicoCard(
+  c: { juridico_nivel?: string | null; juridico_ok?: boolean | null; juridico_pulado?: boolean | null },
+  etapa: string,
+): { texto: string; cor: string; fundo: string; borda: string } | null {
+  const selo = seloJuridico(c);
+  if (etapa === "JURÍDICO") return selo ?? { texto: "Jurídico: aguardando parecer", cor: "#6d28d9", fundo: "#faf5ff", borda: "#ddd6fe" };
+  if (DEPOIS_DO_JURIDICO.includes(etapa)) return selo ?? { texto: "Jurídico: sem parecer registrado", cor: "#64748b", fundo: "#f8fafc", borda: "#e2e8f0" };
+  return etapa === "Reprovado" ? selo : null;
+}
+
 /** Selo do card: o nível do parecer; parecer antigo (antes do nível) aparece como "Jurídico OK". */
 export function seloJuridico(c: { juridico_nivel?: string | null; juridico_ok?: boolean | null; juridico_pulado?: boolean | null }): { texto: string; cor: string; fundo: string; borda: string } | null {
   const n = nivelJuridico(c.juridico_nivel);

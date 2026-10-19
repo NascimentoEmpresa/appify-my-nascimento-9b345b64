@@ -23,16 +23,17 @@ function proximoMes(anoMes: string): string {
 }
 
 // [de, ate): datas "YYYY-MM-DD", fim exclusivo.
-async function buscarView(view: string, ordem: string[], de: string, ate: string): Promise<LinhaFluxoCusto[]> {
+// SIS-2026-0642: `semContrato` busca as despesas administrativas (saídas sem contrato) em vez dos custos de contrato.
+async function buscarView(view: string, ordem: string[], de: string, ate: string, semContrato = false): Promise<LinhaFluxoCusto[]> {
   const linhas: LinhaFluxoCusto[] = [];
   for (let pagina = 0; ; pagina++) {
     let q = (supabase as any)
       .from(view)
-      .select("tipo, data_pagamento, contrato_id, classificacao_id, classificacao_nome, valor")
+      .select("tipo, data_pagamento, contrato_id, empresa_id, classificacao_id, classificacao_nome, valor, id_malote, descricao")
       .eq("tipo", "saida")
-      .not("contrato_id", "is", null)
       .gte("data_pagamento", de)
       .lt("data_pagamento", ate);
+    q = semContrato ? q.is("contrato_id", null) : q.not("contrato_id", "is", null);
     for (const col of ordem) q = q.order(col, { ascending: true });
     const { data, error } = await q.range(pagina * TAMANHO_PAGINA, (pagina + 1) * TAMANHO_PAGINA - 1);
     if (error) throw error;
@@ -42,12 +43,12 @@ async function buscarView(view: string, ordem: string[], de: string, ate: string
   return linhas;
 }
 
-async function buscarPeriodo(de: string, ate: string): Promise<LinhaFluxoCusto[]> {
+async function buscarPeriodo(de: string, ate: string, semContrato = false): Promise<LinhaFluxoCusto[]> {
   const partes = await Promise.all(
     FONTES.map((f) =>
-      buscarView(f.view, f.ordem, de, ate)
+      buscarView(f.view, f.ordem, de, ate, semContrato)
         // linha_id ainda não existe na view da importação (migration 20261006000002).
-        .catch((e: any) => (e?.code === "42703" && f.view.includes("importado") ? buscarView(f.view, ["despesa_id"], de, ate) : Promise.reject(e)))
+        .catch((e: any) => (e?.code === "42703" && f.view.includes("importado") ? buscarView(f.view, ["despesa_id"], de, ate, semContrato) : Promise.reject(e)))
         // View ainda não criada no ambiente: não derruba a tela.
         .catch((e: any) => {
           if (e?.code === "PGRST205" || e?.code === "42P01") return [] as LinhaFluxoCusto[];
@@ -74,5 +75,14 @@ export function useCustosContratoAno(ano: number, habilitado: boolean) {
     staleTime: 120_000,
     enabled: habilitado,
     queryFn: () => buscarPeriodo(`${ano}-01-01`, `${ano + 1}-01-01`),
+  });
+}
+
+// SIS-2026-0642: despesas administrativas do ano (saídas sem contrato), realizadas e já programadas no Fluxo.
+export function useDespesasAdmAno(ano: number) {
+  return useQuery({
+    queryKey: ["fechamento_adm_ano", ano],
+    staleTime: 120_000,
+    queryFn: () => buscarPeriodo(`${ano}-01-01`, `${ano + 1}-01-01`, true),
   });
 }
