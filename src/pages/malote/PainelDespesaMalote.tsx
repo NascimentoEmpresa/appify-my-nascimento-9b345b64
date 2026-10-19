@@ -708,7 +708,7 @@ export function PainelDespesaMalote({
           </div>
           {cartaoEspecial && (
             <p className="text-xs text-muted-foreground">
-              Cartão com Fluxo Especial ({cartaoEspecial.cartao.nome_cartao}): a Data de Pagamento é o dia do lançamento
+              Cartão com Fluxo Especial ({cartaoEspecial.rotulo}): a Data de Pagamento é o dia do lançamento
               ({cartaoEspecial.dataPagamento.split("-").reverse().join("/")}) e não pede exceção; vai direto ao aprovador do Fluxo Especial.
             </p>
           )}
