@@ -696,6 +696,10 @@ export interface SalvarDespesaInput {
   numero_parcelas?: number | null;
   dia_desconto?: number | null;
   arquivos?: string[];
+  // Malote › Criar Despesa › "Importar rateio" (mig 20261019000003): o
+  // gatilho do INSERT vincula e trava o rateio do RH. Só vai no payload
+  // quando existe — nunca mandar null (coluna nova).
+  rh_rateio_id?: string;
   rateio?: RateioLinha[];
   // NovaParcela veio do SIS-2026-0223 (pagamento por parcela); itens, do
   // SIS-2026-0207. As duas coisas convivem.

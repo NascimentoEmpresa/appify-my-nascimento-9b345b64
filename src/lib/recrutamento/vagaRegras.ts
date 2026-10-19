@@ -564,3 +564,33 @@ export function setorDoCatalogo(catalogo: readonly string[], setorErp: unknown):
   if (!alvo) return "";
   return catalogo.find(c => norm(c) === alvo) ?? "";
 }
+
+const normCargo = (s: unknown) =>
+  String(s ?? "").normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/\s+/g, " ").trim().toUpperCase();
+
+/**
+ * Cargo do colaborador escolhido que não é nenhuma das funções do posto do
+ * catálogo (19/10/2026). Vaga #1376 (FURG JARDINAGEM): o cadastro do
+ * substituído dizia AUXILIAR ESCRITORIO — ficha errada no ERP, a Senior dizia
+ * JARDINEIRO — e a vaga saiu com o cargo errado, embora a função escolhida no
+ * catálogo fosse JARDINEIRO. Só AVISA (não trava): nome de função e título de
+ * cargo nem sempre são iguais. Casa sem acento/caixa, e "um começa com o
+ * outro" conta ("SERVENTE" x "SERVENTE DE LIMPEZA"). Sem funções → sem aviso.
+ */
+export function cargoForaDasFuncoes(cargo: unknown, funcoes: readonly unknown[]): boolean {
+  const c = normCargo(cargo);
+  const fs = funcoes.map(normCargo).filter(Boolean);
+  if (!c || fs.length === 0) return false;
+  return !fs.some(f => f === c || c.startsWith(f + " ") || f.startsWith(c + " "));
+}
+
+/**
+ * Escala da vaga diferente da do cadastro do colaborador escolhido
+ * (19/10/2026, vaga #1364: cadastro e Senior 09:00-18:00, vaga 13:00-22:00).
+ * O campo segue editável (16/09/2026: às vezes a vaga é mesmo para outro
+ * turno); a tela só mostra o que o cadastro diz. Ignora espaço e caixa.
+ */
+export function escalaDiferenteDoCadastro(escala: unknown, escalaCadastro: unknown): boolean {
+  const n = (s: unknown) => String(s ?? "").replace(/\s+/g, "").toUpperCase();
+  return !!n(escalaCadastro) && !!n(escala) && n(escala) !== n(escalaCadastro);
+}

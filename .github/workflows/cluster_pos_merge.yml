@@ -105,10 +105,14 @@ jobs:
           USUARIO: ${{ vars.CLUSTER_BACKUP_USER || 'erpbackup' }}
         run: |
           set -uo pipefail
-          # A palavra `migrations` é tudo que esta chave consegue dizer. O SQL
-          # vem do clone do `main` feito pelo próprio nó.
+          # ATENCAO AO `|| RC=$?`: o GitHub roda este passo com `bash -e`, e
+          # `set -uo pipefail` NAO desliga o `-e`. Na primeira versao isto era
+          # `SAIDA=$(ssh ...); RC=$?` -- com o ssh falhando, o `-e` matava o
+          # passo NA LINHA DA ATRIBUICAO, antes do `echo`. Resultado: o job
+          # ficava vermelho sem uma linha de log, sem gravar os outputs e sem
+          # mandar a DM. Um erro que nao se deixa ler e pior que o erro.
           SAIDA=$(ssh -p 8443 -i ~/.ssh/cluster -o BatchMode=yes -o ConnectTimeout=20 \
-                    "$USUARIO@$B1" migrations 2>&1); RC=$?
+                    "$USUARIO@$B1" migrations 2>&1) && RC=0 || RC=$?
           echo "$SAIDA"
           printf 'SAIDA<<EOF\n%s\nEOF\n' "$SAIDA" >> "$GITHUB_OUTPUT"
           echo "RC=$RC" >> "$GITHUB_OUTPUT"

@@ -42,6 +42,7 @@ import {
   rotuloReferencia, ajudaReferencia, mostraNomeReferencia, contratoDoEmpregado, rotuloContrato,
   faltamCamposManuais, podeVagaAdministrativa, statusInicialVaga, contratoEhAdministrativo, setorDoCatalogo,
   substituidosComVagaViva, avisoSubstituidoPreso, FILTRO_EMPREGADO_VAGA,
+  cargoForaDasFuncoes, escalaDiferenteDoCadastro,
 } from "@/lib/recrutamento/vagaRegras";
 import { maskFone } from "@/lib/telefone";
 import { PerguntaLoginErp, loginErpDoBanco, loginErpParaBanco } from "./PerguntaLoginErp";
@@ -878,6 +879,15 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
                 </div>
               </>
             )}
+            {/* 19/10/2026 (vaga #1376): o cargo vem do cadastro do escolhido; se
+                ele não é nenhuma das funções do posto do catálogo, o cadastro
+                pode estar errado. Só avisa — nome de função e de cargo variam. */}
+            {!vagaManual && !!vaga.posto_id && cargoForaDasFuncoes(vaga.cargo, catListas.funcoes.map(f => f.nome)) && (
+              <div style={{ marginTop: 6, fontSize: 13, fontWeight: 700, color: "#b45309", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 8, padding: "6px 9px" }}>
+                <AlertTriangle size={13} strokeWidth={2} aria-hidden style={{ display: "inline-block", verticalAlign: "-2px", marginRight: 5, flexShrink: 0 }} />
+                O cargo {vaga.cargo} não é nenhuma das funções deste posto ({catListas.funcoes.map(f => f.nome).join(", ")}). Confira com o RH se o cadastro do colaborador está certo antes de enviar.
+              </div>
+            )}
             {cnhDoCargo && (
               <div style={{ marginTop: 6, fontSize: 13, fontWeight: 700, color: "#b45309", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 8, padding: "6px 9px" }}>
                 <Car size={13} strokeWidth={2} aria-hidden style={{ display: "inline-block", verticalAlign: "-2px", marginRight: 5, flexShrink: 0 }} />{cnhDoCargo}: CNH obrigatória — já entra sozinha nos requisitos e não pode ser tirada.
@@ -1003,6 +1013,14 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
               placeholder={vagaManual ? "Ex: 12x36, 5x2..." : "Ex: 07:30-17:18 (1H) · 12x36 diurno"}
               value={vaga.escala}
               onChange={e => setVaga(v => ({ ...v, escala: e.target.value }))} />
+            {/* 19/10/2026 (vaga #1364): escala trocada à mão sem ninguém
+                perceber. Continua editável; só mostra o que o cadastro diz. */}
+            {!vagaManual && escalaDiferenteDoCadastro(vaga.escala, empEscolhido?.["Escala"]) && (
+              <div style={{ marginTop: 6, fontSize: 13, fontWeight: 700, color: "#b45309", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 8, padding: "6px 9px" }}>
+                <AlertTriangle size={13} strokeWidth={2} aria-hidden style={{ display: "inline-block", verticalAlign: "-2px", marginRight: 5, flexShrink: 0 }} />
+                Diferente do cadastro do colaborador ({String(empEscolhido?.["Escala"])}). Só mude se a vaga for mesmo para outro turno.
+              </div>
+            )}
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
             <div className="nvg-fg"><label>Salário</label><input className="nvg-fi" placeholder="Ex: R$ 1.412,00" value={vaga.salario} onChange={e => setVaga(v => ({ ...v, salario: e.target.value }))} /></div>
