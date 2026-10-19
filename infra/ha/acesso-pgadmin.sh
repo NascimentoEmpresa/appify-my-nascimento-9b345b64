@@ -270,6 +270,11 @@ echo "   papel criado"
 #
 #    Agora o desligamento e por ControlPath (`ssh -O exit`), que nao depende
 #    de PID nem de `pkill` -- o Git Bash nem sempre tem pkill.
+# O caminho do HOME tem ESPACO ("Eduardo Monteiro"). Com `-o ControlPath="$SOCK"`
+# o shell monta `-o ControlPath=/c/Users/Eduardo` e `Monteiro/...` como
+# argumento solto, e o ssh morre com "keyword controlpath extra arguments at
+# end of line" -- mensagem que nao fala de espaco nenhum. A aspa tem que
+# envolver a opcao INTEIRA: `-o "ControlPath=$SOCK"`.
 SOCK="$HOME/.ssh/cm-pgadmin-$NOME"
 PROVA="nao"
 
@@ -298,7 +303,7 @@ if [ -n "$CHAVE_DEV" ]; then
   PROVA="nao testado (chave do proprio dev)"
 elif [ "$PORTA_TESTE" != "0" ] && \
    ssh -i "$CHAVE" -p "$PORTA_SSH" -o BatchMode=yes -o StrictHostKeyChecking=accept-new \
-       -o ExitOnForwardFailure=yes -o ControlMaster=yes -o ControlPath="$SOCK" \
+       -o ExitOnForwardFailure=yes -o ControlMaster=yes -o "ControlPath=$SOCK" \
        -f -N -L "$PORTA_TESTE":127.0.0.1:5000 "$USUARIO_TUNEL@$BANCO1" 2>/dev/null; then
   sleep 2
   if (exec 3<>/dev/tcp/127.0.0.1/"$PORTA_TESTE") 2>/dev/null; then
@@ -307,7 +312,7 @@ elif [ "$PORTA_TESTE" != "0" ] && \
   else
     echo "   ⚠ o tunel abriu, mas o banco nao atendeu em 127.0.0.1:5000."
   fi
-  ssh -O exit -o ControlPath="$SOCK" "$USUARIO_TUNEL@$BANCO1" 2>/dev/null
+  ssh -O exit -o "ControlPath=$SOCK" "$USUARIO_TUNEL@$BANCO1" 2>/dev/null
 else
   echo "   ⚠ o tunel NAO abriu. Veja a nota no fim da ficha."
 fi
