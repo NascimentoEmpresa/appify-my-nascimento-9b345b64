@@ -65,8 +65,19 @@ for H in "$BANCO1" "$BANCO2"; do
     # Windows escreve CRLF; o shell do Linux le o \r como parte do comando e
     # o erro que aparece e "/usr/bin/env: bash\r: No such file or directory".
     sed -i "s/\r$//" /usr/local/sbin/aplicar-migrations.sh /usr/local/sbin/backup-cluster.sh
-    chmod 700 /usr/local/sbin/aplicar-migrations.sh /usr/local/sbin/backup-cluster.sh
     chown root:root /usr/local/sbin/aplicar-migrations.sh /usr/local/sbin/backup-cluster.sh
+    # OS DOIS MODOS SAO DIFERENTES, e trocar isso quebra o CI inteiro.
+    #
+    # backup-cluster.sh e o `command=` do authorized_keys: ele roda COMO
+    # erpbackup. Se nao for executavel por ele, a chave do CI para de
+    # funcionar por completo -- backup diario, vigia e atualizacao das
+    # functions, tudo. (Foi exatamente o que esta linha fez em 19/10, posta
+    # como 700: o `--instalar` terminou dizendo "ok" e a chave ficou morta.
+    # Nao apareceu ali porque a prova do instalador rodava como root.)
+    chmod 755 /usr/local/sbin/backup-cluster.sh
+    # aplicar-migrations.sh roda por `sudo`, ou seja, JA como root -- ele nao
+    # precisa ser legivel pelo erpbackup, e nao deve: ele le a senha do banco.
+    chmod 700 /usr/local/sbin/aplicar-migrations.sh
 
     # A linha do sudo e reescrita inteira, nominal, sem curinga.
     printf "%s\n" "erpbackup ALL=(root) NOPASSWD: /usr/local/sbin/atualizar-functions.sh, /usr/local/sbin/estado-cluster.sh, /usr/local/sbin/aplicar-migrations.sh" \
@@ -86,8 +97,18 @@ for H in "$BANCO1" "$BANCO2"; do
   echo
 done
 
-echo "== prova: o banco1 lista o que esta pendente, sem aplicar nada"
-no "$BANCO1" '/usr/local/sbin/aplicar-migrations.sh --conferir'
+# A prova tem que andar pelo caminho DO CI, nao pelo caminho do root.
+# A primeira versao disto rodava o aplicador direto como root: dava tudo
+# certo e escondia que o erpbackup nem conseguia executar o despachante.
+# Prova que roda num caminho que ninguem usa nao prova nada.
+echo "== prova pelo caminho do CI: como erpbackup, pelo despachante"
+no "$BANCO1" 'set -e
+  sudo -u erpbackup test -x /usr/local/sbin/backup-cluster.sh \
+    || { echo "   o erpbackup NAO executa o despachante -- a chave do CI esta morta" >&2; exit 1; }
+  echo "   permissao ok"
+  # Mesma palavra que o workflow manda. Com a fila vazia, e inofensivo.
+  sudo -u erpbackup env SSH_ORIGINAL_COMMAND=migrations \
+    /usr/local/sbin/backup-cluster.sh --enviar' || exit 1
 echo
 echo "   Pronto. A partir do proximo merge na main, a migration entra sozinha."
 echo "   Para ver o que ela fez:  Actions > 'Cluster pós-merge' > migrations"
