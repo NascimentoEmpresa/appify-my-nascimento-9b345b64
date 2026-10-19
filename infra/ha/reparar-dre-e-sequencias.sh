@@ -2,38 +2,45 @@
 # ============================================================================
 #  DUAS HERANCAS SILENCIOSAS DO RESTORE: a MV do DRE e o contador dos ids
 #
-#  ACHADO 1 -- O DRE GERENCIAL NUNCA FOI POPULADO NO CLUSTER
+#  ACHADO 1 -- O DRE GERENCIAL NUNCA FOI POPULADO, E O CRON FALHA DE 6 EM 6 H
 #  `public.tvg_dre_mv` e uma VIEW MATERIALIZADA sobre
 #  `mz_60_view_dre_gerencial_competencia` (a contabilidade). O `pg_dump` traz a
-#  DEFINICAO da materializada, nao o conteudo -- ela nasce vazia e marcada como
-#  "nao populada". O job 6 do cron tenta atualizar de 6 em 6 horas com:
+#  DEFINICAO da materializada, nao o conteudo -- ela nasceu vazia e marcada
+#  como "nao populada". O job 6 do cron tenta atualizar com:
 #
 #      REFRESH MATERIALIZED VIEW CONCURRENTLY public.tvg_dre_mv
 #
-#  e o Postgres recusa: "CONCURRENTLY cannot be used when the materialized view
-#  is not populated". Ele falhou nas 3 rodadas desde a virada, e vai falhar para
-#  sempre -- porque a condicao que impede o CONCURRENTLY e exatamente a que o
-#  CONCURRENTLY deveria resolver. Um ovo que precisa da galinha.
+#  e o Postgres recusa: "CONCURRENTLY cannot be used when the materialized
+#  view is not populated". Falhou em todas as rodadas desde a virada e falharia
+#  para sempre -- a condicao que impede o CONCURRENTLY e exatamente a que ele
+#  deveria resolver. Um ovo que precisa da galinha.
 #
-#  Quem le essa materializada: `tvg_dre_contratos` e `tvg_fonte`. Com ela vazia
-#  as duas devolvem lista vazia -- e lista vazia nao e erro, e tela em branco.
-#  Mesmo sintoma do dashboard de Compras, outra causa.
+#  POR QUE DESLIGAR, E NAO POPULAR  (decidido em 19/10/2026)
+#  A primeira ideia foi popular. A conferencia derrubou a ideia, e o Eduardo
+#  estava certo: HOJE NENHUMA TELA LE ESSA MATERIALIZADA.
+#    - `tvg_dre_mv` nao tem GRANT nenhum -- nem para `authenticated`. Nenhuma
+#      tela consegue ler direto.
+#    - o frontend so chama `tvg_painel`, `tvg_responsaveis_capa` e
+#      `tvg_meta_equipe_*`, e nenhuma delas alcanca a MV, nem por dentro.
+#    - quem le a MV (`tvg_fonte`, `tvg_dre_contratos`, `tvg_tendencia_dre`...)
+#      e infraestrutura de um DRE que ainda nao esta ligado na interface.
+#  Popular seria gastar CPU de 6 em 6 horas para alimentar tela nenhuma.
+#  Entao: desliga o job e deixa a MV dormindo. Quando o DRE for para a tela,
+#  `--ligar-dre` faz a primeira carga e religa o job, nessa ordem.
 #
-#  A PRIMEIRA carga tem que ser SEM o CONCURRENTLY. Ela pega ACCESS EXCLUSIVE,
-#  mas so na propria materializada, que hoje ninguem consegue usar porque esta
-#  vazia -- nao ha o que travar. Depois dela, o CONCURRENTLY do cron passa a
-#  funcionar, e esse nao bloqueia leitura nenhuma.
+#  Desligar tambem limpa o historico do cron. Uma falha que se repete a cada
+#  6 horas e ruido, e ruido esconde a falha de verdade quando ela chegar.
 #
 #  ACHADO 2 -- CONTADOR DE id QUE DEVOLVE UM id JA USADO
-#  O alerta do Comite de Etica falhou hoje as 08:00 com
+#  O alerta do Comite de Etica falhou em 19/10 as 08:00 com
 #  `duplicate key value violates unique constraint "fila_http_pkey"`,
 #  Key (id)=(865) already exists.
 #
 #  A causa nao e "a sequencia esta atras do maior id" -- `last_value` era 865,
-#  igual ao maior id. E o `is_called`: uma sequencia com `is_called=false`
-#  devolve o PROPRIO `last_value` no proximo `nextval`, nao `last_value+1`.
-#  Entao 865 foi entregue de novo. Olhar so o `last_value` nao enxerga isso,
-#  e foi por isso que a conferencia anterior deu tudo certo.
+#  igual ao maior id, e parecia certo. E o `is_called`: uma sequencia com
+#  `is_called=false` devolve o PROPRIO `last_value` no proximo `nextval`, nao
+#  `last_value+1`. Olhar so o `last_value` nao enxerga isso, e foi por isso que
+#  a conferencia de sequencias da virada passou limpa.
 #
 #  Este script varre TODA sequencia dona de coluna em public/auth/storage e
 #  calcula o proximo id de verdade (`is_called ? last+1 : last`). Se esse id ja
@@ -45,7 +52,8 @@
 #
 #  USO
 #    bash infra/ha/reparar-dre-e-sequencias.sh --conferir   # so olha
-#    bash infra/ha/reparar-dre-e-sequencias.sh --aplicar
+#    bash infra/ha/reparar-dre-e-sequencias.sh --aplicar    # sequencias + desliga o job do DRE
+#    bash infra/ha/reparar-dre-e-sequencias.sh --ligar-dre  # so no dia em que o DRE for para a tela
 # ============================================================================
 set -uo pipefail
 
@@ -53,13 +61,39 @@ BANCO1="${BANCO1:-216.238.120.171}"
 PORTA_SSH="${PORTA_SSH:-8443}"
 MODO="${1:---conferir}"
 
-case "$MODO" in --conferir|--aplicar) ;; *) sed -n '2,46p' "$0"; exit 2 ;; esac
+case "$MODO" in --conferir|--aplicar|--ligar-dre) ;; *) sed -n '2,56p' "$0"; exit 2 ;; esac
 
 no() { ssh -p "$PORTA_SSH" -o BatchMode=yes -o ConnectTimeout=25 \
          -o StrictHostKeyChecking=accept-new "root@$BANCO1" "$@"; }
 
 # O corpo SQL vai por stdin: nada e gravado no no.
 gerar_sql() {
+
+  if [ "$MODO" = "--ligar-dre" ]; then
+    cat <<'SQL'
+\set ON_ERROR_STOP on
+\pset format unaligned
+\pset fieldsep '|'
+\echo == LIGANDO O DRE  (primeira carga SEM concurrently, depois o job)
+BEGIN;
+SET LOCAL lock_timeout = '5s';
+REFRESH MATERIALIZED VIEW public.tvg_dre_mv;
+COMMIT;
+select count(*) as linhas, count(distinct contrato) as contratos,
+       min(competencia) as de, max(competencia) as ate
+  from public.tvg_dre_mv;
+\echo -- agora o CONCURRENTLY do cron funciona (e o mesmo comando do job 6):
+select public.tvg_dre_atualizar() is null as cron_ok;
+update cron.job set active = true where command ilike '%tvg_dre_atualizar%';
+select jobid, schedule, active from cron.job where command ilike '%tvg_dre_atualizar%';
+\echo
+\echo -- FALTA UMA COISA que este script nao faz por voce: a MV nao tem GRANT
+\echo -- nenhum. Enquanto `authenticated` nao puder ler (direto ou por uma
+\echo -- funcao SECURITY DEFINER), a tela continua vazia mesmo com dado dentro.
+SQL
+    return 0
+  fi
+
   cat <<'SQL'
 \set ON_ERROR_STOP on
 \pset format unaligned
@@ -70,6 +104,15 @@ gerar_sql() {
 select relname, relispopulated as populada,
        pg_size_pretty(pg_total_relation_size(oid)) as tamanho
   from pg_class where relname = 'tvg_dre_mv';
+\echo -- quem consegue ler a MV hoje (vazio = nenhuma tela alcanca):
+select coalesce(string_agg(distinct grantee, ', '), '(ninguem)') as com_grant
+  from information_schema.role_table_grants where table_name = 'tvg_dre_mv';
+\echo -- o job do cron:
+select jobid, schedule, active from cron.job where command ilike '%tvg_dre_atualizar%';
+\echo -- falhas dele:
+select count(*) as rodadas_falhadas from cron.job_run_details d
+  join cron.job j on j.jobid = d.jobid
+ where j.command ilike '%tvg_dre_atualizar%' and d.status <> 'succeeded';
 \echo
 \echo == 2. sequencias cujo proximo id JA existe na tabela
 create temp table achados(sequencia text, origem text, maior_id bigint, last_value bigint, is_called boolean, proximo bigint);
@@ -103,17 +146,10 @@ SQL
   cat <<'SQL'
 \echo
 \echo == APLICANDO
-\echo -- 1. primeira carga da materializada, sem CONCURRENTLY
-BEGIN;
-SET LOCAL lock_timeout = '5s';
-REFRESH MATERIALIZED VIEW public.tvg_dre_mv;
-COMMIT;
-select count(*) as linhas, count(distinct contrato) as contratos,
-       min(competencia) as de, max(competencia) as ate
-  from public.tvg_dre_mv;
-\echo -- 2. o CONCURRENTLY do cron agora funciona? (e o mesmo comando do job 6)
-select public.tvg_dre_atualizar() is null as cron_ok;
-\echo -- 3. empurrando as sequencias para frente
+\echo -- 1. desligando o job do DRE (nenhuma tela le a MV hoje -- ver cabecalho)
+update cron.job set active = false where command ilike '%tvg_dre_atualizar%';
+select jobid, schedule, active as ainda_ativo from cron.job where command ilike '%tvg_dre_atualizar%';
+\echo -- 2. empurrando as sequencias para frente
 do $$
 declare a record;
 begin
@@ -157,12 +193,15 @@ gerar_sql | no "SUP=\$(grep -m1 '^PG_SENHA_SUPER=' /opt/erp/infra/failover/.env 
 RC=${PIPESTATUS[1]}
 
 echo
-if [ "$MODO" = "--conferir" ]; then
-  echo "   Nada foi alterado. Para corrigir:"
-  echo "      bash infra/ha/reparar-dre-e-sequencias.sh --aplicar"
-elif [ "$RC" -eq 0 ]; then
-  echo "   Feito. O job 6 do cron (tvg_dre_atualizar, de 6 em 6 h) volta a passar."
-else
-  echo "   FALHOU -- veja o erro acima." >&2
-fi
+case "$MODO" in
+  --conferir)
+    echo "   Nada foi alterado. Para corrigir:"
+    echo "      bash infra/ha/reparar-dre-e-sequencias.sh --aplicar" ;;
+  --aplicar)
+    [ "$RC" -eq 0 ] && echo "   Feito. O job do DRE para de falhar de 6 em 6 horas." \
+                    || echo "   FALHOU -- veja o erro acima." >&2 ;;
+  --ligar-dre)
+    [ "$RC" -eq 0 ] && echo "   DRE populado e job religado. Falta dar GRANT para a tela ler." \
+                    || echo "   FALHOU -- veja o erro acima." >&2 ;;
+esac
 exit "$RC"
