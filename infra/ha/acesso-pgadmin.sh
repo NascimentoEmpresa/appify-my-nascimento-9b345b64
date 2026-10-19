@@ -171,19 +171,32 @@ echo "   papel criado"
 # 4. provar que o tunel funciona DE VERDADE, da maquina de quem vai usar.
 #    Sem esta prova a pessoa descobre que nao funciona dentro do pgAdmin, onde
 #    a mensagem de erro e generica.
+#    `ssh -f` quem forka e o PROPRIO ssh, nao este shell -- entao `$!` fica
+#    vazio e, com `set -u`, derruba o script. Foi o que aconteceu em 19/10:
+#    morreu aqui, DEPOIS de trocar a senha do papel e ANTES de escrever a
+#    ficha. A senha nova existia so no banco, e ninguem a tinha.
+#
+#    Agora o desligamento e por ControlPath (`ssh -O exit`), que nao depende
+#    de PID nem de `pkill` -- o Git Bash nem sempre tem pkill.
 echo "== provando o tunel (porta local 55432)"
-ssh -i "$CHAVE" -p "$PORTA_SSH" -o BatchMode=yes -o StrictHostKeyChecking=accept-new \
-    -f -N -L 55432:127.0.0.1:5000 "$USUARIO_TUNEL@$BANCO1" 2>/dev/null
-PID_TUNEL=$!
-sleep 2
-if (exec 3<>/dev/tcp/127.0.0.1/55432) 2>/dev/null; then
-  echo "   tunel abriu e o banco atendeu do outro lado."
-  PROVA="sim"
+SOCK="$HOME/.ssh/cm-pgadmin-$NOME"
+PROVA="nao"
+# ExitOnForwardFailure: sem isto o ssh sobe feliz mesmo com o encaminhamento
+# recusado, e o teste daria "ok" para um tunel que nao serve.
+if ssh -i "$CHAVE" -p "$PORTA_SSH" -o BatchMode=yes -o StrictHostKeyChecking=accept-new \
+       -o ExitOnForwardFailure=yes -o ControlMaster=yes -o ControlPath="$SOCK" \
+       -f -N -L 55432:127.0.0.1:5000 "$USUARIO_TUNEL@$BANCO1" 2>/dev/null; then
+  sleep 2
+  if (exec 3<>/dev/tcp/127.0.0.1/55432) 2>/dev/null; then
+    echo "   tunel abriu e o banco atendeu do outro lado."
+    PROVA="sim"
+  else
+    echo "   ⚠ o tunel abriu, mas o banco nao atendeu em 127.0.0.1:5000."
+  fi
+  ssh -O exit -o ControlPath="$SOCK" "$USUARIO_TUNEL@$BANCO1" 2>/dev/null
 else
   echo "   ⚠ o tunel NAO abriu. Veja a nota no fim da ficha."
-  PROVA="nao"
 fi
-pkill -f "55432:127.0.0.1:5000" 2>/dev/null
 
 # 5. a ficha, para copiar campo a campo. A senha vai SO para este arquivo --
 #    ela nao aparece na tela, porque tela de terminal costuma virar registro.
