@@ -134,3 +134,104 @@ export function textoAgendamentoAso(c: AgendamentoAso): string | null {
     "Leve um documento oficial com foto. Qualquer dúvida, é só responder esta mensagem.",
   ].filter((l): l is string => l !== null).join("\n");
 }
+
+// =====================================================================
+// Card "ASOs Agendados" da Gestão Recrutamento (19/10/2026). Pablo: "Vai
+// aparecer só as solicitações com os ASOs agendados e todos ASOs prontos pra
+// copiar e colar ou pra enviar pros colaboradores." A lista vem da
+// VW_RECRUTAMENTO_CANDIDATOS (o mesmo que o SST lê em AsoCandidatos); aqui
+// fica só a régua de quem entra, o agrupamento por solicitação e o texto do
+// "Copiar todos". Componente: src/components/recrutamento/AsosAgendados.tsx.
+// =====================================================================
+
+/** Linha da VW_RECRUTAMENTO_CANDIDATOS que o card usa. */
+export interface AsoAgendadoLinha extends AgendamentoAso {
+  candidato_id: number;
+  vaga_id: number;
+  telefone?: string | null;
+  cpf?: string | null;
+  cargo?: string | null;
+  contrato?: string | null;
+  cidade?: string | null;
+  etapa_processo?: string | null;
+  desistiu?: boolean | null;
+  admitido_em?: string | null;
+}
+
+/** Hoje em São Paulo, "AAAA-MM-DD" (a data do exame não tem fuso). */
+export const hojeSp = () => new Date().toLocaleDateString("sv-SE", { timeZone: "America/Sao_Paulo" });
+
+/**
+ * Entra no card quem tem exame marcado e ainda vai fazê-lo: sem desistência,
+ * sem reprovação (do SST ou do processo) e ainda não admitido. `proximos`
+ * deixa só de hoje em diante; senão, também os que já passaram.
+ */
+export function asoEstaAgendado(c: AsoAgendadoLinha, hoje: string, proximos = true): boolean {
+  if (!c.sst_data_exame) return false;
+  if (c.desistiu || c.sst_ok === false || c.admitido_em) return false;
+  if (/reprovad/i.test(String(c.etapa_processo ?? ""))) return false;
+  return !proximos || String(c.sst_data_exame).slice(0, 10) >= hoje;
+}
+
+/** Data + hora para ordenar ("" no fim de cada dia). */
+const chaveAso = (c: AsoAgendadoLinha) => `${String(c.sst_data_exame ?? "").slice(0, 10)} ${c.sst_hora_exame || "99:99"}`;
+
+export interface SolicitacaoComAsos {
+  vaga_id: number;
+  cargo: string;
+  contrato: string;
+  cidade: string;
+  asos: AsoAgendadoLinha[];
+}
+
+/**
+ * Agrupa por solicitação (vaga), cada uma com os ASOs em ordem de data/hora;
+ * as solicitações saem na ordem do exame mais próximo.
+ */
+export function agruparAsosPorSolicitacao(linhas: AsoAgendadoLinha[]): SolicitacaoComAsos[] {
+  const mapa = new Map<number, SolicitacaoComAsos>();
+  for (const c of linhas) {
+    let g = mapa.get(c.vaga_id);
+    if (!g) {
+      g = { vaga_id: c.vaga_id, cargo: c.cargo ?? "", contrato: c.contrato ?? "", cidade: c.cidade ?? "", asos: [] };
+      mapa.set(c.vaga_id, g);
+    }
+    g.asos.push(c);
+  }
+  const grupos = [...mapa.values()];
+  grupos.forEach((g) => g.asos.sort((a, b) => chaveAso(a).localeCompare(chaveAso(b))));
+  return grupos.sort((a, b) => chaveAso(a.asos[0]).localeCompare(chaveAso(b.asos[0])) || a.vaga_id - b.vaga_id);
+}
+
+/** Busca do card: nome, CPF, telefone, cargo, contrato, cidade, local ou nº da vaga. */
+export function asoCasaBusca(c: AsoAgendadoLinha, busca: string): boolean {
+  const q = busca.trim().toLowerCase();
+  if (!q) return true;
+  const dig = q.replace(/\D/g, "");
+  if (dig && (String(c.vaga_id) === dig || String(c.cpf ?? "").replace(/\D/g, "").includes(dig)
+    || String(c.telefone ?? "").replace(/\D/g, "").includes(dig))) return true;
+  return [c.nome, c.cargo, c.contrato, c.cidade, c.sst_local_exame]
+    .some((s) => String(s ?? "").toLowerCase().includes(q));
+}
+
+/**
+ * "Copiar todos": um bloco por solicitação com, para cada candidato, nome,
+ * telefone e o mesmo texto do "Copiar" individual — para colar num grupo ou
+ * repassar de uma vez.
+ */
+export function textoTodosAsos(grupos: SolicitacaoComAsos[]): string {
+  const blocos: string[] = [];
+  for (const g of grupos) {
+    const titulo = [`#${g.vaga_id}`, g.cargo, g.contrato, g.cidade].filter((s) => String(s).trim()).join(" · ");
+    const itens = g.asos
+      .map((c) => {
+        const texto = textoAgendamentoAso(c);
+        if (!texto) return null;
+        const quem = [String(c.nome ?? "").trim() || "Candidato", String(c.telefone ?? "").trim()].filter(Boolean).join(" · ");
+        return `👤 ${quem}\n${texto}`;
+      })
+      .filter((s): s is string => !!s);
+    if (itens.length) blocos.push(`*${titulo}*\n\n${itens.join("\n\n")}`);
+  }
+  return blocos.join("\n\n──────────\n\n");
+}
