@@ -125,10 +125,28 @@ if [ "$ACAO" = "--ligar" ]; then
                   from public.fila_http group by destino order by 2 desc, 1" 2>/dev/null \
     | sed 's/^/   /' || echo "   (nao li fila_http -- confira a mao antes de seguir)"
   echo
-  echo "== ligando os que estao ligados na producao"
+  # ── espelhar a producao deixa de fazer sentido quando ela e aposentada ──
+  #
+  # Ate a virada, "ligado" era o que a producao dizia. DEPOIS da virada a
+  # producao e desligada -- inclusive o cron dela, para parar de escrever dado
+  # que o cluster nunca veria. A partir dai, espelhar o estado de la liga
+  # exatamente NADA, que foi o que aconteceu em 17/10: o --ligar rodou e
+  # manteve os sete parados, porque a referencia ja estava morta.
+  #
+  # Entao: se a producao ainda tem job ligado, espelha (estamos ANTES da
+  # virada). Se nao tem nenhum, o cluster manda em si mesmo e liga todos.
+  LIGADOS_PROD=$(printf '%s\n' "$AGENDA" | awk -F'\t' '$4=="t"' | grep -c . || true)
+  if [ "$LIGADOS_PROD" -gt 0 ]; then
+    echo "== espelhando a producao ($LIGADOS_PROD ligados la)"
+  else
+    echo "== a producao nao tem nenhum job ligado -- ela ja foi aposentada."
+    echo "   O cluster passa a mandar em si mesmo: ligando os sete."
+  fi
   printf '%s\n' "$AGENDA" | while IFS=$'\t' read -r NOME _ _ ATIVO; do
     [ -n "$NOME" ] || continue
-    [ "$ATIVO" = "t" ] || { echo "   $NOME fica desligado (desligado na producao tambem)"; continue; }
+    if [ "$LIGADOS_PROD" -gt 0 ] && [ "$ATIVO" != "t" ]; then
+      echo "   $NOME fica desligado (desligado na producao tambem)"; continue
+    fi
     NOME_SQL=${NOME//\'/\'\'}
     C -c "update cron.job set active=true where jobname='$NOME_SQL'" >/dev/null 2>&1 \
       && echo "   $NOME LIGADO" || echo "   FALHOU ligar $NOME" >&2

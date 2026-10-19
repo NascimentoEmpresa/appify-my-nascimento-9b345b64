@@ -1,6 +1,6 @@
 import { Suspense, lazy } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
+import { BrowserRouter, Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -378,6 +378,15 @@ import DesignacoesOperacao from "./pages/central-servicos/espaco-colaborador/Des
 // 30s ele deixa de disparar a rajada, mas quem ficou horas fora da aba ainda
 // recebe dado fresco ao voltar — que é o comportamento certo para um sistema
 // com pagamento e aprovação.
+// /app/login não existe — o login é /login. Mesmo assim, em 19/10/2026 parte
+// do pessoal caía em app.grpnascimento.com.br/app/login?next=/app/whatsapp
+// (favorito/link salvo; nada no código monta esse endereço) e via o 404.
+// Redireciona mantendo o ?next=, para voltar à tela de onde vieram.
+function LoginForaDoLugar() {
+  const { search } = useLocation();
+  return <Navigate to={`/login${search}`} replace />;
+}
+
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
@@ -426,6 +435,7 @@ const App = () => (
         <Routes>
           <Route path="/" element={<Navigate to="/login" replace />} />
           <Route path="/login" element={<Login />} />
+          <Route path="/app/login" element={<LoginForaDoLugar />} />
           {/* Tela "Sistema temporariamente indisponível" num endereço próprio (pública). */}
           <Route path="/404" element={<Pagina404 />} />
           <Route path="/trocar-senha" element={<TrocarSenha />} />

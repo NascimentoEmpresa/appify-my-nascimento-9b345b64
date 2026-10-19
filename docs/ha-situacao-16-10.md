@@ -257,12 +257,12 @@ functions nos dois nós     chamado-info 401, tvg-ia 405
 
 ```
 ✅ VOCE 1. registro.br: os dois registros A publicados             conferido
-VOCE   2. recuperar os 13 segredos nos 5 consoles  <- O QUE FALTA   ~20 min
+✅ 2. os segredos: 35 variáveis nos dois nós, em paridade      16/10
 ✅ EU  3. reboot dos dois nós, kernel 6.8.0-147                    13h20
 ✅ EU  4. os outros cinco comandos, feitos e provados             09h40
 ```
 
-**Sobrou uma só: os 13 segredos nos consoles.** O passo a passo clicável, campo por campo, está em [ha-segredos-consoles.md](ha-segredos-consoles.md). Nada além disso antes das 17h.
+**Não sobrou nada antes da virada.** Os segredos fecharam em 16/10 — ver [ha-segredos-consoles.md](ha-segredos-consoles.md).
 
 ### Hoje, 17h+ — a noite da virada, na ordem
 

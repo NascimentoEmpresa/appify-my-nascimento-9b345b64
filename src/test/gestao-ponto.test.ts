@@ -131,7 +131,7 @@ describe("montarEspelho", () => {
     ]);
     const d = (n: string) => e.dias.find((x) => x.data === `2026-09-${n}`)!;
     expect(d("01")).toMatchObject({ situacao: "ok", trabalhado: 480 });
-    expect(d("02")).toMatchObject({ situacao: "atraso", atrasoMin: 20 });
+    expect(d("02")).toMatchObject({ situacao: "atraso", atrasoMin: 30 });   // passou da tolerância: conta inteiro
     expect(d("03")).toMatchObject({ situacao: "extra", saldo: 120 });
     expect(d("04")).toMatchObject({ situacao: "impar", trabalhado: 240 });
     expect(d("08").situacao).toBe("sem_batida");     // terça útil sem nada
@@ -139,6 +139,24 @@ describe("montarEspelho", () => {
     expect(d("07").situacao).toBe("feriado");        // 7 de setembro
     expect(e.totais.impares).toBe(1);
     expect(e.inconsistencias).toBeGreaterThan(2);
+  });
+
+  // Caso do print do Pablo (16/10/2026), escala 07:30-17:18 (8h48).
+  it("atraso: tolerância de 10 min e dia compensado não é atraso", () => {
+    const e = montarEspelho({ escala: esc("07:30-17:18 (1H)(08:48)"), admissao: null, afastamento: null, batidas: [
+      ["2026-10-14", 473], ["2026-10-14", 726], ["2026-10-14", 768], ["2026-10-14", 1283],   // 07:53 · saiu 21:23 (+4:00)
+      ["2026-10-15", 469], ["2026-10-15", 721], ["2026-10-15", 768], ["2026-10-15", 1036],   // 07:49 · saldo −0:08
+      ["2026-10-07", 461], ["2026-10-07", 721], ["2026-10-07", 770], ["2026-10-07", 1280],   // 07:41 · +4:02
+      ["2026-10-20", 500], ["2026-10-20", 720], ["2026-10-20", 780], ["2026-10-20", 1058],   // 08:20 · saiu no horário
+      ["2026-10-21", 458], ["2026-10-21", 720], ["2026-10-21", 780], ["2026-10-21", 1000],   // 07:38 (dentro) · saiu cedo
+    ] }, "2026-10", "2026-10-31");
+    const d = (n: string) => e.dias.find((x) => x.data === `2026-10-${n}`)!;
+    expect(d("14")).toMatchObject({ situacao: "extra", atrasoMin: 0 });
+    expect(d("15")).toMatchObject({ situacao: "ok", atrasoMin: 0 });
+    expect(d("07")).toMatchObject({ situacao: "extra", atrasoMin: 0 });
+    expect(d("20")).toMatchObject({ situacao: "atraso", atrasoMin: 30 });   // entrou 50 min tarde, saiu 20 depois: deve 30
+    expect(d("21")).toMatchObject({ situacao: "devendo", atrasoMin: 0 });   // 8 min de entrada não é atraso
+    expect(e.totais.atrasos).toBe(1);
   });
 
   it("antes da admissão e depois do desligamento não é falta", () => {

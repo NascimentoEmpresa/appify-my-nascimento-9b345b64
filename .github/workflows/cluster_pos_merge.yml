@@ -1,0 +1,147 @@
+# O que acontece no cluster quando uma PR entra na `main`.
+#
+# O PROBLEMA QUE ISTO RESOLVE
+# Na Supabase, a Edge Function subia junto com o deploy. No cluster ela e um
+# *bind mount* nos nos: se ninguem copiar, o frontend novo chama a funcao
+# velha. Depois da virada isso vira rotina -- todo dia um dev mergeia -- e uma
+# atualizacao que depende de alguem lembrar vai falhar numa terca qualquer,
+# com o dev descobrindo pelo usuario.
+#
+# A DIVISAO QUE ESTE ARQUIVO FAZ, E POR QUE
+#   Edge Function  -> automatico. E arquivo: copiar e idempotente, o
+#                     repositorio e a fonte, e o script nunca apaga.
+#   Migration      -> TAMBEM automatico, desde 19/10/2026, a pedido do
+#                     Eduardo. Antes so avisava por DM.
+#
+# POR QUE A MIGRATION PODIA SER PERIGOSA, E O QUE SEGURA ELA AGORA
+# Um `ALTER TABLE` que espera nao espera quieto: ele entra na fila e passa a
+# BARRAR as leituras que chegam depois -- ja travou duas telas por 63 segundos
+# aqui. Isso nao sumiu por decreto. O que mudou e que agora o aplicador cerca
+# o problema: `lock_timeout` de 5 s (a migration DESISTE em vez de travar o
+# ERP), uma transacao por arquivo (ou entra inteira, ou nao entra nada) e
+# parada no primeiro erro (nao aplica a 0231 num banco sem a 0230).
+# O que desiste por lock volta como pendente e entra na proxima rodada, ou na
+# mao fora do pico com `LOCK=30s`.
+#
+# SO O BANCO1 APLICA. Os dois nos mandariam no MESMO lider (o HAProxy sempre
+# aponta para ele) e disputariam a janela entre "ver o que falta" e
+# "registrar". Function e arquivo e vai nos dois; migration e banco, e banco
+# e um so.
+#
+# O no PUXA do repositorio publico; o CI so dispara. A alternativa seria
+# guardar no GitHub uma chave com escrita nos nos. O que a chave do CI
+# consegue mandar e UMA palavra -- ela nao carrega SQL nenhum.
+
+name: Cluster pós-merge
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  functions:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Preparar a chave restrita
+        env:
+          CHAVE: ${{ secrets.CLUSTER_BACKUP_SSH_KEY }}
+        run: |
+          [ -n "$CHAVE" ] || { echo "::error::Falta CLUSTER_BACKUP_SSH_KEY."; exit 1; }
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          printf '%s\n' "$CHAVE" > ~/.ssh/cluster && chmod 600 ~/.ssh/cluster
+          for H in "${{ vars.CLUSTER_BACKUP_HOST || '216.238.120.171' }}" \
+                   "${{ vars.CLUSTER_BANCO2_HOST || '172.237.48.8' }}"; do
+            ssh-keyscan -p 8443 -H "$H" >> ~/.ssh/known_hosts 2>/dev/null
+          done
+
+      - name: Mandar os dois nós puxarem o main
+        env:
+          B1: ${{ vars.CLUSTER_BACKUP_HOST || '216.238.120.171' }}
+          B2: ${{ vars.CLUSTER_BANCO2_HOST || '172.237.48.8' }}
+          USUARIO: ${{ vars.CLUSTER_BACKUP_USER || 'erpbackup' }}
+        run: |
+          set -uo pipefail
+          FALHOU=0
+          for NO in "$B1" "$B2"; do
+            echo "::group::$NO"
+            if ssh -p 8443 -i ~/.ssh/cluster -o BatchMode=yes -o ConnectTimeout=20 \
+                 "$USUARIO@$NO" functions; then :; else FALHOU=1; echo "::error::falhou em $NO"; fi
+            echo "::endgroup::"
+          done
+          # Os DOIS nós, sempre. Um nó com a função velha serve metade dos
+          # acessos com o código de ontem -- e isso não aparece em lugar nenhum.
+          exit $FALHOU
+
+  migrations:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Depois das functions: se a migration criar a coluna que a function nova
+    # usa, a ordem inversa deixaria a function velha lendo o schema novo por
+    # alguns segundos. Nesta ordem a janela nao existe.
+    needs: functions
+    # `always()` porque uma function que falhou num no nao e motivo para o
+    # banco ficar atrasado -- sao problemas independentes.
+    if: always()
+    steps:
+      - name: Preparar a chave restrita
+        env:
+          CHAVE: ${{ secrets.CLUSTER_BACKUP_SSH_KEY }}
+        run: |
+          [ -n "$CHAVE" ] || { echo "::error::Falta CLUSTER_BACKUP_SSH_KEY."; exit 1; }
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          printf '%s\n' "$CHAVE" > ~/.ssh/cluster && chmod 600 ~/.ssh/cluster
+          ssh-keyscan -p 8443 -H "${{ vars.CLUSTER_BACKUP_HOST || '216.238.120.171' }}" >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Aplicar no banco1 o que ainda não entrou
+        id: aplicar
+        env:
+          B1: ${{ vars.CLUSTER_BACKUP_HOST || '216.238.120.171' }}
+          USUARIO: ${{ vars.CLUSTER_BACKUP_USER || 'erpbackup' }}
+        run: |
+          set -uo pipefail
+          # A palavra `migrations` é tudo que esta chave consegue dizer. O SQL
+          # vem do clone do `main` feito pelo próprio nó.
+          SAIDA=$(ssh -p 8443 -i ~/.ssh/cluster -o BatchMode=yes -o ConnectTimeout=20 \
+                    "$USUARIO@$B1" migrations 2>&1); RC=$?
+          echo "$SAIDA"
+          printf 'SAIDA<<EOF\n%s\nEOF\n' "$SAIDA" >> "$GITHUB_OUTPUT"
+          echo "RC=$RC" >> "$GITHUB_OUTPUT"
+          # "nenhuma migration pendente" é o caso normal da maioria dos merges.
+          if printf '%s' "$SAIDA" | grep -q 'nenhuma migration pendente'; then
+            echo "HOUVE=nao" >> "$GITHUB_OUTPUT"
+          else
+            echo "HOUVE=sim" >> "$GITHUB_OUTPUT"
+          fi
+          exit $RC
+
+      - name: Contar por DM o que aconteceu
+        # Silêncio quando não havia nada a fazer: alerta que chega todo dia
+        # sem conteúdo é alerta que para de ser lido.
+        if: always() && steps.aplicar.outputs.HOUVE == 'sim'
+        env:
+          DISCORD_TOKEN: ${{ secrets.DISCORD_TOKEN }}
+          SAIDA: ${{ steps.aplicar.outputs.SAIDA }}
+          RC: ${{ steps.aplicar.outputs.RC }}
+        run: |
+          [ -n "$DISCORD_TOKEN" ] || exit 0
+          CANAL=$(curl -s -X POST "https://discord.com/api/v10/users/@me/channels" \
+            -H "Authorization: Bot $DISCORD_TOKEN" -H "Content-Type: application/json" \
+            -d '{"recipient_id":"1384572666752663653"}' | jq -r '.id')
+          if [ "${RC:-1}" = "0" ]; then
+            CAB="✅ **Migration aplicada no banco1** pelo merge em \`main\`."
+            PE="Nada a fazer."
+          else
+            CAB="❌ **Migration FALHOU no banco1.** O banco está como estava — cada arquivo entra em transação única."
+            PE="Se o motivo foi \`lock timeout\`, a tabela estava em uso e o ERP **não** travou: rode fora do pico com \`LOCK=30s bash infra/ha/aplicar-migration.sh <arquivo>\`."
+          fi
+          CORPO=$(jq -n --arg c "$CAB" --arg s "$(printf '%s' "$SAIDA" | tail -c 1200)" --arg p "$PE" \
+            '{content: ($c + "\n```\n" + $s + "\n```\n" + $p)}')
+          curl -s -X POST "https://discord.com/api/v10/channels/$CANAL/messages" \
+            -H "Authorization: Bot $DISCORD_TOKEN" -H "Content-Type: application/json" \
+            -d "$CORPO" > /dev/null
