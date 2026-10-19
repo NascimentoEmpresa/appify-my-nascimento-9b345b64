@@ -49,10 +49,24 @@
 #                Agora que a migration entra sozinha no merge, pense duas
 #                vezes antes de dar este a alguem.
 #
+#  PARA OUTRO DEV, A CHAVE NAO E GERADA AQUI
+#  Sem `--chave`, o script gera o par de chaves NESTA maquina -- o que serve
+#  para quem esta rodando o script, e so. Mandar a chave PRIVADA para o dev
+#  por WhatsApp ou e-mail seria entregar a identidade dele num canal que
+#  guarda copia: quem ler a conversa passa a ser ele, e trocar isso depois
+#  exige trocar a chave de todo mundo.
+#
+#  O certo e o inverso: o dev gera o par na maquina dele e manda so a parte
+#  PUBLICA, que nao abre nada sozinha. Ai:
+#      bash infra/ha/acesso-pgadmin.sh --criar joao --leitura --chave joao.pub
+#
+#  A senha do banco ainda precisa chegar ate ele -- mas senha se troca com um
+#  comando e sem mexer em mais ninguem; chave privada vazada, nao.
+#
 #  USO
 #    bash infra/ha/acesso-pgadmin.sh --conferir
 #    bash infra/ha/acesso-pgadmin.sh --criar eduardo --migracao
-#    bash infra/ha/acesso-pgadmin.sh --criar joao    --leitura
+#    bash infra/ha/acesso-pgadmin.sh --criar joao --leitura --chave ~/joao.pub
 #    bash infra/ha/acesso-pgadmin.sh --remover joao
 # ============================================================================
 set -uo pipefail
@@ -106,10 +120,26 @@ case "$NOME" in *[!a-z0-9_]*) echo "nome so com minusculas, numeros e _" >&2; ex
 CHAVE="$HOME/.ssh/pgadmin-$NOME"
 FICHA="$HOME/pgadmin-$NOME.txt"
 
+# `--chave <arquivo.pub>`: a chave veio pronta do dev. Nada e gerado aqui, e
+# a privada dele nunca passa por esta maquina.
+CHAVE_DEV=""
+if [ "${4:-}" = "--chave" ]; then
+  CHAVE_DEV="${5:-}"
+  [ -f "$CHAVE_DEV" ] || { echo "nao achei o arquivo de chave publica: ${CHAVE_DEV:-(vazio)}" >&2; exit 2; }
+  case "$(head -c 4 "$CHAVE_DEV")" in
+    ssh-|ecds) ;;
+    *) echo "isto nao parece uma chave PUBLICA (.pub). Se comecar com" >&2
+       echo "'-----BEGIN', voce pegou a PRIVADA por engano -- peca a .pub." >&2; exit 2 ;;
+  esac
+fi
+
 # 1. a chave. -m PEM porque o pgAdmin usa paramiko, que tropeca no formato
 #    novo do OpenSSH em varias versoes -- e o erro que ele mostra fala de
 #    "not a valid key", sem dizer que o problema e o formato.
-if [ -f "$CHAVE" ]; then
+if [ -n "$CHAVE_DEV" ]; then
+  echo "== usando a chave publica entregue pelo dev: $CHAVE_DEV"
+  echo "   (nada e gerado aqui; a privada fica so com ele)"
+elif [ -f "$CHAVE" ]; then
   echo "== reaproveitando a chave que ja existe em $CHAVE"
 else
   echo "== gerando a chave"
@@ -118,7 +148,13 @@ fi
 
 # 2. o usuario do tunel e a chave restrita
 echo "== instalando a chave no banco1, sem shell e so com a porta do banco"
-PUB=$(cat "$CHAVE.pub")
+# O comentario da chave e REESCRITO como `pgadmin-<nome>`. A chave que o dev
+# manda vem comentada com o nome da maquina dele ("joao@DESKTOP-7A3"), e o
+# `--remover` apaga a linha procurando justamente por `pgadmin-<nome>` no fim.
+# Sem reescrever, remover o acesso de alguem falharia em silencio -- e acesso
+# que a gente pensa ter tirado e pior do que acesso que a gente sabe que deu.
+PUB=$(awk -v m="pgadmin-$NOME" 'NF>=2 {print $1" "$2" "m; exit}' "${CHAVE_DEV:-$CHAVE.pub}")
+[ -n "$PUB" ] || { echo "nao consegui ler a chave publica" >&2; exit 1; }
 no "set -e
   id $USUARIO_TUNEL >/dev/null 2>&1 || useradd -m -s /usr/sbin/nologin $USUARIO_TUNEL
   mkdir -p /home/$USUARIO_TUNEL/.ssh && chmod 700 /home/$USUARIO_TUNEL/.ssh
@@ -198,7 +234,13 @@ if [ "$PORTA_TESTE" = "0" ]; then
 fi
 # ExitOnForwardFailure: sem isto o ssh sobe feliz mesmo com o encaminhamento
 # recusado, e o teste daria "ok" para um tunel que nao serve.
-if [ "$PORTA_TESTE" != "0" ] && \
+if [ -n "$CHAVE_DEV" ]; then
+  # A privada esta com o dev. Testar daqui seria impossivel, e fingir que
+  # testou seria pior: ele descobriria sozinho, dentro do pgAdmin, onde a
+  # mensagem de erro nao diz nada.
+  echo "   teste pulado: a chave privada esta com o dev, nao aqui."
+  PROVA="nao testado (chave do proprio dev)"
+elif [ "$PORTA_TESTE" != "0" ] && \
    ssh -i "$CHAVE" -p "$PORTA_SSH" -o BatchMode=yes -o StrictHostKeyChecking=accept-new \
        -o ExitOnForwardFailure=yes -o ControlMaster=yes -o ControlPath="$SOCK" \
        -f -N -L "$PORTA_TESTE":127.0.0.1:5000 "$USUARIO_TUNEL@$BANCO1" 2>/dev/null; then
@@ -239,7 +281,7 @@ Tunnel host:        $BANCO1
 Tunnel port:        $PORTA_SSH
 Username:           $USUARIO_TUNEL
 Authentication:     Identity file
-Identity file:      $(cygpath -w "$CHAVE" 2>/dev/null || echo "$CHAVE")
+Identity file:      ${CHAVE_DEV:+a chave privada que VOCE gerou (o par da .pub que enviou)}${CHAVE_DEV:-$(cygpath -w "$CHAVE" 2>/dev/null || echo "$CHAVE")}
 Password:           (deixe vazio — a chave não tem senha)
 
 >>> ABA "Parameters"
