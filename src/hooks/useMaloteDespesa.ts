@@ -6,6 +6,7 @@ import {
   STATUS_LABEL,
   type StatusDespesa,
 } from "@/lib/maloteStatus";
+import { emLotes } from "@/lib/emLotes";
 
 export type OrigemDespesa = "solicitacao" | "despesa_unica" | "despesa_multi_classificacao";
 export { STATUS_BADGE_CLASS, STATUS_LABEL } from "@/lib/maloteStatus";
@@ -323,13 +324,12 @@ async function buscarParcelasPorDespesa(despesas: MaloteDespesaRow[]): Promise<M
   const ids = despesas.filter((d) => d.parcelado).map((d) => d.id);
   const mapa = new Map<string, Parcela[]>();
   if (ids.length === 0) return mapa;
-  const { data, error } = await (supabase as any)
-    .from("malote_despesa_parcela")
-    .select("*")
-    .in("despesa_id", ids)
-    .order("numero_parcela");
-  if (error) throw error;
-  for (const p of (data ?? []) as Parcela[]) {
+  // Em lotes (19/10/2026): todos os ids numa URL só passavam do limite do
+  // gateway do cluster (502) — ver src/lib/emLotes.ts.
+  const data = await emLotes<Parcela>(ids, 40, (lote) =>
+    (supabase as any).from("malote_despesa_parcela").select("*").in("despesa_id", lote));
+  data.sort((a, b) => a.numero_parcela - b.numero_parcela);
+  for (const p of data) {
     const lst = mapa.get(p.despesa_id) ?? [];
     lst.push(p);
     mapa.set(p.despesa_id, lst);
@@ -517,13 +517,17 @@ export function useMinhasDespesas() {
       if (setoresErr) throw setoresErr;
       const setores = (setoresRows ?? []).map((r: any) => r.setor as string);
 
-      let query = (supabase as any)
+      const base = () => (supabase as any)
         .from("malote_despesa")
         .select(DESPESA_COLUMNS)
+        .is("deleted_at", null)
         .order("created_at", { ascending: false });
 
+      let despesas: MaloteDespesaRow[];
       if (setores.length === 0) {
-        query = query.eq("created_by", u.user.id);
+        const { data, error } = await base().eq("created_by", u.user.id);
+        if (error) throw error;
+        despesas = (data ?? []) as MaloteDespesaRow[];
       } else {
         // SIS-2026-0335: setor_responsavel virou text[] (mais de um setor por
         // Classificação) — .in() comparava igualdade exata contra um valor
@@ -536,15 +540,23 @@ export function useMinhasDespesas() {
         if (classErr) throw classErr;
         const classIds = (classRows ?? []).map((r: any) => r.id as string);
 
-        const orParts = [`created_by.eq.${u.user.id}`];
-        if (classIds.length > 0) orParts.push(`classificacao_id.in.(${classIds.join(",")})`);
-        query = query.or(orParts.join(","));
+        // 19/10/2026: era UM .or(created_by, classificacao_id.in.(todas)) — com
+        // o select comprido (~1,9 KB) e as classificações de um setor inteiro,
+        // a URL passava de ~4 KB e o gateway do cluster devolvia 502: o Meus
+        // Itens da Maiara (Financeiro) ficava vazio. Agora o "criei" vai numa
+        // consulta e as classificações em lotes de 20 (~2,7 KB por URL);
+        // junta sem repetir (o que ela criou numa classificação do setor
+        // vem nas duas).
+        const [minhas, doSetor] = await Promise.all([
+          base().eq("created_by", u.user.id),
+          emLotes<MaloteDespesaRow>(classIds, 20, (lote) => base().in("classificacao_id", lote)),
+        ]);
+        if (minhas.error) throw minhas.error;
+        const porId = new Map<string, MaloteDespesaRow>();
+        for (const d of [...((minhas.data ?? []) as MaloteDespesaRow[]), ...doSetor]) porId.set(d.id, d);
+        despesas = [...porId.values()].sort((a, b) => (b.created_at ?? "").localeCompare(a.created_at ?? ""));
       }
 
-      query = query.is("deleted_at", null);
-      const { data, error } = await query;
-      if (error) throw error;
-      const despesas = (data ?? []) as MaloteDespesaRow[];
       const parcelasPorDespesa = await buscarParcelasPorDespesa(despesas);
       return explodirParcelas(despesas, parcelasPorDespesa);
     },
