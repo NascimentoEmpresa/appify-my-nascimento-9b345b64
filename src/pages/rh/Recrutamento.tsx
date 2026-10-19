@@ -3331,7 +3331,7 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
           {/* Card "ASOs Agendados" (19/10/2026): no canto direito da linha dos
               filtros — as solicitações com exame marcado pelo SST e os textos
               prontos para copiar ou enviar ao candidato. Só no Recrutamento. */}
-          {!soEtapa1 && <AsosAgendados podeEnviar={podeRecrutar} onToast={toast} />}
+          {!soEtapa1 && <AsosAgendados podeEnviar={podeRecrutar} onToast={toast} onAbrirVaga={verDetalhe} />}
           {showContratoFiltro && (
             <>
               <div onClick={() => setShowContratoFiltro(false)} style={{ position: "fixed", inset: 0, zIndex: 40 }} />
