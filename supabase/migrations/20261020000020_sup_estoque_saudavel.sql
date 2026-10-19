@@ -60,8 +60,10 @@
 -- a aba vive dentro do dashboard, cuja tela já é gateada por
 -- sup_dashboard_compras_estoque. O menu fantasma existe para separar VER o
 -- planejamento de APROVAR alvo e MARCAR liquidação, que são decisão de
--- compra e não de leitura. Nasce sem ninguém (concede_tudo_alcanca = false
--- desde 08/10/2026) — liberar em Administração › Acesso por Usuário.
+-- compra e não de leitura. A permissão é SEMEADA no bloco 1.1 — ver lá por
+-- que isso não pode ficar para depois. Quem já vê o dashboard herda só
+-- 'visualizar'; 'alterar' e 'exportar' nascem apenas no perfil que concede
+-- tudo, e se liberam um a um em Administração › Acesso por Usuário.
 --
 -- Idempotente. NÃO SE AUTO-APLICA: rodar no SQL Editor do projeto remoto.
 -- =========================================================================
@@ -76,6 +78,39 @@ INSERT INTO public.app_menu_acao (menu_codigo, acao)
 SELECT 'sup_estoque_saudavel', a::public.app_acao
   FROM unnest(ARRAY['alterar', 'exportar']) a
 ON CONFLICT (menu_codigo, acao) DO NOTHING;
+
+-- ── 1.1) Semear a permissão — SEM ISTO O MENU NASCE ABERTO ───────────────
+--
+-- Menu sem nenhuma linha em perfil_acesso_permissao é lido pelo RouteGuard
+-- como "ninguém configurou ainda" e liberado para TODO usuário autenticado
+-- (fail-open deliberado, para não quebrar tela antiga — ver J2 em
+-- .github/REGRAS-PR.md). Num menu cujas ações são aprovar alvo de compra e
+-- mudar as premissas da conta, esse fail-open publicaria a decisão de compra
+-- para o escritório inteiro.
+--
+-- Duas sementes, com escopos diferentes de propósito:
+--
+--   · perfil que concede tudo (admin): recebe as três ações. É o que garante
+--     que existe alguém capaz de liberar os outros depois;
+--
+--   · quem já enxerga o dashboard de Compras/Estoque: recebe SÓ 'visualizar'.
+--     Ler o planejamento é a mesma informação que a pessoa já vê nos outros
+--     painéis. Aprovar alvo e exportar a lista de compra, não — são decisão
+--     de compra e grant à parte, liberado um a um em Acesso por Usuário.
+INSERT INTO public.perfil_acesso_permissao (perfil_id, menu_codigo, acao, allow)
+SELECT pa.id, 'sup_estoque_saudavel', a::public.app_acao, true
+  FROM public.perfil_acesso pa
+ CROSS JOIN unnest(ARRAY['visualizar', 'alterar', 'exportar']) a
+ WHERE pa.concede_tudo AND pa.ativo
+ON CONFLICT (perfil_id, menu_codigo, acao) DO NOTHING;
+
+INSERT INTO public.perfil_acesso_permissao (perfil_id, menu_codigo, acao, allow)
+SELECT p.perfil_id, 'sup_estoque_saudavel', 'visualizar'::public.app_acao, true
+  FROM public.perfil_acesso_permissao p
+  JOIN public.perfil_acesso pa ON pa.id = p.perfil_id AND pa.ativo AND NOT pa.concede_tudo
+ WHERE p.menu_codigo = 'sup_dashboard_compras_estoque'
+   AND p.acao = 'visualizar' AND p.allow
+ON CONFLICT (perfil_id, menu_codigo, acao) DO NOTHING;
 
 -- ── 2) Parâmetros da conta, por empresa ──────────────────────────────────
 --
@@ -322,6 +357,7 @@ NOTIFY pgrst, 'reload schema';
 --   DROP TABLE IF EXISTS public.sup_estoque_politica_historico;
 --   DROP TABLE IF EXISTS public.sup_estoque_politica;
 --   DROP TABLE IF EXISTS public.sup_estoque_parametro;
+--   DELETE FROM public.perfil_acesso_permissao WHERE menu_codigo = 'sup_estoque_saudavel';
 --   DELETE FROM public.app_menu_acao WHERE menu_codigo = 'sup_estoque_saudavel';
 --   DELETE FROM public.app_menu      WHERE codigo      = 'sup_estoque_saudavel';
 --   NOTIFY pgrst, 'reload schema';
