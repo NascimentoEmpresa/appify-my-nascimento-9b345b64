@@ -41,6 +41,7 @@ import {
 import { AnexosField } from "./AnexosField";
 import { DiaPagamentoPicker } from "./DiaPagamentoPicker";
 import { ExcecaoSenhaField } from "./ExcecaoSenhaField";
+import { useCartaoEspecialDaForma } from "./cartaoEspecial";
 import { conferirExcecaoComDespesa, PARAM_EXCECAO, type ExcecaoValidada } from "./excecao/regras";
 import { validarSenhaExcecao } from "@/hooks/useMaloteExcecao";
 import { supabase } from "@/integrations/supabase/client";
@@ -144,6 +145,7 @@ export function PainelDespesaMalote({
   fornecedorPadraoNome,
   rateioInicial,
   arquivosIniciais,
+  rhRateioId,
 }: {
   classificacaoId: string;
   classificacaoTipo?: TipoClassificacaoOrcamento | null;
@@ -173,6 +175,11 @@ export function PainelDespesaMalote({
   // pessoa. Quem usa troca a key do painel para recomeçar.
   rateioInicial?: RateioLinha[];
   arquivosIniciais?: File[];
+  // Malote › Criar Despesa › "Importar rateio" (19/10/2026, mig
+  // 20261019000003): vai no INSERT como rh_rateio_id — o gatilho vincula e
+  // trava o rateio do RH. O total fica preso ao valor do rateio (o banco
+  // confere igual).
+  rhRateioId?: string;
 }) {
   const [paramsUrl] = useSearchParams();
   const obrigacaoPatrimonio = paramsUrl.get(PARAM_ORIGEM);
@@ -340,7 +347,17 @@ export function PainelDespesaMalote({
 
   const totalRateado = useMemo(() => linhasRateio.reduce((s, l) => s + (Number(l.valor) || 0), 0), [linhasRateio]);
   const { data: prazoNormal } = usePrazoNormalInclusao();
-  const exigeExcecao = !!dataPagamento && !!prazoNormal && dataPagamento < prazoNormal;
+
+  // [SEM-CHAMADO] Cartão com Fluxo Especial: Data de Pagamento e Competência = vencimento do cartão, sem exceção
+  // (a compra já foi feita). Ver cartaoEspecial.ts.
+  const cartaoEspecial = useCartaoEspecialDaForma(formaPagamento);
+  const exigeExcecao = !cartaoEspecial && !!dataPagamento && !!prazoNormal && dataPagamento < prazoNormal;
+  useEffect(() => {
+    if (!cartaoEspecial) return;
+    setDataPagamento(cartaoEspecial.vencimento);
+    setCompetencia(cartaoEspecial.competencia);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cartaoEspecial?.vencimento]);
   const hoje = useMemo(() => new Date().toLocaleDateString("sv-SE"), []);
 
   // SIS-2026-0361: sugere o Dia do desconto a partir da Data de pagamento
@@ -469,6 +486,7 @@ export function PainelDespesaMalote({
         parcelas,
         arquivosNovos: arquivos,
         solicitacao_dispensada_manualmente: !!solicitacaoDispensadaManualmente,
+        ...(rhRateioId ? { rh_rateio_id: rhRateioId } : {}),
       };
 
       if (paraEnviar && aoSalvar) {
@@ -659,7 +677,7 @@ export function PainelDespesaMalote({
                     ? "Valor da compra *"
                     : "Valor de cada parcela *"}
               </Label>
-              <Input type="number" step="0.01" value={totalMes} onChange={(e) => setTotalMes(e.target.value)} placeholder="Ex: R$ 5.000,00" disabled={!ativo || !!aoSalvar} />
+              <Input type="number" step="0.01" value={totalMes} onChange={(e) => setTotalMes(e.target.value)} placeholder="Ex: R$ 5.000,00" disabled={!ativo || !!aoSalvar || !!rhRateioId} />
               {parcelado === "sim" && Number(totalMes) > 0 && Number(quantidadeParcelas) >= QUANTIDADE_PARCELAS_MIN && (
                 <p className="text-[11px] text-muted-foreground mt-1">
                   {modoValorParcela === "compra" ? (
@@ -682,12 +700,18 @@ export function PainelDespesaMalote({
               <DiaPagamentoPicker
                 value={dataPagamento}
                 onChange={setDataPagamento}
-                disabled={!ativo}
-                permitirDiasBloqueados={excecao}
+                disabled={!ativo || !!cartaoEspecial}
+                permitirDiasBloqueados={excecao || !!cartaoEspecial}
                 classificacaoId={classificacaoId}
               />
             </div>
           </div>
+          {cartaoEspecial && (
+            <p className="text-xs text-muted-foreground">
+              Cartão com Fluxo Especial ({cartaoEspecial.cartao.nome_cartao}): a Data de Pagamento e a Competência são o vencimento da fatura
+              ({cartaoEspecial.vencimento.split("-").reverse().join("/")}) e não pedem exceção.
+            </p>
+          )}
           <ExcecaoSenhaField
             validada={excecaoVal}
             onValidada={(e) => { setExcecaoVal(e); if (e) setDataPagamento(e.data_pagamento); }}
@@ -699,7 +723,7 @@ export function PainelDespesaMalote({
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <div>
               <Label>Competência *</Label>
-              <Input type="month" value={competencia} onChange={(e) => setCompetencia(e.target.value)} disabled={!ativo} />
+              <Input type="month" value={competencia} onChange={(e) => setCompetencia(e.target.value)} disabled={!ativo || !!cartaoEspecial} />
             </div>
             <div>
               <Label>Forma de pagamento *</Label>

@@ -23,16 +23,7 @@ import { useContratosAtivos, useEmpresasGrupo, useFornecedoresAtivos, type Ratei
 import { baixarAnexoRateio, useEnviarRateioMalote } from "@/hooks/useRateioDespesas";
 import { FORM_ID_PAINEL_DESPESA_DIARIA, PainelDespesaMalote, type PayloadPainelDespesaMalote } from "@/pages/malote/PainelDespesaMalote";
 import { competenciaRotulo, fmtMoeda, rotuloTipo, type ItemRateio, type TipoRateio } from "@/lib/rh/rateioDespesas";
-
-/** Classificação sugerida por tipo (nome no catálogo do Malote; o RH pode trocar). */
-const CLASSIFICACAO_SUGERIDA: Partial<Record<TipoRateio, string>> = {
-  jusbrasil: "SISTEMAS",
-  senior: "SISTEMAS",
-  fgts: "FGTS MENSAL",
-  seguro: "SEGURO DE VIDA - OPERACIONAL",
-  gratificacao_pcd: "GRATIFICAÇÃO PCD",
-  mensalidade_seeac: "SINDICATO",
-};
+import { CLASSIFICACAO_SUGERIDA, empresaQueMaisLeva, linhasDoRateioParaMalote } from "@/lib/rh/rateioParaMalote";
 
 const norm = (s: string) => s.normalize("NFD").replace(/[̀-ͯ]/g, "").trim().toLowerCase();
 
@@ -79,13 +70,8 @@ export function EnviarRateioMalote({
   }, [classificacoes, rateio.tipo, classificacaoId]);
   useEffect(() => {
     if (empresaId || !contratosProntos) return;
-    const soma = new Map<string, number>();
-    comValor.forEach((i) => {
-      const e = i.contrato_id ? empresaDoContrato.get(i.contrato_id) : null;
-      if (e) soma.set(e, (soma.get(e) ?? 0) + i.valor);
-    });
-    const maior = [...soma.entries()].sort((a, b) => b[1] - a[1])[0];
-    if (maior) setEmpresaId(maior[0]);
+    const maior = empresaQueMaisLeva(comValor, empresaDoContrato);
+    if (maior) setEmpresaId(maior);
   }, [contratosProntos, comValor, empresaDoContrato, empresaId]);
 
   // O anexo do rateio segue para a despesa (é a papelada que o aprovador vê).
@@ -101,17 +87,9 @@ export function EnviarRateioMalote({
 
   const classificacao = classificacoes.find((c) => c.id === classificacaoId) ?? null;
 
+  // Mesma regra do "Importar rateio" do Malote (src/lib/rh/rateioParaMalote.ts).
   const rateioInicial: RateioLinha[] = useMemo(
-    () =>
-      comValor.map((i, k) => ({
-        empresa_id: (i.contrato_id && empresaDoContrato.get(i.contrato_id)) || empresaId || null,
-        contrato_id: i.contrato_id && empresaDoContrato.has(i.contrato_id) ? i.contrato_id : null,
-        fornecedor_id: fornecedorId || null,
-        integrante_empregado_id: null,
-        percentual: Math.round(i.percentual * 100 * 10000) / 10000,
-        valor: i.valor,
-        ordem: k,
-      })),
+    () => linhasDoRateioParaMalote(comValor, { empresaDoContrato, empresaPadrao: empresaId || null, fornecedorId: fornecedorId || null }),
     [comValor, empresaDoContrato, empresaId, fornecedorId],
   );
 
