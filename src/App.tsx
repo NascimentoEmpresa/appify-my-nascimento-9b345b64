@@ -80,6 +80,7 @@ import { AuthProvider } from "./hooks/useAuth";
 import Empresas from "./pages/controladoria/Empresas";
 import ControleFaturamento from "./pages/controladoria/ControleFaturamento";
 import FaturamentoEmpresa from "./pages/controladoria/FaturamentoEmpresa";
+import FechamentoEmpresa from "./pages/controladoria/FechamentoEmpresa";
 import LucratividadeContratos from "./pages/controladoria/LucratividadeContratos";
 import AuditoriaControladoria from "./pages/controladoria/AuditoriaControladoria";
 import CentrosCusto from "./pages/controladoria/CentrosCusto";
@@ -687,6 +688,7 @@ const App = () => (
             <Route path="controladoria/controle-faturamento" element={<Navigate to="/app/financeiro/controle-faturamento" replace />} />
             <Route path="controladoria/reunioes-encarregados" element={<ReunioesEncarregados />} />
             <Route path="controladoria/faturamento-empresa" element={<FaturamentoEmpresa />} />
+            <Route path="controladoria/fechamento-empresa" element={<FechamentoEmpresa />} />
             <Route path="controladoria/lucratividade-contratos" element={<LucratividadeContratos />} />
             <Route path="controladoria/auditoria" element={<AuditoriaControladoria />} />
             <Route path="controladoria/centros-custo" element={<CentrosCusto />} />

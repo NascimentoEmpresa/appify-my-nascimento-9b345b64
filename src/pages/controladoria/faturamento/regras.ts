@@ -77,6 +77,8 @@ export interface LinhaFluxoCusto {
   classificacao_id?: string | null;
   classificacao_nome: string | null;
   valor: number;
+  // SIS-2026-0642: o Fechamento filtra as despesas administrativas por empresa.
+  empresa_id?: string | null;
   // SIS-2026-0641: só para o modal "como é formado" listar o lançamento (ID e descrição do Fluxo).
   id_malote?: string | null;
   descricao?: string | null;
