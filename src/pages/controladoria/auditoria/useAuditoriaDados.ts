@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { emLotes } from "@/lib/emLotes";
 import { usePlanejamentosOrcamento } from "@/hooks/usePlanejamentoOrcamentario";
 import { useLigacoesAdministrativoClassificacao } from "@/hooks/useMaloteAdministrativoClassificacaoLink";
 import { useOrcamentoContratos } from "@/hooks/useOrcamentoContratos";
@@ -278,16 +279,20 @@ export function useAjustesDasDespesas(despesaIds: string[]) {
     queryFn: async () => {
       const db = supabase as any;
       const porDespesa = new Map<string, AjusteRegistrado[]>();
-      const { data, error } = await db
-        .from("financeiro_fluxo_caixa_ajuste_log")
-        .select("despesa_id, acao, antes, depois, user_id, created_at")
-        .eq("origem", "malote")
-        .in("despesa_id", despesaIds.slice(0, 200))
-        .order("created_at", { ascending: false });
-      if (error) {
-        if (error.code === "PGRST205" || error.code === "42P01") return porDespesa;
+      // 200 ids numa URL (~7,8 KB) passam do limite do gateway do cluster (502); em lotes de 40 (src/lib/emLotes.ts).
+      let data: any[];
+      try {
+        data = await emLotes<any>(despesaIds.slice(0, 200), 40, (lote) =>
+          db.from("financeiro_fluxo_caixa_ajuste_log")
+            .select("despesa_id, acao, antes, depois, user_id, created_at")
+            .eq("origem", "malote")
+            .in("despesa_id", lote)
+            .order("created_at", { ascending: false }));
+      } catch (error: any) {
+        if (error?.code === "PGRST205" || error?.code === "42P01") return porDespesa;
         throw error;
       }
+      data.sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)));
       const userIds = [...new Set((data ?? []).map((r: any) => r.user_id).filter(Boolean))] as string[];
       const nomes = new Map<string, string>();
       if (userIds.length > 0) {
