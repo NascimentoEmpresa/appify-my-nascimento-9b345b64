@@ -41,6 +41,11 @@ vi.mock("@/hooks/useMaloteFormaPagamento", () => ({
   useFormasPagamento: () => ({ data: [] }),
 }));
 
+// Cartão com Fluxo Especial: o painel agora consulta os cartões (sem nenhum cadastrado, nada muda na tela).
+vi.mock("@/hooks/useMaloteCartaoCredito", () => ({
+  useCartoesCredito: () => ({ data: [] }),
+}));
+
 vi.mock("@/hooks/useUtilizadoOrcamento", () => ({
   useUtilizadoOrcamento: () => ({ data: [] }),
 }));
