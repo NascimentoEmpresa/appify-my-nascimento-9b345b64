@@ -100,11 +100,24 @@ Q "select version from supabase_migrations.schema_migrations" | LC_ALL=C sort -u
 #  aplicar as que dao e avisar no fim -- deixaria o merge verde, e merge
 #  verde ninguem le. Com a parada, o proximo merge fica vermelho ate alguem
 #  renumerar, que e um conserto de dois minutos.
+#  SO VALE PARA O QUE E NOVO -- e isso nao e preguica, e aritmetica.
+#  O repositorio tem ~240 numeros repetidos de ANTES da virada: durante meses
+#  ninguem dependeu do numero, porque a migration era colada a mao no SQL
+#  Editor. Todas elas ja estao no banco (o schema foi conferido tabela a
+#  tabela contra a producao na noite da virada). Reclamar delas agora seria
+#  deixar TODO merge vermelho por causa de historia passada -- e alarme que
+#  nasce sempre ligado e alarme que vira fita adesiva em cima do alto-falante.
+#
+#  Acima do corte, o numero passa a ser levado a serio, porque e ele que
+#  decide se a migration entra no banco ou desaparece em silencio.
+CORTE="${CORTE:-20261018999999}"
 VISTOS=$(mktemp); DUPES=$(mktemp)
 while IFS= read -r -d '' F; do
   B=$(basename "$F")
   case "$B" in [0-9]*) ;; *) continue ;; esac
-  printf '%s\n' "$(printf '%s' "$B" | sed -E 's/^([0-9]+).*/\1/')" >> "$VISTOS"
+  V=$(printf '%s' "$B" | sed -E 's/^([0-9]+).*/\1/')
+  [ "$V" \> "$CORTE" ] || continue
+  printf '%s\n' "$V" >> "$VISTOS"
 done < <(find "$DIR" -maxdepth 1 -name '*.sql' -print0)
 LC_ALL=C sort "$VISTOS" | uniq -d > "$DUPES"
 if [ -s "$DUPES" ]; then
