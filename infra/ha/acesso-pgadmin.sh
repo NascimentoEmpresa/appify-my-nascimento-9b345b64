@@ -49,10 +49,26 @@
 #                Agora que a migration entra sozinha no merge, pense duas
 #                vezes antes de dar este a alguem.
 #
+#  PARA OUTRO DEV, A CHAVE NAO E GERADA AQUI
+#  Sem `--chave`, o script gera o par de chaves NESTA maquina -- o que serve
+#  para quem esta rodando o script, e so. Mandar a chave PRIVADA para o dev
+#  por WhatsApp ou e-mail seria entregar a identidade dele num canal que
+#  guarda copia: quem ler a conversa passa a ser ele, e trocar isso depois
+#  exige trocar a chave de todo mundo.
+#
+#  O certo e o inverso: o dev gera o par na maquina dele e manda so a parte
+#  PUBLICA, que nao abre nada sozinha. Ai:
+#      bash infra/ha/acesso-pgadmin.sh --criar joao --leitura --chave joao.pub
+#
+#  A senha do banco ainda precisa chegar ate ele -- mas senha se troca com um
+#  comando e sem mexer em mais ninguem; chave privada vazada, nao.
+#
 #  USO
 #    bash infra/ha/acesso-pgadmin.sh --conferir
 #    bash infra/ha/acesso-pgadmin.sh --criar eduardo --migracao
-#    bash infra/ha/acesso-pgadmin.sh --criar joao    --leitura
+#    bash infra/ha/acesso-pgadmin.sh --criar joao --leitura --chave ~/joao.pub
+#    bash infra/ha/acesso-pgadmin.sh --promover joao --migracao
+#    bash infra/ha/acesso-pgadmin.sh --promover joao --leitura   # volta atras
 #    bash infra/ha/acesso-pgadmin.sh --remover joao
 # ============================================================================
 set -uo pipefail
@@ -87,6 +103,60 @@ if [ "$MODO" = "--conferir" ]; then
   exit 0
 fi
 
+# ── --promover: troca SO o papel, sem tocar na senha nem na chave ──────────
+#
+#  POR QUE NAO E SO RODAR `--criar` DE NOVO
+#  O `--criar` gera uma senha nova. Quem ja configurou o pgAdmin teria que
+#  reconfigurar, e a senha nova teria que viajar outra vez. Trocar privilegio
+#  nao deveria custar isso.
+#
+#  O QUE `--migracao` CONCEDE, MEDIDO E NAO SUPOSTO
+#  `grant postgres to acesso_<nome>` com INHERIT da:
+#     has_schema_privilege(... ,'public','CREATE') = true
+#     pg_has_role(..., 'postgres', 'USAGE')        = true  (equivale a ser dono)
+#  Isso e o que falta para `CREATE POLICY` e `ALTER TABLE`, porque as 680
+#  tabelas do public pertencem ao postgres. E e tambem, dito sem rodeio, a
+#  chave do banco inteiro: com `SET ROLE postgres` a pessoa e superusuario.
+#
+#  O CAMINHO MELHOR, PARA UM DIA COM CALMA
+#  Existe um meio-termo de verdade: passar a posse das tabelas para um papel
+#  `erp_owner` que NAO seja superusuario, e dar esse papel aos devs. Eles
+#  ganhariam DDL sem ganhar superusuario. Mas isso e um REASSIGN OWNED em
+#  produção -- mexe em 680 tabelas, 1.600 funcoes e 1.497 policies de uma vez.
+#  Nao e coisa para fazer de passagem num pedido de acesso.
+if [ "$MODO" = "--promover" ]; then
+  [ -n "$NOME" ] || { echo "falta o nome" >&2; exit 2; }
+  case "$PAPEL" in --leitura|--migracao) ;; *) echo "falta --leitura ou --migracao" >&2; exit 2 ;; esac
+  EXISTE=$(psql_no "select count(*) from pg_roles where rolname='acesso_$NOME'")
+  [ "${EXISTE:-0}" != "0" ] || { echo "o papel acesso_$NOME nao existe -- use --criar" >&2; exit 1; }
+
+  if [ "$PAPEL" = "--migracao" ]; then
+    echo "== promovendo acesso_$NOME a MIGRATION"
+    echo "   ⚠ na pratica isto e superusuario: com SET ROLE postgres,"
+    echo "     da para apagar o banco inteiro."
+    SQL="grant postgres to acesso_$NOME;
+         alter role acesso_$NOME inherit;"
+  else
+    echo "== rebaixando acesso_$NOME para LEITURA"
+    SQL="revoke postgres from acesso_$NOME;
+         grant pg_read_all_data to acesso_$NOME;
+         alter role acesso_$NOME nosuperuser nocreatedb nocreaterole bypassrls inherit;"
+  fi
+  printf '%s\n' "$SQL" | no "SUP=\$(grep -m1 '^PG_SENHA_SUPER=' /opt/erp/infra/failover/.env | cut -d= -f2-)
+    PGPASSWORD=\"\$SUP\" psql -h 127.0.0.1 -p 5000 -U postgres -d postgres -q -v ON_ERROR_STOP=1 -f -" || exit 1
+
+  # Provar, nao anunciar: le o privilegio de verdade depois da mudanca.
+  echo "   conferindo o que o papel pode AGORA:"
+  psql_no "select '   CREATE no schema public: '||has_schema_privilege('acesso_$NOME','public','CREATE')::text
+             union all
+           select '   equivale ao dono das tabelas: '||pg_has_role('acesso_$NOME','postgres','USAGE')::text
+             union all
+           select '   escreve em CHAMADO_SISTEMA: '||has_table_privilege('acesso_$NOME','public.\\\"CHAMADO_SISTEMA\\\"','INSERT')::text"
+  echo
+  echo "   A senha e a chave NAO mudaram -- ninguem precisa reconfigurar o pgAdmin."
+  exit 0
+fi
+
 # ── --remover ──────────────────────────────────────────────────────────────
 if [ "$MODO" = "--remover" ]; then
   [ -n "$NOME" ] || { echo "falta o nome" >&2; exit 2; }
@@ -98,7 +168,7 @@ if [ "$MODO" = "--remover" ]; then
 fi
 
 # ── --criar ────────────────────────────────────────────────────────────────
-[ "$MODO" = "--criar" ] || { sed -n '2,66p' "$0"; exit 2; }
+[ "$MODO" = "--criar" ] || { sed -n '2,80p' "$0"; exit 2; }
 [ -n "$NOME" ] || { echo "falta o nome: --criar <nome> --leitura|--migracao" >&2; exit 2; }
 case "$PAPEL" in --leitura|--migracao) ;; *) echo "falta --leitura ou --migracao" >&2; exit 2 ;; esac
 case "$NOME" in *[!a-z0-9_]*) echo "nome so com minusculas, numeros e _" >&2; exit 2 ;; esac
@@ -106,10 +176,26 @@ case "$NOME" in *[!a-z0-9_]*) echo "nome so com minusculas, numeros e _" >&2; ex
 CHAVE="$HOME/.ssh/pgadmin-$NOME"
 FICHA="$HOME/pgadmin-$NOME.txt"
 
+# `--chave <arquivo.pub>`: a chave veio pronta do dev. Nada e gerado aqui, e
+# a privada dele nunca passa por esta maquina.
+CHAVE_DEV=""
+if [ "${4:-}" = "--chave" ]; then
+  CHAVE_DEV="${5:-}"
+  [ -f "$CHAVE_DEV" ] || { echo "nao achei o arquivo de chave publica: ${CHAVE_DEV:-(vazio)}" >&2; exit 2; }
+  case "$(head -c 4 "$CHAVE_DEV")" in
+    ssh-|ecds) ;;
+    *) echo "isto nao parece uma chave PUBLICA (.pub). Se comecar com" >&2
+       echo "'-----BEGIN', voce pegou a PRIVADA por engano -- peca a .pub." >&2; exit 2 ;;
+  esac
+fi
+
 # 1. a chave. -m PEM porque o pgAdmin usa paramiko, que tropeca no formato
 #    novo do OpenSSH em varias versoes -- e o erro que ele mostra fala de
 #    "not a valid key", sem dizer que o problema e o formato.
-if [ -f "$CHAVE" ]; then
+if [ -n "$CHAVE_DEV" ]; then
+  echo "== usando a chave publica entregue pelo dev: $CHAVE_DEV"
+  echo "   (nada e gerado aqui; a privada fica so com ele)"
+elif [ -f "$CHAVE" ]; then
   echo "== reaproveitando a chave que ja existe em $CHAVE"
 else
   echo "== gerando a chave"
@@ -118,7 +204,13 @@ fi
 
 # 2. o usuario do tunel e a chave restrita
 echo "== instalando a chave no banco1, sem shell e so com a porta do banco"
-PUB=$(cat "$CHAVE.pub")
+# O comentario da chave e REESCRITO como `pgadmin-<nome>`. A chave que o dev
+# manda vem comentada com o nome da maquina dele ("joao@DESKTOP-7A3"), e o
+# `--remover` apaga a linha procurando justamente por `pgadmin-<nome>` no fim.
+# Sem reescrever, remover o acesso de alguem falharia em silencio -- e acesso
+# que a gente pensa ter tirado e pior do que acesso que a gente sabe que deu.
+PUB=$(awk -v m="pgadmin-$NOME" 'NF>=2 {print $1" "$2" "m; exit}' "${CHAVE_DEV:-$CHAVE.pub}")
+[ -n "$PUB" ] || { echo "nao consegui ler a chave publica" >&2; exit 1; }
 no "set -e
   id $USUARIO_TUNEL >/dev/null 2>&1 || useradd -m -s /usr/sbin/nologin $USUARIO_TUNEL
   mkdir -p /home/$USUARIO_TUNEL/.ssh && chmod 700 /home/$USUARIO_TUNEL/.ssh
@@ -171,19 +263,54 @@ echo "   papel criado"
 # 4. provar que o tunel funciona DE VERDADE, da maquina de quem vai usar.
 #    Sem esta prova a pessoa descobre que nao funciona dentro do pgAdmin, onde
 #    a mensagem de erro e generica.
-echo "== provando o tunel (porta local 55432)"
-ssh -i "$CHAVE" -p "$PORTA_SSH" -o BatchMode=yes -o StrictHostKeyChecking=accept-new \
-    -f -N -L 55432:127.0.0.1:5000 "$USUARIO_TUNEL@$BANCO1" 2>/dev/null
-PID_TUNEL=$!
-sleep 2
-if (exec 3<>/dev/tcp/127.0.0.1/55432) 2>/dev/null; then
-  echo "   tunel abriu e o banco atendeu do outro lado."
-  PROVA="sim"
+#    `ssh -f` quem forka e o PROPRIO ssh, nao este shell -- entao `$!` fica
+#    vazio e, com `set -u`, derruba o script. Foi o que aconteceu em 19/10:
+#    morreu aqui, DEPOIS de trocar a senha do papel e ANTES de escrever a
+#    ficha. A senha nova existia so no banco, e ninguem a tinha.
+#
+#    Agora o desligamento e por ControlPath (`ssh -O exit`), que nao depende
+#    de PID nem de `pkill` -- o Git Bash nem sempre tem pkill.
+SOCK="$HOME/.ssh/cm-pgadmin-$NOME"
+PROVA="nao"
+
+# Uma porta LIVRE, nao sempre a 55432.
+#
+# Em 19/10 a versao quebrada deste script deixou um tunel orfao segurando a
+# 55432. Na execucao seguinte o encaminhamento foi recusado por porta ocupada,
+# o `ExitOnForwardFailure` fez o ssh sair com erro, e o script anunciou
+# "o tunel NAO abriu" -- sobre um tunel que estava funcionando perfeitamente,
+# ali do lado. Diagnostico ao contrario e pior do que nenhum.
+PORTA_TESTE=0
+for P in $(seq 55432 55442); do
+  if ! (exec 3<>/dev/tcp/127.0.0.1/"$P") 2>/dev/null; then PORTA_TESTE=$P; break; fi
+done
+echo "== provando o tunel (porta local ${PORTA_TESTE:-nenhuma livre})"
+if [ "$PORTA_TESTE" = "0" ]; then
+  echo "   ⚠ nenhuma porta livre entre 55432 e 55442 -- teste pulado."
+fi
+# ExitOnForwardFailure: sem isto o ssh sobe feliz mesmo com o encaminhamento
+# recusado, e o teste daria "ok" para um tunel que nao serve.
+if [ -n "$CHAVE_DEV" ]; then
+  # A privada esta com o dev. Testar daqui seria impossivel, e fingir que
+  # testou seria pior: ele descobriria sozinho, dentro do pgAdmin, onde a
+  # mensagem de erro nao diz nada.
+  echo "   teste pulado: a chave privada esta com o dev, nao aqui."
+  PROVA="nao testado (chave do proprio dev)"
+elif [ "$PORTA_TESTE" != "0" ] && \
+   ssh -i "$CHAVE" -p "$PORTA_SSH" -o BatchMode=yes -o StrictHostKeyChecking=accept-new \
+       -o ExitOnForwardFailure=yes -o ControlMaster=yes -o ControlPath="$SOCK" \
+       -f -N -L "$PORTA_TESTE":127.0.0.1:5000 "$USUARIO_TUNEL@$BANCO1" 2>/dev/null; then
+  sleep 2
+  if (exec 3<>/dev/tcp/127.0.0.1/"$PORTA_TESTE") 2>/dev/null; then
+    echo "   tunel abriu e o banco atendeu do outro lado."
+    PROVA="sim"
+  else
+    echo "   ⚠ o tunel abriu, mas o banco nao atendeu em 127.0.0.1:5000."
+  fi
+  ssh -O exit -o ControlPath="$SOCK" "$USUARIO_TUNEL@$BANCO1" 2>/dev/null
 else
   echo "   ⚠ o tunel NAO abriu. Veja a nota no fim da ficha."
-  PROVA="nao"
 fi
-pkill -f "55432:127.0.0.1:5000" 2>/dev/null
 
 # 5. a ficha, para copiar campo a campo. A senha vai SO para este arquivo --
 #    ela nao aparece na tela, porque tela de terminal costuma virar registro.
@@ -210,7 +337,7 @@ Tunnel host:        $BANCO1
 Tunnel port:        $PORTA_SSH
 Username:           $USUARIO_TUNEL
 Authentication:     Identity file
-Identity file:      $(cygpath -w "$CHAVE" 2>/dev/null || echo "$CHAVE")
+Identity file:      ${CHAVE_DEV:+a chave privada que VOCE gerou (o par da .pub que enviou)}${CHAVE_DEV:-$(cygpath -w "$CHAVE" 2>/dev/null || echo "$CHAVE")}
 Password:           (deixe vazio — a chave não tem senha)
 
 >>> ABA "Parameters"
