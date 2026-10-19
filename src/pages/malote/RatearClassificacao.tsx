@@ -113,16 +113,16 @@ export default function RatearClassificacao() {
   // exceção; exceção pra hoje depois do horário 2.1 bloqueia.
   const { data: prazoNormal } = usePrazoNormalInclusao();
 
-  // [SEM-CHAMADO] Cartão com Fluxo Especial: Data de Pagamento e Competência = vencimento do cartão, sem exceção
+  // [SEM-CHAMADO] Cartão com Fluxo Especial: Data de Pagamento = dia do lançamento e Competência = mês de hoje, sem exceção
   // (a compra já foi feita). Ver cartaoEspecial.ts.
   const cartaoEspecial = useCartaoEspecialDaForma(formaPagamento);
   const exigeExcecao = !cartaoEspecial && !!dataPagamento && !!prazoNormal && dataPagamento < prazoNormal;
   useEffect(() => {
     if (!cartaoEspecial) return;
-    setDataPagamento(cartaoEspecial.vencimento);
+    setDataPagamento(cartaoEspecial.dataPagamento);
     setDataCompetencia(cartaoEspecial.competencia);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cartaoEspecial?.vencimento]);
+  }, [cartaoEspecial?.dataPagamento]);
   const hoje = useMemo(() => new Date().toLocaleDateString("sv-SE"), []);
 
   // SIS-2026-0361: Dia do desconto sugerido da Data de pagamento; cronograma
@@ -403,7 +403,7 @@ export default function RatearClassificacao() {
             </div>
             <div>
               <Label>Data Competência *</Label>
-              <Input type="month" value={dataCompetencia} onChange={(e) => setDataCompetencia(e.target.value)} disabled={!!cartaoEspecial} />
+              <Input type="month" value={dataCompetencia} onChange={(e) => setDataCompetencia(e.target.value)} />
             </div>
             <div>
               <Label className="text-xs text-muted-foreground">Total já lançado (R$)</Label>
@@ -417,8 +417,8 @@ export default function RatearClassificacao() {
 
           {cartaoEspecial && (
             <p className="text-xs text-muted-foreground">
-              Cartão com Fluxo Especial ({cartaoEspecial.cartao.nome_cartao}): a Data de Pagamento e a Competência são o vencimento da fatura
-              ({cartaoEspecial.vencimento.split("-").reverse().join("/")}) e não pedem exceção.
+              Cartão com Fluxo Especial ({cartaoEspecial.cartao.nome_cartao}): a Data de Pagamento é o dia do lançamento
+              ({cartaoEspecial.dataPagamento.split("-").reverse().join("/")}) e não pede exceção; vai direto ao aprovador do Fluxo Especial.
             </p>
           )}
 
