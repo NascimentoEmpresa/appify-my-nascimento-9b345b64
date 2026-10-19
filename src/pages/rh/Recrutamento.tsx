@@ -29,6 +29,7 @@ import { StatusSstDialog } from "@/components/recrutamento/StatusSstDialog";
 import { mensagemEnvioAgendamento } from "@/lib/recrutamento/agendamentoAso";
 import { QuadrosSstCompras } from "@/components/recrutamento/QuadrosSstCompras";
 import { ConfirmarEnvioAgendamento } from "@/components/recrutamento/ConfirmarEnvioAgendamento";
+import { AsosAgendados } from "@/components/recrutamento/AsosAgendados";
 import { CamadaAlta } from "@/components/ui/camada";
 import { FichaAso } from "@/components/recrutamento/FichaAso";
 import { CandidatoManualDialog } from "@/components/recrutamento/CandidatoManualDialog";
@@ -3327,6 +3328,10 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
             )}
             <button onClick={() => { setRespFiltro(""); setPage(1); }} style={{ background: "none", border: "none", color: "#94a3b8", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>limpar</button>
           </>)}
+          {/* Card "ASOs Agendados" (19/10/2026): no canto direito da linha dos
+              filtros — as solicitações com exame marcado pelo SST e os textos
+              prontos para copiar ou enviar ao candidato. Só no Recrutamento. */}
+          {!soEtapa1 && <AsosAgendados podeEnviar={podeRecrutar} onToast={toast} />}
           {showContratoFiltro && (
             <>
               <div onClick={() => setShowContratoFiltro(false)} style={{ position: "fixed", inset: 0, zIndex: 40 }} />
