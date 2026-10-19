@@ -81,6 +81,48 @@ Q "create schema if not exists supabase_migrations;
      (version text primary key, statements text[], name text)" >/dev/null
 Q "select version from supabase_migrations.schema_migrations" | LC_ALL=C sort -u > /tmp/.mig-aplicadas
 
+# ── 2b. DOIS ARQUIVOS COM O MESMO NUMERO = UM DELES NUNCA ENTRA ───────────
+#
+#  Aconteceu em 19/10/2026, no primeiro dia deste aplicador. Tres devs
+#  mergearam em dois minutos e os tres numeraram `20261019000013`, porque
+#  cada um conferiu o repositorio num momento diferente:
+#
+#      20261019000013_he_chamados_so_do_colaborador_no_cluster.sql   aplicada
+#      20261019000013_malote_forma_e_cartao_fluxo_especial.sql       NAO
+#      20261019000013_urls_de_storage_apontam_para_o_cluster.sql     NAO
+#
+#  A chave do registro e o NUMERO. Registrada a primeira, as outras duas
+#  passaram a contar como aplicadas -- para sempre, sem erro, sem log. O
+#  resultado foi uma funcao que a tela do Malote chama e que nao existia no
+#  banco: tela quebrada em producao por um numero repetido.
+#
+#  Por isso o aplicador PARA aqui, antes de tocar no banco. A alternativa --
+#  aplicar as que dao e avisar no fim -- deixaria o merge verde, e merge
+#  verde ninguem le. Com a parada, o proximo merge fica vermelho ate alguem
+#  renumerar, que e um conserto de dois minutos.
+VISTOS=$(mktemp); DUPES=$(mktemp)
+while IFS= read -r -d '' F; do
+  B=$(basename "$F")
+  case "$B" in [0-9]*) ;; *) continue ;; esac
+  printf '%s\n' "$(printf '%s' "$B" | sed -E 's/^([0-9]+).*/\1/')" >> "$VISTOS"
+done < <(find "$DIR" -maxdepth 1 -name '*.sql' -print0)
+LC_ALL=C sort "$VISTOS" | uniq -d > "$DUPES"
+if [ -s "$DUPES" ]; then
+  echo
+  echo "PAREI: ha migrations diferentes com o MESMO numero de versao." >&2
+  echo "Uma delas nunca entraria no banco, e sem erro nenhum." >&2
+  echo >&2
+  while read -r V; do
+    [ -n "$V" ] || continue
+    find "$DIR" -maxdepth 1 -name "${V}_*.sql" -printf '   %f\n' >&2
+  done < "$DUPES"
+  echo >&2
+  echo "Conserto: renumere todas menos uma, com 'git mv', e mergeie." >&2
+  rm -f "$VISTOS" "$DUPES"
+  exit 1
+fi
+rm -f "$VISTOS" "$DUPES"
+
 PENDENTES=()
 while IFS= read -r -d '' F; do
   B=$(basename "$F")
