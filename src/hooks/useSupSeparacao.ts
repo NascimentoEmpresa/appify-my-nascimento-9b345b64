@@ -271,21 +271,31 @@ export function useSituacaoPedidos(pedidoIds: string[], enabled = true) {
       // Continua buscando a fila INTEIRA de propósito: `situacoes` alimenta os
       // cards de KPI e o filtro de status, que contam o banco todo. Limitar
       // aos pedidos visíveis na tela devolveria o bug do SIS-2026-0201.
-      const fatias: string[][] = [];
-      for (let i = 0; i < pedidoIds.length; i += 500) fatias.push(pedidoIds.slice(i, i + 500));
+      //
+      // 19/10/2026: as fatias eram de 500 ids NA URL (~19 KB). No cluster
+      // (api.grpnascimento.com.br) URL acima de ~4 KB volta 414/502: a
+      // situação não chegava, o card "Parcialmente despachado" zerava e o 502
+      // disparava o monitor de queda ("Sistema temporariamente indisponível").
+      // Como a tela quer a fila INTEIRA mesmo, agora lê a view paginada, sem
+      // id nenhum na URL — 3 páginas de 1.000 para ~2.800 pedidos. A view
+      // inteira roda em ~20 ms; a RLS (security_invoker) continua valendo.
+      const PAGINA = 1000;
+      const pagina = (de: number, comContagem = false) => sb
+        .from("sup_pedido_situacao")
+        .select("pedido_id, itens, itens_atendidos, itens_em_separacao, itens_pendentes_compra",
+          comContagem ? { count: "exact" } : undefined)
+        .order("pedido_id")
+        .range(de, de + PAGINA - 1);
 
-      const respostas = await Promise.all(
-        fatias.map(async (fatia) => {
-          const { data, error } = await sb
-            .from("sup_pedido_situacao")
-            .select("pedido_id, itens, itens_atendidos, itens_em_separacao, itens_pendentes_compra")
-            .in("pedido_id", fatia);
-          if (error) throw error;
-          return data ?? [];
-        }),
+      const primeira = await pagina(0, true);
+      if (primeira.error) throw primeira.error;
+      const total = primeira.count ?? (primeira.data ?? []).length;
+      const restantes = await Promise.all(
+        Array.from({ length: Math.max(0, Math.ceil(total / PAGINA) - 1) }, (_, i) => pagina((i + 1) * PAGINA)),
       );
-      for (const linhas of respostas) {
-        for (const r of linhas) mapa.set(r.pedido_id, r as SituacaoPedido);
+      for (const r of [primeira, ...restantes]) {
+        if (r.error) throw r.error;
+        for (const linha of r.data ?? []) mapa.set(linha.pedido_id, linha as SituacaoPedido);
       }
       return mapa;
     },
