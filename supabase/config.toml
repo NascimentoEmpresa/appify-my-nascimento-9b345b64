@@ -164,3 +164,10 @@ verify_jwt = true
 
 [functions.tvg-ia]
 verify_jwt = true
+
+# Suprimentos › Dashboard › Estoque Saudável (migs 20261020000020/21/22): a
+# leitura com I.A do planejamento. JWT do usuário — a função relê o painel
+# pela RPC sup_estoque_saudavel com a sessão dele, então a IA só enxerga o
+# que a pessoa enxerga e os números não vêm do corpo da requisição.
+[functions.sup-estoque-ia]
+verify_jwt = true
