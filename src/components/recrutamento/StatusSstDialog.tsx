@@ -32,7 +32,7 @@ const dataHora = (iso?: string | null) => {
   return isNaN(+d) ? "" : d.toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" });
 };
 
-async function copiar(texto: string): Promise<boolean> {
+export async function copiar(texto: string): Promise<boolean> {
   try { await navigator.clipboard.writeText(texto); return true; } catch {
     // Navegador sem clipboard API (http na rede interna): o jeito antigo.
     try {
