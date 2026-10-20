@@ -18,7 +18,7 @@ import {
 } from "@/components/ui/select";
 import { AvaliarChamadoDialog } from "./AvaliarChamadoDialog";
 import { Flag, UploadCloud, Info, XCircle, CheckCircle2, Lightbulb, Clock, X, Star, ClipboardPaste, FileText, ListChecks } from "lucide-react";
-import type { PendenciaSolicitante } from "./validacaoPresidencia";
+import { abrirChamadoTravado, LIMITE_AVALIACOES_PENDENTES, type PendenciaSolicitante } from "./validacaoPresidencia";
 import {
   CATEGORIAS, TIPOS, IMPACTOS, URGENCIAS, MODULOS_ERP, AMBIENTES, PRIORIDADES, BUCKET_CHAMADOS,
 } from "./types";
@@ -52,8 +52,9 @@ export default function AbrirChamado({ base = "/app/central-servicos/chamados" }
   const { canAbrir, loading: permLoading } = useChamadoPerms();
   const { toast } = useToast();
 
-  // Avaliações pendentes: não pode abrir novo chamado enquanto houver chamado
-  // concluído sem avaliação (regra também enforçada por trigger no banco).
+  // Avaliações pendentes: com 3 chamados concluídos sem avaliação não abre
+  // outro (desde 20/10/2026; antes travava no primeiro). Com 1 ou 2, só avisa.
+  // A mesma regra está no gatilho do banco (mig 20261020000070).
   // Chamado ainda na validação da Presidência não conta (mig 273). O
   // treinamento não trava: é confirmado em Treinamentos Sistemas.
   const { data: avaliacoesPendentes = [] } = useQuery({
@@ -218,15 +219,8 @@ export default function AbrirChamado({ base = "/app/central-servicos/chamados" }
     );
   }
 
-  if (avaliacoesPendentes.length > 0) {
-    return (
-      <div>
-        <PageHeader title="Abrir Novo Chamado" module="Central de Serviços" breadcrumb={["Chamados de Sistemas", "Abrir Novo Chamado"]} />
-        <Card className="space-y-3 border-warning/40 bg-warning/5 p-6">
-          <p className="flex items-center gap-1.5 text-sm font-bold text-warning"><Star className="h-4 w-4" /> Você tem avaliação(ões) pendente(s)</p>
-          <p className="text-sm text-muted-foreground">
-            Antes de abrir um novo chamado, avalie {avaliacoesPendentes.length === 1 ? "o chamado concluído" : `os ${avaliacoesPendentes.length} chamados concluídos`} abaixo:
-          </p>
+  // Lista de "Avaliar" — a mesma no bloqueio (3 pendentes) e no aviso (1 ou 2).
+  const listaPendentes = (
           <div className="space-y-1.5">
             {avaliacoesPendentes.map((p) => (
               // Participante extra avalia aqui mesmo: a tela de acompanhamento é do solicitante.
@@ -240,9 +234,25 @@ export default function AbrirChamado({ base = "/app/central-servicos/chamados" }
               </button>
             ))}
           </div>
+  );
+  const dialogParticipante = (
+    <AvaliarChamadoDialog open={!!avaliarParticipante} onOpenChange={(v) => { if (!v) setAvaliarParticipante(null); }}
+      chamado={avaliarParticipante} comoParticipante />
+  );
+
+  // Trava só na 3ª pendente (mig 20261020000070) — antes era na primeira.
+  if (abrirChamadoTravado(avaliacoesPendentes)) {
+    return (
+      <div>
+        <PageHeader title="Abrir Novo Chamado" module="Central de Serviços" breadcrumb={["Chamados de Sistemas", "Abrir Novo Chamado"]} />
+        <Card className="space-y-3 border-warning/40 bg-warning/5 p-6">
+          <p className="flex items-center gap-1.5 text-sm font-bold text-warning"><Star className="h-4 w-4" /> Você tem {avaliacoesPendentes.length} chamados sem avaliar</p>
+          <p className="text-sm text-muted-foreground">
+            Com {LIMITE_AVALIACOES_PENDENTES} chamados concluídos sem avaliação, não é possível abrir um novo. Avalie os chamados abaixo para liberar:
+          </p>
+          {listaPendentes}
         </Card>
-        <AvaliarChamadoDialog open={!!avaliarParticipante} onOpenChange={(v) => { if (!v) setAvaliarParticipante(null); }}
-          chamado={avaliarParticipante} comoParticipante />
+        {dialogParticipante}
       </div>
     );
   }
@@ -255,6 +265,21 @@ export default function AbrirChamado({ base = "/app/central-servicos/chamados" }
         module="Central de Serviços"
         breadcrumb={["Chamados de Sistemas", "Abrir Novo Chamado"]}
       />
+
+      {/* 1 ou 2 pendentes: abre normalmente, mas fica avisado de quanto falta para travar. */}
+      {avaliacoesPendentes.length > 0 && (
+        <Card className="mb-4 space-y-2 border-warning/40 bg-warning/5 p-4">
+          <p className="flex items-center gap-1.5 text-sm font-semibold text-warning">
+            <Star className="h-4 w-4" />
+            {avaliacoesPendentes.length === 1 ? "Você tem 1 chamado sem avaliar" : `Você tem ${avaliacoesPendentes.length} chamados sem avaliar`}
+          </p>
+          <p className="text-xs text-muted-foreground">
+            Pode abrir este chamado normalmente. Com {LIMITE_AVALIACOES_PENDENTES} sem avaliar, a abertura de novos chamados fica bloqueada até você avaliar.
+          </p>
+          {listaPendentes}
+        </Card>
+      )}
+      {dialogParticipante}
 
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
         <div className="space-y-4">
