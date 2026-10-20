@@ -1,4 +1,5 @@
 import { createClient, type SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { SMTPClient } from "https://deno.land/x/denomailer@1.6.0/mod.ts";
 import {
   TEMPLATE_DA_FAIXA, copiaDoEmail, dentroDaJanela, garantirEnvioPermitido, hojeEmSaoPaulo, montarEmail, planejarCobrancas, somarDias,
   PRAZO_PAGAMENTO_DIAS, type ConfigCobranca, type NotaAberta, type PlanoContrato,
@@ -115,49 +116,31 @@ async function modelo(admin: SupabaseClient, faixa: string) {
   return data as { assunto: string | null; corpo: string };
 }
 
-// ── Microsoft Graph ───────────────────────────────────────────────────────────────────────────────────────────────
+// ── Envio por SMTP ────────────────────────────────────────────────────────────────────────────────────────────────
+// O e-mail da empresa (haggltda.com.br) fica na UOL Host, não no Microsoft 365, então não há Graph: o envio é SMTP, como
+// no aviso do Comitê de Ética. Secrets da função: COBRANCA_SMTP_HOST, COBRANCA_SMTP_PORT (465 = TLS direto; 587 = STARTTLS),
+// COBRANCA_SMTP_USER (a caixa remetente, nfe2@haggltda.com.br) e COBRANCA_SMTP_PASS.
 
-let tokenCache: { token: string; expiraEm: number } | null = null;
-
-function credenciaisGraphOk(): boolean {
-  return !!(Deno.env.get("AZURE_TENANT_ID") && Deno.env.get("AZURE_CLIENT_ID") && Deno.env.get("AZURE_CLIENT_SECRET") && Deno.env.get("COBRANCA_EMAIL_FINANCEIRO"));
+function envioConfigurado(): boolean {
+  return !!(Deno.env.get("COBRANCA_SMTP_HOST") && Deno.env.get("COBRANCA_SMTP_USER") && Deno.env.get("COBRANCA_SMTP_PASS"));
 }
 
-async function obterTokenGraph(): Promise<string> {
-  const agora = Date.now();
-  if (tokenCache && tokenCache.expiraEm > agora + 30_000) return tokenCache.token;
-  const res = await fetch(`https://login.microsoftonline.com/${Deno.env.get("AZURE_TENANT_ID")}/oauth2/v2.0/token`, {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({
-      client_id: Deno.env.get("AZURE_CLIENT_ID")!,
-      client_secret: Deno.env.get("AZURE_CLIENT_SECRET")!,
-      scope: "https://graph.microsoft.com/.default",
-      grant_type: "client_credentials",
-    }),
+async function enviarEmailSmtp(para: string[], cc: string[], assunto: string, corpoHtml: string) {
+  const porta = Number(Deno.env.get("COBRANCA_SMTP_PORT") ?? 465);
+  const usuario = Deno.env.get("COBRANCA_SMTP_USER")!;
+  const client = new SMTPClient({
+    connection: {
+      hostname: Deno.env.get("COBRANCA_SMTP_HOST")!,
+      port: porta,
+      tls: porta === 465,
+      auth: { username: usuario, password: Deno.env.get("COBRANCA_SMTP_PASS")! },
+    },
   });
-  if (!res.ok) throw new Error(`Falha ao autenticar no Graph: ${res.status} ${(await res.text()).slice(0, 200)}`);
-  const data = await res.json();
-  tokenCache = { token: data.access_token, expiraEm: agora + (data.expires_in ?? 3600) * 1000 };
-  return tokenCache.token;
-}
-
-async function enviarEmailGraph(caixa: string, para: string[], cc: string[], assunto: string, corpoHtml: string) {
-  const token = await obterTokenGraph();
-  const res = await fetch(`https://graph.microsoft.com/v1.0/users/${encodeURIComponent(caixa)}/sendMail`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-    body: JSON.stringify({
-      message: {
-        subject: assunto,
-        body: { contentType: "HTML", content: corpoHtml },
-        toRecipients: para.map((email) => ({ emailAddress: { address: email } })),
-        ccRecipients: cc.map((email) => ({ emailAddress: { address: email } })),
-      },
-      saveToSentItems: true,
-    }),
-  });
-  if (!res.ok) throw new Error(`Graph sendMail falhou: ${res.status} ${(await res.text()).slice(0, 300)}`);
+  try {
+    await client.send({ from: usuario, to: para, cc: cc.length ? cc : undefined, subject: assunto, html: corpoHtml, content: "auto" });
+  } finally {
+    try { await client.close(); } catch { /* conexão já caiu: o erro que interessa é o do envio */ }
+  }
 }
 
 // ── Saídas ────────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -209,7 +192,7 @@ Deno.serve(async (req) => {
       const contagem: Record<string, number> = {};
       for (const p of planos) contagem[p.decisao] = (contagem[p.decisao] ?? 0) + 1;
       return json({
-        ok: true, modo: config.modo, janela_aberta: dentroDaJanela(agora, config), credenciais_graph: credenciaisGraphOk(),
+        ok: true, modo: config.modo, janela_aberta: dentroDaJanela(agora, config), envio_configurado: envioConfigurado(),
         gerado_em: agora.toISOString(), contagem, planos: planos.map(resumoDoPlano),
       });
     }
@@ -218,10 +201,9 @@ Deno.serve(async (req) => {
     const config = await lerConfig(admin);
     if (config.modo === "desligado" || config.modo === "simulacao") return json({ ok: true, modo: config.modo, enviados: 0, observacao: "Modo sem envio." });
     if (!dentroDaJanela(agora, config)) return json({ ok: true, modo: config.modo, enviados: 0, observacao: "Fora da janela de envio." });
-    if (!credenciaisGraphOk()) return json({ ok: false, modo: config.modo, error: "Credenciais do Microsoft Graph não configuradas (AZURE_*, COBRANCA_EMAIL_FINANCEIRO)." }, 500);
+    if (!envioConfigurado()) return json({ ok: false, modo: config.modo, error: "Envio por SMTP não configurado (COBRANCA_SMTP_HOST/USER/PASS)." }, 500);
     if (config.modo === "piloto" && !config.email_piloto) return json({ ok: false, modo: config.modo, error: "Modo piloto sem e-mail de teste configurado." }, 400);
 
-    const caixa = Deno.env.get("COBRANCA_EMAIL_FINANCEIRO")!;
     const entrada = await carregarEntrada(admin, config, agora);
     const aEnviar = planejarCobrancas(entrada).filter((p) => p.decisao === "enviar").slice(0, config.limite_por_execucao);
 
@@ -240,7 +222,7 @@ Deno.serve(async (req) => {
         valor_total: p.valorTotal, destinatarios: para, cc, assunto, corpo: email.corpo,
       };
       try {
-        await enviarEmailGraph(caixa, para, cc, assunto, email.corpo);
+        await enviarEmailSmtp(para, cc, assunto, email.corpo);
         await admin.from("cobranca_auto_envio").insert({ ...registro, status: "enviado" });
         enviados++; falhasSeguidas = 0;
       } catch (e) {
