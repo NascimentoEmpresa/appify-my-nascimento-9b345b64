@@ -59,8 +59,8 @@ export function useTotaisAuditoria(f: FiltrosPainel): Record<TipoValidacao, Esta
     let t1: TotaisCard | null = null;
     if (maloteQ.data && fluxoQ.data) {
       const a = totalMaloteDireto(maloteQ.data.naoParceladas, maloteQ.data.parcelas, maloteQ.data.despesasDasParcelas, maloteQ.data.rateios, f);
-      // SIS-2026-0657: Malote + lançamentos do Financeiro (o que está no Fluxo e não veio do Malote) × saídas
-      // do Fluxo. Aplicação financeira é giro de caixa: fica fora e aparece só como informação.
+      // SIS-2026-0657/0687: Malote + todas as origens que alimentam o Fluxo (Aplicações Financeiras, Cartão de Crédito,
+      // Débito Automático...) × total de saídas do Fluxo.
       const r = totaisMaloteFinanceiro(a, fluxoQ.data, f);
       const direto = maloteDiretoPorDespesa(maloteQ.data.naoParceladas, maloteQ.data.parcelas, maloteQ.data.despesasDasParcelas, maloteQ.data.rateios, f);
       r.painel.divergencias = divergenciasMaloteFluxo(direto, fluxoQ.data, f);

@@ -105,23 +105,18 @@ export function useMaloteDiretoMes(mes: string) {
       const idsParcelas = [...new Set(parcelas.map((p) => p.despesa_id))];
       const idsNaoParceladas = naoParceladas.map((d) => d.id);
 
-      const despesasDasParcelas: DespesaMalote[] = [];
-      for (let i = 0; i < idsParcelas.length; i += 200) {
-        const bloco = idsParcelas.slice(i, i + 200);
-        const { data, error } = await db.from("malote_despesa").select(colunasDespesa).in("id", bloco).eq("parcelado", true).is("deleted_at", null);
-        if (error) throw error;
-        despesasDasParcelas.push(...(data ?? []));
-      }
+      // 200 ids numa URL (~7,8 KB) passam do limite do gateway do cluster (502 "invalid response from upstream" na Conciliação do
+      // Malote); em lotes de 40 (src/lib/emLotes.ts), no máximo 6 consultas ao mesmo tempo.
+      const despesasDasParcelas = await emLotes<DespesaMalote>(idsParcelas, 40, (lote) =>
+        db.from("malote_despesa").select(colunasDespesa).in("id", lote).eq("parcelado", true).is("deleted_at", null), 6);
 
       const todosIds = [...idsNaoParceladas, ...despesasDasParcelas.map((d) => d.id)];
-      const rateios: RateioMalote[] = [];
-      for (let i = 0; i < todosIds.length; i += 200) {
-        const bloco = todosIds.slice(i, i + 200);
-        const linhas = await paginar<RateioMalote>(() =>
-          db.from("malote_despesa_rateio_linha").select("despesa_id, empresa_id, contrato_id, valor").in("despesa_id", bloco).order("id")
-        );
-        rateios.push(...linhas);
-      }
+      const rateios = await emLotes<RateioMalote>(todosIds, 40, async (lote) => ({
+        data: await paginar<RateioMalote>(() =>
+          db.from("malote_despesa_rateio_linha").select("despesa_id, empresa_id, contrato_id, valor").in("despesa_id", lote).order("id")
+        ),
+        error: null,
+      }), 6);
       return { naoParceladas, parcelas, despesasDasParcelas, rateios };
     },
   });
@@ -296,8 +291,8 @@ export function useAjustesDasDespesas(despesaIds: string[]) {
       const userIds = [...new Set((data ?? []).map((r: any) => r.user_id).filter(Boolean))] as string[];
       const nomes = new Map<string, string>();
       if (userIds.length > 0) {
-        const { data: perfis } = await db.from("profiles").select("id, display_name").in("id", userIds);
-        for (const p of perfis ?? []) nomes.set(p.id, p.display_name);
+        const perfis = await emLotes<any>(userIds, 40, (lote) => db.from("profiles").select("id, display_name").in("id", lote), 6);
+        for (const p of perfis) nomes.set(p.id, p.display_name);
       }
       const num = (v: unknown) => (v === null || v === undefined || Number.isNaN(Number(v)) ? null : Number(v));
       for (const r of data ?? []) {
