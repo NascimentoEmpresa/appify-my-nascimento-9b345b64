@@ -48,6 +48,7 @@ import { BancoBadge } from "@/components/financeiro/BancoBadge";
 import { urlLogoCartao, useCartaoBancos } from "@/hooks/useMaloteCartaoCredito";
 import { ContratoTrocaCampo } from "@/pages/financeiro/fluxo-caixa/ContratoTrocaCampo";
 import { camposComPendencia, motivosRevisar, SEM_CONTRATO } from "@/pages/financeiro/fluxo-caixa/motivosRevisar";
+import { linhaDaOrigemDoCard } from "@/pages/controladoria/auditoria/regras";
 import { parseValorBR, valorConfere } from "@/pages/financeiro/fluxo-caixa/filtroValor";
 import { useFaturasInformadas } from "@/hooks/useCartaoFaturaConsolidada";
 import { chaveFatura, compararFatura } from "@/pages/financeiro/cartao-credito/faturaConsolidada";
@@ -368,6 +369,9 @@ export default function FluxoCaixaGestao() {
   const [dataAte, setDataAte] = useState(searchParams.get("ate") ?? "");
   const [competencia, setCompetencia] = useState("");
   const [empresaId, setEmpresaId] = useState(searchParams.get("empresa") ?? "");
+  // SIS-2026-0687: os tiles do card 1 da Auditoria abrem o Fluxo já numa origem (?origem=debito_automatico, cartao_fatura,
+  // aplicacao_financeira, malote, importacao_historica).
+  const [origemFiltro, setOrigemFiltro] = useState(searchParams.get("origem") ?? "");
   // SIS-2026-0537 (Iury): "retornar a coluna de Centro de custo" — filtro
   // removido no SIS-2026-0489, pedido de volta — a coluna na view nunca
   // saiu (CartaoCredito.tsx já dependia dela).
@@ -448,6 +452,7 @@ export default function FluxoCaixaGestao() {
     setDataAte("");
     setCompetencia("");
     setEmpresaId("");
+    setOrigemFiltro("");
     setContratoId("");
     setClassificacaoId("");
     setFormaPagamento("");
@@ -468,6 +473,7 @@ export default function FluxoCaixaGestao() {
       if (dataAte && (!l.data_pagamento || l.data_pagamento > dataAte)) return false;
       if (competencia && l.competencia?.slice(0, 7) !== competencia) return false;
       if (empresaId && l.empresa_id !== empresaId) return false;
+      if (origemFiltro && !linhaDaOrigemDoCard(l, origemFiltro)) return false;
       if (contratoId && l.contrato_id !== contratoId) return false;
       if (classificacaoId && l.classificacao_id !== classificacaoId) return false;
       if (formaPagamento && l.forma_pagamento !== formaPagamento) return false;
@@ -477,7 +483,7 @@ export default function FluxoCaixaGestao() {
       if (!linhaCasaBusca(l, buscaNorm)) return false;
       return true;
     });
-  }, [linhas, hoje, situacao, dataDe, dataAte, competencia, empresaId, contratoId, classificacaoId, formaPagamento, bancoId, soInconsistentes, busca, valor]);
+  }, [linhas, hoje, situacao, dataDe, dataAte, competencia, empresaId, origemFiltro, contratoId, classificacaoId, formaPagamento, bancoId, soInconsistentes, busca, valor]);
 
   // SIS-2026-0256: com o Débito Automático somado à fonte, "Saídas" precisa
   // filtrar por tipo — antes só existia saída (Malote), então somar tudo
@@ -992,6 +998,18 @@ export default function FluxoCaixaGestao() {
                   <SelectItem value="todas">Todas</SelectItem>
                   {formasPagamentoDisponiveis.map((nome) => (
                     <SelectItem key={nome} value={nome}>{nome}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label className="text-xs">Origem</Label>
+              <Select value={origemFiltro || "todas"} onValueChange={(v) => { setOrigemFiltro(v === "todas" ? "" : v); setPage(1); }}>
+                <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="todas">Todas</SelectItem>
+                  {(Object.keys(LABEL_ORIGEM) as (keyof typeof LABEL_ORIGEM)[]).map((o) => (
+                    <SelectItem key={o} value={o}>{LABEL_ORIGEM[o]}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>

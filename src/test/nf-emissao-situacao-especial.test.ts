@@ -67,8 +67,19 @@ describe("foraDoRelatorio — gate de listagem (rascunho/enviada fora)", () => {
     expect(foraDoRelatorio({ status: "concluida" })).toBe(false);
   });
 
-  it("cancelada pelo app também entra na listagem (só não conta no KPI)", () => {
-    expect(foraDoRelatorio({ status: "cancelada" })).toBe(false);
+  it("cancelada na validação do Financeiro (devolvida para correção) fica fora até concluir de novo", () => {
+    expect(foraDoRelatorio({ status: "cancelada" })).toBe(true);
+    expect(foraDoRelatorio({ status: "cancelada", situacao_dominio: null, data_pagamento: null, valor_pago: 0 })).toBe(true);
+  });
+
+  it("cancelada de verdade (site ou Domínio) continua na listagem, só não conta no KPI", () => {
+    expect(foraDoRelatorio({ status: "cancelada", situacao_dominio: "CANCELADA" })).toBe(false);
+    expect(foraDoRelatorio({ status: "concluida", situacao_site_pmt: "SUBSTITUIDA" })).toBe(false);
+  });
+
+  it("cancelada com pagamento registrado não some", () => {
+    expect(foraDoRelatorio({ status: "cancelada", valor_pago: 100 })).toBe(false);
+    expect(foraDoRelatorio({ status: "cancelada", data_pagamento: "2026-10-01" })).toBe(false);
   });
 });
 
