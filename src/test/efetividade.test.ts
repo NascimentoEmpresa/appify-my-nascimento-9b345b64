@@ -232,3 +232,56 @@ describe("formatação", () => {
     expect(difDias("2026-10-07", "2026-10-01")).toBe(6);
   });
 });
+
+// 20/10/2026 — pedido do Pablo: "se a pessoa marcou 1x no dia já não é falta"
+// e "falta só se não importou depois do meio-dia; antes é Aguardando apuração
+// total dos pontos da Senior" (os pontos chegam com atraso na importação).
+describe("avaliarDia — uma batida e a regra do meio-dia", () => {
+  // 13/10/2026 (terça) às HH:MM de Brasília (-03:00).
+  const em = (hhmm: string) => new Date(`2026-10-13T${hhmm}:00-03:00`);
+  const HOJE = "2026-10-13";
+
+  it("uma batida só no dia já é presença, não falta", () => {
+    const p = prepararColaborador(col({ dias: [...comercial("2026-10-05", "2026-10-06"), ["2026-10-07", [485]]] }));
+    const d = avaliarDia(p, "2026-10-07", SINC);
+    expect(d.situacao).toBe("presente");
+    expect(d.batidas).toEqual([485]);
+  });
+
+  it("batida que o agrupamento por jornada levou para o dia vizinho ainda tira a falta", () => {
+    // Quem começa à meia-noite: a batida das 23:30 de 07/10 vai para 08/10 —
+    // e 07/10 ficaria vazio. Pela batida no calendário, não é falta.
+    const p = prepararColaborador(col({
+      escala: { codigo: 2, descricao: "00:00-06:00 (15m)", h_semana: "36:00", h_mes: null, h_dsr: null },
+      dias: [["2026-10-05", [0, 360]], ["2026-10-06", [0, 360]], ["2026-10-07", [1410]], ["2026-10-08", [0, 360]]],
+    }));
+    expect(avaliarDia(p, "2026-10-07", SINC).situacao).not.toBe("falta");
+  });
+
+  it("hoje, antes do meio-dia, sem batida = aguardando apuração", () => {
+    const p = prepararColaborador(col({ dias: comercial("2026-10-08", "2026-10-09") }));
+    expect(avaliarDia(p, HOJE, HOJE, em("11:59")).situacao).toBe("aguardando");
+    expect(avaliarDia(p, HOJE, HOJE, em("07:30")).previsto).toBe(true);
+  });
+
+  it("hoje, depois do meio-dia, sem batida = falta", () => {
+    const p = prepararColaborador(col({ dias: comercial("2026-10-08", "2026-10-09") }));
+    expect(avaliarDia(p, HOJE, HOJE, em("12:00")).situacao).toBe("falta");
+  });
+
+  it("turno da noite não vira falta à tarde, antes de começar", () => {
+    const p = prepararColaborador(col({
+      escala: { codigo: 3, descricao: "19:00-23:00 (15m)", h_semana: "20:00", h_mes: null, h_dsr: null },
+      dias: [["2026-10-08", [1140, 1380]], ["2026-10-09", [1140, 1380]]],
+    }));
+    expect(avaliarDia(p, HOJE, HOJE, em("15:00")).situacao).toBe("aguardando");
+    expect(avaliarDia(p, HOJE, HOJE, em("20:30")).situacao).toBe("falta");
+  });
+
+  it("dia que já passou continua falta normal, sem esperar meio-dia nenhum", () => {
+    const p = prepararColaborador(col({ dias: comercial("2026-10-08", "2026-10-09") }));
+    expect(avaliarDia(p, "2026-10-09", HOJE, em("08:00")).situacao).toBe("presente");
+    const q = prepararColaborador(col({ dias: comercial("2026-10-08") }));
+    expect(avaliarDia(q, "2026-10-09", HOJE, em("08:00")).situacao).toBe("falta");
+  });
+});

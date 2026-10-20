@@ -13,8 +13,14 @@
 //      (ADM, estagiário, ponto por outro meio). Medido em 08/10/2026: 273 dos
 //      2.216 "Trabalhando". Chamar essa gente de faltosa todo dia afogaria as
 //      faltas de verdade — fica num contador à parte.
-//   5. Dia depois do último sincronizado → AGUARDANDO (o espelho é diário; o
-//      ponto de hoje ainda não chegou).
+//   5. Dia depois do último sincronizado → AGUARDANDO (o ponto ainda não chegou).
+//      HOJE também é AGUARDANDO até o meio-dia (20/10/2026, pedido do Pablo):
+//      o espelho roda de 10 em 10 min, então "sincronizado até hoje" já vale
+//      às 07:00 — mas a Senior importa as batidas com atraso, e todo mundo
+//      que entrou às 7h aparecia como falta na primeira hora. Falta de hoje
+//      só depois das 12h (e de 1h após a entrada da escala, para o turno da
+//      tarde/noite não virar falta antes de começar). Rótulo na tela:
+//      "Aguardando apuração total dos pontos da Senior".
 //   6. A escala diz se o dia era de trabalho:
 //        · fixa (SEG-SEX, +SÁB): dia útil da semana; feriado nacional não;
 //        · 12x36: paridade com o último dia trabalhado (trabalha em dias
@@ -22,6 +28,11 @@
 //        · outro revezamento (6x1, SAMU): uma folga por semana, então só o
 //          SEGUNDO dia seguido sem batida é falta; o primeiro é folga.
 //      Dia de trabalho sem batida → FALTA; senão → FOLGA (ou FERIADO).
+//   7. UMA batida no dia do calendário basta para não ser falta (20/10/2026,
+//      pedido do Pablo: "se a pessoa marcou 1x no dia já não é falta"). O
+//      agrupamento por jornada pode levar a batida para o dia vizinho (saída
+//      da madrugada do noturno, entrada às 23h de quem começa à meia-noite) e
+//      deixar o dia vazio; antes de chamar de falta, olha o dia cru.
 //
 // EFETIVO PREVISTO = presentes + faltas + atestados + afastamentos (quem a
 // escala esperava, menos quem está de férias — férias é ausência planejada).
@@ -175,6 +186,19 @@ export const AUSENCIAS: SituacaoEfet[] = ["falta", "atestado", "afastamento"];
 export const AUSENCIA_A_COBRIR: SituacaoEfet[] = ["falta", "atestado"];
 const JANELA_CICLO = 14;
 const TOLERANCIA = 10;
+/** Antes disto (hora de Brasília), dia de hoje sem batida não é falta: o ponto chega com atraso. */
+export const FALTA_SO_DEPOIS_DE = 12 * 60;
+/** E nem antes de passar este tanto da entrada prevista (turno da tarde/noite). */
+const FOLGA_APOS_ENTRADA = 60;
+
+/** Data (AAAA-MM-DD) e minuto do dia no horário de Brasília — a regra do meio-dia é de lá. */
+export function agoraBrasilia(agora: Date = new Date()): { data: string; minuto: number } {
+  const p = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Sao_Paulo", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23",
+  }).formatToParts(agora);
+  const v = (t: string) => p.find((x) => x.type === t)?.value ?? "00";
+  return { data: `${v("year")}-${v("month")}-${v("day")}`, minuto: +v("hour") * 60 + +v("minute") };
+}
 
 const iso = (d: Date) => d.toISOString().slice(0, 10);
 export const somaDias = (d: string, n: number) => { const x = new Date(d + "T12:00:00Z"); x.setUTCDate(x.getUTCDate() + n); return iso(x); };
@@ -208,6 +232,8 @@ export interface ColaboradorPrep {
   jornada: Jornada;
   turno: Turno;
   porDia: Map<string, number[]>;
+  /** Batidas pelo dia do CALENDÁRIO, sem agrupar por jornada (regra 7). */
+  brutoPorDia: Map<string, number[]>;
   /** Dias com batida, ordenados. */
   diasTrabalhados: string[];
   motivo: ReturnType<typeof motivoDaSituacao>;
@@ -216,10 +242,14 @@ export interface ColaboradorPrep {
 export function prepararColaborador(c: ColaboradorEfet): ColaboradorPrep {
   const jornada = interpretarEscala(c.escala ?? { descricao: null, h_semana: null });
   const batidas: Batida[] = [];
-  for (const [dia, mins] of c.dias ?? []) for (const m of mins ?? []) batidas.push([dia, m]);
+  const brutoPorDia = new Map<string, number[]>();
+  for (const [dia, mins] of c.dias ?? []) {
+    for (const m of mins ?? []) batidas.push([dia, m]);
+    if (mins?.length) brutoPorDia.set(dia, [...mins].sort((a, b) => a - b));
+  }
   const porDia = agruparPorJornada(batidas, jornada);
   const diasTrabalhados = [...porDia.entries()].filter(([, l]) => l.length > 0).map(([d]) => d).sort();
-  return { c, jornada, turno: turnoDaJornada(jornada), porDia, diasTrabalhados, motivo: motivoDaSituacao(c.situacao) };
+  return { c, jornada, turno: turnoDaJornada(jornada), porDia, brutoPorDia, diasTrabalhados, motivo: motivoDaSituacao(c.situacao) };
 }
 
 const feriadosCache = new Map<number, Map<string, string>>();
@@ -258,7 +288,19 @@ export function diaDeTrabalho(p: ColaboradorPrep, data: string): boolean {
   return dow === 6 && j.sabado;
 }
 
-export function avaliarDia(p: ColaboradorPrep, data: string, sincronizadoAte: string | null): DiaEfet {
+/**
+ * Hoje, ainda cedo demais para chamar de falta? (regra 5) — antes do meio-dia
+ * ou antes de 1h depois da entrada prevista, no horário de Brasília.
+ */
+export function cedoParaFalta(p: ColaboradorPrep, data: string, agora: Date = new Date()): boolean {
+  const { data: hoje, minuto } = agoraBrasilia(agora);
+  if (data !== hoje) return data > hoje;
+  if (minuto < FALTA_SO_DEPOIS_DE) return true;
+  const j = p.jornada;
+  return !j.flexivel && j.inicio != null && j.inicio >= 0 && minuto < j.inicio + FOLGA_APOS_ENTRADA;
+}
+
+export function avaliarDia(p: ColaboradorPrep, data: string, sincronizadoAte: string | null, agora: Date = new Date()): DiaEfet {
   const { c, jornada: j } = p;
   const base = { data, batidas: [] as number[], entrada: null as number | null, horarioPrevisto: j.inicio, atraso: 0 };
   const saiu = desligado(c.situacao) && !!c.data_afastamento && data > c.data_afastamento;
@@ -279,10 +321,15 @@ export function avaliarDia(p: ColaboradorPrep, data: string, sincronizadoAte: st
   if (!trabalhouNaJanela) return { ...base, situacao: "sem_registro", previsto: false };
 
   const deTrabalho = diaDeTrabalho(p, data);
-  if (!sincronizadoAte || data > sincronizadoAte) {
+  if (!sincronizadoAte || data > sincronizadoAte || cedoParaFalta(p, data, agora)) {
     return { ...base, situacao: deTrabalho ? "aguardando" : "folga", previsto: deTrabalho };
   }
-  if (deTrabalho) return { ...base, situacao: "falta", previsto: true };
+  if (deTrabalho) {
+    // Regra 7: bateu ao menos uma vez neste dia do calendário → não é falta.
+    const cru = p.brutoPorDia.get(data);
+    if (cru?.length) return { ...base, batidas: cru, entrada: cru[0], situacao: "presente", previsto: true };
+    return { ...base, situacao: "falta", previsto: true };
+  }
   return { ...base, situacao: !j.revezamento && feriado(data) ? "feriado" : "folga", previsto: false };
 }
 
@@ -315,7 +362,7 @@ export const ROTULO_STATUS: Record<StatusCobertura, string> = {
 
 export const ROTULO_SITUACAO: Record<SituacaoEfet, string> = {
   presente: "Presente", falta: "Falta", atestado: "Atestado", afastamento: "Afastamento",
-  ferias: "Férias", folga: "Folga", feriado: "Feriado", aguardando: "Aguardando ponto",
+  ferias: "Férias", folga: "Folga", feriado: "Feriado", aguardando: "Aguardando apuração total dos pontos da Senior",
   sem_registro: "Sem registro de ponto", fora_contrato: "Fora do contrato",
 };
 
