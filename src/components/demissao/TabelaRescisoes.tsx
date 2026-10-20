@@ -263,40 +263,33 @@ export function TabelaRescisoes({ solicitacoes, carregandoSolicitacoes, onAbrirS
               {linhas.length === 0 ? "Nenhuma rescisão por aqui ainda." : "Nada bate com o filtro atual."}
             </p>
           ) : (
+            // ENQUADRADA (20/10/2026). Eram 20 colunas, uma por coluna da
+            // planilha: a tabela passava da tela, e para chegar ao lápis / ao
+            // olho (lá no fim) era preciso descer até a barra de rolagem e
+            // arrastar pro lado. Agora as colunas da planilha viram 8 GRUPOS
+            // (quem, onde, datas, desligamento, programadas, documentos,
+            // status, ações) com rótulo pequeno em cada dado — nada some, e
+            // `table-fixed` + larguras em % fazem caber na largura da tela.
+            // O Excel exportado segue com as 20 colunas da planilha.
             <div className="overflow-x-auto">
-              <Table className="text-[13px]">
+              <Table className="min-w-[1000px] table-fixed text-[13px]">
                 <TableHeader>
-                  <TableRow className="whitespace-nowrap">
-                    <TableHead>Recebido</TableHead>
-                    <TableHead>Emp.</TableHead>
-                    <TableHead>Mat.</TableHead>
-                    <TableHead className="min-w-[200px]">Funcionário</TableHead>
-                    <TableHead className="min-w-[160px]">Contrato</TableHead>
-                    <TableHead>Homologação</TableHead>
-                    <TableHead>SST</TableHead>
-                    <TableHead>Aviso</TableHead>
-                    <TableHead>Solicitado por</TableHead>
-                    <TableHead>Último dia</TableHead>
-                    <TableHead>Demissão</TableHead>
-                    <TableHead>Pagamento</TableHead>
-                    <TableHead className="min-w-[170px]">Tipo de desl.</TableHead>
-                    <TableHead>Programadas</TableHead>
-                    <TableHead>Malote</TableHead>
-                    <TableHead>Envio doc.</TableHead>
-                    <TableHead>Retorno doc.</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead className="min-w-[160px]">Observação</TableHead>
-                    <TableHead className="w-20" />
+                  <TableRow>
+                    <TableHead className="w-[19%]">Funcionário</TableHead>
+                    <TableHead className="w-[15%]">Contrato</TableHead>
+                    <TableHead className="w-[15%]">Datas</TableHead>
+                    <TableHead className="w-[14%]">Desligamento</TableHead>
+                    <TableHead className="w-[10%]">Programadas</TableHead>
+                    <TableHead className="w-[10%]">Documentos</TableHead>
+                    <TableHead className="w-[12%]">Status</TableHead>
+                    <TableHead className="w-[5%] text-right">Ações</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {filtradas.slice(0, exibir).map((l) => (
                     <TableRow key={l.chave} className="align-top">
-                      <TableCell><DataCelula iso={l.recebido} /></TableCell>
-                      <TableCell>{l.empresa ?? "—"}</TableCell>
-                      <TableCell>{l.matricula ?? "—"}</TableCell>
                       <TableCell>
-                        <div className="font-medium">{l.nome}</div>
+                        <div className="font-medium leading-snug [overflow-wrap:anywhere]">{l.nome}</div>
                         {l.solicitacao ? (
                           <Badge variant="outline" className={cn("mt-0.5 text-[10px]", corDoStatus(l.solicitacao.status))}>
                             #{l.solicitacao.id} · {l.solicitacao.status}
@@ -304,33 +297,57 @@ export function TabelaRescisoes({ solicitacoes, carregandoSolicitacoes, onAbrirS
                         ) : (
                           <span className="text-[11px] text-muted-foreground">importada da planilha</span>
                         )}
+                        <div className="mt-1 text-[11px] text-muted-foreground">
+                          {l.empresa ?? "—"} · mat. {l.matricula ?? "—"} · recebido <DataCelula iso={l.recebido} />
+                        </div>
                       </TableCell>
-                      <TableCell className="text-xs">{l.contrato ?? "—"}</TableCell>
-                      <TableCell>{l.homologacao ?? <span className="text-muted-foreground">—</span>}</TableCell>
-                      <TableCell>{l.sstOk == null ? "—" : l.sstOk ? <span className="font-semibold text-emerald-700">OK</span> : <span className="text-amber-700">Não</span>}</TableCell>
-                      <TableCell><DataCelula iso={l.aviso} sugerido={l.sugerido.aviso} /></TableCell>
-                      <TableCell className="text-xs">{l.solicitadoPor ?? "—"}</TableCell>
-                      <TableCell><DataCelula iso={l.ultimoDia} sugerido={l.sugerido.ultimoDia} /></TableCell>
-                      <TableCell><DataCelula iso={l.demissao} sugerido={l.sugerido.demissao} /></TableCell>
-                      <TableCell><DataCelula iso={l.pagamento} sugerido={l.sugerido.pagamento} /></TableCell>
-                      <TableCell className={cn("text-xs", l.sugerido.tipo && "italic text-muted-foreground")}>{l.tipo ?? "—"}</TableCell>
-                      <TableCell className="whitespace-nowrap text-xs">
+                      <TableCell className="text-xs">
+                        <div className="[overflow-wrap:anywhere]">{l.contrato ?? "—"}</div>
+                        <div className="mt-1 text-[11px] text-muted-foreground">
+                          por <span className="text-foreground/80">{l.solicitadoPor ?? "—"}</span>
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <dl className="grid grid-cols-[auto_1fr] gap-x-2 gap-y-0.5 text-xs">
+                          <dt className="text-muted-foreground">Aviso</dt><dd><DataCelula iso={l.aviso} sugerido={l.sugerido.aviso} /></dd>
+                          <dt className="text-muted-foreground">Últ. dia</dt><dd><DataCelula iso={l.ultimoDia} sugerido={l.sugerido.ultimoDia} /></dd>
+                          <dt className="text-muted-foreground">Demissão</dt><dd><DataCelula iso={l.demissao} sugerido={l.sugerido.demissao} /></dd>
+                          <dt className="font-medium text-muted-foreground">Pagto.</dt><dd className="font-semibold"><DataCelula iso={l.pagamento} sugerido={l.sugerido.pagamento} /></dd>
+                        </dl>
+                      </TableCell>
+                      <TableCell className="text-xs">
+                        <div className={cn("leading-snug", l.sugerido.tipo && "italic text-muted-foreground")}>{l.tipo ?? "—"}</div>
+                        <div className="mt-1 text-[11px] text-muted-foreground">
+                          Homolog.: <span className="text-foreground/80">{l.homologacao ?? "—"}</span>
+                        </div>
+                        <div className="text-[11px] text-muted-foreground">
+                          SST: {l.sstOk == null ? "—" : l.sstOk ? <span className="font-semibold text-emerald-700">OK</span> : <span className="text-amber-700">Não</span>}
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-xs">
                         {l.rescisaoProgramada && l.valesProgramados
-                          ? <span className="inline-flex items-center gap-1 font-semibold text-emerald-700"><CheckCircle2 className="h-3.5 w-3.5" /> Rescisão e vales OK</span>
+                          ? <span className="inline-flex items-center gap-1 font-semibold text-emerald-700"><CheckCircle2 className="h-3.5 w-3.5 shrink-0" /> Rescisão e vales OK</span>
                           : textoProgramadas(l) || <span className="text-muted-foreground">—</span>}
+                        <div className="mt-1 text-[11px] text-muted-foreground">
+                          Malote:{" "}
+                          {l.maloteData ? <span className="text-foreground/80" title={l.maloteObs ?? undefined}>{fmtData(l.maloteData)}</span>
+                            : l.maloteObs ? <span className="text-foreground/80">{l.maloteObs}</span> : "—"}
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-xs">
+                        <div className="text-[11px] text-muted-foreground">Envio</div>
+                        <MeioData meio={l.envioMeio} data={l.envioData} obs={l.envioObs} />
+                        <div className="mt-1 text-[11px] text-muted-foreground">Retorno</div>
+                        <MeioData meio={l.retornoMeio} data={l.retornoData} obs={l.retornoObs} />
                       </TableCell>
                       <TableCell>
-                        {l.maloteData ? <span className="whitespace-nowrap text-xs" title={l.maloteObs ?? undefined}>{fmtData(l.maloteData)}</span>
-                          : l.maloteObs ? <span className="text-xs">{l.maloteObs}</span> : <span className="text-muted-foreground">—</span>}
+                        <Badge variant="outline" className={cn("whitespace-normal text-left", corStatusRescisao(l.statusRescisao))}>{l.statusRescisao}</Badge>
+                        {l.observacao && (
+                          <p className="mt-1 line-clamp-3 text-[11px] text-muted-foreground [overflow-wrap:anywhere]" title={l.observacao}>{l.observacao}</p>
+                        )}
                       </TableCell>
-                      <TableCell><MeioData meio={l.envioMeio} data={l.envioData} obs={l.envioObs} /></TableCell>
-                      <TableCell><MeioData meio={l.retornoMeio} data={l.retornoData} obs={l.retornoObs} /></TableCell>
                       <TableCell>
-                        <Badge variant="outline" className={cn("whitespace-nowrap", corStatusRescisao(l.statusRescisao))}>{l.statusRescisao}</Badge>
-                      </TableCell>
-                      <TableCell className="max-w-[220px] truncate text-xs" title={l.observacao ?? undefined}>{l.observacao ?? ""}</TableCell>
-                      <TableCell>
-                        <div className="flex gap-1">
+                        <div className="flex flex-col items-end gap-1">
                           {podeEditar && (
                             <Button variant="ghost" size="icon" className="h-8 w-8" title="Editar a rescisão" onClick={() => setEditando(l)}>
                               <Pencil className="h-4 w-4" />
