@@ -157,7 +157,17 @@ async function abrirSupabase() {
     user: cred.supabase.usuario,
     database: cred.supabase.banco ?? 'postgres',
     password: cred.supabase.senha,
-    ssl: { rejectUnauthorized: false },
+    // SSL SÓ FORA DO TÚNEL (20/10/2026). Desde a virada para o cluster
+    // (8a8688d8, 19/10) o destino é 127.0.0.1:5433, a ponta local do túnel
+    // SSH até o HAProxy — que não fala SSL. Com `ssl` fixo, toda rodada caía
+    // em "The server does not support SSL connections" desde as 16:21 de
+    // 19/10, e as batidas pararam de chegar no ERP (Gestão de Ponto mostrando
+    // o dia 19 pela metade enquanto a Flex dizia que já tinha tudo). O túnel
+    // já cifra o caminho; na Supabase (host remoto) o SSL continua.
+    // `supabase.ssl` no credenciais.json força um lado ou outro, se precisar.
+    ssl: (cred.supabase.ssl ?? !['127.0.0.1', 'localhost', '::1'].includes(cred.supabase.host))
+      ? { rejectUnauthorized: false }
+      : false,
   });
   await cliente.connect();
   return cliente;
@@ -553,7 +563,14 @@ async function cmdSincronizar() {
   // A carga leva minutos; o statement_timeout padrão do papel derrubava a
   // rodada no meio ("canceling statement due to statement timeout").
   await pgc.query(`SET LOCAL statement_timeout = '20min'`);
-  await pgc.query(`CREATE SCHEMA IF NOT EXISTS ${aspas(SCHEMA)}`);
+  // Só cria se faltar (20/10/2026). `CREATE SCHEMA IF NOT EXISTS` confere o
+  // privilégio CREATE no BANCO antes de ver que o schema existe — e o papel
+  // do cluster (`espelho_carga`) é dono do schema, não do banco, de
+  // propósito. Resultado: "permission denied for database postgres" em toda
+  // rodada, logo depois de o SSL ter sido resolvido.
+  const { rowCount: temSchema } = await pgc.query(
+    'SELECT 1 FROM pg_namespace WHERE nspname = $1', [SCHEMA]);
+  if (!temSchema) await pgc.query(`CREATE SCHEMA ${aspas(SCHEMA)}`);
   if (COMPLETO) console.log('=== COMPLETA — as tabelas incrementais também serão recarregadas inteiras ===\n');
 
   const resumo = [];
@@ -649,10 +666,18 @@ async function cmdSincronizar() {
     // Senior nunca mandou a escala para EMPREGADOS — quem trocava de escala na
     // Senior continuava com a antiga no ERP. Acerta depois de cada carga
     // (menos a rápida do ponto, que não traz as tabelas de escala).
+    // NÃO-FATAL (20/10/2026): no cluster o papel `espelho_carga` não enxerga
+    // public, de propósito, e o acerto da escala pode dar "permission denied".
+    // Como roda depois do COMMIT, as batidas já estão gravadas — derrubar a
+    // rodada por isso daria alarme de "espelho falhou" com o espelho em dia.
     if (COMMIT && !SO_TABELAS) {
-      const { rows: [esc] } = await pgc.query(
-        "SELECT CASE WHEN to_regprocedure('public.rh_sync_escala_espelho()') IS NULL THEN NULL ELSE public.rh_sync_escala_espelho() END AS n");
-      if (esc?.n != null) console.log(`  escala do colaborador (EMPREGADOS ← Senior): ${esc.n} cadastro(s) acertado(s)`);
+      try {
+        const { rows: [esc] } = await pgc.query(
+          "SELECT CASE WHEN to_regprocedure('public.rh_sync_escala_espelho()') IS NULL THEN NULL ELSE public.rh_sync_escala_espelho() END AS n");
+        if (esc?.n != null) console.log(`  escala do colaborador (EMPREGADOS ← Senior): ${esc.n} cadastro(s) acertado(s)`);
+      } catch (e) {
+        console.log(`::warning::acerto da escala (rh_sync_escala_espelho) não rodou: ${e.message} — o espelho foi gravado; falta GRANT para espelho_carga`);
+      }
     }
     if (COMMIT) await registrar(pgc, { ok: true, inicio, resumo });
   } catch (e) {
