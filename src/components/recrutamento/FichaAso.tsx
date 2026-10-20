@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { CAMPOS_ASO, EDITAVEIS_ASO, dataBrDaFicha, faltandoNaFicha, rotuloAso, type FichaAso as Ficha } from "@/lib/recrutamento/fichaAso";
+import { CAMPOS_ASO, EDITAVEIS_ASO, dataBrDaFicha, faltandoNaFicha, rotuloAso, textoChecklistAso, type FichaAso as Ficha } from "@/lib/recrutamento/fichaAso";
 import { createPortal } from "react-dom";
 import { ChevronRight, Stethoscope, X } from "lucide-react";
 
@@ -52,6 +52,17 @@ export function FichaAso({ candidatoId, editar, compacto, onMudou }: {
   }, [aberto]);
 
   const faltando = faltandoNaFicha(ficha);
+
+  const [copiado, setCopiado] = useState(false);
+  const copiarChecklist = async () => {
+    try {
+      await navigator.clipboard.writeText(textoChecklistAso(ficha));
+      setCopiado(true);
+      setTimeout(() => setCopiado(false), 2000);
+    } catch {
+      setErro("Não consegui copiar — o navegador bloqueou a área de transferência.");
+    }
+  };
 
   const salvar = async () => {
     const patch: Record<string, string | null> = {};
@@ -104,6 +115,16 @@ export function FichaAso({ candidatoId, editar, compacto, onMudou }: {
             </div>
           );
         })}
+      </div>
+
+      {/* SIS-2026-0667: o "CHECKLIST ASO" que o Recrutamento digitava no
+          WhatsApp sai pronto daqui, com os dados da ficha. */}
+      <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 8, borderTop: "1px solid #f1f5f9", paddingTop: 10 }}>
+        {!completa && <span style={{ fontSize: 11, color: "#b91c1c" }}>Os campos que faltam saem em branco.</span>}
+        <button type="button" onClick={copiarChecklist} title="Copia o checklist do ASO no formato da mensagem, para colar no WhatsApp"
+          style={{ border: "1px solid #0f3171", borderRadius: 9, background: copiado ? "#0f3171" : "#fff", color: copiado ? "#fff" : "#0f3171", fontWeight: 800, fontSize: 12, padding: "7px 12px", cursor: "pointer", fontFamily: "inherit" }}>
+          {copiado ? "✓ Copiado" : "📋 Copiar checklist ASO"}
+        </button>
       </div>
 
       {editar && faltando.length > 0 && (
