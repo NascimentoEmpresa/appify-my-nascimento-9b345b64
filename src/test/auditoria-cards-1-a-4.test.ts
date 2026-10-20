@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   fmtPercentual, relatorioSemCentro, semCentroDetalhe, totaisCentrosMalote,
-  divergenciasMaloteFluxo, maloteDiretoPorDespesa, relatorioDivergencias, totalMaloteDireto,
+  divergenciasMaloteFluxo, linhaDaOrigemDoCard, maloteDiretoPorDespesa, relatorioDivergencias, totalMaloteDireto,
   centrosAcimaDoOrcado, entradasSaidas, linkFluxoCaixa, linksDoCard, periodoDoMes, saidasFinanceiro, situacaoComparacao,
   totaisFluxoExtrato, totaisMaloteFinanceiro, VALIDACOES, type LinhaFluxoAud,
 } from "@/pages/controladoria/auditoria/regras";
@@ -28,13 +28,28 @@ describe("Auditoria — card 1 (Malote + Financeiro × Fluxo)", () => {
     expect(saidasFinanceiro(fluxo, SEM).map((l) => l.valor).sort((a, b) => a - b)).toEqual([100, 200, 300]);
   });
 
-  it("fecha: Malote direto + Financeiro = saídas de gasto do Fluxo, e aplicação fica só informativa", () => {
+  it("SIS-2026-0687: Malote + todas as origens (aplicação, cartão, débito...) = total de saídas do Fluxo", () => {
     const t = totaisMaloteFinanceiro(1500, fluxo, SEM);
-    expect(t.painel.financeiro).toBe(600);
-    expect(t.a).toBe(2100);
-    expect(t.b).toBe(2100);
+    expect(t.painel.financeiro).toBe(9600); // 9000 aplicação + 300 débito + 200 cartão + 100 importação
+    expect(t.a).toBe(11100);
+    expect(t.b).toBe(11100);
+    expect(t.painel.fluxoSaidas).toBe(11100);
     expect(t.painel.aplicacoes).toBe(9000);
-    expect(t.painel.financeiroPorOrigem[0]).toEqual({ origem: "debito_automatico", valor: 300 });
+  });
+
+  it("origens na ordem do mockup: aplicações, cartão, débito; as demais depois", () => {
+    const t = totaisMaloteFinanceiro(1500, fluxo, SEM);
+    expect(t.painel.financeiroPorOrigem).toEqual([
+      { origem: "aplicacao_financeira", valor: 9000 },
+      { origem: "cartao_fatura", valor: 200 },
+      { origem: "debito_automatico", valor: 300 },
+      { origem: "importacao_historica", valor: 100 },
+    ]);
+  });
+
+  it("o saldo anterior (passagem de saldo) não entra no total do Fluxo", () => {
+    const t = totaisMaloteFinanceiro(1500, fluxo, SEM);
+    expect(t.b).toBe(11100); // a linha de 777 "SALDO ANTERIOR" ficou de fora
   });
 
   it("diverge quando o Fluxo tem ajuste de valor no Malote", () => {
@@ -43,21 +58,22 @@ describe("Auditoria — card 1 (Malote + Financeiro × Fluxo)", () => {
     expect(t.b - t.a).toBe(100);
   });
 
-  it("aplicação importada da planilha (origem importação, classificação Aplicação Financeira) também fica fora do gasto", () => {
+  it("aplicação importada da planilha (origem importação, classificação Aplicação Financeira) soma em Aplicações Financeiras", () => {
     const comImportada = [
       ...fluxo,
       L("importacao_historica", "saida", 5000, { classificacao_nome: "Aplicação Financeira" }),
       L("importacao_historica", "saida", 4000, { classificacao_nome: "APLICACAO FINANCEIRA" }),
     ];
     const t = totaisMaloteFinanceiro(1500, comImportada, SEM);
-    expect(t.b).toBe(2100); // o total de gasto não mudou
-    expect(t.a).toBe(2100);
     expect(t.painel.aplicacoes).toBe(9000 + 5000 + 4000);
+    expect(t.a).toBe(11100 + 9000);
+    expect(t.b).toBe(11100 + 9000);
+    expect(t.painel.financeiroPorOrigem.filter((o) => o.origem === "importacao_historica")).toEqual([{ origem: "importacao_historica", valor: 100 }]);
   });
 
   it("respeita o filtro de empresa dos dois lados", () => {
     const t = totaisMaloteFinanceiro(1000, fluxo, { empresaId: "E1", contratoId: null });
-    expect(t.painel.fluxoSaidas).toBe(1600); // 1000 malote + 600 financeiro (E2 fora)
+    expect(t.painel.fluxoSaidas).toBe(10600); // 1000 malote + 9600 outras origens (a linha de 500 do malote em E2 fica fora)
   });
 });
 
@@ -258,5 +274,29 @@ describe("Auditoria — card 3: lançamentos sem centro e formato da cobertura",
     expect(fmtPercentual(0.06)).toBe("6%");
     expect(fmtPercentual(0.456)).toBe("46%");
     expect(fmtPercentual(1)).toBe("100%");
+  });
+});
+
+describe("SIS-2026-0687 — filtro de origem do Fluxo bate com o tile do card 1", () => {
+  const origens = ["aplicacao_financeira", "cartao_fatura", "debito_automatico", "importacao_historica"];
+  const comImportada = [
+    ...fluxo,
+    L("importacao_historica", "saida", 5000, { classificacao_nome: "Aplicação Financeira" }),
+  ];
+
+  it("a soma das saídas filtradas por origem é o valor do tile, para cada origem", () => {
+    const t = totaisMaloteFinanceiro(1500, comImportada, SEM);
+    for (const o of origens) {
+      const doFiltro = comImportada.filter((l) => l.tipo === "saida" && linhaDaOrigemDoCard(l, o)).reduce((s, l) => s + l.valor, 0);
+      expect(doFiltro).toBe(t.painel.financeiroPorOrigem.find((x) => x.origem === o)?.valor);
+    }
+  });
+
+  it("aplicação importada vai para Aplicações e não para Importação; saldo anterior não é de origem nenhuma", () => {
+    const aplicImportada = comImportada.find((l) => l.valor === 5000)!;
+    expect(linhaDaOrigemDoCard(aplicImportada, "aplicacao_financeira")).toBe(true);
+    expect(linhaDaOrigemDoCard(aplicImportada, "importacao_historica")).toBe(false);
+    const saldo = comImportada.find((l) => l.valor === 777)!;
+    expect(origens.some((o) => linhaDaOrigemDoCard(saldo, o))).toBe(false);
   });
 });

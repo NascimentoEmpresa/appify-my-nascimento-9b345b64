@@ -64,7 +64,7 @@ export interface PainelMaloteFluxo {
   financeiro: number;
   financeiroPorOrigem: { origem: string; valor: number }[];
   fluxoSaidas: number;
-  // Aplicação financeira é giro de caixa, não gasto: fica fora do total e aparece só como informação.
+  // SIS-2026-0687: aplicação financeira entra no total (é uma das origens do Fluxo); aqui fica o valor dela à parte.
   aplicacoes: number;
   // Despesas do Malote cujo valor no Malote e no Fluxo não é o mesmo (relatório do card 1).
   divergencias: DivergenciaMalote[];
@@ -353,10 +353,14 @@ export interface LinhaFluxoAud {
 export const ORIGEM_MALOTE = "malote";
 export const ORIGEM_APLICACAO = "aplicacao_financeira";
 export const LABEL_ORIGEM_FINANCEIRO: Record<string, string> = {
+  aplicacao_financeira: "Aplicações Financeiras",
+  cartao_fatura: "Cartão de Crédito",
   debito_automatico: "Débito Automático",
-  cartao_fatura: "Fatura de Cartão de Crédito",
   importacao_historica: "Importação (planilha de Fluxo 2026)",
 };
+
+// SIS-2026-0687: ordem em que as origens do Fluxo aparecem no card 1 (as demais vêm depois, da maior para a menor).
+const ORDEM_ORIGENS_CARD1 = [ORIGEM_APLICACAO, "cartao_fatura", "debito_automatico"];
 
 // "SALDO ANTERIOR" é a passagem de saldo do mês, não movimento.
 export const ehSaldoAnterior = (l: Pick<LinhaFluxoAud, "classificacao_nome">) => (l.classificacao_nome ?? "").trim().toUpperCase() === "SALDO ANTERIOR";
@@ -382,24 +386,42 @@ export function saidasFinanceiro(fluxo: LinhaFluxoAud[], filtro: FiltroAuditoria
   return saidasDeGasto(fluxo, filtro).filter((l) => l.origem !== ORIGEM_MALOTE);
 }
 
+// SIS-2026-0687: a linha do Fluxo faz parte da origem de um tile do card 1? É a mesma separação do total: aplicação
+// financeira (origem própria ou classificação "Aplicação Financeira" da planilha) é uma origem só, e o saldo anterior nunca
+// conta. O Fluxo de Caixa usa isto no filtro "Origem" para abrir já no que o tile somou.
+export function linhaDaOrigemDoCard(l: Pick<LinhaFluxoAud, "origem" | "classificacao_nome">, origem: string): boolean {
+  if (ehSaldoAnterior(l)) return false;
+  if (origem === ORIGEM_APLICACAO) return ehAplicacao(l);
+  return l.origem === origem && !ehAplicacao(l);
+}
+
+// SIS-2026-0687: o card 1 confere o Malote e TODAS as origens que alimentam o Fluxo (Aplicações Financeiras, Cartão de
+// Crédito, Débito Automático...) contra o TOTAL de saídas do Fluxo. Só o "saldo anterior" (passagem de saldo do mês, não
+// movimento) fica de fora. O card 3 continua sem aplicação: lá o que se compara é gasto de centro de custo.
 export function totaisMaloteFinanceiro(maloteDireto: number, fluxo: LinhaFluxoAud[], filtro: FiltroAuditoria): { a: number; b: number; painel: PainelMaloteFluxo } {
-  const gasto = saidasDeGasto(fluxo, filtro);
-  const financeiro = gasto.filter((l) => l.origem !== ORIGEM_MALOTE);
+  const saidas = fluxo.filter((l) => l.tipo === "saida" && !ehSaldoAnterior(l) && passaLinha(filtro, l));
+  const outras = saidas.filter((l) => l.origem !== ORIGEM_MALOTE);
   const porOrigem = new Map<string, number>();
-  for (const l of financeiro) porOrigem.set(l.origem, (porOrigem.get(l.origem) ?? 0) + (Number(l.valor) || 0));
+  // Aplicação financeira vira uma origem só, venha do módulo próprio ou da planilha de Fluxo importada.
+  for (const l of outras) {
+    const chave = ehAplicacao(l) ? ORIGEM_APLICACAO : l.origem;
+    porOrigem.set(chave, (porOrigem.get(chave) ?? 0) + (Number(l.valor) || 0));
+  }
   const soma = (ls: LinhaFluxoAud[]) => r2(ls.reduce((s, l) => s + (Number(l.valor) || 0), 0));
-  const aplicacoes = soma(fluxo.filter((l) => l.tipo === "saida" && ehAplicacao(l) && passaLinha(filtro, l)));
-  const totalFinanceiro = soma(financeiro);
+  const posicao = (o: string) => { const i = ORDEM_ORIGENS_CARD1.indexOf(o); return i === -1 ? ORDEM_ORIGENS_CARD1.length : i; };
+  const totalFinanceiro = soma(outras);
   return {
     a: r2(maloteDireto + totalFinanceiro),
-    b: soma(gasto),
+    b: soma(saidas),
     painel: {
       kind: "malote_fluxo",
       malote: r2(maloteDireto),
       financeiro: totalFinanceiro,
-      financeiroPorOrigem: Array.from(porOrigem.entries()).map(([origem, valor]) => ({ origem, valor: r2(valor) })).sort((x, y) => y.valor - x.valor),
-      fluxoSaidas: soma(gasto),
-      aplicacoes,
+      financeiroPorOrigem: Array.from(porOrigem.entries())
+        .map(([origem, valor]) => ({ origem, valor: r2(valor) }))
+        .sort((x, y) => posicao(x.origem) - posicao(y.origem) || y.valor - x.valor),
+      fluxoSaidas: soma(saidas),
+      aplicacoes: r2(porOrigem.get(ORIGEM_APLICACAO) ?? 0),
       divergencias: [],
     },
   };
