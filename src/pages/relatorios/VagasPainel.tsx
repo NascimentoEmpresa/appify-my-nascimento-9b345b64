@@ -29,6 +29,7 @@ import {
 } from "@/lib/relatorios/vagasPainel";
 import { rotuloMes, type Kpi } from "./sistemas";
 import { LinhaKpis, SeletorPeriodo, usePeriodo } from "./componentes";
+import { AbaAcompanhamento } from "./AcompanhamentoVagas";
 
 // =====================================================================
 // RELATÓRIOS › VAGAS — DASHBOARD (mig 20261007000020, 07/10/2026)
@@ -75,7 +76,7 @@ export default function VagasPainel() {
   // ou clicando numa linha das outras abas. ?vaga=<nº> abre direto.
   const [params, setParams] = useSearchParams();
   const vagaUrl = Number(params.get("vaga")) || null;
-  const [aba, setAba] = useState(vagaUrl ? "vaga" : "geral");
+  const [aba, setAba] = useState(vagaUrl ? "vaga" : params.get("aba") === "acompanhamento" ? "acomp" : "geral");
   const [vagaId, setVagaIdSt] = useState<number | null>(vagaUrl);
   const setVagaId = (id: number | null) => {
     setVagaIdSt(id);
@@ -111,12 +112,15 @@ export default function VagasPainel() {
         <Tabs value={aba} onValueChange={setAba}>
           <TabsList className="flex-wrap">
             <TabsTrigger value="geral">Visão geral</TabsTrigger>
+            {/* Recrutadoras, responsável atual, desistências (mig 20261020000050). */}
+            <TabsTrigger value="acomp">Acompanhamento</TabsTrigger>
             <TabsTrigger value="etapas">Tempo por etapa</TabsTrigger>
             <TabsTrigger value="abertas">Em aberto agora</TabsTrigger>
             <TabsTrigger value="vagas">Todas as vagas</TabsTrigger>
             <TabsTrigger value="vaga" className="gap-1.5"><Briefcase className="h-3.5 w-3.5" /> Por vaga</TabsTrigger>
           </TabsList>
           <TabsContent value="geral" className="space-y-4"><AbaGeral p={p} meses={periodo.meses} onRecorte={setRecorte} onAbrir={abrirVaga} /></TabsContent>
+          <TabsContent value="acomp" className="space-y-4"><AbaAcompanhamento p={p} onAbrir={abrirVaga} /></TabsContent>
           <TabsContent value="etapas" className="space-y-4"><AbaEtapas p={p} etapas={etapas} onRecorte={setRecorte} /></TabsContent>
           <TabsContent value="abertas" className="space-y-4"><AbaAbertas p={p} onAbrir={abrirVaga} /></TabsContent>
           <TabsContent value="vagas" className="space-y-4"><AbaVagas p={p} onAbrir={abrirVaga} /></TabsContent>
