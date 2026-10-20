@@ -792,7 +792,7 @@ function PainelAoVivo({ tvs, playlists, playlistId, tvInicial }: { tvs: TvDispos
   const r = telaAoVivo({ tv, itens, itensTodos, alertas, aoVivo: aoVivo.data ?? null, agora, simulacaoDesde: simulacaoDesde.current });
   const online = statusTv(tv.ultimo_ping, agora) === "online";
   const desde = aoVivo.data?.atual_desde ? Math.max(0, Math.round((agora.getTime() - new Date(aoVivo.data.atual_desde).getTime()) / 1000)) : null;
-  // TV online que não confirma o item (mig 20261020000001): player antigo — recarregar resolve.
+  // TV online que não confirma o item (mig 20261020000004): player antigo — recarregar resolve.
   const semConfirmacao = online && tv.ativo && aoVivoFresco(aoVivo.data, agora) === false;
   const mandarRecarregar = () => recarregar.mutateAsync([tv.id]).then(
     () => toast.success(`${tv.nome} recarrega em até 15 s — depois disso o ao vivo fica exato.`),
