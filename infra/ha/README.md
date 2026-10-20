@@ -202,8 +202,10 @@ senão o nome novo simplesmente não aparece no relatório.
 Nenhum valor aparece na tela e nada fica gravado nesta máquina: o arquivo
 apontado em `SEGREDOS=` vai por stdin do `ssh` direto para
 `/opt/erp/infra/failover/segredos-functions.env` nos dois nós, com `chmod 600`
-— **apague o arquivo depois**. E o segredo só vale junto com o código: as
-functions no nó são um bind mount que não se atualiza sozinho, por isso o
+— **apague o arquivo depois**. O segredo só vale junto com o código da
+function que o lê — e esse lado já é automático: no merge para a `main`, o
+`cluster_pos_merge.yml` manda os **dois** nós puxarem as functions (job
+`functions`, antes do job das migrations). À mão, quando precisar:
 `atualizar-functions-no-no.sh`.
 
 #### As duas caixas de e-mail, e onde se recupera cada senha
