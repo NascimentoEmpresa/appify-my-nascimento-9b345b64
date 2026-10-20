@@ -235,3 +235,14 @@ export function textoTodosAsos(grupos: SolicitacaoComAsos[]): string {
   }
   return blocos.join("\n\n──────────\n\n");
 }
+
+/**
+ * Identidade do AGENDAMENTO para o "Marcar como visto" (20/10/2026, mig
+ * 20261020000080): data|hora|local. Se o SST reagenda — muda qualquer um dos
+ * três —, a chave muda e o ASO volta a ser NOVO: o candidato precisa ser
+ * avisado de novo. Espaços e maiúsculas não contam (o SST redigita o local).
+ */
+export function chaveAgendamentoAso(c: Pick<AgendamentoAso, "sst_data_exame" | "sst_hora_exame" | "sst_local_exame">): string {
+  const norm = (v: unknown) => String(v ?? "").trim().replace(/\s+/g, " ").toLowerCase();
+  return [String(c.sst_data_exame ?? "").slice(0, 10), norm(c.sst_hora_exame), norm(c.sst_local_exame)].join("|");
+}

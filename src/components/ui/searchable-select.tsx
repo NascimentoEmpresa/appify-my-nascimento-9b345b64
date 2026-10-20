@@ -63,7 +63,14 @@ export function SearchableSelect({
 
   return (
     <div className={cn("relative", className)}>
-      <Popover open={open} onOpenChange={setOpen}>
+      {/* modal (20/10/2026): dentro de um Dialog a roda do mouse não rolava a
+          lista. O Dialog trava a rolagem de tudo que está fora dele, e a
+          lista é desenhada num portal — fora do Dialog. Com `modal` o próprio
+          Popover assume a trava e libera a rolagem dentro da lista (achado
+          em RH › Documentos › Solicitar, escolhendo o usuário). Fora de
+          Dialog o efeito é o mesmo de um Select: a página não rola com a
+          lista aberta. */}
+      <Popover open={open} onOpenChange={setOpen} modal>
         <PopoverTrigger asChild>
           <Button
             type="button"

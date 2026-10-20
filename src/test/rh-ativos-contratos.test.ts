@@ -205,3 +205,59 @@ describe("sugerirContrato — filiais administrativas", () => {
     expect(sugerirContrato("1053 - ADM E ESTAGIARIOS - HAGG", cts)?.id).toBe("hagg");
   });
 });
+
+// 20/10/2026 — RENDA TÉCNICA (mig 20261020000090): todo contrato tem o
+// posto RT; quem é renda técnica não ocupa vaga e sai do previsto/tem/saldo.
+import { ehPostoRT, POSTO_RT } from "@/pages/rh/conferenciaAtivos";
+
+describe("Renda técnica (RT)", () => {
+  let seq = 1000;
+  const p = (over: Partial<PessoaContrato>): PessoaContrato => ({
+    id: ++seq, cadastro: String(seq), nome: `RT ${seq}`, cargo: null, situacao: "Trabalhando",
+    conta: true, posto_senior: "X", posto: null, fora: false, origem: null, ...over,
+  });
+  const contrato = (over: Partial<ContratoAtivos>): ContratoAtivos => ({
+    id: "c", nome: "BENTO", cliente: null, encerrado: false, postos: [], pessoas: [], ...over,
+  });
+
+  it("reconhece o nome com ou sem acento/maiúscula", () => {
+    expect(ehPostoRT("RENDA TÉCNICA")).toBe(true);
+    expect(ehPostoRT("Renda tecnica")).toBe(true);
+    expect(ehPostoRT("RENDA-TECNICA")).toBe(true);
+    expect(ehPostoRT("COPEIRO 40H 5X2")).toBe(false);
+    expect(ehPostoRT(null)).toBe(false);
+  });
+
+  it("quem é RT sai do previsto/tem/saldo e não vira 'sem posto'", () => {
+    const r = conferirContrato(contrato({
+      postos: [{ nome: "COPEIRO 40H 5X2", vagas: 2 }],
+      pessoas: [
+        p({ posto: "COPEIRO 40H 5X2", origem: "posto" }),
+        p({ posto: "COPEIRO 40H 5X2", origem: "posto" }),
+        p({ posto: POSTO_RT, origem: "pessoa" }),
+        p({ posto: POSTO_RT, origem: "pessoa", situacao: "Férias", conta: false }),
+      ],
+    }));
+    expect(r.rt).toHaveLength(2);
+    expect(r).toMatchObject({ previsto: 2, tem: 2, saldo: 0, semPosto: 0, situacao: "ok" });
+    expect(r.postos.map((x) => x.nome)).toEqual(["COPEIRO 40H 5X2"]);
+    expect(r.afastados).toHaveLength(0);   // o RT de férias não conta como afastado do contrato
+  });
+
+  it("posto 'Renda técnica' que já esteja na planilha vira a linha RT (com as vagas), não um posto comum", () => {
+    const r = conferirContrato(contrato({
+      postos: [{ nome: "COPEIRO 40H 5X2", vagas: 1 }, { nome: "Renda Tecnica", vagas: 3 }],
+      pessoas: [p({ posto: "COPEIRO 40H 5X2", origem: "posto" }), p({ posto: "Renda Tecnica", origem: "posto" })],
+    }));
+    expect(r.postos.map((x) => x.nome)).toEqual(["COPEIRO 40H 5X2"]);
+    expect(r.rtPrevisto).toBe(3);
+    expect(r.rt).toHaveLength(1);
+    expect(r.previsto).toBe(1);
+  });
+
+  it("contrato sem ninguém em RT: lista vazia, conta igual", () => {
+    const r = conferirContrato(contrato({ postos: [{ nome: "A", vagas: 1 }], pessoas: [p({ posto: "A", origem: "posto" })] }));
+    expect(r.rt).toEqual([]);
+    expect(r.rtPrevisto).toBe(0);
+  });
+});

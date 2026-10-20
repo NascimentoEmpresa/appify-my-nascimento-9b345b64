@@ -180,6 +180,18 @@ export function sugerirPostos(senior: string, planilha: PostoPlanilha[]): string
   return notas.filter((x) => topo - x.nota < 0.02).slice(0, 8).map((x) => x.nome);
 }
 
+// ---- Renda Técnica (RT) — 20/10/2026, mig 20261020000090 -------------------
+// Todo contrato tem o posto RENDA TÉCNICA: quem é contratado só como renda
+// técnica é movido para lá, pessoa a pessoa, em qualquer contrato (não
+// precisa estar na Planilha de Custo). RT não ocupa vaga de posto, então
+// fica FORA do previsto/tem/saldo — aparece na linha própria.
+
+export const POSTO_RT = "RENDA TÉCNICA";
+
+/** "Renda técnica", "RENDA TECNICA", "RENDA TÉCNICA" → é RT (mesma régua do sup_norm_nome do banco). */
+export const ehPostoRT = (nome: string | null | undefined) =>
+  semAcento(nome ?? "").toUpperCase().replace(/[^A-Z0-9]/g, "") === "RENDATECNICA";
+
 // ---- Conferência -----------------------------------------------------------
 
 export type Situacao = "ok" | "falta" | "excesso";
@@ -225,6 +237,10 @@ export interface ConferenciaContrato {
   sobra: number;
   /** Afastados do contrato inteiro (não contam). */
   afastados: PessoaContrato[];
+  /** Quem é RENDA TÉCNICA neste contrato — fora do previsto/tem/saldo. */
+  rt: PessoaContrato[];
+  /** Vagas de RT, se a planilha tiver um posto "Renda técnica"; senão 0. */
+  rtPrevisto: number;
 }
 
 /**
@@ -252,7 +268,16 @@ function sugestaoUnica(nome: string, postos: PostoPlanilha[]): string | null {
 
 const porNome = (a: { nome: string }, b: { nome: string }) => a.nome.localeCompare(b.nome, "pt-BR");
 
-export function conferirContrato(c: ContratoAtivos): ConferenciaContrato {
+export function conferirContrato(cOriginal: ContratoAtivos): ConferenciaContrato {
+  // RT sai da conta antes de tudo: as pessoas RT e, se a planilha tiver um
+  // posto "Renda técnica", o posto também (vira a linha RT, com as vagas dele).
+  const rt = cOriginal.pessoas.filter((p) => !p.fora && ehPostoRT(p.posto)).sort(porNome);
+  const rtPrevisto = cOriginal.postos.filter((p) => ehPostoRT(p.nome)).reduce((s, p) => s + (p.vagas || 0), 0);
+  const c: ContratoAtivos = {
+    ...cOriginal,
+    postos: cOriginal.postos.filter((p) => !ehPostoRT(p.nome)),
+    pessoas: cOriginal.pessoas.filter((p) => p.fora || !ehPostoRT(p.posto)),
+  };
   const dentro = c.pessoas.filter((p) => !p.fora);
   const noPosto = new Map<string, PessoaContrato[]>();
   const semPosto = new Map<string, PessoaContrato[]>();
@@ -302,6 +327,7 @@ export function conferirContrato(c: ContratoAtivos): ConferenciaContrato {
     falta: postos.reduce((s, p) => s + Math.max(0, -p.saldo), 0),
     sobra: postos.reduce((s, p) => s + Math.max(0, p.saldo), 0),
     afastados: dentro.filter((p) => !p.conta).sort(porNome),
+    rt, rtPrevisto,
   };
 }
 
