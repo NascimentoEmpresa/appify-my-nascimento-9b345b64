@@ -6,6 +6,7 @@ import {
   csvDaCompra,
   explicarAlvo,
   explicarCompra,
+  faltaCronica,
   formatarDias,
   formatarMeses,
   formatarMoedaCurta,
@@ -13,6 +14,7 @@ import {
   pesoSituacao,
   recadoDoPainel,
   rotuloClasse,
+  rotuloFaltaHistorica,
   rotuloSituacao,
   type EstoqueSaudavelDados,
   type ItemEstoqueSaudavel,
@@ -74,6 +76,15 @@ function item(over: Partial<ItemEstoqueSaudavel> = {}): ItemEstoqueSaudavel {
     excesso: 0,
     cobertura_dias: 23,
     meses_sem_giro: 1,
+    giro_anual: 15.92,
+    ciclos_por_ano: 9.1,
+    reposicoes: 0,
+    ultima_reposicao: null,
+    vezes_pedido: 5,
+    vezes_faltou: 0,
+    unidades_faltaram: 0,
+    pct_falta: 0,
+    ultima_falta: null,
     ultima_saida: "2026-09-15",
     ultimo_pedido: "2026-09-01",
     valor_unitario: 70,
@@ -322,5 +333,82 @@ describe("csvDaCompra", () => {
     const linha = csv.split("\r\n")[1];
     expect(linha).toContain("26,55");
     expect(linha).toContain("1050,5");
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* Histórico de falta — o pedido de 20/10/2026                        */
+/* ------------------------------------------------------------------ */
+
+describe("rotuloFaltaHistorica", () => {
+  it("não diz nada quando o item nunca faltou", () => {
+    expect(rotuloFaltaHistorica(item({ vezes_faltou: 0, vezes_pedido: 5 }))).toBeNull();
+  });
+
+  it("conta as vezes e o percentual", () => {
+    expect(rotuloFaltaHistorica(item({ vezes_faltou: 2, vezes_pedido: 5, pct_falta: 40 }))).toBe(
+      "Já faltou 2 de 5 pedidos (40%)",
+    );
+  });
+
+  it("concorda em número com um pedido só", () => {
+    expect(rotuloFaltaHistorica(item({ vezes_faltou: 1, vezes_pedido: 1, pct_falta: 100 }))).toBe(
+      "Já faltou 1 de 1 pedido (100%)",
+    );
+  });
+});
+
+describe("faltaCronica", () => {
+  it("exige repetição E proporção — cada critério sozinho mente", () => {
+    // 1 falta em 1 pedido dá 100%, e não é crônico: é um caso.
+    expect(faltaCronica(item({ vezes_faltou: 1, vezes_pedido: 1, pct_falta: 100 }))).toBe(false);
+    // 2 faltas em 90 pedidos é ruído de operação.
+    expect(faltaCronica(item({ vezes_faltou: 2, vezes_pedido: 90, pct_falta: 2.2 }))).toBe(false);
+    // 2 faltas em 5 pedidos é alvo errado.
+    expect(faltaCronica(item({ vezes_faltou: 2, vezes_pedido: 5, pct_falta: 40 }))).toBe(true);
+  });
+
+  it("item que nunca faltou não é crônico", () => {
+    expect(faltaCronica(item())).toBe(false);
+  });
+});
+
+describe("recadoDoPainel com falta histórica", () => {
+  const base = {
+    itens_planejados: 10,
+    valor_em_estoque: 0,
+    unidades_em_estoque: 0,
+    dinheiro_parado: 0,
+    valor_morto: 0,
+    unidades_mortas: 0,
+    itens_em_falta: 0,
+    itens_a_repor: 0,
+    itens_em_excesso: 0,
+    itens_saudaveis: 0,
+    itens_mortos: 0,
+    unidades_a_comprar: 0,
+    valor_a_comprar: 0,
+    itens_que_faltaram: 0,
+    pedidos_nao_atendidos: 0,
+    itens_sem_preco: 0,
+    alvos_aprovados: 0,
+    cobertura_media_dias: null,
+    demanda_mensal_total: 0,
+    demanda_fora_de_escopo: 0,
+    primeiro_movimento: null,
+  };
+  const painel = (resumo: Partial<typeof base>) =>
+    ({ resumo: { ...base, ...resumo } }) as EstoqueSaudavelDados;
+
+  it("sem aperto hoje, cobra o alvo de quem já deixou pedido na mão", () => {
+    expect(recadoDoPainel(painel({ itens_que_faltaram: 4, valor_morto: 9000 }))).toMatch(
+      /4 tamanhos já deixaram pedido sem atendimento/,
+    );
+  });
+
+  it("falta de hoje continua vindo antes da falta do passado", () => {
+    expect(
+      recadoDoPainel(painel({ itens_em_falta: 2, itens_que_faltaram: 9 })),
+    ).toMatch(/sem nenhuma peça em casa/);
   });
 });

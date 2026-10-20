@@ -2,20 +2,17 @@ import { useMemo, useState } from "react";
 import {
   AlertTriangle,
   Banknote,
-  BrainCircuit,
   CalendarClock,
   CheckCircle2,
   Download,
   Info,
   Loader2,
   PackageX,
-  Send,
   ShoppingCart,
   Sparkles,
   Timer,
   TrendingDown,
 } from "lucide-react";
-import ReactMarkdown from "react-markdown";
 import { toast } from "sonner";
 import {
   Bar,
@@ -49,6 +46,11 @@ import { Tooltip as Dica, TooltipContent, TooltipProvider, TooltipTrigger } from
 import { Card, CardContent } from "@/components/ui/card";
 import { AcessoGate } from "@/components/auth/AcessoGate";
 import {
+  ChamadaChatEstoque,
+  ChatEstoqueIA,
+  type PedidoExternoChat,
+} from "@/components/suprimentos/dashboard/ChatEstoqueIA";
+import {
   AZUL_MAGNITUDE,
   CINZA_GRADE,
   CabecalhoTabela,
@@ -61,13 +63,11 @@ import {
   formatarEixoMoeda,
 } from "@/components/suprimentos/dashboard/PainelBase";
 import {
-  useAnaliseEstoqueIA,
   useEstoqueSaudavel,
   useFecharMesEstoque,
   useSalvarPoliticaEstoque,
   useSalvarPremissasEstoque,
   type LinhaPolitica,
-  type MsgIaEstoque,
 } from "@/hooks/useEstoqueSaudavel";
 import { formatarMoeda, formatarNumero } from "@/lib/suprimentos/dashboardComprasEstoque";
 import {
@@ -78,6 +78,7 @@ import {
   csvDaCompra,
   explicarAlvo,
   explicarCompra,
+  faltaCronica,
   formatarDias,
   formatarMeses,
   formatarMoedaCurta,
@@ -85,6 +86,7 @@ import {
   pesoSituacao,
   recadoDoPainel,
   rotuloClasse,
+  rotuloFaltaHistorica,
   rotuloSituacao,
   type EstoqueSaudavelDados,
   type FiltroEstoqueSaudavel,
@@ -155,6 +157,11 @@ export function EstoqueSaudavel({
   const [situacao, setSituacao] = useState("problema");
   const [busca, setBusca] = useState("");
   const [premissasAbertas, setPremissasAbertas] = useState(false);
+  const [pedidoChat, setPedidoChat] = useState<PedidoExternoChat>({
+    texto: "",
+    modo: "pergunta",
+    seq: 0,
+  });
 
   const filtroCompleto: FiltroEstoqueSaudavel = { ...filtros, contratoId };
   const { data: dados, isLoading, isFetching, error } = useEstoqueSaudavel(empresaId, filtroCompleto);
@@ -250,7 +257,14 @@ export function EstoqueSaudavel({
 
       {dados.alertas.length > 0 && <Alertas alertas={dados.alertas} />}
 
-      <PainelIaEstoque empresaId={empresaId} filtros={filtroCompleto} dados={dados} />
+      {/* A faixa descobre o assistente para quem está lendo a tabela; o chat
+          flutuante é onde a conversa acontece. As duas partes compartilham o
+          mesmo disparo (`pedidoChat`) para não existirem duas caixas de IA. */}
+      <ChamadaChatEstoque
+        onPerguntar={(texto, modo) =>
+          setPedidoChat((p) => ({ texto, modo, seq: p.seq + 1 }))
+        }
+      />
 
       {/* ---- Gráficos ---- */}
       <div className="grid gap-3 xl:grid-cols-[1.25fr_0.75fr]">
@@ -347,6 +361,13 @@ export function EstoqueSaudavel({
         fechar={() => setPremissasAbertas(false)}
         dados={dados}
         empresaId={empresaId}
+      />
+
+      <ChatEstoqueIA
+        empresaId={empresaId}
+        filtros={filtroCompleto}
+        dados={dados}
+        pedidoExterno={pedidoChat}
       />
     </div>
   );
@@ -778,6 +799,7 @@ function TabelaItens({
                   <CabecalhoTabela alinhar="right">Pedir em</CabecalhoTabela>
                   <CabecalhoTabela alinhar="right">Alvo saudável</CabecalhoTabela>
                   <CabecalhoTabela alinhar="right">Comprar</CabecalhoTabela>
+                  <CabecalhoTabela alinhar="center">Já faltou</CabecalhoTabela>
                   <CabecalhoTabela alinhar="right">Parado R$</CabecalhoTabela>
                   <CabecalhoTabela alinhar="center">Classe</CabecalhoTabela>
                   <CabecalhoTabela>Situação</CabecalhoTabela>
@@ -839,6 +861,7 @@ function LinhaItem({
 }) {
   const desconfianca = motivosDeDesconfianca(item);
   const atrasado = chegaAtrasado(item);
+  const faltaDoItem = rotuloFaltaHistorica(item);
 
   return (
     <tr className="border-b last:border-0 align-middle hover:bg-slate-50">
@@ -885,6 +908,43 @@ function LinhaItem({
       </td>
       <td className="px-3 py-1.5 text-right font-bold">
         {item.comprar > 0 ? formatarNumero(item.comprar) : "—"}
+      </td>
+      {/* Histórico de falta. Fica ao lado de "Comprar" porque é o argumento de
+          quem decide a quantidade: item que já deixou pedido na mão merece
+          alvo maior, mesmo que hoje esteja "Saudável". */}
+      <td className="px-3 py-1.5 text-center">
+        {faltaDoItem ? (
+          <Dica>
+            <TooltipTrigger asChild>
+              <span
+                className={cn(
+                  "cursor-default rounded px-1.5 py-0.5 text-[11px] font-bold",
+                  faltaCronica(item)
+                    ? "bg-rose-100 text-rose-700"
+                    : "bg-amber-100 text-amber-700",
+                )}
+              >
+                {item.vezes_faltou}×
+              </span>
+            </TooltipTrigger>
+            <TooltipContent className="max-w-[300px] text-xs">
+              <p>{faltaDoItem}</p>
+              {item.ultima_falta && (
+                <p>
+                  Última vez em{" "}
+                  {new Date(`${item.ultima_falta}T12:00:00`).toLocaleDateString("pt-BR")}.
+                </p>
+              )}
+              {faltaCronica(item) && (
+                <p className="font-semibold">
+                  Falta crônica: o alvo deste tamanho está baixo para a demanda real.
+                </p>
+              )}
+            </TooltipContent>
+          </Dica>
+        ) : (
+          <span className="text-slate-300">—</span>
+        )}
       </td>
       <td className="px-3 py-1.5 text-right">
         {item.valor_excesso > 0 ? (
@@ -1328,148 +1388,3 @@ function DialogPremissas({
   );
 }
 
-/* ================================================================== */
-/* Painel da I.A                                                      */
-/* ================================================================== */
-
-/**
- * A IA LÊ o painel; ela não calcula quantidade. O texto de apoio no cabeçalho
- * diz isso ao usuário de propósito: o gerente vai levar esse número para uma
- * negociação de volume, e precisa saber que a quantidade saiu de uma fórmula
- * auditável, não de um modelo de linguagem.
- */
-function PainelIaEstoque({
-  empresaId,
-  filtros,
-  dados,
-}: {
-  empresaId: string | null;
-  filtros: FiltroEstoqueSaudavel;
-  dados: EstoqueSaudavelDados;
-}) {
-  const ia = useAnaliseEstoqueIA();
-  const [analise, setAnalise] = useState<string | null>(null);
-  const [conversa, setConversa] = useState<MsgIaEstoque[]>([]);
-  const [pergunta, setPergunta] = useState("");
-
-  if (!empresaId) return null;
-  const base = {
-    empresaId,
-    janelaMeses: filtros.janelaMeses,
-    contratoId: filtros.contratoId,
-    categoria: filtros.categoria,
-    almoxarifadoId: filtros.almoxarifadoId,
-  };
-
-  const gerar = async () => {
-    try {
-      setAnalise(await ia.mutateAsync({ ...base, modo: "analise" }));
-    } catch (e) {
-      toast.error((e as Error).message);
-    }
-  };
-
-  const perguntar = async () => {
-    const q = pergunta.trim();
-    if (!q) return;
-    setPergunta("");
-    const historico = conversa;
-    setConversa([...historico, { role: "user", content: q }]);
-    try {
-      const resposta = await ia.mutateAsync({
-        ...base,
-        modo: "pergunta",
-        pergunta: q,
-        historico,
-      });
-      setConversa((c) => [...c, { role: "assistant", content: resposta }]);
-    } catch (e) {
-      toast.error((e as Error).message);
-      setConversa(historico);
-      setPergunta(q);
-    }
-  };
-
-  return (
-    <Card className="border-violet-200 bg-gradient-to-br from-violet-50/70 to-background p-4">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="min-w-0">
-          <p className="flex items-center gap-1.5 text-sm font-bold">
-            <BrainCircuit className="h-4 w-4 text-violet-600" /> Leitura com I.A — planejamento de
-            estoque
-          </p>
-          <p className="text-xs text-muted-foreground">
-            As quantidades são calculadas pelo sistema, por fórmula de reposição — a I.A lê esses
-            números e escreve a análise. Ela não inventa nem arredonda quantidade: o que não está no
-            painel, ela diz que não sabe.
-          </p>
-        </div>
-        <Button
-          size="sm"
-          className="gap-1.5 bg-violet-600 hover:bg-violet-700"
-          disabled={ia.isPending}
-          onClick={gerar}
-        >
-          {ia.isPending && !conversa.length ? (
-            <Loader2 className="h-4 w-4 animate-spin" />
-          ) : (
-            <Sparkles className="h-4 w-4" />
-          )}
-          {analise ? "Gerar de novo" : "Analisar o estoque"}
-        </Button>
-      </div>
-
-      {analise && (
-        <div className="prose prose-sm mt-3 max-w-none rounded-lg border bg-background p-4 prose-headings:mb-1 prose-headings:mt-3 prose-h2:text-base prose-ul:my-1">
-          <ReactMarkdown>{analise}</ReactMarkdown>
-        </div>
-      )}
-
-      <div className="mt-3 space-y-2">
-        {conversa.map((m, i) => (
-          <div
-            key={i}
-            className={cn(
-              "max-w-[90%] rounded-xl px-3 py-2 text-sm",
-              m.role === "user" ? "ml-auto bg-violet-600 text-white" : "border bg-background",
-            )}
-          >
-            {m.role === "assistant" ? (
-              <div className="prose prose-sm max-w-none">
-                <ReactMarkdown>{m.content}</ReactMarkdown>
-              </div>
-            ) : (
-              m.content
-            )}
-          </div>
-        ))}
-        {ia.isPending && conversa.length > 0 && (
-          <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
-            <Loader2 className="h-3.5 w-3.5 animate-spin" /> Pensando…
-          </p>
-        )}
-        <form
-          className="flex gap-2"
-          onSubmit={(e) => {
-            e.preventDefault();
-            perguntar();
-          }}
-        >
-          <Input
-            value={pergunta}
-            onChange={(e) => setPergunta(e.target.value)}
-            placeholder={
-              dados.resumo.itens_em_falta > 0
-                ? "Ex.: o que comprar primeiro para ninguém ficar sem uniforme?"
-                : "Ex.: onde vale fechar volume maior com o fornecedor?"
-            }
-            className="bg-background"
-          />
-          <Button type="submit" size="icon" disabled={ia.isPending || !pergunta.trim()} title="Perguntar">
-            <Send className="h-4 w-4" />
-          </Button>
-        </form>
-      </div>
-    </Card>
-  );
-}

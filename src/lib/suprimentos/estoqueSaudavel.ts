@@ -74,6 +74,25 @@ export interface ItemEstoqueSaudavel {
   excesso: number;
   cobertura_dias: number | null;
   meses_sem_giro: number | null;
+  /** Quantas vezes o estoque deste item se renova por ano. */
+  giro_anual: number | null;
+  /**
+   * Quantas compras por ano o modelo exige. Referência, não ranking: como o
+   * alvo é consumo × (prazo + ciclo), este número é ~365/(prazo+ciclo) para
+   * todo item sem estoque de segurança. Para "o que reponho mais seguido",
+   * use `reposicoes`.
+   */
+  ciclos_por_ano: number | null;
+  /** Reposições que de fato aconteceram na janela (entradas, agrupadas por dia). */
+  reposicoes: number;
+  ultima_reposicao: string | null;
+  /** Pedidos deste item avaliados desde que há baixa por item registrada. */
+  vezes_pedido: number;
+  /** Quantos desses pedidos o estoque NÃO conseguiu atender. */
+  vezes_faltou: number;
+  unidades_faltaram: number;
+  pct_falta: number | null;
+  ultima_falta: string | null;
   ultima_saida: string | null;
   ultimo_pedido: string | null;
 
@@ -125,6 +144,56 @@ export interface LinhaLiquidar {
   sem_preco: boolean;
 }
 
+export interface LinhaRanking {
+  item: string;
+  tamanho: string | null;
+  situacao?: SituacaoEstoque;
+  disponivel?: number;
+  demanda_mensal?: number;
+  cobertura_dias?: number | null;
+  /* mais_roda */
+  giro_anual?: number | null;
+  /* repor_mais_seguido */
+  reposicoes_na_janela?: number;
+  dias_entre_reposicoes?: number | null;
+  ultima_reposicao?: string | null;
+  ciclos_por_ano_modelo?: number | null;
+  alvo?: number;
+  comprar?: number;
+  /* mais_faltou */
+  vezes_faltou?: number;
+  vezes_pedido?: number;
+  pct_falta?: number | null;
+  unidades_faltaram?: number;
+  ultima_falta?: string | null;
+  /* mais_acumulado */
+  excesso?: number;
+  valor_excesso?: number;
+  valor_em_estoque?: number;
+  meses_sem_giro?: number | null;
+  sem_preco?: boolean;
+  /* comprar_urgente */
+  em_transito?: number;
+  valor_comprar?: number;
+  lead_time_dias?: number;
+}
+
+export interface RankingsEstoque {
+  mais_roda: LinhaRanking[];
+  repor_mais_seguido: LinhaRanking[];
+  mais_faltou: LinhaRanking[];
+  mais_acumulado: LinhaRanking[];
+  comprar_urgente: LinhaRanking[];
+  /**
+   * Desde quando dá para afirmar que um pedido "faltou": a data do primeiro
+   * movimento de almoxarifado. Antes dela nenhum pedido tem baixa por item
+   * registrada, então todos pareceriam não atendidos. `null` = empresa sem
+   * movimento nenhum, e o ranking de falta vem vazio.
+   */
+  falta_contada_desde: string | null;
+  pedidos_avaliados: number;
+}
+
 export interface MesEstoque {
   mes: string;
   rotulo: string;
@@ -174,6 +243,9 @@ export interface EstoqueSaudavelDados {
     itens_mortos: number;
     unidades_a_comprar: number;
     valor_a_comprar: number;
+    /** Itens que JÁ deixaram pedido sem atendimento — histórico, não hoje. */
+    itens_que_faltaram: number;
+    pedidos_nao_atendidos: number;
     itens_sem_preco: number;
     alvos_aprovados: number;
     cobertura_media_dias: number | null;
@@ -181,6 +253,15 @@ export interface EstoqueSaudavelDados {
     demanda_fora_de_escopo: number;
     primeiro_movimento: string | null;
   };
+  /**
+   * Topos calculados sobre o CATÁLOGO INTEIRO, no banco.
+   *
+   * Existem para o assistente poder responder "qual item mais/menos ..." — a
+   * lista `itens` vai truncada para o prompt da I.A, e um topo tirado de
+   * amostra é resposta errada com cara de certa. Ao acrescentar pergunta
+   * pronta no chat, confira se há ranking que a sustente.
+   */
+  rankings: RankingsEstoque;
   itens: ItemEstoqueSaudavel[];
   compra_por_familia: FamiliaCompra[];
   liquidar: LinhaLiquidar[];
@@ -311,6 +392,34 @@ export function motivosDeDesconfianca(item: ItemEstoqueSaudavel): string[] {
 }
 
 /**
+ * "Já faltou 2 de 5 pedidos (40%)" — ou `null` quando nunca faltou.
+ *
+ * É a informação que a coluna "Situação" NÃO dá. Um tamanho que deixou dois
+ * pedidos sem atendimento no semestre e foi reposto ontem aparece como
+ * "Saudável" na tabela, e é, no ano, um dos que mais travaram a operação. O
+ * gerente pediu exatamente isto: "qual item tem faltado muito nos pedidos
+ * solicitados e precisamos comprar urgentemente".
+ */
+export function rotuloFaltaHistorica(item: ItemEstoqueSaudavel): string | null {
+  if (!item.vezes_faltou || item.vezes_faltou <= 0) return null;
+  const pct = item.pct_falta ?? 0;
+  return `Já faltou ${item.vezes_faltou} de ${item.vezes_pedido} ${
+    item.vezes_pedido === 1 ? "pedido" : "pedidos"
+  } (${pct.toLocaleString("pt-BR", { maximumFractionDigits: 0 })}%)`;
+}
+
+/**
+ * Falta crônica: faltou várias vezes E em boa parte dos pedidos.
+ *
+ * Os dois critérios juntos, porque cada um sozinho mente: 1 falta em 1 pedido
+ * dá 100% e não é crônico, e 2 faltas em 90 pedidos é ruído de operação. Com
+ * 2+ faltas e 25%+ dos pedidos, o alvo do item está errado — não é azar.
+ */
+export function faltaCronica(item: ItemEstoqueSaudavel): boolean {
+  return (item.vezes_faltou ?? 0) >= 2 && (item.pct_falta ?? 0) >= 25;
+}
+
+/**
  * Quantos dias de operação o item ainda cobre, contando o que está vindo.
  *
  * Diferente de `cobertura_dias`, que olha só o que está em casa. Esta é a
@@ -398,6 +507,13 @@ export function recadoDoPainel(dados: EstoqueSaudavelDados): string {
   }
   if (r.itens_a_repor > 0) {
     return `${r.itens_a_repor} ${r.itens_a_repor === 1 ? "item está" : "itens estão"} abaixo do ponto de pedido — comprar antes de faltar.`;
+  }
+  // Nada apertado hoje não quer dizer nada apertado no ano. Se já houve pedido
+  // sem atendimento, é isso que merece a linha — o alvo desses itens é que
+  // está errado, e eles não aparecem em nenhuma das duas situações acima.
+  if ((r.itens_que_faltaram ?? 0) > 0) {
+    const n = r.itens_que_faltaram;
+    return `Nada em falta agora, mas ${n} ${n === 1 ? "tamanho já deixou" : "tamanhos já deixaram"} pedido sem atendimento — reveja o alvo deles.`;
   }
   if (r.valor_morto > 0) {
     return `Nada em falta. Sobram ${formatarMoedaCurta(r.valor_morto)} em itens sem giro para liquidar.`;
