@@ -28,7 +28,7 @@ import {
 } from "lucide-react";
 import { useEfetBase, useEfetOcorrencias } from "@/hooks/useEfetividade";
 import {
-  avaliarTodos, chaveContrato, chavePosto, fmtDataBR, linkTel, linkWhatsapp, somaDias, ROTULO_SITUACAO, ROTULO_STATUS, ROTULO_TURNO,
+  agoraBrasilia, avaliarTodos, chaveContrato, chavePosto, fmtDataBR, linkTel, linkWhatsapp, somaDias, FALTA_SO_DEPOIS_DE, ROTULO_SITUACAO, ROTULO_STATUS, ROTULO_TURNO,
   type ContratoEfet, type EstadoCobertura, type LinhaDia, type SituacaoEfet, type StatusContrato, type StatusCobertura, type Turno,
 } from "@/lib/efetividade";
 
@@ -222,13 +222,34 @@ export function AvisoSincronizacao({ data, sincAte }: { data: string | null; sin
       </Card>
     );
   }
+  // Hoje (20/10/2026): o espelho roda de 10 em 10 min, mas a Senior importa
+  // as batidas com atraso — até o meio-dia ninguém vira falta pelo relógio.
+  const agora = agoraBrasilia();
+  if (data === agora.data && data <= sincAte) {
+    const antesDoMeioDia = agora.minuto < FALTA_SO_DEPOIS_DE;
+    return (
+      <Card className="mb-4 flex items-start gap-3 border-warning/40 bg-warning/5 p-3 text-sm">
+        <Clock className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
+        <div className="space-y-1">
+          <p className="font-semibold text-warning">Os pontos da Senior chegam com atraso na importação.</p>
+          <p>
+            {antesDoMeioDia
+              ? <>Até o <b>meio-dia</b>, quem a escala espera e ainda não tem batida aparece como <b>Aguardando apuração total dos pontos da Senior</b> — não como falta.</>
+              : <>Já passou do meio-dia: quem a escala espera e não tem nenhuma batida hoje conta como <b>falta</b> (o turno que ainda não começou segue aguardando até 1h depois da entrada).</>}
+            {" "}Uma batida no dia já basta para não ser falta. As faltas avisadas (encarregado, WhatsApp) entram por{" "}
+            <b>Faltas e Coberturas › Registrar falta</b> e já contam aqui.
+          </p>
+        </div>
+      </Card>
+    );
+  }
   if (data <= sincAte) return null;
   return (
     <Card className="mb-4 flex items-start gap-3 border-warning/40 bg-warning/5 p-3 text-sm">
       <Clock className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
       <p>
-        O ponto da Senior chega no ERP uma vez por dia e vai até <b>{fmtDataBR(sincAte)}</b>. Em <b>{fmtDataBR(data)}</b> ninguém
-        é marcado como faltoso pelo relógio — quem a escala espera aparece como <b>aguardando ponto</b>. As faltas avisadas
+        Os pontos da Senior chegam com atraso na importação e por enquanto vão até <b>{fmtDataBR(sincAte)}</b>. Em <b>{fmtDataBR(data)}</b> ninguém
+        é marcado como faltoso pelo relógio — quem a escala espera aparece como <b>Aguardando apuração total dos pontos da Senior</b>. As faltas avisadas
         (encarregado, WhatsApp) entram por <b>Faltas e Coberturas › Registrar falta</b> e já contam aqui.
       </p>
     </Card>
@@ -389,8 +410,10 @@ const COR_SITUACAO: Record<SituacaoEfet, string> = {
 
 export function BadgeSituacao({ s }: { s: SituacaoEfet }) {
   return (
-    <span className={cn("inline-flex items-center gap-1 whitespace-nowrap rounded-md border px-2 py-0.5 text-xs font-semibold", COR_SITUACAO[s])}>
-      <span className="h-1.5 w-1.5 rounded-full bg-current" />{ROTULO_SITUACAO[s]}
+    // "Aguardando apuração total dos pontos da Senior" não cabe no selo de
+    // uma linha da tabela: o selo mostra o começo e o texto todo fica no title.
+    <span title={ROTULO_SITUACAO[s]} className={cn("inline-flex items-center gap-1 whitespace-nowrap rounded-md border px-2 py-0.5 text-xs font-semibold", COR_SITUACAO[s])}>
+      <span className="h-1.5 w-1.5 rounded-full bg-current" />{s === "aguardando" ? "Aguardando apuração" : ROTULO_SITUACAO[s]}
     </span>
   );
 }

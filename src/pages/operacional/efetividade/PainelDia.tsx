@@ -149,7 +149,7 @@ export default function PainelDia() {
                   <LinhaResumo icon={CalendarCheck2} cor="text-muted-foreground" r="Folgas" v={r.folgas} />
                   <LinhaResumo icon={UserMinus} cor="text-orange-600" r="Afastamentos" v={r.afastamentos} />
                   <LinhaResumo icon={RefreshCw} cor="text-warning" r="Coberturas" v={coberturas} />
-                  <LinhaResumo icon={Clock} cor="text-warning" r="Aguardando ponto" v={r.aguardando} />
+                  <LinhaResumo icon={Clock} cor="text-warning" r="Aguardando apuração da Senior" v={r.aguardando} />
                   <LinhaResumo icon={Clock} cor="text-warning" r="Atrasos" v={r.atrasos} />
                   <LinhaResumo icon={Fingerprint} cor="text-muted-foreground" r="Sem registro de ponto" v={r.semRegistro}
                     dica="Ativos sem nenhuma batida em 14 dias — não usam o relógio; ficam fora do efetivo." />
