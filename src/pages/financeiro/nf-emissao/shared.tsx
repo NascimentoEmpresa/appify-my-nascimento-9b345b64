@@ -130,11 +130,14 @@ export function moneyTextContains(valor: number, termo: string): boolean {
   return fmtMoney(valor).toLowerCase().includes(termo.trim().toLowerCase());
 }
 
-export function pendenteHaMaisDe30Dias(n: { situacao_site_pmt?: string | null; situacao_dominio?: string | null; data_pagamento?: string | null; data_emissao?: string | null }): boolean {
+// SIS-2026-0690: mesmo critério de sempre (pendente e emitida há mais de N dias), agora com N escolhido na tela.
+export function pendenteHaMaisDeDias(n: { situacao_site_pmt?: string | null; situacao_dominio?: string | null; data_pagamento?: string | null; data_emissao?: string | null }, limite: number): boolean {
   if (statusDaNota(n) !== "pendente") return false;
   const dias = diasDesdeEmissao(n.data_emissao);
-  return dias !== null && dias > 30;
+  return dias !== null && dias > limite;
 }
+
+export const pendenteHaMaisDe30Dias = (n: Parameters<typeof pendenteHaMaisDeDias>[0]): boolean => pendenteHaMaisDeDias(n, 30);
 
 // Achado real (Ruan): nota Cancelada/Substituída nunca vai ter pagamento —
 // contava como "pendente de receber" em todo lugar que soma isso, inflando

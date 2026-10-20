@@ -8,7 +8,8 @@ import { ListChecks, TrendingUp, CheckCircle2, AlertTriangle, PieChart as PieCha
 import { cn } from "@/lib/utils";
 import { useEmpresasGrupo } from "@/hooks/useMaloteDespesa";
 import { NfEmissaoItemRow, TipoNota, TIPOS_NOTA, useItensNfEmissaoEmLote, useNfsEmissao } from "@/hooks/useNfEmissao";
-import { fmtMoney, statusDaNota, foraDoRelatorio, naoContabilizaKpi, pendenteHaMaisDe30Dias, valorPendenteNf, StatusNota } from "@/pages/financeiro/nf-emissao/shared";
+import { fmtMoney, statusDaNota, foraDoRelatorio, naoContabilizaKpi, pendenteHaMaisDeDias, valorPendenteNf, StatusNota } from "@/pages/financeiro/nf-emissao/shared";
+import { FiltroPendenciaDias } from "./FiltroPendenciaDias";
 
 const STATUS_LABEL: Record<StatusNota, string> = {
   pago: "Pago",
@@ -46,7 +47,7 @@ export default function DashboardRelatorioServicos() {
   const [filtroCompetencia, setFiltroCompetencia] = useState("");
   const [filtroStatus, setFiltroStatus] = useState<StatusNota | "todos">("todos");
   const [filtroCodigo, setFiltroCodigo] = useState<TipoNota | "todos">("todos");
-  const [filtroOver30, setFiltroOver30] = useState(false);
+  const [filtroPendDias, setFiltroPendDias] = useState<number | null>(null);
 
   const competencias = useMemo(() => {
     const base = filtroEmpresa ? nfs.filter((n) => n.empresa_id === filtroEmpresa) : nfs;
@@ -60,10 +61,10 @@ export default function DashboardRelatorioServicos() {
       if (filtroCompetencia && n.competencia !== filtroCompetencia) return false;
       if (filtroStatus !== "todos" && statusDaNota(n) !== filtroStatus) return false;
       if (filtroCodigo !== "todos" && n.tipo_nota !== filtroCodigo) return false;
-      if (filtroOver30 && !pendenteHaMaisDe30Dias(n)) return false;
+      if (filtroPendDias !== null && !pendenteHaMaisDeDias(n, filtroPendDias)) return false;
       return true;
     });
-  }, [nfs, filtroEmpresa, filtroCompetencia, filtroStatus, filtroCodigo, filtroOver30]);
+  }, [nfs, filtroEmpresa, filtroCompetencia, filtroStatus, filtroCodigo, filtroPendDias]);
 
   const { data: itensPorNf } = useItensNfEmissaoEmLote(linhas.map((n) => n.id));
 
@@ -187,15 +188,7 @@ export default function DashboardRelatorioServicos() {
             {(Object.keys(TIPOS_NOTA) as TipoNota[]).map((t) => <SelectItem key={t} value={t}>{t}</SelectItem>)}
           </SelectContent>
         </Select>
-        <button
-          onClick={() => setFiltroOver30((v) => !v)}
-          className={cn(
-            "px-2.5 py-1.5 rounded-full border font-medium transition-colors",
-            filtroOver30 ? "bg-primary text-primary-foreground border-primary" : "bg-background border-border text-muted-foreground hover:border-primary/50"
-          )}
-        >
-          Pendente há mais de 30 dias
-        </button>
+        <FiltroPendenciaDias valor={filtroPendDias} onChange={setFiltroPendDias} />
         <span className="text-muted-foreground ml-auto">Códigos: N · R · M · DH</span>
       </div>
 
