@@ -326,6 +326,8 @@ import PainelDesenvolvedorChamados from "./pages/chamados/PainelDesenvolvedor";
 import DashboardDesenvolvedorChamados from "./pages/chamados/DashboardDesenvolvedor";
 import GithubPainelDev from "./pages/chamados/GithubPainel";
 import ConferenciaPontoEncarregado from "./pages/encarregados/ConferenciaPontoEncarregado";
+import DocumentosEncarregado from "./pages/encarregados/DocumentosEncarregado";
+import DocumentosRh from "./pages/rh/DocumentosRh";
 import ExecutarChamado from "./pages/chamados/ExecutarChamado";
 import AcompanharChamado from "./pages/chamados/AcompanharChamado";
 import WhatsAppInbox from "./pages/whatsapp/WhatsAppInbox";
@@ -522,6 +524,8 @@ const App = () => (
             <Route path="encarregados/diarias" element={<ControleDiarias menuCodigo="encarregados_diarias" />} />
             {/* Conferência de Ponto dos encarregados (mig 20261007000023): a etapa começa aqui. */}
             <Route path="encarregados/conferencia-ponto" element={<ConferenciaPontoEncarregado />} />
+            {/* Documentos que o RH pede ao encarregado (mig 20261019000040). */}
+            <Route path="encarregados/documentos" element={<DocumentosEncarregado />} />
             {/* Operacional — Controle de Diárias */}
             <Route path="operacional" element={<Navigate to="/app/operacional/diarias" replace />} />
             <Route path="operacional/diarias" element={<ControleDiarias />} />
@@ -867,6 +871,7 @@ const App = () => (
             <Route path="rh/ativos-contratos" element={<AtivosContratos />} />
             {/* Hierarquia de postos da Senior (mig 20261007000024). */}
             <Route path="rh/hierarquia-postos" element={<HierarquiaPostos />} />
+            <Route path="rh/documentos" element={<DocumentosRh />} />
             {/* Rateio de Despesas (mig 20261016000010, SIS-2026-0673): Jus Brasil, Senior e despesas lidas do PDF, por contrato. */}
             <Route path="rh/rateio-despesas" element={<RateioDespesas />} />
             {/* Gestão de Ponto (branch local gestaoponto, mig 20261007000001): marcações da Senior por colaborador. */}
