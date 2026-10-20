@@ -349,6 +349,31 @@ interface AlvoConflito {
 }
 
 /**
+ * A solicitação ainda reserva aquele faltante/diarista naquele turno?
+ *
+ * Quatro estados dizem que não, e é deliberado que DOIS deles venham do
+ * Malote. Depois de aprovada a diária não decide mais o próprio destino: se a
+ * despesa foi cancelada ou reprovada lá, nenhum pagamento vai acontecer e a
+ * escala está livre — mesmo com a diária ainda marcada 'aprovada' aqui.
+ *
+ * Foi exatamente essa a falha do SIS-2026-0601: a PR #808 fez a tela MOSTRAR
+ * "Cancelada" (via statusExibicaoDiaria) sem ninguém ensinar a regra de
+ * duplicidade a olhar o mesmo campo. O usuário lia "Cancelada" na lista e
+ * continuava impedido de lançar de novo; só um DELETE escrito à mão por um
+ * dev soltava cada caso.
+ *
+ * Espelha `diaria_ocupa_escala()` da migration 20261020000100 — e é a cópia
+ * que vale menos: o front fala direto com o Supabase pela anon key, então
+ * aqui é só o aviso enquanto a pessoa digita. Os dois têm que mudar juntos, e
+ * é isso que src/test/diarias-conflito.test.ts trava.
+ */
+export const ocupaEscala = (s: Pick<SolicitacaoDiaria, "status" | "maloteStatus">) =>
+  s.status !== "reprovada" &&
+  s.status !== "excluida" &&
+  s.maloteStatus !== "cancelada" &&
+  s.maloteStatus !== "despesa_reprovada";
+
+/**
  * Retorna, por índice de linha, o conflito encontrado — dentro da própria
  * solicitação e contra as solicitações já lançadas (mesma data e turno
  * equivalente, para o mesmo faltante e/ou diarista).
@@ -384,10 +409,10 @@ export function avaliarConflitos(
 
     // Contra o que já está lançado.
     for (const s of existentes) {
-      // Reprovada e excluída não ocupam escala: nenhuma das duas vira
-      // pagamento, e barrar por causa delas impediria justamente o
-      // relançamento corrigido. Mesma regra de diaria_linha_valida() no banco.
-      if (s.status === "reprovada" || s.status === "excluida") continue;
+      // Nenhum dos quatro estados terminais vira pagamento, e barrar por causa
+      // deles impediria justamente o relançamento corrigido. Mesma regra de
+      // diaria_linha_valida() no banco.
+      if (!ocupaEscala(s)) continue;
       const mesmoFaltante = !!faltante && soDigitos(s.faltanteCpf) === faltante;
       const mesmoDiarista = !!diarista && soDigitos(s.diaristaCpf) === diarista;
       if (!mesmoFaltante && !mesmoDiarista) continue;

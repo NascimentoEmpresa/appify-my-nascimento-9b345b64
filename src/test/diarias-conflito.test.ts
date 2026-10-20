@@ -116,6 +116,79 @@ describe("avaliarConflitos", () => {
     expect(r[0]).toBeNull();
   });
 
+  /**
+   * SIS-2026-0601 — os dois estados que vêm do Malote.
+   *
+   * Depois de aprovada a diária não decide mais o próprio destino. A PR #808
+   * fez a tela mostrar "Cancelada" mas deixou a regra de duplicidade olhando
+   * só o status próprio, que continua 'aprovada': a lista dizia cancelada e o
+   * lançamento novo era recusado assim mesmo.
+   */
+  it("despesa CANCELADA no Malote libera a escala, mesmo com a diária 'aprovada'", () => {
+    const r = avaliarConflitos(
+      {
+        faltanteCpf: "529.982.247-25",
+        diaristaCpf: "111.444.777-35",
+        linhas: [{ data: "2026-08-10", turno: "manha" }],
+      },
+      [solicitacao({ status: "aprovada", maloteStatus: "cancelada" })],
+    );
+    expect(r[0]).toBeNull();
+  });
+
+  it("despesa REPROVADA no Malote libera a escala, mesmo com a diária 'aprovada'", () => {
+    const r = avaliarConflitos(
+      {
+        faltanteCpf: "529.982.247-25",
+        diaristaCpf: "111.444.777-35",
+        linhas: [{ data: "2026-08-10", turno: "manha" }],
+      },
+      [solicitacao({ status: "aprovada", maloteStatus: "despesa_reprovada" })],
+    );
+    expect(r[0]).toBeNull();
+  });
+
+  /**
+   * Controle negativo: só os DOIS estados terminais sem pagamento liberam.
+   * Qualquer etapa intermediária do Malote ainda vai virar dinheiro na conta
+   * de alguém, e liberar a escala ali pagaria a mesma escala duas vezes.
+   */
+  it("etapa intermediária do Malote CONTINUA ocupando a escala", () => {
+    const r = avaliarConflitos(
+      {
+        faltanteCpf: "529.982.247-25",
+        diaristaCpf: "111.444.777-35",
+        linhas: [{ data: "2026-08-10", turno: "manha" }],
+      },
+      [solicitacao({ status: "aprovada", maloteStatus: "aguardando_pagamento" })],
+    );
+    expect(r[0]?.tipo).toBe("ambos");
+  });
+
+  it("despesa PAGA continua ocupando a escala — o dinheiro já saiu", () => {
+    const r = avaliarConflitos(
+      {
+        faltanteCpf: "529.982.247-25",
+        diaristaCpf: "111.444.777-35",
+        linhas: [{ data: "2026-08-10", turno: "manha" }],
+      },
+      [solicitacao({ status: "aprovada", maloteStatus: "despesa_paga" })],
+    );
+    expect(r[0]?.tipo).toBe("ambos");
+  });
+
+  it("aprovada sem despesa vinculada continua ocupando a escala", () => {
+    const r = avaliarConflitos(
+      {
+        faltanteCpf: "529.982.247-25",
+        diaristaCpf: "111.444.777-35",
+        linhas: [{ data: "2026-08-10", turno: "manha" }],
+      },
+      [solicitacao({ status: "aprovada", maloteStatus: null })],
+    );
+    expect(r[0]?.tipo).toBe("ambos");
+  });
+
   it("solicitação em ajuste CONTINUA ocupando a escala — ela vai voltar", () => {
     const r = avaliarConflitos(
       {

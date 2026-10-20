@@ -144,8 +144,13 @@ jobs:
         run: |
           set -euo pipefail
           if [ "$EVENTO" = "schedule" ] && [ "$AGENDA" = "*/10 * * * *" ]; then
-            # Rápida do ponto: só as batidas, desde ontem.
-            node espelho.mjs sincronizar --commit --tabelas BiMarcacoes --dias 1
+            # Rápida: as batidas desde ontem + o cadastro (BiSituacoes e
+            # BiEmpregados, ~13 mil linhas, segundos). Desde 20/10/2026 o
+            # EMPREGADOS é atualizado DENTRO do banco a partir destas duas
+            # (rh_sync_senior_pelo_espelho, pg_cron de 15 em 15 min, mig
+            # 20261020000110) — o robô integracao-senior do Discloud saiu.
+            # Sem elas aqui, a situação (atestado, férias…) só andaria 1x/dia.
+            node espelho.mjs sincronizar --commit --tabelas BiSituacoes,BiEmpregados,BiMarcacoes --dias 1
           elif [ "$EVENTO" = "schedule" ]; then
             # A execução diária é sempre a carga completa e definitiva.
             node espelho.mjs sincronizar --commit
