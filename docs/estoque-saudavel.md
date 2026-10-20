@@ -18,6 +18,70 @@ Aba nova em **Suprimentos › Dashboard de Compras, Estoque e Saving**
 | "mês a mês a IA ia analisando e dizendo a hora de diminuir, porque foi trocado o quadro" | Gráfico **Mês a mês** + fechamento mensal automático (dia 1º) |
 | "os contratos que a gente já tem hoje… contrato novo vai ter que fazer um pedido pra aquele contrato específico" | Só contrato **ativo** entra na conta; o que ficou de fora aparece como alerta |
 
+Pedido complementar de **20/10/2026**, depois de ver a primeira versão:
+
+| Pedido | Onde está |
+|---|---|
+| "um lugar nessa tela onde eu pudesse perguntar coisas para a IA" / "um chatbot no canto da tela com caixinha de pergunta" | Botão **Perguntar à I.A**, canto inferior direito |
+| "perguntas prontas" | 7 chips no chat e uma faixa no corpo da página |
+| "qual item mais roda no meu estoque?" | pergunta pronta **O que mais roda?** |
+| "qual item eu devo comprar reposição mais seguidamente?" | pergunta pronta **Reponho mais seguido?** |
+| "qual item tem faltado muito nos pedidos solicitados e precisamos comprar urgentemente?" | pergunta pronta **O que mais faltou?** + coluna **Já faltou** na tabela |
+| "qual item não sai muito ficando acumulado no estoque?" | pergunta pronta **O que está acumulando?** |
+
+## O assistente: perguntar à I.A
+
+No canto inferior direito da aba há o botão **Perguntar à I.A** (com um número
+vermelho quando há tamanho em falta). Ele abre um chat com **perguntas prontas**
+e uma caixa para escrever a sua:
+
+| Pergunta pronta | O que ela usa |
+|---|---|
+| **Análise completa** | o painel inteiro, em seções |
+| **O que mais roda?** | giro anual: quantas vezes o estoque de cada item se renova por ano |
+| **Reponho mais seguido?** | as reposições que **de fato aconteceram** na janela |
+| **O que mais faltou?** | histórico de pedidos que o estoque não conseguiu atender |
+| **O que está acumulando?** | excesso e item sem giro, pelo valor parado |
+| **Dinheiro parado** | excesso em item que gira × item sem giro, separados |
+| **Onde barganhar preço** | compra sugerida somada por família |
+
+As mesmas perguntas aparecem numa faixa no corpo da página, para quem está
+lendo a tabela não precisar procurar o botão.
+
+**As perguntas prontas não são atalhos de digitação.** Cada uma tem um ranking
+calculado no banco sobre o **catálogo inteiro**. Isso importa porque a lista de
+itens que a I.A recebe é truncada (o catálogo todo não cabe no prompt), e um
+"qual item mais roda" respondido sobre uma amostra seria uma resposta errada com
+cara de certa. Se alguém acrescentar pergunta pronta no futuro, precisa conferir
+se existe ranking que a sustente.
+
+### "O que mais faltou" é diferente de "o que está faltando"
+
+A coluna **Situação** mostra o estoque de **hoje**. O ranking de falta mostra o
+**histórico**: quantas vezes aquele tamanho foi pedido e o almoxarifado não
+conseguiu entregar.
+
+São coisas diferentes, e a diferença é o ponto. Um tamanho que deixou dois
+pedidos na mão no semestre e foi reposto ontem aparece como **"Saudável"** na
+tabela — e é, no ano, um dos que mais travaram a operação. A tabela tem a coluna
+**"Já faltou"** justamente para isso; em vermelho quando a falta é crônica (duas
+ou mais vezes **e** em 25% ou mais dos pedidos — os dois critérios juntos, porque
+1 falta em 1 pedido dá 100% e não é crônico, e 2 faltas em 90 pedidos é ruído).
+
+A contagem só vale **a partir de quando o almoxarifado passou a registrar baixa
+por item** (04/08/2026 na matriz). Antes disso nenhum pedido tem registro de
+consumo, então todos pareceriam não atendidos. O chat sempre diz desde quando
+está contando.
+
+### "Reponho mais seguido" usa reposição real, não fórmula
+
+A conta teórica (consumo anual ÷ alvo) **não serve** para esse ranking: como o
+alvo *é* consumo × (prazo + ciclo), ela devolve 365 ÷ (prazo + ciclo) — o mesmo
+número, ~9 vezes por ano, para todo item sem estoque de segurança. Daria um
+ranking plano que pareceria resposta e não era. Então o ranking conta as
+**entradas de estoque que aconteceram** (entradas no mesmo dia contam como uma
+reposição: receber um pedido em três caixas é um reabastecimento, não três).
+
 ## A decisão mais importante: a I.A não calcula quantidade
 
 A quantidade sai de **fórmula de reposição, no banco de dados**, igual toda vez
@@ -130,6 +194,12 @@ ordem:
 2. `supabase/migrations/20261020000021_sup_estoque_saudavel_rpc.sql` — a conta
 3. `supabase/migrations/20261020000022_sup_estoque_saudavel_gravar.sql` —
    gravação e o agendamento do dia 1º
+4. `supabase/migrations/20261020000023_sup_estoque_saudavel_rankings.sql` — os
+   rankings que o assistente usa
+
+A 23 redefine a função da 21 por inteiro (é `CREATE OR REPLACE`), então rodar as
+quatro em ordem funciona tanto num banco que nunca viu nenhuma delas quanto num
+que já tenha rodado as três primeiras.
 
 Depois, a Edge Function da análise:
 

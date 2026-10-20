@@ -151,6 +151,12 @@ function compactar(painel: Record<string, unknown>): Record<string, unknown> {
     resumo: painel.resumo,
     alertas: painel.alertas,
     evolucao: painel.evolucao,
+    // Os RANKINGS vão INTEIROS e primeiro. São dez linhas cada, calculadas
+    // pelo banco sobre o catálogo TODO, e são a única fonte correta para as
+    // perguntas de "qual item mais/menos ..." — a amostra abaixo não serve,
+    // porque um topo tirado de amostra é uma resposta errada com cara de
+    // certa. Cortar daqui para economizar prompt reintroduz esse erro.
+    rankings: painel.rankings,
     compra_por_familia: Array.isArray(painel.compra_por_familia)
       ? (painel.compra_por_familia as unknown[]).slice(0, 25)
       : [],
@@ -179,6 +185,15 @@ COMO O NÚMERO FOI FEITO (explique assim se perguntarem):
 - ABC = onde está o dinheiro (A = 80% do valor consumido). XYZ = previsibilidade (X regular, Z irregular).
 - "dinheiro parado" = valor acima do alvo em itens que giram. "valor morto" = valor de item sem giro no prazo das premissas. São números SEPARADOS, nunca some os dois.
 
+OS RANKINGS (campo "rankings") — USE SEMPRE QUE A PERGUNTA FOR "QUAL ITEM MAIS/MENOS …":
+Eles são calculados sobre o catálogo INTEIRO. A lista de itens ("amostra_itens") é só uma amostra — NUNCA monte um "qual item mais…" a partir dela.
+- rankings.mais_roda → "qual item mais roda no estoque": ordenado por giro anual (quantas vezes o estoque do item se renova por ano). Piso: 5 peças em casa e 3/mês de consumo, para não premiar item de 1 peça.
+- rankings.repor_mais_seguido → "qual item eu reponho mais seguidamente": ordenado pelas reposições QUE ACONTECERAM na janela (entradas de estoque; entradas do mesmo dia contam como uma). "ciclos_por_ano_modelo" é referência teórica, NÃO é o critério — não ranqueie por ele.
+- rankings.mais_faltou → "qual item mais faltou nos pedidos": histórico de pedidos que o estoque NÃO conseguiu atender, contado desde "falta_contada_desde" (quando o almoxarifado passou a registrar baixa por item). NÃO é a situação de hoje: um item que faltou 15 vezes e foi reposto ontem aparece como "saudável" na tabela e ainda assim é o maior problema. Sempre cite desde quando a contagem vale.
+- rankings.mais_acumulado → "qual item não sai e está acumulado": excesso e item sem giro, pelo valor parado, com há quantos meses não gira.
+- rankings.comprar_urgente → o que comprar primeiro: quem está sem peça agora, do maior consumo para o menor, com o histórico de falta ao lado.
+Se um ranking vier vazio, diga que não há caso na janela — não preencha com item da amostra.
+
 REGRAS DURAS:
 - NUNCA invente nem recalcule quantidade, valor ou preço. Use exatamente os números do JSON. Se quiser sugerir quantidade diferente da calculada, diga que é uma sugestão para a pessoa aprovar na tela, e por quê.
 - Se um dado não está no JSON, diga que o painel não mostra. Não estime.
@@ -186,7 +201,13 @@ REGRAS DURAS:
 - Item sem preço cadastrado fica fora do valor — se "itens_sem_preco" for maior que zero, avise que o valor está subestimado.
 - Respeite os alertas: "historico_curto" significa alvo provisório; "demanda_irregular" (classe Z) significa alvo inflado pelo colchão, que vale conferir antes de comprar.
 - Português do Brasil, direto, frases curtas, sem jargão técnico e sem falar de JSON, SQL ou nome de tabela/coluna.
-- Markdown simples: ## nos títulos, "-" nas listas, **negrito** no essencial. Sempre cite o número junto da afirmação.`;
+- Markdown simples: ## nos títulos, "-" nas listas, **negrito** no essencial. Sempre cite o número junto da afirmação.
+
+RESPOSTA A PERGUNTA SOLTA (modo conversa):
+- Vá direto ao ponto: comece pela resposta, não por preâmbulo. No máximo ~12 linhas, salvo se pedirem detalhe.
+- Liste no máximo 5 itens, com o nome, o tamanho e o número que sustenta a posição.
+- Feche com UMA frase de recomendação prática.
+- Se a pergunta não tiver nada a ver com estoque, diga que só sabe responder sobre este painel.`;
 
 const PEDIDO_ANALISE = `Escreva a análise deste painel, nesta ordem:
 
@@ -194,10 +215,13 @@ const PEDIDO_ANALISE = `Escreva a análise deste painel, nesta ordem:
 3 a 5 linhas: quanto temos em estoque, quantos dias isso cobre no consumo de hoje, e o que está em falta agora.
 
 ## Risco de parar gente
-Os itens que podem deixar colaborador sem uniforme (falta e a repor), do mais grave ao menos. Diga o tamanho, quantos dias de cobertura restam e quanto comprar.
+Use rankings.comprar_urgente. Os itens que podem deixar colaborador sem uniforme, do mais grave ao menos: tamanho, dias de cobertura restantes e quanto comprar. Quando o item também aparecer em rankings.mais_faltou, diga quantas vezes ele já faltou — é o que mostra que o problema é crônico e não de hoje.
+
+## O que mais roda e o que eu reponho mais seguido
+Use rankings.mais_roda e rankings.repor_mais_seguido. Dois ou três de cada, com o número. Aponte onde vale comprar em lote maior para reduzir o número de compras no ano.
 
 ## Dinheiro parado e o que vender
-Separe os dois: excesso sobre o alvo em item que gira, e item sem giro (morto). Diga o valor de cada um e liste os maiores, com há quantos meses não giram.
+Use rankings.mais_acumulado. Separe os dois: excesso sobre o alvo em item que gira, e item sem giro (morto). Diga o valor de cada um e liste os maiores, com há quantos meses não giram.
 
 ## Compra sugerida
 O total e as famílias com maior volume — é o que dá poder de negociação com o fornecedor. Diga onde vale fechar volume maior.
