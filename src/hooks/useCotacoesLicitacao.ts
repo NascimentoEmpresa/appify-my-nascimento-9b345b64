@@ -2,6 +2,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useEmpresaAtiva } from "@/context/EmpresaAtivaContext";
 import { useAuth } from "@/hooks/useAuth";
+import { emLotes } from "@/lib/emLotes";
 
 export type CotacaoStatus = "pendente" | "visualizado" | "respondido";
 export type LadoCotacao = "solicitacao" | "resposta";
@@ -128,15 +129,18 @@ export function useCotacoesLicitacao() {
 
       // Uma query só para todos os anexos da página, agrupada no cliente —
       // evita N+1 conforme o histórico cresce.
-      const { data: anexos, error: erroAnexos } = await sb
-        .from("cotacoes_licitacao_arquivo")
-        .select("*")
-        .in("cotacao_id", cotacoes.map((c) => c.id))
-        .order("created_at", { ascending: true });
-      if (erroAnexos) throw erroAnexos;
+      // Em lotes de 40 ids: com o histórico inteiro no `.in()` a URL passava de ~4 KB e o gateway do cluster
+      // respondia 502, deixando a tela em "Carregando…". Os anexos de uma cotação ficam todos no mesmo lote,
+      // então a ordem por created_at dentro de cada cotação se mantém.
+      const anexos = await emLotes<AnexoCotacao>(
+        cotacoes.map((c) => c.id),
+        40,
+        (lote) => sb.from("cotacoes_licitacao_arquivo").select("*").in("cotacao_id", lote).order("created_at", { ascending: true }),
+        4,
+      );
 
       const porCotacao = new Map<string, AnexoCotacao[]>();
-      for (const a of (anexos ?? []) as AnexoCotacao[]) {
+      for (const a of anexos) {
         if (!porCotacao.has(a.cotacao_id)) porCotacao.set(a.cotacao_id, []);
         porCotacao.get(a.cotacao_id)!.push(a);
       }
