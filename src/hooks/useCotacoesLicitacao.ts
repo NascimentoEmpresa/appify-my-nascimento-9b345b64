@@ -128,6 +128,13 @@ export function useCotacoesLicitacao() {
 
       // Uma query só para todos os anexos da página, agrupada no cliente —
       // evita N+1 conforme o histórico cresce.
+      //
+      // (20/10/2026) Duas correções do mesmo 502 entraram juntas na `main`
+      // pelo merge b686fa58 — os lotes de 40 ids (651a2669) e a query sem
+      // filtro abaixo (60b3609f) — e as duas declaravam `anexos`, quebrando
+      // o build de produção. Fica só a sem filtro: URL de tamanho fixo e uma
+      // ida ao banco só, em vez de uma por lote.
+
       // 20/10/2026 — O `.in("cotacao_id", ...)` QUE ESTAVA AQUI DERRUBAVA A
       // TELA EM PRODUÇÃO, com 502 em toda visita.
       //
@@ -156,6 +163,7 @@ export function useCotacoesLicitacao() {
         .select("*")
         .order("created_at", { ascending: true });
       if (erroAnexos) throw erroAnexos;
+
 
       const porCotacao = new Map<string, AnexoCotacao[]>();
       for (const a of (anexos ?? []) as AnexoCotacao[]) {
