@@ -432,6 +432,79 @@ jobs:
           echo "apontados podem ser anteriores à sua mudança — corrija os que"
           echo "vieram com ela."
 
+
+  # ---------------------------------------------------------------------
+  # Dois arquivos de migration com o MESMO número de versão
+  #
+  # O aplicador (infra/ha/no-aplicar-migrations.sh) registra por VERSÃO em
+  # supabase_migrations.schema_migrations, que tem a versão como chave
+  # primária. Com duas migrations no mesmo número, UMA DELAS NUNCA ENTRA NO
+  # BANCO — e sem erro nenhum, porque a segunda vê a versão já registrada e
+  # considera que não há o que fazer.
+  #
+  # O aplicador já detecta isso, mas só na hora de aplicar: o merge sai
+  # verde, a migration fica no repositório parecendo aplicada, e o problema
+  # aparece dias depois, na próxima janela de deploy, com o banco parado no
+  # meio da fila. Aconteceu três vezes em dois dias (19 e 20/10/2026, esta
+  # última duas vezes seguidas) — sempre o mesmo mecanismo: alguém cria a
+  # branch, outro renumera na main, e os dois ficam com o mesmo número.
+  #
+  # Este job antecipa a mesma checagem para a PR, onde o conserto é um
+  # `git mv` e não uma janela de deploy perdida.
+  #
+  # O CORTE é o mesmo do aplicador e existe pelo mesmo motivo: a base tem
+  # 254 pares duplicados de antes de 18/10/2026, herdados da era em que o
+  # Lovable gerava o nome. Cobrar a história inteira deixaria TODO merge
+  # vermelho — e alarme que nasce sempre ligado vira fita adesiva em cima do
+  # alto-falante.
+  migrations:
+    name: migrations
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: github.event_name == 'pull_request' && github.repository == 'NascimentoEmpresa/appify-my-nascimento-9b345b64'
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+      - name: Número de versão repetido
+        env:
+          # Mesmo valor-padrão de infra/ha/no-aplicar-migrations.sh. Mudar um
+          # sem mudar o outro faz a PR passar e o aplicador parar.
+          CORTE: '20261018999999'
+        run: |
+          set -euo pipefail
+          DIR=supabase/migrations
+          VISTOS=$(mktemp); DUPES=$(mktemp)
+          while IFS= read -r -d '' F; do
+            B=$(basename "$F")
+            case "$B" in [0-9]*) ;; *) continue ;; esac
+            V=$(printf '%s' "$B" | sed -E 's/^([0-9]+).*/\1/')
+            [ "$V" \> "$CORTE" ] || continue
+            printf '%s\n' "$V" >> "$VISTOS"
+          done < <(find "$DIR" -maxdepth 1 -name '*.sql' -print0)
+
+          TOTAL=$(wc -l < "$VISTOS" | tr -d ' ')
+          LC_ALL=C sort "$VISTOS" | uniq -d > "$DUPES"
+
+          if [ ! -s "$DUPES" ]; then
+            echo "OK: $TOTAL migrations acima de $CORTE, nenhum número repetido."
+            exit 0
+          fi
+
+          echo "::error::Há migrations diferentes com o MESMO número de versão."
+          echo
+          echo "Uma delas NUNCA entraria no banco, e sem erro nenhum."
+          echo
+          while read -r V; do
+            [ -n "$V" ] || continue
+            find "$DIR" -maxdepth 1 -name "${V}_*.sql" -printf '   %f\n'
+          done < "$DUPES"
+          echo
+          echo "Conserto: renomeie com 'git mv' a que chegou depois, para o"
+          echo "primeiro número livre. Quem já pode ter entrado no banco"
+          echo "mantém o número — confira a data dos commits com:"
+          echo "   git log --format='%h %ad %s' --date=short -1 -- <arquivo>"
+          exit 1
 # ---------------------------------------------------------------------------
 # Sobre o lint
 #

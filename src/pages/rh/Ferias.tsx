@@ -10,6 +10,26 @@ import { ResumoDeFuncoes } from "@/components/fluxos/ResumoDeFuncoes";
 // mesmo padrão de comite-etica/db.ts — a exceção fica num lugar só.
 const db = supabase as unknown as SupabaseClient;
 
+/** Teto de linhas que o servidor devolve numa consulta só. */
+const PAGINA = 1000;
+
+/**
+ * Busca TODAS as linhas, de PAGINA em PAGINA, até vir uma página incompleta.
+ * `montar(de, ate)` monta a consulta de novo a cada página (o builder do
+ * supabase-js só executa uma vez).
+ */
+async function todasAsPaginas<T>(
+  montar: (de: number, ate: number) => PromiseLike<{ data: T[] | null; error: { message: string } | null }>,
+): Promise<{ data: T[]; error: { message: string } | null }> {
+  const tudo: T[] = [];
+  for (let de = 0; ; de += PAGINA) {
+    const { data, error } = await montar(de, de + PAGINA - 1);
+    if (error) return { data: tudo, error };
+    tudo.push(...(data ?? []));
+    if (!data || data.length < PAGINA) return { data: tudo, error: null };
+  }
+}
+
 interface SolicitacaoFerias {
   id: number;
   status: string;
@@ -122,18 +142,28 @@ export default function Ferias() {
   // ── Carregar lista + stats ──────────────────────────────────────────
   const carregar = useCallback(async () => {
     setLoading(true);
-    let q = db.from("SISTEMA_SOLICITACOES_FERIAS").select("*").order("criado_em", { ascending: false }).limit(200);
-    if (statusFilter) q = q.eq("status", statusFilter);
-    if (busca.trim()) q = q.or(`colaborador_nome.ilike.%${busca.trim()}%,solicitante_nome.ilike.%${busca.trim()}%`);
-    const { data, error } = await q;
+    // TODAS as solicitações, em páginas (20/10/2026). Era `.limit(200)`: com
+    // 257 no banco, as 57 mais antigas sumiam da lista e da contagem do
+    // "Filtros · Contratos" (o TJRS mostrava menos do que tinha). Página de
+    // 1000 = o teto que o servidor devolve por consulta; `id` desempata a
+    // ordem para nenhuma linha cair entre duas páginas.
+    const { data, error } = await todasAsPaginas<SolicitacaoFerias>((de, ate) => {
+      let q = db.from("SISTEMA_SOLICITACOES_FERIAS").select("*")
+        .order("criado_em", { ascending: false }).order("id", { ascending: false }).range(de, ate);
+      if (statusFilter) q = q.eq("status", statusFilter);
+      if (busca.trim()) q = q.or(`colaborador_nome.ilike.%${busca.trim()}%,solicitante_nome.ilike.%${busca.trim()}%`);
+      return q;
+    });
     setLoading(false);
     if (error) { toast("Erro ao carregar: " + error.message, "err"); return; }
-    setRows(data ?? []);
+    setRows(data);
   }, [statusFilter, busca, toast]);
 
   const carregarStats = useCallback(async () => {
-    const { data } = await db.from("SISTEMA_SOLICITACOES_FERIAS").select("status").limit(2000);
-    if (!data) return;
+    // Mesma coisa nos cartões do topo: `.limit(2000)` parava em 1000 (teto do servidor).
+    const { data, error } = await todasAsPaginas<{ status: string }>((de, ate) =>
+      db.from("SISTEMA_SOLICITACOES_FERIAS").select("status").order("id").range(de, ate));
+    if (error) return;
     const m: Record<string, number> = { total: data.length };
     for (const r of data) m[r.status] = (m[r.status] ?? 0) + 1;
     setStats(m);

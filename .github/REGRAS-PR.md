@@ -358,6 +358,35 @@ Se a PR tem migration, o comentário precisa dizer isso **em destaque**, e
 listar os arquivos. Sem esse aviso, a PR é aprovada, mergeada, e o recurso
 simplesmente não existe em produção — porque ninguém rodou o SQL.
 
+### J8.A — Número de versão repetido (o CI já pega)
+
+Duas migrations com o **mesmo número** fazem uma delas **nunca entrar no
+banco, e sem erro nenhum**: o aplicador registra por versão em
+`supabase_migrations.schema_migrations`, onde a versão é chave primária, e a
+segunda vê o número já registrado e conclui que não há o que fazer.
+
+Aconteceu três vezes em dois dias (19 e 20/10/2026, esta última duas vezes
+seguidas). O mecanismo é sempre o mesmo: alguém cria a branch, outro renumera
+na `main`, e os dois ficam com o mesmo número — nenhum dos dois erra sozinho.
+
+O job `migrations` do `ci.yml` reprova a PR nesse caso, então **o revisor não
+precisa conferir isso à mão**. O que vale conferir é o conserto, quando a PR
+for justamente a renumeração: quem renumera é a migration que **chegou
+depois**; a que está no número há mais tempo pode já ter sido aplicada e
+mantém o número. A data resolve:
+
+```
+git log --format='%h %ad %s' --date=short -1 -- supabase/migrations/<arquivo>
+```
+
+Renomear migration já mergeada normalmente esbarra na **R4**. Aqui é a
+exceção legítima: é o único conserto possível, e é o que o próprio aplicador
+manda fazer. A PR precisa dizer isso.
+
+O corte (`20261018999999`) é deliberado e igual ao do aplicador: a base tem
+254 pares duplicados anteriores, herdados da era em que o Lovable gerava o
+nome. Cobrar a história inteira deixaria todo merge vermelho.
+
 ---
 
 ## Falsos positivos que o revisor NÃO pode acusar
