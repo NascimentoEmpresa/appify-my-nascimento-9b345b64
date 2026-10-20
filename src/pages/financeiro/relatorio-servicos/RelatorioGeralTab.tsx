@@ -17,7 +17,8 @@ import { useEmpresasGrupo } from "@/hooks/useMaloteDespesa";
 import { useBaseFaturamento } from "@/pages/controladoria/faturamento/useBaseFaturamento";
 import { totaisDoRelatorio } from "./totais";
 import { NfEmissaoRow, TipoNota, TIPOS_NOTA, useEnviarNfsParaLixeira, useExcluirNfsEmissaoEmLote, useItensNfEmissaoEmLote, useNfsEmissao, useNfsEmissaoLixeira, useRestaurarNfsDaLixeira } from "@/hooks/useNfEmissao";
-import { fmtMoney, fmtDate, statusDaNota, foraDoRelatorio, naoContabilizaKpi, pendenteHaMaisDe30Dias, valorPendenteNf, StatusNota } from "@/pages/financeiro/nf-emissao/shared";
+import { fmtMoney, fmtDate, statusDaNota, foraDoRelatorio, naoContabilizaKpi, pendenteHaMaisDeDias, valorPendenteNf, StatusNota } from "@/pages/financeiro/nf-emissao/shared";
+import { FiltroPendenciaDias } from "./FiltroPendenciaDias";
 
 const STATUS_LABEL: Record<StatusNota, string> = {
   pendente: "Pendente",
@@ -82,7 +83,7 @@ export default function RelatorioGeralTab() {
   });
   const [filtroEmissaoDe, setFiltroEmissaoDe] = useState("");
   const [filtroEmissaoAte, setFiltroEmissaoAte] = useState("");
-  const [filtroOver30, setFiltroOver30] = useState(false);
+  const [filtroPendDias, setFiltroPendDias] = useState<number | null>(null);
   const [busca, setBusca] = useState("");
 
   const contratoPorId = useMemo(() => new Map(contratos.map((c) => [c.id, c])), [contratos]);
@@ -102,14 +103,14 @@ export default function RelatorioGeralTab() {
       if (filtroCodigo !== "todos" && n.tipo_nota !== filtroCodigo) return false;
       if (filtroEmissaoDe && (!n.data_emissao || n.data_emissao < filtroEmissaoDe)) return false;
       if (filtroEmissaoAte && (!n.data_emissao || n.data_emissao > filtroEmissaoAte)) return false;
-      if (filtroOver30 && !pendenteHaMaisDe30Dias(n)) return false;
+      if (filtroPendDias !== null && !pendenteHaMaisDeDias(n, filtroPendDias)) return false;
       if (termo) {
         const alvo = `${n.numero_nf ?? ""} ${n.variacao ?? ""} ${n.contrato?.nome ?? ""} ${n.observacoes ?? ""}`.toLowerCase();
         if (!alvo.includes(termo)) return false;
       }
       return true;
     });
-  }, [nfs, filtroEmpresa, filtroCompetencia, filtroContrato, filtroStatus, filtroCodigo, filtroEmissaoDe, filtroEmissaoAte, filtroOver30, busca]);
+  }, [nfs, filtroEmpresa, filtroCompetencia, filtroContrato, filtroStatus, filtroCodigo, filtroEmissaoDe, filtroEmissaoAte, filtroPendDias, busca]);
 
   const { data: itensPorNf } = useItensNfEmissaoEmLote(linhas.map((n) => n.id));
 
@@ -209,7 +210,7 @@ export default function RelatorioGeralTab() {
     setFiltroCodigo("todos");
     setFiltroEmissaoDe("");
     setFiltroEmissaoAte("");
-    setFiltroOver30(false);
+    setFiltroPendDias(null);
     setBusca("");
   }
 
@@ -333,15 +334,7 @@ export default function RelatorioGeralTab() {
         <Input type="date" value={filtroEmissaoAte} onChange={(e) => setFiltroEmissaoAte(e.target.value)} className="h-8 w-36 text-xs" />
       </div>
       <div className="flex items-center gap-x-3 gap-y-3 flex-wrap">
-        <button
-          onClick={() => setFiltroOver30((v) => !v)}
-          className={cn(
-            "h-8 px-2.5 rounded-md border font-medium transition-colors",
-            filtroOver30 ? "bg-primary text-primary-foreground border-primary" : "bg-background border-border text-muted-foreground hover:border-primary/50"
-          )}
-        >
-          Pendente há mais de 30 dias
-        </button>
+        <FiltroPendenciaDias valor={filtroPendDias} onChange={setFiltroPendDias} />
         <button onClick={limparFiltros} className="h-8 px-2.5 rounded-md border border-border bg-background text-muted-foreground hover:text-destructive hover:border-destructive/50 transition-colors">
           Limpar filtros
         </button>
