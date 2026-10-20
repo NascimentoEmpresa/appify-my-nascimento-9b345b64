@@ -1034,7 +1034,7 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
             ) : (
               /* Com colaborador: vem da Planilha de Custo, só leitura. */
               <div className="nvg-fg">
-                <label>Insalubridade <span style={{ color: "#64748b", fontWeight: 600 }}>— da Planilha de Custo</span></label>
+                <label>Insalubridade <span style={{ color: "#64748b", fontWeight: 600 }}>— da Planilha de Custo ou do cadastro</span></label>
                 <input className="nvg-fi" readOnly
                   value={custoBuscando ? "Consultando a planilha…" : vaga.insalubridade_recebe === "Sim" ? `Sim — ${vaga.insalubridade_quanto}` : substituidoId ? "Não" : ""}
                   placeholder="Escolha o colaborador acima"

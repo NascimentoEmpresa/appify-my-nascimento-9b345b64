@@ -112,6 +112,16 @@ export default function ExecutarChamado() {
   const { data: validacao } = useValidacaoChamado(id);
 
   const ehResponsavel = !!chamado && chamado.responsavel_id === user?.id;
+  // Participante extra (mig 20261009000003) — vem pelo Painel do Desenvolvedor desde 20/10/2026.
+  const { data: ehParticipante = false } = useQuery({
+    queryKey: ["chamado-sou-participante", id, user?.id],
+    enabled: !!id && !!user?.id,
+    queryFn: async () => {
+      const { data } = await (supabase as any).from("CHAMADO_SISTEMA_PARTICIPANTE")
+        .select("id").eq("chamado_id", id).eq("user_id", user!.id).maybeSingle();
+      return !!data;
+    },
+  });
   const podeAgir = canCoordenar || canAprovar || (canDev && ehResponsavel);
 
   // Dev responsável abriu o chamado → zera a bolinha de novidades do dev.
@@ -297,12 +307,15 @@ export default function ExecutarChamado() {
           )}
 
           {/* Conversa do chamado (grupo: solicitante + equipe) */}
+          {/* Participante extra que abre pelo Painel do Desenvolvedor
+              (20/10/2026): conversa como participante — mensagem pública
+              sim, observação interna não (a RLS também barra). */}
           <ChatChamado
             chamadoId={chamado.id}
             solicitanteId={chamado.solicitante_id}
-            perfil="equipe"
+            perfil={podeAgir || !ehParticipante ? "equipe" : "solicitante"}
             encerrado={encerrado}
-            somenteLeitura={!podeAgir}
+            somenteLeitura={!podeAgir && !ehParticipante}
           />
         </div>
 
