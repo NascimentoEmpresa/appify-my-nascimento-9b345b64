@@ -66,3 +66,22 @@ describe("card ASOs Agendados", () => {
     expect(textoTodosAsos([])).toBe("");
   });
 });
+
+// 20/10/2026 — "Marcar como visto": a chave do agendamento decide quando o
+// ASO volta a ser novo (o SST reagendou).
+import { chaveAgendamentoAso } from "@/lib/recrutamento/agendamentoAso";
+
+describe("chaveAgendamentoAso", () => {
+  const ag = { sst_data_exame: "2026-10-20T00:00:00", sst_hora_exame: "08:30", sst_local_exame: "Clínica X, Rua A, 100" };
+
+  it("mesmo agendamento = mesma chave, mesmo com espaço/maiúscula redigitados", () => {
+    expect(chaveAgendamentoAso(ag)).toBe(chaveAgendamentoAso({ ...ag, sst_local_exame: "  CLÍNICA X,  Rua A, 100 " }));
+    expect(chaveAgendamentoAso(ag)).toBe("2026-10-20|08:30|clínica x, rua a, 100");
+  });
+
+  it("reagendou (data, hora ou local) = chave nova → volta a ser novo", () => {
+    expect(chaveAgendamentoAso({ ...ag, sst_data_exame: "2026-10-21" })).not.toBe(chaveAgendamentoAso(ag));
+    expect(chaveAgendamentoAso({ ...ag, sst_hora_exame: "09:00" })).not.toBe(chaveAgendamentoAso(ag));
+    expect(chaveAgendamentoAso({ ...ag, sst_local_exame: "Clínica Y" })).not.toBe(chaveAgendamentoAso(ag));
+  });
+});
