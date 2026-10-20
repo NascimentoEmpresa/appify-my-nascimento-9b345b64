@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { PageHeader } from "@/components/layout/PageHeader";
+import { ErroDeConsulta } from "@/components/layout/ErroDeConsulta";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -9,7 +10,7 @@ import {
 } from "@/components/ui/command";
 import {
   ChevronDown, ChevronRight, ChevronsUpDown, Clock, Eye, CheckCircle2, Send,
-  Inbox, ShieldAlert, FileSignature, X,
+  Inbox, FileSignature, X,
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -38,7 +39,7 @@ import {
  */
 export default function CotacoesCompras() {
   const { can } = usePermissoes();
-  const { data: cotacoes = [], isLoading, error } = useCotacoesLicitacao();
+  const { data: cotacoes = [], isLoading, error, refetch } = useCotacoesLicitacao();
 
   const podeResponder = can("alterar", "suprimentos", "sup_cotacoes");
 
@@ -126,12 +127,17 @@ export default function CotacoesCompras() {
         }
       />
 
+      {/* 20/10/2026: era um painel vermelho sem saída, que estampava a frase
+          do Kong ("An invalid response was received from the upstream
+          server") como se fosse defeito da consulta. Quem decide o que
+          mostrar agora é o ErroDeConsulta — ver o comentário lá. */}
       {error ? (
-        <div className="flex flex-col items-center gap-2 rounded-lg border border-destructive/30 bg-destructive/5 py-12 text-center">
-          <ShieldAlert className="h-10 w-10 text-destructive" />
-          <p className="font-medium">Não foi possível carregar as cotações.</p>
-          <p className="max-w-md text-sm text-muted-foreground">{(error as Error).message}</p>
-        </div>
+        <ErroDeConsulta
+          erro={error}
+          aoTentarDeNovo={refetch}
+          oQue="as cotações"
+          rota="/app/suprimentos/cotacoes"
+        />
       ) : isLoading ? (
         <p className="py-16 text-center text-sm text-muted-foreground">Carregando…</p>
       ) : cotacoes.length === 0 ? (
