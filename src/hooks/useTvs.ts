@@ -66,7 +66,7 @@ export const useTvAoVivo = (tvId: string | null) => useQuery({
   // Sem a migration não adianta insistir: para de consultar (a gestão simula).
   refetchInterval: (q) => (q.state.data?.suportado === false ? false : 4_000), staleTime: 3_000, retry: false,
   queryFn: async (): Promise<AoVivoTv> => {
-    // atual_em (mig 20261020000001): quando a TV confirmou o item. Banco sem a
+    // atual_em (mig 20261020000004): quando a TV confirmou o item. Banco sem a
     // coluna → consulta sem ela (atual_em undefined = "não dá pra saber").
     const r = await sb.from("TV_DISPOSITIVO").select("atual_item_id, atual_desde, atual_em").eq("id", tvId).maybeSingle();
     if (!r.error) return { suportado: true, atual_item_id: r.data?.atual_item_id ?? null, atual_desde: r.data?.atual_desde ?? null, atual_em: r.data?.atual_em ?? null };

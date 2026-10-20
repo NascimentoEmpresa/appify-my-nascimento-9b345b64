@@ -198,12 +198,12 @@ export function posicaoNoLaco(itens: Pick<ItemTv, "duracao_seg">[], decorridoMs:
 
 /**
  * O que a TV informou (mig 20261008000003). `suportado` = o banco tem as colunas (a migration foi aplicada).
- * `atual_em` (mig 20261020000001): quando a TV confirmou o item por último — ela confirma a cada consulta.
+ * `atual_em` (mig 20261020000004): quando a TV confirmou o item por último — ela confirma a cada consulta.
  */
 export interface AoVivoTv { suportado: boolean; atual_item_id: string | null; atual_desde: string | null; atual_em?: string | null }
 
 /**
- * A informação da TV ainda vale? Com a mig 20261020000001 a TV confirma o
+ * A informação da TV ainda vale? Com a mig 20261020000004 a TV confirma o
  * item a cada consulta (15 s); sem confirmação há mais que o limite do
  * offline, ela está com o player antigo (só avisa na troca de item) ou o
  * aviso está falhando. `null` = o banco não tem atual_em (não dá pra saber).
