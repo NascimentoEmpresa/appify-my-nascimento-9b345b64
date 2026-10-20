@@ -48,7 +48,7 @@ interface Simulacao {
   ok: boolean;
   modo: Modo;
   janela_aberta: boolean;
-  credenciais_graph: boolean;
+  envio_configurado: boolean;
   gerado_em: string;
   contagem: Partial<Record<Decisao, number>>;
   planos: PlanoLinha[];
@@ -198,8 +198,8 @@ export default function AutomacaoTab() {
           </div>
           <div className="text-xs text-muted-foreground space-y-0.5">
             <p>Janela de envio: {config ? `${config.somente_dias_uteis ? "dias úteis, " : ""}${config.hora_inicio}h às ${config.hora_fim}h (Brasília)` : "—"} · agora {simulacao ? (simulacao.janela_aberta ? "dentro" : "fora") : "—"} da janela</p>
-            <p className={simulacao && !simulacao.credenciais_graph ? "text-amber-600 dark:text-amber-400" : ""}>
-              {simulacao ? (simulacao.credenciais_graph ? "Conta de envio (Microsoft Graph) configurada." : "Conta de envio (Microsoft Graph) ainda não configurada: a rotina não consegue enviar.") : ""}
+            <p className={simulacao && !simulacao.envio_configurado ? "text-amber-600 dark:text-amber-400" : ""}>
+              {simulacao ? (simulacao.envio_configurado ? "Conta de envio (SMTP) configurada." : "Conta de envio (SMTP) ainda não configurada: a rotina não consegue enviar.") : ""}
             </p>
           </div>
           <div className="ml-auto flex gap-2">
