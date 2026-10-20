@@ -128,10 +128,32 @@ export function useCotacoesLicitacao() {
 
       // Uma query só para todos os anexos da página, agrupada no cliente —
       // evita N+1 conforme o histórico cresce.
+      // 20/10/2026 — O `.in("cotacao_id", ...)` QUE ESTAVA AQUI DERRUBAVA A
+      // TELA EM PRODUÇÃO, com 502 em toda visita.
+      //
+      // Ele montava a lista com TODAS as cotações da página: ~180 UUIDs,
+      // `%2C` entre eles, dando uma URL de ~7 KB. O PostgREST devolve a
+      // query string de volta no cabeçalho de resposta `Content-Location`,
+      // e 7 KB de cabeçalho estouram o `proxy_buffer_size` do Kong do
+      // cluster (padrão 4k/8k). O Kong então RECUSA a resposta do upstream:
+      //
+      //   [error] upstream sent too big header while reading response
+      //           header from upstream
+      //
+      // e devolve ao navegador 502 {"message":"An invalid response was
+      // received from the upstream server"}. Determinístico — insistir não
+      // resolve, porque a requisição é inválida sempre. Na Supabase passava
+      // batido: o gateway de lá tem buffer maior. Quem trouxe isto à tona
+      // foi a virada para o cluster (17/10), não uma mudança nesta tela.
+      //
+      // O filtro, além de tudo, era REDUNDANTE: a policy
+      // `cotacoes_arquivo_select` (20260826000001) já pendura a visibilidade
+      // do anexo na do pai — quem não enxerga a cotação não enxerga anexo
+      // nenhum. Pedir os anexos sem filtro devolve exatamente o mesmo
+      // conjunto, com URL de tamanho fixo.
       const { data: anexos, error: erroAnexos } = await sb
         .from("cotacoes_licitacao_arquivo")
         .select("*")
-        .in("cotacao_id", cotacoes.map((c) => c.id))
         .order("created_at", { ascending: true });
       if (erroAnexos) throw erroAnexos;
 
