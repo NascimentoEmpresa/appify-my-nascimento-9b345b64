@@ -81,3 +81,30 @@ export const dataBrDaFicha = (iso?: string | null): string => {
   const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso));
   return m ? `${m[3]}/${m[2]}/${m[1]}` : String(iso);
 };
+
+/**
+ * O "CHECKLIST ASO" do chamado SIS-2026-0667, pronto para colar no WhatsApp
+ * (clínica / SST): os mesmos rótulos e a mesma ordem que o Recrutamento
+ * usava no texto solto, já com os dados da ficha. Campo vazio sai em branco
+ * depois dos dois-pontos, como no modelo.
+ */
+export function textoChecklistAso(f: Partial<FichaAso> | null | undefined): string {
+  const v = (x: unknown) => (x == null ? "" : String(x).trim());
+  const linhas: [string, string][] = [
+    ["Tipo de ASO", v(f?.tipo_aso)],
+    ["Nome", v(f?.nome)],
+    ["Data de Nascimento", dataBrDaFicha(f?.nascimento)],
+    ["Nome da Mãe", v(f?.nome_mae)],
+    ["Função", v(f?.funcao)],
+    ["CPF", v(f?.cpf)],
+    ["RG", v(f?.rg)],
+    ["PIS", v(f?.pis)],
+    ["Setor/Posto", v(f?.posto)],
+    ["Local / Cidade", v(f?.local_cidade)],
+    ["Celular", v(f?.celular)],
+    ["Empresa", v(f?.empresa)],
+    ["Contrato", v(f?.contrato)],
+    ["Encarregado", v(f?.encarregado)],
+  ];
+  return ["ASO - ATESTADO DE SAÚDE OCUPACIONAL", ...linhas.map(([k, x]) => (x ? `${k}: ${x}` : `${k}:`))].join("\n");
+}

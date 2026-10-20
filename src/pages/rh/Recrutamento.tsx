@@ -18,6 +18,7 @@ import {
   vagaConcluiDireto,
 } from "@/lib/recrutamento/vagaRegras";
 import { ModalConcluirDireto } from "@/components/recrutamento/ModalConcluirDireto";
+import { MensagensAutomaticas } from "@/components/recrutamento/MensagensAutomaticas";
 import { baixarPlanilhaVagas, type CandidatoExport, type VagaExport } from "@/lib/recrutamento/exportarVagas";
 import { TABELA_APROVADOR_SETOR } from "@/components/admin/TrocaFuncaoSetoresUsuario";
 import {
@@ -36,7 +37,11 @@ import { CandidatoManualDialog } from "@/components/recrutamento/CandidatoManual
 import { StatusSolicitacao } from "@/components/recrutamento/StatusSolicitacao";
 import { StatusVagaBadge } from "@/components/recrutamento/StatusVagaBadge";
 import { useEtapasDasVagas } from "@/hooks/useEtapasDasVagas";
-import { useResponsaveisDasVagas, listarResponsaveisPossiveis, definirResponsavelVaga, assumirVaga, contarVagasPorResponsavel, marcarCienteVaga, novaDemanda } from "@/hooks/useResponsaveisDasVagas";
+import {
+  useResponsaveisDasVagas, listarResponsaveisPossiveis, definirResponsavelVaga, assumirVaga, contarVagasPorResponsavel, marcarCienteVaga, novaDemanda,
+  useMeuPapelRecrutamento, useAdmissaoDasVagas, listarRecrutadoras, definirRecrutadora, listarResponsaveisAdmissao,
+} from "@/hooks/useResponsaveisDasVagas";
+import { bloqueioDaVaga, motivoDesistencia, primeiroNome, responsavelAtual, vagaDistribuida } from "@/lib/recrutamento/distribuicaoVagas";
 import { NIVEIS_JURIDICO, NIVEL_OK, eventoParecerJuridico, nivelJuridico, seloJuridico, statusJuridicoCard } from "@/lib/recrutamento/parecerJuridico";
 import { STATUS_COM_RESPONSAVEL, STATUS_FILA_APROVACAO, alvoDoFiltro, devePerguntarAssumir, textoConfirmarAssumir, vagaTemResponsavel, type FiltroResponsavel } from "@/lib/recrutamento/responsavelVaga";
 import { vagaTemEtapa } from "@/lib/recrutamento/statusDetalhado";
@@ -162,6 +167,10 @@ interface Curriculo {
   desistencia_em?: string | null;
   desistencia_por?: string | null;
   enviado_admissao_em?: string | null;
+  /** Encaminhamento à Admissão (mig 20261020000050): quem recebe e quem recrutou. */
+  admissao_responsavel_nome?: string | null;
+  recrutadora_nome?: string | null;
+  admitido_em?: string | null;
 }
 
 // Tabelas fora do types.ts gerado: mesmo padrão de comite-etica/db.ts. As
@@ -177,8 +186,6 @@ interface DocCand { id: number; nome?: string | null; titulo?: string | null; st
 interface AlteracaoDataInicio { de?: string | null; para?: string | null; por_nome?: string | null; em?: string | null; justificativa?: string | null }
 /** Cadastro em EMPREGADOS devolvido por empregados_por_cpfs (só o que a tela lê). */
 interface EmpCadastro { cpf_match?: string | null; situacao?: string | null; cargo?: string | null; admissao?: string | null; empresa?: string | null; filial?: string | null; lider?: string | null; perfil?: string | null; setor?: string | null; [k: string]: unknown }
-/** Configuração de mensagem automática por etapa (RECRUTAMENTO_MENSAGENS). */
-interface MsgCfg { etapa: string; template_nome?: string | null; template_idioma?: string | null; texto_previa?: string | null; ativo?: boolean | null; texto?: string | null; [k: string]: unknown }
 
 /** Ícone em linha com o texto (substitui os emojis da tela, 23/09/2026). */
 function Ic({ i: Icone, s = 14 }: { i: LucideIcon; s?: number }) {
@@ -376,24 +383,6 @@ const PAPEL_ETAPA: Record<string, string> = {
   "DOCUMENTAÇÃO": "Recrutamento", "SST + COMPRAS": "SST + Suprimentos",
   "ADMISSÃO": "Recrutamento",
 };
-// Etapas que disparam WhatsApp automático (o texto vem de RECRUTAMENTO_MENSAGENS).
-// "ENTREVISTA GESTOR" é a segunda entrevista, opcional no fluxo.
-const ETAPAS_COM_MENSAGEM = ["TRIAGEM", "ENTREVISTA", "ENTREVISTA GESTOR", "APROVADO"];
-// Variáveis que o RH pode usar nos {{n}} do template aprovado na Meta.
-const MSG_VARIAVEIS = ["primeiro_nome", "nome", "cargo", "cidade", "contrato", "empresa"];
-
-// Nome de template da Meta: só minúsculas, números e underscore. "Entrevista
-// Gestor" é recusado lá com erro 132001, e o envio automático falharia calado
-// a cada card movido — melhor barrar aqui, na hora de configurar.
-const RE_TEMPLATE = /^[a-z0-9_]+$/;
-const nomeTemplateInvalido = (n?: string | null) => {
-  const v = String(n ?? "").trim();
-  return v.length > 0 && !RE_TEMPLATE.test(v);
-};
-const sugerirNomeTemplate = (n?: string | null) =>
-  String(n ?? "").trim().toLowerCase()
-    .normalize("NFD").replace(/[̀-ͯ]/g, "")   // "Aprovação" → "aprovacao"
-    .replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
 // "Pendente Seleção" (23/09/2026): a vaga cujo candidato mais adiantado está
 // em APROVADO no kanban — o sr_sync_status_solicitacao grava esse status.
 // Tem atalho próprio e sai de "Em Processo".
@@ -729,11 +718,6 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
   const [docSubindo, setDocSubindo]         = useState(false);
   // Configuração das mensagens automáticas de WhatsApp
   const [msgModal, setMsgModal]             = useState(false);
-  const [msgCfgs, setMsgCfgs]               = useState<MsgCfg[]>([]);
-  const [msgSalvando, setMsgSalvando]       = useState(false);
-  // Status de cada template na Meta (APPROVED / PENDING / REJECTED / NAO_CRIADO)
-  const [msgStatus, setMsgStatus]           = useState<Record<string, Linha>>({});
-  const [msgMetaBusy, setMsgMetaBusy]       = useState(false);
 
 
   // Toast
@@ -1166,6 +1150,16 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
   // ou um candidato vira o responsável (gatilho no histórico) — relê junto
   // com a etapa, quando os candidatos da vaga aberta mudam.
   const { responsaveis: responsaveisVagas, recarregar: recarregarResponsaveis } = useResponsaveisDasVagas(listaNavegavel);
+  // Distribuição entre as recrutadoras (mig 20261020000050): vaga de outra
+  // recrutadora é só consulta — o banco recusa (rec_vaga_bloqueio) e a tela
+  // nem oferece a ação. `podeRecrutar` continua sendo o "conduz o
+  // Recrutamento" da tela; `podeRecrutarVaga` é ele na vaga aberta agora.
+  const papelRec = useMeuPapelRecrutamento();
+  const { admissaoVagas, recarregarAdmissao } = useAdmissaoDasVagas(listaNavegavel);
+  const bloqueioDe = (vagaId: number | null | undefined) =>
+    vagaId == null ? null : bloqueioDaVaga(responsaveisVagas[vagaId], papelRec, user?.id, admissaoVagas[vagaId]);
+  const drawerBloqueio = bloqueioDe(drawerSol?.id);
+  const podeRecrutarVaga = podeRecrutar && !drawerBloqueio;
 
   // Vagas transferidas PARA MIM ainda sem ciente (mig 20261014000047) — o
   // aviso do topo, que vale para todas as páginas da tabela. Banco sem a
@@ -1215,6 +1209,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
   const perguntarAssumirAoMover = (vaga: Pick<Solicitacao, "id" | "status"> | null | undefined): boolean => {
     if (!vaga || !podeRecrutar) return false;
     const atual = responsaveisVagas[vaga.id];
+    if (vagaDistribuida(atual)) return false;   // distribuída: ninguém assume por cima (mig 20261020000050)
     if (!devePerguntarAssumir(vaga, atual, user?.id)) return false;
     return confirm(`${textoConfirmarAssumir(vaga.id, atual!.responsavel_nome)}\n\nOK = você vira o responsável · Cancelar = a etapa avança e ${atual!.responsavel_nome} continua responsável.`);
   };
@@ -1496,8 +1491,8 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
     // que é justamente o controle que a etapa existe para exercer.
     if (etapa === "JURÍDICO") return podeMoverJuridico;
     // Etapa paralela: cada setor mexe no SEU selo (ver aprovarParalelo).
-    if (etapa === ETAPA_SST_COMPRAS) return podeMoverSst || podeMoverCompras || podeRecrutar;
-    return podeRecrutar; // ENTRADA, TRIAGEM, ENTREVISTA, ENT. GESTOR, APROVADO, DOCUMENTAÇÃO
+    if (etapa === ETAPA_SST_COMPRAS) return podeMoverSst || podeMoverCompras || podeRecrutarVaga;
+    return podeRecrutarVaga; // ENTRADA, TRIAGEM, ENTREVISTA, ENT. GESTOR, APROVADO, DOCUMENTAÇÃO
   };
   // Próxima etapa linear (TRIAGEM e ENTREVISTA ramificam → tratadas no card).
   const CAND_PROX: Record<string, string> = {
@@ -1537,21 +1532,63 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
         }
       }
     }
-    if (!confirm(`Contratar ${cv.nome || "o candidato"}?\n\nEle vai para a Admissão (RH), a vaga é ENCERRADA como "Contratado" e sai do portal público /vagas.`)) return;
+    // SIS-2026-0667: no lugar do confirm(), o modal que confirma E colhe o que
+    // a mensagem "Contratado" precisa (data de início, local, banco).
+    const dataIni = String(drawerSol?.data_inicio_prevista ?? "");
+    const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(dataIni);
+    setContratarModal({
+      cv, cpf: cpfAdmissao,
+      inicio: m ? `${m[3]}/${m[2]}/${m[1]}` : dataIni,
+      local: String(drawerSol?.local_exato ?? ""),
+      banco: "",
+    });
+  };
+
+  const [contratarModal, setContratarModal] = useState<{ cv: Curriculo; cpf: string | null; inicio: string; local: string; banco: string; admResp?: string } | null>(null);
+  // Quem recebe a fila da Admissão (mig 20261020000050). Uma pessoa só: vai direto para ela.
+  const [respAdmissao, setRespAdmissao] = useState<{ id: string; nome: string }[] | null>(null);
+  useEffect(() => {
+    if (!contratarModal || respAdmissao) return;
+    listarResponsaveisAdmissao().then(setRespAdmissao).catch(() => setRespAdmissao([]));
+  }, [contratarModal, respAdmissao]);
+  const [contratando, setContratando] = useState(false);
+
+  const confirmarContratar = async (enviarMensagem: boolean) => {
+    if (!contratarModal) return;
+    const { cv, cpf: cpfAdmissao, inicio, local, banco } = contratarModal;
+    const admResp = contratarModal.admResp || (respAdmissao?.length === 1 ? respAdmissao[0].id : "");
+    if ((respAdmissao?.length ?? 0) > 1 && !admResp) { toast("Escolha quem vai receber o candidato na Admissão.", "err"); return; }
+    if (enviarMensagem && (!inicio.trim() || !local.trim() || !banco.trim())) {
+      toast("Para enviar a mensagem de contratação, preencha data de início, local e banco.", "err");
+      return;
+    }
+    setContratando(true);
     const nowIso = new Date().toISOString();
     const nome = user?.user_metadata?.nome ?? user?.email ?? "";
     const { error } = await sb.from("WA_CURRICULOS")
       .update({
         enviado_admissao_por: nome, enviado_admissao_em: nowIso,
+        // Sem escolha, o banco põe a única responsável da Admissão (rec_encaminhar_admissao).
+        ...(admResp ? { admissao_responsavel_id: admResp } : {}),
         // O gatilho do pedido de login lê o CPF desta mesma linha.
         ...(cpfAdmissao ? { cpf: cpfAdmissao } : {}),
       }).eq("id", cv.id);
-    if (error) { toast("Erro: " + error.message, "err"); return; }
-    if (drawerId) await logHistorico(drawerId, "Contratado — enviado à Admissão (RH)", {
+    if (error) { setContratando(false); toast("Erro: " + error.message, "err"); return; }
+    const nomeAdm = respAdmissao?.find((p) => p.id === admResp)?.nome;
+    if (drawerId) await logHistorico(drawerId, `Recrutamento finalizado — enviado para Admissão${nomeAdm ? ` (${nomeAdm})` : ""}`, {
       papel: "Recrutamento", para: "Contratado", candidatoId: cv.id, candidatoNome: cv.nome,
     });
-    toast("Candidato contratado — enviado à Admissão.", "ok");
+    toast(`Recrutamento finalizado — ${cv.nome || "candidato"} aguardando admissão${nomeAdm ? ` com ${nomeAdm}` : ""}.`, "ok");
+    if (drawerId) recarregarAdmissao([drawerId]);
+    setContratarModal(null);
+    setContratando(false);
     if (drawerId) loadCandidatos(drawerId);
+    // Mensagens do CONTRATADO (Contratado + Treinamentos, configuráveis).
+    if (enviarMensagem) {
+      await dispararMensagemEtapa(cv.id, "CONTRATADO", cv.nome, {
+        "Data de início": inicio.trim(), "Local / posto": local.trim(), "Banco do salário": banco.trim(),
+      });
+    }
   };
 
   // ── Roteiro de entrevista (ENTREVISTA / ENTREVISTA GESTOR) ─────
@@ -1653,78 +1690,9 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
   };
 
   // ── Configuração das mensagens automáticas ─────────────────────
-  const abrirMsgConfig = async () => {
-    const { data } = await sb.from("RECRUTAMENTO_MENSAGENS").select("*");
-    // Ordena pela ordem do funil, não alfabética — é assim que o RH lê o fluxo.
-    const porEtapa = new Map((data ?? []).map((r) => [r.etapa, r]));
-    setMsgCfgs(ETAPAS_COM_MENSAGEM.map(e => porEtapa.get(e) ?? {
-      etapa: e, ativo: false, template_nome: "", template_idioma: "pt_BR",
-      parametros: ["primeiro_nome", "cargo"], texto_previa: "",
-    }));
-    setMsgModal(true);
-    consultarTemplates();
-  };
-
-  // ── Templates na Meta ──────────────────────────────────────────
-  // O texto real mora lá e precisa passar por revisão. Saber o status aqui
-  // evita o RH ligar a etapa e descobrir pelo silêncio que nada é enviado.
-  const consultarTemplates = async () => {
-    try {
-      const { data, error } = await supabase.functions.invoke("whatsapp-templates", { body: { acao: "listar" } });
-      if (error) return; // sem WhatsApp configurado ou sem permissão: a tela segue utilizável
-      const mapa: Record<string, unknown> = {};
-      (((data as { templates?: Linha[] } | null)?.templates) ?? []).forEach((t) => { mapa[String(t.etapa)] = t; });
-      setMsgStatus(mapa as Record<string, Linha>);
-    } catch { /* consulta é informativa; falha nela não trava a configuração */ }
-  };
-
-  const criarTemplates = async () => {
-    if (!confirm("Enviar os textos para aprovação da Meta?\n\nEles passam por revisão e ficam registrados na conta da empresa. Isso não liga o envio automático — depois de aprovados, você ainda marca \"Enviar automaticamente\" na etapa.")) return;
-    setMsgMetaBusy(true);
-    try {
-      const { data, error } = await supabase.functions.invoke("whatsapp-templates", { body: { acao: "criar" } });
-      if (error) { toast("Não consegui falar com a Meta: " + (error.message ?? ""), "err"); return; }
-      const r = ((data as { resultado?: { acao?: string; etapa?: string; erro?: string }[] } | null)?.resultado) ?? [];
-      const criados = r.filter((x) => x.acao === "criado").length;
-      const jaExistiam = r.filter((x) => x.acao === "ja_existia").length;
-      const erros = r.filter((x) => x.acao === "erro");
-      if (erros.length) toast(`${erros.length} template(s) recusado(s): ${erros.map((e) => `${e.etapa} — ${e.erro}`).join(" | ")}`, "err");
-      else toast(`${criados} enviado(s) para aprovação${jaExistiam ? `, ${jaExistiam} já existia(m)` : ""}. A revisão da Meta costuma levar de minutos a algumas horas.`, "ok");
-      await consultarTemplates();
-    } finally { setMsgMetaBusy(false); }
-  };
-  const salvarMsgConfig = async () => {
-    // Nome fora do padrão da Meta só se descobre quando a mensagem não chega —
-    // e aí o candidato já ficou sem retorno. Barra antes de salvar.
-    const invalidos = msgCfgs.filter(c => nomeTemplateInvalido(c.template_nome));
-    if (invalidos.length) {
-      toast(`Nome de template inválido em ${invalidos.map(c => c.etapa).join(", ")}. Use só minúsculas, números e underscore.`, "err");
-      return;
-    }
-    setMsgSalvando(true);
-    const nome = user?.user_metadata?.nome ?? user?.email ?? "";
-    const rows = msgCfgs.map(c => ({
-      etapa: c.etapa,
-      // Ligar sem template só produziria erro de envio a cada card movido.
-      ativo: !!c.ativo && !!String(c.template_nome ?? "").trim(),
-      template_nome: String(c.template_nome ?? "").trim() || null,
-      template_idioma: String(c.template_idioma ?? "").trim() || "pt_BR",
-      parametros: Array.isArray(c.parametros) ? c.parametros : [],
-      texto_previa: String(c.texto_previa ?? "").trim() || null,
-      updated_at: new Date().toISOString(), updated_por: nome,
-    }));
-    const { error } = await sb.from("RECRUTAMENTO_MENSAGENS").upsert(rows, { onConflict: "etapa" });
-    setMsgSalvando(false);
-    if (error) { toast("Erro ao salvar: " + error.message, "err"); return; }
-    // "Salvo" sozinho já enganou: dá a entender que passou a enviar, quando o
-    // que foi salvo pode ser quatro etapas desligadas. O aviso diz o que vale.
-    const ligadasSemTemplate = msgCfgs.filter(c => c.ativo && !String(c.template_nome ?? "").trim());
-    const ligadas = rows.filter(r => r.ativo);
-    if (ligadasSemTemplate.length) toast(`Sem nome do template, ${ligadasSemTemplate.map(c => c.etapa).join(" e ")} ficou(aram) desligada(s).`, "info");
-    else if (!ligadas.length) toast("Salvo — mas nenhuma etapa está enviando. Marque \"Enviar automaticamente\" na etapa desejada.", "info");
-    else toast(`Salvo. Enviando automaticamente em: ${ligadas.map(r => r.etapa).join(", ")}.`, "ok");
-    setMsgModal(false);
-  };
+  // SIS-2026-0667 (mig 20261014000049): a configuração vive no componente
+  // MensagensAutomaticas — etapa → mensagens da biblioteca do WhatsApp.
+  const abrirMsgConfig = () => setMsgModal(true);
 
   // Seleciona um currículo para o processo (entra no kanban como "ENTRADA").
   const selecionarCandidato = async (cv: Curriculo) => {
@@ -1743,6 +1711,8 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
     toast(`${cv.nome || "Candidato"} adicionado ao processo.`, "ok");
     setCurriculos(prev => prev.map(c => c.id === cv.id ? { ...c, etapa_processo: "ENTRADA" } : c));
     if (drawerId) loadCandidatos(drawerId);
+    // Entrou no processo: mensagens da ENTRADA (o convite, SIS-2026-0667).
+    await dispararMensagemEtapa(cv.id, "ENTRADA", cv.nome);
   };
 
   const pedirMoverCand = (cv: Curriculo, novaEtapa: string) => {
@@ -1865,19 +1835,20 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
 
   const confirmarDesistencia = async () => {
     if (!desistModal) return;
-    if (!desistMotivo.trim()) { toast("Informe o motivo da desistência.", "err"); return; }
+    // Sem motivo informado pelo candidato fica "Não informado" (chamado de 19/10/2026).
+    const motivo = motivoDesistencia(desistMotivo);
     const nowIso = new Date().toISOString();
     const nome = user?.user_metadata?.nome ?? user?.email ?? "";
     const { id, etapa } = desistModal;
     const { error } = await sb.from("WA_CURRICULOS").update({
-      desistiu: true, desistencia_motivo: desistMotivo.trim(), desistencia_em: nowIso,
+      desistiu: true, desistencia_motivo: motivo, desistencia_em: nowIso,
       desistencia_por: nome, desistencia_etapa: etapa,
       etapa_processo: "Reprovado", etapa_changed_at: nowIso,
     }).eq("id", id);
     if (error) { toast("Erro ao registrar desistência: " + error.message, "err"); return; }
     if (drawerId) await logHistorico(drawerId, `Candidato desistiu (em ${etapa})`, {
       de: etapa, para: "Reprovado", papel: "Recrutamento",
-      candidatoId: id, candidatoNome: desistModal.nome, detalhe: desistMotivo.trim(),
+      candidatoId: id, candidatoNome: desistModal.nome, detalhe: motivo,
     });
     setDesistModal(null); setDesistMotivo("");
     toast("Desistência registrada.", "ok");
@@ -1960,21 +1931,35 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
   // recusar (template não aprovado, número inválido), o candidato já mudou de
   // etapa e o RH precisa saber para chamar na mão — daí o toast de aviso e o
   // registro em RECRUTAMENTO_MENSAGENS_LOG.
-  const dispararMensagemEtapa = async (candidatoId: number, etapa: string, nome?: string) => {
-    if (!ETAPAS_COM_MENSAGEM.includes(etapa)) return;
+  //
+  // 14/10/2026 (SIS-2026-0667, mig 20261014000049): QUALQUER etapa pode ter
+  // mensagens — quem decide é RECRUTAMENTO_MENSAGEM_ETAPA, configurada em
+  // "Mensagens automáticas". A Edge manda cada uma e devolve o resultado de
+  // cada; `valores` leva o que só a tela sabe (ex.: banco do salário).
+  const dispararMensagemEtapa = async (candidatoId: number, etapa: string, nome?: string, valores?: Record<string, string>) => {
+    const quem = nome || "o candidato";
     try {
       const { data, error } = await supabase.functions.invoke("recrutamento-mensagem", {
-        body: { candidato_id: candidatoId, etapa },
+        body: { candidato_id: candidatoId, etapa, ...(valores ? { valores } : {}) },
       });
-      if (error) { toast(`WhatsApp de "${etapa}" não saiu — chame ${nome || "o candidato"} pelo ícone do WhatsApp.`, "err"); return; }
-      const r = data as { enviado?: boolean; motivo?: string; detalhe?: string };
-      if (r?.enviado) { toast(`WhatsApp de "${etapa}" enviado ao candidato.`, "ok"); return; }
-      // "desligado" é escolha do RH nas Configurações — não é falha, não avisa.
-      if (r?.motivo === "desligado" || r?.motivo === "etapa_sem_mensagem") return;
-      const porque = r?.motivo === "sem_telefone" ? "candidato sem telefone"
-        : r?.motivo === "sem_template" ? "template não configurado"
-        : r?.detalhe || "falha no envio";
-      toast(`WhatsApp de "${etapa}" não saiu (${porque}). Chame pelo ícone do WhatsApp.`, "err");
+      if (error) { toast(`WhatsApp de "${etapa}" não saiu — chame ${quem} pelo ícone do WhatsApp.`, "err"); return; }
+      const r = data as { enviados?: number; motivo?: string; detalhe?: string;
+        resultados?: { titulo: string; enviado: boolean; motivo?: string; detalhe?: string }[] };
+      // Etapa sem mensagem configurada: escolha do RH, não é falha.
+      if (r?.motivo === "etapa_sem_mensagem") return;
+      if (r?.motivo === "sem_telefone") { toast(`WhatsApp de "${etapa}" não saiu: ${quem} está sem telefone.`, "err"); return; }
+      const res = r?.resultados ?? [];
+      const ok = res.filter(x => x.enviado);
+      const falhas = res.filter(x => !x.enviado);
+      if (ok.length) toast(`WhatsApp enviado a ${quem}: ${ok.map(x => x.titulo.replace(/^Recrutamento — /, "")).join(", ")}.`, "ok");
+      if (falhas.length) {
+        const porque = (x: { motivo?: string; detalhe?: string }) =>
+          x.motivo === "falta_valor" ? `falta ${x.detalhe}`
+          : x.motivo === "template_nao_aprovado" || x.motivo === "sem_template" ? "a Meta ainda não aprovou e o candidato não escreveu nas últimas 24h"
+          : x.detalhe || "falha no envio";
+        toast(`Não saiu para ${quem}: ${falhas.map(x => `${x.titulo.replace(/^Recrutamento — /, "")} (${porque(x)})`).join("; ")}. Chame pelo ícone do WhatsApp.`, "err");
+      }
+      if (!res.length && r?.motivo) toast(`WhatsApp de "${etapa}" não saiu (${r.detalhe || r.motivo}).`, "err");
     } catch {
       toast(`WhatsApp de "${etapa}" não saiu. Chame pelo ícone do WhatsApp.`, "err");
     }
@@ -2262,8 +2247,12 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
   const renderResponsavel = (s: Solicitacao) => {
     const r = responsaveisVagas[s.id];
     const aberto = respMenu?.id === s.id;
+    // Distribuída pela gestão (mig 20261020000050): troca só no campo
+    // "Responsável pelo recrutamento", e ninguém "assume" por cima.
+    const distribuida = vagaDistribuida(r);
+    const podeTrocar = podeRecrutar && !distribuida;
     const abrir = (e: ReactMouseEvent<HTMLButtonElement>) => {
-      if (!podeRecrutar) return;
+      if (!podeTrocar) return;
       if (aberto) { setRespMenu(null); return; }
       const b = e.currentTarget.getBoundingClientRect();
       setRespMenu({ id: s.id, x: Math.max(8, Math.min(b.left, window.innerWidth - 276)), y: b.bottom + 6 });
@@ -2283,16 +2272,19 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
         setRespSalvando(false);
       }
     };
-    const titulo = r
+    const titulo = distribuida
+      ? `Responsável pelo recrutamento: ${r!.responsavel_nome} — distribuída pela gestão${bloqueioDe(s.id) ? " (você só consulta esta vaga)" : ""}`
+      : r
       ? `Responsável pela vaga: ${r.responsavel_nome} — ${r.origem === "manual" ? "definido manualmente" : "automático (quem moveu a vaga por último)"}${podeRecrutar ? ". Clique para trocar." : ""}`
       : `Sem responsável ainda — vira responsável quem mover a vaga no Recrutamento${podeRecrutar ? ". Clique para definir." : ""}`;
     return (
       <>
         <button type="button" onClick={abrir} title={titulo}
           style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 10.5, fontWeight: 800, padding: "2px 8px", borderRadius: 20, whiteSpace: "nowrap", fontFamily: "inherit", lineHeight: 1.4,
-                   cursor: podeRecrutar ? "pointer" : "default",
-                   background: r ? "#0f3171" : "#fff1f2", border: `1px solid ${r ? "#0f3171" : "#fda4af"}`, color: r ? "#fff" : "#be123c" }}>
-          👤 {r ? r.responsavel_nome : "Sem responsável"}{r?.origem === "manual" && <span title="Definido manualmente" style={{ opacity: .8 }}> 📌</span>}
+                   cursor: podeTrocar ? "pointer" : "default",
+                   background: bloqueioDe(s.id) ? "#94a3b8" : distribuida ? "#4338ca" : r ? "#0f3171" : "#fff1f2",
+                   border: `1px solid ${bloqueioDe(s.id) ? "#94a3b8" : distribuida ? "#4338ca" : r ? "#0f3171" : "#fda4af"}`, color: r ? "#fff" : "#be123c" }}>
+          {bloqueioDe(s.id) ? "🔒" : "👤"} {r ? r.responsavel_nome : "Sem responsável"}{r?.origem === "manual" && <span title="Definido manualmente" style={{ opacity: .8 }}> 📌</span>}
         </button>
         {/* Vaga transferida (mig 20261014000047): a "linha vermelha" do Excel.
             Fica até a própria responsável dar ciente. */}
@@ -2311,7 +2303,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
           </button>
         )}
         {/* "Tornar-me responsável" (mig 20261014000003): só em vaga de Recrutamento/Seleção e se ainda não é a pessoa. */}
-        {podeRecrutar && vagaTemResponsavel(s.status) && r?.responsavel_id !== user?.id && (
+        {podeTrocar && vagaTemResponsavel(s.status) && r?.responsavel_id !== user?.id && (
           <button type="button" onClick={(e) => { e.stopPropagation(); assumir(s); }}
             title={r ? `Assumir a vaga no lugar de ${r.responsavel_nome}` : "Tornar-me responsável por esta vaga"}
             style={{ display: "inline-flex", alignItems: "center", gap: 3, marginLeft: 4, fontSize: 10.5, fontWeight: 800, padding: "2px 8px", borderRadius: 20, whiteSpace: "nowrap", fontFamily: "inherit", lineHeight: 1.4,
@@ -2353,6 +2345,85 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
           </>
         )}
       </>
+    );
+  };
+
+  // ── Responsável pelo recrutamento (mig 20261020000050) ─────────
+  // A gestão (recrutamento_distribuir) escolhe a recrutadora da vaga; a
+  // escolha trava a vaga para as outras recrutadoras (só consulta). Quem não é
+  // gestão só lê. Com candidato encaminhado, mostra quem está com a Admissão.
+  const [recrutadoras, setRecrutadoras] = useState<{ id: string; nome: string; vagas_abertas: number }[] | null>(null);
+  const [distribuindo, setDistribuindo] = useState(false);
+  useEffect(() => {
+    if (!papelRec.gestor || recrutadoras) return;
+    listarRecrutadoras().then(setRecrutadoras).catch((err) => toast("Erro ao listar recrutadoras: " + err.message, "err"));
+  }, [papelRec.gestor, recrutadoras]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const distribuir = async (vagaId: number, usuarioId: string | null) => {
+    setDistribuindo(true);
+    try {
+      await definirRecrutadora(vagaId, usuarioId);
+      await recarregarResponsaveis([vagaId]);
+      listarRecrutadoras().then(setRecrutadoras).catch(() => { /* contagem só informativa */ });
+      if (drawerSol?.id === vagaId) loadHistorico(vagaId);
+      toast(usuarioId ? "Responsável pelo recrutamento definida." : "Distribuição retirada — a vaga fica livre para as recrutadoras.", "ok");
+    } catch (err) {
+      toast("Erro ao distribuir a vaga: " + (err as Error).message, "err");
+    } finally {
+      setDistribuindo(false);
+    }
+  };
+
+  const renderRecrutadora = (s: Solicitacao) => {
+    const r = responsaveisVagas[s.id];
+    const distribuida = vagaDistribuida(r);
+    const atual = responsavelAtual(r, admissaoVagas[s.id]);
+    const bloqueio = bloqueioDe(s.id);
+    return (
+      <div style={{ marginBottom: 12 }}>
+        {bloqueio && (
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10, padding: "9px 12px", borderRadius: 10, background: "#f1f5f9", border: "1px solid #cbd5e1", color: "#475569", fontSize: 12.5, fontWeight: 600 }}>
+            🔒 Vaga de <b style={{ color: "#0f172a" }}>{bloqueio}</b> — somente consulta. Para trabalhar nela, peça à gestão do Recrutamento para redistribuir.
+          </div>
+        )}
+        <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10, padding: "10px 12px", borderRadius: 10, border: `1px solid ${distribuida ? "#c7d2fe" : "#e2e8f0"}`, background: distribuida ? "#eef2ff" : "#f8fafc" }}>
+          <div style={{ fontSize: 10.5, fontWeight: 800, color: "#64748b", textTransform: "uppercase", letterSpacing: ".5px" }}>Responsável pelo recrutamento</div>
+          {papelRec.gestor ? (
+            <select value={distribuida ? r?.responsavel_id ?? "" : ""} disabled={distribuindo || !recrutadoras}
+              onChange={(e) => distribuir(s.id, e.target.value || null)}
+              style={{ height: 30, minWidth: 200, borderRadius: 8, border: "1px solid #a5b4fc", padding: "0 8px", fontSize: 12.5, fontWeight: 700, color: "#0f172a", background: "#fff", fontFamily: "inherit" }}>
+              <option value="">{recrutadoras ? "— Escolher recrutadora —" : "Carregando…"}</option>
+              {(recrutadoras ?? []).map((p) => (
+                <option key={p.id} value={p.id}>{p.nome}{p.vagas_abertas ? ` (${p.vagas_abertas} em andamento)` : ""}</option>
+              ))}
+            </select>
+          ) : (
+            <span style={{ fontSize: 13, fontWeight: 800, color: distribuida ? "#3730a3" : "#94a3b8" }}>
+              {distribuida ? r!.responsavel_nome : "Ainda não distribuída pela gestão"}
+            </span>
+          )}
+          {atual.etapa === "admissao" && (
+            <span title={`Encaminhado à Admissão em ${fmtDt(admissaoVagas[s.id]?.enviado_em ?? "")}`}
+              style={{ fontSize: 11, fontWeight: 800, padding: "3px 9px", borderRadius: 20, background: "#dcfce7", border: "1px solid #86efac", color: "#15803d" }}>
+              Aguardando admissão · {atual.nome ?? "sem responsável na Admissão"}{atual.recrutadora ? ` · recrutamento: ${atual.recrutadora}` : ""}
+            </span>
+          )}
+        </div>
+      </div>
+    );
+  };
+
+  /** Coluna "Responsável atual": a recrutadora, ou a Admissão enquanto houver candidato esperando por ela. */
+  const renderResponsavelAtual = (s: Solicitacao) => {
+    const atual = responsavelAtual(responsaveisVagas[s.id], admissaoVagas[s.id]);
+    if (!atual.nome && !atual.etapa) return <span style={{ color: "#cbd5e1" }}>—</span>;
+    return (
+      <div style={{ lineHeight: 1.25 }}>
+        <div style={{ fontWeight: 700, color: "#0f172a", fontSize: 12.5 }}>{atual.nome ? primeiroNome(atual.nome) : "—"}</div>
+        <div style={{ fontSize: 10.5, color: atual.etapa === "admissao" ? "#15803d" : "#94a3b8", fontWeight: 600 }}>
+          {atual.etapa === "admissao" ? `Aguardando admissão · recrut.: ${primeiroNome(atual.recrutadora) || "—"}` : "Recrutamento"}
+        </div>
+      </div>
     );
   };
 
@@ -2471,6 +2542,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
             <Copy size={14} /> Copiar informações
           </button>
         </div>
+        {renderRecrutadora(s)}
         <div className="rec-dg">
           {di("Contrato", s.contrato, true)}
           {di("Cargo", s.cargo)}
@@ -2548,20 +2620,22 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
       btns.push(<button key="apr" onClick={aprovar} style={{ padding: "5px 12px", borderRadius: 8, border: "none", background: "#16a34a", color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>✓ Aprovar</button>);
     }
     // Etapa 2 → 3: Recrutamento confirma a abertura (vaga vai pro portal).
-    if (s.status === "Pendente Recrutamento" && podeRecrutar) {
+    if (s.status === "Pendente Recrutamento" && podeRecrutar && !bloqueioDe(s.id)) {
       btns.push(reprovar("rep2"));
       btns.push(<button key="ab" onClick={aprovar} style={{ padding: "5px 12px", borderRadius: 8, border: "none", background: "#16a34a", color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>✓ Confirmar Abertura de Vaga</button>);
     }
     // Etapas 3–10 (dirigidas pelo candidato): currículos, kanban, reprovar.
+    // Vaga de outra recrutadora (mig 20261020000050): só o kanban, para consultar.
+    const travada = !!bloqueioDe(s.id);
     if (STATUS_PROCESSO.includes(s.status) && podeRecrutar) {
-      btns.push(<button key="cv" onClick={abrirCurriculos} style={{ padding: "5px 12px", borderRadius: 8, border: "1px solid rgba(34,197,94,.25)", background: "rgba(34,197,94,.1)", color: "#22c55e", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Currículos</button>);
+      if (!travada) btns.push(<button key="cv" onClick={abrirCurriculos} style={{ padding: "5px 12px", borderRadius: 8, border: "1px solid rgba(34,197,94,.25)", background: "rgba(34,197,94,.1)", color: "#22c55e", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Currículos</button>);
       btns.push(<button key="kb" onClick={abrirKanbanCand} style={{ padding: "5px 12px", borderRadius: 8, border: "1px solid rgba(59,130,246,.35)", background: "rgba(59,130,246,.12)", color: "#2563eb", fontSize: 12, fontWeight: 700, cursor: "pointer" }}><Ic i={Users} />Candidatos ({candidatos.length})</button>);
-      if (s.link_publico) btns.push(<button key="lnk" onClick={() => { setLinkCopiado(false); setModalLink(true); }} style={{ padding: "5px 12px", borderRadius: 8, border: "1px solid rgba(99,102,241,.35)", background: "rgba(99,102,241,.15)", color: "#818cf8", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Gerar Link</button>);
-      btns.push(reprovar("rep3"));
+      if (s.link_publico && !travada) btns.push(<button key="lnk" onClick={() => { setLinkCopiado(false); setModalLink(true); }} style={{ padding: "5px 12px", borderRadius: 8, border: "1px solid rgba(99,102,241,.35)", background: "rgba(99,102,241,.15)", color: "#818cf8", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Gerar Link</button>);
+      if (!travada) btns.push(reprovar("rep3"));
     }
     // Concluir direto (mig 289): a vaga aprovada e ainda aberta fecha aqui,
     // com nome + CPF de quem foi contratado, que vai direto para a Admissão.
-    if (podeConcluirDireto && vagaConcluiDireto(s.status)) {
+    if (podeConcluirDireto && !travada && vagaConcluiDireto(s.status)) {
       btns.push(
         <button key="cdir" onClick={() => setConcluirDireto(s)}
           style={{ padding: "5px 12px", borderRadius: 8, border: "1px solid #86efac", background: "#f0fdf4", color: "#15803d", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
@@ -2582,7 +2656,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
     // Vaga concluída: com alguém na Admissão, o cancelamento é no card dele
     // (abre o kanban); sem ninguém — a vaga importada do Discord, concluída
     // sem candidato —, reabre a vaga direto (mig 20261014000021).
-    if (podeCancelarAdmissao && vagaFechadaComContratado(s.status)) {
+    if (podeCancelarAdmissao && !travada && vagaFechadaComContratado(s.status)) {
       btns.push(
         <button key="cadm" onClick={() => {
             if (temNaAdmissao) abrirKanbanCand();
@@ -2597,7 +2671,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
     // Editar e apagar a solicitação. Ficam antes do histórico e valem em
     // QUALQUER status: a correção de um pedido errado (cargo trocado, contrato
     // errado) costuma chegar justamente depois de ele ter andado.
-    if (podeEditarSolicitacao) {
+    if (podeEditarSolicitacao && !travada) {
       btns.push(
         <button key="edt" onClick={() => { setVagaEditando(s); setModalVaga(true); }}
           style={{ padding: "5px 12px", borderRadius: 8, border: "1px solid #bfdbfe", background: "#eff6ff", color: "#1d4ed8", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
@@ -2605,7 +2679,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
         </button>,
       );
     }
-    if (podeExcluirSolicitacao) {
+    if (podeExcluirSolicitacao && !travada) {
       btns.push(
         <button key="del" onClick={excluirSolicitacao}
           style={{ padding: "5px 12px", borderRadius: 8, border: "1px solid #fecaca", background: "#fef2f2", color: "#b91c1c", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
@@ -2824,14 +2898,14 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
                 title="Ninguém na Admissão: reabre a vaga no início do processo"
                 style={{ padding: "5px 12px", borderRadius: 8, border: "1px solid #fecaca", background: "#fef2f2", color: "#b91c1c", fontSize: 12, fontWeight: 700, cursor: "pointer" }}><Ic i={Ban} />Cancelar conclusão e reabrir vaga</button>
             )}
-            {podeRecrutar && !somenteLeitura && (
+            {podeRecrutarVaga && !somenteLeitura && (
               <button onClick={abrirMsgConfig} title="Definir a mensagem de WhatsApp que o sistema envia em cada etapa"
                 style={{ padding: "5px 12px", borderRadius: 8, border: "1px solid rgba(37,211,102,.3)", background: "rgba(37,211,102,.1)", color: "#128c7e", fontSize: 12, fontWeight: 700, cursor: "pointer" }}><Ic i={Settings} />Mensagens automáticas</button>
             )}
-            {podeRecrutar && !somenteLeitura && (
+            {podeRecrutarVaga && !somenteLeitura && (
               <button onClick={abrirCurriculos} style={{ padding: "5px 12px", borderRadius: 8, border: "1px solid rgba(34,197,94,.25)", background: "rgba(34,197,94,.1)", color: "#22c55e", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>+ Selecionar dos currículos</button>
             )}
-            {podeRecrutar && !somenteLeitura && (
+            {podeRecrutarVaga && !somenteLeitura && (
               <button onClick={() => setShowCandManual(true)} title="Cadastrar um candidato que não veio pelo portal (só nome completo e CPF são obrigatórios)"
                 style={{ padding: "5px 12px", borderRadius: 8, border: "1px solid rgba(15,49,113,.25)", background: "rgba(15,49,113,.08)", color: "#0f3171", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>+ Inserir manualmente</button>
             )}
@@ -2884,7 +2958,7 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
                             <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
                               <div style={{ fontSize: 12, fontWeight: 800, color: "#0f172a", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", flex: 1 }}>{c.nome || "Sem nome"}</div>
                               <AvisoProcessos processos={processosDe(processosCand, c)} compacto />
-                              {c.origem === "Manual" && podeRecrutar && !somenteLeitura && (
+                              {c.origem === "Manual" && podeRecrutarVaga && !somenteLeitura && (
                                 <button onClick={() => setEditarCandId(c.id)} title="Editar os dados do candidato (inserido manualmente)"
                                   style={{ flexShrink: 0, width: 20, height: 20, padding: 0, display: "inline-flex", alignItems: "center", justifyContent: "center", borderRadius: 6, border: "1px solid #e2e8f0", background: "#f8fafc", cursor: "pointer", color: "#475569" }}><Pencil size={11} aria-hidden /></button>
                               )}
@@ -2945,7 +3019,7 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
                                 botão do WhatsApp para mandar o agendamento ao candidato. */}
                             {(etapa === ETAPA_SST_COMPRAS || etapa === "EXAME SST") && (
                               <QuadrosSstCompras candidato={c} pedido={pedidosVaga[String(c.id)]}
-                                podeEnviar={podeRecrutar && !somenteLeitura && temWhatsApp(c)} enviando={enviandoAgendamento === c.id}
+                                podeEnviar={podeRecrutarVaga && !somenteLeitura && temWhatsApp(c)} enviando={enviandoAgendamento === c.id}
                                 onAbrirSst={() => setSstCandId(c.id)} onAbrirCompras={() => setPedidoAberto({ id: c.id, nome: c.nome })}
                                 onEnviarAgendamento={() => enviarAgendamento(c)} />
                             )}
@@ -2956,9 +3030,15 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
                                 Em SST + COMPRAS ela fica DENTRO do quadro do SST
                                 (StatusSstDialog) — pedido do Pablo, 16/10/2026. */}
                             {["APROVADO", "DOCUMENTAÇÃO", "ADMISSÃO"].includes(etapa) && (
-                              <div style={{ marginTop: 6 }}><FichaAso candidatoId={c.id} compacto editar={podeRecrutar && !somenteLeitura} /></div>
+                              <div style={{ marginTop: 6 }}><FichaAso candidatoId={c.id} compacto editar={podeRecrutarVaga && !somenteLeitura} /></div>
                             )}
-                            {etapa === "ADMISSÃO" && c.enviado_admissao_em && <div style={{ fontSize: 9.5, color: "#15803d", marginTop: 4, fontWeight: 700 }}>✓ Contratado — na Admissão (RH)</div>}
+                            {etapa === "ADMISSÃO" && c.enviado_admissao_em && (
+                              <div style={{ fontSize: 9.5, color: "#15803d", marginTop: 4, fontWeight: 700, lineHeight: 1.35 }}
+                                title={`Enviado por ${c.recrutadora_nome ?? "—"} em ${fmtDt(c.enviado_admissao_em)}`}>
+                                {c.admitido_em ? "✓ Admitido" : `⏳ Aguardando admissão — ${primeiroNome(c.admissao_responsavel_nome) || "Admissão (RH)"}`}
+                                {c.recrutadora_nome && <div style={{ color: "#64748b", fontWeight: 600 }}>Recrutamento: {primeiroNome(c.recrutadora_nome)}</div>}
+                              </div>
+                            )}
                             {somenteLeitura ? (
                               // Vaga encerrada: só consulta; o único gesto é cancelar a admissão.
                               etapa === "ADMISSÃO" && podeCancelarAdmissao && (
@@ -2971,9 +3051,9 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
                             ) : (
                             <div style={{ display: "flex", flexDirection: "column", gap: 5, marginTop: 10 }}>
                               {/* ENTREVISTA/GESTOR: roteiro de entrevista */}
-                              {(etapa === "ENTREVISTA" || etapa === "ENTREVISTA GESTOR") && podeRecrutar && <button onClick={() => abrirRoteiro(c, etapa)} style={{ ...bFull, background: "rgba(59,130,246,.1)", color: "#2563eb", border: "1px solid rgba(59,130,246,.3)" }}><Ic i={ClipboardList} />Roteiro de entrevista</button>}
+                              {(etapa === "ENTREVISTA" || etapa === "ENTREVISTA GESTOR") && podeRecrutarVaga && <button onClick={() => abrirRoteiro(c, etapa)} style={{ ...bFull, background: "rgba(59,130,246,.1)", color: "#2563eb", border: "1px solid rgba(59,130,246,.3)" }}><Ic i={ClipboardList} />Roteiro de entrevista</button>}
                               {/* DOCUMENTAÇÃO: anexos do candidato (vários, cada um com título) */}
-                              {etapa === "DOCUMENTAÇÃO" && podeRecrutar && <button onClick={() => abrirDocs(c)} style={{ ...bFull, background: "rgba(8,145,178,.1)", color: "#0e7490", border: "1px solid rgba(8,145,178,.3)" }}><Ic i={Paperclip} />Documentos ({docsCount[c.id] ?? 0})</button>}
+                              {etapa === "DOCUMENTAÇÃO" && podeRecrutarVaga && <button onClick={() => abrirDocs(c)} style={{ ...bFull, background: "rgba(8,145,178,.1)", color: "#0e7490", border: "1px solid rgba(8,145,178,.3)" }}><Ic i={Paperclip} />Documentos ({docsCount[c.id] ?? 0})</button>}
                               {/* Avançar — com ramificação em TRIAGEM e ENTREVISTA */}
                               {etapa === "TRIAGEM" && podeAqui ? (<>
                                 <button onClick={() => pedirMoverCand(c, "JURÍDICO")} style={{ ...avancaBtn, background: "#8b5cf6" }}>Enviar ao Jurídico</button>
@@ -2983,7 +3063,7 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
                                 <button onClick={() => pedirMoverCand(c, "APROVADO")} style={bSkip}>Pular Gestor →</button>
                               </>) : etapa === "ADMISSÃO" ? (
                                 <>
-                                  {podeRecrutar && !c.enviado_admissao_em && <button onClick={() => enviarAdmissao(c)} style={{ ...avancaBtn, background: "#16a34a" }}>✓ Contratar (enviar à Admissão)</button>}
+                                  {podeRecrutarVaga && !c.enviado_admissao_em && <button onClick={() => enviarAdmissao(c)} style={{ ...avancaBtn, background: "#16a34a" }}>✓ Finalizar recrutamento e enviar para Admissão</button>}
                                   {/* Cancelar admissão (mig 20261014000019): vale mesmo depois de
                                       contratado e com a vaga concluída — volta a pessoa para
                                       Reprovado e reabre a vaga. */}
@@ -3004,13 +3084,13 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
                               ) : (CAND_PROX[etapa] && podeAqui && (
                                 <button onClick={() => pedirMoverCand(c, CAND_PROX[etapa])} style={{ ...avancaBtn, background: "#16a34a" }}>{labelProx(etapa)}</button>
                               ))}
-                              {etapa === "DOCUMENTAÇÃO" && podeRecrutar && podePularSstCompras && (
+                              {etapa === "DOCUMENTAÇÃO" && podeRecrutarVaga && podePularSstCompras && (
                                 <button onClick={() => pedirMoverCand(c, "ADMISSÃO")} style={bSkip}>Pular SST e Compras →</button>
                               )}
                               {etapa === "JURÍDICO" && podeMoverJuridico && ehDoJuridico && (
                                 <button onClick={() => okJuridico(c)} title="Nada a apontar: parecer Tudo certo e segue para a Entrevista" style={{ ...bSkip, color: "#15803d", borderColor: "#bbf7d0" }}>✓ OK, tudo certo → Entrevista</button>
                               )}
-                              {etapa === "Reprovado" && podeRecrutar && !somenteLeitura && (
+                              {etapa === "Reprovado" && podeRecrutarVaga && !somenteLeitura && (
                                 <button onClick={() => setRetornoModal({ id: c.id, nome: c.nome || "Candidato", etapa: normalizarEtapa(c.desistencia_etapa) || "", motivo: "" })}
                                   title="Voltar o candidato para uma etapa do processo (o motivo fica no histórico)"
                                   style={{ ...bSkip, color: "#0f3171", borderColor: "#c7d2fe", marginTop: 6 }}>↩ Retornar ao processo</button>
@@ -3020,7 +3100,7 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
                               {/* Desistência: cabe em QUALQUER etapa, porque
                                   desistir é decisão do candidato e ele pode
                                   tomá-la a qualquer momento. */}
-                              {etapa !== "Reprovado" && podeRecrutar && (
+                              {etapa !== "Reprovado" && podeRecrutarVaga && (
                                 <button onClick={() => { setDesistMotivo(""); setDesistModal({ id: c.id, nome: c.nome || "Candidato", etapa }); }}
                                   title="Registrar que o candidato desistiu"
                                   style={{ width: "100%", fontSize: 10, fontWeight: 700, padding: "3px", borderRadius: 7, background: "transparent", border: "none", color: "#dc2626", cursor: "pointer" }}><Ic i={LogOut} />Desistiu</button>
@@ -3111,6 +3191,13 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
           {/* Vale para os três escopos: o fluxo é o mesmo, muda só onde a
               pessoa entra nele. */}
           <ResumoDeFuncoes fluxo="vaga" className="border-white/40 bg-white/15 text-white hover:bg-white hover:text-[#0f3171]" />
+          {/* Acompanhamento gerencial (mig 20261020000050): recrutadoras, responsável atual, tempos e desistências. */}
+          {!soEtapa1 && (podeRecrutar || papelRec.gestor) && (
+            <button onClick={() => navigate("/app/relatorios/vagas?aba=acompanhamento")} title="Vagas por contrato, responsáveis, tempo em cada etapa e desistências"
+              style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "10px 16px", borderRadius: 12, border: "1.5px solid rgba(255,255,255,.4)", background: "rgba(255,255,255,.14)", color: "#fff", fontSize: 12.5, fontWeight: 800, cursor: "pointer" }}>
+              <Ic i={Activity} />Acompanhamento das vagas
+            </button>
+          )}
           {podeRecrutar && (
             <button onClick={copiarLinkPortal} title="Copia o link público (/vagas) para os candidatos escolherem a cidade e enviarem o currículo" style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "10px 16px", borderRadius: 12, border: "1.5px solid rgba(255,255,255,.4)", background: "rgba(255,255,255,.14)", color: "#fff", fontSize: 12.5, fontWeight: 800, cursor: "pointer" }}>
               <Ic i={Link2} />{portalCopiado ? "Link copiado!" : "Copiar link de candidatura"}
@@ -3331,7 +3418,7 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
           {/* Card "ASOs Agendados" (19/10/2026): no canto direito da linha dos
               filtros — as solicitações com exame marcado pelo SST e os textos
               prontos para copiar ou enviar ao candidato. Só no Recrutamento. */}
-          {!soEtapa1 && <AsosAgendados podeEnviar={podeRecrutar} onToast={toast} />}
+          {!soEtapa1 && <AsosAgendados podeEnviar={podeRecrutar} onToast={toast} onAbrirVaga={verDetalhe} />}
           {showContratoFiltro && (
             <>
               <div onClick={() => setShowContratoFiltro(false)} style={{ position: "fixed", inset: 0, zIndex: 40 }} />
@@ -3426,19 +3513,23 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
                   <thead>
                     <tr>
                       <th>#</th><th>Contrato</th><th>Cargo</th><th>Cidade</th>
-                      <th>Status</th><th>Responsável · Etiquetas</th><th>Urgência</th><th>Solicitante</th><th>Data</th><th></th>
+                      <th>Status</th><th>Responsável atual</th><th>Responsável · Etiquetas</th><th>Urgência</th><th>Solicitante</th><th>Data</th><th></th>
                     </tr>
                   </thead>
                   <tbody>
                     {items.map(item => (
                       <tr key={item.id} onClick={() => verDetalhe(item.id)}
                         // Vaga transferida e ainda sem ciente: linha vermelha, como no Excel.
-                        className={novaDemanda(responsaveisVagas[item.id]) ? "rec-nova" : undefined}>
+                        className={novaDemanda(responsaveisVagas[item.id]) ? "rec-nova" : undefined}
+                        // Vaga de outra recrutadora (mig 20261020000050): cinza, só consulta.
+                        style={bloqueioDe(item.id) ? { opacity: .5, filter: "grayscale(1)" } : undefined}
+                        title={bloqueioDe(item.id) ? `Vaga de ${bloqueioDe(item.id)} — somente consulta` : undefined}>
                         <td style={{ color: "#94a3b8", fontSize: 11 }}>#{item.id}</td>
                         <td style={{ fontWeight: 600, color: "#0f172a" }}>{item.contrato || "—"}</td>
                         <td>{item.cargo || "—"}</td>
                         <td>{item.cidade || "—"}</td>
                         <td><StatusVagaBadge status={item.status} etapa={etapasVagas[item.id]} classe="rec-badge" classeCor={badgeStatusCls(item.status)} /></td>
+                        <td>{renderResponsavelAtual(item)}</td>
                         <td>{renderEtiquetas(item)}</td>
                         <td>{item.grau_urgencia ? <span className={`rec-badge ${badgeUrgCls(item.grau_urgencia)}`}>{item.grau_urgencia.startsWith("Alta") ? <><Ic i={Zap} />Alta</> : item.grau_urgencia}</span> : "—"}</td>
                         <td>{item.solicitante_nome || "—"}</td>
@@ -3837,7 +3928,7 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
                     </div>
                   </div>
                   <button onClick={() => baixarDoc(d)} style={{ padding: "5px 10px", borderRadius: 7, border: "1px solid #e2e8f0", background: "#f8fafc", color: "#0f3171", fontSize: 11.5, fontWeight: 700, cursor: "pointer" }}>Abrir</button>
-                  {podeRecrutar && <button onClick={() => removerDoc(d)} title="Remover" style={{ background: "none", border: "none", color: "#dc2626", cursor: "pointer", fontSize: 14 }}>✕</button>}
+                  {podeRecrutarVaga && <button onClick={() => removerDoc(d)} title="Remover" style={{ background: "none", border: "none", color: "#dc2626", cursor: "pointer", fontSize: 14 }}>✕</button>}
                 </div>
               ))}
             </div>
@@ -3849,129 +3940,8 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
         </div>
       )}
 
-      {/* ── Modal: Mensagens automáticas de WhatsApp por etapa ── */}
-      {msgModal && (
-        <div className="rec-modal-ov" style={{ zIndex: 870 }}>
-          <div className="rec-modal" style={{ maxWidth: 780 }}>
-            <button onClick={() => setMsgModal(false)} style={{ position: "absolute", top: 14, right: 14, background: "none", border: "none", color: "#94a3b8", fontSize: 20, cursor: "pointer" }}>✕</button>
-            <div style={{ fontSize: 17, fontWeight: 800, marginBottom: 4 }}><Ic i={Settings} />Mensagens automáticas (WhatsApp)</div>
-            <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 12 }}>
-              Enviadas ao candidato quando ele é movido para a etapa.
-            </div>
-            {/* O RH precisa entender por que o texto não é livre aqui, senão
-                digita a mensagem no campo errado e nada é enviado. */}
-            <div style={{ fontSize: 11.5, color: "#92400e", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 9, padding: "9px 11px", marginBottom: 14, lineHeight: 1.5 }}>
-              O WhatsApp só deixa iniciar conversa com <b>template aprovado pela Meta</b>. Cadastre a mensagem no
-              Meta Business Manager, aguarde a aprovação e coloque aqui o <b>nome do template</b>. O texto abaixo é
-              só a prévia que aparece na Caixa de Entrada — mudar ela não muda o que o candidato recebe.
-            </div>
-
-            <div style={{ display: "flex", flexDirection: "column", gap: 12, maxHeight: "52vh", overflowY: "auto" }}>
-              {msgCfgs.map((c, i) => {
-                const upd = (k: string, v: unknown) => setMsgCfgs(cs => cs.map((x, j) => j === i ? { ...x, [k]: v } : x));
-                const params: string[] = Array.isArray(c.parametros) ? c.parametros : [];
-                const rotulo = c.etapa === "ENTREVISTA GESTOR" ? "ENTREVISTA GESTOR (segunda entrevista — opcional)" : c.etapa;
-                return (
-                  <div key={c.etapa} style={{ border: "1px solid #e2e8f0", borderRadius: 10, padding: "12px 13px", background: c.ativo ? "#f7fdf9" : "#fcfdff" }}>
-                    {/* O estado ligado/desligado tem que ser lido de relance: preencher
-                        o template e esquecer o check faz a etapa continuar muda, e o
-                        envio desligado é silencioso de propósito. */}
-                    <div style={{ display: "flex", alignItems: "center", gap: 9, marginBottom: 9 }}>
-                      <span style={{ fontSize: 13, fontWeight: 800, color: "#0f172a", flex: 1 }}>{rotulo}</span>
-                      {(() => {
-                        // Status na Meta: sem APPROVED, marcar o check não faz a
-                        // mensagem sair — e o RH tem que ver isso antes de marcar.
-                        const st = msgStatus[c.etapa]?.status;
-                        if (!st) return null;
-                        const cor = st === "APPROVED" ? { bg: "#dcfce7", fg: "#15803d", txt: "aprovado na Meta" }
-                          : st === "PENDING" ? { bg: "#fef3c7", fg: "#b45309", txt: "em revisão na Meta" }
-                          : st === "REJECTED" ? { bg: "#fee2e2", fg: "#b91c1c", txt: "reprovado na Meta" }
-                          : { bg: "#f1f5f9", fg: "#64748b", txt: "não enviado à Meta" };
-                        return <span title={String(msgStatus[c.etapa]?.motivo ?? "")} style={{ fontSize: 10, fontWeight: 800, padding: "2px 8px", borderRadius: 20, background: cor.bg, color: cor.fg }}>{cor.txt}</span>;
-                      })()}
-                      <label style={{ display: "inline-flex", alignItems: "center", gap: 6, cursor: "pointer", userSelect: "none" }}>
-                        <input type="checkbox" checked={!!c.ativo} onChange={e => upd("ativo", e.target.checked)} style={{ width: 15, height: 15, cursor: "pointer" }} />
-                        <span style={{ fontSize: 11.5, fontWeight: 800, color: c.ativo ? "#15803d" : "#94a3b8" }}>
-                          {c.ativo ? "Enviando automaticamente" : "Desligada — não envia nada"}
-                        </span>
-                      </label>
-                    </div>
-                    <div style={{ display: "flex", gap: 9, flexWrap: "wrap" }}>
-                      <div style={{ flex: "2 1 220px" }}>
-                        <label style={{ fontSize: 11, fontWeight: 800, color: "#475569" }}>Nome do template na Meta *</label>
-                        <input value={c.template_nome ?? ""} onChange={e => upd("template_nome", e.target.value)} placeholder="ex.: recrutamento_triagem"
-                          style={{ width: "100%", marginTop: 4, height: 32, borderRadius: 8, padding: "0 9px", fontSize: 12.5, outline: "none",
-                            border: `1px solid ${nomeTemplateInvalido(c.template_nome) ? "#fca5a5" : "#e2e8f0"}` }} />
-                        {nomeTemplateInvalido(c.template_nome) && (
-                          <div style={{ fontSize: 10.5, color: "#b91c1c", marginTop: 3, lineHeight: 1.4 }}>
-                            A Meta só aceita minúsculas, números e underscore. Use <b>{sugerirNomeTemplate(c.template_nome)}</b>
-                            {" "}— e confira se é exatamente esse o nome lá no Business Manager.
-                          </div>
-                        )}
-                      </div>
-                      <div style={{ flex: "1 1 110px" }}>
-                        <label style={{ fontSize: 11, fontWeight: 800, color: "#475569" }}>Idioma</label>
-                        <input value={c.template_idioma ?? "pt_BR"} onChange={e => upd("template_idioma", e.target.value)}
-                          style={{ width: "100%", marginTop: 4, height: 32, border: "1px solid #e2e8f0", borderRadius: 8, padding: "0 9px", fontSize: 12.5, outline: "none" }} />
-                      </div>
-                    </div>
-                    <div style={{ marginTop: 9 }}>
-                      <label style={{ fontSize: 11, fontWeight: 800, color: "#475569" }}>
-                        Variáveis, na ordem dos {"{{1}}, {{2}}…"} do template
-                      </label>
-                      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 5 }}>
-                        {params.map((p, pi) => (
-                          <span key={pi} style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 11, fontWeight: 700, background: "#eef4ff", border: "1px solid #dbe4f0", borderRadius: 20, padding: "3px 5px 3px 9px", color: "#0f3171" }}>
-                            {`{{${pi + 1}}}`} = {p}
-                            <button onClick={() => upd("parametros", params.filter((_, j) => j !== pi))} style={{ background: "none", border: "none", color: "#94a3b8", cursor: "pointer", fontSize: 12, lineHeight: 1 }}>✕</button>
-                          </span>
-                        ))}
-                        <select value="" onChange={e => { if (e.target.value) upd("parametros", [...params, e.target.value]); }}
-                          style={{ height: 25, border: "1px dashed #cbd5e1", borderRadius: 20, padding: "0 8px", fontSize: 11, color: "#0f3171", background: "#fff", cursor: "pointer" }}>
-                          <option value="">+ variável</option>
-                          {MSG_VARIAVEIS.map(v => <option key={v} value={v}>{v}</option>)}
-                        </select>
-                      </div>
-                    </div>
-                    <div style={{ marginTop: 9 }}>
-                      <label style={{ fontSize: 11, fontWeight: 800, color: "#475569" }}>Prévia (espelho do template, só para leitura interna)</label>
-                      <textarea value={c.texto_previa ?? ""} onChange={e => upd("texto_previa", e.target.value)} rows={2}
-                        style={{ width: "100%", marginTop: 4, border: "1px solid #e2e8f0", borderRadius: 8, padding: "7px 9px", fontSize: 12.5, outline: "none", fontFamily: "inherit", resize: "vertical" }} />
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-
-            {/* Agendamento do ASO (mig 20261016000031): não é automático — sai pelo
-                botão "Enviar agendamento" do card em SST + COMPRAS —, mas o modelo
-                vai para a Meta junto com os outros, por este mesmo botão. */}
-            {(() => {
-              const st = msgStatus["AGENDAMENTO ASO"]?.status;
-              const txt = st === "APPROVED" ? "aprovado na Meta — o botão já envia" : st === "PENDING" ? "em revisão na Meta"
-                : st === "REJECTED" ? `reprovado na Meta${msgStatus["AGENDAMENTO ASO"]?.motivo ? ` (${msgStatus["AGENDAMENTO ASO"]?.motivo})` : ""}`
-                : st ? "ainda não enviado à Meta — clique em Enviar textos para aprovação" : "status na Meta indisponível";
-              return (
-                <div style={{ marginTop: 12, fontSize: 11.5, color: "#475569", background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: 10, padding: "8px 12px" }}>
-                  <b style={{ color: "#15803d" }}>Agendamento do ASO</b> (botão com o WhatsApp no card em SST + COMPRAS, envio manual) · modelo <code>recrutamento_agendamento_aso</code>: <b>{txt}</b>
-                </div>
-              );
-            })()}
-
-            <div style={{ display: "flex", gap: 8, justifyContent: "space-between", alignItems: "center", marginTop: 16, flexWrap: "wrap" }}>
-              <button onClick={criarTemplates} disabled={msgMetaBusy}
-                title="Cria os textos na conta da empresa na Meta e os põe em revisão"
-                style={{ padding: "7px 14px", borderRadius: 10, border: "1px solid rgba(37,211,102,.35)", background: msgMetaBusy ? "#f1f5f9" : "rgba(37,211,102,.1)", color: "#128c7e", fontSize: 12, fontWeight: 700, cursor: msgMetaBusy ? "default" : "pointer" }}>
-                {msgMetaBusy ? "Enviando…" : "↑ Enviar textos para aprovação da Meta"}
-              </button>
-              <div style={{ display: "flex", gap: 8 }}>
-                <button onClick={() => setMsgModal(false)} style={{ padding: "7px 14px", borderRadius: 10, border: "1px solid #e2e8f0", background: "#fff", color: "#475569", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Cancelar</button>
-                <button onClick={salvarMsgConfig} disabled={msgSalvando} style={{ padding: "7px 14px", borderRadius: 10, border: "none", background: msgSalvando ? "#94a3b8" : "#0f3171", color: "#fff", fontSize: 12, fontWeight: 700, cursor: msgSalvando ? "default" : "pointer" }}>{msgSalvando ? "Salvando…" : "Salvar"}</button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* ── Modal: Mensagens automáticas de WhatsApp por etapa (SIS-2026-0667) ── */}
+      {msgModal && <MensagensAutomaticas onFechar={() => setMsgModal(false)} podeEditar={podeRecrutar} toast={toast} />}
 
       {/* ── Painel Kanban de Candidatos (janela central ~92%) ── */}
       {showKanbanCand && (
@@ -4022,6 +3992,7 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
             });
             toast(noProcesso ? `${nome} inserido e colocado no processo.` : `${nome} inserido nos currículos da vaga.`, "ok");
             loadCandidatos(drawerId);
+            if (noProcesso) await dispararMensagemEtapa(id, "ENTRADA", nome);
             if (showCurriculos) abrirCurriculos();
           }}
         />
@@ -4038,7 +4009,7 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
               </div>
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                 <span style={{ fontSize: 12, color: "#94a3b8" }}>{drawerSol?.cargo} — #{drawerId}</span>
-                {podeRecrutar && (
+                {podeRecrutarVaga && (
                   <button onClick={() => setShowCandManual(true)}
                     style={{ padding: "5px 12px", borderRadius: 8, border: "1px solid rgba(15,49,113,.25)", background: "rgba(15,49,113,.08)", color: "#0f3171", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>+ Inserir manualmente</button>
                 )}
@@ -4093,7 +4064,7 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
                         </div>
                       </div>
                       <div style={{ padding: "10px 14px", borderTop: "1px solid #e2e8f0", display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 8, background: "#fcfdff", flexWrap: "wrap" }}>
-                        {drawerSol && STATUS_PROCESSO.includes(drawerSol.status) && podeRecrutar && (
+                        {drawerSol && STATUS_PROCESSO.includes(drawerSol.status) && podeRecrutarVaga && (
                           g.emProcesso
                             ? <span style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "5px 11px", borderRadius: 6, background: "rgba(34,197,94,.1)", border: "1px solid rgba(34,197,94,.25)", color: "#16a34a", fontSize: 11, fontWeight: 700 }}>✓ No processo</span>
                             : <button onClick={() => selecionarCandidato(cv)} title={bl ? "Atenção: CPF possui restrições (Jurídico)" : ""} style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "5px 11px", borderRadius: 6, background: "#16a34a", border: "none", color: "#fff", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>✓ Selecionar candidato</button>
@@ -4163,6 +4134,58 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
                 <button onClick={() => setExportModal(false)} disabled={exportando} style={{ padding: "7px 14px", borderRadius: 8, background: "#fff", border: "1px solid #e2e8f0", color: "#475569", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Cancelar</button>
                 <button onClick={exportarExcel} disabled={exportando} style={{ padding: "7px 14px", borderRadius: 8, background: "#16a34a", border: "none", color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer", opacity: exportando ? .6 : 1 }}>
                   {exportando ? "Gerando…" : "Baixar Excel"}
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {contratarModal && (() => {
+        const cm = contratarModal;
+        const campo = (rotulo: string, chave: "inicio" | "local" | "banco", ph: string) => (
+          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            <label style={{ fontSize: 11, fontWeight: 700, color: "#475569" }}>{rotulo}</label>
+            <input value={cm[chave]} onChange={e => setContratarModal({ ...cm, [chave]: e.target.value })} placeholder={ph}
+              style={{ padding: "8px 10px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: 13, fontFamily: "inherit" }} />
+          </div>
+        );
+        return (
+          <div className="rec-modal-ov" style={{ zIndex: 950 }} onClick={e => { if (e.target === e.currentTarget && !contratando) setContratarModal(null); }}>
+            <div className="rec-modal" style={{ maxWidth: 480 }} onClick={e => e.stopPropagation()}>
+              <div style={{ fontSize: 17, fontWeight: 800, marginBottom: 2, color: "#15803d" }}><Ic i={CheckCircle2} />Finalizar recrutamento — {cm.cv.nome || "o candidato"}</div>
+              <div style={{ fontSize: 12, color: "#64748b", marginBottom: 12, lineHeight: 1.5 }}>
+                Sua parte termina aqui: o candidato vai para a fila da <b>Admissão</b> (RH › Novas Admissões) com os dados e documentos
+                já registrados, e fica <b>"Aguardando admissão"</b> até a Admissão concluir. A vaga sai do portal público /vagas.
+              </div>
+              {(respAdmissao?.length ?? 0) > 1 && (
+                <div style={{ display: "flex", flexDirection: "column", gap: 4, marginBottom: 12 }}>
+                  <label style={{ fontSize: 11, fontWeight: 700, color: "#475569" }}>Responsável na Admissão *</label>
+                  <select value={cm.admResp ?? ""} onChange={e => setContratarModal({ ...cm, admResp: e.target.value })}
+                    style={{ padding: "8px 10px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: 13, fontFamily: "inherit", background: "#fff" }}>
+                    <option value="">— Escolher —</option>
+                    {respAdmissao!.map((p) => <option key={p.id} value={p.id}>{p.nome}</option>)}
+                  </select>
+                </div>
+              )}
+              {respAdmissao?.length === 1 && (
+                <div style={{ fontSize: 12, color: "#334155", marginBottom: 12 }}>Responsável na Admissão: <b>{respAdmissao[0].nome}</b></div>
+              )}
+              <div style={{ fontSize: 12, color: "#334155", background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: 8, padding: "8px 10px", marginBottom: 12 }}>
+                Estes dados vão na mensagem de WhatsApp <b>"Contratado"</b> que o candidato recebe.
+              </div>
+              <div style={{ display: "grid", gap: 10 }}>
+                {campo("Data de início *", "inicio", "Ex.: 20/10/2026")}
+                {campo("Local / posto *", "local", "Ex.: FORO 01 — Porto Alegre")}
+                {campo("Banco do salário *", "banco", "Ex.: Banrisul")}
+              </div>
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 16, flexWrap: "wrap" }}>
+                <button onClick={() => setContratarModal(null)} disabled={contratando} style={{ padding: "7px 14px", borderRadius: 8, background: "#fff", border: "1px solid #e2e8f0", color: "#475569", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Voltar</button>
+                <button onClick={() => confirmarContratar(false)} disabled={contratando} title="Envia para a Admissão sem mandar WhatsApp"
+                  style={{ padding: "7px 14px", borderRadius: 8, background: "#fff", border: "1px solid #16a34a", color: "#15803d", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Enviar sem mensagem</button>
+                <button onClick={() => confirmarContratar(true)} disabled={contratando}
+                  style={{ padding: "7px 14px", borderRadius: 8, background: "#16a34a", border: "none", color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer", opacity: contratando ? .6 : 1 }}>
+                  {contratando ? "Enviando…" : "✓ Enviar para Admissão e mandar mensagem"}
                 </button>
               </div>
             </div>
@@ -4250,9 +4273,9 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
       {sstCandId != null && (() => {
         const cand = candidatos.find(x => x.id === sstCandId);
         return cand ? <StatusSstDialog candidato={cand} onClose={() => setSstCandId(null)}
-          onEnviarWhatsApp={podeRecrutar && !vagaEncerrada(drawerSol?.status) && temWhatsApp(cand) ? () => enviarAgendamento(cand) : undefined}
+          onEnviarWhatsApp={podeRecrutarVaga && !vagaEncerrada(drawerSol?.status) && temWhatsApp(cand) ? () => enviarAgendamento(cand) : undefined}
           enviando={enviandoAgendamento === cand.id}
-          ficha={<FichaAso candidatoId={cand.id} editar={podeRecrutar && !vagaEncerrada(drawerSol?.status)} />} /> : null;
+          ficha={<FichaAso candidatoId={cand.id} editar={podeRecrutarVaga && !vagaEncerrada(drawerSol?.status)} />} /> : null;
       })()}
       {confirmarAgendamentoId != null && (() => {
         const cand = candidatos.find(x => x.id === confirmarAgendamentoId);
@@ -4285,7 +4308,7 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
             <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 14 }}>
               {desistModal.nome} · estava em <b style={{ color: "#475569" }}>{desistModal.etapa}</b>
             </div>
-            <label style={{ fontSize: 11, fontWeight: 700, color: "#475569" }}>Motivo da desistência *</label>
+            <label style={{ fontSize: 11, fontWeight: 700, color: "#475569" }}>Motivo da desistência (vazio = "Não informado")</label>
             <textarea value={desistMotivo} onChange={e => setDesistMotivo(e.target.value)} rows={3}
               placeholder="Ex.: conseguiu outra colocação, distância, proposta salarial…"
               style={{ width: "100%", marginTop: 6, padding: "8px 10px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: 13, resize: "vertical" }} />

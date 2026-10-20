@@ -24,7 +24,7 @@ import {
   useTvPlaylists, useCatalogoTv, type TvAlerta, type TvDispositivo, type TvItem, type TvPlaylist,
 } from "@/hooks/useTvs";
 import {
-  PERIODOS_TV, RELATORIOS_TV, TIPOS_ITEM, corAviso, duracaoTotal, haQuanto, itensNoAr, nomeRelatorioTv, paginasRelatorioTv, relatorioTemFiltros, statusTv, telaAoVivo, tituloRelatorioTv,
+  PERIODOS_TV, RELATORIOS_TV, TIPOS_ITEM, aoVivoFresco, corAviso, duracaoTotal, haQuanto, itensNoAr, nomeRelatorioTv, paginasRelatorioTv, relatorioTemFiltros, statusTv, telaAoVivo, tituloRelatorioTv,
   urlValida, youtubeEmbed, type ItemTv, type TelaTv, type TipoItem,
 } from "@/lib/tv/tv";
 import { corDoRelatorioTv, duracaoRecomendada } from "@/lib/tv/relatorioTv";
@@ -783,13 +783,20 @@ function PainelAoVivo({ tvs, playlists, playlistId, tvInicial }: { tvs: TvDispos
     // agora só importa quando um item entra/sai da validade: o minuto basta.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [playlistDaTv, contratos, Math.floor(agora.getTime() / 60_000)]);
+  const itensTodos = useMemo(() => (playlistDaTv ? playlistDaTv.itens.map((i) => paraItemTv(i, contratos)) : []), [playlistDaTv, contratos]);
+  const recarregar = useRecarregarTv();
 
   if (!tvs.length) return <p className="text-xs text-muted-foreground"><Radio className="mr-1 inline h-3.5 w-3.5" /> Nenhuma TV conectada ainda — o AO VIVO aparece quando houver uma.</p>;
   if (!tv) return null;
 
-  const r = telaAoVivo({ tv, itens, alertas, aoVivo: aoVivo.data ?? null, agora, simulacaoDesde: simulacaoDesde.current });
+  const r = telaAoVivo({ tv, itens, itensTodos, alertas, aoVivo: aoVivo.data ?? null, agora, simulacaoDesde: simulacaoDesde.current });
   const online = statusTv(tv.ultimo_ping, agora) === "online";
   const desde = aoVivo.data?.atual_desde ? Math.max(0, Math.round((agora.getTime() - new Date(aoVivo.data.atual_desde).getTime()) / 1000)) : null;
+  // TV online que não confirma o item (mig 20261020000004): player antigo — recarregar resolve.
+  const semConfirmacao = online && tv.ativo && aoVivoFresco(aoVivo.data, agora) === false;
+  const mandarRecarregar = () => recarregar.mutateAsync([tv.id]).then(
+    () => toast.success(`${tv.nome} recarrega em até 15 s — depois disso o ao vivo fica exato.`),
+    (e) => toast.error((e as Error).message));
 
   return (
     <div className="space-y-2">
@@ -812,17 +819,30 @@ function PainelAoVivo({ tvs, playlists, playlistId, tvInicial }: { tvs: TvDispos
       </div>
       <QuadroTv tela={r.tela} rotulo={`Ao vivo — ${tv.nome}`} />
       <div className="space-y-0.5 text-[11px] text-muted-foreground">
-        {r.tela.modo === "item" && r.indice != null && (
-          <p className="truncate"><b className="text-foreground">Na tela:</b> {nomeDoItem(r.tela.item)} <span>({r.indice + 1} de {itens.length}{r.exata && desde != null ? ` · há ${desde} s` : ""})</span></p>
+        {r.tela.modo === "item" && (
+          <p className="truncate">
+            <b className="text-foreground">Na tela:</b> {nomeDoItem(r.tela.item)}{" "}
+            <span>({r.indice != null ? `${r.indice + 1} de ${itens.length}` : "fora dos itens no ar agora"}{r.exata && desde != null ? ` · ${desde < 60 ? `há ${desde} s` : haQuanto(aoVivo.data?.atual_desde, agora)}` : ""})</span>
+          </p>
         )}
+        {online && <p>Última notícia da TV: {haQuanto(tv.ultimo_ping, agora)}{tv.tela ? ` · tela ${tv.tela}` : ""}.</p>}
         {r.tela.modo === "relogio" && <p>Mostrando o relógio — {playlistDaTv ? "a playlist não tem item no ar agora" : "a TV está sem playlist"}.</p>}
         {r.tela.modo === "pausada" && <p>TV pausada no ERP — mostra só o nome.</p>}
         {r.tela.alerta && r.tela.modo !== "offline" && <p className="font-semibold text-destructive">Aviso geral no ar cobrindo a tela.</p>}
         {playlistId && tv.playlist_id !== playlistId && <p>Esta TV está com outra playlist: <b className="text-foreground">{playlistDaTv?.nome ?? "nenhuma (relógio)"}</b>.</p>}
         {r.tela.modo === "item" && !r.exata && (
           <p className="text-warning">
-            Aproximado: {aoVivo.data?.suportado === false ? "o banco ainda não recebe o item que a TV mostra (mig 20261008000003)" : "a TV ainda não informou o item — ela passa a informar depois da próxima recarga"}. A sequência e os tempos são os da playlist.
+            Aproximado: {aoVivo.data?.suportado === false ? "o banco ainda não recebe o item que a TV mostra (mig 20261008000003)"
+              : semConfirmacao ? "a TV está com uma versão antiga da tela e não confirma o que mostra"
+              : "a TV ainda não informou o item — ela passa a informar depois da próxima recarga"}. A sequência e os tempos são os da playlist.
           </p>
+        )}
+        {semConfirmacao && (
+          <AcessoGate menu={MENU_TVS} acao="alterar">
+            <Button size="sm" variant="outline" className="h-7 text-xs" disabled={recarregar.isPending} onClick={mandarRecarregar}>
+              <RefreshCw className="mr-1 h-3.5 w-3.5" /> Recarregar a TV (deixa o ao vivo exato)
+            </Button>
+          </AcessoGate>
         )}
       </div>
     </div>
