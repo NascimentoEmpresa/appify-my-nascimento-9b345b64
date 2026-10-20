@@ -33,7 +33,7 @@ import { TvTelaPadrao } from "./TvTelaPadrao";
 // coisa. É só um aviso: se falhar, a TV segue tocando; se o banco ainda não
 // tem a função, ela para de tentar até a próxima recarga.
 //
-// 20/10/2026 (mig 20261020000001) — "quando coloco em ao vivo não aparece o
+// 20/10/2026 (mig 20261020000004) — "quando coloco em ao vivo não aparece o
 // que está aparecendo na TV":
 //   · BATIMENTO: além da troca, a TV confirma o item atual a cada consulta
 //     (p_troca = false, não zera o "desde"). Um aviso de troca perdido não
@@ -108,7 +108,7 @@ export default function TvPlayer() {
     }, () => { /* sem rede: o batimento da próxima consulta corrige */ });
   }, []);
   // Batimento: confirma o item a cada consulta sem zerar o "desde". Banco sem
-  // a mig 20261020000001 (sem p_troca) → desliga só o batimento.
+  // a mig 20261020000004 (sem p_troca) → desliga só o batimento.
   const batimento = () => {
     if (!batimentoLigado.current || !reportarLigado.current || !tokenRef.current || naTela.current === undefined) return;
     rpc("tv_reportar", { p_token: tokenRef.current, p_item: naTela.current, p_troca: false }).then(({ error }) => {

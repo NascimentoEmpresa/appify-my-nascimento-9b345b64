@@ -85,11 +85,11 @@ describe("tela AO VIVO", () => {
   });
 });
 
-// 20/10/2026 (mig 20261020000001): "quando coloco em ao vivo não aparece o
+// 20/10/2026 (mig 20261020000004): "quando coloco em ao vivo não aparece o
 // que está aparecendo na TV". A TV confirma o item a cada consulta; o ao vivo
 // acha o item mesmo fora da lista "no ar" da gestão, abre na página que a TV
 // está, e o player recarrega quando sai versão nova.
-describe("ao vivo confiável (mig 20261020000001)", () => {
+describe("ao vivo confiável (mig 20261020000004)", () => {
   const itens = [item("a", 10), item("b", 20)];
   const base = { tv: tvOnline, itens, alertas: [] as AlertaTv[], agora, simulacaoDesde: agora.getTime() - 12_000 };
 

@@ -14,7 +14,7 @@
 -- analista".
 --
 -- Aqui: todas as tv_* (menos tv_estado e tv_reportar, da mig
--- 20261020000001) recriadas com a definição viva da Supabase antiga
+-- 20261020000004) recriadas com a definição viva da Supabase antiga
 -- (pg_get_functiondef em 20/10/2026 — a última versão de cada uma; nenhuma
 -- mudou depois da virada), com o mesmo EXECUTE de lá (anon só nas que a TV
 -- chama sem login). CREATE OR REPLACE: idempotente.
