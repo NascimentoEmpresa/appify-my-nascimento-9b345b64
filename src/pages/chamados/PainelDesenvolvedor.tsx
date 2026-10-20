@@ -75,6 +75,25 @@ export default function PainelDesenvolvedor() {
     },
   });
 
+  // Chamados em que eu sou PARTICIPANTE EXTRA (20/10/2026): "adicionei um
+  // participante extra mas não aparece a tarefa dele no painel do
+  // desenvolvedor". Entram na lista com a etiqueta "Participante", mas NÃO
+  // na fila nem nas contagens — a fila e os números são do responsável.
+  // A RLS já deixa o participante ver o chamado (mig 20261009000003).
+  const { data: participando = [] } = useQuery({
+    queryKey: ["chamados-participando", user?.id],
+    enabled: !!user?.id && dev,
+    queryFn: async () => {
+      const { data, error } = await (supabase as any).from("CHAMADO_SISTEMA")
+        .select("*, CHAMADO_SISTEMA_PARTICIPANTE!inner(user_id)")
+        .eq("CHAMADO_SISTEMA_PARTICIPANTE.user_id", user!.id)
+        .order("updated_at", { ascending: false });
+      if (error) return [] as Chamado[];   // sem a tabela de participantes: segue só com os meus
+      return ((data ?? []) as Array<Chamado & { CHAMADO_SISTEMA_PARTICIPANTE?: unknown }>)
+        .map(({ CHAMADO_SISTEMA_PARTICIPANTE: _p, ...c }) => c as Chamado);
+    },
+  });
+
   // Posição na fila global (FIFO) dos chamados atribuídos a este dev.
   const { data: posicoes = {} } = useQuery({
     queryKey: ["chamados-posicao-fila", user?.id],
@@ -163,8 +182,14 @@ export default function PainelDesenvolvedor() {
 
   // Posição na MINHA fila (1 = próximo a executar) + lista conforme a visão.
   const posicaoMinhaFila = useMemo(() => posicoesFilaDev(chamados), [chamados]);
+  // Onde sou só participante (e não o responsável).
+  const soParticipante = useMemo(() => {
+    const meus = new Set(chamados.map((c) => c.id));
+    return participando.filter((c) => !meus.has(c.id));
+  }, [chamados, participando]);
+  const idsParticipante = useMemo(() => new Set(soParticipante.map((c) => c.id)), [soParticipante]);
   const visiveis = useMemo(() => {
-    const lista = chamados.filter((c) =>
+    const lista = [...chamados, ...soParticipante].filter((c) =>
       visao === "ativos" ? ATIVO(c.status)
       : visao === "concluidos" ? !ATIVO(c.status)
       : true);
@@ -175,7 +200,7 @@ export default function PainelDesenvolvedor() {
       if (pb) return 1;
       return +new Date(b.updated_at) - +new Date(a.updated_at);
     });
-  }, [chamados, visao, posicaoMinhaFila]);
+  }, [chamados, soParticipante, visao, posicaoMinhaFila]);
 
   const mudarPrioridade = async (id: string, prioridade: string, numero: string) => {
     const { error } = await (supabase as any).from("CHAMADO_SISTEMA").update({ prioridade }).eq("id", id);
@@ -343,7 +368,15 @@ export default function PainelDesenvolvedor() {
                           )}
                         </TableCell>
                         <TableCell>
-                          <p className="font-mono text-[11px] font-semibold">#{c.numero}</p>
+                          <p className="flex flex-wrap items-center gap-1.5 font-mono text-[11px] font-semibold">
+                            #{c.numero}
+                            {idsParticipante.has(c.id) && (
+                              <span className="rounded border border-info/40 bg-info/10 px-1.5 py-px font-sans text-[9px] font-bold uppercase text-info"
+                                title="Você foi incluído como participante — o responsável pela execução é outra pessoa">
+                                Participante · resp.: {nomeDe(c.responsavel_id)}
+                              </span>
+                            )}
+                          </p>
                           <p className="text-xs">{c.assunto}</p>
                           {/* "Abrir PR" e "Reabrir" andam juntos: o chamado que
                               precisa de uma segunda PR é justamente o que foi

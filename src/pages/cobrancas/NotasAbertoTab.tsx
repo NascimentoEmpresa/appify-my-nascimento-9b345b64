@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { SearchableSelect } from "@/components/ui/searchable-select";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { ArrowDown, ArrowUp, ArrowUpDown, Bell, CalendarClock, ChevronDown, ChevronRight, Download, FileText, Mail, MoreVertical, RotateCcw, TrendingDown, TrendingUp, Wallet } from "lucide-react";
@@ -115,11 +116,32 @@ export default function NotasAbertoTab() {
   const mesAtual = new Date().toLocaleDateString("sv-SE").slice(0, 7);
   const recebido = useMemo(() => recebidoDoMes(nfsParaRecebido, mesAtual, { empresaId: filtros.empresaId || undefined, contratoId: filtros.contratoId || undefined }), [nfsParaRecebido, mesAtual, filtros.empresaId, filtros.contratoId]);
 
-  const contratosDoFiltro = useMemo(() => {
-    const m = new Map<string, string>();
-    for (const l of linhas) m.set(l.contratoId, l.contrato);
-    return [...m.entries()].sort((a, b) => a[1].localeCompare(b[1], "pt-BR"));
-  }, [linhas]);
+  // Filtrar por contrato (20/10/2026, chamado "conferência gerencial por
+  // contrato"): pesquisável pelo nome e SÓ com os contratos da empresa
+  // escolhida — antes era uma lista fixa com os contratos de todas as
+  // empresas. Cada opção diz quantas notas e quanto está em aberto, com a
+  // mesma régua de visibilidade da tabela (restricao), para o número da
+  // opção bater com o que aparece ao filtrar.
+  const opcoesContrato = useMemo(() => {
+    const base = filtrarLinhas(linhas, { ...FILTROS_VAZIOS, empresaId: rascunho.empresaId }, restricao);
+    const m = new Map<string, { nome: string; notas: number; valor: number }>();
+    for (const l of base) {
+      const c = m.get(l.contratoId) ?? { nome: l.contrato, notas: 0, valor: 0 };
+      c.notas += 1; c.valor += l.valor;
+      m.set(l.contratoId, c);
+    }
+    return [...m.entries()]
+      .sort((a, b) => a[1].nome.localeCompare(b[1].nome, "pt-BR"))
+      .map(([id, c]) => ({ value: id, label: c.nome, hint: `${c.notas} nota(s) · ${fmtMoney(c.valor)}` }));
+  }, [linhas, rascunho.empresaId, restricao]);
+  const nomeContratoFiltrado = filtros.contratoId ? (linhas.find((l) => l.contratoId === filtros.contratoId)?.contrato ?? "") : "";
+
+  /** Escolher o contrato já aplica (é a conferência de um contrato só); "" volta à visão geral. */
+  const filtrarContrato = (contratoId: string) => {
+    setRascunho((r) => ({ ...r, contratoId }));
+    setFiltros((f) => ({ ...f, contratoId }));
+    setPagina(1); setSelecionadas(new Set());
+  };
 
   const ordenar = (c: ColunaOrdem) => {
     if (ordem === c) setDesc(!desc);
@@ -353,17 +375,29 @@ export default function NotasAbertoTab() {
           </div>
           <div className="space-y-1">
             <Label className="text-xs">Empresa</Label>
-            <Select value={rascunho.empresaId || "todas"} onValueChange={(v) => setRascunho({ ...rascunho, empresaId: v === "todas" ? "" : v })}>
+            <Select value={rascunho.empresaId || "todas"} onValueChange={(v) => {
+              const empresaId = v === "todas" ? "" : v;
+              // Contrato de outra empresa não sobra escolhido escondido.
+              const contratoOk = !rascunho.contratoId || !empresaId
+                || linhas.some((l) => l.contratoId === rascunho.contratoId && l.empresaId === empresaId);
+              setRascunho({ ...rascunho, empresaId, contratoId: contratoOk ? rascunho.contratoId : "" });
+            }}>
               <SelectTrigger className="w-36"><SelectValue /></SelectTrigger>
               <SelectContent><SelectItem value="todas">Todas</SelectItem>{empresas.map((e) => <SelectItem key={e.id} value={e.id}>{e.codigo || e.nome}</SelectItem>)}</SelectContent>
             </Select>
           </div>
           <div className="space-y-1">
-            <Label className="text-xs">Contrato</Label>
-            <Select value={rascunho.contratoId || "todos"} onValueChange={(v) => setRascunho({ ...rascunho, contratoId: v === "todos" ? "" : v })}>
-              <SelectTrigger className="w-56"><SelectValue /></SelectTrigger>
-              <SelectContent><SelectItem value="todos">Todos</SelectItem>{contratosDoFiltro.map(([id, nome]) => <SelectItem key={id} value={id}>{nome}</SelectItem>)}</SelectContent>
-            </Select>
+            <Label className="text-xs">Filtrar por contrato</Label>
+            <SearchableSelect
+              className="w-64"
+              value={rascunho.contratoId}
+              onChange={filtrarContrato}
+              options={opcoesContrato}
+              placeholder={rascunho.empresaId ? "Todos os contratos da empresa" : "Todos os contratos"}
+              searchPlaceholder="Buscar contrato pelo nome…"
+              emptyLabel="Nenhum contrato com notas em aberto"
+              allowClear clearValue=""
+            />
           </div>
           <div className="space-y-1">
             <Label className="text-xs">Status</Label>
@@ -383,7 +417,16 @@ export default function NotasAbertoTab() {
       <Card>
         <CardContent className="p-0">
           <div className="flex flex-wrap items-center justify-between gap-2 border-b px-3 py-2 text-xs">
-            <span className="text-muted-foreground">Resultados: {ordenadas.length} nota(s) em {grupos.length} contrato(s)</span>
+            <span className="flex flex-wrap items-center gap-2 text-muted-foreground">
+              Resultados: {ordenadas.length} nota(s) em {grupos.length} contrato(s)
+              {filtros.contratoId && (
+                <span className="inline-flex items-center gap-1.5 rounded-full border border-primary/40 bg-primary/10 py-0.5 pl-2.5 pr-1 font-medium text-primary">
+                  Contrato: {nomeContratoFiltrado || "selecionado"} · {fmtMoney(totais.totalGeral)}
+                  <button type="button" className="rounded-full px-1.5 hover:bg-primary/20" title="Limpar o filtro de contrato e voltar à visão geral"
+                    onClick={() => filtrarContrato("")}>✕</button>
+                </span>
+              )}
+            </span>
             <div className="inline-flex rounded-md border p-0.5">
               {(["contrato", "nota"] as const).map((m) => (
                 <button key={m} type="button" onClick={() => { setModo(m); setPagina(1); }} className={cn("rounded px-2.5 py-1 font-medium", modo === m ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground")}>

@@ -63,6 +63,8 @@ export const salarioNumero = (v: unknown): number | null => {
 };
 
 const brl = (v: number) => v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+/** 20 → "20"; 20.5 → "20,5" (o cadastro vem "20,00"). */
+const pctBR = (v: number) => v.toLocaleString("pt-BR", { maximumFractionDigits: 2 });
 
 export async function buscarCustoDoPosto(sb: any, e: EntradaCusto): Promise<CustoPosto | null> {
   if (!e.contrato?.trim()) return null;
@@ -88,10 +90,14 @@ export function insalubridadeDoCusto(
       const pct = base > 0 ? Math.round((v / base) * 100) : 0;
       return { recebe: "Sim", quanto: `${brl(v)}/mês${pct ? ` (${pct}%)` : ""}`, origem: "planilha" };
     }
-    return { recebe: "Não", quanto: "", origem: "planilha" };
+    // Planilha do posto SEM insalubridade, mas o colaborador recebe na Senior
+    // (20/10/2026 — MONICA DOS SANTOS MEDEIROS, 20% no cadastro, a vaga saía
+    // "Não"): vale o cadastro. Planilha vazia não é prova de que o posto não
+    // paga — a pessoa que está nele recebe.
+    if (num(cadastroPct) <= 0) return { recebe: "Não", quanto: "", origem: "planilha" };
   }
   const pct = num(cadastroPct);
-  if (pct > 0) return { recebe: "Sim", quanto: `${String(cadastroPct).trim().replace("%", "")}%`, origem: "cadastro" };
+  if (pct > 0) return { recebe: "Sim", quanto: `${pctBR(pct)}%`, origem: "cadastro" };
   return { recebe: "Não", quanto: "", origem: cadastroPct === undefined ? "nenhuma" : "cadastro" };
 }
 
@@ -117,7 +123,8 @@ export function notaDoCusto(custo: CustoPosto | null, origemInsal: "planilha" | 
     return `O posto "${postoEscolhido}" não está na Planilha de Custo vigente do contrato — V.A e V.T ficam com o Recrutamento${origemInsal === "cadastro" ? "; insalubridade veio do cadastro do colaborador" : ""}.`;
   }
   if (custo) {
-    const base = `Da Planilha de Custo — posto "${custo.posto}"${custo.vigencia ? `, vigência ${custo.vigencia.split("-").reverse().join("/")}` : ""}.`;
+    const base = `Da Planilha de Custo — posto "${custo.posto}"${custo.vigencia ? `, vigência ${custo.vigencia.split("-").reverse().join("/")}` : ""}.`
+      + (origemInsal === "cadastro" ? " A planilha do posto está sem insalubridade — veio a do cadastro do colaborador." : "");
     if (postoEscolhido && custo.por_posto === false) {
       return `Da Planilha de Custo — o posto "${postoEscolhido}" não tem esse nome na planilha; usado "${custo.posto}" (mesma cidade e jornada)${custo.ambiguo ? ", mas há postos parecidos com valores diferentes" : ""}. O Recrutamento confere.`;
     }
