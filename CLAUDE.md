@@ -40,10 +40,25 @@ enquanto o backend de permissões era construído.
   (`app_menu`, `profiles`, `screen_permission_user`...). Funções/triggers/
   índices/policies: sempre `snake_case` minúsculo, independente do case da
   tabela.
-- **Migrations não se auto-aplicam** — mergear `.sql` em `main` não roda nada
-  no Supabase real; precisa ser aplicado manualmente no SQL Editor do projeto
-  remoto. Não há `supabase start`/banco local (confirmado: `supabase/config.toml`
-  não tem seção `[db]`/`[api]`).
+- **A Supabase hospedada saiu de produção.** O banco é o cluster próprio
+  (Patroni + PostgREST/GoTrue/Storage/Kong); `.env` e `worker/.env` apontam
+  para `grpnascimento.com.br`, não para `*.supabase.co`. **O SQL Editor não
+  existe mais** — não mande ninguém colar SQL lá.
+- **Migration aplica sozinha no merge para a `main`**, desde 19/10/2026:
+  `.github/workflows/cluster_pos_merge.yml` chama `aplicar-migrations.sh` no
+  banco1 (só nele — banco é um só; Edge Function é arquivo e vai nos dois).
+  Cercas: `lock_timeout` de 5 s (a migration desiste em vez de travar o ERP),
+  UMA transação por arquivo, parada no primeiro erro, e registro em
+  `supabase_migrations.schema_migrations`. O que desiste por lock volta como
+  pendente: confira com `bash infra/ha/aplicar-migration.sh --pendentes` e
+  aplique fora do pico com `LOCK=30s bash infra/ha/aplicar-migration.sh <arq>`.
+- **Dois arquivos com o mesmo número de versão travam o aplicador inteiro** —
+  ele para antes de aplicar qualquer coisa, porque uma das duas nunca entraria
+  e sem erro nenhum. Antes de numerar, rode `git fetch` e confira também
+  `origin/joao` e `origin/pablo`; se colidir depois do merge, renumere com
+  `git mv` **a que entrou por último** (a primeira já pode estar registrada no
+  banco sob aquele número). Não há `supabase start`/banco local; para provar
+  uma migration antes, suba um cluster PostgreSQL 18 descartável.
 - Funções `SECURITY DEFINER` levam quase sempre `SET search_path = public, pg_temp`.
 - Migration que cria/altera função, tabela ou policy termina com
   `NOTIFY pgrst, 'reload schema';`.
