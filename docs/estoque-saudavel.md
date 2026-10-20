@@ -194,6 +194,12 @@ ordem:
 2. `supabase/migrations/20261020000021_sup_estoque_saudavel_rpc.sql` — a conta
 3. `supabase/migrations/20261020000022_sup_estoque_saudavel_gravar.sql` —
    gravação e o agendamento do dia 1º
+4. `supabase/migrations/20261020000023_sup_estoque_saudavel_rankings.sql` — os
+   rankings que o assistente usa
+
+A 23 redefine a função da 21 por inteiro (é `CREATE OR REPLACE`), então rodar as
+quatro em ordem funciona tanto num banco que nunca viu nenhuma delas quanto num
+que já tenha rodado as três primeiras.
 
 Depois, a Edge Function da análise:
 

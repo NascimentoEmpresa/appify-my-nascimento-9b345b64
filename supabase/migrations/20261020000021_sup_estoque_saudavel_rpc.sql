@@ -141,13 +141,6 @@ DECLARE
   v_fim_comp   date;      -- último dia do último mês COMPLETO
   v_dias       integer;
   v_pode_editar boolean;
-  -- Data em que o almoxarifado passou a registrar consumo/baixa por item.
-  -- Antes dela NÃO HÁ como saber se um pedido foi atendido pelo estoque:
-  -- nenhum pedido antigo tem linha em sup_estoque_consumo nem etiqueta
-  -- marcada, então TODOS pareceriam "faltou". Sem este corte o ranking de
-  -- falta seria 100% ruído do período legado — e é justamente o ranking que
-  -- o gerente usa para decidir compra urgente.
-  v_corte_at   timestamptz;
 BEGIN
   IF v_uid IS NULL OR NOT public.can_access(
     v_uid, 'sup_dashboard_compras_estoque', 'visualizar'::public.app_acao
@@ -198,14 +191,6 @@ BEGIN
   v_inicio   := (date_trunc('month', v_hoje) - make_interval(months => v_janela - 1))::date;
   v_fim_comp := (date_trunc('month', v_hoje) - interval '1 day')::date;
   v_dias     := GREATEST((v_hoje - v_inicio) + 1, 1);
-
-  -- O primeiro movimento de almoxarifado da empresa marca quando o controle
-  -- físico entrou em operação (04/08/2026 na matriz). Vira o piso do ranking
-  -- de falta. Empresa sem movimento nenhum devolve NULL e o ranking sai
-  -- vazio, em vez de sair errado.
-  SELECT min(m.created_at) INTO v_corte_at
-    FROM public.sup_estoque_movimento m
-   WHERE m.empresa_id = p_empresa_id;
 
   RETURN (
     WITH
@@ -328,26 +313,6 @@ BEGIN
          AND created_at >= v_inicio::timestamptz
        GROUP BY 1, 2
     ),
-    -- Quantas vezes o item foi REPOSTO de fato na janela.
-    --
-    -- Responde "qual item eu devo comprar reposição mais seguidamente" com
-    -- evidência, e não com modelo. A conta teórica (consumo anual ÷ alvo) não
-    -- serve para ranking: como o alvo É consumo × (prazo + ciclo), ela
-    -- devolve 365/(prazo+ciclo) — o MESMO número para todo item sem estoque
-    -- de segurança, 9,1 vezes por ano com os parâmetros padrão. Daria um
-    -- ranking plano, que pareceria resposta e não era.
-    --
-    -- Entradas no mesmo dia contam como UMA reposição: receber um pedido em
-    -- três caixas bipadas em sequência é um reabastecimento, não três.
-    reposicao AS (
-      SELECT base_id, tamanho,
-             count(DISTINCT (created_at AT TIME ZONE 'America/Sao_Paulo')::date)::integer AS reposicoes,
-             max(created_at)::date AS ultima_reposicao
-        FROM movimento
-       WHERE tipo = 'entrada'
-         AND created_at >= v_inicio::timestamptz
-       GROUP BY 1, 2
-    ),
     ultima_saida AS (
       SELECT base_id, tamanho, max(created_at)::date AS data
         FROM movimento WHERE tipo IN ('saida', 'remocao')
@@ -410,56 +375,6 @@ BEGIN
     ),
 
     -- ------------------------------------------------------------------
-    -- Atendimento: quantas vezes o item foi pedido e NÃO pôde ser entregue
-    -- ------------------------------------------------------------------
-    -- Responde "qual item tem faltado muito nos pedidos solicitados e
-    -- precisamos comprar urgentemente" — a pergunta que a situação atual
-    -- (`falta`) não responde, porque ela só vê o estoque de HOJE. Um tamanho
-    -- que faltou em quinze pedidos ao longo do semestre e foi reposto ontem
-    -- aparece como "saudável" e é, historicamente, o maior problema do
-    -- almoxarifado.
-    --
-    -- O teste de "foi atendido" é COPIADO da view sup_pedido_situacao
-    -- (20260930000077): saiu = tem linha em sup_estoque_consumo OU tem
-    -- etiqueta única marcada como usada. Copiado de propósito, e não
-    -- reinventado, para este número concordar com o que a tela de Separação
-    -- mostra — dois jeitos de contar atendimento divergiriam e ninguém
-    -- saberia qual acreditar.
-    --
-    -- Só pedido que JÁ PASSOU PELA SEPARAÇÃO entra. Pedido em preparação
-    -- ainda não teve a chance de ser atendido, e contá-lo como falta
-    -- acusaria falta em tudo que acabou de ser digitado.
-    atendimento AS (
-      SELECT COALESCE(base.id, pi.item_id)              AS base_id,
-             public.sup_tamanho_da_variante(pi.tamanho)  AS tamanho,
-             count(*)::integer                           AS vezes_pedido,
-             count(*) FILTER (WHERE NOT s.saiu)::integer AS vezes_faltou,
-             sum(pi.quantidade) FILTER (WHERE NOT s.saiu)::numeric AS unidades_faltaram,
-             max(pe.data_solicitacao) FILTER (WHERE NOT s.saiu) AS ultima_falta
-        FROM public.sup_pedido pe
-        JOIN public.sup_pedido_item pi ON pi.pedido_id = pe.id
-        LEFT JOIN public.contratos ct  ON ct.id = pe.contrato_id
-        LEFT JOIN public.sup_item it   ON it.id = pi.item_id
-        LEFT JOIN public.sup_item base ON base.id = COALESCE(it.item_pai_id, it.id)
-        CROSS JOIN LATERAL (
-          SELECT (EXISTS (SELECT 1 FROM public.sup_estoque_consumo cc
-                           WHERE cc.pedido_item_id = pi.id)
-               OR EXISTS (SELECT 1 FROM public.sup_estoque_tag tg
-                           WHERE tg.pedido_item_id = pi.id
-                             AND tg.tipo = 'unico' AND tg.usado)) AS saiu
-        ) s
-       WHERE pe.empresa_id = p_empresa_id
-         AND v_corte_at IS NOT NULL
-         AND pe.created_at >= v_corte_at
-         AND pe.status IN ('AGUARDANDO ENVIO', 'AGUARDANDO COMPRA', 'DESPACHADO',
-                           'RETIRADO PARA ENTREGA')
-         AND (p_contrato_id IS NULL OR pe.contrato_id = p_contrato_id)
-         AND (pe.contrato_id IS NULL OR ct.status = 'ativo')
-         AND (v_categoria IS NULL OR COALESCE(it.tipo, pi.tipo_item) = v_categoria)
-       GROUP BY 1, 2
-    ),
-
-    -- ------------------------------------------------------------------
     -- Política aprovada
     -- ------------------------------------------------------------------
     politica AS (
@@ -480,9 +395,6 @@ BEGIN
       UNION SELECT base_id, tamanho FROM saida_janela WHERE base_id IS NOT NULL
       UNION SELECT base_id, tamanho FROM em_transito WHERE base_id IS NOT NULL
       UNION SELECT base_id, tamanho FROM politica    WHERE base_id IS NOT NULL
-      -- Item que faltou mas caiu fora da janela de demanda (janela curta +
-      -- falta antiga) continua tendo de aparecer: é informação de compra.
-      UNION SELECT base_id, tamanho FROM atendimento WHERE base_id IS NOT NULL
     ),
 
     base AS (
@@ -563,14 +475,6 @@ BEGIN
              us.data AS ultima_saida,
              up.data AS ultimo_pedido,
 
-             COALESCE(rp.reposicoes, 0)        AS reposicoes,
-             rp.ultima_reposicao,
-
-             COALESCE(at.vezes_pedido, 0)      AS vezes_pedido,
-             COALESCE(at.vezes_faltou, 0)      AS vezes_faltou,
-             COALESCE(at.unidades_faltaram, 0) AS unidades_faltaram,
-             at.ultima_falta,
-
              pl.alvo_aprovado, pl.minimo_aprovado,
              COALESCE(pl.liquidar, false)      AS liquidar,
              pl.liquidar_motivo,
@@ -588,8 +492,6 @@ BEGIN
         LEFT JOIN preco_variante pv ON pv.base_id = k.base_id AND pv.tamanho IS NOT DISTINCT FROM k.tamanho
         LEFT JOIN preco_familia pf  ON pf.base_id = k.base_id
         LEFT JOIN politica pl       ON pl.base_id = k.base_id AND pl.tamanho IS NOT DISTINCT FROM k.tamanho
-        LEFT JOIN atendimento at    ON at.base_id = k.base_id AND at.tamanho IS NOT DISTINCT FROM k.tamanho
-        LEFT JOIN reposicao rp      ON rp.base_id = k.base_id AND rp.tamanho IS NOT DISTINCT FROM k.tamanho
     ),
 
     -- ------------------------------------------------------------------
@@ -668,25 +570,6 @@ BEGIN
     -- valor dela fica fora dos totais e o payload conta quantas são.
     valorado AS (
       SELECT f.*,
-             -- GIRO ANUAL — "qual item mais roda no meu estoque?"
-             -- Quantas vezes o estoque deste item se renova por ano. É o
-             -- turnover de livro: consumo anual ÷ o que está em casa.
-             -- Compara com o que se TEM.
-             CASE WHEN f.disponivel > 0 AND f.demanda_dia > 0
-                  THEN round(f.demanda_dia * 365 / f.disponivel, 2) END AS giro_anual,
-
-             -- CICLOS POR ANO — "qual item eu devo comprar reposição mais
-             -- seguidamente?" Quantas compras por ano o item exige para se
-             -- manter no alvo. Compara com o que se DEVERIA ter, e por isso é
-             -- um número diferente do giro: giro alto pode ser só estoque
-             -- baixo, enquanto ciclos alto é trabalho de compra recorrente.
-             CASE WHEN f.alvo > 0 AND f.demanda_dia > 0
-                  THEN round(f.demanda_dia * 365 / f.alvo, 2) END AS ciclos_por_ano,
-
-             -- Com que frequência o pedido deste item não pôde ser atendido.
-             CASE WHEN f.vezes_pedido > 0
-                  THEN round(100.0 * f.vezes_faltou / f.vezes_pedido, 1) END AS pct_falta,
-
              round(f.disponivel * COALESCE(f.valor_unitario, 0), 2) AS valor_em_estoque,
              round(f.excesso    * COALESCE(f.valor_unitario, 0), 2) AS valor_excesso,
              round(f.comprar    * COALESCE(f.valor_unitario, 0), 2) AS valor_comprar,
@@ -851,11 +734,6 @@ BEGIN
                                           WHERE NOT fora_do_plano AND NOT liquidar), 0),
         'valor_a_comprar',    round(COALESCE((SELECT sum(valor_comprar) FROM completo
                                           WHERE NOT fora_do_plano AND NOT liquidar), 0), 2),
-        -- Histórico de falta: itens que já deixaram pedido sem atendimento.
-        -- Diferente de `itens_em_falta`, que é a foto de hoje.
-        'itens_que_faltaram', (SELECT count(*) FROM completo WHERE vezes_faltou > 0),
-        'pedidos_nao_atendidos', COALESCE((SELECT sum(vezes_faltou) FROM completo), 0),
-
         'itens_sem_preco',    (SELECT count(*) FROM completo WHERE sem_preco AND disponivel > 0),
         'alvos_aprovados',    (SELECT count(*) FROM completo WHERE alvo_e_aprovado),
 
@@ -882,16 +760,8 @@ BEGIN
       -- A tabela principal. O teto vem de p_limite_itens: os totais acima são sobre
       -- tudo, e 500 linhas já é mais do que alguém lê numa tela — a ordem
       -- põe falta e dinheiro na frente.
-      -- DOIS jsonb_build_object concatenados por `||`, e não um só: o Postgres
-      -- recusa mais de 100 argumentos numa chamada de função, o que dá 50
-      -- pares chave/valor. A linha de item passou disso ao ganhar o histórico
-      -- de falta e de reposição, e a RPC inteira falhava com "cannot pass more
-      -- than 100 arguments to a function". O `||` mantém o JSON ACHATADO —
-      -- aninhar mudaria o tipo no frontend inteiro. Ao acrescentar campo aqui,
-      -- ponha no segundo bloco.
       'itens', COALESCE((
-        SELECT jsonb_agg(
-               jsonb_build_object(
+        SELECT jsonb_agg(jsonb_build_object(
                  'base_id', base_id, 'item', item_nome, 'tamanho', tamanho,
                  'ordem', ordem, 'tipo', tipo_item,
                  'disponivel', disponivel, 'reservado', reservado,
@@ -906,15 +776,8 @@ BEGIN
                  'alvo', alvo, 'minimo', minimo, 'alvo_aprovado', alvo_aprovado,
                  'minimo_aprovado', minimo_aprovado,
                  'minimo_cadastrado', minimo_cadastrado,
-                 'comprar', comprar, 'excesso', excesso
-               )
-               || jsonb_build_object(
+                 'comprar', comprar, 'excesso', excesso,
                  'cobertura_dias', cobertura_dias, 'meses_sem_giro', meses_sem_giro,
-                 'giro_anual', giro_anual, 'ciclos_por_ano', ciclos_por_ano,
-                 'reposicoes', reposicoes, 'ultima_reposicao', ultima_reposicao,
-                 'vezes_pedido', vezes_pedido, 'vezes_faltou', vezes_faltou,
-                 'unidades_faltaram', unidades_faltaram,
-                 'pct_falta', pct_falta, 'ultima_falta', ultima_falta,
                  'ultima_saida', ultima_saida, 'ultimo_pedido', ultimo_pedido,
                  'valor_unitario', valor_unitario, 'sem_preco', sem_preco,
                  'valor_em_estoque', valor_em_estoque, 'valor_excesso', valor_excesso,
@@ -940,128 +803,6 @@ BEGIN
                           valor_comprar DESC, valor_em_estoque DESC
                  LIMIT GREATEST(COALESCE(p_limite_itens, 500), 1)) c
       ), '[]'::jsonb),
-
-      -- ------------------------------------------------------------------
-      -- RANKINGS — as respostas que o assistente da tela precisa ter
-      -- ------------------------------------------------------------------
-      -- Existem porque a lista `itens` vai TRUNCADA para a IA (o catálogo
-      -- inteiro não cabe no prompt), e "qual item mais roda" respondido sobre
-      -- uma amostra é uma resposta errada com cara de certa. Estes topos são
-      -- calculados sobre o catálogo TODO, no banco, e vão inteiros no prompt
-      -- por serem dez linhas cada.
-      --
-      -- Cada ranking tem um piso de relevância. Sem piso, o primeiro lugar de
-      -- "mais roda" é sempre um item com 1 peça em casa e 2 saídas — giro
-      -- 730 e nenhuma importância. O piso é a diferença entre um ranking que
-      -- orienta compra e um que mostra ruído.
-      'rankings', jsonb_build_object(
-
-        -- "Qual item mais roda no meu estoque?"
-        'mais_roda', COALESCE((
-          SELECT jsonb_agg(jsonb_build_object(
-                   'item', item_nome, 'tamanho', tamanho,
-                   'giro_anual', giro_anual, 'demanda_mensal', demanda_mensal,
-                   'disponivel', disponivel, 'cobertura_dias', cobertura_dias,
-                   'situacao', situacao
-                 ) ORDER BY giro_anual DESC)
-            FROM (SELECT * FROM completo
-                   WHERE giro_anual IS NOT NULL
-                     AND NOT fora_do_plano
-                     -- Piso: pelo menos 5 peças em casa e 3 por mês saindo.
-                     AND disponivel >= 5 AND demanda_mensal >= 3
-                   ORDER BY giro_anual DESC LIMIT 10) x
-        ), '[]'::jsonb),
-
-        -- "Qual item eu devo comprar reposição mais seguidamente?"
-        -- Ordenado pelas reposições QUE ACONTECERAM, com o consumo como
-        -- desempate (e como resposta para quem ainda não tem histórico de
-        -- entrada). `ciclos_por_ano` vai ao lado como referência do modelo,
-        -- não como critério — ver a nota na CTE `reposicao`.
-        'repor_mais_seguido', COALESCE((
-          SELECT jsonb_agg(jsonb_build_object(
-                   'item', item_nome, 'tamanho', tamanho,
-                   'reposicoes_na_janela', reposicoes,
-                   'dias_entre_reposicoes', CASE WHEN reposicoes > 1
-                                                 THEN round(v_dias::numeric / reposicoes) END,
-                   'ultima_reposicao', ultima_reposicao,
-                   'demanda_mensal', demanda_mensal,
-                   'ciclos_por_ano_modelo', ciclos_por_ano,
-                   'alvo', alvo, 'disponivel', disponivel, 'comprar', comprar
-                 ) ORDER BY reposicoes DESC, demanda_mensal DESC)
-            FROM (SELECT * FROM completo
-                   WHERE NOT fora_do_plano AND NOT liquidar
-                     AND (reposicoes > 0 OR demanda_mensal >= 3)
-                   ORDER BY reposicoes DESC, demanda_mensal DESC LIMIT 10) x
-        ), '[]'::jsonb),
-
-        -- "Qual item tem faltado muito nos pedidos e precisamos comprar
-        --  urgentemente?" Histórico de falta, não a foto de hoje.
-        'mais_faltou', COALESCE((
-          SELECT jsonb_agg(jsonb_build_object(
-                   'item', item_nome, 'tamanho', tamanho,
-                   'vezes_faltou', vezes_faltou, 'vezes_pedido', vezes_pedido,
-                   'pct_falta', pct_falta,
-                   'unidades_faltaram', unidades_faltaram,
-                   'ultima_falta', ultima_falta,
-                   'disponivel', disponivel, 'comprar', comprar,
-                   'situacao', situacao
-                 ) ORDER BY vezes_faltou DESC, unidades_faltaram DESC)
-            FROM (SELECT * FROM completo
-                   WHERE vezes_faltou > 0
-                   ORDER BY vezes_faltou DESC, unidades_faltaram DESC LIMIT 10) x
-        ), '[]'::jsonb),
-
-        -- "Qual item não sai muito, ficando acumulado no estoque?"
-        'mais_acumulado', COALESCE((
-          SELECT jsonb_agg(jsonb_build_object(
-                   'item', item_nome, 'tamanho', tamanho,
-                   'disponivel', disponivel, 'alvo', alvo,
-                   'excesso', excesso,
-                   'valor_excesso', valor_excesso,
-                   'valor_em_estoque', valor_em_estoque,
-                   'demanda_mensal', demanda_mensal,
-                   'cobertura_dias', cobertura_dias,
-                   'meses_sem_giro', meses_sem_giro,
-                   'sem_preco', sem_preco, 'situacao', situacao
-                 -- A MESMA ordem do subselect abaixo. Ordens diferentes dentro
-                 -- e fora do LIMIT fariam o corte dos 10 seguir um critério e
-                 -- a exibição outro — o que já aconteceu aqui: o subselect
-                 -- punha item morto na frente e o jsonb_agg reordenava por
-                 -- valor, então a lista saía por valor mas escolhida por
-                 -- "morto primeiro". Dinheiro parado é o critério único.
-                 ) ORDER BY valor_em_estoque DESC NULLS LAST)
-            FROM (SELECT * FROM completo
-                   WHERE situacao IN ('excesso', 'morto', 'liquidar')
-                     AND disponivel > 0
-                   ORDER BY valor_em_estoque DESC NULLS LAST LIMIT 10) x
-        ), '[]'::jsonb),
-
-        -- O que comprar primeiro: quem já está sem peça, do maior consumo
-        -- para o menor, com o histórico de falta ao lado. É a fila de
-        -- urgência que junta "está faltando agora" com "já faltou antes".
-        'comprar_urgente', COALESCE((
-          SELECT jsonb_agg(jsonb_build_object(
-                   'item', item_nome, 'tamanho', tamanho,
-                   'disponivel', disponivel, 'em_transito', em_transito,
-                   'demanda_mensal', demanda_mensal,
-                   'cobertura_dias', cobertura_dias,
-                   'comprar', comprar, 'valor_comprar', valor_comprar,
-                   'vezes_faltou', vezes_faltou,
-                   'lead_time_dias', lead_time_dias,
-                   'situacao', situacao
-                 ) ORDER BY CASE situacao WHEN 'falta' THEN 0 ELSE 1 END,
-                            demanda_mensal DESC)
-            FROM (SELECT * FROM completo
-                   WHERE situacao IN ('falta', 'repor') AND NOT fora_do_plano
-                   ORDER BY CASE situacao WHEN 'falta' THEN 0 ELSE 1 END,
-                            demanda_mensal DESC LIMIT 10) x
-        ), '[]'::jsonb),
-
-        -- Desde quando dá para afirmar que um pedido "faltou". A tela e a IA
-        -- citam esta data junto do ranking de falta.
-        'falta_contada_desde', v_corte_at::date,
-        'pedidos_avaliados', COALESCE((SELECT sum(vezes_pedido) FROM completo), 0)
-      ),
 
       -- Compra consolidada por família: o volume de negociação.
       'compra_por_familia', COALESCE((
@@ -1112,21 +853,6 @@ BEGIN
                              ORDER BY demanda_mensal DESC LIMIT 8) t) AS detalhe,
                    (SELECT count(*)::numeric FROM completo WHERE situacao = 'falta') AS valor
              WHERE EXISTS (SELECT 1 FROM completo WHERE situacao = 'falta')
-
-            UNION ALL
-            -- Falta HISTÓRICA, que a situação de hoje esconde: tamanho que
-            -- deixou pedido sem atendimento várias vezes e hoje está reposto
-            -- aparece como "saudável" na tabela, e é o que mais trava a
-            -- operação ao longo do ano.
-            SELECT 2 AS ordem, 'faltou_no_passado' AS tipo,
-                   'Tamanhos que já deixaram pedido sem atendimento — reveja o alvo deles' AS titulo,
-                   (SELECT string_agg(DISTINCT item_nome || ' ' || COALESCE(tamanho, '')
-                                      || ' (' || vezes_faltou || 'x)', ', ')
-                      FROM (SELECT item_nome, tamanho, vezes_faltou FROM completo
-                             WHERE vezes_faltou > 0
-                             ORDER BY vezes_faltou DESC LIMIT 8) t) AS detalhe,
-                   (SELECT count(*)::numeric FROM completo WHERE vezes_faltou > 0) AS valor
-             WHERE EXISTS (SELECT 1 FROM completo WHERE vezes_faltou > 0)
 
             UNION ALL
             SELECT 2, 'sem_preco',
