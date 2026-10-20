@@ -19,7 +19,7 @@ export interface Simulacao {
   ok: boolean;
   modo: ModoAuto;
   janela_aberta: boolean;
-  credenciais_graph: boolean;
+  envio_configurado: boolean;
   gerado_em: string;
   contagem: Partial<Record<DecisaoAuto, number>>;
   planos: (PlanoSimulado & Record<string, unknown>)[];

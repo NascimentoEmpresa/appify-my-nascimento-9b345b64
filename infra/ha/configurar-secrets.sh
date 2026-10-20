@@ -109,7 +109,12 @@ JA_NO_CLUSTER="JWT_SECRET SUPABASE_URL SUPABASE_ANON_KEY SUPABASE_SERVICE_ROLE_K
 # So usadas em teste automatizado (index_test.ts), nunca em producao.
 SO_TESTE="TEST_ADMIN_EMAIL TEST_ADMIN_PASSWORD TEST_NOROLE_EMAIL TEST_NOROLE_PASSWORD TEST_SCOPED_EMAIL TEST_SCOPED_PASSWORD VITE_SUPABASE_URL VITE_SUPABASE_PUBLISHABLE_KEY"
 # Tem valor padrao no codigo: ausencia nao quebra nada.
-TEM_DEFAULT="GROQ_MODEL IA_BI_MODELO IA_CHAT_MODELO IA_COLABORADOR_MODELO IA_DIRETORIA_MODELO IA_TVG_MODELO VAPID_SUBJECT DENUNCIA_URL_BASE"
+# As duas *_SMTP_PORT entraram em 20/10/2026: o codigo ja cai num padrao
+# (`?? 587` no comite de etica, `?? 465` na cobranca) e o HOST/USER/PASS da
+# mesma caixa continuam obrigatorios, entao faltar so a porta nao derruba
+# envio nenhum -- mas sem esta linha o --conferir as acusava de "ja quebrado
+# HOJE" e mandava recuperar valor que nao falta.
+TEM_DEFAULT="GROQ_MODEL IA_BI_MODELO IA_CHAT_MODELO IA_COLABORADOR_MODELO IA_DIRETORIA_MODELO IA_TVG_MODELO VAPID_SUBJECT DENUNCIA_URL_BASE SMTP_PORT COBRANCA_SMTP_PORT"
 
 contem() { case " $2 " in *" $1 "*) return 0 ;; *) return 1 ;; esac; }
 
