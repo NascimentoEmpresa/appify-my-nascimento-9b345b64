@@ -185,6 +185,50 @@ produção viva. Não usa número anotado: lê os dois lados na hora, porque a
 produção recebe migration quase todo dia — em quatro dias de outubro ela ganhou
 2 funções, 1 índice e mudou 1 CHECK.
 
+### 9. As variáveis de ambiente das Edge Functions
+
+```bash
+bash configurar-secrets.sh --conferir
+SEGREDOS=~/segredos.env bash configurar-secrets.sh --aplicar
+```
+
+O container das functions subiu com **10** variáveis; as 64 functions leem **54
+nomes**. O script monta essa lista lendo os `Deno.env.get(...)` do próprio
+`supabase/functions` **desta cópia do repositório** — então variável nova não
+precisa de ajuste no script, mas em compensação ela só é enxergada **depois que
+o código que a usa estiver aqui**: merge na `main` e `git pull` antes de rodar,
+senão o nome novo simplesmente não aparece no relatório.
+
+Nenhum valor aparece na tela e nada fica gravado nesta máquina: o arquivo
+apontado em `SEGREDOS=` vai por stdin do `ssh` direto para
+`/opt/erp/infra/failover/segredos-functions.env` nos dois nós, com `chmod 600`
+— **apague o arquivo depois**. E o segredo só vale junto com o código: as
+functions no nó são um bind mount que não se atualiza sozinho, por isso o
+`atualizar-functions-no-no.sh`.
+
+#### As duas caixas de e-mail, e onde se recupera cada senha
+
+Os envios de e-mail do ERP saem por **SMTP**, não pelo Microsoft Graph: o
+domínio `haggltda.com.br` está na UOL Host, não no Microsoft 365. São duas
+caixas independentes, com dois conjuntos de nomes — trocar um pelo outro faz a
+function responder 500 sem dizer por quê:
+
+| Variáveis | Function | Caixa remetente | Porta padrão no código |
+|---|---|---|---|
+| `SMTP_HOST` `SMTP_PORT` `SMTP_USER` `SMTP_PASS` | `comite-etica-nova-denuncia` | a do Canal de Denúncia | 587 (STARTTLS) |
+| `COBRANCA_SMTP_HOST` `COBRANCA_SMTP_PORT` `COBRANCA_SMTP_USER` `COBRANCA_SMTP_PASS` | `cobranca-automatica` | `nfe2@haggltda.com.br` | 465 (TLS direto) |
+
+As duas `*_PORT` estão no `TEM_DEFAULT` do script porque o código cai no padrão
+da tabela quando elas faltam. `HOST`, `USER` e `PASS` não têm padrão nenhum: sem
+as três, a function recusa o envio na entrada.
+
+A senha de cada caixa se recupera no **painel da UOL Host** — nenhuma tela do
+ERP pede essa senha, e ela nunca entra neste repositório, que é público. O
+conjunto `COBRANCA_SMTP_*` nasceu na PR #956 (20/10/2026), que trocou o Graph
+por SMTP na cobrança automática. Enquanto ele não estiver nos nós, a aba
+Automação da tela de Cobranças mostra "Conta de envio (SMTP) ainda não
+configurada" e a rotina devolve 500 em vez de mandar e-mail.
+
 ## O que foi medido, não prometido
 
 Ensaios de 06/10/2026: cluster real, cliente gravando a cada 50 ms, queda seca
