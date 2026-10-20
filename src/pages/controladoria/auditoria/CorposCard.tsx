@@ -3,7 +3,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Link } from "react-router-dom";
-import { AlertTriangle, ArrowDown, ArrowUp, BarChart3, Briefcase, CheckCircle2, ClipboardCopy, FileText, Landmark, MinusCircle, ArrowUpDown } from "lucide-react";
+import { AlertTriangle, ArrowDown, ArrowUp, BarChart3, Briefcase, CheckCircle2, ClipboardCopy, CreditCard, FileText, Landmark, MinusCircle, ArrowUpDown, RefreshCw, TrendingUp } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { fmtMoney } from "@/pages/financeiro/nf-emissao/shared";
 import {
@@ -93,6 +93,13 @@ function Aviso({ tom, children }: { tom: "ok" | "erro" | "espera"; children: Rea
 }
 
 // ── 1. Malote + Financeiro × Fluxo ──────────────────────────────────────────
+function iconeDaOrigem(origem: string): ReactNode {
+  if (origem === "aplicacao_financeira") return <TrendingUp className="h-3.5 w-3.5" />;
+  if (origem === "cartao_fatura") return <CreditCard className="h-3.5 w-3.5" />;
+  if (origem === "debito_automatico") return <RefreshCw className="h-3.5 w-3.5" />;
+  return <FileText className="h-3.5 w-3.5" />;
+}
+
 export function CorpoMaloteFluxo({ p, t, situacao, linkMalote, linkFluxo }: { p: PainelMaloteFluxo; t: TotaisCard; situacao: SituacaoComparacao | null; linkMalote: LinkCard; linkFluxo: LinkCard }) {
   const dif = diferenca(t);
   const [verDivergencias, setVerDivergencias] = useState(false);
@@ -100,28 +107,39 @@ export function CorpoMaloteFluxo({ p, t, situacao, linkMalote, linkFluxo }: { p:
   return (
     <div className="space-y-3">
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-        <Painel titulo="Malote" icone={<Briefcase className="h-4 w-4" />} link={linkMalote}>
-          <Metrica tom="saida" rotulo="Saídas" valor={p.malote} />
-          <div className="space-y-2 rounded-md border bg-muted/30 p-2.5">
-            <div className="flex items-center justify-between gap-2">
-              <p className="flex items-center gap-1.5 text-xs font-semibold"><FileText className="h-3.5 w-3.5" />Lançamentos do Financeiro</p>
-              <Link to={linkFluxo.to} className="text-[11px] text-primary hover:underline whitespace-nowrap">{linkFluxo.rotulo} →</Link>
-            </div>
-            <Metrica tom="saida" rotulo="Saídas" valor={p.financeiro} grande={false} />
-            {p.financeiroPorOrigem.length > 0 && (
-              <ul className="space-y-0.5 text-[11px] text-muted-foreground">
-                {p.financeiroPorOrigem.map((o) => (
-                  <li key={o.origem} className="flex justify-between"><span>{LABEL_ORIGEM_FINANCEIRO[o.origem] ?? o.origem}</span><span className="font-medium">{fmtMoney(o.valor)}</span></li>
-                ))}
-              </ul>
-            )}
+        {/* SIS-2026-0687: o Malote e cada origem que alimenta o Fluxo, somando o total das origens. */}
+        <Painel titulo="Lançamentos do Financeiro" icone={<FileText className="h-4 w-4" />} link={linkMalote}>
+          {/* Cada origem é um atalho: o Malote abre o Pagamento Malote; as demais abrem o Fluxo de Caixa já nessa origem, no mesmo período e empresa. */}
+          <Link to={linkMalote.to} title="Abrir o Malote" className="flex items-center justify-between gap-3 rounded-lg border border-sky-300 bg-sky-50 p-3 transition-colors hover:bg-sky-100 dark:border-sky-900 dark:bg-sky-950/30 dark:hover:bg-sky-950/60">
+            <span className="flex items-center gap-2.5">
+              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-sky-100 text-sky-700 dark:bg-sky-900/50 dark:text-sky-300"><Briefcase className="h-4 w-4" /></span>
+              <span><span className="block text-sm font-bold leading-tight">Malote</span><span className="block text-[11px] text-muted-foreground leading-tight">Saídas</span></span>
+            </span>
+            <span className="text-base font-bold">{fmtMoney(p.malote)}</span>
+          </Link>
+          {p.financeiroPorOrigem.map((o) => (
+            <Link
+              key={o.origem}
+              to={`${linkFluxo.to}${linkFluxo.to.includes("?") ? "&" : "?"}origem=${encodeURIComponent(o.origem)}`}
+              title={`Ver no Fluxo de Caixa: ${LABEL_ORIGEM_FINANCEIRO[o.origem] ?? o.origem}`}
+              className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2 transition-colors hover:bg-muted/50"
+            >
+              <span className="flex items-center gap-2.5">
+                <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300">{iconeDaOrigem(o.origem)}</span>
+                <span><span className="block text-xs font-semibold leading-tight">{LABEL_ORIGEM_FINANCEIRO[o.origem] ?? o.origem}</span><span className="block text-[11px] text-muted-foreground leading-tight">Saídas</span></span>
+              </span>
+              <span className="text-sm font-semibold">{fmtMoney(o.valor)}</span>
+            </Link>
+          ))}
+          <div className="flex items-center justify-between rounded-md bg-muted/50 px-3 py-2 text-sm font-semibold">
+            <span>Total das origens:</span><span>{fmtMoney(t.a)}</span>
           </div>
         </Painel>
         <Painel titulo="Fluxo de Caixa" icone={<ArrowUpDown className="h-4 w-4" />} link={linkFluxo}>
           <Metrica tom="saida" rotulo="Saídas" valor={p.fluxoSaidas} />
           {p.aplicacoes > 0 && (
             <p className="text-[11px] text-muted-foreground">
-              Fora do total: aplicações financeiras (giro de caixa) — saídas de {fmtMoney(p.aplicacoes)}.
+              Inclui aplicações financeiras (giro de caixa): saídas de {fmtMoney(p.aplicacoes)}.
             </p>
           )}
         </Painel>
@@ -133,10 +151,10 @@ export function CorpoMaloteFluxo({ p, t, situacao, linkMalote, linkFluxo }: { p:
         dica={qtdDiv > 0 ? `Ver ${qtdDiv} despesa${qtdDiv === 1 ? "" : "s"} divergente${qtdDiv === 1 ? "" : "s"} →` : undefined}
       />
       <Aviso tom={situacao === "confere" ? "ok" : "erro"}>
-        Malote + Lançamentos do Financeiro: <strong>{fmtMoney(t.a)}</strong>.{" "}
+        {["Malote", ...p.financeiroPorOrigem.filter((o) => o.valor !== 0).map((o) => LABEL_ORIGEM_FINANCEIRO[o.origem] ?? o.origem)].join(" + ")} totalizam <strong>{fmtMoney(t.a)}</strong>{" "}
         {situacao === "confere"
-          ? `O total confere com as saídas do Fluxo de Caixa. Diferença: ${fmtMoney(dif.valor)}.`
-          : `O total não confere com as saídas do Fluxo de Caixa. Diferença: ${fmtMoney(dif.valor)} (${pctTxt(dif.percentual)}). Costuma ser ajuste de valor feito só no Fluxo.`}
+          ? `e conferem com as saídas do Fluxo de Caixa. Diferença: ${fmtMoney(dif.valor)}.`
+          : `e não conferem com as saídas do Fluxo de Caixa. Diferença: ${fmtMoney(dif.valor)} (${pctTxt(dif.percentual)}). Costuma ser ajuste de valor feito só no Fluxo.`}
       </Aviso>
       {qtdDiv > 0 && (
         <Dialog open={verDivergencias} onOpenChange={setVerDivergencias}>

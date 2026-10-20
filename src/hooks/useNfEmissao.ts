@@ -3,6 +3,7 @@ import type { LinhaFaltaDias } from "@/pages/financeiro/nf-emissao/faltasPorDias
 import { supabase } from "@/integrations/supabase/client";
 import type { ItemCalculado, TotaisNf, PercentuaisFiscais, InssCategoria } from "@/pages/financeiro/nf-emissao/calculos";
 import { itemParaGravar, substituirItensNf } from "@/pages/financeiro/nf-emissao/itemParaGravar";
+import { emLotes } from "@/lib/emLotes";
 import { ordenarPorConclusao } from "@/pages/financeiro/nf-emissao/ordemConclusao";
 
 const BUCKET = "nf-emissao";
@@ -645,22 +646,24 @@ export function useItensNfEmissaoEmLote(nfIds: string[]) {
       // últimas notas. Pagina em blocos de ids (também evita URL longa
       // demais com 1561 uuids num .in() só) e em blocos de linhas dentro
       // de cada bloco de ids.
-      const TAMANHO_BLOCO_IDS = 200;
+      // 200 ids por URL (~7,8 KB) passam do limite do gateway do cluster (502, derrubava os Descontos da Auditoria): lotes de 40.
+      const TAMANHO_BLOCO_IDS = 40;
       const TAMANHO_PAGINA = 1000;
-      const todosItens: NfEmissaoItemRow[] = [];
-      for (let i = 0; i < nfIds.length; i += TAMANHO_BLOCO_IDS) {
-        const bloco = nfIds.slice(i, i + TAMANHO_BLOCO_IDS);
+      const todosItens = await emLotes<NfEmissaoItemRow>(nfIds, TAMANHO_BLOCO_IDS, async (bloco) => {
+        const doBloco: NfEmissaoItemRow[] = [];
         for (let pagina = 0; ; pagina++) {
           const { data, error } = await (supabase as any)
             .from("nf_emissao_item")
             .select("*")
             .in("nf_emissao_id", bloco)
+            .order("id")
             .range(pagina * TAMANHO_PAGINA, pagina * TAMANHO_PAGINA + TAMANHO_PAGINA - 1);
-          if (error) throw error;
-          todosItens.push(...((data ?? []) as NfEmissaoItemRow[]));
+          if (error) return { data: null, error };
+          doBloco.push(...((data ?? []) as NfEmissaoItemRow[]));
           if (!data || data.length < TAMANHO_PAGINA) break;
         }
-      }
+        return { data: doBloco, error: null };
+      }, 6);
       const porNf = new Map<string, NfEmissaoItemRow[]>();
       for (const item of todosItens) {
         const arr = porNf.get(item.nf_emissao_id) ?? [];
