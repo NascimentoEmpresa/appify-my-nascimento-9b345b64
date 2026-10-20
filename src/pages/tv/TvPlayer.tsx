@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
-import { corAviso, INTERVALO_PING_S, normalizarChaveTv, youtubeEmbed, type EstadoTv, type ItemTv } from "@/lib/tv/tv";
+import { corAviso, INTERVALO_PING_S, normalizarChaveTv, scriptPrincipal, youtubeEmbed, type EstadoTv, type ItemTv } from "@/lib/tv/tv";
 import { TvRelatorio } from "./TvRelatorio";
 import { TvTelaPadrao } from "./TvTelaPadrao";
 
@@ -32,6 +32,15 @@ import { TvTelaPadrao } from "./TvTelaPadrao";
 // a TV avisa qual entrou (tv_reportar), e Sistemas › TV's desenha a mesma
 // coisa. É só um aviso: se falhar, a TV segue tocando; se o banco ainda não
 // tem a função, ela para de tentar até a próxima recarga.
+//
+// 20/10/2026 (mig 20261020000001) — "quando coloco em ao vivo não aparece o
+// que está aparecendo na TV":
+//   · BATIMENTO: além da troca, a TV confirma o item atual a cada consulta
+//     (p_troca = false, não zera o "desde"). Um aviso de troca perdido não
+//     deixa mais a gestão no item errado até a TV recarregar;
+//   · VERSÃO: a cada 10 min confere o JS publicado e recarrega se mudou. TV
+//     SST e TV COMPRAS ficaram três dias no JS de antes da virada para o
+//     cluster, falando com o banco antigo — invisíveis para a gestão.
 // =====================================================================
 
 const CHAVE_TOKEN = "gn:tv:token";
@@ -42,6 +51,7 @@ const gravarToken = (t: string | null) => { try { t ? localStorage.setItem(CHAVE
 const midiaPublica = (arquivo: string | null) => (arquivo ? supabase.storage.from("tv-midia").getPublicUrl(arquivo).data.publicUrl : "");
 
 const SEM_CONTATO_RECARREGA_MS = 3 * 60_000;
+const CONFERE_VERSAO_MS = 10 * 60_000;
 const ABERTA_EM = Date.now();
 
 export default function TvPlayer() {
@@ -70,6 +80,7 @@ export default function TvPlayer() {
       ultimoOk.current = Date.now();
       if (e.comando === "recarregar") { window.location.reload(); return; }
       setEstado(e); setErro(null);
+      batimento();
     } catch (e) {
       setErro((e as Error).message || "Sem conexão com o ERP.");
     }
@@ -85,12 +96,38 @@ export default function TvPlayer() {
   // AO VIVO: avisa o ERP do item que entrou na tela (null = relógio/pausada).
   // Fogo e esquece — nunca atrapalha a reprodução.
   const reportarLigado = useRef(true);
+  const batimentoLigado = useRef(true);
+  // O que está na tela agora (undefined = ainda nada desenhado: sem batimento).
+  const naTela = useRef<string | null | undefined>(undefined);
   const reportar = useCallback((itemId: string | null) => {
+    naTela.current = itemId;
     if (!reportarLigado.current || !tokenRef.current) return;
     rpc("tv_reportar", { p_token: tokenRef.current, p_item: itemId }).then(({ error }) => {
       // Banco sem a mig 20261008000003: não insiste até recarregar.
       if (error && /tv_reportar|function|PGRST202/i.test(error.message)) reportarLigado.current = false;
-    }, () => { /* sem rede: o próximo item tenta de novo */ });
+    }, () => { /* sem rede: o batimento da próxima consulta corrige */ });
+  }, []);
+  // Batimento: confirma o item a cada consulta sem zerar o "desde". Banco sem
+  // a mig 20261020000001 (sem p_troca) → desliga só o batimento.
+  const batimento = () => {
+    if (!batimentoLigado.current || !reportarLigado.current || !tokenRef.current || naTela.current === undefined) return;
+    rpc("tv_reportar", { p_token: tokenRef.current, p_item: naTela.current, p_troca: false }).then(({ error }) => {
+      if (error && /tv_reportar|function|PGRST202/i.test(error.message)) batimentoLigado.current = false;
+    }, () => { /* sem rede */ });
+  };
+
+  // Versão publicada mudou → recarrega (o JS da página aberta fica velho para sempre sem isso).
+  useEffect(() => {
+    const minha = scriptPrincipal(document.documentElement.outerHTML);
+    if (!minha) return;   // dev (vite serve /src/main.tsx)
+    const t = window.setInterval(async () => {
+      try {
+        const r = await fetch(`${window.location.origin}/?tv-versao=${Date.now()}`, { cache: "no-store" });
+        const publicada = r.ok ? scriptPrincipal(await r.text()) : null;
+        if (publicada && publicada !== minha) window.location.reload();
+      } catch { /* sem rede: o cão de guarda cuida */ }
+    }, CONFERE_VERSAO_MS);
+    return () => window.clearInterval(t);
   }, []);
 
   // Cão de guarda: sem falar com o ERP há 3 min, ou de madrugada depois de
@@ -201,7 +238,7 @@ function Reprodutor({ itens, nome, ativa, token, aoMostrar }: { itens: ItemTv[];
  * TV — vídeo e YouTube começam desse ponto, para bater com a tela da TV.
  */
 export function Item({ item, sozinho, aoAcabar, token, previa = false, inicioS = 0 }: { item: ItemTv; sozinho: boolean; aoAcabar: () => void; token: string; previa?: boolean; inicioS?: number }) {
-  if (item.tipo === "relatorio") return <TvRelatorio item={item} token={token} previa={previa} />;
+  if (item.tipo === "relatorio") return <TvRelatorio item={item} token={token} previa={previa} inicioS={inicioS} />;
   const midia = (arquivo: string | null) => item.url_previa || midiaPublica(arquivo);
   if (item.tipo === "imagem") {
     return <img src={midia(item.arquivo)} alt={item.titulo ?? ""} className="h-full w-full object-contain" onError={aoAcabar} />;

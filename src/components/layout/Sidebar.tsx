@@ -78,7 +78,7 @@ import { useTrocaFuncaoNotif } from "@/hooks/useTrocaFuncaoNotif";
 import { useJuridicoNotif } from "@/hooks/useJuridicoNotif";
 import { useReembolsoNotif } from "@/hooks/useReembolsoNotif";
 import { useAprovacoesNotif } from "@/hooks/useAprovacoesNotif";
-import { Inbox, type LucideIcon } from "lucide-react";
+import { Inbox, FileSignature, type LucideIcon } from "lucide-react";
 import { Target, MessagesSquare, KeyRound, MonitorPlay, Gauge } from "lucide-react";
 import { GitBranch, GitMerge } from "lucide-react";
 import { MessageSquare } from "lucide-react";
@@ -578,6 +578,8 @@ const rhModule: ModuleDef = {
         // 20260930000053; as tabelas continuam no banco.
         { label: "Gestão de Férias", to: "/app/rh/ferias", icon: CalendarRange },
         { label: "Solicitações de Demissão", to: "/app/rh/solicitacoes-demissao", icon: UserMinus },
+        // Documentos solicitados aos encarregados, até voltarem assinados (mig 20261019000040).
+        { label: "Documentos", to: "/app/rh/documentos", icon: FileSignature },
         { label: "Conferência de Ponto", to: "/app/rh/conferencia-ponto", icon: ClipboardCheck },
         // "Dashboard de Pontos" desde 30/09/2026 (antes dois itens com o mesmo
         // nome "Conferência de Ponto"). A mesma tela está no Financeiro e no
@@ -687,6 +689,8 @@ const encarregadosModule: ModuleDef = {
         // Envio do ponto do mês ao Operacional (mig 20261007000023) — sem
         // permissão para ninguém por enquanto (pedido de 07/10/2026).
         { label: "Conferência de Ponto", to: "/app/encarregados/conferencia-ponto", icon: ClipboardCheck },
+        // Documentos que o RH pede (assinar e devolver anexado) — mig 20261019000040.
+        { label: "Documentos", to: "/app/encarregados/documentos", icon: FileSignature },
       ],
     },
     {
