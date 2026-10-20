@@ -19,18 +19,23 @@ import {
 } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import {
-  Send, ShieldAlert, XCircle, CheckCircle2, FileText, GripVertical, Info,
-  ChevronRight, MessageSquareMore, ClipboardList, Crown,
+  Send, ShieldAlert, XCircle, CheckCircle2, GripVertical, Info,
+  ChevronRight, ChevronDown, ChevronUp, MessageSquareMore, ClipboardList, Crown, Paperclip, ArrowLeft,
 } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
   BotaoStatusChamado, SeloEtapaValidacao, useValidacaoChamado, useInvalidarValidacao,
 } from "./StatusValidacao";
 import {
-  StatusBadge, PrioridadeBadge, PRIORIDADES, CATEGORIAS, AMBIENTES, URGENCIAS, labelDe,
-  iniciais, fmtDataHora, moduloLabel, chamadoAtivo, CardAvaliacao,
-  type Chamado, type Evento, type AvaliacaoChamado,
+  StatusBadge, PrioridadeBadge, PRIORIDADES, CATEGORIAS, AMBIENTES, URGENCIAS, TIPOS, IMPACTOS, labelDe,
+  iniciais, fmtDataHora, moduloLabel, chamadoAtivo, CardAvaliacao, BUCKET_CHAMADOS, opcoesDownloadAnexo,
+  type Chamado, type Evento, type AvaliacaoChamado, type Anexo,
+  CRITERIOS_AVALIACAO_SOLICITANTE, type AvaliacaoSolicitante,
 } from "./types";
+
+/** Descrição acima disto (ou com mais linhas) começa recolhida, com "Ver tudo". */
+const DESCRICAO_LONGA_CHARS = 700;
+const DESCRICAO_LONGA_LINHAS = 12;
 
 interface Dev { id: string; display_name: string; em_andamento: number; abertos: number; }
 
@@ -89,6 +94,7 @@ export default function CoordenarChamado() {
   // null = ainda não mexeu; segue o que está gravado.
   const [enviarPresidencia, setEnviarPresidencia] = useState<boolean | null>(null);
   const [enviandoPresidencia, setEnviandoPresidencia] = useState(false);
+  const [descricaoAberta, setDescricaoAberta] = useState(false);
   const { data: validacao } = useValidacaoChamado(gestor ? id : null);
   const invalidarValidacao = useInvalidarValidacao();
 
@@ -136,6 +142,32 @@ export default function CoordenarChamado() {
       return (data ?? null) as AvaliacaoChamado | null;
     },
   });
+
+  // E o outro lado (mig 20261020000070): como o dev avaliou quem pediu.
+  const { data: avaliacoesDev = [] } = useQuery({
+    queryKey: ["chamado-avaliacao-dev", id],
+    enabled: !!id && gestor,
+    queryFn: async () => {
+      const { data } = await (supabase as any).from("CHAMADO_SISTEMA_AVALIACAO_DEV").select("*").eq("chamado_id", id).order("created_at");
+      return (data ?? []) as AvaliacaoSolicitante[];
+    },
+  });
+
+  // Anexos da abertura: ficam junto da descrição, no topo — são parte do pedido.
+  const { data: anexos = [] } = useQuery({
+    queryKey: ["chamado-anexos", id],
+    enabled: !!id && gestor,
+    queryFn: async () => {
+      const { data } = await (supabase as any).from("CHAMADO_SISTEMA_ANEXO").select("*").eq("chamado_id", id).order("created_at");
+      return (data ?? []) as Anexo[];
+    },
+  });
+
+  const baixarAnexo = async (path: string) => {
+    const { data, error } = await supabase.storage.from(BUCKET_CHAMADOS).createSignedUrl(path, 3600, opcoesDownloadAnexo(path));
+    if (error || !data?.signedUrl) { toast({ title: "Erro ao abrir anexo", variant: "destructive" }); return; }
+    window.open(data.signedUrl, "_blank", "noopener,noreferrer");
+  };
 
   const { data: eventos = [] } = useQuery({
     queryKey: ["chamado-eventos", id],
@@ -363,8 +395,20 @@ export default function CoordenarChamado() {
   if (!chamado) return <p className="p-6 text-sm text-muted-foreground">Carregando…</p>;
 
   const encerrado = !chamadoAtivo(chamado.status);
-  const categoriaLabel = chamado.categorias.map((x) => labelDe(CATEGORIAS, x)).join(", ") || "—";
   const ultimaAtualizacao = eventos[0];
+  const descricao = (chamado.descricao ?? "").trim();
+  const descricaoLonga = descricao.length > DESCRICAO_LONGA_CHARS || descricao.split("\n").length > DESCRICAO_LONGA_LINHAS;
+  const anexosAbertura = anexos.filter((a) => (a.campo ?? "abertura") === "abertura");
+  const infos: Array<[string, React.ReactNode]> = [
+    ["Tipo de solicitação", labelDe(TIPOS, chamado.tipo_solicitacao)],
+    ["Módulo / Sistema", moduloLabel(chamado)],
+    ["Ambiente", labelDe(AMBIENTES, chamado.ambiente)],
+    ["Impacto no trabalho", labelDe(IMPACTOS, chamado.impacto_trabalho)],
+    ["Urgência informada", labelDe(URGENCIAS, chamado.urgencia)],
+    ["Afeta quantos usuários", chamado.afeta_usuarios != null ? `${chamado.afeta_usuarios} usuário(s)` : "—"],
+    ["Responsável atual", nomeDe(chamado.responsavel_id)],
+    ["Última atualização", <>{fmtDataHora(chamado.updated_at)}{ultimaAtualizacao && <span className="block text-[11px] font-normal text-muted-foreground">por {nomeDe(ultimaAtualizacao.autor_id)}</span>}</>],
+  ];
 
   const acoes = [
     canAprovar && !encerrado && {
@@ -387,54 +431,97 @@ export default function CoordenarChamado() {
   return (
     <div>
       <PageHeader
-        title={`#${chamado.numero}`}
-        subtitle={chamado.assunto}
+        title="Coordenar chamado"
         module="Sistemas"
-        breadcrumb={["Chamados de Sistemas", `#${chamado.numero}`]}
+        breadcrumb={["Chamados de Sistemas", "Painel de Distribuição", `#${chamado.numero}`]}
         actions={
           <div className="flex flex-wrap gap-2">
             <BotaoStatusChamado chamado={chamado} validacao={validacao} nomeDe={nomeDe} size="default" />
-            <Button variant="outline" onClick={() => nav("/app/sistemas/chamados/painel")}>Voltar ao painel</Button>
+            <Button variant="outline" className="gap-1.5" onClick={() => nav("/app/sistemas/chamados/painel")}>
+              <ArrowLeft className="h-4 w-4" /> Voltar ao painel
+            </Button>
           </div>
         }
       />
 
-      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_340px]">
-        <div className="space-y-4">
-          {/* Cabeçalho do chamado */}
-          <Card className="p-4">
-            <div className="flex flex-wrap items-start gap-4">
-              <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
-                <FileText className="h-6 w-6" />
-              </div>
-              <div className="min-w-0 flex-1">
-                <div className="flex flex-wrap items-center gap-2">
-                  <p className="font-mono text-lg font-bold">#{chamado.numero}</p>
-                  <StatusBadge status={chamado.status} />
-                </div>
-                <p className="mt-0.5 text-sm font-semibold">{chamado.assunto}</p>
-                <p className="mt-1 text-[11px] text-muted-foreground">
-                  Categoria: {categoriaLabel} · Prioridade: {PRIORIDADES[chamado.prioridade]?.label ?? chamado.prioridade} · Aberto em: {fmtDataHora(chamado.created_at)}
-                </p>
-              </div>
-              <div className="grid gap-4 text-xs sm:grid-cols-3">
-                <div>
-                  <p className="text-[11px] text-muted-foreground">Solicitante</p>
-                  <p className="font-medium">{chamado.solicitante_nome || "—"}</p>
-                  <p className="text-[11px] text-muted-foreground">{chamado.setor || "—"}</p>
-                </div>
-                <div>
-                  <p className="text-[11px] text-muted-foreground">Setor</p>
-                  <p className="font-medium">{chamado.setor || "—"}</p>
-                </div>
-                <div>
-                  <p className="text-[11px] text-muted-foreground">Última atualização</p>
-                  <p className="font-medium">{fmtDataHora(chamado.updated_at)}</p>
-                  {ultimaAtualizacao && <p className="text-[11px] text-muted-foreground">por {nomeDe(ultimaAtualizacao.autor_id)}</p>}
-                </div>
+      {/* O PEDIDO, NO TOPO E NA LARGURA TODA (20/10/2026). Antes o título
+          aparecia pequeno num cartão e a descrição ficava espremida no
+          "Resumo do chamado", no canto direito — quem coordena tinha que
+          caçar o que foi pedido para decidir para quem mandar. */}
+      <Card className="mb-4 overflow-hidden">
+        <div className="border-b border-border bg-gradient-to-r from-primary/10 via-primary/5 to-transparent px-5 py-4">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="rounded-md border border-border bg-background px-2 py-0.5 font-mono text-xs font-bold">#{chamado.numero}</span>
+            <StatusBadge status={chamado.status} />
+            <PrioridadeBadge prioridade={chamado.prioridade} />
+            {chamado.categorias.map((x) => (
+              <span key={x} className="rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground">{labelDe(CATEGORIAS, x)}</span>
+            ))}
+            {validacao && <SeloEtapaValidacao v={validacao} />}
+          </div>
+          <h2 className="mt-2.5 text-xl font-bold leading-snug [overflow-wrap:anywhere] sm:text-2xl">{chamado.assunto}</h2>
+          <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+            <Avatar className="h-5 w-5"><AvatarFallback className="text-[8px]">{iniciais(chamado.solicitante_nome || "?")}</AvatarFallback></Avatar>
+            <span>Aberto por <b className="font-semibold text-foreground">{chamado.solicitante_nome || "—"}</b></span>
+            {chamado.setor && <span>· {chamado.setor}</span>}
+            <span>· {fmtDataHora(chamado.created_at)}</span>
+          </div>
+        </div>
+
+        <div className="space-y-4 px-5 py-4">
+          <div>
+            <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Descrição</p>
+            <div className={`relative ${descricaoLonga && !descricaoAberta ? "max-h-64 overflow-hidden" : ""}`}>
+              <p className="whitespace-pre-wrap text-sm leading-relaxed [overflow-wrap:anywhere]">
+                {descricao || <span className="text-muted-foreground">Sem descrição.</span>}
+              </p>
+              {descricaoLonga && !descricaoAberta && (
+                <div className="pointer-events-none absolute inset-x-0 bottom-0 h-16 bg-gradient-to-t from-card to-transparent" />
+              )}
+            </div>
+            {descricaoLonga && (
+              <Button variant="ghost" size="sm" className="mt-1 h-7 gap-1 px-2 text-xs text-primary" onClick={() => setDescricaoAberta((v) => !v)}>
+                {descricaoAberta ? <><ChevronUp className="h-3.5 w-3.5" /> Recolher</> : <><ChevronDown className="h-3.5 w-3.5" /> Ver descrição completa</>}
+              </Button>
+            )}
+          </div>
+
+          {chamado.observacoes_solicitante && (
+            <div className="rounded-lg border-l-2 border-primary/50 bg-muted/40 px-3 py-2">
+              <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Observações do solicitante</p>
+              <p className="mt-0.5 whitespace-pre-wrap text-sm [overflow-wrap:anywhere]">{chamado.observacoes_solicitante}</p>
+            </div>
+          )}
+
+          {anexosAbertura.length > 0 && (
+            <div>
+              <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Anexos ({anexosAbertura.length})</p>
+              <div className="flex flex-wrap gap-2">
+                {anexosAbertura.map((a) => (
+                  <button key={a.id} type="button" onClick={() => baixarAnexo(a.storage_path)}
+                    className="flex max-w-[260px] items-center gap-1.5 rounded-md border border-border px-2.5 py-1.5 text-xs transition-colors hover:border-primary/40 hover:bg-primary/5">
+                    <Paperclip className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                    <span className="truncate">{a.nome_arquivo}</span>
+                  </button>
+                ))}
               </div>
             </div>
-          </Card>
+          )}
+        </div>
+
+        {/* Os detalhes do formulário de abertura, numa grade só. */}
+        <div className="grid grid-cols-2 gap-px border-t border-border bg-border sm:grid-cols-4">
+          {infos.map(([k, v]) => (
+            <div key={k} className="bg-card px-4 py-3">
+              <p className="text-[11px] text-muted-foreground">{k}</p>
+              <div className="mt-0.5 text-xs font-medium [overflow-wrap:anywhere]">{v}</div>
+            </div>
+          ))}
+        </div>
+      </Card>
+
+      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
+        <div className="space-y-4">
 
           {/* Antes da coordenação de propósito: num chamado já avaliado, a
               nota e o comentário são o contexto de quem vai redistribuir —
@@ -442,6 +529,12 @@ export default function CoordenarChamado() {
           {avaliacao && (
             <CardAvaliacao avaliacao={avaliacao} titulo="Avaliação do solicitante" tone="warning" />
           )}
+          {avaliacoesDev.map((a) => (
+            <CardAvaliacao
+              key={a.id} avaliacao={a} tone="info" criterios={CRITERIOS_AVALIACAO_SOLICITANTE}
+              titulo={`${nomeDe(a.avaliador_id)} avaliou ${nomeDe(a.avaliado_id)} (${a.papel === "solicitante" ? "solicitante" : "participante"})`}
+            />
+          ))}
 
           <Card className="divide-y divide-border">
             {/* 1. Responsável pela execução */}
@@ -626,33 +719,10 @@ export default function CoordenarChamado() {
         </div>
 
         {/* Coluna direita */}
-        <div className="space-y-4">
-          <Card className="space-y-1 p-4">
-            <p className="mb-2 text-sm font-bold">Resumo do chamado</p>
-            {([
-              ["ID", `#${chamado.numero}`],
-              ["Assunto", chamado.assunto],
-              ["Categoria", categoriaLabel],
-              ["Prioridade", <PrioridadeBadge key="p" prioridade={chamado.prioridade} />],
-              ["Status", <StatusBadge key="s" status={chamado.status} />],
-              ["Solicitante", chamado.solicitante_nome || "—"],
-              ["Setor", chamado.setor || "—"],
-              ["Aberto em", fmtDataHora(chamado.created_at)],
-              ["Última atualização", fmtDataHora(chamado.updated_at)],
-            ] as Array<[string, React.ReactNode]>).map(([k, v]) => (
-              <div key={k} className="flex justify-between gap-2 border-b border-border/60 py-1 last:border-0">
-                <span className="shrink-0 text-xs text-muted-foreground">{k}</span>
-                <span className="text-right text-xs font-medium">{v}</span>
-              </div>
-            ))}
-            {chamado.descricao && (
-              <div className="pt-2">
-                <p className="text-xs text-muted-foreground">Descrição</p>
-                <p className="whitespace-pre-wrap text-xs [overflow-wrap:anywhere]">{chamado.descricao}</p>
-              </div>
-            )}
-          </Card>
-
+        {/* Coluna direita: só o que se FAZ com o chamado. As informações
+            subiram para o cartão do topo. sticky: as ações acompanham a
+            rolagem da coordenação, que é longa. */}
+        <div className="space-y-4 lg:sticky lg:top-4 lg:self-start">
           <Card className="p-4">
             <p className="mb-3 text-sm font-bold">Ações para o chamado</p>
             <div className="space-y-2">
@@ -675,22 +745,6 @@ export default function CoordenarChamado() {
             </div>
           </Card>
 
-          <Card className="p-4">
-            <p className="mb-3 text-sm font-bold">Informações adicionais</p>
-            <div className="grid grid-cols-2 gap-3 text-xs">
-              {([
-                ["Módulo / Sistema", moduloLabel(chamado)],
-                ["Ambiente", labelDe(AMBIENTES, chamado.ambiente)],
-                ["Afeta quantos usuários?", chamado.afeta_usuarios != null ? `${chamado.afeta_usuarios} usuários` : "—"],
-                ["Urgência informada?", labelDe(URGENCIAS, chamado.urgencia)],
-              ] as Array<[string, React.ReactNode]>).map(([k, v]) => (
-                <div key={k}>
-                  <p className="text-[11px] text-muted-foreground">{k}</p>
-                  <p className="font-medium">{v}</p>
-                </div>
-              ))}
-            </div>
-          </Card>
         </div>
       </div>
 
