@@ -157,7 +157,17 @@ async function abrirSupabase() {
     user: cred.supabase.usuario,
     database: cred.supabase.banco ?? 'postgres',
     password: cred.supabase.senha,
-    ssl: { rejectUnauthorized: false },
+    // SSL SÓ FORA DO TÚNEL (20/10/2026). Desde a virada para o cluster
+    // (8a8688d8, 19/10) o destino é 127.0.0.1:5433, a ponta local do túnel
+    // SSH até o HAProxy — que não fala SSL. Com `ssl` fixo, toda rodada caía
+    // em "The server does not support SSL connections" desde as 16:21 de
+    // 19/10, e as batidas pararam de chegar no ERP (Gestão de Ponto mostrando
+    // o dia 19 pela metade enquanto a Flex dizia que já tinha tudo). O túnel
+    // já cifra o caminho; na Supabase (host remoto) o SSL continua.
+    // `supabase.ssl` no credenciais.json força um lado ou outro, se precisar.
+    ssl: (cred.supabase.ssl ?? !['127.0.0.1', 'localhost', '::1'].includes(cred.supabase.host))
+      ? { rejectUnauthorized: false }
+      : false,
   });
   await cliente.connect();
   return cliente;
