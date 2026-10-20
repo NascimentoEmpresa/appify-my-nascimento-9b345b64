@@ -1,0 +1,18 @@
+[
+ {
+  "id": "e0adda4f-44f7-4cf4-8239-bd11bb4d69c3",
+  "nome": "Escritório — Sede",
+  "descricao": "Planta principal do escritório",
+  "endereco": null,
+  "largura_cm": 3700,
+  "altura_cm": 8400,
+  "cor_piso": "#f1f5f9",
+  "ordem": 0,
+  "ativo": true,
+  "created_by": null,
+  "created_at": "2026-09-04 14:49:17.147196+00",
+  "updated_at": "2026-09-09 14:37:15.219359+00",
+  "pe_direito_cm": 200,
+  "nivel": 0
+ }
+]
