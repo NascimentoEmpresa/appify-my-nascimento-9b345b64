@@ -1,5 +1,17 @@
 # Integração Senior → Supabase (EMPREGADOS)
 
+> **⛔ DESATIVADO desde 20/10/2026 — não religar no Discloud.**
+> O EMPREGADOS agora é atualizado **dentro do banco** (cluster PostgreSQL), de
+> 15 em 15 minutos, a partir do espelho da Senior: função
+> `rh_sync_senior_pelo_espelho()` + job `pg_cron` `rh-sync-senior-espelho`
+> (mig `20261020000110`). O espelho (`espelho-mysql/`, GitHub Actions) já
+> copia `BiEmpregados` e `BiSituacoes` — as mesmas tabelas que este robô lia —
+> e a rodada rápida de 10 em 10 min passou a trazê-las.
+> Motivo: depois da virada para o cluster (16/10) este robô seguiu gravando na
+> Supabase antiga e o cadastro congelou na produção. Uma ligação só com a
+> Senior (o espelho), sem robô e sem Discloud. O workflow `sync-senior.yml`
+> foi removido. O código fica aqui só como referência / plano B.
+
 Traz `hagg.BiEmpregados` (MySQL do Senior, via túnel SSH) para a tabela
 `EMPREGADOS` do Supabase. Pacote **self-contained**: esta pasta inteira é
 a unidade de deploy.
