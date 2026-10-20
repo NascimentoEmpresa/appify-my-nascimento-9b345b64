@@ -21,7 +21,8 @@ import {
   DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem,
 } from "@/components/ui/dropdown-menu";
 import { PieChart, Pie, Cell, ResponsiveContainer } from "recharts";
-import { ClipboardList, Clock, Users, CheckCircle2, AlertTriangle, ShieldAlert, MoreHorizontal, ChevronLeft, ChevronRight, Eye, UserCog, Trash2, RotateCcw, Info, MessageSquareQuote, GraduationCap } from "lucide-react";
+import { ClipboardList, Clock, Users, CheckCircle2, AlertTriangle, ShieldAlert, MoreHorizontal, ChevronLeft, ChevronRight, Eye, UserCog, Trash2, RotateCcw, Info, MessageSquareQuote, GraduationCap, UserCheck, ListOrdered } from "lucide-react";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { FeedAtualizacoes } from "./FeedAtualizacoes";
 import { ExcluirChamadoDialog } from "./ExcluirChamadoDialog";
 import { ReabrirChamadoDialog } from "./ReabrirChamadoDialog";
@@ -31,6 +32,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import {
   StatCard, StatusBadge, PrioridadeBadge, STATUS_CHAMADO, PRIORIDADES, CATEGORIAS, labelDe, moduloLabel, iniciais, Estrelas, fmtData, fmtDataHora,
   chamadoAtivo, podeReabrirChamado, posicoesFilaGlobal, posicoesFilaDev, CRITERIOS_AVALIACAO, mediaAvaliacao, type Chamado,
+  CRITERIOS_AVALIACAO_SOLICITANTE, type CriterioSolicitanteKey,
 } from "./types";
 
 const POR_PAGINA = 8;
@@ -102,6 +104,7 @@ export default function PainelDistribuicao() {
   const [fAvaliado, setFAvaliado] = useState("todos");
   const [paginaAval, setPaginaAval] = useState(1);
   const [enviarTreino, setEnviarTreino] = useState<{ chamado: Chamado; v: ValidacaoChamado } | null>(null);
+  const [abaInferior, setAbaInferior] = useState("fila");
 
   const { data: usuarios = [] } = useQuery({
     queryKey: ["chamados-usuarios"],
@@ -155,6 +158,20 @@ export default function PainelDistribuicao() {
     queryFn: async () => {
       const { data } = await (supabase as any).rpc("chamados_avaliacoes_detalhe");
       return (data ?? []) as AvaliacaoDetalhe[];
+    },
+  });
+
+  // O outro lado: como os devs avaliaram quem pediu (mig 20261020000070).
+  // A RPC só devolve linhas para a gestão.
+  const { data: rankingSolicitantes = [] } = useQuery({
+    queryKey: ["chamados-ranking-solicitantes"],
+    enabled: gestor,
+    queryFn: async () => {
+      const { data } = await (supabase as any).rpc("chamados_ranking_solicitantes");
+      const linhas = (data ?? []) as Array<Record<CriterioSolicitanteKey, number> & {
+        avaliado_id: string; nome: string; setor: string | null; avaliacoes: number; media: number; ultimo_comentario: string | null;
+      }>;
+      return [...linhas].sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"));
     },
   });
 
@@ -455,8 +472,11 @@ export default function PainelDistribuicao() {
                         )}
                       </TableCell>
                       <TableCell className="whitespace-nowrap font-mono text-xs font-semibold">#{c.numero}</TableCell>
-                      <TableCell className="min-w-[150px] max-w-[240px] text-sm" title={c.assunto}>
-                        <span className="line-clamp-2">{c.assunto}</span>
+                      {/* Título em destaque e a descrição logo abaixo: dá para
+                          entender o pedido sem abrir o chamado. */}
+                      <TableCell className="min-w-[220px] max-w-[340px]" title={c.descricao ? `${c.assunto}\n\n${c.descricao}` : c.assunto}>
+                        <span className="line-clamp-2 text-sm font-semibold leading-snug">{c.assunto}</span>
+                        {c.descricao && <span className="mt-0.5 line-clamp-2 text-[11px] leading-snug text-muted-foreground">{c.descricao}</span>}
                       </TableCell>
                       <TableCell className="text-xs text-muted-foreground">{c.categorias.map((x) => labelDe(CATEGORIAS, x)).join(", ") || "—"}</TableCell>
                       <TableCell onClick={(e) => e.stopPropagation()}>
@@ -639,9 +659,25 @@ export default function PainelDistribuicao() {
         </div>
       </div>
 
+      {/* As quatro leituras de baixo em ABAS (20/10/2026). Empilhadas, a
+          página passava de cinco telas de altura e a fila por prioridade —
+          que é trabalho do dia — ficava no fim, depois de duas tabelas de
+          avaliação. */}
+      <Tabs value={abaInferior} onValueChange={setAbaInferior} className="mt-4">
+        <TabsList className="h-auto flex-wrap justify-start gap-1 bg-muted/60 p-1">
+          <TabsTrigger value="fila" className="gap-1.5 text-xs"><ListOrdered className="h-3.5 w-3.5" /> Fila por prioridade</TabsTrigger>
+          <TabsTrigger value="satisfacao" className="gap-1.5 text-xs"><Users className="h-3.5 w-3.5" /> Satisfação por integrante</TabsTrigger>
+          <TabsTrigger value="notas" className="gap-1.5 text-xs"><MessageSquareQuote className="h-3.5 w-3.5" /> Notas e comentários</TabsTrigger>
+          <TabsTrigger value="solicitantes" className="gap-1.5 text-xs">
+            <UserCheck className="h-3.5 w-3.5" /> Avaliação dos solicitantes
+            {rankingSolicitantes.length > 0 && <span className="rounded-full bg-info/15 px-1.5 text-[10px] font-bold text-info">{rankingSolicitantes.length}</span>}
+          </TabsTrigger>
+        </TabsList>
+
       {/* Satisfação por integrante. Não é ranking: sem posição e em ordem
           alfabética — a leitura é "como cada um está", não "quem ganhou". */}
-      <Card className="mt-4 p-4">
+      <TabsContent value="satisfacao" className="mt-3">
+      <Card className="p-4">
         <div className="mb-3 flex items-center justify-between">
           <p className="flex items-center gap-1.5 text-sm font-bold">
             <Users className="h-4 w-4 text-warning" /> Satisfação por integrante
@@ -702,9 +738,11 @@ export default function PainelDistribuicao() {
           <Info className="h-3.5 w-3.5" /> A nota final é calculada com base na média ponderada dos critérios avaliados. Clique num integrante para ver as notas dele uma a uma.
         </p>
       </Card>
+      </TabsContent>
 
       {/* Notas uma a uma: quem deu, em qual chamado e o que escreveu. */}
-      <Card className="mt-4 p-4">
+      <TabsContent value="notas" className="mt-3">
+      <Card className="p-4">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
           <p className="flex items-center gap-1.5 text-sm font-bold">
             <MessageSquareQuote className="h-4 w-4 text-warning" /> Notas e comentários por avaliação
@@ -816,9 +854,89 @@ export default function PainelDistribuicao() {
           <Info className="h-3.5 w-3.5" /> Desde 31/08/2026, nota abaixo de 5 em qualquer critério só é aceita com comentário — as avaliações anteriores a isso podem estar sem.
         </p>
       </Card>
+      </TabsContent>
+
+      {/* O dev avalia quem pediu (mig 20261020000070): média por pessoa. Mesma
+          leitura da satisfação — ordem alfabética, sem posição. */}
+      <TabsContent value="solicitantes" className="mt-3">
+      <Card className="p-4">
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <p className="flex items-center gap-1.5 text-sm font-bold">
+            <UserCheck className="h-4 w-4 text-info" /> Avaliação dos solicitantes pelo desenvolvedor
+          </p>
+          <span className="text-[11px] text-muted-foreground">
+            Nota final ponderada ({CRITERIOS_AVALIACAO_SOLICITANTE.map((c) => `${c.titulo} ${Math.round(c.peso * 100)}%`).join(" · ")})
+          </span>
+        </div>
+        <div className="overflow-x-auto">
+          <Table className="[&_td]:px-2 [&_td]:py-2.5 [&_th]:h-9 [&_th]:px-2">
+            <TableHeader>
+              <TableRow>
+                <TableHead>Solicitante</TableHead>
+                <TableHead className="text-center">Avaliações</TableHead>
+                {CRITERIOS_AVALIACAO_SOLICITANTE.map((c) => (
+                  <TableHead key={c.key} className="text-center">
+                    {c.titulo}
+                    <span className="block text-[10px] font-normal text-muted-foreground">({Math.round(c.peso * 100)}%)</span>
+                  </TableHead>
+                ))}
+                <TableHead className="text-right">Nota final</TableHead>
+                <TableHead>Último comentário</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {rankingSolicitantes.map((r) => (
+                <TableRow key={r.avaliado_id}>
+                  <TableCell>
+                    <div className="flex items-center gap-2">
+                      <Avatar className="h-7 w-7"><AvatarFallback className="text-[10px]">{iniciais(r.nome)}</AvatarFallback></Avatar>
+                      <div className="min-w-0">
+                        <p className="truncate text-xs font-medium">{r.nome}</p>
+                        <p className="truncate text-[10px] text-muted-foreground">{r.setor || "—"}</p>
+                      </div>
+                    </div>
+                  </TableCell>
+                  <TableCell className="text-center text-xs text-muted-foreground">{Number(r.avaliacoes)}</TableCell>
+                  {CRITERIOS_AVALIACAO_SOLICITANTE.map((c) => {
+                    const v = Number(r[c.key]);
+                    return (
+                      <TableCell key={c.key} className={`text-center text-xs font-semibold ${v < 3 ? "text-destructive" : v < 4.5 ? "text-warning" : "text-success"}`}>
+                        {v.toFixed(1).replace(".", ",")}
+                      </TableCell>
+                    );
+                  })}
+                  <TableCell className="text-right">
+                    <div className="flex items-center justify-end gap-1.5">
+                      <Estrelas valor={Number(r.media)} size={13} />
+                      <span className="text-sm font-bold">{Number(r.media).toFixed(1).replace(".", ",")}</span>
+                    </div>
+                  </TableCell>
+                  <TableCell className="max-w-[260px]">
+                    {r.ultimo_comentario
+                      ? <p className="line-clamp-2 text-[11px] [overflow-wrap:anywhere]" title={r.ultimo_comentario}>{r.ultimo_comentario}</p>
+                      : <span className="text-[11px] text-muted-foreground">—</span>}
+                  </TableCell>
+                </TableRow>
+              ))}
+              {rankingSolicitantes.length === 0 && (
+                <TableRow>
+                  <TableCell colSpan={CRITERIOS_AVALIACAO_SOLICITANTE.length + 4} className="py-6 text-center text-sm text-muted-foreground">
+                    Nenhum solicitante avaliado ainda. A avaliação é pedida ao desenvolvedor quando ele conclui um chamado (a partir de 20/10/2026).
+                  </TableCell>
+                </TableRow>
+              )}
+            </TableBody>
+          </Table>
+        </div>
+        <p className="mt-3 flex items-center justify-center gap-1.5 border-t border-border/60 pt-3 text-[11px] text-muted-foreground">
+          <Info className="h-3.5 w-3.5" /> Cada pessoa que pediu (solicitante e participantes) recebe a própria avaliação. O avaliado não vê a nota.
+        </p>
+      </Card>
+      </TabsContent>
 
       {/* Fila de chamados por prioridade */}
-      <Card className="mt-4 p-4">
+      <TabsContent value="fila" className="mt-3">
+      <Card className="p-4">
         <p className="mb-3 text-sm font-bold">Fila de chamados por prioridade</p>
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
           {([
@@ -841,6 +959,8 @@ export default function PainelDistribuicao() {
           ))}
         </div>
       </Card>
+      </TabsContent>
+      </Tabs>
 
       <ExcluirChamadoDialog
         open={!!excluir}

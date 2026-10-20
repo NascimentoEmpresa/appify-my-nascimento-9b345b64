@@ -94,6 +94,18 @@ export function avaliacaoLiberada(
   return { liberada: true, motivo: null };
 }
 
+/**
+ * Quantas avaliações pendentes travam abrir outro chamado (20/10/2026, mig
+ * 20261020000070). Antes travava na primeira; agora o solicitante abre com 1
+ * ou 2 pendentes (a tela avisa) e só a 3ª sem avaliar trava. O gatilho do
+ * banco usa o mesmo número — mudar aqui é mudar lá.
+ */
+export const LIMITE_AVALIACOES_PENDENTES = 3;
+
+/** As pendências já travam a abertura de um novo chamado? */
+export const abrirChamadoTravado = (pendentes: readonly unknown[]) =>
+  pendentes.length >= LIMITE_AVALIACOES_PENDENTES;
+
 /** Linha de chamados_meus_avaliacoes_pendentes (mig 269): o que trava abrir outro chamado. */
 export interface PendenciaSolicitante {
   id: string; numero: string; assunto: string; concluido_em: string | null;

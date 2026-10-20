@@ -9,7 +9,7 @@ import { FeedAtualizacoes } from "./FeedAtualizacoes";
 import { AvaliarChamadoDialog } from "./AvaliarChamadoDialog";
 import { BotaoChatChamado, useChamadosNaoLidos } from "./BotaoChatChamado";
 import { BotaoStatusChamado, SeloEtapaValidacao, useValidacoesChamados } from "./StatusValidacao";
-import { avaliacaoLiberada } from "./validacaoPresidencia";
+import { avaliacaoLiberada, abrirChamadoTravado, LIMITE_AVALIACOES_PENDENTES } from "./validacaoPresidencia";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -151,7 +151,13 @@ export default function MeusChamados({ base = "/app/central-servicos/chamados" }
       {avaliacoesPendentes.length > 0 && (
         <Card className="mb-4 space-y-2 border-warning/40 bg-warning/5 p-4">
           <p className="flex items-center gap-1.5 text-sm font-semibold text-warning">
-            <Star className="h-4 w-4" /> Você tem {avaliacoesPendentes.length} avaliação(ões) pendente(s) — avalie para poder abrir novos chamados.
+            <Star className="h-4 w-4 shrink-0" />
+            <span>
+              Você tem {avaliacoesPendentes.length} avaliação(ões) pendente(s) —{" "}
+              {abrirChamadoTravado(avaliacoesPendentes)
+                ? "avalie para poder abrir novos chamados."
+                : `com ${LIMITE_AVALIACOES_PENDENTES} sem avaliar, a abertura de novos chamados fica bloqueada.`}
+            </span>
           </p>
           <div className="flex flex-wrap gap-1.5">
             {avaliacoesPendentes.map((p) => (

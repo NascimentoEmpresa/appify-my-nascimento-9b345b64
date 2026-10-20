@@ -16,7 +16,8 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { CheckCircle2, MessageSquare, XCircle, Paperclip, ArrowLeft, Trash2, Star, RotateCcw, GitPullRequest } from "lucide-react";
+import { CheckCircle2, MessageSquare, XCircle, Paperclip, ArrowLeft, Trash2, Star, RotateCcw, GitPullRequest, UserCheck } from "lucide-react";
+import { AvaliarSolicitanteDialog } from "./AvaliarSolicitanteDialog";
 import { ExcluirChamadoDialog } from "./ExcluirChamadoDialog";
 import { abrirPrGithub } from "./abrirPrGithub";
 import { BotaoAdicionarParticipante } from "./ParticipantesChamado";
@@ -28,6 +29,7 @@ import {
   CATEGORIAS, TIPOS, IMPACTOS, URGENCIAS, AMBIENTES,
   labelDe, moduloLabel, fmtData, fmtDataHora, podeReabrirChamado, chamadoEncerrado,
   BUCKET_CHAMADOS, opcoesDownloadAnexo, type Chamado, type Anexo, type Evento, type AvaliacaoChamado,
+  CRITERIOS_AVALIACAO_SOLICITANTE, DEV_AVALIA_SOLICITANTE_DESDE, type AvaliacaoSolicitante,
 } from "./types";
 
 export default function ExecutarChamado() {
@@ -44,6 +46,10 @@ export default function ExecutarChamado() {
   const [reabrindoOpen, setReabrindoOpen] = useState(false);
   const [agindo, setAgindo] = useState<string | null>(null); // ação em curso (trava cliques repetidos)
   const [flash, setFlash] = useState(false);                 // pisca o selo de status ao mudar
+  // Concluir passa pela avaliação de quem pediu (mig 20261020000070) — com
+  // a saída "Concluir sem avaliar" dentro do próprio diálogo.
+  const [concluindoOpen, setConcluindoOpen] = useState(false);
+  const [avaliarDepoisOpen, setAvaliarDepoisOpen] = useState(false);
 
   const { data: usuarios = [] } = useQuery({
     queryKey: ["chamados-usuarios"],
@@ -91,6 +97,17 @@ export default function ExecutarChamado() {
     },
   });
 
+  // O que o dev (ou a gestão) achou de quem pediu. O RLS só devolve a quem
+  // avaliou, ao responsável e à gestão — para os demais a lista vem vazia.
+  const { data: avaliacoesDev = [] } = useQuery({
+    queryKey: ["chamado-avaliacao-dev", id],
+    enabled: !!id,
+    queryFn: async () => {
+      const { data } = await (supabase as any).from("CHAMADO_SISTEMA_AVALIACAO_DEV").select("*").eq("chamado_id", id).order("created_at");
+      return (data ?? []) as AvaliacaoSolicitante[];
+    },
+  });
+
   // Validação da Presidência (mig 266) — null quando o chamado não foi enviado.
   const { data: validacao } = useValidacaoChamado(id);
 
@@ -123,6 +140,15 @@ export default function ExecutarChamado() {
     setFlash(true); setTimeout(() => setFlash(false), 700);
     setAgindo(null);
     invalidar();
+  };
+
+  /** Fim do diálogo de concluir: grava o status e diz no histórico se houve avaliação. */
+  const concluirAposAvaliar = async (resultado: "avaliou" | "pulou" | "ninguem") => {
+    await mudarStatus(
+      "concluido",
+      resultado === "pulou" ? "Chamado concluído (sem avaliar quem pediu)" : "Chamado concluído",
+      "concluido",
+    );
   };
 
   const salvarPrazo = async (prazo: string) => {
@@ -219,6 +245,13 @@ export default function ExecutarChamado() {
             <CardAvaliacao avaliacao={avaliacao} titulo="Avaliação do solicitante" tone="warning" />
           )}
 
+          {avaliacoesDev.map((a) => (
+            <CardAvaliacao
+              key={a.id} avaliacao={a} tone="info" criterios={CRITERIOS_AVALIACAO_SOLICITANTE}
+              titulo={`${nomeDe(a.avaliador_id)} avaliou ${nomeDe(a.avaliado_id)} (${a.papel === "solicitante" ? "solicitante" : "participante"})`}
+            />
+          ))}
+
           <Card className="space-y-3 p-4">
             <p className="text-sm font-bold">Descrição e evidências (abertura)</p>
             <div>
@@ -285,7 +318,9 @@ export default function ExecutarChamado() {
             <div>
               <p className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Status atual</p>
               {podeAgir ? (
-                <Select value={chamado.status} onValueChange={(v) => mudarStatus(v, `Status alterado para ${STATUS_CHAMADO[v]?.label ?? v}`, "status")}>
+                <Select value={chamado.status} onValueChange={(v) => (v === "concluido" && chamado.status !== "concluido"
+                  ? setConcluindoOpen(true)
+                  : mudarStatus(v, `Status alterado para ${STATUS_CHAMADO[v]?.label ?? v}`, "status"))}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
                     {["aberto", "em_andamento", "aguardando_retorno", "concluido"].map((v) => (
@@ -311,14 +346,25 @@ export default function ExecutarChamado() {
             <Card className="space-y-2 p-4">
               <p className="text-sm font-bold">Ações rápidas</p>
               {chamado.status === "concluido" ? (
-                <div className="flex items-center gap-2 rounded-md border border-success/40 bg-success/10 px-3 py-2 text-sm font-semibold text-success">
-                  <CheckCircle2 className="h-4 w-4 animate-check-pop" /> Chamado concluído
-                </div>
+                <>
+                  <div className="flex items-center gap-2 rounded-md border border-success/40 bg-success/10 px-3 py-2 text-sm font-semibold text-success">
+                    <CheckCircle2 className="h-4 w-4 animate-check-pop" /> Chamado concluído
+                  </div>
+                  {/* Concluído sem passar pelo diálogo (merge da PR) ou pulado:
+                      dá para avaliar depois. Só de agora em diante — os
+                      concluídos antes da mudança ficam de fora. */}
+                  {!!chamado.concluido_em && new Date(chamado.concluido_em) >= new Date(DEV_AVALIA_SOLICITANTE_DESDE)
+                    && !avaliacoesDev.some((a) => a.avaliador_id === user?.id) && (
+                    <Button variant="outline" className="w-full justify-start gap-2 transition-transform active:scale-95" onClick={() => setAvaliarDepoisOpen(true)}>
+                      <UserCheck className="h-4 w-4 text-info" /> Avaliar quem pediu
+                    </Button>
+                  )}
+                </>
               ) : (
                 <Button
                   className="w-full justify-start gap-2 bg-success text-success-foreground transition-transform hover:bg-success/90 active:scale-95 disabled:opacity-60"
                   disabled={!!agindo}
-                  onClick={() => mudarStatus("concluido", "Chamado concluído", "concluido")}
+                  onClick={() => setConcluindoOpen(true)}
                 >
                   <CheckCircle2 className="h-4 w-4" /> {agindo === "concluido" ? "Concluindo…" : "Concluir chamado"}
                 </Button>
@@ -402,6 +448,15 @@ export default function ExecutarChamado() {
           </div>
         </DialogContent>
       </Dialog>
+
+      <AvaliarSolicitanteDialog
+        open={concluindoOpen} onOpenChange={setConcluindoOpen}
+        chamado={chamado} modo="concluir" onConcluir={concluirAposAvaliar}
+      />
+      <AvaliarSolicitanteDialog
+        open={avaliarDepoisOpen} onOpenChange={setAvaliarDepoisOpen}
+        chamado={chamado} modo="avaliar"
+      />
 
       <ReabrirChamadoDialog
         open={reabrindoOpen}
