@@ -55,6 +55,18 @@ export function tempoDaPaginaMs(duracaoSeg: number, paginas: number): number {
   return Math.max(8, Math.floor((duracaoSeg || 30) / n)) * 1000;
 }
 
+/**
+ * Em que página o relatório está depois de `decorridoMs` no ar, e quanto
+ * falta para a próxima — para o AO VIVO da gestão abrir na mesma página da
+ * TV (20/10/2026). Antes abria sempre na 1ª: 6 das 7 TVs têm um item só,
+ * que gira páginas para sempre, e o ao vivo quase nunca batia com a TV.
+ */
+export function paginaNoTempo(decorridoMs: number, duracaoMs: number, paginas: number): { pagina: number; faltaMs: number } {
+  if (paginas < 2 || duracaoMs <= 0 || !(decorridoMs > 0)) return { pagina: 0, faltaMs: duracaoMs };
+  const volta = Math.floor(decorridoMs / duracaoMs);
+  return { pagina: volta % paginas, faltaMs: duracaoMs - (decorridoMs - volta * duracaoMs) };
+}
+
 /** Tempo recomendado para o item ver todas as páginas com calma (15 s cada, no mínimo 30 s). */
 export const duracaoRecomendada = (paginas: number) => Math.max(30, paginas * 15);
 
