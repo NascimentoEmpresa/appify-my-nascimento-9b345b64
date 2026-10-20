@@ -91,7 +91,7 @@ import { TrendingDown } from "lucide-react";
 import { Megaphone, ExternalLink } from "lucide-react";
 import { Award, CalendarDays, FolderTree, PenLine, QrCode, Users } from "lucide-react";
 import { CreditCard, ListTree } from "lucide-react";
-import { Network } from "lucide-react";
+import { Network, Cpu } from "lucide-react";
 import { useNovidades } from "@/hooks/useNovidades";
 import { cn } from "@/lib/utils";
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -856,6 +856,31 @@ const tvsModule: ModuleDef = {
   ],
 };
 
+// T.I — Mapa 3D do escritório, Construir o mapa, Inventário e Painel.
+// Voltou da branch local `ti` em 20/10/2026 ("restaura TUDO da branch ti");
+// tinha saído da pablo em 10/09/2026 (revert 7cb8e295). Backend recriado pelas
+// migs 20261020000120..133. Os menus nascem com quem já tinha a permissão.
+const tiModule: ModuleDef = {
+  id: "ti",
+  label: "T.I",
+  description: "Infraestrutura e hardware",
+  icon: Cpu,
+  basePath: "/app/ti",
+  status: "active",
+  groups: [
+    {
+      label: "Infraestrutura",
+      defaultOpen: true,
+      items: [
+        { label: "Mapa 3D", to: "/app/ti/mapa-hardware", icon: Network },
+        { label: "Construir o mapa", to: "/app/ti/construir", icon: Wrench },
+        { label: "Inventário", to: "/app/ti/inventario", icon: Boxes },
+        { label: "Painel de T.I", to: "/app/ti/painel", icon: BarChart3 },
+      ],
+    },
+  ],
+};
+
 const sistemasModule: ModuleDef = {
   id: "sistemas",
   label: "Sistemas",
@@ -1371,6 +1396,7 @@ const erpModules: ModuleDef[] = [
   encarregadosModule,
   operacionalModule,
   sistemasModule,
+  tiModule,
   tvsModule,
   juridicoModule,
   sstModule,

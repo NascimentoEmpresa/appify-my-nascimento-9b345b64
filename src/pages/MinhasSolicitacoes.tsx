@@ -1552,7 +1552,7 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
                     contrato (pelo colaborador escolhido). Só leitura: o
                     encarregado não escolhe nem edita — ver custoPosto.ts. */}
                 <div className="ini-fg">
-                  <label>Insalubridade <span style={{ color: "#64748b", fontWeight: 600 }}>— da Planilha de Custo</span></label>
+                  <label>Insalubridade <span style={{ color: "#64748b", fontWeight: 600 }}>— da Planilha de Custo ou do cadastro</span></label>
                   <input className="ini-fi" readOnly
                     value={custoBuscando ? "Consultando a planilha…" : vaga.insalubridade_recebe === "Sim" ? `Sim — ${vaga.insalubridade_quanto}` : substituidoId ? "Não" : ""}
                     placeholder="Escolha o colaborador na etapa 1"
