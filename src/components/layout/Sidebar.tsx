@@ -1699,7 +1699,11 @@ export function Sidebar({ collapsed, mobileOpen = false, onMobileClose }: Sideba
             pra tela de "Acesso negado" do RouteGuard. Fica fora do menu dele. */}
         {!externo && (
         <NavLink
-          to="/app/administracao"
+          // Só "PODE TROCAR A SENHA" e sem a Administração (20/10/2026, mig
+          // 20261020000100): o escritório que redefine a senha dos
+          // encarregados cai direto na tela enxuta, que é TUDO o que ele vê
+          // em Configurações. Quem enxerga a Administração segue para ela.
+          to={!canSee("/app/administracao") && canSee("/app/senhas-encarregados") ? "/app/senhas-encarregados" : "/app/administracao"}
           className={({ isActive }) =>
             cn(
               "sb-item flex items-center gap-3 rounded-md px-3 py-2 text-sm font-bold",

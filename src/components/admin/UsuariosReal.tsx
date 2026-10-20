@@ -640,7 +640,7 @@ function AlterarEmailSection({ userId, emailAtual }: { userId: string; emailAtua
   );
 }
 
-function ResetSenhaSection({ userId, email }: { userId: string; email: string }) {
+export function ResetSenhaSection({ userId, email }: { userId: string; email: string }) {
   const [loading, setLoading] = useState(false);
   const [novaSenha, setNovaSenha] = useState<string | null>(null);
   const [confirmando, setConfirmando] = useState(false);

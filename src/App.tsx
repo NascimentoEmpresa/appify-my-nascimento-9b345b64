@@ -41,6 +41,7 @@ import Resultado from "./pages/Resultado";
 import ProntasContrato from "./pages/ProntasContrato";
 import Historico from "./pages/Historico";
 import Administracao from "./pages/Administracao";
+import TrocarSenhaEncarregados from "./pages/admin/TrocarSenhaEncarregados";
 import SmokeTestHelena from "./pages/admin/SmokeTestHelena";
 import MeuPerfil from "./pages/MeuPerfil";
 import DiscordCallback from "./pages/DiscordCallback";
@@ -691,6 +692,7 @@ const App = () => (
             <Route path="contratos/:id" element={<ContratoDetalhe />} />
             <Route path="historico" element={<Historico />} />
             <Route path="administracao" element={<Administracao />} />
+            <Route path="senhas-encarregados" element={<TrocarSenhaEncarregados />} />
             <Route path="admin/smoke-helena" element={<SmokeTestHelena />} />
             <Route path="meu-perfil" element={<MeuPerfil />} />
             {/* URL de retorno do OAuth do Discord. Precisa ser fixa: o Discord

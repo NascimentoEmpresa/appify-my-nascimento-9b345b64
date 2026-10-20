@@ -52,20 +52,31 @@ Deno.serve(async (req) => {
 
     const admin = createClient(SUPABASE_URL, SERVICE_ROLE);
 
-    const { data: podeResetar, error: roleErr } = await admin.rpc("can_access", {
-      _user: callerId,
-      _menu: "administracao",
-      _acao: "alterar",
-    });
-    if (roleErr) return jsonResponse({ error: roleErr.message }, 500);
-    if (!podeResetar) return jsonResponse({ error: "Apenas administradores podem resetar senhas." }, 403);
-
     let body: { user_id?: string };
     try { body = await req.json(); }
     catch { return jsonResponse({ error: "JSON inválido" }, 400); }
 
     const targetId = (body.user_id ?? "").trim();
     if (!targetId) return jsonResponse({ error: "user_id obrigatório" }, 400);
+
+    // Quem pode resetar QUEM (20/10/2026, mig 20261020000100): Administração
+    // (alterar) reseta qualquer um, como antes; a permissão "PODE TROCAR A
+    // SENHA" (trocar_senha_encarregados) só reseta usuário do setor
+    // Encarregados que não administra o ERP. A régua mora no banco
+    // (senha_pode_resetar) para a tela e a Edge não divergirem.
+    let podeResetar: boolean | null = null;
+    const regra = await admin.rpc("senha_pode_resetar", { _quem: callerId, _alvo: targetId });
+    if (!regra.error) podeResetar = !!regra.data;
+    else {
+      // Banco ainda sem a migration (no merge a Edge sobe antes dela): vale a
+      // regra antiga, só Administração.
+      const antiga = await admin.rpc("can_access", { _user: callerId, _menu: "administracao", _acao: "alterar" });
+      if (antiga.error) return jsonResponse({ error: antiga.error.message }, 500);
+      podeResetar = !!antiga.data;
+    }
+    if (!podeResetar) {
+      return jsonResponse({ error: "Você só pode redefinir a senha de usuários do setor Encarregados." }, 403);
+    }
 
     const novaSenha = gerarSenha(12);
 

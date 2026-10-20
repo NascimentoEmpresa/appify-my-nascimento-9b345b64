@@ -175,15 +175,15 @@ export function AvaliarSolicitanteDialog({
 
   return (
     <Dialog open={open} onOpenChange={fechar}>
-      <DialogContent className={`max-h-[92vh] max-w-2xl overflow-y-auto ${tremer ? "animate-shake" : ""}`}>
+      <DialogContent className={`max-h-[94vh] max-w-2xl gap-3 overflow-y-auto ${tremer ? "animate-shake" : ""}`}>
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <UserCheck className="h-5 w-5 text-info" />
             {modo === "concluir" ? "Antes de concluir: avalie quem pediu" : "Avaliar quem pediu"}
             {chamado.numero ? <span className="font-mono text-sm text-muted-foreground">#{chamado.numero}</span> : null}
           </DialogTitle>
-          <DialogDescription>
-            Como foi trabalhar neste chamado com quem pediu? Cada pessoa recebe a sua avaliação. A nota fica com você e com a gestão de chamados.
+          <DialogDescription className="text-xs">
+            Cada pessoa recebe a sua avaliação. A nota fica com você e com a gestão de chamados.
           </DialogDescription>
         </DialogHeader>
 
@@ -196,7 +196,7 @@ export function AvaliarSolicitanteDialog({
             <p className="text-xs text-muted-foreground">Todos já foram avaliados — ou você mesmo abriu este chamado.</p>
           </div>
         ) : (
-          <div className="space-y-4">
+          <div className="space-y-3">
             {/* Uma aba por pessoa, com o estado de cada avaliação. */}
             {lista.length > 1 && (
               <div className="flex flex-wrap gap-2">
@@ -221,50 +221,55 @@ export function AvaliarSolicitanteDialog({
             )}
 
             {atual && (
-              <div key={atual.user_id} className="space-y-4 rounded-xl border border-border p-4">
-                <div className="flex items-center gap-3">
-                  <Avatar className="h-9 w-9"><AvatarFallback className="text-xs">{iniciais(atual.nome)}</AvatarFallback></Avatar>
-                  <div className="min-w-0">
-                    <p className="truncate text-sm font-bold">{atual.nome}</p>
-                    <p className="text-[11px] text-muted-foreground">{atual.papel === "solicitante" ? "Solicitante do chamado" : "Participante do chamado"}</p>
-                  </div>
+              // COMPACTO (20/10/2026 — "diminui pra não precisar descer"): um
+              // critério por LINHA (título + descrição à esquerda, as 5
+              // estrelas à direita), sem o cartão em volta. Cabe numa tela
+              // de notebook sem rolar; no celular a estrela desce para baixo.
+              <div key={atual.user_id} className="space-y-2.5">
+                <div className="flex items-center gap-2.5">
+                  <Avatar className="h-8 w-8"><AvatarFallback className="text-[10px]">{iniciais(atual.nome)}</AvatarFallback></Avatar>
+                  <p className="min-w-0 truncate text-sm font-bold">
+                    {atual.nome}
+                    <span className="ml-1.5 text-[11px] font-normal text-muted-foreground">{atual.papel === "solicitante" ? "· solicitante" : "· participante"}</span>
+                  </p>
                 </div>
 
-                {CRITERIOS_AVALIACAO_SOLICITANTE.map((c, idx) => {
-                  const nota = notasAtual[c.key] ?? 0;
-                  const faltando = tremer && sitAtual === "incompleta" && nota < 1;
-                  return (
-                    <div key={c.key} className="animate-rise-in space-y-1.5" style={{ animationDelay: `${idx * 40}ms` }}>
-                      <div>
-                        <p className={`text-sm font-semibold ${faltando ? "text-destructive" : ""}`}>
-                          {c.titulo} <span className="text-[10px] font-normal text-muted-foreground">({Math.round(c.peso * 100)}%)</span>
-                        </p>
-                        <p className="text-xs text-muted-foreground">{c.descricao}</p>
+                <div className="divide-y divide-border/60 rounded-lg border border-border">
+                  {CRITERIOS_AVALIACAO_SOLICITANTE.map((c) => {
+                    const nota = notasAtual[c.key] ?? 0;
+                    const faltando = tremer && sitAtual === "incompleta" && nota < 1;
+                    return (
+                      <div key={c.key} className="flex flex-col gap-1.5 px-3 py-2 sm:flex-row sm:items-center sm:gap-3">
+                        <div className="min-w-0 flex-1">
+                          <p className={`text-[13px] font-semibold leading-tight ${faltando ? "text-destructive" : ""}`}>
+                            {c.titulo} <span className="text-[10px] font-normal text-muted-foreground">({Math.round(c.peso * 100)}%)</span>
+                          </p>
+                          <p className="text-[11px] leading-snug text-muted-foreground">{c.descricao}</p>
+                        </div>
+                        <div className="flex shrink-0 gap-1">
+                          {[1, 2, 3, 4, 5].map((n) => {
+                            const on = n <= nota;
+                            return (
+                              <button
+                                key={n} type="button" aria-label={`${c.titulo}: ${n}`} title={`${n} de 5`}
+                                onClick={() => setNotas((cur) => ({ ...cur, [atual.user_id]: { ...cur[atual.user_id], [c.key]: n } }))}
+                                className={`flex h-8 w-9 items-center justify-center rounded-md border transition-all duration-150 active:scale-90 ${
+                                  on ? "border-warning bg-warning/10"
+                                    : faltando ? "border-destructive/40"
+                                    : "border-border hover:border-warning/60 hover:bg-warning/5"}`}
+                              >
+                                <Star className={`h-4 w-4 ${on ? "fill-warning text-warning animate-star-pop" : "text-muted-foreground/40"}`} />
+                              </button>
+                            );
+                          })}
+                        </div>
                       </div>
-                      <div className="flex gap-1.5 sm:gap-2">
-                        {[1, 2, 3, 4, 5].map((n) => {
-                          const on = n <= nota;
-                          return (
-                            <button
-                              key={n} type="button" aria-label={`${c.titulo}: ${n}`}
-                              onClick={() => setNotas((cur) => ({ ...cur, [atual.user_id]: { ...cur[atual.user_id], [c.key]: n } }))}
-                              className={`group flex h-10 flex-1 items-center justify-center gap-1 rounded-lg border text-xs font-semibold transition-all duration-150 active:scale-90 ${
-                                on ? "border-warning bg-warning/10 text-warning shadow-sm"
-                                  : faltando ? "border-destructive/40 text-muted-foreground"
-                                  : "border-border text-muted-foreground hover:border-warning/60 hover:bg-warning/5"}`}
-                            >
-                              <Star className={`h-3.5 w-3.5 ${on ? "fill-warning text-warning animate-star-pop" : "text-muted-foreground/50"}`} />
-                              {n}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  );
-                })}
+                    );
+                  })}
+                </div>
 
                 <div className="space-y-1">
-                  <p className="text-sm font-semibold">
+                  <p className="text-[13px] font-semibold">
                     Comentário{" "}
                     {precisaComentario
                       ? <span className="text-destructive">(obrigatório)</span>
@@ -277,7 +282,7 @@ export function AvaliarSolicitanteDialog({
                     </p>
                   )}
                   <Textarea
-                    rows={3} maxLength={500}
+                    rows={2} maxLength={500} className="min-h-[56px] text-sm"
                     placeholder={precisaComentario
                       ? "Ex.: a descrição não dizia qual relatório, demorou dias para responder a dúvida…"
                       : "Algo que vale registrar sobre como foi o atendimento com esta pessoa…"}
