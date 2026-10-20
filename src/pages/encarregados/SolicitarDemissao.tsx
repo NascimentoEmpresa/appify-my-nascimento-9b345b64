@@ -547,7 +547,7 @@ export default function SolicitarDemissao() {
               </div>
               <div>
                 <Label>Nome completo do(a) colaborador(a) *</Label>
-                <BuscaColaborador valor={colaborador} onEscolher={escolherColaborador} />
+                <BuscaColaborador valor={colaborador} onEscolher={escolherColaborador} permitirAfastados />
                 <p className="mt-1 text-xs text-muted-foreground">
                   Escolha na lista. Contrato e escala vêm do cadastro e não podem ser trocados.
                 </p>
