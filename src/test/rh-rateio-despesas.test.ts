@@ -280,21 +280,108 @@ describe("PDF do FGTS (Guia do FGTS Digital)", () => {
     const { identificarLayoutPdf } = await import("@/lib/rh/rateioDespesas");
     expect(identificarLayoutPdf(FGTS_FIXTURE).layout).toBe("fgts_digital");
   });
-  it("lê só a relação do FGTS — o consignado (também com CPF) fica de fora", async () => {
+  it("lê FGTS e consignado como DUAS partes; a Relação de Eventos fica de fora", async () => {
     const { extrairLinhasDoPdf } = await import("@/lib/rh/rateioDespesas");
     const r = extrairLinhasDoPdf(FGTS_FIXTURE, "fgts_digital");
-    expect(r.map((x) => [x.cpf, x.valor])).toEqual([
-      ["52998224725", 179.79],
-      ["39053344705", 179.79],
+    expect(r.map((x) => [x.parte, x.cpf, x.valor])).toEqual([
+      ["fgts", "52998224725", 179.79],
+      ["fgts", "39053344705", 179.79],
+      ["consignado", "52998224725", 107.93],
+      ["consignado", "11144477735", 726.66],
     ]);
-    // A leitura genérica pegaria as linhas do consignado também.
-    expect(extrairLinhasComCpf(FGTS_FIXTURE).length).toBe(4);
   });
-  it("total = 'Total FGTS', não o da guia (FGTS + consignado) nem o da Relação de Eventos", async () => {
-    const { totalDoPdf, totalDeclaradoNoPdf, extrairLinhasDoPdf } = await import("@/lib/rh/rateioDespesas");
-    const soma = extrairLinhasDoPdf(FGTS_FIXTURE, "fgts_digital").reduce((a, x) => a + x.valor, 0);
-    expect(totalDoPdf(FGTS_FIXTURE, "fgts_digital")).toBe(359.58);
-    expect(Math.round(soma * 100) / 100).toBe(359.58);
-    expect(totalDeclaradoNoPdf(FGTS_FIXTURE)).not.toBe(359.58); // o genérico pegaria o último TOTAL
+  it("cada parte bate com o seu total, e a soma com o Total da Guia", async () => {
+    const { totalDoPdf, partesDoPdf, extrairLinhasDoPdf } = await import("@/lib/rh/rateioDespesas");
+    expect(partesDoPdf(FGTS_FIXTURE, "fgts_digital")).toEqual([
+      { parte: "fgts", rotulo: "FGTS mensal", total: 359.58 },
+      { parte: "consignado", rotulo: "Consignado", total: 834.59 },
+    ]);
+    const r = extrairLinhasDoPdf(FGTS_FIXTURE, "fgts_digital");
+    const soma = (p: string) => Math.round(r.filter((x) => x.parte === p).reduce((a, x) => a + x.valor, 0) * 100) / 100;
+    expect(soma("fgts")).toBe(359.58);
+    expect(soma("consignado")).toBe(834.59);
+    expect(totalDoPdf(FGTS_FIXTURE, "fgts_digital")).toBe(1194.17); // = "Total da Guia", não o rodapé da Relação de Eventos
+  });
+  it("guia sem consignado tem uma parte só", async () => {
+    const { partesDoPdf } = await import("@/lib/rh/rateioDespesas");
+    const semCons = FGTS_FIXTURE.slice(0, 20).map((l) => l.replace("834,59  0,00  834,59", "0,00  0,00  0,00"));
+    expect(partesDoPdf(semCons, "fgts_digital").map((p) => p.parte)).toEqual(["fgts"]);
+  });
+});
+
+describe("rateio por partes (FGTS + consignado, cada um pelo seu valor)", () => {
+  it("parte que bate: a base é a soma das linhas; colunas por parte", async () => {
+    const { basesPorParte } = await import("@/lib/rh/rateioDespesas");
+    const r = basesPorParte([
+      { contrato_id: "a", contrato_nome: "A", valor: 100, parte: "fgts" },
+      { contrato_id: "b", contrato_nome: "B", valor: 50, parte: "fgts" },
+      { contrato_id: "a", contrato_nome: "A", valor: 30, parte: "consignado" },
+    ], { fgts: 150, consignado: 30 });
+    expect(r).toEqual([
+      { contrato_id: "a", contrato_nome: "A", base: 130, qtd: 2, porParte: { fgts: 100, consignado: 30 } },
+      { contrato_id: "b", contrato_nome: "B", base: 50, qtd: 1, porParte: { fgts: 50 } },
+    ]);
+  });
+  it("parte que não bate: a diferença fica dentro dela, não vaza para a outra", async () => {
+    const { basesPorParte } = await import("@/lib/rh/rateioDespesas");
+    // Consignado lido 30 + 30 mas o total declarado é 90: só o consignado cresce.
+    const r = basesPorParte([
+      { contrato_id: "a", contrato_nome: "A", valor: 100, parte: "fgts" },
+      { contrato_id: "b", contrato_nome: "B", valor: 30, parte: "consignado" },
+      { contrato_id: "c", contrato_nome: "C", valor: 30, parte: "consignado" },
+    ], { fgts: 100, consignado: 90 });
+    expect(Object.fromEntries(r.map((x) => [x.contrato_id, x.base]))).toEqual({ a: 100, b: 45, c: 45 });
+    expect(r.reduce((a, x) => a + x.base, 0)).toBe(190);
+  });
+});
+
+// Boleto da Bullla 09/2026 (21/10/2026): boleto + tabela dinâmica por
+// contrato + "Relação de Eventos" da Senior. Nomes de colaborador fictícios.
+const BULLLA_FIXTURE = [
+  "BULLLA INSTITUICAO DE PAGAMENTO S.A. CNPJ 08.422.119/0001-64  8541/60940-3  X  109/10079189-7",
+  "01/10/2026  340041/1  21/10/2026  25.767,61",
+  "(-) Descontos / Abatimentos  (-) Outras deducoes  (+) Mora/Multa  (+) Outros acrescimos  (=) Valor cobrado",
+  "6.321,74  19.445,87",
+  "Rótulos de Linha  Soma de Valor Faturado",
+  "SN  1.567,47",
+  "1030 - UFFS CHAPECO - 041/2021  0,00",
+  "1036 - CHARQUEADAS - 249/2020  636,37",
+  "1049 - TJRS - 023/2025  931,10",
+  "PENDENTE DE IDENTIFICAÇÃO  0,00",
+  "Total Geral  1.567,47",
+  "Relação de Eventos",
+  "Evento  Colaborador  SIT  Competência  Pagamento  Referência  Valor",
+  "3794 - Adto Salarial Bulla",
+  "000000664 FULANA DE TAL  001  09/2026  07/10/2026  0,00  299,94",
+  "000000798 BELTRANO DA SILVA  001  09/2026  07/10/2026  0,00  97,08",
+  "Total de Colaboradores:  2  0,00  397,02",
+];
+const CONTRATOS_BULLLA = [
+  { id: "uffs", nome: "UFFS CHAPECO - 041/2021" },
+  { id: "charq", nome: "CHARQUEADAS - 249 /2020" },
+  { id: "tjrs", nome: "TJRS - 023/2025" },
+  { id: "libras", nome: "UFRGS INTERPRETE DE LIBRAS C. 009.2026" },
+];
+
+describe("PDF do boleto da Bullla (resumo por contrato)", () => {
+  it("reconhece a tabela dinâmica e lê só ela", async () => {
+    const { identificarLayoutPdf, linhasDoLayout, totalDoPdf } = await import("@/lib/rh/rateioDespesas");
+    const { layout } = identificarLayoutPdf(BULLLA_FIXTURE);
+    expect(layout).toBe("tabela_contratos");
+    const r = extrairLinhasPorContrato(linhasDoLayout(BULLLA_FIXTURE, layout), CONTRATOS_BULLLA);
+    expect(r.map((l) => l.contrato?.id)).toEqual(["uffs", "charq", "tjrs"]);
+    expect(r.reduce((a, l) => a + l.valor, 0)).toBeCloseTo(1567.47, 2);
+    expect(totalDoPdf(BULLLA_FIXTURE, layout)).toBe(1567.47);
+  });
+
+  it("competência 09/2026 da linha de colaborador não vira o contrato 009.2026", () => {
+    const r = extrairLinhasPorContrato(BULLLA_FIXTURE.slice(11), CONTRATOS_BULLLA);
+    expect(r.some((l) => l.contrato?.id === "libras")).toBe(false);
+  });
+
+  it("rodapé 'Total de Colaboradores' não é o total da despesa", async () => {
+    const { totalDeclaradoNoPdf } = await import("@/lib/rh/rateioDespesas");
+    expect(totalDeclaradoNoPdf(BULLLA_FIXTURE)).toBe(1567.47);
+    expect(totalDeclaradoNoPdf(BULLLA_FIXTURE.slice(11))).toBeNull();
   });
 });

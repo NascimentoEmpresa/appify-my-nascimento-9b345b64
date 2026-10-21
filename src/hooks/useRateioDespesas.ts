@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { uploadAnexosMalote } from "@/hooks/useMaloteDespesa";
-import type { CriterioRateio, ItemRateio, TipoRateio } from "@/lib/rh/rateioDespesas";
+import type { CriterioRateio, ItemRateio, ParteGuia, TipoRateio } from "@/lib/rh/rateioDespesas";
 
 // =====================================================================
 // RH › Rateio de Despesas — acesso a dados (mig 20261016000010).
@@ -35,6 +35,8 @@ export interface LinhaDetalhePdf {
   situacao: string | null;
   valor: number;
   contrato_id: string | null;
+  /** Guia do FGTS: "fgts" ou "consignado" (cada parte rateia o seu valor). */
+  parte?: ParteGuia | null;
 }
 
 export interface DespesaRateio {
@@ -156,6 +158,31 @@ export async function linkAnexoRateio(path: string) {
   const { data, error } = await supabase.storage.from(BUCKET_RATEIO).createSignedUrl(path, 300);
   if (error) throw error;
   return data.signedUrl;
+}
+
+/** O que a Edge rh-rateio-ia devolve — cada valor já conferido contra o PDF. */
+export interface LeituraIaRateio {
+  total_despesa: number | null;
+  origem_total: string;
+  base: string;
+  linhas: { n: number; texto: string; valor: number; contrato_id: string | null; cpf: string | null; contrato_texto: string }[];
+  soma: number;
+  ignorado: string[];
+  explicacao: string;
+  alertas: string[];
+}
+
+/** Lê o texto do PDF com a I.A (o arquivo não sai do navegador: vão as linhas). */
+export async function lerRateioComIa(linhas: string[], tipo: string): Promise<LeituraIaRateio> {
+  const { data, error } = await supabase.functions.invoke("rh-rateio-ia", { body: { linhas, tipo } });
+  if (error) {
+    // A mensagem útil vem no corpo ({ error }), não no FunctionsHttpError.
+    const ctx = (error as { context?: Response }).context;
+    const corpo = ctx && typeof ctx.json === "function" ? await ctx.json().catch(() => null) : null;
+    throw new Error(corpo?.error ?? error.message);
+  }
+  if ((data as { error?: string })?.error) throw new Error((data as { error: string }).error);
+  return data as LeituraIaRateio;
 }
 
 export interface SalvarRateio {
