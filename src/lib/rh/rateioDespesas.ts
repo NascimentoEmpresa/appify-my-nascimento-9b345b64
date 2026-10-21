@@ -224,6 +224,74 @@ export function acharContrato(nome: string, contratos: ContratoRef[]): ContratoR
   return null;
 }
 
+/**
+ * CONTRATO PELO NOME DO ARQUIVO — para documento de UM contrato só que não
+ * traz lista nenhuma (21/10/2026, PDFs reais de 12/2025):
+ *   · "MENSALIDADE SINDICAL 12.2025 - SINDLIMP - CAXIAS DO SUL - 2020.1003":
+ *     só o boleto de R$ 90,00 do sindicato; o contrato está no nome do
+ *     arquivo (CAXIAS DO SUL → "CAXIAS DO SUL - 2026/95", o ativo; "2020.1003"
+ *     não é número de contrato nenhum);
+ *   · "BENEFICIO SOCIAL FAMILIAR  MES 12.2025 - SAMU 192.2024": PDF
+ *     ESCANEADO (imagem, sem texto) — sem o nome do arquivo não havia nada.
+ * Os dois caíam em "Não achei neste PDF linhas…" e a base ficava para digitar.
+ *
+ * Como casa: tira a extensão e a competência ("12.2025", "MES 12.2025" — mês
+ * de 1 ou 2 dígitos; "009.2026" de contrato tem 3 e fica), quebra nos " - ",
+ * e em cada pedaço procura (1) contrato pelo NÚMERO (também invertido,
+ * "2020.1003" × "1003/2020"); senão (2) contrato cuja PRIMEIRA palavra do nome
+ * está no pedaço, pontuando as demais palavras. Ativo ganha de encerrado; só
+ * devolve se sobrar UM — na dúvida, null (a pessoa escolhe). É sugestão: a
+ * tela mostra que veio do nome do arquivo.
+ */
+export function contratoPeloNomeArquivo(nomeArquivo: string, contratos: ContratoRef[]): ContratoRef | null {
+  const base = String(nomeArquivo ?? "")
+    .replace(/\.[A-Za-z0-9]{2,4}$/, "")
+    .replace(/\b(M[EÊ]S\s+)?(0?[1-9]|1[0-2])[./](20\d{2})\b/gi, " ");
+  const pedacos = base.split(/\s+[-–]\s*|\s*[-–]\s+/).map((s) => s.trim()).filter(Boolean);
+  const ativos = (cs: ContratoRef[]) => {
+    const a = cs.filter((c) => (c.status ?? "ativo") !== "encerrado");
+    return a.length ? a : cs;
+  };
+  const unico = (cs: ContratoRef[]) => {
+    const u = [...new Map(cs.map((c) => [c.id, c])).values()];
+    const a = ativos(u);
+    return a.length === 1 ? a[0] : null;
+  };
+
+  // (1) Número de contrato em algum pedaço.
+  const porNumero: ContratoRef[] = [];
+  for (const p of pedacos) {
+    const nums = numerosContrato(p);
+    const invertidos = nums.map((n) => n.split("-").reverse().join("-"));
+    const alvo = new Set([...nums, ...invertidos]);
+    if (alvo.size) porNumero.push(...contratos.filter((c) => numerosContrato(c.nome).some((n) => alvo.has(n))));
+  }
+  if (porNumero.length) {
+    const c = unico(porNumero);
+    if (c) return c;
+  }
+
+  // (2) Palavras do nome do contrato (sem o código "1050 - " e sem números).
+  const PARADAS = new Set(["DOS", "DAS", "PARA", "COM", "LTDA"]);
+  const palavrasDe = (s: string) =>
+    s.replace(/^\s*\d+\s*-\s*/, "").replace(/\d+\s*[./]\s*\d{2,4}/g, " ")
+      .split(/[^A-Za-zÀ-ÿ]+/).map(normNome).filter((w) => w.length >= 3 && !PARADAS.has(w));
+  let melhor: ContratoRef[] = [];
+  let melhorPts = 0;
+  for (const p of pedacos) {
+    const doPedaco = new Set(palavrasDe(p));
+    if (!doPedaco.size) continue;
+    for (const c of contratos) {
+      const ws = palavrasDe(c.nome);
+      if (!ws.length || !doPedaco.has(ws[0])) continue;
+      const pts = ws.filter((w) => doPedaco.has(w)).length;
+      if (pts > melhorPts) { melhorPts = pts; melhor = [c]; }
+      else if (pts === melhorPts) melhor.push(c);
+    }
+  }
+  return melhor.length ? unico(melhor) : null;
+}
+
 // ── Planilha do Jus Brasil (importar faturamento/consultas) ─────────────
 export interface LinhaPlanilhaJus {
   nome: string;
@@ -276,6 +344,10 @@ export interface LinhaPdf {
   valor: number;
   /** Parte da guia de onde veio a linha (FGTS × consignado); ausente = documento de uma parte só. */
   parte?: ParteGuia;
+  /** Relação de Eventos da Senior (sem CPF): matrícula, empresa e nome como estão no PDF. */
+  cadastro?: string;
+  empresa?: number | null;
+  nomePdf?: string;
 }
 
 const RE_CPF =/(?<!\d)(\d{3}\.?\d{3}\.?\d{3}-?\d{2})(?!\d)/;
@@ -356,8 +428,75 @@ const RE_TOTAL_DE_RELATORIO = /\bTOTAL\s+DE\s+(COLABORADORES|FUNCION|TRABALHADOR
 
 export interface LayoutPdf {
   /** Layout reconhecido; "generico" quando nenhum bate. */
-  layout: "seguro_prudential" | "fgts_digital" | "tabela_contratos" | "generico";
+  layout: "seguro_prudential" | "fgts_digital" | "tabela_contratos" | "relacao_eventos" | "generico";
   rotulo: string;
+}
+
+/**
+ * RELAÇÃO DE EVENTOS DA SENIOR SEM CPF — boleto do EMPRÉSTIMO CONSIGNADO da
+ * Soma Financeira (PDF real "SOMA FINANCEIRA 12.2025 - EMPRESTIMO
+ * CONSIGNADO-HAGG", 21/10/2026): página 1 é o boleto (R$ 3.929,66), página 2
+ * a "Relação de Eventos" do evento 3622 - Emprestimo Consignado, uma linha
+ * por colaborador — MATRÍCULA (000007862), nome, SIT, competência, data de
+ * pagamento, referência e valor —, fechando em "Total de Colaboradores: 29
+ * 0,00 3.929,66". Não tem CPF: a leitura genérica não achava NADA e a tela
+ * mandava digitar a base à mão. Aqui a matrícula vira o colaborador (Empresa
+ * do cabeçalho "0001 - NASCIMENTO … Pág.:" + Cadastro, na EMPREGADOS) e o
+ * contrato vem do cadastro dele, como no CPF.
+ *
+ * Na guia do FGTS e no boleto da Bullla a Relação de Eventos é anexo de
+ * conferência e continua de fora (layouts próprios, reconhecidos antes).
+ */
+export function extrairLinhasRelacaoEventos(linhas: string[]): LinhaPdf[] {
+  const out: LinhaPdf[] = [];
+  let dentro = false;
+  let empresa: number | null = null;
+  linhas.forEach((l, i) => {
+    const n = normNome(l);
+    // Cabeçalho da página: "0001 - NASCIMENTO SERVICOS DE LIMPEZA LTDA  Pág.:  1".
+    const cab = l.match(/^\s*(\d{1,4})\s*-\s*\D.*\bP[aá]g\.?\s*:/i);
+    if (cab) { empresa = Number(cab[1]); return; }
+    if (n.includes("RELACAODEEVENTOS")) { dentro = true; return; }
+    if (!dentro || /^\s*TOTAL\b/i.test(l)) return;
+    // "000007862 ADAO SERGIO DE SOUZA PEREIRA  001  12/2025  07/01/2026  0,00  125,81"
+    const m = l.match(/^\s*(\d{4,10})\s+([^\d]+?)\s+\d/);
+    if (!m || RE_CPF.test(l)) return;
+    const vals = valoresDaLinha(l);
+    if (!vals.length) return;
+    out.push({
+      n: i + 1, texto: l.trim(), cpf: null, valor: vals[vals.length - 1],
+      cadastro: String(Number(m[1])), empresa, nomePdf: m[2].trim(),
+    });
+  });
+  return out;
+}
+
+/** Soma dos "Total de Colaboradores" da Relação de Eventos (um por empresa); null se não houver. */
+export function totalRelacaoEventos(linhas: string[]): number | null {
+  const tot = linhas.filter((l) => /^\s*Total\s+de\s+Colaboradores\b/i.test(l)).map((l) => valoresDaLinha(l)).filter((v) => v.length);
+  return tot.length ? Math.round(tot.reduce((a, v) => a + v[v.length - 1], 0) * 100) / 100 : null;
+}
+
+/**
+ * Valor do BOLETO quando o PDF não tem linha de TOTAL (mensalidade do
+ * SINDILIMP, 12/2025: só o boleto de R$ 90,00). "Valor cobrado" ganha de
+ * "Valor do documento" (desconto/abatimento — Bullla 09/2026); o valor está
+ * na mesma linha do rótulo ou na seguinte (ficha de compensação: rótulos numa
+ * linha, valores na de baixo).
+ */
+export function valorDoBoleto(linhas: string[]): number | null {
+  const achar = (re: RegExp) => {
+    for (let i = 0; i < linhas.length; i++) {
+      if (!re.test(linhas[i])) continue;
+      for (const l of [linhas[i], linhas[i + 1] ?? ""]) {
+        if (RE_CPF.test(l)) continue;
+        const v = valoresDaLinha(l).filter((x) => x > 0);
+        if (v.length) return v[v.length - 1];
+      }
+    }
+    return null;
+  };
+  return achar(/\bVALOR\s+COBRADO\b/i) ?? achar(/\bVALOR\s+DO\s+DOCUMENTO\b/i);
 }
 
 /**
@@ -384,6 +523,11 @@ export function identificarLayoutPdf(linhas: string[]): LayoutPdf {
         ? "Boleto Bullla — resumo por contrato (Total Geral)"
         : "Resumo por contrato (Rótulos de Linha → Total Geral)",
     };
+  }
+  // Relação de Eventos sem CPF (consignado da Soma Financeira): só quando
+  // nenhuma linha tem CPF — com CPF, a leitura genérica já resolve.
+  if (tudo.includes("RELACAODEEVENTOS") && !extrairLinhasComCpf(linhas).length && extrairLinhasRelacaoEventos(linhas).length) {
+    return { layout: "relacao_eventos", rotulo: "Relação de Eventos da Senior — valor por matrícula (o contrato vem do cadastro)" };
   }
   return { layout: "generico", rotulo: "Leitura genérica (CPF + último valor da linha)" };
 }
@@ -510,6 +654,7 @@ export function extrairLinhasDoPdf(linhas: string[], layout: LayoutPdf["layout"]
       ...extrairLinhasComCpf(linhasDaSecaoConsignado(linhas)).map((l) => ({ ...l, parte: "consignado" as const })),
     ];
   }
+  if (layout === "relacao_eventos") return extrairLinhasRelacaoEventos(linhas);
   return extrairLinhasComCpf(linhasDoLayout(linhas, layout));
 }
 
@@ -523,7 +668,11 @@ export function totalDoPdf(linhas: string[], layout: LayoutPdf["layout"]): numbe
     if (partes.some((p) => p.total == null)) return null;
     return Math.round(partes.reduce((a, p) => a + (p.total ?? 0), 0) * 100) / 100;
   }
-  return totalDeclaradoNoPdf(linhasDoLayout(linhas, layout));
+  // Relação de Eventos: o rodapé "Total de Colaboradores" É o total (nos
+  // outros layouts ele é anexo e fica de fora — RE_TOTAL_DE_RELATORIO).
+  if (layout === "relacao_eventos") return totalRelacaoEventos(linhas) ?? valorDoBoleto(linhas);
+  // Sem linha de TOTAL, vale o valor do boleto (documento que é só o boleto).
+  return totalDeclaradoNoPdf(linhasDoLayout(linhas, layout)) ?? valorDoBoleto(linhas);
 }
 
 /**
