@@ -8,6 +8,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { useFluxoCaixaCombinado, type FluxoCaixaMaloteLinha } from "@/hooks/useFluxoCaixaMalote";
 import { useConciliacaoPlanilhaFluxo } from "@/hooks/useConciliacaoOrigem";
 import { formatBRL } from "@/hooks/usePlanilhaCusto";
+import PontePlanilhaPorMes from "./conciliacao-origem/PontePlanilhaPorMes";
 import { BarraEquacao, KpisConciliacao, OrigemBadge, Paginacao, ResumoBaseCard, dia, mesAno } from "./conciliacao-origem/componentes";
 import { FiltroData, FiltroSelect, opcoesUnicas } from "./conciliacao-origem/filtros";
 import {
@@ -177,6 +178,8 @@ export default function ConciliacaoOrigemFluxoCaixa() {
       </div>
 
       <BarraEquacao rotuloTotal="Total do Fluxo de Caixa" total={conc.total.valor} sistema={conc.sistema.valor} excel={conc.excel.valor} diferenca={conc.diferenca} />
+
+      <PontePlanilhaPorMes linhasFluxo={linhas} />
 
       {conferencia && (
         <Card>

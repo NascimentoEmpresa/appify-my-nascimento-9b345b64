@@ -8,7 +8,7 @@ import { cn } from "@/lib/utils";
 import { fmtMoney } from "@/pages/financeiro/nf-emissao/shared";
 import {
   diferenca, DivergenciaMalote, EntradasSaidas, fmtPercentual, LABEL_MOTIVO_DIVERGENCIA, LABEL_MOTIVO_SEM_CENTRO, LABEL_ORIGEM_FINANCEIRO, LABEL_ORIGEM_LANCAMENTO,
-  LancamentoSemCentro, LinkCard, PainelFluxoExtrato, PainelMaloteFluxo, PainelOrcadoRealizado, relatorioDivergencias, relatorioSemCentro, SituacaoComparacao, TotaisCard,
+  LancamentoSemCentro, LinkCard, PainelFluxoExtrato, PontePainelFluxo, PainelMaloteFluxo, PainelOrcadoRealizado, relatorioDivergencias, relatorioSemCentro, SituacaoComparacao, TotaisCard,
 } from "./regras";
 import { AjusteRegistrado, useAjustesDasDespesas } from "./useAuditoriaDados";
 
@@ -251,10 +251,18 @@ export function CorpoFluxoExtrato({ p, situacao, semDados, links }: { p: PainelF
   return (
     <div className="space-y-3">
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-        <Painel titulo={p.conciliado ? "Fluxo de Caixa (bancos conciliados)" : "Fluxo de Caixa"} icone={<ArrowUpDown className="h-4 w-4" />} link={links.fluxo}><ColunaEntradasSaidas v={p.fluxo} /></Painel>
+        {/* SIS-2026-0701: o valor do Fluxo é o mesmo do item 1 e da tela do Fluxo de Caixa (todos os bancos); embaixo, a parte que vai contra o extrato. */}
+        <Painel titulo="Fluxo de Caixa" icone={<ArrowUpDown className="h-4 w-4" />} link={links.fluxo}>
+          <ColunaEntradasSaidas v={p.ponte?.total ?? p.fluxo} />
+          {p.ponte && (
+            <p className="mt-2 text-[11px] text-muted-foreground">
+              Dos bancos conciliados (contra o extrato): entradas {fmtMoney(p.fluxo.entradas)} · saídas {fmtMoney(p.fluxo.saidas)}
+            </p>
+          )}
+        </Painel>
         <Painel titulo="Extrato Bancário" icone={<Landmark className="h-4 w-4" />} link={links.banco}><ColunaEntradasSaidas v={p.extrato} /></Painel>
       </div>
-      <Resumo itens={[{ rotulo: "Diferença de entradas", valor: p.difEntradas }, { rotulo: "Diferença de saídas", valor: p.difSaidas }]} situacao={situacao} semDados={semDados} />
+      <Resumo itens={[{ rotulo: p.ponte ? "Diferença de entradas (bancos conciliados)" : "Diferença de entradas", valor: p.difEntradas }, { rotulo: p.ponte ? "Diferença de saídas (bancos conciliados)" : "Diferença de saídas", valor: p.difSaidas }]} situacao={situacao} semDados={semDados} />
       {semDados ? (
         <Aviso tom="espera">Aguardando dados do extrato. Nenhuma conciliação bancária foi salva para este mês. A validação será habilitada quando houver conciliação salva.</Aviso>
       ) : (
@@ -274,6 +282,7 @@ export function CorpoFluxoExtrato({ p, situacao, semDados, links }: { p: PainelF
           {p.semTotais > 0 && <p className="text-amber-700 dark:text-amber-400">{p.semTotais} conciliação(ões) sem o total do extrato registrado — aplique a migration 20261014000006.</p>}
         </div>
       )}
+      {!semDados && p.ponte && <PonteFluxo ponte={p.ponte} recorte={p.fluxo} linkFluxo={links.fluxo} />}
       <p className="text-[11px] text-muted-foreground">
         Origem dos valores:{" "}
         <Link to={links.malote.to} className="text-primary hover:underline">{links.malote.rotulo}</Link>
@@ -282,6 +291,46 @@ export function CorpoFluxoExtrato({ p, situacao, semDados, links }: { p: PainelF
         {" · "}
         <Link to={links.banco.to} className="text-primary hover:underline">{links.banco.rotulo}</Link>
       </p>
+    </div>
+  );
+}
+
+
+// SIS-2026-0701: do total que a tela do Fluxo de Caixa mostra até o recorte que se compara com o extrato, parte a parte.
+function PonteFluxo({ ponte, recorte, linkFluxo }: { ponte: PontePainelFluxo; recorte: EntradasSaidas; linkFluxo: LinkCard }) {
+  const linhas: { rotulo: string; v: EntradasSaidas; sinal: -1 | 1; dica?: string }[] = [
+    { rotulo: "Fluxo de Caixa (igual à tela do Fluxo)", v: ponte.total, sinal: 1 },
+    { rotulo: "Saldo anterior (abertura do mês)", v: ponte.saldoAnterior, sinal: -1, dica: "Passagem de saldo: o extrato não traz isto como movimento." },
+    { rotulo: "Bancos sem conciliação salva", v: ponte.semConciliacao, sinal: -1, dica: "Contas cujo extrato ainda não foi conciliado no mês." },
+    { rotulo: "Ignorados na conciliação", v: ponte.ignorados, sinal: -1, dica: "Conta vinculada e resgates de conta vinculada (BB e Caixa): não aparecem no extrato." },
+  ];
+  return (
+    <div className="rounded-md border p-2.5 text-[11px]">
+      <p className="mb-1.5 font-semibold text-foreground">De onde vem o valor comparado (ponte com o Fluxo de Caixa)</p>
+      <table className="w-full">
+        <thead>
+          <tr className="text-left text-muted-foreground">
+            <th className="pb-1 font-normal">Parte</th>
+            <th className="pb-1 text-right font-normal">Entradas</th>
+            <th className="pb-1 text-right font-normal">Saídas</th>
+          </tr>
+        </thead>
+        <tbody>
+          {linhas.map((l) => (
+            <tr key={l.rotulo} className="border-t" title={l.dica}>
+              <td className="py-1">{l.sinal === -1 ? "(−) " : ""}{l.rotulo}</td>
+              <td className="py-1 text-right tabular-nums">{fmtMoney(l.v.entradas)}</td>
+              <td className="py-1 text-right tabular-nums">{fmtMoney(l.v.saidas)}</td>
+            </tr>
+          ))}
+          <tr className="border-t font-semibold">
+            <td className="py-1">(=) Fluxo dos bancos conciliados (o que vai contra o extrato)</td>
+            <td className="py-1 text-right tabular-nums">{fmtMoney(recorte.entradas)}</td>
+            <td className="py-1 text-right tabular-nums">{fmtMoney(recorte.saidas)}</td>
+          </tr>
+        </tbody>
+      </table>
+      <p className="mt-1.5 text-muted-foreground">Confira o total na tela do <Link to={linkFluxo.to} className="text-primary hover:underline">Fluxo de Caixa</Link> com o mesmo período.</p>
     </div>
   );
 }
