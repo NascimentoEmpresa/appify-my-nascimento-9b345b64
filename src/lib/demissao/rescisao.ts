@@ -73,10 +73,16 @@ export function corStatusRescisao(s: string | null | undefined): string {
 }
 
 // ── A linha gravada ──────────────────────────────────────────────────
+/** erp = solicitação do ERP · planilha = importada · manual = lançada direto no módulo Rescisões (mig 20261021000030). */
+export type OrigemRescisao = "erp" | "planilha" | "manual";
+
+/** A linha da planilha como estava no Excel: cabeçalho → texto/número (datas em dd/mm/aaaa). */
+export type LinhaOriginal = Record<string, string | number>;
+
 export interface RescisaoRH {
   id: number;
   solicitacao_id: number | null;
-  origem: "erp" | "planilha";
+  origem: OrigemRescisao;
   planilha_chave: string | null;
   empresa: string | null;
   matricula: string | null;
@@ -103,6 +109,12 @@ export interface RescisaoRH {
   retorno_obs: string | null;
   status_rescisao: string | null;
   observacao: string | null;
+  // Mig 20261021000030 (módulo Rescisões) — opcionais: linha lida antes dela não traz.
+  pontos_ajustados?: string | null;
+  data_admissao?: string | null;
+  planilha_original?: LinhaOriginal | null;
+  planilha_aba?: string | null;
+  status_desde?: string | null;
   atualizado_por: string | null;
   criado_em: string | null;
   atualizado_em: string | null;
@@ -114,9 +126,14 @@ export const CAMPOS_EDITAVEIS = [
   "tipo_desligamento", "rescisao_programada", "vales_programados",
   "malote_data", "malote_obs", "envio_meio", "envio_data", "envio_obs",
   "retorno_meio", "retorno_data", "retorno_obs", "status_rescisao", "observacao",
+  "pontos_ajustados", "data_admissao",
 ] as const;
 export type CampoEditavel = (typeof CAMPOS_EDITAVEIS)[number];
-export type EdicaoRescisao = { [K in CampoEditavel]: RescisaoRH[K] };
+export type EdicaoRescisao = { [K in CampoEditavel]-?: Exclude<RescisaoRH[K], undefined> };
+
+/** Identificação de uma rescisão lançada à mão (sem solicitação do ERP) — a linha nova da planilha. */
+export const CAMPOS_IDENTIFICACAO = ["empresa", "matricula", "colaborador_nome", "contrato", "data_recebimento", "solicitado_por"] as const;
+export type IdentificacaoRescisao = { [K in (typeof CAMPOS_IDENTIFICACAO)[number]]: string | null };
 
 // ── Datas ────────────────────────────────────────────────────────────
 /** "2026-10-19" + n dias, sem fuso no meio. */
@@ -269,6 +286,11 @@ export interface LinhaPlanilhaRescisao {
   retorno_obs: string | null;
   status_rescisao: string | null;
   observacao: string | null;
+  pontos_ajustados: string | null;
+  data_admissao: string | null;
+  /** A linha como estava no Excel ("importa como estão"). */
+  planilha_original: LinhaOriginal;
+  planilha_aba: string;
 }
 
 /** Célula de data do Excel (Date, número serial ou texto dd/mm/aaaa) → ISO. */
@@ -311,21 +333,58 @@ function indiceDaColuna(cabecalho: unknown[], ...nomes: string[]): number {
   return -1;
 }
 
+/** Cabeçalhos de data da planilha — no original eles vão como dd/mm/aaaa, não como o número serial do Excel. */
+const CABECALHOS_DATA = new Set(["RECEBIDO", "AVISO", "ULTIMO DIA", "DEMISSAO", "PAGAMENTO", "ADMISSAO"]);
+
 /**
- * Lê a aba de rescisões (a primeira com FUNCIONARIO e PAGAMENTO no
- * cabeçalho). A coluna A, sem título, é a data em que o pedido chegou.
+ * A linha "como está" (21/10/2026, "importa todas as informações da planilha
+ * como estão"): cada coluna com o cabeçalho e o valor do Excel, sem
+ * normalizar nada. Vazio fica de fora; datas viram dd/mm/aaaa.
+ */
+function linhaOriginal(cab: unknown[], r: unknown[], colRecebido: number): LinhaOriginal {
+  const out: LinhaOriginal = {};
+  cab.forEach((c, i) => {
+    const v = r[i];
+    // "(vazio)" é o rótulo da tabela dinâmica de onde a aba HOMOLOGAÇÃO saiu — é vazio mesmo.
+    if (typeof v !== "number" && textoOuNull(v) == null) return;
+    const titulo = i === colRecebido ? "RECEBIDO" : String(c ?? "").replace(/\s+/g, " ").trim();
+    if (!titulo) return;
+    const chave = semAcento(titulo).replace(/[.?]/g, "").trim();
+    if (CABECALHOS_DATA.has(chave) && typeof v === "number") {
+      const iso = dataDaCelula(v);
+      out[titulo] = iso ? iso.split("-").reverse().join("/") : v;
+    } else {
+      out[titulo] = typeof v === "number" ? v : String(v).trim();
+    }
+  });
+  return out;
+}
+
+/**
+ * Lê TODAS as abas de rescisão (as que têm FUNCIONARIO e PAGAMENTO no
+ * cabeçalho): a RESCISÕES de 2026 e a HOMOLOGAÇÃO, das homologações de
+ * 2024/2025 (21/10/2026 — antes só a primeira entrava). Na RESCISÕES a
+ * coluna A, sem título, é a data em que o pedido chegou. Uma linha repetida
+ * (mesma chave) entra uma vez só, mesmo vindo de abas diferentes.
  * `avisos` explica o que foi ignorado, para a tela mostrar antes de gravar.
  */
-export function lerPlanilhaRescisao(buffer: ArrayBuffer | Uint8Array): { linhas: LinhaPlanilhaRescisao[]; avisos: string[]; aba: string | null } {
+export function lerPlanilhaRescisao(buffer: ArrayBuffer | Uint8Array): {
+  linhas: LinhaPlanilhaRescisao[]; avisos: string[]; aba: string | null; abas: { aba: string; linhas: number }[];
+} {
   // Datas como número serial (cellDates: false): o Date que a XLSX monta
   // carrega o fuso histórico e caía no dia anterior (02/12 virava 01/12).
   const wb = XLSX.read(buffer, { type: "array", cellDates: false });
   const avisos: string[] = [];
+  const linhas: LinhaPlanilhaRescisao[] = [];
+  const abas: { aba: string; linhas: number }[] = [];
+  const vistas = new Set<string>();
+  let semNome = 0, repetidas = 0, tiposNaoReconhecidos = 0;
   for (const aba of wb.SheetNames) {
     const rows = XLSX.utils.sheet_to_json<unknown[]>(wb.Sheets[aba], { header: 1, raw: true, defval: null });
     const iCab = rows.findIndex((r) => indiceDaColuna(r ?? [], "FUNCIONARIO") >= 0 && indiceDaColuna(r ?? [], "PAGAMENTO") >= 0);
     if (iCab < 0) continue;
     const cab = rows[iCab];
+    const antes = linhas.length;
     const col = {
       empresa: indiceDaColuna(cab, "EMPRESA"),
       mat: indiceDaColuna(cab, "MAT", "MATRICULA"),
@@ -345,14 +404,13 @@ export function lerPlanilhaRescisao(buffer: ArrayBuffer | Uint8Array): { linhas:
       retorno: indiceDaColuna(cab, "RETORNO DA DOCUMENTACAO"),
       status: indiceDaColuna(cab, "STATUS"),
       obs: indiceDaColuna(cab, "OBSERVACAO"),
+      pontos: indiceDaColuna(cab, "PONTOS AJUSTADOS"),
+      admissao: indiceDaColuna(cab, "ADMISSAO"),
     };
     // A coluna da data de chegada só existe se o cabeçalho deixou a A vazia.
     const colRecebido = cab[0] == null || String(cab[0]).trim() === "" ? 0 : -1;
     const pega = (r: unknown[], i: number) => (i >= 0 ? r[i] : null);
 
-    const linhas: LinhaPlanilhaRescisao[] = [];
-    const vistas = new Set<string>();
-    let semNome = 0, repetidas = 0, tiposNaoReconhecidos = 0;
     for (const r of rows.slice(iCab + 1)) {
       if (!r) continue;
       const nome = textoOuNull(pega(r, col.nome));
@@ -400,18 +458,23 @@ export function lerPlanilhaRescisao(buffer: ArrayBuffer | Uint8Array): { linhas:
         retorno_obs: retorno,
         status_rescisao: normalizarStatusRescisao(pega(r, col.status)),
         observacao: obs,
+        pontos_ajustados: textoOuNull(pega(r, col.pontos)),
+        data_admissao: dataDaCelula(pega(r, col.admissao)),
+        planilha_original: linhaOriginal(cab, r, colRecebido),
+        planilha_aba: aba,
       };
       linha.chave = chavePlanilha(linha);
       if (vistas.has(linha.chave)) { repetidas++; continue; }
       vistas.add(linha.chave);
       linhas.push(linha);
     }
-    if (semNome) avisos.push(`${semNome} linha(s) sem o nome do funcionário foram ignoradas.`);
-    if (repetidas) avisos.push(`${repetidas} linha(s) repetidas (mesma empresa, matrícula, nome e datas) entraram uma vez só.`);
-    if (tiposNaoReconhecidos) avisos.push(`${tiposNaoReconhecidos} tipo(s) de desligamento não reconhecidos ficaram em branco — o texto original foi para a observação.`);
-    return { linhas, avisos, aba };
+    abas.push({ aba, linhas: linhas.length - antes });
   }
-  return { linhas: [], avisos: ["Não achei a aba das rescisões (cabeçalho com FUNCIONARIO e PAGAMENTO)."], aba: null };
+  if (!abas.length) return { linhas: [], avisos: ["Não achei a aba das rescisões (cabeçalho com FUNCIONARIO e PAGAMENTO)."], aba: null, abas };
+  if (semNome) avisos.push(`${semNome} linha(s) sem o nome do funcionário foram ignoradas.`);
+  if (repetidas) avisos.push(`${repetidas} linha(s) repetidas (mesma empresa, matrícula, nome e datas) entraram uma vez só.`);
+  if (tiposNaoReconhecidos) avisos.push(`${tiposNaoReconhecidos} tipo(s) de desligamento não reconhecidos ficaram em branco no filtro — o texto original fica na observação e na linha original.`);
+  return { linhas, avisos, aba: abas[0].aba, abas };
 }
 
 // ── Importação: casar com a solicitação do ERP ───────────────────────
@@ -472,6 +535,11 @@ export function completarVazios(atual: Partial<RescisaoRH>, nova: LinhaPlanilhaR
     if (typeof v === "boolean") { if (v && !a) (patch as Record<string, unknown>)[c] = true; continue; }
     if (v != null && v !== "" && (a == null || a === "")) (patch as Record<string, unknown>)[c] = v;
   }
+  // A linha original entra uma vez — importada antes da mig 20261021000030, ganha agora.
+  if (!atual.planilha_original && nova.planilha_original && Object.keys(nova.planilha_original).length) {
+    patch.planilha_original = nova.planilha_original;
+    patch.planilha_aba = nova.planilha_aba ?? null;
+  }
   return Object.keys(patch).length ? patch : null;
 }
 
@@ -480,7 +548,7 @@ export interface LinhaRescisao {
   chave: string;
   solicitacao: SolicitacaoDemissao | null;
   rescisao: RescisaoRH | null;
-  origem: "erp" | "planilha";
+  origem: OrigemRescisao;
   empresa: string | null;
   matricula: string | null;
   nome: string;
@@ -509,6 +577,12 @@ export interface LinhaRescisao {
   retornoObs: string | null;
   statusRescisao: string | null;
   observacao: string | null;
+  pontosAjustados: string | null;
+  admissao: string | null;
+  /** Desde quando está na coluna do kanban (null = não se sabe, ex.: importada). */
+  statusDesde: string | null;
+  planilhaOriginal: LinhaOriginal | null;
+  planilhaAba: string | null;
 }
 
 /** Os status do fluxo em que o SST já resolveu o ASO (a "PLANILHA SST OK"). */
@@ -528,7 +602,7 @@ export function montarLinhaRescisao(
     chave: s ? `s:${s.id}` : `r:${r?.id}`,
     solicitacao: s,
     rescisao: r,
-    origem: s ? "erp" : "planilha",
+    origem: s ? "erp" : (r?.origem === "manual" ? "manual" : "planilha"),
     empresa: r?.empresa ?? siglaEmpresa(empregado?.empresa) ?? null,
     matricula: r?.matricula ?? empregado?.matricula ?? null,
     nome: s?.colaborador_nome ?? r?.colaborador_nome ?? "—",
@@ -564,6 +638,12 @@ export function montarLinhaRescisao(
     // planilha escrevia na linha nova.
     statusRescisao: r?.status_rescisao ?? "Por fazer",
     observacao: r?.observacao ?? null,
+    pontosAjustados: r?.pontos_ajustados ?? null,
+    admissao: r?.data_admissao ?? s?.colaborador_admissao?.slice(0, 10) ?? null,
+    // Solicitação sem ficha: está "por fazer" desde que chegou ao RH.
+    statusDesde: r ? (r.status_desde ?? null) : (s?.rh_em ?? s?.criado_em ?? null),
+    planilhaOriginal: r?.planilha_original ?? null,
+    planilhaAba: r?.planilha_aba ?? null,
   };
 }
 
@@ -605,15 +685,46 @@ export interface FiltroRescisao {
   statusRescisao?: string;
   homologacao?: string;
   tipo?: string;
-  origem?: "" | "erp" | "planilha";
+  origem?: "" | OrigemRescisao;
   /** "2026-10" — mês da data escolhida em `campoMes`. */
   mes?: string;
   campoMes?: "pagamento" | "demissao" | "recebido";
   /** Só o que falta: sem as duas programadas marcadas. */
   soNaoProgramadas?: boolean;
+  /** PLANILHA SST: "ok" = OK, "pendente" = Não ou vazio. */
+  sst?: "" | "ok" | "pendente";
+  /** Só as de pagamento vencido ainda sem a rescisão feita (ver `pagamentoAtrasado`). */
+  soAtrasadas?: boolean;
+  /** Só as com documentação enviada e ainda sem retorno. */
+  soSemRetorno?: boolean;
 }
 
-export function filtrarRescisoes(linhas: LinhaRescisao[], f: FiltroRescisao): LinhaRescisao[] {
+/** Hoje em ISO (data local), para as comparações com as datas da planilha. */
+export function hojeIso(agora: Date = new Date()): string {
+  return `${agora.getFullYear()}-${String(agora.getMonth() + 1).padStart(2, "0")}-${String(agora.getDate()).padStart(2, "0")}`;
+}
+
+/** Os status em que a rescisão ainda não foi calculada — é o que pode atrasar o pagamento. */
+export const STATUS_SEM_RESCISAO = ["Por fazer"] as const;
+
+/** Pagamento já vencido (ou vencendo hoje) e a rescisão ainda por fazer. */
+export function pagamentoAtrasado(l: Pick<LinhaRescisao, "pagamento" | "statusRescisao">, hoje: string = hojeIso()): boolean {
+  return !!l.pagamento && l.pagamento <= hoje && (STATUS_SEM_RESCISAO as readonly string[]).includes(l.statusRescisao ?? "Por fazer");
+}
+
+/** Dias inteiros desde `desde` (ISO) até hoje; null sem data. */
+export function diasDesde(desde: string | null | undefined, agora: Date = new Date()): number | null {
+  if (!desde) return null;
+  const t = Date.parse(desde.length <= 10 ? `${desde}T00:00:00` : desde);
+  if (isNaN(t)) return null;
+  return Math.max(0, Math.floor((agora.getTime() - t) / 86_400_000));
+}
+
+/** Documentação que saiu e ainda não voltou assinada. */
+export const semRetorno = (l: Pick<LinhaRescisao, "envioMeio" | "envioData" | "envioObs" | "retornoMeio" | "retornoData" | "retornoObs">): boolean =>
+  !!(l.envioMeio || l.envioData || l.envioObs) && !(l.retornoMeio || l.retornoData || l.retornoObs);
+
+export function filtrarRescisoes(linhas: LinhaRescisao[], f: FiltroRescisao, hoje: string = hojeIso()): LinhaRescisao[] {
   const q = semAcento(f.busca);
   return linhas.filter((l) => {
     if (f.empresa && l.empresa !== f.empresa) return false;
@@ -622,14 +733,53 @@ export function filtrarRescisoes(linhas: LinhaRescisao[], f: FiltroRescisao): Li
     if (f.tipo && l.tipo !== f.tipo) return false;
     if (f.origem && l.origem !== f.origem) return false;
     if (f.soNaoProgramadas && l.rescisaoProgramada && l.valesProgramados) return false;
+    if (f.sst === "ok" && l.sstOk !== true) return false;
+    if (f.sst === "pendente" && l.sstOk === true) return false;
+    if (f.soAtrasadas && !pagamentoAtrasado(l, hoje)) return false;
+    if (f.soSemRetorno && !semRetorno(l)) return false;
     if (f.mes) {
       const d = l[f.campoMes ?? "pagamento"];
       if (!d || d.slice(0, 7) !== f.mes) return false;
     }
     if (!q) return true;
-    return [l.nome, l.matricula, l.contrato, l.solicitadoPor, l.solicitacao ? String(l.solicitacao.id) : null]
+    return [l.nome, l.matricula, l.contrato, l.solicitadoPor, l.solicitacao ? String(l.solicitacao.id) : null, l.observacao]
       .some((v) => semAcento(v).includes(q));
   });
+}
+
+/** O RESUMO da planilha (COUNTIF por status): quantas em cada coluna do kanban. */
+export function resumoPorStatus(linhas: Pick<LinhaRescisao, "statusRescisao">[]): Record<string, number> {
+  const out: Record<string, number> = Object.fromEntries(STATUS_RESCISAO.map((s) => [s, 0]));
+  for (const l of linhas) {
+    const s = l.statusRescisao ?? "Por fazer";
+    out[s] = (out[s] ?? 0) + 1;
+  }
+  return out;
+}
+
+/**
+ * O que gravar ao arrastar o card para outra coluna: só o status. Programadas,
+ * malote e documentação continuam sendo marcação própria (na planilha, 82
+ * "por fazer" já tinham "RESCISÃO E VALES OK" — um não implica o outro).
+ */
+export function patchDoMovimento(l: LinhaRescisao, para: string): Partial<RescisaoRH> {
+  const patch: Partial<RescisaoRH> = { status_rescisao: para };
+  // Na primeira gravação de uma solicitação do ERP, a sugestão vira valor —
+  // o que a tela mostrava em itálico passa a ser o lançado.
+  if (!l.rescisao) {
+    Object.assign(patch, {
+      data_aviso: l.aviso, data_ultimo_dia: l.ultimoDia, data_demissao: l.demissao,
+      data_pagamento: l.pagamento, tipo_desligamento: l.tipo,
+    });
+  }
+  return patch;
+}
+
+/** Validação da rescisão lançada à mão: nome é o mínimo (a planilha também só exigia isso). */
+export function erroIdentificacao(i: IdentificacaoRescisao): string | null {
+  if (!i.colaborador_nome?.trim()) return "Informe o nome do funcionário.";
+  if (i.empresa && !Object.values(SIGLA_EMPRESA).includes(i.empresa.trim().toUpperCase())) return "Empresa: use HAGG, SN, CANAA ou NH.";
+  return null;
 }
 
 export type OrdemRescisao = "pagamento" | "demissao" | "recebido" | "nome";
@@ -668,6 +818,8 @@ export function edicaoInicial(l: LinhaRescisao): EdicaoRescisao {
     retorno_obs: l.retornoObs,
     status_rescisao: l.statusRescisao,
     observacao: l.observacao,
+    pontos_ajustados: l.pontosAjustados,
+    data_admissao: l.admissao,
   };
 }
 
@@ -717,13 +869,20 @@ export function planilhaDasRescisoes(linhas: LinhaRescisao[]): XLSX.WorkBook {
     "Retorno da documentação": l.retornoObs || comData(l.retornoMeio, l.retornoData),
     "Status": l.statusRescisao ?? "",
     "Observação": l.observacao ?? "",
+    "Pontos ajustados?": l.pontosAjustados ?? "",
+    "Admissão": dataExcel(l.admissao),
     "Solicitação ERP": l.solicitacao ? `#${l.solicitacao.id}` : "",
     "Status no ERP": l.statusFluxo ?? "",
   }));
   const ws = XLSX.utils.json_to_sheet(dados, { cellDates: true, dateNF: "dd/mm/yyyy" });
   ws["!autofilter"] = { ref: ws["!ref"] ?? "A1" };
-  ws["!cols"] = [10, 8, 8, 34, 26, 16, 10, 10, 18, 10, 10, 10, 30, 20, 26, 28, 28, 22, 30, 12, 22].map((wch) => ({ wch }));
+  ws["!cols"] = [10, 8, 8, 34, 26, 16, 10, 10, 18, 10, 10, 10, 30, 20, 26, 28, 28, 22, 30, 12, 10, 12, 22].map((wch) => ({ wch }));
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, "RESCISÕES");
+  // A aba RESUMO da planilha (contagem por status).
+  const resumo = resumoPorStatus(linhas);
+  const wsResumo = XLSX.utils.aoa_to_sheet([["RESUMO DE STATUS", ""], ...Object.entries(resumo), ["TOTAL", linhas.length]]);
+  wsResumo["!cols"] = [{ wch: 28 }, { wch: 8 }];
+  XLSX.utils.book_append_sheet(wb, wsResumo, "RESUMO");
   return wb;
 }

@@ -101,6 +101,29 @@ describe("Auditoria — card 2 (Fluxo × Extrato, entradas e saídas separadas)"
     expect(situacaoComparacao(def, t)).toBe("confere");
   });
 
+  // SIS-2026-0701: jan/26 — o Fluxo da tela somava o saldo anterior nas entradas e a Auditoria não, então os totais não batiam.
+  it("ponte: total do Fluxo (com saldo anterior) = saldo anterior + bancos sem conciliação + ignorados + recorte, entradas e saídas", () => {
+    const linhas = [
+      ...fluxoMes,
+      F("entrada", 300, B1, { classificacao_nome: "SALDO ANTERIOR" }),
+      F("saida", 50, B1, { descricao: "PAGAMENTO CONTA VINCULADA" }),
+      F("entrada", 70, B2),
+    ];
+    const t = totaisFluxoExtrato(linhas, [concil()], null, (l) => (l.descricao ?? "").includes("CONTA VINCULADA") && l.tipo === "saida");
+    const p = t.painel.ponte!;
+    expect(p.total).toMatchObject({ entradas: 1370, saidas: 1050 });
+    expect(p.saldoAnterior).toMatchObject({ entradas: 300, saidas: 0 });
+    expect(p.semConciliacao).toMatchObject({ entradas: 70, saidas: 400 });
+    expect(p.ignorados).toMatchObject({ entradas: 0, saidas: 50 });
+    expect(t.painel.fluxo).toMatchObject({ entradas: 1000, saidas: 600 });
+    expect(p.total.entradas).toBe(p.saldoAnterior.entradas + p.semConciliacao.entradas + p.ignorados.entradas + t.painel.fluxo.entradas);
+    expect(p.total.saidas).toBe(p.saldoAnterior.saidas + p.semConciliacao.saidas + p.ignorados.saidas + t.painel.fluxo.saidas);
+  });
+
+  it("sem conciliação salva não há ponte", () => {
+    expect(totaisFluxoExtrato(fluxoMes, [], null).painel.ponte).toBeNull();
+  });
+
   it("sem conciliação salva: Fluxo do mês inteiro contra extrato zerado, e marcado como não conciliado", () => {
     const t = totaisFluxoExtrato(fluxoMes, [], null);
     expect(t.painel.conciliado).toBe(false);

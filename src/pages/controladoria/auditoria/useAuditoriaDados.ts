@@ -29,6 +29,11 @@ async function paginar<T>(montar: () => any): Promise<T[]> {
 
 const dentroDoMes = (q: any, coluna: string, mes: string) => q.gte(coluna, `${mes}-01`).lt(coluna, proximoMesData(mes));
 
+// SIS-2026-0701: o painel enxerga o mês por data de pagamento (confere o pagamento) ou por competência (como a lucratividade dos
+// contratos é vista). A coluna do Fluxo é `data_pagamento` ou `competencia` (sempre dia 01).
+export type BasePeriodo = "pagamento" | "competencia";
+const colunaFluxo = (base: BasePeriodo) => (base === "competencia" ? "competencia" : "data_pagamento");
+
 // ── Fluxo de Caixa do mês (todas as origens) ────────────────────────────────
 export interface LinhaFluxoMes {
   origem: string;
@@ -59,24 +64,24 @@ const VIEWS_FLUXO: { view: string; origem: string; ordem: string[]; extra?: stri
   { view: "v_fluxo_caixa_importado_fluxo_caixa", origem: "importacao_historica", ordem: ["despesa_id", "linha_id"] },
 ];
 
-async function lerView(view: string, origem: string, ordem: string[], mes: string, extra?: string): Promise<LinhaFluxoMes[]> {
+async function lerView(view: string, origem: string, ordem: string[], mes: string, base: BasePeriodo, extra?: string): Promise<LinhaFluxoMes[]> {
   const linhas = await paginar<Omit<LinhaFluxoMes, "origem">>(() => {
-    let q = dentroDoMes((supabase as any).from(view).select(`tipo, valor, empresa_id, contrato_id, classificacao_id, classificacao_nome, banco_id, banco_nome, descricao, data_pagamento, despesa_id, id_malote${extra ? `, ${extra}` : ""}`), "data_pagamento", mes);
+    let q = dentroDoMes((supabase as any).from(view).select(`tipo, valor, empresa_id, contrato_id, classificacao_id, classificacao_nome, banco_id, banco_nome, descricao, data_pagamento, despesa_id, id_malote${extra ? `, ${extra}` : ""}`), colunaFluxo(base), mes);
     for (const c of ordem) q = q.order(c, { ascending: true });
     return q;
   });
   return linhas.map((l) => ({ ...l, origem }));
 }
 
-export function useFluxoMes(mes: string) {
+export function useFluxoMes(mes: string, base: BasePeriodo = "pagamento") {
   return useQuery({
-    queryKey: ["auditoria_fluxo_mes", mes],
+    queryKey: ["auditoria_fluxo_mes", mes, base],
     staleTime: STALE,
     queryFn: async () => {
       const partes = await Promise.all(
         VIEWS_FLUXO.map((f) =>
-          lerView(f.view, f.origem, f.ordem, mes, f.extra)
-            .catch((e: any) => (e?.code === "42703" && f.view.includes("importado") ? lerView(f.view, f.origem, ["despesa_id"], mes) : Promise.reject(e)))
+          lerView(f.view, f.origem, f.ordem, mes, base, f.extra)
+            .catch((e: any) => (e?.code === "42703" && f.view.includes("importado") ? lerView(f.view, f.origem, ["despesa_id"], mes, base) : Promise.reject(e)))
             .catch((e: any) => {
               if (e?.code === "PGRST205" || e?.code === "42P01") return [] as LinhaFluxoMes[];
               throw e;
@@ -89,28 +94,46 @@ export function useFluxoMes(mes: string) {
 }
 
 // ── Malote direto (tabelas do Malote, sem a view do Fluxo) ──────────────────
-export function useMaloteDiretoMes(mes: string) {
+export function useMaloteDiretoMes(mes: string, base: BasePeriodo = "pagamento") {
   return useQuery({
-    queryKey: ["auditoria_malote_direto", mes],
+    queryKey: ["auditoria_malote_direto", mes, base],
     staleTime: STALE,
     queryFn: async () => {
       const db = supabase as any;
       const colunasDespesa = "id, numero, empresa_id, contrato_id, valor_aprovado, valor_total, parcelado";
-      const naoParceladas = await paginar<DespesaMalote>(() =>
-        dentroDoMes(db.from("malote_despesa").select(colunasDespesa).eq("status", "despesa_paga").eq("parcelado", false).is("deleted_at", null), "data_pagamento", mes).order("id")
-      );
-      const parcelas = await paginar<ParcelaPaga & { id: string }>(() =>
-        dentroDoMes(db.from("malote_despesa_parcela").select("id, despesa_id, valor").eq("status", "paga"), "data_pagamento_real", mes).order("id")
-      );
-      const idsParcelas = [...new Set(parcelas.map((p) => p.despesa_id))];
-      const idsNaoParceladas = naoParceladas.map((d) => d.id);
-
-      // 200 ids numa URL (~7,8 KB) passam do limite do gateway do cluster (502 "invalid response from upstream" na Conciliação do
-      // Malote); em lotes de 40 (src/lib/emLotes.ts), no máximo 6 consultas ao mesmo tempo.
-      const despesasDasParcelas = await emLotes<DespesaMalote>(idsParcelas, 40, (lote) =>
-        db.from("malote_despesa").select(colunasDespesa).in("id", lote).eq("parcelado", true).is("deleted_at", null), 6);
-
-      const todosIds = [...idsNaoParceladas, ...despesasDasParcelas.map((d) => d.id)];
+      let naoParceladas: DespesaMalote[];
+      let parcelas: (ParcelaPaga & { id: string })[];
+      let despesasDasParcelas: DespesaMalote[];
+      if (base === "competencia") {
+        // Por competência: as despesas pagas cuja competência cai no mês; a parcela paga acompanha a competência da despesa,
+        // igual à view do Fluxo (a linha da parcela herda a competência da despesa).
+        naoParceladas = await paginar<DespesaMalote>(() =>
+          dentroDoMes(db.from("malote_despesa").select(colunasDespesa).eq("status", "despesa_paga").eq("parcelado", false).is("deleted_at", null), "competencia", mes).order("id")
+        );
+        despesasDasParcelas = await paginar<DespesaMalote>(() =>
+          dentroDoMes(db.from("malote_despesa").select(colunasDespesa).eq("parcelado", true).is("deleted_at", null), "competencia", mes).order("id")
+        );
+        parcelas = await emLotes<ParcelaPaga & { id: string }>(despesasDasParcelas.map((d) => d.id), 40, async (lote) => ({
+          data: await paginar<ParcelaPaga & { id: string }>(() => db.from("malote_despesa_parcela").select("id, despesa_id, valor").eq("status", "paga").in("despesa_id", lote).order("id")),
+          error: null,
+        }), 6);
+        // Só entram as despesas parceladas que têm parcela paga (as demais ainda não são Fluxo).
+        const comParcelaPaga = new Set(parcelas.map((p) => p.despesa_id));
+        despesasDasParcelas = despesasDasParcelas.filter((d) => comParcelaPaga.has(d.id));
+      } else {
+        naoParceladas = await paginar<DespesaMalote>(() =>
+          dentroDoMes(db.from("malote_despesa").select(colunasDespesa).eq("status", "despesa_paga").eq("parcelado", false).is("deleted_at", null), "data_pagamento", mes).order("id")
+        );
+        parcelas = await paginar<ParcelaPaga & { id: string }>(() =>
+          dentroDoMes(db.from("malote_despesa_parcela").select("id, despesa_id, valor").eq("status", "paga"), "data_pagamento_real", mes).order("id")
+        );
+        const idsParcelas = [...new Set(parcelas.map((p) => p.despesa_id))];
+        // 200 ids numa URL (~7,8 KB) passam do limite do gateway do cluster (502 "invalid response from upstream" na Conciliação do
+        // Malote); em lotes de 40 (src/lib/emLotes.ts), no máximo 6 consultas ao mesmo tempo.
+        despesasDasParcelas = await emLotes<DespesaMalote>(idsParcelas, 40, (lote) =>
+          db.from("malote_despesa").select(colunasDespesa).in("id", lote).eq("parcelado", true).is("deleted_at", null), 6);
+      }
+      const todosIds = [...naoParceladas.map((d) => d.id), ...despesasDasParcelas.map((d) => d.id)];
       const rateios = await emLotes<RateioMalote>(todosIds, 40, async (lote) => ({
         data: await paginar<RateioMalote>(() =>
           db.from("malote_despesa_rateio_linha").select("despesa_id, empresa_id, contrato_id, valor").in("despesa_id", lote).order("id")
@@ -123,14 +146,14 @@ export function useMaloteDiretoMes(mes: string) {
 }
 
 // ── Malote por classificação (card 3) ───────────────────────────────────────
-export function useMaloteCentrosMes(mes: string) {
+export function useMaloteCentrosMes(mes: string, base: BasePeriodo = "pagamento") {
   return useQuery({
-    queryKey: ["auditoria_malote_centros", mes],
+    queryKey: ["auditoria_malote_centros", mes, base],
     staleTime: STALE,
     queryFn: async () => {
       const db = supabase as any;
       const linhas = await paginar<LinhaCentroMalote>(() =>
-        dentroDoMes(db.from("v_malote_pagamento_fluxo_caixa").select("valor, empresa_id, contrato_id, classificacao_id, despesa_id, id_malote, descricao, classificacao_nome, data_pagamento").eq("tipo", "saida"), "data_pagamento", mes)
+        dentroDoMes(db.from("v_malote_pagamento_fluxo_caixa").select("valor, empresa_id, contrato_id, classificacao_id, despesa_id, id_malote, descricao, classificacao_nome, data_pagamento").eq("tipo", "saida"), colunaFluxo(base), mes)
           .order("despesa_id").order("numero_parcela").order("contrato_id").order("valor")
       );
       const classificacoes = await paginar<{ id: string; tipo: string | null }>(() => db.from("planejamento_orcamentario_classificacao").select("id, tipo").order("id"));

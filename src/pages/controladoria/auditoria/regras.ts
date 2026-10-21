@@ -96,6 +96,15 @@ export interface PainelFluxoExtrato {
   bancos: string[];
   // Conciliações salvas sem o total do extrato (anteriores à migration 20261014000006 e ainda sem carga).
   semTotais: number;
+  // SIS-2026-0701: ponte do Fluxo de Caixa da tela (todas as linhas do mês, com o saldo anterior) até o recorte que se compara com o
+  // extrato. total = saldoAnterior + semConciliacao + ignorados + recorte. Só existe quando há conciliação salva.
+  ponte: PontePainelFluxo | null;
+}
+export interface PontePainelFluxo {
+  total: EntradasSaidas;
+  saldoAnterior: EntradasSaidas;
+  semConciliacao: EntradasSaidas;
+  ignorados: EntradasSaidas;
 }
 export interface CentroAcima { nome: string; excesso: number }
 export interface PainelOrcadoRealizado {
@@ -470,7 +479,8 @@ export function totaisFluxoExtrato(
   ignora: (l: LinhaFluxoAud & { banco_nome?: string | null; descricao?: string | null }) => boolean = () => false
 ): { a: number; b: number; painel: PainelFluxoExtrato } {
   const doEscopo = conciliacoesUnicas(conciliacoesSalvas.filter((c) => conciliacaoDaEmpresa({ id: c.id, empresa_ids: c.empresa_ids ?? [], todas_empresas: c.todas_empresas }, empresaId)));
-  const doMes = fluxo.filter((l) => !ehSaldoAnterior(l) && (!empresaId || l.empresa_id === empresaId));
+  const daEmpresa = fluxo.filter((l) => !empresaId || l.empresa_id === empresaId);
+  const doMes = daEmpresa.filter((l) => !ehSaldoAnterior(l));
   const fluxoMes = entradasSaidas(doMes);
 
   const conciliado = doEscopo.length > 0;
@@ -478,6 +488,16 @@ export function totaisFluxoExtrato(
     doEscopo.some((c) => !!c.banco_id && l.banco_id === c.banco_id && (c.todas_empresas || (!!l.empresa_id && (c.empresa_ids ?? []).includes(l.empresa_id))));
   const doRecorte = conciliado ? doMes.filter((l) => !ignora(l) && cobre(l)) : doMes;
   const fluxoRecorte = entradasSaidas(doRecorte);
+  // SIS-2026-0701: a tela do Fluxo de Caixa soma TUDO do período, inclusive o "saldo anterior" (abertura) nas entradas; o recorte da
+  // conciliação não. A ponte mostra cada parte que sai do total até o recorte, para as entradas e saídas baterem com a tela do Fluxo.
+  const ponte: PontePainelFluxo | null = conciliado
+    ? {
+        total: entradasSaidas(daEmpresa),
+        saldoAnterior: entradasSaidas(daEmpresa.filter(ehSaldoAnterior)),
+        semConciliacao: entradasSaidas(doMes.filter((l) => !cobre(l))),
+        ignorados: entradasSaidas(doMes.filter((l) => cobre(l) && ignora(l))),
+      }
+    : null;
 
   let entradas = 0, saidas = 0, semTotais = 0;
   for (const c of doEscopo) {
@@ -504,6 +524,7 @@ export function totaisFluxoExtrato(
       cobertura: conciliado && fluxoMes.saidas > 0 ? fluxoRecorte.saidas / fluxoMes.saidas : null,
       bancos: Array.from(new Set(nomes.values())).sort((a, b) => a.localeCompare(b, "pt-BR")),
       semTotais,
+      ponte,
     },
   };
 }

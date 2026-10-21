@@ -254,6 +254,7 @@ import DiretoriaRecrutamento from "./pages/diretoria/Recrutamento";
 import RelatorioGeral from "./pages/relatorios/RelatorioGeral";
 import RelatorioSistema from "./pages/relatorios/RelatorioSistema";
 import VagasPainel from "./pages/relatorios/VagasPainel";
+import CustoFaltasPainel from "./pages/relatorios/CustoFaltasPainel";
 import { SISTEMAS as RELATORIOS } from "./pages/relatorios/sistemas";
 import SstTrocaFuncao from "./pages/sst/TrocaFuncao";
 import RhTrocaFuncao from "./pages/rh/TrocaFuncao";
@@ -267,6 +268,7 @@ import EfetividadeControlePostos from "./pages/operacional/efetividade/ControleP
 import EfetividadeDetalhePosto from "./pages/operacional/efetividade/DetalhePosto";
 import EfetividadeFaltasCoberturas from "./pages/operacional/efetividade/FaltasCoberturas";
 import EfetividadeHistorico from "./pages/operacional/efetividade/HistoricoIndicadores";
+import EfetividadeMensal from "./pages/operacional/efetividade/EfetividadeMensal";
 import FinanceiroConferenciaPonto from "./pages/financeiro/ConferenciaPonto";
 import LaudosEpi from "./pages/sst/LaudosEpi";
 import ControleCa from "./pages/sst/ControleCa";
@@ -306,6 +308,7 @@ import IndicadoresComiteEtica from "./pages/comite-etica/Indicadores";
 import PresidenciaComiteEtica from "./pages/comite-etica/Presidencia";
 import Ferias from "./pages/rh/Ferias";
 import RhSolicitacoesDemissao from "./pages/rh/SolicitacoesDemissao";
+import RhRescisoes from "./pages/rh/Rescisoes";
 import MinhasSolicitacoes from "./pages/MinhasSolicitacoes";
 import BIDashboard from "./pages/bi/Dashboard";
 import LinksBIs from "./pages/bi/LinksBIs";
@@ -782,6 +785,8 @@ const App = () => (
             <Route path="relatorios" element={<RelatorioGeral />} />
             {/* Vagas — Dashboard (mig 20261007000020): painel próprio, fora de SISTEMAS (o Relatório Geral itera SISTEMAS). */}
             <Route path="relatorios/vagas" element={<VagasPainel />} />
+            {/* Custo das Faltas por Contrato (mig 20261021000060): o campo Faltas das NFs, por contrato e competência. */}
+            <Route path="relatorios/custo-faltas" element={<CustoFaltasPainel />} />
             {RELATORIOS.map((s) => (
               <Route key={s.slug} path={`relatorios/${s.slug}`} element={<RelatorioSistema key={s.slug} slug={s.slug} />} />
             ))}
@@ -918,6 +923,8 @@ const App = () => (
             <Route path="rh/ferias" element={<Ferias />} />
             <Route path="rh/recrutamento" element={<Recrutamento />} />
             <Route path="rh/solicitacoes-demissao" element={<RhSolicitacoesDemissao />} />
+            {/* Rescisões — submódulo próprio com kanban (mig 20261021000030). */}
+            <Route path="rh/rescisoes" element={<RhRescisoes />} />
             {/* Conferência de Ponto — Operacional, RH e Financeiro na mesma tela;
                 o que muda é a permissão de cada um (ver conferencia.ts). */}
             <Route path="rh/conferencia-ponto" element={<ConferenciaPonto />} />
@@ -932,6 +939,8 @@ const App = () => (
             <Route path="operacional/efetividade/posto" element={<EfetividadeDetalhePosto />} />
             <Route path="operacional/efetividade/faltas" element={<EfetividadeFaltasCoberturas />} />
             <Route path="operacional/efetividade/historico" element={<EfetividadeHistorico />} />
+            {/* 6ª aba (21/10/2026): o painel mensal dos contratos, mesmo menu ope_efetividade. */}
+            <Route path="operacional/efetividade/mensal" element={<EfetividadeMensal />} />
             <Route path="financeiro/conferencia-ponto" element={<FinanceiroConferenciaPonto />} />
             {/* Dashboard de Pontos (mig 274): a mesma tela do painel do RH, com
                 menu próprio em cada módulo (financeiro_/operacional_dashboard_pontos). */}

@@ -80,6 +80,7 @@ import { useReembolsoNotif } from "@/hooks/useReembolsoNotif";
 import { useAprovacoesNotif } from "@/hooks/useAprovacoesNotif";
 import { Inbox, FileSignature, PencilRuler, Workflow, type LucideIcon } from "lucide-react";
 import { Target, MessagesSquare, KeyRound, MonitorPlay, Gauge } from "lucide-react";
+import { FileX2, KanbanSquare } from "lucide-react";
 import { GitBranch, GitMerge } from "lucide-react";
 import { MessageSquare } from "lucide-react";
 import { Banknote } from "lucide-react";
@@ -641,6 +642,28 @@ const recrutamentoModule: ModuleDef = {
       defaultOpen: true,
       items: [
         { label: "Acompanhar Colaboradores", to: "/app/rh/recrutamento/acompanhar-colaboradores", icon: ClipboardCheck },
+      ],
+    },
+  ],
+};
+
+// Rescisões (21/10/2026, mig 20261021000030): a planilha de rescisão do RH
+// virou módulo próprio, com kanban por status — "igual o do recrutamento,
+// mas pra rescisões". O fluxo da solicitação (liberar pro SST, cancelar)
+// segue em Recursos Humanos › Solicitações de Demissão.
+const rescisoesModule: ModuleDef = {
+  id: "rescisoes",
+  label: "Rescisões",
+  description: "Kanban e planilha das rescisões",
+  icon: FileX2,
+  basePath: "/app/rh/rescisoes",
+  status: "active",
+  groups: [
+    {
+      label: "Gestão",
+      defaultOpen: true,
+      items: [
+        { label: "Gestão de Rescisões", to: "/app/rh/rescisoes", icon: KanbanSquare },
       ],
     },
   ],
@@ -1353,6 +1376,8 @@ const relatoriosModule: ModuleDef = {
         { label: "Relatório Geral", to: "/app/relatorios", icon: BarChart3 },
         ...RELATORIOS.map((s) => ({ label: s.titulo, to: `/app/relatorios/${s.slug}`, icon: s.icone })),
         { label: "Vagas — Dashboard", to: "/app/relatorios/vagas", icon: Briefcase },
+        // Mig 20261021000060: o desconto de faltas das notas fiscais, por contrato.
+        { label: "Custo das Faltas por Contrato", to: "/app/relatorios/custo-faltas", icon: TrendingDown },
       ],
     },
   ],
@@ -1398,6 +1423,7 @@ const erpModules: ModuleDef[] = [
   contabilModule,
   rhModule,
   recrutamentoModule,
+  rescisoesModule,
   encarregadosModule,
   operacionalModule,
   sistemasModule,
