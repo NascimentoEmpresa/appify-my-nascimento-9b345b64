@@ -31,6 +31,11 @@ const SMTP_HOST = Deno.env.get("SMTP_HOST") ?? "";
 const SMTP_PORT = Number(Deno.env.get("SMTP_PORT") ?? 587);
 const SMTP_USER = Deno.env.get("SMTP_USER") ?? "";
 const SMTP_PASS = Deno.env.get("SMTP_PASS") ?? "";
+// Quem AUTENTICA nem sempre é quem ASSINA. Em servidor de caixa (UOL) os dois
+// são o mesmo endereço; em serviço transacional o usuário é um nome fixo do
+// serviço ("resend"), e usar ele no From produziria um remetente inválido.
+// Sem SMTP_FROM, o comportamento é o de sempre.
+const SMTP_FROM = Deno.env.get("SMTP_FROM") || SMTP_USER;
 
 const APP_URL = "https://appify-my-nascimento.lovable.app/app/comite-etica/denuncias";
 
@@ -152,7 +157,7 @@ Deno.serve(async (req) => {
     // que não precisa circular.
     for (const to of emails) {
       await client.send({
-        from: SMTP_USER,
+        from: SMTP_FROM,
         to,
         subject: `Comitê de Ética — nova denúncia (${protocolo})`,
         content: `Uma nova denúncia foi registrada no Canal de Ética.\n\n`
