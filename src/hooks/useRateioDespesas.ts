@@ -37,6 +37,14 @@ export interface LinhaDetalhePdf {
   contrato_id: string | null;
   /** Guia do FGTS: "fgts" ou "consignado" (cada parte rateia o seu valor). */
   parte?: ParteGuia | null;
+  /** Relação de Eventos sem CPF: a matrícula (Cadastro) lida do PDF. */
+  cadastro?: string | null;
+  /**
+   * Documento de um contrato só, sem lista (boleto do sindicato, BSF
+   * escaneado): a linha leva 100% do valor da despesa, seja qual for — o
+   * contrato veio do nome do arquivo.
+   */
+  inteiro?: boolean;
 }
 
 export interface DespesaRateio {
@@ -142,6 +150,23 @@ export async function carregarUltimoDoTipo(tipo: TipoRateio, excetoId?: string |
 export async function casarCpfs(cpfs: string[]): Promise<CpfCasado[]> {
   if (!cpfs.length) return [];
   const { data, error } = await sb.rpc<CpfCasado[]>("rh_rateio_casar_cpfs", { _cpfs: cpfs });
+  if (error) throw error;
+  return data ?? [];
+}
+
+/** Matrícula da Relação de Eventos (sem CPF) → colaborador e contrato (mig 20261021000070). */
+export interface CadastroCasado {
+  chave: string;
+  nome: string | null;
+  cadastro: string | null;
+  situacao: string | null;
+  contrato_id: string | null;
+  casou_por: "matricula_nome" | "matricula" | "nome";
+}
+
+export async function casarCadastros(itens: { chave: string; empresa: number | null; cadastro: string | null; nome: string | null }[]): Promise<CadastroCasado[]> {
+  if (!itens.length) return [];
+  const { data, error } = await sb.rpc<CadastroCasado[]>("rh_rateio_casar_cadastros", { _itens: itens });
   if (error) throw error;
   return data ?? [];
 }
