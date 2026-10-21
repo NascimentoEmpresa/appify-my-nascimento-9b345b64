@@ -224,6 +224,14 @@ As duas `*_PORT` estão no `TEM_DEFAULT` do script porque o código cai no padr�
 da tabela quando elas faltam. `HOST`, `USER` e `PASS` não têm padrão nenhum: sem
 as três, a function recusa o envio na entrada.
 
+**Quem autentica nem sempre é quem assina.** No servidor da própria caixa os
+dois são o mesmo endereço, e por isso o código usava o `USER` no remetente. Em
+serviço transacional (Resend, Brevo, SES) o usuário do SMTP é um nome fixo do
+serviço — no Resend, literalmente `resend` — e pôr isso no `From` gera
+remetente inválido. Para esse caso existem `SMTP_FROM` e `COBRANCA_SMTP_FROM`:
+quando não estão definidas, o remetente continua sendo o `USER`, exatamente
+como antes.
+
 A senha de cada caixa se recupera no **painel da UOL Host** — nenhuma tela do
 ERP pede essa senha, e ela nunca entra neste repositório, que é público. O
 conjunto `COBRANCA_SMTP_*` nasceu na PR #956 (20/10/2026), que trocou o Graph

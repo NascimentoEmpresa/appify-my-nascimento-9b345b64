@@ -4,7 +4,7 @@ import {
   casarComSolicitacoes, chavePlanilha, completarVazios, dataNoTexto, edicaoInicial, erroDatasRescisao,
   filtrarRescisoes, lerPlanilhaRescisao, meioNoTexto, montarLinhaRescisao, montarLinhasRescisao,
   normalizarHomologacao, normalizarStatusRescisao, normalizarTipoDesligamento, ordenarRescisoes,
-  planilhaDasRescisoes, sugerirDataDemissao, sugerirDataPagamento, textoProgramadas, tipoPelaSolicitacao,
+  planilhaDasRescisoes, sugerirDataDemissao, pagamentoAtrasado, resumoPorStatus, patchDoMovimento, diasDesde, erroIdentificacao, sugerirDataPagamento, textoProgramadas, tipoPelaSolicitacao,
   TIPO_SJ_TRABALHADO, type LinhaPlanilhaRescisao, type RescisaoRH,
 } from "@/lib/demissao/rescisao";
 import type { SolicitacaoDemissao } from "@/lib/demissao/solicitacao";
@@ -230,5 +230,107 @@ describe("a linha da tela", () => {
     expect(rows[0]["Programadas"]).toBe("Rescisão e vales OK");
     expect(rows[0]["Envio da documentação"]).toBe("ZapSign - 01/10/2026");
     expect(rows[0]["Status"]).toBe("Por fazer");
+  });
+});
+
+describe("módulo Rescisões (21/10/2026)", () => {
+  const montarDuasAbas = () => {
+    const rescisoes = XLSX.utils.aoa_to_sheet([
+      [null, "EMPRESA", "MAT", "FUNCIONARIO", "CONTRATO", "HOMOLOGAÇÃO ", "PLANILHA SST", "AVISO", "SOLICITADO POR", "ULTIMO DIA", "DEMISSÃO", "PAGAMENTO", "TIPO DE DESL", "PROGRAMADAS", "MALOTE", "ENVIO DA DOCUMENTAÇÃO", "RETORNO DA DOCUMENTAÇÃO", "STATUS.", "OBSERVAÇÃO", "PONTOS AJUSTADOS?", "ADMISSÃO"],
+      [new Date(2026, 9, 1), "HAGG", 10, "ANA (ENCAMINHADA AO INSS)", "UFRGS", "REALIZADO", "OK", null, "SURVEY MONKEY", new Date(2026, 9, 10), new Date(2026, 9, 17), new Date(2026, 9, 22), "SEM JUSTA - TRABALHADO ( ACORDO 40% )", "RESCISÃO E VALES OK", null, null, null, "RESCISÃO POR FAZER", null, "OK", new Date(2024, 0, 15)],
+    ], { cellDates: true });
+    const homolog = XLSX.utils.aoa_to_sheet([
+      [null, null, null, null, "TOTAL"],
+      [null, null, null, null, 1],
+      ["EMPRESA", "MAT", "FUNCIONARIO", "CONTRATO", "HOMOLOGAÇÃO ", "AVISO", "SOLICITADO POR", "ULTIMO DIA", "DEMISSÃO", "PAGAMENTO", "TIPO DE DESL", "PROGRAMADAS", "MALOTE", "ENVIO DA DOCUMENTAÇÃO", "RETORNO DA DOCUMENTAÇÃO", "STATUS.", "OBSERVAÇÃO"],
+      ["CANAA", 67, "TATIANE", "CANAA", "SIM", new Date(2025, 0, 10), "E-MAIL", new Date(2025, 1, 2), new Date(2025, 1, 9), new Date(2025, 1, 14), "SEM JUSTA - TRABALHADO", "RESCISÃO E VALES OK", "(vazio)", "(vazio)", "(vazio)", "RESCISÃO OK", "(vazio)"],
+    ], { cellDates: true });
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, rescisoes, "RESCISÕES");
+    XLSX.utils.book_append_sheet(wb, homolog, "HOMOLOGAÇÃO");
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([["RESUMO DE STATUS", null]]), "RESUMO");
+    return XLSX.write(wb, { type: "array", bookType: "xlsx" }) as ArrayBuffer;
+  };
+
+  it("lê as duas abas e guarda a linha como está no Excel", () => {
+    const { linhas, abas } = lerPlanilhaRescisao(montarDuasAbas());
+    expect(abas).toEqual([{ aba: "RESCISÕES", linhas: 1 }, { aba: "HOMOLOGAÇÃO", linhas: 1 }]);
+    const [ana, tati] = linhas;
+    expect(ana.planilha_aba).toBe("RESCISÕES");
+    expect(ana.pontos_ajustados).toBe("OK");
+    expect(ana.data_admissao).toBe("2024-01-15");
+    // O original é o texto da planilha, sem normalizar; datas em dd/mm/aaaa.
+    expect(ana.planilha_original).toMatchObject({
+      RECEBIDO: "01/10/2026", FUNCIONARIO: "ANA (ENCAMINHADA AO INSS)", "TIPO DE DESL": "SEM JUSTA - TRABALHADO ( ACORDO 40% )",
+      PAGAMENTO: "22/10/2026", "STATUS.": "RESCISÃO POR FAZER", MAT: 10,
+    });
+    expect(ana.planilha_original).not.toHaveProperty("AVISO");
+    expect(tati).toMatchObject({ planilha_aba: "HOMOLOGAÇÃO", empresa: "CANAA", data_recebimento: null, status_rescisao: "Rescisão OK", malote_obs: null });
+    expect(tati.planilha_original["HOMOLOGAÇÃO"]).toBe("SIM");
+  });
+
+  it("completa a linha original de quem foi importado antes dela existir", () => {
+    const { linhas } = lerPlanilhaRescisao(montarDuasAbas());
+    const p = completarVazios(resc({ status_rescisao: "Por fazer", pontos_ajustados: null }), linhas[0]);
+    expect(p?.planilha_original).toBeTruthy();
+    expect(p?.planilha_aba).toBe("RESCISÕES");
+    expect(p?.pontos_ajustados).toBe("OK");
+    expect(completarVazios(resc({ planilha_original: { X: 1 }, pontos_ajustados: "OK", data_admissao: "2024-01-15", status_rescisao: "x", homologacao: "x", tipo_desligamento: "x", data_ultimo_dia: "x", data_demissao: "x", data_pagamento: "x", rescisao_programada: true, vales_programados: true }), linhas[0])).toBeNull();
+  });
+
+  it("pagamento vencido só conta com a rescisão por fazer; resumo conta por status", () => {
+    const linhas = montarLinhasRescisao([], [
+      resc({ id: 1, colaborador_nome: "A", data_pagamento: "2026-10-20", status_rescisao: "Por fazer" }),
+      resc({ id: 2, colaborador_nome: "B", data_pagamento: "2026-10-20", status_rescisao: "Rescisão OK" }),
+      resc({ id: 3, colaborador_nome: "C", data_pagamento: "2026-10-25" }),
+    ]);
+    expect(linhas.map((l) => pagamentoAtrasado(l, "2026-10-21"))).toEqual([true, false, false]);
+    expect(filtrarRescisoes(linhas, { soAtrasadas: true }, "2026-10-21").map((l) => l.nome)).toEqual(["A"]);
+    expect(resumoPorStatus(linhas)).toMatchObject({ "Por fazer": 2, "Rescisão OK": 1, "Feita": 0 });
+  });
+
+  it("documentação sem retorno e filtro de SST", () => {
+    const linhas = montarLinhasRescisao([], [
+      resc({ id: 1, colaborador_nome: "A", envio_meio: "ZapSign", sst_ok: true }),
+      resc({ id: 2, colaborador_nome: "B", envio_meio: "ZapSign", retorno_meio: "ZapSign" }),
+      resc({ id: 3, colaborador_nome: "C", sst_ok: false }),
+    ]);
+    expect(filtrarRescisoes(linhas, { soSemRetorno: true }).map((l) => l.nome)).toEqual(["A"]);
+    expect(filtrarRescisoes(linhas, { sst: "ok" }).map((l) => l.nome)).toEqual(["A"]);
+    expect(filtrarRescisoes(linhas, { sst: "pendente" }).map((l) => l.nome)).toEqual(["B", "C"]);
+  });
+
+  it("arrastar no kanban grava só o status — e, na 1ª vez da solicitação, as sugestões viram valor", () => {
+    const [comFicha] = montarLinhasRescisao([], [resc({ id: 1, colaborador_nome: "A", status_rescisao: "Por fazer" })]);
+    expect(patchDoMovimento(comFicha, "Feita")).toEqual({ status_rescisao: "Feita" });
+    const semFicha = montarLinhaRescisao(sol({ motivo_solicitacao: "Desligamento sem justa causa", modelo_aviso: "Aviso Prévio Trabalhado", rh_ultima_data_trabalhada: "2026-10-10" }), null);
+    expect(patchDoMovimento(semFicha, "Feita")).toMatchObject({
+      status_rescisao: "Feita", tipo_desligamento: TIPO_SJ_TRABALHADO, data_ultimo_dia: "2026-10-10", data_demissao: "2026-10-17", data_pagamento: "2026-10-22",
+    });
+  });
+
+  it("origem manual e dias na coluna", () => {
+    const [m] = montarLinhasRescisao([], [resc({ origem: "manual", colaborador_nome: "Z", status_desde: "2026-10-18T12:00:00Z" })]);
+    expect(m.origem).toBe("manual");
+    expect(filtrarRescisoes([m], { origem: "manual" })).toHaveLength(1);
+    expect(diasDesde(m.statusDesde, new Date("2026-10-21T12:00:00Z"))).toBe(3);
+    expect(diasDesde(null)).toBeNull();
+  });
+
+  it("nova rescisão à mão: nome obrigatório, empresa da lista", () => {
+    const base = { empresa: null, matricula: null, colaborador_nome: null, contrato: null, data_recebimento: null, solicitado_por: null };
+    expect(erroIdentificacao(base)).toMatch(/nome/);
+    expect(erroIdentificacao({ ...base, colaborador_nome: "X", empresa: "ACME" })).toMatch(/Empresa/);
+    expect(erroIdentificacao({ ...base, colaborador_nome: "X", empresa: "SN" })).toBeNull();
+  });
+
+  it("exporta com a aba RESUMO e as colunas novas", () => {
+    const wb = planilhaDasRescisoes(montarLinhasRescisao([], [resc({ id: 1, colaborador_nome: "X", pontos_ajustados: "OK" })]));
+    expect(wb.SheetNames).toEqual(["RESCISÕES", "RESUMO"]);
+    const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(wb.Sheets["RESCISÕES"]);
+    expect(rows[0]["Pontos ajustados?"]).toBe("OK");
+    const resumo = XLSX.utils.sheet_to_json<unknown[]>(wb.Sheets["RESUMO"], { header: 1 });
+    expect(resumo).toContainEqual(["Por fazer", 1]);
+    expect(resumo).toContainEqual(["TOTAL", 1]);
   });
 });
