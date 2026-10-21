@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { LucideIcon } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
@@ -11,7 +11,6 @@ import { FiltroContratos, passaNoFiltroContratos } from "@/components/solicitaco
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import {
@@ -25,15 +24,14 @@ import {
 } from "@/lib/demissao/solicitacao";
 import { MapaPicker } from "@/components/sst/MapaPicker";
 import {
-  Ban, CheckCircle2, Clock, Download, Eye, FileText, Loader2, MapPin, Search, Stethoscope,
-  ThumbsDown, ThumbsUp, Undo2, XCircle,
+  ArrowUpRight, Ban, CheckCircle2, Clock, Download, Eye, FileText, Loader2, MapPin, Search, Stethoscope,
+  ThumbsDown, ThumbsUp, Undo2, X, XCircle,
 } from "lucide-react";
 import { ConversaSolicitacao } from "@/components/solicitacoes/ConversaSolicitacao";
 import { AvisoCancelada, AvisoPedidoCancelamento } from "@/components/demissao/CancelarDemissao";
 import { BlocoCancelarReconsideracaoRH, BlocoDecidirCancelamentoRH } from "@/components/demissao/CancelarReconsideracaoRH";
 import { TABELA_APROVADOR_SETOR } from "@/components/admin/TrocaFuncaoSetoresUsuario";
-import { TabelaRescisoes } from "@/components/demissao/TabelaRescisoes";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { TABELA_RESCISAO, corStatusRescisao } from "@/lib/demissao/rescisao";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 
@@ -128,21 +126,26 @@ const STATUS_DE_ACAO: Record<Etapa, string[]> = {
   rh: ["Pendente RH"],
 };
 
-function Kpi({ titulo, valor, icone: Icone, cor }: {
-  titulo: string; valor: number; icone: LucideIcon; cor: string;
+/**
+ * Cartão de contagem que também FILTRA (21/10/2026): clicar mostra só os
+ * status que ele soma; clicar de novo volta a mostrar tudo. Antes o número
+ * ficava em cima e o filtro era um dropdown à parte, com outros nomes.
+ */
+function Kpi({ titulo, valor, icone: Icone, cor, ativo, onClick }: {
+  titulo: string; valor: number; icone: LucideIcon; cor: string; ativo?: boolean; onClick?: () => void;
 }) {
   return (
-    <Card>
-      <CardContent className="flex items-center gap-3 py-4">
-        <span className={cn("flex h-10 w-10 shrink-0 items-center justify-center rounded-lg", cor)}>
-          <Icone className="h-5 w-5" />
-        </span>
-        <div className="min-w-0">
-          <p className="text-xs uppercase tracking-wide text-muted-foreground">{titulo}</p>
-          <p className="text-2xl font-bold leading-tight">{valor}</p>
-        </div>
-      </CardContent>
-    </Card>
+    <button type="button" onClick={onClick}
+      className={cn("flex items-center gap-3 rounded-xl border bg-card px-4 py-3 text-left shadow-sm transition hover:border-primary/40",
+        ativo && "border-primary ring-2 ring-primary/30")}>
+      <span className={cn("flex h-9 w-9 shrink-0 items-center justify-center rounded-lg", cor)}>
+        <Icone className="h-[18px] w-[18px]" />
+      </span>
+      <span className="min-w-0">
+        <span className="block text-[11px] font-medium uppercase tracking-wide text-muted-foreground">{titulo}</span>
+        <span className="block text-xl font-bold leading-tight">{valor}</span>
+      </span>
+    </button>
   );
 }
 
@@ -151,7 +154,11 @@ export function PainelDemissoes({ etapa }: { etapa: Etapa }) {
   const [linhas, setLinhas] = useState<SolicitacaoDemissao[]>([]);
   const [carregando, setCarregando] = useState(true);
   const [busca, setBusca] = useState("");
-  const [fStatus, setFStatus] = useState("");
+  // LISTA de status (21/10/2026): os cartões do topo filtram por grupo — "No
+  // SST" são três status — e o chip de um status só é a lista de um.
+  const [fStatus, setFStatus] = useState<string[]>([]);
+  // Mês em que a solicitação foi aberta ("2026-10").
+  const [fMes, setFMes] = useState("");
   // Filtros · Contratos (14/09/2026): o mesmo dropdown do Recrutamento.
   const [fContratos, setFContratos] = useState<string[]>([]);
   const [aberta, setAberta] = useState<SolicitacaoDemissao | null>(null);
@@ -211,18 +218,52 @@ export function PainelDemissoes({ etapa }: { etapa: Etapa }) {
     setLinhas(todas.filter((s) => visivelNaEtapaDemissao(s, etapa, meusSetores)));
   }, [todas, etapa, meusSetores]);
 
+  // O que a etapa tem para resolver vem PRIMEIRO (21/10/2026); dentro de cada
+  // grupo, a mais recente em cima. O RH lê o histórico inteiro, e as do dia
+  // ficavam no meio das concluídas.
+  const precisaDeMim = useCallback((s: SolicitacaoDemissao) =>
+    statusDeAcao.includes(s.status) || (etapa === "rh" && s.status === STATUS_CANCELAMENTO_SOLICITADO), [statusDeAcao, etapa]);
+
   const filtradas = useMemo(() => {
     const q = busca.trim().toLowerCase();
     return linhas.filter((s) => {
-      if (fStatus && s.status !== fStatus) return false;
+      if (fStatus.length && !fStatus.includes(s.status)) return false;
+      if (fMes && (s.criado_em ?? "").slice(0, 7) !== fMes) return false;
       if (!passaNoFiltroContratos(s, "contrato", fContratos)) return false;
       if (!q) return true;
-      return [s.colaborador_nome, s.solicitante_nome, s.contrato, s.colaborador_posto, String(s.id)]
+      return [s.colaborador_nome, s.solicitante_nome, s.contrato, s.colaborador_posto, s.colaborador_cpf, String(s.id)]
         .some((v) => String(v ?? "").toLowerCase().includes(q));
-    });
-  }, [linhas, busca, fStatus, fContratos]);
+    }).sort((a, b) => Number(precisaDeMim(b)) - Number(precisaDeMim(a)));
+  }, [linhas, busca, fStatus, fMes, fContratos, precisaDeMim]);
 
   const contar = (status: string) => linhas.filter((s) => s.status === status).length;
+  const filtroAtivo = fStatus.length > 0 || !!fMes || !!busca || fContratos.length > 0;
+  const limparFiltros = () => { setFStatus([]); setFMes(""); setBusca(""); setFContratos([]); };
+  // Cartão = grupo de status; clicar no grupo que já está ativo desfaz.
+  const filtrarGrupo = (grupo: string[]) =>
+    setFStatus((atual) => (atual.length === grupo.length && grupo.every((g) => atual.includes(g)) ? [] : grupo));
+  const grupoAtivo = (grupo: string[]) => fStatus.length === grupo.length && grupo.every((g) => fStatus.includes(g));
+
+  // O status da RESCISÃO de cada solicitação (só no RH, 21/10/2026): o
+  // controle mudou para o módulo Rescisões, e a lista daqui mostra em que pé
+  // ele está, com o atalho para lá. Sem ficha ainda = "Por fazer".
+  const [statusRescisao, setStatusRescisao] = useState<Map<number, string>>(new Map());
+  useEffect(() => {
+    if (etapa !== "rh") return;
+    (async () => {
+      const mapa = new Map<number, string>();
+      for (let de = 0; ; de += 1000) {
+        const { data, error } = await sb.from(TABELA_RESCISAO).select("solicitacao_id,status_rescisao")
+          .not("solicitacao_id", "is", null).order("id").range(de, de + 999);
+        if (error) { console.warn("RH_RESCISAO:", error.message); break; }
+        for (const r of (data ?? []) as { solicitacao_id: number; status_rescisao: string | null }[]) {
+          if (r.status_rescisao) mapa.set(r.solicitacao_id, r.status_rescisao);
+        }
+        if (!data || data.length < 1000) break;
+      }
+      setStatusRescisao(mapa);
+    })();
+  }, [etapa, todas]);
 
   // Quem decidiu: o nome que fica gravado na solicitação.
   const [quemSou, setQuemSou] = useState("");
@@ -244,150 +285,183 @@ export function PainelDemissoes({ etapa }: { etapa: Etapa }) {
     return true;
   };
 
-  // A fila de sempre (a tabela simples). No RH ela vira a segunda aba.
-  const filaDoFluxo = (
-    <Card>
-      <CardHeader className="gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <CardTitle className="text-base">Solicitações</CardTitle>
-        <div className="flex flex-wrap items-center gap-2">
-          <FiltroContratos linhas={linhas} campo="contrato" selecionados={fContratos} onChange={setFContratos} />
-          <div className="relative">
-            <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-            <Input className="w-56 pl-8" placeholder="Colaborador, solicitante, contrato…"
-              value={busca} onChange={(e) => setBusca(e.target.value)} />
-          </div>
-          <Select value={fStatus || "todos"} onValueChange={(v) => setFStatus(v === "todos" ? "" : v)}>
-            <SelectTrigger className="w-52"><SelectValue placeholder="Todos os status" /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="todos">Todos os status</SelectItem>
-              {statusVisiveis.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}
-            </SelectContent>
-          </Select>
-          <Button variant="outline" onClick={carregar} disabled={carregando}>
-            {carregando ? <Loader2 className="h-4 w-4 animate-spin" /> : "Atualizar"}
-          </Button>
-        </div>
-      </CardHeader>
-      <CardContent>
-        {carregando ? (
-          <p className="py-10 text-center text-sm text-muted-foreground">Carregando…</p>
-        ) : filtradas.length === 0 ? (
-          <p className="py-10 text-center text-sm text-muted-foreground">
-            {linhas.length === 0
-              ? "Nenhuma solicitação de demissão por aqui ainda."
-              : "Nada bate com o filtro atual."}
-          </p>
-        ) : (
-          <div className="overflow-x-auto">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="w-16">#</TableHead>
-                  <TableHead>Colaborador</TableHead>
-                  <TableHead className="hidden md:table-cell">Contrato</TableHead>
-                  <TableHead className="hidden lg:table-cell">Solicitante</TableHead>
-                  <TableHead className="hidden sm:table-cell">Aberta em</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead className="w-24" />
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {filtradas.map((s) => (
-                  <TableRow key={s.id} className="cursor-pointer" onClick={() => setAberta(s)}>
-                    <TableCell className="text-muted-foreground">{s.id}</TableCell>
-                    <TableCell>
-                      <div className="font-medium">{s.colaborador_nome}</div>
-                      <div className="text-xs text-muted-foreground">{s.colaborador_posto || "—"}</div>
-                    </TableCell>
-                    <TableCell className="hidden md:table-cell">{s.contrato || "—"}</TableCell>
-                    <TableCell className="hidden lg:table-cell">{s.solicitante_nome || "—"}</TableCell>
-                    <TableCell className="hidden sm:table-cell">{fmtData(s.criado_em)}</TableCell>
-                    <TableCell>
-                      <div className="flex flex-wrap items-center gap-1">
-                        <Badge variant="outline" className={corDoStatus(s.status)}>
-                          {s.status === STATUS_CANCELAMENTO_SOLICITADO && <Ban className="mr-1 h-3 w-3" />}
-                          {s.status}
-                        </Badge>
-                        {/* Um card devolvido está no MESMO status de um que
-                            nunca saiu do Operacional. Sem o selo, os dois se
-                            parecem na lista e o retrabalho some no meio. */}
-                        {s.devolvido_em && (
-                          <Badge variant="outline" className="border-amber-300 bg-amber-100 text-amber-800">
-                            <Undo2 className="mr-1 h-3 w-3" /> Devolvida
-                          </Badge>
-                        )}
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <Button variant="ghost" size="sm" onClick={(e) => { e.stopPropagation(); setAberta(s); }}>
-                        {statusDeAcao.includes(s.status) || (etapa === "rh" && s.status === STATUS_CANCELAMENTO_SOLICITADO) ? "Analisar" : "Ver"}
-                      </Button>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </div>
-        )}
-      </CardContent>
-    </Card>
+  // UMA TELA SÓ (21/10/2026). O RH tinha duas abas — "Rescisões" (a planilha
+  // do RH) e "Fila do fluxo" —, e o pedido foi "tira a fila de fluxo, deixa
+  // tudo numa tela só, mais simples". A planilha virou o módulo Rescisões
+  // (kanban, mig 20261021000030); aqui ficou a lista das solicitações, com o
+  // status da rescisão numa coluna e o atalho para lá. Os cartões do topo são
+  // o filtro de status; os chips abaixo deles, o status um a um.
+  const [exibir, setExibir] = useState(100);
+  useEffect(() => { setExibir(100); }, [fStatus, fMes, busca, fContratos]);
+  const statusComLinhas = useMemo(
+    () => statusVisiveis.map((st) => [st, linhas.filter((s) => s.status === st).length] as const).filter(([, n]) => n > 0),
+    [statusVisiveis, linhas],
   );
+
+  const kpis: { titulo: string; grupo: string[]; icone: LucideIcon; cor: string }[] =
+    etapa === "analista" || etapa === "operacional" || etapa === "diretoria" ? [
+      { titulo: etapa === "analista" ? "Em aprovação" : "Aguardando você",
+        grupo: etapa === "diretoria" ? ["Pendente Diretoria"] : etapa === "operacional" ? ["Pendente Operacional"] : ["Pendente Operacional", "Pendente Diretoria"],
+        icone: Clock, cor: "bg-yellow-100 text-yellow-700" },
+      { titulo: "No RH", grupo: ["Pendente RH"], icone: FileText, cor: "bg-purple-100 text-purple-700" },
+      // "No SST" soma os dois status da etapa: para quem acompanha de fora,
+      // recebida e a agendar são o mesmo lugar da fila.
+      { titulo: "No SST", grupo: ["Pendente SST", STATUS_SST_RECEBIDA], icone: Stethoscope, cor: "bg-cyan-100 text-cyan-700" },
+      { titulo: "Agendadas", grupo: [STATUS_SST_AGENDADO, "Concluída"], icone: CheckCircle2, cor: "bg-green-100 text-green-700" },
+      { titulo: "Reprovadas", grupo: ["Reprovada"], icone: XCircle, cor: "bg-red-100 text-red-700" },
+    ] : etapa === "sst" ? [
+      { titulo: "A receber", grupo: ["Pendente SST"], icone: Clock, cor: "bg-cyan-100 text-cyan-700" },
+      { titulo: "A agendar", grupo: [STATUS_SST_RECEBIDA], icone: Stethoscope, cor: "bg-sky-100 text-sky-700" },
+      { titulo: "Agendadas", grupo: [STATUS_SST_AGENDADO], icone: CheckCircle2, cor: "bg-emerald-100 text-emerald-700" },
+    ] : [
+      { titulo: "Aguardando você", grupo: ["Pendente RH"], icone: Clock, cor: "bg-purple-100 text-purple-700" },
+      { titulo: "Pedidos de cancelamento", grupo: [STATUS_CANCELAMENTO_SOLICITADO], icone: Ban, cor: "bg-red-600 text-white" },
+      { titulo: "No SST", grupo: ["Pendente SST", STATUS_SST_RECEBIDA], icone: Stethoscope, cor: "bg-cyan-100 text-cyan-700" },
+      { titulo: "Concluídas", grupo: [STATUS_SST_AGENDADO, STATUS_SST_ASO_VALIDO, "Concluída"], icone: CheckCircle2, cor: "bg-green-100 text-green-700" },
+    ];
 
   return (
     <>
-      {/* 5 cartões para quem vê o fluxo inteiro (Operacional e analista), 3 no
-          SST e 2 no RH — o grid acompanha em vez de espremer todo mundo em
-          quatro colunas fixas, que deixavam o RH com dois cartões perdidos. */}
-      <div className={cn("mb-5 grid gap-3 sm:grid-cols-2",
-        etapa === "analista" || etapa === "operacional" || etapa === "diretoria" ? "lg:grid-cols-3 xl:grid-cols-5"
-        : etapa === "sst" ? "lg:grid-cols-3" : etapa === "rh" ? "lg:grid-cols-4" : "")}>
-        {etapa === "analista" || etapa === "operacional" || etapa === "diretoria" ? (
-          <>
-            <Kpi titulo={etapa === "analista" ? "Em aprovação" : "Aguardando você"}
-                 valor={etapa === "diretoria" ? contar("Pendente Diretoria") : etapa === "operacional" ? contar("Pendente Operacional") : contar("Pendente Operacional") + contar("Pendente Diretoria")}
-                 icone={Clock} cor="bg-yellow-100 text-yellow-700" />
-            <Kpi titulo="No RH" valor={contar("Pendente RH")} icone={FileText} cor="bg-purple-100 text-purple-700" />
-            {/* "No SST" soma os dois status da etapa: para quem acompanha de
-                fora, recebida e a agendar são o mesmo lugar da fila. */}
-            <Kpi titulo="No SST" valor={contar("Pendente SST") + contar(STATUS_SST_RECEBIDA)}
-                 icone={Stethoscope} cor="bg-cyan-100 text-cyan-700" />
-            <Kpi titulo="Agendadas" valor={contar(STATUS_SST_AGENDADO) + contar("Concluída")}
-                 icone={CheckCircle2} cor="bg-green-100 text-green-700" />
-            <Kpi titulo="Reprovadas" valor={contar("Reprovada")} icone={XCircle} cor="bg-red-100 text-red-700" />
-          </>
-        ) : etapa === "sst" ? (
-          <>
-            <Kpi titulo="A receber" valor={contar("Pendente SST")} icone={Clock} cor="bg-cyan-100 text-cyan-700" />
-            <Kpi titulo="A agendar" valor={contar(STATUS_SST_RECEBIDA)} icone={Stethoscope} cor="bg-sky-100 text-sky-700" />
-            <Kpi titulo="Agendadas" valor={contar(STATUS_SST_AGENDADO)} icone={CheckCircle2} cor="bg-emerald-100 text-emerald-700" />
-          </>
-        ) : (
-          <>
-            <Kpi titulo="Aguardando você" valor={contar("Pendente RH")} icone={Clock} cor="bg-purple-100 text-purple-700" />
-            <Kpi titulo="Pedidos de cancelamento" valor={contar(STATUS_CANCELAMENTO_SOLICITADO)} icone={Ban} cor="bg-red-600 text-white" />
-            <Kpi titulo="No SST" valor={contar("Pendente SST") + contar(STATUS_SST_RECEBIDA)}
-                 icone={Stethoscope} cor="bg-cyan-100 text-cyan-700" />
-            <Kpi titulo="Agendadas" valor={contar(STATUS_SST_AGENDADO) + contar("Concluída")}
-                 icone={CheckCircle2} cor="bg-green-100 text-green-700" />
-          </>
-        )}
+      <div className={cn("mb-4 grid gap-3 sm:grid-cols-2",
+        kpis.length >= 5 ? "lg:grid-cols-3 xl:grid-cols-5" : kpis.length === 4 ? "lg:grid-cols-4" : "lg:grid-cols-3")}>
+        {kpis.map((k) => (
+          <Kpi key={k.titulo} titulo={k.titulo} valor={k.grupo.reduce((n, st) => n + contar(st), 0)} icone={k.icone} cor={k.cor}
+            ativo={grupoAtivo(k.grupo)} onClick={() => filtrarGrupo(k.grupo)} />
+        ))}
       </div>
 
-      {/* RH (19/10/2026): a tabela no formato da planilha de rescisão é a
-          principal; a fila do fluxo de antes continua na outra aba. */}
-      {etapa === "rh" ? (
-        <Tabs defaultValue="rescisoes">
-          <TabsList className="mb-3">
-            <TabsTrigger value="rescisoes">Rescisões</TabsTrigger>
-            <TabsTrigger value="fila">Fila do fluxo</TabsTrigger>
-          </TabsList>
-          <TabsContent value="rescisoes">
-            <TabelaRescisoes solicitacoes={linhas} carregandoSolicitacoes={carregando}
-              onAbrirSolicitacao={setAberta} quemSou={quemSou} onAtualizar={carregar} />
-          </TabsContent>
-          <TabsContent value="fila">{filaDoFluxo}</TabsContent>
-        </Tabs>
-      ) : filaDoFluxo}
+      <Card>
+        <CardHeader className="gap-3 pb-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="relative min-w-[220px] flex-1 sm:max-w-sm">
+              <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+              <Input className="pl-8" placeholder="Colaborador, CPF, solicitante, contrato, nº…"
+                value={busca} onChange={(e) => setBusca(e.target.value)} />
+            </div>
+            <FiltroContratos linhas={linhas} campo="contrato" selecionados={fContratos} onChange={setFContratos} rotulo="Contratos" />
+            <div className="flex items-center gap-1.5 text-sm text-muted-foreground">
+              Aberta em
+              <Input type="month" className="w-[150px]" value={fMes} onChange={(e) => setFMes(e.target.value)} />
+            </div>
+            {filtroAtivo && (
+              <Button variant="ghost" size="sm" onClick={limparFiltros}><X className="mr-1 h-4 w-4" /> Limpar</Button>
+            )}
+            <div className="ml-auto flex items-center gap-2">
+              {etapa === "rh" && (
+                <Button variant="outline" asChild>
+                  <Link to="/app/rh/rescisoes">Rescisões <ArrowUpRight className="ml-1 h-4 w-4" /></Link>
+                </Button>
+              )}
+              <Button variant="outline" onClick={carregar} disabled={carregando}>
+                {carregando ? <Loader2 className="h-4 w-4 animate-spin" /> : "Atualizar"}
+              </Button>
+            </div>
+          </div>
+          {statusComLinhas.length > 1 && (
+            <div className="flex flex-wrap gap-1.5">
+              {statusComLinhas.map(([st, n]) => {
+                const ativo = fStatus.length === 1 && fStatus[0] === st;
+                return (
+                  <button key={st} type="button" onClick={() => setFStatus(ativo ? [] : [st])}
+                    className={cn("rounded-full border px-2.5 py-0.5 text-xs font-medium transition", corDoStatus(st),
+                      ativo ? "ring-2 ring-primary ring-offset-1" : "opacity-80 hover:opacity-100")}>
+                    {st} <b>{n}</b>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </CardHeader>
+        <CardContent>
+          <CardTitle className="mb-2 text-sm font-medium text-muted-foreground">
+            {filtradas.length} de {linhas.length} solicitação(ões)
+          </CardTitle>
+          {carregando ? (
+            <p className="py-10 text-center text-sm text-muted-foreground">Carregando…</p>
+          ) : filtradas.length === 0 ? (
+            <p className="py-10 text-center text-sm text-muted-foreground">
+              {linhas.length === 0
+                ? "Nenhuma solicitação de demissão por aqui ainda."
+                : "Nada bate com o filtro atual."}
+            </p>
+          ) : (
+            <div className="overflow-x-auto">
+              <Table className="text-[13px]">
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Colaborador</TableHead>
+                    <TableHead className="hidden md:table-cell">Contrato</TableHead>
+                    <TableHead className="hidden lg:table-cell">Solicitante</TableHead>
+                    <TableHead className="hidden sm:table-cell">Datas</TableHead>
+                    <TableHead>Status</TableHead>
+                    {etapa === "rh" && <TableHead className="hidden xl:table-cell">Rescisão</TableHead>}
+                    <TableHead className="w-24" />
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {filtradas.slice(0, exibir).map((s) => {
+                    const minha = precisaDeMim(s);
+                    return (
+                      <TableRow key={s.id} className={cn("cursor-pointer align-top", minha && "bg-primary/[0.03]")} onClick={() => setAberta(s)}>
+                        <TableCell>
+                          <div className="font-medium leading-snug">{s.colaborador_nome}</div>
+                          <div className="text-xs text-muted-foreground">#{s.id} · {s.colaborador_posto || "—"}</div>
+                        </TableCell>
+                        <TableCell className="hidden max-w-[260px] text-xs md:table-cell">{s.contrato || "—"}</TableCell>
+                        <TableCell className="hidden text-xs lg:table-cell">{s.solicitante_nome || "—"}</TableCell>
+                        <TableCell className="hidden text-xs sm:table-cell">
+                          <dl className="grid grid-cols-[auto_1fr] gap-x-2">
+                            <dt className="text-muted-foreground">Aberta</dt><dd>{fmtData(s.criado_em)}</dd>
+                            {s.data_aviso && <><dt className="text-muted-foreground">Aviso</dt><dd>{fmtData(s.data_aviso)}</dd></>}
+                            {s.rh_ultima_data_trabalhada && <><dt className="text-muted-foreground">Últ. dia</dt><dd>{fmtData(s.rh_ultima_data_trabalhada)}</dd></>}
+                          </dl>
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex flex-wrap items-center gap-1">
+                            <Badge variant="outline" className={cn("whitespace-normal text-left", corDoStatus(s.status))}>
+                              {s.status === STATUS_CANCELAMENTO_SOLICITADO && <Ban className="mr-1 h-3 w-3" />}
+                              {s.status}
+                            </Badge>
+                            {/* Um card devolvido está no MESMO status de um que
+                                nunca saiu do Operacional. Sem o selo, os dois se
+                                parecem na lista e o retrabalho some no meio. */}
+                            {s.devolvido_em && (
+                              <Badge variant="outline" className="border-amber-300 bg-amber-100 text-amber-800">
+                                <Undo2 className="mr-1 h-3 w-3" /> Devolvida
+                              </Badge>
+                            )}
+                          </div>
+                        </TableCell>
+                        {etapa === "rh" && (
+                          <TableCell className="hidden xl:table-cell">
+                            {s.status !== "Cancelada" && (
+                              <Badge variant="outline" className={cn("whitespace-normal text-left text-[11px]", corStatusRescisao(statusRescisao.get(s.id) ?? "Por fazer"))}>
+                                {statusRescisao.get(s.id) ?? "Por fazer"}
+                              </Badge>
+                            )}
+                          </TableCell>
+                        )}
+                        <TableCell className="text-right">
+                          <Button variant={minha ? "default" : "ghost"} size="sm" onClick={(e) => { e.stopPropagation(); setAberta(s); }}>
+                            {minha ? "Analisar" : "Ver"}
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+              {filtradas.length > exibir && (
+                <div className="mt-3 text-center">
+                  <Button variant="outline" onClick={() => setExibir((n) => n + 200)}>
+                    Mostrar mais ({filtradas.length - exibir} restantes)
+                  </Button>
+                </div>
+              )}
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       <DetalheSolicitacao
         solicitacao={aberta} etapa={etapa} quemSou={quemSou}

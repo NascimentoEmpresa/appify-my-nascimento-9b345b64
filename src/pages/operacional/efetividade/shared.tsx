@@ -7,8 +7,9 @@
 //   /app/operacional/efetividade/posto      3. Detalhamento do Posto
 //   /app/operacional/efetividade/faltas     4. Faltas e Coberturas
 //   /app/operacional/efetividade/historico  5. Histórico e Indicadores
+//   /app/operacional/efetividade/mensal     6. Efetividade Mensal (21/10/2026)
 //
-// Um menu só (ope_efetividade) governa as cinco pelo prefixo da rota. Os
+// Um menu só (ope_efetividade) governa as seis pelo prefixo da rota. Os
 // filtros moram na URL (?d=AAAA-MM-DD&c=empresa-filial&enc=&t=&p=) para a
 // troca de aba manter a data e o contrato, e para o link poder ser mandado
 // no WhatsApp do encarregado.
@@ -23,7 +24,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import {
-  AlertTriangle, BarChart3, CalendarDays, CheckCircle2, CircleDashed, Clock, FileText, History,
+  AlertTriangle, BarChart3, CalendarDays, CalendarRange, CheckCircle2, CircleDashed, Clock, FileText, History,
   Loader2, MapPin, Phone, RefreshCw, RotateCcw, ShieldAlert, UserCheck, Users, XCircle,
 } from "lucide-react";
 import { useEfetBase, useEfetOcorrencias } from "@/hooks/useEfetividade";
@@ -134,6 +135,7 @@ const ABAS = [
   { to: `${BASE_ROTA}/posto`, label: "Detalhamento do Posto", icon: FileText },
   { to: `${BASE_ROTA}/faltas`, label: "Faltas e Coberturas", icon: AlertTriangle },
   { to: `${BASE_ROTA}/historico`, label: "Histórico e Indicadores", icon: History },
+  { to: `${BASE_ROTA}/mensal`, label: "Efetividade Mensal", icon: CalendarRange },
 ];
 
 export function CabecalhoEfetividade({
@@ -189,7 +191,7 @@ export function CabecalhoEfetividade({
         </div>
       </div>
 
-      <nav className="grid grid-cols-2 gap-2 md:grid-cols-5">
+      <nav className="grid grid-cols-2 gap-2 md:grid-cols-3 xl:grid-cols-6">
         {ABAS.map((a, i) => {
           const ativo = a.exato ? pathname === a.to : pathname.startsWith(a.to) && !(a.to === `${BASE_ROTA}/posto` && pathname.startsWith(`${BASE_ROTA}/postos`));
           return (

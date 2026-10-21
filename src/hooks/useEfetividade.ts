@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useScreenAccess } from "@/hooks/useScreenAccess";
 import {
@@ -50,6 +50,25 @@ export function useEfetBase(ini: string | null, fim: string | null, empresa: num
   });
   const preps: ColaboradorPrep[] = useMemo(() => (q.data?.colaboradores ?? []).map(prepararColaborador), [q.data]);
   return { ...q, preps };
+}
+
+/**
+ * Vários períodos de uma vez (Efetividade Mensal: um por mês), a empresa toda.
+ * Mesma chave do useEfetBase — o cache é o mesmo das outras abas. Mês fechado
+ * não muda mais: fica 1h em cache; o corrente, 5 min.
+ */
+export function useEfetBasesPeriodos(periodos: { ini: string; fim: string; fechado: boolean }[]) {
+  return useQueries({
+    queries: periodos.map((p) => ({
+      queryKey: ["efetividade", "base", p.ini, p.fim, null, null],
+      staleTime: p.fechado ? 60 * 60_000 : 5 * 60_000,
+      queryFn: async (): Promise<BaseEfet> => {
+        const { data, error } = await sb.rpc<BaseEfet>("ope_efet_base", { p_ini: p.ini, p_fim: p.fim, p_empresa: null, p_filial: null });
+        if (error) throw error;
+        return data ?? vazio(p.ini, p.fim);
+      },
+    })),
+  });
 }
 
 export function useEfetOcorrencias(ini: string | null, fim: string | null) {

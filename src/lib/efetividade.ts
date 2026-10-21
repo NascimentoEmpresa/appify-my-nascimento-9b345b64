@@ -191,13 +191,25 @@ export const FALTA_SO_DEPOIS_DE = 12 * 60;
 /** E nem antes de passar este tanto da entrada prevista (turno da tarde/noite). */
 const FOLGA_APOS_ENTRADA = 60;
 
+// O formatador é criado UMA vez e o resultado fica guardado pelo minuto
+// (21/10/2026): avaliarDia chama isto para cada pessoa × dia, e criar um
+// Intl.DateTimeFormat por chamada levava 5,5 s para avaliar um mês da
+// empresa toda (2.400 pessoas × 30 dias) na Efetividade Mensal.
+let fmtBrasilia: Intl.DateTimeFormat | null = null;
+let ultimoBrasilia: { minutoUtc: number; r: { data: string; minuto: number } } | null = null;
+
 /** Data (AAAA-MM-DD) e minuto do dia no horário de Brasília — a regra do meio-dia é de lá. */
 export function agoraBrasilia(agora: Date = new Date()): { data: string; minuto: number } {
-  const p = new Intl.DateTimeFormat("en-CA", {
+  const minutoUtc = Math.floor(agora.getTime() / 60_000);
+  if (ultimoBrasilia?.minutoUtc === minutoUtc) return { ...ultimoBrasilia.r };
+  fmtBrasilia ??= new Intl.DateTimeFormat("en-CA", {
     timeZone: "America/Sao_Paulo", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23",
-  }).formatToParts(agora);
+  });
+  const p = fmtBrasilia.formatToParts(agora);
   const v = (t: string) => p.find((x) => x.type === t)?.value ?? "00";
-  return { data: `${v("year")}-${v("month")}-${v("day")}`, minuto: +v("hour") * 60 + +v("minute") };
+  const r = { data: `${v("year")}-${v("month")}-${v("day")}`, minuto: +v("hour") * 60 + +v("minute") };
+  ultimoBrasilia = { minutoUtc, r };
+  return { ...r };
 }
 
 const iso = (d: Date) => d.toISOString().slice(0, 10);
