@@ -13,7 +13,7 @@ const texto = (c: Celula) => (typeof c === "number" ? fmtMoney(c) : c);
 export function DetalheComposicao({ composicao, onClose }: { composicao: Composicao | null; onClose: () => void }) {
   return (
     <Dialog open={!!composicao} onOpenChange={(o) => { if (!o) onClose(); }}>
-      <DialogContent className="max-h-[90vh] max-w-5xl overflow-y-auto">
+      <DialogContent className="max-h-[90vh] w-[96vw] max-w-[1400px] overflow-x-hidden overflow-y-auto">
         {composicao && (
           <>
             <DialogHeader>
@@ -48,7 +48,7 @@ export function DetalheComposicao({ composicao, onClose }: { composicao: Composi
             {composicao.tabela && (
               <div>
                 <h3 className="mb-1.5 text-sm font-semibold">{composicao.tabela.titulo}</h3>
-                <div className="overflow-x-auto rounded-md border">
+                <div className="rounded-md border [&>div]:overflow-x-hidden">
                   <Table className="text-xs tabular-nums">
                     <TableHeader>
                       <TableRow>
@@ -63,7 +63,7 @@ export function DetalheComposicao({ composicao, onClose }: { composicao: Composi
                           {linha.map((c, j) => (
                             <TableCell
                               key={j}
-                              className={`${composicao.tabela!.colunas[j]?.alinhar === "left" ? "max-w-[240px] truncate" : "whitespace-nowrap text-right"}`}
+                              className={`${composicao.tabela!.colunas[j]?.alinhar === "left" ? "break-words" : "whitespace-nowrap text-right"}`}
                               title={typeof c === "string" ? c : undefined}
                             >
                               {texto(c)}
