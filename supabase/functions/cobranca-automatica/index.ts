@@ -128,6 +128,11 @@ function envioConfigurado(): boolean {
 async function enviarEmailSmtp(para: string[], cc: string[], assunto: string, corpoHtml: string) {
   const porta = Number(Deno.env.get("COBRANCA_SMTP_PORT") ?? 465);
   const usuario = Deno.env.get("COBRANCA_SMTP_USER")!;
+  // Quem AUTENTICA nem sempre é quem ASSINA: no servidor da caixa (UOL) os dois
+  // são `nfe2@haggltda.com.br`, mas em serviço transacional o usuário é um nome
+  // fixo do serviço ("resend") e pôr isso no From produz remetente inválido.
+  // Sem COBRANCA_SMTP_FROM, nada muda em relação a hoje.
+  const remetente = Deno.env.get("COBRANCA_SMTP_FROM") || usuario;
   const client = new SMTPClient({
     connection: {
       hostname: Deno.env.get("COBRANCA_SMTP_HOST")!,
@@ -137,7 +142,7 @@ async function enviarEmailSmtp(para: string[], cc: string[], assunto: string, co
     },
   });
   try {
-    await client.send({ from: usuario, to: para, cc: cc.length ? cc : undefined, subject: assunto, html: corpoHtml, content: "auto" });
+    await client.send({ from: remetente, to: para, cc: cc.length ? cc : undefined, subject: assunto, html: corpoHtml, content: "auto" });
   } finally {
     try { await client.close(); } catch { /* conexão já caiu: o erro que interessa é o do envio */ }
   }
