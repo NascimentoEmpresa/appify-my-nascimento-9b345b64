@@ -30,6 +30,7 @@ import {
 import { rotuloMes, type Kpi } from "./sistemas";
 import { LinhaKpis, SeletorPeriodo, usePeriodo } from "./componentes";
 import { AbaAcompanhamento } from "./AcompanhamentoVagas";
+import { AbaRecrutadores } from "./DashboardRecrutadores";
 import { rotuloEtapaCandidato } from "@/lib/recrutamento/rotuloEtapa";
 
 // =====================================================================
@@ -56,6 +57,10 @@ import { rotuloEtapaCandidato } from "@/lib/recrutamento/rotuloEtapa";
 // e os gráficos de etapa. A lista tem busca, filtro por desfecho e ordem;
 // clicar numa vaga abre o dashboard dela. Critério de cada recorte em
 // vagasDoRecorte — o mesmo da conta que desenhou o gráfico.
+//
+// 21/10/2026 — aba "DASHBOARD - RECRUTADORES" (DashboardRecrutadores.tsx):
+// ranking, histórico e vagas de cada responsável pela vaga, com as
+// movimentações de quem as fez (mig 20261021000150). ?aba=recrutadores abre direto.
 // =====================================================================
 
 const COR_ETAPA: Record<string, string> = {
@@ -77,7 +82,7 @@ export default function VagasPainel() {
   // ou clicando numa linha das outras abas. ?vaga=<nº> abre direto.
   const [params, setParams] = useSearchParams();
   const vagaUrl = Number(params.get("vaga")) || null;
-  const [aba, setAba] = useState(vagaUrl ? "vaga" : params.get("aba") === "acompanhamento" ? "acomp" : "geral");
+  const [aba, setAba] = useState(vagaUrl ? "vaga" : params.get("aba") === "acompanhamento" ? "acomp" : params.get("aba") === "recrutadores" ? "recrutadores" : "geral");
   const [vagaId, setVagaIdSt] = useState<number | null>(vagaUrl);
   const setVagaId = (id: number | null) => {
     setVagaIdSt(id);
@@ -119,12 +124,17 @@ export default function VagasPainel() {
             <TabsTrigger value="abertas">Em aberto agora</TabsTrigger>
             <TabsTrigger value="vagas">Todas as vagas</TabsTrigger>
             <TabsTrigger value="vaga" className="gap-1.5"><Briefcase className="h-3.5 w-3.5" /> Por vaga</TabsTrigger>
+            {/* Por recrutador: ranking, histórico e vagas de cada um (mig 20261021000150). */}
+            <TabsTrigger value="recrutadores" className="gap-1.5"><Users className="h-3.5 w-3.5" /> DASHBOARD - RECRUTADORES</TabsTrigger>
           </TabsList>
           <TabsContent value="geral" className="space-y-4"><AbaGeral p={p} meses={periodo.meses} onRecorte={setRecorte} onAbrir={abrirVaga} /></TabsContent>
           <TabsContent value="acomp" className="space-y-4"><AbaAcompanhamento p={p} onAbrir={abrirVaga} /></TabsContent>
           <TabsContent value="etapas" className="space-y-4"><AbaEtapas p={p} etapas={etapas} onRecorte={setRecorte} /></TabsContent>
           <TabsContent value="abertas" className="space-y-4"><AbaAbertas p={p} onAbrir={abrirVaga} /></TabsContent>
           <TabsContent value="vagas" className="space-y-4"><AbaVagas p={p} onAbrir={abrirVaga} /></TabsContent>
+          <TabsContent value="recrutadores" className="space-y-4">
+            <AbaRecrutadores p={p} filtro={periodo.filtro} meses={periodo.meses} onRecorte={setRecorte} onAbrir={abrirVaga} />
+          </TabsContent>
           <TabsContent value="vaga" className="space-y-4">
             <AbaPorVaga todas={bruto?.vagas ?? []} painel={p} etapas={etapas} vagaId={vagaId} onEscolher={setVagaId} />
           </TabsContent>
