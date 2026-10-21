@@ -267,6 +267,7 @@ import EfetividadeControlePostos from "./pages/operacional/efetividade/ControleP
 import EfetividadeDetalhePosto from "./pages/operacional/efetividade/DetalhePosto";
 import EfetividadeFaltasCoberturas from "./pages/operacional/efetividade/FaltasCoberturas";
 import EfetividadeHistorico from "./pages/operacional/efetividade/HistoricoIndicadores";
+import EfetividadeMensal from "./pages/operacional/efetividade/EfetividadeMensal";
 import FinanceiroConferenciaPonto from "./pages/financeiro/ConferenciaPonto";
 import LaudosEpi from "./pages/sst/LaudosEpi";
 import ControleCa from "./pages/sst/ControleCa";
@@ -935,6 +936,8 @@ const App = () => (
             <Route path="operacional/efetividade/posto" element={<EfetividadeDetalhePosto />} />
             <Route path="operacional/efetividade/faltas" element={<EfetividadeFaltasCoberturas />} />
             <Route path="operacional/efetividade/historico" element={<EfetividadeHistorico />} />
+            {/* 6ª aba (21/10/2026): o painel mensal dos contratos, mesmo menu ope_efetividade. */}
+            <Route path="operacional/efetividade/mensal" element={<EfetividadeMensal />} />
             <Route path="financeiro/conferencia-ponto" element={<FinanceiroConferenciaPonto />} />
             {/* Dashboard de Pontos (mig 274): a mesma tela do painel do RH, com
                 menu próprio em cada módulo (financeiro_/operacional_dashboard_pontos). */}
