@@ -43,6 +43,7 @@ import {
   TIPOS_RATEIO, ROTULO_CRITERIO, SEM_CONTRATO, acharContrato, calcularRateio, competenciaParaData,
   competenciaRotulo, criterioPadrao, extrairLinhasPorContrato, fmtMoeda, fmtPct,
   extrairLinhasDoPdf, identificarLayoutPdf, linhasDoLayout, totalDoPdf,
+  basesPorParte, partesDoPdf, ROTULO_PARTE, type ParteDoPdf, type ParteGuia,
   lerPlanilhaJusBrasil, resumirRateio, rotuloTipo, somarPorContrato, tipoUsaPdf,
   type ContratoRef, type CriterioRateio, type ItemRateio, type LinhaPlanilhaJus, type TipoRateio,
 } from "@/lib/rh/rateioDespesas";
@@ -58,6 +59,8 @@ interface Base {
   contrato_nome: string;
   base: number;
   qtd: number | null;
+  /** Guia com partes (FGTS + consignado): quanto da base veio de cada uma. */
+  porParte?: Partial<Record<ParteGuia, number>>;
 }
 
 const mesAtual = () => new Date().toISOString().slice(0, 7);
@@ -216,7 +219,10 @@ function Editor({ id, onFechar, onSalvo }: { id: string | null; onFechar: () => 
   const [lendo, setLendo] = useState(false);
   const [avisoPdf, setAvisoPdf] = useState<string | null>(null);
   // Do PDF lido agora (não é gravado): total que ele declara e qual layout foi reconhecido.
-  const [pdfInfo, setPdfInfo] = useState<{ total: number | null; rotulo: string } | null>(null);
+  // partes: guia do FGTS com consignado — cada parte com o total que o PDF declara para ela.
+  const [pdfInfo, setPdfInfo] = useState<{ total: number | null; rotulo: string; partes?: ParteDoPdf[] } | null>(null);
+  // Partes que a pessoa tirou do rateio (ex.: ratear só o FGTS desta guia).
+  const [partesFora, setPartesFora] = useState<ParteGuia[]>([]);
   // Texto do PDF lido agora (para a I.A reler sem pedir o arquivo de novo) e o que ela respondeu.
   const [linhasBrutas, setLinhasBrutas] = useState<string[] | null>(null);
   const [lendoIa, setLendoIa] = useState(false);
@@ -270,16 +276,34 @@ function Editor({ id, onFechar, onSalvo }: { id: string | null; onFechar: () => 
   const valor = Number(valorTxt) || 0;
   const usaPdf = tipoUsaPdf(tipo);
 
-  // Base efetiva: PDF com linhas → soma por contrato; senão a tabela de bases.
+  // Linhas do PDF que entram no rateio (sem as da parte que a pessoa tirou).
+  const linhasAtivas = useMemo(
+    () => linhasPdf.filter((l) => !l.parte || !partesFora.includes(l.parte)),
+    [linhasPdf, partesFora],
+  );
+  // Partes presentes: do PDF lido agora (com total) ou, num rateio salvo, das linhas gravadas (sem total).
+  const partes: ParteDoPdf[] = useMemo(() => {
+    if (pdfInfo?.partes?.length) return pdfInfo.partes;
+    const ps = [...new Set(linhasPdf.map((l) => l.parte).filter((p): p is ParteGuia => !!p))];
+    return ps.map((p) => ({ parte: p, rotulo: ROTULO_PARTE[p], total: null }));
+  }, [pdfInfo, linhasPdf]);
+  const partesAtivas = partes.filter((p) => !partesFora.includes(p.parte));
+  const comPartes = partes.length > 1;
+
+  // Base efetiva: PDF com linhas → soma por contrato (guia com partes: cada
+  // parte distribui o próprio total — basesPorParte); senão a tabela de bases.
   const basesEfetivas: Base[] = useMemo(() => {
-    if (usaPdf && linhasPdf.length) {
-      return somarPorContrato(
-        linhasPdf.map((l) => ({ contrato_id: l.contrato_id, contrato_nome: nomeContrato(l.contrato_id), valor: l.valor })),
-      ).map((s) => ({ contrato_id: s.contrato_id, contrato_nome: s.contrato_nome, base: s.base, qtd: s.qtd }));
+    if (usaPdf && linhasAtivas.length) {
+      const ls = linhasAtivas.map((l) => ({ contrato_id: l.contrato_id, contrato_nome: nomeContrato(l.contrato_id), valor: l.valor, parte: l.parte ?? undefined }));
+      if (comPartes) {
+        const totais = Object.fromEntries(partesAtivas.map((p) => [p.parte, p.total]));
+        return basesPorParte(ls, totais);
+      }
+      return somarPorContrato(ls).map((s) => ({ contrato_id: s.contrato_id, contrato_nome: s.contrato_nome, base: s.base, qtd: s.qtd }));
     }
     return bases;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [usaPdf, linhasPdf, bases, contratos]);
+  }, [usaPdf, linhasAtivas, bases, contratos, comPartes, partesAtivas.map((p) => `${p.parte}:${p.total}`).join()]);
 
   const itens: ItemRateio[] = useMemo(
     () =>
@@ -297,8 +321,25 @@ function Editor({ id, onFechar, onSalvo }: { id: string | null; onFechar: () => 
   );
   const resumo = resumirRateio(valor, itens);
   const totalBase = basesEfetivas.reduce((a, b) => a + (b.base || 0), 0);
-  const totalPdf = Math.round(linhasPdf.reduce((a, l) => a + l.valor, 0) * 100) / 100;
+  const totalPdf = Math.round(linhasAtivas.reduce((a, l) => a + l.valor, 0) * 100) / 100;
+  // O que o PDF declara para o que está no rateio: com partes, a soma dos totais das partes que entram.
+  const totalEsperado = comPartes
+    ? (partesAtivas.every((p) => p.total != null) ? Math.round(partesAtivas.reduce((a, p) => a + (p.total ?? 0), 0) * 100) / 100 : null)
+    : pdfInfo?.total ?? null;
+  const somaDaParte = (p: ParteGuia) => Math.round(linhasPdf.filter((l) => l.parte === p).reduce((a, l) => a + l.valor, 0) * 100) / 100;
+  // Tirar/voltar uma parte: o valor da despesa acompanha se era o total sugerido.
+  const alternarParte = (p: ParteGuia) => {
+    const novas = partesFora.includes(p) ? partesFora.filter((x) => x !== p) : [...partesFora, p];
+    if (novas.length >= partes.length) return toast.error("Pelo menos uma parte tem que entrar no rateio.");
+    const novoTotal = partes.filter((x) => !novas.includes(x.parte)).reduce((a, x) => a + (x.total ?? somaDaParte(x.parte)), 0);
+    if (totalEsperado != null && Math.abs(valor - totalEsperado) < 0.005) setValorTxt((Math.round(novoTotal * 100) / 100).toFixed(2));
+    setPartesFora(novas);
+    setAjustes({});
+  };
   const qtdPorChave = useMemo(() => new Map(basesEfetivas.map((b) => [chave(b.contrato_id), b.qtd])), [basesEfetivas]);
+  // Colunas por parte no resultado e no Excel (só guia com mais de uma parte no rateio).
+  const colunasParte = comPartes && usaPdf ? partesAtivas : [];
+  const porPartePorChave = useMemo(() => new Map(basesEfetivas.map((b) => [chave(b.contrato_id), b.porParte])), [basesEfetivas]);
 
   // ── trocar tipo ───────────────────────────────────────────────────────
   const trocarTipo = (t: TipoRateio) => {
@@ -391,7 +432,9 @@ function Editor({ id, onFechar, onSalvo }: { id: string | null; onFechar: () => 
       setLinhasBrutas(linhas);
       const layout = identificarLayoutPdf(linhas);
       const declarado = totalDoPdf(linhas, layout.layout);
-      setPdfInfo({ total: declarado, rotulo: layout.rotulo });
+      const partesLidas = partesDoPdf(linhas, layout.layout);
+      setPdfInfo({ total: declarado, rotulo: layout.rotulo, partes: partesLidas.length > 1 ? partesLidas : undefined });
+      setPartesFora([]);
       let lido = 0;
       const comCpf = extrairLinhasDoPdf(linhas, layout.layout);
       if (comCpf.length) {
@@ -399,7 +442,7 @@ function Editor({ id, onFechar, onSalvo }: { id: string | null; onFechar: () => 
         const porCpf = new Map(casados.map((c) => [c.cpf, c]));
         const det: LinhaDetalhePdf[] = comCpf.map((l) => {
           const c = porCpf.get(l.cpf as string);
-          return { n: l.n, texto: l.texto, cpf: l.cpf, nome: c?.nome ?? null, situacao: c?.situacao ?? null, valor: l.valor, contrato_id: c?.contrato_id ?? null };
+          return { n: l.n, texto: l.texto, cpf: l.cpf, nome: c?.nome ?? null, situacao: c?.situacao ?? null, valor: l.valor, contrato_id: c?.contrato_id ?? null, ...(l.parte ? { parte: l.parte } : {}) };
         });
         setLinhasPdf(det);
         lido = det.reduce((a, d) => a + d.valor, 0);
@@ -442,6 +485,7 @@ function Editor({ id, onFechar, onSalvo }: { id: string | null; onFechar: () => 
         toast.error("A IA não achou uma base de rateio neste PDF — veja a explicação.");
         return;
       }
+      setPartesFora([]);
       const cpfs = [...new Set(r.linhas.map((l) => l.cpf).filter((c): c is string => !!c))];
       const porCpf = new Map((await casarCpfs(cpfs)).map((c) => [c.cpf, c]));
       setLinhasPdf(r.linhas.map((l) => {
@@ -499,7 +543,7 @@ function Editor({ id, onFechar, onSalvo }: { id: string | null; onFechar: () => 
         status: novoStatus,
         anexo_path: path,
         anexo_nome: path ? anexoNome : null,
-        detalhe: usaPdf && linhasPdf.length ? linhasPdf : null,
+        detalhe: usaPdf && linhasAtivas.length ? linhasAtivas : null,
         itens: itens.map((i) => ({ ...i, qtd: qtdPorChave.get(chave(i.contrato_id)) ?? null })),
       });
       setArquivo(null);
@@ -530,20 +574,24 @@ function Editor({ id, onFechar, onSalvo }: { id: string | null; onFechar: () => 
       ["Descrição", descricao],
       ["Status", status === "conferido" ? "Conferido" : "Rascunho"],
       [],
-      ["Contrato", "Base", "Qtd", "%", "Valor rateado", "Ajustado à mão"],
+      ["Contrato", "Base", ...colunasParte.map((p) => p.rotulo), "Qtd", "%", "Valor rateado", "Ajustado à mão"],
     ];
     const corpo = itens.map((i) => [
-      i.contrato_nome, i.base, qtdPorChave.get(chave(i.contrato_id)) ?? "", Math.round(i.percentual * 1e6) / 1e6, i.valor, i.ajustado ? "Sim" : "",
+      i.contrato_nome, i.base, ...colunasParte.map((p) => porPartePorChave.get(chave(i.contrato_id))?.[p.parte] ?? 0),
+      qtdPorChave.get(chave(i.contrato_id)) ?? "", Math.round(i.percentual * 1e6) / 1e6, i.valor, i.ajustado ? "Sim" : "",
     ]);
-    const ws = XLSX.utils.aoa_to_sheet([...cab, ...corpo, [], ["TOTAL", totalBase, "", 1, resumo.totalItens, ""]]);
-    ws["!cols"] = [{ wch: 52 }, { wch: 16 }, { wch: 8 }, { wch: 10 }, { wch: 16 }, { wch: 14 }];
+    const totaisParte = colunasParte.map((p) => Math.round(basesEfetivas.reduce((a, b) => a + (b.porParte?.[p.parte] ?? 0), 0) * 100) / 100);
+    const ws = XLSX.utils.aoa_to_sheet([...cab, ...corpo, [], ["TOTAL", totalBase, ...totaisParte, "", 1, resumo.totalItens, ""]]);
+    ws["!cols"] = [{ wch: 52 }, { wch: 16 }, ...colunasParte.map(() => ({ wch: 16 })), { wch: 8 }, { wch: 10 }, { wch: 16 }, { wch: 14 }];
     XLSX.utils.book_append_sheet(wb, ws, "Rateio");
-    if (usaPdf && linhasPdf.length) {
+    if (usaPdf && linhasAtivas.length) {
       const det = XLSX.utils.aoa_to_sheet([
-        ["Linha do PDF", "CPF", "Colaborador", "Situação", "Contrato", "Valor", "Texto lido"],
-        ...linhasPdf.map((l) => [l.n, l.cpf ?? "", l.nome ?? "", l.situacao ?? "", nomeContrato(l.contrato_id), l.valor, l.texto]),
+        ["Linha do PDF", ...(comPartes ? ["Parte"] : []), "CPF", "Colaborador", "Situação", "Contrato", "Valor", "Texto lido"],
+        ...linhasAtivas.map((l) => [
+          l.n, ...(comPartes ? [l.parte ? ROTULO_PARTE[l.parte] : ""] : []), l.cpf ?? "", l.nome ?? "", l.situacao ?? "", nomeContrato(l.contrato_id), l.valor, l.texto,
+        ]),
       ]);
-      det["!cols"] = [{ wch: 8 }, { wch: 14 }, { wch: 36 }, { wch: 14 }, { wch: 44 }, { wch: 12 }, { wch: 80 }];
+      det["!cols"] = [{ wch: 8 }, ...(comPartes ? [{ wch: 14 }] : []), { wch: 14 }, { wch: 36 }, { wch: 14 }, { wch: 44 }, { wch: 12 }, { wch: 80 }];
       XLSX.utils.book_append_sheet(wb, det, "Linhas do PDF");
     }
     XLSX.writeFile(wb, `rateio_${tipo}_${mes}.xlsx`);
@@ -763,27 +811,58 @@ function Editor({ id, onFechar, onSalvo }: { id: string | null; onFechar: () => 
         {usaPdf && linhasPdf.length > 0 && (
           <div className="space-y-2">
             <div className="flex flex-wrap items-center gap-3 text-sm">
-              <span><FileText className="inline h-4 w-4 mr-1" />{linhasPdf.length} linha(s) lida(s) — soma das linhas <b>{fmtMoeda(totalPdf)}</b></span>
-              {pdfInfo?.total != null && (Math.abs(pdfInfo.total - totalPdf) < 0.005 ? (
+              <span><FileText className="inline h-4 w-4 mr-1" />{linhasAtivas.length} linha(s) lida(s) — soma das linhas <b>{fmtMoeda(totalPdf)}</b></span>
+              {totalEsperado != null && (Math.abs(totalEsperado - totalPdf) < 0.005 ? (
                 <Badge variant="outline" className="bg-success/15 text-success border-success/30 gap-1"><CheckCircle2 className="h-3.5 w-3.5" /> Bate com o TOTAL do PDF</Badge>
               ) : (
                 <Badge variant="outline" className="bg-destructive/10 text-destructive border-destructive/30 gap-1">
-                  <AlertTriangle className="h-3.5 w-3.5" /> TOTAL do PDF {fmtMoeda(pdfInfo.total)} — diferença {fmtMoeda(Math.round((pdfInfo.total - totalPdf) * 100) / 100)}
+                  <AlertTriangle className="h-3.5 w-3.5" /> TOTAL do PDF {fmtMoeda(totalEsperado)} — diferença {fmtMoeda(Math.round((totalEsperado - totalPdf) * 100) / 100)}
                 </Badge>
               ))}
-              {pdfInfo?.total != null && Math.abs(pdfInfo.total - totalPdf) >= 0.005 && linhasBrutas && !leituraIa && !somenteLeitura && (
+              {totalEsperado != null && Math.abs(totalEsperado - totalPdf) >= 0.005 && linhasBrutas && !leituraIa && !somenteLeitura && (
                 <Button size="sm" variant="outline" className="gap-1.5" onClick={() => void lerComIa()} disabled={lendoIa}>
                   {lendoIa ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />} Não bate — pedir para a I.A ler
                 </Button>
               )}
               {pdfInfo && <span className="text-xs text-muted-foreground">{pdfInfo.rotulo}</span>}
-              {Math.abs(totalPdf - valor) >= 0.005 && !somenteLeitura && (
-                <Button size="sm" variant="outline" onClick={() => setValorTxt(totalPdf.toFixed(2))}>Usar o total do PDF como valor da despesa</Button>
+              {Math.abs((totalEsperado ?? totalPdf) - valor) >= 0.005 && !somenteLeitura && (
+                <Button size="sm" variant="outline" onClick={() => setValorTxt((totalEsperado ?? totalPdf).toFixed(2))}>Usar o total do PDF como valor da despesa</Button>
               )}
             </div>
+            {/* Guia com duas partes (FGTS + consignado): cada uma rateia o seu valor e confere com o seu total. */}
+            {comPartes && (
+              <div className="rounded-md border p-2 space-y-1.5">
+                <p className="text-xs text-muted-foreground">
+                  Esta guia tem <b>{partes.length} rateios</b> num pagamento só: cada parte divide o <b>próprio total</b> pelos contratos das suas
+                  linhas, e o valor da despesa é a soma das partes que entram.
+                </p>
+                {partes.map((p) => {
+                  const soma = somaDaParte(p.parte);
+                  const n = linhasPdf.filter((l) => l.parte === p.parte).length;
+                  const fora = partesFora.includes(p.parte);
+                  return (
+                    <div key={p.parte} className={`flex flex-wrap items-center gap-3 text-sm ${fora ? "opacity-50" : ""}`}>
+                      <label className="flex items-center gap-2 min-w-[160px] font-medium">
+                        <input type="checkbox" checked={!fora} disabled={somenteLeitura} onChange={() => alternarParte(p.parte)} />
+                        {p.rotulo}
+                      </label>
+                      <span className="text-xs text-muted-foreground">{n} linha(s) — soma <b className="text-foreground">{fmtMoeda(soma)}</b></span>
+                      {p.total != null && (Math.abs(p.total - soma) < 0.005 ? (
+                        <Badge variant="outline" className="bg-success/15 text-success border-success/30 gap-1"><CheckCircle2 className="h-3.5 w-3.5" /> Bate com o Total {p.rotulo} {fmtMoeda(p.total)}</Badge>
+                      ) : (
+                        <Badge variant="outline" className="bg-destructive/10 text-destructive border-destructive/30 gap-1">
+                          <AlertTriangle className="h-3.5 w-3.5" /> Total {p.rotulo} {fmtMoeda(p.total)} — diferença {fmtMoeda(Math.round((p.total - soma) * 100) / 100)} (fica dentro desta parte)
+                        </Badge>
+                      ))}
+                      {fora && <span className="text-xs">fora do rateio</span>}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
             <label className="flex items-center gap-2 text-xs text-muted-foreground">
               <input type="checkbox" checked={soPendentes} onChange={(e) => setSoPendentes(e.target.checked)} />
-              Mostrar só as linhas sem contrato ({linhasPdf.filter((l) => !l.contrato_id).length})
+              Mostrar só as linhas sem contrato ({linhasAtivas.filter((l) => !l.contrato_id).length})
             </label>
             <div className="max-h-[360px] overflow-auto border rounded-md">
               <table className="w-full text-xs">
@@ -800,12 +879,13 @@ function Editor({ id, onFechar, onSalvo }: { id: string | null; onFechar: () => 
                 <tbody>
                   {/* O PDF do seguro tem ~2.100 segurados: desenha no máximo 300 linhas
                       (cada uma tem um seletor de contrato); o filtro acha as pendentes. */}
-                  {linhasPdf.map((l, i) => ({ l, i })).filter(({ l }) => !soPendentes || !l.contrato_id).slice(0, LIMITE_LINHAS_TELA).map(({ l, i }) => (
+                  {linhasPdf.map((l, i) => ({ l, i })).filter(({ l }) => (!l.parte || !partesFora.includes(l.parte)) && (!soPendentes || !l.contrato_id)).slice(0, LIMITE_LINHAS_TELA).map(({ l, i }) => (
                     <tr key={`${l.n}-${i}`} className={`border-b ${l.contrato_id ? "" : "bg-warning/10"}`}>
                       <td className="p-1.5 text-muted-foreground">{l.n}</td>
                       <td className="p-1.5">
                         {l.nome ? <span className="font-medium">{l.nome}</span> : l.cpf ? <span className="text-destructive">CPF fora da EMPREGADOS</span> : null}
                         {l.situacao && l.situacao !== "Trabalhando" && <Badge variant="outline" className="ml-1 text-[10px]">{l.situacao}</Badge>}
+                        {comPartes && l.parte && <Badge variant="secondary" className="ml-1 text-[10px]">{ROTULO_PARTE[l.parte]}</Badge>}
                         <div className="text-muted-foreground truncate max-w-[420px]" title={l.texto}>{l.texto}</div>
                       </td>
                       <td className="p-1.5 tabular-nums">{mascaraCpf(l.cpf)}</td>
@@ -826,9 +906,9 @@ function Editor({ id, onFechar, onSalvo }: { id: string | null; onFechar: () => 
                 </tbody>
               </table>
             </div>
-            {linhasPdf.filter((l) => !soPendentes || !l.contrato_id).length > LIMITE_LINHAS_TELA && (
+            {linhasAtivas.filter((l) => !soPendentes || !l.contrato_id).length > LIMITE_LINHAS_TELA && (
               <p className="text-xs text-muted-foreground">
-                Mostrando {LIMITE_LINHAS_TELA} de {linhasPdf.filter((l) => !soPendentes || !l.contrato_id).length} linhas — todas entram no rateio; o Excel traz a lista completa.
+                Mostrando {LIMITE_LINHAS_TELA} de {linhasAtivas.filter((l) => !soPendentes || !l.contrato_id).length} linhas — todas entram no rateio; o Excel traz a lista completa.
               </p>
             )}
           </div>
@@ -892,6 +972,7 @@ function Editor({ id, onFechar, onSalvo }: { id: string | null; onFechar: () => 
                 <tr>
                   <th className="text-left py-2 px-2">Contrato</th>
                   <th className="text-right px-2">{ROTULO_CRITERIO[criterio]}</th>
+                  {colunasParte.map((p) => <th key={p.parte} className="text-right px-2">{p.rotulo}</th>)}
                   {(criterio === "colaboradores" || criterio === "pdf") && <th className="text-right px-2">{criterio === "pdf" ? "Linhas" : "Pessoas"}</th>}
                   <th className="text-right px-2">%</th>
                   <th className="text-right px-2 w-44">Valor rateado</th>
@@ -903,6 +984,9 @@ function Editor({ id, onFechar, onSalvo }: { id: string | null; onFechar: () => 
                   <tr key={chave(i.contrato_id)} className={`border-b ${i.contrato_id ? "" : "bg-warning/10"}`}>
                     <td className="py-1.5 px-2">{i.contrato_nome}</td>
                     <td className="px-2 text-right tabular-nums">{ehMoeda ? fmtMoeda(i.base) : i.base.toLocaleString("pt-BR")}</td>
+                    {colunasParte.map((p) => (
+                      <td key={p.parte} className="px-2 text-right tabular-nums text-muted-foreground">{fmtMoeda(porPartePorChave.get(chave(i.contrato_id))?.[p.parte] ?? 0)}</td>
+                    ))}
                     {(criterio === "colaboradores" || criterio === "pdf") && <td className="px-2 text-right tabular-nums">{qtdPorChave.get(chave(i.contrato_id)) ?? ""}</td>}
                     <td className="px-2 text-right tabular-nums">{fmtPct(i.percentual)}</td>
                     <td className="px-2">
@@ -923,6 +1007,9 @@ function Editor({ id, onFechar, onSalvo }: { id: string | null; onFechar: () => 
                 <tr className="font-semibold">
                   <td className="py-2 px-2">Total</td>
                   <td className="px-2 text-right tabular-nums">{ehMoeda ? fmtMoeda(totalBase) : totalBase.toLocaleString("pt-BR")}</td>
+                  {colunasParte.map((p) => (
+                    <td key={p.parte} className="px-2 text-right tabular-nums">{fmtMoeda(basesEfetivas.reduce((a, b) => a + (b.porParte?.[p.parte] ?? 0), 0))}</td>
+                  ))}
                   {(criterio === "colaboradores" || criterio === "pdf") && <td />}
                   <td className="px-2 text-right tabular-nums">{fmtPct(valor ? resumo.totalItens / valor : 0)}</td>
                   <td className="px-2 text-right tabular-nums">{fmtMoeda(resumo.totalItens)}</td>

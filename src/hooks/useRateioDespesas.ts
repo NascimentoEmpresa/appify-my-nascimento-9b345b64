@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { uploadAnexosMalote } from "@/hooks/useMaloteDespesa";
-import type { CriterioRateio, ItemRateio, TipoRateio } from "@/lib/rh/rateioDespesas";
+import type { CriterioRateio, ItemRateio, ParteGuia, TipoRateio } from "@/lib/rh/rateioDespesas";
 
 // =====================================================================
 // RH › Rateio de Despesas — acesso a dados (mig 20261016000010).
@@ -35,6 +35,8 @@ export interface LinhaDetalhePdf {
   situacao: string | null;
   valor: number;
   contrato_id: string | null;
+  /** Guia do FGTS: "fgts" ou "consignado" (cada parte rateia o seu valor). */
+  parte?: ParteGuia | null;
 }
 
 export interface DespesaRateio {

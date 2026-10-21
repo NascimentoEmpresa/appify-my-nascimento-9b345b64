@@ -274,9 +274,11 @@ export interface LinhaPdf {
   texto: string;
   cpf: string | null;
   valor: number;
+  /** Parte da guia de onde veio a linha (FGTS × consignado); ausente = documento de uma parte só. */
+  parte?: ParteGuia;
 }
 
-const RE_CPF = /(?<!\d)(\d{3}\.?\d{3}\.?\d{3}-?\d{2})(?!\d)/;
+const RE_CPF =/(?<!\d)(\d{3}\.?\d{3}\.?\d{3}-?\d{2})(?!\d)/;
 const RE_MOEDA = /(?<![\d,.])-?\d{1,3}(?:\.\d{3})*,\d{2}(?![\d,])/g;
 
 /** CPF válido (dígitos verificadores) — evita pegar PIS/código de barras. */
@@ -433,6 +435,10 @@ export function linhasDoLayout(linhas: string[], layout: LayoutPdf["layout"]): s
  *      R$ 362.025,99 (o "Total da Guia" de R$ 696.441,08 soma os dois).
  *   3. "Relação de Eventos" da Senior por contrato (consignado de novo).
  * Por isso as linhas fora da seção 1 viram "" (mantém a numeração de linha).
+ *
+ * 21/10/2026: o consignado (seção 2) deixou de ser descartado — virou a
+ * SEGUNDA PARTE do rateio, com o próprio total (linhasDaSecaoConsignado,
+ * partesDoPdf, basesPorParte). O que continua de fora é a seção 3.
  */
 export function linhasDaSecaoFgts(linhas: string[]): string[] {
   let modo: "fgts" | "fora" = "fora";
@@ -444,22 +450,116 @@ export function linhasDaSecaoFgts(linhas: string[]): string[] {
   });
 }
 
-/** Linhas com CPF do PDF, aplicando a regra do layout reconhecido. */
+/**
+ * A seção 2 da guia: o CONSIGNADO (empréstimo descontado em folha que a
+ * empresa repassa na mesma guia). Desde 21/10/2026 ele também é rateado —
+ * a guia é UM pagamento (FGTS + consignado) e o Pablo pediu os dois
+ * rateados, cada um pelo seu valor ("são 2 rateios de uma vez … tem que
+ * bater tudo"). Uma linha por contrato de empréstimo: o mesmo CPF pode
+ * aparecer várias vezes, e cada linha conta. Fecha em "Total Consignado".
+ */
+export function linhasDaSecaoConsignado(linhas: string[]): string[] {
+  let modo: "consignado" | "fora" = "fora";
+  return linhas.map((l) => {
+    const n = normNome(l);
+    if (n.includes("TRABALHADORESCONSIGNADO")) modo = "consignado";
+    else if (n.includes("TRABALHADORESFGTS") || n.includes("RELACAODEEVENTOS")) modo = "fora";
+    return modo === "consignado" ? l : "";
+  });
+}
+
+export type ParteGuia = "fgts" | "consignado";
+export const ROTULO_PARTE: Record<ParteGuia, string> = { fgts: "FGTS mensal", consignado: "Consignado" };
+
+export interface ParteDoPdf {
+  parte: ParteGuia;
+  rotulo: string;
+  /** O que o PDF declara para a parte ("Total FGTS" / "Total Consignado"); null se não achou. */
+  total: number | null;
+}
+
+/** Último valor da última linha que casa com `re`. */
+function ultimoValor(linhas: string[], re: RegExp): number | null {
+  for (let i = linhas.length - 1; i >= 0; i--) {
+    if (!re.test(linhas[i])) continue;
+    const v = valoresDaLinha(linhas[i]);
+    if (v.length) return v[v.length - 1];
+  }
+  return null;
+}
+
+/**
+ * Partes do documento que se rateiam cada uma pelo seu valor. Só a guia do
+ * FGTS tem mais de uma (FGTS + consignado); o resto devolve [] (uma parte só).
+ * O consignado só entra se a guia tiver consignado (total > 0 ou linhas).
+ */
+export function partesDoPdf(linhas: string[], layout: LayoutPdf["layout"]): ParteDoPdf[] {
+  if (layout !== "fgts_digital") return [];
+  const out: ParteDoPdf[] = [{ parte: "fgts", rotulo: ROTULO_PARTE.fgts, total: ultimoValor(linhas, /\bTotal\s+FGTS\b/i) }];
+  const totalCons = ultimoValor(linhas, /^\s*Total\s+Consignado\b/i);
+  const temLinhas = extrairLinhasComCpf(linhasDaSecaoConsignado(linhas)).length > 0;
+  if ((totalCons ?? 0) > 0 || temLinhas) out.push({ parte: "consignado", rotulo: ROTULO_PARTE.consignado, total: totalCons });
+  return out;
+}
+
+/** Linhas com CPF do PDF, aplicando a regra do layout reconhecido (FGTS: as duas partes, marcadas). */
 export function extrairLinhasDoPdf(linhas: string[], layout: LayoutPdf["layout"]): LinhaPdf[] {
+  if (layout === "fgts_digital") {
+    return [
+      ...extrairLinhasComCpf(linhasDaSecaoFgts(linhas)).map((l) => ({ ...l, parte: "fgts" as const })),
+      ...extrairLinhasComCpf(linhasDaSecaoConsignado(linhas)).map((l) => ({ ...l, parte: "consignado" as const })),
+    ];
+  }
   return extrairLinhasComCpf(linhasDoLayout(linhas, layout));
 }
 
-/** Total declarado conforme o layout (FGTS: "Total FGTS", nunca o da guia com consignado). */
+/**
+ * Total declarado conforme o layout. FGTS: a soma das partes (Total FGTS +
+ * Total Consignado = "Total da Guia") — nunca o rodapé da Relação de Eventos.
+ */
 export function totalDoPdf(linhas: string[], layout: LayoutPdf["layout"]): number | null {
   if (layout === "fgts_digital") {
-    for (let i = linhas.length - 1; i >= 0; i--) {
-      if (!/\bTotal\s+FGTS\b/i.test(linhas[i])) continue;
-      const v = valoresDaLinha(linhas[i]);
-      if (v.length) return v[v.length - 1];
-    }
-    return null;
+    const partes = partesDoPdf(linhas, layout);
+    if (partes.some((p) => p.total == null)) return null;
+    return Math.round(partes.reduce((a, p) => a + (p.total ?? 0), 0) * 100) / 100;
   }
   return totalDeclaradoNoPdf(linhasDoLayout(linhas, layout));
+}
+
+/**
+ * Base por contrato de um documento com PARTES, cada uma rateando o PRÓPRIO
+ * valor: a parte com total declarado distribui esse total pelas suas linhas
+ * (centavo exato, distribuirCentavos); sem total, vale a soma das linhas.
+ * Quando cada parte bate com o seu total, a base é a própria soma das linhas;
+ * quando não bate, a diferença fica DENTRO da parte — o consignado não passa a
+ * pagar parte do FGTS. A base resultante soma Σ totais, e o rateio da despesa
+ * (valor = Σ totais) reproduz exatamente o rateio parte a parte.
+ */
+export function basesPorParte(
+  linhas: { contrato_id: string | null; contrato_nome: string; valor: number; parte?: ParteGuia }[],
+  totais: Partial<Record<ParteGuia, number | null>>,
+): { contrato_id: string | null; contrato_nome: string; base: number; qtd: number; porParte: Partial<Record<ParteGuia, number>> }[] {
+  type Acc = { contrato_id: string | null; contrato_nome: string; base: number; qtd: number; porParte: Partial<Record<ParteGuia, number>> };
+  const m = new Map<string, Acc>();
+  const pega = (l: { contrato_id: string | null; contrato_nome: string }) => {
+    const k = l.contrato_id ?? "__sem__";
+    const cur = m.get(k) ?? { contrato_id: l.contrato_id, contrato_nome: l.contrato_nome, base: 0, qtd: 0, porParte: {} };
+    m.set(k, cur);
+    return cur;
+  };
+  const partes = [...new Set(linhas.map((l) => l.parte ?? "fgts"))] as ParteGuia[];
+  for (const parte of partes) {
+    const daParte = somarPorContrato(linhas.filter((l) => (l.parte ?? "fgts") === parte));
+    const total = totais[parte];
+    const valores = total != null ? distribuirCentavos(total, daParte.map((c) => c.base)) : daParte.map((c) => c.base);
+    daParte.forEach((c, i) => {
+      const acc = pega(c);
+      acc.porParte[parte] = Math.round(((acc.porParte[parte] ?? 0) + valores[i]) * 100) / 100;
+      acc.base = Math.round((acc.base + valores[i]) * 100) / 100;
+      acc.qtd += c.qtd;
+    });
+  }
+  return [...m.values()].sort((a, b) => b.base - a.base);
 }
 
 export interface LinhaPdfContrato extends LinhaPdf {
