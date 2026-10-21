@@ -10,7 +10,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
-import { Save, Shield, Lock, FileText, Plus, Pencil, Trash2, AlertTriangle, Download, Calendar } from "lucide-react";
+import { Save, Shield, Lock, FileText, Plus, Pencil, Trash2, AlertTriangle, Download, Calendar, Info } from "lucide-react";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { toast } from "sonner";
 import { usePermissoes } from "@/context/PermissoesContext";
 import { SearchableMultiSelect } from "@/components/ui/searchable-multi-select";
@@ -148,6 +149,7 @@ export default function Configuracoes() {
               <PrazoBlock
                 numero="1.1"
                 titulo="Prazo para inclusão e aprovação pelo setor"
+                descricao="Horário de corte para lançar a despesa e para o Nível 1 aprová-la. Despesa lançada depois dele não conta como de hoje: a data normal de pagamento vai para o próximo dia útil, e pagar mais cedo exige exceção. O Nível 1 que tentar aprovar depois dele só consegue com a senha de uma exceção de aprovação."
                 horario={form.inclusao_setor_horario}
                 onHorarioChange={(v) => setForm((f) => (f ? { ...f, inclusao_setor_horario: v } : f))}
                 modo={form.inclusao_setor_pagamento_modo}
@@ -161,6 +163,7 @@ export default function Configuracoes() {
               <PrazoBlock
                 numero="1.2"
                 titulo="Prazo para conferência e aprovação"
+                descricao="Horário de corte da conferência a partir do Nível 2. Despesa ainda parada no Nível 2 ou acima depois dele (ou já vencida) tem o pagamento reagendado para o próximo dia útil, se o reagendamento automático abaixo estiver ligado. Para o Nível 1, depois dele só é exigida uma justificativa, e só quando o pagamento é hoje ou já está vencido."
                 horario={form.conferencia_aprovacao_horario}
                 onHorarioChange={(v) => setForm((f) => (f ? { ...f, conferencia_aprovacao_horario: v } : f))}
                 modo={form.conferencia_aprovacao_pagamento_modo}
@@ -296,7 +299,13 @@ export default function Configuracoes() {
             <CardContent className="space-y-4">
               <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                 <div>
-                  <Label className="text-sm font-semibold">2.1 Limite para inclusão de exceções</Label>
+                  <div className="flex items-center gap-1.5">
+                    <Label className="text-sm font-semibold">2.1 Limite para inclusão de exceções</Label>
+                    <InfoPrazo
+                      titulo="2.1 Limite para inclusão de exceções"
+                      texto="Último horário para lançar uma despesa como exceção com pagamento para o mesmo dia. Depois dele, nem como exceção dá para lançar para pagar hoje."
+                    />
+                  </div>
                   <div className="mt-2">
                     <Label className="text-xs">Horário máximo</Label>
                     <Input
@@ -307,13 +316,16 @@ export default function Configuracoes() {
                       }
                       disabled={!podeEditar}
                     />
-                    <p className="text-xs text-muted-foreground mt-1">
-                      Até que horário o setor pode incluir despesas como exceção no mesmo dia.
-                    </p>
                   </div>
                 </div>
                 <div>
-                  <Label className="text-sm font-semibold">2.2 Limite para aprovação de exceções</Label>
+                  <div className="flex items-center gap-1.5">
+                    <Label className="text-sm font-semibold">2.2 Limite para aprovação de exceções</Label>
+                    <InfoPrazo
+                      titulo="2.2 Limite para aprovação de exceções"
+                      texto="Até que horário uma exceção com pagamento no mesmo dia deve ser aprovada. É só um aviso: não bloqueia a aprovação."
+                    />
+                  </div>
                   <div className="mt-2">
                     <Label className="text-xs">Horário máximo</Label>
                     <Input
@@ -324,12 +336,9 @@ export default function Configuracoes() {
                       }
                       disabled={!podeEditar}
                     />
-                    <p className="text-xs text-muted-foreground mt-1">
-                      Até que horário a despesa de exceção deve ser aprovada.
-                    </p>
                   </div>
                 </div>
-                <div>
+                <div className="md:row-span-2">
                   <Label className="text-sm font-semibold">2.3 Exigências para inclusão de exceções</Label>
                   <p className="text-xs text-muted-foreground mt-1 mb-2">
                     Selecione as exigências obrigatórias para inclusão de despesas como exceção.
@@ -388,9 +397,9 @@ export default function Configuracoes() {
                     </label>
                   </div>
                 </div>
-              </div>
 
-              <div>
+              {/* O 2.4 entra na mesma grade (colunas 1 e 2, abaixo do 2.1/2.2) e o 2.3 ocupa as duas linhas da coluna 3: sem vazio sob o 2.1/2.2. */}
+              <div className="md:col-span-2">
                 <Label className="text-sm font-semibold">2.4 Quem aprova as exceções</Label>
                 <p className="text-xs text-muted-foreground mt-1 mb-2">
                   Aprova ou reprova as Solicitações de Exceção (Malote › Autorizações de Exceção) e, ao aprovar, libera a senha.
@@ -452,6 +461,7 @@ export default function Configuracoes() {
                     <p className="text-xs text-destructive">Aplique a migration 20261015000004 para configurar o aprovador.</p>
                   )}
                 </div>
+              </div>
               </div>
 
               <div className="flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 dark:bg-amber-950/30 p-3">
@@ -528,6 +538,28 @@ const UNIDADE_LABEL: Record<PrazoPagamentoUnidade, string> = {
   corrido: "dia(s) corrido(s)",
 };
 
+// Ícone "i" que abre uma caixa com o que o prazo controla: a explicação fica à mão sem poluir a tela.
+function InfoPrazo({ titulo, texto }: { titulo: string; texto: string }) {
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          className="text-muted-foreground hover:text-foreground rounded-full"
+          aria-label={`O que é o item ${titulo}`}
+          title="O que é este prazo?"
+        >
+          <Info className="h-4 w-4" />
+        </button>
+      </PopoverTrigger>
+      <PopoverContent align="start" className="w-80 text-xs space-y-1">
+        <p className="font-semibold text-sm">{titulo}</p>
+        <p className="text-muted-foreground leading-relaxed">{texto}</p>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
 function PrazoBlock({
   numero,
   titulo,
@@ -540,9 +572,12 @@ function PrazoBlock({
   unidade,
   onUnidadeChange,
   disabled,
+  descricao,
 }: {
   numero: string;
   titulo: string;
+  // O que este prazo controla, em linguagem do dia a dia (aparece sob o título).
+  descricao?: string;
   horario: string;
   onHorarioChange: (v: string) => void;
   modo: PrazoPagamentoModo;
@@ -555,9 +590,12 @@ function PrazoBlock({
 }) {
   return (
     <div>
-      <Label className="text-sm font-semibold">
-        {numero} {titulo}
-      </Label>
+      <div className="flex items-center gap-1.5">
+        <Label className="text-sm font-semibold">
+          {numero} {titulo}
+        </Label>
+        {descricao && <InfoPrazo titulo={`${numero} ${titulo}`} texto={descricao} />}
+      </div>
       <div className="mt-2">
         <Label className="text-xs">Horário máximo</Label>
         <Input type="time" value={horario} onChange={(e) => onHorarioChange(e.target.value)} disabled={disabled} />
