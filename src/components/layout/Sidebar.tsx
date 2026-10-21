@@ -1376,6 +1376,8 @@ const relatoriosModule: ModuleDef = {
         { label: "Relatório Geral", to: "/app/relatorios", icon: BarChart3 },
         ...RELATORIOS.map((s) => ({ label: s.titulo, to: `/app/relatorios/${s.slug}`, icon: s.icone })),
         { label: "Vagas — Dashboard", to: "/app/relatorios/vagas", icon: Briefcase },
+        // Mig 20261021000060: o desconto de faltas das notas fiscais, por contrato.
+        { label: "Custo das Faltas por Contrato", to: "/app/relatorios/custo-faltas", icon: TrendingDown },
       ],
     },
   ],

@@ -254,6 +254,7 @@ import DiretoriaRecrutamento from "./pages/diretoria/Recrutamento";
 import RelatorioGeral from "./pages/relatorios/RelatorioGeral";
 import RelatorioSistema from "./pages/relatorios/RelatorioSistema";
 import VagasPainel from "./pages/relatorios/VagasPainel";
+import CustoFaltasPainel from "./pages/relatorios/CustoFaltasPainel";
 import { SISTEMAS as RELATORIOS } from "./pages/relatorios/sistemas";
 import SstTrocaFuncao from "./pages/sst/TrocaFuncao";
 import RhTrocaFuncao from "./pages/rh/TrocaFuncao";
@@ -784,6 +785,8 @@ const App = () => (
             <Route path="relatorios" element={<RelatorioGeral />} />
             {/* Vagas — Dashboard (mig 20261007000020): painel próprio, fora de SISTEMAS (o Relatório Geral itera SISTEMAS). */}
             <Route path="relatorios/vagas" element={<VagasPainel />} />
+            {/* Custo das Faltas por Contrato (mig 20261021000060): o campo Faltas das NFs, por contrato e competência. */}
+            <Route path="relatorios/custo-faltas" element={<CustoFaltasPainel />} />
             {RELATORIOS.map((s) => (
               <Route key={s.slug} path={`relatorios/${s.slug}`} element={<RelatorioSistema key={s.slug} slug={s.slug} />} />
             ))}

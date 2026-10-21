@@ -3,6 +3,7 @@ import { supabase } from "@/integrations/supabase/client";
 import type { RelatorioDados, RelatorioGeralDados } from "@/pages/relatorios/sistemas";
 import type { PainelTurnover, RescisoesTurnover } from "@/lib/diretoria/turnover";
 import type { DetalheVaga, PainelVagas } from "@/lib/relatorios/vagasPainel";
+import type { DadosCustoFaltas } from "@/lib/relatorios/custoFaltas";
 
 // =====================================================================
 // Diretoria › Relatórios — acesso a dados (mig 20261005000006).
@@ -132,6 +133,24 @@ export function useVagaDetalhe(id: number | null) {
       const { data, error } = await sb.rpc("dir_vagas_detalhe", { _id: id });
       if (error) throw error;
       return data as DetalheVaga;
+    },
+  });
+}
+
+/**
+ * Custo das Faltas por Contrato (mig 20261021000060): as notas do período
+ * (competência), com a soma do campo Faltas dos itens. Traz o período
+ * inteiro uma vez; contrato, empresa, tipo e situação filtram no cliente.
+ */
+export function useCustoFaltas(de: string, ate: string) {
+  return useQuery({
+    queryKey: [CHAVE, "custo-faltas", de, ate],
+    staleTime: 5 * 60_000,
+    placeholderData: (anterior) => anterior,
+    queryFn: async (): Promise<DadosCustoFaltas> => {
+      const { data, error } = await sb.rpc("dir_rel_custo_faltas", { _de: de, _ate: ate });
+      if (error) throw error;
+      return data as DadosCustoFaltas;
     },
   });
 }
