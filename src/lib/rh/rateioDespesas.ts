@@ -274,9 +274,11 @@ export interface LinhaPdf {
   texto: string;
   cpf: string | null;
   valor: number;
+  /** Parte da guia de onde veio a linha (FGTS × consignado); ausente = documento de uma parte só. */
+  parte?: ParteGuia;
 }
 
-const RE_CPF = /(?<!\d)(\d{3}\.?\d{3}\.?\d{3}-?\d{2})(?!\d)/;
+const RE_CPF =/(?<!\d)(\d{3}\.?\d{3}\.?\d{3}-?\d{2})(?!\d)/;
 const RE_MOEDA = /(?<![\d,.])-?\d{1,3}(?:\.\d{3})*,\d{2}(?![\d,])/g;
 
 /** CPF válido (dígitos verificadores) — evita pegar PIS/código de barras. */
@@ -329,20 +331,32 @@ export function extrairLinhasComCpf(linhas: string[]): LinhaPdf[] {
  * Usa a última linha de total do arquivo; null se não houver.
  */
 export function totalDeclaradoNoPdf(linhas: string[]): number | null {
+  // "Total Geral" ganha de qualquer outro total: é o fecho do documento.
+  for (let i = linhas.length - 1; i >= 0; i--) {
+    if (!/^\s*TOTAL\s+GERAL\b/i.test(linhas[i]) || RE_CPF.test(linhas[i])) continue;
+    const v = valoresDaLinha(linhas[i]);
+    if (v.length) return v[v.length - 1];
+  }
   for (let i = linhas.length - 1; i >= 0; i--) {
     // "TOTAL:" em qualquer lugar, ou a linha começando com TOTAL/VALOR TOTAL
     // ("sem total aqui 10,00" não é total).
     if (!/\bTOTAL(\s+GERAL)?\s*:/i.test(linhas[i]) && !/^\s*(VALOR\s+)?TOTAL\b/i.test(linhas[i])) continue;
     if (RE_CPF.test(linhas[i])) continue;
+    // Rodapé de relatório anexo ("Total de Colaboradores: 70  0,00  19.765,08"
+    // da Relação de Eventos da Senior, no boleto da Bullla de 09/2026) não é
+    // o total da despesa — pegá-lo trocava 19.445,87 por 19.765,08.
+    if (RE_TOTAL_DE_RELATORIO.test(linhas[i])) continue;
     const v = valoresDaLinha(linhas[i]);
     if (v.length) return v[v.length - 1];
   }
   return null;
 }
 
+const RE_TOTAL_DE_RELATORIO = /\bTOTAL\s+DE\s+(COLABORADORES|FUNCION|TRABALHADORES|EMPREGADOS|REGISTROS|ITENS|EVENTOS|LAN[CÇ]AMENTOS)/i;
+
 export interface LayoutPdf {
   /** Layout reconhecido; "generico" quando nenhum bate. */
-  layout: "seguro_prudential" | "fgts_digital" | "generico";
+  layout: "seguro_prudential" | "fgts_digital" | "tabela_contratos" | "generico";
   rotulo: string;
 }
 
@@ -361,7 +375,49 @@ export function identificarLayoutPdf(linhas: string[]): LayoutPdf {
   if (topo.includes("RELATORIODEMOVIMENTACAO") && topo.includes("PREMIO") && topo.includes("ISSEGURADO")) {
     return { layout: "seguro_prudential", rotulo: "Relatório de movimentação do seguro de vida (prêmio por segurado)" };
   }
+  // A tabela dinâmica fica na pág. 2 do boleto da Bullla — fora do "topo".
+  const tudo = normNome(linhas.join(" "));
+  if (tudo.includes("ROTULOSDELINHA") && tudo.includes("TOTALGERAL")) {
+    return {
+      layout: "tabela_contratos",
+      rotulo: tudo.includes("BULLLA")
+        ? "Boleto Bullla — resumo por contrato (Total Geral)"
+        : "Resumo por contrato (Rótulos de Linha → Total Geral)",
+    };
+  }
   return { layout: "generico", rotulo: "Leitura genérica (CPF + último valor da linha)" };
+}
+
+/**
+ * BOLETO DA BULLLA (adiantamento salarial pelo cartão), PDF real de 09/2026
+ * ("BOLETO 09.2026 BULLLA SN.pdf", 21/10/2026). Também junta TRÊS coisas:
+ *   1. O boleto — "(=) Valor cobrado" 19.445,87 (documento 25.767,61 menos
+ *      6.321,74 de desconto/abatimento).
+ *   2. Uma tabela dinâmica do Excel: "Rótulos de Linha | Soma de Valor
+ *      Faturado", uma linha por contrato ("1064 - TRIUNFO VIGIAS - 33/2024
+ *      3.325,67"), fechando em "Total Geral 19.445,87". É ESTA a base do rateio.
+ *   3. A "Relação de Eventos" da Senior (Adto Salarial Bulla), uma linha por
+ *      colaborador — matrícula, SIT, "09/2026", data de pagamento, valor —
+ *      fechando em "Total de Colaboradores: 70 … 19.765,08". Lida junto, a
+ *      competência "09/2026" de cada linha casava com o contrato "UFRGS
+ *      INTERPRETE DE LIBRAS C. 009.2026" pelo número, e o rateio dobrava.
+ * Só a seção 2 conta; o resto vira "" (mantém a numeração de linha).
+ */
+export function linhasDaTabelaContratos(linhas: string[]): string[] {
+  let modo: "dentro" | "fora" | "fim" = "fora";
+  return linhas.map((l) => {
+    const n = normNome(l);
+    if (modo === "fora" && n.includes("ROTULOSDELINHA")) { modo = "dentro"; return ""; }
+    if (modo === "dentro" && /^TOTALGERAL/.test(n)) { modo = "fim"; return l; }
+    return modo === "dentro" ? l : "";
+  });
+}
+
+/** As linhas que valem para o layout (o resto vira "", mantendo a numeração). */
+export function linhasDoLayout(linhas: string[], layout: LayoutPdf["layout"]): string[] {
+  if (layout === "fgts_digital") return linhasDaSecaoFgts(linhas);
+  if (layout === "tabela_contratos") return linhasDaTabelaContratos(linhas);
+  return linhas;
 }
 
 /**
@@ -379,6 +435,10 @@ export function identificarLayoutPdf(linhas: string[]): LayoutPdf {
  *      R$ 362.025,99 (o "Total da Guia" de R$ 696.441,08 soma os dois).
  *   3. "Relação de Eventos" da Senior por contrato (consignado de novo).
  * Por isso as linhas fora da seção 1 viram "" (mantém a numeração de linha).
+ *
+ * 21/10/2026: o consignado (seção 2) deixou de ser descartado — virou a
+ * SEGUNDA PARTE do rateio, com o próprio total (linhasDaSecaoConsignado,
+ * partesDoPdf, basesPorParte). O que continua de fora é a seção 3.
  */
 export function linhasDaSecaoFgts(linhas: string[]): string[] {
   let modo: "fgts" | "fora" = "fora";
@@ -390,22 +450,116 @@ export function linhasDaSecaoFgts(linhas: string[]): string[] {
   });
 }
 
-/** Linhas com CPF do PDF, aplicando a regra do layout reconhecido. */
-export function extrairLinhasDoPdf(linhas: string[], layout: LayoutPdf["layout"]): LinhaPdf[] {
-  return extrairLinhasComCpf(layout === "fgts_digital" ? linhasDaSecaoFgts(linhas) : linhas);
+/**
+ * A seção 2 da guia: o CONSIGNADO (empréstimo descontado em folha que a
+ * empresa repassa na mesma guia). Desde 21/10/2026 ele também é rateado —
+ * a guia é UM pagamento (FGTS + consignado) e o Pablo pediu os dois
+ * rateados, cada um pelo seu valor ("são 2 rateios de uma vez … tem que
+ * bater tudo"). Uma linha por contrato de empréstimo: o mesmo CPF pode
+ * aparecer várias vezes, e cada linha conta. Fecha em "Total Consignado".
+ */
+export function linhasDaSecaoConsignado(linhas: string[]): string[] {
+  let modo: "consignado" | "fora" = "fora";
+  return linhas.map((l) => {
+    const n = normNome(l);
+    if (n.includes("TRABALHADORESCONSIGNADO")) modo = "consignado";
+    else if (n.includes("TRABALHADORESFGTS") || n.includes("RELACAODEEVENTOS")) modo = "fora";
+    return modo === "consignado" ? l : "";
+  });
 }
 
-/** Total declarado conforme o layout (FGTS: "Total FGTS", nunca o da guia com consignado). */
+export type ParteGuia = "fgts" | "consignado";
+export const ROTULO_PARTE: Record<ParteGuia, string> = { fgts: "FGTS mensal", consignado: "Consignado" };
+
+export interface ParteDoPdf {
+  parte: ParteGuia;
+  rotulo: string;
+  /** O que o PDF declara para a parte ("Total FGTS" / "Total Consignado"); null se não achou. */
+  total: number | null;
+}
+
+/** Último valor da última linha que casa com `re`. */
+function ultimoValor(linhas: string[], re: RegExp): number | null {
+  for (let i = linhas.length - 1; i >= 0; i--) {
+    if (!re.test(linhas[i])) continue;
+    const v = valoresDaLinha(linhas[i]);
+    if (v.length) return v[v.length - 1];
+  }
+  return null;
+}
+
+/**
+ * Partes do documento que se rateiam cada uma pelo seu valor. Só a guia do
+ * FGTS tem mais de uma (FGTS + consignado); o resto devolve [] (uma parte só).
+ * O consignado só entra se a guia tiver consignado (total > 0 ou linhas).
+ */
+export function partesDoPdf(linhas: string[], layout: LayoutPdf["layout"]): ParteDoPdf[] {
+  if (layout !== "fgts_digital") return [];
+  const out: ParteDoPdf[] = [{ parte: "fgts", rotulo: ROTULO_PARTE.fgts, total: ultimoValor(linhas, /\bTotal\s+FGTS\b/i) }];
+  const totalCons = ultimoValor(linhas, /^\s*Total\s+Consignado\b/i);
+  const temLinhas = extrairLinhasComCpf(linhasDaSecaoConsignado(linhas)).length > 0;
+  if ((totalCons ?? 0) > 0 || temLinhas) out.push({ parte: "consignado", rotulo: ROTULO_PARTE.consignado, total: totalCons });
+  return out;
+}
+
+/** Linhas com CPF do PDF, aplicando a regra do layout reconhecido (FGTS: as duas partes, marcadas). */
+export function extrairLinhasDoPdf(linhas: string[], layout: LayoutPdf["layout"]): LinhaPdf[] {
+  if (layout === "fgts_digital") {
+    return [
+      ...extrairLinhasComCpf(linhasDaSecaoFgts(linhas)).map((l) => ({ ...l, parte: "fgts" as const })),
+      ...extrairLinhasComCpf(linhasDaSecaoConsignado(linhas)).map((l) => ({ ...l, parte: "consignado" as const })),
+    ];
+  }
+  return extrairLinhasComCpf(linhasDoLayout(linhas, layout));
+}
+
+/**
+ * Total declarado conforme o layout. FGTS: a soma das partes (Total FGTS +
+ * Total Consignado = "Total da Guia") — nunca o rodapé da Relação de Eventos.
+ */
 export function totalDoPdf(linhas: string[], layout: LayoutPdf["layout"]): number | null {
   if (layout === "fgts_digital") {
-    for (let i = linhas.length - 1; i >= 0; i--) {
-      if (!/\bTotal\s+FGTS\b/i.test(linhas[i])) continue;
-      const v = valoresDaLinha(linhas[i]);
-      if (v.length) return v[v.length - 1];
-    }
-    return null;
+    const partes = partesDoPdf(linhas, layout);
+    if (partes.some((p) => p.total == null)) return null;
+    return Math.round(partes.reduce((a, p) => a + (p.total ?? 0), 0) * 100) / 100;
   }
-  return totalDeclaradoNoPdf(linhas);
+  return totalDeclaradoNoPdf(linhasDoLayout(linhas, layout));
+}
+
+/**
+ * Base por contrato de um documento com PARTES, cada uma rateando o PRÓPRIO
+ * valor: a parte com total declarado distribui esse total pelas suas linhas
+ * (centavo exato, distribuirCentavos); sem total, vale a soma das linhas.
+ * Quando cada parte bate com o seu total, a base é a própria soma das linhas;
+ * quando não bate, a diferença fica DENTRO da parte — o consignado não passa a
+ * pagar parte do FGTS. A base resultante soma Σ totais, e o rateio da despesa
+ * (valor = Σ totais) reproduz exatamente o rateio parte a parte.
+ */
+export function basesPorParte(
+  linhas: { contrato_id: string | null; contrato_nome: string; valor: number; parte?: ParteGuia }[],
+  totais: Partial<Record<ParteGuia, number | null>>,
+): { contrato_id: string | null; contrato_nome: string; base: number; qtd: number; porParte: Partial<Record<ParteGuia, number>> }[] {
+  type Acc = { contrato_id: string | null; contrato_nome: string; base: number; qtd: number; porParte: Partial<Record<ParteGuia, number>> };
+  const m = new Map<string, Acc>();
+  const pega = (l: { contrato_id: string | null; contrato_nome: string }) => {
+    const k = l.contrato_id ?? "__sem__";
+    const cur = m.get(k) ?? { contrato_id: l.contrato_id, contrato_nome: l.contrato_nome, base: 0, qtd: 0, porParte: {} };
+    m.set(k, cur);
+    return cur;
+  };
+  const partes = [...new Set(linhas.map((l) => l.parte ?? "fgts"))] as ParteGuia[];
+  for (const parte of partes) {
+    const daParte = somarPorContrato(linhas.filter((l) => (l.parte ?? "fgts") === parte));
+    const total = totais[parte];
+    const valores = total != null ? distribuirCentavos(total, daParte.map((c) => c.base)) : daParte.map((c) => c.base);
+    daParte.forEach((c, i) => {
+      const acc = pega(c);
+      acc.porParte[parte] = Math.round(((acc.porParte[parte] ?? 0) + valores[i]) * 100) / 100;
+      acc.base = Math.round((acc.base + valores[i]) * 100) / 100;
+      acc.qtd += c.qtd;
+    });
+  }
+  return [...m.values()].sort((a, b) => b.base - a.base);
 }
 
 export interface LinhaPdfContrato extends LinhaPdf {
@@ -421,11 +575,25 @@ export function extrairLinhasPorContrato(linhas: string[], contratos: ContratoRe
   linhas.forEach((l, i) => {
     const vals = valoresDaLinha(l);
     if (!vals.length) return;
-    const nomeParte = l.replace(RE_MOEDA, " ").trim();
+    const nomeParte = semDatas(l.replace(RE_MOEDA, " ")).trim();
     const c = acharContrato(nomeParte, contratos) ?? acharContratoContido(nomeParte, contratos);
     if (c) out.push({ n: i + 1, texto: l.trim(), cpf: null, valor: vals[vals.length - 1], contrato: c });
   });
   return out;
+}
+
+/**
+ * Tira as datas da linha antes de procurar o número do contrato: "07/10/2026"
+ * sempre, e a competência "09/2026" quando a linha também tem uma data
+ * completa (linha de relatório, não de contrato). Sem isso "09/2026" vira o
+ * contrato "009.2026" — ver linhasDaTabelaContratos.
+ */
+function semDatas(texto: string): string {
+  const RE_DATA = /(?<![\d./])\d{1,2}\/\d{1,2}\/\d{4}(?![\d./])/g;
+  if (!RE_DATA.test(texto)) return texto;
+  return texto
+    .replace(RE_DATA, " ")
+    .replace(/(?<![\d./])(0?[1-9]|1[0-2])\/20\d{2}(?![\d./])/g, " ");
 }
 
 /** O nome normalizado de UM só contrato aparece dentro da linha. */
