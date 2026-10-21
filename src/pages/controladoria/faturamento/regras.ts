@@ -43,6 +43,11 @@ const NAO_CUSTO = [
   "DISTRIBUICAO",
 ];
 
+// SIS-2026-0709: despesa de sócio. O que o sócio retirou ou gastou conta, inclusive "Distribuição de lucros" (que fora do sócio não é
+// custo); continuam de fora as movimentações que só mudam o dinheiro de lugar.
+// "TRANSF" também pega a abreviação usada nas planilhas ("TRANSF. ENTRE CONTAS").
+const NAO_DESPESA_DE_SOCIO = [...NAO_CUSTO.filter((t) => t !== "DISTRIBUICAO"), "TRANSF"];
+
 // Ligação manual feita no painel "Rubricas de custo" da Lucratividade: além das
 // 8 colunas, "nao_custo" tira a classificação do cálculo.
 export type RubricaLigacao = RubricaCusto | "nao_custo";
@@ -90,6 +95,23 @@ export function rubricaDaLinha(l: Pick<LinhaFluxoCusto, "classificacao_id" | "cl
   const manual = l.classificacao_id ? ligacoes?.get(l.classificacao_id) : undefined;
   if (manual) return manual === "nao_custo" ? null : manual;
   return rubricaDeCusto(l.classificacao_nome);
+}
+
+// Contrato administrativo ("ADMINISTRATIVO - HAGG", "ADMINISTRATIVO - CANAA"...): é centro de custo da empresa, não contrato de cliente.
+// A Lucratividade de Contratos não o mostra nem o soma (o custo administrativo é visto no Fechamento da Empresa). Casa pelo INÍCIO do
+// nome, sem acento e sem caixa, para não pegar contrato de cliente que só cita "administrativo" no meio do nome.
+export function ehContratoAdministrativo(nome: string | null | undefined): boolean {
+  const n = (nome ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim().toUpperCase();
+  return n.startsWith("ADMINISTRATIVO");
+}
+
+export function ehDespesaDeSocio(l: Pick<LinhaFluxoCusto, "tipo" | "classificacao_id" | "classificacao_nome">, ligacoes?: LigacoesRubrica): boolean {
+  if (l.tipo !== "saida") return false;
+  const manual = l.classificacao_id ? ligacoes?.get(l.classificacao_id) : undefined;
+  if (manual === "nao_custo") return false;
+  const n = normalizar(l.classificacao_nome);
+  if (!n) return false;
+  return !NAO_DESPESA_DE_SOCIO.some((t) => n.includes(t));
 }
 
 // Saídas de contrato sem classificação: ficam fora de qualquer coluna, mas
