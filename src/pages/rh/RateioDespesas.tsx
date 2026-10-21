@@ -30,19 +30,19 @@ import {
 } from "@/components/ui/alert-dialog";
 import {
   AlertTriangle, ArrowLeft, CheckCircle2, Download, FileSpreadsheet, FileText, History, Loader2,
-  Lock, Paperclip, Plus, RotateCcw, Save, Search, Send, Trash2, Upload, Users,
+  Lock, Paperclip, Plus, RotateCcw, Save, Search, Send, Sparkles, Trash2, Upload, Users,
 } from "lucide-react";
 import { EnviarRateioMalote } from "./EnviarRateioMalote";
 import { useScreenAccess } from "@/hooks/useScreenAccess";
 import {
-  carregarDespesaRateio, carregarUltimoDoTipo, casarCpfs, linkAnexoRateio, subirAnexoRateio,
+  carregarDespesaRateio, carregarUltimoDoTipo, casarCpfs, lerRateioComIa, linkAnexoRateio, subirAnexoRateio,
   useContratosRateio, useDespesasRateio, useExcluirRateio, useMaloteDosRateios, useSalvarRateio,
-  type ContratoRateio, type DespesaRateio, type LinhaDetalhePdf,
+  type ContratoRateio, type DespesaRateio, type LeituraIaRateio, type LinhaDetalhePdf,
 } from "@/hooks/useRateioDespesas";
 import {
   TIPOS_RATEIO, ROTULO_CRITERIO, SEM_CONTRATO, acharContrato, calcularRateio, competenciaParaData,
   competenciaRotulo, criterioPadrao, extrairLinhasPorContrato, fmtMoeda, fmtPct,
-  extrairLinhasDoPdf, identificarLayoutPdf, totalDoPdf,
+  extrairLinhasDoPdf, identificarLayoutPdf, linhasDoLayout, totalDoPdf,
   lerPlanilhaJusBrasil, resumirRateio, rotuloTipo, somarPorContrato, tipoUsaPdf,
   type ContratoRef, type CriterioRateio, type ItemRateio, type LinhaPlanilhaJus, type TipoRateio,
 } from "@/lib/rh/rateioDespesas";
@@ -217,6 +217,10 @@ function Editor({ id, onFechar, onSalvo }: { id: string | null; onFechar: () => 
   const [avisoPdf, setAvisoPdf] = useState<string | null>(null);
   // Do PDF lido agora (não é gravado): total que ele declara e qual layout foi reconhecido.
   const [pdfInfo, setPdfInfo] = useState<{ total: number | null; rotulo: string } | null>(null);
+  // Texto do PDF lido agora (para a I.A reler sem pedir o arquivo de novo) e o que ela respondeu.
+  const [linhasBrutas, setLinhasBrutas] = useState<string[] | null>(null);
+  const [lendoIa, setLendoIa] = useState(false);
+  const [leituraIa, setLeituraIa] = useState<LeituraIaRateio | null>(null);
   const [soPendentes, setSoPendentes] = useState(false);
   const [confirmarExclusao, setConfirmarExclusao] = useState(false);
   const [soComBase, setSoComBase] = useState(false);
@@ -379,9 +383,12 @@ function Editor({ id, onFechar, onSalvo }: { id: string | null; onFechar: () => 
     setAnexoNome(f.name);
     setAvisoPdf(null);
     setPdfInfo(null);
+    setLinhasBrutas(null);
+    setLeituraIa(null);
     setLendo(true);
     try {
       const linhas = await lerLinhasPdf(f);
+      setLinhasBrutas(linhas);
       const layout = identificarLayoutPdf(linhas);
       const declarado = totalDoPdf(linhas, layout.layout);
       setPdfInfo({ total: declarado, rotulo: layout.rotulo });
@@ -401,7 +408,7 @@ function Editor({ id, onFechar, onSalvo }: { id: string | null; onFechar: () => 
         setSoPendentes(det.length > 200 && semCad + semCt > 0);
         if (semCad || semCt) setAvisoPdf(`${semCad ? `${semCad} CPF(s) não estão na EMPREGADOS` : ""}${semCad && semCt ? " e " : ""}${semCt ? `${semCt} colaborador(es) sem contrato` : ""} — escolha o contrato na lista abaixo.`);
       } else {
-        const porContrato = extrairLinhasPorContrato(linhas, refs);
+        const porContrato = extrairLinhasPorContrato(linhasDoLayout(linhas, layout.layout), refs);
         if (porContrato.length) {
           setLinhasPdf(porContrato.map((l) => ({ n: l.n, texto: l.texto, cpf: null, nome: null, situacao: null, valor: l.valor, contrato_id: l.contrato?.id ?? null })));
           lido = porContrato.reduce((a, l) => a + l.valor, 0);
@@ -419,6 +426,46 @@ function Editor({ id, onFechar, onSalvo }: { id: string | null; onFechar: () => 
       setAvisoPdf((e as Error).message);
     } finally {
       setLendo(false);
+    }
+  };
+
+  // A I.A relê o MESMO texto e devolve só valores que estão escritos nas
+  // linhas que ela cita (conferido na Edge rh-rateio-ia). Substitui as linhas
+  // lidas por regra; com CPF, o contrato continua vindo do cadastro.
+  const lerComIa = async () => {
+    if (!linhasBrutas) return;
+    setLendoIa(true);
+    try {
+      const r = await lerRateioComIa(linhasBrutas, tipo);
+      if (!r.linhas.length) {
+        setLeituraIa(r);
+        toast.error("A IA não achou uma base de rateio neste PDF — veja a explicação.");
+        return;
+      }
+      const cpfs = [...new Set(r.linhas.map((l) => l.cpf).filter((c): c is string => !!c))];
+      const porCpf = new Map((await casarCpfs(cpfs)).map((c) => [c.cpf, c]));
+      setLinhasPdf(r.linhas.map((l) => {
+        const c = l.cpf ? porCpf.get(l.cpf) : undefined;
+        return {
+          n: l.n, texto: l.texto, cpf: l.cpf, nome: c?.nome ?? null, situacao: c?.situacao ?? null,
+          valor: l.valor, contrato_id: c?.contrato_id ?? l.contrato_id,
+        };
+      }));
+      setAjustes({});
+      setAvisoPdf(null);
+      setSoPendentes(false);
+      // O valor da despesa só muda se estava vazio ou era o total que a leitura automática sugeriu.
+      if (r.total_despesa != null && (!(valor > 0) || (pdfInfo?.total != null && Math.abs(valor - pdfInfo.total) < 0.005))) {
+        setValorTxt(r.total_despesa.toFixed(2));
+      }
+      setPdfInfo({ total: r.total_despesa, rotulo: `Leitura da I.A${r.origem_total ? ` — ${r.origem_total}` : ""}` });
+      setLeituraIa(r);
+      const semCt = r.linhas.filter((l) => !l.contrato_id && !l.cpf).length;
+      toast.success(`IA leu ${r.linhas.length} linha(s)${semCt ? `, ${semCt} sem contrato — escolha abaixo` : ""}. Confira antes de salvar.`);
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setLendoIa(false);
     }
   };
   const mudarContratoLinha = (idx: number, cid: string) =>
@@ -651,6 +698,11 @@ function Editor({ id, onFechar, onSalvo }: { id: string | null; onFechar: () => 
               <Button size="sm" className="gap-1.5" onClick={() => inputPdf.current?.click()} disabled={lendo}>
                 {lendo ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />} {linhasPdf.length || anexoNome ? "Ler outro PDF" : "Anexar e ler PDF"}
               </Button>
+              {linhasBrutas && (
+                <Button size="sm" variant="outline" className="gap-1.5" onClick={() => void lerComIa()} disabled={lendo || lendoIa}>
+                  {lendoIa ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />} {leituraIa ? "Ler de novo com I.A" : "Ler com I.A"}
+                </Button>
+              )}
             </>
           )}
         </div>
@@ -680,6 +732,25 @@ function Editor({ id, onFechar, onSalvo }: { id: string | null; onFechar: () => 
             <AlertTriangle className="h-4 w-4 mt-0.5 text-warning shrink-0" /> {avisoPdf}
           </div>
         )}
+        {leituraIa && (
+          <div className="rounded-md border border-primary/30 bg-primary/5 p-3 text-sm space-y-1.5">
+            <div className="flex items-center gap-1.5 font-medium"><Sparkles className="h-4 w-4 text-primary" /> Leitura da I.A</div>
+            {leituraIa.explicacao && <p>{leituraIa.explicacao}</p>}
+            {leituraIa.total_despesa != null && (
+              <p className="text-xs text-muted-foreground">
+                Valor da despesa: <b>{fmtMoeda(leituraIa.total_despesa)}</b>{leituraIa.origem_total ? ` — ${leituraIa.origem_total}` : ""}.
+                Base: {leituraIa.base || "—"}, {leituraIa.linhas.length} linha(s), soma {fmtMoeda(leituraIa.soma)}.
+              </p>
+            )}
+            {leituraIa.ignorado.length > 0 && (
+              <p className="text-xs text-muted-foreground">Ignorado: {leituraIa.ignorado.join(" · ")}</p>
+            )}
+            {leituraIa.alertas.map((a, i) => (
+              <p key={i} className="flex items-start gap-1.5 text-xs text-warning"><AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" /> {a}</p>
+            ))}
+            <p className="text-[11px] text-muted-foreground">Cada valor acima foi conferido contra a linha do PDF. A IA lê; quem confere e salva é você.</p>
+          </div>
+        )}
         {planilhaSemContrato.length > 0 && (
           <div className="flex items-start gap-2 rounded-md border border-warning/40 bg-warning/10 p-2 text-sm">
             <AlertTriangle className="h-4 w-4 mt-0.5 text-warning shrink-0" />
@@ -700,6 +771,11 @@ function Editor({ id, onFechar, onSalvo }: { id: string | null; onFechar: () => 
                   <AlertTriangle className="h-3.5 w-3.5" /> TOTAL do PDF {fmtMoeda(pdfInfo.total)} — diferença {fmtMoeda(Math.round((pdfInfo.total - totalPdf) * 100) / 100)}
                 </Badge>
               ))}
+              {pdfInfo?.total != null && Math.abs(pdfInfo.total - totalPdf) >= 0.005 && linhasBrutas && !leituraIa && !somenteLeitura && (
+                <Button size="sm" variant="outline" className="gap-1.5" onClick={() => void lerComIa()} disabled={lendoIa}>
+                  {lendoIa ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />} Não bate — pedir para a I.A ler
+                </Button>
+              )}
               {pdfInfo && <span className="text-xs text-muted-foreground">{pdfInfo.rotulo}</span>}
               {Math.abs(totalPdf - valor) >= 0.005 && !somenteLeitura && (
                 <Button size="sm" variant="outline" onClick={() => setValorTxt(totalPdf.toFixed(2))}>Usar o total do PDF como valor da despesa</Button>

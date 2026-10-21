@@ -298,3 +298,54 @@ describe("PDF do FGTS (Guia do FGTS Digital)", () => {
     expect(totalDeclaradoNoPdf(FGTS_FIXTURE)).not.toBe(359.58); // o genérico pegaria o último TOTAL
   });
 });
+
+// Boleto da Bullla 09/2026 (21/10/2026): boleto + tabela dinâmica por
+// contrato + "Relação de Eventos" da Senior. Nomes de colaborador fictícios.
+const BULLLA_FIXTURE = [
+  "BULLLA INSTITUICAO DE PAGAMENTO S.A. CNPJ 08.422.119/0001-64  8541/60940-3  X  109/10079189-7",
+  "01/10/2026  340041/1  21/10/2026  25.767,61",
+  "(-) Descontos / Abatimentos  (-) Outras deducoes  (+) Mora/Multa  (+) Outros acrescimos  (=) Valor cobrado",
+  "6.321,74  19.445,87",
+  "Rótulos de Linha  Soma de Valor Faturado",
+  "SN  1.567,47",
+  "1030 - UFFS CHAPECO - 041/2021  0,00",
+  "1036 - CHARQUEADAS - 249/2020  636,37",
+  "1049 - TJRS - 023/2025  931,10",
+  "PENDENTE DE IDENTIFICAÇÃO  0,00",
+  "Total Geral  1.567,47",
+  "Relação de Eventos",
+  "Evento  Colaborador  SIT  Competência  Pagamento  Referência  Valor",
+  "3794 - Adto Salarial Bulla",
+  "000000664 FULANA DE TAL  001  09/2026  07/10/2026  0,00  299,94",
+  "000000798 BELTRANO DA SILVA  001  09/2026  07/10/2026  0,00  97,08",
+  "Total de Colaboradores:  2  0,00  397,02",
+];
+const CONTRATOS_BULLLA = [
+  { id: "uffs", nome: "UFFS CHAPECO - 041/2021" },
+  { id: "charq", nome: "CHARQUEADAS - 249 /2020" },
+  { id: "tjrs", nome: "TJRS - 023/2025" },
+  { id: "libras", nome: "UFRGS INTERPRETE DE LIBRAS C. 009.2026" },
+];
+
+describe("PDF do boleto da Bullla (resumo por contrato)", () => {
+  it("reconhece a tabela dinâmica e lê só ela", async () => {
+    const { identificarLayoutPdf, linhasDoLayout, totalDoPdf } = await import("@/lib/rh/rateioDespesas");
+    const { layout } = identificarLayoutPdf(BULLLA_FIXTURE);
+    expect(layout).toBe("tabela_contratos");
+    const r = extrairLinhasPorContrato(linhasDoLayout(BULLLA_FIXTURE, layout), CONTRATOS_BULLLA);
+    expect(r.map((l) => l.contrato?.id)).toEqual(["uffs", "charq", "tjrs"]);
+    expect(r.reduce((a, l) => a + l.valor, 0)).toBeCloseTo(1567.47, 2);
+    expect(totalDoPdf(BULLLA_FIXTURE, layout)).toBe(1567.47);
+  });
+
+  it("competência 09/2026 da linha de colaborador não vira o contrato 009.2026", () => {
+    const r = extrairLinhasPorContrato(BULLLA_FIXTURE.slice(11), CONTRATOS_BULLLA);
+    expect(r.some((l) => l.contrato?.id === "libras")).toBe(false);
+  });
+
+  it("rodapé 'Total de Colaboradores' não é o total da despesa", async () => {
+    const { totalDeclaradoNoPdf } = await import("@/lib/rh/rateioDespesas");
+    expect(totalDeclaradoNoPdf(BULLLA_FIXTURE)).toBe(1567.47);
+    expect(totalDeclaradoNoPdf(BULLLA_FIXTURE.slice(11))).toBeNull();
+  });
+});

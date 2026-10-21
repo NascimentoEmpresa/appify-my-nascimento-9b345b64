@@ -329,20 +329,32 @@ export function extrairLinhasComCpf(linhas: string[]): LinhaPdf[] {
  * Usa a última linha de total do arquivo; null se não houver.
  */
 export function totalDeclaradoNoPdf(linhas: string[]): number | null {
+  // "Total Geral" ganha de qualquer outro total: é o fecho do documento.
+  for (let i = linhas.length - 1; i >= 0; i--) {
+    if (!/^\s*TOTAL\s+GERAL\b/i.test(linhas[i]) || RE_CPF.test(linhas[i])) continue;
+    const v = valoresDaLinha(linhas[i]);
+    if (v.length) return v[v.length - 1];
+  }
   for (let i = linhas.length - 1; i >= 0; i--) {
     // "TOTAL:" em qualquer lugar, ou a linha começando com TOTAL/VALOR TOTAL
     // ("sem total aqui 10,00" não é total).
     if (!/\bTOTAL(\s+GERAL)?\s*:/i.test(linhas[i]) && !/^\s*(VALOR\s+)?TOTAL\b/i.test(linhas[i])) continue;
     if (RE_CPF.test(linhas[i])) continue;
+    // Rodapé de relatório anexo ("Total de Colaboradores: 70  0,00  19.765,08"
+    // da Relação de Eventos da Senior, no boleto da Bullla de 09/2026) não é
+    // o total da despesa — pegá-lo trocava 19.445,87 por 19.765,08.
+    if (RE_TOTAL_DE_RELATORIO.test(linhas[i])) continue;
     const v = valoresDaLinha(linhas[i]);
     if (v.length) return v[v.length - 1];
   }
   return null;
 }
 
+const RE_TOTAL_DE_RELATORIO = /\bTOTAL\s+DE\s+(COLABORADORES|FUNCION|TRABALHADORES|EMPREGADOS|REGISTROS|ITENS|EVENTOS|LAN[CÇ]AMENTOS)/i;
+
 export interface LayoutPdf {
   /** Layout reconhecido; "generico" quando nenhum bate. */
-  layout: "seguro_prudential" | "fgts_digital" | "generico";
+  layout: "seguro_prudential" | "fgts_digital" | "tabela_contratos" | "generico";
   rotulo: string;
 }
 
@@ -361,7 +373,49 @@ export function identificarLayoutPdf(linhas: string[]): LayoutPdf {
   if (topo.includes("RELATORIODEMOVIMENTACAO") && topo.includes("PREMIO") && topo.includes("ISSEGURADO")) {
     return { layout: "seguro_prudential", rotulo: "Relatório de movimentação do seguro de vida (prêmio por segurado)" };
   }
+  // A tabela dinâmica fica na pág. 2 do boleto da Bullla — fora do "topo".
+  const tudo = normNome(linhas.join(" "));
+  if (tudo.includes("ROTULOSDELINHA") && tudo.includes("TOTALGERAL")) {
+    return {
+      layout: "tabela_contratos",
+      rotulo: tudo.includes("BULLLA")
+        ? "Boleto Bullla — resumo por contrato (Total Geral)"
+        : "Resumo por contrato (Rótulos de Linha → Total Geral)",
+    };
+  }
   return { layout: "generico", rotulo: "Leitura genérica (CPF + último valor da linha)" };
+}
+
+/**
+ * BOLETO DA BULLLA (adiantamento salarial pelo cartão), PDF real de 09/2026
+ * ("BOLETO 09.2026 BULLLA SN.pdf", 21/10/2026). Também junta TRÊS coisas:
+ *   1. O boleto — "(=) Valor cobrado" 19.445,87 (documento 25.767,61 menos
+ *      6.321,74 de desconto/abatimento).
+ *   2. Uma tabela dinâmica do Excel: "Rótulos de Linha | Soma de Valor
+ *      Faturado", uma linha por contrato ("1064 - TRIUNFO VIGIAS - 33/2024
+ *      3.325,67"), fechando em "Total Geral 19.445,87". É ESTA a base do rateio.
+ *   3. A "Relação de Eventos" da Senior (Adto Salarial Bulla), uma linha por
+ *      colaborador — matrícula, SIT, "09/2026", data de pagamento, valor —
+ *      fechando em "Total de Colaboradores: 70 … 19.765,08". Lida junto, a
+ *      competência "09/2026" de cada linha casava com o contrato "UFRGS
+ *      INTERPRETE DE LIBRAS C. 009.2026" pelo número, e o rateio dobrava.
+ * Só a seção 2 conta; o resto vira "" (mantém a numeração de linha).
+ */
+export function linhasDaTabelaContratos(linhas: string[]): string[] {
+  let modo: "dentro" | "fora" | "fim" = "fora";
+  return linhas.map((l) => {
+    const n = normNome(l);
+    if (modo === "fora" && n.includes("ROTULOSDELINHA")) { modo = "dentro"; return ""; }
+    if (modo === "dentro" && /^TOTALGERAL/.test(n)) { modo = "fim"; return l; }
+    return modo === "dentro" ? l : "";
+  });
+}
+
+/** As linhas que valem para o layout (o resto vira "", mantendo a numeração). */
+export function linhasDoLayout(linhas: string[], layout: LayoutPdf["layout"]): string[] {
+  if (layout === "fgts_digital") return linhasDaSecaoFgts(linhas);
+  if (layout === "tabela_contratos") return linhasDaTabelaContratos(linhas);
+  return linhas;
 }
 
 /**
@@ -392,7 +446,7 @@ export function linhasDaSecaoFgts(linhas: string[]): string[] {
 
 /** Linhas com CPF do PDF, aplicando a regra do layout reconhecido. */
 export function extrairLinhasDoPdf(linhas: string[], layout: LayoutPdf["layout"]): LinhaPdf[] {
-  return extrairLinhasComCpf(layout === "fgts_digital" ? linhasDaSecaoFgts(linhas) : linhas);
+  return extrairLinhasComCpf(linhasDoLayout(linhas, layout));
 }
 
 /** Total declarado conforme o layout (FGTS: "Total FGTS", nunca o da guia com consignado). */
@@ -405,7 +459,7 @@ export function totalDoPdf(linhas: string[], layout: LayoutPdf["layout"]): numbe
     }
     return null;
   }
-  return totalDeclaradoNoPdf(linhas);
+  return totalDeclaradoNoPdf(linhasDoLayout(linhas, layout));
 }
 
 export interface LinhaPdfContrato extends LinhaPdf {
@@ -421,11 +475,25 @@ export function extrairLinhasPorContrato(linhas: string[], contratos: ContratoRe
   linhas.forEach((l, i) => {
     const vals = valoresDaLinha(l);
     if (!vals.length) return;
-    const nomeParte = l.replace(RE_MOEDA, " ").trim();
+    const nomeParte = semDatas(l.replace(RE_MOEDA, " ")).trim();
     const c = acharContrato(nomeParte, contratos) ?? acharContratoContido(nomeParte, contratos);
     if (c) out.push({ n: i + 1, texto: l.trim(), cpf: null, valor: vals[vals.length - 1], contrato: c });
   });
   return out;
+}
+
+/**
+ * Tira as datas da linha antes de procurar o número do contrato: "07/10/2026"
+ * sempre, e a competência "09/2026" quando a linha também tem uma data
+ * completa (linha de relatório, não de contrato). Sem isso "09/2026" vira o
+ * contrato "009.2026" — ver linhasDaTabelaContratos.
+ */
+function semDatas(texto: string): string {
+  const RE_DATA = /(?<![\d./])\d{1,2}\/\d{1,2}\/\d{4}(?![\d./])/g;
+  if (!RE_DATA.test(texto)) return texto;
+  return texto
+    .replace(RE_DATA, " ")
+    .replace(/(?<![\d./])(0?[1-9]|1[0-2])\/20\d{2}(?![\d./])/g, " ");
 }
 
 /** O nome normalizado de UM só contrato aparece dentro da linha. */
