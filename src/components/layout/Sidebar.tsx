@@ -78,7 +78,7 @@ import { useTrocaFuncaoNotif } from "@/hooks/useTrocaFuncaoNotif";
 import { useJuridicoNotif } from "@/hooks/useJuridicoNotif";
 import { useReembolsoNotif } from "@/hooks/useReembolsoNotif";
 import { useAprovacoesNotif } from "@/hooks/useAprovacoesNotif";
-import { Inbox, FileSignature, type LucideIcon } from "lucide-react";
+import { Inbox, FileSignature, PencilRuler, Workflow, type LucideIcon } from "lucide-react";
 import { Target, MessagesSquare, KeyRound, MonitorPlay, Gauge } from "lucide-react";
 import { GitBranch, GitMerge } from "lucide-react";
 import { MessageSquare } from "lucide-react";
@@ -1376,6 +1376,11 @@ const organogramaModule: ModuleDef = {
       defaultOpen: true,
       items: [
         { label: "Organograma", to: "/app/organograma", icon: Network },
+        // Estrutura de Setores e Processos (mig 20261020000060): o organograma
+        // das atividades — setores, equipe do gerente ao jovem, processos e as
+        // ligações entre setores. O Geral lê a última publicação; o Cadastro edita.
+        { label: "Estrutura e Processos", to: "/app/organograma/processos", icon: Workflow },
+        { label: "Cadastro da Estrutura", to: "/app/organograma/processos/cadastro", icon: PencilRuler },
       ],
     },
   ],
