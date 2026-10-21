@@ -57,7 +57,7 @@ export function useSolicitarExcecao() {
   });
 }
 
-// Depois do horário 1.1 o Nível 1 só aprova com a senha de uma exceção de aprovação (migration 20261020000130). Quem diz se já passou
+// Depois do horário 1.1 o Nível 1 só aprova com a senha de uma exceção de aprovação (migration 20261021000020). Quem diz se já passou
 // do horário é o relógio do banco (Brasília), não o do navegador. Antes da migration a RPC não existe: a regra fica desligada na tela.
 export function useN1ForaDoPrazo(enabled = true) {
   return useQuery({

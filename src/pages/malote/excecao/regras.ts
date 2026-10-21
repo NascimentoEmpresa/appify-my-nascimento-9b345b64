@@ -28,7 +28,7 @@ export interface ExcecaoSolicitacao {
   usada_em: string | null;
   despesa_id: string | null;
   arquivos: string[];
-  // Só existem depois da migration 20261020000130; antes dela ficam undefined e a exceção é tratada como de criação.
+  // Só existem depois da migration 20261021000020; antes dela ficam undefined e a exceção é tratada como de criação.
   finalidade?: FinalidadeExcecao;
   despesa_alvo_id?: string | null;
   created_at: string;

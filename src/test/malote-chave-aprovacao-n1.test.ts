@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { pedidoDeAprovacaoDaDespesa, podeCriarDespesaDaExcecao } from "@/pages/malote/excecao/regras";
 
 // Malote (20/10/2026, DM-2026-2947): depois do horário 1.1 o Nível 1 só aprova com a senha de uma exceção de aprovação daquela despesa.
-// A regra de verdade mora no banco (migration 20261020000130); aqui o que a tela usa para mostrar o pedido e esconder o "Criar despesa".
+// A regra de verdade mora no banco (migration 20261021000020); aqui o que a tela usa para mostrar o pedido e esconder o "Criar despesa".
 const AGORA = new Date("2026-10-20T18:00:00Z");
 const expira = (horas: number) => new Date(AGORA.getTime() + horas * 3_600_000).toISOString();
 

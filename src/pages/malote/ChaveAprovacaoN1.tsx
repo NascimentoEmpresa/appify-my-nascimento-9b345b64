@@ -21,7 +21,7 @@ interface ChaveAprovacaoN1Props {
 }
 
 // Malote: depois do horário 1.1 o Nível 1 só aprova com a senha de uma exceção de aprovação daquela despesa. A regra de verdade mora
-// no banco (malote_aprovar_despesa, migration 20261020000130); aqui o aprovador vê o aviso, pede a chave e digita a senha.
+// no banco (malote_aprovar_despesa, migration 20261021000020); aqui o aprovador vê o aviso, pede a chave e digita a senha.
 // Só aparece quando o relógio do banco já passou do horário; antes disso (ou antes da migration) não renderiza nada.
 export function ChaveAprovacaoN1({ despesaId, userId, horario, senha, onSenha, disabled }: ChaveAprovacaoN1Props) {
   const { data: foraDoPrazo } = useN1ForaDoPrazo();
