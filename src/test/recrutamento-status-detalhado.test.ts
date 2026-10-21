@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ETAPA_KANBAN, dicaDaEtapa, statusDetalhadoVaga, vagaTemEtapa, type EtapaVaga } from "@/lib/recrutamento/statusDetalhado";
+import { rotuloEtapaCandidato } from "@/lib/recrutamento/rotuloEtapa";
 
 // Status detalhado da vaga (08/10/2026, mig 20261008000008): "quando o
 // recrutamento move o kanban deve ficar Recrutamento: TRIAGEM, e por assim
@@ -15,10 +16,10 @@ describe("status detalhado da vaga pela etapa do kanban", () => {
     expect(t).toMatchObject({ texto: "Recrutamento: TRIAGEM", detalhado: true, cor: "#3b82f6", tinta: "#2563eb" });
     expect(statusDetalhadoVaga("Em análise jurídica", etapa("JURÍDICO")).texto).toBe("Jurídico: ANÁLISE JURÍDICA");
     expect(statusDetalhadoVaga("Aguardando SST e Compras", etapa("SST + COMPRAS")).texto).toBe("SST + Compras: EXAME E EPIs");
-    expect(statusDetalhadoVaga("Aguardando SST e Compras", etapa("ADMISSÃO")).texto).toBe("Recrutamento: ADMISSÃO");
+    expect(statusDetalhadoVaga("Aguardando SST e Compras", etapa("ADMISSÃO")).texto).toBe("Recrutamento: ADMISSÃO CONCLUÍDA");
     expect(statusDetalhadoVaga("Entrevista com Gestor", etapa("ENTREVISTA GESTOR")).texto).toBe("Recrutamento: ENTREVISTA GESTOR");
-    // 13/10/2026: aprovado é nas entrevistas — "Recrutamento: APROVADO" dizia pouco.
-    expect(statusDetalhadoVaga("Aprovado - Aguardando SST", etapa("APROVADO")).texto).toBe("Entrevista: APROVADO");
+    // 21/10/2026: APROVADO é exibido como EM ADMISSÃO (valor gravado não muda).
+    expect(statusDetalhadoVaga("Aprovado - Aguardando SST", etapa("APROVADO")).texto).toBe("Recrutamento: EM ADMISSÃO");
   });
 
   it("toda coluna do kanban (menos Reprovado) tem área, texto e cor", () => {
@@ -57,6 +58,16 @@ describe("status detalhado da vaga pela etapa do kanban", () => {
 
   it("etapa desconhecida não inventa selo: cai no status", () => {
     expect(statusDetalhadoVaga("Entrevista e Avaliação", etapa("XYZ"))).toEqual({ texto: "Entrevista e Avaliação", detalhado: false });
+  });
+
+  it("rótulo exibido: APROVADO → EM ADMISSÃO, ADMISSÃO → ADMISSÃO CONCLUÍDA; o resto igual", () => {
+    expect(rotuloEtapaCandidato("APROVADO")).toBe("EM ADMISSÃO");
+    expect(rotuloEtapaCandidato("ADMISSÃO")).toBe("ADMISSÃO CONCLUÍDA");
+    expect(rotuloEtapaCandidato("Reprovado")).toBe("Reprovado / Desistência");
+    expect(rotuloEtapaCandidato("TRIAGEM")).toBe("TRIAGEM");
+    expect(rotuloEtapaCandidato(null)).toBe("");
+    const d = dicaDaEtapa(etapa("APROVADO", { candidatos: 2, por_etapa: { ENTRADA: 1, APROVADO: 1 } }));
+    expect(d).toMatch(/^Candidato mais adiantado: EM ADMISSÃO desde .* \(ENTRADA 1, EM ADMISSÃO 1\)$/);
   });
 
   it("a dica conta os candidatos por etapa, na ordem do kanban, e o desde", () => {

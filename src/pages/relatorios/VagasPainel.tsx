@@ -30,6 +30,7 @@ import {
 import { rotuloMes, type Kpi } from "./sistemas";
 import { LinhaKpis, SeletorPeriodo, usePeriodo } from "./componentes";
 import { AbaAcompanhamento } from "./AcompanhamentoVagas";
+import { rotuloEtapaCandidato } from "@/lib/recrutamento/rotuloEtapa";
 
 // =====================================================================
 // RELATÓRIOS › VAGAS — DASHBOARD (mig 20261007000020, 07/10/2026)
@@ -965,7 +966,7 @@ function DashboardVaga({ vaga, painel, etapas }: { vaga: VagaPainel; painel: Pai
           <Card className="p-4">
             <p className="mb-1 text-sm font-semibold">Kanban dos candidatos — quanto tempo cada um ficou em cada coluna</p>
             <div className="mb-3 flex flex-wrap gap-2 text-[10px] text-muted-foreground">
-              {COLUNAS_CANDIDATO.map((e) => <span key={e} className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-sm" style={{ background: COR_COLUNA[e] }} />{e}</span>)}
+              {COLUNAS_CANDIDATO.map((e) => <span key={e} className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-sm" style={{ background: COR_COLUNA[e] }} />{rotuloEtapaCandidato(e)}</span>)}
             </div>
             <Gantt
               agora={agora}

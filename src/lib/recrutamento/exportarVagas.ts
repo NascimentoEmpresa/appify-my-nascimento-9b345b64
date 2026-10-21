@@ -13,6 +13,7 @@
 // =====================================================================
 
 import * as XLSX from "xlsx";
+import { rotuloEtapaCandidato } from "@/lib/recrutamento/rotuloEtapa";
 
 export interface VagaExport {
   id: number;
@@ -111,7 +112,7 @@ export function resumoCandidatos(cands: CandidatoExport[]) {
     ativos: ativos.length,
     reprovados: fora.filter(c => !c.desistiu).length,
     desistencias: fora.filter(c => c.desistiu).length,
-    etapaMaisAdiantada: maisAdiantado?.etapa_processo ?? "",
+    etapaMaisAdiantada: rotuloEtapaCandidato(maisAdiantado?.etapa_processo),
   };
 }
 
@@ -174,7 +175,7 @@ export function montarPlanilhaVagas(vagas: VagaExport[], op: OpcoesExport = {}):
       const situacao = c.etapa_processo === "Reprovado" ? (c.desistiu ? "Desistiu" : "Reprovado")
         : c.etapa_processo === "ADMISSÃO" && c.enviado_admissao_em ? "Contratado" : "Em andamento";
       return [c.vaga_id, v.cargo ?? "", v.contrato ?? "", v.cidade ?? "", c.nome ?? "", c.cpf ?? "", c.telefone ?? "",
-        c.etapa_processo ?? "", situacao, (c.desistiu ? c.desistencia_motivo : c.motivo_reprovacao) ?? "", data(c.enviado_admissao_em)];
+        rotuloEtapaCandidato(c.etapa_processo), situacao, (c.desistiu ? c.desistencia_motivo : c.motivo_reprovacao) ?? "", data(c.enviado_admissao_em)];
     });
     const wsC = XLSX.utils.aoa_to_sheet([cabC, ...linC], { cellDates: true, dateNF: "dd/mm/yyyy" });
     wsC["!autofilter"] = { ref: XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: Math.max(linC.length, 1), c: cabC.length - 1 } }) };

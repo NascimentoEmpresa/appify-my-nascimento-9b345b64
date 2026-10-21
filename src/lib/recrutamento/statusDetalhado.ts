@@ -23,6 +23,7 @@
 
 import { desfechoDoStatus } from "@/lib/recrutamento/fluxoStatus";
 import { rotuloStatusVaga } from "@/lib/recrutamento/vagaRegras";
+import { rotuloEtapaCandidato } from "@/lib/recrutamento/rotuloEtapa";
 
 /** Uma linha de SISTEMA_RECRUTAMENTO_ETAPA. */
 export interface EtapaVaga {
@@ -52,10 +53,12 @@ export const ETAPA_KANBAN: Record<string, Aparencia> = {
   "ENTREVISTA GESTOR": { area: "Recrutamento",  texto: "ENTREVISTA GESTOR", cor: "#6366f1", tinta: "#4f46e5" },
   // "Recrutamento: APROVADO" dizia pouco (13/10/2026, Pablo: "tem que ficar
   // mais específico — ENTREVISTA: APROVADO"): aprovado é nas entrevistas.
-  APROVADO:            { area: "Entrevista",    texto: "APROVADO",          cor: "#14b8a6", tinta: "#0f766e" },
+  // 21/10/2026: a coluna passou a se chamar EM ADMISSÃO (rotuloEtapa.ts), e
+  // "Entrevista: EM ADMISSÃO" não diz nada — volta a ser do Recrutamento.
+  APROVADO:            { area: "Recrutamento",  texto: rotuloEtapaCandidato("APROVADO"), cor: "#14b8a6", tinta: "#0f766e" },
   "DOCUMENTAÇÃO":      { area: "Recrutamento",  texto: "DOCUMENTAÇÃO",      cor: "#0891b2", tinta: "#0e7490" },
   "SST + COMPRAS":     { area: "SST + Compras", texto: "EXAME E EPIs",      cor: "#f59e0b", tinta: "#b45309" },
-  "ADMISSÃO":          { area: "Recrutamento",  texto: "ADMISSÃO",          cor: "#16a34a", tinta: "#15803d" },
+  "ADMISSÃO":          { area: "Recrutamento",  texto: rotuloEtapaCandidato("ADMISSÃO"), cor: "#16a34a", tinta: "#15803d" },
 };
 
 /** A ordem das colunas (para a dica listar da primeira à última). */
@@ -86,10 +89,10 @@ const fmtData = (iso: string) => {
 
 /** "Candidato mais adiantado: TRIAGEM desde 06/10 · 6 no processo (ENTRADA 5, TRIAGEM 1)". */
 export function dicaDaEtapa(e: EtapaVaga): string {
-  const partes = ORDEM.filter((k) => (e.por_etapa?.[k] ?? 0) > 0).map((k) => `${k} ${e.por_etapa[k]}`);
+  const partes = ORDEM.filter((k) => (e.por_etapa?.[k] ?? 0) > 0).map((k) => `${rotuloEtapaCandidato(k)} ${e.por_etapa[k]}`);
   const desde = e.atualizado_em ? fmtData(e.atualizado_em) : "";
   return [
-    `Candidato mais adiantado: ${e.etapa}${desde ? ` desde ${desde}` : ""}`,
+    `Candidato mais adiantado: ${rotuloEtapaCandidato(e.etapa)}${desde ? ` desde ${desde}` : ""}`,
     `${e.candidatos} no processo${partes.length ? ` (${partes.join(", ")})` : ""}`,
   ].join(" · ");
 }
