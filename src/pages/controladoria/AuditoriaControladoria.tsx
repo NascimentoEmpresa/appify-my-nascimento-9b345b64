@@ -60,17 +60,21 @@ export default function AuditoriaControladoria() {
   const [mes, setMes] = useState(() => mesesRecentes()[1]); // mês fechado mais recente
   const [empresaId, setEmpresaId] = useState(TODOS);
   const [contratoId, setContratoId] = useState(TODOS);
+  // SIS-2026-0701: o mês pode ser lido pela data de pagamento (confere o pagamento) ou pela competência (lucratividade dos contratos).
+  const [base, setBase] = useState<"pagamento" | "competencia">("pagamento");
 
   const { data: empresas = [] } = useEmpresasGrupo();
   const { data: contratos = [] } = useContratosERP({ todasEmpresas: true });
 
   const empresa = empresaId === TODOS ? null : empresaId;
   const filtros = useMemo(
-    () => ({ mes, empresaId: empresa, contratoId: contratoId === TODOS ? null : contratoId }),
-    [mes, empresa, contratoId]
+    () => ({ mes, empresaId: empresa, contratoId: contratoId === TODOS ? null : contratoId, base }),
+    [mes, empresa, contratoId, base]
   );
   // Aprovar/rejeitar só com o recorte completo do período + empresa.
-  const recorteParcial = !!filtros.contratoId;
+  // A aprovação é registrada por mês de PAGAMENTO; a visão por competência é só para conferir, não decide.
+  const porCompetencia = base === "competencia";
+  const recorteParcial = !!filtros.contratoId || porCompetencia;
 
   const totais = useTotaisAuditoria(filtros);
   const { data: validacoes = [] } = useValidacoesPeriodo(mes, empresa);
@@ -124,6 +128,9 @@ export default function AuditoriaControladoria() {
     { nome: "Rejeitadas", valor: geral.rejeitadas, cor: "#dc2626" },
   ];
   const resumo = (tipo: TipoValidacao) => totais[tipo].totais;
+  // SIS-2026-0701: o total do Fluxo é o do mês inteiro (todos os bancos, igual à tela do Fluxo); só sem a ponte cai no recorte da conciliação.
+  const painelFluxo = resumo("fluxo_extrato")?.painel;
+  const fluxoTotalDoMes = painelFluxo?.kind === "fluxo_extrato" ? (painelFluxo.ponte?.total.movimentado ?? painelFluxo.fluxo.movimentado) : resumo("fluxo_extrato")?.a;
 
   return (
     <div className="space-y-6">
@@ -145,6 +152,13 @@ export default function AuditoriaControladoria() {
           <SelectTrigger className="h-8 w-[110px] text-xs"><SelectValue /></SelectTrigger>
           <SelectContent>{mesesRecentes().map((m) => <SelectItem key={m} value={m}>{rotuloMes(m)}</SelectItem>)}</SelectContent>
         </Select>
+        <Select value={base} onValueChange={(v) => setBase(v as "pagamento" | "competencia")}>
+          <SelectTrigger className="h-8 w-[170px] text-xs" title="Como o mês é lido"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="pagamento">Data de pagamento</SelectItem>
+            <SelectItem value="competencia">Competência</SelectItem>
+          </SelectContent>
+        </Select>
         <Select value={empresaId} onValueChange={(v) => { setEmpresaId(v); setContratoId(TODOS); }}>
           <SelectTrigger className="h-8 w-[200px] text-xs"><SelectValue placeholder="Empresa" /></SelectTrigger>
           <SelectContent>
@@ -159,20 +173,24 @@ export default function AuditoriaControladoria() {
             {contratos.filter((c) => !empresa || c.empresa_id === empresa).sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR")).map((c) => <SelectItem key={c.id} value={c.id}>{c.nome}</SelectItem>)}
           </SelectContent>
         </Select>
-        <Button variant="ghost" size="sm" className="h-8 text-xs" onClick={() => { setEmpresaId(TODOS); setContratoId(TODOS); }}>Limpar filtros</Button>
+        <Button variant="ghost" size="sm" className="h-8 text-xs" onClick={() => { setEmpresaId(TODOS); setContratoId(TODOS); setBase("pagamento"); }}>Limpar filtros</Button>
       </div>
 
       {recorteParcial && (
         <Alert>
           <AlertTriangle className="h-4 w-4" />
-          <AlertDescription>Com filtro de contrato você vê um recorte. Aprovar e rejeitar valem para o período inteiro da empresa — limpe o filtro para decidir.</AlertDescription>
+          <AlertDescription>
+            {porCompetencia
+              ? "Visão por competência: serve para conferir os valores de lucratividade. Aprovar e rejeitar valem para o mês de pagamento — volte para Data de pagamento para decidir."
+              : "Com filtro de contrato você vê um recorte. Aprovar e rejeitar valem para o período inteiro da empresa — limpe o filtro para decidir."}
+          </AlertDescription>
         </Alert>
       )}
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
         <KpiTile label="Total do Malote (período)" valor={kpi(resumo("malote_fluxo")?.a)} icon={<FileText />} cor="sky" />
-        <KpiTile label="Total do Fluxo de Caixa" valor={kpi(resumo("fluxo_extrato")?.a)} icon={<Banknote />} cor="emerald" />
-        <KpiTile label="Total conciliado no Extrato" valor={resumo("fluxo_extrato")?.indisponivel ? "—" : kpi(resumo("fluxo_extrato")?.b)} sub={resumo("fluxo_extrato")?.indisponivel ? "Sem conciliação salva no mês" : undefined} icon={<Landmark />} cor="amber" />
+        <KpiTile label="Total do Fluxo de Caixa" valor={kpi(fluxoTotalDoMes)} icon={<Banknote />} cor="emerald" />
+        <KpiTile label="Total conciliado no Extrato" valor={resumo("fluxo_extrato")?.indisponivel ? "—" : kpi(resumo("fluxo_extrato")?.b)} sub={resumo("fluxo_extrato")?.indisponivel ? (porCompetencia ? "Extrato é por data de pagamento" : "Sem conciliação salva no mês") : undefined} icon={<Landmark />} cor="amber" />
         <KpiTile label="Gastos por Centro de Custo" valor={kpi(resumo("centros_malote")?.b)} sub="Contratos + administrativo" icon={<PiggyBank />} cor="slate" />
         <KpiTile label="Total Orçado" valor={kpi(resumo("orcado_realizado")?.a)} icon={<Target />} cor="sky" />
       </div>

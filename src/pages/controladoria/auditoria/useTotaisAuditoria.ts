@@ -8,7 +8,7 @@ import {
   centrosAcimaDoOrcado, conciliacaoDaEmpresa, descontosPorCategoria, divergenciasMaloteFluxo, maloteDiretoPorDespesa, FiltroAuditoria, ItemDesconto, LinhaCentroMalote, saidasFinanceiro, semCentroDetalhe, TipoValidacao, TotaisCard,
   totaisCentrosMalote, totaisFluxoExtrato, totaisMaloteFinanceiro, totalMaloteDireto,
 } from "./regras";
-import { linhasMalote, useConciliadoMes, useMaloteCentrosMes, useFluxoMes, useMaloteDiretoMes, useOrcadoRealizado } from "./useAuditoriaDados";
+import { BasePeriodo, linhasMalote, useConciliadoMes, useMaloteCentrosMes, useFluxoMes, useMaloteDiretoMes, useOrcadoRealizado } from "./useAuditoriaDados";
 
 const r2 = (n: number) => Math.round(n * 100) / 100;
 
@@ -20,6 +20,8 @@ export interface EstadoCard {
 
 export interface FiltrosPainel extends FiltroAuditoria {
   mes: string; // "YYYY-MM"
+  // SIS-2026-0701: como o mês é lido: pela data de pagamento (padrão) ou pela competência.
+  base?: BasePeriodo;
 }
 
 const msg = (e: unknown): string | null => (e ? ((e as { message?: string }).message ?? "erro desconhecido") : null);
@@ -28,10 +30,11 @@ const msg = (e: unknown): string | null => (e ? ((e as { message?: string }).mes
 // Empresa filtra todos; contrato refina onde o dado tem contrato (cards 1, 3,
 // 4, 5, 6 e 7).
 export function useTotaisAuditoria(f: FiltrosPainel): Record<TipoValidacao, EstadoCard> {
-  const fluxoQ = useFluxoMes(f.mes);
-  const maloteQ = useMaloteDiretoMes(f.mes);
+  const base_ = f.base ?? "pagamento";
+  const fluxoQ = useFluxoMes(f.mes, base_);
+  const maloteQ = useMaloteDiretoMes(f.mes, base_);
   const conciliadoQ = useConciliadoMes(f.mes);
-  const centrosQ = useMaloteCentrosMes(f.mes);
+  const centrosQ = useMaloteCentrosMes(f.mes, base_);
   const orcado = useOrcadoRealizado(f.mes, f);
   const base = useBaseFaturamento();
 
@@ -69,7 +72,10 @@ export function useTotaisAuditoria(f: FiltrosPainel): Record<TipoValidacao, Esta
 
     // 2. Fluxo × Extrato
     let t2: TotaisCard | null = null;
-    if (fluxoQ.data && conciliadoQ.data) {
+    if (base_ === "competencia") {
+      // O extrato bancário é por data de pagamento: por competência não há o que conciliar.
+      t2 = { a: 0, b: 0, indisponivel: "Por competência não há conciliação com o extrato: o extrato bancário é por data de pagamento. Troque o período para Data de pagamento." };
+    } else if (fluxoQ.data && conciliadoQ.data) {
       // SIS-2026-0657: entradas e saídas separadas; o Fluxo é recortado igual à conciliação (banco + empresas, sem o que
       // ela ignora) e o total do extrato vem do cabeçalho de cada conciliação salva (a mais recente de cada conta/período).
       const r = totaisFluxoExtrato(fluxoQ.data, conciliadoQ.data.cabecalhos, f.empresaId, (l) =>
@@ -147,5 +153,5 @@ export function useTotaisAuditoria(f: FiltrosPainel): Record<TipoValidacao, Esta
       recebido: estado(t6, faturamentoFonte),
       descontos: estado(t7, faturamentoFonte, itensQ),
     };
-  }, [maloteQ.data, maloteQ.error, centrosQ.data, centrosQ.error, fluxoQ.data, fluxoQ.error, conciliadoQ.data, conciliadoQ.error, orcado.data, orcado.isLoading, base.carregando, base.contratos, base.executavelDoContrato, porContrato, itensQ.data, itensQ.error, idsNfs.length, f.mes, f.empresaId, f.contratoId, contratoPassa]);
+  }, [maloteQ.data, maloteQ.error, centrosQ.data, centrosQ.error, fluxoQ.data, fluxoQ.error, conciliadoQ.data, conciliadoQ.error, orcado.data, orcado.isLoading, base.carregando, base.contratos, base.executavelDoContrato, porContrato, itensQ.data, itensQ.error, idsNfs.length, f.mes, f.empresaId, f.contratoId, contratoPassa, base_]);
 }
