@@ -4,6 +4,8 @@
 
 export type StatusExcecao = "em_analise" | "aprovada" | "reprovada" | "utilizada" | "cancelada";
 export type StatusExcecaoExibido = StatusExcecao | "expirada";
+// 'criacao' = a exceção de sempre (libera lançar a despesa); 'aprovacao' = chave para o Nível 1 aprovar depois do horário 1.1.
+export type FinalidadeExcecao = "criacao" | "aprovacao";
 
 export interface ExcecaoSolicitacao {
   id: string;
@@ -26,6 +28,9 @@ export interface ExcecaoSolicitacao {
   usada_em: string | null;
   despesa_id: string | null;
   arquivos: string[];
+  // Só existem depois da migration 20261021000020; antes dela ficam undefined e a exceção é tratada como de criação.
+  finalidade?: FinalidadeExcecao;
+  despesa_alvo_id?: string | null;
   created_at: string;
 }
 
@@ -137,8 +142,29 @@ export function urlCriarDespesaDaExcecao(s: Pick<ExcecaoSolicitacao, "id" | "des
 }
 
 /** Só dá para criar a despesa enquanto a exceção está aprovada e a senha não venceu nem foi usada. */
-export function podeCriarDespesaDaExcecao(s: Pick<ExcecaoSolicitacao, "status" | "senha_expira_em">, agora: Date = new Date()): boolean {
+export function podeCriarDespesaDaExcecao(s: Pick<ExcecaoSolicitacao, "status" | "senha_expira_em"> & { finalidade?: FinalidadeExcecao }, agora: Date = new Date()): boolean {
+  // A chave de aprovação do Nível 1 só serve para aprovar aquela despesa; nunca para lançar outra.
+  if (s.finalidade === "aprovacao") return false;
   return statusExibidoExcecao(s, agora) === "aprovada";
+}
+
+/**
+ * Pedido de chave de aprovação do Nível 1 que a tela da despesa deve mostrar: o que ainda está valendo (em análise, ou aprovado e
+ * dentro das 24 h) e, na falta dele, o mais recente (para mostrar reprovada/expirada/utilizada).
+ */
+export function pedidoDeAprovacaoDaDespesa<T extends Pick<ExcecaoSolicitacao, "id" | "finalidade" | "despesa_alvo_id" | "status" | "senha_expira_em" | "created_at">>(
+  lista: T[],
+  despesaId: string,
+  agora: Date = new Date(),
+): T | null {
+  const meus = lista
+    .filter((s) => s.finalidade === "aprovacao" && s.despesa_alvo_id === despesaId)
+    .sort((a, b) => b.created_at.localeCompare(a.created_at));
+  const vivo = meus.find((s) => {
+    const st = statusExibidoExcecao(s, agora);
+    return st === "em_analise" || st === "aprovada";
+  });
+  return vivo ?? meus[0] ?? null;
 }
 
 /** Normaliza o que a pessoa digita/cola: espaços fora, caixa alta. */
