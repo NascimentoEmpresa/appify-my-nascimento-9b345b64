@@ -24,6 +24,8 @@ import Inicio from "./pages/Inicio";
 import Novidades from "./pages/Novidades";
 import Presidencia from "./pages/Presidencia";
 import Organograma from "./pages/organograma/Organograma";
+import EstruturaProcessos from "./pages/organograma/EstruturaProcessos";
+import CadastroEstruturaProcessos from "./pages/organograma/CadastroEstruturaProcessos";
 import ChamadosDesenvolvimentoPresidencia from "./pages/presidencia/ChamadosDesenvolvimento";
 import TvPlayer from "./pages/tv/TvPlayer";
 import TvPrevia from "./pages/tv/TvPrevia";
@@ -115,6 +117,21 @@ import EstoqueEtiquetas from "./pages/suprimentos/EstoqueEtiquetas";
 // Única tela carregada sob demanda: ela arrasta o three.js junto, e não faz
 // sentido pesar no carregamento de quem nunca abre o mapa 3D.
 const EstoqueMapa = lazy(() => import("./pages/suprimentos/EstoqueMapa"));
+// T.I (de volta da branch `ti`, 20/10/2026). As duas telas 3D entram por
+// lazy: puxam three + @react-three, que só deve descer para quem abre o mapa.
+const MapaTi = lazy(() => import("./pages/ti/MapaTi"));
+const ConstruirMapa = lazy(() => import("./pages/ti/ConstruirMapa"));
+import InventarioTi from "./pages/ti/InventarioTi";
+import PainelTiPage from "./pages/ti/PainelTiPage";
+
+/** Espera o pedaço 3D chegar — aviso discreto (na 2ª visita o chunk vem do cache). */
+function Carregando3D({ children }: { children: React.ReactNode }) {
+  return (
+    <Suspense fallback={<div className="flex h-[70vh] items-center justify-center text-sm text-muted-foreground">Carregando o mapa 3D…</div>}>
+      {children}
+    </Suspense>
+  );
+}
 import SeparacaoMateriais from "./pages/suprimentos/SeparacaoMateriais";
 import Patrimonio from "./pages/suprimentos/Patrimonio";
 import PainelManutencoes from "./pages/suprimentos/PainelManutencoes";
@@ -567,11 +584,16 @@ const App = () => (
                 Central — o solicitante não tem mais nada em /app/sistemas. */}
             <Route path="sistemas/chamados/:id/acompanhar" element={<AcompanharChamado base="/app/central-servicos/chamados" />} />
             <Route path="sistemas/chamados/:id" element={<ExecutarChamado />} />
-            {/* T.I — Mapa de Hardware (planta do escritório + inventário).
-                Sem redirect de "/app/ti" de propósito: rota sem entrada em
-                app_menu é NEGADA pelo RouteGuard antes de o Navigate rodar, o
-                que trocaria um 404 honesto por um "Acesso negado" confuso. A
-                porta do módulo é o item da sidebar. */}
+            {/* T.I — quatro telas, quatro menus, quatro cadeados: ver o mapa,
+                construir o mapa, o inventário e o painel são permissões
+                separadas. Sem redirect de "/app/ti" de propósito: rota sem
+                entrada em app_menu é NEGADA pelo RouteGuard antes de o
+                Navigate rodar, o que trocaria um 404 honesto por um "Acesso
+                negado" confuso. */}
+            <Route path="ti/mapa-hardware" element={<Carregando3D><MapaTi /></Carregando3D>} />
+            <Route path="ti/construir" element={<Carregando3D><ConstruirMapa /></Carregando3D>} />
+            <Route path="ti/inventario" element={<InventarioTi />} />
+            <Route path="ti/painel" element={<PainelTiPage />} />
             {/* Central de Serviços */}
             <Route path="central-servicos" element={<CentralServicos />} />
             <Route path="central-servicos/chamados" element={<MeusChamados base="/app/central-servicos/chamados" />} />
@@ -640,6 +662,9 @@ const App = () => (
             <Route path="painel-executivo/tv" element={<PainelExecutivoTV />} />
             <Route path="presidencia" element={<Presidencia />} />
             <Route path="organograma" element={<Organograma />} />
+            {/* Estrutura de Setores e Processos (mig 20261020000060) — organograma NOVO, o de cima fica como está. */}
+            <Route path="organograma/processos" element={<EstruturaProcessos />} />
+            <Route path="organograma/processos/cadastro" element={<CadastroEstruturaProcessos />} />
             {/* Presidência › Desenvolvimento Chamados (mig 266): validação do
                 desenvolvimento dos chamados enviados à Presidência. */}
             <Route path="presidencia/chamados-desenvolvimento" element={<ChamadosDesenvolvimentoPresidencia />} />
