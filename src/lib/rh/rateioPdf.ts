@@ -34,10 +34,20 @@ export async function lerLinhasPdf(file: File): Promise<string[]> {
       .map((it: any) => paraEixoDoTexto(it.str, it.transform, it.width ?? 0));
     linhas.push(...montarLinhas(itens));
   }
-  if (!linhas.some((l) => l.trim())) {
-    throw new Error("PDF sem texto (provavelmente escaneado) — não dá para ler. Mande um PDF gerado pelo sistema de origem.");
-  }
+  if (!linhas.some((l) => l.trim())) throw new PdfSemTextoError();
   return linhas;
+}
+
+/**
+ * PDF escaneado (só imagem): pdf.js não acha texto nenhum. O BSF da SAMU de
+ * 12/2025 veio assim. Erro com tipo próprio para a tela ainda tentar o
+ * contrato pelo NOME DO ARQUIVO (contratoPeloNomeArquivo) em vez de parar.
+ */
+export class PdfSemTextoError extends Error {
+  constructor() {
+    super("PDF sem texto (escaneado, só imagem) — não dá para ler os valores. Digite o valor da despesa; o contrato pode vir do nome do arquivo.");
+    this.name = "PdfSemTextoError";
+  }
 }
 
 /**

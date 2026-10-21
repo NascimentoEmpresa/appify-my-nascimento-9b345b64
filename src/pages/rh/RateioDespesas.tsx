@@ -35,19 +35,19 @@ import {
 import { EnviarRateioMalote } from "./EnviarRateioMalote";
 import { useScreenAccess } from "@/hooks/useScreenAccess";
 import {
-  carregarDespesaRateio, carregarUltimoDoTipo, casarCpfs, lerRateioComIa, linkAnexoRateio, subirAnexoRateio,
+  carregarDespesaRateio, carregarUltimoDoTipo, casarCadastros, casarCpfs, lerRateioComIa, linkAnexoRateio, subirAnexoRateio,
   useContratosRateio, useDespesasRateio, useExcluirRateio, useMaloteDosRateios, useSalvarRateio,
   type ContratoRateio, type DespesaRateio, type LeituraIaRateio, type LinhaDetalhePdf,
 } from "@/hooks/useRateioDespesas";
 import {
   TIPOS_RATEIO, ROTULO_CRITERIO, SEM_CONTRATO, acharContrato, calcularRateio, competenciaParaData,
-  competenciaRotulo, criterioPadrao, extrairLinhasPorContrato, fmtMoeda, fmtPct,
+  competenciaRotulo, contratoPeloNomeArquivo, criterioPadrao, extrairLinhasPorContrato, fmtMoeda, fmtPct,
   extrairLinhasDoPdf, identificarLayoutPdf, linhasDoLayout, totalDoPdf,
   basesPorParte, partesDoPdf, ROTULO_PARTE, type ParteDoPdf, type ParteGuia,
   lerPlanilhaJusBrasil, resumirRateio, rotuloTipo, somarPorContrato, tipoUsaPdf,
   type ContratoRef, type CriterioRateio, type ItemRateio, type LinhaPlanilhaJus, type TipoRateio,
 } from "@/lib/rh/rateioDespesas";
-import { lerLinhasPdf } from "@/lib/rh/rateioPdf";
+import { lerLinhasPdf, PdfSemTextoError } from "@/lib/rh/rateioPdf";
 
 const MENU = "rh_rateio_despesas";
 const SEM = "__sem__";
@@ -290,11 +290,15 @@ function Editor({ id, onFechar, onSalvo }: { id: string | null; onFechar: () => 
   const partesAtivas = partes.filter((p) => !partesFora.includes(p.parte));
   const comPartes = partes.length > 1;
 
+  // Linha "inteira" (documento de um contrato só, sem lista — contrato pelo
+  // nome do arquivo): vale o valor da despesa, qualquer que seja.
+  const valorLinha = (l: LinhaDetalhePdf) => (l.inteiro ? valor : l.valor);
+
   // Base efetiva: PDF com linhas → soma por contrato (guia com partes: cada
   // parte distribui o próprio total — basesPorParte); senão a tabela de bases.
   const basesEfetivas: Base[] = useMemo(() => {
     if (usaPdf && linhasAtivas.length) {
-      const ls = linhasAtivas.map((l) => ({ contrato_id: l.contrato_id, contrato_nome: nomeContrato(l.contrato_id), valor: l.valor, parte: l.parte ?? undefined }));
+      const ls = linhasAtivas.map((l) => ({ contrato_id: l.contrato_id, contrato_nome: nomeContrato(l.contrato_id), valor: valorLinha(l), parte: l.parte ?? undefined }));
       if (comPartes) {
         const totais = Object.fromEntries(partesAtivas.map((p) => [p.parte, p.total]));
         return basesPorParte(ls, totais);
@@ -303,7 +307,7 @@ function Editor({ id, onFechar, onSalvo }: { id: string | null; onFechar: () => 
     }
     return bases;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [usaPdf, linhasAtivas, bases, contratos, comPartes, partesAtivas.map((p) => `${p.parte}:${p.total}`).join()]);
+  }, [usaPdf, linhasAtivas, bases, contratos, comPartes, valor, partesAtivas.map((p) => `${p.parte}:${p.total}`).join()]);
 
   const itens: ItemRateio[] = useMemo(
     () =>
@@ -321,7 +325,7 @@ function Editor({ id, onFechar, onSalvo }: { id: string | null; onFechar: () => 
   );
   const resumo = resumirRateio(valor, itens);
   const totalBase = basesEfetivas.reduce((a, b) => a + (b.base || 0), 0);
-  const totalPdf = Math.round(linhasAtivas.reduce((a, l) => a + l.valor, 0) * 100) / 100;
+  const totalPdf = Math.round(linhasAtivas.reduce((a, l) => a + valorLinha(l), 0) * 100) / 100;
   // O que o PDF declara para o que está no rateio: com partes, a soma dos totais das partes que entram.
   const totalEsperado = comPartes
     ? (partesAtivas.every((p) => p.total != null) ? Math.round(partesAtivas.reduce((a, p) => a + (p.total ?? 0), 0) * 100) / 100 : null)
@@ -427,8 +431,32 @@ function Editor({ id, onFechar, onSalvo }: { id: string | null; onFechar: () => 
     setLinhasBrutas(null);
     setLeituraIa(null);
     setLendo(true);
+    // Documento de UM contrato só, sem lista nenhuma (boleto do sindicato,
+    // BSF escaneado — 12/2025): o contrato vem do nome do arquivo e leva 100%
+    // do valor da despesa. Devolve false quando nem o nome do arquivo resolve.
+    const peloNomeDoArquivo = (total: number | null, porque: string) => {
+      const c = contratoPeloNomeArquivo(f.name, refs);
+      if (!c) {
+        setLinhasPdf([]);
+        setAvisoPdf(`${porque} Também não achei o contrato no nome do arquivo — preencha a base por contrato abaixo (ou renomeie o arquivo com o nome do contrato e leia de novo).`);
+        return false;
+      }
+      setLinhasPdf([{ n: 0, texto: `Contrato pelo nome do arquivo: ${f.name}`, cpf: null, nome: null, situacao: null, valor: total ?? 0, contrato_id: c.id, inteiro: true }]);
+      setAvisoPdf(`${porque} O contrato veio do NOME DO ARQUIVO: ${c.nome} — ele leva 100% do valor da despesa. Confira (dá para trocar o contrato na linha abaixo).`);
+      return true;
+    };
     try {
-      const linhas = await lerLinhasPdf(f);
+      let linhas: string[];
+      try {
+        linhas = await lerLinhasPdf(f);
+      } catch (e) {
+        if (!(e instanceof PdfSemTextoError)) throw e;
+        setPdfInfo({ total: null, rotulo: "PDF escaneado (imagem) — sem texto para ler" });
+        setPartesFora([]);
+        setAjustes({});
+        peloNomeDoArquivo(null, "Este PDF é escaneado (só imagem): não dá para ler os valores — digite o valor da despesa.");
+        return;
+      }
       setLinhasBrutas(linhas);
       const layout = identificarLayoutPdf(linhas);
       const declarado = totalDoPdf(linhas, layout.layout);
@@ -437,7 +465,27 @@ function Editor({ id, onFechar, onSalvo }: { id: string | null; onFechar: () => 
       setPartesFora([]);
       let lido = 0;
       const comCpf = extrairLinhasDoPdf(linhas, layout.layout);
-      if (comCpf.length) {
+      if (layout.layout === "relacao_eventos" && comCpf.length) {
+        // Relação de Eventos sem CPF (consignado da Soma Financeira): matrícula → cadastro → contrato.
+        const casados = await casarCadastros(comCpf.map((l, i) => ({ chave: String(i), empresa: l.empresa ?? null, cadastro: l.cadastro ?? null, nome: l.nomePdf ?? null })));
+        const porChave = new Map(casados.map((c) => [c.chave, c]));
+        const det: LinhaDetalhePdf[] = comCpf.map((l, i) => {
+          const c = porChave.get(String(i));
+          return { n: l.n, texto: l.texto, cpf: null, cadastro: l.cadastro ?? null, nome: c?.nome ?? null, situacao: c?.situacao ?? null, valor: l.valor, contrato_id: c?.contrato_id ?? null };
+        });
+        setLinhasPdf(det);
+        lido = det.reduce((a, d) => a + d.valor, 0);
+        const semCad = det.filter((d) => !d.nome).length;
+        const semCt = det.filter((d) => d.nome && !d.contrato_id).length;
+        const soNome = casados.filter((c) => c.casou_por === "nome").length;
+        setSoPendentes(false);
+        const avisos = [
+          semCad ? `${semCad} matrícula(s) não estão na EMPREGADOS` : "",
+          semCt ? `${semCt} colaborador(es) sem contrato` : "",
+          soNome ? `${soNome} casado(s) só pelo nome (a matrícula não bateu) — confira` : "",
+        ].filter(Boolean);
+        if (avisos.length) setAvisoPdf(`${avisos.join("; ")}. Escolha o contrato na lista abaixo quando faltar.`);
+      } else if (comCpf.length) {
         const casados = await casarCpfs([...new Set(comCpf.map((l) => l.cpf as string))]);
         const porCpf = new Map(casados.map((c) => [c.cpf, c]));
         const det: LinhaDetalhePdf[] = comCpf.map((l) => {
@@ -456,8 +504,7 @@ function Editor({ id, onFechar, onSalvo }: { id: string | null; onFechar: () => 
           setLinhasPdf(porContrato.map((l) => ({ n: l.n, texto: l.texto, cpf: null, nome: null, situacao: null, valor: l.valor, contrato_id: l.contrato?.id ?? null })));
           lido = porContrato.reduce((a, l) => a + l.valor, 0);
         } else {
-          setLinhasPdf([]);
-          setAvisoPdf("Não achei neste PDF linhas com CPF e valor, nem com nome de contrato e valor. Preencha a base por contrato abaixo e mande este PDF ao TI para ajustarmos a leitura deste formato.");
+          peloNomeDoArquivo(declarado, "Este PDF não traz linhas de colaborador (CPF ou matrícula) nem de contrato com valor — é só o boleto.");
         }
       }
       setAjustes({});
@@ -586,9 +633,9 @@ function Editor({ id, onFechar, onSalvo }: { id: string | null; onFechar: () => 
     XLSX.utils.book_append_sheet(wb, ws, "Rateio");
     if (usaPdf && linhasAtivas.length) {
       const det = XLSX.utils.aoa_to_sheet([
-        ["Linha do PDF", ...(comPartes ? ["Parte"] : []), "CPF", "Colaborador", "Situação", "Contrato", "Valor", "Texto lido"],
+        ["Linha do PDF", ...(comPartes ? ["Parte"] : []), "CPF / matrícula", "Colaborador", "Situação", "Contrato", "Valor", "Texto lido"],
         ...linhasAtivas.map((l) => [
-          l.n, ...(comPartes ? [l.parte ? ROTULO_PARTE[l.parte] : ""] : []), l.cpf ?? "", l.nome ?? "", l.situacao ?? "", nomeContrato(l.contrato_id), l.valor, l.texto,
+          l.n, ...(comPartes ? [l.parte ? ROTULO_PARTE[l.parte] : ""] : []), l.cpf ?? (l.cadastro ? `mat. ${l.cadastro}` : ""), l.nome ?? "", l.situacao ?? "", nomeContrato(l.contrato_id), valorLinha(l), l.texto,
         ]),
       ]);
       det["!cols"] = [{ wch: 8 }, ...(comPartes ? [{ wch: 14 }] : []), { wch: 14 }, { wch: 36 }, { wch: 14 }, { wch: 44 }, { wch: 12 }, { wch: 80 }];
@@ -771,7 +818,9 @@ function Editor({ id, onFechar, onSalvo }: { id: string | null; onFechar: () => 
         {usaPdf && (
           <p className="text-xs text-muted-foreground">
             O PDF é lido no navegador: cada linha com <b>CPF</b> e valor vira um colaborador, e o contrato vem do cadastro dele
-            (EMPREGADOS, inclusive demitidos). Sem CPF no PDF, vale a linha com o <b>nome do contrato</b>. Confira e corrija antes de salvar.
+            (EMPREGADOS, inclusive demitidos). Relação de Eventos da Senior sem CPF (consignado): vale a <b>matrícula</b>. Sem CPF nem
+            matrícula, vale a linha com o <b>nome do contrato</b>; e documento de um contrato só (boleto do sindicato, PDF escaneado)
+            vai 100% para o contrato do <b>nome do arquivo</b>. Confira e corrija antes de salvar.
           </p>
         )}
 
@@ -870,7 +919,7 @@ function Editor({ id, onFechar, onSalvo }: { id: string | null; onFechar: () => 
                   <tr>
                     <th className="text-left p-1.5">Lin.</th>
                     <th className="text-left p-1.5">Colaborador / texto</th>
-                    <th className="text-left p-1.5">CPF</th>
+                    <th className="text-left p-1.5">CPF / matr.</th>
                     <th className="text-right p-1.5">Valor</th>
                     <th className="text-left p-1.5 w-[320px]">Contrato</th>
                     <th />
@@ -883,13 +932,18 @@ function Editor({ id, onFechar, onSalvo }: { id: string | null; onFechar: () => 
                     <tr key={`${l.n}-${i}`} className={`border-b ${l.contrato_id ? "" : "bg-warning/10"}`}>
                       <td className="p-1.5 text-muted-foreground">{l.n}</td>
                       <td className="p-1.5">
-                        {l.nome ? <span className="font-medium">{l.nome}</span> : l.cpf ? <span className="text-destructive">CPF fora da EMPREGADOS</span> : null}
+                        {l.nome ? <span className="font-medium">{l.nome}</span> : l.cpf ? <span className="text-destructive">CPF fora da EMPREGADOS</span>
+                          : l.cadastro ? <span className="text-destructive">Matrícula fora da EMPREGADOS</span>
+                          : l.inteiro ? <span className="font-medium">Documento de um contrato só</span> : null}
                         {l.situacao && l.situacao !== "Trabalhando" && <Badge variant="outline" className="ml-1 text-[10px]">{l.situacao}</Badge>}
                         {comPartes && l.parte && <Badge variant="secondary" className="ml-1 text-[10px]">{ROTULO_PARTE[l.parte]}</Badge>}
                         <div className="text-muted-foreground truncate max-w-[420px]" title={l.texto}>{l.texto}</div>
                       </td>
-                      <td className="p-1.5 tabular-nums">{mascaraCpf(l.cpf)}</td>
-                      <td className="p-1.5 text-right tabular-nums">{fmtMoeda(l.valor)}</td>
+                      <td className="p-1.5 tabular-nums">{l.cpf ? mascaraCpf(l.cpf) : l.cadastro ? `mat. ${l.cadastro}` : "—"}</td>
+                      <td className="p-1.5 text-right tabular-nums">
+                        {fmtMoeda(valorLinha(l))}
+                        {l.inteiro && <div className="text-[10px] text-muted-foreground">100% da despesa</div>}
+                      </td>
                       <td className="p-1.5">
                         <SearchableSelect value={chave(l.contrato_id)} onChange={(v) => mudarContratoLinha(i, v)} options={opcoesContrato}
                           disabled={somenteLeitura} triggerClassName="h-7 text-xs" />
