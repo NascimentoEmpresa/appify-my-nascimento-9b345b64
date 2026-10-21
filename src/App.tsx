@@ -306,6 +306,7 @@ import IndicadoresComiteEtica from "./pages/comite-etica/Indicadores";
 import PresidenciaComiteEtica from "./pages/comite-etica/Presidencia";
 import Ferias from "./pages/rh/Ferias";
 import RhSolicitacoesDemissao from "./pages/rh/SolicitacoesDemissao";
+import RhRescisoes from "./pages/rh/Rescisoes";
 import MinhasSolicitacoes from "./pages/MinhasSolicitacoes";
 import BIDashboard from "./pages/bi/Dashboard";
 import LinksBIs from "./pages/bi/LinksBIs";
@@ -918,6 +919,8 @@ const App = () => (
             <Route path="rh/ferias" element={<Ferias />} />
             <Route path="rh/recrutamento" element={<Recrutamento />} />
             <Route path="rh/solicitacoes-demissao" element={<RhSolicitacoesDemissao />} />
+            {/* Rescisões — submódulo próprio com kanban (mig 20261021000030). */}
+            <Route path="rh/rescisoes" element={<RhRescisoes />} />
             {/* Conferência de Ponto — Operacional, RH e Financeiro na mesma tela;
                 o que muda é a permissão de cada um (ver conferencia.ts). */}
             <Route path="rh/conferencia-ponto" element={<ConferenciaPonto />} />
