@@ -342,8 +342,8 @@ export default function FechamentoEmpresa() {
             <div className="flex items-center justify-between gap-2 flex-wrap">
               <TabsList>
                 <TabsTrigger value="mensal">Resumo Mensal</TabsTrigger>
-                <TabsTrigger value="adm">Despesas Administrativas</TabsTrigger>
                 <TabsTrigger value="socios">Resumo Mensal com Sócios</TabsTrigger>
+                <TabsTrigger value="adm">Despesas Administrativas</TabsTrigger>
                 <TabsTrigger value="empresa">Por Empresa</TabsTrigger>
               </TabsList>
               {(aba === "mensal" || aba === "socios") && (
