@@ -57,6 +57,39 @@ export function useSolicitarExcecao() {
   });
 }
 
+// Depois do horário 1.1 o Nível 1 só aprova com a senha de uma exceção de aprovação (migration 20261020000130). Quem diz se já passou
+// do horário é o relógio do banco (Brasília), não o do navegador. Antes da migration a RPC não existe: a regra fica desligada na tela.
+export function useN1ForaDoPrazo(enabled = true) {
+  return useQuery({
+    queryKey: [KEY, "n1_fora_do_prazo"],
+    enabled,
+    refetchInterval: 60_000,
+    staleTime: 30_000,
+    retry: false,
+    queryFn: async () => {
+      const { data, error } = await (supabase as any).rpc("malote_n1_fora_do_prazo");
+      if (error) return false;
+      return data === true;
+    },
+  });
+}
+
+export function useSolicitarExcecaoAprovacao() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (i: { despesaId: string; justificativa: string }) => {
+      const { data, error } = await (supabase as any).rpc("malote_excecao_solicitar_aprovacao", {
+        _despesa_id: i.despesaId,
+        _justificativa: i.justificativa,
+        _arquivos: [],
+      });
+      if (error) throw error;
+      return data as string;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: [KEY] }),
+  });
+}
+
 export function useDecidirExcecao() {
   const qc = useQueryClient();
   return useMutation({

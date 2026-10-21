@@ -1361,6 +1361,9 @@ export interface AprovarDespesaInput {
   // ex. Calita) muitas vezes só repassa uma autorização que já veio de
   // outra pessoa por fora do sistema.
   autorizador_nome?: string | null;
+  // Depois do horário 1.1 o Nível 1 só aprova com a senha de uma exceção de aprovação daquela despesa (migration 20261020000130).
+  // Só vai para o banco quando preenchida: sem ela a chamada continua igual à de antes da migration.
+  senha_excecao?: string | null;
 }
 
 // Todas as mutations abaixo (aprovar/ajustar/reprovar despesa, aprovação
@@ -1386,6 +1389,7 @@ export function useAprovarDespesa() {
         _competencia: input.competencia + "-01",
         _rateio_snapshot: input.rateio_snapshot ?? [],
         _autorizador_nome: input.autorizador_nome ?? null,
+        ...(input.senha_excecao?.trim() ? { _senha_excecao: input.senha_excecao.trim() } : {}),
       });
       if (error) throw error;
     },

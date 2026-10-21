@@ -92,6 +92,8 @@ import { FluxoAprovacaoVisual } from "./FluxoAprovacaoVisual";
 import { usePermissoes } from "@/context/PermissoesContext";
 import { DiaPagamentoPicker } from "./DiaPagamentoPicker";
 import { ExcecaoSenhaField } from "./ExcecaoSenhaField";
+import { ChaveAprovacaoN1 } from "./ChaveAprovacaoN1";
+import { useN1ForaDoPrazo } from "@/hooks/useMaloteExcecao";
 import { conferirExcecaoComDespesa, type ExcecaoValidada } from "./excecao/regras";
 import { montarCombosAlcada, encontrarComboQueEstouraAlcada, rescalarRateioPorTotal } from "./orcamentoUtils";
 
@@ -377,6 +379,9 @@ export default function DespesaVisualizar() {
   const [arquivosExistentes, setArquivosExistentes] = useState<string[]>([]);
   const [arquivosNovos, setArquivosNovos] = useState<File[]>([]);
   const [justificativa, setJustificativa] = useState("");
+  // Malote (20/10/2026): depois do horário 1.1 o Nível 1 só aprova com a senha de uma exceção de aprovação desta despesa.
+  const [senhaAprovacaoN1, setSenhaAprovacaoN1] = useState("");
+  const { data: n1ForaDoPrazo } = useN1ForaDoPrazo();
   const [comentario, setComentario] = useState("");
   const [formaPagamento, setFormaPagamento] = useState("");
   const [informacoesPagamento, setInformacoesPagamento] = useState("");
@@ -1009,6 +1014,10 @@ export default function DespesaVisualizar() {
     ) {
       return `Informe a justificativa da aprovação — obrigatória depois do horário limite de conferência (regra 1.2, ${maloteConfig?.conferencia_aprovacao_horario}) para despesa com pagamento hoje ou vencido.`;
     }
+    // Depois do horário 1.1 o N1 só aprova com a senha de uma exceção de aprovação (o banco recusa sem ela; aqui só avisa antes).
+    if (despesa!.nivel_aprovacao_atual === 1 && !despesa!.excecao && n1ForaDoPrazo && !senhaAprovacaoN1.trim()) {
+      return `Depois das ${maloteConfig?.inclusao_setor_horario?.slice(0, 5) ?? "12:00"} o Nível 1 só aprova com a senha de uma exceção de aprovação — peça a chave em "Solicitar exceção de aprovação".`;
+    }
     return null;
   }
 
@@ -1050,7 +1059,9 @@ export default function DespesaVisualizar() {
         competencia,
         rateio_snapshot: calcularRateioSnapshot(),
         autorizador_nome: formaPagamentoEspecial ? autorizadorNome.trim() : null,
+        senha_excecao: despesa!.nivel_aprovacao_atual === 1 && !despesa!.excecao && n1ForaDoPrazo ? senhaAprovacaoN1 : null,
       });
+      setSenhaAprovacaoN1("");
       toast.success(
         proximoNivelConfigurado
           ? "Aprovado — enviado pro próximo nível."
@@ -2214,6 +2225,16 @@ export default function DespesaVisualizar() {
               </Label>
               <Input value={justificativa} onChange={(e) => setJustificativa(e.target.value)} disabled={!podeEditarJustificativaAprovacao} />
             </div>
+            {souAprovadorNivelAtual && despesa.nivel_aprovacao_atual === 1 && despesa.status === "pendente_aprovacao" && !despesa.excecao && (
+              <ChaveAprovacaoN1
+                despesaId={despesa.id}
+                userId={user?.id}
+                horario={maloteConfig?.inclusao_setor_horario}
+                senha={senhaAprovacaoN1}
+                onSenha={setSenhaAprovacaoN1}
+                disabled={!podeEditarJustificativaAprovacao}
+              />
+            )}
             {formaPagamentoEspecial && (
               <div className={cn(!podeEditarJustificativaAprovacao && "opacity-60")}>
                 <Label>
