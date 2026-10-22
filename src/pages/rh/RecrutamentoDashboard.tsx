@@ -8,6 +8,7 @@ import {
 } from "recharts";
 import { FiltroContratos, passaNoFiltroContratos } from "@/components/solicitacoes/FiltroContratos";
 import { STATUS_VAGA_MORTA, rotuloStatusVaga } from "@/lib/recrutamento/vagaRegras";
+import { rotuloEtapaCandidato } from "@/lib/recrutamento/rotuloEtapa";
 
 // =====================================================================
 // RECRUTAMENTO — Dashboard (RH e Diretoria — a MESMA tela nas duas rotas)
@@ -485,7 +486,7 @@ export default function RecrutamentoDashboard() {
                   <BarChart data={etapaData} layout="vertical" margin={{ top: 6, right: 16, left: 20, bottom: 0 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#eef2f7" />
                     <XAxis type="number" allowDecimals={false} tick={{ fontSize: 11, fill: "#64748b" }} />
-                    <YAxis type="category" dataKey="etapa" width={130} tick={{ fontSize: 9.5, fill: "#475569" }} />
+                    <YAxis type="category" dataKey="etapa" width={130} tick={{ fontSize: 9.5, fill: "#475569" }} tickFormatter={rotuloEtapaCandidato} />
                     <Tooltip />
                     <Bar dataKey="qtd" name="Candidatos" radius={[0, 8, 8, 0]} isAnimationActive animationDuration={1200} animationEasing="ease-out">{etapaData.map((d, i) => <Cell key={i} fill={etapaCor[d.etapa] || "#0f3171"} />)}</Bar>
                   </BarChart>

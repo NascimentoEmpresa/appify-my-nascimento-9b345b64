@@ -3,6 +3,7 @@ import { supabase } from "@/integrations/supabase/client";
 import type { RelatorioDados, RelatorioGeralDados } from "@/pages/relatorios/sistemas";
 import type { PainelTurnover, RescisoesTurnover } from "@/lib/diretoria/turnover";
 import type { DetalheVaga, PainelVagas } from "@/lib/relatorios/vagasPainel";
+import type { MovRecrutadores } from "@/lib/relatorios/recrutadoresPainel";
 import type { DadosCustoFaltas } from "@/lib/relatorios/custoFaltas";
 
 // =====================================================================
@@ -119,6 +120,26 @@ export function useVagasPainel(f: FiltroRelatorio) {
       const { data, error } = await sb.rpc("dir_vagas_painel", argsFiltro(f));
       if (error) throw error;
       return data as PainelVagas;
+    },
+  });
+}
+
+/**
+ * Vagas — DASHBOARD - RECRUTADORES (mig 20261021000150): as movimentações do
+ * histórico (papel Recrutamento) por vaga × quem fez × dia × tipo. Só carrega
+ * com a aba aberta; os filtros são os mesmos do painel.
+ */
+export function useVagasRecrutadoresMov(f: FiltroRelatorio, ativo = true) {
+  return useQuery({
+    queryKey: [CHAVE, "vagas-recrutadores-mov", ...chaveFiltro(f)],
+    enabled: ativo,
+    staleTime: 5 * 60_000,
+    placeholderData: (anterior) => anterior,
+    retry: false,
+    queryFn: async (): Promise<MovRecrutadores> => {
+      const { data, error } = await sb.rpc("dir_vagas_recrutadores_mov", argsFiltro(f));
+      if (error) throw error;
+      return data as MovRecrutadores;
     },
   });
 }

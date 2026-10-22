@@ -45,6 +45,7 @@ import { bloqueioDaVaga, motivoDesistencia, primeiroNome, responsavelAtual, vaga
 import { NIVEIS_JURIDICO, NIVEL_OK, eventoParecerJuridico, nivelJuridico, seloJuridico, statusJuridicoCard } from "@/lib/recrutamento/parecerJuridico";
 import { STATUS_COM_RESPONSAVEL, STATUS_FILA_APROVACAO, alvoDoFiltro, devePerguntarAssumir, textoConfirmarAssumir, vagaTemResponsavel, type FiltroResponsavel } from "@/lib/recrutamento/responsavelVaga";
 import { vagaTemEtapa } from "@/lib/recrutamento/statusDetalhado";
+import { rotuloEtapaCandidato } from "@/lib/recrutamento/rotuloEtapa";
 import { EnxovalAdmissao, type EnxovalAdmissaoHandle } from "@/components/recrutamento/EnxovalAdmissao";
 import { PedidoComprasCandidato } from "@/components/recrutamento/PedidoComprasCandidato";
 
@@ -359,11 +360,9 @@ const ETAPAS_ANTIGAS_PARALELO = ["EXAME SST", "COMPRAS"];
 export const normalizarEtapa = (e?: string | null) =>
   ETAPAS_ANTIGAS_PARALELO.includes(String(e ?? "")) ? ETAPA_SST_COMPRAS : String(e ?? "");
 
-// Rótulo da coluna. Só difere do valor onde o nome guardado é curto demais
-// para o que a coluna realmente contém.
-const ETAPA_LABEL: Record<string, string> = {
-  Reprovado: "Reprovado / Desistência",
-};
+// Rótulo da coluna: rotuloEtapaCandidato (lib/recrutamento/rotuloEtapa.ts).
+// Desde 21/10/2026 APROVADO aparece como "EM ADMISSÃO" e ADMISSÃO como
+// "ADMISSÃO CONCLUÍDA" — o valor gravado continua o mesmo.
 const CAND_COL_COLORS: Record<string, { dot: string; label: string; accent: string }> = {
   ENTRADA:            { dot: "#64748b", label: "#475569", accent: "#64748b" },
   TRIAGEM:            { dot: "#3b82f6", label: "#2563eb", accent: "#3b82f6" },
@@ -1507,7 +1506,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
   const labelProx = (etapa: string) => ({
     ENTRADA: "→ Triagem",
     "JURÍDICO": "Dar parecer → Entrevista",
-    "ENTREVISTA GESTOR": "→ Aprovado",
+    "ENTREVISTA GESTOR": "→ Em admissão",
     APROVADO: "→ Documentação",
     "DOCUMENTAÇÃO": "→ SST + Compras",
   } as Record<string, string>)[etapa] || "Avançar";
@@ -1578,7 +1577,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
     if (drawerId) await logHistorico(drawerId, `Recrutamento finalizado — enviado para Admissão${nomeAdm ? ` (${nomeAdm})` : ""}`, {
       papel: "Recrutamento", para: "Contratado", candidatoId: cv.id, candidatoNome: cv.nome,
     });
-    toast(`Recrutamento finalizado — ${cv.nome || "candidato"} aguardando admissão${nomeAdm ? ` com ${nomeAdm}` : ""}.`, "ok");
+    toast(`Admissão concluída — ${cv.nome || "candidato"} enviado como admitido${nomeAdm ? ` (${nomeAdm})` : ""}.`, "ok");
     if (drawerId) recarregarAdmissao([drawerId]);
     setContratarModal(null);
     setContratando(false);
@@ -1589,6 +1588,9 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
         "Data de início": inicio.trim(), "Local / posto": local.trim(), "Banco do salário": banco.trim(),
       });
     }
+    // CONCLUIR ADMISSÃO (21/10/2026): depois de confirmar, vai para a fila de
+    // Novas Admissões, onde o candidato acabou de entrar.
+    navigate("/app/rh/novas-admissoes");
   };
 
   // ── Roteiro de entrevista (ENTREVISTA / ENTREVISTA GESTOR) ─────
@@ -1769,7 +1771,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
       candidatoId: id, candidatoNome: cand?.nome,
       detalhe: detalheHist || String(extra.motivo_reprovacao || extra.juridico_obs || extra.sst_obs || "") || undefined,
     });
-    toast(`Candidato movido para "${novaEtapa}".`, "ok");
+    toast(`Candidato movido para "${rotuloEtapaCandidato(novaEtapa)}".`, "ok");
     if (vaiAssumir && vagaMovida) await assumir(vagaMovida, false);
     if (!reprovado) await dispararMensagemEtapa(id, novaEtapa, cand?.nome);
     if (drawerId) loadCandidatos(drawerId);
@@ -2926,17 +2928,20 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
           </div>
         )}
         {(
-          <div style={{ display: "flex", gap: 6, flex: 1, minHeight: 0, paddingBottom: 4, alignItems: "stretch" }}>
+          <div style={{ display: "flex", gap: 8, flex: 1, minHeight: 0, paddingBottom: 6, alignItems: "stretch", overflowX: "auto" }}>
             {CAND_ETAPAS.map(etapa => {
               const cards = grupos[etapa] ?? [];
               const meta = CAND_COL_COLORS[etapa];
               return (
                 // Mesma largura para todas (16/10/2026: a SST + COMPRAS mais larga
                 // "ficou ruim" — Pablo); os quadros do SST/Compras são compactos.
-                <div key={etapa} className="kb-col" style={{ flex: "1 1 0", minWidth: 0, maxHeight: "100%" }}>
+                // 21/10/2026: com flex "1 1 0" e minWidth 0 cada coluna ficava com
+                // ~165px e o nome cortava ("ALEXANDRA D..."). Agora cada uma tem
+                // no mínimo 210px; se não couber no modal, o quadro rola de lado.
+                <div key={etapa} className="kb-col" style={{ flex: "1 0 210px", minWidth: 210, maxHeight: "100%" }}>
                   <div className="kb-col-head">
                     <span style={{ width: 7, height: 7, borderRadius: "50%", background: meta.dot, display: "inline-block" }} />
-                    <span style={{ fontSize: 10, fontWeight: 800, letterSpacing: ".4px", flex: 1, textTransform: "uppercase", color: meta.label }}>{ETAPA_LABEL[etapa] ?? etapa}</span>
+                    <span style={{ fontSize: 10, fontWeight: 800, letterSpacing: ".4px", flex: 1, textTransform: "uppercase", color: meta.label }}>{rotuloEtapaCandidato(etapa)}</span>
                     <span style={{ fontSize: 10, fontWeight: 800, background: "#eef2f7", borderRadius: 20, padding: "1px 7px", color: "#94a3b8" }}>{cards.length}</span>
                   </div>
                   <div className="kb-col-body" onMouseDown={dragScrollCol}>
@@ -2945,7 +2950,7 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
                     ) : cards.map(c => {
                       const podeAqui = podeMoverCand(etapa);
                       // Botões em largura total, empilhados (layout limpo).
-                      const bFull = { width: "100%", fontSize: 11, fontWeight: 700 as const, padding: "6px 8px", borderRadius: 8, border: "none", color: "#fff", cursor: "pointer", textAlign: "center" as const };
+                      const bFull = { width: "100%", fontSize: 11.5, fontWeight: 700 as const, padding: "7px 10px", borderRadius: 8, border: "none", color: "#fff", cursor: "pointer", textAlign: "center" as const };
                       const bSkip = { ...bFull, background: "#fff", color: "#475569", border: "1px solid #e2e8f0" };
                       const avancaBtn = bFull;
                       // Cor do card pelo parecer do Jurídico (mig 20261014000004): o nível dá a cor.
@@ -2954,9 +2959,9 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
                       return (
                         <div key={c.id} className="kb-card" style={{ cursor: "default", borderColor: selo ? selo.borda : undefined }}>
                           <div style={{ height: 3, background: cor }} />
-                          <div style={{ padding: "9px 10px 8px" }}>
+                          <div style={{ padding: "11px 12px 10px" }}>
                             <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
-                              <div style={{ fontSize: 12, fontWeight: 800, color: "#0f172a", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", flex: 1 }}>{c.nome || "Sem nome"}</div>
+                              <div style={{ fontSize: 12.5, fontWeight: 800, color: "#0f172a", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", flex: 1 }}>{c.nome || "Sem nome"}</div>
                               <AvisoProcessos processos={processosDe(processosCand, c)} compacto />
                               {c.origem === "Manual" && podeRecrutarVaga && !somenteLeitura && (
                                 <button onClick={() => setEditarCandId(c.id)} title="Editar os dados do candidato (inserido manualmente)"
@@ -3063,7 +3068,7 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
                                 <button onClick={() => pedirMoverCand(c, "APROVADO")} style={bSkip}>Pular Gestor →</button>
                               </>) : etapa === "ADMISSÃO" ? (
                                 <>
-                                  {podeRecrutarVaga && !c.enviado_admissao_em && <button onClick={() => enviarAdmissao(c)} style={{ ...avancaBtn, background: "#16a34a" }}>✓ Finalizar recrutamento e enviar para Admissão</button>}
+                                  {podeRecrutarVaga && !c.enviado_admissao_em && <button onClick={() => enviarAdmissao(c)} title="Conclui o recrutamento e envia o candidato como ADMITIDO para RH › Novas Admissões" style={{ ...avancaBtn, background: "#16a34a" }}>CONCLUIR ADMISSÃO</button>}
                                   {/* Cancelar admissão (mig 20261014000019): vale mesmo depois de
                                       contratado e com a vaga concluída — volta a pessoa para
                                       Reprovado e reabre a vaga. */}
@@ -3768,7 +3773,7 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
           <div className="rec-modal" style={{ maxWidth: candModal.novaEtapa === ETAPA_SST_COMPRAS ? 620 : 420 }}>
             <button onClick={() => { setCandModal(null); setCandObs(""); setCandMateriais(""); setCandUrgente({ sst: false, compras: false, motivo: "" }); }} style={{ position: "absolute", top: 14, right: 14, background: "none", border: "none", color: "#94a3b8", fontSize: 20, cursor: "pointer" }}>✕</button>
             <div style={{ fontSize: 17, fontWeight: 800, marginBottom: 4 }}>
-              {candModal.novaEtapa === "Reprovado" ? "Reprovar candidato" : pulandoSstCompras ? "Pular SST e Compras" : parecerJuridico ? "Parecer do Jurídico" : `Mover para "${candModal.novaEtapa}"`}
+              {candModal.novaEtapa === "Reprovado" ? "Reprovar candidato" : pulandoSstCompras ? "Pular SST e Compras" : parecerJuridico ? "Parecer do Jurídico" : `Mover para "${rotuloEtapaCandidato(candModal.novaEtapa)}"`}
             </div>
             <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 14 }}>{candModal.nome}</div>
             {pulandoSstCompras && (
@@ -4153,10 +4158,16 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
         return (
           <div className="rec-modal-ov" style={{ zIndex: 950 }} onClick={e => { if (e.target === e.currentTarget && !contratando) setContratarModal(null); }}>
             <div className="rec-modal" style={{ maxWidth: 480 }} onClick={e => e.stopPropagation()}>
-              <div style={{ fontSize: 17, fontWeight: 800, marginBottom: 2, color: "#15803d" }}><Ic i={CheckCircle2} />Finalizar recrutamento — {cm.cv.nome || "o candidato"}</div>
+              <div style={{ fontSize: 17, fontWeight: 800, marginBottom: 2, color: "#15803d" }}><Ic i={CheckCircle2} />Concluir admissão — {cm.cv.nome || "o candidato"}</div>
+              {/* 21/10/2026 (Pablo): o botão virou "CONCLUIR ADMISSÃO" e a
+                  confirmação diz com todas as letras o que acontece; depois de
+                  confirmar, a tela leva para RH › Novas Admissões. */}
+              <div style={{ fontSize: 12.5, color: "#14532d", background: "#f0fdf4", border: "1px solid #86efac", borderRadius: 8, padding: "10px 12px", marginBottom: 10, lineHeight: 1.5 }}>
+                Você vai <b>CONCLUIR o recrutamento</b> e enviar <b>{cm.cv.nome || "o candidato"}</b> como <b>ADMITIDO</b> no sistema.
+              </div>
               <div style={{ fontSize: 12, color: "#64748b", marginBottom: 12, lineHeight: 1.5 }}>
-                Sua parte termina aqui: o candidato vai para a fila da <b>Admissão</b> (RH › Novas Admissões) com os dados e documentos
-                já registrados, e fica <b>"Aguardando admissão"</b> até a Admissão concluir. A vaga sai do portal público /vagas.
+                O candidato entra na fila de <b>RH › Novas Admissões</b> com os dados e documentos já registrados, e a vaga sai do
+                portal público /vagas. Ao confirmar, você é levado para a tela de Novas Admissões.
               </div>
               {(respAdmissao?.length ?? 0) > 1 && (
                 <div style={{ display: "flex", flexDirection: "column", gap: 4, marginBottom: 12 }}>
@@ -4181,11 +4192,11 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
               </div>
               <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 16, flexWrap: "wrap" }}>
                 <button onClick={() => setContratarModal(null)} disabled={contratando} style={{ padding: "7px 14px", borderRadius: 8, background: "#fff", border: "1px solid #e2e8f0", color: "#475569", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Voltar</button>
-                <button onClick={() => confirmarContratar(false)} disabled={contratando} title="Envia para a Admissão sem mandar WhatsApp"
-                  style={{ padding: "7px 14px", borderRadius: 8, background: "#fff", border: "1px solid #16a34a", color: "#15803d", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Enviar sem mensagem</button>
+                <button onClick={() => confirmarContratar(false)} disabled={contratando} title="Conclui a admissão sem mandar WhatsApp"
+                  style={{ padding: "7px 14px", borderRadius: 8, background: "#fff", border: "1px solid #16a34a", color: "#15803d", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Concluir sem mensagem</button>
                 <button onClick={() => confirmarContratar(true)} disabled={contratando}
                   style={{ padding: "7px 14px", borderRadius: 8, background: "#16a34a", border: "none", color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer", opacity: contratando ? .6 : 1 }}>
-                  {contratando ? "Enviando…" : "✓ Enviar para Admissão e mandar mensagem"}
+                  {contratando ? "Concluindo…" : "✓ Concluir admissão e mandar mensagem"}
                 </button>
               </div>
             </div>
@@ -4251,7 +4262,7 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
             <select value={retornoModal.etapa} onChange={e => setRetornoModal(m => m && { ...m, etapa: e.target.value })}
               style={{ width: "100%", marginTop: 6, marginBottom: 12, padding: "8px 10px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: 13, background: "#fff" }}>
               <option value="">Escolha a etapa…</option>
-              {CAND_ETAPAS.filter(e => e !== "Reprovado").map(e => <option key={e} value={e}>{ETAPA_LABEL[e] ?? e}</option>)}
+              {CAND_ETAPAS.filter(e => e !== "Reprovado").map(e => <option key={e} value={e}>{rotuloEtapaCandidato(e)}</option>)}
             </select>
             <label style={{ fontSize: 11, fontWeight: 700, color: "#475569" }}>Motivo *</label>
             <textarea value={retornoModal.motivo} onChange={e => setRetornoModal(m => m && { ...m, motivo: e.target.value })} rows={3}
