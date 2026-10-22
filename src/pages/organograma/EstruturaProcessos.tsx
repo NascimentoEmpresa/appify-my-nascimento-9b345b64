@@ -19,6 +19,7 @@ import {
 import { AmostraTraco, Avatar, DefsSetas, IconeSetor, StatusDesenvolvimento, TRACO, cor, seta } from "@/components/organograma-processos/visual";
 import { useConectores, type Ligacao } from "@/components/organograma-processos/conectores";
 import { DetalheProcesso, DetalheSetor } from "@/components/organograma-processos/DetalheSetor";
+import { PerfilPessoa, type PessoaAberta } from "@/components/organograma-processos/PerfilPessoa";
 
 // =====================================================================
 // ORGANOGRAMA › ESTRUTURA DE SETORES E PROCESSOS — ORGANOGRAMA GERAL
@@ -49,6 +50,7 @@ export default function EstruturaProcessos() {
   const [expandido, setExpandido] = useState(false);
   const [setorAberto, setSetorAberto] = useState<string | null>(null);
   const [processoAberto, setProcessoAberto] = useState<string | null>(null);
+  const [pessoaAberta, setPessoaAberta] = useState<PessoaAberta | null>(null);
   const e = q.data;
 
   return (
@@ -117,8 +119,13 @@ export default function EstruturaProcessos() {
         <>
           <Organograma e={e} f={f} expandido={expandido} onSetor={setSetorAberto} onProcesso={setProcessoAberto} />
           <Rodape e={e} onProcesso={setProcessoAberto} />
-          <DetalheSetor e={e} setorId={setorAberto} onFechar={() => setSetorAberto(null)} onProcesso={(id) => { setSetorAberto(null); setProcessoAberto(id); }} />
-          <DetalheProcesso e={e} processoId={processoAberto} onFechar={() => setProcessoAberto(null)} onProcesso={setProcessoAberto} />
+          <DetalheSetor e={e} setorId={setorAberto} onFechar={() => setSetorAberto(null)} onProcesso={(id) => { setSetorAberto(null); setProcessoAberto(id); }}
+            onPessoa={(m) => setPessoaAberta({ membroId: m.id, empregadoId: m.empregado_id })} />
+          <DetalheProcesso e={e} processoId={processoAberto} onFechar={() => setProcessoAberto(null)} onProcesso={setProcessoAberto}
+            onPessoa={(m) => { setProcessoAberto(null); setPessoaAberta({ membroId: m.id, empregadoId: m.empregado_id }); }} />
+          {/* Abre por cima do setor: fechar o perfil volta para a equipe. */}
+          <PerfilPessoa e={e} pessoa={pessoaAberta} onFechar={() => setPessoaAberta(null)}
+            onProcesso={(id) => { setPessoaAberta(null); setSetorAberto(null); setProcessoAberto(id); }} />
         </>
       )}
     </div>

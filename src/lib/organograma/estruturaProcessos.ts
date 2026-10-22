@@ -19,6 +19,8 @@ export interface Setor {
 export interface Membro {
   id: string; setor_id: string; nome: string; cargo: string; nivel: number; parent_id: string | null; responsavel: boolean;
   atividades: string | null; empregado_id: number | null; user_id: string | null; ordem: number; avatar_url?: string | null;
+  /** Sem vínculo com o cadastro (texto da carga inicial) — mig 20261022000300. */
+  pendente?: boolean;
 }
 export interface Macro { id: string; codigo: string | null; nome: string; cor: string; ordem: number }
 export interface Processo {
@@ -69,7 +71,27 @@ export const responsavelDoSetor = (e: Estrutura, setorId: string): Membro | null
   const eq = equipeDoSetor(e, setorId);
   return eq.find((m) => m.responsavel) ?? eq[0] ?? null;
 };
-export const setorDoProcesso = (e: Estrutura, p: Pick<Processo, "setor_id">) => e.setores.find((s) => s.id === p.setor_id) ?? null;
+
+// ---- Pessoas reais (mig 20261022000300) --------------------------------------
+// A equipe só aceita gente do cadastro (EMPREGADOS). O que a carga inicial
+// digitou e o vínculo automático não achou fica "pendente" até alguém
+// escolher a pessoa. O retrato publicado antes da mig não traz `pendente`:
+// vale a ausência de empregado_id.
+export const membroPendente = (m: Pick<Membro, "empregado_id">) => !m.empregado_id;
+export const membrosPendentes = (e: Estrutura, setorId?: string) =>
+  e.membros.filter((m) => membroPendente(m) && (!setorId || m.setor_id === setorId));
+
+/** Mesmo limite do CHECK profiles_bio_tamanho (mig 20260829000002). */
+export const BIO_LIMITE = 500;
+
+export interface PerfilPessoa {
+  membro_id: string; setor_id: string; nome: string; cargo_organograma: string; nivel: number;
+  pendente: boolean; tem_login: boolean; eu: boolean; pode_editar_bio: boolean;
+  conta: { nome: string | null; email: string | null; avatar_url: string | null; telefone: string | null; cargo: string | null; bio: string | null } | null;
+  empregado: { nome: string | null; cargo: string | null; setor: string | null; situacao: string | null; empresa: string | null; filial: string | null; email: string | null } | null;
+}
+
+export const setorDoProcesso =(e: Estrutura, p: Pick<Processo, "setor_id">) => e.setores.find((s) => s.id === p.setor_id) ?? null;
 
 /** Processo é "intersetorial" quando liga dois setores diferentes. */
 export function conexaoEntreSetores(e: Estrutura, c: Pick<Conexao, "origem_id" | "destino_id">): boolean {

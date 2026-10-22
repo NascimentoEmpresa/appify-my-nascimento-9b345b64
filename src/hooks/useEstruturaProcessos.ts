@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
-import { ESTRUTURA_VAZIA, type Estrutura } from "@/lib/organograma/estruturaProcessos";
+import { ESTRUTURA_VAZIA, type Estrutura, type PerfilPessoa } from "@/lib/organograma/estruturaProcessos";
 
 // =====================================================================
 // Organograma › Estrutura de Setores e Processos (mig 20261020000060).
@@ -41,7 +41,32 @@ export async function buscarPessoas(busca: string) {
   return (data ?? []) as { empregado_id: number; nome: string; cargo: string | null; setor: string | null; user_id: string | null; avatar_url: string | null }[];
 }
 
-type Tabela = "ORG_PROC_UNIDADE" | "ORG_PROC_SETOR" | "ORG_PROC_MEMBRO" | "ORG_PROC_MACRO" | "ORG_PROC_PROCESSO" | "ORG_PROC_CONEXAO";
+/** Perfil da pessoa do organograma, lido na hora (a bio não espera publicação). */
+export const usePerfilPessoa = (membroId: string | null, empregadoId: number | null) => useQuery({
+  queryKey: [K, "perfil", membroId], enabled: !!membroId,
+  queryFn: async (): Promise<PerfilPessoa | null> => {
+    const { data, error } = await sb.rpc("org_proc_perfil_pessoa", { p_membro_id: membroId, p_empregado_id: empregadoId });
+    erro(error);
+    return (data ?? null) as PerfilPessoa | null;
+  },
+});
+
+/** Grava profiles.bio — a mesma de Meu Perfil (dono ou 'alterar' do cadastro). */
+export function useSalvarBio() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ membroId, bio }: { membroId: string; bio: string }) => {
+      const { error } = await sb.rpc("org_proc_salvar_bio", { p_membro_id: membroId, p_bio: bio });
+      erro(error);
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: [K, "perfil"] });
+      qc.invalidateQueries({ queryKey: ["meu-perfil"] });
+    },
+  });
+}
+
+type Tabela ="ORG_PROC_UNIDADE" | "ORG_PROC_SETOR" | "ORG_PROC_MEMBRO" | "ORG_PROC_MACRO" | "ORG_PROC_PROCESSO" | "ORG_PROC_CONEXAO";
 
 /** Salvar (insert sem id, update com id) e excluir em qualquer tabela da estrutura. */
 export function useGravarEstrutura() {

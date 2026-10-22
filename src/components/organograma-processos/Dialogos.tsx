@@ -145,16 +145,23 @@ export function DialogoMembro({ e, setorId, membro, aberto, onFechar, onSalvar }
       <DialogContent className="max-h-[92vh] max-w-lg overflow-y-auto">
         <DialogHeader><DialogTitle>{membro ? "Editar pessoa da equipe" : "Adicionar pessoa à equipe"}</DialogTitle></DialogHeader>
         <div className="space-y-3">
-          <Campo rotulo="Vincular ao cadastro de colaboradores (opcional)">
+          {/* Pessoa real, sempre (mig 20261022000300): nome e foto vêm do
+              cadastro; o texto da carga inicial só aparece como pista. */}
+          {membro && !membro.empregado_id && !f.empregado_id && (
+            <p className="rounded-lg border border-amber-300 bg-amber-50 px-2.5 py-2 text-xs text-amber-800 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-200">
+              Pendente de vínculo: estava digitado como <b>{membro.nome}</b>. Escolha a pessoa no cadastro — funções e processos continuam ligados.
+            </p>
+          )}
+          <Campo rotulo="Pessoa (cadastro de colaboradores) *">
             {f.empregado_id ? (
               <div className="flex items-center gap-2 rounded-lg border p-2 text-sm">
-                <Avatar nome={f.nome} foto={f.avatar_url} tamanho={26} /> <span className="flex-1">{f.nome} <span className="text-xs text-muted-foreground">· cadastro #{f.empregado_id}</span></span>
-                <button onClick={() => setF({ ...f, empregado_id: null, user_id: null, avatar_url: null })} title="Desvincular"><X className="h-4 w-4" /></button>
+                <Avatar nome={f.nome} foto={f.avatar_url} tamanho={26} /> <span className="flex-1">{f.nome} <span className="text-xs text-muted-foreground">· cadastro #{f.empregado_id}{f.user_id ? "" : " · sem login no ERP"}</span></span>
+                <button onClick={() => setF({ ...f, empregado_id: null, user_id: null, avatar_url: null })} title="Trocar a pessoa"><X className="h-4 w-4" /></button>
               </div>
             ) : (
               <div className="relative">
                 <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-                <Input className="pl-8" placeholder="Buscar pelo nome…" value={busca} onChange={(x) => setBusca(x.target.value)} />
+                <Input className="pl-8" placeholder="Buscar pelo nome…" value={busca} onChange={(x) => setBusca(x.target.value)} autoFocus />
                 {achados.length > 0 && (
                   <div className="absolute z-20 mt-1 max-h-56 w-full overflow-y-auto rounded-lg border bg-popover shadow-lg">
                     {achados.map((p) => (
@@ -169,10 +176,7 @@ export function DialogoMembro({ e, setorId, membro, aberto, onFechar, onSalvar }
               </div>
             )}
           </Campo>
-          <div className="grid grid-cols-2 gap-2">
-            <Campo rotulo="Nome *"><Input value={f.nome} onChange={(x) => setF({ ...f, nome: x.target.value })} /></Campo>
-            <Campo rotulo="Cargo *"><Input value={f.cargo} onChange={(x) => setF({ ...f, cargo: x.target.value })} placeholder="ex.: Analista de DP" /></Campo>
-          </div>
+          <Campo rotulo="Cargo no organograma *"><Input value={f.cargo} onChange={(x) => setF({ ...f, cargo: x.target.value })} placeholder="ex.: Analista de DP" /></Campo>
           <div className="grid grid-cols-2 gap-2">
             <Campo rotulo="Nível">
               <Select value={String(f.nivel)} onValueChange={(v) => setF({ ...f, nivel: Number(v) })}>
@@ -194,7 +198,7 @@ export function DialogoMembro({ e, setorId, membro, aberto, onFechar, onSalvar }
         </div>
         <DialogFooter>
           <Button variant="ghost" onClick={onFechar}>Cancelar</Button>
-          <Button disabled={!f.nome.trim() || !f.cargo.trim() || salvando} onClick={async () => {
+          <Button disabled={!f.empregado_id || !f.cargo.trim() || salvando} onClick={async () => {
             setSalvando(true);
             try {
               await onSalvar({
