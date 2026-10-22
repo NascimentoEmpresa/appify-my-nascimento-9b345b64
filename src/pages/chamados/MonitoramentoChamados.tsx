@@ -1,25 +1,27 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import type { LucideIcon } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useScreenAccess } from "@/hooks/useScreenAccess";
 import { useToast } from "@/hooks/use-toast";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Card } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { SearchableSelect } from "@/components/ui/searchable-select";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Table, TableBody, TableCell, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import {
-  AlertCircle, CheckCircle2, Eye, FileText, Info, Loader2, Pencil, RotateCcw, Star, Users, XCircle, Gauge,
+  AlertCircle, BarChart3, CalendarDays, CheckCircle2, Download, Eye, FileText, Info, Loader2, MessageSquare, Pencil,
+  RotateCcw, Search, Star, Users, XCircle,
 } from "lucide-react";
 import {
-  PRIORIDADES, STATUS_CHAMADO, StatCard, StatusBadge, PrioridadeBadge, fmtData, fmtDataHora, iniciais, moduloLabel,
+  PRIORIDADES, STATUS_CHAMADO, StatusBadge, PrioridadeBadge, fmtData, fmtDataHora, iniciais, moduloLabel,
 } from "./types";
 import {
   ADERENCIA_LABEL, CAMPO_AJUSTE_LABEL, COMPLEXIDADE_LABEL, CRITERIOS_INDICE, TEMAS,
@@ -27,6 +29,7 @@ import {
   temaCor, temaLabel,
   type AjusteMonitor, type CampoAjuste, type ChamadoMonitor, type LinhaMonitor,
 } from "@/lib/chamados/monitoramento";
+import { cn } from "@/lib/utils";
 
 // =====================================================================
 // MONITORAMENTO DE CHAMADOS (22/10/2026, mig 20261022000180).
@@ -38,10 +41,21 @@ import {
 // regras moram em src/lib/chamados/monitoramento.ts — esta tela só filtra e
 // desenha. Nada é digitado de novo pelo solicitante.
 //
+// LAYOUT (22/10/2026, à tarde): refeito para ficar igual ao mockup que o
+// Pablo mandou ("frontend tem que ficar exatamente como esse") — cabeçalho
+// com o quadro azul e o Resumo dos Temas ao lado, 6 indicadores, filtros em
+// linha aplicados no "Pesquisar", tabela com seleção e três ações (ver,
+// histórico, critérios), Ranking e Análise de qualidade lado a lado. Na tela
+// o índice se chama "inteligência", como no mockup; as regras não mudaram.
+//
 // Ajuste manual (ação "alterar" do menu): grava em
 // CHAMADO_SISTEMA_MONITOR_AJUSTE com justificativa; o histórico aparece no
 // detalhe do chamado.
 // =====================================================================
+
+// As três RPCs da mig 20261022000180 não estão no types.ts gerado.
+const rpc = (fn: string, args: Record<string, unknown>) =>
+  (supabase as unknown as { rpc: (f: string, a: Record<string, unknown>) => Promise<{ data: unknown; error: { message: string } | null }> }).rpc(fn, args);
 
 const MENU = "central_servicos_chamados_monitoramento";
 const TODOS = "__todos__";
@@ -53,31 +67,55 @@ const hojeISO = () => {
 };
 const inicioAnoISO = () => `${new Date().getFullYear()}-01-01`;
 const fmt1 = (n: number | null | undefined) => (n == null ? "—" : n.toFixed(1).replace(".", ","));
+const fmtISO = (iso: string) => (iso ? iso.split("-").reverse().join("/") : "—");
 
 const corIndice = (n: number) => (n >= 7.5 ? "text-success" : n >= 5 ? "text-warning" : "text-destructive");
-const bgIndice = (n: number) => (n >= 7.5 ? "bg-success" : n >= 5 ? "bg-warning" : "bg-destructive");
+const bgIndice = (n: number) => (n >= 8 ? "bg-success" : n >= 6 ? "bg-warning" : "bg-destructive");
+const pilulaIndice = (n: number) => (n >= 8.2
+  ? "border-success/30 bg-success/10 text-success"
+  : n >= 6 ? "border-warning/30 bg-warning/10 text-warning" : "border-destructive/30 bg-destructive/10 text-destructive");
+
+// Avatar com cor fixa por pessoa (o mockup tem um tom por solicitante).
+const CORES_AVATAR = [
+  "bg-blue-100 text-blue-700", "bg-emerald-100 text-emerald-700", "bg-orange-100 text-orange-700",
+  "bg-violet-100 text-violet-700", "bg-rose-100 text-rose-700", "bg-cyan-100 text-cyan-700", "bg-amber-100 text-amber-700",
+];
+const corAvatar = (chave: string) => CORES_AVATAR[[...chave].reduce((s, ch) => s + ch.charCodeAt(0), 0) % CORES_AVATAR.length];
+
+interface Filtros {
+  de: string; ate: string; solic: string; setor: string; modulo: string; tema: string; prioridade: string; status: string;
+}
+const filtrosIniciais = (): Filtros => ({
+  de: inicioAnoISO(), ate: hojeISO(), solic: TODOS, setor: TODOS, modulo: TODOS, tema: TODOS, prioridade: TODOS, status: TODOS,
+});
+
+type Foco = "resumo" | "historico" | "criterios";
 
 export default function MonitoramentoChamados() {
   const { data: podeAlterar = false } = useScreenAccess(MENU, "alterar");
 
-  const [de, setDe] = useState(inicioAnoISO);
-  const [ate, setAte] = useState(hojeISO);
-  const [fSolic, setFSolic] = useState(TODOS);
-  const [fSetor, setFSetor] = useState(TODOS);
-  const [fModulo, setFModulo] = useState(TODOS);
-  const [fTema, setFTema] = useState(TODOS);
-  const [fPrioridade, setFPrioridade] = useState(TODOS);
-  const [fStatus, setFStatus] = useState(TODOS);
-  const [pagina, setPagina] = useState(1);
-  const [detalheId, setDetalheId] = useState<string | null>(null);
+  // Rascunho (o que está nos campos) × aplicado (o que a tela mostra): os
+  // filtros valem no "Pesquisar", como no mockup. O tema clicado no resumo
+  // aplica na hora.
+  const [rascunho, setRascunho] = useState<Filtros>(filtrosIniciais);
+  const [f, setF] = useState<Filtros>(filtrosIniciais);
+  const muda = (p: Partial<Filtros>) => setRascunho((r) => ({ ...r, ...p }));
+  const pesquisar = () => { setF(rascunho); setPagina(1); };
+  const limpar = () => { const z = filtrosIniciais(); setRascunho(z); setF(z); setPagina(1); };
+  const aplicarTema = (tema: string) => { setRascunho((r) => ({ ...r, tema })); setF((x) => ({ ...x, tema })); setPagina(1); };
 
-  const periodoOk = !!de && !!ate && de <= ate;
+  const [pagina, setPagina] = useState(1);
+  const [detalhe, setDetalhe] = useState<{ id: string; foco: Foco } | null>(null);
+  const [selecionados, setSelecionados] = useState<Set<string>>(new Set());
+  const [rankingCompleto, setRankingCompleto] = useState(false);
+
+  const periodoOk = !!f.de && !!f.ate && f.de <= f.ate;
   const { data: chamados = [], isLoading, error } = useQuery({
-    queryKey: ["chamados-monitoramento", de, ate],
+    queryKey: ["chamados-monitoramento", f.de, f.ate],
     enabled: periodoOk,
     staleTime: 60_000,
     queryFn: async () => {
-      const { data, error } = await (supabase as any).rpc("chamados_monitoramento", { p_de: de, p_ate: ate });
+      const { data, error } = await rpc("chamados_monitoramento", { p_de: f.de, p_ate: f.ate });
       if (error) throw error;
       return (data ?? []) as ChamadoMonitor[];
     },
@@ -107,13 +145,15 @@ export default function MonitoramentoChamados() {
   }, [todas]);
 
   const filtradas = useMemo(() => todas.filter(({ c, a }) =>
-    (fSolic === TODOS || c.solicitante_id === fSolic)
-    && (fSetor === TODOS || (c.setor?.trim() ?? "") === fSetor)
-    && (fModulo === TODOS || c.modulo_sistema === fModulo)
-    && (fTema === TODOS || a.tema === fTema)
-    && (fPrioridade === TODOS || c.prioridade === fPrioridade)
-    && (fStatus === TODOS || c.status === fStatus),
-  ), [todas, fSolic, fSetor, fModulo, fTema, fPrioridade, fStatus]);
+    (f.solic === TODOS || c.solicitante_id === f.solic)
+    && (f.setor === TODOS || (c.setor?.trim() ?? "") === f.setor)
+    && (f.modulo === TODOS || c.modulo_sistema === f.modulo)
+    && (f.tema === TODOS || a.tema === f.tema)
+    && (f.prioridade === TODOS || c.prioridade === f.prioridade)
+    && (f.status === TODOS || c.status === f.status),
+  ), [todas, f]);
+
+  useEffect(() => { setSelecionados(new Set()); }, [filtradas]);
 
   const kpis = useMemo(() => calcularKpis(filtradas), [filtradas]);
   const temas = useMemo(() => resumoTemas(filtradas), [filtradas]);
@@ -124,59 +164,73 @@ export default function MonitoramentoChamados() {
   const totalPaginas = Math.max(1, Math.ceil(filtradas.length / POR_PAGINA));
   const paginaAtual = Math.min(pagina, totalPaginas);
   const visiveis = filtradas.slice((paginaAtual - 1) * POR_PAGINA, paginaAtual * POR_PAGINA);
-
-  const limpar = () => {
-    setDe(inicioAnoISO()); setAte(hojeISO());
-    setFSolic(TODOS); setFSetor(TODOS); setFModulo(TODOS); setFTema(TODOS); setFPrioridade(TODOS); setFStatus(TODOS);
-    setPagina(1);
-  };
-  const filtro = <T,>(set: (v: T) => void) => (v: T) => { set(v); setPagina(1); };
+  const todosVisiveisMarcados = visiveis.length > 0 && visiveis.every(({ c }) => selecionados.has(c.id));
 
   const pct = (n: number) => (kpis.total ? Math.round((n / kpis.total) * 100) : 0);
-  const detalhe = detalheId ? todas.find((l) => l.c.id === detalheId) ?? null : null;
+  const linhaDetalhe = detalhe ? todas.find((l) => l.c.id === detalhe.id) ?? null : null;
+  const maxTema = Math.max(1, ...temas.map((t) => t.qtd));
+
+  const exportarSelecionados = () => {
+    const linhas = filtradas.filter(({ c }) => selecionados.has(c.id));
+    const cab = ["Solicitante", "Setor", "Nº do chamado", "Assunto", "Tema", "Módulo / Sistema", "Prioridade", "Efetividade (%)", "Inteligência", "Status", "Prazo médio (dias)", "Abertura", "Conclusão"];
+    const esc = (v: unknown) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+    const corpo = linhas.map(({ c, a }) => [
+      c.solicitante_nome, c.setor, c.numero, c.assunto, temaLabel(a.tema), moduloLabel(c), PRIORIDADES[c.prioridade]?.label ?? c.prioridade,
+      a.efetividade ?? "", fmt1(a.indice), STATUS_CHAMADO[c.status]?.label ?? c.status, fmt1(a.prazoDias),
+      fmtData(c.created_at), c.status === "concluido" ? fmtData(c.concluido_em) : "",
+    ].map(esc).join(";"));
+    const blob = new Blob(["﻿" + [cab.map(esc).join(";"), ...corpo].join("\n")], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = `monitoramento-chamados-${hojeISO()}.csv`; a.click();
+    URL.revokeObjectURL(url);
+  };
 
   return (
     <div>
-      <PageHeader
-        title="Monitoramento de Chamados"
-        subtitle="Analise os chamados por solicitante para medir efetividade, relevância operacional e qualidade das demandas no ERP."
-        module="Central de Serviços"
-        breadcrumb={["Chamados de Sistemas", "Monitoramento de Chamados"]}
-      />
-
-      <div className="mb-4 grid gap-4 lg:grid-cols-[1fr_1.1fr]">
-        <Card className="border-info/30 bg-info/5 p-4">
-          <p className="flex items-start gap-1.5 text-sm font-semibold text-info">
-            <Info className="mt-0.5 h-4 w-4 shrink-0" />
-            Este painel analisa o conteúdo das solicitações e identifica os principais temas, prioridades e o nível de qualidade de cada demanda.
-          </p>
-          <p className="mt-1.5 text-xs text-muted-foreground">
-            Tudo é calculado a partir do que já está no chamado (título, descrição, anexos, conversa, prazos e avaliações), por regras fixas:
-            o mesmo chamado sempre recebe a mesma nota, e cada nota mostra o porquê. Chamado não concluído tem avaliação <b>preliminar</b>;
-            a efetividade só existe depois da entrega. Cancelados contam à parte e não pesam contra o solicitante.
-          </p>
-        </Card>
+      {/* ── Cabeçalho: título + explicação | Resumo dos Temas ── */}
+      <div className="mb-4 grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(0,640px)]">
+        <div>
+          <PageHeader
+            className="mb-4"
+            title="Monitoramento de Chamados"
+            subtitle="Analise os chamados por solicitante para medir efetividade, relevância operacional e qualidade das demandas no ERP."
+            module="Central de Serviços"
+            breadcrumb={["Chamados de Sistemas", "Monitoramento de Chamados"]}
+          />
+          <div className="rounded-lg border border-info/30 bg-info/5 px-4 py-3">
+            <p className="flex items-start gap-2 text-sm font-semibold text-info">
+              <Info className="mt-0.5 h-4 w-4 shrink-0" />
+              Este painel analisa o conteúdo das solicitações e identifica os principais temas, prioridades e o nível de inteligência de cada demanda.
+            </p>
+            <p className="ml-6 mt-1 text-xs text-muted-foreground">
+              As informações são geradas automaticamente a partir do título e da descrição do chamado.
+            </p>
+          </div>
+        </div>
 
         <Card className="p-4">
-          <p className="mb-2 text-sm font-bold">Resumo dos Temas das Solicitações</p>
+          <p className="mb-2 text-sm font-bold text-foreground">Resumo dos Temas das Solicitações</p>
           {temas.length === 0 ? (
             <p className="text-xs text-muted-foreground">Sem solicitações no filtro.</p>
           ) : (
-            <div className="space-y-1.5">
+            <div className="space-y-1">
               {temas.map((t) => {
-                const max = Math.max(...temas.map((x) => x.qtd));
-                const ativo = fTema === t.tema;
+                const ativo = f.tema === t.tema;
                 return (
                   <button
                     key={t.tema}
                     type="button"
-                    onClick={() => filtro(setFTema)(ativo ? TODOS : t.tema)}
-                    className={`grid w-full grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)_2.5rem_2.5rem] items-center gap-2 rounded px-1 text-left text-xs hover:bg-muted/60 ${ativo ? "bg-muted" : ""}`}
+                    onClick={() => aplicarTema(ativo ? TODOS : t.tema)}
                     title="Filtrar por este tema"
+                    className={cn(
+                      "grid w-full grid-cols-[minmax(0,1.15fr)_minmax(0,1fr)_2.25rem_2.75rem] items-center gap-3 rounded px-1 py-0.5 text-left text-[13px] hover:bg-muted/60",
+                      ativo && "bg-muted",
+                    )}
                   >
                     <span className="truncate text-primary">{t.label}</span>
-                    <span className="h-2.5 overflow-hidden rounded-full bg-muted">
-                      <span className="block h-full rounded-full" style={{ width: `${(t.qtd / max) * 100}%`, background: t.cor }} />
+                    <span className="h-3 overflow-hidden rounded-sm bg-muted">
+                      <span className="block h-full rounded-sm" style={{ width: `${(t.qtd / maxTema) * 100}%`, background: t.cor }} />
                     </span>
                     <span className="text-right font-bold">{t.qtd}</span>
                     <span className="text-right text-muted-foreground">{t.pct}%</span>
@@ -188,58 +242,77 @@ export default function MonitoramentoChamados() {
         </Card>
       </div>
 
-      <div className="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7">
-        <StatCard icon={Users} label="Solicitantes avaliados" value={kpis.solicitantes} hint="no período" />
-        <StatCard icon={FileText} label="Total de solicitações" value={kpis.total} hint={kpis.canceladas ? `+ ${kpis.canceladas} cancelada(s) à parte` : "período selecionado"} tone="info" />
-        <StatCard icon={CheckCircle2} label="Concluídas" value={kpis.concluidas} hint={`${pct(kpis.concluidas)}% do total`} tone="success" />
-        <StatCard icon={RotateCcw} label="Em andamento" value={kpis.emAndamento} hint={`${pct(kpis.emAndamento)}% do total`} tone="warning" />
-        <StatCard icon={AlertCircle} label="Pendentes" value={kpis.pendentes} hint={`${pct(kpis.pendentes)}% · ${kpis.reprovadas} reprovada(s)`} tone="destructive" />
-        <StatCard icon={Gauge} label="Efetividade média" value={kpis.efetividadeMedia == null ? "—" : `${kpis.efetividadeMedia}%`} hint="só entregas concluídas" tone="success" />
-        <StatCard icon={Star} label="Índice de qualidade" value={kpis.indiceMedio == null ? "—" : `${fmt1(kpis.indiceMedio)} / 10`} hint="média das solicitações" tone="warning" />
+      {/* ── Indicadores ── */}
+      <div className="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-6">
+        <Indicador icone={Users} cor="bg-info/10 text-info" valor={kpis.solicitantes} rotulo="Solicitantes avaliados" dica="Total de solicitantes no período" />
+        <Indicador icone={FileText} cor="bg-info/10 text-info" valor={kpis.total} rotulo="Total de solicitações"
+          dica={kpis.canceladas ? `Período selecionado · + ${kpis.canceladas} cancelada(s) à parte` : "Período selecionado"} />
+        <Indicador icone={CheckCircle2} cor="bg-success/10 text-success" valor={kpis.concluidas} rotulo="Concluídas" dica={`${pct(kpis.concluidas)}% do total`} />
+        <Indicador icone={RotateCcw} cor="bg-warning/10 text-warning" valor={kpis.emAndamento} rotulo="Em andamento" dica={`${pct(kpis.emAndamento)}% do total`} />
+        <Indicador icone={AlertCircle} cor="bg-destructive/10 text-destructive" valor={kpis.pendentes} rotulo="Pendentes" dica={`${pct(kpis.pendentes)}% do total`} />
+        <Indicador icone={Star} cor="bg-warning/10 text-warning" valor={kpis.indiceMedio == null ? "—" : `${fmt1(kpis.indiceMedio)} / 10`}
+          rotulo="Índice de inteligência" dica="Média geral das solicitações" />
       </div>
 
-      {/* Filtros */}
-      <Card className="mb-4 p-4">
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-8">
-          <div className="space-y-1">
-            <Label className="text-xs">Abertura de</Label>
-            <Input type="date" value={de} onChange={(e) => filtro(setDe)(e.target.value)} />
-          </div>
-          <div className="space-y-1">
-            <Label className="text-xs">até</Label>
-            <Input type="date" value={ate} onChange={(e) => filtro(setAte)(e.target.value)} />
-          </div>
-          <div className="space-y-1">
-            <Label className="text-xs">Solicitante</Label>
-            <SearchableSelect
-              value={fSolic}
-              onChange={filtro(setFSolic)}
-              options={[{ value: TODOS, label: "Todos os solicitantes" }, ...opcoes.solicitantes]}
-              placeholder="Todos os solicitantes"
-            />
-          </div>
-          <FiltroSelect label="Setor" value={fSetor} onChange={filtro(setFSetor)} todos="Todos os setores"
-            opcoes={opcoes.setores.map((s) => ({ value: s, label: s }))} />
-          <FiltroSelect label="Módulo / Sistema" value={fModulo} onChange={filtro(setFModulo)} todos="Todos os módulos" opcoes={opcoes.modulos} />
-          <FiltroSelect label="Tema" value={fTema} onChange={filtro(setFTema)} todos="Todos os temas"
-            opcoes={TEMAS.map((t) => ({ value: t.value, label: t.label }))} />
-          <FiltroSelect label="Prioridade" value={fPrioridade} onChange={filtro(setFPrioridade)} todos="Todas"
-            opcoes={Object.entries(PRIORIDADES).map(([value, p]) => ({ value, label: p.label }))} />
-          <FiltroSelect label="Status" value={fStatus} onChange={filtro(setFStatus)} todos="Todos"
-            opcoes={Object.entries(STATUS_CHAMADO).map(([value, s]) => ({ value, label: s.label }))} />
+      {/* ── Filtros (aplicados no Pesquisar) ── */}
+      <div className="mb-4 grid items-end gap-3 sm:grid-cols-2 lg:grid-cols-4 2xl:grid-cols-[minmax(0,1.15fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.3fr)_minmax(0,0.6fr)_minmax(0,0.6fr)_auto_auto]">
+        <div className="space-y-1">
+          <Label className="text-xs">Período</Label>
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button variant="outline" className="h-10 w-full justify-between bg-background px-3 font-normal">
+                <span className="flex items-center gap-2"><CalendarDays className="h-4 w-4 text-muted-foreground" />{fmtISO(rascunho.de)} - {fmtISO(rascunho.ate)}</span>
+                <CalendarDays className="h-4 w-4 text-muted-foreground" />
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent align="start" className="w-72 space-y-2">
+              <div className="space-y-1">
+                <Label className="text-xs">Abertura de</Label>
+                <Input type="date" value={rascunho.de} onChange={(e) => muda({ de: e.target.value })} />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs">até</Label>
+                <Input type="date" value={rascunho.ate} onChange={(e) => muda({ ate: e.target.value })} />
+              </div>
+              {rascunho.de > rascunho.ate && <p className="text-xs text-destructive">A data inicial passa da final.</p>}
+            </PopoverContent>
+          </Popover>
         </div>
-        <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
-          <p className="text-xs text-muted-foreground">
-            {!periodoOk ? <span className="text-destructive">Período inválido.</span>
-              : <>{filtradas.length} chamado(s) no filtro · período pela data de abertura</>}
-          </p>
-          <Button variant="outline" size="sm" onClick={limpar} className="gap-1.5"><RotateCcw className="h-3.5 w-3.5" /> Limpar filtros</Button>
+        <div className="space-y-1">
+          <Label className="text-xs">Solicitante</Label>
+          <SearchableSelect
+            value={rascunho.solic}
+            onChange={(v) => muda({ solic: v })}
+            options={[{ value: TODOS, label: "Todos os solicitantes" }, ...opcoes.solicitantes]}
+            placeholder="Todos os solicitantes"
+          />
         </div>
-      </Card>
+        <FiltroSelect label="Setor" value={rascunho.setor} onChange={(v) => muda({ setor: v })} todos="Todos os setores"
+          opcoes={opcoes.setores.map((s) => ({ value: s, label: s }))} />
+        <FiltroSelect label="Módulo / Sistema" value={rascunho.modulo} onChange={(v) => muda({ modulo: v })} todos="Todos os módulos" opcoes={opcoes.modulos} />
+        <FiltroSelect label="Resumo do Tema da Solicitação" value={rascunho.tema} onChange={(v) => muda({ tema: v })} todos="Todos os temas"
+          opcoes={TEMAS.map((t) => ({ value: t.value, label: t.label }))} />
+        <FiltroSelect label="Prioridade" value={rascunho.prioridade} onChange={(v) => muda({ prioridade: v })} todos="Todas"
+          opcoes={Object.entries(PRIORIDADES).map(([value, p]) => ({ value, label: p.label }))} />
+        <FiltroSelect label="Status" value={rascunho.status} onChange={(v) => muda({ status: v })} todos="Todos"
+          opcoes={Object.entries(STATUS_CHAMADO).map(([value, s]) => ({ value, label: s.label }))} />
+        <Button variant="outline" className="h-10 gap-1.5 bg-background" onClick={limpar}><RotateCcw className="h-4 w-4" /> Limpar filtros</Button>
+        <Button className="h-10 gap-1.5 px-6" onClick={pesquisar} disabled={!rascunho.de || !rascunho.ate || rascunho.de > rascunho.ate}>
+          <Search className="h-4 w-4" /> Pesquisar
+        </Button>
+      </div>
 
-      {/* Tabela */}
+      {/* ── Detalhamento ── */}
       <Card className="mb-4 p-4">
-        <p className="mb-3 text-sm font-bold">Detalhamento das solicitações por solicitante</p>
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <p className="text-sm font-bold">Detalhamento das solicitações por solicitante</p>
+          {selecionados.size > 0 && (
+            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+              {selecionados.size} selecionado(s)
+              <Button size="sm" variant="outline" className="h-7 gap-1.5" onClick={exportarSelecionados}><Download className="h-3.5 w-3.5" /> Exportar</Button>
+            </div>
+          )}
+        </div>
         {error ? (
           <p className="py-8 text-center text-sm text-destructive">Não foi possível carregar: {(error as Error).message}</p>
         ) : isLoading ? (
@@ -249,88 +322,114 @@ export default function MonitoramentoChamados() {
         ) : (
           <>
             <div className="overflow-x-auto">
-              <Table className="text-xs">
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Solicitante</TableHead>
-                    <TableHead>Setor</TableHead>
-                    <TableHead>Nº do chamado</TableHead>
-                    <TableHead className="min-w-[180px]">Assunto</TableHead>
-                    <TableHead>Tema</TableHead>
-                    <TableHead>Módulo / Sistema</TableHead>
-                    <TableHead>Prioridade</TableHead>
-                    <TableHead>Complexidade</TableHead>
-                    <TableHead>Efetividade</TableHead>
-                    <TableHead>Aderência</TableHead>
-                    <TableHead>Índice</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead className="text-right">Prazo (dias)</TableHead>
-                    <TableHead>Abertura</TableHead>
-                    <TableHead>Conclusão</TableHead>
-                    <TableHead className="text-right">Ações</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
+              <table className="w-full min-w-[1280px] border-collapse text-xs">
+                <thead>
+                  <tr className="border-b text-left text-[11px] font-semibold text-muted-foreground">
+                    <th className="w-8 py-2 pl-1">
+                      <Checkbox
+                        checked={todosVisiveisMarcados}
+                        onCheckedChange={(v) => setSelecionados((s) => {
+                          const n = new Set(s);
+                          for (const { c } of visiveis) { if (v) n.add(c.id); else n.delete(c.id); }
+                          return n;
+                        })}
+                        aria-label="Selecionar todos da página"
+                      />
+                    </th>
+                    <th className="py-2 pr-2">Solicitante</th>
+                    <th className="py-2 pr-2">Setor</th>
+                    <th className="py-2 pr-2">Nº do chamado</th>
+                    <th className="py-2 pr-2">Assunto</th>
+                    <th className="py-2 pr-2">Resumo do Tema da Solicitação</th>
+                    <th className="py-2 pr-2">Módulo / Sistema</th>
+                    <th className="py-2 pr-2">Prioridade</th>
+                    <th className="py-2 pr-2">Efetividade</th>
+                    <th className="py-2 pr-2">Inteligência</th>
+                    <th className="py-2 pr-2">Status</th>
+                    <th className="py-2 pr-2 leading-tight">Prazo médio<br />(dias)</th>
+                    <th className="py-2 pr-2">Abertura</th>
+                    <th className="py-2 pr-2">Conclusão</th>
+                    <th className="py-2 pr-1 text-center">Ações</th>
+                  </tr>
+                </thead>
+                <tbody>
                   {visiveis.map(({ c, a }) => (
-                    <TableRow key={c.id} className={a.cancelado ? "opacity-60" : undefined}>
-                      <TableCell>
+                    <tr key={c.id} className={cn("border-b last:border-0 hover:bg-muted/40", a.cancelado && "opacity-70")}>
+                      <td className="py-2 pl-1">
+                        <Checkbox
+                          checked={selecionados.has(c.id)}
+                          onCheckedChange={(v) => setSelecionados((s) => { const n = new Set(s); if (v) n.add(c.id); else n.delete(c.id); return n; })}
+                          aria-label={`Selecionar ${c.numero ?? "chamado"}`}
+                        />
+                      </td>
+                      <td className="py-2 pr-2">
                         <div className="flex items-center gap-2">
-                          <Avatar className="h-7 w-7"><AvatarFallback className="text-[10px]">{iniciais(c.solicitante_nome)}</AvatarFallback></Avatar>
-                          <span className="max-w-[130px] truncate font-medium" title={c.solicitante_nome ?? ""}>{c.solicitante_nome ?? "—"}</span>
+                          <span className={cn("flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[10px] font-bold", corAvatar(c.solicitante_id))}>
+                            {iniciais(c.solicitante_nome)}
+                          </span>
+                          <span className="line-clamp-2 max-w-[110px] font-medium" title={c.solicitante_nome ?? ""}>{c.solicitante_nome ?? "—"}</span>
                         </div>
-                      </TableCell>
-                      <TableCell className="max-w-[120px] truncate" title={c.setor ?? ""}>{c.setor ?? "—"}</TableCell>
-                      <TableCell className="whitespace-nowrap font-bold">{c.numero ?? "—"}</TableCell>
-                      <TableCell className="max-w-[240px] truncate" title={c.assunto}>{c.assunto}</TableCell>
-                      <TableCell>
+                      </td>
+                      <td className="py-2 pr-2"><span className="line-clamp-2 max-w-[110px]" title={c.setor ?? ""}>{c.setor ?? "—"}</span></td>
+                      <td className="whitespace-nowrap py-2 pr-2 font-bold">{c.numero ? `#${c.numero}` : "—"}</td>
+                      <td className="py-2 pr-2"><span className="line-clamp-2 max-w-[200px]" title={c.assunto}>{c.assunto}</span></td>
+                      <td className="py-2 pr-2">
                         <span
-                          className="inline-block max-w-[170px] truncate rounded-md border px-1.5 py-0.5 text-[10px] font-semibold"
-                          style={{ color: temaCor(a.tema), borderColor: `${temaCor(a.tema)}55`, background: `${temaCor(a.tema)}14` }}
-                          title={`${temaLabel(a.tema)}${a.ajustado.includes("tema") ? " (ajustado)" : ""}`}
+                          className="line-clamp-2 block max-w-[160px] rounded-md px-2 py-1 text-[11px] font-semibold leading-tight"
+                          style={{ color: temaCor(a.tema), background: `${temaCor(a.tema)}1f` }}
+                          title={`${temaLabel(a.tema)}${a.ajustado.includes("tema") ? " (ajustado manualmente)" : ""}`}
                         >
                           {temaLabel(a.tema)}{a.ajustado.includes("tema") && " *"}
                         </span>
-                      </TableCell>
-                      <TableCell className="whitespace-nowrap">{moduloLabel(c)}</TableCell>
-                      <TableCell><PrioridadeBadge prioridade={c.prioridade} /></TableCell>
-                      <TableCell>{COMPLEXIDADE_LABEL[a.complexidade]}{a.ajustado.includes("complexidade") && " *"}</TableCell>
-                      <TableCell>
+                      </td>
+                      <td className="whitespace-nowrap py-2 pr-2">{moduloLabel(c)}</td>
+                      <td className="py-2 pr-2"><PrioridadeBadge prioridade={c.prioridade} /></td>
+                      <td className="py-2 pr-2">
                         {a.efetividade == null ? (
                           <span className="text-muted-foreground" title={a.efetividadeMotivo}>—</span>
                         ) : (
-                          <div className="flex items-center gap-1.5" title={a.efetividadeMotivo}>
+                          <div className="flex items-center gap-2" title={a.efetividadeMotivo}>
                             <span className="w-8 font-bold">{a.efetividade}%</span>
-                            <span className="h-1.5 w-14 overflow-hidden rounded-full bg-muted">
-                              <span className={`block h-full ${a.efetividade >= 80 ? "bg-success" : a.efetividade >= 60 ? "bg-info" : "bg-warning"}`} style={{ width: `${a.efetividade}%` }} />
+                            <span className="h-2 w-14 overflow-hidden rounded-full bg-muted">
+                              <span className={cn("block h-full rounded-full", a.efetividade >= 80 ? "bg-success" : "bg-info")} style={{ width: `${a.efetividade}%` }} />
                             </span>
                           </div>
                         )}
-                      </TableCell>
-                      <TableCell>{ADERENCIA_LABEL[a.aderencia]}{a.ajustado.includes("aderencia") && " *"}</TableCell>
-                      <TableCell>
-                        <span className="flex items-center gap-1 whitespace-nowrap" title={a.preliminar ? "Avaliação preliminar — chamado ainda não concluído" : "Avaliação final"}>
-                          <span className={`h-2 w-2 rounded-full ${bgIndice(a.indice)}`} />
-                          <b className={corIndice(a.indice)}>{fmt1(a.indice)}</b>
-                          {a.preliminar && <span className="text-[10px] text-muted-foreground">prel.</span>}
+                      </td>
+                      <td className="py-2 pr-2">
+                        <span className="flex items-center gap-1.5 whitespace-nowrap" title={a.preliminar ? "Avaliação preliminar — chamado ainda não concluído" : "Avaliação final"}>
+                          <span className={cn("h-2 w-2 rounded-full", bgIndice(a.indice))} />
+                          <b>{fmt1(a.indice)}</b>
                           {a.ajustado.includes("indice") && " *"}
                         </span>
-                      </TableCell>
-                      <TableCell><StatusBadge status={c.status} /></TableCell>
-                      <TableCell className="text-right">{fmt1(a.prazoDias)}</TableCell>
-                      <TableCell className="whitespace-nowrap">{fmtData(c.created_at)}</TableCell>
-                      <TableCell className="whitespace-nowrap">{c.status === "concluido" ? fmtData(c.concluido_em) : "—"}</TableCell>
-                      <TableCell className="text-right">
-                        <Button variant="ghost" size="icon" className="h-7 w-7" title="Ver chamado, critérios e histórico" onClick={() => setDetalheId(c.id)}>
-                          <Eye className="h-4 w-4" />
-                        </Button>
-                      </TableCell>
-                    </TableRow>
+                      </td>
+                      <td className="whitespace-nowrap py-2 pr-2 [&>*]:whitespace-nowrap"><StatusBadge status={c.status} /></td>
+                      <td className="py-2 pr-2">{a.prazoDias == null ? "-" : a.prazoDias.toFixed(1)}</td>
+                      <td className="whitespace-nowrap py-2 pr-2">{fmtData(c.created_at)}</td>
+                      <td className="whitespace-nowrap py-2 pr-2">{c.status === "concluido" || c.status === "cancelado" ? fmtData(c.concluido_em) : "-"}</td>
+                      <td className="py-2 pr-1">
+                        <div className="flex items-center justify-center gap-0.5">
+                          <Button variant="ghost" size="icon" className="h-7 w-7" title="Ver o chamado" onClick={() => setDetalhe({ id: c.id, foco: "resumo" })}>
+                            <Eye className="h-4 w-4" />
+                          </Button>
+                          <Button variant="ghost" size="icon" className="h-7 w-7" title="Histórico do chamado e dos ajustes" onClick={() => setDetalhe({ id: c.id, foco: "historico" })}>
+                            <MessageSquare className="h-4 w-4" />
+                          </Button>
+                          <Button variant="ghost" size="icon" className="h-7 w-7" title="Critérios da avaliação" onClick={() => setDetalhe({ id: c.id, foco: "criterios" })}>
+                            <BarChart3 className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      </td>
+                    </tr>
                   ))}
-                </TableBody>
-              </Table>
+                </tbody>
+              </table>
             </div>
-            <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
-              <span>* ajustado manualmente · "prel." = avaliação preliminar (não concluído)</span>
+            <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-[11px] text-muted-foreground">
+              <span>
+                * ajustado manualmente · não concluído = avaliação preliminar · cancelados à parte, sem pesar no solicitante
+                {kpis.efetividadeMedia != null && <> · efetividade média das entregas: <b className="text-foreground">{kpis.efetividadeMedia}%</b></>}
+              </span>
               {totalPaginas > 1 && (
                 <div className="flex items-center gap-2">
                   <Button variant="outline" size="sm" disabled={paginaAtual <= 1} onClick={() => setPagina(paginaAtual - 1)}>Anterior</Button>
@@ -343,64 +442,87 @@ export default function MonitoramentoChamados() {
         )}
       </Card>
 
-      <div className="grid gap-4 lg:grid-cols-2">
+      {/* ── Ranking | Análise de qualidade ── */}
+      <div className="grid gap-4 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
         <Card className="p-4">
-          <p className="mb-3 text-sm font-bold">Ranking dos solicitantes</p>
+          <p className="mb-2 text-sm font-bold">Ranking dos solicitantes</p>
           {ranking.length === 0 ? <p className="text-xs text-muted-foreground">Sem dados.</p> : (
-            <div className="max-h-[360px] overflow-y-auto">
-              <Table className="text-xs">
-                <TableHeader>
-                  <TableRow>
-                    <TableHead className="w-8">#</TableHead>
-                    <TableHead>Solicitante</TableHead>
-                    <TableHead className="text-right">Chamados</TableHead>
-                    <TableHead className="text-right">Média do índice</TableHead>
-                    <TableHead className="text-right">Efetividade média</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {ranking.map((r, i) => (
-                    <TableRow key={r.solicitante_id} className="cursor-pointer" onClick={() => filtro(setFSolic)(r.solicitante_id)} title="Filtrar por este solicitante">
-                      <TableCell>
-                        <span className={`inline-flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-bold ${
-                          i === 0 ? "bg-warning text-warning-foreground" : i === 1 ? "bg-muted-foreground/30" : i === 2 ? "bg-orange-400 text-white" : ""}`}>{i + 1}</span>
-                      </TableCell>
-                      <TableCell>
-                        <p className="font-medium">{r.nome}</p>
-                        <p className="text-[10px] text-muted-foreground">{r.setor ?? "—"}</p>
-                      </TableCell>
-                      <TableCell className="text-right">{r.total}<span className="text-muted-foreground"> ({r.concluidos} concl.)</span></TableCell>
-                      <TableCell className="text-right"><b className={corIndice(r.indiceMedio)}>{fmt1(r.indiceMedio)}</b></TableCell>
-                      <TableCell className="text-right font-bold text-primary">{r.efetividadeMedia == null ? "—" : `${r.efetividadeMedia}%`}</TableCell>
-                    </TableRow>
+            <>
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="border-b text-left text-[11px] font-semibold text-muted-foreground">
+                    <th className="w-10 py-1.5">#</th>
+                    <th className="py-1.5">Solicitante</th>
+                    <th className="py-1.5 text-center">Total de chamados</th>
+                    <th className="py-1.5 text-center">Média de inteligência</th>
+                    <th className="py-1.5 text-center">Efetividade média</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(rankingCompleto ? ranking : ranking.slice(0, 5)).map((r, i) => (
+                    <tr key={r.solicitante_id} className="cursor-pointer hover:bg-muted/40" title="Filtrar por este solicitante"
+                      onClick={() => { setRascunho((x) => ({ ...x, solic: r.solicitante_id })); setF((x) => ({ ...x, solic: r.solicitante_id })); setPagina(1); }}>
+                      <td className="py-1.5">
+                        <span className={cn("inline-flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-bold",
+                          i === 0 ? "bg-amber-400 text-white" : i === 1 ? "bg-slate-400 text-white" : i === 2 ? "bg-orange-500 text-white" : "")}>
+                          {i + 1}
+                        </span>
+                      </td>
+                      <td className="py-1.5 font-medium">{r.nome}</td>
+                      <td className="py-1.5 text-center">{r.total}</td>
+                      <td className="py-1.5 text-center">
+                        <span className={cn("inline-block min-w-[44px] rounded border px-2 py-0.5 font-semibold", pilulaIndice(r.indiceMedio))}>{fmt1(r.indiceMedio)}</span>
+                      </td>
+                      <td className="py-1.5 text-center font-bold text-info">{r.efetividadeMedia == null ? "—" : `${r.efetividadeMedia}%`}</td>
+                    </tr>
                   ))}
-                </TableBody>
-              </Table>
-            </div>
+                </tbody>
+              </table>
+              {ranking.length > 5 && (
+                <button type="button" className="mt-2 text-xs font-medium text-primary hover:underline" onClick={() => setRankingCompleto((v) => !v)}>
+                  {rankingCompleto ? "Mostrar só os 5 primeiros" : `Ver o ranking completo (${ranking.length})`}
+                </button>
+              )}
+            </>
           )}
-          <p className="mt-2 text-[11px] text-muted-foreground">O desempenho do solicitante é só a consolidação das solicitações dele. Cancelados não entram.</p>
         </Card>
 
         <Card className="p-4">
           <p className="mb-3 text-sm font-bold">Análise de qualidade das solicitações</p>
-          <div className="space-y-2">
+          <div className="space-y-2.5">
             <BarraQualidade label="Solicitações com objetivo claro" pct={qualidade.objetivoClaro} cor="bg-success" />
             <BarraQualidade label="Solicitações com grande relevância operacional" pct={qualidade.relevanciaOperacional} cor="bg-info" />
             <BarraQualidade label="Solicitações que trazem melhoria de processo" pct={qualidade.melhoriaProcesso} cor="bg-warning" />
-            <BarraQualidade label="Solicitações com visão estratégica" pct={qualidade.visaoEstrategica} cor="bg-primary" />
-            <BarraQualidade label="Solicitações com baixa especificação" pct={qualidade.baixaEspecificacao} cor="bg-destructive" />
+            <BarraQualidade label="Solicitações com visão estratégica" pct={qualidade.visaoEstrategica} cor="bg-destructive" />
           </div>
           <div className="mt-4 rounded-md border border-info/30 bg-info/5 p-3">
-            <p className="flex items-center gap-1.5 text-xs font-bold text-info"><Info className="h-3.5 w-3.5" /> Leitura da Controladoria</p>
-            <p className="mt-1 text-xs text-muted-foreground">{leitura}</p>
+            <p className="flex items-start gap-2 text-xs">
+              <Info className="mt-0.5 h-4 w-4 shrink-0 text-info" />
+              <span><b className="text-info">Leitura da Controladoria:</b><br /><span className="text-muted-foreground">{leitura}</span></span>
+            </p>
           </div>
         </Card>
       </div>
 
-      {detalhe && (
-        <DetalheDialog linha={detalhe} podeAlterar={podeAlterar} onClose={() => setDetalheId(null)} />
+      {linhaDetalhe && detalhe && (
+        <DetalheDialog linha={linhaDetalhe} foco={detalhe.foco} podeAlterar={podeAlterar} onClose={() => setDetalhe(null)} />
       )}
     </div>
+  );
+}
+
+function Indicador({ icone: Icone, cor, valor, rotulo, dica }: {
+  icone: LucideIcon; cor: string; valor: React.ReactNode; rotulo: string; dica: string;
+}) {
+  return (
+    <Card className="flex items-center gap-4 p-4">
+      <span className={cn("flex h-12 w-12 shrink-0 items-center justify-center rounded-xl", cor)}><Icone className="h-6 w-6" /></span>
+      <div className="min-w-0">
+        <p className="text-2xl font-bold leading-tight">{valor}</p>
+        <p className="text-sm text-muted-foreground">{rotulo}</p>
+        <p className="truncate text-[11px] text-muted-foreground/80">{dica}</p>
+      </div>
+    </Card>
   );
 }
 
@@ -409,10 +531,10 @@ function FiltroSelect({ label, value, onChange, todos, opcoes }: {
   opcoes: ReadonlyArray<{ value: string; label: string }>;
 }) {
   return (
-    <div className="space-y-1">
-      <Label className="text-xs">{label}</Label>
+    <div className="min-w-0 space-y-1">
+      <Label className="block truncate text-xs">{label}</Label>
       <Select value={value} onValueChange={onChange}>
-        <SelectTrigger><SelectValue placeholder={todos} /></SelectTrigger>
+        <SelectTrigger className="bg-background"><SelectValue placeholder={todos} /></SelectTrigger>
         <SelectContent>
           <SelectItem value={TODOS}>{todos}</SelectItem>
           {opcoes.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
@@ -424,10 +546,10 @@ function FiltroSelect({ label, value, onChange, todos, opcoes }: {
 
 function BarraQualidade({ label, pct, cor }: { label: string; pct: number; cor: string }) {
   return (
-    <div className="grid grid-cols-[minmax(0,1fr)_3rem_minmax(0,1fr)] items-center gap-3 text-xs">
+    <div className="grid grid-cols-[minmax(0,1.3fr)_2.75rem_minmax(0,1fr)] items-center gap-3 text-xs">
       <span className="truncate">{label}</span>
-      <b className="text-right">{pct}%</b>
-      <span className="h-2.5 overflow-hidden rounded-full bg-muted"><span className={`block h-full rounded-full ${cor}`} style={{ width: `${pct}%` }} /></span>
+      <b className="text-right text-sm">{pct}%</b>
+      <span className="h-2.5 overflow-hidden rounded-full bg-muted"><span className={cn("block h-full rounded-full", cor)} style={{ width: `${pct}%` }} /></span>
     </div>
   );
 }
@@ -459,14 +581,20 @@ function rotuloValor(campo: string, v: string | null): string {
   return v.replace(".", ",");
 }
 
-function DetalheDialog({ linha, podeAlterar, onClose }: { linha: LinhaMonitor; podeAlterar: boolean; onClose: () => void }) {
+function DetalheDialog({ linha, foco, podeAlterar, onClose }: { linha: LinhaMonitor; foco: Foco; podeAlterar: boolean; onClose: () => void }) {
+  // As três ações da linha abrem o mesmo detalhe, cada uma na sua seção.
+  useEffect(() => {
+    if (foco === "resumo") return;
+    const t = setTimeout(() => document.getElementById(`monitor-${foco}`)?.scrollIntoView({ behavior: "smooth", block: "start" }), 150);
+    return () => clearTimeout(t);
+  }, [foco]);
   const { c, a } = linha;
   const qc = useQueryClient();
   const { toast } = useToast();
   const { data, isLoading } = useQuery({
     queryKey: ["chamado-monitoramento-detalhe", c.id],
     queryFn: async () => {
-      const { data, error } = await (supabase as any).rpc("chamado_monitoramento_detalhe", { p_chamado_id: c.id });
+      const { data, error } = await rpc("chamado_monitoramento_detalhe", { p_chamado_id: c.id });
       if (error) throw error;
       return data as DetalheRpc;
     },
@@ -487,7 +615,7 @@ function DetalheDialog({ linha, podeAlterar, onClose }: { linha: LinhaMonitor; p
       return;
     }
     setSalvando(true);
-    const { error } = await (supabase as any).rpc("chamado_monitoramento_ajustar", {
+    const { error } = await rpc("chamado_monitoramento_ajustar", {
       p_chamado_id: c.id, p_campo: campo, p_valor: voltarAutomatico ? null : valor.trim(),
       p_valor_anterior: valorExibido(campo, linha), p_justificativa: justificativa.trim(),
     });
@@ -516,7 +644,7 @@ function DetalheDialog({ linha, podeAlterar, onClose }: { linha: LinhaMonitor; p
 
         <div className="grid gap-3 sm:grid-cols-3">
           <Card className="p-3">
-            <p className="text-[11px] text-muted-foreground">Índice de qualidade {a.preliminar && "(preliminar)"}</p>
+            <p className="text-[11px] text-muted-foreground">Índice de inteligência {a.preliminar && "(preliminar)"}</p>
             <p className={`text-2xl font-bold ${corIndice(a.indice)}`}>{fmt1(a.indice)}<span className="text-sm text-muted-foreground"> / 10</span></p>
             {a.ajustado.includes("indice") && <p className="text-[10px] text-muted-foreground">automático: {fmt1(a.indiceAuto)}</p>}
           </Card>
@@ -536,7 +664,7 @@ function DetalheDialog({ linha, podeAlterar, onClose }: { linha: LinhaMonitor; p
         </div>
 
         <div>
-          <p className="mb-1 text-xs font-bold">Critérios do índice</p>
+          <p id="monitor-criterios" className="mb-1 scroll-mt-4 text-xs font-bold">Critérios do índice de inteligência</p>
           <Table className="text-xs">
             <TableBody>
               {CRITERIOS_INDICE.map((k) => {
@@ -609,7 +737,7 @@ function DetalheDialog({ linha, podeAlterar, onClose }: { linha: LinhaMonitor; p
         )}
 
         <div>
-          <p className="mb-1 text-xs font-bold">Histórico de ajustes</p>
+          <p id="monitor-historico" className="mb-1 scroll-mt-4 text-xs font-bold">Histórico de ajustes</p>
           {isLoading ? <p className="text-xs text-muted-foreground">Carregando…</p>
             : !data?.ajustes.length ? <p className="text-xs text-muted-foreground">Nenhum ajuste manual — tudo automático.</p>
             : (

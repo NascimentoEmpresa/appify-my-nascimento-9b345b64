@@ -15,6 +15,7 @@ import { useVinculoEmpregado } from "@/hooks/useVinculoEmpregado";
 import { useMeuDiscord } from "@/hooks/useVinculoDiscord";
 import { CartaoPerfil } from "@/components/perfil/CartaoPerfil";
 import { VinculoDiscordCard } from "@/components/perfil/VinculoDiscordCard";
+import { MinhaAssinaturaCard } from "@/components/perfil/MinhaAssinaturaCard";
 import { useModoExterno } from "@/hooks/useModoExterno";
 import { useSessaoExterna } from "@/hooks/useSupPedidos";
 import { toast } from "sonner";
@@ -156,6 +157,7 @@ export default function MeuPerfil() {
       {!externo && (
       <div className="grid gap-5 lg:grid-cols-2">
         <VinculoDiscordCard />
+        <MinhaAssinaturaCard />
 
         <Card>
           <CardHeader>
