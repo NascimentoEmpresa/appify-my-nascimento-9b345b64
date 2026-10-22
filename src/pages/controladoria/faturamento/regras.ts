@@ -43,10 +43,6 @@ const NAO_CUSTO = [
   "DISTRIBUICAO",
 ];
 
-// SIS-2026-0709: despesa de sócio. O que o sócio retirou ou gastou conta, inclusive "Distribuição de lucros" (que fora do sócio não é
-// custo); continuam de fora as movimentações que só mudam o dinheiro de lugar.
-// "TRANSF" também pega a abreviação usada nas planilhas ("TRANSF. ENTRE CONTAS").
-const NAO_DESPESA_DE_SOCIO = [...NAO_CUSTO.filter((t) => t !== "DISTRIBUICAO"), "TRANSF"];
 
 // Ligação manual feita no painel "Rubricas de custo" da Lucratividade: além das
 // 8 colunas, "nao_custo" tira a classificação do cálculo.
@@ -114,13 +110,12 @@ export function ehContratoAdministrativo(nome: string | null | undefined): boole
   return n.startsWith("ADMINISTRATIVO");
 }
 
-export function ehDespesaDeSocio(l: Pick<LinhaFluxoCusto, "tipo" | "classificacao_id" | "classificacao_nome">, ligacoes?: LigacoesRubrica): boolean {
-  if (l.tipo !== "saida") return false;
-  const manual = l.classificacao_id ? ligacoes?.get(l.classificacao_id) : undefined;
-  if (manual === "nao_custo") return false;
-  const n = normalizar(l.classificacao_nome);
-  if (!n) return false;
-  return !NAO_DESPESA_DE_SOCIO.some((t) => n.includes(t));
+// SIS-2026-0709 / SIS-2026-0717: despesa de sócio = TODA saída lançada no contrato "ADMINISTRATIVO SÓCIOS - nome", seja qual for a
+// classificação (financiamento, distribuição de lucros, cartão, transferência, linha sem classificação…). A Controladoria quer ver o valor
+// inteiro do sócio no Fechamento; antes, classificações de "movimentação interna" (ex.: FINANCIAMENTOS, R$ 19.449,72 da Helena em jan/26)
+// ficavam de fora e o total não batia com o Fluxo de Caixa. Os parâmetros de classificação ficam só por compatibilidade com os chamadores.
+export function ehDespesaDeSocio(l: Pick<LinhaFluxoCusto, "tipo"> & Partial<Pick<LinhaFluxoCusto, "classificacao_id" | "classificacao_nome">>, _ligacoes?: LigacoesRubrica): boolean {
+  return l.tipo === "saida";
 }
 
 // Saídas de contrato sem classificação: ficam fora de qualquer coluna, mas
