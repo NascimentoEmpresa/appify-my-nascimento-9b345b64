@@ -207,6 +207,8 @@ export default function MeuPerfil() {
             <DialogDescription>
               Opcional. Serve para dizer o que o cadastro não diz — no que você está
               trabalhando, como prefere ser chamado, em que horário costuma responder.
+              Aparece também no seu perfil no Organograma › Estrutura e Processos,
+              como "o que faz na empresa".
             </DialogDescription>
           </DialogHeader>
 

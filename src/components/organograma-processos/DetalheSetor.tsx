@@ -19,8 +19,8 @@ import { AmostraTraco, Avatar, IconeSetor, cor } from "./visual";
 // processo, aberto pelo clique numa caixa de processo.
 // =====================================================================
 
-export function DetalheSetor({ e, setorId, onFechar, onProcesso }: {
-  e: Estrutura; setorId: string | null; onFechar: () => void; onProcesso: (id: string) => void;
+export function DetalheSetor({ e, setorId, onFechar, onProcesso, onPessoa }: {
+  e: Estrutura; setorId: string | null; onFechar: () => void; onProcesso: (id: string) => void; onPessoa: (m: Membro) => void;
 }) {
   const s = e.setores.find((x) => x.id === setorId) ?? null;
   const equipe = s ? equipeDoSetor(e, s.id) : [];
@@ -42,7 +42,7 @@ export function DetalheSetor({ e, setorId, onFechar, onProcesso }: {
             <div className="mt-4 space-y-2">
               <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Equipe, funções e processos</p>
               {equipe.length === 0 && <p className="text-sm text-muted-foreground">Equipe ainda não cadastrada.</p>}
-              {arvoreEquipe(equipe).map((n) => <NoPessoa key={n.membro.id} no={n} e={e} profundidade={0} onProcesso={onProcesso} corHex={c.hex} />)}
+              {arvoreEquipe(equipe).map((n) => <NoPessoa key={n.membro.id} no={n} e={e} profundidade={0} onProcesso={onProcesso} onPessoa={onPessoa} corHex={c.hex} />)}
               {semResponsavel.length > 0 && (
                 <div className="rounded-lg border border-dashed p-3">
                   <p className="mb-1.5 text-xs font-semibold text-muted-foreground">Processos sem responsável na equipe</p>
@@ -57,7 +57,7 @@ export function DetalheSetor({ e, setorId, onFechar, onProcesso }: {
   );
 }
 
-function NoPessoa({ no, e, profundidade, onProcesso, corHex }: { no: NoEquipe; e: Estrutura; profundidade: number; onProcesso: (id: string) => void; corHex: string }) {
+function NoPessoa({ no, e, profundidade, onProcesso, onPessoa, corHex }: { no: NoEquipe; e: Estrutura; profundidade: number; onProcesso: (id: string) => void; onPessoa: (m: Membro) => void; corHex: string }) {
   const m = no.membro;
   const meus = e.processos.filter((p) => p.responsavel_membro_id === m.id).sort((a, b) => a.ordem - b.ordem);
   const funcoes = listaAtividades(m.atividades);
@@ -65,30 +65,31 @@ function NoPessoa({ no, e, profundidade, onProcesso, corHex }: { no: NoEquipe; e
     <div style={{ marginLeft: profundidade * 18 }} className="relative">
       {profundidade > 0 && <span className="absolute -left-3 top-0 h-6 w-3 rounded-bl-md border-b-2 border-l-2" style={{ borderColor: `${corHex}55` }} />}
       <div className="rounded-xl border bg-card p-3 shadow-sm" style={{ borderLeft: `3px solid ${corHex}` }}>
-        <div className="flex items-center gap-2.5">
+        {/* Clique na pessoa → perfil (dados do cadastro + o que faz). */}
+        <button className="group flex w-full items-center gap-2.5 text-left" onClick={() => onPessoa(m)} title="Ver perfil">
           <Avatar nome={m.nome} foto={m.avatar_url} tamanho={34} />
           <div className="min-w-0 flex-1">
-            <div className="truncate text-sm font-semibold">{m.nome}{m.responsavel && <Badge variant="secondary" className="ml-2 text-[10px]">Responsável</Badge>}</div>
+            <div className="truncate text-sm font-semibold group-hover:underline">{m.nome}{m.responsavel && <Badge variant="secondary" className="ml-2 text-[10px]">Responsável</Badge>}</div>
             <div className="truncate text-xs text-muted-foreground">{m.cargo} · {rotuloNivel(m.nivel)}</div>
           </div>
-        </div>
+        </button>
         {funcoes.length > 0 && (
           <ul className="mt-2 list-disc space-y-0.5 pl-5 text-xs text-foreground/80">{funcoes.map((f, i) => <li key={i}>{f}</li>)}</ul>
         )}
         {meus.length > 0 && (
           <div className="mt-2 space-y-1.5">
-            {meus.map((p) => <ProcessoComLigacoes key={p.id} p={p} e={e} onProcesso={onProcesso} />)}
+            {meus.map((p) => <ProcessoComLigacoes key={p.id} p={p} e={e} onProcesso={onProcesso} onPessoa={onPessoa} />)}
           </div>
         )}
       </div>
       <div className="mt-2 space-y-2">
-        {no.filhos.map((f) => <NoPessoa key={f.membro.id} no={f} e={e} profundidade={profundidade + 1} onProcesso={onProcesso} corHex={corHex} />)}
+        {no.filhos.map((f) => <NoPessoa key={f.membro.id} no={f} e={e} profundidade={profundidade + 1} onProcesso={onProcesso} onPessoa={onPessoa} corHex={corHex} />)}
       </div>
     </div>
   );
 }
 
-function ProcessoComLigacoes({ p, e, onProcesso }: { p: Processo; e: Estrutura; onProcesso: (id: string) => void }) {
+function ProcessoComLigacoes({ p, e, onProcesso, onPessoa }: { p: Processo; e: Estrutura; onProcesso: (id: string) => void; onPessoa: (m: Membro) => void }) {
   const { entradas, saidas } = conexoesDoProcesso(e, p.id);
   const fora = [...entradas.map((x) => ({ ...x, entra: true })), ...saidas.map((x) => ({ ...x, entra: false }))]
     .filter((x) => x.p!.setor_id !== p.setor_id);
@@ -106,7 +107,7 @@ function ProcessoComLigacoes({ p, e, onProcesso }: { p: Processo; e: Estrutura; 
                 <AmostraTraco tipo={c.tipo} largura={18} />
                 <span>{entra ? "recebe de" : "envia para"}</span>
                 <button className="font-medium text-foreground hover:underline" onClick={() => onProcesso(outro!.id)}>{outro!.codigo} {outro!.nome}</button>
-                <span>· {setor?.nome ?? "Presidência"}{resp ? ` · ${resp.nome}` : ""}</span>
+                <span>· {setor?.nome ?? "Presidência"}{resp && <> · <button className="hover:underline" onClick={() => onPessoa(resp)}>{resp.nome}</button></>}</span>
                 {c.rotulo && <span className="italic">({c.rotulo})</span>}
               </li>
             );
@@ -127,8 +128,8 @@ function ChipProcesso({ p, onClick }: { p: Processo; onClick: () => void }) {
   );
 }
 
-export function DetalheProcesso({ e, processoId, onFechar, onProcesso }: {
-  e: Estrutura; processoId: string | null; onFechar: () => void; onProcesso: (id: string) => void;
+export function DetalheProcesso({ e, processoId, onFechar, onProcesso, onPessoa }: {
+  e: Estrutura; processoId: string | null; onFechar: () => void; onProcesso: (id: string) => void; onPessoa: (m: Membro) => void;
 }) {
   const p = e.processos.find((x) => x.id === processoId) ?? null;
   const setor = p ? e.setores.find((s) => s.id === p.setor_id) : null;
@@ -149,7 +150,7 @@ export function DetalheProcesso({ e, processoId, onFechar, onProcesso }: {
               <SheetDescription>{p.codigo} · {setor?.nome ?? "Presidência"}</SheetDescription>
             </SheetHeader>
             <div className="mt-4">
-              {linha("Responsável", resp ? <span className="inline-flex items-center gap-2"><Avatar nome={resp.nome} foto={resp.avatar_url} tamanho={22} />{resp.nome} · {resp.cargo}</span> : null)}
+              {linha("Responsável", resp ? <button className="inline-flex items-center gap-2 text-left hover:underline" onClick={() => onPessoa(resp)}><Avatar nome={resp.nome} foto={resp.avatar_url} tamanho={22} />{resp.nome} · {resp.cargo}</button> : null)}
               {linha("Frequência", p.frequencia)}
               {linha("Entrada", p.entrada)}
               {linha("Saída", p.saida)}

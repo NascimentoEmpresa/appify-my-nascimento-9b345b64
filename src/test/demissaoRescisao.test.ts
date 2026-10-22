@@ -4,7 +4,7 @@ import {
   casarComSolicitacoes, chavePlanilha, completarVazios, dataNoTexto, edicaoInicial, erroDatasRescisao,
   filtrarRescisoes, lerPlanilhaRescisao, meioNoTexto, montarLinhaRescisao, montarLinhasRescisao,
   normalizarHomologacao, normalizarStatusRescisao, normalizarTipoDesligamento, ordenarRescisoes,
-  planilhaDasRescisoes, sugerirDataDemissao, pagamentoAtrasado, resumoPorStatus, patchDoMovimento, diasDesde, erroIdentificacao, sugerirDataPagamento, textoProgramadas, tipoPelaSolicitacao,
+  planilhaDasRescisoes, sugerirDataDemissao, pagamentoAtrasado, resumoPorStatus, patchDaCelula, patchProgramadas, patchTextoDocumento, rescisaoConcluida, demissaoCancelada, diasDesde, erroIdentificacao, sugerirDataPagamento, textoProgramadas, tipoPelaSolicitacao,
   TIPO_SJ_TRABALHADO, type LinhaPlanilhaRescisao, type RescisaoRH,
 } from "@/lib/demissao/rescisao";
 import type { SolicitacaoDemissao } from "@/lib/demissao/solicitacao";
@@ -80,8 +80,8 @@ describe("textos da planilha", () => {
     expect(normalizarHomologacao("SIM/FEZ CARTA ")).toBe("Sim");
     expect(normalizarStatusRescisao("RESCISÃO E DOCUMENTOS OK")).toBe("Rescisão e documentos OK");
     expect(normalizarStatusRescisao("RESCISÃO OK")).toBe("Rescisão OK");
-    expect(normalizarStatusRescisao("RESCISÃO POR FAZER")).toBe("Por fazer");
-    expect(normalizarStatusRescisao("RESCISÃO FEITA")).toBe("Feita");
+    expect(normalizarStatusRescisao("RESCISÃO POR FAZER")).toBe("Rescisão por fazer");
+    expect(normalizarStatusRescisao("RESCISÃO FEITA")).toBe("Rescisão feita");
     expect(normalizarStatusRescisao("ENCAMINHADO AO INSS")).toBe("Encaminhado ao INSS");
   });
   it("meio e data do envio/retorno, com os erros de digitação", () => {
@@ -166,12 +166,12 @@ describe("importação: casar e completar", () => {
     expect(completarVazios(atual, linha({}))).toEqual({
       data_demissao: "2026-10-20", data_pagamento: "2026-10-25", rescisao_programada: true, status_rescisao: "Rescisão OK",
     });
-    expect(completarVazios(resc({ homologacao: "Não", data_demissao: "2026-10-20", data_pagamento: "2026-10-25", rescisao_programada: true, vales_programados: true, status_rescisao: "Feita" }), linha({}))).toBeNull();
+    expect(completarVazios(resc({ homologacao: "Não", data_demissao: "2026-10-20", data_pagamento: "2026-10-25", rescisao_programada: true, vales_programados: true, status_rescisao: "Rescisão feita" }), linha({}))).toBeNull();
   });
 });
 
 describe("a linha da tela", () => {
-  it("solicitação sem ficha: sugere tipo e datas, status 'Por fazer', SST OK pelo status do fluxo", () => {
+  it("solicitação sem ficha: sugere tipo e datas, status 'Rescisão por fazer', SST OK pelo status do fluxo", () => {
     const l = montarLinhaRescisao(sol({
       motivo_solicitacao: "Desligamento sem justa causa", modelo_aviso: "Aviso Prévio Trabalhado",
       data_aviso: "2026-09-09", rh_ultima_data_trabalhada: "2026-10-02",
@@ -179,7 +179,7 @@ describe("a linha da tela", () => {
     expect(l).toMatchObject({
       origem: "erp", empresa: "HAGG", matricula: "8736", tipo: TIPO_SJ_TRABALHADO,
       ultimoDia: "2026-10-02", demissao: "2026-10-09", pagamento: "2026-10-14",
-      statusRescisao: "Por fazer", sstOk: true,
+      statusRescisao: "Rescisão por fazer", sstOk: true,
     });
     expect(l.sugerido).toEqual({ aviso: true, ultimoDia: true, demissao: true, pagamento: true, tipo: true });
   });
@@ -193,18 +193,20 @@ describe("a linha da tela", () => {
     expect(edicaoInicial(l).data_pagamento).toBe("2026-10-10");
   });
 
-  it("junta solicitações e importadas; cancelada sem ficha sai", () => {
+  it("a linha gravada manda: solicitação sem linha (o RH não liberou) não entra; cancelada depois fica sinalizada", () => {
     const linhas = montarLinhasRescisao(
-      [sol({ id: 1 }), sol({ id: 2, status: "Cancelada" }), sol({ id: 3, status: "Cancelada" })],
+      [sol({ id: 1, status: "Pendente RH" }), sol({ id: 3, status: "Cancelada" })],
       [resc({ id: 7, solicitacao_id: 3, origem: "erp" }), resc({ id: 8, colaborador_nome: "AVULSA", empresa: "SN" })],
     );
-    expect(linhas.map((l) => l.chave)).toEqual(["s:1", "s:3", "r:8"]);
-    expect(linhas[2]).toMatchObject({ origem: "planilha", nome: "AVULSA", empresa: "SN" });
+    expect(linhas.map((l) => l.chave)).toEqual(["s:3", "r:8"]);
+    expect(demissaoCancelada(linhas[0])).toBe(true);
+    expect(demissaoCancelada(linhas[1])).toBe(false);
+    expect(linhas[1]).toMatchObject({ origem: "planilha", nome: "AVULSA", empresa: "SN" });
   });
 
   it("programadas: duas marcações viram o texto da planilha", () => {
     expect(textoProgramadas({ rescisaoProgramada: true, valesProgramados: true })).toBe("Rescisão e vales OK");
-    expect(textoProgramadas({ rescisaoProgramada: true, valesProgramados: false })).toBe("Rescisão OK · vales não");
+    expect(textoProgramadas({ rescisaoProgramada: true, valesProgramados: false })).toBe("Rescisão OK");
     expect(textoProgramadas({ rescisaoProgramada: false, valesProgramados: false })).toBe("");
   });
 
@@ -216,7 +218,7 @@ describe("a linha da tela", () => {
     ]);
     expect(filtrarRescisoes(linhas, { empresa: "HAGG" }).map((l) => l.nome)).toEqual(["B", "C"]);
     expect(filtrarRescisoes(linhas, { mes: "2026-09", campoMes: "pagamento" }).map((l) => l.nome)).toEqual(["A"]);
-    expect(filtrarRescisoes(linhas, { statusRescisao: "Por fazer" }).map((l) => l.nome)).toEqual(["A", "C"]);
+    expect(filtrarRescisoes(linhas, { statusRescisao: "Rescisão por fazer" }).map((l) => l.nome)).toEqual(["A", "C"]);
     expect(filtrarRescisoes(linhas, { soNaoProgramadas: true }).map((l) => l.nome)).toEqual(["A", "C"]);
     expect(filtrarRescisoes(linhas, { homologacao: "Sim" }).map((l) => l.nome)).toEqual(["A"]);
     expect(ordenarRescisoes(linhas, "pagamento").map((l) => l.nome)).toEqual(["B", "A", "C"]);
@@ -229,7 +231,7 @@ describe("a linha da tela", () => {
     expect(rows[0]["Funcionário"]).toBe("X");
     expect(rows[0]["Programadas"]).toBe("Rescisão e vales OK");
     expect(rows[0]["Envio da documentação"]).toBe("ZapSign - 01/10/2026");
-    expect(rows[0]["Status"]).toBe("Por fazer");
+    expect(rows[0]["Status"]).toBe("Rescisão por fazer");
   });
 });
 
@@ -271,7 +273,7 @@ describe("módulo Rescisões (21/10/2026)", () => {
 
   it("completa a linha original de quem foi importado antes dela existir", () => {
     const { linhas } = lerPlanilhaRescisao(montarDuasAbas());
-    const p = completarVazios(resc({ status_rescisao: "Por fazer", pontos_ajustados: null }), linhas[0]);
+    const p = completarVazios(resc({ status_rescisao: "Rescisão por fazer", pontos_ajustados: null }), linhas[0]);
     expect(p?.planilha_original).toBeTruthy();
     expect(p?.planilha_aba).toBe("RESCISÕES");
     expect(p?.pontos_ajustados).toBe("OK");
@@ -280,13 +282,13 @@ describe("módulo Rescisões (21/10/2026)", () => {
 
   it("pagamento vencido só conta com a rescisão por fazer; resumo conta por status", () => {
     const linhas = montarLinhasRescisao([], [
-      resc({ id: 1, colaborador_nome: "A", data_pagamento: "2026-10-20", status_rescisao: "Por fazer" }),
+      resc({ id: 1, colaborador_nome: "A", data_pagamento: "2026-10-20", status_rescisao: "Rescisão por fazer" }),
       resc({ id: 2, colaborador_nome: "B", data_pagamento: "2026-10-20", status_rescisao: "Rescisão OK" }),
       resc({ id: 3, colaborador_nome: "C", data_pagamento: "2026-10-25" }),
     ]);
     expect(linhas.map((l) => pagamentoAtrasado(l, "2026-10-21"))).toEqual([true, false, false]);
     expect(filtrarRescisoes(linhas, { soAtrasadas: true }, "2026-10-21").map((l) => l.nome)).toEqual(["A"]);
-    expect(resumoPorStatus(linhas)).toMatchObject({ "Por fazer": 2, "Rescisão OK": 1, "Feita": 0 });
+    expect(resumoPorStatus(linhas)).toMatchObject({ "Rescisão por fazer": 2, "Rescisão OK": 1, "Rescisão feita": 0 });
   });
 
   it("documentação sem retorno e filtro de SST", () => {
@@ -300,13 +302,9 @@ describe("módulo Rescisões (21/10/2026)", () => {
     expect(filtrarRescisoes(linhas, { sst: "pendente" }).map((l) => l.nome)).toEqual(["B", "C"]);
   });
 
-  it("arrastar no kanban grava só o status — e, na 1ª vez da solicitação, as sugestões viram valor", () => {
-    const [comFicha] = montarLinhasRescisao([], [resc({ id: 1, colaborador_nome: "A", status_rescisao: "Por fazer" })]);
-    expect(patchDoMovimento(comFicha, "Feita")).toEqual({ status_rescisao: "Feita" });
-    const semFicha = montarLinhaRescisao(sol({ motivo_solicitacao: "Desligamento sem justa causa", modelo_aviso: "Aviso Prévio Trabalhado", rh_ultima_data_trabalhada: "2026-10-10" }), null);
-    expect(patchDoMovimento(semFicha, "Feita")).toMatchObject({
-      status_rescisao: "Feita", tipo_desligamento: TIPO_SJ_TRABALHADO, data_ultimo_dia: "2026-10-10", data_demissao: "2026-10-17", data_pagamento: "2026-10-22",
-    });
+  it("célula de status grava só o status", () => {
+    const [l] = montarLinhasRescisao([], [resc({ id: 1, colaborador_nome: "A", status_rescisao: "Rescisão por fazer" })]);
+    expect(patchDaCelula(l, { status_rescisao: "Rescisão feita" })).toEqual({ status_rescisao: "Rescisão feita" });
   });
 
   it("origem manual e dias na coluna", () => {
@@ -330,7 +328,87 @@ describe("módulo Rescisões (21/10/2026)", () => {
     const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(wb.Sheets["RESCISÕES"]);
     expect(rows[0]["Pontos ajustados?"]).toBe("OK");
     const resumo = XLSX.utils.sheet_to_json<unknown[]>(wb.Sheets["RESUMO"], { header: 1 });
-    expect(resumo).toContainEqual(["Por fazer", 1]);
+    expect(resumo).toContainEqual(["Rescisão por fazer", 1]);
     expect(resumo).toContainEqual(["TOTAL", 1]);
+  });
+});
+
+describe("Rescisões dentro do RH, a planilha (22/10/2026)", () => {
+  it("os 10 status da lista suspensa do Excel", () => {
+    expect(normalizarStatusRescisao("RESCISÃO URGENTE POR FAZER")).toBe("Rescisão urgente por fazer");
+    expect(normalizarStatusRescisao("RECALCULAR")).toBe("Recalcular");
+    expect(normalizarStatusRescisao("GUIA PENDENTE")).toBe("Guia pendente");
+    expect(normalizarStatusRescisao("PENDENCIA")).toBe("Pendência");
+    expect(normalizarStatusRescisao("FAZER VA")).toBe("Fazer VA");
+    expect(normalizarStatusRescisao("ENCAMINHADO AO INSS")).toBe("Encaminhado ao INSS");
+    expect(normalizarStatusRescisao("RESCISÃO E DOCUMENTOS OK")).toBe("Rescisão e documentos OK");
+  });
+
+  it("concluídas: só Rescisão OK e Rescisão e documentos OK", () => {
+    expect(rescisaoConcluida("Rescisão OK")).toBe(true);
+    expect(rescisaoConcluida("Rescisão e documentos OK")).toBe(true);
+    expect(rescisaoConcluida("Rescisão feita")).toBe(false);
+    expect(rescisaoConcluida("Encaminhado ao INSS")).toBe(false);
+    expect(rescisaoConcluida(null)).toBe(false);
+    const linhas = montarLinhasRescisao([], [
+      resc({ id: 1, colaborador_nome: "A", status_rescisao: "Rescisão OK" }),
+      resc({ id: 2, colaborador_nome: "B", status_rescisao: "Pendência" }),
+      resc({ id: 3, colaborador_nome: "C", status_rescisao: "Rescisão e documentos OK" }),
+    ]);
+    expect(filtrarRescisoes(linhas, { situacao: "abertas" }).map((l) => l.nome)).toEqual(["B"]);
+    expect(filtrarRescisoes(linhas, { situacao: "concluidas" }).map((l) => l.nome)).toEqual(["A", "C"]);
+  });
+
+  it("urgente e recalcular também atrasam o pagamento; guia pendente não", () => {
+    const [u, r, g] = montarLinhasRescisao([], [
+      resc({ id: 1, data_pagamento: "2026-10-20", status_rescisao: "Rescisão urgente por fazer" }),
+      resc({ id: 2, data_pagamento: "2026-10-20", status_rescisao: "Recalcular" }),
+      resc({ id: 3, data_pagamento: "2026-10-20", status_rescisao: "Guia pendente" }),
+    ]);
+    expect([u, r, g].map((l) => pagamentoAtrasado(l, "2026-10-21"))).toEqual([true, true, false]);
+  });
+
+  it("importar: a planilha vence o 'por fazer' que o gatilho pôs na linha do ERP, e só ele", () => {
+    const linha = { ...lerPlanilhaRescisao(XLSX.write((() => {
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([
+        ["EMPRESA", "MAT", "FUNCIONARIO", "PAGAMENTO", "STATUS."],
+        ["HAGG", 1, "X", null, "RESCISÃO OK"],
+      ]), "RESCISÕES");
+      return wb;
+    })(), { type: "array", bookType: "xlsx" }) as ArrayBuffer).linhas[0] };
+    expect(completarVazios(resc({ status_rescisao: "Rescisão por fazer" }), linha)?.status_rescisao).toBe("Rescisão OK");
+    expect(completarVazios(resc({ status_rescisao: "Pendência" }), linha)?.status_rescisao).toBeUndefined();
+  });
+
+  it("mudar último dia ou tipo recalcula demissão e pagamento — se ninguém tinha digitado outra data", () => {
+    const [l] = montarLinhasRescisao([], [resc({
+      id: 1, tipo_desligamento: TIPO_SJ_TRABALHADO, data_ultimo_dia: "2026-10-10", data_demissao: "2026-10-17", data_pagamento: "2026-10-22",
+    })]);
+    expect(patchDaCelula(l, { data_ultimo_dia: "2026-10-20" })).toEqual({
+      data_ultimo_dia: "2026-10-20", data_demissao: "2026-10-27", data_pagamento: "2026-11-01",
+    });
+    expect(patchDaCelula(l, { tipo_desligamento: "Pedido de demissão" })).toEqual({
+      tipo_desligamento: "Pedido de demissão", data_demissao: "2026-10-10", data_pagamento: "2026-10-15",
+    });
+    expect(patchDaCelula(l, { data_demissao: "2026-10-18" })).toEqual({ data_demissao: "2026-10-18", data_pagamento: "2026-10-23" });
+    // Demissão digitada à mão (fora da régua) não é atropelada.
+    const [m] = montarLinhasRescisao([], [resc({
+      id: 2, tipo_desligamento: TIPO_SJ_TRABALHADO, data_ultimo_dia: "2026-10-10", data_demissao: "2026-10-30", data_pagamento: "2026-11-04",
+    })]);
+    expect(patchDaCelula(m, { data_ultimo_dia: "2026-10-20" })).toEqual({ data_ultimo_dia: "2026-10-20" });
+  });
+
+  it("programadas e documentação: a célula de texto vira campo", () => {
+    expect(patchProgramadas("Rescisão e vales OK")).toEqual({ rescisao_programada: true, vales_programados: true });
+    expect(patchProgramadas("Vales OK")).toEqual({ rescisao_programada: false, vales_programados: true });
+    expect(patchProgramadas("")).toEqual({ rescisao_programada: false, vales_programados: false });
+    expect(patchTextoDocumento("envio", "ENVIADO ZAPSIGN - 09/01/2026")).toEqual({
+      envio_obs: "ENVIADO ZAPSIGN - 09/01/2026", envio_data: "2026-01-09", envio_meio: "ZapSign",
+    });
+    expect(patchTextoDocumento("malote", "RESCISAO E FGTS MALOTE 05/01", 2026)).toEqual({
+      malote_obs: "RESCISAO E FGTS MALOTE 05/01", malote_data: "2026-01-05",
+    });
+    expect(patchTextoDocumento("retorno", "  ")).toEqual({ retorno_obs: null, retorno_data: null, retorno_meio: null });
   });
 });

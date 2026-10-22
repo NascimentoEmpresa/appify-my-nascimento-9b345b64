@@ -245,8 +245,8 @@ export function PainelDemissoes({ etapa }: { etapa: Etapa }) {
   const grupoAtivo = (grupo: string[]) => fStatus.length === grupo.length && grupo.every((g) => fStatus.includes(g));
 
   // O status da RESCISÃO de cada solicitação (só no RH, 21/10/2026): o
-  // controle mudou para o módulo Rescisões, e a lista daqui mostra em que pé
-  // ele está, com o atalho para lá. Sem ficha ainda = "Por fazer".
+  // controle mora em Recursos Humanos › Rescisões (22/10/2026), e a lista
+  // daqui mostra em que pé ele está. Sem linha = o RH ainda não liberou.
   const [statusRescisao, setStatusRescisao] = useState<Map<number, string>>(new Map());
   useEffect(() => {
     if (etapa !== "rh") return;
@@ -434,11 +434,14 @@ export function PainelDemissoes({ etapa }: { etapa: Etapa }) {
                         </TableCell>
                         {etapa === "rh" && (
                           <TableCell className="hidden xl:table-cell">
-                            {s.status !== "Cancelada" && (
-                              <Badge variant="outline" className={cn("whitespace-normal text-left text-[11px]", corStatusRescisao(statusRescisao.get(s.id) ?? "Por fazer"))}>
-                                {statusRescisao.get(s.id) ?? "Por fazer"}
+                            {/* Sem linha = o RH ainda não liberou: a linha nasce na liberação (mig 20261022000400). */}
+                            {s.status !== "Cancelada" && (statusRescisao.has(s.id) ? (
+                              <Badge variant="outline" className={cn("whitespace-normal text-left text-[11px]", corStatusRescisao(statusRescisao.get(s.id)))}>
+                                {statusRescisao.get(s.id)}
                               </Badge>
-                            )}
+                            ) : (
+                              <span className="text-[11px] text-muted-foreground" title="Entra em RH › Rescisões quando o RH liberar">—</span>
+                            ))}
                           </TableCell>
                         )}
                         <TableCell className="text-right">

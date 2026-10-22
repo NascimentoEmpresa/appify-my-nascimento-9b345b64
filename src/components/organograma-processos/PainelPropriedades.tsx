@@ -11,7 +11,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { cn } from "@/lib/utils";
 import { useDocumentosProcesso, urlDocumentoProcesso } from "@/hooks/useEstruturaProcessos";
 import {
-  FREQUENCIAS, ROTULO_CONEXAO, equipeDoSetor, processosDoSetor, rotuloNivel,
+  FREQUENCIAS, ROTULO_CONEXAO, equipeDoSetor, membroPendente, processosDoSetor, rotuloNivel,
   type Estrutura, type Membro, type Processo, type Setor, type TipoConexao,
 } from "@/lib/organograma/estruturaProcessos";
 import { AmostraTraco, Avatar, ICONES, IconeSetor, OPCOES_COR, OPCOES_ICONE, cor } from "./visual";
@@ -319,9 +319,11 @@ export function PropriedadesSetor({ e, setor, podeEditar, podeExcluir, gravar, a
             <div key={m.id} className="flex items-center gap-2 rounded-lg border p-2" style={{ marginLeft: Math.min(4, m.nivel - 1) * 8 }}>
               <Avatar nome={m.nome} foto={m.avatar_url} tamanho={30} />
               <div className="min-w-0 flex-1">
-                <div className="truncate text-sm font-medium">{m.nome}{m.responsavel && <span className="ml-1.5 rounded bg-primary/10 px-1 text-[10px] text-primary">responsável</span>}</div>
+                <div className="truncate text-sm font-medium">{m.nome}{m.responsavel && <span className="ml-1.5 rounded bg-primary/10 px-1 text-[10px] text-primary">responsável</span>}
+                  {membroPendente(m) && <span className="ml-1.5 rounded bg-amber-100 px-1 text-[10px] text-amber-800 dark:bg-amber-950 dark:text-amber-200">pendente de vínculo</span>}</div>
                 <div className="truncate text-[11px] text-muted-foreground">{m.cargo} · {rotuloNivel(m.nivel)}{chefe ? ` · responde a ${chefe.nome}` : ""} · {procs} proc.</div>
               </div>
+              {podeEditar && membroPendente(m) && <Button variant="outline" size="sm" className="h-6 px-2 text-[11px]" onClick={() => onMembro(m)}>Vincular</Button>}
               {podeEditar && <button onClick={() => onMembro(m)} className="text-muted-foreground hover:text-foreground" title="Editar"><Pencil className="h-3.5 w-3.5" /></button>}
               {podeExcluir && <button onClick={() => { if (confirm(`Tirar ${m.nome} da equipe?`)) apagar("ORG_PROC_MEMBRO", m.id).catch((x) => toast.error(x.message)); }} className="text-muted-foreground hover:text-red-600" title="Remover"><Trash2 className="h-3.5 w-3.5" /></button>}
             </div>
