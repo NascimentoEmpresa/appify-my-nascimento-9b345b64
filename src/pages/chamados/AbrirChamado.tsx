@@ -23,6 +23,7 @@ import {
   CATEGORIAS, TIPOS, IMPACTOS, URGENCIAS, MODULOS_ERP, AMBIENTES, PRIORIDADES, BUCKET_CHAMADOS,
 } from "./types";
 import { imagensDoClipboard } from "@/lib/imagensColadas";
+import { afetaUsuariosParaBanco, somenteDigitos } from "./afetaUsuarios";
 
 const TITULO_MAX = 120;
 const TAMANHO_MAX_MB = 20; // igual ao limite do bucket (mesmo valor do ChatChamado)
@@ -178,7 +179,7 @@ export default function AbrirChamado({ base = "/app/central-servicos/chamados" }
       modulo_sistema: modulo,
       modulo_sistema_outro: modulo === "outro" ? moduloOutro.trim() || null : null,
       ambiente,
-      afeta_usuarios: afetaUsuarios ? Number(afetaUsuarios) : null,
+      afeta_usuarios: afetaUsuariosParaBanco(afetaUsuarios),
       solicitante_nome: nome !== "—" ? nome : null,
       setor: setor !== "—" ? setor : null,
     }).select("id, numero").single();
@@ -512,7 +513,7 @@ export default function AbrirChamado({ base = "/app/central-servicos/chamados" }
               </div>
               <div>
                 <Label className="mb-1.5 block text-xs font-semibold">Afeta quantos usuários?</Label>
-                <Input type="number" min={0} placeholder="Opcional" value={afetaUsuarios} onChange={(e) => setAfetaUsuarios(e.target.value)} />
+                <Input inputMode="numeric" placeholder="Opcional" value={afetaUsuarios} onChange={(e) => setAfetaUsuarios(somenteDigitos(e.target.value))} />
               </div>
             </div>
           </Card>
