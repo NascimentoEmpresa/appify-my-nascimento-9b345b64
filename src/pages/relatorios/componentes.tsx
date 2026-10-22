@@ -23,7 +23,7 @@ const TOM: Record<string, string> = {
   primary: "bg-primary/10 text-primary", success: "bg-success/10 text-success", warning: "bg-warning/10 text-warning",
   destructive: "bg-destructive/10 text-destructive", info: "bg-info/10 text-info",
 };
-const COR_GRUPO: Record<string, string> = { aberto: "#f59e0b", concluido: "#16a34a", recusado: "#dc2626" };
+const COR_GRUPO: Record<string, string> = { aberto: "#f59e0b", concluido: "#16a34a", recusado: "#dc2626", pendente: "#8b5cf6" };
 const PALETA = ["#2563eb", "#16a34a", "#dc2626", "#f59e0b", "#7c3aed", "#0891b2", "#db2777", "#ea580c"];
 
 // ---- Período ---------------------------------------------------------------

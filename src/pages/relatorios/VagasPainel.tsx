@@ -23,7 +23,7 @@ import { PASSOS_FLUXO, estadosDosPassos, statusAntesDoFim } from "@/lib/recrutam
 import {
   DIMENSOES, ETAPAS, FILTRO_LOCAL_PADRAO, META_DIAS_CONTRATAR, agingAbertas, agruparVagas, aplicarFiltroLocal, corDias, desfechoVaga,
   diasEntreMs, diasNoStatus, diasPorEtapa, diasTotais, etapaDoStatus, fmtDias, funilVagas, mensalVagas, opcoesDe, resumoVagas, tempoAprovacao,
-  tempoPorEtapa, tituloEtapa, trechosDaVaga, vagaFechada, vagaDoDetalhe, kanbanCandidatos, diasPorStatus, COLUNAS_CANDIDATO,
+  tempoPorEtapa, tituloEtapa, trechosDaVaga, vagaFechada, vagaAbertaAgora, vagaDoDetalhe, kanbanCandidatos, diasPorStatus, COLUNAS_CANDIDATO,
   filtrarRecorte, ordenarRecorte, tituloRecorte, vagasDoRecorte,
   type ColunaGrupo, type Dimensao, type FiltroLocal, type LinhaEtapa, type OrdemRecorte, type PainelVagas, type Recorte, type VagaPainel,
 } from "@/lib/relatorios/vagasPainel";
@@ -664,7 +664,7 @@ function AbaEtapas({ p, etapas, onRecorte }: { p: PainelVagas; etapas: LinhaEtap
 // ---- Em aberto agora ------------------------------------------------------------------
 
 function AbaAbertas({ p, onAbrir }: { p: PainelVagas; onAbrir: (v: VagaPainel) => void }) {
-  const abertas = useMemo(() => p.vagas.filter((v) => !vagaFechada(v))
+  const abertas = useMemo(() => p.vagas.filter(vagaAbertaAgora)
     .map((v) => ({ v, total: diasTotais(v, p.agora), noStatus: diasNoStatus(v, p.agora), etapa: etapaDoStatus(v.status) }))
     .sort((a, b) => b.total - a.total), [p]);
   if (!abertas.length) return <Card className="p-6"><SemDados texto="Nenhuma vaga em aberto com esses filtros." /></Card>;
