@@ -44,6 +44,7 @@ import {
   LigacaoSectionBanner,
   ExportarLigacoesMalote,
 } from "./LigacaoLicitacaoClassificacao";
+import { exemploPrazo, type NumeroPrazo } from "./exemploPrazo";
 import { AnalistasContratos } from "./AnalistasContratos";
 import { FormasPagamento } from "./FormasPagamento";
 import { RelatorioDespesasMaloteTab } from "./RelatorioDespesasMaloteTab";
@@ -77,6 +78,20 @@ export default function Configuracoes() {
   useEffect(() => {
     if (config) setForm(config);
   }, [config]);
+
+  // Exemplos das Regras Gerais (1.1 e 1.2): "dia útil" = fora de fim de semana bloqueado, de dia bloqueado cadastrado e de feriado.
+  const { data: diasBloqueadosCadastrados = [] } = useMaloteDiasBloqueados();
+  const bloqueadoParaExemplo = useMemo(() => {
+    const liberados = new Set(diasBloqueadosCadastrados.filter((d) => d.liberado).map((d) => d.data));
+    const bloqueados = new Set(diasBloqueadosCadastrados.filter((d) => !d.liberado).map((d) => d.data));
+    const fimDeSemanaBloqueado = !!form?.bloqueio_fins_de_semana;
+    return (dt: Date) => {
+      const iso = `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, "0")}-${String(dt.getDate()).padStart(2, "0")}`;
+      if (liberados.has(iso)) return false;
+      if (bloqueados.has(iso)) return true;
+      return fimDeSemanaBloqueado && (dt.getDay() === 0 || dt.getDay() === 6);
+    };
+  }, [diasBloqueadosCadastrados, form?.bloqueio_fins_de_semana]);
 
   // [SEM-CHAMADO] (Ruan, financeiro): quem só exporta Relatório (sem
   // "Alterar" em malote_configuracoes) não vê mais as 4 abas gerais —
@@ -149,7 +164,7 @@ export default function Configuracoes() {
               <PrazoBlock
                 numero="1.1"
                 titulo="Prazo para inclusão e aprovação pelo setor"
-                descricao="Horário de corte para lançar a despesa e para o Nível 1 aprová-la. Despesa lançada depois dele não conta como de hoje: a data normal de pagamento vai para o próximo dia útil, e pagar mais cedo exige exceção. O Nível 1 que tentar aprovar depois dele só consegue com a senha de uma exceção de aprovação."
+                descricao="Horário de corte para lançar a despesa e para o Nível 1 aprová-la. Despesa lançada depois dele não conta como de hoje: a data normal de pagamento vai para o próximo dia útil, e pagar mais cedo exige exceção. O Nível 1 que tentar aprovar depois dele uma despesa para pagar hoje (ou já vencida) só consegue com a senha de uma exceção de aprovação; para pagamento de amanhã em diante, aprova normalmente."
                 horario={form.inclusao_setor_horario}
                 onHorarioChange={(v) => setForm((f) => (f ? { ...f, inclusao_setor_horario: v } : f))}
                 modo={form.inclusao_setor_pagamento_modo}
@@ -159,6 +174,10 @@ export default function Configuracoes() {
                 unidade={form.inclusao_setor_pagamento_unidade}
                 onUnidadeChange={(v) => setForm((f) => (f ? { ...f, inclusao_setor_pagamento_unidade: v } : f))}
                 disabled={!podeEditar}
+                exemplo={(modo) => exemploPrazo({
+                  numero: "1.1", modo, horario: form.inclusao_setor_horario, dias: form.inclusao_setor_pagamento_dias,
+                  unidade: form.inclusao_setor_pagamento_unidade, hoje: new Date(), bloqueado: bloqueadoParaExemplo,
+                })}
               />
               <PrazoBlock
                 numero="1.2"
@@ -173,6 +192,11 @@ export default function Configuracoes() {
                 unidade={form.conferencia_aprovacao_pagamento_unidade}
                 onUnidadeChange={(v) => setForm((f) => (f ? { ...f, conferencia_aprovacao_pagamento_unidade: v } : f))}
                 disabled={!podeEditar}
+                exemplo={(modo) => exemploPrazo({
+                  numero: "1.2", modo, horario: form.conferencia_aprovacao_horario, dias: form.conferencia_aprovacao_pagamento_dias,
+                  unidade: form.conferencia_aprovacao_pagamento_unidade, hoje: new Date(), bloqueado: bloqueadoParaExemplo,
+                  reagendamentoAtivo: form.rolagem_data_pagamento_ativa,
+                })}
               />
               {/* SIS-2026-0664: rolagem automática da data de pagamento das despesas paradas no N2+. */}
               <label className="flex items-start gap-2 text-sm cursor-pointer sm:col-span-2">
@@ -560,6 +584,30 @@ function InfoPrazo({ titulo, texto }: { titulo: string; texto: string }) {
   );
 }
 
+// Ícone "i" ao lado de cada opção de pagamento: abre um exemplo com a data de HOJE e o horário/prazo que estão na tela.
+function InfoExemplo({ titulo, linhas }: { titulo: string; linhas: string[] }) {
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          className="text-muted-foreground hover:text-foreground rounded-full align-middle"
+          aria-label={`Exemplo: ${titulo}`}
+          title="Ver um exemplo com a data de hoje"
+        >
+          <Info className="h-3.5 w-3.5" />
+        </button>
+      </PopoverTrigger>
+      <PopoverContent align="start" className="w-80 text-xs space-y-1.5">
+        <p className="font-semibold text-sm">Exemplo — {titulo}</p>
+        {linhas.map((l, i) => (
+          <p key={i} className="text-muted-foreground leading-relaxed">{l}</p>
+        ))}
+      </PopoverContent>
+    </Popover>
+  );
+}
+
 function PrazoBlock({
   numero,
   titulo,
@@ -573,8 +621,11 @@ function PrazoBlock({
   onUnidadeChange,
   disabled,
   descricao,
+  exemplo,
 }: {
   numero: string;
+  // Exemplo com a data de hoje para cada opção de pagamento (ícone "i" ao lado dela).
+  exemplo?: (modo: PrazoPagamentoModo) => string[];
   titulo: string;
   // O que este prazo controla, em linguagem do dia a dia (aparece sob o título).
   descricao?: string;
@@ -607,7 +658,10 @@ function PrazoBlock({
           <label className="flex items-start gap-2 text-sm cursor-pointer">
             <RadioGroupItem value="hoje" disabled={disabled} className="mt-0.5" />
             <span>
-              <span className="font-medium">No dia de hoje</span>
+              <span className="inline-flex items-center gap-1.5 font-medium">
+                No dia de hoje
+                {exemplo && <InfoExemplo titulo={`${numero} · No dia de hoje`} linhas={exemplo("hoje")} />}
+              </span>
               <br />
               <span className="text-xs text-muted-foreground">Pagamento será realizado no mesmo dia.</span>
             </span>
@@ -646,6 +700,7 @@ function PrazoBlock({
                     <SelectItem value="corrido">dia(s) corrido(s)</SelectItem>
                   </SelectContent>
                 </Select>
+                {exemplo && <InfoExemplo titulo={`${numero} · Em até ${dias} ${UNIDADE_LABEL[unidade]}`} linhas={exemplo("dias_uteis")} />}
               </span>
               <br />
               <span className="text-xs text-muted-foreground">

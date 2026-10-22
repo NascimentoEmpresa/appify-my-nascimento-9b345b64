@@ -10,7 +10,7 @@ export type TipoOrcamento = "administrativo" | "socios";
 export type ModoOrcamento = "percentual" | "manual";
 
 export interface LinhaOrcamento {
-  classificacaoAdministrativaId: string;
+  classificacaoMaloteId: string;
   descricao: string;
   modo: ModoOrcamento;
   percentual: number;
@@ -120,11 +120,11 @@ export function validarDistribuicao(linhas: LinhaOrcamento[], nomes: Map<string,
   }
   // classificação ainda sem % (recém-incluída, a preencher) não trava o salvamento; com % precisa de origem
   for (const l of percentuais) {
-    if (l.percentual > 0 && l.origemIds.length === 0) problemas.push({ linha: l.classificacaoAdministrativaId, mensagem: `${nomes.get(l.classificacaoAdministrativaId) ?? "Classificação"}: selecione ao menos uma classificação de origem.` });
+    if (l.percentual > 0 && l.origemIds.length === 0) problemas.push({ linha: l.classificacaoMaloteId, mensagem: `${nomes.get(l.classificacaoMaloteId) ?? "Classificação"}: selecione ao menos uma classificação de origem.` });
   }
   for (const l of linhas.filter((x) => x.modo === "manual")) {
     const soma = Object.values(l.distribuicao).reduce((s, v) => s + (Number(v) || 0), 0);
-    if (Math.abs(soma - 100) > TOLERANCIA) problemas.push({ linha: l.classificacaoAdministrativaId, mensagem: `${nomes.get(l.classificacaoAdministrativaId) ?? "Classificação"}: a distribuição por empresa soma ${soma.toFixed(2).replace(".", ",")}% e precisa ser 100%.` });
+    if (Math.abs(soma - 100) > TOLERANCIA) problemas.push({ linha: l.classificacaoMaloteId, mensagem: `${nomes.get(l.classificacaoMaloteId) ?? "Classificação"}: a distribuição por empresa soma ${soma.toFixed(2).replace(".", ",")}% e precisa ser 100%.` });
   }
   return problemas;
 }

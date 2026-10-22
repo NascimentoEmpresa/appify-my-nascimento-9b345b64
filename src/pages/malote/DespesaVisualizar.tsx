@@ -659,6 +659,11 @@ export default function DespesaVisualizar() {
   // antes desta regra existir/por brecha, sentada em pendente_aprovacao com
   // uma data já vencida.
   const dataPagamentoVencida = !!despesa.data_pagamento && despesa.data_pagamento < new Date().toLocaleDateString("sv-SE");
+  // Depois do horário 1.1 o Nível 1 só precisa da chave (senha de exceção de aprovação) quando o pagamento é HOJE ou já está vencido:
+  // despesa para amanhã em diante não tem pressa e aprova normalmente. O banco aplica a mesma condição (migration 20261022000290).
+  const dataPagamentoDoN1 = dataPagamento || despesa.data_pagamento || "";
+  const n1PrecisaChave =
+    despesa.nivel_aprovacao_atual === 1 && !despesa.excecao && !!n1ForaDoPrazo && !!dataPagamentoDoN1 && dataPagamentoDoN1 <= new Date().toLocaleDateString("sv-SE");
   // SIS-2026-0192: "Dados da Aprovação e Pagamento" e "Dados da Despesa"
   // só podem ser alterados pelo Solicitante — ninguém mais edita, nem
   // admin/supervisor/aprovador.
@@ -1015,8 +1020,8 @@ export default function DespesaVisualizar() {
       return `Informe a justificativa da aprovação — obrigatória depois do horário limite de conferência (regra 1.2, ${maloteConfig?.conferencia_aprovacao_horario}) para despesa com pagamento hoje ou vencido.`;
     }
     // Depois do horário 1.1 o N1 só aprova com a senha de uma exceção de aprovação (o banco recusa sem ela; aqui só avisa antes).
-    if (despesa!.nivel_aprovacao_atual === 1 && !despesa!.excecao && n1ForaDoPrazo && !senhaAprovacaoN1.trim()) {
-      return `Depois das ${maloteConfig?.inclusao_setor_horario?.slice(0, 5) ?? "12:00"} o Nível 1 só aprova com a senha de uma exceção de aprovação — peça a chave em "Solicitar exceção de aprovação".`;
+    if (n1PrecisaChave && !senhaAprovacaoN1.trim()) {
+      return `Depois das ${maloteConfig?.inclusao_setor_horario?.slice(0, 5) ?? "12:00"} o Nível 1 só aprova, para pagamento hoje ou vencido, com a senha de uma exceção de aprovação — peça a chave em "Solicitar exceção de aprovação".`;
     }
     return null;
   }
@@ -1059,7 +1064,7 @@ export default function DespesaVisualizar() {
         competencia,
         rateio_snapshot: calcularRateioSnapshot(),
         autorizador_nome: formaPagamentoEspecial ? autorizadorNome.trim() : null,
-        senha_excecao: despesa!.nivel_aprovacao_atual === 1 && !despesa!.excecao && n1ForaDoPrazo ? senhaAprovacaoN1 : null,
+        senha_excecao: n1PrecisaChave ? senhaAprovacaoN1 : null,
       });
       setSenhaAprovacaoN1("");
       toast.success(
@@ -2225,7 +2230,7 @@ export default function DespesaVisualizar() {
               </Label>
               <Input value={justificativa} onChange={(e) => setJustificativa(e.target.value)} disabled={!podeEditarJustificativaAprovacao} />
             </div>
-            {souAprovadorNivelAtual && despesa.nivel_aprovacao_atual === 1 && despesa.status === "pendente_aprovacao" && !despesa.excecao && (
+            {souAprovadorNivelAtual && despesa.nivel_aprovacao_atual === 1 && despesa.status === "pendente_aprovacao" && !despesa.excecao && n1PrecisaChave && (
               <ChaveAprovacaoN1
                 despesaId={despesa.id}
                 userId={user?.id}
