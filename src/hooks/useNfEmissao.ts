@@ -409,6 +409,24 @@ export interface AjusteDescontosPosInput {
   };
 }
 
+// SIS-2026-0684: "2026-10" (input type=month) → "2026-10-01", como a competência é gravada na nota.
+export function competenciaDoMes(anoMes: string): string | null {
+  return /^\d{4}-(0[1-9]|1[0-2])$/.test(anoMes) ? `${anoMes}-01` : null;
+}
+
+// SIS-2026-0684: ajusta a competência de NF já emitida (Relatório de Serviços). O guard do banco só deixa quem tem 'excluir' em
+// nf-emissao mexer em NF concluída — a tela só oferece o ajuste a essas pessoas, e o motivo vai para o Histórico da nota.
+export function useAjustarCompetenciaNf() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ nfId, competencia }: { nfId: string; competencia: string }) => {
+      const { error } = await (supabase as any).from("nf_emissao").update({ competencia }).eq("id", nfId);
+      if (error) throw error;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: [NF_EMISSAO_KEY] }),
+  });
+}
+
 export function useAjustarDescontosPosEmissao() {
   const qc = useQueryClient();
   return useMutation({
