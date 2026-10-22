@@ -20,8 +20,8 @@
 
 import * as XLSX from "xlsx";
 import {
-  avaliarTodos, chaveContrato, chavePosto, descoberto, diasEntre, difDias, resumir, somaDias,
-  ROTULO_TURNO,
+  avaliarTodos, chaveContrato, chavePosto, descoberto, diasEntre, difDias, fecharResumo, resumir, somaDias,
+  RESUMO_VAZIO, ROTULO_TURNO,
   type ColaboradorPrep, type ContratoEfet, type DiaEfet, type Ocorrencia, type Resumo, type Turno,
 } from "@/lib/efetividade";
 
@@ -125,15 +125,14 @@ export function assinaturaOcorrencias(ocorrencias: Ocorrencia[], r: { ini: strin
 
 /** Soma resumos — dá o mesmo que resumir() sobre todos os dias juntos. */
 export function somarResumos(rs: Resumo[]): Resumo {
-  const t: Resumo = { previsto: 0, presentes: 0, faltas: 0, atestados: 0, afastamentos: 0, ferias: 0, folgas: 0, aguardando: 0, semRegistro: 0, atrasos: 0, efetividade: null };
+  const t: Resumo = { ...RESUMO_VAZIO };
   for (const r of rs) {
-    t.previsto += r.previsto; t.presentes += r.presentes; t.faltas += r.faltas; t.atestados += r.atestados;
+    t.presentes += r.presentes; t.faltas += r.faltas; t.atestados += r.atestados;
     t.afastamentos += r.afastamentos; t.ferias += r.ferias; t.folgas += r.folgas; t.aguardando += r.aguardando;
     t.semRegistro += r.semRegistro; t.atrasos += r.atrasos;
   }
-  const base = t.previsto - t.aguardando;
-  t.efetividade = base > 0 ? t.presentes / base : null;
-  return t;
+  // Previsto, efetividade e "aguardando apuração" pela mesma conta do dia.
+  return fecharResumo(t);
 }
 
 // ---- Faixa (mesmos cortes do statusContrato / CelulaPct) ------------------------
@@ -312,7 +311,7 @@ export function montarPlanilhaEfetividade(d: DadosPlanilha): XLSX.WorkBook {
     ["Postos descobertos (dias)", t.descobertos],
     ["Taxa de faltas", taxaFaltas(t)],
     ["", ""],
-    ["Efetividade = presentes ÷ efetivo previsto. Efetivo previsto = presentes + faltas + atestados + afastamentos (os dias aguardando apuração do ponto não entram); férias, folgas e sem registro de ponto também não.", ""],
+    ["Efetividade = presentes ÷ efetivo previsto. Efetivo previsto = presentes + faltas + atestados (os dias aguardando apuração do ponto não entram); férias, afastamentos longos (INSS, licença), folgas e sem registro de ponto também não.", ""],
   ];
   const wsResumo = XLSX.utils.aoa_to_sheet(resumo);
   resumo.forEach((l, r) => {

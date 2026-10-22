@@ -21,8 +21,8 @@ import { CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, X
 import { useQueryClient } from "@tanstack/react-query";
 import { useEfetBase, useEfetDiaristas, useEfetOcorrencias } from "@/hooks/useEfetividade";
 import {
-  avaliarDia, chaveContrato, diasEntre, difDias, estadoCobertura, minutosEntre, fmtDuracao, pct, resumir, somaDias, baixarCsv,
-  AUSENCIA_A_COBRIR, ROTULO_STATUS, ROTULO_TURNO, type DiaEfet, type Resumo, type StatusCobertura, type Turno,
+  avaliarDia, chaveContrato, diasEntre, difDias, estadoCobertura, fecharResumo, minutosEntre, fmtDuracao, pct, resumir, somaDias, baixarCsv,
+  AUSENCIA_A_COBRIR, RESUMO_VAZIO, ROTULO_STATUS, ROTULO_TURNO, type DiaEfet, type Resumo, type StatusCobertura, type Turno,
 } from "@/lib/efetividade";
 import { BASE_ROTA, CabecalhoEfetividade, Carregando, CelulaPct, Erro, Kpi, Secao, Vazio, useFiltros, useSincronizadoAte } from "./shared";
 
@@ -101,7 +101,8 @@ export default function HistoricoIndicadores() {
     if (!calc) return [];
     const ponto = (rotulo: string, r: Resumo) => {
       const base = r.previsto - r.aguardando;
-      return { rotulo, efetividade: r.efetividade == null ? null : +(r.efetividade * 100).toFixed(1), faltas: base > 0 ? +((r.faltas / base) * 100).toFixed(1) : null, ausencias: base > 0 ? +(((r.faltas + r.atestados + r.afastamentos) / base) * 100).toFixed(1) : null };
+      return { rotulo, efetividade: r.efetividade == null ? null : +(r.efetividade * 100).toFixed(1), faltas: base > 0 ? +((r.faltas / base) * 100).toFixed(1) : null, ausencias: base > 0 ? +(((r.faltas + r.atestados) / base) * 100).toFixed(1) : null };
+      // ↑ afastamento longo saiu do previsto (22/10/2026): ausências = faltas + atestados, sobre a mesma base.
     };
     if (visao === "dia") return calc.serie.map((s) => ponto(s.data.slice(8, 10) + "/" + s.data.slice(5, 7), s));
     const semanas = new Map<string, Resumo[]>();
@@ -112,8 +113,7 @@ export default function HistoricoIndicadores() {
       semanas.get(seg)!.push(s);
     }
     return [...semanas.entries()].map(([seg, rs]) => {
-      const soma = rs.reduce((a, r) => ({ ...a, previsto: a.previsto + r.previsto, presentes: a.presentes + r.presentes, faltas: a.faltas + r.faltas, atestados: a.atestados + r.atestados, afastamentos: a.afastamentos + r.afastamentos, aguardando: a.aguardando + r.aguardando }), { ...rs[0], previsto: 0, presentes: 0, faltas: 0, atestados: 0, afastamentos: 0, aguardando: 0 });
-      soma.efetividade = soma.previsto - soma.aguardando > 0 ? soma.presentes / (soma.previsto - soma.aguardando) : null;
+      const soma = fecharResumo(rs.reduce((a, r) => ({ ...a, presentes: a.presentes + r.presentes, faltas: a.faltas + r.faltas, atestados: a.atestados + r.atestados, afastamentos: a.afastamentos + r.afastamentos, aguardando: a.aguardando + r.aguardando }), { ...RESUMO_VAZIO }));
       return ponto(`sem. ${seg.slice(8, 10)}/${seg.slice(5, 7)}`, soma);
     });
   }, [calc, visao]);
@@ -246,7 +246,7 @@ export default function HistoricoIndicadores() {
                       <tr key={x.k} className="cursor-pointer border-t hover:bg-muted/40" onClick={() => nav(`${BASE_ROTA}/postos?c=${x.k}`)}>
                         <td className="p-2 text-center text-muted-foreground">{i + 1}</td>
                         <td className="max-w-[180px] truncate p-2 font-semibold">{x.nome}</td>
-                        <td className="p-2 text-center"><CelulaPct v={x.r.efetividade} /></td>
+                        <td className="p-2 text-center"><CelulaPct v={x.r.efetividade} aguardando={x.r.aguardandoApuracao} /></td>
                         <td className="p-2 text-center tabular-nums">{media(x.r.previsto)}</td>
                         <td className="p-2 text-center tabular-nums text-destructive">{x.r.faltas}</td>
                         <td className="p-2 text-center tabular-nums">{x.coberturas}</td>
@@ -312,7 +312,7 @@ export default function HistoricoIndicadores() {
                       <td className="p-2 text-center font-bold tabular-nums text-destructive">{x.descobertos}</td>
                       <td className="p-2 text-center tabular-nums">{x.r.faltas}</td>
                       <td className="p-2 text-center tabular-nums">{x.coberturas}</td>
-                      <td className="p-2 text-center"><CelulaPct v={x.r.efetividade} /></td>
+                      <td className="p-2 text-center"><CelulaPct v={x.r.efetividade} aguardando={x.r.aguardandoApuracao} /></td>
                     </tr>
                   ))}
                 </tbody>

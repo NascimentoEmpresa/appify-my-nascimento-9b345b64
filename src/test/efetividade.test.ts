@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   prepararColaborador, avaliarDia, avaliarTodos, resumir, motivoDaSituacao, turnoDaJornada,
   estadoCobertura, statusContrato, agrupar, descoberto, serieDiaria, fmtMin, fmtDuracao,
-  tempoSemCobertura, linkWhatsapp, difDias,
+  tempoSemCobertura, linkWhatsapp, difDias, fecharResumo, RESUMO_VAZIO,
   type ColaboradorEfet, type Ocorrencia,
 } from "@/lib/efetividade";
 
@@ -283,5 +283,64 @@ describe("avaliarDia — uma batida e a regra do meio-dia", () => {
     expect(avaliarDia(p, "2026-10-09", HOJE, em("08:00")).situacao).toBe("presente");
     const q = prepararColaborador(col({ dias: comercial("2026-10-08") }));
     expect(avaliarDia(q, "2026-10-09", HOJE, em("08:00")).situacao).toBe("falta");
+  });
+});
+
+// =====================================================================
+// 22/10/2026 (pedido do Pablo, UFRGS Limpeza 047/2022: 342 previstos com
+// 313 Trabalhando e 303 postos): afastamento longo fora do previsto, e
+// "aguardando apuração" em vez de 0% antes de o ponto chegar.
+// =====================================================================
+describe("afastamento longo fora do efetivo previsto", () => {
+  it("auxílio-doença conta como afastamento, mas não entra no previsto", () => {
+    const p = prepararColaborador(col({ situacao: "Auxílio Doença", data_afastamento: "2026-09-01", dias: [] }));
+    const d = avaliarDia(p, "2026-10-07", SINC);
+    expect(d.situacao).toBe("afastamento");
+    expect(d.previsto).toBe(false);
+  });
+
+  it("no resumo: o afastado é contado, mas a efetividade é só de quem a escala esperava", () => {
+    const presentes = [1, 2, 3].map((id) => prepararColaborador(col({ id, dias: comercial("2026-10-06", "2026-10-07") })));
+    const afastado = prepararColaborador(col({ id: 9, situacao: "Licença Maternidade", data_afastamento: "2026-09-01", dias: [] }));
+    const r = resumir(avaliarTodos([...presentes, afastado], "2026-10-07", SINC, []).map((l) => l.dia));
+    expect(r).toMatchObject({ previsto: 3, presentes: 3, afastamentos: 1, efetividade: 1, aguardandoApuracao: false });
+  });
+
+  it("afastamento avisado à mão também fica fora do previsto; falta e atestado entram", () => {
+    const p = prepararColaborador(col({ dias: comercial("2026-10-06") }));
+    // Dia ainda não apurado (depois do sincronizado): a ocorrência registrada à mão decide a situação.
+    const futuro = (motivo: Ocorrencia["motivo"]) => avaliarTodos([p], "2026-10-12", "2026-10-09", [oc({ data: "2026-10-12", motivo, status: "sem_cobertura" })])[0].dia;
+    expect(futuro("afastamento")).toMatchObject({ situacao: "afastamento", previsto: false });
+    expect(futuro("atestado")).toMatchObject({ situacao: "atestado", previsto: true });
+    expect(futuro("falta")).toMatchObject({ situacao: "falta", previsto: true });
+  });
+});
+
+describe("aguardando apuração (sem 0% enquanto o ponto não chega)", () => {
+  const r = (c: Partial<typeof RESUMO_VAZIO>) => fecharResumo({ ...RESUMO_VAZIO, ...c });
+
+  it("manhã de hoje, ninguém com batida ainda: aguardando, sem efetividade (era 0%)", () => {
+    // O print da UFRGS às 10h: 310 aguardando, 3 atestados, 29 afastados, 0 presentes.
+    const x = r({ aguardando: 310, atestados: 3, afastamentos: 29 });
+    expect(x).toMatchObject({ previsto: 313, aguardandoApuracao: true, efetividade: null });
+  });
+
+  it("metade ou mais ainda aguardando: aguardando", () => {
+    expect(r({ presentes: 100, aguardando: 150, atestados: 3 }).aguardandoApuracao).toBe(true);
+  });
+
+  it("à tarde, só o turno da noite aguardando: a efetividade aparece", () => {
+    const x = r({ presentes: 290, aguardando: 20, atestados: 3, faltas: 7 });
+    expect(x.aguardandoApuracao).toBe(false);
+    expect(x.efetividade).toBeCloseTo(290 / 300);
+  });
+
+  it("dia apurado (nenhum aguardando): conta normal, mesmo com 0 presentes", () => {
+    expect(r({ faltas: 2 })).toMatchObject({ aguardandoApuracao: false, efetividade: 0 });
+    expect(r({})).toMatchObject({ aguardandoApuracao: false, efetividade: null });
+  });
+
+  it("contrato aguardando não vira crítico", () => {
+    expect(statusContrato({ ...r({ aguardando: 50 }), descobertos: 0 })).toBe("normal");
   });
 });

@@ -974,6 +974,8 @@ const centralServicosModule: ModuleDef = {
         { label: "Orientações Jurídicas", to: "/app/central-servicos/orientacoes-juridicas", icon: BookOpen },
         { label: "Nascimento Formulários", to: "/app/central-servicos/formularios", icon: ClipboardList },
         { label: "Chamados de Sistemas", to: "/app/central-servicos/chamados", icon: Headset, notif: "meus" },
+        // Visão gerencial da qualidade das solicitações (mig 20261022000180).
+        { label: "Monitoramento de Chamados", to: "/app/central-servicos/chamados/monitoramento", icon: Gauge },
         { label: "Agenda de Reunião", to: "/app/central-servicos/reunioes", icon: CalendarRange },
         { label: "Agendamento de Veículos", to: "/app/central-servicos/veiculos", icon: Car },
         // Mesma tela de Treinamentos ERP dos Encarregados, ancorada aqui: o
