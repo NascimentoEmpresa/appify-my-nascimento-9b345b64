@@ -197,7 +197,7 @@ export default function FaturamentoEmpresa() {
     </>
   );
 
-  // Lucro por contrato (aba "Por Contrato"): custos do ano em regime de caixa,
+  // Lucro por contrato (aba "Por Contrato"): custos do ano pela competência,
   // as mesmas saídas do Fluxo com contrato usadas na Lucratividade.
   const custoDe = (id: string) => custoPorContrato.get(id) ?? 0;
   const custoTotalContratos = useMemo(() => [...porContrato.keys()].reduce((s, id) => s + (custoPorContrato.get(id) ?? 0), 0), [porContrato, custoPorContrato]);
@@ -363,8 +363,8 @@ export default function FaturamentoEmpresa() {
                       <TableHead className={CAB}><TituloComFormula titulo="Valor Exec. Planilha (R$)" formula="Valor executável dos contratos do recorte no mês, segundo a planilha de custo vigente. Contrato sem planilha usa o Valor Executado Mensal do cadastro do contrato. Zero depois do fim do contrato." /></TableHead>
                       <TableHead className={CAB}><TituloComFormula titulo="Diferença Exec. × Fat. (R$)" formula="Valor Exec. Planilha − Valor Bruto faturado no mês. Positivo = faturou menos do que o executável." /></TableHead>
                       <Cabecalho />
-                      <TableHead className={CAB}><TituloComFormula titulo="Despesas (R$)" formula="Despesas dos contratos do recorte pagas no mês: saídas do Fluxo de Caixa com contrato, em regime de caixa, sem transferências, aplicações e empréstimos. É o custo usado no Lucro." /></TableHead>
-                      <TableHead className={CAB}><TituloComFormula titulo="Lucro Faturamento (R$)" formula="Valor Líquido do mês − custos pagos no mês (saídas do Fluxo de Caixa com contrato dos contratos do recorte, em regime de caixa, sem transferências, aplicações e empréstimos)." /></TableHead>
+                      <TableHead className={CAB}><TituloComFormula titulo="Despesas (R$)" formula="Despesas dos contratos do recorte com competência no mês: saídas do Fluxo de Caixa com contrato, pela competência, sem transferências, aplicações e empréstimos. É o custo usado no Lucro." /></TableHead>
+                      <TableHead className={CAB}><TituloComFormula titulo="Lucro Faturamento (R$)" formula="Valor Líquido do mês − custos da competência do mês (saídas do Fluxo de Caixa com contrato dos contratos do recorte, pela competência, sem transferências, aplicações e empréstimos)." /></TableHead>
                       <TableHead className={CAB}><TituloComFormula titulo="Lucro Recebido (R$)" formula="Recebido do mês − os mesmos custos. A diferença para o Lucro Faturamento é só o que ainda falta receber." /></TableHead>
                       <TableHead className={CAB}><TituloComFormula titulo="Margem Bruta (%)" formula={<><p>Lucro Faturamento ÷ Valor Líquido × 100. Em branco quando não há faturamento no mês.</p><p className="font-medium pt-1">A cor e o Status seguem a faixa:</p><FaixasTexto /></>} /></TableHead>
                       <TableHead className={`${CAB} text-left`}><TituloComFormula alinhar="left" titulo="Status" formula={<><p>Rentabilidade do mês, pela Margem Bruta. A barra enche até 30% de margem.</p><FaixasTexto /></>} /></TableHead>
@@ -422,9 +422,9 @@ export default function FaturamentoEmpresa() {
                       <TableHead className={`${CAB} text-left min-w-[150px]`}>Contrato / Cliente</TableHead>
                       <TableHead className={CAB}><TituloComFormula titulo="Notas" formula="Quantidade de NFs Código N do contrato na competência do ano." /></TableHead>
                       <Cabecalho />
-                      <TableHead className={CAB}><TituloComFormula titulo="Despesas (R$)" formula="Despesas do contrato no ano: saídas do Fluxo de Caixa com contrato, em regime de caixa, sem transferências, aplicações e empréstimos. É o custo usado no Lucro." /></TableHead>
+                      <TableHead className={CAB}><TituloComFormula titulo="Despesas (R$)" formula="Despesas do contrato no ano: saídas do Fluxo de Caixa com contrato, pela competência, sem transferências, aplicações e empréstimos. É o custo usado no Lucro." /></TableHead>
                       <TableHead className={CAB}>
-                        <TituloComFormula titulo="Lucro Faturamento (R$)" formula="Valor Líquido − custos do contrato no ano (saídas do Fluxo de Caixa com contrato, em regime de caixa, sem transferências, aplicações e empréstimos)." />
+                        <TituloComFormula titulo="Lucro Faturamento (R$)" formula="Valor Líquido − custos do contrato no ano (saídas do Fluxo de Caixa com contrato, pela competência, sem transferências, aplicações e empréstimos)." />
                       </TableHead>
                       <TableHead className={CAB}>
                         <TituloComFormula titulo="Lucro Recebido (R$)" formula="Recebido − os mesmos custos do contrato. A diferença para o Lucro Faturamento é só o que ainda falta receber." />

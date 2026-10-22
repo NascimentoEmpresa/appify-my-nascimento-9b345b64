@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import type { LinhaFluxoCusto } from "./regras";
 
+// SIS-2026-0708: o período dos custos é a competência do lançamento (não a data do pagamento).
 // SIS-2026-0556: custos do período para a Lucratividade e o Faturamento da
 // Empresa. Em vez de baixar o Fluxo de Caixa inteiro (6 views, ~20 mil linhas,
 // ~16 MB), pede a cada view só as SAÍDAS do período com contrato, só as 6
@@ -29,10 +30,10 @@ async function buscarView(view: string, ordem: string[], de: string, ate: string
   for (let pagina = 0; ; pagina++) {
     let q = (supabase as any)
       .from(view)
-      .select("tipo, data_pagamento, contrato_id, empresa_id, classificacao_id, classificacao_nome, valor, id_malote, descricao")
+      .select("tipo, data_pagamento, competencia, contrato_id, empresa_id, classificacao_id, classificacao_nome, valor, id_malote, descricao")
       .eq("tipo", "saida")
-      .gte("data_pagamento", de)
-      .lt("data_pagamento", ate);
+      // SIS-2026-0708: o período é o da COMPETÊNCIA; só a linha sem competência cai pelo mês do pagamento.
+      .or(`and(competencia.gte.${de},competencia.lt.${ate}),and(competencia.is.null,data_pagamento.gte.${de},data_pagamento.lt.${ate})`);
     q = semContrato ? q.is("contrato_id", null) : q.not("contrato_id", "is", null);
     for (const col of ordem) q = q.order(col, { ascending: true });
     const { data, error } = await q.range(pagina * TAMANHO_PAGINA, (pagina + 1) * TAMANHO_PAGINA - 1);

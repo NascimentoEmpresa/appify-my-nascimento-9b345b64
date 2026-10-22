@@ -2,7 +2,7 @@
 // que fecha na célula clicada e a lista do que a compõe. Funções puras: a tela só passa o recorte da célula.
 import { diasDesdeEmissao } from "@/pages/financeiro/nf-emissao/shared";
 import {
-  RUBRICAS, aReceberDaNf, contaNoFaturamento, lucroBruto, notasComSaldo, ponteAReceber, rubricaDaLinha, somarNf, totaisVazios,
+  RUBRICAS, aReceberDaNf, contaNoFaturamento, lucroBruto, mesDoCusto, notasComSaldo, ponteAReceber, rubricaDaLinha, somarNf, totaisVazios,
   type LigacoesRubrica, type LinhaFluxoCusto, type NfFaturamento, type TotaisFaturamento,
 } from "./regras";
 
@@ -89,6 +89,7 @@ const r2 = (n: number) => Math.round(n * 100) / 100;
 const pct = (m: number | null) => (m === null ? "—" : `${(m * 100).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%`);
 const mesCurto = (anoMes: string) => `${anoMes.slice(5, 7)}/${anoMes.slice(0, 4)}`;
 const dia = (iso: string | null | undefined) => (iso ? iso.slice(0, 10).split("-").reverse().join("/") : "—");
+const mesAno = (iso: string | null | undefined) => (iso ? `${iso.slice(5, 7)}/${iso.slice(0, 4)}` : "—");
 
 export function totaisDoEscopo(nfs: NfFaturamento[]): TotaisFaturamento {
   const t = totaisVazios();
@@ -113,8 +114,9 @@ export function despesasDoEscopo(custos: LinhaFluxoCusto[], escopo: Pick<EscopoD
   const linhas: (LinhaFluxoCusto & { rubrica: string })[] = [];
   let total = 0;
   for (const l of custos) {
-    if (l.tipo !== "saida" || !l.contrato_id || !l.data_pagamento) continue;
-    if (!contratos.has(l.contrato_id) || !meses.has(l.data_pagamento.slice(0, 7))) continue;
+    const mesDaLinha = mesDoCusto(l);
+    if (l.tipo !== "saida" || !l.contrato_id || !mesDaLinha) continue;
+    if (!contratos.has(l.contrato_id) || !meses.has(mesDaLinha)) continue;
     const rub = rubricaDaLinha(l, ligacoes);
     if (!rub) continue;
     const nome = rotulo.get(rub) ?? rub;
@@ -244,15 +246,15 @@ export function montarComposicao(metrica: Metrica, escopo: EscopoDetalhe, ctx: C
     const d = despesasDoEscopo(ctx.custos, escopo, ctx.ligacoes);
     return {
       titulo,
-      descricao: "Saídas do Fluxo de Caixa com contrato, no mês do pagamento, sem transferências, aplicações e empréstimos. É o custo usado no Lucro.",
+      descricao: "Saídas do Fluxo de Caixa com contrato, pela competência, sem transferências, aplicações e empréstimos. É o custo usado no Lucro.",
       conta: [
         ...d.porRubrica.map((r, i) => ({ rotulo: r.rotulo, valor: r.valor, sinal: i === 0 ? undefined : ("+" as const) })),
         { rotulo: "Despesas", valor: d.total, sinal: "=", destaque: true },
       ],
       tabela: {
         titulo: `Lançamentos do Fluxo de Caixa (${d.linhas.length.toLocaleString("pt-BR")})`,
-        colunas: [{ rotulo: "Pagamento", alinhar: "left" }, { rotulo: "Contrato", alinhar: "left" }, { rotulo: "Classificação", alinhar: "left" }, { rotulo: "Descrição", alinhar: "left" }, { rotulo: "Rubrica", alinhar: "left" }, { rotulo: "Valor" }],
-        linhas: d.linhas.slice(0, LIMITE_LINHAS).map((l) => [dia(l.data_pagamento), ctx.contratoNome(l.contrato_id as string), l.classificacao_nome ?? "—", [l.id_malote, l.descricao].filter(Boolean).join(" · ") || "—", l.rubrica, l.valor || 0]),
+        colunas: [{ rotulo: "Competência", alinhar: "left" }, { rotulo: "Pagamento", alinhar: "left" }, { rotulo: "Contrato", alinhar: "left" }, { rotulo: "Classificação", alinhar: "left" }, { rotulo: "Descrição", alinhar: "left" }, { rotulo: "Rubrica", alinhar: "left" }, { rotulo: "Valor" }],
+        linhas: d.linhas.slice(0, LIMITE_LINHAS).map((l) => [mesAno(l.competencia ?? l.data_pagamento), dia(l.data_pagamento), ctx.contratoNome(l.contrato_id as string), l.classificacao_nome ?? "—", [l.id_malote, l.descricao].filter(Boolean).join(" · ") || "—", l.rubrica, l.valor || 0]),
         nota: d.linhas.length > LIMITE_LINHAS ? `Mostrando os ${LIMITE_LINHAS} maiores lançamentos de ${d.linhas.length.toLocaleString("pt-BR")}; a conta acima soma todos.` : undefined,
       },
     };

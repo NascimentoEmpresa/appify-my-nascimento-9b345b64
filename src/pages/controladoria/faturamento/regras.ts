@@ -6,8 +6,8 @@
 //     fora de rascunho/enviada e de cancelada/substituída — mesmo recorte do
 //     Controle de Faturamento (SIS-0562). Mês = competência da nota.
 //   • Executável = planilha_custo (por contrato/mês), calculado na tela.
-//   • Custo realizado = saídas do Fluxo de Caixa (regime de CAIXA: mês da
-//     data de pagamento), com contrato e classificação. Transferência entre
+//   • Custo realizado = saídas do Fluxo de Caixa (mês da COMPETÊNCIA do
+//     lançamento; SIS-2026-0708), com contrato e classificação. Transferência entre
 //     contas, aplicação financeira, empréstimo etc. NÃO são custo.
 import { foraDoRelatorio, naoContabilizaKpi, statusDaNota } from "@/pages/financeiro/nf-emissao/shared";
 
@@ -78,6 +78,8 @@ export function rubricaDeCusto(classificacaoNome: string | null | undefined): Ru
 export interface LinhaFluxoCusto {
   tipo: "entrada" | "saida";
   data_pagamento: string | null;
+  // SIS-2026-0708: as despesas entram no mês da COMPETÊNCIA (dia 01), não no do pagamento. Sem competência na linha, vale o pagamento.
+  competencia?: string | null;
   contrato_id: string | null;
   classificacao_id?: string | null;
   classificacao_nome: string | null;
@@ -87,6 +89,13 @@ export interface LinhaFluxoCusto {
   // SIS-2026-0641: só para o modal "como é formado" listar o lançamento (ID e descrição do Fluxo).
   id_malote?: string | null;
   descricao?: string | null;
+}
+
+// SIS-2026-0708: mês ("YYYY-MM") em que a despesa conta nos relatórios de Faturamento, Lucratividade e Fechamento: a competência;
+// sem ela (linha antiga ou sem competência informada), o mês do pagamento.
+export function mesDoCusto(l: Pick<LinhaFluxoCusto, "competencia" | "data_pagamento">): string | null {
+  const data = l.competencia || l.data_pagamento;
+  return data ? data.slice(0, 7) : null;
 }
 
 // Rubrica final da linha: a ligação manual da classificação vale primeiro; sem
@@ -140,10 +149,11 @@ export function totalCustos(c: CustosPorRubrica): number {
 export function custosPorContratoMes(linhas: LinhaFluxoCusto[], ligacoes?: LigacoesRubrica): Map<string, CustosPorRubrica> {
   const mapa = new Map<string, CustosPorRubrica>();
   for (const l of linhas) {
-    if (l.tipo !== "saida" || !l.contrato_id || !l.data_pagamento) continue;
+    const mes = mesDoCusto(l);
+    if (l.tipo !== "saida" || !l.contrato_id || !mes) continue;
     const rubrica = rubricaDaLinha(l, ligacoes);
     if (!rubrica) continue;
-    const chave = `${l.contrato_id}|${l.data_pagamento.slice(0, 7)}`;
+    const chave = `${l.contrato_id}|${mes}`;
     const atual = mapa.get(chave) ?? custosVazios();
     atual[rubrica] += l.valor || 0;
     mapa.set(chave, atual);
