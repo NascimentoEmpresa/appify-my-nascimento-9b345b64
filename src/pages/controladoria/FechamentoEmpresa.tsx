@@ -16,7 +16,7 @@ import { useCustosContratoAno, useDespesasAdmAno } from "./faturamento/useCustos
 import { useLigacoesRubrica } from "./faturamento/useLigacoesRubrica";
 import { TituloComFormula } from "./faturamento/Rentabilidade";
 import {
-  admPorClassificacao, admPorMesRubrica, admSemClassificacao, margemFinal, montarFechamento, ORIGEM_ADM, ORIGEM_RUBRICA, ROTULO_STATUS, statusDoFechamento, totalDoFechamento,
+  admPorClassificacao, admPorMesRubrica, despesasDosSocios, socioDoContrato, admSemClassificacao, margemFinal, montarFechamento, ORIGEM_ADM, ORIGEM_RUBRICA, ROTULO_STATUS, statusDoFechamento, totalDoFechamento,
   type LinhaFechamento, type StatusFechamento,
 } from "./fechamento/regras";
 
@@ -90,6 +90,12 @@ export default function FechamentoEmpresa() {
 
   const nfsDoAno = useMemo(() => nfs.filter((n) => n.competencia.startsWith(`${ano}-`)), [nfs, ano]);
   const custosContratoPorMesContrato = useMemo(() => custosPorContratoMes(custosAno, ligacoes), [custosAno, ligacoes]);
+  // SIS-2026-0709: contrato "ADMINISTRATIVO <SÓCIO>" → nome do sócio. Fica fora do lucro dos contratos e entra no Resultado com Sócios.
+  const socioPorContrato = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const c of contratos) { const s = socioDoContrato(c.nome); if (s) m.set(c.id, s); }
+    return m;
+  }, [contratos]);
 
   // Monta as 12 linhas do ano para uma empresa (ou todas) e um contrato (ou todos). Com contrato escolhido só entra o
   // lucro dele: despesa administrativa não pertence a contrato.
@@ -111,22 +117,34 @@ export default function FechamentoEmpresa() {
     const custosContratoPorMes = new Map<string, number>();
     for (const [chave, c] of custosContratoPorMesContrato) {
       const [id, mes] = chave.split("|");
-      if (passa(id)) custosContratoPorMes.set(mes, (custosContratoPorMes.get(mes) ?? 0) + totalCustos(c));
+      if (passa(id) && !socioPorContrato.has(id)) custosContratoPorMes.set(mes, (custosContratoPorMes.get(mes) ?? 0) + totalCustos(c));
     }
+    // Com contrato escolhido só entra o lucro dele: despesa de sócio, como a administrativa, não pertence a contrato.
+    const sociosPorMes = ctId !== TODOS ? new Map<string, Map<string, number>>() : despesasDosSocios(custosAno.filter((l) => !!l.contrato_id && passa(l.contrato_id)), socioPorContrato, ligacoes);
     const admPorMes = ctId !== TODOS ? new Map<string, CustosPorRubrica>() : admPorMesRubrica(admAno, ligacoes, empId === TODOS ? null : empId);
-    return montarFechamento({ meses, mesAtual, liquidoPorMes, executavelPorMes, custosContratoPorMes, admPorMes });
+    return montarFechamento({ meses, mesAtual, liquidoPorMes, executavelPorMes, custosContratoPorMes, admPorMes, sociosPorMes });
   }
 
   const linhasAno = useMemo(
     () => linhasDoRecorte(empresaId, contratoId),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [empresaId, contratoId, nfsDoAno, contratos, execGrade, custosContratoPorMesContrato, admAno, ligacoes, meses, mesAtual]
+    [empresaId, contratoId, nfsDoAno, contratos, execGrade, custosContratoPorMesContrato, admAno, custosAno, socioPorContrato, ligacoes, meses, mesAtual]
   );
 
   const visivel = (l: LinhaFechamento) => periodo === TODOS || (periodo === "realizado" && !l.projetado) || (periodo === "projetado" && l.projetado) || periodo === l.mes;
   const linhas = useMemo(() => linhasAno.filter(visivel), [linhasAno, periodo]); // eslint-disable-line react-hooks/exhaustive-deps
   const total = useMemo(() => totalDoFechamento(linhas), [linhas]);
   const temProjetado = linhas.some((l) => l.projetado);
+  // Colunas da aba com sócios: quem tem despesa em algum mês do ano (ordem alfabética), mesmo que no período filtrado seja zero.
+  // Todo sócio cadastrado aparece como coluna (mesmo sem despesa no ano), respeitando o filtro de empresa.
+  const nomesSocios = useMemo(() => {
+    const s = new Set<string>(linhasAno.flatMap((l) => Object.keys(l.socios)));
+    for (const c of contratos) {
+      const nome = socioPorContrato.get(c.id);
+      if (nome && (empresaId === TODOS || c.empresa_id === empresaId)) s.add(nome);
+    }
+    return [...s].sort((a, b) => a.localeCompare(b, "pt-BR"));
+  }, [linhasAno, contratos, socioPorContrato, empresaId]);
 
   const termo = buscaMes.trim().toLowerCase();
   const linhasTabela = linhas.filter((l) => !termo || rotuloMes(l.mes).toLowerCase().includes(termo) || l.mes.includes(termo));
@@ -324,10 +342,11 @@ export default function FechamentoEmpresa() {
             <div className="flex items-center justify-between gap-2 flex-wrap">
               <TabsList>
                 <TabsTrigger value="mensal">Resumo Mensal</TabsTrigger>
+                <TabsTrigger value="socios">Resumo Mensal com Sócios</TabsTrigger>
                 <TabsTrigger value="adm">Despesas Administrativas</TabsTrigger>
                 <TabsTrigger value="empresa">Por Empresa</TabsTrigger>
               </TabsList>
-              {aba === "mensal" && (
+              {(aba === "mensal" || aba === "socios") && (
                 <input
                   value={buscaMes}
                   onChange={(e) => setBuscaMes(e.target.value)}
@@ -347,7 +366,7 @@ export default function FechamentoEmpresa() {
                         <TableHead className={CAB}><TituloComFormula titulo="Lucro dos Contratos (R$)" formula="Valor líquido faturado − custos dos contratos no mês (mesma conta da Lucratividade de Contratos). Nos meses projetados: notas já emitidas ou executável × proporção líquido/executável dos últimos meses, menos o custo lançado ou a média dos últimos meses (o maior)." /></TableHead>
                         {RUBRICAS.map((r) => <TableHead key={r.id} className={CAB}><TituloComFormula titulo={`${r.label} (R$)`} formula={<><p>{ORIGEM_RUBRICA[r.id]}</p><p>{ORIGEM_ADM}</p></>} /></TableHead>)}
                         <TableHead className={CAB}><TituloComFormula titulo="Total Desp. Adm (R$)" formula="Soma das rubricas: saídas do Fluxo de Caixa sem contrato (transferência, aplicação, empréstimo e financiamento ficam de fora). Nos meses projetados, o lançado/programado ou a média dos últimos meses, o maior por rubrica." /></TableHead>
-                        <TableHead className={CAB}><TituloComFormula titulo="Resultado Final (R$)" formula="Lucro dos Contratos − Total Desp. Adm." /></TableHead>
+                        <TableHead className={CAB}><TituloComFormula titulo="Resultado Final (R$)" formula="Lucro dos Contratos − Total Desp. Adm. Sem as despesas dos sócios: elas entram na aba Resumo Mensal com Sócios, depois deste resultado." /></TableHead>
                         <TableHead className={CAB}><TituloComFormula titulo="Margem Final (%)" formula="Resultado Final ÷ Lucro dos Contratos. Em branco quando não há lucro de contratos no mês." /></TableHead>
                         <TableHead className={`${CAB} text-center`}><TituloComFormula alinhar="center" titulo="Status" formula={<><p>Pela Margem Final:</p><FaixasStatus /></>} /></TableHead>
                       </TableRow>
@@ -429,6 +448,59 @@ export default function FechamentoEmpresa() {
               </Card>
             </TabsContent>
 
+            <TabsContent value="socios">
+              <Card>
+                <CardContent className="p-0">
+                  {contratoId !== TODOS ? (
+                    <p className="p-6 text-center text-xs text-muted-foreground">Escolha "Todos os contratos" para ver o resumo com sócios: despesa de sócio não pertence a contrato.</p>
+                  ) : (
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead className="h-auto px-2 py-1.5 align-bottom">Mês</TableHead>
+                          <TableHead className={CAB}><TituloComFormula titulo="Resultado Final (R$)" formula="Lucro dos Contratos − Total Desp. Adm. É o resultado SEM as despesas dos sócios (mesmo valor da aba Resumo Mensal)." /></TableHead>
+                          {nomesSocios.map((s) => <TableHead key={s} className={CAB}><TituloComFormula titulo={`${s} (R$)`} formula={<><p>Saídas do Fluxo de Caixa lançadas no contrato <strong>ADMINISTRATIVO SÓCIOS - {s.toUpperCase()}</strong>, inclusive distribuição de lucros. Transferência, aplicação, empréstimo e financiamento ficam de fora.</p><p>Meses projetados: o lançado ou a média dos últimos 3 meses, o maior.</p></>} /></TableHead>)}
+                          <TableHead className={CAB}><TituloComFormula titulo="Lucro Líquido Final (R$)" formula="Resultado Final − despesas de todos os sócios no mês." /></TableHead>
+                          <TableHead className={`${CAB} text-center`}><TituloComFormula alinhar="center" titulo="Status" formula={<><p>Pela margem do Lucro Líquido Final sobre o Lucro dos Contratos:</p><FaixasStatus /></>} /></TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {linhas.length === 0 && (
+                          <TableRow><TableCell colSpan={nomesSocios.length + 4} className="text-center text-muted-foreground py-8">Nenhum mês no período.</TableCell></TableRow>
+                        )}
+                        {linhas.map((l) => (
+                          <TableRow key={l.mes}>
+                            <TableCell className="px-2 py-1.5 whitespace-nowrap font-medium">
+                              {rotuloMes(l.mes)}
+                              {l.projetado && <Badge variant="outline" className="ml-1.5 h-4 px-1 text-[9px] font-medium text-sky-700 border-sky-300">Projetado</Badge>}
+                            </TableCell>
+                            <TableCell className={`${CEL} font-semibold ${l.resultado < 0 ? "text-red-600" : ""}`}>{num2(l.resultado)}</TableCell>
+                            {nomesSocios.map((s) => <TableCell key={s} className={CEL}>{num2(l.socios[s] ?? 0)}</TableCell>)}
+                            <TableCell className={`${CEL} font-semibold ${l.lucroLiquido < 0 ? "text-red-600" : ""}`}>{num2(l.lucroLiquido)}</TableCell>
+                            <TableCell className="px-2 py-1.5 text-center"><StatusPill status={l.statusLiquido} /></TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                      {linhas.length > 0 && (
+                        <TableFooter>
+                          <TableRow>
+                            <TableCell className="px-2 py-1.5 font-semibold">Total</TableCell>
+                            <TableCell className={`${CEL} font-semibold ${total.resultado < 0 ? "text-red-600" : ""}`}>{num2(total.resultado)}</TableCell>
+                            {nomesSocios.map((s) => <TableCell key={s} className={`${CEL} font-semibold`}>{num2(total.socios[s] ?? 0)}</TableCell>)}
+                            <TableCell className={`${CEL} font-semibold ${total.lucroLiquido < 0 ? "text-red-600" : ""}`}>{num2(total.lucroLiquido)}</TableCell>
+                            <TableCell className="px-2 py-1.5 text-center"><StatusPill status={total.statusLiquido} /></TableCell>
+                          </TableRow>
+                        </TableFooter>
+                      )}
+                    </Table>
+                  )}
+                  <p className="border-t px-3 py-2 text-[11px] text-muted-foreground">
+                    Despesas dos sócios = saídas do Fluxo de Caixa nos contratos "ADMINISTRATIVO SÓCIOS - nome do sócio". Elas ficam fora do Resultado Final (resumo mensal sem sócios) e entram aqui, depois dele, para chegar ao Lucro Líquido Final.
+                  </p>
+                </CardContent>
+              </Card>
+            </TabsContent>
+
             <TabsContent value="empresa">
               <Card>
                 <CardContent className="p-0">
@@ -468,7 +540,7 @@ export default function FechamentoEmpresa() {
             <Info className="mt-0.5 h-4 w-4 shrink-0" />
             <div>
               <p className="font-semibold">Fórmula do fechamento</p>
-              <p className="text-xs">Lucro dos Contratos − Total de Despesas Administrativas = Resultado Final da Empresa. Meses até o atual vêm do que já aconteceu (notas e Fluxo de Caixa); os seguintes são projetados e aparecem marcados.</p>
+              <p className="text-xs">Lucro dos Contratos − Total de Despesas Administrativas = Resultado Final da Empresa (sem sócios). Resultado Final − despesas dos sócios = Lucro Líquido Final (aba Resumo Mensal com Sócios). Meses até o atual vêm do que já aconteceu (notas e Fluxo de Caixa); os seguintes são projetados e aparecem marcados.</p>
             </div>
           </div>
         </>
