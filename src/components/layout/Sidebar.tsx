@@ -502,6 +502,7 @@ const maloteModule: ModuleDef = {
       items: [
         { label: "Classificações Administrativo", to: "/app/malote/classificacoes-administrativo", icon: ListChecks },
         { label: "Orçamento Administrativo", to: "/app/malote/orcamento-administrativo", icon: ClipboardList },
+        { label: "Orçamento ADM e Sócios (novo)", to: "/app/malote/orcamento-adm-socios", icon: ClipboardList },
         { label: "Classificações Malote", to: "/app/malote/classificacoes-malote", icon: ListChecks },
         { label: "Orçamento de Contratos", to: "/app/malote/orcamento-contratos", icon: FileText },
         { label: "Orçamento Geral", to: "/app/malote/orcamento-geral", icon: Calculator },
