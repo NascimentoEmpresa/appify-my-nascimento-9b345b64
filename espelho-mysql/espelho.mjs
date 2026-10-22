@@ -519,6 +519,57 @@ async function cargaFatiada(my, pgc, tabela, cols, coluna) {
   return total;
 }
 
+// ── travas (21/10/2026) ──────────────────────────────────────────────
+// A diária de 21/10 caiu com "deadlock detected" às 11:50, no BiEmpregados.
+// Do outro lado estava o pg_cron rh-sync-senior-espelho (5,20,35,50 de cada
+// hora, mig 20261020000110), que LÊ BiEmpregados e depois BiSituacoes. A
+// carga, numa transação só, truncava BiSituacoes (9ª da lista) e só depois
+// BiEmpregados (17ª): ordem contrária, cada um segurando o que o outro queria.
+//
+// 1. Uma carga por vez: trava consultiva da transação (pg_advisory_xact_lock,
+//    solta sozinha no COMMIT/ROLLBACK) logo depois do BEGIN —
+//    a rápida do ponto (laço de 10 min) e a diária passaram a rodar em grupos
+//    de concorrência separados no workflow e podem se cruzar; aqui a segunda
+//    espera a primeira terminar, em vez de as duas brigarem pelas tabelas.
+// 2. Todas as travas de tabela de uma vez, em ORDEM ALFABÉTICA, antes de
+//    mexer em qualquer coisa (BiEmpregados antes de BiSituacoes — a mesma
+//    ordem do pg_cron): quem chegar depois espera, ninguém fica de mão cheia.
+//    Tabela que vai ser truncada leva ACCESS EXCLUSIVE (é o que o TRUNCATE
+//    pede); a incremental (BiMarcacoes, só DELETE + COPY) leva ROW EXCLUSIVE,
+//    que não bloqueia leitura — a Efetividade continua lendo o ponto.
+// 3. lock_timeout de 2 min na fase de travar: se um leitor demorado segurar
+//    uma tabela, a carga desiste (55P03) e tenta de novo (ver tentativas).
+const TRAVA_CARGA = 7_420_210; // pg_advisory_xact_lock: número fixo, só desta carga
+const TABELA_TRAVA_SEG = 120;
+
+async function travarAntesDeCarregar(pgc, alvo, incrementais) {
+  await pgc.query(`SELECT pg_advisory_xact_lock(${TRAVA_CARGA})`);
+  await pgc.query(`SET LOCAL lock_timeout = '${TABELA_TRAVA_SEG}s'`);
+  const existentes = new Set((await pgc.query(
+    `SELECT table_name FROM information_schema.tables WHERE table_schema = $1`, [SCHEMA])).rows.map((r) => r.table_name));
+  for (const tabela of [...alvo].filter((t) => existentes.has(t)).sort()) {
+    const modo = incrementais[tabela] && !LIMITE && !COMPLETO ? 'ROW EXCLUSIVE' : 'ACCESS EXCLUSIVE';
+    await pgc.query(`LOCK TABLE ${aspas(SCHEMA)}.${aspas(tabela)} IN ${modo} MODE`);
+  }
+  await pgc.query(`SET LOCAL lock_timeout = 0`);
+}
+
+/** Deadlock (40P01) ou trava não obtida a tempo (55P03): a transação voltou inteira, dá para tentar de novo. */
+const ehConflitoDeTrava = (e) => e?.code === '40P01' || e?.code === '55P03';
+
+async function cmdSincronizarComTentativas() {
+  const esperas = [20, 60]; // segundos antes da 2ª e da 3ª tentativa
+  for (let t = 0; ; t++) {
+    try {
+      return await cmdSincronizar();
+    } catch (e) {
+      if (!ehConflitoDeTrava(e) || t >= esperas.length || !COMMIT) throw e;
+      console.log(`\n::warning::${e.message} (código ${e.code}) — nada foi gravado; tentativa ${t + 2} em ${esperas[t]} s`);
+      await new Promise((r) => setTimeout(r, esperas[t] * 1000));
+    }
+  }
+}
+
 async function cmdSincronizar() {
   const inicio = Date.now();
   const arqTabelas = path.join(AQUI, 'tabelas.json');
@@ -572,6 +623,7 @@ async function cmdSincronizar() {
     'SELECT 1 FROM pg_namespace WHERE nspname = $1', [SCHEMA]);
   if (!temSchema) await pgc.query(`CREATE SCHEMA ${aspas(SCHEMA)}`);
   if (COMPLETO) console.log('=== COMPLETA — as tabelas incrementais também serão recarregadas inteiras ===\n');
+  await travarAntesDeCarregar(pgc, alvo, incrementais);
 
   const resumo = [];
   const fatiadas = []; // incrementais que precisam de recarga completa (vazias ou --completo)
@@ -700,7 +752,7 @@ try {
   else if (COMANDO === 'descobrir') await cmdDescobrir();
   else if (COMANDO === 'perfilar') await cmdPerfilar();
   else if (COMANDO === 'conferir') await cmdConferir();
-  else await cmdSincronizar();
+  else await cmdSincronizarComTentativas();
   process.exit(0);
 } catch (e) {
   console.error(`\nFALHOU: ${e.message}`);

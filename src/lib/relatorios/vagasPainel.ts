@@ -323,8 +323,8 @@ export type Dimensao = keyof typeof DIMENSOES;
 const limpo = (s: string | null | undefined) => (s ?? "").trim().replace(/\s+/g, " ");
 
 /** Nome do grupo da vaga numa dimensão, e a chave que junta grafias (caixa) diferentes. */
-const nomeNoGrupo = (v: VagaPainel, dim: Dimensao) => limpo(DIMENSOES[dim].f(v)) || "(não informado)";
-const chaveDoGrupo = (nome: string) => nome.toLocaleUpperCase("pt-BR");
+export const nomeNoGrupo = (v: VagaPainel, dim: Dimensao) => limpo(DIMENSOES[dim].f(v)) || "(não informado)";
+export const chaveDoGrupo = (nome: string) => nome.toLocaleUpperCase("pt-BR");
 
 export function agruparVagas(p: PainelVagas, dim: Dimensao): LinhaGrupo[] {
   const g = new Map<string, { nome: string; vs: VagaPainel[] }>();
@@ -419,7 +419,9 @@ export type Recorte =
   | { tipo: "desfecho"; desfecho: Desfecho }
   | { tipo: "grupo"; dim: Dimensao; nome: string; coluna?: ColunaGrupo }
   | { tipo: "etapa_parada"; etapa: string }
-  | { tipo: "etapa_passou"; etapa: string };
+  | { tipo: "etapa_passou"; etapa: string }
+  /** Lista pronta (aba Recrutadores, 21/10/2026): as vagas que a conta da aba já escolheu. */
+  | { tipo: "lista"; titulo: string; ids: number[] };
 
 const ROTULO_KPI: Record<KpiRecorte, string> = {
   solicitadas: "Vagas solicitadas no período", contratadas: "Contratadas", reprovadas: "Reprovadas / canceladas",
@@ -446,6 +448,7 @@ export function tituloRecorte(r: Recorte): string {
     case "grupo": return `${DIMENSOES[r.dim].titulo}: ${r.nome}${r.coluna ? ` · ${ROTULO_COLUNA[r.coluna]}` : ""}`;
     case "etapa_parada": return `Paradas agora em ${tituloEtapa(r.etapa)}`;
     case "etapa_passou": return `Passaram por ${tituloEtapa(r.etapa)} (vagas do período)`;
+    case "lista": return r.titulo;
   }
 }
 
@@ -484,6 +487,7 @@ export function vagasDoRecorte(p: PainelVagas, r: Recorte): VagaPainel[] {
     }
     case "etapa_parada": return p.vagas.filter((v) => trechosDaVaga(v, p.agora).find((t) => t.aberto)?.etapa === r.etapa);
     case "etapa_passou": return per().filter((v) => diasPorEtapa(trechosDaVaga(v, p.agora))[r.etapa] != null);
+    case "lista": { const s = new Set(r.ids); return p.vagas.filter((v) => s.has(v.id)); }
   }
 }
 

@@ -50,19 +50,27 @@ on:
     # passo "Rodar" usa para saber qual das duas é — mudar aqui, mudar lá.
     # O GitHub não garante o horário: em hora de pico atrasa ou pula
     # rodadas (a diária de 16/10 começou às 11:29 em vez de 07:00).
-    - cron: '*/10 * * * *'
+    #
+    # 21/10/2026: o '*/10' rodava 5 vezes por DIA (2 a 5 h de intervalo) e o
+    # ERP ficava horas atrás da Flex. Agora o disparo é de hora em hora e cada
+    # execução fica de pé ~5h40 rodando a rápida a cada 10 min
+    # (espelho-mysql/rapida-continua.sh); a próxima espera na fila do grupo
+    # espelho-ponto e entra quando esta sai — disparo pulado não abre buraco.
+    - cron: '7 * * * *'
 
-# Duas execuções ao mesmo tempo brigariam pelo TRUNCATE das mesmas tabelas.
+# A diária e as manuais num grupo; a rápida (laço de horas) no dela — senão a
+# diária das 07:00 esperaria o laço inteiro na fila. Quando as duas se cruzam,
+# o banco põe uma atrás da outra (pg_advisory_xact_lock em espelho.mjs).
 concurrency:
-  group: espelho-mysql
+  group: ${{ github.event.schedule == '7 * * * *' && 'espelho-ponto' || 'espelho-mysql' }}
   cancel-in-progress: false
 
 jobs:
   espelho:
     runs-on: ubuntu-latest
-    # A rápida traz ~15 mil linhas e leva segundos; 10 min de teto é para ela
-    # não segurar a fila (concurrency acima) se o túnel travar.
-    timeout-minutes: ${{ github.event.schedule == '*/10 * * * *' && 10 || 60 }}
+    # Rápida: o laço dura 340 min (rapida-continua.sh) e o teto do runner é
+    # 360; 355 dá folga para fechar sem ser cancelado. Diária e manual: 60.
+    timeout-minutes: ${{ github.event.schedule == '7 * * * *' && 355 || 60 }}
 
     steps:
       - uses: actions/checkout@v4
@@ -141,16 +149,19 @@ jobs:
           GRAVAR: ${{ inputs.gravar }}
           COMPLETO: ${{ inputs.completo }}
           TABELAS: ${{ inputs.tabelas }}
+          # Para o laço da rápida reabrir o túnel do cluster se ele cair.
+          B1: ${{ vars.CLUSTER_BACKUP_HOST || '216.238.120.171' }}
         run: |
           set -euo pipefail
-          if [ "$EVENTO" = "schedule" ] && [ "$AGENDA" = "*/10 * * * *" ]; then
-            # Rápida: as batidas desde ontem + o cadastro (BiSituacoes e
-            # BiEmpregados, ~13 mil linhas, segundos). Desde 20/10/2026 o
-            # EMPREGADOS é atualizado DENTRO do banco a partir destas duas
-            # (rh_sync_senior_pelo_espelho, pg_cron de 15 em 15 min, mig
-            # 20261020000110) — o robô integracao-senior do Discloud saiu.
-            # Sem elas aqui, a situação (atestado, férias…) só andaria 1x/dia.
-            node espelho.mjs sincronizar --commit --tabelas BiSituacoes,BiEmpregados,BiMarcacoes --dias 1
+          if [ "$EVENTO" = "schedule" ] && [ "$AGENDA" = "7 * * * *" ]; then
+            # Rápida em laço de ~5h40, uma rodada a cada 10 min — ver
+            # rapida-continua.sh. Cada rodada traz as batidas desde ontem + o
+            # cadastro (BiSituacoes e BiEmpregados, ~13 mil linhas, segundos).
+            # Desde 20/10/2026 o EMPREGADOS é atualizado DENTRO do banco a
+            # partir destas duas (rh_sync_senior_pelo_espelho, pg_cron de 15 em
+            # 15 min, mig 20261020000110) — o robô integracao-senior do Discloud
+            # saiu. Sem elas aqui, a situação (atestado, férias…) só andaria 1x/dia.
+            bash rapida-continua.sh
           elif [ "$EVENTO" = "schedule" ]; then
             # A execução diária é sempre a carga completa e definitiva.
             node espelho.mjs sincronizar --commit
@@ -243,12 +254,9 @@ jobs:
           DISPARO: ${{ github.event_name }}
         run: |
           set -uo pipefail
-          # A rápida roda 144 vezes por dia: numa queda, só a rodada dos
-          # primeiros 10 min de cada hora avisa — 1 aviso/hora, não 6.
-          if [ "${AGENDA:-}" = "*/10 * * * *" ] && [ "$(date -u +%M)" -ge 10 ]; then
-            echo "rápida do ponto falhou; aviso só no começo da hora"
-            exit 0
-          fi
+          # A rápida (laço) só termina com erro depois de 3 rodadas SEGUIDAS
+          # sem conseguir (30 min sem ponto) — falha avulsa é absorvida lá
+          # dentro. Então todo erro dela aqui merece aviso.
           if [ -z "${DISCORD_TOKEN:-}" ] || [ -z "${ALVOS:-}" ]; then
             echo "::warning::sem DISCORD_TOKEN ou ESPELHO_DISCORD_IDS — aviso não enviado"
             exit 0
@@ -262,7 +270,7 @@ jobs:
             const texto = [
               "🔴 **Espelho MySQL → Supabase falhou**",
               "",
-              (process.env.AGENDA === "*/10 * * * *" ? "A rodada de 10 em 10 min do ponto (BiMarcacoes)"
+              (process.env.AGENDA === "7 * * * *" ? "A rápida do ponto (laço de 10 em 10 min, 3 rodadas seguidas)"
                 : agendado ? "A rodada automática das 07:00" : "Uma execução manual") +
                 " não conseguiu atualizar o Supabase.",
               "O espelho continua com os dados da última carga que deu certo —",

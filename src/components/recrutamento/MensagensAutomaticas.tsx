@@ -30,10 +30,10 @@ export const ETAPAS_MSG: { etapa: string; rotulo: string; dica?: string }[] = [
   { etapa: "JURÍDICO", rotulo: "Jurídico" },
   { etapa: "ENTREVISTA", rotulo: "Entrevista" },
   { etapa: "ENTREVISTA GESTOR", rotulo: "Entrevista com gestor" },
-  { etapa: "APROVADO", rotulo: "Aprovado" },
+  { etapa: "APROVADO", rotulo: "Em admissão" },
   { etapa: "DOCUMENTAÇÃO", rotulo: "Documentação" },
   { etapa: "SST + COMPRAS", rotulo: "SST + Compras" },
-  { etapa: "ADMISSÃO", rotulo: "Admissão" },
+  { etapa: "ADMISSÃO", rotulo: "Admissão concluída" },
   { etapa: "CONTRATADO", rotulo: "Contratado", dica: "ao clicar \"Contratar (enviar à Admissão)\" — a tela pede data de início, local e banco" },
 ];
 
