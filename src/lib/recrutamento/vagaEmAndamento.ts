@@ -12,7 +12,7 @@
 // reprovadas/canceladas. Status desconhecido ou legado ENTRA (está no meio do
 // caminho até alguém fechar).
 //
-// A função da TV (tvg_espelho_vagas, mig 20261022000500) repete esta lista —
+// A função da TV (tvg_espelho_vagas, mig 20261022000510) repete esta lista —
 // mudou aqui, muda lá.
 
 /** Pendentes de aprovação (Operacional/Analista/Diretoria) e do RH (conferência do Recrutamento). */
