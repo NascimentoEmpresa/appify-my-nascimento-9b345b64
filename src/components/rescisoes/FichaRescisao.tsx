@@ -173,7 +173,7 @@ export function FichaRescisao({ abrir, podeEditar, podeExcluir, onFechar, onSalv
               </div>
               <div className="sm:col-span-2">
                 <Label htmlFor="solicitado_por">Solicitado por</Label>
-                <Input id="solicitado_por" className="mt-1" placeholder="Ex.: e-mail, WhatsApp, Alessandra" disabled={somenteLeitura} value={ident.solicitado_por ?? ""} onChange={(ev) => setI("solicitado_por", ev.target.value)} />
+                <Input id="solicitado_por" className="mt-1" placeholder="Ex.: e-mail, WhatsApp, nome de quem pediu" disabled={somenteLeitura} value={ident.solicitado_por ?? ""} onChange={(ev) => setI("solicitado_por", ev.target.value)} />
               </div>
               <div>
                 <Label htmlFor="data_recebimento">Recebido</Label>

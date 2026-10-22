@@ -263,7 +263,7 @@ export function setoresFiltrados(e: Estrutura, f: FiltroGeral): Setor[] {
 /** Termo da busca bate neste texto? (para destacar processo/pessoa achada). */
 export const casaBusca = (texto: string | null | undefined, busca: string) => !!busca.trim() && norm(texto).includes(norm(busca).trim());
 
-/** "Yuri Rosa" → "YR". */
+/** "Fulano Silva" → "FS". */
 export function iniciais(nome: string | null | undefined): string {
   const p = String(nome ?? "").trim().split(/\s+/).filter(Boolean);
   if (!p.length) return "?";

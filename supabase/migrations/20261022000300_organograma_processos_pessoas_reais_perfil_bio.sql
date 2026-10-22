@@ -3,7 +3,7 @@
 -- (22/10/2026)
 --
 -- PEDIDO (Pablo): no painel do setor (Estrutura e Processos) as "pessoas"
--- eram texto digitado — "Gerente Financeiro", "Cálita", "Carol" — com as
+-- eram texto digitado — um cargo ou um primeiro nome — com as
 -- funções e os processos (P-0xx) pendurados nelas. Tem que ser gente de
 -- verdade: o colaborador do cadastro (EMPREGADOS) e, quando tiver, o login
 -- do ERP (profiles). Clicar na pessoa abre o perfil dela, com os dados do
@@ -23,7 +23,7 @@
 -- 2) Vínculo automático do que já estava digitado — conservador: só liga
 --    quando o nome bate com UMA pessoa Trabalhando (a do setor, ou, sem
 --    ninguém no setor, a única com login no ERP). Ambíguo, cargo no lugar
---    do nome ("Gerente Financeiro") ou sem correspondência fica pendente,
+--    do nome (ex.: "Gerente de Setor") ou sem correspondência fica pendente,
 --    e o Cadastro da Estrutura mostra o selo para alguém escolher a pessoa.
 -- 3) org_proc_montar devolve "pendente" e a foto pelo login atual.
 -- 4) org_proc_perfil_pessoa: o perfil para quem vê o organograma — sem CPF
@@ -36,7 +36,7 @@
 -- de outra pessoa = 'alterar' do cadastro, que o toggle já concede.
 -- =========================================================================
 
--- Comparação de nomes sem acento, caixa ou pontuação ("Cálita" = "CALITA").
+-- Comparação de nomes sem acento, caixa ou pontuação ("José" = "JOSE").
 CREATE OR REPLACE FUNCTION public.org_proc_norm(_t text)
 RETURNS text LANGUAGE sql IMMUTABLE SET search_path = public, pg_temp AS $$
   SELECT btrim(regexp_replace(regexp_replace(upper(translate(coalesce(_t, ''),

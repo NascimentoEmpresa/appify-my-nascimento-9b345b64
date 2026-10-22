@@ -13,13 +13,14 @@ const membro = (id: string, setorId: string, o: Partial<Membro> = {}): Membro =>
   empregado_id: null, user_id: null, ordem: 0, ...o,
 });
 
+// Dados fictícios: nada de nome de gente (nem cargo) da estrutura de verdade.
 const E: Estrutura = {
   ...ESTRUTURA_VAZIA,
   membros: [
-    membro("gerente", "fin", { nome: "Gerente Financeiro" }),          // cargo no lugar do nome: pendente
-    membro("calita", "fin", { empregado_id: 101, user_id: "u-101" }),
-    membro("renan", "fin", { empregado_id: 102 }),                      // sem login: vinculado mesmo assim
-    membro("yuri", "ctrl"),
+    membro("m1", "setor-a", { nome: "Cargo de exemplo" }),              // cargo no lugar do nome: pendente
+    membro("m2", "setor-a", { empregado_id: 101, user_id: "u-101" }),
+    membro("m3", "setor-a", { empregado_id: 102 }),                     // sem login: vinculado mesmo assim
+    membro("m4", "setor-b"),
   ],
 };
 
@@ -31,14 +32,14 @@ describe("pendentes de vínculo", () => {
   });
 
   it("vale também para o retrato publicado antes da mig (sem o campo pendente)", () => {
-    const antigo = { ...membro("x", "fin"), pendente: undefined };
+    const antigo = { ...membro("x", "setor-a"), pendente: undefined };
     expect(membroPendente(antigo)).toBe(true);
   });
 
   it("lista por setor e no geral", () => {
-    expect(membrosPendentes(E).map((m) => m.id)).toEqual(["gerente", "yuri"]);
-    expect(membrosPendentes(E, "fin").map((m) => m.id)).toEqual(["gerente"]);
-    expect(membrosPendentes(E, "rh")).toEqual([]);
+    expect(membrosPendentes(E).map((m) => m.id)).toEqual(["m1", "m4"]);
+    expect(membrosPendentes(E, "setor-a").map((m) => m.id)).toEqual(["m1"]);
+    expect(membrosPendentes(E, "setor-c")).toEqual([]);
   });
 });
 
