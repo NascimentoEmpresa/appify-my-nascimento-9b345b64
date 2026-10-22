@@ -22,7 +22,8 @@ interface ChaveAprovacaoN1Props {
 
 // Malote: depois do horário 1.1 o Nível 1 só aprova com a senha de uma exceção de aprovação daquela despesa. A regra de verdade mora
 // no banco (malote_aprovar_despesa, migration 20261021000020); aqui o aprovador vê o aviso, pede a chave e digita a senha.
-// Só aparece quando o relógio do banco já passou do horário; antes disso (ou antes da migration) não renderiza nada.
+// Só aparece quando o relógio do banco já passou do horário; antes disso (ou antes da migration) não renderiza nada. A tela só monta este
+// bloco para despesa com pagamento hoje ou vencido (migration 20261022000290): para data futura o Nível 1 aprova sem chave.
 export function ChaveAprovacaoN1({ despesaId, userId, horario, senha, onSenha, disabled }: ChaveAprovacaoN1Props) {
   const { data: foraDoPrazo } = useN1ForaDoPrazo();
   const { data: minhas = [] } = useMinhasExcecoes(userId);
@@ -56,7 +57,7 @@ export function ChaveAprovacaoN1({ despesaId, userId, horario, senha, onSenha, d
       <div className="flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 dark:bg-amber-950/30 p-3 text-xs">
         <AlertTriangle className="h-4 w-4 text-amber-600 mt-0.5 shrink-0" />
         <p className="text-amber-800/90 dark:text-amber-300/90">
-          Já passou das <span className="font-medium">{horarioFmt}</span> (regra 1.1). Depois desse horário o Nível 1 só aprova com a senha de uma{" "}
+          Já passou das <span className="font-medium">{horarioFmt}</span> (regra 1.1) e esta despesa é para pagar hoje (ou já venceu). Depois desse horário o Nível 1 só aprova com a senha de uma{" "}
           <span className="font-medium">exceção de aprovação</span> desta despesa. Peça a chave abaixo; quem decide as exceções do Malote libera a senha e ela vale 24 horas.
         </p>
       </div>
