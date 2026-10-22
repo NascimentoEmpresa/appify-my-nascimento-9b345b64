@@ -17,6 +17,11 @@ export interface DiaConciliado {
   qtdExtrato: number;
   /** nenhuma divergência (nem ignorada) neste dia */
   ok: boolean;
+  // Mesmos números do "Resumo por Dia" da conciliação: total do Fluxo, total do extrato, diferença e o que explica a diferença.
+  fluxoTotal: number;
+  extratoTotal: number;
+  diferenca: number;
+  observacao: string;
 }
 
 export interface ResumoConciliacao {
@@ -45,7 +50,7 @@ export function resumirConciliacao(
   const dia = (iso: string): DiaConciliado => {
     let d = dias.get(iso);
     if (!d) {
-      d = { dia: iso, fluxoEntradas: 0, fluxoSaidas: 0, extratoEntradas: 0, extratoSaidas: 0, conciliadoEntradas: 0, conciliadoSaidas: 0, qtdFluxo: 0, qtdConciliadas: 0, qtdExtrato: 0, ok: true };
+      d = { dia: iso, fluxoEntradas: 0, fluxoSaidas: 0, extratoEntradas: 0, extratoSaidas: 0, conciliadoEntradas: 0, conciliadoSaidas: 0, qtdFluxo: 0, qtdConciliadas: 0, qtdExtrato: 0, ok: true, fluxoTotal: 0, extratoTotal: 0, diferenca: 0, observacao: "—" };
       dias.set(iso, d);
     }
     return d;
@@ -74,6 +79,26 @@ export function resumirConciliacao(
     if (l.tipoPlanilha === "ENTRADA") divEntradas.set(iso, (divEntradas.get(iso) ?? 0) + l.valor);
     else if (l.tipoPlanilha === "SAÍDA") divSaidas.set(iso, (divSaidas.get(iso) ?? 0) + l.valor);
   }
+  // o que sobra em cada dia, por tipo de ocorrência (texto do "Resumo por Dia")
+  const ocorrencias = new Map<string, { soExtrato: number; soFluxo: number; divergente: number }>();
+  for (const l of resultado.lancamentos) {
+    const iso = brParaIso(l.dia);
+    const o = ocorrencias.get(iso) ?? { soExtrato: 0, soFluxo: 0, divergente: 0 };
+    if (l.erro === "🚨 FLUXO - NÃO ENCONTRADO") o.soExtrato += 1;
+    else if (l.erro === "⚠️ BANCO - NÃO ENCONTRADO") o.soFluxo += 1;
+    else o.divergente += 1;
+    ocorrencias.set(iso, o);
+  }
+  const textoObservacao = (iso: string): string => {
+    const o = ocorrencias.get(iso);
+    if (!o) return "—";
+    const partes: string[] = [];
+    if (o.soExtrato > 0) partes.push(`${o.soExtrato} no extrato, sem par no Fluxo`);
+    if (o.soFluxo > 0) partes.push(`${o.soFluxo} no Fluxo, sem par no extrato`);
+    if (o.divergente > 0) partes.push(`${o.divergente} com valor/tipo divergente`);
+    return partes.length ? partes.join(" · ") : "—";
+  };
+  const resumoDoDia = new Map(resultado.resumo.map((r) => [r.diaISO, r]));
   const lista = [...dias.values()]
     .sort((a, b) => a.dia.localeCompare(b.dia))
     .map<DiaConciliado>((d) => ({
@@ -85,6 +110,11 @@ export function resumirConciliacao(
       conciliadoEntradas: r2(d.fluxoEntradas - (divEntradas.get(d.dia) ?? 0)),
       conciliadoSaidas: r2(d.fluxoSaidas - (divSaidas.get(d.dia) ?? 0)),
       qtdConciliadas: Math.max(0, d.qtdFluxo - (divQtd.get(d.dia) ?? 0)),
+      fluxoTotal: r2(resumoDoDia.get(d.dia)?.totalPlanilha ?? d.fluxoEntradas + d.fluxoSaidas),
+      extratoTotal: r2(Math.abs(resumoDoDia.get(d.dia)?.totalExtrato ?? -(d.extratoEntradas + d.extratoSaidas))),
+      diferenca: r2(resumoDoDia.get(d.dia)?.diferenca ?? 0),
+      ok: resumoDoDia.get(d.dia) ? resumoDoDia.get(d.dia)!.status === "OK" && d.ok : d.ok,
+      observacao: textoObservacao(d.dia),
     }));
   const soma = (f: (d: DiaConciliado) => number) => r2(lista.reduce((s, d) => s + f(d), 0));
   return {

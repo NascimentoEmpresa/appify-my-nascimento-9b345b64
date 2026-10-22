@@ -37,6 +37,10 @@ describe("resumirConciliacao", () => {
     // dia 3: saída só no Fluxo (ainda divergente) → nada conciliado
     expect(r.dias[2]).toMatchObject({ fluxoSaidas: 5, conciliadoSaidas: 0, qtdConciliadas: 0, qtdFluxo: 1, ok: false });
     expect(r.conciliadoSaidas).toBe(50);
+    // mesmo formato do "Resumo por Dia": valor no Fluxo, valor no extrato, diferença, status e observação
+    expect(r.dias[0]).toMatchObject({ fluxoTotal: 100, extratoTotal: 100, diferenca: 0, ok: true, observacao: "—" });
+    expect(r.dias[1]).toMatchObject({ fluxoTotal: 50, extratoTotal: 50, diferenca: 0 });
+    expect(r.dias[2]).toMatchObject({ fluxoTotal: 5, extratoTotal: 0, diferenca: 5, observacao: "1 no Fluxo, sem par no extrato" });
   });
   it("linha só do extrato (sem par no Fluxo) não mexe no conciliado do Fluxo", () => {
     const plan = [P("2026-09-01", 100, "ENTRADA")];
