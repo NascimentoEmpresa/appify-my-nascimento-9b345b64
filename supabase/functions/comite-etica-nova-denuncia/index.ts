@@ -23,7 +23,7 @@
 // aqui seria pior do que o erro.)
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
-import { SMTPClient } from "https://deno.land/x/denomailer@1.6.0/mod.ts";
+import { enviarEmail } from "../_shared/enviar-email.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -130,8 +130,11 @@ Deno.serve(async (req) => {
       ok, erro: erro ?? null,
     }, { onConflict: "denuncia_id" });
 
-  if (!SMTP_HOST || !SMTP_USER || !SMTP_PASS) {
-    const erro = "SMTP não configurado no servidor (SMTP_HOST/USER/PASS)";
+  // Com RESEND_API_KEY o envio nem passa pelo SMTP, então exigir host/usuário/senha
+  // aqui recusaria um aviso que sairia normalmente. Ver _shared/enviar-email.ts.
+  const temResend = !!Deno.env.get("RESEND_API_KEY");
+  if (!temResend && (!SMTP_HOST || !SMTP_USER || !SMTP_PASS)) {
+    const erro = "Envio não configurado no servidor (RESEND_API_KEY ou SMTP_HOST/USER/PASS)";
     console.error(erro);
     await registrar(false, erro);
     return json({ error: erro }, 500);
@@ -141,34 +144,23 @@ Deno.serve(async (req) => {
   const protocolo = String(d.protocolo ?? "—");
 
   try {
-    const client = new SMTPClient({
-      connection: {
-        hostname: SMTP_HOST,
-        port: SMTP_PORT,
-        // 465 é TLS implícito; 587 sobe por STARTTLS, que o denomailer
-        // negocia sozinho quando `tls` é false.
-        tls: SMTP_PORT === 465,
-        auth: { username: SMTP_USER, password: SMTP_PASS },
-      },
-    });
-
     // Um envio por destinatário, em BCC-de-pobre: sem isso cada um vê o
     // e-mail do outro no cabeçalho, e a composição do Comitê é informação
     // que não precisa circular.
+    const smtp = { host: SMTP_HOST, porta: SMTP_PORT, usuario: SMTP_USER, senha: SMTP_PASS };
     for (const to of emails) {
-      await client.send({
-        from: SMTP_FROM,
-        to,
-        subject: `Comitê de Ética — nova denúncia (${protocolo})`,
-        content: `Uma nova denúncia foi registrada no Canal de Ética.\n\n`
-               + `Protocolo: ${protocolo}\nRegistrada em: ${dataHora}\n\n`
-               + `Acesse o ERP para ver os detalhes: ${APP_URL}\n\n`
-               + `Por sigilo, este aviso não traz o teor da denúncia.\n`
-               + `Mensagem automática — não responda.`,
+      await enviarEmail({
+        de: SMTP_FROM,
+        para: [to],
+        assunto: `Comitê de Ética — nova denúncia (${protocolo})`,
+        texto: `Uma nova denúncia foi registrada no Canal de Ética.\n\n`
+             + `Protocolo: ${protocolo}\nRegistrada em: ${dataHora}\n\n`
+             + `Acesse o ERP para ver os detalhes: ${APP_URL}\n\n`
+             + `Por sigilo, este aviso não traz o teor da denúncia.\n`
+             + `Mensagem automática — não responda.`,
         html: corpoHtml(protocolo, dataHora),
-      });
+      }, smtp);
     }
-    await client.close();
   } catch (e) {
     const erro = String((e as Error)?.message ?? e);
     console.error("falha no envio", erro);

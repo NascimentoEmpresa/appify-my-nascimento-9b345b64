@@ -1,5 +1,5 @@
 import { createClient, type SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { SMTPClient } from "https://deno.land/x/denomailer@1.6.0/mod.ts";
+import { enviarEmail } from "../_shared/enviar-email.ts";
 import {
   TEMPLATE_DA_FAIXA, copiaDoEmail, dentroDaJanela, garantirEnvioPermitido, hojeEmSaoPaulo, montarEmail, planejarCobrancas, somarDias,
   PRAZO_PAGAMENTO_DIAS, type ConfigCobranca, type NotaAberta, type PlanoContrato,
@@ -116,36 +116,31 @@ async function modelo(admin: SupabaseClient, faixa: string) {
   return data as { assunto: string | null; corpo: string };
 }
 
-// ── Envio por SMTP ────────────────────────────────────────────────────────────────────────────────────────────────
-// O e-mail da empresa (haggltda.com.br) fica na UOL Host, não no Microsoft 365, então não há Graph: o envio é SMTP, como
-// no aviso do Comitê de Ética. Secrets da função: COBRANCA_SMTP_HOST, COBRANCA_SMTP_PORT (465 = TLS direto; 587 = STARTTLS),
-// COBRANCA_SMTP_USER (a caixa remetente, nfe2@haggltda.com.br) e COBRANCA_SMTP_PASS.
+// ── Envio de e-mail ───────────────────────────────────────────────────────────────────────────────────────────────
+// A UOL recusa entregar mensagem vinda dos IPs do cluster (554 por política), então o envio saiu dela: com
+// RESEND_API_KEY cadastrada, quem entrega é a API do Resend. Os COBRANCA_SMTP_* seguem valendo como caminho de volta,
+// e COBRANCA_SMTP_FROM (ou, na falta dele, COBRANCA_SMTP_USER) é sempre quem assina. Ver _shared/enviar-email.ts.
+
+function remetente(): string {
+  return Deno.env.get("COBRANCA_SMTP_FROM") || Deno.env.get("COBRANCA_SMTP_USER") || "";
+}
 
 function envioConfigurado(): boolean {
+  if (!remetente()) return false;
+  if (Deno.env.get("RESEND_API_KEY")) return true;
   return !!(Deno.env.get("COBRANCA_SMTP_HOST") && Deno.env.get("COBRANCA_SMTP_USER") && Deno.env.get("COBRANCA_SMTP_PASS"));
 }
 
-async function enviarEmailSmtp(para: string[], cc: string[], assunto: string, corpoHtml: string) {
-  const porta = Number(Deno.env.get("COBRANCA_SMTP_PORT") ?? 465);
-  const usuario = Deno.env.get("COBRANCA_SMTP_USER")!;
-  // Quem AUTENTICA nem sempre é quem ASSINA: no servidor da caixa (UOL) os dois
-  // são `nfe2@haggltda.com.br`, mas em serviço transacional o usuário é um nome
-  // fixo do serviço ("resend") e pôr isso no From produz remetente inválido.
-  // Sem COBRANCA_SMTP_FROM, nada muda em relação a hoje.
-  const remetente = Deno.env.get("COBRANCA_SMTP_FROM") || usuario;
-  const client = new SMTPClient({
-    connection: {
-      hostname: Deno.env.get("COBRANCA_SMTP_HOST")!,
-      port: porta,
-      tls: porta === 465,
-      auth: { username: usuario, password: Deno.env.get("COBRANCA_SMTP_PASS")! },
+async function enviarEmailCobranca(para: string[], cc: string[], assunto: string, corpoHtml: string) {
+  await enviarEmail(
+    { de: remetente(), para, cc, assunto, html: corpoHtml },
+    {
+      host: Deno.env.get("COBRANCA_SMTP_HOST") ?? "",
+      porta: Number(Deno.env.get("COBRANCA_SMTP_PORT") ?? 465),
+      usuario: Deno.env.get("COBRANCA_SMTP_USER") ?? "",
+      senha: Deno.env.get("COBRANCA_SMTP_PASS") ?? "",
     },
-  });
-  try {
-    await client.send({ from: remetente, to: para, cc: cc.length ? cc : undefined, subject: assunto, html: corpoHtml, content: "auto" });
-  } finally {
-    try { await client.close(); } catch { /* conexão já caiu: o erro que interessa é o do envio */ }
-  }
+  );
 }
 
 // ── Saídas ────────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -206,7 +201,7 @@ Deno.serve(async (req) => {
     const config = await lerConfig(admin);
     if (config.modo === "desligado" || config.modo === "simulacao") return json({ ok: true, modo: config.modo, enviados: 0, observacao: "Modo sem envio." });
     if (!dentroDaJanela(agora, config)) return json({ ok: true, modo: config.modo, enviados: 0, observacao: "Fora da janela de envio." });
-    if (!envioConfigurado()) return json({ ok: false, modo: config.modo, error: "Envio por SMTP não configurado (COBRANCA_SMTP_HOST/USER/PASS)." }, 500);
+    if (!envioConfigurado()) return json({ ok: false, modo: config.modo, error: "Envio de e-mail não configurado (RESEND_API_KEY ou COBRANCA_SMTP_HOST/USER/PASS, e um remetente)." }, 500);
     if (config.modo === "piloto" && !config.email_piloto) return json({ ok: false, modo: config.modo, error: "Modo piloto sem e-mail de teste configurado." }, 400);
 
     const entrada = await carregarEntrada(admin, config, agora);
@@ -227,7 +222,7 @@ Deno.serve(async (req) => {
         valor_total: p.valorTotal, destinatarios: para, cc, assunto, corpo: email.corpo,
       };
       try {
-        await enviarEmailSmtp(para, cc, assunto, email.corpo);
+        await enviarEmailCobranca(para, cc, assunto, email.corpo);
         await admin.from("cobranca_auto_envio").insert({ ...registro, status: "enviado" });
         enviados++; falhasSeguidas = 0;
       } catch (e) {
