@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import type { PlanilhaRow } from "@/lib/conciliacaoBancariaEngine";
 import type { FluxoCaixaMaloteLinha } from "@/hooks/useFluxoCaixaMalote";
+import type { DiaConciliado, ResumoConciliacao } from "@/lib/conciliacaoResumo";
 
 // SIS-2026-0492: conciliação automática — o lado "Fluxo" vem direto do
 // Fluxo de Caixa interno (useFluxoCaixaCombinado), não de planilha subida.
@@ -92,6 +93,18 @@ export interface ConciliacaoFluxoCaixaSalva {
   // 20261014000006 que ainda não receberam a carga.
   extrato_entradas?: number | null;
   extrato_saidas?: number | null;
+  // Resumo do que foi conciliado (migration 20261022000260). null nas conciliações anteriores.
+  fluxo_entradas?: number | null;
+  fluxo_saidas?: number | null;
+  qtd_fluxo?: number | null;
+  qtd_extrato?: number | null;
+  conciliado_entradas?: number | null;
+  conciliado_saidas?: number | null;
+  qtd_conciliadas?: number | null;
+  dias_total?: number | null;
+  dias_ok?: number | null;
+  // Resumo dia a dia (migration 20261022000270).
+  resumo_dias?: DiaConciliado[] | null;
 }
 
 export interface ConciliacaoFluxoCaixaArquivo {
@@ -181,6 +194,8 @@ export interface SalvarConciliacaoInput {
   // SIS-2026-0657: soma do extrato dentro do período. A Auditoria da Controladoria lê daqui (quando tudo bate, nenhuma linha é gravada).
   extratoEntradas?: number | null;
   extratoSaidas?: number | null;
+  // O que bateu (Fluxo × extrato): gravado para a lista de conciliações salvas mostrar valores mesmo sem divergência.
+  resumo?: ResumoConciliacao | null;
   arquivosOfx: File[];
   linhas: Omit<ConciliacaoFluxoCaixaLinha, "id" | "conciliacao_id">[];
 }
@@ -217,14 +232,22 @@ export function useSalvarConciliacaoFluxoCaixa() {
         (supabase as any).from("financeiro_conciliacao_fluxo_caixa").insert(dados).select("id").single();
       // SIS-2026-0657: guarda os totais do extrato. Migration 20261014000006 ainda não aplicada (coluna
       // ausente): salva sem eles, para a conciliação não deixar de salvar.
-      let { data: conciliacao, error: errHeader } = await inserir({
-        ...cabecalho,
-        extrato_entradas: input.extratoEntradas ?? null,
-        extrato_saidas: input.extratoSaidas ?? null,
-      });
-      if (errHeader && (errHeader.code === "PGRST204" || errHeader.code === "42703")) {
-        ({ data: conciliacao, error: errHeader } = await inserir(cabecalho));
-      }
+      const r = input.resumo;
+      const resumoCols = r
+        ? {
+            fluxo_entradas: r.fluxoEntradas, fluxo_saidas: r.fluxoSaidas, qtd_fluxo: r.qtdFluxo, qtd_extrato: r.qtdExtrato,
+            conciliado_entradas: r.conciliadoEntradas, conciliado_saidas: r.conciliadoSaidas, qtd_conciliadas: r.qtdConciliadas,
+            dias_total: r.diasTotal, dias_ok: r.diasOk,
+          }
+        : {};
+      const diasCol = r ? { resumo_dias: r.dias } : {};
+      const totaisExtrato = { extrato_entradas: input.extratoEntradas ?? null, extrato_saidas: input.extratoSaidas ?? null };
+      const colunaAusente = (e: { code?: string } | null) => !!e && (e.code === "PGRST204" || e.code === "42703");
+      // Migrations 20261022000270 (dia a dia), 20261022000260 (resumo) e 20261014000006 (totais do extrato) ainda não aplicadas: tenta sem as colunas que faltam.
+      let { data: conciliacao, error: errHeader } = await inserir({ ...cabecalho, ...totaisExtrato, ...resumoCols, ...diasCol });
+      if (colunaAusente(errHeader)) ({ data: conciliacao, error: errHeader } = await inserir({ ...cabecalho, ...totaisExtrato, ...resumoCols }));
+      if (colunaAusente(errHeader)) ({ data: conciliacao, error: errHeader } = await inserir({ ...cabecalho, ...totaisExtrato }));
+      if (colunaAusente(errHeader)) ({ data: conciliacao, error: errHeader } = await inserir(cabecalho));
       if (errHeader) throw errHeader;
       const conciliacaoId = conciliacao.id as string;
 

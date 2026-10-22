@@ -53,7 +53,7 @@ export function socioDoContrato(nome: string | null | undefined): string | null 
   return nomeSocio || null;
 }
 
-/** sócio → mês ("YYYY-MM") → total de despesa lançada no Fluxo (saídas do contrato do sócio, sem movimentação interna). */
+/** sócio → mês ("YYYY-MM") → total de despesa lançada no Fluxo (todas as saídas do contrato do sócio, qualquer classificação). */
 export function despesasDosSocios(
   linhas: LinhaFluxoCusto[],
   socioPorContrato: Map<string, string>,

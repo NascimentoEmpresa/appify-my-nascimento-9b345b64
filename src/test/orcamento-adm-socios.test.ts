@@ -16,7 +16,7 @@ const gasto = (extra: Partial<UtilizadoOrcamentoLinha>): UtilizadoOrcamentoLinha
   classificacao_id: "origem", classificacao_nome: "", empresa_id: "hagg", empresa_nome: "", contrato_id: "c1", contrato_nome: "UFRGS", valor: 0, ...extra,
 });
 const linha = (extra: Partial<LinhaOrcamento>): LinhaOrcamento => ({
-  classificacaoAdministrativaId: "a1", descricao: "", modo: "percentual", percentual: 20, origemIds: ["origem"], valorManual: 0, distribuicao: {}, ...extra,
+  classificacaoMaloteId: "a1", descricao: "", modo: "percentual", percentual: 20, origemIds: ["origem"], valorManual: 0, distribuicao: {}, ...extra,
 });
 
 describe("saldo remanescente da origem (regra 6)", () => {
@@ -88,8 +88,8 @@ describe("utilizado da classificação administrativa", () => {
 describe("validação do percentual (regra 7)", () => {
   const nomes = new Map([["a1", "CONSÓRCIOS"], ["a2", "IPTU"]]);
   it("só salva se os percentuais fecham EXATAMENTE 100%", () => {
-    expect(validarDistribuicao([linha({ percentual: 60 }), linha({ classificacaoAdministrativaId: "a2", percentual: 40 })], nomes)).toEqual([]);
-    expect(validarDistribuicao([linha({ percentual: 60 }), linha({ classificacaoAdministrativaId: "a2", percentual: 39.99 })], nomes)[0].mensagem).toMatch(/100%/);
+    expect(validarDistribuicao([linha({ percentual: 60 }), linha({ classificacaoMaloteId: "a2", percentual: 40 })], nomes)).toEqual([]);
+    expect(validarDistribuicao([linha({ percentual: 60 }), linha({ classificacaoMaloteId: "a2", percentual: 39.99 })], nomes)[0].mensagem).toMatch(/100%/);
   });
   it("percentual sem origem não salva; modo manual precisa de 100% entre empresas", () => {
     expect(validarDistribuicao([linha({ percentual: 100, origemIds: [] })], nomes)[0].mensagem).toMatch(/origem/);
@@ -97,7 +97,7 @@ describe("validação do percentual (regra 7)", () => {
     expect(validarDistribuicao([linha({ modo: "manual", distribuicao: { a: 50, b: 50 } })], nomes)).toEqual([]);
   });
   it("classificação recém-incluída (0%, sem origem) não trava o salvamento", () => {
-    expect(validarDistribuicao([linha({ percentual: 100 }), linha({ classificacaoAdministrativaId: "a2", percentual: 0, origemIds: [] })], nomes)).toEqual([]);
+    expect(validarDistribuicao([linha({ percentual: 100 }), linha({ classificacaoMaloteId: "a2", percentual: 0, origemIds: [] })], nomes)).toEqual([]);
   });
   it("sem classificações percentuais não há o que validar", () => {
     expect(validarDistribuicao([], nomes)).toEqual([]);

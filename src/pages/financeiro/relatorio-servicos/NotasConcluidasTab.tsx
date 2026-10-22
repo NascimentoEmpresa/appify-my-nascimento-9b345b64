@@ -25,6 +25,8 @@ import {
   useItensNfEmissaoEmLote,
   useRegistrarPagamentoNf,
   useAjustarDescontosPosEmissao,
+  useAjustarCompetenciaNf,
+  competenciaDoMes,
   TIPOS_NOTA,
 } from "@/hooks/useNfEmissao";
 import {
@@ -571,6 +573,10 @@ function NfPagamentoDialog({ nf, onClose }: { nf: NfEmissaoRow | null; onClose: 
   // SIS-2026-0592: ajustar descontos pós-emissão de NF concluída — mesma ação
   // 'excluir' (Nível D) que o banco exige para mexer em NF concluída.
   const ajustarDescontosPos = useAjustarDescontosPosEmissao();
+  // SIS-2026-0684: ajuste da competência após a emissão (mesma permissão do ajuste de valores)
+  const ajustarCompetencia = useAjustarCompetenciaNf();
+  const [competenciaNova, setCompetenciaNova] = useState("");
+  const [motivoCompetencia, setMotivoCompetencia] = useState("");
   const { can } = usePermissoes();
   const podeAjustarDescontos = can("excluir", "financeiro", "nf-emissao");
   const [modoAjuste, setModoAjuste] = useState(false);
@@ -606,6 +612,8 @@ function NfPagamentoDialog({ nf, onClose }: { nf: NfEmissaoRow | null; onClose: 
     setModoAjuste(false);
     setPosEdit({});
     setMotivoAjuste("");
+    setCompetenciaNova((nf.competencia ?? "").slice(0, 7));
+    setMotivoCompetencia("");
   }, [nf?.id]);
 
   // SIS-2026-0609: sugestão de pagamento = valor a pagar (líquido − conta vinculada −
@@ -769,6 +777,24 @@ function NfPagamentoDialog({ nf, onClose }: { nf: NfEmissaoRow | null; onClose: 
       toast.success("Pagamento registrado.");
     } catch (e: any) {
       toast.error(e.message ?? "Erro ao registrar pagamento.");
+    }
+  }
+
+  async function handleAjustarCompetencia() {
+    if (!nf) return;
+    const nova = competenciaDoMes(competenciaNova);
+    if (!nova) { toast.error("Informe a nova competência (mês/ano)."); return; }
+    if (nova === (nf.competencia ?? "").slice(0, 10)) { toast.error("A nota já está nessa competência."); return; }
+    const motivo = motivoCompetencia.trim();
+    if (motivo.length < 5) { toast.error("Informe o motivo do ajuste (ele fica no histórico da nota)."); return; }
+    const rotulo = (c: string) => new Date(c.slice(0, 10) + "T00:00:00").toLocaleDateString("pt-BR", { month: "2-digit", year: "numeric" });
+    try {
+      await ajustarCompetencia.mutateAsync({ nfId: nf.id, competencia: nova });
+      await registrarLogNf(nf.id, "competencia_ajustada", `Competência ajustada após a emissão: ${rotulo(nf.competencia)} → ${rotulo(nova)} — ${motivo}`);
+      toast.success("Competência da nota atualizada.");
+      setMotivoCompetencia("");
+    } catch (e: any) {
+      toast.error(e.message ?? "Erro ao ajustar a competência da nota.");
     }
   }
 
@@ -995,6 +1021,27 @@ function NfPagamentoDialog({ nf, onClose }: { nf: NfEmissaoRow | null; onClose: 
                 </Button>
               </div>
             </div>
+            {podeAjustarDescontos && (
+              <div className="space-y-2 border-t pt-3">
+                <div className="text-xs font-semibold">Competência da nota</div>
+                <div className="grid grid-cols-4 gap-3 items-end">
+                  <div>
+                    <Label className="text-xs">Competência</Label>
+                    <Input type="month" value={competenciaNova} onChange={(e) => setCompetenciaNova(e.target.value)} />
+                  </div>
+                  <div className="col-span-2">
+                    <Label className="text-xs">Motivo do ajuste *</Label>
+                    <Input value={motivoCompetencia} onChange={(e) => setMotivoCompetencia(e.target.value)} placeholder="Ex.: nota emitida na competência errada; cliente pediu medição de outro mês." />
+                  </div>
+                  <Button variant="outline" onClick={handleAjustarCompetencia} disabled={ajustarCompetencia.isPending}>
+                    {ajustarCompetencia.isPending ? "Salvando…" : "Ajustar competência"}
+                  </Button>
+                </div>
+                <p className="text-[11px] text-muted-foreground">
+                  Muda o mês em que a nota conta no Relatório de Serviços, no Dashboard e no Controle de Faturamento. Fica registrado no Histórico, com seu nome, a data e o antes/depois.
+                </p>
+              </div>
+            )}
           </section>
         )}
 
