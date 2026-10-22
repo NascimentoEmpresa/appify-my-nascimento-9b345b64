@@ -339,10 +339,12 @@ const TONS: Record<string, string> = {
  * (presentes) ou quando desce (faltas).
  */
 export function Kpi({
-  icon: Icon, rotulo, valor, anterior, tom = "primary", melhorSobe = true, sufixo, dica, formatoDelta = "pct", onClick, ativo,
+  icon: Icon, rotulo, valor, anterior, tom = "primary", melhorSobe = true, sufixo, dica, formatoDelta = "pct", onClick, ativo, semValor,
 }: {
   icon: typeof Users; rotulo: string; valor: number | null; anterior?: number | null; tom?: string; melhorSobe?: boolean;
   sufixo?: string; dica?: string; formatoDelta?: "pct" | "pp"; onClick?: () => void; ativo?: boolean;
+  /** Texto no lugar do número quando valor é null (ex.: "Aguardando" antes de o ponto chegar). */
+  semValor?: string;
 }) {
   let delta: React.ReactNode = null;
   if (valor != null && anterior != null) {
@@ -366,7 +368,9 @@ export function Kpi({
           <p className="truncate text-xs font-semibold text-muted-foreground">{rotulo}</p>
           <p className="flex items-baseline gap-2">
             <span className="text-2xl font-bold tabular-nums leading-tight">
-              {valor == null ? "—" : valor.toLocaleString("pt-BR", { maximumFractionDigits: 1 })}{sufixo}
+              {valor == null
+                ? (semValor ? <span className="text-lg text-warning">{semValor}</span> : "—")
+                : <>{valor.toLocaleString("pt-BR", { maximumFractionDigits: 1 })}{sufixo}</>}
             </span>
             {delta}
           </p>
@@ -467,7 +471,12 @@ export function BadgeContrato({ s }: { s: StatusContrato }) {
 }
 
 /** Célula de percentual com fundo proporcional (verde ≥ 95, âmbar ≥ 91, vermelho abaixo). */
-export function CelulaPct({ v }: { v: number | null }) {
+export function CelulaPct({ v, aguardando }: { v: number | null; aguardando?: boolean }) {
+  // 22/10/2026: antes de o ponto chegar (manhã de hoje) não há efetividade a
+  // medir — mostrava 0% e o contrato aparecia crítico. Ver fecharResumo.
+  if (aguardando) {
+    return <span title="Aguardando apuração total dos pontos da Senior" className="inline-block whitespace-nowrap rounded bg-warning/10 px-1.5 py-0.5 text-center text-[11px] font-semibold text-warning">Aguardando</span>;
+  }
   if (v == null) return <span className="text-muted-foreground">—</span>;
   const cls = v >= 0.95 ? "bg-success/15 text-success" : v >= 0.91 ? "bg-warning/15 text-warning" : "bg-destructive/15 text-destructive";
   return <span className={cn("inline-block min-w-[3.5rem] rounded px-1.5 py-0.5 text-center text-xs font-bold tabular-nums", cls)}>{(v * 100).toLocaleString("pt-BR", { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%</span>;

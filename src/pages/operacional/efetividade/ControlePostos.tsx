@@ -104,7 +104,7 @@ export default function ControlePostos() {
         <div className="space-y-4">
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 2xl:grid-cols-7">
             <Kpi icon={Users} rotulo="Efetivo previsto" valor={r.previsto} anterior={rOntem.previsto} tom="info" onClick={() => setSituacao("")} ativo={!situacao} />
-            <Kpi icon={UserCheck} rotulo="Presentes" valor={r.presentes} anterior={rOntem.presentes} tom="success" dica={pct(r.efetividade)} onClick={() => setSituacao("presente")} ativo={situacao === "presente"} />
+            <Kpi icon={UserCheck} rotulo="Presentes" valor={r.presentes} anterior={rOntem.presentes} tom="success" dica={r.aguardandoApuracao ? "aguardando apuração" : pct(r.efetividade)} onClick={() => setSituacao("presente")} ativo={situacao === "presente"} />
             <Kpi icon={UserX} rotulo="Faltas" valor={r.faltas} anterior={rOntem.faltas} tom="destructive" melhorSobe={false} onClick={() => setSituacao("falta")} ativo={situacao === "falta"} />
             <Kpi icon={Stethoscope} rotulo="Atestados" valor={r.atestados} anterior={rOntem.atestados} tom="violet" melhorSobe={false} onClick={() => setSituacao("atestado")} ativo={situacao === "atestado"} />
             <Kpi icon={UserMinus} rotulo="Afastamentos" valor={r.afastamentos} anterior={rOntem.afastamentos} tom="warning" melhorSobe={false} onClick={() => setSituacao("afastamento")} ativo={situacao === "afastamento"} />
@@ -218,7 +218,7 @@ export default function ControlePostos() {
                         <td className="p-2 text-center tabular-nums">{g!.atestados}</td>
                         <td className="p-2 text-center tabular-nums">{g!.afastamentos}</td>
                         <td className="p-2 text-center tabular-nums">{g!.coberturas}</td>
-                        <td className="p-2 text-center"><CelulaPct v={g!.efetividade} /></td>
+                        <td className="p-2 text-center"><CelulaPct v={g!.efetividade} aguardando={g!.aguardandoApuracao} /></td>
                       </tr>
                     ))}
                   </tbody>

@@ -334,7 +334,7 @@ export default function EfetividadeMensal() {
             <b>{nomeMes(recorte.mes)}</b>: {fmtDataBR(recorte.ini)} a {fmtDataBR(recorte.fim)}
             {recorte.fechado ? " (mês fechado)." : <> — mês corrente, <b>até ontem</b>: o dia de hoje ainda não tem os pontos.</>}
             {sincAte && sincAte < recorte.fim && <> O ponto da Senior vai até <b>{fmtDataBR(sincAte)}</b>; os dias seguintes ficam como aguardando e não entram na conta.</>}
-            {" "}Efetividade = presentes ÷ efetivo previsto (presentes + faltas + atestados + afastamentos); férias e folgas não entram.
+            {" "}Efetividade = presentes ÷ efetivo previsto (presentes + faltas + atestados); férias, afastamentos longos (INSS, licença) e folgas não entram.
             {recorte.mes < mesCorrente && (
               // A Senior só diz a situação de HOJE (EMPREGADOS."Situação" + "Data Afastamento"):
               // não há histórico de afastamento no banco. Quem esteve de atestado
@@ -488,7 +488,7 @@ export default function EfetividadeMensal() {
                       <td className="p-2 text-center tabular-nums">{l.r.ferias || ""}</td>
                       <td className="p-2 text-center tabular-nums">{l.coberturas || ""}</td>
                       <td className="p-2 text-center font-semibold tabular-nums text-destructive">{l.descobertos || ""}</td>
-                      <td className="p-2 text-center"><CelulaPct v={l.r.efetividade} /></td>
+                      <td className="p-2 text-center"><CelulaPct v={l.r.efetividade} aguardando={l.r.aguardandoApuracao} /></td>
                     </tr>
                   ))}
                   {!ordenadas.length && <tr><td colSpan={11}><Vazio texto="Nada no recorte com esses filtros." /></td></tr>}
@@ -506,7 +506,7 @@ export default function EfetividadeMensal() {
                       <td className="p-2 text-center tabular-nums">{total.ferias}</td>
                       <td className="p-2 text-center tabular-nums">{total.coberturas}</td>
                       <td className="p-2 text-center tabular-nums">{total.descobertos}</td>
-                      <td className="p-2 text-center"><CelulaPct v={total.efetividade} /></td>
+                      <td className="p-2 text-center"><CelulaPct v={total.efetividade} aguardando={total.aguardandoApuracao} /></td>
                     </tr>
                   </tfoot>
                 )}
