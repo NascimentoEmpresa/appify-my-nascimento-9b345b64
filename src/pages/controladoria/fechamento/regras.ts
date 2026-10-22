@@ -12,7 +12,7 @@
 //     dos últimos meses realizados;
 //   • custos dos contratos e despesas administrativas: o que já está lançado/programado no Fluxo, ou a média mensal
 //     dos últimos meses realizados, o que for maior (o Fluxo costuma ter pouco programado para frente).
-import { custosVazios, RUBRICAS, rubricaDaLinha, totalCustos, type CustosPorRubrica, type LigacoesRubrica, type LinhaFluxoCusto, type RubricaCusto } from "../faturamento/regras";
+import { custosVazios, ehDespesaDeSocio, RUBRICAS, rubricaDaLinha, totalCustos, type CustosPorRubrica, type LigacoesRubrica, type LinhaFluxoCusto, type RubricaCusto } from "../faturamento/regras";
 
 export type StatusFechamento = "saudavel" | "atencao" | "critico";
 
@@ -40,6 +40,38 @@ export const ORIGEM_ADM =
 
 const r2 = (v: number) => Math.round(v * 100) / 100;
 
+// ── SIS-2026-0709: despesas dos sócios ────────────────────────────────────────────────────────────────────
+// O sócio é um "contrato" administrativo com o nome dele: "ADMINISTRATIVO SÓCIOS - HELENA", "ADMINISTRATIVO SÓCIOS - CARLOS EDUARDO"
+// (também vale "ADMINISTRATIVO SENILTON", sem o "SÓCIOS -"). Os contratos administrativos das empresas levam hífen logo depois de
+// ADMINISTRATIVO ("ADMINISTRATIVO - HAGG") e NÃO são de sócio. As despesas dos sócios saem do Resultado Final
+// (que fica "sem sócios") e entram no Resultado com Sócios, que dá o Lucro Líquido Final.
+export function socioDoContrato(nome: string | null | undefined): string | null {
+  const original = (nome ?? "").trim().toUpperCase();
+  const m = /^ADMINISTRATIVO\s+S[OÓ]CIOS?\s*[-–—]\s*(\S.*)$/.exec(original) ?? /^ADMINISTRATIVO\s+(?![-–—])(\S.*)$/.exec(original);
+  if (!m) return null;
+  const nomeSocio = m[1].trim().toLowerCase().replace(/(^|\s)\p{L}/gu, (c) => c.toUpperCase());
+  return nomeSocio || null;
+}
+
+/** sócio → mês ("YYYY-MM") → total de despesa lançada no Fluxo (saídas do contrato do sócio, sem movimentação interna). */
+export function despesasDosSocios(
+  linhas: LinhaFluxoCusto[],
+  socioPorContrato: Map<string, string>,
+  ligacoes?: LigacoesRubrica,
+): Map<string, Map<string, number>> {
+  const out = new Map<string, Map<string, number>>();
+  for (const l of linhas) {
+    if (!l.contrato_id || !l.data_pagamento) continue;
+    const socio = socioPorContrato.get(l.contrato_id);
+    if (!socio || !ehDespesaDeSocio(l, ligacoes)) continue;
+    const porMes = out.get(socio) ?? new Map<string, number>();
+    const mes = l.data_pagamento.slice(0, 7);
+    porMes.set(mes, (porMes.get(mes) ?? 0) + (l.valor || 0));
+    out.set(socio, porMes);
+  }
+  return out;
+}
+
 // Margem Final = Resultado ÷ Lucro dos Contratos. Sem lucro positivo não há base de comparação (null).
 export function margemFinal(resultado: number, lucro: number): number | null {
   return lucro > 0 ? resultado / lucro : null;
@@ -65,6 +97,8 @@ export interface EntradasMes {
   executavelPorMes: Map<string, number>;
   custosContratoPorMes: Map<string, number>;
   admPorMes: Map<string, CustosPorRubrica>;
+  // SIS-2026-0709: sócio → mês → despesa. Sem isto o Lucro Líquido Final é igual ao Resultado Final.
+  sociosPorMes?: Map<string, Map<string, number>>;
 }
 
 export interface LinhaFechamento {
@@ -76,6 +110,12 @@ export interface LinhaFechamento {
   resultado: number;
   margem: number | null;
   status: StatusFechamento | null;
+  // SIS-2026-0709: despesas de cada sócio no mês, o total e o Lucro Líquido Final (resultado − sócios).
+  socios: Record<string, number>;
+  totalSocios: number;
+  lucroLiquido: number;
+  margemLiquida: number | null;
+  statusLiquido: StatusFechamento | null;
 }
 
 export function somaRubricas(a: CustosPorRubrica, b: CustosPorRubrica): CustosPorRubrica {
@@ -121,7 +161,19 @@ export function montarFechamento(e: EntradasMes): LinhaFechamento[] {
     const lucroContratos = r2(liquido - custoContrato);
     const totalAdm = r2(totalCustos(adm));
     const resultado = r2(lucroContratos - totalAdm);
-    return { mes, projetado, lucroContratos, adm, totalAdm, resultado, margem: margemFinal(resultado, lucroContratos), status: statusDoFechamento(lucroContratos, resultado) };
+
+    // Sócios: nos meses realizados vale o lançado; nos projetados, o lançado ou a média dos últimos meses, o maior (como a administrativa).
+    const socios: Record<string, number> = {};
+    for (const [socio, porMes] of e.sociosPorMes ?? []) {
+      const lancado = porMes.get(mes) ?? 0;
+      socios[socio] = r2(projetado ? Math.max(lancado, media((m) => porMes.get(m) ?? 0)) : lancado);
+    }
+    const totalSocios = r2(Object.values(socios).reduce((s, v) => s + v, 0));
+    const lucroLiquido = r2(resultado - totalSocios);
+    return {
+      mes, projetado, lucroContratos, adm, totalAdm, resultado, margem: margemFinal(resultado, lucroContratos), status: statusDoFechamento(lucroContratos, resultado),
+      socios, totalSocios, lucroLiquido, margemLiquida: margemFinal(lucroLiquido, lucroContratos), statusLiquido: statusDoFechamento(lucroContratos, lucroLiquido),
+    };
   });
 }
 
@@ -134,12 +186,20 @@ export interface TotalFechamento {
   status: StatusFechamento | null;
   lucroRealizado: number;
   lucroProjetado: number;
+  // SIS-2026-0709
+  socios: Record<string, number>;
+  totalSocios: number;
+  lucroLiquido: number;
+  margemLiquida: number | null;
+  statusLiquido: StatusFechamento | null;
 }
 
 export function totalDoFechamento(linhas: LinhaFechamento[]): TotalFechamento {
   let adm = custosVazios();
   let lucro = 0, lucroRealizado = 0, lucroProjetado = 0;
+  const socios: Record<string, number> = {};
   for (const l of linhas) {
+    for (const [s, v] of Object.entries(l.socios)) socios[s] = (socios[s] ?? 0) + v;
     adm = somaRubricas(adm, l.adm);
     lucro += l.lucroContratos;
     if (l.projetado) lucroProjetado += l.lucroContratos; else lucroRealizado += l.lucroContratos;
@@ -147,7 +207,14 @@ export function totalDoFechamento(linhas: LinhaFechamento[]): TotalFechamento {
   const lucroContratos = r2(lucro);
   const totalAdm = r2(totalCustos(adm));
   const resultado = r2(lucroContratos - totalAdm);
-  return { lucroContratos, adm, totalAdm, resultado, margem: margemFinal(resultado, lucroContratos), status: statusDoFechamento(lucroContratos, resultado), lucroRealizado: r2(lucroRealizado), lucroProjetado: r2(lucroProjetado) };
+  for (const s of Object.keys(socios)) socios[s] = r2(socios[s]);
+  const totalSocios = r2(Object.values(socios).reduce((t, v) => t + v, 0));
+  const lucroLiquido = r2(resultado - totalSocios);
+  return {
+    lucroContratos, adm, totalAdm, resultado, margem: margemFinal(resultado, lucroContratos), status: statusDoFechamento(lucroContratos, resultado),
+    lucroRealizado: r2(lucroRealizado), lucroProjetado: r2(lucroProjetado),
+    socios, totalSocios, lucroLiquido, margemLiquida: margemFinal(lucroLiquido, lucroContratos), statusLiquido: statusDoFechamento(lucroContratos, lucroLiquido),
+  };
 }
 
 // Despesas administrativas por mês e rubrica: saídas sem contrato que sejam despesa (a ligação manual da classificação

@@ -12,7 +12,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useScreenAccess } from "@/hooks/useScreenAccess";
 import { useCustosContratoMes } from "./faturamento/useCustosContratoMes";
 import { fmtMoney } from "@/pages/financeiro/nf-emissao/shared";
-import { agruparFaturamento, custosPorContratoMes, custosVazios, CustosPorRubrica, lucroBruto, RUBRICAS, semClassificacao, totaisVazios, totalCustos } from "./faturamento/regras";
+import { agruparFaturamento, custosPorContratoMes, custosVazios, CustosPorRubrica, ehContratoAdministrativo, lucroBruto, RUBRICAS, semClassificacao, totaisVazios, totalCustos } from "./faturamento/regras";
 import { RubricasCusto } from "./faturamento/RubricasCusto";
 import { FaixasTexto, pillDaMargem, TituloComFormula } from "./faturamento/Rentabilidade";
 import { useLigacoesRubrica } from "./faturamento/useLigacoesRubrica";
@@ -72,14 +72,17 @@ export default function LucratividadeContratos() {
   const { data: podeVerRubricas } = useScreenAccess("lucratividade-rubricas", "visualizar");
   const { data: podeAlterarRubricas } = useScreenAccess("lucratividade-rubricas", "alterar");
   const custos = useMemo(() => custosPorContratoMes(fluxo, ligacoes), [fluxo, ligacoes]);
-  const semClass = useMemo(() => semClassificacao(fluxo), [fluxo]);
+  // Contratos ADMINISTRATIVO - ... ficam fora da tela (linhas, totais, exportação e aviso de lançamento sem classificação).
+  const idsAdministrativos = useMemo(() => new Set(contratos.filter((c) => ehContratoAdministrativo(c.nome)).map((c) => c.id)), [contratos]);
+  const semClass = useMemo(() => semClassificacao(fluxo.filter((l) => !l.contrato_id || !idsAdministrativos.has(l.contrato_id))), [fluxo, idsAdministrativos]);
   const fat = useMemo(() => agruparFaturamento(nfs.filter((n) => n.competencia.startsWith(mes)), (n) => n.contrato_id), [nfs, mes]);
-  const clientes = useMemo(() => [...new Set(contratos.map((c) => c.cliente).filter(Boolean))].sort((a, b) => a.localeCompare(b, "pt-BR")), [contratos]);
+  const clientes = useMemo(() => [...new Set(contratos.filter((c) => !idsAdministrativos.has(c.id)).map((c) => c.cliente).filter(Boolean))].sort((a, b) => a.localeCompare(b, "pt-BR")), [contratos, idsAdministrativos]);
 
   const linhas = useMemo<Linha[]>(() => {
     const termo = busca.trim().toLowerCase();
     const out: Linha[] = [];
     for (const c of contratos) {
+      if (idsAdministrativos.has(c.id)) continue;
       if (empresaId !== TODOS && c.empresa_id !== empresaId) continue;
       if (cliente !== TODOS && c.cliente !== cliente) continue;
       if (situacao !== TODOS && c.status !== situacao) continue;
@@ -94,7 +97,7 @@ export default function LucratividadeContratos() {
       out.push({ id: c.id, contrato: c.nome, cliente: c.cliente, status: c.status, exec, bruto: f.bruto, liquido: f.liquido, descontos: f.descontos, custos: cu, totalCusto, lucro, margem });
     }
     return out.sort((a, b) => a.contrato.localeCompare(b.contrato, "pt-BR"));
-  }, [contratos, empresaId, cliente, situacao, busca, fat, custos, mes, executavelDoContrato]);
+  }, [contratos, idsAdministrativos, empresaId, cliente, situacao, busca, fat, custos, mes, executavelDoContrato]);
 
   const total = useMemo(() => {
     const t = { exec: 0, bruto: 0, liquido: 0, descontos: 0, totalCusto: 0, custos: custosVazios() };
@@ -295,7 +298,7 @@ export default function LucratividadeContratos() {
             </Table>
           </div>
           <p className="text-[11px] text-muted-foreground">
-            Custos em regime de caixa: saídas do Fluxo de Caixa pagas em {rotuloMes(mes)} e vinculadas ao contrato. Transferências entre contas, aplicações, empréstimos, financiamentos e distribuições ficam de fora. Pagamentos sem contrato não entram em nenhuma linha.
+            Custos em regime de caixa: saídas do Fluxo de Caixa pagas em {rotuloMes(mes)} e vinculadas ao contrato. Transferências entre contas, aplicações, empréstimos, financiamentos e distribuições ficam de fora. Pagamentos sem contrato não entram em nenhuma linha. Contratos ADMINISTRATIVO - … ficam fora desta tela.
           </p>
           {semClass.linhas > 0 && (
             <p className="text-[11px] text-amber-700 dark:text-amber-400">
