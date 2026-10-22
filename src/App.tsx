@@ -170,6 +170,7 @@ import DREGerencial from "./pages/controladoria/DREGerencial";
 import OrcamentoCompleto from "./pages/controladoria/OrcamentoCompleto";
 import MaloteClassificacoesAdministrativo from "./pages/malote/ClassificacoesAdministrativo";
 import MaloteOrcamentoAdministrativo from "./pages/malote/OrcamentoAdministrativo";
+import MaloteOrcamentoAdmSocios from "./pages/malote/OrcamentoAdmSocios";
 import MaloteClassificacoesMalote from "./pages/malote/ClassificacoesMalote";
 import MaloteOrcamentoContratos from "./pages/malote/OrcamentoContratos";
 import MaloteOrcamentoGeral from "./pages/malote/OrcamentoGeral";
@@ -765,6 +766,7 @@ const App = () => (
             <Route path="malote/solicitacao/:id" element={<MaloteSolicitacaoVisualizar />} />
             <Route path="malote/classificacoes-administrativo" element={<MaloteClassificacoesAdministrativo />} />
             <Route path="malote/orcamento-administrativo" element={<MaloteOrcamentoAdministrativo />} />
+            <Route path="malote/orcamento-adm-socios" element={<MaloteOrcamentoAdmSocios />} />
             <Route path="malote/classificacoes-malote" element={<MaloteClassificacoesMalote />} />
             <Route path="malote/orcamento-contratos" element={<MaloteOrcamentoContratos />} />
             <Route path="malote/orcamento-geral" element={<MaloteOrcamentoGeral />} />
