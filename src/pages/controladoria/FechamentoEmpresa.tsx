@@ -512,7 +512,7 @@ export default function FechamentoEmpresa() {
                     </Table>
                   )}
                   <p className="border-t px-3 py-2 text-[11px] text-muted-foreground">
-                    Despesas dos sócios = saídas do Fluxo de Caixa nos contratos "ADMINISTRATIVO SÓCIOS - nome do sócio". Elas ficam fora do Resultado Final (resumo mensal sem sócios) e entram aqui, depois dele, para chegar ao Lucro Líquido Final.
+                    Despesas dos sócios = todas as saídas do Fluxo de Caixa nos contratos "ADMINISTRATIVO SÓCIOS - nome do sócio", seja qual for a classificação, pelo mês da competência. Elas ficam fora do Resultado Final (resumo mensal sem sócios) e entram aqui, depois dele, para chegar ao Lucro Líquido Final.
                   </p>
                 </CardContent>
               </Card>

@@ -11,10 +11,6 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { SearchableMultiSelect } from "@/components/ui/searchable-multi-select";
 import { useEmpresasGrupo } from "@/hooks/useMaloteDespesa";
-import { useClassificacoesAdministrativo } from "@/hooks/useMaloteClassificacaoAdministrativo";
-import { useLigacoesAdministrativoClassificacao } from "@/hooks/useMaloteAdministrativoClassificacaoLink";
-import { useLigacoesClassificacaoMalote } from "@/hooks/useMaloteClassificacaoMaloteLink";
-import { classificacaoCanonica, mapaClassificacaoVinculada } from "@/hooks/useMaloteClassificacaoMaloteLink";
 import { useClassificacoesOrcamentoAdmin } from "@/hooks/usePlanejamentoOrcamentario";
 import { useOrcamentoContratos, type OrcamentoContratoGrupo } from "@/hooks/useOrcamentoContratos";
 import { useUtilizadoOrcamento, type UtilizadoOrcamentoLinha } from "@/hooks/useUtilizadoOrcamento";
@@ -35,8 +31,8 @@ const TEXTO_ABA: Record<TipoOrcamento, { titulo: string; centro: string; exemplo
   socios: { titulo: "Orçamento Sócios", centro: "ADMINISTRATIVO SÓCIOS - + SÓCIO", exemplo: "ADMINISTRATIVO SÓCIOS - GUIOMAR" },
 };
 
-const novaLinha = (classificacaoAdministrativaId: string): LinhaOrcamento => ({
-  classificacaoAdministrativaId, descricao: "", modo: "percentual", percentual: 0, origemIds: [], valorManual: 0, distribuicao: {},
+const novaLinha = (classificacaoMaloteId: string): LinhaOrcamento => ({
+  classificacaoMaloteId, descricao: "", modo: "percentual", percentual: 0, origemIds: [], valorManual: 0, distribuicao: {},
 });
 
 interface DadosComuns {
@@ -45,24 +41,25 @@ interface DadosComuns {
   grupos: OrcamentoContratoGrupo[];
   utilizado: UtilizadoOrcamentoLinha[];
   opcoesOrigem: { value: string; label: string }[];
-  maloteIdPorAdministrativa: Map<string, string>;
+  /** Todas as Classificações do Malote ativas (Administrativo e Contrato). */
+  catalogo: { id: string; nome: string }[];
 }
 
 function AbaOrcamento({ tipo, dados, visivel }: { tipo: TipoOrcamento; dados: DadosComuns; visivel: boolean }) {
   const texto = TEXTO_ABA[tipo];
   const { data: salvas, isLoading } = useLinhasOrcamentoAdmSocios(tipo);
-  const { data: catalogo = [] } = useClassificacoesAdministrativo();
+  const catalogo = dados.catalogo;
   const salvar = useSalvarOrcamentoAdmSocios(tipo);
   const [linhas, setLinhas] = useState<LinhaOrcamento[]>([]);
   const [sujo, setSujo] = useState(false);
   const [abertas, setAbertas] = useState<Set<string>>(new Set());
   const [busca, setBusca] = useState("");
 
-  // Todas as Classificações Administrativo ativas entram no orçamento (Iury): o que já foi salvo mantém a configuração, as demais entram
-  // zeradas (sem origem, descrição nem %) para serem preenchidas. Classificação nova no catálogo aparece aqui sozinha.
+  // Todas as Classificações do Malote ativas (nome da Classificação Malote, Iury) entram no orçamento: o que já foi salvo mantém a
+  // configuração, as demais entram zeradas (sem origem, descrição nem %). Não depende do Orçamento Administrativo atual nem de ligação.
   useEffect(() => {
     if (!salvas || sujo || catalogo.length === 0) return;
-    const porId = new Map(salvas.map((l) => [l.classificacaoAdministrativaId, l]));
+    const porId = new Map(salvas.map((l) => [l.classificacaoMaloteId, l]));
     setLinhas(catalogo.map((c) => porId.get(c.id) ?? novaLinha(c.id)));
   }, [salvas, catalogo, sujo]);
 
@@ -72,13 +69,13 @@ function AbaOrcamento({ tipo, dados, visivel }: { tipo: TipoOrcamento; dados: Da
   const calculo = useMemo(() => linhas.map((l) => {
     const saldo = saldoDaOrigemPorEmpresa(dados.grupos, dados.utilizado, l.origemIds, dados.anoMes);
     const orcado = orcadoPorEmpresa(l, saldo, empresaIds);
-    const gasto = utilizadoPorEmpresa(dados.utilizado, dados.maloteIdPorAdministrativa.get(l.classificacaoAdministrativaId), tipo, dados.anoMes);
+    const gasto = utilizadoPorEmpresa(dados.utilizado, l.classificacaoMaloteId, tipo, dados.anoMes);
     const totalOrcado = [...orcado.values()].reduce((s, v) => s + v, 0);
     const totalUtilizado = [...gasto.values()].reduce((s, v) => s + v.valor, 0);
     return { linha: l, saldo, orcado, gasto, totalOrcado, totalUtilizado };
   }), [linhas, dados, empresaIds, tipo]);
 
-  const filtradas = calculo.filter((c) => !busca.trim() || `${nomes.get(c.linha.classificacaoAdministrativaId) ?? ""} ${c.linha.descricao}`.toLowerCase().includes(busca.toLowerCase()));
+  const filtradas = calculo.filter((c) => !busca.trim() || `${nomes.get(c.linha.classificacaoMaloteId) ?? ""} ${c.linha.descricao}`.toLowerCase().includes(busca.toLowerCase()));
   const totalOrcado = calculo.reduce((s, c) => s + c.totalOrcado, 0);
   const totalUtilizado = calculo.reduce((s, c) => s + c.totalUtilizado, 0);
   const totalPercentual = linhas.filter((l) => l.modo === "percentual").reduce((s, l) => s + l.percentual, 0);
@@ -86,7 +83,7 @@ function AbaOrcamento({ tipo, dados, visivel }: { tipo: TipoOrcamento; dados: Da
 
   function alterar(id: string, mudanca: Partial<LinhaOrcamento>) {
     setSujo(true);
-    setLinhas((atual) => atual.map((l) => (l.classificacaoAdministrativaId === id ? { ...l, ...mudanca } : l)));
+    setLinhas((atual) => atual.map((l) => (l.classificacaoMaloteId === id ? { ...l, ...mudanca } : l)));
   }
   function alternar(id: string) {
     setAbertas((a) => { const n = new Set(a); n.has(id) ? n.delete(id) : n.add(id); return n; });
@@ -96,7 +93,7 @@ function AbaOrcamento({ tipo, dados, visivel }: { tipo: TipoOrcamento; dados: Da
     const base = soma > 0 ? empresaIds.map((id) => Math.round(((l.distribuicao[id] ?? 0) / soma) * 10000) / 100) : empresaIds.map(() => Math.round(10000 / empresaIds.length) / 100);
     const resto = Math.round((100 - base.slice(0, -1).reduce((s, v) => s + v, 0)) * 100) / 100;
     base[base.length - 1] = resto;
-    alterar(l.classificacaoAdministrativaId, { distribuicao: Object.fromEntries(empresaIds.map((id, i) => [id, base[i]])) });
+    alterar(l.classificacaoMaloteId, { distribuicao: Object.fromEntries(empresaIds.map((id, i) => [id, base[i]])) });
   }
   async function salvarTudo() {
     if (problemas.length > 0) { toast.error(problemas[0].mensagem); return; }
@@ -162,9 +159,8 @@ function AbaOrcamento({ tipo, dados, visivel }: { tipo: TipoOrcamento; dados: Da
                 {isLoading && <TableRow><TableCell colSpan={10} className="text-center text-muted-foreground py-8">Carregando...</TableCell></TableRow>}
                 {!isLoading && filtradas.length === 0 && <TableRow><TableCell colSpan={10} className="text-center text-muted-foreground py-8">Nenhuma classificação encontrada.</TableCell></TableRow>}
                 {filtradas.map(({ linha: l, saldo, orcado, gasto, totalOrcado: to, totalUtilizado: tu }) => {
-                  const id = l.classificacaoAdministrativaId;
+                  const id = l.classificacaoMaloteId;
                   const aberta = abertas.has(id);
-                  const semLigacao = !dados.maloteIdPorAdministrativa.get(id);
                   const somaDistribuicao = empresaIds.reduce((s, e) => s + (l.distribuicao[e] ?? 0), 0);
                   return (
                     <Fragment key={id}>
@@ -172,7 +168,7 @@ function AbaOrcamento({ tipo, dados, visivel }: { tipo: TipoOrcamento; dados: Da
                         <TableCell><Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => alternar(id)}>{aberta ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}</Button></TableCell>
                         <TableCell className="font-medium">
                           {nomes.get(id) ?? "—"}
-                          {semLigacao && <span className="block text-[10px] font-normal text-amber-700" title="Sem ligação com uma Classificação do Malote (Configurações → Ligações): o utilizado não consegue ser apurado.">sem ligação — utilizado não apurado</span>}
+                          
                         </TableCell>
                         <TableCell className="space-y-1">
                           <Select value={l.modo} onValueChange={(v) => alterar(id, { modo: v as ModoOrcamento })}>
@@ -290,21 +286,17 @@ export default function OrcamentoAdmSocios() {
   const { data: empresas = [] } = useEmpresasGrupo();
   const { data: grupos = [] } = useOrcamentoContratos(anoMes);
   const { data: utilizado = [] } = useUtilizadoOrcamento();
-  const { data: ligacoesAdm = [] } = useLigacoesAdministrativoClassificacao();
-  const { data: ligacoesMalote = [] } = useLigacoesClassificacaoMalote();
   const { data: classificacoesMalote = [] } = useClassificacoesOrcamentoAdmin();
 
   const dados: DadosComuns = useMemo(() => {
     const nomePorId = new Map(classificacoesMalote.map((c) => [c.id, c.nome]));
-    const vinculo = mapaClassificacaoVinculada(ligacoesMalote);
     // origem = classificações do Malote que têm orçado em algum contrato (as do Orçamento Geral - Contratos)
     const ids = new Set<string>();
     for (const g of grupos) for (const r of g.rubricas) if (r.classificacaoMaloteId && r.valor > 0) ids.add(r.classificacaoMaloteId);
     const opcoesOrigem = [...ids].map((id) => ({ value: id, label: nomePorId.get(id) ?? id })).sort((a, b) => a.label.localeCompare(b.label, "pt-BR"));
-    const maloteIdPorAdministrativa = new Map<string, string>();
-    for (const l of ligacoesAdm) maloteIdPorAdministrativa.set(l.classificacao_administrativa_id, classificacaoCanonica(vinculo, l.classificacao_malote_id) ?? l.classificacao_malote_id);
-    return { anoMes, empresas, grupos, utilizado, opcoesOrigem, maloteIdPorAdministrativa };
-  }, [anoMes, empresas, grupos, utilizado, ligacoesAdm, ligacoesMalote, classificacoesMalote]);
+    const catalogo = classificacoesMalote.filter((c) => c.ativo).map((c) => ({ id: c.id, nome: c.nome })).sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"));
+    return { anoMes, empresas, grupos, utilizado, opcoesOrigem, catalogo };
+  }, [anoMes, empresas, grupos, utilizado, classificacoesMalote]);
 
   return (
     <div className="space-y-6 p-6">
