@@ -179,8 +179,16 @@ export interface NfFaturamento {
 }
 
 // Nota que conta no faturamento: Código N, já validada, nem cancelada nem substituída.
-export function contaNoFaturamento(n: Pick<NfFaturamento, "tipo_nota" | "status" | "situacao_site_pmt" | "situacao_dominio">): boolean {
-  return n.tipo_nota === "N" && !foraDoRelatorio(n) && !naoContabilizaKpi(n);
+// Sem `codigos`, só o Código N (como sempre). As telas com o filtro "Código" passam os códigos escolhidos.
+export function contaNoFaturamento(n: Pick<NfFaturamento, "tipo_nota" | "status" | "situacao_site_pmt" | "situacao_dominio">, codigos?: readonly string[]): boolean {
+  const codigoOk = codigos ? codigos.includes(n.tipo_nota) : n.tipo_nota === "N";
+  return codigoOk && !foraDoRelatorio(n) && !naoContabilizaKpi(n);
+}
+
+// A nota não está cancelada nem substituída e conta nos KPIs, QUALQUER que seja o código. Quem recebe notas já filtradas por código
+// (useBaseFaturamento) usa esta, para não derrubar os códigos que o filtro escolheu.
+export function notaValidaNoFaturamento(n: Pick<NfFaturamento, "status" | "situacao_site_pmt" | "situacao_dominio">): boolean {
+  return !foraDoRelatorio(n) && !naoContabilizaKpi(n);
 }
 
 export interface TotaisFaturamento {
@@ -263,7 +271,7 @@ export function executavelSemPlanilha(
 // Notas que ainda têm saldo a receber, do maior para o menor.
 export function notasComSaldo<T extends NfFaturamento>(nfs: T[]): { nf: T; saldo: number }[] {
   return nfs
-    .filter(contaNoFaturamento)
+    .filter(notaValidaNoFaturamento)
     .map((nf) => ({ nf, saldo: aReceberDaNf(nf) }))
     .filter((x) => x.saldo > 0.005)
     .sort((a, b) => b.saldo - a.saldo);
@@ -273,7 +281,7 @@ export function notasComSaldo<T extends NfFaturamento>(nfs: T[]): { nf: T; saldo
 export function agruparFaturamento<T extends NfFaturamento>(nfs: T[], chaveDe: (n: T) => string | null): Map<string, TotaisFaturamento> {
   const mapa = new Map<string, TotaisFaturamento>();
   for (const n of nfs) {
-    if (!contaNoFaturamento(n)) continue;
+    if (!notaValidaNoFaturamento(n)) continue;
     const chave = chaveDe(n);
     if (chave === null) continue;
     mapa.set(chave, somarNf(mapa.get(chave) ?? totaisVazios(), n));

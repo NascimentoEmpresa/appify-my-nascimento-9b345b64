@@ -11,6 +11,7 @@ import { Bar, BarChart, CartesianGrid, Cell, Legend, Line, LineChart, Pie, PieCh
 import { Info, Percent, Printer, ReceiptText, TrendingUp, CheckCircle2 } from "lucide-react";
 import { fmtMoney } from "@/pages/financeiro/nf-emissao/shared";
 import { agruparFaturamento, custosPorContratoMes, custosVazios, ehContratoAdministrativo, RUBRICAS, totalCustos, type CustosPorRubrica } from "./faturamento/regras";
+import { CODIGO_PADRAO, codigosDoFiltro, FiltroCodigoNota } from "./faturamento/FiltroCodigoNota";
 import { rotuloMes, useBaseFaturamento } from "./faturamento/useBaseFaturamento";
 import { useCustosContratoAno, useDespesasAdmAno } from "./faturamento/useCustosContratoMes";
 import { useLigacoesRubrica } from "./faturamento/useLigacoesRubrica";
@@ -53,7 +54,10 @@ function FaixasStatus() {
 }
 
 export default function FechamentoEmpresa() {
-  const { contratos, nfs, empresas, contratoPorId, executavelDoContrato, carregando } = useBaseFaturamento();
+  // Filtro Código (tipo da nota): padrão N, como sempre foi.
+  const [codigo, setCodigo] = useState(CODIGO_PADRAO);
+  const codigos = useMemo(() => codigosDoFiltro(codigo), [codigo]);
+  const { contratos, nfs, empresas, contratoPorId, executavelDoContrato, carregando } = useBaseFaturamento(codigos);
 
   const hoje = new Date();
   const anoAtual = hoje.getFullYear();
@@ -212,6 +216,7 @@ export default function FechamentoEmpresa() {
           <SelectTrigger className="h-8 w-[90px] text-xs"><SelectValue /></SelectTrigger>
           <SelectContent>{anos.map((a) => <SelectItem key={a} value={String(a)}>{a}</SelectItem>)}</SelectContent>
         </Select>
+        <FiltroCodigoNota valor={codigo} onChange={setCodigo} />
         <Select value={empresaId} onValueChange={(v) => { setEmpresaId(v); setContratoId(TODOS); }}>
           <SelectTrigger className="h-8 w-[200px] text-xs"><SelectValue placeholder="Empresa" /></SelectTrigger>
           <SelectContent>
@@ -235,7 +240,7 @@ export default function FechamentoEmpresa() {
             {contratos.filter((c) => empresaId === TODOS || c.empresa_id === empresaId).sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR")).map((c) => <SelectItem key={c.id} value={c.id}>{c.nome}</SelectItem>)}
           </SelectContent>
         </Select>
-        <Button variant="ghost" size="sm" className="h-8 text-xs" onClick={() => { setEmpresaId(TODOS); setContratoId(TODOS); setPeriodo(TODOS); setBuscaMes(""); }}>Limpar</Button>
+        <Button variant="ghost" size="sm" className="h-8 text-xs" onClick={() => { setEmpresaId(TODOS); setContratoId(TODOS); setPeriodo(TODOS); setBuscaMes(""); setCodigo(CODIGO_PADRAO); }}>Limpar</Button>
       </div>
 
       {erro && <p className="rounded-md border border-red-300 bg-red-50 px-3 py-2 text-xs text-red-800">Não foi possível carregar o Fluxo de Caixa: {(erro as Error).message}</p>}

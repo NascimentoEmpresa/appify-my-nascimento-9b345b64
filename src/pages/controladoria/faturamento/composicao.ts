@@ -2,7 +2,7 @@
 // que fecha na célula clicada e a lista do que a compõe. Funções puras: a tela só passa o recorte da célula.
 import { diasDesdeEmissao } from "@/pages/financeiro/nf-emissao/shared";
 import {
-  RUBRICAS, aReceberDaNf, contaNoFaturamento, lucroBruto, mesDoCusto, notasComSaldo, ponteAReceber, rubricaDaLinha, somarNf, totaisVazios,
+  RUBRICAS, aReceberDaNf, notaValidaNoFaturamento, lucroBruto, mesDoCusto, notasComSaldo, ponteAReceber, rubricaDaLinha, somarNf, totaisVazios,
   type LigacoesRubrica, type LinhaFluxoCusto, type NfFaturamento, type TotaisFaturamento,
 } from "./regras";
 
@@ -93,7 +93,7 @@ const mesAno = (iso: string | null | undefined) => (iso ? `${iso.slice(5, 7)}/${
 
 export function totaisDoEscopo(nfs: NfFaturamento[]): TotaisFaturamento {
   const t = totaisVazios();
-  for (const n of nfs) if (contaNoFaturamento(n)) somarNf(t, n);
+  for (const n of nfs) if (notaValidaNoFaturamento(n)) somarNf(t, n);
   return t;
 }
 
@@ -137,7 +137,7 @@ export function despesasDoEscopo(custos: LinhaFluxoCusto[], escopo: Pick<EscopoD
 // ── Executável: por contrato, de onde vem o valor ──
 function execDoEscopo(escopo: EscopoDetalhe, ctx: ContextoDetalhe) {
   const brutoPorContrato = new Map<string, number>();
-  for (const n of escopo.nfs) if (contaNoFaturamento(n)) brutoPorContrato.set(n.contrato_id, (brutoPorContrato.get(n.contrato_id) ?? 0) + (n.vlr_bruto_total || 0));
+  for (const n of escopo.nfs) if (notaValidaNoFaturamento(n)) brutoPorContrato.set(n.contrato_id, (brutoPorContrato.get(n.contrato_id) ?? 0) + (n.vlr_bruto_total || 0));
   const linhas = escopo.contratoIds.map((id) => {
     let exec = 0;
     const fontes = new Set<FonteExecutavel>();
@@ -168,7 +168,7 @@ function tabelaNotas(escopo: EscopoDetalhe, metrica: Metrica): TabelaDetalhe {
       default: return n.vlr_bruto_total || 0;
     }
   };
-  const base = escopo.nfs.filter(contaNoFaturamento);
+  const base = escopo.nfs.filter(notaValidaNoFaturamento);
   const doRecorte = metrica === "aReceber" ? notasComSaldo(base).map((x) => x.nf as NfDetalhe) : base.filter((n) => metrica === "recebido" || metrica === "contaVinculada" ? Math.abs(valorDe(n)) > 0.005 : true);
   const ordenadas = [...doRecorte].sort((a, b) => valorDe(b) - valorDe(a));
   const mostradas = ordenadas.slice(0, LIMITE_LINHAS);
@@ -265,7 +265,7 @@ export function montarComposicao(metrica: Metrica, escopo: EscopoDetalhe, ctx: C
     const lf = lucroBruto(t.liquido, d.total);
     const lr = t.recebido - d.total;
     const liquidoPorContrato = new Map<string, number>();
-    for (const n of escopo.nfs) if (contaNoFaturamento(n)) liquidoPorContrato.set(n.contrato_id, (liquidoPorContrato.get(n.contrato_id) ?? 0) + (n.vlr_liquido_total || 0));
+    for (const n of escopo.nfs) if (notaValidaNoFaturamento(n)) liquidoPorContrato.set(n.contrato_id, (liquidoPorContrato.get(n.contrato_id) ?? 0) + (n.vlr_liquido_total || 0));
     const ids = [...new Set([...liquidoPorContrato.keys(), ...d.porContrato.keys()])];
     const linhas = ids
       .map((id) => {

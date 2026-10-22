@@ -16,6 +16,7 @@ import { agruparFaturamento, custosPorContratoMes, custosVazios, CustosPorRubric
 import { RubricasCusto } from "./faturamento/RubricasCusto";
 import { FaixasTexto, pillDaMargem, TituloComFormula } from "./faturamento/Rentabilidade";
 import { useLigacoesRubrica } from "./faturamento/useLigacoesRubrica";
+import { CODIGO_PADRAO, codigosDoFiltro, FiltroCodigoNota } from "./faturamento/FiltroCodigoNota";
 import { rotuloMes, useBaseFaturamento } from "./faturamento/useBaseFaturamento";
 import { BannerAuditoria } from "./auditoria/BannerAuditoria";
 
@@ -48,7 +49,10 @@ interface Linha {
 }
 
 export default function LucratividadeContratos() {
-  const { contratos, nfs, empresas, executavelDoContrato, carregando } = useBaseFaturamento();
+  // Filtro Código (tipo da nota): padrão N, como sempre foi.
+  const [codigo, setCodigo] = useState(CODIGO_PADRAO);
+  const codigos = useMemo(() => codigosDoFiltro(codigo), [codigo]);
+  const { contratos, nfs, empresas, executavelDoContrato, carregando } = useBaseFaturamento(codigos);
   const hoje = new Date();
   const [mes, setMes] = useState(`${hoje.getFullYear()}-${String(hoje.getMonth() + 1).padStart(2, "0")}`);
   const { data: fluxo = [], isLoading: carregandoFluxo, error: erroFluxo } = useCustosContratoMes(mes);
@@ -141,7 +145,7 @@ export default function LucratividadeContratos() {
         module="Controladoria"
         breadcrumb={["Lucratividade de Contratos"]}
         title="Lucratividade de Contratos"
-        subtitle="Faturamento (NFs Código N da competência) × custos da competência (saídas do Fluxo de Caixa com contrato)."
+        subtitle="Faturamento (NFs da competência, do código escolhido — padrão N) × custos da competência (saídas do Fluxo de Caixa com contrato)."
         actions={
           <div className="flex gap-2 print:hidden">
             <Button variant="outline" size="sm" onClick={() => window.print()}><Printer className="h-4 w-4 mr-1" />Imprimir</Button>
@@ -166,6 +170,7 @@ export default function LucratividadeContratos() {
           <SelectTrigger className="h-8 w-[110px] text-xs"><SelectValue /></SelectTrigger>
           <SelectContent>{mesesDisponiveis.map((m) => <SelectItem key={m} value={m}>{rotuloMes(m)}</SelectItem>)}</SelectContent>
         </Select>
+        <FiltroCodigoNota valor={codigo} onChange={setCodigo} />
         <Select value={empresaId} onValueChange={setEmpresaId}>
           <SelectTrigger className="h-8 w-[200px] text-xs"><SelectValue placeholder="Empresa" /></SelectTrigger>
           <SelectContent>
