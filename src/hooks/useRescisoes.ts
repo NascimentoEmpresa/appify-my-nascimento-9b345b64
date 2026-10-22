@@ -16,17 +16,17 @@ import {
 const sb = supabase as unknown as SupabaseClient;
 
 /**
- * Os dados do módulo Rescisões (21/10/2026, mig 20261021000030): as
- * solicitações do ERP que chegaram ao RH + as fichas da RH_RESCISAO (ERP,
- * importadas da planilha e lançadas à mão), juntas numa lista só —
- * `montarLinhasRescisao`, a mesma regra que a tabela do RH usava.
+ * Os dados de Recursos Humanos › Rescisões: as linhas da RH_RESCISAO (do
+ * ERP, importadas da planilha e lançadas à mão) + a solicitação de cada
+ * linha do ERP, juntas em `montarLinhasRescisao`.
  *
- * As solicitações são as que o RH enxerga (o mesmo recorte de status do
- * PainelDemissoes, etapa "rh"): do "Pendente RH" em diante, com as
- * canceladas — a cancelada sem ficha a própria montagem tira.
+ * Desde 22/10/2026 (mig 20261022000400) a linha do ERP nasce no banco quando
+ * o RH libera a demissão — a solicitação aqui só completa (status do fluxo,
+ * link). Por isso o recorte é "do RH em diante", sem o Pendente RH: o que o
+ * RH ainda não liberou não é rescisão.
  */
 export const STATUS_SOLICITACAO_NA_RESCISAO = [
-  STATUS_CANCELAMENTO_SOLICITADO, "Pendente RH", "Pendente SST", STATUS_SST_RECEBIDA,
+  STATUS_CANCELAMENTO_SOLICITADO, "Pendente SST", STATUS_SST_RECEBIDA,
   STATUS_SST_AGENDADO, STATUS_SST_ASO_VALIDO, "Concluída", "Cancelada",
 ];
 
@@ -96,34 +96,32 @@ export function useRescisoes() {
 
   const linhas = useMemo(() => montarLinhasRescisao(solicitacoes, rescisoes, empregados), [solicitacoes, rescisoes, empregados]);
 
-  /** Grava na ficha da linha (cria a ficha da solicitação na primeira vez). */
+  /** Grava na linha (toda linha da tela já existe no banco desde a mig 20261022000400). */
   const salvar = useCallback(async (l: LinhaRescisao, dados: Partial<RescisaoRH>): Promise<RescisaoRH> => {
-    const corpo = { ...dados, atualizado_por: quemSou || null };
-    const { data, error } = l.rescisao
-      ? await sb.from(TABELA_RESCISAO).update(corpo).eq("id", l.rescisao.id).select().single()
-      : await sb.from(TABELA_RESCISAO).insert({ ...corpo, solicitacao_id: l.solicitacao?.id ?? null, origem: "erp" }).select().single();
+    if (!l.rescisao) throw new Error("Linha sem registro de rescisão — atualize a tela.");
+    const { data, error } = await sb.from(TABELA_RESCISAO)
+      .update({ ...dados, atualizado_por: quemSou || null }).eq("id", l.rescisao.id).select().single();
     if (error) throw new Error(error.message);
     const nova = data as RescisaoRH;
-    setRescisoes((rs) => (rs.some((r) => r.id === nova.id) ? rs.map((r) => (r.id === nova.id ? nova : r)) : [...rs, nova]));
+    setRescisoes((rs) => rs.map((r) => (r.id === nova.id ? nova : r)));
     return nova;
   }, [quemSou]);
 
   /**
-   * Arrastar no kanban: a coluna muda NA HORA (otimista) e volta se o banco
-   * recusar — esperar o servidor a cada card arrastado é o que deixava o
-   * quadro do Recrutamento "pesado".
+   * Editar uma célula da planilha: muda NA HORA (otimista) e volta se o
+   * banco recusar — esperar o servidor a cada célula é o que deixa uma
+   * planilha de 1.100 linhas "pesada".
    */
-  const mover = useCallback(async (l: LinhaRescisao, dados: Partial<RescisaoRH>) => {
-    if (l.rescisao) {
-      const antes = l.rescisao;
-      setRescisoes((rs) => rs.map((r) => (r.id === antes.id ? { ...r, ...dados, status_desde: new Date().toISOString() } : r)));
-      try { await salvar(l, dados); } catch (e) {
-        setRescisoes((rs) => rs.map((r) => (r.id === antes.id ? antes : r)));
-        throw e;
-      }
-      return;
+  const atualizar = useCallback(async (l: LinhaRescisao, dados: Partial<RescisaoRH>) => {
+    if (!l.rescisao) throw new Error("Linha sem registro de rescisão — atualize a tela.");
+    const antes = l.rescisao;
+    const mudouStatus = dados.status_rescisao != null && dados.status_rescisao !== antes.status_rescisao;
+    setRescisoes((rs) => rs.map((r) => (r.id === antes.id
+      ? { ...r, ...dados, ...(mudouStatus ? { status_desde: new Date().toISOString() } : {}) } : r)));
+    try { await salvar(l, dados); } catch (e) {
+      setRescisoes((rs) => rs.map((r) => (r.id === antes.id ? antes : r)));
+      throw e;
     }
-    await salvar(l, dados);
   }, [salvar]);
 
   /** Rescisão lançada à mão (a linha que o RH digitava na planilha, sem solicitação). */
@@ -142,7 +140,7 @@ export function useRescisoes() {
     setRescisoes((rs) => rs.filter((x) => x.id !== r.id));
   }, []);
 
-  return { linhas, solicitacoes, rescisoes, empregados, carregando, erro, carregar, salvar, mover, criarManual, excluir, quemSou };
+  return { linhas, solicitacoes, rescisoes, empregados, carregando, erro, carregar, salvar, atualizar, criarManual, excluir, quemSou };
 }
 
 export interface HistoricoRescisao {
