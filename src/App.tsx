@@ -351,6 +351,7 @@ import DocumentosEncarregado from "./pages/encarregados/DocumentosEncarregado";
 import DocumentosRh from "./pages/rh/DocumentosRh";
 import ExecutarChamado from "./pages/chamados/ExecutarChamado";
 import AcompanharChamado from "./pages/chamados/AcompanharChamado";
+import MonitoramentoChamados from "./pages/chamados/MonitoramentoChamados";
 import WhatsAppInbox from "./pages/whatsapp/WhatsAppInbox";
 import WhatsAppChatbot from "./pages/whatsapp/WhatsAppChatbot";
 import WhatsAppTestes from "./pages/whatsapp/WhatsAppTestes";
@@ -601,6 +602,8 @@ const App = () => (
             <Route path="central-servicos" element={<CentralServicos />} />
             <Route path="central-servicos/chamados" element={<MeusChamados base="/app/central-servicos/chamados" />} />
             <Route path="central-servicos/chamados/novo" element={<AbrirChamado base="/app/central-servicos/chamados" />} />
+            {/* Monitoramento de Chamados (mig 20261022000180): qualidade das solicitações, por solicitante. */}
+            <Route path="central-servicos/chamados/monitoramento" element={<MonitoramentoChamados />} />
             <Route path="central-servicos/chamados/:id/acompanhar" element={<AcompanharChamado base="/app/central-servicos/chamados" />} />
             {/* WhatsApp — Chatbot */}
             <Route path="whatsapp" element={<WhatsAppInbox />} />
