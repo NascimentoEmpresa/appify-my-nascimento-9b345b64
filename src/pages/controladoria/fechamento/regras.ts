@@ -1,18 +1,18 @@
 // SIS-2026-0642: regras do Fechamento da Empresa (Controladoria). Funções puras — a tela só junta as fontes.
 //
 //   Lucro dos Contratos = valor líquido faturado − custos dos contratos (mesma conta da Lucratividade de Contratos).
-//   Despesas Administrativas = saídas do Fluxo de Caixa SEM contrato, nas mesmas rubricas dos contratos
-//                              (transferência, aplicação, empréstimo, financiamento etc. não contam).
+//   Despesas Administrativas = saídas do Fluxo de Caixa SEM contrato e as dos contratos "ADMINISTRATIVO - …" (centros de custo da empresa,
+//                              pedido da Controladoria, 22/10/2026), nas mesmas rubricas dos contratos (transferência, aplicação, empréstimo, financiamento etc. não contam).
 //   Resultado Final = Lucro dos Contratos − Total de Despesas Administrativas.
 //   Margem Final = Resultado Final ÷ Lucro dos Contratos.
 //
-// Meses até o atual são realizados (regime de caixa, mês do pagamento; faturamento pela competência da nota).
+// Meses até o atual são realizados (despesa e faturamento pela competência; SIS-2026-0708).
 // Meses futuros são PROJETADOS:
 //   • faturamento: notas já emitidas na competência; sem nota, o executável do mês × a proporção líquido/executável
 //     dos últimos meses realizados;
 //   • custos dos contratos e despesas administrativas: o que já está lançado/programado no Fluxo, ou a média mensal
 //     dos últimos meses realizados, o que for maior (o Fluxo costuma ter pouco programado para frente).
-import { custosVazios, ehDespesaDeSocio, RUBRICAS, rubricaDaLinha, totalCustos, type CustosPorRubrica, type LigacoesRubrica, type LinhaFluxoCusto, type RubricaCusto } from "../faturamento/regras";
+import { custosVazios, ehDespesaDeSocio, mesDoCusto, RUBRICAS, rubricaDaLinha, totalCustos, type CustosPorRubrica, type LigacoesRubrica, type LinhaFluxoCusto, type RubricaCusto } from "../faturamento/regras";
 
 export type StatusFechamento = "saudavel" | "atencao" | "critico";
 
@@ -36,7 +36,7 @@ export const ORIGEM_RUBRICA: Record<RubricaCusto, string> = {
 
 // Origem comum a todas as colunas de despesa administrativa.
 export const ORIGEM_ADM =
-  "Saídas do Fluxo de Caixa SEM contrato (Malote, débito automático, fatura de cartão e importação histórica), no mês do pagamento. Transferência, aplicação, empréstimo e financiamento não contam. A ligação manual de classificação em Lucratividade › Rubricas de custo vale antes do nome.";
+  "Saídas do Fluxo de Caixa SEM contrato (Malote, débito automático, fatura de cartão e importação histórica), pela competência. Transferência, aplicação, empréstimo e financiamento não contam. A ligação manual de classificação em Lucratividade › Rubricas de custo vale antes do nome.";
 
 const r2 = (v: number) => Math.round(v * 100) / 100;
 
@@ -61,11 +61,11 @@ export function despesasDosSocios(
 ): Map<string, Map<string, number>> {
   const out = new Map<string, Map<string, number>>();
   for (const l of linhas) {
-    if (!l.contrato_id || !l.data_pagamento) continue;
+    const mes = mesDoCusto(l);
+    if (!l.contrato_id || !mes) continue;
     const socio = socioPorContrato.get(l.contrato_id);
     if (!socio || !ehDespesaDeSocio(l, ligacoes)) continue;
     const porMes = out.get(socio) ?? new Map<string, number>();
-    const mes = l.data_pagamento.slice(0, 7);
     porMes.set(mes, (porMes.get(mes) ?? 0) + (l.valor || 0));
     out.set(socio, porMes);
   }
@@ -222,11 +222,11 @@ export function totalDoFechamento(linhas: LinhaFechamento[]): TotalFechamento {
 export function admPorMesRubrica(linhas: LinhaFluxoCusto[], ligacoes?: LigacoesRubrica, empresaId?: string | null): Map<string, CustosPorRubrica> {
   const mapa = new Map<string, CustosPorRubrica>();
   for (const l of linhas) {
-    if (l.tipo !== "saida" || l.contrato_id || !l.data_pagamento) continue;
+    const mes = mesDoCusto(l);
+    if (l.tipo !== "saida" || l.contrato_id || !mes) continue;
     if (empresaId && l.empresa_id !== empresaId) continue;
     const rubrica = rubricaDaLinha(l, ligacoes);
     if (!rubrica) continue;
-    const mes = l.data_pagamento.slice(0, 7);
     const atual = mapa.get(mes) ?? custosVazios();
     atual[rubrica] += l.valor || 0;
     mapa.set(mes, atual);
@@ -245,7 +245,8 @@ export interface LinhaPorClassificacao {
 export function admPorClassificacao(linhas: LinhaFluxoCusto[], meses: Set<string>, ligacoes?: LigacoesRubrica, empresaId?: string | null): LinhaPorClassificacao[] {
   const mapa = new Map<string, LinhaPorClassificacao>();
   for (const l of linhas) {
-    if (l.tipo !== "saida" || l.contrato_id || !l.data_pagamento || !meses.has(l.data_pagamento.slice(0, 7))) continue;
+    const mesDaLinha = mesDoCusto(l);
+    if (l.tipo !== "saida" || l.contrato_id || !mesDaLinha || !meses.has(mesDaLinha)) continue;
     if (empresaId && l.empresa_id !== empresaId) continue;
     const rubrica = rubricaDaLinha(l, ligacoes);
     if (!rubrica) continue;
