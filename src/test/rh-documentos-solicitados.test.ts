@@ -69,7 +69,7 @@ describe("pendenciasEnvio", () => {
 });
 
 describe("errosSolicitacao", () => {
-  const base = { titulo: "Termo de EPI", descricao: "Assinar e devolver", modo: "contrato" as const, contrato: "1__2", destinatario_id: "u1", prazo: "" };
+  const base = { tipo: "assinatura" as const, titulo: "Termo de EPI", descricao: "Assinar e devolver", modo: "contrato" as const, contrato: "1__2", destinatario_id: "u1", prazo: "" };
   it("formulário completo passa", () => expect(errosSolicitacao(base)).toEqual([]));
   it("contrato exige contrato e responsável", () => {
     expect(errosSolicitacao({ ...base, contrato: "", destinatario_id: "" }))

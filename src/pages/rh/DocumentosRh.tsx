@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { AlertTriangle, FilePlus2, FileText, Loader2, Paperclip, Search, Upload, X } from "lucide-react";
+import { AlertTriangle, Archive, FilePlus2, FileSignature, FileText, ImagePlus, Loader2, Paperclip, Search, ShieldCheck, Upload, X } from "lucide-react";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Card } from "@/components/ui/card";
@@ -18,8 +18,8 @@ import { useScreenAccess } from "@/hooks/useScreenAccess";
 import { useOpcoesDocumento, useSolicitacoesDocumento, useSolicitarDocumento } from "@/hooks/useDocumentosSolicitados";
 import { DetalheDocumento } from "@/components/documentos/DetalheDocumento";
 import {
-  STATUS_DOCUMENTO, atrasada, errosSolicitacao, nomeLegivel, ordenarSolicitacoes, partirContrato, rotuloSituacao, textoPrazo,
-  type FormSolicitacao, type StatusDocumento,
+  STATUS_DOCUMENTO, TIPO_DOCUMENTO, TIPOS_NOVO_DOCUMENTO, atrasada, errosSolicitacao, nomeLegivel, ordenarSolicitacoes, partirContrato,
+  rotuloSituacao, textoPrazo, type FormSolicitacao, type StatusDocumento, type TipoNovoDocumento,
 } from "@/lib/rh/documentosSolicitados";
 
 // =====================================================================
@@ -32,7 +32,14 @@ import {
 // Ponto, pela Hierarquia de Postos — ou um usuário qualquer) e acompanha:
 // fica "Pendente (FULANO — CONTRATO)" até o destinatário anexar e enviar.
 // O lado do encarregado é /app/encarregados/documentos.
+//
+// TIPO obrigatório (mig 20261022000500, 22/10/2026): Registro (só guarda,
+// nasce concluído), Assinatura (o destinatário assina no sistema) e Termo
+// de ciência (pede a assinatura a cada entrada até ele assinar). Imagens
+// anexadas aparecem no card e na janela de assinatura.
 // =====================================================================
+
+const ICONE_TIPO: Record<TipoNovoDocumento, typeof Archive> = { registro: Archive, assinatura: FileSignature, ciencia: ShieldCheck };
 
 type Filtro = "pendente" | "atrasada" | "concluida" | "cancelada" | "todas";
 const hojeIso = () => new Date().toLocaleDateString("sv-SE");
@@ -128,7 +135,12 @@ export default function DocumentosRh() {
                 <TableRow key={s.id} className="cursor-pointer" onClick={() => setAberta(s.id)}>
                   <TableCell className="text-muted-foreground">#{s.id}</TableCell>
                   <TableCell>
-                    <div className="font-medium">{s.titulo}</div>
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <span className="font-medium">{s.titulo}</span>
+                      <Badge variant="outline" className={cn("px-1.5 py-0 text-[10px] font-semibold", TIPO_DOCUMENTO[s.tipo]?.cor)}>
+                        {TIPO_DOCUMENTO[s.tipo]?.rotulo ?? s.tipo}
+                      </Badge>
+                    </div>
                     {s.descricao && <div className="line-clamp-1 max-w-md text-xs text-muted-foreground">{s.descricao}</div>}
                   </TableCell>
                   <TableCell>
@@ -156,19 +168,26 @@ export default function DocumentosRh() {
         )}
       </Card>
 
-      {nova && <NovaSolicitacao onFechar={() => setNova(false)} onCriada={(id) => { setNova(false); setFiltro("pendente"); setAberta(id); }} />}
+      {nova && (
+        <NovaSolicitacao onFechar={() => setNova(false)}
+          onCriada={(id, tipo) => { setNova(false); setFiltro(tipo === "registro" ? "concluida" : "pendente"); setAberta(id); }} />
+      )}
       <DetalheDocumento solicitacao={solicitacaoAberta} lado="rh" podeAnexarRh={podeIncluir || podeAlterar} podeAlterarRh={podeAlterar} onFechar={fechar} />
     </div>
   );
 }
 
 // ── Nova solicitação ─────────────────────────────────────────────────────
-function NovaSolicitacao({ onFechar, onCriada }: { onFechar: () => void; onCriada: (id: number) => void }) {
+function NovaSolicitacao({ onFechar, onCriada }: { onFechar: () => void; onCriada: (id: number, tipo: TipoNovoDocumento) => void }) {
   const opcoes = useOpcoesDocumento();
   const solicitar = useSolicitarDocumento();
   const inputArquivo = useRef<HTMLInputElement>(null);
-  const [f, setF] = useState<FormSolicitacao>({ titulo: "", descricao: "", modo: "contrato", contrato: "", destinatario_id: "", prazo: "" });
+  const inputImagem = useRef<HTMLInputElement>(null);
+  const [f, setF] = useState<FormSolicitacao>({ tipo: "", titulo: "", descricao: "", modo: "contrato", contrato: "", destinatario_id: "", prazo: "" });
   const [arquivos, setArquivos] = useState<File[]>([]);
+  // Prévia das imagens escolhidas (URL local, liberada ao trocar a lista).
+  const previas = useMemo(() => arquivos.map((a) => (a.type.startsWith("image/") ? URL.createObjectURL(a) : null)), [arquivos]);
+  useEffect(() => () => previas.forEach((u) => u && URL.revokeObjectURL(u)), [previas]);
   const [tentou, setTentou] = useState(false);
   const set = (p: Partial<FormSolicitacao>) => setF((x) => ({ ...x, ...p }));
 
@@ -193,22 +212,25 @@ function NovaSolicitacao({ onFechar, onCriada }: { onFechar: () => void; onCriad
     ? responsaveis.find((r) => r.auth_user_id === f.destinatario_id)?.tem_acesso === false
     : opcoes.data?.usuarios.find((u) => u.id === f.destinatario_id)?.tem_acesso === false);
 
-  const erros = errosSolicitacao(f);
+  const erros = errosSolicitacao(f, arquivos.length);
+  const registro = f.tipo === "registro";
 
   const salvar = async () => {
     setTentou(true);
-    if (erros.length) return;
+    if (erros.length || !f.tipo) return;
+    const tipo = f.tipo;
     const c = f.modo === "contrato" ? partirContrato(f.contrato) : null;
     try {
       const id = await solicitar.mutateAsync({
-        titulo: f.titulo.trim(), descricao: f.descricao.trim(),
+        tipo, titulo: f.titulo.trim(), descricao: f.descricao.trim(),
         contrato_empresa: c?.empresa ?? null, contrato_filial: c?.filial ?? null,
-        destinatario_id: f.destinatario_id, prazo: f.prazo || null, arquivos,
+        destinatario_id: f.destinatario_id, prazo: registro ? null : f.prazo || null, arquivos,
       });
-      toast.success(`Solicitação #${id} enviada.`);
-      onCriada(id);
+      toast.success(registro ? `Documento #${id} registrado.` : `Solicitação #${id} enviada.`);
+      onCriada(id, tipo);
     } catch (e) { toast.error((e as Error).message); }
   };
+  const adicionar = (files: FileList | null) => setArquivos((a) => [...a, ...Array.from(files ?? [])]);
 
   return (
     <Dialog open onOpenChange={(v) => { if (!v) onFechar(); }}>
@@ -216,6 +238,24 @@ function NovaSolicitacao({ onFechar, onCriada }: { onFechar: () => void; onCriad
         <DialogHeader><DialogTitle>Nova solicitação de documento</DialogTitle></DialogHeader>
 
         <div className="space-y-3">
+          <div>
+            <Label>Tipo *</Label>
+            <div role="radiogroup" className="mt-1 grid gap-2 sm:grid-cols-3">
+              {TIPOS_NOVO_DOCUMENTO.map((t) => {
+                const Icone = ICONE_TIPO[t];
+                const sel = f.tipo === t;
+                return (
+                  <button key={t} type="button" role="radio" aria-checked={sel} onClick={() => set({ tipo: t })}
+                    className={cn("rounded-lg border p-2.5 text-left transition",
+                      sel ? "border-primary bg-primary/5 ring-2 ring-primary/30" : "hover:border-primary/40 hover:bg-muted/40",
+                      tentou && !f.tipo && "border-red-300")}>
+                    <span className="flex items-center gap-1.5 text-sm font-semibold"><Icone className="h-4 w-4 text-primary" /> {TIPO_DOCUMENTO[t].rotulo}</span>
+                    <span className="mt-1 block text-xs leading-snug text-muted-foreground">{TIPO_DOCUMENTO[t].explicacao}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
           <div>
             <Label>Título *</Label>
             <Input value={f.titulo} maxLength={150} placeholder="ex.: Termo de entrega de EPI — outubro" onChange={(e) => set({ titulo: e.target.value })} />
@@ -271,39 +311,54 @@ function NovaSolicitacao({ onFechar, onCriada }: { onFechar: () => void; onCriad
                 placeholder="Escolha o usuário" searchPlaceholder="Buscar por nome ou e-mail…" />
             </div>
           )}
-          {destinoSemAcesso && (
-            <p className="flex items-start gap-1.5 rounded-md border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-xs text-amber-800">
+          {/* Assinar não exige a tela: a notificação abre a solicitação em qualquer lugar e o termo aparece no login. */}
+          {destinoSemAcesso && f.tipo !== "registro" && (
+            <p className="flex items-start gap-1.5 rounded-md border border-sky-200 bg-sky-50 px-2.5 py-1.5 text-xs text-sky-800">
               <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-              Essa pessoa ainda não tem acesso à tela Encarregados › Documentos. A solicitação fica registrada e ela é notificada,
-              mas só consegue anexar depois que o acesso for liberado em Administração › Acesso por Usuário.
+              Essa pessoa não tem a tela Encarregados › Documentos — tudo bem: ela é notificada e assina pelo link da notificação
+              {f.tipo === "ciencia" ? " (e o termo aparece para ela ao entrar no sistema)" : ""}. Para ela acompanhar a lista de
+              documentos, libere a tela em Administração › Acesso por Usuário.
             </p>
           )}
 
-          <div className="grid gap-3 sm:grid-cols-2">
+          <div className={cn("grid gap-3", !registro && "sm:grid-cols-2")}>
+            {!registro && (
+              <div>
+                <Label>Prazo para assinar</Label>
+                <Input type="date" value={f.prazo} min={hojeIso()} onChange={(e) => set({ prazo: e.target.value })} />
+              </div>
+            )}
             <div>
-              <Label>Prazo para devolver</Label>
-              <Input type="date" value={f.prazo} min={hojeIso()} onChange={(e) => set({ prazo: e.target.value })} />
-            </div>
-            <div>
-              <Label>Documento a assinar</Label>
-              <input ref={inputArquivo} type="file" multiple className="hidden"
-                onChange={(e) => { setArquivos((a) => [...a, ...Array.from(e.target.files ?? [])]); e.target.value = ""; }} />
-              <Button type="button" variant="outline" className="w-full" onClick={() => inputArquivo.current?.click()}>
-                <Upload className="mr-1.5 h-4 w-4" /> Anexar arquivo
-              </Button>
+              <Label>{registro ? "Documento a registrar *" : f.tipo === "ciencia" ? "Termo e imagens" : "Documento a assinar"}</Label>
+              <input ref={inputArquivo} type="file" multiple className="hidden" onChange={(e) => { adicionar(e.target.files); e.target.value = ""; }} />
+              <input ref={inputImagem} type="file" accept="image/*" multiple className="hidden" onChange={(e) => { adicionar(e.target.files); e.target.value = ""; }} />
+              <div className="grid grid-cols-2 gap-2">
+                <Button type="button" variant="outline" onClick={() => inputArquivo.current?.click()}>
+                  <Upload className="mr-1.5 h-4 w-4" /> Arquivo
+                </Button>
+                <Button type="button" variant="outline" onClick={() => inputImagem.current?.click()}>
+                  <ImagePlus className="mr-1.5 h-4 w-4" /> Imagem
+                </Button>
+              </div>
             </div>
           </div>
           {arquivos.length > 0 && (
             <ul className="space-y-1">
               {arquivos.map((a, i) => (
                 <li key={`${a.name}-${i}`} className="flex items-center gap-2 text-sm">
-                  <Paperclip className="h-3.5 w-3.5 text-muted-foreground" /> <span className="truncate">{a.name}</span>
+                  {previas[i]
+                    ? <img src={previas[i] as string} alt={a.name} className="h-10 w-10 shrink-0 rounded border object-cover" />
+                    : <Paperclip className="h-3.5 w-3.5 text-muted-foreground" />}
+                  <span className="truncate">{a.name}</span>
                   <button className="ml-auto text-muted-foreground hover:text-red-600" onClick={() => setArquivos((x) => x.filter((_, j) => j !== i))}>
                     <X className="h-3.5 w-3.5" />
                   </button>
                 </li>
               ))}
             </ul>
+          )}
+          {f.tipo && f.tipo !== "registro" && arquivos.some((a) => a.type.startsWith("image/")) && (
+            <p className="text-xs text-muted-foreground">As imagens aparecem no card e na janela em que o destinatário assina.</p>
           )}
 
           {tentou && erros.length > 0 && <p className="text-sm text-red-600">{erros.join(" ")}</p>}
@@ -312,7 +367,7 @@ function NovaSolicitacao({ onFechar, onCriada }: { onFechar: () => void; onCriad
         <DialogFooter>
           <Button variant="ghost" onClick={onFechar}>Cancelar</Button>
           <Button onClick={salvar} disabled={solicitar.isPending}>
-            {solicitar.isPending && <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />} Solicitar
+            {solicitar.isPending && <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />} {registro ? "Registrar" : "Solicitar"}
           </Button>
         </DialogFooter>
       </DialogContent>

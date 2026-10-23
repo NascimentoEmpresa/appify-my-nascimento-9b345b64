@@ -119,7 +119,12 @@ export interface PontoMes {
 
 export interface HistoricoColaborador {
   ferias: { id: number; saida: string | null; retorno: string | null; dias: number | null; vendidos: number | null; status: string; criado_em: string; motivo_reprovacao: string | null }[];
-  trocas_funcao: { id: number; cargo_atual: string | null; cargo_novo: string; posto: string | null; data_pretendida: string | null; status: string; criado_em: string }[];
+  trocas_funcao: {
+    id: number; cargo_atual: string | null; cargo_novo: string; posto: string | null;
+    /** "Cargo: A → B · Posto: X → Y · Horário: H → H2" (stf_resumo_troca, mig 20261023000410). */
+    resumo?: string | null; tipo?: string | null; posto_atual?: string | null; posto_novo?: string | null;
+    data_pretendida: string | null; status: string; criado_em: string;
+  }[];
   advertencias: { id: number; tipo: string | null; grau: string | null; data: string | null; status: string; resultado: string | null; criado_em: string }[];
 }
 

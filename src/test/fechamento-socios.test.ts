@@ -27,17 +27,22 @@ describe("sócio pelo nome do contrato", () => {
 
 describe("o que conta como despesa de sócio", () => {
   const l = (classificacao_nome: string | null) => ({ tipo: "saida" as const, classificacao_id: null, classificacao_nome });
-  it("conta a distribuição de lucros e gastos pessoais; não conta movimentação que só muda o dinheiro de lugar", () => {
+  // SIS-2026-0717: o valor dos sócios aparece inteiro, independente da classificação (a Helena tinha R$ 19.449,72 de FINANCIAMENTOS fora do total).
+  it("conta TODA saída do sócio, seja qual for a classificação (inclusive financiamento, transferência e sem classificação)", () => {
     expect(ehDespesaDeSocio(l("DISTRIBUIÇÃO DE LUCROS ANT."))).toBe(true);
     expect(ehDespesaDeSocio(l("CARTÃO DE CRÉDITO"))).toBe(true);
-    expect(ehDespesaDeSocio(l("TRANSF. ENTRE CONTAS"))).toBe(false);
-    expect(ehDespesaDeSocio(l("APLICAÇÃO FINANCEIRA"))).toBe(false);
-    expect(ehDespesaDeSocio(l(null))).toBe(false);
+    expect(ehDespesaDeSocio(l("FINANCIAMENTOS"))).toBe(true);
+    expect(ehDespesaDeSocio(l("TRANSF. ENTRE CONTAS"))).toBe(true);
+    expect(ehDespesaDeSocio(l("APLICAÇÃO FINANCEIRA"))).toBe(true);
+    expect(ehDespesaDeSocio(l(null))).toBe(true);
+  });
+
+  it("entrada não é despesa do sócio", () => {
     expect(ehDespesaDeSocio({ tipo: "entrada", classificacao_id: null, classificacao_nome: "DISTRIBUIÇÃO" })).toBe(false);
   });
 
-  it("a ligação manual 'não é custo' tira a classificação da conta do sócio", () => {
-    expect(ehDespesaDeSocio({ tipo: "saida", classificacao_id: "x", classificacao_nome: "CARTÃO" }, new Map([["x", "nao_custo" as const]]))).toBe(false);
+  it("a ligação manual 'não é custo' não tira mais nada da conta do sócio", () => {
+    expect(ehDespesaDeSocio({ tipo: "saida", classificacao_id: "x", classificacao_nome: "CARTÃO" }, new Map([["x", "nao_custo" as const]]))).toBe(true);
   });
 });
 
@@ -45,6 +50,11 @@ describe("despesasDosSocios e o Lucro Líquido Final", () => {
   const linha = (contrato_id: string, valor: number, data: string, nome = "DISTRIBUIÇÃO DE LUCROS"): LinhaFluxoCusto =>
     ({ tipo: "saida", data_pagamento: data, contrato_id, classificacao_nome: nome, valor });
   const socioPorContrato = new Map([["cs", "Senilton"], ["ch", "Helena"]]);
+
+  it("Helena, jan/26: o financiamento entra na soma do sócio (88.327,87 do Fluxo)", () => {
+    const m = despesasDosSocios([linha("ch", 68878.15, "2026-01-05"), linha("ch", 19449.72, "2026-01-12", "FINANCIAMENTOS")], socioPorContrato);
+    expect(Math.round((m.get("Helena")?.get("2026-01") ?? 0) * 100) / 100).toBe(88327.87);
+  });
 
   it("soma por sócio e mês e ignora contrato que não é de sócio", () => {
     const m = despesasDosSocios([linha("cs", 100, "2026-01-05"), linha("cs", 50, "2026-01-20"), linha("ch", 70, "2026-02-01"), linha("outro", 999, "2026-01-05")], socioPorContrato);

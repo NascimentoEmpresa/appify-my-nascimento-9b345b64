@@ -233,6 +233,8 @@ export interface Dashboard {
   primeiros_acessos_30d: { dia: string; n: number }[];
   por_curso: DashboardCurso[];
   por_contrato: { nome: string; alunos: number; ativos: number }[];
+  /** Todos os contratos, sem o top 12 (mig 20261023000020). Ausente antes dela rodar. */
+  por_contrato_todos?: { nome: string; alunos: number; ativos: number }[];
   top_aulas: { nome: string; curso: string; n: number }[];
 }
 

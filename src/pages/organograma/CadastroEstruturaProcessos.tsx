@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ChevronRight, Eraser, Eye, History, Link2, Loader2, Maximize, Minimize, Minus, Move, Network, Plus, Redo2, Save, Search, Send, Spline,
-  Undo2, Users, Wand2, Workflow,
+  Undo2, UserX, Users, Wand2, Workflow,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Card } from "@/components/ui/card";
@@ -13,7 +13,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { useScreenAccess } from "@/hooks/useScreenAccess";
 import { useEstrutura, useGravarEstrutura } from "@/hooks/useEstruturaProcessos";
 import {
-  autoOrganizar, cadeiaDoSetor, conexaoEntreSetores, processosDoSetor, type Estrutura, type Membro, type TipoConexao,
+  autoOrganizar, cadeiaDoSetor, conexaoEntreSetores, membrosPendentes, processosDoSetor, type Estrutura, type Membro, type TipoConexao,
 } from "@/lib/organograma/estruturaProcessos";
 import { AmostraTraco, IconeSetor, StatusDesenvolvimento, cor } from "@/components/organograma-processos/visual";
 import { CanvasSetor } from "@/components/organograma-processos/CanvasSetor";
@@ -323,7 +323,12 @@ function Numeros({ e }: { e: Estrutura }) {
     { icone: Network, n: e.setores.length, r: "Setores cadastrados", c: "text-blue-600 bg-blue-50" },
     { icone: Workflow, n: e.processos.filter((p) => p.status === "ativo").length, r: "Processos ativos", c: "text-emerald-600 bg-emerald-50" },
     { icone: Link2, n: e.conexoes.filter((c) => conexaoEntreSetores(e, c)).length, r: "Conexões intersetoriais", c: "text-violet-600 bg-violet-50" },
-    { icone: Users, n: e.membros.length, r: "Colaboradores vinculados", c: "text-sky-600 bg-sky-50" },
+    { icone: Users, n: e.membros.length - membrosPendentes(e).length, r: "Colaboradores vinculados", c: "text-sky-600 bg-sky-50" },
+    // Texto da carga inicial ainda sem pessoa do cadastro (mig 20261022000300):
+    // o selo some quando todos estiverem vinculados.
+    ...(membrosPendentes(e).length
+      ? [{ icone: UserX, n: membrosPendentes(e).length, r: "Pendentes de vínculo (ver a equipe do setor)", c: "text-amber-700 bg-amber-50" }]
+      : []),
   ];
   return (
     <div className="grid grid-cols-2 gap-2">

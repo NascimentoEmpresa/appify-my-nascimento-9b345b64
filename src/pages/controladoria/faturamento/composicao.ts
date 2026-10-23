@@ -2,7 +2,7 @@
 // que fecha na célula clicada e a lista do que a compõe. Funções puras: a tela só passa o recorte da célula.
 import { diasDesdeEmissao } from "@/pages/financeiro/nf-emissao/shared";
 import {
-  RUBRICAS, aReceberDaNf, contaNoFaturamento, lucroBruto, notasComSaldo, ponteAReceber, rubricaDaLinha, somarNf, totaisVazios,
+  RUBRICAS, type BaseDespesa, aReceberDaNf, notaValidaNoFaturamento, lucroBruto, mesDoCusto, notasComSaldo, ponteAReceber, rubricaDaLinha, somarNf, totaisVazios,
   type LigacoesRubrica, type LinhaFluxoCusto, type NfFaturamento, type TotaisFaturamento,
 } from "./regras";
 
@@ -41,6 +41,8 @@ export interface ContextoDetalhe {
   execDe: (contratoId: string, anoMes: string) => { valor: number; fonte: FonteExecutavel };
   custos: LinhaFluxoCusto[];
   ligacoes?: LigacoesRubrica;
+  // SIS-2026-0721: base em que as despesas foram lidas (só muda o texto do modal).
+  baseDespesa?: BaseDespesa;
 }
 
 export type Celula = string | number;
@@ -89,10 +91,11 @@ const r2 = (n: number) => Math.round(n * 100) / 100;
 const pct = (m: number | null) => (m === null ? "—" : `${(m * 100).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%`);
 const mesCurto = (anoMes: string) => `${anoMes.slice(5, 7)}/${anoMes.slice(0, 4)}`;
 const dia = (iso: string | null | undefined) => (iso ? iso.slice(0, 10).split("-").reverse().join("/") : "—");
+const mesAno = (iso: string | null | undefined) => (iso ? `${iso.slice(5, 7)}/${iso.slice(0, 4)}` : "—");
 
 export function totaisDoEscopo(nfs: NfFaturamento[]): TotaisFaturamento {
   const t = totaisVazios();
-  for (const n of nfs) if (contaNoFaturamento(n)) somarNf(t, n);
+  for (const n of nfs) if (notaValidaNoFaturamento(n)) somarNf(t, n);
   return t;
 }
 
@@ -113,8 +116,9 @@ export function despesasDoEscopo(custos: LinhaFluxoCusto[], escopo: Pick<EscopoD
   const linhas: (LinhaFluxoCusto & { rubrica: string })[] = [];
   let total = 0;
   for (const l of custos) {
-    if (l.tipo !== "saida" || !l.contrato_id || !l.data_pagamento) continue;
-    if (!contratos.has(l.contrato_id) || !meses.has(l.data_pagamento.slice(0, 7))) continue;
+    const mesDaLinha = mesDoCusto(l);
+    if (l.tipo !== "saida" || !l.contrato_id || !mesDaLinha) continue;
+    if (!contratos.has(l.contrato_id) || !meses.has(mesDaLinha)) continue;
     const rub = rubricaDaLinha(l, ligacoes);
     if (!rub) continue;
     const nome = rotulo.get(rub) ?? rub;
@@ -135,7 +139,7 @@ export function despesasDoEscopo(custos: LinhaFluxoCusto[], escopo: Pick<EscopoD
 // ── Executável: por contrato, de onde vem o valor ──
 function execDoEscopo(escopo: EscopoDetalhe, ctx: ContextoDetalhe) {
   const brutoPorContrato = new Map<string, number>();
-  for (const n of escopo.nfs) if (contaNoFaturamento(n)) brutoPorContrato.set(n.contrato_id, (brutoPorContrato.get(n.contrato_id) ?? 0) + (n.vlr_bruto_total || 0));
+  for (const n of escopo.nfs) if (notaValidaNoFaturamento(n)) brutoPorContrato.set(n.contrato_id, (brutoPorContrato.get(n.contrato_id) ?? 0) + (n.vlr_bruto_total || 0));
   const linhas = escopo.contratoIds.map((id) => {
     let exec = 0;
     const fontes = new Set<FonteExecutavel>();
@@ -166,7 +170,7 @@ function tabelaNotas(escopo: EscopoDetalhe, metrica: Metrica): TabelaDetalhe {
       default: return n.vlr_bruto_total || 0;
     }
   };
-  const base = escopo.nfs.filter(contaNoFaturamento);
+  const base = escopo.nfs.filter(notaValidaNoFaturamento);
   const doRecorte = metrica === "aReceber" ? notasComSaldo(base).map((x) => x.nf as NfDetalhe) : base.filter((n) => metrica === "recebido" || metrica === "contaVinculada" ? Math.abs(valorDe(n)) > 0.005 : true);
   const ordenadas = [...doRecorte].sort((a, b) => valorDe(b) - valorDe(a));
   const mostradas = ordenadas.slice(0, LIMITE_LINHAS);
@@ -244,15 +248,15 @@ export function montarComposicao(metrica: Metrica, escopo: EscopoDetalhe, ctx: C
     const d = despesasDoEscopo(ctx.custos, escopo, ctx.ligacoes);
     return {
       titulo,
-      descricao: "Saídas do Fluxo de Caixa com contrato, no mês do pagamento, sem transferências, aplicações e empréstimos. É o custo usado no Lucro.",
+      descricao: `Saídas do Fluxo de Caixa com contrato, pela ${(ctx.baseDespesa === "pagamento" ? "data de pagamento" : "competência")}, sem transferências, aplicações e empréstimos. É o custo usado no Lucro.`,
       conta: [
         ...d.porRubrica.map((r, i) => ({ rotulo: r.rotulo, valor: r.valor, sinal: i === 0 ? undefined : ("+" as const) })),
         { rotulo: "Despesas", valor: d.total, sinal: "=", destaque: true },
       ],
       tabela: {
         titulo: `Lançamentos do Fluxo de Caixa (${d.linhas.length.toLocaleString("pt-BR")})`,
-        colunas: [{ rotulo: "Pagamento", alinhar: "left" }, { rotulo: "Contrato", alinhar: "left" }, { rotulo: "Classificação", alinhar: "left" }, { rotulo: "Descrição", alinhar: "left" }, { rotulo: "Rubrica", alinhar: "left" }, { rotulo: "Valor" }],
-        linhas: d.linhas.slice(0, LIMITE_LINHAS).map((l) => [dia(l.data_pagamento), ctx.contratoNome(l.contrato_id as string), l.classificacao_nome ?? "—", [l.id_malote, l.descricao].filter(Boolean).join(" · ") || "—", l.rubrica, l.valor || 0]),
+        colunas: [{ rotulo: "Competência", alinhar: "left" }, { rotulo: "Pagamento", alinhar: "left" }, { rotulo: "Contrato", alinhar: "left" }, { rotulo: "Classificação", alinhar: "left" }, { rotulo: "Descrição", alinhar: "left" }, { rotulo: "Rubrica", alinhar: "left" }, { rotulo: "Valor" }],
+        linhas: d.linhas.slice(0, LIMITE_LINHAS).map((l) => [mesAno(l.competencia ?? l.data_pagamento), dia(l.data_pagamento), ctx.contratoNome(l.contrato_id as string), l.classificacao_nome ?? "—", [l.id_malote, l.descricao].filter(Boolean).join(" · ") || "—", l.rubrica, l.valor || 0]),
         nota: d.linhas.length > LIMITE_LINHAS ? `Mostrando os ${LIMITE_LINHAS} maiores lançamentos de ${d.linhas.length.toLocaleString("pt-BR")}; a conta acima soma todos.` : undefined,
       },
     };
@@ -263,7 +267,7 @@ export function montarComposicao(metrica: Metrica, escopo: EscopoDetalhe, ctx: C
     const lf = lucroBruto(t.liquido, d.total);
     const lr = t.recebido - d.total;
     const liquidoPorContrato = new Map<string, number>();
-    for (const n of escopo.nfs) if (contaNoFaturamento(n)) liquidoPorContrato.set(n.contrato_id, (liquidoPorContrato.get(n.contrato_id) ?? 0) + (n.vlr_liquido_total || 0));
+    for (const n of escopo.nfs) if (notaValidaNoFaturamento(n)) liquidoPorContrato.set(n.contrato_id, (liquidoPorContrato.get(n.contrato_id) ?? 0) + (n.vlr_liquido_total || 0));
     const ids = [...new Set([...liquidoPorContrato.keys(), ...d.porContrato.keys()])];
     const linhas = ids
       .map((id) => {

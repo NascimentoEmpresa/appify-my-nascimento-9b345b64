@@ -7,16 +7,19 @@ import { contratoEncerradoNaCompetencia } from "../vigenciaContrato";
 import { contaNoFaturamento, executavelSemPlanilha } from "./regras";
 import type { FonteExecutavel } from "./composicao";
 
+const CODIGOS_PADRAO: readonly string[] = ["N"];
+
 // SIS-2026-0556: fontes comuns às duas telas (Faturamento da Empresa e
 // Lucratividade de Contratos). Os hooks já têm cache próprio no React Query —
 // as mesmas chaves do Controle de Faturamento e do Relatório de Serviços.
-export function useBaseFaturamento() {
+// `codigos`: tipos de nota (Código) que entram no faturamento; padrão só o N. Passe um array ESTÁVEL (useMemo).
+export function useBaseFaturamento(codigos: readonly string[] = CODIGOS_PADRAO) {
   const { data: contratos = [], isLoading: c1 } = useContratosERP({ todasEmpresas: true });
   const { data: planilha = [], isLoading: c2 } = usePlanilhaCustos({ todasEmpresas: true });
   const { data: nfsTodas = [], isLoading: c3 } = useNfsEmissao(null, { todasEmpresas: true });
   const { data: empresas = [] } = useEmpresasGrupo();
 
-  const nfs = useMemo(() => nfsTodas.filter(contaNoFaturamento), [nfsTodas]);
+  const nfs = useMemo(() => nfsTodas.filter((n) => contaNoFaturamento(n, codigos)), [nfsTodas, codigos]);
   const contratoPorId = useMemo(() => new Map(contratos.map((c) => [c.id, c])), [contratos]);
   // contrato|YYYY-MM com ao menos uma NF que conta no faturamento.
   const mesesComNota = useMemo(() => new Set(nfs.map((n) => `${n.contrato_id}|${n.competencia.slice(0, 7)}`)), [nfs]);

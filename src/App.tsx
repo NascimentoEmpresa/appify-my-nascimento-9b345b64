@@ -170,6 +170,7 @@ import DREGerencial from "./pages/controladoria/DREGerencial";
 import OrcamentoCompleto from "./pages/controladoria/OrcamentoCompleto";
 import MaloteClassificacoesAdministrativo from "./pages/malote/ClassificacoesAdministrativo";
 import MaloteOrcamentoAdministrativo from "./pages/malote/OrcamentoAdministrativo";
+import MaloteOrcamentoAdmSocios from "./pages/malote/OrcamentoAdmSocios";
 import MaloteClassificacoesMalote from "./pages/malote/ClassificacoesMalote";
 import MaloteOrcamentoContratos from "./pages/malote/OrcamentoContratos";
 import MaloteOrcamentoGeral from "./pages/malote/OrcamentoGeral";
@@ -351,6 +352,7 @@ import DocumentosEncarregado from "./pages/encarregados/DocumentosEncarregado";
 import DocumentosRh from "./pages/rh/DocumentosRh";
 import ExecutarChamado from "./pages/chamados/ExecutarChamado";
 import AcompanharChamado from "./pages/chamados/AcompanharChamado";
+import MonitoramentoChamados from "./pages/chamados/MonitoramentoChamados";
 import WhatsAppInbox from "./pages/whatsapp/WhatsAppInbox";
 import WhatsAppChatbot from "./pages/whatsapp/WhatsAppChatbot";
 import WhatsAppTestes from "./pages/whatsapp/WhatsAppTestes";
@@ -601,6 +603,8 @@ const App = () => (
             <Route path="central-servicos" element={<CentralServicos />} />
             <Route path="central-servicos/chamados" element={<MeusChamados base="/app/central-servicos/chamados" />} />
             <Route path="central-servicos/chamados/novo" element={<AbrirChamado base="/app/central-servicos/chamados" />} />
+            {/* Monitoramento de Chamados (mig 20261022000180): qualidade das solicitações, por solicitante. */}
+            <Route path="central-servicos/chamados/monitoramento" element={<MonitoramentoChamados />} />
             <Route path="central-servicos/chamados/:id/acompanhar" element={<AcompanharChamado base="/app/central-servicos/chamados" />} />
             {/* WhatsApp — Chatbot */}
             <Route path="whatsapp" element={<WhatsAppInbox />} />
@@ -762,6 +766,7 @@ const App = () => (
             <Route path="malote/solicitacao/:id" element={<MaloteSolicitacaoVisualizar />} />
             <Route path="malote/classificacoes-administrativo" element={<MaloteClassificacoesAdministrativo />} />
             <Route path="malote/orcamento-administrativo" element={<MaloteOrcamentoAdministrativo />} />
+            <Route path="malote/orcamento-adm-socios" element={<MaloteOrcamentoAdmSocios />} />
             <Route path="malote/classificacoes-malote" element={<MaloteClassificacoesMalote />} />
             <Route path="malote/orcamento-contratos" element={<MaloteOrcamentoContratos />} />
             <Route path="malote/orcamento-geral" element={<MaloteOrcamentoGeral />} />
@@ -923,7 +928,7 @@ const App = () => (
             <Route path="rh/ferias" element={<Ferias />} />
             <Route path="rh/recrutamento" element={<Recrutamento />} />
             <Route path="rh/solicitacoes-demissao" element={<RhSolicitacoesDemissao />} />
-            {/* Rescisões — submódulo próprio com kanban (mig 20261021000030). */}
+            {/* Rescisões — a planilha do RH, dentro de Recursos Humanos (mig 20261022000400). */}
             <Route path="rh/rescisoes" element={<RhRescisoes />} />
             {/* Conferência de Ponto — Operacional, RH e Financeiro na mesma tela;
                 o que muda é a permissão de cada um (ver conferencia.ts). */}

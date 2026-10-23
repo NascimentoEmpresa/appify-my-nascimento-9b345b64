@@ -1,7 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { emLotes } from "@/lib/emLotes";
 import type { PlanilhaRow } from "@/lib/conciliacaoBancariaEngine";
 import type { FluxoCaixaMaloteLinha } from "@/hooks/useFluxoCaixaMalote";
+import type { DiaConciliado, ResumoConciliacao } from "@/lib/conciliacaoResumo";
 
 // SIS-2026-0492: conciliação automática — o lado "Fluxo" vem direto do
 // Fluxo de Caixa interno (useFluxoCaixaCombinado), não de planilha subida.
@@ -50,6 +52,11 @@ export function linhasFluxoParaPlanilhaRow(linhas: FluxoCaixaMaloteLinha[]): Pla
       numeroParcela: l.numero_parcela,
       origemFluxo: l.origem,
       empresaNome: l.empresa_nome,
+      // ID e descrição do lançamento no Fluxo: a divergência aponta para eles (o rateio é somado numa linha só, então o valor da
+      // divergência pode não existir como linha única na tela do Fluxo).
+      idMalote: l.id_malote,
+      descricaoFluxo: l.descricao,
+      partes: 1,
     };
     if (!l.despesa_id) {
       saida.push(row);
@@ -59,6 +66,7 @@ export function linhasFluxoParaPlanilhaRow(linhas: FluxoCaixaMaloteLinha[]): Pla
     const existente = porChave.get(chave);
     if (existente) {
       existente.valor = Math.round((existente.valor + row.valor) * 100) / 100;
+      existente.partes = (existente.partes ?? 1) + 1;
     } else {
       porChave.set(chave, row);
       saida.push(row);
@@ -92,6 +100,21 @@ export interface ConciliacaoFluxoCaixaSalva {
   // 20261014000006 que ainda não receberam a carga.
   extrato_entradas?: number | null;
   extrato_saidas?: number | null;
+  // Resumo do que foi conciliado (migration 20261022000260). null nas conciliações anteriores.
+  fluxo_entradas?: number | null;
+  fluxo_saidas?: number | null;
+  qtd_fluxo?: number | null;
+  qtd_extrato?: number | null;
+  conciliado_entradas?: number | null;
+  conciliado_saidas?: number | null;
+  qtd_conciliadas?: number | null;
+  dias_total?: number | null;
+  dias_ok?: number | null;
+  // Resumo dia a dia (migration 20261022000270).
+  resumo_dias?: DiaConciliado[] | null;
+  // SIS-2026-0713: saldo final do extrato (LEDGERBAL do OFX, corrigível à mão) — migration 20261023000300. null = não informado.
+  saldo_final_extrato?: number | null;
+  saldo_final_extrato_data?: string | null;
 }
 
 export interface ConciliacaoFluxoCaixaArquivo {
@@ -181,6 +204,10 @@ export interface SalvarConciliacaoInput {
   // SIS-2026-0657: soma do extrato dentro do período. A Auditoria da Controladoria lê daqui (quando tudo bate, nenhuma linha é gravada).
   extratoEntradas?: number | null;
   extratoSaidas?: number | null;
+  // O que bateu (Fluxo × extrato): gravado para a lista de conciliações salvas mostrar valores mesmo sem divergência.
+  resumo?: ResumoConciliacao | null;
+  saldoFinalExtrato?: number | null;
+  saldoFinalExtratoData?: string | null;
   arquivosOfx: File[];
   linhas: Omit<ConciliacaoFluxoCaixaLinha, "id" | "conciliacao_id">[];
 }
@@ -217,14 +244,25 @@ export function useSalvarConciliacaoFluxoCaixa() {
         (supabase as any).from("financeiro_conciliacao_fluxo_caixa").insert(dados).select("id").single();
       // SIS-2026-0657: guarda os totais do extrato. Migration 20261014000006 ainda não aplicada (coluna
       // ausente): salva sem eles, para a conciliação não deixar de salvar.
-      let { data: conciliacao, error: errHeader } = await inserir({
-        ...cabecalho,
-        extrato_entradas: input.extratoEntradas ?? null,
-        extrato_saidas: input.extratoSaidas ?? null,
-      });
-      if (errHeader && (errHeader.code === "PGRST204" || errHeader.code === "42703")) {
-        ({ data: conciliacao, error: errHeader } = await inserir(cabecalho));
-      }
+      const r = input.resumo;
+      const resumoCols = r
+        ? {
+            fluxo_entradas: r.fluxoEntradas, fluxo_saidas: r.fluxoSaidas, qtd_fluxo: r.qtdFluxo, qtd_extrato: r.qtdExtrato,
+            conciliado_entradas: r.conciliadoEntradas, conciliado_saidas: r.conciliadoSaidas, qtd_conciliadas: r.qtdConciliadas,
+            dias_total: r.diasTotal, dias_ok: r.diasOk,
+          }
+        : {};
+      const diasCol = r ? { resumo_dias: r.dias } : {};
+      const saldoFinalCols = input.saldoFinalExtrato != null ? { saldo_final_extrato: input.saldoFinalExtrato, saldo_final_extrato_data: input.saldoFinalExtratoData ?? null } : {};
+      const totaisExtrato = { extrato_entradas: input.extratoEntradas ?? null, extrato_saidas: input.extratoSaidas ?? null };
+      const colunaAusente = (e: { code?: string } | null) => !!e && (e.code === "PGRST204" || e.code === "42703");
+      // Migrations 20261022000270 (dia a dia), 20261022000260 (resumo) e 20261014000006 (totais do extrato) ainda não aplicadas: tenta sem as colunas que faltam.
+      let { data: conciliacao, error: errHeader } = await inserir({ ...cabecalho, ...totaisExtrato, ...resumoCols, ...diasCol, ...saldoFinalCols });
+      // Migration 20261023000300 (saldo final do extrato) ainda não aplicada: tenta sem essas colunas.
+      if (colunaAusente(errHeader)) ({ data: conciliacao, error: errHeader } = await inserir({ ...cabecalho, ...totaisExtrato, ...resumoCols, ...diasCol }));
+      if (colunaAusente(errHeader)) ({ data: conciliacao, error: errHeader } = await inserir({ ...cabecalho, ...totaisExtrato, ...resumoCols }));
+      if (colunaAusente(errHeader)) ({ data: conciliacao, error: errHeader } = await inserir({ ...cabecalho, ...totaisExtrato }));
+      if (colunaAusente(errHeader)) ({ data: conciliacao, error: errHeader } = await inserir(cabecalho));
       if (errHeader) throw errHeader;
       const conciliacaoId = conciliacao.id as string;
 
@@ -248,5 +286,71 @@ export function useSalvarConciliacaoFluxoCaixa() {
       return conciliacaoId;
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: [KEY] }),
+  });
+}
+
+// ── SIS-2026-0713: saldo inicial de janeiro informado à mão ──────────────────
+
+export interface SaldoInicialConciliacao {
+  id: string;
+  empresa_id: string;
+  banco_id: string;
+  conta: string;
+  ano: number;
+  valor: number;
+  updated_at: string;
+}
+
+const KEY_SALDO_INICIAL = "conciliacao_saldo_inicial";
+
+export function useSaldosIniciaisConciliacao() {
+  return useQuery({
+    queryKey: [KEY_SALDO_INICIAL],
+    queryFn: async () => {
+      const { data, error } = await (supabase as any).from("financeiro_conciliacao_saldo_inicial").select("*").order("ano");
+      if (error) throw error;
+      return ((data ?? []) as SaldoInicialConciliacao[]).map((s) => ({ ...s, valor: Number(s.valor) }));
+    },
+  });
+}
+
+export function useSalvarSaldoInicialConciliacao() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: { empresaId: string; bancoId: string; conta: string; ano: number; valor: number | null }) => {
+      const { data: auth } = await supabase.auth.getUser();
+      const chave = { empresa_id: input.empresaId, banco_id: input.bancoId, conta: input.conta, ano: input.ano };
+      // Valor em branco = remove a base (volta a "não informado").
+      if (input.valor == null) {
+        const { error } = await (supabase as any).from("financeiro_conciliacao_saldo_inicial").delete().match(chave);
+        if (error) throw error;
+        return;
+      }
+      const { error } = await (supabase as any)
+        .from("financeiro_conciliacao_saldo_inicial")
+        .upsert({ ...chave, valor: input.valor, updated_by: auth.user?.id ?? null, updated_at: new Date().toISOString() }, { onConflict: "empresa_id,banco_id,conta,ano" });
+      if (error) throw error;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: [KEY_SALDO_INICIAL] }),
+  });
+}
+
+// SIS-2026-0720: divergências TRATADAS (ignorada, ajustada ou criada) das conciliações, para explicar de onde vem a diferença dos KPIs de valor.
+// A conciliação não grava o que bateu sozinho; só o que precisou de tratamento.
+export function useDivergenciasTratadas(conciliacaoIds: string[], ativo: boolean) {
+  const chave = [...conciliacaoIds].sort().join(",");
+  return useQuery({
+    queryKey: [KEY, "tratadas", chave],
+    enabled: ativo && conciliacaoIds.length > 0,
+    queryFn: async () =>
+      emLotes<ConciliacaoFluxoCaixaLinha>(conciliacaoIds, 40, (lote) =>
+        (supabase as any)
+          .from("financeiro_conciliacao_fluxo_caixa_linha")
+          .select("id, conciliacao_id, dia, origem, tipo, valor, descricao, status, observacao")
+          .in("conciliacao_id", lote)
+          .in("status", ["ignorado", "ajustado", "criado"])
+          .order("dia"),
+        4,
+      ),
   });
 }

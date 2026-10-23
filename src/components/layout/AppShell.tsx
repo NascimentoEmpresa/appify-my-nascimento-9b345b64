@@ -10,6 +10,7 @@ import { StatusDevTela } from "./StatusDevTela";
 import { VinculoGate } from "@/components/auth/VinculoEmpregado";
 import { VinculoDiscordGate } from "@/components/auth/VinculoDiscordGate";
 import { GateNotificacoes } from "@/components/notificacoes/GateNotificacoes";
+import { GateTermoCiencia } from "@/components/documentos/GateTermoCiencia";
 import { useModoExterno } from "@/hooks/useModoExterno";
 import { AlertaUrgenteAdmissao } from "@/components/recrutamento/AlertaUrgenteAdmissao";
 
@@ -106,6 +107,10 @@ export function AppShell() {
           responder. Fica aqui, e não numa página, porque o aviso é do
           SISTEMA — não adianta ele existir só em quem abriu Novidades. */}
       {!externo && <GateNotificacoes />}
+      {/* Termo de ciência de RH › Documentos (22/10/2026): pede a assinatura
+          a cada entrada até a pessoa assinar; também abre o link
+          /app?documento=<id> da notificação. */}
+      {!externo && <GateTermoCiencia />}
       {/* Entra depois do VinculoGate de propósito: ele só aparece quando o
           vínculo Senior já está resolvido, para não empilhar dois modais. */}
       {!externo && <VinculoDiscordGate />}

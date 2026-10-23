@@ -1,10 +1,14 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
+
+vi.mock("@/integrations/supabase/client", () => ({ supabase: {} }));
+
 import {
   OPCOES_PREDEFINIDAS,
   TAMANHOS_LETRA,
   TAMANHO_NUMERO_MAX,
   chipsDeOpcao,
 } from "@/lib/suprimentos/opcoesMaterial";
+import { OPCOES_PREDEFINIDAS as OPCOES_DO_CATALOGO } from "@/hooks/useSupCatalogo";
 
 /**
  * SIS-2026-0482 — "não aparece para selecionar".
@@ -16,6 +20,11 @@ import {
  */
 
 describe("grade de tamanhos", () => {
+  it("faz o Catálogo usar a mesma grade que chega até 60", () => {
+    expect(OPCOES_DO_CATALOGO).toBe(OPCOES_PREDEFINIDAS);
+    expect(OPCOES_DO_CATALOGO.tamanho).toContain("60");
+  });
+
   it("cobre a numeração que o estoque já tem (50, 52, 54)", () => {
     for (const n of ["50", "52", "54"]) {
       expect(OPCOES_PREDEFINIDAS.tamanho).toContain(n);

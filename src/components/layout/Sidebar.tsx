@@ -80,7 +80,7 @@ import { useReembolsoNotif } from "@/hooks/useReembolsoNotif";
 import { useAprovacoesNotif } from "@/hooks/useAprovacoesNotif";
 import { Inbox, FileSignature, PencilRuler, Workflow, type LucideIcon } from "lucide-react";
 import { Target, MessagesSquare, KeyRound, MonitorPlay, Gauge } from "lucide-react";
-import { FileX2, KanbanSquare } from "lucide-react";
+import { FileX2 } from "lucide-react";
 import { GitBranch, GitMerge } from "lucide-react";
 import { MessageSquare } from "lucide-react";
 import { Banknote } from "lucide-react";
@@ -502,6 +502,7 @@ const maloteModule: ModuleDef = {
       items: [
         { label: "Classificações Administrativo", to: "/app/malote/classificacoes-administrativo", icon: ListChecks },
         { label: "Orçamento Administrativo", to: "/app/malote/orcamento-administrativo", icon: ClipboardList },
+        { label: "Orçamento ADM e Sócios (novo)", to: "/app/malote/orcamento-adm-socios", icon: ClipboardList },
         { label: "Classificações Malote", to: "/app/malote/classificacoes-malote", icon: ListChecks },
         { label: "Orçamento de Contratos", to: "/app/malote/orcamento-contratos", icon: FileText },
         { label: "Orçamento Geral", to: "/app/malote/orcamento-geral", icon: Calculator },
@@ -579,6 +580,11 @@ const rhModule: ModuleDef = {
         // 20260930000053; as tabelas continuam no banco.
         { label: "Gestão de Férias", to: "/app/rh/ferias", icon: CalendarRange },
         { label: "Solicitações de Demissão", to: "/app/rh/solicitacoes-demissao", icon: UserMinus },
+        // Rescisões (22/10/2026, mig 20261022000400): a planilha de rescisão do
+        // RH. Foi módulo próprio com kanban por um dia (21/10); voltou para
+        // cá a pedido — "não pode ter um módulo só pra rescisões". A linha
+        // nasce quando o RH libera a demissão no item de cima.
+        { label: "Rescisões", to: "/app/rh/rescisoes", icon: FileX2 },
         // Documentos solicitados aos encarregados, até voltarem assinados (mig 20261019000040).
         { label: "Documentos", to: "/app/rh/documentos", icon: FileSignature },
         { label: "Conferência de Ponto", to: "/app/rh/conferencia-ponto", icon: ClipboardCheck },
@@ -642,28 +648,6 @@ const recrutamentoModule: ModuleDef = {
       defaultOpen: true,
       items: [
         { label: "Acompanhar Colaboradores", to: "/app/rh/recrutamento/acompanhar-colaboradores", icon: ClipboardCheck },
-      ],
-    },
-  ],
-};
-
-// Rescisões (21/10/2026, mig 20261021000030): a planilha de rescisão do RH
-// virou módulo próprio, com kanban por status — "igual o do recrutamento,
-// mas pra rescisões". O fluxo da solicitação (liberar pro SST, cancelar)
-// segue em Recursos Humanos › Solicitações de Demissão.
-const rescisoesModule: ModuleDef = {
-  id: "rescisoes",
-  label: "Rescisões",
-  description: "Kanban e planilha das rescisões",
-  icon: FileX2,
-  basePath: "/app/rh/rescisoes",
-  status: "active",
-  groups: [
-    {
-      label: "Gestão",
-      defaultOpen: true,
-      items: [
-        { label: "Gestão de Rescisões", to: "/app/rh/rescisoes", icon: KanbanSquare },
       ],
     },
   ],
@@ -973,6 +957,8 @@ const centralServicosModule: ModuleDef = {
         { label: "Orientações Jurídicas", to: "/app/central-servicos/orientacoes-juridicas", icon: BookOpen },
         { label: "Nascimento Formulários", to: "/app/central-servicos/formularios", icon: ClipboardList },
         { label: "Chamados de Sistemas", to: "/app/central-servicos/chamados", icon: Headset, notif: "meus" },
+        // Visão gerencial da qualidade das solicitações (mig 20261022000180).
+        { label: "Monitoramento de Chamados", to: "/app/central-servicos/chamados/monitoramento", icon: Gauge },
         { label: "Agenda de Reunião", to: "/app/central-servicos/reunioes", icon: CalendarRange },
         { label: "Agendamento de Veículos", to: "/app/central-servicos/veiculos", icon: Car },
         // Mesma tela de Treinamentos ERP dos Encarregados, ancorada aqui: o
@@ -1423,7 +1409,6 @@ const erpModules: ModuleDef[] = [
   contabilModule,
   rhModule,
   recrutamentoModule,
-  rescisoesModule,
   encarregadosModule,
   operacionalModule,
   sistemasModule,

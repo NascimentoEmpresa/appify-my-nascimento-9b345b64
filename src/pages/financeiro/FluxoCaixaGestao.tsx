@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { ErroDeConsulta } from "@/components/layout/ErroDeConsulta";
@@ -20,6 +20,7 @@ import {
   type AbaFluxo, type SituacaoFluxo,
 } from "@/pages/financeiro/fluxo-caixa/abasFluxo";
 import { agruparKpi, explicacaoKpi, linhasDoKpi, totalKpi, type KpiFluxo } from "@/pages/financeiro/fluxo-caixa/kpiFluxo";
+import { useScreenAccess } from "@/hooks/useScreenAccess";
 import { TrendingDown, TrendingUp, Wallet, LineChart, X, Trash2, RotateCcw, Pencil, Eye, ChevronRight, ChevronDown, FileDown, Split } from "lucide-react";
 import { toast } from "sonner";
 import { AcessoGate } from "@/components/auth/AcessoGate";
@@ -50,7 +51,7 @@ import { urlLogoCartao, useCartaoBancos } from "@/hooks/useMaloteCartaoCredito";
 import { ContratoTrocaCampo } from "@/pages/financeiro/fluxo-caixa/ContratoTrocaCampo";
 import { camposComPendencia, motivosRevisar, SEM_CONTRATO } from "@/pages/financeiro/fluxo-caixa/motivosRevisar";
 import { linhaDaOrigemDoCard } from "@/pages/controladoria/auditoria/regras";
-import { parseValorBR, valorConfere } from "@/pages/financeiro/fluxo-caixa/filtroValor";
+import { parseValorBR, valorConfere, valorNaLinha } from "@/pages/financeiro/fluxo-caixa/filtroValor";
 import { useFaturasInformadas } from "@/hooks/useCartaoFaturaConsolidada";
 import { chaveFatura, compararFatura } from "@/pages/financeiro/cartao-credito/faturaConsolidada";
 
@@ -283,6 +284,21 @@ export default function FluxoCaixaGestao() {
   const [editFormaPagamento, setEditFormaPagamento] = useState("");
   const [editBancoId, setEditBancoId] = useState("");
 
+  // SIS-2026-0720: a Auditoria da Controladoria (item 3, "falta distribuir") abre o Fluxo já na edição do lançamento para reclassificar.
+  // ?editar=origem|despesa_id|parcela. Só abre para quem tem "alterar" no Fluxo (o mesmo gate do lápis); sem permissão, nada acontece.
+  const editarParam = searchParams.get("editar");
+  const { data: podeEditarFluxo } = useScreenAccess("financeiro-fluxo-caixa-gestao", "alterar");
+  const editarJaAbriu = useRef(false);
+  useEffect(() => {
+    if (!editarParam || editarJaAbriu.current || !podeEditarFluxo || isLoading || linhasTodas.length === 0) return;
+    const [origem, despesaId, parcela] = editarParam.split("|");
+    const alvo = linhasTodas.find((x) => x.origem === origem && x.despesa_id === despesaId && String(x.numero_parcela ?? "") === (parcela ?? ""));
+    editarJaAbriu.current = true;
+    if (alvo) abrirEditar(alvo);
+    else toast.error("Não achei esse lançamento no Fluxo de Caixa (a data ou a origem pode ter mudado). Procure pelo ID na busca.");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editarParam, podeEditarFluxo, isLoading, linhasTodas]);
+
   function abrirEditar(l: FluxoCaixaMaloteLinha) {
     setItemEditar(l);
     setEditData(l.data_pagamento ?? "");
@@ -474,7 +490,7 @@ export default function FluxoCaixaGestao() {
     const buscaNorm = busca.trim().toLowerCase();
     const valorNum = parseValorBR(valor);
     return filtrarPorSituacaoFluxo(linhas, situacao, hoje).filter((l) => {
-      if (!valorConfere(l.valor, valorNum)) return false;
+      if (valorNaLinha(l, valorNum) === null) return false;
       if (dataDe && (!l.data_pagamento || l.data_pagamento < dataDe)) return false;
       if (dataAte && (!l.data_pagamento || l.data_pagamento > dataAte)) return false;
       if (competencia && l.competencia?.slice(0, 7) !== competencia) return false;
@@ -517,12 +533,19 @@ export default function FluxoCaixaGestao() {
     setExportando(true);
   }
 
+  // Valor procurado: a linha aparece pelo total OU por uma fatia do rateio. No segundo caso a linha abre sozinha e a fatia fica destacada.
+  const valorProcurado = useMemo(() => parseValorBR(valor), [valor]);
+  const qtdAchadasNoRateio = useMemo(
+    () => (valorProcurado === null ? 0 : filtradas.filter((l) => valorNaLinha(l, valorProcurado) === "rateio").length),
+    [filtradas, valorProcurado]
+  );
+
   const linhasExport = useMemo(() => {
     if (!exportando) return [] as typeof linhas;
     const valorNum = parseValorBR(fx.valor);
     return linhas.filter((l) => {
       if (situacaoFluxo(l, hoje) === "cancelado") return false;
-      if (!valorConfere(l.valor, valorNum)) return false;
+      if (valorNaLinha(l, valorNum) === null) return false;
       if (fx.dataDe && (!l.data_pagamento || l.data_pagamento < fx.dataDe)) return false;
       if (fx.dataAte && (!l.data_pagamento || l.data_pagamento > fx.dataAte)) return false;
       if (fx.competencia && l.competencia?.slice(0, 7) !== fx.competencia) return false;
@@ -1080,6 +1103,11 @@ export default function FluxoCaixaGestao() {
           <div>
             <p className="text-sm font-semibold">Movimentações do Fluxo de Caixa</p>
             <p className="text-xs text-muted-foreground">Dados alimentados pelo Pagamento Malote e pelo Débito Automático.</p>
+            {qtdAchadasNoRateio > 0 && (
+              <p className="mt-1 rounded border border-amber-300 bg-amber-50 px-2 py-1 text-xs text-amber-900">
+                {qtdAchadasNoRateio === 1 ? "1 despesa tem" : `${qtdAchadasNoRateio} despesas têm`} o valor procurado dentro de um rateio: a linha mostra o valor TOTAL da despesa e está aberta, com a fatia destacada.
+              </p>
+            )}
           </div>
           <div className="overflow-x-auto">
             {/* Compacto para caber sem rolagem lateral (Ações sempre visíveis): padding menor,
@@ -1131,7 +1159,10 @@ export default function FluxoCaixaGestao() {
                   // despesa_id — key precisa incluir o número da parcela.
                   const chave = `${l.despesa_id}-${l.numero_parcela ?? "unica"}`;
                   const temRateio = (l.contrato_nome === "Rateio" || !!l.fatura_cartao_id) && !!l.rateioDetalhe?.length;
-                  const expandida = linhasExpandidas.has(chave);
+                  // Achada pelo valor de uma fatia do rateio: abre sozinha (e o botão recolhe, em vez de abrir).
+                  const achadaNoRateio = valorProcurado !== null && valorNaLinha(l, valorProcurado) === "rateio";
+                  const alternada = linhasExpandidas.has(chave);
+                  const expandida = achadaNoRateio ? !alternada : alternada;
                   const situacaoLinha = situacaoFluxo(l, hoje);
                   return (
                   <>
@@ -1354,7 +1385,7 @@ export default function FluxoCaixaGestao() {
                   </TableRow>
                   {temRateio && expandida && l.fatura_cartao_id && l.rateioDetalhe!.map((c) => (
                     // SIS-2026-0632: despesa da fatura do cartão — ID (DM/SD), data da compra, classificação, descrição e valor.
-                    <TableRow key={`${chave}-${c.id}`} className="bg-muted/30 hover:bg-muted/30">
+                    <TableRow key={`${chave}-${c.id}`} className={valorProcurado !== null && valorConfere(c.valor, valorProcurado) ? "bg-amber-100/70 hover:bg-amber-100/70" : "bg-muted/30 hover:bg-muted/30"}>
                       <TableCell />
                       <TableCell className="text-center font-mono text-[11px] text-muted-foreground">{c.idMalote ?? "—"}</TableCell>
                       <TableCell className="text-center text-xs text-muted-foreground" title="Data da compra">
@@ -1373,11 +1404,14 @@ export default function FluxoCaixaGestao() {
                     </TableRow>
                   ))}
                   {temRateio && expandida && !l.fatura_cartao_id && l.rateioDetalhe!.map((c) => (
-                    <TableRow key={`${chave}-${c.id}`} className="bg-muted/30 hover:bg-muted/30">
+                    <TableRow key={`${chave}-${c.id}`} className={valorProcurado !== null && valorConfere(c.valor, valorProcurado) ? "bg-amber-100/70 hover:bg-amber-100/70" : "bg-muted/30 hover:bg-muted/30"}>
                       <TableCell />
                       <TableCell colSpan={7} className="text-right text-xs text-muted-foreground pr-4">
                         <span className="inline-flex items-center gap-1.5">
                           <ChevronRight className="h-3 w-3 opacity-50" /> {c.nome}
+                          {valorProcurado !== null && valorConfere(c.valor, valorProcurado) && (
+                            <span className="rounded bg-amber-200 px-1.5 py-0.5 text-[10px] font-semibold text-amber-900">valor procurado</span>
+                          )}
                         </span>
                       </TableCell>
                       <TableCell />

@@ -32,6 +32,7 @@ import {
   type Chamado, type Evento, type AvaliacaoChamado, type Anexo,
   CRITERIOS_AVALIACAO_SOLICITANTE, type AvaliacaoSolicitante,
 } from "./types";
+import { useAnexoChamado } from "./useAnexoChamado";
 
 /** Descrição acima disto (ou com mais linhas) começa recolhida, com "Ver tudo". */
 const DESCRICAO_LONGA_CHARS = 700;
@@ -163,11 +164,8 @@ export default function CoordenarChamado() {
     },
   });
 
-  const baixarAnexo = async (path: string) => {
-    const { data, error } = await supabase.storage.from(BUCKET_CHAMADOS).createSignedUrl(path, 3600, opcoesDownloadAnexo(path));
-    if (error || !data?.signedUrl) { toast({ title: "Erro ao abrir anexo", variant: "destructive" }); return; }
-    window.open(data.signedUrl, "_blank", "noopener,noreferrer");
-  };
+  // Imagem abre num card no centro; o resto, em nova aba (useAnexoChamado).
+  const { abrirAnexo: baixarAnexo, visualizador } = useAnexoChamado();
 
   const { data: eventos = [] } = useQuery({
     queryKey: ["chamado-eventos", id],
@@ -430,6 +428,8 @@ export default function CoordenarChamado() {
 
   return (
     <div>
+      {/* Imagem do anexo aberta num card no centro (useAnexoChamado). */}
+      {visualizador}
       <PageHeader
         title="Coordenar chamado"
         module="Sistemas"
@@ -498,7 +498,7 @@ export default function CoordenarChamado() {
               <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Anexos ({anexosAbertura.length})</p>
               <div className="flex flex-wrap gap-2">
                 {anexosAbertura.map((a) => (
-                  <button key={a.id} type="button" onClick={() => baixarAnexo(a.storage_path)}
+                  <button key={a.id} type="button" onClick={() => baixarAnexo(a)}
                     className="flex max-w-[260px] items-center gap-1.5 rounded-md border border-border px-2.5 py-1.5 text-xs transition-colors hover:border-primary/40 hover:bg-primary/5">
                     <Paperclip className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
                     <span className="truncate">{a.nome_arquivo}</span>

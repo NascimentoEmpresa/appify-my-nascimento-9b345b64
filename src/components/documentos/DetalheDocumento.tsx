@@ -1,6 +1,7 @@
 import { useRef, useState, type ReactNode } from "react";
 import {
-  AlertTriangle, Ban, CheckCircle2, FileText, Forward, Loader2, MessageSquare, Paperclip, Send, Trash2, Undo2, Upload,
+  AlertTriangle, Ban, CheckCircle2, FileSignature, FileText, Forward, ImagePlus, Loader2, MessageSquare, Paperclip, PenLine, Send, Trash2,
+  Undo2, Upload,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -14,9 +15,11 @@ import {
   useRemoverAnexoDocumento, urlDocumento,
 } from "@/hooks/useDocumentosSolicitados";
 import {
-  ACAO_EVENTO, STATUS_DOCUMENTO, atrasada, fmtTamanho, nomeLegivel, pendenciasEnvio, rotuloSituacao, textoPrazo,
-  type AnexoDocumento, type SolicitacaoDocumento,
+  ACAO_EVENTO, STATUS_DOCUMENTO, TIPO_DOCUMENTO, atrasada, fmtTamanho, nomeLegivel, pedeAssinatura, pendenciasEnvio,
+  rotuloSituacao, textoPrazo, type AnexoDocumento, type AssinaturaDocumento, type SolicitacaoDocumento,
 } from "@/lib/rh/documentosSolicitados";
+import { AssinarDocumento, TracoAssinatura } from "@/components/documentos/AssinarDocumento";
+import { ImagensDocumento } from "@/components/documentos/ImagensDocumento";
 
 // =====================================================================
 // Detalhe de uma solicitação de documento (mig 20261019000040) — a mesma
@@ -25,6 +28,12 @@ import {
 //   RH: anexa originais (pendente), devolve (concluída), reencaminha ou
 //       cancela (pendente).
 // Os dois lados trocam mensagens no histórico.
+//
+// Tipo (mig 20261022000500): o painel "Enviar ao RH" é só do fluxo antigo
+// ('anexo'). Assinatura e termo de ciência se concluem pelo botão
+// "Assinar" (AssinarDocumento); registro não pede nada e o RH pode seguir
+// anexando nele. Imagens anexadas aparecem como miniaturas, e a assinatura
+// gravada (traço, quem, quando) aparece no topo.
 // =====================================================================
 
 const hojeIso = () => new Date().toLocaleDateString("sv-SE");
@@ -49,6 +58,8 @@ export function DetalheDocumento({ solicitacao: s, lado, podeAnexarRh, podeAlter
   const concluir = useConcluirDocumento();
   const acaoRh = useAcaoRhDocumento();
   const inputArquivo = useRef<HTMLInputElement>(null);
+  const inputImagem = useRef<HTMLInputElement>(null);
+  const [assinando, setAssinando] = useState(false);
   const [texto, setTexto] = useState("");
   const [observacao, setObservacao] = useState("");
   const [acao, setAcao] = useState<null | "devolver" | "cancelar" | "reencaminhar">(null);
@@ -60,22 +71,28 @@ export function DetalheDocumento({ solicitacao: s, lado, podeAnexarRh, podeAlter
   const hoje = hojeIso();
   const anexos = detalhe.data?.anexos ?? [];
   const eventos = detalhe.data?.eventos ?? [];
+  const assinaturas = detalhe.data?.assinaturas ?? [];
+  // Imagens aparecem também nas miniaturas; nas listas continuam (é onde se remove).
   const originais = anexos.filter((a) => a.origem === "rh");
   const assinados = anexos.filter((a) => a.origem === "destinatario");
   const pendente = s.status === "pendente";
   const souDestinatario = lado === "destinatario";
-  const podeAnexar = pendente && (souDestinatario || podeAnexarRh);
+  const fluxoAnexo = s.tipo === "anexo";
+  const assina = pedeAssinatura(s);
+  // Registro concluído continua recebendo arquivo do RH (rh_doc_pode_anexar).
+  const registroAberto = s.tipo === "registro" && s.status === "concluida" && !souDestinatario && !!podeAnexarRh;
+  const podeAnexar = registroAberto || (pendente && (souDestinatario ? s.tipo !== "ciencia" : !!podeAnexarRh));
   const faltas = pendenciasEnvio(s, anexos);
   const prazoTxt = textoPrazo(s, hoje);
 
-  const subir = async (files: FileList | null) => {
+  const subir = async (files: FileList | null, input: HTMLInputElement | null) => {
     const arquivos = Array.from(files ?? []);
     if (!arquivos.length) return;
     try {
       await anexar.mutateAsync({ solicitacaoId: s.id, arquivos });
       toast.success(arquivos.length === 1 ? "Arquivo anexado." : `${arquivos.length} arquivos anexados.`);
     } catch (e) { toast.error((e as Error).message); }
-    if (inputArquivo.current) inputArquivo.current.value = "";
+    if (input) input.value = "";
   };
 
   const enviarMensagem = async () => {
@@ -119,6 +136,7 @@ export function DetalheDocumento({ solicitacao: s, lado, podeAnexarRh, podeAlter
         <DialogHeader>
           <DialogTitle className="flex flex-wrap items-center gap-2 pr-6">
             <span className="text-muted-foreground">#{s.id}</span> {s.titulo}
+            <Badge variant="outline" className={cn("font-semibold", TIPO_DOCUMENTO[s.tipo]?.cor)}>{TIPO_DOCUMENTO[s.tipo]?.rotulo ?? s.tipo}</Badge>
             <Badge variant="outline" className={cn("font-semibold", STATUS_DOCUMENTO[s.status].cor)}>{rotuloSituacao(s)}</Badge>
           </DialogTitle>
         </DialogHeader>
@@ -131,7 +149,10 @@ export function DetalheDocumento({ solicitacao: s, lado, podeAnexarRh, podeAlter
             <span className={cn(atrasada(s, hoje) && "font-semibold text-red-600")}>
               {fmtData(s.prazo)}{prazoTxt ? ` · ${prazoTxt}` : ""}
             </span>} />
-          {s.status === "concluida" && <Info rotulo="Enviado" valor={`${nomeLegivel(s.concluida_por) || "—"} · ${fmtDataHora(s.concluida_em)}`} />}
+          {s.status === "concluida" && (
+            <Info rotulo={s.tipo === "registro" ? "Registrado" : assina ? "Assinado" : "Enviado"}
+              valor={`${nomeLegivel(s.concluida_por) || "—"} · ${fmtDataHora(s.concluida_em)}`} />
+          )}
           {s.status === "cancelada" && <Info rotulo="Cancelada" valor={`${nomeLegivel(s.cancelada_por) || "—"} · ${s.cancelamento_motivo ?? ""}`} />}
         </div>
 
@@ -140,31 +161,59 @@ export function DetalheDocumento({ solicitacao: s, lado, podeAnexarRh, podeAlter
         )}
         {s.observacao_envio && (
           <div className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-900">
-            <span className="font-semibold">Observação do envio:</span> {s.observacao_envio}
+            <span className="font-semibold">{assina ? "Observação da assinatura:" : "Observação do envio:"}</span> {s.observacao_envio}
           </div>
+        )}
+
+        <ImagensDocumento anexos={anexos} />
+
+        {/* ── Assinatura (assinatura e termo de ciência) ── */}
+        {assina && assinaturas.length > 0 && <AssinaturasFeitas assinaturas={assinaturas} atual={s.status === "concluida"} />}
+        {assina && souDestinatario && pendente && (
+          <div className="flex flex-wrap items-center gap-3 rounded-lg border border-primary/30 bg-primary/5 p-3">
+            <FileSignature className="h-5 w-5 shrink-0 text-primary" />
+            <p className="min-w-0 flex-1 text-sm">
+              {s.tipo === "ciencia" ? "Leia o termo e assine para registrar sua ciência." : "O RH pediu a sua assinatura neste documento."}
+            </p>
+            <Button size="sm" onClick={() => setAssinando(true)}><PenLine className="mr-1.5 h-4 w-4" /> Assinar</Button>
+          </div>
+        )}
+        {assina && !souDestinatario && pendente && (
+          <p className="text-xs text-muted-foreground">
+            Aguardando a assinatura de {nomeLegivel(s.destinatario_nome) || "destinatário"}
+            {s.tipo === "ciencia" ? " — o termo aparece para ele toda vez que entrar no sistema." : " — ele foi notificado."}
+          </p>
         )}
 
         {/* ── Arquivos ── */}
-        <div className="grid gap-3 sm:grid-cols-2">
-          <ListaAnexos titulo="Documento do RH" vazio="O RH não anexou arquivo — veja a descrição." anexos={originais}
+        <div className={cn("grid gap-3", (fluxoAnexo || assinados.length > 0) && "sm:grid-cols-2")}>
+          <ListaAnexos titulo={fluxoAnexo ? "Documento do RH" : "Documentos do RH"}
+            vazio={s.tipo === "registro" ? "Nenhum arquivo registrado ainda." : "O RH não anexou arquivo — veja a descrição."} anexos={originais}
             podeRemover={(a) => podeAnexar && !souDestinatario} onRemover={(id) => remover.mutate(id, { onError: (e) => toast.error(e.message) })} />
-          <ListaAnexos titulo="Documento assinado" vazio={pendente ? "Ainda não anexado." : "Nenhum."} anexos={assinados} destaque
-            podeRemover={() => podeAnexar && souDestinatario} onRemover={(id) => remover.mutate(id, { onError: (e) => toast.error(e.message) })} />
+          {(fluxoAnexo || assinados.length > 0) && (
+            <ListaAnexos titulo={fluxoAnexo ? "Documento assinado" : "Enviados pelo destinatário"} vazio={pendente ? "Ainda não anexado." : "Nenhum."}
+              anexos={assinados} destaque={fluxoAnexo}
+              podeRemover={() => podeAnexar && souDestinatario} onRemover={(id) => remover.mutate(id, { onError: (e) => toast.error(e.message) })} />
+          )}
         </div>
 
         {podeAnexar && (
-          <div>
-            <input ref={inputArquivo} type="file" multiple className="hidden" onChange={(e) => subir(e.target.files)} />
+          <div className="flex flex-wrap items-center gap-2">
+            <input ref={inputArquivo} type="file" multiple className="hidden" onChange={(e) => subir(e.target.files, e.target)} />
+            <input ref={inputImagem} type="file" accept="image/*" multiple className="hidden" onChange={(e) => subir(e.target.files, e.target)} />
             <Button variant="outline" size="sm" disabled={anexar.isPending} onClick={() => inputArquivo.current?.click()}>
               {anexar.isPending ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <Upload className="mr-1.5 h-4 w-4" />}
-              {souDestinatario ? "Anexar documento assinado" : "Anexar documento a assinar"}
+              {souDestinatario ? (fluxoAnexo ? "Anexar documento assinado" : "Anexar arquivo") : fluxoAnexo ? "Anexar documento a assinar" : "Anexar documento"}
             </Button>
-            <span className="ml-2 text-xs text-muted-foreground">PDF ou foto, até 20 MB cada.</span>
+            <Button variant="outline" size="sm" disabled={anexar.isPending} onClick={() => inputImagem.current?.click()}>
+              <ImagePlus className="mr-1.5 h-4 w-4" /> Anexar imagem
+            </Button>
+            <span className="text-xs text-muted-foreground">PDF ou foto, até 20 MB cada.</span>
           </div>
         )}
 
-        {/* ── Envio do destinatário ── */}
-        {souDestinatario && pendente && (
+        {/* ── Envio do destinatário (só o fluxo antigo) ── */}
+        {fluxoAnexo && souDestinatario && pendente && (
           <div className="space-y-2 rounded-lg border border-primary/30 bg-primary/5 p-3">
             <p className="text-sm font-semibold">Enviar ao RH</p>
             <Textarea rows={2} placeholder="Observação do envio (opcional) — ex.: faltou a assinatura de um colaborador, segue amanhã."
@@ -186,7 +235,7 @@ export function DetalheDocumento({ solicitacao: s, lado, podeAnexarRh, podeAlter
           <div className="space-y-2">
             {!acao && (
               <div className="flex flex-wrap gap-2">
-                {s.status === "concluida" && (
+                {s.status === "concluida" && s.tipo !== "registro" && (
                   <Button variant="outline" size="sm" onClick={() => setAcao("devolver")}><Undo2 className="mr-1.5 h-4 w-4" /> Devolver ao destinatário</Button>
                 )}
                 {pendente && (
@@ -253,8 +302,38 @@ export function DetalheDocumento({ solicitacao: s, lado, podeAnexarRh, podeAlter
             </div>
           )}
         </div>
+        {assinando && <AssinarDocumento solicitacao={s} onFechar={() => setAssinando(false)} />}
       </DialogContent>
     </Dialog>
+  );
+}
+
+/** A assinatura vigente (traço, quem e quando) e, recolhidas, as anteriores — de quando o RH devolveu. */
+function AssinaturasFeitas({ assinaturas, atual }: { assinaturas: AssinaturaDocumento[]; atual: boolean }) {
+  const [vigente, ...anteriores] = atual ? assinaturas : [null, ...assinaturas];
+  return (
+    <div className="space-y-2">
+      {vigente && <CartaoAssinatura a={vigente} />}
+      {anteriores.length > 0 && (
+        <details className="text-xs text-muted-foreground">
+          <summary className="cursor-pointer">{anteriores.length} assinatura{anteriores.length === 1 ? "" : "s"} anterior{anteriores.length === 1 ? "" : "es"} (devolvida{anteriores.length === 1 ? "" : "s"} pelo RH)</summary>
+          <div className="mt-2 space-y-2">{anteriores.map((a) => a && <CartaoAssinatura key={a.id} a={a} apagado />)}</div>
+        </details>
+      )}
+    </div>
+  );
+}
+
+function CartaoAssinatura({ a, apagado }: { a: AssinaturaDocumento; apagado?: boolean }) {
+  return (
+    <div className={cn("rounded-lg border p-3", apagado ? "opacity-60" : "border-emerald-200 bg-emerald-50/50")}>
+      <div className="rounded-md bg-white px-2 py-3"><TracoAssinatura a={a} nome={a.nome} altura="56px" /></div>
+      <p className="mt-1.5 flex flex-wrap items-center gap-x-2 text-xs">
+        <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
+        <span>Assinado por <b>{nomeLegivel(a.nome) || "—"}</b> em {fmtDataHora(a.created_at)}</span>
+      </p>
+      {a.declaracao && <p className="mt-1 text-xs italic text-muted-foreground">{a.declaracao}</p>}
+    </div>
   );
 }
 

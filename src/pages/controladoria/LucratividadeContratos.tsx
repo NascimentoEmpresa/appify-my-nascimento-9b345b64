@@ -16,12 +16,15 @@ import { agruparFaturamento, custosPorContratoMes, custosVazios, CustosPorRubric
 import { RubricasCusto } from "./faturamento/RubricasCusto";
 import { FaixasTexto, pillDaMargem, TituloComFormula } from "./faturamento/Rentabilidade";
 import { useLigacoesRubrica } from "./faturamento/useLigacoesRubrica";
+import { SeletorBaseLeitura } from "./faturamento/SeletorBaseLeitura";
+import { useLeituraCompartilhada } from "./faturamento/leituraCompartilhada";
+import { CODIGO_PADRAO, codigosDoFiltro, FiltroCodigoNota } from "./faturamento/FiltroCodigoNota";
 import { rotuloMes, useBaseFaturamento } from "./faturamento/useBaseFaturamento";
 import { BannerAuditoria } from "./auditoria/BannerAuditoria";
 
 // SIS-2026-0556: Lucratividade de Contratos (Controladoria). Faturamento vem
 // das NFs Código N (competência); custo realizado vem das SAÍDAS do Fluxo de
-// Caixa com contrato (mês do pagamento — regime de caixa), sem transferências,
+// Caixa com contrato (mês da COMPETÊNCIA — SIS-2026-0708), sem transferências,
 // aplicações, empréstimos etc. (ver faturamento/regras.ts).
 
 const TODOS = "todos";
@@ -48,11 +51,14 @@ interface Linha {
 }
 
 export default function LucratividadeContratos() {
-  const { contratos, nfs, empresas, executavelDoContrato, carregando } = useBaseFaturamento();
+  // Filtro Código (tipo da nota): padrão N, como sempre foi.
+  // SIS-2026-0721: base, código e empresa vêm da leitura compartilhada com o Faturamento e o Fechamento.
+  const { base, setBase, codigo, setCodigo, empresaId, setEmpresaId } = useLeituraCompartilhada();
+  const codigos = useMemo(() => codigosDoFiltro(codigo), [codigo]);
+  const { contratos, nfs, empresas, executavelDoContrato, carregando } = useBaseFaturamento(codigos);
   const hoje = new Date();
   const [mes, setMes] = useState(`${hoje.getFullYear()}-${String(hoje.getMonth() + 1).padStart(2, "0")}`);
-  const { data: fluxo = [], isLoading: carregandoFluxo, error: erroFluxo } = useCustosContratoMes(mes);
-  const [empresaId, setEmpresaId] = useState(TODOS);
+  const { data: fluxo = [], isLoading: carregandoFluxo, error: erroFluxo } = useCustosContratoMes(mes, base);
   const [cliente, setCliente] = useState(TODOS);
   const [situacao, setSituacao] = useState(TODOS);
   const [busca, setBusca] = useState("");
@@ -141,7 +147,7 @@ export default function LucratividadeContratos() {
         module="Controladoria"
         breadcrumb={["Lucratividade de Contratos"]}
         title="Lucratividade de Contratos"
-        subtitle="Faturamento (NFs Código N da competência) × custos pagos no mês (saídas do Fluxo de Caixa com contrato)."
+        subtitle="Faturamento (NFs da competência, do código escolhido — padrão N) × custos da competência (saídas do Fluxo de Caixa com contrato)."
         actions={
           <div className="flex gap-2 print:hidden">
             <Button variant="outline" size="sm" onClick={() => window.print()}><Printer className="h-4 w-4 mr-1" />Imprimir</Button>
@@ -166,6 +172,8 @@ export default function LucratividadeContratos() {
           <SelectTrigger className="h-8 w-[110px] text-xs"><SelectValue /></SelectTrigger>
           <SelectContent>{mesesDisponiveis.map((m) => <SelectItem key={m} value={m}>{rotuloMes(m)}</SelectItem>)}</SelectContent>
         </Select>
+        <SeletorBaseLeitura base={base} onChange={setBase} />
+        <FiltroCodigoNota valor={codigo} onChange={setCodigo} />
         <Select value={empresaId} onValueChange={setEmpresaId}>
           <SelectTrigger className="h-8 w-[200px] text-xs"><SelectValue placeholder="Empresa" /></SelectTrigger>
           <SelectContent>
@@ -241,7 +249,7 @@ export default function LucratividadeContratos() {
                   <TableHead className={CAB}><TituloComFormula titulo="Desc. Contrato (R$)" formula="Valor Bruto − Valor Líquido: o que foi descontado nas notas da competência." /></TableHead>
                   {detalhar && RUBRICAS.map((r) => (
                     <TableHead key={r.id} className={CAB}>
-                      <TituloComFormula titulo={`${r.label} (R$)`} formula={`Saídas do Fluxo de Caixa com contrato, pagas no mês, cuja classificação está ligada a “${r.label}”. A ligação é feita na aba “Rubricas de custo”${r.id === "outras" ? "; o que não casa com nenhuma outra coluna cai aqui" : ""}.`} />
+                      <TituloComFormula titulo={`${r.label} (R$)`} formula={`Saídas do Fluxo de Caixa com contrato, da competência do mês, cuja classificação está ligada a “${r.label}”. A ligação é feita na aba “Rubricas de custo”${r.id === "outras" ? "; o que não casa com nenhuma outra coluna cai aqui" : ""}.`} />
                     </TableHead>
                   ))}
                   <TableHead className={CAB}><TituloComFormula titulo="Total de Custos (R$)" formula="Soma de todas as colunas de custo (Salários … Outras Despesas), mesmo com o detalhe escondido." /></TableHead>
@@ -298,7 +306,7 @@ export default function LucratividadeContratos() {
             </Table>
           </div>
           <p className="text-[11px] text-muted-foreground">
-            Custos em regime de caixa: saídas do Fluxo de Caixa pagas em {rotuloMes(mes)} e vinculadas ao contrato. Transferências entre contas, aplicações, empréstimos, financiamentos e distribuições ficam de fora. Pagamentos sem contrato não entram em nenhuma linha. Contratos ADMINISTRATIVO - … ficam fora desta tela.
+            Custos {base === "pagamento" ? "pela data de pagamento: saídas do Fluxo de Caixa pagas em" : "pela competência: saídas do Fluxo de Caixa com competência em"} {rotuloMes(mes)} e vinculadas ao contrato. Transferências entre contas, aplicações, empréstimos, financiamentos e distribuições ficam de fora. Pagamentos sem contrato não entram em nenhuma linha. Contratos ADMINISTRATIVO - … ficam fora desta tela.
           </p>
           {semClass.linhas > 0 && (
             <p className="text-[11px] text-amber-700 dark:text-amber-400">
