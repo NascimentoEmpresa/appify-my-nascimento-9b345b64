@@ -11,6 +11,8 @@ import { Bar, BarChart, CartesianGrid, Cell, Legend, Line, LineChart, Pie, PieCh
 import { Info, Percent, Printer, ReceiptText, TrendingUp, CheckCircle2 } from "lucide-react";
 import { fmtMoney } from "@/pages/financeiro/nf-emissao/shared";
 import { agruparFaturamento, custosPorContratoMes, custosVazios, ehContratoAdministrativo, RUBRICAS, totalCustos, type CustosPorRubrica } from "./faturamento/regras";
+import { SeletorBaseLeitura } from "./faturamento/SeletorBaseLeitura";
+import { useLeituraCompartilhada } from "./faturamento/leituraCompartilhada";
 import { CODIGO_PADRAO, codigosDoFiltro, FiltroCodigoNota } from "./faturamento/FiltroCodigoNota";
 import { rotuloMes, useBaseFaturamento } from "./faturamento/useBaseFaturamento";
 import { useCustosContratoAno, useDespesasAdmAno } from "./faturamento/useCustosContratoMes";
@@ -55,7 +57,8 @@ function FaixasStatus() {
 
 export default function FechamentoEmpresa() {
   // Filtro Código (tipo da nota): padrão N, como sempre foi.
-  const [codigo, setCodigo] = useState(CODIGO_PADRAO);
+  // SIS-2026-0721: base, código e empresa vêm da leitura compartilhada com o Faturamento e a Lucratividade.
+  const { base, setBase, codigo, setCodigo, empresaId, setEmpresaId } = useLeituraCompartilhada();
   const codigos = useMemo(() => codigosDoFiltro(codigo), [codigo]);
   const { contratos, nfs, empresas, contratoPorId, executavelDoContrato, carregando } = useBaseFaturamento(codigos);
 
@@ -63,14 +66,13 @@ export default function FechamentoEmpresa() {
   const anoAtual = hoje.getFullYear();
   const mesAtual = `${anoAtual}-${String(hoje.getMonth() + 1).padStart(2, "0")}`;
   const [ano, setAno] = useState(anoAtual);
-  const [empresaId, setEmpresaId] = useState(TODOS);
   const [contratoId, setContratoId] = useState(TODOS);
   const [periodo, setPeriodo] = useState(TODOS);
   const [aba, setAba] = useState("mensal");
   const [buscaMes, setBuscaMes] = useState("");
 
-  const { data: custosAno = [], isLoading: carregandoCustos, error: erroCustos } = useCustosContratoAno(ano, true);
-  const { data: admAno = [], isLoading: carregandoAdm, error: erroAdm } = useDespesasAdmAno(ano);
+  const { data: custosAno = [], isLoading: carregandoCustos, error: erroCustos } = useCustosContratoAno(ano, true, base);
+  const { data: admAno = [], isLoading: carregandoAdm, error: erroAdm } = useDespesasAdmAno(ano, base);
   const { data: ligacoes } = useLigacoesRubrica();
 
   // Mês real de hoje, mesmo vendo outro ano: ano passado fica todo realizado, ano seguinte todo projetado.
@@ -216,6 +218,7 @@ export default function FechamentoEmpresa() {
           <SelectTrigger className="h-8 w-[90px] text-xs"><SelectValue /></SelectTrigger>
           <SelectContent>{anos.map((a) => <SelectItem key={a} value={String(a)}>{a}</SelectItem>)}</SelectContent>
         </Select>
+        <SeletorBaseLeitura base={base} onChange={setBase} />
         <FiltroCodigoNota valor={codigo} onChange={setCodigo} />
         <Select value={empresaId} onValueChange={(v) => { setEmpresaId(v); setContratoId(TODOS); }}>
           <SelectTrigger className="h-8 w-[200px] text-xs"><SelectValue placeholder="Empresa" /></SelectTrigger>
@@ -263,7 +266,7 @@ export default function FechamentoEmpresa() {
             <KpiTile label="Lucro dos Contratos" valor={fmtMoney(total.lucroContratos)} sub={temProjetado ? `${fmtMoney(total.lucroRealizado)} realizado + ${fmtMoney(total.lucroProjetado)} projetado` : "Valor consolidado do período"} icon={<TrendingUp />} cor="sky"
               info={<>
                 <p><strong>Valor líquido faturado − custos dos contratos</strong>, somado nos meses do período.</p>
-                <p>Faturamento: NFs Código N validadas do Relatório de Serviços (fora de canceladas e substituídas), pela competência da nota. Custos: saídas do Fluxo de Caixa com contrato, pela competência. Os contratos "ADMINISTRATIVO - …" não entram aqui (são despesa administrativa). É o mesmo Lucro Bruto da Lucratividade de Contratos.</p>
+                <p>Faturamento: NFs Código N validadas do Relatório de Serviços (fora de canceladas e substituídas), pela competência da nota. Custos: saídas do Fluxo de Caixa com contrato, {base === "pagamento" ? "pela data de pagamento" : "pela competência"}. Os contratos "ADMINISTRATIVO - …" não entram aqui (são despesa administrativa). É o mesmo Lucro Bruto da Lucratividade de Contratos.</p>
                 <p>Meses futuros são projetados (notas já emitidas ou executável do contrato × proporção líquido/executável recente, menos o custo lançado ou a média dos últimos 3 meses, o maior).</p>
               </>}
             />
@@ -512,7 +515,7 @@ export default function FechamentoEmpresa() {
                     </Table>
                   )}
                   <p className="border-t px-3 py-2 text-[11px] text-muted-foreground">
-                    Despesas dos sócios = todas as saídas do Fluxo de Caixa nos contratos "ADMINISTRATIVO SÓCIOS - nome do sócio", seja qual for a classificação, pelo mês da competência. Elas ficam fora do Resultado Final (resumo mensal sem sócios) e entram aqui, depois dele, para chegar ao Lucro Líquido Final.
+                    Despesas dos sócios = todas as saídas do Fluxo de Caixa nos contratos "ADMINISTRATIVO SÓCIOS - nome do sócio", seja qual for a classificação, {base === "pagamento" ? "pelo mês do pagamento" : "pelo mês da competência"}. Elas ficam fora do Resultado Final (resumo mensal sem sócios) e entram aqui, depois dele, para chegar ao Lucro Líquido Final.
                   </p>
                 </CardContent>
               </Card>

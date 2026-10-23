@@ -71,9 +71,16 @@ export function rubricaDeCusto(classificacaoNome: string | null | undefined): Ru
   return "outras";
 }
 
+// SIS-2026-0721: como a despesa do Fluxo de Caixa entra no mês nos relatórios de Faturamento, Lucratividade e Fechamento: pela COMPETÊNCIA do
+// lançamento (padrão, SIS-2026-0708) ou pela DATA DE PAGAMENTO (movimentação do Fluxo). As três telas leem a mesma base.
+export type BaseDespesa = "competencia" | "pagamento";
+export const ROTULO_BASE: Record<BaseDespesa, string> = { competencia: "Competência", pagamento: "Data de pagamento" };
+
 export interface LinhaFluxoCusto {
   tipo: "entrada" | "saida";
   data_pagamento: string | null;
+  // SIS-2026-0721: mês ("YYYY-MM") em que a despesa conta, já resolvido pela base escolhida na leitura. Sem ele, vale a regra da competência.
+  mes_base?: string | null;
   // SIS-2026-0708: as despesas entram no mês da COMPETÊNCIA (dia 01), não no do pagamento. Sem competência na linha, vale o pagamento.
   competencia?: string | null;
   contrato_id: string | null;
@@ -89,8 +96,15 @@ export interface LinhaFluxoCusto {
 
 // SIS-2026-0708: mês ("YYYY-MM") em que a despesa conta nos relatórios de Faturamento, Lucratividade e Fechamento: a competência;
 // sem ela (linha antiga ou sem competência informada), o mês do pagamento.
-export function mesDoCusto(l: Pick<LinhaFluxoCusto, "competencia" | "data_pagamento">): string | null {
+export function mesDoCusto(l: Pick<LinhaFluxoCusto, "competencia" | "data_pagamento"> & { mes_base?: string | null }): string | null {
+  if (l.mes_base) return l.mes_base;
   const data = l.competencia || l.data_pagamento;
+  return data ? data.slice(0, 7) : null;
+}
+
+// Mês da despesa na base escolhida: pagamento = o mês do pagamento; competência = a competência (sem ela, o pagamento).
+export function mesDaDespesaNaBase(l: Pick<LinhaFluxoCusto, "competencia" | "data_pagamento">, base: BaseDespesa): string | null {
+  const data = base === "pagamento" ? l.data_pagamento : l.competencia || l.data_pagamento;
   return data ? data.slice(0, 7) : null;
 }
 

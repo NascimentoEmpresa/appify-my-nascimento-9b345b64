@@ -36,7 +36,7 @@ export const ORIGEM_RUBRICA: Record<RubricaCusto, string> = {
 
 // Origem comum a todas as colunas de despesa administrativa.
 export const ORIGEM_ADM =
-  "Saídas do Fluxo de Caixa SEM contrato (Malote, débito automático, fatura de cartão e importação histórica), pela competência. Transferência, aplicação, empréstimo e financiamento não contam. A ligação manual de classificação em Lucratividade › Rubricas de custo vale antes do nome.";
+  "Saídas do Fluxo de Caixa SEM contrato (Malote, débito automático, fatura de cartão e importação histórica), no mês da base escolhida no topo da tela (competência ou data de pagamento). Transferência, aplicação, empréstimo e financiamento não contam. A ligação manual de classificação em Lucratividade › Rubricas de custo vale antes do nome.";
 
 const r2 = (v: number) => Math.round(v * 100) / 100;
 
