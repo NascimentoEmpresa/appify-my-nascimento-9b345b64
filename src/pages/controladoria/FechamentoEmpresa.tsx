@@ -10,7 +10,8 @@ import { KpiTile } from "@/components/financeiro/KpiTile";
 import { Bar, BarChart, CartesianGrid, Cell, Legend, Line, LineChart, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { Info, Percent, Printer, ReceiptText, TrendingUp, CheckCircle2 } from "lucide-react";
 import { fmtMoney } from "@/pages/financeiro/nf-emissao/shared";
-import { agruparFaturamento, custosPorContratoMes, custosVazios, RUBRICAS, totalCustos, type CustosPorRubrica } from "./faturamento/regras";
+import { agruparFaturamento, custosPorContratoMes, custosVazios, ehContratoAdministrativo, RUBRICAS, totalCustos, type CustosPorRubrica } from "./faturamento/regras";
+import { CODIGO_PADRAO, codigosDoFiltro, FiltroCodigoNota } from "./faturamento/FiltroCodigoNota";
 import { rotuloMes, useBaseFaturamento } from "./faturamento/useBaseFaturamento";
 import { useCustosContratoAno, useDespesasAdmAno } from "./faturamento/useCustosContratoMes";
 import { useLigacoesRubrica } from "./faturamento/useLigacoesRubrica";
@@ -53,7 +54,10 @@ function FaixasStatus() {
 }
 
 export default function FechamentoEmpresa() {
-  const { contratos, nfs, empresas, contratoPorId, executavelDoContrato, carregando } = useBaseFaturamento();
+  // Filtro Código (tipo da nota): padrão N, como sempre foi.
+  const [codigo, setCodigo] = useState(CODIGO_PADRAO);
+  const codigos = useMemo(() => codigosDoFiltro(codigo), [codigo]);
+  const { contratos, nfs, empresas, contratoPorId, executavelDoContrato, carregando } = useBaseFaturamento(codigos);
 
   const hoje = new Date();
   const anoAtual = hoje.getFullYear();
@@ -96,6 +100,18 @@ export default function FechamentoEmpresa() {
     for (const c of contratos) { const s = socioDoContrato(c.nome); if (s) m.set(c.id, s); }
     return m;
   }, [contratos]);
+  // Contratos "ADMINISTRATIVO - …" (inclusive os dos sócios) são centros de custo da empresa, não contrato de cliente: o Lucro dos Contratos
+  // não os conta (igual à Lucratividade de Contratos). O que foi gasto neles é despesa administrativa, exceto o dos sócios (aba própria).
+  const idsAdministrativos = useMemo(() => new Set(contratos.filter((c) => ehContratoAdministrativo(c.nome)).map((c) => c.id)), [contratos]);
+  // (as linhas voltam "sem contrato": é como as funções de despesa administrativa as reconhecem)
+  const admDeContratos = useMemo(
+    () => custosAno
+      .filter((l) => !!l.contrato_id && idsAdministrativos.has(l.contrato_id) && !socioPorContrato.has(l.contrato_id))
+      .map((l) => ({ ...l, contrato_id: null })),
+    [custosAno, idsAdministrativos, socioPorContrato],
+  );
+  // Tudo o que é despesa administrativa no Fluxo: sem contrato + contratos administrativos.
+  const admTodas = useMemo(() => [...admAno, ...admDeContratos], [admAno, admDeContratos]);
 
   // Monta as 12 linhas do ano para uma empresa (ou todas) e um contrato (ou todos). Com contrato escolhido só entra o
   // lucro dele: despesa administrativa não pertence a contrato.
@@ -117,18 +133,18 @@ export default function FechamentoEmpresa() {
     const custosContratoPorMes = new Map<string, number>();
     for (const [chave, c] of custosContratoPorMesContrato) {
       const [id, mes] = chave.split("|");
-      if (passa(id) && !socioPorContrato.has(id)) custosContratoPorMes.set(mes, (custosContratoPorMes.get(mes) ?? 0) + totalCustos(c));
+      if (passa(id) && !socioPorContrato.has(id) && (ctId !== TODOS || !idsAdministrativos.has(id))) custosContratoPorMes.set(mes, (custosContratoPorMes.get(mes) ?? 0) + totalCustos(c));
     }
     // Com contrato escolhido só entra o lucro dele: despesa de sócio, como a administrativa, não pertence a contrato.
     const sociosPorMes = ctId !== TODOS ? new Map<string, Map<string, number>>() : despesasDosSocios(custosAno.filter((l) => !!l.contrato_id && passa(l.contrato_id)), socioPorContrato, ligacoes);
-    const admPorMes = ctId !== TODOS ? new Map<string, CustosPorRubrica>() : admPorMesRubrica(admAno, ligacoes, empId === TODOS ? null : empId);
+    const admPorMes = ctId !== TODOS ? new Map<string, CustosPorRubrica>() : admPorMesRubrica(admTodas, ligacoes, empId === TODOS ? null : empId);
     return montarFechamento({ meses, mesAtual, liquidoPorMes, executavelPorMes, custosContratoPorMes, admPorMes, sociosPorMes });
   }
 
   const linhasAno = useMemo(
     () => linhasDoRecorte(empresaId, contratoId),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [empresaId, contratoId, nfsDoAno, contratos, execGrade, custosContratoPorMesContrato, admAno, custosAno, socioPorContrato, ligacoes, meses, mesAtual]
+    [empresaId, contratoId, nfsDoAno, contratos, execGrade, custosContratoPorMesContrato, admTodas, custosAno, socioPorContrato, idsAdministrativos, ligacoes, meses, mesAtual]
   );
 
   const visivel = (l: LinhaFechamento) => periodo === TODOS || (periodo === "realizado" && !l.projetado) || (periodo === "projetado" && l.projetado) || periodo === l.mes;
@@ -163,8 +179,8 @@ export default function FechamentoEmpresa() {
 
   const mesesVisiveis = useMemo(() => new Set(linhas.map((l) => l.mes)), [linhas]);
   const porClassificacao = useMemo(
-    () => (contratoId !== TODOS ? [] : admPorClassificacao(admAno, mesesVisiveis, ligacoes, empresaId === TODOS ? null : empresaId)),
-    [admAno, mesesVisiveis, ligacoes, empresaId, contratoId]
+    () => (contratoId !== TODOS ? [] : admPorClassificacao(admTodas, mesesVisiveis, ligacoes, empresaId === TODOS ? null : empresaId)),
+    [admTodas, mesesVisiveis, ligacoes, empresaId, contratoId]
   );
   const semClass = useMemo(() => admSemClassificacao(admAno, empresaId === TODOS ? null : empresaId), [admAno, empresaId]);
 
@@ -179,7 +195,7 @@ export default function FechamentoEmpresa() {
         .filter((x) => x.lucroContratos !== 0 || x.totalAdm !== 0)
         .sort((a, b) => b.lucroContratos - a.lucroContratos),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [empresas, contratoId, periodo, nfsDoAno, contratos, execGrade, custosContratoPorMesContrato, admAno, ligacoes, meses, mesAtual]
+    [empresas, contratoId, periodo, nfsDoAno, contratos, execGrade, custosContratoPorMesContrato, admTodas, idsAdministrativos, ligacoes, meses, mesAtual]
   );
 
   const carregandoDados = carregando || carregandoCustos || carregandoAdm;
@@ -200,6 +216,7 @@ export default function FechamentoEmpresa() {
           <SelectTrigger className="h-8 w-[90px] text-xs"><SelectValue /></SelectTrigger>
           <SelectContent>{anos.map((a) => <SelectItem key={a} value={String(a)}>{a}</SelectItem>)}</SelectContent>
         </Select>
+        <FiltroCodigoNota valor={codigo} onChange={setCodigo} />
         <Select value={empresaId} onValueChange={(v) => { setEmpresaId(v); setContratoId(TODOS); }}>
           <SelectTrigger className="h-8 w-[200px] text-xs"><SelectValue placeholder="Empresa" /></SelectTrigger>
           <SelectContent>
@@ -223,7 +240,7 @@ export default function FechamentoEmpresa() {
             {contratos.filter((c) => empresaId === TODOS || c.empresa_id === empresaId).sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR")).map((c) => <SelectItem key={c.id} value={c.id}>{c.nome}</SelectItem>)}
           </SelectContent>
         </Select>
-        <Button variant="ghost" size="sm" className="h-8 text-xs" onClick={() => { setEmpresaId(TODOS); setContratoId(TODOS); setPeriodo(TODOS); setBuscaMes(""); }}>Limpar</Button>
+        <Button variant="ghost" size="sm" className="h-8 text-xs" onClick={() => { setEmpresaId(TODOS); setContratoId(TODOS); setPeriodo(TODOS); setBuscaMes(""); setCodigo(CODIGO_PADRAO); }}>Limpar</Button>
       </div>
 
       {erro && <p className="rounded-md border border-red-300 bg-red-50 px-3 py-2 text-xs text-red-800">Não foi possível carregar o Fluxo de Caixa: {(erro as Error).message}</p>}
@@ -246,7 +263,7 @@ export default function FechamentoEmpresa() {
             <KpiTile label="Lucro dos Contratos" valor={fmtMoney(total.lucroContratos)} sub={temProjetado ? `${fmtMoney(total.lucroRealizado)} realizado + ${fmtMoney(total.lucroProjetado)} projetado` : "Valor consolidado do período"} icon={<TrendingUp />} cor="sky"
               info={<>
                 <p><strong>Valor líquido faturado − custos dos contratos</strong>, somado nos meses do período.</p>
-                <p>Faturamento: NFs Código N validadas do Relatório de Serviços (fora de canceladas e substituídas), pela competência da nota. Custos: saídas do Fluxo de Caixa com contrato, no mês do pagamento. É o mesmo Lucro Bruto da Lucratividade de Contratos.</p>
+                <p>Faturamento: NFs Código N validadas do Relatório de Serviços (fora de canceladas e substituídas), pela competência da nota. Custos: saídas do Fluxo de Caixa com contrato, pela competência. Os contratos "ADMINISTRATIVO - …" não entram aqui (são despesa administrativa). É o mesmo Lucro Bruto da Lucratividade de Contratos.</p>
                 <p>Meses futuros são projetados (notas já emitidas ou executável do contrato × proporção líquido/executável recente, menos o custo lançado ou a média dos últimos 3 meses, o maior).</p>
               </>}
             />
@@ -495,7 +512,7 @@ export default function FechamentoEmpresa() {
                     </Table>
                   )}
                   <p className="border-t px-3 py-2 text-[11px] text-muted-foreground">
-                    Despesas dos sócios = saídas do Fluxo de Caixa nos contratos "ADMINISTRATIVO SÓCIOS - nome do sócio". Elas ficam fora do Resultado Final (resumo mensal sem sócios) e entram aqui, depois dele, para chegar ao Lucro Líquido Final.
+                    Despesas dos sócios = todas as saídas do Fluxo de Caixa nos contratos "ADMINISTRATIVO SÓCIOS - nome do sócio", seja qual for a classificação, pelo mês da competência. Elas ficam fora do Resultado Final (resumo mensal sem sócios) e entram aqui, depois dele, para chegar ao Lucro Líquido Final.
                   </p>
                 </CardContent>
               </Card>

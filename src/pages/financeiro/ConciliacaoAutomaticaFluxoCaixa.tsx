@@ -11,6 +11,9 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { SearchableMultiSelect } from "@/components/ui/searchable-multi-select";
 import { ehSaldoAnterior, linhasSaldoAnterior } from "@/lib/conciliacaoSaldoAnterior";
+import { type ResumoConciliacao } from "@/lib/conciliacaoResumo";
+import { processarConciliacao } from "@/lib/conciliacaoCalculo";
+import { conciliacaoSemResumo, useGerarResumoConciliacoes } from "@/hooks/useGerarResumoConciliacao";
 import { Upload, X, Play, RefreshCw, GitMerge, Pencil, Ban, PlusCircle, Save, History, CheckCircle2 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -31,6 +34,7 @@ import {
   useConciliacoesFluxoCaixaSalvas,
   useConciliacaoFluxoCaixaDetalhe,
   type ConciliacaoFluxoCaixaLinha,
+  type ConciliacaoFluxoCaixaSalva,
 } from "@/hooks/useConciliacaoFluxoCaixa";
 import { useCriarDebito } from "@/hooks/useDebitoAutomatico";
 import { useCartaoBancos } from "@/hooks/useMaloteCartaoCredito";
@@ -125,6 +129,8 @@ function ConciliarTab() {
   const [resolvidos, setResolvidos] = useState<Record<string, Resolucao>>({});
   // SIS-2026-0657: total do extrato dentro do período, guardado ao salvar (a Auditoria da Controladoria lê daqui).
   const [totaisExtrato, setTotaisExtrato] = useState<{ entradas: number; saidas: number } | null>(null);
+  // Resumo do que bateu entre Fluxo e extrato (gravado ao salvar; a lista de salvas mostra mesmo sem divergência).
+  const [resumo, setResumo] = useState<ResumoConciliacao | null>(null);
   const [observacoes, setObservacoes] = useState("");
 
   const [dialogAjustar, setDialogAjustar] = useState<LancamentoRow | null>(null);
@@ -194,23 +200,17 @@ function ConciliarTab() {
   const empresasEscolhidas = todasEmpresas || empresaIds.length > 0;
 
   function rodar(trns: OFXTransaction[]) {
-    // Saldo anterior digitado entra como uma linha da conciliação, nos dois
-    // lados (extrato e Fluxo) — ver lib/conciliacaoSaldoAnterior.ts.
-    const saldoLinhas = linhasSaldoAnterior(
-      linhasDoBancoEmpresa.filter(ehSaldoAnterior),
-      saldoExtrato,
+    // O cálculo mora em lib/conciliacaoCalculo.ts (o mesmo que refaz o resumo das conciliações antigas).
+    const { resultado: res, resumo: resumoCalc, totaisExtrato: totais, fora } = processarConciliacao({
+      linhasDoBancoEmpresa,
+      trns,
       dataDe,
-      bancos.find((b) => b.id === bancoId)?.nome ?? "—"
-    );
-    const planRows = [...linhasFluxoParaPlanilhaRow(linhasPeriodoBanco), ...saldoLinhas.plan];
-    // SIS-2026-0637: só entra do extrato o que está no período escolhido (igual ao lado Fluxo).
-    const { dentro, fora } = transacoesNoPeriodo(trns, dataDe, dataAte);
-    const res = reconciliar(planRows, [...dentro, ...saldoLinhas.ofx]);
-    const r2 = (n: number) => Math.round(n * 100) / 100;
-    setTotaisExtrato({
-      entradas: r2(dentro.filter((t) => t.tipo === "ENTRADA").reduce((s, t) => s + t.valor, 0)),
-      saidas: r2(dentro.filter((t) => t.tipo === "SAÍDA").reduce((s, t) => s + t.valor, 0)),
+      dataAte,
+      saldoExtrato,
+      bancoNome: bancos.find((b) => b.id === bancoId)?.nome ?? "—",
     });
+    setResumo(resumoCalc);
+    setTotaisExtrato(totais);
     setResultado(res);
     toast.success(
       `Conciliação processada — ${res.totalDias} dias, ${res.divergencias} dia(s) com divergência.` +
@@ -273,6 +273,7 @@ function ConciliarTab() {
     setObservacoes("");
     setContaExtrato(null);
     setSaldoExtratoTxt("");
+    setResumo(null);
   }
 
   const pendentes = useMemo(
@@ -403,6 +404,7 @@ function ConciliarTab() {
         saldoAnteriorExtrato: saldoExtrato,
         extratoEntradas: totaisExtrato?.entradas ?? null,
         extratoSaidas: totaisExtrato?.saidas ?? null,
+        resumo,
       });
       toast.success("Conciliação salva.");
       reiniciar();
@@ -966,11 +968,34 @@ function HistoricoTab() {
   const { data: bancos = [] } = useCartaoBancos();
   const { data: empresas = [] } = useEmpresasGrupo();
   const [abrirId, setAbrirId] = useState<string | null>(null);
+  const { data: linhasBrutas = [], isLoading: carregandoFluxo } = useFluxoCaixaCombinado();
+  const gerarResumo = useGerarResumoConciliacoes();
   const bancoNome = (id: string) => bancos.find((b) => b.id === id)?.nome ?? "—";
+  const semResumo = salvas.filter(conciliacaoSemResumo);
+
+  // Conciliações antigas: refaz o resumo com o .OFX guardado e o Fluxo de hoje (ver hooks/useGerarResumoConciliacao.ts).
+  async function gerar(lista: typeof salvas) {
+    const r = await gerarResumo.mutateAsync(
+      lista.map((c) => ({ conciliacao: c, linhasBrutas, bancoNome: c.banco_id ? bancoNome(c.banco_id) : "—" }))
+    );
+    if (r.ok > 0) toast.success(`Resumo gerado em ${r.ok} conciliação(ões).`);
+    if (r.erros.length > 0) toast.error(r.erros[0] + (r.erros.length > 1 ? ` (e mais ${r.erros.length - 1} erro(s))` : ""));
+  }
   const empresaNome = (id: string) => empresas.find((e) => e.id === id)?.nome ?? "—";
 
   return (
     <div className="space-y-4">
+      {semResumo.length > 0 && (
+        <div className="flex flex-wrap items-center gap-3 rounded-md border bg-muted/30 p-3 text-sm">
+          <span className="flex-1 min-w-[260px] text-muted-foreground">
+            {semResumo.length} conciliação(ões) salva(s) antes do resumo de valores conciliados. Dá para gerar o resumo agora: refaz o cálculo com o
+            extrato .OFX guardado e o Fluxo de Caixa de hoje do mesmo período, banco e empresas.
+          </span>
+          <Button size="sm" onClick={() => void gerar(semResumo)} disabled={gerarResumo.isPending || carregandoFluxo}>
+            {gerarResumo.isPending ? "Gerando..." : carregandoFluxo ? "Carregando o Fluxo..." : `Gerar resumo das ${semResumo.length} conciliações`}
+          </Button>
+        </div>
+      )}
       <Card>
         <CardContent className="p-0">
           {isLoading ? (
@@ -983,6 +1008,8 @@ function HistoricoTab() {
                 <tr className="border-b bg-muted/40">
                   <th className="text-left px-4 py-2 font-medium text-muted-foreground">Período</th>
                   <th className="text-left px-4 py-2 font-medium text-muted-foreground">Banco / Empresa</th>
+                  <th className="text-right px-4 py-2 font-medium text-muted-foreground">Conciliado</th>
+                  <th className="text-right px-4 py-2 font-medium text-muted-foreground">Extrato</th>
                   <th className="text-center px-4 py-2 font-medium text-muted-foreground">Divergências</th>
                   <th className="text-center px-4 py-2 font-medium text-muted-foreground">Ajustadas</th>
                   <th className="text-center px-4 py-2 font-medium text-muted-foreground">Criadas</th>
@@ -1006,12 +1033,36 @@ function HistoricoTab() {
                         </div>
                       )}
                     </td>
+                    <td className="px-4 py-2 text-right text-xs whitespace-nowrap">
+                      {c.conciliado_entradas != null && c.conciliado_saidas != null ? (
+                        <>
+                          <div className="text-emerald-700">Entradas {fmtBRL(c.conciliado_entradas)}</div>
+                          <div className="text-rose-700">Saídas {fmtBRL(c.conciliado_saidas)}</div>
+                          <div className="text-muted-foreground">
+                            {c.qtd_conciliadas ?? 0} de {c.qtd_fluxo ?? 0} lançamentos · {c.dias_ok ?? 0}/{c.dias_total ?? 0} dias OK
+                          </div>
+                        </>
+                      ) : <span className="text-muted-foreground" title="Conciliação salva antes do resumo de valores conciliados.">—</span>}
+                    </td>
+                    <td className="px-4 py-2 text-right text-xs whitespace-nowrap">
+                      {c.extrato_entradas != null && c.extrato_saidas != null ? (
+                        <>
+                          <div>Entradas {fmtBRL(c.extrato_entradas)}</div>
+                          <div>Saídas {fmtBRL(c.extrato_saidas)}</div>
+                        </>
+                      ) : <span className="text-muted-foreground">—</span>}
+                    </td>
                     <td className="px-4 py-2 text-center">{c.total_linhas}</td>
                     <td className="px-4 py-2 text-center">{c.linhas_ajustadas}</td>
                     <td className="px-4 py-2 text-center">{c.linhas_criadas}</td>
                     <td className="px-4 py-2 text-center">{c.linhas_ignoradas}</td>
                     <td className="px-4 py-2 text-muted-foreground text-xs">{new Date(c.created_at).toLocaleString("pt-BR")}</td>
                     <td className="px-4 py-2 text-right">
+                      {conciliacaoSemResumo(c) && (
+                        <Button size="sm" variant="outline" className="mr-1" onClick={() => void gerar([c])} disabled={gerarResumo.isPending || carregandoFluxo}>
+                          Gerar resumo
+                        </Button>
+                      )}
                       <Button size="sm" variant="ghost" onClick={() => setAbrirId(c.id)}>Ver</Button>
                     </td>
                   </tr>
@@ -1022,22 +1073,89 @@ function HistoricoTab() {
         </CardContent>
       </Card>
 
-      <DialogDetalheConciliacao id={abrirId} onClose={() => setAbrirId(null)} />
+      <DialogDetalheConciliacao id={abrirId} conciliacao={salvas.find((c) => c.id === abrirId) ?? null} onClose={() => setAbrirId(null)} />
     </div>
   );
 }
 
-function DialogDetalheConciliacao({ id, onClose }: { id: string | null; onClose: () => void }) {
+function DialogDetalheConciliacao({ id, conciliacao, onClose }: { id: string | null; conciliacao: ConciliacaoFluxoCaixaSalva | null; onClose: () => void }) {
   const { data } = useConciliacaoFluxoCaixaDetalhe(id);
 
   return (
     <Dialog open={!!id} onOpenChange={(v) => !v && onClose()}>
-      <DialogContent className="max-w-3xl max-h-[80vh] overflow-y-auto">
+      <DialogContent className="max-w-6xl max-h-[85vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Detalhe da conciliação</DialogTitle>
         </DialogHeader>
         {data && (
           <div className="space-y-4">
+            {conciliacao && conciliacao.conciliado_entradas != null && conciliacao.conciliado_saidas != null && (
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
+                {[
+                  { rotulo: "Fluxo — entradas", valor: fmtBRL(conciliacao.fluxo_entradas ?? 0) },
+                  { rotulo: "Fluxo — saídas", valor: fmtBRL(conciliacao.fluxo_saidas ?? 0) },
+                  { rotulo: "Extrato — entradas", valor: conciliacao.extrato_entradas != null ? fmtBRL(conciliacao.extrato_entradas) : "—" },
+                  { rotulo: "Extrato — saídas", valor: conciliacao.extrato_saidas != null ? fmtBRL(conciliacao.extrato_saidas) : "—" },
+                  { rotulo: "Conciliado — entradas", valor: fmtBRL(conciliacao.conciliado_entradas) },
+                  { rotulo: "Conciliado — saídas", valor: fmtBRL(conciliacao.conciliado_saidas) },
+                  { rotulo: "Lançamentos conciliados", valor: `${conciliacao.qtd_conciliadas ?? 0} de ${conciliacao.qtd_fluxo ?? 0}` },
+                  { rotulo: "Dias OK", valor: `${conciliacao.dias_ok ?? 0} de ${conciliacao.dias_total ?? 0}` },
+                ].map((k) => (
+                  <div key={k.rotulo} className="rounded-md border p-2">
+                    <p className="text-muted-foreground">{k.rotulo}</p>
+                    <p className="text-sm font-semibold">{k.valor}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+            {conciliacao?.resumo_dias && conciliacao.resumo_dias.length > 0 && (
+              <div>
+                <Label className="text-xs">Resumo por Dia — valor no Fluxo × valor no extrato</Label>
+                <table className="mt-1 w-full text-xs">
+                  <thead>
+                    <tr className="border-b bg-muted/40">
+                      <th className="text-left px-2 py-1.5">Data</th>
+                      <th className="text-right px-2 py-1.5">Fluxo</th>
+                      <th className="text-right px-2 py-1.5">Extrato</th>
+                      <th className="text-right px-2 py-1.5">Diferença</th>
+                      <th className="text-center px-2 py-1.5">Status</th>
+                      <th className="text-left px-2 py-1.5">Observação</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {conciliacao.resumo_dias.map((d) => (
+                      <tr key={d.dia} className={cn("border-b", !d.ok && "bg-red-50 dark:bg-red-950/10")}>
+                        <td className="px-2 py-1.5 font-medium whitespace-nowrap">{isoParaBR(d.dia)}</td>
+                        <td className="px-2 py-1.5 text-right">{fmtBRL(d.fluxoTotal ?? d.fluxoEntradas + d.fluxoSaidas)}</td>
+                        <td className="px-2 py-1.5 text-right">{fmtBRL(d.extratoTotal ?? d.extratoEntradas + d.extratoSaidas)}</td>
+                        <td className={cn("px-2 py-1.5 text-right font-medium", Math.abs(d.diferenca ?? 0) < 0.005 ? "text-green-600" : "text-red-600")}>
+                          {(d.diferenca ?? 0) >= 0 ? "+" : ""}{fmtBRL(d.diferenca ?? 0)}
+                        </td>
+                        <td className="px-2 py-1.5 text-center">
+                          {d.ok
+                            ? <Badge className="bg-green-100 text-green-700 border-green-200 hover:bg-green-100">✓ OK</Badge>
+                            : <Badge className="bg-red-100 text-red-700 border-red-200 hover:bg-red-100">Divergente</Badge>}
+                        </td>
+                        <td className="px-2 py-1.5 text-muted-foreground">{d.observacao ?? "—"}</td>
+                      </tr>
+                    ))}
+                    <tr className="font-semibold bg-muted/40">
+                      <td className="px-2 py-1.5">Total</td>
+                      <td className="px-2 py-1.5 text-right">{fmtBRL(conciliacao.resumo_dias.reduce((s, d) => s + (d.fluxoTotal ?? d.fluxoEntradas + d.fluxoSaidas), 0))}</td>
+                      <td className="px-2 py-1.5 text-right">{fmtBRL(conciliacao.resumo_dias.reduce((s, d) => s + (d.extratoTotal ?? d.extratoEntradas + d.extratoSaidas), 0))}</td>
+                      <td className="px-2 py-1.5 text-right">{fmtBRL(conciliacao.resumo_dias.reduce((s, d) => s + (d.diferenca ?? 0), 0))}</td>
+                      <td className="px-2 py-1.5" />
+                      <td className="px-2 py-1.5" />
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            )}
+            {data.linhas.length === 0 && (
+              <p className="rounded-md border border-emerald-200 bg-emerald-50 p-2 text-xs text-emerald-800">
+                Nenhuma divergência: tudo o que estava no Fluxo de Caixa neste período bateu com o extrato.
+              </p>
+            )}
             {data.arquivos.length > 0 && (
               <div>
                 <Label className="text-xs">Arquivos OFX originais</Label>
@@ -1050,6 +1168,7 @@ function DialogDetalheConciliacao({ id, onClose }: { id: string | null; onClose:
                 </div>
               </div>
             )}
+            {data.linhas.length > 0 && (
             <table className="w-full text-xs">
               <thead>
                 <tr className="border-b bg-muted/40">
@@ -1074,6 +1193,7 @@ function DialogDetalheConciliacao({ id, onClose }: { id: string | null; onClose:
                 ))}
               </tbody>
             </table>
+            )}
           </div>
         )}
       </DialogContent>

@@ -143,7 +143,7 @@ export default function DetalhePosto() {
 
             <Card className="flex flex-col items-center justify-center gap-1 p-4">
               <p className="text-sm font-semibold">Efetividade do posto</p>
-              <Anel v={r.efetividade} />
+              <Anel v={r.efetividade} aguardando={r.aguardandoApuracao} />
             </Card>
 
             <div className="grid grid-cols-3 gap-2">
@@ -292,7 +292,13 @@ function MiniKpi({ r, v, cor, fundo, span }: { r: string; v: number; cor?: strin
   );
 }
 
-function Anel({ v }: { v: number | null }) {
+function Anel({ v, aguardando }: { v: number | null; aguardando?: boolean }) {
+  if (aguardando) {
+    return (
+      <div className="flex h-28 w-28 items-center justify-center rounded-full border-[9px] border-warning/30 text-center text-xs font-semibold text-warning"
+        title="Aguardando apuração total dos pontos da Senior">Aguardando apuração</div>
+    );
+  }
   const p = Math.max(0, Math.min(1, v ?? 0));
   const R = 38, C = 2 * Math.PI * R;
   const cor = v == null ? "hsl(var(--muted-foreground))" : p >= 0.95 ? "hsl(var(--success))" : p >= 0.91 ? "hsl(var(--warning))" : "hsl(var(--destructive))";

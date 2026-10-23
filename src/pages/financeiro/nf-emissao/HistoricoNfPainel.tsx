@@ -20,6 +20,7 @@ const ACOES: Record<string, { rotulo: string; icone: typeof History; cor: string
   nf_paga: { rotulo: "Pagamento registrado", icone: CircleDollarSign, cor: "text-emerald-600 bg-emerald-500/10" },
   pagamento_removido: { rotulo: "Pagamento removido", icone: Undo2, cor: "text-amber-600 bg-amber-500/10" },
   reconciliacao_atualizada: { rotulo: "Reconciliação atualizada", icone: RefreshCw, cor: "text-slate-600 bg-slate-500/10" },
+  competencia_ajustada: { rotulo: "Competência ajustada após a emissão", icone: RefreshCw, cor: "text-violet-700 bg-violet-500/10" },
   valores_nf_concluida_ajustados: { rotulo: "Valores ajustados após a conclusão", icone: SlidersHorizontal, cor: "text-violet-700 bg-violet-500/10" },
 };
 

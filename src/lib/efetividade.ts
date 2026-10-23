@@ -34,9 +34,17 @@
 //      da madrugada do noturno, entrada às 23h de quem começa à meia-noite) e
 //      deixar o dia vazio; antes de chamar de falta, olha o dia cru.
 //
-// EFETIVO PREVISTO = presentes + faltas + atestados + afastamentos (quem a
-// escala esperava, menos quem está de férias — férias é ausência planejada).
-// EFETIVIDADE = presentes ÷ previsto.
+// EFETIVO PREVISTO = presentes + faltas + atestados (quem a escala esperava).
+// Ficam FORA: férias (ausência planejada) e, desde 22/10/2026, o AFASTAMENTO
+// longo (INSS, auxílio-doença, licença, cárcere). Pedido do Pablo: na UFRGS
+// Limpeza (047/2022) o painel dizia 342 previstos com 313 Trabalhando e 303
+// postos — os 29 afastados têm substituto no posto, que já está nos 313;
+// contar os dois inflava o previsto e derrubava a efetividade. O afastamento
+// continua contado e listado (Afastamentos), só não entra na conta.
+// EFETIVIDADE = presentes ÷ previsto (sem os aguardando apuração).
+// AGUARDANDO APURAÇÃO: enquanto a maior parte do previsto ainda não tem ponto
+// (manhã de hoje, antes de a Senior importar) ou ninguém tem batida ainda, a
+// efetividade não é medida — 0% às 10h só dizia "a Flex ainda não mandou".
 // POSTO DESCOBERTO = falta ou atestado do dia sem cobertura em andamento ou
 // concluída (afastamento longo costuma ter substituto fixo — entra na lista,
 // mas só conta como descoberto se alguém registrou a ocorrência).
@@ -326,7 +334,9 @@ export function avaliarDia(p: ColaboradorPrep, data: string, sincronizadoAte: st
   }
 
   if (p.motivo && c.data_afastamento && data >= c.data_afastamento) {
-    return { ...base, situacao: p.motivo, previsto: p.motivo !== "ferias" };
+    // Só o atestado (ausência curta, a cobrir) entra no previsto; férias e
+    // afastamento longo, não (22/10/2026 — ver o cabeçalho).
+    return { ...base, situacao: p.motivo, previsto: p.motivo === "atestado" };
   }
 
   const trabalhouNaJanela = p.diasTrabalhados.some((d) => d < data && d >= somaDias(data, -JANELA_CICLO));
@@ -387,12 +397,39 @@ export const ROTULO_MOTIVO: Record<MotivoOcorrencia, string> = {
 export interface Resumo {
   previsto: number; presentes: number; faltas: number; atestados: number; afastamentos: number;
   ferias: number; folgas: number; aguardando: number; semRegistro: number; atrasos: number;
-  /** presentes ÷ previsto (0–1); null sem previsto. */
+  /** presentes ÷ previsto (0–1); null sem previsto ou aguardando apuração. */
   efetividade: number | null;
+  /** O ponto do recorte ainda não chegou o bastante para medir (ver fecharResumo). */
+  aguardandoApuracao: boolean;
+}
+
+export const RESUMO_VAZIO: Resumo = {
+  previsto: 0, presentes: 0, faltas: 0, atestados: 0, afastamentos: 0, ferias: 0, folgas: 0, aguardando: 0, semRegistro: 0, atrasos: 0,
+  efetividade: null, aguardandoApuracao: false,
+};
+
+/**
+ * Fecha previsto, efetividade e "aguardando apuração" a partir das contagens
+ * — a MESMA conta para um dia (resumir), para a soma de dias/contratos
+ * (Efetividade Mensal, semanas do Histórico) e para o Excel.
+ *
+ * Aguardando apuração = há gente aguardando E (ninguém presente ainda OU os
+ * aguardando são metade ou mais do previsto). De manhã, antes de a Senior
+ * importar, é o dia inteiro; à tarde sobra só o turno da noite e a
+ * efetividade já aparece; num mês fechado os aguardando são zero.
+ */
+export function fecharResumo<T extends Resumo>(r: T): T {
+  // Presente na folga não infla o previsto além de quem a escala esperava:
+  // conta como presente E previsto (trabalhou, está no posto).
+  r.previsto = r.presentes + r.faltas + r.atestados + r.aguardando;
+  const base = r.previsto - r.aguardando;
+  r.aguardandoApuracao = r.aguardando > 0 && (r.presentes === 0 || r.aguardando * 2 >= r.previsto);
+  r.efetividade = !r.aguardandoApuracao && base > 0 ? r.presentes / base : null;
+  return r;
 }
 
 export function resumir(dias: DiaEfet[]): Resumo {
-  const r: Resumo = { previsto: 0, presentes: 0, faltas: 0, atestados: 0, afastamentos: 0, ferias: 0, folgas: 0, aguardando: 0, semRegistro: 0, atrasos: 0, efetividade: null };
+  const r: Resumo = { ...RESUMO_VAZIO };
   for (const d of dias) {
     if (d.situacao === "presente") { r.presentes++; if (d.atraso > 0) r.atrasos++; }
     else if (d.situacao === "falta") r.faltas++;
@@ -403,12 +440,7 @@ export function resumir(dias: DiaEfet[]): Resumo {
     else if (d.situacao === "aguardando") r.aguardando++;
     else if (d.situacao === "sem_registro") r.semRegistro++;
   }
-  // Presente na folga não infla o previsto além de quem a escala esperava:
-  // conta como presente E previsto (trabalhou, está no posto).
-  r.previsto = r.presentes + r.faltas + r.atestados + r.afastamentos + r.aguardando;
-  const base = r.previsto - r.aguardando;
-  r.efetividade = base > 0 ? r.presentes / base : null;
-  return r;
+  return fecharResumo(r);
 }
 
 export const chaveContrato = (empresa: number | null | undefined, filial: number | null | undefined) => `${empresa ?? ""}-${filial ?? ""}`;
@@ -436,7 +468,7 @@ export function avaliarTodos(preps: ColaboradorPrep[], data: string, sincronizad
         : ocorrencia.motivo === "afastamento" ? "afastamento"
         : ocorrencia.motivo === "ferias" ? "ferias" : ocorrencia.motivo === "folga" ? "folga" : "falta";
       dia.situacao = sit;
-      dia.previsto = sit !== "ferias" && sit !== "folga";
+      dia.previsto = sit === "falta" || sit === "atestado";
     }
     const ausente = AUSENCIAS.includes(dia.situacao);
     return { p, dia, ocorrencia, cobertura: ausente ? estadoCobertura(ocorrencia) : null };

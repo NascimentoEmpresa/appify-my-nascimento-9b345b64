@@ -10,8 +10,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { corDoStatus, fmtData, fmtDataHora } from "@/lib/demissao/solicitacao";
 import {
-  HOMOLOGACOES, MEIOS_ENVIO, MEIOS_RETORNO, SIGLA_EMPRESA, STATUS_RESCISAO, TIPOS_DESLIGAMENTO,
-  edicaoInicial, erroDatasRescisao, erroIdentificacao, limparEdicao, sugerirDataDemissao, sugerirDataPagamento,
+  HOMOLOGACOES, MEIOS_ENVIO, MEIOS_RETORNO, SIGLA_EMPRESA, STATUS_PADRAO, STATUS_RESCISAO, TIPOS_DESLIGAMENTO,
+  demissaoCancelada, edicaoInicial, erroDatasRescisao, erroIdentificacao, limparEdicao, sugerirDataDemissao, sugerirDataPagamento,
   type EdicaoRescisao, type IdentificacaoRescisao, type LinhaRescisao,
 } from "@/lib/demissao/rescisao";
 import { buscarHistoricoRescisao, type HistoricoRescisao } from "@/hooks/useRescisoes";
@@ -19,8 +19,8 @@ import { CheckCircle2, ExternalLink, FileSpreadsheet, History, Loader2, Trash2 }
 import { cn } from "@/lib/utils";
 
 /**
- * A ficha da rescisão — abre pelo card do kanban, pela lista ou pelo "Nova
- * rescisão". Tudo que a planilha do RH tinha numa linha, mais:
+ * A ficha da rescisão — abre pelo nome na planilha (RH › Rescisões) ou pelo
+ * "Nova rescisão". Tudo que a planilha do RH tinha numa linha, mais:
  *   · a identificação editável quando a linha NÃO é do ERP (importada ou
  *     lançada à mão) — na do ERP quem manda é a solicitação;
  *   · "Como está na planilha": a linha original do Excel, sem normalizar;
@@ -31,7 +31,7 @@ const EDICAO_VAZIA: EdicaoRescisao = {
   homologacao: null, data_aviso: null, data_ultimo_dia: null, data_demissao: null, data_pagamento: null,
   tipo_desligamento: null, rescisao_programada: false, vales_programados: false,
   malote_data: null, malote_obs: null, envio_meio: null, envio_data: null, envio_obs: null,
-  retorno_meio: null, retorno_data: null, retorno_obs: null, status_rescisao: "Por fazer", observacao: null,
+  retorno_meio: null, retorno_data: null, retorno_obs: null, status_rescisao: STATUS_PADRAO, observacao: null,
   pontos_ajustados: null, data_admissao: null,
 };
 
@@ -126,6 +126,13 @@ export function FichaRescisao({ abrir, podeEditar, podeExcluir, onFechar, onSalv
           </DialogTitle>
         </DialogHeader>
 
+        {linha && demissaoCancelada(linha) && (
+          <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
+            A solicitação desta demissão está <b>{linha.statusFluxo}</b> no ERP, depois de já ter entrado na planilha.
+            Se a demissão não vai acontecer, exclua esta linha.
+          </p>
+        )}
+
         {linha?.solicitacao && (
           <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-muted/50 px-3 py-2 text-sm">
             <span className="text-muted-foreground">
@@ -166,7 +173,7 @@ export function FichaRescisao({ abrir, podeEditar, podeExcluir, onFechar, onSalv
               </div>
               <div className="sm:col-span-2">
                 <Label htmlFor="solicitado_por">Solicitado por</Label>
-                <Input id="solicitado_por" className="mt-1" placeholder="Ex.: e-mail, WhatsApp, Alessandra" disabled={somenteLeitura} value={ident.solicitado_por ?? ""} onChange={(ev) => setI("solicitado_por", ev.target.value)} />
+                <Input id="solicitado_por" className="mt-1" placeholder="Ex.: e-mail, WhatsApp, nome de quem pediu" disabled={somenteLeitura} value={ident.solicitado_por ?? ""} onChange={(ev) => setI("solicitado_por", ev.target.value)} />
               </div>
               <div>
                 <Label htmlFor="data_recebimento">Recebido</Label>
