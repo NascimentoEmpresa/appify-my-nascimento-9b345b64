@@ -12,7 +12,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { SearchableMultiSelect } from "@/components/ui/searchable-multi-select";
 import { ehSaldoAnterior, linhasSaldoAnterior } from "@/lib/conciliacaoSaldoAnterior";
 import { type ResumoConciliacao } from "@/lib/conciliacaoResumo";
-import { processarConciliacao } from "@/lib/conciliacaoCalculo";
+import { periodoDoMes, processarConciliacao } from "@/lib/conciliacaoCalculo";
 import { conciliacaoSemResumo, useGerarResumoConciliacoes } from "@/hooks/useGerarResumoConciliacao";
 import { Upload, X, Play, RefreshCw, GitMerge, Pencil, Ban, PlusCircle, Save, History, CheckCircle2 } from "lucide-react";
 import { toast } from "sonner";
@@ -112,6 +112,8 @@ export default function ConciliacaoAutomaticaFluxoCaixa() {
 function ConciliarTab() {
   const [dataDe, setDataDe] = useState("");
   const [dataAte, setDataAte] = useState("");
+  // Mês da competência: o botão ao lado preenche Data De / Data Até com o primeiro e o último dia dele.
+  const [mesCompetencia, setMesCompetencia] = useState("");
   const [bancoId, setBancoId] = useState("");
   // Conciliação é por conta: o extrato OFX é de UMA empresa naquele banco.
   // A pessoa informa quais empresas entram (uma, várias ou todas) — sem isso
@@ -162,12 +164,10 @@ function ConciliarTab() {
   // mesmo valor/data podia "casar" por coincidência e mascarar divergência real.
   // Também só das empresas escolhidas: o banco é compartilhado pelo grupo, mas
   // o extrato é de uma conta. "Todas" não filtra (inclui lançamento sem empresa).
+  const linhasDoBancoTodasEmpresas = useMemo(() => linhasPeriodo.filter((l) => l.banco_id === bancoId), [linhasPeriodo, bancoId]);
   const linhasDoBancoEmpresa = useMemo(
-    () =>
-      linhasPeriodo.filter(
-        (l) => l.banco_id === bancoId && (todasEmpresas || (!!l.empresa_id && empresaIds.includes(l.empresa_id)))
-      ),
-    [linhasPeriodo, bancoId, todasEmpresas, empresaIds]
+    () => linhasDoBancoTodasEmpresas.filter((l) => todasEmpresas || (!!l.empresa_id && empresaIds.includes(l.empresa_id))),
+    [linhasDoBancoTodasEmpresas, todasEmpresas, empresaIds]
   );
 
   // "SALDO ANTERIOR" (importação histórica, dia 01/01) é o saldo de abertura
@@ -203,6 +203,7 @@ function ConciliarTab() {
     // O cálculo mora em lib/conciliacaoCalculo.ts (o mesmo que refaz o resumo das conciliações antigas).
     const { resultado: res, resumo: resumoCalc, totaisExtrato: totais, fora } = processarConciliacao({
       linhasDoBancoEmpresa,
+      linhasDoBancoTodasEmpresas,
       trns,
       dataDe,
       dataAte,
@@ -389,7 +390,7 @@ function ConciliarTab() {
         origem: r.linha.tipoOFX && !r.linha.tipoPlanilha ? "extrato" : "fluxo",
         tipo: (r.linha.tipoOFX ?? r.linha.tipoPlanilha) === "ENTRADA" ? "entrada" : "saida",
         valor: r.linha.valor,
-        descricao: r.linha.detalhe,
+        descricao: r.linha.idMalote ? `${r.linha.idMalote} — ${r.linha.descricaoFluxo ?? r.linha.detalhe}` : r.linha.detalhe,
         banco: r.linha.origem,
         status: r.status,
         observacao: r.observacao ?? null,
@@ -421,6 +422,26 @@ function ConciliarTab() {
           <CardTitle className="text-sm">Período, Banco e Empresa</CardTitle>
         </CardHeader>
         <CardContent className="flex flex-wrap gap-4 items-end">
+          <div>
+            <Label className="text-xs">Competência (mês)</Label>
+            <div className="flex gap-1.5">
+              <Input type="month" className="h-9 w-40" value={mesCompetencia} onChange={(e) => setMesCompetencia(e.target.value)} />
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-9"
+                disabled={!periodoDoMes(mesCompetencia)}
+                title="Preenche Data De e Data Até com o primeiro e o último dia do mês escolhido"
+                onClick={() => {
+                  const p = periodoDoMes(mesCompetencia);
+                  if (p) { setDataDe(p.de); setDataAte(p.ate); }
+                }}
+              >
+                Usar o mês
+              </Button>
+            </div>
+          </div>
           <div>
             <Label className="text-xs">Data De</Label>
             <Input type="date" className="h-9" value={dataDe} onChange={(e) => setDataDe(e.target.value)} />
@@ -616,6 +637,7 @@ function ConciliarTab() {
                         <th className="text-left px-4 py-2 font-medium text-muted-foreground">Ocorrência</th>
                         <th className="text-left px-4 py-2 font-medium text-muted-foreground">Banco/Origem</th>
                         <th className="text-left px-4 py-2 font-medium text-muted-foreground">Empresa</th>
+                        <th className="text-left px-4 py-2 font-medium text-muted-foreground">ID no Fluxo</th>
                         <th className="text-left px-4 py-2 font-medium text-muted-foreground">Detalhe</th>
                         <th className="text-right px-4 py-2 font-medium text-muted-foreground">Valor</th>
                         <th className="text-center px-4 py-2 font-medium text-muted-foreground">Status</th>
@@ -637,7 +659,31 @@ function ConciliarTab() {
                             <td className="px-4 py-2">{descreverOcorrencia(l)}</td>
                             <td className="px-4 py-2 text-muted-foreground whitespace-nowrap">{l.origem}</td>
                             <td className="px-4 py-2 text-muted-foreground whitespace-nowrap">{l.empresaNome ?? "—"}</td>
-                            <td className="px-4 py-2 text-muted-foreground max-w-xs truncate">{l.detalhe}</td>
+                            <td className="px-4 py-2 whitespace-nowrap">
+                              {l.idMalote ? (
+                                <>
+                                  <a
+                                    href={`/app/financeiro/gestao-financeira/fluxo-caixa?busca=${encodeURIComponent(l.idMalote)}`}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="font-mono text-blue-600 underline hover:text-blue-800"
+                                    title="Abrir este lançamento no Fluxo de Caixa (nova aba)"
+                                  >
+                                    {l.idMalote}
+                                  </a>
+                                  {(l.partes ?? 1) > 1 && (
+                                    <span className="block text-[10px] text-muted-foreground" title="O rateio é somado numa linha só na conciliação: no Fluxo o valor aparece dividido.">
+                                      soma de {l.partes} lançamentos do rateio
+                                    </span>
+                                  )}
+                                </>
+                              ) : (
+                                <span className="text-muted-foreground">—</span>
+                              )}
+                            </td>
+                            <td className="px-4 py-2 text-muted-foreground max-w-xs truncate" title={l.descricaoFluxo ? `${l.descricaoFluxo} — ${l.detalhe}` : l.detalhe}>
+                              {l.descricaoFluxo ?? l.detalhe}
+                            </td>
                             <td className="px-4 py-2 text-right font-bold">{fmtBRL(l.valor)}</td>
                             <td className="px-4 py-2 text-center">
                               {resolucao ? (
