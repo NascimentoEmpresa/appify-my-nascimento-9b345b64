@@ -13,7 +13,9 @@
 // Convive com os atalhos (Todas / Pendente Recrutamento / Em Processo...):
 // ou um ou outro. Marcar status aqui volta o atalho para "Todas"; clicar num
 // atalho limpa as marcações — dois filtros de status somados zerariam a
-// tela sem explicar (ex.: atalho Reprovados + marcado Contratado).
+// tela sem explicar (ex.: atalho Reprovados + marcado Contratado). No
+// Recrutamento os atalhos saíram no mesmo dia (sobrou só este botão, e os
+// cards do topo seguem as marcações); ficam nas filas da etapa 1.
 // =====================================================================
 
 import { PASSOS_FLUXO } from "@/lib/recrutamento/fluxoStatus";
