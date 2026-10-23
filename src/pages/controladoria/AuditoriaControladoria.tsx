@@ -21,10 +21,10 @@ import { KpiTile } from "@/components/financeiro/KpiTile";
 import { fmtMoney } from "@/pages/financeiro/nf-emissao/shared";
 import { rotuloMes } from "./faturamento/useBaseFaturamento";
 import {
-  DefValidacao, diferenca, linksDoCard, STATUS_LABEL, statusGeral, situacaoComparacao, TipoValidacao, valoresMudaramDesdeDecisao, VALIDACOES,
+  DefValidacao, diferenca, linkConciliacao, linksDoCard, STATUS_LABEL, statusGeral, situacaoComparacao, TipoValidacao, valoresMudaramDesdeDecisao, VALIDACOES,
 } from "./auditoria/regras";
 import { EstadoCard, useTotaisAuditoria } from "./auditoria/useTotaisAuditoria";
-import { CorpoFluxoExtrato, CorpoMaloteFluxo, CorpoOrcadoRealizado, CorpoSemCentro } from "./auditoria/CorposCard";
+import { CorpoCentrosFluxo, CorpoFluxoExtrato, CorpoMaloteFluxo, CorpoOrcadoRealizado, CorpoSemCentro } from "./auditoria/CorposCard";
 import {
   HistoricoRow, useHistoricoPeriodo, useRegistrarAuditoria, useResponsaveisAuditoria, useSalvarResponsaveis, useValidacoesPeriodo, ValidacaoRow,
 } from "./auditoria/useAuditoriaValidacoes";
@@ -191,7 +191,7 @@ export default function AuditoriaControladoria() {
         <KpiTile label="Total do Malote (período)" valor={kpi(resumo("malote_fluxo")?.a)} icon={<FileText />} cor="sky" />
         <KpiTile label="Total do Fluxo de Caixa" valor={kpi(fluxoTotalDoMes)} icon={<Banknote />} cor="emerald" />
         <KpiTile label="Total conciliado no Extrato" valor={resumo("fluxo_extrato")?.indisponivel ? "—" : kpi(resumo("fluxo_extrato")?.b)} sub={resumo("fluxo_extrato")?.indisponivel ? (porCompetencia ? "Extrato é por data de pagamento" : "Sem conciliação salva no mês") : undefined} icon={<Landmark />} cor="amber" />
-        <KpiTile label="Gastos por Centro de Custo" valor={kpi(resumo("centros_malote")?.b)} sub="Contratos + administrativo" icon={<PiggyBank />} cor="slate" />
+        <KpiTile label="Gastos por Centro de Custo" valor={kpi(resumo("centros_malote")?.b)} sub="Contratos + administrativo + sócios" icon={<PiggyBank />} cor="slate" />
         <KpiTile label="Total Orçado" valor={kpi(resumo("orcado_realizado")?.a)} icon={<Target />} cor="sky" />
       </div>
 
@@ -325,7 +325,10 @@ function CardValidacao(props: {
   const situacao = t && !indisponivel ? situacaoComparacao(def, t) : null;
   const mudou = status === "aprovado" && t ? valoresMudaramDesdeDecisao(validacao?.valores, t) : false;
   // SIS-2026-0657: cards 1 a 4 mostram de onde vem o valor (Malote, Fluxo, Conciliação, Orçamento...).
-  const links = linksDoCard(def.tipo, props.mes, props.empresaId);
+  // SIS-2026-0720: no card 2 a Conciliação abre já na competência e na empresa da auditoria, com os valores que o card mostra.
+  const links = linksDoCard(def.tipo, props.mes, props.empresaId).map((l) =>
+    l.rotulo === "Conciliação Bancária" && t?.painel?.kind === "fluxo_extrato" ? { ...l, to: linkConciliacao(props.mes, props.empresaId, t.painel) } : l
+  );
   const link = (rotulo: string) => links.find((l) => l.rotulo === rotulo) ?? { rotulo, to: def.link };
 
   return (
@@ -333,7 +336,11 @@ function CardValidacao(props: {
       <CardHeader className="pb-2">
         <div className="flex items-start gap-2">
           <span className="h-6 w-6 shrink-0 rounded bg-slate-900 text-white text-xs font-bold flex items-center justify-center dark:bg-slate-100 dark:text-slate-900">{def.numero}</span>
-          <CardTitle className="text-sm font-semibold leading-snug flex-1">{def.titulo}</CardTitle>
+          <CardTitle className="text-sm font-semibold leading-snug flex-1">
+            {def.tipo === "fluxo_extrato" ? (
+              <Link to={link("Conciliação Bancária").to} className="hover:underline" title="Abrir a Conciliação Bancária com os valores desta auditoria">{def.titulo}</Link>
+            ) : def.titulo}
+          </CardTitle>
           {links.length === 0 && (
             <Link to={def.link} className="text-[11px] text-primary whitespace-nowrap hover:underline inline-flex items-center gap-0.5">
               {def.linkRotulo}<ArrowRight className="h-3 w-3" />
@@ -358,6 +365,8 @@ function CardValidacao(props: {
           <CorpoMaloteFluxo p={t.painel} t={t} situacao={situacao} linkMalote={link("Malote")} linkFluxo={link("Fluxo de Caixa")} />
         ) : t.painel?.kind === "fluxo_extrato" ? (
           <CorpoFluxoExtrato p={t.painel} situacao={situacao} semDados={!!indisponivel} links={{ malote: link("Malote"), fluxo: link("Fluxo de Caixa"), banco: link("Conciliação Bancária") }} />
+        ) : t.painel?.kind === "centros_fluxo" ? (
+          <CorpoCentrosFluxo p={t.painel} mes={props.mes} empresaId={props.empresaId} />
         ) : t.painel?.kind === "orcado_realizado" ? (
           <CorpoOrcadoRealizado p={t.painel} t={t} />
         ) : (

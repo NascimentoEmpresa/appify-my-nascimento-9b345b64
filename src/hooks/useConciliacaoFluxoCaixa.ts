@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { emLotes } from "@/lib/emLotes";
 import type { PlanilhaRow } from "@/lib/conciliacaoBancariaEngine";
 import type { FluxoCaixaMaloteLinha } from "@/hooks/useFluxoCaixaMalote";
 import type { DiaConciliado, ResumoConciliacao } from "@/lib/conciliacaoResumo";
@@ -331,5 +332,25 @@ export function useSalvarSaldoInicialConciliacao() {
       if (error) throw error;
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: [KEY_SALDO_INICIAL] }),
+  });
+}
+
+// SIS-2026-0720: divergências TRATADAS (ignorada, ajustada ou criada) das conciliações, para explicar de onde vem a diferença dos KPIs de valor.
+// A conciliação não grava o que bateu sozinho; só o que precisou de tratamento.
+export function useDivergenciasTratadas(conciliacaoIds: string[], ativo: boolean) {
+  const chave = [...conciliacaoIds].sort().join(",");
+  return useQuery({
+    queryKey: [KEY, "tratadas", chave],
+    enabled: ativo && conciliacaoIds.length > 0,
+    queryFn: async () =>
+      emLotes<ConciliacaoFluxoCaixaLinha>(conciliacaoIds, 40, (lote) =>
+        (supabase as any)
+          .from("financeiro_conciliacao_fluxo_caixa_linha")
+          .select("id, conciliacao_id, dia, origem, tipo, valor, descricao, status, observacao")
+          .in("conciliacao_id", lote)
+          .in("status", ["ignorado", "ajustado", "criado"])
+          .order("dia"),
+        4,
+      ),
   });
 }

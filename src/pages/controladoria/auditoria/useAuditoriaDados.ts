@@ -51,16 +51,18 @@ export interface LinhaFluxoMes {
   id_malote: string | null;
   // Só a view do Malote devolve (relatório de divergências do card 1).
   ajustado?: boolean | null;
+  // SIS-2026-0720: parcela (chave, com a despesa, da linha que o Fluxo de Caixa edita). A planilha importada não tem.
+  numero_parcela?: number | null;
 }
 
 // A origem é conhecida pela própria view — nem todas têm a coluna `origem`
 // (a de resgate de aplicação não tem; pedir a coluna derrubava o card inteiro).
 const VIEWS_FLUXO: { view: string; origem: string; ordem: string[]; extra?: string }[] = [
-  { view: "v_malote_pagamento_fluxo_caixa", origem: "malote", ordem: ["despesa_id", "numero_parcela", "contrato_id", "valor"], extra: "ajustado" },
-  { view: "v_debito_automatico_fluxo_caixa", origem: "debito_automatico", ordem: ["despesa_id", "numero_parcela", "contrato_id", "valor"] },
-  { view: "v_cartao_fatura_fluxo_caixa", origem: "cartao_fatura", ordem: ["despesa_id", "numero_parcela", "contrato_id", "valor"] },
-  { view: "v_aplicacao_financeira_fluxo_caixa", origem: "aplicacao_financeira", ordem: ["despesa_id", "numero_parcela", "contrato_id", "valor"] },
-  { view: "v_aplicacao_financeira_resgate_fluxo_caixa", origem: "aplicacao_financeira", ordem: ["despesa_id", "numero_parcela", "contrato_id", "valor"] },
+  { view: "v_malote_pagamento_fluxo_caixa", origem: "malote", ordem: ["despesa_id", "numero_parcela", "contrato_id", "valor"], extra: "ajustado, numero_parcela" },
+  { view: "v_debito_automatico_fluxo_caixa", origem: "debito_automatico", ordem: ["despesa_id", "numero_parcela", "contrato_id", "valor"], extra: "numero_parcela" },
+  { view: "v_cartao_fatura_fluxo_caixa", origem: "cartao_fatura", ordem: ["despesa_id", "numero_parcela", "contrato_id", "valor"], extra: "numero_parcela" },
+  { view: "v_aplicacao_financeira_fluxo_caixa", origem: "aplicacao_financeira", ordem: ["despesa_id", "numero_parcela", "contrato_id", "valor"], extra: "numero_parcela" },
+  { view: "v_aplicacao_financeira_resgate_fluxo_caixa", origem: "aplicacao_financeira", ordem: ["despesa_id", "numero_parcela", "contrato_id", "valor"], extra: "numero_parcela" },
   { view: "v_fluxo_caixa_importado_fluxo_caixa", origem: "importacao_historica", ordem: ["despesa_id", "linha_id"] },
 ];
 
@@ -156,8 +158,14 @@ export function useMaloteCentrosMes(mes: string, base: BasePeriodo = "pagamento"
         dentroDoMes(db.from("v_malote_pagamento_fluxo_caixa").select("valor, empresa_id, contrato_id, classificacao_id, despesa_id, id_malote, descricao, classificacao_nome, data_pagamento").eq("tipo", "saida"), colunaFluxo(base), mes)
           .order("despesa_id").order("numero_parcela").order("contrato_id").order("valor")
       );
-      const classificacoes = await paginar<{ id: string; tipo: string | null }>(() => db.from("planejamento_orcamentario_classificacao").select("id, tipo").order("id"));
-      return { linhas: linhas.map((l) => ({ ...l, origem: "malote" })), tipoPorClassificacao: new Map(classificacoes.map((c) => [c.id, c.tipo])) };
+      const classificacoes = await paginar<{ id: string; tipo: string | null; aprovador1_nomes: string[] | null; aprovador2_nomes: string[] | null }>(() =>
+        db.from("planejamento_orcamentario_classificacao").select("id, tipo, aprovador1_nomes, aprovador2_nomes").order("id")
+      );
+      // SIS-2026-0720: o "gerente responsável" pelo lançamento = aprovadores N1/N2 da classificação dele.
+      const responsaveisPorClassificacao = new Map(
+        classificacoes.map((c) => [c.id, [...new Set([...(c.aprovador1_nomes ?? []), ...(c.aprovador2_nomes ?? [])].filter(Boolean))]] as [string, string[]])
+      );
+      return { linhas: linhas.map((l) => ({ ...l, origem: "malote" })), tipoPorClassificacao: new Map(classificacoes.map((c) => [c.id, c.tipo])), responsaveisPorClassificacao };
     },
   });
 }

@@ -2,11 +2,12 @@ import { useMemo } from "react";
 import { useItensNfEmissaoEmLote } from "@/hooks/useNfEmissao";
 import { ignoraNaConciliacao } from "@/hooks/useConciliacaoFluxoCaixa";
 import { faltaDeFaturamento } from "../faturamentoStatus";
-import { agruparFaturamento, totaisVazios } from "../faturamento/regras";
+import { agruparFaturamento, ehContratoAdministrativo, totaisVazios } from "../faturamento/regras";
+import { socioDoContrato } from "../fechamento/regras";
 import { useBaseFaturamento } from "../faturamento/useBaseFaturamento";
 import {
-  centrosAcimaDoOrcado, conciliacaoDaEmpresa, descontosPorCategoria, divergenciasMaloteFluxo, maloteDiretoPorDespesa, FiltroAuditoria, ItemDesconto, LinhaCentroMalote, saidasFinanceiro, semCentroDetalhe, TipoValidacao, TotaisCard,
-  totaisCentrosMalote, totaisFluxoExtrato, totaisMaloteFinanceiro, totalMaloteDireto,
+  centrosAcimaDoOrcado, conciliacaoDaEmpresa, descontosPorCategoria, divergenciasMaloteFluxo, maloteDiretoPorDespesa, FiltroAuditoria, ItemDesconto, TipoCentro, TipoValidacao, TotaisCard,
+  totaisCentrosFluxo, totaisFluxoExtrato, totaisMaloteFinanceiro, totalMaloteDireto,
 } from "./regras";
 import { BasePeriodo, linhasMalote, useConciliadoMes, useMaloteCentrosMes, useFluxoMes, useMaloteDiretoMes, useOrcadoRealizado } from "./useAuditoriaDados";
 
@@ -87,29 +88,22 @@ export function useTotaisAuditoria(f: FiltrosPainel): Record<TipoValidacao, Esta
       };
     }
 
-    // 3. Centros de Custo × Malote — o centro de custo operacional é o contrato
-    // (já presente no rateio); classificações administrativas vão para os centros
-    // administrativos. A diferença é gasto de contrato lançado sem contrato.
+    // 3. Centros de Custo × saída total do Fluxo (SIS-2026-0720). Da saída total do Fluxo saem aplicação financeira e transferência
+    // entre contas (não são despesa); o saldo utilizável tem que estar distribuído em contratos, administrativo e sócios. O que sobra
+    // é o "falta distribuir", com a lista dos lançamentos (cada um abre o Fluxo já na reclassificação).
     let t3: TotaisCard | null = null;
     if (centrosQ.data && fluxoQ.data) {
-      // SIS-2026-0657: Malote + lançamentos do Financeiro (mesma definição do card 1, sem aplicação).
-      const financeiro: LinhaCentroMalote[] = saidasFinanceiro(fluxoQ.data, f).map((l) => ({
-        valor: Number(l.valor) || 0, empresa_id: l.empresa_id, contrato_id: l.contrato_id, classificacao_id: l.classificacao_id ?? null,
-        origem: l.origem, despesa_id: l.despesa_id ?? null, id_malote: l.id_malote ?? null, descricao: l.descricao ?? null,
-        classificacao_nome: l.classificacao_nome, data_pagamento: l.data_pagamento ?? null,
-      }));
-      const todasAsLinhas = [...centrosQ.data.linhas, ...financeiro];
-      const r = totaisCentrosMalote(todasAsLinhas, centrosQ.data.tipoPorClassificacao, f);
+      const tipoDoContrato = (id: string): TipoCentro => {
+        const nome = base.contratoPorId.get(id)?.nome;
+        if (socioDoContrato(nome)) return "socio";
+        return ehContratoAdministrativo(nome) ? "administrativo" : "contrato";
+      };
+      const p = totaisCentrosFluxo(fluxoQ.data, tipoDoContrato, centrosQ.data.tipoPorClassificacao, centrosQ.data.responsaveisPorClassificacao, f);
       t3 = {
-        painel: { kind: "centros", pendentes: semCentroDetalhe(todasAsLinhas, centrosQ.data.tipoPorClassificacao, f) },
-        a: r.total,
-        b: r2(r.comContrato + r.administrativo),
-        aviso: "Centro de custo = contrato do rateio. A diferença é gasto de contrato ou lançamento financeiro sem centro (ou sem classificação).",
-        detalhes: [
-          { rotulo: "Em centros de contrato", valor: r.comContrato, somaNoTotal: true },
-          { rotulo: "Em centros administrativos", valor: r.administrativo, somaNoTotal: true },
-          { rotulo: "Sem centro (pendente de classificar)", valor: r.pendente, somaNoTotal: false },
-        ],
+        painel: p,
+        a: p.saldoUtilizavel,
+        b: r2(p.contratos + p.administrativo + p.socios),
+        aviso: "Saldo utilizável = saída total do Fluxo − aplicações financeiras − transferências entre contas. O que não está em contrato, administrativo nem sócios fica em \"falta distribuir\".",
       };
     }
 
