@@ -40,3 +40,20 @@ describe("valorConfere", () => {
     expect(valorConfere(123, null)).toBe(true);
   });
 });
+
+// Filtro por valor: acha a despesa rateada pelo valor de uma fatia do rateio (a linha mostra o total e abre o rateio).
+import { valorNaLinha } from "@/pages/financeiro/fluxo-caixa/filtroValor";
+describe("valorNaLinha (valor dentro do rateio)", () => {
+  const dm0733 = { valor: 821.6, rateioDetalhe: [{ valor: 79 }, { valor: 742.6 }] };
+  it("acha pelo total, pela fatia do rateio, e não acha outro valor", () => {
+    expect(valorNaLinha(dm0733, 821.6)).toBe("total");
+    expect(valorNaLinha(dm0733, 79)).toBe("rateio");
+    expect(valorNaLinha(dm0733, 742.6)).toBe("rateio");
+    expect(valorNaLinha(dm0733, 80)).toBeNull();
+  });
+  it("sem filtro devolve o total (a linha entra); sem rateio só confere o total", () => {
+    expect(valorNaLinha(dm0733, null)).toBe("total");
+    expect(valorNaLinha({ valor: 50 }, 50)).toBe("total");
+    expect(valorNaLinha({ valor: 50 }, 20)).toBeNull();
+  });
+});
