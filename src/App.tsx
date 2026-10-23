@@ -928,7 +928,7 @@ const App = () => (
             <Route path="rh/ferias" element={<Ferias />} />
             <Route path="rh/recrutamento" element={<Recrutamento />} />
             <Route path="rh/solicitacoes-demissao" element={<RhSolicitacoesDemissao />} />
-            {/* Rescisões — submódulo próprio com kanban (mig 20261021000030). */}
+            {/* Rescisões — a planilha do RH, dentro de Recursos Humanos (mig 20261022000400). */}
             <Route path="rh/rescisoes" element={<RhRescisoes />} />
             {/* Conferência de Ponto — Operacional, RH e Financeiro na mesma tela;
                 o que muda é a permissão de cada um (ver conferencia.ts). */}

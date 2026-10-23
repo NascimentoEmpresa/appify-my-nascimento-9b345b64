@@ -1,4 +1,5 @@
 import { PASSOS_FLUXO, desfechoDoStatus, type Desfecho, type EventoHistorico } from "@/lib/recrutamento/fluxoStatus";
+import { vagaEmAndamento } from "@/lib/recrutamento/vagaEmAndamento";
 
 // =====================================================================
 // RELATÓRIOS › VAGAS — DASHBOARD (mig 20261007000020, 07/10/2026)
@@ -77,6 +78,14 @@ const indiceEtapa = (chave: string) => PASSOS_FLUXO.findIndex((p) => p.chave ===
 
 export const desfechoVaga = (v: Pick<VagaPainel, "status">): Desfecho => desfechoDoStatus(v.status);
 export const vagaFechada = (v: Pick<VagaPainel, "status">) => desfechoVaga(v) !== "andamento";
+/**
+ * "Aberta agora" dos cartões, do aging e das colunas "abertas" = vaga EM ANDAMENTO
+ * (vagaEmAndamento, 22/10/2026): a mesma régua da Gestão Recrutamento e da TV RH —
+ * sem as pendentes de aprovação (Operacional/Diretoria) e do RH (Pendente
+ * Recrutamento). Antes contava toda vaga não fechada (90 × 76 da Gestão).
+ * vagaFechada continua sendo o "fechou ou não" do período e do desfecho.
+ */
+export const vagaAbertaAgora = (v: Pick<VagaPainel, "status">) => vagaEmAndamento(v.status);
 
 export interface Trecho { status: string; etapa: string; inicio: string; fim: string | null; dias: number; aberto: boolean }
 
@@ -173,13 +182,14 @@ export interface ResumoVagas {
 
 export function resumoVagas(p: PainelVagas): ResumoVagas {
   const per = p.vagas.filter((v) => v.no_periodo);
-  const abertas = p.vagas.filter((v) => !vagaFechada(v));
+  const abertas = p.vagas.filter(vagaAbertaAgora);
   const contr = per.filter((v) => desfechoVaga(v) === "contratada");
   const tempos = contr.map((v) => diasTotais(v, p.agora));
   const aprov = per.map((v) => tempoAprovacao(v)).filter((x): x is number => x != null);
   const decididas = per.filter((v) => vagaFechada(v)).length;
   const comCand = per.filter((v) => !v.legado);
-  const maisAntiga = abertas.reduce<VagaPainel | null>((a, v) => (!a || ms(v.criada) < ms(a.criada) ? v : a), null);
+  // Aberta mais antiga: qualquer vaga não fechada (igual à TV, que só trocou o cartão e o aging).
+  const maisAntiga = p.vagas.filter((v) => !vagaFechada(v)).reduce<VagaPainel | null>((a, v) => (!a || ms(v.criada) < ms(a.criada) ? v : a), null);
   return {
     solicitadas: per.length,
     posicoes: per.reduce((s, v) => s + (v.qtd || 1), 0),
@@ -337,7 +347,7 @@ export function agruparVagas(p: PainelVagas, dim: Dimensao): LinhaGrupo[] {
   }
   return [...g.values()].map(({ nome, vs }) => {
     const per = vs.filter((v) => v.no_periodo);
-    const ab = vs.filter((v) => !vagaFechada(v));
+    const ab = vs.filter(vagaAbertaAgora);
     const c = per.filter((v) => desfechoVaga(v) === "contratada");
     return {
       nome, vagas: per.length, posicoes: per.reduce((s, v) => s + (v.qtd || 1), 0), abertas: ab.length,
@@ -361,7 +371,7 @@ export function vagasDaFaixa(p: PainelVagas, i: number): VagaPainel[] {
   const f = FAIXAS_AGING[i];
   if (!f) return [];
   const de = i === 0 ? -1 : FAIXAS_AGING[i - 1].ate;
-  return p.vagas.filter((v) => { if (vagaFechada(v)) return false; const d = diasTotais(v, p.agora); return d > de && d <= f.ate; });
+  return p.vagas.filter((v) => { if (!vagaAbertaAgora(v)) return false; const d = diasTotais(v, p.agora); return d > de && d <= f.ate; });
 }
 
 export function agingAbertas(p: PainelVagas) {
@@ -461,7 +471,7 @@ export function vagasDoRecorte(p: PainelVagas, r: Recorte): VagaPainel[] {
         case "solicitadas": return per();
         case "contratadas": return per().filter((v) => desfechoVaga(v) === "contratada");
         case "reprovadas": return per().filter(reprovOuCanc);
-        case "abertas": return p.vagas.filter((v) => !vagaFechada(v));
+        case "abertas": return p.vagas.filter(vagaAbertaAgora);
         case "no_prazo": return per().filter((v) => desfechoVaga(v) === "contratada" && diasTotais(v, p.agora) <= META_DIAS_CONTRATAR);
         case "desistencias": return per().filter((v) => v.cand.desistiu > 0);
       }
@@ -480,7 +490,7 @@ export function vagasDoRecorte(p: PainelVagas, r: Recorte): VagaPainel[] {
       const k = chaveDoGrupo(r.nome);
       const doGrupo = p.vagas.filter((v) => (v.no_periodo || !vagaFechada(v)) && chaveDoGrupo(nomeNoGrupo(v, r.dim)) === k);
       if (r.coluna === "vagas") return doGrupo.filter((v) => v.no_periodo);
-      if (r.coluna === "abertas") return doGrupo.filter((v) => !vagaFechada(v));
+      if (r.coluna === "abertas") return doGrupo.filter(vagaAbertaAgora);
       if (r.coluna === "contratadas") return doGrupo.filter((v) => v.no_periodo && desfechoVaga(v) === "contratada");
       if (r.coluna === "reprovadas") return doGrupo.filter((v) => v.no_periodo && reprovOuCanc(v));
       return doGrupo;

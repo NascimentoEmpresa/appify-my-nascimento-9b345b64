@@ -12,6 +12,7 @@ import { useVinculoEmpregado } from "@/hooks/useVinculoEmpregado";
 import { usePermissoes } from "@/context/PermissoesContext";
 import { ResumoDeFuncoes } from "@/components/fluxos/ResumoDeFuncoes";
 import { ModalNovaVaga } from "@/components/recrutamento/ModalNovaVaga";
+import { vagaEmAndamento, filtrarEmAndamento } from "@/lib/recrutamento/vagaEmAndamento";
 import {
   motivoLabel, fmtBr, mostraNomeReferencia,
   podeVagaAdministrativa, filtrarAdministrativas, filtrarPorEscopo, normSetorVaga, STATUS_VAGA_DIRETORIA, rotuloStatusVaga,
@@ -437,10 +438,11 @@ const STATUS_SELECAO = [
   "Encaminhado para SST (ASO)", "ASO Aprovado - Aguardando Informe de EPIs", "Aguardando Confirmação Compras",
 ];
 const FILTRO_SELECAO = "pend_selecao";
-// O atalho/número "Em Processo" não conta o que já tem atalho próprio
-// (Pendente Seleção) — só para quem VÊ esse atalho; quem não vê continua
-// achando as vagas em "Em Processo". O drawer e os candidatos usam STATUS_PROCESSO.
-const STATUS_EM_PROCESSO_SEM_SELECAO = STATUS_PROCESSO.filter(s => !STATUS_SELECAO.includes(s));
+// O atalho/número "Em Processo" é a régua única de vaga em andamento
+// (vagaEmAndamento, 22/10/2026 — a mesma da TV RH): tudo menos pendente do
+// Operacional/Diretoria/RH, concluída e reprovada/cancelada. Pendente Seleção
+// ENTRA — antes saía para quem via esse atalho, e o card dava 42 contra 91 da
+// TV. O drawer e os candidatos continuam usando STATUS_PROCESSO.
 
 // ── Componente Principal ───────────────────────────────────────────
 //
@@ -534,7 +536,6 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
   // Atalhos de filtro com acesso próprio (23/09/2026, mig 20260930000225).
   const verFiltroPendRecrutamento = can("visualizar", undefined, MENU_FILTRO_PEND_RECRUTAMENTO);
   const verFiltroPendSelecao      = can("visualizar", undefined, MENU_FILTRO_PEND_SELECAO);
-  const STATUS_EM_PROCESSO = verFiltroPendSelecao ? STATUS_EM_PROCESSO_SEM_SELECAO : STATUS_PROCESSO;
   // Quem pode mover o candidato pra fora de cada etapa específica do kanban.
   // Vaga do escritório: só quem tem a capacidade vê, marca e decide.
   const podeAdministrativa = podeVagaAdministrativa(can);
@@ -766,11 +767,11 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
       total:            rows.length,
       pendentes:        rows.filter(r => r.status === STATUS_ETAPA1).length,
       ag_treinamentos:  rows.filter(r => r.status === "Pendente Recrutamento").length,
-      em_processo:      rows.filter(r => STATUS_EM_PROCESSO.includes(r.status)).length,
+      em_processo:      rows.filter(r => vagaEmAndamento(r.status)).length,
       contratados:      rows.filter(r => r.status === "Contratado" || String(r.status ?? "").startsWith("Concluído")).length,
       reprovadas:       rows.filter(r => r.status === "Reprovada").length,
     });
-  }, [noEscopo, STATUS_ETAPA1, STATUS_EM_PROCESSO, dataDe, dataAte]);
+  }, [noEscopo, STATUS_ETAPA1, dataDe, dataAte]);
 
   // ── Filtros compartilhados ────────────────────────────────────
   // Tabela e Kanban são a MESMA consulta, só muda a apresentação — então os
@@ -786,7 +787,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
       return q;
     }
     if (statusFilter === "em_processo") {
-      q = q.in("status", STATUS_EM_PROCESSO);
+      q = filtrarEmAndamento(q);
     } else if (statusFilter === FILTRO_SELECAO) {
       q = q.in("status", STATUS_SELECAO);
     } else if (statusFilter === "concluido") {
@@ -810,7 +811,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
     if (dataDe)  q = q.gte("created_at", `${dataDe}T00:00:00-03:00`);
     if (dataAte) q = q.lt("created_at", `${diaSeguinte(dataAte)}T00:00:00-03:00`);
     return q;
-  }, [statusFilter, tab, search, buscaId, user, dataDe, dataAte, STATUS_EM_PROCESSO]);
+  }, [statusFilter, tab, search, buscaId, user, dataDe, dataAte]);
 
   // ── Carregar Lista ────────────────────────────────────────────
   const listaReq = useRef(0);

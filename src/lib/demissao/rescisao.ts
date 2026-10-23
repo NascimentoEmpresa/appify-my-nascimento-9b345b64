@@ -9,8 +9,14 @@
 //
 // Duas fontes viram uma lista só:
 //   · a solicitação do ERP (SISTEMA_SOLICITACOES_DEMISSAO) + a sua linha em
-//     RH_RESCISAO, que nasce na primeira edição do RH;
+//     RH_RESCISAO, que desde 22/10/2026 nasce NO BANCO quando o RH libera a
+//     demissão (gatilho trg_demissao_cria_rescisao, mig 20261022000400 —
+//     antes nascia na primeira edição, e até lá a tela inventava a linha);
 //   · a linha IMPORTADA da planilha (origem = 'planilha'), sem solicitação.
+//
+// E desde 22/10/2026 a tela é a PLANILHA (Recursos Humanos › Rescisões),
+// editável na célula, com os 10 status da lista suspensa do Excel — o kanban
+// do módulo próprio de 21/10 saiu ("tem que parecer a planilha só que melhor").
 //
 // O que a solicitação já sabe (aviso, última data trabalhada, motivo) entra
 // como SUGESTÃO até o RH gravar — e a sugestão segue a régua que a própria
@@ -28,9 +34,28 @@ export const TABELA_RESCISAO = "RH_RESCISAO";
 // ── Opções (as mesmas listas dos CHECKs da migration) ────────────────
 export const HOMOLOGACOES = ["Não", "Sim", "Aguardando carta", "Carta não homo", "Realizado"] as const;
 
+/**
+ * A coluna STATUS da planilha — a mesma lista suspensa do Excel (22/10/2026,
+ * mig 20261022000400; antes eram 5 e "pendência", "recalcular", "guia
+ * pendente", "fazer VA" e "urgente" sumiam dentro de "Por fazer"). Na ordem
+ * do trabalho: o que falta fazer, o que está travado, o que está feito.
+ */
 export const STATUS_RESCISAO = [
-  "Por fazer", "Feita", "Rescisão OK", "Rescisão e documentos OK", "Encaminhado ao INSS",
+  "Rescisão por fazer", "Rescisão urgente por fazer", "Recalcular", "Guia pendente", "Pendência",
+  "Fazer VA", "Rescisão feita", "Encaminhado ao INSS", "Rescisão OK", "Rescisão e documentos OK",
 ] as const;
+export type StatusRescisao = (typeof STATUS_RESCISAO)[number];
+
+/** O status da linha que acabou de chegar do ERP (o que a planilha escrevia na linha nova). */
+export const STATUS_PADRAO: StatusRescisao = "Rescisão por fazer";
+
+/**
+ * Concluída = "Rescisão OK" (rescisão paga) ou "Rescisão e documentos OK"
+ * (paga e sem documento faltando) — as duas que o RH usa como fim da linha.
+ */
+export const STATUS_CONCLUIDOS: readonly StatusRescisao[] = ["Rescisão OK", "Rescisão e documentos OK"];
+export const rescisaoConcluida = (s: string | null | undefined): boolean =>
+  (STATUS_CONCLUIDOS as readonly string[]).includes(s ?? STATUS_PADRAO);
 
 export const TIPO_SJ_TRABALHADO = "Sem justa causa - trabalhado";
 export const TIPOS_DESLIGAMENTO = [
@@ -62,12 +87,17 @@ export const siglaEmpresa = (codigo: unknown): string | null =>
 
 /** Cor do selo do status da rescisão — a régua da coluna STATUS da planilha. */
 export function corStatusRescisao(s: string | null | undefined): string {
-  switch (s) {
-    case "Por fazer": return "bg-amber-100 text-amber-800 border-amber-200";
-    case "Feita": return "bg-sky-100 text-sky-800 border-sky-200";
-    case "Rescisão OK": return "bg-emerald-100 text-emerald-700 border-emerald-200";
+  switch (s ?? STATUS_PADRAO) {
+    case "Rescisão por fazer": return "bg-amber-100 text-amber-900 border-amber-300";
+    case "Rescisão urgente por fazer": return "bg-red-600 text-white border-red-700";
+    case "Recalcular": return "bg-orange-100 text-orange-800 border-orange-300";
+    case "Guia pendente": return "bg-yellow-100 text-yellow-900 border-yellow-300";
+    case "Pendência": return "bg-rose-100 text-rose-800 border-rose-300";
+    case "Fazer VA": return "bg-lime-100 text-lime-900 border-lime-300";
+    case "Rescisão feita": return "bg-sky-100 text-sky-800 border-sky-300";
+    case "Encaminhado ao INSS": return "bg-violet-100 text-violet-800 border-violet-300";
+    case "Rescisão OK": return "bg-emerald-100 text-emerald-800 border-emerald-300";
     case "Rescisão e documentos OK": return "bg-green-600 text-white border-green-700";
-    case "Encaminhado ao INSS": return "bg-violet-100 text-violet-800 border-violet-200";
     default: return "bg-muted text-muted-foreground";
   }
 }
@@ -219,13 +249,19 @@ export function normalizarHomologacao(texto: unknown): (typeof HOMOLOGACOES)[num
   return null;
 }
 
-export function normalizarStatusRescisao(texto: unknown): (typeof STATUS_RESCISAO)[number] | null {
+/** O STATUS do Excel → a lista. Mesma régua de rh_rescisao_status_da_planilha (mig 20261022000400). */
+export function normalizarStatusRescisao(texto: unknown): StatusRescisao | null {
   const t = semAcento(texto);
   if (!t) return null;
   if (t.includes("INSS")) return "Encaminhado ao INSS";
-  if (t.includes("POR FAZER") || t.includes("PENDENC")) return "Por fazer";
+  if (t.includes("URGENTE")) return "Rescisão urgente por fazer";
+  if (t.includes("POR FAZER")) return "Rescisão por fazer";
+  if (t.includes("RECALC")) return "Recalcular";
+  if (t.includes("GUIA")) return "Guia pendente";
+  if (t.includes("PENDENC")) return "Pendência";
+  if (/(^| )VA( |$)/.test(t)) return "Fazer VA";
   if (t.includes("DOCUMENTOS")) return "Rescisão e documentos OK";
-  if (t.includes("FEITA")) return "Feita";
+  if (t.includes("FEITA")) return "Rescisão feita";
   if (t.includes("OK")) return "Rescisão OK";
   return null;
 }
@@ -535,6 +571,12 @@ export function completarVazios(atual: Partial<RescisaoRH>, nova: LinhaPlanilhaR
     if (typeof v === "boolean") { if (v && !a) (patch as Record<string, unknown>)[c] = true; continue; }
     if (v != null && v !== "" && (a == null || a === "")) (patch as Record<string, unknown>)[c] = v;
   }
+  // Status: a linha do ERP nasce "Rescisão por fazer" (gatilho da mig
+  // 20261022000400) — isso é o padrão, não uma decisão do RH. Se a planilha
+  // diz outra coisa (ela é a história do que já foi feito), vale a planilha.
+  if (nova.status_rescisao && atual.status_rescisao === STATUS_PADRAO && nova.status_rescisao !== STATUS_PADRAO) {
+    patch.status_rescisao = nova.status_rescisao;
+  }
   // A linha original entra uma vez — importada antes da mig 20261021000030, ganha agora.
   if (!atual.planilha_original && nova.planilha_original && Object.keys(nova.planilha_original).length) {
     patch.planilha_original = nova.planilha_original;
@@ -605,10 +647,13 @@ export function montarLinhaRescisao(
     origem: s ? "erp" : (r?.origem === "manual" ? "manual" : "planilha"),
     empresa: r?.empresa ?? siglaEmpresa(empregado?.empresa) ?? null,
     matricula: r?.matricula ?? empregado?.matricula ?? null,
-    nome: s?.colaborador_nome ?? r?.colaborador_nome ?? "—",
-    contrato: s?.contrato ?? r?.contrato ?? null,
+    // A linha gravada é a planilha (desde a mig 20261022000400 ela nasce com
+    // os dados da solicitação): o que o RH corrigiu nela vale; a solicitação
+    // só cobre o que estiver vazio.
+    nome: r?.colaborador_nome ?? s?.colaborador_nome ?? "—",
+    contrato: r?.contrato ?? s?.contrato ?? null,
     recebido: r?.data_recebimento ?? s?.data_solicitacao ?? s?.criado_em?.slice(0, 10) ?? null,
-    solicitadoPor: s ? (s.solicitante_nome ?? "ERP") : (r?.solicitado_por ?? null),
+    solicitadoPor: r?.solicitado_por ?? (s ? (s.solicitante_nome ?? "ERP") : null),
     statusFluxo: s?.status ?? null,
     homologacao: r?.homologacao ?? null,
     sstOk: s ? STATUS_SST_RESOLVIDO.includes(s.status) : (r?.sst_ok ?? null),
@@ -636,7 +681,7 @@ export function montarLinhaRescisao(
     retornoObs: r?.retorno_obs ?? null,
     // Sem nada lançado ainda, a rescisão está "por fazer" — é o que a
     // planilha escrevia na linha nova.
-    statusRescisao: r?.status_rescisao ?? "Por fazer",
+    statusRescisao: r?.status_rescisao ?? STATUS_PADRAO,
     observacao: r?.observacao ?? null,
     pontosAjustados: r?.pontos_ajustados ?? null,
     admissao: r?.data_admissao ?? s?.colaborador_admissao?.slice(0, 10) ?? null,
@@ -647,39 +692,70 @@ export function montarLinhaRescisao(
   };
 }
 
-/** Solicitações + rescisões → a lista da tela, uma linha por desligamento. */
+/**
+ * Rescisões (+ a solicitação de cada uma) → a lista da tela, uma linha por
+ * desligamento. Desde 22/10/2026 (mig 20261022000400) quem manda é a LINHA
+ * GRAVADA: ela nasce quando o RH libera a demissão, então solicitação ainda
+ * em Pendente RH (ou sem linha) não é rescisão e não aparece. A solicitação
+ * só completa a linha (status do fluxo, link, empresa/matrícula na falta).
+ */
 export function montarLinhasRescisao(
   solicitacoes: SolicitacaoDemissao[],
   rescisoes: RescisaoRH[],
   empregados: Map<number, VinculoEmpregado> = new Map(),
 ): LinhaRescisao[] {
-  const porSolicitacao = new Map<number, RescisaoRH>();
-  const avulsas: RescisaoRH[] = [];
-  for (const r of rescisoes) {
-    if (r.solicitacao_id != null) porSolicitacao.set(r.solicitacao_id, r);
-    else avulsas.push(r);
-  }
-  // Cancelada sem ficha começada não é rescisão a fazer — some da lista.
-  // Com ficha (o RH já tinha lançado algo), fica, para o lançado não sumir.
-  return [
-    ...solicitacoes
-      .filter((s) => s.status !== "Cancelada" || porSolicitacao.has(s.id))
-      .map((s) => montarLinhaRescisao(s, porSolicitacao.get(s.id) ?? null,
-        s.colaborador_id != null ? empregados.get(s.colaborador_id) : null)),
-    ...avulsas.map((r) => montarLinhaRescisao(null, r)),
-  ];
+  const porId = new Map(solicitacoes.map((s) => [s.id, s]));
+  return rescisoes.map((r) => {
+    const s = r.solicitacao_id != null ? porId.get(r.solicitacao_id) ?? null : null;
+    return montarLinhaRescisao(s, r, s?.colaborador_id != null ? empregados.get(s.colaborador_id) : null);
+  });
 }
+
+/** Demissão cancelada depois que a rescisão já estava na planilha — o RH precisa ver para desfazer. */
+export const demissaoCancelada = (l: Pick<LinhaRescisao, "statusFluxo">): boolean =>
+  l.statusFluxo === "Cancelada" || l.statusFluxo === "Cancelamento solicitado";
+
+/** A lista suspensa da coluna PROGRAMADAS da planilha. */
+export const OPCOES_PROGRAMADAS = ["Rescisão OK", "Vales OK", "Rescisão e vales OK"] as const;
 
 /** "Rescisão e vales OK" — o texto da coluna PROGRAMADAS da planilha. */
 export function textoProgramadas(l: Pick<LinhaRescisao, "rescisaoProgramada" | "valesProgramados">): string {
   if (l.rescisaoProgramada && l.valesProgramados) return "Rescisão e vales OK";
-  if (l.rescisaoProgramada) return "Rescisão OK · vales não";
-  if (l.valesProgramados) return "Vales OK · rescisão não";
+  if (l.rescisaoProgramada) return "Rescisão OK";
+  if (l.valesProgramados) return "Vales OK";
   return "";
+}
+
+/** O que gravar quando escolhem um valor na coluna PROGRAMADAS ("" = nenhum). */
+export function patchProgramadas(texto: string): Pick<RescisaoRH, "rescisao_programada" | "vales_programados"> {
+  const t = semAcento(texto);
+  return { rescisao_programada: t.includes("RESCIS"), vales_programados: t.includes("VALE") };
+}
+
+/**
+ * A célula de MALOTE / ENVIO / RETORNO é texto livre, como no Excel
+ * ("ENVIADO ZAPSIGN - 09/01/2026"). Ao gravar, a data e o meio escritos nela
+ * viram campo (para filtro e alerta) e o texto fica como está.
+ */
+export function patchTextoDocumento(
+  coluna: "malote" | "envio" | "retorno", texto: string, anoPadrao: number = new Date().getFullYear(),
+): Partial<RescisaoRH> {
+  const t = texto.replace(/\s+/g, " ").trim() || null;
+  const data = dataNoTexto(t, anoPadrao);
+  if (coluna === "malote") return { malote_obs: t, malote_data: data };
+  return { [`${coluna}_obs`]: t, [`${coluna}_data`]: data, [`${coluna}_meio`]: t ? meioNoTexto(t, coluna) : null } as Partial<RescisaoRH>;
+}
+
+/** O texto da célula de documento: o que foi escrito, ou "meio - data" das linhas antigas. */
+export function textoDocumento(meio: string | null, data: string | null, obs: string | null): string {
+  if (obs) return obs;
+  return [meio, data ? data.slice(0, 10).split("-").reverse().join("/") : null].filter(Boolean).join(" - ");
 }
 
 // ── Filtro e ordem ───────────────────────────────────────────────────
 export interface FiltroRescisao {
+  /** As abas da tela: em aberto (tudo menos as duas concluídas) ou concluídas. */
+  situacao?: "" | "abertas" | "concluidas";
   busca?: string;
   empresa?: string;
   statusRescisao?: string;
@@ -705,11 +781,11 @@ export function hojeIso(agora: Date = new Date()): string {
 }
 
 /** Os status em que a rescisão ainda não foi calculada — é o que pode atrasar o pagamento. */
-export const STATUS_SEM_RESCISAO = ["Por fazer"] as const;
+export const STATUS_SEM_RESCISAO: readonly StatusRescisao[] = ["Rescisão por fazer", "Rescisão urgente por fazer", "Recalcular"];
 
 /** Pagamento já vencido (ou vencendo hoje) e a rescisão ainda por fazer. */
 export function pagamentoAtrasado(l: Pick<LinhaRescisao, "pagamento" | "statusRescisao">, hoje: string = hojeIso()): boolean {
-  return !!l.pagamento && l.pagamento <= hoje && (STATUS_SEM_RESCISAO as readonly string[]).includes(l.statusRescisao ?? "Por fazer");
+  return !!l.pagamento && l.pagamento <= hoje && (STATUS_SEM_RESCISAO as readonly string[]).includes(l.statusRescisao ?? STATUS_PADRAO);
 }
 
 /** Dias inteiros desde `desde` (ISO) até hoje; null sem data. */
@@ -727,6 +803,8 @@ export const semRetorno = (l: Pick<LinhaRescisao, "envioMeio" | "envioData" | "e
 export function filtrarRescisoes(linhas: LinhaRescisao[], f: FiltroRescisao, hoje: string = hojeIso()): LinhaRescisao[] {
   const q = semAcento(f.busca);
   return linhas.filter((l) => {
+    if (f.situacao === "abertas" && rescisaoConcluida(l.statusRescisao)) return false;
+    if (f.situacao === "concluidas" && !rescisaoConcluida(l.statusRescisao)) return false;
     if (f.empresa && l.empresa !== f.empresa) return false;
     if (f.statusRescisao && l.statusRescisao !== f.statusRescisao) return false;
     if (f.homologacao && l.homologacao !== f.homologacao) return false;
@@ -747,32 +825,38 @@ export function filtrarRescisoes(linhas: LinhaRescisao[], f: FiltroRescisao, hoj
   });
 }
 
-/** O RESUMO da planilha (COUNTIF por status): quantas em cada coluna do kanban. */
+/** O RESUMO da planilha (COUNTIF por status). */
 export function resumoPorStatus(linhas: Pick<LinhaRescisao, "statusRescisao">[]): Record<string, number> {
   const out: Record<string, number> = Object.fromEntries(STATUS_RESCISAO.map((s) => [s, 0]));
   for (const l of linhas) {
-    const s = l.statusRescisao ?? "Por fazer";
+    const s = l.statusRescisao ?? STATUS_PADRAO;
     out[s] = (out[s] ?? 0) + 1;
   }
   return out;
 }
 
 /**
- * O que gravar ao arrastar o card para outra coluna: só o status. Programadas,
- * malote e documentação continuam sendo marcação própria (na planilha, 82
- * "por fazer" já tinham "RESCISÃO E VALES OK" — um não implica o outro).
+ * O que gravar ao mudar uma célula da planilha. Datas: mudar o último dia
+ * ou o tipo recalcula demissão e pagamento pela régua SE eles ainda
+ * estavam batendo com a régua (data digitada à mão não é atropelada).
  */
-export function patchDoMovimento(l: LinhaRescisao, para: string): Partial<RescisaoRH> {
-  const patch: Partial<RescisaoRH> = { status_rescisao: para };
-  // Na primeira gravação de uma solicitação do ERP, a sugestão vira valor —
-  // o que a tela mostrava em itálico passa a ser o lançado.
-  if (!l.rescisao) {
-    Object.assign(patch, {
-      data_aviso: l.aviso, data_ultimo_dia: l.ultimoDia, data_demissao: l.demissao,
-      data_pagamento: l.pagamento, tipo_desligamento: l.tipo,
-    });
+export function patchDaCelula(l: LinhaRescisao, patch: Partial<RescisaoRH>): Partial<RescisaoRH> {
+  const out = { ...patch };
+  if ("data_ultimo_dia" in patch || "tipo_desligamento" in patch) {
+    const ultimo = "data_ultimo_dia" in patch ? patch.data_ultimo_dia ?? null : l.ultimoDia;
+    const tipo = "tipo_desligamento" in patch ? patch.tipo_desligamento ?? null : l.tipo;
+    const demAntes = sugerirDataDemissao(l.ultimoDia, l.tipo);
+    if (!l.demissao || l.demissao === demAntes) {
+      const dem = sugerirDataDemissao(ultimo, tipo);
+      if (dem) {
+        out.data_demissao = dem;
+        if (!l.pagamento || l.pagamento === sugerirDataPagamento(l.demissao)) out.data_pagamento = sugerirDataPagamento(dem);
+      }
+    }
+  } else if ("data_demissao" in patch && (!l.pagamento || l.pagamento === sugerirDataPagamento(l.demissao))) {
+    out.data_pagamento = sugerirDataPagamento(patch.data_demissao) ?? l.pagamento;
   }
-  return patch;
+  return out;
 }
 
 /** Validação da rescisão lançada à mão: nome é o mínimo (a planilha também só exigia isso). */

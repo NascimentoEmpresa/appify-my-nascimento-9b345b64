@@ -1,5 +1,5 @@
 import {
-  META_DIAS_CONTRATAR, chaveDoGrupo, desfechoVaga, diasTotais, media, mediana, nomeNoGrupo, vagaFechada,
+  META_DIAS_CONTRATAR, chaveDoGrupo, desfechoVaga, diasTotais, media, mediana, nomeNoGrupo, vagaFechada, vagaAbertaAgora,
   type PainelVagas, type VagaPainel,
 } from "@/lib/relatorios/vagasPainel";
 
@@ -140,7 +140,7 @@ export function linhasRecrutadores(p: PainelVagas, mov: LinhaMov[]): LinhaRecrut
 
   return [...grupos.entries()].map(([chave, { nome, vs, ms }]) => {
     const per = vs.filter((v) => v.no_periodo);
-    const ab = vs.filter((v) => !vagaFechada(v));
+    const ab = vs.filter(vagaAbertaAgora);
     const contr = per.filter((v) => desfechoVaga(v) === "contratada");
     const tempos = contr.map((v) => diasTotais(v, p.agora));
     const decididas = per.filter((v) => vagaFechada(v)).length;
@@ -241,7 +241,7 @@ export function idsDaCelula(p: PainelVagas, mov: LinhaMov[], chave: string, col:
   const per = vs.filter((v) => v.no_periodo);
   const lista =
     col === "vagas" ? per
-      : col === "abertas" ? vs.filter((v) => !vagaFechada(v))
+      : col === "abertas" ? vs.filter(vagaAbertaAgora)
       : col === "contratadas" ? per.filter((v) => desfechoVaga(v) === "contratada")
       : col === "reprovadas" ? per.filter((v) => ["reprovada", "cancelada"].includes(desfechoVaga(v)))
       : col === "no_prazo" ? per.filter((v) => desfechoVaga(v) === "contratada" && diasTotais(v, p.agora) <= META_DIAS_CONTRATAR)

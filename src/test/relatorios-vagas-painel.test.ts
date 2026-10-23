@@ -118,7 +118,8 @@ describe("painel", () => {
     expect(r.solicitadas).toBe(4);
     expect(r.contratadas).toBe(2);
     expect(r.reprovadas).toBe(1);
-    expect(r.abertasAgora).toBe(2);
+    // A #14 está em Pendente Recrutamento: aberta, mas fora do "em andamento" (vagaEmAndamento, 22/10/2026).
+    expect(r.abertasAgora).toBe(1);
     expect(r.tempoMedioContratar).toBe(15);
     expect(r.medianaContratar).toBe(15);
     expect(r.noPrazoPct).toBe(50);
@@ -156,13 +157,14 @@ describe("painel", () => {
   it("agrupa por contrato ignorando caixa e espaços", () => {
     const g = agruparVagas(painel, "contrato");
     expect(g).toHaveLength(1);
-    expect(g[0]).toMatchObject({ vagas: 4, abertas: 2, contratadas: 2 });
+    expect(g[0]).toMatchObject({ vagas: 4, abertas: 1, contratadas: 2 });
   });
 
   it("aging das abertas", () => {
     const a = agingAbertas(painel);
     expect(a.find((f) => f.rotulo === "8–15 d")!.vagas).toBe(1);
-    expect(a.find((f) => f.rotulo === "+60 d")!.vagas).toBe(1);
+    // A #14 (+60 d) está em Pendente Recrutamento: fora do aging desde 22/10/2026.
+    expect(a.find((f) => f.rotulo === "+60 d")!.vagas).toBe(0);
   });
 
   it("filtro local por busca, fase e legado", () => {
