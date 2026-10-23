@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -15,7 +15,7 @@ import { cn } from "@/lib/utils";
 import { useContratosERP } from "@/hooks/useContratosERP";
 import { useEmpresasGrupo } from "@/hooks/useMaloteDespesa";
 import { useBaseFaturamento } from "@/pages/controladoria/faturamento/useBaseFaturamento";
-import { totaisDoRelatorio } from "./totais";
+import { contratoCombinaComEmpresa, contratosDaEmpresa as contratosDaEmpresaDe, totaisDoRelatorio } from "./totais";
 import { NfEmissaoRow, TipoNota, TIPOS_NOTA, useEnviarNfsParaLixeira, useExcluirNfsEmissaoEmLote, useItensNfEmissaoEmLote, useNfsEmissao, useNfsEmissaoLixeira, useRestaurarNfsDaLixeira } from "@/hooks/useNfEmissao";
 import { fmtMoney, fmtDate, statusDaNota, foraDoRelatorio, naoContabilizaKpi, pendenteHaMaisDeDias, valorPendenteNf, StatusNota } from "@/pages/financeiro/nf-emissao/shared";
 import { FiltroPendenciaDias } from "./FiltroPendenciaDias";
@@ -91,6 +91,13 @@ export default function RelatorioGeralTab() {
 
   const competencias = useMemo(() => [...new Set(nfs.map((n) => n.competencia))].sort().reverse(), [nfs]);
   const contratosComNfs = useMemo(() => [...new Set(nfs.map((n) => n.contrato_id))].map((id) => contratoPorId.get(id)).filter(Boolean), [nfs, contratoPorId]);
+  // SIS-2026-0694: o filtro Contrato só oferece os contratos da empresa escolhida (vínculo do cadastro: contrato.empresa_id). Sem empresa, todos.
+  const contratosDaEmpresa = useMemo(() => contratosDaEmpresaDe(contratosComNfs.filter(Boolean) as NonNullable<(typeof contratosComNfs)[number]>[], filtroEmpresa), [contratosComNfs, filtroEmpresa]);
+  // Trocar a empresa (ou chegar por link com os dois na URL) não pode deixar um contrato de outra empresa selecionado: limpa a seleção.
+  useEffect(() => {
+    if (!filtroEmpresa || !filtroContrato) return;
+    if (!contratoCombinaComEmpresa(contratoPorId.get(filtroContrato), filtroEmpresa)) setFiltroContrato("");
+  }, [filtroEmpresa, filtroContrato, contratoPorId]);
 
   const linhas = useMemo(() => {
     const termo = busca.trim().toLowerCase();
@@ -302,7 +309,7 @@ export default function RelatorioGeralTab() {
             <SelectTrigger className="h-8 w-44 text-xs"><SelectValue /></SelectTrigger>
             <SelectContent>
               <SelectItem value="__todos">Todos</SelectItem>
-              {contratosComNfs.map((c) => <SelectItem key={c!.id} value={c!.id}>{c!.nome}</SelectItem>)}
+              {contratosDaEmpresa.map((c) => <SelectItem key={c.id} value={c.id}>{c.nome}</SelectItem>)}
             </SelectContent>
           </Select>
         </label>
