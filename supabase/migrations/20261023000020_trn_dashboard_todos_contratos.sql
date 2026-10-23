@@ -145,7 +145,7 @@ BEGIN
     'por_contrato', (SELECT coalesce(jsonb_agg(jsonb_build_object('nome', nome, 'alunos', n, 'ativos', ativos)
                                                ORDER BY n DESC, nome), '[]'::jsonb)
                        FROM (SELECT * FROM contratos ORDER BY n DESC, nome LIMIT 12) t),
-    -- Todos os contratos (mig 20261023000010): o Dashboard filtra/ordena na tela.
+    -- Todos os contratos (mig 20261023000020): o Dashboard filtra/ordena na tela.
     -- A lista de cima (top 12) fica como estava porque a TV lê dela.
     'por_contrato_todos', (SELECT coalesce(jsonb_agg(jsonb_build_object('nome', nome, 'alunos', n, 'ativos', ativos)
                                                      ORDER BY n DESC, nome), '[]'::jsonb)

@@ -80,7 +80,7 @@ function normaliza(d: Partial<Dashboard>): Dashboard {
     primeiros_acessos_30d: d.primeiros_acessos_30d ?? [],
     por_curso: d.por_curso ?? [],
     por_contrato: d.por_contrato ?? [],
-    // Antes da mig 20261023000010 só existe o top 12: o filtro trabalha com ele.
+    // Antes da mig 20261023000020 só existe o top 12: o filtro trabalha com ele.
     por_contrato_todos: d.por_contrato_todos ?? d.por_contrato ?? [],
     top_aulas: d.top_aulas ?? [],
   };
