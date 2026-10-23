@@ -561,7 +561,7 @@ export default function SolicitarMateriais() {
             Avançar <ChevronRight className="ml-1 h-4 w-4" />
           </Button>
         ) : (
-          <Button disabled={criar.isPending} onClick={enviar}>
+          <Button disabled={criar.isPending} onClick={() => enviar()}>
             {criar.isPending
               ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Enviando…</>
               : <><CheckCircle2 className="mr-2 h-4 w-4" /> Enviar pedido</>}
