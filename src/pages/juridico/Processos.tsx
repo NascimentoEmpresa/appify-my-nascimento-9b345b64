@@ -10,6 +10,7 @@ import { ModalExportarDados } from "@/components/exportar/ModalExportarDados";
 import { baixar } from "@/lib/exportarRelatorio";
 import { carregarExtras, gerarExcel, gerarHtml, nomeArquivo, type ProcessoExp } from "./processos/exportar";
 import { honorariosEmReais, pctHonorarios, totalDaProposta } from "@/lib/juridico/proposta";
+import { agruparMotivos, chaveMotivo, processoTemMotivo } from "@/lib/juridico/motivos";
 import {
   NATUREZAS_ACAO, PARTE_VAZIA, ROTULO_TIPO_PARTE, empresaDoGrupo, empresaRecebe, erroDasPartes, resultadoEmpresaAutora, type ResultadoEmpresaAutora, formatarDocumento, partes, seloOutros,
   type Parte, type TipoParte, type TipoProcesso,
@@ -537,11 +538,15 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
     }
     return r;
   }, [processos]);
+  // Grafias do mesmo motivo ("Dano Material" × "danos materiais") viram um só,
+  // com o nome mais usado — vale para o ranking, o filtro e o formulário.
+  const motivosAgrupados = useMemo(() => agruparMotivos(processos.flatMap(p => p.motivo_items.map(i => i.motivo))), [processos]);
+  const nomeDoMotivo = useMemo(() => new Map(motivosAgrupados.map(g => [g.chave, g.nome])), [motivosAgrupados]);
   const porMotivo = useMemo(() => {
     const acc = new Map<string, { motivo: string; count: number; processos: Set<string>; total: number }>();
-    for (const p of processos) for (const it of p.motivo_items) { const m = it.motivo || "Não especificado"; const s = acc.get(m) || { motivo: m, count: 0, processos: new Set(), total: 0 }; s.count++; s.processos.add(p.numero_processo); s.total += motivoTotal(it); acc.set(m, s); }
+    for (const p of processos) for (const it of p.motivo_items) { const k = chaveMotivo(it.motivo || "Não especificado"); const m = nomeDoMotivo.get(k) || it.motivo || "Não especificado"; const s = acc.get(k) || { motivo: m, count: 0, processos: new Set(), total: 0 }; s.count++; s.processos.add(p.numero_processo); s.total += motivoTotal(it); acc.set(k, s); }
     return [...acc.values()].map(v => ({ motivo: v.motivo, count: v.count, processos: v.processos.size, total: v.total })).sort((a, b) => b.total - a.total).slice(0, 10);
-  }, [processos]);
+  }, [processos, nomeDoMotivo]);
   const porAno = useMemo(() => {
     const acc = new Map<number, { ano: string; count: number; pedidos: number; acordos: number; total: number }>();
     for (const p of processos) { if (!p.ano_processo) continue; const s = acc.get(p.ano_processo) || { ano: String(p.ano_processo), count: 0, pedidos: 0, acordos: 0, total: 0 }; s.count++; if (!empresaRecebe(p)) { s.pedidos += pedidosTotal(p); s.acordos += acordoTotal(p); } s.total += custoTotal(p); acc.set(p.ano_processo, s); }
@@ -582,7 +587,9 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
     if (aMes && String(a.data || "").slice(0, 7) !== aMes) return false;
     return true;
   }), [audiencias, aStatus, aModal, aTipo, aSit, aMes]);
-  // motivo "predominante" = o 1º motivo do processo (o que aparece na coluna Motivos)
+  // Filtro de motivo (23/10/2026): acha o processo por QUALQUER um dos motivos
+  // dele, não só pelo 1º — a Mara (Dano Moral + Dano Material) sumia no filtro
+  // de Dano Material. O valor do filtro é a chave do motivo (chaveMotivo).
   // Só dígitos: "0020035-59.2024…" acha tanto digitando com pontuação quanto sem.
   const soDigitos = (s: string) => String(s || "").replace(/\D/g, "");
   const contem = (campo: string, termo: string) => String(campo || "").toLowerCase().includes(termo.trim().toLowerCase());
@@ -590,7 +597,7 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
     if (fStatus && p.status !== fStatus) return false;
     if (fMotivo) {
       if (fMotivo === "__SEM__") { if (!ehSemMotivo(p)) return false; }
-      else if ((p.motivo_items[0]?.motivo || "").trim() !== fMotivo) return false;
+      else if (!processoTemMotivo(p.motivo_items, fMotivo)) return false;
     }
     if (fId.trim() && String(p.id_sequencial || "") !== fId.trim()) return false;
     if (fNumero.trim()) {
@@ -607,16 +614,21 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
   const anosDisponiveis = useMemo(() => [...new Set(processos.map(p => p.ano_processo).filter(Boolean))].sort((a, b) => b - a), [processos]);
   const filtrosAtivos = [busca, fStatus, fMotivo, fId, fNumero, fReclamante, fReclamada, fAno, fTipo].filter(v => String(v).trim()).length;
   const limparProc = () => { setBusca(""); setFStatus(""); setFMotivo(""); setFId(""); setFNumero(""); setFReclamante(""); setFReclamada(""); setFAno(""); setFTipo(""); };
-  // opções do filtro: motivos predominantes distintos (ordenados por frequência) + "(Sem motivo)"
-  const motivosPredominantes = useMemo(() => {
+  // opções do filtro: TODOS os motivos (grafias juntadas), com quantos processos
+  // têm cada um em qualquer posição, ordenados por frequência + "(Sem motivo)"
+  const motivosDoFiltro = useMemo(() => {
+    const semChave = new Set(SEM_MOTIVO.map(chaveMotivo));
     const c = new Map<string, number>();
-    for (const p of processos) { const m = (p.motivo_items[0]?.motivo || "").trim(); if (m && !SEM_MOTIVO.includes(m)) c.set(m, (c.get(m) || 0) + 1); }
-    return [...c.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([m, n]) => ({ m, n }));
-  }, [processos]);
+    for (const p of processos) for (const k of new Set(p.motivo_items.map(i => chaveMotivo(i.motivo)))) if (!semChave.has(k)) c.set(k, (c.get(k) || 0) + 1);
+    return [...c.entries()].map(([chave, n]) => ({ chave, nome: nomeDoMotivo.get(chave) || chave, n }))
+      .sort((a, b) => b.n - a.n || a.nome.localeCompare(b.nome));
+  }, [processos, nomeDoMotivo]);
   const semMotivoCount = useMemo(() => processos.filter(ehSemMotivo).length, [processos]);
   const motivosNoRecorte = useMemo(() => filtrados.reduce((s, p) => s + p.motivo_items.length, 0), [filtrados]);
   // listas para os dropdowns (todos os motivos e reclamadas já usados)
-  const motivosDistintos = useMemo(() => [...new Set(rows.map(r => String(r.motivos || "").trim()).filter(Boolean))].sort(), [rows]);
+  // Uma opção por motivo (o nome mais usado): escolher a grafia "certa" é o que
+  // evita criar de novo "danos materiais" ao lado de "Dano Material".
+  const motivosDistintos = useMemo(() => agruparMotivos(rows.map(r => r.motivos)).map(g => g.nome).sort((a, b) => a.localeCompare(b)), [rows]);
   const reclamadasDistintas = useMemo(() => [...new Set(rows.map(r => String(r.reclamada || "").trim()).filter(Boolean))].sort(), [rows]);
   const statusPredominante = useMemo(() => { const c: Record<string, number> = {}; filtrados.forEach(p => c[p.status] = (c[p.status] || 0) + 1); return Object.entries(c).sort((a, b) => b[1] - a[1])[0]?.[0] || "—"; }, [filtrados]);
   // paginação da lista de processos (50 por página)
@@ -1173,7 +1185,7 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
                   <select className="jpr-fi" value={fMotivo} onChange={e => setFMotivo(e.target.value)}>
                     <option value="">Todos os motivos</option>
                     {semMotivoCount > 0 && <option value="__SEM__">⚠️ Sem motivo · {semMotivoCount}</option>}
-                    {motivosPredominantes.map(x => <option key={x.m} value={x.m}>{x.m} · {x.n}</option>)}
+                    {motivosDoFiltro.map(x => <option key={x.chave} value={x.chave}>{x.nome} · {x.n}</option>)}
                   </select>
                 </div>
                 <div><label>Status</label>
