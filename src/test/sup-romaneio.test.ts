@@ -41,6 +41,12 @@ describe("seleção de pedidos para romaneio", () => {
     });
   });
 
+  it("aceita pedido em aguardando compra", () => {
+    expect(validarSelecaoRomaneio([
+      { ...pedido("p1"), status: "AGUARDANDO COMPRA" },
+    ])).toEqual({ valida: true, motivo: null });
+  });
+
   it("recusa contratos misturados", () => {
     expect(validarSelecaoRomaneio([pedido("p1"), pedido("p2", "contrato-b")])).toMatchObject({
       valida: false,
