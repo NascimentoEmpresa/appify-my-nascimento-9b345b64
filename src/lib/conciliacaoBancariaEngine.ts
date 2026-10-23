@@ -48,6 +48,11 @@ export interface PlanilhaRow {
   // ajuda a identificar a divergência mais rápido quando há várias empresas
   // do grupo no mesmo período/banco.
   empresaNome?: string | null;
+  // ID do lançamento no Fluxo de Caixa (ex. IMP-04715, SD-2026-0038), a descrição e quantas linhas do Fluxo (rateio) formam este valor.
+  // A divergência "consta no Fluxo, não caiu no extrato" aponta para ele, para achar o lançamento na tela do Fluxo.
+  idMalote?: string | null;
+  descricaoFluxo?: string | null;
+  partes?: number;
 }
 
 export interface DiaSummary {
@@ -73,6 +78,9 @@ export interface AuditRow {
   numeroParcela?: number | null;
   origemFluxo?: "malote" | "debito_automatico" | "cartao_fatura" | "aplicacao_financeira" | "importacao_historica" | null;
   empresaNome?: string | null;
+  idMalote?: string | null;
+  descricaoFluxo?: string | null;
+  partes?: number;
 }
 
 export interface Suspeito {
@@ -97,6 +105,9 @@ export interface LancamentoRow {
   numeroParcela?: number | null;
   origemFluxo?: "malote" | "debito_automatico" | "cartao_fatura" | "aplicacao_financeira" | "importacao_historica" | null;
   empresaNome?: string | null;
+  idMalote?: string | null;
+  descricaoFluxo?: string | null;
+  partes?: number;
 }
 
 export interface ReconciliacaoResult {
@@ -238,6 +249,9 @@ export function reconciliar(planRows: PlanilhaRow[], ofxTrns: OFXTransaction[]):
           numeroParcela: p.numeroParcela,
           origemFluxo: p.origemFluxo,
           empresaNome: p.empresaNome,
+          idMalote: p.idMalote,
+          descricaoFluxo: p.descricaoFluxo,
+          partes: p.partes,
         });
         ofxSobra.splice(idxTipoErrado, 1);
         continue;
@@ -282,6 +296,9 @@ export function reconciliar(planRows: PlanilhaRow[], ofxTrns: OFXTransaction[]):
           numeroParcela: p.numeroParcela,
           origemFluxo: p.origemFluxo,
           empresaNome: p.empresaNome,
+          idMalote: p.idMalote,
+          descricaoFluxo: p.descricaoFluxo,
+          partes: p.partes,
         });
         extSemMatch.splice(bestIdx, 1);
       } else {
@@ -301,6 +318,9 @@ export function reconciliar(planRows: PlanilhaRow[], ofxTrns: OFXTransaction[]):
         numeroParcela: p.numeroParcela,
         origemFluxo: p.origemFluxo,
         empresaNome: p.empresaNome,
+        idMalote: p.idMalote,
+        descricaoFluxo: p.descricaoFluxo,
+        partes: p.partes,
       });
     for (const e of extSemMatch)
       rawAudit.push({

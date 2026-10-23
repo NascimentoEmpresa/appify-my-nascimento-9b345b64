@@ -14,6 +14,18 @@ export function parseValorBR(texto: string | null | undefined): number | null {
   return Number.isFinite(v) ? v : null;
 }
 
+// O valor procurado é o TOTAL da linha ou o de uma FATIA do rateio dela? O Fluxo mostra a despesa rateada numa linha só (valor total) e
+// abre as fatias por contrato; quem procura "79,00" tem que achar a despesa de R$ 821,60 cujo rateio tem uma fatia de 79,00 (aberta e
+// destacada), em vez de não achar nada. null = a linha não tem esse valor.
+export function valorNaLinha(
+  l: { valor: number | string | null | undefined; rateioDetalhe?: { valor: number | string | null | undefined }[] },
+  filtro: number | null,
+): "total" | "rateio" | null {
+  if (filtro === null) return "total";
+  if (valorConfere(l.valor, filtro)) return "total";
+  return l.rateioDetalhe?.some((r) => valorConfere(r.valor, filtro)) ? "rateio" : null;
+}
+
 // Compara em centavos para não depender de ponto flutuante (0,1 + 0,2).
 export function valorConfere(valorLinha: number | string | null | undefined, filtro: number | null): boolean {
   if (filtro === null) return true;

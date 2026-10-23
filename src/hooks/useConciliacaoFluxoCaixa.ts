@@ -51,6 +51,11 @@ export function linhasFluxoParaPlanilhaRow(linhas: FluxoCaixaMaloteLinha[]): Pla
       numeroParcela: l.numero_parcela,
       origemFluxo: l.origem,
       empresaNome: l.empresa_nome,
+      // ID e descrição do lançamento no Fluxo: a divergência aponta para eles (o rateio é somado numa linha só, então o valor da
+      // divergência pode não existir como linha única na tela do Fluxo).
+      idMalote: l.id_malote,
+      descricaoFluxo: l.descricao,
+      partes: 1,
     };
     if (!l.despesa_id) {
       saida.push(row);
@@ -60,6 +65,7 @@ export function linhasFluxoParaPlanilhaRow(linhas: FluxoCaixaMaloteLinha[]): Pla
     const existente = porChave.get(chave);
     if (existente) {
       existente.valor = Math.round((existente.valor + row.valor) * 100) / 100;
+      existente.partes = (existente.partes ?? 1) + 1;
     } else {
       porChave.set(chave, row);
       saida.push(row);

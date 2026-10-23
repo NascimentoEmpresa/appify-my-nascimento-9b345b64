@@ -40,15 +40,13 @@ async function gerarResumoUma({ conciliacao: c, linhasBrutas, bancoNome }: Gerar
     trns.push(...parseOFX(await blob.text(), a.nome_arquivo));
   }
 
-  const linhasDoBancoEmpresa = linhasDoFluxoParaConciliacao(linhasBrutas, {
-    bancoId: c.banco_id,
-    todasEmpresas: c.todas_empresas,
-    empresaIds: c.empresa_ids ?? [],
-    dataDe: c.data_inicio,
-    dataAte: c.data_fim,
-  });
+  const escopo = { bancoId: c.banco_id, todasEmpresas: c.todas_empresas, empresaIds: c.empresa_ids ?? [], dataDe: c.data_inicio, dataAte: c.data_fim };
+  const linhasDoBancoEmpresa = linhasDoFluxoParaConciliacao(linhasBrutas, escopo);
+  // mesma regra da conciliação nova: rateio entre empresas pago de uma conta só conta pelo total quando o extrato traz o total
+  const linhasDoBancoTodasEmpresas = linhasDoFluxoParaConciliacao(linhasBrutas, { ...escopo, todasEmpresas: true });
   const { resumo: r, totaisExtrato } = processarConciliacao({
     linhasDoBancoEmpresa,
+    linhasDoBancoTodasEmpresas,
     trns,
     dataDe: c.data_inicio,
     dataAte: c.data_fim,
