@@ -31,6 +31,7 @@ import {
   BUCKET_CHAMADOS, opcoesDownloadAnexo, type Chamado, type Anexo, type Evento, type AvaliacaoChamado,
   CRITERIOS_AVALIACAO_SOLICITANTE, DEV_AVALIA_SOLICITANTE_DESDE, type AvaliacaoSolicitante,
 } from "./types";
+import { useAnexoChamado } from "./useAnexoChamado";
 
 export default function ExecutarChamado() {
   const { id } = useParams();
@@ -178,11 +179,8 @@ export default function ExecutarChamado() {
     invalidar();
   };
 
-  const baixarAnexo = async (path: string) => {
-    const { data, error } = await supabase.storage.from(BUCKET_CHAMADOS).createSignedUrl(path, 3600, opcoesDownloadAnexo(path));
-    if (error || !data?.signedUrl) { toast({ title: "Erro ao abrir anexo", variant: "destructive" }); return; }
-    window.open(data.signedUrl, "_blank", "noopener,noreferrer");
-  };
+  // Imagem abre num card no centro; o resto, em nova aba (useAnexoChamado).
+  const { abrirAnexo: baixarAnexo, visualizador } = useAnexoChamado();
 
   if (!chamado) return <p className="p-6 text-sm text-muted-foreground">Carregando…</p>;
 
@@ -201,6 +199,8 @@ export default function ExecutarChamado() {
 
   return (
     <div>
+      {/* Imagem do anexo aberta num card no centro (useAnexoChamado). */}
+      {visualizador}
       <PageHeader
         title={`#${chamado.numero}`}
         subtitle={chamado.assunto}
@@ -278,7 +278,7 @@ export default function ExecutarChamado() {
               <p className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Anexos da abertura ({anexosAbertura.length})</p>
               <div className="space-y-1">
                 {anexosAbertura.map((a) => (
-                  <button key={a.id} onClick={() => baixarAnexo(a.storage_path)} className="flex w-full items-center gap-2 rounded border border-border px-2.5 py-1.5 text-left text-xs hover:border-primary/40">
+                  <button key={a.id} onClick={() => baixarAnexo(a)} className="flex w-full items-center gap-2 rounded border border-border px-2.5 py-1.5 text-left text-xs hover:border-primary/40">
                     <Paperclip className="h-3.5 w-3.5 text-muted-foreground" />
                     <span className="flex-1 truncate">{a.nome_arquivo}</span>
                     {a.tamanho_bytes != null && <span className="text-[10px] text-muted-foreground">{Math.round(a.tamanho_bytes / 1024)} KB</span>}
@@ -295,7 +295,7 @@ export default function ExecutarChamado() {
               <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Anexos enviados nas respostas ({anexosLegado.length})</p>
               <div className="space-y-1">
                 {anexosLegado.map((a) => (
-                  <button key={a.id} onClick={() => baixarAnexo(a.storage_path)} className="flex w-full items-center gap-2 rounded border border-border px-2.5 py-1.5 text-left text-xs hover:border-primary/40">
+                  <button key={a.id} onClick={() => baixarAnexo(a)} className="flex w-full items-center gap-2 rounded border border-border px-2.5 py-1.5 text-left text-xs hover:border-primary/40">
                     <Paperclip className="h-3.5 w-3.5 text-muted-foreground" />
                     <span className="flex-1 truncate">{a.nome_arquivo}</span>
                     <span className="text-[10px] text-muted-foreground">{nomeDe(a.autor_id)}</span>

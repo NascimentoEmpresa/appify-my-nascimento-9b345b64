@@ -1,4 +1,5 @@
-import { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo, type CSSProperties } from "react";
+import { passaNoPeriodo, ultimoDiaDoMes, type BasePeriodo } from "@/lib/rh/feriasPeriodo";
 import { FiltroContratos, passaNoFiltroContratos } from "@/components/solicitacoes/FiltroContratos";
 import { supabase } from "@/integrations/supabase/client";
 import type { SupabaseClient } from "@supabase/supabase-js";
@@ -94,6 +95,8 @@ function StatusBadge({ status }: { status: string }) {
 
 const FILTROS = ["", "Pendente", "Aprovada", "Reprovada", "Cancelada"];
 
+const inputData: CSSProperties = { padding: "7px 10px", borderRadius: 10, border: "1px solid #e2e8f0", fontSize: 13, outline: "none", background: "#fff", color: "#0f172a" };
+
 export default function Ferias() {
   const { user } = useAuth();
   const [nome, setNome] = useState("");
@@ -106,7 +109,18 @@ export default function Ferias() {
   // Filtros · Contratos (14/09/2026). O contrato da férias é a filial do
   // colaborador ("1109 - POLICIA CIVIL..."), gravada em colaborador_filial.
   const [fContratos, setFContratos] = useState<string[]>([]);
-  const rowsFiltradas = useMemo(() => rows.filter(r => passaNoFiltroContratos(r, "colaborador_filial", fContratos)), [rows, fContratos]);
+  const [mes, setMes] = useState("");
+  const [de, setDe] = useState("");
+  const [ate, setAte] = useState("");
+  const [basePeriodo, setBasePeriodo] = useState<BasePeriodo>("ferias");
+  const temPeriodo = !!(de || ate);
+  // Escolher o mês preenche De/Até; mexer em De/Até à mão desfaz o mês.
+  const escolherMes = (v: string) => { setMes(v); setDe(v ? `${v}-01` : ""); setAte(v ? ultimoDiaDoMes(v) : ""); };
+  const limparPeriodo = () => { setMes(""); setDe(""); setAte(""); };
+  const rowsFiltradas = useMemo(
+    () => rows.filter(r => passaNoFiltroContratos(r, "colaborador_filial", fContratos) && passaNoPeriodo(r, basePeriodo, de, ate)),
+    [rows, fContratos, basePeriodo, de, ate],
+  );
 
   const [drawerId, setDrawerId] = useState<number | null>(null);
   const [sol, setSol] = useState<SolicitacaoFerias | null>(null);
@@ -258,6 +272,33 @@ export default function Ferias() {
         <div style={{ marginLeft: "auto" }}><FiltroContratos linhas={rows} campo="colaborador_filial" selecionados={fContratos} onChange={setFContratos} /></div>
         <input value={busca} onChange={e => setBusca(e.target.value)} placeholder="Buscar colaborador / solicitante..."
           style={{ minWidth: 240, padding: "8px 12px", borderRadius: 10, border: "1px solid #e2e8f0", fontSize: 13, outline: "none" }} />
+      </div>
+
+      {/* Período: mês ou de/até, sobre a data das férias ou a de criação */}
+      <div style={{ display: "flex", gap: 10, marginBottom: 14, flexWrap: "wrap", alignItems: "flex-end", background: "#fff", border: "1px solid #e2e8f0", borderRadius: 14, padding: "10px 14px" }}>
+        {[
+          ["Filtrar pela data", <select key="b" value={basePeriodo} onChange={e => setBasePeriodo(e.target.value as BasePeriodo)} style={inputData}>
+            <option value="ferias">Período das férias</option>
+            <option value="criado">Data da solicitação</option>
+          </select>],
+          ["Mês", <input key="m" type="month" value={mes} onChange={e => escolherMes(e.target.value)} style={inputData} />],
+          ["De", <input key="d" type="date" value={de} max={ate || undefined} onChange={e => { setMes(""); setDe(e.target.value); }} style={inputData} />],
+          ["Até", <input key="a" type="date" value={ate} min={de || undefined} onChange={e => { setMes(""); setAte(e.target.value); }} style={inputData} />],
+        ].map(([rotulo, campo]) => (
+          <label key={rotulo as string} style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            <span style={{ fontSize: 10, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase", letterSpacing: ".5px" }}>{rotulo}</span>
+            {campo}
+          </label>
+        ))}
+        {temPeriodo && (
+          <>
+            <button onClick={limparPeriodo} style={{ padding: "7px 12px", borderRadius: 10, border: "1px solid #e2e8f0", background: "#fff", color: "#0f3171", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Limpar período</button>
+            <span style={{ fontSize: 12, color: "#64748b", marginLeft: "auto" }}>
+              <b style={{ color: "#0f172a" }}>{rowsFiltradas.length}</b> solicitação(ões) {basePeriodo === "ferias" ? "com férias" : "criadas"}{" "}
+              {de && ate ? `entre ${fmtDt(de)} e ${fmtDt(ate)}` : de ? `a partir de ${fmtDt(de)}` : `até ${fmtDt(ate)}`}
+            </span>
+          </>
+        )}
       </div>
 
       {/* Tabela */}
