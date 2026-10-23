@@ -114,11 +114,23 @@ describe("o responsável nunca alarga o recorte de status (bug de 23/10/2026)", 
   it("Todas + status marcados (sem Reprovada/Contratado) + responsável: some o que não foi marcado", () => {
     expect(lista("", ["Entrevista e Avaliação", "Pendente Recrutamento"])).toHaveLength(1);
   });
-  it("Reprovados + responsável: só as reprovadas dela", () => {
-    expect(lista("Reprovada", [])).toHaveLength(2);
+  it("Reprovados + responsável: nada — vaga encerrada não está com ninguém (23/10/2026)", () => {
+    expect(lista("Reprovada", [])).toHaveLength(0);
+  });
+  it("23/10/2026: encerradas ficam fora da lista sem marcação; marcadas, aparecem", () => {
+    const todas = ["Entrevista e Avaliação", "Contratado", "Concluído", "Concluído - parcial", "Reprovada", "Cancelada", "Pendente Recrutamento"];
+    const sem = todas.filter((s) => passaNoStatusDaLista(s, { atalho: "", marcados: [], semEncerradas: true }));
+    expect(sem).toEqual(["Entrevista e Avaliação", "Pendente Recrutamento"]);
+    expect(todas.filter((s) => passaNoStatusDaLista(s, { atalho: "", marcados: ["Reprovada"], semEncerradas: true }))).toEqual(["Reprovada"]);
+    // Cards do topo: sem `semEncerradas`, nada marcado = tudo.
+    expect(todas.filter((s) => passaNosStatusMarcados(s, []))).toHaveLength(todas.length);
+  });
+  it("filtrou a Tainara: só o que ainda está em processo, nem com Reprovada marcada", () => {
+    expect(lista("", [])).toHaveLength(1);
+    expect(lista("", ["Reprovada"])).toHaveLength(0);
   });
   it("contagem do filtro respeita o responsável (conta só o que passou nos outros filtros)", () => {
     const op = opcoesStatusVaga(dela.filter((v) => passaNoFiltro(v, v.resp, tai, "u-eu")));
-    expect(op.map((o) => [o.rotulo, o.n])).toEqual([["Entrevista e Avaliação", 1], ["Contratado", 1], ["Reprovada", 2]]);
+    expect(op.map((o) => [o.rotulo, o.n])).toEqual([["Entrevista e Avaliação", 1]]);
   });
 });

@@ -33,6 +33,25 @@ export const STATUS_FILA_APROVACAO = ["Pendente Operacional", "Pendente Analista
 export const vagaForaDaFila = (status: string | null | undefined) =>
   !!status && !(STATUS_FILA_APROVACAO as readonly string[]).includes(status);
 
+/**
+ * Encerradas (23/10/2026): vaga Contratado, Concluído…, Reprovada ou
+ * Cancelada NÃO está com ninguém. Pablo: "quando estiver nesses status não
+ * pode estar com ninguém responsável — fica no histórico quem colocou e por
+ * quê. Filtrei a Tainara, tem que aparecer só os que ainda estão em
+ * processo." Desfaz a regra de 14/10 (por pessoa incluía as encerradas). O
+ * vínculo no banco fica (relatório de recrutadoras / Excel: "quem cuidou");
+ * só não conta nem aparece como responsável. Mesma regra em
+ * rec_responsaveis_contagem (mig 20261023000520).
+ */
+export const STATUS_VAGA_ENCERRADA_RESP = ["Contratado", "Reprovada", "Cancelada"] as const;
+export const vagaEncerradaSemResponsavel = (status: string | null | undefined): boolean => {
+  const s = String(status ?? "").trim();
+  return (STATUS_VAGA_ENCERRADA_RESP as readonly string[]).includes(s) || s.startsWith("Concluído");
+};
+/** A vaga pode estar com alguém agora? (fora da fila de aprovação e não encerrada). */
+export const vagaComResponsavelAtual = (status: string | null | undefined): boolean =>
+  vagaForaDaFila(status) && !vagaEncerradaSemResponsavel(status);
+
 export const vagaTemResponsavel = (status: string | null | undefined) =>
   !!status && (STATUS_COM_RESPONSAVEL as readonly string[]).includes(status);
 
@@ -56,9 +75,9 @@ export function passaNoFiltro(
 ): boolean {
   const alvo = alvoDoFiltro(filtro, meuId);
   if (alvo.tipo === "todos") return true;
-  // "Sem responsável": só em andamento. Por pessoa: tudo o que ela cuidou, menos as filas de aprovação.
+  // "Sem responsável": só em andamento. Por pessoa: o que está com ela agora (sem fila nem encerradas).
   if (alvo.tipo === "sem") return vagaTemResponsavel(vaga.status) && !responsavelId;
-  return vagaForaDaFila(vaga.status) && responsavelId === alvo.id;
+  return vagaComResponsavelAtual(vaga.status) && responsavelId === alvo.id;
 }
 
 /**
