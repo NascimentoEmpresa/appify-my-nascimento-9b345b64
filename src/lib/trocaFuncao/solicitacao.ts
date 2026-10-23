@@ -110,12 +110,24 @@ export interface SolicitacaoTroca {
   /** Cargo de hoje, puxado de EMPREGADOS — o encarregado não digita. */
   cargo_atual: string | null;
   cargo_novo: string | null;
-  /** 'funcao' (troca de cargo, horário informado junto) | 'horario' (só carga horária). */
-  tipo?: "funcao" | "horario" | null;
+  /** Ver `TipoTroca`. Nulo nos pedidos antigos = 'funcao'. */
+  tipo?: TipoTroca | null;
   horario_atual?: string | null;
   horario_novo?: string | null;
   local: string | null;
+  /** Texto antigo do cadastro (Organograma / Descrição do Local). Os pedidos novos usam os `posto_*` abaixo. */
   posto: string | null;
+  /**
+   * Posto de trabalho da Senior (PO-xxxxx, RH_POSTO_TRABALHO). O ATUAL o
+   * banco lê do cadastro no insert (stf_valida_troca); o NOVO é o escolhido
+   * na lista — nulo = o posto não muda. Nome e contrato são retrato do dia.
+   */
+  posto_atual_codigo?: string | null;
+  posto_atual_nome?: string | null;
+  posto_atual_contrato?: string | null;
+  posto_novo_codigo?: string | null;
+  posto_novo_nome?: string | null;
+  posto_novo_contrato?: string | null;
   filial: string | null;
   /** true = escritório (aprova a dupla do administrativo); false = contrato. */
   e_escritorio: boolean;
@@ -141,6 +153,147 @@ export interface SolicitacaoTroca {
   rh_observacao: string | null;
   criado_em: string;
   atualizado_em: string | null;
+}
+
+// ---------------------------------------------------------------------
+// OS TRÊS TIPOS DE MOVIMENTAÇÃO (23/10/2026)
+//
+// Pedido: registrar também a troca de POSTO DE TRABALHO, junto com a de
+// função e a de horário, e a troca só de posto não pode obrigar cargo novo
+// nem horário novo.
+//
+//   funcao  → cargo novo + horário novo (pode ser o mesmo); posto novo
+//             opcional — troca de função que também muda de posto.
+//   horario → só horário; cargo e posto ficam.
+//   posto   → só posto; cargo fica; horário novo opcional (vazio = mesmo).
+//
+// O banco repete tudo isto num gatilho (stf_valida_troca, mig
+// 20261023000410) — a tela só avisa antes.
+// ---------------------------------------------------------------------
+
+export type TipoTroca = "funcao" | "horario" | "posto";
+
+export const ROTULO_TIPO: Record<TipoTroca, string> = {
+  funcao: "Alteração de função",
+  horario: "Só horário",
+  posto: "Só posto",
+};
+
+/** Um posto de trabalho para escolher (RPC stf_postos_trabalho). */
+export interface PostoTrabalho {
+  codigo: string;
+  nome: string;
+  contrato: string | null;
+  /** "Descrição do Local" mais comum entre quem está no posto hoje. */
+  unidade: string | null;
+  ocupantes: number;
+}
+
+/** "UFRGS RECEPÇÃO · PALÁCIO · PO-00002 — RECEPCIONISTA-B 40H" — o que o encarregado reconhece. */
+export function rotuloPosto(p: Pick<PostoTrabalho, "codigo" | "nome" | "contrato" | "unidade">): string {
+  return [p.contrato, p.unidade, `${p.codigo} — ${p.nome}`].filter(Boolean).join(" · ");
+}
+
+const igualSemCaixa = (a?: string | null, b?: string | null) =>
+  String(a ?? "").trim().toUpperCase() === String(b ?? "").trim().toUpperCase();
+
+export interface RascunhoTroca {
+  tipo: TipoTroca;
+  cargoAtual: string;
+  cargoNovo: string;
+  horarioAtual: string;
+  horarioNovo: string;
+  postoAtualCodigo: string;
+  /** Código do posto escolhido; vazio = não muda. */
+  postoNovoCodigo: string;
+}
+
+/** O que impede o envio da PARTE DA TROCA (cargo/horário/posto), ou null. Espelho de stf_valida_troca. */
+export function validarTroca(r: RascunhoTroca): string | null {
+  const cargoNovo = r.cargoNovo.trim();
+  const horarioNovo = r.horarioNovo.trim();
+  const posto = r.postoNovoCodigo.trim();
+  if (r.tipo === "funcao") {
+    if (!cargoNovo) return "Informe para qual cargo a pessoa vai.";
+    if (igualSemCaixa(cargoNovo, r.cargoAtual)) return "O cargo novo é igual ao atual — se é só o horário ou o posto que muda, escolha \"Só horário\" ou \"Só posto\".";
+    if (!horarioNovo) return "Informe a carga horária/escala que a pessoa vai fazer no cargo novo.";
+  }
+  if (r.tipo === "horario") {
+    if (!horarioNovo) return "Informe o horário novo que a pessoa vai fazer.";
+    if (igualSemCaixa(horarioNovo, r.horarioAtual)) return "O horário novo é igual ao atual — não há o que trocar.";
+    if (posto) return "Troca só de horário não muda o posto — escolha \"Só posto\" ou \"Alteração de função\".";
+  }
+  if (r.tipo === "posto" && !posto) return "Escolha o posto novo.";
+  if (posto && posto === r.postoAtualCodigo.trim()) return "O posto novo é o mesmo em que a pessoa já está.";
+  return null;
+}
+
+export interface MudancaTroca {
+  rotulo: "Cargo" | "Posto" | "Horário";
+  atual: string;
+  novo: string;
+}
+
+/**
+ * O que MUDA no pedido, na ordem Cargo → Posto → Horário. É o que o fluxo,
+ * o detalhe, o histórico e o RH mostram — o que não muda não aparece (o
+ * horário "mantido" da troca de função, o cargo da troca só de posto).
+ * Mesma régua de stf_resumo_troca no banco.
+ */
+export function mudancasDaTroca(s: Pick<SolicitacaoTroca,
+  "tipo" | "cargo_atual" | "cargo_novo" | "horario_atual" | "horario_novo"
+  | "posto_atual_codigo" | "posto_atual_nome" | "posto_novo_codigo" | "posto_novo_nome">): MudancaTroca[] {
+  const out: MudancaTroca[] = [];
+  const tipo = s.tipo ?? "funcao";
+  if (tipo === "funcao") out.push({ rotulo: "Cargo", atual: s.cargo_atual || "—", novo: s.cargo_novo || "—" });
+  if (s.posto_novo_codigo) {
+    out.push({
+      rotulo: "Posto",
+      atual: s.posto_atual_nome || s.posto_atual_codigo || "—",
+      novo: s.posto_novo_nome || s.posto_novo_codigo,
+    });
+  }
+  const horarioNovo = String(s.horario_novo ?? "").trim();
+  if (horarioNovo && !igualSemCaixa(horarioNovo, s.horario_atual)) {
+    out.push({ rotulo: "Horário", atual: String(s.horario_atual ?? "").trim() || "—", novo: horarioNovo });
+  }
+  return out;
+}
+
+export interface LinhaQuadroTroca extends MudancaTroca {
+  muda: boolean;
+  /** Contrato do posto, embaixo do nome. */
+  atualExtra?: string | null;
+  novoExtra?: string | null;
+}
+
+/**
+ * O quadro do detalhe: Cargo, Posto e Horário SEMPRE, na mesma ordem. O que
+ * não muda sai como "Mantém …" — quem conclui no RH precisa ver que o posto
+ * não muda, não ficar na dúvida se faltou informar.
+ */
+export function quadroDaTroca(s: Parameters<typeof mudancasDaTroca>[0]
+  & Pick<SolicitacaoTroca, "posto" | "posto_atual_contrato" | "posto_novo_contrato">): LinhaQuadroTroca[] {
+  const muda = new Map(mudancasDaTroca(s).map(m => [m.rotulo, m]));
+  const cargoAtual = s.cargo_atual || "—";
+  const postoAtual = s.posto_atual_nome || s.posto_atual_codigo || s.posto || "—";
+  const horarioAtual = String(s.horario_atual ?? "").trim() || "—";
+  const linha = (rotulo: MudancaTroca["rotulo"], atual: string, extra?: Partial<LinhaQuadroTroca>): LinhaQuadroTroca => {
+    const m = muda.get(rotulo);
+    return m ? { ...m, muda: true, ...extra } : { rotulo, atual, novo: "Mantém", muda: false, atualExtra: extra?.atualExtra };
+  };
+  return [
+    linha("Cargo", cargoAtual),
+    linha("Posto", postoAtual, { atualExtra: s.posto_atual_contrato, novoExtra: s.posto_novo_contrato }),
+    linha("Horário", horarioAtual),
+  ];
+}
+
+/** "Cargo: A → B · Posto: X → Y · Horário: H → H2" — uma linha, para listas e títulos. */
+export function resumoDaTroca(s: Parameters<typeof mudancasDaTroca>[0]): string {
+  const m = mudancasDaTroca(s);
+  if (m.length === 0) return `${s.cargo_atual || "—"} → ${s.cargo_novo || "—"}`;
+  return m.map(x => `${x.rotulo}: ${x.atual} → ${x.novo}`).join(" · ");
 }
 
 /**

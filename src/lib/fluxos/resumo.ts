@@ -95,10 +95,10 @@ const demissao: Fluxo = {
 const trocaFuncao: Fluxo = {
   codigo: "troca_funcao",
   nome: "Mudança de Função",
-  paraQue: "Trocar o cargo de um colaborador, da proposta do encarregado até a alteração na Senior.",
+  paraQue: "Trocar o cargo, o horário ou o posto de trabalho de um colaborador, da proposta do encarregado até a alteração na Senior.",
   passos: [
     {
-      quem: "Encarregado", faz: "Propõe a troca: colaborador, cargo novo, motivo e data pretendida.",
+      quem: "Encarregado", faz: "Propõe a troca — alteração de função, só horário ou só posto: colaborador, o que muda (cargo, posto e/ou horário), motivo e data.",
       onde: "Encarregados › Mudança de Função",
     },
     {
@@ -117,7 +117,7 @@ const trocaFuncao: Fluxo = {
       status: "Pendente SST",
     },
     {
-      quem: "RH", faz: "Altera o cargo na Senior e conclui.",
+      quem: "RH", faz: "Altera na Senior o que mudou (cargo, posto, horário) e conclui.",
       onde: "RH › Mudança de Função",
       status: "Pendente RH",
     },

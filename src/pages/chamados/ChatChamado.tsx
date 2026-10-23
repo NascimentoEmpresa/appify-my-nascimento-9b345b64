@@ -30,6 +30,7 @@ import {
   Check, CheckCheck, Paperclip, Send, X, Lock, Users, Download, ImageIcon, Loader2,
 } from "lucide-react";
 import { BUCKET_CHAMADOS, fmtDataHora, opcoesDownloadAnexo, type Anexo, type Evento } from "./types";
+import { useAnexoChamado } from "./useAnexoChamado";
 import { imagensDoClipboard } from "@/lib/imagensColadas";
 
 export interface Participante {
@@ -377,11 +378,8 @@ export function ChatChamado({
     qc.invalidateQueries({ queryKey: ["chamado-participantes", chamadoId] });
   };
 
-  const baixarAnexo = async (path: string) => {
-    const { data, error } = await supabase.storage.from(BUCKET_CHAMADOS).createSignedUrl(path, 3600, opcoesDownloadAnexo(path));
-    if (error || !data?.signedUrl) { toast({ title: "Erro ao abrir anexo", variant: "destructive" }); return; }
-    window.open(data.signedUrl, "_blank", "noopener,noreferrer");
-  };
+  // Imagem abre num card no centro; o resto, em nova aba (useAnexoChamado).
+  const { abrirAnexo: baixarAnexo, visualizador } = useAnexoChamado();
 
   // Conversa com o solicitante fecha ao encerrar; registro interno continua.
   const podeMandarPublica = !encerrado && !somenteLeitura;
@@ -394,6 +392,8 @@ export function ChatChamado({
 
   return (
     <Card className="flex flex-col overflow-hidden">
+      {/* Imagem do anexo aberta num card no centro (useAnexoChamado). */}
+      {visualizador}
       {/* Cabeçalho: o grupo */}
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-border bg-muted/40 px-4 py-2.5">
         <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary">
@@ -528,7 +528,7 @@ export function ChatChamado({
                       {anexosMsg.map((a) =>
                         ehImagem(a) && urlsImagem[a.storage_path] ? (
                           <button
-                            key={a.id} type="button" onClick={() => baixarAnexo(a.storage_path)}
+                            key={a.id} type="button" onClick={() => baixarAnexo(a)}
                             className="block overflow-hidden rounded-lg border border-border/60 transition-opacity hover:opacity-90"
                           >
                             <img
@@ -538,7 +538,7 @@ export function ChatChamado({
                           </button>
                         ) : (
                           <button
-                            key={a.id} type="button" onClick={() => baixarAnexo(a.storage_path)}
+                            key={a.id} type="button" onClick={() => baixarAnexo(a)}
                             className="flex w-full items-center gap-2 rounded-lg border border-border/60 bg-background/60 px-2.5 py-1.5 text-left text-xs hover:border-primary/40"
                           >
                             {ehImagem(a) ? <ImageIcon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />

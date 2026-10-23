@@ -7,6 +7,7 @@ import { AVISO_REFAZER, diasRestantesParaRefazer, podeRefazerFerias } from "@/li
 import { ConversaSolicitacao, type ModuloConversa } from "@/components/solicitacoes/ConversaSolicitacao";
 import { AnexosSolicitacao } from "@/components/solicitacoes/AnexosSolicitacao";
 import { tempoDeEmpresa } from "@/lib/rh/colaboradoresUtils";
+import { resumoDaTroca, ROTULO_TIPO, type TipoTroca } from "@/lib/trocaFuncao/solicitacao";
 import { AvisoCancelada, AvisoPedidoCancelamento } from "@/components/demissao/CancelarDemissao";
 
 // `integrations/supabase/types.ts` é gerado e não conhece as tabelas de
@@ -97,6 +98,10 @@ const ROTULO: Record<string, string> = {
   // e isso o status já diz.
   cargo_atual: "Cargo atual", cargo_novo: "Cargo novo", local: "Local / contrato",
   horario_atual: "Horário atual", horario_novo: "Horário novo", tipo: "Tipo",
+  // Troca de posto (23/10/2026). Os códigos PO-xxxxx ficam de fora: o nome
+  // do posto já começa por empresa-filial-local e é o que o RH procura.
+  resumo_troca: "A troca", posto_atual_nome: "Posto atual", posto_atual_contrato: "Contrato do posto atual",
+  posto_novo_nome: "Posto novo", posto_novo_contrato: "Contrato do posto novo",
   posto: "Posto", filial: "Filial", data_pretendida: "A partir de", setor: "Setor",
   sst_aso_dispensado: "ASO dispensado",
   aprovador_nome: "Aprovado por", aprovador_em: "Aprovado em",
@@ -137,7 +142,7 @@ const OCULTAS = new Set([
   // Férias refeita: contagem interna; a ficha mostra "Refeita em".
   "refeita_vezes",
   // Mudança de função: roteamento interno, não informação para quem pediu.
-  "e_escritorio", "atualizado_em",
+  "e_escritorio", "atualizado_em", "posto_atual_codigo", "posto_novo_codigo",
   "administrativa", "cnh_obrigatoria",
   // Demissao: ids e carimbos de quem tratou nao dizem nada a quem solicitou.
   "colaborador_id", "colaborador_cpf", "contrato_id", "atualizado_em",
@@ -265,8 +270,11 @@ export function DetalheSolicitacao({ tipo, id, titulo, status, onFechar, onRefaz
   // depois da admissão.
   const fichaExibida: Record<string, unknown> | null = ficha && (() => {
     const out: Record<string, unknown> = {};
+    // Mudança de função: "Cargo: A → B · Posto: X → Y · Horário: H → H2"
+    // antes de tudo, e o tipo por extenso.
+    if (tipo === "Mudança de Função") out.resumo_troca = resumoDaTroca(ficha as Parameters<typeof resumoDaTroca>[0]);
     for (const [k, v] of Object.entries(ficha)) {
-      out[k] = v;
+      out[k] = tipo === "Mudança de Função" && k === "tipo" ? ROTULO_TIPO[v as TipoTroca] ?? v : v;
       if (k === "colaborador_admissao" && v) out.tempo_de_empresa = tempoDeEmpresa(v) || undefined;
     }
     return out;
@@ -283,7 +291,8 @@ export function DetalheSolicitacao({ tipo, id, titulo, status, onFechar, onRefaz
     .map(([k, v]) => [k, ROTULO[k] ?? k.replace(/_/g, " "), typeof v === "boolean" ? (v ? "Sim" : "Não")
       : /^\d{4}-\d{2}-\d{2}/.test(String(v)) ? fmtData(String(v)) : String(v)] as [string, string, string]);
   const ehColaborador = (k: string) => k.startsWith("colaborador_") || k === "tempo_de_empresa" || k === "contrato" || k === "nome_substituido"
-    || ["cargo_atual", "cargo_novo", "local", "posto", "filial", "horario_atual", "horario_novo"].includes(k);
+    || ["cargo_atual", "cargo_novo", "local", "posto", "filial", "horario_atual", "horario_novo",
+        "posto_atual_nome", "posto_atual_contrato", "posto_novo_nome", "posto_novo_contrato"].includes(k);
   const ehDecisao = (k: string) => /^(aprovado_|aprovador_|operacional_|rh_|sst_|devolvido_|concluido_|analista_|cancelado_)/.test(k)
     || ["motivo_reprovacao", "parecer_juridico", "resultado", "sem_vaga_motivo", "refeita_em"].includes(k);
   const grupos: { titulo: string; icone: string; itens: [string, string, string][] }[] = [
