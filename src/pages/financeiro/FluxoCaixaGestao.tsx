@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { PageHeader } from "@/components/layout/PageHeader";
+import { ErroDeConsulta } from "@/components/layout/ErroDeConsulta";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -140,9 +141,15 @@ const SITUACAO_CLASSE: Record<SituacaoFluxo, string> = {
 export default function FluxoCaixaGestao() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const { data: linhasRealizadas = [], isLoading } = useFluxoCaixaCombinado();
+  const [aba, setAba] = useState<AbaFluxo>("realizado");
+  const { data: linhasRealizadas = [], isLoading, error: erroRealizadas, refetch: recarregarRealizadas } = useFluxoCaixaCombinado();
   // SIS-2026-0611: compromissos ainda não pagos (só esta tela usa; a Conciliação não).
-  const { data: linhasPrevistas = [] } = useFluxoCaixaPrevisto();
+  // Na abertura a aba é Realizado: consultar o Projetado nesse momento só
+  // competia por conexões e descartava dados que ainda não seriam exibidos.
+  const { data: linhasPrevistas = [], isLoading: carregandoPrevistas, error: erroPrevistas, refetch: recarregarPrevistas } = useFluxoCaixaPrevisto(aba !== "realizado");
+  const erroDoFluxo = erroRealizadas ?? (aba !== "realizado" ? erroPrevistas : null);
+  const recarregarFluxo = erroRealizadas ? recarregarRealizadas : recarregarPrevistas;
+  const estaCarregandoFluxo = isLoading || (aba !== "realizado" && carregandoPrevistas);
   const linhasBrutas = useMemo(() => [...linhasRealizadas, ...linhasPrevistas], [linhasRealizadas, linhasPrevistas]);
   // SIS-2026-0632: valor real da fatura (digitado no Cartão de Crédito) p/ comparar com a linha consolidada.
   const { data: faturasInformadas } = useFaturasInformadas();
@@ -219,7 +226,6 @@ export default function FluxoCaixaGestao() {
   // pagamento até hoje); Projetado = datas futuras (ex.: parcelas de cartão ainda por
   // vencer); Consolidado = os dois juntos. Padrão é Realizado, que é o que o Fluxo
   // sempre representou. Tudo abaixo (filtros, totais, exportação) trabalha sobre `linhas`.
-  const [aba, setAba] = useState<AbaFluxo>("realizado");
   const hoje = hojeISO();
   const linhas = useMemo(() => filtrarPorAbaFluxo(linhasTodas, aba, hoje), [linhasTodas, aba, hoje]);
   // SIS-2026-0221/0439: "Forma de pagamento" vem do catálogo nomeado
@@ -238,16 +244,16 @@ export default function FluxoCaixaGestao() {
   // Linhas importadas da planilha: excluir (lixeira) e ratear — permissão de editar o Fluxo (alterar).
   const excluirImportada = useExcluirLinhaImportada();
   const restaurarImportada = useRestaurarLinhaImportada();
-  const { data: importadasLixeira = [] } = useImportadaLixeira();
+  const [lixeiraAberta, setLixeiraAberta] = useState(false);
+  const { data: importadasLixeira = [] } = useImportadaLixeira(lixeiraAberta);
   const [itemRatear, setItemRatear] = useState<{ linha: LinhaParaRatear; refazendo: boolean } | null>(null);
 
   const [itemExcluir, setItemExcluir] = useState<FluxoCaixaMaloteLinha | null>(null);
   const [excluindo, setExcluindo] = useState(false);
-  const [lixeiraAberta, setLixeiraAberta] = useState(false);
 
-  const { data: despesasLixeira = [] } = useDespesasLixeira();
-  const { data: debitosLixeira = [] } = useDebitoAutomaticoLixeira();
-  const { data: itensFaturaLixeira = [] } = useCartaoFaturaLixeira();
+  const { data: despesasLixeira = [] } = useDespesasLixeira(lixeiraAberta);
+  const { data: debitosLixeira = [] } = useDebitoAutomaticoLixeira(lixeiraAberta);
+  const { data: itensFaturaLixeira = [] } = useCartaoFaturaLixeira(lixeiraAberta);
 
   // SIS-2026-0489: Editar grava em financeiro_fluxo_caixa_ajuste (ver
   // useFluxoCaixaMalote.ts) — nunca mais na despesa/débito/fatura de
@@ -641,6 +647,15 @@ export default function FluxoCaixaGestao() {
           ))}
         </TabsList>
       </Tabs>
+
+      {erroDoFluxo && (
+        <ErroDeConsulta
+          erro={erroDoFluxo}
+          aoTentarDeNovo={recarregarFluxo}
+          oQue="as movimentações do Fluxo de Caixa"
+          rota="/app/financeiro/gestao-financeira/fluxo-caixa"
+        />
+      )}
 
       <Dialog open={exportando} onOpenChange={setExportando}>
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
@@ -1095,12 +1110,12 @@ export default function FluxoCaixaGestao() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {isLoading && (
+                {!erroDoFluxo && estaCarregandoFluxo && (
                   <TableRow>
                     <TableCell colSpan={13} className="text-center text-muted-foreground py-10">Carregando...</TableCell>
                   </TableRow>
                 )}
-                {!isLoading && filtradas.length === 0 && (
+                {!erroDoFluxo && !estaCarregandoFluxo && filtradas.length === 0 && (
                   <TableRow>
                     <TableCell colSpan={13} className="text-center text-muted-foreground py-10">
                       <div className="flex flex-col items-center gap-2">

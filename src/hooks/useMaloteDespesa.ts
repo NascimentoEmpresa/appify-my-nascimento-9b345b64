@@ -1003,9 +1003,10 @@ export interface DespesaLixeira {
   deleted_at: string;
 }
 
-export function useDespesasLixeira() {
+export function useDespesasLixeira(ativo = true) {
   return useQuery({
     queryKey: [DESPESA_KEY, "lixeira"],
+    enabled: ativo,
     queryFn: async () => {
       const { data, error } = await (supabase as any)
         .from("malote_despesa")
