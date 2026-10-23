@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { CheckCircle2, ClipboardList, Clock, PieChart } from "lucide-react";
+import { ArrowDown, ArrowUp, CheckCircle2, ClipboardList, Clock, Landmark, PieChart, Scale } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { AcessoGate } from "@/components/auth/AcessoGate";
@@ -12,12 +12,14 @@ import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { fmtBRL } from "@/lib/conciliacaoBancariaEngine";
 import { conciliacaoSemSaldoFinal, useCarregarSaldoFinalConciliacoes } from "@/hooks/useGerarResumoConciliacao";
-import { registrosAtuais, saldosMensais, type SaldoMensal } from "@/lib/conciliacaoDashboard";
+import { registrosAtuais, saldosMensais, valoresDaConciliacao, type SaldoMensal } from "@/lib/conciliacaoDashboard";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useFluxoCaixaCombinado } from "@/hooks/useFluxoCaixaMalote";
 import { useCartaoBancos } from "@/hooks/useMaloteCartaoCredito";
 import { useEmpresasGrupo } from "@/hooks/useMaloteDespesa";
 import {
   useConciliacoesFluxoCaixaSalvas,
+  useDivergenciasTratadas,
   useSaldosIniciaisConciliacao,
   useSalvarSaldoInicialConciliacao,
 } from "@/hooks/useConciliacaoFluxoCaixa";
@@ -45,7 +47,16 @@ function BadgeConfere({ s }: { s: SaldoMensal }) {
   return <Badge className="bg-yellow-100 text-yellow-800 border-yellow-200 hover:bg-yellow-100">Pendente de conferência</Badge>;
 }
 
-export function DashboardConciliacoes({ onVerDetalhes }: { onVerDetalhes: (id: string) => void }) {
+export interface ValoresDaAuditoria {
+  mes: string;
+  empresaId: string | null;
+  fluxoEntradas: number | null;
+  fluxoSaidas: number | null;
+  extratoEntradas: number | null;
+  extratoSaidas: number | null;
+}
+
+export function DashboardConciliacoes({ onVerDetalhes, auditoria = null }: { onVerDetalhes: (id: string) => void; auditoria?: ValoresDaAuditoria | null }) {
   const { data: salvas = [], isLoading } = useConciliacoesFluxoCaixaSalvas();
   const { data: bancos = [] } = useCartaoBancos();
   const { data: empresas = [] } = useEmpresasGrupo();
@@ -55,10 +66,10 @@ export function DashboardConciliacoes({ onVerDetalhes }: { onVerDetalhes: (id: s
   const carregarSaldos = useCarregarSaldoFinalConciliacoes();
 
   const hoje = new Date();
-  const [empresaId, setEmpresaId] = useState(TODAS);
+  const [empresaId, setEmpresaId] = useState(auditoria?.empresaId || TODAS);
   const [bancoId, setBancoId] = useState(TODAS);
-  const [mesDe, setMesDe] = useState(`${hoje.getFullYear()}-01`);
-  const [mesAte, setMesAte] = useState("");
+  const [mesDe, setMesDe] = useState(auditoria?.mes ?? `${hoje.getFullYear()}-01`);
+  const [mesAte, setMesAte] = useState(auditoria?.mes ?? "");
   const [situacao, setSituacao] = useState<"todas" | "concluida" | "pendente">(TODAS as "todas");
   const [subaba, setSubaba] = useState<"conciliacoes" | "saldos">("conciliacoes");
   const [rascunhoBase, setRascunhoBase] = useState<Record<string, string>>({});
@@ -142,6 +153,35 @@ export function DashboardConciliacoes({ onVerDetalhes }: { onVerDetalhes: (id: s
     setSituacao((atual) => (atual === alvo ? "todas" : alvo));
   }
 
+  // SIS-2026-0720: KPIs de VALOR para bater com o card 2 da Auditoria. São os valores gravados em cada conciliação no dia em que foi salva
+  // (Fluxo, extrato e conciliado). Conciliação antiga sem esses valores fica de fora, e o aviso diz quantas. Saldo não entra aqui: o chamado
+  // proíbe somar saldos entre empresas e bancos; por isso o último KPI só conta os meses que conferem.
+  const valores = useMemo(() => {
+    let fe = 0, fs = 0, ee = 0, es = 0, ce = 0, cs = 0, semValores = 0;
+    for (const { c } of registros.concluidos) {
+      const v = valoresDaConciliacao(c);
+      if (!v) { semValores += 1; continue; }
+      fe += v.fe; fs += v.fs; ee += v.ee; es += v.es; ce += v.ce; cs += v.cs;
+    }
+    const r2 = (n: number) => Math.round(n * 100) / 100;
+    return { fe: r2(fe), fs: r2(fs), ee: r2(ee), es: r2(es), ce: r2(ce), cs: r2(cs), semValores, comValores: registros.concluidos.length - semValores };
+  }, [registros.concluidos]);
+
+  // Painel "de onde vem a diferença": as conciliações que carregam diferença e o que foi tratado em cada uma.
+  const [explicar, setExplicar] = useState<"entradas" | "saidas" | null>(null);
+  const comDiferenca = useMemo(
+    () =>
+      registros.concluidos
+        .map(({ c }) => ({ c, v: valoresDaConciliacao(c) }))
+        .filter((x): x is { c: typeof x.c; v: NonNullable<typeof x.v> } => !!x.v && (Math.abs(x.v.difEntradas) >= 0.005 || Math.abs(x.v.difSaidas) >= 0.005))
+        .sort((a, b) => Math.abs(b.v.difEntradas) + Math.abs(b.v.difSaidas) - (Math.abs(a.v.difEntradas) + Math.abs(a.v.difSaidas))),
+    [registros.concluidos],
+  );
+  const { data: tratadas = [], isLoading: carregandoTratadas } = useDivergenciasTratadas(comDiferenca.map((x) => x.c.id), explicar !== null);
+  const saldosSim = saldosFiltrados.filter((x) => x.confere === "sim").length;
+  const saldosNao = saldosFiltrados.filter((x) => x.confere === "nao").length;
+  const saldosPendentes = saldosFiltrados.filter((x) => x.confere === "pendente").length;
+
   // Meses em que o saldo do sistema não bate com o do extrato (aparece como aviso na sub-aba).
   const divergentes = saldosFiltrados.filter((s) => s.confere === "nao").length;
 
@@ -167,6 +207,21 @@ export function DashboardConciliacoes({ onVerDetalhes }: { onVerDetalhes: (id: s
 
   return (
     <div className="space-y-4">
+      {auditoria && (
+        <div className="rounded-md border border-blue-200 bg-blue-50 p-3 text-xs text-blue-900 dark:border-blue-900 dark:bg-blue-950/30 dark:text-blue-200">
+          <p className="font-semibold">Vindo da Auditoria da Controladoria — competência {mesParaBR(auditoria.mes)}{auditoria.empresaId ? ` · ${empresaNome(auditoria.empresaId)}` : " · todas as empresas"}</p>
+          {auditoria.fluxoEntradas !== null && auditoria.extratoEntradas !== null && (
+            <p className="mt-1">
+              Entradas: Fluxo {fmtBRL(auditoria.fluxoEntradas)} × extrato {fmtBRL(auditoria.extratoEntradas)} (diferença {fmtBRL(Math.round((auditoria.fluxoEntradas - auditoria.extratoEntradas) * 100) / 100)}).
+              {auditoria.fluxoSaidas !== null && auditoria.extratoSaidas !== null && (
+                <> Saídas: Fluxo {fmtBRL(auditoria.fluxoSaidas)} × extrato {fmtBRL(auditoria.extratoSaidas)} (diferença {fmtBRL(Math.round((auditoria.fluxoSaidas - auditoria.extratoSaidas) * 100) / 100)}).</>
+              )}
+            </p>
+          )}
+          <p className="mt-1 text-blue-800/80 dark:text-blue-300/80">Os filtros abaixo já estão na competência e na empresa da auditoria. Abra o detalhe de uma conciliação (ou a aba Saldos mensais) para achar de onde vem a diferença.</p>
+        </div>
+      )}
+
       <Card>
         <CardHeader className="pb-3">
           <CardTitle className="text-sm">Filtros</CardTitle>
@@ -266,6 +321,134 @@ export function DashboardConciliacoes({ onVerDetalhes }: { onVerDetalhes: (id: s
         })}
       </div>
 
+
+      {/* KPIs de valor (mesmo desenho do Painel Executivo): batem com o card 2 da Auditoria da Controladoria. */}
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4 xl:items-stretch">
+        {[
+          { rotulo: "Entradas — Fluxo × Extrato", valor: fmtBRL(valores.fe), Icone: ArrowUp, corIcone: "text-emerald-300", dif: valores.fe - valores.ee, explica: "entradas" as "entradas" | "saidas" | null,
+            rodape: `Extrato ${fmtBRL(valores.ee)}`, dica: "Entradas do Fluxo conciliadas × entradas do extrato (valores gravados em cada conciliação)." },
+          { rotulo: "Saídas — Fluxo × Extrato", valor: fmtBRL(valores.fs), Icone: ArrowDown, corIcone: "text-rose-300", dif: valores.fs - valores.es, explica: "saidas" as "entradas" | "saidas" | null,
+            rodape: `Extrato ${fmtBRL(valores.es)}`, dica: "Saídas do Fluxo conciliadas × saídas do extrato (valores gravados em cada conciliação)." },
+          { rotulo: "Valor conciliado", valor: fmtBRL(valores.ce + valores.cs), Icone: Landmark, corIcone: "text-blue-300", dif: null as number | null, explica: null as "entradas" | "saidas" | null,
+            rodape: `Entradas ${fmtBRL(valores.ce)} · Saídas ${fmtBRL(valores.cs)}`, dica: "O que bateu entre Fluxo e extrato (entradas + saídas)." },
+        ].map((k) => (
+          <div
+            key={k.rotulo}
+            title={k.dif !== null && Math.abs(k.dif) >= 0.005 ? "Clique para ver de onde vem a diferença" : k.dica}
+            onClick={k.explica ? () => setExplicar(k.explica) : undefined}
+            className={cn("relative flex min-h-[110px] flex-col overflow-hidden rounded-xl bg-white p-5 shadow-sm ring-1 ring-slate-200 dark:bg-card dark:ring-border", k.explica && "cursor-pointer transition-all hover:shadow-md")}
+          >
+            <div
+              className="pointer-events-none absolute right-0 top-1/2 -translate-y-1/2 translate-x-2"
+              style={{ fontSize: 0, WebkitMaskImage: "linear-gradient(to left, black 0%, black 30%, rgba(0,0,0,0.6) 60%, transparent 100%)", maskImage: "linear-gradient(to left, black 0%, black 30%, rgba(0,0,0,0.6) 60%, transparent 100%)" }}
+            >
+              <span className="[&>svg]:h-28 [&>svg]:w-28"><k.Icone className={k.corIcone} strokeWidth={1.5} /></span>
+            </div>
+            <p className="relative z-10 mb-3 text-[10px] font-semibold uppercase tracking-widest text-slate-400">{k.rotulo}</p>
+            <p className="relative z-10 text-2xl font-bold leading-none text-slate-900 dark:text-foreground">{valores.comValores === 0 ? "—" : k.valor}</p>
+            <div className="relative z-10 mt-auto pt-3 text-[11px] leading-snug text-slate-500">
+              <p>{valores.comValores === 0 ? "Sem valores gravados" : k.rodape}</p>
+              {k.dif !== null && valores.comValores > 0 && (
+                <p className={Math.abs(k.dif) < 0.005 ? "font-medium text-emerald-600" : "font-medium text-red-600"}>
+                  Diferença {fmtBRL(Math.round(k.dif * 100) / 100)}{Math.abs(k.dif) >= 0.005 ? " · ver de onde vem →" : ""}
+                </p>
+              )}
+            </div>
+          </div>
+        ))}
+        <button
+          type="button"
+          title="Meses em que o saldo do sistema confere com o saldo final do extrato. Clique para ver os saldos mensais."
+          onClick={() => setSubaba("saldos")}
+          className="relative flex min-h-[110px] flex-col overflow-hidden rounded-xl bg-white p-5 text-left shadow-sm ring-1 ring-slate-200 transition-all hover:shadow-md focus:outline-none focus-visible:ring-2 dark:bg-card dark:ring-border"
+        >
+          <div
+            className="pointer-events-none absolute right-0 top-1/2 -translate-y-1/2 translate-x-2"
+            style={{ fontSize: 0, WebkitMaskImage: "linear-gradient(to left, black 0%, black 30%, rgba(0,0,0,0.6) 60%, transparent 100%)", maskImage: "linear-gradient(to left, black 0%, black 30%, rgba(0,0,0,0.6) 60%, transparent 100%)" }}
+          >
+            <span className="[&>svg]:h-28 [&>svg]:w-28"><Scale className="text-purple-300" strokeWidth={1.5} /></span>
+          </div>
+          <p className="relative z-10 mb-3 text-[10px] font-semibold uppercase tracking-widest text-slate-400">Saldos que conferem</p>
+          <p className="relative z-10 text-2xl font-bold leading-none text-slate-900 dark:text-foreground">{saldosFiltrados.length === 0 ? "—" : `${saldosSim} de ${saldosFiltrados.length}`}</p>
+          <div className="relative z-10 mt-auto pt-3 text-[11px] leading-snug text-slate-500">
+            <p className={saldosNao > 0 ? "font-medium text-red-600" : ""}>{saldosNao} divergente(s) · {saldosPendentes} pendente(s) de conferência</p>
+            <p>Clique para ver por empresa e banco</p>
+          </div>
+        </button>
+      </div>
+      {valores.semValores > 0 && (
+        <p className="text-[11px] text-amber-700 dark:text-amber-400">
+          {valores.semValores} conciliação(ões) sem valores gravados ficam fora destes totais (salvas antes do resumo de valores). Em Conciliações Salvas, "Gerar resumo" refaz.
+        </p>
+      )}
+
+
+      <Dialog open={explicar !== null} onOpenChange={(o) => !o && setExplicar(null)}>
+        <DialogContent className="max-w-4xl">
+          <DialogHeader>
+            <DialogTitle>
+              De onde vem a diferença de {explicar === "saidas" ? "saídas" : "entradas"}
+              {" — "}
+              {fmtBRL(Math.round((explicar === "saidas" ? valores.fs - valores.es : valores.fe - valores.ee) * 100) / 100)}
+            </DialogTitle>
+            <DialogDescription>
+              Diferença = Fluxo conciliado − extrato. Uma conciliação fecha quando toda divergência foi tratada; o que foi <strong>ignorado</strong> segue sem bater, e
+              o que foi <strong>ajustado</strong> ou <strong>criado</strong> mudou o Fluxo depois do cálculo. Abaixo, as conciliações com diferença e o que foi tratado em cada uma.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="max-h-[60vh] space-y-3 overflow-y-auto pr-1">
+            {comDiferenca.length === 0 && <p className="py-6 text-center text-sm text-muted-foreground">Nenhuma conciliação do filtro tem diferença.</p>}
+            {comDiferenca.map(({ c, v }) => {
+              const linhas = tratadas.filter((l) => l.conciliacao_id === c.id);
+              const dif = explicar === "saidas" ? v.difSaidas : v.difEntradas;
+              const aqui = Math.abs(dif) >= 0.005;
+              return (
+                <div key={c.id} className={cn("rounded-lg border", aqui ? "border-red-200" : "opacity-70")}>
+                  <div className="flex flex-wrap items-center justify-between gap-2 border-b bg-muted/40 px-3 py-2 text-xs">
+                    <div>
+                      <p className="font-semibold">{bancoNome(c.banco_id)} · {c.todas_empresas ? "Todas as empresas" : c.empresa_ids.map(empresaNome).join(", ") || traco}</p>
+                      <p className="text-muted-foreground">{isoParaBR(c.data_inicio)} — {isoParaBR(c.data_fim)}{c.conta_extrato ? ` · ${c.conta_extrato}` : ""}</p>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <span>Entradas <strong className={Math.abs(v.difEntradas) >= 0.005 ? "text-red-600" : ""}>{fmtBRL(v.difEntradas)}</strong></span>
+                      <span>Saídas <strong className={Math.abs(v.difSaidas) >= 0.005 ? "text-red-600" : ""}>{fmtBRL(v.difSaidas)}</strong></span>
+                      <Button size="sm" variant="outline" className="h-7" onClick={() => { setExplicar(null); onVerDetalhes(c.id); }}>Ver detalhes</Button>
+                    </div>
+                  </div>
+                  {carregandoTratadas ? (
+                    <p className="px-3 py-2 text-xs text-muted-foreground">Carregando...</p>
+                  ) : linhas.length === 0 ? (
+                    <p className="px-3 py-2 text-xs text-muted-foreground">Nenhuma divergência tratada gravada nesta conciliação (diferença sem item tratado: veja o detalhe e o Fluxo do período).</p>
+                  ) : (
+                    <ul className="divide-y text-xs">
+                      {linhas.map((l) => {
+                        const bate = Math.abs(Number(l.valor) - Math.abs(dif)) < 0.005 && aqui;
+                        return (
+                          <li key={l.id} className={cn("flex flex-wrap items-baseline gap-x-3 gap-y-0.5 px-3 py-1.5", bate && "bg-amber-50 dark:bg-amber-950/20")}>
+                            <Badge variant="secondary" className={cn("text-[10px]", l.status === "ignorado" && "bg-amber-100 text-amber-800")}>{l.status === "ignorado" ? "Ignorada" : l.status === "ajustado" ? "Ajustada" : "Criada"}</Badge>
+                            <span className="font-medium whitespace-nowrap">{isoParaBR(l.dia)}</span>
+                            <span className="text-muted-foreground">{l.origem === "fluxo" ? "Fluxo" : "Extrato"} · {l.tipo === "entrada" ? "entrada" : "saída"}</span>
+                            <span className="font-semibold tabular-nums">{fmtBRL(Number(l.valor))}</span>
+                            {bate && <span className="rounded bg-amber-200 px-1.5 text-[10px] font-semibold text-amber-900">mesmo valor da diferença</span>}
+                            <span className="min-w-0 flex-1 truncate text-muted-foreground" title={`${l.descricao ?? ""}${l.observacao ? ` — ${l.observacao}` : ""}`}>
+                              {l.descricao}{l.observacao ? ` — ${l.observacao}` : ""}
+                            </span>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+          <p className="text-[11px] text-muted-foreground">
+            O saldo de abertura (saldo anterior) não entra nestes valores, como na Auditoria. Um lançamento com tipo diferente nos dois lados (entrada de um, saída do outro)
+            aparece como uma linha só, e a diferença se repete nas entradas e nas saídas.
+          </p>
+        </DialogContent>
+      </Dialog>
+
       <Card>
         <CardHeader className="pb-3">
           <CardTitle className="text-sm">
@@ -302,8 +485,12 @@ export function DashboardConciliacoes({ onVerDetalhes }: { onVerDetalhes: (id: s
                         <div className="text-muted-foreground">{r.c.conta_extrato ?? traco}</div>
                       </td>
                       <td className="px-4 py-2">{isoParaBR(r.c.data_inicio)} — {isoParaBR(r.c.data_fim)}</td>
-                      <td className="px-4 py-2 text-center"><Badge className="bg-green-100 text-green-700 border-green-200 hover:bg-green-100">Concluída</Badge></td>
-                      <td className="px-4 py-2 text-center">0</td>
+                      <td className="px-4 py-2 text-center">
+                        {r.c.linhas_ignoradas > 0
+                          ? <Badge className="bg-amber-100 text-amber-800 border-amber-200 hover:bg-amber-100" title="Salva antes de o Ignorar sair: as divergências ignoradas ainda não foram resolvidas.">Concluída com ignoradas</Badge>
+                          : <Badge className="bg-green-100 text-green-700 border-green-200 hover:bg-green-100">Concluída</Badge>}
+                      </td>
+                      <td className={cn("px-4 py-2 text-center", r.c.linhas_ignoradas > 0 && "font-semibold text-amber-700")} title={r.c.linhas_ignoradas > 0 ? "Divergências ignoradas na conciliação (ainda por resolver)" : undefined}>{r.c.linhas_ignoradas}</td>
                       <td className="px-4 py-2 text-xs text-muted-foreground">{new Date(r.c.created_at).toLocaleString("pt-BR")}</td>
                       <td className="px-4 py-2 text-right"><Button size="sm" variant="ghost" onClick={() => onVerDetalhes(r.c.id)}>Ver detalhes</Button></td>
                     </tr>
