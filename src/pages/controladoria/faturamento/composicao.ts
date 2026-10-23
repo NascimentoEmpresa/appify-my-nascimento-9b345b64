@@ -2,7 +2,7 @@
 // que fecha na célula clicada e a lista do que a compõe. Funções puras: a tela só passa o recorte da célula.
 import { diasDesdeEmissao } from "@/pages/financeiro/nf-emissao/shared";
 import {
-  RUBRICAS, aReceberDaNf, notaValidaNoFaturamento, lucroBruto, mesDoCusto, notasComSaldo, ponteAReceber, rubricaDaLinha, somarNf, totaisVazios,
+  RUBRICAS, type BaseDespesa, aReceberDaNf, notaValidaNoFaturamento, lucroBruto, mesDoCusto, notasComSaldo, ponteAReceber, rubricaDaLinha, somarNf, totaisVazios,
   type LigacoesRubrica, type LinhaFluxoCusto, type NfFaturamento, type TotaisFaturamento,
 } from "./regras";
 
@@ -41,6 +41,8 @@ export interface ContextoDetalhe {
   execDe: (contratoId: string, anoMes: string) => { valor: number; fonte: FonteExecutavel };
   custos: LinhaFluxoCusto[];
   ligacoes?: LigacoesRubrica;
+  // SIS-2026-0721: base em que as despesas foram lidas (só muda o texto do modal).
+  baseDespesa?: BaseDespesa;
 }
 
 export type Celula = string | number;
@@ -246,7 +248,7 @@ export function montarComposicao(metrica: Metrica, escopo: EscopoDetalhe, ctx: C
     const d = despesasDoEscopo(ctx.custos, escopo, ctx.ligacoes);
     return {
       titulo,
-      descricao: "Saídas do Fluxo de Caixa com contrato, pela competência, sem transferências, aplicações e empréstimos. É o custo usado no Lucro.",
+      descricao: `Saídas do Fluxo de Caixa com contrato, pela ${(ctx.baseDespesa === "pagamento" ? "data de pagamento" : "competência")}, sem transferências, aplicações e empréstimos. É o custo usado no Lucro.`,
       conta: [
         ...d.porRubrica.map((r, i) => ({ rotulo: r.rotulo, valor: r.valor, sinal: i === 0 ? undefined : ("+" as const) })),
         { rotulo: "Despesas", valor: d.total, sinal: "=", destaque: true },

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -15,7 +16,7 @@ import { type ResumoConciliacao } from "@/lib/conciliacaoResumo";
 import { periodoDoMes, processarConciliacao } from "@/lib/conciliacaoCalculo";
 import { DashboardConciliacoes } from "@/pages/financeiro/conciliacao-dashboard/DashboardConciliacoes";
 import { conciliacaoSemResumo, useGerarResumoConciliacoes } from "@/hooks/useGerarResumoConciliacao";
-import { Upload, X, Play, RefreshCw, GitMerge, Pencil, Ban, PlusCircle, Save, History, CheckCircle2, LayoutDashboard, Info, Landmark } from "lucide-react";
+import { Upload, X, Play, RefreshCw, GitMerge, Pencil, PlusCircle, Save, History, CheckCircle2, LayoutDashboard, Info, Landmark } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { AcessoGate } from "@/components/auth/AcessoGate";
@@ -53,9 +54,12 @@ import { useFormasPagamento } from "@/hooks/useMaloteFormaPagamento";
 // src/lib/conciliacaoBancariaEngine.ts (extraído da tela antiga,
 // ConciliacaoBancaria.tsx, que continua existindo pra quem usa planilha
 // manual). Divergência resolvida (Ajustar/Criar) faz a linha desaparecer
-// ao recalcular — "Ignorar" fica marcada localmente até salvar, porque
-// não muda nenhum dado de origem. Só libera "Salvar conciliação" quando
-// não sobra nenhuma pendência.
+// ao recalcular. Só libera "Salvar conciliação" quando não sobra nenhuma
+// pendência. SIS-2026-0713: o "Ignorar" saiu — ignorar fecha a conciliação
+// sem fechar a diferença, e o valor continua sem bater (a chefia vê o
+// Dashboard "resolvido" e a diferença ainda lá). Toda divergência se resolve
+// (Ajustar/Criar) ou se corrige na origem e recalcula. O status "ignorado"
+// fica só no tipo para mostrar o que já foi salvo assim.
 //
 // Nome do arquivo é "ConciliacaoAutomaticaFluxoCaixa" (não
 // "ConciliacaoFluxoCaixa") de propósito — esse outro nome já existia
@@ -81,7 +85,15 @@ function brParaIso(br: string) {
 }
 
 export default function ConciliacaoAutomaticaFluxoCaixa() {
-  const [aba, setAba] = useState<"conciliar" | "historico" | "dashboard">("conciliar");
+  // SIS-2026-0720: a Auditoria da Controladoria (card 2) abre aqui já no Dashboard, na competência e na empresa dela, com os valores que ela mostra.
+  const [searchParams] = useSearchParams();
+  const vindoDaAuditoria = useMemo(() => {
+    const mes = searchParams.get("mes");
+    if (searchParams.get("aba") !== "dashboard" || !mes || !/^\d{4}-\d{2}$/.test(mes)) return null;
+    const n = (k: string) => (searchParams.get(k) === null ? null : Number(searchParams.get(k)));
+    return { mes, empresaId: searchParams.get("empresa"), fluxoEntradas: n("fe"), fluxoSaidas: n("fs"), extratoEntradas: n("ee"), extratoSaidas: n("es") };
+  }, [searchParams]);
+  const [aba, setAba] = useState<"conciliar" | "historico" | "dashboard">(vindoDaAuditoria ? "dashboard" : "conciliar");
   // SIS-2026-0713: "Ver detalhes" do dashboard abre o resultado salvo (sem pedir o OFX nem conciliar de novo).
   const [detalheId, setDetalheId] = useState<string | null>(null);
   const { data: salvasDashboard = [] } = useConciliacoesFluxoCaixaSalvas();
@@ -114,7 +126,7 @@ export default function ConciliacaoAutomaticaFluxoCaixa() {
           <HistoricoTab />
         </TabsContent>
         <TabsContent value="dashboard" className="mt-4">
-          <DashboardConciliacoes onVerDetalhes={setDetalheId} />
+          <DashboardConciliacoes onVerDetalhes={setDetalheId} auditoria={vindoDaAuditoria} />
         </TabsContent>
       </Tabs>
       <DialogDetalheConciliacao id={detalheId} conciliacao={salvasDashboard.find((c) => c.id === detalheId) ?? null} onClose={() => setDetalheId(null)} />
@@ -158,7 +170,6 @@ function ConciliarTab() {
 
   const [dialogAjustar, setDialogAjustar] = useState<LancamentoRow | null>(null);
   const [dialogCriar, setDialogCriar] = useState<LancamentoRow | null>(null);
-  const [dialogIgnorar, setDialogIgnorar] = useState<LancamentoRow | null>(null);
   const [abaResultado, setAbaResultado] = useState<"resumo" | "divergencias">("resumo");
 
   const { data: linhasBrutas = [] } = useFluxoCaixaCombinado();
@@ -423,12 +434,6 @@ function ConciliarTab() {
     } catch (e: any) {
       toast.error(e.message ?? "Erro ao criar lançamento.");
     }
-  }
-
-  function confirmarIgnorar(motivo: string) {
-    if (!dialogIgnorar) return;
-    setResolvidos((prev) => ({ ...prev, [dialogIgnorar.id]: { linha: dialogIgnorar, status: "ignorado", observacao: motivo } }));
-    setDialogIgnorar(null);
   }
 
   async function handleSalvar() {
@@ -816,9 +821,16 @@ function ConciliarTab() {
                                       <PlusCircle className="h-3 w-3 mr-1" /> Criar
                                     </Button>
                                   )}
-                                  <Button size="sm" variant="ghost" className="h-6 text-xs px-2 text-muted-foreground" onClick={() => setDialogIgnorar(l)}>
-                                    <Ban className="h-3 w-3 mr-1" /> Ignorar
-                                  </Button>
+                                  {!podeAjustar && !podeCriar && (
+                                    <span
+                                      className="text-[11px] text-muted-foreground"
+                                      title={l.origemFluxo === "aplicacao_financeira"
+                                        ? "Aplicação financeira não se ajusta aqui: corrija (exclua e recadastre) na tela de Aplicações Financeiras e use Recalcular."
+                                        : "Sem ajuste possível aqui: corrija o lançamento na origem e use Recalcular."}
+                                    >
+                                      Corrigir na origem
+                                    </span>
+                                  )}
                                 </div>
                               )}
                             </td>
@@ -863,7 +875,6 @@ function ConciliarTab() {
 
       <DialogAjustar linha={dialogAjustar} onClose={() => setDialogAjustar(null)} onConfirmar={confirmarAjuste} salvando={ajustar.isPending} />
       <DialogCriarLancamento linha={dialogCriar} onClose={() => setDialogCriar(null)} onConfirmar={confirmarCriar} salvando={criarDebito.isPending} empresaInicial={!todasEmpresas && empresaIds.length === 1 ? empresaIds[0] : ""} bancoInicial={bancoId} />
-      <DialogIgnorar linha={dialogIgnorar} onClose={() => setDialogIgnorar(null)} onConfirmar={confirmarIgnorar} />
     </div>
   );
 }
@@ -1085,37 +1096,6 @@ function DialogCriarLancamento({
   );
 }
 
-// ── Dialog: Ignorar linha ────────────────────────────────────────────────
-
-function DialogIgnorar({ linha, onClose, onConfirmar }: { linha: LancamentoRow | null; onClose: () => void; onConfirmar: (motivo: string) => void }) {
-  const [motivo, setMotivo] = useState("");
-  if (!linha) return null;
-  return (
-    <Dialog open={!!linha} onOpenChange={(v) => !v && onClose()}>
-      <DialogContent className="sm:max-w-sm p-5">
-        <DialogHeader>
-          <DialogTitle>Ignorar divergência</DialogTitle>
-        </DialogHeader>
-        <div className="space-y-3">
-          <p className="text-xs text-muted-foreground">
-            {linha.dia} — {fmtBRL(linha.valor)} — {linha.detalhe}
-          </p>
-          <div>
-            <Label className="text-xs">Motivo (obrigatório)</Label>
-            <Textarea value={motivo} onChange={(e) => setMotivo(e.target.value.slice(0, 300))} placeholder="Ex: transferência entre contas próprias, taxa, IOF..." />
-          </div>
-        </div>
-        <DialogFooter>
-          <Button variant="outline" size="sm" onClick={onClose}>Cancelar</Button>
-          <Button size="sm" disabled={!motivo.trim()} onClick={() => { onConfirmar(motivo.trim()); setMotivo(""); }}>
-            Confirmar
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
 // ── Aba Histórico ────────────────────────────────────────────────────────
 
 function HistoricoTab() {
@@ -1266,7 +1246,7 @@ function DialogDetalheConciliacao({ id, conciliacao, onClose }: { id: string | n
                     { rotulo: "Dias processados", valor: conciliacao.dias_total != null ? String(conciliacao.dias_total) : "—" },
                     { rotulo: "Dias OK", valor: conciliacao.dias_ok != null ? String(conciliacao.dias_ok) : "—" },
                     { rotulo: "Divergências", valor: String(conciliacao.total_linhas) },
-                    { rotulo: "Pendentes", valor: "0" },
+                    { rotulo: "Pendentes (ignoradas)", valor: String(conciliacao.linhas_ignoradas) },
                   ].map((k) => (
                     <div key={k.rotulo} className="rounded-md border p-2">
                       <p className="text-muted-foreground">{k.rotulo}</p>

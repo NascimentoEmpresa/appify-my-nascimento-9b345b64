@@ -1341,15 +1341,18 @@ export default function Processos({ view = "processos" }: { view?: "dashboard" |
             detalhe: p.reclamante,
             busca: `${p.reclamada} ${p.comarca}`,
           }))}
+          filtrados={{ n: filtrados.length, ativo: filtrosAtivos > 0 }}
           inicialId={exportando.id != null ? String(exportando.id) : null}
           onFechar={() => setExportando(null)}
           onErro={msg => toast(msg, "err")}
-          onExportar={async (formato, id, progresso) => {
-            const alvo = (id == null ? processos : processos.filter(p => String(p.id) === id)).map(paraExportar);
+          onExportar={async (formato, id, progresso, alcance) => {
+            // "Filtrados": a mesma lista da tabela (todos os filtros da consulta + a aba de status).
+            const base = alcance === "filtrados" ? filtrados : id == null ? processos : processos.filter(p => String(p.id) === id);
+            const alvo = base.map(paraExportar);
             if (!alvo.length) throw new Error("nenhum processo para exportar.");
             const extras = await carregarExtras(db, alvo, progresso);
             progresso("Montando o arquivo…");
-            const nome = nomeArquivo(alvo);
+            const nome = nomeArquivo(alvo, alcance === "filtrados");
             if (formato === "excel") baixar(gerarExcel(alvo, extras, autor), `${nome}.xlsx`);
             else baixar(gerarHtml(alvo, extras, autor), `${nome}.html`);
             toast("Exportação gerada — confira os downloads.", "ok");

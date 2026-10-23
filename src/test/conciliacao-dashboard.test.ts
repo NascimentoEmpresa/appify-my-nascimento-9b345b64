@@ -96,3 +96,18 @@ describe("saldoFinalNoDia", () => {
     expect(saldoFinalNoDia({ valor: 1000, data: null }, trns, "2026-01-31")).toBe(930);
   });
 });
+
+import { valoresDaConciliacao } from "@/lib/conciliacaoDashboard";
+describe("valoresDaConciliacao", () => {
+  const base = { fluxo_entradas: 1000, fluxo_saidas: 500, extrato_entradas: 940.5, extrato_saidas: 559.5, conciliado_entradas: 900, conciliado_saidas: 450 };
+  it("diferença = Fluxo − extrato, por entradas e saídas", () => {
+    expect(valoresDaConciliacao(base)).toMatchObject({ difEntradas: 59.5, difSaidas: -59.5 });
+  });
+  it("saldo anterior que entrou como linha no Fluxo (e no conciliado) sai da conta; o extrato não o tinha", () => {
+    const v = valoresDaConciliacao({ ...base, fluxo_entradas: 1270.22, conciliado_entradas: 1170.22, saldo_anterior_fluxo: 270.22, saldo_anterior_extrato: 270.22 });
+    expect(v).toMatchObject({ fe: 1000, ce: 900, difEntradas: 59.5 });
+  });
+  it("conciliação sem os valores gravados devolve null (fica de fora, nunca zero)", () => {
+    expect(valoresDaConciliacao({ ...base, extrato_entradas: null })).toBeNull();
+  });
+});

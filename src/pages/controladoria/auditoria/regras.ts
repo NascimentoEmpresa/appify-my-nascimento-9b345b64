@@ -23,7 +23,7 @@ export interface DefValidacao {
 export const VALIDACOES: DefValidacao[] = [
   { tipo: "malote_fluxo", numero: 1, titulo: "Conciliação do Malote em relação ao Fluxo de Caixa", rotuloA: "Malote + Lançamentos do Financeiro", rotuloB: "Total no Fluxo de Caixa", comparacao: "igual", link: "/app/financeiro/gestao-financeira/fluxo-caixa", linkRotulo: "Fluxo de Caixa" },
   { tipo: "fluxo_extrato", numero: 2, titulo: "Conciliação do Fluxo de Caixa em relação ao Extrato", rotuloA: "Total no Fluxo de Caixa", rotuloB: "Total conciliado com extratos", comparacao: "igual", link: "/app/financeiro/gestao-financeira/conciliacao-fluxo-caixa", linkRotulo: "Conciliação Bancária" },
-  { tipo: "centros_malote", numero: 3, titulo: "Conciliação de gastos dos Centros de Custo em relação ao Malote e lançamentos financeiros", rotuloA: "Total conciliado (Malote + lanç. financeiros)", rotuloB: "Total em Centros de Custo (contratos + administrativo)", comparacao: "igual", link: "/app/controladoria/centros-custo", linkRotulo: "Centros de Custo" },
+  { tipo: "centros_malote", numero: 3, titulo: "Conciliação de gastos dos Centros de Custo em relação ao Malote e lançamentos financeiros", rotuloA: "Saldo utilizável do Fluxo (saídas − aplicações − transferências)", rotuloB: "Total em Centros de Custo (contratos + administrativo + sócios)", comparacao: "igual", link: "/app/controladoria/centros-custo", linkRotulo: "Centros de Custo" },
   { tipo: "orcado_realizado", numero: 4, titulo: "Comparativo de Orçado × Realizado", rotuloA: "Total Orçado", rotuloB: "Total Realizado", comparacao: "livre", link: "/app/malote/orcamento-geral", linkRotulo: "Orçamento Geral" },
   { tipo: "faturado", numero: 5, titulo: "Totais de notas faturadas × falta faturar", rotuloA: "Total Faturado", rotuloB: "Falta Faturar", comparacao: "livre", link: "/app/financeiro/controle-faturamento", linkRotulo: "Controle de Faturamento" },
   { tipo: "recebido", numero: 6, titulo: "Totais de notas recebidas × falta receber", rotuloA: "Total Recebido", rotuloB: "Falta Receber", comparacao: "livre", link: "/app/financeiro/relatorio-servicos", linkRotulo: "Relatório de Serviços" },
@@ -125,7 +125,28 @@ export interface LancamentoSemCentro {
   motivo: "sem_classificacao" | "contrato_nao_informado";
 }
 export interface PainelCentros { kind: "centros"; pendentes: LancamentoSemCentro[] }
-export type PainelCard = PainelMaloteFluxo | PainelFluxoExtrato | PainelOrcadoRealizado | PainelCentros;
+
+// SIS-2026-0720: item 3 parte da SAÍDA TOTAL do Fluxo de Caixa. O que não é despesa (aplicação financeira e transferência entre contas)
+// sai; o que sobra é o saldo utilizável, que precisa estar distribuído nos centros de custo (contratos, administrativo e sócios). O que
+// não está em nenhum centro é o "falta distribuir": a lista dos lançamentos leva ao Fluxo já na reclassificação.
+export interface LancamentoFaltaDistribuir extends LancamentoSemCentro {
+  numeroParcela: number | null;
+  // Aprovadores N1/N2 da classificação do lançamento (o "gerente responsável"); vazio quando não há classificação.
+  responsaveis: string[];
+}
+export interface PainelCentrosFluxo {
+  kind: "centros_fluxo";
+  saidaTotal: number;
+  aplicacoes: number;
+  transferencias: number;
+  saldoUtilizavel: number;
+  contratos: number;
+  administrativo: number;
+  socios: number;
+  faltaDistribuir: number;
+  lancamentos: LancamentoFaltaDistribuir[];
+}
+export type PainelCard = PainelMaloteFluxo | PainelFluxoExtrato | PainelOrcadoRealizado | PainelCentros | PainelCentrosFluxo;
 
 
 export function diferenca(t: Pick<TotaisCard, "a" | "b">): { valor: number; percentual: number | null } {
@@ -298,6 +319,81 @@ export function totaisCentrosMalote(
     else if (l.classificacao_id && tipoPorClassificacao.get(l.classificacao_id) === "administrativo") administrativo += v;
   }
   return { total: r2(total), comContrato: r2(comContrato), administrativo: r2(administrativo), pendente: r2(total - comContrato - administrativo) };
+}
+
+// ── SIS-2026-0720: item 3 a partir da saída total do Fluxo de Caixa ──────────────────────────────────────
+export type TipoCentro = "contrato" | "administrativo" | "socio";
+
+// Transferência entre contas é movimento do dinheiro da própria empresa, não despesa (junto da aplicação financeira, fica fora do
+// saldo utilizável). Casa pelo nome da classificação, sem acento e sem caixa.
+export const ehTransferenciaEntreContas = (l: Pick<LinhaFluxoAud, "classificacao_nome">) =>
+  semAcento((l.classificacao_nome ?? "").trim().toUpperCase()) === "TRANSFERENCIA ENTRE CONTAS";
+
+export function totaisCentrosFluxo(
+  fluxo: (LinhaFluxoAud & { numero_parcela?: number | null })[],
+  tipoDoContrato: (contratoId: string) => TipoCentro,
+  tipoPorClassificacao: Map<string, string | null>,
+  responsaveisPorClassificacao: Map<string, string[]>,
+  filtro: FiltroAuditoria,
+): PainelCentrosFluxo {
+  let saidaTotal = 0, aplicacoes = 0, transferencias = 0, contratos = 0, administrativo = 0, socios = 0;
+  const por = new Map<string, LancamentoFaltaDistribuir>();
+  fluxo.forEach((l, i) => {
+    if (l.tipo !== "saida" || ehSaldoAnterior(l) || !passaLinha(filtro, l)) return;
+    const v = Number(l.valor) || 0;
+    saidaTotal += v;
+    if (ehAplicacao(l)) { aplicacoes += v; return; }
+    if (ehTransferenciaEntreContas(l)) { transferencias += v; return; }
+    if (l.contrato_id) {
+      const t = tipoDoContrato(l.contrato_id);
+      if (t === "socio") socios += v;
+      else if (t === "administrativo") administrativo += v;
+      else contratos += v;
+      return;
+    }
+    if (l.classificacao_id && tipoPorClassificacao.get(l.classificacao_id) === "administrativo") { administrativo += v; return; }
+    // Sem contrato e sem classificação administrativa: não está em nenhum centro. Um lançamento rateado entra uma vez, com as fatias somadas.
+    const parcela = l.numero_parcela ?? null;
+    const chave = l.despesa_id ? `${l.origem}|${l.despesa_id}|${parcela ?? ""}|${l.data_pagamento ?? ""}` : `${l.origem}|#${i}`;
+    const atual = por.get(chave);
+    if (atual) { atual.valor = r2(atual.valor + v); return; }
+    por.set(chave, {
+      origem: l.origem,
+      despesaId: l.despesa_id ?? null,
+      numeroParcela: parcela,
+      numero: l.id_malote ?? null,
+      descricao: l.descricao ?? "",
+      classificacao: l.classificacao_nome ?? null,
+      data: l.data_pagamento ?? null,
+      valor: r2(v),
+      motivo: l.classificacao_id ? "contrato_nao_informado" : "sem_classificacao",
+      responsaveis: l.classificacao_id ? (responsaveisPorClassificacao.get(l.classificacao_id) ?? []) : [],
+    });
+  });
+  const lancamentos = Array.from(por.values()).sort((a, b) => b.valor - a.valor);
+  const saldoUtilizavel = r2(saidaTotal - aplicacoes - transferencias);
+  return {
+    kind: "centros_fluxo",
+    saidaTotal: r2(saidaTotal),
+    aplicacoes: r2(aplicacoes),
+    transferencias: r2(transferencias),
+    saldoUtilizavel,
+    contratos: r2(contratos),
+    administrativo: r2(administrativo),
+    socios: r2(socios),
+    faltaDistribuir: r2(saldoUtilizavel - contratos - administrativo - socios),
+    lancamentos,
+  };
+}
+
+// Fluxo de Caixa abre direto na edição (reclassificar) do lançamento: origem|despesa|parcela. Só quem tem "alterar" no Fluxo edita.
+export function linkReclassificarFluxo(mes: string, empresaId: string | null, l: Pick<LancamentoFaltaDistribuir, "origem" | "despesaId" | "numeroParcela" | "numero">): string {
+  const base = linkFluxoCaixa(mes, empresaId);
+  const q = new URLSearchParams();
+  if (l.numero) q.set("busca", l.numero);
+  if (l.despesaId) q.set("editar", [l.origem, l.despesaId, l.numeroParcela ?? ""].join("|"));
+  const extra = q.toString();
+  return extra ? `${base}&${extra}` : base;
 }
 
 // ── 7. Descontos por categoria ──────────────────────────────────────────────
@@ -565,13 +661,25 @@ export function linkFluxoCaixa(mes: string, empresaId: string | null): string {
   return `/app/financeiro/gestao-financeira/fluxo-caixa?${q.toString()}`;
 }
 
+// SIS-2026-0720: o card 2 leva à Conciliação Bancária (Dashboard) já na competência e na empresa da auditoria, com os valores que a auditoria
+// mostra (Fluxo × extrato nos bancos conciliados) para conferir lá.
+export function linkConciliacao(mes: string, empresaId: string | null, p?: Pick<PainelFluxoExtrato, "fluxo" | "extrato">): string {
+  const q = new URLSearchParams({ aba: "dashboard", mes });
+  if (empresaId) q.set("empresa", empresaId);
+  if (p) {
+    q.set("fe", String(p.fluxo.entradas)); q.set("fs", String(p.fluxo.saidas));
+    q.set("ee", String(p.extrato.entradas)); q.set("es", String(p.extrato.saidas));
+  }
+  return `/app/financeiro/gestao-financeira/conciliacao-fluxo-caixa?${q.toString()}`;
+}
+
 export function linksDoCard(tipo: TipoValidacao, mes: string, empresaId: string | null): LinkCard[] {
   const malote = { rotulo: "Malote", to: "/app/malote/pagamento" };
   const fluxo = { rotulo: "Fluxo de Caixa", to: linkFluxoCaixa(mes, empresaId) };
   switch (tipo) {
     case "malote_fluxo": return [malote, fluxo];
-    case "fluxo_extrato": return [malote, fluxo, { rotulo: "Conciliação Bancária", to: "/app/financeiro/gestao-financeira/conciliacao-fluxo-caixa" }];
-    case "centros_malote": return [malote, { rotulo: "Lançamentos financeiros", to: linkFluxoCaixa(mes, empresaId) }, { rotulo: "Centros de Custo", to: "/app/controladoria/centros-custo" }];
+    case "fluxo_extrato": return [malote, fluxo, { rotulo: "Conciliação Bancária", to: linkConciliacao(mes, empresaId) }];
+    case "centros_malote": return [{ rotulo: "Fluxo de Caixa", to: linkFluxoCaixa(mes, empresaId) }, { rotulo: "Centros de Custo", to: "/app/controladoria/centros-custo" }];
     case "orcado_realizado": return [fluxo, { rotulo: "Orçamento Geral", to: "/app/malote/orcamento-geral" }];
     default: return [];
   }

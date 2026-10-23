@@ -169,3 +169,26 @@ export function saldosMensais(
   }
   return saida.sort((a, b) => (a.empresaId + a.bancoId === b.empresaId + b.bancoId ? (a.mes < b.mes ? -1 : 1) : a.empresaId + a.bancoId < b.empresaId + b.bancoId ? -1 : 1));
 }
+
+// SIS-2026-0720: valores gravados em UMA conciliação (Fluxo, extrato e conciliado, entradas e saídas), sem o saldo de abertura. Conciliações
+// antigas com o "saldo anterior do extrato" digitado gravaram esse saldo como uma linha nos totais do Fluxo (e no conciliado), mas o total do
+// extrato vem só do OFX: aqui ele sai, como na Auditoria (saldo de abertura não é movimento). null = conciliação sem os valores gravados.
+export interface ValoresConciliacao {
+  fe: number; fs: number; ee: number; es: number; ce: number; cs: number;
+  difEntradas: number; difSaidas: number;
+}
+export function valoresDaConciliacao(c: {
+  fluxo_entradas?: number | null; fluxo_saidas?: number | null; extrato_entradas?: number | null; extrato_saidas?: number | null;
+  conciliado_entradas?: number | null; conciliado_saidas?: number | null; saldo_anterior_fluxo?: number | null; saldo_anterior_extrato?: number | null;
+}): ValoresConciliacao | null {
+  if (c.fluxo_entradas == null || c.fluxo_saidas == null || c.extrato_entradas == null || c.extrato_saidas == null || c.conciliado_entradas == null || c.conciliado_saidas == null) return null;
+  let fe = Number(c.fluxo_entradas), fs = Number(c.fluxo_saidas), ce = Number(c.conciliado_entradas), cs = Number(c.conciliado_saidas);
+  if (c.saldo_anterior_extrato != null && c.saldo_anterior_fluxo != null) {
+    const saldo = Number(c.saldo_anterior_fluxo);
+    const bateu = Number(c.saldo_anterior_extrato) === saldo;
+    if (saldo > 0) { fe -= saldo; if (bateu) ce -= saldo; }
+    else if (saldo < 0) { fs += saldo; if (bateu) cs += saldo; }
+  }
+  const ee = Number(c.extrato_entradas), es = Number(c.extrato_saidas);
+  return { fe: r2(fe), fs: r2(fs), ee: r2(ee), es: r2(es), ce: r2(ce), cs: r2(cs), difEntradas: r2(fe - ee), difSaidas: r2(fs - es) };
+}
