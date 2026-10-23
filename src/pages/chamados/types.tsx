@@ -442,3 +442,14 @@ export function opcoesDownloadAnexo(path: string): { download: string } | undefi
   const nome = (path.split("/").pop() ?? path).replace(/^\d+-/, "");
   return /\.(html?|svg|xml)$/i.test(nome) ? { download: nome } : undefined;
 }
+
+/**
+ * Anexo que abre no visualizador do chamado (card no centro da tela) em vez
+ * de outra aba — 23/10/2026, pedido do Pablo. SVG fica de fora de propósito:
+ * vem com download forçado (ver opcoesDownloadAnexo acima).
+ */
+export function ehImagemAnexo(a: { mime_type?: string | null; nome_arquivo?: string | null; storage_path?: string | null }): boolean {
+  const nome = a.nome_arquivo || a.storage_path || "";
+  if (/\.svg$/i.test(nome) || (a.mime_type ?? "").includes("svg")) return false;
+  return (a.mime_type ?? "").startsWith("image/") || /\.(png|jpe?g|gif|webp|bmp|avif)$/i.test(nome);
+}
