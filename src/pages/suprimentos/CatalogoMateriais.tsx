@@ -17,6 +17,7 @@ import {
 } from "@/hooks/useSupCatalogo";
 import { chipsDeOpcao } from "@/lib/suprimentos/opcoesMaterial";
 import { useEstoqueLista, type LinhaEstoque } from "@/hooks/useSupEstoque";
+import { custosPorItemDoEnxoval, totalDoEnxoval } from "@/lib/suprimentos/custoEnxoval";
 import { AutorAlteracao } from "@/components/suprimentos/HistoricoLote";
 import {
   Plus, Pencil, Trash2, Settings2, Send, ChevronRight, Building2, MapPin,
@@ -44,6 +45,8 @@ import { cn } from "@/lib/utils";
  */
 
 type NivelItem = { id: string; nome: string; aprovado: boolean; alerta?: string };
+
+const formatarMoeda = (valor: number) => valor.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 
 /**
  * Um nível da cascata: lista selecionável, com criar/renomear/excluir
@@ -254,6 +257,14 @@ export default function CatalogoMateriais() {
   const contrato = useMemo(() => contratos.find((c) => c.id === contratoId) ?? null, [contratos, contratoId]);
   const posto = useMemo(() => postos.find((p) => p.id === postoId) ?? null, [postos, postoId]);
   const funcao = useMemo(() => funcoes.find((f) => f.id === funcaoId) ?? null, [funcoes, funcaoId]);
+  const custosDoEnxoval = useMemo(
+    () => custosPorItemDoEnxoval(enxoval.map((fi) => fi.item_id), estoque),
+    [enxoval, estoque],
+  );
+  const custoTotalDoEnxoval = useMemo(
+    () => totalDoEnxoval(custosDoEnxoval.values()),
+    [custosDoEnxoval],
+  );
 
   // Contexto gravado junto de cada rascunho, pra tela de aprovação ler a
   // hierarquia sem precisar re-derivar nada.
@@ -388,7 +399,12 @@ export default function CatalogoMateriais() {
             <CardTitle className="flex items-center gap-2 text-sm font-semibold">
               <Shirt className="h-4 w-4 text-muted-foreground" />
               Enxoval da Função
-              <Badge variant="secondary" className="ml-auto text-[11px]">{enxoval.length}</Badge>
+              {funcaoId && (
+                <span className="ml-auto text-xs font-semibold tabular-nums text-foreground">
+                  Custo: {formatarMoeda(custoTotalDoEnxoval)}
+                </span>
+              )}
+              <Badge variant="secondary" className="ml-2 text-[11px]">{enxoval.length}</Badge>
             </CardTitle>
           </CardHeader>
           <CardContent className="flex-1 space-y-1.5">
@@ -424,6 +440,9 @@ export default function CatalogoMateriais() {
                       </div>
                       <span className="text-[11px] text-muted-foreground">
                         {fi.sup_item ? LABEL_TIPO_ITEM[fi.sup_item.tipo] : ""}
+                      </span>
+                      <span className="block text-[11px] tabular-nums text-muted-foreground">
+                        Custo: {formatarMoeda(custosDoEnxoval.get(fi.item_id) ?? 0)}
                       </span>
                     </div>
                     <Button
