@@ -9,7 +9,7 @@ import { SearchableSelect } from "@/components/ui/searchable-select";
 import { cn } from "@/lib/utils";
 import { useVagasRecrutadoresMov, type FiltroRelatorio } from "@/hooks/useRelatoriosDiretoria";
 import {
-  META_DIAS_CONTRATAR, corDias, desfechoVaga, diasTotais, etapaDoStatus, fmtDias, mensalVagas, resumoVagas, tituloEtapa, vagaFechada,
+  META_DIAS_CONTRATAR, corDias, desfechoVaga, diasTotais, etapaDoStatus, fmtDias, mensalVagas, resumoVagas, tituloEtapa, vagaFechada, vagaAbertaAgora,
   type PainelVagas, type Recorte, type VagaPainel,
 } from "@/lib/relatorios/vagasPainel";
 import {
@@ -167,7 +167,7 @@ function KpisRecorte({ pSel, movSel, sel, nRecrutadores, semMov, onLista }: {
     "Contratadas": () => onLista(`${quem} · contratadas`, ids(contr)),
     "Tempo médio até contratar": () => onLista(`${quem} · contratadas`, ids(contr)),
     "Reprovadas / canceladas": () => onLista(`${quem} · reprovadas/canceladas`, ids(per.filter((v) => ["reprovada", "cancelada"].includes(desfechoVaga(v))))),
-    "Em aberto agora": () => onLista(`${quem} · em aberto agora`, ids(pSel.vagas.filter((v) => !vagaFechada(v)))),
+    "Em aberto agora": () => onLista(`${quem} · em aberto agora`, ids(pSel.vagas.filter(vagaAbertaAgora))),
     [`Contratadas em até ${META_DIAS_CONTRATAR} dias`]: () => onLista(`${quem} · contratadas em até ${META_DIAS_CONTRATAR} dias`, ids(contr.filter((v) => diasTotais(v, pSel.agora) <= META_DIAS_CONTRATAR))),
     "Desistências de candidatos": () => onLista(`${quem} · vagas com desistência`, ids(per.filter((v) => v.cand.desistiu > 0))),
   };

@@ -12,8 +12,10 @@
 // reprovadas/canceladas. Status desconhecido ou legado ENTRA (está no meio do
 // caminho até alguém fechar).
 //
-// A função da TV (tvg_espelho_vagas, mig 20261022000510) repete esta lista —
-// mudou aqui, muda lá.
+// A função da TV (tvg_espelho_vagas, mig 20261022000510) e o relatório
+// Relatórios › Gestão Recrutamento (dir_rel_dados, mig 20261022000520) repetem
+// esta lista — mudou aqui, muda lá. Relatórios › Vagas usa esta função direto
+// (vagaAbertaAgora em src/lib/relatorios/vagasPainel.ts).
 
 /** Pendentes de aprovação (Operacional/Analista/Diretoria) e do RH (conferência do Recrutamento). */
 export const STATUS_VAGA_PENDENTE_APROVACAO = [
