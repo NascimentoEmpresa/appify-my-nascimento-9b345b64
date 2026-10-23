@@ -212,8 +212,9 @@ export default function SolicitarMateriais() {
     try {
       const resultado = await criar.mutateAsync(dadosPedido);
       if (resultado?.pedido_id) setProtocolo(resultado.pedido_id);
-    } catch (erro: any) {
-      if (!aceitarDuplicidade && String(erro?.message ?? "").includes("PEDIDO_DUPLICADO_JUSTIFICATIVA")) {
+    } catch (erro: unknown) {
+      const mensagem = erro instanceof Error ? erro.message : String(erro ?? "");
+      if (!aceitarDuplicidade && mensagem.includes("PEDIDO_DUPLICADO_JUSTIFICATIVA")) {
         setDuplicidadeDetectada(true);
         return;
       }
