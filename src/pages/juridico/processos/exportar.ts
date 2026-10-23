@@ -346,9 +346,9 @@ export const gerarExcel = (ps: ProcessoExp[], ex: ExtrasProcesso, autor: string)
 export const gerarHtml = (ps: ProcessoExp[], ex: ExtrasProcesso, autor: string) => htmlBlob(montarHtml(ps, ex, autor));
 
 /** "processo-123-0020035-59-2024-5-04-0001-2026-09-21" ou "processos-completo-…". */
-export function nomeArquivo(ps: ProcessoExp[]): string {
+export function nomeArquivo(ps: ProcessoExp[], filtrado = false): string {
   const dia = new Date().toISOString().slice(0, 10);
-  if (ps.length !== 1) return `processos-completo-${dia}`;
+  if (ps.length !== 1) return `processos-${filtrado ? "filtrado" : "completo"}-${dia}`;
   const p = ps[0];
   return ["processo", p.id_sequencial ? String(p.id_sequencial) : "", slug(p.numero_processo, 30), dia].filter(Boolean).join("-");
 }
