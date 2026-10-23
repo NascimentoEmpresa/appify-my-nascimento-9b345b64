@@ -143,6 +143,7 @@ import { DetalheSolicitacao, type TipoSolicitacao } from "./encarregados/Detalhe
 import { AVISO_REFAZER, podeRefazerFerias } from "@/lib/solicitacoes/feriasRefazer";
 import { BotaoCancelarDemissao } from "@/components/demissao/CancelarDemissao";
 import { CredenciaisProntas } from "@/components/sistemas/CredenciaisProntas";
+import { resumoDaTroca } from "@/lib/trocaFuncao/solicitacao";
 import { PerguntaLoginErp, loginErpParaBanco } from "@/components/recrutamento/PerguntaLoginErp";
 import {
   MEDIDAS, erroDaMedida, exigeChecarVerbal, medidaPor, statusDaMedida,
@@ -354,7 +355,7 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
     // Mudança de função: mesmo caminho da demissão — quem pede acompanha aqui
     // em vez de ter que perguntar com quem a solicitação está.
     const tf = await db.from("SISTEMA_SOLICITACOES_TROCA_FUNCAO")
-      .select("id, colaborador_nome, cargo_atual, cargo_novo, status, criado_em, atualizado_em")
+      .select("id, colaborador_nome, cargo_atual, cargo_novo, tipo, horario_atual, horario_novo, posto_atual_codigo, posto_atual_nome, posto_novo_codigo, posto_novo_nome, status, criado_em, atualizado_em")
       .eq("solicitante_email", email).order("criado_em", { ascending: false }).limit(30);
 
     // Chamado é por auth.uid (a tabela usa solicitante_id), não por e-mail.
@@ -383,7 +384,7 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
       ...(ad.data ?? []).map(r => ({ tipo: "Advertência", icon: "⚠️", id: r.id, titulo: `Advertência ${r.tipo_advertencia || ""} — ${r.colaborador_nome || ""}`, status: r.status, data: r.created_at, statusDesde: r.status_changed_at || r.created_at, excecao: r.excecao })),
       ...(tf.data ?? []).map(r => ({
         tipo: "Mudança de Função", icon: "🔀", id: r.id,
-        titulo: `${r.colaborador_nome || ""} — ${r.cargo_atual || "?"} → ${r.cargo_novo || "?"}`,
+        titulo: `${r.colaborador_nome || ""} — ${resumoDaTroca(r)}`,
         status: r.status, data: r.criado_em,
         statusDesde: r.atualizado_em || r.criado_em,
       })),

@@ -23,6 +23,10 @@ export interface EmpregadoEscolhido {
   cpf: string;
   cargo: string;
   posto: string;
+  /** EMPREGADOS."Posto" — o posto de trabalho da Senior (PO-xxxxx). */
+  postoCodigo: string;
+  /** EMPREGADOS."Nome do Posto" — a descrição do posto de trabalho. */
+  nomePosto: string;
   filial: string;
   nomeFilial: string;
   /**
@@ -79,6 +83,8 @@ export function montarEmpregadoEscolhido(e: Record<string, any>): EmpregadoEscol
     cpf: texto(e["CPF"]),
     cargo: primeiroCampo(e, "Título do Cargo", "Nome do Cargo", "Cargo"),
     posto: primeiroCampo(e, "Organograma", "Descrição do Local", "Titulo C.Custo", "Nome Filial"),
+    postoCodigo: texto(e["Posto"]),
+    nomePosto: texto(e["Nome do Posto"]),
     filial: texto(e["Filial"]),
     nomeFilial: texto(e["Nome Filial"]),
     contrato: nomeContratoDe(e),
