@@ -10,6 +10,8 @@ import { createPortal } from "react-dom";
 // conteúdo — o mesmo motivo do portal no detalhe de Processos.
 
 export type FormatoExportacao = "excel" | "html";
+/** Quais registros: todos, só os que os filtros da tela deixaram, ou um escolhido. */
+export type AlcanceExportacao = "todos" | "filtrados" | "um";
 
 export interface OpcaoRegistro { id: string; titulo: string; detalhe?: string; busca?: string }
 
@@ -19,20 +21,29 @@ interface Props {
   /** O que vai dentro do arquivo, numa frase. */
   conteudo: string;
   registros: OpcaoRegistro[];
+  /**
+   * "Filtrados (N)" (23/10/2026, pedido do Pablo em Jurídico › Processos:
+   * "exportar filtrado"): o que os filtros da tela deixaram. Só aparece
+   * quando a tela passa — e com filtro ativo (sem filtro é igual a Todos).
+   */
+  filtrados?: { n: number; ativo: boolean };
   /** Abre já com "apenas um" marcado nesse registro. */
   inicialId?: string | null;
   /**
    * Gera e baixa. `progresso` atualiza a linha de status do modal enquanto
    * roda (ex.: "Comprovantes 120/407").
    */
-  onExportar: (formato: FormatoExportacao, id: string | null, progresso: (msg: string) => void) => Promise<void>;
+  onExportar: (formato: FormatoExportacao, id: string | null, progresso: (msg: string) => void, alcance: AlcanceExportacao) => Promise<void>;
   onFechar: () => void;
   onErro: (msg: string) => void;
 }
 
-export function ModalExportarDados({ nome, conteudo, registros, inicialId, onExportar, onFechar, onErro }: Props) {
+export function ModalExportarDados({ nome, conteudo, registros, filtrados, inicialId, onExportar, onFechar, onErro }: Props) {
   const [formato, setFormato] = useState<FormatoExportacao>("excel");
-  const [alcance, setAlcance] = useState<"todos" | "um">(inicialId ? "um" : "todos");
+  const comFiltrados = !!filtrados?.ativo;
+  // Com filtro ativo, abre em "Filtrados": quem filtrou e clicou em exportar
+  // quer, quase sempre, o que está vendo.
+  const [alcance, setAlcance] = useState<AlcanceExportacao>(inicialId ? "um" : comFiltrados ? "filtrados" : "todos");
   const [id, setId] = useState<string | null>(inicialId ?? null);
   const [busca, setBusca] = useState("");
   const [gerando, setGerando] = useState(false);
@@ -47,9 +58,10 @@ export function ModalExportarDados({ nome, conteudo, registros, inicialId, onExp
 
   const exportar = async () => {
     if (alcance === "um" && !id) { onErro(`Escolha o ${nome.um} que vai ser exportado.`); return; }
+    if (alcance === "filtrados" && !filtrados?.n) { onErro(`Nenhum ${nome.um} nos filtros atuais.`); return; }
     setGerando(true); setProgresso("Buscando os dados…");
     try {
-      await onExportar(formato, alcance === "um" ? id : null, setProgresso);
+      await onExportar(formato, alcance === "um" ? id : null, setProgresso, alcance);
       onFechar();
     } catch (e) {
       onErro("Não deu para exportar: " + (e instanceof Error ? e.message : String(e)));
@@ -92,6 +104,12 @@ export function ModalExportarDados({ nome, conteudo, registros, inicialId, onExp
             <div style={{ fontWeight: 800, fontSize: 14 }}>Todos ({registros.length})</div>
             <div style={sub}>Informações completas de todos os {nome.varios}.</div>
           </button>
+          {comFiltrados && (
+            <button type="button" style={cartao(alcance === "filtrados")} onClick={() => setAlcance("filtrados")}>
+              <div style={{ fontWeight: 800, fontSize: 14 }}>Filtrados ({filtrados!.n})</div>
+              <div style={sub}>Só os {nome.varios} que os filtros da tela deixaram.</div>
+            </button>
+          )}
           <button type="button" style={cartao(alcance === "um")} onClick={() => setAlcance("um")}>
             <div style={{ fontWeight: 800, fontSize: 14 }}>Apenas um</div>
             <div style={sub}>{escolhido ? escolhido.titulo : `Informações completas de um ${nome.um} escolhido.`}</div>

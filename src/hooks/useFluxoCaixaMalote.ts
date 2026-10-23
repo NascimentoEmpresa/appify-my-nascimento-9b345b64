@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { criarLimitadorDeConcorrencia } from "@/lib/limitarConcorrencia";
 
 // SIS-2026-0038 (achado do usuário, DESPESA SD-2026-0038 sumida do Fluxo de
 // Caixa): PostgREST limita todo select("*") sem .range() a 1000 linhas por
@@ -9,13 +10,14 @@ import { supabase } from "@/integrations/supabase/client";
 // lançamento podia sumir do cliente sem erro nenhum. Pagina em blocos de
 // 1000 até a página vir menor que o tamanho pedido.
 const TAMANHO_PAGINA = 1000;
-// Perf do Fluxo (06/10/2026): a importação histórica tem ~20 mil linhas e as
-// 20 páginas eram buscadas uma após a outra (~3,8 s só nela, de ~16 MB no
-// total). Agora as páginas saem em "ondas" de CONCORRENCIA_PAGINAS ao mesmo
-// tempo — não todas de uma vez: o banco já foi afogado por rajada de
-// requisições (incidente de 21/09, ver erroSobrecarga em App.tsx), e 4 por
-// vez ainda corta o tempo de ~20 voltas para ~5.
-const CONCORRENCIA_PAGINAS = 4;
+// Incidente 23/10/2026: cada uma das seis fontes abria a sua própria onda de
+// quatro páginas. Na prática, o Promise.all abaixo chegava a 24 consultas
+// simultâneas, além de permissões/notificações da abertura da página, e o
+// pool devolvia PGRST000/502/504. O limite precisa valer para o Fluxo INTEIRO,
+// não para cada fonte. Duas conexões deixam folga para o restante do ERP;
+// com ~20 mil importações, a carga continua em poucos segundos sem afogar o
+// banco.
+const CONCORRENCIA_TOTAL_FLUXO = 2;
 // Ordenação das fontes. Paginação sem ORDER BY pode repetir/pular linhas entre
 // páginas (SIS-2026-0569), e ordenar por uma chave que repete (despesa_id é
 // compartilhado por todas as linhas de um rateio/parcelamento) também. Por
@@ -28,22 +30,24 @@ const ORDEM_IMPORTACAO = ["despesa_id", "linha_id"];
 // fatura), então o desempate precisa incluir a despesa e a parcela de ORIGEM.
 const ORDEM_CONSOLIDADA = ["despesa_id", "despesa_id_origem", "numero_parcela_origem", "contrato_id", "valor"];
 
-async function buscarPagina(tabela: string, ordenarPor: string[], pagina: number): Promise<any[]> {
-  let q = (supabase as any).from(tabela).select("*");
-  for (const col of ordenarPor) q = q.order(col, { ascending: true });
-  const { data, error } = await q.range(pagina * TAMANHO_PAGINA, pagina * TAMANHO_PAGINA + TAMANHO_PAGINA - 1);
-  if (error) throw error;
-  return data ?? [];
+type ExecutarLimitado = ReturnType<typeof criarLimitadorDeConcorrencia>;
+
+async function buscarPagina(tabela: string, ordenarPor: string[], pagina: number, executar: ExecutarLimitado): Promise<any[]> {
+  return executar(async () => {
+    let q = (supabase as any).from(tabela).select("*");
+    for (const col of ordenarPor) q = q.order(col, { ascending: true });
+    const { data, error } = await q.range(pagina * TAMANHO_PAGINA, pagina * TAMANHO_PAGINA + TAMANHO_PAGINA - 1);
+    if (error) throw error;
+    return data ?? [];
+  });
 }
 
-async function buscarTodasLinhas(tabela: string, ordenarPor: string[] = ORDEM_FONTES): Promise<any[]> {
+async function buscarTodasLinhas(tabela: string, ordenarPor: string[] = ORDEM_FONTES, executar = criarLimitadorDeConcorrencia(1)): Promise<any[]> {
   const linhas: any[] = [];
-  for (let onda = 0; ; onda += 1) {
-    const paginas = Array.from({ length: CONCORRENCIA_PAGINAS }, (_, i) => onda * CONCORRENCIA_PAGINAS + i);
-    const resultados = await Promise.all(paginas.map((p) => buscarPagina(tabela, ordenarPor, p)));
-    for (const dados of resultados) linhas.push(...dados);
-    // Onda terminou quando alguma página veio incompleta (a última).
-    if (resultados.some((dados) => dados.length < TAMANHO_PAGINA)) break;
+  for (let pagina = 0; ; pagina += 1) {
+    const dados = await buscarPagina(tabela, ordenarPor, pagina, executar);
+    linhas.push(...dados);
+    if (dados.length < TAMANHO_PAGINA) break;
   }
   return linhas;
 }
@@ -132,7 +136,8 @@ export function useFluxoCaixaMalote() {
   return useQuery({
     queryKey: ["fluxo_caixa_malote"],
     queryFn: async () => {
-      const linhas = (await buscarTodasLinhas("v_malote_pagamento_fluxo_caixa")) as FluxoCaixaMaloteLinha[];
+      const executar = criarLimitadorDeConcorrencia(CONCORRENCIA_TOTAL_FLUXO);
+      const linhas = (await buscarTodasLinhas("v_malote_pagamento_fluxo_caixa", ORDEM_FONTES, executar)) as FluxoCaixaMaloteLinha[];
       linhas.sort((a, b) => (b.data_pagamento ?? "").localeCompare(a.data_pagamento ?? ""));
       return linhas;
     },
@@ -158,6 +163,7 @@ export function useFluxoCaixaCombinado() {
     staleTime: 120_000,
     gcTime: 1_800_000,
     queryFn: async () => {
+      const executar = criarLimitadorDeConcorrencia(CONCORRENCIA_TOTAL_FLUXO);
       // SIS-2026-0473: Aplicações Financeiras entra como DUAS views — aplicar
       // (saída) e resgate (entrada) — pelo mesmo motivo de não dar pra
       // representar as duas pontas de uma "aplicação com resgate" numa
@@ -167,20 +173,20 @@ export function useFluxoCaixaCombinado() {
         // SIS-2026-0632: cartão com "fatura consolidada no Fluxo" (2719) vira 1 linha
         // por fatura, no vencimento. Migration 20261008000005 ainda não aplicada
         // (view/coluna ausente) -> cai na view de sempre, 1 linha por despesa.
-        buscarTodasLinhas("v_malote_pagamento_fluxo_caixa_consolidado", ORDEM_CONSOLIDADA).catch((e: any) => {
-          if (e?.code === "PGRST205" || e?.code === "42P01" || e?.code === "42703") return buscarTodasLinhas("v_malote_pagamento_fluxo_caixa");
+        buscarTodasLinhas("v_malote_pagamento_fluxo_caixa_consolidado", ORDEM_CONSOLIDADA, executar).catch((e: any) => {
+          if (e?.code === "PGRST205" || e?.code === "42P01" || e?.code === "42703") return buscarTodasLinhas("v_malote_pagamento_fluxo_caixa", ORDEM_FONTES, executar);
           throw e;
         }),
-        buscarTodasLinhas("v_debito_automatico_fluxo_caixa"),
-        buscarTodasLinhas("v_cartao_fatura_fluxo_caixa"),
-        buscarTodasLinhas("v_aplicacao_financeira_fluxo_caixa"),
-        buscarTodasLinhas("v_aplicacao_financeira_resgate_fluxo_caixa"),
+        buscarTodasLinhas("v_debito_automatico_fluxo_caixa", ORDEM_FONTES, executar),
+        buscarTodasLinhas("v_cartao_fatura_fluxo_caixa", ORDEM_FONTES, executar),
+        buscarTodasLinhas("v_aplicacao_financeira_fluxo_caixa", ORDEM_FONTES, executar),
+        buscarTodasLinhas("v_aplicacao_financeira_resgate_fluxo_caixa", ORDEM_FONTES, executar),
         // SIS-2026-0569: planilha de Fluxo de Caixa 2026 importada. Migration
         // não se auto-aplica — se o código subir antes dela, a view ainda
         // não existe; sem este guard a tela inteira do Fluxo quebraria.
-        buscarTodasLinhas("v_fluxo_caixa_importado_fluxo_caixa", ORDEM_IMPORTACAO)
+        buscarTodasLinhas("v_fluxo_caixa_importado_fluxo_caixa", ORDEM_IMPORTACAO, executar)
           // linha_id ainda não existe (migration 20261006000002 não aplicada).
-          .catch((e: any) => (e?.code === "42703" ? buscarTodasLinhas("v_fluxo_caixa_importado_fluxo_caixa", ["despesa_id"]) : Promise.reject(e)))
+          .catch((e: any) => (e?.code === "42703" ? buscarTodasLinhas("v_fluxo_caixa_importado_fluxo_caixa", ["despesa_id"], executar) : Promise.reject(e)))
           .catch((e: any) => {
             if (e?.code === "PGRST205" || e?.code === "42P01") return [];
             throw e;
@@ -209,13 +215,15 @@ export function useFluxoCaixaCombinado() {
 // a Conciliação Bancária lê useFluxoCaixaCombinado para casar com o extrato, e algo que ainda
 // não foi pago não pode entrar nessa conciliação. Migration 20261014000003 ainda não aplicada
 // (view ausente) -> lista vazia, a tela segue só com o que já existia.
-export function useFluxoCaixaPrevisto() {
+export function useFluxoCaixaPrevisto(ativo = true) {
   return useQuery({
     queryKey: ["fluxo_caixa_previsto"],
     staleTime: 60_000,
+    enabled: ativo,
     queryFn: async () => {
       try {
-        const linhas = (await buscarTodasLinhas("v_fluxo_caixa_previsto")) as FluxoCaixaMaloteLinha[];
+        const executar = criarLimitadorDeConcorrencia(CONCORRENCIA_TOTAL_FLUXO);
+        const linhas = (await buscarTodasLinhas("v_fluxo_caixa_previsto", ORDEM_FONTES, executar)) as FluxoCaixaMaloteLinha[];
         return linhas;
       } catch (e: any) {
         if (e?.code === "PGRST205" || e?.code === "42P01") return [] as FluxoCaixaMaloteLinha[];

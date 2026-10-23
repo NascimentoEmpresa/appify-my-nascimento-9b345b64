@@ -21,6 +21,7 @@
 import { PASSOS_FLUXO } from "@/lib/recrutamento/fluxoStatus";
 import { rotuloStatusVaga } from "@/lib/recrutamento/vagaRegras";
 import { vagaConcluida, vagaEmAndamento } from "@/lib/recrutamento/vagaEmAndamento";
+import { STATUS_VAGA_ENCERRADA_RESP, vagaEncerradaSemResponsavel } from "@/lib/recrutamento/responsavelVaga";
 
 /**
  * Todos os status reais da vaga, na ordem do fluxo (o mesmo do botão Status:
@@ -99,9 +100,22 @@ export function alternarOpcao(marcados: readonly string[], opcao: Pick<OpcaoStat
   return [...marcados, ...opcao.status.filter((s) => !marcados.includes(s))];
 }
 
-/** O status passa nas marcações? Nada marcado = todos. */
-export const passaNosStatusMarcados = (status: string | null | undefined, marcados: readonly string[]): boolean =>
-  marcados.length === 0 || marcados.includes(limpo(status));
+/**
+ * O status passa nas marcações? Nada marcado = todos — ou, com
+ * `semEncerradas` (a lista da Gestão Recrutamento, 23/10/2026), todos MENOS
+ * as encerradas. Pablo: "os concluídos, reprovados e contratados ficam fora
+ * geral; só se eu filtrar nos status eles aparecem". Os cards do topo não
+ * usam `semEncerradas` (Concluídas/Reprovadas mostram o total).
+ */
+export const passaNosStatusMarcados = (status: string | null | undefined, marcados: readonly string[], semEncerradas = false): boolean =>
+  marcados.length ? marcados.includes(limpo(status)) : !semEncerradas || !vagaEncerradaSemResponsavel(status);
+
+/** O mesmo "sem encerradas" num builder do PostgREST (Contratado/Reprovada/Cancelada + Concluído…). */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- builder do PostgREST; o tipo exato muda a cada .select()
+export function filtrarSemEncerradas<Q extends { not: (...a: any[]) => Q }>(q: Q): Q {
+  const lista = STATUS_VAGA_ENCERRADA_RESP.map((s) => `"${s}"`).join(",");
+  return q.not("status", "in", `(${lista})`).not("status", "like", "Concluído%");
+}
 
 /** Os atalhos da tela (val do botão): "" = Todas. Mesma regra da consulta (aplicarFiltros). */
 export const ATALHO_EM_PROCESSO = "em_processo";
@@ -124,10 +138,12 @@ export function passaNoAtalho(status: string | null | undefined, atalho: string,
  */
 export function passaNoStatusDaLista(
   status: string | null | undefined,
-  filtro: { atalho: string; marcados: readonly string[]; statusSelecao?: readonly string[] },
+  filtro: { atalho: string; marcados: readonly string[]; statusSelecao?: readonly string[]; semEncerradas?: boolean },
   outros = true,
 ): boolean {
-  return outros && passaNoAtalho(status, filtro.atalho, filtro.statusSelecao) && passaNosStatusMarcados(status, filtro.marcados);
+  // Sem encerradas só quando nem atalho nem marcação dizem outra coisa.
+  const semEncerradas = !!filtro.semEncerradas && !filtro.atalho;
+  return outros && passaNoAtalho(status, filtro.atalho, filtro.statusSelecao) && passaNosStatusMarcados(status, filtro.marcados, semEncerradas);
 }
 
 /** Texto do botão: "Status" · "Status: Reprovada" · "Status (3)". */

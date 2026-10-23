@@ -44,9 +44,9 @@ import {
 } from "@/hooks/useResponsaveisDasVagas";
 import { bloqueioDaVaga, motivoDesistencia, primeiroNome, responsavelAtual, vagaDistribuida } from "@/lib/recrutamento/distribuicaoVagas";
 import { NIVEIS_JURIDICO, NIVEL_OK, eventoParecerJuridico, nivelJuridico, seloJuridico, statusJuridicoCard } from "@/lib/recrutamento/parecerJuridico";
-import { STATUS_COM_RESPONSAVEL, STATUS_FILA_APROVACAO, alvoDoFiltro, devePerguntarAssumir, textoConfirmarAssumir, vagaTemResponsavel, type FiltroResponsavel } from "@/lib/recrutamento/responsavelVaga";
+import { STATUS_COM_RESPONSAVEL, STATUS_FILA_APROVACAO, alvoDoFiltro, devePerguntarAssumir, textoConfirmarAssumir, vagaEncerradaSemResponsavel, vagaTemResponsavel, type FiltroResponsavel } from "@/lib/recrutamento/responsavelVaga";
 import { vagaTemEtapa } from "@/lib/recrutamento/statusDetalhado";
-import { alternarOpcao, opcaoMarcada, opcoesStatusVaga, passaNosStatusMarcados, rotuloBotaoStatus } from "@/lib/recrutamento/filtroStatusVaga";
+import { alternarOpcao, filtrarSemEncerradas, opcaoMarcada, opcoesStatusVaga, passaNosStatusMarcados, rotuloBotaoStatus } from "@/lib/recrutamento/filtroStatusVaga";
 import { rotuloEtapaCandidato } from "@/lib/recrutamento/rotuloEtapa";
 import { EnxovalAdmissao, type EnxovalAdmissaoHandle } from "@/components/recrutamento/EnxovalAdmissao";
 import { PedidoComprasCandidato } from "@/components/recrutamento/PedidoComprasCandidato";
@@ -829,6 +829,11 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
     // alarga o recorte do outro. Atalho e marcações não somam — a tela zera
     // um quando o outro é usado.
     if (statusMarcados.length) q = q.in("status", statusMarcados);
+    // Nada marcado no Recrutamento: tudo MENOS as encerradas (23/10/2026,
+    // filtroStatusVaga.ts). "Os concluídos, reprovados e contratados ficam
+    // fora geral; só se eu filtrar nos status eles aparecem." As filas da
+    // etapa 1 têm atalhos próprios (Concluídas/Reprovadas) e não entram aqui.
+    else if (!soEtapa1 && !statusFilter) q = filtrarSemEncerradas(q);
     if (statusFilter === "em_processo") {
       q = filtrarEmAndamento(q);
     } else if (statusFilter === FILTRO_SELECAO) {
@@ -841,7 +846,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
       q = q.eq("status", statusFilter);
     }
     return q;
-  }, [aplicarFiltrosSemStatus, statusFilter, statusMarcados, buscaId]);
+  }, [aplicarFiltrosSemStatus, statusFilter, statusMarcados, buscaId, soEtapa1]);
 
   // ── Carregar Lista ────────────────────────────────────────────
   const listaReq = useRef(0);
@@ -856,10 +861,12 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const aplicarResp = useCallback((q: any) => {
     if (alvoResp.tipo === "todos") return q;
-    // Sem responsável: só em andamento. Por pessoa: inclusive as que ela já fechou (Contratado,
-    // Concluído…) — só as filas de aprovação ficam de fora (responsavelVaga.ts).
+    // Sem responsável: só em andamento. Por pessoa: o que está com ela AGORA —
+    // sem as filas de aprovação nem as encerradas (23/10/2026: vaga Contratado,
+    // Concluído…, Reprovada ou Cancelada não está com ninguém; responsavelVaga.ts).
+    // Marcar Reprovada + uma pessoa, portanto, não traz nada — de propósito.
     if (alvoResp.tipo === "sem") return q.in("status", [...STATUS_COM_RESPONSAVEL]).is("resp_vaga", null);
-    return q.not("status", "in", `(${STATUS_FILA_APROVACAO.map((s) => `"${s}"`).join(",")})`).eq("resp_vaga.responsavel_id", alvoResp.id);
+    return filtrarSemEncerradas(q.not("status", "in", `(${STATUS_FILA_APROVACAO.map((s) => `"${s}"`).join(",")})`)).eq("resp_vaga.responsavel_id", alvoResp.id);
   }, [alvoResp]);
 
   const loadLista = useCallback(async () => {
@@ -1213,16 +1220,17 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
   // Vagas transferidas PARA MIM ainda sem ciente (mig 20261014000047) — o
   // aviso do topo, que vale para todas as páginas da tabela. Banco sem a
   // migration: a consulta falha e o aviso simplesmente não aparece.
-  type MinhaNova = { vaga_id: number; transferida_em: string | null; transferida_por_nome: string | null; ciente_em: string | null; vaga?: { cargo?: string | null; contrato?: string | null } | null };
+  type MinhaNova = { vaga_id: number; transferida_em: string | null; transferida_por_nome: string | null; ciente_em: string | null; vaga?: { cargo?: string | null; contrato?: string | null; status?: string | null } | null };
   const [minhasNovas, setMinhasNovas] = useState<MinhaNova[]>([]);
   const loadMinhasNovas = useCallback(async () => {
     if (!user?.id) return;
     const { data, error } = await sb.from("SISTEMA_RECRUTAMENTO_RESPONSAVEL")
-      .select("vaga_id,transferida_em,transferida_por_nome,ciente_em,vaga:SISTEMA_RECRUTAMENTO(cargo,contrato)")
+      .select("vaga_id,transferida_em,transferida_por_nome,ciente_em,vaga:SISTEMA_RECRUTAMENTO(cargo,contrato,status)")
       .eq("responsavel_id", user.id).not("transferida_em", "is", null)
       .order("transferida_em", { ascending: false });
     if (error) return;
-    setMinhasNovas(((data ?? []) as unknown as MinhaNova[]).filter(x => novaDemanda({ ...x, responsavel_id: user.id, responsavel_nome: "", origem: "manual", atualizado_em: "" })));
+    // Vaga já encerrada não é demanda de ninguém (23/10/2026).
+    setMinhasNovas(((data ?? []) as unknown as MinhaNova[]).filter(x => !vagaEncerradaSemResponsavel(x.vaga?.status) && novaDemanda({ ...x, responsavel_id: user.id, responsavel_nome: "", origem: "manual", atualizado_em: "" })));
   }, [user?.id]);
   useEffect(() => { loadMinhasNovas(); }, [loadMinhasNovas, items, kanbanData]);
   useEffect(() => {
@@ -2297,6 +2305,9 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
   };
 
   const renderResponsavel = (s: Solicitacao) => {
+    // Vaga encerrada não está com ninguém (23/10/2026): sem selo, sem "NOVA",
+    // sem "Tornar-me responsável". Quem cuidou e quem encerrou ficam no histórico.
+    if (vagaEncerradaSemResponsavel(s.status)) return null;
     const r = responsaveisVagas[s.id];
     const aberto = respMenu?.id === s.id;
     // Distribuída pela gestão (mig 20261020000050): troca só no campo
@@ -2427,6 +2438,11 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
   };
 
   const renderRecrutadora = (s: Solicitacao) => {
+    if (vagaEncerradaSemResponsavel(s.status)) return (
+      <div style={{ marginBottom: 12, padding: "10px 12px", borderRadius: 10, border: "1px solid #e2e8f0", background: "#f8fafc", fontSize: 12.5, color: "#64748b", fontWeight: 600 }}>
+        Vaga encerrada — sem responsável. Quem cuidou dela e quem a encerrou estão no histórico.
+      </div>
+    );
     const r = responsaveisVagas[s.id];
     const distribuida = vagaDistribuida(r);
     const atual = responsavelAtual(r, admissaoVagas[s.id]);
@@ -2467,6 +2483,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
 
   /** Coluna "Responsável atual": a recrutadora, ou a Admissão enquanto houver candidato esperando por ela. */
   const renderResponsavelAtual = (s: Solicitacao) => {
+    if (vagaEncerradaSemResponsavel(s.status)) return <span style={{ color: "#cbd5e1" }} title="Vaga encerrada — sem responsável. Quem cuidou está no histórico.">—</span>;
     const atual = responsavelAtual(responsaveisVagas[s.id], admissaoVagas[s.id]);
     if (!atual.nome && !atual.etapa) return <span style={{ color: "#cbd5e1" }}>—</span>;
     return (
@@ -3435,6 +3452,11 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
                     <span style={{ fontSize: 11, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase", letterSpacing: ".5px" }}>Mostrar só estes status</span>
                     {statusMarcados.length > 0 && <button onClick={() => { setStatusMarcados([]); setPage(1); }} style={{ background: "none", border: "none", color: "#0f3171", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>Limpar</button>}
                   </div>
+                  {!soEtapa1 && statusMarcados.length === 0 && (
+                    <div style={{ fontSize: 11, color: "#64748b", padding: "0 4px 8px", lineHeight: 1.4 }}>
+                      Sem marcar nada, a lista mostra só o que está em processo — Contratado, Concluído, Reprovada e Cancelada aparecem só se marcados.
+                    </div>
+                  )}
                   {opcoesStatus.length === 0 ? (
                     <div style={{ fontSize: 12, color: "#94a3b8", padding: "8px 6px" }}>Nenhuma vaga com esses filtros.</div>
                   ) : opcoesStatus.map(o => {
@@ -3482,7 +3504,7 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
                   <>
                     <div onClick={() => setShowRespFiltro(false)} style={{ position: "fixed", inset: 0, zIndex: 40 }} />
                     <div style={{ position: "absolute", top: "100%", left: 0, zIndex: 50, marginTop: 6, background: "#fff", border: "1px solid #e2e8f0", borderRadius: 12, boxShadow: "0 16px 40px rgba(15,23,42,.16)", padding: 10, width: 290, maxWidth: "90vw", maxHeight: 380, overflowY: "auto" }}>
-                      <div style={{ fontSize: 11, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase", letterSpacing: ".5px", padding: "0 4px 8px" }}>Vagas de cada responsável (inclui as encerradas)</div>
+                      <div style={{ fontSize: 11, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase", letterSpacing: ".5px", padding: "0 4px 8px" }}>Vagas de cada responsável (só em processo)</div>
                       {opcao("", "Todas (sem filtro)", 0)}
                       {opcao("eu", "Minhas vagas", meus, true)}
                       {opcao("sem", "Sem responsável", sem)}
