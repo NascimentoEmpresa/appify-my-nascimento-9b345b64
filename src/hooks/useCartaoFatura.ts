@@ -81,9 +81,10 @@ export interface ItemFaturaLixeira {
   competencia: string;
 }
 
-export function useCartaoFaturaLixeira() {
+export function useCartaoFaturaLixeira(ativo = true) {
   return useQuery({
     queryKey: [FATURA_KEY, "lixeira"],
+    enabled: ativo,
     queryFn: async () => {
       const { data, error } = await (supabase as any)
         .from("malote_cartao_fatura_item")

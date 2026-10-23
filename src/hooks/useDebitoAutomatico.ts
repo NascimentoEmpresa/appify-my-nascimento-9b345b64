@@ -94,9 +94,10 @@ export function useDebitoAutomaticoLista() {
 
 // SIS-2026-0413: itens na lixeira (soft-deleted) — usado pelo modal de
 // Lixeira do Fluxo de Caixa.
-export function useDebitoAutomaticoLixeira() {
+export function useDebitoAutomaticoLixeira(ativo = true) {
   return useQuery({
     queryKey: [LISTA_KEY, "lixeira"],
+    enabled: ativo,
     queryFn: async () => {
       const { data, error } = await (supabase as any)
         .from("v_debito_automatico_lista")

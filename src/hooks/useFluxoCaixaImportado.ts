@@ -60,10 +60,11 @@ export interface ImportadaNaLixeira {
 }
 
 // Só o que um USUÁRIO excluiu pela tela (deleted_by preenchido): o que a carga/conferência já tinha excluído fica de fora.
-export function useImportadaLixeira() {
+export function useImportadaLixeira(ativo = true) {
   return useQuery({
     queryKey: [LIXEIRA_KEY],
     staleTime: 30_000,
+    enabled: ativo,
     queryFn: async () => {
       const { data, error } = await (supabase as any)
         .from("fluxo_caixa_importado")
