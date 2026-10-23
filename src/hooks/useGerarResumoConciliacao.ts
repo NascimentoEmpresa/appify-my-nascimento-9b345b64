@@ -1,6 +1,6 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
-import { parseOFX, type OFXTransaction } from "@/lib/conciliacaoBancariaEngine";
+import { parseOFX, parseSaldoFinalOFX, saldoFinalNoDia, type OFXTransaction } from "@/lib/conciliacaoBancariaEngine";
 import { linhasDoFluxoParaConciliacao, processarConciliacao } from "@/lib/conciliacaoCalculo";
 import type { ConciliacaoFluxoCaixaArquivo, ConciliacaoFluxoCaixaSalva } from "@/hooks/useConciliacaoFluxoCaixa";
 import type { FluxoCaixaMaloteLinha } from "@/hooks/useFluxoCaixaMalote";
@@ -91,6 +91,68 @@ export function useGerarResumoConciliacoes() {
         }
       }
       return { ok, erros };
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: [KEY] }),
+  });
+}
+
+// SIS-2026-0713: conciliações salvas antes do saldo final do extrato (migration 20261023000300): relê o .OFX guardado, pega o LEDGERBAL e
+// grava o saldo do último dia do período. Não precisa do Fluxo. Sem LEDGERBAL no arquivo, o saldo continua "não informado".
+export function conciliacaoSemSaldoFinal(c: Pick<ConciliacaoFluxoCaixaSalva, "saldo_final_extrato" | "banco_id">): boolean {
+  return c.saldo_final_extrato == null && !!c.banco_id;
+}
+
+async function carregarSaldoFinalUma(c: ConciliacaoFluxoCaixaSalva): Promise<boolean> {
+  const { data: arquivos, error: errArq } = await (supabase as any)
+    .from("financeiro_conciliacao_fluxo_caixa_arquivo")
+    .select("nome_arquivo, storage_path")
+    .eq("conciliacao_id", c.id);
+  if (errArq) throw errArq;
+  const lista = (arquivos ?? []) as Pick<ConciliacaoFluxoCaixaArquivo, "nome_arquivo" | "storage_path">[];
+  if (lista.length === 0) throw new Error("sem o arquivo .OFX guardado");
+
+  const trns: OFXTransaction[] = [];
+  let saldo: { valor: number; data: string | null } | null = null;
+  for (const a of lista) {
+    const { data: blob, error } = await supabase.storage.from(BUCKET).download(a.storage_path);
+    if (error || !blob) throw new Error(`não consegui abrir ${a.nome_arquivo}: ${error?.message ?? "arquivo vazio"}`);
+    const texto = await blob.text();
+    trns.push(...parseOFX(texto, a.nome_arquivo));
+    const sf = parseSaldoFinalOFX(texto);
+    if (sf && (!saldo || (sf.data ?? "") >= (saldo.data ?? ""))) saldo = sf;
+  }
+  if (!saldo) return false;
+  const valor = saldoFinalNoDia(saldo, trns, c.data_fim);
+  const { data, error } = await (supabase as any)
+    .from("financeiro_conciliacao_fluxo_caixa")
+    .update({ saldo_final_extrato: valor, saldo_final_extrato_data: saldo.data && saldo.data > c.data_fim ? c.data_fim : saldo.data })
+    .eq("id", c.id)
+    .select("id");
+  if (error) {
+    if (error.code === "PGRST204" || error.code === "42703") throw new MigrationPendente("Falta a migration 20261023000300 (saldo final do extrato) no banco.");
+    throw error;
+  }
+  if (!data || data.length === 0) throw new Error("sem permissão para atualizar (ação Alterar em Conciliação Bancária)");
+  return true;
+}
+
+export function useCarregarSaldoFinalConciliacoes() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (itens: ConciliacaoFluxoCaixaSalva[]) => {
+      let ok = 0;
+      let semSaldo = 0;
+      const erros: string[] = [];
+      for (const c of itens) {
+        try {
+          if (await carregarSaldoFinalUma(c)) ok += 1;
+          else semSaldo += 1;
+        } catch (e: any) {
+          if (e instanceof MigrationPendente) { erros.unshift(e.message); break; }
+          erros.push(`${c.data_inicio} a ${c.data_fim}: ${e?.message ?? "erro"}`);
+        }
+      }
+      return { ok, semSaldo, erros };
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: [KEY] }),
   });

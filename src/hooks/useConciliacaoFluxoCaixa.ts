@@ -111,6 +111,9 @@ export interface ConciliacaoFluxoCaixaSalva {
   dias_ok?: number | null;
   // Resumo dia a dia (migration 20261022000270).
   resumo_dias?: DiaConciliado[] | null;
+  // SIS-2026-0713: saldo final do extrato (LEDGERBAL do OFX, corrigível à mão) — migration 20261023000300. null = não informado.
+  saldo_final_extrato?: number | null;
+  saldo_final_extrato_data?: string | null;
 }
 
 export interface ConciliacaoFluxoCaixaArquivo {
@@ -202,6 +205,8 @@ export interface SalvarConciliacaoInput {
   extratoSaidas?: number | null;
   // O que bateu (Fluxo × extrato): gravado para a lista de conciliações salvas mostrar valores mesmo sem divergência.
   resumo?: ResumoConciliacao | null;
+  saldoFinalExtrato?: number | null;
+  saldoFinalExtratoData?: string | null;
   arquivosOfx: File[];
   linhas: Omit<ConciliacaoFluxoCaixaLinha, "id" | "conciliacao_id">[];
 }
@@ -247,10 +252,13 @@ export function useSalvarConciliacaoFluxoCaixa() {
           }
         : {};
       const diasCol = r ? { resumo_dias: r.dias } : {};
+      const saldoFinalCols = input.saldoFinalExtrato != null ? { saldo_final_extrato: input.saldoFinalExtrato, saldo_final_extrato_data: input.saldoFinalExtratoData ?? null } : {};
       const totaisExtrato = { extrato_entradas: input.extratoEntradas ?? null, extrato_saidas: input.extratoSaidas ?? null };
       const colunaAusente = (e: { code?: string } | null) => !!e && (e.code === "PGRST204" || e.code === "42703");
       // Migrations 20261022000270 (dia a dia), 20261022000260 (resumo) e 20261014000006 (totais do extrato) ainda não aplicadas: tenta sem as colunas que faltam.
-      let { data: conciliacao, error: errHeader } = await inserir({ ...cabecalho, ...totaisExtrato, ...resumoCols, ...diasCol });
+      let { data: conciliacao, error: errHeader } = await inserir({ ...cabecalho, ...totaisExtrato, ...resumoCols, ...diasCol, ...saldoFinalCols });
+      // Migration 20261023000300 (saldo final do extrato) ainda não aplicada: tenta sem essas colunas.
+      if (colunaAusente(errHeader)) ({ data: conciliacao, error: errHeader } = await inserir({ ...cabecalho, ...totaisExtrato, ...resumoCols, ...diasCol }));
       if (colunaAusente(errHeader)) ({ data: conciliacao, error: errHeader } = await inserir({ ...cabecalho, ...totaisExtrato, ...resumoCols }));
       if (colunaAusente(errHeader)) ({ data: conciliacao, error: errHeader } = await inserir({ ...cabecalho, ...totaisExtrato }));
       if (colunaAusente(errHeader)) ({ data: conciliacao, error: errHeader } = await inserir(cabecalho));
@@ -277,5 +285,51 @@ export function useSalvarConciliacaoFluxoCaixa() {
       return conciliacaoId;
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: [KEY] }),
+  });
+}
+
+// ── SIS-2026-0713: saldo inicial de janeiro informado à mão ──────────────────
+
+export interface SaldoInicialConciliacao {
+  id: string;
+  empresa_id: string;
+  banco_id: string;
+  conta: string;
+  ano: number;
+  valor: number;
+  updated_at: string;
+}
+
+const KEY_SALDO_INICIAL = "conciliacao_saldo_inicial";
+
+export function useSaldosIniciaisConciliacao() {
+  return useQuery({
+    queryKey: [KEY_SALDO_INICIAL],
+    queryFn: async () => {
+      const { data, error } = await (supabase as any).from("financeiro_conciliacao_saldo_inicial").select("*").order("ano");
+      if (error) throw error;
+      return ((data ?? []) as SaldoInicialConciliacao[]).map((s) => ({ ...s, valor: Number(s.valor) }));
+    },
+  });
+}
+
+export function useSalvarSaldoInicialConciliacao() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: { empresaId: string; bancoId: string; conta: string; ano: number; valor: number | null }) => {
+      const { data: auth } = await supabase.auth.getUser();
+      const chave = { empresa_id: input.empresaId, banco_id: input.bancoId, conta: input.conta, ano: input.ano };
+      // Valor em branco = remove a base (volta a "não informado").
+      if (input.valor == null) {
+        const { error } = await (supabase as any).from("financeiro_conciliacao_saldo_inicial").delete().match(chave);
+        if (error) throw error;
+        return;
+      }
+      const { error } = await (supabase as any)
+        .from("financeiro_conciliacao_saldo_inicial")
+        .upsert({ ...chave, valor: input.valor, updated_by: auth.user?.id ?? null, updated_at: new Date().toISOString() }, { onConflict: "empresa_id,banco_id,conta,ano" });
+      if (error) throw error;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: [KEY_SALDO_INICIAL] }),
   });
 }

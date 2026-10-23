@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useRef, useCallback, type MouseEvent as ReactMouseEvent, type CSSProperties, type ReactNode } from "react";
 import {
   Activity, AlertTriangle, Ban, Building2, CalendarDays, Check, CheckCircle2, ChevronLeft, ChevronRight, ClipboardList, Clock, Copy, Eye, FileSpreadsheet, FileText,
-  FolderOpen, GraduationCap, History, IdCard, Landmark, Link2, LogOut, Mail, MapPin, MessageSquare, Package, Paperclip,
+  FolderOpen, GraduationCap, History, IdCard, Landmark, Link2, ListChecks, LogOut, Mail, MapPin, MessageSquare, Package, Paperclip,
   Pencil, Phone, Scale, Search, Settings, Stethoscope, Tags, Target, Trash2, UserCheck, UserSearch, Users, X, XCircle, Zap, type LucideIcon,
 } from "lucide-react";
 import { useNavigate, useSearchParams } from "react-router-dom";
@@ -46,6 +46,7 @@ import { bloqueioDaVaga, motivoDesistencia, primeiroNome, responsavelAtual, vaga
 import { NIVEIS_JURIDICO, NIVEL_OK, eventoParecerJuridico, nivelJuridico, seloJuridico, statusJuridicoCard } from "@/lib/recrutamento/parecerJuridico";
 import { STATUS_COM_RESPONSAVEL, STATUS_FILA_APROVACAO, alvoDoFiltro, devePerguntarAssumir, textoConfirmarAssumir, vagaTemResponsavel, type FiltroResponsavel } from "@/lib/recrutamento/responsavelVaga";
 import { vagaTemEtapa } from "@/lib/recrutamento/statusDetalhado";
+import { alternarOpcao, opcaoMarcada, opcoesStatusVaga, passaNosStatusMarcados, rotuloBotaoStatus } from "@/lib/recrutamento/filtroStatusVaga";
 import { rotuloEtapaCandidato } from "@/lib/recrutamento/rotuloEtapa";
 import { EnxovalAdmissao, type EnxovalAdmissaoHandle } from "@/components/recrutamento/EnxovalAdmissao";
 import { PedidoComprasCandidato } from "@/components/recrutamento/PedidoComprasCandidato";
@@ -579,6 +580,13 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
   // vinha da aba, que PRENDIA o status e impedia ele de rever o que ja tinha
   // aprovado.
   const [statusFilter, setStatusFilter] = useState(soEtapa1 ? STATUS_ETAPA1 : "");
+  // Status com várias marcações (23/10/2026, filtroStatusVaga.ts): o filtro
+  // de Status do Excel, na tela, com a quantidade de cada um. Ou ele ou o
+  // atalho acima — marcar aqui volta o atalho para "Todas"; clicar num
+  // atalho limpa as marcações. Valores do banco (não rótulos).
+  const [statusMarcados, setStatusMarcados]         = useState<string[]>([]);
+  const [showStatusFiltro, setShowStatusFiltro]     = useState(false);
+  const [statusDasVagas, setStatusDasVagas]         = useState<{ status: string | null }[]>([]);
   // A LISTA da Diretoria em "Todas" (18/09/2026): tudo mesmo, sem o recorte
   // administrativo — pra ver e filtrar qualquer solicitação. A fila
   // "Aguardando você" e os KPIs continuam só com as administrativas.
@@ -616,7 +624,6 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
   const [search, setSearch]           = useState("");
   // Busca pelo nº da vaga (o "#" da 1ª coluna) — 09/10/2026.
   const [buscaId, setBuscaId]         = useState("");
-  const [stats, setStats]             = useState({ total: 0, pendentes: 0, ag_treinamentos: 0, em_processo: 0, contratados: 0, reprovadas: 0 });
   const [kanbanData, setKanbanData]   = useState<Record<string, Solicitacao[]>>({});
 
   // Drawer
@@ -752,32 +759,44 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
   useEffect(() => { setTab(tabs[0].tab); }, [isRH, podeRecrutar, soEtapa1]);
 
   // ── Carregar Stats ────────────────────────────────────────────
-  // Os KPIs seguem o período escolhido (dataDe/dataAte) — o resto dos filtros
-  // não, como sempre foi.
+  // Os KPIs seguem o período escolhido (dataDe/dataAte) e, desde 23/10/2026,
+  // as marcações do botão "Status" (pedido do Pablo: "os números de cima
+  // atualizando conforme muda os filtros dos status") — marcou Reprovada, o
+  // Total vira o nº de reprovadas e os outros cards zeram. O resto dos
+  // filtros não, como sempre foi. A consulta só depende do mês; as marcações
+  // filtram aqui, sem ir ao banco a cada clique.
+  type LinhaStats = { status: string; administrativa?: boolean | null; setor?: string | null };
+  const [linhasStats, setLinhasStats] = useState<LinhaStats[]>([]);
   const loadStats = useCallback(async () => {
-    const { data, error } = await lerTudo<{ status: string; administrativa?: boolean | null; setor?: string | null }>(() => {
+    const { data, error } = await lerTudo<LinhaStats>(() => {
       let q = sb.from("SISTEMA_RECRUTAMENTO").select("id, status, administrativa, setor");
       if (dataDe)  q = q.gte("created_at", `${dataDe}T00:00:00-03:00`);
       if (dataAte) q = q.lt("created_at", `${diaSeguinte(dataAte)}T00:00:00-03:00`);
       return q;
     });
     if (error || !data) return;
-    const rows: { status: string; administrativa?: boolean | null; setor?: string | null }[] = noEscopo(data);
-    setStats({
+    setLinhasStats(noEscopo(data));
+  }, [noEscopo, dataDe, dataAte]);
+  const stats = useMemo(() => {
+    const rows = linhasStats.filter(r => passaNosStatusMarcados(r.status, statusMarcados));
+    return {
       total:            rows.length,
       pendentes:        rows.filter(r => r.status === STATUS_ETAPA1).length,
       ag_treinamentos:  rows.filter(r => r.status === "Pendente Recrutamento").length,
       em_processo:      rows.filter(r => vagaEmAndamento(r.status)).length,
       contratados:      rows.filter(r => r.status === "Contratado" || String(r.status ?? "").startsWith("Concluído")).length,
       reprovadas:       rows.filter(r => r.status === "Reprovada").length,
-    });
-  }, [noEscopo, STATUS_ETAPA1, dataDe, dataAte]);
+    };
+  }, [linhasStats, statusMarcados, STATUS_ETAPA1]);
 
   // ── Filtros compartilhados ────────────────────────────────────
   // Tabela e Kanban são a MESMA consulta, só muda a apresentação — então os
   // dois aplicam exatamente os mesmos filtros (aba/status/busca).
+  //
+  // Tudo menos o status (atalho e marcações) — é o que a contagem do filtro de
+  // Status usa: cada opção mostra quanto traria com os OUTROS filtros.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- builder do PostgREST; o tipo exato muda a cada .select()
-  const aplicarFiltros = useCallback((q: any) => {
+  const aplicarFiltrosSemStatus = useCallback((q: any) => {
     // Nº da vaga digitado: vai direto nela, sem chip de status nem período —
     // senão um "Pendente…" marcado escondia a vaga que se procurou pelo #.
     // A aba "Minhas" continua valendo (não abre vaga de outro solicitante).
@@ -785,17 +804,6 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
       q = q.eq("id", Number(buscaId));
       if (tab === "minha" && user?.email) q = q.eq("solicitante_cpf", user.email);
       return q;
-    }
-    if (statusFilter === "em_processo") {
-      q = filtrarEmAndamento(q);
-    } else if (statusFilter === FILTRO_SELECAO) {
-      q = q.in("status", STATUS_SELECAO);
-    } else if (statusFilter === "concluido") {
-      // "Contratado" também é concluída (o card do topo já contava; o
-      // filtro deixava as 13 de fora).
-      q = q.or("status.eq.Contratado,status.like.Concluído%");
-    } else if (statusFilter) {
-      q = q.eq("status", statusFilter);
     }
     if (tab === "minha" && user?.email) {
       q = q.eq("solicitante_cpf", user.email);
@@ -811,7 +819,29 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
     if (dataDe)  q = q.gte("created_at", `${dataDe}T00:00:00-03:00`);
     if (dataAte) q = q.lt("created_at", `${diaSeguinte(dataAte)}T00:00:00-03:00`);
     return q;
-  }, [statusFilter, tab, search, buscaId, user, dataDe, dataAte]);
+  }, [tab, search, buscaId, user, dataDe, dataAte]);
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- builder do PostgREST; o tipo exato muda a cada .select()
+  const aplicarFiltros = useCallback((q: any) => {
+    q = aplicarFiltrosSemStatus(q);
+    if (buscaId) return q;
+    // Marcações em AND com o resto (responsável inclusive): nenhum filtro
+    // alarga o recorte do outro. Atalho e marcações não somam — a tela zera
+    // um quando o outro é usado.
+    if (statusMarcados.length) q = q.in("status", statusMarcados);
+    if (statusFilter === "em_processo") {
+      q = filtrarEmAndamento(q);
+    } else if (statusFilter === FILTRO_SELECAO) {
+      q = q.in("status", STATUS_SELECAO);
+    } else if (statusFilter === "concluido") {
+      // "Contratado" também é concluída (o card do topo já contava; o
+      // filtro deixava as 13 de fora).
+      q = q.or("status.eq.Contratado,status.like.Concluído%");
+    } else if (statusFilter) {
+      q = q.eq("status", statusFilter);
+    }
+    return q;
+  }, [aplicarFiltrosSemStatus, statusFilter, statusMarcados, buscaId]);
 
   // ── Carregar Lista ────────────────────────────────────────────
   const listaReq = useRef(0);
@@ -901,6 +931,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
     const aba = tabs.find(t => t.tab === tab)?.label;
     if (aba) f.push(["Aba", aba]);
     if (statusFilter) f.push(["Status", statusFilter === FILTRO_SELECAO ? "Pendente Seleção" : rotuloStatusVaga(statusFilter)]);
+    if (statusMarcados.length) f.push(["Status", Array.from(new Set(statusMarcados.map(rotuloStatusVaga))).join(", ")]);
     if (search) f.push(["Busca", search]);
     if (mes) f.push(["Mês da solicitação", mes.split("-").reverse().join("/")]);
     if (contratoFiltro.length) f.push(["Contratos", contratoFiltro.join(", ")]);
@@ -909,7 +940,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
       : respContagem.find(r => r.responsavel_id === respFiltro)?.responsavel_nome ?? "Pessoa escolhida"]);
     return f;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tab, statusFilter, search, mes, contratoFiltro, etiquetaFiltro, respFiltro, respContagem]);
+  }, [tab, statusFilter, statusMarcados, search, mes, contratoFiltro, etiquetaFiltro, respFiltro, respContagem]);
 
   const exportarExcel = async () => {
     setExportando(true);
@@ -991,6 +1022,23 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
     setEtiquetaCounts(porEtiqueta);
   }, [aplicarFiltros]);
 
+  // Quantas vagas em cada status, com TODOS os outros filtros (mês, aba,
+  // busca, contratos, etiquetas, responsável) e o mesmo recorte de quem vê o
+  // quê da lista — o número ao lado de cada opção é o que ela traria.
+  const loadStatusCounts = useCallback(async () => {
+    type LinhaStatus = { status: string | null; administrativa?: boolean | null; setor?: string | null };
+    const { data, error } = await lerTudo<LinhaStatus>(() => {
+      let q = sb.from("SISTEMA_RECRUTAMENTO").select(colsComResp("id,status,administrativa,setor"));
+      q = aplicarFiltrosSemStatus(q);
+      if (contratoFiltro.length && !buscaId) q = q.in("contrato", contratoFiltro);
+      if (etiquetaFiltro.length && !buscaId) q = q.overlaps("etiquetas", etiquetaFiltro);
+      return aplicarResp(q);
+    });
+    if (error || !data) return;
+    setStatusDasVagas(noEscopoLista(filtrarAdministrativas(data, podeAdministrativa)));
+  }, [aplicarFiltrosSemStatus, colsComResp, aplicarResp, contratoFiltro, etiquetaFiltro, buscaId, noEscopoLista, podeAdministrativa]);
+  const opcoesStatus = useMemo(() => opcoesStatusVaga(statusDasVagas, statusMarcados), [statusDasVagas, statusMarcados]);
+
   // ── Etiquetas ─────────────────────────────────────────────────
   // Grava a lista inteira (não "adiciona uma"): o popover mostra o estado
   // final e é ele que vai para o banco. Atualiza a linha na tabela e o
@@ -1005,6 +1053,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
 
   useEffect(() => { loadStats(); }, [loadStats]);
   useEffect(() => { loadContratoCounts(); }, [loadContratoCounts]);
+  useEffect(() => { loadStatusCounts(); }, [loadStatusCounts]);
   useEffect(() => { if (view === "tabela") loadLista(); else loadKanban(); }, [view, loadLista, loadKanban, tab, page, statusFilter, search]);
 
   const debounceSearch = (v: string) => {
@@ -3372,6 +3421,40 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
             <button onClick={() => { setEtiquetaFiltro([]); setPage(1); }} style={{ background: "none", border: "none", color: "#94a3b8", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>limpar</button>
           )}
 
+          {/* Status com várias marcações (23/10/2026) — o filtro de Status do
+              Excel, na tela. Marcar volta o atalho de status para "Todas". */}
+          <div style={{ position: "relative" }}>
+            <button onClick={() => setShowStatusFiltro(v => !v)} style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "7px 14px", borderRadius: 10, border: "1px solid #e2e8f0", background: statusMarcados.length ? "#0f3171" : "#fff", color: statusMarcados.length ? "#fff" : "#475569", fontSize: 12, fontWeight: 700, cursor: "pointer", boxShadow: "0 8px 24px rgba(15,23,42,.06)" }}>
+              <Ic i={ListChecks} />{rotuloBotaoStatus(statusMarcados, opcoesStatus)} ▾
+            </button>
+            {showStatusFiltro && (
+              <>
+                <div onClick={() => setShowStatusFiltro(false)} style={{ position: "fixed", inset: 0, zIndex: 40 }} />
+                <div style={{ position: "absolute", top: "100%", left: 0, zIndex: 50, marginTop: 6, background: "#fff", border: "1px solid #e2e8f0", borderRadius: 12, boxShadow: "0 16px 40px rgba(15,23,42,.16)", padding: 10, width: 340, maxWidth: "90vw", maxHeight: 400, overflowY: "auto" }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8, padding: "0 4px" }}>
+                    <span style={{ fontSize: 11, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase", letterSpacing: ".5px" }}>Mostrar só estes status</span>
+                    {statusMarcados.length > 0 && <button onClick={() => { setStatusMarcados([]); setPage(1); }} style={{ background: "none", border: "none", color: "#0f3171", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>Limpar</button>}
+                  </div>
+                  {opcoesStatus.length === 0 ? (
+                    <div style={{ fontSize: 12, color: "#94a3b8", padding: "8px 6px" }}>Nenhuma vaga com esses filtros.</div>
+                  ) : opcoesStatus.map(o => {
+                    const checked = opcaoMarcada(statusMarcados, o);
+                    return (
+                      <label key={o.rotulo} style={{ display: "flex", alignItems: "center", gap: 9, padding: "7px 6px", borderRadius: 8, cursor: "pointer", background: checked ? "#eef4ff" : "transparent" }}>
+                        <input type="checkbox" checked={checked} onChange={() => { setStatusMarcados(prev => alternarOpcao(prev, o)); setStatusFilter(""); setPage(1); }} style={{ width: 15, height: 15, accentColor: "#0f3171", cursor: "pointer" }} />
+                        <span style={{ flex: 1, fontSize: 13, color: "#0f172a", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{o.rotulo}</span>
+                        <span style={{ fontSize: 11, fontWeight: 800, color: "#0f3171", background: "#fff", border: "1px solid #dbe4f0", borderRadius: 20, padding: "1px 9px", minWidth: 22, textAlign: "center" }}>{o.n}</span>
+                      </label>
+                    );
+                  })}
+                </div>
+              </>
+            )}
+          </div>
+          {statusMarcados.length > 0 && (
+            <button onClick={() => { setStatusMarcados([]); setPage(1); }} style={{ background: "none", border: "none", color: "#94a3b8", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>limpar</button>
+          )}
+
           {/* Filtro "Responsável da vaga" (14/10/2026, mig 20261014000003): só
               vagas no Recrutamento/Seleção — Operacional e encerradas não entram. */}
           {!soEtapa1 && (() => {
@@ -3411,16 +3494,17 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
               </div>
             );
           })()}
-          {respFiltro && (<>
-            {/* O total do filtro à vista (14/10/2026): a tabela pagina de 20 em 20 e
-                "28 no menu × 20 na tela" parecia número errado. */}
-            {view === "tabela" && !loading && (
-              <span style={{ fontSize: 12, fontWeight: 700, color: "#0f3171", background: "#eef4ff", border: "1px solid #c7d7f5", borderRadius: 20, padding: "4px 11px" }}>
-                {total} vaga{total === 1 ? "" : "s"}{pages > 1 ? ` · página ${page} de ${pages}` : ""}
-              </span>
-            )}
+          {respFiltro && (
             <button onClick={() => { setRespFiltro(""); setPage(1); }} style={{ background: "none", border: "none", color: "#94a3b8", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>limpar</button>
-          </>)}
+          )}
+          {/* O total do filtro à vista (14/10/2026): a tabela pagina de 20 em 20 e
+              "28 no menu × 20 na tela" parecia número errado. É o count da MESMA
+              consulta da tabela — responsável E status E o resto. */}
+          {(respFiltro || statusMarcados.length > 0) && view === "tabela" && !loading && (
+            <span style={{ fontSize: 12, fontWeight: 700, color: "#0f3171", background: "#eef4ff", border: "1px solid #c7d7f5", borderRadius: 20, padding: "4px 11px" }}>
+              {total} vaga{total === 1 ? "" : "s"}{pages > 1 ? ` · página ${page} de ${pages}` : ""}
+            </span>
+          )}
           {/* Card "ASOs Agendados" (19/10/2026): no canto direito da linha dos
               filtros — as solicitações com exame marcado pelo SST e os textos
               prontos para copiar ou enviar ao candidato. Só no Recrutamento. */}
@@ -3459,9 +3543,15 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
             {/* O Operacional também filtra. Sem isto ele só via a própria fila
                 (Pendente Operacional) e não conseguia voltar no que já tinha
                 aprovado ou reprovado — nem abrir o chat daqueles casos. */}
+            {/* No Recrutamento os atalhos (Todas / Pendente Recrutamento /
+                Pendente Seleção / Em Processo / Concluídas / Reprovados) saíram
+                em 23/10/2026, a pedido do Pablo: o botão "Status", com várias
+                marcações e a quantidade, faz o mesmo. Ficam só nas filas da
+                etapa 1 (Operacional/Analista/Diretoria), que abrem em
+                "Aguardando você". */}
+            {soEtapa1 && (
             <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 14 }}>
-              {(soEtapa1
-              ? [
+              {[
                 { label: "Aguardando você", val: STATUS_ETAPA1 },
                 // Aprovar pelo Operacional manda para o Recrutamento; daí em
                 // diante o caso anda sozinho. Por isso "já aprovadas" não é um
@@ -3471,23 +3561,15 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
                 { label: "Concluídas", val: "concluido" },
                 { label: "Reprovadas", val: "Reprovada" },
                 { label: "Todas", val: "" },
-              ]
-              : [
-                { label: "Todas", val: "" },
-                // Os dois "Pendente" têm acesso próprio em Acesso por Usuário
-                // (menus fantasmas da mig 20260930000225) — só organização:
-                // esconde o atalho, as vagas continuam em "Todas".
-                ...(verFiltroPendRecrutamento ? [{ label: "Pendente Recrutamento", val: "Pendente Recrutamento" }] : []),
-                ...(verFiltroPendSelecao ? [{ label: "Pendente Seleção", val: FILTRO_SELECAO }] : []),
-                { label: "Em Processo", val: "em_processo" },
-                { label: "Concluídas", val: "concluido" },
-                { label: "Reprovados", val: "Reprovada" },
-              ]).map(p => (
-                <button key={p.val} onClick={() => { setStatusFilter(p.val); setPage(1); }} style={{ padding: "5px 13px", borderRadius: 20, border: "1px solid #e2e8f0", background: statusFilter === p.val ? "#0f3171" : "#fff", color: statusFilter === p.val ? "#fff" : "#94a3b8", fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+              ].map(p => (
+                // Atalho e marcações de Status não somam: o atalho limpa as
+                // marcações e, com marcações, nenhum atalho fica aceso.
+                <button key={p.val} onClick={() => { setStatusFilter(p.val); setStatusMarcados([]); setPage(1); }} style={{ padding: "5px 13px", borderRadius: 20, border: "1px solid #e2e8f0", background: statusFilter === p.val && !statusMarcados.length ? "#0f3171" : "#fff", color: statusFilter === p.val && !statusMarcados.length ? "#fff" : "#94a3b8", fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
                   {p.label}
                 </button>
               ))}
             </div>
+            )}
 
             {/* Busca */}
             <div style={{ marginBottom: 10, display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>

@@ -12,15 +12,37 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { BuscaColaborador, type EmpregadoEscolhido } from "@/components/demissao/BuscaColaborador";
-import { ArrowRight, Building2, CheckCircle2, Loader2, Send, UserCog } from "lucide-react";
-import { localEhEscritorio, statusInicial, TABELA, fmtData } from "@/lib/trocaFuncao/solicitacao";
+import { ArrowRight, Building2, Check, CheckCircle2, ChevronsUpDown, Loader2, MapPin, Send, UserCog } from "lucide-react";
+import {
+  localEhEscritorio, statusInicial, TABELA, fmtData, validarTroca, rotuloPosto, ROTULO_TIPO,
+  type PostoTrabalho, type TipoTroca,
+} from "@/lib/trocaFuncao/solicitacao";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { solicitacaoEmAberto, type SolicitacaoEmAberto } from "@/lib/solicitacoes/duplicidade";
 
 const sb = supabase as any;
+
+const EXPLICA_TIPO: Record<TipoTroca, string> = {
+  funcao: "Muda o cargo. Informe o horário no cargo novo; o posto pode mudar junto.",
+  horario: "Aumento ou redução de carga horária, escala ou turno. Cargo e posto ficam.",
+  posto: "Muda o posto de trabalho. Cargo fica; horário só se mudar também.",
+};
+const ROTULO_DATA: Record<TipoTroca, string> = {
+  funcao: "Data da troca de função",
+  horario: "Data da troca de horário",
+  posto: "Data da troca de posto",
+};
+const QUANDO_VALE: Record<TipoTroca, string> = {
+  funcao: "a nova função",
+  horario: "o horário novo",
+  posto: "o posto novo",
+};
 
 /**
  * Encarregado — pedir a mudança de função de alguém da equipe.
@@ -60,10 +82,16 @@ export default function SolicitarTrocaFuncao() {
     return () => { vivo = false; };
   }, [colaborador?.id]);
   const [cargoNovo, setCargoNovo] = useState("");
-  // Só horário (15/09/2026): a função fica a mesma e o que muda é a carga
-  // horária/escala. Na troca de função o horário novo também é obrigatório.
-  const [soHorario, setSoHorario] = useState(false);
+  // Três tipos (23/10/2026). Só horário (15/09/2026): a função fica a mesma
+  // e o que muda é a carga horária/escala. Só posto: muda o posto de
+  // trabalho e mais nada é obrigatório. Na troca de função o horário novo é
+  // obrigatório e o posto novo é opcional.
+  const [tipo, setTipo] = useState<TipoTroca>("funcao");
+  const soHorario = tipo === "horario";
   const [horarioNovo, setHorarioNovo] = useState("");
+  const [postoNovo, setPostoNovo] = useState<PostoTrabalho | null>(null);
+  const [postos, setPostos] = useState<PostoTrabalho[] | null>(null);
+  const [erroPostos, setErroPostos] = useState("");
   const [motivo, setMotivo] = useState("");
   const [dataPretendida, setDataPretendida] = useState("");
   const [setor, setSetor] = useState("");
@@ -87,24 +115,50 @@ export default function SolicitarTrocaFuncao() {
     })();
   }, []);
 
+  // Os postos de trabalho da Senior (RH_POSTO_TRABALHO), com contrato e
+  // unidade. A tabela é fechada para quem não tem a Hierarquia de Postos;
+  // a RPC abre só a lista para quem pede/decide mudança de função.
+  useEffect(() => {
+    (async () => {
+      const { data, error } = await sb.rpc("stf_postos_trabalho");
+      if (error) { setErroPostos(error.message); setPostos([]); return; }
+      setPostos(data ?? []);
+    })();
+  }, []);
+
   const cargoAtual = colaborador?.cargo ?? "";
   const horarioAtual = colaborador?.escala ?? "";
-  const mesmoCargo = !soHorario && cargoAtual.trim().toUpperCase() === cargoNovo.trim().toUpperCase()
+  const postoAtualCodigo = colaborador?.postoCodigo ?? "";
+  const postoAtual = useMemo(() => {
+    if (!colaborador) return "";
+    const p = postos?.find(x => x.codigo === postoAtualCodigo);
+    if (p) return rotuloPosto(p);
+    return [postoAtualCodigo, colaborador.nomePosto].filter(Boolean).join(" — ") || colaborador.posto || "";
+  }, [colaborador, postos, postoAtualCodigo]);
+  const mesmoCargo = tipo === "funcao" && cargoAtual.trim().toUpperCase() === cargoNovo.trim().toUpperCase()
                   && cargoNovo.trim().length > 0;
   const mesmoHorario = soHorario && horarioAtual.trim().toUpperCase() === horarioNovo.trim().toUpperCase()
                   && horarioNovo.trim().length > 0;
+  const mesmoPosto = !!postoNovo && postoNovo.codigo === postoAtualCodigo;
+
+  const escolherTipo = (t: TipoTroca) => {
+    setTipo(t);
+    if (t !== "funcao") setCargoNovo("");
+    if (t === "horario") setPostoNovo(null);
+  };
 
   const problema = (): string | null => {
     if (!colaborador) return "Escolha o colaborador na lista.";
     if (duplicada) return duplicada.mensagem;
-    if (!soHorario && !cargoNovo.trim()) return "Informe para qual cargo a pessoa vai.";
-    if (mesmoCargo) return "O cargo novo é igual ao atual — se é só o horário que muda, marque \"Só troca de horário\".";
-    if (!horarioNovo.trim()) return soHorario ? "Informe o horário novo que a pessoa vai fazer." : "Informe a carga horária/escala que a pessoa vai fazer no cargo novo.";
-    if (mesmoHorario) return "O horário novo é igual ao atual — não há o que trocar.";
+    const daTroca = validarTroca({
+      tipo, cargoAtual, cargoNovo, horarioAtual, horarioNovo,
+      postoAtualCodigo, postoNovoCodigo: postoNovo?.codigo ?? "",
+    });
+    if (daTroca) return daTroca;
     if (!motivo.trim()) return "Escreva o motivo da mudança.";
     // Obrigatória desde 25/09/2026 (mig 243): chegou pedido sem a data e o RH
     // não tinha como fazer a troca — não sabia a partir de quando vale.
-    if (!dataPretendida) return soHorario ? "Informe a partir de quando vale o horário novo." : "Informe a partir de quando vale a nova função.";
+    if (!dataPretendida) return `Informe a partir de quando vale ${QUANDO_VALE[tipo]}.`;
     // Escritório (15/09/2026): o setor é obrigatório — é por ele que o
     // administrativo acha o pedido na fila. Em contrato continua opcional.
     if (eEscritorio && !setor) return "Pedido do escritório administrativo precisa do setor.";
@@ -123,14 +177,16 @@ export default function SolicitarTrocaFuncao() {
       colaborador_cpf: colaborador!.cpf,
       colaborador_admissao: colaborador!.admissao,
       cargo_atual: cargoAtual || null,
-      // Só horário: o cargo "novo" é o mesmo — a coluna é NOT NULL e o
-      // painel mostra "Só horário" pelo tipo.
-      cargo_novo: soHorario ? (cargoAtual || "—") : cargoNovo.trim(),
-      tipo: soHorario ? "horario" : "funcao",
+      // Só horário / só posto: o cargo "novo" é o mesmo — a coluna é NOT
+      // NULL e o painel mostra o tipo.
+      cargo_novo: tipo === "funcao" ? cargoNovo.trim() : (cargoAtual || "—"),
+      tipo,
       horario_atual: horarioAtual || null,
-      horario_novo: horarioNovo.trim(),
+      horario_novo: horarioNovo.trim() || null,
       local: local || null,
       posto: colaborador!.posto || null,
+      // O posto ATUAL e o nome/contrato do novo o banco preenche (stf_valida_troca).
+      posto_novo_codigo: postoNovo?.codigo ?? null,
       filial: colaborador!.nomeFilial || null,
       e_escritorio: eEscritorio,
       setor: setor || null,
@@ -144,7 +200,7 @@ export default function SolicitarTrocaFuncao() {
   };
 
   const recomecar = () => {
-    setColaborador(null); setCargoNovo(""); setMotivo(""); setSoHorario(false); setHorarioNovo("");
+    setColaborador(null); setCargoNovo(""); setMotivo(""); setTipo("funcao"); setHorarioNovo(""); setPostoNovo(null);
     setDataPretendida(""); setSetor(""); setEEscritorio(false); setProtocolo(null);
   };
 
@@ -178,7 +234,7 @@ export default function SolicitarTrocaFuncao() {
     <div className="mx-auto max-w-3xl space-y-4">
       <PageHeader
         title="Mudança de Função"
-        subtitle="Peça a troca de cargo ou só de horário de alguém da sua equipe. O cargo e o horário atuais vêm do cadastro. Passa pelo analista, pela aprovação, pelo SST e termina no RH."
+        subtitle="Peça a troca de cargo, de horário ou de posto de alguém da sua equipe. Cargo, posto e horário atuais vêm do cadastro. Passa pelo analista, pela aprovação, pelo SST e termina no RH."
         module="Encarregados"
         breadcrumb={["Mudança de Função"]}
         actions={<ResumoDeFuncoes fluxo="troca_funcao" />}
@@ -212,24 +268,24 @@ export default function SolicitarTrocaFuncao() {
       <Card>
         <CardHeader><CardTitle className="text-base">A troca</CardTitle></CardHeader>
         <CardContent className="space-y-4">
-          {/* Só horário: muita gente só aumenta/reduz a carga horária sem
-              mudar de função. Marcado, o cargo some e fica só o horário. */}
-          <div className={cn("rounded-lg border p-3 transition-colors", soHorario && "border-primary/40 bg-primary/5")}>
-            <div className="flex items-start gap-2.5">
-              <Checkbox id="so-horario" checked={soHorario}
-                        onCheckedChange={v => { setSoHorario(v === true); if (v === true) setCargoNovo(""); }} className="mt-0.5" />
-              <div className="space-y-1">
-                <Label htmlFor="so-horario" className="cursor-pointer font-medium">
-                  Só troca de horário (a função continua a mesma)
-                </Label>
-                <p className="text-xs text-muted-foreground">
-                  Aumento ou redução de carga horária, mudança de escala ou de turno. O cargo fica como está.
-                </p>
-              </div>
-            </div>
-          </div>
+          {/* O tipo de movimentação (23/10/2026). Só horário: muita gente só
+              aumenta/reduz a carga horária sem mudar de função. Só posto: a
+              pessoa muda de posto de trabalho e o resto fica. */}
+          <RadioGroup value={tipo} onValueChange={v => escolherTipo(v as TipoTroca)} className="grid gap-2 sm:grid-cols-3">
+            {(Object.keys(ROTULO_TIPO) as TipoTroca[]).map(t => (
+              <Label key={t} htmlFor={`tipo-${t}`}
+                     className={cn("flex cursor-pointer items-start gap-2.5 rounded-lg border p-3 font-normal transition-colors",
+                                   tipo === t && "border-primary/40 bg-primary/5")}>
+                <RadioGroupItem id={`tipo-${t}`} value={t} className="mt-0.5" />
+                <span className="space-y-1">
+                  <span className="block font-medium">{ROTULO_TIPO[t]}</span>
+                  <span className="block text-xs text-muted-foreground">{EXPLICA_TIPO[t]}</span>
+                </span>
+              </Label>
+            ))}
+          </RadioGroup>
 
-          {!soHorario && (
+          {tipo === "funcao" && (
             <div className="grid items-end gap-3 sm:grid-cols-[1fr_auto_1fr]">
               <div className="space-y-1.5">
                 <Label>Cargo atual</Label>
@@ -248,11 +304,39 @@ export default function SolicitarTrocaFuncao() {
           )}
 
           {mesmoCargo && (
-            <p className="text-sm text-destructive">O cargo novo é igual ao atual — se é só o horário que muda, marque “Só troca de horário”.</p>
+            <p className="text-sm text-destructive">O cargo novo é igual ao atual — se é só o horário ou o posto que muda, escolha “Só horário” ou “Só posto”.</p>
           )}
 
-          {/* Horário: obrigatório nos dois casos. Na troca de função é o
-              que a pessoa vai fazer no cargo novo (pode ser o mesmo). */}
+          {/* Posto: obrigatório no "Só posto", opcional na troca de função
+              (vazio = continua no mesmo), fora do "Só horário". Só dá para
+              escolher posto cadastrado — nada de digitar. */}
+          {tipo !== "horario" && (
+            <div className="grid items-end gap-3 sm:grid-cols-[1fr_auto_1fr]">
+              <div className="space-y-1.5">
+                <Label>Posto atual</Label>
+                <div className={cn("flex min-h-10 items-center rounded-md border bg-muted/60 px-3 py-2 text-sm",
+                                   !postoAtual && "text-muted-foreground")}>
+                  {postoAtual || (colaborador ? "Sem posto no cadastro" : "Escolha o colaborador para preencher")}
+                </div>
+              </div>
+              <ArrowRight className="mb-2 hidden h-5 w-5 text-muted-foreground sm:block" />
+              <div className="space-y-1.5">
+                <Label>
+                  Posto novo {tipo === "posto" ? <span className="text-destructive">*</span> : <span className="font-normal text-muted-foreground">(opcional)</span>}
+                </Label>
+                <EscolhaPosto postos={postos} valor={postoNovo} onEscolher={setPostoNovo}
+                              atual={postoAtualCodigo} erro={erroPostos}
+                              vazio={tipo === "posto" ? "Escolha o posto novo" : "Continua no mesmo posto"} />
+              </div>
+            </div>
+          )}
+          {mesmoPosto && (
+            <p className="text-sm text-destructive">O posto novo é o mesmo em que a pessoa já está.</p>
+          )}
+
+          {/* Horário: obrigatório na troca de função (o que a pessoa vai
+              fazer no cargo novo, pode ser o mesmo) e no "Só horário";
+              opcional no "Só posto" (vazio = continua o mesmo). */}
           <div className="grid items-end gap-3 sm:grid-cols-[1fr_auto_1fr]">
             <div className="space-y-1.5">
               <Label>Horário / carga horária atual</Label>
@@ -262,10 +346,12 @@ export default function SolicitarTrocaFuncao() {
             </div>
             <ArrowRight className="mb-2 hidden h-5 w-5 text-muted-foreground sm:block" />
             <div className="space-y-1.5">
-              <Label>Horário / carga horária nova <span className="text-destructive">*</span></Label>
+              <Label>
+                Horário / carga horária nova {tipo === "posto" ? <span className="font-normal text-muted-foreground">(opcional)</span> : <span className="text-destructive">*</span>}
+              </Label>
               <Input value={horarioNovo} onChange={e => setHorarioNovo(e.target.value)}
-                     placeholder="Ex.: 40h 5x2, 08:00–17:00" />
-              {!soHorario && horarioAtual && !horarioNovo && (
+                     placeholder={tipo === "posto" ? "Vazio = continua o mesmo horário" : "Ex.: 40h 5x2, 08:00–17:00"} />
+              {tipo === "funcao" && horarioAtual && !horarioNovo && (
                 <button type="button" className="text-xs text-primary hover:underline" onClick={() => setHorarioNovo(horarioAtual)}>
                   Mantém o mesmo horário
                 </button>
@@ -283,7 +369,7 @@ export default function SolicitarTrocaFuncao() {
           </div>
 
           <div className="space-y-1.5">
-            <Label>{soHorario ? "Data da troca de horário" : "Data da troca de função"} <span className="text-destructive">*</span></Label>
+            <Label>{ROTULO_DATA[tipo]} <span className="text-destructive">*</span></Label>
             <Input type="date" className="sm:w-56" value={dataPretendida} required
                    onChange={e => setDataPretendida(e.target.value)} />
             <p className="text-xs text-muted-foreground">A partir de quando a mudança vale — sem ela o RH não consegue fazer a troca.</p>
@@ -356,6 +442,82 @@ export default function SolicitarTrocaFuncao() {
         </Button>
       </div>
     </div>
+  );
+}
+
+/**
+ * Posto novo: só os postos cadastrados (sem digitar), com contrato, unidade
+ * e nome na mesma linha — são ~400 postos e o nome sozinho
+ * ("RECEPCIONISTA-B 40H 5X2") se repete entre contratos. A busca é local
+ * (cmdk) sobre a lista inteira, que chega de uma vez.
+ */
+function EscolhaPosto({ postos, valor, onEscolher, atual, erro, vazio }: {
+  postos: PostoTrabalho[] | null;
+  valor: PostoTrabalho | null;
+  onEscolher: (p: PostoTrabalho | null) => void;
+  atual: string;
+  erro: string;
+  vazio: string;
+}) {
+  const [aberto, setAberto] = useState(false);
+  return (
+    <Popover open={aberto} onOpenChange={setAberto}>
+      <PopoverTrigger asChild>
+        <Button type="button" variant="outline" role="combobox" aria-expanded={aberto}
+                className="h-auto min-h-10 w-full justify-between px-3 py-2 text-left font-normal">
+          {valor ? (
+            <span className="flex min-w-0 flex-col">
+              <span className="truncate font-medium">{valor.codigo} — {valor.nome}</span>
+              <span className="truncate text-xs text-muted-foreground">
+                {[valor.contrato, valor.unidade].filter(Boolean).join(" · ") || "Contrato não identificado"}
+              </span>
+            </span>
+          ) : (
+            <span className="text-muted-foreground">{vazio}</span>
+          )}
+          <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent className="w-[min(36rem,calc(100vw-2rem))] p-0" align="end">
+        <Command>
+          <CommandInput placeholder="Contrato, unidade, código ou nome do posto…" />
+          <CommandList>
+            {postos === null ? (
+              <div className="flex items-center gap-2 px-3 py-6 text-sm text-muted-foreground">
+                <Loader2 className="h-4 w-4 animate-spin" /> Carregando postos…
+              </div>
+            ) : (
+              <CommandEmpty>{erro ? `Não deu para carregar os postos: ${erro}` : "Nenhum posto encontrado."}</CommandEmpty>
+            )}
+            {valor && (
+              <CommandGroup>
+                <CommandItem value="__limpar" onSelect={() => { onEscolher(null); setAberto(false); }}>
+                  <span className="text-muted-foreground">{vazio}</span>
+                </CommandItem>
+              </CommandGroup>
+            )}
+            {!!postos?.length && (
+              <CommandGroup heading="Postos de trabalho">
+                {postos.map(p => (
+                  <CommandItem key={p.codigo} value={rotuloPosto(p)} disabled={p.codigo === atual}
+                               onSelect={() => { onEscolher(p); setAberto(false); }}>
+                    <MapPin className="mr-2 h-4 w-4 shrink-0 text-muted-foreground" />
+                    <span className="flex min-w-0 flex-1 flex-col">
+                      <span className="truncate">{p.codigo} — {p.nome}</span>
+                      <span className="truncate text-xs text-muted-foreground">
+                        {[p.contrato, p.unidade].filter(Boolean).join(" · ") || "Contrato não identificado"}
+                        {p.codigo === atual ? " · posto atual" : ""}
+                      </span>
+                    </span>
+                    <Check className={cn("ml-2 h-4 w-4 shrink-0", valor?.codigo === p.codigo ? "opacity-100" : "opacity-0")} />
+                  </CommandItem>
+                ))}
+              </CommandGroup>
+            )}
+          </CommandList>
+        </Command>
+      </PopoverContent>
+    </Popover>
   );
 }
 

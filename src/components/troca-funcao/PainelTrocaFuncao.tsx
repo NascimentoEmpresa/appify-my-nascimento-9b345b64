@@ -21,7 +21,7 @@ import {
 import {
   ROTULO_ORIGEM, TABELA, corDoStatus, explicaStatus, fmtData, fmtDataHora,
   normSetorTroca, origemDa, origensVisiveis, pertenceAFila, podeAgirEm, proximoStatus,
-  resumoSST, statusVisiveis,
+  resumoSST, statusVisiveis, mudancasDaTroca, quadroDaTroca, ROTULO_TIPO,
   type Etapa, type Origem, type SolicitacaoTroca,
 } from "@/lib/trocaFuncao/solicitacao";
 import { toast } from "sonner";
@@ -53,7 +53,7 @@ const ROTULO: Record<Etapa, { acao: string; icone: any; ajuda: string }> = {
   analista:  { acao: "Acompanhar", icone: ThumbsUp,  ajuda: "A aprovação é do Operacional (contrato) ou da Diretoria (administrativo / setor)." },
   aprovacao: { acao: "Aprovar",  icone: ThumbsUp,    ajuda: "Aprovar manda para o SST." },
   sst:       { acao: "ASO marcado", icone: Stethoscope, ajuda: "Informe a data do ASO — ou dispense, se a função não exige exame novo. Depois segue para o RH." },
-  rh:        { acao: "Concluir", icone: CheckCircle2, ajuda: "Confirme depois de alterar o cargo na Senior." },
+  rh:        { acao: "Concluir", icone: CheckCircle2, ajuda: "Confirme depois de alterar na Senior o que mudou (cargo, posto, horário)." },
 };
 
 function Kpi({ titulo, valor, icone: Icone, cor }: {
@@ -163,7 +163,8 @@ export function PainelTrocaFuncao({ etapa, origem }: { etapa: Etapa; origem?: Or
       if (fOrigem && origemDa(r) !== fOrigem) return false;
       if (fSetor && (r.setor ?? "") !== fSetor) return false;
       if (!q) return true;
-      return [r.colaborador_nome, r.cargo_atual, r.cargo_novo, r.local, r.setor, r.solicitante_nome]
+      return [r.colaborador_nome, r.cargo_atual, r.cargo_novo, r.local, r.setor, r.solicitante_nome,
+              r.posto_atual_codigo, r.posto_atual_nome, r.posto_novo_codigo, r.posto_novo_nome, r.posto_novo_contrato]
         .some(v => String(v ?? "").toLowerCase().includes(q));
     });
   }, [linhas, busca, fStatus, fOrigem, fSetor, fContratos]);
@@ -323,20 +324,21 @@ export function PainelTrocaFuncao({ etapa, origem }: { etapa: Etapa; origem?: Or
                       <TableCell className="px-2 font-mono text-xs text-muted-foreground">{r.id}</TableCell>
                       <TableCell className="px-2 text-sm font-medium leading-snug">{r.colaborador_nome}</TableCell>
                       <TableCell className="px-2 text-sm leading-snug">
-                        {r.tipo === "horario" ? (
-                          <>
-                            <span className="mr-1.5 rounded-full border border-sky-300 bg-sky-50 px-1.5 text-[10px] font-semibold text-sky-800">Só horário</span>
-                            <span className="text-muted-foreground">{r.horario_atual || "—"}</span>
-                            <ArrowRight className="mx-1 inline h-3 w-3" />
-                            <span className="font-medium">{r.horario_novo || "—"}</span>
-                          </>
-                        ) : (
-                          <>
-                            <span className="text-muted-foreground">{r.cargo_atual || "—"}</span>
+                        {/* Uma linha por coisa que muda — Cargo, Posto, Horário
+                            (23/10/2026). O que não muda não aparece. */}
+                        {r.tipo && r.tipo !== "funcao" && (
+                          <span className="mb-0.5 inline-block rounded-full border border-sky-300 bg-sky-50 px-1.5 text-[10px] font-semibold text-sky-800">{ROTULO_TIPO[r.tipo]}</span>
+                        )}
+                        {mudancasDaTroca(r).map(m => (
+                          <div key={m.rotulo} className="break-words">
+                            <span className="text-xs font-semibold uppercase text-muted-foreground">{m.rotulo}: </span>
+                            <span className="text-muted-foreground">{m.atual}</span>
                             <ArrowRight className="mx-1 inline h-3 w-3 shrink-0" />
-                            <span className="font-medium">{r.cargo_novo}</span>
-                            {r.horario_novo && <div className="text-xs text-muted-foreground">{r.horario_novo}</div>}
-                          </>
+                            <span className="font-medium">{m.novo}</span>
+                          </div>
+                        ))}
+                        {r.tipo === "funcao" && r.horario_novo && !mudancasDaTroca(r).some(m => m.rotulo === "Horário") && (
+                          <div className="text-xs text-muted-foreground">Horário mantido: {r.horario_novo}</div>
                         )}
                       </TableCell>
                       <TableCell className="px-2 text-sm leading-snug">
@@ -387,41 +389,37 @@ export function PainelTrocaFuncao({ etapa, origem }: { etapa: Etapa; origem?: Or
                   <span className="text-sm text-muted-foreground">{explicaStatus(aberta.status)}</span>
                 </div>
 
-                {aberta.tipo !== "horario" && (
-                  <div className="flex items-center justify-center gap-4 rounded-xl border bg-muted/30 p-4">
-                    <div className="text-center">
-                      <p className="text-xs uppercase text-muted-foreground">Cargo atual</p>
-                      <p className="font-semibold">{aberta.cargo_atual || "—"}</p>
+                {/* Cargo, posto e horário (23/10/2026): os três sempre, na
+                    mesma ordem — o que não muda aparece como "mantém", para
+                    o RH não ter que adivinhar se faltou informar. */}
+                <div className="space-y-2">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                    {ROTULO_TIPO[aberta.tipo ?? "funcao"]}
+                  </p>
+                  {quadroDaTroca(aberta).map(q => (
+                    <div key={q.rotulo} className="grid items-center gap-2 rounded-xl border bg-muted/30 p-3 sm:grid-cols-[6rem_1fr_auto_1fr]">
+                      <p className="text-xs font-semibold uppercase text-muted-foreground">{q.rotulo}</p>
+                      <div>
+                        <p className="text-[11px] uppercase text-muted-foreground">Atual</p>
+                        <p className="font-semibold">{q.atual}</p>
+                        {q.atualExtra && <p className="text-xs text-muted-foreground">{q.atualExtra}</p>}
+                      </div>
+                      <ArrowRight className="hidden h-5 w-5 text-primary sm:block" />
+                      <div>
+                        <p className="text-[11px] uppercase text-muted-foreground">Novo</p>
+                        <p className={cn("font-semibold", q.muda ? "text-primary" : "text-muted-foreground")}>{q.novo}</p>
+                        {q.novoExtra && <p className="text-xs text-muted-foreground">{q.novoExtra}</p>}
+                      </div>
                     </div>
-                    <ArrowRight className="h-5 w-5 text-primary" />
-                    <div className="text-center">
-                      <p className="text-xs uppercase text-muted-foreground">Cargo novo</p>
-                      <p className="font-semibold text-primary">{aberta.cargo_novo}</p>
-                    </div>
-                  </div>
-                )}
-                {/* Horário (15/09/2026): sempre que informado; na troca só de
-                    horário é o bloco principal. */}
-                {(aberta.horario_novo || aberta.tipo === "horario") && (
-                  <div className="flex items-center justify-center gap-4 rounded-xl border bg-muted/30 p-4">
-                    <div className="text-center">
-                      <p className="text-xs uppercase text-muted-foreground">Horário atual</p>
-                      <p className="font-semibold">{aberta.horario_atual || "—"}</p>
-                    </div>
-                    <ArrowRight className="h-5 w-5 text-primary" />
-                    <div className="text-center">
-                      <p className="text-xs uppercase text-muted-foreground">{aberta.tipo === "horario" ? "Horário novo (só horário — cargo continua " + (aberta.cargo_atual || "o mesmo") + ")" : "Horário no cargo novo"}</p>
-                      <p className="font-semibold text-primary">{aberta.horario_novo || "—"}</p>
-                    </div>
-                  </div>
-                )}
+                  ))}
+                </div>
 
                 <div className="grid gap-3 sm:grid-cols-2">
                   <Info rotulo="CPF" valor={aberta.colaborador_cpf} />
                   <Info rotulo="Admissão" valor={fmtData(aberta.colaborador_admissao)} />
                   <Info rotulo="Local / contrato" valor={aberta.local} />
                   <Info rotulo="Setor" valor={aberta.setor} />
-                  <Info rotulo="Posto" valor={aberta.posto} />
+                  {!aberta.posto_atual_codigo && <Info rotulo="Posto" valor={aberta.posto} />}
                   <Info rotulo="Pedido por" valor={aberta.solicitante_nome} />
                   <Info rotulo="A partir de" valor={fmtData(aberta.data_pretendida)} />
                 </div>
