@@ -38,11 +38,11 @@ const vagas: VagaPainel[] = [
     cand: cand({ total: 2 }),
   }),
   // Aberta há 20 dias (faixa 16–30 d), contrato B.
-  vaga({ id: 15, criada: "2026-09-17T12:00:00Z", status: "Pendente Recrutamento", status_em: "2026-09-18T12:00:00Z", contrato: "Contrato B", qtd: 3 }),
+  vaga({ id: 15, criada: "2026-09-17T12:00:00Z", status: "Entrevista e Avaliação", status_em: "2026-09-18T12:00:00Z", contrato: "Contrato B", qtd: 3 }),
   // Reprovada.
   vaga({ id: 13, criada: "2026-09-20T12:00:00Z", status: "Reprovada", status_em: "2026-09-22T12:00:00Z", aberta: false, log: [["Pendente Analista", "Reprovada", "2026-09-22T12:00:00Z"]] }),
   // Aberta de fora do período (+60 d): só nos "abertos agora".
-  vaga({ id: 14, criada: "2026-06-01T12:00:00Z", status: "Pendente Recrutamento", status_em: "2026-06-01T12:00:00Z", no_periodo: false, contrato: "contrato  a" }),
+  vaga({ id: 14, criada: "2026-06-01T12:00:00Z", status: "Em análise jurídica", status_em: "2026-06-01T12:00:00Z", no_periodo: false, contrato: "contrato  a" }),
 ];
 const p: PainelVagas = { de: "2026-08-01", ate: "2026-10-07", agora: AGORA, log_desde: "2026-08-19T00:00:00Z", vagas };
 const ids = (vs: VagaPainel[]) => vs.map((v) => v.id).sort((a, b) => a - b);
@@ -124,5 +124,29 @@ describe("lista do recorte", () => {
     expect(ordenarRecorte(ab, AGORA, "antigas").map((v) => v.id)).toEqual([14, 15, 11]);
     expect(ordenarRecorte(ab, AGORA, "recentes").map((v) => v.id)).toEqual([15, 14, 11]);
     expect(ordenarRecorte(ab, AGORA, "candidatos")[0].id).toBe(11);
+  });
+});
+
+// 22/10/2026: "aberta agora" = vaga em andamento, a mesma régua da Gestão
+// Recrutamento e da TV — pendente de aprovação ou do RH não entra.
+describe("aberta agora = vaga em andamento", () => {
+  const comPendentes: PainelVagas = {
+    ...p,
+    vagas: [
+      ...vagas,
+      vaga({ id: 20, status: "Pendente Analista" }),
+      vaga({ id: 21, status: "Pendente Diretoria", administrativa: true }),
+      vaga({ id: 22, status: "Pendente Recrutamento" }),
+      vaga({ id: 23, status: "Aprovado - Aguardando SST" }),
+    ],
+  };
+
+  it("cartão, lista do cartão, aging e tabela contam a mesma base", () => {
+    const r = resumoVagas(comPendentes);
+    const lista = ids(vagasDoRecorte(comPendentes, { tipo: "kpi", kpi: "abertas" }));
+    expect(lista).toEqual([11, 14, 15, 23]);
+    expect(r.abertasAgora).toBe(lista.length);
+    expect(agingAbertas(comPendentes).reduce((s, f) => s + f.vagas, 0)).toBe(lista.length);
+    expect(agruparVagas(comPendentes, "contrato").reduce((s, l) => s + l.abertas, 0)).toBe(lista.length);
   });
 });
