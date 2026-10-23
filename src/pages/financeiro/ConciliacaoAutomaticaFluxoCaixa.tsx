@@ -13,13 +13,16 @@ import { SearchableMultiSelect } from "@/components/ui/searchable-multi-select";
 import { ehSaldoAnterior, linhasSaldoAnterior } from "@/lib/conciliacaoSaldoAnterior";
 import { type ResumoConciliacao } from "@/lib/conciliacaoResumo";
 import { periodoDoMes, processarConciliacao } from "@/lib/conciliacaoCalculo";
+import { DashboardConciliacoes } from "@/pages/financeiro/conciliacao-dashboard/DashboardConciliacoes";
 import { conciliacaoSemResumo, useGerarResumoConciliacoes } from "@/hooks/useGerarResumoConciliacao";
-import { Upload, X, Play, RefreshCw, GitMerge, Pencil, Ban, PlusCircle, Save, History, CheckCircle2 } from "lucide-react";
+import { Upload, X, Play, RefreshCw, GitMerge, Pencil, Ban, PlusCircle, Save, History, CheckCircle2, LayoutDashboard, Info, Landmark } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { AcessoGate } from "@/components/auth/AcessoGate";
 import {
   parseOFX,
+  parseSaldoFinalOFX,
+  saldoFinalNoDia,
   reconciliar,
   transacoesNoPeriodo,
   fmtBRL,
@@ -33,6 +36,8 @@ import {
   useSalvarConciliacaoFluxoCaixa,
   useConciliacoesFluxoCaixaSalvas,
   useConciliacaoFluxoCaixaDetalhe,
+  useSaldosIniciaisConciliacao,
+  useSalvarSaldoInicialConciliacao,
   type ConciliacaoFluxoCaixaLinha,
   type ConciliacaoFluxoCaixaSalva,
 } from "@/hooks/useConciliacaoFluxoCaixa";
@@ -76,7 +81,10 @@ function brParaIso(br: string) {
 }
 
 export default function ConciliacaoAutomaticaFluxoCaixa() {
-  const [aba, setAba] = useState<"conciliar" | "historico">("conciliar");
+  const [aba, setAba] = useState<"conciliar" | "historico" | "dashboard">("conciliar");
+  // SIS-2026-0713: "Ver detalhes" do dashboard abre o resultado salvo (sem pedir o OFX nem conciliar de novo).
+  const [detalheId, setDetalheId] = useState<string | null>(null);
+  const { data: salvasDashboard = [] } = useConciliacoesFluxoCaixaSalvas();
 
   return (
     <div className="space-y-6 p-6">
@@ -87,13 +95,16 @@ export default function ConciliacaoAutomaticaFluxoCaixa() {
         breadcrumb={["Financeiro", "Gestão Financeira", "Conciliação Bancária"]}
       />
 
-      <Tabs value={aba} onValueChange={(v) => setAba(v as "conciliar" | "historico")}>
+      <Tabs value={aba} onValueChange={(v) => setAba(v as "conciliar" | "historico" | "dashboard")}>
         <TabsList>
           <TabsTrigger value="conciliar" className="gap-1.5">
             <GitMerge className="h-3.5 w-3.5" /> Conciliar
           </TabsTrigger>
           <TabsTrigger value="historico" className="gap-1.5">
             <History className="h-3.5 w-3.5" /> Conciliações Salvas
+          </TabsTrigger>
+          <TabsTrigger value="dashboard" className="gap-1.5">
+            <LayoutDashboard className="h-3.5 w-3.5" /> Dashboard de Conciliações
           </TabsTrigger>
         </TabsList>
         <TabsContent value="conciliar" className="mt-4">
@@ -102,7 +113,11 @@ export default function ConciliacaoAutomaticaFluxoCaixa() {
         <TabsContent value="historico" className="mt-4">
           <HistoricoTab />
         </TabsContent>
+        <TabsContent value="dashboard" className="mt-4">
+          <DashboardConciliacoes onVerDetalhes={setDetalheId} />
+        </TabsContent>
       </Tabs>
+      <DialogDetalheConciliacao id={detalheId} conciliacao={salvasDashboard.find((c) => c.id === detalheId) ?? null} onClose={() => setDetalheId(null)} />
     </div>
   );
 }
@@ -123,7 +138,13 @@ function ConciliarTab() {
   const [contaExtrato, setContaExtrato] = useState<string | null>(null);
   // O OFX só traz movimentos e o saldo final — o saldo ANTERIOR (abertura)
   // está só no extrato impresso/PDF. Campo opcional pra digitar e conferir.
-  const [saldoExtratoTxt, setSaldoExtratoTxt] = useState("");
+  // SIS-2026-0713: saldo anterior de JANEIRO informado à mão (fechamento de dezembro), por empresa + banco + ano de início do histórico.
+  // Substitui o antigo "saldo anterior do extrato" digitado: aquele virava uma linha da conciliação, e o saldo inicial não é lançamento a conciliar.
+  const [baseTxt, setBaseTxt] = useState<string | null>(null);
+  // SIS-2026-0713: saldo FINAL do extrato (LEDGERBAL do OFX; dá para corrigir à mão) — o dashboard compara com o saldo do sistema.
+  const [saldoFinalTxt, setSaldoFinalTxt] = useState("");
+  const [saldoFinalData, setSaldoFinalData] = useState<string | null>(null);
+  const [editandoSaldoFinal, setEditandoSaldoFinal] = useState(false);
   const [ofxFiles, setOfxFiles] = useState<File[]>([]);
   const [ofxTrns, setOfxTrns] = useState<OFXTransaction[] | null>(null);
   const [resultado, setResultado] = useState<ReconciliacaoResult | null>(null);
@@ -174,30 +195,48 @@ function ConciliarTab() {
   // da conta — no extrato aparece como "SALDO ANT EM 24/12", não como
   // movimento, então nunca tem par no OFX e virava uma divergência falsa
   // (achado da Érica: R$ 270,22 da AGPS/Banrisul). Fica fora da comparação
-  // normal; se a pessoa digitar o saldo do extrato, entra como uma linha da
-  // conciliação (ver `rodar`).
-  const saldoAnteriorFluxo = useMemo(() => {
-    const itens = linhasDoBancoEmpresa.filter(ehSaldoAnterior);
-    const total = itens.reduce((t, l) => t + (l.tipo === "entrada" ? Number(l.valor) : -Number(l.valor)), 0);
-    return { qtd: itens.length, total };
-  }, [linhasDoBancoEmpresa]);
+  // normal (o saldo inicial é só a base do Dashboard, nunca um lançamento a conciliar).
   const linhasPeriodoBanco = useMemo(
     () => linhasDoBancoEmpresa.filter((l) => !ehSaldoAnterior(l)),
     [linhasDoBancoEmpresa]
   );
 
   // Aceita "270,22", "1.234,56" ou "270.22". Vazio/inválido = não informado.
-  const saldoExtrato = useMemo(() => {
-    const t = saldoExtratoTxt.replace(/R\$|\s/g, "");
+  const saldoFinalExtrato = useMemo(() => {
+    const t = saldoFinalTxt.replace(/R\$|\s/g, "");
     if (!t) return null;
     const n = Number(t.includes(",") ? t.replace(/\./g, "").replace(",", ".") : t);
     return Number.isFinite(n) ? Math.round(n * 100) / 100 : null;
-  }, [saldoExtratoTxt]);
-  const saldoFluxoTotal = Math.round(saldoAnteriorFluxo.total * 100) / 100;
-  // Só compara quando há saldo anterior no Fluxo E a pessoa informou o do extrato.
-  const saldoConfere = saldoExtrato != null && saldoAnteriorFluxo.qtd > 0 ? saldoExtrato === saldoFluxoTotal : null;
-
+  }, [saldoFinalTxt]);
   const empresasEscolhidas = todasEmpresas || empresaIds.length > 0;
+
+  const { data: saldosIniciais = [] } = useSaldosIniciaisConciliacao();
+  const salvarBase = useSalvarSaldoInicialConciliacao();
+  const baseUmaEmpresa = !todasEmpresas && empresaIds.length === 1 && !!bancoId;
+  const basesDoGrupo = baseUmaEmpresa ? saldosIniciais.filter((i) => i.empresa_id === empresaIds[0] && i.banco_id === bancoId) : [];
+  // O ano é o de início do histórico: se já existe base, é o dela (não se pede de novo todo janeiro); senão, o do período escolhido.
+  const baseAno = basesDoGrupo.length ? Math.min(...basesDoGrupo.map((i) => i.ano)) : Number((dataDe || new Date().toISOString()).slice(0, 4));
+  const baseSalva = basesDoGrupo.some((i) => i.ano === baseAno) ? basesDoGrupo.filter((i) => i.ano === baseAno).reduce((t, i) => t + i.valor, 0) : null;
+
+  // trocar de empresa ou banco descarta o que estava sendo digitado para a base anterior
+  useEffect(() => setBaseTxt(null), [empresaIds.join(","), bancoId, todasEmpresas]);
+
+  async function gravarBase() {
+    if (baseTxt === null) return;
+    const t = baseTxt.replace(/R\$|\s/g, "");
+    const valor = t ? Number(t.includes(",") ? t.replace(/\./g, "").replace(",", ".") : t) : null;
+    if (valor !== null && !Number.isFinite(valor)) {
+      toast.error("Valor inválido para o saldo anterior de janeiro.");
+      return;
+    }
+    try {
+      await salvarBase.mutateAsync({ empresaId: empresaIds[0], bancoId, conta: "", ano: baseAno, valor: valor === null ? null : Math.round(valor * 100) / 100 });
+      setBaseTxt(null);
+      toast.success(valor === null ? "Saldo anterior removido." : "Saldo anterior de janeiro salvo.");
+    } catch (e: any) {
+      toast.error(e.message ?? "Erro ao salvar o saldo anterior.");
+    }
+  }
 
   function rodar(trns: OFXTransaction[]) {
     // O cálculo mora em lib/conciliacaoCalculo.ts (o mesmo que refaz o resumo das conciliações antigas).
@@ -207,7 +246,7 @@ function ConciliarTab() {
       trns,
       dataDe,
       dataAte,
-      saldoExtrato,
+      saldoExtrato: null,
       bancoNome: bancos.find((b) => b.id === bancoId)?.nome ?? "—",
     });
     setResumo(resumoCalc);
@@ -240,9 +279,13 @@ function ConciliarTab() {
     try {
       const trns: OFXTransaction[] = [];
       const contas = new Set<string>();
+      let saldoFinalOfx: { valor: number; data: string | null } | null = null;
       for (const f of ofxFiles) {
         const text = await f.text();
         trns.push(...parseOFX(text, f.name));
+        // Vários arquivos: vale o saldo final do que tem a data mais recente.
+        const sf = parseSaldoFinalOFX(text);
+        if (sf && (!saldoFinalOfx || (sf.data ?? "") >= (saldoFinalOfx.data ?? ""))) saldoFinalOfx = sf;
         // Conta do próprio extrato (BANKID/ACCTID) — só informativa, pra
         // conferir se a empresa escolhida é a dona desse arquivo.
         const bank = /<BANKID>\s*([^\s<]+)/i.exec(text)?.[1];
@@ -250,6 +293,10 @@ function ConciliarTab() {
         if (acct) contas.add(bank ? `${bank} / ${acct}` : acct);
       }
       setContaExtrato(contas.size ? Array.from(contas).join(" · ") : null);
+      // O saldo é o do ÚLTIMO DIA do período: se o arquivo passa dele, desconta o que se movimentou depois.
+      const sfd = saldoFinalOfx as { valor: number; data: string | null } | null;
+      setSaldoFinalTxt(sfd ? String(saldoFinalNoDia(sfd, trns, dataAte)).replace(".", ",") : "");
+      setSaldoFinalData(sfd ? (sfd.data && sfd.data > dataAte ? dataAte : sfd.data) : null);
       if (!trns.length) throw new Error("Nenhum lançamento encontrado nos extratos OFX.");
       setOfxTrns(trns);
       setResolvidos({});
@@ -273,7 +320,9 @@ function ConciliarTab() {
     setResolvidos({});
     setObservacoes("");
     setContaExtrato(null);
-    setSaldoExtratoTxt("");
+    setSaldoFinalTxt("");
+    setSaldoFinalData(null);
+    setEditandoSaldoFinal(false);
     setResumo(null);
   }
 
@@ -401,8 +450,10 @@ function ConciliarTab() {
       const id = await salvar.mutateAsync({
         dataInicio: dataDe, dataFim: dataAte, observacoes: observacoes || null,
         bancoId, todasEmpresas, empresaIds, contaExtrato, arquivosOfx, linhas,
-        saldoAnteriorFluxo: saldoAnteriorFluxo.qtd > 0 ? saldoFluxoTotal : null,
-        saldoAnteriorExtrato: saldoExtrato,
+        saldoAnteriorFluxo: null,
+        saldoAnteriorExtrato: null,
+        saldoFinalExtrato,
+        saldoFinalExtratoData: saldoFinalData,
         extratoEntradas: totaisExtrato?.entradas ?? null,
         extratoSaidas: totaisExtrato?.saidas ?? null,
         resumo,
@@ -483,27 +534,32 @@ function ConciliarTab() {
               maxBadges={3}
             />
           </div>
-          <div>
-            <Label className="text-xs">Saldo anterior do extrato (R$) <span className="text-muted-foreground">— opcional</span></Label>
-            <Input
-              className="h-9 w-44"
-              inputMode="decimal"
-              placeholder="Ex.: 270,22"
-              value={saldoExtratoTxt}
-              onChange={(e) => setSaldoExtratoTxt(e.target.value)}
-            />
-          </div>
+          {/* Só faz sentido com UMA empresa e UM banco: a base é por empresa, banco e ano de início do histórico. */}
+          {baseUmaEmpresa && (
+            <AcessoGate menu="conciliacao-fluxo-caixa" acao="alterar">
+              <div>
+                <Label className="text-xs">Saldo anterior de janeiro/{baseAno} (manual)</Label>
+                <div className="flex items-center gap-1.5">
+                  <Input
+                    className="h-9 w-44"
+                    inputMode="decimal"
+                    placeholder="Fechamento de dezembro"
+                    value={baseTxt ?? (baseSalva != null ? String(baseSalva).replace(".", ",") : "")}
+                    onChange={(e) => setBaseTxt(e.target.value)}
+                  />
+                  <Button size="sm" variant="outline" className="h-9" disabled={baseTxt === null || salvarBase.isPending} onClick={() => void gravarBase()}>
+                    Salvar
+                  </Button>
+                  <span title="Fechamento de dezembro do ano anterior = abertura de janeiro. Informe uma vez, no início do histórico: vale como base dos saldos do sistema, não entra como entrada, saída nem lançamento a conciliar e não é somado de novo a cada conciliação. Os meses seguintes partem do fechamento do mês anterior.">
+                    <Info className="h-4 w-4 text-muted-foreground" />
+                  </span>
+                </div>
+              </div>
+            </AcessoGate>
+          )}
           <div className="w-full text-xs text-muted-foreground">
             {bancoId && empresasEscolhidas
-              ? `${linhasPeriodoBanco.length} de ${linhasPeriodo.length} lançamento(s) do Fluxo de Caixa no período são deste banco${todasEmpresas ? "" : " e das empresas escolhidas"}.${
-                  saldoAnteriorFluxo.qtd > 0
-                    ? ` Saldo anterior no Fluxo: ${saldoAnteriorFluxo.total.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}. ${
-                        saldoExtrato == null
-                          ? 'Fica fora da comparação — digite o "SALDO ANT" do extrato para conferi-lo como uma linha da conciliação.'
-                          : "Entra na conciliação como uma linha, comparado com o saldo digitado."
-                      }`
-                    : ""
-                }`
+              ? `${linhasPeriodoBanco.length} de ${linhasPeriodo.length} lançamento(s) do Fluxo de Caixa no período são deste banco${todasEmpresas ? "" : " e das empresas escolhidas"}.`
               : `${linhasPeriodo.length} lançamento(s) do Fluxo de Caixa no período. Escolha o banco e a(s) empresa(s) para conciliar.`}
           </div>
         </CardContent>
@@ -569,6 +625,59 @@ function ConciliarTab() {
               </Card>
             ))}
           </div>
+
+          {/* SIS-2026-0713: só existe depois de processar o OFX. É o saldo que o Dashboard compara com o saldo do sistema. */}
+          <Card className="border-2 border-purple-300 bg-purple-50/50 dark:bg-purple-950/10">
+            <CardContent className="grid gap-4 p-4 md:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)] md:items-center">
+              <div className="flex items-center gap-4">
+                <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-purple-100 text-purple-600">
+                  <Landmark className="h-6 w-6" />
+                </div>
+                <div className="min-w-0">
+                  <p className="text-[10px] font-semibold uppercase tracking-widest text-purple-700">Saldo final do extrato</p>
+                  {editandoSaldoFinal ? (
+                    <div className="mt-1 flex items-center gap-2">
+                      <Input
+                        autoFocus
+                        className="h-9 w-44 bg-background"
+                        inputMode="decimal"
+                        placeholder="Ex.: 12.345,67"
+                        value={saldoFinalTxt}
+                        onChange={(e) => setSaldoFinalTxt(e.target.value)}
+                        onKeyDown={(e) => e.key === "Enter" && setEditandoSaldoFinal(false)}
+                      />
+                      <Button size="sm" onClick={() => setEditandoSaldoFinal(false)}>OK</Button>
+                    </div>
+                  ) : saldoFinalExtrato != null ? (
+                    <>
+                      <p className="text-2xl font-bold leading-tight text-purple-900 dark:text-purple-200">{fmtBRL(saldoFinalExtrato)}</p>
+                      <p className="text-[11px] text-muted-foreground">
+                        {saldoFinalData ? `Saldo em ${isoParaBR(saldoFinalData)} · ` : ""}lido do arquivo OFX
+                        <Button variant="link" size="sm" className="ml-1 h-auto p-0 text-[11px]" onClick={() => setEditandoSaldoFinal(true)}>
+                          <Pencil className="mr-0.5 h-3 w-3" /> Corrigir
+                        </Button>
+                      </p>
+                    </>
+                  ) : (
+                    <>
+                      <p className="text-lg font-semibold text-muted-foreground">Não informado no arquivo</p>
+                      <Button variant="link" size="sm" className="h-auto p-0 text-[11px]" onClick={() => setEditandoSaldoFinal(true)}>
+                        <Pencil className="mr-0.5 h-3 w-3" /> Informar
+                      </Button>
+                    </>
+                  )}
+                </div>
+              </div>
+              <div className="flex gap-2 rounded-md border border-purple-200 bg-background/70 p-3 text-xs text-muted-foreground">
+                <Info className="mt-0.5 h-4 w-4 shrink-0 text-purple-500" />
+                <p>
+                  É o saldo do extrato no <strong>último dia do período</strong>. Se o arquivo vai além do período, desconta o que se movimentou depois.
+                  Ao salvar, o Dashboard de Conciliações compara esse valor com o saldo do sistema do mês (saldo anterior de janeiro + entradas − saídas).
+                  Confira com o extrato e corrija se estiver diferente. Sem ele, o mês fica como "pendente de conferência".
+                </p>
+              </div>
+            </CardContent>
+          </Card>
 
           <Card>
             <CardHeader className="pb-0 pt-4 px-4">
@@ -1126,6 +1235,8 @@ function HistoricoTab() {
 
 function DialogDetalheConciliacao({ id, conciliacao, onClose }: { id: string | null; conciliacao: ConciliacaoFluxoCaixaSalva | null; onClose: () => void }) {
   const { data } = useConciliacaoFluxoCaixaDetalhe(id);
+  const { data: bancosDet = [] } = useCartaoBancos();
+  const { data: empresasDet = [] } = useEmpresasGrupo();
 
   return (
     <Dialog open={!!id} onOpenChange={(v) => !v && onClose()}>
@@ -1135,6 +1246,36 @@ function DialogDetalheConciliacao({ id, conciliacao, onClose }: { id: string | n
         </DialogHeader>
         {data && (
           <div className="space-y-4">
+            {conciliacao && (
+              <div className="space-y-2">
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
+                  {[
+                    { rotulo: "Empresa", valor: conciliacao.todas_empresas ? "Todas as empresas" : conciliacao.empresa_ids.map((e) => empresasDet.find((x) => x.id === e)?.nome ?? "—").join(", ") || "—" },
+                    { rotulo: "Banco", valor: conciliacao.banco_id ? bancosDet.find((b) => b.id === conciliacao.banco_id)?.nome ?? "—" : "—" },
+                    { rotulo: "Conta", valor: conciliacao.conta_extrato ?? "—" },
+                    { rotulo: "Período", valor: `${isoParaBR(conciliacao.data_inicio)} a ${isoParaBR(conciliacao.data_fim)}` },
+                  ].map((k) => (
+                    <div key={k.rotulo} className="rounded-md border p-2">
+                      <p className="text-muted-foreground">{k.rotulo}</p>
+                      <p className="text-sm font-semibold break-words">{k.valor}</p>
+                    </div>
+                  ))}
+                </div>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
+                  {[
+                    { rotulo: "Dias processados", valor: conciliacao.dias_total != null ? String(conciliacao.dias_total) : "—" },
+                    { rotulo: "Dias OK", valor: conciliacao.dias_ok != null ? String(conciliacao.dias_ok) : "—" },
+                    { rotulo: "Divergências", valor: String(conciliacao.total_linhas) },
+                    { rotulo: "Pendentes", valor: "0" },
+                  ].map((k) => (
+                    <div key={k.rotulo} className="rounded-md border p-2">
+                      <p className="text-muted-foreground">{k.rotulo}</p>
+                      <p className="text-sm font-semibold">{k.valor}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
             {conciliacao && conciliacao.conciliado_entradas != null && conciliacao.conciliado_saidas != null && (
               <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
                 {[
