@@ -3,6 +3,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { useClassificacoesOrcamentoAdmin } from "@/hooks/usePlanejamentoOrcamentario";
 import { ChevronLeft, ChevronRight, CheckCircle2, Eye, Pencil, XCircle } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -92,6 +93,7 @@ export function RateioParceladoTable({
   const { data: empresas = [] } = useEmpresasGrupo();
   const { data: contratos = [] } = useContratosAtivos();
   const { data: fornecedores = [] } = useFornecedoresAtivos();
+  const { data: classificacoesCatalogo = [] } = useClassificacoesOrcamentoAdmin();
   const { data: integrantes = [] } = useIntegrantes();
   const { data: meusContratosAnalista } = useMeusContratosAnalista();
   const justificar = useJustificarRateioLinha();
@@ -123,6 +125,8 @@ export function RateioParceladoTable({
 
   const mostrarColunaEmpresa = dimensoes.empresa || linhas.some((l) => l.empresa_id);
   const mostrarColunaContrato = dimensoes.contrato || linhas.some((l) => l.contrato_id);
+  // SIS-2026-0680: rateio por CLASSIFICAÇÃO — cada linha tem a sua; a coluna mostra qual é de qual.
+  const mostrarColunaClassificacao = linhas.some((l) => !!l.classificacao_id);
 
   function abrirDialog(linha: RateioLinha, edicao: boolean) {
     setDialogLinha(linha);
@@ -221,7 +225,8 @@ export function RateioParceladoTable({
               <TableRow>
                 {mostrarColunaEmpresa && <TableHead className="text-center">Empresa</TableHead>}
                 {mostrarColunaContrato && <TableHead className="text-center">Contrato</TableHead>}
-                {dimensoes.fornecedor && <TableHead className="text-center">Fornecedor</TableHead>}
+                {mostrarColunaClassificacao && <TableHead className="text-center">Classificação</TableHead>}
+              {dimensoes.fornecedor && <TableHead className="text-center">Fornecedor</TableHead>}
                 {dimensoes.integrante && <TableHead className="text-center">Integrante</TableHead>}
                 <TableHead className="text-center">% Rateio</TableHead>
                 <TableHead className="text-center">Valor da parcela</TableHead>
@@ -241,6 +246,7 @@ export function RateioParceladoTable({
                       8 +
                       Number(mostrarColunaEmpresa) +
                       Number(mostrarColunaContrato) +
+                      Number(mostrarColunaClassificacao) +
                       Number(dimensoes.fornecedor) +
                       Number(dimensoes.integrante)
                     }
@@ -288,7 +294,12 @@ export function RateioParceladoTable({
                     {mostrarColunaContrato && (
                       <TableCell className="text-xs text-center">{contratos.find((c) => c.id === linha.contrato_id)?.nome ?? "—"}</TableCell>
                     )}
-                    {dimensoes.fornecedor && (
+                    {mostrarColunaClassificacao && (
+                    <TableCell className="text-xs text-center font-medium">
+                      {classificacoesCatalogo.find((c) => c.id === linha.classificacao_id)?.nome ?? "—"}
+                    </TableCell>
+                  )}
+                  {dimensoes.fornecedor && (
                       <TableCell className="text-xs text-center">{fornecedores.find((f) => f.id === linha.fornecedor_id)?.nome ?? "—"}</TableCell>
                     )}
                     {dimensoes.integrante && (
