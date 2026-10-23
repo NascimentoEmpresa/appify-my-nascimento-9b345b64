@@ -203,7 +203,7 @@ describe("Auditoria — links para conferir a origem", () => {
     const rot = (t: Parameters<typeof linksDoCard>[0]) => linksDoCard(t, "2026-09", null).map((l) => l.rotulo);
     expect(rot("malote_fluxo")).toEqual(["Malote", "Fluxo de Caixa"]);
     expect(rot("fluxo_extrato")).toEqual(["Malote", "Fluxo de Caixa", "Conciliação Bancária"]);
-    expect(rot("centros_malote")).toEqual(["Malote", "Lançamentos financeiros", "Centros de Custo"]);
+    expect(rot("centros_malote")).toEqual(["Fluxo de Caixa", "Centros de Custo"]);
     expect(rot("orcado_realizado")).toEqual(["Fluxo de Caixa", "Orçamento Geral"]);
     expect(rot("faturado")).toEqual([]);
   });

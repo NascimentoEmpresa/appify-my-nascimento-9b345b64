@@ -16,6 +16,8 @@ import { agruparFaturamento, custosPorContratoMes, custosVazios, CustosPorRubric
 import { RubricasCusto } from "./faturamento/RubricasCusto";
 import { FaixasTexto, pillDaMargem, TituloComFormula } from "./faturamento/Rentabilidade";
 import { useLigacoesRubrica } from "./faturamento/useLigacoesRubrica";
+import { SeletorBaseLeitura } from "./faturamento/SeletorBaseLeitura";
+import { useLeituraCompartilhada } from "./faturamento/leituraCompartilhada";
 import { CODIGO_PADRAO, codigosDoFiltro, FiltroCodigoNota } from "./faturamento/FiltroCodigoNota";
 import { rotuloMes, useBaseFaturamento } from "./faturamento/useBaseFaturamento";
 import { BannerAuditoria } from "./auditoria/BannerAuditoria";
@@ -50,13 +52,13 @@ interface Linha {
 
 export default function LucratividadeContratos() {
   // Filtro Código (tipo da nota): padrão N, como sempre foi.
-  const [codigo, setCodigo] = useState(CODIGO_PADRAO);
+  // SIS-2026-0721: base, código e empresa vêm da leitura compartilhada com o Faturamento e o Fechamento.
+  const { base, setBase, codigo, setCodigo, empresaId, setEmpresaId } = useLeituraCompartilhada();
   const codigos = useMemo(() => codigosDoFiltro(codigo), [codigo]);
   const { contratos, nfs, empresas, executavelDoContrato, carregando } = useBaseFaturamento(codigos);
   const hoje = new Date();
   const [mes, setMes] = useState(`${hoje.getFullYear()}-${String(hoje.getMonth() + 1).padStart(2, "0")}`);
-  const { data: fluxo = [], isLoading: carregandoFluxo, error: erroFluxo } = useCustosContratoMes(mes);
-  const [empresaId, setEmpresaId] = useState(TODOS);
+  const { data: fluxo = [], isLoading: carregandoFluxo, error: erroFluxo } = useCustosContratoMes(mes, base);
   const [cliente, setCliente] = useState(TODOS);
   const [situacao, setSituacao] = useState(TODOS);
   const [busca, setBusca] = useState("");
@@ -170,6 +172,7 @@ export default function LucratividadeContratos() {
           <SelectTrigger className="h-8 w-[110px] text-xs"><SelectValue /></SelectTrigger>
           <SelectContent>{mesesDisponiveis.map((m) => <SelectItem key={m} value={m}>{rotuloMes(m)}</SelectItem>)}</SelectContent>
         </Select>
+        <SeletorBaseLeitura base={base} onChange={setBase} />
         <FiltroCodigoNota valor={codigo} onChange={setCodigo} />
         <Select value={empresaId} onValueChange={setEmpresaId}>
           <SelectTrigger className="h-8 w-[200px] text-xs"><SelectValue placeholder="Empresa" /></SelectTrigger>
@@ -303,7 +306,7 @@ export default function LucratividadeContratos() {
             </Table>
           </div>
           <p className="text-[11px] text-muted-foreground">
-            Custos pela competência: saídas do Fluxo de Caixa com competência em {rotuloMes(mes)} e vinculadas ao contrato. Transferências entre contas, aplicações, empréstimos, financiamentos e distribuições ficam de fora. Pagamentos sem contrato não entram em nenhuma linha. Contratos ADMINISTRATIVO - … ficam fora desta tela.
+            Custos {base === "pagamento" ? "pela data de pagamento: saídas do Fluxo de Caixa pagas em" : "pela competência: saídas do Fluxo de Caixa com competência em"} {rotuloMes(mes)} e vinculadas ao contrato. Transferências entre contas, aplicações, empréstimos, financiamentos e distribuições ficam de fora. Pagamentos sem contrato não entram em nenhuma linha. Contratos ADMINISTRATIVO - … ficam fora desta tela.
           </p>
           {semClass.linhas > 0 && (
             <p className="text-[11px] text-amber-700 dark:text-amber-400">

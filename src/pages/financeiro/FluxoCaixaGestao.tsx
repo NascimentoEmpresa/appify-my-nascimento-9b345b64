@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Card, CardContent } from "@/components/ui/card";
@@ -19,6 +19,7 @@ import {
   type AbaFluxo, type SituacaoFluxo,
 } from "@/pages/financeiro/fluxo-caixa/abasFluxo";
 import { agruparKpi, explicacaoKpi, linhasDoKpi, totalKpi, type KpiFluxo } from "@/pages/financeiro/fluxo-caixa/kpiFluxo";
+import { useScreenAccess } from "@/hooks/useScreenAccess";
 import { TrendingDown, TrendingUp, Wallet, LineChart, X, Trash2, RotateCcw, Pencil, Eye, ChevronRight, ChevronDown, FileDown, Split } from "lucide-react";
 import { toast } from "sonner";
 import { AcessoGate } from "@/components/auth/AcessoGate";
@@ -276,6 +277,21 @@ export default function FluxoCaixaGestao() {
   const [editEmpresaId, setEditEmpresaId] = useState("");
   const [editFormaPagamento, setEditFormaPagamento] = useState("");
   const [editBancoId, setEditBancoId] = useState("");
+
+  // SIS-2026-0720: a Auditoria da Controladoria (item 3, "falta distribuir") abre o Fluxo já na edição do lançamento para reclassificar.
+  // ?editar=origem|despesa_id|parcela. Só abre para quem tem "alterar" no Fluxo (o mesmo gate do lápis); sem permissão, nada acontece.
+  const editarParam = searchParams.get("editar");
+  const { data: podeEditarFluxo } = useScreenAccess("financeiro-fluxo-caixa-gestao", "alterar");
+  const editarJaAbriu = useRef(false);
+  useEffect(() => {
+    if (!editarParam || editarJaAbriu.current || !podeEditarFluxo || isLoading || linhasTodas.length === 0) return;
+    const [origem, despesaId, parcela] = editarParam.split("|");
+    const alvo = linhasTodas.find((x) => x.origem === origem && x.despesa_id === despesaId && String(x.numero_parcela ?? "") === (parcela ?? ""));
+    editarJaAbriu.current = true;
+    if (alvo) abrirEditar(alvo);
+    else toast.error("Não achei esse lançamento no Fluxo de Caixa (a data ou a origem pode ter mudado). Procure pelo ID na busca.");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editarParam, podeEditarFluxo, isLoading, linhasTodas]);
 
   function abrirEditar(l: FluxoCaixaMaloteLinha) {
     setItemEditar(l);

@@ -3,12 +3,13 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Link } from "react-router-dom";
-import { AlertTriangle, ArrowDown, ArrowUp, BarChart3, Briefcase, CheckCircle2, ClipboardCopy, CreditCard, FileText, Landmark, MinusCircle, ArrowUpDown, RefreshCw, TrendingUp } from "lucide-react";
+import { ArrowRight, Pencil, AlertTriangle, ArrowDown, ArrowUp, BarChart3, Briefcase, CheckCircle2, ClipboardCopy, CreditCard, FileText, Landmark, MinusCircle, ArrowUpDown, RefreshCw, TrendingUp } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useScreenAccess } from "@/hooks/useScreenAccess";
 import { fmtMoney } from "@/pages/financeiro/nf-emissao/shared";
 import {
   diferenca, DivergenciaMalote, EntradasSaidas, fmtPercentual, LABEL_MOTIVO_DIVERGENCIA, LABEL_MOTIVO_SEM_CENTRO, LABEL_ORIGEM_FINANCEIRO, LABEL_ORIGEM_LANCAMENTO,
-  LancamentoSemCentro, LinkCard, PainelFluxoExtrato, PontePainelFluxo, PainelMaloteFluxo, PainelOrcadoRealizado, relatorioDivergencias, relatorioSemCentro, SituacaoComparacao, TotaisCard,
+  LancamentoSemCentro, LinkCard, linkReclassificarFluxo, PainelCentrosFluxo, PainelFluxoExtrato, PontePainelFluxo, PainelMaloteFluxo, PainelOrcadoRealizado, relatorioDivergencias, relatorioSemCentro, SituacaoComparacao, TotaisCard,
 } from "./regras";
 import { AjusteRegistrado, useAjustesDasDespesas } from "./useAuditoriaDados";
 
@@ -386,6 +387,120 @@ export function CorpoSemCentro({ pendentes, linkFluxo }: { pendentes: Lancamento
         </DialogContent>
       </Dialog>
     </>
+  );
+}
+
+// ── 3 (SIS-2026-0720). Centros de custo × saída total do Fluxo de Caixa ───────────────────────────────────
+// Saída total → (−) aplicação → (−) transferência entre contas = saldo utilizável, que precisa estar nos centros de custo. O que não está
+// em nenhum é o "falta distribuir": a seta abre os lançamentos e cada um leva ao Fluxo já na edição para reclassificar.
+function LinhaValor({ rotulo, valor, forte, tom, dica }: { rotulo: string; valor: number; forte?: boolean; tom?: "neutro" | "alerta"; dica?: string }) {
+  return (
+    <div className={cn("flex items-center justify-between gap-2 px-3 py-1.5 text-sm", forte && "bg-muted/50 font-semibold", tom === "alerta" && "text-red-600 dark:text-red-400")} title={dica}>
+      <span>{rotulo}</span>
+      <span className="tabular-nums">{fmtMoney(valor)}</span>
+    </div>
+  );
+}
+
+export function CorpoCentrosFluxo({ p, mes, empresaId }: { p: PainelCentrosFluxo; mes: string; empresaId: string | null }) {
+  const [aberto, setAberto] = useState(false);
+  // Só Controladoria e Financeiro reclassificam: é a permissão "Alterar" do Fluxo de Caixa.
+  const { data: podeReclassificar = false } = useScreenAccess("financeiro-fluxo-caixa-gestao", "alterar");
+  const dia = (iso: string | null) => (iso ? iso.split("-").reverse().join("/") : "—");
+  const temFalta = p.lancamentos.length > 0;
+  const fechou = Math.abs(p.faltaDistribuir) < 1;
+
+  async function copiar() {
+    try {
+      await navigator.clipboard.writeText(relatorioSemCentro(p.lancamentos));
+      toast.success("Relatório copiado.");
+    } catch {
+      toast.error("Não foi possível copiar.");
+    }
+  }
+
+  return (
+    <div className="space-y-3">
+      <div className="text-center">
+        <p className="text-2xl font-bold">{fmtMoney(p.saidaTotal)}</p>
+        <p className="text-[11px] text-muted-foreground">Total de saídas do Fluxo de Caixa</p>
+      </div>
+      <div className="divide-y rounded-lg border overflow-hidden">
+        <LinhaValor rotulo="Saída total do Fluxo de Caixa" valor={p.saidaTotal} />
+        <LinhaValor rotulo="Aplicação (não utiliza)" valor={p.aplicacoes} dica="Aplicação financeira é giro de caixa, não despesa." />
+        <LinhaValor rotulo="Transferências entre contas (não utiliza)" valor={p.transferencias} dica="Classificação TRANSFERÊNCIA ENTRE CONTAS: dinheiro que muda de conta, não despesa." />
+        <LinhaValor rotulo="Saldo utilizável" valor={p.saldoUtilizavel} forte />
+      </div>
+      <div className="rounded-lg border overflow-hidden">
+        <p className="border-b bg-muted/40 px-3 py-1.5 text-xs font-semibold">Centros de custo</p>
+        <div className="divide-y">
+          <LinhaValor rotulo="Contratos" valor={p.contratos} />
+          <LinhaValor rotulo="Administrativo" valor={p.administrativo} />
+          <LinhaValor rotulo="Sócios" valor={p.socios} />
+          <div className={cn("flex items-center justify-between gap-2 px-3 py-1.5 text-sm font-semibold", fechou ? "bg-emerald-50 text-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-300" : "bg-red-50 text-red-700 dark:bg-red-950/30 dark:text-red-300")}>
+            <span>Falta distribuir</span>
+            <span className="flex items-center gap-2">
+              <span className="tabular-nums">{fmtMoney(p.faltaDistribuir)}</span>
+              {temFalta && (
+                <Button type="button" variant="outline" size="icon" className="h-6 w-6" title={`Ver os ${p.lancamentos.length} lançamentos que compõem o valor`} onClick={() => setAberto(true)}>
+                  <ArrowRight className="h-3.5 w-3.5" />
+                </Button>
+              )}
+            </span>
+          </div>
+        </div>
+      </div>
+      <p className="text-[11px] text-muted-foreground">
+        Base de leitura: saídas do Fluxo de Caixa menos aplicações e transferências entre contas; comparação com os valores distribuídos nos centros de custo.
+        {temFalta ? ` Clique na seta para ver os ${p.lancamentos.length} lançamentos que compõem o "falta distribuir".` : ""}
+      </p>
+
+      <Dialog open={aberto} onOpenChange={setAberto}>
+        <DialogContent className="max-w-4xl">
+          <DialogHeader>
+            <DialogTitle>Falta distribuir — {fmtMoney(p.faltaDistribuir)}</DialogTitle>
+            <DialogDescription>
+              Saídas sem contrato e sem classificação administrativa: não estão em nenhum centro de custo. Reclassifique pelo ID: o Fluxo de Caixa abre direto na edição do lançamento.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-[11px] text-muted-foreground">
+              {podeReclassificar
+                ? "Você pode reclassificar no Fluxo de Caixa (permissão Alterar)."
+                : "Só a Controladoria e o Financeiro reclassificam (permissão Alterar no Fluxo de Caixa). Aqui você consulta e identifica o gerente responsável."}
+            </p>
+            <Button type="button" variant="ghost" size="sm" className="h-7 gap-1 text-[11px]" onClick={copiar}><ClipboardCopy className="h-3.5 w-3.5" />Copiar relatório</Button>
+          </div>
+          <ul className="max-h-[55vh] divide-y overflow-y-auto rounded-lg border text-xs">
+            {p.lancamentos.map((l, i) => (
+              <li key={`${l.origem}-${l.despesaId ?? i}-${l.numeroParcela ?? ""}-${i}`} className="space-y-0.5 px-3 py-2">
+                <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5">
+                  <span className="font-mono">{l.numero ?? "sem ID"}</span>
+                  <span className="text-muted-foreground">{LABEL_ORIGEM_LANCAMENTO[l.origem] ?? l.origem} · {dia(l.data)}</span>
+                  <span className="font-semibold">{fmtMoney(l.valor)}</span>
+                </div>
+                <p className="truncate" title={l.descricao}>{l.descricao || "sem descrição"}</p>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-muted-foreground">
+                    {LABEL_MOTIVO_SEM_CENTRO[l.motivo]}{l.classificacao ? ` · ${l.classificacao}` : ""}
+                    {" · "}Gerente responsável: <span className="text-foreground">{l.responsaveis.length ? l.responsaveis.join(", ") : "não definido (sem classificação)"}</span>
+                  </p>
+                  {podeReclassificar && l.despesaId && (
+                    <Button asChild size="sm" variant="outline" className="h-7 gap-1 text-[11px]">
+                      <Link to={linkReclassificarFluxo(mes, empresaId, l)}><Pencil className="h-3 w-3" />Reclassificar no Fluxo</Link>
+                    </Button>
+                  )}
+                </div>
+              </li>
+            ))}
+          </ul>
+          <p className="text-[11px] text-muted-foreground">
+            Total: <span className="font-medium text-foreground">{fmtMoney(p.lancamentos.reduce((s, l) => s + l.valor, 0))}</span> em {p.lancamentos.length} lançamento(s).
+            O envio da solicitação de alteração ao gerente responsável entra com o módulo de ajuste de lançamento (SIS-2026-0560).
+          </p>
+        </DialogContent>
+      </Dialog>
+    </div>
   );
 }
 
