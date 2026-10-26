@@ -715,6 +715,8 @@ const encarregadosModule: ModuleDef = {
       items: [
         { label: "Solicitar Férias", to: "/app/encarregados/solicitar-ferias", icon: CalendarRange },
         { label: "Solicitar Demissão", to: "/app/encarregados/solicitar-demissao", icon: UserMinus },
+        // Pedido de treinamento ao setor de Treinamentos (mig 20261026000010).
+        { label: "Solicitar Treinamento", to: "/app/encarregados/solicitar-treinamento", icon: GraduationCap },
         { label: "Mudança de Função", to: "/app/encarregados/troca-funcao", icon: ArrowLeftRight, notif: "troca_funcao" },
       ],
     },
@@ -796,6 +798,14 @@ const treinamentosModule: ModuleDef = {
       defaultOpen: true,
       items: [
         { label: "Dashboard", to: "/app/treinamentos", icon: LayoutDashboard },
+      ],
+    },
+    {
+      // Pedidos dos encarregados (mig 20261026000010): aprovar, agendar, reprovar e conversar.
+      label: "Solicitações",
+      defaultOpen: true,
+      items: [
+        { label: "Solicitações de Treinamentos", to: "/app/treinamentos/solicitacoes", icon: ClipboardList },
       ],
     },
     {

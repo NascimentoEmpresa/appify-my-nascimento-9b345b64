@@ -24,6 +24,8 @@ export interface RotasSolicitacoes {
   meusPedidos: string;
   /** Orientações Jurídicas (biblioteca + minhas perguntas) — cada módulo tem a sua porta (17/09/2026). */
   orientacoes: string;
+  /** Solicitar Treinamento (mig 20261026000010) — só existe no módulo Encarregados. */
+  treinamento: string;
 }
 
 export const rotasSolicitacoes = (base: BaseSolicitacoes = "encarregados"): RotasSolicitacoes =>
@@ -42,6 +44,7 @@ export const rotasSolicitacoes = (base: BaseSolicitacoes = "encarregados"): Rota
         chamadoNovo: "/app/central-servicos/chamados/novo",
         meusPedidos: "/app/encarregados/meus-pedidos",
         orientacoes: "/app/central-servicos/orientacoes-juridicas",
+        treinamento: "/app/encarregados/solicitar-treinamento",
       }
     : {
         base,
@@ -55,6 +58,7 @@ export const rotasSolicitacoes = (base: BaseSolicitacoes = "encarregados"): Rota
         chamadoNovo: "/app/encarregados/chamados/novo",
         meusPedidos: "/app/encarregados/meus-pedidos",
         orientacoes: "/app/encarregados/orientacoes-juridicas",
+        treinamento: "/app/encarregados/solicitar-treinamento",
       };
 
 /** Descobre a base pela URL atual — pra componente compartilhado que não recebe prop. */
