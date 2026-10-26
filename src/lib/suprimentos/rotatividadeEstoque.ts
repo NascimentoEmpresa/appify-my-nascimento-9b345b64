@@ -76,6 +76,19 @@ export interface HistoricoUniformeLinha {
   utilizados: number;
 }
 
+/** Baixa física de uniforme, identificada pela pessoa atendida no pedido. */
+export interface FornecimentoUniformeColaborador {
+  data_fornecimento: string;
+  colaborador: string;
+  matricula: string | null;
+  contrato: string;
+  posto: string;
+  protocolo: string;
+  tipo_uniforme: string;
+  tamanho: string | null;
+  quantidade: number;
+}
+
 export interface GradeDeclarada {
   peca: string;
   tamanho: string;
