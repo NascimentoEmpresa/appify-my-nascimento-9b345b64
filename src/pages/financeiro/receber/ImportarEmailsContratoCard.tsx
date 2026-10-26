@@ -132,6 +132,7 @@ export default function ImportarEmailsContratoCard() {
     );
     // A simulação da cobrança automática lê os destinatários: refaz para a aba Automação já refletir o cadastro.
     qc.invalidateQueries({ queryKey: ["cobranca-auto-simulacao"] });
+    qc.invalidateQueries({ queryKey: ["cobranca-dest-emails"] });
     setImportando(false);
   };
 

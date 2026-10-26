@@ -2,6 +2,8 @@ import { PageHeader } from "@/components/layout/PageHeader";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import NotasAbertoTab from "./NotasAbertoTab";
 import AutomacaoTab from "./AutomacaoTab";
+import ModelosEmailTab from "./ModelosEmailTab";
+import DestinatariosTab from "./DestinatariosTab";
 
 export default function Cobrancas() {
   return (
@@ -18,9 +20,13 @@ export default function Cobrancas() {
         <TabsList>
           <TabsTrigger value="notas">Notas em aberto</TabsTrigger>
           <TabsTrigger value="automacao">Automação</TabsTrigger>
+          <TabsTrigger value="modelos">Modelos de e-mail</TabsTrigger>
+          <TabsTrigger value="destinatarios">Destinatários</TabsTrigger>
         </TabsList>
         <TabsContent value="notas" className="mt-4"><NotasAbertoTab /></TabsContent>
         <TabsContent value="automacao" className="mt-4"><AutomacaoTab /></TabsContent>
+        <TabsContent value="modelos" className="mt-4"><ModelosEmailTab /></TabsContent>
+        <TabsContent value="destinatarios" className="mt-4"><DestinatariosTab /></TabsContent>
       </Tabs>
     </div>
   );
