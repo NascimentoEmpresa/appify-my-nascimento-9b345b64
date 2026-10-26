@@ -119,6 +119,8 @@ export default function VerificacaoCandidatos() {
     if (!restrInput.trim()) { toast("Informe o motivo da restrição.", "err"); return; }
     const { error } = await (supabase as any).from("RECRUTAMENTO_CPF_BLACKLIST").upsert({
       cpf_digits: d, cpf_fmt: restr.cpf, motivo: restrInput.trim(), criado_por: nome,
+      // Cadastro Restritivo (mig 20261025000020): nome e quem restringiu.
+      nome: restr.nome ?? null, origem: "juridico",
     }, { onConflict: "cpf_digits" });
     if (error) { toast("Erro: " + error.message, "err"); return; }
     // Restrito → vai direto para Reprovado (sai do processo).
