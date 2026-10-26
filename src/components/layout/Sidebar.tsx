@@ -78,7 +78,7 @@ import { useTrocaFuncaoNotif } from "@/hooks/useTrocaFuncaoNotif";
 import { useJuridicoNotif } from "@/hooks/useJuridicoNotif";
 import { useReembolsoNotif } from "@/hooks/useReembolsoNotif";
 import { useAprovacoesNotif } from "@/hooks/useAprovacoesNotif";
-import { Inbox, FileSignature, PencilRuler, Workflow, type LucideIcon } from "lucide-react";
+import { Inbox, FileSignature, PencilRuler, Workflow, UserX, type LucideIcon } from "lucide-react";
 import { Target, MessagesSquare, KeyRound, MonitorPlay, Gauge } from "lucide-react";
 import { FileX2 } from "lucide-react";
 import { GitBranch, GitMerge } from "lucide-react";
@@ -639,6 +639,8 @@ const recrutamentoModule: ModuleDef = {
         // (rh_recrutamento_dashboard, recrutamento_dashboard) seguem os mesmos.
         { label: "Gestão Recrutamento", to: "/app/rh/recrutamento", icon: UserCog },
         { label: "Banco de Talentos", to: "/app/rh/banco-talentos", icon: Users2 },
+        // CPFs com restrição para contratação (mig 20261025000020) — a mesma lista do Jurídico.
+        { label: "Cadastro Restritivo", to: "/app/rh/recrutamento/cadastro-restritivo", icon: UserX },
       ],
     },
     {
@@ -1147,6 +1149,8 @@ const juridicoModule: ModuleDef = {
       defaultOpen: true,
       items: [
         { label: "Verificação de Candidatos", to: "/app/juridico/candidatos", icon: ClipboardCheck },
+        // CPFs com restrição para contratação (mig 20261025000020) — a mesma lista do Recrutamento.
+        { label: "Cadastro Restritivo", to: "/app/juridico/cadastro-restritivo", icon: UserX },
       ],
     },
     {

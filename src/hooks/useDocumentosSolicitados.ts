@@ -80,7 +80,8 @@ export const useTermosCienciaPendentes = (userId: string | null | undefined) => 
   queryKey: [K, "ciencia", userId], enabled: !!userId, staleTime: 60_000,
   queryFn: async (): Promise<SolicitacaoDocumento[]> => {
     const { data, error } = await sb.from("RH_DOCUMENTO_SOLICITACAO").select(SELECT_LISTA)
-      .eq("destinatario_id", userId).eq("tipo", "ciencia").eq("status", "pendente").order("created_at");
+      // + "Termo assinado e anexado" (mig 20261025000030): também aparece a cada entrada.
+      .eq("destinatario_id", userId).in("tipo", ["ciencia", "ciencia_anexo"]).eq("status", "pendente").order("created_at");
     erroRpc(error);
     return data ?? [];
   },
@@ -117,6 +118,43 @@ export function useSolicitarDocumento() {
     },
     onSettled: () => invalidar(qc),
   });
+}
+
+/** Os encarregados (Hierarquia de Postos + cargo de encarregado, com login) — envio para todos (mig 20261025000030). */
+export interface EncarregadoDocumento { id: string; nome: string | null; cargo: string | null; contratos: string | null; por_hierarquia: boolean; por_cargo: boolean }
+export const useEncarregadosDocumento = (ativo: boolean) => useQuery({
+  queryKey: [K, "encarregados"], enabled: ativo, staleTime: 10 * 60_000,
+  queryFn: async (): Promise<EncarregadoDocumento[]> => {
+    const { data, error } = await sb.rpc("rh_doc_encarregados");
+    erroRpc(error);
+    return data ?? [];
+  },
+});
+
+/** Uma solicitação para cada encarregado marcado, todas no mesmo lote; o arquivo sobe uma vez e vale para todas. */
+export function useSolicitarLote() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (p: { tipo: TipoNovoDocumento; titulo: string; descricao: string; prazo: string | null; destinatarios: string[]; arquivos: File[] }) => {
+      const { arquivos, ...dados } = p;
+      const { data, error } = await sb.rpc("rh_doc_solicitar_lote", { p: dados });
+      erroRpc(error);
+      const lote = String(data?.lote_id ?? "");
+      const ids = ((data?.ids ?? []) as (number | string)[]).map(Number);
+      if (arquivos.length && ids.length) {
+        await anexar(ids[0], arquivos);
+        const r = await sb.rpc("rh_doc_anexo_replicar", { p_lote: lote, p_de: ids[0] });
+        erroRpc(r.error);
+      }
+      return { lote, ids };
+    },
+    onSettled: () => invalidar(qc),
+  });
+}
+
+/** O destinatário abriu o documento do RH (a "leitura" do chamado). Silencioso: não atrapalha quem só quer ver. */
+export async function marcarDocumentoLido(id: number) {
+  try { await sb.rpc("rh_doc_marcar_lido", { p_id: id }); } catch { /* sem efeito na tela */ }
 }
 
 export function useAnexarDocumento() {
