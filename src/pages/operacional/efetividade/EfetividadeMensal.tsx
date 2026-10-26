@@ -44,6 +44,7 @@ import {
   type ApuracaoColab, type FaixaEfet, type FiltrosMensal, type RecorteMes, type TotalMes,
 } from "@/lib/efetividadeMensal";
 import { CabecalhoEfetividade, CelulaPct, Erro, Kpi, Paginacao, Secao, Vazio } from "./shared";
+import { QuemFaltou } from "./QuemFaltou";
 
 const SEM_OCORRENCIAS: Ocorrencia[] = [];
 const MESES_NO_SELETOR = 24;
@@ -64,6 +65,8 @@ interface Apurado { base: BaseEfet; assinatura: string; ap: ApuracaoColab[] }
 interface LinhaTabela {
   chave: string; titulo: string; sub: string; colaboradores: number | null;
   r: Resumo; coberturas: number; descobertos: number; contrato: string;
+  /** Os colaboradores da linha — o clique em Faltas abre quem faltou. */
+  itens: ApuracaoColab[];
 }
 
 export default function EfetividadeMensal() {
@@ -85,6 +88,8 @@ export default function EfetividadeMensal() {
   const [visao, setVisao] = useState<Visao>("contratos");
   const [grafico, setGrafico] = useState<"mes" | "dia">("mes");
   const [ordem, setOrdem] = useState<{ col: ColOrdem; asc: boolean }>({ col: "efetividade", asc: true });
+  // Clique no número de faltas (26/10/2026): quem faltou naquela linha.
+  const [faltasDe, setFaltasDe] = useState<{ titulo: string; itens: ApuracaoColab[] } | null>(null);
 
   // ---- Dados: um período por mês (o selecionado é o último) ----
   const recortes = useMemo(
@@ -211,15 +216,15 @@ export default function EfetividadeMensal() {
     const enc = (empresa: number, filial: number) => contratos.get(chaveContrato(empresa, filial))?.encarregados.map((e) => e.nome).join(", ") ?? "";
     if (visao === "contratos") return linhasContrato.map((l) => ({
       chave: l.chave, titulo: l.rotulo, sub: enc(l.itens[0].p.c.empresa, l.itens[0].p.c.filial) || "Sem encarregado na Hierarquia",
-      colaboradores: l.colaboradores, r: l, coberturas: l.coberturas, descobertos: l.descobertos, contrato: l.rotulo,
+      colaboradores: l.colaboradores, r: l, coberturas: l.coberturas, descobertos: l.descobertos, contrato: l.rotulo, itens: l.itens,
     }));
     if (visao === "postos") return porPosto(apF).map((l) => ({
       chave: l.chave, titulo: l.rotulo, sub: l.itens[0].p.c.contrato, colaboradores: l.colaboradores, r: l,
-      coberturas: l.coberturas, descobertos: l.descobertos, contrato: l.itens[0].p.c.contrato,
+      coberturas: l.coberturas, descobertos: l.descobertos, contrato: l.itens[0].p.c.contrato, itens: l.itens,
     }));
     return apF.map((a) => ({
       chave: String(a.p.c.id), titulo: a.p.c.nome, sub: `${a.p.c.cadastro ?? ""} · ${a.p.c.cargo ?? "—"} · ${a.p.c.contrato}`,
-      colaboradores: null, r: a.resumo, coberturas: a.coberturas, descobertos: a.descobertos, contrato: a.p.c.contrato,
+      colaboradores: null, r: a.resumo, coberturas: a.coberturas, descobertos: a.descobertos, contrato: a.p.c.contrato, itens: [a],
     }));
   }, [visao, linhasContrato, apF, contratos]);
 
@@ -482,7 +487,15 @@ export default function EfetividadeMensal() {
                       {visao !== "colaboradores" && <td className="p-2 text-center tabular-nums">{l.colaboradores}</td>}
                       <td className="p-2 text-center tabular-nums">{(l.r.previsto - l.r.aguardando).toLocaleString("pt-BR")}</td>
                       <td className="p-2 text-center tabular-nums text-success">{l.r.presentes.toLocaleString("pt-BR")}</td>
-                      <td className="p-2 text-center font-semibold tabular-nums text-destructive">{l.r.faltas || ""}</td>
+                      <td className="p-2 text-center font-semibold tabular-nums text-destructive">
+                        {l.r.faltas > 0 && (
+                          <button type="button" title="Ver quem faltou e em que dias"
+                            onClick={(e) => { e.stopPropagation(); setFaltasDe({ titulo: l.titulo, itens: l.itens }); }}
+                            className="rounded px-1.5 py-0.5 underline decoration-dotted underline-offset-2 hover:bg-destructive/10">
+                            {l.r.faltas}
+                          </button>
+                        )}
+                      </td>
                       <td className="p-2 text-center tabular-nums">{l.r.atestados || ""}</td>
                       <td className="p-2 text-center tabular-nums">{l.r.afastamentos || ""}</td>
                       <td className="p-2 text-center tabular-nums">{l.r.ferias || ""}</td>
@@ -500,7 +513,14 @@ export default function EfetividadeMensal() {
                       {visao !== "colaboradores" && <td className="p-2 text-center tabular-nums">{total.colaboradores}</td>}
                       <td className="p-2 text-center tabular-nums">{(total.previsto - total.aguardando).toLocaleString("pt-BR")}</td>
                       <td className="p-2 text-center tabular-nums">{total.presentes.toLocaleString("pt-BR")}</td>
-                      <td className="p-2 text-center tabular-nums">{total.faltas}</td>
+                      <td className="p-2 text-center tabular-nums">
+                        {total.faltas > 0 ? (
+                          <button type="button" title="Ver quem faltou e em que dias" onClick={() => setFaltasDe({ titulo: "Total do recorte", itens: apF })}
+                            className="rounded px-1.5 py-0.5 underline decoration-dotted underline-offset-2 hover:bg-destructive/10">
+                            {total.faltas}
+                          </button>
+                        ) : total.faltas}
+                      </td>
                       <td className="p-2 text-center tabular-nums">{total.atestados}</td>
                       <td className="p-2 text-center tabular-nums">{total.afastamentos}</td>
                       <td className="p-2 text-center tabular-nums">{total.ferias}</td>
@@ -514,6 +534,8 @@ export default function EfetividadeMensal() {
             </div>
             <Paginacao pagina={paginaAtual} total={ordenadas.length} porPagina={POR_PAGINA} onPagina={setPagina} />
           </Secao>
+          <QuemFaltou aberto={!!faltasDe} onFechar={() => setFaltasDe(null)} titulo={faltasDe?.titulo ?? ""}
+            itens={faltasDe?.itens ?? []} fim={recorte.fim} />
         </div>
       )}
     </div>

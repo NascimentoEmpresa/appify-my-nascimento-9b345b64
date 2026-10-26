@@ -3,7 +3,7 @@ import * as XLSX from "xlsx";
 import { agoraBrasilia, prepararColaborador, resumir, type ColaboradorEfet, type ContratoEfet, type Ocorrencia } from "@/lib/efetividade";
 import {
   apurarMes, assinaturaOcorrencias, faixaEfetividade, taxaFaltas, filtrarApuracao, mesesAte, mesPadrao, montarPlanilhaEfetividade, porContrato, recorteDoMes,
-  rotuloMes, serieDoMes, somaMeses, somarResumos, totalDoMes, ultimoDiaDoMes, FILTROS_VAZIOS,
+  rotuloMes, serieDoMes, somaMeses, somarResumos, totalDoMes, ultimoDiaDoMes, FILTROS_VAZIOS, faltososDe, horaDaBatida,
 } from "@/lib/efetividadeMensal";
 
 // =====================================================================
@@ -113,6 +113,25 @@ describe("apurarMes", () => {
     expect({ ...t, coberturas: undefined, descobertos: undefined, colaboradores: undefined }).toEqual({ ...direto, coberturas: undefined, descobertos: undefined, colaboradores: undefined });
     expect(t.efetividade).toBeCloseTo(19 / 21);
     expect(t.colaboradores).toBe(3);
+  });
+
+  it("quem faltou (clique em Faltas): só quem tem falta, mais faltas primeiro, com a última marcação", () => {
+    // Davi bateu até 01/10 e sumiu: faltas de 02/10 em diante (dias úteis).
+    const davi = prepararColaborador(col({ id: 5, nome: "Davi", dias: comercial(...UTEIS.filter((d) => d <= "2026-10-01")) }));
+    const ap2 = apurarMes([ana, beto, davi], "2026-10-01", "2026-10-09", SINC, []);
+    const f = faltososDe(ap2, "2026-10-09");
+    expect(f.map((x) => x.a.p.c.nome)).toEqual(["Davi", "Beto"]);
+    expect(f[0].a.faltasEm).toEqual(["2026-10-02", "2026-10-05", "2026-10-06", "2026-10-07", "2026-10-08", "2026-10-09"]);
+    expect(f[0].ultimaMarcacao).toBe("2026-10-01");
+    expect(f[1].ultimaMarcacao).toBe("2026-10-09");
+    // Uma marcação só no dia já não é falta (regra 7): Beto com uma batida em 07/10.
+    const beto1 = prepararColaborador(col({ id: 2, nome: "Beto", dias: [...comercial(...UTEIS.filter((d) => d !== "2026-10-05" && d !== "2026-10-07")), ["2026-10-07", [600]]] }));
+    expect(apurarMes([beto1], "2026-10-01", "2026-10-09", SINC, [])[0].faltasEm).toEqual(["2026-10-05"]);
+  });
+
+  it("hora da batida (noturno passa de 1440)", () => {
+    expect(horaDaBatida(478)).toBe("07:58");
+    expect(horaDaBatida(1440 + 330)).toBe("05:30");
   });
 
   it("quem não estava no contrato no mês some", () => {

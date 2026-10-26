@@ -234,6 +234,36 @@ export function agregarPor(ap: ApuracaoColab[], chave: (a: ApuracaoColab) => str
 export const porContrato = (ap: ApuracaoColab[]) => agregarPor(ap, (a) => chaveContrato(a.p.c.empresa, a.p.c.filial), (a) => a.p.c.contrato);
 export const porPosto = (ap: ApuracaoColab[]) => agregarPor(ap, (a) => chavePosto(a.p.c), (a) => a.p.c.posto_nome);
 
+// ---- Quem faltou (o clique no número de faltas, 26/10/2026) ---------------------
+// Pedido do Pablo: "preciso conseguir clicar aqui e saber quem são as pessoas
+// que estão com as faltas, tá puxando falta DEMAIS". A regra não muda (falta =
+// dia de trabalho da escala sem NENHUMA marcação no dia do calendário, regra 7
+// da lib do dia); isto só abre o que já foi apurado, pessoa a pessoa.
+
+export interface Faltoso {
+  a: ApuracaoColab;
+  /** Última marcação qualquer até o fim do recorte (AAAA-MM-DD); null = nenhuma na base. */
+  ultimaMarcacao: string | null;
+}
+
+/** Quem tem falta no grupo: mais faltas primeiro, depois por nome. */
+export function faltososDe(itens: ApuracaoColab[], fim: string): Faltoso[] {
+  return itens
+    .filter((a) => a.faltasEm.length > 0)
+    .map((a) => {
+      let ultima: string | null = null;
+      for (const d of a.p.brutoPorDia.keys()) if (d <= fim && (!ultima || d > ultima)) ultima = d;
+      return { a, ultimaMarcacao: ultima };
+    })
+    .sort((x, y) => y.a.faltasEm.length - x.a.faltasEm.length || x.a.p.c.nome.localeCompare(y.a.p.c.nome, "pt-BR"));
+}
+
+/** Minutos da batida → "07:58" (a jornada noturna soma 1440 depois da meia-noite). */
+export const horaDaBatida = (m: number) => {
+  const x = ((Math.round(m) % 1440) + 1440) % 1440;
+  return `${String(Math.floor(x / 60)).padStart(2, "0")}:${String(x % 60).padStart(2, "0")}`;
+};
+
 export interface TotalMes extends Resumo { coberturas: number; descobertos: number; colaboradores: number }
 export function totalDoMes(ap: ApuracaoColab[]): TotalMes {
   return {
