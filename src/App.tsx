@@ -135,6 +135,7 @@ function Carregando3D({ children }: { children: React.ReactNode }) {
 import SeparacaoMateriais from "./pages/suprimentos/SeparacaoMateriais";
 import Patrimonio from "./pages/suprimentos/Patrimonio";
 import PainelManutencoes from "./pages/suprimentos/PainelManutencoes";
+import SolicitacoesManutencoes from "./pages/suprimentos/SolicitacoesManutencoes";
 import EpisAdmissoes from "./pages/suprimentos/EpisAdmissoes";
 import CorreioDeclaracao from "./pages/suprimentos/CorreioDeclaracao";
 import EnxovalAdmissao from "./pages/publico/EnxovalAdmissao";
@@ -366,6 +367,7 @@ import AgendamentoVeiculos from "./pages/central-servicos/veiculos/AgendamentoVe
 import SolicitarVagaCentral from "./pages/central-servicos/SolicitarVaga";
 import QuadroAvisos from "./pages/central-servicos/QuadroAvisos";
 import SolicitarReembolso from "./pages/central-servicos/reembolso/SolicitarReembolso";
+import SolicitarManutencaoEquipamento from "./pages/central-servicos/SolicitarManutencaoEquipamento";
 import AprovacaoReembolso from "./pages/central-servicos/reembolso/AprovacaoReembolso";
 import ConfiguracaoReembolso from "./pages/central-servicos/reembolso/ConfiguracaoReembolso";
 import EspacoColaborador from "./pages/central-servicos/espaco-colaborador/EspacoColaborador";
@@ -613,6 +615,7 @@ const App = () => (
             <Route path="whatsapp/testes" element={<WhatsAppTestes />} />
             <Route path="whatsapp/dashboard" element={<WhatsAppDashboard />} />
             <Route path="central-servicos/veiculos" element={<AgendamentoVeiculos />} />
+            <Route path="central-servicos/solicitar-manutencao-equipamento" element={<SolicitarManutencaoEquipamento />} />
             {/* Reembolso: a rota-mãe é aberta a todo colaborador (ele só vê o
                 que é dele); aprovação e configuração são gateadas por
                 AcessoGate dentro da própria tela, não por rota, para quem cai
@@ -846,6 +849,7 @@ const App = () => (
             <Route path="suprimentos/estoque-mapa" element={<Suspense fallback={null}><EstoqueMapa /></Suspense>} />
             <Route path="suprimentos/patrimonio" element={<Patrimonio />} />
             <Route path="suprimentos/manutencao" element={<PainelManutencoes />} />
+            <Route path="suprimentos/solicitacoes-manutencoes" element={<SolicitacoesManutencoes />} />
             <Route path="suprimentos/epis-admissoes" element={<EpisAdmissoes />} />
             <Route path="suprimentos/correio-declaracao" element={<CorreioDeclaracao />} />
             {/* Financeiro */}

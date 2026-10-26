@@ -42,7 +42,7 @@ import {
 import {
   TIPOS_RATEIO, ROTULO_CRITERIO, SEM_CONTRATO, acharContrato, calcularRateio, competenciaParaData,
   competenciaRotulo, contratoPeloNomeArquivo, criterioPadrao, extrairLinhasPorContrato, fmtMoeda, fmtPct,
-  extrairLinhasDoPdf, identificarLayoutPdf, linhasDoLayout, totalDoPdf,
+  extrairLinhasDoPdf, identificarLayoutPdf, layoutPorMatricula, linhasDoLayout, totalDoPdf,
   basesPorParte, partesDoPdf, ROTULO_PARTE, type ParteDoPdf, type ParteGuia,
   lerPlanilhaJusBrasil, resumirRateio, rotuloTipo, somarPorContrato, tipoUsaPdf,
   type ContratoRef, type CriterioRateio, type ItemRateio, type LinhaPlanilhaJus, type TipoRateio,
@@ -465,8 +465,8 @@ function Editor({ id, onFechar, onSalvo }: { id: string | null; onFechar: () => 
       setPartesFora([]);
       let lido = 0;
       const comCpf = extrairLinhasDoPdf(linhas, layout.layout);
-      if (layout.layout === "relacao_eventos" && comCpf.length) {
-        // Relação de Eventos sem CPF (consignado da Soma Financeira): matrícula → cadastro → contrato.
+      if (layoutPorMatricula(layout.layout) && comCpf.length) {
+        // Sem CPF (Relação de Eventos do consignado; Vale Transporte BSVT001, 26/10/2026): matrícula → cadastro → contrato.
         const casados = await casarCadastros(comCpf.map((l, i) => ({ chave: String(i), empresa: l.empresa ?? null, cadastro: l.cadastro ?? null, nome: l.nomePdf ?? null })));
         const porChave = new Map(casados.map((c) => [c.chave, c]));
         const det: LinhaDetalhePdf[] = comCpf.map((l, i) => {
@@ -818,7 +818,7 @@ function Editor({ id, onFechar, onSalvo }: { id: string | null; onFechar: () => 
         {usaPdf && (
           <p className="text-xs text-muted-foreground">
             O PDF é lido no navegador: cada linha com <b>CPF</b> e valor vira um colaborador, e o contrato vem do cadastro dele
-            (EMPREGADOS, inclusive demitidos). Relação de Eventos da Senior sem CPF (consignado): vale a <b>matrícula</b>. Sem CPF nem
+            (EMPREGADOS, inclusive demitidos). Relação de Eventos (consignado) e Vale Transporte da Senior, sem CPF: vale a <b>matrícula</b>. Sem CPF nem
             matrícula, vale a linha com o <b>nome do contrato</b>; e documento de um contrato só (boleto do sindicato, PDF escaneado)
             vai 100% para o contrato do <b>nome do arquivo</b>. Confira e corrija antes de salvar.
           </p>
