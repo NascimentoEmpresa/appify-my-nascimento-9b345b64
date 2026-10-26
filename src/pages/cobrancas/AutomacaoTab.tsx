@@ -15,6 +15,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { KpiTile } from "@/components/financeiro/KpiTile";
+import ImportarEmailsContratoCard from "@/pages/financeiro/receber/ImportarEmailsContratoCard";
 import { Ban, Clock, Gavel, Mail, MailX, RefreshCw } from "lucide-react";
 
 // SIS-2026-0653: cobrança automática a partir do Relatório de Serviços. A conta (quem recebe o quê e quando) é feita pela
@@ -285,6 +286,9 @@ export default function AutomacaoTab() {
           </div>
         </CardContent>
       </Card>
+
+      {/* Destinatários: sem e-mail cadastrado o contrato fica em "Cadastrar e-mail do tomador" e nada é enviado. */}
+      {podeAlterar && <ImportarEmailsContratoCard />}
 
       {/* Detalhe do contrato */}
       <Dialog open={!!aberto} onOpenChange={(o) => !o && setAberto(null)}>

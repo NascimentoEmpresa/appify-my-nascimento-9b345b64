@@ -30,6 +30,7 @@ import { fmtMoney, fmtDate, STATUS_LABEL, STATUS_CLASS, itemVazio, situacaoEspec
 import { ItensNfEditor, ItemForm } from "@/pages/financeiro/nf-emissao/ItensNfEditor";
 import { registrarLogNf } from "@/pages/financeiro/nf-emissao/registrarLogNf";
 import { HistoricoNfPainel } from "@/pages/financeiro/nf-emissao/HistoricoNfPainel";
+import { contratoCombinaComEmpresa, contratosDasNotasDaEmpresa, notaCombinaComStatus } from "./filtros";
 
 // "concluida" no banco cobre tanto a validação normal quanto notas do
 // relatório legado que na origem já constavam SUBSTITUIDA/CANCELADA (o
@@ -64,6 +65,8 @@ export default function ControleNotas() {
   const [busca, setBusca] = useState("");
   const [filtroStatus, setFiltroStatus] = useState<"todos" | "concluida" | "cancelada">("todos");
   const [filtroCompetencia, setFiltroCompetencia] = useState("todas");
+  const [filtroEmpresa, setFiltroEmpresa] = useState("todas");
+  const [filtroContrato, setFiltroContrato] = useState("todos");
 
   const pendentes = useMemo(() => nfs.filter((n) => n.status === "enviada"), [nfs]);
   const historico = useMemo(() => nfs.filter((n) => n.status === "concluida" || n.status === "cancelada"), [nfs]);
@@ -74,11 +77,31 @@ export default function ControleNotas() {
     return Array.from(set).sort((a, b) => b.localeCompare(a));
   }, [historico]);
 
+  const empresasDisponiveis = useMemo(() => {
+    const porId = new Map<string, string>();
+    for (const n of historico) {
+      if (!porId.has(n.empresa_id)) porId.set(n.empresa_id, n.empresa?.nome_fantasia || n.empresa?.razao_social || "-");
+    }
+    return Array.from(porId, ([id, nome]) => ({ id, nome })).sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"));
+  }, [historico]);
+
+  const contratosDisponiveis = useMemo(
+    () => contratosDasNotasDaEmpresa(historico, filtroEmpresa),
+    [historico, filtroEmpresa],
+  );
+
+  // Ao trocar a empresa, o contrato que não pertence a ela volta para "Todos".
+  useEffect(() => {
+    if (!contratoCombinaComEmpresa(contratosDisponiveis, filtroContrato)) setFiltroContrato("todos");
+  }, [contratosDisponiveis, filtroContrato]);
+
   const lista = useMemo(() => {
     const termo = busca.trim().toLowerCase();
     return listaBase.filter((n) => {
-      if (aba === "historico" && filtroStatus !== "todos" && n.status !== filtroStatus) return false;
+      if (aba === "historico" && !notaCombinaComStatus(n, filtroStatus)) return false;
       if (aba === "historico" && filtroCompetencia !== "todas" && n.competencia !== filtroCompetencia) return false;
+      if (aba === "historico" && filtroEmpresa !== "todas" && n.empresa_id !== filtroEmpresa) return false;
+      if (aba === "historico" && filtroContrato !== "todos" && n.contrato_id !== filtroContrato) return false;
       if (!termo) return true;
       return (
         (n.contrato?.nome ?? "").toLowerCase().includes(termo) ||
@@ -86,7 +109,7 @@ export default function ControleNotas() {
         (n.numero_nf ?? "").toLowerCase().includes(termo)
       );
     });
-  }, [listaBase, busca, filtroStatus, filtroCompetencia, aba]);
+  }, [listaBase, busca, filtroStatus, filtroCompetencia, filtroEmpresa, filtroContrato, aba]);
 
   return (
     <div className="space-y-6 p-6">
@@ -147,6 +170,28 @@ export default function ControleNotas() {
                   <SelectItem key={c} value={c}>
                     {new Date(c + "T00:00:00").toLocaleDateString("pt-BR", { month: "2-digit", year: "numeric" })}
                   </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Select value={filtroEmpresa} onValueChange={setFiltroEmpresa}>
+              <SelectTrigger className="h-9 w-48 text-xs">
+                <SelectValue placeholder="Empresa" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="todas">Todas as empresas</SelectItem>
+                {empresasDisponiveis.map((e) => (
+                  <SelectItem key={e.id} value={e.id}>{e.nome}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Select value={filtroContrato} onValueChange={setFiltroContrato}>
+              <SelectTrigger className="h-9 w-64 text-xs">
+                <SelectValue placeholder="Contrato" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="todos">Todos os contratos</SelectItem>
+                {contratosDisponiveis.map((c) => (
+                  <SelectItem key={c.id} value={c.id}>{c.nome}</SelectItem>
                 ))}
               </SelectContent>
             </Select>
