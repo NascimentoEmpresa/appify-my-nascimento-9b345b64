@@ -48,15 +48,20 @@ describe("opções do filtro, com a quantidade", () => {
     expect(op.find((o) => o.rotulo === "Contratado")?.n).toBe(0);
   });
 
-  it("'Concluído - ...' vai junto de Concluído na ordem", () => {
-    const op = opcoesStatusVaga([{ status: "Reprovada" }, { status: "Concluído - 2 vagas" }, { status: "Contratado" }]);
-    expect(op.map((o) => o.rotulo)).toEqual(["Contratado", "Concluído - 2 vagas", "Reprovada"]);
+  it("26/10/2026: 'Concluído' (e 'Concluído - ...') é Contratado — uma linha só no filtro", () => {
+    const op = opcoesStatusVaga([{ status: "Reprovada" }, { status: "Concluído - 2 vagas" }, { status: "Concluído" }, { status: "Contratado" }]);
+    expect(op.map((o) => o.rotulo)).toEqual(["Contratado", "Reprovada"]);
+    const contratado = op.find((o) => o.rotulo === "Contratado")!;
+    expect(contratado.n).toBe(3);
+    // Marcar "Contratado" pega as grafias antigas também.
+    expect(contratado.status).toEqual(expect.arrayContaining(["Contratado", "Concluído", "Concluído - 2 vagas"]));
   });
 
   it("a lista de status vem do fluxo (botão Status), não inventada", () => {
     expect(ORDEM_STATUS_VAGA).toContain("Aguardando SST e Compras");
     expect(ORDEM_STATUS_VAGA).toContain("Compras Confirmou - Aguardando Documentação");
-    expect(ORDEM_STATUS_VAGA.slice(-3)).toEqual(["Concluído", "Reprovada", "Cancelada"]);
+    expect(ORDEM_STATUS_VAGA.slice(-3)).toEqual(["Contratado", "Reprovada", "Cancelada"]);
+    expect(ORDEM_STATUS_VAGA).not.toContain("Concluído");
   });
 });
 
