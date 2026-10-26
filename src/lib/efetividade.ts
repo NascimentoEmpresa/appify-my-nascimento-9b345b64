@@ -189,6 +189,24 @@ export interface DiaEfet {
   atraso: number;
 }
 
+/**
+ * FORA DE ESCALA (26/10/2026, pedido do Pablo): presente, mas a primeira
+ * batida está a MAIS DE 1 HORA do início da escala — "minha escala é às
+ * 7:30; se eu marquei depois das 8:30, já estou marcando fora da minha
+ * escala". Vale para os dois lados (entrar 6:00 numa escala das 7:30 também
+ * não é a escala). Escala flexível ou sem horário de início não entra.
+ */
+export const TOLERANCIA_FORA_ESCALA = 60;
+
+export function foraDaEscala(dia: Pick<DiaEfet, "situacao" | "entrada" | "horarioPrevisto">, jornada: Pick<Jornada, "flexivel">): boolean {
+  if (dia.situacao !== "presente" || dia.entrada == null || dia.horarioPrevisto == null || jornada.flexivel) return false;
+  if (dia.horarioPrevisto < 0) return false;
+  // A entrada pode vir com +1440 (jornada que vira a meia-noite): compara no relógio do dia.
+  let dif = Math.abs((dia.entrada % 1440) - (dia.horarioPrevisto % 1440));
+  dif = Math.min(dif, 1440 - dif);
+  return dif > TOLERANCIA_FORA_ESCALA;
+}
+
 export const AUSENCIAS: SituacaoEfet[] = ["falta", "atestado", "afastamento"];
 /** Ausência que deixa o posto descoberto no dia, se ninguém cobrir. */
 export const AUSENCIA_A_COBRIR: SituacaoEfet[] = ["falta", "atestado"];
