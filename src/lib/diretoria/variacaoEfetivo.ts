@@ -8,17 +8,22 @@
 //   turnover do mês = demissões ÷ efetivo no fim do mês × 100 (a taxa
 //   mensal do Turn-over); turnover médio = média das taxas mensais.
 //
-// 26/10/2026 (mig 20261026000010): "trabalhando" passou a ser só quem está
-// de fato trabalhando (atestado conta; férias, auxílio-doença etc. não), sem
-// quem está fora da conta / RENDA TÉCNICA — o "Tem" do Ativos/Contratos. O
-// turnover segue no efetivo de antes (todos os ativos, afastados inclusive),
-// que vem em `efetivo`; sem ele (RPC antiga), cai no trabalhando.
+// 26/10/2026 (migs 20261026000010 e 040): "trabalhando" é o "Tem" do
+// Ativos/Contratos — só Situação "Trabalhando" (atestado, férias, auxílio-
+// doença etc. não), sem fora da conta / RENDA TÉCNICA; no mês corrente é a
+// foto de hoje. O cartão soma, como o de lá, só contratos com Planilha de
+// Custo (`planilha`); "Pablo: um lado tem 2151, no outro 2.236 — os números
+// têm que bater". O turnover segue no efetivo de antes (todos os ativos,
+// afastados inclusive), que vem em `efetivo`; sem ele (RPC antiga), cai no
+// trabalhando.
 // =====================================================================
 
 export interface MesEfetivo {
   mes: string; previsto: number; trabalhando: number; admissoes: number; demissoes: number;
   /** Todos os ativos no fim do mês, afastados inclusive — base do turnover. */
   efetivo?: number;
+  /** O contrato tem posto vigente na Planilha de Custo no mês (o que o cartão do Ativos/Contratos soma). */
+  planilha?: boolean;
 }
 export interface ContratoEfetivo { chave: string; nome: string; no_erp: boolean; meses: MesEfetivo[] }
 export interface EmpresaEfetivo { empresa: string; contratos: ContratoEfetivo[] }
@@ -64,17 +69,25 @@ export const todosContratos = (v: VariacaoEfetivo) => v.empresas.flatMap((e) => 
 export const ultimoMes = (v: Pick<VariacaoEfetivo, "meses">) => v.meses[v.meses.length - 1] ?? null;
 
 export interface Resumo {
-  mes: string | null; previsto: number; trabalhando: number; turnoverMedio: number | null; admissoes: number; demissoes: number;
+  mes: string | null; previsto: number;
+  /** Trabalhando nos contratos com Planilha de Custo — o "Tem" do cartão do Ativos/Contratos. */
+  trabalhando: number;
+  /** Trabalhando em contrato sem planilha ou filial sem contrato (fora do cartão, como lá). */
+  trabalhandoSemPlanilha: number;
+  turnoverMedio: number | null; admissoes: number; demissoes: number;
 }
 
 /** Cartões do topo: quadro do último mês, turnover médio mensal e movimentos do ano. */
 export function resumo(contratos: ContratoEfetivo[], meses: string[]): Resumo {
   const ult = meses[meses.length - 1] ?? null;
   const fim = ult ? somar(contratos, ult) : VAZIO;
+  // RPC antiga (sem `planilha`): conta todos, como antes.
+  const comPlanilha = ult ? contratos.filter((c) => c.meses.find((m) => m.mes === ult)?.planilha ?? true) : [];
+  const trabalhando = ult ? somar(comPlanilha, ult).trabalhando : 0;
   const regs = meses.map((m) => somar(contratos, m)).filter((r) => !r.vazio);
   const taxas = regs.map((r) => r.turnover).filter((t): t is number => t != null);
   return {
-    mes: ult, previsto: fim.previsto, trabalhando: fim.trabalhando,
+    mes: ult, previsto: fim.previsto, trabalhando, trabalhandoSemPlanilha: fim.trabalhando - trabalhando,
     turnoverMedio: taxas.length ? r2(taxas.reduce((a, b) => a + b, 0) / taxas.length) : null,
     admissoes: regs.reduce((s, r) => s + r.admissoes, 0),
     demissoes: regs.reduce((s, r) => s + r.demissoes, 0),
