@@ -121,7 +121,6 @@ ALTER TABLE public."SUP_SOLICITACAO_MANUTENCAO" ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public."SUP_SOLICITACAO_MANUTENCAO_ANEXO" ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public."SUP_SOLICITACAO_MANUTENCAO_HISTORICO" ENABLE ROW LEVEL SECURITY;
 
-DROP POLICY IF EXISTS sup_solicitacao_manutencao_select ON public."SUP_SOLICITACAO_MANUTENCAO";
 CREATE POLICY sup_solicitacao_manutencao_select
   ON public."SUP_SOLICITACAO_MANUTENCAO" FOR SELECT TO authenticated
   USING (
@@ -130,7 +129,6 @@ CREATE POLICY sup_solicitacao_manutencao_select
     OR public.has_screen_access(auth.uid(), 'sup_solicitacoes_manutencoes', 'visualizar')
   );
 
-DROP POLICY IF EXISTS sup_solicitacao_manutencao_insert ON public."SUP_SOLICITACAO_MANUTENCAO";
 CREATE POLICY sup_solicitacao_manutencao_insert
   ON public."SUP_SOLICITACAO_MANUTENCAO" FOR INSERT TO authenticated
   WITH CHECK (
@@ -139,14 +137,12 @@ CREATE POLICY sup_solicitacao_manutencao_insert
     AND status = 'aberta' AND respondida_por IS NULL AND respondida_em IS NULL
   );
 
-DROP POLICY IF EXISTS sup_solicitacao_manutencao_anexo_select ON public."SUP_SOLICITACAO_MANUTENCAO_ANEXO";
 CREATE POLICY sup_solicitacao_manutencao_anexo_select
   ON public."SUP_SOLICITACAO_MANUTENCAO_ANEXO" FOR SELECT TO authenticated
   USING (EXISTS (
     SELECT 1 FROM public."SUP_SOLICITACAO_MANUTENCAO" s WHERE s.id = solicitacao_id
   ));
 
-DROP POLICY IF EXISTS sup_solicitacao_manutencao_anexo_insert ON public."SUP_SOLICITACAO_MANUTENCAO_ANEXO";
 CREATE POLICY sup_solicitacao_manutencao_anexo_insert
   ON public."SUP_SOLICITACAO_MANUTENCAO_ANEXO" FOR INSERT TO authenticated
   WITH CHECK (EXISTS (
@@ -154,7 +150,6 @@ CREATE POLICY sup_solicitacao_manutencao_anexo_insert
      WHERE s.id = solicitacao_id AND s.solicitante_id = auth.uid()
   ));
 
-DROP POLICY IF EXISTS sup_solicitacao_manutencao_historico_select ON public."SUP_SOLICITACAO_MANUTENCAO_HISTORICO";
 CREATE POLICY sup_solicitacao_manutencao_historico_select
   ON public."SUP_SOLICITACAO_MANUTENCAO_HISTORICO" FOR SELECT TO authenticated
   USING (EXISTS (
@@ -166,7 +161,6 @@ INSERT INTO storage.buckets (id, name, public, file_size_limit)
 VALUES ('sup-solicitacoes-manutencao', 'sup-solicitacoes-manutencao', false, 5242880) -- 5 MB
 ON CONFLICT (id) DO UPDATE SET public = false, file_size_limit = EXCLUDED.file_size_limit;
 
-DROP POLICY IF EXISTS "sup solicitacoes manutencao storage insert" ON storage.objects;
 CREATE POLICY "sup solicitacoes manutencao storage insert"
   ON storage.objects FOR INSERT TO authenticated
   WITH CHECK (
@@ -174,7 +168,6 @@ CREATE POLICY "sup solicitacoes manutencao storage insert"
     AND name LIKE auth.uid()::text || '/%'
   );
 
-DROP POLICY IF EXISTS "sup solicitacoes manutencao storage select" ON storage.objects;
 CREATE POLICY "sup solicitacoes manutencao storage select"
   ON storage.objects FOR SELECT TO authenticated
   USING (
