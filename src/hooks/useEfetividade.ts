@@ -108,6 +108,22 @@ export function useEfetDiaristas(ini: string | null = null, fim: string | null =
   });
 }
 
+/** Previsto da Planilha de Custo por contrato, na chave Empresa+Filial (mig 20261026000090) — o mesmo do Ativos/Contratos. */
+export interface PrevistoPlanilha { empresa: number; filial: number; contrato_id: string; contrato: string; previsto: number }
+
+export function useEfetPrevistoPlanilha() {
+  return useQuery({
+    queryKey: ["efetividade", "previsto-planilha"],
+    staleTime: 5 * 60_000,
+    queryFn: async () => {
+      const { data, error } = await sb.rpc<PrevistoPlanilha[]>("ope_efet_previsto_planilha");
+      // Banco ainda sem a função (antes da migration): a coluna fica "—".
+      if (error) { if (/schema cache|does not exist|não existe/i.test(error.message)) return []; throw error; }
+      return data ?? [];
+    },
+  });
+}
+
 export interface ObsPosto { id: number; empresa: number | null; filial: number | null; posto: string; texto: string; autor_id: string | null; autor_nome: string | null; created_at: string }
 
 export function useEfetObsPosto(posto: string | null) {
