@@ -28,6 +28,11 @@ describe("turnover e somas", () => {
     expect(registro(u, "2026-01")).toMatchObject({ previsto: 100, trabalhando: 95, demissoes: 4, turnover: 4.21, vazio: false });
     expect(registro(u, "2026-05").vazio).toBe(true);
   });
+  it("turnover usa o efetivo (afastados inclusive), não o trabalhando sem afastados", () => {
+    const x: ContratoEfetivo = { chave: "x", nome: "X", no_erp: true, meses: [{ mes: "2026-01", previsto: 50, trabalhando: 40, efetivo: 50, admissoes: 0, demissoes: 5 }] };
+    expect(registro(x, "2026-01")).toMatchObject({ trabalhando: 40, efetivo: 50, turnover: 10 });
+    expect(somar([x, x], "2026-01")).toMatchObject({ trabalhando: 80, efetivo: 100, turnover: 10 });
+  });
   it("soma da empresa recalcula a taxa sobre o total", () => {
     const s = somar(V.empresas[0].contratos, "2026-01");
     expect(s).toMatchObject({ previsto: 120, trabalhando: 115, admissoes: 5, demissoes: 4, turnover: 3.48 });
