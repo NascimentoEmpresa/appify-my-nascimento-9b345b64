@@ -40,6 +40,9 @@ interface Linha {
   ordem: number;
 }
 
+/** O que a Meta devolve por mensagem (categoria = a que ELA deu; anterior = o reserva). */
+interface StatusMeta { status: string; motivo?: string; categoria?: string; anterior?: { nome: string; status: string; categoria?: string } }
+
 const STATUS: Record<string, { txt: string; cls: string; ajuda: string }> = {
   APPROVED:     { txt: "aprovada",    cls: "bg-success/15 text-success",              ajuda: "Pode ser enviada para qualquer contato." },
   PENDING:      { txt: "em revisão",  cls: "bg-warning/15 text-warning-foreground",   ajuda: "A Meta ainda está revisando. Só funciona dentro das 24h." },
@@ -76,11 +79,11 @@ export function MensagensProntasCard() {
   const { data: status = {}, isFetching: conferindo, refetch: reconferir } = useQuery({
     queryKey: ["wa-templates-status"],
     staleTime: 60 * 1000,
-    queryFn: async (): Promise<Record<string, { status: string; motivo?: string }>> => {
+    queryFn: async (): Promise<Record<string, StatusMeta>> => {
       const { data, error } = await supabase.functions.invoke("whatsapp-template-enviar", { body: { acao: "status" } });
       if (error) return {};
-      const mapa: Record<string, { status: string; motivo?: string }> = {};
-      ((data as any)?.templates ?? []).forEach((t: any) => { mapa[t.codigo] = { status: t.status, motivo: t.motivo }; });
+      const mapa: Record<string, StatusMeta> = {};
+      ((data as any)?.templates ?? []).forEach((t: any) => { mapa[t.codigo] = { status: t.status, motivo: t.motivo, categoria: t.categoria, anterior: t.anterior }; });
       return mapa;
     },
   });
@@ -137,6 +140,29 @@ export function MensagensProntasCard() {
     }
   };
 
+  // "Enviar todas" (SIS-2026-0667): manda à Meta, uma a uma, toda mensagem
+  // ligada que ainda não foi (ou foi reprovada). Antes eram N cliques.
+  const pendentesMeta = linhas.filter((l) => l.ativo && l.template_nome
+    && ["NAO_CRIADO", "REJECTED"].includes(status[l.codigo]?.status ?? "NAO_CRIADO"));
+  const [enviandoTodas, setEnviandoTodas] = useState(false);
+  const submeterTodas = async () => {
+    if (!pendentesMeta.length) return;
+    if (!confirm(`Enviar ${pendentesMeta.length} mensagem(ns) para aprovação da Meta?\n\nA Meta revisa cada uma — pode levar de algumas horas a alguns dias. Até aprovar, a mensagem só chega a quem escreveu nas últimas 24h.`)) return;
+    setEnviandoTodas(true);
+    const erros: string[] = [];
+    let ok = 0;
+    for (const l of pendentesMeta) {
+      const { data, error } = await supabase.functions.invoke("whatsapp-template-enviar", { body: { acao: "criar_template", codigo: l.codigo } });
+      if (error) erros.push(`${l.titulo}: ${await erroDaFunction(error)}`);
+      else if (!(data as { ok?: boolean })?.ok) erros.push(`${l.titulo}: ${(data as { error?: string })?.error ?? "erro"}`);
+      else ok++;
+    }
+    setEnviandoTodas(false);
+    if (ok) toast({ title: `${ok} enviada(s) para aprovação`, description: "A Meta pode levar de algumas horas a alguns dias. Acompanhe pelo “Conferir status”." });
+    if (erros.length) toast({ title: `${erros.length} não enviada(s)`, description: erros.join(" | "), variant: "destructive" });
+    reconferir();
+  };
+
   const alternar = async (l: Linha) => {
     const { error } = await (supabase as any).from("WA_TEMPLATE").update({ ativo: !l.ativo }).eq("id", l.id);
     if (error) { toast({ title: "Não deu para alterar", description: error.message, variant: "destructive" }); return; }
@@ -165,10 +191,23 @@ export function MensagensProntasCard() {
             estar aprovada na Meta — é o botão <b>Enviar para aprovação</b> de cada linha.
           </p>
         </div>
-        <Button variant="ghost" size="sm" className="shrink-0 gap-1.5" onClick={() => reconferir()} disabled={conferindo}>
-          {conferindo ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />} Conferir status
-        </Button>
+        <div className="flex shrink-0 flex-col items-end gap-1">
+          <Button variant="ghost" size="sm" className="gap-1.5" onClick={() => reconferir()} disabled={conferindo}>
+            {conferindo ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />} Conferir status
+          </Button>
+          {pendentesMeta.length > 0 && (
+            <Button variant="outline" size="sm" className="gap-1.5" onClick={submeterTodas} disabled={enviandoTodas}
+              title="Manda à Meta todas as mensagens ligadas que ainda não foram aprovadas">
+              {enviandoTodas ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+              Enviar todas para aprovação ({pendentesMeta.length})
+            </Button>
+          )}
+        </div>
       </div>
+      <p className="rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-xs text-warning-foreground">
+        A Meta precisa aprovar cada mensagem — <b>pode levar alguns dias</b>. Até lá ela só chega a quem escreveu nas últimas 24h.
+        Mensagem nova ou com texto alterado volta para a fila de aprovação.
+      </p>
 
       <div className="space-y-1.5">
         {linhas.map((l) => {
@@ -189,6 +228,13 @@ export function MensagensProntasCard() {
                 <span className="text-sm font-medium">{l.titulo}</span>
                 <code className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">/{l.codigo}</code>
                 <Badge variant="secondary" className={`text-[10px] ${st.cls}`} title={st.ajuda}>{st.txt}</Badge>
+                {/* Marketing (14/10/2026): a Meta limita por pessoa (131049/130472) — explica o "não chega pra ninguém". */}
+                {status[l.codigo]?.categoria === "MARKETING" && (
+                  <Badge variant="secondary" className="bg-warning/15 text-[10px] text-warning-foreground"
+                    title="A Meta classificou como marketing: ela limita quantas mensagens assim cada pessoa recebe (erro 131049). Reescreva como aviso de serviço (UTILITY).">
+                    marketing na Meta
+                  </Badge>
+                )}
                 {!l.ativo && <Badge variant="outline" className="text-[10px]">desligada</Badge>}
                 <div className="ml-auto flex shrink-0 items-center gap-1">
                   {st.txt !== "aprovada" && l.template_nome && (
@@ -210,6 +256,14 @@ export function MensagensProntasCard() {
                 <p className="text-[11px] text-muted-foreground">Pergunta antes de enviar: {l.variaveis.join(", ")}</p>
               )}
               {motivo && <p className="text-[11px] text-destructive">Motivo da recusa: {motivo}</p>}
+              {/* Enquanto o novo não é aprovado, sai o reserva — e se ele é marketing, a Meta barra (131049). */}
+              {status[l.codigo]?.anterior && status[l.codigo]?.status !== "APPROVED" && (
+                <p className="text-[11px] text-warning-foreground">
+                  Enquanto esta não é aprovada, sai a versão anterior (<code>{status[l.codigo]!.anterior!.nome}</code>
+                  {status[l.codigo]!.anterior!.categoria ? `, ${status[l.codigo]!.anterior!.categoria === "MARKETING" ? "marketing" : status[l.codigo]!.anterior!.categoria!.toLowerCase()}` : ""})
+                  {status[l.codigo]!.anterior!.categoria === "MARKETING" ? " — a Meta limita a entrega dela por pessoa, por isso parte não chega." : "."}
+                </p>
+              )}
             </div>
           );
         })}

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { supabase } from "@/integrations/supabase/client";
+import { PAPEL_NENHUM, resumirAdmissao, type AdmissaoDaVaga, type PapelRecrutamento } from "@/lib/recrutamento/distribuicaoVagas";
 
 // Responsável pela vaga (SISTEMA_RECRUTAMENTO_RESPONSAVEL, mig 20261013000003).
 // Pedido de 13/10/2026: "etiqueta obrigatória puxando automático com opção
@@ -17,19 +18,39 @@ export interface ResponsavelVaga {
   vaga_id: number;
   responsavel_id: string | null;
   responsavel_nome: string;
-  origem: "automatico" | "manual" | "assumido";
+  origem: "automatico" | "manual" | "assumido" | "distribuida";
   atualizado_em: string;
+  /** Transferida por outra pessoa (mig 20261014000047). */
+  transferida_em?: string | null;
+  transferida_por_nome?: string | null;
+  /** Quando a responsável clicou em "Ciente". */
+  ciente_em?: string | null;
 }
+
+/**
+ * Vaga que outra pessoa passou para a responsável e ela ainda não deu
+ * "Ciente" — a "nova demanda" que no Excel era a linha pintada de vermelho.
+ */
+export function novaDemanda(r: ResponsavelVaga | null | undefined): boolean {
+  if (!r?.transferida_em) return false;
+  return !r.ciente_em || new Date(r.ciente_em) < new Date(r.transferida_em);
+}
+
+const COLS = "vaga_id,responsavel_id,responsavel_nome,origem,atualizado_em";
+const COLS_TRANSF = `${COLS},transferida_em,transferida_por_nome,ciente_em`;
 
 async function buscar(ids: number[]): Promise<ResponsavelVaga[] | null> {
   const blocos: number[][] = [];
   for (let i = 0; i < ids.length; i += BLOCO) blocos.push(ids.slice(i, i + BLOCO));
-  const res = await Promise.all(blocos.map((b) => db
+  const ler = (cols: string) => Promise.all(blocos.map((b) => db
     .from("SISTEMA_RECRUTAMENTO_RESPONSAVEL")
-    .select("vaga_id,responsavel_id,responsavel_nome,origem,atualizado_em")
+    .select(cols)
     .in("vaga_id", b)));
+  // Banco ainda sem a mig 20261014000047: lê sem as colunas da transferência.
+  let res = await ler(COLS_TRANSF);
+  if (res.some((r) => r.error)) res = await ler(COLS);
   if (res.some((r) => r.error)) return null;
-  return res.flatMap((r) => (r.data ?? []) as ResponsavelVaga[]);
+  return res.flatMap((r) => (r.data ?? []) as unknown as ResponsavelVaga[]);
 }
 
 export function useResponsaveisDasVagas(vagas: ReadonlyArray<{ id: number }> | null | undefined) {
@@ -69,6 +90,12 @@ export async function definirResponsavelVaga(vagaId: number, usuarioId: string |
   if (error) throw error;
 }
 
+/** "Ciente" da vaga transferida (mig 20261014000047): tira o vermelho. */
+export async function marcarCienteVaga(vagaId: number): Promise<void> {
+  const { error } = await db.rpc("rec_responsavel_ciente", { p_vaga: vagaId });
+  if (error) throw error;
+}
+
 /** "Tornar-me responsável" (mig 20261014000003): a própria pessoa assume a vaga. */
 export async function assumirVaga(vagaId: number): Promise<void> {
   const { error } = await db.rpc("rec_responsavel_assumir", { p_vaga: vagaId });
@@ -81,4 +108,64 @@ export async function contarVagasPorResponsavel(): Promise<{ responsavel_id: str
   if (error) throw error;
   return ((data ?? []) as { responsavel_id: string | null; responsavel_nome: string; vagas: number | string }[])
     .map((r) => ({ ...r, vagas: Number(r.vagas) }));
+}
+
+// ── Distribuição entre as recrutadoras e Admissão (mig 20261020000050) ──
+
+/** O papel de quem está logado: gestão, recrutadora, Admissão. Erro/banco antigo → nenhum. */
+export function useMeuPapelRecrutamento(): PapelRecrutamento {
+  const [papel, setPapel] = useState<PapelRecrutamento>(PAPEL_NENHUM);
+  useEffect(() => {
+    let vivo = true;
+    db.rpc("rec_meu_papel").then(({ data, error }) => {
+      if (vivo && !error && data) setPapel({ ...PAPEL_NENHUM, ...(data as Partial<PapelRecrutamento>) });
+    });
+    return () => { vivo = false; };
+  }, []);
+  return papel;
+}
+
+/** As recrutadoras (alterar na Gestão, sem ser gestão) e quantas vagas abertas cada uma tem distribuídas. */
+export async function listarRecrutadoras(): Promise<{ id: string; nome: string; vagas_abertas: number }[]> {
+  const { data, error } = await db.rpc("rec_recrutadoras");
+  if (error) throw error;
+  return ((data ?? []) as { id: string; nome: string; vagas_abertas: number | string }[])
+    .map((r) => ({ ...r, vagas_abertas: Number(r.vagas_abertas) }));
+}
+
+/** Gestão: distribui a vaga para a recrutadora (ou, com null, tira a distribuição). */
+export async function definirRecrutadora(vagaId: number, usuarioId: string | null): Promise<void> {
+  const { error } = await db.rpc("rec_recrutadora_definir", { p_vaga: vagaId, p_usuario: usuarioId });
+  if (error) throw error;
+}
+
+/** Quem recebe a fila da Admissão (menu recrutamento_admissao). */
+export async function listarResponsaveisAdmissao(): Promise<{ id: string; nome: string }[]> {
+  const { data, error } = await db.rpc("rec_responsaveis_admissao");
+  if (error) throw error;
+  return (data ?? []) as { id: string; nome: string }[];
+}
+
+/** Candidatos encaminhados à Admissão, resumidos por vaga. Erro/banco antigo → vazio. */
+export function useAdmissaoDasVagas(vagas: ReadonlyArray<{ id: number }> | null | undefined) {
+  const [porVaga, setPorVaga] = useState<Record<number, AdmissaoDaVaga>>({});
+  const recarregar = useCallback(async (ids: number[]) => {
+    const lista = Array.from(new Set(ids.filter((id) => Number.isFinite(id))));
+    if (!lista.length) return;
+    const blocos: number[][] = [];
+    for (let i = 0; i < lista.length; i += BLOCO) blocos.push(lista.slice(i, i + BLOCO));
+    const ler = (cols: string) => Promise.all(blocos.map((b) => db.from("WA_CURRICULOS").select(cols)
+      .in("vaga_id", b).not("enviado_admissao_em", "is", null)));
+    let res = await ler("vaga_id,enviado_admissao_em,admitido_em,desistiu,admissao_responsavel_nome,recrutadora_nome");
+    if (res.some((r) => r.error)) res = await ler("vaga_id,enviado_admissao_em,admitido_em,desistiu");
+    if (res.some((r) => r.error)) return;
+    const novos = resumirAdmissao(res.flatMap((r) => (r.data ?? []) as unknown as Parameters<typeof resumirAdmissao>[0]));
+    setPorVaga((prev) => {
+      const out = { ...prev };
+      for (const id of lista) delete out[id];
+      return { ...out, ...novos };
+    });
+  }, []);
+  useEffect(() => { recarregar((vagas ?? []).map((v) => Number(v.id))); }, [vagas, recarregar]);
+  return { admissaoVagas: porVaga, recarregarAdmissao: recarregar };
 }

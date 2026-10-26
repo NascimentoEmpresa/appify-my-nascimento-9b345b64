@@ -6,6 +6,7 @@ import {
   STATUS_LABEL,
   type StatusDespesa,
 } from "@/lib/maloteStatus";
+import { emLotes } from "@/lib/emLotes";
 
 export type OrigemDespesa = "solicitacao" | "despesa_unica" | "despesa_multi_classificacao";
 export { STATUS_BADGE_CLASS, STATUS_LABEL } from "@/lib/maloteStatus";
@@ -323,13 +324,12 @@ async function buscarParcelasPorDespesa(despesas: MaloteDespesaRow[]): Promise<M
   const ids = despesas.filter((d) => d.parcelado).map((d) => d.id);
   const mapa = new Map<string, Parcela[]>();
   if (ids.length === 0) return mapa;
-  const { data, error } = await (supabase as any)
-    .from("malote_despesa_parcela")
-    .select("*")
-    .in("despesa_id", ids)
-    .order("numero_parcela");
-  if (error) throw error;
-  for (const p of (data ?? []) as Parcela[]) {
+  // Em lotes (19/10/2026): todos os ids numa URL só passavam do limite do
+  // gateway do cluster (502) — ver src/lib/emLotes.ts.
+  const data = await emLotes<Parcela>(ids, 40, (lote) =>
+    (supabase as any).from("malote_despesa_parcela").select("*").in("despesa_id", lote));
+  data.sort((a, b) => a.numero_parcela - b.numero_parcela);
+  for (const p of data) {
     const lst = mapa.get(p.despesa_id) ?? [];
     lst.push(p);
     mapa.set(p.despesa_id, lst);
@@ -517,13 +517,17 @@ export function useMinhasDespesas() {
       if (setoresErr) throw setoresErr;
       const setores = (setoresRows ?? []).map((r: any) => r.setor as string);
 
-      let query = (supabase as any)
+      const base = () => (supabase as any)
         .from("malote_despesa")
         .select(DESPESA_COLUMNS)
+        .is("deleted_at", null)
         .order("created_at", { ascending: false });
 
+      let despesas: MaloteDespesaRow[];
       if (setores.length === 0) {
-        query = query.eq("created_by", u.user.id);
+        const { data, error } = await base().eq("created_by", u.user.id);
+        if (error) throw error;
+        despesas = (data ?? []) as MaloteDespesaRow[];
       } else {
         // SIS-2026-0335: setor_responsavel virou text[] (mais de um setor por
         // Classificação) — .in() comparava igualdade exata contra um valor
@@ -536,15 +540,23 @@ export function useMinhasDespesas() {
         if (classErr) throw classErr;
         const classIds = (classRows ?? []).map((r: any) => r.id as string);
 
-        const orParts = [`created_by.eq.${u.user.id}`];
-        if (classIds.length > 0) orParts.push(`classificacao_id.in.(${classIds.join(",")})`);
-        query = query.or(orParts.join(","));
+        // 19/10/2026: era UM .or(created_by, classificacao_id.in.(todas)) — com
+        // o select comprido (~1,9 KB) e as classificações de um setor inteiro,
+        // a URL passava de ~4 KB e o gateway do cluster devolvia 502: o Meus
+        // Itens da Maiara (Financeiro) ficava vazio. Agora o "criei" vai numa
+        // consulta e as classificações em lotes de 20 (~2,7 KB por URL);
+        // junta sem repetir (o que ela criou numa classificação do setor
+        // vem nas duas).
+        const [minhas, doSetor] = await Promise.all([
+          base().eq("created_by", u.user.id),
+          emLotes<MaloteDespesaRow>(classIds, 20, (lote) => base().in("classificacao_id", lote)),
+        ]);
+        if (minhas.error) throw minhas.error;
+        const porId = new Map<string, MaloteDespesaRow>();
+        for (const d of [...((minhas.data ?? []) as MaloteDespesaRow[]), ...doSetor]) porId.set(d.id, d);
+        despesas = [...porId.values()].sort((a, b) => (b.created_at ?? "").localeCompare(a.created_at ?? ""));
       }
 
-      query = query.is("deleted_at", null);
-      const { data, error } = await query;
-      if (error) throw error;
-      const despesas = (data ?? []) as MaloteDespesaRow[];
       const parcelasPorDespesa = await buscarParcelasPorDespesa(despesas);
       return explodirParcelas(despesas, parcelasPorDespesa);
     },
@@ -684,6 +696,10 @@ export interface SalvarDespesaInput {
   numero_parcelas?: number | null;
   dia_desconto?: number | null;
   arquivos?: string[];
+  // Malote › Criar Despesa › "Importar rateio" (mig 20261019000003): o
+  // gatilho do INSERT vincula e trava o rateio do RH. Só vai no payload
+  // quando existe — nunca mandar null (coluna nova).
+  rh_rateio_id?: string;
   rateio?: RateioLinha[];
   // NovaParcela veio do SIS-2026-0223 (pagamento por parcela); itens, do
   // SIS-2026-0207. As duas coisas convivem.
@@ -699,6 +715,9 @@ export interface SalvarDespesaInput {
   // bloqueio de dia (data_pagamento em dia bloqueado), só pra ela.
   excecao?: boolean;
   justificativa_excecao?: string | null;
+  // SIS-2026-0668: a exceção só vale com a senha de uma solicitação aprovada (Malote › Solicitar Exceção). O banco
+  // consome a senha e marca excecao=true; mandar excecao=true sem este id é recusado.
+  excecao_solicitacao_id?: string | null;
   // [SEM-CHAMADO] (achado real, DM-2026-0246 — complemento ao SIS-2026-0339):
   // mesma coluna usada por necessidade_de_ajuste (aprovação) e por
   // ajuste_pagamento (pagamento, malote_solicitar_ajuste_pagamento_despesa).
@@ -1342,6 +1361,9 @@ export interface AprovarDespesaInput {
   // ex. Calita) muitas vezes só repassa uma autorização que já veio de
   // outra pessoa por fora do sistema.
   autorizador_nome?: string | null;
+  // Depois do horário 1.1 o Nível 1 só aprova com a senha de uma exceção de aprovação daquela despesa (migration 20261021000020).
+  // Só vai para o banco quando preenchida: sem ela a chamada continua igual à de antes da migration.
+  senha_excecao?: string | null;
 }
 
 // Todas as mutations abaixo (aprovar/ajustar/reprovar despesa, aprovação
@@ -1367,6 +1389,7 @@ export function useAprovarDespesa() {
         _competencia: input.competencia + "-01",
         _rateio_snapshot: input.rateio_snapshot ?? [],
         _autorizador_nome: input.autorizador_nome ?? null,
+        ...(input.senha_excecao?.trim() ? { _senha_excecao: input.senha_excecao.trim() } : {}),
       });
       if (error) throw error;
     },
@@ -1445,7 +1468,8 @@ export const RATEIO_E_PARCELAS_VAZIO: { linhas: RateioLinha[]; parcelas: Parcela
 // `.in(...)` vira querystring na URL do PostgREST, e um UUID ocupa ~37
 // caracteres com a vírgula. Uma lista de 300 despesas passaria do limite de
 // URL e a requisição falharia INTEIRA — por isso os ids vão em blocos.
-const BLOCO_IN = 100;
+// 19/10/2026: 100 ids (~3,9 KB) já passa do limite de ~4 KB da URL no gateway do cluster; 40 deixa folga (src/lib/emLotes.ts).
+const BLOCO_IN = 40;
 
 // O retorno é marcado com `despesa_id` porque é por ele que o agrupamento é
 // feito. A coluna existe nas duas tabelas, mas a interface RateioLinha não a
@@ -1827,13 +1851,11 @@ export function useClassificacaoIdsPorDespesaRateio(despesaIds: string[]) {
     enabled: despesaIds.length > 0,
     staleTime: 60_000,
     queryFn: async () => {
-      const { data, error } = await (supabase as any)
-        .from("malote_despesa_rateio_linha")
-        .select("despesa_id, classificacao_id")
-        .in("despesa_id", despesaIds);
-      if (error) throw error;
+      // Em lotes: todos os ids numa URL só estouram o limite do gateway do cluster (502). Ver src/lib/emLotes.ts.
+      const data = await emLotes<{ despesa_id: string; classificacao_id: string | null }>(despesaIds, 40, (lote) =>
+        (supabase as any).from("malote_despesa_rateio_linha").select("despesa_id, classificacao_id").in("despesa_id", lote));
       const mapa = new Map<string, Set<string>>();
-      for (const r of (data ?? []) as { despesa_id: string; classificacao_id: string | null }[]) {
+      for (const r of data) {
         if (!r.classificacao_id) continue;
         const atual = mapa.get(r.despesa_id) ?? new Set<string>();
         atual.add(r.classificacao_id);
@@ -1864,26 +1886,34 @@ export function useClassificacaoIdsPorDespesaRateio(despesaIds: string[]) {
 // (falha silenciosa, sem toast — só um Map vazio no client). Quebra em
 // lotes de ids também, não só a resposta.
 async function buscarTodasLinhasRateio<T>(colunas: string, campoNaoNulo: string, despesaIds: string[]): Promise<T[]> {
-  const TAMANHO_LOTE_IDS = 150;
+  // 19/10/2026: era 150 (~5,8 KB de URL) e o gateway do cluster devolve 502 acima de ~4 KB: a consulta inteira falhava,
+  // o Map vinha vazio e Pagamento Malote/Aprovações ficavam sem Contrato (DM-2026-2829). 40 ids = ~1,6 KB. Ver src/lib/emLotes.ts.
+  const TAMANHO_LOTE_IDS = 40;
   const TAMANHO_PAGINA = 1000;
-  const linhas: T[] = [];
-  for (let inicio = 0; inicio < despesaIds.length; inicio += TAMANHO_LOTE_IDS) {
-    const lote = despesaIds.slice(inicio, inicio + TAMANHO_LOTE_IDS);
-    for (let pagina = 0; ; pagina++) {
-      const { data, error } = await (supabase as any)
-        .from("malote_despesa_rateio_linha")
-        .select(colunas)
-        .in("despesa_id", lote)
-        .not(campoNaoNulo, "is", null)
-        .order("despesa_id")
-        .order("ordem")
-        .range(pagina * TAMANHO_PAGINA, pagina * TAMANHO_PAGINA + TAMANHO_PAGINA - 1);
-      if (error) throw error;
-      linhas.push(...((data ?? []) as T[]));
-      if (!data || data.length < TAMANHO_PAGINA) break;
-    }
-  }
-  return linhas;
+  // Lotes em paralelo (cada um pagina sozinho); a ordem por despesa_id/ordem vale dentro de cada lote, e uma despesa
+  // nunca está em dois lotes, então "a primeira linha" de cada despesa continua a mesma.
+  const lotes: string[][] = [];
+  for (let inicio = 0; inicio < despesaIds.length; inicio += TAMANHO_LOTE_IDS) lotes.push(despesaIds.slice(inicio, inicio + TAMANHO_LOTE_IDS));
+  const porLote = await Promise.all(
+    lotes.map(async (lote) => {
+      const doLote: T[] = [];
+      for (let pagina = 0; ; pagina++) {
+        const { data, error } = await (supabase as any)
+          .from("malote_despesa_rateio_linha")
+          .select(colunas)
+          .in("despesa_id", lote)
+          .not(campoNaoNulo, "is", null)
+          .order("despesa_id")
+          .order("ordem")
+          .range(pagina * TAMANHO_PAGINA, pagina * TAMANHO_PAGINA + TAMANHO_PAGINA - 1);
+        if (error) throw error;
+        doLote.push(...((data ?? []) as T[]));
+        if (!data || data.length < TAMANHO_PAGINA) break;
+      }
+      return doLote;
+    }),
+  );
+  return porLote.flat();
 }
 
 // SIS-2026-0288 (Iury): coluna/filtro de "Empresa" em Pagamento Malote —

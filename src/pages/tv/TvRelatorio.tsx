@@ -1,11 +1,11 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Briefcase, Calculator, Crown, Gavel, GraduationCap, HardHat, LayoutDashboard, Package, Scale, Server, Truck, UserPlus, Users, Wallet, type LucideIcon } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { SISTEMAS, sistemaPorSlug, type RelatorioDados, type RelatorioGeralDados } from "@/pages/relatorios/sistemas";
 import { periodoTv, relatorioTemFiltros, rotuloPeriodoTv, tituloRelatorioTv, type ItemTv } from "@/lib/tv/tv";
 import { rotuloMeses } from "@/lib/diretoria/turnover";
 import type { LinhaLicitacaoTv } from "@/lib/tv/licitacaoTv";
-import { corDoRelatorioTv, mesesTurnoverTv, paginasDoRelatorio, tempoDaPaginaMs, type DadosRelTv } from "@/lib/tv/relatorioTv";
+import { corDoRelatorioTv, mesesTurnoverTv, paginaNoTempo, paginasDoRelatorio, tempoDaPaginaMs, type DadosRelTv } from "@/lib/tv/relatorioTv";
 import { Aviso, Moldura, Palco } from "./relatorio/base";
 import { PaginaDestaques, PaginaGeral, PaginaResumo } from "./relatorio/paginasPadrao";
 import { PaginaVagasAndamento, PaginaVagasContratos, PaginaVagasResumo } from "./relatorio/paginasVagas";
@@ -124,8 +124,10 @@ async function carregarPrevia(item: ItemTv): Promise<DadosRelTv> {
   return { ...(ok(await rpc(s.rpc, args)) as RelatorioDados), tipo: "sistema", slug: s.slug, contrato };
 }
 
-export function TvRelatorio({ item, token, previa = false, onIndicador }: {
+export function TvRelatorio({ item, token, previa = false, inicioS = 0, onIndicador }: {
   item: ItemTv; token: string; previa?: boolean;
+  /** AO VIVO da gestão: há quanto tempo o item está na TV — abre na mesma página dela. */
+  inicioS?: number;
   /** Prévia da gestão (14/10/2026): clicar num indicador gerencial abre a I.A "de onde vem". */
   onIndicador?: (i: IndicadorGerencial) => void;
 }) {
@@ -141,15 +143,21 @@ export function TvRelatorio({ item, token, previa = false, onIndicador }: {
       carregarPrevia(item).then((d) => { if (vivo) setDados(d); }, (e) => { if (vivo) setErro((e as Error).message); });
       return () => { vivo = false; };
     }
-    const c = CACHE.get(item.id);
-    if (c && Date.now() - c.em < VALIDADE_MS) { setDados(c.dados); return; }
-    rpc("tv_relatorio", { p_token: token, p_item: item.id }).then(({ data, error }) => {
+    // 20/10/2026: reconsulta a cada VALIDADE_MS enquanto está na tela. Antes
+    // só consultava ao montar — e 6 das 7 TVs têm UM item, que nunca
+    // desmonta: os números ficavam os de quando a TV ligou, e o ao vivo da
+    // gestão (que consulta na hora) mostrava outros. Falha na reconsulta
+    // mantém os números que já estão na tela.
+    const buscar = () => rpc("tv_relatorio", { p_token: token, p_item: item.id }).then(({ data, error }) => {
       if (!vivo) return;
-      if (error) { setErro(error.message); return; }
+      if (error) { setDados((d) => { if (!d) setErro(error.message); return d; }); return; }
       CACHE.set(item.id, { em: Date.now(), dados: data as DadosRelTv });
       setDados(data as DadosRelTv); setErro(null);
-    });
-    return () => { vivo = false; };
+    }, () => { /* sem rede: a próxima volta tenta de novo */ });
+    const c = CACHE.get(item.id);
+    if (c && Date.now() - c.em < VALIDADE_MS) setDados(c.dados); else buscar();
+    const t = window.setInterval(buscar, VALIDADE_MS);
+    return () => { vivo = false; window.clearInterval(t); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [item.id, token, previa, chavePrevia]);
 
@@ -162,10 +170,21 @@ export function TvRelatorio({ item, token, previa = false, onIndicador }: {
   const paginas = useMemo(() => (dados ? paginasDoRelatorio(dados.tipo === "gerencial" ? { ...dados, visual } : dados) : []), [dados, visual]);
   const duracaoMs = tempoDaPaginaMs(item.duracao_seg, paginas.length);
   const [pagina, setPagina] = useState(0);
-  useEffect(() => { setPagina(0); }, [paginas.length, item.id]);
+  // AO VIVO: o instante em que o item entrou na TV (fixo desde a montagem — os dados da prévia chegam depois).
+  const entrouEm = useRef(Date.now() - inicioS * 1000);
+  const primeiraTroca = useRef<number | null>(null);
+  useEffect(() => {
+    const decorrido = inicioS > 0 ? Date.now() - entrouEm.current : 0;
+    const p = paginaNoTempo(decorrido, duracaoMs, paginas.length);
+    setPagina(p.pagina);
+    primeiraTroca.current = decorrido > 0 ? p.faltaMs : null;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [paginas.length, item.id]);
   useEffect(() => {
     if (paginas.length < 2) return;
-    const t = window.setTimeout(() => setPagina((p) => (p + 1) % paginas.length), duracaoMs);
+    // A espera curta vale até a primeira troca (o salto para a página da TV re-renderiza antes dela).
+    const espera = primeiraTroca.current ?? duracaoMs;
+    const t = window.setTimeout(() => { primeiraTroca.current = null; setPagina((p) => (p + 1) % paginas.length); }, espera);
     return () => window.clearTimeout(t);
   }, [pagina, paginas.length, duracaoMs]);
 

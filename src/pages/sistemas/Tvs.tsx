@@ -24,7 +24,7 @@ import {
   useTvPlaylists, useCatalogoTv, type TvAlerta, type TvDispositivo, type TvItem, type TvPlaylist,
 } from "@/hooks/useTvs";
 import {
-  PERIODOS_TV, RELATORIOS_TV, TIPOS_ITEM, corAviso, duracaoTotal, haQuanto, itensNoAr, nomeRelatorioTv, paginasRelatorioTv, relatorioTemFiltros, statusTv, telaAoVivo, tituloRelatorioTv,
+  PERIODOS_TV, RELATORIOS_TV, TIPOS_ITEM, aoVivoFresco, corAviso, duracaoTotal, haQuanto, itensNoAr, nomeRelatorioTv, paginasRelatorioTv, relatorioTemFiltros, statusTv, telaAoVivo, tituloRelatorioTv,
   urlValida, youtubeEmbed, type ItemTv, type TelaTv, type TipoItem,
 } from "@/lib/tv/tv";
 import { corDoRelatorioTv, duracaoRecomendada } from "@/lib/tv/relatorioTv";
@@ -454,6 +454,14 @@ function NovoItem({ playlistId, proximaOrdem, onRascunho }: { playlistId: string
     return [...m.entries()];
   }, [catalogo]);
   const [f, setF] = useState(VAZIO);
+  // Busca no seletor de relatório (14/10/2026, Pablo: "tá muito ruim de pesquisar
+  // aqui, coloca uma caixa de pesquisa aqui em cima") — ignora acento e maiúscula.
+  const [buscaRel, setBuscaRel] = useState("");
+  const semAcento = (t: string) => t.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+  const casaBusca = (...textos: (string | null | undefined)[]) => {
+    const q = semAcento(buscaRel.trim());
+    return !q || q.split(/\s+/).every((p) => textos.some((t) => t && semAcento(t).includes(p)));
+  };
   const escolherRelatorio = (v: string) => {
     // Link de BI (Power BI…): vira item "Página web" com o endereço dele.
     if (v.startsWith("link:")) {
@@ -568,37 +576,58 @@ function NovoItem({ playlistId, proximaOrdem, onRascunho }: { playlistId: string
           <>
             <div><Label className="text-xs">Relatório *</Label>
               {/* Relatório com mais páginas pede mais tempo: sobe o tempo na tela até o recomendado (nunca baixa). */}
-              <Select value={f.relatorio} onValueChange={escolherRelatorio}>
+              <Select value={f.relatorio} onValueChange={escolherRelatorio} onOpenChange={(aberto) => { if (!aberto) setBuscaRel(""); }}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent className="max-h-[420px]">
+                  {/* Busca no topo; as teclas não vão para o Select (senão ele "pula" para o item que começa com a letra). */}
+                  <div className="sticky top-0 z-10 -mx-1 -mt-1 mb-1 border-b bg-popover p-2">
+                    <Input autoFocus value={buscaRel} onChange={(e) => setBuscaRel(e.target.value)}
+                      onKeyDown={(e) => { if (e.key !== "Escape") e.stopPropagation(); }}
+                      placeholder="Buscar relatório, TV, gráfico ou B.I…" className="h-8 text-sm" />
+                  </div>
                   {/* Os relatórios do módulo e, separadas por diretoria, as TVs gerenciais (mig 20261012000001). */}
-                  {[...new Set(RELATORIOS_TV.map((r) => r.grupo ?? ""))].map((g) => (
-                    <SelectGroup key={g || "relatorios"}>
-                      <SelectLabel className="text-xs text-muted-foreground">{g ? `TVs gerenciais — ${g}` : "Relatórios do ERP"}</SelectLabel>
-                      {RELATORIOS_TV.filter((r) => (r.grupo ?? "") === g).map((r) => (
-                        <SelectItem key={r.slug} value={r.slug}>{r.titulo}{!r.grupo && r.paginas > 1 ? ` · ${r.paginas} páginas` : ""}{r.grupo ? " — dashboard" : ""}</SelectItem>
-                      ))}
-                    </SelectGroup>
-                  ))}
+                  {[...new Set(RELATORIOS_TV.map((r) => r.grupo ?? ""))].map((g) => {
+                    const grupoTitulo = g ? `TVs gerenciais — ${g}` : "Relatórios do ERP";
+                    const itens = RELATORIOS_TV.filter((r) => (r.grupo ?? "") === g && casaBusca(r.titulo, grupoTitulo));
+                    if (!itens.length) return null;
+                    return (
+                      <SelectGroup key={g || "relatorios"}>
+                        <SelectLabel className="text-xs text-muted-foreground">{grupoTitulo}</SelectLabel>
+                        {itens.map((r) => (
+                          <SelectItem key={r.slug} value={r.slug}>{r.titulo}{!r.grupo && r.paginas > 1 ? ` · ${r.paginas} páginas` : ""}{r.grupo ? " — dashboard" : ""}</SelectItem>
+                        ))}
+                      </SelectGroup>
+                    );
+                  })}
                   {/* Cada gráfico gerencial sozinho, em tela cheia (14/10/2026). */}
-                  {gruposIndicadores.map(([painel, g]) => (
-                    <SelectGroup key={painel}>
-                      <SelectLabel className="text-xs text-muted-foreground">Gráfico avulso — TV {g.titulo}</SelectLabel>
-                      {g.itens.map((i) => <SelectItem key={i.codigo} value={`ind:${i.codigo}`}>{i.nome}</SelectItem>)}
-                    </SelectGroup>
-                  ))}
+                  {gruposIndicadores.map(([painel, g]) => {
+                    const itens = g.itens.filter((i) => casaBusca(i.nome, `TV ${g.titulo}`, "gráfico avulso"));
+                    if (!itens.length) return null;
+                    return (
+                      <SelectGroup key={painel}>
+                        <SelectLabel className="text-xs text-muted-foreground">Gráfico avulso — TV {g.titulo}</SelectLabel>
+                        {itens.map((i) => <SelectItem key={i.codigo} value={`ind:${i.codigo}`}>{i.nome}</SelectItem>)}
+                      </SelectGroup>
+                    );
+                  })}
                   {/* B.I nas TVs (14/10/2026): painéis do Estúdio e links de BI. */}
-                  {(catalogo?.bi_paineis.length ?? 0) > 0 && (
+                  {(catalogo?.bi_paineis ?? []).some((b) => casaBusca(b.nome, "B.I BI Estúdio")) && (
                     <SelectGroup>
                       <SelectLabel className="text-xs text-muted-foreground">B.I — Estúdio de BI</SelectLabel>
-                      {catalogo!.bi_paineis.map((b) => <SelectItem key={b.id} value={`bi:${b.id}`}>{b.nome}{b.widgets ? ` · ${b.widgets} gráfico(s)` : " · sem gráficos ainda"}</SelectItem>)}
+                      {catalogo!.bi_paineis.filter((b) => casaBusca(b.nome, "B.I BI Estúdio")).map((b) => <SelectItem key={b.id} value={`bi:${b.id}`}>{b.nome}{b.widgets ? ` · ${b.widgets} gráfico(s)` : " · sem gráficos ainda"}</SelectItem>)}
                     </SelectGroup>
                   )}
-                  {(catalogo?.bi_links.length ?? 0) > 0 && (
+                  {(catalogo?.bi_links ?? []).some((l) => casaBusca(l.titulo, "B.I BI link")) && (
                     <SelectGroup>
                       <SelectLabel className="text-xs text-muted-foreground">B.I — Links (entra como página web)</SelectLabel>
-                      {catalogo!.bi_links.map((l) => <SelectItem key={l.id} value={`link:${l.id}`}>{l.titulo}</SelectItem>)}
+                      {catalogo!.bi_links.filter((l) => casaBusca(l.titulo, "B.I BI link")).map((l) => <SelectItem key={l.id} value={`link:${l.id}`}>{l.titulo}</SelectItem>)}
                     </SelectGroup>
+                  )}
+                  {buscaRel.trim() && !RELATORIOS_TV.some((r) => casaBusca(r.titulo, r.grupo ? `TVs gerenciais — ${r.grupo}` : "Relatórios do ERP"))
+                    && !gruposIndicadores.some(([, g]) => g.itens.some((i) => casaBusca(i.nome, `TV ${g.titulo}`, "gráfico avulso")))
+                    && !(catalogo?.bi_paineis ?? []).some((b) => casaBusca(b.nome, "B.I BI Estúdio"))
+                    && !(catalogo?.bi_links ?? []).some((l) => casaBusca(l.titulo, "B.I BI link")) && (
+                    <p className="px-3 py-4 text-center text-sm text-muted-foreground">Nada encontrado para “{buscaRel}”.</p>
                   )}
                 </SelectContent>
               </Select>
@@ -754,13 +783,20 @@ function PainelAoVivo({ tvs, playlists, playlistId, tvInicial }: { tvs: TvDispos
     // agora só importa quando um item entra/sai da validade: o minuto basta.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [playlistDaTv, contratos, Math.floor(agora.getTime() / 60_000)]);
+  const itensTodos = useMemo(() => (playlistDaTv ? playlistDaTv.itens.map((i) => paraItemTv(i, contratos)) : []), [playlistDaTv, contratos]);
+  const recarregar = useRecarregarTv();
 
   if (!tvs.length) return <p className="text-xs text-muted-foreground"><Radio className="mr-1 inline h-3.5 w-3.5" /> Nenhuma TV conectada ainda — o AO VIVO aparece quando houver uma.</p>;
   if (!tv) return null;
 
-  const r = telaAoVivo({ tv, itens, alertas, aoVivo: aoVivo.data ?? null, agora, simulacaoDesde: simulacaoDesde.current });
+  const r = telaAoVivo({ tv, itens, itensTodos, alertas, aoVivo: aoVivo.data ?? null, agora, simulacaoDesde: simulacaoDesde.current });
   const online = statusTv(tv.ultimo_ping, agora) === "online";
   const desde = aoVivo.data?.atual_desde ? Math.max(0, Math.round((agora.getTime() - new Date(aoVivo.data.atual_desde).getTime()) / 1000)) : null;
+  // TV online que não confirma o item (mig 20261020000004): player antigo — recarregar resolve.
+  const semConfirmacao = online && tv.ativo && aoVivoFresco(aoVivo.data, agora) === false;
+  const mandarRecarregar = () => recarregar.mutateAsync([tv.id]).then(
+    () => toast.success(`${tv.nome} recarrega em até 15 s — depois disso o ao vivo fica exato.`),
+    (e) => toast.error((e as Error).message));
 
   return (
     <div className="space-y-2">
@@ -783,17 +819,30 @@ function PainelAoVivo({ tvs, playlists, playlistId, tvInicial }: { tvs: TvDispos
       </div>
       <QuadroTv tela={r.tela} rotulo={`Ao vivo — ${tv.nome}`} />
       <div className="space-y-0.5 text-[11px] text-muted-foreground">
-        {r.tela.modo === "item" && r.indice != null && (
-          <p className="truncate"><b className="text-foreground">Na tela:</b> {nomeDoItem(r.tela.item)} <span>({r.indice + 1} de {itens.length}{r.exata && desde != null ? ` · há ${desde} s` : ""})</span></p>
+        {r.tela.modo === "item" && (
+          <p className="truncate">
+            <b className="text-foreground">Na tela:</b> {nomeDoItem(r.tela.item)}{" "}
+            <span>({r.indice != null ? `${r.indice + 1} de ${itens.length}` : "fora dos itens no ar agora"}{r.exata && desde != null ? ` · ${desde < 60 ? `há ${desde} s` : haQuanto(aoVivo.data?.atual_desde, agora)}` : ""})</span>
+          </p>
         )}
+        {online && <p>Última notícia da TV: {haQuanto(tv.ultimo_ping, agora)}{tv.tela ? ` · tela ${tv.tela}` : ""}.</p>}
         {r.tela.modo === "relogio" && <p>Mostrando o relógio — {playlistDaTv ? "a playlist não tem item no ar agora" : "a TV está sem playlist"}.</p>}
         {r.tela.modo === "pausada" && <p>TV pausada no ERP — mostra só o nome.</p>}
         {r.tela.alerta && r.tela.modo !== "offline" && <p className="font-semibold text-destructive">Aviso geral no ar cobrindo a tela.</p>}
         {playlistId && tv.playlist_id !== playlistId && <p>Esta TV está com outra playlist: <b className="text-foreground">{playlistDaTv?.nome ?? "nenhuma (relógio)"}</b>.</p>}
         {r.tela.modo === "item" && !r.exata && (
           <p className="text-warning">
-            Aproximado: {aoVivo.data?.suportado === false ? "o banco ainda não recebe o item que a TV mostra (mig 20261008000003)" : "a TV ainda não informou o item — ela passa a informar depois da próxima recarga"}. A sequência e os tempos são os da playlist.
+            Aproximado: {aoVivo.data?.suportado === false ? "o banco ainda não recebe o item que a TV mostra (mig 20261008000003)"
+              : semConfirmacao ? "a TV está com uma versão antiga da tela e não confirma o que mostra"
+              : "a TV ainda não informou o item — ela passa a informar depois da próxima recarga"}. A sequência e os tempos são os da playlist.
           </p>
+        )}
+        {semConfirmacao && (
+          <AcessoGate menu={MENU_TVS} acao="alterar">
+            <Button size="sm" variant="outline" className="h-7 text-xs" disabled={recarregar.isPending} onClick={mandarRecarregar}>
+              <RefreshCw className="mr-1 h-3.5 w-3.5" /> Recarregar a TV (deixa o ao vivo exato)
+            </Button>
+          </AcessoGate>
         )}
       </div>
     </div>

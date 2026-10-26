@@ -321,9 +321,21 @@ export function montarEspelho(
       else if (dow >= 1 && dow <= 5) previsto = j.minutosDia;
       else if (dow === 6 && j.sabado) previsto = j.minutosSabado;
     }
-    const atrasoMin = !j.flexivel && j.inicio != null && batidas.length && previsto
-      ? Math.max(0, batidas[0] - j.inicio - TOLERANCIA_MIN) : 0;
     const saldo = batidas.length % 2 === 0 ? trabalhado - previsto : 0;
+    // Atraso (16/10/2026, Pablo: "tá puxando atraso de 9 min mas tem
+    // tolerância de 10 minutos, o atraso não faz sentido sendo que tem 4h de
+    // h.e ali em azul"). Antes: entrada − início − 10, em qualquer dia — 07:49
+    // numa escala de 07:30 virava "Atraso 0:09" mesmo com +4:00 no saldo.
+    // Agora:
+    //   · tolerância é franquia: até 10 min não é atraso; passou, conta o
+    //     atraso INTEIRO (como o art. 58 §1º da CLT) — 07:49 = 19 min;
+    //   · só é atraso se o dia fechou DEVENDO além da tolerância — quem
+    //     entrou tarde e ficou mais compensou, e o dia vale pelo saldo
+    //     (hora extra ou ok). O atraso mostrado é o que o dia ficou devendo,
+    //     no máximo os minutos de atraso da entrada.
+    const atrasoEntrada = !j.flexivel && j.inicio != null && batidas.length && previsto
+      ? Math.max(0, batidas[0] - j.inicio) : 0;
+    const atrasoMin = atrasoEntrada > TOLERANCIA_MIN && saldo < -TOLERANCIA_MIN ? Math.min(atrasoEntrada, -saldo) : 0;
 
     let situacao: SituacaoDia;
     if (foraContrato) situacao = "fora_contrato";

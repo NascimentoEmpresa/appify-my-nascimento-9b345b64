@@ -110,6 +110,12 @@ export interface FluxoCaixaMaloteLinha {
   inconsistencia?: string | null;
   // Só a view da importação: id único da linha (desempate da paginação).
   linha_id?: string;
+  // Só a view da importação: true quando o rateio foi criado no ERP (esse dá para refazer/desfazer pela tela;
+  // o que veio rateado da planilha não é alterado).
+  rateio_erp?: boolean;
+  // SIS-2026-0611: só a view de previstos (Fluxo Projetado) devolve — 'aberto' | 'cancelado'.
+  // Linha com isto preenchido ainda NÃO aconteceu: não é pagamento realizado.
+  situacao_base?: "aberto" | "cancelado" | null;
   // SIS-2026-0632: só a view consolidada devolve. Preenchidos quando a linha é a
   // fatura consolidada de um cartão (várias despesas num despesa_id só).
   fatura_cartao_id?: string | null;
@@ -180,9 +186,14 @@ export function useFluxoCaixaCombinado() {
             throw e;
           }),
       ]);
+      // Débito Automático no cartão com fatura consolidada já veio DENTRO da fatura (view consolidada):
+      // sai daqui para não somar duas vezes.
+      const debitosNaFatura = new Set(
+        (malote as FluxoCaixaMaloteLinha[]).filter((l) => l.fatura_cartao_id && l.despesa_id_origem).map((l) => l.despesa_id_origem as string),
+      );
       const linhas = [
         ...malote,
-        ...debitoAutomatico,
+        ...(debitoAutomatico as FluxoCaixaMaloteLinha[]).filter((l) => !debitosNaFatura.has(l.despesa_id)),
         ...cartaoFatura,
         ...aplicacaoFinanceira,
         ...resgateAplicacao,
@@ -190,6 +201,26 @@ export function useFluxoCaixaCombinado() {
       ] as FluxoCaixaMaloteLinha[];
       linhas.sort((a, b) => (b.data_pagamento ?? "").localeCompare(a.data_pagamento ?? ""));
       return linhas;
+    },
+  });
+}
+
+// SIS-2026-0611: compromissos ainda não pagos (aba Projetado). HOOK SEPARADO de propósito:
+// a Conciliação Bancária lê useFluxoCaixaCombinado para casar com o extrato, e algo que ainda
+// não foi pago não pode entrar nessa conciliação. Migration 20261014000003 ainda não aplicada
+// (view ausente) -> lista vazia, a tela segue só com o que já existia.
+export function useFluxoCaixaPrevisto() {
+  return useQuery({
+    queryKey: ["fluxo_caixa_previsto"],
+    staleTime: 60_000,
+    queryFn: async () => {
+      try {
+        const linhas = (await buscarTodasLinhas("v_fluxo_caixa_previsto")) as FluxoCaixaMaloteLinha[];
+        return linhas;
+      } catch (e: any) {
+        if (e?.code === "PGRST205" || e?.code === "42P01") return [] as FluxoCaixaMaloteLinha[];
+        throw e;
+      }
     },
   });
 }

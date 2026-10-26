@@ -73,7 +73,7 @@ export default function PainelDia() {
   const exportar = () => baixarCsv(`efetividade_${d.data}.csv`, [
     ["Contrato", "Previstos", "Presentes", "Faltas", "Atestados", "Afastamentos", "Férias", "Coberturas", "Descobertos", "Efetividade", "Status", "Sem registro de ponto"],
     ...porContrato.map((x) => [x.contrato?.nome ?? x.chave, x.previsto, x.presentes, x.faltas, x.atestados, x.afastamentos, x.ferias, x.coberturas,
-      x.descobertos, pct(x.efetividade), x.status, x.semRegistro]),
+      x.descobertos, x.aguardandoApuracao ? "aguardando apuração" : pct(x.efetividade), x.status, x.semRegistro]),
   ]);
 
   const irPostos = (c: string) => nav(`${BASE_ROTA}/postos?${new URLSearchParams({ c, ...(d.data ? { d: d.data } : {}) })}`);
@@ -100,7 +100,9 @@ export default function PainelDia() {
             <Kpi icon={RefreshCw} rotulo="Coberturas realizadas" valor={coberturas} anterior={coberturasOntem} tom="warning" />
             <Kpi icon={AlertTriangle} rotulo="Postos descobertos" valor={descobertos.length} anterior={descobertosOntem} tom="destructive" melhorSobe={false} onClick={irFaltas} />
             <Kpi icon={BarChart3} rotulo="Efetividade do dia" valor={r.efetividade == null ? null : r.efetividade * 100} sufixo="%"
-              anterior={rOntem.efetividade == null ? null : rOntem.efetividade * 100} formatoDelta="pp" tom="success" />
+              anterior={rOntem.efetividade == null ? null : rOntem.efetividade * 100} formatoDelta="pp" tom={r.aguardandoApuracao ? "warning" : "success"}
+              semValor={r.aguardandoApuracao ? "Aguardando" : undefined}
+              dica={r.aguardandoApuracao ? "apuração dos pontos da Senior" : undefined} />
           </div>
 
           <div className="grid gap-4 xl:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)_minmax(0,0.9fr)]">
@@ -127,7 +129,7 @@ export default function PainelDia() {
                         <td className="p-2 text-center tabular-nums text-destructive">{x.faltas + x.atestados + x.afastamentos}</td>
                         <td className="p-2 text-center tabular-nums text-info">{x.coberturas}</td>
                         <td className={cn("p-2 text-center font-bold tabular-nums", x.descobertos ? "text-destructive" : "text-muted-foreground")}>{x.descobertos}</td>
-                        <td className="p-2 text-center"><CelulaPct v={x.efetividade} /></td>
+                        <td className="p-2 text-center"><CelulaPct v={x.efetividade} aguardando={x.aguardandoApuracao} /></td>
                         <td className="p-2 text-center"><BadgeContrato s={x.status} /></td>
                         <td className="p-2 text-right"><Button size="sm" variant="outline" onClick={() => irPostos(x.chave)}>Ver detalhe</Button></td>
                       </tr>
@@ -149,11 +151,11 @@ export default function PainelDia() {
                   <LinhaResumo icon={CalendarCheck2} cor="text-muted-foreground" r="Folgas" v={r.folgas} />
                   <LinhaResumo icon={UserMinus} cor="text-orange-600" r="Afastamentos" v={r.afastamentos} />
                   <LinhaResumo icon={RefreshCw} cor="text-warning" r="Coberturas" v={coberturas} />
-                  <LinhaResumo icon={Clock} cor="text-warning" r="Aguardando ponto" v={r.aguardando} />
+                  <LinhaResumo icon={Clock} cor="text-warning" r="Aguardando apuração da Senior" v={r.aguardando} />
                   <LinhaResumo icon={Clock} cor="text-warning" r="Atrasos" v={r.atrasos} />
                   <LinhaResumo icon={Fingerprint} cor="text-muted-foreground" r="Sem registro de ponto" v={r.semRegistro}
                     dica="Ativos sem nenhuma batida em 14 dias — não usam o relógio; ficam fora do efetivo." />
-                  <LinhaResumo icon={BarChart3} cor="text-success" r="Efetividade" v={pct(r.efetividade)} />
+                  <LinhaResumo icon={BarChart3} cor="text-success" r="Efetividade" v={r.aguardandoApuracao ? "Aguardando" : pct(r.efetividade)} />
                 </div>
               </Secao>
 
@@ -177,7 +179,7 @@ export default function PainelDia() {
               <TabelaRanking cab={["Contrato", "Descob.", "Ausências", "Efetividade"]}
                 linhas={[...porContrato].filter((x) => x.descobertos > 0).sort((a, b) => b.descobertos - a.descobertos).slice(0, 6)
                   .map((x) => [<button key="n" className="truncate text-left font-semibold text-primary hover:underline" onClick={() => irPostos(x.chave)}>{x.contrato?.nome ?? x.chave}</button>,
-                    <b key="d" className="text-destructive">{x.descobertos}</b>, x.faltas + x.atestados + x.afastamentos, <CelulaPct key="e" v={x.efetividade} />])}
+                    <b key="d" className="text-destructive">{x.descobertos}</b>, x.faltas + x.atestados + x.afastamentos, <CelulaPct key="e" v={x.efetividade} aguardando={x.aguardandoApuracao} />])}
                 vazio="Nenhum posto descoberto." />
             </Secao>
             <Secao titulo="Colaboradores com Mais Faltas" icone={UserX} sub="Últimos 14 dias pelo ponto">
@@ -256,12 +258,12 @@ function MapaContratos({ grupos, onAbrir }: { grupos: (ResumoGrupo & { contrato?
           const peso = 0.35 + 0.65 * Math.sqrt(g.previsto / max);
           const nome = (g.contrato?.nome ?? g.chave).replace(/^\d+\s*-\s*/, "");
           return (
-            <button key={g.chave} onClick={() => onAbrir(g.chave)} title={`${g.contrato?.nome}\nEfetividade ${pct(g.efetividade)} · ${g.descobertos} descoberto(s)`}
+            <button key={g.chave} onClick={() => onAbrir(g.chave)} title={`${g.contrato?.nome}\nEfetividade ${g.aguardandoApuracao ? "aguardando apuração" : pct(g.efetividade)} · ${g.descobertos} descoberto(s)`}
               className={cn("relative flex flex-col justify-between rounded-md border p-1.5 text-left transition-colors", cor[g.status])}
               style={{ width: `${Math.round(70 + 110 * peso)}px`, height: `${Math.round(44 + 40 * peso)}px` }}>
               <span className="line-clamp-2 text-[10px] font-semibold leading-tight">{nome}</span>
               <span className="flex items-center justify-between text-[10px] tabular-nums">
-                <span>{pct(g.efetividade, 0)}</span>
+                <span>{g.aguardandoApuracao ? "aguard." : pct(g.efetividade, 0)}</span>
                 {g.descobertos > 0 && <span className="rounded bg-destructive px-1 font-bold text-destructive-foreground">{g.descobertos}</span>}
               </span>
             </button>

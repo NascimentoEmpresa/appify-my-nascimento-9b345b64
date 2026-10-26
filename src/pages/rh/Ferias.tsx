@@ -1,4 +1,5 @@
-import { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo, type CSSProperties } from "react";
+import { passaNoPeriodo, ultimoDiaDoMes, type BasePeriodo } from "@/lib/rh/feriasPeriodo";
 import { FiltroContratos, passaNoFiltroContratos } from "@/components/solicitacoes/FiltroContratos";
 import { supabase } from "@/integrations/supabase/client";
 import type { SupabaseClient } from "@supabase/supabase-js";
@@ -9,6 +10,26 @@ import { ResumoDeFuncoes } from "@/components/fluxos/ResumoDeFuncoes";
 // SISTEMA_SOLICITACOES_FERIAS e o histórico não estão no types.ts gerado;
 // mesmo padrão de comite-etica/db.ts — a exceção fica num lugar só.
 const db = supabase as unknown as SupabaseClient;
+
+/** Teto de linhas que o servidor devolve numa consulta só. */
+const PAGINA = 1000;
+
+/**
+ * Busca TODAS as linhas, de PAGINA em PAGINA, até vir uma página incompleta.
+ * `montar(de, ate)` monta a consulta de novo a cada página (o builder do
+ * supabase-js só executa uma vez).
+ */
+async function todasAsPaginas<T>(
+  montar: (de: number, ate: number) => PromiseLike<{ data: T[] | null; error: { message: string } | null }>,
+): Promise<{ data: T[]; error: { message: string } | null }> {
+  const tudo: T[] = [];
+  for (let de = 0; ; de += PAGINA) {
+    const { data, error } = await montar(de, de + PAGINA - 1);
+    if (error) return { data: tudo, error };
+    tudo.push(...(data ?? []));
+    if (!data || data.length < PAGINA) return { data: tudo, error: null };
+  }
+}
 
 interface SolicitacaoFerias {
   id: number;
@@ -23,6 +44,8 @@ interface SolicitacaoFerias {
   data_retorno?: string | null;
   dias_ferias?: number | null;
   dias_vendidos?: number | null;
+  /** "venda" (14/10/2026, mig 20261014000043): vende dias sem tirar as férias — não tem saída nem retorno. */
+  tipo?: string | null;
   excecao?: boolean | null;
   observacoes?: string | null;
   motivo_reprovacao?: string | null;
@@ -72,6 +95,8 @@ function StatusBadge({ status }: { status: string }) {
 
 const FILTROS = ["", "Pendente", "Aprovada", "Reprovada", "Cancelada"];
 
+const inputData: CSSProperties = { padding: "7px 10px", borderRadius: 10, border: "1px solid #e2e8f0", fontSize: 13, outline: "none", background: "#fff", color: "#0f172a" };
+
 export default function Ferias() {
   const { user } = useAuth();
   const [nome, setNome] = useState("");
@@ -84,7 +109,18 @@ export default function Ferias() {
   // Filtros · Contratos (14/09/2026). O contrato da férias é a filial do
   // colaborador ("1109 - POLICIA CIVIL..."), gravada em colaborador_filial.
   const [fContratos, setFContratos] = useState<string[]>([]);
-  const rowsFiltradas = useMemo(() => rows.filter(r => passaNoFiltroContratos(r, "colaborador_filial", fContratos)), [rows, fContratos]);
+  const [mes, setMes] = useState("");
+  const [de, setDe] = useState("");
+  const [ate, setAte] = useState("");
+  const [basePeriodo, setBasePeriodo] = useState<BasePeriodo>("ferias");
+  const temPeriodo = !!(de || ate);
+  // Escolher o mês preenche De/Até; mexer em De/Até à mão desfaz o mês.
+  const escolherMes = (v: string) => { setMes(v); setDe(v ? `${v}-01` : ""); setAte(v ? ultimoDiaDoMes(v) : ""); };
+  const limparPeriodo = () => { setMes(""); setDe(""); setAte(""); };
+  const rowsFiltradas = useMemo(
+    () => rows.filter(r => passaNoFiltroContratos(r, "colaborador_filial", fContratos) && passaNoPeriodo(r, basePeriodo, de, ate)),
+    [rows, fContratos, basePeriodo, de, ate],
+  );
 
   const [drawerId, setDrawerId] = useState<number | null>(null);
   const [sol, setSol] = useState<SolicitacaoFerias | null>(null);
@@ -120,18 +156,28 @@ export default function Ferias() {
   // ── Carregar lista + stats ──────────────────────────────────────────
   const carregar = useCallback(async () => {
     setLoading(true);
-    let q = db.from("SISTEMA_SOLICITACOES_FERIAS").select("*").order("criado_em", { ascending: false }).limit(200);
-    if (statusFilter) q = q.eq("status", statusFilter);
-    if (busca.trim()) q = q.or(`colaborador_nome.ilike.%${busca.trim()}%,solicitante_nome.ilike.%${busca.trim()}%`);
-    const { data, error } = await q;
+    // TODAS as solicitações, em páginas (20/10/2026). Era `.limit(200)`: com
+    // 257 no banco, as 57 mais antigas sumiam da lista e da contagem do
+    // "Filtros · Contratos" (o TJRS mostrava menos do que tinha). Página de
+    // 1000 = o teto que o servidor devolve por consulta; `id` desempata a
+    // ordem para nenhuma linha cair entre duas páginas.
+    const { data, error } = await todasAsPaginas<SolicitacaoFerias>((de, ate) => {
+      let q = db.from("SISTEMA_SOLICITACOES_FERIAS").select("*")
+        .order("criado_em", { ascending: false }).order("id", { ascending: false }).range(de, ate);
+      if (statusFilter) q = q.eq("status", statusFilter);
+      if (busca.trim()) q = q.or(`colaborador_nome.ilike.%${busca.trim()}%,solicitante_nome.ilike.%${busca.trim()}%`);
+      return q;
+    });
     setLoading(false);
     if (error) { toast("Erro ao carregar: " + error.message, "err"); return; }
-    setRows(data ?? []);
+    setRows(data);
   }, [statusFilter, busca, toast]);
 
   const carregarStats = useCallback(async () => {
-    const { data } = await db.from("SISTEMA_SOLICITACOES_FERIAS").select("status").limit(2000);
-    if (!data) return;
+    // Mesma coisa nos cartões do topo: `.limit(2000)` parava em 1000 (teto do servidor).
+    const { data, error } = await todasAsPaginas<{ status: string }>((de, ate) =>
+      db.from("SISTEMA_SOLICITACOES_FERIAS").select("status").order("id").range(de, ate));
+    if (error) return;
     const m: Record<string, number> = { total: data.length };
     for (const r of data) m[r.status] = (m[r.status] ?? 0) + 1;
     setStats(m);
@@ -228,6 +274,33 @@ export default function Ferias() {
           style={{ minWidth: 240, padding: "8px 12px", borderRadius: 10, border: "1px solid #e2e8f0", fontSize: 13, outline: "none" }} />
       </div>
 
+      {/* Período: mês ou de/até, sobre a data das férias ou a de criação */}
+      <div style={{ display: "flex", gap: 10, marginBottom: 14, flexWrap: "wrap", alignItems: "flex-end", background: "#fff", border: "1px solid #e2e8f0", borderRadius: 14, padding: "10px 14px" }}>
+        {[
+          ["Filtrar pela data", <select key="b" value={basePeriodo} onChange={e => setBasePeriodo(e.target.value as BasePeriodo)} style={inputData}>
+            <option value="ferias">Período das férias</option>
+            <option value="criado">Data da solicitação</option>
+          </select>],
+          ["Mês", <input key="m" type="month" value={mes} onChange={e => escolherMes(e.target.value)} style={inputData} />],
+          ["De", <input key="d" type="date" value={de} max={ate || undefined} onChange={e => { setMes(""); setDe(e.target.value); }} style={inputData} />],
+          ["Até", <input key="a" type="date" value={ate} min={de || undefined} onChange={e => { setMes(""); setAte(e.target.value); }} style={inputData} />],
+        ].map(([rotulo, campo]) => (
+          <label key={rotulo as string} style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            <span style={{ fontSize: 10, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase", letterSpacing: ".5px" }}>{rotulo}</span>
+            {campo}
+          </label>
+        ))}
+        {temPeriodo && (
+          <>
+            <button onClick={limparPeriodo} style={{ padding: "7px 12px", borderRadius: 10, border: "1px solid #e2e8f0", background: "#fff", color: "#0f3171", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Limpar período</button>
+            <span style={{ fontSize: 12, color: "#64748b", marginLeft: "auto" }}>
+              <b style={{ color: "#0f172a" }}>{rowsFiltradas.length}</b> solicitação(ões) {basePeriodo === "ferias" ? "com férias" : "criadas"}{" "}
+              {de && ate ? `entre ${fmtDt(de)} e ${fmtDt(ate)}` : de ? `a partir de ${fmtDt(de)}` : `até ${fmtDt(ate)}`}
+            </span>
+          </>
+        )}
+      </div>
+
       {/* Tabela */}
       <div style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 16, overflow: "hidden", boxShadow: "0 4px 16px rgba(15,23,42,.05)" }}>
         <table style={{ width: "100%", borderCollapse: "collapse" }}>
@@ -253,8 +326,14 @@ export default function Ferias() {
                   <div style={{ fontWeight: 600, color: "#0f172a" }}>{r.colaborador_nome}</div>
                   <div style={{ fontSize: 11, color: "#94a3b8" }}>{r.colaborador_cargo}{r.colaborador_filial ? ` · ${r.colaborador_filial}` : ""}</div>
                 </td>
-                <td style={{ padding: "11px 14px", fontSize: 12, color: "#475569" }}>{fmtDt(r.data_saida)} → {fmtDt(r.data_retorno)}</td>
-                <td style={{ padding: "11px 14px", fontSize: 12, color: "#475569" }}>{r.dias_ferias}d{r.dias_vendidos ? ` +${r.dias_vendidos} abono` : ""}</td>
+                <td style={{ padding: "11px 14px", fontSize: 12, color: "#475569" }}>
+                  {r.tipo === "venda"
+                    ? <span style={{ fontWeight: 700, color: "#b45309" }}>💰 Venda — sem tirar</span>
+                    : <>{fmtDt(r.data_saida)} → {fmtDt(r.data_retorno)}</>}
+                </td>
+                <td style={{ padding: "11px 14px", fontSize: 12, color: "#475569" }}>
+                  {r.tipo === "venda" ? `${r.dias_vendidos}d vendidos` : <>{r.dias_ferias}d{r.dias_vendidos ? ` +${r.dias_vendidos} abono` : ""}</>}
+                </td>
                 <td style={{ padding: "11px 14px", fontSize: 12, color: "#475569" }}>{r.solicitante_nome || "—"}</td>
                 <td style={{ padding: "11px 14px" }}>
                   <StatusBadge status={r.status} />
@@ -332,10 +411,10 @@ export default function Ferias() {
               {/* Resumo */}
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 18 }}>
                 {[
-                  ["Saída", fmtDt(sol.data_saida)],
-                  ["Retorno", fmtDt(sol.data_retorno)],
-                  ["Dias de férias", `${sol.dias_ferias} dias`],
-                  ["Abono (vendidos)", `${sol.dias_vendidos || 0} dias`],
+                  ...(sol.tipo === "venda"
+                    ? [["Tipo", "💰 Venda de dias — sem tirar as férias"], ["Dias vendidos", `${sol.dias_vendidos || 0} dias`]]
+                    : [["Saída", fmtDt(sol.data_saida)], ["Retorno", fmtDt(sol.data_retorno)],
+                       ["Dias de férias", `${sol.dias_ferias} dias`], ["Abono (vendidos)", `${sol.dias_vendidos || 0} dias`]]),
                   ["CPF", sol.colaborador_cpf || "—"],
                   ["Admissão", fmtDt(sol.colaborador_admissao)],
                   ["Solicitante", sol.solicitante_nome || "—"],

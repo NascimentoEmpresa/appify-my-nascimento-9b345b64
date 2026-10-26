@@ -46,7 +46,9 @@ export const useTvDispositivos = () => useQuery({
 });
 
 export const useTvPlaylists = () => useQuery({
-  queryKey: [K, "playlists"], staleTime: 30_000,
+  // refetch: o AO VIVO procura o item que a TV informou nesta lista — item
+  // criado por outra pessoa não pode ficar de fora até alguém recarregar a tela.
+  queryKey: [K, "playlists"], staleTime: 30_000, refetchInterval: 60_000,
   queryFn: async (): Promise<TvPlaylist[]> => {
     const { data, error } = await sb.from("TV_PLAYLIST").select("id, nome, descricao, itens:TV_ITEM(*)").order("nome");
     if (error) throw error;
@@ -64,6 +66,10 @@ export const useTvAoVivo = (tvId: string | null) => useQuery({
   // Sem a migration não adianta insistir: para de consultar (a gestão simula).
   refetchInterval: (q) => (q.state.data?.suportado === false ? false : 4_000), staleTime: 3_000, retry: false,
   queryFn: async (): Promise<AoVivoTv> => {
+    // atual_em (mig 20261020000004): quando a TV confirmou o item. Banco sem a
+    // coluna → consulta sem ela (atual_em undefined = "não dá pra saber").
+    const r = await sb.from("TV_DISPOSITIVO").select("atual_item_id, atual_desde, atual_em").eq("id", tvId).maybeSingle();
+    if (!r.error) return { suportado: true, atual_item_id: r.data?.atual_item_id ?? null, atual_desde: r.data?.atual_desde ?? null, atual_em: r.data?.atual_em ?? null };
     const { data, error } = await sb.from("TV_DISPOSITIVO").select("atual_item_id, atual_desde").eq("id", tvId).maybeSingle();
     if (error) return { suportado: false, atual_item_id: null, atual_desde: null };
     return { suportado: true, atual_item_id: data?.atual_item_id ?? null, atual_desde: data?.atual_desde ?? null };

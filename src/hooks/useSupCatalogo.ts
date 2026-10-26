@@ -55,12 +55,8 @@ export interface Alteracao {
 const sb = supabase as any;
 
 /** Listas pré-definidas do painel legado (ARQUITETURA-COMPLETA.md §11.2). */
-export const OPCOES_PREDEFINIDAS: Record<string, string[]> = {
-  quantidade: ["1", "2", "3", "4", "5", "6"],
-  tamanho: ["PP", "P", "M", "G", "GG", "EGG", "EXGG",
-    ...Array.from({ length: 17 }, (_, i) => String(33 + i))],
-  litros: Array.from({ length: 19 }, (_, i) => String((i + 1) * 10)),
-};
+// A grade vive na regra testável para o Catálogo e suas opções não divergirem.
+export { OPCOES_PREDEFINIDAS } from "@/lib/suprimentos/opcoesMaterial";
 
 export const LABEL_TIPO_ITEM: Record<TipoItem, string> = {
   uniforme: "Uniforme",

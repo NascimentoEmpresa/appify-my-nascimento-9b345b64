@@ -1,0 +1,140 @@
+# Os ARQUIVOS dos anexos do cluster, levados para fora do cluster.
+#
+# POR QUE ESTE ARQUIVO EXISTE, SE JA HA UM backup_storage.yml
+# O `backup_storage.yml` baixa os anexos da SUPABASE, e monta a lista de
+# objetos com uma consulta `psql` no banco dela. Nada disso funciona contra o
+# cluster: o Postgres do cluster nao atende na internet (so no IP do tunel e no
+# HAProxy local), entao o runner nao consegue nem montar a lista. Reapontar
+# aquele workflow seria reescreve-lo.
+#
+# Aqui o desenho e o mesmo do `backup_cluster.yml`, que ja funciona: quem
+# empacota e o NO, que tem os arquivos na mao; o runner so busca o resultado.
+#
+#   no, domingo 04h30 UTC   backup-anexos.timer -> tar --xattrs | gzip | gpg
+#   runner, domingo 06h00   ssh backup@no anexos -> artefato no GitHub
+#
+# POR QUE SEMANAL
+# Sao ~5,5 GB cifrados. Anexo nao muda depois de enviado -- so entra mais -- e
+# o banco (diario) registra todo dia que o arquivo existe. A janela de uma
+# semana custa, no pior caso, os anexos enviados depois da ultima copia.
+#
+# O QUE ISTO FECHA
+# Ate hoje os 5,8 GB existiam em dois lugares: banco1 e banco2, pelo espelho
+# de 1 minuto. Dois provedores, e ainda assim REDUNDANCIA, nao backup -- o
+# espelho copia o que existe e tambem copiaria a ausencia de um arquivo
+# apagado por engano nos dois lados. A partir daqui existe uma copia que
+# NINGUEM no cluster pode apagar.
+#
+# A ARMADILHA QUE ESTE BACKUP CARREGA RESOLVIDA
+# O content-type de cada anexo mora num xattr do arquivo, nao no banco. `tar`
+# sem `--xattrs` perde isso e o anexo restaurado aparece na tela mas o
+# download morre com ENODATA, sem falar de arquivo. O `--anexos` do
+# `backup-cluster.sh` usa `--xattrs --xattrs-include='*'`; restaurar tambem
+# exige `--xattrs`, e isso esta no roteiro de restauracao.
+
+name: Backup dos anexos do cluster
+
+on:
+  workflow_dispatch:
+    inputs:
+      retencao_dias:
+        description: 'Por quantos dias guardar este artefato'
+        type: string
+        default: '60'
+  schedule:
+    # Domingo 06h00 UTC = 03h00 de Brasilia, ~90 min depois do timer do no.
+    - cron: '0 6 * * 0'
+
+permissions:
+  contents: read
+
+jobs:
+  anexos:
+    runs-on: ubuntu-latest
+    # 5,5 GB para baixar e subir. O backup do banco leva 20; este precisa de ar.
+    timeout-minutes: 90
+    steps:
+      - name: Preparar a chave restrita
+        env:
+          CHAVE: ${{ secrets.CLUSTER_BACKUP_SSH_KEY }}
+        run: |
+          if [ -z "$CHAVE" ]; then
+            echo "::error::Falta o secret CLUSTER_BACKUP_SSH_KEY."
+            echo "Crie com: bash infra/ha/chave-backup-github.sh"
+            exit 1
+          fi
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          printf '%s\n' "$CHAVE" > ~/.ssh/cluster
+          chmod 600 ~/.ssh/cluster
+          ssh-keyscan -p 8443 -H "${{ vars.CLUSTER_BACKUP_HOST || '216.238.120.171' }}" \
+            > ~/.ssh/known_hosts 2>/dev/null
+          wc -l < ~/.ssh/known_hosts | xargs printf 'host conhecido: %s linha(s)\n'
+
+      - name: Conferir que ha espaco no runner antes de puxar
+        run: |
+          LIVRE=$(df -BM --output=avail / | tail -1 | tr -dc '0-9')
+          echo "livre em /: ${LIVRE} MB"
+          # 5,5 GB chegando + margem. Encher o disco no meio gera um arquivo
+          # truncado de tamanho convincente, que e o pior resultado possivel.
+          [ "$LIVRE" -gt 12000 ] || { echo "::error::Menos de 12 GB livres."; exit 1; }
+
+      - name: Puxar o pacote cifrado dos anexos
+        env:
+          NO: ${{ vars.CLUSTER_BACKUP_HOST || '216.238.120.171' }}
+          # Ver o cabecalho de infra/ha/chave-backup-github.sh: `backup` ja
+          # existe no Debian com shell nologin, e o sintoma de usar esse nome
+          # e "0 bytes" entregues, sem erro.
+          USUARIO: ${{ vars.CLUSTER_BACKUP_USER || 'erpbackup' }}
+        run: |
+          set -o pipefail
+          NOME="anexos-cluster-$(date -u +%Y%m%d).tar.gz.gpg"
+          # A unica palavra que o `--enviar` entende e "anexos": com ela, manda
+          # o pacote dos arquivos; sem ela, o do banco. Nada e executado no no.
+          time ssh -p 8443 -i ~/.ssh/cluster -o BatchMode=yes \
+               -o ConnectTimeout=20 -o ServerAliveInterval=30 \
+               "$USUARIO@$NO" anexos > "$NOME"
+          echo "ARQUIVO=$NOME" >> "$GITHUB_ENV"
+          ls -lh "$NOME"
+
+      - name: Conferir que veio o pacote dos anexos, e nao um erro
+        run: |
+          TAM=$(stat -c %s "$ARQUIVO")
+          echo "tamanho: $((TAM/1048576)) MB"
+          # Os anexos passam de 5 GB. Qualquer coisa abaixo de 1 GB aqui e
+          # mensagem de erro cuspida no stdout, ou o pacote do BANCO vindo no
+          # lugar (62 MB) -- os dois casos sao falha, nao backup.
+          if [ "$TAM" -lt 1000000000 ]; then
+            echo "::error::Pacote com $((TAM/1048576)) MB -- pequeno demais para os anexos."
+            head -c 400 "$ARQUIVO"; exit 1
+          fi
+          if ! gpg --list-packets --list-only "$ARQUIVO" 2>/dev/null | grep -q 'pubkey enc packet'; then
+            echo "::error::Nao parece um arquivo GPG. Cabecalho:"
+            head -c 64 "$ARQUIVO" | xxd; exit 1
+          fi
+          gpg --list-packets --list-only "$ARQUIVO" 2>/dev/null | grep 'keyid' | head -1
+
+      - name: Publicar o artefato
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.ARQUIVO }}
+          path: ${{ env.ARQUIVO }}
+          retention-days: ${{ github.event.inputs.retencao_dias || '60' }}
+          # Sem compressao: o arquivo ja esta gzipado e cifrado. Comprimir de
+          # novo so gasta minutos de runner e nao tira um byte.
+          compression-level: 0
+          if-no-files-found: error
+
+      - name: Avisar o Eduardo por DM se falhou
+        # DM, nunca o canal: o canal tem outras pessoas.
+        if: failure()
+        env:
+          DISCORD_TOKEN: ${{ secrets.DISCORD_TOKEN }}
+        run: |
+          [ -n "$DISCORD_TOKEN" ] || exit 0
+          CANAL=$(curl -s -X POST "https://discord.com/api/v10/users/@me/channels" \
+            -H "Authorization: Bot $DISCORD_TOKEN" -H "Content-Type: application/json" \
+            -d '{"recipient_id":"1384572666752663653"}' | jq -r '.id')
+          curl -s -X POST "https://discord.com/api/v10/channels/$CANAL/messages" \
+            -H "Authorization: Bot $DISCORD_TOKEN" -H "Content-Type: application/json" \
+            -d "{\"content\":\"**Backup dos ANEXOS do cluster FALHOU** - ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}" \
+            > /dev/null

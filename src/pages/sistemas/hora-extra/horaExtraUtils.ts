@@ -164,9 +164,9 @@ export function podeIgnorarEscalaNoFimDeSemana(
   return ehFimDeSemana(data) && Boolean(escala?.nao_aplicavel_fins_semana);
 }
 
-/** No fim de semana sem escala, cada minuto efetivamente trabalhado é HE. */
-export function jornadaParaCalculoHoraExtra(jornada: number, seguirEscala = true): number {
-  return seguirEscala ? Math.max(0, jornada || 0) : 0;
+/** Sem escala ou em feriado, cada minuto efetivamente trabalhado é HE. */
+export function jornadaParaCalculoHoraExtra(jornada: number, seguirEscala = true, feriado = false): number {
+  return seguirEscala && !feriado ? Math.max(0, jornada || 0) : 0;
 }
 
 /**
@@ -398,6 +398,7 @@ export function linhasExcel(solicitacoes: SolicitacaoHoraExtra[]) {
       Setor: solicitacao.setor ?? "",
       Empresa: solicitacao.empresa ?? "",
       "Data da HE": formatarData(solicitacao.data_he),
+      Feriado: solicitacao.feriado ? "Sim" : "Não",
       "Tipo de HE": solicitacao.tipo === "emergencial" ? "Emergencial" : "Normal",
       "Horário previsto": `${somenteHora(solicitacao.he_inicio_previsto)} - ${somenteHora(solicitacao.he_fim_previsto)}`,
       "Total previsto": formatarDuracao(solicitacao.total_previsto_min, true),

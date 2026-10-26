@@ -3,6 +3,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { useClassificacoesOrcamentoAdmin } from "@/hooks/usePlanejamentoOrcamentario";
 import { CheckCircle2, Eye, Pencil, XCircle } from "lucide-react";
 import { toast } from "sonner";
 import { RateioLinha, useEmpresasGrupo, useContratosAtivos, useFornecedoresAtivos, useIntegrantes, useJustificarRateioLinha } from "@/hooks/useMaloteDespesa";
@@ -60,6 +61,7 @@ export function RateioAprovadorTable({
   const { data: empresas = [] } = useEmpresasGrupo();
   const { data: contratos = [] } = useContratosAtivos();
   const { data: fornecedores = [] } = useFornecedoresAtivos();
+  const { data: classificacoesCatalogo = [] } = useClassificacoesOrcamentoAdmin();
   const { data: integrantes = [] } = useIntegrantes();
   const { data: utilizadoLinhas = [] } = useUtilizadoOrcamento();
   const { data: ligacoesClassMalote = [] } = useLigacoesClassificacaoMalote();
@@ -73,6 +75,8 @@ export function RateioAprovadorTable({
 
   const mostrarColunaEmpresa = dimensoes.empresa || linhas.some((l) => l.empresa_id);
   const mostrarColunaContrato = dimensoes.contrato || linhas.some((l) => l.contrato_id);
+  // SIS-2026-0680: rateio por CLASSIFICAÇÃO — cada linha tem a sua; a coluna mostra qual é de qual.
+  const mostrarColunaClassificacao = linhas.some((l) => !!l.classificacao_id);
 
   // "Utilizado antes desta despesa" = lançamentos já em Aguardando
   // Pagamento/Despesa Paga da mesma Classificação+Contrato no mesmo mês,
@@ -130,6 +134,7 @@ export function RateioAprovadorTable({
             <TableRow>
               {mostrarColunaEmpresa && <TableHead className="text-center">Empresa</TableHead>}
               {mostrarColunaContrato && <TableHead className="text-center">Contrato</TableHead>}
+              {mostrarColunaClassificacao && <TableHead className="text-center">Classificação</TableHead>}
               {dimensoes.fornecedor && <TableHead className="text-center">Fornecedor</TableHead>}
               {dimensoes.integrante && <TableHead className="text-center">Integrante</TableHead>}
               <TableHead className="text-center">Valor (R$)</TableHead>
@@ -145,7 +150,7 @@ export function RateioAprovadorTable({
               <TableRow>
                 <TableCell
                   colSpan={
-                    5 + Number(mostrarColunaEmpresa) + Number(mostrarColunaContrato) + Number(dimensoes.fornecedor) + Number(dimensoes.integrante)
+                    5 + Number(mostrarColunaEmpresa) + Number(mostrarColunaContrato) + Number(mostrarColunaClassificacao) + Number(dimensoes.fornecedor) + Number(dimensoes.integrante)
                   }
                   className="text-center text-muted-foreground py-6"
                 >
@@ -181,6 +186,11 @@ export function RateioAprovadorTable({
                 <TableRow key={linha.id ?? idx}>
                   {mostrarColunaEmpresa && <TableCell className="text-xs text-center">{empresas.find((e) => e.id === linha.empresa_id)?.nome ?? "—"}</TableCell>}
                   {mostrarColunaContrato && <TableCell className="text-xs text-center">{contratos.find((c) => c.id === linha.contrato_id)?.nome ?? "—"}</TableCell>}
+                  {mostrarColunaClassificacao && (
+                    <TableCell className="text-xs text-center font-medium">
+                      {classificacoesCatalogo.find((c) => c.id === linha.classificacao_id)?.nome ?? "—"}
+                    </TableCell>
+                  )}
                   {dimensoes.fornecedor && (
                     <TableCell className="text-xs text-center">{fornecedores.find((f) => f.id === linha.fornecedor_id)?.nome ?? "—"}</TableCell>
                   )}

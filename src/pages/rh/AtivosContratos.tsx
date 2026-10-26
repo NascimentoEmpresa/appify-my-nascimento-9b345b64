@@ -30,6 +30,7 @@ import {
 } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
   AlertTriangle, Building2, CheckCircle2, ChevronDown, ChevronRight, Loader2, Search,
   ShieldAlert, Sparkles, UserMinus, Users, UserX, MessageSquare, Trash2, Send,
@@ -42,7 +43,7 @@ import {
   type ObservacaoAtivos,
 } from "@/hooks/useAtivosContratos";
 import {
-  conferirContrato, limparPostoSenior, fmtSaldo, sugerirContrato,
+  conferirContrato, limparPostoSenior, fmtSaldo, sugerirContrato, ehPostoRT, POSTO_RT,
   type ContratoAtivos, type ConferenciaContrato, type ConferenciaPosto, type PessoaContrato,
   type PendenteSenior, type Situacao, type PainelAtivos,
 } from "./conferenciaAtivos";
@@ -174,6 +175,8 @@ export default function AtivosContratos() {
       semPosto: com.reduce((s, l) => s + l.conf.semPosto, 0),
       contratosSemPosto: com.filter((l) => l.conf.semPosto > 0).length,
       afastados: com.reduce((s, l) => s + l.conf.afastados.length, 0),
+      // Renda técnica (20/10/2026): fora do previsto/tem; aparece na dica do "Tem".
+      rt: linhas.reduce((s, l) => s + l.conf.rt.length, 0),
       semContrato: (data?.filiais_sem_contrato ?? []).reduce((s, f) => s + f.qtd, 0),
     };
   }, [linhas, data]);
@@ -214,7 +217,7 @@ export default function AtivosContratos() {
         <>
           <div className="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             <Kpi icon={Users} valor={tot.previsto.toLocaleString("pt-BR")} rotulo="Previsto" dica="soma das vagas da planilha" tom="info" />
-            <Kpi icon={CheckCircle2} valor={tot.tem.toLocaleString("pt-BR")} rotulo="Tem" dica={`trabalhando · ${tot.afastados} afastado(s) fora`} tom="success" />
+            <Kpi icon={CheckCircle2} valor={tot.tem.toLocaleString("pt-BR")} rotulo="Tem" dica={`trabalhando · ${tot.afastados} afastado(s) fora${tot.rt ? ` · ${tot.rt} em renda técnica` : ""}`} tom="success" />
             {/* Falta posto a posto só é real com todo mundo no seu posto — antes
                 disso, gente "sem posto" vira falta no posto e infla o número. */}
             <Kpi icon={AlertTriangle} valor={<span className={corSaldo(tot.tem - tot.previsto)}>{fmtSaldo(tot.tem - tot.previsto)}</span>}
@@ -261,6 +264,7 @@ export default function AtivosContratos() {
                     <th className="w-24 py-2 pr-3 text-right">Saldo</th>
                     <th className="w-24 py-2 pr-3 text-right">Afastados</th>
                     <th className="w-56 py-2 pr-3" />
+                    <th className="w-72 py-2 pr-3">Justificativa da diferença</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -272,7 +276,7 @@ export default function AtivosContratos() {
                     );
                   })}
                   {visiveis.length === 0 && (
-                    <tr><td colSpan={7} className="py-8 text-center text-sm text-muted-foreground">Nenhum contrato neste filtro.</td></tr>
+                    <tr><td colSpan={8} className="py-8 text-center text-sm text-muted-foreground">Nenhum contrato neste filtro.</td></tr>
                   )}
                 </tbody>
               </table>
@@ -331,10 +335,11 @@ function LinhaContrato({ c, conf, aberto, podeVincular, onToggle }: {
             )}
           </div>
         </td>
+        <td className="py-2 pr-3"><CelulaJustificativa c={c} diferenca={temPlanilha ? conf.saldo : 0} /></td>
       </tr>
       {aberto && (
         <tr className="border-b border-border">
-          <td colSpan={7} className="bg-muted/10 p-4">
+          <td colSpan={8} className="bg-muted/10 p-4">
             <DetalheContrato c={c} conf={conf} podeVincular={podeVincular} />
           </td>
         </tr>
@@ -352,7 +357,11 @@ function DetalheContrato({ c, conf, podeVincular }: { c: ContratoAtivos; conf: C
         <p className="text-muted-foreground">
           Este contrato não tem posto EXECUTADO vigente na Planilha de Custo — não há quantidade prevista para comparar.
         </p>
-        <ListaPessoas pessoas={c.pessoas} />
+        {podeVincular
+          ? <ListaPessoasMover c={c} pessoas={c.pessoas.filter((p) => !ehPostoRT(p.posto))} />
+          : <ListaPessoas pessoas={c.pessoas.filter((p) => !ehPostoRT(p.posto))} />}
+        {/* Sem planilha também tem RT (todo contrato tem). */}
+        <TabelaSoRT c={c} conf={conf} podeVincular={podeVincular} />
         <ObservacoesContrato c={c} />
       </div>
     );
@@ -367,18 +376,27 @@ function DetalheContrato({ c, conf, podeVincular }: { c: ContratoAtivos; conf: C
   );
 }
 
-/** Select de posto da planilha, com "fora da conta" e (opcional) "voltar ao posto da Senior". */
-function SelectPosto({ c, valor, onChange, disabled, comVoltar = false, placeholder = "Escolher posto…", className = "w-72" }: {
+/**
+ * Select de posto da planilha, com "fora da conta" e (opcional) "voltar ao
+ * posto da Senior". `comRt`: mover UMA pessoa também pode ir para RENDA
+ * TÉCNICA (20/10/2026) — o posto da Senior inteiro não (o RT é pessoa a pessoa).
+ */
+function SelectPosto({ c, valor, onChange, disabled, comVoltar = false, comRt = false, placeholder = "Escolher posto…", className = "w-72" }: {
   c: ContratoAtivos; valor: string | undefined; onChange: (v: string) => void; disabled?: boolean;
-  comVoltar?: boolean; placeholder?: string; className?: string;
+  comVoltar?: boolean; comRt?: boolean; placeholder?: string; className?: string;
 }) {
   return (
     <Select value={valor ?? ""} onValueChange={onChange} disabled={disabled}>
       <SelectTrigger className={`h-8 text-xs ${className}`} onClick={(e) => e.stopPropagation()}><SelectValue placeholder={placeholder} /></SelectTrigger>
       <SelectContent>
-        {c.postos.map((p) => (
+        {c.postos.filter((p) => !ehPostoRT(p.nome)).map((p) => (
           <SelectItem key={p.nome} value={p.nome} className="text-xs">{p.nome} <span className="text-muted-foreground">· {p.vagas} vaga(s)</span></SelectItem>
         ))}
+        {comRt && (
+          <SelectItem value={POSTO_RT} className="text-xs font-medium text-violet-700 dark:text-violet-300">
+            {POSTO_RT} <span className="font-normal text-muted-foreground">· RT, não ocupa vaga</span>
+          </SelectItem>
+        )}
         <SelectSeparator />
         {comVoltar && <SelectItem value={DA_SENIOR} className="text-xs">Voltar ao posto da Senior</SelectItem>}
         <SelectItem value={FORA} className="text-xs text-muted-foreground">Fora da conta deste contrato</SelectItem>
@@ -503,6 +521,7 @@ function TabelaPostos({ c, conf, podeVincular }: { c: ContratoAtivos; conf: Conf
             <th className="w-20 py-2 pr-3 text-right">Saldo</th>
             <th className="w-20 py-2 pr-3 text-right">Afastados</th>
             <th className="w-32 py-2 pr-3" />
+            <th className="w-72 py-2 pr-3">Justificativa da diferença</th>
           </tr>
         </thead>
         <tbody>
@@ -510,6 +529,9 @@ function TabelaPostos({ c, conf, podeVincular }: { c: ContratoAtivos; conf: Conf
             <LinhaPosto key={p.nome} c={c} p={p} aberto={aberto === p.nome} podeVincular={podeVincular}
               onToggle={() => setAberto(aberto === p.nome ? null : p.nome)} />
           ))}
+          {/* Depois do último posto, em TODO contrato. Fora do Total abaixo. */}
+          <LinhaRendaTecnica c={c} conf={conf} aberto={aberto === POSTO_RT} podeVincular={podeVincular}
+            onToggle={() => setAberto(aberto === POSTO_RT ? null : POSTO_RT)} />
         </tbody>
         <tfoot>
           <tr className="border-t border-border bg-muted/30 font-semibold">
@@ -523,10 +545,73 @@ function TabelaPostos({ c, conf, podeVincular }: { c: ContratoAtivos; conf: Conf
             </td>
             <td className="py-2 pr-3 text-right tabular-nums"><Afastados pessoas={conf.postos.flatMap((p) => p.afastados)} mostrarPosto /></td>
             <td />
+            <td />
           </tr>
         </tfoot>
       </table>
     </div>
+  );
+}
+
+/** Contrato sem planilha: só a linha RT (e a lista de pessoas acima, para mover). */
+function TabelaSoRT({ c, conf, podeVincular }: { c: ContratoAtivos; conf: ConferenciaContrato; podeVincular: boolean }) {
+  const [aberto, setAberto] = useState(false);
+  return (
+    <div className="overflow-x-auto rounded-lg border border-border bg-background">
+      <table className="w-full text-xs">
+        <tbody>
+          <LinhaRendaTecnica c={c} conf={conf} aberto={aberto} podeVincular={podeVincular} onToggle={() => setAberto(!aberto)} />
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+/**
+ * RENDA TÉCNICA (20/10/2026, mig 20261020000090): a linha que todo contrato
+ * tem, depois do último posto. Quem é contratado só como renda técnica é
+ * movido para cá pelo "Mover para…" de cada pessoa. Não ocupa vaga: não soma
+ * no previsto/tem/saldo do contrato (o Total da tabela fica igual).
+ */
+function LinhaRendaTecnica({ c, conf, aberto, podeVincular, onToggle }: {
+  c: ContratoAtivos; conf: ConferenciaContrato; aberto: boolean; podeVincular: boolean; onToggle: () => void;
+}) {
+  const { moverPessoa, salvando } = useAcoesPosto(c);
+  const n = conf.rt.length;
+  return (
+    <>
+      <tr className={`border-b border-border/60 bg-violet-500/[0.04] ${n ? "cursor-pointer hover:bg-violet-500/10" : ""} ${aberto ? "bg-violet-500/10" : ""}`}
+        onClick={() => n && onToggle()}>
+        <td className="py-2 pl-3 text-muted-foreground">
+          {n > 0 && (aberto ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />)}
+        </td>
+        <td className="py-2 pr-3 font-medium">
+          <span className="inline-flex items-center gap-1.5">
+            {POSTO_RT}
+            <span className="rounded border border-violet-500/30 bg-violet-500/10 px-1.5 py-px text-[9px] font-bold text-violet-700 dark:text-violet-300">RT</span>
+            <SeloObservacoes contratoId={c.id} posto={POSTO_RT} />
+          </span>
+        </td>
+        <td className="py-2 pr-3 text-right tabular-nums text-muted-foreground">{conf.rtPrevisto || "—"}</td>
+        <td className="py-2 pr-3 text-right font-medium tabular-nums">{n}</td>
+        <td className="py-2 pr-3 text-right tabular-nums text-muted-foreground">—</td>
+        <td className="py-2 pr-3 text-right tabular-nums"><Afastados pessoas={conf.rt.filter((p) => !p.conta)} /></td>
+        <td className="py-2 pr-3">
+          <span className="text-[10px] text-muted-foreground">não ocupa vaga</span>
+        </td>
+        <td className="py-2 pr-3 text-[11px] text-muted-foreground">
+          {n ? `${n} contratado(s) como renda técnica` : podeVincular ? "Ninguém em RT — use “Mover para…” na pessoa" : "Ninguém em RT"}
+        </td>
+      </tr>
+      {aberto && n > 0 && (
+        <tr className="border-b border-border/60">
+          <td colSpan={8} className="bg-violet-500/[0.03] px-4 py-2">
+            <p className="py-1 text-[11px] text-muted-foreground">Renda técnica · {n} — “Voltar ao posto da Senior” tira a pessoa do RT.</p>
+            {conf.rt.map((x) => <LinhaPessoa key={x.id} p={x} c={c} podeVincular={podeVincular} salvando={salvando} onMover={moverPessoa} mostrarSenior />)}
+          </td>
+        </tr>
+      )}
+    </>
   );
 }
 
@@ -559,10 +644,11 @@ function LinhaPosto({ c, p, aberto, podeVincular, onToggle }: {
         <td className={`py-2 pr-3 text-right font-bold tabular-nums ${corSaldo(p.saldo)}`}>{fmtSaldo(p.saldo)}</td>
         <td className="py-2 pr-3 text-right tabular-nums"><Afastados pessoas={p.afastados} /></td>
         <td className="py-2 pr-3"><SituacaoBadge situacao={p.situacao} saldo={p.saldo} /></td>
+        <td className="py-2 pr-3"><CelulaJustificativa c={c} posto={p.nome} diferenca={p.saldo} /></td>
       </tr>
       {aberto && (
         <tr className="border-b border-border/60">
-          <td colSpan={7} className="bg-muted/10 px-4 py-2">
+          <td colSpan={8} className="bg-muted/10 px-4 py-2">
             {grupos.map(([ps, pessoas]) => (
               <div key={ps} className="mb-2 last:mb-0">
                 <div className="flex flex-wrap items-center gap-2 py-1">
@@ -605,7 +691,7 @@ function LinhaPessoa({ p, c, podeVincular, salvando, onMover, mostrarSenior = fa
       <span className={`w-36 shrink-0 ${p.conta ? "text-muted-foreground" : "font-medium text-warning"}`}>{p.situacao ?? "—"}</span>
       {podeVincular && (
         <SelectPosto c={c} valor={undefined} disabled={salvando} placeholder="Mover para…" className="w-52" comVoltar={p.origem === "pessoa"}
-          onChange={(v) => v !== p.posto && onMover(p, v)} />
+          comRt={!ehPostoRT(p.posto)} onChange={(v) => v !== p.posto && onMover(p, v)} />
       )}
     </div>
   );
@@ -628,12 +714,12 @@ function ForaDaConta({ c, pessoas, podeVincular }: { c: ContratoAtivos; pessoas:
                 <span className="text-muted-foreground"> · Senior: {limparPostoSenior(p.posto_senior)}</span></span>
               <span className="w-36 text-muted-foreground">{p.situacao ?? "—"}</span>
               {podeVincular && (
-                <SelectPosto c={c} valor={undefined} disabled={salvando} placeholder="Colocar em…" className="w-52"
+                <SelectPosto c={c} valor={undefined} disabled={salvando} placeholder="Colocar em…" className="w-52" comRt
                   onChange={(v) => {
                     if (v === FORA) return;
                     // Fora por causa do posto da Senior inteiro → desfaz o "ignorar" do posto;
-                    // fora individualmente → move a pessoa.
-                    if (p.origem === "posto") ligarPostoSenior([{ posto_senior: p.posto_senior, destino: v }]);
+                    // fora individualmente → move a pessoa. RT é sempre pessoa a pessoa.
+                    if (p.origem === "posto" && v !== POSTO_RT) ligarPostoSenior([{ posto_senior: p.posto_senior, destino: v }]);
                     else moverPessoa(p, v);
                   }} />
               )}
@@ -641,6 +727,17 @@ function ForaDaConta({ c, pessoas, podeVincular }: { c: ContratoAtivos; pessoas:
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+/** Contrato sem planilha, para quem pode mover: cada pessoa com "Mover para…" (só RT / fora). */
+function ListaPessoasMover({ c, pessoas }: { c: ContratoAtivos; pessoas: PessoaContrato[] }) {
+  const { moverPessoa, salvando } = useAcoesPosto(c);
+  return (
+    <div className="max-h-80 overflow-y-auto rounded-md border border-border bg-background p-2">
+      {pessoas.map((p) => <LinhaPessoa key={p.id} p={p} c={c} podeVincular salvando={salvando} onMover={moverPessoa} mostrarSenior />)}
+      {!pessoas.length && <p className="p-2 text-xs text-muted-foreground">Ninguém ativo.</p>}
     </div>
   );
 }
@@ -842,6 +939,72 @@ function ObservacoesContrato({ c }: { c: ContratoAtivos }) {
           {salvar.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />} Salvar
         </Button>
       </div>
+    </div>
+  );
+}
+
+// ---- Coluna "Justificativa da diferença" (15/10/2026) ---------------------------
+// Pablo: "criar uma coluna bem à direita em Ativos/Contratos para que o
+// supervisor possa justificar a diferença entre o que tinha que ter e o que
+// tem nos postos / contratos". Usa as MESMAS observações (rh_ac_observacao_*,
+// mig 20261008000010) — antes elas só apareciam como um selo ao lado do nome
+// e com o contrato aberto. Na linha do contrato a justificativa vale para o
+// contrato inteiro; na do posto, para aquele posto.
+
+function CelulaJustificativa({ c, posto, diferenca }: { c: ContratoAtivos; posto?: string; diferenca: number }) {
+  const todas = useObservacoesDe(c.id, posto);
+  // Na linha do contrato, a mais recente de qualquer nível (contrato ou posto) explica a linha.
+  const ultima = todas[0];
+  const salvar = useSalvarObservacaoAtivos();
+  const [aberto, setAberto] = useState(false);
+  const [texto, setTexto] = useState("");
+  const pendente = diferenca !== 0 && !ultima;
+  const enviar = () => {
+    if (texto.trim().length < 3) { toast.error("Escreva a justificativa."); return; }
+    salvar.mutate({ contratoId: c.id, posto: posto ?? "", texto: texto.trim() }, {
+      onSuccess: () => { setTexto(""); setAberto(false); toast.success("Justificativa salva."); },
+      onError: (e) => toast.error((e as Error).message),
+    });
+  };
+  return (
+    <div className="flex min-w-0 items-start gap-1.5" onClick={(e) => e.stopPropagation()}>
+      <div className="min-w-0 flex-1">
+        {ultima ? (
+          <>
+            <p className="line-clamp-2 text-xs" title={ultima.texto}>{ultima.texto}</p>
+            <p className="text-[10px] text-muted-foreground">
+              {ultima.autor_nome ?? "—"} · {fmtQuando(ultima.created_at)}{todas.length > 1 ? ` · +${todas.length - 1}` : ""}
+            </p>
+          </>
+        ) : pendente ? (
+          <p className="text-[11px] font-medium text-amber-700 dark:text-amber-400">Diferença de {fmtSaldo(diferenca)} sem justificativa</p>
+        ) : (
+          <p className="text-[11px] text-muted-foreground">—</p>
+        )}
+      </div>
+      <Popover open={aberto} onOpenChange={setAberto}>
+        <PopoverTrigger asChild>
+          <Button size="sm" variant={pendente ? "default" : "outline"} className="h-7 shrink-0 gap-1 px-2 text-[11px]">
+            <MessageSquare className="h-3 w-3" /> {ultima ? "Atualizar" : "Justificar"}
+          </Button>
+        </PopoverTrigger>
+        <PopoverContent align="end" className="w-80 space-y-2 p-3">
+          <p className="text-xs font-semibold">
+            {posto ? `Posto ${posto}` : `Contrato ${c.nome}`}
+            {diferenca !== 0 && <span className={`ml-1 ${corSaldo(diferenca)}`}>({fmtSaldo(diferenca)})</span>}
+          </p>
+          <p className="text-[11px] text-muted-foreground">Por que tem gente a mais ou a menos do que a planilha prevê? Fica registrado com o seu nome e a data.</p>
+          <Textarea value={texto} onChange={(e) => setTexto(e.target.value)} rows={3} maxLength={2000} autoFocus
+            placeholder="Ex.: 2 vagas em seleção, previsão de início em 20/10; 1 cobrindo férias até 30/10…"
+            className="text-xs" onKeyDown={(e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) enviar(); }} />
+          <div className="flex justify-end gap-2">
+            <Button size="sm" variant="ghost" className="h-8 text-xs" onClick={() => setAberto(false)}>Cancelar</Button>
+            <Button size="sm" className="h-8 gap-1.5 text-xs" disabled={salvar.isPending || texto.trim().length < 3} onClick={enviar}>
+              {salvar.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />} Salvar
+            </Button>
+          </div>
+        </PopoverContent>
+      </Popover>
     </div>
   );
 }

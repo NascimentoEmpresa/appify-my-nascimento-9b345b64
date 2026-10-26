@@ -3,6 +3,7 @@ import type { LinhaFaltaDias } from "@/pages/financeiro/nf-emissao/faltasPorDias
 import { supabase } from "@/integrations/supabase/client";
 import type { ItemCalculado, TotaisNf, PercentuaisFiscais, InssCategoria } from "@/pages/financeiro/nf-emissao/calculos";
 import { itemParaGravar, substituirItensNf } from "@/pages/financeiro/nf-emissao/itemParaGravar";
+import { emLotes } from "@/lib/emLotes";
 import { ordenarPorConclusao } from "@/pages/financeiro/nf-emissao/ordemConclusao";
 
 const BUCKET = "nf-emissao";
@@ -65,6 +66,8 @@ export interface NfEmissaoRow {
   concluida_em?: string | null;
   // null = linha importada da planilha legada (SIS-2026-0540), sem autor no app.
   created_by: string | null;
+  // SIS-2026-0658: 'sistema' | 'excel_antigo'. Ausente enquanto a migration 20261015000020 não foi aplicada.
+  origem?: "sistema" | "excel_antigo";
   // Lixeira do Relatório Geral: != null = NF na lixeira (fora de todos os totais).
   deleted_at: string | null;
   deleted_by: string | null;
@@ -406,6 +409,24 @@ export interface AjusteDescontosPosInput {
   };
 }
 
+// SIS-2026-0684: "2026-10" (input type=month) → "2026-10-01", como a competência é gravada na nota.
+export function competenciaDoMes(anoMes: string): string | null {
+  return /^\d{4}-(0[1-9]|1[0-2])$/.test(anoMes) ? `${anoMes}-01` : null;
+}
+
+// SIS-2026-0684: ajusta a competência de NF já emitida (Relatório de Serviços). O guard do banco só deixa quem tem 'excluir' em
+// nf-emissao mexer em NF concluída — a tela só oferece o ajuste a essas pessoas, e o motivo vai para o Histórico da nota.
+export function useAjustarCompetenciaNf() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ nfId, competencia }: { nfId: string; competencia: string }) => {
+      const { error } = await (supabase as any).from("nf_emissao").update({ competencia }).eq("id", nfId);
+      if (error) throw error;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: [NF_EMISSAO_KEY] }),
+  });
+}
+
 export function useAjustarDescontosPosEmissao() {
   const qc = useQueryClient();
   return useMutation({
@@ -533,6 +554,26 @@ export function useEnviarNfEmissao() {
   });
 }
 
+// SIS-2026-0671: envio em lote pela Lista final. Só sai quem ainda é rascunho (o filtro vai na própria atualização: uma NF
+// que alguém já enviou/alterou nesse meio tempo não é tocada). Devolve os ids que de fato foram enviados.
+export function useEnviarNfsEmLote() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (ids: string[]) => {
+      if (ids.length === 0) return [] as string[];
+      const { data, error } = await (supabase as any)
+        .from("nf_emissao")
+        .update({ status: "enviada" })
+        .in("id", ids)
+        .eq("status", "rascunho")
+        .select("id");
+      if (error) throw error;
+      return ((data ?? []) as { id: string }[]).map((r) => r.id);
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: [NF_EMISSAO_KEY] }),
+  });
+}
+
 // A analista reabre uma NF cancelada pelo Financeiro (a validação rejeitou) para
 // corrigir e reenviar — volta para 'rascunho' na MESMA nota (itens, anexos e
 // histórico ficam). Regras e exceção do guard: migration
@@ -623,22 +664,24 @@ export function useItensNfEmissaoEmLote(nfIds: string[]) {
       // últimas notas. Pagina em blocos de ids (também evita URL longa
       // demais com 1561 uuids num .in() só) e em blocos de linhas dentro
       // de cada bloco de ids.
-      const TAMANHO_BLOCO_IDS = 200;
+      // 200 ids por URL (~7,8 KB) passam do limite do gateway do cluster (502, derrubava os Descontos da Auditoria): lotes de 40.
+      const TAMANHO_BLOCO_IDS = 40;
       const TAMANHO_PAGINA = 1000;
-      const todosItens: NfEmissaoItemRow[] = [];
-      for (let i = 0; i < nfIds.length; i += TAMANHO_BLOCO_IDS) {
-        const bloco = nfIds.slice(i, i + TAMANHO_BLOCO_IDS);
+      const todosItens = await emLotes<NfEmissaoItemRow>(nfIds, TAMANHO_BLOCO_IDS, async (bloco) => {
+        const doBloco: NfEmissaoItemRow[] = [];
         for (let pagina = 0; ; pagina++) {
           const { data, error } = await (supabase as any)
             .from("nf_emissao_item")
             .select("*")
             .in("nf_emissao_id", bloco)
+            .order("id")
             .range(pagina * TAMANHO_PAGINA, pagina * TAMANHO_PAGINA + TAMANHO_PAGINA - 1);
-          if (error) throw error;
-          todosItens.push(...((data ?? []) as NfEmissaoItemRow[]));
+          if (error) return { data: null, error };
+          doBloco.push(...((data ?? []) as NfEmissaoItemRow[]));
           if (!data || data.length < TAMANHO_PAGINA) break;
         }
-      }
+        return { data: doBloco, error: null };
+      }, 6);
       const porNf = new Map<string, NfEmissaoItemRow[]>();
       for (const item of todosItens) {
         const arr = porNf.get(item.nf_emissao_id) ?? [];

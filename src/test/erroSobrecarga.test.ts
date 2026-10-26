@@ -37,6 +37,29 @@ describe("erro de sobrecarga x erro de token vencido", () => {
         isSobrecargaError({ message: "connection to database not available" }),
       ).toBe(true);
     });
+
+    // 20/10/2026 — o caso de /app/suprimentos/cotacoes. O postgrest-js monta
+    // o erro com JSON.parse do corpo, então o que chega é SÓ `{ message }`:
+    // não há `status` 502 para a checagem numérica acima olhar. Se estes
+    // testes caírem, um erro de borda volta a ser tratado como erro de
+    // aplicação — 3 tentativas em cima de um gateway já sufocado, e a frase
+    // em inglês do Kong na cara do usuário.
+    it("pelas frases do Kong do cluster, que vêm sem status nenhum junto", () => {
+      expect(
+        isSobrecargaError({ message: "An invalid response was received from the upstream server" }),
+      ).toBe(true);
+      expect(
+        isSobrecargaError({ message: "The upstream server is timing out" }),
+      ).toBe(true);
+      expect(
+        isSobrecargaError({ message: "failure to get a peer from the ring-balancer" }),
+      ).toBe(true);
+    });
+
+    it("pelo corpo do Caddy/nginx na frente do Kong", () => {
+      expect(isSobrecargaError({ message: "502 Bad Gateway" })).toBe(true);
+      expect(isSobrecargaError({ message: "504 Gateway Time-out" })).toBe(true);
+    });
   });
 
   describe("NÃO confunde com os outros erros", () => {

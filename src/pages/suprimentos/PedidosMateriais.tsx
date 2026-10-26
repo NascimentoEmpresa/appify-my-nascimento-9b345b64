@@ -46,7 +46,7 @@ import { ModalFichaEpi } from "@/components/suprimentos/ModalFichaEpi";
 import { FotoCracha } from "@/components/suprimentos/FotoCracha";
 import { calcularEnvioItens } from "@/lib/suprimentos/envioItens";
 import { useRastreioEmLote, resumirSituacao, type SituacaoObjeto } from "@/hooks/useCorreios";
-import { pedidoEmRomaneioAberto, validarSelecaoRomaneio } from "@/lib/suprimentos/romaneio";
+import { pedidoElegivelParaRomaneio, pedidoEmRomaneioAberto, validarSelecaoRomaneio } from "@/lib/suprimentos/romaneio";
 import { imprimirRomaneio } from "@/lib/suprimentos/romaneioImpressao";
 
 /**
@@ -349,7 +349,7 @@ export default function PedidosMateriais() {
       if (atual.size === 0) return atual;
       const validos = [...atual].filter((id) => {
         const pedido = pedidos.find((item) => item.id === id);
-        return pedido?.status === "AGUARDANDO ENVIO" && !pedidoEmRomaneioAberto(pedido);
+        return !!pedido && pedidoElegivelParaRomaneio(pedido) && !pedidoEmRomaneioAberto(pedido);
       });
       return validos.length === atual.size ? atual : new Set(validos);
     });
@@ -1085,7 +1085,7 @@ function CardPedido({
     )}>
       <CardHeader className="flex-row items-center justify-between gap-2 space-y-0 pb-3">
         <div className="flex items-center gap-2">
-          {p.status === "AGUARDANDO ENVIO" && !pedidoEmRomaneioAberto(p) && (
+          {pedidoElegivelParaRomaneio(p) && !pedidoEmRomaneioAberto(p) && (
             <AcessoGate menu="sup_romaneio" acao="incluir">
               <Checkbox
                 checked={selecionadoRomaneio}

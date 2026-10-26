@@ -196,12 +196,51 @@ export function posicaoNoLaco(itens: Pick<ItemTv, "duracao_seg">[], decorridoMs:
   return { indice: 0, noItemMs: 0 };
 }
 
-/** O que a TV informou (mig 20261008000003). `suportado` = o banco tem as colunas (a migration foi aplicada). */
-export interface AoVivoTv { suportado: boolean; atual_item_id: string | null; atual_desde: string | null }
+/**
+ * O que a TV informou (mig 20261008000003). `suportado` = o banco tem as colunas (a migration foi aplicada).
+ * `atual_em` (mig 20261020000004): quando a TV confirmou o item por último — ela confirma a cada consulta.
+ */
+export interface AoVivoTv { suportado: boolean; atual_item_id: string | null; atual_desde: string | null; atual_em?: string | null }
+
+/**
+ * A informação da TV ainda vale? Com a mig 20261020000004 a TV confirma o
+ * item a cada consulta (15 s); sem confirmação há mais que o limite do
+ * offline, ela está com o player antigo (só avisa na troca de item) ou o
+ * aviso está falhando. `null` = o banco não tem atual_em (não dá pra saber).
+ */
+export function aoVivoFresco(a: AoVivoTv | null | undefined, agora: Date = new Date()): boolean | null {
+  if (!a?.suportado || a.atual_em === undefined) return null;
+  if (!a.atual_em) return false;
+  return (agora.getTime() - new Date(a.atual_em).getTime()) / 1000 <= OFFLINE_APOS_S;
+}
+
+/**
+ * O JS principal que um index.html publicado carrega ("/assets/index-AbC123.js").
+ * O player compara o da página aberta com o publicado e recarrega quando
+ * muda (20/10/2026): TV SST e TV COMPRAS ficaram três dias no JS de antes da
+ * virada para o cluster, falando com o banco antigo. null = não achou (dev).
+ */
+export function scriptPrincipal(html: string | null | undefined): string | null {
+  if (!html) return null;
+  for (const m of html.matchAll(/<script\b[^>]*>/gi)) {
+    const tag = m[0];
+    if (!/type=["']module["']/i.test(tag)) continue;
+    const src = tag.match(/src=["']([^"']+)["']/i)?.[1];
+    if (src && /\/assets\/[^/]+\.js(\?.*)?$/.test(src)) return src;
+  }
+  return null;
+}
 
 export interface EntradaAoVivo {
   tv: { id: string; nome: string | null; ativo: boolean; ultimo_ping: string | null };
   itens: ItemTv[];                 // os itens no ar da playlist da TV, na ordem
+  /**
+   * Todos os itens da playlist (inclusive fora da validade pelo relógio de
+   * quem olha). O item que a TV INFORMOU é procurado aqui também: ela pode
+   * estar num item que a gestão, com outro relógio ou lista de 30 s atrás,
+   * já não conta como "no ar" — antes isso caía na simulação e mostrava outro.
+   */
+  itensTodos?: ItemTv[];
   alertas: AlertaTv[];
   aoVivo: AoVivoTv | null;
   agora: Date;
@@ -224,18 +263,20 @@ export function telaAoVivo(e: EntradaAoVivo): { tela: TelaTv; exata: boolean; in
   if (!e.tv.ativo) return { tela: { modo: "pausada", nome, alerta, chave: `pausa|${chaveAlerta}` }, exata: true, indice: null };
   if (!e.itens.length) return { tela: { modo: "relogio", nome, alerta, chave: `rel|${chaveAlerta}` }, exata: true, indice: null };
 
-  const informado = e.aoVivo?.suportado && e.aoVivo.atual_item_id ? e.itens.findIndex((i) => i.id === e.aoVivo!.atual_item_id) : -1;
-  if (informado >= 0) {
+  // Informação velha (TV com player antigo ou aviso falhando) não vale como exata.
+  const idInformado = e.aoVivo?.suportado && aoVivoFresco(e.aoVivo, e.agora) !== false ? e.aoVivo.atual_item_id : null;
+  const informado = idInformado ? e.itens.findIndex((i) => i.id === idInformado) : -1;
+  const item = informado >= 0 ? e.itens[informado] : idInformado ? e.itensTodos?.find((i) => i.id === idInformado) : undefined;
+  if (item) {
     const desde = e.aoVivo!.atual_desde ? new Date(e.aoVivo!.atual_desde).getTime() : e.agora.getTime();
-    const item = e.itens[informado];
     return {
       tela: { modo: "item", item, inicioS: Math.max(0, (e.agora.getTime() - desde) / 1000), alerta, chave: `i|${item.id}|${e.aoVivo!.atual_desde}|${chaveAlerta}` },
-      exata: true, indice: informado,
+      exata: true, indice: informado >= 0 ? informado : null,
     };
   }
   const p = posicaoNoLaco(e.itens, e.agora.getTime() - e.simulacaoDesde);
-  const item = e.itens[p.indice];
-  return { tela: { modo: "item", item, inicioS: p.noItemMs / 1000, alerta, chave: `s|${item.id}|${p.indice}|${chaveAlerta}` }, exata: false, indice: p.indice };
+  const simulado = e.itens[p.indice];
+  return { tela: { modo: "item", item: simulado, inicioS: p.noItemMs / 1000, alerta, chave: `s|${simulado.id}|${p.indice}|${chaveAlerta}` }, exata: false, indice: p.indice };
 }
 
 /** Duração total da playlist em texto ("2 min 30 s"). Vídeo e YouTube contam pela duração cadastrada. */

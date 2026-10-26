@@ -41,6 +41,11 @@ vi.mock("@/hooks/useMaloteFormaPagamento", () => ({
   useFormasPagamento: () => ({ data: [] }),
 }));
 
+// Cartão com Fluxo Especial: o painel pergunta ao banco se a forma é cartão (sem cartão, nada muda na tela).
+vi.mock("@/pages/malote/cartaoEspecial", () => ({
+  useCartaoEspecialDaForma: () => null,
+}));
+
 vi.mock("@/hooks/useUtilizadoOrcamento", () => ({
   useUtilizadoOrcamento: () => ({ data: [] }),
 }));

@@ -508,7 +508,7 @@ export function CardTreinamento({
           </div>
           {meu && !meu.confirmado_em && (
             <Button asChild variant="outline" className="w-full gap-2">
-              <Link to="/app/central-servicos/treinamentos-sistemas"><GraduationCap className="h-4 w-4" /> Confirmar em Treinamentos Sistemas</Link>
+              <Link to="/app/central-servicos/treinamentos-sistemas"><GraduationCap className="h-4 w-4" /> Confirmar treinamento</Link>
             </Button>
           )}
         </>

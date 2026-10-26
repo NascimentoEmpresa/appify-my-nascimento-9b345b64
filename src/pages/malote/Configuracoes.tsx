@@ -10,10 +10,17 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
-import { Save, Shield, Lock, FileText, Plus, Pencil, Trash2, AlertTriangle, Download, Calendar } from "lucide-react";
+import { Save, Shield, Lock, FileText, Plus, Pencil, Trash2, AlertTriangle, Download, Calendar, Info } from "lucide-react";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { toast } from "sonner";
 import { usePermissoes } from "@/context/PermissoesContext";
 import { SearchableMultiSelect } from "@/components/ui/searchable-multi-select";
+import { SearchableSelect } from "@/components/ui/searchable-select";
+import { useUsuariosAtivos } from "@/hooks/useNfEmissao";
+import {
+  ROTULO_MODO_APROVACAO, useExcecaoAprovacaoModo, useExcecaoAprovador, useSalvarExcecaoAprovacaoModo, useSalvarExcecaoAprovador,
+  type ModoAprovacaoExcecao,
+} from "@/hooks/useMaloteExcecao";
 import { useClassificacoesOrcamentoAdmin } from "@/hooks/usePlanejamentoOrcamentario";
 import {
   useMaloteConfig,
@@ -37,6 +44,7 @@ import {
   LigacaoSectionBanner,
   ExportarLigacoesMalote,
 } from "./LigacaoLicitacaoClassificacao";
+import { exemploPrazo, type NumeroPrazo } from "./exemploPrazo";
 import { AnalistasContratos } from "./AnalistasContratos";
 import { FormasPagamento } from "./FormasPagamento";
 import { RelatorioDespesasMaloteTab } from "./RelatorioDespesasMaloteTab";
@@ -55,6 +63,13 @@ export default function Configuracoes() {
   const podeExportarRelatorio = can("exportar", "malote", "malote_relatorio_despesas");
 
   const { data: config, isLoading } = useMaloteConfig();
+  // SIS-2026-0668: único aprovador das Solicitações de Exceção (grava na hora, como as demais chaves desta tela não: tem botão próprio).
+  const { data: usuariosAtivos = [] } = useUsuariosAtivos();
+  const { data: aprovadorExcecaoId, isError: aprovadorExcecaoIndisponivel } = useExcecaoAprovador();
+  const salvarAprovadorExcecao = useSalvarExcecaoAprovador();
+  // Quem aprova as exceções: a pessoa escolhida, a pessoa e o N2 da classificação, ou só o N2.
+  const { data: modoAprovacao = "pessoa", isError: modoAprovacaoIndisponivel } = useExcecaoAprovacaoModo();
+  const salvarModoAprovacao = useSalvarExcecaoAprovacaoModo();
   const salvar = useSalvarMaloteConfig();
 
   const [form, setForm] = useState<MaloteConfig | null>(null);
@@ -63,6 +78,20 @@ export default function Configuracoes() {
   useEffect(() => {
     if (config) setForm(config);
   }, [config]);
+
+  // Exemplos das Regras Gerais (1.1 e 1.2): "dia útil" = fora de fim de semana bloqueado, de dia bloqueado cadastrado e de feriado.
+  const { data: diasBloqueadosCadastrados = [] } = useMaloteDiasBloqueados();
+  const bloqueadoParaExemplo = useMemo(() => {
+    const liberados = new Set(diasBloqueadosCadastrados.filter((d) => d.liberado).map((d) => d.data));
+    const bloqueados = new Set(diasBloqueadosCadastrados.filter((d) => !d.liberado).map((d) => d.data));
+    const fimDeSemanaBloqueado = !!form?.bloqueio_fins_de_semana;
+    return (dt: Date) => {
+      const iso = `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, "0")}-${String(dt.getDate()).padStart(2, "0")}`;
+      if (liberados.has(iso)) return false;
+      if (bloqueados.has(iso)) return true;
+      return fimDeSemanaBloqueado && (dt.getDay() === 0 || dt.getDay() === 6);
+    };
+  }, [diasBloqueadosCadastrados, form?.bloqueio_fins_de_semana]);
 
   // [SEM-CHAMADO] (Ruan, financeiro): quem só exporta Relatório (sem
   // "Alterar" em malote_configuracoes) não vê mais as 4 abas gerais —
@@ -135,6 +164,7 @@ export default function Configuracoes() {
               <PrazoBlock
                 numero="1.1"
                 titulo="Prazo para inclusão e aprovação pelo setor"
+                descricao="Horário de corte para lançar a despesa e para o Nível 1 aprová-la. Despesa lançada depois dele não conta como de hoje: a data normal de pagamento vai para o próximo dia útil, e pagar mais cedo exige exceção. O Nível 1 que tentar aprovar depois dele uma despesa para pagar hoje (ou já vencida) só consegue com a senha de uma exceção de aprovação; para pagamento de amanhã em diante, aprova normalmente."
                 horario={form.inclusao_setor_horario}
                 onHorarioChange={(v) => setForm((f) => (f ? { ...f, inclusao_setor_horario: v } : f))}
                 modo={form.inclusao_setor_pagamento_modo}
@@ -144,10 +174,15 @@ export default function Configuracoes() {
                 unidade={form.inclusao_setor_pagamento_unidade}
                 onUnidadeChange={(v) => setForm((f) => (f ? { ...f, inclusao_setor_pagamento_unidade: v } : f))}
                 disabled={!podeEditar}
+                exemplo={(modo) => exemploPrazo({
+                  numero: "1.1", modo, horario: form.inclusao_setor_horario, dias: form.inclusao_setor_pagamento_dias,
+                  unidade: form.inclusao_setor_pagamento_unidade, hoje: new Date(), bloqueado: bloqueadoParaExemplo,
+                })}
               />
               <PrazoBlock
                 numero="1.2"
                 titulo="Prazo para conferência e aprovação"
+                descricao="Horário de corte da conferência a partir do Nível 2. Despesa ainda parada no Nível 2 ou acima depois dele (ou já vencida) tem o pagamento reagendado para o próximo dia útil, se o reagendamento automático abaixo estiver ligado. Para o Nível 1, depois dele só é exigida uma justificativa, e só quando o pagamento é hoje ou já está vencido."
                 horario={form.conferencia_aprovacao_horario}
                 onHorarioChange={(v) => setForm((f) => (f ? { ...f, conferencia_aprovacao_horario: v } : f))}
                 modo={form.conferencia_aprovacao_pagamento_modo}
@@ -157,7 +192,31 @@ export default function Configuracoes() {
                 unidade={form.conferencia_aprovacao_pagamento_unidade}
                 onUnidadeChange={(v) => setForm((f) => (f ? { ...f, conferencia_aprovacao_pagamento_unidade: v } : f))}
                 disabled={!podeEditar}
+                exemplo={(modo) => exemploPrazo({
+                  numero: "1.2", modo, horario: form.conferencia_aprovacao_horario, dias: form.conferencia_aprovacao_pagamento_dias,
+                  unidade: form.conferencia_aprovacao_pagamento_unidade, hoje: new Date(), bloqueado: bloqueadoParaExemplo,
+                  reagendamentoAtivo: form.rolagem_data_pagamento_ativa,
+                })}
               />
+              {/* SIS-2026-0664: rolagem automática da data de pagamento das despesas paradas no N2+. */}
+              <label className="flex items-start gap-2 text-sm cursor-pointer sm:col-span-2">
+                <Checkbox
+                  checked={form.rolagem_data_pagamento_ativa}
+                  onCheckedChange={(checked) =>
+                    setForm((f) => (f ? { ...f, rolagem_data_pagamento_ativa: checked === true } : f))
+                  }
+                  disabled={!podeEditar}
+                />
+                <span>
+                  <span className="font-medium">Reagendar automaticamente despesas paradas na aprovação</span>
+                  <br />
+                  <span className="text-xs text-muted-foreground">
+                    Despesa pendente de aprovação do Nível 2 em diante que passar do horário do item 1.2 (ou já estiver com data vencida)
+                    tem o pagamento reagendado para o próximo dia útil. O solicitante é avisado e o histórico da despesa registra a mudança.
+                    Vale também para exceções; não vale para despesas parceladas.
+                  </span>
+                </span>
+              </label>
             </CardContent>
           </Card>
 
@@ -264,7 +323,13 @@ export default function Configuracoes() {
             <CardContent className="space-y-4">
               <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                 <div>
-                  <Label className="text-sm font-semibold">2.1 Limite para inclusão de exceções</Label>
+                  <div className="flex items-center gap-1.5">
+                    <Label className="text-sm font-semibold">2.1 Limite para inclusão de exceções</Label>
+                    <InfoPrazo
+                      titulo="2.1 Limite para inclusão de exceções"
+                      texto="Último horário para lançar uma despesa como exceção com pagamento para o mesmo dia. Depois dele, nem como exceção dá para lançar para pagar hoje."
+                    />
+                  </div>
                   <div className="mt-2">
                     <Label className="text-xs">Horário máximo</Label>
                     <Input
@@ -275,13 +340,16 @@ export default function Configuracoes() {
                       }
                       disabled={!podeEditar}
                     />
-                    <p className="text-xs text-muted-foreground mt-1">
-                      Até que horário o setor pode incluir despesas como exceção no mesmo dia.
-                    </p>
                   </div>
                 </div>
                 <div>
-                  <Label className="text-sm font-semibold">2.2 Limite para aprovação de exceções</Label>
+                  <div className="flex items-center gap-1.5">
+                    <Label className="text-sm font-semibold">2.2 Limite para aprovação de exceções</Label>
+                    <InfoPrazo
+                      titulo="2.2 Limite para aprovação de exceções"
+                      texto="Até que horário uma exceção com pagamento no mesmo dia deve ser aprovada. É só um aviso: não bloqueia a aprovação."
+                    />
+                  </div>
                   <div className="mt-2">
                     <Label className="text-xs">Horário máximo</Label>
                     <Input
@@ -292,12 +360,9 @@ export default function Configuracoes() {
                       }
                       disabled={!podeEditar}
                     />
-                    <p className="text-xs text-muted-foreground mt-1">
-                      Até que horário a despesa de exceção deve ser aprovada.
-                    </p>
                   </div>
                 </div>
-                <div>
+                <div className="md:row-span-2">
                   <Label className="text-sm font-semibold">2.3 Exigências para inclusão de exceções</Label>
                   <p className="text-xs text-muted-foreground mt-1 mb-2">
                     Selecione as exigências obrigatórias para inclusão de despesas como exceção.
@@ -337,8 +402,90 @@ export default function Configuracoes() {
                         </span>
                       </span>
                     </label>
+                    <label className="flex items-start gap-2 text-sm cursor-pointer">
+                      <Checkbox
+                        checked={form.excecao_gerente_financeiro_ativo}
+                        onCheckedChange={(checked) =>
+                          setForm((f) => (f ? { ...f, excecao_gerente_financeiro_ativo: checked === true } : f))
+                        }
+                        disabled={!podeEditar}
+                      />
+                      <span>
+                        <span className="font-medium">Reforço do Gerente Financeiro nas exceções</span>
+                        <br />
+                        <span className="text-xs text-muted-foreground">
+                          Quem tem o cargo GERENTE FINANCEIRO pode aprovar, reprovar e ajustar exceções do Nível 2 em diante.
+                          Desligado por padrão.
+                        </span>
+                      </span>
+                    </label>
                   </div>
                 </div>
+
+              {/* O 2.4 entra na mesma grade (colunas 1 e 2, abaixo do 2.1/2.2) e o 2.3 ocupa as duas linhas da coluna 3: sem vazio sob o 2.1/2.2. */}
+              <div className="md:col-span-2">
+                <Label className="text-sm font-semibold">2.4 Quem aprova as exceções</Label>
+                <p className="text-xs text-muted-foreground mt-1 mb-2">
+                  Aprova ou reprova as Solicitações de Exceção (Malote › Autorizações de Exceção) e, ao aprovar, libera a senha.
+                </p>
+
+                <div className="max-w-sm space-y-1">
+                  <Label className="text-xs">Quem aprova</Label>
+                  <Select
+                    value={modoAprovacao}
+                    disabled={!podeEditar || salvarModoAprovacao.isPending || modoAprovacaoIndisponivel}
+                    onValueChange={async (v) => {
+                      try {
+                        await salvarModoAprovacao.mutateAsync(v as ModoAprovacaoExcecao);
+                        toast.success(`Quem aprova as exceções: ${ROTULO_MODO_APROVACAO[v as ModoAprovacaoExcecao].toLowerCase()}.`);
+                      } catch (e) {
+                        toast.error(e instanceof Error ? e.message : "Não foi possível salvar.");
+                      }
+                    }}
+                  >
+                    <SelectTrigger className="h-9 text-xs"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {(Object.keys(ROTULO_MODO_APROVACAO) as ModoAprovacaoExcecao[]).map((m) => (
+                        <SelectItem key={m} value={m}>{ROTULO_MODO_APROVACAO[m]}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">
+                    {modoAprovacao === "pessoa" && "Só a pessoa escolhida abaixo decide."}
+                    {modoAprovacao === "pessoa_e_n2" && "A pessoa escolhida abaixo e o N2 da classificação da solicitação: qualquer um dos dois aprova ou reprova (a primeira decisão vale)."}
+                    {modoAprovacao === "n2" && "Só o N2 da classificação decide. Classificação sem N2 cadastrado não aceita solicitação."}
+                    {modoAprovacao !== "pessoa" && " O N2 precisa ter o menu \"Malote — Autorizações de Exceção\" liberado em Administração."}
+                  </p>
+                  {modoAprovacaoIndisponivel && (
+                    <p className="text-xs text-destructive">Aplique a migration 20261016000010 para escolher quem aprova.</p>
+                  )}
+                </div>
+
+                {/* Só N2: a pessoa escolhida não decide, então o campo fica esmaecido e travado (o valor continua guardado). */}
+                <div className={`mt-3 max-w-sm space-y-1 transition-opacity ${modoAprovacao === "n2" ? "opacity-50" : ""}`}>
+                  <Label className="text-xs">Pessoa escolhida</Label>
+                  <SearchableSelect
+                    value={aprovadorExcecaoId ?? ""}
+                    onChange={async (id) => {
+                      try {
+                        await salvarAprovadorExcecao.mutateAsync(id || null);
+                        toast.success("Aprovador das exceções atualizado.");
+                      } catch (e) {
+                        toast.error(e instanceof Error ? e.message : "Não foi possível salvar o aprovador.");
+                      }
+                    }}
+                    options={usuariosAtivos.map((u) => ({ value: u.id, label: u.display_name }))}
+                    placeholder="Selecione o aprovador"
+                    disabled={!podeEditar || salvarAprovadorExcecao.isPending || aprovadorExcecaoIndisponivel || modoAprovacao === "n2"}
+                  />
+                  {modoAprovacao === "n2" && (
+                    <p className="text-xs text-muted-foreground">Não decide neste modo (só o N2 da classificação). O nome fica guardado para quando voltar a "pessoa".</p>
+                  )}
+                  {aprovadorExcecaoIndisponivel && (
+                    <p className="text-xs text-destructive">Aplique a migration 20261015000004 para configurar o aprovador.</p>
+                  )}
+                </div>
+              </div>
               </div>
 
               <div className="flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 dark:bg-amber-950/30 p-3">
@@ -415,6 +562,52 @@ const UNIDADE_LABEL: Record<PrazoPagamentoUnidade, string> = {
   corrido: "dia(s) corrido(s)",
 };
 
+// Ícone "i" que abre uma caixa com o que o prazo controla: a explicação fica à mão sem poluir a tela.
+function InfoPrazo({ titulo, texto }: { titulo: string; texto: string }) {
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          className="text-muted-foreground hover:text-foreground rounded-full"
+          aria-label={`O que é o item ${titulo}`}
+          title="O que é este prazo?"
+        >
+          <Info className="h-4 w-4" />
+        </button>
+      </PopoverTrigger>
+      <PopoverContent align="start" className="w-80 text-xs space-y-1">
+        <p className="font-semibold text-sm">{titulo}</p>
+        <p className="text-muted-foreground leading-relaxed">{texto}</p>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+// Ícone "i" ao lado de cada opção de pagamento: abre um exemplo com a data de HOJE e o horário/prazo que estão na tela.
+function InfoExemplo({ titulo, linhas }: { titulo: string; linhas: string[] }) {
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          className="text-muted-foreground hover:text-foreground rounded-full align-middle"
+          aria-label={`Exemplo: ${titulo}`}
+          title="Ver um exemplo com a data de hoje"
+        >
+          <Info className="h-3.5 w-3.5" />
+        </button>
+      </PopoverTrigger>
+      <PopoverContent align="start" className="w-80 text-xs space-y-1.5">
+        <p className="font-semibold text-sm">Exemplo — {titulo}</p>
+        {linhas.map((l, i) => (
+          <p key={i} className="text-muted-foreground leading-relaxed">{l}</p>
+        ))}
+      </PopoverContent>
+    </Popover>
+  );
+}
+
 function PrazoBlock({
   numero,
   titulo,
@@ -427,9 +620,15 @@ function PrazoBlock({
   unidade,
   onUnidadeChange,
   disabled,
+  descricao,
+  exemplo,
 }: {
   numero: string;
+  // Exemplo com a data de hoje para cada opção de pagamento (ícone "i" ao lado dela).
+  exemplo?: (modo: PrazoPagamentoModo) => string[];
   titulo: string;
+  // O que este prazo controla, em linguagem do dia a dia (aparece sob o título).
+  descricao?: string;
   horario: string;
   onHorarioChange: (v: string) => void;
   modo: PrazoPagamentoModo;
@@ -442,9 +641,12 @@ function PrazoBlock({
 }) {
   return (
     <div>
-      <Label className="text-sm font-semibold">
-        {numero} {titulo}
-      </Label>
+      <div className="flex items-center gap-1.5">
+        <Label className="text-sm font-semibold">
+          {numero} {titulo}
+        </Label>
+        {descricao && <InfoPrazo titulo={`${numero} ${titulo}`} texto={descricao} />}
+      </div>
       <div className="mt-2">
         <Label className="text-xs">Horário máximo</Label>
         <Input type="time" value={horario} onChange={(e) => onHorarioChange(e.target.value)} disabled={disabled} />
@@ -456,7 +658,10 @@ function PrazoBlock({
           <label className="flex items-start gap-2 text-sm cursor-pointer">
             <RadioGroupItem value="hoje" disabled={disabled} className="mt-0.5" />
             <span>
-              <span className="font-medium">No dia de hoje</span>
+              <span className="inline-flex items-center gap-1.5 font-medium">
+                No dia de hoje
+                {exemplo && <InfoExemplo titulo={`${numero} · No dia de hoje`} linhas={exemplo("hoje")} />}
+              </span>
               <br />
               <span className="text-xs text-muted-foreground">Pagamento será realizado no mesmo dia.</span>
             </span>
@@ -495,6 +700,7 @@ function PrazoBlock({
                     <SelectItem value="corrido">dia(s) corrido(s)</SelectItem>
                   </SelectContent>
                 </Select>
+                {exemplo && <InfoExemplo titulo={`${numero} · Em até ${dias} ${UNIDADE_LABEL[unidade]}`} linhas={exemplo("dias_uteis")} />}
               </span>
               <br />
               <span className="text-xs text-muted-foreground">

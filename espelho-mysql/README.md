@@ -179,6 +179,53 @@ Para rodar na hora, sem esperar as 07:00: botão direito na tarefa → `Executar
 sincronização precisar acontecer com o PC desligado, o certo é mudar para um
 servidor com IP fixo — o script é o mesmo, muda só quem o chama.
 
+> **Hoje quem roda é o GitHub Actions** (`.github/workflows/espelho_mysql.yml`),
+> não um PC: a rede da empresa bloqueia a porta 22. A seção acima ficou como
+> histórico do Agendador.
+
+## Rodada rápida do ponto — a cada 10 min (16/10/2026)
+
+Além da diária das 07:00, o mesmo workflow roda **a cada 10 minutos** a
+`BiMarcacoes` desde ontem (e o cadastro: `BiSituacoes`, `BiEmpregados`), para as
+batidas aparecerem no ERP quase ao vivo:
+
+```
+node espelho.mjs sincronizar --commit --tabelas BiSituacoes,BiEmpregados,BiMarcacoes --dias 1
+```
+
+- `--tabelas A,B`: só essas (precisam estar em `tabelas.json`); não roda o
+  acerto de escala do colaborador, que depende das outras tabelas.
+- `--dias N`: nas incrementais, apaga e traz de novo só desde N dias atrás
+  (0 = só hoje). A `data_hora` da BiMarcacoes é só a data; a hora fica em `hora`.
+- Não combina com `--completo`, e recusa tabela vazia: a recarga completa é
+  só da diária.
+- O GitHub **não garante o horário** do agendamento: em hora de pico ele
+  atrasa ou pula rodadas. Medido em 20-21/10/2026: o cron `*/10` disparou
+  **5 vezes em 24 h**, de 2 a 5 h entre uma e outra.
+- Por isso, desde 21/10/2026 o disparo é **de hora em hora** (`7 * * * *`) e
+  cada execução fica de pé ~5h40 rodando a rápida a cada 10 min cravados
+  (`rapida-continua.sh`). A rápida tem grupo de concorrência próprio
+  (`espelho-ponto`): a próxima espera na fila e entra quando a atual sai, então
+  disparo pulado não abre buraco — e a diária não fica presa atrás do laço.
+- Falha avulsa não derruba o laço (a rodada seguinte tenta de novo); só **3
+  rodadas seguidas** sem conseguir (30 min sem ponto) encerram com erro e avisam
+  no Discord.
+
+## Travas: uma carga por vez, sem deadlock (21/10/2026)
+
+A diária de 21/10 caiu com `deadlock detected` às 11:50: o pg_cron
+`rh-sync-senior-espelho` (5, 20, 35, 50 de cada hora) lê `BiEmpregados` e depois
+`BiSituacoes`, e a carga truncava `BiSituacoes` antes de `BiEmpregados`. Agora,
+logo depois do `BEGIN`, a carga:
+
+1. pega `pg_advisory_xact_lock` — diária e rápida nunca carregam ao mesmo tempo
+   (a segunda espera a primeira terminar);
+2. trava **todas** as tabelas de uma vez, em **ordem alfabética** (a mesma do
+   pg_cron) — `ACCESS EXCLUSIVE` nas que vai truncar, `ROW EXCLUSIVE` na
+   incremental (`BiMarcacoes` continua legível durante a carga);
+3. se mesmo assim der deadlock ou a trava não vier em 2 min, a transação volta
+   inteira e a carga **tenta de novo** (3 tentativas: na hora, +20 s, +60 s).
+
 ## Como a carga funciona
 
 Cada tabela é **recarregada inteira** dentro de uma transação. Isso significa:

@@ -108,9 +108,12 @@ export default function WhatsAppInbox() {
       const mapa: Record<string, WaContato> = {};
       // Em lotes: o .in() vira query string, e com todas as conversas de uma
       // vez a URL passou do limite (set/2026) — a consulta falhava calada e a
-      // lista inteira ficava "—", sem nome nem número. Lote de 100 uuids
-      // fica em ~4 KB, folgado para qualquer proxy.
-      const LOTE = 100;
+      // lista inteira ficava "—", sem nome nem número.
+      // 19/10/2026: aconteceu DE NOVO depois da virada para o cluster
+      // (api.grpnascimento.com.br) — o gateway de lá devolve 502 com 100 uuids
+      // (~3,8 KB de URL; 90 ainda passa). O "folgado para qualquer proxy" de
+      // antes não era. Lote de 40 fica em ~1,5 KB, longe do limite.
+      const LOTE = 40;
       const lotes = await Promise.all(
         Array.from({ length: Math.ceil(ids.length / LOTE) }, (_, i) =>
           (supabase as any).from("WA_CONTATO").select("*").in("id", ids.slice(i * LOTE, (i + 1) * LOTE))),
@@ -343,6 +346,29 @@ export default function WhatsAppInbox() {
     }
   };
 
+  // O candidato da conversa (pelo telefone): o formulário das mensagens prontas
+  // já vem com nome e cargo — as automáticas do recrutamento (/auto_*, 15/10/2026)
+  // pedem justamente esses dois.
+  const { data: candidatoConversa } = useQuery({
+    queryKey: ["wa-candidato-contato", sel?.contato?.wa_id],
+    // Busca ao abrir a conversa (e não ao abrir o formulário): o formulário nasce já com os valores.
+    enabled: !!sel?.contato?.wa_id,
+    staleTime: 5 * 60_000,
+    queryFn: async (): Promise<{ nome: string | null; cargo: string | null } | null> => {
+      const { data } = await (supabase as any).rpc("wa_candidato_do_contato", { p_wa_id: sel?.contato?.wa_id });
+      return data ?? null;
+    },
+  });
+  const sugestaoVariavel = (rotulo: string): string | undefined => {
+    const r = rotulo.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+    const nome = (candidatoConversa?.nome || nomeContato(sel?.contato) || "").trim();
+    const capitaliza = (t: string) => t.toLowerCase().replace(/(^|\s)\S/g, (x) => x.toUpperCase());
+    if (r.includes("primeiro nome")) return nome ? capitaliza(nome.split(/\s+/)[0]) : undefined;
+    if (r === "nome" || r.includes("nome do candidato") || r.includes("nome completo")) return nome ? capitaliza(nome) : undefined;
+    if (r.includes("cargo") || r.includes("vaga")) return candidatoConversa?.cargo ? capitaliza(candidatoConversa.cargo) : undefined;
+    return undefined;
+  };
+
   // Sem variável vai direto; com variável, o formulário primeiro.
   const escolherPronta = (item: ItemMenu) => {
     if (item.tipo === "bot") { enviarRespostaBot(item.bot); return; }
@@ -428,6 +454,7 @@ export default function WhatsAppInbox() {
 
       <PreencherVariaveis
         mensagem={preenchendo}
+        sugestao={sugestaoVariavel}
         enviando={enviando}
         onCancelar={() => setPreenchendo(null)}
         onConfirmar={(valores) => preenchendo && enviarPronta(preenchendo, valores)}

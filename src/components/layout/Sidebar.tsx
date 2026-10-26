@@ -78,29 +78,36 @@ import { useTrocaFuncaoNotif } from "@/hooks/useTrocaFuncaoNotif";
 import { useJuridicoNotif } from "@/hooks/useJuridicoNotif";
 import { useReembolsoNotif } from "@/hooks/useReembolsoNotif";
 import { useAprovacoesNotif } from "@/hooks/useAprovacoesNotif";
-import { Inbox, type LucideIcon } from "lucide-react";
+import { Inbox, FileSignature, PencilRuler, Workflow, UserX, type LucideIcon } from "lucide-react";
 import { Target, MessagesSquare, KeyRound, MonitorPlay, Gauge } from "lucide-react";
+import { FileX2 } from "lucide-react";
 import { GitBranch, GitMerge } from "lucide-react";
 import { MessageSquare } from "lucide-react";
 import { Banknote } from "lucide-react";
+import { Database } from "lucide-react"; // SIS-2026-0599 — Base Mestre
 import { Crown, Landmark } from "lucide-react";
 import { Percent } from "lucide-react";
 import { FolderOpen } from "lucide-react";
 import { TrendingDown } from "lucide-react";
 import { Megaphone, ExternalLink } from "lucide-react";
-import { Award, CalendarDays, FolderTree, MonitorCog, PenLine, QrCode, Users } from "lucide-react";
+import { Award, CalendarDays, FolderTree, PenLine, QrCode, Users } from "lucide-react";
 import { CreditCard, ListTree } from "lucide-react";
-import { Network } from "lucide-react";
+import { Network, Cpu } from "lucide-react";
 import { useNovidades } from "@/hooks/useNovidades";
 import { cn } from "@/lib/utils";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { SISTEMAS as RELATORIOS } from "@/pages/relatorios/sistemas";
+import { selNovoVigente } from "@/lib/selNovo";
 
 interface NavItem {
   label: string;
   to: string;
   icon: LucideIcon;
   badge?: string;
+  // Selo "Novo" que expira sozinho: data (AAAA-MM-DD) em que a tela foi liberada. O selo
+  // aparece por NOVO_DIAS (15) dias a partir dela e some depois, sem precisar de PR para remover.
+  // Ao lançar uma tela de verdade, basta preencher a data de hoje.
+  novoDesde?: string;
   // Bolinha de notificação (novidade). Resolvida em runtime pelo useChamadosNotif.
   notif?: "meus" | "dev" | "troca_funcao" | "juridico" | "reembolso";
   dot?: boolean;
@@ -147,6 +154,10 @@ const licitacoesModule: ModuleDef = {
       items: [
         { label: "Capa de Edital Licitações", to: "/app/editais", icon: FileText },
         { label: "Implantação de Contratos", to: "/app/licitacoes/implantacao", icon: ListChecks },
+        // SIS-2026-0599: cadastro único que alimenta os quatro resumos
+        // setoriais (Financeiro, RH, Operacional e Compras). Menu próprio,
+        // `implantacao.base` — quem preenche o checklist não ganha a base junto.
+        { label: "Base Mestre de Contrato", to: "/app/licitacoes/implantacao/base", icon: Database },
         { label: "Planilha de Custo", to: "/app/licitacoes/planilha-custo", icon: TableProperties },
         { label: "Contratos", to: "/app/licitacoes/contratos", icon: Building2 },
         { label: "Cotações", to: "/app/licitacoes/cotacoes", icon: MessageSquare },
@@ -262,12 +273,12 @@ const controladoriaOrcModule: ModuleDef = {
         // app_menu pra decidir se o item aparece dado o acesso do usuário
         // (ver isAllowed logo abaixo). Sem esta linha, a rota funciona por
         // acesso direto mas nunca aparece pra ninguém clicar.
-        { label: "Controle de Faturamento", to: "/app/controladoria/controle-faturamento", icon: FileText },
         // 06/10/2026 (mig 20261006000005): transcrições das reuniões dos
         // supervisores com os encarregados → dashboard de dificuldades.
         { label: "Reuniões com Encarregados", to: "/app/controladoria/reunioes-encarregados", icon: MessagesSquare, badge: "Novo" },
         // SIS-2026-0556: mesma regra do item acima — precisa existir aqui E em app_menu.
         { label: "Faturamento da Empresa", to: "/app/controladoria/faturamento-empresa", icon: TrendingUp },
+        { label: "Fechamento da Empresa", to: "/app/controladoria/fechamento-empresa", icon: TrendingUp, badge: "Novo" },
         { label: "Lucratividade de Contratos", to: "/app/controladoria/lucratividade-contratos", icon: TrendingUp },
         // SIS-2026-0553: checkpoint da Controladoria antes da Lucratividade.
         { label: "Auditoria da Controladoria", to: "/app/controladoria/auditoria", icon: ListChecks },
@@ -290,6 +301,8 @@ const suprimentosModule: ModuleDef = {
       defaultOpen: true,
       items: [
         { label: "Dashboard de Compras", to: "/app/suprimentos/dashboard", icon: BarChart3, badge: "Novo" },
+        // SIS-2026-0599: o que comprar para um contrato que está começando.
+        { label: "Início de Contrato", to: "/app/suprimentos/inicio-de-contrato", icon: ShoppingCart },
       ],
     },
     {
@@ -375,6 +388,8 @@ const financeiroModule: ModuleDef = {
         { label: "Emissão de NF", to: "/app/financeiro/emissao-nf/cadastro", icon: FileText },
         { label: "Validação de Notas", to: "/app/financeiro/emissao-nf/controle-notas", icon: ClipboardCheck },
         { label: "Relatório de Serviços", to: "/app/financeiro/relatorio-servicos", icon: TableProperties },
+        // SIS-2026-0658: Sistema × Excel antigo, só leitura
+        { label: "Conciliação da Origem (Serviços)", to: "/app/financeiro/relatorio-servicos/conciliacao-origem", icon: GitMerge },
         { label: "Cobranças", to: "/app/cobrancas", icon: Bell },
       ],
     },
@@ -382,6 +397,8 @@ const financeiroModule: ModuleDef = {
       label: "Operação Financeira",
       defaultOpen: true,
       items: [
+        // SIS-2026-0599: resumo financeiro do contrato que vai começar.
+        { label: "Início de Contrato", to: "/app/financeiro/inicio-de-contrato", icon: Banknote },
         { label: "Conferência de Ponto", to: "/app/financeiro/conferencia-ponto", icon: ClipboardCheck },
         // Dashboard de Pontos (30/09/2026, mig 274): o painel do RH, com menu
         // próprio do Financeiro (financeiro_dashboard_pontos).
@@ -397,13 +414,13 @@ const financeiroModule: ModuleDef = {
       defaultOpen: true,
       items: [
         { label: "Fluxo de Caixa", to: "/app/financeiro/gestao-financeira/fluxo-caixa", icon: TrendingDown },
-        { label: "Débito Automático", to: "/app/financeiro/gestao-financeira/debito-automatico", icon: ArrowLeftRight, badge: "Novo" },
-        { label: "Cartão de Crédito", to: "/app/financeiro/gestao-financeira/cartao-credito", icon: CreditCard, badge: "Novo" },
-        { label: "Classificar Lançamentos", to: "/app/financeiro/gestao-financeira/cartao-credito/classificar", icon: ListTree, badge: "Novo" },
-        { label: "Extrator de Benefícios (VA/VT)", to: "/app/financeiro/gestao-financeira/extrator-beneficios", icon: FileSpreadsheet, badge: "Novo" },
+        { label: "Débito Automático", to: "/app/financeiro/gestao-financeira/debito-automatico", icon: ArrowLeftRight },
+        { label: "Cartão de Crédito", to: "/app/financeiro/gestao-financeira/cartao-credito", icon: CreditCard },
+        { label: "Classificar Lançamentos", to: "/app/financeiro/gestao-financeira/cartao-credito/classificar", icon: ListTree },
+        { label: "Extrator de Benefícios (VA/VT)", to: "/app/financeiro/gestao-financeira/extrator-beneficios", icon: FileSpreadsheet },
         // SIS-2026-0473: registra aplicações (CDB/Fundo DI/etc.) e resgates,
         // alimenta o Fluxo de Caixa igual ao Débito Automático.
-        { label: "Aplicações Financeiras", to: "/app/financeiro/gestao-financeira/aplicacoes-financeiras", icon: Landmark, badge: "Novo" },
+        { label: "Aplicações Financeiras", to: "/app/financeiro/gestao-financeira/aplicacoes-financeiras", icon: Landmark },
         // O item saiu da sidebar no SIS-2026-0317 (menus obsoletos) e foi
         // reexposto só no Gerenciamento de Acesso (dc0d7389) — a tela
         // continuou viva e acessível só por URL. Volta aqui, na rota atual.
@@ -417,21 +434,25 @@ const financeiroModule: ModuleDef = {
         // SIS-2026-0492: as duas convivem aqui em Ferramentas (pedido do
         // usuário, "vou concentrando tudo ali") — a nova puxa o lado "Fluxo"
         // direto do Fluxo de Caixa interno; a antiga continua manual/planilha.
-        { label: "Conciliação Bancária", to: "/app/financeiro/gestao-financeira/conciliacao-fluxo-caixa", icon: GitMerge, badge: "Novo" },
+        { label: "Conciliação Bancária", to: "/app/financeiro/gestao-financeira/conciliacao-fluxo-caixa", icon: GitMerge },
+        // SIS-2026-0658: Sistema × Excel antigo, só leitura
+        { label: "Conciliação da Origem (Fluxo)", to: "/app/financeiro/gestao-financeira/conciliacao-origem-fluxo-caixa", icon: GitMerge },
         { label: "Conciliação Bancária (Planilha Manual)", to: "/app/financeiro/conciliacao-bancaria", icon: GitMerge },
         // SIS-2026-0304: Checklist de Faturamento (e a futura Solicitação
         // de Ajuste, SIS-2026-0305) ficam aqui em "Ferramentas" — decisão
         // do usuário, são módulos migrados de sistema externo, não fazem
         // parte da Gestão Financeira "nativa" do ERP.
-        { label: "Checklist de Faturamento", to: "/app/financeiro/checklist-faturamento", icon: ListChecks, badge: "Novo" },
-        { label: "Solicitações de Ajuste", to: "/app/financeiro/solicitacoes-ajuste", icon: ClipboardList, badge: "Novo" },
+        { label: "Checklist de Faturamento", to: "/app/financeiro/checklist-faturamento", icon: ListChecks },
+        // SIS-2026-0652: veio da Controladoria; o acesso é o mesmo menu (controle-faturamento), só módulo e rota mudaram (mig 20261016000001).
+        { label: "Controle de Faturamento", to: "/app/financeiro/controle-faturamento", icon: FileText },
+        { label: "Solicitações de Ajuste", to: "/app/financeiro/solicitacoes-ajuste", icon: ClipboardList },
         // SIS-2026-0524: juros informado no pagamento do Malote, controle
         // de cobrança do responsável — não gera lançamento no Fluxo de Caixa.
-        { label: "Controle de Juros", to: "/app/financeiro/controle-juros", icon: Percent, badge: "Novo" },
+        { label: "Controle de Juros", to: "/app/financeiro/controle-juros", icon: Percent },
         // DOC CANAA: gestão de documentos da Escola Canaã, migrada do
         // blueprint Flask legado `sistema_canaa` — módulo migrado de sistema
         // externo, por isso aqui em Ferramentas junto do Checklist/Ajustes.
-        { label: "DOC CANAA", to: "/app/financeiro/doc-canaa", icon: FolderOpen, badge: "Novo" },
+        { label: "DOC CANAA", to: "/app/financeiro/doc-canaa", icon: FolderOpen },
       ],
     },
   ],
@@ -460,6 +481,16 @@ const maloteModule: ModuleDef = {
         { label: "Pagamento Malote", to: "/app/malote/pagamento", icon: Banknote },
       ],
     },
+    // SIS-2026-0668: exceção pedida ANTES de lançar a despesa; o N2 aprova e a senha é digitada em Criar Despesa.
+    {
+      label: "Exceções",
+      defaultOpen: true,
+      items: [
+        { label: "Autorizações de Exceção", to: "/app/malote/excecao/autorizacoes", icon: ClipboardList },
+        { label: "Solicitar Exceção", to: "/app/malote/excecao/solicitar", icon: KeyRound },
+        { label: "Minhas Solicitações", to: "/app/malote/excecao/minhas", icon: ListChecks },
+      ],
+    },
     // SIS-2026-0125: Classificação/Orçamento saem de Controladoria e passam
     // a viver aqui — Classificação Administrativo (simples) e Orçamento
     // Administrativo continuam separados de Classificações Malote (rica,
@@ -471,6 +502,7 @@ const maloteModule: ModuleDef = {
       items: [
         { label: "Classificações Administrativo", to: "/app/malote/classificacoes-administrativo", icon: ListChecks },
         { label: "Orçamento Administrativo", to: "/app/malote/orcamento-administrativo", icon: ClipboardList },
+        { label: "Orçamento ADM e Sócios (novo)", to: "/app/malote/orcamento-adm-socios", icon: ClipboardList },
         { label: "Classificações Malote", to: "/app/malote/classificacoes-malote", icon: ListChecks },
         { label: "Orçamento de Contratos", to: "/app/malote/orcamento-contratos", icon: FileText },
         { label: "Orçamento Geral", to: "/app/malote/orcamento-geral", icon: Calculator },
@@ -537,6 +569,8 @@ const rhModule: ModuleDef = {
       defaultOpen: true,
       items: [
         { label: "Colaboradores", to: "/app/rh/colaboradores", icon: Users2 },
+        // SIS-2026-0599: dimensionamento de pessoas do contrato novo.
+        { label: "Início de Contrato", to: "/app/rh/inicio-de-contrato", icon: Database },
         { label: "Novas Admissões", to: "/app/rh/novas-admissoes", icon: ClipboardCheck },
         // "Alocações em Contratos" e "Folha de Pagamento" saíram em
         // 04/09/2026. Eram as duas telas genéricas que sobraram do modelo
@@ -546,6 +580,13 @@ const rhModule: ModuleDef = {
         // 20260930000053; as tabelas continuam no banco.
         { label: "Gestão de Férias", to: "/app/rh/ferias", icon: CalendarRange },
         { label: "Solicitações de Demissão", to: "/app/rh/solicitacoes-demissao", icon: UserMinus },
+        // Rescisões (22/10/2026, mig 20261022000400): a planilha de rescisão do
+        // RH. Foi módulo próprio com kanban por um dia (21/10); voltou para
+        // cá a pedido — "não pode ter um módulo só pra rescisões". A linha
+        // nasce quando o RH libera a demissão no item de cima.
+        { label: "Rescisões", to: "/app/rh/rescisoes", icon: FileX2 },
+        // Documentos solicitados aos encarregados, até voltarem assinados (mig 20261019000040).
+        { label: "Documentos", to: "/app/rh/documentos", icon: FileSignature },
         { label: "Conferência de Ponto", to: "/app/rh/conferencia-ponto", icon: ClipboardCheck },
         // "Dashboard de Pontos" desde 30/09/2026 (antes dois itens com o mesmo
         // nome "Conferência de Ponto"). A mesma tela está no Financeiro e no
@@ -571,6 +612,8 @@ const rhModule: ModuleDef = {
         { label: "Ativos/Contratos", to: "/app/rh/ativos-contratos", icon: ClipboardCheck },
         // Hierarquia de postos da Senior (mig 20261007000024): quem responde por quem e por qual contrato.
         { label: "Hierarquia de Postos", to: "/app/rh/hierarquia-postos", icon: Network },
+        // Rateio de Despesas (mig 20261016000010, SIS-2026-0673): Jus Brasil, Senior e FGTS/Bullla/seguro/BSF/PCD/SEEAC pelo PDF.
+        { label: "Rateio de Despesas", to: "/app/rh/rateio-despesas", icon: PieChart },
       ],
     },
   ],
@@ -596,6 +639,8 @@ const recrutamentoModule: ModuleDef = {
         // (rh_recrutamento_dashboard, recrutamento_dashboard) seguem os mesmos.
         { label: "Gestão Recrutamento", to: "/app/rh/recrutamento", icon: UserCog },
         { label: "Banco de Talentos", to: "/app/rh/banco-talentos", icon: Users2 },
+        // CPFs com restrição para contratação (mig 20261025000020) — a mesma lista do Jurídico.
+        { label: "Cadastro Restritivo", to: "/app/rh/recrutamento/cadastro-restritivo", icon: UserX },
       ],
     },
     {
@@ -653,6 +698,8 @@ const encarregadosModule: ModuleDef = {
         // Envio do ponto do mês ao Operacional (mig 20261007000023) — sem
         // permissão para ninguém por enquanto (pedido de 07/10/2026).
         { label: "Conferência de Ponto", to: "/app/encarregados/conferencia-ponto", icon: ClipboardCheck },
+        // Documentos que o RH pede (assinar e devolver anexado) — mig 20261019000040.
+        { label: "Documentos", to: "/app/encarregados/documentos", icon: FileSignature },
       ],
     },
     {
@@ -818,6 +865,31 @@ const tvsModule: ModuleDef = {
   ],
 };
 
+// T.I — Mapa 3D do escritório, Construir o mapa, Inventário e Painel.
+// Voltou da branch local `ti` em 20/10/2026 ("restaura TUDO da branch ti");
+// tinha saído da pablo em 10/09/2026 (revert 7cb8e295). Backend recriado pelas
+// migs 20261020000120..133. Os menus nascem com quem já tinha a permissão.
+const tiModule: ModuleDef = {
+  id: "ti",
+  label: "T.I",
+  description: "Infraestrutura e hardware",
+  icon: Cpu,
+  basePath: "/app/ti",
+  status: "active",
+  groups: [
+    {
+      label: "Infraestrutura",
+      defaultOpen: true,
+      items: [
+        { label: "Mapa 3D", to: "/app/ti/mapa-hardware", icon: Network },
+        { label: "Construir o mapa", to: "/app/ti/construir", icon: Wrench },
+        { label: "Inventário", to: "/app/ti/inventario", icon: Boxes },
+        { label: "Painel de T.I", to: "/app/ti/painel", icon: BarChart3 },
+      ],
+    },
+  ],
+};
+
 const sistemasModule: ModuleDef = {
   id: "sistemas",
   label: "Sistemas",
@@ -887,6 +959,8 @@ const centralServicosModule: ModuleDef = {
         { label: "Orientações Jurídicas", to: "/app/central-servicos/orientacoes-juridicas", icon: BookOpen },
         { label: "Nascimento Formulários", to: "/app/central-servicos/formularios", icon: ClipboardList },
         { label: "Chamados de Sistemas", to: "/app/central-servicos/chamados", icon: Headset, notif: "meus" },
+        // Visão gerencial da qualidade das solicitações (mig 20261022000180).
+        { label: "Monitoramento de Chamados", to: "/app/central-servicos/chamados/monitoramento", icon: Gauge },
         { label: "Agenda de Reunião", to: "/app/central-servicos/reunioes", icon: CalendarRange },
         { label: "Agendamento de Veículos", to: "/app/central-servicos/veiculos", icon: Car },
         // Mesma tela de Treinamentos ERP dos Encarregados, ancorada aqui: o
@@ -895,10 +969,10 @@ const centralServicosModule: ModuleDef = {
         // (`central_servicos_treinamentos`) — liberar esta porta não abre a
         // de lá, nem o contrário.
         { label: "Treinamentos", to: "/app/central-servicos/treinamentos", icon: GraduationCap },
-        // Treinamentos Sistemas (mig 273): rota em ROTAS_SEMPRE_LIBERADAS,
-        // aparece para todos — qualquer um pode receber treinamento de um
-        // desenvolvimento do ERP (o dev escolhe setores inteiros).
-        { label: "Treinamentos Sistemas", to: "/app/central-servicos/treinamentos-sistemas", icon: MonitorCog },
+        // Treinamentos Sistemas (mig 273) SAIU do menu em 14/10/2026: "é a
+        // mesma coisa que Treinamentos". A rota continua (ROTAS_SEMPRE_LIBERADAS)
+        // só como a tela de confirmar o treinamento de um chamado — é para lá
+        // que Meus Chamados e o Status da validação mandam quem recebeu.
         // Só o "Solicitar" entra no menu. Aprovação e Tipos/Limites ficam de
         // fora de propósito: são telas de poucas pessoas, alcançadas pelos
         // botões do cabeçalho da própria tela de solicitar (que só aparecem
@@ -1075,6 +1149,8 @@ const juridicoModule: ModuleDef = {
       defaultOpen: true,
       items: [
         { label: "Verificação de Candidatos", to: "/app/juridico/candidatos", icon: ClipboardCheck },
+        // CPFs com restrição para contratação (mig 20261025000020) — a mesma lista do Recrutamento.
+        { label: "Cadastro Restritivo", to: "/app/juridico/cadastro-restritivo", icon: UserX },
       ],
     },
     {
@@ -1156,6 +1232,8 @@ const operacionalModule: ModuleDef = {
       label: "Operacional",
       defaultOpen: true,
       items: [
+        // SIS-2026-0599: locais, cidades e cobertura do contrato que inicia.
+        { label: "Início de Contrato", to: "/app/operacional/inicio-de-contrato", icon: Building2 },
         { label: "Controle de Diárias", to: "/app/operacional/diarias", icon: CalendarCheck2 },
         // Efetividade e Coberturas (branch local efetividade, mig 20261008000030):
         // quem faltou pelo ponto da Senior e o acionamento de diaristas. As 5
@@ -1288,6 +1366,8 @@ const relatoriosModule: ModuleDef = {
         { label: "Relatório Geral", to: "/app/relatorios", icon: BarChart3 },
         ...RELATORIOS.map((s) => ({ label: s.titulo, to: `/app/relatorios/${s.slug}`, icon: s.icone })),
         { label: "Vagas — Dashboard", to: "/app/relatorios/vagas", icon: Briefcase },
+        // Mig 20261021000060: o desconto de faltas das notas fiscais, por contrato.
+        { label: "Custo das Faltas por Contrato", to: "/app/relatorios/custo-faltas", icon: TrendingDown },
       ],
     },
   ],
@@ -1311,6 +1391,11 @@ const organogramaModule: ModuleDef = {
       defaultOpen: true,
       items: [
         { label: "Organograma", to: "/app/organograma", icon: Network },
+        // Estrutura de Setores e Processos (mig 20261020000060): o organograma
+        // das atividades — setores, equipe do gerente ao jovem, processos e as
+        // ligações entre setores. O Geral lê a última publicação; o Cadastro edita.
+        { label: "Estrutura e Processos", to: "/app/organograma/processos", icon: Workflow },
+        { label: "Cadastro da Estrutura", to: "/app/organograma/processos/cadastro", icon: PencilRuler },
       ],
     },
   ],
@@ -1331,6 +1416,7 @@ const erpModules: ModuleDef[] = [
   encarregadosModule,
   operacionalModule,
   sistemasModule,
+  tiModule,
   tvsModule,
   juridicoModule,
   sstModule,
@@ -1449,7 +1535,11 @@ export function Sidebar({ collapsed, mobileOpen = false, onMobileClose }: Sideba
           ?.map((g) => ({
             ...g,
             items: g.items
-              .map((item) => ({ ...item, badge: resolvedBadge(item.badge), dot: resolvedDot(item) }))
+              .map((item) => ({
+                ...item,
+                badge: selNovoVigente(item.novoDesde) ? "Novo" : resolvedBadge(item.badge),
+                dot: resolvedDot(item),
+              }))
               .sort(porNome),
           }))
           .sort(porNome),
@@ -1655,7 +1745,11 @@ export function Sidebar({ collapsed, mobileOpen = false, onMobileClose }: Sideba
             pra tela de "Acesso negado" do RouteGuard. Fica fora do menu dele. */}
         {!externo && (
         <NavLink
-          to="/app/administracao"
+          // Só "PODE TROCAR A SENHA" e sem a Administração (20/10/2026, mig
+          // 20261020000100): o escritório que redefine a senha dos
+          // encarregados cai direto na tela enxuta, que é TUDO o que ele vê
+          // em Configurações. Quem enxerga a Administração segue para ela.
+          to={!canSee("/app/administracao") && canSee("/app/senhas-encarregados") ? "/app/senhas-encarregados" : "/app/administracao"}
           className={({ isActive }) =>
             cn(
               "sb-item flex items-center gap-3 rounded-md px-3 py-2 text-sm font-bold",

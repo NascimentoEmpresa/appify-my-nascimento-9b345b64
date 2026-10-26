@@ -5,7 +5,9 @@
 // mostrando algo acionável.
 import { render, screen, fireEvent } from "@testing-library/react";
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
+import { MemoryRouter } from "react-router-dom";
 import { ErroDeTela } from "@/components/layout/ErroDeTela";
+import { ehErroDePermissao } from "@/lib/erroDePermissao";
 
 function Explode({ deve }: { deve: boolean }): JSX.Element {
   if (deve) throw new Error("s.trim is not a function");
@@ -64,5 +66,30 @@ describe("ErroDeTela", () => {
     );
     fireEvent.click(screen.getByRole("button", { name: /Recarregar/i }));
     expect(recarregar).toHaveBeenCalledTimes(1);
+  });
+
+  it("erro de PERMISSÃO mostra 'Sem acesso' (403), não 'Sistema indisponível'", () => {
+    function SemPermissao(): JSX.Element {
+      throw Object.assign(new Error("permission denied for table malote_despesa"), { code: "42501" });
+    }
+    render(
+      <MemoryRouter>
+        <ErroDeTela rota="/app/malote/aprovacoes">
+          <SemPermissao />
+        </ErroDeTela>
+      </MemoryRouter>
+    );
+    expect(screen.getByText("Você não tem acesso a esta área")).toBeTruthy();
+    expect(screen.queryByText("Sistema temporariamente indisponível")).toBeNull();
+  });
+});
+
+describe("ehErroDePermissao", () => {
+  it("reconhece RLS/privilégio e ignora erro comum de código", () => {
+    expect(ehErroDePermissao({ code: "42501", message: "x" })).toBe(true);
+    expect(ehErroDePermissao(new Error("new row violates row-level security policy"))).toBe(true);
+    expect(ehErroDePermissao({ status: 403, message: "x" })).toBe(true);
+    expect(ehErroDePermissao(new Error("s.trim is not a function"))).toBe(false);
+    expect(ehErroDePermissao(null)).toBe(false);
   });
 });

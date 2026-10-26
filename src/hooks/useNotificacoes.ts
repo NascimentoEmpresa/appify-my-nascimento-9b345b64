@@ -5,7 +5,7 @@ import { useMeuNome } from "@/hooks/useMeuNome";
 import { usePermissoes } from "@/context/PermissoesContext";
 import {
   BUCKET_ANEXOS, MENU_PUBLICAR, MENU_QUADRO, TABELA, TABELA_ALVO, TABELA_CIENCIA,
-  bloqueantesDe, pendentesDe,
+  animacaoDe, bloqueantesDe, corCabecalhoDe, iconeCabecalhoDe, botoesDoAviso, pendentesDe, posicaoImagemDe, tamanhoImagemDe,
   type AlvoNotificacao, type CienciaNotificacao, type Escolha,
   type FormNotificacao, type Notificacao,
 } from "@/lib/notificacoes";
@@ -183,7 +183,21 @@ export function useNotificacoes() {
         anexo_nome: (f.imagens[0]?.nome ?? f.anexo_nome).trim() || null,
         imagens: f.imagens.filter((i) => i.url.trim()).map((i) => ({ url: i.url.trim(), nome: i.nome ?? "" })),
         imagens_layout: f.imagens_layout === "grade" ? "grade" : "carrossel",
+        // "" (padrão) vai como NULL: é o que aviso antigo tem, e a CHECK aceita.
+        imagens_tamanho: tamanhoImagemDe(f.imagens_tamanho) || null,
+        imagens_posicao: posicaoImagemDe(f.imagens_posicao),
         links: f.links.filter((l) => l.url.trim()).map((l) => ({ rotulo: l.rotulo.trim() || "Link", url: l.url.trim() })),
+        // Botões próprios (16/10/2026). Sem ciência não há o que responder:
+        // grava vazio para o aviso não carregar botão que nunca aparece.
+        botoes: f.exigir_ciencia ? botoesDoAviso(f) : [],
+        // Comentários (16/10/2026). Anônimo só vale com comentários ligados.
+        permitir_comentarios: f.permitir_comentarios,
+        permitir_anonimo: f.permitir_comentarios && f.permitir_anonimo,
+        // "" (nenhuma) vai como NULL — o mesmo de aviso antigo.
+        animacao: animacaoDe(f.animacao) || null,
+        // Cabeçalho (16/10/2026): "" (amarelo / "!") vai como NULL, igual aviso antigo.
+        cabecalho_cor: corCabecalhoDe(f.cabecalho_cor).valor || null,
+        cabecalho_icone: iconeCabecalhoDe(f.cabecalho_icone) || null,
         exigir_ciencia: f.exigir_ciencia,
         // publico_alvo saiu na 081: a verdade é a tabela de alvos, e ter as
         // duas era duas fontes para a mesma pergunta.
@@ -262,13 +276,15 @@ export function useNotificacoes() {
    */
   const responder = useMutation({
     mutationFn: async (
-      { id, escolha, observacao, lidoEm }:
-      { id: number; escolha: Escolha; observacao?: string; lidoEm?: string },
+      { id, escolha, resposta, observacao, lidoEm }:
+      { id: number; escolha: Escolha; resposta?: string; observacao?: string; lidoEm?: string },
     ) => {
       const { error } = await sb.from(TABELA_CIENCIA).insert({
         notificacao_id: id,
         user_id: user?.id,
         escolha,
+        // O texto do botão próprio que a pessoa apertou (16/10/2026).
+        resposta: resposta?.trim() || null,
         observacao: observacao?.trim() || null,
         // Quando o aviso abriu na frente da pessoa. A distância até
         // respondido_em é o que separa quem leu de quem só tirou da frente.
@@ -287,6 +303,8 @@ export function useNotificacoes() {
 
   return {
     notificacoes,
+    /** Quem está logado — o autor que a Pré-visualização mostra. */
+    meuNome: meuNome ?? null,
     historico: historicoQ.data ?? [],
     alvos: alvosQ.data ?? [],
     setores: setoresQ.data ?? [],

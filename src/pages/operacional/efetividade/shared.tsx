@@ -7,8 +7,9 @@
 //   /app/operacional/efetividade/posto      3. Detalhamento do Posto
 //   /app/operacional/efetividade/faltas     4. Faltas e Coberturas
 //   /app/operacional/efetividade/historico  5. Histórico e Indicadores
+//   /app/operacional/efetividade/mensal     6. Efetividade Mensal (21/10/2026)
 //
-// Um menu só (ope_efetividade) governa as cinco pelo prefixo da rota. Os
+// Um menu só (ope_efetividade) governa as seis pelo prefixo da rota. Os
 // filtros moram na URL (?d=AAAA-MM-DD&c=empresa-filial&enc=&t=&p=) para a
 // troca de aba manter a data e o contrato, e para o link poder ser mandado
 // no WhatsApp do encarregado.
@@ -23,12 +24,12 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import {
-  AlertTriangle, BarChart3, CalendarDays, CheckCircle2, CircleDashed, Clock, FileText, History,
+  AlertTriangle, BarChart3, CalendarDays, CalendarRange, CheckCircle2, CircleDashed, Clock, FileText, History,
   Loader2, MapPin, Phone, RefreshCw, RotateCcw, ShieldAlert, UserCheck, Users, XCircle,
 } from "lucide-react";
 import { useEfetBase, useEfetOcorrencias } from "@/hooks/useEfetividade";
 import {
-  avaliarTodos, chaveContrato, chavePosto, fmtDataBR, linkTel, linkWhatsapp, somaDias, ROTULO_SITUACAO, ROTULO_STATUS, ROTULO_TURNO,
+  agoraBrasilia, avaliarTodos, chaveContrato, chavePosto, fmtDataBR, linkTel, linkWhatsapp, somaDias, FALTA_SO_DEPOIS_DE, ROTULO_SITUACAO, ROTULO_STATUS, ROTULO_TURNO,
   type ContratoEfet, type EstadoCobertura, type LinhaDia, type SituacaoEfet, type StatusContrato, type StatusCobertura, type Turno,
 } from "@/lib/efetividade";
 
@@ -134,6 +135,7 @@ const ABAS = [
   { to: `${BASE_ROTA}/posto`, label: "Detalhamento do Posto", icon: FileText },
   { to: `${BASE_ROTA}/faltas`, label: "Faltas e Coberturas", icon: AlertTriangle },
   { to: `${BASE_ROTA}/historico`, label: "Histórico e Indicadores", icon: History },
+  { to: `${BASE_ROTA}/mensal`, label: "Efetividade Mensal", icon: CalendarRange },
 ];
 
 export function CabecalhoEfetividade({
@@ -189,7 +191,7 @@ export function CabecalhoEfetividade({
         </div>
       </div>
 
-      <nav className="grid grid-cols-2 gap-2 md:grid-cols-5">
+      <nav className="grid grid-cols-2 gap-2 md:grid-cols-3 xl:grid-cols-6">
         {ABAS.map((a, i) => {
           const ativo = a.exato ? pathname === a.to : pathname.startsWith(a.to) && !(a.to === `${BASE_ROTA}/posto` && pathname.startsWith(`${BASE_ROTA}/postos`));
           return (
@@ -222,13 +224,34 @@ export function AvisoSincronizacao({ data, sincAte }: { data: string | null; sin
       </Card>
     );
   }
+  // Hoje (20/10/2026): o espelho roda de 10 em 10 min, mas a Senior importa
+  // as batidas com atraso — até o meio-dia ninguém vira falta pelo relógio.
+  const agora = agoraBrasilia();
+  if (data === agora.data && data <= sincAte) {
+    const antesDoMeioDia = agora.minuto < FALTA_SO_DEPOIS_DE;
+    return (
+      <Card className="mb-4 flex items-start gap-3 border-warning/40 bg-warning/5 p-3 text-sm">
+        <Clock className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
+        <div className="space-y-1">
+          <p className="font-semibold text-warning">Os pontos da Senior chegam com atraso na importação.</p>
+          <p>
+            {antesDoMeioDia
+              ? <>Até o <b>meio-dia</b>, quem a escala espera e ainda não tem batida aparece como <b>Aguardando apuração total dos pontos da Senior</b> — não como falta.</>
+              : <>Já passou do meio-dia: quem a escala espera e não tem nenhuma batida hoje conta como <b>falta</b> (o turno que ainda não começou segue aguardando até 1h depois da entrada).</>}
+            {" "}Uma batida no dia já basta para não ser falta. As faltas avisadas (encarregado, WhatsApp) entram por{" "}
+            <b>Faltas e Coberturas › Registrar falta</b> e já contam aqui.
+          </p>
+        </div>
+      </Card>
+    );
+  }
   if (data <= sincAte) return null;
   return (
     <Card className="mb-4 flex items-start gap-3 border-warning/40 bg-warning/5 p-3 text-sm">
       <Clock className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
       <p>
-        O ponto da Senior chega no ERP uma vez por dia e vai até <b>{fmtDataBR(sincAte)}</b>. Em <b>{fmtDataBR(data)}</b> ninguém
-        é marcado como faltoso pelo relógio — quem a escala espera aparece como <b>aguardando ponto</b>. As faltas avisadas
+        Os pontos da Senior chegam com atraso na importação e por enquanto vão até <b>{fmtDataBR(sincAte)}</b>. Em <b>{fmtDataBR(data)}</b> ninguém
+        é marcado como faltoso pelo relógio — quem a escala espera aparece como <b>Aguardando apuração total dos pontos da Senior</b>. As faltas avisadas
         (encarregado, WhatsApp) entram por <b>Faltas e Coberturas › Registrar falta</b> e já contam aqui.
       </p>
     </Card>
@@ -316,10 +339,12 @@ const TONS: Record<string, string> = {
  * (presentes) ou quando desce (faltas).
  */
 export function Kpi({
-  icon: Icon, rotulo, valor, anterior, tom = "primary", melhorSobe = true, sufixo, dica, formatoDelta = "pct", onClick, ativo,
+  icon: Icon, rotulo, valor, anterior, tom = "primary", melhorSobe = true, sufixo, dica, formatoDelta = "pct", onClick, ativo, semValor,
 }: {
   icon: typeof Users; rotulo: string; valor: number | null; anterior?: number | null; tom?: string; melhorSobe?: boolean;
   sufixo?: string; dica?: string; formatoDelta?: "pct" | "pp"; onClick?: () => void; ativo?: boolean;
+  /** Texto no lugar do número quando valor é null (ex.: "Aguardando" antes de o ponto chegar). */
+  semValor?: string;
 }) {
   let delta: React.ReactNode = null;
   if (valor != null && anterior != null) {
@@ -343,7 +368,9 @@ export function Kpi({
           <p className="truncate text-xs font-semibold text-muted-foreground">{rotulo}</p>
           <p className="flex items-baseline gap-2">
             <span className="text-2xl font-bold tabular-nums leading-tight">
-              {valor == null ? "—" : valor.toLocaleString("pt-BR", { maximumFractionDigits: 1 })}{sufixo}
+              {valor == null
+                ? (semValor ? <span className="text-lg text-warning">{semValor}</span> : "—")
+                : <>{valor.toLocaleString("pt-BR", { maximumFractionDigits: 1 })}{sufixo}</>}
             </span>
             {delta}
           </p>
@@ -389,8 +416,10 @@ const COR_SITUACAO: Record<SituacaoEfet, string> = {
 
 export function BadgeSituacao({ s }: { s: SituacaoEfet }) {
   return (
-    <span className={cn("inline-flex items-center gap-1 whitespace-nowrap rounded-md border px-2 py-0.5 text-xs font-semibold", COR_SITUACAO[s])}>
-      <span className="h-1.5 w-1.5 rounded-full bg-current" />{ROTULO_SITUACAO[s]}
+    // "Aguardando apuração total dos pontos da Senior" não cabe no selo de
+    // uma linha da tabela: o selo mostra o começo e o texto todo fica no title.
+    <span title={ROTULO_SITUACAO[s]} className={cn("inline-flex items-center gap-1 whitespace-nowrap rounded-md border px-2 py-0.5 text-xs font-semibold", COR_SITUACAO[s])}>
+      <span className="h-1.5 w-1.5 rounded-full bg-current" />{s === "aguardando" ? "Aguardando apuração" : ROTULO_SITUACAO[s]}
     </span>
   );
 }
@@ -442,7 +471,12 @@ export function BadgeContrato({ s }: { s: StatusContrato }) {
 }
 
 /** Célula de percentual com fundo proporcional (verde ≥ 95, âmbar ≥ 91, vermelho abaixo). */
-export function CelulaPct({ v }: { v: number | null }) {
+export function CelulaPct({ v, aguardando }: { v: number | null; aguardando?: boolean }) {
+  // 22/10/2026: antes de o ponto chegar (manhã de hoje) não há efetividade a
+  // medir — mostrava 0% e o contrato aparecia crítico. Ver fecharResumo.
+  if (aguardando) {
+    return <span title="Aguardando apuração total dos pontos da Senior" className="inline-block whitespace-nowrap rounded bg-warning/10 px-1.5 py-0.5 text-center text-[11px] font-semibold text-warning">Aguardando</span>;
+  }
   if (v == null) return <span className="text-muted-foreground">—</span>;
   const cls = v >= 0.95 ? "bg-success/15 text-success" : v >= 0.91 ? "bg-warning/15 text-warning" : "bg-destructive/15 text-destructive";
   return <span className={cn("inline-block min-w-[3.5rem] rounded px-1.5 py-0.5 text-center text-xs font-bold tabular-nums", cls)}>{(v * 100).toLocaleString("pt-BR", { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%</span>;

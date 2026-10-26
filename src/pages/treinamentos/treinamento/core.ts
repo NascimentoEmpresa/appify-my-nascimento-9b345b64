@@ -28,6 +28,8 @@ export interface PerguntaProva {
  */
 export type EscopoTreinamento = "encarregados" | "central_servicos" | "sistemas";
 
+// A grade `sistemas` (Treinamentos Sistemas, mig 20261014000020) viveu um
+// dia: "é a mesma coisa que Treinamentos" — saiu na mig 20261014000022.
 export const ESCOPOS_TREINAMENTO: { id: EscopoTreinamento; label: string }[] = [
   { id: "encarregados", label: "Encarregados" },
   { id: "central_servicos", label: "Central de Serviços" },

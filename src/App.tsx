@@ -1,12 +1,11 @@
 import { Suspense, lazy } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
+import { BrowserRouter, Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ErroDeTela } from "@/components/layout/ErroDeTela";
 import { MonitorDeQueda } from "@/components/layout/MonitorDeQueda";
-import { AvisoContingencia } from "@/components/layout/AvisoContingencia";
 import { isAuthExpiredError } from "@/lib/authErrors";
 import { isSobrecargaError, atrasoSobrecargaMs } from "@/lib/erroSobrecarga";
 import NotFound from "./pages/NotFound.tsx";
@@ -25,6 +24,8 @@ import Inicio from "./pages/Inicio";
 import Novidades from "./pages/Novidades";
 import Presidencia from "./pages/Presidencia";
 import Organograma from "./pages/organograma/Organograma";
+import EstruturaProcessos from "./pages/organograma/EstruturaProcessos";
+import CadastroEstruturaProcessos from "./pages/organograma/CadastroEstruturaProcessos";
 import ChamadosDesenvolvimentoPresidencia from "./pages/presidencia/ChamadosDesenvolvimento";
 import TvPlayer from "./pages/tv/TvPlayer";
 import TvPrevia from "./pages/tv/TvPrevia";
@@ -42,6 +43,7 @@ import Resultado from "./pages/Resultado";
 import ProntasContrato from "./pages/ProntasContrato";
 import Historico from "./pages/Historico";
 import Administracao from "./pages/Administracao";
+import TrocarSenhaEncarregados from "./pages/admin/TrocarSenhaEncarregados";
 import SmokeTestHelena from "./pages/admin/SmokeTestHelena";
 import MeuPerfil from "./pages/MeuPerfil";
 import DiscordCallback from "./pages/DiscordCallback";
@@ -53,6 +55,15 @@ import ParecerControladoria from "./pages/pareceres/ParecerControladoria";
 import ParecerDiretorOperacional from "./pages/pareceres/ParecerDiretorOperacional";
 import ParecerDiretorAdministrativo from "./pages/pareceres/ParecerDiretorAdministrativo";
 import Implantacao from "./pages/contratos/Implantacao";
+// SIS-2026-0599 — Base Mestre de Início de Contrato e os quatro recortes
+// setoriais. Cada recorte mora no módulo do setor dono, como nos mockups do
+// chamado, e não dentro de Licitações.
+import BaseMestre from "./pages/implantacao/BaseMestre";
+import BaseMestreHub from "./pages/implantacao/BaseMestreHub";
+import FinanceiroInicioContrato from "./pages/implantacao/setor/FinanceiroInicioContrato";
+import RhInicioContrato from "./pages/implantacao/setor/RhInicioContrato";
+import OperacionalInicioContrato from "./pages/implantacao/setor/OperacionalInicioContrato";
+import ComprasInicioContrato from "./pages/implantacao/setor/ComprasInicioContrato";
 import PlanilhaCusto from "./pages/licitacoes/PlanilhaCusto";
 import ContratosERP from "./pages/licitacoes/ContratosERP";
 import CotacoesLicitacao from "./pages/licitacoes/CotacoesLicitacao";
@@ -72,6 +83,7 @@ import { AuthProvider } from "./hooks/useAuth";
 import Empresas from "./pages/controladoria/Empresas";
 import ControleFaturamento from "./pages/controladoria/ControleFaturamento";
 import FaturamentoEmpresa from "./pages/controladoria/FaturamentoEmpresa";
+import FechamentoEmpresa from "./pages/controladoria/FechamentoEmpresa";
 import LucratividadeContratos from "./pages/controladoria/LucratividadeContratos";
 import AuditoriaControladoria from "./pages/controladoria/AuditoriaControladoria";
 import CentrosCusto from "./pages/controladoria/CentrosCusto";
@@ -105,6 +117,21 @@ import EstoqueEtiquetas from "./pages/suprimentos/EstoqueEtiquetas";
 // Única tela carregada sob demanda: ela arrasta o three.js junto, e não faz
 // sentido pesar no carregamento de quem nunca abre o mapa 3D.
 const EstoqueMapa = lazy(() => import("./pages/suprimentos/EstoqueMapa"));
+// T.I (de volta da branch `ti`, 20/10/2026). As duas telas 3D entram por
+// lazy: puxam three + @react-three, que só deve descer para quem abre o mapa.
+const MapaTi = lazy(() => import("./pages/ti/MapaTi"));
+const ConstruirMapa = lazy(() => import("./pages/ti/ConstruirMapa"));
+import InventarioTi from "./pages/ti/InventarioTi";
+import PainelTiPage from "./pages/ti/PainelTiPage";
+
+/** Espera o pedaço 3D chegar — aviso discreto (na 2ª visita o chunk vem do cache). */
+function Carregando3D({ children }: { children: React.ReactNode }) {
+  return (
+    <Suspense fallback={<div className="flex h-[70vh] items-center justify-center text-sm text-muted-foreground">Carregando o mapa 3D…</div>}>
+      {children}
+    </Suspense>
+  );
+}
 import SeparacaoMateriais from "./pages/suprimentos/SeparacaoMateriais";
 import Patrimonio from "./pages/suprimentos/Patrimonio";
 import PainelManutencoes from "./pages/suprimentos/PainelManutencoes";
@@ -122,6 +149,8 @@ import Cobrancas from "./pages/cobrancas/Cobrancas";
 import RelatorioServicos from "./pages/financeiro/RelatorioServicos";
 import FluxoCaixa from "./pages/financeiro/FluxoCaixa";
 import FluxoCaixaGestao from "./pages/financeiro/FluxoCaixaGestao";
+import ConciliacaoOrigemFluxoCaixa from "./pages/financeiro/ConciliacaoOrigemFluxoCaixa";
+import ConciliacaoOrigemRelatorioServicos from "./pages/financeiro/ConciliacaoOrigemRelatorioServicos";
 import ConciliacaoAutomaticaFluxoCaixa from "./pages/financeiro/ConciliacaoAutomaticaFluxoCaixa";
 import CartaoCredito from "./pages/financeiro/CartaoCredito";
 import ClassificarLancamentos from "./pages/financeiro/cartao-credito/ClassificarLancamentos";
@@ -141,6 +170,7 @@ import DREGerencial from "./pages/controladoria/DREGerencial";
 import OrcamentoCompleto from "./pages/controladoria/OrcamentoCompleto";
 import MaloteClassificacoesAdministrativo from "./pages/malote/ClassificacoesAdministrativo";
 import MaloteOrcamentoAdministrativo from "./pages/malote/OrcamentoAdministrativo";
+import MaloteOrcamentoAdmSocios from "./pages/malote/OrcamentoAdmSocios";
 import MaloteClassificacoesMalote from "./pages/malote/ClassificacoesMalote";
 import MaloteOrcamentoContratos from "./pages/malote/OrcamentoContratos";
 import MaloteOrcamentoGeral from "./pages/malote/OrcamentoGeral";
@@ -157,6 +187,9 @@ import MaloteMeusItens from "./pages/malote/MeusItens";
 import MaloteDespesaVisualizar from "./pages/malote/DespesaVisualizar";
 import MaloteSolicitacaoVisualizar from "./pages/malote/SolicitacaoVisualizar";
 import MaloteArquivos from "./pages/malote/ArquivosMalote";
+import MaloteExcecaoSolicitar from "./pages/malote/ExcecaoSolicitar";
+import MaloteExcecaoAutorizacoes from "./pages/malote/ExcecaoAutorizacoes";
+import MaloteExcecaoMinhas from "./pages/malote/ExcecaoMinhas";
 import MovimentosBancarios from "./pages/financeiro/MovimentosBancarios";
 import ContasBancariasEmpresa from "./pages/financeiro/ContasBancariasEmpresa";
 import IntegracaoBancaria from "./pages/financeiro/IntegracaoBancaria";
@@ -178,6 +211,7 @@ import Contabilidade from "./pages/Contabilidade";
 import Colaboradores from "./pages/rh/Colaboradores";
 import AtivosContratos from "./pages/rh/AtivosContratos";
 import HierarquiaPostos from "./pages/rh/HierarquiaPostos";
+import RateioDespesas from "./pages/rh/RateioDespesas";
 import GestaoPonto from "./pages/rh/GestaoPonto";
 import Recrutamento from "./pages/rh/Recrutamento";
 import Patrimonios from "./pages/juridico/Patrimonios";
@@ -186,6 +220,7 @@ import CentralDuvidas from "./pages/juridico/CentralDuvidas";
 import Processos from "./pages/juridico/Processos";
 import Advertencias from "./pages/juridico/Advertencias";
 import VerificacaoCandidatos from "./pages/juridico/VerificacaoCandidatos";
+import CadastroRestritivo from "./pages/rh/CadastroRestritivo";
 import TreinamentosERP from "./pages/treinamentos/TreinamentosERP";
 import TreinamentosSistemasPagina from "./pages/treinamentos/TreinamentosSistemas";
 // Plataforma de Treinamentos (porta do membox, 18/09/2026) — ver a migration
@@ -221,6 +256,7 @@ import DiretoriaRecrutamento from "./pages/diretoria/Recrutamento";
 import RelatorioGeral from "./pages/relatorios/RelatorioGeral";
 import RelatorioSistema from "./pages/relatorios/RelatorioSistema";
 import VagasPainel from "./pages/relatorios/VagasPainel";
+import CustoFaltasPainel from "./pages/relatorios/CustoFaltasPainel";
 import { SISTEMAS as RELATORIOS } from "./pages/relatorios/sistemas";
 import SstTrocaFuncao from "./pages/sst/TrocaFuncao";
 import RhTrocaFuncao from "./pages/rh/TrocaFuncao";
@@ -234,6 +270,7 @@ import EfetividadeControlePostos from "./pages/operacional/efetividade/ControleP
 import EfetividadeDetalhePosto from "./pages/operacional/efetividade/DetalhePosto";
 import EfetividadeFaltasCoberturas from "./pages/operacional/efetividade/FaltasCoberturas";
 import EfetividadeHistorico from "./pages/operacional/efetividade/HistoricoIndicadores";
+import EfetividadeMensal from "./pages/operacional/efetividade/EfetividadeMensal";
 import FinanceiroConferenciaPonto from "./pages/financeiro/ConferenciaPonto";
 import LaudosEpi from "./pages/sst/LaudosEpi";
 import ControleCa from "./pages/sst/ControleCa";
@@ -273,6 +310,7 @@ import IndicadoresComiteEtica from "./pages/comite-etica/Indicadores";
 import PresidenciaComiteEtica from "./pages/comite-etica/Presidencia";
 import Ferias from "./pages/rh/Ferias";
 import RhSolicitacoesDemissao from "./pages/rh/SolicitacoesDemissao";
+import RhRescisoes from "./pages/rh/Rescisoes";
 import MinhasSolicitacoes from "./pages/MinhasSolicitacoes";
 import BIDashboard from "./pages/bi/Dashboard";
 import LinksBIs from "./pages/bi/LinksBIs";
@@ -311,8 +349,11 @@ import PainelDesenvolvedorChamados from "./pages/chamados/PainelDesenvolvedor";
 import DashboardDesenvolvedorChamados from "./pages/chamados/DashboardDesenvolvedor";
 import GithubPainelDev from "./pages/chamados/GithubPainel";
 import ConferenciaPontoEncarregado from "./pages/encarregados/ConferenciaPontoEncarregado";
+import DocumentosEncarregado from "./pages/encarregados/DocumentosEncarregado";
+import DocumentosRh from "./pages/rh/DocumentosRh";
 import ExecutarChamado from "./pages/chamados/ExecutarChamado";
 import AcompanharChamado from "./pages/chamados/AcompanharChamado";
+import MonitoramentoChamados from "./pages/chamados/MonitoramentoChamados";
 import WhatsAppInbox from "./pages/whatsapp/WhatsAppInbox";
 import WhatsAppChatbot from "./pages/whatsapp/WhatsAppChatbot";
 import WhatsAppTestes from "./pages/whatsapp/WhatsAppTestes";
@@ -363,6 +404,15 @@ import DesignacoesOperacao from "./pages/central-servicos/espaco-colaborador/Des
 // 30s ele deixa de disparar a rajada, mas quem ficou horas fora da aba ainda
 // recebe dado fresco ao voltar — que é o comportamento certo para um sistema
 // com pagamento e aprovação.
+// /app/login não existe — o login é /login. Mesmo assim, em 19/10/2026 parte
+// do pessoal caía em app.grpnascimento.com.br/app/login?next=/app/whatsapp
+// (favorito/link salvo; nada no código monta esse endereço) e via o 404.
+// Redireciona mantendo o ?next=, para voltar à tela de onde vieram.
+function LoginForaDoLugar() {
+  const { search } = useLocation();
+  return <Navigate to={`/login${search}`} replace />;
+}
+
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
@@ -396,7 +446,6 @@ const App = () => (
       <Sonner />
       {/* Queda do banco: cobre tudo com "Sistema temporariamente indisponível" (ver lib/monitorDeQueda.ts). */}
       <MonitorDeQueda />
-      <AvisoContingencia />
       <BrowserRouter>
         {/* Rede final: o ErroDeTela do AppShell cobre as telas de /app
             mantendo menu e topbar de pé, mas não cobre o que está FORA dele
@@ -412,6 +461,7 @@ const App = () => (
         <Routes>
           <Route path="/" element={<Navigate to="/login" replace />} />
           <Route path="/login" element={<Login />} />
+          <Route path="/app/login" element={<LoginForaDoLugar />} />
           {/* Tela "Sistema temporariamente indisponível" num endereço próprio (pública). */}
           <Route path="/404" element={<Pagina404 />} />
           <Route path="/trocar-senha" element={<TrocarSenha />} />
@@ -498,6 +548,8 @@ const App = () => (
             <Route path="encarregados/diarias" element={<ControleDiarias menuCodigo="encarregados_diarias" />} />
             {/* Conferência de Ponto dos encarregados (mig 20261007000023): a etapa começa aqui. */}
             <Route path="encarregados/conferencia-ponto" element={<ConferenciaPontoEncarregado />} />
+            {/* Documentos que o RH pede ao encarregado (mig 20261019000040). */}
+            <Route path="encarregados/documentos" element={<DocumentosEncarregado />} />
             {/* Operacional — Controle de Diárias */}
             <Route path="operacional" element={<Navigate to="/app/operacional/diarias" replace />} />
             <Route path="operacional/diarias" element={<ControleDiarias />} />
@@ -538,15 +590,22 @@ const App = () => (
                 Central — o solicitante não tem mais nada em /app/sistemas. */}
             <Route path="sistemas/chamados/:id/acompanhar" element={<AcompanharChamado base="/app/central-servicos/chamados" />} />
             <Route path="sistemas/chamados/:id" element={<ExecutarChamado />} />
-            {/* T.I — Mapa de Hardware (planta do escritório + inventário).
-                Sem redirect de "/app/ti" de propósito: rota sem entrada em
-                app_menu é NEGADA pelo RouteGuard antes de o Navigate rodar, o
-                que trocaria um 404 honesto por um "Acesso negado" confuso. A
-                porta do módulo é o item da sidebar. */}
+            {/* T.I — quatro telas, quatro menus, quatro cadeados: ver o mapa,
+                construir o mapa, o inventário e o painel são permissões
+                separadas. Sem redirect de "/app/ti" de propósito: rota sem
+                entrada em app_menu é NEGADA pelo RouteGuard antes de o
+                Navigate rodar, o que trocaria um 404 honesto por um "Acesso
+                negado" confuso. */}
+            <Route path="ti/mapa-hardware" element={<Carregando3D><MapaTi /></Carregando3D>} />
+            <Route path="ti/construir" element={<Carregando3D><ConstruirMapa /></Carregando3D>} />
+            <Route path="ti/inventario" element={<InventarioTi />} />
+            <Route path="ti/painel" element={<PainelTiPage />} />
             {/* Central de Serviços */}
             <Route path="central-servicos" element={<CentralServicos />} />
             <Route path="central-servicos/chamados" element={<MeusChamados base="/app/central-servicos/chamados" />} />
             <Route path="central-servicos/chamados/novo" element={<AbrirChamado base="/app/central-servicos/chamados" />} />
+            {/* Monitoramento de Chamados (mig 20261022000180): qualidade das solicitações, por solicitante. */}
+            <Route path="central-servicos/chamados/monitoramento" element={<MonitoramentoChamados />} />
             <Route path="central-servicos/chamados/:id/acompanhar" element={<AcompanharChamado base="/app/central-servicos/chamados" />} />
             {/* WhatsApp — Chatbot */}
             <Route path="whatsapp" element={<WhatsAppInbox />} />
@@ -611,6 +670,9 @@ const App = () => (
             <Route path="painel-executivo/tv" element={<PainelExecutivoTV />} />
             <Route path="presidencia" element={<Presidencia />} />
             <Route path="organograma" element={<Organograma />} />
+            {/* Estrutura de Setores e Processos (mig 20261020000060) — organograma NOVO, o de cima fica como está. */}
+            <Route path="organograma/processos" element={<EstruturaProcessos />} />
+            <Route path="organograma/processos/cadastro" element={<CadastroEstruturaProcessos />} />
             {/* Presidência › Desenvolvimento Chamados (mig 266): validação do
                 desenvolvimento dos chamados enviados à Presidência. */}
             <Route path="presidencia/chamados-desenvolvimento" element={<ChamadosDesenvolvimentoPresidencia />} />
@@ -636,6 +698,14 @@ const App = () => (
             <Route path="contratos/implantacao" element={<Implantacao />} />
             <Route path="licitacoes/planilha-custo" element={<PlanilhaCusto />} />
             <Route path="licitacoes/implantacao" element={<Implantacao />} />
+            {/* SIS-2026-0599: a base mestre é tela separada do checklist de
+                Implantação — e as quatro setoriais leem dela. */}
+            <Route path="licitacoes/implantacao/base" element={<BaseMestre />} />
+            <Route path="licitacoes/implantacao/base/hub" element={<BaseMestreHub />} />
+            <Route path="financeiro/inicio-de-contrato" element={<FinanceiroInicioContrato />} />
+            <Route path="rh/inicio-de-contrato" element={<RhInicioContrato />} />
+            <Route path="operacional/inicio-de-contrato" element={<OperacionalInicioContrato />} />
+            <Route path="suprimentos/inicio-de-contrato" element={<ComprasInicioContrato />} />
             <Route path="licitacoes/contratos" element={<ContratosERP />} />
             <Route path="licitacoes/cotacoes" element={<CotacoesLicitacao />} />
             {/* Consulta somente-leitura do banco de preços que o Compras
@@ -655,15 +725,19 @@ const App = () => (
             <Route path="contratos/:id" element={<ContratoDetalhe />} />
             <Route path="historico" element={<Historico />} />
             <Route path="administracao" element={<Administracao />} />
+            <Route path="senhas-encarregados" element={<TrocarSenhaEncarregados />} />
             <Route path="admin/smoke-helena" element={<SmokeTestHelena />} />
             <Route path="meu-perfil" element={<MeuPerfil />} />
             {/* URL de retorno do OAuth do Discord. Precisa ser fixa: o Discord
                 só aceita redirecionar para endereços registrados no app. */}
             <Route path="meu-perfil/discord" element={<DiscordCallback />} />
             <Route path="controladoria/empresas" element={<Empresas />} />
-            <Route path="controladoria/controle-faturamento" element={<ControleFaturamento />} />
+            {/* SIS-2026-0652: o Controle de Faturamento é do Financeiro; a URL antiga redireciona (links salvos, notificações). */}
+            <Route path="financeiro/controle-faturamento" element={<ControleFaturamento />} />
+            <Route path="controladoria/controle-faturamento" element={<Navigate to="/app/financeiro/controle-faturamento" replace />} />
             <Route path="controladoria/reunioes-encarregados" element={<ReunioesEncarregados />} />
             <Route path="controladoria/faturamento-empresa" element={<FaturamentoEmpresa />} />
+            <Route path="controladoria/fechamento-empresa" element={<FechamentoEmpresa />} />
             <Route path="controladoria/lucratividade-contratos" element={<LucratividadeContratos />} />
             <Route path="controladoria/auditoria" element={<AuditoriaControladoria />} />
             <Route path="controladoria/centros-custo" element={<CentrosCusto />} />
@@ -678,6 +752,11 @@ const App = () => (
             {/* Malote */}
             <Route path="malote/aprovacoes" element={<MaloteAprovacoes />} />
             <Route path="malote/arquivos" element={<MaloteArquivos />} />
+            <Route path="malote/excecao/solicitar" element={<MaloteExcecaoSolicitar />} />
+            {/* SIS-2026-0668: Aprovar Exceções foi unificada em Autorizações de Exceção; a rota antiga só redireciona. */}
+            <Route path="malote/excecao/aprovar" element={<Navigate to="/app/malote/excecao/autorizacoes" replace />} />
+            <Route path="malote/excecao/autorizacoes" element={<MaloteExcecaoAutorizacoes />} />
+            <Route path="malote/excecao/minhas" element={<MaloteExcecaoMinhas />} />
             <Route path="malote/pagamento" element={<MalotePagamento />} />
             <Route path="malote/configuracoes" element={<MaloteConfiguracoes />} />
             <Route path="malote/criar-despesa" element={<MaloteCriarDespesa />} />
@@ -688,6 +767,7 @@ const App = () => (
             <Route path="malote/solicitacao/:id" element={<MaloteSolicitacaoVisualizar />} />
             <Route path="malote/classificacoes-administrativo" element={<MaloteClassificacoesAdministrativo />} />
             <Route path="malote/orcamento-administrativo" element={<MaloteOrcamentoAdministrativo />} />
+            <Route path="malote/orcamento-adm-socios" element={<MaloteOrcamentoAdmSocios />} />
             <Route path="malote/classificacoes-malote" element={<MaloteClassificacoesMalote />} />
             <Route path="malote/orcamento-contratos" element={<MaloteOrcamentoContratos />} />
             <Route path="malote/orcamento-geral" element={<MaloteOrcamentoGeral />} />
@@ -711,6 +791,8 @@ const App = () => (
             <Route path="relatorios" element={<RelatorioGeral />} />
             {/* Vagas — Dashboard (mig 20261007000020): painel próprio, fora de SISTEMAS (o Relatório Geral itera SISTEMAS). */}
             <Route path="relatorios/vagas" element={<VagasPainel />} />
+            {/* Custo das Faltas por Contrato (mig 20261021000060): o campo Faltas das NFs, por contrato e competência. */}
+            <Route path="relatorios/custo-faltas" element={<CustoFaltasPainel />} />
             {RELATORIOS.map((s) => (
               <Route key={s.slug} path={`relatorios/${s.slug}`} element={<RelatorioSistema key={s.slug} slug={s.slug} />} />
             ))}
@@ -784,6 +866,9 @@ const App = () => (
             <Route path="financeiro/conta-garantida" element={<ContaGarantida />} />
             <Route path="financeiro/fluxo-caixa" element={<FluxoCaixa />} />
             <Route path="financeiro/gestao-financeira/fluxo-caixa" element={<FluxoCaixaGestao />} />
+            {/* SIS-2026-0658: conciliação da origem dos dados (Sistema × Excel antigo) */}
+            <Route path="financeiro/gestao-financeira/conciliacao-origem-fluxo-caixa" element={<ConciliacaoOrigemFluxoCaixa />} />
+            <Route path="financeiro/relatorio-servicos/conciliacao-origem" element={<ConciliacaoOrigemRelatorioServicos />} />
             <Route path="financeiro/gestao-financeira/conciliacao-fluxo-caixa" element={<ConciliacaoAutomaticaFluxoCaixa />} />
             <Route path="financeiro/gestao-financeira/debito-automatico" element={<DebitoAutomatico />} />
             <Route path="financeiro/gestao-financeira/aplicacoes-financeiras" element={<AplicacoesFinanceiras />} />
@@ -824,6 +909,9 @@ const App = () => (
             <Route path="rh/ativos-contratos" element={<AtivosContratos />} />
             {/* Hierarquia de postos da Senior (mig 20261007000024). */}
             <Route path="rh/hierarquia-postos" element={<HierarquiaPostos />} />
+            <Route path="rh/documentos" element={<DocumentosRh />} />
+            {/* Rateio de Despesas (mig 20261016000010, SIS-2026-0673): Jus Brasil, Senior e despesas lidas do PDF, por contrato. */}
+            <Route path="rh/rateio-despesas" element={<RateioDespesas />} />
             {/* Gestão de Ponto (branch local gestaoponto, mig 20261007000001): marcações da Senior por colaborador. */}
             <Route path="rh/gestao-ponto" element={<GestaoPonto />} />
             {/* RH > Hierarquia removido (jul/2026) — feature descontinuada. A tabela
@@ -834,6 +922,8 @@ const App = () => (
             <Route path="rh/banco-talentos" element={<BancoTalentos />} />
             {/* Check-in dos recém-admitidos (25/09/2026, mig 245) — o Excel CONTRATOS_VIGENTES do RH. */}
             <Route path="rh/recrutamento/acompanhar-colaboradores" element={<AcompanharColaboradores />} />
+            {/* Cadastro Restritivo (mig 20261025000020): a mesma lista no Recrutamento e no Jurídico. */}
+            <Route path="rh/recrutamento/cadastro-restritivo" element={<CadastroRestritivo modulo="recrutamento" />} />
             {/* Dashboard Recrutamento (02/10/2026, mig 288) — o painel completo; o Dashboard antigo segue em rh/recrutamento-dashboard. */}
             <Route path="rh/recrutamento/dashboard" element={<DashboardRecrutamento />} />
             <Route path="rh/recrutamento/acompanhar-experiencia" element={<Navigate to="/app/rh/recrutamento/acompanhar-colaboradores?situacao=experiencia" replace />} />
@@ -841,6 +931,8 @@ const App = () => (
             <Route path="rh/ferias" element={<Ferias />} />
             <Route path="rh/recrutamento" element={<Recrutamento />} />
             <Route path="rh/solicitacoes-demissao" element={<RhSolicitacoesDemissao />} />
+            {/* Rescisões — a planilha do RH, dentro de Recursos Humanos (mig 20261022000400). */}
+            <Route path="rh/rescisoes" element={<RhRescisoes />} />
             {/* Conferência de Ponto — Operacional, RH e Financeiro na mesma tela;
                 o que muda é a permissão de cada um (ver conferencia.ts). */}
             <Route path="rh/conferencia-ponto" element={<ConferenciaPonto />} />
@@ -855,6 +947,8 @@ const App = () => (
             <Route path="operacional/efetividade/posto" element={<EfetividadeDetalhePosto />} />
             <Route path="operacional/efetividade/faltas" element={<EfetividadeFaltasCoberturas />} />
             <Route path="operacional/efetividade/historico" element={<EfetividadeHistorico />} />
+            {/* 6ª aba (21/10/2026): o painel mensal dos contratos, mesmo menu ope_efetividade. */}
+            <Route path="operacional/efetividade/mensal" element={<EfetividadeMensal />} />
             <Route path="financeiro/conferencia-ponto" element={<FinanceiroConferenciaPonto />} />
             {/* Dashboard de Pontos (mig 274): a mesma tela do painel do RH, com
                 menu próprio em cada módulo (financeiro_/operacional_dashboard_pontos). */}
@@ -877,6 +971,7 @@ const App = () => (
             {/* Operacional aprova a advertência antes do Jurídico (15/09/2026).
                 Sem menu próprio: cai em operacional_home por prefixo. */}
             <Route path="juridico/candidatos" element={<VerificacaoCandidatos />} />
+            <Route path="juridico/cadastro-restritivo" element={<CadastroRestritivo modulo="juridico" />} />
             <Route path="juridico/duvidas" element={<CentralDuvidas />} />
             {/* Treinamentos */}
             {/* Plataforma de Treinamentos (18/09/2026). "/app/treinamentos" era

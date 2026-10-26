@@ -25,6 +25,8 @@ import {
   useItensNfEmissaoEmLote,
   useRegistrarPagamentoNf,
   useAjustarDescontosPosEmissao,
+  useAjustarCompetenciaNf,
+  competenciaDoMes,
   TIPOS_NOTA,
 } from "@/hooks/useNfEmissao";
 import {
@@ -32,8 +34,9 @@ import {
   ajustarValoresNfConcluida, somaDescontosPosEmissao, AjusteValoresItem,
 } from "@/pages/financeiro/nf-emissao/calculos";
 import {
-  fmtMoney, fmtDate, situacaoEspecial, statusDaNota, pendenteHaMaisDe30Dias, moneyTextContains, valorPendenteNf,
+  fmtMoney, fmtDate, situacaoEspecial, statusDaNota, pendenteHaMaisDeDias, moneyTextContains, valorPendenteNf,
 } from "@/pages/financeiro/nf-emissao/shared";
+import { FiltroPendenciaDias } from "./FiltroPendenciaDias";
 import { ItensNfEditor, ItemForm } from "@/pages/financeiro/nf-emissao/ItensNfEditor";
 import { registrarLogNf } from "@/pages/financeiro/nf-emissao/registrarLogNf";
 import { HistoricoNfPainel } from "@/pages/financeiro/nf-emissao/HistoricoNfPainel";
@@ -124,7 +127,7 @@ export default function NotasConcluidasTab() {
   // filtro por cabeçalho de coluna (funil), não faixa de filtros inline —
   // o usuário achou a faixa inline "estranha" e preferiu o padrão do protótipo.
   const [colFiltros, setColFiltros] = useState<Record<string, string>>({});
-  const [filtroOver30, setFiltroOver30] = useState(false);
+  const [filtroPendDias, setFiltroPendDias] = useState<number | null>(null);
 
   function setColFiltro(chave: string, valor: string) {
     setColFiltros((prev) => {
@@ -175,7 +178,7 @@ export default function NotasConcluidasTab() {
     if (cf.recebido && !moneyTextContains(n.valor_pago ?? 0, cf.recebido)) return false;
     if (cf.contaVinculada && !moneyTextContains(n.desconto_conta_vinculada, cf.contaVinculada)) return false;
     if (cf.status && STATUS_FILTRO_LABEL[statusDaNota(n)] !== cf.status) return false;
-    if (filtroOver30 && !pendenteHaMaisDe30Dias(n)) return false;
+    if (filtroPendDias !== null && !pendenteHaMaisDeDias(n, filtroPendDias)) return false;
     return true;
   }
 
@@ -188,7 +191,7 @@ export default function NotasConcluidasTab() {
         bateBuscaNf(n, termo) &&
         bateColFiltros(n)
     );
-  }, [concluidas, contratoSel, filtroStatus, buscaNf, colFiltros, filtroOver30]);
+  }, [concluidas, contratoSel, filtroStatus, buscaNf, colFiltros, filtroPendDias]);
 
   // Sem contrato selecionado, mas com filtro de status e/ou busca de NF ativos:
   // lista achatada cruzando todos os contratos (ex: "me mostra todas as
@@ -200,7 +203,7 @@ export default function NotasConcluidasTab() {
     return concluidas
       .filter((n) => (filtroStatus === "todos" || statusDaNota(n) === filtroStatus) && bateBuscaNf(n, termo) && bateColFiltros(n))
       .sort((a, b) => b.competencia.localeCompare(a.competencia));
-  }, [concluidas, contratoSel, filtroStatus, buscaNf, colFiltros, filtroOver30]);
+  }, [concluidas, contratoSel, filtroStatus, buscaNf, colFiltros, filtroPendDias]);
 
   const linhasVisiveis = contratoAtual ? nfsDoContrato : nfsFlatFiltradas;
 
@@ -255,7 +258,7 @@ export default function NotasConcluidasTab() {
 
   function limparFiltrosExtras() {
     setColFiltros({});
-    setFiltroOver30(false);
+    setFiltroPendDias(null);
   }
 
   function exportarExcel() {
@@ -383,16 +386,8 @@ export default function NotasConcluidasTab() {
             faixa de filtros inline — só sobra aqui o que não tem coluna
             própria (Pendência >30d) + limpar + exportar. */}
         <div className="border-b border-border px-4 py-2 flex items-center gap-2 flex-wrap text-xs">
-          <button
-            onClick={() => setFiltroOver30((v) => !v)}
-            className={cn(
-              "px-2.5 py-1 rounded-full border font-medium transition-colors",
-              filtroOver30 ? "bg-primary text-primary-foreground border-primary" : "bg-background border-border text-muted-foreground hover:border-primary/50"
-            )}
-          >
-            Pendente há mais de 30 dias
-          </button>
-          {(Object.keys(colFiltros).length > 0 || filtroOver30) && (
+          <FiltroPendenciaDias valor={filtroPendDias} onChange={setFiltroPendDias} />
+          {(Object.keys(colFiltros).length > 0 || filtroPendDias !== null) && (
             <button onClick={limparFiltrosExtras} className="text-muted-foreground hover:text-destructive">Limpar filtros</button>
           )}
           <Button size="sm" variant="outline" className="h-7 ml-auto text-xs" onClick={exportarExcel}>
@@ -578,6 +573,10 @@ function NfPagamentoDialog({ nf, onClose }: { nf: NfEmissaoRow | null; onClose: 
   // SIS-2026-0592: ajustar descontos pós-emissão de NF concluída — mesma ação
   // 'excluir' (Nível D) que o banco exige para mexer em NF concluída.
   const ajustarDescontosPos = useAjustarDescontosPosEmissao();
+  // SIS-2026-0684: ajuste da competência após a emissão (mesma permissão do ajuste de valores)
+  const ajustarCompetencia = useAjustarCompetenciaNf();
+  const [competenciaNova, setCompetenciaNova] = useState("");
+  const [motivoCompetencia, setMotivoCompetencia] = useState("");
   const { can } = usePermissoes();
   const podeAjustarDescontos = can("excluir", "financeiro", "nf-emissao");
   const [modoAjuste, setModoAjuste] = useState(false);
@@ -613,6 +612,8 @@ function NfPagamentoDialog({ nf, onClose }: { nf: NfEmissaoRow | null; onClose: 
     setModoAjuste(false);
     setPosEdit({});
     setMotivoAjuste("");
+    setCompetenciaNova((nf.competencia ?? "").slice(0, 7));
+    setMotivoCompetencia("");
   }, [nf?.id]);
 
   // SIS-2026-0609: sugestão de pagamento = valor a pagar (líquido − conta vinculada −
@@ -776,6 +777,24 @@ function NfPagamentoDialog({ nf, onClose }: { nf: NfEmissaoRow | null; onClose: 
       toast.success("Pagamento registrado.");
     } catch (e: any) {
       toast.error(e.message ?? "Erro ao registrar pagamento.");
+    }
+  }
+
+  async function handleAjustarCompetencia() {
+    if (!nf) return;
+    const nova = competenciaDoMes(competenciaNova);
+    if (!nova) { toast.error("Informe a nova competência (mês/ano)."); return; }
+    if (nova === (nf.competencia ?? "").slice(0, 10)) { toast.error("A nota já está nessa competência."); return; }
+    const motivo = motivoCompetencia.trim();
+    if (motivo.length < 5) { toast.error("Informe o motivo do ajuste (ele fica no histórico da nota)."); return; }
+    const rotulo = (c: string) => new Date(c.slice(0, 10) + "T00:00:00").toLocaleDateString("pt-BR", { month: "2-digit", year: "numeric" });
+    try {
+      await ajustarCompetencia.mutateAsync({ nfId: nf.id, competencia: nova });
+      await registrarLogNf(nf.id, "competencia_ajustada", `Competência ajustada após a emissão: ${rotulo(nf.competencia)} → ${rotulo(nova)} — ${motivo}`);
+      toast.success("Competência da nota atualizada.");
+      setMotivoCompetencia("");
+    } catch (e: any) {
+      toast.error(e.message ?? "Erro ao ajustar a competência da nota.");
     }
   }
 
@@ -1002,6 +1021,27 @@ function NfPagamentoDialog({ nf, onClose }: { nf: NfEmissaoRow | null; onClose: 
                 </Button>
               </div>
             </div>
+            {podeAjustarDescontos && (
+              <div className="space-y-2 border-t pt-3">
+                <div className="text-xs font-semibold">Competência da nota</div>
+                <div className="grid grid-cols-4 gap-3 items-end">
+                  <div>
+                    <Label className="text-xs">Competência</Label>
+                    <Input type="month" value={competenciaNova} onChange={(e) => setCompetenciaNova(e.target.value)} />
+                  </div>
+                  <div className="col-span-2">
+                    <Label className="text-xs">Motivo do ajuste *</Label>
+                    <Input value={motivoCompetencia} onChange={(e) => setMotivoCompetencia(e.target.value)} placeholder="Ex.: nota emitida na competência errada; cliente pediu medição de outro mês." />
+                  </div>
+                  <Button variant="outline" onClick={handleAjustarCompetencia} disabled={ajustarCompetencia.isPending}>
+                    {ajustarCompetencia.isPending ? "Salvando…" : "Ajustar competência"}
+                  </Button>
+                </div>
+                <p className="text-[11px] text-muted-foreground">
+                  Muda o mês em que a nota conta no Relatório de Serviços, no Dashboard e no Controle de Faturamento. Fica registrado no Histórico, com seu nome, a data e o antes/depois.
+                </p>
+              </div>
+            )}
           </section>
         )}
 

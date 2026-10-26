@@ -21,9 +21,10 @@ import { KpiTile } from "@/components/financeiro/KpiTile";
 import { fmtMoney } from "@/pages/financeiro/nf-emissao/shared";
 import { rotuloMes } from "./faturamento/useBaseFaturamento";
 import {
-  DefValidacao, diferenca, STATUS_LABEL, statusGeral, situacaoComparacao, TipoValidacao, valoresMudaramDesdeDecisao, VALIDACOES,
+  DefValidacao, diferenca, linkConciliacao, linksDoCard, STATUS_LABEL, statusGeral, situacaoComparacao, TipoValidacao, valoresMudaramDesdeDecisao, VALIDACOES,
 } from "./auditoria/regras";
 import { EstadoCard, useTotaisAuditoria } from "./auditoria/useTotaisAuditoria";
+import { CorpoCentrosFluxo, CorpoFluxoExtrato, CorpoMaloteFluxo, CorpoOrcadoRealizado, CorpoSemCentro } from "./auditoria/CorposCard";
 import {
   HistoricoRow, useHistoricoPeriodo, useRegistrarAuditoria, useResponsaveisAuditoria, useSalvarResponsaveis, useValidacoesPeriodo, ValidacaoRow,
 } from "./auditoria/useAuditoriaValidacoes";
@@ -59,17 +60,21 @@ export default function AuditoriaControladoria() {
   const [mes, setMes] = useState(() => mesesRecentes()[1]); // mês fechado mais recente
   const [empresaId, setEmpresaId] = useState(TODOS);
   const [contratoId, setContratoId] = useState(TODOS);
+  // SIS-2026-0701: o mês pode ser lido pela data de pagamento (confere o pagamento) ou pela competência (lucratividade dos contratos).
+  const [base, setBase] = useState<"pagamento" | "competencia">("pagamento");
 
   const { data: empresas = [] } = useEmpresasGrupo();
   const { data: contratos = [] } = useContratosERP({ todasEmpresas: true });
 
   const empresa = empresaId === TODOS ? null : empresaId;
   const filtros = useMemo(
-    () => ({ mes, empresaId: empresa, contratoId: contratoId === TODOS ? null : contratoId }),
-    [mes, empresa, contratoId]
+    () => ({ mes, empresaId: empresa, contratoId: contratoId === TODOS ? null : contratoId, base }),
+    [mes, empresa, contratoId, base]
   );
   // Aprovar/rejeitar só com o recorte completo do período + empresa.
-  const recorteParcial = !!filtros.contratoId;
+  // A aprovação é registrada por mês de PAGAMENTO; a visão por competência é só para conferir, não decide.
+  const porCompetencia = base === "competencia";
+  const recorteParcial = !!filtros.contratoId || porCompetencia;
 
   const totais = useTotaisAuditoria(filtros);
   const { data: validacoes = [] } = useValidacoesPeriodo(mes, empresa);
@@ -123,6 +128,9 @@ export default function AuditoriaControladoria() {
     { nome: "Rejeitadas", valor: geral.rejeitadas, cor: "#dc2626" },
   ];
   const resumo = (tipo: TipoValidacao) => totais[tipo].totais;
+  // SIS-2026-0701: o total do Fluxo é o do mês inteiro (todos os bancos, igual à tela do Fluxo); só sem a ponte cai no recorte da conciliação.
+  const painelFluxo = resumo("fluxo_extrato")?.painel;
+  const fluxoTotalDoMes = painelFluxo?.kind === "fluxo_extrato" ? (painelFluxo.ponte?.total.movimentado ?? painelFluxo.fluxo.movimentado) : resumo("fluxo_extrato")?.a;
 
   return (
     <div className="space-y-6">
@@ -144,6 +152,13 @@ export default function AuditoriaControladoria() {
           <SelectTrigger className="h-8 w-[110px] text-xs"><SelectValue /></SelectTrigger>
           <SelectContent>{mesesRecentes().map((m) => <SelectItem key={m} value={m}>{rotuloMes(m)}</SelectItem>)}</SelectContent>
         </Select>
+        <Select value={base} onValueChange={(v) => setBase(v as "pagamento" | "competencia")}>
+          <SelectTrigger className="h-8 w-[170px] text-xs" title="Como o mês é lido"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="pagamento">Data de pagamento</SelectItem>
+            <SelectItem value="competencia">Competência</SelectItem>
+          </SelectContent>
+        </Select>
         <Select value={empresaId} onValueChange={(v) => { setEmpresaId(v); setContratoId(TODOS); }}>
           <SelectTrigger className="h-8 w-[200px] text-xs"><SelectValue placeholder="Empresa" /></SelectTrigger>
           <SelectContent>
@@ -158,29 +173,36 @@ export default function AuditoriaControladoria() {
             {contratos.filter((c) => !empresa || c.empresa_id === empresa).sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR")).map((c) => <SelectItem key={c.id} value={c.id}>{c.nome}</SelectItem>)}
           </SelectContent>
         </Select>
-        <Button variant="ghost" size="sm" className="h-8 text-xs" onClick={() => { setEmpresaId(TODOS); setContratoId(TODOS); }}>Limpar filtros</Button>
+        <Button variant="ghost" size="sm" className="h-8 text-xs" onClick={() => { setEmpresaId(TODOS); setContratoId(TODOS); setBase("pagamento"); }}>Limpar filtros</Button>
       </div>
 
       {recorteParcial && (
         <Alert>
           <AlertTriangle className="h-4 w-4" />
-          <AlertDescription>Com filtro de contrato você vê um recorte. Aprovar e rejeitar valem para o período inteiro da empresa — limpe o filtro para decidir.</AlertDescription>
+          <AlertDescription>
+            {porCompetencia
+              ? "Visão por competência: serve para conferir os valores de lucratividade. Aprovar e rejeitar valem para o mês de pagamento — volte para Data de pagamento para decidir."
+              : "Com filtro de contrato você vê um recorte. Aprovar e rejeitar valem para o período inteiro da empresa — limpe o filtro para decidir."}
+          </AlertDescription>
         </Alert>
       )}
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
         <KpiTile label="Total do Malote (período)" valor={kpi(resumo("malote_fluxo")?.a)} icon={<FileText />} cor="sky" />
-        <KpiTile label="Total do Fluxo de Caixa" valor={kpi(resumo("fluxo_extrato")?.a)} icon={<Banknote />} cor="emerald" />
-        <KpiTile label="Total conciliado no Extrato" valor={resumo("fluxo_extrato")?.indisponivel ? "—" : kpi(resumo("fluxo_extrato")?.b)} sub={resumo("fluxo_extrato")?.indisponivel ? "Sem conciliação salva no mês" : undefined} icon={<Landmark />} cor="amber" />
-        <KpiTile label="Gastos por Centro de Custo" valor={kpi(resumo("centros_malote")?.b)} sub="Contratos + administrativo" icon={<PiggyBank />} cor="slate" />
+        <KpiTile label="Total do Fluxo de Caixa" valor={kpi(fluxoTotalDoMes)} icon={<Banknote />} cor="emerald" />
+        <KpiTile label="Total conciliado no Extrato" valor={resumo("fluxo_extrato")?.indisponivel ? "—" : kpi(resumo("fluxo_extrato")?.b)} sub={resumo("fluxo_extrato")?.indisponivel ? (porCompetencia ? "Extrato é por data de pagamento" : "Sem conciliação salva no mês") : undefined} icon={<Landmark />} cor="amber" />
+        <KpiTile label="Gastos por Centro de Custo" valor={kpi(resumo("centros_malote")?.b)} sub="Contratos + administrativo + sócios" icon={<PiggyBank />} cor="slate" />
         <KpiTile label="Total Orçado" valor={kpi(resumo("orcado_realizado")?.a)} icon={<Target />} cor="sky" />
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
-        {VALIDACOES.map((def) => (
+      {[VALIDACOES.slice(0, 4), VALIDACOES.slice(4)].map((grupo, g) => (
+      <div key={g} className={cn("grid grid-cols-1 gap-4", g === 0 ? "lg:grid-cols-2" : "lg:grid-cols-4")}>
+        {grupo.map((def) => (
           <CardValidacao
             key={def.tipo}
             def={def}
+            mes={mes}
+            empresaId={empresa}
             estado={totais[def.tipo]}
             validacao={porTipo.get(def.tipo)}
             podeAprovar={podeAprovar && !recorteParcial}
@@ -194,6 +216,7 @@ export default function AuditoriaControladoria() {
           />
         ))}
       </div>
+      ))}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <Card>
@@ -281,6 +304,8 @@ export default function AuditoriaControladoria() {
 
 function CardValidacao(props: {
   def: DefValidacao;
+  mes: string;
+  empresaId: string | null;
   estado: EstadoCard;
   validacao?: ValidacaoRow;
   podeAprovar: boolean;
@@ -299,23 +324,51 @@ function CardValidacao(props: {
   const dif = t && !indisponivel ? diferenca(t) : null;
   const situacao = t && !indisponivel ? situacaoComparacao(def, t) : null;
   const mudou = status === "aprovado" && t ? valoresMudaramDesdeDecisao(validacao?.valores, t) : false;
+  // SIS-2026-0657: cards 1 a 4 mostram de onde vem o valor (Malote, Fluxo, Conciliação, Orçamento...).
+  // SIS-2026-0720: no card 2 a Conciliação abre já na competência e na empresa da auditoria, com os valores que o card mostra.
+  const links = linksDoCard(def.tipo, props.mes, props.empresaId).map((l) =>
+    l.rotulo === "Conciliação Bancária" && t?.painel?.kind === "fluxo_extrato" ? { ...l, to: linkConciliacao(props.mes, props.empresaId, t.painel) } : l
+  );
+  const link = (rotulo: string) => links.find((l) => l.rotulo === rotulo) ?? { rotulo, to: def.link };
 
   return (
     <Card className={cn("flex flex-col", props.className)}>
       <CardHeader className="pb-2">
         <div className="flex items-start gap-2">
           <span className="h-6 w-6 shrink-0 rounded bg-slate-900 text-white text-xs font-bold flex items-center justify-center dark:bg-slate-100 dark:text-slate-900">{def.numero}</span>
-          <CardTitle className="text-sm font-semibold leading-snug flex-1">{def.titulo}</CardTitle>
-          <Link to={def.link} className="text-[11px] text-primary whitespace-nowrap hover:underline inline-flex items-center gap-0.5">
-            {def.linkRotulo}<ArrowRight className="h-3 w-3" />
-          </Link>
+          <CardTitle className="text-sm font-semibold leading-snug flex-1">
+            {def.tipo === "fluxo_extrato" ? (
+              <Link to={link("Conciliação Bancária").to} className="hover:underline" title="Abrir a Conciliação Bancária com os valores desta auditoria">{def.titulo}</Link>
+            ) : def.titulo}
+          </CardTitle>
+          {links.length === 0 && (
+            <Link to={def.link} className="text-[11px] text-primary whitespace-nowrap hover:underline inline-flex items-center gap-0.5">
+              {def.linkRotulo}<ArrowRight className="h-3 w-3" />
+            </Link>
+          )}
         </div>
+        {links.length > 0 && (
+          <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 pl-8 text-[11px]">
+            <span className="text-muted-foreground">Ver origem:</span>
+            {links.map((l) => (
+              <Link key={l.rotulo} to={l.to} className="text-primary hover:underline inline-flex items-center gap-0.5">{l.rotulo}<ArrowRight className="h-3 w-3" /></Link>
+            ))}
+          </div>
+        )}
       </CardHeader>
       <CardContent className="flex-1 flex flex-col gap-3">
         {estado.erro ? (
           <p className="text-xs text-red-600">Não foi possível calcular: {estado.erro}</p>
         ) : estado.carregando || !t ? (
           <p className="text-xs text-muted-foreground py-6 text-center">Calculando...</p>
+        ) : t.painel?.kind === "malote_fluxo" ? (
+          <CorpoMaloteFluxo p={t.painel} t={t} situacao={situacao} linkMalote={link("Malote")} linkFluxo={link("Fluxo de Caixa")} />
+        ) : t.painel?.kind === "fluxo_extrato" ? (
+          <CorpoFluxoExtrato p={t.painel} situacao={situacao} semDados={!!indisponivel} links={{ malote: link("Malote"), fluxo: link("Fluxo de Caixa"), banco: link("Conciliação Bancária") }} />
+        ) : t.painel?.kind === "centros_fluxo" ? (
+          <CorpoCentrosFluxo p={t.painel} mes={props.mes} empresaId={props.empresaId} />
+        ) : t.painel?.kind === "orcado_realizado" ? (
+          <CorpoOrcadoRealizado p={t.painel} t={t} />
         ) : (
           <>
             <div className="grid grid-cols-2 gap-2 text-center">
@@ -327,7 +380,7 @@ function CardValidacao(props: {
                 <Construction className="h-3.5 w-3.5 shrink-0 mt-0.5" /><span>{indisponivel}</span>
               </p>
             )}
-            {!indisponivel && <ResponsiveContainer width="100%" height={70}>
+            {!indisponivel && def.tipo !== "centros_malote" && <ResponsiveContainer width="100%" height={70}>
               <BarChart data={[{ n: def.rotuloA, v: Math.abs(t.a) }, { n: def.rotuloB, v: Math.abs(t.b) }]} layout="vertical" margin={{ left: 0, right: 8, top: 0, bottom: 0 }}>
                 <XAxis type="number" hide />
                 <YAxis type="category" dataKey="n" hide />
@@ -349,6 +402,7 @@ function CardValidacao(props: {
                 ))}
               </ul>
             )}
+            {t.painel?.kind === "centros" && <CorpoSemCentro pendentes={t.painel.pendentes} linkFluxo={link("Lançamentos financeiros").to} />}
             {t.aviso && <p className="text-[11px] text-muted-foreground">{t.aviso}</p>}
           </>
         )}

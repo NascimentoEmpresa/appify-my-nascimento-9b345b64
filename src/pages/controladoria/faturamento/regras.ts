@@ -6,8 +6,8 @@
 //     fora de rascunho/enviada e de cancelada/substituída — mesmo recorte do
 //     Controle de Faturamento (SIS-0562). Mês = competência da nota.
 //   • Executável = planilha_custo (por contrato/mês), calculado na tela.
-//   • Custo realizado = saídas do Fluxo de Caixa (regime de CAIXA: mês da
-//     data de pagamento), com contrato e classificação. Transferência entre
+//   • Custo realizado = saídas do Fluxo de Caixa (mês da COMPETÊNCIA do
+//     lançamento; SIS-2026-0708), com contrato e classificação. Transferência entre
 //     contas, aplicação financeira, empréstimo etc. NÃO são custo.
 import { foraDoRelatorio, naoContabilizaKpi, statusDaNota } from "@/pages/financeiro/nf-emissao/shared";
 
@@ -43,6 +43,7 @@ const NAO_CUSTO = [
   "DISTRIBUICAO",
 ];
 
+
 // Ligação manual feita no painel "Rubricas de custo" da Lucratividade: além das
 // 8 colunas, "nao_custo" tira a classificação do cálculo.
 export type RubricaLigacao = RubricaCusto | "nao_custo";
@@ -70,13 +71,41 @@ export function rubricaDeCusto(classificacaoNome: string | null | undefined): Ru
   return "outras";
 }
 
+// SIS-2026-0721: como a despesa do Fluxo de Caixa entra no mês nos relatórios de Faturamento, Lucratividade e Fechamento: pela COMPETÊNCIA do
+// lançamento (padrão, SIS-2026-0708) ou pela DATA DE PAGAMENTO (movimentação do Fluxo). As três telas leem a mesma base.
+export type BaseDespesa = "competencia" | "pagamento";
+export const ROTULO_BASE: Record<BaseDespesa, string> = { competencia: "Competência", pagamento: "Data de pagamento" };
+
 export interface LinhaFluxoCusto {
   tipo: "entrada" | "saida";
   data_pagamento: string | null;
+  // SIS-2026-0721: mês ("YYYY-MM") em que a despesa conta, já resolvido pela base escolhida na leitura. Sem ele, vale a regra da competência.
+  mes_base?: string | null;
+  // SIS-2026-0708: as despesas entram no mês da COMPETÊNCIA (dia 01), não no do pagamento. Sem competência na linha, vale o pagamento.
+  competencia?: string | null;
   contrato_id: string | null;
   classificacao_id?: string | null;
   classificacao_nome: string | null;
   valor: number;
+  // SIS-2026-0642: o Fechamento filtra as despesas administrativas por empresa.
+  empresa_id?: string | null;
+  // SIS-2026-0641: só para o modal "como é formado" listar o lançamento (ID e descrição do Fluxo).
+  id_malote?: string | null;
+  descricao?: string | null;
+}
+
+// SIS-2026-0708: mês ("YYYY-MM") em que a despesa conta nos relatórios de Faturamento, Lucratividade e Fechamento: a competência;
+// sem ela (linha antiga ou sem competência informada), o mês do pagamento.
+export function mesDoCusto(l: Pick<LinhaFluxoCusto, "competencia" | "data_pagamento"> & { mes_base?: string | null }): string | null {
+  if (l.mes_base) return l.mes_base;
+  const data = l.competencia || l.data_pagamento;
+  return data ? data.slice(0, 7) : null;
+}
+
+// Mês da despesa na base escolhida: pagamento = o mês do pagamento; competência = a competência (sem ela, o pagamento).
+export function mesDaDespesaNaBase(l: Pick<LinhaFluxoCusto, "competencia" | "data_pagamento">, base: BaseDespesa): string | null {
+  const data = base === "pagamento" ? l.data_pagamento : l.competencia || l.data_pagamento;
+  return data ? data.slice(0, 7) : null;
 }
 
 // Rubrica final da linha: a ligação manual da classificação vale primeiro; sem
@@ -85,6 +114,22 @@ export function rubricaDaLinha(l: Pick<LinhaFluxoCusto, "classificacao_id" | "cl
   const manual = l.classificacao_id ? ligacoes?.get(l.classificacao_id) : undefined;
   if (manual) return manual === "nao_custo" ? null : manual;
   return rubricaDeCusto(l.classificacao_nome);
+}
+
+// Contrato administrativo ("ADMINISTRATIVO - HAGG", "ADMINISTRATIVO - CANAA"...): é centro de custo da empresa, não contrato de cliente.
+// A Lucratividade de Contratos não o mostra nem o soma (o custo administrativo é visto no Fechamento da Empresa). Casa pelo INÍCIO do
+// nome, sem acento e sem caixa, para não pegar contrato de cliente que só cita "administrativo" no meio do nome.
+export function ehContratoAdministrativo(nome: string | null | undefined): boolean {
+  const n = (nome ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim().toUpperCase();
+  return n.startsWith("ADMINISTRATIVO");
+}
+
+// SIS-2026-0709 / SIS-2026-0717: despesa de sócio = TODA saída lançada no contrato "ADMINISTRATIVO SÓCIOS - nome", seja qual for a
+// classificação (financiamento, distribuição de lucros, cartão, transferência, linha sem classificação…). A Controladoria quer ver o valor
+// inteiro do sócio no Fechamento; antes, classificações de "movimentação interna" (ex.: FINANCIAMENTOS, R$ 19.449,72 da Helena em jan/26)
+// ficavam de fora e o total não batia com o Fluxo de Caixa. Os parâmetros de classificação ficam só por compatibilidade com os chamadores.
+export function ehDespesaDeSocio(l: Pick<LinhaFluxoCusto, "tipo"> & Partial<Pick<LinhaFluxoCusto, "classificacao_id" | "classificacao_nome">>, _ligacoes?: LigacoesRubrica): boolean {
+  return l.tipo === "saida";
 }
 
 // Saídas de contrato sem classificação: ficam fora de qualquer coluna, mas
@@ -113,10 +158,11 @@ export function totalCustos(c: CustosPorRubrica): number {
 export function custosPorContratoMes(linhas: LinhaFluxoCusto[], ligacoes?: LigacoesRubrica): Map<string, CustosPorRubrica> {
   const mapa = new Map<string, CustosPorRubrica>();
   for (const l of linhas) {
-    if (l.tipo !== "saida" || !l.contrato_id || !l.data_pagamento) continue;
+    const mes = mesDoCusto(l);
+    if (l.tipo !== "saida" || !l.contrato_id || !mes) continue;
     const rubrica = rubricaDaLinha(l, ligacoes);
     if (!rubrica) continue;
-    const chave = `${l.contrato_id}|${l.data_pagamento.slice(0, 7)}`;
+    const chave = `${l.contrato_id}|${mes}`;
     const atual = mapa.get(chave) ?? custosVazios();
     atual[rubrica] += l.valor || 0;
     mapa.set(chave, atual);
@@ -142,8 +188,16 @@ export interface NfFaturamento {
 }
 
 // Nota que conta no faturamento: Código N, já validada, nem cancelada nem substituída.
-export function contaNoFaturamento(n: Pick<NfFaturamento, "tipo_nota" | "status" | "situacao_site_pmt" | "situacao_dominio">): boolean {
-  return n.tipo_nota === "N" && !foraDoRelatorio(n) && !naoContabilizaKpi(n);
+// Sem `codigos`, só o Código N (como sempre). As telas com o filtro "Código" passam os códigos escolhidos.
+export function contaNoFaturamento(n: Pick<NfFaturamento, "tipo_nota" | "status" | "situacao_site_pmt" | "situacao_dominio">, codigos?: readonly string[]): boolean {
+  const codigoOk = codigos ? codigos.includes(n.tipo_nota) : n.tipo_nota === "N";
+  return codigoOk && !foraDoRelatorio(n) && !naoContabilizaKpi(n);
+}
+
+// A nota não está cancelada nem substituída e conta nos KPIs, QUALQUER que seja o código. Quem recebe notas já filtradas por código
+// (useBaseFaturamento) usa esta, para não derrubar os códigos que o filtro escolheu.
+export function notaValidaNoFaturamento(n: Pick<NfFaturamento, "status" | "situacao_site_pmt" | "situacao_dominio">): boolean {
+  return !foraDoRelatorio(n) && !naoContabilizaKpi(n);
 }
 
 export interface TotaisFaturamento {
@@ -152,11 +206,15 @@ export interface TotaisFaturamento {
   descontos: number;
   recebido: number;
   aReceber: number;
+  // SIS-2026-0641: desconto de conta vinculada retido na nota (não entra em dinheiro) e descontos depois da NF
+  // (multas/glosas/outros pós-emissão); são o que separa Líquido − Recebido do A Receber.
+  contaVinculada: number;
+  posEmissao: number;
   notas: number;
 }
 
 export function totaisVazios(): TotaisFaturamento {
-  return { bruto: 0, liquido: 0, descontos: 0, recebido: 0, aReceber: 0, notas: 0 };
+  return { bruto: 0, liquido: 0, descontos: 0, recebido: 0, aReceber: 0, contaVinculada: 0, posEmissao: 0, notas: 0 };
 }
 
 // "A receber": o que falta entrar da nota. SIS-2026-0609: o líquido NÃO embute os
@@ -174,15 +232,65 @@ export function somarNf(t: TotaisFaturamento, n: NfFaturamento): TotaisFaturamen
   t.descontos += (n.vlr_bruto_total || 0) - (n.vlr_liquido_total || 0);
   t.recebido += n.valor_pago ?? 0;
   t.aReceber += aReceberDaNf(n);
+  t.contaVinculada += n.desconto_conta_vinculada || 0;
+  t.posEmissao += n.descontos_pos_emissao_total || 0;
   t.notas += 1;
   return t;
+}
+
+// SIS-2026-0641: a conta do A Receber, para quem confere "Líquido − Recebido" e não chega no saldo.
+//   Líquido − Recebido − Conta vinculada − Descontos depois da NF − Diferença em notas já baixadas = A Receber
+// A "diferença em notas já baixadas" é o resto: nota paga (com data de pagamento) não tem saldo mesmo que o valor
+// pago não feche com o devido (pago a menos = positivo; pago a mais = negativo).
+export interface PonteAReceber {
+  liquido: number;
+  recebido: number;
+  contaVinculada: number;
+  posEmissao: number;
+  diferencaBaixadas: number;
+  aReceber: number;
+}
+
+export function ponteAReceber(t: TotaisFaturamento): PonteAReceber {
+  const r2 = (v: number) => Math.round(v * 100) / 100;
+  return {
+    liquido: r2(t.liquido),
+    recebido: r2(t.recebido),
+    contaVinculada: r2(t.contaVinculada),
+    posEmissao: r2(t.posEmissao),
+    diferencaBaixadas: r2(t.liquido - t.recebido - t.contaVinculada - t.posEmissao - t.aReceber),
+    aReceber: r2(t.aReceber),
+  };
+}
+
+// SIS-2026-0641: contrato SEM planilha de custo (ex.: contrato novo vindo da licitação, ainda sem planilha) ficava com
+// executável zero e a diferença para o faturado não aparecia. Nesse caso vale o "Valor Executado Mensal" digitado
+// no cadastro do contrato, a partir do mês de início da vigência. Quem tem planilha continua pela planilha.
+export function executavelSemPlanilha(
+  c: { valor_executado_mensal?: number | null; vigencia_inicial?: string | null; data_inicio?: string | null },
+  anoMes: string,
+): number {
+  const valor = Number(c.valor_executado_mensal) || 0;
+  if (valor <= 0) return 0;
+  const inicio = (c.vigencia_inicial || c.data_inicio || "").slice(0, 7);
+  if (inicio && anoMes < inicio) return 0;
+  return valor;
+}
+
+// Notas que ainda têm saldo a receber, do maior para o menor.
+export function notasComSaldo<T extends NfFaturamento>(nfs: T[]): { nf: T; saldo: number }[] {
+  return nfs
+    .filter(notaValidaNoFaturamento)
+    .map((nf) => ({ nf, saldo: aReceberDaNf(nf) }))
+    .filter((x) => x.saldo > 0.005)
+    .sort((a, b) => b.saldo - a.saldo);
 }
 
 // Agrupa as NFs que contam por uma chave qualquer (mês, contrato, cliente...).
 export function agruparFaturamento<T extends NfFaturamento>(nfs: T[], chaveDe: (n: T) => string | null): Map<string, TotaisFaturamento> {
   const mapa = new Map<string, TotaisFaturamento>();
   for (const n of nfs) {
-    if (!contaNoFaturamento(n)) continue;
+    if (!notaValidaNoFaturamento(n)) continue;
     const chave = chaveDe(n);
     if (chave === null) continue;
     mapa.set(chave, somarNf(mapa.get(chave) ?? totaisVazios(), n));

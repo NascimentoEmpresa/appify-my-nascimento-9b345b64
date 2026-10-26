@@ -3,6 +3,9 @@ import { supabase } from "@/integrations/supabase/client";
 import type { RelatorioDados, RelatorioGeralDados } from "@/pages/relatorios/sistemas";
 import type { PainelTurnover, RescisoesTurnover } from "@/lib/diretoria/turnover";
 import type { DetalheVaga, PainelVagas } from "@/lib/relatorios/vagasPainel";
+import type { MovRecrutadores } from "@/lib/relatorios/recrutadoresPainel";
+import type { DadosCustoFaltas } from "@/lib/relatorios/custoFaltas";
+import type { VariacaoEfetivo } from "@/lib/diretoria/variacaoEfetivo";
 
 // =====================================================================
 // Diretoria › Relatórios — acesso a dados (mig 20261005000006).
@@ -74,6 +77,19 @@ export function useTurnoverPainel(f: { ano: number; meses: number[] | null; cont
   });
 }
 
+/** Aba "Variação de Efetivo" (mig 20261025000010): previsto × trabalhando × movimentos, por empresa › contrato › mês. */
+export function useVariacaoEfetivo(ano: number, ativo: boolean) {
+  return useQuery({
+    queryKey: [CHAVE, "turnover-variacao-efetivo", ano], enabled: ativo,
+    staleTime: 5 * 60_000,
+    queryFn: async (): Promise<VariacaoEfetivo> => {
+      const { data, error } = await sb.rpc("dir_turnover_variacao_efetivo", { _ano: ano });
+      if (error) throw error;
+      return { ano, meses: [], empresas: [], ...(data ?? {}) } as VariacaoEfetivo;
+    },
+  });
+}
+
 /** Aba "Turnover em Valores" — por enquanto quantidades e perfil das rescisões (mig 20261007000006). */
 export function useTurnoverRescisoes(f: { ano: number; meses: number[] | null; contrato: string | null }, ativo: boolean) {
   return useQuery({
@@ -122,6 +138,26 @@ export function useVagasPainel(f: FiltroRelatorio) {
   });
 }
 
+/**
+ * Vagas — DASHBOARD - RECRUTADORES (mig 20261021000150): as movimentações do
+ * histórico (papel Recrutamento) por vaga × quem fez × dia × tipo. Só carrega
+ * com a aba aberta; os filtros são os mesmos do painel.
+ */
+export function useVagasRecrutadoresMov(f: FiltroRelatorio, ativo = true) {
+  return useQuery({
+    queryKey: [CHAVE, "vagas-recrutadores-mov", ...chaveFiltro(f)],
+    enabled: ativo,
+    staleTime: 5 * 60_000,
+    placeholderData: (anterior) => anterior,
+    retry: false,
+    queryFn: async (): Promise<MovRecrutadores> => {
+      const { data, error } = await sb.rpc("dir_vagas_recrutadores_mov", argsFiltro(f));
+      if (error) throw error;
+      return data as MovRecrutadores;
+    },
+  });
+}
+
 /** Detalhe de uma vaga: trilha completa e candidatos. */
 export function useVagaDetalhe(id: number | null) {
   return useQuery({
@@ -132,6 +168,24 @@ export function useVagaDetalhe(id: number | null) {
       const { data, error } = await sb.rpc("dir_vagas_detalhe", { _id: id });
       if (error) throw error;
       return data as DetalheVaga;
+    },
+  });
+}
+
+/**
+ * Custo das Faltas por Contrato (mig 20261021000060): as notas do período
+ * (competência), com a soma do campo Faltas dos itens. Traz o período
+ * inteiro uma vez; contrato, empresa, tipo e situação filtram no cliente.
+ */
+export function useCustoFaltas(de: string, ate: string) {
+  return useQuery({
+    queryKey: [CHAVE, "custo-faltas", de, ate],
+    staleTime: 5 * 60_000,
+    placeholderData: (anterior) => anterior,
+    queryFn: async (): Promise<DadosCustoFaltas> => {
+      const { data, error } = await sb.rpc("dir_rel_custo_faltas", { _de: de, _ate: ate });
+      if (error) throw error;
+      return data as DadosCustoFaltas;
     },
   });
 }

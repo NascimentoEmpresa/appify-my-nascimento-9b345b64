@@ -1,4 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { DndContext, type DragEndEvent, PointerSensor, closestCenter, useSensor, useSensors } from "@dnd-kit/core";
+import { SortableContext, useSortable, verticalListSortingStrategy, arrayMove } from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 import { useNavigate } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
@@ -21,7 +24,8 @@ import {
   DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem,
 } from "@/components/ui/dropdown-menu";
 import { PieChart, Pie, Cell, ResponsiveContainer } from "recharts";
-import { ClipboardList, Clock, Users, CheckCircle2, AlertTriangle, ShieldAlert, MoreHorizontal, ChevronLeft, ChevronRight, Eye, UserCog, Trash2, RotateCcw, Info, MessageSquareQuote, GraduationCap } from "lucide-react";
+import { ClipboardList, Clock, Users, CheckCircle2, AlertTriangle, ShieldAlert, MoreHorizontal, ChevronLeft, ChevronRight, Eye, UserCog, Trash2, RotateCcw, Info, MessageSquareQuote, GraduationCap, UserCheck, ListOrdered, GripVertical } from "lucide-react";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { FeedAtualizacoes } from "./FeedAtualizacoes";
 import { ExcluirChamadoDialog } from "./ExcluirChamadoDialog";
 import { ReabrirChamadoDialog } from "./ReabrirChamadoDialog";
@@ -31,6 +35,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import {
   StatCard, StatusBadge, PrioridadeBadge, STATUS_CHAMADO, PRIORIDADES, CATEGORIAS, labelDe, moduloLabel, iniciais, Estrelas, fmtData, fmtDataHora,
   chamadoAtivo, podeReabrirChamado, posicoesFilaGlobal, posicoesFilaDev, CRITERIOS_AVALIACAO, mediaAvaliacao, type Chamado,
+  CRITERIOS_AVALIACAO_SOLICITANTE, type CriterioSolicitanteKey,
 } from "./types";
 
 const POR_PAGINA = 8;
@@ -78,6 +83,35 @@ const DONUT = {
   reprovado: "hsl(var(--destructive))", cancelado: "hsl(var(--muted-foreground))",
 };
 
+const CHAVE_FILTROS_PAINEL = "painel-distribuicao:filtros";
+type FiltrosPainel = Partial<{ aba: string; busca: string; fCategoria: string; fPrioridade: string; fResponsavel: string; fDe: string; fAte: string; pagina: number }>;
+function lerFiltrosPainel(): FiltrosPainel {
+  try { return JSON.parse(sessionStorage.getItem(CHAVE_FILTROS_PAINEL) ?? "{}") as FiltrosPainel; } catch { return {}; }
+}
+
+// Abas de chamados ATIVOS: aqui a ordem é a da fila de cada desenvolvedor
+// (posicao_dev), e com um responsável escolhido dá pra arrastar (20/10/2026).
+const ABAS_FILA_DEV = ["em_andamento", "aberto", "aguardando_retorno"];
+
+/** Linha da tabela que pode ser arrastada (mesmo dnd-kit da tela de Coordenar). */
+function LinhaArrastavel({ id, habilitado, className, onClick, children }: {
+  id: string; habilitado: boolean; className?: string; onClick?: () => void;
+  children: (alca: React.ReactNode) => React.ReactNode;
+}) {
+  const s = useSortable({ id, disabled: !habilitado });
+  const style: React.CSSProperties = {
+    transform: CSS.Transform.toString(s.transform), transition: s.transition,
+    opacity: s.isDragging ? 0.6 : 1, position: "relative", zIndex: s.isDragging ? 10 : undefined,
+  };
+  const alca = habilitado ? (
+    <button type="button" {...s.attributes} {...s.listeners} onClick={(e) => e.stopPropagation()}
+      className="cursor-grab rounded p-0.5 text-muted-foreground hover:bg-muted active:cursor-grabbing" title="Arraste para mudar a ordem na fila do desenvolvedor">
+      <GripVertical className="h-4 w-4" />
+    </button>
+  ) : null;
+  return <TableRow ref={s.setNodeRef} style={style} className={className} onClick={onClick}>{children(alca)}</TableRow>;
+}
+
 export default function PainelDistribuicao() {
   const nav = useNavigate();
   const qc = useQueryClient();
@@ -85,14 +119,22 @@ export default function PainelDistribuicao() {
   const { user } = useAuth();
   const { gestor, canCoordenar, canAprovar, canDev, canExcluir } = useChamadoPerms();
 
-  const [aba, setAba] = useState<string>("fila");
-  const [busca, setBusca] = useState("");
-  const [fCategoria, setFCategoria] = useState("todas");
-  const [fPrioridade, setFPrioridade] = useState("todas");
-  const [fResponsavel, setFResponsavel] = useState("todos");
-  const [fDe, setFDe] = useState("");
-  const [fAte, setFAte] = useState("");
-  const [pagina, setPagina] = useState(1);
+  // Filtros LEMBRADOS (20/10/2026): abrir um chamado e voltar zerava tudo —
+  // aba, responsável, busca… Ficam na sessão do navegador (some ao fechar a aba).
+  const salvos = useMemo(() => lerFiltrosPainel(), []);
+  const [aba, setAba] = useState<string>(salvos.aba ?? "fila");
+  const [busca, setBusca] = useState(salvos.busca ?? "");
+  const [fCategoria, setFCategoria] = useState(salvos.fCategoria ?? "todas");
+  const [fPrioridade, setFPrioridade] = useState(salvos.fPrioridade ?? "todas");
+  const [fResponsavel, setFResponsavel] = useState(salvos.fResponsavel ?? "todos");
+  const [fDe, setFDe] = useState(salvos.fDe ?? "");
+  const [fAte, setFAte] = useState(salvos.fAte ?? "");
+  const [pagina, setPagina] = useState(salvos.pagina ?? 1);
+  useEffect(() => {
+    try {
+      sessionStorage.setItem(CHAVE_FILTROS_PAINEL, JSON.stringify({ aba, busca, fCategoria, fPrioridade, fResponsavel, fDe, fAte, pagina }));
+    } catch { /* sessão indisponível: só não lembra */ }
+  }, [aba, busca, fCategoria, fPrioridade, fResponsavel, fDe, fAte, pagina]);
   const [atribChamado, setAtribChamado] = useState<string | null>(null);
   const [atribDev, setAtribDev] = useState<string | null>(null);
   const [excluir, setExcluir] = useState<{ id: string; numero: string } | null>(null);
@@ -102,6 +144,7 @@ export default function PainelDistribuicao() {
   const [fAvaliado, setFAvaliado] = useState("todos");
   const [paginaAval, setPaginaAval] = useState(1);
   const [enviarTreino, setEnviarTreino] = useState<{ chamado: Chamado; v: ValidacaoChamado } | null>(null);
+  const [abaInferior, setAbaInferior] = useState("fila");
 
   const { data: usuarios = [] } = useQuery({
     queryKey: ["chamados-usuarios"],
@@ -155,6 +198,20 @@ export default function PainelDistribuicao() {
     queryFn: async () => {
       const { data } = await (supabase as any).rpc("chamados_avaliacoes_detalhe");
       return (data ?? []) as AvaliacaoDetalhe[];
+    },
+  });
+
+  // O outro lado: como os devs avaliaram quem pediu (mig 20261020000070).
+  // A RPC só devolve linhas para a gestão.
+  const { data: rankingSolicitantes = [] } = useQuery({
+    queryKey: ["chamados-ranking-solicitantes"],
+    enabled: gestor,
+    queryFn: async () => {
+      const { data } = await (supabase as any).rpc("chamados_ranking_solicitantes");
+      const linhas = (data ?? []) as Array<Record<CriterioSolicitanteKey, number> & {
+        avaliado_id: string; nome: string; setor: string | null; avaliacoes: number; media: number; ultimo_comentario: string | null;
+      }>;
+      return [...linhas].sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"));
     },
   });
 
@@ -251,6 +308,20 @@ export default function PainelDistribuicao() {
       if (t && ![c.numero, c.assunto, c.solicitante_nome, c.setor].some((v) => String(v ?? "").toLowerCase().includes(t))) return false;
       return true;
     });
+    // Abas de ativos (Em andamento, Abertos, Aguardando retorno): na ORDEM
+    // DA FILA DE CADA DEV (20/10/2026) — responsável por nome, depois a
+    // posição na fila dele; sem responsável no fim, por chegada.
+    if (ABAS_FILA_DEV.includes(aba)) {
+      return lista.sort((a, b) => {
+        if (!!a.responsavel_id !== !!b.responsavel_id) return a.responsavel_id ? -1 : 1;
+        if (a.responsavel_id && b.responsavel_id && a.responsavel_id !== b.responsavel_id) {
+          return nomeDe(a.responsavel_id).localeCompare(nomeDe(b.responsavel_id), "pt-BR");
+        }
+        const da = posicaoDev[a.id] ?? Number.MAX_SAFE_INTEGER, db = posicaoDev[b.id] ?? Number.MAX_SAFE_INTEGER;
+        if (da !== db) return da - db;
+        return (posicaoFila[a.id] ?? Number.MAX_SAFE_INTEGER) - (posicaoFila[b.id] ?? Number.MAX_SAFE_INTEGER);
+      });
+    }
     // Quem está na fila vem da posição 1 pra baixo; encerrados, do mais recente.
     return lista.sort((a, b) => {
       const pa = posicaoFila[a.id], pb = posicaoFila[b.id];
@@ -259,19 +330,61 @@ export default function PainelDistribuicao() {
       if (pb) return 1;
       return +new Date(b.created_at) - +new Date(a.created_at);
     });
-  }, [chamados, aba, fCategoria, fPrioridade, fResponsavel, fDe, fAte, busca, posicaoFila, treinosPendentes]);
+  }, [chamados, aba, fCategoria, fPrioridade, fResponsavel, fDe, fAte, busca, posicaoFila, posicaoDev, treinosPendentes, usuarios]);
 
-  // Volta pra página 1 sempre que os filtros mudam.
-  useEffect(() => { setPagina(1); }, [aba, fCategoria, fPrioridade, fResponsavel, fDe, fAte, busca]);
+  // Volta pra página 1 sempre que os filtros mudam — menos na montagem, senão
+  // a página lembrada (voltando de um chamado) se perderia.
+  const montou = useRef(false);
+  useEffect(() => {
+    if (!montou.current) { montou.current = true; return; }
+    setPagina(1);
+  }, [aba, fCategoria, fPrioridade, fResponsavel, fDe, fAte, busca]);
 
-  const totalPaginas = Math.max(1, Math.ceil(filtrados.length / POR_PAGINA));
+  // Arrastar para reordenar (20/10/2026): numa aba de ativos, com UM
+  // desenvolvedor escolhido no filtro, e para quem coordena — a mesma régua
+  // da RPC chamado_reordenar_fila_dev. Arrastando, a lista vem inteira (sem
+  // páginas), senão não daria para levar um chamado para outra página.
+  const devFiltrado = fResponsavel !== "todos" && fResponsavel !== "sem" ? fResponsavel : null;
+  const arrastando = canCoordenar && ABAS_FILA_DEV.includes(aba) && !!devFiltrado;
+  const porPagina = arrastando ? Math.max(1, filtrados.length) : POR_PAGINA;
+  const totalPaginas = Math.max(1, Math.ceil(filtrados.length / porPagina));
   const paginaAtual = Math.min(pagina, totalPaginas);
   const visiveis = useMemo(
-    () => filtrados.slice((paginaAtual - 1) * POR_PAGINA, paginaAtual * POR_PAGINA),
-    [filtrados, paginaAtual],
+    () => filtrados.slice((paginaAtual - 1) * porPagina, paginaAtual * porPagina),
+    [filtrados, paginaAtual, porPagina],
   );
-  const de = filtrados.length === 0 ? 0 : (paginaAtual - 1) * POR_PAGINA + 1;
-  const ate = Math.min(paginaAtual * POR_PAGINA, filtrados.length);
+  const de = filtrados.length === 0 ? 0 : (paginaAtual - 1) * porPagina + 1;
+  const ate = Math.min(paginaAtual * porPagina, filtrados.length);
+
+  const sensores = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
+  /**
+   * Soltou: a ordem nova vale para a fila INTEIRA do dev (inclusive o que a
+   * aba atual não mostra — ex.: "Aguardando retorno" quando se está em "Em
+   * andamento"). Move o chamado arrastado para o lugar do alvo dentro da fila
+   * completa e grava pela mesma RPC da tela de Coordenar.
+   */
+  const reordenar = async ({ active, over }: DragEndEvent) => {
+    if (!over || active.id === over.id || !devFiltrado) return;
+    const fila = chamados
+      .filter((c) => c.responsavel_id === devFiltrado && chamadoAtivo(c.status))
+      .sort((a, b) => (posicaoDev[a.id] ?? Number.MAX_SAFE_INTEGER) - (posicaoDev[b.id] ?? Number.MAX_SAFE_INTEGER));
+    const deI = fila.findIndex((c) => c.id === active.id);
+    const paraI = fila.findIndex((c) => c.id === over.id);
+    if (deI === -1 || paraI === -1) return;
+    const nova = arrayMove(fila, deI, paraI);
+    const ordem = nova.map((c) => c.id);
+    // Otimista: a tabela já mostra a ordem nova enquanto o banco grava.
+    qc.setQueryData<Chamado[]>(["chamados-todos"], (velhos) =>
+      (velhos ?? []).map((c) => { const i = ordem.indexOf(c.id); return i === -1 ? c : { ...c, posicao_dev: i + 1 }; }));
+    const { error } = await (supabase as any).rpc("chamado_reordenar_fila_dev", { p_responsavel_id: devFiltrado, p_ordem: ordem });
+    if (error) toast({ title: "Erro ao reordenar a fila", description: error.message, variant: "destructive" });
+    else {
+      const movido = fila[deI];
+      toast({ title: "Fila atualizada", description: `#${movido.numero} agora é o ${paraI + 1}º da fila de ${nomeDe(devFiltrado)}.` });
+    }
+    qc.invalidateQueries({ queryKey: ["chamados-todos"] });
+    qc.invalidateQueries({ queryKey: ["chamados-fila-dev"] });
+  };
 
   // Fila por prioridade (chamados ativos) para o rodapé.
   const filaPorPrioridade = useMemo(() => {
@@ -426,10 +539,33 @@ export default function PainelDistribuicao() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
+                  <DndContext sensors={sensores} collisionDetection={closestCenter} onDragEnd={reordenar}>
+                  <SortableContext items={visiveis.map((c) => c.id)} strategy={verticalListSortingStrategy}>
                   {visiveis.map((c) => (
-                    <TableRow key={c.id} className="cursor-pointer" onClick={() => nav(`/app/sistemas/chamados/${c.id}/coordenar`)}>
+                    <LinhaArrastavel key={c.id} id={c.id} habilitado={arrastando} className="cursor-pointer" onClick={() => nav(`/app/sistemas/chamados/${c.id}/coordenar`)}>
+                    {(alca) => (<>
                       <TableCell className="text-center">
-                        {posicaoFila[c.id] ? (
+                        {ABAS_FILA_DEV.includes(aba) && posicaoDev[c.id] ? (
+                          // Abas de ativos: o número grande é a posição na fila DO DEV.
+                          <span className="inline-flex items-center gap-1">
+                            {alca}
+                            <span
+                              className={`inline-flex h-7 w-7 items-center justify-center rounded-full text-xs font-bold ${
+                                c.prioridade === "alta" ? "bg-destructive/15 text-destructive"
+                                : c.prioridade === "media" ? "bg-warning/15 text-warning"
+                                : "bg-success/15 text-success"
+                              }`}
+                              title={`${posicaoDev[c.id]}º na fila de ${nomeDe(c.responsavel_id)}`}
+                            >
+                              {posicaoDev[c.id]}
+                            </span>
+                            {posicaoFila[c.id] && (
+                              <span className="text-[10px] font-semibold text-muted-foreground" title="Posição na fila geral (ordem de chegada)">
+                                ({posicaoFila[c.id]})
+                              </span>
+                            )}
+                          </span>
+                        ) : posicaoFila[c.id] ? (
                           <span className="inline-flex items-center gap-1">
                             <span
                               className={`inline-flex h-7 w-7 items-center justify-center rounded-full text-xs font-bold ${
@@ -455,8 +591,11 @@ export default function PainelDistribuicao() {
                         )}
                       </TableCell>
                       <TableCell className="whitespace-nowrap font-mono text-xs font-semibold">#{c.numero}</TableCell>
-                      <TableCell className="min-w-[150px] max-w-[240px] text-sm" title={c.assunto}>
-                        <span className="line-clamp-2">{c.assunto}</span>
+                      {/* Título em destaque e a descrição logo abaixo: dá para
+                          entender o pedido sem abrir o chamado. */}
+                      <TableCell className="min-w-[220px] max-w-[340px]" title={c.descricao ? `${c.assunto}\n\n${c.descricao}` : c.assunto}>
+                        <span className="line-clamp-2 text-sm font-semibold leading-snug">{c.assunto}</span>
+                        {c.descricao && <span className="mt-0.5 line-clamp-2 text-[11px] leading-snug text-muted-foreground">{c.descricao}</span>}
                       </TableCell>
                       <TableCell className="text-xs text-muted-foreground">{c.categorias.map((x) => labelDe(CATEGORIAS, x)).join(", ") || "—"}</TableCell>
                       <TableCell onClick={(e) => e.stopPropagation()}>
@@ -530,8 +669,11 @@ export default function PainelDistribuicao() {
                           </DropdownMenu>
                         </div>
                       </TableCell>
-                    </TableRow>
+                    </>)}
+                    </LinhaArrastavel>
                   ))}
+                  </SortableContext>
+                  </DndContext>
                   {filtrados.length === 0 && (
                     <TableRow><TableCell colSpan={10} className="py-6 text-center text-sm text-muted-foreground">Nenhum chamado.</TableCell></TableRow>
                   )}
@@ -545,8 +687,19 @@ export default function PainelDistribuicao() {
                 </p>
               )}
               <p className="mt-2 text-[11px] text-muted-foreground">
-                Posição = ordem de chegada na fila geral. Entre parênteses, a posição do chamado na fila do próprio responsável
-                (definida ao direcionar o chamado). Concluídos e reprovados saem da fila e ficam nas abas correspondentes.
+                {ABAS_FILA_DEV.includes(aba) ? (
+                  <>
+                    Em ordem da fila de cada desenvolvedor: o número é a posição na fila do responsável; entre parênteses, a posição na fila geral.
+                    {arrastando
+                      ? <> <b className="text-foreground">Arraste pela alça</b> para mudar a ordem da fila de {nomeDe(devFiltrado)} — vale para a fila inteira dele, inclusive o que esta aba não mostra.</>
+                      : canCoordenar ? <> Para <b className="text-foreground">arrastar e mudar a ordem</b>, escolha um responsável no filtro.</> : null}
+                  </>
+                ) : (
+                  <>
+                    Posição = ordem de chegada na fila geral. Entre parênteses, a posição do chamado na fila do próprio responsável
+                    (definida ao direcionar o chamado). Concluídos e reprovados saem da fila e ficam nas abas correspondentes.
+                  </>
+                )}
               </p>
             </div>
           )}
@@ -639,9 +792,25 @@ export default function PainelDistribuicao() {
         </div>
       </div>
 
+      {/* As quatro leituras de baixo em ABAS (20/10/2026). Empilhadas, a
+          página passava de cinco telas de altura e a fila por prioridade —
+          que é trabalho do dia — ficava no fim, depois de duas tabelas de
+          avaliação. */}
+      <Tabs value={abaInferior} onValueChange={setAbaInferior} className="mt-4">
+        <TabsList className="h-auto flex-wrap justify-start gap-1 bg-muted/60 p-1">
+          <TabsTrigger value="fila" className="gap-1.5 text-xs"><ListOrdered className="h-3.5 w-3.5" /> Fila por prioridade</TabsTrigger>
+          <TabsTrigger value="satisfacao" className="gap-1.5 text-xs"><Users className="h-3.5 w-3.5" /> Satisfação por integrante</TabsTrigger>
+          <TabsTrigger value="notas" className="gap-1.5 text-xs"><MessageSquareQuote className="h-3.5 w-3.5" /> Notas e comentários</TabsTrigger>
+          <TabsTrigger value="solicitantes" className="gap-1.5 text-xs">
+            <UserCheck className="h-3.5 w-3.5" /> Avaliação dos solicitantes
+            {rankingSolicitantes.length > 0 && <span className="rounded-full bg-info/15 px-1.5 text-[10px] font-bold text-info">{rankingSolicitantes.length}</span>}
+          </TabsTrigger>
+        </TabsList>
+
       {/* Satisfação por integrante. Não é ranking: sem posição e em ordem
           alfabética — a leitura é "como cada um está", não "quem ganhou". */}
-      <Card className="mt-4 p-4">
+      <TabsContent value="satisfacao" className="mt-3">
+      <Card className="p-4">
         <div className="mb-3 flex items-center justify-between">
           <p className="flex items-center gap-1.5 text-sm font-bold">
             <Users className="h-4 w-4 text-warning" /> Satisfação por integrante
@@ -702,9 +871,11 @@ export default function PainelDistribuicao() {
           <Info className="h-3.5 w-3.5" /> A nota final é calculada com base na média ponderada dos critérios avaliados. Clique num integrante para ver as notas dele uma a uma.
         </p>
       </Card>
+      </TabsContent>
 
       {/* Notas uma a uma: quem deu, em qual chamado e o que escreveu. */}
-      <Card className="mt-4 p-4">
+      <TabsContent value="notas" className="mt-3">
+      <Card className="p-4">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
           <p className="flex items-center gap-1.5 text-sm font-bold">
             <MessageSquareQuote className="h-4 w-4 text-warning" /> Notas e comentários por avaliação
@@ -816,9 +987,89 @@ export default function PainelDistribuicao() {
           <Info className="h-3.5 w-3.5" /> Desde 31/08/2026, nota abaixo de 5 em qualquer critério só é aceita com comentário — as avaliações anteriores a isso podem estar sem.
         </p>
       </Card>
+      </TabsContent>
+
+      {/* O dev avalia quem pediu (mig 20261020000070): média por pessoa. Mesma
+          leitura da satisfação — ordem alfabética, sem posição. */}
+      <TabsContent value="solicitantes" className="mt-3">
+      <Card className="p-4">
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <p className="flex items-center gap-1.5 text-sm font-bold">
+            <UserCheck className="h-4 w-4 text-info" /> Avaliação dos solicitantes pelo desenvolvedor
+          </p>
+          <span className="text-[11px] text-muted-foreground">
+            Nota final ponderada ({CRITERIOS_AVALIACAO_SOLICITANTE.map((c) => `${c.titulo} ${Math.round(c.peso * 100)}%`).join(" · ")})
+          </span>
+        </div>
+        <div className="overflow-x-auto">
+          <Table className="[&_td]:px-2 [&_td]:py-2.5 [&_th]:h-9 [&_th]:px-2">
+            <TableHeader>
+              <TableRow>
+                <TableHead>Solicitante</TableHead>
+                <TableHead className="text-center">Avaliações</TableHead>
+                {CRITERIOS_AVALIACAO_SOLICITANTE.map((c) => (
+                  <TableHead key={c.key} className="text-center">
+                    {c.titulo}
+                    <span className="block text-[10px] font-normal text-muted-foreground">({Math.round(c.peso * 100)}%)</span>
+                  </TableHead>
+                ))}
+                <TableHead className="text-right">Nota final</TableHead>
+                <TableHead>Último comentário</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {rankingSolicitantes.map((r) => (
+                <TableRow key={r.avaliado_id}>
+                  <TableCell>
+                    <div className="flex items-center gap-2">
+                      <Avatar className="h-7 w-7"><AvatarFallback className="text-[10px]">{iniciais(r.nome)}</AvatarFallback></Avatar>
+                      <div className="min-w-0">
+                        <p className="truncate text-xs font-medium">{r.nome}</p>
+                        <p className="truncate text-[10px] text-muted-foreground">{r.setor || "—"}</p>
+                      </div>
+                    </div>
+                  </TableCell>
+                  <TableCell className="text-center text-xs text-muted-foreground">{Number(r.avaliacoes)}</TableCell>
+                  {CRITERIOS_AVALIACAO_SOLICITANTE.map((c) => {
+                    const v = Number(r[c.key]);
+                    return (
+                      <TableCell key={c.key} className={`text-center text-xs font-semibold ${v < 3 ? "text-destructive" : v < 4.5 ? "text-warning" : "text-success"}`}>
+                        {v.toFixed(1).replace(".", ",")}
+                      </TableCell>
+                    );
+                  })}
+                  <TableCell className="text-right">
+                    <div className="flex items-center justify-end gap-1.5">
+                      <Estrelas valor={Number(r.media)} size={13} />
+                      <span className="text-sm font-bold">{Number(r.media).toFixed(1).replace(".", ",")}</span>
+                    </div>
+                  </TableCell>
+                  <TableCell className="max-w-[260px]">
+                    {r.ultimo_comentario
+                      ? <p className="line-clamp-2 text-[11px] [overflow-wrap:anywhere]" title={r.ultimo_comentario}>{r.ultimo_comentario}</p>
+                      : <span className="text-[11px] text-muted-foreground">—</span>}
+                  </TableCell>
+                </TableRow>
+              ))}
+              {rankingSolicitantes.length === 0 && (
+                <TableRow>
+                  <TableCell colSpan={CRITERIOS_AVALIACAO_SOLICITANTE.length + 4} className="py-6 text-center text-sm text-muted-foreground">
+                    Nenhum solicitante avaliado ainda. A avaliação é pedida ao desenvolvedor quando ele conclui um chamado (a partir de 20/10/2026).
+                  </TableCell>
+                </TableRow>
+              )}
+            </TableBody>
+          </Table>
+        </div>
+        <p className="mt-3 flex items-center justify-center gap-1.5 border-t border-border/60 pt-3 text-[11px] text-muted-foreground">
+          <Info className="h-3.5 w-3.5" /> Cada pessoa que pediu (solicitante e participantes) recebe a própria avaliação. O avaliado não vê a nota.
+        </p>
+      </Card>
+      </TabsContent>
 
       {/* Fila de chamados por prioridade */}
-      <Card className="mt-4 p-4">
+      <TabsContent value="fila" className="mt-3">
+      <Card className="p-4">
         <p className="mb-3 text-sm font-bold">Fila de chamados por prioridade</p>
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
           {([
@@ -841,6 +1092,8 @@ export default function PainelDistribuicao() {
           ))}
         </div>
       </Card>
+      </TabsContent>
+      </Tabs>
 
       <ExcluirChamadoDialog
         open={!!excluir}

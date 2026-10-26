@@ -10,7 +10,9 @@ import { StatusDevTela } from "./StatusDevTela";
 import { VinculoGate } from "@/components/auth/VinculoEmpregado";
 import { VinculoDiscordGate } from "@/components/auth/VinculoDiscordGate";
 import { GateNotificacoes } from "@/components/notificacoes/GateNotificacoes";
+import { GateTermoCiencia } from "@/components/documentos/GateTermoCiencia";
 import { useModoExterno } from "@/hooks/useModoExterno";
+import { AlertaUrgenteAdmissao } from "@/components/recrutamento/AlertaUrgenteAdmissao";
 
 export function AppShell() {
   // Encarregado externo (sessão anônima) não tem cadastro em EMPREGADOS para
@@ -98,11 +100,17 @@ export function AppShell() {
         </main>
       </div>
       {!externo && <ChamadoFab />}
+      {/* Admissão urgente (14/10/2026): card tremendo pro SST e pro Compras, em qualquer tela. */}
+      {!externo && <AlertaUrgenteAdmissao />}
       {!externo && <VinculoGate />}
       {/* Notificação com ciência: para a tela em qualquer rota até a pessoa
           responder. Fica aqui, e não numa página, porque o aviso é do
           SISTEMA — não adianta ele existir só em quem abriu Novidades. */}
       {!externo && <GateNotificacoes />}
+      {/* Termo de ciência de RH › Documentos (22/10/2026): pede a assinatura
+          a cada entrada até a pessoa assinar; também abre o link
+          /app?documento=<id> da notificação. */}
+      {!externo && <GateTermoCiencia />}
       {/* Entra depois do VinculoGate de propósito: ele só aparece quando o
           vínculo Senior já está resolvido, para não empilhar dois modais. */}
       {!externo && <VinculoDiscordGate />}

@@ -347,12 +347,45 @@ export function useSavePlanilhaCusto() {
         return data;
       } else {
         if (!rest.empresa_id) throw new Error("Empresa é obrigatória (defina o contrato).");
+
+        // Contorno (21/10/2026, pós-virada pro cluster): um POST com a linha inteira
+        // (100+ colunas) volta 500 "cannot pass more than 100 arguments to a function",
+        // enquanto o PATCH com as mesmas colunas e um INSERT com todas as colunas
+        // direto no banco funcionam — ou seja, o limite é estourado no SQL que a API do
+        // cluster gera pro INSERT. Criamos a linha só com as colunas de identificação
+        // (as numéricas têm DEFAULT 0 no banco) e gravamos o resto num PATCH.
+        // Não é atômico: se o PATCH falhar, a linha parcial é removida.
+        // TODO: voltar pro insert único quando o cluster for corrigido.
+        const CAMPOS_BASE = [
+          "empresa_id", "orexec", "cliente", "contrato", "posto", "servico",
+          "sindicato", "data_vigencia", "qt_postos", "arquivo_origem", "contrato_id",
+        ] as const;
+        const base: Record<string, unknown> = {};
+        const resto: Record<string, unknown> = {};
+        for (const [k, v] of Object.entries(rest)) {
+          if ((CAMPOS_BASE as readonly string[]).includes(k)) base[k] = v;
+          else resto[k] = v;
+        }
+
+        const { data: criada, error: erroCriar } = await (supabase as any)
+          .from("planilha_custo")
+          .insert(base)
+          .select("id")
+          .single();
+        if (erroCriar) throw erroCriar;
+        if (Object.keys(resto).length === 0) return criada;
+
         const { data, error } = await (supabase as any)
           .from("planilha_custo")
-          .insert(rest)
+          .update({ ...resto, updated_at: new Date().toISOString() })
+          .eq("id", criada.id)
           .select()
           .single();
-        if (error) throw error;
+        if (error) {
+          // não deixa um posto zerado pra trás
+          await (supabase as any).from("planilha_custo").delete().eq("id", criada.id);
+          throw error;
+        }
         return data;
       }
     },

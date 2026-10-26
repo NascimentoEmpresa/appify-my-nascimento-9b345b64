@@ -35,6 +35,12 @@ export interface PedidoConferenciaRomaneio {
   id: string;
 }
 
+const STATUS_ELEGIVEL_ROMANEIO = new Set(["AGUARDANDO ENVIO", "AGUARDANDO COMPRA"]);
+
+export function pedidoElegivelParaRomaneio(pedido: Pick<PedidoSelecionavelRomaneio, "status">) {
+  return STATUS_ELEGIVEL_ROMANEIO.has(pedido.status);
+}
+
 export interface PedidoRetiradaPayload {
   pedido_id: string;
   retirado: boolean;
@@ -53,8 +59,8 @@ export function validarSelecaoRomaneio(
   if (pedidos.length === 0) {
     return { valida: false, motivo: "Selecione pelo menos um pedido." };
   }
-  if (pedidos.some((pedido) => pedido.status !== "AGUARDANDO ENVIO")) {
-    return { valida: false, motivo: "Selecione somente pedidos em Aguardando envio." };
+  if (pedidos.some((pedido) => !pedidoElegivelParaRomaneio(pedido))) {
+    return { valida: false, motivo: "Selecione somente pedidos em Aguardando envio ou Aguardando compra." };
   }
   if (pedidos.some(pedidoEmRomaneioAberto)) {
     return { valida: false, motivo: "Um dos pedidos já pertence a um romaneio." };

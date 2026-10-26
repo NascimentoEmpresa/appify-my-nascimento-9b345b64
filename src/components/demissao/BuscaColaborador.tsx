@@ -5,7 +5,12 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import {
   Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList,
 } from "@/components/ui/command";
-import { Check, ChevronsUpDown, Loader2, Search, UserRound } from "lucide-react";
+import { AlertTriangle, Check, ChevronsUpDown, Loader2, Search, UserRound } from "lucide-react";
+import { Checkbox } from "@/components/ui/checkbox";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
+  AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { cn } from "@/lib/utils";
 import { dataParaIso, nomeContratoDe } from "@/lib/rh/colaboradoresUtils";
 
@@ -18,6 +23,10 @@ export interface EmpregadoEscolhido {
   cpf: string;
   cargo: string;
   posto: string;
+  /** EMPREGADOS."Posto" — o posto de trabalho da Senior (PO-xxxxx). */
+  postoCodigo: string;
+  /** EMPREGADOS."Nome do Posto" — a descrição do posto de trabalho. */
+  nomePosto: string;
   filial: string;
   nomeFilial: string;
   /**
@@ -36,13 +45,21 @@ export interface EmpregadoEscolhido {
   admissao: string | null;
   email: string;
   telefone: string;
+  /** EMPREGADOS."Situação" ("Trabalhando", "Atestado (dias)", "Férias"…). */
+  situacao: string;
 }
 
 // Recorte leve para a LISTA. O cadastro completo só é buscado quando a pessoa
 // é escolhida — trazer tudo de 50 resultados a cada tecla é o que trava a tela.
-const COLS_LISTA = '"ID","Nome","CPF","Título do Cargo","Nome Filial"';
+const COLS_LISTA = '"ID","Nome","CPF","Título do Cargo","Nome Filial","Situação"';
 
 const texto = (v: unknown) => String(v ?? "").trim();
+
+/** Afastado = não está Trabalhando e não saiu da empresa (atestado, férias, licença, auxílio…). */
+export const estaAfastado = (situacao: string | null | undefined) => {
+  const s = texto(situacao);
+  return !!s && !/^trabalhando$/i.test(s) && !/demit|deslig|rescis|aposent/i.test(s);
+};
 
 /**
  * O primeiro campo que existir, na ordem pedida. A EMPREGADOS é espelho do
@@ -66,6 +83,8 @@ export function montarEmpregadoEscolhido(e: Record<string, any>): EmpregadoEscol
     cpf: texto(e["CPF"]),
     cargo: primeiroCampo(e, "Título do Cargo", "Nome do Cargo", "Cargo"),
     posto: primeiroCampo(e, "Organograma", "Descrição do Local", "Titulo C.Custo", "Nome Filial"),
+    postoCodigo: texto(e["Posto"]),
+    nomePosto: texto(e["Nome do Posto"]),
     filial: texto(e["Filial"]),
     nomeFilial: texto(e["Nome Filial"]),
     contrato: nomeContratoDe(e),
@@ -76,6 +95,7 @@ export function montarEmpregadoEscolhido(e: Record<string, any>): EmpregadoEscol
     admissao: dataParaIso(e["Admissão"]),
     email: primeiroCampo(e, "email", "E-mail", "Email"),
     telefone: primeiroCampo(e, "Telefone", "Celular", "Fone"),
+    situacao: texto(e["Situação"]),
   };
 }
 
@@ -100,17 +120,27 @@ export async function carregarEmpregadoEscolhido(id: number): Promise<EmpregadoE
  * debounce e teto de 50 linhas.
  */
 export function BuscaColaborador({
-  valor, onEscolher, disabled,
+  valor, onEscolher, disabled, permitirAfastados = false,
 }: {
   valor: EmpregadoEscolhido | null;
   onEscolher: (e: EmpregadoEscolhido | null) => void;
   disabled?: boolean;
+  /**
+   * "[ ] Listar afastados" embaixo da busca (20/10/2026, Solicitar Demissão):
+   * marcado, a busca traz também quem está afastado (atestado, férias,
+   * licença, auxílio…) — nunca desligado — e escolher um afastado pede
+   * confirmação mostrando a situação.
+   */
+  permitirAfastados?: boolean;
 }) {
   const [aberto, setAberto] = useState(false);
   const [digitado, setDigitado] = useState("");
   const [busca, setBusca] = useState("");
   const [opcoes, setOpcoes] = useState<any[]>([]);
   const [carregando, setCarregando] = useState(false);
+  const [comAfastados, setComAfastados] = useState(false);
+  // Afastado escolhido esperando o "tem certeza?".
+  const [confirmar, setConfirmar] = useState<EmpregadoEscolhido | null>(null);
 
   useEffect(() => {
     const t = setTimeout(() => setBusca(digitado.trim()), 300);
@@ -122,28 +152,34 @@ export function BuscaColaborador({
     let valeu = true;                       // descarta resposta de busca antiga
     setCarregando(true);
     (async () => {
-      const { data } = await sb.from("EMPREGADOS")
-        .select(COLS_LISTA)
-        .eq("Situação", "Trabalhando")
-        .ilike("Nome", `%${busca}%`)
-        .order("Nome")
-        .limit(50);
+      let q = sb.from("EMPREGADOS").select(COLS_LISTA).ilike("Nome", `%${busca}%`);
+      // Afastados: tudo que não é desligado. Situação vazia fica de fora
+      // (cadastro sem situação não é "afastado", é dado faltando).
+      q = permitirAfastados && comAfastados
+        ? q.not("Situação", "is", null)
+            .not("Situação", "ilike", "%demit%").not("Situação", "ilike", "%deslig%")
+            .not("Situação", "ilike", "%rescis%").not("Situação", "ilike", "%aposent%")
+        : q.eq("Situação", "Trabalhando");
+      const { data } = await q.order("Nome").limit(50);
       if (!valeu) return;
       setOpcoes(data ?? []);
       setCarregando(false);
     })();
     return () => { valeu = false; };
-  }, [aberto, busca]);
+  }, [aberto, busca, comAfastados, permitirAfastados]);
 
   const escolher = async (linha: any) => {
     setAberto(false);
     // Cadastro completo da pessoa escolhida: é dele que saem posto, escala,
     // admissão e contato, que a tela mostra travados.
     const { data } = await sb.from("EMPREGADOS").select("*").eq("ID", linha.ID).maybeSingle();
-    onEscolher(montarEmpregadoEscolhido(data ?? linha));
+    const e = montarEmpregadoEscolhido(data ?? linha);
+    if (estaAfastado(e.situacao)) { setConfirmar(e); return; }
+    onEscolher(e);
   };
 
   return (
+    <>
     <Popover open={aberto} onOpenChange={setAberto}>
       <PopoverTrigger asChild>
         <Button
@@ -152,7 +188,14 @@ export function BuscaColaborador({
         >
           {valor ? (
             <span className="flex min-w-0 flex-col">
-              <span className="truncate font-medium">{valor.nome}</span>
+              <span className="flex items-center gap-2">
+                <span className="truncate font-medium">{valor.nome}</span>
+                {estaAfastado(valor.situacao) && (
+                  <span className="shrink-0 rounded border border-warning/40 bg-warning/10 px-1.5 py-px text-[10px] font-semibold text-warning">
+                    Afastado · {valor.situacao}
+                  </span>
+                )}
+              </span>
               <span className="text-xs text-muted-foreground">
                 {valor.cargo || "Cargo não informado"}
                 {valor.nomeFilial ? ` · ${valor.nomeFilial}` : ""}
@@ -170,6 +213,12 @@ export function BuscaColaborador({
             resultados legítimos que o cmdk não sabe casar. */}
         <Command shouldFilter={false}>
           <CommandInput placeholder="Digite o nome…" value={digitado} onValueChange={setDigitado} />
+          {permitirAfastados && (
+            <label className="flex cursor-pointer items-center gap-2 border-b border-border px-3 py-1.5 text-xs text-muted-foreground hover:bg-muted/40">
+              <Checkbox checked={comAfastados} onCheckedChange={(v) => setComAfastados(v === true)} className="h-3.5 w-3.5" />
+              Listar afastados <span className="text-[11px]">(atestado, férias, licença…)</span>
+            </label>
+          )}
           <CommandList>
             {carregando && (
               <div className="flex items-center gap-2 px-3 py-6 text-sm text-muted-foreground">
@@ -185,7 +234,11 @@ export function BuscaColaborador({
                   ) : (
                     <>
                       <p className="text-sm font-medium">Ninguém encontrado para "{busca}"</p>
-                      <p className="text-xs text-muted-foreground">A busca cobre quem está trabalhando.</p>
+                      <p className="text-xs text-muted-foreground">
+                        {comAfastados
+                          ? "A busca cobre quem está trabalhando e os afastados."
+                          : permitirAfastados ? "A busca cobre quem está trabalhando — marque “Listar afastados” para incluir os afastados." : "A busca cobre quem está trabalhando."}
+                      </p>
                     </>
                   )}
                 </div>
@@ -197,7 +250,14 @@ export function BuscaColaborador({
                   <CommandItem key={o.ID} value={String(o.ID)} onSelect={() => escolher(o)}>
                     <UserRound className="mr-2 h-4 w-4 shrink-0 text-muted-foreground" />
                     <span className="flex min-w-0 flex-1 flex-col">
-                      <span className="truncate">{o.Nome}</span>
+                      <span className="flex items-center gap-2">
+                        <span className="truncate">{o.Nome}</span>
+                        {estaAfastado(o["Situação"]) && (
+                          <span className="shrink-0 rounded border border-warning/40 bg-warning/10 px-1.5 py-px text-[10px] font-semibold text-warning">
+                            {texto(o["Situação"])}
+                          </span>
+                        )}
+                      </span>
                       <span className="text-xs text-muted-foreground">
                         {texto(o["Título do Cargo"]) || "Cargo não informado"}
                         {texto(o["Nome Filial"]) ? ` · ${o["Nome Filial"]}` : ""}
@@ -213,5 +273,31 @@ export function BuscaColaborador({
         </Command>
       </PopoverContent>
     </Popover>
+
+    <AlertDialog open={!!confirmar} onOpenChange={(v) => { if (!v) setConfirmar(null); }}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle className="flex items-center gap-2">
+            <AlertTriangle className="h-5 w-5 text-warning" /> Colaborador afastado
+          </AlertDialogTitle>
+          <AlertDialogDescription asChild>
+            <div className="space-y-2 text-sm">
+              <p><b className="text-foreground">{confirmar?.nome}</b>{confirmar?.cargo ? ` · ${confirmar.cargo}` : ""}</p>
+              <p>
+                Situação: <span className="rounded border border-warning/40 bg-warning/10 px-1.5 py-0.5 text-xs font-semibold text-warning">{confirmar?.situacao}</span>
+              </p>
+              <p>Esse usuário está afastado. Tem certeza que deseja continuar?</p>
+            </div>
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Cancelar</AlertDialogCancel>
+          <AlertDialogAction onClick={() => { if (confirmar) onEscolher(confirmar); setConfirmar(null); }}>
+            Sim, continuar
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+    </>
   );
 }

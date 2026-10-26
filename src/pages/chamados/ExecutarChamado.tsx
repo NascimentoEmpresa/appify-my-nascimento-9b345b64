@@ -16,7 +16,8 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { CheckCircle2, MessageSquare, XCircle, Paperclip, ArrowLeft, Trash2, Star, RotateCcw, GitPullRequest } from "lucide-react";
+import { CheckCircle2, MessageSquare, XCircle, Paperclip, ArrowLeft, Trash2, Star, RotateCcw, GitPullRequest, UserCheck } from "lucide-react";
+import { AvaliarSolicitanteDialog } from "./AvaliarSolicitanteDialog";
 import { ExcluirChamadoDialog } from "./ExcluirChamadoDialog";
 import { abrirPrGithub } from "./abrirPrGithub";
 import { BotaoAdicionarParticipante } from "./ParticipantesChamado";
@@ -28,7 +29,9 @@ import {
   CATEGORIAS, TIPOS, IMPACTOS, URGENCIAS, AMBIENTES,
   labelDe, moduloLabel, fmtData, fmtDataHora, podeReabrirChamado, chamadoEncerrado,
   BUCKET_CHAMADOS, opcoesDownloadAnexo, type Chamado, type Anexo, type Evento, type AvaliacaoChamado,
+  CRITERIOS_AVALIACAO_SOLICITANTE, DEV_AVALIA_SOLICITANTE_DESDE, type AvaliacaoSolicitante,
 } from "./types";
+import { useAnexoChamado } from "./useAnexoChamado";
 
 export default function ExecutarChamado() {
   const { id } = useParams();
@@ -44,6 +47,10 @@ export default function ExecutarChamado() {
   const [reabrindoOpen, setReabrindoOpen] = useState(false);
   const [agindo, setAgindo] = useState<string | null>(null); // ação em curso (trava cliques repetidos)
   const [flash, setFlash] = useState(false);                 // pisca o selo de status ao mudar
+  // Concluir passa pela avaliação de quem pediu (mig 20261020000070) — com
+  // a saída "Concluir sem avaliar" dentro do próprio diálogo.
+  const [concluindoOpen, setConcluindoOpen] = useState(false);
+  const [avaliarDepoisOpen, setAvaliarDepoisOpen] = useState(false);
 
   const { data: usuarios = [] } = useQuery({
     queryKey: ["chamados-usuarios"],
@@ -91,10 +98,31 @@ export default function ExecutarChamado() {
     },
   });
 
+  // O que o dev (ou a gestão) achou de quem pediu. O RLS só devolve a quem
+  // avaliou, ao responsável e à gestão — para os demais a lista vem vazia.
+  const { data: avaliacoesDev = [] } = useQuery({
+    queryKey: ["chamado-avaliacao-dev", id],
+    enabled: !!id,
+    queryFn: async () => {
+      const { data } = await (supabase as any).from("CHAMADO_SISTEMA_AVALIACAO_DEV").select("*").eq("chamado_id", id).order("created_at");
+      return (data ?? []) as AvaliacaoSolicitante[];
+    },
+  });
+
   // Validação da Presidência (mig 266) — null quando o chamado não foi enviado.
   const { data: validacao } = useValidacaoChamado(id);
 
   const ehResponsavel = !!chamado && chamado.responsavel_id === user?.id;
+  // Participante extra (mig 20261009000003) — vem pelo Painel do Desenvolvedor desde 20/10/2026.
+  const { data: ehParticipante = false } = useQuery({
+    queryKey: ["chamado-sou-participante", id, user?.id],
+    enabled: !!id && !!user?.id,
+    queryFn: async () => {
+      const { data } = await (supabase as any).from("CHAMADO_SISTEMA_PARTICIPANTE")
+        .select("id").eq("chamado_id", id).eq("user_id", user!.id).maybeSingle();
+      return !!data;
+    },
+  });
   const podeAgir = canCoordenar || canAprovar || (canDev && ehResponsavel);
 
   // Dev responsável abriu o chamado → zera a bolinha de novidades do dev.
@@ -125,6 +153,15 @@ export default function ExecutarChamado() {
     invalidar();
   };
 
+  /** Fim do diálogo de concluir: grava o status e diz no histórico se houve avaliação. */
+  const concluirAposAvaliar = async (resultado: "avaliou" | "pulou" | "ninguem") => {
+    await mudarStatus(
+      "concluido",
+      resultado === "pulou" ? "Chamado concluído (sem avaliar quem pediu)" : "Chamado concluído",
+      "concluido",
+    );
+  };
+
   const salvarPrazo = async (prazo: string) => {
     const { error } = await (supabase as any).from("CHAMADO_SISTEMA").update({ prazo_previsto: prazo || null }).eq("id", id);
     if (error) { toast({ title: "Erro ao salvar prazo", description: error.message, variant: "destructive" }); return; }
@@ -142,11 +179,8 @@ export default function ExecutarChamado() {
     invalidar();
   };
 
-  const baixarAnexo = async (path: string) => {
-    const { data, error } = await supabase.storage.from(BUCKET_CHAMADOS).createSignedUrl(path, 3600, opcoesDownloadAnexo(path));
-    if (error || !data?.signedUrl) { toast({ title: "Erro ao abrir anexo", variant: "destructive" }); return; }
-    window.open(data.signedUrl, "_blank", "noopener,noreferrer");
-  };
+  // Imagem abre num card no centro; o resto, em nova aba (useAnexoChamado).
+  const { abrirAnexo: baixarAnexo, visualizador } = useAnexoChamado();
 
   if (!chamado) return <p className="p-6 text-sm text-muted-foreground">Carregando…</p>;
 
@@ -165,6 +199,8 @@ export default function ExecutarChamado() {
 
   return (
     <div>
+      {/* Imagem do anexo aberta num card no centro (useAnexoChamado). */}
+      {visualizador}
       <PageHeader
         title={`#${chamado.numero}`}
         subtitle={chamado.assunto}
@@ -219,6 +255,13 @@ export default function ExecutarChamado() {
             <CardAvaliacao avaliacao={avaliacao} titulo="Avaliação do solicitante" tone="warning" />
           )}
 
+          {avaliacoesDev.map((a) => (
+            <CardAvaliacao
+              key={a.id} avaliacao={a} tone="info" criterios={CRITERIOS_AVALIACAO_SOLICITANTE}
+              titulo={`${nomeDe(a.avaliador_id)} avaliou ${nomeDe(a.avaliado_id)} (${a.papel === "solicitante" ? "solicitante" : "participante"})`}
+            />
+          ))}
+
           <Card className="space-y-3 p-4">
             <p className="text-sm font-bold">Descrição e evidências (abertura)</p>
             <div>
@@ -235,7 +278,7 @@ export default function ExecutarChamado() {
               <p className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Anexos da abertura ({anexosAbertura.length})</p>
               <div className="space-y-1">
                 {anexosAbertura.map((a) => (
-                  <button key={a.id} onClick={() => baixarAnexo(a.storage_path)} className="flex w-full items-center gap-2 rounded border border-border px-2.5 py-1.5 text-left text-xs hover:border-primary/40">
+                  <button key={a.id} onClick={() => baixarAnexo(a)} className="flex w-full items-center gap-2 rounded border border-border px-2.5 py-1.5 text-left text-xs hover:border-primary/40">
                     <Paperclip className="h-3.5 w-3.5 text-muted-foreground" />
                     <span className="flex-1 truncate">{a.nome_arquivo}</span>
                     {a.tamanho_bytes != null && <span className="text-[10px] text-muted-foreground">{Math.round(a.tamanho_bytes / 1024)} KB</span>}
@@ -252,7 +295,7 @@ export default function ExecutarChamado() {
               <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Anexos enviados nas respostas ({anexosLegado.length})</p>
               <div className="space-y-1">
                 {anexosLegado.map((a) => (
-                  <button key={a.id} onClick={() => baixarAnexo(a.storage_path)} className="flex w-full items-center gap-2 rounded border border-border px-2.5 py-1.5 text-left text-xs hover:border-primary/40">
+                  <button key={a.id} onClick={() => baixarAnexo(a)} className="flex w-full items-center gap-2 rounded border border-border px-2.5 py-1.5 text-left text-xs hover:border-primary/40">
                     <Paperclip className="h-3.5 w-3.5 text-muted-foreground" />
                     <span className="flex-1 truncate">{a.nome_arquivo}</span>
                     <span className="text-[10px] text-muted-foreground">{nomeDe(a.autor_id)}</span>
@@ -264,12 +307,15 @@ export default function ExecutarChamado() {
           )}
 
           {/* Conversa do chamado (grupo: solicitante + equipe) */}
+          {/* Participante extra que abre pelo Painel do Desenvolvedor
+              (20/10/2026): conversa como participante — mensagem pública
+              sim, observação interna não (a RLS também barra). */}
           <ChatChamado
             chamadoId={chamado.id}
             solicitanteId={chamado.solicitante_id}
-            perfil="equipe"
+            perfil={podeAgir || !ehParticipante ? "equipe" : "solicitante"}
             encerrado={encerrado}
-            somenteLeitura={!podeAgir}
+            somenteLeitura={!podeAgir && !ehParticipante}
           />
         </div>
 
@@ -285,7 +331,9 @@ export default function ExecutarChamado() {
             <div>
               <p className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Status atual</p>
               {podeAgir ? (
-                <Select value={chamado.status} onValueChange={(v) => mudarStatus(v, `Status alterado para ${STATUS_CHAMADO[v]?.label ?? v}`, "status")}>
+                <Select value={chamado.status} onValueChange={(v) => (v === "concluido" && chamado.status !== "concluido"
+                  ? setConcluindoOpen(true)
+                  : mudarStatus(v, `Status alterado para ${STATUS_CHAMADO[v]?.label ?? v}`, "status"))}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
                     {["aberto", "em_andamento", "aguardando_retorno", "concluido"].map((v) => (
@@ -311,14 +359,25 @@ export default function ExecutarChamado() {
             <Card className="space-y-2 p-4">
               <p className="text-sm font-bold">Ações rápidas</p>
               {chamado.status === "concluido" ? (
-                <div className="flex items-center gap-2 rounded-md border border-success/40 bg-success/10 px-3 py-2 text-sm font-semibold text-success">
-                  <CheckCircle2 className="h-4 w-4 animate-check-pop" /> Chamado concluído
-                </div>
+                <>
+                  <div className="flex items-center gap-2 rounded-md border border-success/40 bg-success/10 px-3 py-2 text-sm font-semibold text-success">
+                    <CheckCircle2 className="h-4 w-4 animate-check-pop" /> Chamado concluído
+                  </div>
+                  {/* Concluído sem passar pelo diálogo (merge da PR) ou pulado:
+                      dá para avaliar depois. Só de agora em diante — os
+                      concluídos antes da mudança ficam de fora. */}
+                  {!!chamado.concluido_em && new Date(chamado.concluido_em) >= new Date(DEV_AVALIA_SOLICITANTE_DESDE)
+                    && !avaliacoesDev.some((a) => a.avaliador_id === user?.id) && (
+                    <Button variant="outline" className="w-full justify-start gap-2 transition-transform active:scale-95" onClick={() => setAvaliarDepoisOpen(true)}>
+                      <UserCheck className="h-4 w-4 text-info" /> Avaliar quem pediu
+                    </Button>
+                  )}
+                </>
               ) : (
                 <Button
                   className="w-full justify-start gap-2 bg-success text-success-foreground transition-transform hover:bg-success/90 active:scale-95 disabled:opacity-60"
                   disabled={!!agindo}
-                  onClick={() => mudarStatus("concluido", "Chamado concluído", "concluido")}
+                  onClick={() => setConcluindoOpen(true)}
                 >
                   <CheckCircle2 className="h-4 w-4" /> {agindo === "concluido" ? "Concluindo…" : "Concluir chamado"}
                 </Button>
@@ -402,6 +461,15 @@ export default function ExecutarChamado() {
           </div>
         </DialogContent>
       </Dialog>
+
+      <AvaliarSolicitanteDialog
+        open={concluindoOpen} onOpenChange={setConcluindoOpen}
+        chamado={chamado} modo="concluir" onConcluir={concluirAposAvaliar}
+      />
+      <AvaliarSolicitanteDialog
+        open={avaliarDepoisOpen} onOpenChange={setAvaliarDepoisOpen}
+        chamado={chamado} modo="avaliar"
+      />
 
       <ReabrirChamadoDialog
         open={reabrindoOpen}

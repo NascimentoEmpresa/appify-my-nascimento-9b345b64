@@ -9,7 +9,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { KpiTile } from "@/components/financeiro/KpiTile";
 import { PieChart, Pie, Cell, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from "recharts";
 import { Tooltip as UiTooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { ListChecks, CheckCircle2, AlertTriangle, FileWarning, Wallet, TrendingUp, Percent } from "lucide-react";
+import { ClipboardCheck, ListChecks, CheckCircle2, AlertTriangle, FileWarning, Wallet, TrendingUp, Percent } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useEmpresasGrupo } from "@/hooks/useMaloteDespesa";
 import { useContratosERP, ContratoERP } from "@/hooks/useContratosERP";
@@ -17,7 +17,7 @@ import { usePlanilhaCustos, resolverLinhasPorPeriodo, somarCamposEmLinhas, fimDo
 import { useNfsEmissao } from "@/hooks/useNfEmissao";
 import { fmtMoney, foraDoRelatorio, naoContabilizaKpi } from "@/pages/financeiro/nf-emissao/shared";
 import { contratoEncerradoNaCompetencia } from "./vigenciaContrato";
-import { StatusCelula, excessoDeFaturamento, faltaDeFaturamento, resumirFaturamento, statusCelula } from "./faturamentoStatus";
+import { StatusCelula, divergenciaEntre, excessoDeFaturamento, faltaDeFaturamento, resumirFaturamento, statusCelula } from "./faturamentoStatus";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { NfsNaoEmitidasTab } from "./NfsNaoEmitidasTab";
 
@@ -79,6 +79,15 @@ interface LinhaFaturamento {
   status: StatusCelula;
 }
 
+// SIS-2026-0648: positivo = o valor comparado ficou abaixo da referência; negativo = passou dela.
+function textoDivergencia(d: number, comparado: "executado" | "faturado"): string {
+  if (d === 0) return "sem divergência";
+  return d > 0 ? `${comparado} abaixo do valor de referência` : `${comparado} acima do valor de referência`;
+}
+function classeDivergencia(d: number): string {
+  return d === 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400";
+}
+
 export default function ControleFaturamento() {
   const navigate = useNavigate();
   const { data: contratos = [], isLoading: carregandoContratos } = useContratosERP({ todasEmpresas: true });
@@ -87,6 +96,7 @@ export default function ControleFaturamento() {
   const { data: empresas = [] } = useEmpresasGrupo();
 
   const [filtroEmpresa, setFiltroEmpresa] = useState("");
+  const [aba, setAba] = useState("geral");
   // Busca por nome do contrato (ou cliente), sem acento e sem diferenciar
   // maiúsculas — vale nas 3 abas, pois todas partem de contratosFiltrados.
   const [filtroNome, setFiltroNome] = useState("");
@@ -208,11 +218,14 @@ export default function ControleFaturamento() {
     }
     // Não Emitido = soma das faltas por contrato (excesso de um contrato não
     // abate a falta de outro) — ver faturamentoStatus.ts.
-    const { executavel, contabil, naoEmitido, excesso, lancadas, parciais, pendentes, semDados } = resumirFaturamento(linhasCompetencia);
+    const { executavel, execRel, contabil, naoEmitido, excesso, lancadas, parciais, pendentes, semDados } = resumirFaturamento(linhasCompetencia);
     return {
       vigentes: linhasCompetencia.length,
       lancadas, parciais, pendentes, semDados,
-      executavel, contabil, naoEmitido, excesso, liquido, recebido,
+      executavel, execRel, contabil, naoEmitido, excesso, liquido, recebido,
+      // SIS-2026-0648: Executável (Base) × Executado (digitado na NF) e Executado × Faturado (bruto das NFs Código N).
+      divExecutavelExecutado: divergenciaEntre(executavel, execRel),
+      divExecutadoFaturado: divergenciaEntre(execRel, contabil),
       pctNaoEmitido: executavel ? (naoEmitido / executavel) * 100 : 0,
       pctRecebido: contabil ? (recebido / contabil) * 100 : 0,
     };
@@ -286,6 +299,13 @@ export default function ControleFaturamento() {
   // SIS-2026-0562 (Iury): clicar na linha leva pro Relatório de Serviços
   // (aba Relatório Geral) já com empresa/competência/contrato filtrados —
   // mesmo recorte que gerou os números daquela linha.
+  // SIS-2026-0652: clicar num KPI abre a tela de onde o número vem. Os de NFs vão para o Relatório de Serviços (aba Relatório
+  // Geral) no mesmo recorte do KPI: empresa e competência da tela, só Código N; o Recebido só com as notas pagas.
+  function abrirKpiNoRelatorioServicos(extra?: Record<string, string>) {
+    const params = new URLSearchParams({ competencia, codigo: "N", ...(filtroEmpresa ? { empresa: filtroEmpresa } : {}), ...extra });
+    navigate(`/app/financeiro/relatorio-servicos?${params.toString()}`);
+  }
+
   function abrirNoRelatorioServicos(l: LinhaFaturamento) {
     const params = new URLSearchParams({ empresa: l.contrato.empresa_id, competencia, contrato: l.contrato.id });
     navigate(`/app/financeiro/relatorio-servicos?${params.toString()}`);
@@ -343,7 +363,7 @@ export default function ControleFaturamento() {
       {carregando ? (
         <p className="text-sm text-muted-foreground py-10 text-center">Carregando...</p>
       ) : (
-        <Tabs defaultValue="geral">
+        <Tabs value={aba} onValueChange={setAba}>
           <TabsList>
             <TabsTrigger value="geral">Visão Geral</TabsTrigger>
             <TabsTrigger value="anual">Visão Anual</TabsTrigger>
@@ -357,14 +377,17 @@ export default function ControleFaturamento() {
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-              <KpiTile label="Executável (Base)" valor={fmtMoney(kpis.executavel)} icon={<ListChecks />} cor="slate" />
-              <KpiTile label="Valor Contábil (Código N)" valor={fmtMoney(kpis.contabil)} icon={<TrendingUp />} cor="sky" />
-              <KpiTile label="Divergências" valor={fmtMoney(kpis.naoEmitido + kpis.excesso)} sub={`${fmtMoney(kpis.naoEmitido)} a emitir · ${fmtMoney(kpis.excesso)} emitidos a mais · clique para ver por contrato`} icon={<AlertTriangle />} cor="red" valorClass="text-red-600 dark:text-red-400" onClick={() => setAbrirNaoEmitido(true)} />
-              <KpiTile label="Contratos Pendentes" valor={kpis.pendentes.toLocaleString("pt-BR")} sub={`de ${kpis.vigentes} vigentes na competência`} icon={<FileWarning />} cor="amber" valorClass="text-amber-600 dark:text-amber-400" />
-              <KpiTile label="Valor Líquido" valor={fmtMoney(kpis.liquido)} icon={<Wallet />} cor="slate" />
-              <KpiTile label="Valor Recebido" valor={fmtMoney(kpis.recebido)} icon={<CheckCircle2 />} cor="emerald" valorClass="text-emerald-600 dark:text-emerald-400" />
-              <KpiTile label="% Recebido sobre Faturado" valor={`${kpis.pctRecebido.toFixed(1).replace(".", ",")}%`} sub={`${fmtMoney(kpis.recebido)} de ${fmtMoney(kpis.contabil)}`} icon={<Percent />} cor="emerald" valorClass="text-emerald-600 dark:text-emerald-400" />
-              <KpiTile label="Contratos Faturados" valor={kpis.lancadas.toLocaleString("pt-BR")} sub={kpis.vigentes ? `${((kpis.lancadas / kpis.vigentes) * 100).toFixed(0)}% dos vigentes${kpis.parciais > 0 ? ` · +${kpis.parciais} parcial(is)` : ""}` : undefined} icon={<CheckCircle2 />} cor="emerald" valorClass="text-emerald-600 dark:text-emerald-400" />
+              <KpiTile label="Valor Executável" valor={fmtMoney(kpis.executavel)} sub="valor da Base (Planilha de Custo) · clique para abrir" icon={<ListChecks />} cor="slate" onClick={() => navigate("/app/licitacoes/planilha-custo")} />
+              <KpiTile label="Valor Executado" valor={fmtMoney(kpis.execRel)} sub="valor executado informado nas NFs Código N · clique para ver as notas" icon={<ClipboardCheck />} cor="sky" onClick={() => abrirKpiNoRelatorioServicos()} />
+              <KpiTile label="Divergência Executável × Executado" valor={fmtMoney(kpis.divExecutavelExecutado)} sub={textoDivergencia(kpis.divExecutavelExecutado, "executado")} icon={<AlertTriangle />} cor={kpis.divExecutavelExecutado === 0 ? "emerald" : "red"} valorClass={classeDivergencia(kpis.divExecutavelExecutado)} />
+              <KpiTile label="Valor Faturado" valor={fmtMoney(kpis.contabil)} sub="valor contábil das NFs Código N · clique para ver as notas" icon={<TrendingUp />} cor="sky" onClick={() => abrirKpiNoRelatorioServicos()} />
+              <KpiTile label="Divergência Executado × Faturado" valor={fmtMoney(kpis.divExecutadoFaturado)} sub={textoDivergencia(kpis.divExecutadoFaturado, "faturado")} icon={<AlertTriangle />} cor={kpis.divExecutadoFaturado === 0 ? "emerald" : "red"} valorClass={classeDivergencia(kpis.divExecutadoFaturado)} />
+              <KpiTile label="Divergência Executável × Faturado" valor={fmtMoney(kpis.naoEmitido + kpis.excesso)} sub={`${fmtMoney(kpis.naoEmitido)} a emitir · ${fmtMoney(kpis.excesso)} emitidos a mais · clique para ver por contrato`} icon={<AlertTriangle />} cor="red" valorClass="text-red-600 dark:text-red-400" onClick={() => setAbrirNaoEmitido(true)} />
+              <KpiTile label="Contratos Pendentes" valor={kpis.pendentes.toLocaleString("pt-BR")} sub={`de ${kpis.vigentes} vigentes na competência · clique para ver quais`} icon={<FileWarning />} cor="amber" valorClass="text-amber-600 dark:text-amber-400" onClick={() => setAba("pendentes")} />
+              <KpiTile label="Valor Líquido" valor={fmtMoney(kpis.liquido)} sub="clique para ver as notas no Relatório de Serviços" icon={<Wallet />} cor="slate" onClick={() => abrirKpiNoRelatorioServicos()} />
+              <KpiTile label="Valor Recebido" valor={fmtMoney(kpis.recebido)} sub="clique para ver as notas pagas no Relatório de Serviços" icon={<CheckCircle2 />} cor="emerald" valorClass="text-emerald-600 dark:text-emerald-400" onClick={() => abrirKpiNoRelatorioServicos({ status: "pago" })} />
+              <KpiTile label="% Recebido sobre Faturado" valor={`${kpis.pctRecebido.toFixed(1).replace(".", ",")}%`} sub={`${fmtMoney(kpis.recebido)} de ${fmtMoney(kpis.contabil)} · clique para ver as notas`} icon={<Percent />} cor="emerald" valorClass="text-emerald-600 dark:text-emerald-400" onClick={() => abrirKpiNoRelatorioServicos()} />
+              <KpiTile label="Contratos Faturados" valor={kpis.lancadas.toLocaleString("pt-BR")} sub={kpis.vigentes ? `${((kpis.lancadas / kpis.vigentes) * 100).toFixed(0)}% dos vigentes${kpis.parciais > 0 ? ` · +${kpis.parciais} parcial(is)` : ""} · clique para ver as notas` : "clique para ver as notas"} icon={<CheckCircle2 />} cor="emerald" valorClass="text-emerald-600 dark:text-emerald-400" onClick={() => abrirKpiNoRelatorioServicos()} />
             </div>
 
             {kpis.executavel > 0 && kpis.naoEmitido > 0 && (
@@ -441,9 +464,11 @@ export default function ControleFaturamento() {
                         <TableHead>Empresa</TableHead>
                         <TableHead>Contrato</TableHead>
                         <TableHead className="text-center">Status</TableHead>
-                        <TableHead className="text-right">Executável (Base)</TableHead>
-                        <TableHead className="text-right">Executado (Relatório N)</TableHead>
-                        <TableHead className="text-right">Valor Contábil (Código N)</TableHead>
+                        <TableHead className="text-right">Valor Executável</TableHead>
+                        <TableHead className="text-right">Valor Executado</TableHead>
+                        <TableHead className="text-right">Diverg. Executável × Executado</TableHead>
+                        <TableHead className="text-right">Valor Faturado</TableHead>
+                        <TableHead className="text-right">Diverg. Executado × Faturado</TableHead>
                         <TableHead className="text-right">Não Emitido</TableHead>
                         <TableHead className="text-right">Valor Líquido</TableHead>
                         <TableHead className="text-right">Valor Recebido</TableHead>
@@ -453,7 +478,7 @@ export default function ControleFaturamento() {
                     </TableHeader>
                     <TableBody>
                       {linhasCompetencia.length === 0 && (
-                        <TableRow><TableCell colSpan={11} className="text-center text-muted-foreground py-8">Sem contratos vigentes para os filtros selecionados.</TableCell></TableRow>
+                        <TableRow><TableCell colSpan={13} className="text-center text-muted-foreground py-8">Sem contratos vigentes para os filtros selecionados.</TableCell></TableRow>
                       )}
                       {linhasCompetencia.map((l) => (
                         <TableRow
@@ -469,7 +494,9 @@ export default function ControleFaturamento() {
                           </TableCell>
                           <TableCell className="text-right text-sm">{fmtMoney(l.executavel)}</TableCell>
                           <TableCell className="text-right text-sm">{fmtMoney(l.execRel)}</TableCell>
+                          <TableCell className={cn("text-right text-sm", divergenciaEntre(l.executavel, l.execRel) !== 0 && "text-red-600 dark:text-red-400 font-medium")}>{fmtMoney(divergenciaEntre(l.executavel, l.execRel))}</TableCell>
                           <TableCell className="text-right text-sm">{fmtMoney(l.contabil)}</TableCell>
+                          <TableCell className={cn("text-right text-sm", divergenciaEntre(l.execRel, l.contabil) !== 0 && "text-red-600 dark:text-red-400 font-medium")}>{fmtMoney(divergenciaEntre(l.execRel, l.contabil))}</TableCell>
                           <TableCell className={cn("text-right text-sm", l.naoEmitido > 0 && "text-red-600 dark:text-red-400 font-medium")}>{fmtMoney(l.naoEmitido)}</TableCell>
                           <TableCell className="text-right text-sm">{fmtMoney(l.liquido)}</TableCell>
                           <TableCell className="text-right text-sm">{fmtMoney(l.recebido)}</TableCell>
@@ -483,8 +510,10 @@ export default function ControleFaturamento() {
                         <TableRow className="font-semibold bg-muted/40">
                           <TableCell colSpan={3}>TOTAL</TableCell>
                           <TableCell className="text-right">{fmtMoney(kpis.executavel)}</TableCell>
-                          <TableCell className="text-right">{fmtMoney(linhasCompetencia.reduce((s, l) => s + l.execRel, 0))}</TableCell>
+                          <TableCell className="text-right">{fmtMoney(kpis.execRel)}</TableCell>
+                          <TableCell className="text-right">{fmtMoney(kpis.divExecutavelExecutado)}</TableCell>
                           <TableCell className="text-right">{fmtMoney(kpis.contabil)}</TableCell>
+                          <TableCell className="text-right">{fmtMoney(kpis.divExecutadoFaturado)}</TableCell>
                           <TableCell className="text-right">{fmtMoney(kpis.naoEmitido)}</TableCell>
                           <TableCell className="text-right">{fmtMoney(kpis.liquido)}</TableCell>
                           <TableCell className="text-right">{fmtMoney(kpis.recebido)}</TableCell>
@@ -563,6 +592,7 @@ export default function ControleFaturamento() {
                                     <p className="text-muted-foreground">{STATUS_INFO[c.status].label}</p>
                                     <dl className="grid grid-cols-[1fr_auto] gap-x-4 gap-y-0.5 tabular-nums">
                                       <dt>Executável</dt><dd className="text-right">{fmtMoney(c.executavel)}</dd>
+                                      <dt>Executado</dt><dd className="text-right">{fmtMoney(c.execRel)}</dd>
                                       <dt>Faturado (bruto)</dt><dd className="text-right">{fmtMoney(c.contabil)}</dd>
                                       <dt>Líquido</dt><dd className="text-right">{fmtMoney(c.liquido)}</dd>
                                       <dt>Faltante</dt><dd className={cn("text-right", c.naoEmitido > 0 && "text-red-600 font-medium")}>{fmtMoney(c.naoEmitido)}</dd>

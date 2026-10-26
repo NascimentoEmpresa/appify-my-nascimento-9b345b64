@@ -15,7 +15,7 @@ on:
       comando:
         description: 'O que rodar'
         type: choice
-        options: [testar, descobrir, perfilar, sincronizar]
+        options: [testar, descobrir, perfilar, sincronizar, conferir]
         default: testar
       tabelas:
         description: 'Só para perfilar: tabelas separadas por espaço (vazio = as de tabelas.json)'
@@ -33,19 +33,44 @@ on:
         description: 'Gravar de verdade? Desmarcado = simulação com rollback'
         type: boolean
         default: false
+      completo:
+        # Só para sincronizar: as tabelas "incremental" de tabelas.json
+        # (BiMarcacoes) trazem só os últimos dias; marcado, recarrega inteira.
+        description: 'Recarga COMPLETA (inclusive BiMarcacoes)? Desmarcado = só os dias recentes nas tabelas grandes'
+        type: boolean
+        default: false
   schedule:
-    # 10:00 UTC = 07:00 no horário de Brasília.
+    # 10:00 UTC = 07:00 no horário de Brasília. Carga diária: todas as
+    # tabelas + 45 dias de BiMarcacoes.
     - cron: '0 10 * * *'
+    # RÁPIDA DO PONTO (16/10/2026): a cada 10 min, só BiMarcacoes desde
+    # ontem, para as batidas aparecerem no ERP quase ao vivo. Pedido do
+    # Pablo depois de 15/10, quando a diária travou, foi cancelada em 60 min
+    # e o ERP ficou sem as batidas do dia. O texto do cron é a chave que o
+    # passo "Rodar" usa para saber qual das duas é — mudar aqui, mudar lá.
+    # O GitHub não garante o horário: em hora de pico atrasa ou pula
+    # rodadas (a diária de 16/10 começou às 11:29 em vez de 07:00).
+    #
+    # 21/10/2026: o '*/10' rodava 5 vezes por DIA (2 a 5 h de intervalo) e o
+    # ERP ficava horas atrás da Flex. Agora o disparo é de hora em hora e cada
+    # execução fica de pé ~5h40 rodando a rápida a cada 10 min
+    # (espelho-mysql/rapida-continua.sh); a próxima espera na fila do grupo
+    # espelho-ponto e entra quando esta sai — disparo pulado não abre buraco.
+    - cron: '7 * * * *'
 
-# Duas execuções ao mesmo tempo brigariam pelo TRUNCATE das mesmas tabelas.
+# A diária e as manuais num grupo; a rápida (laço de horas) no dela — senão a
+# diária das 07:00 esperaria o laço inteiro na fila. Quando as duas se cruzam,
+# o banco põe uma atrás da outra (pg_advisory_xact_lock em espelho.mjs).
 concurrency:
-  group: espelho-mysql
+  group: ${{ github.event.schedule == '7 * * * *' && 'espelho-ponto' || 'espelho-mysql' }}
   cancel-in-progress: false
 
 jobs:
   espelho:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    # Rápida: o laço dura 340 min (rapida-continua.sh) e o teto do runner é
+    # 360; 355 dá folga para fechar sem ser cancelado. Diária e manual: 60.
+    timeout-minutes: ${{ github.event.schedule == '7 * * * *' && 355 || 60 }}
 
     steps:
       - uses: actions/checkout@v4
@@ -72,19 +97,72 @@ jobs:
           node -e "JSON.parse(require('fs').readFileSync('credenciais.json','utf8'))" \
             || { echo "::error::ESPELHO_CREDENCIAIS não contém um JSON válido."; exit 1; }
 
+      # TÚNEL PARA O CLUSTER (19/10/2026)
+      #
+      # Até a virada o destino era a Supabase, que atendia na internet. O
+      # Postgres do cluster NÃO atende: o HAProxy escuta só em 127.0.0.1 e o
+      # Postgres só no IP do túnel WireGuard. Abrir a 5432 para o mundo seria
+      # o caminho curto e é justamente o que derruba gente: Postgres exposto
+      # apanha varredura de senha o dia inteiro.
+      #
+      # Então o runner abre um túnel SSH e escreve em 127.0.0.1:5433 — o
+      # mesmo arranjo que o pgAdmin dos devs usa. A chave é só de
+      # encaminhamento (`restrict,port-forwarding,permitopen="127.0.0.1:5000"`):
+      # quem a tiver não abre sessão, não roda comando, não lê arquivo.
+      #
+      # A porta 5000 do outro lado é o HAProxy, que sempre aponta para o
+      # líder. Apontar para o Postgres de um nó específico significaria, no
+      # dia do failover, escrever no standby e receber "cannot execute in a
+      # read-only transaction" às 07:00 da manhã.
+      - name: Abrir o túnel até o banco1
+        env:
+          CHAVE: ${{ secrets.CLUSTER_TUNEL_SSH_KEY }}
+          B1: ${{ vars.CLUSTER_BACKUP_HOST || '216.238.120.171' }}
+        run: |
+          set -euo pipefail
+          [ -n "$CHAVE" ] || { echo "::error::Falta CLUSTER_TUNEL_SSH_KEY."; exit 1; }
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          printf '%s\n' "$CHAVE" > ~/.ssh/tunel && chmod 600 ~/.ssh/tunel
+          ssh-keyscan -p 8443 -H "$B1" >> ~/.ssh/known_hosts 2>/dev/null
+          # ExitOnForwardFailure: sem isto o ssh sobe feliz mesmo com o
+          # encaminhamento recusado, e a falha só apareceria depois, como
+          # "connection refused" do pg — erro que não fala de túnel nenhum.
+          ssh -i ~/.ssh/tunel -p 8443 -o BatchMode=yes -o ExitOnForwardFailure=yes \
+              -o ServerAliveInterval=30 -f -N -L 5433:127.0.0.1:5000 "pgtunel@$B1"
+          for _ in $(seq 1 10); do
+            if (exec 3<>/dev/tcp/127.0.0.1/5433) 2>/dev/null; then
+              echo "túnel aberto: 127.0.0.1:5433 -> banco1 127.0.0.1:5000"; exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::O túnel não respondeu em 10 s."; exit 1
+
       - name: Rodar
         working-directory: espelho-mysql
         # Os inputs vão por env, nunca interpolados direto no shell: assim um
         # valor com aspas ou ; não vira comando.
         env:
           EVENTO: ${{ github.event_name }}
+          AGENDA: ${{ github.event.schedule }}
           COMANDO: ${{ inputs.comando }}
           LIMITE: ${{ inputs.limite }}
           GRAVAR: ${{ inputs.gravar }}
+          COMPLETO: ${{ inputs.completo }}
           TABELAS: ${{ inputs.tabelas }}
+          # Para o laço da rápida reabrir o túnel do cluster se ele cair.
+          B1: ${{ vars.CLUSTER_BACKUP_HOST || '216.238.120.171' }}
         run: |
           set -euo pipefail
-          if [ "$EVENTO" = "schedule" ]; then
+          if [ "$EVENTO" = "schedule" ] && [ "$AGENDA" = "7 * * * *" ]; then
+            # Rápida em laço de ~5h40, uma rodada a cada 10 min — ver
+            # rapida-continua.sh. Cada rodada traz as batidas desde ontem + o
+            # cadastro (BiSituacoes e BiEmpregados, ~13 mil linhas, segundos).
+            # Desde 20/10/2026 o EMPREGADOS é atualizado DENTRO do banco a
+            # partir destas duas (rh_sync_senior_pelo_espelho, pg_cron de 15 em
+            # 15 min, mig 20261020000110) — o robô integracao-senior do Discloud
+            # saiu. Sem elas aqui, a situação (atestado, férias…) só andaria 1x/dia.
+            bash rapida-continua.sh
+          elif [ "$EVENTO" = "schedule" ]; then
             # A execução diária é sempre a carga completa e definitiva.
             node espelho.mjs sincronizar --commit
           else
@@ -105,6 +183,9 @@ jobs:
               if [ -n "$LIMITE" ]; then
                 set -- "$@" --limite "$LIMITE"
               fi
+              if [ "$COMPLETO" = "true" ]; then
+                set -- "$@" --completo
+              fi
             fi
             echo "rodando: node espelho.mjs $*"
             node espelho.mjs "$@"
@@ -114,12 +195,56 @@ jobs:
       # congela com os dados de ontem, parecendo certo, e só se descobre por
       # acaso. Reaproveita o bot que o pr_notify_dm.yml já usa.
       #
+      # QUANTO CUSTOU A DIÁRIA, NO NÓ  (19/10/2026)
+      #
+      # A diária reescreve ~2,66 milhões de linhas numa tacada. Na Supabase
+      # isso era problema dela; no cluster é nosso, e vira WAL que precisa
+      # chegar ao banco2 — que hoje tem 1 vCPU e 2 GB e já vive em swap.
+      #
+      # Em vez de alguém "ficar de olho" às 07:00, o próprio workflow mede e
+      # conta. Vigilância que depende de alguém lembrar de olhar não é
+      # vigilância; é sorte com hora marcada.
+      #
+      # Só na diária: a rápida de 10 min move ~1.500 linhas e mandaria 144
+      # mensagens por dia sem conteúdo — e alarme que chega sempre é alarme
+      # que ninguém lê.
+      - name: Quanto custou, no nó
+        if: success() && github.event_name == 'schedule' && github.event.schedule == '0 10 * * *'
+        env:
+          CHAVE: ${{ secrets.CLUSTER_BACKUP_SSH_KEY }}
+          B1: ${{ vars.CLUSTER_BACKUP_HOST || '216.238.120.171' }}
+          B2: ${{ vars.CLUSTER_BANCO2_HOST || '172.237.48.8' }}
+          USUARIO: ${{ vars.CLUSTER_BACKUP_USER || 'erpbackup' }}
+          DISCORD_TOKEN: ${{ secrets.DISCORD_TOKEN }}
+        run: |
+          set -uo pipefail
+          [ -n "$CHAVE" ] && [ -n "$DISCORD_TOKEN" ] || exit 0
+          printf '%s\n' "$CHAVE" > ~/.ssh/cluster && chmod 600 ~/.ssh/cluster
+          for H in "$B1" "$B2"; do ssh-keyscan -p 8443 -H "$H" >> ~/.ssh/known_hosts 2>/dev/null; done
+          # "status" é a única palavra que esta chave sabe dizer além de
+          # pedir backup; devolve contadores, nunca segredo.
+          E1=$(ssh -p 8443 -i ~/.ssh/cluster -o BatchMode=yes -o ConnectTimeout=20 "$USUARIO@$B1" status 2>&1 | head -20)
+          E2=$(ssh -p 8443 -i ~/.ssh/cluster -o BatchMode=yes -o ConnectTimeout=20 "$USUARIO@$B2" status 2>&1 | head -20)
+          CANAL=$(curl -s -X POST "https://discord.com/api/v10/users/@me/channels" \
+            -H "Authorization: Bot $DISCORD_TOKEN" -H "Content-Type: application/json" \
+            -d '{"recipient_id":"1384572666752663653"}' | jq -r '.id')
+          CORPO=$(jq -n --arg a "$E1" --arg b "$E2" \
+            '{content: ("📊 **Espelho: carga diária concluída.** Estado dos nós logo depois:\n**banco1**\n```\n"+$a+"\n```\n**banco2**\n```\n"+$b+"\n```\nOlhar: `carga`, `swap_uso` e `membros_streaming` (tem que ser 1).")}')
+          curl -s -X POST "https://discord.com/api/v10/channels/$CANAL/messages" \
+            -H "Authorization: Bot $DISCORD_TOKEN" -H "Content-Type: application/json" \
+            -d "$CORPO" > /dev/null
+          echo "medição enviada por DM"
+
       # Vai pela API REST em vez do discord.js: são duas chamadas (abre o
       # canal de DM, manda a mensagem), sem instalar pacote nem esperar o
       # cliente conectar.
+      # cancelled() entrou em 16/10/2026: a diária de 15/10 estourou os 60 min,
+      # foi CANCELADA (não "falhou") e o aviso não saiu — ninguém soube que o
+      # ponto parou.
       - name: Avisar no Discord se quebrou
-        if: failure()
+        if: failure() || cancelled()
         env:
+          AGENDA: ${{ github.event.schedule }}
           DISCORD_TOKEN: ${{ secrets.DISCORD_TOKEN }}
           # IDs de quem recebe, separados por vírgula. Editável em
           # Settings > Secrets and variables > Actions > Variables,
@@ -129,6 +254,9 @@ jobs:
           DISPARO: ${{ github.event_name }}
         run: |
           set -uo pipefail
+          # A rápida (laço) só termina com erro depois de 3 rodadas SEGUIDAS
+          # sem conseguir (30 min sem ponto) — falha avulsa é absorvida lá
+          # dentro. Então todo erro dela aqui merece aviso.
           if [ -z "${DISCORD_TOKEN:-}" ] || [ -z "${ALVOS:-}" ]; then
             echo "::warning::sem DISCORD_TOKEN ou ESPELHO_DISCORD_IDS — aviso não enviado"
             exit 0
@@ -142,7 +270,8 @@ jobs:
             const texto = [
               "🔴 **Espelho MySQL → Supabase falhou**",
               "",
-              (agendado ? "A rodada automática das 07:00" : "Uma execução manual") +
+              (process.env.AGENDA === "7 * * * *" ? "A rápida do ponto (laço de 10 em 10 min, 3 rodadas seguidas)"
+                : agendado ? "A rodada automática das 07:00" : "Uma execução manual") +
                 " não conseguiu atualizar o Supabase.",
               "O espelho continua com os dados da última carga que deu certo —",
               "nada foi corrompido, mas está desatualizado.",

@@ -16,7 +16,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import {
   Landmark, TrendingUp, ArrowDownToLine, TimerOff, X, Plus, PiggyBank,
-  Pencil, Trash2, History, MoreHorizontal,
+  Pencil, Trash2, History, MoreHorizontal, ChevronLeft, ChevronRight,
 } from "lucide-react";
 import { toast } from "sonner";
 import { AcessoGate } from "@/components/auth/AcessoGate";
@@ -33,6 +33,7 @@ import {
   useAtualizarRendimento,
   useResgatarMontanteAplicacao,
   useResgatesCaixa,
+  useHistoricoImportadoAplicacao,
   useEditarResgate,
   useExcluirResgate,
   type AplicacaoFinanceiraResgateCaixa,
@@ -51,6 +52,7 @@ import {
 // própria. Rendimento é informativo/manual (sem cálculo de indexador/CDI).
 
 const MENU_CODIGO = "financeiro-aplicacao-financeira";
+const MOV_POR_PAGINA = 25;
 
 const PRODUTOS: ProdutoAplicacao[] = ["CDB", "Fundo DI", "Conta remunerada", "Poupança", "Outro"];
 const TIPO_APLICACAO_LABEL: Record<TipoAplicacao, string> = {
@@ -71,6 +73,7 @@ const fmtData = (iso: string | null) => (iso ? new Date(iso + "T00:00:00").toLoc
 export default function AplicacoesFinanceiras() {
   const { data: linhas = [], isLoading } = useAplicacoesFinanceiras();
   const { data: resgatesCaixa = [] } = useResgatesCaixa();
+  const { data: historico = [] } = useHistoricoImportadoAplicacao();
   const { data: empresas = [] } = useEmpresasGrupo();
   const excluir = useExcluirAplicacao();
 
@@ -122,16 +125,23 @@ export default function AplicacoesFinanceiras() {
     // desconta os resgates antigos, por linha) — o principal já resgatado pela
     // tabela do caixa sai daqui para o card acompanhar o resgate lançado.
     const principalResgatadoCaixa = resgatesCaixa.reduce((s, r) => s + Number(r.valor_principal), 0);
-    const totalAplicado = ativas.reduce((s, l) => s + Number(l.saldo_principal), 0) - principalResgatadoCaixa;
-    const rendimentoAcumulado = ativas.reduce((s, l) => s + Number(l.rendimento_acumulado), 0);
+    // SIS-2026-0651: histórico importado do Fluxo (até 08/09). O que foi aplicado e ainda
+    // não resgatado até lá segue aplicado; resgates e rendimentos entram nos totais.
+    const histAplicado = historico.filter((h) => h.movimento === "aplicacao").reduce((s, h) => s + h.valor, 0);
+    const histResgatado = historico.filter((h) => h.movimento === "resgate").reduce((s, h) => s + h.valor, 0);
+    const histRendimento = historico.filter((h) => h.movimento === "rendimento").reduce((s, h) => s + h.valor, 0);
+    const totalAplicado = ativas.reduce((s, l) => s + Number(l.saldo_principal), 0) - principalResgatadoCaixa
+      + (histAplicado - histResgatado);
+    const rendimentoAcumulado = ativas.reduce((s, l) => s + Number(l.rendimento_acumulado), 0) + histRendimento;
     // Resgate não é mais por linha (entra no caixa da empresa, ver
     // useResgatarMontanteAplicacao) — soma vem da tabela própria, não das
     // colunas total_principal_resgatado/total_rendimento_resgatado da view
     // (essas ficam sempre zero pra resgates feitos por esse fluxo).
-    const totalResgatado = resgatesCaixa.reduce((s, r) => s + Number(r.valor_principal) + Number(r.valor_rendimento), 0);
+    const totalResgatado = resgatesCaixa.reduce((s, r) => s + Number(r.valor_principal) + Number(r.valor_rendimento), 0)
+      + histResgatado;
     const vencidas = ativas.filter((l) => l.status_exibicao === "vencida").length;
     return { totalAplicado, rendimentoAcumulado, totalResgatado, vencidas };
-  }, [linhas, resgatesCaixa]);
+  }, [linhas, resgatesCaixa, historico]);
 
   // SIS-2026-0588: o resgate não mexe na linha da carteira (decisão da Cálita:
   // cada linha bate 1:1 com o extrato), então ele só aparecia no KPI e no Fluxo.
@@ -141,10 +151,20 @@ export default function AplicacoesFinanceiras() {
   const movimentacoes = useMemo(() => {
     const nomeEmpresa = new Map(linhas.map((l) => [l.empresa_id, l.empresa_nome]));
     const itens: {
-      chave: string; data: string; tipo: "aplicacao" | "resgate"; empresa: string; descricao: string;
+      chave: string; data: string; tipo: "aplicacao" | "resgate" | "rendimento"; empresa: string; descricao: string;
       principal: number; rendimento: number; observacao: string | null;
-      resgate?: AplicacaoFinanceiraResgateCaixa;
+      resgate?: AplicacaoFinanceiraResgateCaixa; historico?: boolean;
     }[] = [];
+    // SIS-2026-0651: histórico importado do Fluxo — só leitura (corrige-se no Fluxo de Caixa).
+    for (const h of historico) {
+      itens.push({
+        chave: `h-${h.linha_id}`, data: h.data_pagamento, tipo: h.movimento, empresa_id: h.empresa_id,
+        empresa: h.empresa_nome ?? "—", descricao: `${h.id_malote} · ${h.banco_nome ?? "Importado"}`,
+        principal: h.movimento === "rendimento" ? 0 : h.valor,
+        rendimento: h.movimento === "rendimento" ? h.valor : 0,
+        observacao: h.descricao, historico: true,
+      } as any);
+    }
     for (const l of linhas) {
       itens.push({
         chave: `a-${l.id}`, data: l.data_aplicacao, tipo: "aplicacao", empresa_id: l.empresa_id,
@@ -168,7 +188,27 @@ export default function AplicacoesFinanceiras() {
         return true;
       })
       .sort((a, b) => b.data.localeCompare(a.data));
-  }, [linhas, resgatesCaixa, empresaFiltro, dataDe, dataAte]);
+  }, [linhas, resgatesCaixa, historico, empresaFiltro, dataDe, dataAte]);
+
+  // Paginação só da tabela; os totais do período abaixo somam TODAS as movimentações filtradas.
+  const [paginaMov, setPaginaMov] = useState(1);
+  const totalPaginasMov = Math.max(1, Math.ceil(movimentacoes.length / MOV_POR_PAGINA));
+  const paginaMovAtual = Math.min(paginaMov, totalPaginasMov);
+  const movimentacoesPagina = useMemo(
+    () => movimentacoes.slice((paginaMovAtual - 1) * MOV_POR_PAGINA, paginaMovAtual * MOV_POR_PAGINA),
+    [movimentacoes, paginaMovAtual],
+  );
+  useEffect(() => { setPaginaMov(1); }, [empresaFiltro, dataDe, dataAte]);
+
+  const totaisMovimentacoes = useMemo(() => {
+    let aplicado = 0, resgatado = 0, rendimento = 0;
+    for (const m of movimentacoes) {
+      if (m.tipo === "aplicacao") aplicado += m.principal;
+      else if (m.tipo === "resgate") { resgatado += m.principal; rendimento += m.rendimento; }
+      else rendimento += m.rendimento;
+    }
+    return { aplicado, resgatado, rendimento };
+  }, [movimentacoes]);
 
   async function confirmarExcluir() {
     if (!registroExcluir) return;
@@ -394,15 +434,20 @@ export default function AplicacoesFinanceiras() {
                   {movimentacoes.length === 0 && (
                     <TableRow><TableCell colSpan={9} className="text-center text-muted-foreground py-8">Nenhuma movimentação no período.</TableCell></TableRow>
                   )}
-                  {movimentacoes.map((m) => {
-                    const entrada = m.tipo === "resgate";
+                  {movimentacoesPagina.map((m) => {
+                    const entrada = m.tipo !== "aplicacao";
                     return (
                       <TableRow key={m.chave} className="[&>td]:px-2 [&>td]:py-2">
                         <TableCell className="text-xs whitespace-nowrap">{fmtData(m.data)}</TableCell>
-                        <TableCell>
+                        <TableCell className="whitespace-nowrap">
                           <Badge className={entrada ? "bg-sky-100 text-sky-800 dark:bg-sky-950/40 dark:text-sky-300" : "bg-slate-100 text-slate-700 dark:bg-slate-800/60 dark:text-slate-300"}>
-                            {entrada ? "Resgate (entrada)" : "Aplicação (saída)"}
+                            {m.tipo === "rendimento" ? "Rendimento (entrada)" : entrada ? "Resgate (entrada)" : "Aplicação (saída)"}
                           </Badge>
+                          {m.historico && (
+                            <Badge variant="outline" className="ml-1 text-[10px]" title="Importado da planilha de Fluxo de Caixa 2026. Para corrigir, use a Gestão do Fluxo de Caixa.">
+                              Histórico
+                            </Badge>
+                          )}
                         </TableCell>
                         <TableCell className="text-xs">{m.empresa}</TableCell>
                         <TableCell className="text-xs whitespace-nowrap">{m.descricao}</TableCell>
@@ -432,7 +477,10 @@ export default function AplicacoesFinanceiras() {
                               </DropdownMenuContent>
                             </DropdownMenu>
                           ) : (
-                            <span className="text-xs text-muted-foreground" title="Gerencie na Carteira de Aplicações">—</span>
+                            <span
+                              className="text-xs text-muted-foreground"
+                              title={m.historico ? "Histórico importado: corrija na Gestão do Fluxo de Caixa" : "Gerencie na Carteira de Aplicações"}
+                            >—</span>
                           )}
                         </TableCell>
                       </TableRow>
@@ -442,9 +490,32 @@ export default function AplicacoesFinanceiras() {
               </Table>
             </div>
             {movimentacoes.length > 0 && (
-              <p className="text-xs text-muted-foreground pt-1">
-                Mostrando {movimentacoes.length} movimentaç{movimentacoes.length === 1 ? "ão" : "ões"} (filtros de Empresa e Data).
-              </p>
+              <div className="text-xs text-muted-foreground pt-1 space-y-0.5">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p>
+                    Mostrando {(paginaMovAtual - 1) * MOV_POR_PAGINA + 1}–{Math.min(paginaMovAtual * MOV_POR_PAGINA, movimentacoes.length)} de{" "}
+                    {movimentacoes.length} movimentaç{movimentacoes.length === 1 ? "ão" : "ões"} (filtros de Empresa e Data).
+                  </p>
+                  {totalPaginasMov > 1 && (
+                    <div className="flex items-center gap-2">
+                      <Button variant="outline" size="icon" className="h-7 w-7" disabled={paginaMovAtual <= 1}
+                        onClick={() => setPaginaMov(paginaMovAtual - 1)} aria-label="Página anterior">
+                        <ChevronLeft className="h-4 w-4" />
+                      </Button>
+                      <span>Página {paginaMovAtual} de {totalPaginasMov}</span>
+                      <Button variant="outline" size="icon" className="h-7 w-7" disabled={paginaMovAtual >= totalPaginasMov}
+                        onClick={() => setPaginaMov(paginaMovAtual + 1)} aria-label="Próxima página">
+                        <ChevronRight className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  )}
+                </div>
+                <p>
+                  No período: aplicado <span className="font-medium text-foreground">{formatBRL(totaisMovimentacoes.aplicado)}</span>
+                  {" · "}resgatado <span className="font-medium text-foreground">{formatBRL(totaisMovimentacoes.resgatado)}</span>
+                  {" · "}rendimento <span className="font-medium text-emerald-600 dark:text-emerald-400">{formatBRL(totaisMovimentacoes.rendimento)}</span>
+                </p>
+              </div>
             )}
           </CardContent>
         </Card>

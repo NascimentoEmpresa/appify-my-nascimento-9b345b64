@@ -164,3 +164,16 @@ verify_jwt = true
 
 [functions.tvg-ia]
 verify_jwt = true
+
+# Suprimentos › Dashboard › Estoque Saudável (migs 20261020000020/21/22): a
+# leitura com I.A do planejamento. JWT do usuário — a função relê o painel
+# pela RPC sup_estoque_saudavel com a sessão dele, então a IA só enxerga o
+# que a pessoa enxerga e os números não vêm do corpo da requisição.
+[functions.sup-estoque-ia]
+verify_jwt = true
+
+# RH › Rateio de Despesas: leitura do PDF com I.A (21/10/2026). JWT do
+# usuário — os contratos vêm de rh_rateio_contratos com a sessão dele
+# (rh_rateio_pode), e cada valor da IA é conferido contra o texto do PDF.
+[functions.rh-rateio-ia]
+verify_jwt = true

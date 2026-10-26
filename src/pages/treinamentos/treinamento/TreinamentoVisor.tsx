@@ -297,7 +297,20 @@ export function TreinamentoVisor({ treinamento, meuNome, meuId, escopo, jaFeito,
                 </p>
               )}
 
-              {t.prova!.map((q, qi) => (
+              {/* A prova só aparece depois do vídeo inteiro (14/10/2026): antes
+                  as questões ficavam à vista, desabilitadas — dava para ler e
+                  pensar nas respostas sem assistir. */}
+              {faltaVideo ? (
+                <div className="flex flex-col items-center gap-2 rounded-xl border border-dashed p-8 text-center">
+                  <Lock className="h-8 w-8 text-muted-foreground" />
+                  <p className="font-semibold">
+                    {(estado?.falhas_seguidas ?? 0) > 0
+                      ? "Assista o vídeo novamente, inteiro, para refazer a prova"
+                      : "Assista o vídeo inteiro para liberar a prova"}
+                  </p>
+                  <p className="text-sm text-muted-foreground">Não dá para adiantar o vídeo. Ao chegar no fim, as questões aparecem aqui.</p>
+                </div>
+              ) : t.prova!.map((q, qi) => (
                 <div key={q.id} className="space-y-2 rounded-lg border p-4">
                   <p className="font-medium">
                     <span className="mr-2 text-primary">{qi + 1}.</span>{q.enunciado}
@@ -321,16 +334,11 @@ export function TreinamentoVisor({ treinamento, meuNome, meuId, escopo, jaFeito,
                 </div>
               ))}
 
-              {faltaVideo && (
-                <p className="rounded-lg bg-muted p-3 text-center text-sm text-muted-foreground">
-                  {(estado?.falhas_seguidas ?? 0) > 0
-                    ? "Assista o vídeo novamente até o fim para refazer a prova."
-                    : "Assista o vídeo até o fim para fazer a prova."}
-                </p>
+              {!faltaVideo && (
+                <Button className="w-full" size="lg" onClick={enviarProva} disabled={enviando || !estado}>
+                  {enviando ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Corrigindo…</> : "Enviar prova"}
+                </Button>
               )}
-              <Button className="w-full" size="lg" onClick={enviarProva} disabled={enviando || faltaVideo || !estado}>
-                {enviando ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Corrigindo…</> : "Enviar prova"}
-              </Button>
             </div>
           )}
 

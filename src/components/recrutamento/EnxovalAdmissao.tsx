@@ -2,7 +2,9 @@ import { forwardRef, useCallback, useEffect, useImperativeHandle, useState, type
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { supabase } from "@/integrations/supabase/client";
 import { useContratosCatalogo, useFuncoes, usePostos } from "@/hooks/useSupCatalogo";
-import { NAO_PRECISA, faltandoTamanho, resumoLivre, type ItemEnxoval } from "@/lib/recrutamento/enxoval";
+import { NAO_PRECISA, exigeTamanho, faltandoTamanho, resumoLivre, type ItemEnxoval } from "@/lib/recrutamento/enxoval";
+import { enviarFotoCracha } from "@/hooks/useSupPedidos";
+import { BUCKET_CRACHAS } from "@/lib/suprimentos/fotoCracha";
 
 // =====================================================================
 // Enxoval da função ao mandar o candidato pra SST + COMPRAS
@@ -20,6 +22,19 @@ import { NAO_PRECISA, faltandoTamanho, resumoLivre, type ItemEnxoval } from "@/l
 //
 // O pai (modal de mover candidato) chama `enviar()` no Confirmar: grava via
 // rec_enxoval_informar e recebe o resumo que vai para compras_necessidades.
+//
+// 14/10/2026 (mig 20261014000045, Pablo: "tem que ser anexado a imagem do
+// candidato pro crachá e a quantidade de itens"): FOTO DO CRACHÁ obrigatória
+// (bucket sup-crachas, vai junto no pedido de materiais) e QUANTIDADE de cada
+// item — antes todo item ia com 1.
+//
+// 19/10/2026 (mig 20261019000001, Pablo: "deixa enviar sem preencher, só que
+// tem que botar OBSERVAÇÃO pra cada coisa que não está preenchida… mesmo se
+// não tiver opção por parte do compras, o recrutamento tem que conseguir
+// colocar o tamanho"): todo item ganha um campo para ESCREVER o tamanho (o
+// jaleco sem grade no Catálogo não tinha onde clicar e travava o pedido no
+// banco). Item que exige tamanho e fica sem ele pede uma OBSERVAÇÃO, que vai
+// para o Compras nas observações do pedido. "Não precisa" conta como preenchido.
 // =====================================================================
 
 const db = supabase as unknown as SupabaseClient;
@@ -29,12 +44,13 @@ interface Preview {
   contrato_id: string | null; posto_id: string | null; funcao_id: string | null;
   contrato_nome: string | null; posto_nome: string | null; funcao_nome: string | null;
   itens: ItemEnxoval[]; observacoes: string | null; ja_informado: boolean; tem_pedido: boolean;
+  foto_cracha_path?: string | null;
 }
 
 export interface EnxovalAdmissaoHandle {
   /** Grava o enxoval. `resumo` vai para compras_necessidades (null = não mexer). */
   // Sem união discriminada: o projeto roda sem strict, e o TS não estreita por `ok`.
-  enviar: () => Promise<{ ok: boolean; resumo?: string | null; erro?: string }>;
+  enviar: () => Promise<{ ok: boolean; resumo?: string | null; erro?: string; foto?: string | null }>;
 }
 
 const fi: CSSProperties = { width: "100%", marginTop: 4, padding: "8px 10px", borderRadius: 8, border: "1px solid #cbd5e1", background: "#fff", fontSize: 13 };
@@ -51,10 +67,14 @@ export const EnxovalAdmissao = forwardRef<EnxovalAdmissaoHandle, { candidatoId: 
   const [tamanhos, setTamanhos] = useState<Record<string, string>>({});
   const [obs, setObs] = useState("");
   const [livre, setLivre] = useState("");
+  const [qtds, setQtds] = useState<Record<string, number>>({});
+  const [obsItens, setObsItens] = useState<Record<string, string>>({});
+  const [foto, setFoto] = useState<File | null>(null);
+  const [fotoUrl, setFotoUrl] = useState<string | null>(null);
 
   const { data: contratos = [] } = useContratosCatalogo(!!prev && !prev.vaga_tem_catalogo);
   const { data: postos = [] } = usePostos(escolha.contrato_id || null);
-  const { data: funcoes = [] } = useFuncoes(escolha.posto_id || null);
+  const { data: funcoes = [], isSuccess: funcoesCarregadas } = useFuncoes(escolha.posto_id || null);
 
   const carregar = useCallback(async (ids?: { contrato_id: string; posto_id: string; funcao_id: string }) => {
     setCarregando(true); setErro(null);
@@ -68,9 +88,22 @@ export const EnxovalAdmissao = forwardRef<EnxovalAdmissaoHandle, { candidatoId: 
     setPrev(p);
     setEscolha({ contrato_id: p.contrato_id ?? "", posto_id: p.posto_id ?? "", funcao_id: p.funcao_id ?? "" });
     setTamanhos(Object.fromEntries((p.itens ?? []).filter((i) => i.tamanho).map((i) => [i.item_id, i.tamanho as string])));
+    setQtds(Object.fromEntries((p.itens ?? []).map((i) => [i.item_id, Math.max(1, Number(i.quantidade) || 1)])));
+    setObsItens(Object.fromEntries((p.itens ?? []).filter((i) => i.obs).map((i) => [i.item_id, i.obs as string])));
     setObs(p.observacoes ?? "");
   }, [candidatoId]);
   useEffect(() => { carregar(); }, [carregar]);
+
+  // Prévia da foto: a nova escolhida agora, senão a que já estava anexada.
+  useEffect(() => {
+    if (foto) { const u = URL.createObjectURL(foto); setFotoUrl(u); return () => URL.revokeObjectURL(u); }
+    const caminho = prev?.foto_cracha_path;
+    if (!caminho) { setFotoUrl(null); return; }
+    let vivo = true;
+    db.storage.from(BUCKET_CRACHAS).createSignedUrl(caminho, 600)
+      .then(({ data }) => { if (vivo) setFotoUrl(data?.signedUrl ?? null); });
+    return () => { vivo = false; };
+  }, [foto, prev?.foto_cracha_path]);
 
   const itens = prev?.itens ?? [];
   const semEnxoval = !!prev?.funcao_id && itens.length === 0;
@@ -82,22 +115,32 @@ export const EnxovalAdmissao = forwardRef<EnxovalAdmissaoHandle, { candidatoId: 
       if (!escolha.contrato_id || !escolha.posto_id || !escolha.funcao_id) {
         return { ok: false, erro: "Escolha o contrato, o posto e a função do Catálogo para puxar o enxoval." };
       }
-      if (semEnxoval) {
-        if (!livre.trim()) return { ok: false, erro: "A função não tem enxoval no Catálogo — descreva os materiais/EPIs para o Compras." };
-        return { ok: true, resumo: resumoLivre(prev.funcao_nome, livre) };
+      if (!foto && !prev.foto_cracha_path) return { ok: false, erro: "Anexe a foto do candidato para o crachá." };
+      if (semEnxoval && !livre.trim()) return { ok: false, erro: "A função não tem enxoval no Catálogo — descreva os materiais/EPIs para o Compras." };
+      const faltam = semEnxoval ? [] : faltandoTamanho(itens, tamanhos, obsItens);
+      if (faltam.length) return { ok: false, erro: `Informe o tamanho ou escreva uma observação para: ${faltam.join(", ")}.` };
+      if (!semEnxoval && itens.every((i) => tamanhos[i.item_id] === NAO_PRECISA)) return { ok: false, erro: "Marque ao menos um item do enxoval." };
+      // A foto sobe só depois de tudo validado — senão cada tentativa deixava um arquivo solto no bucket.
+      let caminhoFoto = prev.foto_cracha_path ?? null;
+      if (foto) {
+        try { caminhoFoto = await enviarFotoCracha(foto); }
+        catch (e) { return { ok: false, erro: "Não consegui enviar a foto do crachá: " + ((e as Error)?.message ?? e) }; }
       }
-      const faltam = faltandoTamanho(itens, tamanhos);
-      if (faltam.length) return { ok: false, erro: `Informe o tamanho de: ${faltam.join(", ")}.` };
-      if (itens.every((i) => tamanhos[i.item_id] === NAO_PRECISA)) return { ok: false, erro: "Marque ao menos um item do enxoval." };
+      if (semEnxoval) return { ok: true, resumo: resumoLivre(prev.funcao_nome, livre), foto: caminhoFoto };
       const { data, error } = await db.rpc("rec_enxoval_informar", {
         p_candidato_id: candidatoId, p_contrato_id: escolha.contrato_id, p_posto_id: escolha.posto_id, p_funcao_id: escolha.funcao_id,
-        p_itens: itens.map((i) => ({ item_id: i.item_id, tamanho: tamanhos[i.item_id] ?? null })),
-        p_obs: obs.trim() || null,
+        p_itens: itens.map((i) => ({
+          item_id: i.item_id, tamanho: tamanhos[i.item_id]?.trim() || null, quantidade: qtds[i.item_id] ?? 1,
+          obs: tamanhos[i.item_id] === NAO_PRECISA ? null : obsItens[i.item_id]?.trim() || null,
+        })),
+        // A observação para o Compras vem do modal (rec_enxoval_gerar_pedido, 15/10/2026).
+        p_obs: null,
+        p_foto_path: caminhoFoto,
       });
       if (error) return { ok: false, erro: error.message };
-      return { ok: true, resumo: (data as { resumo?: string } | null)?.resumo ?? null };
+      return { ok: true, resumo: (data as { resumo?: string } | null)?.resumo ?? null, foto: caminhoFoto };
     },
-  }), [prev, erro, escolha, semEnxoval, livre, itens, tamanhos, obs, candidatoId]);
+  }), [prev, erro, escolha, semEnxoval, livre, itens, tamanhos, obsItens, qtds, foto, obs, candidatoId]);
 
   if (carregando && !prev) return <div style={{ padding: 16, textAlign: "center", color: "#64748b", fontSize: 13 }}>Carregando o enxoval da função…</div>;
   if (erro && !prev) return <div style={{ padding: 12, color: "#b91c1c", fontSize: 13, background: "#fef2f2", borderRadius: 8 }}>Não consegui carregar o enxoval: {erro}</div>;
@@ -129,12 +172,37 @@ export const EnxovalAdmissao = forwardRef<EnxovalAdmissaoHandle, { candidatoId: 
             <option value="">Função…</option>
             {funcoes.map((f) => <option key={f.id} value={f.id}>{f.nome}</option>)}
           </select>
+          {/* 15/10/2026: posto sem função no Catálogo deixava o select vazio, sem explicar nada. */}
+          {escolha.posto_id && funcoesCarregadas && funcoes.length === 0 && (
+            <div style={{ fontSize: 12, color: "#9a3412", background: "#fff7ed", border: "1px solid #fdba74", borderRadius: 8, padding: "7px 10px" }}>
+              Este posto não tem função cadastrada no Catálogo (Suprimentos), então não há enxoval para puxar.
+              Se a função não usa EPI/uniforme, marque <b>"Não precisa de pedido do Compras"</b> acima e diga o motivo.
+            </div>
+          )}
         </div>
       )}
 
       {prev.tem_pedido && (
         <div style={{ marginTop: 8, fontSize: 12.5, color: "#15803d", background: "#ecfdf5", border: "1px solid #a7f3d0", borderRadius: 8, padding: "7px 10px" }}>
           ✓ O Compras já gerou o pedido de materiais deste candidato — os tamanhos não mudam mais por aqui.
+        </div>
+      )}
+
+      {/* Foto do crachá (14/10/2026): obrigatória — vai no pedido de materiais. */}
+      {!prev.tem_pedido && (
+        <div style={{ marginTop: 10, display: "flex", alignItems: "center", gap: 10, background: "#fff", border: `1px solid ${fotoUrl ? "#e2e8f0" : "#fdba74"}`, borderRadius: 10, padding: "8px 10px" }}>
+          <div style={{ width: 52, height: 64, flexShrink: 0, borderRadius: 8, overflow: "hidden", background: "#f1f5f9", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22 }}>
+            {fotoUrl ? <img src={fotoUrl} alt="Foto do crachá" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : "🪪"}
+          </div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: "#0f172a" }}>Foto do candidato para o crachá *</div>
+            <div style={{ fontSize: 11.5, color: "#64748b" }}>{foto ? foto.name : prev.foto_cracha_path ? "Foto já anexada — troque se precisar." : "Foto de rosto, fundo claro (JPG ou PNG)."}</div>
+          </div>
+          <label style={{ ...chip(false), padding: "6px 10px", display: "inline-flex", alignItems: "center", cursor: "pointer" }}>
+            {fotoUrl ? "Trocar" : "Anexar foto"}
+            <input type="file" accept="image/*" style={{ display: "none" }}
+              onChange={(e) => { const f = e.target.files?.[0]; if (f) setFoto(f); e.target.value = ""; }} />
+          </label>
         </div>
       )}
 
@@ -146,25 +214,52 @@ export const EnxovalAdmissao = forwardRef<EnxovalAdmissaoHandle, { candidatoId: 
             const t = tamanhos[it.item_id] ?? "";
             const naoPrecisa = t === NAO_PRECISA;
             const temGrade = it.grade.length > 0;
-            const pendente = temGrade && !t;
+            const exige = exigeTamanho(it);
+            const daGrade = temGrade && it.grade.includes(t);
+            const o = obsItens[it.item_id] ?? "";
+            const semTamanho = !t.trim();
+            const pendente = exige && semTamanho && !o.trim();
             return (
               <div key={it.item_id} style={{ background: "#fff", border: `1px solid ${pendente ? "#fdba74" : "#e2e8f0"}`, borderRadius: 10, padding: "8px 10px", opacity: naoPrecisa ? .55 : 1 }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
                   <div style={{ minWidth: 0 }}>
                     <div style={{ fontSize: 13, fontWeight: 700, color: "#0f172a", textDecoration: naoPrecisa ? "line-through" : "none" }}>{it.nome}</div>
-                    <div style={{ fontSize: 10.5, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase" }}>{it.tipo}{!temGrade && !naoPrecisa ? " · sem tamanho" : ""}</div>
+                    <div style={{ fontSize: 10.5, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase" }}>{it.tipo}{!temGrade && !naoPrecisa ? " · sem grade no Catálogo" : ""}</div>
                   </div>
+                  {!naoPrecisa && (
+                    <div style={{ display: "inline-flex", alignItems: "center", gap: 4, marginLeft: "auto" }} title="Quantidade">
+                      <button type="button" style={{ ...chip(false), minWidth: 26, padding: "2px 6px" }}
+                        onClick={() => setQtds((q) => ({ ...q, [it.item_id]: Math.max(1, (q[it.item_id] ?? 1) - 1) }))}>−</button>
+                      <input type="number" min={1} max={99} value={qtds[it.item_id] ?? 1} aria-label={`Quantidade de ${it.nome}`}
+                        onChange={(e) => { const v = Math.max(1, Math.min(99, Number(e.target.value) || 1)); setQtds((q) => ({ ...q, [it.item_id]: v })); }}
+                        style={{ width: 44, padding: "3px 4px", textAlign: "center", border: "1px solid #cbd5e1", borderRadius: 7, fontSize: 13, fontWeight: 700 }} />
+                      <button type="button" style={{ ...chip(false), minWidth: 26, padding: "2px 6px" }}
+                        onClick={() => setQtds((q) => ({ ...q, [it.item_id]: Math.min(99, (q[it.item_id] ?? 1) + 1) }))}>+</button>
+                    </div>
+                  )}
                   <button type="button" onClick={() => setTamanhos((s) => { const n = { ...s }; if (naoPrecisa) delete n[it.item_id]; else n[it.item_id] = NAO_PRECISA; return n; })}
                     style={{ ...chip(naoPrecisa, "#64748b"), fontWeight: 600, fontSize: 11 }} title="Este candidato não leva este item">
                     Não precisa
                   </button>
                 </div>
-                {temGrade && !naoPrecisa && (
-                  <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginTop: 7 }}>
+                {!naoPrecisa && (
+                  <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 5, marginTop: 7 }}>
                     {it.grade.map((g) => (
                       <button key={g} type="button" style={chip(t === g)} onClick={() => setTamanhos((s) => ({ ...s, [it.item_id]: g }))}>{g}</button>
                     ))}
+                    {/* Escrito à mão: o Catálogo pode não ter a opção (ou nem ter grade). */}
+                    <input value={daGrade ? "" : t} aria-label={`Tamanho de ${it.nome}`}
+                      placeholder={temGrade ? "Outro tamanho" : exige ? "Tamanho" : "Tamanho (se tiver)"}
+                      onChange={(e) => { const v = e.target.value; setTamanhos((s) => { const n = { ...s }; if (v) n[it.item_id] = v; else delete n[it.item_id]; return n; }); }}
+                      style={{ width: temGrade ? 110 : 150, padding: "4px 8px", borderRadius: 7, fontSize: 12, border: `1.5px solid ${!daGrade && t ? "#0f3171" : "#cbd5e1"}` }} />
                   </div>
+                )}
+                {/* Sem tamanho só passa com observação (vai para o Compras no pedido). */}
+                {!naoPrecisa && ((exige && semTamanho) || o) && (
+                  <input value={o} aria-label={`Observação de ${it.nome}`}
+                    placeholder={exige && semTamanho ? "Observação * — por que vai sem tamanho" : "Observação para o Compras"}
+                    onChange={(e) => setObsItens((s) => ({ ...s, [it.item_id]: e.target.value }))}
+                    style={{ width: "100%", marginTop: 6, padding: "5px 8px", borderRadius: 7, fontSize: 12, border: `1.5px solid ${pendente ? "#fb923c" : "#cbd5e1"}` }} />
                 )}
               </div>
             );
@@ -180,11 +275,8 @@ export const EnxovalAdmissao = forwardRef<EnxovalAdmissaoHandle, { candidatoId: 
         </div>
       )}
 
-      {!prev.tem_pedido && itens.length > 0 && (
-        <textarea rows={2} style={{ ...fi, marginTop: 10, resize: "vertical" }} value={obs} onChange={(e) => setObs(e.target.value)}
-          placeholder="Observação para o Compras (opcional)" />
-      )}
-      <div style={{ fontSize: 10.5, color: "#94a3b8", marginTop: 6 }}>Vai para Suprimentos › EPIs — Admissões, que gera o pedido de materiais.</div>
+      {/* A observação para o Compras está no modal (15/10/2026) — vai no pedido. */}
+      <div style={{ fontSize: 10.5, color: "#94a3b8", marginTop: 6 }}>Ao enviar, o pedido de materiais é gerado na hora em Suprimentos › Pedidos de Materiais.</div>
     </div>
   );
 });

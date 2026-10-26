@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Card, CardContent } from "@/components/ui/card";
@@ -13,11 +13,19 @@ import {
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
-import { TrendingDown, TrendingUp, Wallet, LineChart, X, Trash2, RotateCcw, Pencil, Eye, ChevronRight, ChevronDown, FileDown } from "lucide-react";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  ABAS_FLUXO, SITUACOES_FLUXO, filtrarPorAbaFluxo, filtrarPorSituacaoFluxo, hojeISO, situacaoFluxo,
+  type AbaFluxo, type SituacaoFluxo,
+} from "@/pages/financeiro/fluxo-caixa/abasFluxo";
+import { agruparKpi, explicacaoKpi, linhasDoKpi, totalKpi, type KpiFluxo } from "@/pages/financeiro/fluxo-caixa/kpiFluxo";
+import { useScreenAccess } from "@/hooks/useScreenAccess";
+import { TrendingDown, TrendingUp, Wallet, LineChart, X, Trash2, RotateCcw, Pencil, Eye, ChevronRight, ChevronDown, FileDown, Split } from "lucide-react";
 import { toast } from "sonner";
 import { AcessoGate } from "@/components/auth/AcessoGate";
 import {
   useFluxoCaixaCombinado,
+  useFluxoCaixaPrevisto,
   useAjustarLinhaFluxoCaixa,
   useTrocarContratoFluxoCaixa,
   useSemContratoImportado,
@@ -31,12 +39,18 @@ import { useExcluirDebito, useRestaurarDebito, useDebitoAutomaticoLixeira } from
 import { useExcluirItemFatura, useRestaurarItemFatura, useCartaoFaturaLixeira } from "@/hooks/useCartaoFatura";
 import { useClassificacoesOrcamentoAdmin } from "@/hooks/usePlanejamentoOrcamentario";
 import { ExcluirPermanentementeButton } from "@/pages/malote/ExcluirPermanentementeButton";
+import { useExcluirLinhaImportada, useImportadaLixeira, useRestaurarLinhaImportada } from "@/hooks/useFluxoCaixaImportado";
+import { RatearImportadoDialog, type LinhaParaRatear } from "./fluxo-caixa/RatearImportadoDialog";
+import { acaoDeRateio } from "./fluxo-caixa/rateioImportado";
+import { linhasDoExport, linhaTemContrato } from "./fluxo-caixa/exportRateio";
+import { linhaCasaBusca } from "./fluxo-caixa/buscaLinha";
 import { KpiTile } from "@/components/financeiro/KpiTile";
 import { BancoBadge } from "@/components/financeiro/BancoBadge";
 import { urlLogoCartao, useCartaoBancos } from "@/hooks/useMaloteCartaoCredito";
 import { ContratoTrocaCampo } from "@/pages/financeiro/fluxo-caixa/ContratoTrocaCampo";
 import { camposComPendencia, motivosRevisar, SEM_CONTRATO } from "@/pages/financeiro/fluxo-caixa/motivosRevisar";
-import { parseValorBR, valorConfere } from "@/pages/financeiro/fluxo-caixa/filtroValor";
+import { linhaDaOrigemDoCard } from "@/pages/controladoria/auditoria/regras";
+import { parseValorBR, valorConfere, valorNaLinha } from "@/pages/financeiro/fluxo-caixa/filtroValor";
 import { useFaturasInformadas } from "@/hooks/useCartaoFaturaConsolidada";
 import { chaveFatura, compararFatura } from "@/pages/financeiro/cartao-credito/faturaConsolidada";
 
@@ -112,6 +126,14 @@ const LABEL_ORIGEM: Record<FluxoCaixaMaloteLinha["origem"], string> = {
 // filtradas de uma vez — mesmo padrão de paginação de PlanilhaCusto.tsx.
 const PAGE_SIZE = 50;
 
+// SIS-2026-0611: cor do selo de situação (aba Projetado/Consolidado).
+const SITUACAO_CLASSE: Record<SituacaoFluxo, string> = {
+  vencido: "text-red-600 dark:text-red-400",
+  a_vencer: "text-amber-600 dark:text-amber-400",
+  previsto: "text-sky-600 dark:text-sky-400",
+  cancelado: "text-slate-500 dark:text-slate-400",
+};
+
 // SIS-2026-0160: início do Fluxo de Caixa. SIS-2026-0256 somou o Débito
 // Automático (entrada e saída) ao Pagamento Malote (só saída) como segunda
 // fonte — os cards de Entradas/Saldo ainda ficam zerados (nenhuma das duas
@@ -119,7 +141,10 @@ const PAGE_SIZE = 50;
 export default function FluxoCaixaGestao() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const { data: linhasBrutas = [], isLoading } = useFluxoCaixaCombinado();
+  const { data: linhasRealizadas = [], isLoading } = useFluxoCaixaCombinado();
+  // SIS-2026-0611: compromissos ainda não pagos (só esta tela usa; a Conciliação não).
+  const { data: linhasPrevistas = [] } = useFluxoCaixaPrevisto();
+  const linhasBrutas = useMemo(() => [...linhasRealizadas, ...linhasPrevistas], [linhasRealizadas, linhasPrevistas]);
   // SIS-2026-0632: valor real da fatura (digitado no Cartão de Crédito) p/ comparar com a linha consolidada.
   const { data: faturasInformadas } = useFaturasInformadas();
 
@@ -134,7 +159,7 @@ export default function FluxoCaixaGestao() {
   // SIS-2026-0537 (Iury): guarda o detalhe por contrato (nome + fatia do
   // valor) em `rateioDetalhe`, pra tela poder expandir a linha e mostrar
   // como o rateio foi feito, em vez de só o rótulo "Rateio".
-  const linhas = useMemo(() => {
+  const linhasTodas = useMemo(() => {
     const grupos = new Map<
       string,
       { base: FluxoCaixaMaloteLinha; valor: number; contratos: Map<string, { nome: string; valor: number }>; classes: Set<string>; despesas: Map<string, RateioDetalheItem> }
@@ -190,6 +215,14 @@ export default function FluxoCaixaGestao() {
       return { ...base, valor, rateioDetalhe: undefined as RateioDetalheItem[] | undefined };
     });
   }, [linhasBrutas]);
+
+  // SIS-2026-0611: três visões do mesmo Fluxo. Realizado = o que já aconteceu (data de
+  // pagamento até hoje); Projetado = datas futuras (ex.: parcelas de cartão ainda por
+  // vencer); Consolidado = os dois juntos. Padrão é Realizado, que é o que o Fluxo
+  // sempre representou. Tudo abaixo (filtros, totais, exportação) trabalha sobre `linhas`.
+  const [aba, setAba] = useState<AbaFluxo>("realizado");
+  const hoje = hojeISO();
+  const linhas = useMemo(() => filtrarPorAbaFluxo(linhasTodas, aba, hoje), [linhasTodas, aba, hoje]);
   // SIS-2026-0221/0439: "Forma de pagamento" vem do catálogo nomeado
   // cadastrável em Configurações do Malote → Formas de Pagamento.
   const { data: formasPagamento = [] } = useFormasPagamento();
@@ -203,6 +236,11 @@ export default function FluxoCaixaGestao() {
   const restaurarDespesa = useRestaurarDespesa();
   const restaurarDebito = useRestaurarDebito();
   const restaurarItemFatura = useRestaurarItemFatura();
+  // Linhas importadas da planilha: excluir (lixeira) e ratear — permissão de editar o Fluxo (alterar).
+  const excluirImportada = useExcluirLinhaImportada();
+  const restaurarImportada = useRestaurarLinhaImportada();
+  const { data: importadasLixeira = [] } = useImportadaLixeira();
+  const [itemRatear, setItemRatear] = useState<{ linha: LinhaParaRatear; refazendo: boolean } | null>(null);
 
   const [itemExcluir, setItemExcluir] = useState<FluxoCaixaMaloteLinha | null>(null);
   const [excluindo, setExcluindo] = useState(false);
@@ -239,6 +277,21 @@ export default function FluxoCaixaGestao() {
   const [editEmpresaId, setEditEmpresaId] = useState("");
   const [editFormaPagamento, setEditFormaPagamento] = useState("");
   const [editBancoId, setEditBancoId] = useState("");
+
+  // SIS-2026-0720: a Auditoria da Controladoria (item 3, "falta distribuir") abre o Fluxo já na edição do lançamento para reclassificar.
+  // ?editar=origem|despesa_id|parcela. Só abre para quem tem "alterar" no Fluxo (o mesmo gate do lápis); sem permissão, nada acontece.
+  const editarParam = searchParams.get("editar");
+  const { data: podeEditarFluxo } = useScreenAccess("financeiro-fluxo-caixa-gestao", "alterar");
+  const editarJaAbriu = useRef(false);
+  useEffect(() => {
+    if (!editarParam || editarJaAbriu.current || !podeEditarFluxo || isLoading || linhasTodas.length === 0) return;
+    const [origem, despesaId, parcela] = editarParam.split("|");
+    const alvo = linhasTodas.find((x) => x.origem === origem && x.despesa_id === despesaId && String(x.numero_parcela ?? "") === (parcela ?? ""));
+    editarJaAbriu.current = true;
+    if (alvo) abrirEditar(alvo);
+    else toast.error("Não achei esse lançamento no Fluxo de Caixa (a data ou a origem pode ter mudado). Procure pelo ID na busca.");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editarParam, podeEditarFluxo, isLoading, linhasTodas]);
 
   function abrirEditar(l: FluxoCaixaMaloteLinha) {
     setItemEditar(l);
@@ -304,6 +357,7 @@ export default function FluxoCaixaGestao() {
     try {
       if (itemExcluir.origem === "malote") await excluirDespesa.mutateAsync(itemExcluir.despesa_id);
       else if (itemExcluir.origem === "debito_automatico") await excluirDebito.mutateAsync(itemExcluir.despesa_id);
+      else if (itemExcluir.origem === "importacao_historica") await excluirImportada.mutateAsync(itemExcluir.despesa_id);
       else await excluirItemFatura.mutateAsync(itemExcluir.despesa_id);
       toast.success("Lançamento movido para a lixeira.");
       setItemExcluir(null);
@@ -318,6 +372,7 @@ export default function FluxoCaixaGestao() {
     try {
       if (origem === "malote") await restaurarDespesa.mutateAsync(id);
       else if (origem === "debito_automatico") await restaurarDebito.mutateAsync(id);
+      else if (origem === "importacao_historica") await restaurarImportada.mutateAsync(id);
       else await restaurarItemFatura.mutateAsync(id);
       toast.success("Restaurado.");
     } catch (e: any) {
@@ -325,16 +380,22 @@ export default function FluxoCaixaGestao() {
     }
   }
 
-  const [dataDe, setDataDe] = useState("");
-  const [dataAte, setDataAte] = useState("");
+  // SIS-2026-0657: a Auditoria da Controladoria abre o Fluxo já no período/empresa do painel (?de=&ate=&empresa=).
+  const [dataDe, setDataDe] = useState(searchParams.get("de") ?? "");
+  const [dataAte, setDataAte] = useState(searchParams.get("ate") ?? "");
   const [competencia, setCompetencia] = useState("");
-  const [empresaId, setEmpresaId] = useState("");
+  const [empresaId, setEmpresaId] = useState(searchParams.get("empresa") ?? "");
+  // SIS-2026-0687: os tiles do card 1 da Auditoria abrem o Fluxo já numa origem (?origem=debito_automatico, cartao_fatura,
+  // aplicacao_financeira, malote, importacao_historica).
+  const [origemFiltro, setOrigemFiltro] = useState(searchParams.get("origem") ?? "");
   // SIS-2026-0537 (Iury): "retornar a coluna de Centro de custo" — filtro
   // removido no SIS-2026-0489, pedido de volta — a coluna na view nunca
   // saiu (CartaoCredito.tsx já dependia dela).
   const [contratoId, setContratoId] = useState("");
   const [classificacaoId, setClassificacaoId] = useState("");
   const [formaPagamento, setFormaPagamento] = useState("");
+  const [situacao, setSituacao] = useState<SituacaoFluxo | "">("");
+  const [kpiAberto, setKpiAberto] = useState<KpiFluxo | null>(null);
   // SIS-2026-0307: "após o pagamento alimentamos o fluxo de caixa" (usuário)
   // — Banco entra aqui, não em Pagamento Malote/Meus Itens.
   const [bancoId, setBancoId] = useState("");
@@ -407,9 +468,11 @@ export default function FluxoCaixaGestao() {
     setDataAte("");
     setCompetencia("");
     setEmpresaId("");
+    setOrigemFiltro("");
     setContratoId("");
     setClassificacaoId("");
     setFormaPagamento("");
+    setSituacao("");
     setBancoId("");
     setValor("");
     setSoInconsistentes(false);
@@ -420,31 +483,35 @@ export default function FluxoCaixaGestao() {
   const filtradas = useMemo(() => {
     const buscaNorm = busca.trim().toLowerCase();
     const valorNum = parseValorBR(valor);
-    return linhas.filter((l) => {
-      if (!valorConfere(l.valor, valorNum)) return false;
+    return filtrarPorSituacaoFluxo(linhas, situacao, hoje).filter((l) => {
+      if (valorNaLinha(l, valorNum) === null) return false;
       if (dataDe && (!l.data_pagamento || l.data_pagamento < dataDe)) return false;
       if (dataAte && (!l.data_pagamento || l.data_pagamento > dataAte)) return false;
       if (competencia && l.competencia?.slice(0, 7) !== competencia) return false;
       if (empresaId && l.empresa_id !== empresaId) return false;
+      if (origemFiltro && !linhaDaOrigemDoCard(l, origemFiltro)) return false;
       if (contratoId && l.contrato_id !== contratoId) return false;
       if (classificacaoId && l.classificacao_id !== classificacaoId) return false;
       if (formaPagamento && l.forma_pagamento !== formaPagamento) return false;
       if (bancoId && l.banco_id !== bancoId) return false;
       if (soInconsistentes && !l.inconsistencia) return false;
-      if (
-        buscaNorm &&
-        !(l.id_malote ?? "").toLowerCase().includes(buscaNorm) &&
-        !(l.descricao ?? "").toLowerCase().includes(buscaNorm)
-      ) return false;
+      // Acha também a despesa que está dentro de uma fatura de cartão (ID e descrição moram no rateioDetalhe).
+      if (!linhaCasaBusca(l, buscaNorm)) return false;
       return true;
     });
-  }, [linhas, dataDe, dataAte, competencia, empresaId, contratoId, classificacaoId, formaPagamento, bancoId, soInconsistentes, busca, valor]);
+  }, [linhas, hoje, situacao, dataDe, dataAte, competencia, empresaId, origemFiltro, contratoId, classificacaoId, formaPagamento, bancoId, soInconsistentes, busca, valor]);
 
   // SIS-2026-0256: com o Débito Automático somado à fonte, "Saídas" precisa
   // filtrar por tipo — antes só existia saída (Malote), então somar tudo
   // dava no mesmo.
   const totalSaidas = useMemo(() => filtradas.filter((l) => l.tipo === "saida").reduce((s, l) => s + Number(l.valor), 0), [filtradas]);
   const totalEntradas = useMemo(() => filtradas.filter((l) => l.tipo === "entrada").reduce((s, l) => s + Number(l.valor), 0), [filtradas]);
+  // SIS-2026-0611: saldo = entradas − saídas do filtro atual; vencidas = saídas previstas com data anterior a hoje.
+  const saldoFiltro = totalEntradas - totalSaidas;
+  const totalVencidas = useMemo(
+    () => filtradas.filter((l) => l.tipo === "saida" && situacaoFluxo(l, hoje) === "vencido").reduce((s, l) => s + Number(l.valor), 0),
+    [filtradas, hoje],
+  );
 
   // Exportação com escolha do recorte: o diálogo já abre com os filtros que a
   // tela está usando, e a pessoa ajusta o que quiser (período, empresa, banco,
@@ -460,17 +527,25 @@ export default function FluxoCaixaGestao() {
     setExportando(true);
   }
 
+  // Valor procurado: a linha aparece pelo total OU por uma fatia do rateio. No segundo caso a linha abre sozinha e a fatia fica destacada.
+  const valorProcurado = useMemo(() => parseValorBR(valor), [valor]);
+  const qtdAchadasNoRateio = useMemo(
+    () => (valorProcurado === null ? 0 : filtradas.filter((l) => valorNaLinha(l, valorProcurado) === "rateio").length),
+    [filtradas, valorProcurado]
+  );
+
   const linhasExport = useMemo(() => {
     if (!exportando) return [] as typeof linhas;
     const valorNum = parseValorBR(fx.valor);
     return linhas.filter((l) => {
-      if (!valorConfere(l.valor, valorNum)) return false;
+      if (situacaoFluxo(l, hoje) === "cancelado") return false;
+      if (valorNaLinha(l, valorNum) === null) return false;
       if (fx.dataDe && (!l.data_pagamento || l.data_pagamento < fx.dataDe)) return false;
       if (fx.dataAte && (!l.data_pagamento || l.data_pagamento > fx.dataAte)) return false;
       if (fx.competencia && l.competencia?.slice(0, 7) !== fx.competencia) return false;
       if (fx.empresaId && l.empresa_id !== fx.empresaId) return false;
       if (fx.bancoId && l.banco_id !== fx.bancoId) return false;
-      if (fx.contratoId && l.contrato_id !== fx.contratoId) return false;
+      if (fx.contratoId && !linhaTemContrato(l, fx.contratoId)) return false;
       if (fx.classificacaoId && l.classificacao_id !== fx.classificacaoId) return false;
       if (fx.formaPagamento && l.forma_pagamento !== fx.formaPagamento) return false;
       if (fx.tipo !== "todos" && l.tipo !== fx.tipo) return false;
@@ -478,9 +553,14 @@ export default function FluxoCaixaGestao() {
       if (fx.soRevisar && !l.inconsistencia) return false;
       return true;
     });
-  }, [exportando, linhas, fx]);
-  const exportEntradas = useMemo(() => linhasExport.filter((l) => l.tipo === "entrada").reduce((t, l) => t + Number(l.valor), 0), [linhasExport]);
-  const exportSaidas = useMemo(() => linhasExport.filter((l) => l.tipo === "saida").reduce((t, l) => t + Number(l.valor), 0), [linhasExport]);
+  }, [exportando, linhas, fx, hoje]);
+  // Rateios abertos: uma linha da planilha por cota (contrato), para filtrar/somar por contrato no Excel.
+  const linhasPlanilhaBase = useMemo(
+    () => linhasExport.flatMap((l) => linhasDoExport(l, fx.contratoId || undefined)),
+    [linhasExport, fx.contratoId],
+  );
+  const exportEntradas = useMemo(() => linhasPlanilhaBase.filter((x) => x.linha.tipo === "entrada").reduce((t, x) => t + x.valor, 0), [linhasPlanilhaBase]);
+  const exportSaidas = useMemo(() => linhasPlanilhaBase.filter((x) => x.linha.tipo === "saida").reduce((t, x) => t + x.valor, 0), [linhasPlanilhaBase]);
 
   function gerarExcel() {
     if (linhasExport.length === 0) {
@@ -490,23 +570,24 @@ export default function FluxoCaixaGestao() {
     const nomeDe = (lista: [string, string][], id: string) => lista.find(([i]) => i === id)?.[1] ?? "";
     const dia = (iso: string | null) => (iso ? iso.slice(0, 10).split("-").reverse().join("/") : "");
     const mesAno = (iso: string | null) => (iso ? `${iso.slice(5, 7)}/${iso.slice(0, 4)}` : "");
-    const linhasPlanilha = [...linhasExport]
-      .sort((a, b) => (a.data_pagamento ?? "").localeCompare(b.data_pagamento ?? ""))
-      .map((l) => ({
+    const linhasPlanilha = [...linhasPlanilhaBase]
+      .sort((a, b) => (a.linha.data_pagamento ?? "").localeCompare(b.linha.data_pagamento ?? ""))
+      .map(({ linha: l, valor, contrato, descricao, rateado, valorLancamento }) => ({
         "Data pagamento": dia(l.data_pagamento),
         Tipo: l.tipo === "entrada" ? "Entrada" : "Saída",
         Origem: LABEL_ORIGEM[l.origem],
         "Nº": l.id_malote ?? "",
         Classificação: l.classificacao_nome ?? "",
-        Descrição: l.descricao ?? "",
+        Descrição: descricao,
         Competência: mesAno(l.competencia),
         Empresa: l.empresa_nome ?? "",
-        Contrato: l.contrato_nome ?? "",
-        "Rateio (contrato ou despesa: valor)": l.rateioDetalhe ? l.rateioDetalhe.map((r) => `${r.nome}: ${formatBRL(r.valor)}`).join(" | ") : "",
+        Contrato: contrato,
+        Rateado: rateado ? "Sim" : "",
+        "Valor do lançamento (rateado)": rateado ? (l.tipo === "entrada" ? valorLancamento : -valorLancamento) : "",
         "Forma de pagamento": l.forma_pagamento ?? "",
         Banco: l.banco_nome ?? "",
         Parcela: l.numero_parcela ? (l.numero_parcelas ? `${l.numero_parcela}/${l.numero_parcelas}` : String(l.numero_parcela)) : "",
-        Valor: l.tipo === "entrada" ? Number(l.valor) : -Number(l.valor),
+        Valor: l.tipo === "entrada" ? valor : -valor,
         Ajustado: l.ajustado ? "Sim" : "",
         "Revisar (motivo)": l.inconsistencia ?? "",
       }));
@@ -525,7 +606,7 @@ export default function FluxoCaixaGestao() {
     ];
     import("xlsx").then((XLSX) => {
       const ws = XLSX.utils.json_to_sheet(linhasPlanilha);
-      ws["!cols"] = [14, 9, 22, 16, 26, 42, 12, 14, 34, 40, 20, 18, 9, 16, 9, 40].map((wch) => ({ wch }));
+      ws["!cols"] = [14, 9, 22, 16, 26, 42, 12, 14, 34, 9, 18, 20, 18, 9, 16, 9, 40].map((wch) => ({ wch }));
       const resumo = [
         ["Fluxo de Caixa — exportação", ""],
         ["Gerado em", new Date().toLocaleString("pt-BR")],
@@ -538,6 +619,7 @@ export default function FluxoCaixaGestao() {
         ["Saldo (entradas − saídas)", exportEntradas - exportSaidas],
         ["", ""],
         ["Obs.: na planilha, saídas aparecem com valor negativo.", ""],
+        ["Obs.: lançamento rateado sai em uma linha por cota (coluna Rateado = Sim); a coluna Valor é a cota.", ""],
       ];
       const wsResumo = XLSX.utils.aoa_to_sheet(resumo);
       wsResumo["!cols"] = [{ wch: 34 }, { wch: 40 }];
@@ -571,6 +653,17 @@ export default function FluxoCaixaGestao() {
           </div>
         }
       />
+
+      <Tabs value={aba} onValueChange={(v) => { setAba(v as AbaFluxo); setPage(1); }}>
+        <TabsList className="grid h-auto w-full grid-cols-3 gap-1 p-1">
+          {ABAS_FLUXO.map((a) => (
+            <TabsTrigger key={a.valor} value={a.valor} className="flex flex-col items-center gap-0 px-4 py-2 text-center">
+              <span className="text-sm font-semibold">{a.titulo}</span>
+              <span className="text-[11px] font-normal opacity-80">{a.descricao}</span>
+            </TabsTrigger>
+          ))}
+        </TabsList>
+      </Tabs>
 
       <Dialog open={exportando} onOpenChange={setExportando}>
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
@@ -688,28 +781,154 @@ export default function FluxoCaixaGestao() {
         </DialogContent>
       </Dialog>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <KpiTile label="Saldo Atual" valor="—" icon={<Wallet />} cor="slate" valorClass="text-muted-foreground" />
+      {/* SIS-2026-0611: o que é cada card e o que o alimenta (respeita os filtros atuais). */}
+      <Dialog open={!!kpiAberto} onOpenChange={(o) => !o && setKpiAberto(null)}>
+        <DialogContent className="max-h-[85vh] max-w-2xl overflow-y-auto">
+          {kpiAberto && (() => {
+            const exp = explicacaoKpi(kpiAberto, aba);
+            const doKpi = linhasDoKpi(filtradas, kpiAberto, hoje);
+            const total = totalKpi(doKpi, kpiAberto);
+            const porOrigem = agruparKpi(doKpi, (l) => LABEL_ORIGEM[l.origem]);
+            const porSituacao = agruparKpi(doKpi, (l) => {
+              const s = situacaoFluxo(l, hoje);
+              return s ? (SITUACOES_FLUXO.find((x) => x.valor === s)?.curto ?? s) : "Realizado";
+            });
+            const mostrarSaldoPorGrupo = kpiAberto === "saldo";
+            const maiores = [...doKpi].sort((a, b) => Math.abs(Number(b.valor)) - Math.abs(Number(a.valor))).slice(0, 8);
+            const dia = (iso: string | null) => (iso ? new Date(iso + "T00:00:00").toLocaleDateString("pt-BR") : "—");
+            return (
+              <>
+                <DialogHeader>
+                  <DialogTitle>{exp.titulo}</DialogTitle>
+                </DialogHeader>
+                <div className="space-y-4 text-sm">
+                  <div className="rounded-md border bg-muted/30 px-3 py-2">
+                    <p className="text-2xl font-bold">{formatBRL(total)}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {doKpi.length.toLocaleString("pt-BR")} lançamento(s) no filtro atual
+                    </p>
+                  </div>
+                  <p>{exp.oQueE}</p>
+                  <div>
+                    <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">O que alimenta</p>
+                    <ul className="list-disc space-y-0.5 pl-5 text-xs text-muted-foreground">
+                      {exp.fontes.map((f) => <li key={f}>{f}</li>)}
+                    </ul>
+                    {exp.aviso && <p className="mt-2 rounded-md bg-amber-50 px-2 py-1.5 text-xs text-amber-800 dark:bg-amber-950/30 dark:text-amber-300">{exp.aviso}</p>}
+                  </div>
+                  {doKpi.length > 0 && (
+                    <>
+                      <div>
+                        <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Por origem (filtro atual)</p>
+                        <Table>
+                          <TableHeader>
+                            <TableRow>
+                              <TableHead>Origem</TableHead>
+                              <TableHead className="text-right">Lançamentos</TableHead>
+                              <TableHead className="text-right">{mostrarSaldoPorGrupo ? "Saldo" : "Valor"}</TableHead>
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            {porOrigem.map((g) => (
+                              <TableRow key={g.chave}>
+                                <TableCell className="text-xs">{g.chave}</TableCell>
+                                <TableCell className="text-right text-xs">{g.qtd.toLocaleString("pt-BR")}</TableCell>
+                                <TableCell className="text-right text-xs font-medium">
+                                  {formatBRL(mostrarSaldoPorGrupo ? g.total : kpiAberto === "entradas" ? g.entradas : g.saidas)}
+                                </TableCell>
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
+                      </div>
+                      {aba !== "realizado" && (
+                        <div>
+                          <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Por situação</p>
+                          <Table>
+                            <TableBody>
+                              {porSituacao.map((g) => (
+                                <TableRow key={g.chave}>
+                                  <TableCell className="text-xs">{g.chave}</TableCell>
+                                  <TableCell className="text-right text-xs">{g.qtd.toLocaleString("pt-BR")}</TableCell>
+                                  <TableCell className="text-right text-xs font-medium">
+                                    {formatBRL(mostrarSaldoPorGrupo ? g.total : kpiAberto === "entradas" ? g.entradas : g.saidas)}
+                                  </TableCell>
+                                </TableRow>
+                              ))}
+                            </TableBody>
+                          </Table>
+                        </div>
+                      )}
+                      <div>
+                        <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Maiores lançamentos</p>
+                        <Table>
+                          <TableBody>
+                            {maiores.map((l, i) => (
+                              <TableRow key={`${l.despesa_id}-${l.numero_parcela ?? ""}-${i}`}>
+                                <TableCell className="font-mono text-[11px]">{l.id_malote}</TableCell>
+                                <TableCell className="text-xs">{dia(l.data_pagamento)}</TableCell>
+                                <TableCell className="max-w-[220px] truncate text-xs" title={l.descricao}>{l.descricao}</TableCell>
+                                <TableCell className={`text-right text-xs font-medium ${l.tipo === "entrada" ? "text-emerald-600" : ""}`}>
+                                  {l.tipo === "entrada" ? "+" : "−"} {formatBRL(Number(l.valor))}
+                                </TableCell>
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
+                      </div>
+                    </>
+                  )}
+                </div>
+                <DialogFooter>
+                  <Button variant="outline" onClick={() => setKpiAberto(null)}>Fechar</Button>
+                </DialogFooter>
+              </>
+            );
+          })()}
+        </DialogContent>
+      </Dialog>
+
+      <div className={`grid grid-cols-1 sm:grid-cols-2 gap-4 ${aba === "projetado" ? "lg:grid-cols-4" : "lg:grid-cols-3"}`}>
+        {aba === "projetado" && (
+          <KpiTile label="Vencidas não pagas (saídas)" valor={formatBRL(totalVencidas)} icon={<Wallet />} cor="amber" valorClass="text-amber-600 dark:text-amber-400" onClick={() => setKpiAberto("vencidas")} />
+        )}
         <KpiTile
-          label="Entradas (filtro atual)"
+          label={aba === "projetado" ? "Entradas previstas (filtro atual)" : "Entradas (filtro atual)"}
           valor={formatBRL(totalEntradas)}
           icon={<TrendingUp />}
           cor="emerald"
           valorClass="text-emerald-600 dark:text-emerald-400"
+          onClick={() => setKpiAberto("entradas")}
         />
         <KpiTile
-          label="Saídas (filtro atual)"
+          label={aba === "projetado" ? "Saídas previstas (filtro atual)" : "Saídas (filtro atual)"}
           valor={formatBRL(totalSaidas)}
           icon={<TrendingDown />}
           cor="red"
           valorClass="text-red-600 dark:text-red-400"
+          onClick={() => setKpiAberto("saidas")}
         />
-        <KpiTile label="Saldo Projetado" valor="—" icon={<LineChart />} cor="sky" valorClass="text-muted-foreground" />
+        <KpiTile
+          label={aba === "projetado" ? "Saldo projetado (entradas − saídas)" : "Saldo (entradas − saídas)"}
+          valor={formatBRL(saldoFiltro)}
+          icon={<LineChart />}
+          cor="sky"
+          valorClass={saldoFiltro < 0 ? "text-red-600 dark:text-red-400" : "text-sky-700 dark:text-sky-400"}
+          onClick={() => setKpiAberto("saldo")}
+        />
       </div>
 
       <p className="text-xs text-muted-foreground -mt-2">
-        Saldo Atual e Saldo Projetado ainda não têm fonte de dado. Entradas e Saídas somam Pagamento Malote (só saída)
-        e Débito Automático (entrada e saída).
+        Clique em um card para ver o que ele é e o que o alimenta. O saldo é entradas menos saídas do filtro atual (o Fluxo não tem saldo bancário).
+        {aba !== "realizado" && (
+          <span className="mt-0.5 block">
+            Situação:{" "}
+            <span className={`font-semibold ${SITUACAO_CLASSE.vencido}`}>Vencido</span> = previsto com data anterior a hoje e ainda não pago ·{" "}
+            <span className={`font-semibold ${SITUACAO_CLASSE.a_vencer}`}>A vencer</span> = vence em até 7 dias ·{" "}
+            <span className={`font-semibold ${SITUACAO_CLASSE.previsto}`}>Previsto</span> = vence depois disso ·{" "}
+            <span className={`font-semibold ${SITUACAO_CLASSE.cancelado}`}>Cancelado</span> = só aparece no filtro Situação e não entra nos totais.
+          </span>
+        )}
       </p>
 
       <Card>
@@ -768,6 +987,20 @@ export default function FluxoCaixaGestao() {
                 </SelectContent>
               </Select>
             </div>
+            {aba !== "realizado" && (
+              <div>
+                <Label className="text-xs">Situação</Label>
+                <Select value={situacao || "todas"} onValueChange={(v) => { setSituacao(v === "todas" ? "" : (v as SituacaoFluxo)); setPage(1); }}>
+                  <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="todas">Todas (sem canceladas)</SelectItem>
+                    {SITUACOES_FLUXO.map((s) => (
+                      <SelectItem key={s.valor} value={s.valor}>{s.rotulo}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
             <div>
               <Label className="text-xs">Classificação</Label>
               <Select value={classificacaoId || "todas"} onValueChange={(v) => setClassificacaoId(v === "todas" ? "" : v)}>
@@ -788,6 +1021,18 @@ export default function FluxoCaixaGestao() {
                   <SelectItem value="todas">Todas</SelectItem>
                   {formasPagamentoDisponiveis.map((nome) => (
                     <SelectItem key={nome} value={nome}>{nome}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label className="text-xs">Origem</Label>
+              <Select value={origemFiltro || "todas"} onValueChange={(v) => { setOrigemFiltro(v === "todas" ? "" : v); setPage(1); }}>
+                <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="todas">Todas</SelectItem>
+                  {(Object.keys(LABEL_ORIGEM) as (keyof typeof LABEL_ORIGEM)[]).map((o) => (
+                    <SelectItem key={o} value={o}>{LABEL_ORIGEM[o]}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>
@@ -843,6 +1088,11 @@ export default function FluxoCaixaGestao() {
           <div>
             <p className="text-sm font-semibold">Movimentações do Fluxo de Caixa</p>
             <p className="text-xs text-muted-foreground">Dados alimentados pelo Pagamento Malote e pelo Débito Automático.</p>
+            {qtdAchadasNoRateio > 0 && (
+              <p className="mt-1 rounded border border-amber-300 bg-amber-50 px-2 py-1 text-xs text-amber-900">
+                {qtdAchadasNoRateio === 1 ? "1 despesa tem" : `${qtdAchadasNoRateio} despesas têm`} o valor procurado dentro de um rateio: a linha mostra o valor TOTAL da despesa e está aberta, com a fatia destacada.
+              </p>
+            )}
           </div>
           <div className="overflow-x-auto">
             {/* Compacto para caber sem rolagem lateral (Ações sempre visíveis): padding menor,
@@ -894,7 +1144,11 @@ export default function FluxoCaixaGestao() {
                   // despesa_id — key precisa incluir o número da parcela.
                   const chave = `${l.despesa_id}-${l.numero_parcela ?? "unica"}`;
                   const temRateio = (l.contrato_nome === "Rateio" || !!l.fatura_cartao_id) && !!l.rateioDetalhe?.length;
-                  const expandida = linhasExpandidas.has(chave);
+                  // Achada pelo valor de uma fatia do rateio: abre sozinha (e o botão recolhe, em vez de abrir).
+                  const achadaNoRateio = valorProcurado !== null && valorNaLinha(l, valorProcurado) === "rateio";
+                  const alternada = linhasExpandidas.has(chave);
+                  const expandida = achadaNoRateio ? !alternada : alternada;
+                  const situacaoLinha = situacaoFluxo(l, hoje);
                   return (
                   <>
                   <TableRow key={chave}>
@@ -919,6 +1173,11 @@ export default function FluxoCaixaGestao() {
                         <Badge className="bg-emerald-100 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300">Entrada</Badge>
                       ) : (
                         <Badge className="bg-red-100 text-red-800 dark:bg-red-950/40 dark:text-red-300">Saída</Badge>
+                      )}
+                      {situacaoLinha && (
+                        <div className={`mt-1 text-[11px] font-semibold leading-tight ${SITUACAO_CLASSE[situacaoLinha]}`}>
+                          {SITUACOES_FLUXO.find((s) => s.valor === situacaoLinha)?.curto}
+                        </div>
                       )}
                     </TableCell>
                     <TableCell className="text-center text-sm">{l.classificacao_nome ?? "—"}</TableCell>
@@ -996,6 +1255,17 @@ export default function FluxoCaixaGestao() {
                         >
                           Ver no Cartão
                         </Button>
+                      ) : l.situacao_base ? (
+                        // Compromisso ainda não pago: aqui só se consulta; pagar/editar/excluir é na tela de origem.
+                        <Button
+                          variant="link"
+                          size="sm"
+                          className="h-auto whitespace-nowrap p-0 text-xs"
+                          title={l.origem === "malote" ? "Ver despesa no Malote" : "Ver em Débito Automático"}
+                          onClick={() => navigate(l.origem === "malote" ? `/app/malote/despesa/${l.despesa_id}` : "/app/financeiro/gestao-financeira/debito-automatico")}
+                        >
+                          {l.origem === "malote" ? "Ver no Malote" : "Ver no Débito"}
+                        </Button>
                       ) : l.origem === "aplicacao_financeira" ? (
                         <Button
                           variant="link"
@@ -1039,6 +1309,43 @@ export default function FluxoCaixaGestao() {
                               <Pencil className="h-3.5 w-3.5" />
                             </Button>
                           </AcessoGate>
+                          {/* Importada da planilha: ratear (ou refazer/desfazer um rateio feito aqui) e excluir. */}
+                          {l.origem === "importacao_historica" && (
+                            <AcessoGate menu="financeiro-fluxo-caixa-gestao" acao="alterar">
+                              {acaoDeRateio(l) && (
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-7 w-7 text-muted-foreground hover:text-foreground"
+                                  title={acaoDeRateio(l) === "refazer" ? "Refazer ou desfazer o rateio" : "Ratear entre contratos"}
+                                  onClick={() =>
+                                    setItemRatear({
+                                      linha: {
+                                        despesa_id: l.despesa_id,
+                                        id_malote: l.id_malote,
+                                        descricao: l.descricao,
+                                        valor: Number(l.valor) || 0,
+                                        contrato_id: l.contrato_id,
+                                        rateioDetalhe: l.rateioDetalhe?.map((r) => ({ id: r.id, nome: r.nome, valor: r.valor })),
+                                      },
+                                      refazendo: acaoDeRateio(l) === "refazer",
+                                    })
+                                  }
+                                >
+                                  <Split className="h-3.5 w-3.5" />
+                                </Button>
+                              )}
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-7 w-7 text-muted-foreground hover:text-destructive"
+                                title="Excluir (vai para a lixeira)"
+                                onClick={() => setItemExcluir(l)}
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </Button>
+                            </AcessoGate>
+                          )}
                           {l.origem !== "importacao_historica" && (
                             <AcessoGate menu={MENU_POR_ORIGEM[l.origem]} acao="excluir">
                               <Button
@@ -1063,7 +1370,7 @@ export default function FluxoCaixaGestao() {
                   </TableRow>
                   {temRateio && expandida && l.fatura_cartao_id && l.rateioDetalhe!.map((c) => (
                     // SIS-2026-0632: despesa da fatura do cartão — ID (DM/SD), data da compra, classificação, descrição e valor.
-                    <TableRow key={`${chave}-${c.id}`} className="bg-muted/30 hover:bg-muted/30">
+                    <TableRow key={`${chave}-${c.id}`} className={valorProcurado !== null && valorConfere(c.valor, valorProcurado) ? "bg-amber-100/70 hover:bg-amber-100/70" : "bg-muted/30 hover:bg-muted/30"}>
                       <TableCell />
                       <TableCell className="text-center font-mono text-[11px] text-muted-foreground">{c.idMalote ?? "—"}</TableCell>
                       <TableCell className="text-center text-xs text-muted-foreground" title="Data da compra">
@@ -1082,11 +1389,14 @@ export default function FluxoCaixaGestao() {
                     </TableRow>
                   ))}
                   {temRateio && expandida && !l.fatura_cartao_id && l.rateioDetalhe!.map((c) => (
-                    <TableRow key={`${chave}-${c.id}`} className="bg-muted/30 hover:bg-muted/30">
+                    <TableRow key={`${chave}-${c.id}`} className={valorProcurado !== null && valorConfere(c.valor, valorProcurado) ? "bg-amber-100/70 hover:bg-amber-100/70" : "bg-muted/30 hover:bg-muted/30"}>
                       <TableCell />
                       <TableCell colSpan={7} className="text-right text-xs text-muted-foreground pr-4">
                         <span className="inline-flex items-center gap-1.5">
                           <ChevronRight className="h-3 w-3 opacity-50" /> {c.nome}
+                          {valorProcurado !== null && valorConfere(c.valor, valorProcurado) && (
+                            <span className="rounded bg-amber-200 px-1.5 py-0.5 text-[10px] font-semibold text-amber-900">valor procurado</span>
+                          )}
                         </span>
                       </TableCell>
                       <TableCell />
@@ -1319,7 +1629,9 @@ export default function FluxoCaixaGestao() {
         </DialogContent>
       </Dialog>
 
-      {/* Lixeira — itens excluídos das 3 origens, cada um com Restaurar */}
+      <RatearImportadoDialog linha={itemRatear?.linha ?? null} refazendo={!!itemRatear?.refazendo} onClose={() => setItemRatear(null)} />
+
+      {/* Lixeira — itens excluídos das origens (inclusive importadas da planilha), cada um com Restaurar */}
       <Dialog open={lixeiraAberta} onOpenChange={setLixeiraAberta}>
         <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
           <DialogHeader>
@@ -1331,7 +1643,7 @@ export default function FluxoCaixaGestao() {
               de algum item), inflando o modal antes do truncate interno
               ter chance de agir. */}
           <div className="space-y-5 min-w-0">
-            {despesasLixeira.length === 0 && debitosLixeira.length === 0 && itensFaturaLixeira.length === 0 && (
+            {despesasLixeira.length === 0 && debitosLixeira.length === 0 && itensFaturaLixeira.length === 0 && importadasLixeira.length === 0 && (
               <p className="text-sm text-muted-foreground py-6 text-center">A lixeira está vazia.</p>
             )}
 
@@ -1380,6 +1692,28 @@ export default function FluxoCaixaGestao() {
                       <span className="font-medium">{formatBRL(d.valor)}</span>
                       <AcessoGate menu="financeiro-debito-automatico" acao="excluir">
                         <Button variant="outline" size="icon" className="h-8 w-8" title="Restaurar" onClick={() => restaurar("debito_automatico", d.id)}>
+                          <RotateCcw className="h-3.5 w-3.5" />
+                        </Button>
+                      </AcessoGate>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {importadasLixeira.length > 0 && (
+              <div className="space-y-1.5">
+                <p className="text-xs font-semibold text-muted-foreground uppercase">Importadas da planilha</p>
+                {importadasLixeira.map((i) => (
+                  <div key={i.despesaId} className="flex items-center justify-between gap-2 rounded-md border border-border px-3 py-2 text-sm">
+                    <div className="flex-1 min-w-0">
+                      <p className="font-mono text-xs text-muted-foreground">{i.codigo}{i.cotas > 1 ? ` · rateio (${i.cotas} cotas)` : ""}</p>
+                      <p className="truncate">{i.descricao}</p>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <span className="font-medium">{formatBRL(i.valor)}</span>
+                      <AcessoGate menu="financeiro-fluxo-caixa-gestao" acao="alterar">
+                        <Button variant="outline" size="icon" className="h-8 w-8" title="Restaurar" onClick={() => restaurar("importacao_historica", i.despesaId)}>
                           <RotateCcw className="h-3.5 w-3.5" />
                         </Button>
                       </AcessoGate>

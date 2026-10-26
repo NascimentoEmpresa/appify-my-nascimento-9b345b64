@@ -20,6 +20,11 @@ import { useControleJurosLista, useMarcarJurosCobrado, type ControleJurosLinha }
 // toda despesa/parcela do Malote paga com juros por atraso (informado no
 // modal de Confirmar Pagamento) e permite marcar como cobrado do
 // responsável. Só controle interno: não gera lançamento no Fluxo de Caixa.
+//
+// 15/10/2026 (mig 20261015000002): os juros de jan–set/2026 controlados na
+// planilha "RELATÓRIO DE JUROS E MULTAS - 2026" foram importados para
+// FIN_JUROS_IMPORTADO e entram na mesma lista (origem "planilha"): sem
+// despesa no Malote por trás, então sem "Ver despesa".
 
 const MENU_CODIGO = "financeiro-controle-juros";
 
@@ -80,7 +85,8 @@ export default function ControleJuros() {
 
   async function confirmarCobrado(l: ControleJurosLinha) {
     try {
-      await marcarCobrado.mutateAsync({ origem: l.parcela_id ? "parcela" : "despesa", id: l.parcela_id ?? l.despesa_id });
+      const origem = l.origem === "planilha" ? "planilha" : l.parcela_id ? "parcela" : "despesa";
+      await marcarCobrado.mutateAsync({ origem, id: l.parcela_id ?? l.despesa_id });
       toast.success("Juros marcado como cobrado.");
     } catch (e: any) {
       toast.error(e.message ?? "Erro ao marcar como cobrado.");
@@ -96,6 +102,7 @@ export default function ControleJuros() {
       "Valor do Juros (R$)": Number(l.valor_juros),
       "Solicitante": l.solicitante_nome ?? "—",
       "Status da Cobrança": l.juros_status === "cobrado" ? "Já cobrado" : "Pendente cobrar",
+      "Origem": l.origem === "planilha" ? "Planilha 2026 (importado)" : "Malote",
     }));
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(linhasExport), "CONTROLE DE JUROS");
@@ -208,6 +215,9 @@ export default function ControleJuros() {
                       <TableCell className="font-mono text-xs whitespace-nowrap">
                         {l.numero}
                         {l.numero_parcela && <span className="text-muted-foreground"> ({l.numero_parcela}/{l.numero_parcelas})</span>}
+                        {l.origem === "planilha" && (
+                          <Badge variant="outline" className="ml-1.5 px-1.5 py-0 text-[10px] font-sans" title="Importado da planilha de juros de 2026 — não tem despesa no Malote">Planilha</Badge>
+                        )}
                       </TableCell>
                       <TableCell className="text-xs whitespace-nowrap">{fmtData(l.data_pagamento)}</TableCell>
                       <TableCell className="text-xs max-w-[140px] truncate" title={l.classificacao_nome ?? ""}>{l.classificacao_nome ?? "—"}</TableCell>
@@ -223,9 +233,11 @@ export default function ControleJuros() {
                       </TableCell>
                       <TableCell className="text-center">
                         <div className="flex items-center justify-center gap-1">
-                          <Button variant="ghost" size="icon" className="h-7 w-7" title="Ver despesa" onClick={() => navigate(`/app/malote/despesa/${l.despesa_id}`)}>
-                            <Eye className="h-3.5 w-3.5" />
-                          </Button>
+                          {l.origem !== "planilha" && (
+                            <Button variant="ghost" size="icon" className="h-7 w-7" title="Ver despesa" onClick={() => navigate(`/app/malote/despesa/${l.despesa_id}`)}>
+                              <Eye className="h-3.5 w-3.5" />
+                            </Button>
+                          )}
                           <AcessoGate menu={MENU_CODIGO} acao="alterar">
                             <Button
                               variant="ghost"

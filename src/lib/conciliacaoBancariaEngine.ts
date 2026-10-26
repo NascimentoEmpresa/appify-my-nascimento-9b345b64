@@ -48,6 +48,11 @@ export interface PlanilhaRow {
   // ajuda a identificar a divergência mais rápido quando há várias empresas
   // do grupo no mesmo período/banco.
   empresaNome?: string | null;
+  // ID do lançamento no Fluxo de Caixa (ex. IMP-04715, SD-2026-0038), a descrição e quantas linhas do Fluxo (rateio) formam este valor.
+  // A divergência "consta no Fluxo, não caiu no extrato" aponta para ele, para achar o lançamento na tela do Fluxo.
+  idMalote?: string | null;
+  descricaoFluxo?: string | null;
+  partes?: number;
 }
 
 export interface DiaSummary {
@@ -73,6 +78,9 @@ export interface AuditRow {
   numeroParcela?: number | null;
   origemFluxo?: "malote" | "debito_automatico" | "cartao_fatura" | "aplicacao_financeira" | "importacao_historica" | null;
   empresaNome?: string | null;
+  idMalote?: string | null;
+  descricaoFluxo?: string | null;
+  partes?: number;
 }
 
 export interface Suspeito {
@@ -97,6 +105,9 @@ export interface LancamentoRow {
   numeroParcela?: number | null;
   origemFluxo?: "malote" | "debito_automatico" | "cartao_fatura" | "aplicacao_financeira" | "importacao_historica" | null;
   empresaNome?: string | null;
+  idMalote?: string | null;
+  descricaoFluxo?: string | null;
+  partes?: number;
 }
 
 export interface ReconciliacaoResult {
@@ -162,6 +173,40 @@ export function parseOFX(text: string, origem: string): OFXTransaction[] {
     });
   }
   return txns;
+}
+
+// SIS-2026-0713: saldo FINAL do extrato (LEDGERBAL) e a data a que ele se refere. É o saldo de fechamento que o dashboard compara com o
+// saldo do sistema; o saldo anterior/abertura continua descartado (MEMOS_IGNORAR). Sem LEDGERBAL no arquivo = null (nunca zero).
+export function parseSaldoFinalOFX(text: string): { valor: number; data: string | null } | null {
+  const bloco = /<LEDGERBAL>([\s\S]*?)(?:<\/LEDGERBAL>|<AVAILBAL>|<\/STMTRS>|$)/i.exec(text)?.[1];
+  if (!bloco) return null;
+  const amt = bloco.match(/<BALAMT>\s*([-+\d.,]+)/i)?.[1];
+  if (!amt) return null;
+  const valor = parseOfxAmount(amt);
+  if (!Number.isFinite(valor)) return null;
+  // Alguns bancos mandam DTASOF zerado (00000000): data inválida = sem data (gravar "0000-00-00" o banco recusa).
+  const dt = bloco.match(/<DTASOF>\s*(\d{8})/i)?.[1];
+  const ano = dt ? Number(dt.slice(0, 4)) : 0;
+  const mes = dt ? Number(dt.slice(4, 6)) : 0;
+  const dia = dt ? Number(dt.slice(6, 8)) : 0;
+  const dataValida = ano >= 2000 && mes >= 1 && mes <= 12 && dia >= 1 && dia <= 31;
+  return { valor: Math.round(valor * 100) / 100, data: dt && dataValida ? `${dt.slice(0, 4)}-${dt.slice(4, 6)}-${dt.slice(6, 8)}` : null };
+}
+
+// O LEDGERBAL é o saldo na data em que o extrato foi gerado. Se o arquivo passa do fim do período (extrato "de janeiro" exportado em fevereiro),
+// o saldo do último dia do período é o do arquivo menos o que se movimentou depois dele. Sem data no saldo (ou data inválida), a referência
+// é o último movimento do arquivo; arquivo sem movimento depois do período, ou sem movimento nenhum, vale o valor como veio.
+export function saldoFinalNoDia(
+  saldo: { valor: number; data: string | null },
+  trns: Pick<OFXTransaction, "dia" | "valor" | "tipo">[],
+  dataFim: string,
+): number {
+  const ref = saldo.data ?? trns.reduce((m, t) => (t.dia > m ? t.dia : m), "");
+  if (!ref || ref <= dataFim) return saldo.valor;
+  const depois = trns
+    .filter((t) => t.dia > dataFim && t.dia <= ref)
+    .reduce((s, t) => s + (t.tipo === "ENTRADA" ? t.valor : -t.valor), 0);
+  return Math.round((saldo.valor - depois) * 100) / 100;
 }
 
 // ── Motor de conciliação ───────────────────────────────────────────────────
@@ -238,6 +283,9 @@ export function reconciliar(planRows: PlanilhaRow[], ofxTrns: OFXTransaction[]):
           numeroParcela: p.numeroParcela,
           origemFluxo: p.origemFluxo,
           empresaNome: p.empresaNome,
+          idMalote: p.idMalote,
+          descricaoFluxo: p.descricaoFluxo,
+          partes: p.partes,
         });
         ofxSobra.splice(idxTipoErrado, 1);
         continue;
@@ -282,6 +330,9 @@ export function reconciliar(planRows: PlanilhaRow[], ofxTrns: OFXTransaction[]):
           numeroParcela: p.numeroParcela,
           origemFluxo: p.origemFluxo,
           empresaNome: p.empresaNome,
+          idMalote: p.idMalote,
+          descricaoFluxo: p.descricaoFluxo,
+          partes: p.partes,
         });
         extSemMatch.splice(bestIdx, 1);
       } else {
@@ -301,6 +352,9 @@ export function reconciliar(planRows: PlanilhaRow[], ofxTrns: OFXTransaction[]):
         numeroParcela: p.numeroParcela,
         origemFluxo: p.origemFluxo,
         empresaNome: p.empresaNome,
+        idMalote: p.idMalote,
+        descricaoFluxo: p.descricaoFluxo,
+        partes: p.partes,
       });
     for (const e of extSemMatch)
       rawAudit.push({

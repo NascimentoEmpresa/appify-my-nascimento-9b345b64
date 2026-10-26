@@ -184,9 +184,17 @@ senão o script reusa o dump velho.
 ## O que ainda falta
 
 ```
-⬜ copiar os dados          2,3 GB de banco + 5,4 GB de anexos (fora do horário)
-⬜ REPLICA IDENTITY FULL    "CONTRATOS", "ESCALAS", "SETORES" (3 tabelas sem PK)
-⬜ domínio + HTTPS          api.gprnascimento.com.br
+✅ IPv6 nos dois bancos     13/10 — sem ele a replicação lógica era impossível
+✅ anexos: script + carga   infra/ha/carregar-anexos.sh (5,6 GB, provado nos 2 nós)
+✅ auth + storage           infra/ha/carregar-auth-storage.sh (159 logins no cluster)
+✅ alerta do slot           migration 20261014000020 + worker/src/saudeBanco.js
+⬜ replicação lógica        REPLICA IDENTITY FULL + publicação + assinatura
+⬜ domínio + HTTPS          api.grpnascimento.com.br (adiado: sai da Render/Vercel)
 ⬜ troca de DNS pelo árbitro
-⬜ banco2 para 2 vCPU / 4 GB (+US$ 16,80/mês) — hoje sobram 1,1 GB com a pilha de pé
+✅ banco2 continua 1 vCPU / 2 GB — orçamento de infra fechado em 13/10/2026.
+   A folga sai de dentro: parar a pilha dele durante a carga (378 MB) e capar o
+   diário do sistema (170 MB). Ver ha-corte-roteiro.md, passo 0.2.
 ```
+
+O passo a passo da virada, com ponto de desistência em cada etapa, está em
+[`ha-corte-roteiro.md`](ha-corte-roteiro.md).

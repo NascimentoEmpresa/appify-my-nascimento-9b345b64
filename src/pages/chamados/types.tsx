@@ -186,6 +186,41 @@ export type CriterioKey = (typeof CRITERIOS_AVALIACAO)[number]["key"];
 export const mediaAvaliacao = (a: Pick<AvaliacaoChamado, CriterioKey>) =>
   CRITERIOS_AVALIACAO.reduce((s, c) => s + (a[c.key] ?? 0) * c.peso, 0);
 
+// O DESENVOLVEDOR avalia QUEM PEDIU (20/10/2026, mig 20261020000070) — mesma
+// mecânica do solicitante: 1 a 5 por critério, comentário obrigatório se não
+// for nota cheia. Uma avaliação por pessoa (solicitante e cada participante
+// extra). Pesos somam 1,00 e são os mesmos de chamados_ranking_solicitantes().
+export const CRITERIOS_AVALIACAO_SOLICITANTE = [
+  { key: "clareza",     titulo: "Clareza do pedido",       peso: 0.30, descricao: "O que precisava ser feito estava bem explicado desde a abertura?" },
+  { key: "informacoes", titulo: "Informações e evidências", peso: 0.20, descricao: "Mandou prints, exemplos e os dados necessários para resolver?" },
+  { key: "retorno",     titulo: "Retorno às dúvidas",       peso: 0.20, descricao: "Respondeu quando foi procurado, sem deixar o chamado parado?" },
+  { key: "validacao",   titulo: "Validação da entrega",     peso: 0.15, descricao: "Testou o que foi entregue e deu o retorno?" },
+  { key: "colaboracao", titulo: "Colaboração",              peso: 0.15, descricao: "Cordialidade e parceria durante o atendimento." },
+] as const;
+
+export type CriterioSolicitanteKey = (typeof CRITERIOS_AVALIACAO_SOLICITANTE)[number]["key"];
+
+/** Linha de CHAMADO_SISTEMA_AVALIACAO_DEV. */
+export interface AvaliacaoSolicitante extends Record<CriterioSolicitanteKey, number> {
+  id: number;
+  chamado_id: string;
+  avaliado_id: string;
+  avaliador_id: string;
+  papel: "solicitante" | "participante";
+  comentario: string | null;
+  created_at: string;
+}
+
+export const mediaAvaliacaoSolicitante = (a: Pick<AvaliacaoSolicitante, CriterioSolicitanteKey>) =>
+  CRITERIOS_AVALIACAO_SOLICITANTE.reduce((s, c) => s + (a[c.key] ?? 0) * c.peso, 0);
+
+/**
+ * Daqui pra frente o dev avalia quem pediu. Chamado concluído antes disso
+ * nunca é oferecido para avaliar — pedido do Pablo: "os anteriores não
+ * precisam ser avaliados, só os próximos".
+ */
+export const DEV_AVALIA_SOLICITANTE_DESDE = "2026-10-20T00:00:00-03:00";
+
 export const BUCKET_CHAMADOS = "chamados-sistemas";
 
 /**
@@ -322,16 +357,20 @@ export function PrioridadeBadge({ prioridade }: { prioridade: string }) {
  * coluna — daí a quebra forçada e o min-w-0 aqui, num lugar só.
  */
 export function CardAvaliacao({
-  avaliacao, titulo, tone = "muted",
+  avaliacao, titulo, tone = "muted", criterios = CRITERIOS_AVALIACAO,
 }: {
-  avaliacao: Pick<AvaliacaoChamado, CriterioKey | "comentario" | "created_at">;
+  avaliacao: { comentario: string | null; created_at: string };
   titulo: string;
-  tone?: "muted" | "warning";
+  tone?: "muted" | "warning" | "info";
+  /** Padrão: os critérios do solicitante. A avaliação do dev passa os dela. */
+  criterios?: ReadonlyArray<{ key: string; titulo: string; peso: number }>;
 }) {
-  const nota = mediaAvaliacao(avaliacao);
+  // Interface sem index signature (AvaliacaoChamado) não cabe em Record: lê pela chave.
+  const notaDe = (k: string) => Number((avaliacao as unknown as Record<string, unknown>)[k] ?? 0);
+  const nota = criterios.reduce((s, c) => s + notaDe(c.key) * c.peso, 0);
   return (
     <Card className={`animate-rise-in min-w-0 space-y-3 overflow-hidden p-4 ${
-      tone === "warning" ? "border-warning/30 bg-warning/5" : ""
+      tone === "warning" ? "border-warning/30 bg-warning/5" : tone === "info" ? "border-info/30 bg-info/5" : ""
     }`}>
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="flex items-center gap-1.5 text-sm font-bold">
@@ -344,8 +383,8 @@ export function CardAvaliacao({
       </div>
 
       <div className="grid gap-x-4 gap-y-1 sm:grid-cols-2">
-        {CRITERIOS_AVALIACAO.map((c) => {
-          const v = avaliacao[c.key];
+        {criterios.map((c) => {
+          const v = notaDe(c.key);
           return (
             <div key={c.key} className="flex items-center justify-between gap-2 text-xs">
               <span className="truncate text-muted-foreground">{c.titulo}</span>
@@ -402,4 +441,15 @@ export function Estrelas({ valor, size = 16 }: { valor: number; size?: number })
 export function opcoesDownloadAnexo(path: string): { download: string } | undefined {
   const nome = (path.split("/").pop() ?? path).replace(/^\d+-/, "");
   return /\.(html?|svg|xml)$/i.test(nome) ? { download: nome } : undefined;
+}
+
+/**
+ * Anexo que abre no visualizador do chamado (card no centro da tela) em vez
+ * de outra aba — 23/10/2026, pedido do Pablo. SVG fica de fora de propósito:
+ * vem com download forçado (ver opcoesDownloadAnexo acima).
+ */
+export function ehImagemAnexo(a: { mime_type?: string | null; nome_arquivo?: string | null; storage_path?: string | null }): boolean {
+  const nome = a.nome_arquivo || a.storage_path || "";
+  if (/\.svg$/i.test(nome) || (a.mime_type ?? "").includes("svg")) return false;
+  return (a.mime_type ?? "").startsWith("image/") || /\.(png|jpe?g|gif|webp|bmp|avif)$/i.test(nome);
 }

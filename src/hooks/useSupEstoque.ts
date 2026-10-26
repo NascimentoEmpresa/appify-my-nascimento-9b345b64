@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useDebounce } from "@/hooks/useDebounce";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
+import { emLotes } from "@/lib/emLotes";
 
 /**
  * Controle de estoque por etiqueta física (TAGs).
@@ -444,16 +445,16 @@ export interface TagEmLote {
   valor_unitario: number | null;
 }
 
-/** Quantos ids cabem por requisição sem estourar o tamanho da URL do PostgREST. */
-const LOTE_IDS = 150;
-
-async function emLotes<T>(ids: string[], fn: (fatia: string[]) => Promise<T[]>): Promise<T[]> {
-  const out: T[] = [];
-  for (let i = 0; i < ids.length; i += LOTE_IDS) {
-    out.push(...(await fn(ids.slice(i, i + LOTE_IDS))));
-  }
-  return out;
-}
+/**
+ * Quantos ids cabem por requisição sem estourar o tamanho da URL.
+ *
+ * 19/10/2026: era 150, em sequência. No cluster (api.grpnascimento.com.br) a
+ * URL acima de ~4 KB volta 414/502 — 150 uuids são ~5,8 KB — e o filtro por
+ * item e o Excel da fila falhavam. Agora 40 por lote (~1,6 KB), até 6 ao mesmo
+ * tempo, pelo helper comum (src/lib/emLotes.ts).
+ */
+const LOTE_IDS = 40;
+const LOTES_SIMULTANEOS = 6;
 
 /**
  * Mesma resposta de `useTagsDoPedido`, só que para MUITOS pedidos de uma vez
@@ -481,23 +482,15 @@ async function emLotes<T>(ids: string[], fn: (fatia: string[]) => Promise<T[]>):
 export async function buscarTagsDePedidos(pedidoIds: string[]): Promise<TagEmLote[]> {
   if (pedidoIds.length === 0) return [];
   const [unicas, consumos] = await Promise.all([
-    emLotes(pedidoIds, async (fatia) => {
-      const { data, error } = await sb
-        .from("sup_estoque_tag")
-        .select("codigo, pedido_id, pedido_item_id, tipo, valor_unitario, sup_estoque_item:item_estoque_id (valor_unitario)")
-        .in("pedido_id", fatia)
-        .eq("tipo", "unico");
-      if (error) throw error;
-      return data ?? [];
-    }),
-    emLotes(pedidoIds, async (fatia) => {
-      const { data, error } = await sb
-        .from("sup_estoque_consumo")
-        .select("codigo, pedido_id, pedido_item_id, quantidade, sup_estoque_item:item_estoque_id (valor_unitario)")
-        .in("pedido_id", fatia);
-      if (error) throw error;
-      return data ?? [];
-    }),
+    emLotes<unknown>(pedidoIds, LOTE_IDS, (fatia) => sb
+      .from("sup_estoque_tag")
+      .select("codigo, pedido_id, pedido_item_id, tipo, valor_unitario, sup_estoque_item:item_estoque_id (valor_unitario)")
+      .in("pedido_id", fatia)
+      .eq("tipo", "unico"), LOTES_SIMULTANEOS),
+    emLotes<unknown>(pedidoIds, LOTE_IDS, (fatia) => sb
+      .from("sup_estoque_consumo")
+      .select("codigo, pedido_id, pedido_item_id, quantidade, sup_estoque_item:item_estoque_id (valor_unitario)")
+      .in("pedido_id", fatia), LOTES_SIMULTANEOS),
   ]);
 
   // `codigo|pedido_id` que o ledger já cobre — a linha única correspondente

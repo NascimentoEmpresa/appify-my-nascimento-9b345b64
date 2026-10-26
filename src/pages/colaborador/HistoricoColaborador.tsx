@@ -45,9 +45,9 @@ export default function HistoricoColaborador() {
               <li key={t.id} className="flex items-center gap-3 py-2.5">
                 <div className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-primary/10 text-primary"><ArrowRightLeft className="h-5 w-5" /></div>
                 <div className="min-w-0 flex-1">
-                  <p className="text-sm font-semibold">{t.cargo_atual ?? "—"} → {t.cargo_novo}</p>
+                  <p className="text-sm font-semibold">{t.resumo || `${t.cargo_atual ?? "—"} → ${t.cargo_novo}`}</p>
                   <p className="text-xs text-muted-foreground">
-                    {t.posto ? `${t.posto} · ` : ""}{t.data_pretendida ? `a partir de ${fmtData(t.data_pretendida)}` : `pedido em ${fmtData(t.criado_em)}`}
+                    {t.posto && !t.posto_novo ? `${t.posto} · ` : ""}{t.data_pretendida ? `a partir de ${fmtData(t.data_pretendida)}` : `pedido em ${fmtData(t.criado_em)}`}
                   </p>
                 </div>
                 <Chip tom={tomStatus(t.status)}>{t.status}</Chip>

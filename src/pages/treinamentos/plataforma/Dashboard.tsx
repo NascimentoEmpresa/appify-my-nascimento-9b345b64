@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import {
   Activity, Award, BookOpen, CheckCircle2, ClipboardCheck, LogIn, MessageSquare, Star, UserMinus,
-  UserPlus, UserX, Users, Bell,
+  UserPlus, UserX, Users, Bell, Search,
 } from "lucide-react";
 import {
   Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, ComposedChart, Legend, Line, Pie, PieChart,
@@ -40,6 +40,26 @@ const COR = {
 };
 
 const pct = (parte: number, todo: number) => (todo > 0 ? Math.round((parte / todo) * 100) : 0);
+
+// Filtro do "Acesso por contrato" (23/10/2026, pedido do Pablo: aparecer todos
+// os contratos e o usuário filtrar como quiser). É tudo na tela, sobre a lista
+// completa que a RPC já devolve — trocar filtro não vai ao banco.
+type FaixaAcesso = "todas" | "zero" | "ate50" | "50a79" | "80mais";
+type OrdemContrato = "alunos" | "menor" | "maior" | "nome";
+const FAIXAS: { v: FaixaAcesso; rotulo: string; ok: (p: number) => boolean }[] = [
+  { v: "todas", rotulo: "Qualquer % de acesso", ok: () => true },
+  { v: "zero", rotulo: "Ninguém acessou (0%)", ok: (p) => p === 0 },
+  { v: "ate50", rotulo: "Abaixo de 50%", ok: (p) => p < 50 },
+  { v: "50a79", rotulo: "De 50% a 79%", ok: (p) => p >= 50 && p < 80 },
+  { v: "80mais", rotulo: "80% ou mais", ok: (p) => p >= 80 },
+];
+const ORDENS: { v: OrdemContrato; rotulo: string }[] = [
+  { v: "alunos", rotulo: "Mais alunos" },
+  { v: "menor", rotulo: "Menor % de acesso" },
+  { v: "maior", rotulo: "Maior % de acesso" },
+  { v: "nome", rotulo: "Nome (A-Z)" },
+];
+const QTDS = ["12", "25", "50", "todos"] as const;
 const num = (n: number | null | undefined) => (n ?? 0).toLocaleString("pt-BR");
 
 /**
@@ -60,6 +80,8 @@ function normaliza(d: Partial<Dashboard>): Dashboard {
     primeiros_acessos_30d: d.primeiros_acessos_30d ?? [],
     por_curso: d.por_curso ?? [],
     por_contrato: d.por_contrato ?? [],
+    // Antes da mig 20261023000020 só existe o top 12: o filtro trabalha com ele.
+    por_contrato_todos: d.por_contrato_todos ?? d.por_contrato ?? [],
     top_aulas: d.top_aulas ?? [],
   };
 }
@@ -90,13 +112,32 @@ export default function TreinamentosDashboard() {
     () => (d ? [5, 4, 3, 2, 1].map((n) => ({ nota: `${n} ★`, q: d.avaliacoes_por_nota[n - 1] ?? 0 })) : []),
     [d],
   );
+  const [ctBusca, setCtBusca] = useState("");
+  const [ctFaixa, setCtFaixa] = useState<FaixaAcesso>("todas");
+  const [ctOrdem, setCtOrdem] = useState<OrdemContrato>("alunos");
+  const [ctQtd, setCtQtd] = useState<(typeof QTDS)[number]>("12");
+  const ctFiltrando = !!ctBusca.trim() || ctFaixa !== "todas" || ctOrdem !== "alunos" || ctQtd !== "12";
+  const todosContratos = useMemo(() => d?.por_contrato_todos ?? [], [d]);
+  // Filtrados = passam na busca e na faixa; exibidos = os N primeiros na ordem escolhida.
+  const contratosFiltrados = useMemo(() => {
+    const termo = ctBusca.trim().toLocaleLowerCase("pt-BR");
+    const faixa = FAIXAS.find((f) => f.v === ctFaixa) ?? FAIXAS[0];
+    const lista = todosContratos.filter((c) =>
+      (!termo || c.nome.toLocaleLowerCase("pt-BR").includes(termo)) && faixa.ok(pct(c.ativos, c.alunos)));
+    const taxa = (c: { ativos: number; alunos: number }) => (c.alunos > 0 ? c.ativos / c.alunos : 0);
+    return [...lista].sort((a, b) =>
+      ctOrdem === "menor" ? taxa(a) - taxa(b) || b.alunos - a.alunos
+      : ctOrdem === "maior" ? taxa(b) - taxa(a) || b.alunos - a.alunos
+      : ctOrdem === "nome" ? a.nome.localeCompare(b.nome, "pt-BR")
+      : b.alunos - a.alunos || a.nome.localeCompare(b.nome, "pt-BR"));
+  }, [todosContratos, ctBusca, ctFaixa, ctOrdem]);
   const contratos = useMemo(
-    () => (d?.por_contrato ?? []).map((c) => ({
+    () => (ctQtd === "todos" ? contratosFiltrados : contratosFiltrados.slice(0, Number(ctQtd))).map((c) => ({
       ...c, inativos: c.alunos - c.ativos,
       // O % vai no rótulo do eixo: é o número que o RH procura primeiro.
       rotulo: `${c.nome.length > 28 ? c.nome.slice(0, 27) + "…" : c.nome} · ${pct(c.ativos, c.alunos)}%`,
     })),
-    [d],
+    [contratosFiltrados, ctQtd],
   );
 
   const taxaAcesso = d ? pct(d.alunos_ativos, d.alunos) : 0;
@@ -352,8 +393,39 @@ export default function TreinamentosDashboard() {
             <div className="mt-4 grid gap-4 lg:grid-cols-[1.4fr_1fr]">
               <div className="trn-card">
                 <h3>Acesso por contrato</h3>
-                <div className="sub">Os {contratos.length} contratos com mais alunos: quantos já entraram na plataforma.</div>
-                {contratos.length === 0 ? <div className="trn-vazio">Sem contratos neste recorte.</div> : (
+                <div className="sub">
+                  {ctFiltrando
+                    ? `Mostrando ${contratos.length} de ${contratosFiltrados.length} contrato(s) no filtro (${todosContratos.length} no total): quantos já entraram na plataforma.`
+                    : `Os ${contratos.length} contratos com mais alunos, de ${todosContratos.length}: quantos já entraram na plataforma.`}
+                </div>
+                <div className="mb-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-[1.4fr_1fr_1fr_0.8fr]">
+                  <div className="relative">
+                    <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                    <Input value={ctBusca} onChange={(e) => setCtBusca(e.target.value)} placeholder="Buscar contrato (nome ou número)" className="h-9 pl-8 text-sm" />
+                  </div>
+                  <Select value={ctFaixa} onValueChange={(v) => setCtFaixa(v as FaixaAcesso)}>
+                    <SelectTrigger className="h-9 text-sm"><SelectValue /></SelectTrigger>
+                    <SelectContent>{FAIXAS.map((f) => <SelectItem key={f.v} value={f.v}>{f.rotulo}</SelectItem>)}</SelectContent>
+                  </Select>
+                  <Select value={ctOrdem} onValueChange={(v) => setCtOrdem(v as OrdemContrato)}>
+                    <SelectTrigger className="h-9 text-sm"><SelectValue /></SelectTrigger>
+                    <SelectContent>{ORDENS.map((o) => <SelectItem key={o.v} value={o.v}>{o.rotulo}</SelectItem>)}</SelectContent>
+                  </Select>
+                  <Select value={ctQtd} onValueChange={(v) => setCtQtd(v as (typeof QTDS)[number])}>
+                    <SelectTrigger className="h-9 text-sm"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {QTDS.map((q) => <SelectItem key={q} value={q}>{q === "todos" ? "Todos" : `Mostrar ${q}`}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
+                {ctFiltrando && (
+                  <button className="mb-2 text-xs font-semibold text-primary" onClick={() => { setCtBusca(""); setCtFaixa("todas"); setCtOrdem("alunos"); setCtQtd("12"); }}>
+                    Limpar filtro de contratos
+                  </button>
+                )}
+                {contratos.length === 0 ? <div className="trn-vazio">{todosContratos.length === 0 ? "Sem contratos neste recorte." : "Nenhum contrato bate com o filtro."}</div> : (
+                  // Com "Todos" a lista passa de cem: rola dentro do card em vez de esticar a página.
+                  <div className="max-h-[640px] overflow-y-auto pr-1">
                   <div style={{ height: 40 + contratos.length * 32 }}>
                     <ResponsiveContainer>
                       <BarChart data={contratos} layout="vertical" margin={{ top: 0, right: 40, left: 0, bottom: 0 }}>
@@ -365,6 +437,7 @@ export default function TreinamentosDashboard() {
                         <Bar dataKey="inativos" name="Ainda não" stackId="c" fill={COR.inativo} radius={[0, 6, 6, 0]} />
                       </BarChart>
                     </ResponsiveContainer>
+                  </div>
                   </div>
                 )}
               </div>

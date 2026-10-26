@@ -19,13 +19,21 @@ export type Sentido = "menor" | "maior";
 export type Fonte = "auto" | "manual" | "espelho" | "soma";
 export type Situacao = "vermelho" | "amarelo" | "verde" | "neutro" | "sem_dado";
 
-export interface LinhaDetalhe { nome: string; valor: number | null; rotulo?: string | null; /** duas séries (postos: contratados × cobertos; quadro: ativos × necessários) */ a?: number | null; b?: number | null }
+export interface LinhaDetalhe {
+  nome: string; valor: number | null; rotulo?: string | null; /** duas séries (postos: contratados × cobertos; quadro: ativos × necessários) */ a?: number | null; b?: number | null;
+  /** Gráfico "lista" (alertas): data (AAAA-MM-DD), linha principal e linha de apoio. */
+  data?: string | null; titulo?: string | null; sub?: string | null;
+}
 
 export interface ResultadoIndicador {
   valor: number | string | null;
   afetado?: string | null; causa?: string | null; impacto?: number | string | null; base?: string | null;
   detalhe?: LinhaDetalhe[] | null; erro?: string | null; origem?: string | null;
   referencia?: string | null; atualizado_em?: string | null; observacao?: string | null;
+  /** TV que espelha um relatório (mig 20261014000030): o gráfico da tela de origem — tipo, título e a ordem embaixo. */
+  grafico?: TipoGrafico | null; grafico_titulo?: string | null; grafico_series?: [string, string] | null; destaque?: number | null;
+  /** Casas decimais pedidas pelo relatório de origem (mig 20261014000046: turnover em 42,70%, como a tela). */
+  casas?: number | null;
 }
 
 export interface IndicadorGerencial {
@@ -40,12 +48,37 @@ export interface IndicadorGerencial {
 export interface TendenciaPainel {
   titulo: string; series: [string, string]; unidade: Unidade;
   meses: { mes: string; a: number | null; b: number | null }[];
+  /** "meta" (mig 20261014000046): `b` é a meta — uma barra por mês, vermelha acima e verde abaixo, meta tracejada (Relatórios › Turnover). */
+  modo?: "meta" | null;
   erro?: string;
+}
+
+/**
+ * Meta de uma pessoa da equipe (mig 20261015000003 › tvg_equipe_meta): os
+ * editais "Ganhamos" da Capa de Edital desde `ganhos_desde`, pelo responsável.
+ * valor = valor estimado ÷ meses do prazo do contrato; contratos = quantidade.
+ */
+export interface MetaEquipe {
+  id: string; nome: string; foto: string | null; cor: string | null;
+  tipo: "valor" | "contratos"; meta: number; ganhos_desde: string;
+  realizado: number; contratos: number; valor_mensal: number; pct: number;
+  itens: { objeto: string; cidade: string | null; cliente: string | null; ganho_em: string; valor_estimado: number | null;
+           prazo_meses: number; prazo_assumido: boolean; mensal: number }[];
+}
+
+export const CORES_EQUIPE = ["#16a34a", "#2563eb", "#f59e0b", "#8b5cf6", "#ec4899", "#0ea5e9", "#dc2626"];
+
+/** "R$ 612 mil" ou "1 contrato" / "3 contratos". */
+export function formatarMetaEquipe(v: number, tipo: MetaEquipe["tipo"]): string {
+  if (tipo === "contratos") { const n = Math.round(Number(v) || 0); return `${n} contrato${n === 1 ? "" : "s"}`; }
+  return formatarValor(v, "brl");
 }
 
 export interface PainelGerencial {
   painel: { slug: string; titulo: string; diretoria: string; pergunta: string } | null;
   indicadores: IndicadorGerencial[];
+  /** Meta por pessoa (só painéis com TVG_META_EQUIPE — hoje a TV Licitações). */
+  equipe?: MetaEquipe[];
   tendencia?: TendenciaPainel | null;
   gerado_em?: string;
 }
@@ -84,7 +117,10 @@ export function situacao(i: Pick<IndicadorGerencial, "meta" | "alerta" | "sentid
   const v = num(i.resultado?.valor);
   if (v == null) return "sem_dado";
   const meta = num(i.meta);
-  if (meta == null) return "neutro";
+  // "Quanto mais, melhor" sem meta = o que o setor entregou (chamados concluídos,
+  // vagas preenchidas, recebido no mês…): é notícia boa, vai em verde. Pablo,
+  // 14/10/2026: "só tá aparecendo coisa ruim, tem que aparecer coisas boas".
+  if (meta == null) return i.sentido === "maior" && v > 0 ? "verde" : "neutro";
   const alerta = num(i.alerta);
   if (i.sentido === "maior") {
     if (v >= meta) return "verde";
@@ -94,7 +130,9 @@ export function situacao(i: Pick<IndicadorGerencial, "meta" | "alerta" | "sentid
   return alerta != null && v <= alerta ? "amarelo" : "vermelho";
 }
 
-const PESO: Record<Situacao, number> = { vermelho: 0, amarelo: 1, sem_dado: 2, neutro: 3, verde: 4 };
+// Neutro e verde empatam: o que não está ruim segue a ordem do cadastro — assim a TV
+// Supply mostra os cartões na ordem do Dashboard de Compras (14/10/2026).
+const PESO: Record<Situacao, number> = { vermelho: 0, amarelo: 1, sem_dado: 2, neutro: 3, verde: 3 };
 
 /** Quanto o indicador está fora da meta, em valor absoluto (0 se dentro ou sem meta). */
 export function desvio(i: Pick<IndicadorGerencial, "meta" | "sentido"> & { resultado: Pick<ResultadoIndicador, "valor"> }): number {
@@ -129,13 +167,18 @@ export const subindicadores = (p: PainelGerencial | null | undefined, pai: strin
   (p?.indicadores ?? []).filter((i) => !i.na_tv && (pai ? i.pai === pai : !i.pai));
 
 /** Número curto para a TV: R$ 1,2 mi / R$ 80 mil / 12,5% / 138. */
-export function formatarValor(v: number | string | null | undefined, unidade: Unidade, curto = true): string {
+export function formatarValor(v: number | string | null | undefined, unidade: Unidade, curto = true, casas?: number | null): string {
   const n = num(v);
   if (n == null) return "—";
+  // `casas` vem do relatório espelhado: 42,70% como em Relatórios › Turnover (14/10/2026).
+  if (unidade === "pct" && casas != null) return `${n.toLocaleString("pt-BR", { minimumFractionDigits: casas, maximumFractionDigits: casas })}%`;
   if (unidade === "pct") return `${n.toLocaleString("pt-BR", { maximumFractionDigits: 1 })}%`;
-  if (unidade === "dias") return `${n.toLocaleString("pt-BR", { maximumFractionDigits: 0 })} d`;
+  // Uma casa, como os dashboards dos módulos ("7,5 dias" no Dashboard de Compras; antes saía "8 d").
+  if (unidade === "dias") return `${n.toLocaleString("pt-BR", { maximumFractionDigits: 1 })} d`;
   if (unidade === "brl") {
     const a = Math.abs(n);
+    // Bilhão (14/10/2026): "R$ 1.140,1 mi" (valor participado das licitações) não cabia no cartão.
+    if (curto && a >= 1_000_000_000) return `R$ ${(n / 1_000_000_000).toLocaleString("pt-BR", { maximumFractionDigits: 1 })} bi`;
     if (curto && a >= 1_000_000) return `R$ ${(n / 1_000_000).toLocaleString("pt-BR", { maximumFractionDigits: 1 })} mi`;
     if (curto && a >= 10_000) return `R$ ${(n / 1000).toLocaleString("pt-BR", { maximumFractionDigits: 0 })} mil`;
     const casas = a >= 1000 || Number.isInteger(n) ? 0 : 2; // mínimo explícito: navegador de TV antigo recusa máximo < mínimo padrão
@@ -147,8 +190,10 @@ export function formatarValor(v: number | string | null | undefined, unidade: Un
 /** "Meta ≤ 0" / "Meta ≥ 95%" / "Sem meta" — o texto da comparação com a meta. */
 export function textoMeta(i: Pick<IndicadorGerencial, "meta" | "sentido" | "unidade">): string {
   const meta = num(i.meta);
-  if (meta == null) return "Sem meta · acompanhamento";
-  return `Meta ${i.sentido === "maior" ? "≥" : "≤"} ${formatarValor(meta, i.unidade)}`;
+  if (meta == null) return i.sentido === "maior" ? "Entregue no período" : "Sem meta · acompanhamento";
+  // Meta quebrada vai inteira ("3,42%", aceitável do turnover mensal), não arredondada para "3,4%".
+  const casas = i.unidade === "pct" && !Number.isInteger(meta) ? 2 : null;
+  return `Meta ${i.sentido === "maior" ? "≥" : "≤"} ${formatarValor(meta, i.unidade, true, casas)}`;
 }
 
 export const ROTULO_SITUACAO: Record<Situacao, string> = {
@@ -173,7 +218,7 @@ export function lancamentoAtrasado(i: Pick<IndicadorGerencial, "fonte" | "period
 
 /** O resumo da TV numa linha, no formato "adequado" do documento. */
 export function frase(i: IndicadorGerencial): string {
-  const partes = [`${i.nome}: ${formatarValor(i.resultado?.valor, i.unidade)}`];
+  const partes = [`${i.nome}: ${formatarValor(i.resultado?.valor, i.unidade, true, i.resultado?.casas)}`];
   if (i.resultado?.afetado) partes.push(i.resultado.afetado);
   if (i.resultado?.causa) partes.push(`maior causa: ${i.resultado.causa}`);
   if (i.responsavel) partes.push(`responsável: ${i.responsavel}`);
@@ -222,15 +267,19 @@ export const visualGerencial = (v: string | null | undefined) => VISUAIS_GERENCI
 export const ehDashboard = (v: VisualGerencial) => v === "dashboard" || v === "dashboard-escuro";
 export const visualDoItem = (v: string | null | undefined): VisualGerencial => visualGerencial(v).valor;
 
-export type TipoGrafico = "colunas" | "agrupado" | "linha" | "rosca" | "combo";
+/** "lista": linhas de alerta com data, título e apoio (lic_prazo — o slide Alertas da TV de Licitações, 14/10/2026). */
+export type TipoGrafico = "colunas" | "agrupado" | "linha" | "rosca" | "combo" | "lista";
 /** O tipo de gráfico de cada indicador — o mesmo do protótipo HTML quando o dado do ERP permite. */
 const GRAFICO: Record<string, { tipo: TipoGrafico; series?: [string, string]; /** unidade do detalhe quando difere da do indicador */ unidade?: Unidade }> = {
   fin_notas_pendentes: { tipo: "colunas", unidade: "brl" }, sup_valor_estoque: { tipo: "colunas", unidade: "brl" }, sup_sem_mov: { tipo: "colunas", unidade: "brl" },
   rh_ob_rescisoes: { tipo: "colunas", unidade: "qtd" }, fin_recebimentos: { tipo: "colunas", unidade: "brl" },
-  lic_prazo: { tipo: "colunas", unidade: "dias" }, lic_implantacao: { tipo: "colunas", unidade: "dias" }, lic_propostas: { tipo: "colunas", unidade: "dias" },
+  lic_prazo: { tipo: "lista", unidade: "dias" }, lic_implantacao: { tipo: "colunas", unidade: "dias" }, lic_propostas: { tipo: "colunas", unidade: "dias" },
   jur_prazos: { tipo: "colunas", unidade: "dias" }, fro_manutencoes: { tipo: "colunas", unidade: "dias" }, jur_audiencias: { tipo: "linha", unidade: "dias" },
   op_postos: { tipo: "agrupado", series: ["Contratados", "Cobertos"] }, pre_postos: { tipo: "agrupado", series: ["Contratados", "Cobertos"] },
   rh_quadro: { tipo: "agrupado", series: ["Ativos", "Necessários"] },
+  // TV Supply = Dashboard de Compras (mig 20261014000028): os mesmos gráficos de lá.
+  sup_solicitacoes: { tipo: "agrupado", series: ["Solicitações", "Despachadas"] }, sup_pendentes: { tipo: "rosca" },
+  sup_cotacoes: { tipo: "rosca" }, sup_saving: { tipo: "colunas", unidade: "brl" }, sup_saving_pct: { tipo: "colunas", unidade: "pct" }, sup_tempo_atendimento: { tipo: "colunas", unidade: "dias" }, sup_despachados: { tipo: "colunas", unidade: "qtd" },
   op_lucratividade: { tipo: "combo" }, pre_lucratividade: { tipo: "combo" }, op_reclamacoes: { tipo: "combo" }, ctl_margem: { tipo: "combo" },
   op_faltas: { tipo: "linha" }, op_turnover: { tipo: "linha" }, rh_turnover: { tipo: "linha" }, sst_afastamentos: { tipo: "linha" },
   sup_contratos_sem_entrega: { tipo: "linha" }, fin_fluxo: { tipo: "linha" },
@@ -239,9 +288,12 @@ const GRAFICO: Record<string, { tipo: TipoGrafico; series?: [string, string]; /*
   pre_vermelhos: { tipo: "rosca" }, ti_integracoes: { tipo: "rosca" }, fro_sem_responsavel: { tipo: "rosca" },
 };
 export function graficoDo(i: Pick<IndicadorGerencial, "codigo" | "resultado">): { tipo: TipoGrafico; series?: [string, string]; unidade?: Unidade } {
-  const g = GRAFICO[i.codigo] ?? { tipo: "colunas" as TipoGrafico };
+  // Espelho de relatório: o tipo do gráfico vem da tela de origem.
+  const g = i.resultado?.grafico ? { tipo: i.resultado.grafico, series: i.resultado.grafico_series ?? undefined } : GRAFICO[i.codigo] ?? { tipo: "colunas" as TipoGrafico };
   // Agrupado sem as duas séries (detalhe lançado à mão) cai para colunas.
   if (g.tipo === "agrupado" && !(i.resultado?.detalhe ?? []).some((l) => l.a != null && l.b != null)) return { tipo: "colunas" };
+  // Lista sem os campos (banco antes da mig 20261014000027) cai para colunas.
+  if (g.tipo === "lista" && !(i.resultado?.detalhe ?? []).some((l) => l.titulo)) return { tipo: "colunas", unidade: g.unidade };
   return g;
 }
 
@@ -307,8 +359,22 @@ export const corDoGrafico = (codigo: string): string | null => COR_GRAFICO[codig
 // ---- Dashboard completo (14/10/2026) -----------------------------------------
 
 /** Os gráficos de baixo do dashboard: os piores com detalhamento (até `n`), na ordem da TV. */
+/** TV que espelha o dashboard do módulo: os gráficos de baixo são os mesmos da tela de lá, nessa ordem. */
+const GRAFICOS_DO_DASHBOARD: Record<string, string[]> = {
+  // Suprimentos › Dashboard de Compras: Solicitações por Contrato · Saving por Contrato · Motivos das Pendências.
+  "ger-supply": ["sup_solicitacoes", "sup_saving", "sup_pendentes"],
+};
+
 export function destaquesDoDashboard(p: PainelGerencial, n = 3): IndicadorGerencial[] {
   const comGrafico = indicadoresDaTv(p).filter((i) => dadosDoGrafico(i).length > 0);
+  // Espelho de relatório: os gráficos da tela, na ordem marcada no cadastro (espelho_destaque).
+  const marcados = comGrafico.filter((i) => i.resultado?.destaque != null).sort((a, b) => Number(a.resultado?.destaque) - Number(b.resultado?.destaque));
+  if (marcados.length) return marcados.slice(0, n);
+  const fixos = GRAFICOS_DO_DASHBOARD[p.painel?.slug ?? ""];
+  if (fixos) {
+    const escolhidos = fixos.map((c) => comGrafico.find((i) => i.codigo === c)).filter((i): i is IndicadorGerencial => !!i);
+    if (escolhidos.length) return escolhidos.slice(0, n);
+  }
   const ruins = comGrafico.filter((i) => ["vermelho", "amarelo"].includes(situacao(i)));
   return [...ruins, ...comGrafico.filter((i) => !ruins.includes(i))].slice(0, n);
 }

@@ -1,5 +1,7 @@
 import { Card, CardContent } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
+import { Info } from "lucide-react";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
 // Extraído de FluxoCaixaGestao.tsx (SIS-2026-0160) — mesma técnica visual
 // do TileDestaque em DespesaVisualizar.tsx (que por sua vez reaproveita o
@@ -22,6 +24,7 @@ export function KpiTile({
   cor,
   valorClass,
   onClick,
+  info,
 }: {
   label: string;
   valor: string;
@@ -35,6 +38,8 @@ export function KpiTile({
   // modal com o detalhe (ex.: "Com Pendência" abre a lista de contratos).
   // Opcional; os outros usos deste componente continuam iguais sem passar.
   onClick?: () => void;
+  // SIS-2026-0642: ícone (i) ao lado do rótulo com "como este número é calculado". Opcional.
+  info?: React.ReactNode;
 }) {
   return (
     <Card
@@ -54,7 +59,19 @@ export function KpiTile({
         >
           <span className={cn("[&>svg]:h-16 [&>svg]:w-16", KPI_TILE_ICONE[cor])}>{icon}</span>
         </div>
-        <p className="relative z-10 text-xs font-medium uppercase tracking-wide text-muted-foreground">{label}</p>
+        <p className="relative z-10 flex items-center gap-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+          {label}
+          {info && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button type="button" aria-label="Como é calculado" className="shrink-0 hover:text-foreground print:hidden" onClick={(e) => e.stopPropagation()}>
+                  <Info className="h-3 w-3" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent className="max-w-[300px] space-y-1 text-xs font-normal normal-case leading-snug tracking-normal">{info}</TooltipContent>
+            </Tooltip>
+          )}
+        </p>
         <p className={cn("relative z-10 text-2xl font-bold mt-1", valorClass)}>{valor}</p>
         {sub && <p className="relative z-10 text-[11px] text-muted-foreground mt-0.5">{sub}</p>}
       </CardContent>
