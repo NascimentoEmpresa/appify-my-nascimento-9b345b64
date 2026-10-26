@@ -1,4 +1,5 @@
 import { useRef, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import * as XLSX from "xlsx";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -18,6 +19,7 @@ type LinhaResultado = LinhaPlanilha & {
 };
 
 export default function ImportarEmailsContratoCard() {
+  const qc = useQueryClient();
   const fileRef = useRef<HTMLInputElement>(null);
   const [arquivoNome, setArquivoNome] = useState<string | null>(null);
   const [resultados, setResultados] = useState<LinhaResultado[]>([]);
@@ -95,21 +97,41 @@ export default function ImportarEmailsContratoCard() {
     setImportando(true);
     let ok = 0;
     let erros = 0;
+    let jaExistiam = 0;
 
+    // Só entra o que ainda não está cadastrado: importar a mesma planilha duas vezes (ou duas planilhas com o mesmo e-mail) não duplica o destinatário.
+    const existentes = new Set<string>();
+    for (let de = 0; ; de += 1000) {
+      const { data, error } = await (supabase as any).from("contrato_email_cobranca").select("contrato_id, email").order("id").range(de, de + 999);
+      if (error) break;
+      for (const r of data ?? []) existentes.add(`${r.contrato_id}|${String(r.email).trim().toLowerCase()}`);
+      if (!data || data.length < 1000) break;
+    }
+    const novos: { contrato_id: string; email: string }[] = [];
     for (const linha of linhasComMatch) {
       for (const email of linha.emails) {
-        const { error } = await (supabase as any)
-          .from("contrato_email_cobranca")
-          .insert({ contrato_id: linha.contratoId, email });
-        if (error) erros++;
-        else ok++;
+        const chave = `${linha.contratoId}|${email.trim().toLowerCase()}`;
+        if (existentes.has(chave)) { jaExistiam++; continue; }
+        existentes.add(chave);
+        novos.push({ contrato_id: linha.contratoId as string, email: email.trim() });
       }
+    }
+
+    for (let i = 0; i < novos.length; i += 100) {
+      const lote = novos.slice(i, i + 100);
+      const { error } = await (supabase as any).from("contrato_email_cobranca").insert(lote);
+      if (error) erros += lote.length;
+      else ok += lote.length;
     }
 
     setImportResult({ ok, erros });
     toast[erros === 0 ? "success" : "warning"](
-      erros === 0 ? `${ok} e-mail(s) importado(s) com sucesso!` : `${ok} importados, ${erros} com erro.`,
+      erros === 0
+        ? `${ok} e-mail(s) importado(s)${jaExistiam ? `; ${jaExistiam} já estavam cadastrados` : ""}.`
+        : `${ok} importados, ${erros} com erro${jaExistiam ? `; ${jaExistiam} já estavam cadastrados` : ""}.`,
     );
+    // A simulação da cobrança automática lê os destinatários: refaz para a aba Automação já refletir o cadastro.
+    qc.invalidateQueries({ queryKey: ["cobranca-auto-simulacao"] });
     setImportando(false);
   };
 
