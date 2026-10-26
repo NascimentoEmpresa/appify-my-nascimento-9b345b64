@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { CalendarDays, ChevronDown, Clock3, FileText, Info, Send, Trash2, UserRound, UsersRound } from "lucide-react";
+import { CalendarDays, ChevronDown, Clock3, FileText, Info, Send, Trash2, UserRound, UsersRound, Zap } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -30,6 +30,7 @@ import {
   validarSolicitacao,
 } from "./horaExtraUtils";
 import { Campo, DropzoneAnexos, SecaoForm, TotalHoras } from "./HoraExtraUI";
+import { ASSUNTO_EMERGENCIAL_SEM_CHAMADO, linhaSemChamado, NUMERO_SEM_CHAMADO } from "./prHoraExtraUtils";
 import SeletorChamadoDialog from "./SeletorChamadoDialog";
 import type { ChamadoDisponivel, PrioridadeHoraExtra, SolicitacaoHoraExtra, TipoHoraExtra } from "./types";
 import { CLASSE_PRIORIDADE, LABEL_PRIORIDADE } from "./types";
@@ -37,6 +38,8 @@ import { CLASSE_PRIORIDADE, LABEL_PRIORIDADE } from "./types";
 interface LinhaChamado extends ChamadoDisponivel {
   percentual_previsto: number;
   prioridade_he: PrioridadeHoraExtra;
+  /** HE emergencial aberta sem chamado (26/10/2026): linha única, sem vínculo. */
+  sem_chamado?: boolean;
 }
 const estadoInicial = {
   colaborador_id: "",
@@ -112,16 +115,18 @@ export default function NovaSolicitacaoDialog({
         (solicitacao.chamados ?? [])
           .filter((c) => !c.adicional)
           .map((c) => ({
-            // Planejado sempre tem chamado (só a linha adicional pode vir sem).
+            // O planejado tem chamado, menos na HE emergencial sem chamado
+            // (26/10/2026), que guarda a linha planejada com chamado_id nulo.
             id: c.chamado_id ?? "",
-            numero: c.chamado_numero,
-            assunto: c.chamado_assunto,
+            numero: linhaSemChamado(c) ? NUMERO_SEM_CHAMADO : c.chamado_numero,
+            assunto: linhaSemChamado(c) ? ASSUNTO_EMERGENCIAL_SEM_CHAMADO : c.chamado_assunto,
             setor: c.chamado_setor,
             prioridade: c.prioridade,
             responsavel_id: solicitacao.colaborador_id,
             responsavel_nome: solicitacao.colaborador_nome,
             percentual_previsto: Number(c.percentual_previsto),
             prioridade_he: c.prioridade,
+            sem_chamado: linhaSemChamado(c),
           })),
       );
     } else {
@@ -202,6 +207,7 @@ export default function NovaSolicitacaoDialog({
   );
   const minutos = calculo.excedente;
   const media = mediaConclusao(chamados.map((c) => c.percentual_previsto));
+  const semChamado = chamados.some((c) => c.sem_chamado);
   const gerencial = podeAprovar && !!user && form.colaborador_id !== user.id && !solicitacao;
   // HE reprovada sendo corrigida: o banco devolve a solicitação para a fila
   // de liberação ao salvar, então a tela fala de reenvio, não de edição.
@@ -210,6 +216,25 @@ export default function NovaSolicitacaoDialog({
     setForm((atual) => ({ ...atual, [campo]: valor }));
   const adicionar = (item: ChamadoDisponivel) =>
     setChamados((atual) => [...atual, { ...item, percentual_previsto: 100, prioridade_he: item.prioridade }]);
+  // "Emergencial, sem chamado" (26/10/2026): ajuste direto em produção que
+  // precisa sair na hora e não tem chamado para vincular. Entra sozinha — HE
+  // sem chamado não mistura com chamado — e o tipo da HE passa a emergencial,
+  // que é o que o gestor vê na fila de liberação.
+  const adicionarSemChamado = () => {
+    setChamados([
+      {
+        id: "",
+        numero: NUMERO_SEM_CHAMADO,
+        assunto: ASSUNTO_EMERGENCIAL_SEM_CHAMADO,
+        setor: null,
+        prioridade: "alta",
+        percentual_previsto: 100,
+        prioridade_he: "alta",
+        sem_chamado: true,
+      },
+    ]);
+    setForm((atual) => ({ ...atual, tipo: "emergencial" }));
+  };
   const enviar = async () => {
     const erros = validarSolicitacao({
       chamados,
@@ -236,7 +261,8 @@ export default function NovaSolicitacaoDialog({
           he_inicio_previsto: calculo.inicio,
           he_fim_previsto: calculo.fim,
           chamados: chamados.map((c) => ({
-            chamado_id: c.id,
+            chamado_id: c.sem_chamado ? null : c.id,
+            sem_chamado: !!c.sem_chamado,
             prioridade: c.prioridade_he,
             percentual_previsto: c.percentual_previsto,
           })),
@@ -363,8 +389,10 @@ export default function NovaSolicitacaoDialog({
                   </Campo>
                   <Campo rotulo="Tipo de HE" className="min-w-0">
                     <select
-                      className="h-10 w-full rounded-md border bg-white px-3 text-sm"
+                      className="h-10 w-full rounded-md border bg-white px-3 text-sm disabled:bg-slate-100"
                       value={form.tipo}
+                      disabled={semChamado}
+                      title={semChamado ? "HE aberta sem chamado é sempre emergencial." : undefined}
                       onChange={(e) => alterar("tipo", e.target.value)}
                     >
                       <option value="normal">Normal</option>
@@ -472,8 +500,13 @@ export default function NovaSolicitacaoDialog({
                 }
                 icone={<UsersRound className="h-5 w-5" />}
               >
-                <div className="-mt-10 mb-3 flex justify-end">
-                  <Button variant="outline" onClick={() => setSeletor(true)}>
+                <div className="-mt-10 mb-3 flex items-center justify-end gap-3">
+                  {semChamado && (
+                    <span className="text-xs text-slate-500">
+                      HE emergencial sem chamado: remova a linha para vincular chamados.
+                    </span>
+                  )}
+                  <Button variant="outline" disabled={semChamado} onClick={() => setSeletor(true)}>
                     + &nbsp; Adicionar chamado
                   </Button>
                 </div>
@@ -490,8 +523,22 @@ export default function NovaSolicitacaoDialog({
                     </thead>
                     <tbody>
                       {chamados.map((c, i) => (
-                        <tr key={c.id} className="border-t">
-                          <td className="p-3 font-semibold">#{c.numero}</td>
+                        <tr key={c.sem_chamado ? "sem-chamado" : c.id} className="border-t">
+                          <td className="p-3 font-semibold">
+                            {c.sem_chamado ? (
+                              <span
+                                className={cn(
+                                  "inline-flex items-center gap-1 rounded-full border px-2 py-0.5",
+                                  "border-orange-200 bg-orange-50 text-[11px] font-semibold text-orange-700",
+                                )}
+                              >
+                                <Zap className="h-3 w-3" />
+                                Emergencial
+                              </span>
+                            ) : (
+                              <>#{c.numero}</>
+                            )}
+                          </td>
                           <td className="p-3">
                             <div>{c.assunto}</div>
                             <div className="text-xs text-slate-500">{c.setor}</div>
@@ -553,7 +600,8 @@ export default function NovaSolicitacaoDialog({
                       {!chamados.length && (
                         <tr>
                           <td colSpan={5} className="p-6 text-center text-slate-500">
-                            Nenhum chamado adicionado.
+                            Nenhum chamado adicionado. Em ajuste emergencial sem chamado, clique em
+                            "Adicionar chamado" e escolha "Emergencial, sem chamado".
                           </td>
                         </tr>
                       )}
@@ -607,7 +655,7 @@ export default function NovaSolicitacaoDialog({
                   <Resumo rotulo="Total de hora extra" valor={formatarDuracao(minutos)} />
                   <Resumo
                     rotulo="Chamados"
-                    valor={`${chamados.length} ${chamados.length === 1 ? "chamado" : "chamados"}`}
+                    valor={semChamado ? "Emergencial, sem chamado" : `${chamados.length} ${chamados.length === 1 ? "chamado" : "chamados"}`}
                   />
                   <Resumo rotulo="Expectativa média" valor={`${media}%`} />
                 </dl>
@@ -622,6 +670,11 @@ export default function NovaSolicitacaoDialog({
                     A HE será realizada somente após <strong>aprovação</strong> do gestor.
                   </li>
                   <li>Informe apenas chamados que serão tratados no período da HE.</li>
+                  <li>
+                    Ajuste emergencial em produção sem chamado aberto: escolha{" "}
+                    <strong>Emergencial, sem chamado</strong> em "Adicionar chamado" e detalhe na
+                    justificativa o que foi feito.
+                  </li>
                   <li>
                     A expectativa de cada chamado vai de <strong>0 a 100%</strong>; o total é a média entre eles.
                   </li>
@@ -663,6 +716,8 @@ export default function NovaSolicitacaoDialog({
         podeAprovar={podeAprovar}
         ignorar={chamados.map((c) => c.id)}
         aoSelecionar={adicionar}
+        permiteSemChamado={!chamados.length}
+        aoSelecionarSemChamado={adicionarSemChamado}
       />
     </>
   );

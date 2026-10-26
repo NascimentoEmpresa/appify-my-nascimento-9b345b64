@@ -62,6 +62,16 @@ export function totalizarLinhasRelatorioPr(linhas: LinhaRelatorioPrHoraExtra[]) 
  */
 export const NUMERO_SEM_CHAMADO = "SEM-CHAMADO";
 
+/**
+ * HE EMERGENCIAL SEM CHAMADO (26/10/2026): ajuste em produção que precisa
+ * sair na hora e não tem chamado para vincular. Aqui a linha sem chamado não
+ * é a PR que chegou depois — é a própria solicitação, que já nasce planejada
+ * com chamado_id nulo, chamado_numero = 'SEM-CHAMADO' e este assunto fixo.
+ * É o que a liberação, a validação e o relatório mostram no lugar do número
+ * do chamado.
+ */
+export const ASSUNTO_EMERGENCIAL_SEM_CHAMADO = "Emergencial, sem chamado";
+
 export const linhaSemChamado = (l: { chamado_id?: string | null; chamado_numero?: string | null }) =>
   !l.chamado_id || l.chamado_numero === NUMERO_SEM_CHAMADO;
 

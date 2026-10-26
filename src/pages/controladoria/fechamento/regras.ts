@@ -270,3 +270,65 @@ export function admSemClassificacao(linhas: LinhaFluxoCusto[], empresaId?: strin
   }
   return { linhas: n, valor: r2(valor) };
 }
+
+// ── SIS-2026-0730: detalhamento por classificação ao clicar no valor ──────────────────────────────────────────────────
+// Mesma seleção de linhas e mesmo mês das colunas do resumo mensal, só que agrupada pela classificação do lançamento no Fluxo.
+// A soma do detalhe é o valor da célula; nos meses projetados o que a célula mostra pode passar do lançado (média dos últimos
+// meses): a diferença vem à parte em `complementoProjecao`, para o total do modal sempre bater com o número clicado.
+export interface ItemDetalheClassificacao {
+  classificacao: string;
+  valor: number;
+  lancamentos: number;
+}
+
+function agruparPorClassificacao(linhas: { classificacao_nome: string | null; valor: number }[]): ItemDetalheClassificacao[] {
+  const mapa = new Map<string, ItemDetalheClassificacao>();
+  for (const l of linhas) {
+    const nome = (l.classificacao_nome ?? "").trim() || "(sem classificação)";
+    const atual = mapa.get(nome) ?? { classificacao: nome, valor: 0, lancamentos: 0 };
+    atual.valor += l.valor || 0;
+    atual.lancamentos += 1;
+    mapa.set(nome, atual);
+  }
+  return [...mapa.values()].map((x) => ({ ...x, valor: r2(x.valor) })).sort((a, b) => b.valor - a.valor || a.classificacao.localeCompare(b.classificacao, "pt-BR"));
+}
+
+/** Despesa administrativa lançada nos meses, por classificação. `rubricas` = só essas colunas (null = todas, para o Total Desp. Adm). */
+export function detalheAdmPorClassificacao(
+  linhas: LinhaFluxoCusto[],
+  meses: Set<string>,
+  rubricas: RubricaCusto[] | null,
+  ligacoes?: LigacoesRubrica,
+  empresaId?: string | null,
+): ItemDetalheClassificacao[] {
+  const escolhidas = linhas.filter((l) => {
+    const mes = mesDoCusto(l);
+    if (l.tipo !== "saida" || l.contrato_id || !mes || !meses.has(mes)) return false;
+    if (empresaId && l.empresa_id !== empresaId) return false;
+    const rubrica = rubricaDaLinha(l, ligacoes);
+    return !!rubrica && (!rubricas || rubricas.includes(rubrica));
+  });
+  return agruparPorClassificacao(escolhidas);
+}
+
+/** Despesa lançada nos contratos do sócio nos meses, por classificação (mesma seleção de despesasDosSocios). */
+export function detalheSocioPorClassificacao(
+  linhas: LinhaFluxoCusto[],
+  meses: Set<string>,
+  socio: string,
+  socioPorContrato: Map<string, string>,
+  ligacoes?: LigacoesRubrica,
+): ItemDetalheClassificacao[] {
+  const escolhidas = linhas.filter((l) => {
+    const mes = mesDoCusto(l);
+    if (!l.contrato_id || !mes || !meses.has(mes)) return false;
+    return socioPorContrato.get(l.contrato_id) === socio && ehDespesaDeSocio(l, ligacoes);
+  });
+  return agruparPorClassificacao(escolhidas);
+}
+
+/** Quanto do valor mostrado na célula não está lançado (projeção por média). Zero nos meses realizados. */
+export function complementoProjecao(valorCelula: number, itens: ItemDetalheClassificacao[]): number {
+  const dif = r2(valorCelula - itens.reduce((s, i) => s + i.valor, 0));
+  return dif > 0.005 ? dif : 0;
+}
