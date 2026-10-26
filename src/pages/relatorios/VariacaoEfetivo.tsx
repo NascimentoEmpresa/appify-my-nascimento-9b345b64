@@ -16,8 +16,9 @@ import {
 // (mig 20261025000010, 25/10/2026) — no formato do modelo
 // variacao_efetivo_erp.html, com os números do próprio ERP:
 //   previsto      = Planilha de Custo vigente no mês (regra do Ativos/Contratos)
-//   trabalhando   = de fato trabalhando no fim do mês: atestado conta; férias,
-//                   auxílio-doença e outros afastamentos não (mig 20261026000010)
+//   trabalhando   = o "Tem" do Ativos/Contratos: só Situação "Trabalhando"
+//                   (atestado, férias, auxílio-doença… não); o cartão soma só
+//                   contratos com planilha, como lá (migs 20261026000010 e 040)
 //   admissões/demissões do mês (regra do relatório de Colaboradores)
 //   turnover      = demissões ÷ efetivo no fim do mês, afastados inclusive
 //                   (taxa mensal do Turn-over)
@@ -44,7 +45,7 @@ function Kpis({ itens }: { itens: [string, string, string][] }) {
 
 function Legenda({ children }: { children?: ReactNode }) {
   const itens: [string, string][] = [
-    [CINZA, "Previsto: efetivo exigido na Planilha de Custo"], [AZUL, "Trabalhando: no fim do mês, sem afastados (atestado conta)"],
+    [CINZA, "Previsto: efetivo exigido na Planilha de Custo"], [AZUL, "Trabalhando: no fim do mês, sem afastados (o “Tem” do Ativos/Contratos)"],
     [VERMELHO, "Turnover e demissões"], [VERDE, "Admissões"],
   ];
   return (
@@ -89,7 +90,9 @@ export function VariacaoEfetivoVisao({ v, onAbrirContrato }: { v: VariacaoEfetiv
     <div className="space-y-4">
       <Kpis itens={[
         ["Efetivo previsto", fmt(r.previsto), r.mes ? `Planilha de Custo em ${rotuloMes(r.mes)}` : "—"],
-        ["Efetivo trabalhando", fmt(r.trabalhando), r.mes ? `Trabalhando no fim de ${rotuloMes(r.mes)}, sem afastados` : "—"],
+        ["Efetivo trabalhando", fmt(r.trabalhando), r.mes
+          ? `Contratos com planilha em ${rotuloMes(r.mes)}, sem afastados${r.trabalhandoSemPlanilha > 0 ? ` · +${fmt(r.trabalhandoSemPlanilha)} sem planilha` : ""}`
+          : "—"],
         ["Turnover médio", pct(r.turnoverMedio), "Média das taxas mensais"],
         ["Demissões", fmt(r.demissoes), `No ano (${v.meses.length} ${v.meses.length === 1 ? "mês" : "meses"})`],
         ["Admissões", fmt(r.admissoes), `No ano (${v.meses.length} ${v.meses.length === 1 ? "mês" : "meses"})`],
@@ -274,8 +277,9 @@ export function VariacaoEfetivoDetalhe({ v, chave, onEscolher, onVoltar }: {
         <h2 className="mb-2 text-base font-semibold">Leitura gerencial</h2>
         <div className="rounded-lg border border-blue-100 bg-blue-50/60 p-3 text-sm leading-relaxed text-slate-700">
           O <b>efetivo previsto</b> é o quadro da Planilha de Custo vigente no mês (o mesmo do RH › Ativos/Contratos). O <b>efetivo trabalhando</b> é
-          quem estava de fato trabalhando no contrato no último dia do mês — atestado conta; férias, auxílio-doença e outros afastamentos não
-          (nem Renda Técnica ou quem está fora da conta no Ativos/Contratos). As admissões e demissões são movimentos ocorridos durante o mês e
+          quem estava de fato trabalhando no contrato no último dia do mês, com a mesma régua do “Tem” do RH › Ativos/Contratos: só a situação
+          “Trabalhando” (atestado, férias, auxílio-doença e outros afastamentos não; nem Renda Técnica ou quem está fora da conta). No mês
+          corrente é a foto de hoje, e o cartão soma só os contratos com Planilha de Custo, como lá. As admissões e demissões são movimentos ocorridos durante o mês e
           não devem ser confundidas com o quadro final: transferências de lotação, afastamentos e outras movimentações explicam diferenças entre
           entradas/saídas e a mudança no efetivo trabalhando. O turnover segue a regra do Turn-over: demissões do mês ÷ efetivo no fim do mês (afastados inclusive).
         </div>

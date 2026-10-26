@@ -279,6 +279,17 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
   // Vender sem tirar: só na Central de Serviços (Pablo, 14/10/2026: "os encarregados não podem").
   const podeVenderSemTirar = base === "central";
 
+  // Envio em andamento (26/10/2026): 8 advertências verbais iguais saíram de
+  // cliques repetidos no botão (#56 a #63). O botão trava até a resposta; a
+  // trava global (src/lib/envioUnico.ts) e o gatilho do banco seguram o resto.
+  const [enviando, setEnviando] = useState(false);
+  const enviarUmaVez = (fn: () => Promise<unknown>) => async () => {
+    if (enviando) return;
+    setEnviando(true);
+    try { await fn(); } finally { setEnviando(false); }
+  };
+  const travaEnvio = { disabled: enviando, "aria-busy": enviando } as const;
+
   // Modal advertência
   const [modalAdv, setModalAdv] = useState(false);
   // Medida disciplinar (22/09/2026): a tela começa escolhendo O QUE se vai
@@ -1640,7 +1651,7 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 16, paddingTop: 14, borderTop: "1px solid #e2e8f0" }}>
               {vagaStep > 1 && <button onClick={() => setVagaStep(s => s - 1)} style={{ padding: "7px 14px", borderRadius: 10, border: "1px solid #e2e8f0", background: "#fff", color: "#475569", fontSize: 14.5, fontWeight: 700, cursor: "pointer" }}>← Anterior</button>}
               {vagaStep < 3 && <button onClick={() => { if (vagaValidar(vagaStep)) setVagaStep(s => s + 1); }} style={{ padding: "7px 14px", borderRadius: 10, border: "none", background: "#0f3171", color: "#fff", fontSize: 14.5, fontWeight: 700, cursor: "pointer" }}>Próximo →</button>}
-              {vagaStep === 3 && <button onClick={submitVaga} style={{ padding: "7px 14px", borderRadius: 10, border: "none", background: "#16a34a", color: "#fff", fontSize: 14.5, fontWeight: 700, cursor: "pointer" }}>✓ Solicitar Vaga</button>}
+              {vagaStep === 3 && <button onClick={enviarUmaVez(submitVaga)} {...travaEnvio} style={{ padding: "7px 14px", borderRadius: 10, border: "none", background: enviando ? "#94a3b8" : "#16a34a", color: "#fff", fontSize: 14.5, fontWeight: 700, cursor: enviando ? "wait" : "pointer" }}>{enviando ? "Enviando…" : "✓ Solicitar Vaga"}</button>}
             </div>
           </div>
         </div>
@@ -1754,7 +1765,7 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
             <div className="ini-fg"><label>Observações</label><textarea className="ini-fi" rows={2} value={ferias.observacoes} onChange={e => setFerias(f => ({ ...f, observacoes: e.target.value }))} placeholder="Opcional..." /></div>
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 8, paddingTop: 14, borderTop: "1px solid #e2e8f0" }}>
               <button onClick={() => setModalFerias(false)} style={{ padding: "7px 14px", borderRadius: 10, border: "1px solid #e2e8f0", background: "#fff", color: "#475569", fontSize: 14.5, fontWeight: 700, cursor: "pointer" }}>Cancelar</button>
-              <button onClick={submitFerias} style={{ padding: "7px 14px", borderRadius: 10, border: "none", background: feriasRefazerId ? "#4f46e5" : "#16a34a", color: "#fff", fontSize: 14.5, fontWeight: 700, cursor: "pointer" }}>{feriasRefazerId ? "🔁 Refazer e enviar ao RH" : ferias.tipo === "venda" ? "✓ Solicitar venda" : "✓ Solicitar Férias"}</button>
+              <button onClick={enviarUmaVez(submitFerias)} {...travaEnvio} style={{ padding: "7px 14px", borderRadius: 10, border: "none", background: enviando ? "#94a3b8" : feriasRefazerId ? "#4f46e5" : "#16a34a", color: "#fff", fontSize: 14.5, fontWeight: 700, cursor: enviando ? "wait" : "pointer" }}>{enviando ? "Enviando…" : feriasRefazerId ? "🔁 Refazer e enviar ao RH" : ferias.tipo === "venda" ? "✓ Solicitar venda" : "✓ Solicitar Férias"}</button>
             </div>
           </div>
         </div>
@@ -1960,7 +1971,7 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
 
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 8, paddingTop: 14, borderTop: "1px solid #e2e8f0" }}>
               <button onClick={() => setModalAdv(false)} style={{ padding: "7px 14px", borderRadius: 10, border: "1px solid #e2e8f0", background: "#fff", color: "#475569", fontSize: 14.5, fontWeight: 700, cursor: "pointer" }}>Cancelar</button>
-              <button onClick={submitAdv} disabled={advBloqueada} style={{ padding: "7px 14px", borderRadius: 10, border: "none", background: advBloqueada ? "#cbd5e1" : "#16a34a", color: "#fff", fontSize: 14.5, fontWeight: 700, cursor: advBloqueada ? "not-allowed" : "pointer" }}>{ehRegistroVerbal ? "✓ Registrar advertência verbal" : `✓ Solicitar ${medidaAtual?.tipoGravado.toLowerCase() ?? "advertência"}`}</button>
+              <button onClick={enviarUmaVez(submitAdv)} disabled={advBloqueada || enviando} aria-busy={enviando} style={{ padding: "7px 14px", borderRadius: 10, border: "none", background: advBloqueada || enviando ? "#cbd5e1" : "#16a34a", color: "#fff", fontSize: 14.5, fontWeight: 700, cursor: advBloqueada ? "not-allowed" : enviando ? "wait" : "pointer" }}>{enviando ? "Enviando…" : ehRegistroVerbal ? "✓ Registrar advertência verbal" : `✓ Solicitar ${medidaAtual?.tipoGravado.toLowerCase() ?? "advertência"}`}</button>
             </div>
           </div>
         </div>
@@ -1985,8 +1996,8 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
                 style={{ padding: "9px 22px", borderRadius: 10, border: "1px solid #e2e8f0", background: "#fff", color: "#475569", fontSize: 14, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
                 Cancelar
               </button>
-              <button type="button" onClick={() => doSubmitFerias(true)}
-                style={{ padding: "9px 22px", borderRadius: 10, border: "none", background: "#d97706", color: "#fff", fontSize: 14, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+              <button type="button" onClick={enviarUmaVez(() => doSubmitFerias(true))} {...travaEnvio}
+                style={{ padding: "9px 22px", borderRadius: 10, border: "none", background: enviando ? "#94a3b8" : "#d97706", color: "#fff", fontSize: 14, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
                 Solicitar mesmo assim
               </button>
             </div>
@@ -2003,7 +2014,7 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
             <div className="ini-fg"><label>Justificativa da exceção *</label><textarea className="ini-fi" rows={3} placeholder="Explique por que está sendo solicitada fora do prazo…" value={advExc.justificativa} onChange={e => setAdvExc(s => ({ ...s, justificativa: e.target.value }))} /></div>
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 8 }}>
               <button onClick={() => setAdvExc({ open: false, justificativa: "" })} style={{ padding: "7px 14px", borderRadius: 10, border: "1px solid #e2e8f0", background: "#fff", color: "#475569", fontSize: 14.5, fontWeight: 700, cursor: "pointer" }}>Cancelar</button>
-              <button onClick={confirmarExcecao} style={{ padding: "7px 14px", borderRadius: 10, border: "none", background: "#d97706", color: "#fff", fontSize: 14.5, fontWeight: 700, cursor: "pointer" }}>Confirmar como Exceção</button>
+              <button onClick={enviarUmaVez(confirmarExcecao)} {...travaEnvio} style={{ padding: "7px 14px", borderRadius: 10, border: "none", background: enviando ? "#94a3b8" : "#d97706", color: "#fff", fontSize: 14.5, fontWeight: 700, cursor: "pointer" }}>Confirmar como Exceção</button>
             </div>
           </div>
         </div>
