@@ -25,7 +25,7 @@ import {
 import { useQueryClient } from "@tanstack/react-query";
 import { useEfetDiaristas, useEfetPrevistoPlanilha } from "@/hooks/useEfetividade";
 import {
-  agrupar, avaliarDia, chaveContrato, descoberto, foraDaEscala, pct, resumir, somaDias, statusContrato, baixarCsv, tempoSemCobertura,
+  AUSENCIA_A_COBRIR, agrupar, avaliarDia, chaveContrato, descoberto, foraDaEscala, pct, resumir, somaDias, statusContrato, baixarCsv, tempoSemCobertura,
   type ResumoGrupo,
 } from "@/lib/efetividade";
 import {
@@ -51,18 +51,33 @@ export default function PainelDia() {
   const coberturasOntem = d.linhasOntem.filter((l) => l.cobertura === "coberto").length;
   const descobertosOntem = d.linhasOntem.filter(descoberto).length;
 
+  // As colunas coloridas da Situação Geral são uma PARTIÇÃO dos escalados
+  // (Pablo, 26/10/2026: "os números coloridos somados têm que dar o Escalados
+  // hoje; os fora de escala não somam no presentes"). Cada escalado cai em
+  // uma só: na escala | fora de escala | ausência coberta | ausência em
+  // andamento (cobertura acionada ou ponto ainda não chegou) | descoberto.
+  // Afastamento/férias não são escalados — ficam no Resumo das Ocorrências.
   const porContrato = useMemo(() => {
     const g = agrupar(d.linhas, (l) => chaveContrato(l.p.c.empresa, l.p.c.filial));
     return [...g.values()]
       .filter((x) => x.previsto > 0 || x.linhas.length > 0)
-      .map((x) => ({
-        ...x, contrato: d.contratoMap.get(x.chave), status: statusContrato(x),
-        previstoPlanilha: previstoPlanilha.get(x.chave)?.previsto ?? null,
-        foraEscala: x.linhas.filter((l) => foraDaEscala(l.dia, l.p.jornada)).length,
-      }))
+      .map((x) => {
+        const aCobrir = x.linhas.filter((l) => AUSENCIA_A_COBRIR.includes(l.dia.situacao));
+        const foraEscala = x.linhas.filter((l) => foraDaEscala(l.dia, l.p.jornada)).length;
+        const cobertas = aCobrir.filter((l) => l.cobertura === "coberto").length;
+        const descobertasEscala = aCobrir.filter((l) => l.cobertura === "descoberto").length;
+        const presentesEscala = x.presentes - foraEscala;
+        return {
+          ...x, contrato: d.contratoMap.get(x.chave), status: statusContrato(x),
+          previstoPlanilha: previstoPlanilha.get(x.chave)?.previsto ?? null,
+          foraEscala, presentesEscala, cobertas, descobertasEscala,
+          pendentes: x.previsto - presentesEscala - foraEscala - cobertas - descobertasEscala,
+        };
+      })
       .sort((a, b) => ORDEM_STATUS[a.status] - ORDEM_STATUS[b.status] || b.descobertos - a.descobertos || (a.efetividade ?? 1) - (b.efetividade ?? 1));
   }, [d.linhas, d.contratoMap, previstoPlanilha]);
   const foraEscalaTotal = porContrato.reduce((a, x) => a + x.foraEscala, 0);
+  const foraEscalaOntem = d.linhasOntem.filter((l) => foraDaEscala(l.dia, l.p.jornada)).length;
 
   // Faltas nos últimos 14 dias (a base já traz as batidas dessa janela).
   const rankingFaltas = useMemo(() => {
@@ -86,9 +101,9 @@ export default function PainelDia() {
   const contratosDescobertos = porContrato.filter((x) => x.descobertos > 0).length;
 
   const exportar = () => baixarCsv(`efetividade_${d.data}.csv`, [
-    ["Contrato", "Previsto (planilha)", "Escalados hoje", "Presentes", "Fora de escala", "Faltas", "Atestados", "Afastamentos", "Férias", "Coberturas", "Descobertos", "Efetividade", "Status", "Sem registro de ponto"],
-    ...porContrato.map((x) => [x.contrato?.nome ?? x.chave, x.previstoPlanilha ?? "", x.previsto, x.presentes, x.foraEscala, x.faltas, x.atestados, x.afastamentos, x.ferias, x.coberturas,
-      x.descobertos, x.aguardandoApuracao ? "aguardando apuração" : pct(x.efetividade), x.status, x.semRegistro]),
+    ["Contrato", "Previsto (planilha)", "Escalados hoje", "Presentes na escala", "Fora de escala", "Coberturas", "Em andamento", "Descobertos", "Faltas", "Atestados", "Afastamentos", "Férias", "Efetividade", "Status", "Sem registro de ponto"],
+    ...porContrato.map((x) => [x.contrato?.nome ?? x.chave, x.previstoPlanilha ?? "", x.previsto, x.presentesEscala, x.foraEscala, x.cobertas, x.pendentes, x.descobertasEscala,
+      x.faltas, x.atestados, x.afastamentos, x.ferias, x.aguardandoApuracao ? "aguardando apuração" : pct(x.efetividade), x.status, x.semRegistro]),
   ]);
 
   const irPostos = (c: string) => nav(`${BASE_ROTA}/postos?${new URLSearchParams({ c, ...(d.data ? { d: d.data } : {}) })}`);
@@ -110,8 +125,8 @@ export default function PainelDia() {
         <div className="space-y-4">
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-6">
             <Kpi icon={Users} rotulo="Escalados hoje" valor={r.previsto} anterior={rOntem.previsto} tom="info" />
-            <Kpi icon={UserCheck} rotulo="Presentes" valor={r.presentes} anterior={rOntem.presentes} tom="success" />
-            <Kpi icon={UserX} rotulo="Ausências" valor={r.faltas + r.atestados + r.afastamentos} anterior={rOntem.faltas + rOntem.atestados + rOntem.afastamentos} tom="destructive" melhorSobe={false} />
+            <Kpi icon={UserCheck} rotulo="Presentes na escala" valor={r.presentes - foraEscalaTotal} anterior={rOntem.presentes - foraEscalaOntem} tom="success" />
+            <Kpi icon={UserX} rotulo="Ausências" valor={r.faltas + r.atestados} anterior={rOntem.faltas + rOntem.atestados} tom="destructive" melhorSobe={false} />
             <Kpi icon={RefreshCw} rotulo="Coberturas realizadas" valor={coberturas} anterior={coberturasOntem} tom="warning" />
             <Kpi icon={AlertTriangle} rotulo="Postos descobertos" valor={descobertos.length} anterior={descobertosOntem} tom="destructive" melhorSobe={false} onClick={irFaltas} />
             <Kpi icon={BarChart3} rotulo="Efetividade do dia" valor={r.efetividade == null ? null : r.efetividade * 100} sufixo="%"
@@ -129,10 +144,12 @@ export default function PainelDia() {
                     <tr>
                       <th className="p-2 text-left">Contrato</th>
                       <th className="p-2" title="Vagas da Planilha de Custo — a mesma conta do RH › Ativos/Contratos">Previsto</th>
-                      <th className="p-2" title="Quem a escala esperava neste dia (presentes + faltas + atestados) — a base da efetividade">Escalados hoje</th>
-                      <th className="p-2">Presentes</th>
+                      <th className="p-2" title="Quem a escala esperava neste dia = Presentes + Fora de escala + Coberturas + Em andamento + Descobertos — a base da efetividade">Escalados hoje</th>
+                      <th className="p-2" title="Presentes dentro da escala (1ª batida até 1h do início)">Presentes</th>
                       <th className="p-2" title="Presentes com a 1ª batida a mais de 1h do início da escala">Fora de escala</th>
-                      <th className="p-2">Ausências</th><th className="p-2">Coberturas</th><th className="p-2">Descobertos</th>
+                      <th className="p-2" title="Faltas/atestados já cobertos">Coberturas</th>
+                      <th className="p-2" title="Faltas/atestados com cobertura acionada, ou ponto da Senior ainda não chegou">Em andamento</th>
+                      <th className="p-2" title="Faltas/atestados sem cobertura">Descobertos</th>
                       <th className="p-2">Efetividade</th><th className="p-2">Status</th><th className="p-2" />
                     </tr>
                   </thead>
@@ -145,11 +162,11 @@ export default function PainelDia() {
                         </td>
                         <td className="p-2 text-center tabular-nums">{x.previstoPlanilha ?? <span className="text-muted-foreground" title="Sem Planilha de Custo ligada a este contrato">—</span>}</td>
                         <td className="p-2 text-center tabular-nums">{x.previsto}</td>
-                        <td className="p-2 text-center tabular-nums text-success">{x.presentes}</td>
+                        <td className="p-2 text-center tabular-nums text-success">{x.presentesEscala}</td>
                         <td className={cn("p-2 text-center tabular-nums", x.foraEscala ? "font-semibold text-warning" : "text-muted-foreground")}>{x.foraEscala}</td>
-                        <td className="p-2 text-center tabular-nums text-destructive">{x.faltas + x.atestados + x.afastamentos}</td>
-                        <td className="p-2 text-center tabular-nums text-info">{x.coberturas}</td>
-                        <td className={cn("p-2 text-center font-bold tabular-nums", x.descobertos ? "text-destructive" : "text-muted-foreground")}>{x.descobertos}</td>
+                        <td className="p-2 text-center tabular-nums text-info">{x.cobertas}</td>
+                        <td className={cn("p-2 text-center tabular-nums", x.pendentes ? "text-orange-600" : "text-muted-foreground")}>{x.pendentes}</td>
+                        <td className={cn("p-2 text-center font-bold tabular-nums", x.descobertasEscala ? "text-destructive" : "text-muted-foreground")}>{x.descobertasEscala}</td>
                         <td className="p-2 text-center"><CelulaPct v={x.efetividade} aguardando={x.aguardandoApuracao} /></td>
                         <td className="p-2 text-center"><BadgeContrato s={x.status} /></td>
                         <td className="p-2 text-right"><Button size="sm" variant="outline" onClick={() => irPostos(x.chave)}>Ver detalhe</Button></td>
@@ -202,7 +219,7 @@ export default function PainelDia() {
               <TabelaRanking cab={["Contrato", "Descob.", "Ausências", "Efetividade"]}
                 linhas={[...porContrato].filter((x) => x.descobertos > 0).sort((a, b) => b.descobertos - a.descobertos).slice(0, 6)
                   .map((x) => [<button key="n" className="truncate text-left font-semibold text-primary hover:underline" onClick={() => irPostos(x.chave)}>{x.contrato?.nome ?? x.chave}</button>,
-                    <b key="d" className="text-destructive">{x.descobertos}</b>, x.faltas + x.atestados + x.afastamentos, <CelulaPct key="e" v={x.efetividade} aguardando={x.aguardandoApuracao} />])}
+                    <b key="d" className="text-destructive">{x.descobertos}</b>, x.faltas + x.atestados, <CelulaPct key="e" v={x.efetividade} aguardando={x.aguardandoApuracao} />])}
                 vazio="Nenhum posto descoberto." />
             </Secao>
             <Secao titulo="Colaboradores com Mais Faltas" icone={UserX} sub="Últimos 14 dias pelo ponto">
