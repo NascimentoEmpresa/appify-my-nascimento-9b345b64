@@ -5,6 +5,7 @@ import {
   dataLocalISO,
   diaSemana,
   ehFimDeSemana,
+  ERRO_SEM_CHAMADO_EXCLUSIVO,
   formatarData,
   formatarDataHora,
   formatarDuracao,
@@ -183,6 +184,26 @@ describe("regras de hora extra", () => {
         jornadaMinutos: JORNADA,
       })[0],
     ).toContain("pelo menos um chamado"));
+  // "Emergencial, sem chamado" (26/10/2026): ajuste que entra direto em
+  // produção e não tem chamado para vincular. A linha vale sozinha; ao lado
+  // de um chamado, não — o relatório da conclusão ficaria com uma linha sem
+  // o que comprovar junto das que têm.
+  it("aceita a HE emergencial só com a linha sem chamado", () =>
+    expect(
+      validarSolicitacao({
+        chamados: [{ percentual_previsto: 100, sem_chamado: true }],
+        ponto: { entrada: "07:30", saida_intervalo: "12:00", retorno_intervalo: "13:00", saida: "19:00" },
+        jornadaMinutos: JORNADA,
+      }),
+    ).toHaveLength(0));
+  it("recusa a linha sem chamado junto de um chamado", () =>
+    expect(
+      validarSolicitacao({
+        chamados: [{ percentual_previsto: 100 }, { percentual_previsto: 100, sem_chamado: true }],
+        ponto: { entrada: "07:30", saida_intervalo: "12:00", retorno_intervalo: "13:00", saida: "19:00" },
+        jornadaMinutos: JORNADA,
+      }),
+    ).toContain(ERRO_SEM_CHAMADO_EXCLUSIVO));
   it.each([
     [150, 100],
     [-5, 0],
