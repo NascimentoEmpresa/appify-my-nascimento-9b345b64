@@ -10,16 +10,17 @@ import { KpiTile } from "@/components/financeiro/KpiTile";
 import { Bar, BarChart, CartesianGrid, Cell, Legend, Line, LineChart, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { Info, Percent, Printer, ReceiptText, TrendingUp, CheckCircle2 } from "lucide-react";
 import { fmtMoney } from "@/pages/financeiro/nf-emissao/shared";
-import { agruparFaturamento, custosPorContratoMes, custosVazios, ehContratoAdministrativo, RUBRICAS, totalCustos, type CustosPorRubrica } from "./faturamento/regras";
+import { agruparFaturamento, custosPorContratoMes, custosVazios, ehContratoAdministrativo, RUBRICAS, totalCustos, type CustosPorRubrica, type RubricaCusto } from "./faturamento/regras";
 import { SeletorBaseLeitura } from "./faturamento/SeletorBaseLeitura";
 import { useLeituraCompartilhada } from "./faturamento/leituraCompartilhada";
 import { CODIGO_PADRAO, codigosDoFiltro, FiltroCodigoNota } from "./faturamento/FiltroCodigoNota";
 import { rotuloMes, useBaseFaturamento } from "./faturamento/useBaseFaturamento";
 import { useCustosContratoAno, useDespesasAdmAno } from "./faturamento/useCustosContratoMes";
 import { useLigacoesRubrica } from "./faturamento/useLigacoesRubrica";
+import { DetalheDespesaDialog, type DetalheAberto } from "./fechamento/DetalheDespesaDialog";
 import { TituloComFormula } from "./faturamento/Rentabilidade";
 import {
-  admPorClassificacao, admPorMesRubrica, despesasDosSocios, socioDoContrato, admSemClassificacao, margemFinal, montarFechamento, ORIGEM_ADM, ORIGEM_RUBRICA, ROTULO_STATUS, statusDoFechamento, totalDoFechamento,
+  admPorClassificacao, detalheAdmPorClassificacao, detalheSocioPorClassificacao, admPorMesRubrica, despesasDosSocios, socioDoContrato, admSemClassificacao, margemFinal, montarFechamento, ORIGEM_ADM, ORIGEM_RUBRICA, ROTULO_STATUS, statusDoFechamento, totalDoFechamento,
   type LinhaFechamento, type StatusFechamento,
 } from "./fechamento/regras";
 
@@ -52,6 +53,16 @@ function FaixasStatus() {
       <li><strong>Atenção</strong>: de 8% a 10%</li>
       <li><strong>Crítico</strong>: abaixo de 8%</li>
     </ul>
+  );
+}
+
+// Valor que abre o detalhamento por classificação (SIS-2026-0730). Zero não tem o que detalhar.
+function ValorDetalhavel({ valor, onClick }: { valor: number; onClick: () => void }) {
+  if (!valor) return <>{num2(valor)}</>;
+  return (
+    <button type="button" onClick={onClick} title="Ver detalhamento por classificação" className="underline decoration-dotted underline-offset-2 hover:text-primary print:no-underline">
+      {num2(valor)}
+    </button>
   );
 }
 
@@ -163,6 +174,39 @@ export default function FechamentoEmpresa() {
     }
     return [...s].sort((a, b) => a.localeCompare(b, "pt-BR"));
   }, [linhasAno, contratos, socioPorContrato, empresaId]);
+
+  // SIS-2026-0730: clique no valor abre o detalhamento por classificação (mesma seleção de linhas e mesmo mês da célula).
+  const [detalhe, setDetalhe] = useState<DetalheAberto | null>(null);
+  const empresaAdm = empresaId === TODOS ? null : empresaId;
+  const linhasDosSocios = useMemo(
+    () => custosAno.filter((l) => !!l.contrato_id && (empresaId === TODOS || contratoPorId.get(l.contrato_id)?.empresa_id === empresaId)),
+    [custosAno, empresaId, contratoPorId],
+  );
+  const textoPeriodo = (meses: string[]) => {
+    if (meses.length === 1) return `no mês de ${new Date(`${meses[0]}-01T00:00:00`).toLocaleDateString("pt-BR", { month: "long", year: "numeric" })}`;
+    return `no período selecionado (${rotuloMes(meses[0])} a ${rotuloMes(meses[meses.length - 1])})`;
+  };
+  const rotuloPeriodo = (meses: string[]) => (meses.length === 1 ? rotuloMes(meses[0]) : "Total do período");
+  const abrirAdm = (rotulo: string, rubricas: RubricaCusto[] | null, mesesAlvo: string[], valorCelula: number) => {
+    const alvo = new Set(mesesAlvo);
+    setDetalhe({
+      titulo: `${rotulo} | ${rotuloPeriodo(mesesAlvo)}`,
+      subtitulo: `Composição da despesa administrativa atribuída a ${rotulo} ${textoPeriodo(mesesAlvo)}.`,
+      itens: detalheAdmPorClassificacao(admTodas, alvo, rubricas, ligacoes, empresaAdm),
+      valorCelula,
+      projetado: mesesAlvo.some((m) => m > mesAtual),
+    });
+  };
+  const abrirSocio = (socio: string, mesesAlvo: string[], valorCelula: number) => {
+    setDetalhe({
+      titulo: `${socio} | ${rotuloPeriodo(mesesAlvo)}`,
+      subtitulo: `Composição da despesa administrativa atribuída a ${socio} ${textoPeriodo(mesesAlvo)}.`,
+      itens: detalheSocioPorClassificacao(linhasDosSocios, new Set(mesesAlvo), socio, socioPorContrato, ligacoes),
+      valorCelula,
+      projetado: mesesAlvo.some((m) => m > mesAtual),
+    });
+  };
+  const mesesDaTabela = linhas.map((l) => l.mes);
 
   const termo = buscaMes.trim().toLowerCase();
   const linhasTabela = linhas.filter((l) => !termo || rotuloMes(l.mes).toLowerCase().includes(termo) || l.mes.includes(termo));
@@ -402,8 +446,8 @@ export default function FechamentoEmpresa() {
                             {l.projetado && <Badge variant="outline" className="ml-1.5 h-4 px-1 text-[9px] font-medium text-sky-700 border-sky-300">Projetado</Badge>}
                           </TableCell>
                           <TableCell className={CEL}>{num2(l.lucroContratos)}</TableCell>
-                          {RUBRICAS.map((r) => <TableCell key={r.id} className={CEL}>{num2(l.adm[r.id])}</TableCell>)}
-                          <TableCell className={CEL}>{num2(l.totalAdm)}</TableCell>
+                          {RUBRICAS.map((r) => <TableCell key={r.id} className={CEL}><ValorDetalhavel valor={l.adm[r.id]} onClick={() => abrirAdm(r.label, [r.id], [l.mes], l.adm[r.id])} /></TableCell>)}
+                          <TableCell className={CEL}><ValorDetalhavel valor={l.totalAdm} onClick={() => abrirAdm("Total Desp. Adm", null, [l.mes], l.totalAdm)} /></TableCell>
                           <TableCell className={`${CEL} font-semibold ${l.resultado < 0 ? "text-red-600" : ""}`}>{num2(l.resultado)}</TableCell>
                           <TableCell className={CEL}>{pctTxt(l.margem)}</TableCell>
                           <TableCell className="px-2 py-1.5 text-center"><StatusPill status={l.status} /></TableCell>
@@ -415,8 +459,8 @@ export default function FechamentoEmpresa() {
                         <TableRow>
                           <TableCell className="px-2 py-1.5 font-semibold">Total</TableCell>
                           <TableCell className={`${CEL} font-semibold`}>{num2(total.lucroContratos)}</TableCell>
-                          {RUBRICAS.map((r) => <TableCell key={r.id} className={`${CEL} font-semibold`}>{num2(total.adm[r.id])}</TableCell>)}
-                          <TableCell className={`${CEL} font-semibold`}>{num2(total.totalAdm)}</TableCell>
+                          {RUBRICAS.map((r) => <TableCell key={r.id} className={`${CEL} font-semibold`}><ValorDetalhavel valor={total.adm[r.id]} onClick={() => abrirAdm(r.label, [r.id], mesesDaTabela, total.adm[r.id])} /></TableCell>)}
+                          <TableCell className={`${CEL} font-semibold`}><ValorDetalhavel valor={total.totalAdm} onClick={() => abrirAdm("Total Desp. Adm", null, mesesDaTabela, total.totalAdm)} /></TableCell>
                           <TableCell className={`${CEL} font-semibold ${total.resultado < 0 ? "text-red-600" : ""}`}>{num2(total.resultado)}</TableCell>
                           <TableCell className={`${CEL} font-semibold`}>{pctTxt(total.margem)}</TableCell>
                           <TableCell className="px-2 py-1.5 text-center"><StatusPill status={total.status} /></TableCell>
@@ -495,7 +539,7 @@ export default function FechamentoEmpresa() {
                               {l.projetado && <Badge variant="outline" className="ml-1.5 h-4 px-1 text-[9px] font-medium text-sky-700 border-sky-300">Projetado</Badge>}
                             </TableCell>
                             <TableCell className={`${CEL} font-semibold ${l.resultado < 0 ? "text-red-600" : ""}`}>{num2(l.resultado)}</TableCell>
-                            {nomesSocios.map((s) => <TableCell key={s} className={CEL}>{num2(l.socios[s] ?? 0)}</TableCell>)}
+                            {nomesSocios.map((s) => <TableCell key={s} className={CEL}><ValorDetalhavel valor={l.socios[s] ?? 0} onClick={() => abrirSocio(s, [l.mes], l.socios[s] ?? 0)} /></TableCell>)}
                             <TableCell className={`${CEL} font-semibold ${l.lucroLiquido < 0 ? "text-red-600" : ""}`}>{num2(l.lucroLiquido)}</TableCell>
                             <TableCell className="px-2 py-1.5 text-center"><StatusPill status={l.statusLiquido} /></TableCell>
                           </TableRow>
@@ -506,7 +550,7 @@ export default function FechamentoEmpresa() {
                           <TableRow>
                             <TableCell className="px-2 py-1.5 font-semibold">Total</TableCell>
                             <TableCell className={`${CEL} font-semibold ${total.resultado < 0 ? "text-red-600" : ""}`}>{num2(total.resultado)}</TableCell>
-                            {nomesSocios.map((s) => <TableCell key={s} className={`${CEL} font-semibold`}>{num2(total.socios[s] ?? 0)}</TableCell>)}
+                            {nomesSocios.map((s) => <TableCell key={s} className={`${CEL} font-semibold`}><ValorDetalhavel valor={total.socios[s] ?? 0} onClick={() => abrirSocio(s, mesesDaTabela, total.socios[s] ?? 0)} /></TableCell>)}
                             <TableCell className={`${CEL} font-semibold ${total.lucroLiquido < 0 ? "text-red-600" : ""}`}>{num2(total.lucroLiquido)}</TableCell>
                             <TableCell className="px-2 py-1.5 text-center"><StatusPill status={total.statusLiquido} /></TableCell>
                           </TableRow>
@@ -565,6 +609,8 @@ export default function FechamentoEmpresa() {
           </div>
         </>
       )}
+
+      <DetalheDespesaDialog detalhe={detalhe} onClose={() => setDetalhe(null)} />
     </div>
   );
 }
