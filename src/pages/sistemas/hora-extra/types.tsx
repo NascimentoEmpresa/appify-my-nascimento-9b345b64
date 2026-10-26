@@ -120,6 +120,14 @@ export interface ChamadoDisponivel {
   setor?: string | null;
   responsavel_id?: string | null;
   responsavel_nome?: string | null;
+  /** Mais informação no "Adicionar chamado" (mig 20261026000070). */
+  solicitante_nome?: string | null;
+  status?: string | null;
+  aberto_em?: string | null;
+  prazo_previsto?: string | null;
+  modulo_sistema?: string | null;
+  tipo_solicitacao?: string | null;
+  descricao?: string | null;
 }
 
 export interface StatsHoraExtra {

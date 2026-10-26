@@ -231,6 +231,7 @@ export default function SolicitacoesHoraExtra() {
         busca={busca}
         setBusca={setBusca}
         limpar={limpar}
+        podeAprovar={podeAprovar}
       />
       <div className="mt-3 grid gap-3 xl:grid-cols-[minmax(0,1fr)_255px]">
         <div className="overflow-hidden rounded-lg border bg-white">
@@ -535,6 +536,8 @@ function Filtros(p: {
   busca: string;
   setBusca: (v: string) => void;
   limpar: () => void;
+  /** Quem não aprova só enxerga as próprias HEs (RLS): o filtro de colaborador não serve. */
+  podeAprovar: boolean;
 }) {
   const unicos = (xs: (string | null | undefined)[]) => Array.from(new Set(xs.filter(Boolean) as string[])).sort();
   return (
@@ -550,12 +553,14 @@ function Filtros(p: {
         </label>
         <Filtro label="Empresa" value={p.empresa} set={p.setEmpresa} opcoes={unicos(p.lista.map((x) => x.empresa))} />
         <Filtro label="Setor" value={p.setor} set={p.setSetor} opcoes={unicos(p.lista.map((x) => x.setor))} />
-        <Filtro
-          label="Colaborador"
-          value={p.colaborador}
-          set={p.setColaborador}
-          opcoes={Array.from(new Map(p.lista.map((x) => [x.colaborador_id, x.colaborador_nome])).entries())}
-        />
+        {p.podeAprovar && (
+          <Filtro
+            label="Colaborador"
+            value={p.colaborador}
+            set={p.setColaborador}
+            opcoes={Array.from(new Map(p.lista.map((x) => [x.colaborador_id, x.colaborador_nome])).entries())}
+          />
+        )}
         <Filtro
           label="Status"
           value={p.status}

@@ -1,11 +1,20 @@
 import { useMemo, useState } from "react";
-import { Link2, Search } from "lucide-react";
+import { CalendarClock, Link2, Search, UserRound } from "lucide-react";
 import { toast } from "sonner";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 import { useChamadosDisponiveisHoraExtra } from "@/hooks/useHoraExtra";
+import { labelDe, MODULOS_ERP, PRIORIDADES, STATUS_CHAMADO, TIPOS } from "@/pages/chamados/types";
 import type { ChamadoDisponivel } from "./types";
+
+// 26/10/2026 (mig 20261026000070): "na hora de adicionar o chamado deixa ver
+// mais informações como quem solicitou". Cada chamado mostra quem abriu,
+// status, prioridade, módulo, tipo, abertura, prazo e o começo da descrição;
+// a busca também acha pelo solicitante.
+
+const dataBR = (iso?: string | null) => (iso ? new Date(iso.length === 10 ? `${iso}T12:00:00` : iso).toLocaleDateString("pt-BR") : null);
 
 export default function SeletorChamadoDialog({
   aberto,
@@ -30,7 +39,8 @@ export default function SeletorChamadoDialog({
     () =>
       data.filter(
         (item) =>
-          !ignorar.includes(item.id) && `${item.numero} ${item.assunto}`.toLowerCase().includes(busca.toLowerCase()),
+          !ignorar.includes(item.id) &&
+          `${item.numero} ${item.assunto} ${item.solicitante_nome ?? ""} ${item.setor ?? ""}`.toLowerCase().includes(busca.toLowerCase()),
       ),
     [data, busca, ignorar],
   );
@@ -50,9 +60,10 @@ export default function SeletorChamadoDialog({
     aoFechar();
     setBusca("");
   };
+  const hoje = new Date().toISOString().slice(0, 10);
   return (
     <Dialog open={aberto} onOpenChange={(v) => !v && aoFechar()}>
-      <DialogContent className="max-w-3xl">
+      <DialogContent className="max-w-4xl">
         <DialogHeader>
           <DialogTitle>Adicionar chamado</DialogTitle>
           <DialogDescription>Selecione um chamado em aberto já designado ao colaborador.</DialogDescription>
@@ -62,62 +73,65 @@ export default function SeletorChamadoDialog({
           <Input
             value={busca}
             onChange={(e) => setBusca(e.target.value)}
-            placeholder="Buscar por número ou assunto..."
+            placeholder="Buscar por número, assunto, solicitante ou setor..."
             className="pl-9"
           />
         </div>
-        <div className="max-h-[55vh] overflow-auto rounded-lg border">
-          <table className="w-full text-sm">
-            <thead className="bg-slate-50 text-left text-xs text-slate-500">
-              <tr>
-                <th className="p-3">ID</th>
-                <th className="p-3">Título</th>
-                {podeAprovar && <th className="p-3">Responsável</th>}
-                <th className="p-3"></th>
-              </tr>
-            </thead>
-            <tbody>
-              {isLoading ? (
-                <tr>
-                  <td colSpan={4} className="p-8 text-center">
-                    Carregando...
-                  </td>
-                </tr>
-              ) : (
-                itens.map((item) => (
-                  <tr key={item.id} className="border-t">
-                    <td className="p-3 font-semibold text-blue-700">
-                      <span className="flex items-center gap-1">
-                        <Link2 className="h-3.5 w-3.5" />
-                        {item.numero}
-                      </span>
-                    </td>
-                    <td className="p-3">
-                      <div>{item.assunto}</div>
-                      <div className="text-xs text-slate-500">{item.setor}</div>
-                    </td>
-                    {podeAprovar && (
-                      <td className="p-3">
-                        {item.responsavel_nome || <span className="text-amber-600">Não designado</span>}
-                      </td>
-                    )}
-                    <td className="p-3 text-right">
-                      <Button size="sm" variant="outline" onClick={() => escolher(item)}>
-                        Selecionar
-                      </Button>
-                    </td>
-                  </tr>
-                ))
-              )}
-              {!isLoading && !itens.length && (
-                <tr>
-                  <td colSpan={4} className="p-8 text-center text-slate-500">
-                    Nenhum chamado encontrado.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
+        <div className="max-h-[60vh] space-y-2 overflow-auto pr-1">
+          {isLoading && <p className="p-8 text-center text-sm">Carregando...</p>}
+          {!isLoading && !itens.length && <p className="p-8 text-center text-sm text-slate-500">Nenhum chamado encontrado.</p>}
+          {!isLoading &&
+            itens.map((item) => {
+              const st = item.status ? STATUS_CHAMADO[item.status] : null;
+              const pr = PRIORIDADES[item.prioridade];
+              const atrasado = !!item.prazo_previsto && item.prazo_previsto < hoje;
+              return (
+                <div key={item.id} className="rounded-lg border p-3 transition-colors hover:border-blue-300 hover:bg-blue-50/40">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <span className="flex items-center gap-1 font-semibold text-blue-700">
+                          <Link2 className="h-3.5 w-3.5" />
+                          {item.numero}
+                        </span>
+                        {st && <span className={cn("rounded-full border px-2 py-0.5 text-[11px] font-medium", st.cls)}>{st.label}</span>}
+                        {pr && <span className={cn("rounded-full border px-2 py-0.5 text-[11px] font-medium", pr.cls)}>{pr.label}</span>}
+                        {item.tipo_solicitacao && (
+                          <span className="rounded-full border px-2 py-0.5 text-[11px] text-slate-600">{labelDe(TIPOS, item.tipo_solicitacao)}</span>
+                        )}
+                      </div>
+                      <p className="mt-1 font-medium text-slate-900">{item.assunto}</p>
+                      {item.descricao && (
+                        <p className="mt-0.5 line-clamp-2 text-xs text-slate-500" title={item.descricao}>{item.descricao}</p>
+                      )}
+                      <div className="mt-1.5 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-600">
+                        <span className="inline-flex items-center gap-1">
+                          <UserRound className="h-3.5 w-3.5 text-slate-400" />
+                          Solicitante: <b className="font-medium text-slate-800">{item.solicitante_nome || "—"}</b>
+                          {item.setor ? <span className="text-slate-400"> · {item.setor}</span> : null}
+                        </span>
+                        {item.modulo_sistema && <span>Módulo: <b className="font-medium text-slate-800">{labelDe(MODULOS_ERP, item.modulo_sistema)}</b></span>}
+                        {item.aberto_em && <span>Aberto em {dataBR(item.aberto_em)}</span>}
+                        {item.prazo_previsto && (
+                          <span className={cn("inline-flex items-center gap-1", atrasado && "font-semibold text-red-600")}>
+                            <CalendarClock className="h-3.5 w-3.5" />
+                            Prazo {dataBR(item.prazo_previsto)}{atrasado ? " (vencido)" : ""}
+                          </span>
+                        )}
+                        {podeAprovar && (
+                          <span>
+                            Responsável: {item.responsavel_nome || <span className="text-amber-600">Não designado</span>}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    <Button size="sm" variant="outline" className="shrink-0" onClick={() => escolher(item)}>
+                      Selecionar
+                    </Button>
+                  </div>
+                </div>
+              );
+            })}
         </div>
       </DialogContent>
     </Dialog>

@@ -302,8 +302,16 @@ export const statusInicialVaga = (administrativa: boolean, setor?: string | null
  * banco continua "Pendente Analista" (gatilhos, filtros e histórico dependem
  * dele), então compare sempre o valor, nunca o rótulo.
  */
+// 26/10/2026: "Concluído" e "Contratado" eram a MESMA coisa (Pablo: "funde
+// esse status e deixa só CONTRATADO"). A mig 20261026000080 passou o legado
+// para Contratado; o que ainda vier com a grafia antiga aparece como Contratado.
+export const ehStatusConcluidoLegado = (status: string | null | undefined): boolean =>
+  status === "Concluída" || String(status ?? "").startsWith("Concluído");
+
 export const rotuloStatusVaga = (status: string | null | undefined): string =>
-  status === "Pendente Analista" ? "Pendente Operacional" : String(status ?? "");
+  status === "Pendente Analista" ? "Pendente Operacional"
+    : ehStatusConcluidoLegado(status) ? "Contratado"
+    : String(status ?? "");
 
 export const normSetorVaga = (s: string | null | undefined): string =>
   String(s ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim().toUpperCase();
