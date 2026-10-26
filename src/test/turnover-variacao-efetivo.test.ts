@@ -46,6 +46,16 @@ describe("resumo e leitura", () => {
     // jan: 6/123 = 4,88%; fev: 3/128 = 2,34% → média 3,61%
     expect(r.turnoverMedio).toBe(3.61);
   });
+  it("cartão trabalhando soma só contratos com planilha, como o Tem do Ativos/Contratos", () => {
+    const m = (planilha: boolean, previsto: number, trabalhando: number) =>
+      ({ mes: "2026-10", previsto, trabalhando, efetivo: trabalhando, admissoes: 0, demissoes: 0, planilha });
+    const cs: ContratoEfetivo[] = [
+      { chave: "a", nome: "A", no_erp: true, meses: [m(true, 50, 48)] },
+      { chave: "b", nome: "ADMINISTRATIVO", no_erp: true, meses: [m(false, 0, 10)] },
+      { chave: "filial:X", nome: "X", no_erp: false, meses: [m(false, 0, 3)] },
+    ];
+    expect(resumo(cs, ["2026-10"])).toMatchObject({ previsto: 50, trabalhando: 48, trabalhandoSemPlanilha: 13 });
+  });
   it("déficit, excedente e sem previsto", () => {
     expect(leituraDoMes({ previsto: 10, trabalhando: 8 })).toEqual({ tipo: "deficit", diferenca: 2 });
     expect(leituraDoMes({ previsto: 10, trabalhando: 12 })).toEqual({ tipo: "excedente", diferenca: 2 });
