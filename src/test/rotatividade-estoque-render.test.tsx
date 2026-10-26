@@ -18,14 +18,23 @@ import { describe, expect, it, vi } from "vitest";
 
 import payload from "./fixtures/rotatividade-estoque-producao.json";
 
-const { consultar, consultarHistorico } = vi.hoisted(() => ({
+const { consultar, consultarHistorico, consultarFornecimentos } = vi.hoisted(() => ({
   consultar: vi.fn(),
   consultarHistorico: vi.fn(),
+  consultarFornecimentos: vi.fn(),
 }));
 
 const historicoUniformes = [
   { mes: "2026-10-01", tipo_uniforme: "CAMISA POLO", tamanho: "M", solicitados: 12, utilizados: 9 },
   { mes: "2026-09-01", tipo_uniforme: "CALÇA OPERACIONAL", tamanho: "G", solicitados: 8, utilizados: 8 },
+];
+
+const fornecimentosUniformes = [
+  {
+    data_fornecimento: "2026-10-13", colaborador: "Maria da Silva", matricula: "1010",
+    contrato: "Contrato Alfa", posto: "Recepção", protocolo: "SUP-2026-0010",
+    tipo_uniforme: "CAMISA POLO", tamanho: "M", quantidade: 2,
+  },
 ];
 
 vi.mock("@/hooks/useDashboardRotatividadeEstoque", () => ({
@@ -36,6 +45,10 @@ vi.mock("@/hooks/useDashboardRotatividadeEstoque", () => ({
   useHistoricoUniformes: (empresaId: string | null, filtros: unknown) => {
     consultarHistorico(empresaId, filtros);
     return { data: historicoUniformes, error: null, isLoading: false, isFetching: false, refetch: vi.fn() };
+  },
+  useFornecimentosUniformesColaborador: (empresaId: string | null, filtros: unknown) => {
+    consultarFornecimentos(empresaId, filtros);
+    return { data: fornecimentosUniformes, error: null, isLoading: false, isFetching: false, refetch: vi.fn() };
   },
 }));
 
@@ -88,7 +101,7 @@ const esperadoPct = (n: number) =>
 const esperadoMoeda = (n: number) =>
   n
     .toLocaleString("pt-BR", { style: "currency", currency: "BRL", minimumFractionDigits: 2 })
-    .replace(/ /g, " ");
+    .replace(new RegExp(String.fromCharCode(160), "g"), " ");
 
 function montar() {
   return render(
@@ -105,6 +118,7 @@ describe("aba Rotatividade do Estoque — render com payload de produção", () 
   it("abre em Uniformes e repassa o período e o contrato do filtro da página", () => {
     consultar.mockClear();
     consultarHistorico.mockClear();
+    consultarFornecimentos.mockClear();
     montar();
     expect(consultar).toHaveBeenCalledWith(
       "5a61c769-21d8-4e61-b9bb-506b8db0bce8",
@@ -119,14 +133,26 @@ describe("aba Rotatividade do Estoque — render com payload de produção", () 
       "5a61c769-21d8-4e61-b9bb-506b8db0bce8",
       { inicio: "2026-01-01", fim: "2026-10-13", contratoId: null },
     );
+    expect(consultarFornecimentos).toHaveBeenCalledWith(
+      "5a61c769-21d8-4e61-b9bb-506b8db0bce8",
+      { inicio: "2026-01-01", fim: "2026-10-13", contratoId: null },
+    );
   });
 
   it("mostra o histórico mensal por tipo e tamanho, separado entre pedido e uso", () => {
     montar();
     expect(screen.getByText("Histórico de Uniformes por Tipo e Tamanho")).toBeInTheDocument();
-    expect(screen.getByText("CAMISA POLO")).toBeInTheDocument();
+    expect(screen.getAllByText("CAMISA POLO").length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText("Solicitados")).toBeInTheDocument();
     expect(screen.getByText("Utilizados")).toBeInTheDocument();
+  });
+
+  it("identifica o colaborador e a data em que o uniforme saiu do almoxarifado", () => {
+    montar();
+    expect(screen.getByText("Fornecimentos de Uniformes por Colaborador")).toBeInTheDocument();
+    expect(screen.getByText("Maria da Silva")).toBeInTheDocument();
+    expect(screen.getByText("13/10/2026")).toBeInTheDocument();
+    expect(screen.getByText("SUP-2026-0010")).toBeInTheDocument();
   });
 
   it("responde as quatro perguntas do diretor nos cartões de destaque", () => {
