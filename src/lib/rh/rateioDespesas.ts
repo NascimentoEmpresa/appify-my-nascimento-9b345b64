@@ -15,9 +15,10 @@
 //     Aqui o total é a soma de todos os contratos — sempre fecha 100%.
 //   · SENIOR — pela quantidade de colaboradores TRABALHANDO por contrato
 //     (EMPREGADOS, o mesmo contrato de RH › Ativos/Contratos).
-//   · FGTS, Bullla, seguro, BSF, gratificação PCD, mensalidade SEEAC — pelo
-//     PDF anexado à despesa: cada linha do PDF com CPF (ou com o nome de um
-//     contrato) vira um valor, somado por contrato.
+//   · FGTS, Bullla, seguro, BSF, gratificação PCD, mensalidade SEEAC e, desde
+//     26/10/2026, VALE TRANSPORTE — pelo PDF anexado à despesa: cada linha do
+//     PDF com CPF, matrícula (ou com o nome de um contrato) vira um valor,
+//     somado por contrato.
 //
 // Centavos: a divisão usa o método do maior resto — a soma dos itens é
 // SEMPRE igual ao valor da despesa (a planilha arredondava cada linha e a
@@ -32,7 +33,8 @@ export type TipoRateio =
   | "seguro"
   | "bsf"
   | "gratificacao_pcd"
-  | "mensalidade_seeac";
+  | "mensalidade_seeac"
+  | "vale_transporte";
 
 export type CriterioRateio = "faturamento" | "consultas" | "colaboradores" | "pdf";
 
@@ -45,6 +47,7 @@ export const TIPOS_RATEIO: { tipo: TipoRateio; rotulo: string; criterio: Criteri
   { tipo: "bsf", rotulo: "BSF", criterio: "pdf" },
   { tipo: "gratificacao_pcd", rotulo: "Gratificação PCD", criterio: "pdf" },
   { tipo: "mensalidade_seeac", rotulo: "Mensalidade SEEAC", criterio: "pdf" },
+  { tipo: "vale_transporte", rotulo: "Vale Transporte", criterio: "pdf" },
 ];
 
 export const rotuloTipo = (t: string) => TIPOS_RATEIO.find((x) => x.tipo === t)?.rotulo ?? t;
@@ -428,7 +431,7 @@ const RE_TOTAL_DE_RELATORIO = /\bTOTAL\s+DE\s+(COLABORADORES|FUNCION|TRABALHADOR
 
 export interface LayoutPdf {
   /** Layout reconhecido; "generico" quando nenhum bate. */
-  layout: "seguro_prudential" | "fgts_digital" | "tabela_contratos" | "relacao_eventos" | "generico";
+  layout: "seguro_prudential" | "fgts_digital" | "tabela_contratos" | "relacao_eventos" | "vale_transporte" | "generico";
   rotulo: string;
 }
 
@@ -470,6 +473,63 @@ export function extrairLinhasRelacaoEventos(linhas: string[]): LinhaPdf[] {
   });
   return out;
 }
+
+/**
+ * VALE TRANSPORTE — boleto da operadora + os relatórios "Período Vale
+ * Transporte" da Senior (BSVT001.COL). PDF real "VT 11.2026 POLICIA-SMS-SAMU-
+ * TJ-UFRGS- TEU.pdf" (26/10/2026, pedido do Pablo: "preciso conseguir
+ * importar esse arquivo de rateio também"):
+ *   1. o boleto da TEU (ASSOC. EMP. DO SBE - RMPA): "Pedido de Carga"
+ *      23.775,50, "Desconto sobre cargas não realizadas" 1.272,00, taxa de
+ *      4,80 → "Total:  22.508,30" — é o valor pago, o valor da despesa;
+ *   2. 13 relatórios do BSVT001, um por grupo de postos, SEM nome de contrato
+ *      e SEM CPF. Uma linha por colaborador: Cadastro (000010174), Nome — que
+ *      a Senior cola no código da escala ("…DE MORAES00004") —, linha, meio,
+ *      faltas, passes, unitário e "Valor Total" (o ÚLTIMO valor da linha, já
+ *      sem as faltas). Cabeçalho "0001 - NASCIMENTO … Pág.:" dá a empresa.
+ * Igual à Relação de Eventos: a matrícula vira o colaborador e o contrato
+ * vem do cadastro dele. A soma dos relatórios (24.358,50 nesse PDF) não é o
+ * valor pago — é a BASE: cada contrato leva a sua proporção do boleto.
+ */
+export function extrairLinhasValeTransporte(linhas: string[]): LinhaPdf[] {
+  const out: LinhaPdf[] = [];
+  let empresa: number | null = null;
+  linhas.forEach((l, i) => {
+    const cab = l.match(/^\s*(\d{1,4})\s*-\s*\D.*\bP[aá]g\.?\s*:/i);
+    if (cab) { empresa = Number(cab[1]); return; }
+    // "000010174 ANA CAROLINE ALVES DE MORAES00004  2  TEU - LINHA ÚNICAÔnibus … 402,80  0,00  402,80"
+    const m = l.match(/^\s*(\d{6,10})\s+(\D+?)\s*\d{5}\s+\d+\s/);
+    if (!m || RE_CPF.test(l)) return;
+    const vals = valoresDaLinha(l);
+    if (!vals.length) return;
+    out.push({
+      n: i + 1, texto: l.trim(), cpf: null, valor: vals[vals.length - 1],
+      cadastro: String(Number(m[1])), empresa, nomePdf: m[2].trim(),
+    });
+  });
+  return out;
+}
+
+/**
+ * Valor pago do VT: o "Total:" do resumo do boleto (já com desconto e taxa);
+ * sem ele, o valor do boleto; sem boleto, a soma dos "Total Empresa" dos
+ * relatórios. Nunca o "Total Empresa" de um relatório sozinho — a leitura
+ * genérica pegava o último (1.155,40).
+ */
+export function totalValeTransporte(linhas: string[]): number | null {
+  for (const l of linhas) {
+    if (!/^\s*Total\s*:/i.test(l)) continue;
+    const v = valoresDaLinha(l);
+    if (v.length) return v[v.length - 1];
+  }
+  const boleto = valorDoBoleto(linhas);
+  if (boleto != null) return boleto;
+  const tot = linhas.filter((l) => /^\s*Total\s+Em\s*pres\s*a\b/i.test(l)).map((l) => valoresDaLinha(l)).filter((v) => v.length);
+  return tot.length ? Math.round(tot.reduce((a, v) => a + v[v.length - 1], 0) * 100) / 100 : null;
+}
+
+/** Layouts sem CPF em que a MATRÍCULA (empresa + cadastro) leva ao colaborador e ao contrato. */
+export const layoutPorMatricula = (l: LayoutPdf["layout"]) => l === "relacao_eventos" || l === "vale_transporte";
 
 /** Soma dos "Total de Colaboradores" da Relação de Eventos (um por empresa); null se não houver. */
 export function totalRelacaoEventos(linhas: string[]): number | null {
@@ -523,6 +583,10 @@ export function identificarLayoutPdf(linhas: string[]): LayoutPdf {
         ? "Boleto Bullla — resumo por contrato (Total Geral)"
         : "Resumo por contrato (Rótulos de Linha → Total Geral)",
     };
+  }
+  // Relatório de Vale Transporte da Senior (BSVT001), com ou sem o boleto na frente.
+  if (tudo.includes("PERIODOVALETRANSPORTE") && !extrairLinhasComCpf(linhas).length && extrairLinhasValeTransporte(linhas).length) {
+    return { layout: "vale_transporte", rotulo: "Vale Transporte da Senior (BSVT001) — valor por matrícula (o contrato vem do cadastro)" };
   }
   // Relação de Eventos sem CPF (consignado da Soma Financeira): só quando
   // nenhuma linha tem CPF — com CPF, a leitura genérica já resolve.
@@ -655,6 +719,7 @@ export function extrairLinhasDoPdf(linhas: string[], layout: LayoutPdf["layout"]
     ];
   }
   if (layout === "relacao_eventos") return extrairLinhasRelacaoEventos(linhas);
+  if (layout === "vale_transporte") return extrairLinhasValeTransporte(linhas);
   return extrairLinhasComCpf(linhasDoLayout(linhas, layout));
 }
 
@@ -671,6 +736,7 @@ export function totalDoPdf(linhas: string[], layout: LayoutPdf["layout"]): numbe
   // Relação de Eventos: o rodapé "Total de Colaboradores" É o total (nos
   // outros layouts ele é anexo e fica de fora — RE_TOTAL_DE_RELATORIO).
   if (layout === "relacao_eventos") return totalRelacaoEventos(linhas) ?? valorDoBoleto(linhas);
+  if (layout === "vale_transporte") return totalValeTransporte(linhas);
   // Sem linha de TOTAL, vale o valor do boleto (documento que é só o boleto).
   return totalDeclaradoNoPdf(linhasDoLayout(linhas, layout)) ?? valorDoBoleto(linhas);
 }
