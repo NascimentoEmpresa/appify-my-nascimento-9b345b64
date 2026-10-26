@@ -5,6 +5,7 @@ import type { PainelTurnover, RescisoesTurnover } from "@/lib/diretoria/turnover
 import type { DetalheVaga, PainelVagas } from "@/lib/relatorios/vagasPainel";
 import type { MovRecrutadores } from "@/lib/relatorios/recrutadoresPainel";
 import type { DadosCustoFaltas } from "@/lib/relatorios/custoFaltas";
+import type { VariacaoEfetivo } from "@/lib/diretoria/variacaoEfetivo";
 
 // =====================================================================
 // Diretoria › Relatórios — acesso a dados (mig 20261005000006).
@@ -72,6 +73,19 @@ export function useTurnoverPainel(f: { ano: number; meses: number[] | null; cont
       const { data, error } = await sb.rpc("dir_turnover_painel", { _ano: f.ano, _meses: f.meses, _contrato: f.contrato, _causas: f.causas });
       if (error) throw error;
       return data as PainelTurnover;
+    },
+  });
+}
+
+/** Aba "Variação de Efetivo" (mig 20261025000010): previsto × trabalhando × movimentos, por empresa › contrato › mês. */
+export function useVariacaoEfetivo(ano: number, ativo: boolean) {
+  return useQuery({
+    queryKey: [CHAVE, "turnover-variacao-efetivo", ano], enabled: ativo,
+    staleTime: 5 * 60_000,
+    queryFn: async (): Promise<VariacaoEfetivo> => {
+      const { data, error } = await sb.rpc("dir_turnover_variacao_efetivo", { _ano: ano });
+      if (error) throw error;
+      return { ano, meses: [], empresas: [], ...(data ?? {}) } as VariacaoEfetivo;
     },
   });
 }

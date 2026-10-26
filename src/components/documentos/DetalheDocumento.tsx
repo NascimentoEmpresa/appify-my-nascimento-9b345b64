@@ -12,10 +12,10 @@ import { SearchableSelect } from "@/components/ui/searchable-select";
 import { cn } from "@/lib/utils";
 import {
   useAcaoRhDocumento, useAnexarDocumento, useConcluirDocumento, useDetalheDocumento, useMensagemDocumento, useOpcoesDocumento,
-  useRemoverAnexoDocumento, urlDocumento,
+  useRemoverAnexoDocumento, urlDocumento, marcarDocumentoLido,
 } from "@/hooks/useDocumentosSolicitados";
 import {
-  ACAO_EVENTO, STATUS_DOCUMENTO, TIPO_DOCUMENTO, atrasada, fmtTamanho, nomeLegivel, pedeAssinatura, pendenciasEnvio,
+  ACAO_EVENTO, STATUS_DOCUMENTO, TIPO_DOCUMENTO, atrasada, concluiAnexando, fmtTamanho, nomeLegivel, pedeAssinatura, pendenciasEnvio,
   rotuloSituacao, textoPrazo, type AnexoDocumento, type AssinaturaDocumento, type SolicitacaoDocumento,
 } from "@/lib/rh/documentosSolicitados";
 import { AssinarDocumento, TracoAssinatura } from "@/components/documentos/AssinarDocumento";
@@ -34,6 +34,12 @@ import { ImagensDocumento } from "@/components/documentos/ImagensDocumento";
 // "Assinar" (AssinarDocumento); registro não pede nada e o RH pode seguir
 // anexando nele. Imagens anexadas aparecem como miniaturas, e a assinatura
 // gravada (traço, quem, quando) aparece no topo.
+//
+// 25/10/2026 (mig 20261025000030) — "Termo assinado e anexado"
+// (ciencia_anexo): segue o painel "Enviar ao RH" (anexar o assinado e
+// enviar), e aparece na entrada do sistema pela GateTermoCiencia, que monta
+// esta janela com `aoEntrar` (o aviso e o "Fazer depois"). Abrir o
+// documento do RH registra a leitura (rh_doc_marcar_lido).
 // =====================================================================
 
 const hojeIso = () => new Date().toLocaleDateString("sv-SE");
@@ -48,9 +54,11 @@ interface Props {
   /** RH: devolver, reencaminhar, cancelar. */
   podeAlterarRh?: boolean;
   onFechar: () => void;
+  /** Aberta pela janela da entrada no sistema: aviso de pendência e "Fazer depois". */
+  aoEntrar?: { restantes: number; onAdiar: () => void };
 }
 
-export function DetalheDocumento({ solicitacao: s, lado, podeAnexarRh, podeAlterarRh, onFechar }: Props) {
+export function DetalheDocumento({ solicitacao: s, lado, podeAnexarRh, podeAlterarRh, onFechar, aoEntrar }: Props) {
   const detalhe = useDetalheDocumento(s?.id ?? null);
   const anexar = useAnexarDocumento();
   const remover = useRemoverAnexoDocumento();
@@ -77,7 +85,7 @@ export function DetalheDocumento({ solicitacao: s, lado, podeAnexarRh, podeAlter
   const assinados = anexos.filter((a) => a.origem === "destinatario");
   const pendente = s.status === "pendente";
   const souDestinatario = lado === "destinatario";
-  const fluxoAnexo = s.tipo === "anexo";
+  const fluxoAnexo = concluiAnexando(s);
   const assina = pedeAssinatura(s);
   // Registro concluído continua recebendo arquivo do RH (rh_doc_pode_anexar).
   const registroAberto = s.tipo === "registro" && s.status === "concluida" && !souDestinatario && !!podeAnexarRh;
@@ -140,6 +148,13 @@ export function DetalheDocumento({ solicitacao: s, lado, podeAnexarRh, podeAlter
             <Badge variant="outline" className={cn("font-semibold", STATUS_DOCUMENTO[s.status].cor)}>{rotuloSituacao(s)}</Badge>
           </DialogTitle>
         </DialogHeader>
+        {aoEntrar && (
+          <div className="flex flex-wrap items-center gap-2 rounded-lg border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+            <span className="flex-1">Esta janela aparece ao entrar no sistema enquanto o documento estiver pendente
+              {aoEntrar.restantes > 0 ? ` (mais ${aoEntrar.restantes} na fila)` : ""}.</span>
+            <Button size="sm" variant="outline" onClick={aoEntrar.onAdiar}>Fazer depois</Button>
+          </div>
+        )}
 
         <div className="grid gap-x-6 gap-y-1.5 text-sm sm:grid-cols-2">
           <Info rotulo="Solicitado por" valor={`${nomeLegivel(s.solicitante_nome) || "—"} · ${fmtDataHora(s.created_at)}`} />
@@ -156,6 +171,17 @@ export function DetalheDocumento({ solicitacao: s, lado, podeAnexarRh, podeAlter
           {s.status === "cancelada" && <Info rotulo="Cancelada" valor={`${nomeLegivel(s.cancelada_por) || "—"} · ${s.cancelamento_motivo ?? ""}`} />}
         </div>
 
+        {/* Pendência que aparece a cada entrada no sistema (mig 20261025000030). */}
+        {souDestinatario && pendente && s.tipo === "ciencia_anexo" && (
+          <div className="rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-900">
+            <p className="font-semibold">Pendência obrigatória — aparece toda vez que você entrar no sistema até ser concluída.</p>
+            <ol className="mt-1.5 list-decimal space-y-0.5 pl-5 text-[13px]">
+              <li className={cn(s.lido_em && "text-emerald-700")}>Abra e leia o documento do RH{s.lido_em ? " ✓" : ""}.</li>
+              <li>Imprima, assine e digitalize (ou fotografe) o documento assinado.</li>
+              <li>Anexe o arquivo assinado e clique em <b>Enviar documento e concluir</b>.</li>
+            </ol>
+          </div>
+        )}
         {s.descricao && (
           <div className="whitespace-pre-wrap rounded-md border bg-muted/40 px-3 py-2 text-sm">{s.descricao}</div>
         )}
@@ -189,7 +215,8 @@ export function DetalheDocumento({ solicitacao: s, lado, podeAnexarRh, podeAlter
         <div className={cn("grid gap-3", (fluxoAnexo || assinados.length > 0) && "sm:grid-cols-2")}>
           <ListaAnexos titulo={fluxoAnexo ? "Documento do RH" : "Documentos do RH"}
             vazio={s.tipo === "registro" ? "Nenhum arquivo registrado ainda." : "O RH não anexou arquivo — veja a descrição."} anexos={originais}
-            podeRemover={(a) => podeAnexar && !souDestinatario} onRemover={(id) => remover.mutate(id, { onError: (e) => toast.error(e.message) })} />
+            podeRemover={(a) => podeAnexar && !souDestinatario} onRemover={(id) => remover.mutate(id, { onError: (e) => toast.error(e.message) })}
+            onAbrir={souDestinatario && !s.lido_em ? () => marcarDocumentoLido(s.id) : undefined} />
           {(fluxoAnexo || assinados.length > 0) && (
             <ListaAnexos titulo={fluxoAnexo ? "Documento assinado" : "Enviados pelo destinatário"} vazio={pendente ? "Ainda não anexado." : "Nenhum."}
               anexos={assinados} destaque={fluxoAnexo}
@@ -346,9 +373,11 @@ function Info({ rotulo, valor }: { rotulo: string; valor: ReactNode }) {
   );
 }
 
-function ListaAnexos({ titulo, vazio, anexos, destaque, podeRemover, onRemover }: {
+function ListaAnexos({ titulo, vazio, anexos, destaque, podeRemover, onRemover, onAbrir }: {
   titulo: string; vazio: string; anexos: AnexoDocumento[]; destaque?: boolean;
   podeRemover: (a: AnexoDocumento) => boolean | undefined; onRemover: (id: number) => void;
+  /** Ao abrir um arquivo (o destinatário abrindo o documento do RH registra a leitura). */
+  onAbrir?: () => void;
 }) {
   return (
     <div className={cn("rounded-lg border p-3", destaque && anexos.length > 0 && "border-emerald-200 bg-emerald-50/50")}>
@@ -361,7 +390,7 @@ function ListaAnexos({ titulo, vazio, anexos, destaque, podeRemover, onRemover }
             <li key={a.id} className="flex items-center gap-2 text-sm">
               <Paperclip className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
               <button className="min-w-0 truncate text-left text-primary underline-offset-2 hover:underline" title={a.nome_arquivo ?? a.storage_path}
-                onClick={async () => { const u = await urlDocumento(a.storage_path); if (u) window.open(u, "_blank"); else toast.error("Não foi possível abrir o arquivo."); }}>
+                onClick={async () => { const u = await urlDocumento(a.storage_path); if (u) { window.open(u, "_blank"); onAbrir?.(); } else toast.error("Não foi possível abrir o arquivo."); }}>
                 {a.nome_arquivo ?? a.storage_path}
               </button>
               <span className="shrink-0 text-xs text-muted-foreground">{fmtTamanho(a.tamanho_bytes)}</span>

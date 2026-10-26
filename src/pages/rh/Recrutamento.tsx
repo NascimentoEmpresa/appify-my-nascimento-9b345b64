@@ -659,8 +659,8 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
   const [sstCandId, setSstCandId] = useState<number | null>(null);
   const [showCurriculos, setShowCurriculos] = useState(false);
   const [empCpf, setEmpCpf]                 = useState<Record<string, EmpCadastro[]>>({});   // CPF dígitos → cadastros EMPREGADOS
-  const [blacklist, setBlacklist]           = useState<Record<string, { motivo: string; criado_em?: string }>>({});
-  const [blockModal, setBlockModal]         = useState<{ digits: string; fmt: string } | null>(null);
+  const [blacklist, setBlacklist]           = useState<Record<string, { motivo: string; criado_em?: string; origem?: string | null }>>({});
+  const [blockModal, setBlockModal]         = useState<{ digits: string; fmt: string; nome?: string | null } | null>(null);
   const [blockMotivo, setBlockMotivo]       = useState("");
   const [detalheEmp, setDetalheEmp]         = useState<{ nome: string; cpf: string; telefone?: string; email?: string; itens: Curriculo[]; emps: EmpCadastro[] } | null>(null);
 
@@ -1088,6 +1088,20 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
       .order("etapa_changed_at", { ascending: false });
     const lista = (data ?? []).map(mapCurriculo);
     setCandidatos(lista);
+    // Cadastro Restritivo (mig 20261025000020): o aviso também nos cards do kanban.
+    const cpfsCand = Array.from(new Set(lista.map((c: Curriculo) => digitsOf(c.cpf)).filter((d: string) => d.length === 11)));
+    if (cpfsCand.length) {
+      sb.from("RECRUTAMENTO_CPF_BLACKLIST").select("cpf_digits,motivo,criado_em,nome,origem").in("cpf_digits", cpfsCand)
+        .then(({ data: bl }: { data: { cpf_digits: string; motivo: string; criado_em?: string; nome?: string | null; origem?: string | null }[] | null }) => {
+          if (!bl) return;
+          setBlacklist((prev) => {
+            const novo = { ...prev };
+            for (const d of cpfsCand) delete novo[d];
+            for (const b of bl) novo[b.cpf_digits] = { motivo: b.motivo, criado_em: b.criado_em, origem: b.origem ?? null };
+            return novo;
+          });
+        });
+    }
     // ID e status do pedido de materiais de quem está (ou passou) em SST + COMPRAS.
     sb.rpc("rec_pedidos_da_vaga", { p_vaga_id: vagaId }).then(({ data: ps }) => setPedidosVaga((ps as Record<string, { protocolo: string; status: string }>) ?? {}));
     // Contador de documentos no card: uma consulta só para todos os candidatos
@@ -1445,10 +1459,11 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
     }
     if (digits.length) {
       const { data: bl } = await sb
-        .from("RECRUTAMENTO_CPF_BLACKLIST").select("cpf_digits,motivo,criado_em").in("cpf_digits", digits);
-      const blMap: Record<string, { motivo: string; criado_em?: string }> = {};
-      (bl ?? []).forEach((b) => { blMap[b.cpf_digits] = { motivo: b.motivo, criado_em: b.criado_em }; });
-      setBlacklist(blMap);
+        .from("RECRUTAMENTO_CPF_BLACKLIST").select("cpf_digits,motivo,criado_em,origem").in("cpf_digits", digits);
+      const blMap: Record<string, { motivo: string; criado_em?: string; origem?: string | null }> = {};
+      (bl ?? []).forEach((b) => { blMap[b.cpf_digits] = { motivo: b.motivo, criado_em: b.criado_em, origem: b.origem ?? null }; });
+      // Soma ao que o kanban já carregou (os dois usam o mesmo mapa).
+      setBlacklist((prev) => ({ ...prev, ...blMap }));
     }
   };
 
@@ -1502,13 +1517,15 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
   const abrirBloqueio = (cv: Curriculo) => {
     const digits = digitsOf(cv.cpf);
     if (digits.length !== 11) { toast("CPF do candidato inválido.", "err"); return; }
-    setBlockMotivo(""); setBlockModal({ digits, fmt: cv.cpf || digits });
+    setBlockMotivo(""); setBlockModal({ digits, fmt: cv.cpf || digits, nome: cv.nome || null });
   };
   const confirmarBloqueio = async () => {
     if (!blockModal) return;
     if (!blockMotivo.trim()) { toast("Informe o motivo do bloqueio.", "err"); return; }
     const { error } = await sb.from("RECRUTAMENTO_CPF_BLACKLIST").upsert({
       cpf_digits: blockModal.digits, cpf_fmt: blockModal.fmt, motivo: blockMotivo.trim(),
+      // Cadastro Restritivo (mig 20261025000020): o nome vai junto e a origem é o Recrutamento.
+      nome: blockModal.nome ?? null, origem: "recrutamento",
       criado_por: user?.user_metadata?.nome ?? user?.email ?? "",
     }, { onConflict: "cpf_digits" });
     if (error) { toast("Erro ao bloquear: " + error.message, "err"); return; }
@@ -1808,6 +1825,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
       if (d.length === 11) {
         await sb.from("RECRUTAMENTO_CPF_BLACKLIST").upsert({
           cpf_digits: d, cpf_fmt: cand?.cpf, motivo: extra.motivo_reprovacao || "Reprovado pelo Jurídico", criado_por: nome,
+          nome: cand?.nome ?? null, origem: "juridico",
         }, { onConflict: "cpf_digits" });
       }
     }
@@ -3038,6 +3056,18 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
                                 style={{ flexShrink: 0, width: 20, height: 20, padding: 0, display: "inline-flex", alignItems: "center", justifyContent: "center", borderRadius: 6, border: "1px solid #e2e8f0", background: "#f8fafc", cursor: "pointer", color: "#475569" }}><Search size={12} aria-hidden /></button>
                             </div>
                             {c.cpf && <div style={{ fontSize: 10, color: "#94a3b8" }}>CPF {c.cpf}</div>}
+                            {/* Cadastro Restritivo (mig 20261025000020) */}
+                            {(() => {
+                              const restr = blacklist[digitsOf(c.cpf)];
+                              if (!restr) return null;
+                              return (
+                                <div title={`Cadastro Restritivo${restr.origem === "recrutamento" ? " (Recrutamento)" : " (Jurídico)"} — ${restr.motivo}`}
+                                  style={{ marginTop: 5, fontSize: 10, lineHeight: 1.35, color: "#92400e", background: "#fffbeb", border: "1px solid #fcd34d", borderRadius: 6, padding: "4px 6px" }}>
+                                  <b style={{ color: "#b45309" }}>⚠ CADASTRO RESTRITIVO</b>
+                                  <div style={{ display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{restr.motivo}</div>
+                                </div>
+                              );
+                            })()}
                             {c.telefone && (
                               <div style={{ fontSize: 10, color: "#475569", display: "flex", alignItems: "center", gap: 5 }}>
                                 <span><Ic i={Phone} />{c.telefone}</span>
@@ -4146,7 +4176,7 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
                       <div style={{ height: 3, background: cv.origem === "whatsapp" ? "linear-gradient(90deg,#22c55e,#16a34a)" : "linear-gradient(90deg,#0f3171,#1e4a8a)" }}></div>
                       <div style={{ position: "absolute", top: 9, right: 9, zIndex: 2, display: "flex", gap: 6 }}>
                         {hasEmp && <span title="Já tem cadastro na empresa (EMPREGADOS)" style={{ display: "inline-flex", alignItems: "center", gap: 4, background: "#0f3171", color: "#fff", borderRadius: 8, padding: "3px 8px", fontSize: 10, fontWeight: 800, boxShadow: "0 6px 16px rgba(15,49,113,.3)" }}><Ic i={Landmark} />NO BANCO</span>}
-                        {bl && <span title={`Restrição: ${bl.motivo}`} style={{ display: "inline-flex", alignItems: "center", gap: 4, background: "#d97706", color: "#fff", borderRadius: 8, padding: "3px 8px", fontSize: 10, fontWeight: 800, boxShadow: "0 6px 16px rgba(217,119,6,.32)" }}><Ic i={AlertTriangle} />POSSUI RESTRIÇÕES</span>}
+                        {bl && <span title={`Restrição: ${bl.motivo}`} style={{ display: "inline-flex", alignItems: "center", gap: 4, background: "#d97706", color: "#fff", borderRadius: 8, padding: "3px 8px", fontSize: 10, fontWeight: 800, boxShadow: "0 6px 16px rgba(217,119,6,.32)" }}><Ic i={AlertTriangle} />CADASTRO RESTRITIVO</span>}
                       </div>
                       <div style={{ padding: "16px 18px", flex: 1, display: "flex", flexDirection: "column", gap: 10 }}>
                         <span style={{ width: "fit-content", display: "inline-flex", alignItems: "center", gap: 5, fontSize: 10, fontWeight: 700, letterSpacing: ".5px", textTransform: "uppercase", padding: "3px 9px", borderRadius: 4, background: cv.origem === "whatsapp" ? "rgba(34,197,94,.1)" : "rgba(249,115,22,.12)", color: cv.origem === "whatsapp" ? "#22c55e" : "#f97316", border: `1px solid ${cv.origem === "whatsapp" ? "rgba(34,197,94,.2)" : "rgba(249,115,22,.18)"}` }}>
@@ -4159,7 +4189,7 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
                           {cv.email    && <div style={{ fontSize: 12, color: "#475569", display: "flex", gap: 7 }}><span style={{ fontSize: 10, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase", minWidth: 50 }}>Email</span>{cv.email}</div>}
                           {cv.cpf      && <div style={{ fontSize: 12, color: "#475569", display: "flex", gap: 7 }}><span style={{ fontSize: 10, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase", minWidth: 50 }}>CPF</span>{cv.cpf}</div>}
                         </div>
-                        {bl && <div style={{ fontSize: 11.5, color: "#92400e", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 7, padding: "8px 10px" }}><b><Ic i={AlertTriangle} />Possui restrições.</b> {bl.motivo} <span style={{ color: "#b45309" }}>(definido pelo Jurídico)</span></div>}
+                        {bl && <div style={{ fontSize: 11.5, color: "#92400e", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 7, padding: "8px 10px" }}><b><Ic i={AlertTriangle} />Está no Cadastro Restritivo.</b> {bl.motivo} <span style={{ color: "#b45309" }}>(incluído pelo {bl.origem === "recrutamento" ? "Recrutamento" : "Jurídico"})</span></div>}
                         <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                           <div style={{ fontSize: 10, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".5px", color: "#94a3b8" }}>Currículos enviados</div>
                           {g.items.map(item => (
