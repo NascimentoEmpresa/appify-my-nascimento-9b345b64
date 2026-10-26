@@ -218,12 +218,20 @@ export function calcularHoraExtra(ponto: PontoDia, jornadaMinutos = JORNADA_PADR
 }
 
 export interface DadosValidacaoSolicitacao {
-  chamados: Array<{ percentual_previsto: number | string | null }>;
+  chamados: Array<{ percentual_previsto: number | string | null; sem_chamado?: boolean }>;
   ponto: PontoDia;
   jornadaMinutos: number;
 }
 
 const ERRO_PERCENTUAL = "A expectativa de conclusão de cada chamado deve ficar entre 0% e 100%.";
+
+/**
+ * "Emergencial, sem chamado" (26/10/2026) é exclusivo de propósito: a HE
+ * aberta sem chamado não mistura com chamado nenhum, senão o relatório da
+ * conclusão teria uma linha sem o que comprovar ao lado das que têm.
+ */
+export const ERRO_SEM_CHAMADO_EXCLUSIVO =
+  'A HE emergencial sem chamado não aceita chamado junto: remova os chamados ou a linha "Emergencial, sem chamado".';
 
 function erroSemHoraExtra(trabalhado: number, jornadaMinutos: number): string {
   return (
@@ -235,6 +243,9 @@ function erroSemHoraExtra(trabalhado: number, jornadaMinutos: number): string {
 export function validarSolicitacao(dados: DadosValidacaoSolicitacao): string[] {
   const erros: string[] = [];
   if (!dados.chamados.length) erros.push("Adicione pelo menos um chamado.");
+  if (dados.chamados.length > 1 && dados.chamados.some((chamado) => chamado.sem_chamado)) {
+    erros.push(ERRO_SEM_CHAMADO_EXCLUSIVO);
+  }
   const forade = dados.chamados.some((chamado) => {
     const valor = Number(chamado.percentual_previsto);
     return !Number.isFinite(valor) || valor < 0 || valor > 100;
