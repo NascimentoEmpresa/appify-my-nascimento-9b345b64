@@ -18,6 +18,10 @@ import { DetalheDocumento } from "@/components/documentos/DetalheDocumento";
  * sessão (estado, não banco): adiar não é ciência, e na próxima entrada o
  * termo volta, até ser assinado.
  *
+ * 25/10/2026 (mig 20261025000030) — "Termo assinado e anexado" entra na
+ * mesma fila: abre o detalhe do documento (ler, anexar o assinado e enviar),
+ * com o mesmo "Fazer depois" que só vale nesta sessão.
+ *
  * Também atende o link da notificação de quem não tem a tela dos
  * Encarregados: /app?documento=<id> abre a solicitação por cima de
  * qualquer tela (rh_doc_link_destinatario decide o link no banco).
@@ -44,5 +48,9 @@ export function GateTermoCiencia() {
   if (!atual) return null;
   // Assinou: sai da fila na hora (a lista recarrega pela invalidação da mutation).
   const tirarDaFila = () => setAdiados((a) => [...a, atual.id]);
+  if (atual.tipo === "ciencia_anexo") {
+    return <DetalheDocumento key={atual.id} solicitacao={atual} lado="destinatario" onFechar={tirarDaFila}
+      aoEntrar={{ restantes: fila.length - 1, onAdiar: tirarDaFila }} />;
+  }
   return <AssinarDocumento solicitacao={atual} restantes={fila.length - 1} onFechar={tirarDaFila} onAdiar={tirarDaFila} />;
 }

@@ -18,7 +18,7 @@ const linha = (p: Partial<Linha>): Linha => ({ id: 1, tipo: "ciencia", status: "
 
 describe("tipo obrigatório na criação", () => {
   it("sem tipo não passa", () => {
-    expect(errosSolicitacao(form({ tipo: "" }))).toEqual(["Escolha o tipo: Registro, Assinatura ou Termo de ciência."]);
+    expect(errosSolicitacao(form({ tipo: "" }))).toEqual(["Escolha o tipo: Registro, Assinatura, Termo de ciência ou Termo assinado e anexado."]);
   });
   it("registro exige arquivo ou imagem; os outros não", () => {
     expect(errosSolicitacao(form({ tipo: "registro" }), 0)).toEqual(["Registro guarda um documento: anexe o arquivo ou a imagem."]);
@@ -26,8 +26,9 @@ describe("tipo obrigatório na criação", () => {
     expect(errosSolicitacao(form({ tipo: "assinatura" }), 0)).toEqual([]);
     expect(errosSolicitacao(form({ tipo: "ciencia" }), 0)).toEqual([]);
   });
-  it("oferece só os três tipos novos, cada um com explicação", () => {
-    expect(TIPOS_NOVO_DOCUMENTO).toEqual(["registro", "assinatura", "ciencia"]);
+  // 25/10/2026 (mig 20261025000030): + "Termo assinado e anexado".
+  it("oferece os quatro tipos novos, cada um com explicação", () => {
+    expect(TIPOS_NOVO_DOCUMENTO).toEqual(["registro", "assinatura", "ciencia", "ciencia_anexo"]);
     for (const t of TIPOS_NOVO_DOCUMENTO) expect(TIPO_DOCUMENTO[t].explicacao.length).toBeGreaterThan(20);
   });
 });
