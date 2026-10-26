@@ -69,3 +69,14 @@ export function totaisDoRelatorio<T extends NfParaTotais>(
     pendente: r2(pendente),
   };
 }
+
+// SIS-2026-0694: o filtro Contrato do Relatório Geral depende do filtro Empresa. O vínculo é o do cadastro (contrato.empresa_id).
+// Sem empresa escolhida, valem todos os contratos.
+export function contratosDaEmpresa<T extends { empresa_id: string }>(contratos: T[], empresaId: string): T[] {
+  return empresaId ? contratos.filter((c) => c.empresa_id === empresaId) : contratos;
+}
+
+// O contrato selecionado ainda é compatível com a empresa? (contrato desconhecido ou sem empresa escolhida: não há o que limpar)
+export function contratoCombinaComEmpresa(contrato: { empresa_id: string } | undefined, empresaId: string): boolean {
+  return !empresaId || !contrato || contrato.empresa_id === empresaId;
+}

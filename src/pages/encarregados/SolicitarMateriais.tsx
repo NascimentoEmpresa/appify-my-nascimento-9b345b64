@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { useModoExterno } from "@/hooks/useModoExterno";
 import { useContratosCatalogo } from "@/hooks/useSupCatalogo";
@@ -72,6 +73,8 @@ export default function SolicitarMateriais() {
   const [observacoes, setObservacoes] = useState("");
   const [selecionados, setSelecionados] = useState<Record<string, Selecao>>({});
   const [protocolo, setProtocolo] = useState<string | null>(null);
+  const [duplicidadeDetectada, setDuplicidadeDetectada] = useState(false);
+  const [justificativaDuplicidade, setJustificativaDuplicidade] = useState("");
 
   const contratoEfetivo = externo ? sessao?.contrato_id ?? null : contratoId;
   // O externo não pode ler public.contratos (nem deve — ela traz valores e
@@ -161,7 +164,7 @@ export default function SolicitarMateriais() {
     return true;
   })();
 
-  const enviar = async () => {
+  const enviar = async (aceitarDuplicidade = false) => {
     if (!contratoEfetivo || !postoId || !funcaoId) return;
     if (!marcados.every(itemCompleto)) {
       toast.error("Revise os itens marcados: informe o tamanho e uma quantidade inteira maior que zero.");
@@ -180,7 +183,7 @@ export default function SolicitarMateriais() {
       }
     }
 
-    const resultado = await criar.mutateAsync({
+    const dadosPedido = {
       contrato_id: contratoEfetivo,
       posto_id: postoId,
       funcao_id: funcaoId,
@@ -195,6 +198,7 @@ export default function SolicitarMateriais() {
       imagem_cracha_path: crachaPath,
       tipo_pedido: tipoPedido,
       observacoes_solicitante: observacoes.trim() || null,
+      justificativa_duplicidade: aceitarDuplicidade ? justificativaDuplicidade.trim() : null,
       solicitante_nome: sessao?.login_informado ?? null,
       itens: marcados.map((i) => ({
         item_id: i.id,
@@ -203,9 +207,19 @@ export default function SolicitarMateriais() {
         quantidade: normalizarQuantidadeSolicitada(selecionados[i.id]?.quantidade) ?? 1,
         litros: selecionados[i.id]?.litros || null,
       })),
-    });
+    };
 
-    if (resultado?.pedido_id) setProtocolo(resultado.pedido_id);
+    try {
+      const resultado = await criar.mutateAsync(dadosPedido);
+      if (resultado?.pedido_id) setProtocolo(resultado.pedido_id);
+    } catch (erro: unknown) {
+      const mensagem = erro instanceof Error ? erro.message : String(erro ?? "");
+      if (!aceitarDuplicidade && mensagem.includes("PEDIDO_DUPLICADO_JUSTIFICATIVA")) {
+        setDuplicidadeDetectada(true);
+        return;
+      }
+      throw erro;
+    }
   };
 
   // ── Tela de sucesso ──
@@ -243,6 +257,35 @@ export default function SolicitarMateriais() {
 
   return (
     <div className="mx-auto max-w-4xl space-y-6">
+      <Dialog open={duplicidadeDetectada} onOpenChange={setDuplicidadeDetectada}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Pedido possivelmente duplicado</DialogTitle>
+            <DialogDescription>
+              Já existe um pedido em aberto para este colaborador, contrato, posto, função e os mesmos itens.
+              Confirme somente se esta nova solicitação for necessária.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2">
+            <Label htmlFor="justificativa-duplicidade">Justificativa para aceitar o pedido *</Label>
+            <Textarea
+              id="justificativa-duplicidade"
+              value={justificativaDuplicidade}
+              onChange={(e) => setJustificativaDuplicidade(e.target.value)}
+              placeholder="Explique por que este pedido deve seguir mesmo sendo semelhante ao que já está aberto."
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDuplicidadeDetectada(false)}>Cancelar solicitação</Button>
+            <Button
+              disabled={!justificativaDuplicidade.trim() || criar.isPending}
+              onClick={() => enviar(true)}
+            >
+              {criar.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />} Aceitar e enviar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       <PageHeader
         title="Solicitar Materiais"
         subtitle="Uniformes, EPIs e insumos para um colaborador do seu posto."
@@ -519,7 +562,7 @@ export default function SolicitarMateriais() {
             Avançar <ChevronRight className="ml-1 h-4 w-4" />
           </Button>
         ) : (
-          <Button disabled={criar.isPending} onClick={enviar}>
+          <Button disabled={criar.isPending} onClick={() => enviar()}>
             {criar.isPending
               ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Enviando…</>
               : <><CheckCircle2 className="mr-2 h-4 w-4" /> Enviar pedido</>}

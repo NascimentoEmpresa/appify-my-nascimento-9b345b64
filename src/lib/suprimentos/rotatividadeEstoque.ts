@@ -67,6 +67,15 @@ export interface MesRotatividade {
   saidas: number;
 }
 
+/** Linha mensal do histórico que orienta a futura política de estoque mínimo. */
+export interface HistoricoUniformeLinha {
+  mes: string;
+  tipo_uniforme: string;
+  tamanho: string | null;
+  solicitados: number;
+  utilizados: number;
+}
+
 export interface GradeDeclarada {
   peca: string;
   tamanho: string;

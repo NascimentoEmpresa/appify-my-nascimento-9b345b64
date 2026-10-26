@@ -18,12 +18,24 @@ import { describe, expect, it, vi } from "vitest";
 
 import payload from "./fixtures/rotatividade-estoque-producao.json";
 
-const { consultar } = vi.hoisted(() => ({ consultar: vi.fn() }));
+const { consultar, consultarHistorico } = vi.hoisted(() => ({
+  consultar: vi.fn(),
+  consultarHistorico: vi.fn(),
+}));
+
+const historicoUniformes = [
+  { mes: "2026-10-01", tipo_uniforme: "CAMISA POLO", tamanho: "M", solicitados: 12, utilizados: 9 },
+  { mes: "2026-09-01", tipo_uniforme: "CALÇA OPERACIONAL", tamanho: "G", solicitados: 8, utilizados: 8 },
+];
 
 vi.mock("@/hooks/useDashboardRotatividadeEstoque", () => ({
   useDashboardRotatividadeEstoque: (empresaId: string | null, filtros: unknown) => {
     consultar(empresaId, filtros);
     return { data: payload, error: null, isLoading: false, isFetching: false, refetch: vi.fn() };
+  },
+  useHistoricoUniformes: (empresaId: string | null, filtros: unknown) => {
+    consultarHistorico(empresaId, filtros);
+    return { data: historicoUniformes, error: null, isLoading: false, isFetching: false, refetch: vi.fn() };
   },
 }));
 
@@ -92,6 +104,7 @@ function montar() {
 describe("aba Rotatividade do Estoque — render com payload de produção", () => {
   it("abre em Uniformes e repassa o período e o contrato do filtro da página", () => {
     consultar.mockClear();
+    consultarHistorico.mockClear();
     montar();
     expect(consultar).toHaveBeenCalledWith(
       "5a61c769-21d8-4e61-b9bb-506b8db0bce8",
@@ -102,6 +115,18 @@ describe("aba Rotatividade do Estoque — render com payload de produção", () 
         categoria: "uniforme",
       }),
     );
+    expect(consultarHistorico).toHaveBeenCalledWith(
+      "5a61c769-21d8-4e61-b9bb-506b8db0bce8",
+      { inicio: "2026-01-01", fim: "2026-10-13", contratoId: null },
+    );
+  });
+
+  it("mostra o histórico mensal por tipo e tamanho, separado entre pedido e uso", () => {
+    montar();
+    expect(screen.getByText("Histórico de Uniformes por Tipo e Tamanho")).toBeInTheDocument();
+    expect(screen.getByText("CAMISA POLO")).toBeInTheDocument();
+    expect(screen.getByText("Solicitados")).toBeInTheDocument();
+    expect(screen.getByText("Utilizados")).toBeInTheDocument();
   });
 
   it("responde as quatro perguntas do diretor nos cartões de destaque", () => {

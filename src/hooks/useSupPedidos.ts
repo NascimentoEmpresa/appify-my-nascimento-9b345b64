@@ -387,6 +387,8 @@ export interface NovoPedido {
   imagem_cracha_path?: string | null;
   tipo_pedido: "uniforme" | "insumos" | "ambos";
   observacoes_solicitante?: string | null;
+  /** Obrigatória quando a mesma solicitação ainda está aberta. */
+  justificativa_duplicidade?: string | null;
   solicitante_nome?: string | null;
   itens: { item_id: string; nome_item: string; tamanho?: string | null; quantidade: number; litros?: string | null }[];
 }
@@ -403,7 +405,12 @@ export function useCriarPedido() {
       qc.invalidateQueries({ queryKey: ["sup_ext_meus_pedidos"] });
       qc.invalidateQueries({ queryKey: ["sup_pedido"] });
     },
-    onError: (e: any) => toast.error(e?.message ?? "Não foi possível enviar o pedido."),
+    onError: (e: any) => {
+      // A tela transforma esta resposta esperada em um diálogo de decisão;
+      // toast aqui só esconderia o aviso importante atrás de uma mensagem técnica.
+      if (String(e?.message ?? "").includes("PEDIDO_DUPLICADO_JUSTIFICATIVA")) return;
+      toast.error(e?.message ?? "Não foi possível enviar o pedido.");
+    },
   });
 }
 
