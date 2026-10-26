@@ -6,6 +6,7 @@ import ExportarDados from "@/components/rh/ExportarDados";
 import CarregandoLogo from "@/components/ui/CarregandoLogo";
 import { useScreenAccess } from "@/hooks/useScreenAccess";
 import { empresaDe, parseSalario, parseData, fmtData, nomeCargoDe } from "@/lib/rh/colaboradoresUtils";
+import { buscarCustoDoPosto, type CustoPosto } from "@/lib/recrutamento/custoPosto";
 
 // =========================================================================
 // RH — Colaboradores (fonte: tabela EMPREGADOS, read-only + edição de campos RH)
@@ -64,6 +65,22 @@ let cacheLista: any = null;
 const PERFIS = ["PADRAO", "ENCARREGADO", "ADMINISTRATIVO", "DIRETORIA", "ADMIN"];
 // Campos principais editáveis (coluna da EMPREGADOS → rótulo). Situação é tratada à parte (select).
 // Cargo NÃO entra aqui: é um select próprio ligado à tabela CARGOS.
+/**
+ * Ficha da Senior para o modal (rh_colaborador_ficha_senior, mig 20261026000900):
+ * lida AO VIVO do espelho da BiEmpregados — insalubridade, periculosidade,
+ * horas, posto, local, escala, centro de custo, dados pessoais. Remuneração e
+ * banco só vêm para quem tem "colaboradores_ver_salario".
+ * Pedido (Pablo, 26/10/2026): "tem que ter tudo completo aqui, insalubridade,
+ * benefício etc." — e a insalubridade da vaga #1388 saiu errada (20% x 40%).
+ */
+type FichaSenior = { na_senior: boolean } & Record<string, string | number | boolean | null>;
+const vazio = (v: unknown) => v === null || v === undefined || String(v).trim() === "";
+const pctTxt = (v: unknown) => (vazio(v) ? "—" : Number(v) > 0 ? `${Number(v).toLocaleString("pt-BR", { maximumFractionDigits: 2 })}%` : "Não recebe");
+const numTxt = (v: unknown, suf = "") => (vazio(v) ? "—" : `${Number(v).toLocaleString("pt-BR", { maximumFractionDigits: 2 })}${suf}`);
+const txt = (v: unknown) => (vazio(v) ? "—" : String(v));
+const comCod = (cod: unknown, nome: unknown) => [cod, nome].filter(x => !vazio(x)).join(" · ") || "—";
+const brlFicha = (v: unknown) => (vazio(v) || Number(v) <= 0 ? "—" : Number(v).toLocaleString("pt-BR", { style: "currency", currency: "BRL" }));
+
 const MAIN_FIELDS: [string, string][] = [
   ["Nome", "Nome"],
   ["CPF", "CPF"],
@@ -289,6 +306,8 @@ export default function Colaboradores() {
 
   const [editing, setEditing] = useState<any | null>(null);
   const [form, setForm] = useState<Record<string, string>>({});
+  const [ficha, setFicha] = useState<FichaSenior | null | "carregando" | "erro">(null);
+  const [custoFicha, setCustoFicha] = useState<CustoPosto | null | "carregando">(null);
   const [toast, setToast] = useState<{ msg: string; tipo: "ok" | "err" } | null>(null);
   const aviso = (msg: string, tipo: "ok" | "err" = "ok") => { setToast({ msg, tipo }); setTimeout(() => setToast(null), 3200); };
 
@@ -560,6 +579,21 @@ export default function Colaboradores() {
     f["LIDER"] = String(e["Título do Cargo"] ?? "").trim() || String(e["LIDER"] ?? "").trim(); // Nível puxa do cargo
     f["Perfil_ERP"] = String(e["Perfil_ERP"] ?? "").trim() || "PADRAO";
     setForm(f);
+    carregarFicha(e);
+  };
+  // Ficha da Senior + benefícios do posto (Planilha de Custo do contrato). Os
+  // dois são só leitura: quem muda é a Senior / a planilha.
+  const carregarFicha = async (e: any) => {
+    setFicha("carregando"); setCustoFicha("carregando");
+    const { data, error } = await (supabase as any).rpc("rh_colaborador_ficha_senior", { p_id: e["ID"] });
+    setFicha(error ? "erro" : ((data as FichaSenior | null) ?? { na_senior: false }));
+    const contrato = contratoDe(e);
+    if (!contrato || contrato === "—") { setCustoFicha(null); return; }
+    const custo = await buscarCustoDoPosto(supabase, {
+      contrato, posto: String(e["Nome do Posto"] ?? "").trim() || null,
+      cargo: nomeCargoDe(e), salario: e["Valor Salário"] ?? null, escala: String(e["Escala"] ?? "").trim() || null,
+    });
+    setCustoFicha(custo);
   };
   const salvarEdit = async () => {
     if (!editing) return;
@@ -807,7 +841,7 @@ export default function Colaboradores() {
       {/* Modal editar campos RH */}
       {editing && (
         <div onClick={ev => { if (ev.target === ev.currentTarget) setEditing(null); }} style={{ position: "fixed", inset: 0, zIndex: 700, background: "rgba(15,23,42,.45)", backdropFilter: "blur(4px)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
-          <div style={{ background: "#fff", borderRadius: 16, width: "100%", maxWidth: 600, maxHeight: "90vh", display: "flex", flexDirection: "column", position: "relative" }}>
+          <div style={{ background: "#fff", borderRadius: 16, width: "100%", maxWidth: 760, maxHeight: "90vh", display: "flex", flexDirection: "column", position: "relative" }}>
             <button onClick={() => setEditing(null)} style={{ position: "absolute", top: 14, right: 16, border: "none", background: "none", fontSize: 20, color: "#94a3b8", cursor: "pointer", zIndex: 1 }}>✕</button>
             <div style={{ padding: "20px 22px 12px" }}>
               <div style={{ fontSize: 17, fontWeight: 800, color: "#0f172a" }}>{editing["Nome"] || "Colaborador"}</div>
@@ -830,6 +864,8 @@ export default function Colaboradores() {
                   </select>
                 </div>
               </div>
+
+              <FichaSeniorBlocos ficha={ficha} custo={custoFicha} verSalario={!!verSalario} />
 
               <div style={{ fontSize: 11, fontWeight: 800, color: "#0f3171", textTransform: "uppercase", letterSpacing: ".4px", margin: "18px 0 3px" }}>Configurações extras (ERP)</div>
               <div style={{ fontSize: 11, color: "#94a3b8", marginBottom: 10 }}>Setor, nível e perfil usados pelo sistema (permissões/encarregados).</div>
@@ -862,6 +898,102 @@ export default function Colaboradores() {
         <div style={{ position: "fixed", bottom: 24, left: "50%", transform: "translateX(-50%)", zIndex: 9999, padding: "10px 18px", borderRadius: 9, fontSize: 13, fontWeight: 600, boxShadow: "0 16px 40px rgba(15,23,42,.18)", background: toast.tipo === "ok" ? "#ecfdf3" : "#fef2f2", color: toast.tipo === "ok" ? "#15803d" : "#b91c1c", border: `1px solid ${toast.tipo === "ok" ? "#86efac" : "#fecaca"}` }}>{toast.msg}</div>
       )}
     </div>
+  );
+}
+
+function Titulo({ children, sub }: { children: ReactNode; sub?: string }) {
+  return (
+    <>
+      <div style={{ fontSize: 11, fontWeight: 800, color: "#0f3171", textTransform: "uppercase", letterSpacing: ".4px", margin: "18px 0 3px" }}>{children}</div>
+      {sub && <div style={{ fontSize: 11, color: "#94a3b8", marginBottom: 10 }}>{sub}</div>}
+    </>
+  );
+}
+function Info({ label, valor, destaque }: { label: string; valor: string; destaque?: boolean }) {
+  return (
+    <div style={{ minWidth: 0 }}>
+      <div style={{ fontSize: 11, fontWeight: 700, color: "#475569" }}>{label}</div>
+      <div style={{ minHeight: 36, display: "flex", alignItems: "center", padding: "0 11px", border: "1px solid #e2e8f0", borderRadius: 9, background: "#f8fafc", fontSize: 13, color: destaque ? "#0f3171" : "#0f172a", fontWeight: destaque ? 700 : 400, overflowWrap: "anywhere" }}>{valor}</div>
+    </div>
+  );
+}
+const grade = { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 12 } as const;
+function Aviso({ texto }: { texto: string }) { return <div style={{ fontSize: 12.5, color: "#94a3b8", padding: "6px 0" }}>{texto}</div>; }
+
+/** Blocos só leitura do modal: o que a Senior diz hoje + os benefícios do posto. */
+function FichaSeniorBlocos({ ficha, custo, verSalario }: { ficha: FichaSenior | null | "carregando" | "erro"; custo: CustoPosto | null | "carregando"; verSalario: boolean }) {
+  if (ficha === null) return null;
+  const titulo = <Titulo>Remuneração e adicionais (Senior)</Titulo>;
+  if (ficha === "carregando") return <>{titulo}<Aviso texto="Consultando a Senior…" /></>;
+  if (ficha === "erro") return <>{titulo}<Aviso texto="Não foi possível ler a ficha da Senior." /></>;
+  if (!ficha.na_senior) return <>{titulo}<Aviso texto="Colaborador não encontrado no espelho da Senior (empresa/cadastro)." /></>;
+  const f = ficha;
+  const origemCusto = custo && custo !== "carregando"
+    ? `Planilha de Custo do contrato — posto "${custo.posto}"${custo.por_posto === false ? " (aproximado por cidade/jornada)" : ""}${custo.vigencia ? `, vigência ${custo.vigencia.split("-").reverse().join("/")}` : ""}.`
+    : undefined;
+  return (
+    <>
+      <Titulo sub="Direto da Senior (espelho atualizado a cada 10–15 min). Para mudar, altere na Senior.">Remuneração e adicionais (Senior)</Titulo>
+      <div style={grade}>
+        {verSalario && <Info label="Salário" valor={brlFicha(f.salario)} destaque />}
+        {verSalario && <Info label="Complemento de salário" valor={brlFicha(f.complemento)} />}
+        {verSalario && <Info label="Data do último salário" valor={txt(f.data_salario)} />}
+        <Info label="Insalubridade" valor={pctTxt(f.insalubridade_pct)} destaque />
+        <Info label="Periculosidade" valor={pctTxt(f.periculosidade_pct)} />
+        <Info label="Horas/mês" valor={numTxt(f.horas_mes, "h")} />
+        <Info label="Horas/semana" valor={numTxt(f.horas_semana, "h")} />
+        <Info label="Dependentes IR / Sal. família" valor={`${numTxt(f.dependentes_ir)} / ${numTxt(f.dependentes_sf)}`} />
+      </div>
+
+      <Titulo sub={origemCusto}>Benefícios do posto</Titulo>
+      {custo === "carregando" ? <Aviso texto="Consultando a Planilha de Custo…" />
+        : !custo ? <Aviso texto="Contrato sem Planilha de Custo para este posto — benefícios não cadastrados." />
+        : (
+          <div style={grade}>
+            <Info label="Vale-transporte" valor={brlFicha(custo.vt)} />
+            <Info label="Vale-alimentação" valor={brlFicha(custo.va)} />
+            <Info label="Vale-refeição" valor={brlFicha(custo.vr)} />
+            <Info label="Auxílio lanche" valor={brlFicha(custo.lanche)} />
+            <Info label="Cesta básica" valor={brlFicha(custo.cesta_basica)} />
+            <Info label="Assistência médica" valor={brlFicha(custo.assistencia_medica)} />
+            <Info label="Escala de VT (Senior)" valor={txt(f.escala_vt)} />
+          </div>
+        )}
+
+      <Titulo>Lotação (Senior)</Titulo>
+      <div style={grade}>
+        <Info label="Posto" valor={comCod(f.posto_codigo, f.posto)} />
+        <Info label="Local" valor={txt(f.local)} />
+        <Info label="Escala" valor={comCod(f.escala_codigo, f.escala)} />
+        <Info label="Centro de custo" valor={comCod(f.centro_custo, f.centro_custo_nome)} />
+        <Info label="No cargo desde" valor={txt(f.data_cargo)} />
+        <Info label="No posto desde" valor={txt(f.data_posto)} />
+      </div>
+
+      <Titulo>Dados pessoais e contrato</Titulo>
+      <div style={grade}>
+        <Info label="Nascimento" valor={txt(f.nascimento)} />
+        <Info label="Sexo" valor={f.sexo === "F" ? "Feminino" : f.sexo === "M" ? "Masculino" : txt(f.sexo)} />
+        <Info label="Estado civil" valor={txt(f.estado_civil)} />
+        <Info label="Instrução" valor={txt(f.instrucao)} />
+        <Info label="Nacionalidade" valor={txt(f.nacionalidade)} />
+        <Info label="Tipo de contrato" valor={txt(f.tipo_contrato)} />
+        <Info label="CTPS (nº/série/UF)" valor={txt(f.ctps)} />
+      </div>
+
+      {verSalario && (
+        <>
+          <Titulo>Dados bancários</Titulo>
+          <div style={grade}>
+            <Info label="Banco" valor={txt(f.banco)} />
+            <Info label="Agência" valor={txt(f.agencia)} />
+            <Info label="Conta" valor={txt(f.conta)} />
+            <Info label="Tipo de conta" valor={txt(f.tipo_conta)} />
+            <Info label="Chave Pix" valor={txt(f.chave_pix)} />
+          </div>
+        </>
+      )}
+    </>
   );
 }
 
