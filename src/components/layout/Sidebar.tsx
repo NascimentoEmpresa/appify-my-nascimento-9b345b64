@@ -351,6 +351,7 @@ const suprimentosModule: ModuleDef = {
       items: [
         { label: "Patrimônio", to: "/app/suprimentos/patrimonio", icon: Car },
         { label: "Painel de Manutenções", to: "/app/suprimentos/manutencao", icon: Wrench },
+        { label: "Solicitações de Manutenção", to: "/app/suprimentos/solicitacoes-manutencoes", icon: ClipboardList },
       ],
     },
     {
@@ -1010,6 +1011,7 @@ const centralServicosModule: ModuleDef = {
         { label: "Solicitar Demissão", to: "/app/central-servicos/solicitacoes/demissao", icon: UserMinus },
         { label: "Mudança de Função", to: "/app/central-servicos/solicitacoes/mudanca-funcao", icon: ArrowLeftRight, notif: "troca_funcao" },
         { label: "Solicitar Medida Disciplinar", to: "/app/central-servicos/solicitacoes/advertencia", icon: ShieldAlert },
+        { label: "Solicitar Manutenção de Equipamento", to: "/app/central-servicos/solicitar-manutencao-equipamento", icon: Wrench },
       ],
     },
   ],
