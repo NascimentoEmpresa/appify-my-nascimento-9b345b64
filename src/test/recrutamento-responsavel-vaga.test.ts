@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { STATUS_COM_RESPONSAVEL, alvoDoFiltro, devePerguntarAssumir, passaNoFiltro, textoConfirmarAssumir, vagaTemResponsavel } from "@/lib/recrutamento/responsavelVaga";
+import { STATUS_COM_RESPONSAVEL, alvoDoFiltro, vagaEncerradaSemResponsavel, devePerguntarAssumir, passaNoFiltro, textoConfirmarAssumir, vagaTemResponsavel } from "@/lib/recrutamento/responsavelVaga";
 
 // Gestão Recrutamento — filtro "Responsável da vaga" e "Tornar-me responsável" (mig 20261014000003).
 
@@ -33,9 +33,16 @@ describe("filtro", () => {
     expect(passaNoFiltro(rec, eu, "eu", eu)).toBe(true);
     expect(passaNoFiltro(rec, "u-ana", "eu", eu)).toBe(false);
     expect(passaNoFiltro(rec, "u-ana", "u-ana", eu)).toBe(true);
-    // 14/10/2026: vaga encerrada continua na lista de quem cuidou (a #261 da Giovana, Contratado).
-    expect(passaNoFiltro({ status: "Contratado" }, eu, "eu", eu)).toBe(true);
-    expect(passaNoFiltro({ status: "Concluído" }, "u-ana", "u-ana", eu)).toBe(true);
+    // 23/10/2026: vaga encerrada não está com ninguém — some do filtro por pessoa
+    // (desfaz a regra de 14/10). Filtrou a Tainara: só o que ainda está em processo.
+    expect(passaNoFiltro({ status: "Contratado" }, eu, "eu", eu)).toBe(false);
+    expect(passaNoFiltro({ status: "Concluído" }, "u-ana", "u-ana", eu)).toBe(false);
+    expect(passaNoFiltro({ status: "Concluído - parcial" }, "u-ana", "u-ana", eu)).toBe(false);
+    expect(passaNoFiltro({ status: "Reprovada" }, "u-ana", "u-ana", eu)).toBe(false);
+    expect(passaNoFiltro({ status: "Cancelada" }, "u-ana", "u-ana", eu)).toBe(false);
+    expect(passaNoFiltro({ status: "Aguardando SST e Compras" }, "u-ana", "u-ana", eu)).toBe(true);
+    expect(vagaEncerradaSemResponsavel("Contratado")).toBe(true);
+    expect(vagaEncerradaSemResponsavel("Entrevista e Avaliação")).toBe(false);
     expect(passaNoFiltro({ status: "Contratado" }, null, "sem", eu)).toBe(false);
     expect(passaNoFiltro({ status: "Pendente Operacional" }, eu, "eu", eu)).toBe(false);
   });

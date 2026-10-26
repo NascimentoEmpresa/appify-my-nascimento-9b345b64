@@ -52,4 +52,10 @@ describe("Exportar processos", () => {
     expect(html).not.toContain('id="indice"');
     expect(nomeArquivo(ps)).toMatch(/^processo-123-0020035-59-2024-5-04-0001-\d{4}-\d{2}-\d{2}$/);
   });
+
+  it("exportar filtrado (23/10/2026): o nome do arquivo diz que é recorte", () => {
+    const ps = [proc(), proc({ id: 11 })];
+    expect(nomeArquivo(ps)).toMatch(/^processos-completo-\d{4}-\d{2}-\d{2}$/);
+    expect(nomeArquivo(ps, true)).toMatch(/^processos-filtrado-\d{4}-\d{2}-\d{2}$/);
+  });
 });
