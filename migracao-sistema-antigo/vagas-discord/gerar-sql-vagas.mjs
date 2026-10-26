@@ -3,7 +3,7 @@
 //
 // Pedido de 23/09/2026: migrar TODAS as solicitações de vaga do
 // export-vagas-completo.xlsx para a Gestão Recrutamento, encerradas:
-//   • Contratado / Aprovado Operação / Buscando Colaborador -> "Concluído"
+//   • Contratado / Aprovado Operação / Buscando Colaborador -> "Contratado" (era "Concluído" até 26/10/2026, fundido)
 //   • Reprovado                                              -> "Reprovada"
 // (a tela conta todo "Concluído…" como contratação — reprovada lá dentro
 // inflaria esse número; decisão do Pablo no mesmo dia).
@@ -68,7 +68,7 @@ const inteiro = (v) => {
   return Number.isFinite(n) && n > 0 ? n : 1;
 };
 const MOTIVO = { "Aumento de quadro": "Expansão (Aumento de Quadro)" };
-const statusNovo = (s) => (String(s ?? "").trim() === "Reprovado" ? "Reprovada" : "Concluído");
+const statusNovo = (s) => (String(s ?? "").trim() === "Reprovado" ? "Reprovada" : "Contratado");
 
 /** Literal SQL. */
 const q = (v) => (v == null ? "NULL" : `'${String(v).replace(/'/g, "''")}'`);
@@ -177,9 +177,9 @@ const valorLinha = (l) => "(" + colunas.map((c) => (typeof l[c] === "number" || 
 const arquivos = [];
 for (const [mes, linhas] of [...porMes].sort(([a], [b]) => a.localeCompare(b))) {
   const eventos = linhas.flatMap((l) => l.eventos.map((e) => `(${q(l.legado_chave)}, ${q(e.em)}, ${q(e.evento)}, ${q(e.para)}, ${q(e.ator)})`));
-  const conc = linhas.filter((l) => l.status === "Concluído").length;
+  const conc = linhas.filter((l) => l.status === "Contratado").length;
   const sql = `-- Vagas do sistema antigo (Discord) — solicitações de ${mes}
--- ${linhas.length} vaga(s): ${conc} Concluído, ${linhas.length - conc} Reprovada. ${eventos.length} evento(s) de histórico.
+-- ${linhas.length} vaga(s): ${conc} Contratado, ${linhas.length - conc} Reprovada. ${eventos.length} evento(s) de histórico.
 -- Gerado por migracao-sistema-antigo/vagas-discord/gerar-sql-vagas.mjs.
 -- Pré-requisito: migration 20260930000221 (coluna legado_chave). Reexecutável.
 BEGIN;
