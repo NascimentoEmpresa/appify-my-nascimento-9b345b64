@@ -1,3 +1,4 @@
+import { dataPagamentoEfetiva } from "@/lib/dataPagamentoEfetiva";
 import { useEffect, useMemo, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { PageHeader } from "@/components/layout/PageHeader";
@@ -658,10 +659,12 @@ export default function DespesaVisualizar() {
   // exceção) — só resta Solicitar ajuste ou Reprovar. Cobre despesa lançada
   // antes desta regra existir/por brecha, sentada em pendente_aprovacao com
   // uma data já vencida.
-  const dataPagamentoVencida = !!despesa.data_pagamento && despesa.data_pagamento < new Date().toLocaleDateString("sv-SE");
+  // Parcelada: data_pagamento é a data da COMPRA (rastreio); quem vence é a primeira parcela em aberto (ver dataPagamentoEfetiva).
+  const dataPagamentoEfetivaDespesa = dataPagamentoEfetiva(despesa.parcelado, data?.parcelas, despesa.data_pagamento);
+  const dataPagamentoVencida = !!dataPagamentoEfetivaDespesa && dataPagamentoEfetivaDespesa < new Date().toLocaleDateString("sv-SE");
   // Depois do horário 1.1 o Nível 1 só precisa da chave (senha de exceção de aprovação) quando o pagamento é HOJE ou já está vencido:
   // despesa para amanhã em diante não tem pressa e aprova normalmente. O banco aplica a mesma condição (migration 20261022000290).
-  const dataPagamentoDoN1 = dataPagamento || despesa.data_pagamento || "";
+  const dataPagamentoDoN1 = despesa.parcelado ? dataPagamentoEfetivaDespesa : dataPagamento || despesa.data_pagamento || "";
   const n1PrecisaChave =
     despesa.nivel_aprovacao_atual === 1 && !despesa.excecao && !!n1ForaDoPrazo && !!dataPagamentoDoN1 && dataPagamentoDoN1 <= new Date().toLocaleDateString("sv-SE");
   // SIS-2026-0192: "Dados da Aprovação e Pagamento" e "Dados da Despesa"
@@ -997,7 +1000,7 @@ export default function DespesaVisualizar() {
     // SIS-2026-0361 (complemento): piso absoluto — nem editando o campo dá
     // pra aprovar com data no passado. Backstop; o botão já fica oculto
     // nesse caso (ver dataPagamentoVencida).
-    if (dataPagamento < new Date().toLocaleDateString("sv-SE")) {
+    if ((despesa!.parcelado ? dataPagamentoEfetivaDespesa : dataPagamento) < new Date().toLocaleDateString("sv-SE")) {
       return "Data de pagamento é anterior a hoje — não é possível aprovar. Use Solicitar ajuste.";
     }
     if (!competencia) return "Informe a competência.";
