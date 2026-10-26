@@ -19,7 +19,7 @@
 // =====================================================================
 
 import { PASSOS_FLUXO } from "@/lib/recrutamento/fluxoStatus";
-import { rotuloStatusVaga } from "@/lib/recrutamento/vagaRegras";
+import { ehStatusConcluidoLegado, rotuloStatusVaga } from "@/lib/recrutamento/vagaRegras";
 import { vagaConcluida, vagaEmAndamento } from "@/lib/recrutamento/vagaEmAndamento";
 import { STATUS_VAGA_ENCERRADA_RESP, vagaEncerradaSemResponsavel } from "@/lib/recrutamento/responsavelVaga";
 
@@ -30,7 +30,7 @@ import { STATUS_VAGA_ENCERRADA_RESP, vagaEncerradaSemResponsavel } from "@/lib/r
  */
 export const ORDEM_STATUS_VAGA: readonly string[] = [
   ...PASSOS_FLUXO.flatMap((p) => p.status),
-  "Concluído",
+  // "Concluído" saiu em 26/10/2026 — fundido em "Contratado" (rotuloStatusVaga).
   "Reprovada",
   "Cancelada",
 ];
@@ -44,9 +44,9 @@ export interface OpcaoStatusVaga {
 
 const limpo = (s: string | null | undefined) => String(s ?? "").trim();
 
-/** Posição na ordem do fluxo ("Concluído - ..." vai junto de "Concluído"; desconhecido no fim). */
+/** Posição na ordem do fluxo ("Concluído…" legado vai junto de "Contratado"; desconhecido no fim). */
 function posicao(status: string): number {
-  const i = ORDEM_STATUS_VAGA.indexOf(status.startsWith("Concluído") ? "Concluído" : status);
+  const i = ORDEM_STATUS_VAGA.indexOf(ehStatusConcluidoLegado(status) ? "Contratado" : status);
   return i >= 0 ? i : ORDEM_STATUS_VAGA.length;
 }
 

@@ -3378,7 +3378,7 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
               { label: "Total de solicitações", val: stats.total,      color: "#0f3171", icone: FolderOpen, sub: "cadastradas · o nº (#) de cada uma é sequência, não contagem" },
               { label: "Pend. Recrutamento",val: stats.ag_treinamentos, color: "#8b5cf6", icone: UserSearch },
               { label: "Em Processo",      val: stats.em_processo,     color: "#3b82f6", icone: Activity },
-              { label: "Concluídas",       val: stats.contratados,     color: "#16a34a", icone: CheckCircle2 },
+              { label: "Contratadas",      val: stats.contratados,     color: "#16a34a", icone: CheckCircle2 },
               { label: "Reprovadas",       val: stats.reprovadas,      color: "#dc2626", icone: XCircle },
             ]
           ).map(k => (
@@ -3610,7 +3610,7 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
                 // status só, e cada etapa vira um recorte próprio.
                 { label: "Já aprovadas", val: "Pendente Recrutamento" },
                 { label: "Em processo", val: "em_processo" },
-                { label: "Concluídas", val: "concluido" },
+                { label: "Contratadas", val: "concluido" },
                 { label: "Reprovadas", val: "Reprovada" },
                 { label: "Todas", val: "" },
               ].map(p => (
