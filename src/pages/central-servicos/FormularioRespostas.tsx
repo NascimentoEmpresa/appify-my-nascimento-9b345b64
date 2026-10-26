@@ -267,15 +267,19 @@ function GrupoValor({ texto, itens, resolve, resolveQuem, onPessoa, quem, onVerR
 
 // Barra de filtros - larga, alinhada com o cabeçalho (não com os cards, que
 // são estreitos). Filtra Resumo, Individuais e o CSV de uma vez só.
-export function FiltrosRespostas({ fResp, setFResp, opcoesResp, fSetor, setFSetor, opcoesSetor, fDe, setFDe, fAte, setFAte, filtrando, onLimpar }: {
+// soData (26/10/2026): formulário anônimo (ex.: AVALIAÇÃO DE RECONHECIMENTO E
+// CONVIVÊNCIA PROFISSIONAL) mostra só o período — pedido para ver os votos
+// por mês. Respondente e setor continuam fora (ver comentário no uso).
+export function FiltrosRespostas({ fResp, setFResp, opcoesResp, fSetor, setFSetor, opcoesSetor, fDe, setFDe, fAte, setFAte, filtrando, onLimpar, soData = false }: {
   fResp: string; setFResp: (v: string) => void; opcoesResp: string[];
   fSetor: string; setFSetor: (v: string) => void; opcoesSetor: string[];
   fDe: string; setFDe: (v: string) => void; fAte: string; setFAte: (v: string) => void;
-  filtrando: boolean; onLimpar: () => void;
+  filtrando: boolean; onLimpar: () => void; soData?: boolean;
 }) {
   return (
     <div style={{ ...card, display: "flex", alignItems: "flex-end", gap: 14, flexWrap: "wrap", padding: "12px 16px", margin: "14px 24px 0", borderRadius: 18, flexShrink: 0 }}>
       <span style={{ fontSize: 13, fontWeight: 800, color: "#0f172a", paddingBottom: 9 }}>Filtros:</span>
+      {!soData && <>
       <div style={{ flex: "1 1 190px", minWidth: 165 }}>
         <label style={rotFiltro}>Respondente</label>
         <select value={fResp} onChange={e => setFResp(e.target.value)} style={selFiltro}>
@@ -290,8 +294,9 @@ export function FiltrosRespostas({ fResp, setFResp, opcoesResp, fSetor, setFSeto
           {opcoesSetor.map(s => <option key={s} value={s}>{s}</option>)}
         </select>
       </div>
+      </>}
       <div>
-        <label style={rotFiltro}>Data de criação</label>
+        <label style={rotFiltro}>{soData ? "Período (data de envio)" : "Data de criação"}</label>
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           <input type="date" value={fDe} max={fAte || undefined} onChange={e => setFDe(e.target.value)} style={{ ...selFiltro, width: 148 }} />
           <span style={{ fontSize: 12.5, color: "#64748b", fontWeight: 600 }}>até</span>
@@ -613,13 +618,16 @@ export default function FormularioRespostas() {
       {/* Formulário que aceita resposta anônima não tem barra de filtros
           (18/09/2026): não há respondente nem setor pra escolher — e mesmo
           uma resposta identificada no meio das anônimas não justifica a
-          barra, que só confunde. Vale também quando todas vieram anônimas. */}
-      {!form?.permite_anonimo && respsEscopo.some(r => !r.anonimo) && (
+          barra, que só confunde. Vale também quando todas vieram anônimas.
+          26/10/2026: o PERÍODO volta nesses formulários (soData) — pedido
+          para ver os votos da Avaliação de Reconhecimento mês a mês. */}
+      {respsEscopo.length > 0 && (
         <FiltrosRespostas
           fResp={fResp} setFResp={setFResp} opcoesResp={opcoesResp}
           fSetor={fSetor} setFSetor={setFSetor} opcoesSetor={opcoesSetor}
           fDe={fDe} setFDe={setFDe} fAte={fAte} setFAte={setFAte}
-          filtrando={filtrando} onLimpar={limparFiltros} />
+          filtrando={filtrando} onLimpar={limparFiltros}
+          soData={!!form?.permite_anonimo || !respsEscopo.some(r => !r.anonimo)} />
       )}
 
       <div style={{ flex: 1, overflowY: "auto", padding: "18px 24px 40px" }}>

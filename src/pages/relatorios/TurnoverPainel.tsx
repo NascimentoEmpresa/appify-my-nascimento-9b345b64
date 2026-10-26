@@ -11,7 +11,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { SearchableSelect } from "@/components/ui/searchable-select";
-import { useTurnoverPainel, useTurnoverRescisoes } from "@/hooks/useRelatoriosDiretoria";
+import { useTurnoverPainel, useTurnoverRescisoes, useVariacaoEfetivo } from "@/hooks/useRelatoriosDiretoria";
+import { VariacaoEfetivoDetalhe, VariacaoEfetivoVisao } from "./VariacaoEfetivo";
 import {
   LIMITES, META_ANUAL, META_MENSAL, analistas, dozeMeses, nomeContrato, pctDe, rotuloMeses, tempoDeCasa, totalAnalistas, turnoverDoAno, turnoverPorContrato,
   type LinhaAnalista, type PainelTurnover, type RescisoesTurnover, type TipoLimite,
@@ -33,6 +34,10 @@ import { PainelIA } from "./componentes";
 //   · Valores (rescisões) — a Senior manda as verbas sem valor; desde
 //     07/10/2026 (mig 20261007000006) a aba mostra QUANTIDADES: perfil das
 //     rescisões (tempo de casa, contrato, causa, aviso) e verbas de férias.
+//   · Variação de Efetivo / Detalhamento de Efetivo (25/10/2026, mig
+//     20261025000010) — previsto × trabalhando × turnover × demissões ×
+//     admissões, os 12 meses por empresa › contrato (VariacaoEfetivo.tsx).
+//     Usa só o ano; os filtros de meses e contrato valem para as outras abas.
 // Filtro de meses (07/10/2026, mig 20261007000003): era "Até <mês>"; agora
 // marca um ou vários meses soltos (FiltroMeses) e a RPC recebe _meses.
 // Contas em src/lib/diretoria/turnover.ts (com teste).
@@ -57,6 +62,9 @@ export default function TurnoverPainel() {
   // olhar sempre o ano inteiro, e o Pablo viu as porcentagens "não mudando").
   const [aba, setAba] = useState("resumo");
   const qResc = useTurnoverRescisoes({ ano, meses, contrato }, aba === "valores");
+  // Variação de Efetivo (mig 20261025000010): o ano inteiro, por empresa › contrato › mês.
+  const qVar = useVariacaoEfetivo(ano, aba === "variacao" || aba === "detalhe");
+  const [contratoVar, setContratoVar] = useState<string | null>(null);
 
   return (
     <div className="space-y-4">
@@ -87,6 +95,8 @@ export default function TurnoverPainel() {
             <TabsTrigger value="resumo">Resumo Turnover</TabsTrigger>
             <TabsTrigger value="analistas">Analistas</TabsTrigger>
             <TabsTrigger value="valores">Turnover em Valores</TabsTrigger>
+            <TabsTrigger value="variacao" className="gap-1.5">Variação de Efetivo <span className="rounded bg-red-100 px-1.5 py-0.5 text-[10px] font-semibold text-red-700">Novo</span></TabsTrigger>
+            <TabsTrigger value="detalhe">Detalhamento de Efetivo</TabsTrigger>
           </TabsList>
           <TabsContent value="resumo" className="space-y-4">
             <FiltroCausas p={p} causas={causas} onChange={setCausas} />
@@ -94,6 +104,16 @@ export default function TurnoverPainel() {
           </TabsContent>
           <TabsContent value="analistas" className="space-y-4">
             <Analistas p={p} />
+          </TabsContent>
+          <TabsContent value="variacao" className="space-y-4">
+            {qVar.data ? <VariacaoEfetivoVisao v={qVar.data} onAbrirContrato={(k) => { setContratoVar(k); setAba("detalhe"); }} />
+              : qVar.error ? <Card className="flex items-center gap-3 p-6 text-sm text-muted-foreground"><ShieldAlert className="h-5 w-5 text-warning" /> {(qVar.error as Error).message}</Card>
+              : <Card className="flex items-center gap-2 p-6 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Montando a variação do efetivo…</Card>}
+          </TabsContent>
+          <TabsContent value="detalhe" className="space-y-4">
+            {qVar.data ? <VariacaoEfetivoDetalhe v={qVar.data} chave={contratoVar} onEscolher={setContratoVar} onVoltar={() => setAba("variacao")} />
+              : qVar.error ? <Card className="flex items-center gap-3 p-6 text-sm text-muted-foreground"><ShieldAlert className="h-5 w-5 text-warning" /> {(qVar.error as Error).message}</Card>
+              : <Card className="flex items-center gap-2 p-6 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Montando o detalhamento…</Card>}
           </TabsContent>
           <TabsContent value="valores" className="space-y-4">
             {qResc.data ? <Rescisoes r={qResc.data} carregando={qResc.isFetching} />

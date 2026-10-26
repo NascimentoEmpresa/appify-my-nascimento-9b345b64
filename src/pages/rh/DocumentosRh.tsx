@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { AlertTriangle, Archive, FilePlus2, FileSignature, FileText, ImagePlus, Loader2, Paperclip, Search, ShieldCheck, Upload, X } from "lucide-react";
+import { AlertTriangle, Archive, Download, FileCheck2, FilePlus2, FileSignature, FileText, ImagePlus, Loader2, Paperclip, Search, ShieldCheck, Upload, Users, X } from "lucide-react";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Card } from "@/components/ui/card";
@@ -13,13 +13,18 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { SearchableSelect } from "@/components/ui/searchable-select";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Progress } from "@/components/ui/progress";
 import { cn } from "@/lib/utils";
 import { useScreenAccess } from "@/hooks/useScreenAccess";
-import { useOpcoesDocumento, useSolicitacoesDocumento, useSolicitarDocumento } from "@/hooks/useDocumentosSolicitados";
+import {
+  useEncarregadosDocumento, useOpcoesDocumento, useSolicitacoesDocumento, useSolicitarDocumento, useSolicitarLote, type EncarregadoDocumento,
+} from "@/hooks/useDocumentosSolicitados";
 import { DetalheDocumento } from "@/components/documentos/DetalheDocumento";
 import {
   STATUS_DOCUMENTO, TIPO_DOCUMENTO, TIPOS_NOVO_DOCUMENTO, atrasada, errosSolicitacao, nomeLegivel, ordenarSolicitacoes, partirContrato,
   rotuloSituacao, textoPrazo, type FormSolicitacao, type StatusDocumento, type TipoNovoDocumento,
+  ROTULO_SITUACAO_LOTE, resumoLotes, situacaoNoLote, type ResumoLote, type SituacaoNoLote, type SolicitacaoDocumento,
 } from "@/lib/rh/documentosSolicitados";
 
 // =====================================================================
@@ -37,9 +42,17 @@ import {
 // nasce concluído), Assinatura (o destinatário assina no sistema) e Termo
 // de ciência (pede a assinatura a cada entrada até ele assinar). Imagens
 // anexadas aparecem no card e na janela de assinatura.
+//
+// PARA TODOS OS ENCARREGADOS (mig 20261025000030, 25/10/2026) — chamado:
+// "o documento seja exibido na tela inicial de todos os encarregados [...]
+// até que realize a leitura, assine e anexe o arquivo assinado". Novo tipo
+// "Termo assinado e anexado" (aparece a cada entrada até anexarem o
+// assinado) e "Enviar para › Todos os encarregados": uma solicitação por
+// encarregado, no mesmo lote. O quadro "Envios para todos os encarregados"
+// acompanha cada envio — quem concluiu, quem só leu, quem nem abriu.
 // =====================================================================
 
-const ICONE_TIPO: Record<TipoNovoDocumento, typeof Archive> = { registro: Archive, assinatura: FileSignature, ciencia: ShieldCheck };
+const ICONE_TIPO: Record<TipoNovoDocumento, typeof Archive> = { registro: Archive, assinatura: FileSignature, ciencia: ShieldCheck, ciencia_anexo: FileCheck2 };
 
 type Filtro = "pendente" | "atrasada" | "concluida" | "cancelada" | "todas";
 const hojeIso = () => new Date().toLocaleDateString("sv-SE");
@@ -82,6 +95,8 @@ export default function DocumentosRh() {
     return ordenarSolicitacoes(filtradas, hoje);
   }, [todas, filtro, busca, hoje]);
 
+  const lotes = useMemo(() => resumoLotes(todas), [todas]);
+  const [loteAberto, setLoteAberto] = useState<string | null>(null);
   const solicitacaoAberta = todas.find((s) => s.id === aberta) ?? null;
   const fechar = () => { setAberta(null); if (params.get("s")) { params.delete("s"); setParams(params, { replace: true }); } };
 
@@ -93,6 +108,8 @@ export default function DocumentosRh() {
         module="Recursos Humanos"
         actions={podeIncluir ? <Button onClick={() => setNova(true)}><FilePlus2 className="mr-1.5 h-4 w-4" /> Nova solicitação</Button> : undefined}
       />
+
+      {lotes.length > 0 && <QuadroLotes lotes={lotes} onAbrir={setLoteAberto} />}
 
       <div className="flex flex-wrap items-center gap-3">
         <Tabs value={filtro} onValueChange={(v) => setFiltro(v as Filtro)}>
@@ -170,17 +187,23 @@ export default function DocumentosRh() {
 
       {nova && (
         <NovaSolicitacao onFechar={() => setNova(false)}
-          onCriada={(id, tipo) => { setNova(false); setFiltro(tipo === "registro" ? "concluida" : "pendente"); setAberta(id); }} />
+          onCriada={(id, tipo) => { setNova(false); setFiltro(tipo === "registro" ? "concluida" : "pendente"); setAberta(id); }}
+          onLote={(lote) => { setNova(false); setFiltro("pendente"); setLoteAberto(lote); }} />
       )}
       <DetalheDocumento solicitacao={solicitacaoAberta} lado="rh" podeAnexarRh={podeIncluir || podeAlterar} podeAlterarRh={podeAlterar} onFechar={fechar} />
+      {loteAberto && (
+        <DialogoLote lote={lotes.find((l) => l.lote_id === loteAberto) ?? null} solicitacoes={todas.filter((x) => x.lote_id === loteAberto)}
+          onFechar={() => setLoteAberto(null)} onAbrir={(id) => setAberta(id)} />
+      )}
     </div>
   );
 }
 
 // ── Nova solicitação ─────────────────────────────────────────────────────
-function NovaSolicitacao({ onFechar, onCriada }: { onFechar: () => void; onCriada: (id: number, tipo: TipoNovoDocumento) => void }) {
+function NovaSolicitacao({ onFechar, onCriada, onLote }: { onFechar: () => void; onCriada: (id: number, tipo: TipoNovoDocumento) => void; onLote: (lote: string) => void }) {
   const opcoes = useOpcoesDocumento();
   const solicitar = useSolicitarDocumento();
+  const solicitarLote = useSolicitarLote();
   const inputArquivo = useRef<HTMLInputElement>(null);
   const inputImagem = useRef<HTMLInputElement>(null);
   const [f, setF] = useState<FormSolicitacao>({ tipo: "", titulo: "", descricao: "", modo: "contrato", contrato: "", destinatario_id: "", prazo: "" });
@@ -190,6 +213,11 @@ function NovaSolicitacao({ onFechar, onCriada }: { onFechar: () => void; onCriad
   useEffect(() => () => previas.forEach((u) => u && URL.revokeObjectURL(u)), [previas]);
   const [tentou, setTentou] = useState(false);
   const set = (p: Partial<FormSolicitacao>) => setF((x) => ({ ...x, ...p }));
+  // Todos os encarregados (mig 20261025000030): todos marcados; o RH desmarca quem não deve receber.
+  const encarregados = useEncarregadosDocumento(f.modo === "encarregados");
+  const [fora, setFora] = useState<Set<string>>(new Set());
+  const [buscaEnc, setBuscaEnc] = useState("");
+  const marcados = (encarregados.data ?? []).filter((x) => !fora.has(x.id));
 
   const contratos = useMemo(() => opcoes.data?.contratos ?? [], [opcoes.data]);
   const contratoSel = contratos.find((c) => `${c.empresa}__${c.filial}` === f.contrato);
@@ -212,13 +240,25 @@ function NovaSolicitacao({ onFechar, onCriada }: { onFechar: () => void; onCriad
     ? responsaveis.find((r) => r.auth_user_id === f.destinatario_id)?.tem_acesso === false
     : opcoes.data?.usuarios.find((u) => u.id === f.destinatario_id)?.tem_acesso === false);
 
-  const erros = errosSolicitacao(f, arquivos.length);
+  const erros = errosSolicitacao(f, arquivos.length, marcados.length);
   const registro = f.tipo === "registro";
 
   const salvar = async () => {
     setTentou(true);
     if (erros.length || !f.tipo) return;
     const tipo = f.tipo;
+    if (f.modo === "encarregados") {
+      if (!confirm(`Enviar "${f.titulo.trim()}" para ${marcados.length} encarregado(s)? Cada um recebe a sua pendência.`)) return;
+      try {
+        const r = await solicitarLote.mutateAsync({
+          tipo, titulo: f.titulo.trim(), descricao: f.descricao.trim(), prazo: f.prazo || null,
+          destinatarios: marcados.map((x) => x.id), arquivos,
+        });
+        toast.success(`Enviado para ${r.ids.length} encarregado(s).`);
+        onLote(r.lote);
+      } catch (e) { toast.error((e as Error).message); }
+      return;
+    }
     const c = f.modo === "contrato" ? partirContrato(f.contrato) : null;
     try {
       const id = await solicitar.mutateAsync({
@@ -240,7 +280,7 @@ function NovaSolicitacao({ onFechar, onCriada }: { onFechar: () => void; onCriad
         <div className="space-y-3">
           <div>
             <Label>Tipo *</Label>
-            <div role="radiogroup" className="mt-1 grid gap-2 sm:grid-cols-3">
+            <div role="radiogroup" className="mt-1 grid gap-2 sm:grid-cols-2">
               {TIPOS_NOVO_DOCUMENTO.map((t) => {
                 const Icone = ICONE_TIPO[t];
                 const sel = f.tipo === t;
@@ -272,6 +312,7 @@ function NovaSolicitacao({ onFechar, onCriada }: { onFechar: () => void; onCriad
               <TabsList className="mt-1">
                 <TabsTrigger value="contrato">Responsável do contrato</TabsTrigger>
                 <TabsTrigger value="usuario">Usuário do sistema</TabsTrigger>
+                <TabsTrigger value="encarregados" className="gap-1.5"><Users className="h-3.5 w-3.5" /> Todos os encarregados</TabsTrigger>
               </TabsList>
             </Tabs>
           </div>
@@ -280,6 +321,9 @@ function NovaSolicitacao({ onFechar, onCriada }: { onFechar: () => void; onCriad
             <p className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Carregando contratos e usuários…</p>
           ) : opcoes.error ? (
             <p className="text-sm text-red-600">{(opcoes.error as Error).message}</p>
+          ) : f.modo === "encarregados" ? (
+            <ListaEncarregados lista={encarregados.data} carregando={encarregados.isLoading} erro={encarregados.error as Error | null}
+              fora={fora} setFora={setFora} busca={buscaEnc} setBusca={setBuscaEnc} />
           ) : f.modo === "contrato" ? (
             <div className="grid gap-3 sm:grid-cols-2">
               <div>
@@ -366,10 +410,145 @@ function NovaSolicitacao({ onFechar, onCriada }: { onFechar: () => void; onCriad
 
         <DialogFooter>
           <Button variant="ghost" onClick={onFechar}>Cancelar</Button>
-          <Button onClick={salvar} disabled={solicitar.isPending}>
-            {solicitar.isPending && <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />} {registro ? "Registrar" : "Solicitar"}
+          <Button onClick={salvar} disabled={solicitar.isPending || solicitarLote.isPending}>
+            {(solicitar.isPending || solicitarLote.isPending) && <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />}
+            {registro ? "Registrar" : f.modo === "encarregados" ? `Enviar para ${marcados.length} encarregado(s)` : "Solicitar"}
           </Button>
         </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ── Todos os encarregados: a lista para conferir antes de enviar ────────────
+function ListaEncarregados({ lista, carregando, erro, fora, setFora, busca, setBusca }: {
+  lista: EncarregadoDocumento[] | undefined; carregando: boolean; erro: Error | null;
+  fora: Set<string>; setFora: (s: Set<string>) => void; busca: string; setBusca: (s: string) => void;
+}) {
+  if (carregando) return <p className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Buscando os encarregados…</p>;
+  if (erro) return <p className="text-sm text-red-600">{erro.message}</p>;
+  const todos = lista ?? [];
+  const t = busca.trim().toLowerCase();
+  const vis = todos.filter((x) => !t || [x.nome, x.cargo, x.contratos].some((v) => String(v ?? "").toLowerCase().includes(t)));
+  const alternar = (id: string) => { const n = new Set(fora); if (n.has(id)) n.delete(id); else n.add(id); setFora(n); };
+  return (
+    <div className="space-y-2 rounded-lg border p-3">
+      <div className="flex flex-wrap items-center gap-2 text-sm">
+        <b>{todos.length - fora.size}</b> de {todos.length} encarregados vão receber.
+        <button type="button" className="text-xs text-primary hover:underline" onClick={() => setFora(new Set())}>Marcar todos</button>
+        <div className="relative ml-auto w-56">
+          <Search className="absolute left-2 top-2 h-3.5 w-3.5 text-muted-foreground" />
+          <Input className="h-8 pl-7 text-xs" placeholder="Buscar…" value={busca} onChange={(e) => setBusca(e.target.value)} />
+        </div>
+      </div>
+      <p className="text-[11px] text-muted-foreground">
+        Encarregado = responsável de contrato na Hierarquia de Postos ou colaborador ativo com cargo de encarregado — os dois com login no ERP.
+        Quem não tem login não aparece (não teria como ver a pendência).
+      </p>
+      <div className="max-h-56 space-y-0.5 overflow-y-auto">
+        {vis.map((x) => (
+          <label key={x.id} className="flex cursor-pointer items-center gap-2 rounded px-1.5 py-1 text-sm hover:bg-muted/50">
+            <Checkbox checked={!fora.has(x.id)} onCheckedChange={() => alternar(x.id)} />
+            <span className="min-w-0 flex-1 truncate">{nomeLegivel(x.nome) || "—"}
+              <span className="ml-1.5 text-xs text-muted-foreground">{x.cargo ?? ""}{x.contratos ? ` · ${x.contratos}` : ""}</span>
+            </span>
+          </label>
+        ))}
+        {vis.length === 0 && <p className="px-1.5 py-2 text-xs text-muted-foreground">Ninguém com esse filtro.</p>}
+      </div>
+    </div>
+  );
+}
+
+// ── Envios para todos os encarregados: acompanhamento ───────────────────────
+const COR_SITUACAO: Record<SituacaoNoLote, string> = {
+  concluida: "border-emerald-200 bg-emerald-50 text-emerald-700",
+  leu: "border-amber-200 bg-amber-50 text-amber-800",
+  nao_abriu: "border-red-200 bg-red-50 text-red-700",
+  cancelada: "border-slate-200 bg-slate-50 text-slate-500",
+};
+
+function QuadroLotes({ lotes, onAbrir }: { lotes: ResumoLote[]; onAbrir: (lote: string) => void }) {
+  return (
+    <Card className="p-4">
+      <p className="mb-2 flex items-center gap-1.5 text-sm font-semibold"><Users className="h-4 w-4" /> Envios para todos os encarregados</p>
+      <div className="space-y-2">
+        {lotes.slice(0, 6).map((l) => (
+          <button key={l.lote_id} onClick={() => onAbrir(l.lote_id)} className="flex w-full flex-wrap items-center gap-3 rounded-lg border px-3 py-2 text-left hover:border-primary/50 hover:bg-muted/30">
+            <div className="min-w-0 flex-1">
+              <div className="truncate text-sm font-medium">{l.titulo}</div>
+              <div className="text-xs text-muted-foreground">
+                {new Date(l.criado_em).toLocaleDateString("pt-BR")} · {TIPO_DOCUMENTO[l.tipo]?.rotulo ?? l.tipo}{l.solicitante ? ` · ${nomeLegivel(l.solicitante)}` : ""}
+              </div>
+            </div>
+            <div className="w-56">
+              <Progress value={l.pct} className="h-2" />
+              <div className="mt-1 flex justify-between text-[11px] text-muted-foreground">
+                <span className="text-emerald-700">{l.concluidas}/{l.total} concluídos</span>
+                <span>{l.leram} leram · {l.nao_abriram} não abriram</span>
+              </div>
+            </div>
+          </button>
+        ))}
+      </div>
+    </Card>
+  );
+}
+
+function DialogoLote({ lote, solicitacoes, onFechar, onAbrir }: {
+  lote: ResumoLote | null; solicitacoes: SolicitacaoDocumento[]; onFechar: () => void; onAbrir: (id: number) => void;
+}) {
+  const [filtro, setFiltro] = useState<SituacaoNoLote | "todas">("todas");
+  if (!lote) return null;
+  const fmt = (x: string | null | undefined) => (x ? new Date(x).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" }) : "—");
+  const ordem: Record<SituacaoNoLote, number> = { nao_abriu: 0, leu: 1, concluida: 2, cancelada: 3 };
+  const linhas = [...solicitacoes]
+    .filter((x) => filtro === "todas" || situacaoNoLote(x) === filtro)
+    .sort((a, b) => ordem[situacaoNoLote(a)] - ordem[situacaoNoLote(b)] || String(a.destinatario_nome).localeCompare(String(b.destinatario_nome)));
+  const exportar = () => {
+    const cab = ["Encarregado", "Contrato", "Situação", "Leu em", "Concluído em", "Observação"];
+    const rows = solicitacoes.map((x) => [nomeLegivel(x.destinatario_nome), x.contrato_nome ?? "", ROTULO_SITUACAO_LOTE[situacaoNoLote(x)], fmt(x.lido_em), fmt(x.concluida_em), x.observacao_envio ?? ""]);
+    const csv = "\uFEFF" + [cab, ...rows].map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(";")).join("\r\n");
+    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+    const a = document.createElement("a"); a.href = url; a.download = "confirmacoes-documento.csv"; a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
+  return (
+    <Dialog open onOpenChange={(v) => { if (!v) onFechar(); }}>
+      <DialogContent className="max-h-[92vh] max-w-3xl overflow-y-auto">
+        <DialogHeader><DialogTitle>{lote.titulo}</DialogTitle></DialogHeader>
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+          {([["todas", "Encarregados", lote.total], ["concluida", "Concluíram", lote.concluidas], ["leu", "Leram, faltam anexar", lote.leram], ["nao_abriu", "Não abriram", lote.nao_abriram]] as const).map(([k, r, n]) => (
+            <button key={k} onClick={() => setFiltro(k)} className={cn("rounded-lg border p-2.5 text-left", filtro === k && "border-primary ring-2 ring-primary/20")}>
+              <div className="text-xl font-bold">{n}</div><div className="text-xs text-muted-foreground">{r}</div>
+            </button>
+          ))}
+        </div>
+        <Progress value={lote.pct} className="h-2" />
+        <div className="flex justify-end">
+          <Button variant="outline" size="sm" onClick={exportar}><Download className="mr-1.5 h-4 w-4" /> Exportar confirmações (CSV)</Button>
+        </div>
+        <Table>
+          <TableHeader>
+            <TableRow><TableHead>Encarregado</TableHead><TableHead>Situação</TableHead><TableHead>Leu em</TableHead><TableHead>Concluído em</TableHead></TableRow>
+          </TableHeader>
+          <TableBody>
+            {linhas.map((x) => {
+              const sit = situacaoNoLote(x);
+              return (
+                <TableRow key={x.id} className="cursor-pointer" onClick={() => onAbrir(x.id)}>
+                  <TableCell>
+                    <div className="font-medium">{nomeLegivel(x.destinatario_nome) || "—"}</div>
+                    {x.contrato_nome && <div className="text-xs text-muted-foreground">{x.contrato_nome}</div>}
+                  </TableCell>
+                  <TableCell><Badge variant="outline" className={cn("font-semibold", COR_SITUACAO[sit])}>{ROTULO_SITUACAO_LOTE[sit]}</Badge></TableCell>
+                  <TableCell className="text-xs">{fmt(x.lido_em)}</TableCell>
+                  <TableCell className="text-xs">{fmt(x.concluida_em)}</TableCell>
+                </TableRow>
+              );
+            })}
+          </TableBody>
+        </Table>
       </DialogContent>
     </Dialog>
   );

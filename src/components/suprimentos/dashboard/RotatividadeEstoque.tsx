@@ -4,6 +4,7 @@ import {
   ArrowDownToLine,
   ArrowUpFromLine,
   Boxes,
+  Download,
   Info,
   PackageSearch,
   Repeat,
@@ -30,6 +31,7 @@ import {
 } from "recharts";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
@@ -44,7 +46,11 @@ import {
   PainelGrafico,
   SERIES,
 } from "@/components/suprimentos/dashboard/PainelBase";
-import { useDashboardRotatividadeEstoque } from "@/hooks/useDashboardRotatividadeEstoque";
+import {
+  useDashboardRotatividadeEstoque,
+  useFornecimentosUniformesColaborador,
+  useHistoricoUniformes,
+} from "@/hooks/useDashboardRotatividadeEstoque";
 import { formatarMoeda, formatarNumero } from "@/lib/suprimentos/dashboardComprasEstoque";
 import {
   avisoMovimento,
@@ -61,9 +67,12 @@ import {
   rotuloSituacaoGiro,
   situacaoCobertura,
   situacaoGiro,
+  type FornecimentoUniformeColaborador,
+  type HistoricoUniformeLinha,
   type RotatividadeEstoqueDados,
 } from "@/lib/suprimentos/rotatividadeEstoque";
 import { cn } from "@/lib/utils";
+import * as XLSX from "xlsx";
 
 /**
  * Aba "Rotatividade do Estoque".
@@ -296,6 +305,207 @@ function TabelaPorPeca({ dados }: { dados: RotatividadeEstoqueDados }) {
   );
 }
 
+function rotuloMesHistorico(mes: string): string {
+  return new Date(`${mes}T12:00:00`).toLocaleDateString("pt-BR", {
+    month: "short",
+    year: "numeric",
+  });
+}
+
+function rotuloDataFornecimento(data: string): string {
+  return new Date(`${data}T12:00:00`).toLocaleDateString("pt-BR");
+}
+
+function TabelaHistoricoUniformes({
+  linhas,
+  carregando,
+  erro,
+  inicio,
+  fim,
+}: {
+  linhas: HistoricoUniformeLinha[];
+  carregando: boolean;
+  erro: Error | null;
+  inicio: string;
+  fim: string;
+}) {
+  const linhasVisiveis = linhas.slice(0, 100);
+  const exportar = () => {
+    const planilha = XLSX.utils.json_to_sheet(linhas.map((linha) => ({
+      "Mês": rotuloMesHistorico(linha.mes),
+      "Tipo de uniforme": linha.tipo_uniforme,
+      Tamanho: linha.tamanho ?? "Não informado",
+      Solicitados: linha.solicitados,
+      Utilizados: linha.utilizados,
+    })));
+    planilha["!cols"] = [
+      { wch: 13 }, { wch: 42 }, { wch: 18 }, { wch: 14 }, { wch: 14 },
+    ];
+    const arquivo = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(arquivo, planilha, "Histórico uniformes");
+    XLSX.writeFile(arquivo, `historico-uniformes-${inicio}-a-${fim}.xlsx`);
+  };
+
+  return (
+    <PainelGrafico
+      titulo="Histórico de Uniformes por Tipo e Tamanho"
+      subtitulo="Solicitado é a demanda registrada; utilizado é a saída física confirmada pelo almoxarifado."
+      acao={
+        <Button size="sm" variant="outline" onClick={exportar} disabled={!linhas.length || carregando}>
+          <Download className="mr-2 h-4 w-4" /> Baixar planilha
+        </Button>
+      }
+    >
+      {erro ? (
+        <Alert variant="destructive">
+          <AlertTitle>Não foi possível carregar o histórico de uniformes</AlertTitle>
+          <AlertDescription>{erro.message}</AlertDescription>
+        </Alert>
+      ) : carregando ? (
+        <Skeleton className="h-72" />
+      ) : (
+        <>
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr>
+                  <CabecalhoTabela>Mês</CabecalhoTabela>
+                  <CabecalhoTabela>Tipo de uniforme</CabecalhoTabela>
+                  <CabecalhoTabela>Tamanho</CabecalhoTabela>
+                  <CabecalhoTabela alinhar="right">Solicitados</CabecalhoTabela>
+                  <CabecalhoTabela alinhar="right">Utilizados</CabecalhoTabela>
+                </tr>
+              </thead>
+              <tbody>
+                {linhasVisiveis.map((linha) => (
+                  <tr
+                    key={`${linha.mes}-${linha.tipo_uniforme}-${linha.tamanho ?? "sem-tamanho"}`}
+                    className="border-b last:border-0 hover:bg-slate-50"
+                  >
+                    <td className="whitespace-nowrap px-3 py-2 font-medium">{rotuloMesHistorico(linha.mes)}</td>
+                    <td className="max-w-80 truncate px-3 py-2" title={linha.tipo_uniforme}>{linha.tipo_uniforme}</td>
+                    <td className="px-3 py-2">{linha.tamanho ?? "Não informado"}</td>
+                    <td className="px-3 py-2 text-right">{formatarNumero(linha.solicitados)}</td>
+                    <td className="px-3 py-2 text-right font-medium">{formatarNumero(linha.utilizados)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {!linhas.length && <EstadoVazio texto="Nenhum uniforme solicitado ou utilizado no período." />}
+          </div>
+          {linhas.length > linhasVisiveis.length && (
+            <p className="mt-3 text-xs text-slate-500">
+              Mostrando as {formatarNumero(linhasVisiveis.length)} ocorrências mais recentes de {formatarNumero(linhas.length)}. A planilha contém o histórico completo do período.
+            </p>
+          )}
+        </>
+      )}
+    </PainelGrafico>
+  );
+}
+
+function TabelaFornecimentosPorColaborador({
+  linhas,
+  carregando,
+  erro,
+  inicio,
+  fim,
+}: {
+  linhas: FornecimentoUniformeColaborador[];
+  carregando: boolean;
+  erro: Error | null;
+  inicio: string;
+  fim: string;
+}) {
+  const linhasVisiveis = linhas.slice(0, 100);
+  const exportar = () => {
+    const planilha = XLSX.utils.json_to_sheet(linhas.map((linha) => ({
+      "Data do fornecimento": rotuloDataFornecimento(linha.data_fornecimento),
+      Colaborador: linha.colaborador,
+      Matrícula: linha.matricula ?? "Não informada",
+      Contrato: linha.contrato,
+      Posto: linha.posto,
+      Protocolo: linha.protocolo,
+      Uniforme: linha.tipo_uniforme,
+      Tamanho: linha.tamanho ?? "Não informado",
+      Quantidade: linha.quantidade,
+    })));
+    planilha["!cols"] = [
+      { wch: 20 }, { wch: 34 }, { wch: 16 }, { wch: 36 }, { wch: 28 },
+      { wch: 20 }, { wch: 40 }, { wch: 18 }, { wch: 12 },
+    ];
+    const arquivo = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(arquivo, planilha, "Por colaborador");
+    XLSX.writeFile(arquivo, `fornecimentos-uniformes-${inicio}-a-${fim}.xlsx`);
+  };
+
+  return (
+    <PainelGrafico
+      titulo="Fornecimentos de Uniformes por Colaborador"
+      subtitulo="Registra somente a saída física do almoxarifado, na data em que a peça foi fornecida. Use o filtro de contrato para analisar o consumo de um posto ao longo das substituições."
+      acao={
+        <Button size="sm" variant="outline" onClick={exportar} disabled={!linhas.length || carregando}>
+          <Download className="mr-2 h-4 w-4" /> Baixar planilha
+        </Button>
+      }
+    >
+      {erro ? (
+        <Alert variant="destructive">
+          <AlertTitle>Não foi possível carregar os fornecimentos por colaborador</AlertTitle>
+          <AlertDescription>{erro.message}</AlertDescription>
+        </Alert>
+      ) : carregando ? (
+        <Skeleton className="h-72" />
+      ) : (
+        <>
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[960px] text-xs">
+              <thead>
+                <tr>
+                  <CabecalhoTabela>Data</CabecalhoTabela>
+                  <CabecalhoTabela>Colaborador</CabecalhoTabela>
+                  <CabecalhoTabela>Matrícula</CabecalhoTabela>
+                  <CabecalhoTabela>Contrato / posto</CabecalhoTabela>
+                  <CabecalhoTabela>Protocolo</CabecalhoTabela>
+                  <CabecalhoTabela>Uniforme</CabecalhoTabela>
+                  <CabecalhoTabela>Tamanho</CabecalhoTabela>
+                  <CabecalhoTabela alinhar="right">Quantidade</CabecalhoTabela>
+                </tr>
+              </thead>
+              <tbody>
+                {linhasVisiveis.map((linha) => (
+                  <tr
+                    key={`${linha.data_fornecimento}-${linha.protocolo}-${linha.tipo_uniforme}-${linha.tamanho ?? "sem-tamanho"}`}
+                    className="border-b last:border-0 hover:bg-slate-50"
+                  >
+                    <td className="whitespace-nowrap px-3 py-2 font-medium">{rotuloDataFornecimento(linha.data_fornecimento)}</td>
+                    <td className="px-3 py-2">{linha.colaborador}</td>
+                    <td className="px-3 py-2">{linha.matricula ?? "Não informada"}</td>
+                    <td className="max-w-72 px-3 py-2">
+                      <p className="truncate" title={linha.contrato}>{linha.contrato}</p>
+                      <p className="truncate text-slate-500" title={linha.posto}>{linha.posto}</p>
+                    </td>
+                    <td className="whitespace-nowrap px-3 py-2">{linha.protocolo}</td>
+                    <td className="max-w-80 truncate px-3 py-2" title={linha.tipo_uniforme}>{linha.tipo_uniforme}</td>
+                    <td className="px-3 py-2">{linha.tamanho ?? "Não informado"}</td>
+                    <td className="px-3 py-2 text-right font-medium">{formatarNumero(linha.quantidade)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {!linhas.length && <EstadoVazio texto="Nenhum uniforme foi fornecido a colaborador no período." />}
+          </div>
+          {linhas.length > linhasVisiveis.length && (
+            <p className="mt-3 text-xs text-slate-500">
+              Mostrando os {formatarNumero(linhasVisiveis.length)} fornecimentos mais recentes de {formatarNumero(linhas.length)}. A planilha contém o histórico completo do período.
+            </p>
+          )}
+        </>
+      )}
+    </PainelGrafico>
+  );
+}
+
 function Carregando() {
   return (
     <div className="space-y-3">
@@ -325,6 +535,8 @@ export function RotatividadeEstoque({ empresaId, inicio, fim, contratoId }: Prop
     [inicio, fim, contratoId, categoria],
   );
   const consulta = useDashboardRotatividadeEstoque(empresaId, filtros);
+  const consultaHistorico = useHistoricoUniformes(empresaId, { inicio, fim, contratoId });
+  const consultaFornecimentos = useFornecimentosUniformesColaborador(empresaId, { inicio, fim, contratoId });
   const dados = consulta.data;
 
   const comparativo = useMemo(() => (dados ? compararGrade(dados.por_tamanho) : []), [dados]);
@@ -919,6 +1131,24 @@ export function RotatividadeEstoque({ empresaId, inicio, fim, contratoId }: Prop
 
       <TabelaPorTamanho dados={dados} />
       <TabelaPorPeca dados={dados} />
+      {categoria === "uniforme" && (
+        <>
+          <TabelaHistoricoUniformes
+            linhas={consultaHistorico.data ?? []}
+            carregando={consultaHistorico.isLoading}
+            erro={consultaHistorico.error as Error | null}
+            inicio={inicio}
+            fim={fim}
+          />
+          <TabelaFornecimentosPorColaborador
+            linhas={consultaFornecimentos.data ?? []}
+            carregando={consultaFornecimentos.isLoading}
+            erro={consultaFornecimentos.error as Error | null}
+            inicio={inicio}
+            fim={fim}
+          />
+        </>
+      )}
 
       <p className="px-1 pb-2 text-xs text-slate-500">
         Grade declarada: {formatarNumero(dados.levantamento_resumo.respostas)} respostas de{" "}

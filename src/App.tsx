@@ -220,6 +220,7 @@ import CentralDuvidas from "./pages/juridico/CentralDuvidas";
 import Processos from "./pages/juridico/Processos";
 import Advertencias from "./pages/juridico/Advertencias";
 import VerificacaoCandidatos from "./pages/juridico/VerificacaoCandidatos";
+import CadastroRestritivo from "./pages/rh/CadastroRestritivo";
 import TreinamentosERP from "./pages/treinamentos/TreinamentosERP";
 import TreinamentosSistemasPagina from "./pages/treinamentos/TreinamentosSistemas";
 // Plataforma de Treinamentos (porta do membox, 18/09/2026) — ver a migration
@@ -921,6 +922,8 @@ const App = () => (
             <Route path="rh/banco-talentos" element={<BancoTalentos />} />
             {/* Check-in dos recém-admitidos (25/09/2026, mig 245) — o Excel CONTRATOS_VIGENTES do RH. */}
             <Route path="rh/recrutamento/acompanhar-colaboradores" element={<AcompanharColaboradores />} />
+            {/* Cadastro Restritivo (mig 20261025000020): a mesma lista no Recrutamento e no Jurídico. */}
+            <Route path="rh/recrutamento/cadastro-restritivo" element={<CadastroRestritivo modulo="recrutamento" />} />
             {/* Dashboard Recrutamento (02/10/2026, mig 288) — o painel completo; o Dashboard antigo segue em rh/recrutamento-dashboard. */}
             <Route path="rh/recrutamento/dashboard" element={<DashboardRecrutamento />} />
             <Route path="rh/recrutamento/acompanhar-experiencia" element={<Navigate to="/app/rh/recrutamento/acompanhar-colaboradores?situacao=experiencia" replace />} />
@@ -968,6 +971,7 @@ const App = () => (
             {/* Operacional aprova a advertência antes do Jurídico (15/09/2026).
                 Sem menu próprio: cai em operacional_home por prefixo. */}
             <Route path="juridico/candidatos" element={<VerificacaoCandidatos />} />
+            <Route path="juridico/cadastro-restritivo" element={<CadastroRestritivo modulo="juridico" />} />
             <Route path="juridico/duvidas" element={<CentralDuvidas />} />
             {/* Treinamentos */}
             {/* Plataforma de Treinamentos (18/09/2026). "/app/treinamentos" era
