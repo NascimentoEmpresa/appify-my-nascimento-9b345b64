@@ -170,6 +170,47 @@ export function saldosMensais(
   return saida.sort((a, b) => (a.empresaId + a.bancoId === b.empresaId + b.bancoId ? (a.mes < b.mes ? -1 : 1) : a.empresaId + a.bancoId < b.empresaId + b.bancoId ? -1 : 1));
 }
 
+// SIS-2026-0736: soma de entradas e saídas do período de movimentação, para comparar com "Entradas/Saídas (filtro atual)" do Fluxo de Caixa —
+// Realizado. Tem de dar o MESMO número, então segue a conta daquela tela: o Fluxo junta as fatias do rateio numa linha por lançamento
+// (despesa_id + parcela, valor somado, e empresa/banco/data/tipo da primeira fatia), tira o que ainda não aconteceu (data depois de hoje) e só
+// então filtra por período, empresa e banco. Nada é descartado além disso: saldo anterior e conta vinculada contam, porque o Fluxo os mostra.
+export interface LinhaParaTotais {
+  despesa_id: string;
+  numero_parcela: number | null;
+  empresa_id: string | null;
+  banco_id: string | null;
+  data_pagamento: string | null;
+  tipo: "entrada" | "saida";
+  valor: number | string;
+  situacao_base?: "aberto" | "cancelado" | null;
+}
+
+export function totaisDeMovimentacao(
+  linhas: LinhaParaTotais[],
+  f: { dataDe: string; dataAte: string; empresaId: string | null; bancoId: string | null },
+  hoje: string,
+): { entradas: number; saidas: number; lancamentos: number } {
+  const grupos = new Map<string, { base: LinhaParaTotais; valor: number }>();
+  for (const l of linhas) {
+    const chave = `${l.despesa_id}::${l.numero_parcela ?? ""}`;
+    const g = grupos.get(chave);
+    if (g) g.valor += Number(l.valor) || 0;
+    else grupos.set(chave, { base: l, valor: Number(l.valor) || 0 });
+  }
+  let entradas = 0, saidas = 0, lancamentos = 0;
+  for (const { base, valor } of grupos.values()) {
+    const data = base.data_pagamento?.slice(0, 10) ?? null;
+    if (base.situacao_base || (data && data > hoje)) continue; // ainda não aconteceu: é do Projetado
+    if (f.dataDe && (!data || data < f.dataDe)) continue;
+    if (f.dataAte && (!data || data > f.dataAte)) continue;
+    if (f.empresaId && base.empresa_id !== f.empresaId) continue;
+    if (f.bancoId && base.banco_id !== f.bancoId) continue;
+    lancamentos += 1;
+    if (base.tipo === "entrada") entradas += valor; else saidas += valor;
+  }
+  return { entradas: r2(entradas), saidas: r2(saidas), lancamentos };
+}
+
 // SIS-2026-0720: valores gravados em UMA conciliação (Fluxo, extrato e conciliado, entradas e saídas), sem o saldo de abertura. Conciliações
 // antigas com o "saldo anterior do extrato" digitado gravaram esse saldo como uma linha nos totais do Fluxo (e no conciliado), mas o total do
 // extrato vem só do OFX: aqui ele sai, como na Auditoria (saldo de abertura não é movimento). null = conciliação sem os valores gravados.
