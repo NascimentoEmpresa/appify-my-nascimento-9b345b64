@@ -50,6 +50,10 @@ import { BancoBadge } from "@/components/financeiro/BancoBadge";
 import { urlLogoCartao, useCartaoBancos } from "@/hooks/useMaloteCartaoCredito";
 import { ContratoTrocaCampo } from "@/pages/financeiro/fluxo-caixa/ContratoTrocaCampo";
 import { camposComPendencia, motivosRevisar, SEM_CONTRATO } from "@/pages/financeiro/fluxo-caixa/motivosRevisar";
+import { totaisPorNatureza } from "@/pages/financeiro/fluxo-caixa/naturezaFluxo";
+import { CardsPorNatureza } from "@/pages/financeiro/fluxo-caixa/CardsPorNatureza";
+import { NaturezaClassificacoesDialog } from "@/pages/financeiro/fluxo-caixa/NaturezaClassificacoesDialog";
+import { useNaturezaClassificacoes } from "@/hooks/useFluxoNaturezaClassificacao";
 import { linhaDaOrigemDoCard } from "@/pages/controladoria/auditoria/regras";
 import { parseValorBR, valorConfere, valorNaLinha } from "@/pages/financeiro/fluxo-caixa/filtroValor";
 import { useFaturasInformadas } from "@/hooks/useCartaoFaturaConsolidada";
@@ -181,16 +185,17 @@ export default function FluxoCaixaGestao() {
   const linhasTodas = useMemo(() => {
     const grupos = new Map<
       string,
-      { base: FluxoCaixaMaloteLinha; valor: number; contratos: Map<string, { nome: string; valor: number }>; classes: Set<string>; despesas: Map<string, RateioDetalheItem>; cotasClass: Map<string, CotaClassificacao> }
+      { base: FluxoCaixaMaloteLinha; valor: number; contratos: Map<string, { nome: string; valor: number }>; classes: Set<string>; despesas: Map<string, RateioDetalheItem>; cotasClass: Map<string, CotaClassificacao>; partes: Map<string, number> }
     >();
     for (const l of linhasBrutas) {
       const chave = `${l.despesa_id}::${l.numero_parcela ?? ""}`;
       let grupo = grupos.get(chave);
       if (!grupo) {
-        grupo = { base: l, valor: 0, contratos: new Map(), classes: new Set(), despesas: new Map(), cotasClass: new Map() };
+        grupo = { base: l, valor: 0, contratos: new Map(), classes: new Set(), despesas: new Map(), cotasClass: new Map(), partes: new Map() };
         grupos.set(chave, grupo);
       }
       grupo.valor += Number(l.valor) || 0;
+      grupo.partes.set(l.classificacao_id ?? "", (grupo.partes.get(l.classificacao_id ?? "") ?? 0) + (Number(l.valor) || 0));
       if (l.classificacao_id) grupo.classes.add(l.classificacao_id);
       if (!l.fatura_cartao_id) {
         const chaveCota = `${l.contrato_id ?? l.contrato_nome ?? ""}::${l.classificacao_id ?? ""}`;
@@ -224,7 +229,9 @@ export default function FluxoCaixaGestao() {
         grupo.contratos.set(chaveContrato, { nome: l.contrato_nome, valor: (atual?.valor ?? 0) + (Number(l.valor) || 0) });
       }
     }
-    return Array.from(grupos.values()).map(({ base, valor, contratos, classes, despesas, cotasClass }) => {
+    return Array.from(grupos.values()).map(({ base, valor, contratos, classes, despesas, cotasClass, partes }) => {
+      // SIS-2026-0726: valor por classificação, para os cards separarem por natureza (conta movimento / vinculada / CDB).
+      const partesClassificacao = Array.from(partes, ([k, v]) => ({ classificacaoId: k || null, valor: v }));
       // SIS-2026-0632: fatura consolidada junta despesas de classificações diferentes numa linha só.
       // SIS-2026-0742: com mais de uma classificação fica "Rateio", como o contrato (e abre pelo mesmo botão, com a classificação de cada despesa).
       if (base.fatura_cartao_id && classes.size > 1) base = { ...base, classificacao_id: null, classificacao_nome: "Rateio" };
@@ -239,15 +246,15 @@ export default function FluxoCaixaGestao() {
       if (base.fatura_cartao_id && despesas.size > 0) {
         const rateioDetalhe = Array.from(despesas.values())
           .sort((a, b) => (a.dataCompra ?? "").localeCompare(b.dataCompra ?? "") || a.nome.localeCompare(b.nome, "pt-BR", { numeric: true }));
-        return { ...base, valor, contrato_id: null, contrato_nome: contratos.size > 1 ? "Rateio" : (base.contrato_nome ?? null), rateioDetalhe, classificacaoDetalhe, classificacoesIds };
+        return { ...base, valor, contrato_id: null, contrato_nome: contratos.size > 1 ? "Rateio" : (base.contrato_nome ?? null), rateioDetalhe, classificacaoDetalhe, classificacoesIds, partesClassificacao };
       }
       if (contratos.size > 1) {
         const rateioDetalhe = Array.from(contratos.entries())
           .map(([id, { nome, valor: valorContrato }]) => ({ id, nome, valor: valorContrato }))
           .sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"));
-        return { ...base, valor, contrato_id: null, contrato_nome: "Rateio", rateioDetalhe, classificacaoDetalhe, classificacoesIds };
+        return { ...base, valor, contrato_id: null, contrato_nome: "Rateio", rateioDetalhe, classificacaoDetalhe, classificacoesIds, partesClassificacao };
       }
-      return { ...base, valor, rateioDetalhe: undefined as RateioDetalheItem[] | undefined, classificacaoDetalhe, classificacoesIds };
+      return { ...base, valor, rateioDetalhe: undefined as RateioDetalheItem[] | undefined, classificacaoDetalhe, classificacoesIds, partesClassificacao };
     });
   }, [linhasBrutas]);
 
@@ -316,6 +323,10 @@ export default function FluxoCaixaGestao() {
   // ?editar=origem|despesa_id|parcela. Só abre para quem tem "alterar" no Fluxo (o mesmo gate do lápis); sem permissão, nada acontece.
   const editarParam = searchParams.get("editar");
   const { data: podeEditarFluxo } = useScreenAccess("financeiro-fluxo-caixa-gestao", "alterar");
+  // SIS-2026-0726: natureza (conta movimento / conta vinculada / CDB) de cada classificação, para os cards.
+  const { data: mapaNaturezaBruto } = useNaturezaClassificacoes();
+  const mapaNatureza = useMemo(() => mapaNaturezaBruto ?? new Map(), [mapaNaturezaBruto]);
+  const [naturezaAberta, setNaturezaAberta] = useState(false);
   const editarJaAbriu = useRef(false);
   useEffect(() => {
     if (!editarParam || editarJaAbriu.current || !podeEditarFluxo || isLoading || linhasTodas.length === 0) return;
@@ -545,6 +556,7 @@ export default function FluxoCaixaGestao() {
   const totalEntradas = useMemo(() => filtradas.filter((l) => l.tipo === "entrada").reduce((s, l) => s + Number(l.valor), 0), [filtradas]);
   // SIS-2026-0611: saldo = entradas − saídas do filtro atual; vencidas = saídas previstas com data anterior a hoje.
   const saldoFiltro = totalEntradas - totalSaidas;
+  const totaisNatureza = useMemo(() => totaisPorNatureza(filtradas, mapaNatureza), [filtradas, mapaNatureza]);
   const totalVencidas = useMemo(
     () => filtradas.filter((l) => l.tipo === "saida" && situacaoFluxo(l, hoje) === "vencido").reduce((s, l) => s + Number(l.valor), 0),
     [filtradas, hoje],
@@ -683,6 +695,9 @@ export default function FluxoCaixaGestao() {
           <div className="flex items-center gap-2">
             <Button variant="outline" size="sm" className="gap-1.5" onClick={abrirExportacao}>
               <FileDown className="h-3.5 w-3.5" /> Exportar Excel
+            </Button>
+            <Button variant="outline" size="sm" className="gap-1.5" onClick={() => setNaturezaAberta(true)}>
+              <LineChart className="h-3.5 w-3.5" /> Natureza das classificações
             </Button>
             <Button variant="outline" size="sm" className="gap-1.5" onClick={() => setLixeiraAberta(true)}>
               <Trash2 className="h-3.5 w-3.5" /> Lixeira
@@ -830,6 +845,15 @@ export default function FluxoCaixaGestao() {
       </Dialog>
 
       {/* SIS-2026-0611: o que é cada card e o que o alimenta (respeita os filtros atuais). */}
+      <NaturezaClassificacoesDialog
+        aberto={naturezaAberta}
+        onFechar={() => setNaturezaAberta(false)}
+        classificacoes={classificacoesCatalogo}
+        mapa={mapaNatureza}
+        pendentes={totaisNatureza.semNaturezaPorClassificacao}
+        podeEditar={!!podeEditarFluxo}
+      />
+
       <Dialog open={!!kpiAberto} onOpenChange={(o) => !o && setKpiAberto(null)}>
         <DialogContent className="max-h-[85vh] max-w-2xl overflow-y-auto">
           {kpiAberto && (() => {
@@ -936,38 +960,21 @@ export default function FluxoCaixaGestao() {
         </DialogContent>
       </Dialog>
 
-      <div className={`grid grid-cols-1 sm:grid-cols-2 gap-4 ${aba === "projetado" ? "lg:grid-cols-4" : "lg:grid-cols-3"}`}>
-        {aba === "projetado" && (
+      {aba === "projetado" && (
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 lg:grid-cols-3">
           <KpiTile label="Vencidas não pagas (saídas)" valor={formatBRL(totalVencidas)} icon={<Wallet />} cor="amber" valorClass="text-amber-600 dark:text-amber-400" onClick={() => setKpiAberto("vencidas")} />
-        )}
-        <KpiTile
-          label={aba === "projetado" ? "Entradas previstas (filtro atual)" : "Entradas (filtro atual)"}
-          valor={formatBRL(totalEntradas)}
-          icon={<TrendingUp />}
-          cor="emerald"
-          valorClass="text-emerald-600 dark:text-emerald-400"
-          onClick={() => setKpiAberto("entradas")}
-        />
-        <KpiTile
-          label={aba === "projetado" ? "Saídas previstas (filtro atual)" : "Saídas (filtro atual)"}
-          valor={formatBRL(totalSaidas)}
-          icon={<TrendingDown />}
-          cor="red"
-          valorClass="text-red-600 dark:text-red-400"
-          onClick={() => setKpiAberto("saidas")}
-        />
-        <KpiTile
-          label={aba === "projetado" ? "Saldo projetado (entradas − saídas)" : "Saldo (entradas − saídas)"}
-          valor={formatBRL(saldoFiltro)}
-          icon={<LineChart />}
-          cor="sky"
-          valorClass={saldoFiltro < 0 ? "text-red-600 dark:text-red-400" : "text-sky-700 dark:text-sky-400"}
-          onClick={() => setKpiAberto("saldo")}
-        />
-      </div>
+        </div>
+      )}
+      <CardsPorNatureza
+        totais={totaisNatureza}
+        projetado={aba === "projetado"}
+        onAbrirKpi={setKpiAberto}
+        onDefinirNatureza={() => setNaturezaAberta(true)}
+        podeEditar={!!podeEditarFluxo}
+      />
 
       <p className="text-xs text-muted-foreground -mt-2">
-        Clique em um card para ver o que ele é e o que o alimenta. O saldo é entradas menos saídas do filtro atual (o Fluxo não tem saldo bancário).
+        Clique em um card para ver o que ele é e o que o alimenta. O saldo é entradas menos saídas do filtro atual (o Fluxo não tem saldo bancário). A separação em conta movimento, conta vinculada e CDB vem da classificação de cada lançamento.
         {aba !== "realizado" && (
           <span className="mt-0.5 block">
             Situação:{" "}
