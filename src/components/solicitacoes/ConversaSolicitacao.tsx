@@ -33,7 +33,8 @@ import {
 const db = supabase as unknown as SupabaseClient;
 
 /** Os módulos que usam o feed para conversar sobre uma solicitação. */
-export type ModuloConversa = "ferias" | "advertencia" | "demissao" | "troca_funcao";
+// "treinamento" (26/10/2026, mig 20261026000910): Solicitação de Treinamento.
+export type ModuloConversa = "ferias" | "advertencia" | "demissao" | "troca_funcao" | "treinamento";
 
 interface Comentario {
   id: number;
