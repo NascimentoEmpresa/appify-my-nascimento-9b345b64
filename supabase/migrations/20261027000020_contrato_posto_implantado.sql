@@ -92,7 +92,7 @@ SELECT DISTINCT pp.perfil_id, 'licitacoes_contratos_implantacao', pp.acao, true
 
 INSERT INTO public.screen_permission_user (user_id, menu_codigo, acao, allow, motivo)
 SELECT DISTINCT s.user_id, 'licitacoes_contratos_implantacao', s.acao, true,
-       'Migração 20261027000010: já cuidava do Quadro de Postos do contrato'
+       'Migração 20261027000020: já cuidava do Quadro de Postos do contrato'
   FROM public.screen_permission_user s
  WHERE s.menu_codigo = 'contrato_quadro_postos'
    AND s.acao IN ('visualizar', 'alterar') AND s.allow

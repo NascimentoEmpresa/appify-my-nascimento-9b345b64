@@ -7,7 +7,7 @@
 // muda no meio do ano), com justificativa sempre que difere do previsto; os
 // supervisores (Ativos/Contratos, Efetividade) trabalham pelo implantado.
 //
-// As regras abaixo são as MESMAS do banco (mig 20261027000010:
+// As regras abaixo são as MESMAS do banco (mig 20261027000020:
 // contrato_implantacao_salvar e contrato_ciclo_inicio) — a tela avisa antes,
 // o banco decide.
 // =====================================================================

@@ -24,7 +24,7 @@ export interface PostoPlanilha {
   /** Previsto: QT. PESSOAS da planilha. */
   vagas: number;
   /** Implantado de fato (Licitação › Contratos › Implantação, mig
-   *  20261027000010); sem registro = igual às vagas. Ausente = banco antigo. */
+   *  20261027000020); sem registro = igual às vagas. Ausente = banco antigo. */
   implantado?: number;
   implantado_registrado?: boolean;
 }

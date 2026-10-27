@@ -5,7 +5,7 @@
 // A Licitação registra a cada renovação — ou quando o tomador muda algo no
 // meio do ano — e justifica toda diferença. É o implantado que os
 // supervisores veem no Ativos/Contratos e na Efetividade.
-// Regras em src/lib/licitacoes/implantacao.ts; banco na mig 20261027000010.
+// Regras em src/lib/licitacoes/implantacao.ts; banco na mig 20261027000020.
 // =====================================================================
 import { useEffect, useMemo, useState } from "react";
 import { AlertTriangle, CheckCircle2, History, Loader2, ShieldAlert } from "lucide-react";
