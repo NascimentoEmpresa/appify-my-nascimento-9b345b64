@@ -56,9 +56,35 @@ interface StatusTemplate {
   idioma?: string;
   existe_no_idioma?: boolean;
   status?: string | null;
+  // A categoria que a META deu (pode não ser a que pedimos): MARKETING toma
+  // 131049, o limite por pessoa — foi o que barrou a abertura em 27/10/2026.
+  categoria?: string | null;
+  // A abertura genérica (sem vaga / reserva enquanto a principal não passa).
+  generica?: { nome: string; status: string; categoria: string | null } | null;
   motivo_reprovacao?: string | null;
   outros_idiomas?: { idioma?: string; status?: string }[];
   aprovados?: { nome?: string; idioma?: string }[];
+}
+
+// {{1}} = primeiro nome, {{2}} = vaga — mesma regra da whatsapp-abertura,
+// para a prévia ser o que a pessoa recebe.
+const temVariaveis = (t: string) => /\{\{\d+\}\}/.test(t);
+const preencher = (t: string, valores: string[]) =>
+  t.replace(/\{\{(\d+)\}\}/g, (m, n) => valores[Number(n) - 1] || m);
+function primeiroNome(nome: string): string {
+  const p = nome.trim().split(/\s+/)[0] ?? "";
+  return p ? p[0].toUpperCase() + p.slice(1).toLowerCase() : "";
+}
+
+/** Selo da categoria que a Meta deu ao template. */
+function SeloCategoria({ categoria }: { categoria?: string | null }) {
+  if (!categoria) return null;
+  const marketing = categoria === "MARKETING";
+  return (
+    <span className={`rounded px-1.5 py-px text-[10px] font-semibold ${marketing ? "bg-warning/15 text-warning" : "bg-success/15 text-success"}`}>
+      {marketing ? "Marketing" : categoria === "UTILITY" ? "Utilidade" : categoria.toLowerCase()}
+    </span>
+  );
 }
 
 export function NovaConversa({ aberto, onFechar, onAberta, podeConfig, pastas, podeTodas }: Props) {
@@ -72,6 +98,10 @@ export function NovaConversa({ aberto, onFechar, onAberta, podeConfig, pastas, p
   // consulta seguinte apagar o que a pessoa acabou de escrever.
   const [nomeTocado, setNomeTocado] = useState(false);
   const [enviarAbertura, setEnviarAbertura] = useState(true);
+  // Vaga da candidatura ({{2}} da abertura). Vem sozinha do candidato daquele
+  // telefone; vazia, sai a abertura genérica (marketing para a Meta).
+  const [vaga, setVaga] = useState("");
+  const [vagaTocada, setVagaTocada] = useState(false);
   // Onde a conversa nova vai nascer. Quem enxerga tudo pode deixar na
   // triagem; quem atende uma fila precisa nascer dentro dela, senão a RLS
   // esconde a conversa de quem acabou de criá-la.
@@ -92,9 +122,9 @@ export function NovaConversa({ aberto, onFechar, onAberta, podeConfig, pastas, p
     enabled: aberto,
     staleTime: 5 * 60 * 1000,
     queryFn: async () => {
-      const { data } = await (supabase as any).from("WA_BOT_CONFIG")
-        .select("abertura_texto, abertura_botao").limit(1).maybeSingle();
-      return (data ?? null) as { abertura_texto: string; abertura_botao: string } | null;
+      // `*`: as colunas da genérica só existem depois da mig 20261027000110.
+      const { data } = await (supabase as any).from("WA_BOT_CONFIG").select("*").limit(1).maybeSingle();
+      return (data ?? null) as { abertura_texto: string; abertura_botao: string; abertura_texto_generico?: string | null } | null;
     },
   });
 
@@ -102,6 +132,7 @@ export function NovaConversa({ aberto, onFechar, onAberta, podeConfig, pastas, p
   // atendente mandar abertura para a pessoa errada.
   useEffect(() => {
     setTelefone(""); setNome(""); setNomeTocado(false); setEnviarAbertura(true);
+    setVaga(""); setVagaTocada(false);
     setConsulta(null); setFaltaTemplate(false);
     setPasta(podeTodas ? SEM_PASTA : (pastas[0]?.codigo ?? SEM_PASTA));
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -126,6 +157,15 @@ export function NovaConversa({ aberto, onFechar, onAberta, podeConfig, pastas, p
       if (r?.existe && !nomeTocado) setNome((r.nome_manual ?? r.nome ?? "").trim());
       // Conversa que já tem mensagens não precisa de abertura: é só abrir.
       if (r?.tem_mensagens) setEnviarAbertura(false);
+
+      // Candidato com este telefone? A vaga dele vira o assunto da abertura
+      // (e o nome, se ainda não temos um). Falhou: fica em branco e o
+      // atendente digita.
+      const { data: cand } = await (supabase as any).rpc("wa_candidato_do_contato", { p_wa_id: digitos });
+      if (cancelado) return;
+      const c = (cand ?? null) as { nome?: string | null; cargo?: string | null } | null;
+      if (!vagaTocada) setVaga((c?.cargo ?? "").trim());
+      if (!nomeTocado && !(r?.nome_manual ?? r?.nome ?? "").trim() && c?.nome) setNome(c.nome.trim());
     }, 400);
     return () => { cancelado = true; clearTimeout(t); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -134,24 +174,31 @@ export function NovaConversa({ aberto, onFechar, onAberta, podeConfig, pastas, p
   /**
    * O estado real do template na Meta. null enquanto consulta.
    *
-   * Só é buscado DEPOIS que a abertura falha: é uma chamada à Graph API e
-   * não faz sentido pagar por ela em toda abertura do modal — interessa
-   * quando algo deu errado e a pergunta "por quê?" apareceu.
+   * Antes só era buscado DEPOIS que a abertura falhava. Desde 27/10/2026 vem
+   * ao abrir o modal (com cache de 10 min, uma chamada à Graph API por
+   * sessão de atendimento): a categoria que a Meta deu precisa aparecer
+   * ANTES do envio — marketing é limitado por pessoa (131049) e a falha só
+   * chega minutos depois, pelo webhook, quando o modal já fechou.
    */
-  const [statusTpl, setStatusTpl] = useState<StatusTemplate | null>(null);
-
-  const consultarStatus = async () => {
-    setStatusTpl(null);
-    try {
-      const { data, error } = await supabase.functions.invoke("whatsapp-abertura", {
-        body: { acao: "status_template" },
-      });
-      if (error) throw new Error(await erroDaFunction(error));
-      setStatusTpl(data as StatusTemplate);
-    } catch (e) {
-      setStatusTpl({ erro: String((e as Error)?.message ?? e) });
-    }
-  };
+  const statusQ = useQuery({
+    queryKey: ["wa-abertura-status"],
+    enabled: aberto,
+    staleTime: 10 * 60 * 1000,
+    retry: false,
+    queryFn: async (): Promise<StatusTemplate> => {
+      try {
+        const { data, error } = await supabase.functions.invoke("whatsapp-abertura", {
+          body: { acao: "status_template" },
+        });
+        if (error) throw new Error(await erroDaFunction(error));
+        return data as StatusTemplate;
+      } catch (e) {
+        return { erro: String((e as Error)?.message ?? e) };
+      }
+    },
+  });
+  const statusTpl: StatusTemplate | null = statusQ.isFetching ? null : (statusQ.data ?? null);
+  const consultarStatus = () => { statusQ.refetch(); };
 
   // Falhou por template → vai atrás do motivo sozinho. Sem isto alguém teria
   // que saber que existe um botão para descobrir por que o erro aconteceu.
@@ -201,7 +248,7 @@ export function NovaConversa({ aberto, onFechar, onAberta, podeConfig, pastas, p
       // na Caixa mesmo assim — o atendente vê o motivo na bolha e decide.
       if (enviarAbertura) {
         const { error: erroEnvio } = await supabase.functions.invoke("whatsapp-abertura", {
-          body: { conversa_id: r.conversa_id },
+          body: { conversa_id: r.conversa_id, nome: nome.trim(), vaga: vaga.trim() },
         });
         if (erroEnvio) {
           const detalhe = await erroDaFunction(erroEnvio);
@@ -231,6 +278,20 @@ export function NovaConversa({ aberto, onFechar, onAberta, podeConfig, pastas, p
   const foraDoAcesso = !!consulta?.conversa_id && consulta?.pode_ver === false;
   // Sem pasta escolhida e sem "todas", a conversa nasceria invisível.
   const semDestino = !podeTodas && pasta === SEM_PASTA;
+
+  // Qual abertura vai sair: com vaga, a da candidatura (UTILITY); sem vaga,
+  // a genérica. Config sem variável = antes da mig 20261027000110: uma só.
+  const textoCfg = cfg?.abertura_texto ?? "";
+  const porCandidatura = temVariaveis(textoCfg);
+  const usaGenerica = porCandidatura && !vaga.trim();
+  const previa = !cfg ? "…"
+    : usaGenerica ? (cfg.abertura_texto_generico ?? "")
+    : preencher(textoCfg, [primeiroNome(nome) || "candidato(a)", vaga.trim()]);
+  const principalAprovada = statusTpl?.status === "APPROVED";
+  // Fora da janela, a da candidatura sem aprovação cai na genérica (reserva).
+  const categoriaQueSai = !statusTpl || statusTpl.erro ? null
+    : usaGenerica || (!principalAprovada && statusTpl.generica) ? statusTpl.generica?.categoria
+    : statusTpl.categoria;
 
   return (
     <Dialog open={aberto} onOpenChange={(v) => !v && onFechar()}>
@@ -324,15 +385,63 @@ export function NovaConversa({ aberto, onFechar, onAberta, podeConfig, pastas, p
                 Este número já conversou com a gente — normalmente é só abrir a conversa e escrever.
               </p>
             )}
+            {enviarAbertura && porCandidatura && (
+              <div className="mt-2 space-y-1">
+                <Label htmlFor="wa-vaga" className="text-xs">Vaga da candidatura</Label>
+                <Input
+                  id="wa-vaga" className="h-8 text-sm" placeholder="Ex.: Recepcionista"
+                  value={vaga} onChange={(e) => { setVaga(e.target.value); setVagaTocada(true); }}
+                />
+                <p className="text-[11px] text-muted-foreground">
+                  {usaGenerica
+                    ? "Sem vaga sai a abertura genérica — use para quem não é candidato."
+                    : "A abertura cita a candidatura: é o que a Meta aceita como mensagem de utilidade."}
+                </p>
+              </div>
+            )}
             {enviarAbertura && (
               <div className="mt-2 rounded-md bg-success/10 p-2.5 text-xs">
-                <p className="whitespace-pre-wrap break-words">{cfg?.abertura_texto ?? "…"}</p>
+                <p className="whitespace-pre-wrap break-words">{previa}</p>
                 {cfg?.abertura_botao && (
                   <div className="mt-1.5 flex items-center justify-center gap-1 rounded-md border-t border-current/15 bg-muted px-2 py-1 text-[11px] font-medium">
                     <MousePointerClick className="h-3 w-3 opacity-70" /> {cfg.abertura_botao}
                   </div>
                 )}
               </div>
+            )}
+            {/* A categoria que a Meta deu ao template que vai sair (27/10/2026):
+                marketing é limitado por pessoa e a recusa (131049) só chega
+                depois, na bolha — o atendente precisa saber antes. Dentro da
+                janela de 24h sai texto livre e isto não se aplica. */}
+            {enviarAbertura && !consulta?.dentro_janela && statusTpl && !statusTpl.erro && (
+              <div className="mt-2 space-y-1 text-[11px] text-muted-foreground">
+                <p className="flex flex-wrap items-center gap-1.5">
+                  Na Meta: <span className="font-mono">{usaGenerica || (!principalAprovada && statusTpl.generica) ? statusTpl.generica?.nome : statusTpl.nome}</span>
+                  <SeloCategoria categoria={categoriaQueSai} />
+                </p>
+                {porCandidatura && !usaGenerica && !principalAprovada && (
+                  <p>
+                    A abertura da candidatura ({statusTpl.nome}) está{" "}
+                    {statusTpl.status === "PENDING" ? "em revisão na Meta"
+                      : statusTpl.status === "REJECTED" ? "reprovada pela Meta"
+                      : !statusTpl.existe_no_idioma ? "ainda não criada na Meta" : `como ${statusTpl.status}`}
+                    {statusTpl.generica ? " — até lá sai a genérica." : "."}
+                  </p>
+                )}
+                {categoriaQueSai === "MARKETING" && (
+                  <p className="flex items-start gap-1 text-warning">
+                    <AlertTriangle className="mt-px h-3 w-3 shrink-0" />
+                    A Meta classificou como marketing e limita quantas mensagens assim cada pessoa recebe — esta pode não
+                    chegar (erro 131049). Se for candidato, preencha a vaga.
+                  </p>
+                )}
+              </div>
+            )}
+            {enviarAbertura && podeConfig && porCandidatura && statusTpl && !statusTpl.erro && !statusTpl.existe_no_idioma && !faltaTemplate && (
+              <Button size="sm" variant="outline" className="mt-2 gap-1.5" onClick={criarTemplate} disabled={criandoTemplate}>
+                {criandoTemplate ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
+                Criar na Meta a abertura da candidatura
+              </Button>
             )}
             {enviarAbertura && consulta?.dentro_janela === false && consulta?.tem_mensagens && (
               <p className="mt-2 text-[11px] text-muted-foreground">
