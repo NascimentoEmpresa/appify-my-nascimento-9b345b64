@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { reconciliar } from "@/lib/conciliacaoBancariaEngine";
 import { linhasFluxoParaPlanilhaRow } from "@/hooks/useConciliacaoFluxoCaixa";
-import { incluirRateioPagoPorUmaConta, linhasDoFluxoParaConciliacao } from "@/lib/conciliacaoCalculo";
+import { incluirRateioPagoPorUmaConta, linhasDoFluxoParaConciliacao, processarConciliacao, separarRateioDeOutraConta } from "@/lib/conciliacaoCalculo";
 import type { FluxoCaixaMaloteLinha } from "@/hooks/useFluxoCaixaMalote";
 
 // Conciliação Bancária: a divergência "consta no Fluxo, não caiu no extrato" aponta para o ID do lançamento no Fluxo de Caixa.
@@ -60,6 +60,47 @@ describe("ID do lançamento do Fluxo na divergência", () => {
     it("rateio todo dentro da empresa e despesas de uma empresa só ficam intactos", () => {
       const sozinha = [L({ despesa_id: "x", empresa_id: "nh", valor: 30, origem: "malote" }), L({ despesa_id: "x", empresa_id: "nh", valor: 20, origem: "malote" })];
       expect(incluirRateioPagoPorUmaConta(sozinha, sozinha, [trn(50)])).toEqual(sozinha);
+    });
+
+    // SIS-2026-0736: a conciliação lê o total; fatia de despesa paga por outra conta não é pendência.
+    describe("total da despesa rateada (escopo parcial)", () => {
+      it("o total não está no extrato da NH nem a fatia: a fatia sai da comparação e vira aviso, sem divergência", () => {
+        const daEmpresa = linhasDoFluxoParaConciliacao(doBanco, escopo("nh"));
+        const r = separarRateioDeOutraConta(daEmpresa, doBanco, [trn(10)]);
+        expect(r.linhas).toEqual([]);
+        expect(r.informativas).toEqual([
+          { idMalote: "DM-2026-0733", descricao: "CEE - LUZ", dia: "2026-09-21", tipo: "saida", total: 821.6, daEmpresa: 79, empresas: ["NH", "HAGG"] },
+        ]);
+        const p = processarConciliacao({ linhasDoBancoEmpresa: daEmpresa, linhasDoBancoTodasEmpresas: doBanco, trns: [], dataDe: "2026-09-01", dataAte: "2026-09-30", saldoExtrato: null, bancoNome: "Banrisul" });
+        expect(p.resultado.lancamentos).toHaveLength(0);
+        expect(p.rateiosDeOutraConta).toHaveLength(1);
+      });
+
+      it("a fatia da NH tem o próprio valor no extrato dela: foi paga por ela, segue normal", () => {
+        const daEmpresa = linhasDoFluxoParaConciliacao(doBanco, escopo("nh"));
+        const r = separarRateioDeOutraConta(daEmpresa, doBanco, [trn(79)]);
+        expect(r.linhas).toEqual(daEmpresa);
+        expect(r.informativas).toEqual([]);
+      });
+
+      it("o total está no extrato da HAGG: entra inteiro, sem aviso", () => {
+        const daEmpresa = linhasDoFluxoParaConciliacao(doBanco, escopo("hagg"));
+        const comTotal = incluirRateioPagoPorUmaConta(daEmpresa, doBanco, [trn(821.6)]);
+        const r = separarRateioDeOutraConta(comTotal, doBanco, [trn(821.6)]);
+        expect(r.linhas).toHaveLength(2);
+        expect(r.informativas).toEqual([]);
+      });
+
+      it("escopo que cobre todas as empresas do rateio: total fora do extrato é pendência de verdade", () => {
+        const todas = { ...escopo("nh"), empresaIds: ["nh", "hagg"] };
+        const daEmpresa = linhasDoFluxoParaConciliacao(doBanco, todas);
+        const r = separarRateioDeOutraConta(daEmpresa, doBanco, []);
+        expect(r.linhas).toEqual(daEmpresa);
+        expect(r.informativas).toEqual([]);
+        const p = processarConciliacao({ linhasDoBancoEmpresa: daEmpresa, linhasDoBancoTodasEmpresas: doBanco, trns: [], dataDe: "2026-09-01", dataAte: "2026-09-30", saldoExtrato: null, bancoNome: "Banrisul" });
+        expect(p.resultado.lancamentos).toHaveLength(1);
+        expect(p.resultado.lancamentos[0]).toMatchObject({ valor: 821.6, partes: 2 });
+      });
     });
   });
 

@@ -4,6 +4,7 @@ import { emLotes } from "@/lib/emLotes";
 import type { PlanilhaRow } from "@/lib/conciliacaoBancariaEngine";
 import type { FluxoCaixaMaloteLinha } from "@/hooks/useFluxoCaixaMalote";
 import type { DiaConciliado, ResumoConciliacao } from "@/lib/conciliacaoResumo";
+import type { EmpresaPagadora } from "@/lib/conciliacaoEmpresaPagadora";
 
 // SIS-2026-0492: conciliação automática — o lado "Fluxo" vem direto do
 // Fluxo de Caixa interno (useFluxoCaixaCombinado), não de planilha subida.
@@ -332,6 +333,40 @@ export function useSalvarSaldoInicialConciliacao() {
       if (error) throw error;
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: [KEY_SALDO_INICIAL] }),
+  });
+}
+
+// Empresa que PAGOU uma despesa rateada entre empresas (ver lib/conciliacaoEmpresaPagadora.ts). Tabela ausente (migration não aplicada) = sem registros.
+const KEY_EMPRESA_PAGADORA = "conciliacao_empresa_pagadora";
+
+export async function buscarEmpresasPagadoras(): Promise<EmpresaPagadora[]> {
+  const { data, error } = await (supabase as any).from("financeiro_conciliacao_empresa_pagadora").select("origem, despesa_id, numero_parcela, empresa_pagadora_id");
+  if (error) {
+    if (error.code === "PGRST205" || error.code === "42P01") return [];
+    throw error;
+  }
+  return (data ?? []) as EmpresaPagadora[];
+}
+
+export function useEmpresasPagadorasConciliacao() {
+  return useQuery({ queryKey: [KEY_EMPRESA_PAGADORA], queryFn: buscarEmpresasPagadoras });
+}
+
+// empresaId null = remove a marcação (volta a cada fatia na empresa do contrato).
+export function useSalvarEmpresaPagadora() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: { origem: string; despesaId: string; empresaId: string | null }) => {
+      const tabela = () => (supabase as any).from("financeiro_conciliacao_empresa_pagadora");
+      // A marcação vale para a despesa inteira (numero_parcela nulo): apaga a que existir e grava a nova.
+      const { error: errDel } = await tabela().delete().eq("origem", input.origem).eq("despesa_id", input.despesaId).is("numero_parcela", null);
+      if (errDel) throw errDel;
+      if (!input.empresaId) return;
+      const { data: auth } = await supabase.auth.getUser();
+      const { error } = await tabela().insert({ origem: input.origem, despesa_id: input.despesaId, numero_parcela: null, empresa_pagadora_id: input.empresaId, updated_by: auth.user?.id ?? null });
+      if (error) throw error;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: [KEY_EMPRESA_PAGADORA] }),
   });
 }
 

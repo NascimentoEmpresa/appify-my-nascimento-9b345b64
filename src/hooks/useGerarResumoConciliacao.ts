@@ -2,7 +2,8 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { parseOFX, parseSaldoFinalOFX, saldoFinalNoDia, type OFXTransaction } from "@/lib/conciliacaoBancariaEngine";
 import { linhasDoFluxoParaConciliacao, processarConciliacao } from "@/lib/conciliacaoCalculo";
-import type { ConciliacaoFluxoCaixaArquivo, ConciliacaoFluxoCaixaSalva } from "@/hooks/useConciliacaoFluxoCaixa";
+import { buscarEmpresasPagadoras, type ConciliacaoFluxoCaixaArquivo, type ConciliacaoFluxoCaixaSalva } from "@/hooks/useConciliacaoFluxoCaixa";
+import { aplicarEmpresaPagadora, mapaEmpresaPagadora } from "@/lib/conciliacaoEmpresaPagadora";
 import type { FluxoCaixaMaloteLinha } from "@/hooks/useFluxoCaixaMalote";
 
 // Conciliações salvas ANTES do resumo de valores conciliados (migrations 20261022000260/270) só tinham as divergências gravadas. Como o .OFX
@@ -41,9 +42,11 @@ async function gerarResumoUma({ conciliacao: c, linhasBrutas, bancoNome }: Gerar
   }
 
   const escopo = { bancoId: c.banco_id, todasEmpresas: c.todas_empresas, empresaIds: c.empresa_ids ?? [], dataDe: c.data_inicio, dataAte: c.data_fim };
-  const linhasDoBancoEmpresa = linhasDoFluxoParaConciliacao(linhasBrutas, escopo);
-  // mesma regra da conciliação nova: rateio entre empresas pago de uma conta só conta pelo total quando o extrato traz o total
-  const linhasDoBancoTodasEmpresas = linhasDoFluxoParaConciliacao(linhasBrutas, { ...escopo, todasEmpresas: true });
+  // mesma regra da conciliação nova: despesa rateada entre empresas pertence à empresa que a pagou (quando marcada)
+  const fluxo = aplicarEmpresaPagadora(linhasBrutas, mapaEmpresaPagadora(await buscarEmpresasPagadoras()), new Map());
+  const linhasDoBancoEmpresa = linhasDoFluxoParaConciliacao(fluxo, escopo);
+  // e rateio entre empresas pago de uma conta só conta pelo total quando o extrato traz o total
+  const linhasDoBancoTodasEmpresas = linhasDoFluxoParaConciliacao(fluxo, { ...escopo, todasEmpresas: true });
   const { resumo: r, totaisExtrato } = processarConciliacao({
     linhasDoBancoEmpresa,
     linhasDoBancoTodasEmpresas,
