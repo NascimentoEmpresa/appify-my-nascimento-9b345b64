@@ -26,6 +26,7 @@ import {
   ETIQUETAS_RECRUTAMENTO, alternarEtiqueta, corDaEtiqueta, etiquetasValidas,
 } from "@/lib/recrutamento/etiquetas";
 import { AvisoProcessos, processosDe, useProcessosDosCandidatos } from "@/components/recrutamento/AvisoProcessos";
+import { BeneficiosDaSolicitacao } from "@/components/recrutamento/BeneficiosDaSolicitacao";
 import { ParecerJuridicoDialog } from "@/components/recrutamento/ParecerJuridicoDialog";
 import { StatusSstDialog } from "@/components/recrutamento/StatusSstDialog";
 import { mensagemEnvioAgendamento } from "@/lib/recrutamento/agendamentoAso";
@@ -2617,8 +2618,12 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
       </div>
     ) : null;
 
+    // Duas colunas (27/10/2026, Convenções Coletivas): à esquerda os dados da
+    // vaga; à direita os benefícios da CCT do posto e as observações. Em
+    // painel estreito as colunas empilham.
     return (
-      <div style={{ padding: 20 }}>
+      <div style={{ padding: 20, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(360px, 1fr))", gap: 20, alignItems: "start" }}>
+      <div style={{ minWidth: 0 }}>
         <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 10 }}>
           <button
             type="button"
@@ -2689,6 +2694,8 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
         {dd("Motivo de Reprovação", s.motivo_reprovacao)}
         {s.status === "Funcionário Selecionado" && dd("Funcionário Selecionado", s.funcionario_selecionado)}
         {s.status === "Contratado" && dd("Contratado", [s.contratado_nome, s.contratado_contato ? "Contato: " + s.contratado_contato : "", s.contratado_data_inicio ? "Início: " + s.contratado_data_inicio : ""].filter(Boolean).join("\n"))}
+      </div>
+        <div style={{ minWidth: 0 }}><BeneficiosDaSolicitacao vagaId={s.id} /></div>
       </div>
     );
   };
