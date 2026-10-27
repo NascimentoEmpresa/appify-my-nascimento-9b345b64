@@ -542,7 +542,7 @@ export default function RatearClassificacao() {
                               </span>
                             )}
                             {primeira ? (
-                              <span className="text-xs text-muted-foreground">{p.data_vencimento} · Data de pagamento</span>
+                              <span className="text-xs text-muted-foreground">{p.data_vencimento.split("-").reverse().join("/")} · Data de pagamento</span>
                             ) : (
                               <>
                                 <Input

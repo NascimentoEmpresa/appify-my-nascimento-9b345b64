@@ -209,6 +209,27 @@ export function saldoFinalNoDia(
   return Math.round((saldo.valor - depois) * 100) / 100;
 }
 
+// Último dia que o arquivo cobre (DTEND do extrato). null = o arquivo não diz.
+export function parseFimPeriodoOFX(text: string): string | null {
+  const dt = /<DTEND>\s*(\d{8})/i.exec(text)?.[1];
+  return dt ? `${dt.slice(0, 4)}-${dt.slice(4, 6)}-${dt.slice(6, 8)}` : null;
+}
+
+// Data a gravar junto do saldo final. O LEDGERBAL costuma vir com a data em que o extrato foi BAIXADO (ex.: 04/02 num extrato de janeiro).
+// Só dá para trazer o saldo de volta ao último dia do período se o arquivo traz os movimentos até essa data; senão, os de 01 a 04/02 estão
+// dentro do saldo e fora do arquivo, e ele NÃO é o saldo de 31/01 (AGPS · Banrisul jan/2026: 111,16 em 04/02 x 190,16 em 31/01). Nesse caso
+// a data real é mantida e o dashboard avisa, em vez de fingir que o saldo é do fim do período.
+export function dataDoSaldoFinal(
+  saldo: { valor: number; data: string | null },
+  trns: Pick<OFXTransaction, "dia">[],
+  dataFim: string,
+  fimDoArquivo: string | null,
+): string | null {
+  if (!saldo.data || saldo.data <= dataFim) return saldo.data;
+  const cobre = trns.some((t) => t.dia > dataFim) || (fimDoArquivo != null && fimDoArquivo >= saldo.data);
+  return cobre ? dataFim : saldo.data;
+}
+
 // ── Motor de conciliação ───────────────────────────────────────────────────
 
 export function reconciliar(planRows: PlanilhaRow[], ofxTrns: OFXTransaction[]): ReconciliacaoResult {

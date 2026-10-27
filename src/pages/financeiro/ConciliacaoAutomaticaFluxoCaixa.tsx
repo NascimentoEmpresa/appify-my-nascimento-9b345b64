@@ -24,6 +24,8 @@ import { AcessoGate } from "@/components/auth/AcessoGate";
 import {
   parseOFX,
   parseSaldoFinalOFX,
+  parseFimPeriodoOFX,
+  dataDoSaldoFinal,
   saldoFinalNoDia,
   reconciliar,
   transacoesNoPeriodo,
@@ -304,10 +306,13 @@ function ConciliarTab() {
       const trns: OFXTransaction[] = [];
       const contas = new Set<string>();
       let saldoFinalOfx: { valor: number; data: string | null } | null = null;
+      let fimDosArquivos: string | null = null;
       for (const f of ofxFiles) {
         const text = await f.text();
         trns.push(...parseOFX(text, f.name));
         // Vários arquivos: vale o saldo final do que tem a data mais recente.
+        const fimArq = parseFimPeriodoOFX(text);
+        if (fimArq && (!fimDosArquivos || fimArq > fimDosArquivos)) fimDosArquivos = fimArq;
         const sf = parseSaldoFinalOFX(text);
         if (sf && (!saldoFinalOfx || (sf.data ?? "") >= (saldoFinalOfx.data ?? ""))) saldoFinalOfx = sf;
         // Conta do próprio extrato (BANKID/ACCTID) — só informativa, pra
@@ -320,7 +325,7 @@ function ConciliarTab() {
       // O saldo é o do ÚLTIMO DIA do período: se o arquivo passa dele, desconta o que se movimentou depois.
       const sfd = saldoFinalOfx as { valor: number; data: string | null } | null;
       setSaldoFinalTxt(sfd ? String(saldoFinalNoDia(sfd, trns, dataAte)).replace(".", ",") : "");
-      setSaldoFinalData(sfd ? (sfd.data && sfd.data > dataAte ? dataAte : sfd.data) : null);
+      setSaldoFinalData(sfd ? dataDoSaldoFinal(sfd, trns, dataAte, fimDosArquivos) : null);
       if (!trns.length) throw new Error("Nenhum lançamento encontrado nos extratos OFX.");
       setOfxTrns(trns);
       setResolvidos({});
