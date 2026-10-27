@@ -180,13 +180,6 @@ SELECT public.rh_sync_adicionais_do_senior();
 -- Vaga de substituição ainda em andamento: a insalubridade passa a ser a do
 -- substituído na Senior. Só mexe quando o gravado não tem o percentual certo
 -- (a #1388 tinha "R$ 385,15/mês (20%)" para quem recebe 40%).
---
--- O guard (só a data de início muda depois de criada) não vale pra correção
--- de dado — como nas migs 187 e 20261019000004. Sem isto a migration caiu no
--- pós-merge de 27/10 (sem auth.uid() o guard trata como "não gestor") e
--- travou a fila: a 20261026000910 (TRN_SOLICITACAO) não entrou e Solicitar
--- Treinamento abriu com "relation does not exist".
-ALTER TABLE public."SISTEMA_RECRUTAMENTO" DISABLE TRIGGER trg_sistema_recrutamento_guard;
 WITH certo AS (
   SELECT r.id,
          public.col_num(e."% Insalubridade") AS pct,
@@ -212,7 +205,6 @@ UPDATE public."SISTEMA_RECRUTAMENTO" r
         -- Percentual gravado ("... (20%)" ou "20%") diferente do da Senior.
         OR (n.recebe = 'Sim' AND public.col_num(substring(coalesce(r.insalubridade_quanto, '') FROM '([0-9]+(?:[.,][0-9]+)?)%'))
                                  IS DISTINCT FROM (SELECT c.pct FROM certo c WHERE c.id = n.id)));
-ALTER TABLE public."SISTEMA_RECRUTAMENTO" ENABLE TRIGGER trg_sistema_recrutamento_guard;
 
 -- ── d) Ficha da Senior para o modal de RH › Colaboradores ────────────────
 CREATE OR REPLACE FUNCTION public.rh_colaborador_ficha_senior(p_id bigint)
