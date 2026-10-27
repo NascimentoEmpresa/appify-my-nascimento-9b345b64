@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { CalendarClock, Link2, Search, UserRound } from "lucide-react";
+import { CalendarClock, Link2, Search, UserRound, Zap } from "lucide-react";
 import { toast } from "sonner";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -13,6 +13,11 @@ import type { ChamadoDisponivel } from "./types";
 // mais informações como quem solicitou". Cada chamado mostra quem abriu,
 // status, prioridade, módulo, tipo, abertura, prazo e o começo da descrição;
 // a busca também acha pelo solicitante.
+//
+// 26/10/2026 (mig 20261026000840): quando NÃO existe chamado para vincular —
+// ajuste emergencial direto em produção — a janela oferece "Emergencial, sem
+// chamado". É a primeira opção da lista, antes da busca, porque é justamente
+// quando a lista de chamados está vazia que ela é procurada.
 
 const dataBR = (iso?: string | null) => (iso ? new Date(iso.length === 10 ? `${iso}T12:00:00` : iso).toLocaleDateString("pt-BR") : null);
 
@@ -24,6 +29,8 @@ export default function SeletorChamadoDialog({
   concluidosDesde,
   ignorar = [],
   aoSelecionar,
+  permiteSemChamado = false,
+  aoSelecionarSemChamado,
 }: {
   aberto: boolean;
   aoFechar: () => void;
@@ -32,6 +39,9 @@ export default function SeletorChamadoDialog({
   concluidosDesde?: string | null;
   ignorar?: string[];
   aoSelecionar: (chamado: ChamadoDisponivel) => void;
+  /** Só na solicitação, e só enquanto nenhum chamado foi adicionado. */
+  permiteSemChamado?: boolean;
+  aoSelecionarSemChamado?: () => void;
 }) {
   const [busca, setBusca] = useState("");
   const { data = [], isLoading } = useChamadosDisponiveisHoraExtra(colaboradorId, concluidosDesde);
@@ -61,13 +71,44 @@ export default function SeletorChamadoDialog({
     setBusca("");
   };
   const hoje = new Date().toISOString().slice(0, 10);
+  const ofereceSemChamado = permiteSemChamado && !!aoSelecionarSemChamado;
+  const escolherSemChamado = () => {
+    aoSelecionarSemChamado?.();
+    aoFechar();
+    setBusca("");
+  };
   return (
     <Dialog open={aberto} onOpenChange={(v) => !v && aoFechar()}>
       <DialogContent className="max-w-4xl">
         <DialogHeader>
           <DialogTitle>Adicionar chamado</DialogTitle>
-          <DialogDescription>Selecione um chamado em aberto já designado ao colaborador.</DialogDescription>
+          <DialogDescription>
+            Selecione um chamado em aberto já designado ao colaborador
+            {ofereceSemChamado ? " — ou, se o ajuste é emergencial e não tem chamado, use a opção abaixo." : "."}
+          </DialogDescription>
         </DialogHeader>
+        {ofereceSemChamado && (
+          <button
+            type="button"
+            onClick={escolherSemChamado}
+            className={cn(
+              "flex w-full items-start gap-3 rounded-lg border border-orange-300 bg-orange-50 p-3 text-left",
+              "transition-colors hover:border-orange-400 hover:bg-orange-100",
+            )}
+          >
+            <span className="mt-0.5 grid h-8 w-8 shrink-0 place-items-center rounded-full bg-orange-100 text-orange-600">
+              <Zap className="h-4 w-4" />
+            </span>
+            <span className="min-w-0">
+              <span className="block font-semibold text-[#07194b]">Emergencial, sem chamado</span>
+              <span className="block text-xs text-slate-600">
+                Ajuste em produção ou atendimento emergencial que não tem chamado aberto. A HE segue para
+                aprovação como <b className="font-medium">Emergencial</b>, sem chamado vinculado, e a
+                justificativa passa a ser o que o gestor vai avaliar.
+              </span>
+            </span>
+          </button>
+        )}
         <div className="relative">
           <Search className="absolute left-3 top-3 h-4 w-4 text-slate-400" />
           <Input
@@ -79,7 +120,12 @@ export default function SeletorChamadoDialog({
         </div>
         <div className="max-h-[60vh] space-y-2 overflow-auto pr-1">
           {isLoading && <p className="p-8 text-center text-sm">Carregando...</p>}
-          {!isLoading && !itens.length && <p className="p-8 text-center text-sm text-slate-500">Nenhum chamado encontrado.</p>}
+          {!isLoading && !itens.length && (
+            <p className="p-8 text-center text-sm text-slate-500">
+              Nenhum chamado encontrado.
+              {ofereceSemChamado ? " Se a HE é um ajuste emergencial, use a opção acima." : ""}
+            </p>
+          )}
           {!isLoading &&
             itens.map((item) => {
               const st = item.status ? STATUS_CHAMADO[item.status] : null;
