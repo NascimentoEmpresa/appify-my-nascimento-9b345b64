@@ -75,7 +75,61 @@ export function incluirRateioPagoPorUmaConta(
   return adicionadas.length ? [...doEscopo, ...adicionadas] : doEscopo;
 }
 
+/** Despesa rateada entre empresas cujo total não está neste extrato: provavelmente paga pela conta de outra empresa do rateio. */
+export interface RateioDeOutraConta {
+  idMalote: string;
+  descricao: string;
+  dia: string; // YYYY-MM-DD
+  tipo: "entrada" | "saida";
+  total: number;
+  daEmpresa: number;
+  empresas: string[];
+}
+
+/**
+ * SIS-2026-0736: a conciliação lê o TOTAL da despesa rateada entre empresas, nunca só a fatia. Depois de incluirRateioPagoPorUmaConta (que traz
+ * o total quando o extrato o tem), sobra o caso de uma despesa de que esta conciliação só tem parte das empresas e cujo total não está neste
+ * extrato (nem a fatia sozinha): quem pagou foi a conta de outra empresa. A fatia não é pendência aqui — sai da comparação e volta como aviso
+ * informativo. Se o escopo cobre todas as empresas do rateio, nada disto se aplica (a despesa já entra pelo total, e se não está no extrato
+ * é falta de pagamento de verdade).
+ */
+export function separarRateioDeOutraConta(
+  doEscopo: FluxoCaixaMaloteLinha[],
+  doBanco: FluxoCaixaMaloteLinha[],
+  extrato: Pick<OFXTransaction, "dia" | "valor" | "tipo">[],
+): { linhas: FluxoCaixaMaloteLinha[]; informativas: RateioDeOutraConta[] } {
+  const noEscopo = new Set(doEscopo);
+  const grupos = new Map<string, FluxoCaixaMaloteLinha[]>();
+  for (const l of doBanco) {
+    if (l.origem !== "malote" || !l.despesa_id || !l.data_pagamento) continue;
+    const chave = [l.despesa_id, l.numero_parcela ?? "", l.data_pagamento, l.tipo].join("|");
+    const g = grupos.get(chave);
+    if (g) g.push(l); else grupos.set(chave, [l]);
+  }
+  const noExtrato = new Set(extrato.map((t) => `${t.dia}|${t.tipo === "ENTRADA" ? "entrada" : "saida"}|${centavos(t.valor)}`));
+  const sair = new Set<FluxoCaixaMaloteLinha>();
+  const informativas: RateioDeOutraConta[] = [];
+  for (const g of grupos.values()) {
+    if (new Set(g.map((l) => l.empresa_id)).size < 2) continue;
+    const dentro = g.filter((l) => noEscopo.has(l));
+    if (dentro.length === 0 || dentro.length === g.length) continue;
+    const total = g.reduce((s, l) => s + (Number(l.valor) || 0), 0);
+    const daEmpresa = dentro.reduce((s, l) => s + (Number(l.valor) || 0), 0);
+    const { data_pagamento: dia, tipo } = g[0];
+    // A fatia chegou sozinha ao extrato desta conta: foi paga por ela, segue a conciliação normal.
+    if (noExtrato.has(`${dia}|${tipo}|${centavos(daEmpresa)}`)) continue;
+    dentro.forEach((l) => sair.add(l));
+    informativas.push({
+      idMalote: g[0].id_malote, descricao: g[0].descricao, dia: dia as string, tipo, total: Math.round(total * 100) / 100,
+      daEmpresa: Math.round(daEmpresa * 100) / 100, empresas: [...new Set(g.map((l) => l.empresa_nome ?? "—"))],
+    });
+  }
+  return sair.size ? { linhas: doEscopo.filter((l) => !sair.has(l)), informativas } : { linhas: doEscopo, informativas };
+}
+
 export interface ProcessamentoConciliacao {
+  /** Rateios entre empresas pagos por outra conta (avisos, não pendências). */
+  rateiosDeOutraConta: RateioDeOutraConta[];
   resultado: ReconciliacaoResult;
   resumo: ResumoConciliacao;
   totaisExtrato: { entradas: number; saidas: number };
@@ -96,9 +150,12 @@ export function processarConciliacao(args: {
   const { linhasDoBancoEmpresa: linhasDaEmpresa, linhasDoBancoTodasEmpresas, trns, dataDe, dataAte, saldoExtrato, bancoNome } = args;
   // SIS-2026-0657: só entra do extrato o que está no período escolhido (igual ao lado Fluxo).
   const { dentro, fora } = transacoesNoPeriodo(trns, dataDe, dataAte);
-  const linhasDoBancoEmpresa = linhasDoBancoTodasEmpresas
-    ? incluirRateioPagoPorUmaConta(linhasDaEmpresa, linhasDoBancoTodasEmpresas, dentro)
-    : linhasDaEmpresa;
+  // Despesa rateada entre empresas conta pelo total: entra inteira quando o extrato tem o total; se o total não está neste extrato e a
+  // conciliação só tem parte das empresas, a fatia sai da comparação e vira aviso (SIS-2026-0736).
+  const comTotal = linhasDoBancoTodasEmpresas ? incluirRateioPagoPorUmaConta(linhasDaEmpresa, linhasDoBancoTodasEmpresas, dentro) : linhasDaEmpresa;
+  const { linhas: linhasDoBancoEmpresa, informativas: rateiosDeOutraConta } = linhasDoBancoTodasEmpresas
+    ? separarRateioDeOutraConta(comTotal, linhasDoBancoTodasEmpresas, dentro)
+    : { linhas: comTotal, informativas: [] as RateioDeOutraConta[] };
   // "SALDO ANTERIOR" é o saldo de abertura (não movimento): fica fora da comparação normal e, se o saldo do extrato foi informado, entra como
   // uma linha dos dois lados (ver lib/conciliacaoSaldoAnterior.ts).
   const saldoLinhas = linhasSaldoAnterior(linhasDoBancoEmpresa.filter(ehSaldoAnterior), saldoExtrato, dataDe, bancoNome);
@@ -108,6 +165,7 @@ export function processarConciliacao(args: {
   const resultado = reconciliar(planRows, ofxRows);
   const r2 = (n: number) => Math.round(n * 100) / 100;
   return {
+    rateiosDeOutraConta,
     resultado,
     resumo: resumirConciliacao(planRows, ofxRows, resultado),
     totaisExtrato: {

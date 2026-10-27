@@ -12,7 +12,8 @@ import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { fmtBRL } from "@/lib/conciliacaoBancariaEngine";
 import { conciliacaoSemSaldoFinal, useCarregarSaldoFinalConciliacoes } from "@/hooks/useGerarResumoConciliacao";
-import { registrosAtuais, saldosMensais, valoresDaConciliacao, type SaldoMensal } from "@/lib/conciliacaoDashboard";
+import { registrosAtuais, saldosMensais, totaisDeMovimentacao, ultimoDiaDoMes, valoresDaConciliacao, type SaldoMensal } from "@/lib/conciliacaoDashboard";
+import { hojeISO } from "@/pages/financeiro/fluxo-caixa/abasFluxo";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useFluxoCaixaCombinado } from "@/hooks/useFluxoCaixaMalote";
 import { useCartaoBancos } from "@/hooks/useMaloteCartaoCredito";
@@ -68,8 +69,11 @@ export function DashboardConciliacoes({ onVerDetalhes, auditoria = null }: { onV
   const hoje = new Date();
   const [empresaId, setEmpresaId] = useState(auditoria?.empresaId || TODAS);
   const [bancoId, setBancoId] = useState(TODAS);
-  const [mesDe, setMesDe] = useState(auditoria?.mes ?? `${hoje.getFullYear()}-01`);
-  const [mesAte, setMesAte] = useState(auditoria?.mes ?? "");
+  // SIS-2026-0736: período de movimentação em DATAS (como o filtro do Fluxo de Caixa); as listas por mês usam os meses que ele abrange.
+  const [dataDe, setDataDe] = useState(auditoria?.mes ? `${auditoria.mes}-01` : `${hoje.getFullYear()}-01-01`);
+  const [dataAte, setDataAte] = useState(auditoria?.mes ? ultimoDiaDoMes(auditoria.mes) : "");
+  const mesDe = dataDe.slice(0, 7);
+  const mesAte = dataAte.slice(0, 7);
   const [situacao, setSituacao] = useState<"todas" | "concluida" | "pendente">(TODAS as "todas");
   const [subaba, setSubaba] = useState<"conciliacoes" | "saldos">("conciliacoes");
   const [rascunhoBase, setRascunhoBase] = useState<Record<string, string>>({});
@@ -182,6 +186,12 @@ export function DashboardConciliacoes({ onVerDetalhes, auditoria = null }: { onV
   const saldosNao = saldosFiltrados.filter((x) => x.confere === "nao").length;
   const saldosPendentes = saldosFiltrados.filter((x) => x.confere === "pendente").length;
 
+  // SIS-2026-0736: soma de entradas e saídas do período de movimentação (empresa e banco dos filtros), igual ao "(filtro atual)" do Fluxo — Realizado.
+  const totaisMov = useMemo(
+    () => totaisDeMovimentacao(linhasFluxo, { dataDe, dataAte, empresaId: empresaId === TODAS ? null : empresaId, bancoId: bancoValido === TODAS ? null : bancoValido }, hojeISO()),
+    [linhasFluxo, dataDe, dataAte, empresaId, bancoValido],
+  );
+
   // Meses em que o saldo do sistema não bate com o do extrato (aparece como aviso na sub-aba).
   const divergentes = saldosFiltrados.filter((s) => s.confere === "nao").length;
 
@@ -248,12 +258,12 @@ export function DashboardConciliacoes({ onVerDetalhes, auditoria = null }: { onV
             </Select>
           </div>
           <div>
-            <Label className="text-xs">Competência — de</Label>
-            <Input type="month" className="h-9 w-40" value={mesDe} onChange={(e) => setMesDe(e.target.value)} />
+            <Label className="text-xs">Período de movimentação — de</Label>
+            <Input type="date" className="h-9 w-40" value={dataDe} onChange={(e) => setDataDe(e.target.value)} />
           </div>
           <div>
             <Label className="text-xs">até</Label>
-            <Input type="month" className="h-9 w-40" value={mesAte} onChange={(e) => setMesAte(e.target.value)} />
+            <Input type="date" className="h-9 w-40" value={dataAte} onChange={(e) => setDataAte(e.target.value)} />
           </div>
           <div>
             <Label className="text-xs">Situação da conciliação</Label>
@@ -517,6 +527,29 @@ export function DashboardConciliacoes({ onVerDetalhes, auditoria = null }: { onV
 
         <TabsContent value="saldos" className="mt-4">
       <div className="space-y-3">
+        {/* SIS-2026-0736: totais do período para conferir com os cards "Entradas/Saídas (filtro atual)" do Fluxo de Caixa — Realizado. */}
+        <div className="grid gap-3 sm:grid-cols-2">
+          {[
+            { rotulo: "Saldo de movimentação de entradas", valor: totaisMov.entradas, Icone: ArrowUp, cor: "text-emerald-700", fundo: "bg-emerald-50 dark:bg-emerald-950/30", borda: "border-emerald-200", card: "Entradas (filtro atual)" },
+            { rotulo: "Saldo de movimentação de saídas", valor: totaisMov.saidas, Icone: ArrowDown, cor: "text-rose-700", fundo: "bg-rose-50 dark:bg-rose-950/30", borda: "border-rose-200", card: "Saídas (filtro atual)" },
+          ].map((k) => (
+            <div key={k.rotulo} className={cn("flex items-center gap-4 rounded-xl border p-4", k.fundo, k.borda)}>
+              <k.Icone className={cn("h-8 w-8 shrink-0", k.cor)} />
+              <div>
+                <p className={cn("text-sm font-medium", k.cor)}>{k.rotulo}</p>
+                <p className="text-2xl font-bold leading-tight">{fmtBRL(k.valor)}</p>
+                <p className="text-[11px] text-muted-foreground">
+                  {empresaId === TODAS ? "Todas as empresas" : empresaNome(empresaId)} · {bancoValido === TODAS ? "todos os bancos" : bancoNome(bancoValido)} · {dataDe ? isoParaBR(dataDe) : "início"} a {dataAte ? isoParaBR(dataAte) : "hoje"}
+                </p>
+                <p className="text-[11px] text-muted-foreground">Compare com “{k.card}” do Fluxo de Caixa — Realizado ({totaisMov.lancamentos.toLocaleString("pt-BR")} lançamentos).</p>
+              </div>
+            </div>
+          ))}
+        </div>
+        <p className="text-[11px] text-muted-foreground">
+          Mesma conta do Fluxo de Caixa: soma tudo o que o Fluxo mostra no período (inclusive saldo anterior e conta vinculada, que a conferência de saldos abaixo
+          desconsidera) e o rateio entre empresas conta pelo total, na empresa do primeiro lançamento, como no Fluxo. Na tabela mensal abaixo, o mês entra inteiro.
+        </p>
         <div>
           <h3 className="text-sm font-semibold">Saldos mensais por empresa e banco</h3>
           <p className="text-xs text-muted-foreground">
@@ -571,7 +604,7 @@ export function DashboardConciliacoes({ onVerDetalhes, auditoria = null }: { onV
                 <table className="w-full text-xs">
                   <thead>
                     <tr className="border-b bg-muted/40">
-                      <th className="text-left px-3 py-2">Competência</th>
+                      <th className="text-left px-3 py-2">Período de movimentação</th>
                       <th className="text-right px-3 py-2">Entradas</th>
                       <th className="text-right px-3 py-2">Saídas</th>
                       <th className="text-right px-3 py-2">Saldo final (sistema)</th>
@@ -584,7 +617,7 @@ export function DashboardConciliacoes({ onVerDetalhes, auditoria = null }: { onV
                   <tbody>
                     {meses.map((s) => (
                       <tr key={s.chave} className="border-b">
-                        <td className="px-3 py-2 font-medium">{mesParaBR(s.mes)}</td>
+                        <td className="px-3 py-2 font-medium whitespace-nowrap">{isoParaBR(`${s.mes}-01`)} — {isoParaBR(ultimoDiaDoMes(s.mes))}</td>
                         <td className="px-3 py-2 text-right text-emerald-700">{fmtBRL(s.entradas)}</td>
                         <td className="px-3 py-2 text-right text-rose-700">{fmtBRL(s.saidas)}</td>
                         <td className="px-3 py-2 text-right">{s.saldoSistema == null ? "Não informado" : fmtBRL(s.saldoSistema)}</td>

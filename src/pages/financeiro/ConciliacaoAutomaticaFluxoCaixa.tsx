@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -13,7 +13,8 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { SearchableMultiSelect } from "@/components/ui/searchable-multi-select";
 import { ehSaldoAnterior, linhasSaldoAnterior } from "@/lib/conciliacaoSaldoAnterior";
 import { type ResumoConciliacao } from "@/lib/conciliacaoResumo";
-import { periodoDoMes, processarConciliacao } from "@/lib/conciliacaoCalculo";
+import { periodoDoMes, processarConciliacao, type RateioDeOutraConta } from "@/lib/conciliacaoCalculo";
+import { aplicarEmpresaPagadora, mapaEmpresaPagadora } from "@/lib/conciliacaoEmpresaPagadora";
 import { DashboardConciliacoes } from "@/pages/financeiro/conciliacao-dashboard/DashboardConciliacoes";
 import { conciliacaoSemResumo, useGerarResumoConciliacoes } from "@/hooks/useGerarResumoConciliacao";
 import { Upload, X, Play, RefreshCw, GitMerge, Pencil, PlusCircle, Save, History, CheckCircle2, LayoutDashboard, Info, Landmark } from "lucide-react";
@@ -39,6 +40,8 @@ import {
   useConciliacaoFluxoCaixaDetalhe,
   useSaldosIniciaisConciliacao,
   useSalvarSaldoInicialConciliacao,
+  useEmpresasPagadorasConciliacao,
+  useSalvarEmpresaPagadora,
   type ConciliacaoFluxoCaixaLinha,
   type ConciliacaoFluxoCaixaSalva,
 } from "@/hooks/useConciliacaoFluxoCaixa";
@@ -166,15 +169,24 @@ function ConciliarTab() {
   const [totaisExtrato, setTotaisExtrato] = useState<{ entradas: number; saidas: number } | null>(null);
   // Resumo do que bateu entre Fluxo e extrato (gravado ao salvar; a lista de salvas mostra mesmo sem divergência).
   const [resumo, setResumo] = useState<ResumoConciliacao | null>(null);
+  const [rateiosOutraConta, setRateiosOutraConta] = useState<RateioDeOutraConta[]>([]);
   const [observacoes, setObservacoes] = useState("");
 
   const [dialogAjustar, setDialogAjustar] = useState<LancamentoRow | null>(null);
   const [dialogCriar, setDialogCriar] = useState<LancamentoRow | null>(null);
   const [abaResultado, setAbaResultado] = useState<"resumo" | "divergencias">("resumo");
 
-  const { data: linhasBrutas = [] } = useFluxoCaixaCombinado();
+  const { data: linhasFluxo = [] } = useFluxoCaixaCombinado();
   const { data: bancos = [] } = useCartaoBancos();
   const { data: empresas = [] } = useEmpresasGrupo();
+  const { data: pagadoras = [] } = useEmpresasPagadorasConciliacao();
+  const salvarPagadora = useSalvarEmpresaPagadora();
+  const [dialogPagadora, setDialogPagadora] = useState<LancamentoRow | null>(null);
+  // Despesa rateada entre empresas pertence, na conciliação, à empresa que a pagou (quando marcada em "Quem pagou?"): o extrato dela traz o total.
+  const linhasBrutas = useMemo(
+    () => aplicarEmpresaPagadora(linhasFluxo, mapaEmpresaPagadora(pagadoras), new Map(empresas.map((e) => [e.id, e.nome]))),
+    [linhasFluxo, pagadoras, empresas]
+  );
   const ajustar = useAjustarLinhaFluxoCaixa();
   const criarDebito = useCriarDebito();
   const salvar = useSalvarConciliacaoFluxoCaixa();
@@ -251,7 +263,7 @@ function ConciliarTab() {
 
   function rodar(trns: OFXTransaction[]) {
     // O cálculo mora em lib/conciliacaoCalculo.ts (o mesmo que refaz o resumo das conciliações antigas).
-    const { resultado: res, resumo: resumoCalc, totaisExtrato: totais, fora } = processarConciliacao({
+    const { resultado: res, resumo: resumoCalc, totaisExtrato: totais, fora, rateiosDeOutraConta: rateios } = processarConciliacao({
       linhasDoBancoEmpresa,
       linhasDoBancoTodasEmpresas,
       trns,
@@ -261,6 +273,7 @@ function ConciliarTab() {
       bancoNome: bancos.find((b) => b.id === bancoId)?.nome ?? "—",
     });
     setResumo(resumoCalc);
+    setRateiosOutraConta(rateios);
     setTotaisExtrato(totais);
     setResultado(res);
     toast.success(
@@ -324,6 +337,9 @@ function ConciliarTab() {
     rodar(ofxTrns);
   }
 
+  const recalcularRef = useRef<() => void>(() => {});
+  recalcularRef.current = recalcular;
+
   function reiniciar() {
     setOfxFiles([]);
     setOfxTrns(null);
@@ -335,6 +351,7 @@ function ConciliarTab() {
     setSaldoFinalData(null);
     setEditandoSaldoFinal(false);
     setResumo(null);
+    setRateiosOutraConta([]);
   }
 
   const pendentes = useMemo(
@@ -402,6 +419,21 @@ function ConciliarTab() {
       setTimeout(recalcular, 400); // dá tempo do useFluxoCaixaCombinado refazer o fetch
     } catch (e: any) {
       toast.error(e.message ?? "Erro ao ajustar.");
+    }
+  }
+
+  async function confirmarPagadora(empresaId: string | null) {
+    if (!dialogPagadora || !dialogPagadora.despesaId || !dialogPagadora.origemFluxo) return;
+    try {
+      await salvarPagadora.mutateAsync({ origem: dialogPagadora.origemFluxo, despesaId: dialogPagadora.despesaId, empresaId });
+      const alvo = dialogPagadora;
+      setDialogPagadora(null);
+      toast.success(empresaId ? "Empresa pagadora marcada — recalculando..." : "Marcação removida — recalculando...");
+      // O recálculo precisa ver as linhas já com a pagadora: lê a versão mais nova da função (a deste render ainda tem as linhas antigas).
+      setTimeout(() => recalcularRef.current(), 300);
+      if (empresaId) setResolvidos((prev) => ({ ...prev, [alvo.id]: { linha: alvo, status: "ajustado", observacao: "Despesa paga por outra empresa" } }));
+    } catch (e: any) {
+      toast.error(e.message ?? "Erro ao salvar a empresa pagadora.");
     }
   }
 
@@ -684,6 +716,25 @@ function ConciliarTab() {
             </CardContent>
           </Card>
 
+          {rateiosOutraConta.length > 0 && (
+            <div className="rounded-md border border-sky-200 bg-sky-50 p-3 text-xs text-sky-900 dark:border-sky-900 dark:bg-sky-950/30 dark:text-sky-200">
+              <p className="font-semibold">
+                {rateiosOutraConta.length} despesa(s) rateada(s) entre empresas, sem o total neste extrato — provavelmente pagas pela conta de outra empresa
+              </p>
+              <p className="mt-0.5 text-sky-800/80 dark:text-sky-300/80">
+                A conciliação lê o total da despesa, não a fatia. Estas só têm parte das empresas aqui e o total não caiu neste extrato, então não são pendência
+                e não travam o salvamento. Para cobrá-las como falta de pagamento, concilie com todas as empresas do rateio juntas (ou "Todas as empresas").
+              </p>
+              <ul className="mt-1.5 space-y-0.5">
+                {rateiosOutraConta.map((r, i) => (
+                  <li key={i}>
+                    <span className="font-mono">{r.idMalote}</span> · {isoParaBR(r.dia)} · total {fmtBRL(r.total)} (fatia desta conciliação {fmtBRL(r.daEmpresa)}) · {r.empresas.join(" + ")} · {r.descricao}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
           <Card>
             <CardHeader className="pb-0 pt-4 px-4">
               <div className="flex items-center justify-between gap-4">
@@ -767,6 +818,8 @@ function ConciliarTab() {
                         // excluir + recadastrar na própria tela de Aplicações.
                         const podeAjustar = !!l.despesaId && l.origemFluxo !== "aplicacao_financeira" && !resolucao;
                         const podeCriar = l.erro === "🚨 FLUXO - NÃO ENCONTRADO" && !resolucao;
+                        // Fatia de despesa do Malote que não caiu no extrato desta conta: pode ter sido paga pela conta de outra empresa do rateio.
+                        const podePagadora = l.erro === "⚠️ BANCO - NÃO ENCONTRADO" && l.origemFluxo === "malote" && !!l.despesaId && !resolucao;
                         return (
                           <tr key={l.id} className={cn("border-b", resolucao && "opacity-60")}>
                             <td className="px-4 py-2 whitespace-nowrap font-medium">{l.dia}</td>
@@ -814,6 +867,17 @@ function ConciliarTab() {
                                   {podeAjustar && (
                                     <Button size="sm" variant="ghost" className="h-6 text-xs px-2" onClick={() => setDialogAjustar(l)}>
                                       <Pencil className="h-3 w-3 mr-1" /> Ajustar
+                                    </Button>
+                                  )}
+                                  {podePagadora && (
+                                    <Button
+                                      size="sm"
+                                      variant="ghost"
+                                      className="h-6 text-xs px-2"
+                                      title="Despesa rateada entre empresas, paga por uma conta só: marque qual empresa pagou"
+                                      onClick={() => setDialogPagadora(l)}
+                                    >
+                                      <Landmark className="h-3 w-3 mr-1" /> Quem pagou?
                                     </Button>
                                   )}
                                   {podeCriar && (
@@ -874,6 +938,14 @@ function ConciliarTab() {
       )}
 
       <DialogAjustar linha={dialogAjustar} onClose={() => setDialogAjustar(null)} onConfirmar={confirmarAjuste} salvando={ajustar.isPending} />
+      <DialogEmpresaPagadora
+        linha={dialogPagadora}
+        empresas={empresas}
+        atual={dialogPagadora ? pagadoras.find((p) => p.origem === dialogPagadora.origemFluxo && p.despesa_id === dialogPagadora.despesaId && p.numero_parcela == null)?.empresa_pagadora_id ?? "" : ""}
+        onClose={() => setDialogPagadora(null)}
+        onConfirmar={confirmarPagadora}
+        salvando={salvarPagadora.isPending}
+      />
       <DialogCriarLancamento linha={dialogCriar} onClose={() => setDialogCriar(null)} onConfirmar={confirmarCriar} salvando={criarDebito.isPending} empresaInicial={!todasEmpresas && empresaIds.length === 1 ? empresaIds[0] : ""} bancoInicial={bancoId} />
     </div>
   );
@@ -958,6 +1030,67 @@ function DialogAjustar({
             }
           >
             {salvando ? "Salvando..." : "Confirmar ajuste"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ── Dialog: Quem pagou a despesa rateada entre empresas ──────────────────
+
+function DialogEmpresaPagadora({
+  linha,
+  empresas,
+  atual,
+  onClose,
+  onConfirmar,
+  salvando,
+}: {
+  linha: LancamentoRow | null;
+  empresas: { id: string; nome: string }[];
+  atual: string;
+  onClose: () => void;
+  onConfirmar: (empresaId: string | null) => void;
+  salvando: boolean;
+}) {
+  const [empresaId, setEmpresaId] = useState("");
+  useEffect(() => setEmpresaId(atual), [linha, atual]);
+
+  if (!linha) return null;
+  return (
+    <Dialog open={!!linha} onOpenChange={(v) => !v && onClose()}>
+      <DialogContent className="sm:max-w-md p-5">
+        <DialogHeader>
+          <DialogTitle>Quem pagou esta despesa?</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-3">
+          <p className="text-xs text-muted-foreground">
+            {linha.idMalote ? `${linha.idMalote} — ` : ""}{linha.dia} — {fmtBRL(linha.valor)} — {linha.descricaoFluxo ?? linha.detalhe}
+          </p>
+          <p className="text-xs text-muted-foreground">
+            Numa despesa rateada entre empresas, o pagamento sai da conta de UMA delas e o extrato mostra o valor total. Escolha a empresa que
+            pagou: na conciliação, a despesa inteira passa a ser dela (o total no extrato dela, nada no das outras). Vale só para a conciliação — o
+            Fluxo de Caixa e o rateio continuam como estão.
+          </p>
+          <div>
+            <Label className="text-xs">Empresa que pagou</Label>
+            <Select value={empresaId || "_"} onValueChange={(v) => setEmpresaId(v === "_" ? "" : v)}>
+              <SelectTrigger className="h-9"><SelectValue placeholder="Selecione…" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="_">—</SelectItem>
+                {empresas.map((e) => <SelectItem key={e.id} value={e.id}>{e.nome}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+        <DialogFooter>
+          {atual && (
+            <Button variant="ghost" size="sm" onClick={() => onConfirmar(null)} disabled={salvando}>Remover marcação</Button>
+          )}
+          <Button variant="outline" size="sm" onClick={onClose} disabled={salvando}>Cancelar</Button>
+          <Button size="sm" disabled={salvando || !empresaId || empresaId === atual} onClick={() => onConfirmar(empresaId)}>
+            {salvando ? "Salvando..." : "Confirmar"}
           </Button>
         </DialogFooter>
       </DialogContent>
