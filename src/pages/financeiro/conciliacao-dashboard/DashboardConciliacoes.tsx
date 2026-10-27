@@ -4,14 +4,15 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { ArrowDown, ArrowUp, CheckCircle2, ClipboardList, Clock, Landmark, PieChart, Scale } from "lucide-react";
+import { ArrowDown, ArrowUp, CheckCircle2, ClipboardList, Clock, Info, Landmark, Pencil, PieChart, Scale } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { AcessoGate } from "@/components/auth/AcessoGate";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { fmtBRL } from "@/lib/conciliacaoBancariaEngine";
-import { conciliacaoSemSaldoFinal, useCarregarSaldoFinalConciliacoes } from "@/hooks/useGerarResumoConciliacao";
+import { conciliacaoSemSaldoFinal, useCarregarSaldoFinalConciliacoes, useSalvarSaldoFinalManual } from "@/hooks/useGerarResumoConciliacao";
 import { registrosAtuais, saldosMensais, totaisDeMovimentacao, totaisDeSaldos, ultimoDiaDoMes, valoresDaConciliacao, type SaldoMensal } from "@/lib/conciliacaoDashboard";
 import { hojeISO } from "@/pages/financeiro/fluxo-caixa/abasFluxo";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -43,9 +44,27 @@ function parseValor(txt: string): number | null {
 
 function BadgeConfere({ s }: { s: SaldoMensal }) {
   if (s.confere === "sim") return <Badge className="bg-green-100 text-green-700 border-green-200 hover:bg-green-100">Sim, saldos conferidos</Badge>;
+  if (s.saldoExtratoDeOutraData) return <Badge className="bg-amber-100 text-amber-800 border-amber-200 hover:bg-amber-100">Conferir: saldo do extrato é de {isoParaBR(s.saldoExtratoDeOutraData)}</Badge>;
   if (s.confere === "nao")
     return <Badge className="bg-red-100 text-red-700 border-red-200 hover:bg-red-100">Não, saldo divergente {s.diferenca != null ? `(${s.diferenca > 0 ? "+" : ""}${fmtBRL(s.diferenca)})` : ""}</Badge>;
   return <Badge className="bg-yellow-100 text-yellow-800 border-yellow-200 hover:bg-yellow-100">Pendente de conferência</Badge>;
+}
+
+// Título de coluna com o "i" que explica de onde vem o número.
+function TituloComInfo({ texto, children }: { texto: string; children: React.ReactNode }) {
+  return (
+    <span className="inline-flex items-center gap-1">
+      {children}
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <button type="button" className="text-muted-foreground hover:text-foreground" aria-label={`Como é calculado: ${texto}`}>
+            <Info className="h-3 w-3" />
+          </button>
+        </TooltipTrigger>
+        <TooltipContent className="max-w-xs text-xs font-normal normal-case">{texto}</TooltipContent>
+      </Tooltip>
+    </span>
+  );
 }
 
 export interface ValoresDaAuditoria {
@@ -77,6 +96,9 @@ export function DashboardConciliacoes({ onVerDetalhes, auditoria = null }: { onV
   const [situacao, setSituacao] = useState<"todas" | "concluida" | "pendente">(TODAS as "todas");
   const [subaba, setSubaba] = useState<"conciliacoes" | "saldos">("conciliacoes");
   const [rascunhoBase, setRascunhoBase] = useState<Record<string, string>>({});
+  // saldo final do extrato digitado à mão numa linha (chave = empresa|banco|mês)
+  const [editSaldo, setEditSaldo] = useState<{ chave: string; texto: string } | null>(null);
+  const salvarSaldoManual = useSalvarSaldoFinalManual();
 
   const empresaNome = (id: string) => empresas.find((e) => e.id === id)?.nome ?? "—";
   const bancoNome = (id: string | null) => (id ? bancos.find((b) => b.id === id)?.nome ?? "—" : "—");
@@ -134,6 +156,24 @@ export function DashboardConciliacoes({ onVerDetalhes, auditoria = null }: { onV
   }, [todosSaldos, saldosFiltrados, empresas, bancos]);
 
   // Conciliações salvas antes do saldo final do extrato: relê o .OFX guardado de cada uma.
+  // Aceita "0", "270,22", "1.234,56" ou "270.22". Vazio apaga e volta a "não informado".
+  async function gravarSaldoManual(s: SaldoMensal) {
+    if (!editSaldo || !s.conciliacaoId) return;
+    const t = editSaldo.texto.replace(/R\$|\s/g, "");
+    const n = t ? Number(t.includes(",") ? t.replace(/\./g, "").replace(",", ".") : t) : null;
+    if (n !== null && !Number.isFinite(n)) {
+      toast.error("Valor inválido para o saldo final do extrato.");
+      return;
+    }
+    try {
+      await salvarSaldoManual.mutateAsync({ conciliacaoId: s.conciliacaoId, valor: n === null ? null : Math.round(n * 100) / 100, dataFim: ultimoDiaDoMes(s.mes) });
+      setEditSaldo(null);
+      toast.success(n === null ? "Saldo do extrato removido." : "Saldo final do extrato salvo.");
+    } catch (e: any) {
+      toast.error(e.message ?? "Erro ao salvar o saldo.");
+    }
+  }
+
   const semSaldoFinal = useMemo(() => atuais.filter(conciliacaoSemSaldoFinal), [atuais]);
   async function carregarSaldosAntigos() {
     const r = await carregarSaldos.mutateAsync(semSaldoFinal);
@@ -574,10 +614,16 @@ export function DashboardConciliacoes({ onVerDetalhes, auditoria = null }: { onV
         </p>
         <div>
           <h3 className="text-sm font-semibold">Saldos mensais por empresa e banco</h3>
-          <p className="text-xs text-muted-foreground">
-            Saldo do sistema = saldo anterior de janeiro (manual) + entradas − saídas, mês a mês. Saldo do extrato = saldo final lido do OFX da conciliação do mês.
-            Diferença = sistema − extrato. Cada empresa e banco é conferido sozinho nesta tabela (nada é compensado entre grupos); os totais acima só somam o resultado de cada um.
-          </p>
+        </div>
+        <div className="rounded-md border border-blue-200 bg-blue-50 p-3 text-xs text-blue-900 dark:border-blue-900 dark:bg-blue-950/30 dark:text-blue-200">
+          <p className="mb-1 flex items-center gap-1.5 font-semibold"><Info className="h-3.5 w-3.5" /> Como ler os saldos</p>
+          <ul className="list-disc space-y-1 pl-5">
+            <li><strong>Saldo final (sistema)</strong>: o que o ERP calcula. É o <em>saldo anterior de janeiro</em> (campo manual de cada conta) + entradas − saídas do Fluxo, mês a mês, acumulado.</li>
+            <li><strong>Saldo final (extrato)</strong>: o saldo de fechamento que o <em>banco informa dentro do .OFX</em> (campo LEDGERBAL), não é calculado. Dá para digitar à mão (lápis) quando o arquivo não traz, ou quando a data dele não é a do fim do mês.</li>
+            <li><strong>Diferença</strong> = sistema − extrato. Se as entradas e saídas do mês batem com o extrato e mesmo assim há diferença, o problema costuma estar no <em>saldo anterior de janeiro</em> digitado, e não no mês.</li>
+            <li><strong>Saldo do extrato com outra data</strong>: o banco grava no OFX a data em que o extrato foi <em>baixado</em> (ex.: 04/02 num extrato de janeiro). Se o arquivo não traz os movimentos até essa data, o saldo não é o de 31/01. Aparece o aviso em amarelo e a linha fica pendente até alguém informar o saldo do fim do mês.</li>
+            <li>Cada empresa e banco é conferido sozinho (nada é compensado entre grupos); os totais de cima só somam o resultado de cada um.</li>
+          </ul>
         </div>
         {semSaldoFinal.length > 0 && (
           <AcessoGate menu="conciliacao-fluxo-caixa" acao="alterar">
@@ -626,13 +672,13 @@ export function DashboardConciliacoes({ onVerDetalhes, auditoria = null }: { onV
                 <table className="w-full text-xs">
                   <thead>
                     <tr className="border-b bg-muted/40">
-                      <th className="text-left px-3 py-2">Período de movimentação</th>
-                      <th className="text-right px-3 py-2">Entradas</th>
-                      <th className="text-right px-3 py-2">Saídas</th>
-                      <th className="text-right px-3 py-2">Saldo final (sistema)</th>
-                      <th className="text-right px-3 py-2">Saldo final (extrato)</th>
-                      <th className="text-right px-3 py-2">Diferença</th>
-                      <th className="text-center px-3 py-2">Saldos conferem?</th>
+                      <th className="text-left px-3 py-2"><TituloComInfo texto="O mês inteiro (do dia 1 ao último dia) em que as entradas e saídas do Fluxo de Caixa foram somadas, pela data de pagamento.">Período de movimentação</TituloComInfo></th>
+                      <th className="text-right px-3 py-2"><TituloComInfo texto="Soma das entradas do Fluxo de Caixa desta empresa e banco no mês. Não vem do extrato; ignora saldo anterior e conta vinculada.">Entradas</TituloComInfo></th>
+                      <th className="text-right px-3 py-2"><TituloComInfo texto="Soma das saídas do Fluxo de Caixa desta empresa e banco no mês. Não vem do extrato; ignora saldo anterior e conta vinculada.">Saídas</TituloComInfo></th>
+                      <th className="text-right px-3 py-2"><TituloComInfo texto="Calculado pelo ERP: saldo anterior de janeiro (campo manual no topo do cartão) + entradas − saídas, mês a mês, acumulado. Se o saldo anterior estiver errado, todos os meses herdam o erro.">Saldo final (sistema)</TituloComInfo></th>
+                      <th className="text-right px-3 py-2"><TituloComInfo texto="Não é calculado: é o saldo de fechamento que o banco informa dentro do arquivo .OFX da conciliação do mês. Use o lápis para digitar à mão quando o arquivo não traz o saldo ou traz o de outra data (ex.: extrato de janeiro baixado em 04/02).">Saldo final (extrato)</TituloComInfo></th>
+                      <th className="text-right px-3 py-2"><TituloComInfo texto="Saldo final (sistema) − Saldo final (extrato). Se as entradas e saídas do mês batem com o extrato e ainda assim há diferença, confira o saldo anterior de janeiro.">Diferença</TituloComInfo></th>
+                      <th className="text-center px-3 py-2"><TituloComInfo texto="Sim: sistema e extrato iguais. Não: há diferença. Pendente: o mês não tem conciliação salva, ou o saldo do extrato não foi informado ou é de outra data.">Saldos conferem?</TituloComInfo></th>
                       <th className="px-3 py-2" />
                     </tr>
                   </thead>
@@ -643,7 +689,41 @@ export function DashboardConciliacoes({ onVerDetalhes, auditoria = null }: { onV
                         <td className="px-3 py-2 text-right text-emerald-700">{fmtBRL(s.entradas)}</td>
                         <td className="px-3 py-2 text-right text-rose-700">{fmtBRL(s.saidas)}</td>
                         <td className="px-3 py-2 text-right">{s.saldoSistema == null ? "Não informado" : fmtBRL(s.saldoSistema)}</td>
-                        <td className="px-3 py-2 text-right">{s.saldoExtrato == null ? "Não informado" : fmtBRL(s.saldoExtrato)}</td>
+                        <td className="px-3 py-2 text-right">
+                          {editSaldo?.chave === s.chave ? (
+                            <span className="inline-flex items-center gap-1">
+                              <Input
+                                autoFocus
+                                className="h-7 w-28 text-right text-xs"
+                                inputMode="decimal"
+                                placeholder="0,00"
+                                value={editSaldo.texto}
+                                onChange={(e) => setEditSaldo({ chave: s.chave, texto: e.target.value })}
+                                onKeyDown={(e) => { if (e.key === "Enter") void gravarSaldoManual(s); if (e.key === "Escape") setEditSaldo(null); }}
+                              />
+                              <Button size="sm" className="h-7 px-2" disabled={salvarSaldoManual.isPending} onClick={() => void gravarSaldoManual(s)}>OK</Button>
+                            </span>
+                          ) : (
+                            <span className="inline-flex flex-col items-end">
+                              <span className="inline-flex items-center gap-1">
+                                {s.saldoExtrato == null ? "Não informado" : fmtBRL(s.saldoExtrato)}
+                                {s.conciliacaoId && (
+                                  <AcessoGate menu="conciliacao-fluxo-caixa" acao="alterar">
+                                    <button
+                                      type="button"
+                                      className="text-muted-foreground hover:text-foreground"
+                                      title="Informar o saldo final do extrato à mão (saldo do último dia do mês)"
+                                      onClick={() => setEditSaldo({ chave: s.chave, texto: s.saldoExtrato == null ? "" : String(s.saldoExtrato).replace(".", ",") })}
+                                    >
+                                      <Pencil className="h-3 w-3" />
+                                    </button>
+                                  </AcessoGate>
+                                )}
+                              </span>
+                              {s.saldoExtratoDeOutraData && <span className="text-[10px] text-amber-700">saldo em {isoParaBR(s.saldoExtratoDeOutraData)}, fora do mês</span>}
+                            </span>
+                          )}
+                        </td>
                         <td className={cn("px-3 py-2 text-right font-medium", s.diferenca != null && s.diferenca !== 0 && "text-red-600")}>
                           {s.diferenca == null ? traco : fmtBRL(s.diferenca)}
                         </td>

@@ -1,6 +1,6 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
-import { parseOFX, parseSaldoFinalOFX, saldoFinalNoDia, type OFXTransaction } from "@/lib/conciliacaoBancariaEngine";
+import { parseOFX, parseSaldoFinalOFX, parseFimPeriodoOFX, dataDoSaldoFinal, saldoFinalNoDia, type OFXTransaction } from "@/lib/conciliacaoBancariaEngine";
 import { linhasDoFluxoParaConciliacao, processarConciliacao } from "@/lib/conciliacaoCalculo";
 import { buscarEmpresasPagadoras, type ConciliacaoFluxoCaixaArquivo, type ConciliacaoFluxoCaixaSalva } from "@/hooks/useConciliacaoFluxoCaixa";
 import { aplicarEmpresaPagadora, mapaEmpresaPagadora } from "@/lib/conciliacaoEmpresaPagadora";
@@ -116,11 +116,14 @@ async function carregarSaldoFinalUma(c: ConciliacaoFluxoCaixaSalva): Promise<boo
 
   const trns: OFXTransaction[] = [];
   let saldo: { valor: number; data: string | null } | null = null;
+  let fimDosArquivos: string | null = null;
   for (const a of lista) {
     const { data: blob, error } = await supabase.storage.from(BUCKET).download(a.storage_path);
     if (error || !blob) throw new Error(`não consegui abrir ${a.nome_arquivo}: ${error?.message ?? "arquivo vazio"}`);
     const texto = await blob.text();
     trns.push(...parseOFX(texto, a.nome_arquivo));
+    const fimArq = parseFimPeriodoOFX(texto);
+    if (fimArq && (!fimDosArquivos || fimArq > fimDosArquivos)) fimDosArquivos = fimArq;
     const sf = parseSaldoFinalOFX(texto);
     if (sf && (!saldo || (sf.data ?? "") >= (saldo.data ?? ""))) saldo = sf;
   }
@@ -128,7 +131,7 @@ async function carregarSaldoFinalUma(c: ConciliacaoFluxoCaixaSalva): Promise<boo
   const valor = saldoFinalNoDia(saldo, trns, c.data_fim);
   const { data, error } = await (supabase as any)
     .from("financeiro_conciliacao_fluxo_caixa")
-    .update({ saldo_final_extrato: valor, saldo_final_extrato_data: saldo.data && saldo.data > c.data_fim ? c.data_fim : saldo.data })
+    .update({ saldo_final_extrato: valor, saldo_final_extrato_data: dataDoSaldoFinal(saldo, trns, c.data_fim, fimDosArquivos) })
     .eq("id", c.id)
     .select("id");
   if (error) {
@@ -156,6 +159,24 @@ export function useCarregarSaldoFinalConciliacoes() {
         }
       }
       return { ok, semSaldo, erros };
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: [KEY] }),
+  });
+}
+
+// Saldo final do extrato digitado à mão numa conciliação já salva (arquivo sem saldo, como o Mentore, ou saldo de outra data). A data gravada
+// é o fim do período: quem digita está informando o saldo daquele dia. Valor vazio apaga e volta a "não informado".
+export function useSalvarSaldoFinalManual() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ conciliacaoId, valor, dataFim }: { conciliacaoId: string; valor: number | null; dataFim: string }) => {
+      const { data, error } = await (supabase as any)
+        .from("financeiro_conciliacao_fluxo_caixa")
+        .update({ saldo_final_extrato: valor, saldo_final_extrato_data: valor == null ? null : dataFim })
+        .eq("id", conciliacaoId)
+        .select("id");
+      if (error) throw error;
+      if (!data || data.length === 0) throw new Error("Sem permissão para atualizar (ação Alterar em Conciliação Bancária).");
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: [KEY] }),
   });
