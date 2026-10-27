@@ -71,6 +71,7 @@ export interface DashboardComprasEstoqueDados {
   menos_movimentados: ItemMovimentado[];
   estoque_detalhado: {
     item: string;
+    codigo: string | null;
     categoria: string;
     disponivel: number;
     reservado: number;
@@ -89,6 +90,7 @@ export interface DashboardComprasEstoqueDados {
 
 export interface ItemMovimentado {
   item: string;
+  codigo: string | null;
   categoria: string;
   quantidade: number;
   valor_total: number;
