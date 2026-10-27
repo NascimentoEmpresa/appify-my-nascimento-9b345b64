@@ -109,7 +109,8 @@ export function useEfetDiaristas(ini: string | null = null, fim: string | null =
 }
 
 /** Previsto da Planilha de Custo por contrato, na chave Empresa+Filial (mig 20261026000090) — o mesmo do Ativos/Contratos. */
-export interface PrevistoPlanilha { empresa: number; filial: number; contrato_id: string; contrato: string; previsto: number }
+/** previsto = Planilha de Custo; implantado = o que a Licitação registrou como de fato implantado (mig 20261027000020; ausente = banco antigo). */
+export interface PrevistoPlanilha { empresa: number; filial: number; contrato_id: string; contrato: string; previsto: number; implantado?: number }
 
 export function useEfetPrevistoPlanilha() {
   return useQuery({

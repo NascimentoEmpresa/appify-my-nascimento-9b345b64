@@ -13,6 +13,12 @@
 // escala esperava no dia virou "Escalados hoje" — é a base da efetividade.
 // E a coluna "Fora de escala": presente com a 1ª batida a mais de 1h do
 // início da escala (foraDaEscala, src/lib/efetividade.ts).
+//
+// 27/10/2026 (chamado da Operação: "o que deve aparecer para os supervisores
+// é o que de fato foi implantado, não o previsto"): a coluna passa a ser o
+// IMPLANTADO — registrado pela Licitação em Contratos › Implantação, igual
+// ao previsto enquanto ninguém registrar. O previsto aparece ao lado só
+// quando difere, e os dois vão no CSV.
 // =====================================================================
 import { useMemo } from "react";
 import { Link, useNavigate } from "react-router-dom";
@@ -70,6 +76,7 @@ export default function PainelDia() {
         return {
           ...x, contrato: d.contratoMap.get(x.chave), status: statusContrato(x),
           previstoPlanilha: previstoPlanilha.get(x.chave)?.previsto ?? null,
+          implantado: (() => { const p = previstoPlanilha.get(x.chave); return p ? Number(p.implantado ?? p.previsto) : null; })(),
           foraEscala, presentesEscala, cobertas, descobertasEscala,
           pendentes: x.previsto - presentesEscala - foraEscala - cobertas - descobertasEscala,
         };
@@ -101,8 +108,8 @@ export default function PainelDia() {
   const contratosDescobertos = porContrato.filter((x) => x.descobertos > 0).length;
 
   const exportar = () => baixarCsv(`efetividade_${d.data}.csv`, [
-    ["Contrato", "Previsto (planilha)", "Escalados hoje", "Presentes na escala", "Fora de escala", "Coberturas", "Em andamento", "Descobertos", "Faltas", "Atestados", "Afastamentos", "Férias", "Efetividade", "Status", "Sem registro de ponto"],
-    ...porContrato.map((x) => [x.contrato?.nome ?? x.chave, x.previstoPlanilha ?? "", x.previsto, x.presentesEscala, x.foraEscala, x.cobertas, x.pendentes, x.descobertasEscala,
+    ["Contrato", "Previsto (planilha)", "Implantado", "Escalados hoje", "Presentes na escala", "Fora de escala", "Coberturas", "Em andamento", "Descobertos", "Faltas", "Atestados", "Afastamentos", "Férias", "Efetividade", "Status", "Sem registro de ponto"],
+    ...porContrato.map((x) => [x.contrato?.nome ?? x.chave, x.previstoPlanilha ?? "", x.implantado ?? "", x.previsto, x.presentesEscala, x.foraEscala, x.cobertas, x.pendentes, x.descobertasEscala,
       x.faltas, x.atestados, x.afastamentos, x.ferias, x.aguardandoApuracao ? "aguardando apuração" : pct(x.efetividade), x.status, x.semRegistro]),
   ]);
 
@@ -143,7 +150,7 @@ export default function PainelDia() {
                   <thead className="sticky top-0 bg-muted/70 text-xs backdrop-blur">
                     <tr>
                       <th className="p-2 text-left">Contrato</th>
-                      <th className="p-2" title="Vagas da Planilha de Custo — a mesma conta do RH › Ativos/Contratos">Previsto</th>
+                      <th className="p-2" title="Postos de fato implantados (Licitação › Contratos › Implantação; sem registro, igual às vagas da Planilha de Custo) — a mesma conta do RH › Ativos/Contratos">Implantado</th>
                       <th className="p-2" title="Quem a escala esperava neste dia = Presentes + Fora de escala + Coberturas + Em andamento + Descobertos — a base da efetividade">Escalados hoje</th>
                       <th className="p-2" title="Presentes dentro da escala (1ª batida até 1h do início)">Presentes</th>
                       <th className="p-2" title="Presentes com a 1ª batida a mais de 1h do início da escala">Fora de escala</th>
@@ -160,7 +167,11 @@ export default function PainelDia() {
                           <p className="truncate font-semibold text-primary" title={x.contrato?.nome}>{x.contrato?.nome ?? x.chave}</p>
                           {!!x.contrato?.encarregados.length && <p className="truncate text-[11px] text-muted-foreground">{x.contrato.encarregados.map((e) => e.nome).join(", ")}</p>}
                         </td>
-                        <td className="p-2 text-center tabular-nums">{x.previstoPlanilha ?? <span className="text-muted-foreground" title="Sem Planilha de Custo ligada a este contrato">—</span>}</td>
+                        <td className="whitespace-nowrap p-2 text-center tabular-nums">
+                          {x.implantado == null ? <span className="text-muted-foreground" title="Sem Planilha de Custo ligada a este contrato">—</span>
+                            : x.implantado === Number(x.previstoPlanilha) ? x.implantado
+                            : <span title={`Previsto na Planilha de Custo: ${x.previstoPlanilha}`}>{x.implantado}<span className="ml-1 text-[10px] text-muted-foreground">/ {x.previstoPlanilha} prev.</span></span>}
+                        </td>
                         <td className="p-2 text-center tabular-nums">{x.previsto}</td>
                         <td className="p-2 text-center tabular-nums text-success">{x.presentesEscala}</td>
                         <td className={cn("p-2 text-center tabular-nums", x.foraEscala ? "font-semibold text-warning" : "text-muted-foreground")}>{x.foraEscala}</td>

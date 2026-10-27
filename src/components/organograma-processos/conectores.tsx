@@ -16,6 +16,9 @@ export interface Ligacao {
   seta?: boolean;
   /** "baixo" sai da base e chega no topo; "lado" sai da direita e chega na esquerda. */
   sentido?: "baixo" | "lado" | "cima";
+  /** Dobra numa ALTURA FIXA em vez de proporcional: data-no de uma faixa e a fração (0–1) dentro dela.
+   *  Linhas que vão ao mesmo destino dobram na mesma altura e viram um "barramento" só (27/10/2026). */
+  faixa?: string; faixaPos?: number;
 }
 export interface Caminho { d: string; cor: string; dash?: string; largura: number; seta: boolean; chave: string }
 
@@ -27,11 +30,14 @@ export function useConectores(container: RefObject<HTMLElement>, ligacoes: Ligac
     const raiz = container.current;
     if (!raiz) return;
     const base = raiz.getBoundingClientRect();
-    const rect = (k: string) => {
-      const el = raiz.querySelector(`[data-no="${CSS.escape(k)}"]`) as HTMLElement | null;
+    // Dentro de um canvas com zoom (transform: scale) o getBoundingClientRect
+    // vem escalado; divide pela escala para voltar às coordenadas do contêiner.
+    const k = raiz.offsetWidth ? base.width / raiz.offsetWidth : 1;
+    const rect = (chave: string) => {
+      const el = raiz.querySelector(`[data-no="${CSS.escape(chave)}"]`) as HTMLElement | null;
       if (!el) return null;
       const r = el.getBoundingClientRect();
-      return { x: r.left - base.left, y: r.top - base.top, w: r.width, h: r.height };
+      return { x: (r.left - base.left) / k, y: (r.top - base.top) / k, w: r.width / k, h: r.height / k };
     };
     const out: Caminho[] = [];
     ligacoes.forEach((l, i) => {
@@ -48,7 +54,8 @@ export function useConectores(container: RefObject<HTMLElement>, ligacoes: Ligac
         d = `M${x1},${y1} V${ym} H${x2} V${y2 + (l.seta ? 2 : 0)}`;
       } else {
         const x1 = a.x + a.w / 2 + (l.dx1 ?? 0), y1 = a.y + a.h, x2 = b.x + b.w / 2 + (l.dx2 ?? 0), y2 = b.y;
-        const ym = y1 + (y2 - y1) * (l.dobra ?? 0.5);
+        const f = l.faixa ? rect(l.faixa) : null;
+        const ym = f ? f.y + f.h * (l.faixaPos ?? 0.5) : y1 + (y2 - y1) * (l.dobra ?? 0.5);
         d = `M${x1},${y1} V${ym} H${x2} V${y2 - (l.seta ? 2 : 0)}`;
       }
       out.push({ d, cor: l.cor, dash: l.dash, largura: l.largura ?? 1.6, seta: !!l.seta, chave: `${l.de}>${l.para}>${i}` });
