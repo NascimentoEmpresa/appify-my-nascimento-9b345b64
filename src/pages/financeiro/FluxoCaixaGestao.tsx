@@ -117,6 +117,9 @@ interface RateioDetalheItem {
 
 // SIS-2026-0742: rateio de despesa do Malote com mais de uma classificação — uma cota por contrato + classificação (só para exibir;
 // o rateioDetalhe, por contrato, continua o que a troca de contrato e a exportação usam).
+// Filtro "Sem contrato / Sem classificação": as linhas que na tela mostram "—" nesses campos.
+const FILTRO_SEM_VALOR = "__sem";
+
 interface CotaClassificacao {
   id: string;
   contrato: string;
@@ -524,8 +527,8 @@ export default function FluxoCaixaGestao() {
       if (competencia && l.competencia?.slice(0, 7) !== competencia) return false;
       if (empresaId && l.empresa_id !== empresaId) return false;
       if (origemFiltro && !linhaDaOrigemDoCard(l, origemFiltro)) return false;
-      if (contratoId && l.contrato_id !== contratoId) return false;
-      if (classificacaoId && l.classificacao_id !== classificacaoId && !l.classificacoesIds?.includes(classificacaoId)) return false;
+      if (contratoId === FILTRO_SEM_VALOR ? !!l.contrato_nome : contratoId && l.contrato_id !== contratoId) return false;
+      if (classificacaoId === FILTRO_SEM_VALOR ? !!l.classificacao_nome : classificacaoId && l.classificacao_id !== classificacaoId && !l.classificacoesIds?.includes(classificacaoId)) return false;
       if (formaPagamento && l.forma_pagamento !== formaPagamento) return false;
       if (bancoId && l.banco_id !== bancoId) return false;
       if (soInconsistentes && !l.inconsistencia) return false;
@@ -579,8 +582,8 @@ export default function FluxoCaixaGestao() {
       if (fx.competencia && l.competencia?.slice(0, 7) !== fx.competencia) return false;
       if (fx.empresaId && l.empresa_id !== fx.empresaId) return false;
       if (fx.bancoId && l.banco_id !== fx.bancoId) return false;
-      if (fx.contratoId && !linhaTemContrato(l, fx.contratoId)) return false;
-      if (fx.classificacaoId && l.classificacao_id !== fx.classificacaoId && !l.classificacoesIds?.includes(fx.classificacaoId)) return false;
+      if (fx.contratoId === FILTRO_SEM_VALOR ? !!l.contrato_nome : fx.contratoId && !linhaTemContrato(l, fx.contratoId)) return false;
+      if (fx.classificacaoId === FILTRO_SEM_VALOR ? !!l.classificacao_nome : fx.classificacaoId && l.classificacao_id !== fx.classificacaoId && !l.classificacoesIds?.includes(fx.classificacaoId)) return false;
       if (fx.formaPagamento && l.forma_pagamento !== fx.formaPagamento) return false;
       if (fx.tipo !== "todos" && l.tipo !== fx.tipo) return false;
       if (fx.origem !== "todas" && l.origem !== fx.origem) return false;
@@ -601,7 +604,7 @@ export default function FluxoCaixaGestao() {
       toast.error("Não há lançamentos para exportar com essas opções.");
       return;
     }
-    const nomeDe = (lista: [string, string][], id: string) => lista.find(([i]) => i === id)?.[1] ?? "";
+    const nomeDe = (lista: [string, string][], id: string) => (id === FILTRO_SEM_VALOR ? "Sem (—)" : lista.find(([i]) => i === id)?.[1] ?? "");
     const dia = (iso: string | null) => (iso ? iso.slice(0, 10).split("-").reverse().join("/") : "");
     const mesAno = (iso: string | null) => (iso ? `${iso.slice(5, 7)}/${iso.slice(0, 4)}` : "");
     const linhasPlanilha = [...linhasPlanilhaBase]
@@ -770,6 +773,7 @@ export default function FluxoCaixaGestao() {
                 <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="__todos">Todos</SelectItem>
+                  <SelectItem value={FILTRO_SEM_VALOR}>Sem contrato (—)</SelectItem>
                   {contratosDisponiveis.map(([id, nome]) => <SelectItem key={id} value={id}>{nome}</SelectItem>)}
                 </SelectContent>
               </Select>
@@ -780,6 +784,7 @@ export default function FluxoCaixaGestao() {
                 <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="__todas">Todas</SelectItem>
+                  <SelectItem value={FILTRO_SEM_VALOR}>Sem classificação (—)</SelectItem>
                   {classificacoesDisponiveis.map(([id, nome]) => <SelectItem key={id} value={id}>{nome}</SelectItem>)}
                 </SelectContent>
               </Select>
@@ -1024,6 +1029,7 @@ export default function FluxoCaixaGestao() {
                 <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="todos">Todos</SelectItem>
+                  <SelectItem value={FILTRO_SEM_VALOR}>Sem contrato (—)</SelectItem>
                   {contratosDisponiveis.map(([id, nome]) => (
                     <SelectItem key={id} value={id}>{nome}</SelectItem>
                   ))}
@@ -1050,6 +1056,7 @@ export default function FluxoCaixaGestao() {
                 <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="todas">Todas</SelectItem>
+                  <SelectItem value={FILTRO_SEM_VALOR}>Sem classificação (—)</SelectItem>
                   {classificacoesDisponiveis.map(([id, nome]) => (
                     <SelectItem key={id} value={id}>{nome}</SelectItem>
                   ))}
