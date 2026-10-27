@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { supabase } from "@/integrations/supabase/client";
-import { desempacotar, type DadosDashboard } from "@/lib/recrutamento/dashboardRecrutamento";
+import { desempacotar, desempacotarPassagens, type DadosDashboard, type PassagemResponsavel } from "@/lib/recrutamento/dashboardRecrutamento";
 
 const sb = supabase as unknown as SupabaseClient;
 
@@ -24,5 +24,23 @@ export function useDashboardRecrutamento() {
     staleTime: 60_000,
     refetchInterval: 5 * 60_000,
     refetchOnWindowFocus: true,
+  });
+}
+
+/**
+ * Tempo em cada status por responsável (mig 20261027000920): as passagens
+ * de status no período, com quem segurava a vaga. Banco ainda sem a RPC →
+ * lista vazia (a seção mostra só o "parado agora").
+ */
+export function useTempoStatusResponsavel(faixa: [string | null, string | null]) {
+  return useQuery({
+    queryKey: ["recrut_tempo_status_responsavel", faixa[0], faixa[1]],
+    queryFn: async (): Promise<PassagemResponsavel[]> => {
+      const { data, error } = await sb.rpc("recrut_tempo_status_responsavel", { _de: faixa[0], _ate: faixa[1] });
+      if (error) return [];
+      return desempacotarPassagens(data);
+    },
+    staleTime: 60_000,
+    refetchInterval: 5 * 60_000,
   });
 }
