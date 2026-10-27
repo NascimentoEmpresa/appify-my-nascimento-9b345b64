@@ -10,7 +10,6 @@ interface Linha {
   valor: number;
   destaque?: boolean;
   aviso?: boolean;
-  nota?: string;
 }
 
 function CardNatureza({
@@ -41,8 +40,7 @@ function CardNatureza({
         <p className={cn("relative z-10 mt-1 text-2xl font-bold", corValor)}>{formatBRL(total)}</p>
         <div className="relative z-10 mt-3 space-y-1.5 border-t pt-2">
           {linhas.map((l) => (
-            <div key={l.rotulo}>
-            <div className={cn("flex items-baseline justify-between gap-3 text-xs", l.aviso && "text-amber-700 dark:text-amber-400")}>
+            <div key={l.rotulo} className={cn("flex items-baseline justify-between gap-3 text-xs", l.aviso && "text-amber-700 dark:text-amber-400")}>
               <span className={cn("min-w-0", l.destaque ? "font-semibold" : "text-muted-foreground", l.aviso && "font-medium")}>{l.rotulo}</span>
               <span className="flex shrink-0 items-baseline gap-2">
                 <span className={cn("tabular-nums", l.destaque && "font-semibold", l.valor < 0 && "text-red-600 dark:text-red-400")}>{formatBRL(l.valor)}</span>
@@ -50,8 +48,6 @@ function CardNatureza({
                   <span className="w-12 text-right text-[10px] text-muted-foreground">{((l.valor / percentualDe) * 100).toFixed(2).replace(".", ",")}%</span>
                 )}
               </span>
-            </div>
-            {l.nota && <p className="text-[10px] leading-tight text-muted-foreground">{l.nota}</p>}
             </div>
           ))}
           <div className="flex items-baseline justify-between gap-3 border-t pt-1.5 text-xs font-semibold">
@@ -64,14 +60,10 @@ function CardNatureza({
   );
 }
 
-const grupos = (t: TotaisPorGrupo, nomes: { livre: string; vinc: string; cdb: string }, viaTexto = 0): Linha[] => {
+const grupos = (t: TotaisPorGrupo, nomes: { livre: string; vinc: string; cdb: string }): Linha[] => {
   const l: Linha[] = [
     { rotulo: nomes.livre, valor: t.livre },
-    {
-      rotulo: nomes.vinc,
-      valor: t.conta_vinculada,
-      nota: viaTexto > 0.004 ? `${formatBRL(viaTexto)} identificados pelo banco/descrição "conta vinculada" (sem classificação mapeada)` : undefined,
-    },
+    { rotulo: nomes.vinc, valor: t.conta_vinculada },
     { rotulo: nomes.cdb, valor: t.cdb },
   ];
   if (Math.abs(t.semNatureza) > 0.004) l.push({ rotulo: "Sem natureza definida", valor: t.semNatureza, aviso: true });
@@ -107,7 +99,7 @@ export function CardsPorNatureza({
           total={totais.entradas.total}
           cor="emerald"
           icone={<TrendingUp />}
-          linhas={grupos(totais.entradas, { livre: "Conta movimento (livre utilização)", vinc: "Conta vinculada", cdb: "Aplicações em CDB (resgates)" }, totais.contaVinculadaPorTexto.entradas)}
+          linhas={grupos(totais.entradas, { livre: "Conta movimento (livre utilização)", vinc: "Conta vinculada", cdb: "Aplicações em CDB (resgates)" })}
           totalRotulo="Total de entradas"
           percentualDe={totais.entradas.total}
           onClick={() => onAbrirKpi("entradas")}
@@ -117,7 +109,7 @@ export function CardsPorNatureza({
           total={totais.saidas.total}
           cor="red"
           icone={<TrendingDown />}
-          linhas={grupos(totais.saidas, { livre: "Conta movimento (livre utilização)", vinc: "Saídas de conta vinculada", cdb: "Aplicações em CDB" }, totais.contaVinculadaPorTexto.saidas)}
+          linhas={grupos(totais.saidas, { livre: "Conta movimento (livre utilização)", vinc: "Saídas de conta vinculada", cdb: "Aplicações em CDB" })}
           totalRotulo="Total de saídas"
           percentualDe={totais.saidas.total}
           onClick={() => onAbrirKpi("saidas")}
