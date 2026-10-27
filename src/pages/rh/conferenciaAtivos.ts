@@ -21,8 +21,16 @@
 
 export interface PostoPlanilha {
   nome: string;
+  /** Previsto: QT. PESSOAS da planilha. */
   vagas: number;
+  /** Implantado de fato (Licitação › Contratos › Implantação, mig
+   *  20261027000010); sem registro = igual às vagas. Ausente = banco antigo. */
+  implantado?: number;
+  implantado_registrado?: boolean;
 }
+
+/** A base do saldo: o implantado; sem ele, o previsto. */
+export const implantadoDe = (p: PostoPlanilha) => Number(p.implantado ?? p.vagas ?? 0) || 0;
 
 export interface PessoaContrato {
   id: number;
@@ -200,10 +208,13 @@ export const situacaoDe = (saldo: number): Situacao => (saldo === 0 ? "ok" : sal
 
 export interface ConferenciaPosto {
   nome: string;
+  /** Planilha de Custo (assinatura do contrato). */
   previsto: number;
+  /** O que de fato está implantado — a base do saldo (27/10/2026). */
+  implantado: number;
   /** Pessoas no posto que contam (trabalhando). */
   tem: number;
-  /** tem − previsto (negativo = falta gente). */
+  /** tem − implantado (negativo = falta gente). */
   saldo: number;
   situacao: Situacao;
   /** Todos no posto, inclusive afastados. */
@@ -227,6 +238,7 @@ export interface ConferenciaContrato {
   semPosto: number;
   fora: PessoaContrato[];
   previsto: number;
+  implantado: number;
   /** Todos que contam no contrato (com ou sem posto definido). */
   tem: number;
   saldo: number;
@@ -296,9 +308,12 @@ export function conferirContrato(cOriginal: ContratoAtivos): ConferenciaContrato
   const postos: ConferenciaPosto[] = c.postos.map((pl) => {
     const pessoas = (noPosto.get(pl.nome) ?? []).slice().sort(porNome);
     const tem = pessoas.filter((p) => p.conta).length;
-    const saldo = tem - (pl.vagas || 0);
+    // 27/10/2026: o saldo é contra o IMPLANTADO — posto que o tomador pediu
+    // para não implantar não é falta de gente.
+    const implantado = implantadoDe(pl);
+    const saldo = tem - implantado;
     return {
-      nome: pl.nome, previsto: pl.vagas || 0, tem, saldo, situacao: situacaoDe(saldo),
+      nome: pl.nome, previsto: pl.vagas || 0, implantado, tem, saldo, situacao: situacaoDe(saldo),
       pessoas, afastados: pessoas.filter((p) => !p.conta),
     };
   }).sort(porNome);
@@ -314,15 +329,16 @@ export function conferirContrato(cOriginal: ContratoAtivos): ConferenciaContrato
     .sort((a, b) => b.pessoas.length - a.pessoas.length || a.posto_senior.localeCompare(b.posto_senior, "pt-BR"));
 
   const previsto = postos.reduce((s, p) => s + p.previsto, 0);
+  const implantado = postos.reduce((s, p) => s + p.implantado, 0);
   const tem = dentro.filter((p) => p.conta).length;
-  const saldo = tem - previsto;
+  const saldo = tem - implantado;
 
   return {
     postos,
     pendentes,
     semPosto: pendentes.reduce((s, p) => s + p.pessoas.length, 0),
     fora: c.pessoas.filter((p) => p.fora).sort(porNome),
-    previsto, tem, saldo,
+    previsto, implantado, tem, saldo,
     situacao: situacaoDe(saldo),
     falta: postos.reduce((s, p) => s + Math.max(0, -p.saldo), 0),
     sobra: postos.reduce((s, p) => s + Math.max(0, p.saldo), 0),
