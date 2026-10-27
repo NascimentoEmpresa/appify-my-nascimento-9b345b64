@@ -350,14 +350,21 @@ export function PainelDespesaMalote({
 
   // [SEM-CHAMADO] Cartão com Fluxo Especial: Data de Pagamento = dia do lançamento e Competência = mês de hoje, sem exceção
   // (a compra já foi feita). Ver cartaoEspecial.ts.
-  const cartaoEspecial = useCartaoEspecialDaForma(formaPagamento);
+  const cartaoEspecial = useCartaoEspecialDaForma(formaPagamento, empresaId);
   const exigeExcecao = !cartaoEspecial && !!dataPagamento && !!prazoNormal && dataPagamento < prazoNormal;
+  // Despesa PARCELADA no cartão: a 1ª parcela vence no vencimento da fatura em que a compra cai (e o dia do desconto das seguintes é o dia
+  // de vencimento do cartão). À vista continua pagando no dia do lançamento. Sem os dias do cartão, mantém a data de hoje.
+  const vencimentoDaFatura = parcelado === "sim" ? cartaoEspecial?.proximoVencimento ?? null : null;
   useEffect(() => {
     if (!cartaoEspecial) return;
-    setDataPagamento(cartaoEspecial.dataPagamento);
+    setDataPagamento(vencimentoDaFatura ?? cartaoEspecial.dataPagamento);
     setCompetencia(cartaoEspecial.competencia);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cartaoEspecial?.dataPagamento]);
+  }, [cartaoEspecial?.dataPagamento, vencimentoDaFatura]);
+  useEffect(() => {
+    if (vencimentoDaFatura && cartaoEspecial?.diaVencimento) setDiaDesconto(String(Math.min(cartaoEspecial.diaVencimento, 30)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [vencimentoDaFatura, cartaoEspecial?.diaVencimento]);
   const hoje = useMemo(() => new Date().toLocaleDateString("sv-SE"), []);
 
   // SIS-2026-0361: sugere o Dia do desconto a partir da Data de pagamento
@@ -708,8 +715,11 @@ export function PainelDespesaMalote({
           </div>
           {cartaoEspecial && (
             <p className="text-xs text-muted-foreground">
-              Cartão com Fluxo Especial ({cartaoEspecial.rotulo}): a Data de Pagamento é o dia do lançamento
-              ({cartaoEspecial.dataPagamento.split("-").reverse().join("/")}) e não pede exceção; vai direto ao aprovador do Fluxo Especial.
+              Cartão com Fluxo Especial ({cartaoEspecial.rotulo}):{" "}
+              {vencimentoDaFatura
+                ? `como a despesa é parcelada, a 1ª parcela vence no próximo vencimento da fatura (${vencimentoDaFatura.split("-").reverse().join("/")}) e as seguintes no dia ${cartaoEspecial.diaVencimento} dos meses seguintes`
+                : `a Data de Pagamento é o dia do lançamento (${cartaoEspecial.dataPagamento.split("-").reverse().join("/")})`}
+              {" "}e não pede exceção; vai direto ao aprovador do Fluxo Especial.
             </p>
           )}
           <ExcecaoSenhaField
@@ -865,7 +875,7 @@ export function PainelDespesaMalote({
                               </span>
                             )}
                             {primeira ? (
-                              <span className="text-xs text-muted-foreground">{p.data_vencimento} · Data de pagamento</span>
+                              <span className="text-xs text-muted-foreground">{p.data_vencimento.split("-").reverse().join("/")} · Data de pagamento</span>
                             ) : (
                               <>
                                 <Input
