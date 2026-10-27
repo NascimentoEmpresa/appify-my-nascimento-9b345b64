@@ -57,7 +57,10 @@ interface LinhaConclusao {
   status: StatusExecucao;
   observacao: string;
   adicional: boolean;
-  /** PR sem chamado no título ([SEM-CHAMADO]) — só como linha adicional. */
+  /**
+   * PR sem chamado no título ([SEM-CHAMADO]). Vem como linha adicional ou,
+   * desde 26/10/2026, como a linha planejada da HE emergencial sem chamado.
+   */
   sem_chamado: boolean;
   pr_texto: string;
   pr_numero: number | null;
@@ -218,9 +221,19 @@ export default function ConcluirHoraExtraDialog({
       // O chamado planejado precisa de uma PR DELE. PR de outro chamado, uma
       // segunda PR do mesmo chamado ou PR sem chamado entram pelo "Adicionar
       // Chamado" — o mesmo chamado pode ter quantas linhas (PRs) precisar.
-      if (grupo === "originais" && !dados.chamado) {
+      // Na HE emergencial sem chamado (26/10/2026) é o contrário: a linha
+      // planejada já nasce sem chamado e espera justamente uma PR
+      // [SEM-CHAMADO]. PR COM chamado é que não cabe nela — entra pelo
+      // "Adicionar Chamado", como qualquer chamado fora da solicitação.
+      if (grupo === "originais" && !linha.sem_chamado && !dados.chamado) {
         throw new Error(
           `A PR #${numeroPr} não tem chamado no título. PR sem chamado entra como linha adicional (botão Adicionar Chamado).`,
+        );
+      }
+      if (grupo === "originais" && linha.sem_chamado && dados.chamado) {
+        throw new Error(
+          `A PR #${numeroPr} tem o chamado #${dados.chamado.numero} no título, e esta HE foi aberta como ` +
+            "emergencial sem chamado. Inclua essa PR pelo botão Adicionar Chamado.",
         );
       }
       if (grupo === "originais" && dados.chamado && dados.chamado.id !== linha.chamado_id) {
@@ -701,12 +714,14 @@ function TabelaRelatorioPr({
               </td>
               <td className="p-2 text-center font-medium tabular-nums">{l.pr_url ? l.pr_commits ?? 0 : "—"}</td>
               <td className="p-2">
-                {l.sem_chamado && l.pr_url ? (
+                {l.sem_chamado ? (
                   <>
                     <div className="font-semibold text-slate-500">Sem chamado</div>
-                    <div className="max-w-56 truncate text-slate-500" title={l.assunto}>
-                      {l.assunto}
-                    </div>
+                    {l.assunto && (
+                      <div className="max-w-56 truncate text-slate-500" title={l.assunto}>
+                        {l.assunto}
+                      </div>
+                    )}
                   </>
                 ) : l.numero ? (
                   <>
