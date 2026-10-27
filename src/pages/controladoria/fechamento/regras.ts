@@ -53,6 +53,18 @@ export function socioDoContrato(nome: string | null | undefined): string | null 
   return nomeSocio || null;
 }
 
+// SIS-2026-0744: contratos "INVESTIMENTOS <empresa>" (INVESTIMENTOS AGPS, HAGG, SN…) recebem o mesmo tratamento das despesas dos sócios: a saída fica
+// fora do Resultado Final e entra numa coluna própria, "Investimentos", antes do Lucro Líquido Final. Casa pelo INÍCIO do nome, sem acento e sem caixa.
+export const ROTULO_INVESTIMENTOS = "Investimentos";
+export function ehContratoInvestimento(nome: string | null | undefined): boolean {
+  return (nome ?? "").normalize("NFD").replace(/[̀-ͯ]/g, "").trim().toUpperCase().startsWith("INVESTIMENTO");
+}
+
+// Ordem das colunas da aba com sócios: os sócios em ordem alfabética e "Investimentos" por último (logo antes do Lucro Líquido Final).
+export function ordenarColunasSocios(nomes: string[]): string[] {
+  return [...nomes].sort((a, b) => Number(a === ROTULO_INVESTIMENTOS) - Number(b === ROTULO_INVESTIMENTOS) || a.localeCompare(b, "pt-BR"));
+}
+
 /** sócio → mês ("YYYY-MM") → total de despesa lançada no Fluxo (todas as saídas do contrato do sócio, qualquer classificação). */
 export function despesasDosSocios(
   linhas: LinhaFluxoCusto[],
