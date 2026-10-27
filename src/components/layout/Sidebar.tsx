@@ -759,6 +759,9 @@ const encarregadosModule: ModuleDef = {
         // seu próprio item acima, e a rota continua de pé (o Início e os
         // redirecionamentos do Jurídico ainda apontam para ela).
         { label: "Solicitar Materiais", to: "/app/encarregados/solicitar-materiais", icon: Shirt },
+        // Mesma solicitação de manutenção da Central de Serviços, com menu
+        // próprio para que o encarregado a encontre no módulo em que trabalha.
+        { label: "Solicitar Manutenção de Equipamento", to: "/app/encarregados/solicitar-manutencao-equipamento", icon: Wrench },
         // "Meus Pedidos" era ambíguo ao lado de "Minhas Solicitações": o
         // encarregado não distingue pedido de solicitação. O rótulo agora diz
         // de que são.

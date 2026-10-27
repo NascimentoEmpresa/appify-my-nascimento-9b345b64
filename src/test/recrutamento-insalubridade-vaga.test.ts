@@ -1,5 +1,11 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { insalubridadeDoCusto, notaDoCusto, type CustoPosto } from "@/lib/recrutamento/custoPosto";
+
+const migration = readFileSync(
+  "supabase/migrations/20261026000899_rh_prepara_vagas_insalubridade.sql",
+  "utf8",
+);
 
 // Solicitar Nova Vaga › Insalubridade (20/10/2026). Caso real: MONICA DOS
 // SANTOS MEDEIROS, 20% de insalubridade no cadastro (Senior), posto "AE VILA
@@ -44,5 +50,15 @@ describe("insalubridade da vaga", () => {
   it("o aviso diz que a insalubridade veio do cadastro", () => {
     expect(notaDoCusto({ ...custo(0), casou_salario: true } as CustoPosto, "cadastro", "AE VILA DOS COMERCIARIOS"))
       .toContain("cadastro do colaborador na Senior");
+  });
+
+  it("prepara a correção de dados com o guard de vagas desligado só durante o UPDATE", () => {
+    const desliga = 'ALTER TABLE public."SISTEMA_RECRUTAMENTO" DISABLE TRIGGER trg_sistema_recrutamento_guard;';
+    const atualiza = 'UPDATE public."SISTEMA_RECRUTAMENTO" r';
+    const religa = 'ALTER TABLE public."SISTEMA_RECRUTAMENTO" ENABLE TRIGGER trg_sistema_recrutamento_guard;';
+
+    expect(migration.indexOf(desliga)).toBeGreaterThan(-1);
+    expect(migration.indexOf(atualiza)).toBeGreaterThan(migration.indexOf(desliga));
+    expect(migration.indexOf(religa)).toBeGreaterThan(migration.indexOf(atualiza));
   });
 });

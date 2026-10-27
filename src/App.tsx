@@ -620,6 +620,7 @@ const App = () => (
             <Route path="whatsapp/dashboard" element={<WhatsAppDashboard />} />
             <Route path="central-servicos/veiculos" element={<AgendamentoVeiculos />} />
             <Route path="central-servicos/solicitar-manutencao-equipamento" element={<SolicitarManutencaoEquipamento />} />
+            <Route path="encarregados/solicitar-manutencao-equipamento" element={<SolicitarManutencaoEquipamento />} />
             {/* Reembolso: a rota-mãe é aberta a todo colaborador (ele só vê o
                 que é dele); aprovação e configuração são gateadas por
                 AcessoGate dentro da própria tela, não por rota, para quem cai
