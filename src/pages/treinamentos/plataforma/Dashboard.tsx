@@ -1,8 +1,8 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import {
   Activity, Award, BookOpen, CheckCircle2, ClipboardCheck, LogIn, MessageSquare, Star, UserMinus,
-  UserPlus, UserX, Users, Bell, Search,
+  UserPlus, UserX, Users, Bell,
 } from "lucide-react";
 import {
   Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, ComposedChart, Legend, Line, Pie, PieChart,
@@ -12,8 +12,10 @@ import { AcessoGate } from "@/components/auth/AcessoGate";
 import { Card } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
+import { useAuth } from "@/hooks/useAuth";
 import { useTrnCursos, useTrnDashboard } from "@/hooks/useTreinamentosPlataforma";
 import { MENU, type Dashboard } from "./tipos";
+import { SeletorContratos } from "./SeletorContratos";
 import { TrnCarregando, TrnEstilo, TrnHero, TrnKpi } from "./ui";
 
 // =====================================================================
@@ -60,6 +62,20 @@ const ORDENS: { v: OrdemContrato; rotulo: string }[] = [
   { v: "nome", rotulo: "Nome (A-Z)" },
 ];
 const QTDS = ["12", "25", "50", "todos"] as const;
+
+// Contratos escolhidos no seletor (27/10/2026, pedido do Pablo: "ficar salvo
+// como padrão"). Vale por usuário e por navegador — localStorage, sem ir ao
+// banco: o ERP não tem tabela de preferência de tela e isto é conveniência,
+// não regra. Vazio = todos os contratos.
+const chaveContratosSalvos = (uid: string | undefined) => `trn-dashboard-contratos:${uid ?? "anon"}`;
+function lerContratosSalvos(chave: string): string[] {
+  try {
+    const v = JSON.parse(localStorage.getItem(chave) || "[]");
+    return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
+  } catch {
+    return [];
+  }
+}
 const num = (n: number | null | undefined) => (n ?? 0).toLocaleString("pt-BR");
 
 /**
@@ -87,6 +103,7 @@ function normaliza(d: Partial<Dashboard>): Dashboard {
 }
 
 export default function TreinamentosDashboard() {
+  const { user } = useAuth();
   const [curso, setCurso] = useState<string>("");
   const [de, setDe] = useState("");
   const [ate, setAte] = useState("");
@@ -112,25 +129,47 @@ export default function TreinamentosDashboard() {
     () => (d ? [5, 4, 3, 2, 1].map((n) => ({ nota: `${n} ★`, q: d.avaliacoes_por_nota[n - 1] ?? 0 })) : []),
     [d],
   );
-  const [ctBusca, setCtBusca] = useState("");
   const [ctFaixa, setCtFaixa] = useState<FaixaAcesso>("todas");
   const [ctOrdem, setCtOrdem] = useState<OrdemContrato>("alunos");
   const [ctQtd, setCtQtd] = useState<(typeof QTDS)[number]>("12");
-  const ctFiltrando = !!ctBusca.trim() || ctFaixa !== "todas" || ctOrdem !== "alunos" || ctQtd !== "12";
+  const ctFiltrando = ctFaixa !== "todas" || ctOrdem !== "alunos" || ctQtd !== "12";
   const todosContratos = useMemo(() => d?.por_contrato_todos ?? [], [d]);
-  // Filtrados = passam na busca e na faixa; exibidos = os N primeiros na ordem escolhida.
+  const chaveSel = chaveContratosSalvos(user?.id);
+  const [ctSel, setCtSelBruto] = useState<string[]>(() => lerContratosSalvos(chaveSel));
+  useEffect(() => { setCtSelBruto(lerContratosSalvos(chaveSel)); }, [chaveSel]);
+  // Só conta o que existe no recorte atual. Com filtro de curso, um contrato
+  // salvo pode sumir da lista — nem por isso ele sai do padrão do usuário.
+  const ctSelValida = useMemo(() => {
+    const existe = new Set(todosContratos.map((c) => c.nome));
+    return ctSel.filter((n) => existe.has(n));
+  }, [ctSel, todosContratos]);
+  const setCtSel = (visiveis: string[]) => {
+    const existe = new Set(todosContratos.map((c) => c.nome));
+    const novo = [...ctSel.filter((n) => !existe.has(n)), ...visiveis];
+    setCtSelBruto(novo);
+    try {
+      if (novo.length) localStorage.setItem(chaveSel, JSON.stringify(novo));
+      else localStorage.removeItem(chaveSel);
+    } catch { /* modo privado / quota — o filtro vale só nesta visita */ }
+  };
+  // Base = os escolhidos no seletor (ou todos); a contagem "de N" é sobre ela.
+  const baseContratos = useMemo(() => {
+    if (ctSelValida.length === 0) return todosContratos;
+    const sel = new Set(ctSelValida);
+    return todosContratos.filter((c) => sel.has(c.nome));
+  }, [todosContratos, ctSelValida]);
+  // Filtrados = passam na faixa; exibidos = os N primeiros na ordem escolhida.
+  // (A busca por texto mora dentro do seletor desde 27/10/2026.)
   const contratosFiltrados = useMemo(() => {
-    const termo = ctBusca.trim().toLocaleLowerCase("pt-BR");
     const faixa = FAIXAS.find((f) => f.v === ctFaixa) ?? FAIXAS[0];
-    const lista = todosContratos.filter((c) =>
-      (!termo || c.nome.toLocaleLowerCase("pt-BR").includes(termo)) && faixa.ok(pct(c.ativos, c.alunos)));
+    const lista = baseContratos.filter((c) => faixa.ok(pct(c.ativos, c.alunos)));
     const taxa = (c: { ativos: number; alunos: number }) => (c.alunos > 0 ? c.ativos / c.alunos : 0);
     return [...lista].sort((a, b) =>
       ctOrdem === "menor" ? taxa(a) - taxa(b) || b.alunos - a.alunos
       : ctOrdem === "maior" ? taxa(b) - taxa(a) || b.alunos - a.alunos
       : ctOrdem === "nome" ? a.nome.localeCompare(b.nome, "pt-BR")
       : b.alunos - a.alunos || a.nome.localeCompare(b.nome, "pt-BR"));
-  }, [todosContratos, ctBusca, ctFaixa, ctOrdem]);
+  }, [baseContratos, ctFaixa, ctOrdem]);
   const contratos = useMemo(
     () => (ctQtd === "todos" ? contratosFiltrados : contratosFiltrados.slice(0, Number(ctQtd))).map((c) => ({
       ...c, inativos: c.alunos - c.ativos,
@@ -395,14 +434,14 @@ export default function TreinamentosDashboard() {
                 <h3>Acesso por contrato</h3>
                 <div className="sub">
                   {ctFiltrando
-                    ? `Mostrando ${contratos.length} de ${contratosFiltrados.length} contrato(s) no filtro (${todosContratos.length} no total): quantos já entraram na plataforma.`
-                    : `Os ${contratos.length} contratos com mais alunos, de ${todosContratos.length}: quantos já entraram na plataforma.`}
+                    ? `Mostrando ${contratos.length} de ${contratosFiltrados.length} contrato(s) no filtro (${baseContratos.length} ${ctSelValida.length ? "selecionado(s)" : "no total"}): quantos já entraram na plataforma.`
+                    : `Os ${contratos.length} contratos com mais alunos, de ${baseContratos.length}${ctSelValida.length ? ` selecionado(s) (${todosContratos.length} no total)` : ""}: quantos já entraram na plataforma.`}
                 </div>
+                {/* O campo de busca virou o seletor (27/10/2026, Pablo: "deixa aqui pra
+                    selecionar os contratos que o usuário quer que apareça, não pesquisar
+                    só") — digitar continua buscando, e cada contrato/grupo se marca. */}
                 <div className="mb-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-[1.4fr_1fr_1fr_0.8fr]">
-                  <div className="relative">
-                    <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-                    <Input value={ctBusca} onChange={(e) => setCtBusca(e.target.value)} placeholder="Buscar contrato (nome ou número)" className="h-9 pl-8 text-sm" />
-                  </div>
+                  <SeletorContratos contratos={todosContratos} value={ctSelValida} onChange={setCtSel} />
                   <Select value={ctFaixa} onValueChange={(v) => setCtFaixa(v as FaixaAcesso)}>
                     <SelectTrigger className="h-9 text-sm"><SelectValue /></SelectTrigger>
                     <SelectContent>{FAIXAS.map((f) => <SelectItem key={f.v} value={f.v}>{f.rotulo}</SelectItem>)}</SelectContent>
@@ -418,12 +457,15 @@ export default function TreinamentosDashboard() {
                     </SelectContent>
                   </Select>
                 </div>
+                {ctSelValida.length > 0 && (
+                  <div className="-mt-2 mb-2 text-[11px] text-slate-400">Seleção salva: a tela abre assim da próxima vez.</div>
+                )}
                 {ctFiltrando && (
-                  <button className="mb-2 text-xs font-semibold text-primary" onClick={() => { setCtBusca(""); setCtFaixa("todas"); setCtOrdem("alunos"); setCtQtd("12"); }}>
+                  <button className="mb-2 text-xs font-semibold text-primary" onClick={() => { setCtFaixa("todas"); setCtOrdem("alunos"); setCtQtd("12"); }}>
                     Limpar filtro de contratos
                   </button>
                 )}
-                {contratos.length === 0 ? <div className="trn-vazio">{todosContratos.length === 0 ? "Sem contratos neste recorte." : "Nenhum contrato bate com o filtro."}</div> : (
+                {contratos.length === 0 ? <div className="trn-vazio">{baseContratos.length === 0 ? "Sem contratos neste recorte." : "Nenhum contrato bate com o filtro."}</div> : (
                   // Com "Todos" a lista passa de cem: rola dentro do card em vez de esticar a página.
                   <div className="max-h-[640px] overflow-y-auto pr-1">
                   <div style={{ height: 40 + contratos.length * 32 }}>

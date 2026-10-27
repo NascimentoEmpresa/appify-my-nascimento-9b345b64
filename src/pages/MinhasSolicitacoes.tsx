@@ -80,6 +80,11 @@ function badgeStatusCls(st: string) {
     // Solicitação de Treinamento (mig 20261026000910).
     "Aguardando Treinamentos": "bg-yellow-100 text-yellow-800 border-yellow-200",
     "Ajuste solicitado": "bg-orange-100 text-orange-800 border-orange-300",
+    // 27/10/2026 (mig 20261027000120): Treinamentos valida e informa a data;
+    // "Aprove a data" é a vez do encarregado — forte, para não passar batido.
+    "Aguardando validação": "bg-yellow-100 text-yellow-800 border-yellow-200",
+    "Aceita — aguardando data": "bg-sky-100 text-sky-800 border-sky-200",
+    "Aprove a data": "bg-violet-600 text-white border-violet-700",
     Agendada: "bg-indigo-100 text-indigo-700 border-indigo-200",
   };
   return m[st] ?? "bg-blue-100 text-blue-700 border-blue-200";
@@ -439,8 +444,9 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
       ...(tr.data ?? []).map((r: { id: number; protocolo: string; treinamento: string; contrato_nome: string; status: string; devolucao_motivo: string | null; created_at: string; updated_at: string }) => ({
         tipo: "Treinamento", icon: "🎓", id: r.id,
         titulo: `${r.treinamento}${r.contrato_nome ? ` — ${r.contrato_nome}` : ""}`,
-        status: r.status === "pendente" ? (r.devolucao_motivo ? "Ajuste solicitado" : "Aguardando Treinamentos")
-          : ({ aprovada: "Aprovada", agendada: "Agendada", concluida: "Concluída", reprovada: "Reprovada", cancelada: "Cancelada" } as Record<string, string>)[r.status] ?? r.status,
+        status: r.status === "pendente" ? (r.devolucao_motivo ? "Ajuste solicitado" : "Aguardando validação")
+          : ({ aprovada: "Aceita — aguardando data", data_informada: "Aprove a data", agendada: "Agendada", concluida: "Concluída",
+               reprovada: "Reprovada", cancelada: "Cancelada" } as Record<string, string>)[r.status] ?? r.status,
         data: r.created_at, statusDesde: r.updated_at || r.created_at,
         rota: `${rotas.treinamento}?s=${r.id}`,
         acao: "💬 Detalhes e chat",

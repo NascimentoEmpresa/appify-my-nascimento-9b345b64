@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useSearchParams } from "react-router-dom";
 import {
-  AlertTriangle, Bus, Building, Check, ChevronLeft, ChevronRight, ClipboardCheck, ClipboardList, Coffee, GraduationCap, Loader2, Plug, Plus, Send,
+  AlertTriangle, Building, CalendarClock, CalendarPlus, Check, ChevronLeft, ChevronRight, ClipboardCheck, ClipboardList, Coffee, GraduationCap,
+  Loader2, Plug, Plus, Send, X,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Card } from "@/components/ui/card";
@@ -14,8 +15,8 @@ import { SearchableSelect } from "@/components/ui/searchable-select";
 import { cn } from "@/lib/utils";
 import { useEnviarTreinamento, useOpcoesTreinamento, useSolicitacoesTreinamento } from "@/hooks/useSolicitacoesTreinamento";
 import {
-  CHECKLIST, DECLARACAO, ETAPAS, FORM_VAZIO, MODALIDADES, RECURSOS, STATUS_SOL_TREINAMENTO, VOLTAGENS, errosEtapa, formDaSolicitacao,
-  paraEnvio, precisaLocal, primeiraEtapaComErro, progressoChecklist, rotuloStatus, secoesFicha,
+  CHECKLIST, DECLARACAO, ETAPAS, FORM_VAZIO, MAX_DATAS, MODALIDADES, STATUS_SOL_TREINAMENTO, ULTIMA_ETAPA, VOLTAGENS, comData, errosEtapa,
+  fmtDataIso, formDaSolicitacao, paraEnvio, precisaLocal, primeiraEtapaComErro, progressoChecklist, rotuloStatus, secoesFicha,
   type FormTreinamento, type SolicitacaoTreinamento,
 } from "@/lib/treinamentos/solicitacaoTreinamento";
 import { DetalheSolicitacaoTreinamento } from "@/components/treinamentos/DetalheSolicitacaoTreinamento";
@@ -29,6 +30,12 @@ import { DetalheSolicitacaoTreinamento } from "@/components/treinamentos/Detalhe
 // encarregado confirme as informações antes do envio". O formulário segue
 // o modelo do chamado: 5 etapas (Identificação, Necessidade, Participantes,
 // Estrutura com o checklist do local, Confirmação com a declaração).
+//
+// 27/10/2026 (Pablo, mig 20261027000120): virou 4 etapas — a Estrutura entrou
+// na Necessidade; modalidade só Presencial ou Online; saíram horário de
+// início/término, "Recursos necessários" e a pergunta de transporte; a data
+// prevista aceita várias datas. Depois que Treinamentos aceita e informa a
+// data, quem pediu aprova a data ou pede outra (com motivo) — na ficha.
 //
 // Abaixo, as solicitações do encarregado com o status; clicar abre a ficha,
 // a conversa com Treinamentos e, se Treinamentos devolveu para ajuste, o
@@ -67,7 +74,7 @@ export default function SolicitarTreinamento() {
     setTentou(true);
     if (erros.length) return;
     setTentou(false);
-    setEtapa((e) => Math.min(5, e + 1));
+    setEtapa((e) => Math.min(ULTIMA_ETAPA, e + 1));
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
   const voltar = () => { setTentou(false); setEtapa((e) => Math.max(1, e - 1)); };
@@ -81,7 +88,7 @@ export default function SolicitarTreinamento() {
 
   const confirmarEnvio = async () => {
     setTentou(true);
-    if (errosEtapa(f, 5).length) return;
+    if (errosEtapa(f, ULTIMA_ETAPA).length) return;
     try {
       const r = await enviar.mutateAsync({ dados: paraEnvio(f), reenviarId });
       toast.success(reenviarId ? "Solicitação corrigida e reenviada a Treinamentos." : `Solicitação ${r.protocolo ?? ""} enviada a Treinamentos.`);
@@ -118,7 +125,7 @@ export default function SolicitarTreinamento() {
           </div>
 
           {/* Etapas */}
-          <ol className="mt-5 grid grid-cols-5 gap-1 border-b pb-4">
+          <ol className="mt-5 grid grid-cols-4 gap-1 border-b pb-4">
             {ETAPAS.map((e) => {
               const feita = e.n < etapa;
               const atual = e.n === etapa;
@@ -147,8 +154,7 @@ export default function SolicitarTreinamento() {
             {etapa === 1 && <Etapa1 f={f} set={set} opcoes={opcoes.data} carregando={opcoes.isLoading} />}
             {etapa === 2 && <Etapa2 f={f} set={set} />}
             {etapa === 3 && <Etapa3 f={f} set={set} />}
-            {etapa === 4 && <Etapa4 f={f} set={set} />}
-            {etapa === 5 && <Etapa5 f={f} set={set} nome={opcoes.data?.eu.nome ?? null} />}
+            {etapa === 4 && <EtapaConfirmacao f={f} set={set} nome={opcoes.data?.eu.nome ?? null} />}
 
             {tentou && erros.length > 0 && (
               <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
@@ -158,7 +164,7 @@ export default function SolicitarTreinamento() {
 
             <div className="flex items-center justify-between pt-2">
               <Button variant="outline" className="rounded-full" onClick={voltar} disabled={etapa === 1}><ChevronLeft className="mr-1 h-4 w-4" /> Voltar</Button>
-              {etapa < 5 ? (
+              {etapa < ULTIMA_ETAPA ? (
                 <Button className="rounded-full bg-slate-900 hover:bg-slate-800" onClick={avancar}>Próxima etapa <ChevronRight className="ml-1 h-4 w-4" /></Button>
               ) : (
                 <Button className="rounded-full" onClick={confirmarEnvio} disabled={enviar.isPending || !f.confirmado}>
@@ -178,6 +184,13 @@ export default function SolicitarTreinamento() {
           : minhas.error ? <p className="text-sm text-red-600">{(minhas.error as Error).message}</p>
           : lista.length === 0 ? <p className="text-sm text-muted-foreground">Nenhuma solicitação ainda.</p>
           : (
+            <>
+            {lista.some((s) => s.status === "data_informada") && (
+              <p className="mb-2 flex items-center gap-1.5 rounded-md border border-violet-200 bg-violet-50 px-3 py-2 text-sm text-violet-900">
+                <CalendarClock className="h-4 w-4 shrink-0" /> Treinamentos informou a data de {lista.filter((s) => s.status === "data_informada").length} treinamento(s):
+                abra para aprovar a data ou pedir outra.
+              </p>
+            )}
             <ul className="divide-y">
               {lista.map((s) => (
                 <li key={s.id}>
@@ -185,7 +198,8 @@ export default function SolicitarTreinamento() {
                     <div className="min-w-0 flex-1">
                       <div className="truncate font-medium">{s.treinamento}</div>
                       <div className="text-xs text-muted-foreground">{s.protocolo} · {s.contrato_nome} · {s.qtd_participantes} participante(s)
-                        {s.data_confirmada ? ` · confirmado para ${new Date(`${s.data_confirmada}T12:00:00`).toLocaleDateString("pt-BR")}` : ""}</div>
+                        {s.data_confirmada && (s.status === "data_informada" || s.status === "agendada" || s.status === "concluida")
+                          ? ` · ${s.status === "data_informada" ? "data informada" : "agendado"}: ${fmtDataIso(s.data_confirmada)}` : ""}</div>
                     </div>
                     {s.urgencia === "prioritario" && <Badge variant="outline" className="border-red-200 bg-red-50 text-red-700">Prioritário</Badge>}
                     <Badge variant="outline" className={cn("font-semibold", s.status === "pendente" && s.devolucao_motivo ? "border-orange-300 bg-orange-100 text-orange-800" : STATUS_SOL_TREINAMENTO[s.status].cor)}>
@@ -196,6 +210,7 @@ export default function SolicitarTreinamento() {
                 </li>
               ))}
             </ul>
+            </>
           )}
       </Card>
 
@@ -266,37 +281,28 @@ function Etapa2({ f, set }: PropsEtapa) {
       <Campo rotulo="Quais assuntos precisam ser abordados?" obrig>
         <Textarea rows={3} value={f.assuntos} placeholder="Descreva os procedimentos, dificuldades e situações práticas que precisam ser explicados." onChange={(e) => set({ assuntos: e.target.value })} />
       </Campo>
+      <EstruturaTreinamento f={f} set={set} />
     </div>
   );
 }
 
-function Etapa3({ f, set }: PropsEtapa) {
-  return (
-    <div className="space-y-4">
-      <Campo rotulo="Quantidade de colaboradores" obrig>
-        <Input className="rounded-full" type="number" min={1} max={5000} inputMode="numeric" value={f.qtd_participantes} placeholder="Ex.: 25"
-          onChange={(e) => set({ qtd_participantes: e.target.value.replace(/\D/g, "") })} />
-      </Campo>
-      <Campo rotulo="Qual equipe participará?">
-        <Input className="rounded-full" value={f.equipe} placeholder="Ex.: Equipe de coleta de resíduos" onChange={(e) => set({ equipe: e.target.value })} />
-      </Campo>
-      <Campo rotulo="Turnos de trabalho dos participantes" dica="O setor de Treinamentos poderá avaliar a necessidade de dividir os participantes em turmas.">
-        <Input className="rounded-full" value={f.turnos} placeholder="Ex.: manhã e tarde" onChange={(e) => set({ turnos: e.target.value })} />
-      </Campo>
-    </div>
-  );
-}
-
-function Etapa4({ f, set }: PropsEtapa) {
+/** O que era a etapa "Estrutura" — desde 27/10 dentro da Necessidade. */
+function EstruturaTreinamento({ f, set }: PropsEtapa) {
   const local = precisaLocal(f);
   const prog = progressoChecklist(f);
-  const alternarRecurso = (v: string) => set({ recursos: f.recursos.includes(v) ? f.recursos.filter((x) => x !== v) : [...f.recursos, v] });
+  const [novaData, setNovaData] = useState("");
   const icone: Record<string, typeof Building> = {
-    "1. Estrutura do local": Building, "2. Equipamentos e infraestrutura": Plug, "3. Espaço para café": Coffee, "4. Transporte e deslocamento": Bus,
+    "1. Estrutura do local": Building, "2. Equipamentos e infraestrutura": Plug, "3. Espaço para café": Coffee,
+  };
+  const incluirData = () => {
+    if (!novaData) return;
+    if (f.datas_previstas.length >= MAX_DATAS) { toast.error(`No máximo ${MAX_DATAS} datas.`); return; }
+    set({ datas_previstas: comData(f.datas_previstas, novaData) });
+    setNovaData("");
   };
   let ultimaSecao = "";
   return (
-    <div className="space-y-4">
+    <div className="space-y-4 border-t pt-4">
       <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950">
         <p className="flex items-center gap-1.5 font-semibold"><AlertTriangle className="h-4 w-4" /> Atenção — Leia antes de preencher</p>
         <p className="mt-1">É fundamental que todas as respostas sejam <b>verificadas e confirmadas antes do envio da solicitação</b>.
@@ -304,7 +310,7 @@ function Etapa4({ f, set }: PropsEtapa) {
         <p className="mt-1"><b>O encarregado é responsável pela veracidade das informações prestadas.</b> Dados incorretos ou incompletos poderão comprometer o planejamento e a realização das atividades.</p>
       </div>
 
-      <Campo rotulo="Modalidade desejada" obrig>
+      <Campo rotulo="Modalidade" obrig dica="Presencial ou online: em ambas o setor de Treinamentos aceita ou reprova a solicitação.">
         <Opcoes nome="Modalidade" valor={f.modalidade} opcoes={MODALIDADES} onChange={(v) => set({ modalidade: v })} />
       </Campo>
       {local && (
@@ -312,29 +318,29 @@ function Etapa4({ f, set }: PropsEtapa) {
           <Input className="rounded-full" value={f.local_treinamento} placeholder="Ex.: Campus Centro — Av. Paulo Gama, 110 — Porto Alegre" onChange={(e) => set({ local_treinamento: e.target.value })} />
         </Campo>
       )}
-      <div className="grid gap-3 sm:grid-cols-3">
-        <Campo rotulo="Data prevista" obrig>
-          <Input className="rounded-full" type="date" min={hojeIso()} value={f.data_preferencial} onChange={(e) => set({ data_preferencial: e.target.value })} />
-        </Campo>
-        <Campo rotulo="Horário de início" obrig>
-          <Input className="rounded-full" type="time" value={f.horario_inicio} onChange={(e) => set({ horario_inicio: e.target.value })} />
-        </Campo>
-        <Campo rotulo="Horário de término" obrig>
-          <Input className="rounded-full" type="time" value={f.horario_fim} onChange={(e) => set({ horario_fim: e.target.value })} />
-        </Campo>
-      </div>
+      <Campo rotulo="Datas previstas" obrig dica="Pode sugerir mais de uma data; o setor de Treinamentos define a data e você aprova.">
+        <div className="flex flex-wrap gap-2">
+          <Input className="w-44 rounded-full" type="date" min={hojeIso()} value={novaData} aria-label="Nova data prevista"
+            onChange={(e) => setNovaData(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); incluirData(); } }} />
+          <Button type="button" variant="outline" className="rounded-full" onClick={incluirData} disabled={!novaData}>
+            <CalendarPlus className="mr-1.5 h-4 w-4" /> Adicionar data
+          </Button>
+        </div>
+        {f.datas_previstas.length > 0 && (
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            {f.datas_previstas.map((d) => (
+              <span key={d} className="inline-flex items-center gap-1 rounded-full border bg-muted/40 py-0.5 pl-3 pr-1 text-sm">
+                {fmtDataIso(d)}
+                <button type="button" aria-label={`Tirar ${fmtDataIso(d)}`} className="rounded-full p-0.5 hover:bg-muted"
+                  onClick={() => set({ datas_previstas: f.datas_previstas.filter((x) => x !== d) })}><X className="h-3.5 w-3.5" /></button>
+              </span>
+            ))}
+          </div>
+        )}
+      </Campo>
       <Campo rotulo="Prazo ou urgência" obrig>
         <Opcoes nome="Urgência" valor={f.urgencia} onChange={(v) => set({ urgencia: v })}
           opcoes={[{ v: "programavel", r: "Programável" }, { v: "prioritario", r: "Prioritário — justificar nas observações" }]} />
-      </Campo>
-      <Campo rotulo="Recursos necessários">
-        <div className="grid gap-2 sm:grid-cols-2">
-          {RECURSOS.map((r) => (
-            <label key={r.v} className="flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 text-sm hover:bg-muted/40">
-              <Checkbox checked={f.recursos.includes(r.v)} onCheckedChange={() => alternarRecurso(r.v)} /> {r.r}
-            </label>
-          ))}
-        </div>
       </Campo>
 
       {local && (
@@ -375,7 +381,24 @@ function Etapa4({ f, set }: PropsEtapa) {
   );
 }
 
-function Etapa5({ f, set, nome }: PropsEtapa & { nome: string | null }) {
+function Etapa3({ f, set }: PropsEtapa) {
+  return (
+    <div className="space-y-4">
+      <Campo rotulo="Quantidade de colaboradores" obrig>
+        <Input className="rounded-full" type="number" min={1} max={5000} inputMode="numeric" value={f.qtd_participantes} placeholder="Ex.: 25"
+          onChange={(e) => set({ qtd_participantes: e.target.value.replace(/\D/g, "") })} />
+      </Campo>
+      <Campo rotulo="Qual equipe participará?">
+        <Input className="rounded-full" value={f.equipe} placeholder="Ex.: Equipe de coleta de resíduos" onChange={(e) => set({ equipe: e.target.value })} />
+      </Campo>
+      <Campo rotulo="Turnos de trabalho dos participantes" dica="O setor de Treinamentos poderá avaliar a necessidade de dividir os participantes em turmas.">
+        <Input className="rounded-full" value={f.turnos} placeholder="Ex.: manhã e tarde" onChange={(e) => set({ turnos: e.target.value })} />
+      </Campo>
+    </div>
+  );
+}
+
+function EtapaConfirmacao({ f, set, nome }: PropsEtapa & { nome: string | null }) {
   const ficha = secoesFicha({ ...f, qtd_participantes: Number(f.qtd_participantes) || 0, voltagem: f.voltagem || null, solicitante_nome: nome });
   return (
     <div className="space-y-4">
