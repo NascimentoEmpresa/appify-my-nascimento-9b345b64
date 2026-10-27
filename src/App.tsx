@@ -227,6 +227,9 @@ import TreinamentosSistemasPagina from "./pages/treinamentos/TreinamentosSistema
 // Plataforma de Treinamentos (porta do membox, 18/09/2026) — ver a migration
 // 20260930000190_treinamentos_plataforma.sql.
 import TreinamentosDashboard from "./pages/treinamentos/plataforma/Dashboard";
+// Solicitação de Treinamento (mig 20261026000910): o encarregado pede, Treinamentos decide.
+import SolicitarTreinamento from "./pages/encarregados/SolicitarTreinamento";
+import SolicitacoesTreinamento from "./pages/treinamentos/SolicitacoesTreinamento";
 import TrnAlunosLista from "./pages/treinamentos/plataforma/AlunosLista";
 import TrnAlunoForm from "./pages/treinamentos/plataforma/AlunoForm";
 import TrnAlunosGerenciar from "./pages/treinamentos/plataforma/AlunosGerenciar";
@@ -529,6 +532,7 @@ const App = () => (
             {/* Supply — solicitação de materiais. Também é a única área que o
                 usuário externo (sessão anônima) enxerga; ver useModoExterno. */}
             <Route path="encarregados/solicitar-materiais" element={<SolicitarMateriais />} />
+            <Route path="encarregados/solicitar-treinamento" element={<SolicitarTreinamento />} />
             <Route path="encarregados/meus-pedidos" element={<MeusPedidos />} />
             {/* Nascimento Formulários dos encarregados (mig 276): só os formulários
                 liberados para o setor ENCARREGADOS — responder e ver as próprias respostas. */}
@@ -986,6 +990,7 @@ const App = () => (
                 "categorias"/"certificados" têm menu próprio, como no membox. */}
             <Route path="treinamentos" element={<TreinamentosDashboard />} />
             <Route path="treinamentos/erp" element={<TreinamentosERP escopo="encarregados" />} />
+            <Route path="treinamentos/solicitacoes" element={<SolicitacoesTreinamento />} />
             <Route path="treinamentos/alunos" element={<TrnAlunosLista />} />
             {/* "Adicionar novo" virou "Gerenciar" (21/09/2026): aluno é colaborador
                 e entra pela admissão. A rota ficou pra não zerar a permissão. */}
