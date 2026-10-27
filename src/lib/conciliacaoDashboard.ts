@@ -170,6 +170,39 @@ export function saldosMensais(
   return saida.sort((a, b) => (a.empresaId + a.bancoId === b.empresaId + b.bancoId ? (a.mes < b.mes ? -1 : 1) : a.empresaId + a.bancoId < b.empresaId + b.bancoId ? -1 : 1));
 }
 
+// SIS-2026-0724: totais de Saldo final (sistema), Saldo final (extrato) e Diferença, para a leitura de cima da conferência mensal.
+// Saldo é acumulado (o de um mês já carrega os anteriores), então NÃO se soma mês a mês: vale, por empresa + banco, o ÚLTIMO mês conferido do
+// período (o mais recente com saldo do sistema e do extrato), e só então se soma entre as empresas/bancos. Grupo sem nenhum mês conferido fica
+// de fora dos três totais (para Sistema − Extrato = Diferença) e é contado em `semConferencia`.
+export interface TotaisSaldos {
+  sistema: number;
+  extrato: number;
+  diferenca: number;
+  grupos: number; // empresa + banco com saldo conferido
+  divergentes: number; // desses, os que não batem
+  semConferencia: number; // empresa + banco do filtro sem nenhum mês conferido
+}
+
+export function totaisDeSaldos(saldos: SaldoMensal[]): TotaisSaldos {
+  const ultimo = new Map<string, SaldoMensal | null>();
+  for (const s of saldos) {
+    const g = `${s.empresaId}|${s.bancoId}`;
+    if (!ultimo.has(g)) ultimo.set(g, null);
+    if (s.saldoSistema == null || s.saldoExtrato == null) continue;
+    const atual = ultimo.get(g);
+    if (!atual || s.mes > atual.mes) ultimo.set(g, s);
+  }
+  let sistema = 0, extrato = 0, grupos = 0, divergentes = 0, semConferencia = 0;
+  for (const s of ultimo.values()) {
+    if (!s) { semConferencia += 1; continue; }
+    grupos += 1;
+    sistema += s.saldoSistema as number;
+    extrato += s.saldoExtrato as number;
+    if (s.confere === "nao") divergentes += 1;
+  }
+  return { sistema: r2(sistema), extrato: r2(extrato), diferenca: r2(sistema - extrato), grupos, divergentes, semConferencia };
+}
+
 // SIS-2026-0736: soma de entradas e saídas do período de movimentação, para comparar com "Entradas/Saídas (filtro atual)" do Fluxo de Caixa —
 // Realizado. Tem de dar o MESMO número, então segue a conta daquela tela: o Fluxo junta as fatias do rateio numa linha por lançamento
 // (despesa_id + parcela, valor somado, e empresa/banco/data/tipo da primeira fatia), tira o que ainda não aconteceu (data depois de hoje) e só
