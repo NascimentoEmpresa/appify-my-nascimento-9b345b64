@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
-import type { EventoSolTreinamento, SolicitacaoTreinamento } from "@/lib/treinamentos/solicitacaoTreinamento";
+import type { AcaoTreinamentos, EventoSolTreinamento, SolicitacaoTreinamento } from "@/lib/treinamentos/solicitacaoTreinamento";
 
 // =====================================================================
 // Solicitação de Treinamento (mig 20261026000910) — o encarregado pede
@@ -66,7 +66,7 @@ export function useEnviarTreinamento() {
   });
 }
 
-export type AcaoTreinamento = "aprovar" | "reprovar" | "devolver" | "agendar" | "concluir" | "cancelar";
+export type AcaoTreinamento = AcaoTreinamentos;
 
 export function useDecidirTreinamento() {
   const qc = useQueryClient();
@@ -74,6 +74,19 @@ export function useDecidirTreinamento() {
     mutationFn: async (p: { id: number; acao: AcaoTreinamento; motivo?: string; data_confirmada?: string; horario_confirmado?: string; instrutor?: string; obs?: string }) => {
       const { id, acao, ...resto } = p;
       const { error } = await sb.rpc("trn_sol_decidir", { p_id: id, p_acao: acao, p: resto });
+      erro(error);
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: [K] }),
+  });
+}
+
+/** Quem pediu aprova a data que Treinamentos informou, ou pede outra (motivo
+ *  obrigatório — volta para Treinamentos informar de novo). Mig 20261027000120. */
+export function useResponderDataTreinamento() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (p: { id: number; aprovar: boolean; motivo?: string }) => {
+      const { error } = await sb.rpc("trn_sol_responder_data", { p_id: p.id, p_aprovar: p.aprovar, p_motivo: p.motivo ?? null });
       erro(error);
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: [K] }),

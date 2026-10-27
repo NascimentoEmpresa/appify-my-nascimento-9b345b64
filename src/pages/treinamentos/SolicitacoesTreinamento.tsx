@@ -11,7 +11,9 @@ import { cn } from "@/lib/utils";
 import { useScreenAccess } from "@/hooks/useScreenAccess";
 import { useSolicitacoesTreinamento } from "@/hooks/useSolicitacoesTreinamento";
 import { DetalheSolicitacaoTreinamento } from "@/components/treinamentos/DetalheSolicitacaoTreinamento";
-import { MODALIDADES, STATUS_SOL_TREINAMENTO, ordenarFila, rotuloStatus, type StatusSolTreinamento } from "@/lib/treinamentos/solicitacaoTreinamento";
+import {
+  STATUS_SOL_TREINAMENTO, datasPrevistas, emAndamento, ordenarFila, rotuloModalidade, rotuloStatus, type StatusSolTreinamento,
+} from "@/lib/treinamentos/solicitacaoTreinamento";
 
 // =====================================================================
 // TREINAMENTOS › SOLICITAÇÕES DE TREINAMENTOS (mig 20261026000910, 26/10/2026)
@@ -21,6 +23,11 @@ import { MODALIDADES, STATUS_SOL_TREINAMENTO, ordenarFila, rotuloStatus, type St
 // prevista. Quem tem "aprovar" em treinamentos_solicitacoes aprova (com ou
 // sem data), devolve para ajuste, reprova, agenda, marca como realizado ou
 // cancela; todos conversam com o encarregado e copiam a ficha para o ofício.
+//
+// 27/10/2026 (mig 20261027000120): aceitar/reprovar vale para presencial e
+// online; a data informada fica "aguardando aprovação" até o encarregado
+// aprovar (ou pedir outra). A coluna de data mostra as datas sugeridas até
+// haver uma informada.
 // =====================================================================
 
 type Filtro = "pendente" | "andamento" | "concluida" | "encerradas" | "todas";
@@ -38,7 +45,7 @@ export default function SolicitacoesTreinamento() {
 
   const todas = useMemo(() => lista.data ?? [], [lista.data]);
   const grupo = (st: StatusSolTreinamento): Filtro =>
-    st === "pendente" ? "pendente" : st === "aprovada" || st === "agendada" ? "andamento" : st === "concluida" ? "concluida" : "encerradas";
+    st === "pendente" ? "pendente" : emAndamento(st) ? "andamento" : st === "concluida" ? "concluida" : "encerradas";
   const contagem = (f: Filtro) => (f === "todas" ? todas.length : todas.filter((s) => grupo(s.status) === f).length);
   const prioritarias = todas.filter((s) => s.status === "pendente" && s.urgencia === "prioritario").length;
   const participantes = todas.filter((s) => grupo(s.status) === "andamento").reduce((a, s) => a + s.qtd_participantes, 0);
@@ -55,12 +62,12 @@ export default function SolicitacoesTreinamento() {
   return (
     <div className="space-y-4">
       <PageHeader title="Solicitações de Treinamentos" module="Treinamentos" breadcrumb={["Solicitações de Treinamentos"]}
-        subtitle="Pedidos dos encarregados com todas as informações para organizar o treinamento: aprove, agende, devolva para ajuste ou reprove." />
+        subtitle="Pedidos dos encarregados com todas as informações para organizar o treinamento: aceite ou reprove, informe a data e acompanhe a aprovação do encarregado." />
 
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <Kpi icone={Clock} rotulo="Aguardando análise" valor={contagem("pendente")} cor="text-amber-600 bg-amber-50" />
+        <Kpi icone={Clock} rotulo="Aguardando validação" valor={contagem("pendente")} cor="text-amber-600 bg-amber-50" />
         <Kpi icone={AlertTriangle} rotulo="Prioritárias pendentes" valor={prioritarias} cor="text-red-600 bg-red-50" />
-        <Kpi icone={CalendarCheck} rotulo="Aprovadas / agendadas" valor={contagem("andamento")} dica={`${participantes} participante(s)`} cor="text-indigo-600 bg-indigo-50" />
+        <Kpi icone={CalendarCheck} rotulo="Aceitas / agendadas" valor={contagem("andamento")} dica={`${participantes} participante(s)`} cor="text-indigo-600 bg-indigo-50" />
         <Kpi icone={CheckCircle2} rotulo="Realizadas" valor={contagem("concluida")} cor="text-emerald-600 bg-emerald-50" />
       </div>
 
@@ -68,7 +75,7 @@ export default function SolicitacoesTreinamento() {
         <Tabs value={filtro} onValueChange={(v) => setFiltro(v as Filtro)}>
           <TabsList className="h-auto flex-wrap">
             <TabsTrigger value="pendente">Aguardando ({contagem("pendente")})</TabsTrigger>
-            <TabsTrigger value="andamento">Aprovadas e agendadas ({contagem("andamento")})</TabsTrigger>
+            <TabsTrigger value="andamento">Aceitas e agendadas ({contagem("andamento")})</TabsTrigger>
             <TabsTrigger value="concluida">Realizadas ({contagem("concluida")})</TabsTrigger>
             <TabsTrigger value="encerradas">Reprovadas e canceladas ({contagem("encerradas")})</TabsTrigger>
             <TabsTrigger value="todas">Todas ({contagem("todas")})</TabsTrigger>
@@ -95,7 +102,7 @@ export default function SolicitacoesTreinamento() {
                 <TableHead>Treinamento</TableHead>
                 <TableHead className="hidden lg:table-cell">Solicitante</TableHead>
                 <TableHead className="text-right">Particip.</TableHead>
-                <TableHead>Data prevista</TableHead>
+                <TableHead>Data</TableHead>
                 <TableHead>Situação</TableHead>
               </TableRow>
             </TableHeader>
@@ -108,13 +115,22 @@ export default function SolicitacoesTreinamento() {
                       {s.urgencia === "prioritario" && <Badge variant="outline" className="border-red-200 bg-red-50 px-1.5 py-0 text-[10px] text-red-700">Prioritário</Badge>}
                       {s.treinamento}
                     </div>
-                    <div className="text-xs text-muted-foreground">{s.contrato_nome} · {MODALIDADES.find((m) => m.v === s.modalidade)?.r}</div>
+                    <div className="text-xs text-muted-foreground">{s.contrato_nome} · {rotuloModalidade(s.modalidade)}</div>
                   </TableCell>
                   <TableCell className="hidden text-sm lg:table-cell">{s.solicitante_nome ?? "—"}</TableCell>
                   <TableCell className="text-right font-semibold">{s.qtd_participantes}</TableCell>
                   <TableCell className="text-sm">
-                    {s.data_confirmada ? <span className="font-semibold text-indigo-700">{fmtData(s.data_confirmada)}</span> : fmtData(s.data_preferencial)}
-                    <div className="text-xs text-muted-foreground">{s.data_confirmada ? s.horario_confirmado ?? "" : `${(s.horario_inicio ?? "").slice(0, 5)}–${(s.horario_fim ?? "").slice(0, 5)}`}</div>
+                    {s.data_confirmada && s.status !== "pendente" ? (
+                      <>
+                        <span className={cn("font-semibold", s.status === "data_informada" ? "text-violet-700" : "text-indigo-700")}>{fmtData(s.data_confirmada)}</span>
+                        <div className="text-xs text-muted-foreground">{s.status === "data_informada" ? "aguardando encarregado" : s.horario_confirmado ?? ""}</div>
+                      </>
+                    ) : (
+                      <>
+                        {datasPrevistas(s).slice(0, 2).map(fmtData).join(", ") || "—"}
+                        <div className="text-xs text-muted-foreground">{datasPrevistas(s).length > 2 ? `+${datasPrevistas(s).length - 2} sugerida(s)` : "sugerida(s)"}</div>
+                      </>
+                    )}
                   </TableCell>
                   <TableCell>
                     <Badge variant="outline" className={cn("font-semibold", s.status === "pendente" && s.devolucao_motivo ? "border-orange-300 bg-orange-100 text-orange-800" : STATUS_SOL_TREINAMENTO[s.status].cor)}>
@@ -129,7 +145,7 @@ export default function SolicitacoesTreinamento() {
       </Card>
 
       {!podeDecidir && todas.length > 0 && (
-        <p className="flex items-center gap-1.5 text-xs text-muted-foreground"><ClipboardList className="h-3.5 w-3.5" /> Você acompanha e conversa; aprovar e reprovar pede "aprovar" em Solicitações de Treinamentos.</p>
+        <p className="flex items-center gap-1.5 text-xs text-muted-foreground"><ClipboardList className="h-3.5 w-3.5" /> Você acompanha e conversa; aceitar, reprovar e informar a data pede "aprovar" em Solicitações de Treinamentos.</p>
       )}
       <DetalheSolicitacaoTreinamento solicitacao={sol} lado="treinamentos" podeDecidir={podeDecidir} onFechar={fechar} />
     </div>
