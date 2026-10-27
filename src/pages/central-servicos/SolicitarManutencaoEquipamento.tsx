@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { useLocation } from "react-router-dom";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -24,6 +25,15 @@ const STATUS: Record<StatusSolicitacaoManutencao, string> = {
 };
 
 export default function SolicitarManutencaoEquipamento() {
+  const { pathname } = useLocation();
+  const peloModuloEncarregados = pathname.startsWith("/app/encarregados/");
+  const menu = peloModuloEncarregados
+    ? "encarregados_solicitar_manutencao_equipamento"
+    : "central_servicos_solicitar_manutencao_equipamento";
+  const modulo = peloModuloEncarregados ? "Encarregados" : "Central de Serviços";
+  const breadcrumb = peloModuloEncarregados
+    ? ["Encarregados", "Suprimentos", "Manutenção de equipamento"]
+    : ["Central de Serviços", "Solicitações", "Manutenção de equipamento"];
   const { data: contratos = [] } = useContratosCatalogo();
   const { data: solicitacoes = [] } = useSolicitacoesManutencao();
   const criar = useCriarSolicitacaoManutencao();
@@ -48,11 +58,11 @@ export default function SolicitarManutencaoEquipamento() {
       <PageHeader
         title="Solicitar manutenção de equipamento"
         subtitle="Envie a necessidade do contrato para avaliação do Almoxarifado."
-        module="Central de Serviços"
-        breadcrumb={["Central de Serviços", "Solicitações", "Manutenção de equipamento"]}
+        module={modulo}
+        breadcrumb={breadcrumb}
       />
 
-      <AcessoGate menu="central_servicos_solicitar_manutencao_equipamento" acao="incluir" fallback={
+      <AcessoGate menu={menu} acao="incluir" fallback={
         <Card><CardContent className="py-10 text-center text-sm text-muted-foreground">Seu acesso permite acompanhar solicitações, mas não abrir uma nova.</CardContent></Card>
       }>
         <Card className="max-w-3xl">
