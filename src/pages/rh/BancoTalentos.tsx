@@ -1,9 +1,10 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { usePermissoes } from "@/context/PermissoesContext";
 import { Toasts, btnStyle, EtapaChip, Modal } from "@/components/recrutamento/CandidatoInfo";
 import { AvisoProcessos, processosDe, useProcessosDosCandidatos } from "@/components/recrutamento/AvisoProcessos";
+import { BlocoExColaborador, SeloExColaborador, useCadastrosEmpresa, vinculoDoCpf } from "@/components/recrutamento/ExColaborador";
 
 // =====================================================================
 // RH / RECRUTAMENTO — Banco de Talentos
@@ -75,6 +76,9 @@ export default function BancoTalentos() {
   const [rows, setRows] = useState<any[]>([]);
   // "Já processou a empresa?" — uma chamada pela lista inteira, não por card.
   const processosCand = useProcessosDosCandidatos(rows);
+  // "Já trabalhou conosco? Saiu há quanto tempo?" (27/10/2026) — idem, em lote.
+  const cpfsRows = useMemo(() => rows.map(r => r.cpf || r.cpf_cand), [rows]);
+  const cadastrosEmpresa = useCadastrosEmpresa(cpfsRows);
   const [arquivos, setArquivos] = useState<Record<number, any[]>>({});
   const [sols, setSols] = useState<any[]>([]);                 // solicitações (cargo/status)
   const [vagasComCand, setVagasComCand] = useState<{ vaga_id: number; n: number }[]>([]);
@@ -323,6 +327,7 @@ export default function BancoTalentos() {
                   <div style={{ fontSize: 15, fontWeight: 800, color: "#0f172a", paddingRight: 28, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                     {c.nome || "Sem nome"}
                     <AvisoProcessos processos={processosDe(processosCand, c)} compacto />
+                    <SeloExColaborador vinculo={vinculoDoCpf(cadastrosEmpresa, deG("cpf") || deG("cpf_cand"))} />
                     {g.n > 1 && <span style={{ fontSize: 10.5, fontWeight: 800, padding: "2px 9px", borderRadius: 20, background: "#eef4ff", border: "1px solid #dbe4f0", color: "#0f3171" }}>📩 {g.n} candidaturas</span>}
                   </div>
                   {(g.n > 1 || c.vaga_id) && (
@@ -446,6 +451,7 @@ export default function BancoTalentos() {
         return (
           <Modal title={`🔍 ${detalhe.latest.nome || "Candidato"}`} sub={`${detalhe.n} candidatura(s) · cadastro mais recente em ${fmtDt(detalhe.latest.created_at)}`} onClose={() => setDetalhe(null)} maxWidth={680}>
             <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+              <BlocoExColaborador vinculo={vinculoDoCpf(cadastrosEmpresa, dg("cpf") || dg("cpf_cand"))} />
               <div style={bloco}>
                 <div style={tit}>Candidaturas</div>
                 <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>

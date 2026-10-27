@@ -17,7 +17,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { FiltroContratos } from "@/components/solicitacoes/FiltroContratos";
 import { StatusSolicitacao, type SolicitacaoStatus } from "@/components/recrutamento/StatusSolicitacao";
 import { usePermissoes } from "@/context/PermissoesContext";
-import { useDashboardRecrutamento } from "@/hooks/useDashboardRecrutamento";
+import { useDashboardRecrutamento, useTempoStatusResponsavel } from "@/hooks/useDashboardRecrutamento";
 import { rotuloStatusVaga } from "@/lib/recrutamento/vagaRegras";
 import { statusDetalhadoVaga } from "@/lib/recrutamento/statusDetalhado";
 import { useEtapasDasVagas } from "@/hooks/useEtapasDasVagas";
@@ -27,8 +27,8 @@ import {
   COR_PRAZO, FILTROS_VAZIOS, JANELA_ATENCAO, ROTULO_PERIODO, ROTULO_PRAZO, SITUACOES_PRAZO, URGENCIAS,
   dataBr, filtrar, funilAberto, hojeSP, idadeDasAbertas, indicadoresAgora, indicadoresCandidatos, indicadoresPeriodo,
   intervalo, mesesDoIntervalo, noIntervalo, porMes, prazoPorContrato, ranking, rotuloCargo, rotuloCidade, rotuloContrato, rotuloMotivo,
-  tempoAteContratar, urgencia, vagasAbertas,
-  type Andamento, type FiltrosDash, type LinhaAberta, type Periodo, type SituacaoPrazo, type Urgencia,
+  tempoAteContratar, tempoPorResponsavel, urgencia, vagasAbertas, SEM_RESPONSAVEL,
+  type Andamento, type LinhaTempoResponsavel, type FiltrosDash, type LinhaAberta, type Periodo, type SituacaoPrazo, type Urgencia,
 } from "@/lib/recrutamento/dashboardRecrutamento";
 
 // =====================================================================
@@ -83,6 +83,11 @@ const diasTxt = (n: number | null) => {
 const diasCurto = (n: number) =>
   n < 1 / 24 ? `${Math.max(1, Math.round(n * 1440))}min` : n < 1 ? `${Math.round(n * 24)}h` : `${n.toLocaleString("pt-BR", { maximumFractionDigits: 1 })}d`;
 const TODAS = "__todas";
+/** Dias de calendário (o "parado agora" conta por data, não por hora). */
+const diasInteiros = (n: number) => {
+  const d = Math.round(n);
+  return d < 1 ? "hoje" : `${num(d)} ${d === 1 ? "dia" : "dias"}`;
+};
 
 // ── Peças ────────────────────────────────────────────────────────────────
 
@@ -173,6 +178,79 @@ function Grafico({ titulo, sub, children, className = "", vazio }: { titulo: str
         {sub && <p className="text-xs text-muted-foreground">{sub}</p>}
       </div>
       {vazio ? <p className="flex h-40 items-center justify-center text-sm text-muted-foreground">Sem dados neste recorte.</p> : children}
+    </Card>
+  );
+}
+
+/**
+ * Tempo em cada status por responsável (27/10/2026, mig 20261027000920).
+ * Uma linha por responsável × status: as passagens que terminaram no período
+ * (com quem segurava a vaga) e as vagas paradas nesse status agora.
+ */
+function TempoPorResponsavel({ linhas, carregando }: { linhas: LinhaTempoResponsavel[]; carregando: boolean }) {
+  const [resp, setResp] = useState(TODAS);
+  const pessoas = useMemo(() => Array.from(new Set(linhas.map((l) => l.responsavel))), [linhas]);
+  const vis = resp === TODAS ? linhas : linhas.filter((l) => l.responsavel === resp);
+  return (
+    <Card className="p-4">
+      <div className="mb-3 flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h3 className="text-sm font-bold text-foreground">Tempo em cada status por responsável</h3>
+          <p className="text-xs text-muted-foreground">
+            Passagens = status que a vaga deixou no período, com quem a vaga estava. Parado agora = vagas em aberto nesse status hoje.
+          </p>
+        </div>
+        <Select value={resp} onValueChange={setResp}>
+          <SelectTrigger className="h-8 w-60 text-sm"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value={TODAS}>Todos os responsáveis</SelectItem>
+            {pessoas.map((p) => <SelectItem key={p} value={p}>{p}</SelectItem>)}
+          </SelectContent>
+        </Select>
+      </div>
+      {carregando && !linhas.length ? <Skeleton className="h-40 w-full" />
+        : !vis.length ? <p className="flex h-32 items-center justify-center text-sm text-muted-foreground">Sem dados neste recorte.</p>
+        : (
+          <div className="max-h-[520px] overflow-auto">
+            <table className="w-full min-w-[860px] text-sm">
+              <thead className="sticky top-0 z-10 bg-muted/95 backdrop-blur">
+                <tr className="text-left text-[10.5px] font-bold uppercase tracking-wide text-muted-foreground">
+                  <th className="px-3 py-2.5">Responsável</th>
+                  <th className="px-3 py-2.5">Status</th>
+                  <th className="px-3 py-2.5 text-right">Passagens</th>
+                  <th className="px-3 py-2.5 text-right">Média</th>
+                  <th className="px-3 py-2.5 text-right">Mediana</th>
+                  <th className="px-3 py-2.5 text-right">Maior</th>
+                  <th className="px-3 py-2.5 text-right">Parado agora</th>
+                  <th className="px-3 py-2.5 text-right">Há (média · maior)</th>
+                </tr>
+              </thead>
+              <tbody>
+                {vis.map((l, i) => {
+                  const primeira = i === 0 || vis[i - 1].responsavel !== l.responsavel;
+                  return (
+                    <tr key={l.responsavel + l.status} className={cn("border-t border-border", primeira && i > 0 && "border-t-2")}>
+                      <td className={cn("px-3 py-2 text-xs font-semibold", l.responsavel === SEM_RESPONSAVEL ? "text-muted-foreground" : "text-foreground")}>
+                        {primeira ? l.responsavel : ""}
+                      </td>
+                      <td className="max-w-[280px] px-3 py-2 text-xs text-foreground">{rotuloStatusVaga(l.status)}</td>
+                      <td className="px-3 py-2 text-right text-xs tabular-nums">{l.passagens ? num(l.passagens.n) : "—"}</td>
+                      <td className="px-3 py-2 text-right text-xs font-bold tabular-nums">{l.passagens ? diasTxt(l.passagens.media) : "—"}</td>
+                      <td className="px-3 py-2 text-right text-xs tabular-nums">{l.passagens ? diasTxt(l.passagens.mediana) : "—"}</td>
+                      <td className="px-3 py-2 text-right text-xs tabular-nums">{l.passagens ? diasTxt(l.passagens.maximo) : "—"}</td>
+                      <td className="px-3 py-2 text-right text-xs tabular-nums" title={l.agora ? l.agora.vagas.map((v) => `#${v}`).join(", ") : undefined}>
+                        {l.agora ? `${num(l.agora.n)} ${l.agora.n === 1 ? "vaga" : "vagas"}` : "—"}
+                      </td>
+                      <td className="px-3 py-2 text-right text-xs font-bold tabular-nums">
+                        {l.agora ? `${diasInteiros(l.agora.media)} · ${diasInteiros(l.agora.maximo)}` : "—"}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
     </Card>
   );
 }
@@ -329,6 +407,9 @@ export default function DashboardRecrutamento() {
     .filter((t) => t.n >= 2)
     .map((t) => ({ nome: rotuloStatusVaga(t.etapa), qtd: t.media, mediana: t.mediana, n: t.n }))
     .sort((a, b) => b.qtd - a.qtd), [q.data?.tempos]);
+  // Tempo em cada status por responsável (27/10/2026): passagens do período + paradas agora.
+  const passagensQ = useTempoStatusResponsavel(faixa);
+  const tempoResp = useMemo(() => tempoPorResponsavel(passagensQ.data ?? [], abertas, hoje), [passagensQ.data, abertas, hoje]);
 
   // 3. Candidatos
   const idsAbertas = useMemo(() => new Set(abertas.map((v) => v.id)), [abertas]);
@@ -772,6 +853,8 @@ export default function DashboardRecrutamento() {
                 </ResponsiveContainer>
               </Grafico>
             </div>
+
+            <TempoPorResponsavel linhas={tempoResp} carregando={passagensQ.isLoading} />
           </Secao>
 
           {/* ── 3. CANDIDATOS ────────────────────────────────────────── */}
