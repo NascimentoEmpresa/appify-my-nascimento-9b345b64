@@ -54,7 +54,7 @@ type Linha = { c: ContratoAtivos; conf: ConferenciaContrato };
 const FILTROS: { k: Filtro; label: string }[] = [
   { k: "todos", label: "Todos" },
   { k: "falta", label: "Falta gente" },
-  { k: "excesso", label: "Acima do previsto" },
+  { k: "excesso", label: "Acima do implantado" },
   { k: "ok", label: "Completo" },
   { k: "sem_posto", label: "Gente sem posto" },
   { k: "sem_planilha", label: "Sem planilha" },
@@ -93,6 +93,16 @@ function Kpi({ icon: Icon, valor, rotulo, dica, tom = "primary" }: {
         {dica && <p className="truncate text-[11px] text-muted-foreground/70">{dica}</p>}
       </div>
     </Card>
+  );
+}
+
+/** Implantado (a base do saldo) e, quando difere, o previsto da planilha ao lado. */
+function Implantado({ implantado, previsto }: { implantado: number; previsto: number }) {
+  if (implantado === previsto) return <>{implantado}</>;
+  return (
+    <span title={`Implantado ${implantado} · previsto na Planilha de Custo ${previsto} — justificativa em Licitação › Contratos › Implantação`}>
+      {implantado}<span className="ml-1 text-[10px] font-normal text-muted-foreground">/ {previsto} prev.</span>
+    </span>
   );
 }
 
@@ -169,6 +179,7 @@ export default function AtivosContratos() {
     const com = linhas.filter((l) => l.c.postos.length);
     return {
       previsto: com.reduce((s, l) => s + l.conf.previsto, 0),
+      implantado: com.reduce((s, l) => s + l.conf.implantado, 0),
       tem: com.reduce((s, l) => s + l.conf.tem, 0),
       falta: com.reduce((s, l) => s + l.conf.falta, 0),
       sobra: com.reduce((s, l) => s + l.conf.sobra, 0),
@@ -199,7 +210,7 @@ export default function AtivosContratos() {
     <div>
       <PageHeader
         title="Ativos/Contratos"
-        subtitle="Quantas pessoas cada posto deveria ter (Planilha de Custo) e quantas tem de fato."
+        subtitle="Quantas pessoas cada posto tem implantado (previsto na Planilha de Custo, ajustado pela Licitação) e quantas tem de fato."
         module="Recursos Humanos"
         breadcrumb={["Recursos Humanos", "Ativos/Contratos"]}
       />
@@ -216,12 +227,13 @@ export default function AtivosContratos() {
       ) : (
         <>
           <div className="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            <Kpi icon={Users} valor={tot.previsto.toLocaleString("pt-BR")} rotulo="Previsto" dica="soma das vagas da planilha" tom="info" />
+            <Kpi icon={Users} valor={tot.implantado.toLocaleString("pt-BR")} rotulo="Implantado"
+                 dica={tot.implantado === tot.previsto ? "igual ao previsto da planilha" : `previsto na planilha: ${tot.previsto.toLocaleString("pt-BR")}`} tom="info" />
             <Kpi icon={CheckCircle2} valor={tot.tem.toLocaleString("pt-BR")} rotulo="Tem" dica={`trabalhando · ${tot.afastados} afastado(s) fora${tot.rt ? ` · ${tot.rt} em renda técnica` : ""}`} tom="success" />
             {/* Falta posto a posto só é real com todo mundo no seu posto — antes
                 disso, gente "sem posto" vira falta no posto e infla o número. */}
-            <Kpi icon={AlertTriangle} valor={<span className={corSaldo(tot.tem - tot.previsto)}>{fmtSaldo(tot.tem - tot.previsto)}</span>}
-                 rotulo="Saldo geral (tem − previsto)"
+            <Kpi icon={AlertTriangle} valor={<span className={corSaldo(tot.tem - tot.implantado)}>{fmtSaldo(tot.tem - tot.implantado)}</span>}
+                 rotulo="Saldo geral (tem − implantado)"
                  dica={tot.semPosto ? "posto a posto: defina o posto de todos" : `posto a posto: faltam ${tot.falta}, sobram ${tot.sobra}`}
                  tom="destructive" />
             <Kpi icon={UserMinus} valor={tot.semPosto.toLocaleString("pt-BR")} rotulo="Pessoas sem posto definido"
@@ -259,7 +271,7 @@ export default function AtivosContratos() {
                   <tr className="border-b border-border bg-muted/40 text-left text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
                     <th className="w-8 py-2 pl-3" />
                     <th className="py-2 pr-3">Contrato</th>
-                    <th className="w-24 py-2 pr-3 text-right">Previsto</th>
+                    <th className="w-28 py-2 pr-3 text-right">Implantado</th>
                     <th className="w-24 py-2 pr-3 text-right">Tem</th>
                     <th className="w-24 py-2 pr-3 text-right">Saldo</th>
                     <th className="w-24 py-2 pr-3 text-right">Afastados</th>
@@ -295,7 +307,8 @@ export default function AtivosContratos() {
           <p className="mt-3 text-[11px] text-muted-foreground">
             Tem = colaboradores ativos no posto que estão trabalhando. Atestado, auxílio-doença, licença, férias e
             outros afastamentos não contam (o posto está descoberto) e aparecem em Afastados.
-            Previsto = QT. PESSOAS dos postos EXECUTADO vigentes da Planilha de Custo. Atualizado em {new Date(data.gerado_em).toLocaleString("pt-BR")}.
+            Previsto = QT. PESSOAS dos postos EXECUTADO vigentes da Planilha de Custo. Implantado = o que a Licitação registrou como de fato
+            implantado (sem registro, igual ao previsto); o saldo é contra ele. Atualizado em {new Date(data.gerado_em).toLocaleString("pt-BR")}.
           </p>
         </>
       )}
@@ -319,7 +332,7 @@ function LinhaContrato({ c, conf, aberto, podeVincular, onToggle }: {
           <p className="flex items-center gap-1.5 font-medium">{c.nome}<SeloObservacoes contratoId={c.id} /></p>
           {c.cliente && <p className="text-[11px] text-muted-foreground">{c.cliente}</p>}
         </td>
-        <td className="py-2.5 pr-3 text-right tabular-nums">{temPlanilha ? conf.previsto : "—"}</td>
+        <td className="py-2.5 pr-3 text-right tabular-nums">{temPlanilha ? <Implantado implantado={conf.implantado} previsto={conf.previsto} /> : "—"}</td>
         <td className="py-2.5 pr-3 text-right font-medium tabular-nums">{conf.tem}</td>
         <td className={`py-2.5 pr-3 text-right font-bold tabular-nums ${temPlanilha ? corSaldo(conf.saldo) : "text-muted-foreground"}`}>
           {temPlanilha ? fmtSaldo(conf.saldo) : "—"}
@@ -516,7 +529,7 @@ function TabelaPostos({ c, conf, podeVincular }: { c: ContratoAtivos; conf: Conf
           <tr className="border-b border-border bg-muted/40 text-left text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
             <th className="w-7 py-2 pl-3" />
             <th className="py-2 pr-3">Posto</th>
-            <th className="w-20 py-2 pr-3 text-right">Previsto</th>
+            <th className="w-28 py-2 pr-3 text-right">Implantado</th>
             <th className="w-20 py-2 pr-3 text-right">Tem</th>
             <th className="w-20 py-2 pr-3 text-right">Saldo</th>
             <th className="w-20 py-2 pr-3 text-right">Afastados</th>
@@ -537,7 +550,7 @@ function TabelaPostos({ c, conf, podeVincular }: { c: ContratoAtivos; conf: Conf
           <tr className="border-t border-border bg-muted/30 font-semibold">
             <td />
             <td className="py-2 pr-3">Total{conf.semPosto > 0 && <span className="font-normal text-muted-foreground"> · {conf.semPosto} pessoa(s) ainda sem posto entram só no total do contrato</span>}</td>
-            <td className="py-2 pr-3 text-right tabular-nums">{conf.previsto}</td>
+            <td className="py-2 pr-3 text-right tabular-nums"><Implantado implantado={conf.implantado} previsto={conf.previsto} /></td>
             <td className="py-2 pr-3 text-right tabular-nums">{conf.postos.reduce((s, p) => s + p.tem, 0)}</td>
             <td className="py-2 pr-3 text-right tabular-nums">
               <span className="text-destructive">−{conf.falta}</span>
@@ -639,7 +652,7 @@ function LinhaPosto({ c, p, aberto, podeVincular, onToggle }: {
           {p.pessoas.length > 0 && (aberto ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />)}
         </td>
         <td className="py-2 pr-3 font-medium"><span className="inline-flex items-center gap-1.5">{p.nome}<SeloObservacoes contratoId={c.id} posto={p.nome} /></span></td>
-        <td className="py-2 pr-3 text-right tabular-nums">{p.previsto}</td>
+        <td className="py-2 pr-3 text-right tabular-nums"><Implantado implantado={p.implantado} previsto={p.previsto} /></td>
         <td className="py-2 pr-3 text-right font-medium tabular-nums">{p.tem}</td>
         <td className={`py-2 pr-3 text-right font-bold tabular-nums ${corSaldo(p.saldo)}`}>{fmtSaldo(p.saldo)}</td>
         <td className="py-2 pr-3 text-right tabular-nums"><Afastados pessoas={p.afastados} /></td>

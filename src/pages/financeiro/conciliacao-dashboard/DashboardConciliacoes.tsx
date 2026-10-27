@@ -12,7 +12,7 @@ import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { fmtBRL } from "@/lib/conciliacaoBancariaEngine";
 import { conciliacaoSemSaldoFinal, useCarregarSaldoFinalConciliacoes } from "@/hooks/useGerarResumoConciliacao";
-import { registrosAtuais, saldosMensais, totaisDeMovimentacao, ultimoDiaDoMes, valoresDaConciliacao, type SaldoMensal } from "@/lib/conciliacaoDashboard";
+import { registrosAtuais, saldosMensais, totaisDeMovimentacao, totaisDeSaldos, ultimoDiaDoMes, valoresDaConciliacao, type SaldoMensal } from "@/lib/conciliacaoDashboard";
 import { hojeISO } from "@/pages/financeiro/fluxo-caixa/abasFluxo";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useFluxoCaixaCombinado } from "@/hooks/useFluxoCaixaMalote";
@@ -191,6 +191,9 @@ export function DashboardConciliacoes({ onVerDetalhes, auditoria = null }: { onV
     () => totaisDeMovimentacao(linhasFluxo, { dataDe, dataAte, empresaId: empresaId === TODAS ? null : empresaId, bancoId: bancoValido === TODAS ? null : bancoValido }, hojeISO()),
     [linhasFluxo, dataDe, dataAte, empresaId, bancoValido],
   );
+
+  // SIS-2026-0724: totais dos saldos finais (sistema × extrato) do que está filtrado.
+  const totaisSaldo = useMemo(() => totaisDeSaldos(saldosFiltrados), [saldosFiltrados]);
 
   // Meses em que o saldo do sistema não bate com o do extrato (aparece como aviso na sub-aba).
   const divergentes = saldosFiltrados.filter((s) => s.confere === "nao").length;
@@ -550,11 +553,30 @@ export function DashboardConciliacoes({ onVerDetalhes, auditoria = null }: { onV
           Mesma conta do Fluxo de Caixa: soma tudo o que o Fluxo mostra no período (inclusive saldo anterior e conta vinculada, que a conferência de saldos abaixo
           desconsidera) e o rateio entre empresas conta pelo total, na empresa do primeiro lançamento, como no Fluxo. Na tabela mensal abaixo, o mês entra inteiro.
         </p>
+        {/* SIS-2026-0724: totais de Saldo final (sistema), Saldo final (extrato) e Diferença das empresas/bancos filtrados. */}
+        <div className="grid gap-3 sm:grid-cols-3">
+          {[
+            { rotulo: "Saldo final (sistema) — total", valor: totaisSaldo.sistema, cor: "text-slate-900 dark:text-foreground" },
+            { rotulo: "Saldo final (extrato) — total", valor: totaisSaldo.extrato, cor: "text-slate-900 dark:text-foreground" },
+            { rotulo: "Diferença — total (sistema − extrato)", valor: totaisSaldo.diferenca, cor: totaisSaldo.diferenca === 0 ? "text-emerald-700" : "text-red-600" },
+          ].map((k) => (
+            <div key={k.rotulo} className="rounded-xl border bg-white p-4 shadow-sm dark:bg-card">
+              <p className="text-[10px] font-semibold uppercase tracking-widest text-slate-400">{k.rotulo}</p>
+              <p className={cn("mt-1 text-2xl font-bold leading-tight", k.cor)}>{totaisSaldo.grupos === 0 ? traco : fmtBRL(k.valor)}</p>
+            </div>
+          ))}
+        </div>
+        <p className="text-[11px] text-muted-foreground">
+          Soma, entre as empresas e bancos filtrados, do saldo do <strong>último mês conferido</strong> de cada um (o saldo é acumulado, por isso não se somam os meses).
+          {" "}{totaisSaldo.grupos} conferido(s){totaisSaldo.divergentes > 0 ? `, ${totaisSaldo.divergentes} com diferença` : ""}
+          {totaisSaldo.semConferencia > 0 ? `; ${totaisSaldo.semConferencia} sem nenhum mês conferido (saldo final do extrato não informado) ficam de fora dos três totais` : ""}.
+          Cada empresa e banco continua conferido sozinho na tabela abaixo.
+        </p>
         <div>
           <h3 className="text-sm font-semibold">Saldos mensais por empresa e banco</h3>
           <p className="text-xs text-muted-foreground">
             Saldo do sistema = saldo anterior de janeiro (manual) + entradas − saídas, mês a mês. Saldo do extrato = saldo final lido do OFX da conciliação do mês.
-            Diferença = sistema − extrato. Cada empresa e banco é conferido sozinho: nada é somado nem compensado entre grupos.
+            Diferença = sistema − extrato. Cada empresa e banco é conferido sozinho nesta tabela (nada é compensado entre grupos); os totais acima só somam o resultado de cada um.
           </p>
         </div>
         {semSaldoFinal.length > 0 && (
