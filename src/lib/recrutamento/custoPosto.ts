@@ -78,11 +78,24 @@ export async function buscarCustoDoPosto(sb: any, e: EntradaCusto): Promise<Cust
 
 /**
  * Insalubridade pronta pros dois campos da vaga.
- * Da planilha: "Sim — R$ 642,13/mês (40%)". Do cadastro: "Sim — 40%".
+ * Do cadastro (Senior, prioridade): "Sim — 40%". Da planilha, só quando o
+ * cadastro está vazio: "Sim — R$ 642,13/mês (40%)".
  */
 export function insalubridadeDoCusto(
   custo: CustoPosto | null, cadastroPct?: unknown, salario?: unknown,
 ): { recebe: "Sim" | "Não"; quanto: string; origem: "planilha" | "cadastro" | "nenhuma" } {
+  // O CADASTRO (Senior) manda sempre que diz alguma coisa (26/10/2026 — vaga
+  // #1388, CARLA THAINA: 40,00 na Senior, a planilha do posto dizia outra
+  // coisa e a vaga saiu "R$ 385,15/mês (20%)"). Quem está no posto é a prova
+  // do que o posto paga; a planilha só entra quando o cadastro está vazio.
+  // O cadastro segue a Senior de 15 em 15 min (mig 20261026000900).
+  const temCadastro = cadastroPct !== undefined && cadastroPct !== null && String(cadastroPct).trim() !== "";
+  if (temCadastro) {
+    const pct = num(cadastroPct);
+    return pct > 0
+      ? { recebe: "Sim", quanto: `${pctBR(pct)}%`, origem: "cadastro" }
+      : { recebe: "Não", quanto: "", origem: "cadastro" };
+  }
   if (custo) {
     const v = num(custo.insalubridade);
     if (v > 0) {
@@ -90,15 +103,9 @@ export function insalubridadeDoCusto(
       const pct = base > 0 ? Math.round((v / base) * 100) : 0;
       return { recebe: "Sim", quanto: `${brl(v)}/mês${pct ? ` (${pct}%)` : ""}`, origem: "planilha" };
     }
-    // Planilha do posto SEM insalubridade, mas o colaborador recebe na Senior
-    // (20/10/2026 — MONICA DOS SANTOS MEDEIROS, 20% no cadastro, a vaga saía
-    // "Não"): vale o cadastro. Planilha vazia não é prova de que o posto não
-    // paga — a pessoa que está nele recebe.
-    if (num(cadastroPct) <= 0) return { recebe: "Não", quanto: "", origem: "planilha" };
+    return { recebe: "Não", quanto: "", origem: "planilha" };
   }
-  const pct = num(cadastroPct);
-  if (pct > 0) return { recebe: "Sim", quanto: `${pctBR(pct)}%`, origem: "cadastro" };
-  return { recebe: "Não", quanto: "", origem: cadastroPct === undefined ? "nenhuma" : "cadastro" };
+  return { recebe: "Não", quanto: "", origem: "nenhuma" };
 }
 
 /** "VT R$ 126,28/mês · VA R$ 461,82/mês" — só o que é maior que zero. */
@@ -124,7 +131,7 @@ export function notaDoCusto(custo: CustoPosto | null, origemInsal: "planilha" | 
   }
   if (custo) {
     const base = `Da Planilha de Custo — posto "${custo.posto}"${custo.vigencia ? `, vigência ${custo.vigencia.split("-").reverse().join("/")}` : ""}.`
-      + (origemInsal === "cadastro" ? " A planilha do posto está sem insalubridade — veio a do cadastro do colaborador." : "");
+      + (origemInsal === "cadastro" ? " A insalubridade é a do cadastro do colaborador na Senior (vale mais que a planilha)." : "");
     if (postoEscolhido && custo.por_posto === false) {
       return `Da Planilha de Custo — o posto "${postoEscolhido}" não tem esse nome na planilha; usado "${custo.posto}" (mesma cidade e jornada)${custo.ambiguo ? ", mas há postos parecidos com valores diferentes" : ""}. O Recrutamento confere.`;
     }
