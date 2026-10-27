@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { custosVazios, ehDespesaDeSocio, type LinhaFluxoCusto } from "@/pages/controladoria/faturamento/regras";
-import { despesasDosSocios, montarFechamento, socioDoContrato, totalDoFechamento } from "@/pages/controladoria/fechamento/regras";
+import { despesasDosSocios, ehContratoInvestimento, montarFechamento, ordenarColunasSocios, ROTULO_INVESTIMENTOS, socioDoContrato, totalDoFechamento } from "@/pages/controladoria/fechamento/regras";
 
 // SIS-2026-0709: despesas dos sócios saem do Resultado Final e entram no Resultado com Sócios (Lucro Líquido Final).
 describe("sócio pelo nome do contrato", () => {
@@ -88,5 +88,29 @@ describe("despesasDosSocios e o Lucro Líquido Final", () => {
     expect(jan.socios.Senilton).toBe(100);
     expect(mar.projetado).toBe(true);
     expect(mar.socios.Senilton).toBe(100); // a média só olha meses anteriores ao atual: só jan (fev, o mês atual, está incompleto)
+  });
+});
+
+describe("SIS-2026-0744 — coluna Investimentos (contratos INVESTIMENTOS …)", () => {
+  it("reconhece os contratos de investimento pelo início do nome, sem acento nem caixa", () => {
+    expect(ehContratoInvestimento("INVESTIMENTOS AGPS")).toBe(true);
+    expect(ehContratoInvestimento("Investimentos HAGG")).toBe(true);
+    expect(ehContratoInvestimento("INVESTIMENTO SN")).toBe(true);
+    expect(ehContratoInvestimento("HUSM SANTA MARIA - LAVANDERIA - 020/2021")).toBe(false);
+    expect(ehContratoInvestimento("ADMINISTRATIVO - HAGG")).toBe(false);
+    expect(ehContratoInvestimento(null)).toBe(false);
+  });
+
+  it("Investimentos é a última coluna, depois dos sócios em ordem alfabética", () => {
+    expect(ordenarColunasSocios(["Senilton", ROTULO_INVESTIMENTOS, "Antônio", "Helena"])).toEqual(["Antônio", "Helena", "Senilton", ROTULO_INVESTIMENTOS]);
+  });
+
+  it("soma todas as saídas dos contratos de investimento no mês e desconta do Lucro Líquido Final (como os sócios)", () => {
+    const porContrato = new Map([["c-agps", ROTULO_INVESTIMENTOS], ["c-hagg", ROTULO_INVESTIMENTOS], ["c-helena", "Helena"]]);
+    const linha = (contrato_id: string, valor: number, mes = "2026-03-10") =>
+      ({ tipo: "saida", valor, contrato_id, classificacao_id: null, classificacao_nome: null, data_pagamento: mes, competencia: mes } as any);
+    const r = despesasDosSocios([linha("c-agps", 100), linha("c-hagg", 50.5), linha("c-helena", 10), { ...linha("c-agps", 999), tipo: "entrada" }], porContrato);
+    expect(r.get(ROTULO_INVESTIMENTOS)?.get("2026-03")).toBe(150.5);
+    expect(r.get("Helena")?.get("2026-03")).toBe(10);
   });
 });

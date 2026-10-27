@@ -20,7 +20,7 @@ import { useLigacoesRubrica } from "./faturamento/useLigacoesRubrica";
 import { DetalheDespesaDialog, type DetalheAberto } from "./fechamento/DetalheDespesaDialog";
 import { TituloComFormula } from "./faturamento/Rentabilidade";
 import {
-  admPorClassificacao, detalheAdmPorClassificacao, detalheSocioPorClassificacao, admPorMesRubrica, despesasDosSocios, socioDoContrato, admSemClassificacao, margemFinal, montarFechamento, ORIGEM_ADM, ORIGEM_RUBRICA, ROTULO_STATUS, statusDoFechamento, totalDoFechamento,
+  admPorClassificacao, detalheAdmPorClassificacao, detalheSocioPorClassificacao, admPorMesRubrica, despesasDosSocios, socioDoContrato, admSemClassificacao, ehContratoInvestimento, ordenarColunasSocios, ROTULO_INVESTIMENTOS, margemFinal, montarFechamento, ORIGEM_ADM, ORIGEM_RUBRICA, ROTULO_STATUS, statusDoFechamento, totalDoFechamento,
   type LinhaFechamento, type StatusFechamento,
 } from "./fechamento/regras";
 
@@ -110,7 +110,8 @@ export default function FechamentoEmpresa() {
   // SIS-2026-0709: contrato "ADMINISTRATIVO <SÓCIO>" → nome do sócio. Fica fora do lucro dos contratos e entra no Resultado com Sócios.
   const socioPorContrato = useMemo(() => {
     const m = new Map<string, string>();
-    for (const c of contratos) { const s = socioDoContrato(c.nome); if (s) m.set(c.id, s); }
+    // SIS-2026-0744: contrato "INVESTIMENTOS …" entra como mais uma coluna desta aba (rótulo "Investimentos"), com a mesma regra dos sócios.
+    for (const c of contratos) { const s = socioDoContrato(c.nome) ?? (ehContratoInvestimento(c.nome) ? ROTULO_INVESTIMENTOS : null); if (s) m.set(c.id, s); }
     return m;
   }, [contratos]);
   // Contratos "ADMINISTRATIVO - …" (inclusive os dos sócios) são centros de custo da empresa, não contrato de cliente: o Lucro dos Contratos
@@ -172,7 +173,7 @@ export default function FechamentoEmpresa() {
       const nome = socioPorContrato.get(c.id);
       if (nome && (empresaId === TODOS || c.empresa_id === empresaId)) s.add(nome);
     }
-    return [...s].sort((a, b) => a.localeCompare(b, "pt-BR"));
+    return ordenarColunasSocios([...s]);
   }, [linhasAno, contratos, socioPorContrato, empresaId]);
 
   // SIS-2026-0730: clique no valor abre o detalhamento por classificação (mesma seleção de linhas e mesmo mês da célula).
@@ -523,8 +524,10 @@ export default function FechamentoEmpresa() {
                         <TableRow>
                           <TableHead className="h-auto px-2 py-1.5 align-bottom">Mês</TableHead>
                           <TableHead className={CAB}><TituloComFormula titulo="Resultado Final (R$)" formula="Lucro dos Contratos − Total Desp. Adm. É o resultado SEM as despesas dos sócios (mesmo valor da aba Resumo Mensal)." /></TableHead>
-                          {nomesSocios.map((s) => <TableHead key={s} className={CAB}><TituloComFormula titulo={`${s} (R$)`} formula={<><p>Saídas do Fluxo de Caixa lançadas no contrato <strong>ADMINISTRATIVO SÓCIOS - {s.toUpperCase()}</strong>, inclusive distribuição de lucros. Transferência, aplicação, empréstimo e financiamento ficam de fora.</p><p>Meses projetados: o lançado ou a média dos últimos 3 meses, o maior.</p></>} /></TableHead>)}
-                          <TableHead className={CAB}><TituloComFormula titulo="Lucro Líquido Final (R$)" formula="Resultado Final − despesas de todos os sócios no mês." /></TableHead>
+                          {nomesSocios.map((s) => <TableHead key={s} className={CAB}><TituloComFormula titulo={`${s} (R$)`} formula={s === ROTULO_INVESTIMENTOS
+                            ? <><p>Todas as saídas do Fluxo de Caixa lançadas nos contratos <strong>INVESTIMENTOS …</strong> (AGPS, HAGG, SN…), seja qual for a classificação. Ficam fora do Resultado Final e saem aqui, antes do Lucro Líquido Final.</p><p>Meses projetados: o lançado ou a média dos últimos 3 meses, o maior.</p></>
+                            : <><p>Saídas do Fluxo de Caixa lançadas no contrato <strong>ADMINISTRATIVO SÓCIOS - {s.toUpperCase()}</strong>, inclusive distribuição de lucros. Transferência, aplicação, empréstimo e financiamento ficam de fora.</p><p>Meses projetados: o lançado ou a média dos últimos 3 meses, o maior.</p></>} /></TableHead>)}
+                          <TableHead className={CAB}><TituloComFormula titulo="Lucro Líquido Final (R$)" formula="Resultado Final − despesas de todos os sócios e os investimentos no mês." /></TableHead>
                           <TableHead className={`${CAB} text-center`}><TituloComFormula alinhar="center" titulo="Status" formula={<><p>Pela margem do Lucro Líquido Final sobre o Lucro dos Contratos:</p><FaixasStatus /></>} /></TableHead>
                         </TableRow>
                       </TableHeader>
@@ -559,7 +562,7 @@ export default function FechamentoEmpresa() {
                     </Table>
                   )}
                   <p className="border-t px-3 py-2 text-[11px] text-muted-foreground">
-                    Despesas dos sócios = todas as saídas do Fluxo de Caixa nos contratos "ADMINISTRATIVO SÓCIOS - nome do sócio", seja qual for a classificação, {base === "pagamento" ? "pelo mês do pagamento" : "pelo mês da competência"}. Elas ficam fora do Resultado Final (resumo mensal sem sócios) e entram aqui, depois dele, para chegar ao Lucro Líquido Final.
+                    Despesas dos sócios = todas as saídas do Fluxo de Caixa nos contratos "ADMINISTRATIVO SÓCIOS - nome do sócio", seja qual for a classificação, {base === "pagamento" ? "pelo mês do pagamento" : "pelo mês da competência"}. Os contratos "INVESTIMENTOS …" seguem a mesma regra e formam a coluna Investimentos. Tudo isso fica fora do Resultado Final (resumo mensal sem sócios) e entra aqui, depois dele, para chegar ao Lucro Líquido Final.
                   </p>
                 </CardContent>
               </Card>
