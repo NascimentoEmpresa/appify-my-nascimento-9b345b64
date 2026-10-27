@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { totaisDeMovimentacao, totaisDeSaldos, type LinhaParaTotais, type SaldoMensal } from "@/lib/conciliacaoDashboard";
+import { dataDoSaldoFinal, parseFimPeriodoOFX } from "@/lib/conciliacaoBancariaEngine";
 
 const S = (o: Partial<SaldoMensal>): SaldoMensal => ({
-  chave: "x", empresaId: "A", bancoId: "b1", conta: "", mes: "2026-01", entradas: 0, saidas: 0, saldoSistema: 100, saldoExtrato: 100, diferenca: 0, confere: "sim", conciliacaoId: "c", ...o,
+  chave: "x", empresaId: "A", bancoId: "b1", conta: "", mes: "2026-01", entradas: 0, saidas: 0, saldoSistema: 100, saldoExtrato: 100, saldoExtratoDeOutraData: null, diferenca: 0, confere: "sim", conciliacaoId: "c", ...o,
 });
 
 describe("SIS-2026-0724 — totais de saldo final (sistema × extrato)", () => {
@@ -73,5 +74,33 @@ describe("SIS-2026-0736 — soma de entradas e saídas do período", () => {
   it("o que ainda não aconteceu (data depois de hoje ou previsto) fica de fora", () => {
     const r = totaisDeMovimentacao([l({ valor: 5 }), l({ valor: 7, data_pagamento: "2026-12-01" }), l({ valor: 9, situacao_base: "aberto" })], todos, hoje);
     expect(r.saidas).toBe(5);
+  });
+});
+
+describe("Saldo final do extrato com data posterior ao período (AGPS · Banrisul jan/2026)", () => {
+  const saldo = { valor: 111.16, data: "2026-02-04" };
+
+  it("arquivo que termina no período e saldo baixado depois: mantém a data real (não é o saldo de 31/01)", () => {
+    expect(dataDoSaldoFinal(saldo, [{ dia: "2026-01-29" }], "2026-01-31", "2026-01-31")).toBe("2026-02-04");
+  });
+
+  it("arquivo que traz os movimentos até a data do saldo: dá para trazer de volta ao fim do período", () => {
+    expect(dataDoSaldoFinal(saldo, [{ dia: "2026-02-03" }], "2026-01-31", "2026-02-04")).toBe("2026-01-31");
+    expect(dataDoSaldoFinal(saldo, [{ dia: "2026-01-29" }], "2026-01-31", "2026-02-04")).toBe("2026-01-31");
+  });
+
+  it("saldo até o fim do período ou sem data: devolve como veio", () => {
+    expect(dataDoSaldoFinal({ valor: 1, data: "2026-01-31" }, [], "2026-01-31", null)).toBe("2026-01-31");
+    expect(dataDoSaldoFinal({ valor: 1, data: null }, [], "2026-01-31", null)).toBeNull();
+  });
+
+  it("lê o DTEND do arquivo", () => {
+    expect(parseFimPeriodoOFX("<BANKTRANLIST><DTSTART>20260101000000<DTEND>20260131000000<STMTTRN>")).toBe("2026-01-31");
+    expect(parseFimPeriodoOFX("<OFX></OFX>")).toBeNull();
+  });
+
+  it("no dashboard o saldo de outra data não é comparado: fica pendente, sem diferença, e sai dos totais", () => {
+    const r = totaisDeSaldos([S({ saldoExtrato: 111.16, saldoExtratoDeOutraData: "2026-02-04", diferenca: null, confere: "pendente" })]);
+    expect(r).toMatchObject({ grupos: 0, semConferencia: 1 });
   });
 });

@@ -43,6 +43,7 @@ export interface ConciliacaoParaSaldo {
   empresa_ids: string[];
   conta_extrato: string | null;
   saldo_final_extrato?: number | null;
+  saldo_final_extrato_data?: string | null;
   created_at: string;
 }
 
@@ -56,6 +57,9 @@ export interface SaldoMensal {
   saidas: number;
   saldoSistema: number | null;
   saldoExtrato: number | null;
+  // Data a que o saldo do extrato se refere, só quando é POSTERIOR ao fim do período (extrato baixado depois e sem os movimentos até lá):
+  // aí o saldo não é o do último dia do mês e a comparação com o sistema não vale. null = é do fim do período (ou não se sabe).
+  saldoExtratoDeOutraData: string | null;
   diferenca: number | null;
   confere: ConfereSaldo;
   conciliacaoId: string | null;
@@ -160,10 +164,14 @@ export function saldosMensais(
       const conc = conciliacaoDoMes(atuais, empresaId, bancoId, mes);
       const saldoExtrato = conc?.saldo_final_extrato ?? null;
       // sem conciliação processada naquele mês, a conferência fica pendente mesmo que exista saldo do sistema
-      const { confere, diferenca } = conc ? statusConfere(acumulado, saldoExtrato) : { confere: "pendente" as const, diferenca: null };
+      // Saldo de data posterior ao fim do período não é o do último dia: não compara (fica pendente) até alguém informar o saldo certo.
+      const deOutraData = conc?.saldo_final_extrato_data && saldoExtrato != null && conc.saldo_final_extrato_data > conc.data_fim ? conc.saldo_final_extrato_data : null;
+      const { confere, diferenca } = conc ? statusConfere(acumulado, deOutraData ? null : saldoExtrato) : { confere: "pendente" as const, diferenca: null };
       saida.push({
         chave: `${g}|${mes}`, empresaId, bancoId, conta: contas, mes, entradas, saidas,
-        saldoSistema: acumulado, saldoExtrato, diferenca, confere, conciliacaoId: conc?.id ?? null,
+        saldoSistema: acumulado, saldoExtrato,
+        saldoExtratoDeOutraData: deOutraData,
+        diferenca, confere, conciliacaoId: conc?.id ?? null,
       });
     }
   }
@@ -188,7 +196,7 @@ export function totaisDeSaldos(saldos: SaldoMensal[]): TotaisSaldos {
   for (const s of saldos) {
     const g = `${s.empresaId}|${s.bancoId}`;
     if (!ultimo.has(g)) ultimo.set(g, null);
-    if (s.saldoSistema == null || s.saldoExtrato == null) continue;
+    if (s.saldoSistema == null || s.saldoExtrato == null || s.saldoExtratoDeOutraData) continue;
     const atual = ultimo.get(g);
     if (!atual || s.mes > atual.mes) ultimo.set(g, s);
   }
