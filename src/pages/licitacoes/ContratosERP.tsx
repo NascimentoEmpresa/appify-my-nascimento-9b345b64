@@ -17,6 +17,7 @@ import { cn } from "@/lib/utils";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { ContratosDashboardTab, type FiltroDashboard } from "./contratos/ContratosDashboardTab";
+import { ImplantacaoTab } from "./contratos/ImplantacaoTab";
 import { Plus, Pencil, Trash2, Building2, CalendarDays, TrendingUp, FileText, ExternalLink, Archive, ChevronDown, ChevronUp } from "lucide-react";
 import {
   useContratosERP,
@@ -189,7 +190,10 @@ export default function ContratosERP() {
   // mockup batizou a página de "Controle de Contratos" e o dashboard é a
   // cara principal dela; "lista" é a tela de KPIs/abas/tabela já entregue,
   // virou o destino de "Ver detalhes"/"Ver todos" dos cards do dashboard.
-  const [viewTab, setViewTab] = useState<"dashboard" | "lista">("dashboard");
+  // 27/10/2026: "implantacao" = previsto × implantado por posto, com a
+  // justificativa anual (ver contratos/ImplantacaoTab.tsx).
+  const [viewTab, setViewTab] = useState<"dashboard" | "lista" | "implantacao">("dashboard");
+  const { data: veImplantacao = false } = useScreenAccess("licitacoes_contratos_implantacao", "visualizar");
   const [busca, setBusca] = useState("");
   const [filtroStatus, setFiltroStatus] = useState<string>("todos");
   const [filtroEmpresaId, setFiltroEmpresaId] = useState<string>("todas");
@@ -545,7 +549,14 @@ export default function ContratosERP() {
         <TabsList>
           <TabsTrigger value="dashboard">Dashboard</TabsTrigger>
           <TabsTrigger value="lista">Lista</TabsTrigger>
+          {veImplantacao && <TabsTrigger value="implantacao">Implantação</TabsTrigger>}
         </TabsList>
+
+        <TabsContent value="implantacao" className="pt-4">
+          <AcessoGate menu="licitacoes_contratos_implantacao" acao="visualizar">
+            {viewTab === "implantacao" && <ImplantacaoTab />}
+          </AcessoGate>
+        </TabsContent>
 
         <TabsContent value="dashboard" className="pt-4">
           <ContratosDashboardTab

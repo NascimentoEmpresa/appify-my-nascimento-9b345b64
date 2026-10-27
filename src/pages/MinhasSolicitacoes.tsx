@@ -77,6 +77,10 @@ function badgeStatusCls(st: string) {
     Contratado: "bg-emerald-100 text-emerald-700 border-emerald-200",
     Respondida: "bg-green-100 text-green-700 border-green-200",
     Aberta: "bg-orange-100 text-orange-700 border-orange-200",
+    // Solicitação de Treinamento (mig 20261026000910).
+    "Aguardando Treinamentos": "bg-yellow-100 text-yellow-800 border-yellow-200",
+    "Ajuste solicitado": "bg-orange-100 text-orange-800 border-orange-300",
+    Agendada: "bg-indigo-100 text-indigo-700 border-indigo-200",
   };
   return m[st] ?? "bg-blue-100 text-blue-700 border-blue-200";
 }
@@ -217,6 +221,7 @@ const FILTROS: Array<{ valor: string; rotulo: string }> = [
   { valor: "Demissão",           rotulo: "Demissão" },
   { valor: "Chamado",            rotulo: "Chamado" },
   { valor: "Materiais",          rotulo: "Materiais" },
+  { valor: "Treinamento",        rotulo: "Treinamento" },
 ];
 
 // Vaga já andou: o encarregado não mexe mais na data (o Recrutamento assume).
@@ -380,6 +385,11 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
     // devolve só os pedidos de quem está logado. Não consulto as tabelas de
     // Suprimentos direto — a regra de quem vê o quê é de lá.
     const mt = await db.rpc("sup_ext_meus_pedidos");
+    // Treinamento (mig 20261026000910): a RLS já devolve só os de quem está logado.
+    const tr = user?.id
+      ? await db.from("TRN_SOLICITACAO").select("id, protocolo, treinamento, contrato_nome, status, devolucao_motivo, created_at, updated_at")
+          .eq("solicitante_id", user.id).order("created_at", { ascending: false }).limit(30)
+      : { data: [] };
     const itens: SolItem[] = [
       ...(vg.data ?? []).map(r => ({
         tipo: "Vaga", icon: "🎯", id: r.id,
@@ -425,6 +435,15 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
         // Pedido de material não tem conversa; prometer "chat" aqui seria
         // mandar o encarregado procurar algo que não existe.
         acao: "📦 Ver pedido",
+      })),
+      ...(tr.data ?? []).map((r: { id: number; protocolo: string; treinamento: string; contrato_nome: string; status: string; devolucao_motivo: string | null; created_at: string; updated_at: string }) => ({
+        tipo: "Treinamento", icon: "🎓", id: r.id,
+        titulo: `${r.treinamento}${r.contrato_nome ? ` — ${r.contrato_nome}` : ""}`,
+        status: r.status === "pendente" ? (r.devolucao_motivo ? "Ajuste solicitado" : "Aguardando Treinamentos")
+          : ({ aprovada: "Aprovada", agendada: "Agendada", concluida: "Concluída", reprovada: "Reprovada", cancelada: "Cancelada" } as Record<string, string>)[r.status] ?? r.status,
+        data: r.created_at, statusDesde: r.updated_at || r.created_at,
+        rota: `${rotas.treinamento}?s=${r.id}`,
+        acao: "💬 Detalhes e chat",
       })),
     ].sort((a, b) => String(b.data || "").localeCompare(String(a.data || "")));
     setLoadingSols(false);
@@ -1138,6 +1157,10 @@ export default function MinhasSolicitacoes({ abrir, base = "encarregados" }: { a
                 formulário aqui seria uma segunda versão para manter. */}
             <button onClick={() => nav(rotas.materiais)} className="ini-sol-create">
               <span className="icon">📦</span><span>Solicitar Materiais</span>
+            </button>
+            {/* Solicitação de Treinamento (mig 20261026000910): formulário de 5 etapas na tela própria. */}
+            <button onClick={() => nav(rotas.treinamento)} className="ini-sol-create">
+              <span className="icon">🎓</span><span>Solicitar Treinamento</span>
             </button>
             <button onClick={() => nav(rotas.chamadoNovo)} className="ini-sol-create">
               <span className="icon">🎧</span><span>Abrir Chamado</span>
