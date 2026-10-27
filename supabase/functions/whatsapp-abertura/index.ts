@@ -9,8 +9,16 @@
 // modo de falhar. Esta função escolhe o caminho e mantém as duas pontas
 // com o mesmo texto (o de WA_BOT_CONFIG.abertura_*).
 //
+// DUAS aberturas (27/10/2026): a genérica ("Precisamos entrar em contato com
+// você...") tomava 131049 — a Meta a reclassificou como MARKETING, que ela
+// limita por pessoa. A principal agora é ligada à candidatura ({{1}} =
+// primeiro nome, {{2}} = vaga), o que a Meta aceita como UTILITY; a genérica
+// sobra para quem não é candidato e como reserva enquanto a nova não é
+// aprovada. Ver mig 20261027000110.
+//
 // Ações:
-//   { conversa_id }             → manda a abertura (texto livre OU template)
+//   { conversa_id, nome?, vaga? } → manda a abertura (texto livre OU template);
+//                                   sem vaga sai a genérica
 //   { acao: "criar_template" }  → cria/consulta o template na Meta
 //   { acao: "status_template" } → só CONSULTA o estado na Meta
 //
@@ -54,6 +62,16 @@ const json = (b: unknown, status = 200) =>
 function problemaDeTemplate(codigo: unknown): boolean {
   const n = Number(codigo);
   return Number.isFinite(n) && n >= 132000 && n < 133000;
+}
+
+// {{1}}, {{2}}... — quantas variáveis o corpo tem e como preenchê-las.
+const qtdVariaveis = (t: string) => new Set(t.match(/\{\{\d+\}\}/g) ?? []).size;
+const preencher = (t: string, valores: string[]) =>
+  t.replace(/\{\{(\d+)\}\}/g, (m, n) => valores[Number(n) - 1] ?? m);
+// "MARIA DA SILVA" → "Maria": o nome do cadastro vem em caixa alta.
+function primeiroNome(nome: string): string {
+  const p = nome.trim().split(/\s+/)[0] ?? "";
+  return p ? p[0].toUpperCase() + p.slice(1).toLowerCase() : "";
 }
 
 interface CorpoAprovado { texto: string | null; botoes: string[] }
@@ -112,17 +130,19 @@ Deno.serve(async (req) => {
 
   if (!WA_TOKEN || !PHONE_NUMBER_ID) return json({ error: "WhatsApp não configurado no servidor" }, 500);
 
-  let body: { conversa_id?: string; acao?: string };
+  let body: { conversa_id?: string; acao?: string; nome?: string; vaga?: string };
   try { body = await req.json(); } catch { return json({ error: "json inválido" }, 400); }
 
-  // Texto, botão e nome do template — uma fonte só, no banco.
-  const { data: cfg } = await db.from("WA_BOT_CONFIG")
-    .select("abertura_texto, abertura_botao, abertura_template, abertura_template_idioma")
-    .limit(1).maybeSingle();
+  // Texto, botão e nome do template — uma fonte só, no banco. `*` e não a
+  // lista de colunas: a function sobe antes da migration que cria as da
+  // genérica, e uma coluna citada que não existe derrubaria a abertura toda.
+  const { data: cfg } = await db.from("WA_BOT_CONFIG").select("*").limit(1).maybeSingle();
   const texto = String(cfg?.abertura_texto ?? "").trim();
   const rotuloBotao = String(cfg?.abertura_botao ?? "").trim();
   const nomeTemplate = String(cfg?.abertura_template ?? "abertura_contato").trim();
   const idioma = String(cfg?.abertura_template_idioma ?? "pt_BR").trim();
+  const textoGenerico = String(cfg?.abertura_texto_generico ?? "").trim();
+  const nomeGenerico = String(cfg?.abertura_template_generico ?? "").trim();
   if (!texto) return json({ error: "mensagem de abertura não configurada" }, 500);
 
   // ---- só consultar o estado na Meta ----------------------------------
@@ -144,6 +164,7 @@ Deno.serve(async (req) => {
     const todos: Tpl[] = d?.data ?? [];
     const mesmoNome = todos.filter(t => t?.name === nomeTemplate);
     const noIdioma = mesmoNome.find(t => t?.language === idioma);
+    const gen = nomeGenerico ? todos.find(t => t?.name === nomeGenerico && t?.language === idioma) : undefined;
 
     return json({
       ok: true,
@@ -154,7 +175,14 @@ Deno.serve(async (req) => {
       // é justamente esse descasamento que devolve #132001.
       existe_no_idioma: !!noIdioma,
       status: noIdioma?.status ?? null,
+      // A categoria que a META deu — não a que pedimos. Ela reclassifica
+      // UTILITY → MARKETING sozinha, e marketing toma 131049 (27/10/2026).
       categoria: noIdioma?.category ?? null,
+      // A genérica (sem vaga / reserva): a tela mostra a categoria dela
+      // também, para o atendente saber quando a abertura pode ser barrada.
+      generica: nomeGenerico
+        ? { nome: nomeGenerico, status: gen?.status ?? "NAO_CRIADO", categoria: gen?.category ?? null }
+        : null,
       motivo_reprovacao: noIdioma?.rejected_reason ?? null,
       // O corpo REALMENTE aprovado. É o que a pessoa vai receber, e pode
       // não ter nada a ver com o abertura_texto configurado aqui — foi
@@ -223,7 +251,11 @@ Deno.serve(async (req) => {
         category: "UTILITY",
         language: idioma,
         components: [
-          { type: "BODY", text: texto },
+          // Com variável a Meta exige exemplo — sem ele recusa o template.
+          { type: "BODY", text: texto,
+            ...(qtdVariaveis(texto)
+              ? { example: { body_text: [["Maria", "Recepcionista", "exemplo", "exemplo"].slice(0, qtdVariaveis(texto))] } }
+              : {}) },
           // QUICK_REPLY: o clique volta como mensagem de entrada e abre a
           // janela de 24h. É o que faz a abertura virar conversa.
           ...(rotuloBotao
@@ -258,35 +290,66 @@ Deno.serve(async (req) => {
     .eq("conversa_id", conversa.id).eq("direcao", "entrada").gt("criada_em", limite);
   const dentroJanela = (count ?? 0) > 0;
 
+  // Qual abertura: com vaga, a da candidatura (UTILITY); sem vaga, a
+  // genérica. Texto sem variável é a configuração de antes da mig
+  // 20261027000110 — segue como sempre foi.
+  const vaga = String(body.vaga ?? "").trim();
+  const temVariaveis = qtdVariaveis(texto) > 0;
+  const valores = [primeiroNome(String(body.nome ?? "")) || "candidato(a)", vaga];
+  const generica = { nome: nomeGenerico, texto: textoGenerico, valores: [] as string[] };
+  let escolhida = { nome: nomeTemplate, texto, valores: temVariaveis ? valores : [] };
+  if (temVariaveis && !vaga) {
+    if (!nomeGenerico || !textoGenerico) return json({ error: "informe a vaga para mandar a abertura" }, 400);
+    escolhida = generica;
+  }
+  const textoEnvio = preencher(escolhida.texto, escolhida.valores);
+
   const botoes = rotuloBotao ? [{ id: BOTAO_ID, titulo: rotuloBotao }] : [];
 
   const base = { messaging_product: "whatsapp", to: contato.wa_id };
+  const comoTemplate = (t: { nome: string; valores: string[] }) => ({
+    ...base, type: "template",
+    // Sem variável não vai `components`: o botão de resposta rápida não leva
+    // parâmetro, então a Meta usa o que foi aprovado.
+    template: {
+      name: t.nome, language: { code: idioma },
+      ...(t.valores.length
+        ? { components: [{ type: "body", parameters: t.valores.map((v) => ({ type: "text", text: v })) }] }
+        : {}),
+    },
+  });
   const mensagem: Record<string, unknown> = !dentroJanela
-    ? {
-        ...base, type: "template",
-        // Sem `components`: o corpo não tem variável e o botão de resposta
-        // rápida não leva parâmetro, então a Meta usa o que foi aprovado.
-        template: { name: nomeTemplate, language: { code: idioma } },
-      }
+    ? comoTemplate(escolhida)
     : botoes.length
     ? {
         ...base, type: "interactive",
         interactive: {
           type: "button",
-          body: { text: texto },
+          body: { text: textoEnvio },
           // 20 caracteres é o teto do botão interativo (o do template é 25).
           action: { buttons: botoes.map((b) => ({ type: "reply", reply: { id: b.id, title: b.titulo.slice(0, 20) } })) },
         },
       }
     // Sem botão configurado não há interativo para mandar — vai texto puro.
-    : { ...base, type: "text", text: { body: texto } };
+    : { ...base, type: "text", text: { body: textoEnvio } };
 
-  const res = await fetch(`${GRAPH}/${PHONE_NUMBER_ID}/messages`, {
+  const enviarGraph = (m: Record<string, unknown>) => fetch(`${GRAPH}/${PHONE_NUMBER_ID}/messages`, {
     method: "POST",
     headers: { Authorization: `Bearer ${WA_TOKEN}`, "Content-Type": "application/json" },
-    body: JSON.stringify(mensagem),
+    body: JSON.stringify(m),
   });
-  const data = await res.json().catch(() => ({}));
+  let res = await enviarGraph(mensagem);
+  let data = await res.json().catch(() => ({}));
+
+  // A da candidatura ainda não aprovada (1320xx)? Cai na genérica, que já
+  // estava em uso — mesma reserva da Saudação (whatsapp-template-enviar).
+  // Fica registrado no payload, porque a genérica pode tomar 131049.
+  let usouGenerica = escolhida === generica;
+  if (!res.ok && !dentroJanela && escolhida !== generica && nomeGenerico && problemaDeTemplate(data?.error?.code)) {
+    res = await enviarGraph(comoTemplate(generica));
+    data = await res.json().catch(() => ({}));
+    if (res.ok) { escolhida = generica; usouGenerica = true; }
+  }
 
   if (!res.ok) {
     const codigo = data?.error?.code;
@@ -295,8 +358,8 @@ Deno.serve(async (req) => {
     // oferecer "criar na Meta" em vez de repetir um erro sem saída.
     if (problemaDeTemplate(codigo)) {
       return json({
-        error: `O template "${nomeTemplate}" ainda não está aprovado na Meta — sem ele não dá para falar com quem não escreveu nas últimas 24h.`,
-        template_faltando: true, nome_template: nomeTemplate, detalhe: data,
+        error: `O template "${escolhida.nome}" ainda não está aprovado na Meta — sem ele não dá para falar com quem não escreveu nas últimas 24h.`,
+        template_faltando: true, nome_template: escolhida.nome, detalhe: data,
       }, 400);
     }
     return json({ error: "falha ao enviar a abertura", detalhe: data }, 502);
@@ -311,17 +374,18 @@ Deno.serve(async (req) => {
   // contato nunca recebeu. Agora o corpo real é buscado e é ele que fica
   // registrado; se a consulta falhar, cai no texto local com a ressalva
   // gravada no payload, para ninguém ler a bolha como se fosse certeza.
-  let textoGravado = texto;
+  let textoGravado = preencher(escolhida.texto, escolhida.valores);
   let botoesGravados = botoes.map(b => b.titulo);
   let corpoIncerto = false;
 
   if (!dentroJanela) {
     const waba = await descobrirWaba(WA_TOKEN, PHONE_NUMBER_ID);
     const real = waba.id
-      ? await corpoAprovado(WA_TOKEN, waba.id, nomeTemplate, idioma)
+      ? await corpoAprovado(WA_TOKEN, waba.id, escolhida.nome, idioma)
       : { texto: null, botoes: [] };
     if (real.texto) {
-      textoGravado = real.texto;
+      // O aprovado vem com {{1}}/{{2}}: preenche com o que foi mandado.
+      textoGravado = preencher(real.texto, escolhida.valores);
       botoesGravados = real.botoes;
     } else {
       corpoIncerto = true;
@@ -338,7 +402,7 @@ Deno.serve(async (req) => {
     row.payload = {
       tipo: "button",
       botoes: botoesGravados.map((titulo, i) => ({ id: i === 0 ? BOTAO_ID : `b_${i}`, titulo })),
-      ...(dentroJanela ? {} : { template: nomeTemplate, idioma }),
+      ...(dentroJanela ? {} : { template: escolhida.nome, idioma, ...(usouGenerica ? { template_generico: true } : {}) }),
       ...(corpoIncerto ? { corpo_incerto: true } : {}),
     };
   }
@@ -350,5 +414,8 @@ Deno.serve(async (req) => {
     nao_lidas: 0,
   }).eq("id", conversa.id);
 
-  return json({ ok: true, wa_message_id: waId, via: dentroJanela ? "texto" : "template" });
+  return json({
+    ok: true, wa_message_id: waId, via: dentroJanela ? "texto" : "template",
+    template: dentroJanela ? null : escolhida.nome, generica: usouGenerica,
+  });
 });
