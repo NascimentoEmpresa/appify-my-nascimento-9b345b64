@@ -115,6 +115,15 @@ interface RateioDetalheItem {
   classificacao?: string | null;
 }
 
+// SIS-2026-0742: rateio de despesa do Malote com mais de uma classificação — uma cota por contrato + classificação (só para exibir;
+// o rateioDetalhe, por contrato, continua o que a troca de contrato e a exportação usam).
+interface CotaClassificacao {
+  id: string;
+  contrato: string;
+  classificacao: string;
+  valor: number;
+}
+
 const LABEL_ORIGEM: Record<FluxoCaixaMaloteLinha["origem"], string> = {
   malote: "Pagamento Malote",
   debito_automatico: "Débito Automático",
@@ -169,17 +178,24 @@ export default function FluxoCaixaGestao() {
   const linhasTodas = useMemo(() => {
     const grupos = new Map<
       string,
-      { base: FluxoCaixaMaloteLinha; valor: number; contratos: Map<string, { nome: string; valor: number }>; classes: Set<string>; despesas: Map<string, RateioDetalheItem> }
+      { base: FluxoCaixaMaloteLinha; valor: number; contratos: Map<string, { nome: string; valor: number }>; classes: Set<string>; despesas: Map<string, RateioDetalheItem>; cotasClass: Map<string, CotaClassificacao> }
     >();
     for (const l of linhasBrutas) {
       const chave = `${l.despesa_id}::${l.numero_parcela ?? ""}`;
       let grupo = grupos.get(chave);
       if (!grupo) {
-        grupo = { base: l, valor: 0, contratos: new Map(), classes: new Set(), despesas: new Map() };
+        grupo = { base: l, valor: 0, contratos: new Map(), classes: new Set(), despesas: new Map(), cotasClass: new Map() };
         grupos.set(chave, grupo);
       }
       grupo.valor += Number(l.valor) || 0;
       if (l.classificacao_id) grupo.classes.add(l.classificacao_id);
+      if (!l.fatura_cartao_id) {
+        const chaveCota = `${l.contrato_id ?? l.contrato_nome ?? ""}::${l.classificacao_id ?? ""}`;
+        const cota = grupo.cotasClass.get(chaveCota);
+        grupo.cotasClass.set(chaveCota, {
+          id: chaveCota, contrato: l.contrato_nome ?? "—", classificacao: l.classificacao_nome ?? "—", valor: (cota?.valor ?? 0) + (Number(l.valor) || 0),
+        });
+      }
       // SIS-2026-0632: na fatura do cartão a abertura mostra as DESPESAS (DM-xxx, descrição, valor),
       // não os contratos (cada despesa já traz o seu rateio no Malote).
       if (l.fatura_cartao_id) {
@@ -205,21 +221,30 @@ export default function FluxoCaixaGestao() {
         grupo.contratos.set(chaveContrato, { nome: l.contrato_nome, valor: (atual?.valor ?? 0) + (Number(l.valor) || 0) });
       }
     }
-    return Array.from(grupos.values()).map(({ base, valor, contratos, classes, despesas }) => {
+    return Array.from(grupos.values()).map(({ base, valor, contratos, classes, despesas, cotasClass }) => {
       // SIS-2026-0632: fatura consolidada junta despesas de classificações diferentes numa linha só.
-      if (base.fatura_cartao_id && classes.size > 1) base = { ...base, classificacao_id: null, classificacao_nome: "Diversas" };
+      // SIS-2026-0742: com mais de uma classificação fica "Rateio", como o contrato (e abre pelo mesmo botão, com a classificação de cada despesa).
+      if (base.fatura_cartao_id && classes.size > 1) base = { ...base, classificacao_id: null, classificacao_nome: "Rateio" };
+      // Despesa do Malote rateada com classificações diferentes: "Rateio" também, e a abertura mostra a classificação de cada cota.
+      // A abertura mostra a classificação de cada cota também quando todas são a mesma (rateio só entre contratos).
+      let classificacaoDetalhe: CotaClassificacao[] | undefined;
+      if (!base.fatura_cartao_id && classes.size > 1) base = { ...base, classificacao_id: null, classificacao_nome: "Rateio" };
+      if (!base.fatura_cartao_id && (classes.size > 1 || contratos.size > 1)) {
+        classificacaoDetalhe = Array.from(cotasClass.values()).sort((a, b) => a.contrato.localeCompare(b.contrato, "pt-BR") || a.classificacao.localeCompare(b.classificacao, "pt-BR"));
+      }
+      const classificacoesIds = classes.size > 1 ? Array.from(classes) : undefined;
       if (base.fatura_cartao_id && despesas.size > 0) {
         const rateioDetalhe = Array.from(despesas.values())
           .sort((a, b) => (a.dataCompra ?? "").localeCompare(b.dataCompra ?? "") || a.nome.localeCompare(b.nome, "pt-BR", { numeric: true }));
-        return { ...base, valor, contrato_id: null, contrato_nome: contratos.size > 1 ? "Rateio" : (base.contrato_nome ?? null), rateioDetalhe };
+        return { ...base, valor, contrato_id: null, contrato_nome: contratos.size > 1 ? "Rateio" : (base.contrato_nome ?? null), rateioDetalhe, classificacaoDetalhe, classificacoesIds };
       }
       if (contratos.size > 1) {
         const rateioDetalhe = Array.from(contratos.entries())
           .map(([id, { nome, valor: valorContrato }]) => ({ id, nome, valor: valorContrato }))
           .sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"));
-        return { ...base, valor, contrato_id: null, contrato_nome: "Rateio", rateioDetalhe };
+        return { ...base, valor, contrato_id: null, contrato_nome: "Rateio", rateioDetalhe, classificacaoDetalhe, classificacoesIds };
       }
-      return { ...base, valor, rateioDetalhe: undefined as RateioDetalheItem[] | undefined };
+      return { ...base, valor, rateioDetalhe: undefined as RateioDetalheItem[] | undefined, classificacaoDetalhe, classificacoesIds };
     });
   }, [linhasBrutas]);
 
@@ -335,7 +360,10 @@ export default function FluxoCaixaGestao() {
         numeroParcela: itemEditar.numero_parcela,
         dataPagamento: editData || null,
         tipo: editTipo,
-        classificacaoId: editClassificacaoId || null,
+        // Só grava se a pessoa trocou o campo. O ajuste vale pra despesa inteira:
+        // gravar o valor mostrado (o da 1ª cota) congelava a classificação em todas
+        // as cotas de um rateio (DM-2026-3116: INSUMOS virou COMBUSTÍVEL).
+        classificacaoId: editClassificacaoId === (itemEditar.classificacao_id ?? "") ? undefined : editClassificacaoId || null,
         descricao: editDescricao.trim() || null,
         competencia: editCompetencia ? `${editCompetencia}-01` : null,
         empresaId: editEmpresaId || null,
@@ -497,7 +525,7 @@ export default function FluxoCaixaGestao() {
       if (empresaId && l.empresa_id !== empresaId) return false;
       if (origemFiltro && !linhaDaOrigemDoCard(l, origemFiltro)) return false;
       if (contratoId && l.contrato_id !== contratoId) return false;
-      if (classificacaoId && l.classificacao_id !== classificacaoId) return false;
+      if (classificacaoId && l.classificacao_id !== classificacaoId && !l.classificacoesIds?.includes(classificacaoId)) return false;
       if (formaPagamento && l.forma_pagamento !== formaPagamento) return false;
       if (bancoId && l.banco_id !== bancoId) return false;
       if (soInconsistentes && !l.inconsistencia) return false;
@@ -552,7 +580,7 @@ export default function FluxoCaixaGestao() {
       if (fx.empresaId && l.empresa_id !== fx.empresaId) return false;
       if (fx.bancoId && l.banco_id !== fx.bancoId) return false;
       if (fx.contratoId && !linhaTemContrato(l, fx.contratoId)) return false;
-      if (fx.classificacaoId && l.classificacao_id !== fx.classificacaoId) return false;
+      if (fx.classificacaoId && l.classificacao_id !== fx.classificacaoId && !l.classificacoesIds?.includes(fx.classificacaoId)) return false;
       if (fx.formaPagamento && l.forma_pagamento !== fx.formaPagamento) return false;
       if (fx.tipo !== "todos" && l.tipo !== fx.tipo) return false;
       if (fx.origem !== "todas" && l.origem !== fx.origem) return false;
@@ -1158,7 +1186,7 @@ export default function FluxoCaixaGestao() {
                   // de 1 linha (1 por parcela paga) com o mesmo
                   // despesa_id — key precisa incluir o número da parcela.
                   const chave = `${l.despesa_id}-${l.numero_parcela ?? "unica"}`;
-                  const temRateio = (l.contrato_nome === "Rateio" || !!l.fatura_cartao_id) && !!l.rateioDetalhe?.length;
+                  const temRateio = ((l.contrato_nome === "Rateio" || !!l.fatura_cartao_id) && !!l.rateioDetalhe?.length) || !!l.classificacaoDetalhe?.length;
                   // Achada pelo valor de uma fatia do rateio: abre sozinha (e o botão recolhe, em vez de abrir).
                   const achadaNoRateio = valorProcurado !== null && valorNaLinha(l, valorProcurado) === "rateio";
                   const alternada = linhasExpandidas.has(chave);
@@ -1195,7 +1223,21 @@ export default function FluxoCaixaGestao() {
                         </div>
                       )}
                     </TableCell>
-                    <TableCell className="text-center text-sm">{l.classificacao_nome ?? "—"}</TableCell>
+                    <TableCell className="text-center text-sm">
+                      {temRateio && l.classificacao_nome === "Rateio" ? (
+                        // SIS-2026-0742: igual ao contrato — "Rateio" abre as despesas da fatura, cada uma com a sua classificação.
+                        <button
+                          type="button"
+                          className="underline decoration-dotted hover:text-foreground"
+                          title={l.fatura_cartao_id ? "Ver as classificações desta fatura" : "Ver o rateio por classificação"}
+                          onClick={() => alternarExpansao(chave)}
+                        >
+                          Rateio
+                        </button>
+                      ) : (
+                        l.classificacao_nome ?? "—"
+                      )}
+                    </TableCell>
                     <TableCell className="text-center text-sm">
                       <span className="inline-flex max-w-[190px] flex-wrap items-center justify-center gap-1" title={l.descricao}>
                         {l.descricao}
@@ -1220,7 +1262,7 @@ export default function FluxoCaixaGestao() {
                     <TableCell className="text-center text-sm">{l.competencia ? new Date(l.competencia + "T00:00:00").toLocaleDateString("pt-BR", { month: "2-digit", year: "numeric" }) : "—"}</TableCell>
                     <TableCell className="text-center text-sm">{l.empresa_nome ?? "—"}</TableCell>
                     <TableCell className="text-center text-sm">
-                      {temRateio ? (
+                      {temRateio && (l.contrato_nome === "Rateio" || !!l.fatura_cartao_id) ? (
                         <button
                           type="button"
                           className="underline decoration-dotted hover:text-foreground"
@@ -1403,12 +1445,33 @@ export default function FluxoCaixaGestao() {
                       <TableCell />
                     </TableRow>
                   ))}
-                  {temRateio && expandida && !l.fatura_cartao_id && l.rateioDetalhe!.map((c) => (
+                  {temRateio && expandida && !l.fatura_cartao_id && !l.classificacaoDetalhe && l.rateioDetalhe!.map((c) => (
                     <TableRow key={`${chave}-${c.id}`} className={valorProcurado !== null && valorConfere(c.valor, valorProcurado) ? "bg-amber-100/70 hover:bg-amber-100/70" : "bg-muted/30 hover:bg-muted/30"}>
                       <TableCell />
                       <TableCell colSpan={7} className="text-right text-xs text-muted-foreground pr-4">
                         <span className="inline-flex items-center gap-1.5">
                           <ChevronRight className="h-3 w-3 opacity-50" /> {c.nome}
+                          {valorProcurado !== null && valorConfere(c.valor, valorProcurado) && (
+                            <span className="rounded bg-amber-200 px-1.5 py-0.5 text-[10px] font-semibold text-amber-900">valor procurado</span>
+                          )}
+                        </span>
+                      </TableCell>
+                      <TableCell />
+                      <TableCell />
+                      <TableCell />
+                      <TableCell className="text-center text-xs font-medium text-muted-foreground">{formatBRL(c.valor)}</TableCell>
+                      <TableCell />
+                    </TableRow>
+                  ))}
+                  {expandida && !l.fatura_cartao_id && l.classificacaoDetalhe?.map((c) => (
+                    // SIS-2026-0742: rateio com mais de uma classificação — cada cota (contrato + classificação) com o seu valor.
+                    <TableRow key={`${chave}-${c.id}`} className={valorProcurado !== null && valorConfere(c.valor, valorProcurado) ? "bg-amber-100/70 hover:bg-amber-100/70" : "bg-muted/30 hover:bg-muted/30"}>
+                      <TableCell />
+                      <TableCell colSpan={3} />
+                      <TableCell className="text-center text-xs text-muted-foreground">{c.classificacao}</TableCell>
+                      <TableCell colSpan={3} className="text-right text-xs text-muted-foreground pr-4">
+                        <span className="inline-flex items-center gap-1.5">
+                          <ChevronRight className="h-3 w-3 opacity-50" /> {c.contrato}
                           {valorProcurado !== null && valorConfere(c.valor, valorProcurado) && (
                             <span className="rounded bg-amber-200 px-1.5 py-0.5 text-[10px] font-semibold text-amber-900">valor procurado</span>
                           )}
