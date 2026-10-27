@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { insalubridadeDoCusto, notaDoCusto, type CustoPosto } from "@/lib/recrutamento/custoPosto";
 
 const migration = readFileSync(
-  "supabase/migrations/20261026000900_rh_insalubridade_e_ficha_completa_senior.sql",
+  "supabase/migrations/20261026000899_rh_prepara_vagas_insalubridade.sql",
   "utf8",
 );
 
@@ -52,7 +52,7 @@ describe("insalubridade da vaga", () => {
       .toContain("cadastro do colaborador na Senior");
   });
 
-  it("aplica a correção de dados com o guard de vagas desligado só durante o UPDATE", () => {
+  it("prepara a correção de dados com o guard de vagas desligado só durante o UPDATE", () => {
     const desliga = 'ALTER TABLE public."SISTEMA_RECRUTAMENTO" DISABLE TRIGGER trg_sistema_recrutamento_guard;';
     const atualiza = 'UPDATE public."SISTEMA_RECRUTAMENTO" r';
     const religa = 'ALTER TABLE public."SISTEMA_RECRUTAMENTO" ENABLE TRIGGER trg_sistema_recrutamento_guard;';
