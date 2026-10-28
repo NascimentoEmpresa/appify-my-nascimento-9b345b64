@@ -155,6 +155,7 @@ export function useSalvarVinculoPosto() {
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["lic_posto_convencao"] });
+      qc.invalidateQueries({ queryKey: ["lic_postos_do_contrato"] });
       qc.invalidateQueries({ queryKey: ["lic_referencia_posto"] });
     },
   });
@@ -169,6 +170,66 @@ export function useRemoverVinculoPosto() {
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["lic_posto_convencao"] });
+      qc.invalidateQueries({ queryKey: ["lic_postos_do_contrato"] });
+      qc.invalidateQueries({ queryKey: ["lic_referencia_posto"] });
+    },
+  });
+}
+
+// ── Vínculo pelo lado da convenção (mig 20261028000910) ────────────────────
+
+export interface PostoDoContrato { posto: string; linhas: number; pessoas: number; convencao_id: string | null }
+
+/** Postos do contrato na Planilha de Custo, com a convenção de cada um (se houver). */
+export function usePostosDoContrato(contratoId: string | null | undefined) {
+  return useQuery({
+    queryKey: ["lic_postos_do_contrato", contratoId ?? ""],
+    enabled: !!contratoId,
+    queryFn: async (): Promise<PostoDoContrato[]> => {
+      const { data, error } = await sb.rpc("lic_postos_do_contrato", { p_contrato_id: contratoId });
+      if (error) throw error;
+      return (data ?? []) as PostoDoContrato[];
+    },
+  });
+}
+
+/**
+ * Cadastro da convenção: os postos marcados passam a seguir ESTA convenção
+ * (como principal); os desmarcados que seguiam ela perdem o vínculo. Posto que
+ * seguia outra convenção e foi marcado troca de principal — as regras por
+ * benefício que apontavam para esta saem (seriam "igual à principal").
+ */
+export function useSincronizarPostosConvencao() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ convencaoId, contratoId, listados, marcados, vinculos }: {
+      convencaoId: string; contratoId: string;
+      /** Postos que estavam na tela: vínculo de posto fora da lista não é mexido. */
+      listados: string[];
+      marcados: string[]; vinculos: Map<string, VinculoPosto> | undefined;
+    }) => {
+      const querem = new Set(marcados.map(chavePosto));
+      const naTela = new Set(listados.map(chavePosto));
+      const doContrato = [...(vinculos?.values() ?? [])].filter((v) => v.contrato_id === contratoId);
+      const sair = doContrato.filter((v) => v.convencao_id === convencaoId && naTela.has(chavePosto(v.posto)) && !querem.has(chavePosto(v.posto)));
+      for (const v of sair) {
+        const { error } = await sb.from("LIC_POSTO_CONVENCAO").delete().eq("id", v.id);
+        if (error) throw error;
+      }
+      for (const posto of marcados) {
+        const atual = vinculoDe(vinculos, contratoId, posto);
+        if (atual?.convencao_id === convencaoId) continue;
+        const regras = Object.fromEntries(Object.entries(atual?.regras ?? {}).filter(([, id]) => id && id !== convencaoId));
+        const linha = { contrato_id: contratoId, posto: posto.trim(), convencao_id: convencaoId, regras };
+        const { error } = atual
+          ? await sb.from("LIC_POSTO_CONVENCAO").update(linha).eq("id", atual.id)
+          : await sb.from("LIC_POSTO_CONVENCAO").insert(linha);
+        if (error) throw error;
+      }
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["lic_posto_convencao"] });
+      qc.invalidateQueries({ queryKey: ["lic_postos_do_contrato"] });
       qc.invalidateQueries({ queryKey: ["lic_referencia_posto"] });
     },
   });

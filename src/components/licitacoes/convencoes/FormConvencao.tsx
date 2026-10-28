@@ -14,11 +14,12 @@ import { useEmpresasGrupo } from "@/hooks/useMaloteDespesa";
 import { useContratosERP } from "@/hooks/useContratosERP";
 import {
   BUCKET_CONVENCOES, abrirAnexoConvencao, enviarAnexoConvencao, useSalvarConvencao,
+  usePostosDoContrato, useSincronizarPostosConvencao, useVinculosPosto,
   type Convencao, type ConvencaoInput,
 } from "@/hooks/useConvencoes";
 import { supabase } from "@/integrations/supabase/client";
 import {
-  BENEFICIOS, pendenciasConvencao, periodoEfetivo,
+  BENEFICIOS, identificacaoCct, pendenciasConvencao, periodoEfetivo,
   type DefBeneficio, type MapaBeneficios, type Periodo, type ValorBeneficio,
 } from "@/lib/licitacoes/convencoes";
 import { IconeBeneficio } from "./IconeBeneficio";
@@ -170,6 +171,8 @@ export function FormConvencao({ aberto, onFechar, convencao, somenteLeitura, exi
   existentes: Convencao[];
 }) {
   const salvar = useSalvarConvencao();
+  const sincronizarPostos = useSincronizarPostosConvencao();
+  const { data: vinculos } = useVinculosPosto();
   const { data: empresas = [] } = useEmpresasGrupo();
   const { data: contratos = [] } = useContratosERP({ todasEmpresas: true });
 
@@ -186,6 +189,12 @@ export function FormConvencao({ aberto, onFechar, convencao, somenteLeitura, exi
   const [beneficios, setBeneficios] = useState<MapaBeneficios>({});
   const [obs, setObs] = useState("");
   const [enviando, setEnviando] = useState(false);
+  // Postos do contrato que seguem esta convenção (vínculo da Planilha de Custo,
+  // gravado pelos dois lados — mig 20261028000910).
+  const postosQ = usePostosDoContrato(contratoId || null);
+  const [marcados, setMarcados] = useState<string[]>([]);
+  const [buscaPosto, setBuscaPosto] = useState("");
+  const marcadosDe = useRef<string | null>(null);
 
   useEffect(() => {
     if (!aberto) return;
@@ -202,7 +211,26 @@ export function FormConvencao({ aberto, onFechar, convencao, somenteLeitura, exi
     setDecreto(c ? { path: c.decreto_arquivo_path, nome: c.decreto_arquivo_nome, tamanho: c.decreto_arquivo_tamanho } : ANEXO_VAZIO);
     setBeneficios(c?.beneficios ?? {});
     setObs(c?.observacoes ?? "");
+    setMarcados([]);
+    setBuscaPosto("");
+    marcadosDe.current = null;
   }, [aberto, convencao]);
+
+  // Marca uma vez por contrato aberto o que já segue esta convenção — sem
+  // atropelar o que a pessoa marcou quando a lista recarrega.
+  useEffect(() => {
+    if (!aberto || !contratoId || !postosQ.data || marcadosDe.current === contratoId) return;
+    marcadosDe.current = contratoId;
+    setMarcados(convencao ? postosQ.data.filter((p) => p.convencao_id === convencao.id).map((p) => p.posto) : []);
+  }, [aberto, contratoId, postosQ.data, convencao]);
+
+  const convencoesPorId = useMemo(() => new Map(existentes.map((e) => [e.id, e])), [existentes]);
+  const postosVisiveis = useMemo(() => {
+    const q = buscaPosto.trim().toLowerCase();
+    return (postosQ.data ?? []).filter((p) => !q || p.posto.toLowerCase().includes(q));
+  }, [postosQ.data, buscaPosto]);
+  const alternarPosto = (posto: string, marcar: boolean) =>
+    setMarcados((m) => (marcar ? [...m.filter((x) => x !== posto), posto] : m.filter((x) => x !== posto)));
 
   const opcoesContrato = useMemo(() => contratos
     .filter((c) => !empresaId || c.empresa_id === empresaId)
@@ -245,7 +273,7 @@ export function FormConvencao({ aberto, onFechar, convencao, somenteLeitura, exi
         decreto_arquivo_path: decFinal.path, decreto_arquivo_nome: decFinal.nome, decreto_arquivo_tamanho: decFinal.tamanho,
         beneficios, observacoes: obs.trim() || null,
       };
-      await salvar.mutateAsync(input);
+      const id = await salvar.mutateAsync(input);
       // Arquivo trocado ou removido: o antigo sai do storage depois do save
       // (a versão anterior da convenção guarda só o caminho).
       if (convencao) {
@@ -253,6 +281,17 @@ export function FormConvencao({ aberto, onFechar, convencao, somenteLeitura, exi
           convencao.cct_arquivo_path !== cctFinal.path ? convencao.cct_arquivo_path : null,
           convencao.decreto_arquivo_path !== decFinal.path ? convencao.decreto_arquivo_path : null,
         ]).catch(() => undefined);
+      }
+      // Só sincroniza com a lista de postos carregada: lista que falhou não
+      // pode virar "desmarcou tudo" e apagar vínculos.
+      if (postosQ.data) {
+        try {
+          await sincronizarPostos.mutateAsync({ convencaoId: id, contratoId, listados: postosQ.data.map((p) => p.posto), marcados, vinculos });
+        } catch (e) {
+          toast.error("Convenção salva, mas o vínculo dos postos não: " + (e instanceof Error ? e.message : String(e)));
+          onFechar();
+          return;
+        }
       }
       toast.success(pendencias.length ? "Salvo — o cadastro segue Pendente até completar o que falta." : "Convenção salva.");
       onFechar();
@@ -348,6 +387,61 @@ export function FormConvencao({ aberto, onFechar, convencao, somenteLeitura, exi
               <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200">
                 <p className="mb-1 flex items-center gap-1.5 font-semibold"><AlertTriangle className="h-3.5 w-3.5" />Pendências ({pendencias.length}) — o cadastro fica como Pendente</p>
                 <ul className="list-disc space-y-0.5 pl-5">{pendencias.map((p) => <li key={p}>{p}</li>)}</ul>
+              </div>
+            )}
+          </Secao>
+
+          <Secao n={4} titulo="Postos que seguem esta convenção">
+            {!contratoId ? (
+              <p className="text-xs text-muted-foreground">Escolha o contrato para listar os postos dele na Planilha de Custo.</p>
+            ) : postosQ.isLoading ? (
+              <p className="flex items-center gap-2 text-xs text-muted-foreground"><Loader2 className="h-3.5 w-3.5 animate-spin" />Carregando os postos do contrato…</p>
+            ) : postosQ.isError ? (
+              <p className="rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200">
+                Não foi possível listar os postos agora. O vínculo também pode ser feito na Planilha de Custo, na coluna CCT do posto.
+              </p>
+            ) : !postosQ.data?.length ? (
+              <p className="text-xs text-muted-foreground">Este contrato ainda não tem postos na Planilha de Custo.</p>
+            ) : (
+              <div className="space-y-2">
+                <p className="text-xs text-muted-foreground">
+                  Os postos marcados puxam os benefícios desta convenção (Planilha de Custo e Abertura de Vagas).
+                  {" "}{marcados.length} de {postosQ.data.length} marcado(s).
+                </p>
+                <div className="flex items-center gap-2">
+                  {postosQ.data.length > 8 && (
+                    <Input value={buscaPosto} onChange={(e) => setBuscaPosto(e.target.value)} placeholder="Buscar posto…" className="h-8 text-xs" />
+                  )}
+                  {!somenteLeitura && (
+                    <div className="flex shrink-0 gap-2 text-xs">
+                      <button type="button" className="font-medium text-blue-700 hover:underline dark:text-blue-300"
+                        onClick={() => setMarcados((m) => Array.from(new Set([...m, ...postosVisiveis.map((p) => p.posto)])))}>Marcar todos</button>
+                      <button type="button" className="font-medium text-muted-foreground hover:underline"
+                        onClick={() => setMarcados((m) => m.filter((x) => !postosVisiveis.some((p) => p.posto === x)))}>Desmarcar</button>
+                    </div>
+                  )}
+                </div>
+                <div className="max-h-64 divide-y overflow-y-auto rounded-md border">
+                  {postosVisiveis.map((p) => {
+                    const marcado = marcados.includes(p.posto);
+                    const outra = p.convencao_id && p.convencao_id !== convencao?.id ? convencoesPorId.get(p.convencao_id) : null;
+                    return (
+                      <label key={p.posto} className={cn("flex items-center gap-2.5 px-3 py-2 text-xs", !somenteLeitura && "cursor-pointer hover:bg-muted/40")}>
+                        <Checkbox checked={marcado} disabled={somenteLeitura} onCheckedChange={(c) => alternarPosto(p.posto, !!c)} />
+                        <span className="min-w-0 flex-1">
+                          <span className="font-medium text-foreground">{p.posto}</span>
+                          <span className="text-muted-foreground"> · {p.pessoas} pessoa(s)</span>
+                          {p.convencao_id && p.convencao_id !== convencao?.id && (
+                            <span className={cn("block text-[11px]", marcado ? "text-amber-700 dark:text-amber-300" : "text-muted-foreground")}>
+                              {marcado ? "Vai trocar de convenção — hoje segue " : "Segue "}
+                              {(outra && (identificacaoCct(outra) || outra.decreto_numero || outra.sindicato)) || "outra convenção"}
+                            </span>
+                          )}
+                        </span>
+                      </label>
+                    );
+                  })}
+                </div>
               </div>
             )}
           </Secao>
