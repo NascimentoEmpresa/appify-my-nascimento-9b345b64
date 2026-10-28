@@ -86,7 +86,7 @@ export default function FechamentoEmpresa() {
   const [aba, setAba] = useState("mensal");
   const [buscaMes, setBuscaMes] = useState("");
 
-  const { data: custosAno = [], isLoading: carregandoCustos, error: erroCustos } = useCustosContratoAno(ano, true, base, { manterInvestimentos: true });
+  const { data: custosAno = [], isLoading: carregandoCustos, error: erroCustos } = useCustosContratoAno(ano, true, base, { manterInvestimentos: true, manterAdministrativos: true });
   const { data: admAno = [], isLoading: carregandoAdm, error: erroAdm } = useDespesasAdmAno(ano, base);
   const { data: ligacoes } = useLigacoesRubrica();
 

@@ -19,10 +19,11 @@ export type TratamentosContrato = Map<string, TratamentoContrato>;
 
 const semAcento = (nome: string | null | undefined) => (nome ?? "").normalize("NFD").replace(/[̀-ͯ]/g, "").trim().toUpperCase();
 
-// A regra de antes da configuração, só pelo início do nome.
+// A regra pelo início do nome. Contrato ADMINISTRATIVO (empresa e sócios) é centro de custo da empresa, não contrato de cliente: o custo dele não é despesa de
+// contrato (a Lucratividade já não o mostra) e é visto no Fechamento da Empresa. Dá para voltar a contar pela configuração.
 export function tratamentoPadraoPorNome(nome: string | null | undefined): TratamentoContrato {
   if (semAcento(nome).startsWith("INVESTIMENTO")) return "investimento";
-  return ehContratoForaDasDespesas(nome) ? "fora_das_despesas" : "normal";
+  return ehContratoForaDasDespesas(nome) || ehContratoAdministrativo(nome) ? "fora_das_despesas" : "normal";
 }
 
 // O que vale para o contrato: a exceção gravada, ou o padrão pelo nome.
@@ -35,7 +36,3 @@ export function saiDasDespesas(tratamento: TratamentoContrato, opcoes?: { manter
   return tratamento === "fora_das_despesas" || (tratamento === "investimento" && !opcoes?.manterInvestimentos);
 }
 
-// Contratos administrativos e de sócio têm regra própria (centros de custo da empresa) e não entram nesta configuração.
-export function contratoConfiguravel(nome: string | null | undefined): boolean {
-  return !ehContratoAdministrativo(nome);
-}

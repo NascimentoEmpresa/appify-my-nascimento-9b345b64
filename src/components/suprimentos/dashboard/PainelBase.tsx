@@ -102,6 +102,39 @@ export function TickCategoria({
   );
 }
 
+/** Rótulo completo em várias linhas para gráficos com poucas categorias. */
+export function TickCategoriaQuebrado({
+  x,
+  y,
+  payload,
+  maximoLinha = 32,
+  tamanhoFonte = 9,
+}: {
+  x?: number;
+  y?: number;
+  payload?: { value?: string | number };
+  maximoLinha?: number;
+  tamanhoFonte?: number;
+}) {
+  const completo = String(payload?.value ?? "").replace(/\s+/g, " ").trim();
+  const linhas: string[] = [];
+  for (const palavra of completo.split(" ")) {
+    const atual = linhas.at(-1) ?? "";
+    if (!atual || `${atual} ${palavra}`.length > maximoLinha) linhas.push(palavra);
+    else linhas[linhas.length - 1] = `${atual} ${palavra}`;
+  }
+  return (
+    <text x={x} y={y} textAnchor="end" fill="#334155" fontSize={tamanhoFonte}>
+      <title>{completo}</title>
+      {linhas.map((linha, indice) => (
+        <tspan key={`${linha}-${indice}`} x={x} dy={indice === 0 ? `${-(linhas.length - 1) * 0.55}em` : "1.1em"}>
+          {linha}
+        </tspan>
+      ))}
+    </text>
+  );
+}
+
 /** Mesma ideia no eixo horizontal: uma linha só, inclinada para caber. */
 export function TickCategoriaInclinado({
   x,
