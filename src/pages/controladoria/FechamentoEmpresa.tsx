@@ -16,11 +16,14 @@ import { useLeituraCompartilhada } from "./faturamento/leituraCompartilhada";
 import { CODIGO_PADRAO, codigosDoFiltro, FiltroCodigoNota } from "./faturamento/FiltroCodigoNota";
 import { rotuloMes, useBaseFaturamento } from "./faturamento/useBaseFaturamento";
 import { useCustosContratoAno, useDespesasAdmAno } from "./faturamento/useCustosContratoMes";
+import { tratamentoEfetivo, type TratamentoContrato } from "./faturamento/tratamentoContrato";
+import { useTratamentosContrato } from "./faturamento/useTratamentosContrato";
+import { BotaoTratamentoContratos } from "./faturamento/TratamentoContratosDialog";
 import { useLigacoesRubrica } from "./faturamento/useLigacoesRubrica";
 import { DetalheDespesaDialog, type DetalheAberto } from "./fechamento/DetalheDespesaDialog";
 import { TituloComFormula } from "./faturamento/Rentabilidade";
 import {
-  admPorClassificacao, detalheAdmPorClassificacao, detalheSocioPorClassificacao, admPorMesRubrica, despesasDosSocios, socioDoContrato, admSemClassificacao, ehContratoInvestimento, ordenarColunasSocios, ROTULO_INVESTIMENTOS, margemFinal, montarFechamento, ORIGEM_ADM, ORIGEM_RUBRICA, ROTULO_STATUS, statusDoFechamento, totalDoFechamento,
+  admPorClassificacao, detalheAdmPorClassificacao, detalheSocioPorClassificacao, admPorMesRubrica, despesasDosSocios, socioDoContrato, admSemClassificacao, ordenarColunasSocios, ROTULO_INVESTIMENTOS, margemFinal, montarFechamento, ORIGEM_ADM, ORIGEM_RUBRICA, ROTULO_STATUS, statusDoFechamento, totalDoFechamento,
   type LinhaFechamento, type StatusFechamento,
 } from "./fechamento/regras";
 
@@ -82,7 +85,7 @@ export default function FechamentoEmpresa() {
   const [aba, setAba] = useState("mensal");
   const [buscaMes, setBuscaMes] = useState("");
 
-  const { data: custosAno = [], isLoading: carregandoCustos, error: erroCustos } = useCustosContratoAno(ano, true, base);
+  const { data: custosAno = [], isLoading: carregandoCustos, error: erroCustos } = useCustosContratoAno(ano, true, base, { manterInvestimentos: true });
   const { data: admAno = [], isLoading: carregandoAdm, error: erroAdm } = useDespesasAdmAno(ano, base);
   const { data: ligacoes } = useLigacoesRubrica();
 
@@ -108,12 +111,15 @@ export default function FechamentoEmpresa() {
   const nfsDoAno = useMemo(() => nfs.filter((n) => n.competencia.startsWith(`${ano}-`)), [nfs, ano]);
   const custosContratoPorMesContrato = useMemo(() => custosPorContratoMes(custosAno, ligacoes), [custosAno, ligacoes]);
   // SIS-2026-0709: contrato "ADMINISTRATIVO <SÓCIO>" → nome do sócio. Fica fora do lucro dos contratos e entra no Resultado com Sócios.
+  // Tratamento configurado por contrato (Tratamento dos contratos): sem exceção vale o padrão pelo nome.
+  const { data: tratamentosBrutos } = useTratamentosContrato();
+  const tratamentos = useMemo(() => tratamentosBrutos ?? new Map<string, TratamentoContrato>(), [tratamentosBrutos]);
   const socioPorContrato = useMemo(() => {
     const m = new Map<string, string>();
     // SIS-2026-0744: contrato "INVESTIMENTOS …" entra como mais uma coluna desta aba (rótulo "Investimentos"), com a mesma regra dos sócios.
-    for (const c of contratos) { const s = socioDoContrato(c.nome) ?? (ehContratoInvestimento(c.nome) ? ROTULO_INVESTIMENTOS : null); if (s) m.set(c.id, s); }
+    for (const c of contratos) { const s = socioDoContrato(c.nome) ?? (tratamentoEfetivo(c.nome, tratamentos.get(c.id)) === "investimento" ? ROTULO_INVESTIMENTOS : null); if (s) m.set(c.id, s); }
     return m;
-  }, [contratos]);
+  }, [contratos, tratamentos]);
   // Contratos "ADMINISTRATIVO - …" (inclusive os dos sócios) são centros de custo da empresa, não contrato de cliente: o Lucro dos Contratos
   // não os conta (igual à Lucratividade de Contratos). O que foi gasto neles é despesa administrativa, exceto o dos sócios (aba própria).
   const idsAdministrativos = useMemo(() => new Set(contratos.filter((c) => ehContratoAdministrativo(c.nome)).map((c) => c.id)), [contratos]);
@@ -255,7 +261,7 @@ export default function FechamentoEmpresa() {
         breadcrumb={["Fechamento da Empresa"]}
         title="Fechamento da Empresa"
         subtitle="Acompanhe o fechamento consolidado da empresa com base no lucro dos contratos menos as despesas administrativas."
-        actions={<Button variant="outline" size="sm" onClick={() => window.print()}><Printer className="h-4 w-4 mr-1" />Imprimir</Button>}
+        actions={<div className="flex items-center gap-2"><BotaoTratamentoContratos /><Button variant="outline" size="sm" onClick={() => window.print()}><Printer className="h-4 w-4 mr-1" />Imprimir</Button></div>}
       />
 
       <div className="card-elevated p-3 flex items-center gap-2 flex-wrap text-xs print:hidden">

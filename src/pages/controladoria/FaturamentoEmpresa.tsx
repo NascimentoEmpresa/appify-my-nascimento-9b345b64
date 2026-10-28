@@ -12,6 +12,7 @@ import { CheckCircle2, Clock, Printer, TrendingUp, Wallet } from "lucide-react";
 import { fmtMoney } from "@/pages/financeiro/nf-emissao/shared";
 import { agruparFaturamento, custosPorContratoMes, lucroBruto, lucroRecebido, totaisVazios, totalCustos, TotaisFaturamento } from "./faturamento/regras";
 import { SeletorBaseLeitura } from "./faturamento/SeletorBaseLeitura";
+import { BotaoTratamentoContratos } from "./faturamento/TratamentoContratosDialog";
 import { useLeituraCompartilhada } from "./faturamento/leituraCompartilhada";
 import { CODIGO_PADRAO, codigosDoFiltro, FiltroCodigoNota } from "./faturamento/FiltroCodigoNota";
 import { rotuloMes, useBaseFaturamento } from "./faturamento/useBaseFaturamento";
@@ -251,7 +252,7 @@ export default function FaturamentoEmpresa() {
         breadcrumb={["Faturamento da Empresa"]}
         title="Faturamento da Empresa"
         subtitle="Faturamento geral com visão de notas emitidas, recebidas e a receber — NFs validadas no Relatório de Serviços, do código escolhido (padrão N)."
-        actions={<Button variant="outline" size="sm" onClick={() => window.print()}><Printer className="h-4 w-4 mr-1" />Imprimir</Button>}
+        actions={<div className="flex items-center gap-2"><BotaoTratamentoContratos /><Button variant="outline" size="sm" onClick={() => window.print()}><Printer className="h-4 w-4 mr-1" />Imprimir</Button></div>}
       />
 
       <div className="card-elevated p-3 flex items-center gap-2 flex-wrap text-xs print:hidden">
