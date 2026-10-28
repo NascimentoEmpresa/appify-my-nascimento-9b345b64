@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
   Banknote,
@@ -156,6 +156,7 @@ export function EstoqueSaudavel({
     almoxarifadoId: null,
   });
   const [situacao, setSituacao] = useState("problema");
+  const tabelaItensRef = useRef<HTMLDivElement>(null);
   const [busca, setBusca] = useState("");
   const [premissasAbertas, setPremissasAbertas] = useState(false);
   const [pedidoChat, setPedidoChat] = useState<PedidoExternoChat>({
@@ -328,7 +329,15 @@ export function EstoqueSaudavel({
           titulo="Situação dos itens"
           subtitulo={`${formatarNumero(r.itens_planejados)} combinações de item e tamanho no plano`}
         >
-          <GraficoSituacao dados={dados} aoSelecionar={setSituacao} />
+          <GraficoSituacao
+            dados={dados}
+            aoSelecionar={(proximaSituacao) => {
+              setSituacao(proximaSituacao);
+              requestAnimationFrame(() =>
+                tabelaItensRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }),
+              );
+            }}
+          />
         </PainelGrafico>
       </div>
 
@@ -350,14 +359,16 @@ export function EstoqueSaudavel({
         )}
       </PainelGrafico>
 
-      <TabelaItens
-        dados={dados}
-        empresaId={empresaId}
-        situacao={situacao}
-        setSituacao={setSituacao}
-        busca={busca}
-        setBusca={setBusca}
-      />
+      <div ref={tabelaItensRef} className="scroll-mt-4">
+        <TabelaItens
+          dados={dados}
+          empresaId={empresaId}
+          situacao={situacao}
+          setSituacao={setSituacao}
+          busca={busca}
+          setBusca={setBusca}
+        />
+      </div>
 
       {dados.liquidar.length > 0 && <BlocoLiquidar dados={dados} empresaId={empresaId} />}
 
