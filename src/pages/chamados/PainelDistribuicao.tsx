@@ -540,11 +540,11 @@ export default function PainelDistribuicao() {
                       Posição <span className="font-normal text-muted-foreground">(dev)</span>
                     </TableHead>
                     <TableHead>ID</TableHead>
-                    <TableHead>Assunto</TableHead>
-                    <TableHead>Categoria</TableHead>
                     <TableHead>Prioridade</TableHead>
                     {/* Reunião ou Extra — definida em Coordenar chamado (mig 20261028001700). */}
                     <TableHead>Definição</TableHead>
+                    <TableHead>Assunto</TableHead>
+                    <TableHead>Categoria</TableHead>
                     <TableHead>Solicitante</TableHead>
                     <TableHead>Abertura</TableHead>
                     <TableHead>Status</TableHead>
@@ -607,11 +607,6 @@ export default function PainelDistribuicao() {
                       <TableCell className="whitespace-nowrap font-mono text-xs font-semibold">#{c.numero}</TableCell>
                       {/* Título em destaque e a descrição logo abaixo: dá para
                           entender o pedido sem abrir o chamado. */}
-                      <TableCell className="min-w-[150px] max-w-[340px] [overflow-wrap:anywhere]" title={c.descricao ? `${c.assunto}\n\n${c.descricao}` : c.assunto}>
-                        <span className="line-clamp-2 text-sm font-semibold leading-snug">{c.assunto}</span>
-                        {c.descricao && <span className="mt-0.5 line-clamp-2 text-[11px] leading-snug text-muted-foreground">{c.descricao}</span>}
-                      </TableCell>
-                      <TableCell className="min-w-[100px] text-xs text-muted-foreground">{c.categorias.map((x) => labelDe(CATEGORIAS, x)).join(", ") || "—"}</TableCell>
                       <TableCell onClick={(e) => e.stopPropagation()}>
                         {chamadoAtivo(c.status) ? (
                           <div className={flashPrioridade === c.id ? "animate-pop" : ""}>
@@ -629,6 +624,11 @@ export default function PainelDistribuicao() {
                         )}
                       </TableCell>
                       <TableCell><DefinicaoBadge definicao={c.definicao} /></TableCell>
+                      <TableCell className="min-w-[150px] max-w-[340px] [overflow-wrap:anywhere]" title={c.descricao ? `${c.assunto}\n\n${c.descricao}` : c.assunto}>
+                        <span className="line-clamp-2 text-sm font-semibold leading-snug">{c.assunto}</span>
+                        {c.descricao && <span className="mt-0.5 line-clamp-2 text-[11px] leading-snug text-muted-foreground">{c.descricao}</span>}
+                      </TableCell>
+                      <TableCell className="min-w-[100px] text-xs text-muted-foreground">{c.categorias.map((x) => labelDe(CATEGORIAS, x)).join(", ") || "—"}</TableCell>
                       <TableCell className="text-xs">{c.solicitante_nome || "—"}<div className="text-[10px] text-muted-foreground">{c.setor}</div></TableCell>
                       <TableCell className="min-w-[78px] text-xs text-muted-foreground">{fmtDataHora(c.created_at)}</TableCell>
                       <TableCell>
