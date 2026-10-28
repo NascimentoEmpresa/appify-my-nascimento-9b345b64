@@ -434,6 +434,16 @@ function TabelaFornecimentosPorColaborador({
   fim: string;
 }) {
   const linhasVisiveis = linhas.slice(0, 100);
+  const porItemTamanho = useMemo(() => {
+    const mapa = new Map<string, { rotulo: string; quantidade: number }>();
+    for (const linha of linhas) {
+      const rotulo = `${linha.tipo_uniforme} · ${linha.tamanho ?? "sem tamanho"}`;
+      const atual = mapa.get(rotulo) ?? { rotulo, quantidade: 0 };
+      atual.quantidade += linha.quantidade;
+      mapa.set(rotulo, atual);
+    }
+    return [...mapa.values()].sort((a, b) => b.quantidade - a.quantidade).slice(0, 12);
+  }, [linhas]);
   const exportar = () => {
     const planilha = XLSX.utils.json_to_sheet(linhas.map((linha) => ({
       "Data do fornecimento": rotuloDataFornecimento(linha.data_fornecimento),
@@ -474,6 +484,21 @@ function TabelaFornecimentosPorColaborador({
         <Skeleton className="h-72" />
       ) : (
         <>
+          {porItemTamanho.length > 0 && (
+            <div className="mb-4 h-[320px]">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={porItemTamanho} layout="vertical" margin={{ left: 8, right: 38, top: 4 }}>
+                  <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke={CINZA_GRADE} />
+                  <XAxis type="number" allowDecimals={false} />
+                  <YAxis type="category" dataKey="rotulo" width={200} tick={<TickCategoria maximo={34} tamanhoFonte={10} />} />
+                  <Tooltip content={<TooltipPadrao sufixo=" un. fornecidas" />} cursor={{ fill: "#f1f5f9" }} />
+                  <Bar dataKey="quantidade" name="Unidades fornecidas" fill={SERIES.saida} radius={[0, 4, 4, 0]}>
+                    <LabelList dataKey="quantidade" position="right" fill="#475569" formatter={(v: number) => formatarNumero(v)} />
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          )}
           <div className="overflow-x-auto">
             <table className="w-full min-w-[960px] text-xs">
               <thead>
