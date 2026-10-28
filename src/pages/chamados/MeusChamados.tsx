@@ -7,9 +7,13 @@ import { chamadosMarkSeen } from "@/hooks/useChamadosNotif";
 import { useChamadoPerms } from "./useChamadoPerms";
 import { FeedAtualizacoes } from "./FeedAtualizacoes";
 import { AvaliarChamadoDialog } from "./AvaliarChamadoDialog";
+import { ConfirmarConclusaoDialog } from "./ConfirmarConclusaoDialog";
 import { BotaoChatChamado, useChamadosNaoLidos } from "./BotaoChatChamado";
 import { BotaoStatusChamado, SeloEtapaValidacao, useValidacoesChamados } from "./StatusValidacao";
-import { avaliacaoLiberada, abrirChamadoTravado, LIMITE_AVALIACOES_PENDENTES } from "./validacaoPresidencia";
+import {
+  avaliacaoLiberada, abrirChamadoTravado, LIMITE_AVALIACOES_PENDENTES, podeConfirmarConclusao, separarPendencias, descreverPendencias,
+  type PendenciaSolicitante,
+} from "./validacaoPresidencia";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -18,7 +22,7 @@ import {
 } from "@/components/ui/table";
 import { Plus, ClipboardList, CheckCircle2, Clock, RotateCcw, CalendarClock, Info, MessageSquarePlus, XCircle, Lightbulb, ChevronLeft, ChevronRight, Star, Lock, GraduationCap } from "lucide-react";
 import {
-  StatCard, StatusBadge, PrioridadeBadge, fmtData, fmtDataHora, moduloLabel, type Chamado,
+  StatCard, StatusBadge, SeloConfirmacao, SeloDesenvolvimento, PrioridadeBadge, fmtData, fmtDataHora, moduloLabel, type Chamado,
 } from "./types";
 
 const POR_PAGINA = 8;
@@ -46,7 +50,7 @@ export default function MeusChamados({ base = "/app/central-servicos/chamados" }
     queryKey: ["chamados-avaliacoes-pendentes"],
     queryFn: async () => {
       const { data } = await (supabase as any).rpc("chamados_meus_avaliacoes_pendentes");
-      return (data ?? []) as Array<{ id: string; numero: string; assunto: string; pendencia: "avaliacao" | "avaliacao_participante" }>;
+      return (data ?? []) as PendenciaSolicitante[];
     },
   });
 
@@ -75,8 +79,11 @@ export default function MeusChamados({ base = "/app/central-servicos/chamados" }
 
   const { data: naoLidos = {} } = useChamadosNaoLidos();
 
-  const pendentesIds = useMemo(() => new Set(avaliacoesPendentes.map((p) => p.id)), [avaliacoesPendentes]);
+  // Confirmar conclusão (mig 20261028001300) e avaliar contam juntos na trava de 3.
+  const { confirmar: confirmacoesPendentes, avaliar: soAvaliacoes } = useMemo(() => separarPendencias(avaliacoesPendentes), [avaliacoesPendentes]);
+  const pendentesIds = useMemo(() => new Set(soAvaliacoes.map((p) => p.id)), [soAvaliacoes]);
   const [avaliarAlvo, setAvaliarAlvo] = useState<{ id: string; numero: string; participante?: boolean } | null>(null);
+  const [confirmarAlvo, setConfirmarAlvo] = useState<Pick<Chamado, "id" | "numero" | "status" | "responsavel_id" | "assunto"> | null>(null);
   const [pagina, setPagina] = useState(1);
 
   const { data: stats } = useQuery({
@@ -153,14 +160,20 @@ export default function MeusChamados({ base = "/app/central-servicos/chamados" }
           <p className="flex items-center gap-1.5 text-sm font-semibold text-warning">
             <Star className="h-4 w-4 shrink-0" />
             <span>
-              Você tem {avaliacoesPendentes.length} avaliação(ões) pendente(s) —{" "}
+              {descreverPendencias(avaliacoesPendentes)} —{" "}
               {abrirChamadoTravado(avaliacoesPendentes)
-                ? "avalie para poder abrir novos chamados."
-                : `com ${LIMITE_AVALIACOES_PENDENTES} sem avaliar, a abertura de novos chamados fica bloqueada.`}
+                ? "confirme e avalie para poder abrir novos chamados."
+                : `com ${LIMITE_AVALIACOES_PENDENTES} pendências (confirmar ou avaliar), a abertura de novos chamados fica bloqueada.`}
             </span>
           </p>
           <div className="flex flex-wrap gap-1.5">
-            {avaliacoesPendentes.map((p) => (
+            {confirmacoesPendentes.map((p) => (
+              <button key={p.id} onClick={() => setConfirmarAlvo({ id: p.id, numero: p.numero, assunto: p.assunto, status: "concluido", responsavel_id: chamados.find((c) => c.id === p.id)?.responsavel_id ?? null })}
+                className="flex items-center gap-1 rounded border border-success/40 bg-background px-2 py-1 text-xs transition-transform hover:border-success hover:bg-success/5 active:scale-90">
+                <CheckCircle2 className="h-3 w-3 text-success" /> <span className="font-mono font-semibold">#{p.numero}</span> confirmar conclusão
+              </button>
+            ))}
+            {soAvaliacoes.map((p) => (
               <button key={p.id} onClick={() => setAvaliarAlvo({ id: p.id, numero: p.numero, participante: p.pendencia === "avaliacao_participante" })}
                 className="flex items-center gap-1 rounded border border-warning/40 bg-background px-2 py-1 text-xs transition-transform hover:border-warning hover:bg-warning/5 active:scale-90">
                 <Star className="h-3 w-3 text-warning" /> <span className="font-mono font-semibold">#{p.numero}</span> avaliar
@@ -187,7 +200,8 @@ export default function MeusChamados({ base = "/app/central-servicos/chamados" }
         <StatCard icon={ClipboardList} tone="primary" label="Total de solicitações" value={stats?.meus ?? 0} hint="Meus chamados" />
         <StatCard icon={CheckCircle2} tone="success" label="Chamados finalizados" value={stats?.concluidos ?? 0} hint="Concluídos" />
         <StatCard icon={RotateCcw} tone="primary" label="Necessita de retorno" value={stats?.aguardando_acao ?? 0} hint="Aguardando sua ação" />
-        <StatCard icon={Star} tone="warning" label="Concluídos sem avaliação" value={avaliacoesPendentes.length} hint="Necessitam avaliação" />
+        <StatCard icon={Star} tone="warning" label="Aguardando você" value={avaliacoesPendentes.length}
+          hint={`${confirmacoesPendentes.length} a confirmar · ${soAvaliacoes.length} a avaliar`} />
         <StatCard icon={CalendarClock} tone="muted" label="Prazo médio de conclusão" value={stats?.tempo_medio != null ? `${stats.tempo_medio} dias` : "—"} hint="Tempo médio" />
       </div>
 
@@ -254,11 +268,13 @@ export default function MeusChamados({ base = "/app/central-servicos/chamados" }
                     <TableCell>
                       <div className="flex flex-col items-start gap-1">
                         <StatusBadge status={c.status} />
+                        <SeloDesenvolvimento chamado={c} />
+                        {avaliacaoLiberada(validacoes[c.id]).liberada && <SeloConfirmacao chamado={c} paraSolicitante />}
                         <SeloEtapaValidacao v={validacoes[c.id]} compacto />
                       </div>
                     </TableCell>
                     <TableCell className="text-xs">{nomeDe(c.responsavel_id)}</TableCell>
-                    <TableCell className="whitespace-nowrap text-xs">{fmtData(c.prazo_previsto)}</TableCell>
+                    <TableCell className="whitespace-nowrap text-xs">{c.prazo_conclusao_em ? fmtData(c.prazo_conclusao_em) : fmtData(c.prazo_previsto)}</TableCell>
                     <TableCell className="whitespace-nowrap text-xs text-muted-foreground">{fmtDataHora(c.created_at)}</TableCell>
                     <TableCell className="max-w-[200px] truncate text-xs text-muted-foreground" title={c.observacao_gerente ?? ""}>
                       {c.observacao_gerente
@@ -277,6 +293,12 @@ export default function MeusChamados({ base = "/app/central-servicos/chamados" }
                       {c.status === "cancelado" ? null : c.status !== "concluido" ? (
                         <Button variant="ghost" size="sm" disabled className="h-8 cursor-not-allowed gap-1.5 text-muted-foreground/60">
                           <Lock className="h-3.5 w-3.5" /> Avaliar
+                        </Button>
+                      ) : podeConfirmarConclusao(c, validacoes[c.id], user?.id) ? (
+                        // O time concluiu: o solicitante confirma antes de avaliar (mig 20261028001300).
+                        <Button size="sm" onClick={() => setConfirmarAlvo(c)}
+                          className="h-8 gap-1.5 transition-transform active:scale-90">
+                          <CheckCircle2 className="h-3.5 w-3.5" /> Confirmar conclusão
                         </Button>
                       ) : !avaliacaoLiberada(validacoes[c.id]).liberada ? (
                         // Presidência validando (mig 273): a avaliação abre depois que ela aprovar.
@@ -341,6 +363,13 @@ export default function MeusChamados({ base = "/app/central-servicos/chamados" }
         </div>
         <FeedAtualizacoes scope="solicitante" buildHref={(cid) => `${base}/${cid}/acompanhar`} />
       </div>
+
+      <ConfirmarConclusaoDialog
+        open={!!confirmarAlvo}
+        onOpenChange={(v) => { if (!v) setConfirmarAlvo(null); }}
+        chamado={confirmarAlvo}
+        onConfirmado={() => confirmarAlvo && setAvaliarAlvo({ id: confirmarAlvo.id, numero: confirmarAlvo.numero })}
+      />
 
       <AvaliarChamadoDialog
         open={!!avaliarAlvo}

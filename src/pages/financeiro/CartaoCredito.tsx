@@ -34,6 +34,7 @@ import { FaturasConsolidadasCard } from "./cartao-credito/FaturasConsolidadasCar
 import { useEmpresasGrupo } from "@/hooks/useMaloteDespesa";
 import { useTiposFormaPagamento } from "@/hooks/useMaloteFormaPagamento";
 import { useUsuariosAtivos } from "@/hooks/useNfEmissao";
+import { ehSocio } from "@/pages/financeiro/cartao-credito/socios";
 import { formatBRL } from "@/hooks/usePlanilhaCusto";
 import {
   useCartoesCredito,
@@ -64,7 +65,11 @@ interface FormState {
   ativo: boolean;
   finalCartao: string;
   usuariosClassificarIds: string[];
+  // Uma só escolha: "u:<id do sócio>", "e:<id da empresa>" ou RESPONSAVEL_GRUPO (todas as empresas).
+  responsavel: string;
 }
+
+const RESPONSAVEL_GRUPO = "grupo";
 
 const VAZIO: FormState = {
   nomeCartao: "",
@@ -78,6 +83,7 @@ const VAZIO: FormState = {
   ativo: true,
   finalCartao: "",
   usuariosClassificarIds: [],
+  responsavel: "",
 };
 
 function paraFormState(c: CartaoCreditoRow): FormState {
@@ -94,7 +100,17 @@ function paraFormState(c: CartaoCreditoRow): FormState {
     ativo: c.ativo,
     finalCartao: c.final_cartao ?? "",
     usuariosClassificarIds: c.usuarios_classificar_ids ?? [],
+    responsavel: c.responsavel_grupo ? RESPONSAVEL_GRUPO : c.responsavel_user_id ? `u:${c.responsavel_user_id}` : c.responsavel_empresa_id ? `e:${c.responsavel_empresa_id}` : "",
   };
+}
+
+// Sócio, empresa ou "Grupo" (todas) para a coluna Responsável da listagem.
+function textoResponsavel(c: CartaoCreditoRow, empresasPorId: Map<string, string>): string {
+  const partes = [
+    c.responsavel,
+    c.responsavel_grupo ? "Grupo" : c.responsavel_empresa_id ? empresasPorId.get(c.responsavel_empresa_id) ?? null : null,
+  ].filter(Boolean);
+  return partes.length ? partes.join(" · ") : "—";
 }
 
 const DIAS_MES = Array.from({ length: 31 }, (_, i) => i + 1);
@@ -266,6 +282,15 @@ export default function CartaoCredito() {
   const { data: bancos = [] } = useCartaoBancos();
   const { data: bandeiras = [] } = useCartaoBandeiras();
   const { data: usuariosAtivos = [] } = useUsuariosAtivos();
+  // Responsável: sócios, empresas do grupo e "Grupo" (todas) na mesma lista.
+  const opcoesResponsavel = useMemo(
+    () => [
+      ...usuariosAtivos.filter((u) => ehSocio(u.display_name)).map((u) => ({ value: `u:${u.id}`, label: u.display_name, hint: "Sócio" })),
+      ...empresas.map((e) => ({ value: `e:${e.id}`, label: e.nome, hint: "Empresa" })),
+      { value: RESPONSAVEL_GRUPO, label: "Grupo", hint: "Todas as empresas" },
+    ],
+    [usuariosAtivos, empresas],
+  );
   const opcoesUsuariosClassificar = useMemo(
     () => usuariosAtivos.map((u) => ({ value: u.id, label: u.display_name })),
     [usuariosAtivos],
@@ -431,6 +456,7 @@ export default function CartaoCredito() {
     if (!editando.empresaId) return toast.error("Selecione a empresa.");
     if (!editando.bancoId) return toast.error("Selecione o banco.");
     if (!editando.bandeiraId) return toast.error("Selecione a bandeira.");
+    if (!editando.responsavel) return toast.error("Selecione o responsável pelo cartão.");
     if (!editando.diaFechamento) return toast.error("Selecione o dia de fechamento.");
     if (!editando.diaVencimento) return toast.error("Selecione o dia de vencimento.");
     const limite = Number(editando.limite.replace(",", "."));
@@ -467,6 +493,10 @@ export default function CartaoCredito() {
         limite,
         ativo: editando.ativo,
         final_cartao: editando.finalCartao ? editando.finalCartao : null,
+        responsavel: editando.responsavel.startsWith("u:") ? usuariosAtivos.find((u) => u.id === editando.responsavel.slice(2))?.display_name ?? null : null,
+        responsavel_user_id: editando.responsavel.startsWith("u:") ? editando.responsavel.slice(2) : null,
+        responsavel_empresa_id: editando.responsavel.startsWith("e:") ? editando.responsavel.slice(2) : null,
+        responsavel_grupo: editando.responsavel === RESPONSAVEL_GRUPO,
         usuarios_classificar_ids: editando.usuariosClassificarIds,
         usuarios_classificar_nomes: editando.usuariosClassificarIds.map(
           (id) => usuariosAtivos.find((u) => u.id === id)?.display_name ?? "",
@@ -619,15 +649,15 @@ export default function CartaoCredito() {
         <CardHeader>
           <CardTitle className="text-base">Cartões de Crédito Cadastrados</CardTitle>
         </CardHeader>
-        <CardContent className="space-y-3 overflow-x-auto">
-          <Table>
+        <CardContent className="space-y-3">
+          <Table className="[&_td]:px-2 [&_th]:px-2">
             <TableHeader>
               <TableRow>
                 <TableHead>Cartão</TableHead>
-                <TableHead>Nome no Malote</TableHead>
                 <TableHead className="text-center">Empresa</TableHead>
                 <TableHead className="text-center">Banco</TableHead>
                 <TableHead className="text-center">Bandeira</TableHead>
+                <TableHead>Responsável</TableHead>
                 <TableHead className="text-center">Fechamento</TableHead>
                 <TableHead className="text-center">Vencimento</TableHead>
                 <TableHead className="text-right">Limite</TableHead>
@@ -658,10 +688,10 @@ export default function CartaoCredito() {
                 return (
                   <TableRow key={c.id}>
                     <TableCell className="font-medium">
-                      <div className="whitespace-nowrap">{c.nome_cartao}</div>
+                      <div>{c.nome_cartao}</div>
                       {c.final_cartao && <div className="font-normal text-xs text-muted-foreground">•••• {c.final_cartao}</div>}
+                      <div className="font-normal text-xs text-muted-foreground" title="Nome no Malote">{c.tipo_forma_pagamento}</div>
                     </TableCell>
-                    <TableCell className="text-sm">{c.tipo_forma_pagamento}</TableCell>
                     <TableCell className="text-sm text-center">{empresasPorId.get(c.empresa_id) ?? "—"}</TableCell>
                     <TableCell className="text-center">
                       {banco ? (
@@ -681,6 +711,7 @@ export default function CartaoCredito() {
                         "—"
                       )}
                     </TableCell>
+                    <TableCell className="text-sm">{textoResponsavel(c, empresasPorId)}</TableCell>
                     <TableCell className="text-sm text-center">Dia {c.dia_fechamento}</TableCell>
                     <TableCell className="text-sm text-center">Dia {c.dia_vencimento}</TableCell>
                     <TableCell className="text-right text-sm">{formatBRL(c.limite)}</TableCell>
@@ -878,6 +909,18 @@ export default function CartaoCredito() {
                     />
                   </div>
                 )}
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label>Responsável pelo Cartão <span className="text-destructive">*</span></Label>
+                <SearchableSelect
+                  value={editando?.responsavel ?? ""}
+                  onChange={(v) => setEditando((s) => (s ? { ...s, responsavel: v } : s))}
+                  options={opcoesResponsavel}
+                  placeholder="Selecione o responsável..."
+                  searchPlaceholder="Buscar sócio ou empresa..."
+                />
               </div>
             </div>
             <div className="grid grid-cols-2 gap-3">

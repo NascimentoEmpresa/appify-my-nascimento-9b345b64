@@ -108,11 +108,17 @@ export interface CartaoCredito {
   // aprovador1_nomes (ClassificacoesMalote.tsx).
   usuarios_classificar_ids: string[];
   usuarios_classificar_nomes: string[];
+  // SIS-2026-0759: quem está com o cartão — usuário do ERP (nome em cache em `responsavel`) e/ou uma empresa
+  // do grupo (ou "Grupo" = todas). Independe da empresa à qual o cartão está vinculado.
+  responsavel: string | null;
+  responsavel_user_id: string | null;
+  responsavel_empresa_id: string | null;
+  responsavel_grupo: boolean;
 }
 
 const KEY = "malote_cartao_credito";
 const COLUMNS =
-  "id, nome_cartao, tipo_forma_pagamento, empresa_id, banco_id, bandeira_id, dia_fechamento, dia_vencimento, limite, ativo, final_cartao, usuarios_classificar_ids, usuarios_classificar_nomes";
+  "id, nome_cartao, tipo_forma_pagamento, empresa_id, banco_id, bandeira_id, dia_fechamento, dia_vencimento, limite, ativo, final_cartao, usuarios_classificar_ids, usuarios_classificar_nomes, responsavel, responsavel_user_id, responsavel_empresa_id, responsavel_grupo";
 
 export function useCartoesCredito() {
   return useQuery({
@@ -142,6 +148,10 @@ interface SalvarCartaoCreditoInput {
   final_cartao: string | null;
   usuarios_classificar_ids: string[];
   usuarios_classificar_nomes: string[];
+  responsavel: string | null;
+  responsavel_user_id: string | null;
+  responsavel_empresa_id: string | null;
+  responsavel_grupo: boolean;
 }
 
 export function useSalvarCartaoCredito() {

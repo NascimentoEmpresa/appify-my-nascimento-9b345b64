@@ -16,17 +16,21 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { CheckCircle2, MessageSquare, XCircle, Paperclip, ArrowLeft, Trash2, Star, RotateCcw, GitPullRequest, UserCheck } from "lucide-react";
+import { CalendarClock, PlayCircle, CheckCircle2, MessageSquare, XCircle, Paperclip, ArrowLeft, Trash2, Star, RotateCcw, GitPullRequest, UserCheck } from "lucide-react";
 import { AvaliarSolicitanteDialog } from "./AvaliarSolicitanteDialog";
 import { ExcluirChamadoDialog } from "./ExcluirChamadoDialog";
 import { abrirPrGithub } from "./abrirPrGithub";
 import { BotaoAdicionarParticipante } from "./ParticipantesChamado";
 import { ReabrirChamadoDialog } from "./ReabrirChamadoDialog";
+import { IniciarDesenvolvimentoDialog } from "./IniciarDesenvolvimentoDialog";
+import {
+  SITUACOES_PRAZO, desceuNaFila, podeDefinirPrazo, podeIniciarDesenvolvimento, situacaoPrazo,
+} from "@/lib/chamados/prazoDesenvolvimento";
 import { ChatChamado } from "./ChatChamado";
 import { InformacoesGithubChamado } from "./InformacoesGithubChamado";
 import { BotaoStatusChamado, CardTreinamento, CardValidacaoPresidencia, useValidacaoChamado } from "./StatusValidacao";
 import {
-  StatusBadge, PrioridadeBadge, STATUS_CHAMADO, CardAvaliacao,
+  StatusBadge, SeloConfirmacao, SeloDesenvolvimento, PrioridadeBadge, STATUS_CHAMADO, CardAvaliacao,
   CATEGORIAS, TIPOS, IMPACTOS, URGENCIAS, AMBIENTES,
   labelDe, moduloLabel, fmtData, fmtDataHora, podeReabrirChamado, chamadoEncerrado,
   BUCKET_CHAMADOS, opcoesDownloadAnexo, type Chamado, type Anexo, type Evento, type AvaliacaoChamado,
@@ -52,6 +56,10 @@ export default function ExecutarChamado() {
   // a saída "Concluir sem avaliar" dentro do próprio diálogo.
   const [concluindoOpen, setConcluindoOpen] = useState(false);
   const [avaliarDepoisOpen, setAvaliarDepoisOpen] = useState(false);
+  // Iniciar desenvolvimento / alterar prazo (mig 20261028001400).
+  const [iniciarOpen, setIniciarOpen] = useState(false);
+  // Definir / redefinir o prazo em dias (mig 20261028001410).
+  const [prazoOpen, setPrazoOpen] = useState(false);
 
   const { data: usuarios = [] } = useQuery({
     queryKey: ["chamados-usuarios"],
@@ -163,12 +171,6 @@ export default function ExecutarChamado() {
     );
   };
 
-  const salvarPrazo = async (prazo: string) => {
-    const { error } = await (supabase as any).from("CHAMADO_SISTEMA").update({ prazo_previsto: prazo || null }).eq("id", id);
-    if (error) { toast({ title: "Erro ao salvar prazo", description: error.message, variant: "destructive" }); return; }
-    invalidar();
-  };
-
   const reprovar = async () => {
     if (!motivo.trim()) { toast({ title: "Informe o motivo.", variant: "destructive" }); return; }
     const { error } = await (supabase as any).from("CHAMADO_SISTEMA").update({ status: "reprovado", motivo_reprovacao: motivo.trim() }).eq("id", id);
@@ -220,7 +222,9 @@ export default function ExecutarChamado() {
           <Card className="space-y-4 p-4">
             <div className="flex items-center justify-between">
               <p className="text-sm font-bold">Informações do chamado</p>
-              <span className={`rounded-full ${flash ? "animate-status-flash" : ""}`}>
+              <span className={`flex items-center gap-1.5 rounded-full ${flash ? "animate-status-flash" : ""}`}>
+                <SeloConfirmacao chamado={chamado} />
+                <SeloDesenvolvimento chamado={chamado} />
                 <StatusBadge status={chamado.status} />
               </span>
             </div>
@@ -236,6 +240,8 @@ export default function ExecutarChamado() {
               <Campo label="Solicitante">{chamado.solicitante_nome || "—"} <span className="text-xs text-muted-foreground">({chamado.setor || "—"})</span></Campo>
               <Campo label="Afeta usuários">{chamado.afeta_usuarios ?? "—"}</Campo>
               <Campo label="Urgência informada">{labelDe(URGENCIAS, chamado.urgencia)}</Campo>
+              {/* Prazo esperado por quem abriu (mig 20261028001420). */}
+              <Campo label="Prazo do solicitante">{chamado.prazo_solicitante ? fmtData(`${chamado.prazo_solicitante}T12:00:00`) : "—"}</Campo>
             </div>
           </Card>
 
@@ -351,11 +357,50 @@ export default function ExecutarChamado() {
               <p className="text-sm font-medium">{nomeDe(chamado.responsavel_id)}</p>
             </div>
             <div>
-              <p className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Prazo para concluir</p>
-              {podeAgir ? (
-                <Input type="date" defaultValue={chamado.prazo_previsto ?? ""} onBlur={(e) => salvarPrazo(e.target.value)} />
-              ) : <p className="text-sm">{fmtData(chamado.prazo_previsto)}</p>}
+              <p className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Prazo (dias úteis)</p>
+              {/* SIS-2026-0763 (mig 20261028001410): prazo em dias úteis,
+                  definido pelo dev ao receber a tarefa e TRAVADO — só
+                  redefine quando a tarefa desce na fila. A previsão de
+                  entrega é início + prazo; antes de iniciar, depende da fila. */}
+              {chamado.prazo_dias ? (
+                <p className="text-sm font-medium">
+                  {chamado.prazo_dias} dia(s) útil(eis)
+                  {!!chamado.prazo_redefinicoes && <span className="text-xs font-normal text-muted-foreground"> · redefinido {chamado.prazo_redefinicoes}x</span>}
+                </p>
+              ) : (
+                <p className="text-xs text-warning">Ainda não definido — obrigatório para iniciar.</p>
+              )}
+              {desceuNaFila(chamado) && (
+                <p className="mt-1 text-xs text-destructive">A tarefa desceu na fila ({chamado.prazo_posicao_fila}º → {chamado.posicao_dev}º): redefina o prazo.</p>
+              )}
+              {/* O prazo real é informado ao iniciar (botão em Ações rápidas);
+                  depois, só redefine se a tarefa descer na fila. */}
+              {podeAgir && chamado.prazo_dias != null && podeDefinirPrazo(chamado) && (
+                <Button variant="outline" size="sm" className="mt-1.5 h-8 gap-1.5" onClick={() => setPrazoOpen(true)}>
+                  <CalendarClock className="h-3.5 w-3.5" /> Redefinir prazo
+                </Button>
+              )}
             </div>
+            <div>
+              <p className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Previsão de entrega</p>
+              {chamado.prazo_conclusao_em ? (
+                <p className="text-sm font-medium">{fmtData(chamado.prazo_conclusao_em)}</p>
+              ) : (
+                <p className="text-xs text-muted-foreground">{chamado.prazo_dias ? "Conta a partir do início do desenvolvimento (veja a projeção no Painel do Desenvolvedor)." : "—"}</p>
+              )}
+              {(() => {
+                const sit = situacaoPrazo(chamado, chamado.prazo_conclusao_em ? { data: new Date(chamado.prazo_conclusao_em), projetada: false } : null);
+                return sit && (chamado.prazo_conclusao_em || chamado.status === "concluido") ? (
+                  <span className={`mt-1 inline-flex rounded border px-1.5 py-0.5 text-[10px] font-semibold ${SITUACOES_PRAZO[sit].cls}`}>{SITUACOES_PRAZO[sit].label}</span>
+                ) : null;
+              })()}
+            </div>
+            {chamado.desenvolvimento_iniciado_em && (
+              <div>
+                <p className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Desenvolvimento iniciado</p>
+                <p className="text-sm">{fmtDataHora(chamado.desenvolvimento_iniciado_em)} · {nomeDe(chamado.desenvolvimento_iniciado_por ?? null)}</p>
+              </div>
+            )}
           </Card>
 
           {podeAgir && (
@@ -366,6 +411,13 @@ export default function ExecutarChamado() {
                   <div className="flex items-center gap-2 rounded-md border border-success/40 bg-success/10 px-3 py-2 text-sm font-semibold text-success">
                     <CheckCircle2 className="h-4 w-4 animate-check-pop" /> Chamado concluído
                   </div>
+                  {/* Concluir não fecha de vez (mig 20261028001300): o
+                      solicitante confere e confirma — ou reabre e volta pra cá. */}
+                  {!chamado.conclusao_confirmada_em && (
+                    <p className="rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-xs text-warning">
+                      Aguardando o solicitante <b>confirmar a conclusão</b>. Se não resolveu, ele reabre e o chamado volta para você.
+                    </p>
+                  )}
                   {/* Concluído sem passar pelo diálogo (merge da PR) ou pulado:
                       dá para avaliar depois. Só de agora em diante — os
                       concluídos antes da mudança ficam de fora. */}
@@ -377,6 +429,18 @@ export default function ExecutarChamado() {
                   )}
                 </>
               ) : (
+                <>
+                {/* Em desenvolvimento (mig 20261028001400): o dev avisa o
+                    solicitante que começou — com prazo obrigatório. */}
+                {podeIniciarDesenvolvimento(chamado) && (
+                  <Button
+                    className="w-full justify-start gap-2 transition-transform active:scale-95"
+                    disabled={!!agindo}
+                    onClick={() => setIniciarOpen(true)}
+                  >
+                    <PlayCircle className="h-4 w-4" /> Iniciar desenvolvimento
+                  </Button>
+                )}
                 <Button
                   className="w-full justify-start gap-2 bg-success text-success-foreground transition-transform hover:bg-success/90 active:scale-95 disabled:opacity-60"
                   disabled={!!agindo}
@@ -384,6 +448,7 @@ export default function ExecutarChamado() {
                 >
                   <CheckCircle2 className="h-4 w-4" /> {agindo === "concluido" ? "Concluindo…" : "Concluir chamado"}
                 </Button>
+                </>
               )}
               {/* Mesmo "Abrir PR" da fila do Painel do Desenvolvedor: GitHub já
                   com título (número do chamado) e descrição preenchidos. Fica
@@ -479,6 +544,21 @@ export default function ExecutarChamado() {
         onOpenChange={setReabrindoOpen}
         chamado={chamado}
         onReaberto={invalidar}
+      />
+
+      <IniciarDesenvolvimentoDialog
+        open={prazoOpen}
+        onOpenChange={setPrazoOpen}
+        chamado={chamado}
+        modo="definir"
+        onFeito={invalidar}
+      />
+
+      <IniciarDesenvolvimentoDialog
+        open={iniciarOpen}
+        onOpenChange={setIniciarOpen}
+        chamado={chamado}
+        onFeito={invalidar}
       />
 
       <ExcluirChamadoDialog
