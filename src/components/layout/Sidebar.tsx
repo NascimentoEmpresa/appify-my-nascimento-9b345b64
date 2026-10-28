@@ -25,6 +25,7 @@ import {
   Wallet,
   Users2,
   CalendarRange,
+  CalendarClock,
   Ruler,
   TrendingUp,
   PackageCheck,
@@ -188,6 +189,7 @@ const licitacoesModule: ModuleDef = {
         // Base dos benefícios da vaga: a CCT/decreto vinculada ao posto na
         // Planilha de Custo aparece sozinha na Abertura de Vagas (mig 20261027000930).
         { label: "Convenções Coletivas e Decretos Municipais", to: "/app/licitacoes/convencoes", icon: FileText },
+        { label: "Prazos, Recursos e Impugnações", to: "/app/licitacoes/prazos-recursos", icon: CalendarClock },
       ],
     },
     {
