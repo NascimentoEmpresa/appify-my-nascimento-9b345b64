@@ -45,9 +45,36 @@ import { TvTelaPadrao } from "./TvTelaPadrao";
 // 28/10/2026 (mig 20261028000020) — aviso geral com IMAGEM e tempo em
 // segundos ou minutos: a imagem cobre a tela inteira (contain), e o tempo é
 // contado pela própria TV a partir de quando desenha o aviso (useAvisoNoTempo).
+//
+// 28/10/2026, à tarde — "ao adicionar o aviso nas TVs TODAS ESTÃO FICANDO
+// VERMELHAS AINDA, faz a tv recarregar quando aparecer o aviso". Uma hora
+// depois do deploy as 7 TVs ainda mandavam só "960x540" (sem a versão): o JS
+// novo não tinha chegado em nenhuma, e o player antigo desenha o aviso só de
+// imagem como a cor com o texto vazio. Agora:
+//   · AVISO NOVO → a TV recarrega UMA vez antes de mostrar (o id do aviso fica
+//     em localStorage; sem localStorage não recarrega, para não entrar em loop);
+//   · todo recarregamento (aviso, versão, comando, cão de guarda) vai para a
+//     MESMA rota com ?tv-r=<agora>: URL nova, o WebView não tem como devolver
+//     o HTML (e o JS) antigo do cache, como um reload() simples pode fazer.
 // =====================================================================
 
 const CHAVE_TOKEN = "gn:tv:token";
+const CHAVE_AVISO_RECARREGADO = "gn:tv:aviso-recarregado";
+
+/** Recarrega a página por uma URL nova (?tv-r=), nunca pelo cache. */
+function recarregarTv() {
+  const u = new URL(window.location.href);
+  u.searchParams.set("tv-r", String(Date.now()));
+  window.location.replace(u.toString());
+}
+/** Aviso que ainda não fez a TV recarregar → marca e devolve true. Sem localStorage, false (sem loop). */
+function recarregarPeloAviso(id: string): boolean {
+  try {
+    if (localStorage.getItem(CHAVE_AVISO_RECARREGADO) === id) return false;
+    localStorage.setItem(CHAVE_AVISO_RECARREGADO, id);
+    return localStorage.getItem(CHAVE_AVISO_RECARREGADO) === id;
+  } catch { return false; }
+}
 const rpc = supabase.rpc.bind(supabase) as unknown as (fn: string, args?: Record<string, unknown>) => Promise<{ data: any; error: { message: string } | null }>;
 // 28/10/2026 — "todas TVs estão VERMELHAS em vez de estar aparecendo a imagem
 // anexada", e da gestão não dava para saber se a TV estava no JS novo nem o
@@ -89,7 +116,9 @@ export default function TvPlayer() {
         tokenRef.current = null; gravarToken(null); return consultar();
       }
       ultimoOk.current = Date.now();
-      if (e.comando === "recarregar") { window.location.reload(); return; }
+      if (e.comando === "recarregar") { recarregarTv(); return; }
+      // Aviso novo no ar: recarrega uma vez, e o aviso entra já no JS publicado.
+      if (e.pareada && e.alerta?.id && recarregarPeloAviso(e.alerta.id)) { recarregarTv(); return; }
       setEstado(e); setErro(null);
       batimento();
     } catch (e) {
@@ -135,7 +164,7 @@ export default function TvPlayer() {
       try {
         const r = await fetch(`${window.location.origin}/?tv-versao=${Date.now()}`, { cache: "no-store" });
         const publicada = r.ok ? scriptPrincipal(await r.text()) : null;
-        if (publicada && publicada !== minha) window.location.reload();
+        if (publicada && publicada !== minha) recarregarTv();
       } catch { /* sem rede: o cão de guarda cuida */ }
     }, CONFERE_VERSAO_MS);
     return () => window.clearInterval(t);
@@ -146,8 +175,8 @@ export default function TvPlayer() {
   useEffect(() => {
     const t = window.setInterval(() => {
       const h = new Date().getHours();
-      if (Date.now() - ultimoOk.current > SEM_CONTATO_RECARREGA_MS && navigator.onLine !== false) window.location.reload();
-      else if (Date.now() - ABERTA_EM > 20 * 3600_000 && h >= 3 && h < 5) window.location.reload();
+      if (Date.now() - ultimoOk.current > SEM_CONTATO_RECARREGA_MS && navigator.onLine !== false) recarregarTv();
+      else if (Date.now() - ABERTA_EM > 20 * 3600_000 && h >= 3 && h < 5) recarregarTv();
     }, 30_000);
     const voltou = () => consultar();
     window.addEventListener("online", voltou);

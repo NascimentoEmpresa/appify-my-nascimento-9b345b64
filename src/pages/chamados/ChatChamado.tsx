@@ -109,6 +109,15 @@ function descreverAviso(e: Evento, nomeDe: (uid: string | null) => string): Avis
     let m: RegExpMatchArray | null;
     if (/^Chamado aberto$/i.test(t)) return `${quem} abriu o chamado`;
     if (/^Chamado conclu[ií]do$/i.test(t)) return `${quem} concluiu o chamado`;
+    // Confirmação do solicitante (mig 20261028001300).
+    if (/^Conclus[ãa]o confirmada pelo solicitante$/i.test(t)) return `${quem} confirmou a conclusão do chamado`;
+    // Início do desenvolvimento / prazo (mig 20261028001400).
+    if ((m = t.match(/^Desenvolvimento iniciado — (.+)$/i))) return `${quem} começou o desenvolvimento — ${m[1]}`;
+    // Prazo em dias, travado (SIS-2026-0763, mig 20261028001410).
+    if ((m = t.match(/^Prazo definido:\s*(.+)$/i))) return `${quem} definiu o prazo: ${m[1]}`;
+    // Reunião ou Extra (mig 20261028001700).
+    if ((m = t.match(/^Defini[çc][ãa]o da prioridade:\s*(.+)$/i))) return `${quem} registrou a prioridade como definida em ${m[1]}`;
+    if ((m = t.match(/^Prazo redefinido para\s+(.+)$/i))) return `${quem} redefiniu o prazo para ${m[1]}`;
     // O direcionamento nem sempre trouxe a posição na fila (gravações antigas).
     if ((m = t.match(/^Chamado direcionado a (.+?)(?:\s*—\s*(\d+)º lugar na fila.*)?$/i)))
       return `${quem} designou o chamado para ${m[1]}${m[2] ? ` · ${m[2]}º na fila` : ""}`;
