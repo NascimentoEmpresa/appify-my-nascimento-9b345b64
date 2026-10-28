@@ -875,7 +875,15 @@ function TabelaItens({
                   <CabecalhoTabela alinhar="right">Comprar</CabecalhoTabela>
                   <CabecalhoTabela alinhar="center">Já faltou</CabecalhoTabela>
                   <CabecalhoTabela alinhar="right">Parado R$</CabecalhoTabela>
-                  <CabecalhoTabela alinhar="center">Classe</CabecalhoTabela>
+                  <CabecalhoTabela alinhar="center">
+                    <Dica>
+                      <TooltipTrigger asChild><span className="cursor-help">Classe ABC/XYZ</span></TooltipTrigger>
+                      <TooltipContent className="max-w-[320px] text-xs">
+                        <p><strong>ABC</strong> mostra o impacto financeiro: A concentra maior valor de consumo, C o menor.</p>
+                        <p className="mt-1"><strong>XYZ</strong> mostra a previsibilidade: X é regular; Z oscila muito. Não é nível de qualidade do item.</p>
+                      </TooltipContent>
+                    </Dica>
+                  </CabecalhoTabela>
                   <CabecalhoTabela>Situação</CabecalhoTabela>
                   <CabecalhoTabela alinhar="center">Conta</CabecalhoTabela>
                 </tr>
@@ -1131,10 +1139,10 @@ function BlocoLiquidar({
             <tr>
               <CabecalhoTabela>Item</CabecalhoTabela>
               <CabecalhoTabela>Tam.</CabecalhoTabela>
-              <CabecalhoTabela alinhar="right">Em casa</CabecalhoTabela>
+              <CabecalhoTabela alinhar="right">Disponível</CabecalhoTabela>
               <CabecalhoTabela alinhar="right">Valor parado</CabecalhoTabela>
               <CabecalhoTabela alinhar="right">Sem giro há</CabecalhoTabela>
-              <CabecalhoTabela>Última saída</CabecalhoTabela>
+              <CabecalhoTabela>Última baixa física</CabecalhoTabela>
               <CabecalhoTabela>Motivo</CabecalhoTabela>
               <CabecalhoTabela alinhar="center">Liquidar</CabecalhoTabela>
             </tr>
@@ -1154,9 +1162,13 @@ function BlocoLiquidar({
                   </td>
                   <td className="px-3 py-1.5 text-right">{formatarMeses(l.meses_sem_giro)}</td>
                   <td className="px-3 py-1.5 text-slate-500">
-                    {l.ultima_saida
-                      ? new Date(`${l.ultima_saida}T12:00:00`).toLocaleDateString("pt-BR")
-                      : "nunca saiu"}
+                    {l.ultima_saida ? (
+                      new Date(`${l.ultima_saida}T12:00:00`).toLocaleDateString("pt-BR")
+                    ) : l.ultima_reserva ? (
+                      <span title="Houve reserva para separação, mas não há baixa física registrada.">
+                        Sem baixa · reserva em {new Date(`${l.ultima_reserva}T12:00:00`).toLocaleDateString("pt-BR")}
+                      </span>
+                    ) : "sem baixa registrada"}
                   </td>
                   <td className="px-3 py-1.5">
                     {l.ja_marcado ? (

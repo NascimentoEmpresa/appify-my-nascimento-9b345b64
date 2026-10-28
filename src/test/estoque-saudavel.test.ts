@@ -87,6 +87,7 @@ function item(over: Partial<ItemEstoqueSaudavel> = {}): ItemEstoqueSaudavel {
     pct_falta: 0,
     ultima_falta: null,
     ultima_saida: "2026-09-15",
+    ultima_reserva: null,
     ultimo_pedido: "2026-09-01",
     valor_unitario: 70,
     sem_preco: false,
