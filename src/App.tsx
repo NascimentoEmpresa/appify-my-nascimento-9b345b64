@@ -65,6 +65,7 @@ import RhInicioContrato from "./pages/implantacao/setor/RhInicioContrato";
 import OperacionalInicioContrato from "./pages/implantacao/setor/OperacionalInicioContrato";
 import ComprasInicioContrato from "./pages/implantacao/setor/ComprasInicioContrato";
 import PlanilhaCusto from "./pages/licitacoes/PlanilhaCusto";
+import ConvencoesColetivas from "./pages/licitacoes/ConvencoesColetivas";
 import ContratosERP from "./pages/licitacoes/ContratosERP";
 import CotacoesLicitacao from "./pages/licitacoes/CotacoesLicitacao";
 import PrecosMateriais from "./pages/licitacoes/PrecosMateriais";
@@ -705,6 +706,8 @@ const App = () => (
             <Route path="prontas-contrato" element={<ProntasContrato />} />
             <Route path="contratos/implantacao" element={<Implantacao />} />
             <Route path="licitacoes/planilha-custo" element={<PlanilhaCusto />} />
+            {/* Convenções Coletivas e Decretos Municipais (mig 20261027000930). */}
+            <Route path="licitacoes/convencoes" element={<ConvencoesColetivas />} />
             <Route path="licitacoes/implantacao" element={<Implantacao />} />
             {/* SIS-2026-0599: a base mestre é tela separada do checklist de
                 Implantação — e as quatro setoriais leem dela. */}
