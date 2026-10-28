@@ -214,6 +214,7 @@ import Contabilidade from "./pages/Contabilidade";
 import Colaboradores from "./pages/rh/Colaboradores";
 import AtivosContratos from "./pages/rh/AtivosContratos";
 import HierarquiaPostos from "./pages/rh/HierarquiaPostos";
+import PesquisaPermanencia from "./pages/rh/PesquisaPermanencia";
 import RateioDespesas from "./pages/rh/RateioDespesas";
 import GestaoPonto from "./pages/rh/GestaoPonto";
 import Recrutamento from "./pages/rh/Recrutamento";
@@ -294,6 +295,7 @@ import PainelGerencialFormularios from "./pages/central-servicos/PainelGerencial
 import FormulariosConfig from "./pages/central-servicos/FormulariosConfig";
 import FormularioPublico from "./pages/publico/FormularioPublico";
 import CampanhaPublica from "./pages/publico/CampanhaPublica";
+import PesquisaPermanenciaPublica from "./pages/publico/PesquisaPermanenciaPublica";
 import FormulariosEncarregados from "./pages/encarregados/FormulariosEncarregados";
 import Denuncia from "./pages/publico/Denuncia";
 import FornecedorCadastro from "./pages/publico/FornecedorCadastro";
@@ -482,6 +484,9 @@ const App = () => (
           {/* Campanhas do Treinamentos — página pública do QR Code, sem login
               (mig 20260930000268: só as RPCs trn_campanha_publica/_responder). */}
           <Route path="/campanhas/:slug" element={<CampanhaPublica />} />
+          {/* RH › Pesquisa de Permanência — resposta anônima, sem login
+              (mig 20261028001200: só as RPCs pp_publica/pp_responder). */}
+          <Route path="/pesquisa-permanencia/:token" element={<PesquisaPermanenciaPublica />} />
           {/* Nascimento Formulários — resposta pública, sem login */}
           <Route path="/formularios/:slug" element={<FormularioPublico />} />
           {/* Cadastro que o próprio fornecedor preenche, sem login. A credencial
@@ -923,6 +928,7 @@ const App = () => (
             <Route path="rh/ativos-contratos" element={<AtivosContratos />} />
             {/* Hierarquia de postos da Senior (mig 20261007000024). */}
             <Route path="rh/hierarquia-postos" element={<HierarquiaPostos />} />
+            <Route path="rh/pesquisa-permanencia" element={<PesquisaPermanencia />} />
             <Route path="rh/documentos" element={<DocumentosRh />} />
             {/* Rateio de Despesas (mig 20261016000010, SIS-2026-0673): Jus Brasil, Senior e despesas lidas do PDF, por contrato. */}
             <Route path="rh/rateio-despesas" element={<RateioDespesas />} />

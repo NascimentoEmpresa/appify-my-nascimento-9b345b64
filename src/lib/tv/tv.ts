@@ -106,8 +106,16 @@ export interface EstadoTv {
   alerta?: AlertaNaTv | null;
 }
 
-/** Aviso geral como o tv_estado entrega (inicio/imagem/duracao_seg: mig 20261028000020). */
-export interface AlertaNaTv { id: string; texto: string; cor: string; fim: string; inicio?: string; imagem?: string | null; duracao_seg?: number | null }
+/** Aviso geral como o tv_estado entrega (inicio/imagem/duracao_seg: mig 20261028000020; layout: mig 20261028000021). */
+export interface AlertaNaTv { id: string; texto: string; cor: string; fim: string; inicio?: string; imagem?: string | null; duracao_seg?: number | null; layout?: LayoutAviso | null }
+
+/** Como o aviso com imagem ocupa a TV (mig 20261028000021). Sem imagem, o layout não conta. */
+export type LayoutAviso = "cheia" | "esquerda" | "direita";
+export const LAYOUTS_AVISO: { valor: LayoutAviso; rotulo: string }[] = [
+  { valor: "cheia", rotulo: "Imagem na tela inteira" },
+  { valor: "esquerda", rotulo: "Imagem à esquerda, texto à direita" },
+  { valor: "direita", rotulo: "Texto à esquerda, imagem à direita" },
+];
 
 /** A TV consulta o ERP a cada INTERVALO_PING_S; sem notícia há 3 consultas, está offline. */
 export const INTERVALO_PING_S = 15;
@@ -168,7 +176,7 @@ export const corAviso = (c: string | null | undefined) => (c && /^#([0-9a-f]{3}|
 // aviso geral por cima; pausada; relógio quando não há nada).
 
 /** O que uma tela de TV mostra (o iframe /tv/previa desenha). `chave` muda = remonta (vídeo recomeça, relatório reconsulta). */
-export type TelaTv = { chave: string; alerta?: { texto: string; cor: string; imagem?: string | null } | null } & (
+export type TelaTv = { chave: string; alerta?: { texto: string; cor: string; imagem?: string | null; layout?: LayoutAviso | null } | null } & (
   | { modo: "item"; item: ItemTv; inicioS?: number }
   | { modo: "relogio"; nome: string }
   | { modo: "pausada"; nome: string }
@@ -188,7 +196,7 @@ export function itensNoAr<T extends ItemNoAr>(itens: T[], agora: Date = new Date
 
 export interface AlertaTv {
   id: string; texto: string; cor: string; inicio: string; fim: string; todas: boolean; dispositivos: string[]; encerrado_em: string | null; created_at: string;
-  imagem?: string | null; duracao_seg?: number | null;
+  imagem?: string | null; duracao_seg?: number | null; layout?: LayoutAviso | null;
 }
 
 /** O aviso geral que cobre esta TV agora (o mais recente valendo) — a regra do tv_estado. */
@@ -275,7 +283,7 @@ export interface EntradaAoVivo {
 export function telaAoVivo(e: EntradaAoVivo): { tela: TelaTv; exata: boolean; indice: number | null } {
   const nome = e.tv.nome ?? "TV";
   const a = alertaDaTv(e.alertas, e.tv.id, e.agora);
-  const alerta = a ? { texto: a.texto, cor: a.cor, imagem: a.imagem ?? null } : null;
+  const alerta = a ? { texto: a.texto, cor: a.cor, imagem: a.imagem ?? null, layout: a.layout ?? "cheia" } : null;
   const chaveAlerta = a?.id ?? "-";
   if (statusTv(e.tv.ultimo_ping, e.agora) !== "online") {
     return { tela: { modo: "offline", nome, visto: haQuanto(e.tv.ultimo_ping, e.agora), chave: `off|${e.tv.id}` }, exata: true, indice: null };

@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
-import { FOLGA_AVISO_S, type AoVivoTv, type TipoItem } from "@/lib/tv/tv";
+import { FOLGA_AVISO_S, type AoVivoTv, type LayoutAviso, type TipoItem } from "@/lib/tv/tv";
 
 // =====================================================================
 // Sistemas › TV's — gestão (mig 20261007000012). Tabelas TV_* com RLS por
@@ -32,6 +32,8 @@ export interface TvAlerta {
   encerrado_em: string | null; created_at: string; created_by_nome: string | null;
   /** Mig 20261028000020: imagem no bucket tv-midia (pasta aviso/) e o tempo escolhido, em segundos. */
   imagem: string | null; duracao_seg: number | null;
+  /** Mig 20261028000021: como a imagem ocupa a TV. */
+  layout?: LayoutAviso | null;
 }
 
 const COLS_DISP = "id, nome, local, playlist_id, pareado_em, ultimo_ping, user_agent, tela, comando, comando_em, ativo, created_at";
@@ -150,10 +152,12 @@ export const urlMidia = (caminho: string | null) => (caminho ? supabase.storage.
  * FOLGA_AVISO_S — quem conta os `duracaoSeg` é a TV, a partir de quando
  * desenha o aviso (mig 20261028000020).
  */
-export const useCriarAlerta = () => useMut(async (p: { texto: string; cor: string; duracaoSeg: number; imagem: File | null; todas: boolean; dispositivos: string[]; autor: string }) => {
+export const useCriarAlerta = () => useMut(async (p: { texto: string; cor: string; duracaoSeg: number; imagem: File | null; layout: LayoutAviso; todas: boolean; dispositivos: string[]; autor: string }) => {
   const imagem = p.imagem ? await enviarMidia("aviso", p.imagem) : null;
   const fim = new Date(Date.now() + (p.duracaoSeg + FOLGA_AVISO_S) * 1000).toISOString();
-  const r = await sb.from("TV_ALERTA").insert({ texto: p.texto, cor: p.cor, fim, duracao_seg: p.duracaoSeg, imagem, todas: p.todas,
+  const r = await sb.from("TV_ALERTA").insert({ texto: p.texto, cor: p.cor, fim, duracao_seg: p.duracaoSeg, imagem,
+                                               // 'cheia' é o DEFAULT: só manda o layout quando muda (o insert não quebra antes da mig 21 entrar).
+                                               ...(p.layout !== "cheia" ? { layout: p.layout } : {}), todas: p.todas,
                                                dispositivos: p.todas ? [] : p.dispositivos, created_by_nome: p.autor });
   // Aviso não entrou: a imagem não fica órfã no bucket.
   if (r.error && imagem) await sb.storage.from("tv-midia").remove([imagem]);
