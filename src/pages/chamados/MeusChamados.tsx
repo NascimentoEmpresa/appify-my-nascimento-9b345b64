@@ -22,7 +22,7 @@ import {
 } from "@/components/ui/table";
 import { Plus, ClipboardList, CheckCircle2, Clock, RotateCcw, CalendarClock, Info, MessageSquarePlus, XCircle, Lightbulb, ChevronLeft, ChevronRight, Star, Lock, GraduationCap } from "lucide-react";
 import {
-  StatCard, StatusBadge, SeloConfirmacao, PrioridadeBadge, fmtData, fmtDataHora, moduloLabel, type Chamado,
+  StatCard, StatusBadge, SeloConfirmacao, SeloDesenvolvimento, PrioridadeBadge, fmtData, fmtDataHora, moduloLabel, type Chamado,
 } from "./types";
 
 const POR_PAGINA = 8;
@@ -268,12 +268,13 @@ export default function MeusChamados({ base = "/app/central-servicos/chamados" }
                     <TableCell>
                       <div className="flex flex-col items-start gap-1">
                         <StatusBadge status={c.status} />
+                        <SeloDesenvolvimento chamado={c} />
                         {avaliacaoLiberada(validacoes[c.id]).liberada && <SeloConfirmacao chamado={c} paraSolicitante />}
                         <SeloEtapaValidacao v={validacoes[c.id]} compacto />
                       </div>
                     </TableCell>
                     <TableCell className="text-xs">{nomeDe(c.responsavel_id)}</TableCell>
-                    <TableCell className="whitespace-nowrap text-xs">{fmtData(c.prazo_previsto)}</TableCell>
+                    <TableCell className="whitespace-nowrap text-xs">{c.prazo_conclusao_em ? fmtDataHora(c.prazo_conclusao_em) : fmtData(c.prazo_previsto)}</TableCell>
                     <TableCell className="whitespace-nowrap text-xs text-muted-foreground">{fmtDataHora(c.created_at)}</TableCell>
                     <TableCell className="max-w-[200px] truncate text-xs text-muted-foreground" title={c.observacao_gerente ?? ""}>
                       {c.observacao_gerente

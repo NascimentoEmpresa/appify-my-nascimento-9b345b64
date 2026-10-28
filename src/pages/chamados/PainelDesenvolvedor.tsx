@@ -25,7 +25,7 @@ import { BotaoChatChamado, useChamadosNaoLidos } from "./BotaoChatChamado";
 import { ReabrirChamadoDialog } from "./ReabrirChamadoDialog";
 import { abrirPrGithub } from "./abrirPrGithub";
 import {
-  StatCard, PrioridadeBadge, StatusBadge, STATUS_CHAMADO, PRIORIDADES, Estrelas, iniciais, fmtData, fmtDataHora,
+  StatCard, PrioridadeBadge, StatusBadge, SeloDesenvolvimento, STATUS_CHAMADO, PRIORIDADES, Estrelas, iniciais, fmtData, fmtDataHora,
   chamadoAtivo, podeReabrirChamado, posicoesFilaDev, CRITERIOS_AVALIACAO, mediaAvaliacao, type Chamado,
 } from "./types";
 
@@ -417,8 +417,14 @@ export default function PainelDesenvolvedor() {
                             <PrioridadeBadge prioridade={c.prioridade} />
                           )}
                         </TableCell>
-                        <TableCell><StatusBadge status={c.status} /></TableCell>
-                        <TableCell className={`whitespace-nowrap text-xs ${atrasado ? "font-semibold text-destructive" : ""}`}>{fmtData(c.prazo_previsto)}{atrasado ? " · atrasado" : ""}</TableCell>
+                        <TableCell>
+                          <div className="flex flex-col items-start gap-1">
+                            <StatusBadge status={c.status} />
+                            {/* Na fila x Em desenvolvimento (mig 20261028001400) */}
+                            <SeloDesenvolvimento chamado={c} />
+                          </div>
+                        </TableCell>
+                        <TableCell className={`whitespace-nowrap text-xs ${atrasado ? "font-semibold text-destructive" : ""}`}>{c.prazo_conclusao_em ? fmtDataHora(c.prazo_conclusao_em) : fmtData(c.prazo_previsto)}{atrasado ? " · atrasado" : ""}</TableCell>
                         <TableCell className="whitespace-nowrap text-xs text-muted-foreground">{fmtDataHora(c.updated_at)}</TableCell>
                         <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
                           <BotaoChatChamado chamado={c} perfil="equipe" naoLidos={naoLidos[c.id] ?? 0} responsavelNome={nomeDe(c.responsavel_id)} />

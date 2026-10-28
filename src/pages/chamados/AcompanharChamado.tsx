@@ -18,7 +18,7 @@ import { ChatChamado } from "./ChatChamado";
 import { BotaoStatusChamado, CardTreinamento, CardValidacaoPresidencia, useValidacaoChamado } from "./StatusValidacao";
 import { avaliacaoLiberada, conclusaoAguardandoConfirmacao, podeConfirmarConclusao } from "./validacaoPresidencia";
 import {
-  StatusBadge, SeloConfirmacao, PrioridadeBadge, CardAvaliacao,
+  StatusBadge, SeloConfirmacao, SeloDesenvolvimento, PrioridadeBadge, CardAvaliacao,
   CATEGORIAS, TIPOS, IMPACTOS, URGENCIAS, AMBIENTES,
   labelDe, moduloLabel, fmtData, fmtDataHora, chamadoEncerrado,
   BUCKET_CHAMADOS, opcoesDownloadAnexo, type Chamado, type Anexo, type AvaliacaoChamado,
@@ -139,6 +139,7 @@ export default function AcompanharChamado({ base = "/app/central-servicos/chamad
               <p className="text-sm font-bold">Informações do chamado</p>
               <div className="flex flex-wrap items-center justify-end gap-1.5">
                 {liberacao.liberada && <SeloConfirmacao chamado={chamado} paraSolicitante={ehSolicitante} />}
+                <SeloDesenvolvimento chamado={chamado} />
                 <StatusBadge status={chamado.status} />
               </div>
             </div>
@@ -151,7 +152,9 @@ export default function AcompanharChamado({ base = "/app/central-servicos/chamad
               <Campo label="Impacto">{labelDe(IMPACTOS, chamado.impacto_trabalho)}</Campo>
               <Campo label="Abertura">{fmtDataHora(chamado.created_at)}</Campo>
               <Campo label="Responsável">{nomeDe(chamado.responsavel_id)}</Campo>
-              <Campo label="Prazo previsto">{fmtData(chamado.prazo_previsto)}</Campo>
+              {/* Prazo informado pelo dev ao iniciar o desenvolvimento (mig 20261028001400). */}
+              <Campo label="Previsão de conclusão">{chamado.prazo_conclusao_em ? fmtDataHora(chamado.prazo_conclusao_em) : fmtData(chamado.prazo_previsto)}</Campo>
+              {chamado.desenvolvimento_iniciado_em && <Campo label="Desenvolvimento iniciado">{fmtDataHora(chamado.desenvolvimento_iniciado_em)}</Campo>}
               <Campo label="Urgência informada">{labelDe(URGENCIAS, chamado.urgencia)}</Campo>
             </div>
           </Card>

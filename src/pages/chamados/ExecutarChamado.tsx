@@ -16,16 +16,18 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { CheckCircle2, MessageSquare, XCircle, Paperclip, ArrowLeft, Trash2, Star, RotateCcw, GitPullRequest, UserCheck } from "lucide-react";
+import { CalendarClock, PlayCircle, CheckCircle2, MessageSquare, XCircle, Paperclip, ArrowLeft, Trash2, Star, RotateCcw, GitPullRequest, UserCheck } from "lucide-react";
 import { AvaliarSolicitanteDialog } from "./AvaliarSolicitanteDialog";
 import { ExcluirChamadoDialog } from "./ExcluirChamadoDialog";
 import { abrirPrGithub } from "./abrirPrGithub";
 import { BotaoAdicionarParticipante } from "./ParticipantesChamado";
 import { ReabrirChamadoDialog } from "./ReabrirChamadoDialog";
+import { IniciarDesenvolvimentoDialog } from "./IniciarDesenvolvimentoDialog";
+import { podeIniciarDesenvolvimento, prazoVencido } from "@/lib/chamados/prazoDesenvolvimento";
 import { ChatChamado } from "./ChatChamado";
 import { BotaoStatusChamado, CardTreinamento, CardValidacaoPresidencia, useValidacaoChamado } from "./StatusValidacao";
 import {
-  StatusBadge, SeloConfirmacao, PrioridadeBadge, STATUS_CHAMADO, CardAvaliacao,
+  StatusBadge, SeloConfirmacao, SeloDesenvolvimento, PrioridadeBadge, STATUS_CHAMADO, CardAvaliacao,
   CATEGORIAS, TIPOS, IMPACTOS, URGENCIAS, AMBIENTES,
   labelDe, moduloLabel, fmtData, fmtDataHora, podeReabrirChamado, chamadoEncerrado,
   BUCKET_CHAMADOS, opcoesDownloadAnexo, type Chamado, type Anexo, type Evento, type AvaliacaoChamado,
@@ -51,6 +53,8 @@ export default function ExecutarChamado() {
   // a saída "Concluir sem avaliar" dentro do próprio diálogo.
   const [concluindoOpen, setConcluindoOpen] = useState(false);
   const [avaliarDepoisOpen, setAvaliarDepoisOpen] = useState(false);
+  // Iniciar desenvolvimento / alterar prazo (mig 20261028001400).
+  const [iniciarOpen, setIniciarOpen] = useState(false);
 
   const { data: usuarios = [] } = useQuery({
     queryKey: ["chamados-usuarios"],
@@ -162,12 +166,6 @@ export default function ExecutarChamado() {
     );
   };
 
-  const salvarPrazo = async (prazo: string) => {
-    const { error } = await (supabase as any).from("CHAMADO_SISTEMA").update({ prazo_previsto: prazo || null }).eq("id", id);
-    if (error) { toast({ title: "Erro ao salvar prazo", description: error.message, variant: "destructive" }); return; }
-    invalidar();
-  };
-
   const reprovar = async () => {
     if (!motivo.trim()) { toast({ title: "Informe o motivo.", variant: "destructive" }); return; }
     const { error } = await (supabase as any).from("CHAMADO_SISTEMA").update({ status: "reprovado", motivo_reprovacao: motivo.trim() }).eq("id", id);
@@ -221,6 +219,7 @@ export default function ExecutarChamado() {
               <p className="text-sm font-bold">Informações do chamado</p>
               <span className={`flex items-center gap-1.5 rounded-full ${flash ? "animate-status-flash" : ""}`}>
                 <SeloConfirmacao chamado={chamado} />
+                <SeloDesenvolvimento chamado={chamado} />
                 <StatusBadge status={chamado.status} />
               </span>
             </div>
@@ -350,10 +349,30 @@ export default function ExecutarChamado() {
             </div>
             <div>
               <p className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Prazo para concluir</p>
-              {podeAgir ? (
-                <Input type="date" defaultValue={chamado.prazo_previsto ?? ""} onBlur={(e) => salvarPrazo(e.target.value)} />
-              ) : <p className="text-sm">{fmtData(chamado.prazo_previsto)}</p>}
+              {/* Desde 28/10/2026 (mig 20261028001400) o prazo é informado ao
+                  iniciar o desenvolvimento, com hora — e só muda pelo diálogo,
+                  que avisa se outro chamado do dev vence no mesmo dia. */}
+              {chamado.prazo_conclusao_em ? (
+                <p className={`text-sm font-medium ${prazoVencido(chamado) ? "text-destructive" : ""}`}>
+                  {fmtDataHora(chamado.prazo_conclusao_em)}{prazoVencido(chamado) ? " · vencido" : ""}
+                </p>
+              ) : chamado.prazo_previsto ? (
+                <p className="text-sm">{fmtData(chamado.prazo_previsto)}</p>
+              ) : (
+                <p className="text-xs text-muted-foreground">Informado ao iniciar o desenvolvimento.</p>
+              )}
+              {podeAgir && !!chamado.desenvolvimento_iniciado_em && !chamadoEncerrado(chamado.status) && (
+                <Button variant="outline" size="sm" className="mt-1.5 h-8 gap-1.5" onClick={() => setIniciarOpen(true)}>
+                  <CalendarClock className="h-3.5 w-3.5" /> Alterar prazo
+                </Button>
+              )}
             </div>
+            {chamado.desenvolvimento_iniciado_em && (
+              <div>
+                <p className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Desenvolvimento iniciado</p>
+                <p className="text-sm">{fmtDataHora(chamado.desenvolvimento_iniciado_em)} · {nomeDe(chamado.desenvolvimento_iniciado_por ?? null)}</p>
+              </div>
+            )}
           </Card>
 
           {podeAgir && (
@@ -382,6 +401,18 @@ export default function ExecutarChamado() {
                   )}
                 </>
               ) : (
+                <>
+                {/* Em desenvolvimento (mig 20261028001400): o dev avisa o
+                    solicitante que começou — com prazo obrigatório. */}
+                {podeIniciarDesenvolvimento(chamado) && (
+                  <Button
+                    className="w-full justify-start gap-2 transition-transform active:scale-95"
+                    disabled={!!agindo}
+                    onClick={() => setIniciarOpen(true)}
+                  >
+                    <PlayCircle className="h-4 w-4" /> Iniciar desenvolvimento
+                  </Button>
+                )}
                 <Button
                   className="w-full justify-start gap-2 bg-success text-success-foreground transition-transform hover:bg-success/90 active:scale-95 disabled:opacity-60"
                   disabled={!!agindo}
@@ -389,6 +420,7 @@ export default function ExecutarChamado() {
                 >
                   <CheckCircle2 className="h-4 w-4" /> {agindo === "concluido" ? "Concluindo…" : "Concluir chamado"}
                 </Button>
+                </>
               )}
               {/* Mesmo "Abrir PR" da fila do Painel do Desenvolvedor: GitHub já
                   com título (número do chamado) e descrição preenchidos. Fica
@@ -484,6 +516,13 @@ export default function ExecutarChamado() {
         onOpenChange={setReabrindoOpen}
         chamado={chamado}
         onReaberto={invalidar}
+      />
+
+      <IniciarDesenvolvimentoDialog
+        open={iniciarOpen}
+        onOpenChange={setIniciarOpen}
+        chamado={chamado}
+        onFeito={invalidar}
       />
 
       <ExcluirChamadoDialog

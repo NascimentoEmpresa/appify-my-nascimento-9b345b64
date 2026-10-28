@@ -6,6 +6,7 @@
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { Star, type LucideIcon } from "lucide-react";
+import { prazoVencido, situacaoDesenvolvimento } from "@/lib/chamados/prazoDesenvolvimento";
 
 // ---- Opções (options de select / checkbox) --------------------------
 export const CATEGORIAS = [
@@ -127,6 +128,11 @@ export interface Chamado {
   // 'concluido' = o time concluiu e o solicitante ainda não confirmou.
   conclusao_confirmada_em?: string | null;
   conclusao_confirmada_por?: string | null;
+  // Início do desenvolvimento + prazo informado pelo dev (mig 20261028001400).
+  // Com status 'em_andamento': iniciado = "Em desenvolvimento"; sem = na fila.
+  desenvolvimento_iniciado_em?: string | null;
+  desenvolvimento_iniciado_por?: string | null;
+  prazo_conclusao_em?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -361,6 +367,26 @@ export function SeloConfirmacao({ chamado, paraSolicitante = false }: {
   return (
     <Badge variant="outline" className="border-warning/40 bg-warning/10 text-[10px] font-semibold text-warning">
       {paraSolicitante ? "Aguardando sua confirmação" : "Aguardando confirmação do solicitante"}
+    </Badge>
+  );
+}
+
+/**
+ * Selo do andamento do dev (mig 20261028001400): em andamento com início
+ * marcado = "Em desenvolvimento"; sem início = "Na fila". Prazo vencido em vermelho.
+ */
+export function SeloDesenvolvimento({ chamado, comPrazo = false }: {
+  chamado: Pick<Chamado, "status" | "desenvolvimento_iniciado_em" | "prazo_conclusao_em">; comPrazo?: boolean;
+}) {
+  const s = situacaoDesenvolvimento(chamado);
+  if (!s) return null;
+  if (s === "na_fila") {
+    return <Badge variant="outline" className="border-muted-foreground/30 bg-muted text-[10px] font-semibold text-muted-foreground">Na fila — aguardando início</Badge>;
+  }
+  const vencido = prazoVencido(chamado);
+  return (
+    <Badge variant="outline" className={`text-[10px] font-semibold ${vencido ? "border-destructive/30 bg-destructive/10 text-destructive" : "border-info/30 bg-info/10 text-info"}`}>
+      Em desenvolvimento{comPrazo && chamado.prazo_conclusao_em ? ` · ${vencido ? "venceu" : "até"} ${fmtDataHora(chamado.prazo_conclusao_em)}` : ""}
     </Badge>
   );
 }

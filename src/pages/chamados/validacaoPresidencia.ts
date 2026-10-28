@@ -174,7 +174,10 @@ export interface PassoStatus {
 
 type ChamadoStatus = Pick<Chamado,
   "status" | "created_at" | "responsavel_id" | "concluido_em" | "motivo_reprovacao" | "motivo_cancelamento" | "cancelado_em" | "updated_at"
-  | "conclusao_confirmada_em">;
+  | "conclusao_confirmada_em" | "desenvolvimento_iniciado_em" | "prazo_conclusao_em">;
+
+const dataHoraBr = (s: string) =>
+  new Date(s).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" });
 
 /** Passo "o solicitante confirmou a conclusão" (mig 20261028001300). */
 function passoConfirmacao(c: ChamadoStatus, liberado: boolean): PassoStatus {
@@ -220,6 +223,15 @@ export function montarLinhaDoTempo(
   const detalhesDev: string[] = [];
   if (temResponsavel) detalhesDev.push(`Responsável: ${nomeDe(c.responsavel_id)}`);
   else if (!devConcluiu) detalhesDev.push("Aguardando a coordenação direcionar a um desenvolvedor");
+  // Início + prazo informados pelo dev (mig 20261028001400).
+  if (!devConcluiu && !encerradoSemEntrega && c.status === "em_andamento") {
+    detalhesDev.push(c.desenvolvimento_iniciado_em
+      ? `Em desenvolvimento desde ${dataHoraBr(c.desenvolvimento_iniciado_em)}`
+      : "Na fila do desenvolvedor — ainda não começou");
+  }
+  if (!devConcluiu && !encerradoSemEntrega && c.prazo_conclusao_em) {
+    detalhesDev.push(`Previsão de conclusão: ${dataHoraBr(c.prazo_conclusao_em)}`);
+  }
   if (c.status === "aguardando_retorno") detalhesDev.push("O time pediu mais informações ao solicitante");
   if (v && v.devolucoes > 0 && etapa === "desenvolvimento" && v.presidencia_aprovado === false) {
     detalhesDev.push(`Devolvido pela Presidência: ${v.presidencia_parecer ?? "—"}`);
@@ -303,7 +315,7 @@ export function montarLinhaDoTempo(
 }
 
 /** Rótulo curto da situação atual — o que aparece no botão "Status". */
-export function resumoStatus(c: Pick<Chamado, "status" | "conclusao_confirmada_em">, v: ValidacaoChamado | null | undefined): string {
+export function resumoStatus(c: Pick<Chamado, "status" | "conclusao_confirmada_em" | "desenvolvimento_iniciado_em">, v: ValidacaoChamado | null | undefined): string {
   if (c.status === "reprovado") return "Reprovado";
   if (c.status === "cancelado") return "Cancelado";
   // Concluído pelo time e ainda sem a confirmação (quando já dá para confirmar).
@@ -311,6 +323,7 @@ export function resumoStatus(c: Pick<Chamado, "status" | "conclusao_confirmada_e
   if (v && v.etapa !== "desenvolvimento") return ETAPAS_VALIDACAO[v.etapa].label;
   if (c.status === "concluido") return "Concluído";
   if (c.status === "aguardando_retorno") return "Aguardando retorno";
-  if (c.status === "em_andamento") return "Em desenvolvimento";
+  // Direcionado ao dev, mas ele ainda não clicou em Iniciar (mig 20261028001400).
+  if (c.status === "em_andamento") return c.desenvolvimento_iniciado_em ? "Em desenvolvimento" : "Na fila do desenvolvedor";
   return "Aberto";
 }

@@ -185,6 +185,8 @@ describe("resumoStatus", () => {
     expect(resumoStatus(confirmado, null)).toBe("Concluído");
     // Presidência ainda validando: a etapa dela vence a confirmação pendente.
     expect(resumoStatus({ status: "concluido" }, validacao({ etapa: "validacao_presidencia" }))).toBe("Validação da Presidência");
-    expect(resumoStatus({ status: "em_andamento" }, validacao())).toBe("Em desenvolvimento");
+    expect(resumoStatus({ status: "em_andamento", desenvolvimento_iniciado_em: "2026-09-02T10:00:00Z" }, validacao())).toBe("Em desenvolvimento");
+    // Direcionado e ainda não iniciado (mig 20261028001400).
+    expect(resumoStatus({ status: "em_andamento" }, validacao())).toBe("Na fila do desenvolvedor");
   });
 });

@@ -111,6 +111,9 @@ function descreverAviso(e: Evento, nomeDe: (uid: string | null) => string): Avis
     if (/^Chamado conclu[ií]do$/i.test(t)) return `${quem} concluiu o chamado`;
     // Confirmação do solicitante (mig 20261028001300).
     if (/^Conclus[ãa]o confirmada pelo solicitante$/i.test(t)) return `${quem} confirmou a conclusão do chamado`;
+    // Início do desenvolvimento / prazo (mig 20261028001400).
+    if ((m = t.match(/^Desenvolvimento iniciado — prazo de conclus[ãa]o:\s*(.+)$/i))) return `${quem} começou o desenvolvimento — previsão de conclusão: ${m[1]}`;
+    if ((m = t.match(/^Prazo de conclus[ãa]o alterado para\s+(.+)$/i))) return `${quem} mudou a previsão de conclusão para ${m[1]}`;
     // O direcionamento nem sempre trouxe a posição na fila (gravações antigas).
     if ((m = t.match(/^Chamado direcionado a (.+?)(?:\s*—\s*(\d+)º lugar na fila.*)?$/i)))
       return `${quem} designou o chamado para ${m[1]}${m[2] ? ` · ${m[2]}º na fila` : ""}`;
