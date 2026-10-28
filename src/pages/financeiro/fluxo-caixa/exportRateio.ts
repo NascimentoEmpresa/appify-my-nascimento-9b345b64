@@ -34,7 +34,8 @@ const r2 = (n: number) => Math.round(n * 100) / 100;
  * entre contratos abre por contrato. `contratoId`: filtro de contrato do export — numa linha rateada, só as
  * cotas daquele contrato entram.
  */
-export function linhasDoExport<L extends LinhaParaExport>(l: L, contratoId?: string): LinhaExportada<L>[] {
+export function linhasDoExport<L extends LinhaParaExport>(l: L, contratoId?: string | string[]): LinhaExportada<L>[] {
+  const contratosFiltro = contratoId === undefined ? [] : Array.isArray(contratoId) ? contratoId : [contratoId];
   const total = Number(l.valor) || 0;
   const cotas = l.rateioDetalhe ?? [];
   if (cotas.length === 0) {
@@ -45,7 +46,7 @@ export function linhasDoExport<L extends LinhaParaExport>(l: L, contratoId?: str
     return cotas.map((c) => ({ linha: l, valor: r2(c.valor), contrato, descricao: c.nome, rateado: true, valorLancamento: total }));
   }
   return cotas
-    .filter((c) => !contratoId || c.id === contratoId)
+    .filter((c) => contratosFiltro.length === 0 || contratosFiltro.includes(c.id))
     .map((c) => ({ linha: l, valor: r2(c.valor), contrato: c.nome, descricao: l.descricao ?? "", rateado: true, valorLancamento: total }));
 }
 
