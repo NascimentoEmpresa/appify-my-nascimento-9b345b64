@@ -33,6 +33,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { useAuth } from "@/hooks/useAuth";
 import { useVinculoEmpregado } from "@/hooks/useVinculoEmpregado";
 import { usePermissoes } from "@/context/PermissoesContext";
+import { QuadroBeneficiosDoPosto } from "@/components/licitacoes/convencoes/QuadroBeneficios";
 import { VinculoCatalogoVaga, type ListasCatalogo } from "@/components/recrutamento/VinculoCatalogoVaga";
 import { ESTADOS_BR, municipiosDe } from "@/data/municipios-brasil";
 import {
@@ -905,6 +906,13 @@ export function ModalNovaVaga({ aberto, onFechar, onCriada, onToast, solicitacao
             onListas={setCatListas}
             onFuncaoNome={vagaManual ? (nome => setVaga(x => ({ ...x, cargo: x.cargo || nome }))) : undefined}
             classeInput="nvg-fi" classeGrupo="nvg-fg" />
+          {/* Benefícios e adicionais da vaga (27/10/2026, Convenções Coletivas):
+              contrato + posto → CCT/decreto vinculado na Planilha de Custo. */}
+          {vaga.contrato_id && postoNomeEscolhido && (
+            <div style={{ marginBottom: 14 }}>
+              <QuadroBeneficiosDoPosto contratoId={vaga.contrato_id} posto={postoNomeEscolhido} />
+            </div>
+          )}
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
             <div className="nvg-fg">
               <label>Estado (UF) <span style={{ color: "#dc2626" }}>*</span></label>

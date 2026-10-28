@@ -185,6 +185,9 @@ const licitacoesModule: ModuleDef = {
         // Acompanhamento desde 14/09/2026: a aprovação da demissão voltou
         // para o Operacional.
         { label: "Solicitações de Demissão — Acompanhar", to: "/app/licitacoes/analistas/demissao", icon: UserMinus },
+        // Base dos benefícios da vaga: a CCT/decreto vinculada ao posto na
+        // Planilha de Custo aparece sozinha na Abertura de Vagas (mig 20261027000930).
+        { label: "Convenções Coletivas e Decretos Municipais", to: "/app/licitacoes/convencoes", icon: FileText },
       ],
     },
     {

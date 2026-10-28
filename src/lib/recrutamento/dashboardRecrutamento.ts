@@ -542,3 +542,66 @@ export function indicadoresCandidatos(candidatos: CandidatoDash[], faixa: [strin
     desistencias: noPeriodo.filter((c) => c.desistiu).length,
   };
 }
+
+// ── Tempo em cada status por responsável (27/10/2026, mig 20261027000920) ──
+// Pedido do Pablo: "saber quanto tempo está demorando em cada status por
+// responsável". Duas fontes que se completam:
+//   • passagens — status que a vaga JÁ deixou, com quem a segurava na hora
+//     (recrut_tempo_status_responsavel, filtrado pelo período);
+//   • parado agora — as vagas em aberto: status atual, desde `mudou`, com o
+//     responsável de hoje (vem pronto em recrut_dashboard_dados).
+
+export const SEM_RESPONSAVEL = "Sem responsável";
+
+/** Uma linha de recrut_tempo_status_responsavel. */
+export interface PassagemResponsavel { responsavel: string; status: string; n: number; media: number; mediana: number; maximo: number }
+
+export function desempacotarPassagens(raw: unknown): PassagemResponsavel[] {
+  return (Array.isArray(raw) ? raw : []).map((r: Record<string, unknown>) => ({
+    responsavel: String(r.responsavel ?? SEM_RESPONSAVEL), status: String(r.status ?? ""),
+    n: Number(r.n), media: Number(r.media), mediana: Number(r.mediana), maximo: Number(r.maximo),
+  }));
+}
+
+export interface ParadoAgora { n: number; media: number; maximo: number; vagas: number[] }
+
+export interface LinhaTempoResponsavel {
+  responsavel: string;
+  status: string;
+  passagens: Omit<PassagemResponsavel, "responsavel" | "status"> | null;
+  agora: ParadoAgora | null;
+}
+
+/**
+ * Junta passagens e vagas paradas agora numa linha por responsável × status.
+ * Ordem: responsável (o "Sem responsável" por último), depois o status que
+ * mais demora (maior entre a média das passagens e a média de agora).
+ */
+export function tempoPorResponsavel(passagens: PassagemResponsavel[], abertas: VagaDash[], hoje = hojeSP()): LinhaTempoResponsavel[] {
+  const m = new Map<string, LinhaTempoResponsavel>();
+  const linha = (responsavel: string, status: string) => {
+    const k = responsavel + "\u0000" + status;
+    if (!m.has(k)) m.set(k, { responsavel, status, passagens: null, agora: null });
+    return m.get(k)!;
+  };
+  for (const p of passagens) {
+    const { responsavel, status, ...resto } = p;
+    linha(responsavel, status).passagens = resto;
+  }
+  for (const v of abertas) {
+    const desde = dia(v.mudou) ?? dia(v.criada);
+    if (!desde) continue;
+    const dias = Math.max(0, diasEntre(desde, hoje));
+    const l = linha(v.responsavel || SEM_RESPONSAVEL, v.status);
+    const a = l.agora ?? (l.agora = { n: 0, media: 0, maximo: 0, vagas: [] });
+    a.media = (a.media * a.n + dias) / (a.n + 1);
+    a.n += 1;
+    a.maximo = Math.max(a.maximo, dias);
+    a.vagas.push(v.id);
+  }
+  const peso = (l: LinhaTempoResponsavel) => Math.max(l.passagens?.media ?? 0, l.agora?.media ?? 0);
+  return [...m.values()].sort((a, b) =>
+    (a.responsavel === SEM_RESPONSAVEL ? 1 : 0) - (b.responsavel === SEM_RESPONSAVEL ? 1 : 0)
+    || a.responsavel.localeCompare(b.responsavel, "pt-BR")
+    || peso(b) - peso(a));
+}

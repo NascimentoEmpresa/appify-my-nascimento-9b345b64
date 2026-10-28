@@ -29,6 +29,10 @@ import {
   Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList,
 } from "@/components/ui/command";
 import { cn } from "@/lib/utils";
+import { useScreenAccess } from "@/hooks/useScreenAccess";
+import { useConvencoes, useVinculosPosto, vinculoDe } from "@/hooks/useConvencoes";
+import { identificacaoCct } from "@/lib/licitacoes/convencoes";
+import { VinculoPostoDialog } from "@/components/licitacoes/convencoes/VinculoPostoDialog";
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
 
@@ -229,6 +233,14 @@ export default function PlanilhaCusto() {
   const [filtroPosto, setFiltroPosto] = useState<string>("");
   const [updateFromRow, setUpdateFromRow] = useState<PlanilhaCustoRow | undefined>();
   const [postosRow, setPostosRow] = useState<PlanilhaCustoRow | null>(null);
+  // Convenções Coletivas (mig 20261027000930): vínculo posto → CCT/decreto.
+  const [vinculoAlvo, setVinculoAlvo] = useState<{ contrato_id: string | null; contrato: string; posto: string } | null>(null);
+  const { data: vinculosPosto } = useVinculosPosto();
+  const { data: convencoesLista = [] } = useConvencoes();
+  const convencoesPorId = React.useMemo(() => new Map(convencoesLista.map((c) => [c.id, c])), [convencoesLista]);
+  const { data: podeAlterarPlanilha = false } = useScreenAccess("planilha-custo", "alterar");
+  const { data: podeIncluirPlanilha = false } = useScreenAccess("planilha-custo", "incluir");
+  const podeVincular = podeAlterarPlanilha || podeIncluirPlanilha;
 
   // SIS-2026-0309: lê a planilha/contratos de todas as empresas do grupo —
   // o filtro de "empresa ativa" só limitava a visão, sem proteger nada.
@@ -519,6 +531,7 @@ export default function PlanilhaCusto() {
                 <th className="px-4 py-3 text-center">Contrato</th>
                 <th className="px-4 py-3 text-center">Posto</th>
                 <th className="px-4 py-3 text-center">Serviço</th>
+                <th className="px-4 py-3 text-center">CCT / Decreto</th>
                 <th className="px-4 py-3 text-center">Vigência</th>
                 <th className="px-4 py-3 text-center">Status</th>
                 <th className="px-4 py-3 text-center">Qt. Pessoas</th>
@@ -531,14 +544,14 @@ export default function PlanilhaCusto() {
             <tbody>
               {isLoading && (
                 <tr>
-                  <td colSpan={11} className="px-4 py-8 text-center text-muted-foreground">
+                  <td colSpan={12} className="px-4 py-8 text-center text-muted-foreground">
                     Carregando…
                   </td>
                 </tr>
               )}
               {!isLoading && filtered.length === 0 && (
                 <tr>
-                  <td colSpan={11} className="px-4 py-8 text-center text-muted-foreground">
+                  <td colSpan={12} className="px-4 py-8 text-center text-muted-foreground">
                     Nenhum registro cadastrado ainda.
                   </td>
                 </tr>
@@ -549,6 +562,31 @@ export default function PlanilhaCusto() {
                   <td className="px-4 py-3 text-center text-muted-foreground">{r.contrato}</td>
                   <td className="px-4 py-3 text-center">{r.posto}</td>
                   <td className="px-4 py-3 text-center text-muted-foreground">{r.servico ?? "—"}</td>
+                  <td className="px-4 py-3 text-center">
+                    {/* Convenções Coletivas (mig 20261027000930): a CCT/decreto do POSTO. */}
+                    {(() => {
+                      const v = vinculoDe(vinculosPosto, r.contrato_id, r.posto);
+                      const conv = v ? convencoesPorId.get(v.convencao_id) : null;
+                      const extras = v ? new Set(Object.values(v.regras ?? {})).size : 0;
+                      if (v) {
+                        return (
+                          <button onClick={() => setVinculoAlvo({ contrato_id: r.contrato_id, contrato: r.contrato, posto: r.posto })}
+                            title={[conv?.contrato?.nome, conv?.sindicato, extras ? `+${extras} referência(s) por benefício` : ""].filter(Boolean).join(" · ")}
+                            className={cn("whitespace-nowrap rounded-md px-2 py-1 text-[11px] font-medium",
+                              conv?.situacao === "pendente" ? "bg-amber-100 text-amber-800" : "bg-blue-50 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300")}>
+                            {(conv ? identificacaoCct(conv) || conv.decreto_numero : null) ?? "Vinculada"}{extras ? ` +${extras}` : ""}
+                          </button>
+                        );
+                      }
+                      if (!r.contrato_id) return <span className="text-muted-foreground">—</span>;
+                      return podeVincular ? (
+                        <button onClick={() => setVinculoAlvo({ contrato_id: r.contrato_id, contrato: r.contrato, posto: r.posto })}
+                          className="whitespace-nowrap rounded-md border border-dashed border-amber-400 px-2 py-1 text-[11px] font-medium text-amber-700 hover:bg-amber-50 dark:text-amber-300">
+                          Vincular CCT
+                        </button>
+                      ) : <span className="text-[11px] text-amber-700 dark:text-amber-300">Sem CCT</span>;
+                    })()}
+                  </td>
                   <td className="px-4 py-3 text-center text-muted-foreground">
                     {r.data_vigencia
                       ? new Date(r.data_vigencia + "T00:00:00").toLocaleDateString("pt-BR")
@@ -770,6 +808,8 @@ export default function PlanilhaCusto() {
       </Dialog>
 
       {/* Modal de definir postos / localizações */}
+      <VinculoPostoDialog alvo={vinculoAlvo} onFechar={() => setVinculoAlvo(null)} podeAlterar={podeVincular} />
+
       <Dialog open={!!postosRow} onOpenChange={(o) => !o && setPostosRow(null)}>
         <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto p-0">
           {postosRow && (

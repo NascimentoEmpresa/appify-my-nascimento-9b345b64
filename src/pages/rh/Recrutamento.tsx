@@ -26,6 +26,9 @@ import {
   ETIQUETAS_RECRUTAMENTO, alternarEtiqueta, corDaEtiqueta, etiquetasValidas,
 } from "@/lib/recrutamento/etiquetas";
 import { AvisoProcessos, processosDe, useProcessosDosCandidatos } from "@/components/recrutamento/AvisoProcessos";
+import { BlocoExColaborador, SeloExColaborador, buscarCadastrosEmpresa, useCadastrosEmpresa, vinculoDoCpf } from "@/components/recrutamento/ExColaborador";
+import { JANELA_EX_COLABORADOR, textoSaida, vinculoNaEmpresa, type VinculoEmpresa } from "@/lib/recrutamento/exColaborador";
+import { BeneficiosDaSolicitacao } from "@/components/recrutamento/BeneficiosDaSolicitacao";
 import { ParecerJuridicoDialog } from "@/components/recrutamento/ParecerJuridicoDialog";
 import { StatusSstDialog } from "@/components/recrutamento/StatusSstDialog";
 import { mensagemEnvioAgendamento } from "@/lib/recrutamento/agendamentoAso";
@@ -188,7 +191,7 @@ interface DocCand { id: number; nome?: string | null; titulo?: string | null; st
 /** Remarcação da data de início gravada na vaga. */
 interface AlteracaoDataInicio { de?: string | null; para?: string | null; por_nome?: string | null; em?: string | null; justificativa?: string | null }
 /** Cadastro em EMPREGADOS devolvido por empregados_por_cpfs (só o que a tela lê). */
-interface EmpCadastro { cpf_match?: string | null; situacao?: string | null; cargo?: string | null; admissao?: string | null; empresa?: string | null; filial?: string | null; lider?: string | null; perfil?: string | null; setor?: string | null; [k: string]: unknown }
+interface EmpCadastro { cpf_match?: string | null; situacao?: string | null; cargo?: string | null; admissao?: string | null; afastamento?: string | null; empresa?: string | null; filial?: string | null; lider?: string | null; perfil?: string | null; setor?: string | null; [k: string]: unknown }
 
 /** Ícone em linha com o texto (substitui os emojis da tela, 23/09/2026). */
 function Ic({ i: Icone, s = 14 }: { i: LucideIcon; s?: number }) {
@@ -676,8 +679,15 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
   const [candidatos, setCandidatos]         = useState<Curriculo[]>([]);
   // "Já processou a empresa?" para os cards do kanban — uma chamada pela lista.
   const processosCand = useProcessosDosCandidatos(candidatos);
+  // Já trabalhou conosco? Há quanto tempo saiu (27/10/2026) — em lote, pelo kanban inteiro.
+  const cpfsKanban = useMemo(() => candidatos.map(c => c.cpf), [candidatos]);
+  const cadastrosKanban = useCadastrosEmpresa(cpfsKanban);
+  // Aviso antes de mover para TRIAGEM quem saiu da empresa há
+  // JANELA_EX_COLABORADOR dias ou menos (ver pedirMoverCand).
+  const [exColabModal, setExColabModal] = useState<{ cv: Curriculo; novaEtapa: string; vinculo: VinculoEmpresa } | null>(null);
   const [buscaCand, setBuscaCand]           = useState(""); // busca no kanban de candidatos
-  const [candModal, setCandModal]           = useState<{ id: number; novaEtapa: string; nome: string } | null>(null);
+  // `exColab`: texto do aviso de ex-colaborador já confirmado — vai para o histórico.
+  const [candModal, setCandModal]           = useState<{ id: number; novaEtapa: string; nome: string; exColab?: string } | null>(null);
   const [candObs, setCandObs]               = useState("");
   // Nível do parecer do Jurídico no modal (mig 20261014000004).
   const [candNivel, setCandNivel]           = useState<string>(NIVEL_OK);
@@ -1792,11 +1802,23 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
     await dispararMensagemEtapa(cv.id, "ENTRADA", cv.nome);
   };
 
-  const pedirMoverCand = (cv: Curriculo, novaEtapa: string) => {
+  const abrirMoverCand = (cv: Curriculo, novaEtapa: string, exColab?: string) => {
     setCandObs("");
     setCandNivel(NIVEL_OK);
     setCandMateriais("");
-    setCandModal({ id: cv.id, novaEtapa, nome: cv.nome || "Candidato" });
+    setCandModal({ id: cv.id, novaEtapa, nome: cv.nome || "Candidato", exColab });
+  };
+
+  // Ex-colaborador (27/10/2026, pedido do Pablo): ir para TRIAGEM quem saiu da
+  // empresa há JANELA_EX_COLABORADOR dias ou menos pede confirmação, com os
+  // dados da última passagem na tela. Busca na hora (o mapa do kanban pode
+  // ainda não ter chegado); sem CPF ou sem cadastro, segue direto.
+  const pedirMoverCand = async (cv: Curriculo, novaEtapa: string) => {
+    if (novaEtapa === "TRIAGEM") {
+      const vinculo = vinculoNaEmpresa(await buscarCadastrosEmpresa(cv.cpf));
+      if (vinculo.tipo === "saiu" && vinculo.recente) { setExColabModal({ cv, novaEtapa, vinculo }); return; }
+    }
+    abrirMoverCand(cv, novaEtapa);
   };
 
   const executarMoverCand = async (id: number, novaEtapa: string, extra: Record<string, unknown> = {}, detalheHist?: string) => {
@@ -2108,10 +2130,14 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
     } else if (candObs.trim()) {
       if (origem === ETAPA_SST_COMPRAS)        extra.sst_obs = candObs.trim();
     }
+    // Seguiu mesmo com o aviso de ex-colaborador: fica no histórico, com a observação.
+    const detalheExColab = candModal.exColab
+      ? [`Ex-colaborador: ${candModal.exColab} — movido após confirmar o aviso de ${JANELA_EX_COLABORADOR} dias.`, candObs.trim()].filter(Boolean).join("\n")
+      : undefined;
     setCandModal(null);
     setCandObs("");
     setCandMateriais("");
-    await executarMoverCand(id, novaEtapa, extra);
+    await executarMoverCand(id, novaEtapa, extra, detalheExColab);
   };
 
   // Modal aberto pelo botão "Pular SST e Compras" (DOCUMENTAÇÃO → ADMISSÃO).
@@ -2617,8 +2643,12 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
       </div>
     ) : null;
 
+    // Duas colunas (27/10/2026, Convenções Coletivas): à esquerda os dados da
+    // vaga; à direita os benefícios da CCT do posto e as observações. Em
+    // painel estreito as colunas empilham.
     return (
-      <div style={{ padding: 20 }}>
+      <div style={{ padding: 20, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(360px, 1fr))", gap: 20, alignItems: "start" }}>
+      <div style={{ minWidth: 0 }}>
         <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 10 }}>
           <button
             type="button"
@@ -2689,6 +2719,8 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
         {dd("Motivo de Reprovação", s.motivo_reprovacao)}
         {s.status === "Funcionário Selecionado" && dd("Funcionário Selecionado", s.funcionario_selecionado)}
         {s.status === "Contratado" && dd("Contratado", [s.contratado_nome, s.contratado_contato ? "Contato: " + s.contratado_contato : "", s.contratado_data_inicio ? "Início: " + s.contratado_data_inicio : ""].filter(Boolean).join("\n"))}
+      </div>
+        <div style={{ minWidth: 0 }}><BeneficiosDaSolicitacao vagaId={s.id} /></div>
       </div>
     );
   };
@@ -3056,6 +3088,11 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
                                 style={{ flexShrink: 0, width: 20, height: 20, padding: 0, display: "inline-flex", alignItems: "center", justifyContent: "center", borderRadius: 6, border: "1px solid #e2e8f0", background: "#f8fafc", cursor: "pointer", color: "#475569" }}><Search size={12} aria-hidden /></button>
                             </div>
                             {c.cpf && <div style={{ fontSize: 10, color: "#94a3b8" }}>CPF {c.cpf}</div>}
+                            {/* Ex-colaborador: há quanto tempo saiu (27/10/2026) */}
+                            {(() => {
+                              const v = vinculoDoCpf(cadastrosKanban, c.cpf);
+                              return v.tipo === "nenhum" ? null : <div style={{ marginTop: 4 }}><SeloExColaborador vinculo={v} /></div>;
+                            })()}
                             {/* Cadastro Restritivo (mig 20261025000020) */}
                             {(() => {
                               const restr = blacklist[digitsOf(c.cpf)];
@@ -3902,6 +3939,31 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
         </div>
       )}
 
+      {/* ── Aviso: ex-colaborador saiu há pouco (antes de mover para a TRIAGEM) ── */}
+      {exColabModal && (
+        <div className="rec-modal-ov" style={{ zIndex: 860 }} onClick={e => { if (e.target === e.currentTarget) setExColabModal(null); }}>
+          <div className="rec-modal" style={{ maxWidth: 480 }} onClick={e => e.stopPropagation()}>
+            <button onClick={() => setExColabModal(null)} style={{ position: "absolute", top: 14, right: 14, background: "none", border: "none", color: "#94a3b8", fontSize: 20, cursor: "pointer" }}>✕</button>
+            <div style={{ fontSize: 17, fontWeight: 800, marginBottom: 4, color: "#b91c1c" }}><Ic i={AlertTriangle} />Já trabalhou conosco</div>
+            <div style={{ fontSize: 13, color: "#334155", marginBottom: 14, lineHeight: 1.5 }}>
+              Este candidato trabalhou na empresa nos últimos <b>{JANELA_EX_COLABORADOR} dias</b>. Tem certeza que deseja continuar e movê-lo para <b>{rotuloEtapaCandidato(exColabModal.novaEtapa)}</b>?
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "5px 16px", fontSize: 12, color: "#334155", marginBottom: 12 }}>
+              <div><span style={{ color: "#94a3b8", fontWeight: 700 }}>Nome: </span>{exColabModal.cv.nome || "—"}</div>
+              <div><span style={{ color: "#94a3b8", fontWeight: 700 }}>CPF: </span>{exColabModal.cv.cpf || "—"}</div>
+              <div><span style={{ color: "#94a3b8", fontWeight: 700 }}>Telefone: </span>{exColabModal.cv.telefone || "—"}</div>
+              <div><span style={{ color: "#94a3b8", fontWeight: 700 }}>E-mail: </span>{exColabModal.cv.email || "—"}</div>
+            </div>
+            <BlocoExColaborador vinculo={exColabModal.vinculo} />
+            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 16 }}>
+              <button onClick={() => setExColabModal(null)} style={{ padding: "7px 14px", borderRadius: 10, border: "1px solid #e2e8f0", background: "#fff", color: "#475569", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Cancelar</button>
+              <button onClick={() => { const m = exColabModal; setExColabModal(null); abrirMoverCand(m.cv, m.novaEtapa, textoSaida(m.vinculo)); }}
+                style={{ padding: "7px 14px", borderRadius: 10, border: "none", background: "#b91c1c", color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Sim, continuar</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ── Modal Mover Candidato (kanban interno) ── */}
       {candModal && (
         <div className="rec-modal-ov" style={{ zIndex: 850 }}>
@@ -4175,7 +4237,7 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
                     <div key={g.items[0].id} className="cv-card" style={{ position: "relative", outline: bl ? "2px solid #fecaca" : undefined, outlineOffset: -1 }}>
                       <div style={{ height: 3, background: cv.origem === "whatsapp" ? "linear-gradient(90deg,#22c55e,#16a34a)" : "linear-gradient(90deg,#0f3171,#1e4a8a)" }}></div>
                       <div style={{ position: "absolute", top: 9, right: 9, zIndex: 2, display: "flex", gap: 6 }}>
-                        {hasEmp && <span title="Já tem cadastro na empresa (EMPREGADOS)" style={{ display: "inline-flex", alignItems: "center", gap: 4, background: "#0f3171", color: "#fff", borderRadius: 8, padding: "3px 8px", fontSize: 10, fontWeight: 800, boxShadow: "0 6px 16px rgba(15,49,113,.3)" }}><Ic i={Landmark} />NO BANCO</span>}
+                        {hasEmp && <span title={`Já tem cadastro na empresa (EMPREGADOS) — ${textoSaida(vinculoNaEmpresa(emps))}`} style={{ display: "inline-flex", alignItems: "center", gap: 4, background: "#0f3171", color: "#fff", borderRadius: 8, padding: "3px 8px", fontSize: 10, fontWeight: 800, boxShadow: "0 6px 16px rgba(15,49,113,.3)" }}><Ic i={Landmark} />NO BANCO</span>}
                         {bl && <span title={`Restrição: ${bl.motivo}`} style={{ display: "inline-flex", alignItems: "center", gap: 4, background: "#d97706", color: "#fff", borderRadius: 8, padding: "3px 8px", fontSize: 10, fontWeight: 800, boxShadow: "0 6px 16px rgba(217,119,6,.32)" }}><Ic i={AlertTriangle} />CADASTRO RESTRITIVO</span>}
                       </div>
                       <div style={{ padding: "16px 18px", flex: 1, display: "flex", flexDirection: "column", gap: 10 }}>
@@ -4533,6 +4595,8 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
               {/* Cadastros na empresa (EMPREGADOS) */}
               {detalheEmp.emps.length > 0 && (
                 <div>
+                  {/* Há quanto tempo saiu (27/10/2026) — pela última passagem. */}
+                  <div style={{ marginBottom: 10 }}><BlocoExColaborador vinculo={vinculoNaEmpresa(detalheEmp.emps)} /></div>
                   <div style={{ fontSize: 11, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".5px", color: "#0f3171", marginBottom: 8 }}><Ic i={Landmark} />Cadastros na empresa ({detalheEmp.emps.length})</div>
                   <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                     {detalheEmp.emps.map((e, i) => {
@@ -4545,6 +4609,7 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
                           </div>
                           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "6px 16px", marginTop: 10, fontSize: 12, color: "#334155" }}>
                             <div><span style={{ color: "#94a3b8", fontWeight: 700 }}>Admissão: </span>{e.admissao || "—"}</div>
+                            {off && <div><span style={{ color: "#94a3b8", fontWeight: 700 }}>Saída: </span>{e.afastamento ? String(e.afastamento).slice(0, 10).split("-").reverse().join("/") : "—"}</div>}
                             <div><span style={{ color: "#94a3b8", fontWeight: 700 }}>Setor: </span>{e.setor || "—"}</div>
                             <div><span style={{ color: "#94a3b8", fontWeight: 700 }}>Empresa: </span>{e.empresa || "—"}</div>
                             <div><span style={{ color: "#94a3b8", fontWeight: 700 }}>Filial: </span>{e.filial || "—"}</div>
