@@ -9,7 +9,10 @@
 --   DELETE FROM public.screen_permission_user spu
 --    USING public.profiles p
 --    WHERE spu.user_id = p.id
---      AND p.display_name IN ('Bernardo Campos', 'Cassio Raphaelli Camargo Duarte', 'Cleidir Peixoto Goularte')
+--      AND (   (p.display_name ILIKE '%Bernardo%' AND p.display_name ILIKE '%Campos%')
+--           OR p.display_name ILIKE '%Raphaelli%'
+--           OR p.display_name ILIKE '%Cleidir%')
+--      AND p.display_name NOT ILIKE '%teste%'
 --      AND spu.menu_codigo IN ('central_servicos_solicitar_manutencao_equipamento',
 --                              'encarregados_solicitar_manutencao_equipamento',
 --                              'sup_solicitacoes_manutencoes');
@@ -94,30 +97,57 @@ CREATE POLICY "sup solicitacoes manutencao storage select"
 
 -- Liberação solicitada: Bernardo (almoxarifado), Cássio e Cleidir podem abrir
 -- e acompanhar pela Central/Encarregados e administrar a fila em Suprimentos.
--- Nomes completos tornam a migration determinística e impedem liberar homônimos.
+--
+-- 27/10/2026 — ESTA PARTE BARROU A FILA DE MIGRATIONS INTEIRA.
+-- A versão anterior casava `profiles.display_name` por igualdade exata com os
+-- três nomes completos e abortava se não achasse exatamente 3:
+--
+--   ERROR: SIS-2026-0746: esperava os perfis Bernardo Campos, Cassio Raphaelli
+--          Camargo Duarte e Cleidir Peixoto Goularte; encontrou 0.
+--
+-- Encontrou ZERO dos três. Nome digitado num chamado não é chave: acento
+-- ("Cássio"), nome do meio, caixa e espaço sobrando fazem a igualdade falhar
+-- sem que ninguém esteja errado. E como o aplicador roda numa transação única
+-- e para no primeiro erro, um nome fora de forma deixou de ser um detalhe de
+-- permissão e passou a barrar as migrations de todo mundo em cada merge.
+--
+-- Duas mudanças:
+--   1. a busca segue a convenção do repositório para casar pessoa por nome
+--      (`display_name ILIKE '%fragmento%'`, excluindo as contas de teste, que
+--      duplicam nome oficial) e exige UM perfil ativo por pessoa — se o
+--      fragmento casar mais de um, ninguém é liberado às cegas;
+--   2. perfil que não aparece é AVISO, não exceção. Permissão de um usuário é
+--      ajustável em /app/administracao?tab=modulos em dez segundos; fila de
+--      migration parada bloqueia o banco para o time inteiro. O aviso sai no
+--      log do merge dizendo exatamente quem ficou de fora.
 DO $bloco$
 DECLARE
-  v_usuarios uuid[];
+  v_liberados int := 0;
+  v_falta text;
+  v_ambiguo text;
 BEGIN
-  SELECT array_agg(p.id ORDER BY p.display_name)
-    INTO v_usuarios
-    FROM public.profiles p
-   WHERE p.ativo
-     AND p.display_name IN (
-       'Bernardo Campos',
-       'Cassio Raphaelli Camargo Duarte',
-       'Cleidir Peixoto Goularte'
-     );
+  CREATE TEMP TABLE _sis0746_alvo (rotulo text, frag1 text, frag2 text) ON COMMIT DROP;
+  INSERT INTO _sis0746_alvo VALUES
+    ('Bernardo Campos',                 '%bernardo%',  '%campos%'),
+    ('Cassio Raphaelli Camargo Duarte', '%raphaelli%', '%'),
+    ('Cleidir Peixoto Goularte',        '%cleidir%',   '%');
 
-  IF COALESCE(array_length(v_usuarios, 1), 0) <> 3 THEN
-    RAISE EXCEPTION
-      'SIS-2026-0746: esperava os perfis Bernardo Campos, Cassio Raphaelli Camargo Duarte e Cleidir Peixoto Goularte; encontrou %.',
-      COALESCE(array_length(v_usuarios, 1), 0);
-  END IF;
+  CREATE TEMP TABLE _sis0746_achado ON COMMIT DROP AS
+  SELECT a.rotulo,
+         p.id AS user_id,
+         p.display_name,
+         count(*) OVER (PARTITION BY a.rotulo) AS quantos
+    FROM _sis0746_alvo a
+    JOIN public.profiles p
+      ON p.ativo
+     AND lower(coalesce(p.display_name, '')) LIKE a.frag1
+     AND lower(coalesce(p.display_name, '')) LIKE a.frag2
+     -- Conta de teste duplica o nome oficial e casaria junto.
+     AND coalesce(p.display_name, '') NOT ILIKE '%teste%';
 
   INSERT INTO public.screen_permission_user (user_id, menu_codigo, acao, allow, empresa_id)
-  SELECT u.user_id, p.menu_codigo, p.acao, true, NULL
-    FROM unnest(v_usuarios) AS u(user_id)
+  SELECT ac.user_id, m.menu_codigo, m.acao, true, NULL
+    FROM _sis0746_achado ac
    CROSS JOIN (VALUES
      ('central_servicos_solicitar_manutencao_equipamento', 'visualizar'::public.app_acao),
      ('central_servicos_solicitar_manutencao_equipamento', 'incluir'::public.app_acao),
@@ -125,9 +155,30 @@ BEGIN
      ('encarregados_solicitar_manutencao_equipamento', 'incluir'::public.app_acao),
      ('sup_solicitacoes_manutencoes', 'visualizar'::public.app_acao),
      ('sup_solicitacoes_manutencoes', 'alterar'::public.app_acao)
-   ) AS p(menu_codigo, acao)
+   ) AS m(menu_codigo, acao)
+   WHERE ac.quantos = 1
   ON CONFLICT (user_id, menu_codigo, acao, empresa_id)
     DO UPDATE SET allow = true, updated_at = now();
+
+  SELECT count(*) INTO v_liberados FROM _sis0746_achado WHERE quantos = 1;
+
+  SELECT string_agg(a.rotulo, '; ' ORDER BY a.rotulo) INTO v_falta
+    FROM _sis0746_alvo a
+   WHERE NOT EXISTS (SELECT 1 FROM _sis0746_achado ac WHERE ac.rotulo = a.rotulo);
+
+  SELECT string_agg(DISTINCT ac.rotulo || ' -> ' || ac.display_name, '; ') INTO v_ambiguo
+    FROM _sis0746_achado ac
+   WHERE ac.quantos > 1;
+
+  RAISE NOTICE 'SIS-2026-0746: % de 3 perfis liberados na manutenção de equipamento.', v_liberados;
+
+  IF v_falta IS NOT NULL THEN
+    RAISE WARNING 'SIS-2026-0746: perfil ativo não encontrado para: %. Libere à mão em /app/administracao?tab=modulos (menus central_servicos_solicitar_manutencao_equipamento, encarregados_solicitar_manutencao_equipamento e sup_solicitacoes_manutencoes). A migration NÃO falha por isso.', v_falta;
+  END IF;
+
+  IF v_ambiguo IS NOT NULL THEN
+    RAISE WARNING 'SIS-2026-0746: mais de um perfil ativo casou o mesmo nome e nenhum deles foi liberado, para não acertar homônimo: %.', v_ambiguo;
+  END IF;
 END;
 $bloco$;
 
