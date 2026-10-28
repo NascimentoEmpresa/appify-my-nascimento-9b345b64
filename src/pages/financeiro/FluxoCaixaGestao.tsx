@@ -21,7 +21,7 @@ import {
 } from "@/pages/financeiro/fluxo-caixa/abasFluxo";
 import { agruparKpi, explicacaoKpi, linhasDoKpi, totalKpi, type KpiFluxo } from "@/pages/financeiro/fluxo-caixa/kpiFluxo";
 import { useScreenAccess } from "@/hooks/useScreenAccess";
-import { TrendingDown, TrendingUp, Wallet, LineChart, X, Trash2, RotateCcw, Pencil, Eye, ChevronRight, ChevronDown, FileDown, Split } from "lucide-react";
+import { TrendingDown, TrendingUp, Wallet, LineChart, X, Trash2, RotateCcw, Pencil, Eye, ChevronRight, ChevronDown, FileDown, FileUp, Split } from "lucide-react";
 import { toast } from "sonner";
 import { AcessoGate } from "@/components/auth/AcessoGate";
 import {
@@ -53,6 +53,7 @@ import { camposComPendencia, motivosRevisar, SEM_CONTRATO } from "@/pages/financ
 import { totaisPorNatureza } from "@/pages/financeiro/fluxo-caixa/naturezaFluxo";
 import { CardsPorNatureza } from "@/pages/financeiro/fluxo-caixa/CardsPorNatureza";
 import { NaturezaClassificacoesDialog } from "@/pages/financeiro/fluxo-caixa/NaturezaClassificacoesDialog";
+import { ImportarContratosDialog } from "@/pages/financeiro/fluxo-caixa/ImportarContratosDialog";
 import { useNaturezaClassificacoes } from "@/hooks/useFluxoNaturezaClassificacao";
 import { linhaDaOrigemDoCard } from "@/pages/controladoria/auditoria/regras";
 import { parseValorBR, valorConfere, valorNaLinha } from "@/pages/financeiro/fluxo-caixa/filtroValor";
@@ -327,6 +328,7 @@ export default function FluxoCaixaGestao() {
   const { data: mapaNaturezaBruto } = useNaturezaClassificacoes();
   const mapaNatureza = useMemo(() => mapaNaturezaBruto ?? new Map(), [mapaNaturezaBruto]);
   const [naturezaAberta, setNaturezaAberta] = useState(false);
+  const [importarContratosAberto, setImportarContratosAberto] = useState(false);
   const editarJaAbriu = useRef(false);
   useEffect(() => {
     if (!editarParam || editarJaAbriu.current || !podeEditarFluxo || isLoading || linhasTodas.length === 0) return;
@@ -696,6 +698,11 @@ export default function FluxoCaixaGestao() {
             <Button variant="outline" size="sm" className="gap-1.5" onClick={abrirExportacao}>
               <FileDown className="h-3.5 w-3.5" /> Exportar Excel
             </Button>
+            {podeEditarFluxo && (
+              <Button variant="outline" size="sm" className="gap-1.5" onClick={() => setImportarContratosAberto(true)}>
+                <FileUp className="h-3.5 w-3.5" /> Importar contratos
+              </Button>
+            )}
             <Button variant="outline" size="sm" className="gap-1.5" onClick={() => setNaturezaAberta(true)}>
               <LineChart className="h-3.5 w-3.5" /> Natureza das classificações
             </Button>
@@ -845,6 +852,10 @@ export default function FluxoCaixaGestao() {
       </Dialog>
 
       {/* SIS-2026-0611: o que é cada card e o que o alimenta (respeita os filtros atuais). */}
+      {podeEditarFluxo && (
+        <ImportarContratosDialog aberto={importarContratosAberto} onFechar={() => setImportarContratosAberto(false)} linhasFluxo={linhasBrutas} />
+      )}
+
       <NaturezaClassificacoesDialog
         aberto={naturezaAberta}
         onFechar={() => setNaturezaAberta(false)}
