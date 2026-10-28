@@ -11,9 +11,10 @@
 // um aviso" — o aviso de data repetida continua aqui (chamadosComMesmaData).
 //
 // Modelo:
-//   · prazo_dias = esforço em DIAS ÚTEIS, obrigatório para iniciar, TRAVADO
-//     depois de definido (RPC chamado_definir_prazo) — só destrava quando a
-//     tarefa desce na fila (posicao_dev > prazo_posicao_fila);
+//   · prazo = quantidade (prazo_dias) + unidade (horas, dias úteis ou
+//     semanas — mig 20261028001900), obrigatório para iniciar, TRAVADO
+//     depois de definido — só destrava quando a posição na fila MUDA, para
+//     cima ou para baixo (posicao_dev ≠ prazo_posicao_fila);
 //   · previsão de entrega: iniciado = início + prazo_dias (gravada pelo banco
 //     em prazo_conclusao_em); não iniciado = PROJEÇÃO pela fila — começa
 //     quando as tarefas da frente terminam (`projetarPrevisoes`);
@@ -84,6 +85,43 @@ export function diasUteisAte(de: Date, ate: Date): number {
 
 // ---- Chamado com prazo ------------------------------------------------
 
+/**
+ * Unidade do prazo (mig 20261028001900): "determinar se o prazo vai ser em
+ * dias, horas, semanas" (Pablo). Horas = corridas, com hora exata; dias =
+ * úteis; semanas = 5 dias úteis cada. A quantidade mora em prazo_dias (o
+ * nome é da versão só em dias).
+ */
+export type UnidadePrazo = "horas" | "dias" | "semanas";
+
+export const UNIDADES_PRAZO: { value: UnidadePrazo; label: string; curto: (n: number) => string }[] = [
+  { value: "horas",   label: "Horas",      curto: (n) => `${n} h` },
+  { value: "dias",    label: "Dias úteis", curto: (n) => `${n} ${n === 1 ? "dia" : "dias"}` },
+  { value: "semanas", label: "Semanas",    curto: (n) => `${n} sem` },
+];
+
+/** Limite por unidade — o mesmo de public.chamado_prazo_valido. */
+export const LIMITE_PRAZO: Record<UnidadePrazo, number> = { horas: 720, dias: 120, semanas: 24 };
+
+export const prazoValido = (quantidade: number, unidade: UnidadePrazo) =>
+  Number.isInteger(quantidade) && quantidade >= 1 && quantidade <= (LIMITE_PRAZO[unidade] ?? 0);
+
+/** "4 h", "2 dias", "1 sem". */
+export const rotuloPrazo = (quantidade: number | null | undefined, unidade: string | null | undefined) =>
+  quantidade == null ? "—" : (UNIDADES_PRAZO.find((u) => u.value === (unidade ?? "dias")) ?? UNIDADES_PRAZO[1]).curto(quantidade);
+
+/**
+ * Previsão a partir de `inicio`. Espelha public.chamado_previsao_entrega:
+ * horas → início + N h; dias → N dias úteis (até o fim do dia); semanas →
+ * N × 5 dias úteis (até o fim do dia).
+ */
+export function calcularPrevisao(inicio: Date, quantidade: number, unidade: UnidadePrazo | string | null | undefined): Date {
+  if (unidade === "horas") return new Date(inicio.getTime() + Math.max(0, quantidade) * 3_600_000);
+  const dias = unidade === "semanas" ? quantidade * 5 : quantidade;
+  const d = somarDiasUteis(inicio, dias);
+  d.setHours(23, 59, 59, 0);
+  return d;
+}
+
 export interface ChamadoPrazo {
   id: string;
   status: string;
@@ -94,6 +132,7 @@ export interface ChamadoPrazo {
   prazo_conclusao_em?: string | null;
   prazo_previsto?: string | null;
   prazo_dias?: number | null;
+  prazo_unidade?: string | null;
   prazo_definido_em?: string | null;
   prazo_posicao_fila?: number | null;
   concluido_no_prazo?: boolean | null;
@@ -103,45 +142,51 @@ const ENCERRADOS = ["concluido", "reprovado", "cancelado"];
 const ativo = (s: string) => !ENCERRADOS.includes(s);
 
 /**
- * A tarefa desceu de prioridade na fila desde que o prazo foi definido?
- * ESPELHA a trava de chamado_definir_prazo: é o que libera redefinir.
+ * A posição na fila mudou desde que o prazo foi definido — desceu (5º → 6º)
+ * ou subiu (6º → 5º)? ESPELHA a trava de chamado_definir_prazo: é o que
+ * libera ajustar o prazo (mig 20261028001900; antes só quando descia).
  */
-export const desceuNaFila = (c: ChamadoPrazo) =>
+export const mudouNaFila = (c: ChamadoPrazo) =>
   ativo(c.status) && c.prazo_dias != null && c.posicao_dev != null && c.prazo_posicao_fila != null
-  && c.posicao_dev > c.prazo_posicao_fila;
+  && c.posicao_dev !== c.prazo_posicao_fila;
 
-/** Pode definir o prazo agora? Primeira vez, ou redefinir porque desceu. */
+/** Desceu (posição maior que a de quando definiu o prazo). */
+export const desceuNaFila = (c: ChamadoPrazo) => mudouNaFila(c) && c.posicao_dev! > c.prazo_posicao_fila!;
+
+/** Pode definir o prazo agora? Primeira vez, ou ajustar porque a posição mudou. */
 export const podeDefinirPrazo = (c: ChamadoPrazo) =>
-  ativo(c.status) && !!c.responsavel_id && (c.prazo_dias == null || desceuNaFila(c));
+  ativo(c.status) && !!c.responsavel_id && (c.prazo_dias == null || mudouNaFila(c));
 
 /** ESPELHA chamado_iniciar_desenvolvimento: aberto/em andamento, com responsável, ainda não iniciado. */
 export const podeIniciarDesenvolvimento = (
   c: { status: string; responsavel_id: string | null; desenvolvimento_iniciado_em?: string | null },
 ) => !c.desenvolvimento_iniciado_em && !!c.responsavel_id && (c.status === "aberto" || c.status === "em_andamento");
 
-export interface Previsao { data: Date; projetada: boolean }
+/** `comHora`: prazo em horas — a previsão tem hora certa, não só o dia. */
+export interface Previsao { data: Date; projetada: boolean; comHora?: boolean }
 
 /**
  * Previsão de entrega de cada tarefa da fila de UM dev. A fila vai na ordem
  * de execução (posicao_dev). Iniciada = a previsão gravada (início + prazo).
- * Não iniciada = começa quando a tarefa da frente termina (ou hoje) e soma o
- * prazo em dias úteis — muda sozinha quando a fila muda. Sem prazo: sem
+ * Não iniciada = começa quando a tarefa da frente termina (ou agora) e soma o
+ * prazo na unidade dela — muda sozinha quando a fila muda. Sem prazo: sem
  * previsão, e não empurra as de trás.
  */
-export function projetarPrevisoes(fila: readonly ChamadoPrazo[], hoje = new Date()): Record<string, Previsao> {
+export function projetarPrevisoes(fila: readonly ChamadoPrazo[], agora = new Date()): Record<string, Previsao> {
   const ordem = [...fila].filter((c) => ativo(c.status))
     .sort((a, b) => (a.posicao_dev ?? Number.MAX_SAFE_INTEGER) - (b.posicao_dev ?? Number.MAX_SAFE_INTEGER)
       || +new Date(a.created_at ?? 0) - +new Date(b.created_at ?? 0));
   const r: Record<string, Previsao> = {};
-  let cursor = dataDoDia(diaLocal(hoje));
+  let cursor = new Date(agora.getTime());
   for (const c of ordem) {
+    const comHora = c.prazo_unidade === "horas";
     if (c.desenvolvimento_iniciado_em && c.prazo_conclusao_em) {
-      const d = dataDoDia(diaLocal(c.prazo_conclusao_em));
-      r[c.id] = { data: d, projetada: false };
+      const d = new Date(c.prazo_conclusao_em);
+      r[c.id] = { data: d, projetada: false, comHora };
       if (d > cursor) cursor = d;
     } else if (c.prazo_dias) {
-      const d = somarDiasUteis(cursor, c.prazo_dias);
-      r[c.id] = { data: d, projetada: true };
+      const d = calcularPrevisao(cursor, c.prazo_dias, c.prazo_unidade);
+      r[c.id] = { data: d, projetada: true, comHora };
       cursor = d;
     }
   }
@@ -163,9 +208,10 @@ export const SITUACOES_PRAZO: Record<SituacaoPrazo, { label: string; cls: string
 };
 
 /**
- * Situação do prazo. Concluído: o que o banco gravou ao concluir. Ativo:
- * passou do dia da previsão = Atrasado; vence hoje ou no próximo dia útil =
- * Risco; senão No prazo. Sem prazo definido = "Definir prazo".
+ * Situação do prazo. Concluído: o que o banco gravou ao concluir. Ativo,
+ * prazo em dias/semanas: passou do dia da previsão = Atrasado; vence hoje ou
+ * no próximo dia útil = Risco. Prazo em horas: passou da hora = Atrasado;
+ * faltam 2 horas ou menos = Risco. Senão No prazo. Sem prazo = "Definir prazo".
  */
 export function situacaoPrazo(c: ChamadoPrazo, previsao: Previsao | null | undefined, agora = new Date()): SituacaoPrazo | null {
   if (c.status === "concluido") {
@@ -174,9 +220,13 @@ export function situacaoPrazo(c: ChamadoPrazo, previsao: Previsao | null | undef
   }
   if (!ativo(c.status)) return null;
   if (!c.prazo_dias || !previsao) return "sem_prazo";
-  const faltam = diasUteisAte(agora, previsao.data);
+  if (c.prazo_unidade === "horas") {
+    const ms = previsao.data.getTime() - agora.getTime();
+    if (ms < 0) return "atrasado";
+    return ms <= 2 * 3_600_000 ? "risco" : "no_prazo";
+  }
   if (diaLocal(previsao.data) < diaLocal(agora)) return "atrasado";
-  return faltam <= 1 ? "risco" : "no_prazo";
+  return diasUteisAte(agora, previsao.data) <= 1 ? "risco" : "no_prazo";
 }
 
 // ---- Aviso de data repetida (pedido de 28/10, continua valendo) -------

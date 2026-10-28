@@ -136,6 +136,8 @@ export interface Chamado {
   // Prazo em dias úteis, travado (mig 20261028001410): só redefine quando a
   // tarefa desce na fila (posicao_dev > prazo_posicao_fila).
   prazo_dias?: number | null;
+  /** Unidade de prazo_dias: horas, dias (úteis) ou semanas (mig 20261028001900). */
+  prazo_unidade?: string | null;
   prazo_definido_em?: string | null;
   prazo_definido_por?: string | null;
   prazo_posicao_fila?: number | null;

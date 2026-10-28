@@ -472,7 +472,10 @@ export default function PainelDistribuicao() {
 
       {/* items-start: cada coluna fica com a altura do próprio conteúdo (sem o
           card da esquerda esticar até a altura da coluna da direita). */}
-      <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_300px]">
+      {/* Laterais ao lado da tabela só em tela larga (1536 px+); abaixo,
+          descem e a tabela usa a largura toda — antes ela ficava com ~740 px
+          para 11 colunas e saía do card. */}
+      <div className="grid items-start gap-4 2xl:grid-cols-[minmax(0,1fr)_300px]">
         <Card className="p-4">
           {/* Abas */}
           <div className="mb-3 flex flex-wrap gap-1 border-b border-border pb-2">
@@ -604,16 +607,16 @@ export default function PainelDistribuicao() {
                       <TableCell className="whitespace-nowrap font-mono text-xs font-semibold">#{c.numero}</TableCell>
                       {/* Título em destaque e a descrição logo abaixo: dá para
                           entender o pedido sem abrir o chamado. */}
-                      <TableCell className="min-w-[220px] max-w-[340px]" title={c.descricao ? `${c.assunto}\n\n${c.descricao}` : c.assunto}>
+                      <TableCell className="min-w-[150px] max-w-[340px] [overflow-wrap:anywhere]" title={c.descricao ? `${c.assunto}\n\n${c.descricao}` : c.assunto}>
                         <span className="line-clamp-2 text-sm font-semibold leading-snug">{c.assunto}</span>
                         {c.descricao && <span className="mt-0.5 line-clamp-2 text-[11px] leading-snug text-muted-foreground">{c.descricao}</span>}
                       </TableCell>
-                      <TableCell className="text-xs text-muted-foreground">{c.categorias.map((x) => labelDe(CATEGORIAS, x)).join(", ") || "—"}</TableCell>
+                      <TableCell className="min-w-[100px] text-xs text-muted-foreground">{c.categorias.map((x) => labelDe(CATEGORIAS, x)).join(", ") || "—"}</TableCell>
                       <TableCell onClick={(e) => e.stopPropagation()}>
                         {chamadoAtivo(c.status) ? (
                           <div className={flashPrioridade === c.id ? "animate-pop" : ""}>
                             <Select value={c.prioridade} onValueChange={(v) => mudarPrioridade(c.id, v, c.numero)}>
-                              <SelectTrigger className="h-7 w-[92px] text-xs"><SelectValue /></SelectTrigger>
+                              <SelectTrigger className="h-7 w-[80px] text-xs"><SelectValue /></SelectTrigger>
                               <SelectContent>
                                 <SelectItem value="alta">Alta</SelectItem>
                                 <SelectItem value="media">Média</SelectItem>
@@ -627,7 +630,7 @@ export default function PainelDistribuicao() {
                       </TableCell>
                       <TableCell><DefinicaoBadge definicao={c.definicao} /></TableCell>
                       <TableCell className="text-xs">{c.solicitante_nome || "—"}<div className="text-[10px] text-muted-foreground">{c.setor}</div></TableCell>
-                      <TableCell className="whitespace-nowrap text-xs text-muted-foreground">{fmtDataHora(c.created_at)}</TableCell>
+                      <TableCell className="min-w-[78px] text-xs text-muted-foreground">{fmtDataHora(c.created_at)}</TableCell>
                       <TableCell>
                         {treinosPendentes[c.id] ? (
                           treinosPendentes[c.id].treinamento_dev_em ? (
@@ -642,7 +645,7 @@ export default function PainelDistribuicao() {
                           )
                         ) : <StatusBadge status={c.status} />}
                       </TableCell>
-                      <TableCell className="text-xs">{nomeDe(treinosPendentes[c.id] ? desenvolvedorDaValidacao(treinosPendentes[c.id], c) : c.responsavel_id)}</TableCell>
+                      <TableCell className="max-w-[110px] text-xs">{nomeDe(treinosPendentes[c.id] ? desenvolvedorDaValidacao(treinosPendentes[c.id], c) : c.responsavel_id)}</TableCell>
                       <TableCell onClick={(e) => e.stopPropagation()}>
                         <div className="flex items-center justify-end gap-0.5">
                           {treinosPendentes[c.id] && !treinosPendentes[c.id].treinamento_dev_em && (

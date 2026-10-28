@@ -24,7 +24,7 @@ import { BotaoAdicionarParticipante } from "./ParticipantesChamado";
 import { ReabrirChamadoDialog } from "./ReabrirChamadoDialog";
 import { IniciarDesenvolvimentoDialog } from "./IniciarDesenvolvimentoDialog";
 import {
-  SITUACOES_PRAZO, desceuNaFila, podeDefinirPrazo, podeIniciarDesenvolvimento, situacaoPrazo,
+  SITUACOES_PRAZO, mudouNaFila, podeDefinirPrazo, podeIniciarDesenvolvimento, rotuloPrazo, situacaoPrazo,
 } from "@/lib/chamados/prazoDesenvolvimento";
 import { ChatChamado } from "./ChatChamado";
 import { BotaoStatusChamado, CardTreinamento, CardValidacaoPresidencia, useValidacaoChamado } from "./StatusValidacao";
@@ -354,39 +354,38 @@ export default function ExecutarChamado() {
               <p className="text-sm font-medium">{nomeDe(chamado.responsavel_id)}</p>
             </div>
             <div>
-              <p className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Prazo (dias úteis)</p>
-              {/* SIS-2026-0763 (mig 20261028001410): prazo em dias úteis,
-                  definido pelo dev ao receber a tarefa e TRAVADO — só
-                  redefine quando a tarefa desce na fila. A previsão de
-                  entrega é início + prazo; antes de iniciar, depende da fila. */}
+              <p className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Prazo</p>
+              {/* SIS-2026-0763 (migs 20261028001410 / 1900): prazo em horas,
+                  dias úteis ou semanas, informado pelo dev ao iniciar e
+                  TRAVADO — só ajusta quando a posição na fila muda (subiu ou
+                  desceu). A previsão é início + prazo; antes de iniciar,
+                  depende da fila. */}
               {chamado.prazo_dias ? (
                 <p className="text-sm font-medium">
-                  {chamado.prazo_dias} dia(s) útil(eis)
-                  {!!chamado.prazo_redefinicoes && <span className="text-xs font-normal text-muted-foreground"> · redefinido {chamado.prazo_redefinicoes}x</span>}
+                  {rotuloPrazo(chamado.prazo_dias, chamado.prazo_unidade)}
+                  {!!chamado.prazo_redefinicoes && <span className="text-xs font-normal text-muted-foreground"> · ajustado {chamado.prazo_redefinicoes}x</span>}
                 </p>
               ) : (
                 <p className="text-xs text-warning">Ainda não definido — obrigatório para iniciar.</p>
               )}
-              {desceuNaFila(chamado) && (
-                <p className="mt-1 text-xs text-destructive">A tarefa desceu na fila ({chamado.prazo_posicao_fila}º → {chamado.posicao_dev}º): redefina o prazo.</p>
+              {mudouNaFila(chamado) && (
+                <p className="mt-1 text-xs text-destructive">A posição na fila mudou ({chamado.prazo_posicao_fila}º → {chamado.posicao_dev}º): revise o prazo.</p>
               )}
-              {/* O prazo real é informado ao iniciar (botão em Ações rápidas);
-                  depois, só redefine se a tarefa descer na fila. */}
               {podeAgir && chamado.prazo_dias != null && podeDefinirPrazo(chamado) && (
                 <Button variant="outline" size="sm" className="mt-1.5 h-8 gap-1.5" onClick={() => setPrazoOpen(true)}>
-                  <CalendarClock className="h-3.5 w-3.5" /> Redefinir prazo
+                  <CalendarClock className="h-3.5 w-3.5" /> Ajustar prazo
                 </Button>
               )}
             </div>
             <div>
               <p className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Previsão de entrega</p>
               {chamado.prazo_conclusao_em ? (
-                <p className="text-sm font-medium">{fmtData(chamado.prazo_conclusao_em)}</p>
+                <p className="text-sm font-medium">{chamado.prazo_unidade === "horas" ? fmtDataHora(chamado.prazo_conclusao_em) : fmtData(chamado.prazo_conclusao_em)}</p>
               ) : (
                 <p className="text-xs text-muted-foreground">{chamado.prazo_dias ? "Conta a partir do início do desenvolvimento (veja a projeção no Painel do Desenvolvedor)." : "—"}</p>
               )}
               {(() => {
-                const sit = situacaoPrazo(chamado, chamado.prazo_conclusao_em ? { data: new Date(chamado.prazo_conclusao_em), projetada: false } : null);
+                const sit = situacaoPrazo(chamado, chamado.prazo_conclusao_em ? { data: new Date(chamado.prazo_conclusao_em), projetada: false, comHora: chamado.prazo_unidade === "horas" } : null);
                 return sit && (chamado.prazo_conclusao_em || chamado.status === "concluido") ? (
                   <span className={`mt-1 inline-flex rounded border px-1.5 py-0.5 text-[10px] font-semibold ${SITUACOES_PRAZO[sit].cls}`}>{SITUACOES_PRAZO[sit].label}</span>
                 ) : null;
