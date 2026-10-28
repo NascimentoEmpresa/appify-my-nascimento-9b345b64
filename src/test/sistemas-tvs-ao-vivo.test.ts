@@ -44,7 +44,7 @@ describe("itens no ar e aviso geral — as regras do tv_estado", () => {
     expect(alertaDaTv([alerta(curto)], "tv1", new Date("2026-10-08T12:00:15Z"))).toBeNull();
     expect(fimDoAviso({ inicio: curto.inicio, fim: curto.fim })).toBe(new Date(curto.fim).getTime());
     const comImagem = telaAoVivo({ tv: tvOnline, itens: [], alertas: [alerta({ imagem: "aviso/x.png", texto: "" })], aoVivo: null, agora, simulacaoDesde: agora.getTime() });
-    expect(comImagem.tela.alerta).toEqual({ texto: "", cor: "#dc2626", imagem: "aviso/x.png" });
+    expect(comImagem.tela.alerta).toEqual({ texto: "", cor: "#dc2626", imagem: "aviso/x.png", layout: "cheia" });
   });
 });
 
@@ -79,7 +79,7 @@ describe("tela AO VIVO", () => {
 
   it("aviso geral por cima, pausada, relógio e offline", () => {
     const comAviso = telaAoVivo({ ...base, alertas: [alerta({})], aoVivo: null });
-    expect(comAviso.tela.alerta).toEqual({ texto: "Simulado", cor: "#dc2626", imagem: null });
+    expect(comAviso.tela.alerta).toEqual({ texto: "Simulado", cor: "#dc2626", imagem: null, layout: "cheia" });
     expect(telaAoVivo({ ...base, tv: { ...tvOnline, ativo: false }, aoVivo: null }).tela.modo).toBe("pausada");
     expect(telaAoVivo({ ...base, itens: [], aoVivo: null }).tela.modo).toBe("relogio");
     const off = telaAoVivo({ ...base, tv: { ...tvOnline, ultimo_ping: "2026-10-08T11:50:00Z" }, aoVivo: null });
