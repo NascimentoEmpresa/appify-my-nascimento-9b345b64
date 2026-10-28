@@ -18,6 +18,7 @@ import {
 } from "@/components/ui/select";
 import { AvaliarChamadoDialog } from "./AvaliarChamadoDialog";
 import { Flag, UploadCloud, Info, XCircle, CheckCircle2, Lightbulb, Clock, X, Star, ClipboardPaste, FileText, ListChecks } from "lucide-react";
+import { prazoSolicitanteValido, sugestaoPrazoSolicitante } from "@/lib/chamados/prazoDesenvolvimento";
 import { abrirChamadoTravado, descreverPendencias, LIMITE_AVALIACOES_PENDENTES, type PendenciaSolicitante } from "./validacaoPresidencia";
 import {
   CATEGORIAS, TIPOS, IMPACTOS, URGENCIAS, MODULOS_ERP, AMBIENTES, PRIORIDADES, BUCKET_CHAMADOS,
@@ -81,6 +82,11 @@ export default function AbrirChamado({ base = "/app/central-servicos/chamados" }
   const [observacoes, setObservacoes] = useState("");
   const [impacto, setImpacto] = useState("");
   const [urgencia, setUrgencia] = useState("");
+  // Prazo esperado (SIS-2026-0763, mig 20261028001600): a data em que quem
+  // abre precisa da entrega. Vem sugerida pela urgência e pode ser trocada;
+  // `prazoManual` impede a urgência de sobrescrever a data que a pessoa digitou.
+  const [prazoSolicitante, setPrazoSolicitante] = useState("");
+  const [prazoManual, setPrazoManual] = useState(false);
   const [modulo, setModulo] = useState("");
   const [moduloOutro, setModuloOutro] = useState("");
   const [ambiente, setAmbiente] = useState("producao");
@@ -143,9 +149,10 @@ export default function AbrirChamado({ base = "/app/central-servicos/chamados" }
       { id: "campo-descricao",   label: "Descrição",            ok: !!descricao.trim() && descricao.trim() !== ROTEIRO_DESCRICAO.trim() },
       { id: "campo-impacto",     label: "Impacto no trabalho",  ok: !!impacto },
       { id: "campo-urgencia",    label: "Urgência",             ok: !!urgencia },
+      { id: "campo-prazo",       label: "Prazo esperado",       ok: prazoSolicitanteValido(prazoSolicitante) },
     ];
     return req.filter((c) => !c.ok);
-  }, [assunto, categorias, tipo, modulo, moduloOutro, prioridade, descricao, impacto, urgencia]);
+  }, [assunto, categorias, tipo, modulo, moduloOutro, prioridade, descricao, impacto, urgencia, prazoSolicitante]);
   const podeEnviar = faltando.length === 0;
 
   const irParaCampo = (campoId: string) =>
@@ -153,7 +160,7 @@ export default function AbrirChamado({ base = "/app/central-servicos/chamados" }
 
   const limpar = () => {
     setAssunto(""); setCategorias([]); setTipo(""); setPrioridade(""); setDescricao(""); setObservacoes("");
-    setImpacto(""); setUrgencia(""); setModulo(""); setModuloOutro(""); setAmbiente("producao");
+    setImpacto(""); setUrgencia(""); setPrazoSolicitante(""); setPrazoManual(false); setModulo(""); setModuloOutro(""); setAmbiente("producao");
     setAfetaUsuarios(""); setArquivos([]);
   };
 
@@ -179,6 +186,7 @@ export default function AbrirChamado({ base = "/app/central-servicos/chamados" }
       observacoes_solicitante: observacoes.trim() || null,
       impacto_trabalho: impacto,
       urgencia,
+      prazo_solicitante: prazoSolicitante,
       modulo_sistema: modulo,
       modulo_sistema_outro: modulo === "outro" ? moduloOutro.trim() || null : null,
       ambiente,
@@ -506,7 +514,10 @@ export default function AbrirChamado({ base = "/app/central-servicos/chamados" }
                 <div className="flex flex-wrap gap-x-4 gap-y-1.5">
                   {URGENCIAS.map((u) => (
                     <label key={u.value} className="flex items-center gap-2 text-xs">
-                      <Checkbox checked={urgencia === u.value} onCheckedChange={() => setUrgencia(u.value)} />
+                      <Checkbox checked={urgencia === u.value} onCheckedChange={() => {
+                        setUrgencia(u.value);
+                        if (!prazoManual) setPrazoSolicitante(sugestaoPrazoSolicitante(u.value) ?? "");
+                      }} />
                       <span>{u.label}</span>
                     </label>
                   ))}
@@ -514,7 +525,13 @@ export default function AbrirChamado({ base = "/app/central-servicos/chamados" }
               </div>
             </div>
 
-            <div className="grid gap-4 md:grid-cols-2">
+            <div className="grid gap-4 md:grid-cols-3">
+              <div id="campo-prazo" className="scroll-mt-24">
+                <Label className="mb-1.5 block text-xs font-semibold">Prazo esperado <span className="text-destructive">*</span></Label>
+                <Input type="date" min={new Date().toLocaleDateString("sv-SE")} value={prazoSolicitante}
+                  onChange={(e) => { setPrazoSolicitante(e.target.value); setPrazoManual(true); }} />
+                <p className="mt-1 text-[11px] text-muted-foreground">Quando você precisa da entrega. O desenvolvedor informa o prazo real ao iniciar.</p>
+              </div>
               <div>
                 <Label className="mb-1.5 block text-xs font-semibold">Ambiente</Label>
                 <Select value={ambiente} onValueChange={setAmbiente}>

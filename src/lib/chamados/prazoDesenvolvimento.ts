@@ -219,3 +219,48 @@ export function situacaoDesenvolvimento(
 export const prazoVencido = (
   c: { status: string; prazo_conclusao_em?: string | null }, agora = new Date(),
 ) => !!c.prazo_conclusao_em && ativo(c.status) && diaLocal(c.prazo_conclusao_em) < diaLocal(agora);
+
+// ---- Prazo do solicitante (mig 20261028001600) --------------------------
+
+/**
+ * Sugestão de "prazo esperado" a partir da urgência marcada na abertura —
+ * o solicitante pode trocar a data. "Mais de 5 dias úteis" sugere 10.
+ */
+export function sugestaoPrazoSolicitante(urgencia: string, hoje = new Date()): string | null {
+  const dias: Record<string, number> = { ate_1h: 0, ate_1d: 1, ate_3d: 3, ate_5d: 5, mais_5d: 10 };
+  if (!(urgencia in dias)) return null;
+  return diaLocal(somarDiasUteis(hoje, dias[urgencia]));
+}
+
+/** Prazo esperado válido: data (AAAA-MM-DD) de hoje em diante. Espelha o gatilho do banco. */
+export const prazoSolicitanteValido = (v: string, hoje = new Date()) =>
+  /^\d{4}-\d{2}-\d{2}$/.test(v) && v >= diaLocal(hoje);
+
+// ---- Painel do Desenvolvedor (layout do mockup, SIS-2026-0763) ---------
+
+export type StatusPainel = "em_desenvolvimento" | "em_analise" | "aguardando_retorno" | "concluido" | "reprovado" | "cancelado";
+
+/**
+ * Status como o Painel do Desenvolvedor mostra: em andamento com início
+ * marcado = "Em desenvolvimento"; aberto ou na fila sem início = "Em análise".
+ */
+export function statusPainel(c: { status: string; desenvolvimento_iniciado_em?: string | null }): StatusPainel {
+  if (c.status === "em_andamento" && c.desenvolvimento_iniciado_em) return "em_desenvolvimento";
+  if (c.status === "aberto" || c.status === "em_andamento") return "em_analise";
+  return c.status as StatusPainel;
+}
+
+export const STATUS_PAINEL: Record<StatusPainel, { label: string; cls: string; cor: string }> = {
+  em_desenvolvimento: { label: "Em desenvolvimento", cls: "border-info/30 bg-info/10 text-info",                   cor: "hsl(var(--info))" },
+  em_analise:         { label: "Em análise",         cls: "border-muted-foreground/20 bg-muted text-muted-foreground", cor: "hsl(var(--warning))" },
+  aguardando_retorno: { label: "Aguardando retorno", cls: "border-warning/40 bg-warning/10 text-warning",          cor: "hsl(var(--destructive))" },
+  concluido:          { label: "Concluído",          cls: "border-success/30 bg-success/10 text-success",          cor: "hsl(var(--success))" },
+  reprovado:          { label: "Reprovado",          cls: "border-destructive/30 bg-destructive/10 text-destructive", cor: "hsl(var(--destructive))" },
+  cancelado:          { label: "Cancelado",          cls: "border-muted-foreground/30 bg-muted text-muted-foreground", cor: "hsl(var(--muted-foreground))" },
+};
+
+/** Variação percentual (arredondada) de `anterior` para `atual`; null sem base. */
+export function variacaoPercentual(atual: number | null, anterior: number | null): number | null {
+  if (atual == null || anterior == null || anterior === 0) return null;
+  return Math.round(((atual - anterior) / anterior) * 100);
+}

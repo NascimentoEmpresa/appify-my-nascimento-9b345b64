@@ -239,6 +239,8 @@ export default function ExecutarChamado() {
               <Campo label="Solicitante">{chamado.solicitante_nome || "—"} <span className="text-xs text-muted-foreground">({chamado.setor || "—"})</span></Campo>
               <Campo label="Afeta usuários">{chamado.afeta_usuarios ?? "—"}</Campo>
               <Campo label="Urgência informada">{labelDe(URGENCIAS, chamado.urgencia)}</Campo>
+              {/* Prazo esperado por quem abriu (mig 20261028001600). */}
+              <Campo label="Prazo do solicitante">{chamado.prazo_solicitante ? fmtData(`${chamado.prazo_solicitante}T12:00:00`) : "—"}</Campo>
             </div>
           </Card>
 
@@ -368,9 +370,11 @@ export default function ExecutarChamado() {
               {desceuNaFila(chamado) && (
                 <p className="mt-1 text-xs text-destructive">A tarefa desceu na fila ({chamado.prazo_posicao_fila}º → {chamado.posicao_dev}º): redefina o prazo.</p>
               )}
-              {podeAgir && podeDefinirPrazo(chamado) && (
+              {/* O prazo real é informado ao iniciar (botão em Ações rápidas);
+                  depois, só redefine se a tarefa descer na fila. */}
+              {podeAgir && chamado.prazo_dias != null && podeDefinirPrazo(chamado) && (
                 <Button variant="outline" size="sm" className="mt-1.5 h-8 gap-1.5" onClick={() => setPrazoOpen(true)}>
-                  <CalendarClock className="h-3.5 w-3.5" /> {chamado.prazo_dias ? "Redefinir prazo" : "Definir prazo"}
+                  <CalendarClock className="h-3.5 w-3.5" /> Redefinir prazo
                 </Button>
               )}
             </div>

@@ -160,6 +160,8 @@ export default function AcompanharChamado({ base = "/app/central-servicos/chamad
               )}
               {chamado.desenvolvimento_iniciado_em && <Campo label="Desenvolvimento iniciado">{fmtDataHora(chamado.desenvolvimento_iniciado_em)}</Campo>}
               <Campo label="Urgência informada">{labelDe(URGENCIAS, chamado.urgencia)}</Campo>
+              {/* Prazo esperado informado ao abrir (mig 20261028001600). */}
+              <Campo label="Prazo esperado">{chamado.prazo_solicitante ? fmtData(`${chamado.prazo_solicitante}T12:00:00`) : "—"}</Campo>
             </div>
           </Card>
 

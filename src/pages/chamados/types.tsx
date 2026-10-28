@@ -142,6 +142,8 @@ export interface Chamado {
   prazo_redefinicoes?: number | null;
   /** Gravado ao concluir: true = no prazo, false = com atraso, null = sem prazo. */
   concluido_no_prazo?: boolean | null;
+  /** Prazo esperado informado por quem abriu (mig 20261028001600). */
+  prazo_solicitante?: string | null;
   created_at: string;
   updated_at: string;
 }
