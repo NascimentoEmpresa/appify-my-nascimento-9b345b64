@@ -24,7 +24,7 @@ import {
   useTvPlaylists, useCatalogoTv, type TvAlerta, type TvDispositivo, type TvItem, type TvPlaylist,
 } from "@/hooks/useTvs";
 import {
-  PERIODOS_TV, RELATORIOS_TV, TIPOS_ITEM, aoVivoFresco, corAviso, duracaoTotal, haQuanto, itensNoAr, nomeRelatorioTv, paginasRelatorioTv, relatorioTemFiltros, statusTv, telaAoVivo, tituloRelatorioTv,
+  PERIODOS_TV, RELATORIOS_TV, TIPOS_ITEM, aoVivoFresco, corAviso, duracaoTotal, fimDoAviso, haQuanto, itensNoAr, nomeRelatorioTv, paginasRelatorioTv, relatorioTemFiltros, statusTv, telaAoVivo, tituloRelatorioTv,
   urlValida, youtubeEmbed, type ItemTv, type TelaTv, type TipoItem,
 } from "@/lib/tv/tv";
 import { corDoRelatorioTv, duracaoRecomendada } from "@/lib/tv/relatorioTv";
@@ -40,8 +40,8 @@ import { VISUAIS_GERENCIAIS } from "@/lib/tv/gerencial";
 //     pareia pelo código de 6 dígitos que a TV mostra em <app>/tv;
 //   · Playlists — o que passa: imagem, vídeo, aviso em texto, YouTube e
 //     página web, com duração, validade e ordem;
-//   · Aviso geral — texto que cobre a tela de todas (ou algumas) TVs até
-//     a hora escolhida.
+//   · Aviso geral — texto e/ou imagem (28/10/2026) que cobre a tela de
+//     todas (ou algumas) TVs pelo tempo escolhido.
 // 07/10/2026 (mig 20261007000014): item "Relatório do ERP" (qual relatório,
 // período e contrato — tela cheia na TV) e LINK FIXO por TV (<app>/tv/<chave>)
 // para a TV abrir já conectada ao ligar, com o guia do app de quiosque.
@@ -923,25 +923,54 @@ function PainelPrevia({ p, rascunho }: { p: TvPlaylist; rascunho: ItemTv | null 
 
 // ---- Aviso geral --------------------------------------------------------------
 
+// 28/10/2026 (mig 20261028000020): aviso com IMAGEM (só texto, só imagem ou
+// os dois) e tempo em segundos ou minutos — gravado sempre em segundos
+// (duracao_seg); a TV conta o tempo a partir de quando desenha o aviso.
+const MAX_IMAGEM_AVISO_MB = 20;
+const fmtDuracao = (s: number) => (s < 60 ? `${s} s` : s % 60 === 0 ? `${s / 60} min` : `${Math.floor(s / 60)} min ${s % 60} s`);
+
+/** Miniatura do aviso: a imagem (se houver) ou a faixa na cor. */
+function MiniAviso({ a, pequena = false }: { a: TvAlerta; pequena?: boolean }) {
+  const cls = pequena ? "h-6 w-10" : "h-10 w-16";
+  if (a.imagem) return <img src={urlMidia(a.imagem)} alt="" className={`${cls} shrink-0 rounded border bg-black object-contain`} style={{ borderColor: corAviso(a.cor) }} />;
+  return <div className={`${pequena ? "h-6" : "h-10"} w-2 shrink-0 rounded`} style={{ background: corAviso(a.cor) }} />;
+}
+
 function AbaAviso({ tvs }: { tvs: TvDispositivo[] }) {
   const { user } = useAuth();
   const alertas = useTvAlertas();
   const criar = useCriarAlerta();
   const encerrar = useEncerrarAlerta();
-  const [f, setF] = useState({ texto: "", cor: "#dc2626", minutos: "30", todas: true, escolhidas: [] as string[] });
+  const [f, setF] = useState({ texto: "", cor: "#dc2626", tempo: "30", unidade: "min" as "seg" | "min", todas: true, escolhidas: [] as string[] });
+  const [arquivo, setArquivo] = useState<File | null>(null);
+  const inputImagem = useRef<HTMLInputElement>(null);
+  const previa = useMemo(() => (arquivo ? URL.createObjectURL(arquivo) : ""), [arquivo]);
+  useEffect(() => () => { if (previa) URL.revokeObjectURL(previa); }, [previa]);
+  // Aviso de segundos sai de "No ar agora" na hora, sem esperar a consulta de 30 s.
+  const [, tique] = useState(0);
+  useEffect(() => { const t = window.setInterval(() => tique((n) => n + 1), 5_000); return () => window.clearInterval(t); }, []);
   const agora = Date.now();
-  const ativos = (alertas.data ?? []).filter((a) => !a.encerrado_em && new Date(a.fim).getTime() > agora && new Date(a.inicio).getTime() <= agora);
+  const ativos = (alertas.data ?? []).filter((a) => !a.encerrado_em && fimDoAviso(a) > agora && new Date(a.inicio).getTime() <= agora);
   const historico = (alertas.data ?? []).filter((a) => !ativos.includes(a));
 
+  const escolherImagem = (fl: File | null) => {
+    if (inputImagem.current) inputImagem.current.value = "";
+    if (!fl) return;
+    if (!fl.type.startsWith("image/")) return toast.error("Escolha um arquivo de imagem (JPG, PNG, WEBP…).");
+    if (fl.size > MAX_IMAGEM_AVISO_MB * 1024 * 1024) return toast.error(`Imagem acima de ${MAX_IMAGEM_AVISO_MB} MB.`);
+    setArquivo(fl);
+  };
+
   const enviar = async () => {
-    const min = Number(f.minutos);
-    if (!f.texto.trim()) return toast.error("Escreva o aviso.");
-    if (!Number.isInteger(min) || min < 1 || min > 1440) return toast.error("Duração entre 1 e 1440 minutos.");
+    const n = Number(f.tempo);
+    const seg = f.unidade === "min" ? n * 60 : n;
+    if (!f.texto.trim() && !arquivo) return toast.error("Escreva o aviso ou anexe uma imagem.");
+    if (!Number.isInteger(n) || seg < 5 || seg > 86400) return toast.error("Duração entre 5 segundos e 1440 minutos (24 h).");
     if (!f.todas && f.escolhidas.length === 0) return toast.error("Escolha pelo menos uma TV.");
     try {
-      await criar.mutateAsync({ texto: f.texto.trim(), cor: f.cor, fim: new Date(Date.now() + min * 60_000).toISOString(), todas: f.todas, dispositivos: f.escolhidas,
+      await criar.mutateAsync({ texto: f.texto.trim(), cor: f.cor, duracaoSeg: seg, imagem: arquivo, todas: f.todas, dispositivos: f.escolhidas,
                                autor: (user?.user_metadata?.display_name as string) || user?.email || "" });
-      toast.success("Aviso no ar — as TVs mostram em até 15 s."); setF({ ...f, texto: "" });
+      toast.success("Aviso no ar — as TVs mostram em até 15 s."); setF({ ...f, texto: "" }); setArquivo(null);
     } catch (e) { toast.error((e as Error).message); }
   };
 
@@ -952,8 +981,33 @@ function AbaAviso({ tvs }: { tvs: TvDispositivo[] }) {
           <p className="flex items-center gap-2 text-sm font-semibold"><AlertTriangle className="h-4 w-4 text-destructive" /> Novo aviso geral</p>
           <p className="text-xs text-muted-foreground">Cobre a tela inteira das TVs por cima da playlist, até acabar o tempo ou alguém encerrar.</p>
           <Textarea rows={4} value={f.texto} onChange={(e) => setF({ ...f, texto: e.target.value })} placeholder="Ex.: Simulado de incêndio às 15h — siga as orientações da brigada" />
+          <div>
+            <Label className="text-xs">Imagem (opcional — cobre a tela inteira, sem cortar)</Label>
+            <input ref={inputImagem} type="file" accept="image/*" className="hidden" onChange={(e) => escolherImagem(e.target.files?.[0] ?? null)} />
+            {arquivo ? (
+              <div className="mt-1 flex items-center gap-3 rounded-lg border p-2">
+                <img src={previa} alt="" className="h-20 w-36 shrink-0 rounded bg-black object-contain" />
+                <div className="min-w-0 flex-1 text-xs">
+                  <p className="truncate font-medium">{arquivo.name}</p>
+                  <p className="text-muted-foreground">{(arquivo.size / 1024 / 1024).toFixed(1)} MB</p>
+                </div>
+                <Button size="sm" variant="ghost" onClick={() => inputImagem.current?.click()}>Trocar</Button>
+                <Button size="icon" variant="ghost" onClick={() => setArquivo(null)} title="Tirar a imagem"><Trash2 className="h-4 w-4" /></Button>
+              </div>
+            ) : (
+              <Button type="button" variant="outline" className="mt-1 w-full" onClick={() => inputImagem.current?.click()}><Upload className="mr-1 h-4 w-4" /> Anexar imagem</Button>
+            )}
+          </div>
           <div className="grid gap-3 sm:grid-cols-2">
-            <div><Label className="text-xs">Fica no ar por (minutos)</Label><Input type="number" min={1} max={1440} value={f.minutos} onChange={(e) => setF({ ...f, minutos: e.target.value })} /></div>
+            <div><Label className="text-xs">Fica no ar por</Label>
+              <div className="flex gap-2">
+                <Input type="number" min={1} max={f.unidade === "min" ? 1440 : 86400} value={f.tempo} onChange={(e) => setF({ ...f, tempo: e.target.value })} />
+                <Select value={f.unidade} onValueChange={(v) => setF({ ...f, unidade: v as "seg" | "min" })}>
+                  <SelectTrigger className="w-32"><SelectValue /></SelectTrigger>
+                  <SelectContent><SelectItem value="seg">segundos</SelectItem><SelectItem value="min">minutos</SelectItem></SelectContent>
+                </Select>
+              </div>
+            </div>
             <div><Label className="text-xs">Cor</Label><div className="flex items-center gap-2"><input type="color" value={f.cor} onChange={(e) => setF({ ...f, cor: e.target.value })} className="h-9 w-14 cursor-pointer rounded border" />
               <div className="flex-1 truncate rounded px-2 py-1.5 text-center text-xs font-bold text-white" style={{ background: corAviso(f.cor) }}>{f.texto.slice(0, 30) || "prévia"}</div></div></div>
           </div>
@@ -977,10 +1031,10 @@ function AbaAviso({ tvs }: { tvs: TvDispositivo[] }) {
           <p className="mb-2 text-sm font-semibold">No ar agora</p>
           {ativos.length === 0 ? <p className="text-xs text-muted-foreground">Nenhum aviso geral no ar.</p> : ativos.map((a) => (
             <div key={a.id} className="mb-2 flex items-start gap-3 rounded-lg border p-2">
-              <div className="h-10 w-2 shrink-0 rounded" style={{ background: corAviso(a.cor) }} />
+              <MiniAviso a={a} />
               <div className="min-w-0 flex-1 text-sm">
-                <p className="whitespace-pre-wrap font-medium">{a.texto}</p>
-                <p className="text-[11px] text-muted-foreground">{a.todas ? "todas as TVs" : `${a.dispositivos.length} TV(s)`} · até {fmtDataHora(a.fim)} · {a.created_by_nome ?? ""}</p>
+                <p className="whitespace-pre-wrap font-medium">{a.texto || <span className="italic text-muted-foreground">só imagem</span>}</p>
+                <p className="text-[11px] text-muted-foreground">{a.todas ? "todas as TVs" : `${a.dispositivos.length} TV(s)`} · {a.duracao_seg ? `${fmtDuracao(a.duracao_seg)} · ` : ""}até {new Date(fimDoAviso(a)).toLocaleTimeString("pt-BR")} · {a.created_by_nome ?? ""}</p>
               </div>
               <AcessoGate menu={MENU_TVS} acao="alterar"><Button size="sm" variant="outline" onClick={() => encerrar.mutateAsync(a.id).then(() => toast.success("Aviso encerrado."))}>Encerrar</Button></AcessoGate>
             </div>
@@ -989,7 +1043,10 @@ function AbaAviso({ tvs }: { tvs: TvDispositivo[] }) {
         <Card className="p-4">
           <p className="mb-2 text-sm font-semibold">Últimos avisos</p>
           {historico.length === 0 ? <p className="text-xs text-muted-foreground">Nada ainda.</p> : historico.slice(0, 10).map((a) => (
-            <p key={a.id} className="truncate border-t py-1.5 text-xs first:border-t-0"><span className="text-muted-foreground">{fmtDataHora(a.created_at)} · </span>{a.texto}</p>
+            <div key={a.id} className="flex items-center gap-2 border-t py-1.5 text-xs first:border-t-0">
+              {a.imagem && <MiniAviso a={a} pequena />}
+              <p className="min-w-0 flex-1 truncate"><span className="text-muted-foreground">{fmtDataHora(a.created_at)}{a.duracao_seg ? ` · ${fmtDuracao(a.duracao_seg)}` : ""} · </span>{a.texto || <span className="italic text-muted-foreground">só imagem</span>}</p>
+            </div>
           ))}
         </Card>
       </div>

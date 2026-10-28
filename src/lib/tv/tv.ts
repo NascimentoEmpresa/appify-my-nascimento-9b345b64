@@ -103,12 +103,29 @@ export interface EstadoTv {
   nome?: string; local?: string | null; ativa?: boolean;
   comando?: "recarregar" | null;
   itens?: ItemTv[];
-  alerta?: { id: string; texto: string; cor: string; fim: string } | null;
+  alerta?: AlertaNaTv | null;
 }
+
+/** Aviso geral como o tv_estado entrega (inicio/imagem/duracao_seg: mig 20261028000020). */
+export interface AlertaNaTv { id: string; texto: string; cor: string; fim: string; inicio?: string; imagem?: string | null; duracao_seg?: number | null }
 
 /** A TV consulta o ERP a cada INTERVALO_PING_S; sem notícia há 3 consultas, está offline. */
 export const INTERVALO_PING_S = 15;
 export const OFFLINE_APOS_S = INTERVALO_PING_S * 3 + 5;
+
+/**
+ * Aviso geral com tempo (duracao_seg): a TV conta a partir de quando ELA o
+ * desenhou, e o `fim` gravado leva esta folga para o tv_estado seguir
+ * devolvendo o aviso até ela terminar — a TV só consulta a cada 15 s, e um
+ * aviso de 20 s contado pelo `fim` podia aparecer só 5 s (mig 20261028000020).
+ */
+export const FOLGA_AVISO_S = INTERVALO_PING_S * 2;
+
+/** Quando o aviso sai das TVs, para a gestão: o tempo escolhido (sem a folga) ou, nos antigos, o `fim`. */
+export function fimDoAviso(a: { inicio: string; fim: string; duracao_seg?: number | null }): number {
+  const fim = new Date(a.fim).getTime();
+  return a.duracao_seg ? Math.min(fim, new Date(a.inicio).getTime() + a.duracao_seg * 1000) : fim;
+}
 
 export function statusTv(ultimoPing: string | null | undefined, agora: Date = new Date()): "online" | "offline" | "nunca" {
   if (!ultimoPing) return "nunca";
@@ -151,7 +168,7 @@ export const corAviso = (c: string | null | undefined) => (c && /^#([0-9a-f]{3}|
 // aviso geral por cima; pausada; relógio quando não há nada).
 
 /** O que uma tela de TV mostra (o iframe /tv/previa desenha). `chave` muda = remonta (vídeo recomeça, relatório reconsulta). */
-export type TelaTv = { chave: string; alerta?: { texto: string; cor: string } | null } & (
+export type TelaTv = { chave: string; alerta?: { texto: string; cor: string; imagem?: string | null } | null } & (
   | { modo: "item"; item: ItemTv; inicioS?: number }
   | { modo: "relogio"; nome: string }
   | { modo: "pausada"; nome: string }
@@ -169,13 +186,16 @@ export function itensNoAr<T extends ItemNoAr>(itens: T[], agora: Date = new Date
     .sort((a, b) => a.ordem - b.ordem);
 }
 
-export interface AlertaTv { id: string; texto: string; cor: string; inicio: string; fim: string; todas: boolean; dispositivos: string[]; encerrado_em: string | null; created_at: string }
+export interface AlertaTv {
+  id: string; texto: string; cor: string; inicio: string; fim: string; todas: boolean; dispositivos: string[]; encerrado_em: string | null; created_at: string;
+  imagem?: string | null; duracao_seg?: number | null;
+}
 
 /** O aviso geral que cobre esta TV agora (o mais recente valendo) — a regra do tv_estado. */
 export function alertaDaTv(alertas: AlertaTv[], tvId: string | null, agora: Date = new Date()): AlertaTv | null {
   const t = agora.getTime();
   return [...alertas]
-    .filter((a) => !a.encerrado_em && new Date(a.inicio).getTime() <= t && new Date(a.fim).getTime() > t && (a.todas || (!!tvId && a.dispositivos.includes(tvId))))
+    .filter((a) => !a.encerrado_em && new Date(a.inicio).getTime() <= t && fimDoAviso(a) > t && (a.todas || (!!tvId && a.dispositivos.includes(tvId))))
     .sort((a, b) => b.created_at.localeCompare(a.created_at))[0] ?? null;
 }
 
@@ -255,7 +275,7 @@ export interface EntradaAoVivo {
 export function telaAoVivo(e: EntradaAoVivo): { tela: TelaTv; exata: boolean; indice: number | null } {
   const nome = e.tv.nome ?? "TV";
   const a = alertaDaTv(e.alertas, e.tv.id, e.agora);
-  const alerta = a ? { texto: a.texto, cor: a.cor } : null;
+  const alerta = a ? { texto: a.texto, cor: a.cor, imagem: a.imagem ?? null } : null;
   const chaveAlerta = a?.id ?? "-";
   if (statusTv(e.tv.ultimo_ping, e.agora) !== "online") {
     return { tela: { modo: "offline", nome, visto: haQuanto(e.tv.ultimo_ping, e.agora), chave: `off|${e.tv.id}` }, exata: true, indice: null };
