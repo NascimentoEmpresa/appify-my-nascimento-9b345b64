@@ -18,12 +18,16 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
 import { PieChart, Pie, Cell, ResponsiveContainer } from "recharts";
-import { ListChecks, Clock, MessageSquare, CheckCircle2, AlertTriangle, ShieldAlert, CalendarClock, RotateCw, RotateCcw, ArrowUpRight, Plus, BookOpen, ClipboardCheck, Sparkles, FileText, Zap, Star, Trophy, GitPullRequest, LayoutDashboard, GraduationCap } from "lucide-react";
+import { ArrowDown, Lock, Timer, ListChecks, Clock, MessageSquare, CheckCircle2, AlertTriangle, ShieldAlert, CalendarClock, RotateCw, RotateCcw, ArrowUpRight, Plus, BookOpen, ClipboardCheck, Sparkles, FileText, Zap, Star, Trophy, GitPullRequest, LayoutDashboard, GraduationCap } from "lucide-react";
 import { HoverCard, HoverCardTrigger, HoverCardContent } from "@/components/ui/hover-card";
 import { FeedAtualizacoes } from "./FeedAtualizacoes";
 import { BotaoChatChamado, useChamadosNaoLidos } from "./BotaoChatChamado";
 import { ReabrirChamadoDialog } from "./ReabrirChamadoDialog";
 import { abrirPrGithub } from "./abrirPrGithub";
+import { IniciarDesenvolvimentoDialog } from "./IniciarDesenvolvimentoDialog";
+import {
+  SITUACOES_PRAZO, desceuNaFila, diasUteisAte, podeDefinirPrazo, projetarPrevisoes, situacaoPrazo, type SituacaoPrazo,
+} from "@/lib/chamados/prazoDesenvolvimento";
 import {
   StatCard, PrioridadeBadge, StatusBadge, SeloDesenvolvimento, STATUS_CHAMADO, PRIORIDADES, Estrelas, iniciais, fmtData, fmtDataHora,
   chamadoAtivo, podeReabrirChamado, posicoesFilaDev, CRITERIOS_AVALIACAO, mediaAvaliacao, type Chamado,
@@ -58,6 +62,8 @@ export default function PainelDesenvolvedor() {
   const [flashPrioridade, setFlashPrioridade] = useState<string | null>(null);
   const [visao, setVisao] = useState<string>("ativos");
   const [reabrir, setReabrir] = useState<Chamado | null>(null);
+  // Definir / redefinir prazo em dias (SIS-2026-0763, mig 20261028001500).
+  const [prazoAlvo, setPrazoAlvo] = useState<Chamado | null>(null);
 
   // Abriu o Painel do Desenvolvedor → zera a bolinha de novidades do dev.
   useEffect(() => { chamadosMarkSeen(user?.id, "dev"); }, [user?.id]);
@@ -202,6 +208,17 @@ export default function PainelDesenvolvedor() {
     });
   }, [chamados, soParticipante, visao, posicaoMinhaFila]);
 
+  // Previsão de entrega pela MINHA fila: iniciada = início + prazo; não
+  // iniciada = depois das tarefas da frente (SIS-2026-0763).
+  const previsoes = useMemo(() => projetarPrevisoes(chamados), [chamados]);
+  const situacoes = useMemo(() => {
+    const m: Record<string, SituacaoPrazo | null> = {};
+    [...chamados, ...soParticipante].forEach((c) => { m[c.id] = situacaoPrazo(c, previsoes[c.id]); });
+    return m;
+  }, [chamados, soParticipante, previsoes]);
+  const desceram = useMemo(() => chamados.filter((c) => desceuNaFila(c)), [chamados]);
+  const semPrazo = useMemo(() => chamados.filter((c) => ATIVO(c.status) && c.prazo_dias == null), [chamados]);
+
   const mudarPrioridade = async (id: string, prioridade: string, numero: string) => {
     const { error } = await (supabase as any).from("CHAMADO_SISTEMA").update({ prioridade }).eq("id", id);
     if (error) { toast({ title: "Erro ao alterar prioridade", description: error.message, variant: "destructive" }); return; }
@@ -216,16 +233,36 @@ export default function PainelDesenvolvedor() {
   const hoje = new Date(); hoje.setHours(0, 0, 0, 0);
   const stats = useMemo(() => {
     const ativos = chamados.filter((c) => ATIVO(c.status));
-    const atrasados = ativos.filter((c) => c.prazo_previsto && new Date(c.prazo_previsto) < hoje);
+    const atrasados = ativos.filter((c) => situacoes[c.id] === "atrasado");
     const mesIni = new Date(hoje.getFullYear(), hoje.getMonth(), 1);
+    // Prazo médio de entrega: dias úteis do início do desenvolvimento até a
+    // conclusão, nos concluídos dos últimos 90 dias que tiveram início marcado.
+    const corte = new Date(hoje); corte.setDate(corte.getDate() - 90);
+    const entregas = chamados
+      .filter((c) => c.status === "concluido" && c.desenvolvimento_iniciado_em && c.concluido_em && new Date(c.concluido_em) >= corte)
+      .map((c) => Math.max(0, diasUteisAte(new Date(c.desenvolvimento_iniciado_em!), new Date(c.concluido_em!))));
     return {
+      prazo_medio: entregas.length ? entregas.reduce((a, b) => a + b, 0) / entregas.length : null,
       abertos: ativos.length,
       em_andamento: chamados.filter((c) => c.status === "em_andamento").length,
       aguardando: chamados.filter((c) => c.status === "aguardando_retorno").length,
       concluidos_mes: chamados.filter((c) => c.status === "concluido" && new Date(c.updated_at) >= mesIni).length,
       atrasados: atrasados.length,
     };
-  }, [chamados]);
+  }, [chamados, situacoes]);
+
+  // Situação dos prazos: em aberto + concluídos no mês.
+  const situacaoResumo = useMemo(() => {
+    const mesIni = new Date(hoje.getFullYear(), hoje.getMonth(), 1);
+    const m: Partial<Record<SituacaoPrazo, number>> = {};
+    chamados.forEach((c) => {
+      const sit = situacoes[c.id];
+      if (!sit) return;
+      if (c.status === "concluido" && !(c.concluido_em && new Date(c.concluido_em) >= mesIni)) return;
+      m[sit] = (m[sit] ?? 0) + 1;
+    });
+    return m;
+  }, [chamados, situacoes]);
 
   const donutData = useMemo(() => {
     const m: Record<string, number> = {};
@@ -234,8 +271,8 @@ export default function PainelDesenvolvedor() {
   }, [chamados]);
 
   const proximos = useMemo(
-    () => chamados.filter((c) => ATIVO(c.status) && c.prazo_previsto).sort((a, b) => +new Date(a.prazo_previsto!) - +new Date(b.prazo_previsto!)).slice(0, 5),
-    [chamados],
+    () => chamados.filter((c) => ATIVO(c.status) && previsoes[c.id]).sort((a, b) => +previsoes[a.id].data - +previsoes[b.id].data).slice(0, 5),
+    [chamados, previsoes],
   );
 
   // Chamado alvo dos atalhos = o mais urgente ativo (por prazo), senão o primeiro ativo.
@@ -296,13 +333,49 @@ export default function PainelDesenvolvedor() {
         </Card>
       )}
 
-      <div className="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+      <div className="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-6">
         <StatCard icon={ListChecks} tone="primary" label="Meus chamados abertos" value={stats.abertos} />
         <StatCard icon={Clock} tone="info" label="Em andamento" value={stats.em_andamento} />
         <StatCard icon={MessageSquare} tone="primary" label="Aguardando retorno" value={stats.aguardando} />
         <StatCard icon={CheckCircle2} tone="success" label="Concluídos (mês)" value={stats.concluidos_mes} />
         <StatCard icon={AlertTriangle} tone="destructive" label="Atrasados" value={stats.atrasados} />
+        <StatCard icon={Timer} tone="muted" label="Prazo médio de entrega"
+          value={stats.prazo_medio != null ? `${stats.prazo_medio.toFixed(1).replace(".", ",")} dias` : "—"}
+          hint="Do início à conclusão, dias úteis (90 dias)" />
       </div>
+
+      {/* SIS-2026-0763: prazo travado — só redefine quando a tarefa desce na
+          fila; e tarefa sem prazo não inicia. */}
+      {desceram.length > 0 && (
+        <Card className="mb-4 flex flex-wrap items-center gap-2 border-destructive/40 bg-destructive/5 p-3">
+          <p className="flex items-center gap-1.5 text-sm font-semibold text-destructive">
+            <AlertTriangle className="h-4 w-4" /> {desceram.length} tarefa(s) desceu(ram) de prioridade na fila. É necessário redefinir o prazo.
+          </p>
+          <div className="flex flex-wrap gap-1.5">
+            {desceram.map((c) => (
+              <button key={c.id} onClick={() => setPrazoAlvo(c)}
+                className="flex items-center gap-1 rounded border border-destructive/40 bg-background px-2 py-1 text-xs hover:bg-destructive/10">
+                <ArrowDown className="h-3 w-3 text-destructive" /> <span className="font-mono font-semibold">#{c.numero}</span> {c.prazo_posicao_fila}º → {c.posicao_dev}º · redefinir
+              </button>
+            ))}
+          </div>
+        </Card>
+      )}
+      {semPrazo.length > 0 && (
+        <Card className="mb-4 flex flex-wrap items-center gap-2 border-warning/40 bg-warning/5 p-3">
+          <p className="flex items-center gap-1.5 text-sm font-semibold text-warning">
+            <CalendarClock className="h-4 w-4" /> {semPrazo.length} tarefa(s) sem prazo — defina em dias úteis, de acordo com as suas prioridades.
+          </p>
+          <div className="flex flex-wrap gap-1.5">
+            {semPrazo.map((c) => (
+              <button key={c.id} onClick={() => setPrazoAlvo(c)}
+                className="flex items-center gap-1 rounded border border-warning/40 bg-background px-2 py-1 text-xs hover:bg-warning/10">
+                <span className="font-mono font-semibold">#{c.numero}</span> definir prazo
+              </button>
+            ))}
+          </div>
+        </Card>
+      )}
 
       {/* items-start: cada coluna com a altura do próprio conteúdo (evita o
           vão branco embaixo da tabela quando a lista é curta). */}
@@ -334,14 +407,19 @@ export default function PainelDesenvolvedor() {
                     <TableHead>Solicitante / Setor</TableHead>
                     <TableHead>Prioridade</TableHead>
                     <TableHead>Status</TableHead>
-                    <TableHead>Prazo</TableHead>
-                    <TableHead>Atualização</TableHead>
+                    <TableHead className="text-center">Prazo (dias)<span className="text-destructive">*</span></TableHead>
+                    <TableHead>Início Dev.</TableHead>
+                    <TableHead title="Iniciada: início + prazo em dias úteis. Não iniciada: projeção depois das tarefas da frente da fila.">Previsão de entrega</TableHead>
+                    <TableHead>Situação do prazo</TableHead>
                     <TableHead className="text-right">Conversa</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {visiveis.map((c) => {
-                    const atrasado = c.prazo_previsto && ATIVO(c.status) && new Date(c.prazo_previsto) < hoje;
+                    const prev = previsoes[c.id];
+                    const sit = situacoes[c.id];
+                    const desceu = desceuNaFila(c);
+                    const ehMeu = c.responsavel_id === user?.id || canCoordenar || canAprovar;
                     return (
                       <TableRow key={c.id} className="cursor-pointer" onClick={() => nav(`/app/sistemas/chamados/${c.id}`)}>
                         <TableCell className="text-center">
@@ -360,6 +438,11 @@ export default function PainelDesenvolvedor() {
                               {posicoes[c.id] && (
                                 <span className="text-[10px] font-semibold text-muted-foreground" title={`${posicoes[c.id]}º na fila geral (ordem de chegada)`}>
                                   ({posicoes[c.id]})
+                                </span>
+                              )}
+                              {desceu && (
+                                <span className="inline-flex items-center text-[10px] font-semibold text-destructive" title="Desceu de prioridade desde que o prazo foi definido">
+                                  <ArrowDown className="h-3 w-3" />{c.prazo_posicao_fila}º→{c.posicao_dev}º
                                 </span>
                               )}
                             </span>
@@ -424,8 +507,39 @@ export default function PainelDesenvolvedor() {
                             <SeloDesenvolvimento chamado={c} />
                           </div>
                         </TableCell>
-                        <TableCell className={`whitespace-nowrap text-xs ${atrasado ? "font-semibold text-destructive" : ""}`}>{c.prazo_conclusao_em ? fmtDataHora(c.prazo_conclusao_em) : fmtData(c.prazo_previsto)}{atrasado ? " · atrasado" : ""}</TableCell>
-                        <TableCell className="whitespace-nowrap text-xs text-muted-foreground">{fmtDataHora(c.updated_at)}</TableCell>
+                        <TableCell className="text-center" onClick={(e) => e.stopPropagation()}>
+                          {c.prazo_dias ? (
+                            desceu && ehMeu ? (
+                              <Button size="sm" variant="outline" className="h-7 gap-1 border-destructive/50 px-2 text-[11px] text-destructive hover:bg-destructive/10"
+                                onClick={() => setPrazoAlvo(c)} title="A tarefa desceu na fila: o prazo pode ser redefinido">
+                                {c.prazo_dias} · Redefinir prazo
+                              </Button>
+                            ) : (
+                              <span className="inline-flex items-center gap-1 rounded border border-border px-2 py-0.5 text-xs font-semibold" title="Prazo travado — só muda se a tarefa descer na fila">
+                                {c.prazo_dias} <Lock className="h-3 w-3 text-muted-foreground" />
+                              </span>
+                            )
+                          ) : ATIVO(c.status) && ehMeu && podeDefinirPrazo(c) ? (
+                            <Button size="sm" variant="outline" className="h-7 border-warning/50 px-2 text-[11px] text-warning hover:bg-warning/10" onClick={() => setPrazoAlvo(c)}>
+                              Definir
+                            </Button>
+                          ) : <span className="text-xs text-muted-foreground">—</span>}
+                        </TableCell>
+                        <TableCell className="whitespace-nowrap text-xs">{c.desenvolvimento_iniciado_em ? fmtData(c.desenvolvimento_iniciado_em) : "—"}</TableCell>
+                        <TableCell className="whitespace-nowrap text-xs">
+                          {prev ? (
+                            <span title={prev.projetada ? "Projeção pela fila: começa quando as tarefas da frente terminam" : "Início + prazo em dias úteis"}>
+                              {prev.data.toLocaleDateString("pt-BR")}{prev.projetada && <span className="text-muted-foreground"> *</span>}
+                            </span>
+                          ) : c.status === "concluido" && c.concluido_em ? fmtData(c.concluido_em) : "—"}
+                        </TableCell>
+                        <TableCell>
+                          {sit && (
+                            <span className={`inline-flex whitespace-nowrap rounded border px-1.5 py-0.5 text-[10px] font-semibold ${SITUACOES_PRAZO[sit].cls}`}>
+                              {SITUACOES_PRAZO[sit].label}
+                            </span>
+                          )}
+                        </TableCell>
                         <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
                           <BotaoChatChamado chamado={c} perfil="equipe" naoLidos={naoLidos[c.id] ?? 0} responsavelNome={nomeDe(c.responsavel_id)} />
                         </TableCell>
@@ -433,7 +547,7 @@ export default function PainelDesenvolvedor() {
                     );
                   })}
                   {visiveis.length === 0 && (
-                    <TableRow><TableCell colSpan={8} className="py-6 text-center text-sm text-muted-foreground">
+                    <TableRow><TableCell colSpan={10} className="py-6 text-center text-sm text-muted-foreground">
                       {visao === "concluidos" ? "Nenhum chamado concluído." : "Nenhum chamado na sua fila."}
                     </TableCell></TableRow>
                   )}
@@ -441,6 +555,8 @@ export default function PainelDesenvolvedor() {
               </Table>
               <p className="mt-2 text-[11px] text-muted-foreground">
                 Fila = a sua ordem de execução (1 = próximo a fazer), definida pela coordenação. Entre parênteses, a posição na fila geral.
+                Prazo (dias) = dias úteis, obrigatório para iniciar e travado depois de definido — só redefine se a tarefa descer na fila (↓).
+                Previsão com * = projeção pela fila (a tarefa ainda não começou).
               </p>
             </div>
           )}
@@ -473,11 +589,34 @@ export default function PainelDesenvolvedor() {
           </Card>
 
           <Card className="p-4">
-            <p className="mb-2 flex items-center gap-1.5 text-sm font-bold"><CalendarClock className="h-4 w-4 text-primary" /> Próximos prazos</p>
+            <p className="mb-2 text-sm font-bold">Situação dos prazos</p>
+            <div className="space-y-1.5">
+              {(["no_prazo", "risco", "atrasado", "sem_prazo", "concluido_no_prazo", "concluido_atraso"] as SituacaoPrazo[]).map((k) => {
+                const v = situacaoResumo[k] ?? 0;
+                const max = Math.max(1, ...Object.values(situacaoResumo).map((x) => x ?? 0));
+                return (
+                  <div key={k} className="flex items-center gap-2 text-[11px]">
+                    <span className="flex w-36 items-center gap-1.5">
+                      <span className="h-2 w-2 rounded-full" style={{ background: SITUACOES_PRAZO[k].cor }} />
+                      {SITUACOES_PRAZO[k].label}
+                    </span>
+                    <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-muted">
+                      <div className="h-full rounded-full" style={{ width: `${(v / max) * 100}%`, background: SITUACOES_PRAZO[k].cor }} />
+                    </div>
+                    <span className="w-5 text-right font-medium">{v}</span>
+                  </div>
+                );
+              })}
+            </div>
+            <p className="mt-2 text-[10px] text-muted-foreground">Em aberto + concluídos no mês. Risco = vence hoje ou no próximo dia útil.</p>
+          </Card>
+
+          <Card className="p-4">
+            <p className="mb-2 flex items-center gap-1.5 text-sm font-bold"><CalendarClock className="h-4 w-4 text-primary" /> Próximas entregas</p>
             <div className="space-y-2">
               {proximos.map((c) => (
                 <button key={c.id} onClick={() => nav(`/app/sistemas/chamados/${c.id}`)} className="block w-full rounded border border-border px-2.5 py-1.5 text-left hover:border-primary/40">
-                  <p className="text-xs font-medium">{fmtData(c.prazo_previsto)} — #{c.numero}</p>
+                  <p className="text-xs font-medium">{previsoes[c.id].data.toLocaleDateString("pt-BR")}{previsoes[c.id].projetada ? " (projeção)" : ""} — #{c.numero}</p>
                   <p className="truncate text-[11px] text-muted-foreground">{c.assunto}</p>
                 </button>
               ))}
@@ -623,6 +762,13 @@ export default function PainelDesenvolvedor() {
           </div>
         </Card>
       </div>
+
+      <IniciarDesenvolvimentoDialog
+        open={!!prazoAlvo}
+        onOpenChange={(v) => { if (!v) setPrazoAlvo(null); }}
+        chamado={prazoAlvo}
+        modo="definir"
+      />
 
       <ReabrirChamadoDialog
         open={!!reabrir}

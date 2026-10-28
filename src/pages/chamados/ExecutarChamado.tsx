@@ -23,7 +23,9 @@ import { abrirPrGithub } from "./abrirPrGithub";
 import { BotaoAdicionarParticipante } from "./ParticipantesChamado";
 import { ReabrirChamadoDialog } from "./ReabrirChamadoDialog";
 import { IniciarDesenvolvimentoDialog } from "./IniciarDesenvolvimentoDialog";
-import { podeIniciarDesenvolvimento, prazoVencido } from "@/lib/chamados/prazoDesenvolvimento";
+import {
+  SITUACOES_PRAZO, desceuNaFila, podeDefinirPrazo, podeIniciarDesenvolvimento, situacaoPrazo,
+} from "@/lib/chamados/prazoDesenvolvimento";
 import { ChatChamado } from "./ChatChamado";
 import { BotaoStatusChamado, CardTreinamento, CardValidacaoPresidencia, useValidacaoChamado } from "./StatusValidacao";
 import {
@@ -55,6 +57,8 @@ export default function ExecutarChamado() {
   const [avaliarDepoisOpen, setAvaliarDepoisOpen] = useState(false);
   // Iniciar desenvolvimento / alterar prazo (mig 20261028001400).
   const [iniciarOpen, setIniciarOpen] = useState(false);
+  // Definir / redefinir o prazo em dias (mig 20261028001500).
+  const [prazoOpen, setPrazoOpen] = useState(false);
 
   const { data: usuarios = [] } = useQuery({
     queryKey: ["chamados-usuarios"],
@@ -348,24 +352,41 @@ export default function ExecutarChamado() {
               <p className="text-sm font-medium">{nomeDe(chamado.responsavel_id)}</p>
             </div>
             <div>
-              <p className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Prazo para concluir</p>
-              {/* Desde 28/10/2026 (mig 20261028001400) o prazo é informado ao
-                  iniciar o desenvolvimento, com hora — e só muda pelo diálogo,
-                  que avisa se outro chamado do dev vence no mesmo dia. */}
-              {chamado.prazo_conclusao_em ? (
-                <p className={`text-sm font-medium ${prazoVencido(chamado) ? "text-destructive" : ""}`}>
-                  {fmtDataHora(chamado.prazo_conclusao_em)}{prazoVencido(chamado) ? " · vencido" : ""}
+              <p className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Prazo (dias úteis)</p>
+              {/* SIS-2026-0763 (mig 20261028001500): prazo em dias úteis,
+                  definido pelo dev ao receber a tarefa e TRAVADO — só
+                  redefine quando a tarefa desce na fila. A previsão de
+                  entrega é início + prazo; antes de iniciar, depende da fila. */}
+              {chamado.prazo_dias ? (
+                <p className="text-sm font-medium">
+                  {chamado.prazo_dias} dia(s) útil(eis)
+                  {!!chamado.prazo_redefinicoes && <span className="text-xs font-normal text-muted-foreground"> · redefinido {chamado.prazo_redefinicoes}x</span>}
                 </p>
-              ) : chamado.prazo_previsto ? (
-                <p className="text-sm">{fmtData(chamado.prazo_previsto)}</p>
               ) : (
-                <p className="text-xs text-muted-foreground">Informado ao iniciar o desenvolvimento.</p>
+                <p className="text-xs text-warning">Ainda não definido — obrigatório para iniciar.</p>
               )}
-              {podeAgir && !!chamado.desenvolvimento_iniciado_em && !chamadoEncerrado(chamado.status) && (
-                <Button variant="outline" size="sm" className="mt-1.5 h-8 gap-1.5" onClick={() => setIniciarOpen(true)}>
-                  <CalendarClock className="h-3.5 w-3.5" /> Alterar prazo
+              {desceuNaFila(chamado) && (
+                <p className="mt-1 text-xs text-destructive">A tarefa desceu na fila ({chamado.prazo_posicao_fila}º → {chamado.posicao_dev}º): redefina o prazo.</p>
+              )}
+              {podeAgir && podeDefinirPrazo(chamado) && (
+                <Button variant="outline" size="sm" className="mt-1.5 h-8 gap-1.5" onClick={() => setPrazoOpen(true)}>
+                  <CalendarClock className="h-3.5 w-3.5" /> {chamado.prazo_dias ? "Redefinir prazo" : "Definir prazo"}
                 </Button>
               )}
+            </div>
+            <div>
+              <p className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Previsão de entrega</p>
+              {chamado.prazo_conclusao_em ? (
+                <p className="text-sm font-medium">{fmtData(chamado.prazo_conclusao_em)}</p>
+              ) : (
+                <p className="text-xs text-muted-foreground">{chamado.prazo_dias ? "Conta a partir do início do desenvolvimento (veja a projeção no Painel do Desenvolvedor)." : "—"}</p>
+              )}
+              {(() => {
+                const sit = situacaoPrazo(chamado, chamado.prazo_conclusao_em ? { data: new Date(chamado.prazo_conclusao_em), projetada: false } : null);
+                return sit && (chamado.prazo_conclusao_em || chamado.status === "concluido") ? (
+                  <span className={`mt-1 inline-flex rounded border px-1.5 py-0.5 text-[10px] font-semibold ${SITUACOES_PRAZO[sit].cls}`}>{SITUACOES_PRAZO[sit].label}</span>
+                ) : null;
+              })()}
             </div>
             {chamado.desenvolvimento_iniciado_em && (
               <div>
@@ -516,6 +537,14 @@ export default function ExecutarChamado() {
         onOpenChange={setReabrindoOpen}
         chamado={chamado}
         onReaberto={invalidar}
+      />
+
+      <IniciarDesenvolvimentoDialog
+        open={prazoOpen}
+        onOpenChange={setPrazoOpen}
+        chamado={chamado}
+        modo="definir"
+        onFeito={invalidar}
       />
 
       <IniciarDesenvolvimentoDialog

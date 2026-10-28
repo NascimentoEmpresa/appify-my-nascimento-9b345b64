@@ -1,47 +1,30 @@
 // =====================================================================
-// INÍCIO DO DESENVOLVIMENTO + PRAZO (28/10/2026, mig 20261028001400).
+// PRAZO DO DESENVOLVEDOR (28/10/2026 — migs 20261028001400 e 20261028001500,
+// chamado SIS-2026-0763).
 //
-// Pedido do Pablo: o dev marca "Em desenvolvimento" e, antes de confirmar o
-// início, informa o PRAZO — em horas ou em dias. "Cada chamado tem que ter
-// sua data. Não posso colocar a mesma data em dois chamados. Mas nada pode
-// impedir também, só tem que dar um aviso e deixar como opcional."
+// Pedido do Pablo: "Ao receber a tarefa o desenvolvedor deve definir o prazo
+// de acordo com as suas prioridades, esse prazo não poderá ser alterado,
+// somente se a tarefa descer de prioridade. Ao concluir a tarefa deve ficar
+// com o status de concluída dentro do prazo ou concluída com atraso."
+// Antes (mesmo dia): "cada chamado tem que ter sua data. Não posso colocar a
+// mesma data em dois chamados. Mas nada pode impedir também, só tem que dar
+// um aviso" — o aviso de data repetida continua aqui (chamadosComMesmaData).
 //
-// Por isso:
-//   · o prazo é obrigatório para iniciar (a RPC chamado_iniciar_desenvolvimento
-//     recusa sem prazo ou com prazo no passado);
-//   · mesma DATA (dia) em outro chamado ativo do mesmo dev é só AVISO —
-//     `chamadosComMesmaData` lista quais, e a tela deixa seguir assim mesmo.
+// Modelo:
+//   · prazo_dias = esforço em DIAS ÚTEIS, obrigatório para iniciar, TRAVADO
+//     depois de definido (RPC chamado_definir_prazo) — só destrava quando a
+//     tarefa desce na fila (posicao_dev > prazo_posicao_fila);
+//   · previsão de entrega: iniciado = início + prazo_dias (gravada pelo banco
+//     em prazo_conclusao_em); não iniciado = PROJEÇÃO pela fila — começa
+//     quando as tarefas da frente terminam (`projetarPrevisoes`);
+//   · situação: No prazo / Risco / Atrasado e, concluído, Concluído no prazo
+//     / Concluído com atraso (concluido_no_prazo, gravado pelo banco).
 //
-// Lógica pura (sem React) para a tela e os testes concordarem.
+// Dias úteis: sem sábado, domingo e feriado nacional do tipo "Feriado" de
+// feriadosNacionais — o MESMO calendário de public.chamado_feriado (mig
+// 20261028001500). Mudar um = mudar o outro.
 // =====================================================================
-
-export type UnidadePrazo = "horas" | "dias";
-
-export const UNIDADES_PRAZO: { value: UnidadePrazo; label: string }[] = [
-  { value: "horas", label: "Horas" },
-  { value: "dias", label: "Dias úteis" },
-];
-
-/**
- * Prazo a partir de agora. Horas = corridas (chamado de 3 h vence hoje).
- * Dias = úteis: pula sábado e domingo, mantendo a hora — o mesmo jeito que o
- * formulário de abertura fala de urgência ("até 3 dias úteis").
- */
-export function calcularPrazo(agora: Date, quantidade: number, unidade: UnidadePrazo): Date | null {
-  if (!Number.isFinite(quantidade) || quantidade <= 0) return null;
-  const d = new Date(agora.getTime());
-  if (unidade === "horas") {
-    d.setTime(d.getTime() + Math.round(quantidade * 60) * 60_000);
-    return d;
-  }
-  let falta = Math.ceil(quantidade);
-  while (falta > 0) {
-    d.setDate(d.getDate() + 1);
-    const dia = d.getDay();
-    if (dia !== 0 && dia !== 6) falta--;
-  }
-  return d;
-}
+import { feriadosNacionais } from "@/lib/feriadosNacionais";
 
 const doisDigitos = (n: number) => String(n).padStart(2, "0");
 
@@ -54,18 +37,149 @@ export function diaLocal(d: Date | string): string {
   return `${x.getFullYear()}-${doisDigitos(x.getMonth() + 1)}-${doisDigitos(x.getDate())}`;
 }
 
-/** Valor para <input type="datetime-local"> (hora local, sem segundos). */
-export function paraInputDataHora(d: Date | null | undefined): string {
-  if (!d) return "";
-  return `${diaLocal(d)}T${doisDigitos(d.getHours())}:${doisDigitos(d.getMinutes())}`;
+/** AAAA-MM-DD → Date à meia-noite local. */
+const dataDoDia = (dia: string) => { const [a, m, d] = dia.split("-").map(Number); return new Date(a, m - 1, d); };
+
+const feriadosPorAno = new Map<number, Set<string>>();
+function feriadosDoAno(ano: number): Set<string> {
+  let s = feriadosPorAno.get(ano);
+  if (!s) {
+    s = new Set(feriadosNacionais(ano).filter((f) => f.tipo === "Feriado").map((f) => f.data));
+    feriadosPorAno.set(ano, s);
+  }
+  return s;
 }
 
-/** Lê o valor do <input type="datetime-local"> (hora local). Vazio/ruim = null. */
-export function lerInputDataHora(v: string): Date | null {
-  if (!v) return null;
-  const d = new Date(v);
-  return Number.isNaN(d.getTime()) ? null : d;
+/** Dia útil = segunda a sexta, fora feriado nacional. */
+export function ehDiaUtil(d: Date): boolean {
+  const dia = d.getDay();
+  if (dia === 0 || dia === 6) return false;
+  return !feriadosDoAno(d.getFullYear()).has(diaLocal(d));
 }
+
+/**
+ * O dia que fica N dias úteis depois de `base` (o dia da base não conta).
+ * Espelha public.chamado_somar_dias_uteis.
+ */
+export function somarDiasUteis(base: Date, dias: number): Date {
+  const d = dataDoDia(diaLocal(base));
+  let falta = Math.max(0, Math.floor(dias || 0));
+  while (falta > 0) {
+    d.setDate(d.getDate() + 1);
+    if (ehDiaUtil(d)) falta--;
+  }
+  return d;
+}
+
+/** Dias úteis de `de` (exclusive) até `ate` (inclusive). Negativo se `ate` já passou. */
+export function diasUteisAte(de: Date, ate: Date): number {
+  const a = diaLocal(de), b = diaLocal(ate);
+  if (a === b) return 0;
+  const passou = b < a;
+  const ini = dataDoDia(passou ? b : a), fim = passou ? a : b;
+  let n = 0;
+  while (diaLocal(ini) < fim) { ini.setDate(ini.getDate() + 1); if (ehDiaUtil(ini)) n++; }
+  return passou ? -n : n;
+}
+
+// ---- Chamado com prazo ------------------------------------------------
+
+export interface ChamadoPrazo {
+  id: string;
+  status: string;
+  responsavel_id: string | null;
+  posicao_dev?: number | null;
+  created_at?: string;
+  desenvolvimento_iniciado_em?: string | null;
+  prazo_conclusao_em?: string | null;
+  prazo_previsto?: string | null;
+  prazo_dias?: number | null;
+  prazo_definido_em?: string | null;
+  prazo_posicao_fila?: number | null;
+  concluido_no_prazo?: boolean | null;
+}
+
+const ENCERRADOS = ["concluido", "reprovado", "cancelado"];
+const ativo = (s: string) => !ENCERRADOS.includes(s);
+
+/**
+ * A tarefa desceu de prioridade na fila desde que o prazo foi definido?
+ * ESPELHA a trava de chamado_definir_prazo: é o que libera redefinir.
+ */
+export const desceuNaFila = (c: ChamadoPrazo) =>
+  ativo(c.status) && c.prazo_dias != null && c.posicao_dev != null && c.prazo_posicao_fila != null
+  && c.posicao_dev > c.prazo_posicao_fila;
+
+/** Pode definir o prazo agora? Primeira vez, ou redefinir porque desceu. */
+export const podeDefinirPrazo = (c: ChamadoPrazo) =>
+  ativo(c.status) && !!c.responsavel_id && (c.prazo_dias == null || desceuNaFila(c));
+
+/** ESPELHA chamado_iniciar_desenvolvimento: aberto/em andamento, com responsável, ainda não iniciado. */
+export const podeIniciarDesenvolvimento = (
+  c: { status: string; responsavel_id: string | null; desenvolvimento_iniciado_em?: string | null },
+) => !c.desenvolvimento_iniciado_em && !!c.responsavel_id && (c.status === "aberto" || c.status === "em_andamento");
+
+export interface Previsao { data: Date; projetada: boolean }
+
+/**
+ * Previsão de entrega de cada tarefa da fila de UM dev. A fila vai na ordem
+ * de execução (posicao_dev). Iniciada = a previsão gravada (início + prazo).
+ * Não iniciada = começa quando a tarefa da frente termina (ou hoje) e soma o
+ * prazo em dias úteis — muda sozinha quando a fila muda. Sem prazo: sem
+ * previsão, e não empurra as de trás.
+ */
+export function projetarPrevisoes(fila: readonly ChamadoPrazo[], hoje = new Date()): Record<string, Previsao> {
+  const ordem = [...fila].filter((c) => ativo(c.status))
+    .sort((a, b) => (a.posicao_dev ?? Number.MAX_SAFE_INTEGER) - (b.posicao_dev ?? Number.MAX_SAFE_INTEGER)
+      || +new Date(a.created_at ?? 0) - +new Date(b.created_at ?? 0));
+  const r: Record<string, Previsao> = {};
+  let cursor = dataDoDia(diaLocal(hoje));
+  for (const c of ordem) {
+    if (c.desenvolvimento_iniciado_em && c.prazo_conclusao_em) {
+      const d = dataDoDia(diaLocal(c.prazo_conclusao_em));
+      r[c.id] = { data: d, projetada: false };
+      if (d > cursor) cursor = d;
+    } else if (c.prazo_dias) {
+      const d = somarDiasUteis(cursor, c.prazo_dias);
+      r[c.id] = { data: d, projetada: true };
+      cursor = d;
+    }
+  }
+  return r;
+}
+
+export type SituacaoPrazo =
+  | "no_prazo" | "risco" | "atrasado" | "sem_prazo"
+  | "concluido_no_prazo" | "concluido_atraso" | "concluido";
+
+export const SITUACOES_PRAZO: Record<SituacaoPrazo, { label: string; cls: string; cor: string }> = {
+  no_prazo:           { label: "No prazo",               cls: "border-success/30 bg-success/10 text-success",             cor: "hsl(var(--success))" },
+  risco:              { label: "Risco",                  cls: "border-warning/40 bg-warning/10 text-warning",             cor: "hsl(var(--warning))" },
+  atrasado:           { label: "Atrasado",               cls: "border-destructive/40 bg-destructive text-destructive-foreground", cor: "hsl(var(--destructive))" },
+  sem_prazo:          { label: "Definir prazo",          cls: "border-muted-foreground/30 bg-muted text-muted-foreground", cor: "hsl(var(--muted-foreground))" },
+  concluido_no_prazo: { label: "Concluído no prazo",     cls: "border-success/30 bg-success/10 text-success",             cor: "hsl(var(--primary))" },
+  concluido_atraso:   { label: "Concluído com atraso",   cls: "border-destructive/30 bg-destructive/10 text-destructive", cor: "hsl(var(--destructive))" },
+  concluido:          { label: "Concluído",              cls: "border-muted-foreground/30 bg-muted text-muted-foreground", cor: "hsl(var(--muted-foreground))" },
+};
+
+/**
+ * Situação do prazo. Concluído: o que o banco gravou ao concluir. Ativo:
+ * passou do dia da previsão = Atrasado; vence hoje ou no próximo dia útil =
+ * Risco; senão No prazo. Sem prazo definido = "Definir prazo".
+ */
+export function situacaoPrazo(c: ChamadoPrazo, previsao: Previsao | null | undefined, agora = new Date()): SituacaoPrazo | null {
+  if (c.status === "concluido") {
+    return c.concluido_no_prazo === true ? "concluido_no_prazo"
+      : c.concluido_no_prazo === false ? "concluido_atraso" : "concluido";
+  }
+  if (!ativo(c.status)) return null;
+  if (!c.prazo_dias || !previsao) return "sem_prazo";
+  const faltam = diasUteisAte(agora, previsao.data);
+  if (diaLocal(previsao.data) < diaLocal(agora)) return "atrasado";
+  return faltam <= 1 ? "risco" : "no_prazo";
+}
+
+// ---- Aviso de data repetida (pedido de 28/10, continua valendo) -------
 
 export interface ChamadoComPrazo {
   id: string;
@@ -75,13 +189,13 @@ export interface ChamadoComPrazo {
   prazo_previsto?: string | null;
 }
 
-/** O dia do prazo do chamado: o informado ao iniciar; sem ele, o prazo_previsto antigo. */
+/** O dia do prazo do chamado: o gravado ao iniciar; sem ele, o prazo_previsto antigo. */
 export const diaDoPrazo = (c: Pick<ChamadoComPrazo, "prazo_conclusao_em" | "prazo_previsto">): string | null =>
   c.prazo_conclusao_em ? diaLocal(c.prazo_conclusao_em) : c.prazo_previsto ? diaLocal(c.prazo_previsto) : null;
 
 /**
- * Outros chamados (do mesmo dev, ainda ativos — quem chama filtra) com prazo
- * no MESMO DIA. Só aviso: a tela mostra e deixa seguir.
+ * Outros chamados (do mesmo dev, ainda ativos — quem chama filtra) com
+ * previsão no MESMO DIA. Só aviso: a tela mostra e deixa seguir.
  */
 export function chamadosComMesmaData<T extends ChamadoComPrazo>(prazo: Date | null, outros: readonly T[], idAtual?: string): T[] {
   if (!prazo) return [];
@@ -89,12 +203,11 @@ export function chamadosComMesmaData<T extends ChamadoComPrazo>(prazo: Date | nu
   return outros.filter((c) => c.id !== idAtual && diaDoPrazo(c) === dia);
 }
 
+// ---- Selo do andamento ------------------------------------------------
+
 export type SituacaoDesenvolvimento = "na_fila" | "em_desenvolvimento" | null;
 
-/**
- * Em andamento com início marcado = "Em desenvolvimento"; sem início =
- * "Na fila" (direcionado ao dev, que ainda não começou). Outros status: null.
- */
+/** Em andamento com início marcado = "Em desenvolvimento"; sem início = "Na fila". */
 export function situacaoDesenvolvimento(
   c: { status: string; desenvolvimento_iniciado_em?: string | null },
 ): SituacaoDesenvolvimento {
@@ -102,13 +215,7 @@ export function situacaoDesenvolvimento(
   return null;
 }
 
-/** ESPELHA a RPC: iniciar só com chamado aberto/em andamento, com responsável, ainda não iniciado. */
-export const podeIniciarDesenvolvimento = (
-  c: { status: string; responsavel_id: string | null; desenvolvimento_iniciado_em?: string | null },
-) => !c.desenvolvimento_iniciado_em && !!c.responsavel_id && (c.status === "aberto" || c.status === "em_andamento");
-
-/** Prazo estourado: tem prazo, ainda não concluiu e já passou. */
+/** Previsão estourada: tem previsão gravada, ainda não concluiu e o dia já passou. */
 export const prazoVencido = (
   c: { status: string; prazo_conclusao_em?: string | null }, agora = new Date(),
-) => !!c.prazo_conclusao_em && !["concluido", "reprovado", "cancelado"].includes(c.status)
-  && new Date(c.prazo_conclusao_em).getTime() < agora.getTime();
+) => !!c.prazo_conclusao_em && ativo(c.status) && diaLocal(c.prazo_conclusao_em) < diaLocal(agora);

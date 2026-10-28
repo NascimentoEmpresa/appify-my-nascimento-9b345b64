@@ -133,6 +133,15 @@ export interface Chamado {
   desenvolvimento_iniciado_em?: string | null;
   desenvolvimento_iniciado_por?: string | null;
   prazo_conclusao_em?: string | null;
+  // Prazo em dias úteis, travado (mig 20261028001500): só redefine quando a
+  // tarefa desce na fila (posicao_dev > prazo_posicao_fila).
+  prazo_dias?: number | null;
+  prazo_definido_em?: string | null;
+  prazo_definido_por?: string | null;
+  prazo_posicao_fila?: number | null;
+  prazo_redefinicoes?: number | null;
+  /** Gravado ao concluir: true = no prazo, false = com atraso, null = sem prazo. */
+  concluido_no_prazo?: boolean | null;
   created_at: string;
   updated_at: string;
 }
@@ -386,7 +395,7 @@ export function SeloDesenvolvimento({ chamado, comPrazo = false }: {
   const vencido = prazoVencido(chamado);
   return (
     <Badge variant="outline" className={`text-[10px] font-semibold ${vencido ? "border-destructive/30 bg-destructive/10 text-destructive" : "border-info/30 bg-info/10 text-info"}`}>
-      Em desenvolvimento{comPrazo && chamado.prazo_conclusao_em ? ` · ${vencido ? "venceu" : "até"} ${fmtDataHora(chamado.prazo_conclusao_em)}` : ""}
+      Em desenvolvimento{comPrazo && chamado.prazo_conclusao_em ? ` · ${vencido ? "venceu" : "até"} ${fmtData(chamado.prazo_conclusao_em)}` : ""}
     </Badge>
   );
 }

@@ -112,8 +112,10 @@ function descreverAviso(e: Evento, nomeDe: (uid: string | null) => string): Avis
     // Confirmação do solicitante (mig 20261028001300).
     if (/^Conclus[ãa]o confirmada pelo solicitante$/i.test(t)) return `${quem} confirmou a conclusão do chamado`;
     // Início do desenvolvimento / prazo (mig 20261028001400).
-    if ((m = t.match(/^Desenvolvimento iniciado — prazo de conclus[ãa]o:\s*(.+)$/i))) return `${quem} começou o desenvolvimento — previsão de conclusão: ${m[1]}`;
-    if ((m = t.match(/^Prazo de conclus[ãa]o alterado para\s+(.+)$/i))) return `${quem} mudou a previsão de conclusão para ${m[1]}`;
+    if ((m = t.match(/^Desenvolvimento iniciado — (.+)$/i))) return `${quem} começou o desenvolvimento — ${m[1]}`;
+    // Prazo em dias, travado (SIS-2026-0763, mig 20261028001500).
+    if ((m = t.match(/^Prazo definido:\s*(.+)$/i))) return `${quem} definiu o prazo: ${m[1]}`;
+    if ((m = t.match(/^Prazo redefinido para\s+(.+)$/i))) return `${quem} redefiniu o prazo para ${m[1]}`;
     // O direcionamento nem sempre trouxe a posição na fila (gravações antigas).
     if ((m = t.match(/^Chamado direcionado a (.+?)(?:\s*—\s*(\d+)º lugar na fila.*)?$/i)))
       return `${quem} designou o chamado para ${m[1]}${m[2] ? ` · ${m[2]}º na fila` : ""}`;

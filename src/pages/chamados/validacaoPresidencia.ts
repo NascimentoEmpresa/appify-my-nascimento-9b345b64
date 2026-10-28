@@ -230,7 +230,7 @@ export function montarLinhaDoTempo(
       : "Na fila do desenvolvedor — ainda não começou");
   }
   if (!devConcluiu && !encerradoSemEntrega && c.prazo_conclusao_em) {
-    detalhesDev.push(`Previsão de conclusão: ${dataHoraBr(c.prazo_conclusao_em)}`);
+    detalhesDev.push(`Previsão de conclusão: ${new Date(c.prazo_conclusao_em).toLocaleDateString("pt-BR")}`);
   }
   if (c.status === "aguardando_retorno") detalhesDev.push("O time pediu mais informações ao solicitante");
   if (v && v.devolucoes > 0 && etapa === "desenvolvimento" && v.presidencia_aprovado === false) {

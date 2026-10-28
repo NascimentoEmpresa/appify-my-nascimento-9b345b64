@@ -274,7 +274,7 @@ export default function MeusChamados({ base = "/app/central-servicos/chamados" }
                       </div>
                     </TableCell>
                     <TableCell className="text-xs">{nomeDe(c.responsavel_id)}</TableCell>
-                    <TableCell className="whitespace-nowrap text-xs">{c.prazo_conclusao_em ? fmtDataHora(c.prazo_conclusao_em) : fmtData(c.prazo_previsto)}</TableCell>
+                    <TableCell className="whitespace-nowrap text-xs">{c.prazo_conclusao_em ? fmtData(c.prazo_conclusao_em) : fmtData(c.prazo_previsto)}</TableCell>
                     <TableCell className="whitespace-nowrap text-xs text-muted-foreground">{fmtDataHora(c.created_at)}</TableCell>
                     <TableCell className="max-w-[200px] truncate text-xs text-muted-foreground" title={c.observacao_gerente ?? ""}>
                       {c.observacao_gerente
