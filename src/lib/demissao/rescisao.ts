@@ -585,6 +585,109 @@ export function completarVazios(atual: Partial<RescisaoRH>, nova: LinhaPlanilhaR
   return Object.keys(patch).length ? patch : null;
 }
 
+/**
+ * Reimportar ATUALIZA (28/10/2026). Pedido do Pablo: "alguns status de
+ * rescisões já cadastradas estão desatualizados no sistema e a planilha tem o
+ * valor certo". Com completarVazios a planilha só preenchia o vazio — e o
+ * status só saía do "Rescisão por fazer" — então o RH marcava "RESCISÃO OK"
+ * no Excel, reimportava, e o sistema continuava em "Rescisão feita".
+ *
+ * Aqui a planilha vence em tudo que ela PREENCHE: status, datas, tipo,
+ * homologação, malote, envio/retorno. O que ela deixa vazio não apaga o que
+ * está no sistema, e as programadas só passam a OK (um "não" no Excel não
+ * desfaz o OK lançado aqui). Observação e pontos ajustados continuam só
+ * completando: é onde o RH escreve no sistema, e a observação da planilha
+ * carrega o "Tipo na planilha: …" do importador. A troca de status fica no
+ * RH_RESCISAO_HISTORICO pelo gatilho, como qualquer outra.
+ */
+const SO_COMPLETAM: ReadonlySet<CampoEditavel> = new Set(["observacao", "pontos_ajustados"]);
+
+export interface MudancaCampo { campo: string; de: unknown; para: unknown }
+
+// O jsonb devolve as chaves em outra ordem (por tamanho): comparar o
+// JSON.stringify inteiro dava "mudou" em toda linha e regravava a planilha toda.
+const mesmaLinhaOriginal = (a: LinhaOriginal | null | undefined, b: LinhaOriginal): boolean => {
+  if (!a) return false;
+  const ka = Object.keys(a), kb = Object.keys(b);
+  return ka.length === kb.length && kb.every((k) => a[k] === b[k]);
+};
+
+export function atualizarPelaPlanilha(
+  atual: Partial<RescisaoRH>, nova: LinhaPlanilhaRescisao,
+): { patch: Partial<RescisaoRH>; mudancas: MudancaCampo[] } | null {
+  const patch: Record<string, unknown> = {};
+  const mudancas: MudancaCampo[] = [];
+  const muda = (campo: string, de: unknown, para: unknown) => { patch[campo] = para; mudancas.push({ campo, de: de ?? null, para }); };
+  for (const c of CAMPOS_EDITAVEIS) {
+    const v = nova[c];
+    const a = atual[c];
+    if (typeof v === "boolean") { if (v && !a) muda(c, a, true); continue; }
+    if (v == null || v === "") continue;
+    const vazio = a == null || a === "";
+    if (SO_COMPLETAM.has(c) ? vazio : String(a ?? "").slice(0, c.startsWith("data_") ? 10 : undefined) !== v) muda(c, a, v);
+  }
+  // A chave e a linha original acompanham a planilha de agora — sem entrar no
+  // relatório (não é dado que o RH vê mudar).
+  if (atual.planilha_chave !== nova.chave) patch.planilha_chave = nova.chave;
+  if (nova.planilha_original && Object.keys(nova.planilha_original).length
+      && !mesmaLinhaOriginal(atual.planilha_original, nova.planilha_original)) {
+    patch.planilha_original = nova.planilha_original;
+    patch.planilha_aba = nova.planilha_aba ?? null;
+  }
+  return Object.keys(patch).length ? { patch: patch as Partial<RescisaoRH>, mudancas } : null;
+}
+
+/** Empresa|matrícula|nome — a pessoa, sem as datas (as três primeiras partes da planilha_chave). */
+export const pessoaDaChave = (chave: string): string => chave.split("|").slice(0, 3).join("|");
+
+/**
+ * Para cada linha da planilha, a RH_RESCISAO que já é ela (28/10/2026).
+ * Primeiro pela planilha_chave inteira. Mas a chave leva as datas de demissão
+ * e pagamento: o RH corrige uma data no Excel e a linha "virava outra" —
+ * entrava DE NOVO, duplicada. Então, sem a chave exata, casa pela pessoa
+ * (empresa + matrícula + nome) entre as já importadas que sobraram, pela data
+ * de demissão (ou pagamento) mais próxima. Duas candidatas empatadas (ou sem
+ * data para desempatar) = ambígua: não grava, a tela mostra — melhor deixar
+ * de fora do que atualizar a rescisão errada ou duplicar.
+ */
+export function casarComExistentes(
+  linhas: LinhaPlanilhaRescisao[], rescisoes: Pick<RescisaoRH, "id" | "planilha_chave" | "data_demissao" | "data_pagamento">[],
+): { casadas: Map<string, number>; ambiguas: LinhaPlanilhaRescisao[] } {
+  const porChave = new Map(rescisoes.filter((r) => r.planilha_chave).map((r) => [r.planilha_chave!, r.id]));
+  const casadas = new Map<string, number>();
+  const usadas = new Set<number>();
+  for (const l of linhas) {
+    const id = porChave.get(l.chave);
+    if (id != null) { casadas.set(l.chave, id); usadas.add(id); }
+  }
+  const porPessoa = new Map<string, typeof rescisoes>();
+  for (const r of rescisoes) {
+    if (!r.planilha_chave || usadas.has(r.id)) continue;
+    const p = pessoaDaChave(r.planilha_chave);
+    porPessoa.set(p, [...(porPessoa.get(p) ?? []), r]);
+  }
+  const dataDe = (r: (typeof rescisoes)[number]) => {
+    const [, , , dem, pag] = r.planilha_chave!.split("|");
+    return (r.data_demissao ?? dem ?? "").slice(0, 10) || (r.data_pagamento ?? pag ?? "").slice(0, 10) || null;
+  };
+  const ambiguas: LinhaPlanilhaRescisao[] = [];
+  for (const l of linhas) {
+    if (casadas.has(l.chave)) continue;
+    const candidatas = (porPessoa.get(pessoaDaChave(l.chave)) ?? []).filter((r) => !usadas.has(r.id));
+    if (!candidatas.length) continue;
+    const ref = l.data_demissao ?? l.data_pagamento;
+    const dist = (r: (typeof rescisoes)[number]) => {
+      const d = dataDe(r);
+      return ref && d ? Math.abs(Date.parse(d) - Date.parse(ref)) : Number.MAX_SAFE_INTEGER;
+    };
+    const ordem = [...candidatas].sort((a, b) => dist(a) - dist(b));
+    if (ordem.length > 1 && dist(ordem[0]) === dist(ordem[1])) { ambiguas.push(l); continue; }
+    casadas.set(l.chave, ordem[0].id);
+    usadas.add(ordem[0].id);
+  }
+  return { casadas, ambiguas };
+}
+
 // ── A linha da tela ──────────────────────────────────────────────────
 export interface LinhaRescisao {
   chave: string;

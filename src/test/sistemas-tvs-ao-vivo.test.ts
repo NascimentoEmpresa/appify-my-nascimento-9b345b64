@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { alertaDaTv, aoVivoFresco, itensNoAr, posicaoNoLaco, scriptPrincipal, telaAoVivo, type AlertaTv, type ItemTv } from "@/lib/tv/tv";
+import { alertaDaTv, aoVivoFresco, fimDoAviso, itensNoAr, posicaoNoLaco, scriptPrincipal, telaAoVivo, type AlertaTv, type ItemTv } from "@/lib/tv/tv";
 import { paginaNoTempo } from "@/lib/tv/relatorioTv";
 
 // Sistemas › TV's — AO VIVO × PRÉVIA (mig 20261008000003). A gestão tem que
@@ -35,6 +35,17 @@ describe("itens no ar e aviso geral — as regras do tv_estado", () => {
     const dois = [alerta({ id: "velho" }), alerta({ id: "novo", created_at: "2026-10-08T11:30:00Z" })];
     expect(alertaDaTv(dois, "tv1", agora)?.id).toBe("novo");
   });
+
+  it("aviso com tempo (mig 20261028000020): sai no tempo escolhido, não no fim com folga", () => {
+    // 20 s a partir das 11:59:50 → fora às 12:00:10; o fim gravado leva a folga.
+    const curto = { inicio: "2026-10-08T11:59:50Z", fim: "2026-10-08T12:00:40Z", duracao_seg: 20 };
+    expect(fimDoAviso(curto)).toBe(new Date("2026-10-08T12:00:10Z").getTime());
+    expect(alertaDaTv([alerta(curto)], "tv1", agora)?.id).toBe("a1");
+    expect(alertaDaTv([alerta(curto)], "tv1", new Date("2026-10-08T12:00:15Z"))).toBeNull();
+    expect(fimDoAviso({ inicio: curto.inicio, fim: curto.fim })).toBe(new Date(curto.fim).getTime());
+    const comImagem = telaAoVivo({ tv: tvOnline, itens: [], alertas: [alerta({ imagem: "aviso/x.png", texto: "" })], aoVivo: null, agora, simulacaoDesde: agora.getTime() });
+    expect(comImagem.tela.alerta).toEqual({ texto: "", cor: "#dc2626", imagem: "aviso/x.png" });
+  });
 });
 
 describe("posição na volta da playlist (simulação)", () => {
@@ -68,7 +79,7 @@ describe("tela AO VIVO", () => {
 
   it("aviso geral por cima, pausada, relógio e offline", () => {
     const comAviso = telaAoVivo({ ...base, alertas: [alerta({})], aoVivo: null });
-    expect(comAviso.tela.alerta).toEqual({ texto: "Simulado", cor: "#dc2626" });
+    expect(comAviso.tela.alerta).toEqual({ texto: "Simulado", cor: "#dc2626", imagem: null });
     expect(telaAoVivo({ ...base, tv: { ...tvOnline, ativo: false }, aoVivo: null }).tela.modo).toBe("pausada");
     expect(telaAoVivo({ ...base, itens: [], aoVivo: null }).tela.modo).toBe("relogio");
     const off = telaAoVivo({ ...base, tv: { ...tvOnline, ultimo_ping: "2026-10-08T11:50:00Z" }, aoVivo: null });

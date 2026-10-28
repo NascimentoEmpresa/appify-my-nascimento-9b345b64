@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import * as XLSX from "xlsx";
 import {
-  casarComSolicitacoes, chavePlanilha, completarVazios, dataNoTexto, edicaoInicial, erroDatasRescisao,
+  atualizarPelaPlanilha, casarComExistentes, casarComSolicitacoes, chavePlanilha, completarVazios, dataNoTexto, edicaoInicial, erroDatasRescisao,
   filtrarRescisoes, lerPlanilhaRescisao, meioNoTexto, montarLinhaRescisao, montarLinhasRescisao,
   normalizarHomologacao, normalizarStatusRescisao, normalizarTipoDesligamento, ordenarRescisoes,
   planilhaDasRescisoes, sugerirDataDemissao, pagamentoAtrasado, resumoPorStatus, patchDaCelula, patchProgramadas, patchTextoDocumento, rescisaoConcluida, demissaoCancelada, diasDesde, erroIdentificacao, sugerirDataPagamento, textoProgramadas, tipoPelaSolicitacao,
@@ -410,5 +410,69 @@ describe("Rescisões dentro do RH, a planilha (22/10/2026)", () => {
       malote_obs: "RESCISAO E FGTS MALOTE 05/01", malote_data: "2026-01-05",
     });
     expect(patchTextoDocumento("retorno", "  ")).toEqual({ retorno_obs: null, retorno_data: null, retorno_meio: null });
+  });
+});
+
+describe("reimportar atualiza (28/10/2026)", () => {
+  const linha = (p: Partial<LinhaPlanilhaRescisao>): LinhaPlanilhaRescisao => {
+    const l = {
+      chave: "", empresa: "HAGG", matricula: "100", colaborador_nome: "FULANA DE TAL", contrato: null,
+      data_recebimento: null, solicitado_por: null, homologacao: null, sst_ok: null,
+      data_aviso: null, data_ultimo_dia: null, data_demissao: "2026-10-20", data_pagamento: "2026-10-25",
+      tipo_desligamento: null, rescisao_programada: false, vales_programados: false, malote_data: null,
+      malote_obs: null, envio_meio: null, envio_data: null, envio_obs: null, retorno_meio: null,
+      retorno_data: null, retorno_obs: null, status_rescisao: "Rescisão OK", observacao: null,
+      pontos_ajustados: null, data_admissao: null, planilha_original: { FUNCIONARIO: "FULANA DE TAL", MAT: 100 }, planilha_aba: "RESCISÕES", ...p,
+    } as LinhaPlanilhaRescisao;
+    l.chave = chavePlanilha(l);
+    return l;
+  };
+
+  it("a planilha vence o status e as datas que ela preenche; vazio dela não apaga; observação só completa", () => {
+    const l = linha({ observacao: "da planilha", rescisao_programada: false });
+    const r = atualizarPelaPlanilha(resc({
+      planilha_chave: l.chave, status_rescisao: "Rescisão feita", data_demissao: "2026-10-20", data_pagamento: "2026-10-24",
+      envio_obs: "ZAPSIGN 21/10", observacao: "do sistema", rescisao_programada: true,
+      planilha_original: { MAT: 100, FUNCIONARIO: "FULANA DE TAL" },
+    }), l);
+    expect(r?.patch).toEqual({ status_rescisao: "Rescisão OK", data_pagamento: "2026-10-25" });
+    expect(r?.mudancas).toContainEqual({ campo: "status_rescisao", de: "Rescisão feita", para: "Rescisão OK" });
+  });
+
+  it("igual à planilha (mesmo com o jsonb em outra ordem) não muda nada", () => {
+    const l = linha({});
+    expect(atualizarPelaPlanilha(resc({
+      planilha_chave: l.chave, status_rescisao: "Rescisão OK", data_demissao: "2026-10-20", data_pagamento: "2026-10-25",
+      planilha_original: { MAT: 100, FUNCIONARIO: "FULANA DE TAL" },
+    }), l)).toBeNull();
+  });
+
+  it("data mudou no Excel: casa pela pessoa, não duplica; a complementar fica nova; empate é ambígua", () => {
+    const antiga = linha({ data_pagamento: "2026-10-24" });
+    const nova = linha({}); // pagamento corrigido para 25/10
+    const compl = linha({ data_demissao: "2026-12-01", data_pagamento: "2026-12-06" });
+    const r1 = casarComExistentes([nova, compl], [{ id: 7, planilha_chave: antiga.chave, data_demissao: "2026-10-20", data_pagamento: "2026-10-24" }]);
+    expect(r1.casadas.get(nova.chave)).toBe(7);
+    expect(r1.casadas.has(compl.chave)).toBe(false);
+    expect(r1.ambiguas).toEqual([]);
+
+    const semData = linha({ data_demissao: null, data_pagamento: null });
+    const r2 = casarComExistentes([semData], [
+      { id: 1, planilha_chave: antiga.chave, data_demissao: "2026-10-20", data_pagamento: null },
+      { id: 2, planilha_chave: compl.chave, data_demissao: "2026-12-01", data_pagamento: null },
+    ]);
+    expect(r2.casadas.size).toBe(0);
+    expect(r2.ambiguas).toHaveLength(1);
+  });
+
+  it("a chave exata vem antes da pessoa", () => {
+    const a = linha({});
+    const b = linha({ data_demissao: "2026-10-21", data_pagamento: "2026-10-26" });
+    const r = casarComExistentes([b, a], [
+      { id: 1, planilha_chave: a.chave, data_demissao: "2026-10-20", data_pagamento: "2026-10-25" },
+      { id: 2, planilha_chave: chavePlanilha({ ...b, data_pagamento: "2026-10-27" }), data_demissao: "2026-10-21", data_pagamento: "2026-10-27" },
+    ]);
+    expect(r.casadas.get(a.chave)).toBe(1);
+    expect(r.casadas.get(b.chave)).toBe(2);
   });
 });
