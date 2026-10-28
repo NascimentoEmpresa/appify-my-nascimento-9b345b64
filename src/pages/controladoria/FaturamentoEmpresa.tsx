@@ -20,6 +20,7 @@ import { useCustosContratoAno } from "./faturamento/useCustosContratoMes";
 import { useLigacoesRubrica } from "./faturamento/useLigacoesRubrica";
 import { FaixasTexto, pillDaMargem, StatusRentabilidade, TituloComFormula } from "./faturamento/Rentabilidade";
 import { DetalheComposicao } from "./faturamento/DetalheComposicao";
+import { useTratamentosContrato } from "./faturamento/useTratamentosContrato";
 import { montarComposicao, type EscopoDetalhe, type Metrica } from "./faturamento/composicao";
 
 // SIS-2026-0556: Faturamento da Empresa (Controladoria). Mesma base do
@@ -62,6 +63,7 @@ export default function FaturamentoEmpresa() {
   // margem) é aberta: as outras abas não precisam do Fluxo de Caixa.
   const { data: custosAno = [], isLoading: carregandoCustos, error: erroCustos } = useCustosContratoAno(ano, aba === "contrato" || aba === "mensal", base);
   const { data: ligacoes } = useLigacoesRubrica();
+  const { data: tratamentos } = useTratamentosContrato();
   const custoPorContrato = useMemo(() => {
     const m = new Map<string, number>();
     for (const [chave, c] of custosPorContratoMes(custosAno, ligacoes)) {
@@ -239,10 +241,11 @@ export default function FaturamentoEmpresa() {
             },
             custos: custosAno,
             ligacoes,
+            tratamentos,
           })
         : null,
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [detalhe, custosAno, ligacoes, contratoPorId]
+    [detalhe, custosAno, ligacoes, contratoPorId, tratamentos]
   );
 
   return (
@@ -374,7 +377,7 @@ export default function FaturamentoEmpresa() {
                       <TableHead className={CAB}><TituloComFormula titulo="Valor Exec. Planilha (R$)" formula="Valor executável dos contratos do recorte no mês, segundo a planilha de custo vigente. Contrato sem planilha usa o Valor Executado Mensal do cadastro do contrato. Zero depois do fim do contrato." /></TableHead>
                       <TableHead className={CAB}><TituloComFormula titulo="Diferença Exec. × Fat. (R$)" formula="Valor Exec. Planilha − Valor Bruto faturado no mês. Positivo = faturou menos do que o executável." /></TableHead>
                       <Cabecalho />
-                      <TableHead className={CAB}><TituloComFormula titulo="Despesas (R$)" formula={`Despesas dos contratos do recorte ${base === "pagamento" ? "pagas no mês" : "com competência no mês"}: saídas do Fluxo de Caixa com contrato, ${textoBase}, sem transferências, aplicações e empréstimos. É o custo usado no Lucro.`} /></TableHead>
+                      <TableHead className={CAB}><TituloComFormula titulo="Despesas (R$)" formula={`Despesas dos contratos do recorte ${base === "pagamento" ? "pagas no mês" : "com competência no mês"}: saídas do Fluxo de Caixa com contrato, ${textoBase}, sem transferências, aplicações e empréstimos. Contratos de estoque, movimentação financeira e investimento ficam de fora (clique no valor para ver e ajustar). É o custo usado no Lucro.`} /></TableHead>
                       <TableHead className={CAB}><TituloComFormula titulo="Lucro Faturamento (R$)" formula={`Valor Líquido do mês − custos do mês (saídas do Fluxo de Caixa com contrato dos contratos do recorte, ${textoBase}, sem transferências, aplicações e empréstimos).`} /></TableHead>
                       <TableHead className={CAB}><TituloComFormula titulo="Lucro Recebido (R$)" formula="Recebido do mês − os mesmos custos. A diferença para o Lucro Faturamento é só o que ainda falta receber." /></TableHead>
                       <TableHead className={CAB}><TituloComFormula titulo="Margem Bruta (%)" formula={<><p>Lucro Faturamento ÷ Valor Líquido × 100. Em branco quando não há faturamento no mês.</p><p className="font-medium pt-1">A cor e o Status seguem a faixa:</p><FaixasTexto /></>} /></TableHead>

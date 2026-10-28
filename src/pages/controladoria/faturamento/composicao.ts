@@ -5,6 +5,7 @@ import {
   RUBRICAS, type BaseDespesa, aReceberDaNf, notaValidaNoFaturamento, lucroBruto, mesDoCusto, notasComSaldo, ponteAReceber, rubricaDaLinha, somarNf, totaisVazios,
   type LigacoesRubrica, type LinhaFluxoCusto, type NfFaturamento, type TotaisFaturamento,
 } from "./regras";
+import { contratoConfiguravel, saiDasDespesas, tratamentoEfetivo, type TratamentoContrato, type TratamentosContrato } from "./tratamentoContrato";
 
 export type Metrica =
   | "exec" | "diferenca" | "bruto" | "descontos" | "liquido" | "recebido" | "aReceber" | "contaVinculada"
@@ -43,6 +44,8 @@ export interface ContextoDetalhe {
   ligacoes?: LigacoesRubrica;
   // SIS-2026-0721: base em que as despesas foram lidas (só muda o texto do modal).
   baseDespesa?: BaseDespesa;
+  // SIS-2026-0755: exceções de tratamento por contrato (Tratamento dos contratos); sem elas vale o padrão pelo nome.
+  tratamentos?: TratamentosContrato;
 }
 
 export type Celula = string | number;
@@ -63,12 +66,31 @@ export interface TabelaDetalhe {
   nota?: string;
 }
 
+// SIS-2026-0755: contratos que compõem (ou ficam fora de) uma coluna, para o usuário ajustar o tratamento do contrato direto no modal.
+export interface ContratoDaColuna {
+  id: string;
+  nome: string;
+  valor: number;
+  // só o que dá para mudar: administrativo e sócios têm regra própria
+  configuravel: boolean;
+}
+
+export interface ContratoForaDaColuna {
+  id: string;
+  nome: string;
+  tratamento: TratamentoContrato;
+  // 'padrao' = pela regra do nome; 'configurado' = alguém definiu em Tratamento dos contratos
+  origem: "padrao" | "configurado";
+}
+
 export interface Composicao {
   titulo: string;
   descricao?: string;
   conta: LinhaConta[];
   tabela?: TabelaDetalhe;
   aviso?: string;
+  contratosNaColuna?: ContratoDaColuna[];
+  contratosForaDaColuna?: ContratoForaDaColuna[];
 }
 
 export const ROTULO_METRICA: Record<Metrica, string> = {
@@ -248,7 +270,14 @@ export function montarComposicao(metrica: Metrica, escopo: EscopoDetalhe, ctx: C
     const d = despesasDoEscopo(ctx.custos, escopo, ctx.ligacoes);
     return {
       titulo,
-      descricao: `Saídas do Fluxo de Caixa com contrato, pela ${(ctx.baseDespesa === "pagamento" ? "data de pagamento" : "competência")}, sem transferências, aplicações e empréstimos. É o custo usado no Lucro.`,
+      descricao: `Saídas do Fluxo de Caixa com contrato, pela ${(ctx.baseDespesa === "pagamento" ? "data de pagamento" : "competência")}, sem transferências, aplicações e empréstimos. É o custo usado no Lucro. Contratos de estoque, movimentação financeira e investimento ficam de fora (padrão pelo nome, ajustável abaixo).`,
+      contratosNaColuna: [...d.porContrato.entries()]
+        .map(([id, valor]) => ({ id, nome: ctx.contratoNome(id), valor: r2(valor), configuravel: contratoConfiguravel(ctx.contratoNome(id)) }))
+        .sort((a, b) => b.valor - a.valor),
+      contratosForaDaColuna: escopo.contratoIds
+        .map((id) => ({ id, nome: ctx.contratoNome(id), tratamento: tratamentoEfetivo(ctx.contratoNome(id), ctx.tratamentos?.get(id)), origem: (ctx.tratamentos?.has(id) ? "configurado" : "padrao") as "padrao" | "configurado" }))
+        .filter((c) => contratoConfiguravel(c.nome) && saiDasDespesas(c.tratamento))
+        .sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR")),
       conta: [
         ...d.porRubrica.map((r, i) => ({ rotulo: r.rotulo, valor: r.valor, sinal: i === 0 ? undefined : ("+" as const) })),
         { rotulo: "Despesas", valor: d.total, sinal: "=", destaque: true },
