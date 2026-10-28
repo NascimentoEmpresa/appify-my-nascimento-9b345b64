@@ -33,7 +33,7 @@ import { EnviarTreinamentoDialog } from "./StatusValidacao";
 import { desenvolvedorDaValidacao, type ValidacaoChamado } from "./validacaoPresidencia";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import {
-  StatCard, StatusBadge, PrioridadeBadge, STATUS_CHAMADO, PRIORIDADES, CATEGORIAS, labelDe, moduloLabel, iniciais, Estrelas, fmtData, fmtDataHora,
+  StatCard, StatusBadge, PrioridadeBadge, DefinicaoBadge, DEFINICOES, STATUS_CHAMADO, PRIORIDADES, CATEGORIAS, labelDe, moduloLabel, iniciais, Estrelas, fmtData, fmtDataHora,
   chamadoAtivo, podeReabrirChamado, posicoesFilaGlobal, posicoesFilaDev, CRITERIOS_AVALIACAO, mediaAvaliacao, type Chamado,
   CRITERIOS_AVALIACAO_SOLICITANTE, type CriterioSolicitanteKey,
 } from "./types";
@@ -137,6 +137,7 @@ export default function PainelDistribuicao() {
   }, [aba, busca, fCategoria, fPrioridade, fResponsavel, fDe, fAte, pagina]);
   const [atribChamado, setAtribChamado] = useState<string | null>(null);
   const [atribDev, setAtribDev] = useState<string | null>(null);
+  const [atribDefinicao, setAtribDefinicao] = useState<string>("");
   const [excluir, setExcluir] = useState<{ id: string; numero: string } | null>(null);
   const [reabrir, setReabrir] = useState<Chamado | null>(null);
   const [flashPrioridade, setFlashPrioridade] = useState<string | null>(null);
@@ -417,8 +418,16 @@ export default function PainelDistribuicao() {
   }, [chamados]);
 
   // Atribuição rápida: entra no FIM da fila do dev (posição = último lugar).
+  // A definição (Reunião / Extra, mig 20261028001700) é obrigatória aqui
+  // também — distribuir é o momento em que ela é registrada.
   const atribuir = async () => {
-    if (!atribChamado || !atribDev) return;
+    if (!atribChamado || !atribDev || !atribDefinicao) return;
+    const { error: erroDef } = await (supabase as any).from("CHAMADO_SISTEMA").update({ definicao: atribDefinicao }).eq("id", atribChamado);
+    if (erroDef) { toast({ title: "Erro ao gravar a definição", description: erroDef.message, variant: "destructive" }); return; }
+    await (supabase as any).from("CHAMADO_SISTEMA_EVENTO").insert({
+      chamado_id: atribChamado, tipo: "evento",
+      texto: `Definição da prioridade: ${DEFINICOES[atribDefinicao as keyof typeof DEFINICOES]?.label ?? atribDefinicao}`,
+    });
     const { error } = await (supabase as any).rpc("chamado_direcionar", {
       p_chamado_id: atribChamado, p_responsavel_id: atribDev, p_posicao: null, p_observacao: null,
     });
@@ -426,7 +435,7 @@ export default function PainelDistribuicao() {
     supabase.functions.invoke("enviar-notificacao-push", { body: { chamado_id: atribChamado, evento: "atribuido" } }).catch(() => {});
     supabase.functions.invoke("notificar-chamado-whatsapp", { body: { chamado_id: atribChamado, evento: "atribuido" } }).catch(() => {});
     toast({ title: "Chamado atribuído" });
-    setAtribChamado(null); setAtribDev(null);
+    setAtribChamado(null); setAtribDev(null); setAtribDefinicao("");
     qc.invalidateQueries({ queryKey: ["chamados-todos"] });
     qc.invalidateQueries({ queryKey: ["chamados-painel-stats"] });
     qc.invalidateQueries({ queryKey: ["chamados-devs"] });
@@ -531,6 +540,8 @@ export default function PainelDistribuicao() {
                     <TableHead>Assunto</TableHead>
                     <TableHead>Categoria</TableHead>
                     <TableHead>Prioridade</TableHead>
+                    {/* Reunião ou Extra — definida em Coordenar chamado (mig 20261028001700). */}
+                    <TableHead>Definição</TableHead>
                     <TableHead>Solicitante</TableHead>
                     <TableHead>Abertura</TableHead>
                     <TableHead>Status</TableHead>
@@ -614,6 +625,7 @@ export default function PainelDistribuicao() {
                           <PrioridadeBadge prioridade={c.prioridade} />
                         )}
                       </TableCell>
+                      <TableCell><DefinicaoBadge definicao={c.definicao} /></TableCell>
                       <TableCell className="text-xs">{c.solicitante_nome || "—"}<div className="text-[10px] text-muted-foreground">{c.setor}</div></TableCell>
                       <TableCell className="whitespace-nowrap text-xs text-muted-foreground">{fmtDataHora(c.created_at)}</TableCell>
                       <TableCell>
@@ -675,7 +687,7 @@ export default function PainelDistribuicao() {
                   </SortableContext>
                   </DndContext>
                   {filtrados.length === 0 && (
-                    <TableRow><TableCell colSpan={10} className="py-6 text-center text-sm text-muted-foreground">Nenhum chamado.</TableCell></TableRow>
+                    <TableRow><TableCell colSpan={11} className="py-6 text-center text-sm text-muted-foreground">Nenhum chamado.</TableCell></TableRow>
                   )}
                 </TableBody>
               </Table>
@@ -761,7 +773,16 @@ export default function PainelDistribuicao() {
               searchPlaceholder="Buscar dev…"
               allowClear clearValue=""
             />
-            <Button size="sm" className="w-full" disabled={!atribChamado || !atribDev} onClick={atribuir}>Atribuir chamado</Button>
+            <Select value={atribDefinicao} onValueChange={setAtribDefinicao}>
+              <SelectTrigger className="h-9 text-xs" title="Onde a prioridade foi definida — vai para a coluna Definição">
+                <SelectValue placeholder="Definição: Reunião ou Extra…" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="reuniao"><DefinicaoBadge definicao="reuniao" /></SelectItem>
+                <SelectItem value="extra"><DefinicaoBadge definicao="extra" /></SelectItem>
+              </SelectContent>
+            </Select>
+            <Button size="sm" className="w-full" disabled={!atribChamado || !atribDev || !atribDefinicao} onClick={atribuir}>Atribuir chamado</Button>
           </Card>}
 
           <Card className="p-4">

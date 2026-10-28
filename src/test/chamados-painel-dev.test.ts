@@ -49,3 +49,12 @@ describe("variação do prazo médio de entrega", () => {
     expect(variacaoPercentual(3, 0)).toBeNull();
   });
 });
+
+describe("definição da prioridade (Reunião / Extra)", () => {
+  it("as opções da tela são exatamente as do CHECK do banco (mig 20261028001700)", async () => {
+    const { DEFINICOES } = await import("@/pages/chamados/types");
+    expect(Object.keys(DEFINICOES).sort()).toEqual(["extra", "reuniao"]);
+    expect(DEFINICOES.reuniao.label).toBe("Reunião");
+    expect(DEFINICOES.extra.label).toBe("Extra");
+  });
+});

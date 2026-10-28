@@ -27,7 +27,7 @@ import {
   BotaoStatusChamado, SeloEtapaValidacao, useValidacaoChamado, useInvalidarValidacao,
 } from "./StatusValidacao";
 import {
-  StatusBadge, PrioridadeBadge, PRIORIDADES, CATEGORIAS, AMBIENTES, URGENCIAS, TIPOS, IMPACTOS, labelDe,
+  StatusBadge, PrioridadeBadge, DefinicaoBadge, DEFINICOES, PRIORIDADES, CATEGORIAS, AMBIENTES, URGENCIAS, TIPOS, IMPACTOS, labelDe,
   iniciais, fmtDataHora, moduloLabel, chamadoAtivo, CardAvaliacao, BUCKET_CHAMADOS, opcoesDownloadAnexo,
   type Chamado, type Evento, type AvaliacaoChamado, type Anexo,
   CRITERIOS_AVALIACAO_SOLICITANTE, type AvaliacaoSolicitante,
@@ -83,6 +83,9 @@ export default function CoordenarChamado() {
   const [responsavel, setResponsavel] = useState<string | null>(null);
   const [posicao, setPosicao] = useState<string>("");           // posição escolhida na fila do dev
   const [prioridade, setPrioridade] = useState<string>("");     // prioridade da tarefa (carrega do chamado)
+  // Definição da prioridade: reunião ou extra (mig 20261028001700). Vai para
+  // a coluna "Definição" do Painel de Distribuição; obrigatória ao direcionar.
+  const [definicao, setDefinicao] = useState<string>("");
   const [observacao, setObservacao] = useState("");
   const [salvando, setSalvando] = useState(false);
   const [reprovando, setReprovando] = useState(false);
@@ -120,6 +123,7 @@ export default function CoordenarChamado() {
       setResponsavel((cur) => cur ?? c.responsavel_id ?? null);
       setObservacao((cur) => cur || c.observacao_gerente || "");
       setPrioridade((cur) => cur || c.prioridade);
+      setDefinicao((cur) => cur || c.definicao || "");
       return c;
     },
   });
@@ -266,16 +270,22 @@ export default function CoordenarChamado() {
 
   const atribuir = async () => {
     if (!responsavel) { toast({ title: "Escolha o responsável pela execução.", variant: "destructive" }); return; }
+    if (!definicao) {
+      toast({ title: "Informe a definição da prioridade", description: "Foi combinada em Reunião ou é Extra?", variant: "destructive" });
+      document.getElementById("campo-definicao")?.scrollIntoView({ behavior: "smooth", block: "center" });
+      return;
+    }
 
     const novaPosicao = Number(posicao) || fila.filter((c) => c.id !== id).length + 1;
     const mudouPosicao = posicaoAtual !== novaPosicao;
     const mudouObs = (observacao.trim() || null) !== (chamado?.observacao_gerente || null);
     const mudouPrioridade = !!prioridade && prioridade !== chamado?.prioridade;
+    const mudouDefinicao = !!definicao && definicao !== (chamado?.definicao ?? "");
     const mudouPresidencia = enviarPresidencia !== null && enviarPresidencia !== !!validacao;
 
     // Já é tarefa deste dev e nada mudou → só avisa, não reescreve a fila.
     // (Só a marcação da Presidência mudou → grava só ela.)
-    if (jaDesignado && !mudouPosicao && !mudouObs && !mudouPrioridade) {
+    if (jaDesignado && !mudouPosicao && !mudouObs && !mudouPrioridade && !mudouDefinicao) {
       if (mudouPresidencia) { await gravarPresidencia(enviarPresidencia!); return; }
       toast({
         title: "Essa tarefa já está designada para esse desenvolvedor selecionado.",
@@ -290,6 +300,14 @@ export default function CoordenarChamado() {
       if (erroPrio) { setSalvando(false); toast({ title: "Erro ao alterar prioridade", description: erroPrio.message, variant: "destructive" }); return; }
       await (supabase as any).from("CHAMADO_SISTEMA_EVENTO").insert({
         chamado_id: id, tipo: "evento", texto: `Prioridade alterada para ${PRIORIDADES[prioridade]?.label ?? prioridade}`,
+      });
+    }
+    if (mudouDefinicao) {
+      const { error: erroDef } = await (supabase as any).from("CHAMADO_SISTEMA").update({ definicao }).eq("id", id);
+      if (erroDef) { setSalvando(false); toast({ title: "Erro ao gravar a definição", description: erroDef.message, variant: "destructive" }); return; }
+      await (supabase as any).from("CHAMADO_SISTEMA_EVENTO").insert({
+        chamado_id: id, tipo: "evento",
+        texto: `Definição da prioridade: ${DEFINICOES[definicao as keyof typeof DEFINICOES]?.label ?? definicao}`,
       });
     }
     const { error } = await (supabase as any).rpc("chamado_direcionar", {
@@ -454,6 +472,7 @@ export default function CoordenarChamado() {
             <span className="rounded-md border border-border bg-background px-2 py-0.5 font-mono text-xs font-bold">#{chamado.numero}</span>
             <StatusBadge status={chamado.status} />
             <PrioridadeBadge prioridade={chamado.prioridade} />
+            {chamado.definicao && <DefinicaoBadge definicao={chamado.definicao} />}
             {chamado.categorias.map((x) => (
               <span key={x} className="rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground">{labelDe(CATEGORIAS, x)}</span>
             ))}
@@ -643,9 +662,27 @@ export default function CoordenarChamado() {
                       </SelectContent>
                     </Select>
                   </div>
+                  <div id="campo-definicao" className="flex items-center gap-2 scroll-mt-24">
+                    <span className="flex items-center gap-1 whitespace-nowrap text-xs font-medium">
+                      Definição <span className="text-destructive">*</span>
+                      <span title="A definição informada aqui será levada para o Painel de Distribuição de Chamados.">
+                        <Info className="h-3.5 w-3.5 text-info" />
+                      </span>
+                    </span>
+                    <Select value={definicao} onValueChange={setDefinicao}>
+                      <SelectTrigger className={`h-9 w-[120px] text-xs ${!definicao ? "border-destructive/60" : ""}`}><SelectValue placeholder="Escolha" /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="reuniao"><DefinicaoBadge definicao="reuniao" /></SelectItem>
+                        <SelectItem value="extra"><DefinicaoBadge definicao="extra" /></SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
                 </div>
-                <div className="rounded-lg border border-info/30 bg-info/5 px-3 py-2 text-[11px] text-muted-foreground">
-                  A tarefa será inserida na posição selecionada e as demais serão deslocadas para baixo.
+                <div className="space-y-1.5 rounded-lg border border-info/30 bg-info/5 px-3 py-2 text-[11px] text-muted-foreground">
+                  <p>A tarefa será inserida na posição selecionada e as demais serão deslocadas para baixo.</p>
+                  <p className="flex items-start gap-1 font-medium text-info">
+                    <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" /> A definição (Reunião ou Extra) informada aqui será levada para o Painel de Distribuição de Chamados.
+                  </p>
                 </div>
               </div>
             </div>

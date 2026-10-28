@@ -115,6 +115,8 @@ function descreverAviso(e: Evento, nomeDe: (uid: string | null) => string): Avis
     if ((m = t.match(/^Desenvolvimento iniciado — (.+)$/i))) return `${quem} começou o desenvolvimento — ${m[1]}`;
     // Prazo em dias, travado (SIS-2026-0763, mig 20261028001500).
     if ((m = t.match(/^Prazo definido:\s*(.+)$/i))) return `${quem} definiu o prazo: ${m[1]}`;
+    // Reunião ou Extra (mig 20261028001700).
+    if ((m = t.match(/^Defini[çc][ãa]o da prioridade:\s*(.+)$/i))) return `${quem} registrou a prioridade como definida em ${m[1]}`;
     if ((m = t.match(/^Prazo redefinido para\s+(.+)$/i))) return `${quem} redefiniu o prazo para ${m[1]}`;
     // O direcionamento nem sempre trouxe a posição na fila (gravações antigas).
     if ((m = t.match(/^Chamado direcionado a (.+?)(?:\s*—\s*(\d+)º lugar na fila.*)?$/i)))

@@ -144,6 +144,10 @@ export interface Chamado {
   concluido_no_prazo?: boolean | null;
   /** Prazo esperado informado por quem abriu (mig 20261028001600). */
   prazo_solicitante?: string | null;
+  /** Onde a prioridade foi definida: reunião ou extra (mig 20261028001700). */
+  definicao?: "reuniao" | "extra" | null;
+  definicao_em?: string | null;
+  definicao_por?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -400,6 +404,21 @@ export function SeloDesenvolvimento({ chamado, comPrazo = false }: {
       Em desenvolvimento{comPrazo && chamado.prazo_conclusao_em ? ` · ${vencido ? "venceu" : "até"} ${fmtData(chamado.prazo_conclusao_em)}` : ""}
     </Badge>
   );
+}
+
+/**
+ * Definição da prioridade (mig 20261028001700): combinada na reunião de
+ * priorização ou extra (fora dela). A coordenação escolhe ao direcionar.
+ */
+export const DEFINICOES = {
+  reuniao: { label: "Reunião", cls: "border-info/40 bg-info/10 text-info" },
+  extra:   { label: "Extra",   cls: "border-violet-400/50 bg-violet-500/10 text-violet-700 dark:text-violet-300" },
+} as const;
+
+export function DefinicaoBadge({ definicao }: { definicao?: string | null }) {
+  const d = definicao ? DEFINICOES[definicao as keyof typeof DEFINICOES] : null;
+  if (!d) return <span className="text-xs text-muted-foreground">—</span>;
+  return <Badge variant="outline" className={`rounded-full text-[10px] font-semibold ${d.cls}`}>{d.label}</Badge>;
 }
 
 export function PrioridadeBadge({ prioridade }: { prioridade: string }) {
