@@ -96,6 +96,8 @@ export interface ItemEstoqueSaudavel {
   pct_falta: number | null;
   ultima_falta: string | null;
   ultima_saida: string | null;
+  /** Última reserva para separação. Reserva não é baixa física. */
+  ultima_reserva: string | null;
   ultimo_pedido: string | null;
 
   valor_unitario: number | null;
@@ -140,6 +142,7 @@ export interface LinhaLiquidar {
   valor_em_estoque: number;
   meses_sem_giro: number | null;
   ultima_saida: string | null;
+  ultima_reserva: string | null;
   ultimo_pedido: string | null;
   ja_marcado: boolean;
   motivo: string | null;
