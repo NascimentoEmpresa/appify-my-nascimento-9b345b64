@@ -25,18 +25,19 @@ const ctx = (custos: LinhaFluxoCusto[], tratamentos?: TratamentosContrato): Cont
 const escopo = (contratoIds: string[]): EscopoDetalhe => ({ titulo: "jan/26", nfs: [], meses: ["2026-01"], contratoIds });
 
 describe("modal Despesas: contratos dentro e fora da coluna", () => {
-  it("lista os contratos que compõem o valor, do maior para o menor, e marca o que dá para configurar", () => {
+  it("lista os contratos que compõem o valor, do maior para o menor", () => {
     const c = montarComposicao("despesas", escopo(["c1", "c2", "c4"]), ctx([custo("c1", 100), custo("c4", 300), custo("c2", 50), custo("c1", 20)]));
-    expect(c.contratosNaColuna?.map((x) => [x.nome, x.valor, x.configuravel])).toEqual([
-      ["OBRAS ADM - SN", 300, true],
-      ["UFRGS - LIMPEZA GERAL - 047/2022", 120, true],
-      ["ADMINISTRATIVO - HAGG", 50, false], // administrativo tem regra própria
+    expect(c.contratosNaColuna?.map((x) => [x.nome, x.valor])).toEqual([
+      ["OBRAS ADM - SN", 300],
+      ["UFRGS - LIMPEZA GERAL - 047/2022", 120],
+      ["ADMINISTRATIVO - HAGG", 50],
     ]);
   });
 
-  it("sem exceção, os contratos tirados pelo nome aparecem em 'fora', marcados como padrão", () => {
-    const c = montarComposicao("despesas", escopo(["c1", "c3", "c5"]), ctx([custo("c1", 100)]));
+  it("sem exceção, os contratos tirados pelo nome (inclusive administrativo) aparecem em 'fora', marcados como padrão", () => {
+    const c = montarComposicao("despesas", escopo(["c1", "c2", "c3", "c5"]), ctx([custo("c1", 100)]));
     expect(c.contratosForaDaColuna?.map((x) => [x.nome, x.tratamento, x.origem])).toEqual([
+      ["ADMINISTRATIVO - HAGG", "fora_das_despesas", "padrao"],
       ["ESTOQUE HAGG", "fora_das_despesas", "padrao"],
       ["INVESTIMENTOS AGPS", "investimento", "padrao"],
     ]);
@@ -48,8 +49,8 @@ describe("modal Despesas: contratos dentro e fora da coluna", () => {
     expect(c.contratosForaDaColuna?.map((x) => [x.nome, x.origem])).toEqual([["OBRAS ADM - SN", "configurado"]]);
   });
 
-  it("administrativo nunca aparece na lista de fora (não é configurável)", () => {
-    const tratamentos: TratamentosContrato = new Map([["c2", "fora_das_despesas"]]);
+  it("administrativo que voltou a contar (exceção 'normal') sai da lista de fora", () => {
+    const tratamentos: TratamentosContrato = new Map([["c2", "normal"]]);
     expect(montarComposicao("despesas", escopo(["c2"]), ctx([], tratamentos)).contratosForaDaColuna).toEqual([]);
   });
 
