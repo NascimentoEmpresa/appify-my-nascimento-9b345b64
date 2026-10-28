@@ -48,6 +48,8 @@ export interface ItemEstoqueSaudavel {
 
   disponivel: number;
   reservado: number;
+  /** Peças físicas na prateleira, antes de descontar o que já está separado. */
+  fisico: number;
   em_transito: number;
 
   demanda_janela: number;

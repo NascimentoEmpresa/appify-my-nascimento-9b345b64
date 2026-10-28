@@ -316,6 +316,15 @@ function rotuloDataFornecimento(data: string): string {
   return new Date(`${data}T12:00:00`).toLocaleDateString("pt-BR");
 }
 
+function rotuloOrigemDemanda(origem: HistoricoUniformeLinha["origem_demanda"]): string {
+  const rotulos: Record<HistoricoUniformeLinha["origem_demanda"], string> = {
+    implantacao_aditivo: "Implantação / aditivo",
+    substituicao: "Substituição",
+    reposicao: "Reposição",
+  };
+  return rotulos[origem];
+}
+
 function TabelaHistoricoUniformes({
   linhas,
   carregando,
@@ -333,13 +342,14 @@ function TabelaHistoricoUniformes({
   const exportar = () => {
     const planilha = XLSX.utils.json_to_sheet(linhas.map((linha) => ({
       "Mês": rotuloMesHistorico(linha.mes),
+      Origem: rotuloOrigemDemanda(linha.origem_demanda),
       "Tipo de uniforme": linha.tipo_uniforme,
       Tamanho: linha.tamanho ?? "Não informado",
       Solicitados: linha.solicitados,
       Utilizados: linha.utilizados,
     })));
     planilha["!cols"] = [
-      { wch: 13 }, { wch: 42 }, { wch: 18 }, { wch: 14 }, { wch: 14 },
+      { wch: 13 }, { wch: 24 }, { wch: 42 }, { wch: 18 }, { wch: 14 }, { wch: 14 },
     ];
     const arquivo = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(arquivo, planilha, "Histórico uniformes");
@@ -348,8 +358,8 @@ function TabelaHistoricoUniformes({
 
   return (
     <PainelGrafico
-      titulo="Histórico de Uniformes por Tipo e Tamanho"
-      subtitulo="Solicitado é a demanda registrada; utilizado é a saída física confirmada pelo almoxarifado."
+      titulo="Demanda Mensal por Item, Tamanho e Origem"
+      subtitulo="Separe implantação/aditivo, substituição e reposição antes de definir o mínimo e máximo. Solicitado é a demanda registrada; utilizado é a saída física confirmada."
       acao={
         <Button size="sm" variant="outline" onClick={exportar} disabled={!linhas.length || carregando}>
           <Download className="mr-2 h-4 w-4" /> Baixar planilha
@@ -370,6 +380,7 @@ function TabelaHistoricoUniformes({
               <thead>
                 <tr>
                   <CabecalhoTabela>Mês</CabecalhoTabela>
+                  <CabecalhoTabela>Origem</CabecalhoTabela>
                   <CabecalhoTabela>Tipo de uniforme</CabecalhoTabela>
                   <CabecalhoTabela>Tamanho</CabecalhoTabela>
                   <CabecalhoTabela alinhar="right">Solicitados</CabecalhoTabela>
@@ -383,6 +394,11 @@ function TabelaHistoricoUniformes({
                     className="border-b last:border-0 hover:bg-slate-50"
                   >
                     <td className="whitespace-nowrap px-3 py-2 font-medium">{rotuloMesHistorico(linha.mes)}</td>
+                    <td className="whitespace-nowrap px-3 py-2">
+                      <Badge variant="outline" className="text-[10px] font-medium">
+                        {rotuloOrigemDemanda(linha.origem_demanda)}
+                      </Badge>
+                    </td>
                     <td className="max-w-80 truncate px-3 py-2" title={linha.tipo_uniforme}>{linha.tipo_uniforme}</td>
                     <td className="px-3 py-2">{linha.tamanho ?? "Não informado"}</td>
                     <td className="px-3 py-2 text-right">{formatarNumero(linha.solicitados)}</td>

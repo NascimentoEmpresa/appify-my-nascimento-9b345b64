@@ -70,6 +70,12 @@ export interface MesRotatividade {
 /** Linha mensal do histórico que orienta a futura política de estoque mínimo. */
 export interface HistoricoUniformeLinha {
   mes: string;
+  /**
+   * Origem operacional do pedido. O campo vem de `sup_pedido.admissao` e
+   * `tipo_admissao`; não é inferido do volume, para não misturar uma demanda
+   * de implantação com reposição recorrente na conta do estoque mínimo.
+   */
+  origem_demanda: "implantacao_aditivo" | "substituicao" | "reposicao";
   tipo_uniforme: string;
   tamanho: string | null;
   solicitados: number;
