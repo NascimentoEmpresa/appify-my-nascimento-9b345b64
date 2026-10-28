@@ -45,7 +45,16 @@ interface Body {
   pr_url?: string;
   pr_titulo?: string;
   pr_autor_github?: string;
+  pr_numero?: number | null;
+  pr_commits?: number | null;
+  pr_linhas_adicionadas?: number | null;
+  pr_arquivos_alterados?: number | null;
 }
+
+// Métricas da PR são contagens inteiras. null mantém compatibilidade com
+// conclusões disparadas pelo workflow anterior, que não enviava os campos.
+const inteiroNaoNegativo = (valor: unknown) =>
+  typeof valor === "number" && Number.isSafeInteger(valor) && valor >= 0 ? valor : null;
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: cors });
@@ -60,6 +69,10 @@ Deno.serve(async (req) => {
   const prUrl = body.pr_url?.trim() ?? "";
   const prTitulo = body.pr_titulo?.trim() ?? "";
   const prAutorGithub = body.pr_autor_github?.trim() ?? "";
+  const prNumero = inteiroNaoNegativo(body.pr_numero);
+  const prCommits = inteiroNaoNegativo(body.pr_commits);
+  const prLinhasAdicionadas = inteiroNaoNegativo(body.pr_linhas_adicionadas);
+  const prArquivosAlterados = inteiroNaoNegativo(body.pr_arquivos_alterados);
   if (!numero || !prUrl) return json({ error: "numero e pr_url são obrigatórios" }, 400);
 
   const admin = createClient(SUPABASE_URL, SERVICE_ROLE, { auth: { persistSession: false } });
@@ -87,12 +100,22 @@ Deno.serve(async (req) => {
     .eq("id", chamado.id);
   if (upErr) return json({ error: upErr.message }, 500);
 
+  const metricas = [
+    prCommits !== null && `${prCommits} ${prCommits === 1 ? "commit" : "commits"}`,
+    prLinhasAdicionadas !== null && `${prLinhasAdicionadas} linhas adicionadas`,
+    prArquivosAlterados !== null && `${prArquivosAlterados} ${prArquivosAlterados === 1 ? "arquivo alterado" : "arquivos alterados"}`,
+  ].filter(Boolean).join(" · ");
+
   const { error: insErr } = await admin.from("CHAMADO_SISTEMA_EVENTO").insert({
     chamado_id: chamado.id,
     autor_id: autorId,
     tipo: "evento",
-    texto: `Chamado concluído automaticamente — PR mergeada: ${prTitulo || prUrl} — ${prUrl}`,
-    meta: { canal: "github", origem: "merge", pr_url: prUrl, pr_titulo: prTitulo, pr_autor_github: prAutorGithub },
+    texto: `Chamado concluído automaticamente — PR${prNumero !== null ? ` #${prNumero}` : ""} mergeada: ${prTitulo || prUrl}${metricas ? ` — ${metricas}` : ""} — ${prUrl}`,
+    meta: {
+      canal: "github", origem: "merge", pr_numero: prNumero, pr_url: prUrl,
+      pr_titulo: prTitulo, pr_autor_github: prAutorGithub, pr_commits: prCommits,
+      pr_linhas_adicionadas: prLinhasAdicionadas, pr_arquivos_alterados: prArquivosAlterados,
+    },
   });
   // Status já mudou; um erro no histórico não justifica desfazer a conclusão.
   if (insErr) console.error("Falha ao registrar evento de conclusão:", insErr.message);

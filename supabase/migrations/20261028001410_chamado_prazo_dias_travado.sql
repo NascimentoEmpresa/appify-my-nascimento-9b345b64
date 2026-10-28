@@ -45,7 +45,7 @@ ALTER TABLE public."CHAMADO_SISTEMA"
   ADD COLUMN IF NOT EXISTS concluido_no_prazo  boolean;
 
 COMMENT ON COLUMN public."CHAMADO_SISTEMA".prazo_dias IS
-  'Esforço em dias úteis informado pelo dev (mig 20261028001500). Travado: só redefine quando a tarefa desce na fila.';
+  'Esforço em dias úteis informado pelo dev (mig 20261028001410). Travado: só redefine quando a tarefa desce na fila.';
 COMMENT ON COLUMN public."CHAMADO_SISTEMA".prazo_posicao_fila IS
   'posicao_dev quando o prazo foi definido. posicao_dev maior que isto = desceu de prioridade = libera redefinir.';
 COMMENT ON COLUMN public."CHAMADO_SISTEMA".concluido_no_prazo IS

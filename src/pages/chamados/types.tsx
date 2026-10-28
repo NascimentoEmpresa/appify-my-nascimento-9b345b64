@@ -133,7 +133,7 @@ export interface Chamado {
   desenvolvimento_iniciado_em?: string | null;
   desenvolvimento_iniciado_por?: string | null;
   prazo_conclusao_em?: string | null;
-  // Prazo em dias úteis, travado (mig 20261028001500): só redefine quando a
+  // Prazo em dias úteis, travado (mig 20261028001410): só redefine quando a
   // tarefa desce na fila (posicao_dev > prazo_posicao_fila).
   prazo_dias?: number | null;
   prazo_definido_em?: string | null;
@@ -142,7 +142,7 @@ export interface Chamado {
   prazo_redefinicoes?: number | null;
   /** Gravado ao concluir: true = no prazo, false = com atraso, null = sem prazo. */
   concluido_no_prazo?: boolean | null;
-  /** Prazo esperado informado por quem abriu (mig 20261028001600). */
+  /** Prazo esperado informado por quem abriu (mig 20261028001420). */
   prazo_solicitante?: string | null;
   /** Onde a prioridade foi definida: reunião ou extra (mig 20261028001700). */
   definicao?: "reuniao" | "extra" | null;

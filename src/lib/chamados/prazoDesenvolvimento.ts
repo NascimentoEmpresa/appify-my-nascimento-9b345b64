@@ -1,5 +1,5 @@
 // =====================================================================
-// PRAZO DO DESENVOLVEDOR (28/10/2026 — migs 20261028001400 e 20261028001500,
+// PRAZO DO DESENVOLVEDOR (28/10/2026 — migs 20261028001400 e 20261028001410,
 // chamado SIS-2026-0763).
 //
 // Pedido do Pablo: "Ao receber a tarefa o desenvolvedor deve definir o prazo
@@ -22,7 +22,7 @@
 //
 // Dias úteis: sem sábado, domingo e feriado nacional do tipo "Feriado" de
 // feriadosNacionais — o MESMO calendário de public.chamado_feriado (mig
-// 20261028001500). Mudar um = mudar o outro.
+// 20261028001410). Mudar um = mudar o outro.
 // =====================================================================
 import { feriadosNacionais } from "@/lib/feriadosNacionais";
 
@@ -220,7 +220,7 @@ export const prazoVencido = (
   c: { status: string; prazo_conclusao_em?: string | null }, agora = new Date(),
 ) => !!c.prazo_conclusao_em && ativo(c.status) && diaLocal(c.prazo_conclusao_em) < diaLocal(agora);
 
-// ---- Prazo do solicitante (mig 20261028001600) --------------------------
+// ---- Prazo do solicitante (mig 20261028001420) --------------------------
 
 /**
  * Sugestão de "prazo esperado" a partir da urgência marcada na abertura —

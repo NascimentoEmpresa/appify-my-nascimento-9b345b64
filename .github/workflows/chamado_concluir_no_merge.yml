@@ -34,6 +34,11 @@ jobs:
           PR_TITLE: ${{ github.event.pull_request.title }}
           PR_URL: ${{ github.event.pull_request.html_url }}
           PR_AUTOR: ${{ github.event.pull_request.user.login }}
+          # Contagens da PR mergeada, registradas no histórico do chamado.
+          PR_NUMERO: ${{ github.event.pull_request.number }}
+          PR_COMMITS: ${{ github.event.pull_request.commits }}
+          PR_ADICOES: ${{ github.event.pull_request.additions }}
+          PR_ARQUIVOS: ${{ github.event.pull_request.changed_files }}
           # Um lugar so para a virada: criar a variavel de repositorio
           # SUPABASE_FUNCTIONS_URL (Settings > Variables) apontando para
           # https://api.grpnascimento.com.br/functions/v1 troca o CI de
@@ -56,6 +61,16 @@ jobs:
             exit 0
           fi
 
+          # Só permite inteiros naturais no JSON. Campo ausente/inválido não
+          # bloqueia a conclusão: segue como null para a Edge Function.
+          numero_json() {
+            [[ "$1" =~ ^[0-9]+$ ]] && printf '%s' "$1" || printf 'null'
+          }
+          PR_NUMERO_JSON=$(numero_json "$PR_NUMERO")
+          PR_COMMITS_JSON=$(numero_json "$PR_COMMITS")
+          PR_ADICOES_JSON=$(numero_json "$PR_ADICOES")
+          PR_ARQUIVOS_JSON=$(numero_json "$PR_ARQUIVOS")
+
           RESP=$(curl -sS --max-time 15 -w '\n%{http_code}' \
             -X POST "$SUPABASE_FUNCTIONS_URL/chamado-concluir-pr" \
             -H "Authorization: Bearer $CHAMADOS_CI_SECRET" \
@@ -65,7 +80,13 @@ jobs:
                   --arg pr_url "$PR_URL" \
                   --arg pr_titulo "$PR_TITLE" \
                   --arg pr_autor_github "$PR_AUTOR" \
-                  '{numero: $numero, pr_url: $pr_url, pr_titulo: $pr_titulo, pr_autor_github: $pr_autor_github}')") \
+                  --argjson pr_numero "$PR_NUMERO_JSON" \
+                  --argjson pr_commits "$PR_COMMITS_JSON" \
+                  --argjson pr_linhas_adicionadas "$PR_ADICOES_JSON" \
+                  --argjson pr_arquivos_alterados "$PR_ARQUIVOS_JSON" \
+                  '{numero: $numero, pr_url: $pr_url, pr_titulo: $pr_titulo, pr_autor_github: $pr_autor_github,
+                    pr_numero: $pr_numero, pr_commits: $pr_commits,
+                    pr_linhas_adicionadas: $pr_linhas_adicionadas, pr_arquivos_alterados: $pr_arquivos_alterados}')") \
             || RESP=$'\n000'
 
           HTTP_CODE=$(echo "$RESP" | tail -n1)

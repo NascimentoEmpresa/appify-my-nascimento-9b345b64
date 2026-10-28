@@ -13,7 +13,7 @@ import { fmtData, type Chamado } from "./types";
 
 // =====================================================================
 // PRAZO DO DESENVOLVEDOR — definir / redefinir o prazo em DIAS ÚTEIS e
-// iniciar o desenvolvimento (28/10/2026, migs 20261028001400/1500, chamado
+// iniciar o desenvolvimento (28/10/2026, migs 20261028001400/1410, chamado
 // SIS-2026-0763).
 //
 // modo "definir": prazo da tarefa recebida (ou redefinição, que o banco só

@@ -11,16 +11,16 @@
 --     Checklist de Módulos, mig 291) e os chamados antigos não têm.
 --   · Não aceita data no passado ao abrir. Depois de aberto, só a coordenação
 --     muda (é o combinado com quem pediu; o dev informa o PRAZO REAL dele em
---     prazo_dias ao iniciar — mig 20261028001500).
+--     prazo_dias ao iniciar — mig 20261028001410).
 --   · O prazo real do dev continua em chamado_iniciar_desenvolvimento /
---     chamado_definir_prazo (mig 20261028001500), sem mudança aqui.
+--     chamado_definir_prazo (mig 20261028001410), sem mudança aqui.
 -- =========================================================================
 
 ALTER TABLE public."CHAMADO_SISTEMA"
   ADD COLUMN IF NOT EXISTS prazo_solicitante date;
 
 COMMENT ON COLUMN public."CHAMADO_SISTEMA".prazo_solicitante IS
-  'Prazo esperado informado por quem abriu o chamado (mig 20261028001600). Depois de aberto, só a coordenação muda.';
+  'Prazo esperado informado por quem abriu o chamado (mig 20261028001420). Depois de aberto, só a coordenação muda.';
 
 CREATE OR REPLACE FUNCTION public.chamado_sistema_prazo_solicitante()
 RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp

@@ -154,13 +154,13 @@ export default function AcompanharChamado({ base = "/app/central-servicos/chamad
               <Campo label="Responsável">{nomeDe(chamado.responsavel_id)}</Campo>
               {/* Prazo informado pelo dev ao iniciar o desenvolvimento (mig 20261028001400). */}
               <Campo label="Previsão de entrega">{chamado.prazo_conclusao_em ? fmtData(chamado.prazo_conclusao_em) : "—"}</Campo>
-              {/* Concluído no prazo / com atraso (SIS-2026-0763, mig 20261028001500). */}
+              {/* Concluído no prazo / com atraso (SIS-2026-0763, mig 20261028001410). */}
               {chamado.status === "concluido" && chamado.concluido_no_prazo != null && (
                 <Campo label="Entrega">{chamado.concluido_no_prazo ? "Concluído dentro do prazo" : "Concluído com atraso"}</Campo>
               )}
               {chamado.desenvolvimento_iniciado_em && <Campo label="Desenvolvimento iniciado">{fmtDataHora(chamado.desenvolvimento_iniciado_em)}</Campo>}
               <Campo label="Urgência informada">{labelDe(URGENCIAS, chamado.urgencia)}</Campo>
-              {/* Prazo esperado informado ao abrir (mig 20261028001600). */}
+              {/* Prazo esperado informado ao abrir (mig 20261028001420). */}
               <Campo label="Prazo esperado">{chamado.prazo_solicitante ? fmtData(`${chamado.prazo_solicitante}T12:00:00`) : "—"}</Campo>
             </div>
           </Card>

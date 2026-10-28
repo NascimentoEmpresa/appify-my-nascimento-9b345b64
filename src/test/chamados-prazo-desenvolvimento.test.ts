@@ -7,7 +7,7 @@ import {
 import { montarLinhaDoTempo, resumoStatus } from "@/pages/chamados/validacaoPresidencia";
 
 // =====================================================================
-// Prazo do desenvolvedor (SIS-2026-0763 — migs 20261028001400 e 1500).
+// Prazo do desenvolvedor (SIS-2026-0763 — migs 20261028001400 e 20261028001410).
 //
 // "Ao receber a tarefa o desenvolvedor deve definir o prazo de acordo com as
 // suas prioridades, esse prazo não poderá ser alterado, somente se a tarefa

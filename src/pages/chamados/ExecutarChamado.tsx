@@ -57,7 +57,7 @@ export default function ExecutarChamado() {
   const [avaliarDepoisOpen, setAvaliarDepoisOpen] = useState(false);
   // Iniciar desenvolvimento / alterar prazo (mig 20261028001400).
   const [iniciarOpen, setIniciarOpen] = useState(false);
-  // Definir / redefinir o prazo em dias (mig 20261028001500).
+  // Definir / redefinir o prazo em dias (mig 20261028001410).
   const [prazoOpen, setPrazoOpen] = useState(false);
 
   const { data: usuarios = [] } = useQuery({
@@ -239,7 +239,7 @@ export default function ExecutarChamado() {
               <Campo label="Solicitante">{chamado.solicitante_nome || "—"} <span className="text-xs text-muted-foreground">({chamado.setor || "—"})</span></Campo>
               <Campo label="Afeta usuários">{chamado.afeta_usuarios ?? "—"}</Campo>
               <Campo label="Urgência informada">{labelDe(URGENCIAS, chamado.urgencia)}</Campo>
-              {/* Prazo esperado por quem abriu (mig 20261028001600). */}
+              {/* Prazo esperado por quem abriu (mig 20261028001420). */}
               <Campo label="Prazo do solicitante">{chamado.prazo_solicitante ? fmtData(`${chamado.prazo_solicitante}T12:00:00`) : "—"}</Campo>
             </div>
           </Card>
@@ -355,7 +355,7 @@ export default function ExecutarChamado() {
             </div>
             <div>
               <p className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Prazo (dias úteis)</p>
-              {/* SIS-2026-0763 (mig 20261028001500): prazo em dias úteis,
+              {/* SIS-2026-0763 (mig 20261028001410): prazo em dias úteis,
                   definido pelo dev ao receber a tarefa e TRAVADO — só
                   redefine quando a tarefa desce na fila. A previsão de
                   entrega é início + prazo; antes de iniciar, depende da fila. */}

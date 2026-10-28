@@ -51,10 +51,10 @@ import {
 // prazo esperado, e o desenvolvedor manda com o prazo real de desenvolvimento
 // ao iniciar o chamado."
 //
-//   · Prazo do Solicitante = prazo_solicitante (informado ao abrir, mig 1600).
+//   · Prazo do Solicitante = prazo_solicitante (informado ao abrir, mig 20261028001420).
 //   · Prazo (dias)* = prazo REAL do dev, em dias úteis, informado ao INICIAR
 //     (chamado_iniciar_desenvolvimento) e travado depois — só redefine quando
-//     a tarefa desce na fila (chamado_definir_prazo, mig 1500).
+//     a tarefa desce na fila (chamado_definir_prazo, mig 20261028001410).
 //   · Previsão de entrega / Situação do prazo / Fila: src/lib/chamados/
 //     prazoDesenvolvimento.ts (as mesmas regras do banco).
 // Abaixo dos 4 cards explicativos fica o bloco "Minha satisfação" que já
@@ -94,6 +94,21 @@ const paraTela = (s: SituacaoPrazo | null): SituacaoTela | null =>
 /** "#0763" no lugar de "#SIS-2026-0763", como o mockup; o número completo vai no title. */
 const numeroCurto = (n: string) => n.split("-").pop() ?? n;
 
+// Métricas da PR que concluiu o chamado (SIS-2026-0765).
+interface MetricasGithubConclusao {
+  commits: number | null;
+  linhasAdicionadas: number | null;
+  arquivosAlterados: number | null;
+}
+
+interface EventoGithubConclusao {
+  chamado_id: string;
+  meta: Record<string, unknown> | null;
+}
+
+const numeroDaMetrica = (valor: unknown) =>
+  typeof valor === "number" && Number.isSafeInteger(valor) && valor >= 0 ? valor : null;
+
 export default function PainelDesenvolvedor() {
   const nav = useNavigate();
   const qc = useQueryClient();
@@ -129,6 +144,33 @@ export default function PainelDesenvolvedor() {
         .order("prazo_previsto", { ascending: true, nullsFirst: false });
       if (error) throw error;
       return (data ?? []) as Chamado[];
+    },
+  });
+
+  // A conclusão automática registra as métricas da PR como meta do evento
+  // (SIS-2026-0765). A consulta fica separada da lista de chamados para não
+  // carregar toda a conversa de cada item apenas para montar esta linha.
+  const { data: metricasGithub = {} } = useQuery({
+    queryKey: ["chamados-metricas-github", user?.id],
+    enabled: !!user?.id && dev,
+    queryFn: async () => {
+      const { data, error } = await (supabase as any).from("CHAMADO_SISTEMA_EVENTO")
+        .select("chamado_id, meta, created_at")
+        .eq("tipo", "evento")
+        .contains("meta", { canal: "github", origem: "merge" })
+        .order("created_at", { ascending: false });
+      if (error) throw error;
+
+      return (data ?? []).reduce((porChamado: Record<string, MetricasGithubConclusao>, evento: EventoGithubConclusao) => {
+        if (porChamado[evento.chamado_id]) return porChamado;
+        const meta = (evento.meta ?? {}) as Record<string, unknown>;
+        porChamado[evento.chamado_id] = {
+          commits: numeroDaMetrica(meta.pr_commits),
+          linhasAdicionadas: numeroDaMetrica(meta.pr_linhas_adicionadas),
+          arquivosAlterados: numeroDaMetrica(meta.pr_arquivos_alterados),
+        };
+        return porChamado;
+      }, {});
     },
   });
 
@@ -553,6 +595,7 @@ export default function PainelDesenvolvedor() {
                     const ultima = i === visiveis.length - 1;
                     const SitIcon = sit ? SITUACAO_TELA[sit].icon : null;
                     const iniciar = ehMeu && podeIniciarDesenvolvimento(c);
+                    const metricas = metricasGithub[c.id];
                     return (
                       <TableRow key={c.id} className={`cursor-pointer ${desceu ? "bg-destructive/5 hover:bg-destructive/10" : ""}`}
                         onClick={() => nav(`/app/sistemas/chamados/${c.id}`)}>
@@ -560,6 +603,13 @@ export default function PainelDesenvolvedor() {
                         <TableCell onClick={(e) => e.stopPropagation()}><PrioridadePill c={c} /></TableCell>
                         <TableCell className="max-w-[200px]">
                           <p className="text-xs">{c.assunto}</p>
+                          {metricas && (
+                            <p className="mt-0.5 flex flex-wrap items-center gap-1 text-[10px] font-medium text-muted-foreground">
+                              <GitPullRequest className="h-3 w-3 text-primary" /> GitHub: {metricas.commits ?? "—"} commits
+                              <span>· +{metricas.linhasAdicionadas ?? "—"} linhas</span>
+                              <span>· {metricas.arquivosAlterados ?? "—"} arquivos</span>
+                            </p>
+                          )}
                           {participante && (
                             <span className="mt-0.5 inline-block rounded border border-info/40 bg-info/10 px-1.5 py-px text-[9px] font-bold uppercase text-info"
                               title="Você foi incluído como participante — o responsável pela execução é outra pessoa">

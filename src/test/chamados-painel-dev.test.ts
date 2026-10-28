@@ -5,7 +5,7 @@ import {
 
 // =====================================================================
 // Painel do Desenvolvedor no layout do mockup + prazo do solicitante
-// (SIS-2026-0763, mig 20261028001600). "o solicitante manda já com o prazo
+// (SIS-2026-0763, mig 20261028001420). "o solicitante manda já com o prazo
 // esperado, e o desenvolvedor manda com o prazo real de desenvolvimento ao
 // iniciar o chamado." — Pablo.
 // =====================================================================

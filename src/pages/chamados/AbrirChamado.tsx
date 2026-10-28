@@ -82,7 +82,7 @@ export default function AbrirChamado({ base = "/app/central-servicos/chamados" }
   const [observacoes, setObservacoes] = useState("");
   const [impacto, setImpacto] = useState("");
   const [urgencia, setUrgencia] = useState("");
-  // Prazo esperado (SIS-2026-0763, mig 20261028001600): a data em que quem
+  // Prazo esperado (SIS-2026-0763, mig 20261028001420): a data em que quem
   // abre precisa da entrega. Vem sugerida pela urgência e pode ser trocada;
   // `prazoManual` impede a urgência de sobrescrever a data que a pessoa digitou.
   const [prazoSolicitante, setPrazoSolicitante] = useState("");
