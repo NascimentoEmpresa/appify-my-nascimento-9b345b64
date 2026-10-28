@@ -53,6 +53,7 @@ import { alternarOpcao, filtrarSemEncerradas, opcaoMarcada, opcoesStatusVaga, pa
 import { rotuloEtapaCandidato } from "@/lib/recrutamento/rotuloEtapa";
 import { EnxovalAdmissao, type EnxovalAdmissaoHandle } from "@/components/recrutamento/EnxovalAdmissao";
 import { PedidoComprasCandidato } from "@/components/recrutamento/PedidoComprasCandidato";
+import { erroDataInicio, hojeIso, inicioTrabalho, linhaInicioPedido, sugestaoDataInicio } from "@/lib/recrutamento/inicioTrabalho";
 
 // ── Tipos ──────────────────────────────────────────────────────────
 interface Solicitacao {
@@ -177,6 +178,8 @@ interface Curriculo {
   admissao_responsavel_nome?: string | null;
   recrutadora_nome?: string | null;
   admitido_em?: string | null;
+  /** Data em que começa a trabalhar — informada no envio para SST + Compras (mig 20261028001800). */
+  data_inicio_trabalho?: string | null;
 }
 
 // Tabelas fora do types.ts gerado: mesmo padrão de comite-etica/db.ts. As
@@ -702,6 +705,9 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
   // Compras (vai no pedido) e "não precisa de pedido" — o Compras recebe igual,
   // só para ficar ciente, com o motivo.
   const [candCompras, setCandCompras] = useState({ obs: "", dispensa: false, motivo: "" });
+  // Data em que o colaborador começa a trabalhar (mig 20261028001800): obrigatória
+  // no envio para SST + Compras — o Compras libera o uniforme por ela.
+  const [candInicio, setCandInicio] = useState("");
   // Pedido de materiais de cada candidato do quadro (ID + status) e o aberto no "Compras" do card.
   const [pedidosVaga, setPedidosVaga] = useState<Record<string, { protocolo: string; status: string }>>({});
   const [pedidoAberto, setPedidoAberto] = useState<{ id: number; nome: string } | null>(null);
@@ -1806,6 +1812,10 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
     setCandObs("");
     setCandNivel(NIVEL_OK);
     setCandMateriais("");
+    // Reenvio mantém a data já informada; senão sugere a prevista da vaga (se não passou).
+    setCandInicio(novaEtapa === ETAPA_SST_COMPRAS
+      ? (sugestaoDataInicio(cv.data_inicio_trabalho) || sugestaoDataInicio(drawerSol?.data_inicio_prevista))
+      : "");
     setCandModal({ id: cv.id, novaEtapa, nome: cv.nome || "Candidato", exColab });
   };
 
@@ -2086,7 +2096,11 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
     // em compras_necessidades como antes. Para o SST a observação é opcional.
     const extra: Record<string, unknown> = {};
     const origem = candidatos.find(c => c.id === id)?.etapa_processo;
+    const inicioIso = candInicio;
     if (novaEtapa === ETAPA_SST_COMPRAS) {
+      const erroIni = erroDataInicio(inicioIso);
+      if (erroIni) { toast(erroIni, "err"); return; }
+      extra.data_inicio_trabalho = inicioIso;
       const obsCompras = candCompras.obs.trim();
       if (candCompras.dispensa) {
         // Sem pedido: o Compras recebe o candidato só para ficar ciente.
@@ -2101,7 +2115,9 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
         const r = await enxovalRef.current.enviar();
         if (!r.ok) { setEnviandoEnxoval(false); toast(r.erro, "err"); return; }
         // O pedido nasce aqui (antes era no "Aprovar" do Compras) — com a observação do RH dentro.
-        const { data: ped, error: ePed } = await sb.rpc("rec_enxoval_gerar_pedido", { p_candidato_id: id, p_obs_rh: obsCompras });
+        // A data de início vai na observação do pedido: é por ela que o Compras prioriza o uniforme.
+        const obsPedido = [linhaInicioPedido(inicioIso), obsCompras].filter(Boolean).join(" · ");
+        const { data: ped, error: ePed } = await sb.rpc("rec_enxoval_gerar_pedido", { p_candidato_id: id, p_obs_rh: obsPedido });
         setEnviandoEnxoval(false);
         if (ePed) { toast("Enxoval salvo, mas o pedido não foi gerado: " + ePed.message, "err"); return; }
         if (ped?.protocolo) toast(`Pedido ${ped.protocolo} gerado em Pedidos de Materiais.`, "ok");
@@ -2134,10 +2150,11 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
     const detalheExColab = candModal.exColab
       ? [`Ex-colaborador: ${candModal.exColab} — movido após confirmar o aviso de ${JANELA_EX_COLABORADOR} dias.`, candObs.trim()].filter(Boolean).join("\n")
       : undefined;
+    const detalheHist = [detalheExColab, novaEtapa === ETAPA_SST_COMPRAS ? linhaInicioPedido(inicioIso) : ""].filter(Boolean).join("\n") || undefined;
     setCandModal(null);
     setCandObs("");
     setCandMateriais("");
-    await executarMoverCand(id, novaEtapa, extra, detalheExColab);
+    await executarMoverCand(id, novaEtapa, extra, detalheHist);
   };
 
   // Modal aberto pelo botão "Pular SST e Compras" (DOCUMENTAÇÃO → ADMISSÃO).
@@ -3978,6 +3995,24 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
                 O candidato vai direto para <strong>Admissão</strong>, sem passar pelo exame admissional (SST) nem pelo enxoval (Compras).
               </div>
             )}
+            {/* Início no posto (28/10/2026, mig 20261028001800): obrigatório — aparece para o Compras e o SST. */}
+            {candModal.novaEtapa === ETAPA_SST_COMPRAS && (() => {
+              const ini = inicioTrabalho(candInicio);
+              return (
+                <div style={{ border: "1px solid #bfdbfe", background: "#eff6ff", borderRadius: 12, padding: 12, marginBottom: 12 }}>
+                  <label style={{ display: "block", fontSize: 13, fontWeight: 800, color: "#0f3171" }}>📅 Data em que o colaborador vai começar a trabalhar *</label>
+                  <div style={{ fontSize: 11.5, color: "#64748b", margin: "3px 0 8px" }}>O Compras e o SST veem esta data — é por ela que o uniforme e o exame são priorizados.</div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                    <input type="date" value={candInicio} min={hojeIso()} onChange={e => setCandInicio(e.target.value)}
+                      style={{ padding: "8px 10px", borderRadius: 8, border: "1px solid #93c5fd", fontSize: 13, background: "#fff" }} />
+                    {ini && <span style={{ fontSize: 12.5, fontWeight: 700, color: ini.tom === "normal" ? "#0f3171" : "#b45309" }}>{ini.data} · {ini.prazo}</span>}
+                  </div>
+                  {drawerSol?.data_inicio_prevista && (
+                    <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 6 }}>Prevista na vaga: {fmtBr(drawerSol.data_inicio_prevista)}</div>
+                  )}
+                </div>
+              );
+            })()}
             {/* Não precisa de pedido (15/10/2026): o Compras recebe só para ficar ciente. */}
             {candModal.novaEtapa === ETAPA_SST_COMPRAS && (
               <div style={{ border: `1px solid ${candCompras.dispensa ? "#fdba74" : "#e2e8f0"}`, background: candCompras.dispensa ? "#fff7ed" : "#fff", borderRadius: 12, padding: 12, marginBottom: 12 }}>
