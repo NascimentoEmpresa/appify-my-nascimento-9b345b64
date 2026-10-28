@@ -337,14 +337,18 @@ export function FormConvencao({ aberto, onFechar, convencao, somenteLeitura, exi
                 <Input list="conv-sindicatos" value={sindicato} onChange={(e) => setSindicato(e.target.value)} placeholder="Ex.: Sindilimp RS" disabled={somenteLeitura} className="h-9" />
                 <datalist id="conv-sindicatos">{sugestoes("sindicato").map((s) => <option key={s} value={s} />)}</datalist>
               </Campo>
-              <Campo label="Vigência da CCT" obrigatorio>
-                <div className="flex items-center gap-2">
-                  <Input type="date" value={vigIni} onChange={(e) => setVigIni(e.target.value)} disabled={somenteLeitura} className="h-9" />
-                  <span className="text-xs text-muted-foreground">a</span>
-                  <Input type="date" value={vigFim} onChange={(e) => setVigFim(e.target.value)} disabled={somenteLeitura} className="h-9" />
+              {/* Vigência e anexo em linha inteira (28/10/2026): duas datas
+                  numa meia coluna de 600px não cabem — o input de data tem
+                  largura mínima própria (~126px com o ícone) e a segunda
+                  passava por cima do campo de anexo ao lado. */}
+              <Campo label="Vigência da CCT" obrigatorio className="min-w-0 sm:col-span-2">
+                <div className="flex min-w-0 items-center gap-2">
+                  <Input type="date" value={vigIni} onChange={(e) => setVigIni(e.target.value)} disabled={somenteLeitura} className="h-9 min-w-0 flex-1" />
+                  <span className="shrink-0 text-xs text-muted-foreground">a</span>
+                  <Input type="date" value={vigFim} onChange={(e) => setVigFim(e.target.value)} disabled={somenteLeitura} className="h-9 min-w-0 flex-1" />
                 </div>
               </Campo>
-              <Campo label="Anexo da Convenção Coletiva" obrigatorio>
+              <Campo label="Anexo da Convenção Coletiva" obrigatorio className="min-w-0 sm:col-span-2">
                 <CampoAnexo anexo={cct} rotulo="a convenção" somenteLeitura={somenteLeitura}
                   onEscolher={(f) => setCct((a) => ({ ...a, novo: f }))}
                   onRemover={() => setCct(ANEXO_VAZIO)} />
