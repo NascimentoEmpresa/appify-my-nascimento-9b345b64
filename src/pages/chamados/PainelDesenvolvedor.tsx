@@ -44,6 +44,20 @@ const VISOES = [
   { key: "todos", label: "Todos" },
 ] as const;
 
+interface MetricasGithubConclusao {
+  commits: number | null;
+  linhasAdicionadas: number | null;
+  arquivosAlterados: number | null;
+}
+
+interface EventoGithubConclusao {
+  chamado_id: string;
+  meta: Record<string, unknown> | null;
+}
+
+const numeroDaMetrica = (valor: unknown) =>
+  typeof valor === "number" && Number.isSafeInteger(valor) && valor >= 0 ? valor : null;
+
 export default function PainelDesenvolvedor() {
   const nav = useNavigate();
   const qc = useQueryClient();
@@ -72,6 +86,33 @@ export default function PainelDesenvolvedor() {
         .order("prazo_previsto", { ascending: true, nullsFirst: false });
       if (error) throw error;
       return (data ?? []) as Chamado[];
+    },
+  });
+
+  // A conclusão automática registra as métricas da PR como meta do evento.
+  // A consulta fica separada da lista de chamados para não carregar toda a
+  // conversa de cada item apenas para montar esta linha do painel.
+  const { data: metricasGithub = {} } = useQuery({
+    queryKey: ["chamados-metricas-github", user?.id],
+    enabled: !!user?.id && dev,
+    queryFn: async () => {
+      const { data, error } = await (supabase as any).from("CHAMADO_SISTEMA_EVENTO")
+        .select("chamado_id, meta, created_at")
+        .eq("tipo", "evento")
+        .contains("meta", { canal: "github", origem: "merge" })
+        .order("created_at", { ascending: false });
+      if (error) throw error;
+
+      return (data ?? []).reduce((porChamado: Record<string, MetricasGithubConclusao>, evento: EventoGithubConclusao) => {
+        if (porChamado[evento.chamado_id]) return porChamado;
+        const meta = (evento.meta ?? {}) as Record<string, unknown>;
+        porChamado[evento.chamado_id] = {
+          commits: numeroDaMetrica(meta.pr_commits),
+          linhasAdicionadas: numeroDaMetrica(meta.pr_linhas_adicionadas),
+          arquivosAlterados: numeroDaMetrica(meta.pr_arquivos_alterados),
+        };
+        return porChamado;
+      }, {});
     },
   });
 
@@ -342,6 +383,7 @@ export default function PainelDesenvolvedor() {
                 <TableBody>
                   {visiveis.map((c) => {
                     const atrasado = c.prazo_previsto && ATIVO(c.status) && new Date(c.prazo_previsto) < hoje;
+                    const metricas = metricasGithub[c.id];
                     return (
                       <TableRow key={c.id} className="cursor-pointer" onClick={() => nav(`/app/sistemas/chamados/${c.id}`)}>
                         <TableCell className="text-center">
@@ -378,6 +420,13 @@ export default function PainelDesenvolvedor() {
                             )}
                           </p>
                           <p className="text-xs">{c.assunto}</p>
+                          {metricas && (
+                            <p className="mt-0.5 flex flex-wrap items-center gap-1 text-[10px] font-medium text-muted-foreground">
+                              <GitPullRequest className="h-3 w-3 text-primary" /> GitHub: {metricas.commits ?? "—"} commits
+                              <span>· +{metricas.linhasAdicionadas ?? "—"} linhas</span>
+                              <span>· {metricas.arquivosAlterados ?? "—"} arquivos</span>
+                            </p>
+                          )}
                           {/* "Abrir PR" e "Reabrir" andam juntos: o chamado que
                               precisa de uma segunda PR é justamente o que foi
                               concluído pelo merge da primeira. */}
