@@ -51,6 +51,7 @@ import {
   FileOutput,
   Headset,
   ShieldAlert,
+  HeartPulse,
   ClipboardList,
   Bell,
   MessageCircle,
@@ -1327,6 +1328,14 @@ const sstModule: ModuleDef = {
       items: [
         { label: "Laudos de EPI", to: "/app/sst/laudos", icon: FileCheck2 },
         { label: "Controle de CA", to: "/app/sst/controle-ca", icon: ShieldAlert },
+      ],
+    },
+    {
+      // Atestados + telemedicina com lotação automática e impacto financeiro (mig 20261028002000).
+      label: "Saúde ocupacional",
+      defaultOpen: true,
+      items: [
+        { label: "Afastamentos e Telemedicina", to: "/app/sst/afastamentos", icon: HeartPulse },
       ],
     },
   ],
