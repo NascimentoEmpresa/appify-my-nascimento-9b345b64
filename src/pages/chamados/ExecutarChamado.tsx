@@ -23,6 +23,7 @@ import { abrirPrGithub } from "./abrirPrGithub";
 import { BotaoAdicionarParticipante } from "./ParticipantesChamado";
 import { ReabrirChamadoDialog } from "./ReabrirChamadoDialog";
 import { ChatChamado } from "./ChatChamado";
+import { InformacoesGithubChamado } from "./InformacoesGithubChamado";
 import { BotaoStatusChamado, CardTreinamento, CardValidacaoPresidencia, useValidacaoChamado } from "./StatusValidacao";
 import {
   StatusBadge, PrioridadeBadge, STATUS_CHAMADO, CardAvaliacao,
@@ -237,6 +238,8 @@ export default function ExecutarChamado() {
               <Campo label="Urgência informada">{labelDe(URGENCIAS, chamado.urgencia)}</Campo>
             </div>
           </Card>
+
+          <InformacoesGithubChamado eventos={eventos} />
 
           {chamado.comentario_gerente && (
             <Card className="space-y-1 border-primary/30 bg-primary/5 p-4">

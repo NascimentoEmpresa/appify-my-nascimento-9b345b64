@@ -14,15 +14,28 @@ import { AvaliarChamadoDialog } from "./AvaliarChamadoDialog";
 import { ReabrirChamadoDialog } from "./ReabrirChamadoDialog";
 import { CancelarChamadoDialog } from "./CancelarChamadoDialog";
 import { ChatChamado } from "./ChatChamado";
+import { InformacoesGithubChamado } from "./InformacoesGithubChamado";
 import { BotaoStatusChamado, CardTreinamento, CardValidacaoPresidencia, useValidacaoChamado } from "./StatusValidacao";
 import { avaliacaoLiberada } from "./validacaoPresidencia";
 import {
   StatusBadge, PrioridadeBadge, CardAvaliacao,
   CATEGORIAS, TIPOS, IMPACTOS, URGENCIAS, AMBIENTES,
   labelDe, moduloLabel, fmtData, fmtDataHora, chamadoEncerrado,
-  BUCKET_CHAMADOS, opcoesDownloadAnexo, type Chamado, type Anexo, type AvaliacaoChamado,
+  BUCKET_CHAMADOS, opcoesDownloadAnexo, type Chamado, type Anexo, type AvaliacaoChamado, type Evento,
 } from "./types";
 import { useAnexoChamado } from "./useAnexoChamado";
+
+interface ConsultaEventosChamado {
+  select(colunas: string): {
+    eq(coluna: string, valor: string | undefined): {
+      order(coluna: string, opcoes: { ascending: boolean }): Promise<{ data: unknown[] | null }>;
+    };
+  };
+}
+
+const tabelasChamado = supabase as unknown as {
+  from(tabela: string): ConsultaEventosChamado;
+};
 
 // Tela do SOLICITANTE: acompanha o próprio chamado e, quando o time pede mais
 // informações (status 'aguardando_retorno'), adiciona novas informações que
@@ -66,6 +79,18 @@ export default function AcompanharChamado({ base = "/app/central-servicos/chamad
     queryFn: async () => {
       const { data } = await (supabase as any).from("CHAMADO_SISTEMA_ANEXO").select("*").eq("chamado_id", id).order("created_at");
       return (data ?? []) as Anexo[];
+    },
+  });
+
+  // A mesma fonte que abastece a conversa fornece a comprovação objetiva da
+  // entrega: a automação do GitHub grava as métricas da PR neste histórico.
+  const { data: eventos = [] } = useQuery({
+    queryKey: ["chamado-eventos", id],
+    enabled: !!id,
+    queryFn: async () => {
+      const { data } = await tabelasChamado.from("CHAMADO_SISTEMA_EVENTO")
+        .select("*").eq("chamado_id", id).order("created_at", { ascending: false });
+      return (data ?? []) as Evento[];
     },
   });
 
@@ -147,6 +172,8 @@ export default function AcompanharChamado({ base = "/app/central-servicos/chamad
               <Campo label="Urgência informada">{labelDe(URGENCIAS, chamado.urgencia)}</Campo>
             </div>
           </Card>
+
+          <InformacoesGithubChamado eventos={eventos} />
 
           {chamado.observacao_gerente && (
             <Card className="space-y-1 p-4">

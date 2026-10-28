@@ -8,6 +8,7 @@ import { Card } from "@/components/ui/card";
 import { FileDown, FolderDown, Loader2 } from "lucide-react";
 import { PdfDocumento, fmtDataHoraPdf } from "@/lib/pdf/PdfDocumento";
 import { bytesLegivel, nomeNoZip, pastaDe } from "./exportarUtils";
+import { metricasGithubDaConclusao, somarMetricasGithub } from "./githubConclusao";
 import {
   BUCKET_CHAMADOS, CATEGORIAS, TIPOS, IMPACTOS, URGENCIAS, AMBIENTES,
   PRIORIDADES, STATUS_CHAMADO, CRITERIOS_AVALIACAO, labelDe, moduloLabel,
@@ -168,6 +169,24 @@ function gerarRelatorio(d: Dados) {
     if (c.observacao_gerente?.trim()) pdf.paragrafo(`Observação: ${c.observacao_gerente}`, { espacoDepois: 2 });
     if (c.comentario_gerente?.trim()) pdf.paragrafo(`Comentário: ${c.comentario_gerente}`, { espacoDepois: 2 });
     if (c.motivo_reprovacao?.trim()) pdf.paragrafo(`Motivo da reprovação: ${c.motivo_reprovacao}`, { espacoDepois: 2 });
+  }
+
+  const metricasGithub = metricasGithubDaConclusao(eventos);
+  if (metricasGithub.length) {
+    pdf.tituloSecao("Informações do GitHub na conclusão", 12);
+    metricasGithub.forEach((pr) => {
+      pdf.paragrafo(
+        `PR #${pr.numeroPr} · ${pr.linhasAdicionadas ?? "—"} linhas adicionadas · ${pr.commits ?? "—"} commits · ${pr.arquivosAlterados ?? "—"} arquivos alterados${pr.urlPr ? ` · ${pr.urlPr}` : ""}`,
+        { espacoDepois: 1.5 },
+      );
+    });
+    if (metricasGithub.length > 1) {
+      const total = somarMetricasGithub(metricasGithub);
+      pdf.paragrafo(
+        `Total (${metricasGithub.length} PRs): ${total.linhasAdicionadas ?? "—"} linhas adicionadas · ${total.commits ?? "—"} commits · ${total.arquivosAlterados ?? "—"} arquivos alterados`,
+        { negrito: true, espacoDepois: 3 },
+      );
+    }
   }
 
   // Histórico e conversa no mesmo fio, em ordem cronológica: é assim que o
