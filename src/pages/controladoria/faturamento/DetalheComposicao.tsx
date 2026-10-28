@@ -75,7 +75,7 @@ export function DetalheComposicao({ composicao, onClose }: { composicao: Composi
                           <TableCell className="break-words">{c.nome}</TableCell>
                           <TableCell className="whitespace-nowrap text-right">{fmtMoney(c.valor)}</TableCell>
                           <TableCell className="w-px whitespace-nowrap text-right">
-                            {podeAlterar && c.configuravel && (
+                            {podeAlterar && (
                               <Button size="sm" variant="outline" className="h-6 px-2 text-[11px]" disabled={salvar.isPending} onClick={() => void mudar(c.id, "fora_das_despesas")}>
                                 Tirar das despesas
                               </Button>

@@ -5,7 +5,7 @@ import {
   RUBRICAS, type BaseDespesa, aReceberDaNf, notaValidaNoFaturamento, lucroBruto, mesDoCusto, notasComSaldo, ponteAReceber, rubricaDaLinha, somarNf, totaisVazios,
   type LigacoesRubrica, type LinhaFluxoCusto, type NfFaturamento, type TotaisFaturamento,
 } from "./regras";
-import { contratoConfiguravel, saiDasDespesas, tratamentoEfetivo, type TratamentoContrato, type TratamentosContrato } from "./tratamentoContrato";
+import { saiDasDespesas, tratamentoEfetivo, type TratamentoContrato, type TratamentosContrato } from "./tratamentoContrato";
 
 export type Metrica =
   | "exec" | "diferenca" | "bruto" | "descontos" | "liquido" | "recebido" | "aReceber" | "contaVinculada"
@@ -71,8 +71,6 @@ export interface ContratoDaColuna {
   id: string;
   nome: string;
   valor: number;
-  // só o que dá para mudar: administrativo e sócios têm regra própria
-  configuravel: boolean;
 }
 
 // SIS-2026-0755: classificações que compõem a coluna, para trocar a rubrica de cada uma direto no modal.
@@ -292,14 +290,14 @@ export function montarComposicao(metrica: Metrica, escopo: EscopoDetalhe, ctx: C
     const d = despesasDoEscopo(ctx.custos, escopo, ctx.ligacoes);
     return {
       titulo,
-      descricao: `Saídas do Fluxo de Caixa com contrato, pela ${(ctx.baseDespesa === "pagamento" ? "data de pagamento" : "competência")}, sem transferências, aplicações e empréstimos. É o custo usado no Lucro. Contratos de estoque, movimentação financeira e investimento ficam de fora (padrão pelo nome, ajustável abaixo).`,
+      descricao: `Saídas do Fluxo de Caixa com contrato, pela ${(ctx.baseDespesa === "pagamento" ? "data de pagamento" : "competência")}, sem transferências, aplicações e empréstimos. É o custo usado no Lucro. Contratos de estoque, movimentação financeira, investimento e administrativos (centros de custo da empresa) ficam de fora (padrão pelo nome, ajustável abaixo).`,
       contratosNaColuna: [...d.porContrato.entries()]
-        .map(([id, valor]) => ({ id, nome: ctx.contratoNome(id), valor: r2(valor), configuravel: contratoConfiguravel(ctx.contratoNome(id)) }))
+        .map(([id, valor]) => ({ id, nome: ctx.contratoNome(id), valor: r2(valor) }))
         .sort((a, b) => b.valor - a.valor),
       classificacoesNaColuna: classificacoesDasLinhas(d.linhas),
       contratosForaDaColuna: escopo.contratoIds
         .map((id) => ({ id, nome: ctx.contratoNome(id), tratamento: tratamentoEfetivo(ctx.contratoNome(id), ctx.tratamentos?.get(id)), origem: (ctx.tratamentos?.has(id) ? "configurado" : "padrao") as "padrao" | "configurado" }))
-        .filter((c) => contratoConfiguravel(c.nome) && saiDasDespesas(c.tratamento))
+        .filter((c) => saiDasDespesas(c.tratamento))
         .sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR")),
       conta: [
         ...d.porRubrica.map((r, i) => ({ rotulo: r.rotulo, valor: r.valor, sinal: i === 0 ? undefined : ("+" as const) })),
