@@ -21,17 +21,15 @@ type AnexoAbrir = Pick<Anexo, "storage_path" | "nome_arquivo" | "mime_type">;
 // =====================================================================
 // Imagem do anexo pelo DOWNLOAD AUTENTICADO, não pela URL assinada
 // (28/10/2026). Print colado no chat do chamado aparecia como imagem
-// quebrada no balão: a assinatura era criada (POST /object/sign → URL
-// devolvida), mas o GET da URL assinada, que o <img> faz sem cabeçalho
-// nenhum, não entregava a imagem no cluster. Mesmo sintoma da contingência
-// em 05/10 (infra/failover/render/monolito/nginx.conf: 401 em JSON onde a
-// tag esperava PNG → ERR_BLOCKED_BY_ORB).
+// quebrada no balão. A assinatura sai mesmo quando o arquivo ainda não está
+// no nó que respondeu (o espelho entre os bancos roda de minuto em minuto —
+// ver TENTATIVAS_IMAGEM abaixo), e o <img> com a URL assinada só descobre
+// isso quebrando, sem nova tentativa.
 //
-// O download vai com apikey + JWT do usuário, pelo mesmo caminho dos
-// outros arquivos do Storage, e vira blob: URL local — não depende da rota
-// de assinatura nem do content-type que o Storage devolve. Se nem o download
-// vier, tenta a assinada; se a imagem ainda assim não decodificar, quem
-// desenha mostra o nome do arquivo em vez do ícone quebrado.
+// O download vai com apikey + JWT do usuário e vira blob: URL local: se ele
+// veio, os bytes estão aqui — dá para tentar de novo até chegarem. Se nem o
+// download vier, devolve a assinada; se a imagem ainda assim não decodificar,
+// quem desenha mostra o nome do arquivo em vez do ícone quebrado.
 // =====================================================================
 export async function urlImagemAnexo(path: string): Promise<{ url: string; local: boolean } | null> {
   const { data: blob } = await supabase.storage.from(BUCKET_CHAMADOS).download(path);
@@ -40,31 +38,57 @@ export async function urlImagemAnexo(path: string): Promise<{ url: string; local
   return data?.signedUrl ? { url: data.signedUrl, local: false } : null;
 }
 
+// O print recém-enviado pode ainda não estar no nó que respondeu: o
+// storage-api grava em disco local e o espelho entre banco1 e banco2 roda de
+// minuto em minuto (infra/ha/espelhar-anexos.sh — "a LINHA existe, os bytes
+// não"). Conferido em 28/10/2026 no chamado SIS-2026-0745: os dois prints
+// das 12:48 quebrados na hora, e a MESMA URL entregando o PNG (219.938 bytes)
+// minutos depois. Antes a tela guardava o link 50 min sem tentar de novo.
+// Por isso: novas tentativas cobrindo mais de um ciclo do espelho.
+const TENTATIVAS_IMAGEM = 5;
+const ESPERA_IMAGEM_MS = 15_000;
+
 /**
- * blob: URLs das imagens do chat, por caminho (null = não veio). Só busca o
- * que é novo — mensagem nova não rebaixa as imagens que já estão na tela — e
- * revoga tudo ao desmontar.
+ * blob: URLs das imagens do chat, por caminho (null = não veio depois de
+ * todas as tentativas). Só busca o que é novo — mensagem nova não rebaixa as
+ * imagens que já estão na tela — e revoga tudo ao desmontar.
  */
 export function useImagensAnexo(caminhos: string[]) {
   const [urls, setUrls] = useState<Record<string, string | null>>({});
   const pedidos = useRef(new Set<string>());
   const locais = useRef<string[]>([]);
+  const vivo = useRef(true);
   const chave = caminhos.join("|");
+
+  const buscar = useCallback(async (p: string, tentativa = 1) => {
+    // Só o download (blob) prova que os bytes chegaram; a assinada sai mesmo
+    // com o arquivo ausente no nó, e aí o <img> quebraria de novo.
+    const r = await urlImagemAnexo(p).catch(() => null);
+    if (!vivo.current) { if (r?.local) URL.revokeObjectURL(r.url); return; }
+    if (r?.local) {
+      locais.current.push(r.url);
+      setUrls((cur) => ({ ...cur, [p]: r.url }));
+      return;
+    }
+    if (tentativa < TENTATIVAS_IMAGEM) {
+      setTimeout(() => { if (vivo.current) buscar(p, tentativa + 1); }, ESPERA_IMAGEM_MS);
+      return;
+    }
+    setUrls((cur) => ({ ...cur, [p]: r?.url ?? null }));
+  }, []);
+
   useEffect(() => {
     const novos = caminhos.filter((p) => !pedidos.current.has(p));
     novos.forEach((p) => pedidos.current.add(p));
     // Uma por vez: cada ida ao Storage é uma conexão do pool dele com o
     // Postgres (ver ModalFotosComprovacao, 21/09/2026).
-    (async () => {
-      for (const p of novos) {
-        const r = await urlImagemAnexo(p).catch(() => null);
-        if (r?.local) locais.current.push(r.url);
-        setUrls((cur) => ({ ...cur, [p]: r?.url ?? null }));
-      }
-    })();
+    (async () => { for (const p of novos) await buscar(p); })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chave]);
-  useEffect(() => () => { locais.current.forEach((u) => URL.revokeObjectURL(u)); }, []);
+  useEffect(() => {
+    vivo.current = true;
+    return () => { vivo.current = false; locais.current.forEach((u) => URL.revokeObjectURL(u)); };
+  }, []);
   return urls;
 }
 

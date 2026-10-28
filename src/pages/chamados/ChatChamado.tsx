@@ -227,8 +227,9 @@ export function ChatChamado({
   }, [chamadoId, ultimoId, qc]);
 
   // Imagens aparecem dentro do balão (bucket privado). Desde 28/10/2026 pelo
-  // download autenticado, não pela URL assinada — o print colado aparecia
-  // quebrado no cluster (ver urlImagemAnexo em useAnexoChamado).
+  // download autenticado, com novas tentativas — o print recém-colado
+  // aparecia quebrado enquanto o arquivo não chegava no outro nó do cluster
+  // (ver urlImagemAnexo e TENTATIVAS_IMAGEM em useAnexoChamado).
   const caminhosImagem = useMemo(
     () => anexos.filter(ehImagem).map((a) => a.storage_path),
     [anexos],
