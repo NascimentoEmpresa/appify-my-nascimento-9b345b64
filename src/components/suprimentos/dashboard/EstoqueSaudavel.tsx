@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
   Banknote,
@@ -156,6 +156,7 @@ export function EstoqueSaudavel({
     almoxarifadoId: null,
   });
   const [situacao, setSituacao] = useState("problema");
+  const tabelaItensRef = useRef<HTMLDivElement>(null);
   const [busca, setBusca] = useState("");
   const [premissasAbertas, setPremissasAbertas] = useState(false);
   const [pedidoChat, setPedidoChat] = useState<PedidoExternoChat>({
@@ -273,7 +274,9 @@ export function EstoqueSaudavel({
           titulo="Mês a mês: o que temos, o que consumimos e qual era o alvo"
           subtitulo={
             dados.evolucao.length
-              ? "Cada ponto é um fechamento de mês. O alvo cai sozinho quando o quadro do contrato diminui."
+              ? dados.evolucao.length === 1
+                ? "Há somente um fechamento mensal; a linha será formada a partir do próximo fechamento, sem estimar meses inexistentes."
+                : "Cada ponto é um fechamento de mês. O alvo cai sozinho quando o quadro do contrato diminui."
               : "Começa no primeiro fechamento mensal."
           }
         >
@@ -326,7 +329,15 @@ export function EstoqueSaudavel({
           titulo="Situação dos itens"
           subtitulo={`${formatarNumero(r.itens_planejados)} combinações de item e tamanho no plano`}
         >
-          <GraficoSituacao dados={dados} />
+          <GraficoSituacao
+            dados={dados}
+            aoSelecionar={(proximaSituacao) => {
+              setSituacao(proximaSituacao);
+              requestAnimationFrame(() =>
+                tabelaItensRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }),
+              );
+            }}
+          />
         </PainelGrafico>
       </div>
 
@@ -348,14 +359,16 @@ export function EstoqueSaudavel({
         )}
       </PainelGrafico>
 
-      <TabelaItens
-        dados={dados}
-        empresaId={empresaId}
-        situacao={situacao}
-        setSituacao={setSituacao}
-        busca={busca}
-        setBusca={setBusca}
-      />
+      <div ref={tabelaItensRef} className="scroll-mt-4">
+        <TabelaItens
+          dados={dados}
+          empresaId={empresaId}
+          situacao={situacao}
+          setSituacao={setSituacao}
+          busca={busca}
+          setBusca={setBusca}
+        />
+      </div>
 
       {dados.liquidar.length > 0 && <BlocoLiquidar dados={dados} empresaId={empresaId} />}
 
@@ -614,7 +627,13 @@ function Alertas({ alertas }: { alertas: EstoqueSaudavelDados["alertas"] }) {
 /* Gráficos                                                           */
 /* ================================================================== */
 
-function GraficoSituacao({ dados }: { dados: EstoqueSaudavelDados }) {
+function GraficoSituacao({
+  dados,
+  aoSelecionar,
+}: {
+  dados: EstoqueSaudavelDados;
+  aoSelecionar: (situacao: string) => void;
+}) {
   const r = dados.resumo;
   const linhas = [
     { nome: "Faltando", chave: "falta", itens: r.itens_em_falta },
@@ -633,8 +652,17 @@ function GraficoSituacao({ dados }: { dados: EstoqueSaudavelDados }) {
           <CartesianGrid strokeDasharray="3 3" stroke={CINZA_GRADE} horizontal={false} />
           <XAxis type="number" allowDecimals={false} />
           <YAxis type="category" dataKey="nome" width={86} tick={{ fontSize: 12 }} />
-          <Tooltip formatter={(v: number) => [`${formatarNumero(v)} itens`, "Quantidade"]} />
-          <Bar dataKey="itens" name="Itens" radius={[0, 4, 4, 0]}>
+          <Tooltip formatter={(v: number) => [`${formatarNumero(v)} itens — clique para ver a lista`, "Quantidade"]} />
+          <Bar
+            dataKey="itens"
+            name="Itens"
+            radius={[0, 4, 4, 0]}
+            className="cursor-pointer"
+            onClick={(entrada) => {
+              const chave = (entrada as { payload?: { chave?: string } }).payload?.chave;
+              if (chave) aoSelecionar(chave);
+            }}
+          >
             {linhas.map((l) => (
               <Cell key={l.chave} fill={COR_SITUACAO[l.chave] ?? AZUL_MAGNITUDE} />
             ))}
