@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Download, ExternalLink, Loader2 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
@@ -18,17 +18,97 @@ import { BUCKET_CHAMADOS, ehImagemAnexo, opcoesDownloadAnexo, type Anexo } from 
 
 type AnexoAbrir = Pick<Anexo, "storage_path" | "nome_arquivo" | "mime_type">;
 
+// =====================================================================
+// Imagem do anexo pelo DOWNLOAD AUTENTICADO, não pela URL assinada
+// (28/10/2026). Print colado no chat do chamado aparecia como imagem
+// quebrada no balão. A assinatura sai mesmo quando o arquivo ainda não está
+// no nó que respondeu (o espelho entre os bancos roda de minuto em minuto —
+// ver TENTATIVAS_IMAGEM abaixo), e o <img> com a URL assinada só descobre
+// isso quebrando, sem nova tentativa.
+//
+// O download vai com apikey + JWT do usuário e vira blob: URL local: se ele
+// veio, os bytes estão aqui — dá para tentar de novo até chegarem. Se nem o
+// download vier, devolve a assinada; se a imagem ainda assim não decodificar,
+// quem desenha mostra o nome do arquivo em vez do ícone quebrado.
+// =====================================================================
+export async function urlImagemAnexo(path: string): Promise<{ url: string; local: boolean } | null> {
+  const { data: blob } = await supabase.storage.from(BUCKET_CHAMADOS).download(path);
+  if (blob && blob.size > 0) return { url: URL.createObjectURL(blob), local: true };
+  const { data } = await supabase.storage.from(BUCKET_CHAMADOS).createSignedUrl(path, 3600);
+  return data?.signedUrl ? { url: data.signedUrl, local: false } : null;
+}
+
+// O print recém-enviado pode ainda não estar no nó que respondeu: o
+// storage-api grava em disco local e o espelho entre banco1 e banco2 roda de
+// minuto em minuto (infra/ha/espelhar-anexos.sh — "a LINHA existe, os bytes
+// não"). Conferido em 28/10/2026 no chamado SIS-2026-0745: os dois prints
+// das 12:48 quebrados na hora, e a MESMA URL entregando o PNG (219.938 bytes)
+// minutos depois. Antes a tela guardava o link 50 min sem tentar de novo.
+// Por isso: novas tentativas cobrindo mais de um ciclo do espelho.
+const TENTATIVAS_IMAGEM = 5;
+const ESPERA_IMAGEM_MS = 15_000;
+
+/**
+ * blob: URLs das imagens do chat, por caminho (null = não veio depois de
+ * todas as tentativas). Só busca o que é novo — mensagem nova não rebaixa as
+ * imagens que já estão na tela — e revoga tudo ao desmontar.
+ */
+export function useImagensAnexo(caminhos: string[]) {
+  const [urls, setUrls] = useState<Record<string, string | null>>({});
+  const pedidos = useRef(new Set<string>());
+  const locais = useRef<string[]>([]);
+  const vivo = useRef(true);
+  const chave = caminhos.join("|");
+
+  const buscar = useCallback(async (p: string, tentativa = 1) => {
+    // Só o download (blob) prova que os bytes chegaram; a assinada sai mesmo
+    // com o arquivo ausente no nó, e aí o <img> quebraria de novo.
+    const r = await urlImagemAnexo(p).catch(() => null);
+    if (!vivo.current) { if (r?.local) URL.revokeObjectURL(r.url); return; }
+    if (r?.local) {
+      locais.current.push(r.url);
+      setUrls((cur) => ({ ...cur, [p]: r.url }));
+      return;
+    }
+    if (tentativa < TENTATIVAS_IMAGEM) {
+      setTimeout(() => { if (vivo.current) buscar(p, tentativa + 1); }, ESPERA_IMAGEM_MS);
+      return;
+    }
+    setUrls((cur) => ({ ...cur, [p]: r?.url ?? null }));
+  }, []);
+
+  useEffect(() => {
+    const novos = caminhos.filter((p) => !pedidos.current.has(p));
+    novos.forEach((p) => pedidos.current.add(p));
+    // Uma por vez: cada ida ao Storage é uma conexão do pool dele com o
+    // Postgres (ver ModalFotosComprovacao, 21/09/2026).
+    (async () => { for (const p of novos) await buscar(p); })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chave]);
+  useEffect(() => {
+    vivo.current = true;
+    return () => { vivo.current = false; locais.current.forEach((u) => URL.revokeObjectURL(u)); };
+  }, []);
+  return urls;
+}
+
 export function useAnexoChamado() {
   const { toast } = useToast();
   const [img, setImg] = useState<{ anexo: AnexoAbrir; url: string } | null>(null);
   const [carregou, setCarregou] = useState(false);
 
   const abrirAnexo = useCallback(async (a: AnexoAbrir) => {
-    const imagem = ehImagemAnexo(a);
+    if (ehImagemAnexo(a)) {
+      // Card no centro pelo download autenticado — ver urlImagemAnexo.
+      const r = await urlImagemAnexo(a.storage_path).catch(() => null);
+      if (!r) { toast({ title: "Erro ao abrir anexo", variant: "destructive" }); return; }
+      setCarregou(false);
+      setImg((cur) => { if (cur?.url.startsWith("blob:")) URL.revokeObjectURL(cur.url); return { anexo: a, url: r.url }; });
+      return;
+    }
     const { data, error } = await supabase.storage.from(BUCKET_CHAMADOS)
-      .createSignedUrl(a.storage_path, 3600, imagem ? undefined : opcoesDownloadAnexo(a.storage_path));
+      .createSignedUrl(a.storage_path, 3600, opcoesDownloadAnexo(a.storage_path));
     if (error || !data?.signedUrl) { toast({ title: "Erro ao abrir anexo", variant: "destructive" }); return; }
-    if (imagem) { setCarregou(false); setImg({ anexo: a, url: data.signedUrl }); return; }
     window.open(data.signedUrl, "_blank", "noopener,noreferrer");
   }, [toast]);
 
@@ -36,6 +116,13 @@ export function useAnexoChamado() {
   const baixar = async () => {
     if (!img) return;
     const nome = img.anexo.nome_arquivo || (img.anexo.storage_path.split("/").pop() ?? "imagem").replace(/^\d+-/, "");
+    // Imagem já baixada (blob:): salva dela mesma, sem nova ida ao Storage.
+    if (img.url.startsWith("blob:")) {
+      const a = document.createElement("a");
+      a.href = img.url; a.download = nome;
+      document.body.appendChild(a); a.click(); a.remove();
+      return;
+    }
     const { data, error } = await supabase.storage.from(BUCKET_CHAMADOS)
       .createSignedUrl(img.anexo.storage_path, 3600, { download: nome });
     if (error || !data?.signedUrl) { toast({ title: "Erro ao baixar anexo", variant: "destructive" }); return; }
