@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { AvisoProcessos, processosDe, useProcessosDosCandidatos } from "@/components/recrutamento/AvisoProcessos";
 import { AlertTriangle, Search, CalendarDays, MapPin, History } from "lucide-react";
+import { BlocoExColaborador, SeloExColaborador, useVinculoEmpresa } from "@/components/recrutamento/ExColaborador";
 
 // Bloco compartilhado: mostra TODAS as informações do candidato + da vaga +
 // restrição do CPF + perfil e anexos (CV/CTPS). Usado nas filas de Jurídico,
@@ -33,6 +34,8 @@ export function CandidatoInfo({ cand, hideCurriculo }: { cand: any; hideCurricul
   // Já processou a empresa? Vai ao lado do nome, nos dois lugares (resumo e modal).
   const candLista = useMemo(() => [{ cpf: cand?.cpf, nome: cand?.nome }], [cand?.cpf, cand?.nome]);
   const processos = processosDe(useProcessosDosCandidatos(candLista), { cpf: cand?.cpf, nome: cand?.nome });
+  // Já trabalhou conosco? Há quanto tempo saiu (27/10/2026).
+  const vinculo = useVinculoEmpresa(cand?.cpf);
   useEffect(() => {
     let vivo = true;
     (async () => {
@@ -59,6 +62,7 @@ export function CandidatoInfo({ cand, hideCurriculo }: { cand: any; hideCurricul
           <span title={cand.restricao_motivo || ""} style={{ fontSize: 10, fontWeight: 800, padding: "2px 9px", borderRadius: 20, background: "#fef3c7", color: "#92400e", border: "1px solid #fde68a" }}><AlertTriangle size={11} strokeWidth={2} aria-hidden style={{ display: "inline-block", verticalAlign: "-2px", marginRight: 5, flexShrink: 0 }} />Possui restrições</span>
         )}
         <AvisoProcessos processos={processos} compacto />
+        <SeloExColaborador vinculo={vinculo} />
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
         <Field label="CPF" val={cand.cpf} />
@@ -87,6 +91,7 @@ export function CandidatoInfo({ cand, hideCurriculo }: { cand: any; hideCurricul
               {cand.possui_restricao && <span style={{ fontSize: 10, fontWeight: 800, padding: "2px 9px", borderRadius: 20, background: "#fef3c7", color: "#92400e", border: "1px solid #fde68a" }}><AlertTriangle size={11} strokeWidth={2} aria-hidden style={{ display: "inline-block", verticalAlign: "-2px", marginRight: 5, flexShrink: 0 }} />Possui restrições</span>}
             </div>
             <AvisoProcessos processos={processos} />
+            <BlocoExColaborador vinculo={vinculo} />
             <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
               <Field label="CPF" val={cand.cpf} />
               <Field label="Fone" val={cand.telefone} />

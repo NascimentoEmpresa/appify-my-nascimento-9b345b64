@@ -352,15 +352,15 @@ export function PainelDespesaMalote({
   // (a compra já foi feita). Ver cartaoEspecial.ts.
   const cartaoEspecial = useCartaoEspecialDaForma(formaPagamento, empresaId);
   const exigeExcecao = !cartaoEspecial && !!dataPagamento && !!prazoNormal && dataPagamento < prazoNormal;
-  // Despesa PARCELADA no cartão: a 1ª parcela vence no vencimento da fatura em que a compra cai (e o dia do desconto das seguintes é o dia
-  // de vencimento do cartão). À vista continua pagando no dia do lançamento. Sem os dias do cartão, mantém a data de hoje.
-  const vencimentoDaFatura = parcelado === "sim" ? cartaoEspecial?.proximoVencimento ?? null : null;
   useEffect(() => {
     if (!cartaoEspecial) return;
-    setDataPagamento(vencimentoDaFatura ?? cartaoEspecial.dataPagamento);
+    setDataPagamento(cartaoEspecial.dataPagamento);
     setCompetencia(cartaoEspecial.competencia);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cartaoEspecial?.dataPagamento, vencimentoDaFatura]);
+  }, [cartaoEspecial?.dataPagamento]);
+  // Despesa PARCELADA no cartão: a Data de pagamento da despesa continua sendo o dia do lançamento; só o CRONOGRAMA parte do vencimento da
+  // fatura em que a compra cai (1ª parcela nele, e as seguintes no dia de vencimento do cartão). Sem os dias do cartão, nada muda.
+  const vencimentoDaFatura = parcelado === "sim" ? cartaoEspecial?.proximoVencimento ?? null : null;
   useEffect(() => {
     if (vencimentoDaFatura && cartaoEspecial?.diaVencimento) setDiaDesconto(String(Math.min(cartaoEspecial.diaVencimento, 30)));
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -382,18 +382,18 @@ export function PainelDespesaMalote({
   useEffect(() => {
     setDatasManuais({});
     setValoresManuais({});
-  }, [diaDesconto, quantidadeParcelas, totalMes, dataPagamento, modoValorParcela]);
+  }, [diaDesconto, quantidadeParcelas, totalMes, dataPagamento, vencimentoDaFatura, modoValorParcela]);
 
   const parcelasPreview = useMemo(() => {
     if (parcelado !== "sim" || !diaDesconto || !quantidadeParcelas || !dataPagamento) return [];
     const n = Number(quantidadeParcelas);
     if (!Number.isInteger(n) || n < QUANTIDADE_PARCELAS_MIN || n > QUANTIDADE_PARCELAS_MAX) return [];
     const comData = mesclarDatasParcelas(
-      gerarParcelas(Number(totalMes) || 0, n, dataPagamento, Number(diaDesconto), modoValorParcela),
+      gerarParcelas(Number(totalMes) || 0, n, vencimentoDaFatura ?? dataPagamento, Number(diaDesconto), modoValorParcela),
       datasManuais,
     );
     return modoValorParcela === "compra" ? mesclarValoresParcelas(comData, valoresManuais) : comData;
-  }, [parcelado, diaDesconto, quantidadeParcelas, dataPagamento, totalMes, datasManuais, valoresManuais, modoValorParcela]);
+  }, [parcelado, diaDesconto, quantidadeParcelas, dataPagamento, vencimentoDaFatura, totalMes, datasManuais, valoresManuais, modoValorParcela]);
 
   const somaParcelasPreview = useMemo(
     () => parcelasPreview.reduce((s, p) => s + (Number(p.valor) || 0), 0),
@@ -716,10 +716,8 @@ export function PainelDespesaMalote({
           {cartaoEspecial && (
             <p className="text-xs text-muted-foreground">
               Cartão com Fluxo Especial ({cartaoEspecial.rotulo}):{" "}
-              {vencimentoDaFatura
-                ? `como a despesa é parcelada, a 1ª parcela vence no próximo vencimento da fatura (${vencimentoDaFatura.split("-").reverse().join("/")}) e as seguintes no dia ${cartaoEspecial.diaVencimento} dos meses seguintes`
-                : `a Data de Pagamento é o dia do lançamento (${cartaoEspecial.dataPagamento.split("-").reverse().join("/")})`}
-              {" "}e não pede exceção; vai direto ao aprovador do Fluxo Especial.
+              a Data de Pagamento é o dia do lançamento ({cartaoEspecial.dataPagamento.split("-").reverse().join("/")}) e não pede exceção; vai direto ao aprovador do Fluxo Especial.
+              {vencimentoDaFatura && ` Como a despesa é parcelada, a 1ª parcela vence no próximo vencimento da fatura (${vencimentoDaFatura.split("-").reverse().join("/")}) e as seguintes no dia ${cartaoEspecial.diaVencimento} dos meses seguintes.`}
             </p>
           )}
           <ExcecaoSenhaField

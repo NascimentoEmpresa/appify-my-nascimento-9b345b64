@@ -888,6 +888,24 @@ export default function FluxoCaixaGestao() {
                     </ul>
                     {exp.aviso && <p className="mt-2 rounded-md bg-amber-50 px-2 py-1.5 text-xs text-amber-800 dark:bg-amber-950/30 dark:text-amber-300">{exp.aviso}</p>}
                   </div>
+                  {kpiAberto !== "vencidas" && (() => {
+                    // SIS-2026-0726 V1: parte de Conta vinculada que veio do texto (banco/descrição), não de uma classificação mapeada.
+                    const t = totaisNatureza.contaVinculadaPorTexto;
+                    const valor = kpiAberto === "entradas" ? t.entradas : kpiAberto === "saidas" ? t.saidas : null;
+                    if (valor === null ? t.entradas + t.saidas < 0.005 : valor < 0.005) return null;
+                    return (
+                      <div>
+                        <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Como a conta vinculada é separada</p>
+                        <p className="text-xs text-muted-foreground">
+                          A natureza vem da classificação do lançamento. Como ainda não há classificação de conta vinculada mapeada em “Natureza das classificações”,{" "}
+                          {valor === null
+                            ? <>{formatBRL(t.entradas)} de entradas e {formatBRL(t.saidas)} de saídas</>
+                            : <>{formatBRL(valor)}</>}{" "}
+                          foram identificados pelo <strong>banco ou pela descrição</strong> com “conta vinculada”. Quando a classificação for mapeada, ela passa a valer no lugar do texto.
+                        </p>
+                      </div>
+                    );
+                  })()}
                   {doKpi.length > 0 && (
                     <>
                       <div>
