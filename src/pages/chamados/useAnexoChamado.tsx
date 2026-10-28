@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Download, ExternalLink, Loader2 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
@@ -18,17 +18,73 @@ import { BUCKET_CHAMADOS, ehImagemAnexo, opcoesDownloadAnexo, type Anexo } from 
 
 type AnexoAbrir = Pick<Anexo, "storage_path" | "nome_arquivo" | "mime_type">;
 
+// =====================================================================
+// Imagem do anexo pelo DOWNLOAD AUTENTICADO, não pela URL assinada
+// (28/10/2026). Print colado no chat do chamado aparecia como imagem
+// quebrada no balão: a assinatura era criada (POST /object/sign → URL
+// devolvida), mas o GET da URL assinada, que o <img> faz sem cabeçalho
+// nenhum, não entregava a imagem no cluster. Mesmo sintoma da contingência
+// em 05/10 (infra/failover/render/monolito/nginx.conf: 401 em JSON onde a
+// tag esperava PNG → ERR_BLOCKED_BY_ORB).
+//
+// O download vai com apikey + JWT do usuário, pelo mesmo caminho dos
+// outros arquivos do Storage, e vira blob: URL local — não depende da rota
+// de assinatura nem do content-type que o Storage devolve. Se nem o download
+// vier, tenta a assinada; se a imagem ainda assim não decodificar, quem
+// desenha mostra o nome do arquivo em vez do ícone quebrado.
+// =====================================================================
+export async function urlImagemAnexo(path: string): Promise<{ url: string; local: boolean } | null> {
+  const { data: blob } = await supabase.storage.from(BUCKET_CHAMADOS).download(path);
+  if (blob && blob.size > 0) return { url: URL.createObjectURL(blob), local: true };
+  const { data } = await supabase.storage.from(BUCKET_CHAMADOS).createSignedUrl(path, 3600);
+  return data?.signedUrl ? { url: data.signedUrl, local: false } : null;
+}
+
+/**
+ * blob: URLs das imagens do chat, por caminho (null = não veio). Só busca o
+ * que é novo — mensagem nova não rebaixa as imagens que já estão na tela — e
+ * revoga tudo ao desmontar.
+ */
+export function useImagensAnexo(caminhos: string[]) {
+  const [urls, setUrls] = useState<Record<string, string | null>>({});
+  const pedidos = useRef(new Set<string>());
+  const locais = useRef<string[]>([]);
+  const chave = caminhos.join("|");
+  useEffect(() => {
+    const novos = caminhos.filter((p) => !pedidos.current.has(p));
+    novos.forEach((p) => pedidos.current.add(p));
+    // Uma por vez: cada ida ao Storage é uma conexão do pool dele com o
+    // Postgres (ver ModalFotosComprovacao, 21/09/2026).
+    (async () => {
+      for (const p of novos) {
+        const r = await urlImagemAnexo(p).catch(() => null);
+        if (r?.local) locais.current.push(r.url);
+        setUrls((cur) => ({ ...cur, [p]: r?.url ?? null }));
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chave]);
+  useEffect(() => () => { locais.current.forEach((u) => URL.revokeObjectURL(u)); }, []);
+  return urls;
+}
+
 export function useAnexoChamado() {
   const { toast } = useToast();
   const [img, setImg] = useState<{ anexo: AnexoAbrir; url: string } | null>(null);
   const [carregou, setCarregou] = useState(false);
 
   const abrirAnexo = useCallback(async (a: AnexoAbrir) => {
-    const imagem = ehImagemAnexo(a);
+    if (ehImagemAnexo(a)) {
+      // Card no centro pelo download autenticado — ver urlImagemAnexo.
+      const r = await urlImagemAnexo(a.storage_path).catch(() => null);
+      if (!r) { toast({ title: "Erro ao abrir anexo", variant: "destructive" }); return; }
+      setCarregou(false);
+      setImg((cur) => { if (cur?.url.startsWith("blob:")) URL.revokeObjectURL(cur.url); return { anexo: a, url: r.url }; });
+      return;
+    }
     const { data, error } = await supabase.storage.from(BUCKET_CHAMADOS)
-      .createSignedUrl(a.storage_path, 3600, imagem ? undefined : opcoesDownloadAnexo(a.storage_path));
+      .createSignedUrl(a.storage_path, 3600, opcoesDownloadAnexo(a.storage_path));
     if (error || !data?.signedUrl) { toast({ title: "Erro ao abrir anexo", variant: "destructive" }); return; }
-    if (imagem) { setCarregou(false); setImg({ anexo: a, url: data.signedUrl }); return; }
     window.open(data.signedUrl, "_blank", "noopener,noreferrer");
   }, [toast]);
 
@@ -36,6 +92,13 @@ export function useAnexoChamado() {
   const baixar = async () => {
     if (!img) return;
     const nome = img.anexo.nome_arquivo || (img.anexo.storage_path.split("/").pop() ?? "imagem").replace(/^\d+-/, "");
+    // Imagem já baixada (blob:): salva dela mesma, sem nova ida ao Storage.
+    if (img.url.startsWith("blob:")) {
+      const a = document.createElement("a");
+      a.href = img.url; a.download = nome;
+      document.body.appendChild(a); a.click(); a.remove();
+      return;
+    }
     const { data, error } = await supabase.storage.from(BUCKET_CHAMADOS)
       .createSignedUrl(img.anexo.storage_path, 3600, { download: nome });
     if (error || !data?.signedUrl) { toast({ title: "Erro ao baixar anexo", variant: "destructive" }); return; }

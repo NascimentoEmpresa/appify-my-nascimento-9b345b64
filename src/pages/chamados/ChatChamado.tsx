@@ -30,7 +30,7 @@ import {
   Check, CheckCheck, Paperclip, Send, X, Lock, Users, Download, ImageIcon, Loader2,
 } from "lucide-react";
 import { BUCKET_CHAMADOS, fmtDataHora, opcoesDownloadAnexo, type Anexo, type Evento } from "./types";
-import { useAnexoChamado } from "./useAnexoChamado";
+import { useAnexoChamado, useImagensAnexo } from "./useAnexoChamado";
 import { imagensDoClipboard } from "@/lib/imagensColadas";
 
 export interface Participante {
@@ -226,22 +226,16 @@ export function ChatChamado({
     })();
   }, [chamadoId, ultimoId, qc]);
 
-  // Imagens aparecem dentro do balão → precisa de URL assinada (bucket privado).
+  // Imagens aparecem dentro do balão (bucket privado). Desde 28/10/2026 pelo
+  // download autenticado, não pela URL assinada — o print colado aparecia
+  // quebrado no cluster (ver urlImagemAnexo em useAnexoChamado).
   const caminhosImagem = useMemo(
     () => anexos.filter(ehImagem).map((a) => a.storage_path),
     [anexos],
   );
-  const { data: urlsImagem = {} } = useQuery({
-    queryKey: ["chamado-anexos-urls", chamadoId, caminhosImagem.join("|")],
-    enabled: caminhosImagem.length > 0,
-    staleTime: 50 * 60 * 1000, // a assinatura vale 1 h
-    queryFn: async () => {
-      const { data } = await supabase.storage.from(BUCKET_CHAMADOS).createSignedUrls(caminhosImagem, 3600);
-      const m: Record<string, string> = {};
-      (data ?? []).forEach((d: any) => { if (d?.path && d?.signedUrl) m[d.path] = d.signedUrl; });
-      return m;
-    },
-  });
+  const urlsImagem = useImagensAnexo(caminhosImagem);
+  // Imagem que não decodificou vira o cartão com o nome, não ícone quebrado.
+  const [imagemFalhou, setImagemFalhou] = useState<Record<string, true>>({});
 
   const anexosPorEvento = useMemo(() => {
     const m: Record<string, Anexo[]> = {};
@@ -526,16 +520,21 @@ export function ChatChamado({
                   {anexosMsg.length > 0 && (
                     <div className="mt-1.5 space-y-1.5">
                       {anexosMsg.map((a) =>
-                        ehImagem(a) && urlsImagem[a.storage_path] ? (
+                        ehImagem(a) && urlsImagem[a.storage_path] && !imagemFalhou[a.storage_path] ? (
                           <button
                             key={a.id} type="button" onClick={() => baixarAnexo(a)}
                             className="block overflow-hidden rounded-lg border border-border/60 transition-opacity hover:opacity-90"
                           >
                             <img
-                              src={urlsImagem[a.storage_path]} alt={a.nome_arquivo} loading="lazy"
+                              src={urlsImagem[a.storage_path]!} alt={a.nome_arquivo} loading="lazy"
+                              onError={() => setImagemFalhou((m) => ({ ...m, [a.storage_path]: true }))}
                               className="max-h-64 w-full object-contain"
                             />
                           </button>
+                        ) : ehImagem(a) && !(a.storage_path in urlsImagem) ? (
+                          <div key={a.id} className="flex h-20 items-center justify-center rounded-lg border border-border/60 bg-background/60">
+                            <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                          </div>
                         ) : (
                           <button
                             key={a.id} type="button" onClick={() => baixarAnexo(a)}
