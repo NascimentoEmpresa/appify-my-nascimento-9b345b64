@@ -39,6 +39,7 @@ export interface TamanhoRotatividade {
 }
 
 export interface PecaRotatividade {
+  codigo: string | null;
   peca: string;
   pedidas: number;
   valor_pedido: number;
@@ -46,6 +47,20 @@ export interface PecaRotatividade {
   saidas: number;
   saldo_disponivel: number;
   tamanho_top: string | null;
+  giro: number | null;
+}
+
+/** Unidade de decisão operacional: produto identificado + tamanho. */
+export interface ItemTamanhoRotatividade {
+  codigo: string | null;
+  item: string;
+  tamanho: string | null;
+  pedidas: number;
+  entradas: number;
+  saidas: number;
+  fisico: number;
+  reservado: number;
+  saldo_disponivel: number;
   giro: number | null;
 }
 
@@ -124,6 +139,16 @@ export interface DestaqueTamanho {
   saidas?: number;
 }
 
+export interface DestaqueItemTamanho {
+  codigo: string | null;
+  item: string;
+  tamanho: string | null;
+  unidades?: number;
+  giro?: number;
+  saldo?: number;
+  saidas?: number;
+}
+
 export interface RotatividadeEstoqueDados {
   atualizado_em: string;
   categoria: string | null;
@@ -143,6 +168,8 @@ export interface RotatividadeEstoqueDados {
     entradas: number;
     saidas: number;
     devolucoes: number;
+    saldo_fisico: number;
+    reservado: number;
     saldo_disponivel: number;
     itens_distintos: number;
     tamanhos_distintos: number;
@@ -150,10 +177,14 @@ export interface RotatividadeEstoqueDados {
     tamanho_mais_sai: DestaqueTamanho | null;
     tamanho_mais_entra: DestaqueTamanho | null;
     tamanho_maior_giro: DestaqueTamanho | null;
-    peca_mais_sai: { peca: string; unidades: number } | null;
+    item_tamanho_mais_sai: DestaqueItemTamanho | null;
+    item_tamanho_mais_entra: DestaqueItemTamanho | null;
+    item_tamanho_maior_giro: DestaqueItemTamanho | null;
+    peca_mais_sai: { codigo: string | null; peca: string; unidades: number } | null;
     tamanhos_zerados: number;
   };
   por_tamanho: TamanhoRotatividade[];
+  por_item_tamanho: ItemTamanhoRotatividade[];
   por_peca: PecaRotatividade[];
   por_contrato: ContratoRotatividade[];
   evolucao: MesRotatividade[];

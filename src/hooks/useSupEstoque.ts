@@ -52,7 +52,7 @@ export interface LinhaEstoque {
   valor_unitario: number;
   /** Custo que a tela mostra — ver `custoDoItem` (SIS-2026-0199). */
   custo_unitario: number;
-  /** `custo_unitario` × disponível. */
+  /** `custo_unitario` × físico; reserva não retira patrimônio da prateleira. */
   valor_total: number;
   /** Até quando o fornecedor segura este preço. */
   preco_valido_ate: string | null;
@@ -236,6 +236,10 @@ export function useEstoqueLista(empresaId: string | null) {
                  almoxarifado:almoxarifado_id (nome),
                  sup_estoque_tag (codigo, tamanho, tipo, usado, quantidade_massa, quantidade_original_massa, valor_unitario,
                                   sup_estoque_reserva (quantidade, situacao))`)
+        // A RLS permite todas as empresas às quais o usuário tem acesso. Sem
+        // este filtro, trocar a empresa operacional mudava só a chave do cache
+        // e a tela continuava somando os estoques de todas elas.
+        .eq("empresa_id", empresaId)
         // Material excluído que já atendeu pedido não é apagado, é arquivado
         // (ver sup_est_excluir_item) — a linha fica para os pedidos antigos
         // continuarem sabendo o que receberam. Na lista, ele não existe mais.

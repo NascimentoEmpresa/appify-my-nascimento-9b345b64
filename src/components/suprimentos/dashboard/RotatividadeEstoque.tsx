@@ -55,18 +55,14 @@ import {
 import { formatarMoeda, formatarNumero } from "@/lib/suprimentos/dashboardComprasEstoque";
 import {
   avisoMovimento,
-  classeSituacaoCobertura,
   classeSituacaoGiro,
   compararGrade,
   coberturaDePreco,
-  formatarCobertura,
   formatarGap,
   formatarGiro,
   formatarPercentual,
   maiorDesalinhamento,
-  rotuloSituacaoCobertura,
   rotuloSituacaoGiro,
-  situacaoCobertura,
   situacaoGiro,
   type FornecimentoUniformeColaborador,
   type HistoricoUniformeLinha,
@@ -78,15 +74,14 @@ import * as XLSX from "xlsx";
 /**
  * Aba "Rotatividade do Estoque".
  *
- * Responde, nesta ordem, o que a diretoria pediu: qual tamanho mais sai, qual
- * mais entra, qual mais roda dentro do estoque, por contrato, com valor e ao
+ * Responde, nesta ordem, o que a diretoria pediu: qual item+tamanho mais sai,
+ * qual mais entra, qual mais roda dentro do estoque, por contrato, com valor e ao
  * longo do tempo. E fecha com a comparação que só o levantamento de uniformes
  * permite: a grade que a equipe declara vestir contra a que de fato sai.
  *
  * Período, empresa e contrato vêm do filtro da página, compartilhados com as
- * outras abas. A CATEGORIA é local: a aba abre em Uniformes porque foi o que
- * o diretor pediu, enquanto o filtro global da página segue em "Todas" para
- * não mexer no que as outras abas mostram.
+ * outras abas. A CATEGORIA é local e abre em "Todas" para o saldo disponível
+ * bater com Estoque & Etiquetas; o usuário pode restringir depois.
  */
 
 interface Props {
@@ -178,50 +173,45 @@ function BlocoAlertas({ dados }: { dados: RotatividadeEstoqueDados }) {
   );
 }
 
-function TabelaPorTamanho({ dados }: { dados: RotatividadeEstoqueDados }) {
-  const linhas = dados.por_tamanho.filter(
-    (t) => t.pedidas > 0 || t.saidas > 0 || t.entradas > 0 || t.saldo_disponivel > 0,
+function TabelaPorItemTamanho({ dados }: { dados: RotatividadeEstoqueDados }) {
+  const linhas = dados.por_item_tamanho.filter(
+    (linha) => linha.pedidas > 0 || linha.saidas > 0 || linha.entradas > 0 || linha.fisico > 0,
   );
   return (
     <PainelGrafico
-      titulo="Detalhe por Tamanho"
-      subtitulo="A mesma informação dos gráficos em números — ordenada pela escala de tamanho, não pelo volume."
+      titulo="Detalhe por Item e Tamanho"
+      subtitulo="Cada linha identifica o código do estoque, a peça e o tamanho. Saída é baixa física confirmada; pedido aberto não entra como consumo."
     >
       <div className="overflow-x-auto">
-        <table className="w-full text-xs">
+        <table className="w-full min-w-[1080px] text-xs">
           <thead>
             <tr>
+              <CabecalhoTabela>Código</CabecalhoTabela>
+              <CabecalhoTabela>Item</CabecalhoTabela>
               <CabecalhoTabela>Tamanho</CabecalhoTabela>
               <CabecalhoTabela alinhar="right">Pedidas</CabecalhoTabela>
-              <CabecalhoTabela alinhar="right">% do total</CabecalhoTabela>
               <CabecalhoTabela alinhar="right">Entradas</CabecalhoTabela>
-              <CabecalhoTabela alinhar="right">Saídas</CabecalhoTabela>
-              <CabecalhoTabela alinhar="right">Devoluções</CabecalhoTabela>
-              <CabecalhoTabela alinhar="right">Em estoque</CabecalhoTabela>
+              <CabecalhoTabela alinhar="right">Saídas físicas</CabecalhoTabela>
+              <CabecalhoTabela alinhar="right">Físico</CabecalhoTabela>
+              <CabecalhoTabela alinhar="right">Reservado</CabecalhoTabela>
+              <CabecalhoTabela alinhar="right">Disponível</CabecalhoTabela>
               <CabecalhoTabela alinhar="right">Giro</CabecalhoTabela>
               <CabecalhoTabela>Rotatividade</CabecalhoTabela>
-              <CabecalhoTabela alinhar="right">Cobertura</CabecalhoTabela>
-              <CabecalhoTabela>Situação</CabecalhoTabela>
-              <CabecalhoTabela alinhar="right">Declararam</CabecalhoTabela>
-              <CabecalhoTabela alinhar="right">Valor</CabecalhoTabela>
             </tr>
           </thead>
           <tbody>
             {linhas.map((linha) => {
               const giro = situacaoGiro(linha);
-              const cobertura = situacaoCobertura(linha);
               return (
-                <tr key={linha.tamanho} className="border-b last:border-0 hover:bg-slate-50">
-                  <td className="px-3 py-2 font-bold text-blue-950">{linha.tamanho}</td>
+                <tr key={`${linha.codigo ?? linha.item}-${linha.tamanho ?? "sem-tamanho"}`} className="border-b last:border-0 hover:bg-slate-50">
+                  <td className="whitespace-nowrap px-3 py-2 font-mono text-[11px] text-slate-500">{linha.codigo ?? "—"}</td>
+                  <td className="max-w-72 px-3 py-2 font-medium text-blue-950">{linha.item}</td>
+                  <td className="px-3 py-2 font-bold text-blue-950">{linha.tamanho ?? "Sem tamanho"}</td>
                   <td className="px-3 py-2 text-right font-medium">{formatarNumero(linha.pedidas)}</td>
-                  <td className="px-3 py-2 text-right text-slate-500">
-                    {formatarPercentual(linha.pct_pedidas)}
-                  </td>
                   <td className="px-3 py-2 text-right">{formatarNumero(linha.entradas)}</td>
                   <td className="px-3 py-2 text-right">{formatarNumero(linha.saidas)}</td>
-                  <td className="px-3 py-2 text-right text-slate-500">
-                    {formatarNumero(linha.devolucoes)}
-                  </td>
+                  <td className="px-3 py-2 text-right">{formatarNumero(linha.fisico)}</td>
+                  <td className="px-3 py-2 text-right text-amber-700">{formatarNumero(linha.reservado)}</td>
                   <td className="px-3 py-2 text-right">{formatarNumero(linha.saldo_disponivel)}</td>
                   <td className="px-3 py-2 text-right font-medium">{formatarGiro(linha.giro)}</td>
                   <td className="px-3 py-2">
@@ -229,24 +219,12 @@ function TabelaPorTamanho({ dados }: { dados: RotatividadeEstoqueDados }) {
                       {rotuloSituacaoGiro(giro)}
                     </Badge>
                   </td>
-                  <td className="px-3 py-2 text-right">{formatarCobertura(linha.dias_cobertura)}</td>
-                  <td className="px-3 py-2">
-                    <Badge className={cn("border-0 text-[10px]", classeSituacaoCobertura(cobertura))}>
-                      {rotuloSituacaoCobertura(cobertura)}
-                    </Badge>
-                  </td>
-                  <td className="px-3 py-2 text-right text-slate-500">
-                    {linha.declarado_pessoas > 0 ? formatarNumero(linha.declarado_pessoas) : "—"}
-                  </td>
-                  <td className="px-3 py-2 text-right font-medium">
-                    {formatarMoeda(linha.valor_pedido)}
-                  </td>
                 </tr>
               );
             })}
           </tbody>
         </table>
-        {!linhas.length && <EstadoVazio texto="Nenhum tamanho movimentado no período." />}
+        {!linhas.length && <EstadoVazio texto="Nenhum item/tamanho movimentado no período." />}
       </div>
     </PainelGrafico>
   );
@@ -264,6 +242,7 @@ function TabelaPorPeca({ dados }: { dados: RotatividadeEstoqueDados }) {
           <thead>
             <tr>
               <CabecalhoTabela>#</CabecalhoTabela>
+              <CabecalhoTabela>Código</CabecalhoTabela>
               <CabecalhoTabela>Peça</CabecalhoTabela>
               <CabecalhoTabela alinhar="center">Tamanho top</CabecalhoTabela>
               <CabecalhoTabela alinhar="right">Pedidas</CabecalhoTabela>
@@ -276,8 +255,9 @@ function TabelaPorPeca({ dados }: { dados: RotatividadeEstoqueDados }) {
           </thead>
           <tbody>
             {linhas.map((linha, i) => (
-              <tr key={linha.peca} className="border-b last:border-0 hover:bg-slate-50">
+              <tr key={`${linha.codigo ?? "sem-codigo"}-${linha.peca}`} className="border-b last:border-0 hover:bg-slate-50">
                 <td className="px-3 py-2 text-slate-400">{i + 1}</td>
+                <td className="whitespace-nowrap px-3 py-2 font-mono text-[11px] text-slate-500">{linha.codigo ?? "—"}</td>
                 <td className="max-w-64 truncate px-3 py-2 font-medium" title={linha.peca}>
                   {linha.peca}
                 </td>
@@ -571,7 +551,7 @@ function Carregando() {
 }
 
 export function RotatividadeEstoque({ empresaId, inicio, fim, contratoId }: Props) {
-  const [categoria, setCategoria] = useState<string>("uniforme");
+  const [categoria, setCategoria] = useState<string>("");
   const filtros = useMemo(
     () => ({ inicio, fim, contratoId, categoria }),
     [inicio, fim, contratoId, categoria],
@@ -589,51 +569,30 @@ export function RotatividadeEstoque({ empresaId, inicio, fim, contratoId }: Prop
   );
 
   // O tamanho sozinho mistura peças diferentes (por exemplo, camisa G e
-  // jaqueta G). Para orientar compra, a unidade de leitura é sempre peça +
-  // tamanho. Esta série vem da RPC de histórico, que preserva essa chave.
+  // jaqueta G). A série principal vem da mesma RPC dos cards e preserva
+  // código + item + tamanho, inclusive quando a categoria está em "Todas".
   const porItemTamanho = useMemo(() => {
-    const acumulado = new Map<string, { itemTamanho: string; solicitados: number; utilizados: number }>();
-    for (const linha of consultaHistorico.data ?? []) {
-      const tamanho = linha.tamanho ?? "sem tamanho";
-      const itemTamanho = `${linha.tipo_uniforme} · ${tamanho}`;
-      const atual = acumulado.get(itemTamanho) ?? { itemTamanho, solicitados: 0, utilizados: 0 };
-      atual.solicitados += linha.solicitados;
-      atual.utilizados += linha.utilizados;
-      acumulado.set(itemTamanho, atual);
-    }
-    return [...acumulado.values()]
+    return (dados?.por_item_tamanho ?? [])
+      .map((linha) => ({
+        itemTamanho: `${linha.item} · ${linha.tamanho ?? "sem tamanho"}`,
+        solicitados: linha.pedidas,
+        utilizados: linha.saidas,
+      }))
       .filter((linha) => linha.solicitados > 0 || linha.utilizados > 0)
       .sort((a, b) => b.solicitados - a.solicitados || b.utilizados - a.utilizados)
       .slice(0, 12);
-  }, [consultaHistorico.data]);
+  }, [dados]);
 
-  // Gráficos de volume leem melhor ordenados por volume; a tabela abaixo
-  // mantém a ordem da escala de tamanho, para quem quer conferir a grade.
-  const porVolume = useMemo(
+  const giroPorItemTamanho = useMemo(
     () =>
       dados
-        ? [...dados.por_tamanho]
-            .filter((t) => t.pedidas > 0)
-            .sort((a, b) => b.pedidas - a.pedidas)
-            .slice(0, 12)
-        : [],
-    [dados],
-  );
-  const fluxoPorTamanho = useMemo(
-    () =>
-      dados
-        ? dados.por_tamanho
-            .filter((t) => t.entradas > 0 || t.saidas > 0)
-            .sort((a, b) => a.ordem - b.ordem)
-        : [],
-    [dados],
-  );
-  const giroPorTamanho = useMemo(
-    () =>
-      dados
-        ? [...dados.por_tamanho]
-            .filter((t) => t.giro !== null && t.saidas > 0)
-            .sort((a, b) => (b.giro ?? 0) - (a.giro ?? 0))
+        ? [...dados.por_item_tamanho]
+            .filter((linha) => linha.giro !== null && linha.saidas > 0)
+            .map((linha) => ({
+              ...linha,
+              itemTamanho: `${linha.item} · ${linha.tamanho ?? "sem tamanho"}`,
+            }))
+            .sort((a, b) => (b.giro ?? 0) - (a.giro ?? 0) || b.saidas - a.saidas)
             .slice(0, 12)
         : [],
     [dados],
@@ -704,42 +663,38 @@ export function RotatividadeEstoque({ empresaId, inicio, fim, contratoId }: Prop
         </Alert>
       )}
 
-      {/* Números-herói: a resposta direta às quatro perguntas do diretor. */}
+      {/* Números-herói: produto + tamanho, nunca um tamanho solto. */}
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <CartaoDestaque
-          titulo="Tamanho que mais sai"
-          valor={r.tamanho_mais_sai?.tamanho ?? "—"}
+          titulo="Item/tamanho que mais sai"
+          valor={r.item_tamanho_mais_sai ? <span className="text-xl leading-tight">{r.item_tamanho_mais_sai.item} · {r.item_tamanho_mais_sai.tamanho ?? "sem tamanho"}</span> : "—"}
           icone={<Shirt className="h-6 w-6" />}
           detalhe={
-            r.tamanho_mais_sai
-              ? `${formatarNumero(r.tamanho_mais_sai.unidades)} unidades · ${formatarPercentual(
-                  r.tamanho_mais_sai.percentual,
-                )} de tudo que saiu`
-              : "sem saída no período"
+            r.item_tamanho_mais_sai
+              ? <><span className="font-mono">{r.item_tamanho_mais_sai.codigo ?? "sem código"}</span> · {formatarNumero(r.item_tamanho_mais_sai.unidades)} saídas físicas · {formatarNumero(r.item_tamanho_mais_sai.saldo)} disponíveis</>
+              : "sem baixa física no período"
           }
         />
         <CartaoDestaque
-          titulo="Tamanho que mais entra"
-          valor={r.tamanho_mais_entra?.tamanho ?? "—"}
+          titulo="Item/tamanho que mais entra"
+          valor={r.item_tamanho_mais_entra ? <span className="text-xl leading-tight">{r.item_tamanho_mais_entra.item} · {r.item_tamanho_mais_entra.tamanho ?? "sem tamanho"}</span> : "—"}
           tom="green"
           icone={<ArrowDownToLine className="h-6 w-6" />}
           detalhe={
-            r.tamanho_mais_entra
-              ? `${formatarNumero(r.tamanho_mais_entra.unidades)} unidades recebidas`
+            r.item_tamanho_mais_entra
+              ? <><span className="font-mono">{r.item_tamanho_mais_entra.codigo ?? "sem código"}</span> · {formatarNumero(r.item_tamanho_mais_entra.unidades)} unidades recebidas</>
               : "nenhuma entrada registrada"
           }
         />
         <CartaoDestaque
-          titulo="Maior rotatividade"
-          valor={r.tamanho_maior_giro?.tamanho ?? "—"}
+          titulo="Item/tamanho de maior giro"
+          valor={r.item_tamanho_maior_giro ? <span className="text-xl leading-tight">{r.item_tamanho_maior_giro.item} · {r.item_tamanho_maior_giro.tamanho ?? "sem tamanho"}</span> : "—"}
           tom="amber"
           icone={<Repeat className="h-6 w-6" />}
           detalhe={
-            r.tamanho_maior_giro
-              ? `gira ${formatarGiro(r.tamanho_maior_giro.giro)} no período · ${formatarNumero(
-                  r.tamanho_maior_giro.saldo,
-                )} em estoque`
-              : "nenhum tamanho com volume suficiente"
+            r.item_tamanho_maior_giro
+              ? <><span className="font-mono">{r.item_tamanho_maior_giro.codigo ?? "sem código"}</span> · giro {formatarGiro(r.item_tamanho_maior_giro.giro)} = {formatarNumero(r.item_tamanho_maior_giro.saidas)} saídas ÷ {formatarNumero(r.item_tamanho_maior_giro.saldo)} disponíveis</>
+              : "nenhum item/tamanho com volume suficiente"
           }
         />
         <CartaoDestaque
@@ -750,7 +705,7 @@ export function RotatividadeEstoque({ empresaId, inicio, fim, contratoId }: Prop
           tom="red"
           icone={<Boxes className="h-6 w-6" />}
           detalhe={
-            r.peca_mais_sai ? `${formatarNumero(r.peca_mais_sai.unidades)} unidades pedidas` : "—"
+            r.peca_mais_sai ? <><span className="font-mono">{r.peca_mais_sai.codigo ?? "sem código"}</span> · {formatarNumero(r.peca_mais_sai.unidades)} saídas físicas</> : "—"
           }
         />
       </div>
@@ -793,13 +748,11 @@ export function RotatividadeEstoque({ empresaId, inicio, fim, contratoId }: Prop
           detalhe="saídas ÷ saldo atual, no período"
         />
         <CartaoIndicador
-          titulo="Em estoque hoje"
+          titulo="Disponível hoje"
           valor={formatarNumero(r.saldo_disponivel)}
           icone={<Boxes className="h-6 w-6" />}
           detalhe={
-            r.tamanhos_zerados > 0
-              ? `${formatarNumero(r.tamanhos_zerados)} tamanhos pedidos estão zerados`
-              : "nenhum tamanho pedido está zerado"
+            `${formatarNumero(r.saldo_fisico)} físicas − ${formatarNumero(r.reservado)} reservadas · ${nomeCategoria}`
           }
         />
       </div>
@@ -844,7 +797,7 @@ export function RotatividadeEstoque({ empresaId, inicio, fim, contratoId }: Prop
               </ResponsiveContainer>
             </div>
           ) : (
-            <EstadoVazio texto="Nenhuma unidade de uniforme solicitada no período." altura={320} />
+            <EstadoVazio texto="Nenhum item/tamanho solicitado no período." altura={320} />
           )}
         </PainelGrafico>
 
@@ -886,7 +839,7 @@ export function RotatividadeEstoque({ empresaId, inicio, fim, contratoId }: Prop
             </div>
           ) : (
             <EstadoVazio
-              texto="Nenhuma solicitação ou baixa física de uniforme no período."
+              texto="Nenhuma solicitação ou baixa física no período."
               altura={320}
             />
           )}
@@ -897,26 +850,27 @@ export function RotatividadeEstoque({ empresaId, inicio, fim, contratoId }: Prop
         {/* Giro é razão, não unidade: gráfico próprio, nunca segundo eixo do
             gráfico de volume. */}
         <PainelGrafico
-          titulo="Quanto Cada Tamanho Roda"
-          subtitulo="Giro = saídas ÷ saldo atual. Acima de 1× o tamanho girou o estoque inteiro no período."
+          titulo="Giro por Item e Tamanho"
+          subtitulo="Giro = saídas físicas ÷ disponível atual. O código, item e tamanho permanecem juntos."
         >
-          {giroPorTamanho.length ? (
-            <div className="h-[300px]">
+          {giroPorItemTamanho.length ? (
+            <div style={{ height: Math.max(320, giroPorItemTamanho.length * 42) }}>
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={giroPorTamanho} layout="vertical" margin={{ left: 8, right: 48, top: 4 }}>
+                <BarChart data={giroPorItemTamanho} layout="vertical" margin={{ left: 8, right: 48, top: 4 }}>
                   <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke={CINZA_GRADE} />
                   <XAxis type="number" tick={{ fontSize: 10, fill: "#64748b" }} />
                   <YAxis
                     type="category"
-                    dataKey="tamanho"
-                    width={52}
-                    tick={{ fontSize: 11, fontWeight: 600, fill: "#334155" }}
+                    dataKey="itemTamanho"
+                    width={230}
+                    tick={<TickCategoriaQuebrado maximoLinha={36} tamanhoFonte={9} />}
                   />
                   <Tooltip
                     content={({ active, payload, label }) =>
                       active && payload?.length ? (
                         <div className="rounded-lg border bg-white p-2 text-xs shadow-lg">
-                          <p className="mb-1 font-semibold text-slate-700">Tamanho {label}</p>
+                          <p className="mb-1 font-semibold text-slate-700">{label}</p>
+                          <p className="font-mono text-slate-500">{payload[0].payload.codigo ?? "sem código"}</p>
                           <p className="text-slate-600">
                             Giro: {formatarGiro(payload[0].payload.giro)}
                           </p>
@@ -924,20 +878,17 @@ export function RotatividadeEstoque({ empresaId, inicio, fim, contratoId }: Prop
                             {formatarNumero(payload[0].payload.saidas)} saíram ·{" "}
                             {formatarNumero(payload[0].payload.saldo_disponivel)} em estoque
                           </p>
-                          <p className="text-slate-600">
-                            Cobertura: {formatarCobertura(payload[0].payload.dias_cobertura)}
-                          </p>
                         </div>
                       ) : null
                     }
                     cursor={{ fill: "#f1f5f9" }}
                   />
                   <Bar dataKey="giro" name="Giro" radius={[0, 4, 4, 0]} maxBarSize={22}>
-                    {giroPorTamanho.map((linha) => (
+                    {giroPorItemTamanho.map((linha) => (
                       // Cor por ESTADO (parado/lento/saudável/acelerado), com o
                       // rótulo do estado na tabela abaixo — nunca cor sozinha.
                       <Cell
-                        key={linha.tamanho}
+                        key={`${linha.codigo ?? linha.item}-${linha.tamanho ?? "sem-tamanho"}`}
                         fill={
                           (linha.giro ?? 0) >= 1
                             ? SERIES.pedido
@@ -1191,9 +1142,9 @@ export function RotatividadeEstoque({ empresaId, inicio, fim, contratoId }: Prop
         )}
       </PainelGrafico>
 
-      <TabelaPorTamanho dados={dados} />
+      <TabelaPorItemTamanho dados={dados} />
       <TabelaPorPeca dados={dados} />
-      {categoria === "uniforme" && (
+      {(categoria === "" || categoria === "uniforme") && (
         <>
           <TabelaHistoricoUniformes
             linhas={consultaHistorico.data ?? []}
