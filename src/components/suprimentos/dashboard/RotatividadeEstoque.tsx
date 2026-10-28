@@ -39,6 +39,7 @@ import {
   CINZA_GRADE,
   CabecalhoTabela,
   TickCategoria,
+  TickCategoriaQuebrado,
   formatarEixoMoeda,
   CartaoDestaque,
   CartaoIndicador,
@@ -485,12 +486,12 @@ function TabelaFornecimentosPorColaborador({
       ) : (
         <>
           {porItemTamanho.length > 0 && (
-            <div className="mb-4 h-[320px]">
+            <div className="mb-4" style={{ height: Math.max(360, porItemTamanho.length * 42) }}>
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={porItemTamanho} layout="vertical" margin={{ left: 8, right: 38, top: 4 }}>
                   <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke={CINZA_GRADE} />
                   <XAxis type="number" allowDecimals={false} />
-                  <YAxis type="category" dataKey="rotulo" width={200} tick={<TickCategoria maximo={34} tamanhoFonte={10} />} />
+                  <YAxis type="category" dataKey="rotulo" width={230} tick={<TickCategoriaQuebrado maximoLinha={36} tamanhoFonte={9} />} />
                   <Tooltip content={<TooltipPadrao sufixo=" un. fornecidas" />} cursor={{ fill: "#f1f5f9" }} />
                   <Bar dataKey="quantidade" name="Unidades fornecidas" fill={SERIES.saida} radius={[0, 4, 4, 0]}>
                     <LabelList dataKey="quantidade" position="right" fill="#475569" formatter={(v: number) => formatarNumero(v)} />
@@ -812,7 +813,7 @@ export function RotatividadeEstoque({ empresaId, inicio, fim, contratoId }: Prop
           subtitulo="Cada barra identifica a peça e o tamanho; não mistura, por exemplo, camisa G com jaqueta G."
         >
           {porItemTamanho.length ? (
-            <div className="h-[320px]">
+            <div style={{ height: Math.max(360, porItemTamanho.length * 42) }}>
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={porItemTamanho} layout="vertical" margin={{ left: 8, right: 44, top: 4 }}>
                   <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke={CINZA_GRADE} />
@@ -820,8 +821,8 @@ export function RotatividadeEstoque({ empresaId, inicio, fim, contratoId }: Prop
                   <YAxis
                     type="category"
                     dataKey="itemTamanho"
-                    width={170}
-                    tick={<TickCategoria maximo={28} tamanhoFonte={10} inclinacao={0} />}
+                    width={230}
+                    tick={<TickCategoriaQuebrado maximoLinha={36} tamanhoFonte={9} />}
                   />
                   <Tooltip content={<TooltipPadrao sufixo=" un." />} cursor={{ fill: "#f1f5f9" }} />
                   <Bar
@@ -853,17 +854,17 @@ export function RotatividadeEstoque({ empresaId, inicio, fim, contratoId }: Prop
           subtitulo="Pedido é demanda; utilizado só conta quando há baixa física confirmada no almoxarifado."
         >
           {porItemTamanho.length ? (
-            <div className="h-[320px]">
+            <div style={{ height: Math.max(360, porItemTamanho.length * 42) }}>
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={porItemTamanho} layout="vertical" margin={{ left: 8, right: 24, top: 4 }} barGap={2}>
                   <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={CINZA_GRADE} />
-                  <XAxis
+                  <XAxis type="number" allowDecimals={false} tick={{ fontSize: 10, fill: "#64748b" }} />
+                  <YAxis
                     type="category"
                     dataKey="itemTamanho"
-                    width={170}
-                    tick={<TickCategoria maximo={28} tamanhoFonte={10} inclinacao={0} />}
+                    width={230}
+                    tick={<TickCategoriaQuebrado maximoLinha={36} tamanhoFonte={9} />}
                   />
-                  <YAxis type="number" allowDecimals={false} tick={{ fontSize: 10, fill: "#64748b" }} />
                   <Tooltip content={<TooltipPadrao sufixo=" un." />} cursor={{ fill: "#f1f5f9" }} />
                   <Legend wrapperStyle={{ fontSize: 11 }} />
                   <Bar
