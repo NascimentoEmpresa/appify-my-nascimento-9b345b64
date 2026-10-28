@@ -51,7 +51,7 @@ export default function TvPrevia() {
         : tela.modo === "relogio" ? <Ocioso nome={tela.nome} />
         : tela.modo === "pausada" ? <Centro titulo={tela.nome} sub="TV pausada no ERP" />
         : <Centro titulo={`${tela.nome} está offline`} sub={`A TV não fala com o ERP desde ${tela.visto}. Quando voltar, ela retoma a playlist sozinha.`} />}
-      {tela && tela.modo !== "offline" && tela.alerta && <Alerta texto={tela.alerta.texto} cor={tela.alerta.cor} />}
+      {tela && tela.modo !== "offline" && tela.alerta && <Alerta key={`${tela.alerta.imagem ?? ""}|${tela.alerta.texto}`} texto={tela.alerta.texto} cor={tela.alerta.cor} imagem={tela.alerta.imagem} />}
     </div>
   );
 }

@@ -124,6 +124,16 @@ export function ehContratoAdministrativo(nome: string | null | undefined): boole
   return n.startsWith("ADMINISTRATIVO");
 }
 
+// SIS-2026-0755: contratos "MOVIMENTAÇÃO FINANCEIRA …", "INVESTIMENTOS …" e "ESTOQUE …" não são contrato de cliente: o que se paga neles é movimento de
+// caixa (conta garantida, aplicação, estoque), não custo de contrato. Ficam fora da coluna Despesas e do Lucro (Faturamento da Empresa, Lucratividade de
+// Contratos e Lucro dos Contratos do Fechamento). `manterInvestimentos` existe para o Fechamento, que mostra os investimentos em coluna própria
+// (SIS-2026-0744) e precisa das linhas deles. Casa pelo INÍCIO do nome, sem acento e sem caixa.
+export function ehContratoForaDasDespesas(nome: string | null | undefined, opcoes?: { manterInvestimentos?: boolean }): boolean {
+  const n = (nome ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim().toUpperCase();
+  if (n.startsWith("MOVIMENTACAO FINANCEIRA") || n.startsWith("ESTOQUE")) return true;
+  return !opcoes?.manterInvestimentos && n.startsWith("INVESTIMENTO");
+}
+
 // SIS-2026-0709 / SIS-2026-0717: despesa de sócio = TODA saída lançada no contrato "ADMINISTRATIVO SÓCIOS - nome", seja qual for a
 // classificação (financiamento, distribuição de lucros, cartão, transferência, linha sem classificação…). A Controladoria quer ver o valor
 // inteiro do sócio no Fechamento; antes, classificações de "movimentação interna" (ex.: FINANCIAMENTOS, R$ 19.449,72 da Helena em jan/26)

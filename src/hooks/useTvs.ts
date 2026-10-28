@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
-import type { AoVivoTv, TipoItem } from "@/lib/tv/tv";
+import { FOLGA_AVISO_S, type AoVivoTv, type TipoItem } from "@/lib/tv/tv";
 
 // =====================================================================
 // Sistemas › TV's — gestão (mig 20261007000012). Tabelas TV_* com RLS por
@@ -30,6 +30,8 @@ export interface TvPlaylist { id: string; nome: string; descricao: string | null
 export interface TvAlerta {
   id: string; texto: string; cor: string; inicio: string; fim: string; todas: boolean; dispositivos: string[];
   encerrado_em: string | null; created_at: string; created_by_nome: string | null;
+  /** Mig 20261028000020: imagem no bucket tv-midia (pasta aviso/) e o tempo escolhido, em segundos. */
+  imagem: string | null; duracao_seg: number | null;
 }
 
 const COLS_DISP = "id, nome, local, playlist_id, pareado_em, ultimo_ping, user_agent, tela, comando, comando_em, ativo, created_at";
@@ -143,8 +145,20 @@ export async function enviarMidia(playlistId: string, arquivo: File): Promise<st
 }
 export const urlMidia = (caminho: string | null) => (caminho ? supabase.storage.from("tv-midia").getPublicUrl(caminho).data.publicUrl : "");
 
-export const useCriarAlerta = () => useMut(async (p: { texto: string; cor: string; fim: string; todas: boolean; dispositivos: string[]; autor: string }) =>
-  ok(await sb.from("TV_ALERTA").insert({ texto: p.texto, cor: p.cor, fim: p.fim, todas: p.todas, dispositivos: p.todas ? [] : p.dispositivos, created_by_nome: p.autor })));
+/**
+ * Aviso geral: a imagem (se houver) sobe antes, e o `fim` leva a folga de
+ * FOLGA_AVISO_S — quem conta os `duracaoSeg` é a TV, a partir de quando
+ * desenha o aviso (mig 20261028000020).
+ */
+export const useCriarAlerta = () => useMut(async (p: { texto: string; cor: string; duracaoSeg: number; imagem: File | null; todas: boolean; dispositivos: string[]; autor: string }) => {
+  const imagem = p.imagem ? await enviarMidia("aviso", p.imagem) : null;
+  const fim = new Date(Date.now() + (p.duracaoSeg + FOLGA_AVISO_S) * 1000).toISOString();
+  const r = await sb.from("TV_ALERTA").insert({ texto: p.texto, cor: p.cor, fim, duracao_seg: p.duracaoSeg, imagem, todas: p.todas,
+                                               dispositivos: p.todas ? [] : p.dispositivos, created_by_nome: p.autor });
+  // Aviso não entrou: a imagem não fica órfã no bucket.
+  if (r.error && imagem) await sb.storage.from("tv-midia").remove([imagem]);
+  ok(r);
+});
 
 export const useEncerrarAlerta = () => useMut(async (id: string) =>
   ok(await sb.from("TV_ALERTA").update({ encerrado_em: new Date().toISOString() }).eq("id", id)));

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
-import { corAviso, INTERVALO_PING_S, normalizarChaveTv, scriptPrincipal, youtubeEmbed, type EstadoTv, type ItemTv } from "@/lib/tv/tv";
+import { corAviso, INTERVALO_PING_S, normalizarChaveTv, scriptPrincipal, youtubeEmbed, type AlertaNaTv, type EstadoTv, type ItemTv } from "@/lib/tv/tv";
 import { TvRelatorio } from "./TvRelatorio";
 import { TvTelaPadrao } from "./TvTelaPadrao";
 
@@ -41,6 +41,10 @@ import { TvTelaPadrao } from "./TvTelaPadrao";
 //   · VERSÃO: a cada 10 min confere o JS publicado e recarrega se mudou. TV
 //     SST e TV COMPRAS ficaram três dias no JS de antes da virada para o
 //     cluster, falando com o banco antigo — invisíveis para a gestão.
+//
+// 28/10/2026 (mig 20261028000020) — aviso geral com IMAGEM e tempo em
+// segundos ou minutos: a imagem cobre a tela inteira (contain), e o tempo é
+// contado pela própria TV a partir de quando desenha o aviso (useAvisoNoTempo).
 // =====================================================================
 
 const CHAVE_TOKEN = "gn:tv:token";
@@ -154,12 +158,14 @@ export default function TvPlayer() {
     return () => { document.removeEventListener("visibilitychange", vis); document.body.style.cursor = ""; lock?.release?.(); };
   }, []);
 
+  const alerta = useAvisoNoTempo(estado?.alerta ?? null);
+
   return (
     <div className="fixed inset-0 overflow-hidden bg-black text-white" onDoubleClick={() => document.documentElement.requestFullscreen?.().catch(() => {})}>
       {!estado ? <Centro titulo="Conectando ao ERP…" sub={erro ?? undefined} />
         : !estado.pareada ? <Pareamento codigo={estado.codigo ?? "------"} erro={erro} />
         : <Reprodutor itens={estado.itens ?? []} nome={estado.nome ?? ""} ativa={estado.ativa !== false} token={tokenRef.current ?? ""} aoMostrar={reportar} />}
-      {estado?.pareada && estado.alerta && <Alerta texto={estado.alerta.texto} cor={estado.alerta.cor} />}
+      {estado?.pareada && alerta && <Alerta key={alerta.id} texto={alerta.texto} cor={alerta.cor} imagem={alerta.imagem} />}
       {erro && estado?.pareada && <div className="absolute bottom-2 right-3 rounded bg-black/60 px-2 py-1 text-xs text-white/70">sem conexão — tentando de novo</div>}
     </div>
   );
@@ -186,10 +192,79 @@ function Pareamento({ codigo, erro }: { codigo: string; erro: string | null }) {
   );
 }
 
-export function Alerta({ texto, cor }: { texto: string; cor: string }) {
+/**
+ * Aviso com tempo (duracao_seg, mig 20261028000020): conta a partir de
+ * quando ESTA TV desenhou o aviso e some sozinho no fim, mesmo que o
+ * tv_estado ainda o devolva (o `fim` gravado leva a folga de FOLGA_AVISO_S).
+ * Encerrado na gestão → o tv_estado para de devolver e ele some na próxima
+ * consulta. Aviso antigo (sem duracao_seg): fica enquanto vier.
+ */
+function useAvisoNoTempo(alerta: AlertaNaTv | null): AlertaNaTv | null {
+  const vistoEm = useRef(new Map<string, number>());
+  const [, redesenhar] = useState(0);
+  const id = alerta?.id ?? null;
+  const duracao = alerta?.duracao_seg ?? null;
+  if (id && !vistoEm.current.has(id)) vistoEm.current.set(id, Date.now());
+  const saiEm = id && duracao ? vistoEm.current.get(id)! + duracao * 1000 : null;
+  useEffect(() => {
+    if (saiEm == null) return;
+    const t = window.setTimeout(() => redesenhar((n) => n + 1), Math.max(0, saiEm - Date.now()) + 50);
+    return () => window.clearTimeout(t);
+  }, [saiEm]);
+  if (!alerta) return null;
+  return saiEm != null && Date.now() >= saiEm ? null : alerta;
+}
+
+// O Storage do cluster espelha arquivo entre banco1/banco2 a cada minuto:
+// imagem recém-enviada pode dar 404 no nó que atende nos primeiros segundos
+// (o mesmo do chat dos chamados, useImagensAnexo). Tenta de novo, com a URL
+// "furando" o cache do navegador, por até ~2 min.
+const TENTATIVAS_IMAGEM_AVISO = 8;
+const ESPERA_IMAGEM_AVISO_MS = 15_000;
+
+/**
+ * Aviso geral cobrindo a tela. Só texto: o texto na cor escolhida. Com
+ * imagem: a imagem inteira (contain, sem cortar) em fundo preto e, se houver
+ * texto, uma faixa na cor embaixo. Enquanto a imagem não chega, mostra o
+ * texto (ou só a cor); se não chegar nunca e não houver texto, sai da frente.
+ * `imagem` é o caminho no bucket tv-midia ou uma URL (blob: na prévia).
+ */
+export function Alerta({ texto, cor, imagem }: { texto: string; cor: string; imagem?: string | null }) {
+  const [tentativa, setTentativa] = useState(0);
+  const [carregou, setCarregou] = useState(false);
+  const [desistiu, setDesistiu] = useState(false);
+  const temTexto = !!texto?.trim();
+  const base = imagem ? (/^(blob:|https?:)/.test(imagem) ? imagem : midiaPublica(imagem)) : "";
+  const src = base && tentativa > 0 && !base.startsWith("blob:") ? `${base}${base.includes("?") ? "&" : "?"}t=${tentativa}` : base;
+  const falhou = () => {
+    if (tentativa + 1 >= TENTATIVAS_IMAGEM_AVISO) { setDesistiu(true); return; }
+    window.setTimeout(() => setTentativa((n) => n + 1), ESPERA_IMAGEM_AVISO_MS);
+  };
+
+  if (!base || desistiu) {
+    if (!temTexto) return null;
+    return (
+      <div className="absolute inset-0 z-20 flex items-center justify-center p-[6vmin] text-center" style={{ background: corAviso(cor) }}>
+        <p className="whitespace-pre-wrap text-[7vmin] font-black leading-tight">{texto}</p>
+      </div>
+    );
+  }
   return (
-    <div className="absolute inset-0 z-20 flex items-center justify-center p-[6vmin] text-center" style={{ background: corAviso(cor) }}>
-      <p className="whitespace-pre-wrap text-[7vmin] font-black leading-tight">{texto}</p>
+    <div className="absolute inset-0 z-20 flex flex-col bg-black" style={carregou ? undefined : { background: corAviso(cor) }}>
+      <div className="relative min-h-0 flex-1">
+        <img key={src} src={src} alt="" className={`h-full w-full object-contain ${carregou ? "" : "invisible"}`}
+          onLoad={() => setCarregou(true)} onError={() => { setCarregou(false); falhou(); }} />
+        {!carregou && temTexto && (
+          <div className="absolute inset-0 flex items-center justify-center p-[6vmin] text-center">
+            <p className="whitespace-pre-wrap text-[7vmin] font-black leading-tight">{texto}</p>
+          </div>
+        )}
+      </div>
+      {carregou && temTexto && (
+        <div className="shrink-0 px-[4vmin] py-[2vmin] text-center" style={{ background: corAviso(cor) }}>
+          <p className="whitespace-pre-wrap text-[4.5vmin] font-black leading-tight">{texto}</p>
+        </div>
+      )}
     </div>
   );
 }
