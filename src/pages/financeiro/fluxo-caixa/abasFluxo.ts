@@ -66,10 +66,11 @@ export function filtrarPorAbaFluxo<T extends LinhaFluxo>(linhas: T[], aba: AbaFl
 }
 
 // Cancelado só aparece quando a situação "Cancelado" é pedida e nunca entra em totais.
-export function filtrarPorSituacaoFluxo<T extends LinhaFluxo>(linhas: T[], situacao: SituacaoFluxo | "", hoje: string): T[] {
+export function filtrarPorSituacaoFluxo<T extends LinhaFluxo>(linhas: T[], situacao: SituacaoFluxo | "" | SituacaoFluxo[], hoje: string): T[] {
+  const escolhidas = Array.isArray(situacao) ? situacao : situacao ? [situacao] : [];
   return linhas.filter((l) => {
     const s = situacaoFluxo(l, hoje);
-    if (situacao) return s === situacao;
+    if (escolhidas.length > 0) return s !== null && escolhidas.includes(s);
     return s !== "cancelado";
   });
 }

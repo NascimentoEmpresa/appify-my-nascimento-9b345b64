@@ -44,6 +44,8 @@ import { useExcluirLinhaImportada, useImportadaLixeira, useRestaurarLinhaImporta
 import { RatearImportadoDialog, type LinhaParaRatear } from "./fluxo-caixa/RatearImportadoDialog";
 import { acaoDeRateio } from "./fluxo-caixa/rateioImportado";
 import { linhasDoExport, linhaTemContrato } from "./fluxo-caixa/exportRateio";
+import { SearchableMultiSelect } from "@/components/ui/searchable-multi-select";
+import { FILTRO_SEM_VALOR, casaSelecao, nomesSelecionados, opcoesDe, opcoesDeTextos } from "./fluxo-caixa/filtrosMultiplos";
 import { linhaCasaBusca } from "./fluxo-caixa/buscaLinha";
 import { KpiTile } from "@/components/financeiro/KpiTile";
 import { BancoBadge } from "@/components/financeiro/BancoBadge";
@@ -92,20 +94,20 @@ interface FiltrosExport {
   dataDe: string;
   dataAte: string;
   competencia: string;
-  empresaId: string;
-  bancoId: string;
-  contratoId: string;
-  classificacaoId: string;
-  formaPagamento: string;
+  empresaIds: string[];
+  bancoIds: string[];
+  contratoIds: string[];
+  classificacaoIds: string[];
+  formasPagamento: string[];
   valor: string;
   tipo: "todos" | "entrada" | "saida";
-  origem: "todas" | FluxoCaixaMaloteLinha["origem"];
+  origens: FluxoCaixaMaloteLinha["origem"][];
   soRevisar: boolean;
 }
 
 const FILTROS_EXPORT_VAZIOS: FiltrosExport = {
-  dataDe: "", dataAte: "", competencia: "", empresaId: "", bancoId: "", contratoId: "", classificacaoId: "", formaPagamento: "", valor: "",
-  tipo: "todos", origem: "todas", soRevisar: false,
+  dataDe: "", dataAte: "", competencia: "", empresaIds: [], bancoIds: [], contratoIds: [], classificacaoIds: [], formasPagamento: [], valor: "",
+  tipo: "todos", origens: [], soRevisar: false,
 };
 
 interface RateioDetalheItem {
@@ -122,8 +124,7 @@ interface RateioDetalheItem {
 
 // SIS-2026-0742: rateio de despesa do Malote com mais de uma classificação — uma cota por contrato + classificação (só para exibir;
 // o rateioDetalhe, por contrato, continua o que a troca de contrato e a exportação usam).
-// Filtro "Sem contrato / Sem classificação": as linhas que na tela mostram "—" nesses campos.
-const FILTRO_SEM_VALOR = "__sem";
+// Filtro "Sem contrato / Sem classificação": as linhas que na tela mostram "—" nesses campos (FILTRO_SEM_VALOR, em filtrosMultiplos.ts).
 
 interface CotaClassificacao {
   id: string;
@@ -434,21 +435,23 @@ export default function FluxoCaixaGestao() {
   const [dataDe, setDataDe] = useState(searchParams.get("de") ?? "");
   const [dataAte, setDataAte] = useState(searchParams.get("ate") ?? "");
   const [competencia, setCompetencia] = useState("");
-  const [empresaId, setEmpresaId] = useState(searchParams.get("empresa") ?? "");
+  // SIS-2026-0725: todos os filtros de lista aceitam mais de um item (lista vazia = todos); os parâmetros da URL entram como 1 item.
+  const doParametro = (k: string) => (searchParams.get(k) ? [searchParams.get(k) as string] : []);
+  const [empresaIds, setEmpresaIds] = useState<string[]>(() => doParametro("empresa"));
   // SIS-2026-0687: os tiles do card 1 da Auditoria abrem o Fluxo já numa origem (?origem=debito_automatico, cartao_fatura,
   // aplicacao_financeira, malote, importacao_historica).
-  const [origemFiltro, setOrigemFiltro] = useState(searchParams.get("origem") ?? "");
+  const [origensFiltro, setOrigensFiltro] = useState<string[]>(() => doParametro("origem"));
   // SIS-2026-0537 (Iury): "retornar a coluna de Centro de custo" — filtro
   // removido no SIS-2026-0489, pedido de volta — a coluna na view nunca
   // saiu (CartaoCredito.tsx já dependia dela).
-  const [contratoId, setContratoId] = useState("");
-  const [classificacaoId, setClassificacaoId] = useState("");
-  const [formaPagamento, setFormaPagamento] = useState("");
-  const [situacao, setSituacao] = useState<SituacaoFluxo | "">("");
+  const [contratoIds, setContratoIds] = useState<string[]>([]);
+  const [classificacaoIds, setClassificacaoIds] = useState<string[]>([]);
+  const [formasFiltro, setFormasFiltro] = useState<string[]>([]);
+  const [situacoes, setSituacoes] = useState<SituacaoFluxo[]>([]);
   const [kpiAberto, setKpiAberto] = useState<KpiFluxo | null>(null);
   // SIS-2026-0307: "após o pagamento alimentamos o fluxo de caixa" (usuário)
   // — Banco entra aqui, não em Pagamento Malote/Meus Itens.
-  const [bancoId, setBancoId] = useState("");
+  const [bancoIds, setBancoIds] = useState<string[]>([]);
   // Valor exato digitado como a pessoa fala ("1.066,65"); ver fluxo-caixa/filtroValor.ts.
   const [valor, setValor] = useState("");
   // SIS-2026-0569: linhas importadas da planilha que subiram sem vínculo
@@ -513,17 +516,19 @@ export default function FluxoCaixaGestao() {
     return Array.from(set).sort((a, b) => a.localeCompare(b, "pt-BR"));
   }, [linhas]);
 
+  const opcoesOrigem = useMemo(() => (Object.keys(LABEL_ORIGEM) as (keyof typeof LABEL_ORIGEM)[]).map((o) => ({ value: o, label: LABEL_ORIGEM[o] })), []);
+
   function limparFiltros() {
     setDataDe("");
     setDataAte("");
     setCompetencia("");
-    setEmpresaId("");
-    setOrigemFiltro("");
-    setContratoId("");
-    setClassificacaoId("");
-    setFormaPagamento("");
-    setSituacao("");
-    setBancoId("");
+    setEmpresaIds([]);
+    setOrigensFiltro([]);
+    setContratoIds([]);
+    setClassificacaoIds([]);
+    setFormasFiltro([]);
+    setSituacoes([]);
+    setBancoIds([]);
     setValor("");
     setSoInconsistentes(false);
     setBusca("");
@@ -533,23 +538,23 @@ export default function FluxoCaixaGestao() {
   const filtradas = useMemo(() => {
     const buscaNorm = busca.trim().toLowerCase();
     const valorNum = parseValorBR(valor);
-    return filtrarPorSituacaoFluxo(linhas, situacao, hoje).filter((l) => {
+    return filtrarPorSituacaoFluxo(linhas, situacoes, hoje).filter((l) => {
       if (valorNaLinha(l, valorNum) === null) return false;
       if (dataDe && (!l.data_pagamento || l.data_pagamento < dataDe)) return false;
       if (dataAte && (!l.data_pagamento || l.data_pagamento > dataAte)) return false;
       if (competencia && l.competencia?.slice(0, 7) !== competencia) return false;
-      if (empresaId && l.empresa_id !== empresaId) return false;
-      if (origemFiltro && !linhaDaOrigemDoCard(l, origemFiltro)) return false;
-      if (contratoId === FILTRO_SEM_VALOR ? !!l.contrato_nome : contratoId && l.contrato_id !== contratoId) return false;
-      if (classificacaoId === FILTRO_SEM_VALOR ? !!l.classificacao_nome : classificacaoId && l.classificacao_id !== classificacaoId && !l.classificacoesIds?.includes(classificacaoId)) return false;
-      if (formaPagamento && l.forma_pagamento !== formaPagamento) return false;
-      if (bancoId && l.banco_id !== bancoId) return false;
+      if (empresaIds.length > 0 && !empresaIds.includes(l.empresa_id ?? "")) return false;
+      if (origensFiltro.length > 0 && !origensFiltro.some((o) => linhaDaOrigemDoCard(l, o))) return false;
+      if (!casaSelecao(contratoIds, !!l.contrato_nome, (id) => l.contrato_id === id)) return false;
+      if (!casaSelecao(classificacaoIds, !!l.classificacao_nome, (id) => l.classificacao_id === id || !!l.classificacoesIds?.includes(id))) return false;
+      if (formasFiltro.length > 0 && !formasFiltro.includes(l.forma_pagamento ?? "")) return false;
+      if (bancoIds.length > 0 && !bancoIds.includes(l.banco_id ?? "")) return false;
       if (soInconsistentes && !l.inconsistencia) return false;
       // Acha também a despesa que está dentro de uma fatura de cartão (ID e descrição moram no rateioDetalhe).
       if (!linhaCasaBusca(l, buscaNorm)) return false;
       return true;
     });
-  }, [linhas, hoje, situacao, dataDe, dataAte, competencia, empresaId, origemFiltro, contratoId, classificacaoId, formaPagamento, bancoId, soInconsistentes, busca, valor]);
+  }, [linhas, hoje, situacoes, dataDe, dataAte, competencia, empresaIds, origensFiltro, contratoIds, classificacaoIds, formasFiltro, bancoIds, soInconsistentes, busca, valor]);
 
   // SIS-2026-0256: com o Débito Automático somado à fonte, "Saídas" precisa
   // filtrar por tipo — antes só existia saída (Malote), então somar tudo
@@ -572,8 +577,8 @@ export default function FluxoCaixaGestao() {
 
   function abrirExportacao() {
     setFx({
-      dataDe, dataAte, competencia, empresaId, bancoId, contratoId, classificacaoId, formaPagamento, valor,
-      tipo: "todos", origem: "todas", soRevisar: soInconsistentes,
+      dataDe, dataAte, competencia, empresaIds, bancoIds, contratoIds, classificacaoIds, formasPagamento: formasFiltro, valor,
+      tipo: "todos", origens: origensFiltro.filter((o): o is FluxoCaixaMaloteLinha["origem"] => o in LABEL_ORIGEM), soRevisar: soInconsistentes,
     });
     setExportando(true);
   }
@@ -594,21 +599,21 @@ export default function FluxoCaixaGestao() {
       if (fx.dataDe && (!l.data_pagamento || l.data_pagamento < fx.dataDe)) return false;
       if (fx.dataAte && (!l.data_pagamento || l.data_pagamento > fx.dataAte)) return false;
       if (fx.competencia && l.competencia?.slice(0, 7) !== fx.competencia) return false;
-      if (fx.empresaId && l.empresa_id !== fx.empresaId) return false;
-      if (fx.bancoId && l.banco_id !== fx.bancoId) return false;
-      if (fx.contratoId === FILTRO_SEM_VALOR ? !!l.contrato_nome : fx.contratoId && !linhaTemContrato(l, fx.contratoId)) return false;
-      if (fx.classificacaoId === FILTRO_SEM_VALOR ? !!l.classificacao_nome : fx.classificacaoId && l.classificacao_id !== fx.classificacaoId && !l.classificacoesIds?.includes(fx.classificacaoId)) return false;
-      if (fx.formaPagamento && l.forma_pagamento !== fx.formaPagamento) return false;
+      if (fx.empresaIds.length > 0 && !fx.empresaIds.includes(l.empresa_id ?? "")) return false;
+      if (fx.bancoIds.length > 0 && !fx.bancoIds.includes(l.banco_id ?? "")) return false;
+      if (!casaSelecao(fx.contratoIds, !!l.contrato_nome, (id) => linhaTemContrato(l, id))) return false;
+      if (!casaSelecao(fx.classificacaoIds, !!l.classificacao_nome, (id) => l.classificacao_id === id || !!l.classificacoesIds?.includes(id))) return false;
+      if (fx.formasPagamento.length > 0 && !fx.formasPagamento.includes(l.forma_pagamento ?? "")) return false;
       if (fx.tipo !== "todos" && l.tipo !== fx.tipo) return false;
-      if (fx.origem !== "todas" && l.origem !== fx.origem) return false;
+      if (fx.origens.length > 0 && !fx.origens.includes(l.origem)) return false;
       if (fx.soRevisar && !l.inconsistencia) return false;
       return true;
     });
   }, [exportando, linhas, fx, hoje]);
   // Rateios abertos: uma linha da planilha por cota (contrato), para filtrar/somar por contrato no Excel.
   const linhasPlanilhaBase = useMemo(
-    () => linhasExport.flatMap((l) => linhasDoExport(l, fx.contratoId || undefined)),
-    [linhasExport, fx.contratoId],
+    () => linhasExport.flatMap((l) => linhasDoExport(l, fx.contratoIds.filter((id) => id !== FILTRO_SEM_VALOR))),
+    [linhasExport, fx.contratoIds],
   );
   const exportEntradas = useMemo(() => linhasPlanilhaBase.filter((x) => x.linha.tipo === "entrada").reduce((t, x) => t + x.valor, 0), [linhasPlanilhaBase]);
   const exportSaidas = useMemo(() => linhasPlanilhaBase.filter((x) => x.linha.tipo === "saida").reduce((t, x) => t + x.valor, 0), [linhasPlanilhaBase]);
@@ -618,7 +623,6 @@ export default function FluxoCaixaGestao() {
       toast.error("Não há lançamentos para exportar com essas opções.");
       return;
     }
-    const nomeDe = (lista: [string, string][], id: string) => (id === FILTRO_SEM_VALOR ? "Sem (—)" : lista.find(([i]) => i === id)?.[1] ?? "");
     const dia = (iso: string | null) => (iso ? iso.slice(0, 10).split("-").reverse().join("/") : "");
     const mesAno = (iso: string | null) => (iso ? `${iso.slice(5, 7)}/${iso.slice(0, 4)}` : "");
     const linhasPlanilha = [...linhasPlanilhaBase]
@@ -645,14 +649,14 @@ export default function FluxoCaixaGestao() {
     const recorte: [string, string][] = [
       ["Período (data de pagamento)", fx.dataDe || fx.dataAte ? `${fx.dataDe ? dia(fx.dataDe) : "início"} a ${fx.dataAte ? dia(fx.dataAte) : "hoje"}` : "Todos"],
       ["Competência", fx.competencia ? `${fx.competencia.slice(5, 7)}/${fx.competencia.slice(0, 4)}` : "Todas"],
-      ["Empresa", fx.empresaId ? nomeDe(empresasDisponiveis, fx.empresaId) : "Todas"],
-      ["Banco", fx.bancoId ? nomeDe(bancosDisponiveis, fx.bancoId) : "Todos"],
-      ["Contrato", fx.contratoId ? nomeDe(contratosDisponiveis, fx.contratoId) : "Todos"],
-      ["Classificação", fx.classificacaoId ? nomeDe(classificacoesDisponiveis, fx.classificacaoId) : "Todas"],
-      ["Forma de pagamento", fx.formaPagamento || "Todas"],
+      ["Empresa", nomesSelecionados(empresasDisponiveis, fx.empresaIds, "Todas")],
+      ["Banco", nomesSelecionados(bancosDisponiveis, fx.bancoIds, "Todos")],
+      ["Contrato", nomesSelecionados(contratosDisponiveis, fx.contratoIds, "Todos")],
+      ["Classificação", nomesSelecionados(classificacoesDisponiveis, fx.classificacaoIds, "Todas")],
+      ["Forma de pagamento", fx.formasPagamento.length > 0 ? fx.formasPagamento.join(", ") : "Todas"],
       ["Valor (exato)", parseValorBR(fx.valor) !== null ? fx.valor.trim() : "Todos"],
       ["Tipo", fx.tipo === "todos" ? "Entradas e saídas" : fx.tipo === "entrada" ? "Só entradas" : "Só saídas"],
-      ["Origem", fx.origem === "todas" ? "Todas" : LABEL_ORIGEM[fx.origem]],
+      ["Origem", fx.origens.length > 0 ? fx.origens.map((o) => LABEL_ORIGEM[o]).join(", ") : "Todas"],
       ["Só linhas com selo \"revisar\"", fx.soRevisar ? "Sim" : "Não"],
     ];
     import("xlsx").then((XLSX) => {
@@ -771,65 +775,27 @@ export default function FluxoCaixaGestao() {
             </div>
             <div className="space-y-1">
               <Label className="text-xs">Empresa</Label>
-              <Select value={fx.empresaId || "__todas"} onValueChange={(v) => setFx((f) => ({ ...f, empresaId: v === "__todas" ? "" : v }))}>
-                <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__todas">Todas</SelectItem>
-                  {empresasDisponiveis.map(([id, nome]) => <SelectItem key={id} value={id}>{nome}</SelectItem>)}
-                </SelectContent>
-              </Select>
+              <SearchableMultiSelect value={fx.empresaIds} onChange={(v) => setFx((f) => ({ ...f, empresaIds: v }))} options={opcoesDe(empresasDisponiveis)} placeholder="Todas" searchPlaceholder="Buscar..." maxBadges={2} />
             </div>
             <div className="space-y-1">
               <Label className="text-xs">Banco</Label>
-              <Select value={fx.bancoId || "__todos"} onValueChange={(v) => setFx((f) => ({ ...f, bancoId: v === "__todos" ? "" : v }))}>
-                <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__todos">Todos</SelectItem>
-                  {bancosDisponiveis.map(([id, nome]) => <SelectItem key={id} value={id}>{nome}</SelectItem>)}
-                </SelectContent>
-              </Select>
+              <SearchableMultiSelect value={fx.bancoIds} onChange={(v) => setFx((f) => ({ ...f, bancoIds: v }))} options={opcoesDe(bancosDisponiveis)} placeholder="Todos" searchPlaceholder="Buscar..." maxBadges={2} />
             </div>
             <div className="space-y-1">
               <Label className="text-xs">Contrato</Label>
-              <Select value={fx.contratoId || "__todos"} onValueChange={(v) => setFx((f) => ({ ...f, contratoId: v === "__todos" ? "" : v }))}>
-                <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__todos">Todos</SelectItem>
-                  <SelectItem value={FILTRO_SEM_VALOR}>Sem contrato (—)</SelectItem>
-                  {contratosDisponiveis.map(([id, nome]) => <SelectItem key={id} value={id}>{nome}</SelectItem>)}
-                </SelectContent>
-              </Select>
+              <SearchableMultiSelect value={fx.contratoIds} onChange={(v) => setFx((f) => ({ ...f, contratoIds: v }))} options={opcoesDe(contratosDisponiveis, "Sem contrato (—)")} placeholder="Todos" searchPlaceholder="Buscar..." maxBadges={2} />
             </div>
             <div className="space-y-1">
               <Label className="text-xs">Classificação</Label>
-              <Select value={fx.classificacaoId || "__todas"} onValueChange={(v) => setFx((f) => ({ ...f, classificacaoId: v === "__todas" ? "" : v }))}>
-                <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__todas">Todas</SelectItem>
-                  <SelectItem value={FILTRO_SEM_VALOR}>Sem classificação (—)</SelectItem>
-                  {classificacoesDisponiveis.map(([id, nome]) => <SelectItem key={id} value={id}>{nome}</SelectItem>)}
-                </SelectContent>
-              </Select>
+              <SearchableMultiSelect value={fx.classificacaoIds} onChange={(v) => setFx((f) => ({ ...f, classificacaoIds: v }))} options={opcoesDe(classificacoesDisponiveis, "Sem classificação (—)")} placeholder="Todas" searchPlaceholder="Buscar..." maxBadges={2} />
             </div>
             <div className="space-y-1">
               <Label className="text-xs">Forma de pagamento</Label>
-              <Select value={fx.formaPagamento || "__todas"} onValueChange={(v) => setFx((f) => ({ ...f, formaPagamento: v === "__todas" ? "" : v }))}>
-                <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__todas">Todas</SelectItem>
-                  {formasPagamentoDisponiveis.map((nome) => <SelectItem key={nome} value={nome}>{nome}</SelectItem>)}
-                </SelectContent>
-              </Select>
+              <SearchableMultiSelect value={fx.formasPagamento} onChange={(v) => setFx((f) => ({ ...f, formasPagamento: v }))} options={opcoesDeTextos(formasPagamentoDisponiveis)} placeholder="Todas" searchPlaceholder="Buscar..." maxBadges={2} />
             </div>
             <div className="space-y-1">
               <Label className="text-xs">Origem do lançamento</Label>
-              <Select value={fx.origem} onValueChange={(v) => setFx((f) => ({ ...f, origem: v as FiltrosExport["origem"] }))}>
-                <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="todas">Todas</SelectItem>
-                  {(Object.keys(LABEL_ORIGEM) as FluxoCaixaMaloteLinha["origem"][]).map((o) => <SelectItem key={o} value={o}>{LABEL_ORIGEM[o]}</SelectItem>)}
-                </SelectContent>
-              </Select>
+              <SearchableMultiSelect value={fx.origens} onChange={(v) => setFx((f) => ({ ...f, origens: v as FiltrosExport["origens"] }))} options={opcoesOrigem} placeholder="Todas" searchPlaceholder="Buscar..." maxBadges={2} />
             </div>
             <label className="flex items-center gap-2 sm:col-span-2 cursor-pointer">
               <input type="checkbox" checked={fx.soRevisar} onChange={(e) => setFx((f) => ({ ...f, soRevisar: e.target.checked }))} />
@@ -1049,91 +1015,33 @@ export default function FluxoCaixaGestao() {
             </div>
             <div>
               <Label className="text-xs">Empresa</Label>
-              <Select value={empresaId || "todas"} onValueChange={(v) => setEmpresaId(v === "todas" ? "" : v)}>
-                <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="todas">Todas</SelectItem>
-                  {empresasDisponiveis.map(([id, nome]) => (
-                    <SelectItem key={id} value={id}>{nome}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <SearchableMultiSelect className="text-xs" value={empresaIds} onChange={setEmpresaIds} options={opcoesDe(empresasDisponiveis)} placeholder="Todas" searchPlaceholder="Buscar..." maxBadges={1} />
             </div>
             <div>
               <Label className="text-xs">Contrato</Label>
-              <Select value={contratoId || "todos"} onValueChange={(v) => setContratoId(v === "todos" ? "" : v)}>
-                <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="todos">Todos</SelectItem>
-                  <SelectItem value={FILTRO_SEM_VALOR}>Sem contrato (—)</SelectItem>
-                  {contratosDisponiveis.map(([id, nome]) => (
-                    <SelectItem key={id} value={id}>{nome}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <SearchableMultiSelect className="text-xs" value={contratoIds} onChange={setContratoIds} options={opcoesDe(contratosDisponiveis, "Sem contrato (—)")} placeholder="Todos" searchPlaceholder="Buscar..." maxBadges={1} />
             </div>
             {aba !== "realizado" && (
               <div>
                 <Label className="text-xs">Situação</Label>
-                <Select value={situacao || "todas"} onValueChange={(v) => { setSituacao(v === "todas" ? "" : (v as SituacaoFluxo)); setPage(1); }}>
-                  <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="todas">Todas (sem canceladas)</SelectItem>
-                    {SITUACOES_FLUXO.map((s) => (
-                      <SelectItem key={s.valor} value={s.valor}>{s.rotulo}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <SearchableMultiSelect className="text-xs" value={situacoes} onChange={(v) => { setSituacoes(v as SituacaoFluxo[]); setPage(1); }} options={SITUACOES_FLUXO.map((s) => ({ value: s.valor, label: s.rotulo }))} placeholder="Todas (sem canceladas)" searchPlaceholder="Buscar..." maxBadges={1} />
               </div>
             )}
             <div>
               <Label className="text-xs">Classificação</Label>
-              <Select value={classificacaoId || "todas"} onValueChange={(v) => setClassificacaoId(v === "todas" ? "" : v)}>
-                <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="todas">Todas</SelectItem>
-                  <SelectItem value={FILTRO_SEM_VALOR}>Sem classificação (—)</SelectItem>
-                  {classificacoesDisponiveis.map(([id, nome]) => (
-                    <SelectItem key={id} value={id}>{nome}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <SearchableMultiSelect className="text-xs" value={classificacaoIds} onChange={setClassificacaoIds} options={opcoesDe(classificacoesDisponiveis, "Sem classificação (—)")} placeholder="Todas" searchPlaceholder="Buscar..." maxBadges={1} />
             </div>
             <div>
               <Label className="text-xs">Forma de Pagamento</Label>
-              <Select value={formaPagamento || "todas"} onValueChange={(v) => setFormaPagamento(v === "todas" ? "" : v)}>
-                <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="todas">Todas</SelectItem>
-                  {formasPagamentoDisponiveis.map((nome) => (
-                    <SelectItem key={nome} value={nome}>{nome}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <SearchableMultiSelect className="text-xs" value={formasFiltro} onChange={setFormasFiltro} options={opcoesDeTextos(formasPagamentoDisponiveis)} placeholder="Todas" searchPlaceholder="Buscar..." maxBadges={1} />
             </div>
             <div>
               <Label className="text-xs">Origem</Label>
-              <Select value={origemFiltro || "todas"} onValueChange={(v) => { setOrigemFiltro(v === "todas" ? "" : v); setPage(1); }}>
-                <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="todas">Todas</SelectItem>
-                  {(Object.keys(LABEL_ORIGEM) as (keyof typeof LABEL_ORIGEM)[]).map((o) => (
-                    <SelectItem key={o} value={o}>{LABEL_ORIGEM[o]}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <SearchableMultiSelect className="text-xs" value={origensFiltro} onChange={(v) => { setOrigensFiltro(v); setPage(1); }} options={opcoesOrigem} placeholder="Todas" searchPlaceholder="Buscar..." maxBadges={1} />
             </div>
             <div>
               <Label className="text-xs">Banco</Label>
-              <Select value={bancoId || "todos"} onValueChange={(v) => setBancoId(v === "todos" ? "" : v)}>
-                <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="todos">Todos</SelectItem>
-                  {bancosDisponiveis.map(([id, nome]) => (
-                    <SelectItem key={id} value={id}>{nome}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <SearchableMultiSelect className="text-xs" value={bancoIds} onChange={setBancoIds} options={opcoesDe(bancosDisponiveis)} placeholder="Todos" searchPlaceholder="Buscar..." maxBadges={1} />
             </div>
             <div>
               <Label className="text-xs">Valor (exato)</Label>
