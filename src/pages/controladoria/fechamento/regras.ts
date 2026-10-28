@@ -288,16 +288,18 @@ export function admSemClassificacao(linhas: LinhaFluxoCusto[], empresaId?: strin
 // A soma do detalhe é o valor da célula; nos meses projetados o que a célula mostra pode passar do lançado (média dos últimos
 // meses): a diferença vem à parte em `complementoProjecao`, para o total do modal sempre bater com o número clicado.
 export interface ItemDetalheClassificacao {
+  // SIS-2026-0755: id da classificação (null = lançamento sem classificação), para trocar a rubrica dela direto no modal
+  classificacaoId: string | null;
   classificacao: string;
   valor: number;
   lancamentos: number;
 }
 
-function agruparPorClassificacao(linhas: { classificacao_nome: string | null; valor: number }[]): ItemDetalheClassificacao[] {
+function agruparPorClassificacao(linhas: { classificacao_id?: string | null; classificacao_nome: string | null; valor: number }[]): ItemDetalheClassificacao[] {
   const mapa = new Map<string, ItemDetalheClassificacao>();
   for (const l of linhas) {
     const nome = (l.classificacao_nome ?? "").trim() || "(sem classificação)";
-    const atual = mapa.get(nome) ?? { classificacao: nome, valor: 0, lancamentos: 0 };
+    const atual = mapa.get(nome) ?? { classificacaoId: l.classificacao_id ?? null, classificacao: nome, valor: 0, lancamentos: 0 };
     atual.valor += l.valor || 0;
     atual.lancamentos += 1;
     mapa.set(nome, atual);

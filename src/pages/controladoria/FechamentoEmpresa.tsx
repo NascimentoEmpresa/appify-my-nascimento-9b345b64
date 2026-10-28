@@ -31,6 +31,7 @@ import {
 // com o que já aconteceu no Fluxo de Caixa e a projeção dos meses seguintes. As regras estão em fechamento/regras.ts.
 
 const TODOS = "todos";
+const arredondar2 = (n: number) => Math.round(n * 100) / 100;
 const CORES = ["#1e3a8a", "#f97316", "#64748b", "#eab308", "#38bdf8", "#22c55e", "#a855f7", "#ec4899"];
 const milhoes = (v: number) => `${(v / 1_000_000).toLocaleString("pt-BR", { maximumFractionDigits: 1 })}M`;
 const num2 = (n: number) => new Intl.NumberFormat("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n || 0);
@@ -183,7 +184,9 @@ export default function FechamentoEmpresa() {
   }, [linhasAno, contratos, socioPorContrato, empresaId]);
 
   // SIS-2026-0730: clique no valor abre o detalhamento por classificação (mesma seleção de linhas e mesmo mês da célula).
-  const [detalhe, setDetalhe] = useState<DetalheAberto | null>(null);
+  // O detalhe guarda só o que foi clicado; os itens e o valor são recalculados a cada render, então mudar a rubrica de uma classificação no modal atualiza tudo.
+  type DetalheParams = { tipo: "adm"; rotulo: string; rubricas: RubricaCusto[] | null; mesesAlvo: string[] } | { tipo: "socio"; socio: string; mesesAlvo: string[] };
+  const [detalheParams, setDetalheParams] = useState<DetalheParams | null>(null);
   const empresaAdm = empresaId === TODOS ? null : empresaId;
   const linhasDosSocios = useMemo(
     () => custosAno.filter((l) => !!l.contrato_id && (empresaId === TODOS || contratoPorId.get(l.contrato_id)?.empresa_id === empresaId)),
@@ -194,25 +197,35 @@ export default function FechamentoEmpresa() {
     return `no período selecionado (${rotuloMes(meses[0])} a ${rotuloMes(meses[meses.length - 1])})`;
   };
   const rotuloPeriodo = (meses: string[]) => (meses.length === 1 ? rotuloMes(meses[0]) : "Total do período");
-  const abrirAdm = (rotulo: string, rubricas: RubricaCusto[] | null, mesesAlvo: string[], valorCelula: number) => {
-    const alvo = new Set(mesesAlvo);
-    setDetalhe({
-      titulo: `${rotulo} | ${rotuloPeriodo(mesesAlvo)}`,
-      subtitulo: `Composição da despesa administrativa atribuída a ${rotulo} ${textoPeriodo(mesesAlvo)}.`,
-      itens: detalheAdmPorClassificacao(admTodas, alvo, rubricas, ligacoes, empresaAdm),
+  // (o valor da célula, 4º argumento, é recalculado de linhasAno: o mesmo número que a tabela mostra)
+  const abrirAdm = (rotulo: string, rubricas: RubricaCusto[] | null, mesesAlvo: string[], _valorCelula?: number) => setDetalheParams({ tipo: "adm", rotulo, rubricas, mesesAlvo });
+  const abrirSocio = (socio: string, mesesAlvo: string[], _valorCelula?: number) => setDetalheParams({ tipo: "socio", socio, mesesAlvo });
+  const detalhe = useMemo<DetalheAberto | null>(() => {
+    const p = detalheParams;
+    if (!p) return null;
+    const linhaDoMes = (mes: string) => linhasAno.find((l) => l.mes === mes);
+    const projetado = p.mesesAlvo.some((m) => m > mesAtual);
+    if (p.tipo === "adm") {
+      const valorCelula = arredondar2(p.mesesAlvo.reduce((s, m) => { const l = linhaDoMes(m); return s + (!l ? 0 : p.rubricas ? p.rubricas.reduce((t, r) => t + l.adm[r], 0) : l.totalAdm); }, 0));
+      return {
+        titulo: `${p.rotulo} | ${rotuloPeriodo(p.mesesAlvo)}`,
+        subtitulo: `Composição da despesa administrativa atribuída a ${p.rotulo} ${textoPeriodo(p.mesesAlvo)}.`,
+        itens: detalheAdmPorClassificacao(admTodas, new Set(p.mesesAlvo), p.rubricas, ligacoes, empresaAdm),
+        valorCelula,
+        projetado,
+        mostrarRubrica: true,
+      };
+    }
+    const valorCelula = arredondar2(p.mesesAlvo.reduce((s, m) => s + (linhaDoMes(m)?.socios[p.socio] ?? 0), 0));
+    return {
+      titulo: `${p.socio} | ${rotuloPeriodo(p.mesesAlvo)}`,
+      subtitulo: `Composição da despesa administrativa atribuída a ${p.socio} ${textoPeriodo(p.mesesAlvo)}.`,
+      itens: detalheSocioPorClassificacao(linhasDosSocios, new Set(p.mesesAlvo), p.socio, socioPorContrato, ligacoes),
       valorCelula,
-      projetado: mesesAlvo.some((m) => m > mesAtual),
-    });
-  };
-  const abrirSocio = (socio: string, mesesAlvo: string[], valorCelula: number) => {
-    setDetalhe({
-      titulo: `${socio} | ${rotuloPeriodo(mesesAlvo)}`,
-      subtitulo: `Composição da despesa administrativa atribuída a ${socio} ${textoPeriodo(mesesAlvo)}.`,
-      itens: detalheSocioPorClassificacao(linhasDosSocios, new Set(mesesAlvo), socio, socioPorContrato, ligacoes),
-      valorCelula,
-      projetado: mesesAlvo.some((m) => m > mesAtual),
-    });
-  };
+      projetado,
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [detalheParams, linhasAno, admTodas, ligacoes, empresaAdm, linhasDosSocios, socioPorContrato, mesAtual]);
   const mesesDaTabela = linhas.map((l) => l.mes);
 
   const termo = buscaMes.trim().toLowerCase();
@@ -619,7 +632,7 @@ export default function FechamentoEmpresa() {
         </>
       )}
 
-      <DetalheDespesaDialog detalhe={detalhe} onClose={() => setDetalhe(null)} />
+      <DetalheDespesaDialog detalhe={detalhe} onClose={() => setDetalheParams(null)} />
     </div>
   );
 }

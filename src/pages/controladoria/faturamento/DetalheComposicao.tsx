@@ -7,6 +7,7 @@ import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, Table
 import { fmtMoney } from "@/pages/financeiro/nf-emissao/shared";
 import type { Celula, Composicao } from "./composicao";
 import { useSalvarTratamentoContrato } from "./useTratamentosContrato";
+import { SeletorRubricaClassificacao } from "./SeletorRubricaClassificacao";
 import type { TratamentoContrato } from "./tratamentoContrato";
 
 // SIS-2026-0641: modal "como esse número é formado" do Faturamento da Empresa. Em cima, a conta que fecha na célula
@@ -85,6 +86,28 @@ export function DetalheComposicao({ composicao, onClose }: { composicao: Composi
                       {composicao.contratosNaColuna.length === 0 && (
                         <TableRow><TableCell colSpan={3} className="py-4 text-center text-muted-foreground">Nenhum contrato com despesa neste recorte.</TableCell></TableRow>
                       )}
+                    </TableBody>
+                  </Table>
+                </div>
+              </div>
+            )}
+
+            {composicao.classificacoesNaColuna && composicao.classificacoesNaColuna.length > 0 && (
+              <div className="space-y-2">
+                <h3 className="text-sm font-semibold">Classificações que compõem esta coluna ({composicao.classificacoesNaColuna.length.toLocaleString("pt-BR")})</h3>
+                <p className="text-[11px] text-muted-foreground">
+                  Cada classificação entra numa rubrica (Salários, Férias, FGTS, Outras…) ou fica de fora se “Não é custo”. Mudar a rubrica vale para todos os meses e telas (mesma ligação do painel Rubricas de custo da Lucratividade). Classificação marcada como “Não é custo” sai desta lista; para ela voltar, use o painel Rubricas de custo da Lucratividade.
+                </p>
+                <div className="max-h-56 overflow-y-auto rounded-md border">
+                  <Table className="text-xs tabular-nums">
+                    <TableBody>
+                      {composicao.classificacoesNaColuna.map((c) => (
+                        <TableRow key={c.id ?? c.nome}>
+                          <TableCell className="break-words">{c.nome}<span className="ml-2 text-muted-foreground">{c.lancamentos} {c.lancamentos === 1 ? "lançamento" : "lançamentos"}</span></TableCell>
+                          <TableCell className="whitespace-nowrap text-right">{fmtMoney(c.valor)}</TableCell>
+                          <TableCell className="w-px whitespace-nowrap text-right"><SeletorRubricaClassificacao classificacaoId={c.id} nome={c.nome} /></TableCell>
+                        </TableRow>
+                      ))}
                     </TableBody>
                   </Table>
                 </div>

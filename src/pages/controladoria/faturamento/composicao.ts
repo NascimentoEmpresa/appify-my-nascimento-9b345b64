@@ -75,6 +75,14 @@ export interface ContratoDaColuna {
   configuravel: boolean;
 }
 
+// SIS-2026-0755: classificações que compõem a coluna, para trocar a rubrica de cada uma direto no modal.
+export interface ClassificacaoDaColuna {
+  id: string | null;
+  nome: string;
+  valor: number;
+  lancamentos: number;
+}
+
 export interface ContratoForaDaColuna {
   id: string;
   nome: string;
@@ -90,6 +98,7 @@ export interface Composicao {
   tabela?: TabelaDetalhe;
   aviso?: string;
   contratosNaColuna?: ContratoDaColuna[];
+  classificacoesNaColuna?: ClassificacaoDaColuna[];
   contratosForaDaColuna?: ContratoForaDaColuna[];
 }
 
@@ -156,6 +165,19 @@ export function despesasDoEscopo(custos: LinhaFluxoCusto[], escopo: Pick<EscopoD
     linhas: linhas.sort((a, b) => (b.valor || 0) - (a.valor || 0)),
     porContrato,
   };
+}
+
+function classificacoesDasLinhas(linhas: { classificacao_id?: string | null; classificacao_nome: string | null; valor: number }[]): ClassificacaoDaColuna[] {
+  const m = new Map<string, ClassificacaoDaColuna>();
+  for (const l of linhas) {
+    const nome = (l.classificacao_nome ?? "").trim() || "(sem classificação)";
+    const k = l.classificacao_id ?? `nome:${nome}`;
+    const a = m.get(k) ?? { id: l.classificacao_id ?? null, nome, valor: 0, lancamentos: 0 };
+    a.valor += l.valor || 0;
+    a.lancamentos += 1;
+    m.set(k, a);
+  }
+  return [...m.values()].map((x) => ({ ...x, valor: r2(x.valor) })).sort((a, b) => b.valor - a.valor);
 }
 
 // ── Executável: por contrato, de onde vem o valor ──
@@ -274,6 +296,7 @@ export function montarComposicao(metrica: Metrica, escopo: EscopoDetalhe, ctx: C
       contratosNaColuna: [...d.porContrato.entries()]
         .map(([id, valor]) => ({ id, nome: ctx.contratoNome(id), valor: r2(valor), configuravel: contratoConfiguravel(ctx.contratoNome(id)) }))
         .sort((a, b) => b.valor - a.valor),
+      classificacoesNaColuna: classificacoesDasLinhas(d.linhas),
       contratosForaDaColuna: escopo.contratoIds
         .map((id) => ({ id, nome: ctx.contratoNome(id), tratamento: tratamentoEfetivo(ctx.contratoNome(id), ctx.tratamentos?.get(id)), origem: (ctx.tratamentos?.has(id) ? "configurado" : "padrao") as "padrao" | "configurado" }))
         .filter((c) => contratoConfiguravel(c.nome) && saiDasDespesas(c.tratamento))
