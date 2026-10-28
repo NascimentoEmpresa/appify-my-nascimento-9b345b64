@@ -562,6 +562,25 @@ export function RotatividadeEstoque({ empresaId, inicio, fim, contratoId }: Prop
     [dados],
   );
 
+  // O tamanho sozinho mistura peças diferentes (por exemplo, camisa G e
+  // jaqueta G). Para orientar compra, a unidade de leitura é sempre peça +
+  // tamanho. Esta série vem da RPC de histórico, que preserva essa chave.
+  const porItemTamanho = useMemo(() => {
+    const acumulado = new Map<string, { itemTamanho: string; solicitados: number; utilizados: number }>();
+    for (const linha of consultaHistorico.data ?? []) {
+      const tamanho = linha.tamanho ?? "sem tamanho";
+      const itemTamanho = `${linha.tipo_uniforme} · ${tamanho}`;
+      const atual = acumulado.get(itemTamanho) ?? { itemTamanho, solicitados: 0, utilizados: 0 };
+      atual.solicitados += linha.solicitados;
+      atual.utilizados += linha.utilizados;
+      acumulado.set(itemTamanho, atual);
+    }
+    return [...acumulado.values()]
+      .filter((linha) => linha.solicitados > 0 || linha.utilizados > 0)
+      .sort((a, b) => b.solicitados - a.solicitados || b.utilizados - a.utilizados)
+      .slice(0, 12);
+  }, [consultaHistorico.data]);
+
   // Gráficos de volume leem melhor ordenados por volume; a tabela abaixo
   // mantém a ordem da escala de tamanho, para quem quer conferir a grade.
   const porVolume = useMemo(
@@ -764,31 +783,31 @@ export function RotatividadeEstoque({ empresaId, inicio, fim, contratoId }: Prop
       <div className="grid gap-3 xl:grid-cols-2">
         {/* MAGNITUDE: hue única, a barra já codifica o valor. */}
         <PainelGrafico
-          titulo="Tamanho que Mais Sai"
-          subtitulo="Unidades pedidas por tamanho, do maior para o menor."
+          titulo="Itens e Tamanhos Mais Pedidos"
+          subtitulo="Cada barra identifica a peça e o tamanho; não mistura, por exemplo, camisa G com jaqueta G."
         >
-          {porVolume.length ? (
+          {porItemTamanho.length ? (
             <div className="h-[320px]">
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={porVolume} layout="vertical" margin={{ left: 8, right: 44, top: 4 }}>
+                <BarChart data={porItemTamanho} layout="vertical" margin={{ left: 8, right: 44, top: 4 }}>
                   <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke={CINZA_GRADE} />
                   <XAxis type="number" allowDecimals={false} tick={{ fontSize: 10, fill: "#64748b" }} />
                   <YAxis
                     type="category"
-                    dataKey="tamanho"
-                    width={52}
-                    tick={{ fontSize: 11, fontWeight: 600, fill: "#334155" }}
+                    dataKey="itemTamanho"
+                    width={170}
+                    tick={<TickCategoria maximo={28} tamanhoFonte={10} inclinacao={0} />}
                   />
                   <Tooltip content={<TooltipPadrao sufixo=" un." />} cursor={{ fill: "#f1f5f9" }} />
                   <Bar
-                    dataKey="pedidas"
+                    dataKey="solicitados"
                     name="Unidades pedidas"
                     fill={AZUL_MAGNITUDE}
                     radius={[0, 4, 4, 0]}
                     maxBarSize={22}
                   >
                     <LabelList
-                      dataKey="pedidas"
+                      dataKey="solicitados"
                       position="right"
                       className="text-[10px]"
                       fill="#475569"
@@ -799,38 +818,39 @@ export function RotatividadeEstoque({ empresaId, inicio, fim, contratoId }: Prop
               </ResponsiveContainer>
             </div>
           ) : (
-            <EstadoVazio texto="Nenhuma unidade pedida no período." altura={320} />
+            <EstadoVazio texto="Nenhuma unidade de uniforme solicitada no período." altura={320} />
           )}
         </PainelGrafico>
 
         {/* DUAS SÉRIES na mesma unidade (unidades) — um eixo só. */}
         <PainelGrafico
-          titulo="Entrada x Saída por Tamanho"
-          subtitulo="Movimentação física do almoxarifado, na ordem da escala de tamanho."
+          titulo="Solicitado x Baixa Física por Item e Tamanho"
+          subtitulo="Pedido é demanda; utilizado só conta quando há baixa física confirmada no almoxarifado."
         >
-          {fluxoPorTamanho.length ? (
+          {porItemTamanho.length ? (
             <div className="h-[320px]">
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={fluxoPorTamanho} margin={{ top: 4 }} barGap={2}>
+                <BarChart data={porItemTamanho} layout="vertical" margin={{ left: 8, right: 24, top: 4 }} barGap={2}>
                   <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={CINZA_GRADE} />
                   <XAxis
-                    dataKey="tamanho"
-                    tick={{ fontSize: 10, fontWeight: 600, fill: "#334155" }}
-                    interval={0}
+                    type="category"
+                    dataKey="itemTamanho"
+                    width={170}
+                    tick={<TickCategoria maximo={28} tamanhoFonte={10} inclinacao={0} />}
                   />
-                  <YAxis allowDecimals={false} tick={{ fontSize: 10, fill: "#64748b" }} />
+                  <YAxis type="number" allowDecimals={false} tick={{ fontSize: 10, fill: "#64748b" }} />
                   <Tooltip content={<TooltipPadrao sufixo=" un." />} cursor={{ fill: "#f1f5f9" }} />
                   <Legend wrapperStyle={{ fontSize: 11 }} />
                   <Bar
-                    dataKey="entradas"
-                    name="Entradas"
-                    fill={SERIES.entrada}
+                    dataKey="solicitados"
+                    name="Solicitados"
+                    fill={SERIES.pedido}
                     radius={[4, 4, 0, 0]}
                     maxBarSize={26}
                   />
                   <Bar
-                    dataKey="saidas"
-                    name="Saídas"
+                    dataKey="utilizados"
+                    name="Baixas físicas"
                     fill={SERIES.saida}
                     radius={[4, 4, 0, 0]}
                     maxBarSize={26}
@@ -840,7 +860,7 @@ export function RotatividadeEstoque({ empresaId, inicio, fim, contratoId }: Prop
             </div>
           ) : (
             <EstadoVazio
-              texto="Nenhuma entrada ou saída registrada no almoxarifado neste período."
+              texto="Nenhuma solicitação ou baixa física de uniforme no período."
               altura={320}
             />
           )}
