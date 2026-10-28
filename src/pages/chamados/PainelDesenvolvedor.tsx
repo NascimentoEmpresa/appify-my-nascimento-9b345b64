@@ -45,6 +45,8 @@ const VISOES = [
 ] as const;
 
 interface MetricasGithubConclusao {
+  numeroPr: number | null;
+  urlPr: string | null;
   commits: number | null;
   linhasAdicionadas: number | null;
   arquivosAlterados: number | null;
@@ -53,6 +55,15 @@ interface MetricasGithubConclusao {
 interface EventoGithubConclusao {
   chamado_id: string;
   meta: Record<string, unknown> | null;
+}
+
+interface PrGithubCache {
+  numero: number;
+  chamado: string;
+  url: string | null;
+  commits: number | null;
+  adicoes: number | null;
+  arquivos: number | null;
 }
 
 const numeroDaMetrica = (valor: unknown) =>
@@ -96,7 +107,7 @@ export default function PainelDesenvolvedor() {
     queryKey: ["chamados-metricas-github", user?.id],
     enabled: !!user?.id && dev,
     queryFn: async () => {
-      const { data, error } = await (supabase as any).from("CHAMADO_SISTEMA_EVENTO")
+      const { data, error } = await supabase.from("CHAMADO_SISTEMA_EVENTO")
         .select("chamado_id, meta, created_at")
         .eq("tipo", "evento")
         .contains("meta", { canal: "github", origem: "merge" })
@@ -107,11 +118,40 @@ export default function PainelDesenvolvedor() {
         if (porChamado[evento.chamado_id]) return porChamado;
         const meta = (evento.meta ?? {}) as Record<string, unknown>;
         porChamado[evento.chamado_id] = {
+          numeroPr: numeroDaMetrica(meta.pr_numero),
+          urlPr: typeof meta.pr_url === "string" ? meta.pr_url : null,
           commits: numeroDaMetrica(meta.pr_commits),
           linhasAdicionadas: numeroDaMetrica(meta.pr_linhas_adicionadas),
           arquivosAlterados: numeroDaMetrica(meta.pr_arquivos_alterados),
         };
         return porChamado;
+      }, {});
+    },
+  });
+
+  // Chamados concluídos antes desta melhoria não possuem as métricas no
+  // evento histórico. O mesmo cache de PRs que abastece o Painel GitHub cobre
+  // esse caso sem nova chamada ao GitHub e só busca as PRs destes chamados.
+  const numerosChamados = chamados.map((chamado) => chamado.numero);
+  const { data: metricasGithubPorNumero = {} } = useQuery({
+    queryKey: ["chamados-metricas-github-cache", numerosChamados],
+    enabled: !!user?.id && dev && numerosChamados.length > 0,
+    queryFn: async () => {
+      const { data, error } = await supabase.from("DEV_GITHUB_PR")
+        .select("numero, chamado, url, commits, adicoes, arquivos")
+        .in("chamado", numerosChamados)
+        .eq("estado", "merged")
+        .order("mergeado_em", { ascending: false });
+      if (error) throw error;
+
+      return (data ?? []).reduce((porNumero: Record<string, MetricasGithubConclusao>, pr: PrGithubCache) => {
+        if (porNumero[pr.chamado]) return porNumero;
+        porNumero[pr.chamado] = {
+          numeroPr: numeroDaMetrica(pr.numero), urlPr: pr.url,
+          commits: numeroDaMetrica(pr.commits), linhasAdicionadas: numeroDaMetrica(pr.adicoes),
+          arquivosAlterados: numeroDaMetrica(pr.arquivos),
+        };
+        return porNumero;
       }, {});
     },
   });
@@ -372,6 +412,10 @@ export default function PainelDesenvolvedor() {
                   <TableRow>
                     <TableHead className="w-16 text-center">Fila</TableHead>
                     <TableHead>Chamado / Assunto</TableHead>
+                    <TableHead>PR</TableHead>
+                    <TableHead className="text-center">Linhas adicionadas</TableHead>
+                    <TableHead className="text-center">Commits</TableHead>
+                    <TableHead className="text-center">Arquivos alterados</TableHead>
                     <TableHead>Solicitante / Setor</TableHead>
                     <TableHead>Prioridade</TableHead>
                     <TableHead>Status</TableHead>
@@ -383,7 +427,7 @@ export default function PainelDesenvolvedor() {
                 <TableBody>
                   {visiveis.map((c) => {
                     const atrasado = c.prazo_previsto && ATIVO(c.status) && new Date(c.prazo_previsto) < hoje;
-                    const metricas = metricasGithub[c.id];
+                    const metricas = metricasGithub[c.id] ?? metricasGithubPorNumero[c.numero];
                     return (
                       <TableRow key={c.id} className="cursor-pointer" onClick={() => nav(`/app/sistemas/chamados/${c.id}`)}>
                         <TableCell className="text-center">
@@ -420,13 +464,6 @@ export default function PainelDesenvolvedor() {
                             )}
                           </p>
                           <p className="text-xs">{c.assunto}</p>
-                          {metricas && (
-                            <p className="mt-0.5 flex flex-wrap items-center gap-1 text-[10px] font-medium text-muted-foreground">
-                              <GitPullRequest className="h-3 w-3 text-primary" /> GitHub: {metricas.commits ?? "—"} commits
-                              <span>· +{metricas.linhasAdicionadas ?? "—"} linhas</span>
-                              <span>· {metricas.arquivosAlterados ?? "—"} arquivos</span>
-                            </p>
-                          )}
                           {/* "Abrir PR" e "Reabrir" andam juntos: o chamado que
                               precisa de uma segunda PR é justamente o que foi
                               concluído pelo merge da primeira. */}
@@ -449,6 +486,17 @@ export default function PainelDesenvolvedor() {
                             )}
                           </div>
                         </TableCell>
+                        <TableCell onClick={(e) => e.stopPropagation()}>
+                          {metricas?.urlPr && metricas.numeroPr !== null ? (
+                            <a href={metricas.urlPr} target="_blank" rel="noreferrer"
+                              className="inline-flex items-center gap-1 text-xs font-semibold text-primary underline-offset-2 hover:underline">
+                              #{metricas.numeroPr} <ArrowUpRight className="h-3 w-3" />
+                            </a>
+                          ) : <span className="text-xs text-muted-foreground">—</span>}
+                        </TableCell>
+                        <TableCell className="text-center text-xs font-medium tabular-nums">{metricas?.linhasAdicionadas?.toLocaleString("pt-BR") ?? "—"}</TableCell>
+                        <TableCell className="text-center text-xs font-medium tabular-nums">{metricas?.commits ?? "—"}</TableCell>
+                        <TableCell className="text-center text-xs font-medium tabular-nums">{metricas?.arquivosAlterados ?? "—"}</TableCell>
                         <TableCell className="text-xs">{c.solicitante_nome || "—"}<div className="text-[10px] text-muted-foreground">{c.setor}</div></TableCell>
                         <TableCell onClick={(e) => e.stopPropagation()}>
                           {podeEditarPrioridade && ATIVO(c.status) ? (
@@ -476,7 +524,7 @@ export default function PainelDesenvolvedor() {
                     );
                   })}
                   {visiveis.length === 0 && (
-                    <TableRow><TableCell colSpan={8} className="py-6 text-center text-sm text-muted-foreground">
+                    <TableRow><TableCell colSpan={12} className="py-6 text-center text-sm text-muted-foreground">
                       {visao === "concluidos" ? "Nenhum chamado concluído." : "Nenhum chamado na sua fila."}
                     </TableCell></TableRow>
                   )}
