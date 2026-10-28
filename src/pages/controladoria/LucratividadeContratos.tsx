@@ -14,6 +14,7 @@ import { useCustosContratoMes } from "./faturamento/useCustosContratoMes";
 import { fmtMoney } from "@/pages/financeiro/nf-emissao/shared";
 import { agruparFaturamento, custosPorContratoMes, custosVazios, CustosPorRubrica, ehContratoAdministrativo, lucroBruto, RUBRICAS, semClassificacao, totaisVazios, totalCustos } from "./faturamento/regras";
 import { RubricasCusto } from "./faturamento/RubricasCusto";
+import { BotaoTratamentoContratos } from "./faturamento/TratamentoContratosDialog";
 import { FaixasTexto, pillDaMargem, TituloComFormula } from "./faturamento/Rentabilidade";
 import { useLigacoesRubrica } from "./faturamento/useLigacoesRubrica";
 import { SeletorBaseLeitura } from "./faturamento/SeletorBaseLeitura";
@@ -150,6 +151,7 @@ export default function LucratividadeContratos() {
         subtitle="Faturamento (NFs da competência, do código escolhido — padrão N) × custos da competência (saídas do Fluxo de Caixa com contrato)."
         actions={
           <div className="flex gap-2 print:hidden">
+            <BotaoTratamentoContratos />
             <Button variant="outline" size="sm" onClick={() => window.print()}><Printer className="h-4 w-4 mr-1" />Imprimir</Button>
             <Button size="sm" onClick={exportarCsv} disabled={linhas.length === 0}><FileDown className="h-4 w-4 mr-1" />Exportar</Button>
           </div>

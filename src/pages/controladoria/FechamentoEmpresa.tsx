@@ -16,11 +16,14 @@ import { useLeituraCompartilhada } from "./faturamento/leituraCompartilhada";
 import { CODIGO_PADRAO, codigosDoFiltro, FiltroCodigoNota } from "./faturamento/FiltroCodigoNota";
 import { rotuloMes, useBaseFaturamento } from "./faturamento/useBaseFaturamento";
 import { useCustosContratoAno, useDespesasAdmAno } from "./faturamento/useCustosContratoMes";
+import { tratamentoEfetivo, type TratamentoContrato } from "./faturamento/tratamentoContrato";
+import { useTratamentosContrato } from "./faturamento/useTratamentosContrato";
+import { BotaoTratamentoContratos } from "./faturamento/TratamentoContratosDialog";
 import { useLigacoesRubrica } from "./faturamento/useLigacoesRubrica";
 import { DetalheDespesaDialog, type DetalheAberto } from "./fechamento/DetalheDespesaDialog";
 import { TituloComFormula } from "./faturamento/Rentabilidade";
 import {
-  admPorClassificacao, detalheAdmPorClassificacao, detalheSocioPorClassificacao, admPorMesRubrica, despesasDosSocios, socioDoContrato, admSemClassificacao, ehContratoInvestimento, ordenarColunasSocios, ROTULO_INVESTIMENTOS, margemFinal, montarFechamento, ORIGEM_ADM, ORIGEM_RUBRICA, ROTULO_STATUS, statusDoFechamento, totalDoFechamento,
+  admPorClassificacao, detalheAdmPorClassificacao, detalheSocioPorClassificacao, admPorMesRubrica, despesasDosSocios, socioDoContrato, admSemClassificacao, ordenarColunasSocios, ROTULO_INVESTIMENTOS, margemFinal, montarFechamento, ORIGEM_ADM, ORIGEM_RUBRICA, ROTULO_STATUS, statusDoFechamento, totalDoFechamento,
   type LinhaFechamento, type StatusFechamento,
 } from "./fechamento/regras";
 
@@ -28,6 +31,7 @@ import {
 // com o que já aconteceu no Fluxo de Caixa e a projeção dos meses seguintes. As regras estão em fechamento/regras.ts.
 
 const TODOS = "todos";
+const arredondar2 = (n: number) => Math.round(n * 100) / 100;
 const CORES = ["#1e3a8a", "#f97316", "#64748b", "#eab308", "#38bdf8", "#22c55e", "#a855f7", "#ec4899"];
 const milhoes = (v: number) => `${(v / 1_000_000).toLocaleString("pt-BR", { maximumFractionDigits: 1 })}M`;
 const num2 = (n: number) => new Intl.NumberFormat("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n || 0);
@@ -82,7 +86,7 @@ export default function FechamentoEmpresa() {
   const [aba, setAba] = useState("mensal");
   const [buscaMes, setBuscaMes] = useState("");
 
-  const { data: custosAno = [], isLoading: carregandoCustos, error: erroCustos } = useCustosContratoAno(ano, true, base);
+  const { data: custosAno = [], isLoading: carregandoCustos, error: erroCustos } = useCustosContratoAno(ano, true, base, { manterInvestimentos: true });
   const { data: admAno = [], isLoading: carregandoAdm, error: erroAdm } = useDespesasAdmAno(ano, base);
   const { data: ligacoes } = useLigacoesRubrica();
 
@@ -108,12 +112,15 @@ export default function FechamentoEmpresa() {
   const nfsDoAno = useMemo(() => nfs.filter((n) => n.competencia.startsWith(`${ano}-`)), [nfs, ano]);
   const custosContratoPorMesContrato = useMemo(() => custosPorContratoMes(custosAno, ligacoes), [custosAno, ligacoes]);
   // SIS-2026-0709: contrato "ADMINISTRATIVO <SÓCIO>" → nome do sócio. Fica fora do lucro dos contratos e entra no Resultado com Sócios.
+  // Tratamento configurado por contrato (Tratamento dos contratos): sem exceção vale o padrão pelo nome.
+  const { data: tratamentosBrutos } = useTratamentosContrato();
+  const tratamentos = useMemo(() => tratamentosBrutos ?? new Map<string, TratamentoContrato>(), [tratamentosBrutos]);
   const socioPorContrato = useMemo(() => {
     const m = new Map<string, string>();
     // SIS-2026-0744: contrato "INVESTIMENTOS …" entra como mais uma coluna desta aba (rótulo "Investimentos"), com a mesma regra dos sócios.
-    for (const c of contratos) { const s = socioDoContrato(c.nome) ?? (ehContratoInvestimento(c.nome) ? ROTULO_INVESTIMENTOS : null); if (s) m.set(c.id, s); }
+    for (const c of contratos) { const s = socioDoContrato(c.nome) ?? (tratamentoEfetivo(c.nome, tratamentos.get(c.id)) === "investimento" ? ROTULO_INVESTIMENTOS : null); if (s) m.set(c.id, s); }
     return m;
-  }, [contratos]);
+  }, [contratos, tratamentos]);
   // Contratos "ADMINISTRATIVO - …" (inclusive os dos sócios) são centros de custo da empresa, não contrato de cliente: o Lucro dos Contratos
   // não os conta (igual à Lucratividade de Contratos). O que foi gasto neles é despesa administrativa, exceto o dos sócios (aba própria).
   const idsAdministrativos = useMemo(() => new Set(contratos.filter((c) => ehContratoAdministrativo(c.nome)).map((c) => c.id)), [contratos]);
@@ -177,7 +184,9 @@ export default function FechamentoEmpresa() {
   }, [linhasAno, contratos, socioPorContrato, empresaId]);
 
   // SIS-2026-0730: clique no valor abre o detalhamento por classificação (mesma seleção de linhas e mesmo mês da célula).
-  const [detalhe, setDetalhe] = useState<DetalheAberto | null>(null);
+  // O detalhe guarda só o que foi clicado; os itens e o valor são recalculados a cada render, então mudar a rubrica de uma classificação no modal atualiza tudo.
+  type DetalheParams = { tipo: "adm"; rotulo: string; rubricas: RubricaCusto[] | null; mesesAlvo: string[] } | { tipo: "socio"; socio: string; mesesAlvo: string[] };
+  const [detalheParams, setDetalheParams] = useState<DetalheParams | null>(null);
   const empresaAdm = empresaId === TODOS ? null : empresaId;
   const linhasDosSocios = useMemo(
     () => custosAno.filter((l) => !!l.contrato_id && (empresaId === TODOS || contratoPorId.get(l.contrato_id)?.empresa_id === empresaId)),
@@ -188,25 +197,35 @@ export default function FechamentoEmpresa() {
     return `no período selecionado (${rotuloMes(meses[0])} a ${rotuloMes(meses[meses.length - 1])})`;
   };
   const rotuloPeriodo = (meses: string[]) => (meses.length === 1 ? rotuloMes(meses[0]) : "Total do período");
-  const abrirAdm = (rotulo: string, rubricas: RubricaCusto[] | null, mesesAlvo: string[], valorCelula: number) => {
-    const alvo = new Set(mesesAlvo);
-    setDetalhe({
-      titulo: `${rotulo} | ${rotuloPeriodo(mesesAlvo)}`,
-      subtitulo: `Composição da despesa administrativa atribuída a ${rotulo} ${textoPeriodo(mesesAlvo)}.`,
-      itens: detalheAdmPorClassificacao(admTodas, alvo, rubricas, ligacoes, empresaAdm),
+  // (o valor da célula, 4º argumento, é recalculado de linhasAno: o mesmo número que a tabela mostra)
+  const abrirAdm = (rotulo: string, rubricas: RubricaCusto[] | null, mesesAlvo: string[], _valorCelula?: number) => setDetalheParams({ tipo: "adm", rotulo, rubricas, mesesAlvo });
+  const abrirSocio = (socio: string, mesesAlvo: string[], _valorCelula?: number) => setDetalheParams({ tipo: "socio", socio, mesesAlvo });
+  const detalhe = useMemo<DetalheAberto | null>(() => {
+    const p = detalheParams;
+    if (!p) return null;
+    const linhaDoMes = (mes: string) => linhasAno.find((l) => l.mes === mes);
+    const projetado = p.mesesAlvo.some((m) => m > mesAtual);
+    if (p.tipo === "adm") {
+      const valorCelula = arredondar2(p.mesesAlvo.reduce((s, m) => { const l = linhaDoMes(m); return s + (!l ? 0 : p.rubricas ? p.rubricas.reduce((t, r) => t + l.adm[r], 0) : l.totalAdm); }, 0));
+      return {
+        titulo: `${p.rotulo} | ${rotuloPeriodo(p.mesesAlvo)}`,
+        subtitulo: `Composição da despesa administrativa atribuída a ${p.rotulo} ${textoPeriodo(p.mesesAlvo)}.`,
+        itens: detalheAdmPorClassificacao(admTodas, new Set(p.mesesAlvo), p.rubricas, ligacoes, empresaAdm),
+        valorCelula,
+        projetado,
+        mostrarRubrica: true,
+      };
+    }
+    const valorCelula = arredondar2(p.mesesAlvo.reduce((s, m) => s + (linhaDoMes(m)?.socios[p.socio] ?? 0), 0));
+    return {
+      titulo: `${p.socio} | ${rotuloPeriodo(p.mesesAlvo)}`,
+      subtitulo: `Composição da despesa administrativa atribuída a ${p.socio} ${textoPeriodo(p.mesesAlvo)}.`,
+      itens: detalheSocioPorClassificacao(linhasDosSocios, new Set(p.mesesAlvo), p.socio, socioPorContrato, ligacoes),
       valorCelula,
-      projetado: mesesAlvo.some((m) => m > mesAtual),
-    });
-  };
-  const abrirSocio = (socio: string, mesesAlvo: string[], valorCelula: number) => {
-    setDetalhe({
-      titulo: `${socio} | ${rotuloPeriodo(mesesAlvo)}`,
-      subtitulo: `Composição da despesa administrativa atribuída a ${socio} ${textoPeriodo(mesesAlvo)}.`,
-      itens: detalheSocioPorClassificacao(linhasDosSocios, new Set(mesesAlvo), socio, socioPorContrato, ligacoes),
-      valorCelula,
-      projetado: mesesAlvo.some((m) => m > mesAtual),
-    });
-  };
+      projetado,
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [detalheParams, linhasAno, admTodas, ligacoes, empresaAdm, linhasDosSocios, socioPorContrato, mesAtual]);
   const mesesDaTabela = linhas.map((l) => l.mes);
 
   const termo = buscaMes.trim().toLowerCase();
@@ -255,7 +274,7 @@ export default function FechamentoEmpresa() {
         breadcrumb={["Fechamento da Empresa"]}
         title="Fechamento da Empresa"
         subtitle="Acompanhe o fechamento consolidado da empresa com base no lucro dos contratos menos as despesas administrativas."
-        actions={<Button variant="outline" size="sm" onClick={() => window.print()}><Printer className="h-4 w-4 mr-1" />Imprimir</Button>}
+        actions={<div className="flex items-center gap-2"><BotaoTratamentoContratos /><Button variant="outline" size="sm" onClick={() => window.print()}><Printer className="h-4 w-4 mr-1" />Imprimir</Button></div>}
       />
 
       <div className="card-elevated p-3 flex items-center gap-2 flex-wrap text-xs print:hidden">
@@ -613,7 +632,7 @@ export default function FechamentoEmpresa() {
         </>
       )}
 
-      <DetalheDespesaDialog detalhe={detalhe} onClose={() => setDetalhe(null)} />
+      <DetalheDespesaDialog detalhe={detalhe} onClose={() => setDetalheParams(null)} />
     </div>
   );
 }
