@@ -13,7 +13,7 @@ import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { fmtBRL } from "@/lib/conciliacaoBancariaEngine";
 import { conciliacaoSemSaldoFinal, useCarregarSaldoFinalConciliacoes, useSalvarSaldoFinalManual } from "@/hooks/useGerarResumoConciliacao";
-import { registrosAtuais, saldosMensais, totaisDeMovimentacao, totaisDeSaldos, ultimoDiaDoMes, valoresDaConciliacao, type SaldoMensal } from "@/lib/conciliacaoDashboard";
+import { registrosAtuais, saldosMensais, totaisDeMovimentacao, totaisDeSaldos, totaisDoExtrato, totaisFluxoDosBancosConciliados, ultimoDiaDoMes, valoresDaConciliacao, type SaldoMensal } from "@/lib/conciliacaoDashboard";
 import { hojeISO } from "@/pages/financeiro/fluxo-caixa/abasFluxo";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useFluxoCaixaCombinado } from "@/hooks/useFluxoCaixaMalote";
@@ -230,6 +230,18 @@ export function DashboardConciliacoes({ onVerDetalhes, auditoria = null }: { onV
   const totaisMov = useMemo(
     () => totaisDeMovimentacao(linhasFluxo, { dataDe, dataAte, empresaId: empresaId === TODAS ? null : empresaId, bancoId: bancoValido === TODAS ? null : bancoValido }, hojeISO()),
     [linhasFluxo, dataDe, dataAte, empresaId, bancoValido],
+  );
+
+  // O que o EXTRATO diz no mesmo período e filtros (conciliações salvas) e o Fluxo só dos bancos conciliados, para comparar um com o outro.
+  const totaisExt = useMemo(
+    () => totaisDoExtrato(atuais, { empresaId: empresaId === TODAS ? null : empresaId, bancoId: bancoValido === TODAS ? null : bancoValido, mesDe, mesAte }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [atuais, empresaId, bancoValido, mesDe, mesAte],
+  );
+  const fluxoConciliado = useMemo(
+    () => totaisFluxoDosBancosConciliados(linhasFluxo, atuais, { dataDe, dataAte, empresaId: empresaId === TODAS ? null : empresaId, bancoId: bancoValido === TODAS ? null : bancoValido, mesDe, mesAte }, hojeISO()),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [linhasFluxo, atuais, dataDe, dataAte, empresaId, bancoValido, mesDe, mesAte],
   );
 
   // SIS-2026-0724: totais dos saldos finais (sistema × extrato) do que está filtrado.
@@ -589,6 +601,38 @@ export function DashboardConciliacoes({ onVerDetalhes, auditoria = null }: { onV
             </div>
           ))}
         </div>
+        {/* O extrato no mesmo período: o que o banco diz, lado a lado com o Fluxo dos bancos que têm conciliação salva. */}
+        <div className="grid gap-3 sm:grid-cols-2">
+          {[
+            { rotulo: "Extrato bancário — entradas", valor: totaisExt.entradas, fluxo: fluxoConciliado.entradas, Icone: ArrowUp, cor: "text-emerald-700" },
+            { rotulo: "Extrato bancário — saídas", valor: totaisExt.saidas, fluxo: fluxoConciliado.saidas, Icone: ArrowDown, cor: "text-rose-700" },
+          ].map((k) => {
+            const dif = Math.round((k.fluxo - k.valor) * 100) / 100;
+            return (
+              <div key={k.rotulo} className="flex items-center gap-4 rounded-xl border bg-white p-4 dark:bg-card">
+                <k.Icone className={cn("h-8 w-8 shrink-0", k.cor)} />
+                <div>
+                  <p className={cn("text-sm font-medium", k.cor)}>{k.rotulo}</p>
+                  <p className="text-2xl font-bold leading-tight">{totaisExt.conciliacoes === 0 ? "—" : fmtBRL(k.valor)}</p>
+                  <p className="text-[11px] text-muted-foreground">
+                    Das {totaisExt.conciliacoes.toLocaleString("pt-BR")} conciliação(ões) salva(s) no período e filtros (totais lidos do OFX, sem saldo de abertura).
+                    {totaisExt.semValores > 0 ? ` ${totaisExt.semValores} conciliação(ões) antiga(s) sem os totais gravados ficam de fora.` : ""}
+                  </p>
+                  {totaisExt.conciliacoes > 0 && (
+                    <p className="text-[11px] text-muted-foreground">
+                      Fluxo dos mesmos bancos conciliados: <strong>{fmtBRL(k.fluxo)}</strong> · diferença{" "}
+                      <strong className={dif === 0 ? "text-emerald-700" : "text-red-600"}>{fmtBRL(dif)}</strong>
+                    </p>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+        <p className="text-[11px] text-muted-foreground">
+          Os dois primeiros cards são do <strong>Fluxo de Caixa</strong> (todos os bancos); os de extrato só têm os bancos com conciliação salva, por isso o Fluxo deles é recortado nos mesmos
+          bancos, mês a mês, sem saldo anterior e sem o que a conciliação ignora. É a mesma comparação do item 2 da Auditoria.
+        </p>
         <p className="text-[11px] text-muted-foreground">
           Mesma conta do Fluxo de Caixa: soma tudo o que o Fluxo mostra no período (inclusive saldo anterior e conta vinculada, que a conferência de saldos abaixo
           desconsidera) e o rateio entre empresas conta pelo total, na empresa do primeiro lançamento, como no Fluxo. Na tabela mensal abaixo, o mês entra inteiro.
