@@ -30,9 +30,10 @@ import {
 } from "@/components/ui/command";
 import { cn } from "@/lib/utils";
 import { useScreenAccess } from "@/hooks/useScreenAccess";
-import { useConvencoes, useVinculosPosto, vinculoDe } from "@/hooks/useConvencoes";
+import { useConvencoes, useReferenciaDoPosto, useVinculosPosto, vinculoDe } from "@/hooks/useConvencoes";
 import { identificacaoCct } from "@/lib/licitacoes/convencoes";
 import { VinculoPostoDialog } from "@/components/licitacoes/convencoes/VinculoPostoDialog";
+import { QuadroBeneficios } from "@/components/licitacoes/convencoes/QuadroBeneficios";
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
 
@@ -743,6 +744,8 @@ export default function PlanilhaCusto() {
               row={rows.find((r) => r.id === viewId)!}
               onClose={() => setViewId(null)}
               onEdit={() => { setViewId(null); openEdit(viewId); }}
+              podeVincular={podeVincular}
+              onVincular={(r) => setVinculoAlvo({ contrato_id: r.contrato_id, contrato: r.contrato, posto: r.posto })}
             />
           )}
         </DialogContent>
@@ -3449,11 +3452,19 @@ function ViewModal({
   row,
   onClose,
   onEdit,
+  podeVincular,
+  onVincular,
 }: {
   row: PlanilhaCustoRow;
   onClose: () => void;
   onEdit: () => void;
+  podeVincular: boolean;
+  onVincular: (row: PlanilhaCustoRow) => void;
 }) {
+  // CCT / decreto do posto (mig 20261027000930): o mesmo vínculo da coluna
+  // CCT da lista, aberto aqui dentro do posto.
+  const referencia = useReferenciaDoPosto(row.contrato_id, row.posto);
+  const vinculado = referencia.data?.status === "vinculado";
   const somaRemuneracao = row.salario + row.insalubridade + row.periculosidade + row.lideranca +
     row.adicional_noturno_reduzido + row.adicional_noturno + row.adicional_extra + row.dsr;
   const somaEncargos = row.decimo_terceiro + row.adicional_ferias + row.incidencia_enc_41 +
@@ -3540,6 +3551,27 @@ function ViewModal({
 
           {/* Conteúdo */}
           <div className="px-6 py-4 space-y-3">
+
+            {row.contrato_id ? (
+              <QuadroBeneficios
+                resposta={referencia.data ?? { status: "sem_vinculo", posto: row.posto }}
+                carregando={referencia.isLoading}
+                compacto
+                titulo="CCT / Decreto do posto"
+                acao={podeVincular ? (
+                  <button
+                    onClick={() => onVincular(row)}
+                    className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md border border-border bg-card px-3 text-xs font-medium hover:bg-muted"
+                  >
+                    {vinculado ? "Trocar CCT" : "Vincular CCT"}
+                  </button>
+                ) : undefined}
+              />
+            ) : (
+              <p className="rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200">
+                Esta linha não está ligada a um contrato do ERP — edite a linha e escolha o contrato para poder vincular a CCT do posto.
+              </p>
+            )}
 
             <VSec title="2 — Composição da Remuneração" soma={somaRemuneracao}>
               <VRow label="Salário Base" value={row.salario} />
