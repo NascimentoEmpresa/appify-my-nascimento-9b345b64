@@ -25,8 +25,9 @@ const { consultar, consultarHistorico, consultarFornecimentos } = vi.hoisted(() 
 }));
 
 const historicoUniformes = [
-  { mes: "2026-10-01", tipo_uniforme: "CAMISA POLO", tamanho: "M", solicitados: 12, utilizados: 9 },
-  { mes: "2026-09-01", tipo_uniforme: "CALÇA OPERACIONAL", tamanho: "G", solicitados: 8, utilizados: 8 },
+  { mes: "2026-10-01", origem_demanda: "implantacao_aditivo", tipo_uniforme: "CAMISA POLO", tamanho: "M", solicitados: 12, utilizados: 9 },
+  { mes: "2026-09-01", origem_demanda: "substituicao", tipo_uniforme: "CALÇA OPERACIONAL", tamanho: "G", solicitados: 8, utilizados: 8 },
+  { mes: "2026-09-01", origem_demanda: "reposicao", tipo_uniforme: "CAMISA POLO", tamanho: "M", solicitados: 4, utilizados: 4 },
 ];
 
 const fornecimentosUniformes = [
@@ -139,10 +140,13 @@ describe("aba Rotatividade do Estoque — render com payload de produção", () 
     );
   });
 
-  it("mostra o histórico mensal por tipo e tamanho, separado entre pedido e uso", () => {
+  it("mostra a demanda mensal por item e tamanho, separada pela origem", () => {
     montar();
-    expect(screen.getByText("Histórico de Uniformes por Tipo e Tamanho")).toBeInTheDocument();
+    expect(screen.getByText("Demanda Mensal por Item, Tamanho e Origem")).toBeInTheDocument();
     expect(screen.getAllByText("CAMISA POLO").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText("Implantação / aditivo")).toBeInTheDocument();
+    expect(screen.getByText("Substituição")).toBeInTheDocument();
+    expect(screen.getByText("Reposição")).toBeInTheDocument();
     expect(screen.getByText("Solicitados")).toBeInTheDocument();
     expect(screen.getByText("Utilizados")).toBeInTheDocument();
   });

@@ -130,7 +130,9 @@ function compactar(painel: Record<string, unknown>): Record<string, unknown> {
   const enxuto = (i: Record<string, unknown>) => ({
     item: i.item,
     tam: i.tamanho,
+    fisico: i.fisico,
     disp: i.disponivel,
+    reservado: i.reservado,
     transito: i.em_transito,
     dem_mes: i.demanda_mensal,
     cob_dias: i.cobertura_dias,
@@ -182,6 +184,7 @@ COMO O NÚMERO FOI FEITO (explique assim se perguntarem):
 - "ponto de pedido" = consumo durante o prazo de reposição + segurança. Abaixo dele, pedir.
 - "alvo saudável" = consumo durante (prazo de reposição + ciclo de revisão) + segurança. É o quanto ter em casa depois de comprar.
 - "comprar" = alvo − disponível − em trânsito.
+- "físico na prateleira" conta tudo que está no almoxarifado. "disponível" = físico − reservado para pedido que já está em separação. Ao responder estoque atual, cite os dois se houver reserva; nunca chame o disponível de físico.
 - ABC = onde está o dinheiro (A = 80% do valor consumido). XYZ = previsibilidade (X regular, Z irregular).
 - "dinheiro parado" = valor acima do alvo em itens que giram. "valor morto" = valor de item sem giro no prazo das premissas. São números SEPARADOS, nunca some os dois.
 

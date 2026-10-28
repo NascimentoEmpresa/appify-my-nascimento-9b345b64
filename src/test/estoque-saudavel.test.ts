@@ -56,6 +56,7 @@ function item(over: Partial<ItemEstoqueSaudavel> = {}): ItemEstoqueSaudavel {
     tipo: "uniforme",
     disponivel: 20,
     reservado: 0,
+    fisico: 20,
     em_transito: 0,
     demanda_janela: 150,
     demanda_mensal: 26.55,
