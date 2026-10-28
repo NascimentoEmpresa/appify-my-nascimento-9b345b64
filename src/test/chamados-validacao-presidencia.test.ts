@@ -116,16 +116,17 @@ describe("montarLinhaDoTempo", () => {
   const chaves = (p: ReturnType<typeof montarLinhaDoTempo>) => p.map((x) => x.key);
   const situacao = (p: ReturnType<typeof montarLinhaDoTempo>, key: string) => p.find((x) => x.key === key)?.situacao;
 
-  it("sem Presidência: aberto → desenvolvimento → concluído", () => {
+  // "confirmacao" = o solicitante confirma a conclusão (mig 20261028001300).
+  it("sem Presidência: aberto → desenvolvimento → concluído → confirmação", () => {
     const p = montarLinhaDoTempo(chamado(), null);
-    expect(chaves(p)).toEqual(["aberto", "desenvolvimento", "concluido"]);
+    expect(chaves(p)).toEqual(["aberto", "desenvolvimento", "concluido", "confirmacao"]);
     expect(situacao(p, "desenvolvimento")).toBe("atual");
     expect(situacao(p, "concluido")).toBe("pendente");
   });
 
   it("com Presidência mostra validação, treinamento e finalização", () => {
     const p = montarLinhaDoTempo(chamado(), validacao());
-    expect(chaves(p)).toEqual(["aberto", "desenvolvimento", "concluido", "presidencia", "treinamento", "finalizado"]);
+    expect(chaves(p)).toEqual(["aberto", "desenvolvimento", "concluido", "presidencia", "confirmacao", "treinamento", "finalizado"]);
   });
 
   it("dev concluiu → Presidência é o passo atual", () => {
@@ -154,7 +155,7 @@ describe("montarLinhaDoTempo", () => {
 
   it("finalizado fecha todos os passos", () => {
     const p = montarLinhaDoTempo(
-      chamado({ status: "concluido" }),
+      chamado({ status: "concluido", conclusao_confirmada_em: "2026-09-06T10:00:00Z" }),
       validacao({ etapa: "finalizado", presidencia_aprovado: true, finalizado_em: "2026-09-07T10:00:00Z" }),
     );
     expect(p.every((x) => x.situacao === "feito")).toBe(true);
@@ -179,8 +180,11 @@ describe("montarLinhaDoTempo", () => {
 
 describe("resumoStatus", () => {
   it("a etapa da Presidência vence o status 'concluído'", () => {
-    expect(resumoStatus({ status: "concluido" }, validacao({ etapa: "treinamento" }))).toBe("Treinamento pendente");
-    expect(resumoStatus({ status: "concluido" }, null)).toBe("Concluído");
+    const confirmado = { status: "concluido", conclusao_confirmada_em: "2026-09-06T10:00:00Z" };
+    expect(resumoStatus(confirmado, validacao({ etapa: "treinamento" }))).toBe("Treinamento pendente");
+    expect(resumoStatus(confirmado, null)).toBe("Concluído");
+    // Presidência ainda validando: a etapa dela vence a confirmação pendente.
+    expect(resumoStatus({ status: "concluido" }, validacao({ etapa: "validacao_presidencia" }))).toBe("Validação da Presidência");
     expect(resumoStatus({ status: "em_andamento" }, validacao())).toBe("Em desenvolvimento");
   });
 });

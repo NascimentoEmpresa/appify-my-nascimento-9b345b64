@@ -65,7 +65,9 @@ interface Body {
 function mensagemChamado(evento: string | undefined, numero: string, assunto: string): { title: string; body: string } {
   switch (evento) {
     case "atribuido":      return { title: "Chamado atribuído",      body: `#${numero} — ${assunto}` };
-    case "concluido":      return { title: "Chamado concluído",      body: `#${numero} foi concluído.` };
+    // Concluir não encerra de vez (mig 20261028001300): o solicitante confirma
+    // a conclusão — e enquanto não confirma, o chamado conta na trava de 3.
+    case "concluido":      return { title: "Confirme a conclusão do chamado", body: `#${numero} foi concluído pelo time. Confira e clique em Confirmar conclusão.` };
     // Reabertura: o solicitante já tinha visto "concluído", então o aviso
     // precisa dizer que voltou — senão ele só descobre ao abrir a tela.
     case "reaberto":       return { title: "Chamado reaberto",       body: `#${numero} voltou para atendimento.` };

@@ -18,7 +18,7 @@ import {
 } from "@/components/ui/select";
 import { AvaliarChamadoDialog } from "./AvaliarChamadoDialog";
 import { Flag, UploadCloud, Info, XCircle, CheckCircle2, Lightbulb, Clock, X, Star, ClipboardPaste, FileText, ListChecks } from "lucide-react";
-import { abrirChamadoTravado, LIMITE_AVALIACOES_PENDENTES, type PendenciaSolicitante } from "./validacaoPresidencia";
+import { abrirChamadoTravado, descreverPendencias, LIMITE_AVALIACOES_PENDENTES, type PendenciaSolicitante } from "./validacaoPresidencia";
 import {
   CATEGORIAS, TIPOS, IMPACTOS, URGENCIAS, MODULOS_ERP, AMBIENTES, PRIORIDADES, BUCKET_CHAMADOS,
 } from "./types";
@@ -58,6 +58,9 @@ export default function AbrirChamado({ base = "/app/central-servicos/chamados" }
   // A mesma regra está no gatilho do banco (mig 20261020000070).
   // Chamado ainda na validação da Presidência não conta (mig 273). O
   // treinamento não trava: é confirmado em Treinamentos Sistemas.
+  // Desde 28/10/2026 (mig 20261028001300) o chamado concluído pelo time e
+  // ainda não confirmado pelo solicitante também conta (pendência
+  // 'confirmacao') — confirma na tela de acompanhamento e, depois, avalia.
   const { data: avaliacoesPendentes = [] } = useQuery({
     queryKey: ["chamados-avaliacoes-pendentes"],
     queryFn: async () => {
@@ -220,7 +223,8 @@ export default function AbrirChamado({ base = "/app/central-servicos/chamados" }
     );
   }
 
-  // Lista de "Avaliar" — a mesma no bloqueio (3 pendentes) e no aviso (1 ou 2).
+  // Lista de "Confirmar conclusão" / "Avaliar" — a mesma no bloqueio (3
+  // pendentes) e no aviso (1 ou 2).
   const listaPendentes = (
           <div className="space-y-1.5">
             {avaliacoesPendentes.map((p) => (
@@ -228,10 +232,16 @@ export default function AbrirChamado({ base = "/app/central-servicos/chamados" }
               <button key={p.id} onClick={() => p.pendencia === "avaliacao_participante" ? setAvaliarParticipante({ id: p.id, numero: p.numero }) : nav(`${base}/${p.id}/acompanhar`)}
                 className="flex w-full items-center justify-between gap-2 rounded border border-border px-3 py-2 text-left text-sm hover:border-warning/50">
                 <span className="min-w-0 flex-1 truncate"><span className="font-mono text-xs font-semibold">#{p.numero}</span> {p.assunto}</span>
+                {p.pendencia === "confirmacao" ? (
+                  <span className="flex shrink-0 items-center gap-1 text-success">
+                    <CheckCircle2 className="h-4 w-4" /> Confirmar conclusão
+                  </span>
+                ) : (
                 <span className="flex shrink-0 items-center gap-1 text-warning">
                   {p.pendencia === "avaliacao_participante" && <span className="text-[11px] text-muted-foreground">você participou ·</span>}
                   <Star className="h-4 w-4" /> Avaliar
                 </span>
+                )}
               </button>
             ))}
           </div>
@@ -247,9 +257,11 @@ export default function AbrirChamado({ base = "/app/central-servicos/chamados" }
       <div>
         <PageHeader title="Abrir Novo Chamado" module="Central de Serviços" breadcrumb={["Chamados de Sistemas", "Abrir Novo Chamado"]} />
         <Card className="space-y-3 border-warning/40 bg-warning/5 p-6">
-          <p className="flex items-center gap-1.5 text-sm font-bold text-warning"><Star className="h-4 w-4" /> Você tem {avaliacoesPendentes.length} chamados sem avaliar</p>
+          <p className="flex items-center gap-1.5 text-sm font-bold text-warning"><Star className="h-4 w-4" /> {descreverPendencias(avaliacoesPendentes)}</p>
           <p className="text-sm text-muted-foreground">
-            Com {LIMITE_AVALIACOES_PENDENTES} chamados concluídos sem avaliação, não é possível abrir um novo. Avalie os chamados abaixo para liberar:
+            Com {LIMITE_AVALIACOES_PENDENTES} chamados concluídos esperando você — confirmar a conclusão ou avaliar o atendimento —, não é
+            possível abrir um novo. Quando o time de Sistemas conclui um chamado, ele só fecha depois que você clica em
+            <b> Confirmar conclusão</b>. Resolva os chamados abaixo para liberar:
           </p>
           {listaPendentes}
         </Card>
@@ -272,10 +284,11 @@ export default function AbrirChamado({ base = "/app/central-servicos/chamados" }
         <Card className="mb-4 space-y-2 border-warning/40 bg-warning/5 p-4">
           <p className="flex items-center gap-1.5 text-sm font-semibold text-warning">
             <Star className="h-4 w-4" />
-            {avaliacoesPendentes.length === 1 ? "Você tem 1 chamado sem avaliar" : `Você tem ${avaliacoesPendentes.length} chamados sem avaliar`}
+            {descreverPendencias(avaliacoesPendentes)}
           </p>
           <p className="text-xs text-muted-foreground">
-            Pode abrir este chamado normalmente. Com {LIMITE_AVALIACOES_PENDENTES} sem avaliar, a abertura de novos chamados fica bloqueada até você avaliar.
+            Pode abrir este chamado normalmente. Com {LIMITE_AVALIACOES_PENDENTES} pendências (confirmar conclusão ou avaliar), a abertura de
+            novos chamados fica bloqueada até você resolver.
           </p>
           {listaPendentes}
         </Card>

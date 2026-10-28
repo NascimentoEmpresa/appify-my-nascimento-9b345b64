@@ -4,6 +4,10 @@ name: Concluir Chamado no merge
 # mergeada na main, o chamado é concluído sozinho no ERP — sem o dev precisar
 # abrir /app/sistemas/chamados/:id e clicar em "Concluir chamado".
 #
+# "Concluído" aqui é o mesmo do botão: o chamado fica aguardando o SOLICITANTE
+# confirmar a conclusão (mig 20261028001300) e, até ele confirmar, conta na
+# trava de 3 pendências para abrir chamado novo. O merge NÃO confirma por ele.
+#
 # Arquivo separado do chamado_pr_sync.yml de propósito: lá o job
 # validar-chamado é required status check na proteção da main, e acrescentar o
 # evento "closed" aos gatilhos daquele arquivo mexeria com o merge de toda PR.

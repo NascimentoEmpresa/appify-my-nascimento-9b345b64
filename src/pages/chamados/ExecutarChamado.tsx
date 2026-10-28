@@ -25,7 +25,7 @@ import { ReabrirChamadoDialog } from "./ReabrirChamadoDialog";
 import { ChatChamado } from "./ChatChamado";
 import { BotaoStatusChamado, CardTreinamento, CardValidacaoPresidencia, useValidacaoChamado } from "./StatusValidacao";
 import {
-  StatusBadge, PrioridadeBadge, STATUS_CHAMADO, CardAvaliacao,
+  StatusBadge, SeloConfirmacao, PrioridadeBadge, STATUS_CHAMADO, CardAvaliacao,
   CATEGORIAS, TIPOS, IMPACTOS, URGENCIAS, AMBIENTES,
   labelDe, moduloLabel, fmtData, fmtDataHora, podeReabrirChamado, chamadoEncerrado,
   BUCKET_CHAMADOS, opcoesDownloadAnexo, type Chamado, type Anexo, type Evento, type AvaliacaoChamado,
@@ -219,7 +219,8 @@ export default function ExecutarChamado() {
           <Card className="space-y-4 p-4">
             <div className="flex items-center justify-between">
               <p className="text-sm font-bold">Informações do chamado</p>
-              <span className={`rounded-full ${flash ? "animate-status-flash" : ""}`}>
+              <span className={`flex items-center gap-1.5 rounded-full ${flash ? "animate-status-flash" : ""}`}>
+                <SeloConfirmacao chamado={chamado} />
                 <StatusBadge status={chamado.status} />
               </span>
             </div>
@@ -363,6 +364,13 @@ export default function ExecutarChamado() {
                   <div className="flex items-center gap-2 rounded-md border border-success/40 bg-success/10 px-3 py-2 text-sm font-semibold text-success">
                     <CheckCircle2 className="h-4 w-4 animate-check-pop" /> Chamado concluído
                   </div>
+                  {/* Concluir não fecha de vez (mig 20261028001300): o
+                      solicitante confere e confirma — ou reabre e volta pra cá. */}
+                  {!chamado.conclusao_confirmada_em && (
+                    <p className="rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-xs text-warning">
+                      Aguardando o solicitante <b>confirmar a conclusão</b>. Se não resolveu, ele reabre e o chamado volta para você.
+                    </p>
+                  )}
                   {/* Concluído sem passar pelo diálogo (merge da PR) ou pulado:
                       dá para avaliar depois. Só de agora em diante — os
                       concluídos antes da mudança ficam de fora. */}

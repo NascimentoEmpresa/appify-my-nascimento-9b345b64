@@ -123,6 +123,10 @@ export interface Chamado {
   // Cancelamento pelo solicitante (mig 260). O motivo fica mesmo após reabrir.
   motivo_cancelamento?: string | null;
   cancelado_em?: string | null;
+  // Confirmação do solicitante (mig 20261028001300). NULL com status
+  // 'concluido' = o time concluiu e o solicitante ainda não confirmou.
+  conclusao_confirmada_em?: string | null;
+  conclusao_confirmada_por?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -343,6 +347,22 @@ export function StatCard({
 export function StatusBadge({ status }: { status: string }) {
   const s = STATUS_CHAMADO[status] ?? { label: status, cls: "" };
   return <Badge variant="outline" className={`text-[10px] font-semibold ${s.cls}`}>{s.label}</Badge>;
+}
+
+/**
+ * Selo "aguardando confirmação" ao lado do status (mig 20261028001300): o
+ * status continua 'concluido', mas o chamado só fecha quando o solicitante
+ * confirma. `paraSolicitante` troca o texto para "sua confirmação".
+ */
+export function SeloConfirmacao({ chamado, paraSolicitante = false }: {
+  chamado: Pick<Chamado, "status" | "conclusao_confirmada_em">; paraSolicitante?: boolean;
+}) {
+  if (chamado.status !== "concluido" || chamado.conclusao_confirmada_em) return null;
+  return (
+    <Badge variant="outline" className="border-warning/40 bg-warning/10 text-[10px] font-semibold text-warning">
+      {paraSolicitante ? "Aguardando sua confirmação" : "Aguardando confirmação do solicitante"}
+    </Badge>
+  );
 }
 
 export function PrioridadeBadge({ prioridade }: { prioridade: string }) {

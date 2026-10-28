@@ -8,6 +8,11 @@
 // muda o status, registra o evento no histórico e dispara o push pro
 // solicitante. A diferença é a origem: aqui não existe usuário logado.
 //
+// Concluir não encerra de vez (mig 20261028001300): o gatilho
+// chamado_sistema_confirmacao deixa o chamado aguardando o SOLICITANTE
+// clicar em "Confirmar conclusão", e chamado_concluido_avisa_solicitante põe
+// o aviso no sino dele. Nada a fazer aqui — o merge cai no mesmo caminho.
+//
 // Secrets: CHAMADOS_CI_SECRET (SUPABASE_URL / SERVICE_ROLE já existem).
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";

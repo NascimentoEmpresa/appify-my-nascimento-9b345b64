@@ -9,15 +9,16 @@ import { PageHeader } from "@/components/layout/PageHeader";
 import { ExportarChamado } from "./ExportarChamado";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { ArrowLeft, MessageSquarePlus, Paperclip, RotateCcw, Star, XCircle } from "lucide-react";
+import { ArrowLeft, CheckCircle2, MessageSquarePlus, Paperclip, RotateCcw, Star, XCircle } from "lucide-react";
 import { AvaliarChamadoDialog } from "./AvaliarChamadoDialog";
 import { ReabrirChamadoDialog } from "./ReabrirChamadoDialog";
+import { ConfirmarConclusaoDialog } from "./ConfirmarConclusaoDialog";
 import { CancelarChamadoDialog } from "./CancelarChamadoDialog";
 import { ChatChamado } from "./ChatChamado";
 import { BotaoStatusChamado, CardTreinamento, CardValidacaoPresidencia, useValidacaoChamado } from "./StatusValidacao";
-import { avaliacaoLiberada } from "./validacaoPresidencia";
+import { avaliacaoLiberada, conclusaoAguardandoConfirmacao, podeConfirmarConclusao } from "./validacaoPresidencia";
 import {
-  StatusBadge, PrioridadeBadge, CardAvaliacao,
+  StatusBadge, SeloConfirmacao, PrioridadeBadge, CardAvaliacao,
   CATEGORIAS, TIPOS, IMPACTOS, URGENCIAS, AMBIENTES,
   labelDe, moduloLabel, fmtData, fmtDataHora, chamadoEncerrado,
   BUCKET_CHAMADOS, opcoesDownloadAnexo, type Chamado, type Anexo, type AvaliacaoChamado,
@@ -37,6 +38,7 @@ export default function AcompanharChamado({ base = "/app/central-servicos/chamad
   const [avaliarAberto, setAvaliarAberto] = useState(false);
   const [reabrirAberto, setReabrirAberto] = useState(false);
   const [cancelarAberto, setCancelarAberto] = useState(false);
+  const [confirmarAberto, setConfirmarAberto] = useState(false);
 
   // Abriu o chamado → o solicitante viu a novidade.
   useEffect(() => { chamadosMarkSeen(user?.id, "meus"); }, [user?.id]);
@@ -99,6 +101,9 @@ export default function AcompanharChamado({ base = "/app/central-servicos/chamad
   const encerrado = chamadoEncerrado(chamado.status);
   const rotuloEncerrado = chamado.status === "concluido" ? "concluído" : chamado.status === "cancelado" ? "cancelado" : "reprovado";
   const aguardandoRetorno = chamado.status === "aguardando_retorno";
+  // Concluído pelo time, falta o solicitante confirmar (mig 20261028001300).
+  const aguardandoConfirmacao = conclusaoAguardandoConfirmacao(chamado);
+  const podeConfirmar = podeConfirmarConclusao(chamado, validacao, user?.id);
   const anexosAbertura = anexos.filter((a) => (a.campo ?? "abertura") === "abertura");
   // Anexos anteriores ao chat: sem mensagem dona, ficam listados à parte.
   const anexosLegado = anexos.filter((a) => a.campo && a.campo !== "abertura" && !a.evento_id);
@@ -132,7 +137,10 @@ export default function AcompanharChamado({ base = "/app/central-servicos/chamad
           <Card className="space-y-4 p-4">
             <div className="flex items-center justify-between">
               <p className="text-sm font-bold">Informações do chamado</p>
-              <StatusBadge status={chamado.status} />
+              <div className="flex flex-wrap items-center justify-end gap-1.5">
+                {liberacao.liberada && <SeloConfirmacao chamado={chamado} paraSolicitante={ehSolicitante} />}
+                <StatusBadge status={chamado.status} />
+              </div>
             </div>
             <div className="grid gap-4 sm:grid-cols-3">
               <Campo label="Categorias">{chamado.categorias.map((c) => labelDe(CATEGORIAS, c)).join(", ")}</Campo>
@@ -262,6 +270,26 @@ export default function AcompanharChamado({ base = "/app/central-servicos/chamad
             </Card>
           )}
 
+          {/* Confirmar conclusão (28/10/2026, mig 20261028001300): concluir não
+              fecha de vez. Até o solicitante confirmar, o chamado conta na trava
+              de 3 pendências para abrir outro. Não resolveu → reabre, abaixo. */}
+          {podeConfirmar && (
+            <Card className="animate-rise-in space-y-3 border-success/40 bg-success/5 p-4">
+              <p className="flex items-center gap-1.5 text-sm font-bold"><CheckCircle2 className="h-4 w-4 text-success animate-pulse-soft" /> O time concluiu este chamado</p>
+              <p className="text-xs text-muted-foreground">
+                Confira se ficou como você pediu e confirme. Enquanto não confirmar, ele conta no limite de pendências para abrir chamados novos.
+              </p>
+              <Button className="w-full gap-2 transition-transform active:scale-95" onClick={() => setConfirmarAberto(true)}>
+                <CheckCircle2 className="h-4 w-4" /> Confirmar conclusão
+              </Button>
+            </Card>
+          )}
+          {aguardandoConfirmacao && liberacao.liberada && !ehSolicitante && (
+            <Card className="p-4 text-xs text-muted-foreground">
+              Concluído pelo time — <b>aguardando a confirmação do solicitante</b>.
+            </Card>
+          )}
+
           {/* Avaliação — só em chamados concluídos. No fluxo da Presidência,
               abre depois que ela aprova (o banco também trava): enquanto ela
               valida, o card some e o CardValidacaoPresidencia, acima, explica
@@ -270,7 +298,7 @@ export default function AcompanharChamado({ base = "/app/central-servicos/chamad
           {chamado.status === "concluido" && (
             avaliacao ? (
               <CardAvaliacao avaliacao={avaliacao} titulo="Sua avaliação" />
-            ) : ehSolicitante && liberacao.liberada ? (
+            ) : ehSolicitante && liberacao.liberada && !aguardandoConfirmacao ? (
               <Card className="animate-rise-in space-y-3 border-warning/40 bg-warning/5 p-4">
                 <p className="flex items-center gap-1.5 text-sm font-bold"><Star className="h-4 w-4 text-warning animate-pulse-soft" /> Avaliar atendimento</p>
                 <p className="text-xs text-muted-foreground">Chamado concluído. Avalie o atendimento em 6 critérios — o comentário é opcional.</p>
@@ -319,6 +347,13 @@ export default function AcompanharChamado({ base = "/app/central-servicos/chamad
         onOpenChange={setCancelarAberto}
         chamado={chamado}
         onCancelado={invalidar}
+      />
+
+      <ConfirmarConclusaoDialog
+        open={confirmarAberto}
+        onOpenChange={setConfirmarAberto}
+        chamado={chamado}
+        onConfirmado={() => { invalidar(); setAvaliarAberto(true); }}
       />
 
       <AvaliarChamadoDialog
