@@ -27,6 +27,7 @@ import {
   SITUACOES_PRAZO, desceuNaFila, podeDefinirPrazo, podeIniciarDesenvolvimento, situacaoPrazo,
 } from "@/lib/chamados/prazoDesenvolvimento";
 import { ChatChamado } from "./ChatChamado";
+import { InformacoesGithubChamado } from "./InformacoesGithubChamado";
 import { BotaoStatusChamado, CardTreinamento, CardValidacaoPresidencia, useValidacaoChamado } from "./StatusValidacao";
 import {
   StatusBadge, SeloConfirmacao, SeloDesenvolvimento, PrioridadeBadge, STATUS_CHAMADO, CardAvaliacao,
@@ -243,6 +244,8 @@ export default function ExecutarChamado() {
               <Campo label="Prazo do solicitante">{chamado.prazo_solicitante ? fmtData(`${chamado.prazo_solicitante}T12:00:00`) : "—"}</Campo>
             </div>
           </Card>
+
+          <InformacoesGithubChamado eventos={eventos} />
 
           {chamado.comentario_gerente && (
             <Card className="space-y-1 border-primary/30 bg-primary/5 p-4">
