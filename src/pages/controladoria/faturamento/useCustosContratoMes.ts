@@ -1,17 +1,18 @@
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
-import { mesDaDespesaNaBase, type BaseDespesa, type LinhaFluxoCusto } from "./regras";
+import { ehContratoAdministrativo, mesDaDespesaNaBase, type BaseDespesa, type LinhaFluxoCusto } from "./regras";
 import { saiDasDespesas, tratamentoPadraoPorNome, type TratamentoContrato } from "./tratamentoContrato";
 
 // SIS-2026-0755: Fechamento da Empresa mantém as linhas dos contratos INVESTIMENTOS (coluna própria); as demais telas as tiram das despesas.
-export interface OpcoesCustos { manterInvestimentos?: boolean }
+// Administrativo (empresa e sócios) também sai das despesas por padrão; o Fechamento os mantém, pois é onde eles são a despesa administrativa.
+export interface OpcoesCustos { manterInvestimentos?: boolean; manterAdministrativos?: boolean }
 
 // Ids dos contratos que não contam como despesa de contrato. Vale a exceção configurada em controladoria_contrato_tratamento (Tratamento dos contratos);
 // sem exceção, a regra pelo nome de antes (MOVIMENTAÇÃO FINANCEIRA, INVESTIMENTOS, ESTOQUE). O banco filtra por prefixo e a regra exata é tratamentoPadraoPorNome.
 async function idsContratosForaDasDespesas(opcoes?: OpcoesCustos): Promise<Set<string>> {
   const [excecoes, porNome] = await Promise.all([
     (supabase as any).from("controladoria_contrato_tratamento").select("contrato_id, tratamento"),
-    (supabase as any).from("contratos").select("id, nome").or("nome.ilike.MOVIMENTA%,nome.ilike.INVESTIMENTO%,nome.ilike.ESTOQUE%"),
+    (supabase as any).from("contratos").select("id, nome").or("nome.ilike.MOVIMENTA%,nome.ilike.INVESTIMENTO%,nome.ilike.ESTOQUE%,nome.ilike.ADMINISTRATIVO%"),
   ]);
   if (porNome.error) throw porNome.error;
   // tabela de exceções ainda não criada no banco: tudo segue pelo nome
@@ -20,7 +21,9 @@ async function idsContratosForaDasDespesas(opcoes?: OpcoesCustos): Promise<Set<s
   const fora = new Set<string>();
   for (const [id, t] of definidos) if (saiDasDespesas(t, opcoes)) fora.add(id);
   for (const c of (porNome.data ?? []) as { id: string; nome: string }[]) {
-    if (!definidos.has(c.id) && saiDasDespesas(tratamentoPadraoPorNome(c.nome), opcoes)) fora.add(c.id);
+    if (definidos.has(c.id)) continue;
+    if (opcoes?.manterAdministrativos && ehContratoAdministrativo(c.nome)) continue;
+    if (saiDasDespesas(tratamentoPadraoPorNome(c.nome), opcoes)) fora.add(c.id);
   }
   return fora;
 }
@@ -92,7 +95,7 @@ async function buscarPeriodo(de: string, ate: string, semContrato = false, base:
 
 export function useCustosContratoMes(mes: string, base: BaseDespesa = "competencia", opcoes?: OpcoesCustos) {
   return useQuery({
-    queryKey: ["lucratividade_custos_mes", mes, base, !!opcoes?.manterInvestimentos],
+    queryKey: ["lucratividade_custos_mes", mes, base, !!opcoes?.manterInvestimentos, !!opcoes?.manterAdministrativos],
     staleTime: 120_000,
     queryFn: () => buscarPeriodo(`${mes}-01`, proximoMes(mes), false, base, opcoes),
   });
@@ -102,7 +105,7 @@ export function useCustosContratoMes(mes: string, base: BaseDespesa = "competenc
 // aba que precisa dos custos for aberta.
 export function useCustosContratoAno(ano: number, habilitado: boolean, base: BaseDespesa = "competencia", opcoes?: OpcoesCustos) {
   return useQuery({
-    queryKey: ["lucratividade_custos_ano", ano, base, !!opcoes?.manterInvestimentos],
+    queryKey: ["lucratividade_custos_ano", ano, base, !!opcoes?.manterInvestimentos, !!opcoes?.manterAdministrativos],
     staleTime: 120_000,
     enabled: habilitado,
     queryFn: () => buscarPeriodo(`${ano}-01-01`, `${ano + 1}-01-01`, false, base, opcoes),

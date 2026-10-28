@@ -24,8 +24,8 @@ import {
   useTvPlaylists, useCatalogoTv, type TvAlerta, type TvDispositivo, type TvItem, type TvPlaylist,
 } from "@/hooks/useTvs";
 import {
-  PERIODOS_TV, RELATORIOS_TV, TIPOS_ITEM, aoVivoFresco, corAviso, duracaoTotal, fimDoAviso, haQuanto, itensNoAr, nomeRelatorioTv, paginasRelatorioTv, relatorioTemFiltros, statusTv, telaAoVivo, tituloRelatorioTv,
-  urlValida, youtubeEmbed, type ItemTv, type TelaTv, type TipoItem,
+  LAYOUTS_AVISO, PERIODOS_TV, RELATORIOS_TV, TIPOS_ITEM, aoVivoFresco, corAviso, duracaoTotal, fimDoAviso, haQuanto, itensNoAr, nomeRelatorioTv, paginasRelatorioTv, relatorioTemFiltros, statusTv, telaAoVivo, tituloRelatorioTv,
+  urlValida, youtubeEmbed, type ItemTv, type LayoutAviso, type TelaTv, type TipoItem,
 } from "@/lib/tv/tv";
 import { corDoRelatorioTv, duracaoRecomendada } from "@/lib/tv/relatorioTv";
 import { VISUAIS_GERENCIAIS } from "@/lib/tv/gerencial";
@@ -929,6 +929,14 @@ function PainelPrevia({ p, rascunho }: { p: TvPlaylist; rascunho: ItemTv | null 
 const MAX_IMAGEM_AVISO_MB = 20;
 const fmtDuracao = (s: number) => (s < 60 ? `${s} s` : s % 60 === 0 ? `${s / 60} min` : `${Math.floor(s / 60)} min ${s % 60} s`);
 
+/** Desenho do layout no seletor: preto = imagem, cor = texto. */
+function MiniLayout({ layout, cor }: { layout: LayoutAviso; cor: string }) {
+  const img = <span className="flex flex-1 items-center justify-center bg-zinc-900"><ImageIcon className="h-3.5 w-3.5 text-white/70" /></span>;
+  const txt = <span className="flex-1" style={{ background: corAviso(cor) }} />;
+  if (layout === "cheia") return <span className="flex aspect-video w-full flex-col overflow-hidden rounded">{img}<span className="h-1.5" style={{ background: corAviso(cor) }} /></span>;
+  return <span className="flex aspect-video w-full overflow-hidden rounded">{layout === "esquerda" ? <>{img}{txt}</> : <>{txt}{img}</>}</span>;
+}
+
 /** Miniatura do aviso: a imagem (se houver) ou a faixa na cor. */
 function MiniAviso({ a, pequena = false }: { a: TvAlerta; pequena?: boolean }) {
   const cls = pequena ? "h-6 w-10" : "h-10 w-16";
@@ -946,6 +954,13 @@ function AbaAviso({ tvs }: { tvs: TvDispositivo[] }) {
   const inputImagem = useRef<HTMLInputElement>(null);
   const previa = useMemo(() => (arquivo ? URL.createObjectURL(arquivo) : ""), [arquivo]);
   useEffect(() => () => { if (previa) URL.revokeObjectURL(previa); }, [previa]);
+  const [layout, setLayout] = useState<LayoutAviso>("cheia");
+  // A prévia é o próprio player (/tv/previa) com o aviso por cima — o blob:
+  // da imagem ainda não enviada vale lá dentro (mesma origem).
+  const telaPrevia = useMemo<TelaTv>(() => {
+    const alerta = { texto: f.texto.trim(), cor: f.cor, imagem: previa || null, layout };
+    return { modo: "relogio", nome: "Prévia", alerta, chave: `aviso|${JSON.stringify(alerta)}` };
+  }, [f.texto, f.cor, previa, layout]);
   // Aviso de segundos sai de "No ar agora" na hora, sem esperar a consulta de 30 s.
   const [, tique] = useState(0);
   useEffect(() => { const t = window.setInterval(() => tique((n) => n + 1), 5_000); return () => window.clearInterval(t); }, []);
@@ -968,7 +983,7 @@ function AbaAviso({ tvs }: { tvs: TvDispositivo[] }) {
     if (!Number.isInteger(n) || seg < 5 || seg > 86400) return toast.error("Duração entre 5 segundos e 1440 minutos (24 h).");
     if (!f.todas && f.escolhidas.length === 0) return toast.error("Escolha pelo menos uma TV.");
     try {
-      await criar.mutateAsync({ texto: f.texto.trim(), cor: f.cor, duracaoSeg: seg, imagem: arquivo, todas: f.todas, dispositivos: f.escolhidas,
+      await criar.mutateAsync({ texto: f.texto.trim(), cor: f.cor, duracaoSeg: seg, imagem: arquivo, layout, todas: f.todas, dispositivos: f.escolhidas,
                                autor: (user?.user_metadata?.display_name as string) || user?.email || "" });
       toast.success("Aviso no ar — as TVs mostram em até 15 s."); setF({ ...f, texto: "" }); setArquivo(null);
     } catch (e) { toast.error((e as Error).message); }
@@ -982,7 +997,7 @@ function AbaAviso({ tvs }: { tvs: TvDispositivo[] }) {
           <p className="text-xs text-muted-foreground">Cobre a tela inteira das TVs por cima da playlist, até acabar o tempo ou alguém encerrar.</p>
           <Textarea rows={4} value={f.texto} onChange={(e) => setF({ ...f, texto: e.target.value })} placeholder="Ex.: Simulado de incêndio às 15h — siga as orientações da brigada" />
           <div>
-            <Label className="text-xs">Imagem (opcional — cobre a tela inteira, sem cortar)</Label>
+            <Label className="text-xs">Imagem (opcional — aparece inteira, sem cortar)</Label>
             <input ref={inputImagem} type="file" accept="image/*" className="hidden" onChange={(e) => escolherImagem(e.target.files?.[0] ?? null)} />
             {arquivo ? (
               <div className="mt-1 flex items-center gap-3 rounded-lg border p-2">
@@ -998,6 +1013,27 @@ function AbaAviso({ tvs }: { tvs: TvDispositivo[] }) {
               <Button type="button" variant="outline" className="mt-1 w-full" onClick={() => inputImagem.current?.click()}><Upload className="mr-1 h-4 w-4" /> Anexar imagem</Button>
             )}
           </div>
+          {arquivo && (
+            <div>
+              <Label className="text-xs">Layout na TV</Label>
+              <div className="mt-1 grid grid-cols-3 gap-2">
+                {LAYOUTS_AVISO.map((l) => (
+                  <button key={l.valor} type="button" onClick={() => setLayout(l.valor)} title={l.rotulo}
+                    className={`rounded-lg border p-1.5 text-left text-[11px] leading-tight ${layout === l.valor ? "border-primary bg-primary/10 font-semibold text-primary" : "hover:bg-muted"}`}>
+                    <MiniLayout layout={l.valor} cor={f.cor} />
+                    <span className="mt-1 block">{l.rotulo}</span>
+                  </button>
+                ))}
+              </div>
+              {layout !== "cheia" && !f.texto.trim() && <p className="mt-1 text-[11px] text-muted-foreground">Sem texto, a imagem ocupa a tela inteira.</p>}
+            </div>
+          )}
+          {(arquivo || f.texto.trim()) && (
+            <div>
+              <Label className="text-xs">Prévia — como fica na TV</Label>
+              <div className="mt-1"><QuadroTv tela={telaPrevia} rotulo="Prévia do aviso geral" /></div>
+            </div>
+          )}
           <div className="grid gap-3 sm:grid-cols-2">
             <div><Label className="text-xs">Fica no ar por</Label>
               <div className="flex gap-2">

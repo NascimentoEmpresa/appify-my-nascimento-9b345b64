@@ -9,14 +9,14 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useContratosERP } from "@/hooks/useContratosERP";
 import { useScreenAccess } from "@/hooks/useScreenAccess";
-import { contratoConfiguravel, ROTULO_TRATAMENTO, TRATAMENTOS, tratamentoEfetivo, tratamentoPadraoPorNome, type TratamentoContrato } from "./tratamentoContrato";
+import { ROTULO_TRATAMENTO, TRATAMENTOS, tratamentoEfetivo, tratamentoPadraoPorNome, type TratamentoContrato } from "./tratamentoContrato";
 import { useSalvarTratamentoContrato, useTratamentosContrato } from "./useTratamentosContrato";
 
 const PADRAO = "__padrao";
 const LIMITE_LINHAS = 150;
 
 // V1: define como cada contrato conta nos relatórios (Faturamento, Lucratividade e Fechamento): contrato comum, fora das despesas ou investimento.
-// Só grava a exceção; "Padrão" volta à regra pelo nome (ESTOQUE…, MOVIMENTAÇÃO FINANCEIRA… = fora das despesas; INVESTIMENTOS… = investimento).
+// Só grava a exceção; "Padrão" volta à regra pelo nome (ESTOQUE…, MOVIMENTAÇÃO FINANCEIRA… e ADMINISTRATIVO… = fora das despesas; INVESTIMENTOS… = investimento).
 export function TratamentoContratosDialog({ aberto, onFechar }: { aberto: boolean; onFechar: () => void }) {
   const { data: contratos = [] } = useContratosERP({ todasEmpresas: true });
   const { data: excecoes = new Map<string, TratamentoContrato>() } = useTratamentosContrato();
@@ -28,7 +28,6 @@ export function TratamentoContratosDialog({ aberto, onFechar }: { aberto: boolea
   const linhas = useMemo(() => {
     const termo = busca.trim().toLowerCase();
     return (contratos as any[])
-      .filter((c) => contratoConfiguravel(c.nome))
       .map((c) => {
         const excecao = excecoes.get(c.id) ?? null;
         return { id: c.id as string, nome: c.nome as string, cliente: (c.cliente ?? "") as string, excecao, efetivo: tratamentoEfetivo(c.nome, excecao), padrao: tratamentoPadraoPorNome(c.nome) };
