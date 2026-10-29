@@ -191,3 +191,12 @@ verify_jwt = true
 # usuário, conferido por chamado_parecer_ia_pode_gerar antes de gastar token).
 [functions.chamado-parecer-ia]
 verify_jwt = true
+
+# Comitê de Ética › Canal de Denúncias › "Parecer I.A" na ficha (Comitê e
+# Presidência): resumo do caso + chat, sob demanda, sem gravar nada. Só JWT de
+# usuário — a função NÃO usa service_role: lê a denúncia com o login de quem
+# pediu (v_canal_denuncia + policies do canal), então a I.A só recebe o que
+# aquela pessoa já vê. Identidade do denunciante nunca vai; anexo sigiloso
+# entra só como "existe um anexo sigiloso".
+[functions.denuncia-parecer-ia]
+verify_jwt = true
