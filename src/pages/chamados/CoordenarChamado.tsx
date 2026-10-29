@@ -13,6 +13,10 @@ import { PageHeader } from "@/components/layout/PageHeader";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
+import { Input } from "@/components/ui/input";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { rotuloPrazo } from "@/lib/chamados/prazoDesenvolvimento";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
@@ -27,7 +31,7 @@ import {
   BotaoStatusChamado, SeloEtapaValidacao, useValidacaoChamado, useInvalidarValidacao,
 } from "./StatusValidacao";
 import {
-  StatusBadge, PrioridadeBadge, DefinicaoBadge, DEFINICOES, PRIORIDADES, CATEGORIAS, AMBIENTES, URGENCIAS, TIPOS, IMPACTOS, labelDe,
+  StatusBadge, PrioridadeBadge, DefinicaoBadge, DEFINICOES, PRIORIDADES, CATEGORIAS, MODULOS_ERP, AMBIENTES, URGENCIAS, TIPOS, IMPACTOS, labelDe,
   iniciais, fmtDataHora, moduloLabel, chamadoAtivo, CardAvaliacao, BUCKET_CHAMADOS, opcoesDownloadAnexo,
   type Chamado, type Evento, type AvaliacaoChamado, type Anexo,
   CRITERIOS_AVALIACAO_SOLICITANTE, type AvaliacaoSolicitante,
@@ -86,6 +90,12 @@ export default function CoordenarChamado() {
   // Definição da prioridade: reunião ou extra (mig 20261028001700). Vai para
   // a coluna "Definição" do Painel de Distribuição; obrigatória ao direcionar.
   const [definicao, setDefinicao] = useState<string>("");
+  // Linha de campos do topo (layout do print, 28/10/2026): a coordenação
+  // ajusta módulo, categorias e o prazo do solicitante junto com a prioridade
+  // e a definição — tudo gravado no "Atribuir tarefas e direcionar chamado".
+  const [modulo, setModulo] = useState<string>("");
+  const [categoriasSel, setCategoriasSel] = useState<string[] | null>(null);
+  const [prazoSolicitante, setPrazoSolicitante] = useState<string | null>(null);
   const [observacao, setObservacao] = useState("");
   const [salvando, setSalvando] = useState(false);
   const [reprovando, setReprovando] = useState(false);
@@ -124,6 +134,9 @@ export default function CoordenarChamado() {
       setObservacao((cur) => cur || c.observacao_gerente || "");
       setPrioridade((cur) => cur || c.prioridade);
       setDefinicao((cur) => cur || c.definicao || "");
+      setModulo((cur) => cur || c.modulo_sistema || "");
+      setCategoriasSel((cur) => cur ?? c.categorias ?? []);
+      setPrazoSolicitante((cur) => cur ?? c.prazo_solicitante ?? "");
       return c;
     },
   });
@@ -281,11 +294,16 @@ export default function CoordenarChamado() {
     const mudouObs = (observacao.trim() || null) !== (chamado?.observacao_gerente || null);
     const mudouPrioridade = !!prioridade && prioridade !== chamado?.prioridade;
     const mudouDefinicao = !!definicao && definicao !== (chamado?.definicao ?? "");
+    const mudouModulo = !!modulo && modulo !== (chamado?.modulo_sistema ?? "");
+    const ordenar = (xs: readonly string[]) => [...xs].sort().join("|");
+    const mudouCategorias = !!categoriasSel && categoriasSel.length > 0 && ordenar(categoriasSel) !== ordenar(chamado?.categorias ?? []);
+    const mudouPrazoSol = prazoSolicitante !== null && (prazoSolicitante || null) !== (chamado?.prazo_solicitante ?? null);
+    const mudouDados = mudouModulo || mudouCategorias || mudouPrazoSol;
     const mudouPresidencia = enviarPresidencia !== null && enviarPresidencia !== !!validacao;
 
     // Já é tarefa deste dev e nada mudou → só avisa, não reescreve a fila.
     // (Só a marcação da Presidência mudou → grava só ela.)
-    if (jaDesignado && !mudouPosicao && !mudouObs && !mudouPrioridade && !mudouDefinicao) {
+    if (jaDesignado && !mudouPosicao && !mudouObs && !mudouPrioridade && !mudouDefinicao && !mudouDados) {
       if (mudouPresidencia) { await gravarPresidencia(enviarPresidencia!); return; }
       toast({
         title: "Essa tarefa já está designada para esse desenvolvedor selecionado.",
@@ -300,6 +318,18 @@ export default function CoordenarChamado() {
       if (erroPrio) { setSalvando(false); toast({ title: "Erro ao alterar prioridade", description: erroPrio.message, variant: "destructive" }); return; }
       await (supabase as any).from("CHAMADO_SISTEMA_EVENTO").insert({
         chamado_id: id, tipo: "evento", texto: `Prioridade alterada para ${PRIORIDADES[prioridade]?.label ?? prioridade}`,
+      });
+    }
+    if (mudouDados) {
+      const patch: Record<string, unknown> = {};
+      if (mudouModulo) patch.modulo_sistema = modulo;
+      if (mudouCategorias) patch.categorias = categoriasSel;
+      if (mudouPrazoSol) patch.prazo_solicitante = prazoSolicitante || null;
+      const { error: erroDados } = await (supabase as any).from("CHAMADO_SISTEMA").update(patch).eq("id", id);
+      if (erroDados) { setSalvando(false); toast({ title: "Erro ao salvar os dados do chamado", description: erroDados.message, variant: "destructive" }); return; }
+      const oque = [mudouModulo && "módulo", mudouCategorias && "categoria", mudouPrazoSol && "prazo do solicitante"].filter(Boolean).join(", ");
+      await (supabase as any).from("CHAMADO_SISTEMA_EVENTO").insert({
+        chamado_id: id, tipo: "evento", texto: `Coordenação ajustou: ${oque}`,
       });
     }
     if (mudouDefinicao) {
@@ -487,6 +517,95 @@ export default function CoordenarChamado() {
           </div>
         </div>
 
+        {/* Linha de campos do topo, como no print (28/10/2026). Prioridade e
+            Definição saíram da seção 3 e vêm para cá; tudo é gravado no
+            "Atribuir tarefas e direcionar chamado". Prazo (dias) é o prazo
+            REAL do desenvolvedor — ele informa ao iniciar (só leitura aqui). */}
+        <TooltipProvider delayDuration={150}>
+        <div className="grid gap-3 border-b border-border px-5 py-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
+          <div className="space-y-1">
+            <p className="text-xs font-medium">Módulo / Sistema</p>
+            <Select value={modulo} onValueChange={setModulo} disabled={!canCoordenar}>
+              <SelectTrigger className="h-9 text-xs"><SelectValue placeholder="Selecione" /></SelectTrigger>
+              <SelectContent>
+                {MODULOS_ERP.map((m) => <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1">
+            <p className="text-xs font-medium">Categoria</p>
+            <Popover>
+              <PopoverTrigger asChild disabled={!canCoordenar}>
+                <button className="flex h-9 w-full items-center justify-between gap-1 rounded-md border border-input bg-background px-3 text-left text-xs disabled:cursor-not-allowed disabled:opacity-50">
+                  <span className="truncate">{(categoriasSel ?? []).map((x) => labelDe(CATEGORIAS, x)).join(", ") || "Selecione"}</span>
+                  <ChevronDown className="h-4 w-4 shrink-0 opacity-50" />
+                </button>
+              </PopoverTrigger>
+              <PopoverContent align="start" className="w-64 space-y-1.5 p-3">
+                {CATEGORIAS.map((cat) => {
+                  const marcada = (categoriasSel ?? []).includes(cat.value);
+                  return (
+                    <label key={cat.value} className="flex cursor-pointer items-center gap-2 text-xs">
+                      <Checkbox checked={marcada} onCheckedChange={() => setCategoriasSel((cur) => {
+                        const atual = cur ?? [];
+                        return marcada ? atual.filter((x) => x !== cat.value) : [...atual, cat.value];
+                      })} />
+                      {cat.label}
+                    </label>
+                  );
+                })}
+              </PopoverContent>
+            </Popover>
+          </div>
+          <div className="space-y-1">
+            <p className="text-xs font-medium">Prioridade</p>
+            <Select value={prioridade} onValueChange={setPrioridade} disabled={!canCoordenar}>
+              <SelectTrigger className="h-9 text-xs"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {(["alta", "media", "baixa"] as const).map((p) => (
+                  <SelectItem key={p} value={p}>
+                    <span className="flex items-center gap-1.5"><span className={`h-2 w-2 rounded-full ${PRIORIDADES[p].dot}`} /> {PRIORIDADES[p].label}</span>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div id="campo-definicao" className="scroll-mt-24 space-y-1">
+            <p className="flex items-center gap-1 text-xs font-medium">
+              Definição <span className="text-destructive">*</span>
+              <Tooltip>
+                <TooltipTrigger asChild><Info className="h-3.5 w-3.5 text-info" /></TooltipTrigger>
+                <TooltipContent className="max-w-xs text-xs">A definição informada aqui será levada para o Painel de Distribuição de Chamados.</TooltipContent>
+              </Tooltip>
+            </p>
+            <Select value={definicao} onValueChange={setDefinicao} disabled={!canCoordenar}>
+              <SelectTrigger className={`h-9 text-xs ${!definicao ? "border-destructive/60" : ""}`}><SelectValue placeholder="Reunião ou Extra" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="reuniao"><DefinicaoBadge definicao="reuniao" /></SelectItem>
+                <SelectItem value="extra"><DefinicaoBadge definicao="extra" /></SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1">
+            <p className="text-xs font-medium">Prazo do Solicitante</p>
+            <Input type="date" className="h-9 text-xs" value={prazoSolicitante ?? ""} disabled={!canCoordenar}
+              onChange={(e) => setPrazoSolicitante(e.target.value)} />
+          </div>
+          <div className="space-y-1">
+            <p className="flex items-center gap-1 text-xs font-medium">
+              Prazo (dias)
+              <Tooltip>
+                <TooltipTrigger asChild><Info className="h-3.5 w-3.5 text-muted-foreground" /></TooltipTrigger>
+                <TooltipContent className="max-w-xs text-xs">Prazo real do desenvolvedor — ele informa em horas, dias úteis ou semanas ao iniciar o desenvolvimento.</TooltipContent>
+              </Tooltip>
+            </p>
+            <div className="flex h-9 items-center rounded-md border border-input bg-muted/40 px-3 text-xs">
+              {chamado.prazo_dias ? rotuloPrazo(chamado.prazo_dias, chamado.prazo_unidade) : <span className="text-muted-foreground">Definido ao iniciar</span>}
+            </div>
+          </div>
+        </div>
+        </TooltipProvider>
+
         <div className="space-y-4 px-5 py-4">
           <div>
             <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Descrição</p>
@@ -651,37 +770,11 @@ export default function CoordenarChamado() {
                       </SelectContent>
                     </Select>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <span className="whitespace-nowrap text-xs font-medium">Prioridade da tarefa:</span>
-                    <Select value={prioridade} onValueChange={setPrioridade}>
-                      <SelectTrigger className="h-9 w-[120px] text-xs"><SelectValue /></SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="alta">Alta</SelectItem>
-                        <SelectItem value="media">Média</SelectItem>
-                        <SelectItem value="baixa">Baixa</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div id="campo-definicao" className="flex items-center gap-2 scroll-mt-24">
-                    <span className="flex items-center gap-1 whitespace-nowrap text-xs font-medium">
-                      Definição <span className="text-destructive">*</span>
-                      <span title="A definição informada aqui será levada para o Painel de Distribuição de Chamados.">
-                        <Info className="h-3.5 w-3.5 text-info" />
-                      </span>
-                    </span>
-                    <Select value={definicao} onValueChange={setDefinicao}>
-                      <SelectTrigger className={`h-9 w-[120px] text-xs ${!definicao ? "border-destructive/60" : ""}`}><SelectValue placeholder="Escolha" /></SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="reuniao"><DefinicaoBadge definicao="reuniao" /></SelectItem>
-                        <SelectItem value="extra"><DefinicaoBadge definicao="extra" /></SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
                 </div>
                 <div className="space-y-1.5 rounded-lg border border-info/30 bg-info/5 px-3 py-2 text-[11px] text-muted-foreground">
                   <p>A tarefa será inserida na posição selecionada e as demais serão deslocadas para baixo.</p>
                   <p className="flex items-start gap-1 font-medium text-info">
-                    <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" /> A definição (Reunião ou Extra) informada aqui será levada para o Painel de Distribuição de Chamados.
+                    <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" /> Prioridade e Definição (Reunião ou Extra) ficam no topo do chamado e são gravadas junto com a atribuição.
                   </p>
                 </div>
               </div>

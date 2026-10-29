@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  chamadosComMesmaData, desceuNaFila, diaDoPrazo, diaLocal, diasUteisAte, ehDiaUtil, podeDefinirPrazo,
+  calcularPrevisao, chamadosComMesmaData, desceuNaFila, mudouNaFila, prazoValido, rotuloPrazo, diaDoPrazo, diaLocal, diasUteisAte, ehDiaUtil, podeDefinirPrazo,
   podeIniciarDesenvolvimento, prazoVencido, projetarPrevisoes, situacaoDesenvolvimento, situacaoPrazo, somarDiasUteis,
   type ChamadoPrazo,
 } from "@/lib/chamados/prazoDesenvolvimento";
@@ -47,19 +47,28 @@ describe("dias úteis (o mesmo calendário de public.chamado_somar_dias_uteis)",
   });
 });
 
-describe("prazo travado: só redefine quando a tarefa desce na fila", () => {
+// Mig 20261028001900: "se meu chamado numero 5 foi pra 6, posso ajustar o
+// prazo, e vice versa" — libera quando a posição MUDA, para cima ou para baixo.
+describe("prazo travado: só ajusta quando a posição na fila muda", () => {
   it("sem prazo: pode definir", () => {
     expect(podeDefinirPrazo(chamado())).toBe(true);
   });
 
-  it("com prazo e mesma posição (ou subiu): travado", () => {
+  it("com prazo e mesma posição: travado", () => {
     expect(podeDefinirPrazo(chamado({ prazo_dias: 3, prazo_posicao_fila: 2, posicao_dev: 2 }))).toBe(false);
-    expect(podeDefinirPrazo(chamado({ prazo_dias: 3, prazo_posicao_fila: 5, posicao_dev: 3 }))).toBe(false);
   });
 
-  it("desceu (5º → 8º): libera redefinir", () => {
-    const c = chamado({ prazo_dias: 3, prazo_posicao_fila: 5, posicao_dev: 8 });
+  it("desceu (5º → 6º): libera ajustar", () => {
+    const c = chamado({ prazo_dias: 3, prazo_posicao_fila: 5, posicao_dev: 6 });
+    expect(mudouNaFila(c)).toBe(true);
     expect(desceuNaFila(c)).toBe(true);
+    expect(podeDefinirPrazo(c)).toBe(true);
+  });
+
+  it("subiu (6º → 5º): também libera ajustar", () => {
+    const c = chamado({ prazo_dias: 3, prazo_posicao_fila: 6, posicao_dev: 5 });
+    expect(mudouNaFila(c)).toBe(true);
+    expect(desceuNaFila(c)).toBe(false);
     expect(podeDefinirPrazo(c)).toBe(true);
   });
 
@@ -169,5 +178,58 @@ describe("Na fila x Em desenvolvimento", () => {
     expect(dev.detalhe).toContain("Em desenvolvimento desde");
     expect(dev.detalhe).toContain("Previsão de conclusão");
     expect(resumoStatus({ ...c, desenvolvimento_iniciado_em: null }, null)).toBe("Na fila do desenvolvedor");
+  });
+});
+
+// Mig 20261028001900: "determinar se o prazo vai ser em dias, horas, semanas".
+describe("prazo em horas, dias ou semanas", () => {
+  it("horas são corridas, com hora: 4 h a partir de quarta 10:00 = 14:00 do mesmo dia", () => {
+    const p = calcularPrevisao(QUARTA, 4, "horas");
+    expect(diaLocal(p)).toBe("2026-10-28");
+    expect(p.getHours()).toBe(14);
+  });
+
+  it("dias úteis vão até o fim do dia; semana = 5 dias úteis (02/11 é Finados)", () => {
+    const d = calcularPrevisao(QUARTA, 3, "dias");
+    expect(diaLocal(d)).toBe("2026-11-03");
+    expect(d.getHours()).toBe(23);
+    expect(diaLocal(calcularPrevisao(QUARTA, 1, "semanas"))).toBe("2026-11-05");
+  });
+
+  it("limite por unidade, igual ao banco (chamado_prazo_valido)", () => {
+    expect(prazoValido(720, "horas")).toBe(true);
+    expect(prazoValido(721, "horas")).toBe(false);
+    expect(prazoValido(120, "dias")).toBe(true);
+    expect(prazoValido(121, "dias")).toBe(false);
+    expect(prazoValido(24, "semanas")).toBe(true);
+    expect(prazoValido(25, "semanas")).toBe(false);
+    expect(prazoValido(0, "dias")).toBe(false);
+    expect(prazoValido(1.5, "dias")).toBe(false);
+  });
+
+  it("rótulo curto na tabela; sem unidade (prazos antigos) é dias", () => {
+    expect(rotuloPrazo(4, "horas")).toBe("4 h");
+    expect(rotuloPrazo(1, "dias")).toBe("1 dia");
+    expect(rotuloPrazo(3, null)).toBe("3 dias");
+    expect(rotuloPrazo(2, "semanas")).toBe("2 sem");
+    expect(rotuloPrazo(null, "dias")).toBe("—");
+  });
+
+  it("situação em horas: atrasado depois da hora, risco faltando 2 h ou menos", () => {
+    const c = chamado({ prazo_dias: 4, prazo_unidade: "horas" });
+    const prev = (h: number) => ({ data: new Date(2026, 9, 28, h, 0), projetada: false, comHora: true });
+    expect(situacaoPrazo(c, prev(9), QUARTA)).toBe("atrasado");
+    expect(situacaoPrazo(c, prev(12), QUARTA)).toBe("risco");
+    expect(situacaoPrazo(c, prev(15), QUARTA)).toBe("no_prazo");
+  });
+
+  it("projeção pela fila respeita a unidade de cada tarefa", () => {
+    const p = projetarPrevisoes([
+      chamado({ id: "h", posicao_dev: 1, prazo_dias: 3, prazo_unidade: "horas" }),
+      chamado({ id: "d", posicao_dev: 2, prazo_dias: 1, prazo_unidade: "dias" }),
+    ], QUARTA);
+    expect(p.h.data.getHours()).toBe(13);
+    expect(p.h.comHora).toBe(true);
+    expect(diaLocal(p.d.data)).toBe("2026-10-29");
   });
 });

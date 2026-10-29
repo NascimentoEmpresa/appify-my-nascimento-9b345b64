@@ -23,6 +23,7 @@ import { HistoricoCandidato } from "@/components/recrutamento/CandidatoInfo";
 import { FichaAso } from "@/components/recrutamento/FichaAso";
 import { FotoCrachaCandidato } from "@/components/recrutamento/AlertaUrgenteAdmissao";
 import { cn } from "@/lib/utils";
+import { COR_INICIO, inicioTrabalho } from "@/lib/recrutamento/inicioTrabalho";
 
 // =====================================================================
 // SST — ASO Admissão (fila do Recrutamento)
@@ -55,6 +56,8 @@ interface Cand {
   sst_data_exame: string | null; sst_hora_exame: string | null; sst_local_exame: string | null; sst_maps_url: string | null;
   sst_agendado_em: string | null; sst_agendado_por: string | null; compras_ok: boolean | null;
   sst_visto_em: string | null; sst_visto_por: string | null; cracha_foto_path: string | null;
+  /** Início no posto, informado pelo Recrutamento (mig 20261028002000). */
+  data_inicio_trabalho?: string | null;
   urgente_sst: boolean | null; urgente_por: string | null; urgente_motivo: string | null; urgente_em: string | null;
   solicitante_nome: string | null;
 }
@@ -222,6 +225,7 @@ export default function AsoCandidatos() {
                     <TableHead className="w-16">#</TableHead>
                     <TableHead>Candidato</TableHead>
                     <TableHead className="hidden md:table-cell">Contrato</TableHead>
+                    <TableHead>Início no posto</TableHead>
                     <TableHead className="hidden lg:table-cell">Exame</TableHead>
                     <TableHead className="hidden sm:table-cell">Chegou em</TableHead>
                     <TableHead>Status</TableHead>
@@ -240,6 +244,7 @@ export default function AsoCandidatos() {
                           <div className="text-xs text-muted-foreground">{c.cargo || "—"}</div>
                         </TableCell>
                         <TableCell className="hidden md:table-cell">{c.contrato || "—"}</TableCell>
+                        <TableCell><InicioNoPosto iso={c.data_inicio_trabalho} /></TableCell>
                         <TableCell className="hidden lg:table-cell">
                           {c.sst_data_exame ? `${fmtD(c.sst_data_exame)}${c.sst_hora_exame ? ` ${c.sst_hora_exame}` : ""}` : "—"}
                         </TableCell>
@@ -266,6 +271,26 @@ export default function AsoCandidatos() {
       </Card>
 
       <DetalheCandidato cand={aberta} podeAgir={podeAgir} nome={nome} onFechar={() => setAberta(null)} onSalvar={salvar} />
+    </div>
+  );
+}
+
+/** Data em que começa a trabalhar (mig 20261028002000): na lista, curta; no detalhe, em faixa. */
+function InicioNoPosto({ iso, destaque }: { iso?: string | null; destaque?: boolean }) {
+  const ini = inicioTrabalho(iso);
+  if (!ini) return destaque ? null : <span className="text-muted-foreground">—</span>;
+  const cor = COR_INICIO[ini.tom];
+  if (!destaque) {
+    return (
+      <div>
+        <div className="font-medium" style={{ color: cor.cor }}>{ini.curta}</div>
+        <div className="text-xs" style={{ color: cor.cor }}>{ini.prazo}</div>
+      </div>
+    );
+  }
+  return (
+    <div className="rounded-lg border px-3 py-2 text-sm" style={{ color: cor.cor, background: cor.fundo, borderColor: cor.borda }}>
+      📅 <b>Começa a trabalhar em {ini.data}</b> — {ini.prazo}
     </div>
   );
 }
@@ -341,6 +366,7 @@ function DetalheCandidato({ cand: c, podeAgir, nome, onFechar, onSalvar }: {
         </DialogHeader>
 
         <div className="space-y-4">
+          <InicioNoPosto iso={c.data_inicio_trabalho} destaque />
           {c.urgente_sst && (
             <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
               🚨 Marcado como <b>urgente</b>{c.urgente_por ? ` por ${c.urgente_por}` : ""}{c.urgente_em ? ` em ${fmtDH(c.urgente_em)}` : ""}{c.urgente_motivo ? ` — ${c.urgente_motivo}` : ""}.

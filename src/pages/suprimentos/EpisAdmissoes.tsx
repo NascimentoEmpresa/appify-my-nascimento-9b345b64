@@ -7,6 +7,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { usePermissoes } from "@/context/PermissoesContext";
 import { useContratosCatalogo, usePostos, useFuncoes } from "@/hooks/useSupCatalogo";
+import { COR_INICIO, inicioTrabalho } from "@/lib/recrutamento/inicioTrabalho";
 import {
   CandidatoInfo, Modal, Campo, Acoes, Toasts, btnStyle, PendToggle, EtapaChip, HistoricoCandidato,
 } from "@/components/recrutamento/CandidatoInfo";
@@ -289,6 +290,17 @@ export default function EpisAdmissoes() {
                     <div style={{ flex: 1, minWidth: 0 }}><CandidatoInfo cand={c} hideCurriculo /></div>
                     <FotoCrachaCandidato caminho={c.cracha_foto_path} />
                   </div>
+                  {/* Início no posto (mig 20261028002000): é por ela que o uniforme é liberado. */}
+                  {(() => {
+                    const ini = inicioTrabalho(c.data_inicio_trabalho);
+                    if (!ini) return null;
+                    const cor = COR_INICIO[ini.tom];
+                    return (
+                      <div style={{ marginTop: 8, fontSize: 12.5, color: cor.cor, background: cor.fundo, border: `1px solid ${cor.borda}`, borderRadius: 8, padding: "7px 10px" }}>
+                        📅 <b>Começa a trabalhar em {ini.data}</b> — {ini.prazo}
+                      </div>
+                    );
+                  })()}
                   {c.compras_visto_em
                     ? <div style={{ marginTop: 6, fontSize: 11.5, color: "#0369a1" }}>👁 Visto por {c.compras_visto_por || "—"}</div>
                     : podeAgir && ETAPAS_PARALELO.includes(c.etapa_processo) && c.compras_ok !== true && (
