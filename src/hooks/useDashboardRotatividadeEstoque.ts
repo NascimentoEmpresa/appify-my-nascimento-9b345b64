@@ -34,7 +34,7 @@ export function useDashboardRotatividadeEstoque(
           parametros: Record<string, unknown>,
         ) => Promise<{ data: unknown; error: { message: string } | null }>;
       };
-      const { data, error } = await cliente.rpc("sup_dashboard_rotatividade_estoque", {
+      const { data, error } = await cliente.rpc("sup_dashboard_rotatividade_estoque_detalhado", {
         p_empresa_id: empresaId,
         p_inicio: filtros.inicio,
         p_fim: filtros.fim,
