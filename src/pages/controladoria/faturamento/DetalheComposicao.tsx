@@ -125,7 +125,7 @@ export function DetalheComposicao({ composicao, onClose }: { composicao: Composi
                         <TableRow key={c.id}>
                           <TableCell className="break-words">{c.nome}</TableCell>
                           <TableCell className="whitespace-nowrap text-muted-foreground">
-                            {c.tratamento === "investimento" ? "Investimento" : "Fora das despesas"} · {c.origem === "configurado" ? "definido em Tratamento dos contratos" : "padrão pelo nome"}
+                            {c.tratamento === "investimento" ? "Investimento" : c.tratamento === "obra_administrativa" ? "Obra administrativa" : "Fora das despesas"} · {c.origem === "configurado" ? "definido em Tratamento dos contratos" : "padrão pelo nome"}
                           </TableCell>
                           <TableCell className="w-px whitespace-nowrap text-right">
                             {podeAlterar && (

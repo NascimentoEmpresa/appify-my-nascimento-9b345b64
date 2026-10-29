@@ -168,6 +168,29 @@ export function TickCategoriaInclinado({
   );
 }
 
+/** Rótulo horizontal centralizado exatamente sob a barra correspondente. */
+export function TickCategoriaCentralizado({
+  x,
+  y,
+  payload,
+  maximo = 18,
+  tamanhoFonte = 9,
+}: {
+  x?: number;
+  y?: number;
+  payload?: { value?: string | number };
+  maximo?: number;
+  tamanhoFonte?: number;
+}) {
+  const completo = String(payload?.value ?? "");
+  return (
+    <text x={x} y={y} dy={14} textAnchor="middle" fill="#334155" fontSize={tamanhoFonte}>
+      <title>{completo}</title>
+      {abreviarRotulo(completo, maximo)}
+    </text>
+  );
+}
+
 /**
  * Eixo de valor em reais, compacto e sem mentir sobre a escala.
  *
