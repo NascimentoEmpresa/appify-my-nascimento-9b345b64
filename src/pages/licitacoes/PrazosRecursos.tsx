@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, CalendarClock, CheckCircle2, ClipboardList, Plus, Trophy } from "lucide-react";
+import { AlertTriangle, CalendarClock, CheckCircle2, ClipboardList, Download, Plus, Trophy } from "lucide-react";
+import * as XLSX from "xlsx";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -42,7 +43,21 @@ export default function PrazosRecursos() {
   const linhas = useMemo(() => (consulta.data ?? []).filter((x) => filtro === "todos" || x.modalidade === filtro), [consulta.data, filtro]);
   const total = linhas.length; const abertos = linhas.filter((x) => x.status !== "concluido" && x.status !== "cancelado" && (diasAte(x.prazo) ?? 999) >= 0).length; const exitos = linhas.filter((x) => x.resultado === "favoravel" || x.resultado === "parcial").length; const naoExitos = linhas.filter((x) => x.resultado === "desfavoravel").length;
   function abrir(d?: Demanda) { setEdicao(d ?? null); setForm(d ? { modalidade: d.modalidade, processo: d.processo, orgao: d.orgao ?? "", objeto: d.objeto ?? "", prazo: d.prazo ?? "", responsavel_id: d.responsavel_id ?? "", observacoes: d.observacoes ?? "" } : vazio); setModal(true); }
-  return <div className="space-y-6"><PageHeader title="Controle de Prazos e Resultados" subtitle="Recursos, impugnações e demais demandas jurídicas da Licitação." breadcrumb={["Prazos e recursos"]} actions={<Button onClick={() => abrir()}><Plus className="mr-2 h-4 w-4" />Nova demanda</Button>} />
+  function exportarExcel() {
+    const dados = linhas.map((d) => ({
+      Modalidade: modalidades[d.modalidade], Processo: d.processo, "Órgão / cidade": d.orgao ?? "",
+      Objeto: d.objeto ?? "", Prazo: d.prazo ? new Date(`${d.prazo}T00:00:00`) : "",
+      Responsável: nomeResponsavel(d.responsavel_id, usuarios), Status: textoStatus[d.status],
+      Resultado: d.resultado === "favoravel" ? "Favorável" : d.resultado === "parcial" ? "Parcialmente favorável" : d.resultado === "desfavoravel" ? "Desfavorável" : "Pendente",
+      "Protocolado em": d.protocolo_em ? new Date(`${d.protocolo_em}T00:00:00`) : "", Observações: d.observacoes ?? "",
+    }));
+    const planilha = XLSX.utils.json_to_sheet(dados);
+    planilha["!cols"] = [18, 22, 26, 50, 14, 26, 18, 26, 18, 50].map((wch) => ({ wch }));
+    for (const celula of Object.keys(planilha)) if (celula.startsWith("E") || celula.startsWith("I")) if (celula !== "E1" && celula !== "I1") planilha[celula].z = "dd/mm/yyyy";
+    const arquivo = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(arquivo, planilha, "Prazos e resultados");
+    XLSX.writeFile(arquivo, `prazos-e-resultados-${hoje()}.xlsx`);
+  }
+  return <div className="space-y-6"><PageHeader title="Controle de Prazos e Resultados" subtitle="Recursos, impugnações e demais demandas jurídicas da Licitação." breadcrumb={["Prazos e recursos"]} actions={<><Button variant="outline" onClick={exportarExcel}><Download className="mr-2 h-4 w-4" />Exportar Excel</Button><Button onClick={() => abrir()}><Plus className="mr-2 h-4 w-4" />Nova demanda</Button></>} />
     <div className="flex flex-wrap gap-2"><Button variant={filtro === "todos" ? "default" : "outline"} size="sm" onClick={() => setFiltro("todos")}>Todas</Button>{Object.entries(modalidades).map(([k, v]) => <Button key={k} variant={filtro === k ? "default" : "outline"} size="sm" onClick={() => setFiltro(k as Modalidade)}>{v}</Button>)}</div>
     <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4"><Kpi icon={<ClipboardList />} titulo="Processos totais" valor={total} cor="text-blue-600" /><Kpi icon={<CalendarClock />} titulo="Em aberto a vencer" valor={abertos} cor="text-amber-600" /><Kpi icon={<Trophy />} titulo="Êxitos" valor={exitos} cor="text-emerald-600" /><Kpi icon={<AlertTriangle />} titulo="Não êxito" valor={naoExitos} cor="text-rose-600" /></div>
     <Card><CardContent className="p-0"><Table><TableHeader><TableRow><TableHead>Modalidade</TableHead><TableHead>Processo / órgão</TableHead><TableHead>Prazo</TableHead><TableHead>Responsável</TableHead><TableHead>Status</TableHead><TableHead className="text-right">Ação</TableHead></TableRow></TableHeader><TableBody>{linhas.map((d) => { const dias = diasAte(d.prazo); return <TableRow key={d.id} className="cursor-pointer" onClick={() => abrir(d)}><TableCell className="text-xs">{modalidades[d.modalidade]}</TableCell><TableCell><p className="font-medium">{d.processo}</p><p className="max-w-[330px] truncate text-xs text-muted-foreground">{d.orgao || d.objeto || "—"}</p></TableCell><TableCell className={dias !== null && dias < 0 && d.status !== "concluido" ? "font-medium text-destructive" : ""}>{d.prazo ? new Date(`${d.prazo}T00:00:00`).toLocaleDateString("pt-BR") : "—"}<p className="text-xs text-muted-foreground">{dias !== null && d.status !== "concluido" ? `${dias < 0 ? "Vencido há" : "Faltam"} ${Math.abs(dias)} dia(s)` : ""}</p></TableCell><TableCell>{nomeResponsavel(d.responsavel_id, usuarios)}</TableCell><TableCell>{textoStatus[d.status]}</TableCell><TableCell className="text-right">{d.status !== "concluido" && <Button size="sm" variant="outline" onClick={(e) => { e.stopPropagation(); concluir.mutate(d); }}><CheckCircle2 className="mr-1 h-3.5 w-3.5" />Pronto</Button>}</TableCell></TableRow>; })}{!linhas.length && <TableRow><TableCell colSpan={6} className="h-32 text-center text-muted-foreground">Nenhuma demanda encontrada.</TableCell></TableRow>}</TableBody></Table></CardContent></Card>
