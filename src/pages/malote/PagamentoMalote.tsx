@@ -429,7 +429,13 @@ export default function PagamentoMalote() {
   function valorItem(item: ItemLinhaMalote): number {
     return item.parcela ? item.parcela.valor : item.despesa.valor_aprovado ?? item.despesa.valor_total;
   }
-  const valorPago = itensComFiltrosDoPainel.filter((i) => statusEfetivo(i) === "despesa_paga").reduce((s, i) => s + valorItem(i), 0);
+  // SIS-2026-0733: o que foi de fato pago inclui o juros informado no pagamento.
+  function jurosItem(item: ItemLinhaMalote): number {
+    return Number((item.parcela ? item.parcela.valor_juros : item.despesa.valor_juros) ?? 0);
+  }
+  const valorPago = itensComFiltrosDoPainel
+    .filter((i) => statusEfetivo(i) === "despesa_paga")
+    .reduce((s, i) => s + valorItem(i) + jurosItem(i), 0);
   const valorPendente = itensComFiltrosDoPainel
     .filter((i) => ["aguardando_pagamento", "pronto_para_pagar", "ajuste_pagamento"].includes(statusEfetivo(i)))
     .reduce((s, i) => s + valorItem(i), 0);
@@ -656,6 +662,7 @@ function LinhaItem({
   const diasSemComprovante = semComprovante ? diasAguardandoComprovante(pagoEmDoItem(item)) : 0;
   const sevComprovante = severidadeComprovante(diasSemComprovante);
   const valor = parcela ? parcela.valor : despesa.valor_aprovado ?? despesa.valor_total;
+  const juros = Number((parcela ? parcela.valor_juros : despesa.valor_juros) ?? 0);
   const dataPagamento = parcela ? parcela.data_pagamento_real ?? parcela.data_vencimento : despesa.data_pagamento;
   return (
     <TableRow className="cursor-pointer hover:bg-muted/50" onClick={onAbrir}>
@@ -679,6 +686,14 @@ function LinhaItem({
       <TableCell className="text-center text-sm">{despesa.classificacao?.nome ?? "—"}</TableCell>
       <TableCell className="text-center text-sm">
         {Number(valor).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
+        {juros > 0 && (
+          <div
+            className="text-xs text-amber-700"
+            title={`Valor pago: ${(Number(valor) + juros).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })} (compra + juros)`}
+          >
+            + {juros.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })} de juros
+          </div>
+        )}
       </TableCell>
       <TableCell className="text-center text-sm">{despesa.forma_pagamento ?? "—"}</TableCell>
       <TableCell className="text-center text-sm">{solicitanteNome ?? "—"}</TableCell>
