@@ -51,14 +51,23 @@ jobs:
                 commits: .commits, adicoes: .additions, remocoes: .deletions, arquivos: .changed_files
               }]}' "$GITHUB_EVENT_PATH" > envio.json
 
-          RESP=$(curl -sS --max-time 20 -w '\n%{http_code}' \
-            -X POST "$SUPABASE_FUNCTIONS_URL/dev-github-pr-registrar" \
-            -H "Authorization: Bearer $CHAMADOS_CI_SECRET" \
-            -H "Content-Type: application/json" \
-            --data-binary @envio.json) || RESP=$'\n000'
+          # Até 4 tentativas, 20 s entre elas. O merge que dispara este job
+          # também dispara o cluster_pos_merge, que reinicia o runtime das
+          # functions -- a primeira chamada pode cair justo nesses segundos
+          # (foi o que aconteceu no merge da própria PR #1083: 404).
+          for TENTATIVA in 1 2 3 4; do
+            RESP=$(curl -sS --max-time 20 -w '\n%{http_code}' \
+              -X POST "$SUPABASE_FUNCTIONS_URL/dev-github-pr-registrar" \
+              -H "Authorization: Bearer $CHAMADOS_CI_SECRET" \
+              -H "Content-Type: application/json" \
+              --data-binary @envio.json) || RESP=$'\n000'
+            HTTP_CODE=$(echo "$RESP" | tail -n1)
+            BODY=$(echo "$RESP" | sed '$d')
+            [ "$HTTP_CODE" = "200" ] && break
+            echo "Tentativa $TENTATIVA: HTTP $HTTP_CODE: $BODY"
+            [ "$TENTATIVA" -lt 4 ] && sleep 20
+          done
 
-          HTTP_CODE=$(echo "$RESP" | tail -n1)
-          BODY=$(echo "$RESP" | sed '$d')
           if [ "$HTTP_CODE" != "200" ]; then
             echo "::warning::dev-github-pr-registrar respondeu HTTP $HTTP_CODE: $BODY — a PR fica fora do Controle de PRs até o próximo 'Run workflow'."
             exit 0
