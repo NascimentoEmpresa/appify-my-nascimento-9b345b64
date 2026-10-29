@@ -5,6 +5,10 @@
 // um com valor/hora × horas e a explicação) e a complexidade de 1 a 5 com a
 // justificativa. Grava em CHAMADO_SISTEMA_PARECER_IA; a tela só LÊ de lá.
 //
+// Entrega real (29/10/2026): além do texto de abertura, a I.A recebe as PRs
+// do chamado e as métricas do GitHub, e precifica o que FOI ENTREGUE. Ao
+// concluir, o parecer é refeito sozinho (fila com `forcar`).
+//
 // Modo "chat" (29/10/2026): conversa sobre os custos do parecer ("da onde
 // você tirou esse valor?"). Quem vê o chamado pode perguntar — o portão é a
 // própria RLS de CHAMADO_SISTEMA, lida com o JWT de quem perguntou. Não grava
@@ -27,11 +31,24 @@
 // Edge Function, nunca em arquivo.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import {
-  extrairJson, limparHistorico, montarPrompt, montarSistemaChat, validarParecer, SYSTEM_PROMPT,
-  type ChamadoParaParecer, type ParecerParaChat,
+  extrairJson, limparHistorico, montarPrompt, montarSistemaChat, resumirEntrega, validarParecer, SYSTEM_PROMPT,
+  type ChamadoParaParecer, type EntregaReal, type EventoGithub, type ParecerParaChat,
 } from "../_shared/chamado-parecer-ia.ts";
 
-const CAMPOS_CHAMADO = "id, numero, assunto, tipo_solicitacao, descricao, categorias, modulo_sistema, modulo_sistema_outro, ambiente, impacto_trabalho, urgencia, afeta_usuarios, observacoes_solicitante, definicao";
+const CAMPOS_CHAMADO = "id, numero, assunto, tipo_solicitacao, descricao, categorias, modulo_sistema, modulo_sistema_outro, ambiente, impacto_trabalho, urgencia, afeta_usuarios, observacoes_solicitante, definicao, status, created_at, concluido_em";
+
+/** O que foi entregue de fato: PRs e métricas gravadas pelo vínculo/merge do
+ *  GitHub (chamado-vincular-pr / chamado-concluir-pr). Sem PR, null. */
+async function carregarEntrega(admin: ReturnType<typeof createClient>, c: ChamadoParaParecer): Promise<EntregaReal | null> {
+  const { data, error } = await admin.from("CHAMADO_SISTEMA_EVENTO")
+    .select("created_at, meta")
+    .eq("chamado_id", c.id)
+    .eq("meta->>canal", "github")
+    .order("created_at", { ascending: true })
+    .limit(500);
+  if (error) { console.error("eventos github", error.message); return null; }
+  return resumirEntrega((data ?? []) as EventoGithub[], c);
+}
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -120,8 +137,10 @@ async function responderChat(supa: Cliente, admin: Cliente, chamadoId: string, c
   const provs = provedores();
   if (!provs.length) return respostaJson({ error: "A chave da IA não está configurada. Avise o time de Sistemas." }, 500);
 
+  const chamado = c as unknown as ChamadoParaParecer;
+  const entrega = await carregarEntrega(admin, chamado);
   const res = await chamarIA(provs, [
-    { role: "system", content: montarSistemaChat(c as unknown as ChamadoParaParecer, p as unknown as ParecerParaChat) },
+    { role: "system", content: montarSistemaChat(chamado, p as unknown as ParecerParaChat, entrega) },
     ...limparHistorico(corpo?.historico),
     { role: "user", content: pergunta },
   ], false);
@@ -175,10 +194,12 @@ Deno.serve(async (req) => {
       if (!pode) { chamadoId = ""; return respostaJson({ error: "Só a gestão de chamados ou o responsável pode gerar o parecer." }, 403); }
       solicitadoPor = userData.user.id;
     } else {
-      // Fila: parecer pronto não é refeito (reentrega do worker, backfill de novo).
+      // Fila: parecer pronto não é refeito (reentrega do worker, backfill de
+      // novo) — salvo `forcar`, que vem da conclusão do chamado e da
+      // reavaliação pela entrega real (mig 20261029001200).
       const { data: atual } = await admin.from("CHAMADO_SISTEMA_PARECER_IA")
         .select("status").eq("chamado_id", chamadoId).maybeSingle();
-      if (atual?.status === "pronto") return respostaJson({ ok: true, pulado: "já pronto" });
+      if (atual?.status === "pronto" && corpo?.forcar !== true) return respostaJson({ ok: true, pulado: "já pronto" });
     }
 
     const { data: c, error: cErr } = await admin
@@ -196,9 +217,11 @@ Deno.serve(async (req) => {
       return respostaJson({ error: msg }, 500);
     }
 
+    const chamado = c as unknown as ChamadoParaParecer;
+    const entrega = await carregarEntrega(admin, chamado);
     const res = await chamarIA(provs, [
       { role: "system", content: SYSTEM_PROMPT },
-      { role: "user", content: montarPrompt(c as unknown as ChamadoParaParecer) },
+      { role: "user", content: montarPrompt(chamado, entrega) },
     ]);
     if (!res.texto) {
       await registrarErro(res.erro ?? "Falha ao chamar a IA.");
