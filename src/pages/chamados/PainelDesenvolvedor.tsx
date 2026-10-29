@@ -71,11 +71,20 @@ const POR_PAGINA = [10, 20, 50];
 // ainda não confirmou (Pablo, 29/10/2026: "os concluídos não precisam
 // aparecer aqui, apenas os que ainda não foram concluídos pelo solicitante").
 // O confirmado sai da lista padrão e continua na visão "Concluídos".
+//
+// Desfeito no mesmo dia (Pablo, 29/10/2026, tarde): a lista caiu para 8
+// chamados — "tá aparecendo só 8 chamados pra mim, trás tudo de volta, eu já
+// conclui mais de 100". A padrão agora é TODOS: a fila no topo (ordem da
+// fila) e, abaixo, todos os concluídos do mais recente para o mais antigo.
+// O "aguardando confirmação" virou visão opcional. Os antigos sem confirmação
+// deixaram de existir: só os concluídos desta semana esperam o solicitante
+// (mig 20261029001100 confirma o resto sozinha).
+const VISAO_PADRAO = "todos";
 const VISOES = [
+  { key: "todos", label: "Todos (fila + concluídos)" },
   { key: "fila_mes", label: "Minha fila + aguardando confirmação" },
   { key: "ativos", label: "Só a minha fila" },
   { key: "concluidos", label: "Concluídos" },
-  { key: "todos", label: "Todos" },
 ] as const;
 
 const COR_PRIORIDADE: Record<string, { pill: string; dot: string; barra: string }> = {
@@ -125,7 +134,7 @@ export default function PainelDesenvolvedor() {
   const dev = access?.codes.has("chamados_sistemas_dev") ?? false;
   const podeEditarPrioridade = canCoordenar || gestor; // gerência troca a prioridade na fila
 
-  const [visao, setVisao] = useState<string>("fila_mes");
+  const [visao, setVisao] = useState<string>(VISAO_PADRAO);
   const [soDesceram, setSoDesceram] = useState(false);
   const [busca, setBusca] = useState("");
   const [filtroStatus, setFiltroStatus] = useState<string>("todos");
@@ -513,7 +522,7 @@ export default function PainelDesenvolvedor() {
               <PopoverTrigger asChild>
                 <Button size="sm" variant="outline" className="h-8 gap-1.5">
                   <Filter className="h-3.5 w-3.5" /> Filtros
-                  {(visao !== "fila_mes" || filtroStatus !== "todos" || filtroPrioridade !== "todas") && <span className="h-1.5 w-1.5 rounded-full bg-primary" />}
+                  {(visao !== VISAO_PADRAO || filtroStatus !== "todos" || filtroPrioridade !== "todas") && <span className="h-1.5 w-1.5 rounded-full bg-primary" />}
                 </Button>
               </PopoverTrigger>
               <PopoverContent align="end" className="w-64 space-y-3">
@@ -547,7 +556,7 @@ export default function PainelDesenvolvedor() {
                   </Select>
                 </div>
                 <Button size="sm" variant="ghost" className="h-7 w-full text-xs"
-                  onClick={() => { setVisao("fila_mes"); setFiltroStatus("todos"); setFiltroPrioridade("todas"); setSoDesceram(false); }}>
+                  onClick={() => { setVisao(VISAO_PADRAO); setFiltroStatus("todos"); setFiltroPrioridade("todas"); setSoDesceram(false); }}>
                   Limpar filtros
                 </Button>
               </PopoverContent>
@@ -1000,7 +1009,7 @@ export default function PainelDesenvolvedor() {
         chamado={reabrir}
         // O chamado reaberto volta para a fila; sem trocar a visão o dev
         // clica e a linha some da tela em que ele está.
-        onReaberto={() => setVisao("fila_mes")}
+        onReaberto={() => setVisao(VISAO_PADRAO)}
       />
     </div>
     </TooltipProvider>
