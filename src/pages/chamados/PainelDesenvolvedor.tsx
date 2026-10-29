@@ -35,6 +35,7 @@ import { useChamadosNaoLidos } from "./BotaoChatChamado";
 import { ReabrirChamadoDialog } from "./ReabrirChamadoDialog";
 import { IniciarDesenvolvimentoDialog, type ModoPrazo } from "./IniciarDesenvolvimentoDialog";
 import { abrirPrGithub } from "./abrirPrGithub";
+import { conclusaoAguardandoConfirmacao } from "./validacaoPresidencia";
 import {
   STATUS_PAINEL, mudouNaFila, rotuloPrazo, diasUteisAte, podeDefinirPrazo, podeIniciarDesenvolvimento, projetarPrevisoes,
   situacaoPrazo, statusPainel, variacaoPercentual, type SituacaoPrazo, type StatusPainel,
@@ -65,9 +66,12 @@ import {
 const ATIVO = (s: string) => chamadoAtivo(s);
 const POR_PAGINA = [10, 20, 50];
 
-// Visões do botão Filtros. A padrão é a do mockup: a fila + o que concluí no mês.
+// Visões do botão Filtros. A padrão é a fila + o que concluí e o solicitante
+// ainda não confirmou (Pablo, 29/10/2026: "os concluídos não precisam
+// aparecer aqui, apenas os que ainda não foram concluídos pelo solicitante").
+// O confirmado sai da lista padrão e continua na visão "Concluídos".
 const VISOES = [
-  { key: "fila_mes", label: "Minha fila + concluídos no mês" },
+  { key: "fila_mes", label: "Minha fila + aguardando confirmação" },
   { key: "ativos", label: "Só a minha fila" },
   { key: "concluidos", label: "Concluídos" },
   { key: "todos", label: "Todos" },
@@ -292,7 +296,7 @@ export default function PainelDesenvolvedor() {
     const termo = busca.trim().toLowerCase();
     return [...chamados, ...soParticipante]
       .filter((c) =>
-        visao === "fila_mes" ? ATIVO(c.status) || concluidoNoMes(c)
+        visao === "fila_mes" ? ATIVO(c.status) || conclusaoAguardandoConfirmacao(c)
         : visao === "ativos" ? ATIVO(c.status)
         : visao === "concluidos" ? !ATIVO(c.status)
         : true)
