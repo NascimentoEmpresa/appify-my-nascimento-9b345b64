@@ -61,6 +61,7 @@ import {
   PainelGrafico,
   SERIES,
   TickCategoria,
+  TickCategoriaCentralizado,
   formatarEixoMoeda,
 } from "@/components/suprimentos/dashboard/PainelBase";
 import {
@@ -750,9 +751,14 @@ function GraficoFamilias({ familias }: { familias: EstoqueSaudavelDados["compra_
     <div className="space-y-3">
       <div className="h-[280px]">
         <ResponsiveContainer width="100%" height="100%">
-          <BarChart data={dados} margin={{ bottom: 8 }}>
+          <BarChart data={dados} margin={{ bottom: 8, left: 8, right: 8 }}>
             <CartesianGrid strokeDasharray="3 3" stroke={CINZA_GRADE} />
-            <XAxis dataKey="item" interval={0} height={92} tick={<TickCategoria maximo={18} />} />
+            <XAxis
+              dataKey="item"
+              interval={0}
+              height={48}
+              tick={<TickCategoriaCentralizado maximo={18} />}
+            />
             <YAxis tickFormatter={formatarEixoMoeda} />
             <Tooltip
               formatter={(valor: number, nome: string) =>
