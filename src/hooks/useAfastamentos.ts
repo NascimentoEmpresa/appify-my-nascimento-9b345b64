@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
-import type { AfastamentoItem, LinhaImportacao } from "@/lib/sst/afastamentos";
+import type { AfastamentoItem, FaturamentoContrato, LinhaImportacao } from "@/lib/sst/afastamentos";
 
 // =====================================================================
 // SST › Afastamentos e Telemedicina (mig 20261029001750). Leitura e escrita
@@ -26,6 +26,8 @@ export interface Lotacao {
 export interface Cobertura { dia: string; fonte: "efetividade" | "diaria" | "registro"; substituto: string | null; eh_rt: boolean; valor: number | null }
 export interface Despesa { id: number; tipo: string; data: string; dias: number; substituto_nome: string | null; horas: number | null; valor: number; descricao: string | null; created_by_nome: string | null }
 export interface EventoAfa { id: number; tipo: string; descricao: string | null; autor_nome: string | null; created_at: string }
+export interface HoraExtraRelacionada { numero: string | null; data: string; colaborador: string; status: string; minutos: number; justificativa: string | null; valor_estimado: number | null }
+export interface DesligamentoSolicitado { id: number; status: string; data_solicitacao: string | null; motivo: string | null; solicitante: string | null; data_aviso: string | null }
 export interface NotaContrato { competencia: string; numero_nf: string | null; status: string; bruto: number; liquido: number; faltas: number; glosas: number; outros_descontos: number }
 
 export interface FichaAfastamento {
@@ -34,10 +36,13 @@ export interface FichaAfastamento {
   ve_financeiro: boolean;
   empregado: { situacao: string | null; data_afastamento: string | null; admissao: string | null; telefone: string | null } | null;
   coberturas: Cobertura[];
+  /** HE aprovadas de quem é da mesma filial nos dias do afastamento (mig 20261029003100). */
+  horas_extras?: HoraExtraRelacionada[];
+  desligamento?: DesligamentoSolicitado | null;
   despesas: Despesa[];
   eventos: EventoAfa[];
   rt: { quantidade: number; colaboradores: string[] };
-  historico_colaborador: { id: number; protocolo: string; data_inicio: string; dias: number | null; tele_status: string }[];
+  historico_colaborador: { id: number; protocolo: string; data_inicio: string; tipo?: string; dias: number | null; tele_status: string }[];
   financeiro?: { valor_mensal_posto: number | null; salario: number | null; custo_mensal_posto: number | null; lucro_mensal: number | null; planilha_vigencia: string | null; glosa_valor: number | null; glosa_obs: string | null } | null;
   notas?: NotaContrato[];
 }
@@ -48,6 +53,16 @@ export const useListaAfastamentos = (ini: string, fim: string) => useQuery({
     const { data, error } = await sb.rpc("sst_afa_lista", { p_ini: ini, p_fim: fim });
     erro(error);
     return { ve_financeiro: !!data?.ve_financeiro, itens: (data?.itens ?? []) as AfastamentoItem[] };
+  },
+});
+
+/** Notas emitidas por contrato e competência (vazio sem o financeiro). */
+export const useFaturamentoAfastamentos = (ini: string, fim: string, ativo: boolean) => useQuery({
+  queryKey: [K, "faturamento", ini, fim], enabled: ativo,
+  queryFn: async (): Promise<FaturamentoContrato[]> => {
+    const { data, error } = await sb.rpc("sst_afa_faturamento", { p_ini: ini, p_fim: fim });
+    erro(error);
+    return (data ?? []) as FaturamentoContrato[];
   },
 });
 
@@ -117,8 +132,12 @@ export const useImportarPlanilha = () => useMutacao(async (linhas: LinhaImportac
   return total;
 });
 
-export const useCapturarSenior = () => useMutacao<void, { novos: number; retornos: number; desligados: number }>(async () => {
+export interface ResultadoCaptura {
+  novos: number; retornos: number; desligados: number;
+  ferias?: number; efetividade?: number; situacao_senior?: number; desligamentos?: number; prorrogados?: number;
+}
+export const useCapturarSenior = () => useMutacao<void, ResultadoCaptura>(async () => {
   const { data, error } = await sb.rpc("sst_afa_capturar_senior");
   erro(error);
-  return data as { novos: number; retornos: number; desligados: number };
+  return data as ResultadoCaptura;
 });

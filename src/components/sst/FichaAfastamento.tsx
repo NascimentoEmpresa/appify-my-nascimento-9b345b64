@@ -14,7 +14,7 @@ import {
   type ColaboradorBusca, type FichaAfastamento as Ficha,
 } from "@/hooks/useAfastamentos";
 import {
-  ASSINATURAS, DESPESAS, RESULTADOS, RETORNOS, TELE_STATUS, TIPOS, brl, calcularImpacto, fmtData, rotuloCompetencia,
+  ASSINATURAS, DESPESAS, ORIGENS, RESULTADOS, RETORNOS, TELE_STATUS, TIPOS, brl, calcularImpacto, fmtData, rotuloCompetencia,
   type AfastamentoItem, type Impacto, type RetornoStatus, type TeleStatus,
 } from "@/lib/sst/afastamentos";
 
@@ -23,6 +23,10 @@ import {
 // atestado + telemedicina, retorno, cobertura (automática + registrada),
 // valores do posto e impacto (só com sst_afastamentos_financeiro), notas do
 // contrato nas competências e o histórico.
+// 29/10/2026 (mig 20261029003100): de onde a linha veio (Senior, Férias do
+// ERP, Efetividade), horas extras da mesma filial nos dias do afastamento
+// (possível cobertura — lança com um clique) e, no desligamento, a
+// solicitação de demissão que o originou.
 // =====================================================================
 
 const FONTE: Record<string, string> = { efetividade: "Efetividade (cobertura acionada)", diaria: "Diária", registro: "Registrada aqui" };
@@ -169,7 +173,7 @@ function Conteudo({ f, podeAlterar }: { f: Ficha; podeAlterar: boolean }) {
         </DialogTitle>
         <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
           <span>{fmtData(a.data_inicio)} a {fmtData(f.data_fim)} · {imp.dias} dia(s)</span>
-          <span>· origem: {a.origem === "senior" ? "Senior (automático)" : a.origem === "planilha" ? "planilha importada" : "registro manual"}</span>
+          <span>· origem: {ORIGENS[a.origem] ?? a.origem}{a.fonte_ref ? ` (${String(a.fonte_ref)})` : ""}</span>
           <div className="ml-auto flex gap-2">
             <Button size="sm" variant="outline" onClick={() => imprimir(f, imp)}><Printer className="mr-1 h-4 w-4" /> Imprimir ficha</Button>
           </div>
@@ -205,7 +209,19 @@ function Conteudo({ f, podeAlterar }: { f: Ficha; podeAlterar: boolean }) {
           )}
         </Secao>
 
-        <Secao titulo="Atestado">
+        {f.desligamento && (
+          <Secao titulo="Solicitação de desligamento">
+            <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+              <Info r="Solicitação" v={`#${f.desligamento.id} · ${f.desligamento.status}`} />
+              <Info r="Pedida em" v={fmtData(f.desligamento.data_solicitacao)} />
+              <Info r="Solicitante" v={f.desligamento.solicitante} />
+              <Info r="Aviso" v={fmtData(f.desligamento.data_aviso)} />
+              <div className="col-span-2 md:col-span-4"><Info r="Motivo" v={f.desligamento.motivo} /></div>
+            </div>
+          </Secao>
+        )}
+
+        <Secao titulo={a.tipo === "atestado" || a.tipo === "atestado_acompanhante" || a.tipo === "acidente_trabalho" ? "Atestado" : "Afastamento"}>
           <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
             {escolha("tipo", "Tipo", TIPOS, false)}
             {campo("data_inicio", "Início do afastamento", "date")}
@@ -264,7 +280,7 @@ function Conteudo({ f, podeAlterar }: { f: Ficha; podeAlterar: boolean }) {
               <div className="mb-1 text-xs font-semibold text-muted-foreground">Outros afastamentos do colaborador ({f.historico_colaborador.length})</div>
               <div className="flex flex-wrap gap-1.5">
                 {f.historico_colaborador.map((h) => (
-                  <Badge key={h.id} variant="outline">{fmtData(h.data_inicio)} · {h.dias ?? "?"} dia(s) · {TELE_STATUS[h.tele_status as TeleStatus]?.r}</Badge>
+                  <Badge key={h.id} variant="outline">{fmtData(h.data_inicio)} · {TIPOS.find((t) => t.v === h.tipo)?.r ?? "Atestado"} · {h.dias ?? "?"} dia(s){h.tele_status !== "nao_se_aplica" ? ` · ${TELE_STATUS[h.tele_status as TeleStatus]?.r}` : ""}</Badge>
                 ))}
               </div>
             </div>
@@ -344,6 +360,33 @@ function Cobertura({ f, imp, podeAlterar, diasRt }: { f: Ficha; imp: Impacto; po
               ))}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {(f.horas_extras?.length ?? 0) > 0 && (
+        <div className="mt-3">
+          <div className="mb-1 text-xs font-semibold text-muted-foreground">
+            Horas extras aprovadas na mesma filial durante o afastamento (Sistemas › Hora Extra) — possível cobertura, confira e lance
+          </div>
+          <ul className="space-y-1 text-sm">
+            {f.horas_extras!.map((h, i) => (
+              <li key={i} className="flex flex-wrap items-center gap-2 rounded border border-dashed px-2 py-1">
+                <span className="font-medium">{fmtData(h.data)} · {h.colaborador}</span>
+                <span className="text-muted-foreground">{(h.minutos / 60).toLocaleString("pt-BR", { maximumFractionDigits: 1 })}h · {h.status}{h.numero ? ` · ${h.numero}` : ""}{h.justificativa ? ` · ${h.justificativa}` : ""}</span>
+                <span className="ml-auto">{h.valor_estimado != null ? <>≈ {brl(Number(h.valor_estimado))}</> : <span className="text-xs text-muted-foreground">sem salário</span>}</span>
+                {podeAlterar && !f.despesas.some((x) => x.tipo === "hora_extra" && x.data === h.data && x.substituto_nome === h.colaborador) && (
+                  <Button size="sm" variant="outline" className="h-7" disabled={salvar.isPending}
+                    onClick={() => salvar.mutateAsync({
+                      afastamento_id: f.afastamento.id, tipo: "hora_extra", data: h.data, dias: "1", substituto_nome: h.colaborador,
+                      horas: String(+(h.minutos / 60).toFixed(2)), valor: h.valor_estimado != null ? String(h.valor_estimado) : "0",
+                      descricao: `HE ${h.numero ?? ""} (Sistemas › Hora Extra) — valor estimado: salário ÷ 220 × 1,5`.trim(),
+                    }).then(() => toast.success("Hora extra lançada como cobertura."), (e) => toast.error((e as Error).message))}>
+                    Lançar como cobertura
+                  </Button>
+                )}
+              </li>
+            ))}
+          </ul>
         </div>
       )}
 
