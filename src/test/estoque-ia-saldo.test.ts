@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   itensRelacionados,
   respostaQuantidadeAtual,
+  respostaResumoOperacional,
 } from "../../supabase/functions/_shared/estoque-ia";
 
 const itens = [
@@ -32,5 +33,15 @@ describe("Assistente do Estoque — consulta exata no catálogo completo", () =>
     expect(resposta).toContain("10 disponível(is)");
     expect(resposta).toContain("1 reservada(s)");
     expect(resposta).not.toContain("MOLETOM AZUL");
+  });
+
+  it("responde entradas registradas com o mesmo KPI da tela operacional", () => {
+    const resposta = respostaResumoOperacional(
+      "quantas entradas registradas tenho no meu estoque atualmente?",
+      { entradas_registradas: 10584 },
+    );
+
+    expect(resposta).toContain("10.584 entradas registradas");
+    expect(resposta).toContain("Estoque & Etiquetas");
   });
 });

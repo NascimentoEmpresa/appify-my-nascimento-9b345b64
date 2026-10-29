@@ -28,6 +28,7 @@ const porItemTamanho = payload.por_peca.slice(0, 6).map((linha, indice) => ({
   fisico: linha.saldo_disponivel,
   reservado: 0,
   saldo_disponivel: linha.saldo_disponivel,
+  cadastro_ativo: true,
   giro: linha.giro,
 }));
 const primeiroItem = porItemTamanho[0];
@@ -51,7 +52,14 @@ const payloadDetalhado = {
     },
     peca_mais_sai: { codigo: primeiroItem.codigo, peca: primeiroItem.item, unidades: primeiroItem.saidas },
   },
-  por_item_tamanho: porItemTamanho,
+  por_item_tamanho: [
+    ...porItemTamanho,
+    {
+      codigo: "0002626", item: "MOP CORTADA 60CM", tamanho: null,
+      pedidas: 0, entradas: 10, saidas: 10, fisico: 0, reservado: 0,
+      saldo_disponivel: 0, cadastro_ativo: false, giro: null,
+    },
+  ],
   por_peca: payload.por_peca.map((linha, indice) => ({
     ...linha,
     codigo: `ITEM-${String(indice + 1).padStart(3, "0")}`,
@@ -271,8 +279,10 @@ describe("aba Rotatividade do Estoque — render com payload de produção", () 
     expect(within(tabela!).getByText("Código")).toBeInTheDocument();
     expect(within(tabela!).getByText("Físico")).toBeInTheDocument();
     expect(within(tabela!).getByText("Reservado")).toBeInTheDocument();
-    expect(within(tabela!).getAllByRole("row").length).toBe(porItemTamanho.length + 1);
+    expect(within(tabela!).getAllByRole("row").length).toBe(porItemTamanho.length + 2);
     expect(within(tabela!).getByText("ITEM-001")).toBeInTheDocument();
+    expect(within(tabela!).getByText("0002626")).toBeInTheDocument();
+    expect(within(tabela!).getByText("Histórico encerrado")).toBeInTheDocument();
   });
 
   it("credita o levantamento, dizendo de quantas pessoas a grade saiu", () => {

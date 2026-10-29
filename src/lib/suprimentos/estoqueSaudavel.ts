@@ -239,6 +239,8 @@ export interface EstoqueSaudavelDados {
   };
   resumo: {
     itens_planejados: number;
+    /** Mesmo total de etiquetas exibido como "Entradas registradas" no estoque operacional. */
+    entradas_registradas: number;
     valor_em_estoque: number;
     unidades_em_estoque: number;
     dinheiro_parado: number;

@@ -61,6 +61,8 @@ export interface ItemTamanhoRotatividade {
   fisico: number;
   reservado: number;
   saldo_disponivel: number;
+  /** False quando a linha existe só para explicar movimentações antigas. */
+  cadastro_ativo?: boolean;
   giro: number | null;
 }
 
