@@ -19,7 +19,7 @@ import {
 import { useEmpresasGrupo, useContratosAtivos } from "@/hooks/useMaloteDespesa";
 import { useTiposFormaPagamento } from "@/hooks/useMaloteFormaPagamento";
 import { useClassificacoesOrcamento } from "@/hooks/usePlanejamentoOrcamentario";
-import { useCartaoBancos, urlLogoCartao } from "@/hooks/useMaloteCartaoCredito";
+import { useCartaoBancos, urlLogoCartao, useFormasCartaoFaturaImportada } from "@/hooks/useMaloteCartaoCredito";
 import { BancoBadge } from "@/components/financeiro/BancoBadge";
 import { AnexosDebito } from "./AnexosDebito";
 import { ParcelaCalculada, gerarParcelasAutomaticas, somaParcelas, validarParcelas } from "./parcelas";
@@ -55,6 +55,7 @@ export function DebitoAutomaticoModal({
   const { data: classificacoes = [] } = useClassificacoesOrcamento();
   const { data: bancos = [] } = useCartaoBancos();
   const bancosAtivos = bancos.filter((b) => b.ativo);
+  const { data: formasFaturaImportada = [] } = useFormasCartaoFaturaImportada();
 
   const criarDebito = useCriarDebito();
   const criarMovimentacao = useCriarMovimentacao();
@@ -496,6 +497,17 @@ export function DebitoAutomaticoModal({
               )}
             </div>
           </div>
+
+          {/* SIS-2026-0751: cartão de fatura importada — a fatura é a fonte do Fluxo, o débito não entra nele. */}
+          {tipoOrigem !== "movimentacao_financeira" && tipo === "saida" && formasFaturaImportada.includes(formaPagamento) && (
+            <div className="flex items-start gap-2 rounded-md border bg-amber-50 p-2.5 text-xs text-amber-800 dark:bg-amber-950/20 dark:text-amber-300">
+              <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+              <span>
+                Este cartão tem a fatura importada: a cobrança já vem nela. Este débito fica cadastrado aqui, mas não gera lançamento próprio
+                no Fluxo de Caixa para não contar duas vezes.
+              </span>
+            </div>
+          )}
 
           {tipoOrigem !== "movimentacao_financeira" && (
             <div>
