@@ -279,6 +279,7 @@ import EfetividadeFaltasCoberturas from "./pages/operacional/efetividade/FaltasC
 import EfetividadeHistorico from "./pages/operacional/efetividade/HistoricoIndicadores";
 import EfetividadeMensal from "./pages/operacional/efetividade/EfetividadeMensal";
 import FinanceiroConferenciaPonto from "./pages/financeiro/ConferenciaPonto";
+import FichaFinanceira from "./pages/financeiro/FichaFinanceira";
 import LaudosEpi from "./pages/sst/LaudosEpi";
 import ControleCa from "./pages/sst/ControleCa";
 // Afastamentos e Telemedicina (mig 20261029001750): atestados, lotação automática e impacto financeiro.
@@ -974,6 +975,8 @@ const App = () => (
             {/* 6ª aba (21/10/2026): o painel mensal dos contratos, mesmo menu ope_efetividade. */}
             <Route path="operacional/efetividade/mensal" element={<EfetividadeMensal />} />
             <Route path="financeiro/conferencia-ponto" element={<FinanceiroConferenciaPonto />} />
+            {/* Ficha Financeira: eventos de pagamento da Senior por colaborador (mig 20261029004700). */}
+            <Route path="financeiro/ficha-financeira" element={<FichaFinanceira />} />
             {/* Dashboard de Pontos (mig 274): a mesma tela do painel do RH, com
                 menu próprio em cada módulo (financeiro_/operacional_dashboard_pontos). */}
             <Route path="financeiro/dashboard-pontos" element={<ConferenciaPontoPainel />} />
