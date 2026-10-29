@@ -281,6 +281,8 @@ import EfetividadeMensal from "./pages/operacional/efetividade/EfetividadeMensal
 import FinanceiroConferenciaPonto from "./pages/financeiro/ConferenciaPonto";
 import LaudosEpi from "./pages/sst/LaudosEpi";
 import ControleCa from "./pages/sst/ControleCa";
+// Afastamentos e Telemedicina (mig 20261028002000): atestados, lotação automática e impacto financeiro.
+import SstAfastamentos from "./pages/sst/Afastamentos";
 import NovasAdmissoes from "./pages/rh/NovasAdmissoes";
 import BancoTalentos from "./pages/rh/BancoTalentos";
 import AcompanharColaboradores from "./pages/rh/AcompanharColaboradores";
@@ -1049,6 +1051,7 @@ const App = () => (
             <Route path="sst/aso-demissional" element={<AsoDemissional />} />
             <Route path="sst/laudos" element={<LaudosEpi />} />
             <Route path="sst/controle-ca" element={<ControleCa />} />
+            <Route path="sst/afastamentos" element={<SstAfastamentos />} />
             {/* BI */}
             <Route path="bi" element={<BIDashboard />} />
             <Route path="bi/links" element={<LinksBIs />} />

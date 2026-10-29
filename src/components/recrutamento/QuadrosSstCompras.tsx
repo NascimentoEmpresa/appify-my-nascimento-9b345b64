@@ -88,7 +88,7 @@ export function QuadrosSstCompras({ candidato, pedido, podeEnviar, enviando, onA
     : pedido ? ROTULO_PEDIDO[pedido.status] ?? pedido.status : c.compras_dispensado ? "Sem pedido" : "Aguardando";
 
   const enviar = (e: MouseEvent) => { e.stopPropagation(); onEnviarAgendamento(); };
-  // Início no posto (mig 20261028002000) — o que o SST e o Compras olham primeiro.
+  // Início no posto (mig 20261028002050) — o que o SST e o Compras olham primeiro.
   const ini = inicioTrabalho(c.data_inicio_trabalho);
   const corIni = ini ? COR_INICIO[ini.tom] : null;
 

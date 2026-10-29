@@ -564,7 +564,6 @@ export default function PainelDesenvolvedor() {
                     <TableHead>Módulo</TableHead>
                     <TableHead>Status</TableHead>
                     <TableHead className="text-center leading-tight">Prazo do<br />Solicitante</TableHead>
-                    {/* A coluna obrigatória vem emoldurada, como no mockup. */}
                     <TableHead className="text-center" title="Prazo real do desenvolvedor — horas, dias úteis ou semanas. Obrigatório para iniciar.">
                       Prazo <span className="text-destructive">*</span>
                     </TableHead>
