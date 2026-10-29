@@ -665,7 +665,7 @@ export default function CoordenarChamado() {
           {/* Parecer da I.A (mig 20261029000900): preço de mercado e
               complexidade ANTES de escolher o responsável — é para isso que
               ele é gerado já na abertura do chamado. */}
-          <ParecerIaChamado chamadoId={chamado.id} podeGerar={gestor} />
+          <ParecerIaChamado chamadoId={chamado.id} podeGerar={gestor} horasReais={chamado.horas_gastas} />
 
           {/* Antes da coordenação de propósito: num chamado já avaliado, a
               nota e o comentário são o contexto de quem vai redistribuir —

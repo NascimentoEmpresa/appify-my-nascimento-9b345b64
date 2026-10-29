@@ -3,8 +3,10 @@
 //
 // Três preços médios de mercado (freelancer, software house, equipe
 // interna — cada um com valor/hora × horas e a explicação) e a complexidade
-// de 1 a 5. O parecer é GERADO uma vez (na abertura do chamado, pela fila)
-// e guardado em CHAMADO_SISTEMA_PARECER_IA: abrir a tela só lê de lá.
+// de 1 a 5. O parecer é GERADO uma vez — SÓ quando o chamado é concluído
+// com as horas gastas informadas (29/10/2026, mig 20261029002400) — e
+// guardado em CHAMADO_SISTEMA_PARECER_IA: abrir a tela só lê de lá.
+// Preço = horas × valor/hora fixo de sênior × fator da complexidade.
 //
 // Falha da I.A aparece NA TELA (status 'erro' + mensagem) — a memória do
 // projeto registra que, nas outras I.As, a falha era silenciosa e ninguém
@@ -20,12 +22,15 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { fmtDataHora } from "./types";
+import { fmtHorasGastas } from "@/lib/chamados/horasGastas";
 
 export interface PrecoParecerIa {
   perfil: string;
   rotulo: string;
   valor_hora: number;
   horas: number;
+  /** Multiplicador da complexidade (pareceres de antes de 29/10/2026 não têm). */
+  fator_complexidade?: number | null;
   valor: number;
   embasamento: string;
   explicacao: string;
@@ -197,7 +202,13 @@ export function ResumoParecerIaLinha({ resumo }: { resumo?: ResumoParecerIa }) {
   );
 }
 
-export function ParecerIaChamado({ chamadoId, podeGerar }: { chamadoId: string; podeGerar: boolean }) {
+export function ParecerIaChamado({ chamadoId, podeGerar, horasReais }: {
+  chamadoId: string;
+  podeGerar: boolean;
+  /** CHAMADO_SISTEMA.horas_gastas — sem elas, não há parecer. */
+  horasReais?: number | string | null;
+}) {
+  const reais = Number(horasReais) > 0 ? Number(horasReais) : null;
   const qc = useQueryClient();
   const { toast } = useToast();
   const [gerando, setGerando] = useState(false);
@@ -234,7 +245,7 @@ export function ParecerIaChamado({ chamadoId, podeGerar }: { chamadoId: string; 
   // Valores fixos (29/10/2026, Pablo: "toda vez que clica em gerar de novo
   // altera os valores, perdendo a credibilidade"): o botão só existe enquanto
   // NÃO há parecer pronto — nunca gerou, ou a I.A falhou. Pronto, não muda.
-  const botao = podeGerar && parecer?.status !== "pronto" && parecer?.status !== "pendente" && (
+  const botao = podeGerar && reais != null && parecer?.status !== "pronto" && parecer?.status !== "pendente" && (
     <Button size="sm" variant="outline" className="h-7 gap-1.5 text-xs" onClick={gerar} disabled={gerando}>
       {gerando ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
       Gerar parecer
@@ -260,7 +271,9 @@ export function ParecerIaChamado({ chamadoId, podeGerar }: { chamadoId: string; 
         <p className="flex items-center gap-2 text-xs text-muted-foreground"><Loader2 className="h-3.5 w-3.5 animate-spin" /> A I.A está avaliando o chamado…</p>
       ) : !parecer ? (
         <p className="text-xs text-muted-foreground">
-          Este chamado ainda não tem parecer.{podeGerar ? " Clique em “Gerar parecer”." : ""}
+          {reais == null
+            ? "O parecer da I.A sai quando o desenvolvedor concluir o chamado e informar as horas gastas."
+            : `Este chamado ainda não tem parecer.${podeGerar ? " Clique em “Gerar parecer”." : ""}`}
         </p>
       ) : parecer.status === "pendente" ? (
         <p className="flex items-center gap-2 text-xs text-muted-foreground"><Loader2 className="h-3.5 w-3.5 animate-spin" /> A I.A está preparando o parecer — aparece aqui sozinho em instantes.</p>
@@ -296,11 +309,29 @@ export function ParecerIaChamado({ chamadoId, podeGerar }: { chamadoId: string; 
                 <p className="mt-1 text-lg font-bold">{fmtReais(p.valor)}</p>
                 <p className="text-[11px] font-medium text-muted-foreground">
                   {fmtReais(p.valor_hora)}/h × {Number(p.horas).toLocaleString("pt-BR")} h
+                  {p.fator_complexidade != null && p.fator_complexidade !== 1
+                    ? ` × ${Number(p.fator_complexidade).toLocaleString("pt-BR")} (complexidade)` : ""}
                 </p>
                 {p.explicacao && <p className="mt-1.5 text-[11px] leading-snug">{p.explicacao}</p>}
                 {p.embasamento && <p className="mt-1 text-[11px] leading-snug text-muted-foreground">{p.embasamento}</p>}
               </div>
             ))}
+          </div>
+
+          {/* Estimado × real (mig 20261029002400): as horas que o dev
+              informou ao concluir, no mesmo valor/hora e fator de cada perfil. */}
+          <div className="rounded-lg border border-border bg-muted/30 p-3 text-xs">
+            <p className="font-semibold">
+              Estimado {parecer.horas_estimadas != null ? `${fmtHorasGastas(parecer.horas_estimadas)} h` : "—"} × real {reais != null ? `${fmtHorasGastas(reais)} h` : "—"}
+            </p>
+            {reais != null ? (
+              <p className="mt-0.5 text-muted-foreground">
+                Valor das horas reais: {(parecer.precos ?? []).map((p) =>
+                  `${p.rotulo} ${fmtReais(reais * p.valor_hora * (p.fator_complexidade ?? 1))}`).join(" · ")}
+              </p>
+            ) : (
+              <p className="mt-0.5 text-muted-foreground">Horas reais não informadas (concluído antes da regra ou pela PR).</p>
+            )}
           </div>
 
           {parecer.complexidade_justificativa && (
