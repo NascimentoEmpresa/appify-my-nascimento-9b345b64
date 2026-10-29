@@ -18,6 +18,48 @@ import { describe, expect, it, vi } from "vitest";
 
 import payload from "./fixtures/rotatividade-estoque-producao.json";
 
+const porItemTamanho = payload.por_peca.slice(0, 6).map((linha, indice) => ({
+  codigo: `ITEM-${String(indice + 1).padStart(3, "0")}`,
+  item: linha.peca,
+  tamanho: linha.tamanho_top,
+  pedidas: linha.pedidas,
+  entradas: linha.entradas,
+  saidas: linha.saidas,
+  fisico: linha.saldo_disponivel,
+  reservado: 0,
+  saldo_disponivel: linha.saldo_disponivel,
+  giro: linha.giro,
+}));
+const primeiroItem = porItemTamanho[0];
+const payloadDetalhado = {
+  ...payload,
+  resumo: {
+    ...payload.resumo,
+    saldo_fisico: payload.resumo.saldo_disponivel,
+    reservado: 0,
+    item_tamanho_mais_sai: {
+      codigo: primeiroItem.codigo, item: primeiroItem.item, tamanho: primeiroItem.tamanho,
+      unidades: primeiroItem.saidas, saldo: primeiroItem.saldo_disponivel,
+    },
+    item_tamanho_mais_entra: {
+      codigo: primeiroItem.codigo, item: primeiroItem.item, tamanho: primeiroItem.tamanho,
+      unidades: primeiroItem.entradas, saldo: primeiroItem.saldo_disponivel,
+    },
+    item_tamanho_maior_giro: {
+      codigo: primeiroItem.codigo, item: primeiroItem.item, tamanho: primeiroItem.tamanho,
+      giro: primeiroItem.giro, saidas: primeiroItem.saidas, saldo: primeiroItem.saldo_disponivel,
+    },
+    peca_mais_sai: { codigo: primeiroItem.codigo, peca: primeiroItem.item, unidades: primeiroItem.saidas },
+  },
+  por_item_tamanho: porItemTamanho,
+  por_peca: payload.por_peca.map((linha, indice) => ({
+    ...linha,
+    codigo: `ITEM-${String(indice + 1).padStart(3, "0")}`,
+    fisico: linha.saldo_disponivel,
+    reservado: 0,
+  })),
+};
+
 const { consultar, consultarHistorico, consultarFornecimentos } = vi.hoisted(() => ({
   consultar: vi.fn(),
   consultarHistorico: vi.fn(),
@@ -41,7 +83,7 @@ const fornecimentosUniformes = [
 vi.mock("@/hooks/useDashboardRotatividadeEstoque", () => ({
   useDashboardRotatividadeEstoque: (empresaId: string | null, filtros: unknown) => {
     consultar(empresaId, filtros);
-    return { data: payload, error: null, isLoading: false, isFetching: false, refetch: vi.fn() };
+    return { data: payloadDetalhado, error: null, isLoading: false, isFetching: false, refetch: vi.fn() };
   },
   useHistoricoUniformes: (empresaId: string | null, filtros: unknown) => {
     consultarHistorico(empresaId, filtros);
@@ -116,7 +158,7 @@ function montar() {
 }
 
 describe("aba Rotatividade do Estoque — render com payload de produção", () => {
-  it("abre em Uniformes e repassa o período e o contrato do filtro da página", () => {
+  it("abre em Todas as categorias e repassa o período e o contrato do filtro da página", () => {
     consultar.mockClear();
     consultarHistorico.mockClear();
     consultarFornecimentos.mockClear();
@@ -127,7 +169,7 @@ describe("aba Rotatividade do Estoque — render com payload de produção", () 
         inicio: "2026-01-01",
         fim: "2026-10-13",
         contratoId: null,
-        categoria: "uniforme",
+        categoria: "",
       }),
     );
     expect(consultarHistorico).toHaveBeenCalledWith(
@@ -161,28 +203,19 @@ describe("aba Rotatividade do Estoque — render com payload de produção", () 
 
   it("responde as quatro perguntas do diretor nos cartões de destaque", () => {
     montar();
-    const r = payload.resumo;
+    const r = payloadDetalhado.resumo;
 
-    // "qual tamanho mais sai" — o valor sai do próprio payload, não fixo no
-    // teste: a base é viva e o número muda entre capturas da fixture.
-    expect(screen.getByText("Tamanho que mais sai")).toBeInTheDocument();
+    expect(screen.getByText("Item/tamanho que mais sai")).toBeInTheDocument();
+    expect(screen.getAllByText(`${r.item_tamanho_mais_sai.item} · ${r.item_tamanho_mais_sai.tamanho}`).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(new RegExp(`${esperado(r.item_tamanho_mais_sai.unidades)} saídas físicas`)).length).toBeGreaterThan(0);
+
+    expect(screen.getByText("Item/tamanho que mais entra")).toBeInTheDocument();
     expect(
-      screen.getByText(
-        `${esperado(r.tamanho_mais_sai.unidades)} unidades · ${esperadoPct(
-          r.tamanho_mais_sai.percentual,
-        )} de tudo que saiu`,
-      ),
+      screen.getByText(new RegExp(`${esperado(r.item_tamanho_mais_entra.unidades)} unidades recebidas`)),
     ).toBeInTheDocument();
 
-    // "qual mais entra"
-    expect(screen.getByText("Tamanho que mais entra")).toBeInTheDocument();
-    expect(
-      screen.getByText(`${esperado(r.tamanho_mais_entra.unidades)} unidades recebidas`),
-    ).toBeInTheDocument();
-
-    // "qual mais roda dentro do estoque"
-    expect(screen.getByText("Maior rotatividade")).toBeInTheDocument();
-    expect(screen.getByText(new RegExp(`gira ${r.tamanho_maior_giro.giro}`.replace(".", ",")))).toBeInTheDocument();
+    expect(screen.getByText("Item/tamanho de maior giro")).toBeInTheDocument();
+    expect(screen.getByText(new RegExp(`giro ${r.item_tamanho_maior_giro.giro}`.replace(".", ",")))).toBeInTheDocument();
 
     // "qual uniforme mais sai" — a peça aparece no destaque E na tabela de
     // peças, então são duas ocorrências legítimas.
@@ -230,23 +263,16 @@ describe("aba Rotatividade do Estoque — render com payload de produção", () 
     ).toBeInTheDocument();
   });
 
-  it("monta a tabela por tamanho com a situação de cada um", () => {
+  it("monta a tabela por item e tamanho com código e saldo conciliado", () => {
     montar();
-    // Duas tabelas na aba: a primeira é o detalhe por tamanho.
-    const [porTamanho] = screen.getAllByRole("table");
-    expect(within(porTamanho).getByText("Rotatividade")).toBeInTheDocument();
-    expect(within(porTamanho).getByText("Cobertura")).toBeInTheDocument();
-
-    // Uma linha por tamanho com algum movimento ou saldo.
-    const comMovimento = payload.por_tamanho.filter(
-      (t) => t.pedidas > 0 || t.saidas > 0 || t.entradas > 0 || t.saldo_disponivel > 0,
-    );
-    expect(within(porTamanho).getAllByRole("row").length).toBe(comMovimento.length + 1);
-
-    // Há tamanho com estoque muito acima do consumo (P tinha 1.741 contra 182
-    // saídas): a cobertura é cortada em +999 dias e sinalizada.
-    expect(within(porTamanho).getAllByText("+999 dias").length).toBeGreaterThan(0);
-    expect(within(porTamanho).getAllByText("Estoque alto").length).toBeGreaterThan(0);
+    expect(screen.getByText("Detalhe por Item e Tamanho")).toBeInTheDocument();
+    const tabela = screen.getAllByRole("table").find((item) => within(item).queryByText("Saídas físicas"));
+    expect(tabela).toBeDefined();
+    expect(within(tabela!).getByText("Código")).toBeInTheDocument();
+    expect(within(tabela!).getByText("Físico")).toBeInTheDocument();
+    expect(within(tabela!).getByText("Reservado")).toBeInTheDocument();
+    expect(within(tabela!).getAllByRole("row").length).toBe(porItemTamanho.length + 1);
+    expect(within(tabela!).getByText("ITEM-001")).toBeInTheDocument();
   });
 
   it("credita o levantamento, dizendo de quantas pessoas a grade saiu", () => {

@@ -4,14 +4,18 @@ import type {
   DashboardComprasEstoqueDados,
   FiltroDashboardCompras,
 } from "@/lib/suprimentos/dashboardComprasEstoque";
+import { consolidarDashboardsCompras } from "@/lib/suprimentos/dashboardComprasEstoque";
 
 export function useDashboardComprasEstoque(
-  empresaId: string | null | undefined,
+  empresaIdOuIds: string | string[] | null | undefined,
   filtros: FiltroDashboardCompras,
 ) {
+  const empresaIds = Array.isArray(empresaIdOuIds)
+    ? empresaIdOuIds.filter(Boolean)
+    : empresaIdOuIds ? [empresaIdOuIds] : [];
   return useQuery({
-    queryKey: ["sup_dashboard_compras_estoque", empresaId, filtros],
-    enabled: !!empresaId && !!filtros.inicio && !!filtros.fim,
+    queryKey: ["sup_dashboard_compras_estoque", empresaIds, filtros],
+    enabled: empresaIds.length > 0 && !!filtros.inicio && !!filtros.fim,
     staleTime: 2 * 60 * 1000,
     queryFn: async (): Promise<DashboardComprasEstoqueDados> => {
       const cliente = supabase as unknown as {
@@ -20,16 +24,19 @@ export function useDashboardComprasEstoque(
           error: { message: string } | null;
         }>;
       };
-      const { data, error } = await cliente.rpc("sup_dashboard_compras_estoque", {
-        p_empresa_id: empresaId,
-        p_inicio: filtros.inicio,
-        p_fim: filtros.fim,
-        p_contrato_id: filtros.contratoId,
-        p_categoria: filtros.categoria,
-        p_comprador: filtros.comprador,
-      });
-      if (error) throw error;
-      return data as DashboardComprasEstoqueDados;
+      const paineis = await Promise.all(empresaIds.map(async (empresaId) => {
+        const { data, error } = await cliente.rpc("sup_dashboard_compras_estoque", {
+          p_empresa_id: empresaId,
+          p_inicio: filtros.inicio,
+          p_fim: filtros.fim,
+          p_contrato_id: filtros.contratoId,
+          p_categoria: filtros.categoria,
+          p_comprador: filtros.comprador,
+        });
+        if (error) throw error;
+        return data as DashboardComprasEstoqueDados;
+      }));
+      return consolidarDashboardsCompras(paineis);
     },
   });
 }

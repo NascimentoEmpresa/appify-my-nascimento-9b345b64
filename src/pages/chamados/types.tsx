@@ -6,6 +6,7 @@
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { Star, type LucideIcon } from "lucide-react";
+import { prazoVencido, situacaoDesenvolvimento } from "@/lib/chamados/prazoDesenvolvimento";
 
 // ---- Opções (options de select / checkbox) --------------------------
 export const CATEGORIAS = [
@@ -123,6 +124,30 @@ export interface Chamado {
   // Cancelamento pelo solicitante (mig 260). O motivo fica mesmo após reabrir.
   motivo_cancelamento?: string | null;
   cancelado_em?: string | null;
+  // Confirmação do solicitante (mig 20261028001300). NULL com status
+  // 'concluido' = o time concluiu e o solicitante ainda não confirmou.
+  conclusao_confirmada_em?: string | null;
+  conclusao_confirmada_por?: string | null;
+  // Início do desenvolvimento + prazo informado pelo dev (mig 20261028001400).
+  // Com status 'em_andamento': iniciado = "Em desenvolvimento"; sem = na fila.
+  desenvolvimento_iniciado_em?: string | null;
+  desenvolvimento_iniciado_por?: string | null;
+  prazo_conclusao_em?: string | null;
+  // Prazo em dias úteis, travado (mig 20261028001410): só redefine quando a
+  // tarefa desce na fila (posicao_dev > prazo_posicao_fila).
+  prazo_dias?: number | null;
+  prazo_definido_em?: string | null;
+  prazo_definido_por?: string | null;
+  prazo_posicao_fila?: number | null;
+  prazo_redefinicoes?: number | null;
+  /** Gravado ao concluir: true = no prazo, false = com atraso, null = sem prazo. */
+  concluido_no_prazo?: boolean | null;
+  /** Prazo esperado informado por quem abriu (mig 20261028001420). */
+  prazo_solicitante?: string | null;
+  /** Onde a prioridade foi definida: reunião ou extra (mig 20261028001700). */
+  definicao?: "reuniao" | "extra" | null;
+  definicao_em?: string | null;
+  definicao_por?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -343,6 +368,57 @@ export function StatCard({
 export function StatusBadge({ status }: { status: string }) {
   const s = STATUS_CHAMADO[status] ?? { label: status, cls: "" };
   return <Badge variant="outline" className={`text-[10px] font-semibold ${s.cls}`}>{s.label}</Badge>;
+}
+
+/**
+ * Selo "aguardando confirmação" ao lado do status (mig 20261028001300): o
+ * status continua 'concluido', mas o chamado só fecha quando o solicitante
+ * confirma. `paraSolicitante` troca o texto para "sua confirmação".
+ */
+export function SeloConfirmacao({ chamado, paraSolicitante = false }: {
+  chamado: Pick<Chamado, "status" | "conclusao_confirmada_em">; paraSolicitante?: boolean;
+}) {
+  if (chamado.status !== "concluido" || chamado.conclusao_confirmada_em) return null;
+  return (
+    <Badge variant="outline" className="border-warning/40 bg-warning/10 text-[10px] font-semibold text-warning">
+      {paraSolicitante ? "Aguardando sua confirmação" : "Aguardando confirmação do solicitante"}
+    </Badge>
+  );
+}
+
+/**
+ * Selo do andamento do dev (mig 20261028001400): em andamento com início
+ * marcado = "Em desenvolvimento"; sem início = "Na fila". Prazo vencido em vermelho.
+ */
+export function SeloDesenvolvimento({ chamado, comPrazo = false }: {
+  chamado: Pick<Chamado, "status" | "desenvolvimento_iniciado_em" | "prazo_conclusao_em">; comPrazo?: boolean;
+}) {
+  const s = situacaoDesenvolvimento(chamado);
+  if (!s) return null;
+  if (s === "na_fila") {
+    return <Badge variant="outline" className="border-muted-foreground/30 bg-muted text-[10px] font-semibold text-muted-foreground">Na fila — aguardando início</Badge>;
+  }
+  const vencido = prazoVencido(chamado);
+  return (
+    <Badge variant="outline" className={`text-[10px] font-semibold ${vencido ? "border-destructive/30 bg-destructive/10 text-destructive" : "border-info/30 bg-info/10 text-info"}`}>
+      Em desenvolvimento{comPrazo && chamado.prazo_conclusao_em ? ` · ${vencido ? "venceu" : "até"} ${fmtData(chamado.prazo_conclusao_em)}` : ""}
+    </Badge>
+  );
+}
+
+/**
+ * Definição da prioridade (mig 20261028001700): combinada na reunião de
+ * priorização ou extra (fora dela). A coordenação escolhe ao direcionar.
+ */
+export const DEFINICOES = {
+  reuniao: { label: "Reunião", cls: "border-info/40 bg-info/10 text-info" },
+  extra:   { label: "Extra",   cls: "border-violet-400/50 bg-violet-500/10 text-violet-700 dark:text-violet-300" },
+} as const;
+
+export function DefinicaoBadge({ definicao }: { definicao?: string | null }) {
+  const d = definicao ? DEFINICOES[definicao as keyof typeof DEFINICOES] : null;
+  if (!d) return <span className="text-xs text-muted-foreground">—</span>;
+  return <Badge variant="outline" className={`rounded-full text-[10px] font-semibold ${d.cls}`}>{d.label}</Badge>;
 }
 
 export function PrioridadeBadge({ prioridade }: { prioridade: string }) {

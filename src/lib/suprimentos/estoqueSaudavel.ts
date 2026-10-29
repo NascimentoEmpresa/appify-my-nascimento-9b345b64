@@ -202,10 +202,13 @@ export interface RankingsEstoque {
 export interface MesEstoque {
   mes: string;
   rotulo: string;
-  saldo: number;
+  /** Nulo quando aquele mês ainda não tinha fechamento confiável. */
+  saldo: number | null;
   demanda: number;
-  alvo: number;
-  valor: number;
+  alvo: number | null;
+  valor: number | null;
+  /** Fechamento histórico, posição ao vivo de hoje ou mês sem fechamento. */
+  tipo_ponto?: "fechamento" | "hoje" | "sem_fechamento";
 }
 
 export interface AlertaEstoque {

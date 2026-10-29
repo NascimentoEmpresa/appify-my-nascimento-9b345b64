@@ -13,9 +13,11 @@
  * estado. Teste de mapeamento puro não teria pego isso — só renderizar pega.
  * Daí este ser um teste de render, fora do padrão do projeto.
  */
-import { render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { SolicitacaoDiaria } from "@/pages/operacional/diarias";
+
+const pontoMock = vi.hoisted(() => ({ data: null as unknown }));
 
 // As bordas de rede do modal. Sem isto o teste subiria react-query e o cliente
 // do Supabase só para desenhar um formulário.
@@ -24,7 +26,7 @@ vi.mock("@/hooks/useDiarias", async () => {
   return {
     ...real,
     // Ponto do faltante (mig 20261007000021): sem RPC no teste, nada a conferir.
-    usePontoFaltanteDiaria: () => ({ data: null, isFetching: false }),
+    usePontoFaltanteDiaria: () => ({ data: pontoMock.data, isFetching: false }),
     useContratosDiaria: () => ({
       data: [{ id: "c1", nome: "Contrato 1", cliente: "Cliente", empresa: "Empresa" }],
       isLoading: false,
@@ -100,6 +102,10 @@ const abrir = (modo: "ajustar" | "nova") =>
   );
 
 describe("modo ajustar", () => {
+  beforeEach(() => {
+    pontoMock.data = null;
+  });
+
   it("abre com os campos preenchidos como a solicitação foi enviada", () => {
     abrir("ajustar");
     // Pessoas e Pix: é o que sumia inteiro no relato.
@@ -125,6 +131,38 @@ describe("modo ajustar", () => {
     abrir("ajustar");
     expect(screen.getByDisplayValue("MARIA DA SILVA")).not.toHaveAttribute("readonly");
     expect(screen.getByRole("button", { name: /Reenviar para aprovação/i })).toBeInTheDocument();
+  });
+
+  it("ponto batido fica como aviso e não bloqueia o reenvio", () => {
+    pontoMock.data = {
+      disponivel: true,
+      sincronizado_ate: "2026-09-18",
+      vinculos: [{ id: 1, nome: "MARIA DA SILVA", cadastro: "123", empresa: "1", situacao: "Trabalhando" }],
+      dias: [{ data: "2026-09-18", minutos: [420, 690] }],
+    };
+
+    abrir("ajustar");
+
+    expect(screen.getByText(/MARIA DA SILVA bateu ponto em/i)).toBeInTheDocument();
+    expect(screen.getByText(/o lançamento e a aprovação continuam liberados/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Reenviar para aprovação/i })).not.toBeDisabled();
+  });
+
+  it("ponto batido fica como aviso e não bloqueia uma nova solicitação", () => {
+    pontoMock.data = {
+      disponivel: true,
+      sincronizado_ate: "2026-09-18",
+      vinculos: [{ id: 1, nome: "MARIA DA SILVA", cadastro: "123", empresa: "1", situacao: "Trabalhando" }],
+      dias: [{ data: "2026-09-18", minutos: [420, 690] }],
+    };
+
+    abrir("nova");
+    const campoData = document.querySelector<HTMLInputElement>('input[type="date"]');
+    expect(campoData).not.toBeNull();
+    fireEvent.change(campoData!, { target: { value: "2026-09-18" } });
+
+    expect(screen.getByText(/bateu ponto em 18\/09\/2026/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Salvar solicitação/i })).not.toBeDisabled();
   });
 
   it("não contamina o modo nova: ali os campos continuam vazios", () => {
