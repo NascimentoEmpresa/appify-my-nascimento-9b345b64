@@ -1714,6 +1714,31 @@ export default function DespesaVisualizar() {
                 />
               </div>
 
+              {/* SIS-2026-0733: juros informado ao confirmar o pagamento — evidência na própria despesa. O Fluxo de Caixa
+                  mostra o valor pago (compra + juros); o Valor acima continua sendo o da compra (orçamento/aprovação). */}
+              {despesa.status === "despesa_paga" &&
+                (() => {
+                  const paraNumero = (n: number | null | undefined) => Number(n ?? 0);
+                  const jurosParcelas = (data?.parcelas ?? []).filter((p) => p.status === "paga").reduce((t, p) => t + paraNumero(p.valor_juros), 0);
+                  const juros = despesa.parcelado ? jurosParcelas : paraNumero(despesa.valor_juros);
+                  if (juros <= 0) return null;
+                  const compra = paraNumero(despesa.valor_aprovado ?? despesa.valor_total);
+                  return (
+                    <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-200">
+                      {despesa.parcelado ? (
+                        <>
+                          <strong>Pago com juros:</strong> {fmtMoneyResumo(juros)} no total das parcelas pagas (detalhe na coluna Valor da tabela de parcelas).
+                        </>
+                      ) : (
+                        <>
+                          <strong>Pago com juros:</strong> compra {fmtMoneyResumo(compra)} + juros {fmtMoneyResumo(juros)} ={" "}
+                          <strong>valor pago {fmtMoneyResumo(compra + juros)}</strong>
+                        </>
+                      )}
+                    </div>
+                  );
+                })()}
+
               {dadosDespesaPagamentoEditaveis && (
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
@@ -2023,7 +2048,14 @@ export default function DespesaVisualizar() {
                             }
                           />
                         ) : (
-                          fmtMoneyResumo(p.valor)
+                          <>
+                            {fmtMoneyResumo(p.valor)}
+                            {p.status === "paga" && Number(p.valor_juros ?? 0) > 0 && (
+                              <div className="text-xs text-amber-700 dark:text-amber-400">
+                                + {fmtMoneyResumo(Number(p.valor_juros))} de juros = {fmtMoneyResumo(p.valor + Number(p.valor_juros))}
+                              </div>
+                            )}
+                          </>
                         )}
                       </TableCell>
                       <TableCell>
