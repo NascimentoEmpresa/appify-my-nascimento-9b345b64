@@ -392,6 +392,7 @@ export default function FormularioRespostas() {
   const mesInicialAplicado = useRef(false);
   const [part, setPart] = useState<Participacao | null>(null);   // quem votou no mês (null = sem dado/sem permissão)
   const [verFaltantes, setVerFaltantes] = useState(false);
+  const [hoverFaltam, setHoverFaltam] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -723,14 +724,31 @@ export default function FormularioRespostas() {
                   <div style={{ fontSize: 11.5, color: "#94a3b8" }}>Entre as {part.alvo_total} pessoa(s) que podem responder este formulário</div>
                 </div>
                 <span style={{ fontSize: 12.5, fontWeight: 800, padding: "5px 11px", borderRadius: 20, background: "#dcfce7", color: "#15803d" }}>✓ {part.responderam} responderam</span>
-                <span style={{ fontSize: 12.5, fontWeight: 800, padding: "5px 11px", borderRadius: 20, background: part.faltam ? "#fef3c7" : "#f1f5f9", color: part.faltam ? "#b45309" : "#64748b" }}>⏳ {part.faltam} faltam</span>
+                {/* Mouse em cima mostra QUEM falta (Pablo, 29/10/2026: "pra
+                    conseguirmos pedir pra votar"). Também no anônimo, desde a
+                    mig 20261029001300: participar não é sigiloso, o conteúdo é. */}
+                <span style={{ position: "relative" }}
+                  onMouseEnter={() => setHoverFaltam(true)} onMouseLeave={() => setHoverFaltam(false)}>
+                  <span style={{ fontSize: 12.5, fontWeight: 800, padding: "5px 11px", borderRadius: 20, background: part.faltam ? "#fef3c7" : "#f1f5f9", color: part.faltam ? "#b45309" : "#64748b", cursor: part.faltantes?.length ? "help" : "default" }}>⏳ {part.faltam} faltam</span>
+                  {hoverFaltam && !!part.faltantes?.length && (
+                    <div style={{ position: "absolute", top: "calc(100% + 6px)", right: 0, zIndex: 60, width: 320, maxHeight: 320, overflowY: "auto", background: "#fff", border: "1px solid #e2e8f0", borderRadius: 12, boxShadow: "0 12px 30px rgba(15,23,42,.16)", padding: "10px 12px" }}>
+                      <div style={{ fontSize: 11, fontWeight: 800, color: "#b45309", marginBottom: 6 }}>Faltam votar em {rotuloMes(mesSel)} ({part.faltantes.length})</div>
+                      {part.faltantes.map((f, fi) => (
+                        <div key={fi} style={{ fontSize: 11.5, padding: "3px 0", borderTop: fi ? "1px solid #f1f5f9" : "none", color: "#334155" }}>
+                          {f.nome}{f.setor ? <span style={{ color: "#4338ca", fontWeight: 800, fontSize: 10.5 }}> · {f.setor}</span> : null}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </span>
               </div>
               <div style={{ height: 8, background: "#f1f5f9", borderRadius: 8, overflow: "hidden", marginTop: 10 }}>
                 <div style={{ width: `${part.alvo_total ? Math.round(((part.responderam ?? 0) / part.alvo_total) * 100) : 0}%`, height: "100%", background: "#16a34a" }} />
               </div>
-              {part.anonimo ? (
-                <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 8 }}>🕶 Formulário anônimo: só os números — quem respondeu (e, por consequência, quem falta) não é mostrado.</div>
-              ) : !!part.faltantes?.length && (
+              {part.anonimo && (
+                <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 8 }}>🕶 Formulário anônimo: a lista mostra só quem ainda não votou — as respostas continuam sem nome.</div>
+              )}
+              {!!part.faltantes?.length && (
                 <div style={{ marginTop: 8 }}>
                   <button onClick={() => setVerFaltantes(v => !v)} style={btnMini("#fff", "#0f3171", "1px solid rgba(15,49,113,.25)")}>
                     {verFaltantes ? "Ocultar" : `Ver quem falta (${part.faltantes.length})`}
