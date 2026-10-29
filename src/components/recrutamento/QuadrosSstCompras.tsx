@@ -20,6 +20,7 @@
 import type { CSSProperties, MouseEvent, ReactNode } from "react";
 import { ChevronRight, Loader2, Package, Stethoscope } from "lucide-react";
 import { resumoAgendamentoAso, situacaoSst, type AgendamentoAso } from "@/lib/recrutamento/agendamentoAso";
+import { COR_INICIO, inicioTrabalho } from "@/lib/recrutamento/inicioTrabalho";
 
 export function IconeWhatsApp({ tamanho = 12, cor = "#fff" }: { tamanho?: number; cor?: string }) {
   return (
@@ -64,7 +65,7 @@ function Quadro({ titulo, icone, tom, chip, onAbrir, rotuloAbrir, children }: {
 const linhaInfo: CSSProperties = { fontSize: 10, color: "#64748b", lineHeight: 1.3, overflowWrap: "anywhere" };
 
 export function QuadrosSstCompras({ candidato, pedido, podeEnviar, enviando, onAbrirSst, onAbrirCompras, onEnviarAgendamento }: {
-  candidato: AgendamentoAso & { compras_ok?: boolean | null; compras_dispensado?: boolean | null };
+  candidato: AgendamentoAso & { compras_ok?: boolean | null; compras_dispensado?: boolean | null; data_inicio_trabalho?: string | null };
   pedido?: { protocolo: string; status: string } | null;
   /** Tem telefone e quem vê pode recrutar. */
   podeEnviar: boolean;
@@ -87,9 +88,19 @@ export function QuadrosSstCompras({ candidato, pedido, podeEnviar, enviando, onA
     : pedido ? ROTULO_PEDIDO[pedido.status] ?? pedido.status : c.compras_dispensado ? "Sem pedido" : "Aguardando";
 
   const enviar = (e: MouseEvent) => { e.stopPropagation(); onEnviarAgendamento(); };
+  // Início no posto (mig 20261028002000) — o que o SST e o Compras olham primeiro.
+  const ini = inicioTrabalho(c.data_inicio_trabalho);
+  const corIni = ini ? COR_INICIO[ini.tom] : null;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 5, marginTop: 6 }}>
+      {ini && corIni && (
+        <div title={`Começa a trabalhar em ${ini.data} — ${ini.prazo}`}
+          style={{ fontSize: 10, fontWeight: 800, color: corIni.cor, background: corIni.fundo, border: `1px solid ${corIni.borda}`, borderRadius: 7, padding: "3px 6px", lineHeight: 1.3 }}>
+          📅 Início {ini.curta}
+          <div style={{ fontWeight: 600 }}>{ini.prazo}</div>
+        </div>
+      )}
       <Quadro titulo="SST" icone={<Stethoscope size={12} aria-hidden />} tom={tomSst} chip={chipSst}
         onAbrir={onAbrirSst} rotuloAbrir="Ver o SST: agendamento completo (local, mapa, copiar) e a ficha do ASO">
         {c.sst_data_exame ? (

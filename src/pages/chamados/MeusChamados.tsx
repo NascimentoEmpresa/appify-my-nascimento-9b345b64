@@ -196,7 +196,8 @@ export default function MeusChamados({ base = "/app/central-servicos/chamados" }
         </Card>
       )}
 
-      <div className="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+      {/* 5 cards numa linha só a partir de 1536 px — abaixo disso os rótulos cortavam. */}
+      <div className="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-5">
         <StatCard icon={ClipboardList} tone="primary" label="Total de solicitações" value={stats?.meus ?? 0} hint="Meus chamados" />
         <StatCard icon={CheckCircle2} tone="success" label="Chamados finalizados" value={stats?.concluidos ?? 0} hint="Concluídos" />
         <StatCard icon={RotateCcw} tone="primary" label="Necessita de retorno" value={stats?.aguardando_acao ?? 0} hint="Aguardando sua ação" />
@@ -213,10 +214,12 @@ export default function MeusChamados({ base = "/app/central-servicos/chamados" }
           <p className="py-8 text-center text-sm text-muted-foreground">Você ainda não abriu chamados. Clique em <b>Abrir Novo Chamado</b>.</p>
         ) : (
           <div className="overflow-x-auto">
-            <Table>
+            {/* Células compactas (como os painéis): com o padding padrão a
+                tabela tinha 1.530 px num card de 1.060 e saía para o lado. */}
+            <Table className="[&_td]:px-2 [&_td]:py-2.5 [&_th]:px-2">
               <TableHeader>
                 <TableRow>
-                  <TableHead className="w-24 text-center">Posição na fila</TableHead>
+                  <TableHead className="w-16 text-center leading-tight">Posição<br />na fila</TableHead>
                   <TableHead>Nº do chamado</TableHead>
                   <TableHead>Assunto</TableHead>
                   <TableHead>Módulo / Sistema</TableHead>
@@ -225,7 +228,8 @@ export default function MeusChamados({ base = "/app/central-servicos/chamados" }
                   <TableHead>Responsável</TableHead>
                   <TableHead>Prazo previsto</TableHead>
                   <TableHead>Abertura</TableHead>
-                  <TableHead>Observação do gerente</TableHead>
+                  {/* Só em tela larga — a observação também aparece no acompanhamento. */}
+                  <TableHead className="hidden 2xl:table-cell">Observação do gerente</TableHead>
                   <TableHead className="text-right">Ações</TableHead>
                 </TableRow>
               </TableHeader>
@@ -275,14 +279,14 @@ export default function MeusChamados({ base = "/app/central-servicos/chamados" }
                     </TableCell>
                     <TableCell className="text-xs">{nomeDe(c.responsavel_id)}</TableCell>
                     <TableCell className="whitespace-nowrap text-xs">{c.prazo_conclusao_em ? fmtData(c.prazo_conclusao_em) : fmtData(c.prazo_previsto)}</TableCell>
-                    <TableCell className="whitespace-nowrap text-xs text-muted-foreground">{fmtDataHora(c.created_at)}</TableCell>
-                    <TableCell className="max-w-[200px] truncate text-xs text-muted-foreground" title={c.observacao_gerente ?? ""}>
+                    <TableCell className="min-w-[78px] text-xs text-muted-foreground">{fmtDataHora(c.created_at)}</TableCell>
+                    <TableCell className="hidden max-w-[200px] truncate text-xs text-muted-foreground 2xl:table-cell" title={c.observacao_gerente ?? ""}>
                       {c.observacao_gerente
                         || (c.status === "reprovado" && c.motivo_reprovacao ? c.motivo_reprovacao
                         : c.status === "cancelado" && c.motivo_cancelamento ? `Cancelado: ${c.motivo_cancelamento}` : "—")}
                     </TableCell>
                     <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
-                      <div className="flex items-center justify-end gap-1.5">
+                      <div className="ml-auto flex max-w-[220px] flex-wrap items-center justify-end gap-1">
                       <BotaoStatusChamado chamado={c} validacao={validacoes[c.id] ?? null} nomeDe={nomeDe} />
                       <BotaoChatChamado
                         chamado={c}

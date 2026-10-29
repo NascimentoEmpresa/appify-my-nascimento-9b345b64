@@ -67,7 +67,7 @@ export function ConfirmarConclusaoDialog({
   return (
     <>
       <Dialog open={open} onOpenChange={(v) => { if (!confirmando) onOpenChange(v); }}>
-        <DialogContent className="max-w-md">
+        <DialogContent className="max-w-md [&>*]:min-w-0">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <CheckCircle2 className="h-5 w-5 text-success" /> Confirmar conclusão{chamado ? ` #${chamado.numero}` : ""}
