@@ -14,12 +14,24 @@
 // própria RLS de CHAMADO_SISTEMA, lida com o JWT de quem perguntou. Não grava
 // nada: o histórico vem do cliente a cada pergunta.
 //
+// NÚMEROS FIXOS (29/10/2026, Pablo: "toda vez que clica em gerar de novo
+// altera os valores, perdendo a credibilidade... mantém os valores fixos
+// gerados, só explica os valores"). Parecer PRONTO não é refeito — nem pelo
+// botão (que saiu da tela), nem pela fila.
+//
+// SÓ DEPOIS DAS HORAS (29/10/2026, Pablo: "a i.a só pode dar parecer quando
+// o desenvolvedor concluir e informar as horas de desenvolvimento"): sem
+// chamado concluído COM horas_gastas, não gera (mig 20261029002400). A única
+// troca de um parecer pronto é o feito ANTES das horas serem informadas
+// (horas_gastas_em mais novo que gerado_em) — sobra de antes da regra.
+//
 // Dois jeitos de GERAR o parecer:
-//   · worker/fila_http (Bearer = service_role): chamado recém-aberto e o
-//     backfill da migration. Parecer já pronto é pulado — não gasta token.
-//   · botão "Gerar de novo" na tela (Bearer = JWT do usuário): confere
+//   · worker/fila_http (Bearer = service_role): enfileirado pelo banco quando
+//     as horas são gravadas (trg_chamado_horas_gastas_parecer_ia).
+//   · botão "Gerar parecer" na tela (Bearer = JWT do usuário), só quando
+//     ainda NÃO há parecer pronto (nunca gerou ou deu erro): confere
 //     chamado_parecer_ia_pode_gerar (gestão de chamados ou o responsável)
-//     COM O LOGIN DE QUEM CLICOU antes de qualquer coisa, e refaz sempre.
+//     COM O LOGIN DE QUEM CLICOU antes de qualquer coisa.
 //
 // A I.A falhar NÃO some em silêncio: a linha fica com status 'erro' e a
 // mensagem, e a tela mostra. Se já havia um parecer pronto, ele é mantido e
@@ -35,7 +47,7 @@ import {
   type ChamadoParaParecer, type EntregaReal, type EventoGithub, type ParecerParaChat,
 } from "../_shared/chamado-parecer-ia.ts";
 
-const CAMPOS_CHAMADO = "id, numero, assunto, tipo_solicitacao, descricao, categorias, modulo_sistema, modulo_sistema_outro, ambiente, impacto_trabalho, urgencia, afeta_usuarios, observacoes_solicitante, definicao, status, created_at, concluido_em";
+const CAMPOS_CHAMADO = "id, numero, assunto, tipo_solicitacao, descricao, categorias, modulo_sistema, modulo_sistema_outro, ambiente, impacto_trabalho, urgencia, afeta_usuarios, observacoes_solicitante, definicao, status, created_at, concluido_em, horas_gastas, horas_gastas_em";
 
 /** O que foi entregue de fato: PRs e métricas gravadas pelo vínculo/merge do
  *  GitHub (chamado-vincular-pr / chamado-concluir-pr). Sem PR, null. */
@@ -82,7 +94,7 @@ function provedores(): Provedor[] {
 
 const esperar = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-async function chamarIA(provs: Provedor[], messages: { role: string; content: string }[], json = true):
+async function chamarIA(provs: Provedor[], messages: { role: string; content: string }[], json = true, temperatura = 0.2):
   Promise<{ texto?: string; provedor?: string; modelo?: string; erro?: string; status?: number }> {
   let ultimo: { erro: string; status: number } = { erro: "Não foi possível gerar o parecer agora.", status: 502 };
   for (const prov of provs) {
@@ -92,7 +104,7 @@ async function chamarIA(provs: Provedor[], messages: { role: string; content: st
         headers: { Authorization: `Bearer ${prov.chave}`, "Content-Type": "application/json" },
         body: JSON.stringify({
           model: prov.modelo,
-          temperature: 0.2,
+          temperature: temperatura,
           messages,
           // O Groq aceita forçar JSON; no Gemini o extrairJson dá conta da cerca ```.
           ...(json && prov.nome === "groq" ? { response_format: { type: "json_object" } } : {}),
@@ -192,14 +204,27 @@ Deno.serve(async (req) => {
       const { data: pode, error: podeErr } = await supa.rpc("chamado_parecer_ia_pode_gerar", { p_chamado_id: chamadoId });
       if (podeErr) { chamadoId = ""; return respostaJson({ error: podeErr.message }, 500); }
       if (!pode) { chamadoId = ""; return respostaJson({ error: "Só a gestão de chamados ou o responsável pode gerar o parecer." }, 403); }
+      const { data: atual } = await admin.from("CHAMADO_SISTEMA_PARECER_IA")
+        .select("status").eq("chamado_id", chamadoId).maybeSingle();
+      if (atual?.status === "pronto") {
+        chamadoId = "";
+        return respostaJson({ error: "O parecer já foi gerado e os valores são fixos. Use o chat para entender os números." }, 409);
+      }
       solicitadoPor = userData.user.id;
     } else {
       // Fila: parecer pronto não é refeito (reentrega do worker, backfill de
-      // novo) — salvo `forcar`, que vem da conclusão do chamado e da
-      // reavaliação pela entrega real (mig 20261029001200).
+      // novo). `forcar` (conclusão do chamado) troca SÓ o parecer gerado
+      // ANTES da conclusão — o da abertura, que precificou o pedido. O gerado
+      // depois de concluído é o definitivo.
       const { data: atual } = await admin.from("CHAMADO_SISTEMA_PARECER_IA")
-        .select("status").eq("chamado_id", chamadoId).maybeSingle();
-      if (atual?.status === "pronto" && corpo?.forcar !== true) return respostaJson({ ok: true, pulado: "já pronto" });
+        .select("status, gerado_em").eq("chamado_id", chamadoId).maybeSingle();
+      if (atual?.status === "pronto") {
+        if (corpo?.forcar !== true) return respostaJson({ ok: true, pulado: "já pronto" });
+        const { data: cc } = await admin.from("CHAMADO_SISTEMA").select("horas_gastas_em").eq("id", chamadoId).maybeSingle();
+        const anteriorAsHoras = !!cc?.horas_gastas_em &&
+          (!atual.gerado_em || Date.parse(atual.gerado_em) < Date.parse(cc.horas_gastas_em));
+        if (!anteriorAsHoras) return respostaJson({ ok: true, pulado: "valores fixos" });
+      }
     }
 
     const { data: c, error: cErr } = await admin
@@ -209,6 +234,14 @@ Deno.serve(async (req) => {
       .maybeSingle();
     if (cErr) { await registrarErro(cErr.message); return respostaJson({ error: cErr.message }, 500); }
     if (!c) { chamadoId = ""; return respostaJson({ ok: true, pulado: "chamado não encontrado" }); }
+    // Sem conclusão com horas, não há parecer — nem pela fila, nem pelo botão.
+    const cc = c as unknown as ChamadoParaParecer;
+    if (cc.status !== "concluido" || !(Number(cc.horas_gastas) > 0)) {
+      chamadoId = "";
+      return viaFila
+        ? respostaJson({ ok: true, pulado: "sem horas informadas" })
+        : respostaJson({ error: "O parecer da I.A só sai depois que o chamado é concluído com as horas gastas informadas." }, 409);
+    }
 
     const provs = provedores();
     if (!provs.length) {
@@ -219,16 +252,17 @@ Deno.serve(async (req) => {
 
     const chamado = c as unknown as ChamadoParaParecer;
     const entrega = await carregarEntrega(admin, chamado);
+    // Temperatura 0: chamados parecidos recebem horas parecidas.
     const res = await chamarIA(provs, [
       { role: "system", content: SYSTEM_PROMPT },
       { role: "user", content: montarPrompt(chamado, entrega) },
-    ]);
+    ], true, 0);
     if (!res.texto) {
       await registrarErro(res.erro ?? "Falha ao chamar a IA.");
       return respostaJson({ error: res.erro }, res.status ?? 502);
     }
 
-    const v = validarParecer(extrairJson(res.texto));
+    const v = validarParecer(extrairJson(res.texto), chamado.horas_gastas);
     if (!v.ok) {
       console.error("parecer inválido", chamadoId, res.texto.slice(0, 500));
       await registrarErro(v.erro);

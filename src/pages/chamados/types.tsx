@@ -142,6 +142,11 @@ export interface Chamado {
   prazo_definido_por?: string | null;
   prazo_posicao_fila?: number | null;
   prazo_redefinicoes?: number | null;
+  /** Horas que o dev informou ao concluir (mig 20261029002400). NULL =
+   *  concluído antes da regra, pela PR (pendente) ou não concluído. */
+  horas_gastas?: number | null;
+  horas_gastas_por?: string | null;
+  horas_gastas_em?: string | null;
   /** Gravado ao concluir: true = no prazo, false = com atraso, null = sem prazo. */
   concluido_no_prazo?: boolean | null;
   /** Prazo esperado informado por quem abriu (mig 20261028001420). */

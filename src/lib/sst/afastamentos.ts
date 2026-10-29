@@ -1,5 +1,5 @@
 // =====================================================================
-// SST › AFASTAMENTOS E TELEMEDICINA (mig 20261028002000, 28/10/2026)
+// SST › AFASTAMENTOS E TELEMEDICINA (mig 20261029001750, 28/10/2026)
 //
 // Chamado: automatizar a análise dos afastamentos por atestado e medir o
 // impacto operacional e financeiro — hoje uma planilha manual (PLANILHA

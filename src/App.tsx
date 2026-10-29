@@ -281,7 +281,7 @@ import EfetividadeMensal from "./pages/operacional/efetividade/EfetividadeMensal
 import FinanceiroConferenciaPonto from "./pages/financeiro/ConferenciaPonto";
 import LaudosEpi from "./pages/sst/LaudosEpi";
 import ControleCa from "./pages/sst/ControleCa";
-// Afastamentos e Telemedicina (mig 20261028002000): atestados, lotação automática e impacto financeiro.
+// Afastamentos e Telemedicina (mig 20261029001750): atestados, lotação automática e impacto financeiro.
 import SstAfastamentos from "./pages/sst/Afastamentos";
 import NovasAdmissoes from "./pages/rh/NovasAdmissoes";
 import BancoTalentos from "./pages/rh/BancoTalentos";
@@ -643,6 +643,8 @@ const App = () => (
             <Route path="central-servicos/solicitacoes/advertencia" element={<MinhasSolicitacoes base="central" abrir="advertencia" />} />
             <Route path="central-servicos/solicitacoes/demissao" element={<SolicitarDemissao />} />
             <Route path="central-servicos/solicitacoes/mudanca-funcao" element={<SolicitarTrocaFuncao />} />
+            {/* 29/10/2026 (Pablo): a mesma tela de Encarregados, para o pessoal da Central. */}
+            <Route path="central-servicos/solicitacoes/treinamento" element={<SolicitarTreinamento />} />
             <Route path="central-servicos/quadro-avisos" element={<QuadroAvisos />} />
             {/* Mesma tela de /app/treinamentos/erp, ancorada na Central de
                 Serviços: mesmo componente e mesmos treinamentos, com menu

@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import type { PainelAtivos } from "@/pages/rh/conferenciaAtivos";
 
@@ -60,6 +60,33 @@ export function usePessoasAtivas(contratoId: string | null, filial: string | nul
       if (error) throw error;
       return data ?? [];
     },
+  });
+}
+
+/**
+ * Pessoas de TODAS as filiais sem contrato ligado — para a busca por nome do
+ * colaborador (29/10/2026). Só dispara quando alguém busca (ativo), e reusa a
+ * mesma chave do diálogo "Ver" da filial: sem RPC nova, e o painel (que já
+ * esteve a um passo do statement timeout de 8 s) continua igual.
+ */
+export function usePessoasSemContrato(filiais: string[], ativo: boolean) {
+  return useQueries({
+    queries: filiais.map((filial) => ({
+      queryKey: ["rh-ativos-contratos", "pessoas", null, filial],
+      enabled: ativo,
+      staleTime: 2 * 60_000,
+      queryFn: async (): Promise<PessoaAtiva[]> => {
+        const { data, error } = await sb.rpc<PessoaAtiva[]>("rh_ac_pessoas", {
+          p_contrato_id: null, p_filial: filial,
+        });
+        if (error) throw error;
+        return data ?? [];
+      },
+    })),
+    combine: (rs) => ({
+      porFilial: filiais.map((filial, i) => ({ filial, pessoas: rs[i]?.data ?? [] })),
+      carregando: rs.some((r) => r.isLoading),
+    }),
   });
 }
 
