@@ -36,6 +36,7 @@ import { ReabrirChamadoDialog } from "./ReabrirChamadoDialog";
 import { IniciarDesenvolvimentoDialog, type ModoPrazo } from "./IniciarDesenvolvimentoDialog";
 import { abrirPrGithub } from "./abrirPrGithub";
 import { conclusaoAguardandoConfirmacao } from "./validacaoPresidencia";
+import { ResumoParecerIaLinha, useResumosParecerIa } from "./ParecerIaChamado";
 import {
   STATUS_PAINEL, mudouNaFila, rotuloPrazo, diasUteisAte, podeDefinirPrazo, podeIniciarDesenvolvimento, projetarPrevisoes,
   situacaoPrazo, statusPainel, variacaoPercentual, type SituacaoPrazo, type StatusPainel,
@@ -151,6 +152,9 @@ export default function PainelDesenvolvedor() {
       return (data ?? []) as Chamado[];
     },
   });
+
+  // Parecer da I.A (mig 20261029000900): valor médio + complexidade na linha.
+  const pareceresIa = useResumosParecerIa(!!user?.id && dev);
 
   // A conclusão automática registra as métricas da PR como meta do evento
   // (SIS-2026-0765). A consulta fica separada da lista de chamados para não
@@ -610,6 +614,7 @@ export default function PainelDesenvolvedor() {
                         <TableCell onClick={(e) => e.stopPropagation()}><PrioridadePill c={c} /></TableCell>
                         <TableCell className="min-w-[150px] max-w-[260px]">
                           <p className="line-clamp-3 text-xs" title={c.assunto}>{c.assunto}</p>
+                          <ResumoParecerIaLinha resumo={pareceresIa[c.id]} />
                           {metricas && (
                             <p className="mt-0.5 flex flex-wrap items-center gap-1 text-[10px] font-medium text-muted-foreground">
                               <GitPullRequest className="h-3 w-3 text-primary" /> GitHub: {metricas.commits ?? "—"} commits

@@ -37,6 +37,7 @@ import {
   CRITERIOS_AVALIACAO_SOLICITANTE, type AvaliacaoSolicitante,
 } from "./types";
 import { useAnexoChamado } from "./useAnexoChamado";
+import { ParecerIaChamado } from "./ParecerIaChamado";
 
 /** Descrição acima disto (ou com mais linhas) começa recolhida, com "Ver tudo". */
 const DESCRICAO_LONGA_CHARS = 700;
@@ -660,6 +661,11 @@ export default function CoordenarChamado() {
 
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
         <div className="space-y-4">
+
+          {/* Parecer da I.A (mig 20261029000900): preço de mercado e
+              complexidade ANTES de escolher o responsável — é para isso que
+              ele é gerado já na abertura do chamado. */}
+          <ParecerIaChamado chamadoId={chamado.id} podeGerar={gestor} />
 
           {/* Antes da coordenação de propósito: num chamado já avaliado, a
               nota e o comentário são o contexto de quem vai redistribuir —
