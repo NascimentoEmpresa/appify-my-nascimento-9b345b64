@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
-  extrairJson, limparHistorico, montarPrompt, montarSistemaChat, resumirEntrega, validarParecer, PERFIS, VALOR_HORA_SENIOR, type ChamadoParaParecer,
+  extrairJson, limparHistorico, montarPrompt, montarSistemaChat, resumirEntrega, validarParecer, PERFIS, VALOR_HORA_SENIOR, FATOR_COMPLEXIDADE, type ChamadoParaParecer,
 } from "../../supabase/functions/_shared/chamado-parecer-ia.ts";
 
 const resposta = (extra: Record<string, unknown> = {}) => ({
@@ -16,13 +16,14 @@ const resposta = (extra: Record<string, unknown> = {}) => ({
 });
 
 describe("parecer da I.A do chamado", () => {
-  it("faz a conta do preço no servidor (horas × valor/hora fixo de sênior) e a média", () => {
+  it("faz a conta do preço no servidor (horas × valor/hora fixo de sênior × fator de complexidade) e a média", () => {
     const v = validarParecer(resposta());
     expect(v.ok).toBe(true);
     if (!v.ok) return;
-    // 10 × 200, 15 × 320, 8 × 165
-    expect(v.parecer.precos.map((p) => p.valor)).toEqual([2000, 4800, 1320]);
-    expect(v.parecer.valor_medio).toBe(2706.67);
+    // nível 3 = ×1,5: 10 × 200, 15 × 320, 8 × 165
+    expect(v.parecer.precos.map((p) => p.fator_complexidade)).toEqual([1.5, 1.5, 1.5]);
+    expect(v.parecer.precos.map((p) => p.valor)).toEqual([3000, 7200, 1980]);
+    expect(v.parecer.valor_medio).toBe(4060);
     expect(v.parecer.horas_estimadas).toBe(11);
     expect(v.parecer.complexidade_rotulo).toBe("Média");
     expect(v.parecer.precos.map((p) => p.perfil)).toEqual(PERFIS.map((p) => p.perfil));
@@ -40,6 +41,28 @@ describe("parecer da I.A do chamado", () => {
     // Sem valor_hora nenhum também serve: a I.A só manda horas.
     const soHoras = resposta({ precos: resposta().precos.map(({ valor_hora, embasamento, ...x }) => x) });
     expect(validarParecer(soHoras).ok).toBe(true);
+  });
+
+  it("1 h complexa vale mais que 1 h tranquila (Pablo, 29/10/2026)", () => {
+    const umaHora = (nivel: number) => resposta({
+      complexidade_nivel: nivel,
+      precos: resposta().precos.map((p) => ({ ...p, horas: 1 })),
+    });
+    const facil = validarParecer(umaHora(1), 1);
+    const critica = validarParecer(umaHora(5), 1);
+    expect(facil.ok && critica.ok).toBe(true);
+    if (!facil.ok || !critica.ok) return;
+    expect(facil.parecer.precos[2].valor).toBe(165 * FATOR_COMPLEXIDADE[1]);
+    expect(critica.parecer.precos[2].valor).toBe(165 * FATOR_COMPLEXIDADE[5]);
+    expect(critica.parecer.valor_medio).toBeGreaterThan(facil.parecer.valor_medio * 2);
+  });
+
+  it("a equipe interna usa as horas reais informadas ao concluir, não a estimativa", () => {
+    const v = validarParecer(resposta(), "12.5");
+    expect(v.ok).toBe(true);
+    if (!v.ok) return;
+    expect(v.parecer.precos[2].horas).toBe(12.5);
+    expect(v.parecer.precos[0].horas).toBe(10); // freelancer segue a estimativa da I.A
   });
 
   it("recusa resposta sem um dos perfis, sem nível ou sem justificativa", () => {
