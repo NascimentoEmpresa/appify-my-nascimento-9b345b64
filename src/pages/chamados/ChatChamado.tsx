@@ -32,6 +32,7 @@ import {
 import { BUCKET_CHAMADOS, fmtDataHora, opcoesDownloadAnexo, type Anexo, type Evento } from "./types";
 import { useAnexoChamado, useImagensAnexo } from "./useAnexoChamado";
 import { imagensDoClipboard } from "@/lib/imagensColadas";
+import { TextoComLinks } from "@/components/notificacoes/ConteudoAviso";
 
 export interface Participante {
   user_id: string;
@@ -526,8 +527,10 @@ export function ChatChamado({
                   </p>
 
                   {/* overflow-wrap:anywhere porque break-words não quebra uma
-                      "palavra" gigante sem espaço — e aí o balão estoura. */}
-                  {e.texto && <p className="whitespace-pre-wrap break-words text-sm [overflow-wrap:anywhere]">{e.texto}</p>}
+                      "palavra" gigante sem espaço — e aí o balão estoura.
+                      URL colada na mensagem vira link azul clicável (29/10/2026,
+                      pedido do Pablo) — mesmo componente dos avisos. */}
+                  {e.texto && <TextoComLinks texto={e.texto} className="break-words leading-normal [overflow-wrap:anywhere]" />}
 
                   {anexosMsg.length > 0 && (
                     <div className="mt-1.5 space-y-1.5">
