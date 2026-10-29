@@ -16,7 +16,8 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { CalendarClock, PlayCircle, CheckCircle2, MessageSquare, XCircle, Paperclip, ArrowLeft, Trash2, Star, RotateCcw, GitPullRequest, UserCheck } from "lucide-react";
+import { CalendarClock, PlayCircle, CheckCircle2, Clock, MessageSquare, XCircle, Paperclip, ArrowLeft, Trash2, Star, RotateCcw, GitPullRequest, UserCheck } from "lucide-react";
+import { fmtHorasGastas, lerHorasGastas } from "@/lib/chamados/horasGastas";
 import { AvaliarSolicitanteDialog } from "./AvaliarSolicitanteDialog";
 import { ExcluirChamadoDialog } from "./ExcluirChamadoDialog";
 import { abrirPrGithub } from "./abrirPrGithub";
@@ -39,6 +40,9 @@ import {
 } from "./types";
 import { useAnexoChamado } from "./useAnexoChamado";
 
+/** Início da regra das horas gastas (mig 20261029002400): concluído antes disso fica "—". */
+const HORAS_GASTAS_DESDE = "2026-10-29T00:00:00-03:00";
+
 export default function ExecutarChamado() {
   const { id } = useParams();
   const nav = useNavigate();
@@ -57,6 +61,8 @@ export default function ExecutarChamado() {
   // a saída "Concluir sem avaliar" dentro do próprio diálogo.
   const [concluindoOpen, setConcluindoOpen] = useState(false);
   const [avaliarDepoisOpen, setAvaliarDepoisOpen] = useState(false);
+  // Horas gastas pendentes (concluído pelo merge da PR — mig 20261029002400).
+  const [horasDepois, setHorasDepois] = useState("");
   // Iniciar desenvolvimento / alterar prazo (mig 20261028001400).
   const [iniciarOpen, setIniciarOpen] = useState(false);
   // Definir / redefinir o prazo em dias (mig 20261028001410).
@@ -146,16 +152,18 @@ export default function ExecutarChamado() {
     qc.invalidateQueries({ queryKey: ["chamado-validacoes"] });
   };
 
-  const mudarStatus = async (status: string, texto: string, evento: string) => {
+  /** `texto` vai ao histórico e ao toast; `textoEvento` null = o banco já registra o evento. */
+  const mudarStatus = async (status: string, texto: string, evento: string,
+                             extra: Record<string, unknown> = {}, textoEvento: string | null = texto) => {
     if (agindo) return;                                   // já tem ação rodando
     if (chamado?.status === status) {                     // já está nesse status → não repete
       toast({ title: `O chamado já está "${STATUS_CHAMADO[status]?.label ?? status}".` });
       return;
     }
     setAgindo(evento);
-    const { error } = await (supabase as any).from("CHAMADO_SISTEMA").update({ status }).eq("id", id);
+    const { error } = await (supabase as any).from("CHAMADO_SISTEMA").update({ status, ...extra }).eq("id", id);
     if (error) { setAgindo(null); toast({ title: "Erro", description: error.message, variant: "destructive" }); return; }
-    await (supabase as any).from("CHAMADO_SISTEMA_EVENTO").insert({ chamado_id: id, tipo: "evento", texto });
+    if (textoEvento) await (supabase as any).from("CHAMADO_SISTEMA_EVENTO").insert({ chamado_id: id, tipo: "evento", texto: textoEvento });
     supabase.functions.invoke("enviar-notificacao-push", { body: { chamado_id: id, evento } }).catch(() => {});
     toast({ title: texto });
     setFlash(true); setTimeout(() => setFlash(false), 700);
@@ -163,13 +171,32 @@ export default function ExecutarChamado() {
     invalidar();
   };
 
-  /** Fim do diálogo de concluir: grava o status e diz no histórico se houve avaliação. */
-  const concluirAposAvaliar = async (resultado: "avaliou" | "pulou" | "ninguem") => {
+  /** Fim do diálogo de concluir: grava o status COM as horas gastas no mesmo
+   *  UPDATE (o banco recusa concluir sem elas e registra "Chamado concluído
+   *  em X h" no histórico — mig 20261029002400). Aqui só fica a nota de que
+   *  a avaliação foi pulada. */
+  const concluirAposAvaliar = async (resultado: "avaliou" | "pulou" | "ninguem", horas: number) => {
     await mudarStatus(
       "concluido",
-      resultado === "pulou" ? "Chamado concluído (sem avaliar quem pediu)" : "Chamado concluído",
+      `Chamado concluído em ${fmtHorasGastas(horas)} h`,
       "concluido",
+      { horas_gastas: horas },
+      resultado === "pulou" ? "Conclusão sem avaliar quem pediu" : null,
     );
+  };
+
+  /** Concluído pelo merge da PR: o dev informa as horas depois. */
+  const informarHorasDepois = async () => {
+    const h = lerHorasGastas(horasDepois);
+    if (h == null) { toast({ title: "Informe as horas gastas", description: "Maior que zero (aceita meia hora, ex.: 12,5).", variant: "destructive" }); return; }
+    if (agindo) return;
+    setAgindo("horas");
+    const { error } = await (supabase as any).rpc("chamado_informar_horas_gastas", { p_chamado_id: id, p_horas: h });
+    setAgindo(null);
+    if (error) { toast({ title: "Erro ao gravar as horas", description: error.message, variant: "destructive" }); return; }
+    toast({ title: `Horas gastas registradas: ${fmtHorasGastas(h)} h` });
+    setHorasDepois("");
+    invalidar();
   };
 
   const reprovar = async () => {
@@ -249,7 +276,7 @@ export default function ExecutarChamado() {
           <InformacoesGithubChamado eventos={eventos} />
 
           {/* Parecer da I.A (mig 20261029000900): preço de mercado + complexidade. */}
-          <ParecerIaChamado chamadoId={chamado.id} podeGerar={gestor || chamado.responsavel_id === user?.id} />
+          <ParecerIaChamado chamadoId={chamado.id} podeGerar={gestor || chamado.responsavel_id === user?.id} horasReais={chamado.horas_gastas} />
 
           {chamado.comentario_gerente && (
             <Card className="space-y-1 border-primary/30 bg-primary/5 p-4">
@@ -414,6 +441,24 @@ export default function ExecutarChamado() {
                   <div className="flex items-center gap-2 rounded-md border border-success/40 bg-success/10 px-3 py-2 text-sm font-semibold text-success">
                     <CheckCircle2 className="h-4 w-4 animate-check-pop" /> Chamado concluído
                   </div>
+                  {/* Horas gastas (mig 20261029002400). Concluído antes da regra = "—".
+                      Concluído pelo merge da PR depois dela = pendente, e o
+                      responsável (ou a gestão) informa aqui. */}
+                  <p className="flex items-center gap-1.5 px-1 text-xs text-muted-foreground">
+                    <Clock className="h-3.5 w-3.5" /> Horas gastas: <b className="text-foreground">{chamado.horas_gastas != null ? `${fmtHorasGastas(chamado.horas_gastas)} h` : "—"}</b>
+                  </p>
+                  {chamado.horas_gastas == null && !!chamado.concluido_em && new Date(chamado.concluido_em) >= new Date(HORAS_GASTAS_DESDE)
+                    && (gestor || chamado.responsavel_id === user?.id) && (
+                    <div className="space-y-1.5 rounded-md border border-warning/40 bg-warning/10 p-2">
+                      <p className="text-xs text-warning">Concluído pela PR: informe quantas horas levou.</p>
+                      <div className="flex gap-1.5">
+                        <Input inputMode="decimal" placeholder="Ex.: 12,5" className="h-8 text-right text-xs"
+                          value={horasDepois} onChange={(e) => setHorasDepois(e.target.value)}
+                          onKeyDown={(e) => { if (e.key === "Enter") informarHorasDepois(); }} />
+                        <Button size="sm" className="h-8" disabled={agindo === "horas"} onClick={informarHorasDepois}>Gravar</Button>
+                      </div>
+                    </div>
+                  )}
                   {/* Concluir não fecha de vez (mig 20261028001300): o
                       solicitante confere e confirma — ou reabre e volta pra cá. */}
                   {!chamado.conclusao_confirmada_em && (

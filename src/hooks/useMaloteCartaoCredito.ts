@@ -197,3 +197,21 @@ export function calcularFatura(dataPagamento: string, diaFechamento: number): st
   }
   return `${ano}-${String(mes + 1).padStart(2, "0")}`;
 }
+
+// SIS-2026-0751: formas de pagamento de cartões com fatura IMPORTADA (não consolidada). Débito automático de saída
+// com uma dessas formas não gera linha própria no Fluxo — a fatura importada é a fonte (migration 20261029001900).
+export function useFormasCartaoFaturaImportada() {
+  return useQuery({
+    queryKey: ["malote_cartao_credito", "formas_fatura_importada"],
+    staleTime: 300_000,
+    queryFn: async () => {
+      const { data, error } = await (supabase as any).rpc("fn_formas_cartao_fatura_importada");
+      if (error) {
+        // migration ainda não aplicada: sem aviso, sem quebrar o modal
+        if (error.code === "PGRST202" || error.code === "42883") return [] as string[];
+        throw error;
+      }
+      return ((data ?? []) as { tipo_forma_pagamento: string }[]).map((r) => r.tipo_forma_pagamento);
+    },
+  });
+}

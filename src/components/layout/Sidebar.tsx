@@ -1033,6 +1033,8 @@ const centralServicosModule: ModuleDef = {
         { label: "Mudança de Função", to: "/app/central-servicos/solicitacoes/mudanca-funcao", icon: ArrowLeftRight, notif: "troca_funcao" },
         { label: "Solicitar Medida Disciplinar", to: "/app/central-servicos/solicitacoes/advertencia", icon: ShieldAlert },
         { label: "Solicitar Manutenção de Equipamento", to: "/app/central-servicos/solicitar-manutencao-equipamento", icon: Wrench },
+        // 29/10/2026: a tela de Encarregados; cai no menu central_servicos_solicitacoes por prefixo.
+        { label: "Solicitar Treinamento", to: "/app/central-servicos/solicitacoes/treinamento", icon: GraduationCap },
       ],
     },
   ],

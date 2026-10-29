@@ -643,6 +643,8 @@ const App = () => (
             <Route path="central-servicos/solicitacoes/advertencia" element={<MinhasSolicitacoes base="central" abrir="advertencia" />} />
             <Route path="central-servicos/solicitacoes/demissao" element={<SolicitarDemissao />} />
             <Route path="central-servicos/solicitacoes/mudanca-funcao" element={<SolicitarTrocaFuncao />} />
+            {/* 29/10/2026 (Pablo): a mesma tela de Encarregados, para o pessoal da Central. */}
+            <Route path="central-servicos/solicitacoes/treinamento" element={<SolicitarTreinamento />} />
             <Route path="central-servicos/quadro-avisos" element={<QuadroAvisos />} />
             {/* Mesma tela de /app/treinamentos/erp, ancorada na Central de
                 Serviços: mesmo componente e mesmos treinamentos, com menu

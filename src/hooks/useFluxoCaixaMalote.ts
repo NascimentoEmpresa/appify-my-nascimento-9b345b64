@@ -144,6 +144,22 @@ export function useFluxoCaixaMalote() {
   });
 }
 
+// SIS-2026-0751: a tela de Cartão de Crédito só lia o Malote, então um Débito Automático
+// lançado com a forma de pagamento de um cartão nunca entrava em "Utilizado", "Fatura do
+// Mês" nem na lista de lançamentos. Só SAÍDA conta (entrada não é gasto no cartão). A chave
+// começa por "fluxo_caixa_combinado" de propósito: o Débito Automático já invalida esse
+// prefixo ao pagar/editar/excluir, então esta lista acompanha sem mexer no outro hook.
+export function useFluxoCaixaDebitoAutomaticoSaidas() {
+  return useQuery({
+    queryKey: ["fluxo_caixa_combinado", "debito_automatico_saidas"],
+    queryFn: async () => {
+      const executar = criarLimitadorDeConcorrencia(CONCORRENCIA_TOTAL_FLUXO);
+      const linhas = (await buscarTodasLinhas("v_debito_automatico_fluxo_caixa", ORDEM_FONTES, executar)) as FluxoCaixaMaloteLinha[];
+      return linhas.filter((l) => l.tipo === "saida");
+    },
+  });
+}
+
 // SIS-2026-0256/0255: fonte combinada da tela /app/financeiro/gestao-
 // financeira/fluxo-caixa — Pagamento Malote (só saída) + Débito Automático
 // (entrada e saída, itens "pago" que não passam pelo Malote) + fatura de
