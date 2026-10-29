@@ -73,3 +73,22 @@ export function respostaQuantidadeAtual(
   ).join("\n");
   return `**${String(linhas[0].item)}**: ${numero(totalFisico)} unidade(s) física(s) e ${numero(totalDisponivel)} disponível(is) no total.\n${detalhe}`;
 }
+
+/**
+ * KPIs operacionais não passam pelo modelo de linguagem. A resposta usa o
+ * mesmo número que alimenta o cartão da tela Estoque & Etiquetas.
+ */
+export function respostaResumoOperacional(
+  pergunta: string,
+  resumo: Record<string, unknown>,
+): string | null {
+  const q = normalizar(pergunta);
+  const perguntaEntradas = (
+    /entrada/.test(q) && /(registrad|registro|etiqueta)/.test(q)
+  ) || /quantas entradas/.test(q);
+  if (!perguntaEntradas) return null;
+
+  const valor = Number(resumo.entradas_registradas);
+  if (!Number.isFinite(valor)) return null;
+  return `Há **${valor.toLocaleString("pt-BR")} entradas registradas** no estoque atual. Esse é o mesmo total exibido no cartão “Entradas registradas” de Estoque & Etiquetas para a empresa selecionada.`;
+}

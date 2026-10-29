@@ -9,8 +9,19 @@ export type FiltroDashboardCompras = {
 export type SerieNomeQuantidade = { nome: string; quantidade: number };
 export type SerieNomeValor = { nome: string; valor: number };
 
+export interface PeriodoDisponivelDashboardCompras {
+  inicio: string | null;
+  fim: string | null;
+  solicitacoes_inicio: string | null;
+  solicitacoes_fim: string | null;
+  itens_registrados_inicio: string | null;
+  movimentos_inicio: string | null;
+  cotacoes_inicio: string | null;
+}
+
 export interface DashboardComprasEstoqueDados {
   atualizado_em: string;
+  periodo_disponivel: PeriodoDisponivelDashboardCompras;
   filtros: {
     contratos: { id: string; nome: string; status: string }[];
     categorias: { valor: string; nome: string }[];
@@ -173,6 +184,10 @@ export function consolidarDashboardsCompras(
 
   const soma = (ler: (painel: DashboardComprasEstoqueDados) => number) =>
     paineis.reduce((total, painel) => total + Number(ler(painel) ?? 0), 0);
+  const menorData = (ler: (painel: DashboardComprasEstoqueDados) => string | null) =>
+    paineis.map(ler).filter((data): data is string => !!data).sort()[0] ?? null;
+  const maiorData = (ler: (painel: DashboardComprasEstoqueDados) => string | null) =>
+    paineis.map(ler).filter((data): data is string => !!data).sort().at(-1) ?? null;
   const solicitacoesPeriodo = soma((p) => p.resumo.solicitacoes);
   const cotacoes = soma((p) => p.resumo.cotacoes);
   const despachadas = soma((p) => p.resumo.despachadas);
@@ -241,6 +256,15 @@ export function consolidarDashboardsCompras(
 
   return {
     atualizado_em: paineis.map((p) => p.atualizado_em).sort().at(-1) ?? paineis[0].atualizado_em,
+    periodo_disponivel: {
+      inicio: menorData((p) => p.periodo_disponivel?.inicio ?? null),
+      fim: maiorData((p) => p.periodo_disponivel?.fim ?? null),
+      solicitacoes_inicio: menorData((p) => p.periodo_disponivel?.solicitacoes_inicio ?? null),
+      solicitacoes_fim: maiorData((p) => p.periodo_disponivel?.solicitacoes_fim ?? null),
+      itens_registrados_inicio: menorData((p) => p.periodo_disponivel?.itens_registrados_inicio ?? null),
+      movimentos_inicio: menorData((p) => p.periodo_disponivel?.movimentos_inicio ?? null),
+      cotacoes_inicio: menorData((p) => p.periodo_disponivel?.cotacoes_inicio ?? null),
+    },
     filtros: {
       contratos: [...contratos.values()].sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR")),
       categorias: [...categorias.values()].sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR")),

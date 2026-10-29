@@ -180,7 +180,7 @@ function TabelaPorItemTamanho({ dados }: { dados: RotatividadeEstoqueDados }) {
   return (
     <PainelGrafico
       titulo="Detalhe por Item e Tamanho"
-      subtitulo="Cada linha identifica o código do estoque, a peça e o tamanho. Saída é baixa física confirmada; pedido aberto não entra como consumo."
+      subtitulo="Cada linha identifica o código do estoque, a peça e o tamanho. Ficha encerrada permanece visível apenas para conciliar o histórico."
     >
       <div className="overflow-x-auto">
         <table className="w-full min-w-[1080px] text-xs">
@@ -202,10 +202,14 @@ function TabelaPorItemTamanho({ dados }: { dados: RotatividadeEstoqueDados }) {
           <tbody>
             {linhas.map((linha) => {
               const giro = situacaoGiro(linha);
+              const historico = linha.cadastro_ativo === false;
               return (
-                <tr key={`${linha.codigo ?? linha.item}-${linha.tamanho ?? "sem-tamanho"}`} className="border-b last:border-0 hover:bg-slate-50">
+                <tr key={`${linha.codigo ?? linha.item}-${linha.tamanho ?? "sem-tamanho"}`} className={cn("border-b last:border-0 hover:bg-slate-50", historico && "bg-slate-50/80")}>
                   <td className="whitespace-nowrap px-3 py-2 font-mono text-[11px] text-slate-500">{linha.codigo ?? "—"}</td>
-                  <td className="max-w-72 px-3 py-2 font-medium text-blue-950">{linha.item}</td>
+                  <td className="max-w-72 px-3 py-2 font-medium text-blue-950">
+                    {linha.item}
+                    {historico && <Badge variant="outline" className="ml-2 border-slate-300 text-[10px] text-slate-600">Histórico encerrado</Badge>}
+                  </td>
                   <td className="px-3 py-2 font-bold text-blue-950">{linha.tamanho ?? "Sem tamanho"}</td>
                   <td className="px-3 py-2 text-right font-medium">{formatarNumero(linha.pedidas)}</td>
                   <td className="px-3 py-2 text-right">{formatarNumero(linha.entradas)}</td>
@@ -215,8 +219,8 @@ function TabelaPorItemTamanho({ dados }: { dados: RotatividadeEstoqueDados }) {
                   <td className="px-3 py-2 text-right">{formatarNumero(linha.saldo_disponivel)}</td>
                   <td className="px-3 py-2 text-right font-medium">{formatarGiro(linha.giro)}</td>
                   <td className="px-3 py-2">
-                    <Badge className={cn("border-0 text-[10px]", classeSituacaoGiro(giro))}>
-                      {rotuloSituacaoGiro(giro)}
+                    <Badge className={cn("border-0 text-[10px]", historico ? "bg-slate-200 text-slate-700" : classeSituacaoGiro(giro))}>
+                      {historico ? "Histórico" : rotuloSituacaoGiro(giro)}
                     </Badge>
                   </td>
                 </tr>
