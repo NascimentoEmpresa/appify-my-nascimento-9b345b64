@@ -1,11 +1,13 @@
 import { useState } from "react";
 import ReactMarkdown from "react-markdown";
-import { AlertTriangle, Loader2, MessageSquare, RefreshCw, Send, Sparkles } from "lucide-react";
+import { AlertTriangle, Check, Copy, FileSpreadsheet, Loader2, MessageSquare, RefreshCw, Send, Sparkles } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
+import { useToast } from "@/hooks/use-toast";
 import { fmtDataHora } from "./dossie";
+import { CAMPOS_PLANILHA, type IdCampoPlanilha } from "../../../supabase/functions/_shared/denuncia-parecer-ia";
 
 // =====================================================================
 // PARECER I.A — resumo e conversa sobre a denúncia (29/10/2026)
@@ -21,7 +23,7 @@ import { fmtDataHora } from "./dossie";
 // A I.A falhar aparece NA TELA — nunca em silêncio.
 // =====================================================================
 
-async function chamarFuncao(body: Record<string, unknown>): Promise<{ texto?: string; modelo?: string; gerado_em?: string }> {
+async function chamarFuncao(body: Record<string, unknown>): Promise<{ texto?: string; modelo?: string; gerado_em?: string; proposta?: boolean }> {
   const { data, error } = await supabase.functions.invoke("denuncia-parecer-ia", { body });
   if (error) {
     // A mensagem útil vem no corpo (403 sem acesso, 429 sem tokens).
@@ -113,6 +115,98 @@ function ChatDenunciaIa({ denunciaId }: { denunciaId: string }) {
   );
 }
 
+type EstadoCampo =
+  | { fase: "gerando" }
+  | { fase: "pronto"; texto: string; proposta: boolean }
+  | { fase: "erro"; erro: string };
+
+/** Os seis campos da planilha de pareceres do Comitê (29/10/2026): cada
+ *  botão pede à I.A o texto daquela coluna, pronto para copiar na célula.
+ *  Nada é gravado — a resposta vive só nesta tela, como o resumo. */
+function CamposPlanilhaIa({ denunciaId }: { denunciaId: string }) {
+  const { toast } = useToast();
+  const [estado, setEstado] = useState<Partial<Record<IdCampoPlanilha, EstadoCampo>>>({});
+  const [copiado, setCopiado] = useState<IdCampoPlanilha | null>(null);
+
+  const gerar = async (id: IdCampoPlanilha) => {
+    setEstado((e) => ({ ...e, [id]: { fase: "gerando" } }));
+    try {
+      const r = await chamarFuncao({ denuncia_id: denunciaId, modo: "campo", campo: id });
+      if (!r.texto) throw new Error("A I.A devolveu resposta vazia. Tente de novo.");
+      setEstado((e) => ({ ...e, [id]: { fase: "pronto", texto: r.texto!, proposta: !!r.proposta } }));
+    } catch (err) {
+      setEstado((e) => ({ ...e, [id]: { fase: "erro", erro: err instanceof Error ? err.message : String(err) } }));
+    }
+  };
+
+  const copiar = async (id: IdCampoPlanilha, texto: string) => {
+    try {
+      await navigator.clipboard.writeText(texto);
+      setCopiado(id);
+      setTimeout(() => setCopiado((c) => (c === id ? null : c)), 2000);
+    } catch {
+      toast({ title: "Não foi possível copiar", description: "Selecione o texto e copie com Ctrl+C.", variant: "destructive" });
+    }
+  };
+
+  const respostas = CAMPOS_PLANILHA.filter((c) => estado[c.id]);
+
+  return (
+    <div className="space-y-2 rounded-lg border border-border bg-muted/30 p-3">
+      <p className="flex items-center gap-1.5 text-xs font-semibold">
+        <FileSpreadsheet className="h-3.5 w-3.5 text-primary" /> Campos da planilha de pareceres
+      </p>
+      <div className="flex flex-wrap gap-1.5">
+        {CAMPOS_PLANILHA.map((c) => {
+          const e = estado[c.id];
+          return (
+            <Button key={c.id} type="button" size="sm" variant={e?.fase === "pronto" ? "secondary" : "outline"}
+                    className="h-auto min-h-7 gap-1.5 whitespace-normal py-1 text-left text-[11px]"
+                    disabled={e?.fase === "gerando"} onClick={() => gerar(c.id)}>
+              {e?.fase === "gerando" ? <Loader2 className="h-3 w-3 shrink-0 animate-spin" /> : <Sparkles className="h-3 w-3 shrink-0" />}
+              {c.rotulo}
+            </Button>
+          );
+        })}
+      </div>
+      {respostas.map((c) => {
+        const e = estado[c.id]!;
+        return (
+          <div key={c.id} className="rounded-lg border border-border bg-background p-3">
+            <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
+              <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                {c.rotulo}
+                {e.fase === "pronto" && e.proposta && (
+                  <span className="ml-1.5 rounded border border-warning/40 bg-warning/10 px-1.5 py-0.5 normal-case tracking-normal text-warning">proposta</span>
+                )}
+              </p>
+              {e.fase === "pronto" && (
+                <div className="flex gap-1">
+                  <Button type="button" size="sm" variant="ghost" className="h-6 gap-1 px-2 text-[11px]" onClick={() => gerar(c.id)}>
+                    <RefreshCw className="h-3 w-3" /> De novo
+                  </Button>
+                  <Button type="button" size="sm" variant="outline" className="h-6 gap-1 px-2 text-[11px]" onClick={() => copiar(c.id, e.texto)}>
+                    {copiado === c.id ? <><Check className="h-3 w-3" /> Copiado</> : <><Copy className="h-3 w-3" /> Copiar</>}
+                  </Button>
+                </div>
+              )}
+            </div>
+            {e.fase === "gerando" ? (
+              <p className="flex items-center gap-1.5 text-[11px] text-muted-foreground"><Loader2 className="h-3 w-3 animate-spin" /> A I.A está escrevendo…</p>
+            ) : e.fase === "erro" ? (
+              <p className="flex items-start gap-1.5 text-xs text-destructive [overflow-wrap:anywhere]">
+                <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" /> A I.A não respondeu: {e.erro}
+              </p>
+            ) : (
+              <p className="select-text whitespace-pre-line text-xs leading-relaxed">{e.texto}</p>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 /** Card "Parecer I.A" — o mesmo na ficha do Comitê e na da Presidência. */
 export function ParecerIaDenuncia({ denunciaId }: { denunciaId: string }) {
   const [resumo, setResumo] = useState<{ texto: string; modelo?: string; gerado_em?: string } | null>(null);
@@ -143,7 +237,7 @@ export function ParecerIaDenuncia({ denunciaId }: { denunciaId: string }) {
         <div>
           <p className="flex items-center gap-1.5 text-sm font-bold"><Sparkles className="h-4 w-4 text-primary" /> Parecer I.A</p>
           <p className="text-xs text-muted-foreground">
-            Resumo do caso e perguntas à I.A. Ela lê só o que o seu acesso enxerga, nunca a identidade do denunciante nem o conteúdo dos arquivos — e nada fica gravado.
+            Resumo do caso, campos da planilha de pareceres e perguntas à I.A. Ela lê só o que o seu acesso enxerga, nunca a identidade do denunciante nem o conteúdo dos arquivos — e nada fica gravado.
           </p>
         </div>
         <Button size="sm" variant="outline" className="h-7 gap-1.5 text-xs" onClick={gerar} disabled={gerando}>
@@ -174,6 +268,8 @@ export function ParecerIaDenuncia({ denunciaId }: { denunciaId: string }) {
       ) : !erro && (
         <p className="text-xs text-muted-foreground">Clique em “Gerar resumo” para a I.A contar o caso: relato, linha do tempo, providências, evidências, resultado e próximos passos.</p>
       )}
+
+      <CamposPlanilhaIa key={`campos-${denunciaId}`} denunciaId={denunciaId} />
 
       <ChatDenunciaIa key={denunciaId} denunciaId={denunciaId} />
     </Card>

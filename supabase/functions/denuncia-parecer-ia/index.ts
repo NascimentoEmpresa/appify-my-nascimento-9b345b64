@@ -6,7 +6,11 @@
 //     providências (feitas, pendentes, prazos estourados), evidências que
 //     existem, resultado e medidas, situação e próximos passos sugeridos;
 //   · "chat": perguntas sobre o caso ("o que falta para concluir?", "redija
-//     o parecer conclusivo"). O histórico vem do cliente a cada pergunta.
+//     o parecer conclusivo"). O histórico vem do cliente a cada pergunta;
+//   · "campo" (29/10/2026): um dos seis campos da planilha de pareceres do
+//     Comitê ("Resumo objetivo", "Resultado", ...), no estilo da célula —
+//     regras e conferência em _shared/denuncia-parecer-ia.ts. Campo da
+//     Presidência sem decisão registrada sai como PROPOSTA, dito no texto.
 //
 // POR QUE NÃO GUARDA O RESUMO (diferente de chamado-parecer-ia)
 //   O que cada um enxerga numa denúncia é diferente: a Presidência não lê as
@@ -34,6 +38,7 @@
 // ao Groq (GROQ_API_KEY, modelo openai/gpt-oss-120b). Chaves nos secrets da
 // Edge Function, nunca em arquivo.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
+import { campoPorId, montarPedidoCampo, validarCampo } from "../_shared/denuncia-parecer-ia.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
@@ -147,7 +152,7 @@ const campo = (rotulo: string, v: unknown) => {
   return t && t !== "—" ? `- ${rotulo}: ${t}` : null;
 };
 
-interface Dossie { texto: string; protocolo: string }
+interface Dossie { texto: string; protocolo: string; decidida: boolean }
 
 async function montarDossie(supa: ReturnType<typeof createClient>, denunciaId: string): Promise<Dossie | { erro: string; status: number }> {
   const { data: d, error } = await supa.from("v_canal_denuncia").select(CAMPOS_DENUNCIA).eq("id", denunciaId).maybeSingle();
@@ -276,7 +281,7 @@ async function montarDossie(supa: ReturnType<typeof createClient>, denunciaId: s
     }
   }
 
-  return { texto: s.join("\n"), protocolo: String(den.protocolo ?? "") };
+  return { texto: s.join("\n"), protocolo: String(den.protocolo ?? ""), decidida: !!den.decisao_em };
 }
 
 // ------------------------------------------------------------ prompts
@@ -325,9 +330,11 @@ Deno.serve(async (req) => {
     const corpo = await req.json().catch(() => ({}));
     const denunciaId = String(corpo?.denuncia_id ?? "").trim();
     if (!/^[0-9a-f-]{36}$/i.test(denunciaId)) return respostaJson({ error: "denuncia_id inválido." }, 400);
-    const modo = corpo?.modo === "chat" ? "chat" : "resumo";
+    const modo = corpo?.modo === "chat" ? "chat" : corpo?.modo === "campo" ? "campo" : "resumo";
     const pergunta = String(corpo?.pergunta ?? "").trim().slice(0, 2000);
     if (modo === "chat" && !pergunta) return respostaJson({ error: "Escreva a pergunta." }, 400);
+    const campo = modo === "campo" ? campoPorId(corpo?.campo) : undefined;
+    if (modo === "campo" && !campo) return respostaJson({ error: "Campo da planilha desconhecido." }, 400);
 
     // Com o login de quem pediu: toda leitura daqui passa pela RLS dele.
     const supa = createClient(SUPABASE_URL, ANON_KEY, {
@@ -344,6 +351,26 @@ Deno.serve(async (req) => {
     if (!provs.length) return respostaJson({ error: "A chave da IA não está configurada. Avise o time de Sistemas." }, 500);
 
     const sistema = `${REGRAS}\n\n=== DOSSIÊ DA DENÚNCIA ${dossie.protocolo} ===\n${dossie.texto}\n=== FIM DO DOSSIÊ ===`;
+
+    if (campo) {
+      const pedido = [{ role: "system", content: sistema }, { role: "user", content: montarPedidoCampo(campo, dossie.decidida) }];
+      let res = await chamarIA(provs, pedido);
+      if (!res.texto) return respostaJson({ error: res.erro }, res.status ?? 502);
+      let v = validarCampo(res.texto, campo, dossie.decidida);
+      if (!v.ok) {
+        // Uma correção só (ex.: Resultado sem veredito na frente); falhou de
+        // novo, o erro vai para a tela.
+        res = await chamarIA(provs, [...pedido, { role: "assistant", content: res.texto },
+                                     { role: "user", content: `${v.erro} Reescreva só o texto da célula.` }]);
+        if (!res.texto) return respostaJson({ error: res.erro }, res.status ?? 502);
+        v = validarCampo(res.texto, campo, dossie.decidida);
+        if (!v.ok) return respostaJson({ error: v.erro }, 502);
+      }
+      return respostaJson({
+        texto: v.texto, campo: campo.id, proposta: !!campo.daPresidencia && !dossie.decidida,
+        provedor: res.provedor, modelo: res.modelo, gerado_em: new Date().toISOString(),
+      });
+    }
     const messages = modo === "chat"
       ? [{ role: "system", content: sistema }, ...limparHistorico(corpo?.historico), { role: "user", content: pergunta }]
       : [{ role: "system", content: sistema }, { role: "user", content: PEDIDO_RESUMO }];
