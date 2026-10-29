@@ -10,6 +10,7 @@ import { Badge } from "@/components/ui/badge";
 import { MessagesSquare, Lock, Send, History, Loader2, User, ShieldCheck } from "lucide-react";
 import {
   LABEL_SITUACAO, LABEL_RESULTADO, LABEL_GRAVIDADE, LABEL_TIPO_REGISTRO, TIPO_REGISTRO, rotulo,
+  LABEL_CATEGORIA_ANEXO,
 } from "./vocabulario";
 
 // =====================================================================
@@ -39,6 +40,7 @@ interface Mensagem {
 
 interface Evento {
   id: string; campo: string; de: string | null; para: string | null; created_at: string;
+  objeto?: string | null;
 }
 
 const fmt = (s?: string | null) => {
@@ -53,12 +55,14 @@ function valorDoEvento(campo: string, v: string | null) {
   if (campo === "status") return rotulo(LABEL_SITUACAO, v);
   if (campo === "resultado") return rotulo(LABEL_RESULTADO, v);
   if (campo === "gravidade") return rotulo(LABEL_GRAVIDADE, v);
+  if (campo === "anexo_excluido") return v === "excluido" ? "excluído" : rotulo(LABEL_CATEGORIA_ANEXO, v);
   return v;
 }
 
 const NOME_CAMPO: Record<string, string> = {
   status: "Situação", resultado: "Resultado",
   gravidade: "Gravidade", responsavel: "Responsável pela apuração",
+  anexo_excluido: "Anexo excluído", anexo_observacao: "Observação do anexo",
 };
 
 export default function Conversa({ denunciaId, protocolo }: {
@@ -233,7 +237,7 @@ export default function Conversa({ denunciaId, protocolo }: {
             {eventos.map((e) => (
               <li key={e.id} className="flex flex-wrap items-baseline gap-x-2 text-xs">
                 <span className="text-muted-foreground">{fmt(e.created_at)}</span>
-                <b>{NOME_CAMPO[e.campo] ?? e.campo}:</b>
+                <b>{NOME_CAMPO[e.campo] ?? e.campo}{e.objeto ? ` (${e.objeto})` : ""}:</b>
                 <span className="text-muted-foreground">{valorDoEvento(e.campo, e.de)}</span>
                 <span className="text-muted-foreground">→</span>
                 <span className="font-semibold">{valorDoEvento(e.campo, e.para)}</span>

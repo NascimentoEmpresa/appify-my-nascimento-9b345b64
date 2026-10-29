@@ -56,6 +56,7 @@ export function HistoricoDenuncia({ denunciaId }: { denunciaId: string }) {
             <div className="flex flex-wrap items-center gap-2">
               <History className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
               <span className="text-xs font-semibold">{nomeCampo(e.campo)}</span>
+              {e.objeto && <span className="truncate text-xs text-muted-foreground">{e.objeto}</span>}
               {e.campo === "status" && (
                 <Badge variant="outline" className="text-[10px]">situação</Badge>
               )}
