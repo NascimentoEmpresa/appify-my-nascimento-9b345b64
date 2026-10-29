@@ -359,6 +359,7 @@ import CoordenarChamado from "./pages/chamados/CoordenarChamado";
 import PainelDesenvolvedorChamados from "./pages/chamados/PainelDesenvolvedor";
 import DashboardDesenvolvedorChamados from "./pages/chamados/DashboardDesenvolvedor";
 import GithubPainelDev from "./pages/chamados/GithubPainel";
+import ControlePullRequests from "./pages/chamados/ControlePullRequests";
 import ConferenciaPontoEncarregado from "./pages/encarregados/ConferenciaPontoEncarregado";
 import DocumentosEncarregado from "./pages/encarregados/DocumentosEncarregado";
 import DocumentosRh from "./pages/rh/DocumentosRh";
@@ -600,6 +601,7 @@ const App = () => (
             <Route path="sistemas/chamados/dev/dashboard" element={<DashboardDesenvolvedorChamados />} />
             {/* GitHub do repositório (mig 20261007000022 + Edge dev-github-sync). */}
             <Route path="sistemas/chamados/dev/github" element={<GithubPainelDev />} />
+            <Route path="sistemas/chamados/pull-requests" element={<ControlePullRequests />} />
             <Route path="sistemas/chamados/:id/coordenar" element={<CoordenarChamado />} />
             {/* Não vira redirect por causa do :id, que o Navigate não interpola.
                 Renderiza a mesma tela, mas com o "voltar" apontando para a

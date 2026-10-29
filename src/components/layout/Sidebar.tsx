@@ -69,7 +69,7 @@ import {
   UserMinus,
   UserPlus,
   CalendarCheck2,
-  AlertTriangle, WandSparkles, Clock, FileSpreadsheet } from "lucide-react";
+  AlertTriangle, WandSparkles, Clock, FileSpreadsheet, GitPullRequest } from "lucide-react";
 import { useTemAlcada } from "@/hooks/useTemAlcada";
 import { useAccessibleMenus, matchMenuCode } from "@/hooks/useAccessibleMenus";
 import { useModoExterno, rotaPermitidaExterno } from "@/hooks/useModoExterno";
@@ -952,6 +952,7 @@ const sistemasModule: ModuleDef = {
         { label: "Painel de Distribuição", to: "/app/sistemas/chamados/painel", icon: BarChart3 },
         { label: "Dashboard de Chamados", to: "/app/sistemas/chamados/dashboard-tv", icon: LayoutDashboard },
         { label: "Painel do Desenvolvedor", to: "/app/sistemas/chamados/dev", icon: ClipboardList, notif: "dev" },
+        { label: "Controle de Pull Requests (PR)", to: "/app/sistemas/chamados/pull-requests", icon: GitPullRequest },
       ],
     },
     {
