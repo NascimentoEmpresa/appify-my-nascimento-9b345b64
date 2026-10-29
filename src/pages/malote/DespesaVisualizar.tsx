@@ -94,6 +94,7 @@ import { usePermissoes } from "@/context/PermissoesContext";
 import { DiaPagamentoPicker } from "./DiaPagamentoPicker";
 import { ExcecaoSenhaField } from "./ExcecaoSenhaField";
 import { ChaveAprovacaoN1 } from "./ChaveAprovacaoN1";
+import { useCartaoEspecialDaForma } from "./cartaoEspecial";
 import { useN1ForaDoPrazo } from "@/hooks/useMaloteExcecao";
 import { conferirExcecaoComDespesa, type ExcecaoValidada } from "./excecao/regras";
 import { montarCombosAlcada, encontrarComboQueEstouraAlcada, rescalarRateioPorTotal } from "./orcamentoUtils";
@@ -435,6 +436,8 @@ export default function DespesaVisualizar() {
   const [confirmarAprovarParceladoAberto, setConfirmarAprovarParceladoAberto] = useState(false);
 
   const despesa = data?.despesa;
+  // SIS-2026-0758: compra no cartão com Fluxo Especial (Sicredi) já foi feita — data vencida e chave do N1 não travam a aprovação.
+  const cartaoEspecial = useCartaoEspecialDaForma(despesa?.forma_pagamento ?? "", despesa?.empresa_id);
   // [SEM-CHAMADO] (15/10/2026, DM-2026-2492): despesa marcada como parcelada mas SEM nenhuma linha em
   // malote_despesa_parcela (o salvamento foi cortado depois de criar a despesa) derrubava a tela inteira —
   // RateioParceladoTable lia parcelas[-1].data_vencimento — e o ErroDeTela mostrava "Sistema indisponível" para
@@ -661,12 +664,12 @@ export default function DespesaVisualizar() {
   // uma data já vencida.
   // Parcelada: data_pagamento é a data da COMPRA (rastreio); quem vence é a primeira parcela em aberto (ver dataPagamentoEfetiva).
   const dataPagamentoEfetivaDespesa = dataPagamentoEfetiva(despesa.parcelado, data?.parcelas, despesa.data_pagamento);
-  const dataPagamentoVencida = !!dataPagamentoEfetivaDespesa && dataPagamentoEfetivaDespesa < new Date().toLocaleDateString("sv-SE");
+  const dataPagamentoVencida = !cartaoEspecial && !!dataPagamentoEfetivaDespesa && dataPagamentoEfetivaDespesa < new Date().toLocaleDateString("sv-SE");
   // Depois do horário 1.1 o Nível 1 só precisa da chave (senha de exceção de aprovação) quando o pagamento é HOJE ou já está vencido:
   // despesa para amanhã em diante não tem pressa e aprova normalmente. O banco aplica a mesma condição (migration 20261022000290).
   const dataPagamentoDoN1 = despesa.parcelado ? dataPagamentoEfetivaDespesa : dataPagamento || despesa.data_pagamento || "";
   const n1PrecisaChave =
-    despesa.nivel_aprovacao_atual === 1 && !despesa.excecao && !!n1ForaDoPrazo && !!dataPagamentoDoN1 && dataPagamentoDoN1 <= new Date().toLocaleDateString("sv-SE");
+    despesa.nivel_aprovacao_atual === 1 && !despesa.excecao && !cartaoEspecial && !!n1ForaDoPrazo && !!dataPagamentoDoN1 && dataPagamentoDoN1 <= new Date().toLocaleDateString("sv-SE");
   // SIS-2026-0192: "Dados da Aprovação e Pagamento" e "Dados da Despesa"
   // só podem ser alterados pelo Solicitante — ninguém mais edita, nem
   // admin/supervisor/aprovador.
@@ -1000,7 +1003,7 @@ export default function DespesaVisualizar() {
     // SIS-2026-0361 (complemento): piso absoluto — nem editando o campo dá
     // pra aprovar com data no passado. Backstop; o botão já fica oculto
     // nesse caso (ver dataPagamentoVencida).
-    if ((despesa!.parcelado ? dataPagamentoEfetivaDespesa : dataPagamento) < new Date().toLocaleDateString("sv-SE")) {
+    if (!cartaoEspecial && (despesa!.parcelado ? dataPagamentoEfetivaDespesa : dataPagamento) < new Date().toLocaleDateString("sv-SE")) {
       return "Data de pagamento é anterior a hoje — não é possível aprovar. Use Solicitar ajuste.";
     }
     if (!competencia) return "Informe a competência.";
