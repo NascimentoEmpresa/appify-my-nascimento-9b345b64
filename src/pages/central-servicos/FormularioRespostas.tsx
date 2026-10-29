@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import type { SupabaseClient } from "@supabase/supabase-js";
@@ -110,6 +110,42 @@ const btnMini = (bg: string, c: string, border: string): React.CSSProperties =>
   ({ padding: "3px 9px", borderRadius: 7, border, background: bg, color: c, fontSize: 10.5, fontWeight: 700, cursor: "pointer", flexShrink: 0 });
 const rotFiltro: React.CSSProperties = { display: "block", fontSize: 11.5, fontWeight: 600, color: "#94a3b8", marginBottom: 4 };
 const selFiltro: React.CSSProperties = { width: "100%", border: "1px solid #e2e8f0", borderRadius: 9, padding: "8px 10px", fontSize: 12.5, outline: "none", fontFamily: "inherit", background: "#fff", color: "#0f172a" };
+
+// ── Mês da votação (29/10/2026) ──
+// O mês é só um atalho do filtro de período: as setas preenchem "de" com o
+// dia 1 e "até" com o último dia. Por isso não há estado próprio — o mês
+// selecionado é LIDO das duas datas, e qualquer período que não seja um mês
+// inteiro (digitado à mão, ou filtro limpo) simplesmente não é "um mês".
+const MESES = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"];
+const doisDig = (n: number) => String(n).padStart(2, "0");
+/** "AAAA-MM" de hoje (relógio do navegador). */
+const mesAtual = () => { const d = new Date(); return `${d.getFullYear()}-${doisDig(d.getMonth() + 1)}`; };
+/** Desloca "AAAA-MM" em `delta` meses. */
+const somaMes = (ym: string, delta: number) => {
+  const [a, m] = ym.split("-").map(Number);
+  const d = new Date(a, m - 1 + delta, 1);
+  return `${d.getFullYear()}-${doisDig(d.getMonth() + 1)}`;
+};
+/** Primeiro e último dia do mês, no formato do <input type="date">. */
+const limitesMes = (ym: string) => {
+  const [a, m] = ym.split("-").map(Number);
+  return { de: `${ym}-01`, ate: `${ym}-${doisDig(new Date(a, m, 0).getDate())}` };
+};
+/** O período é exatamente um mês inteiro? Devolve "AAAA-MM" ou null. */
+const mesDoPeriodo = (de: string, ate: string): string | null => {
+  if (!de || !ate) return null;
+  const ym = de.slice(0, 7);
+  const l = limitesMes(ym);
+  return de === l.de && ate === l.ate ? ym : null;
+};
+const rotuloMes = (ym: string) => { const [a, m] = ym.split("-").map(Number); return `${MESES[m - 1]} de ${a}`; };
+const btnSeta: React.CSSProperties = { width: 34, height: 34, borderRadius: 9, border: "1px solid #e2e8f0", background: "#fff", color: "#0f3171", fontSize: 18, fontWeight: 800, lineHeight: 1, cursor: "pointer" };
+
+// Participação do mês (RPC cs_form_participacao_mes, mig 20261029001000).
+type Participacao = {
+  alvo_total: number | null; responderam: number | null; faltam: number | null;
+  anonimo: boolean; faltantes: { nome: string; setor: string | null }[] | null;
+};
 
 // Como um texto de resposta deve aparecer: se é pessoa (bate com o cadastro ou
 // foi vinculado à mão) e sob que nome. O vínculo manual troca o texto da
@@ -276,6 +312,14 @@ export function FiltrosRespostas({ fResp, setFResp, opcoesResp, fSetor, setFSeto
   fDe: string; setFDe: (v: string) => void; fAte: string; setFAte: (v: string) => void;
   filtrando: boolean; onLimpar: () => void; soData?: boolean;
 }) {
+  // ‹ › andam de mês em mês a partir do mês do período (ou do mês atual,
+  // quando o período está vazio ou não é um mês inteiro).
+  const mesSel = mesDoPeriodo(fDe, fAte);
+  const irMes = (delta: number) => {
+    const base = mesSel ?? (fDe ? fDe.slice(0, 7) : mesAtual());
+    const l = limitesMes(mesSel || fDe ? somaMes(base, delta) : base);
+    setFDe(l.de); setFAte(l.ate);
+  };
   return (
     <div style={{ ...card, display: "flex", alignItems: "flex-end", gap: 14, flexWrap: "wrap", padding: "12px 16px", margin: "14px 24px 0", borderRadius: 18, flexShrink: 0 }}>
       <span style={{ fontSize: 13, fontWeight: 800, color: "#0f172a", paddingBottom: 9 }}>Filtros:</span>
@@ -295,6 +339,16 @@ export function FiltrosRespostas({ fResp, setFResp, opcoesResp, fSetor, setFSeto
         </select>
       </div>
       </>}
+      <div>
+        <label style={rotFiltro}>Mês</label>
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <button onClick={() => irMes(-1)} title="Mês anterior" style={btnSeta}>‹</button>
+          <span style={{ minWidth: 150, textAlign: "center", fontSize: 13, fontWeight: 800, color: mesSel ? "#0f3171" : "#94a3b8" }}>
+            {mesSel ? rotuloMes(mesSel) : fDe || fAte ? "Período livre" : "Todos os meses"}
+          </span>
+          <button onClick={() => irMes(1)} title="Mês seguinte" style={btnSeta}>›</button>
+        </div>
+      </div>
       <div>
         <label style={rotFiltro}>{soData ? "Período (data de envio)" : "Data de criação"}</label>
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -335,6 +389,9 @@ export default function FormularioRespostas() {
   const [pessoa, setPessoa] = useState<string | null>(null);      // modal ficha do empregado (nome citado)
   const [vinculos, setVinculos] = useState<Map<string, string>>(new Map()); // apelido -> nome do empregado (CS_FORM_VINCULOS)
   const [menuPdf, setMenuPdf] = useState(false);
+  const mesInicialAplicado = useRef(false);
+  const [part, setPart] = useState<Participacao | null>(null);   // quem votou no mês (null = sem dado/sem permissão)
+  const [verFaltantes, setVerFaltantes] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -345,8 +402,20 @@ export default function FormularioRespostas() {
     setLoading(false);
     if (fRes.error) { nav("/app/central-servicos/formularios"); return; }
     setForm(fRes.data);
-    setPergsTodas(normalizaPerguntas(fRes.data.perguntas));
+    const pergsLidas = normalizaPerguntas(fRes.data.perguntas);
+    setPergsTodas(pergsLidas);
     setResps((rRes.data ?? []).map((r: Resposta) => ({ ...r, itens: r.itens ?? {} })));
+    // Votação mês a mês (1 resposta por mês civil, ou pergunta "colegas"):
+    // abre no mês atual. Só na primeira carga — o load() depois de excluir
+    // uma resposta não pode atropelar o mês que a pessoa escolheu. Pesquisa
+    // comum continua abrindo com todas as respostas.
+    if (!mesInicialAplicado.current) {
+      mesInicialAplicado.current = true;
+      if (fRes.data.intervalo_mensal || pergsLidas.some(p => p.tipo === "colegas")) {
+        const l = limitesMes(mesAtual());
+        setFDe(l.de); setFAte(l.ate);
+      }
+    }
   }, [id, nav]);
   useEffect(() => { load(); }, [load]);
 
@@ -508,6 +577,20 @@ export default function FormularioRespostas() {
   const filtrando = !!(fResp || fSetor || fDe || fAte);
   const limparFiltros = () => { setFResp(""); setFSetor(""); setFDe(""); setFAte(""); };
 
+  // Quem votou no mês selecionado, contra o público-alvo. O alvo e o relógio
+  // de envios (CS_FORM_ENVIOS) não chegam ao front pela RLS — a RPC confere
+  // se quem pede lê TODAS as respostas e, em formulário anônimo, devolve só
+  // os números. Sem permissão (ou RPC ainda não aplicada) o bloco não aparece.
+  const mesSel = mesDoPeriodo(fDe, fAte);
+  useEffect(() => {
+    setPart(null); setVerFaltantes(false);
+    if (!mesSel || !id) return;
+    let vivo = true;
+    sb.rpc("cs_form_participacao_mes", { _form_id: id, _mes: `${mesSel}-01` })
+      .then(({ data, error }) => { if (vivo && !error && data) setPart(data as Participacao); });
+    return () => { vivo = false; };
+  }, [id, mesSel]);
+
   const exportCsv = () => {
     if (!form) return;
     const esc = (s: unknown) => `"${String(s ?? "").replace(/"/g, '""')}"`;
@@ -632,6 +715,39 @@ export default function FormularioRespostas() {
 
       <div style={{ flex: 1, overflowY: "auto", padding: "18px 24px 40px" }}>
         <div style={{ maxWidth: 860, margin: "0 auto", display: "flex", flexDirection: "column", gap: 14 }}>
+          {mesSel && part && part.alvo_total != null && (
+            <div style={card}>
+              <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
+                <div style={{ flex: 1, minWidth: 220 }}>
+                  <div style={{ fontSize: 14, fontWeight: 800, color: "#0f172a" }}>Participação em {rotuloMes(mesSel)}</div>
+                  <div style={{ fontSize: 11.5, color: "#94a3b8" }}>Entre as {part.alvo_total} pessoa(s) que podem responder este formulário</div>
+                </div>
+                <span style={{ fontSize: 12.5, fontWeight: 800, padding: "5px 11px", borderRadius: 20, background: "#dcfce7", color: "#15803d" }}>✓ {part.responderam} responderam</span>
+                <span style={{ fontSize: 12.5, fontWeight: 800, padding: "5px 11px", borderRadius: 20, background: part.faltam ? "#fef3c7" : "#f1f5f9", color: part.faltam ? "#b45309" : "#64748b" }}>⏳ {part.faltam} faltam</span>
+              </div>
+              <div style={{ height: 8, background: "#f1f5f9", borderRadius: 8, overflow: "hidden", marginTop: 10 }}>
+                <div style={{ width: `${part.alvo_total ? Math.round(((part.responderam ?? 0) / part.alvo_total) * 100) : 0}%`, height: "100%", background: "#16a34a" }} />
+              </div>
+              {part.anonimo ? (
+                <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 8 }}>🕶 Formulário anônimo: só os números — quem respondeu (e, por consequência, quem falta) não é mostrado.</div>
+              ) : !!part.faltantes?.length && (
+                <div style={{ marginTop: 8 }}>
+                  <button onClick={() => setVerFaltantes(v => !v)} style={btnMini("#fff", "#0f3171", "1px solid rgba(15,49,113,.25)")}>
+                    {verFaltantes ? "Ocultar" : `Ver quem falta (${part.faltantes.length})`}
+                  </button>
+                  {verFaltantes && (
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginTop: 8, maxHeight: 220, overflowY: "auto" }}>
+                      {part.faltantes.map((f, fi) => (
+                        <span key={fi} style={{ fontSize: 11, fontWeight: 700, padding: "3px 9px", borderRadius: 20, background: "#f8fafc", border: "1px solid #e2e8f0", color: "#334155" }}>
+                          {f.nome}{f.setor ? <span style={{ color: "#4338ca", fontWeight: 800 }}> · {f.setor}</span> : null}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
           {respsEscopo.length === 0 ? (
             <div style={{ ...card, textAlign: "center", color: "#94a3b8", padding: 50 }}>{soPropriasNoForm(id) ? "Você ainda não enviou nenhuma resposta a este formulário." : "Nenhuma resposta ainda. Compartilhe a URL pública do formulário."}</div>
           ) : respsFiltradas.length === 0 ? (
@@ -912,9 +1028,22 @@ function ResumoColegas({ resps, pid, resolve, onPessoa, quem }: {
         m.set(chave, g);
       });
     });
-    return [...m.entries()]
+    // Posição (29/10/2026): ranking de COMPETIÇÃO — empatados dividem a
+    // posição e a seguinte pula (1º, 2º, 2º, 4º). Empate = mesma contagem E
+    // mesma nota COMO APARECE na tela (1 casa): 4,875 e 4,917 mostram ★ 4.9,
+    // e posições diferentes para notas iguais na tela pareceriam erro. A
+    // ordem usa a mesma nota arredondada, para empatados ficarem juntos.
+    const notaTela = (x: number | null) => x == null ? -1 : Math.round(x * 10) / 10;
+    const lista = [...m.entries()]
       .map(([chave, g]) => ({ chave, ...g, media: g.notas.length ? g.notas.reduce((s, n) => s + n, 0) / g.notas.length : null }))
-      .sort((a, b) => b.n - a.n || (b.media ?? 0) - (a.media ?? 0) || a.nome.localeCompare(b.nome, "pt-BR"));
+      .sort((a, b) => b.n - a.n || notaTela(b.media) - notaTela(a.media) || a.nome.localeCompare(b.nome, "pt-BR"));
+    let pos = 0;
+    return lista.map((g, i) => {
+      const ant = lista[i - 1];
+      if (!ant || ant.n !== g.n || notaTela(ant.media) !== notaTela(g.media)) pos = i + 1;
+      return { ...g, pos, empate: (!!ant && ant.n === g.n && notaTela(ant.media) === notaTela(g.media))
+        || (!!lista[i + 1] && lista[i + 1].n === g.n && notaTela(lista[i + 1].media) === notaTela(g.media)) };
+    });
   }, [resps, pid, resolve, quem]);
 
   if (!ranking.length) return <div style={{ fontSize: 12.5, color: "#94a3b8" }}>Nenhum colega indicado ainda.</div>;
@@ -927,6 +1056,12 @@ function ResumoColegas({ resps, pid, resolve, onPessoa, quem }: {
         return (
           <div key={g.chave} style={{ border: "1px solid #f1f5f9", borderRadius: 9, background: on ? "#f8fafc" : "#fff" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 9, padding: "7px 10px", flexWrap: "wrap" }}>
+              <span title={g.empate ? "Empatado: mesma quantidade de indicações e mesma nota" : undefined}
+                style={{ minWidth: 34, textAlign: "center", fontSize: 11.5, fontWeight: 900, padding: "3px 6px", borderRadius: 8, flexShrink: 0,
+                  background: g.pos === 1 ? "#fef3c7" : g.pos === 2 ? "#e2e8f0" : g.pos === 3 ? "#fde7d4" : "#f8fafc",
+                  color: g.pos === 1 ? "#a16207" : g.pos === 2 ? "#475569" : g.pos === 3 ? "#c2410c" : "#64748b" }}>
+                {g.pos}º
+              </span>
               <div style={{ flex: 1, minWidth: 150, display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap" }}>
                 <NomeLink texto={g.nome} resolve={resolve} onPessoa={onPessoa} />
                 {[...g.setores].map(s => <span key={s} style={{ fontSize: 10, fontWeight: 800, padding: "2px 7px", borderRadius: 20, background: "#eef2ff", color: "#4338ca" }}>{s}</span>)}

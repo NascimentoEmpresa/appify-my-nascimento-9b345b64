@@ -12,10 +12,12 @@
 // =====================================================================
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, Loader2, RefreshCw, Sparkles } from "lucide-react";
+import ReactMarkdown from "react-markdown";
+import { AlertTriangle, Loader2, MessageSquare, RefreshCw, Send, Sparkles } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { fmtDataHora } from "./types";
 
@@ -66,8 +68,8 @@ export function SeloComplexidade({ nivel, rotulo }: { nivel: number | null | und
   );
 }
 
-async function gerarParecer(chamadoId: string): Promise<void> {
-  const { data, error } = await supabase.functions.invoke("chamado-parecer-ia", { body: { chamado_id: chamadoId } });
+async function chamarFuncao(body: Record<string, unknown>): Promise<{ texto?: string }> {
+  const { data, error } = await supabase.functions.invoke("chamado-parecer-ia", { body });
   if (error) {
     // A mensagem útil vem no corpo (403 sem permissão, 429 sem tokens).
     const ctx = (error as { context?: Response }).context;
@@ -75,6 +77,86 @@ async function gerarParecer(chamadoId: string): Promise<void> {
     throw new Error(corpo?.error ?? error.message);
   }
   if (data?.error) throw new Error(data.error);
+  return data ?? {};
+}
+
+const gerarParecer = (chamadoId: string) => chamarFuncao({ chamado_id: chamadoId });
+
+type MsgChat = { role: "user" | "assistant"; content: string; erro?: boolean };
+
+const SUGESTOES = [
+  "De onde você tirou esse valor?",
+  "Por que a software house custa tanto mais?",
+  "Quebre as horas por etapa.",
+];
+
+/** Conversa com a I.A sobre os custos do parecer (29/10/2026). Não grava
+ *  nada: o histórico vive só nesta tela e vai junto a cada pergunta. */
+function ChatParecerIa({ chamadoId }: { chamadoId: string }) {
+  const [msgs, setMsgs] = useState<MsgChat[]>([]);
+  const [texto, setTexto] = useState("");
+  const [enviando, setEnviando] = useState(false);
+
+  const enviar = async (pergunta: string) => {
+    const p = pergunta.trim();
+    if (!p || enviando) return;
+    // Erros não voltam para a I.A como se fossem resposta dela.
+    const historico = msgs.filter((m) => !m.erro).map(({ role, content }) => ({ role, content }));
+    setMsgs((cur) => [...cur, { role: "user", content: p }]);
+    setTexto("");
+    setEnviando(true);
+    try {
+      const r = await chamarFuncao({ chamado_id: chamadoId, modo: "chat", pergunta: p, historico });
+      setMsgs((cur) => [...cur, { role: "assistant", content: r.texto || "A I.A devolveu resposta vazia.", erro: !r.texto }]);
+    } catch (e) {
+      setMsgs((cur) => [...cur, { role: "assistant", content: e instanceof Error ? e.message : String(e), erro: true }]);
+    } finally {
+      setEnviando(false);
+    }
+  };
+
+  return (
+    <div className="space-y-2 rounded-lg border border-border bg-muted/30 p-3">
+      <p className="flex items-center gap-1.5 text-xs font-semibold"><MessageSquare className="h-3.5 w-3.5 text-primary" /> Pergunte à I.A sobre os custos</p>
+      {msgs.length > 0 && (
+        <div className="max-h-96 space-y-2 overflow-y-auto pr-1">
+          {msgs.map((m, i) => (
+            m.role === "user" ? (
+              <div key={i} className="ml-auto max-w-[85%] whitespace-pre-line rounded-lg bg-primary px-3 py-2 text-xs text-primary-foreground">{m.content}</div>
+            ) : m.erro ? (
+              <div key={i} className="flex max-w-[95%] items-start gap-1.5 rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+                <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" /> <span>A I.A não respondeu: {m.content}</span>
+              </div>
+            ) : (
+              <div key={i} className="max-w-[95%] rounded-lg border border-border bg-background px-3 py-2 text-xs">
+                <div className="prose prose-sm max-w-none text-xs dark:prose-invert prose-p:my-1 prose-ul:my-1 prose-li:my-0 prose-table:text-xs"><ReactMarkdown>{m.content}</ReactMarkdown></div>
+              </div>
+            )
+          ))}
+          {enviando && <p className="flex items-center gap-1.5 text-[11px] text-muted-foreground"><Loader2 className="h-3 w-3 animate-spin" /> A I.A está pensando…</p>}
+        </div>
+      )}
+      {msgs.length === 0 && (
+        <div className="flex flex-wrap gap-1.5">
+          {SUGESTOES.map((s) => (
+            <button key={s} type="button" onClick={() => enviar(s)} disabled={enviando}
+              className="rounded-full border border-border bg-background px-2.5 py-1 text-[11px] hover:border-primary/40 disabled:opacity-50">{s}</button>
+          ))}
+        </div>
+      )}
+      <form className="flex gap-2" onSubmit={(e) => { e.preventDefault(); enviar(texto); }}>
+        <Textarea
+          value={texto} onChange={(e) => setTexto(e.target.value)} rows={1}
+          placeholder="Ex.: por que esse valor está tão caro?"
+          className="min-h-9 flex-1 resize-none text-xs"
+          onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); enviar(texto); } }}
+        />
+        <Button type="submit" size="sm" className="h-9 gap-1" disabled={enviando || !texto.trim()}>
+          {enviando ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
+        </Button>
+      </form>
+    </div>
+  );
 }
 
 /** Resumo de TODOS os pareceres que o usuário enxerga (a RLS recorta), para
@@ -238,6 +320,8 @@ export function ParecerIaChamado({ chamadoId, podeGerar }: { chamadoId: string; 
           <p className="text-[10px] text-muted-foreground">
             Estimativa automática, não é orçamento. Gerado em {fmtDataHora(parecer.gerado_em)}{parecer.modelo ? ` · ${parecer.modelo}` : ""}.
           </p>
+
+          <ChatParecerIa key={parecer.gerado_em ?? ""} chamadoId={chamadoId} />
         </>
       )}
     </Card>
