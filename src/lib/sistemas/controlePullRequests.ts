@@ -1,9 +1,10 @@
 // =====================================================================
-// SIS-2026-0786 — CONTROLE DE PULL REQUESTS (mig 20261029004900)
+// SIS-2026-0786 — CONTROLE DE PULL REQUESTS (migs 20261029004900 e 005000)
 //
-// Contas da tela Sistemas › Controle de Pull Requests (PR): filtro,
-// paginação e CSV sobre a lista que a RPC dev_github_controle_pr devolve
-// (só PRs mergeadas na main, mais novas primeiro).
+// Apoio da tela Sistemas › Controle de Pull Requests (PR). Filtro e
+// paginação acontecem NO BANCO (RPC dev_github_controle_pr): a tela pede uma
+// página por vez, nunca a tabela inteira. Aqui ficam só a tradução do filtro
+// para os parâmetros da RPC, a formatação e o CSV.
 //
 // "Data e hora da aprovação" é o MERGE na main (mergeado_em) — decisão do
 // Eduardo: é o momento em que a alteração foi para produção.
@@ -27,7 +28,16 @@ export interface PrControle {
   mergeado_em: string;
 }
 
-export interface ControlePrBruto { prs: PrControle[] | null }
+/** Uma página, como a RPC devolve. */
+export interface PaginaControlePr {
+  total: number;
+  /** A página que veio de fato (a RPC corrige página além da última). */
+  pagina: number;
+  por_pagina: number;
+  /** Todos os desenvolvedores que já tiveram PR, para o filtro (não só os da página). */
+  desenvolvedores: string[];
+  prs: PrControle[];
+}
 
 /** "com" = título com SIS-AAAA-NNNN; "sem" = [SEM-CHAMADO] ou título sem número. */
 export type FiltroChamado = "todas" | "com" | "sem";
@@ -35,7 +45,7 @@ export type FiltroChamado = "todas" | "com" | "sem";
 export interface FiltroControlePr {
   busca: string;
   desenvolvedor: string | null;
-  /** AAAA-MM-DD, dia de Brasília, inclusivo. */
+  /** AAAA-MM-DD, dia de Brasília do merge, inclusivo. Vazio = sem limite. */
   de: string;
   ate: string;
   chamado: FiltroChamado;
@@ -44,51 +54,33 @@ export interface FiltroControlePr {
 export const FILTRO_CONTROLE_PR_PADRAO: FiltroControlePr = { busca: "", desenvolvedor: null, de: "", ate: "", chamado: "todas" };
 
 export const POR_PAGINA_CONTROLE_PR = 20;
+/** Lote do Exportar CSV — o teto que a RPC aceita por chamada. */
+export const LOTE_CSV_CONTROLE_PR = 500;
 
-const FUSO = "America/Sao_Paulo";
-const diaFmt = new Intl.DateTimeFormat("en-CA", { timeZone: FUSO, year: "numeric", month: "2-digit", day: "2-digit" });
+export const filtroVazio = (f: FiltroControlePr) =>
+  !f.busca.trim() && !f.desenvolvedor && !f.de && !f.ate && f.chamado === "todas";
+
+/** Parâmetros da RPC dev_github_controle_pr. Campo vazio vai como null (= sem filtro). */
+export function parametrosRpc(f: FiltroControlePr, pagina: number, porPagina = POR_PAGINA_CONTROLE_PR) {
+  return {
+    _busca: f.busca.trim() || null,
+    _desenvolvedor: f.desenvolvedor || null,
+    _de: f.de || null,
+    _ate: f.ate || null,
+    _chamado: f.chamado,
+    _pagina: Math.max(1, Math.floor(pagina) || 1),
+    _por_pagina: porPagina,
+  };
+}
+
+export const totalPaginas = (total: number, porPagina: number) => Math.max(1, Math.ceil(total / Math.max(1, porPagina)));
+
 const dataHoraFmt = new Intl.DateTimeFormat("pt-BR", {
-  timeZone: FUSO, day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit",
+  timeZone: "America/Sao_Paulo", day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit",
 });
-
-/** Dia (AAAA-MM-DD) em Brasília: merge às 22h do dia 29 em UTC-3 ainda é dia 29. */
-export const diaBrasilia = (iso: string) => diaFmt.format(new Date(iso));
-
 export const fmtDataHoraBrasilia = (iso: string) => dataHoraFmt.format(new Date(iso));
 
-const semAcento = (s: string) => s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLocaleLowerCase("pt-BR");
-
 export const linhasAlteradas = (p: PrControle) => (p.adicoes ?? 0) + (p.remocoes ?? 0);
-
-export function filtrarControlePr(prs: PrControle[], f: FiltroControlePr): PrControle[] {
-  const termo = semAcento(f.busca.trim().replace(/^#/, ""));
-  return prs.filter((p) => {
-    if (f.desenvolvedor && p.desenvolvedor !== f.desenvolvedor) return false;
-    if (f.chamado === "com" && !p.chamado) return false;
-    if (f.chamado === "sem" && p.chamado) return false;
-    if (f.de || f.ate) {
-      const dia = diaBrasilia(p.mergeado_em);
-      if (f.de && dia < f.de) return false;
-      if (f.ate && dia > f.ate) return false;
-    }
-    if (termo) {
-      const alvo = semAcento([p.numero, p.titulo, p.chamado, p.chamado_assunto, p.desenvolvedor, p.autor_login].filter(Boolean).join(" "));
-      if (!alvo.includes(termo)) return false;
-    }
-    return true;
-  });
-}
-
-/** Desenvolvedores distintos, em ordem alfabética, para o filtro. */
-export const desenvolvedoresDe = (prs: PrControle[]) =>
-  [...new Set(prs.map((p) => p.desenvolvedor))].sort((a, b) => a.localeCompare(b, "pt-BR"));
-
-export function paginar<T>(itens: T[], pagina: number, porPagina = POR_PAGINA_CONTROLE_PR) {
-  const totalPaginas = Math.max(1, Math.ceil(itens.length / porPagina));
-  const atual = Math.min(Math.max(1, pagina), totalPaginas);
-  const inicio = (atual - 1) * porPagina;
-  return { pagina: atual, totalPaginas, itens: itens.slice(inicio, inicio + porPagina), de: itens.length ? inicio + 1 : 0, ate: Math.min(inicio + porPagina, itens.length) };
-}
 
 const celulaCsv = (v: unknown) => `"${String(v ?? "").replace(/"/g, '""')}"`;
 

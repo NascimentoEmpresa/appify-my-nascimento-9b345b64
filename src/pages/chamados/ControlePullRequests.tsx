@@ -1,6 +1,7 @@
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { Link } from "react-router-dom";
-import { Download, ExternalLink, GitPullRequest, Loader2, Search, ShieldAlert } from "lucide-react";
+import { ChevronLeft, ChevronRight, Download, ExternalLink, GitPullRequest, Loader2, Search, ShieldAlert } from "lucide-react";
+import { toast } from "sonner";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { AcessoGate } from "@/components/auth/AcessoGate";
 import { Card } from "@/components/ui/card";
@@ -8,9 +9,10 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { useControlePullRequests } from "@/hooks/useControlePullRequests";
+import { useDebounce } from "@/hooks/useDebounce";
+import { buscarTudoParaCsv, useControlePullRequests } from "@/hooks/useControlePullRequests";
 import {
-  FILTRO_CONTROLE_PR_PADRAO, csvControlePr, desenvolvedoresDe, filtrarControlePr, fmtDataHoraBrasilia, linhasAlteradas, paginar,
+  FILTRO_CONTROLE_PR_PADRAO, csvControlePr, filtroVazio, fmtDataHoraBrasilia, linhasAlteradas, totalPaginas,
   type FiltroChamado, type FiltroControlePr, type PrControle,
 } from "@/lib/sistemas/controlePullRequests";
 
@@ -19,8 +21,10 @@ import {
 //
 // Pedido do Iury: a parte central do Painel_Pull_Requests_ERP.html anexo ao
 // chamado (a sidebar e o topo do mockup são os do próprio ERP). Toda PR
-// mergeada na main entra sozinha pelo workflow pr_registrar_painel.yml; a
-// tela só lê (RPC dev_github_controle_pr, mig 20261029004900).
+// mergeada na main entra sozinha pelo workflow pr_registrar_painel.yml.
+//
+// Filtro e paginação rodam no banco (mig 20261029005000): cada troca de
+// página ou de filtro pede só aquela página à RPC dev_github_controle_pr.
 // =====================================================================
 
 const MENU = "sistemas_controle_pr";
@@ -48,25 +52,38 @@ export default function ControlePullRequests() {
 }
 
 function Conteudo() {
-  const q = useControlePullRequests();
   const [filtro, setFiltro] = useState<FiltroControlePr>(FILTRO_CONTROLE_PR_PADRAO);
   const [pagina, setPagina] = useState(1);
-  const prs = useMemo(() => q.data ?? [], [q.data]);
-  const devs = useMemo(() => desenvolvedoresDe(prs), [prs]);
-  const filtradas = useMemo(() => filtrarControlePr(prs, filtro), [prs, filtro]);
-  const pg = paginar(filtradas, pagina);
+  const [exportando, setExportando] = useState(false);
+  // A busca só vai ao banco quando a pessoa para de digitar.
+  const buscaAtrasada = useDebounce(filtro.busca.trim());
+  const filtroBanco: FiltroControlePr = { ...filtro, busca: buscaAtrasada };
+  const q = useControlePullRequests(filtroBanco, pagina);
+  const r = q.data;
+  const paginas = r ? totalPaginas(r.total, r.por_pagina) : 1;
+  const atual = r?.pagina ?? 1;
+  const de = r && r.total ? (atual - 1) * r.por_pagina + 1 : 0;
+  const ate = r ? de + r.prs.length - (r.prs.length ? 1 : 0) : 0;
 
   const mudar = (parcial: Partial<FiltroControlePr>) => { setFiltro((f) => ({ ...f, ...parcial })); setPagina(1); };
   const limpar = () => { setFiltro(FILTRO_CONTROLE_PR_PADRAO); setPagina(1); };
-  const exportar = () => {
-    const url = URL.createObjectURL(new Blob([csvControlePr(filtradas)], { type: "text/csv;charset=utf-8" }));
-    const a = document.createElement("a");
-    a.href = url; a.download = "pull_requests_erp.csv"; a.click();
-    URL.revokeObjectURL(url);
+  const exportar = async () => {
+    setExportando(true);
+    try {
+      const prs = await buscarTudoParaCsv(filtroBanco);
+      const url = URL.createObjectURL(new Blob([csvControlePr(prs)], { type: "text/csv;charset=utf-8" }));
+      const a = document.createElement("a");
+      a.href = url; a.download = "pull_requests_erp.csv"; a.click();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      toast.error(`Não foi possível exportar: ${(e as Error).message}`);
+    } finally {
+      setExportando(false);
+    }
   };
 
   if (q.isLoading) return <Card className="flex items-center gap-2 p-6 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Carregando…</Card>;
-  if (q.error) return <Card className="flex items-center gap-3 p-6 text-sm text-muted-foreground"><ShieldAlert className="h-5 w-5 text-warning" /> {(q.error as Error).message}</Card>;
+  if (q.error && !r) return <Card className="flex items-center gap-3 p-6 text-sm text-muted-foreground"><ShieldAlert className="h-5 w-5 text-warning" /> {(q.error as Error).message}</Card>;
 
   return (
     <Card className="overflow-hidden">
@@ -76,14 +93,16 @@ function Conteudo() {
           <p className="text-xs text-muted-foreground">PRs mergeadas na main. A data da aprovação é o momento do merge — quando a alteração foi para produção.</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <Button variant="outline" size="sm" onClick={limpar}>Limpar filtros</Button>
+          <Button variant="outline" size="sm" onClick={limpar} disabled={filtroVazio(filtro)}>Limpar filtros</Button>
           <AcessoGate menu={MENU} acao="exportar">
-            <Button size="sm" onClick={exportar} disabled={!filtradas.length} className="gap-1.5"><Download className="h-4 w-4" /> Exportar CSV</Button>
+            <Button size="sm" onClick={exportar} disabled={!r?.total || exportando} className="gap-1.5">
+              {exportando ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />} Exportar CSV
+            </Button>
           </AcessoGate>
         </div>
       </div>
 
-      <div className="flex flex-wrap items-center gap-2 px-4 pb-4">
+      <div className="flex flex-wrap items-end gap-2 px-4 pb-4">
         <div className="relative min-w-[220px] flex-1">
           <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
           <Input value={filtro.busca} onChange={(e) => mudar({ busca: e.target.value })} placeholder="Buscar pull, chamado ou desenvolvedor" className="h-9 pl-8 text-sm" />
@@ -92,7 +111,7 @@ function Conteudo() {
           <SelectTrigger className="h-9 w-56 text-sm"><SelectValue /></SelectTrigger>
           <SelectContent>
             <SelectItem value="*">Todos os desenvolvedores</SelectItem>
-            {devs.map((d) => <SelectItem key={d} value={d}>{d}</SelectItem>)}
+            {(r?.desenvolvedores ?? []).map((d) => <SelectItem key={d} value={d}>{d}</SelectItem>)}
           </SelectContent>
         </Select>
         <Select value={filtro.chamado} onValueChange={(v) => mudar({ chamado: v as FiltroChamado })}>
@@ -103,12 +122,18 @@ function Conteudo() {
             <SelectItem value="sem">Sem chamado</SelectItem>
           </SelectContent>
         </Select>
-        <Input type="date" value={filtro.de} onChange={(e) => mudar({ de: e.target.value })} title="Data inicial" className="h-9 w-40 text-sm" />
-        <Input type="date" value={filtro.ate} onChange={(e) => mudar({ ate: e.target.value })} title="Data final" className="h-9 w-40 text-sm" />
+        <label className="grid gap-1 text-xs text-muted-foreground">
+          Merge de
+          <Input type="date" value={filtro.de} max={filtro.ate || undefined} onChange={(e) => mudar({ de: e.target.value })} className="h-9 w-40 text-sm" />
+        </label>
+        <label className="grid gap-1 text-xs text-muted-foreground">
+          até
+          <Input type="date" value={filtro.ate} min={filtro.de || undefined} onChange={(e) => mudar({ ate: e.target.value })} className="h-9 w-40 text-sm" />
+        </label>
       </div>
 
       <div className="overflow-x-auto border-t">
-        <Table className="min-w-[1020px] text-sm">
+        <Table className={`min-w-[1020px] text-sm transition-opacity ${q.isPlaceholderData ? "opacity-60" : ""}`}>
           <TableHeader>
             <TableRow className="bg-muted/40">
               <TableHead className="pl-4">Desenvolvedor</TableHead>
@@ -121,12 +146,12 @@ function Conteudo() {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {pg.itens.length ? pg.itens.map((p) => <Linha key={p.numero} p={p} />) : (
+            {r?.prs.length ? r.prs.map((p) => <Linha key={p.numero} p={p} />) : (
               <TableRow>
                 <TableCell colSpan={7} className="py-10 text-center text-muted-foreground">
-                  {prs.length ? "Nenhum pull request encontrado para os filtros selecionados." : (
+                  {filtroVazio(filtroBanco) ? (
                     <span className="inline-flex items-center gap-2"><GitPullRequest className="h-4 w-4" /> Nenhuma PR registrada ainda.</span>
-                  )}
+                  ) : "Nenhum pull request encontrado para os filtros selecionados."}
                 </TableCell>
               </TableRow>
             )}
@@ -135,14 +160,18 @@ function Conteudo() {
       </div>
 
       <div className="flex flex-wrap items-center justify-between gap-2 border-t px-4 py-3 text-xs text-muted-foreground">
-        <span>Mostrando {pg.de} a {pg.ate} de {filtradas.length} pull requests</span>
-        {pg.totalPaginas > 1 && (
-          <div className="flex items-center gap-2">
-            <Button variant="outline" size="sm" disabled={pg.pagina <= 1} onClick={() => setPagina(pg.pagina - 1)}>Anterior</Button>
-            <span>Página {pg.pagina} de {pg.totalPaginas}</span>
-            <Button variant="outline" size="sm" disabled={pg.pagina >= pg.totalPaginas} onClick={() => setPagina(pg.pagina + 1)}>Próxima</Button>
-          </div>
-        )}
+        <span>Mostrando {de} a {ate} de {(r?.total ?? 0).toLocaleString("pt-BR")} pull requests</span>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" size="sm" className="gap-1" disabled={atual <= 1 || q.isFetching} onClick={() => setPagina(atual - 1)}>
+            <ChevronLeft className="h-4 w-4" /> Anterior
+          </Button>
+          <span className="min-w-[110px] text-center">
+            {q.isFetching ? <Loader2 className="mx-auto h-4 w-4 animate-spin" /> : `Página ${atual} de ${paginas}`}
+          </span>
+          <Button variant="outline" size="sm" className="gap-1" disabled={atual >= paginas || q.isFetching} onClick={() => setPagina(atual + 1)}>
+            Próxima <ChevronRight className="h-4 w-4" />
+          </Button>
+        </div>
       </div>
     </Card>
   );
