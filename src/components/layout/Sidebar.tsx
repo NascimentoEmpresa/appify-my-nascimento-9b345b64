@@ -407,6 +407,9 @@ const financeiroModule: ModuleDef = {
         // SIS-2026-0599: resumo financeiro do contrato que vai começar.
         { label: "Início de Contrato", to: "/app/financeiro/inicio-de-contrato", icon: Banknote },
         { label: "Conferência de Ponto", to: "/app/financeiro/conferencia-ponto", icon: ClipboardCheck },
+        // Ficha Financeira (29/10/2026, mig 20261029004700): tudo o que cada
+        // colaborador recebeu na Senior. Nasce sem ninguém liberado.
+        { label: "Ficha Financeira", to: "/app/financeiro/ficha-financeira", icon: Receipt },
         // Dashboard de Pontos (30/09/2026, mig 274): o painel do RH, com menu
         // próprio do Financeiro (financeiro_dashboard_pontos).
         { label: "Dashboard de Pontos", to: "/app/financeiro/dashboard-pontos", icon: BarChart3 },
