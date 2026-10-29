@@ -303,3 +303,123 @@ COMMENT ON FUNCTION public.sup_dashboard_rotatividade_estoque_detalhado(uuid,dat
   'SIS-2026-0753: rotatividade conferível por código, item e tamanho, preservando a resposta executiva existente.';
 
 NOTIFY pgrst, 'reload schema';
+
+-- O histórico mensal anterior devolvia SOMENTE meses que já tinham snapshot.
+-- Como o primeiro fechamento existente é set/26, o eixo escondia toda a
+-- demanda anterior e também a posição atual de outubro. A série abaixo mostra
+-- todos os meses da janela: demanda real em todos eles, fechamentos onde
+-- existem e a posição ao vivo no mês corrente. Saldo/alvo antigos sem
+-- fechamento ficam NULL de propósito — lacuna honesta, nunca zero inventado.
+DO $bloco$
+DECLARE
+  v_definicao text;
+  v_origem text;
+  v_destino text;
+BEGIN
+  SELECT pg_get_functiondef(
+    'public.sup_estoque_saudavel(uuid,integer,uuid,text,uuid,integer)'::regprocedure
+  ) INTO v_definicao;
+
+  IF v_definicao IS NULL THEN
+    RAISE EXCEPTION 'Função sup_estoque_saudavel não encontrada.';
+  END IF;
+
+  v_origem := $trecho$
+    evolucao AS (
+      SELECT to_char(s.competencia, 'YYYY-MM')  AS mes,
+             to_char(s.competencia, 'TMMon/YY') AS rotulo,
+             sum(s.saldo_disponivel)            AS saldo,
+             sum(s.demanda_mes)                 AS demanda,
+             sum(s.alvo_calculado)              AS alvo,
+             round(sum(s.valor_em_estoque), 2)  AS valor
+        FROM public.sup_estoque_snapshot s
+       WHERE s.empresa_id = p_empresa_id
+         AND (v_categoria IS NULL OR s.tipo_item = v_categoria)
+         AND s.competencia >= (date_trunc('month', v_hoje) - interval '13 months')::date
+       GROUP BY s.competencia
+    )
+$trecho$;
+
+  v_destino := $trecho$
+    meses_evolucao AS (
+      SELECT generate_series(
+               date_trunc('month', v_inicio::timestamp),
+               date_trunc('month', v_hoje::timestamp),
+               interval '1 month'
+             )::date AS mes
+    ),
+    demanda_evolucao AS (
+      SELECT d.mes, sum(d.quantidade)::numeric AS demanda
+        FROM demanda d
+       GROUP BY d.mes
+    ),
+    snapshot_evolucao AS (
+      SELECT s.competencia AS mes,
+             sum(s.saldo_disponivel)::numeric AS saldo,
+             sum(s.alvo_calculado)::numeric AS alvo,
+             round(sum(s.valor_em_estoque), 2) AS valor
+        FROM public.sup_estoque_snapshot s
+       WHERE s.empresa_id = p_empresa_id
+         AND (v_categoria IS NULL OR s.tipo_item = v_categoria)
+         AND s.competencia >= (date_trunc('month', v_hoje) - interval '13 months')::date
+       GROUP BY s.competencia
+    ),
+    totais_atuais AS (
+      SELECT COALESCE(sum(c.disponivel), 0)::numeric AS saldo,
+             COALESCE(sum(c.alvo), 0)::numeric AS alvo,
+             round(COALESCE(sum(c.valor_em_estoque), 0), 2) AS valor
+        FROM completo c
+    ),
+    evolucao AS (
+      SELECT to_char(m.mes, 'YYYY-MM') AS mes,
+             to_char(m.mes, 'TMMon/YY') AS rotulo,
+             CASE WHEN m.mes = date_trunc('month', v_hoje)::date
+                  THEN atual.saldo ELSE snapshot.saldo END AS saldo,
+             COALESCE(demanda.demanda, 0) AS demanda,
+             CASE WHEN m.mes = date_trunc('month', v_hoje)::date
+                  THEN atual.alvo ELSE snapshot.alvo END AS alvo,
+             CASE WHEN m.mes = date_trunc('month', v_hoje)::date
+                  THEN atual.valor ELSE snapshot.valor END AS valor,
+             CASE
+               WHEN m.mes = date_trunc('month', v_hoje)::date THEN 'hoje'
+               WHEN snapshot.mes IS NOT NULL THEN 'fechamento'
+               ELSE 'sem_fechamento'
+             END AS tipo_ponto
+        FROM meses_evolucao m
+        LEFT JOIN demanda_evolucao demanda ON demanda.mes = m.mes
+        LEFT JOIN snapshot_evolucao snapshot ON snapshot.mes = m.mes
+        CROSS JOIN totais_atuais atual
+    )
+$trecho$;
+
+  IF position(v_origem IN v_definicao) = 0 THEN
+    RAISE EXCEPTION 'Não foi possível localizar a evolução mensal em sup_estoque_saudavel.';
+  END IF;
+  v_definicao := replace(v_definicao, v_origem, v_destino);
+
+  v_origem := $trecho$'mes', mes, 'rotulo', rotulo, 'saldo', saldo,
+                 'demanda', demanda, 'alvo', alvo, 'valor', valor$trecho$;
+  v_destino := $trecho$'mes', mes, 'rotulo', rotulo, 'saldo', saldo,
+                 'demanda', demanda, 'alvo', alvo, 'valor', valor,
+                 'tipo_ponto', tipo_ponto$trecho$;
+  IF position(v_origem IN v_definicao) = 0 THEN
+    RAISE EXCEPTION 'Não foi possível expor o tipo do ponto mensal.';
+  END IF;
+  v_definicao := replace(v_definicao, v_origem, v_destino);
+
+  v_definicao := replace(
+    v_definicao,
+    'WHERE NOT EXISTS (SELECT 1 FROM evolucao)',
+    'WHERE NOT EXISTS (SELECT 1 FROM evolucao WHERE tipo_ponto = ''fechamento'')'
+  );
+  v_definicao := replace(
+    v_definicao,
+    'Ainda não há fechamento mensal gravado — a comparação mês a mês começa no próximo dia 1º',
+    'Ainda não há fechamento mensal gravado — o consumo histórico aparece, e estoque/alvo começam no próximo dia 1º'
+  );
+
+  EXECUTE v_definicao;
+END;
+$bloco$;
+
+NOTIFY pgrst, 'reload schema';

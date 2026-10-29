@@ -271,14 +271,8 @@ export function EstoqueSaudavel({
       {/* ---- Gráficos ---- */}
       <div className="grid gap-3 xl:grid-cols-[1.25fr_0.75fr]">
         <PainelGrafico
-          titulo="Mês a mês: o que temos, o que consumimos e qual era o alvo"
-          subtitulo={
-            dados.evolucao.length
-              ? dados.evolucao.length === 1
-                ? "Há somente um fechamento mensal; a linha será formada a partir do próximo fechamento, sem estimar meses inexistentes."
-                : "Cada ponto é um fechamento de mês. O alvo cai sozinho quando o quadro do contrato diminui."
-              : "Começa no primeiro fechamento mensal."
-          }
+          titulo="Mês a mês: estoque, consumo e alvo"
+          subtitulo="Todos os meses da janela aparecem. Consumo vem dos pedidos; estoque e alvo usam fechamentos reais e a posição de hoje. Lacuna significa mês anterior ao primeiro fechamento — não estimativa."
         >
           {dados.evolucao.length ? (
             <div className="h-[280px]">
@@ -287,7 +281,18 @@ export function EstoqueSaudavel({
                   <CartesianGrid strokeDasharray="3 3" stroke={CINZA_GRADE} />
                   <XAxis dataKey="rotulo" />
                   <YAxis />
-                  <Tooltip />
+                  <Tooltip
+                    formatter={(valor, nome) => [
+                      valor == null ? "Sem fechamento" : formatarNumero(Number(valor), 1),
+                      nome,
+                    ]}
+                    labelFormatter={(rotulo, entradas) => {
+                      const tipo = entradas?.[0]?.payload?.tipo_ponto;
+                      if (tipo === "hoje") return `${rotulo} · posição de hoje`;
+                      if (tipo === "sem_fechamento") return `${rotulo} · sem fechamento de estoque`;
+                      return `${rotulo} · fechamento mensal`;
+                    }}
+                  />
                   <Legend />
                   <Line
                     type="monotone"
@@ -296,6 +301,7 @@ export function EstoqueSaudavel({
                     stroke={AZUL_MAGNITUDE}
                     strokeWidth={2}
                     dot={{ r: 3 }}
+                    connectNulls={false}
                   />
                   <Line
                     type="monotone"
@@ -305,6 +311,7 @@ export function EstoqueSaudavel({
                     strokeWidth={2}
                     strokeDasharray="5 4"
                     dot={{ r: 3 }}
+                    connectNulls={false}
                   />
                   <Line
                     type="monotone"
