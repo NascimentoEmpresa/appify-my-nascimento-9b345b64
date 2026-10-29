@@ -1028,8 +1028,10 @@ function ResumoColegas({ resps, pid, resolve, onPessoa, quem }: {
         m.set(chave, g);
       });
     });
-    // Posição (29/10/2026): ranking de COMPETIÇÃO — empatados dividem a
-    // posição e a seguinte pula (1º, 2º, 2º, 4º). Empate = mesma contagem E
+    // Posição (29/10/2026): ranking DENSO — empatados dividem a posição e a
+    // seguinte NÃO pula (1º, 2º, 2º, 3º). Começou como ranking de competição
+    // (1º, 2º, 2º, 4º) e o Pablo pediu no mesmo dia: "tá pulando de 2 pra 4,
+    // o 4 é o 3, não pode pular". Empate = mesma contagem E
     // mesma nota COMO APARECE na tela (1 casa): 4,875 e 4,917 mostram ★ 4.9,
     // e posições diferentes para notas iguais na tela pareceriam erro. A
     // ordem usa a mesma nota arredondada, para empatados ficarem juntos.
@@ -1040,7 +1042,7 @@ function ResumoColegas({ resps, pid, resolve, onPessoa, quem }: {
     let pos = 0;
     return lista.map((g, i) => {
       const ant = lista[i - 1];
-      if (!ant || ant.n !== g.n || notaTela(ant.media) !== notaTela(g.media)) pos = i + 1;
+      if (!ant || ant.n !== g.n || notaTela(ant.media) !== notaTela(g.media)) pos += 1;
       return { ...g, pos, empate: (!!ant && ant.n === g.n && notaTela(ant.media) === notaTela(g.media))
         || (!!lista[i + 1] && lista[i + 1].n === g.n && notaTela(lista[i + 1].media) === notaTela(g.media)) };
     });
