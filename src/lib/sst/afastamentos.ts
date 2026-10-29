@@ -18,7 +18,8 @@
 //   · a leitura da planilha de telemedicina para a importação.
 // =====================================================================
 
-export type TipoAfastamento = "atestado" | "atestado_acompanhante" | "acidente_trabalho" | "auxilio_doenca" | "outros";
+export type TipoAfastamento = "atestado" | "atestado_acompanhante" | "acidente_trabalho" | "auxilio_doenca"
+  | "ferias" | "licenca" | "afastamento" | "desligamento" | "outros";
 export type TeleStatus = "nao_avaliado" | "agendada" | "realizada" | "nao_compareceu" | "nao_avaliado_prazo" | "nao_se_aplica";
 export type TeleResultado = "mantido" | "reduzido" | "zerado" | "ampliado";
 export type Assinatura = "encaminhado" | "assinado" | "sem_assinatura";
@@ -30,8 +31,21 @@ export const TIPOS: { v: TipoAfastamento; r: string }[] = [
   { v: "atestado_acompanhante", r: "Atestado de acompanhante (filho/familiar)" },
   { v: "acidente_trabalho", r: "Acidente de trabalho" },
   { v: "auxilio_doenca", r: "Auxílio-doença (INSS)" },
+  { v: "ferias", r: "Férias" },
+  { v: "licenca", r: "Licença (maternidade, paternidade…)" },
+  { v: "afastamento", r: "Outro afastamento da folha" },
+  { v: "desligamento", r: "Desligamento" },
   { v: "outros", r: "Outros" },
 ];
+
+/** Os que são atestado (entram no relatório mensal e na telemedicina). */
+export const TIPOS_ATESTADO: TipoAfastamento[] = ["atestado", "atestado_acompanhante", "acidente_trabalho", "auxilio_doenca", "outros"];
+
+/** De onde a linha veio (mig 20261029003100). */
+export const ORIGENS: Record<string, string> = {
+  manual: "registro manual", senior: "Senior (automático)", planilha: "planilha importada",
+  ferias: "Solicitação de férias do ERP", efetividade: "Efetividade (ausência registrada)",
+};
 
 export const TELE_STATUS: Record<TeleStatus, { r: string; cor: string }> = {
   nao_avaliado: { r: "Não avaliado", cor: "bg-slate-100 text-slate-700 border-slate-200" },
@@ -86,7 +100,10 @@ export interface AfastamentoItem {
   dias_atestado: number | null;
   dias_apos_tele: number | null;
   dias_considerados: number | null;
-  origem: "manual" | "senior" | "planilha";
+  origem: "manual" | "senior" | "planilha" | "ferias" | "efetividade";
+  fonte_ref?: string | null;
+  filial_nome?: string | null;
+  situacao_senior?: string | null;
   tele_status: TeleStatus;
   tele_data: string | null;
   tele_resultado: TeleResultado | null;
@@ -112,6 +129,9 @@ export interface AfastamentoItem {
   custo_mensal_posto?: number | null;
   lucro_mensal?: number | null;
   glosa_valor?: number | null;
+  /** Só quando recortado ao período (recortarAoPeriodo): o afastamento inteiro. */
+  inicio_real?: string;
+  dias_total?: number;
 }
 
 // ── Datas ────────────────────────────────────────────────────────────
@@ -133,14 +153,18 @@ export const rotuloCompetencia = (c: string) => {
  * Dias do afastamento: os da telemedicina, senão os do atestado. Em aberto
  * (sem dias) conta até hoje. Reduzido a zero = 0 dia de ausência.
  */
-export function diasDoAfastamento(a: Pick<AfastamentoItem, "data_inicio" | "dias_considerados">, hoje: string = hojeIso()): number {
+type Periodo = Pick<AfastamentoItem, "data_inicio" | "dias_considerados"> & { retornou_em?: string | null };
+const entre = (de: string, ate: string) => Math.round((paraData(ate).getTime() - paraData(de).getTime()) / 86_400_000);
+
+export function diasDoAfastamento(a: Periodo, hoje: string = hojeIso()): number {
   if (a.dias_considerados != null) return Math.max(0, a.dias_considerados);
-  const diff = Math.round((paraData(hoje).getTime() - paraData(a.data_inicio).getTime()) / 86_400_000) + 1;
-  return Math.max(1, diff);
+  // Encerrado sem dias informados: até a véspera do retorno (igual a sst_afa_fim).
+  if (a.retornou_em) return Math.max(1, entre(a.data_inicio, a.retornou_em));
+  return Math.max(1, entre(a.data_inicio, hoje) + 1);
 }
 
 /** Último dia do afastamento (inclusive). */
-export function fimDoAfastamento(a: Pick<AfastamentoItem, "data_inicio" | "dias_considerados">, hoje: string = hojeIso()): string {
+export function fimDoAfastamento(a: Periodo, hoje: string = hojeIso()): string {
   const dias = diasDoAfastamento(a, hoje);
   const d = paraData(a.data_inicio);
   d.setUTCDate(d.getUTCDate() + Math.max(dias, 1) - 1);
@@ -148,7 +172,7 @@ export function fimDoAfastamento(a: Pick<AfastamentoItem, "data_inicio" | "dias_
 }
 
 /** Dias por competência: um atestado de 28/06 a 03/07 é 3 em junho e 3 em julho. */
-export function diasPorCompetencia(a: Pick<AfastamentoItem, "data_inicio" | "dias_considerados">, hoje: string = hojeIso()): Record<string, number> {
+export function diasPorCompetencia(a: Periodo, hoje: string = hojeIso()): Record<string, number> {
   const dias = diasDoAfastamento(a, hoje);
   const out: Record<string, number> = {};
   if (dias === 0) { out[competenciaDe(a.data_inicio)] = 0; return out; }
@@ -159,6 +183,36 @@ export function diasPorCompetencia(a: Pick<AfastamentoItem, "data_inicio" | "dia
     d.setUTCDate(d.getUTCDate() + 1);
   }
   return out;
+}
+
+/**
+ * Recorta o afastamento ao período olhado [ini, fim]. Sem isso um
+ * auxílio-doença aberto desde 2024 jogaria 700 dias (e o valor deles) num
+ * relatório de agosto a outubro. Fica só a parte dentro do período: dias,
+ * cobertura e custo proporcionais; os dias evitados pela telemedicina contam
+ * no período em que o afastamento começou.
+ */
+export function recortarAoPeriodo(a: AfastamentoItem, ini: string, fim: string, hoje: string = hojeIso()): AfastamentoItem | null {
+  const total = diasDoAfastamento(a, hoje);
+  const fimA = fimDoAfastamento(a, hoje);
+  if (a.data_inicio > fim || fimA < ini) return null;
+  if (a.data_inicio >= ini && fimA <= fim) return { ...a, inicio_real: a.data_inicio, dias_total: total };
+  const de = a.data_inicio > ini ? a.data_inicio : ini;
+  const ate = fimA < fim ? fimA : fim;
+  const dentro = total === 0 ? 0 : Math.max(0, entre(de, ate) + 1);
+  const frac = total > 0 ? dentro / total : 1;
+  const comecouAntes = a.data_inicio < ini;
+  return {
+    ...a,
+    inicio_real: a.data_inicio, dias_total: total,
+    data_inicio: de, dias_considerados: dentro, retornou_em: null,
+    dias_atestado: comecouAntes ? dentro : a.dias_atestado,
+    dias_apos_tele: comecouAntes ? null : a.dias_apos_tele,
+    dias_cobertos: Math.min(dentro, Math.round((a.dias_cobertos ?? 0) * frac)),
+    dias_rt: Math.min(dentro, Math.round((a.dias_rt ?? 0) * frac)),
+    custo_cobertura: Number(a.custo_cobertura ?? 0) * frac,
+    glosa_valor: a.glosa_valor != null ? Number(a.glosa_valor) * frac : a.glosa_valor,
+  };
 }
 
 // ── Impacto financeiro ───────────────────────────────────────────────
@@ -246,6 +300,32 @@ export interface LinhaConsolidada {
   economiaTele: number;
   /** Quantos afastamentos não têm valor do posto (impacto subestimado). */
   semValor: number;
+  /** Faturamento realizado (NFs emitidas) — só por contrato e por competência. */
+  faturamento?: number | null;
+  descontosNf?: number | null;
+}
+
+/** sst_afa_faturamento: notas emitidas por contrato e competência. */
+export interface FaturamentoContrato { contrato_id: string; competencia: string; bruto: number; liquido: number; faltas: number; glosas: number }
+
+/**
+ * Põe o faturamento realizado nas linhas do relatório gerencial. Por
+ * contrato: as notas do contrato nas competências do período. Por
+ * competência: as notas, naquele mês, dos contratos que tiveram afastamento.
+ * Nos outros agrupamentos não há faturamento por colaborador/posto.
+ */
+export function anexarFaturamento(linhas: LinhaConsolidada[], por: Agrupamento, itens: AfastamentoItem[], fat: FaturamentoContrato[]): LinhaConsolidada[] {
+  if (por !== "contrato" && por !== "competencia") return linhas;
+  const contratos = new Set(itens.filter((a) => !a.cancelado && a.contrato_id).map((a) => a.contrato_id as string));
+  return linhas.map((l) => {
+    const notas = fat.filter((n) => (por === "contrato" ? n.contrato_id === l.chave : n.competencia === l.chave && contratos.has(n.contrato_id)));
+    if (!notas.length) return { ...l, faturamento: null, descontosNf: null };
+    return {
+      ...l,
+      faturamento: notas.reduce((s, n) => s + Number(n.liquido ?? 0), 0),
+      descontosNf: notas.reduce((s, n) => s + Number(n.faltas ?? 0) + Number(n.glosas ?? 0), 0),
+    };
+  });
 }
 
 const SEM_CONTRATO = "(sem contrato identificado)";
@@ -322,7 +402,7 @@ export interface LinhaMensal {
 export function relatorioMensal(itens: AfastamentoItem[], hoje: string = hojeIso()): LinhaMensal[] {
   const m = new Map<string, LinhaMensal>();
   for (const a of itens) {
-    if (a.cancelado) continue;
+    if (a.cancelado || !TIPOS_ATESTADO.includes(a.tipo)) continue;
     const comp = competenciaDe(a.data_inicio);
     const ct = contratoDe(a);
     const k = `${comp}|${ct}`;

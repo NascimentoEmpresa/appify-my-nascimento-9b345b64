@@ -647,16 +647,16 @@ export default function Patrimonios() {
   const pagoMes = obrAll.filter(o => o.status === "Pago" && (o.pago_em || "").slice(0, 7) === mesAtual).reduce((s, o) => s + (Number(o.valor) || 0), 0);
   const pendentesTransf = pats.filter(p => !p.transferida).length;
   const totalPrevisto = naoPagas.reduce((s, o) => s + (Number(o.valor) || 0), 0);
-  // Alerta: contas em aberto vencidas OU vencendo nos próximos 10 dias.
+  // Alerta: contas em aberto vencidas OU vencendo nos próximos 30 dias (eram 10 até 29/10/2026 — Pablo pediu 30).
   //
   // Suspensa fica DE FORA: suspender é justamente dizer "esta não corre
   // agora", e ela reaparecia aqui como "Vencida há 164d" — o alerta exibia
   // o selo cinza de Suspensa e o vermelho de vencida lado a lado, que é a
   // contradição que a suspensão existe para eliminar.
-  const em10dias = (() => { const d = new Date(hoje() + "T00:00:00"); d.setDate(d.getDate() + 10); return d.toISOString().slice(0, 10); })();
+  const em30dias = (() => { const d = new Date(hoje() + "T00:00:00"); d.setDate(d.getDate() + 30); return d.toISOString().slice(0, 10); })();
   const contasAlerta = naoPagas
     .filter(o => entraNoAlerta(seloDaConta(o)))
-    .filter(o => o.vencimento && o.vencimento <= em10dias)
+    .filter(o => o.vencimento && o.vencimento <= em30dias)
     .sort((a, b) => String(a.vencimento || "").localeCompare(String(b.vencimento || "")));
 
   // ── Dashboard: agregações ──────────────────────────────────────
@@ -792,13 +792,13 @@ export default function Patrimonios() {
           </>)}
         </div>
 
-        {/* Alerta: contas vencendo (≤10 dias) ou vencidas */}
+        {/* Alerta: contas vencendo (≤30 dias) ou vencidas */}
         {contasAlerta.length > 0 && (
           <div style={{ background: "linear-gradient(135deg,#fff7ed,#ffffff)", border: "1px solid #fed7aa", borderRadius: 14, padding: "14px 16px", marginBottom: 16, boxShadow: "0 8px 24px rgba(234,88,12,.08)" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10, flexWrap: "wrap" }}>
               <span style={{ fontSize: 18 }}>⏰</span>
               <span style={{ fontWeight: 800, color: "#9a3412" }}>{contasAlerta.length} conta(s) a vencer / vencida(s)</span>
-              <span style={{ fontSize: 12, color: "#c2410c" }}>(vencidas ou vencendo nos próximos 10 dias)</span>
+              <span style={{ fontSize: 12, color: "#c2410c" }}>(vencidas ou vencendo nos próximos 30 dias)</span>
             </div>
             <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
               {contasAlerta.slice(0, 6).map(o => {

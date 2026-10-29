@@ -605,14 +605,15 @@ export function RotatividadeEstoque({ empresaId, inicio, fim, contratoId }: Prop
   if (consulta.isLoading) return <Carregando />;
 
   if (consulta.error) {
+    const mensagem = (consulta.error as Error).message;
+    const excedeuTempo = /statement timeout|canceling statement/i.test(mensagem);
     return (
       <Alert variant="destructive">
         <AlertTitle>Não foi possível carregar a rotatividade</AlertTitle>
         <AlertDescription>
-          {(consulta.error as Error).message}. Se as migrations de 13/10/2026 (
-          <code className="font-mono text-xs">20261013000010</code> a{" "}
-          <code className="font-mono text-xs">20261013000012</code>) ainda não foram aplicadas no
-          Supabase, aplique-as antes de abrir esta aba.
+          {excedeuTempo
+            ? "A consulta excedeu o tempo de resposta. Atualize a página; se persistir, reduza temporariamente o período e informe o suporte."
+            : mensagem}
         </AlertDescription>
       </Alert>
     );

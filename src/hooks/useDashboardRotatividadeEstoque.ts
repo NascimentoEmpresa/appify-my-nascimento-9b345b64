@@ -5,15 +5,18 @@ import type {
   FornecimentoUniformeColaborador,
   HistoricoUniformeLinha,
   RotatividadeEstoqueDados,
+  RotatividadeEstoqueDetalhe,
 } from "@/lib/suprimentos/rotatividadeEstoque";
+import { combinarRotatividadeEstoque } from "@/lib/suprimentos/rotatividadeEstoque";
 
 /**
  * Aba "Rotatividade do Estoque" do dashboard de Suprimentos.
  *
- * Mesmo desenho do useDashboardComprasEstoque: uma RPC só, que agrega no banco
- * e devolve o painel inteiro em jsonb. São ~8.800 itens de pedido e ~6.400
- * movimentos de estoque — agregar no navegador seria baixar tudo isso a cada
- * troca de filtro.
+ * A visão executiva e o detalhe conferível são agregados no banco, em duas
+ * RPCs paralelas. São ~8.800 itens de pedido e ~6.400 movimentos de estoque:
+ * a RPC detalhada antiga calculava os dois blocos em série, sob o mesmo
+ * `statement_timeout`, e falhava em janelas maiores. As duas respostas são
+ * pequenas e voltam a formar o mesmo contrato de dados no navegador.
  *
  * O cast do client existe porque a RPC é nova e `types.ts` é gerado à mão
  * (`supabase gen types`), fora do CI: enquanto não for regerado, o nome da
@@ -24,7 +27,7 @@ export function useDashboardRotatividadeEstoque(
   filtros: FiltroRotatividade,
 ) {
   return useQuery({
-    queryKey: ["sup_dashboard_rotatividade_estoque", empresaId, filtros],
+    queryKey: ["sup_dashboard_rotatividade_estoque_v2", empresaId, filtros],
     enabled: !!empresaId && !!filtros.inicio && !!filtros.fim,
     staleTime: 2 * 60 * 1000,
     queryFn: async (): Promise<RotatividadeEstoqueDados> => {
@@ -34,15 +37,25 @@ export function useDashboardRotatividadeEstoque(
           parametros: Record<string, unknown>,
         ) => Promise<{ data: unknown; error: { message: string } | null }>;
       };
-      const { data, error } = await cliente.rpc("sup_dashboard_rotatividade_estoque_detalhado", {
+      const parametros = {
         p_empresa_id: empresaId,
         p_inicio: filtros.inicio,
         p_fim: filtros.fim,
         p_contrato_id: filtros.contratoId,
         p_categoria: filtros.categoria || null,
-      });
-      if (error) throw error;
-      return data as RotatividadeEstoqueDados;
+      };
+      const [respostaBase, respostaDetalhe] = await Promise.all([
+        cliente.rpc("sup_dashboard_rotatividade_estoque", parametros),
+        cliente.rpc("sup_dashboard_rotatividade_itens_detalhe", parametros),
+      ]);
+
+      if (respostaBase.error) throw respostaBase.error;
+      if (respostaDetalhe.error) throw respostaDetalhe.error;
+
+      return combinarRotatividadeEstoque(
+        respostaBase.data as RotatividadeEstoqueDados,
+        respostaDetalhe.data as RotatividadeEstoqueDetalhe,
+      );
     },
   });
 }

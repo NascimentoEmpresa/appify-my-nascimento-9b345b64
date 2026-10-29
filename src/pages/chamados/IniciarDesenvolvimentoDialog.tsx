@@ -3,6 +3,10 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter,
+  AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -27,8 +31,13 @@ import { fmtData, fmtDataHora, type Chamado } from "./types";
 //   TAREFA NA FILA MUDOU — "se meu chamado numero 5 foi pra 6, posso ajustar
 //   o prazo, e vice versa" (chamado_definir_prazo).
 //
-// Previsão no mesmo dia de outro chamado ativo do dev é só AVISO, deixa
-// seguir (pedido anterior).
+// Previsão no mesmo dia de outro chamado ativo do dev: deixa seguir, mas
+// PERGUNTA antes de salvar (29/10/2026, Pablo: "você já tem demandas pra
+// entregar nesse dia, deseja confirmar?"). Até aqui era só a faixa amarela
+// no diálogo — o #8498 foi iniciado com a mesma previsão (30/10) do #8773
+// sem ninguém parar para ler. E a consulta dos outros chamados engolia o
+// erro: se falhasse, o aviso sumia calado. Agora a checagem é refeita no
+// banco NA HORA do clique (sem cache) e erro de consulta aparece.
 // =====================================================================
 export type ModoPrazo = "definir" | "iniciar";
 
@@ -54,9 +63,12 @@ export function IniciarDesenvolvimentoDialog({
   const [quantidade, setQuantidade] = useState("");
   const [unidade, setUnidade] = useState<UnidadePrazo>("dias");
   const [salvando, setSalvando] = useState(false);
+  // Chamados com entrega no mesmo dia, achados no clique: abre a confirmação.
+  const [confirmarMesmaData, setConfirmarMesmaData] = useState<ChamadoComPrazo[] | null>(null);
 
   useEffect(() => {
     if (!open) return;
+    setConfirmarMesmaData(null);
     setQuantidade(ajustando ? String(chamado?.prazo_dias ?? "") : "");
     setUnidade(((ajustando ? chamado?.prazo_unidade : null) ?? "dias") as UnidadePrazo);
   }, [open, ajustando, chamado?.prazo_dias, chamado?.prazo_unidade]);
@@ -76,23 +88,42 @@ export function IniciarDesenvolvimentoDialog({
   }, [qtdEfetiva, unidadeEfetiva, modo, chamado?.desenvolvimento_iniciado_em]);
 
   // Outros chamados ativos do mesmo dev, para o aviso de data repetida.
+  const buscarOutros = async (): Promise<ChamadoComPrazo[]> => {
+    const { data, error } = await (supabase as any)
+      .from("CHAMADO_SISTEMA")
+      .select("id, numero, assunto, prazo_conclusao_em, prazo_previsto")
+      .eq("responsavel_id", chamado!.responsavel_id)
+      .not("status", "in", "(concluido,reprovado,cancelado)");
+    if (error) throw error;
+    return (data ?? []) as ChamadoComPrazo[];
+  };
   const { data: outros = [] } = useQuery({
     queryKey: ["chamados-prazos-dev", chamado?.responsavel_id],
     enabled: open && !!chamado?.responsavel_id,
-    queryFn: async () => {
-      const { data } = await (supabase as any)
-        .from("CHAMADO_SISTEMA")
-        .select("id, numero, assunto, prazo_conclusao_em, prazo_previsto")
-        .eq("responsavel_id", chamado!.responsavel_id)
-        .not("status", "in", "(concluido,reprovado,cancelado)");
-      return (data ?? []) as ChamadoComPrazo[];
-    },
+    queryFn: buscarOutros,
   });
   const mesmaData = useMemo(() => chamadosComMesmaData(previsao, outros, chamado?.id), [previsao?.getTime(), outros, chamado?.id]);
 
-  const salvar = async () => {
+  const salvar = async (confirmado = false) => {
     if (!chamado || salvando || (pedePrazo && !prazoOk)) return;
     setSalvando(true);
+    // Mesmo dia de outra entrega: confere no banco agora e pergunta antes.
+    if (!confirmado && previsao && chamado.responsavel_id) {
+      let conflitos: ChamadoComPrazo[];
+      try {
+        conflitos = chamadosComMesmaData(previsao, await buscarOutros(), chamado.id);
+      } catch (e) {
+        setSalvando(false);
+        toast({ title: "Não deu para conferir as outras entregas", description: (e as Error)?.message ?? String(e), variant: "destructive" });
+        return;
+      }
+      if (conflitos.length) {
+        setSalvando(false);
+        setConfirmarMesmaData(conflitos);
+        return;
+      }
+    }
+    setConfirmarMesmaData(null);
     const { error } = modo === "iniciar"
       ? await (supabase as any).rpc("chamado_iniciar_desenvolvimento", {
           p_chamado_id: chamado.id, p_quantidade: pedePrazo ? n : null, p_unidade: pedePrazo ? unidade : null,
@@ -200,12 +231,41 @@ export function IniciarDesenvolvimentoDialog({
 
         <div className="flex flex-wrap justify-end gap-2">
           <Button variant="outline" onClick={() => onOpenChange(false)} disabled={salvando}>Voltar</Button>
-          <Button className="gap-1.5" onClick={salvar} disabled={!chamado || salvando || (pedePrazo && !prazoOk)}>
+          <Button className="gap-1.5" onClick={() => salvar()} disabled={!chamado || salvando || (pedePrazo && !prazoOk)}>
             {modo === "iniciar" ? <PlayCircle className="h-4 w-4" /> : <CalendarClock className="h-4 w-4" />}
-            {salvando ? "Salvando…" : mesmaData.length ? `${titulo} mesmo assim` : titulo}
+            {salvando ? "Salvando…" : titulo}
           </Button>
         </div>
       </DialogContent>
+
+      <AlertDialog open={!!confirmarMesmaData} onOpenChange={(v) => { if (!v) setConfirmarMesmaData(null); }}>
+        <AlertDialogContent className="max-w-md [&>*]:min-w-0">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2">
+              <AlertTriangle className="h-5 w-5 shrink-0 text-warning" /> Você já tem entrega nesse dia
+            </AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-2 text-sm">
+                <p>
+                  A previsão do #{chamado?.numero} cai em{" "}
+                  <b>{previsao ? (unidadeEfetiva === "horas" ? fmtDataHora(previsao.toISOString()) : fmtData(previsao.toISOString())) : "—"}</b>,
+                  o mesmo dia de:
+                </p>
+                <ul className="space-y-0.5 rounded-md border border-warning/40 bg-warning/10 p-2.5 text-xs">
+                  {(confirmarMesmaData ?? []).map((c) => (
+                    <li key={c.id} className="line-clamp-2 break-words"><span className="font-mono font-semibold">#{c.numero}</span> {c.assunto}</li>
+                  ))}
+                </ul>
+                <p>Deseja confirmar mesmo assim?</p>
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Voltar e mudar o prazo</AlertDialogCancel>
+            <AlertDialogAction onClick={() => salvar(true)}>Confirmar</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Dialog>
   );
 }

@@ -201,6 +201,39 @@ export interface RotatividadeEstoqueDados {
   alertas: AlertaRotatividade[];
 }
 
+/**
+ * Parte conferível por código + item + tamanho, carregada separadamente da
+ * visão executiva. Separar as duas RPCs dá a cada agregação seu próprio
+ * limite de execução; a RPC detalhada antiga fazia as duas leituras em série
+ * dentro do mesmo `statement_timeout` e expirava em períodos maiores.
+ */
+export interface RotatividadeEstoqueDetalhe {
+  resumo: Partial<RotatividadeEstoqueDados["resumo"]>;
+  por_item_tamanho: ItemTamanhoRotatividade[];
+  por_peca: PecaRotatividade[];
+}
+
+/** Reconstitui o contrato de dados que a aba já consumia antes da divisão. */
+export function combinarRotatividadeEstoque(
+  base: RotatividadeEstoqueDados,
+  detalhe: RotatividadeEstoqueDetalhe,
+): RotatividadeEstoqueDados {
+  // O valor pedido depende da regra de preço da RPC executiva. A consulta de
+  // detalhe cuida somente de identidade e quantidade, portanto preservamos o
+  // valor da mesma peça calculado pela fonte original.
+  const valorPorPeca = new Map(base.por_peca.map((linha) => [linha.peca, linha.valor_pedido]));
+
+  return {
+    ...base,
+    resumo: { ...base.resumo, ...detalhe.resumo },
+    por_item_tamanho: detalhe.por_item_tamanho,
+    por_peca: detalhe.por_peca.map((linha) => ({
+      ...linha,
+      valor_pedido: valorPorPeca.get(linha.peca) ?? linha.valor_pedido ?? 0,
+    })),
+  };
+}
+
 /** Tamanho com `ordem` abaixo de 1000 é escala de letra (PP…EXGG). */
 export const ORDEM_PRIMEIRO_NUMERICO = 1000;
 
