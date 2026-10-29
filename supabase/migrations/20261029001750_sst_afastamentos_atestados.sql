@@ -2,6 +2,15 @@
 -- SST › AFASTAMENTOS E TELEMEDICINA — análise automática dos afastamentos
 -- por atestado e do impacto operacional e financeiro (28/10/2026)
 --
+-- RENUMERADA 20261028002000 → 20261029001750 (29/10/2026). Ela NUNCA rodou
+-- no banco1: a versão 20261028002000 já tinha sido registrada às 10:59 por
+-- 20261028002000_recrutamento_data_inicio_trabalho (renumerada para
+-- 20261028002050 depois), e o aplicador, que controla por VERSÃO, deu esta
+-- como aplicada sem rodar — os menus sst_afastamentos não existiam e a tela
+-- dava 403 para todos. Lição: renumerar uma migration que JÁ foi aplicada
+-- deixa a versão antiga "ocupada" no banco; quem entrar depois com aquele
+-- número é pulado sem erro. Tudo aqui é idempotente, roda inteira.
+--
 -- CHAMADO: "automatizar a análise dos afastamentos por atestado e permitir a
 -- mensuração de seus impactos operacionais e financeiros". Hoje é uma
 -- planilha manual (PLANILHA TELEMEDICINA.xlsx — 1.472 linhas, mar–out/2026 —

@@ -1331,7 +1331,7 @@ const sstModule: ModuleDef = {
       ],
     },
     {
-      // Atestados + telemedicina com lotação automática e impacto financeiro (mig 20261028002000).
+      // Atestados + telemedicina com lotação automática e impacto financeiro (mig 20261029001750).
       label: "Saúde ocupacional",
       defaultOpen: true,
       items: [

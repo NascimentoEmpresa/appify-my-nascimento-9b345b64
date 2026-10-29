@@ -4,7 +4,7 @@ import {
   interpretarObservacao, lerPlanilhaTelemedicina, relatorioMensal, type AfastamentoItem,
 } from "@/lib/sst/afastamentos";
 
-// SST › Afastamentos e Telemedicina (mig 20261028002000). Casos tirados da
+// SST › Afastamentos e Telemedicina (mig 20261029001750). Casos tirados da
 // PLANILHA TELEMEDICINA.xlsx e do RELATÓRIO MENSAL ATESTADOS.xlsx.
 const HOJE = "2026-10-28";
 const base = (x: Partial<AfastamentoItem>): AfastamentoItem => ({

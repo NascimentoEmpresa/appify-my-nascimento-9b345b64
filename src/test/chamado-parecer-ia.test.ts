@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
-  extrairJson, limparHistorico, montarPrompt, montarSistemaChat, resumirEntrega, validarParecer, PERFIS, type ChamadoParaParecer,
+  extrairJson, limparHistorico, montarPrompt, montarSistemaChat, resumirEntrega, validarParecer, PERFIS, VALOR_HORA_SENIOR, type ChamadoParaParecer,
 } from "../../supabase/functions/_shared/chamado-parecer-ia.ts";
 
 const resposta = (extra: Record<string, unknown> = {}) => ({
@@ -16,22 +16,30 @@ const resposta = (extra: Record<string, unknown> = {}) => ({
 });
 
 describe("parecer da I.A do chamado", () => {
-  it("faz a conta do preço no servidor (horas × valor/hora) e a média", () => {
+  it("faz a conta do preço no servidor (horas × valor/hora fixo de sênior) e a média", () => {
     const v = validarParecer(resposta());
     expect(v.ok).toBe(true);
     if (!v.ok) return;
-    expect(v.parecer.precos.map((p) => p.valor)).toEqual([1000, 3000, 640]);
-    expect(v.parecer.valor_medio).toBe(1546.67);
+    // 10 × 200, 15 × 320, 8 × 165
+    expect(v.parecer.precos.map((p) => p.valor)).toEqual([2000, 4800, 1320]);
+    expect(v.parecer.valor_medio).toBe(2706.67);
     expect(v.parecer.horas_estimadas).toBe(11);
     expect(v.parecer.complexidade_rotulo).toBe("Média");
     expect(v.parecer.precos.map((p) => p.perfil)).toEqual(PERFIS.map((p) => p.perfil));
   });
 
-  it("puxa o valor/hora para dentro da faixa do perfil", () => {
+  it("ignora o valor/hora que a I.A mandar: vale a tabela fixa de sênior", () => {
     const r = resposta();
     (r.precos as Array<Record<string, unknown>>)[0].valor_hora = 900;
+    (r.precos as Array<Record<string, unknown>>)[2].valor_hora = 10;
     const v = validarParecer(r);
-    expect(v.ok && v.parecer.precos[0].valor_hora).toBe(220);
+    expect(v.ok).toBe(true);
+    if (!v.ok) return;
+    expect(v.parecer.precos.map((p) => p.valor_hora)).toEqual([VALOR_HORA_SENIOR.freelancer, VALOR_HORA_SENIOR.software_house, VALOR_HORA_SENIOR.interno]);
+    expect(v.parecer.precos.every((p) => /sênior/.test(p.embasamento))).toBe(true);
+    // Sem valor_hora nenhum também serve: a I.A só manda horas.
+    const soHoras = resposta({ precos: resposta().precos.map(({ valor_hora, embasamento, ...x }) => x) });
+    expect(validarParecer(soHoras).ok).toBe(true);
   });
 
   it("recusa resposta sem um dos perfis, sem nível ou sem justificativa", () => {
@@ -74,7 +82,8 @@ describe("chat sobre o parecer", () => {
     });
     expect(s).toContain("Férias no ERP");
     expect(s).toContain("5467");
-    expect(s).toContain("R$ 120 a R$ 380/h");
+    expect(s).toContain("R$ 320/h fixo");
+    expect(s).toContain("FIXOS");
   });
 
   it("limpa o histórico vindo do cliente", () => {
