@@ -3,7 +3,8 @@ import { montarLinhasExcelEstoque, nomeArquivoEstoque } from "@/lib/suprimentos/
 import type { LinhaEstoque } from "@/hooks/useSupEstoque";
 
 const linha: LinhaEstoque = {
-  item_estoque_id: "estoque-1", sup_item_id: "item-1", codigo_item: "EPI-001", tamanho_item: "M",
+  item_estoque_id: "estoque-1", sup_item_id: "item-1", arquivado_em: null, arquivado_motivo: null,
+  codigo_item: "EPI-001", tamanho_item: "M",
   base: null, codigos_lote: [], material: "Luva", tipo_material: "EPI", almoxarifado: "Central",
   valor_unitario: 12.5, custo_unitario: 12.5, valor_total: 125, preco_valido_ate: "2026-12-31",
   preco_vencido: false, estoque_minimo: 10, disponivel: 8, reservado: 2, fisico: 10, consumido: 3,

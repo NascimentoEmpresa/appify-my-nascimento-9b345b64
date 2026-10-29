@@ -205,6 +205,7 @@ describe("recadoDoPainel", () => {
     ({
       resumo: {
         itens_planejados: 10,
+        entradas_registradas: 0,
         valor_em_estoque: 0,
         unidades_em_estoque: 0,
         dinheiro_parado: 0,
@@ -378,6 +379,7 @@ describe("faltaCronica", () => {
 describe("recadoDoPainel com falta histórica", () => {
   const base = {
     itens_planejados: 10,
+    entradas_registradas: 0,
     valor_em_estoque: 0,
     unidades_em_estoque: 0,
     dinheiro_parado: 0,

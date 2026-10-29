@@ -7,6 +7,15 @@ import {
 function painel(empresa: string, pedidos: number, disponivel: number): DashboardComprasEstoqueDados {
   return {
     atualizado_em: `2026-10-${empresa === "A" ? "27" : "28"}T12:00:00Z`,
+    periodo_disponivel: {
+      inicio: empresa === "A" ? "2026-03-17" : "2026-04-01",
+      fim: "2026-10-28",
+      solicitacoes_inicio: empresa === "A" ? "2026-03-17" : "2026-04-01",
+      solicitacoes_fim: "2026-10-28",
+      itens_registrados_inicio: empresa === "A" ? "2026-08-04" : "2026-08-10",
+      movimentos_inicio: empresa === "A" ? "2026-08-04" : "2026-08-10",
+      cotacoes_inicio: empresa === "A" ? "2026-05-01" : "2026-06-01",
+    },
     filtros: {
       contratos: [{ id: `contrato-${empresa}`, nome: `Contrato ${empresa}`, status: "ATIVO" }],
       categorias: [{ valor: "uniforme", nome: "Uniformes" }],
@@ -65,5 +74,12 @@ describe("dashboard de Suprimentos — consolidado de empresas", () => {
       expect.objectContaining({ mes: "2026-10", solicitacoes: 28, entradas: 6, saidas: 4 }),
     ]);
     expect(resultado.filtros.contratos).toHaveLength(2);
+    expect(resultado.periodo_disponivel).toMatchObject({
+      inicio: "2026-03-17",
+      solicitacoes_inicio: "2026-03-17",
+      itens_registrados_inicio: "2026-08-04",
+      movimentos_inicio: "2026-08-04",
+      cotacoes_inicio: "2026-05-01",
+    });
   });
 });

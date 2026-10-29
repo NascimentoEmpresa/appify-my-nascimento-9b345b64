@@ -41,6 +41,7 @@ import { AcessoGate } from "@/components/auth/AcessoGate";
 import { BotaoVer3D } from "@/components/suprimentos/BotaoVer3D";
 import { useContagemRotativa } from "@/hooks/useSupSeparacao";
 import { montarLinhasExcelEstoque, nomeArquivoEstoque } from "@/lib/suprimentos/estoqueEtiquetasExcel";
+import { filtrarLinhasEstoque } from "@/lib/suprimentos/estoqueEtiquetas";
 import { toast } from "sonner";
 import * as XLSX from "xlsx";
 
@@ -59,7 +60,14 @@ const sb = supabase as any;
  */
 export default function EstoqueEtiquetas() {
   const { data: empresaId } = useEmpresaId();
-  const { data: linhas = [], isLoading, error } = useEstoqueLista(empresaId ?? null);
+  const { data: todasAsLinhas = [], isLoading, error } = useEstoqueLista(
+    empresaId ?? null,
+    { incluirArquivados: true },
+  );
+  const linhas = useMemo(
+    () => todasAsLinhas.filter((linha) => !linha.arquivado_em),
+    [todasAsLinhas],
+  );
   const [busca, setBusca] = useState("");
   const [tipo, setTipo] = useState<string>(TODOS_OS_TIPOS);
 
@@ -87,19 +95,11 @@ export default function EstoqueEtiquetas() {
   const [editando, setEditando] = useState<LinhaEstoque | null>(null);
   const [exportando, setExportando] = useState<"completo" | "filtrado" | null>(null);
 
-  const filtradas = useMemo(() => {
-    const t = busca.trim().toLowerCase();
-    return linhas.filter((l) => {
-      if (tipo !== TODOS_OS_TIPOS && l.tipo_material !== tipo) return false;
-      if (!t) return true;
-      // O base entra na busca: "JAQUETA" ou o código antigo dela (0001001)
-      // tem de achar todos os tamanhos, que agora são linhas próprias.
-      // A localização entra na busca pelo caminho inverso do normal: quem
-      // está na frente da estante "F-04" quer saber o que deveria estar ali.
-      return `${l.codigo_item ?? ""} ${l.material} ${l.almoxarifado} ${l.tamanhos.join(" ")} ${l.base?.codigo ?? ""} ${l.localizacao ?? ""}`
-        .toLowerCase().includes(t);
-    });
-  }, [linhas, busca, tipo]);
+  const filtradas = useMemo(
+    () => filtrarLinhasEstoque(todasAsLinhas, busca, tipo, TODOS_OS_TIPOS),
+    [todasAsLinhas, busca, tipo],
+  );
+  const historicasEncontradas = filtradas.filter((linha) => !!linha.arquivado_em).length;
 
   /** Quantos materiais há de cada tipo, para o filtro dizer o que vai achar. */
   const porTipo = useMemo(() => {
@@ -231,7 +231,7 @@ export default function EstoqueEtiquetas() {
         <div className="relative min-w-[260px] flex-1 max-w-md">
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input value={busca} onChange={(e) => setBusca(e.target.value)}
-                 placeholder="Buscar material, almoxarifado, tamanho, localização…" className="pl-9" />
+                 placeholder="Buscar código, material, lote, tamanho ou localização…" className="pl-9" />
         </div>
 
         {/* O contador em cada opção evita o filtro que zera a tela sem
@@ -248,6 +248,13 @@ export default function EstoqueEtiquetas() {
           </SelectContent>
         </Select>
       </div>
+
+      {historicasEncontradas > 0 && (
+        <p className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700">
+          {historicasEncontradas} {historicasEncontradas === 1 ? "ficha histórica encontrada" : "fichas históricas encontradas"}.
+          {" "}Ela não compõe o estoque atual, mas permanece consultável para conciliar entradas, saídas e códigos antigos.
+        </p>
+      )}
 
       {error ? (
         <div className="flex flex-col items-center gap-2 rounded-lg border border-destructive/30 bg-destructive/5 py-12 text-center">
@@ -295,7 +302,7 @@ export default function EstoqueEtiquetas() {
                 {filtradas.map((l) => {
                   const critico = l.estoque_minimo > 0 && l.disponivel < l.estoque_minimo;
                   return (
-                    <TableRow key={l.item_estoque_id} className="cursor-pointer"
+                    <TableRow key={l.item_estoque_id} className={cn("cursor-pointer", l.arquivado_em && "bg-slate-50/80")}
                               onClick={() => setDetalhe(l)}>
                       {/* O código do produto vem antes do nome: é por ele que
                           se procura e se bipa, e ele nunca muda (ajuste 7). */}
@@ -307,6 +314,15 @@ export default function EstoqueEtiquetas() {
                         <Badge variant="secondary" className="ml-2 text-[10px]">
                           {LABEL_TIPO_ITEM[l.tipo_material as TipoItem] ?? l.tipo_material}
                         </Badge>
+                        {l.arquivado_em && (
+                          <Badge
+                            variant="outline"
+                            className="ml-2 border-slate-300 text-[10px] text-slate-600"
+                            title={l.arquivado_motivo ?? "Ficha retirada do estoque ativo"}
+                          >
+                            Histórico encerrado
+                          </Badge>
+                        )}
                       </TableCell>
                       {/* A prateleira fica sob o almoxarifado, que é o outro
                           "onde está" da linha — e some quando não foi
@@ -371,14 +387,14 @@ export default function EstoqueEtiquetas() {
                       {(podeAlterar || podeExcluir) && (
                         <TableCell className="whitespace-nowrap p-1 text-right">
                           {/* stopPropagation: o clique na linha abre o detalhe. */}
-                          {podeAlterar && (
+                          {podeAlterar && !l.arquivado_em && (
                             <Button variant="ghost" size="icon" className="h-8 w-8"
                                     title="Editar material"
                                     onClick={(e) => { e.stopPropagation(); setEditando(l); }}>
                               <Pencil className="h-4 w-4" />
                             </Button>
                           )}
-                          {podeExcluir && (
+                          {podeExcluir && !l.arquivado_em && (
                             <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive"
                                     title="Excluir material do estoque"
                                     onClick={(e) => { e.stopPropagation(); setExcluindo(l); }}>
