@@ -8,11 +8,11 @@ import { saiDasDespesas, tratamentoPadraoPorNome, type TratamentoContrato } from
 export interface OpcoesCustos { manterInvestimentos?: boolean; manterAdministrativos?: boolean }
 
 // Ids dos contratos que não contam como despesa de contrato. Vale a exceção configurada em controladoria_contrato_tratamento (Tratamento dos contratos);
-// sem exceção, a regra pelo nome de antes (MOVIMENTAÇÃO FINANCEIRA, INVESTIMENTOS, ESTOQUE). O banco filtra por prefixo e a regra exata é tratamentoPadraoPorNome.
+// sem exceção, a regra pelo nome de antes (MOVIMENTAÇÃO FINANCEIRA, INVESTIMENTOS, OBRAS ADM, ESTOQUE). O banco filtra por prefixo e a regra exata é tratamentoPadraoPorNome.
 async function idsContratosForaDasDespesas(opcoes?: OpcoesCustos): Promise<Set<string>> {
   const [excecoes, porNome] = await Promise.all([
     (supabase as any).from("controladoria_contrato_tratamento").select("contrato_id, tratamento"),
-    (supabase as any).from("contratos").select("id, nome").or("nome.ilike.MOVIMENTA%,nome.ilike.INVESTIMENTO%,nome.ilike.ESTOQUE%,nome.ilike.ADMINISTRATIVO%"),
+    (supabase as any).from("contratos").select("id, nome").or("nome.ilike.MOVIMENTA%,nome.ilike.INVESTIMENTO%,nome.ilike.ESTOQUE%,nome.ilike.ADMINISTRATIVO%,nome.ilike.OBRAS%"),
   ]);
   if (porNome.error) throw porNome.error;
   // tabela de exceções ainda não criada no banco: tudo segue pelo nome
