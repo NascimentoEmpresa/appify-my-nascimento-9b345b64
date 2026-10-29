@@ -16,13 +16,15 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
 import { useScreenAccess } from "@/hooks/useScreenAccess";
 import {
-  buscarColaboradores, previaLotacao, useCapturarSenior, useImportarPlanilha, useListaAfastamentos, useSalvarAfastamento,
+  buscarColaboradores, previaLotacao, useCapturarSenior, useFaturamentoAfastamentos, useImportarPlanilha, useListaAfastamentos, useSalvarAfastamento,
   type ColaboradorBusca, type Lotacao,
 } from "@/hooks/useAfastamentos";
 import { FichaAfastamentoDialog } from "@/components/sst/FichaAfastamento";
+import { FontesAfastamento } from "@/components/sst/FontesAfastamento";
 import {
-  RETORNOS, TELE_STATUS, TIPOS, brl, calcularImpacto, consolidar, fmtData, fmtNum, lerPlanilhaTelemedicina, relatorioMensal,
-  rotuloCompetencia, type Agrupamento, type AfastamentoItem, type LinhaImportacao, type TeleStatus,
+  ORIGENS, RETORNOS, TELE_STATUS, TIPOS, anexarFaturamento, brl, calcularImpacto, consolidar, fmtData, fmtNum, lerPlanilhaTelemedicina,
+  recortarAoPeriodo, relatorioMensal, rotuloCompetencia, type Agrupamento, type AfastamentoItem, type FaturamentoContrato, type LinhaImportacao,
+  type TeleStatus,
 } from "@/lib/sst/afastamentos";
 
 // =====================================================================
@@ -34,6 +36,14 @@ import {
 // registradas) e, para quem tem sst_afastamentos_financeiro, o impacto
 // financeiro. Relatório gerencial por colaborador / posto / contrato /
 // competência e o relatório mensal no formato da planilha de hoje.
+//
+// 29/10/2026 (mig 20261029003100): a tela vinha VAZIA — a captura só olhava
+// quem estava HOJE de atestado/doença nos últimos 120 dias. Agora entram
+// todas as situações da Senior (férias, licença, auxílio-doença antigo,
+// demais afastamentos, desligamentos), as férias aprovadas no ERP e as
+// ausências da Efetividade. KPIs e relatórios usam só a parte de cada
+// afastamento DENTRO do período (recortarAoPeriodo): um auxílio-doença aberto
+// desde 2024 conta os dias de agosto a outubro, não 700.
 // =====================================================================
 
 const p2 = (n: number) => String(n).padStart(2, "0");
@@ -46,8 +56,11 @@ export default function Afastamentos() {
   const podeAlterar = useScreenAccess("sst_afastamentos", "alterar").data === true;
   const [mesIni, setMesIni] = useState(mesIso(new Date(hoje.getFullYear(), hoje.getMonth() - 2, 1)));
   const [mesFim, setMesFim] = useState(mesIso(hoje));
-  const lista = useListaAfastamentos(`${mesIni}-01`, ultimoDia(mesFim));
+  const ini = `${mesIni}-01`, fim = ultimoDia(mesFim);
+  const lista = useListaAfastamentos(ini, fim);
   const veFin = lista.data?.ve_financeiro ?? false;
+  const fat = useFaturamentoAfastamentos(ini, fim, veFin);
+  const [fTipo, setFTipo] = useState("_");
   const [busca, setBusca] = useState("");
   const [fContrato, setFContrato] = useState("_");
   const [fTele, setFTele] = useState("_");
@@ -67,14 +80,24 @@ export default function Afastamentos() {
     const t = busca.trim().toLowerCase();
     return todos.filter((a) => (verCancelados || !a.cancelado)
       && (fContrato === "_" || (a.contrato_nome || a.contrato_planilha || "(sem contrato)") === fContrato)
+      && (fTipo === "_" || a.tipo === fTipo)
       && (fTele === "_" || a.tele_status === fTele)
       && (fRetorno === "_" || a.retorno_status === fRetorno)
       && (!t || [a.nome, a.protocolo, a.cpf, a.contrato_nome, a.posto_planilha, a.posto_senior, a.encarregado_nome].some((v) => String(v ?? "").toLowerCase().includes(t))));
-  }, [todos, busca, fContrato, fTele, fRetorno, verCancelados]);
+  }, [todos, busca, fContrato, fTele, fRetorno, fTipo, verCancelados]);
+  // Só a parte de cada afastamento dentro do período (KPIs e relatórios).
+  const noPeriodo = useMemo(() => itens.map((a) => recortarAoPeriodo(a, ini, fim)).filter((a): a is AfastamentoItem => !!a), [itens, ini, fim]);
+  // Relatório mensal de atestados: pelo mês em que o atestado começou.
+  const iniciadosNoPeriodo = useMemo(() => itens.filter((a) => a.data_inicio >= ini && a.data_inicio <= fim), [itens, ini, fim]);
+  const porTipo = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const a of todos) if (!a.cancelado) m.set(a.tipo, (m.get(a.tipo) ?? 0) + 1);
+    return TIPOS.filter((t) => m.has(t.v)).map((t) => ({ ...t, n: m.get(t.v)! }));
+  }, [todos]);
 
   const kpi = useMemo(() => {
     let dias = 0, evitados = 0, cobertos = 0, custo = 0, impacto = 0, economia = 0, tele = 0, aguardando = 0;
-    for (const a of itens) {
+    for (const a of noPeriodo) {
       if (a.cancelado) continue;
       const i = calcularImpacto(a);
       dias += i.dias; evitados += i.diasEvitados; cobertos += i.diasCobertos; custo += i.custoCobertura;
@@ -82,13 +105,13 @@ export default function Afastamentos() {
       if (a.tele_status === "realizada") tele++;
       if (a.retorno_status === "aguardando") aguardando++;
     }
-    return { qtd: itens.filter((a) => !a.cancelado).length, dias, evitados, cobertos, custo, impacto, economia, tele, aguardando };
-  }, [itens]);
+    return { qtd: noPeriodo.filter((a) => !a.cancelado).length, dias, evitados, cobertos, custo, impacto, economia, tele, aguardando };
+  }, [noPeriodo]);
 
   return (
     <div className="space-y-4">
       <PageHeader title="Afastamentos e Telemedicina" module="SST" breadcrumb={["Afastamentos e Telemedicina"]}
-        subtitle="Atestados com a lotação puxada automaticamente (contrato, posto, escala e valor do posto), a cobertura da ausência e o impacto financeiro." />
+        subtitle="Atestados, auxílio-doença, férias, licenças e desligamentos — capturados da Senior, das Férias do ERP e da Efetividade — com a lotação puxada sozinha (contrato, posto, escala e valor do posto), a cobertura da ausência e o impacto financeiro." />
 
       <div className="flex flex-wrap items-end gap-3">
         <div className="space-y-1"><Label className="text-xs">De</Label><Input type="month" className="w-40" value={mesIni} onChange={(e) => e.target.value && setMesIni(e.target.value)} /></div>
@@ -96,7 +119,9 @@ export default function Afastamentos() {
         <div className="ml-auto flex flex-wrap gap-2">
           {podeAlterar && <>
             <Button variant="outline" disabled={capturar.isPending} onClick={() => capturar.mutateAsync().then(
-              (r) => toast.success(`Senior: ${r.novos} afastamento(s) novo(s), ${r.retornos} retorno(s), ${r.desligados} desligado(s).`),
+              (r) => toast.success(`${r.novos} afastamento(s) novo(s)` + (r.ferias != null
+                ? ` (Senior: ${r.situacao_senior ?? 0}, desligamentos: ${r.desligamentos ?? 0}, férias do ERP: ${r.ferias}, Efetividade: ${r.efetividade ?? 0})` : "")
+                + `, ${r.retornos} retorno(s)${r.prorrogados ? `, ${r.prorrogados} emendado(s)` : ""}.`),
               (e) => toast.error((e as Error).message))}>
               <RefreshCw className={cn("mr-1 h-4 w-4", capturar.isPending && "animate-spin")} /> Trazer da Senior
             </Button>
@@ -108,7 +133,7 @@ export default function Afastamentos() {
 
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-8">
         <Kpi r="Afastamentos" v={fmtNum(kpi.qtd)} />
-        <Kpi r="Dias de afastamento" v={fmtNum(kpi.dias)} />
+        <Kpi r="Dias de afastamento" v={fmtNum(kpi.dias)} sub="dentro do período" />
         <Kpi r="Avaliados na telemedicina" v={`${fmtNum(kpi.tele)}`} sub={kpi.qtd ? `${Math.round((kpi.tele / kpi.qtd) * 100)}%` : ""} />
         <Kpi r="Dias evitados (telemedicina)" v={fmtNum(kpi.evitados)} cor="text-emerald-700" />
         <Kpi r="Dias cobertos" v={fmtNum(kpi.cobertos)} sub={kpi.dias ? `${Math.round((kpi.cobertos / kpi.dias) * 100)}% dos dias` : ""} />
@@ -118,11 +143,23 @@ export default function Afastamentos() {
           : <Kpi r="Impacto financeiro" v="—" sub="sem acesso aos valores" />}
       </div>
 
+      {porTipo.length > 0 && (
+        <div className="flex flex-wrap gap-1.5">
+          {porTipo.map((t) => (
+            <button key={t.v} type="button" onClick={() => setFTipo(fTipo === t.v ? "_" : t.v)}
+              className={cn("rounded-full border px-2.5 py-0.5 text-xs", fTipo === t.v ? "border-[#0f3171] bg-[#0f3171] text-white" : "bg-background hover:bg-muted")}>
+              {t.r} <b>{t.n}</b>
+            </button>
+          ))}
+        </div>
+      )}
+
       <Tabs defaultValue="lista">
         <TabsList>
           <TabsTrigger value="lista">Afastamentos ({itens.length})</TabsTrigger>
           <TabsTrigger value="gerencial">Relatório gerencial</TabsTrigger>
           <TabsTrigger value="mensal">Relatório mensal por contrato</TabsTrigger>
+          <TabsTrigger value="fontes">De onde vêm os dados</TabsTrigger>
         </TabsList>
 
         <div className="mt-3 flex flex-wrap items-center gap-2">
@@ -131,6 +168,7 @@ export default function Afastamentos() {
             <Input className="pl-8" placeholder="Nome, protocolo, CPF, posto…" value={busca} onChange={(e) => setBusca(e.target.value)} />
           </div>
           <Filtro valor={fContrato} set={setFContrato} todos="Todos os contratos" ops={contratos.map((c) => ({ v: c, r: c }))} largura="w-64" />
+          <Filtro valor={fTipo} set={setFTipo} todos="Todos os tipos" ops={TIPOS.map((t) => ({ v: t.v, r: t.r }))} />
           <Filtro valor={fTele} set={setFTele} todos="Telemedicina: todas" ops={Object.entries(TELE_STATUS).map(([v, x]) => ({ v, r: x.r }))} />
           <Filtro valor={fRetorno} set={setFRetorno} todos="Retorno: todos" ops={Object.entries(RETORNOS).map(([v, x]) => ({ v, r: x.r }))} />
           <label className="flex items-center gap-1.5 text-xs text-muted-foreground"><input type="checkbox" checked={verCancelados} onChange={(e) => setVerCancelados(e.target.checked)} /> mostrar cancelados</label>
@@ -139,7 +177,7 @@ export default function Afastamentos() {
         <TabsContent value="lista">
           <Card className="overflow-x-auto">
             {lista.isLoading ? <Carregando /> : lista.error ? <div className="p-6 text-sm text-red-600">{(lista.error as Error).message}</div>
-              : itens.length === 0 ? <Vazio /> : (
+              : itens.length === 0 ? <Vazio dica={todos.length === 0 && podeAlterar} /> : (
               <Table>
                 <TableHeader><TableRow>
                   <TableHead>Colaborador</TableHead>
@@ -159,14 +197,16 @@ export default function Afastamentos() {
                         <TableCell>
                           <div className="font-medium">{a.nome}</div>
                           <div className="text-xs text-muted-foreground">{a.protocolo} · {TIPOS.find((t) => t.v === a.tipo)?.r}{!a.empregado_id && <span className="text-amber-700"> · sem cadastro</span>}</div>
+                          <div className="text-[10px] text-muted-foreground">{a.fonte_ref || ORIGENS[a.origem]}</div>
                         </TableCell>
                         <TableCell className="hidden max-w-[260px] lg:table-cell">
                           <div className="truncate text-sm">{a.contrato_nome || a.contrato_planilha || "—"}</div>
                           <div className="truncate text-xs text-muted-foreground">{a.posto_planilha || a.posto_senior || "—"}</div>
                         </TableCell>
-                        <TableCell className="text-sm">{fmtData(a.data_inicio)}<div className="text-xs text-muted-foreground">{a.dias_considerados == null ? "em aberto" : ""}</div></TableCell>
+                        <TableCell className="text-sm">{fmtData(a.data_inicio)}<div className="text-xs text-muted-foreground">{a.dias_considerados == null && !a.retornou_em ? "em aberto" : a.tipo === "desligamento" ? "" : `até ${fmtData(fimDoItem(a))}`}</div></TableCell>
                         <TableCell className="text-right">
                           <span className="font-semibold">{i.dias}</span>
+                          {(() => { const r = recortarAoPeriodo(a, ini, fim); return r && r.dias_considerados !== i.dias ? <div className="text-xs text-muted-foreground">{r.dias_considerados} no período</div> : null; })()}
                           {i.diasEvitados > 0 && <div className="text-xs text-emerald-700">de {a.dias_atestado} (−{i.diasEvitados})</div>}
                         </TableCell>
                         <TableCell><Badge variant="outline" className={TELE_STATUS[a.tele_status as TeleStatus].cor}>{TELE_STATUS[a.tele_status as TeleStatus].r}</Badge></TableCell>
@@ -185,8 +225,9 @@ export default function Afastamentos() {
           </Card>
         </TabsContent>
 
-        <TabsContent value="gerencial"><Gerencial itens={itens} veFin={veFin} /></TabsContent>
-        <TabsContent value="mensal"><Mensal itens={itens} /></TabsContent>
+        <TabsContent value="gerencial"><Gerencial itens={noPeriodo} veFin={veFin} fat={fat.data ?? []} /></TabsContent>
+        <TabsContent value="mensal"><Mensal itens={iniciadosNoPeriodo} /></TabsContent>
+        <TabsContent value="fontes"><FontesAfastamento /></TabsContent>
       </Tabs>
 
       <FichaAfastamentoDialog id={aberta} podeAlterar={podeAlterar} onFechar={fechar} />
@@ -214,34 +255,45 @@ function Filtro({ valor, set, todos, ops, largura = "w-52" }: { valor: string; s
   );
 }
 const Carregando = () => <div className="flex items-center gap-2 p-6 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Carregando…</div>;
-const Vazio = () => <div className="p-10 text-center text-sm text-muted-foreground"><HeartPulse className="mx-auto mb-2 h-8 w-8 opacity-40" /> Nenhum afastamento no período.</div>;
+const Vazio = ({ dica }: { dica?: boolean }) => (
+  <div className="p-10 text-center text-sm text-muted-foreground"><HeartPulse className="mx-auto mb-2 h-8 w-8 opacity-40" /> Nenhum afastamento no período.
+    {dica && <div className="mt-1 text-xs">A captura roda sozinha de hora em hora (aos 25 minutos). Para trazer agora, clique em <b>Trazer da Senior</b>.</div>}
+  </div>
+);
+const fimDoItem = (a: AfastamentoItem) => (a as AfastamentoItem & { data_fim?: string }).data_fim ?? a.data_inicio;
 
 // ── Relatório gerencial ──────────────────────────────────────────────
 const AGRUP: { v: Agrupamento; r: string }[] = [
   { v: "contrato", r: "Por contrato" }, { v: "posto", r: "Por posto" }, { v: "colaborador", r: "Por colaborador" }, { v: "competencia", r: "Por competência (mês)" },
 ];
 
-function Gerencial({ itens, veFin }: { itens: AfastamentoItem[]; veFin: boolean }) {
+function Gerencial({ itens, veFin, fat }: { itens: AfastamentoItem[]; veFin: boolean; fat: FaturamentoContrato[] }) {
   const [por, setPor] = useState<Agrupamento>("contrato");
-  const linhas = useMemo(() => consolidar(itens, por), [itens, por]);
+  const linhas = useMemo(() => anexarFaturamento(consolidar(itens, por), por, itens, fat), [itens, por, fat]);
+  const comFat = veFin && (por === "contrato" || por === "competencia");
+  const pctFat = (imp: number, f: number | null | undefined) => (f ? `${((imp / f) * 100).toLocaleString("pt-BR", { maximumFractionDigits: 2 })}%` : "—");
   const tot = linhas.reduce((s, l) => ({
     afastamentos: s.afastamentos + l.afastamentos, dias: s.dias + l.dias, diasCobertos: s.diasCobertos + l.diasCobertos, diasRt: s.diasRt + l.diasRt,
     diasEvitados: s.diasEvitados + l.diasEvitados, custoCobertura: s.custoCobertura + l.custoCobertura, perdaReceita: s.perdaReceita + l.perdaReceita,
     impacto: s.impacto + l.impacto, margemApurada: s.margemApurada + l.margemApurada, economiaTele: s.economiaTele + l.economiaTele,
-  }), { afastamentos: 0, dias: 0, diasCobertos: 0, diasRt: 0, diasEvitados: 0, custoCobertura: 0, perdaReceita: 0, impacto: 0, margemApurada: 0, economiaTele: 0 });
+    faturamento: s.faturamento + (l.faturamento ?? 0), descontosNf: s.descontosNf + (l.descontosNf ?? 0),
+  }), { afastamentos: 0, dias: 0, diasCobertos: 0, diasRt: 0, diasEvitados: 0, custoCobertura: 0, perdaReceita: 0, impacto: 0, margemApurada: 0, economiaTele: 0, faturamento: 0, descontosNf: 0 });
 
   const exportar = () => {
     const cab = ["Grupo", "Detalhe", "Afastamentos", "Dias", "Dias cobertos", "Dias RT", "Dias evitados (tele)", "Custo de cobertura",
-      ...(veFin ? ["Perda de receita", "Impacto total", "Margem prevista", "Margem apurada", "Economia telemedicina"] : [])];
+      ...(veFin ? ["Perda de receita", "Impacto total", "Margem prevista", "Margem apurada", "Economia telemedicina"] : []),
+      ...(comFat ? ["Faturamento realizado (NF líquido)", "Faltas + glosas na NF", "Impacto % do faturamento"] : [])];
     const dados = linhas.map((l) => [l.rotulo, l.sub ?? "", l.afastamentos, Math.round(l.dias), Math.round(l.diasCobertos), Math.round(l.diasRt),
       Math.round(l.diasEvitados), +l.custoCobertura.toFixed(2),
-      ...(veFin ? [+l.perdaReceita.toFixed(2), +l.impacto.toFixed(2), +l.margemPrevista.toFixed(2), +l.margemApurada.toFixed(2), +l.economiaTele.toFixed(2)] : [])]);
+      ...(veFin ? [+l.perdaReceita.toFixed(2), +l.impacto.toFixed(2), +l.margemPrevista.toFixed(2), +l.margemApurada.toFixed(2), +l.economiaTele.toFixed(2)] : []),
+      ...(comFat ? [l.faturamento ?? "", l.descontosNf ?? "", l.faturamento ? +((l.impacto / l.faturamento) * 100).toFixed(2) : ""] : [])]);
     const det = itens.filter((a) => !a.cancelado).map((a) => {
       const i = calcularImpacto(a);
       return {
-        Protocolo: a.protocolo, Colaborador: a.nome, Contrato: a.contrato_nome || a.contrato_planilha || "", "Posto (planilha)": a.posto_planilha ?? "",
-        "Posto (Senior)": a.posto_senior ?? "", Cargo: a.cargo ?? "", Escala: a.escala ?? "", Início: fmtData(a.data_inicio), "Dias atestado": a.dias_atestado ?? "",
-        "Dias considerados": i.dias, Telemedicina: TELE_STATUS[a.tele_status].r, "Data tele": fmtData(a.tele_data), "Dias evitados": i.diasEvitados,
+        Protocolo: a.protocolo, Tipo: TIPOS.find((t) => t.v === a.tipo)?.r ?? a.tipo, Origem: a.fonte_ref || ORIGENS[a.origem] || a.origem,
+        Colaborador: a.nome, Contrato: a.contrato_nome || a.contrato_planilha || "", "Posto (planilha)": a.posto_planilha ?? "",
+        "Posto (Senior)": a.posto_senior ?? "", Cargo: a.cargo ?? "", Escala: a.escala ?? "", Início: fmtData(a.inicio_real ?? a.data_inicio), "Dias atestado": a.dias_atestado ?? "",
+        "Dias no período": i.dias, "Dias do afastamento inteiro": a.dias_total ?? i.dias, Telemedicina: TELE_STATUS[a.tele_status].r, "Data tele": fmtData(a.tele_data), "Dias evitados": i.diasEvitados,
         "Dias cobertos": i.diasCobertos, "Dias RT": a.dias_rt, "Custo cobertura": +i.custoCobertura.toFixed(2), Retorno: RETORNOS[a.retorno_status].r,
         ...(veFin ? { "Valor mensal posto": a.valor_mensal_posto ?? "", "Perda de receita": i.perdaReceita != null ? +i.perdaReceita.toFixed(2) : "",
           "Impacto total": i.impactoTotal != null ? +i.impactoTotal.toFixed(2) : "", "Margem apurada": i.margemApurada != null ? +i.margemApurada.toFixed(2) : "" } : {}),
@@ -260,7 +312,8 @@ function Gerencial({ itens, veFin }: { itens: AfastamentoItem[]; veFin: boolean 
           <SelectTrigger className="w-60"><SelectValue /></SelectTrigger>
           <SelectContent>{AGRUP.map((a) => <SelectItem key={a.v} value={a.v}>{a.r}</SelectItem>)}</SelectContent>
         </Select>
-        {!veFin && <span className="text-xs text-muted-foreground">Valores do posto, perda de receita e margem aparecem para quem tem "Afastamentos — Ver valores e impacto financeiro".</span>}
+        {!veFin ? <span className="text-xs text-muted-foreground">Valores do posto, perda de receita, margem e faturamento aparecem para quem tem "Afastamentos — Ver valores e impacto financeiro".</span>
+          : <span className="text-xs text-muted-foreground">Só os dias de cada afastamento dentro do período. Faturamento = notas emitidas (líquido) do contrato nas competências do período.</span>}
         <Button variant="outline" className="ml-auto" onClick={exportar} disabled={!linhas.length}><Download className="mr-1 h-4 w-4" /> Exportar Excel</Button>
       </div>
       {linhas.length === 0 ? <Vazio /> : (
@@ -272,6 +325,8 @@ function Gerencial({ itens, veFin }: { itens: AfastamentoItem[]; veFin: boolean 
             <TableHead className="text-right">Evitados</TableHead><TableHead className="text-right">Custo cobertura</TableHead>
             {veFin && <><TableHead className="text-right">Perda receita</TableHead><TableHead className="text-right">Impacto</TableHead>
               <TableHead className="text-right">Margem apurada</TableHead><TableHead className="text-right">Economia tele</TableHead></>}
+            {comFat && <><TableHead className="text-right">Faturamento (NF)</TableHead><TableHead className="text-right">Faltas+glosas NF</TableHead>
+              <TableHead className="text-right">Impacto % fat.</TableHead></>}
           </TableRow></TableHeader>
           <TableBody>
             {linhas.map((l) => (
@@ -288,6 +343,9 @@ function Gerencial({ itens, veFin }: { itens: AfastamentoItem[]; veFin: boolean 
                   <TableCell className="text-right font-semibold text-red-700">{brl(l.impacto)}</TableCell>
                   <TableCell className={cn("text-right", l.margemApurada < 0 ? "text-red-700" : "text-emerald-700")}>{brl(l.margemApurada)}</TableCell>
                   <TableCell className="text-right text-emerald-700">{brl(l.economiaTele)}</TableCell></>}
+                {comFat && <><TableCell className="text-right">{l.faturamento != null ? brl(l.faturamento) : <span className="text-xs text-muted-foreground">sem NF</span>}</TableCell>
+                  <TableCell className="text-right">{l.descontosNf != null ? brl(l.descontosNf) : "—"}</TableCell>
+                  <TableCell className="text-right">{pctFat(l.impacto, l.faturamento)}</TableCell></>}
               </TableRow>
             ))}
             <TableRow className="bg-muted/50 font-semibold">
@@ -296,6 +354,8 @@ function Gerencial({ itens, veFin }: { itens: AfastamentoItem[]; veFin: boolean 
               <TableCell className="text-right">{fmtNum(tot.diasEvitados)}</TableCell><TableCell className="text-right">{brl(tot.custoCobertura)}</TableCell>
               {veFin && <><TableCell className="text-right">{brl(tot.perdaReceita)}</TableCell><TableCell className="text-right">{brl(tot.impacto)}</TableCell>
                 <TableCell className="text-right">{brl(tot.margemApurada)}</TableCell><TableCell className="text-right">{brl(tot.economiaTele)}</TableCell></>}
+              {comFat && <><TableCell className="text-right">{brl(tot.faturamento)}</TableCell><TableCell className="text-right">{brl(tot.descontosNf)}</TableCell>
+                <TableCell className="text-right">{pctFat(tot.impacto, tot.faturamento)}</TableCell></>}
             </TableRow>
           </TableBody>
         </Table>
@@ -320,7 +380,7 @@ function Mensal({ itens }: { itens: AfastamentoItem[] }) {
   return (
     <Card className="overflow-x-auto p-3">
       <div className="mb-3 flex items-center gap-2">
-        <p className="text-xs text-muted-foreground">O mesmo quadro do RELATÓRIO MENSAL ATESTADOS, gerado dos afastamentos (mês do início do atestado).</p>
+        <p className="text-xs text-muted-foreground">O mesmo quadro do RELATÓRIO MENSAL ATESTADOS, gerado dos afastamentos por atestado (mês do início; férias, licenças e desligamentos ficam de fora).</p>
         <Button variant="outline" className="ml-auto" onClick={exportar} disabled={!linhas.length}><Download className="mr-1 h-4 w-4" /> Exportar Excel</Button>
       </div>
       {linhas.length === 0 ? <Vazio /> : (

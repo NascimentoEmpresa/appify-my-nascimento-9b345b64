@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
-  calcularImpacto, consolidar, dataPlanilha, diasDoAfastamento, diasPorCompetencia, fimDoAfastamento, horaPlanilha,
-  interpretarObservacao, lerPlanilhaTelemedicina, relatorioMensal, type AfastamentoItem,
+  anexarFaturamento, calcularImpacto, consolidar, dataPlanilha, diasDoAfastamento, diasPorCompetencia, fimDoAfastamento, horaPlanilha,
+  interpretarObservacao, lerPlanilhaTelemedicina, recortarAoPeriodo, relatorioMensal, type AfastamentoItem,
 } from "@/lib/sst/afastamentos";
 
 // SST › Afastamentos e Telemedicina (mig 20261029001750). Casos tirados da
@@ -164,5 +164,63 @@ describe("leitura da PLANILHA TELEMEDICINA", () => {
     expect(ana).toMatchObject({ data_inicio: "2026-03-09", tele_data: "2026-03-09", tele_horario: "10:00", dias_atestado: 3 });
     const jaq = linhas.find((l) => l.nome.startsWith("JAQUELINE"))!;
     expect(jaq).toMatchObject({ dias_atestado: 90, dias_apos_tele: 60, tele_resultado: "reduzido", ponto: "cumpriu", assinatura: "encaminhado" });
+  });
+});
+
+// Mig 20261029003100: afastamentos de todas as fontes (férias, licença,
+// desligamento, auxílio-doença antigo) — o recorte ao período e o
+// faturamento realizado no relatório gerencial.
+describe("afastamentos reais no período", () => {
+  it("encerrado sem dias conta até a véspera do retorno, não até hoje", () => {
+    expect(diasDoAfastamento(base({ data_inicio: "2026-08-01", dias_considerados: null, retornou_em: "2026-08-11" }), HOJE)).toBe(10);
+  });
+
+  it("auxílio-doença aberto desde 2024 só conta os dias dentro do período", () => {
+    const a = base({ tipo: "auxilio_doenca", data_inicio: "2024-03-10", dias_atestado: null, dias_considerados: null, dias_cobertos: 100,
+      valor_mensal_posto: 3000, custo_mensal_posto: 2700 });
+    const r = recortarAoPeriodo(a, "2026-08-01", "2026-10-31", HOJE)!;
+    expect(r.data_inicio).toBe("2026-08-01");
+    expect(r.dias_considerados).toBe(89); // 01/08 a 28/10 (hoje)
+    expect(r.inicio_real).toBe("2024-03-10");
+    expect(r.dias_cobertos).toBeLessThanOrEqual(89);
+    expect(calcularImpacto(r, HOJE).dias).toBe(89);
+    expect(consolidar([r], "competencia", HOJE).map((l) => [l.chave, l.dias])).toEqual([["2026-08", 31], ["2026-09", 30], ["2026-10", 28]]);
+  });
+
+  it("fora do período some; dentro fica igual", () => {
+    expect(recortarAoPeriodo(base({ data_inicio: "2026-06-10", dias_considerados: 5 }), "2026-08-01", "2026-10-31", HOJE)).toBeNull();
+    const d = recortarAoPeriodo(base({ data_inicio: "2026-09-10", dias_considerados: 5 }), "2026-08-01", "2026-10-31", HOJE)!;
+    expect(d.dias_considerados).toBe(5);
+    expect(d.data_inicio).toBe("2026-09-10");
+  });
+
+  it("desligamento é evento de 0 dia e fica no período", () => {
+    const d = recortarAoPeriodo(base({ tipo: "desligamento", data_inicio: "2026-09-15", dias_atestado: 0, dias_considerados: 0 }), "2026-08-01", "2026-10-31", HOJE)!;
+    expect(calcularImpacto(d, HOJE).dias).toBe(0);
+  });
+
+  it("relatório mensal de atestados não conta férias nem desligamento", () => {
+    const r = relatorioMensal([
+      base({ id: 1, dias_atestado: 3 }),
+      base({ id: 2, tipo: "ferias", dias_atestado: 30, dias_considerados: 30 }),
+      base({ id: 3, tipo: "desligamento", dias_atestado: 0, dias_considerados: 0 }),
+    ], HOJE);
+    expect(r).toHaveLength(1);
+    expect(r[0].quantidade).toBe(1);
+  });
+
+  it("faturamento realizado por contrato e por competência", () => {
+    const itens = [base({ id: 1, contrato_id: "c1" }), base({ id: 2, contrato_id: "c2", contrato_nome: "DMAE", data_inicio: "2026-07-02" })];
+    const fat = [
+      { contrato_id: "c1", competencia: "2026-06", bruto: 110000, liquido: 100000, faltas: 500, glosas: 200 },
+      { contrato_id: "c2", competencia: "2026-07", bruto: 55000, liquido: 50000, faltas: 0, glosas: 0 },
+      { contrato_id: "c9", competencia: "2026-06", bruto: 1, liquido: 1, faltas: 0, glosas: 0 },
+    ];
+    const pc = anexarFaturamento(consolidar(itens, "contrato", HOJE), "contrato", itens, fat);
+    expect(pc.find((l) => l.chave === "c1")?.faturamento).toBe(100000);
+    expect(pc.find((l) => l.chave === "c1")?.descontosNf).toBe(700);
+    const pm = anexarFaturamento(consolidar(itens, "competencia", HOJE), "competencia", itens, fat);
+    expect(pm.find((l) => l.chave === "2026-06")?.faturamento).toBe(100000); // c9 não teve afastamento
+    expect(anexarFaturamento(consolidar(itens, "colaborador", HOJE), "colaborador", itens, fat)[0].faturamento).toBeUndefined();
   });
 });
