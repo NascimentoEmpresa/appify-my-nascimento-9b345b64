@@ -30,7 +30,11 @@
 // para o Groq (GROQ_API_KEY). Modelo por variável (IA_ESTOQUE_MODELO só vale
 // para o Gemini; o Groq usa GROQ_MODEL).
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
-import { itensRelacionados, respostaQuantidadeAtual } from "../_shared/estoque-ia.ts";
+import {
+  itensRelacionados,
+  respostaQuantidadeAtual,
+  respostaResumoOperacional,
+} from "../_shared/estoque-ia.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -303,6 +307,12 @@ Deno.serve(async (req) => {
       ? ((painel as Record<string, unknown>).itens as Record<string, unknown>[])
       : [];
     if (modo === "pergunta") {
+      const resumo = (painel as Record<string, unknown>).resumo;
+      const respostaOperacional = respostaResumoOperacional(
+        pergunta,
+        resumo && typeof resumo === "object" ? resumo as Record<string, unknown> : {},
+      );
+      if (respostaOperacional) return respostaJson({ texto: respostaOperacional });
       const respostaDireta = respostaQuantidadeAtual(pergunta, itensCompletos);
       if (respostaDireta) return respostaJson({ texto: respostaDireta });
     }

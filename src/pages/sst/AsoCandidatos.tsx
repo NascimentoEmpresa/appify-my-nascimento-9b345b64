@@ -56,7 +56,7 @@ interface Cand {
   sst_data_exame: string | null; sst_hora_exame: string | null; sst_local_exame: string | null; sst_maps_url: string | null;
   sst_agendado_em: string | null; sst_agendado_por: string | null; compras_ok: boolean | null;
   sst_visto_em: string | null; sst_visto_por: string | null; cracha_foto_path: string | null;
-  /** Início no posto, informado pelo Recrutamento (mig 20261028002000). */
+  /** Início no posto, informado pelo Recrutamento (mig 20261028002050). */
   data_inicio_trabalho?: string | null;
   urgente_sst: boolean | null; urgente_por: string | null; urgente_motivo: string | null; urgente_em: string | null;
   solicitante_nome: string | null;
@@ -275,7 +275,7 @@ export default function AsoCandidatos() {
   );
 }
 
-/** Data em que começa a trabalhar (mig 20261028002000): na lista, curta; no detalhe, em faixa. */
+/** Data em que começa a trabalhar (mig 20261028002050): na lista, curta; no detalhe, em faixa. */
 function InicioNoPosto({ iso, destaque }: { iso?: string | null; destaque?: boolean }) {
   const ini = inicioTrabalho(iso);
   if (!ini) return destaque ? null : <span className="text-muted-foreground">—</span>;

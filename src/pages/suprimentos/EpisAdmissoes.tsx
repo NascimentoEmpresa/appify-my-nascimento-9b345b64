@@ -290,7 +290,7 @@ export default function EpisAdmissoes() {
                     <div style={{ flex: 1, minWidth: 0 }}><CandidatoInfo cand={c} hideCurriculo /></div>
                     <FotoCrachaCandidato caminho={c.cracha_foto_path} />
                   </div>
-                  {/* Início no posto (mig 20261028002000): é por ela que o uniforme é liberado. */}
+                  {/* Início no posto (mig 20261028002050): é por ela que o uniforme é liberado. */}
                   {(() => {
                     const ini = inicioTrabalho(c.data_inicio_trabalho);
                     if (!ini) return null;

@@ -42,7 +42,7 @@ async function carregar(denunciaId: string): Promise<DadosDossie> {
     db.from("CANAL_DENUNCIA_EVENTO").select("*").eq("denuncia_id", denunciaId).order("created_at"),
     db.from("CANAL_DENUNCIA_MENSAGEM").select("*").eq("denuncia_id", denunciaId).order("created_at"),
     db.from("CANAL_DENUNCIA_PROVIDENCIA").select("*").eq("denuncia_id", denunciaId).order("ordem"),
-    db.from("CANAL_DENUNCIA_ANEXO").select("*").eq("denuncia_id", denunciaId).order("created_at"),
+    db.from("CANAL_DENUNCIA_ANEXO").select("*").eq("denuncia_id", denunciaId).order("ordem"),
   ]);
   if (d.error) throw d.error;
   return {

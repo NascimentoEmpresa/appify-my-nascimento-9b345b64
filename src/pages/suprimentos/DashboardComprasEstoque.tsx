@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   BarChart3,
   Boxes,
@@ -286,6 +286,7 @@ export default function DashboardComprasEstoque() {
   const { data: empresaOperacionalId } = useEmpresaId();
   const [empresaSelecionadaId, setEmpresaSelecionadaId] = useState<string | null>(null);
   const [filtros, setFiltros] = useState<FiltroDashboardCompras>(filtrosIniciais);
+  const [periodoAutomatico, setPeriodoAutomatico] = useState(true);
   const todasEmpresas = empresaSelecionadaId === TODAS_EMPRESAS;
   const empresaId = todasEmpresas ? null : empresaSelecionadaId ?? empresaOperacionalId ?? null;
   const empresaIdsConsulta = useMemo(
@@ -295,10 +296,16 @@ export default function DashboardComprasEstoque() {
   const empresa = empresas.find((item) => item.id === empresaId);
   const consulta = useDashboardComprasEstoque(empresaIdsConsulta, filtros);
   const dados = consulta.data;
+  useEffect(() => {
+    const inicio = dados?.periodo_disponivel?.inicio;
+    if (!periodoAutomatico || !inicio || filtros.inicio === inicio) return;
+    setFiltros((atuais) => ({ ...atuais, inicio }));
+  }, [dados?.periodo_disponivel?.inicio, filtros.inicio, periodoAutomatico]);
   const atualizado = useMemo(() => dados?.atualizado_em ? new Date(dados.atualizado_em).toLocaleString("pt-BR") : "—", [dados?.atualizado_em]);
   const trocar = <K extends keyof FiltroDashboardCompras>(campo: K, valor: FiltroDashboardCompras[K]) => setFiltros((f) => ({ ...f, [campo]: valor }));
   const trocarEmpresa = (id: string) => {
     setEmpresaSelecionadaId(id);
+    setPeriodoAutomatico(true);
     setFiltros((atuais) => ({
       ...atuais,
       contratoId: null,
@@ -318,14 +325,37 @@ export default function DashboardComprasEstoque() {
         </div>
 
         <Card className="border-slate-200 shadow-sm"><CardContent className="p-3"><div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-7">
-          <div><label className="mb-1 block text-xs font-semibold text-slate-700">Início</label><Input type="date" value={filtros.inicio} max={filtros.fim} onChange={(e) => trocar("inicio", e.target.value)} /></div>
-          <div><label className="mb-1 block text-xs font-semibold text-slate-700">Fim</label><Input type="date" value={filtros.fim} min={filtros.inicio} onChange={(e) => trocar("fim", e.target.value)} /></div>
+          <div><label className="mb-1 block text-xs font-semibold text-slate-700">Início</label><Input type="date" value={filtros.inicio} max={filtros.fim} onChange={(e) => { setPeriodoAutomatico(false); trocar("inicio", e.target.value); }} /></div>
+          <div><label className="mb-1 block text-xs font-semibold text-slate-700">Fim</label><Input type="date" value={filtros.fim} min={filtros.inicio} onChange={(e) => { setPeriodoAutomatico(false); trocar("fim", e.target.value); }} /></div>
           <div><label className="mb-1 block text-xs font-semibold text-slate-700">Empresa</label><Select value={todasEmpresas ? TODAS_EMPRESAS : empresaId ?? undefined} onValueChange={trocarEmpresa} disabled={!empresaIdsConsulta.length}><SelectTrigger><SelectValue placeholder="Carregando..." /></SelectTrigger><SelectContent><SelectItem value={TODAS_EMPRESAS}>Todas</SelectItem>{empresas.map((item) => <SelectItem key={item.id} value={item.id}>{item.sigla}</SelectItem>)}</SelectContent></Select></div>
           <div><label className="mb-1 block text-xs font-semibold text-slate-700">Contrato</label><Select value={filtros.contratoId ?? "todos"} onValueChange={(v) => trocar("contratoId", v === "todos" ? null : v)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="todos">Todos</SelectItem>{dados?.filtros.contratos.map((c) => <SelectItem key={c.id} value={c.id}>{c.nome}</SelectItem>)}</SelectContent></Select></div>
           <div><label className="mb-1 block text-xs font-semibold text-slate-700">Categoria</label><Select value={filtros.categoria ?? "todas"} onValueChange={(v) => trocar("categoria", v === "todas" ? null : v)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="todas">Todas</SelectItem>{dados?.filtros.categorias.map((c) => <SelectItem key={c.valor} value={c.valor}>{c.nome}</SelectItem>)}</SelectContent></Select></div>
           <div><label className="mb-1 block text-xs font-semibold text-slate-700">Comprador responsável</label><Select value={filtros.comprador ?? "todos"} onValueChange={(v) => trocar("comprador", v === "todos" ? null : v)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="todos">Todos</SelectItem>{dados?.filtros.compradores.map((nome) => <SelectItem key={nome} value={nome}>{nome}</SelectItem>)}</SelectContent></Select></div>
           <div className="flex items-end"><Button variant="outline" className="w-full" onClick={() => consulta.refetch()} disabled={consulta.isFetching}><RefreshCw className={cn("mr-2 h-4 w-4", consulta.isFetching && "animate-spin")} />Atualizar</Button></div>
         </div></CardContent></Card>
+
+        {dados?.periodo_disponivel?.inicio && (
+          <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-blue-100 bg-blue-50/70 px-3 py-2 text-xs text-blue-900">
+            <p>
+              <strong>Cobertura encontrada no sistema:</strong>{" "}
+              solicitações desde {dados.periodo_disponivel.solicitacoes_inicio ? new Date(`${dados.periodo_disponivel.solicitacoes_inicio}T12:00:00`).toLocaleDateString("pt-BR") : "sem registro"};{" "}
+              itens desde {dados.periodo_disponivel.itens_registrados_inicio ? new Date(`${dados.periodo_disponivel.itens_registrados_inicio}T12:00:00`).toLocaleDateString("pt-BR") : "sem registro"};{" "}
+              movimentos desde {dados.periodo_disponivel.movimentos_inicio ? new Date(`${dados.periodo_disponivel.movimentos_inicio}T12:00:00`).toLocaleDateString("pt-BR") : "sem registro"};{" "}
+              cotações desde {dados.periodo_disponivel.cotacoes_inicio ? new Date(`${dados.periodo_disponivel.cotacoes_inicio}T12:00:00`).toLocaleDateString("pt-BR") : "sem registro"}.
+              Pedidos importados são posicionados pela data real da solicitação, não pela data da importação.
+            </p>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                setPeriodoAutomatico(true);
+                setFiltros((atuais) => ({ ...atuais, inicio: dados.periodo_disponivel.inicio! }));
+              }}
+            >
+              Todo o histórico disponível
+            </Button>
+          </div>
+        )}
 
         {consulta.isLoading && <Carregando />}
         {consulta.error && <Alert variant="destructive"><AlertTitle>Não foi possível carregar o dashboard</AlertTitle><AlertDescription>{(consulta.error as Error).message}. Se a migration do SIS-2026-0607 ainda não foi aplicada no Supabase, execute-a antes de abrir esta tela.</AlertDescription></Alert>}

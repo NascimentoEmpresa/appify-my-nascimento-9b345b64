@@ -178,7 +178,7 @@ interface Curriculo {
   admissao_responsavel_nome?: string | null;
   recrutadora_nome?: string | null;
   admitido_em?: string | null;
-  /** Data em que começa a trabalhar — informada no envio para SST + Compras (mig 20261028002000). */
+  /** Data em que começa a trabalhar — informada no envio para SST + Compras (mig 20261028002050). */
   data_inicio_trabalho?: string | null;
 }
 
@@ -705,7 +705,7 @@ export default function Recrutamento({ escopo = "rh" }: { escopo?: "rh" | "anali
   // Compras (vai no pedido) e "não precisa de pedido" — o Compras recebe igual,
   // só para ficar ciente, com o motivo.
   const [candCompras, setCandCompras] = useState({ obs: "", dispensa: false, motivo: "" });
-  // Data em que o colaborador começa a trabalhar (mig 20261028002000): obrigatória
+  // Data em que o colaborador começa a trabalhar (mig 20261028002050): obrigatória
   // no envio para SST + Compras — o Compras libera o uniforme por ela.
   const [candInicio, setCandInicio] = useState("");
   // Pedido de materiais de cada candidato do quadro (ID + status) e o aberto no "Compras" do card.
@@ -3995,7 +3995,7 @@ Isto não tem desfazer: o histórico e os candidatos ligados a ela vão junto.`)
                 O candidato vai direto para <strong>Admissão</strong>, sem passar pelo exame admissional (SST) nem pelo enxoval (Compras).
               </div>
             )}
-            {/* Início no posto (28/10/2026, mig 20261028002000): obrigatório — aparece para o Compras e o SST. */}
+            {/* Início no posto (28/10/2026, mig 20261028002050): obrigatório — aparece para o Compras e o SST. */}
             {candModal.novaEtapa === ETAPA_SST_COMPRAS && (() => {
               const ini = inicioTrabalho(candInicio);
               return (

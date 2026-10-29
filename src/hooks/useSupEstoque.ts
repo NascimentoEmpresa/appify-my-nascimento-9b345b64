@@ -23,6 +23,9 @@ export interface Almoxarifado { id: string; codigo: string; nome: string; empres
 export interface LinhaEstoque {
   item_estoque_id: string;
   sup_item_id: string;
+  /** Ficha preservada apenas para conciliar códigos e movimentos antigos. */
+  arquivado_em: string | null;
+  arquivado_motivo: string | null;
   /** Código interno do produto, imutável — o que se bipa (ajuste 7 do Cassio). */
   codigo_item: string | null;
   /**
@@ -224,14 +227,19 @@ export function useAlmoxarifados(empresaId: string | null) {
 }
 
 /** Saldo consolidado por material — alimenta o dashboard de estoque. */
-export function useEstoqueLista(empresaId: string | null) {
+export function useEstoqueLista(
+  empresaId: string | null,
+  opcoes: { incluirArquivados?: boolean } = {},
+) {
+  const incluirArquivados = opcoes.incluirArquivados === true;
   return useQuery({
-    queryKey: ["sup_estoque_lista", empresaId],
+    queryKey: ["sup_estoque_lista", empresaId, incluirArquivados],
     enabled: !!empresaId,
     queryFn: async (): Promise<LinhaEstoque[]> => {
-      const { data, error } = await sb
+      let consulta = sb
         .from("sup_estoque_item")
         .select(`id, valor_unitario, estoque_minimo, preco_valido_ate, fornecedor_id, observacoes, localizacao,
+                 arquivado_em, arquivado_motivo,
                  sup_item:sup_item_id (id, nome, tipo, codigo, tamanho, pai:item_pai_id (id, nome, codigo)),
                  almoxarifado:almoxarifado_id (nome),
                  sup_estoque_tag (codigo, tamanho, tipo, usado, quantidade_massa, quantidade_original_massa, valor_unitario,
@@ -239,11 +247,11 @@ export function useEstoqueLista(empresaId: string | null) {
         // A RLS permite todas as empresas às quais o usuário tem acesso. Sem
         // este filtro, trocar a empresa operacional mudava só a chave do cache
         // e a tela continuava somando os estoques de todas elas.
-        .eq("empresa_id", empresaId)
-        // Material excluído que já atendeu pedido não é apagado, é arquivado
-        // (ver sup_est_excluir_item) — a linha fica para os pedidos antigos
-        // continuarem sabendo o que receberam. Na lista, ele não existe mais.
-        .is("arquivado_em", null);
+        .eq("empresa_id", empresaId);
+      // Catálogo e modais continuam pedindo somente fichas ativas. A tela de
+      // consulta opta pelos arquivados para localizar um código histórico.
+      if (!incluirArquivados) consulta = consulta.is("arquivado_em", null);
+      const { data, error } = await consulta;
       if (error) throw error;
 
       // Mesma fórmula da view sup_estoque_saldo — aqui só para evitar um
@@ -273,6 +281,8 @@ export function useEstoqueLista(empresaId: string | null) {
         return {
           item_estoque_id: r.id,
           sup_item_id: r.sup_item?.id,
+          arquivado_em: r.arquivado_em ?? null,
+          arquivado_motivo: r.arquivado_motivo ?? null,
           codigo_item: r.sup_item?.codigo ?? null,
           tamanho_item: r.sup_item?.tamanho ?? null,
           base: r.sup_item?.pai

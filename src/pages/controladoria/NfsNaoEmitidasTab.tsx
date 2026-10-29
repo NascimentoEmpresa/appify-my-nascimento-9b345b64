@@ -32,6 +32,9 @@ interface Props {
   empresaNomePorId: Map<string, string>;
   filtros: ReactNode;
   onLimparFiltros: () => void;
+  // Código da nota escolhido no Controle de Faturamento (N por padrão; R, M, DH ou todos).
+  codigos: Set<string>;
+  rotuloCodigo: string;
 }
 
 const ETAPA_CLASSE: Record<EtapaNf, string> = {
@@ -54,11 +57,11 @@ function KpiCard({ label, valor, sub, borda, valorClass }: { label: string; valo
   );
 }
 
-export function NfsNaoEmitidasTab({ pendentes, executavelTotal, competenciaLabel, competenciaISO, nfs, empresaNomePorId, filtros, onLimparFiltros }: Props) {
+export function NfsNaoEmitidasTab({ pendentes, executavelTotal, competenciaLabel, competenciaISO, nfs, empresaNomePorId, filtros, onLimparFiltros, codigos, rotuloCodigo }: Props) {
   const linhas = useMemo(() => {
     const etapaPorContrato = new Map<string, { status?: string | null }[]>();
     for (const n of nfs) {
-      if (n.tipo_nota !== "N" || n.competencia !== competenciaISO) continue;
+      if (!codigos.has(n.tipo_nota) || n.competencia !== competenciaISO) continue;
       const arr = etapaPorContrato.get(n.contrato_id) ?? [];
       arr.push(n);
       etapaPorContrato.set(n.contrato_id, arr);
@@ -72,7 +75,7 @@ export function NfsNaoEmitidasTab({ pendentes, executavelTotal, competenciaLabel
         etapa: etapaDaNf(etapaPorContrato.get(p.contratoId) ?? []),
         impactoPct: impactoDoContratoPct(p.naoEmitido, executavelTotal),
       }));
-  }, [pendentes, nfs, competenciaISO, empresaNomePorId, executavelTotal]);
+  }, [pendentes, nfs, competenciaISO, empresaNomePorId, executavelTotal, codigos]);
 
   const resumo = useMemo(
     () => resumirPendencias(linhas.map((l) => ({ empresaNome: l.empresaNome, contratoNome: l.contratoNome, naoEmitido: l.naoEmitido })), executavelTotal),
@@ -112,12 +115,12 @@ export function NfsNaoEmitidasTab({ pendentes, executavelTotal, competenciaLabel
       </div>
 
       <p className="text-xs text-muted-foreground">
-        Contratos vigentes em {competenciaLabel} sem nenhuma NF Código N lançada — priorizados pelo maior valor executável.{" "}
+        Contratos vigentes em {competenciaLabel} sem nenhuma NF {rotuloCodigo} lançada — priorizados pelo maior valor executável.{" "}
         <strong className="text-foreground">Impactos calculados sobre o executável da competência.</strong>
       </p>
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <KpiCard label="Contratos sem NF" valor={resumo.qtd.toLocaleString("pt-BR")} sub="Contratos vigentes sem NF Código N" borda="border-l-orange-500" />
+        <KpiCard label="Contratos sem NF" valor={resumo.qtd.toLocaleString("pt-BR")} sub={`Contratos vigentes sem NF ${rotuloCodigo}`} borda="border-l-orange-500" />
         <KpiCard label="Valor não faturado" valor={fmtMoney(resumo.valorNaoFaturado)} sub="Soma dos contratos sem NF" borda="border-l-red-500" valorClass="text-red-600 dark:text-red-400" />
         <KpiCard label="Impacto no mês" valor={pct(resumo.impactoPct)} sub="Sobre o executável total da competência" borda="border-l-amber-500" />
         <KpiCard label="Maior pendência" valor={resumo.maior ? fmtMoney(resumo.maior.valor) : "—"} sub={resumo.maior?.contratoNome} borda="border-l-blue-500" />
