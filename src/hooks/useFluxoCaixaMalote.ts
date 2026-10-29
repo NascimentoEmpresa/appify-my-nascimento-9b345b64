@@ -367,3 +367,39 @@ export function useReverterAjusteFluxoCaixa() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["fluxo_caixa_combinado"] }),
   });
 }
+
+// SIS-2026-0733: histórico das edições do Fluxo (financeiro_fluxo_caixa_ajuste_historico) - quem criou, alterou ou
+// desfez o ajuste de uma linha, quando, e os valores antes/depois. Gravado por gatilho no banco; aqui so leitura.
+export interface HistoricoAjusteFluxo {
+  id: string;
+  operacao: "criado" | "alterado" | "desfeito";
+  campos: string[];
+  antes: Record<string, unknown> | null;
+  depois: Record<string, unknown> | null;
+  usuario_nome: string | null;
+  usuario_banco: string;
+  created_at: string;
+}
+
+export function useHistoricoAjusteFluxo(linha: { origem: string; despesa_id: string; numero_parcela: number | null } | null) {
+  return useQuery({
+    queryKey: ["fluxo_caixa_ajuste_historico", linha?.origem, linha?.despesa_id, linha?.numero_parcela ?? null],
+    enabled: !!linha,
+    queryFn: async () => {
+      let q = (supabase as any)
+        .from("financeiro_fluxo_caixa_ajuste_historico")
+        .select("id, operacao, campos, antes, depois, usuario_nome, usuario_banco, created_at")
+        .eq("origem", linha!.origem)
+        .eq("despesa_id", linha!.despesa_id)
+        .order("created_at", { ascending: false });
+      q = linha!.numero_parcela == null ? q.is("numero_parcela", null) : q.eq("numero_parcela", linha!.numero_parcela);
+      const { data, error } = await q;
+      if (error) {
+        // Migration ainda nao aplicada: a tela segue sem a secao, sem quebrar.
+        if (error.code === "PGRST205" || error.code === "42P01") return [] as HistoricoAjusteFluxo[];
+        throw error;
+      }
+      return (data ?? []) as HistoricoAjusteFluxo[];
+    },
+  });
+}
