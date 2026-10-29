@@ -184,3 +184,19 @@ verify_jwt = true
 # (rh_rateio_pode), e cada valor da IA é conferido contra o texto do PDF.
 [functions.rh-rateio-ia]
 verify_jwt = true
+
+# Chamados de Sistemas › parecer da I.A (mig 20261029000900): preço de mercado
+# + complexidade. Dois chamadores, ambos com JWT: o worker (fila_http, com a
+# service_role — chamado aberto e backfill) e o botão "Gerar de novo" (JWT do
+# usuário, conferido por chamado_parecer_ia_pode_gerar antes de gastar token).
+[functions.chamado-parecer-ia]
+verify_jwt = true
+
+# Comitê de Ética › Canal de Denúncias › "Parecer I.A" na ficha (Comitê e
+# Presidência): resumo do caso + chat, sob demanda, sem gravar nada. Só JWT de
+# usuário — a função NÃO usa service_role: lê a denúncia com o login de quem
+# pediu (v_canal_denuncia + policies do canal), então a I.A só recebe o que
+# aquela pessoa já vê. Identidade do denunciante nunca vai; anexo sigiloso
+# entra só como "existe um anexo sigiloso".
+[functions.denuncia-parecer-ia]
+verify_jwt = true

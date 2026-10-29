@@ -13,6 +13,7 @@ import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { HistoricoAjusteFluxo } from "@/pages/financeiro/fluxo-caixa/HistoricoAjusteFluxo";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
@@ -1623,6 +1624,7 @@ export default function FluxoCaixaGestao() {
               </div>
             )}
           </div>
+          <HistoricoAjusteFluxo linha={itemEditar} />
           <DialogFooter className="flex-wrap gap-2 sm:justify-between">
             {itemEditar?.ajustado && (
               <Button

@@ -28,6 +28,7 @@ import {
 } from "@/lib/chamados/prazoDesenvolvimento";
 import { ChatChamado } from "./ChatChamado";
 import { InformacoesGithubChamado } from "./InformacoesGithubChamado";
+import { ParecerIaChamado } from "./ParecerIaChamado";
 import { BotaoStatusChamado, CardTreinamento, CardValidacaoPresidencia, useValidacaoChamado } from "./StatusValidacao";
 import {
   StatusBadge, SeloConfirmacao, SeloDesenvolvimento, PrioridadeBadge, STATUS_CHAMADO, CardAvaliacao,
@@ -246,6 +247,9 @@ export default function ExecutarChamado() {
           </Card>
 
           <InformacoesGithubChamado eventos={eventos} />
+
+          {/* Parecer da I.A (mig 20261029000900): preço de mercado + complexidade. */}
+          <ParecerIaChamado chamadoId={chamado.id} podeGerar={gestor || chamado.responsavel_id === user?.id} />
 
           {chamado.comentario_gerente && (
             <Card className="space-y-1 border-primary/30 bg-primary/5 p-4">

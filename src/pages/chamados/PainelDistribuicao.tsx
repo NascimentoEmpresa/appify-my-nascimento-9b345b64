@@ -31,6 +31,7 @@ import { ExcluirChamadoDialog } from "./ExcluirChamadoDialog";
 import { ReabrirChamadoDialog } from "./ReabrirChamadoDialog";
 import { EnviarTreinamentoDialog } from "./StatusValidacao";
 import { desenvolvedorDaValidacao, type ValidacaoChamado } from "./validacaoPresidencia";
+import { ResumoParecerIaLinha, useResumosParecerIa } from "./ParecerIaChamado";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import {
   StatCard, StatusBadge, PrioridadeBadge, DefinicaoBadge, DEFINICOES, STATUS_CHAMADO, PRIORIDADES, CATEGORIAS, labelDe, moduloLabel, iniciais, Estrelas, fmtData, fmtDataHora,
@@ -226,6 +227,10 @@ export default function PainelDistribuicao() {
       return (data ?? []) as Chamado[];
     },
   });
+
+  // Parecer da I.A (mig 20261029000900): valor médio + complexidade na linha,
+  // para distribuir já sabendo o tamanho do pedido.
+  const pareceresIa = useResumosParecerIa(gestor);
 
   // Treinamentos pendentes (etapa "treinamento"): a Presidência aprovou e
   // falta o dev e/ou o solicitante confirmarem. Alimenta a aba própria.
@@ -627,6 +632,7 @@ export default function PainelDistribuicao() {
                       <TableCell className="min-w-[150px] max-w-[340px] [overflow-wrap:anywhere]" title={c.descricao ? `${c.assunto}\n\n${c.descricao}` : c.assunto}>
                         <span className="line-clamp-2 text-sm font-semibold leading-snug">{c.assunto}</span>
                         {c.descricao && <span className="mt-0.5 line-clamp-2 text-[11px] leading-snug text-muted-foreground">{c.descricao}</span>}
+                        <div className="mt-0.5"><ResumoParecerIaLinha resumo={pareceresIa[c.id]} /></div>
                       </TableCell>
                       <TableCell className="min-w-[100px] text-xs text-muted-foreground">{c.categorias.map((x) => labelDe(CATEGORIAS, x)).join(", ") || "—"}</TableCell>
                       <TableCell className="text-xs">{c.solicitante_nome || "—"}<div className="text-[10px] text-muted-foreground">{c.setor}</div></TableCell>
