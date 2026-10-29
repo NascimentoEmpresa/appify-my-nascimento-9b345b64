@@ -281,7 +281,7 @@ import EfetividadeMensal from "./pages/operacional/efetividade/EfetividadeMensal
 import FinanceiroConferenciaPonto from "./pages/financeiro/ConferenciaPonto";
 import LaudosEpi from "./pages/sst/LaudosEpi";
 import ControleCa from "./pages/sst/ControleCa";
-// Afastamentos e Telemedicina (mig 20261028002000): atestados, lotação automática e impacto financeiro.
+// Afastamentos e Telemedicina (mig 20261029001750): atestados, lotação automática e impacto financeiro.
 import SstAfastamentos from "./pages/sst/Afastamentos";
 import NovasAdmissoes from "./pages/rh/NovasAdmissoes";
 import BancoTalentos from "./pages/rh/BancoTalentos";

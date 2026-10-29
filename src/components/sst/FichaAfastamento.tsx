@@ -19,7 +19,7 @@ import {
 } from "@/lib/sst/afastamentos";
 
 // =====================================================================
-// Ficha individual do afastamento (mig 20261028002000): lotação na data,
+// Ficha individual do afastamento (mig 20261029001750): lotação na data,
 // atestado + telemedicina, retorno, cobertura (automática + registrada),
 // valores do posto e impacto (só com sst_afastamentos_financeiro), notas do
 // contrato nas competências e o histórico.
