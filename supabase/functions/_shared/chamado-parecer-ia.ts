@@ -117,6 +117,53 @@ export function montarPrompt(c: ChamadoParaParecer): string {
   return linhas.join("\n");
 }
 
+// ── Chat sobre o parecer ───────────────────────────────────────────────
+// Pedido do Pablo (29/10/2026): "se eu perguntar 'da onde você tirou esse
+// valor caro?' ela tem que argumentar perfeitamente". A I.A recebe o chamado
+// E o parecer gravado, e defende os números com a conta (horas por etapa ×
+// valor/hora da faixa) — mas reconhece quando a pergunta mostra um erro, e
+// aí diz qual seria o número corrigido. O parecer gravado NÃO muda pelo chat:
+// para mudar, é o botão "Gerar de novo".
+export interface ParecerParaChat {
+  precos: unknown;
+  valor_medio: number | null;
+  horas_estimadas: number | null;
+  complexidade_nivel: number | null;
+  complexidade_rotulo: string | null;
+  complexidade_justificativa: string | null;
+  premissas: string | null;
+}
+
+export function montarSistemaChat(c: ChamadoParaParecer, p: ParecerParaChat): string {
+  const faixas = PERFIS.map((x) => `- ${x.rotulo} ("${x.perfil}"): R$ ${x.min} a R$ ${x.max}/h`).join("\n");
+  return `Você é o consultor sênior de orçamento de software que escreveu o parecer abaixo sobre um chamado do ERP interno do Grupo Nascimento. Agora conversa com a gestão de Sistemas, que questiona os números.
+
+Como responder:
+- Defenda o parecer com argumentos concretos e verificáveis: quebre as horas por etapa (entender o pedido, banco/migration e regras de acesso, tela, testes, revisão e publicação, reuniões/ajustes com o solicitante), mostre a conta horas × valor/hora e por que aquele valor/hora está naquele ponto da faixa de mercado.
+- Explique a diferença entre os perfis: fornecedor externo cobra a curva de aprendizado de um ERP grande com centenas de telas, reuniões, gestão de projeto, impostos, margem e garantia; a equipe interna já conhece o sistema e o custo-hora é o custo empresa (salário + encargos ~70-100% + benefícios).
+- Seja honesto: se a pergunta mostra que a estimativa está alta ou baixa (por exemplo, o padrão já existe no sistema, ou o pedido é menor do que parece), reconheça, refaça a conta ali na resposta e diga o número que você daria agora. Não defenda erro.
+- Não invente fonte, pesquisa ou estatística com nome e número exato que você não tem. Pode citar as referências de mercado de forma geral (tabelas de freelancer, propostas de software house, custo CLT de dev pleno/sênior no Brasil em 2026).
+- O parecer gravado só muda pelo botão "Gerar de novo" na tela — diga isso se pedirem para alterar.
+- Português do Brasil, direto, frases curtas. Markdown simples (listas, **negrito**, tabela pequena quando ajudar). Valores em R$.
+
+Faixas de valor/hora usadas no parecer (Brasil, 2026):
+${faixas}
+
+CHAMADO:
+${montarPrompt(c)}
+
+PARECER GRAVADO (o preço de cada perfil = horas × valor/hora; valor médio = média dos três):
+${JSON.stringify(p)}`;
+}
+
+/** Histórico do chat vindo do cliente: só papéis válidos, últimas 12, cortado. */
+export function limparHistorico(h: unknown): { role: "user" | "assistant"; content: string }[] {
+  return (Array.isArray(h) ? h : [])
+    .filter((m) => m && (m.role === "user" || m.role === "assistant") && typeof m.content === "string" && m.content.trim())
+    .slice(-12)
+    .map((m) => ({ role: m.role, content: String(m.content).slice(0, 4000) }));
+}
+
 /** Tira o JSON da resposta mesmo com cerca ``` ou texto em volta. */
 export function extrairJson(bruto: string): unknown | null {
   const t = String(bruto ?? "").trim().replace(/^```(?:json)?/i, "").replace(/```$/, "").trim();

@@ -5,7 +5,12 @@
 // um com valor/hora × horas e a explicação) e a complexidade de 1 a 5 com a
 // justificativa. Grava em CHAMADO_SISTEMA_PARECER_IA; a tela só LÊ de lá.
 //
-// Dois jeitos de chegar aqui:
+// Modo "chat" (29/10/2026): conversa sobre os custos do parecer ("da onde
+// você tirou esse valor?"). Quem vê o chamado pode perguntar — o portão é a
+// própria RLS de CHAMADO_SISTEMA, lida com o JWT de quem perguntou. Não grava
+// nada: o histórico vem do cliente a cada pergunta.
+//
+// Dois jeitos de GERAR o parecer:
 //   · worker/fila_http (Bearer = service_role): chamado recém-aberto e o
 //     backfill da migration. Parecer já pronto é pulado — não gasta token.
 //   · botão "Gerar de novo" na tela (Bearer = JWT do usuário): confere
@@ -22,8 +27,11 @@
 // Edge Function, nunca em arquivo.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import {
-  extrairJson, montarPrompt, validarParecer, SYSTEM_PROMPT, type ChamadoParaParecer,
+  extrairJson, limparHistorico, montarPrompt, montarSistemaChat, validarParecer, SYSTEM_PROMPT,
+  type ChamadoParaParecer, type ParecerParaChat,
 } from "../_shared/chamado-parecer-ia.ts";
+
+const CAMPOS_CHAMADO = "id, numero, assunto, tipo_solicitacao, descricao, categorias, modulo_sistema, modulo_sistema_outro, ambiente, impacto_trabalho, urgencia, afeta_usuarios, observacoes_solicitante, definicao";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -57,7 +65,7 @@ function provedores(): Provedor[] {
 
 const esperar = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-async function chamarIA(provs: Provedor[], messages: { role: string; content: string }[]):
+async function chamarIA(provs: Provedor[], messages: { role: string; content: string }[], json = true):
   Promise<{ texto?: string; provedor?: string; modelo?: string; erro?: string; status?: number }> {
   let ultimo: { erro: string; status: number } = { erro: "Não foi possível gerar o parecer agora.", status: 502 };
   for (const prov of provs) {
@@ -70,7 +78,7 @@ async function chamarIA(provs: Provedor[], messages: { role: string; content: st
           temperature: 0.2,
           messages,
           // O Groq aceita forçar JSON; no Gemini o extrairJson dá conta da cerca ```.
-          ...(prov.nome === "groq" ? { response_format: { type: "json_object" } } : {}),
+          ...(json && prov.nome === "groq" ? { response_format: { type: "json_object" } } : {}),
         }),
       }).catch((e) => { console.error("IA rede", prov.nome, e); return null; });
       if (r && r.ok) {
@@ -91,6 +99,34 @@ async function chamarIA(provs: Provedor[], messages: { role: string; content: st
     }
   }
   return ultimo;
+}
+
+type Cliente = ReturnType<typeof createClient>;
+
+async function responderChat(supa: Cliente, admin: Cliente, chamadoId: string, corpo: Record<string, unknown>): Promise<Response> {
+  const pergunta = String(corpo?.pergunta ?? "").trim().slice(0, 2000);
+  if (!pergunta) return respostaJson({ error: "Escreva a pergunta." }, 400);
+
+  // Com o JWT de quem pergunta: se a RLS não deixa ver o chamado, não há conversa.
+  const { data: c, error: cErr } = await supa.from("CHAMADO_SISTEMA").select(CAMPOS_CHAMADO).eq("id", chamadoId).maybeSingle();
+  if (cErr) return respostaJson({ error: cErr.message }, 500);
+  if (!c) return respostaJson({ error: "Você não tem acesso a este chamado." }, 403);
+
+  const { data: p } = await admin.from("CHAMADO_SISTEMA_PARECER_IA")
+    .select("status, precos, valor_medio, horas_estimadas, complexidade_nivel, complexidade_rotulo, complexidade_justificativa, premissas")
+    .eq("chamado_id", chamadoId).maybeSingle();
+  if (!p || p.status !== "pronto") return respostaJson({ error: "Este chamado ainda não tem parecer pronto para conversar." }, 409);
+
+  const provs = provedores();
+  if (!provs.length) return respostaJson({ error: "A chave da IA não está configurada. Avise o time de Sistemas." }, 500);
+
+  const res = await chamarIA(provs, [
+    { role: "system", content: montarSistemaChat(c as unknown as ChamadoParaParecer, p as unknown as ParecerParaChat) },
+    ...limparHistorico(corpo?.historico),
+    { role: "user", content: pergunta },
+  ], false);
+  if (!res.texto) return respostaJson({ error: res.erro }, res.status ?? 502);
+  return respostaJson({ texto: res.texto });
 }
 
 Deno.serve(async (req) => {
@@ -128,6 +164,12 @@ Deno.serve(async (req) => {
       });
       const { data: userData, error: userErr } = await supa.auth.getUser();
       if (userErr || !userData?.user) { chamadoId = ""; return respostaJson({ error: "Sessão inválida." }, 401); }
+      if (corpo?.modo === "chat") {
+        // Chat não grava nada: erro dele vai só para a conversa, nunca para a linha.
+        const id = chamadoId;
+        chamadoId = "";
+        return await responderChat(supa, admin, id, corpo);
+      }
       const { data: pode, error: podeErr } = await supa.rpc("chamado_parecer_ia_pode_gerar", { p_chamado_id: chamadoId });
       if (podeErr) { chamadoId = ""; return respostaJson({ error: podeErr.message }, 500); }
       if (!pode) { chamadoId = ""; return respostaJson({ error: "Só a gestão de chamados ou o responsável pode gerar o parecer." }, 403); }
@@ -141,7 +183,7 @@ Deno.serve(async (req) => {
 
     const { data: c, error: cErr } = await admin
       .from("CHAMADO_SISTEMA")
-      .select("id, numero, assunto, tipo_solicitacao, descricao, categorias, modulo_sistema, modulo_sistema_outro, ambiente, impacto_trabalho, urgencia, afeta_usuarios, observacoes_solicitante, definicao")
+      .select(CAMPOS_CHAMADO)
       .eq("id", chamadoId)
       .maybeSingle();
     if (cErr) { await registrarErro(cErr.message); return respostaJson({ error: cErr.message }, 500); }
