@@ -26,7 +26,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { PieChart, Pie, Cell, ResponsiveContainer } from "recharts";
 import {
-  AlertTriangle, ArrowDown, ArrowRight, CalendarCheck, CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, Clock,
+  AlertTriangle, ArrowDown, ArrowRight, ArrowUp, ArrowUpDown, CalendarCheck, CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, Clock,
   Columns2, Copy, FileText, Filter, GitPullRequest, GraduationCap, Info, LayoutDashboard, Layers, MessageSquare,
   MoreVertical, PlayCircle, Plus, RotateCcw, Search, Settings, ShieldAlert, Star, Trophy, XCircle,
 } from "lucide-react";
@@ -36,7 +36,7 @@ import { ReabrirChamadoDialog } from "./ReabrirChamadoDialog";
 import { IniciarDesenvolvimentoDialog, type ModoPrazo } from "./IniciarDesenvolvimentoDialog";
 import { abrirPrGithub } from "./abrirPrGithub";
 import {
-  STATUS_PAINEL, desceuNaFila, diasUteisAte, podeDefinirPrazo, podeIniciarDesenvolvimento, projetarPrevisoes,
+  STATUS_PAINEL, mudouNaFila, rotuloPrazo, diasUteisAte, podeDefinirPrazo, podeIniciarDesenvolvimento, projetarPrevisoes,
   situacaoPrazo, statusPainel, variacaoPercentual, type SituacaoPrazo, type StatusPainel,
 } from "@/lib/chamados/prazoDesenvolvimento";
 import {
@@ -52,7 +52,8 @@ import {
 // ao iniciar o chamado."
 //
 //   · Prazo do Solicitante = prazo_solicitante (informado ao abrir, mig 20261028001420).
-//   · Prazo (dias)* = prazo REAL do dev, em dias úteis, informado ao INICIAR
+//   · Prazo* = prazo REAL do dev, em horas, dias úteis ou semanas (mig
+//     20261028001900), informado ao INICIAR
 //     (chamado_iniciar_desenvolvimento) e travado depois — só redefine quando
 //     a tarefa desce na fila (chamado_definir_prazo, mig 20261028001410).
 //   · Previsão de entrega / Situação do prazo / Fila: src/lib/chamados/
@@ -128,7 +129,7 @@ export default function PainelDesenvolvedor() {
   const [porPagina, setPorPagina] = useState(10);
   const [filaPrioridadeAberta, setFilaPrioridadeAberta] = useState(false);
   const [reabrir, setReabrir] = useState<Chamado | null>(null);
-  // Iniciar (com o prazo real) ou redefinir o prazo quando desceu na fila.
+  // Iniciar (com o prazo real) ou ajustar o prazo quando a posição na fila mudou.
   const [prazoAlvo, setPrazoAlvo] = useState<{ chamado: Chamado; modo: ModoPrazo } | null>(null);
 
   // Abriu o Painel do Desenvolvedor → zera a bolinha de novidades do dev.
@@ -279,7 +280,9 @@ export default function PainelDesenvolvedor() {
     [...chamados, ...soParticipante].forEach((c) => { m[c.id] = situacaoPrazo(c, previsoes[c.id]); });
     return m;
   }, [chamados, soParticipante, previsoes]);
-  const desceram = useMemo(() => chamados.filter((c) => desceuNaFila(c)), [chamados]);
+  // Posição na fila mudou (subiu ou desceu) desde que o prazo foi definido:
+  // o dev pode ajustar o prazo (mig 20261028001900).
+  const desceram = useMemo(() => chamados.filter((c) => mudouNaFila(c)), [chamados]);
   const concluidoNoMes = (c: Chamado) => c.status === "concluido" && !!c.concluido_em && new Date(c.concluido_em) >= mesIni;
 
   // Base dos painéis laterais: a minha fila + o que concluí no mês.
@@ -293,7 +296,7 @@ export default function PainelDesenvolvedor() {
         : visao === "ativos" ? ATIVO(c.status)
         : visao === "concluidos" ? !ATIVO(c.status)
         : true)
-      .filter((c) => !soDesceram || desceuNaFila(c))
+      .filter((c) => !soDesceram || mudouNaFila(c))
       .filter((c) => filtroStatus === "todos" || statusPainel(c) === filtroStatus)
       .filter((c) => filtroPrioridade === "todas" || c.prioridade === filtroPrioridade)
       .filter((c) => !termo || [c.numero, c.assunto, c.solicitante_nome, c.setor].some((v) => (v ?? "").toLowerCase().includes(termo)))
@@ -451,7 +454,8 @@ export default function PainelDesenvolvedor() {
       )}
 
       {/* KPIs */}
-      <div className="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
+      {/* 6 cards numa linha só a partir de 1536 px — abaixo disso os rótulos cortavam. */}
+      <div className="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-6">
         <StatCard icon={CalendarCheck} tone="primary" label="Meus chamados abertos" value={stats.abertos} />
         <StatCard icon={Clock} tone="info" label="Em andamento" value={stats.em_andamento} />
         <StatCard icon={Layers} tone="muted" label="Aguardando retorno" value={stats.aguardando} />
@@ -476,7 +480,10 @@ export default function PainelDesenvolvedor() {
         </Card>
       </div>
 
-      <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_260px]">
+      {/* Os painéis laterais só ficam ao lado da tabela em tela larga; abaixo
+          de 1536 px descem para baixo dela (3 lado a lado) e a tabela de 13
+          colunas fica com a largura toda. */}
+      <div className="grid items-start gap-4 2xl:grid-cols-[minmax(0,1fr)_260px]">
         {/* Tabela */}
         <Card className="p-4">
           <div className="mb-3 flex flex-wrap items-center gap-2">
@@ -484,7 +491,7 @@ export default function PainelDesenvolvedor() {
             {desceram.length > 0 && (
               <div className="flex items-center gap-2 rounded-md border border-destructive/50 bg-destructive/5 px-3 py-1.5 text-xs text-destructive">
                 <AlertTriangle className="h-4 w-4 shrink-0" />
-                <span>{desceram.length} tarefa(s) desceu(ram) de prioridade na fila. É necessário redefinir o prazo.</span>
+                <span>{desceram.length} tarefa(s) mudou(aram) de posição na fila. Revise e ajuste o prazo, se necessário.</span>
                 <Button size="sm" variant="outline" className="h-7 border-destructive/50 px-2.5 text-xs text-destructive hover:bg-destructive/10 hover:text-destructive"
                   onClick={() => setSoDesceram((v) => !v)}>
                   {soDesceram ? "Ver todas" : "Ver tarefas"}
@@ -547,7 +554,7 @@ export default function PainelDesenvolvedor() {
             <p className="py-8 text-center text-sm text-muted-foreground">Carregando…</p>
           ) : (
             <div className="overflow-x-auto">
-              <Table className="[&_td]:px-2 [&_td]:py-2.5 [&_th]:h-10 [&_th]:px-2 [&_th]:text-[11px]">
+              <Table className="[&_td]:px-1.5 [&_td]:py-2.5 [&_th]:h-10 [&_th]:px-1.5 [&_th]:text-[11px]">
                 <TableHeader>
                   <TableRow>
                     <TableHead>#</TableHead>
@@ -557,12 +564,8 @@ export default function PainelDesenvolvedor() {
                     <TableHead>Módulo</TableHead>
                     <TableHead>Status</TableHead>
                     <TableHead className="text-center leading-tight">Prazo do<br />Solicitante</TableHead>
-                    {/* A coluna obrigatória vem emoldurada, como no mockup. */}
-                    <TableHead className="rounded-t-lg border-x-2 border-t-2 border-warning text-center font-bold text-foreground">
-                      <div className="flex flex-col items-center gap-1">
-                        <span>Prazo (dias) <span className="text-destructive">*</span></span>
-                        <span className="flex gap-0.5"><span className="h-0.5 w-3 rounded bg-success" /><span className="h-0.5 w-3 rounded bg-info" /></span>
-                      </div>
+                    <TableHead className="text-center" title="Prazo real do desenvolvedor — horas, dias úteis ou semanas. Obrigatório para iniciar.">
+                      Prazo <span className="text-destructive">*</span>
                     </TableHead>
                     <TableHead>Início Dev.</TableHead>
                     <TableHead className="leading-tight">
@@ -588,11 +591,11 @@ export default function PainelDesenvolvedor() {
                     const prev = previsoes[c.id];
                     const sitRaw = situacoes[c.id];
                     const sit = paraTela(sitRaw);
-                    const desceu = desceuNaFila(c);
+                    const desceu = mudouNaFila(c);                 // mudou de posição (subiu ou desceu)
+                    const subiu = desceu && (c.posicao_dev ?? 0) < (c.prazo_posicao_fila ?? 0);
                     const participante = idsParticipante.has(c.id);
                     const ehMeu = !participante && (c.responsavel_id === user?.id || canCoordenar || canAprovar);
                     const st = statusPainel(c);
-                    const ultima = i === visiveis.length - 1;
                     const SitIcon = sit ? SITUACAO_TELA[sit].icon : null;
                     const iniciar = ehMeu && podeIniciarDesenvolvimento(c);
                     const metricas = metricasGithub[c.id];
@@ -601,8 +604,8 @@ export default function PainelDesenvolvedor() {
                         onClick={() => nav(`/app/sistemas/chamados/${c.id}`)}>
                         <TableCell className="whitespace-nowrap font-mono text-[11px] font-semibold" title={c.numero}>#{numeroCurto(c.numero)}</TableCell>
                         <TableCell onClick={(e) => e.stopPropagation()}><PrioridadePill c={c} /></TableCell>
-                        <TableCell className="max-w-[200px]">
-                          <p className="text-xs">{c.assunto}</p>
+                        <TableCell className="min-w-[150px] max-w-[260px]">
+                          <p className="line-clamp-3 text-xs" title={c.assunto}>{c.assunto}</p>
                           {metricas && (
                             <p className="mt-0.5 flex flex-wrap items-center gap-1 text-[10px] font-medium text-muted-foreground">
                               <GitPullRequest className="h-3 w-3 text-primary" /> GitHub: {metricas.commits ?? "—"} commits
@@ -617,36 +620,39 @@ export default function PainelDesenvolvedor() {
                             </span>
                           )}
                         </TableCell>
-                        <TableCell className="whitespace-nowrap text-xs">{c.solicitante_nome || "—"}{c.setor ? ` / ${c.setor}` : ""}</TableCell>
-                        <TableCell className="text-xs">{moduloLabel(c)}</TableCell>
+                        <TableCell className="max-w-[150px] text-xs">
+                          <p className="truncate" title={c.solicitante_nome ?? ""}>{c.solicitante_nome || "—"}</p>
+                          {c.setor && <p className="truncate text-[10px] text-muted-foreground" title={c.setor}>{c.setor}</p>}
+                        </TableCell>
+                        <TableCell className="max-w-[90px] text-xs">{moduloLabel(c)}</TableCell>
                         <TableCell>
-                          <span className={`inline-flex whitespace-nowrap rounded-md border px-2 py-0.5 text-[10px] font-semibold ${STATUS_PAINEL[st].cls}`}>{STATUS_PAINEL[st].label}</span>
+                          <span className={`inline-flex rounded-md border px-2 py-0.5 text-[10px] font-semibold leading-tight ${STATUS_PAINEL[st].cls}`}>{STATUS_PAINEL[st].label}</span>
                         </TableCell>
                         <TableCell className="whitespace-nowrap text-center text-xs">{c.prazo_solicitante ? fmtData(`${c.prazo_solicitante}T12:00:00`) : "—"}</TableCell>
-                        <TableCell className={`border-x-2 border-warning text-center ${ultima ? "rounded-b-lg border-b-2" : ""}`} onClick={(e) => e.stopPropagation()}>
+                        <TableCell className="text-center" onClick={(e) => e.stopPropagation()}>
                           {c.prazo_dias ? (
                             <button
                               disabled={!(desceu && ehMeu)}
                               onClick={() => setPrazoAlvo({ chamado: c, modo: "definir" })}
-                              title={desceu ? "A tarefa desceu na fila: clique para redefinir o prazo" : "Prazo travado — só muda se a tarefa descer na fila"}
-                              className={`inline-flex h-8 w-14 items-center justify-center rounded-md border bg-background text-sm font-semibold ${desceu && ehMeu ? "border-destructive text-destructive hover:bg-destructive/10" : "border-input"}`}>
-                              {c.prazo_dias}
+                              title={desceu ? "A posição na fila mudou: clique para ajustar o prazo" : "Prazo travado — só muda se a posição na fila mudar"}
+                              className={`inline-flex h-8 min-w-14 items-center justify-center whitespace-nowrap rounded-md border bg-background px-2 text-xs font-semibold ${desceu && ehMeu ? "border-destructive text-destructive hover:bg-destructive/10" : "border-input"}`}>
+                              {rotuloPrazo(c.prazo_dias, c.prazo_unidade)}
                             </button>
                           ) : iniciar ? (
-                            <button onClick={() => setPrazoAlvo({ chamado: c, modo: "iniciar" })}
-                              title="Informe o prazo real ao iniciar o desenvolvimento"
-                              className="inline-flex h-8 w-14 items-center justify-center rounded-md border border-dashed border-warning bg-background text-[10px] font-semibold text-warning hover:bg-warning/10">
-                              Iniciar
-                            </button>
+                            <Button size="sm" variant="outline" className="h-8 gap-1 px-2 text-[11px]" onClick={() => setPrazoAlvo({ chamado: c, modo: "iniciar" })}
+                              title="Informe o prazo real ao iniciar o desenvolvimento">
+                              <PlayCircle className="h-3.5 w-3.5" /> Iniciar
+                            </Button>
                           ) : (
-                            <span className="inline-flex h-8 w-14 items-center justify-center rounded-md border border-input bg-muted/40 text-xs text-muted-foreground">—</span>
+                            <span className="text-xs text-muted-foreground">—</span>
                           )}
                         </TableCell>
                         <TableCell className="whitespace-nowrap text-xs">{c.desenvolvimento_iniciado_em ? fmtData(c.desenvolvimento_iniciado_em) : "—"}</TableCell>
                         <TableCell className="whitespace-nowrap text-xs">
                           {prev ? (
-                            <span title={prev.projetada ? "Projeção pela fila (a tarefa ainda não começou)" : "Início + prazo em dias úteis"}>
+                            <span title={prev.projetada ? "Projeção pela fila (a tarefa ainda não começou)" : "Início + prazo"}>
                               {prev.data.toLocaleDateString("pt-BR")}{prev.projetada && <span className="text-muted-foreground">*</span>}
+                              {prev.comHora && <span className="block text-[10px] text-muted-foreground">{prev.data.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}</span>}
                             </span>
                           ) : c.prazo_conclusao_em ? fmtData(c.prazo_conclusao_em) : "—"}
                         </TableCell>
@@ -665,10 +671,10 @@ export default function PainelDesenvolvedor() {
                         </TableCell>
                         <TableCell className="whitespace-nowrap text-center text-xs font-semibold">
                           {desceu ? (
-                            <span className="inline-flex items-center gap-1 text-destructive">
-                              <ArrowDown className="h-3.5 w-3.5" /> {c.prazo_posicao_fila}º → {c.posicao_dev}º
+                            <span className={`inline-flex items-center gap-1 ${subiu ? "text-success" : "text-destructive"}`}>
+                              {subiu ? <ArrowUp className="h-3.5 w-3.5" /> : <ArrowDown className="h-3.5 w-3.5" />} {c.prazo_posicao_fila}º → {c.posicao_dev}º
                               <Tooltip><TooltipTrigger asChild><Info className="h-3 w-3" /></TooltipTrigger>
-                                <TooltipContent className="text-xs">Desceu de prioridade desde que o prazo foi definido</TooltipContent>
+                                <TooltipContent className="text-xs">{subiu ? "Subiu" : "Desceu"} na fila desde que o prazo foi definido — dá para ajustar o prazo</TooltipContent>
                               </Tooltip>
                             </span>
                           ) : posicaoMinhaFila[c.id] ? `${posicaoMinhaFila[c.id]}º` : "—"}
@@ -677,7 +683,7 @@ export default function PainelDesenvolvedor() {
                           <div className="flex items-center gap-1">
                             {desceu && ehMeu ? (
                               <Button size="sm" variant="outline" className="h-7 px-2 text-[11px]" onClick={() => setPrazoAlvo({ chamado: c, modo: "definir" })}>
-                                Redefinir prazo
+                                Ajustar prazo
                               </Button>
                             ) : (
                               <Button size="sm" variant="outline" className="h-7 gap-1 px-2 text-[11px]" onClick={() => nav(`/app/sistemas/chamados/${c.id}`)}>
@@ -697,7 +703,7 @@ export default function PainelDesenvolvedor() {
                                   <DropdownMenuItem onClick={() => setPrazoAlvo({ chamado: c, modo: "iniciar" })}><PlayCircle className="mr-2 h-4 w-4" /> Iniciar desenvolvimento</DropdownMenuItem>
                                 )}
                                 {ehMeu && podeDefinirPrazo(c) && c.prazo_dias != null && (
-                                  <DropdownMenuItem onClick={() => setPrazoAlvo({ chamado: c, modo: "definir" })}><CalendarDays className="mr-2 h-4 w-4" /> Redefinir prazo</DropdownMenuItem>
+                                  <DropdownMenuItem onClick={() => setPrazoAlvo({ chamado: c, modo: "definir" })}><CalendarDays className="mr-2 h-4 w-4" /> Ajustar prazo</DropdownMenuItem>
                                 )}
                                 <DropdownMenuItem onClick={() => nav(`/app/sistemas/chamados/${c.id}`)}>
                                   <MessageSquare className="mr-2 h-4 w-4" /> Conversa{(naoLidos[c.id] ?? 0) > 0 ? ` (${naoLidos[c.id]} nova(s))` : ""}
@@ -717,7 +723,7 @@ export default function PainelDesenvolvedor() {
                   })}
                   {visiveis.length === 0 && (
                     <TableRow><TableCell colSpan={13} className="py-6 text-center text-sm text-muted-foreground">
-                      {soDesceram ? "Nenhuma tarefa desceu na fila." : "Nenhum chamado para mostrar."}
+                      {soDesceram ? "Nenhuma tarefa mudou de posição na fila." : "Nenhum chamado para mostrar."}
                     </TableCell></TableRow>
                   )}
                 </TableBody>
@@ -751,7 +757,7 @@ export default function PainelDesenvolvedor() {
         </Card>
 
         {/* Painéis laterais */}
-        <div className="space-y-4">
+        <div className="grid items-start gap-4 md:grid-cols-3 2xl:grid-cols-1">
           <Card className="p-4">
             <p className="mb-2 text-sm font-bold">Status dos meus chamados</p>
             <div className="relative h-36">
@@ -816,8 +822,8 @@ export default function PainelDesenvolvedor() {
         <Card className="flex gap-3 border-info/40 bg-info/5 p-4">
           <Settings className="h-9 w-9 shrink-0 text-info" />
           <div className="space-y-1.5 text-xs">
-            <p className="text-sm font-bold text-info">Prazo (dias) – Obrigatório</p>
-            <p className="text-muted-foreground">Campo obrigatório preenchido pelo desenvolvedor com a quantidade de dias necessários para executar a tarefa.</p>
+            <p className="text-sm font-bold text-info">Prazo – Obrigatório</p>
+            <p className="text-muted-foreground">Campo obrigatório preenchido pelo desenvolvedor com o tempo necessário para executar a tarefa — em horas, dias úteis ou semanas.</p>
             <p className="text-info">Sem preencher, não é possível iniciar o desenvolvimento do chamado.</p>
           </div>
         </Card>
@@ -827,7 +833,7 @@ export default function PainelDesenvolvedor() {
             <p className="text-sm font-bold text-warning">Previsão de entrega</p>
             <p className="text-muted-foreground">Calculada automaticamente considerando:</p>
             <ul className="list-disc space-y-0.5 pl-4 text-muted-foreground">
-              <li>o prazo (dias) informado</li>
+              <li>o prazo informado (horas, dias ou semanas)</li>
               <li>a posição na fila</li>
               <li>as tarefas anteriores</li>
               <li>os finais de semana e feriados (conforme regra do sistema).</li>
@@ -835,12 +841,12 @@ export default function PainelDesenvolvedor() {
           </div>
         </Card>
         <Card className="flex gap-3 border-destructive/40 bg-destructive/5 p-4">
-          <span className="flex h-9 w-9 shrink-0 items-center justify-center text-destructive"><ArrowDown className="h-5 w-5" /><ArrowDown className="-ml-1.5 h-5 w-5" /></span>
+          <span className="flex h-9 w-9 shrink-0 items-center justify-center text-destructive"><ArrowUpDown className="h-6 w-6" /></span>
           <div className="space-y-1.5 text-xs">
-            <p className="text-sm font-bold text-destructive">Tarefa desceu de prioridade</p>
-            <p className="text-muted-foreground">Quando uma nova tarefa entra na fila com maior prioridade, as demais tarefas têm seu prazo recalculado automaticamente.</p>
+            <p className="text-sm font-bold text-destructive">Tarefa mudou de posição</p>
+            <p className="text-muted-foreground">Quando a posição da tarefa na fila muda (ex.: do 5º para o 6º lugar, ou do 6º para o 5º), a previsão é recalculada automaticamente e o prazo pode ser ajustado.</p>
             <p className="flex items-start gap-1 rounded-md border border-destructive/30 bg-background p-2 text-destructive">
-              <ArrowDown className="mt-0.5 h-3.5 w-3.5 shrink-0" /> O desenvolvedor deve revisar e redefinir o prazo, se necessário.
+              <ArrowUpDown className="mt-0.5 h-3.5 w-3.5 shrink-0" /> O desenvolvedor deve revisar e ajustar o prazo, se necessário.
             </p>
           </div>
         </Card>
@@ -958,7 +964,7 @@ export default function PainelDesenvolvedor() {
                           <span className="w-8 font-semibold">{posicaoMinhaFila[c.id] ? `${posicaoMinhaFila[c.id]}º` : "—"}</span>
                           <span className="font-mono text-[11px] font-semibold">#{numeroCurto(c.numero)}</span>
                           <span className="min-w-0 flex-1 truncate">{c.assunto}</span>
-                          <span className="text-muted-foreground">{c.prazo_dias ? `${c.prazo_dias} d` : "sem prazo"}</span>
+                          <span className="text-muted-foreground">{c.prazo_dias ? rotuloPrazo(c.prazo_dias, c.prazo_unidade) : "sem prazo"}</span>
                           <span className="w-20 text-right">{previsoes[c.id] ? previsoes[c.id].data.toLocaleDateString("pt-BR") : "—"}</span>
                           {sit && <span className={`rounded border px-1.5 py-px text-[10px] font-semibold ${SITUACAO_TELA[sit].cls}`}>{SITUACAO_TELA[sit].label}</span>}
                         </button>

@@ -20,6 +20,7 @@ import { contratoEncerradoNaCompetencia } from "./vigenciaContrato";
 import { StatusCelula, divergenciaEntre, excessoDeFaturamento, faltaDeFaturamento, resumirFaturamento, statusCelula } from "./faturamentoStatus";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { NfsNaoEmitidasTab } from "./NfsNaoEmitidasTab";
+import { CODIGO_PADRAO, CODIGO_TODOS, codigosDoFiltro, FiltroCodigoNota } from "./faturamento/FiltroCodigoNota";
 
 // SIS-2026-0562 (Iury): "Base de Contratos Vigentes × Relatório de
 // Serviços", igual ao protótipo em anexo (Dashboard_Controle_Faturamento_
@@ -42,7 +43,7 @@ import { NfsNaoEmitidasTab } from "./NfsNaoEmitidasTab";
 // pra mostrar.
 
 const STATUS_INFO: Record<StatusCelula, { label: string; labelCurto: string; className: string; dot: string }> = {
-  NOTAS_LANCADAS: { label: "Notas lançadas (Código N)", labelCurto: "Faturado", className: "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-400", dot: "#2aa978" },
+  NOTAS_LANCADAS: { label: "Notas lançadas", labelCurto: "Faturado", className: "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-400", dot: "#2aa978" },
   FATURADO_PARCIAL: { label: "Faturado parcial (NF abaixo do executável)", labelCurto: "Parcial", className: "bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-400", dot: "#f59e0b" },
   NENHUM_LANCAMENTO: { label: "Nenhum lançamento", labelCurto: "Sem lançamento", className: "bg-red-100 text-red-700 dark:bg-red-950/40 dark:text-red-400", dot: "#d75a54" },
   COMPETENCIA_SEM_DADOS: { label: "Competência ainda sem dado no relatório", labelCurto: "Sem dado no relatório", className: "bg-slate-100 text-slate-500 dark:bg-slate-800/40 dark:text-slate-400", dot: "#94a3b8" },
@@ -100,6 +101,11 @@ export default function ControleFaturamento() {
   // Busca por nome do contrato (ou cliente), sem acento e sem diferenciar
   // maiúsculas — vale nas 3 abas, pois todas partem de contratosFiltrados.
   const [filtroNome, setFiltroNome] = useState("");
+  // Código da nota (tipo): padrão N, que é o que sempre contou como lançamento. R, M, DH ou todos juntos mudam os
+  // indicadores, as três abas e o recorte que os KPIs abrem no Relatório de Serviços — mesmo filtro de Faturamento da Empresa.
+  const [codigo, setCodigo] = useState(CODIGO_PADRAO);
+  const codigos = useMemo(() => new Set<string>(codigosDoFiltro(codigo)), [codigo]);
+  const rotuloCodigo = codigo === CODIGO_TODOS ? "de todos os códigos" : `Código ${codigo}`;
   const [ano, setAno] = useState(() => new Date().getFullYear());
   const meses = useMemo(() => Array.from({ length: 12 }, (_, i) => mesId(ano, i + 1)), [ano]);
 
@@ -113,11 +119,11 @@ export default function ControleFaturamento() {
   // Competência default: mês mais recente com NF Código N nesse ano, senão
   // o mês atual (se o ano selecionado for o corrente), senão janeiro.
   const competenciaDefault = useMemo(() => {
-    const doAno = nfs.filter((n) => n.tipo_nota === "N" && anoDe(n.competencia) === ano).map((n) => n.competencia).sort();
+    const doAno = nfs.filter((n) => codigos.has(n.tipo_nota) && anoDe(n.competencia) === ano).map((n) => n.competencia).sort();
     if (doAno.length) return doAno[doAno.length - 1];
     const hoje = new Date();
     return hoje.getFullYear() === ano ? mesId(ano, hoje.getMonth() + 1) : mesId(ano, 1);
-  }, [nfs, ano]);
+  }, [nfs, ano, codigos]);
   const [competenciaSel, setCompetenciaSel] = useState<string | null>(null);
   const competencia = competenciaSel && meses.includes(competenciaSel) ? competenciaSel : competenciaDefault;
 
@@ -151,7 +157,7 @@ export default function ControleFaturamento() {
     // como "lançamento" (célula verde) — processo real só considera lançada
     // a nota já validada (concluida).
     for (const n of nfs) {
-      if (n.tipo_nota !== "N" || foraDoRelatorio(n) || naoContabilizaKpi(n)) continue;
+      if (!codigos.has(n.tipo_nota) || foraDoRelatorio(n) || naoContabilizaKpi(n)) continue;
       const chave = `${n.contrato_id}|${n.competencia}`;
       const atual = mapa.get(chave) ?? { execRel: 0, contabil: 0, liquido: 0, recebido: 0, cv: 0, count: 0 };
       atual.execRel += n.valor_contrato_exec_total;
@@ -163,8 +169,8 @@ export default function ControleFaturamento() {
       mapa.set(chave, atual);
     }
     return mapa;
-  }, [nfs]);
-  const competenciasComDadosN = useMemo(() => new Set(nfs.filter((n) => n.tipo_nota === "N").map((n) => n.competencia)), [nfs]);
+  }, [nfs, codigos]);
+  const competenciasComDadosN = useMemo(() => new Set(nfs.filter((n) => codigos.has(n.tipo_nota)).map((n) => n.competencia)), [nfs, codigos]);
 
   function linhaDoContrato(c: ContratoERP, mesAlvo: string): LinhaFaturamento {
     const rowsDoContrato = planilhaPorContrato.get(c.id) ?? [];
@@ -249,7 +255,7 @@ export default function ControleFaturamento() {
   const evolucao = useMemo(() => {
     const porComp = new Map<string, { comp: string; contabil: number; liquido: number; recebido: number }>();
     for (const n of nfs) {
-      if (n.tipo_nota !== "N" || foraDoRelatorio(n) || naoContabilizaKpi(n)) continue;
+      if (!codigos.has(n.tipo_nota) || foraDoRelatorio(n) || naoContabilizaKpi(n)) continue;
       if (filtroEmpresa && n.empresa_id !== filtroEmpresa) continue;
       const atual = porComp.get(n.competencia) ?? { comp: n.competencia, contabil: 0, liquido: 0, recebido: 0 };
       atual.contabil += n.vlr_bruto_total;
@@ -261,7 +267,7 @@ export default function ControleFaturamento() {
       .sort((a, b) => a.comp.localeCompare(b.comp))
       .slice(-6)
       .map((x) => ({ ...x, label: labelMes(x.comp) }));
-  }, [nfs, filtroEmpresa]);
+  }, [nfs, filtroEmpresa, codigos]);
 
   // ── Visão Anual: matriz contrato × mês do ano selecionado ────────────
   const [filtroStatusAno, setFiltroStatusAno] = useState<StatusCelula | "todos">("todos");
@@ -302,12 +308,12 @@ export default function ControleFaturamento() {
   // SIS-2026-0652: clicar num KPI abre a tela de onde o número vem. Os de NFs vão para o Relatório de Serviços (aba Relatório
   // Geral) no mesmo recorte do KPI: empresa e competência da tela, só Código N; o Recebido só com as notas pagas.
   function abrirKpiNoRelatorioServicos(extra?: Record<string, string>) {
-    const params = new URLSearchParams({ competencia, codigo: "N", ...(filtroEmpresa ? { empresa: filtroEmpresa } : {}), ...extra });
+    const params = new URLSearchParams({ competencia, codigo, ...(filtroEmpresa ? { empresa: filtroEmpresa } : {}), ...extra });
     navigate(`/app/financeiro/relatorio-servicos?${params.toString()}`);
   }
 
   function abrirNoRelatorioServicos(l: LinhaFaturamento) {
-    const params = new URLSearchParams({ empresa: l.contrato.empresa_id, competencia, contrato: l.contrato.id });
+    const params = new URLSearchParams({ empresa: l.contrato.empresa_id, competencia, contrato: l.contrato.id, codigo });
     navigate(`/app/financeiro/relatorio-servicos?${params.toString()}`);
   }
 
@@ -319,6 +325,7 @@ export default function ControleFaturamento() {
     setFiltroNome("");
     setAno(new Date().getFullYear());
     setCompetenciaSel(null);
+    setCodigo(CODIGO_PADRAO);
   }
 
   const FiltroEmpresaAno = (
@@ -348,6 +355,7 @@ export default function ControleFaturamento() {
         placeholder="Buscar contrato ou cliente..."
         className="h-8 w-56 text-xs"
       />
+      <FiltroCodigoNota valor={codigo} onChange={setCodigo} />
     </>
   );
 
@@ -357,7 +365,7 @@ export default function ControleFaturamento() {
         module="Controladoria"
         breadcrumb={["Controle de Faturamento"]}
         title="Controle de Faturamento"
-        subtitle="Base de Contratos Vigentes × Relatório de Serviços — só registros Código N contam como lançamento."
+        subtitle={`Base de Contratos Vigentes × Relatório de Serviços — ${codigo === CODIGO_TODOS ? "notas de todos os códigos contam" : `só registros Código ${codigo} contam`} como lançamento.`}
       />
 
       {carregando ? (
@@ -373,14 +381,14 @@ export default function ControleFaturamento() {
           <TabsContent value="geral" className="space-y-4 mt-4">
             <div className="card-elevated p-3 flex items-center gap-2 flex-wrap text-xs">
               {FiltroEmpresaAno}
-              <span className="text-muted-foreground ml-auto">Competência N: {competenciasComDadosN.has(competencia) ? "com dados no relatório" : "ainda sem dado no relatório"}</span>
+              <span className="text-muted-foreground ml-auto">Competência ({rotuloCodigo}): {competenciasComDadosN.has(competencia) ? "com dados no relatório" : "ainda sem dado no relatório"}</span>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
               <KpiTile label="Valor Executável" valor={fmtMoney(kpis.executavel)} sub="valor da Base (Planilha de Custo) · clique para abrir" icon={<ListChecks />} cor="slate" onClick={() => navigate("/app/licitacoes/planilha-custo")} />
-              <KpiTile label="Valor Executado" valor={fmtMoney(kpis.execRel)} sub="valor executado informado nas NFs Código N · clique para ver as notas" icon={<ClipboardCheck />} cor="sky" onClick={() => abrirKpiNoRelatorioServicos()} />
+              <KpiTile label="Valor Executado" valor={fmtMoney(kpis.execRel)} sub={`valor executado informado nas NFs ${rotuloCodigo} · clique para ver as notas`} icon={<ClipboardCheck />} cor="sky" onClick={() => abrirKpiNoRelatorioServicos()} />
               <KpiTile label="Divergência Executável × Executado" valor={fmtMoney(kpis.divExecutavelExecutado)} sub={textoDivergencia(kpis.divExecutavelExecutado, "executado")} icon={<AlertTriangle />} cor={kpis.divExecutavelExecutado === 0 ? "emerald" : "red"} valorClass={classeDivergencia(kpis.divExecutavelExecutado)} />
-              <KpiTile label="Valor Faturado" valor={fmtMoney(kpis.contabil)} sub="valor contábil das NFs Código N · clique para ver as notas" icon={<TrendingUp />} cor="sky" onClick={() => abrirKpiNoRelatorioServicos()} />
+              <KpiTile label="Valor Faturado" valor={fmtMoney(kpis.contabil)} sub={`valor contábil das NFs ${rotuloCodigo} · clique para ver as notas`} icon={<TrendingUp />} cor="sky" onClick={() => abrirKpiNoRelatorioServicos()} />
               <KpiTile label="Divergência Executado × Faturado" valor={fmtMoney(kpis.divExecutadoFaturado)} sub={textoDivergencia(kpis.divExecutadoFaturado, "faturado")} icon={<AlertTriangle />} cor={kpis.divExecutadoFaturado === 0 ? "emerald" : "red"} valorClass={classeDivergencia(kpis.divExecutadoFaturado)} />
               <KpiTile label="Divergência Executável × Faturado" valor={fmtMoney(kpis.naoEmitido + kpis.excesso)} sub={`${fmtMoney(kpis.naoEmitido)} a emitir · ${fmtMoney(kpis.excesso)} emitidos a mais · clique para ver por contrato`} icon={<AlertTriangle />} cor="red" valorClass="text-red-600 dark:text-red-400" onClick={() => setAbrirNaoEmitido(true)} />
               <KpiTile label="Contratos Pendentes" valor={kpis.pendentes.toLocaleString("pt-BR")} sub={`de ${kpis.vigentes} vigentes na competência · clique para ver quais`} icon={<FileWarning />} cor="amber" valorClass="text-amber-600 dark:text-amber-400" onClick={() => setAba("pendentes")} />
@@ -435,7 +443,7 @@ export default function ControleFaturamento() {
                 <CardHeader className="pb-2"><CardTitle className="text-sm font-semibold">Evolução do faturamento — últimas {evolucao.length} competências</CardTitle></CardHeader>
                 <CardContent className="flex-1">
                   {evolucao.length === 0 ? (
-                    <p className="text-sm text-muted-foreground text-center py-10">Sem NFs Código N lançadas ainda.</p>
+                    <p className="text-sm text-muted-foreground text-center py-10">Sem NFs {rotuloCodigo} lançadas ainda.</p>
                   ) : (
                     <ResponsiveContainer width="100%" height={220}>
                       <LineChart data={evolucao} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
@@ -629,6 +637,8 @@ export default function ControleFaturamento() {
               empresaNomePorId={empresaNomePorId}
               filtros={FiltroEmpresaAno}
               onLimparFiltros={limparFiltros}
+              codigos={codigos}
+              rotuloCodigo={rotuloCodigo}
             />
           </TabsContent>
         </Tabs>
@@ -639,7 +649,7 @@ export default function ControleFaturamento() {
           <DialogHeader>
             <DialogTitle>Divergências de faturamento — {labelMes(competencia)}</DialogTitle>
             <DialogDescription>
-              Contratos em que o valor contábil lançado (Código N) difere do executável da Base: o que ainda falta emitir e o que foi emitido a mais.
+              Contratos em que o valor contábil lançado ({rotuloCodigo}) difere do executável da Base: o que ainda falta emitir e o que foi emitido a mais.
               Clique numa linha para ver as notas.
             </DialogDescription>
           </DialogHeader>

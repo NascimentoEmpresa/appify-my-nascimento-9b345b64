@@ -90,12 +90,15 @@ export interface Anexo {
   nome_arquivo: string; storage_path: string; mime_type: string | null;
   tamanho_bytes: number | null; sensivel: boolean; descricao: string | null;
   autor_nome: string | null; created_at: string;
+  ordem: number | null; observacao: string | null;
 }
 
 /** Uma linha do histórico. */
 export interface Evento {
   id: string; denuncia_id: string; campo: string;
   de: string | null; para: string | null;
+  /** De qual arquivo é a linha, nos eventos de anexo. */
+  objeto?: string | null;
   por_nome: string | null; justificativa: string | null; created_at: string;
 }
 
