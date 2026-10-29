@@ -27,10 +27,11 @@ import { usePermissoes } from "@/context/PermissoesContext";
 import { KpiTile } from "@/components/financeiro/KpiTile";
 import { BancoBadge } from "@/components/financeiro/BancoBadge";
 import { BandeiraBadge } from "@/components/financeiro/BandeiraBadge";
-import { useFluxoCaixaMalote } from "@/hooks/useFluxoCaixaMalote";
+import { useFluxoCaixaMalote, useFluxoCaixaDebitoAutomaticoSaidas } from "@/hooks/useFluxoCaixaMalote";
 import { useFaturasResumoPorCartao } from "@/hooks/useCartaoFatura";
 import { ImportarFaturaModal } from "./cartao-credito/ImportarFaturaModal";
 import { FaturasConsolidadasCard } from "./cartao-credito/FaturasConsolidadasCard";
+import { FaturasImportadasCard } from "./cartao-credito/FaturasImportadasCard";
 import { useEmpresasGrupo } from "@/hooks/useMaloteDespesa";
 import { useTiposFormaPagamento } from "@/hooks/useMaloteFormaPagamento";
 import { useUsuariosAtivos } from "@/hooks/useNfEmissao";
@@ -276,7 +277,10 @@ export default function CartaoCredito() {
   const { can } = usePermissoes();
   const podeExcluir = can("excluir", "financeiro", "financeiro-cartao-credito");
   const { data: cartoes = [], isLoading } = useCartoesCredito();
-  const { data: lancamentos = [] } = useFluxoCaixaMalote();
+  // SIS-2026-0751: Débito Automático (saída, já pago) no cartão conta junto com o Malote.
+  const { data: lancamentosMalote = [] } = useFluxoCaixaMalote();
+  const { data: lancamentosDebito = [] } = useFluxoCaixaDebitoAutomaticoSaidas();
+  const lancamentos = useMemo(() => [...lancamentosMalote, ...lancamentosDebito], [lancamentosMalote, lancamentosDebito]);
   const { data: empresas = [] } = useEmpresasGrupo();
   const { data: tiposFormaPagamento = [] } = useTiposFormaPagamento();
   const { data: bancos = [] } = useCartaoBancos();
@@ -807,7 +811,12 @@ export default function CartaoCredito() {
                   <TableCell className="text-sm">{l.empresa_nome ?? "—"}</TableCell>
                   <TableCell className="text-sm">{l.contrato_nome ?? "—"}</TableCell>
                   <TableCell className="text-sm">{l.classificacao_nome ?? "—"}</TableCell>
-                  <TableCell className="text-sm">{l.descricao}</TableCell>
+                  <TableCell className="text-sm">
+                    {l.descricao}
+                    {l.origem === "debito_automatico" && (
+                      <Badge variant="outline" className="ml-2 align-middle text-[10px]">Débito automático</Badge>
+                    )}
+                  </TableCell>
                   <TableCell className="text-sm">{tiposCadastrados.get(l.forma_pagamento!) ?? "—"}</TableCell>
                   <TableCell className="text-right text-sm font-medium">{formatBRL(l.valor)}</TableCell>
                 </TableRow>
@@ -817,6 +826,9 @@ export default function CartaoCredito() {
           </div>
         </CardContent>
       </Card>
+
+      {/* SIS-2026-0751: faturas importadas — abrir o arquivo e seguir pra classificação por item. */}
+      <FaturasImportadasCard competencia={competencia} cartaoId={filtroCartaoId} />
 
       {/* SIS-2026-0632: faturas consolidadas no Fluxo (Sicredi 2719): valor real da fatura, boleto e conferência. */}
       <FaturasConsolidadasCard cartoes={cartoes} />
