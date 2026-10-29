@@ -31,6 +31,7 @@
 // para o Gemini; o Groq usa GROQ_MODEL).
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import {
+  ehPerguntaQuantidadeAtual,
   itensRelacionados,
   respostaQuantidadeAtual,
   respostaResumoOperacional,
@@ -287,6 +288,32 @@ Deno.serve(async (req) => {
     const janela = Number.isInteger(corpo?.janelaMeses) ? Number(corpo.janelaMeses) : null;
     const categoria = typeof corpo?.categoria === "string" && corpo.categoria ? corpo.categoria : null;
 
+    // Saldo atual é uma pergunta OPERACIONAL, não de planejamento. A RPC do
+    // Estoque Saudável consolida variantes sob a família base para calcular
+    // demanda e alvo. Essa consolidação fez "AVENTAL DE NAPA (BRANCO)"
+    // herdar o saldo de "AVENTAL DE NAPA". Para perguntas de quantidade,
+    // consultamos primeiro as fichas exatas (código + nome + tamanho) que
+    // alimentam Estoque & Etiquetas e não deixamos o modelo escolher um nome
+    // parecido. A categoria do planejamento é ignorada de propósito: o código
+    // consultado pode ser EPI mesmo quando a aba está filtrada em uniforme.
+    if (modo === "pergunta" && ehPerguntaQuantidadeAtual(pergunta)) {
+      const { data: saldoOperacional, error: saldoErr } = await supa.rpc(
+        "sup_estoque_saldo_operacional_ia",
+        {
+          p_empresa_id: empresaId,
+          p_almoxarifado_id: uuid(corpo?.almoxarifadoId),
+        },
+      );
+      if (saldoErr) {
+        return respostaJson({ error: saldoErr.message }, saldoErr.code === "42501" ? 403 : 500);
+      }
+      const respostaDireta = respostaQuantidadeAtual(
+        pergunta,
+        Array.isArray(saldoOperacional) ? saldoOperacional as Record<string, unknown>[] : [],
+      );
+      if (respostaDireta) return respostaJson({ texto: respostaDireta });
+    }
+
     // A permissão é cobrada DENTRO da RPC (can_access no dashboard de
     // Compras/Estoque) — não se confere aqui de novo para não haver duas
     // regras de acesso se desencontrando com o tempo. 42501 vira 403.
@@ -303,9 +330,6 @@ Deno.serve(async (req) => {
     }
     if (!painel) return respostaJson({ error: "O painel voltou vazio." }, 502);
 
-    const itensCompletos = Array.isArray((painel as Record<string, unknown>).itens)
-      ? ((painel as Record<string, unknown>).itens as Record<string, unknown>[])
-      : [];
     if (modo === "pergunta") {
       const resumo = (painel as Record<string, unknown>).resumo;
       const respostaOperacional = respostaResumoOperacional(
@@ -313,8 +337,6 @@ Deno.serve(async (req) => {
         resumo && typeof resumo === "object" ? resumo as Record<string, unknown> : {},
       );
       if (respostaOperacional) return respostaJson({ texto: respostaOperacional });
-      const respostaDireta = respostaQuantidadeAtual(pergunta, itensCompletos);
-      if (respostaDireta) return respostaJson({ texto: respostaDireta });
     }
 
     const provs = provedores();
