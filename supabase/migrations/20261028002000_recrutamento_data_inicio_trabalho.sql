@@ -24,7 +24,7 @@
 
 ALTER TABLE public."WA_CURRICULOS" ADD COLUMN IF NOT EXISTS data_inicio_trabalho date;
 COMMENT ON COLUMN public."WA_CURRICULOS".data_inicio_trabalho IS
-  'Data em que o colaborador começa a trabalhar no posto — informada pelo Recrutamento ao enviar para SST + Compras (mig 20261028001800).';
+  'Data em que o colaborador começa a trabalhar no posto — informada pelo Recrutamento ao enviar para SST + Compras (mig 20261028002000).';
 
 CREATE OR REPLACE VIEW public."VW_RECRUTAMENTO_CANDIDATOS" WITH (security_invoker = true) AS
  SELECT c.id AS candidato_id,

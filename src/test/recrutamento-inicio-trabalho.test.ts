@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { erroDataInicio, inicioTrabalho, linhaInicioPedido, sugestaoDataInicio } from "@/lib/recrutamento/inicioTrabalho";
 
 // Envio para SST + Compras com a data em que o colaborador começa a trabalhar
-// (mig 20261028001800). "Hoje" fixo: quarta, 28/10/2026.
+// (mig 20261028002000). "Hoje" fixo: quarta, 28/10/2026.
 const HOJE = new Date(2026, 9, 28, 9, 30);
 
 describe("data de início no envio para SST + Compras", () => {

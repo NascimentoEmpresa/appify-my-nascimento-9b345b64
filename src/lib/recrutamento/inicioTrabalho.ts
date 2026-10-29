@@ -1,5 +1,5 @@
 // =====================================================================
-// Data em que o colaborador começa a trabalhar (mig 20261028001800).
+// Data em que o colaborador começa a trabalhar (mig 20261028002000).
 //
 // Chamado (28/10/2026): "para que o compras tenha ideia do início no posto
 // para liberar com mais agilidade o uniforme". O Recrutamento informa a data
