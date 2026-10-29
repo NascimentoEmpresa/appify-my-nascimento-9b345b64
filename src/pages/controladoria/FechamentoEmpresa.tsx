@@ -23,7 +23,7 @@ import { useLigacoesRubrica } from "./faturamento/useLigacoesRubrica";
 import { DetalheDespesaDialog, type DetalheAberto } from "./fechamento/DetalheDespesaDialog";
 import { TituloComFormula } from "./faturamento/Rentabilidade";
 import {
-  admPorClassificacao, detalheAdmPorClassificacao, detalheSocioPorClassificacao, admPorMesRubrica, despesasDosSocios, socioDoContrato, admSemClassificacao, ordenarColunasSocios, ROTULO_INVESTIMENTOS, margemFinal, montarFechamento, ORIGEM_ADM, ORIGEM_RUBRICA, ROTULO_STATUS, statusDoFechamento, totalDoFechamento,
+  admPorClassificacao, detalheAdmPorClassificacao, detalheSocioPorClassificacao, admPorMesRubrica, despesasDosSocios, socioDoContrato, admSemClassificacao, ordenarColunasSocios, ROTULO_INVESTIMENTOS, ROTULO_OBRAS_ADM, tributosPorMes, detalheTributosPorClassificacao, margemFinal, montarFechamento, ORIGEM_ADM, ORIGEM_RUBRICA, ROTULO_STATUS, statusDoFechamento, totalDoFechamento,
   type LinhaFechamento, type StatusFechamento,
 } from "./fechamento/regras";
 
@@ -118,7 +118,12 @@ export default function FechamentoEmpresa() {
   const socioPorContrato = useMemo(() => {
     const m = new Map<string, string>();
     // SIS-2026-0744: contrato "INVESTIMENTOS …" entra como mais uma coluna desta aba (rótulo "Investimentos"), com a mesma regra dos sócios.
-    for (const c of contratos) { const s = socioDoContrato(c.nome) ?? (tratamentoEfetivo(c.nome, tratamentos.get(c.id)) === "investimento" ? ROTULO_INVESTIMENTOS : null); if (s) m.set(c.id, s); }
+    // SIS-2026-0749: contrato com tratamento "Obra administrativa" (padrão: nome "OBRAS ADM - …") forma a coluna Obras Adm.
+    for (const c of contratos) {
+      const t = tratamentoEfetivo(c.nome, tratamentos.get(c.id));
+      const s = socioDoContrato(c.nome) ?? (t === "investimento" ? ROTULO_INVESTIMENTOS : t === "obra_administrativa" ? ROTULO_OBRAS_ADM : null);
+      if (s) m.set(c.id, s);
+    }
     return m;
   }, [contratos, tratamentos]);
   // Contratos "ADMINISTRATIVO - …" (inclusive os dos sócios) são centros de custo da empresa, não contrato de cliente: o Lucro dos Contratos
@@ -159,7 +164,9 @@ export default function FechamentoEmpresa() {
     // Com contrato escolhido só entra o lucro dele: despesa de sócio, como a administrativa, não pertence a contrato.
     const sociosPorMes = ctId !== TODOS ? new Map<string, Map<string, number>>() : despesasDosSocios(custosAno.filter((l) => !!l.contrato_id && passa(l.contrato_id)), socioPorContrato, ligacoes);
     const admPorMes = ctId !== TODOS ? new Map<string, CustosPorRubrica>() : admPorMesRubrica(admTodas, ligacoes, empId === TODOS ? null : empId);
-    return montarFechamento({ meses, mesAtual, liquidoPorMes, executavelPorMes, custosContratoPorMes, admPorMes, sociosPorMes });
+    // SIS-2026-0749: IRPJ/CSLL saem da despesa administrativa e entram como Tributos sobre o Resultado (como a administrativa, não pertencem a contrato).
+    const tributos = ctId !== TODOS ? new Map<string, number>() : tributosPorMes(admTodas, ligacoes, empId === TODOS ? null : empId);
+    return montarFechamento({ meses, mesAtual, liquidoPorMes, executavelPorMes, custosContratoPorMes, admPorMes, sociosPorMes, tributosPorMes: tributos });
   }
 
   const linhasAno = useMemo(
@@ -185,7 +192,7 @@ export default function FechamentoEmpresa() {
 
   // SIS-2026-0730: clique no valor abre o detalhamento por classificação (mesma seleção de linhas e mesmo mês da célula).
   // O detalhe guarda só o que foi clicado; os itens e o valor são recalculados a cada render, então mudar a rubrica de uma classificação no modal atualiza tudo.
-  type DetalheParams = { tipo: "adm"; rotulo: string; rubricas: RubricaCusto[] | null; mesesAlvo: string[] } | { tipo: "socio"; socio: string; mesesAlvo: string[] };
+  type DetalheParams = { tipo: "adm"; rotulo: string; rubricas: RubricaCusto[] | null; mesesAlvo: string[] } | { tipo: "socio"; socio: string; mesesAlvo: string[] } | { tipo: "tributos"; mesesAlvo: string[] };
   const [detalheParams, setDetalheParams] = useState<DetalheParams | null>(null);
   const empresaAdm = empresaId === TODOS ? null : empresaId;
   const linhasDosSocios = useMemo(
@@ -200,6 +207,7 @@ export default function FechamentoEmpresa() {
   // (o valor da célula, 4º argumento, é recalculado de linhasAno: o mesmo número que a tabela mostra)
   const abrirAdm = (rotulo: string, rubricas: RubricaCusto[] | null, mesesAlvo: string[], _valorCelula?: number) => setDetalheParams({ tipo: "adm", rotulo, rubricas, mesesAlvo });
   const abrirSocio = (socio: string, mesesAlvo: string[], _valorCelula?: number) => setDetalheParams({ tipo: "socio", socio, mesesAlvo });
+  const abrirTributos = (mesesAlvo: string[]) => setDetalheParams({ tipo: "tributos", mesesAlvo });
   const detalhe = useMemo<DetalheAberto | null>(() => {
     const p = detalheParams;
     if (!p) return null;
@@ -214,6 +222,15 @@ export default function FechamentoEmpresa() {
         valorCelula,
         projetado,
         mostrarRubrica: true,
+      };
+    }
+    if (p.tipo === "tributos") {
+      return {
+        titulo: `Tributos sobre o Resultado | ${rotuloPeriodo(p.mesesAlvo)}`,
+        subtitulo: `IRPJ e CSLL lançados no Fluxo de Caixa ${textoPeriodo(p.mesesAlvo)}.`,
+        itens: detalheTributosPorClassificacao(admTodas, new Set(p.mesesAlvo), ligacoes, empresaAdm),
+        valorCelula: arredondar2(p.mesesAlvo.reduce((s, m) => s + (linhaDoMes(m)?.tributos ?? 0), 0)),
+        projetado,
       };
     }
     const valorCelula = arredondar2(p.mesesAlvo.reduce((s, m) => s + (linhaDoMes(m)?.socios[p.socio] ?? 0), 0));
@@ -342,7 +359,7 @@ export default function FechamentoEmpresa() {
               </>}
             />
             <KpiTile
-              label="Resultado Final"
+              label="Resultado Operacional"
               valor={fmtMoney(total.resultado)}
               sub="Lucro dos contratos menos despesas"
               icon={<CheckCircle2 />}
@@ -350,9 +367,9 @@ export default function FechamentoEmpresa() {
               cor={total.resultado < 0 ? "red" : "emerald"}
               valorClass={total.resultado < 0 ? "text-red-600 dark:text-red-400" : "text-emerald-600 dark:text-emerald-400"}
             />
-            <KpiTile label="Margem Final" valor={pctTxt(total.margem)} sub="Resultado final ÷ lucro dos contratos" icon={<Percent />} cor="sky" valorClass="text-sky-700 dark:text-sky-300"
+            <KpiTile label="Margem Final" valor={pctTxt(total.margem)} sub="Resultado operacional ÷ lucro dos contratos" icon={<Percent />} cor="sky" valorClass="text-sky-700 dark:text-sky-300"
               info={<>
-                <p><strong>Resultado Final ÷ Lucro dos Contratos</strong>. Em branco quando não há lucro de contratos no período.</p>
+                <p><strong>Resultado Operacional ÷ Lucro dos Contratos</strong>. Em branco quando não há lucro de contratos no período.</p>
                 <p>Status do mês: acima de 10% Saudável, de 8% a 10% Atenção, abaixo de 8% Crítico.</p>
               </>}
             />
@@ -371,7 +388,7 @@ export default function FechamentoEmpresa() {
                     <Legend />
                     <Bar dataKey="lucro" name="Lucro dos Contratos" fill="#1e3a8a" radius={[2, 2, 0, 0]} />
                     <Bar dataKey="adm" name="Desp. Administrativas" fill="#f97316" radius={[2, 2, 0, 0]} />
-                    <Bar dataKey="resultado" name="Resultado Final" fill="#22c55e" radius={[2, 2, 0, 0]} />
+                    <Bar dataKey="resultado" name="Resultado Operacional" fill="#22c55e" radius={[2, 2, 0, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
               </CardContent>
@@ -386,7 +403,7 @@ export default function FechamentoEmpresa() {
                     <YAxis fontSize={11} tickFormatter={milhoes} />
                     <Tooltip formatter={(v: number) => fmtMoney(v)} />
                     <Legend />
-                    <Line type="monotone" dataKey="realizado" name="Resultado Final" stroke="#16a34a" strokeWidth={2} dot connectNulls={false} />
+                    <Line type="monotone" dataKey="realizado" name="Resultado Operacional" stroke="#16a34a" strokeWidth={2} dot connectNulls={false} />
                     <Line type="monotone" dataKey="projetado" name="Projetado" stroke="#16a34a" strokeWidth={2} strokeDasharray="5 4" dot={false} connectNulls={false} />
                   </LineChart>
                 </ResponsiveContainer>
@@ -450,8 +467,8 @@ export default function FechamentoEmpresa() {
                         <TableHead className={CAB}><TituloComFormula titulo="Lucro dos Contratos (R$)" formula="Valor líquido faturado − custos dos contratos no mês (mesma conta da Lucratividade de Contratos). Nos meses projetados: notas já emitidas ou executável × proporção líquido/executável dos últimos meses, menos o custo lançado ou a média dos últimos meses (o maior)." /></TableHead>
                         {RUBRICAS.map((r) => <TableHead key={r.id} className={CAB}><TituloComFormula titulo={`${r.label} (R$)`} formula={<><p>{ORIGEM_RUBRICA[r.id]}</p><p>{ORIGEM_ADM}</p></>} /></TableHead>)}
                         <TableHead className={CAB}><TituloComFormula titulo="Total Desp. Adm (R$)" formula="Soma das rubricas: saídas do Fluxo de Caixa sem contrato (transferência, aplicação, empréstimo e financiamento ficam de fora). Nos meses projetados, o lançado/programado ou a média dos últimos meses, o maior por rubrica." /></TableHead>
-                        <TableHead className={CAB}><TituloComFormula titulo="Resultado Final (R$)" formula="Lucro dos Contratos − Total Desp. Adm. Sem as despesas dos sócios: elas entram na aba Resumo Mensal com Sócios, depois deste resultado." /></TableHead>
-                        <TableHead className={CAB}><TituloComFormula titulo="Margem Final (%)" formula="Resultado Final ÷ Lucro dos Contratos. Em branco quando não há lucro de contratos no mês." /></TableHead>
+                        <TableHead className={CAB}><TituloComFormula titulo="Resultado Operacional (R$)" formula="Lucro dos Contratos − Total Desp. Adm (o IRPJ e a CSLL não entram aqui: ficam em Tributos sobre o Resultado). Sem as despesas dos sócios, Investimentos e Obras Adm: elas entram na aba Resumo Mensal com Sócios, depois deste resultado." /></TableHead>
+                        <TableHead className={CAB}><TituloComFormula titulo="Margem Final (%)" formula="Resultado Operacional ÷ Lucro dos Contratos. Em branco quando não há lucro de contratos no mês." /></TableHead>
                         <TableHead className={`${CAB} text-center`}><TituloComFormula alinhar="center" titulo="Status" formula={<><p>Pela Margem Final:</p><FaixasStatus /></>} /></TableHead>
                       </TableRow>
                     </TableHeader>
@@ -542,17 +559,21 @@ export default function FechamentoEmpresa() {
                       <TableHeader>
                         <TableRow>
                           <TableHead className="h-auto px-2 py-1.5 align-bottom">Mês</TableHead>
-                          <TableHead className={CAB}><TituloComFormula titulo="Resultado Final (R$)" formula="Lucro dos Contratos − Total Desp. Adm. É o resultado SEM as despesas dos sócios (mesmo valor da aba Resumo Mensal)." /></TableHead>
-                          {nomesSocios.map((s) => <TableHead key={s} className={CAB}><TituloComFormula titulo={`${s} (R$)`} formula={s === ROTULO_INVESTIMENTOS
-                            ? <><p>Todas as saídas do Fluxo de Caixa lançadas nos contratos <strong>INVESTIMENTOS …</strong> (AGPS, HAGG, SN…), seja qual for a classificação. Ficam fora do Resultado Final e saem aqui, antes do Lucro Líquido Final.</p><p>Meses projetados: o lançado ou a média dos últimos 3 meses, o maior.</p></>
+                          <TableHead className={CAB}><TituloComFormula titulo="Resultado Operacional (R$)" formula="Lucro dos Contratos − Total Desp. Adm. É o resultado da operação dos contratos após as despesas administrativas, antes dos sócios, investimentos e obras (mesmo valor da aba Resumo Mensal)." /></TableHead>
+                          {nomesSocios.map((s) => <TableHead key={s} className={CAB}><TituloComFormula titulo={`${s} (R$)`} formula={s === ROTULO_OBRAS_ADM
+                            ? <><p>Todas as saídas do Fluxo de Caixa lançadas nos contratos de <strong>obra administrativa</strong> (<strong>OBRAS ADM - HAGG</strong>, <strong>OBRAS ADM - SN</strong>…), seja qual for a classificação. Ficam fora do Lucro dos Contratos e do Resultado Operacional e saem aqui, antes do Resultado Gerencial após Ajustes. O tratamento de cada contrato se ajusta em Tratamento dos contratos.</p><p>Meses projetados: o lançado ou a média dos últimos 3 meses, o maior.</p></>
+                            : s === ROTULO_INVESTIMENTOS
+                            ? <><p>Todas as saídas do Fluxo de Caixa lançadas nos contratos <strong>INVESTIMENTOS …</strong> (AGPS, HAGG, SN…), seja qual for a classificação. Ficam fora do Resultado Operacional e saem aqui, antes do Resultado Gerencial após Ajustes.</p><p>Meses projetados: o lançado ou a média dos últimos 3 meses, o maior.</p></>
                             : <><p>Saídas do Fluxo de Caixa lançadas no contrato <strong>ADMINISTRATIVO SÓCIOS - {s.toUpperCase()}</strong>, inclusive distribuição de lucros. Transferência, aplicação, empréstimo e financiamento ficam de fora.</p><p>Meses projetados: o lançado ou a média dos últimos 3 meses, o maior.</p></>} /></TableHead>)}
-                          <TableHead className={CAB}><TituloComFormula titulo="Lucro Líquido Final (R$)" formula="Resultado Final − despesas de todos os sócios e os investimentos no mês." /></TableHead>
-                          <TableHead className={`${CAB} text-center`}><TituloComFormula alinhar="center" titulo="Status" formula={<><p>Pela margem do Lucro Líquido Final sobre o Lucro dos Contratos:</p><FaixasStatus /></>} /></TableHead>
+                          <TableHead className={CAB}><TituloComFormula titulo="Resultado Gerencial após Ajustes (R$)" formula="Resultado Operacional − despesas dos sócios (Antonio, Carlos Eduardo, Guiomar, Helena e Senilton) − Investimentos − Obras Adm no mês." /></TableHead>
+                          <TableHead className={CAB}><TituloComFormula titulo="Tributos sobre o Resultado (R$)" formula={<><p>Saídas do Fluxo de Caixa sem contrato nas classificações <strong>IRPJ</strong> e <strong>CSLL</strong>. Ficam fora das Despesas Administrativas e do Resultado Operacional e são descontadas aqui, depois do Resultado Gerencial após Ajustes. IMPOSTOS e TRIBUTOS ESTADUAIS continuam como despesa administrativa.</p><p>Meses projetados: o lançado ou a média dos últimos 3 meses, o maior.</p></>} /></TableHead>
+                          <TableHead className={CAB}><TituloComFormula titulo="Resultado Gerencial Líquido (R$)" formula="Resultado Gerencial após Ajustes − Tributos sobre o Resultado." /></TableHead>
+                          <TableHead className={`${CAB} text-center`}><TituloComFormula alinhar="center" titulo="Status" formula={<><p>Pela margem do Resultado Gerencial Líquido sobre o Lucro dos Contratos:</p><FaixasStatus /></>} /></TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
                         {linhas.length === 0 && (
-                          <TableRow><TableCell colSpan={nomesSocios.length + 4} className="text-center text-muted-foreground py-8">Nenhum mês no período.</TableCell></TableRow>
+                          <TableRow><TableCell colSpan={nomesSocios.length + 6} className="text-center text-muted-foreground py-8">Nenhum mês no período.</TableCell></TableRow>
                         )}
                         {linhas.map((l) => (
                           <TableRow key={l.mes}>
@@ -563,6 +584,8 @@ export default function FechamentoEmpresa() {
                             <TableCell className={`${CEL} font-semibold ${l.resultado < 0 ? "text-red-600" : ""}`}>{num2(l.resultado)}</TableCell>
                             {nomesSocios.map((s) => <TableCell key={s} className={CEL}><ValorDetalhavel valor={l.socios[s] ?? 0} onClick={() => abrirSocio(s, [l.mes], l.socios[s] ?? 0)} /></TableCell>)}
                             <TableCell className={`${CEL} font-semibold ${l.lucroLiquido < 0 ? "text-red-600" : ""}`}>{num2(l.lucroLiquido)}</TableCell>
+                            <TableCell className={CEL}><ValorDetalhavel valor={l.tributos} onClick={() => abrirTributos([l.mes])} /></TableCell>
+                            <TableCell className={`${CEL} font-semibold ${l.resultadoGerencialLiquido < 0 ? "text-red-600" : ""}`}>{num2(l.resultadoGerencialLiquido)}</TableCell>
                             <TableCell className="px-2 py-1.5 text-center"><StatusPill status={l.statusLiquido} /></TableCell>
                           </TableRow>
                         ))}
@@ -574,6 +597,8 @@ export default function FechamentoEmpresa() {
                             <TableCell className={`${CEL} font-semibold ${total.resultado < 0 ? "text-red-600" : ""}`}>{num2(total.resultado)}</TableCell>
                             {nomesSocios.map((s) => <TableCell key={s} className={`${CEL} font-semibold`}><ValorDetalhavel valor={total.socios[s] ?? 0} onClick={() => abrirSocio(s, mesesDaTabela, total.socios[s] ?? 0)} /></TableCell>)}
                             <TableCell className={`${CEL} font-semibold ${total.lucroLiquido < 0 ? "text-red-600" : ""}`}>{num2(total.lucroLiquido)}</TableCell>
+                            <TableCell className={`${CEL} font-semibold`}><ValorDetalhavel valor={total.tributos} onClick={() => abrirTributos(mesesDaTabela)} /></TableCell>
+                            <TableCell className={`${CEL} font-semibold ${total.resultadoGerencialLiquido < 0 ? "text-red-600" : ""}`}>{num2(total.resultadoGerencialLiquido)}</TableCell>
                             <TableCell className="px-2 py-1.5 text-center"><StatusPill status={total.statusLiquido} /></TableCell>
                           </TableRow>
                         </TableFooter>
@@ -581,7 +606,7 @@ export default function FechamentoEmpresa() {
                     </Table>
                   )}
                   <p className="border-t px-3 py-2 text-[11px] text-muted-foreground">
-                    Despesas dos sócios = todas as saídas do Fluxo de Caixa nos contratos "ADMINISTRATIVO SÓCIOS - nome do sócio", seja qual for a classificação, {base === "pagamento" ? "pelo mês do pagamento" : "pelo mês da competência"}. Os contratos "INVESTIMENTOS …" seguem a mesma regra e formam a coluna Investimentos. Tudo isso fica fora do Resultado Final (resumo mensal sem sócios) e entra aqui, depois dele, para chegar ao Lucro Líquido Final.
+                    Despesas dos sócios = todas as saídas do Fluxo de Caixa nos contratos "ADMINISTRATIVO SÓCIOS - nome do sócio", seja qual for a classificação, {base === "pagamento" ? "pelo mês do pagamento" : "pelo mês da competência"}. Os contratos "INVESTIMENTOS …" seguem a mesma regra e formam a coluna Investimentos, e os contratos "OBRAS ADM - …" formam a coluna Obras Adm. Tudo isso fica fora do Resultado Operacional e entra aqui, depois dele, para chegar ao Resultado Gerencial após Ajustes. Descontando os Tributos sobre o Resultado (IRPJ e CSLL), chega-se ao Resultado Gerencial Líquido.
                   </p>
                 </CardContent>
               </Card>
@@ -596,7 +621,7 @@ export default function FechamentoEmpresa() {
                         <TableHead className="h-auto px-2 py-1.5">Empresa</TableHead>
                         <TableHead className={CAB}>Lucro dos Contratos (R$)</TableHead>
                         <TableHead className={CAB}>Total Desp. Adm (R$)</TableHead>
-                        <TableHead className={CAB}>Resultado Final (R$)</TableHead>
+                        <TableHead className={CAB}>Resultado Operacional (R$)</TableHead>
                         <TableHead className={CAB}>Margem Final (%)</TableHead>
                         <TableHead className={`${CAB} text-center`}>Status</TableHead>
                       </TableRow>
@@ -626,7 +651,7 @@ export default function FechamentoEmpresa() {
             <Info className="mt-0.5 h-4 w-4 shrink-0" />
             <div>
               <p className="font-semibold">Fórmula do fechamento</p>
-              <p className="text-xs">Lucro dos Contratos − Total de Despesas Administrativas = Resultado Final da Empresa (sem sócios). Resultado Final − despesas dos sócios = Lucro Líquido Final (aba Resumo Mensal com Sócios). Meses até o atual vêm do que já aconteceu (notas e Fluxo de Caixa); os seguintes são projetados e aparecem marcados.</p>
+              <p className="text-xs">Lucro dos Contratos − Total de Despesas Administrativas = Resultado Operacional. Resultado Operacional − sócios − Investimentos − Obras Adm = Resultado Gerencial após Ajustes. Resultado Gerencial após Ajustes − Tributos sobre o Resultado (IRPJ e CSLL) = Resultado Gerencial Líquido (aba Resumo Mensal com Sócios). Meses até o atual vêm do que já aconteceu (notas e Fluxo de Caixa); os seguintes são projetados e aparecem marcados.</p>
             </div>
           </div>
         </>
