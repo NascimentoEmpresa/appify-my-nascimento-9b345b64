@@ -112,6 +112,8 @@ export interface Parcela {
   despesa_id: string;
   numero_parcela: number;
   valor: number;
+  // SIS-2026-0733: juros desta parcela, informado ao pagá-la.
+  valor_juros?: number | null;
   data_vencimento: string;
   // SIS-2026-0223: pagamento passou a ser por parcela — cada uma tem seu
   // próprio comprovante/data real, independente das demais.
@@ -167,6 +169,8 @@ export interface MaloteDespesaRow {
   nivel_aprovacao_atual: 1 | 2 | 3 | null;
   valor_aprovado_cotacao: number | null;
   valor_aprovado: number | null;
+  // SIS-2026-0733: juros informado ao confirmar o pagamento (fica à parte do valor da compra; o Fluxo soma os dois).
+  valor_juros: number | null;
   justificativa_aprovacao: string | null;
   motivo_ajuste: string | null;
   // SIS-2026-0439: quem de fato autorizou a compra (não necessariamente
@@ -340,7 +344,7 @@ async function buscarParcelasPorDespesa(despesas: MaloteDespesaRow[]): Promise<M
 const DESPESA_COLUMNS =
   "id, numero, empresa_id, classificacao_id, origem, status, nome, valor_total, motivo, descricao, links, tipo_movimento, tipo, contrato_id, " +
   "data_pagamento, competencia, forma_pagamento, banco_id, informacoes_pagamento, parcelado, numero_parcelas, dia_desconto, " +
-  "nivel_aprovacao_atual, valor_aprovado_cotacao, valor_aprovado, justificativa_aprovacao, motivo_ajuste, autorizador_nome, excecao, justificativa_excecao, " +
+  "nivel_aprovacao_atual, valor_aprovado_cotacao, valor_aprovado, valor_juros, justificativa_aprovacao, motivo_ajuste, autorizador_nome, excecao, justificativa_excecao, " +
   "solicitacao_dispensada_manualmente, " +
   "cot1_fornecedor, cot1_valor, cot1_prazo, cot1_link, cot1_anexo_path, cot1_anexo_nome, " +
   "cot2_fornecedor, cot2_valor, cot2_prazo, cot2_link, cot2_anexo_path, cot2_anexo_nome, " +
