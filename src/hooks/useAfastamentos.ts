@@ -3,7 +3,7 @@ import { supabase } from "@/integrations/supabase/client";
 import type { AfastamentoItem, LinhaImportacao } from "@/lib/sst/afastamentos";
 
 // =====================================================================
-// SST › Afastamentos e Telemedicina (mig 20261028002000). Leitura e escrita
+// SST › Afastamentos e Telemedicina (mig 20261029001750). Leitura e escrita
 // só pelas RPCs sst_afa_* — a lotação, as coberturas e os valores do posto
 // são resolvidos no banco; os valores só voltam para quem tem
 // sst_afastamentos_financeiro.

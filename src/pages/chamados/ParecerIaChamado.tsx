@@ -231,10 +231,13 @@ export function ParecerIaChamado({ chamadoId, podeGerar }: { chamadoId: string; 
     }
   };
 
-  const botao = podeGerar && (
+  // Valores fixos (29/10/2026, Pablo: "toda vez que clica em gerar de novo
+  // altera os valores, perdendo a credibilidade"): o botão só existe enquanto
+  // NÃO há parecer pronto — nunca gerou, ou a I.A falhou. Pronto, não muda.
+  const botao = podeGerar && parecer?.status !== "pronto" && parecer?.status !== "pendente" && (
     <Button size="sm" variant="outline" className="h-7 gap-1.5 text-xs" onClick={gerar} disabled={gerando}>
       {gerando ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
-      {parecer?.status === "pronto" ? "Gerar de novo" : "Gerar parecer"}
+      Gerar parecer
     </Button>
   );
 
@@ -248,11 +251,6 @@ export function ParecerIaChamado({ chamadoId, podeGerar }: { chamadoId: string; 
       {erroLeitura && (
         <p className="rounded-md border border-destructive/30 bg-destructive/10 p-2 text-xs text-destructive">
           Não foi possível ler o parecer: {(erroLeitura as Error).message}
-        </p>
-      )}
-      {erroBotao && parecer?.status === "pronto" && (
-        <p className="rounded-md border border-destructive/30 bg-destructive/10 p-2 text-xs text-destructive">
-          A nova geração falhou — o parecer abaixo é o anterior. Motivo: {erroBotao}
         </p>
       )}
 
@@ -318,7 +316,7 @@ export function ParecerIaChamado({ chamadoId, podeGerar }: { chamadoId: string; 
             </div>
           )}
           <p className="text-[10px] text-muted-foreground">
-            Estimativa automática, não é orçamento. Gerado em {fmtDataHora(parecer.gerado_em)}{parecer.modelo ? ` · ${parecer.modelo}` : ""}.
+            Valor/hora fixo de desenvolvedor sênior; valores fixos depois de gerados. Estimativa automática, não é orçamento. Gerado em {fmtDataHora(parecer.gerado_em)}{parecer.modelo ? ` · ${parecer.modelo}` : ""}.
           </p>
 
           <ChatParecerIa key={parecer.gerado_em ?? ""} chamadoId={chamadoId} />

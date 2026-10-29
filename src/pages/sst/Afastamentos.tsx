@@ -26,7 +26,7 @@ import {
 } from "@/lib/sst/afastamentos";
 
 // =====================================================================
-// SST › AFASTAMENTOS E TELEMEDICINA (mig 20261028002000, 28/10/2026)
+// SST › AFASTAMENTOS E TELEMEDICINA (mig 20261029001750, 28/10/2026)
 //
 // Substitui a PLANILHA TELEMEDICINA e o RELATÓRIO MENSAL ATESTADOS: cada
 // afastamento com a lotação puxada sozinha na data (contrato, posto, escala,
