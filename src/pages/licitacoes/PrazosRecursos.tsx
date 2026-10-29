@@ -194,7 +194,7 @@ export default function PrazosRecursos() {
             <TableCell className="text-xs">{modalidades[demanda.modalidade]}</TableCell>
             <TableCell><p className="font-medium">{demanda.processo}</p><p className="max-w-[330px] truncate text-xs text-muted-foreground">{demanda.orgao || demanda.objeto || "—"}</p></TableCell>
             <TableCell className={dias !== null && dias < 0 && demanda.status !== "concluido" ? "font-medium text-destructive" : ""}>{demanda.prazo ? new Date(`${demanda.prazo}T00:00:00`).toLocaleDateString("pt-BR") : "—"}<p className="text-xs text-muted-foreground">{dias !== null && demanda.status !== "concluido" ? `${dias < 0 ? "Vencido há" : "Faltam"} ${Math.abs(dias)} dia(s)` : ""}</p></TableCell>
-            <TableCell><p>{nomeResponsavel(demanda.responsavel_id, usuarios)}</p><p className="text-xs text-muted-foreground">De: {nomeResponsavel(demanda.responsavel_id, usuarios)} → Para: {OTNIEL}</p></TableCell>
+            <TableCell><p>{nomeResponsavel(demanda.responsavel_id, usuarios)}</p><p className="text-xs text-muted-foreground">De: {nomeResponsavel(demanda.responsavel_id, usuarios).toUpperCase()} -&gt; Para: {OTNIEL.toUpperCase()}</p></TableCell>
             <TableCell>{textoStatus[demanda.status]}</TableCell>
             <TableCell>{demanda.status === "concluido" ? textoResultado(demanda.resultado) : "—"}</TableCell>
             <TableCell className="text-right"><div className="flex justify-end gap-2">
