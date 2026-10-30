@@ -14,7 +14,10 @@ import { useVinculoEmpregado } from "@/hooks/useVinculoEmpregado";
 export type FormCap =
   | "editar_criar" | "responder" | "encerrar_excluir"
   | "ver_tudo" | "ver_proprias" | "ver_setor" | "criar_setor" | "ver_lixeira"
-  | "diagnostico_feedback" | "chat_ia_painel";
+  | "diagnostico_feedback" | "chat_ia_painel"
+  // mig 20261030001000: Assistente de I.A em todos os formularios e
+  // Rotatividade + Plano de acao (vieram da Pesquisa de Permanencia do RH).
+  | "assistente_ia" | "rotatividade";
 
 const VIEW_CAPS: FormCap[] = ["ver_tudo", "ver_proprias"];
 

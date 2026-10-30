@@ -8,6 +8,7 @@ import { useVinculoEmpregado } from "@/hooks/useVinculoEmpregado";
 import { Formulario, Pergunta, fmtDt, situacao, normalizaPerguntas } from "./Formularios";
 import EmpregadoDetalheModal, { normNome, carregarVinculos, prewarmFichas, invalidarFichas } from "./EmpregadoDetalheModal";
 import { gerarPdfRespostas, type BlocoPdf, type RespostaPdf } from "@/lib/formularios/respostasPdf";
+import { textoValorEspecial } from "@/components/formularios/PerguntasEspeciais";
 
 // =====================================================================
 // NASCIMENTO FORMULÁRIOS - Respostas
@@ -92,6 +93,23 @@ const CADASTRO_CAMPOS: { k: string; rotulo: string }[] = [
 const btn = (bg: string, c = "#fff", border = "none"): React.CSSProperties =>
   ({ padding: "6px 12px", borderRadius: 9, border, background: bg, color: c, fontSize: 12, fontWeight: 700, cursor: "pointer" });
 const card: React.CSSProperties = { background: "#fff", border: "1px solid #e2e8f0", borderRadius: 14, padding: "15px 17px", boxShadow: "0 8px 24px rgba(15,23,42,.06)" };
+// Tipos que vieram da Pesquisa de Permanência (mig 20261030001000) gravam um
+// objeto (local de trabalho; marcadas + mais importante + complemento). Estas
+// telas sabem mostrar texto e lista: valorDe vira o texto completo (resposta
+// individual, CSV, PDF); valorResumo vira o que o gráfico conta (o contrato; as
+// alternativas marcadas, pelo rótulo).
+const valorDe = (p: Pergunta, v: Valor): Valor => textoValorEspecial(p, v) ?? v;
+const valorResumo = (p: Pergunta, v: Valor): Valor => {
+  if (v == null || typeof v !== "object" || Array.isArray(v)) return v;
+  const o = v as Record<string, unknown>;
+  if (p.tipo === "local_trabalho") return o.contrato ? String(o.contrato) : null;
+  if (p.tipo === "escolha_complemento") {
+    const itens = (Array.isArray(p.config?.itens) ? p.config.itens : []) as { cod: string; rotulo: string }[];
+    return (Array.isArray(o.marcadas) ? o.marcadas : []).map(c => itens.find(i => i.cod === c)?.rotulo ?? String(c));
+  }
+  return v;
+};
+
 const valorTexto = (v: Valor): string =>
   v == null || v === "" ? "-"
   : Array.isArray(v) ? (v.length ? v.map(x => (ehLinhaColega(x) ? textoLinhaColega(x) : String(x))).join("; ") : "-")
@@ -598,7 +616,7 @@ export default function FormularioRespostas() {
     const cab = ["Enviado em", "Nome", "Enviado por", "E-mail", ...pergs.map(p => p.titulo)];
     const linhas = respsFiltradas.map(r => [
       fmtDt(r.enviado_em), nomeRespondente(r), enviadoPor(r), r.respondente_email ?? "",
-      ...pergs.map(p => valorTexto(r.itens[p.id])),
+      ...pergs.map(p => valorTexto(valorDe(p, r.itens[p.id]))),
     ]);
     const csv = "﻿" + [cab, ...linhas].map(l => l.map(esc).join(";")).join("\r\n");
     const a = document.createElement("a");
@@ -615,7 +633,7 @@ export default function FormularioRespostas() {
     const quem = nomeRespondente(r);
     const blocos: BlocoPdf[] = pergs.map(p => {
       const res = resolverDaPergunta(p, perguntaNomeId, resolveQuem, resolve);
-      const v = r.itens[p.id];
+      const v = valorDe(p, r.itens[p.id]);
       const txt = (x: Valor) => { const t = valorTexto(x); return t === "-" ? t : (res(x).exibir || t); };
       const lista = Array.isArray(v) ? v.filter(x => x != null && x !== "") : [];
       const itens = lista.length
@@ -818,7 +836,7 @@ export default function FormularioRespostas() {
                     const anexo = String(r.itens[`${p.id}__anexo`] ?? "") || null;
                     return (
                       <div key={p.id} style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                        <BlocoResposta titulo={p.titulo} valor={r.itens[p.id]} resolve={resolverDaPergunta(p, perguntaNomeId, resolveQuem, resolve)} onPessoa={setPessoa} />
+                        <BlocoResposta titulo={p.titulo} valor={valorDe(p, r.itens[p.id])} resolve={resolverDaPergunta(p, perguntaNomeId, resolveQuem, resolve)} onPessoa={setPessoa} />
                         {anexo && (
                           <a href={anexo} target="_blank" rel="noopener noreferrer" style={{ alignSelf: "flex-start", display: "inline-flex", alignItems: "center", gap: 6, fontSize: 11.5, fontWeight: 700, color: "#0369a1", textDecoration: "none", background: "#f0f7ff", border: "1px solid #dbeafe", borderRadius: 8, padding: "5px 10px" }}>📎 Baixar anexo{r.itens[`${p.id}__anexo_nome`] ? ` — ${r.itens[`${p.id}__anexo_nome`]}` : ""}</a>
                         )}
@@ -917,19 +935,19 @@ function BarraOpcao({ rotulo, n, pct, pessoas, resolve, resolveQuem, onPessoa }:
 }
 
 function ResumoPergunta({ p, i, resps, resolve, resolveQuem, onPessoa, quem, onVerRespostas }: { p: Pergunta; i: number; resps: Resposta[]; resolve: Resolver; resolveQuem: Resolver; onPessoa: (n: string) => void; quem: (r: Resposta) => string; onVerRespostas: (nome: string) => void }) {
-  const valores = useMemo(() => resps.map(r => r.itens[p.id]).filter(v => v != null && v !== "" && !(Array.isArray(v) && v.length === 0)), [resps, p.id]);
+  const valores = useMemo(() => resps.map(r => valorResumo(p, r.itens[p.id])).filter(v => v != null && v !== "" && !(Array.isArray(v) && v.length === 0)), [resps, p]);
 
   // Ocorrências com a resposta de origem (o valor sozinho perde "quem disse").
   // Arrays (caixas de seleção) viram uma ocorrência por item.
   const ocorrencias = useMemo(() => {
     const out: { v: Valor; r: Resposta }[] = [];
     resps.forEach(r => {
-      const v = r.itens[p.id];
+      const v = valorResumo(p, r.itens[p.id]);
       if (v == null || v === "") return;
       (Array.isArray(v) ? v : [v]).forEach(x => { if (x != null && x !== "") out.push({ v: x, r }); });
     });
     return out;
-  }, [resps, p.id]);
+  }, [resps, p]);
 
   // Agrupa pela IDENTIDADE resolvida, não pelo texto cru: grafias diferentes
   // vinculadas à mesma pessoa ("Iury", "Gerência Sistemas") juntam-se ao nome
@@ -968,7 +986,7 @@ function ResumoPergunta({ p, i, resps, resolve, resolveQuem, onPessoa, quem, onV
     // indicações, média das notas e o que escreveram sobre a pessoa.
     if (p.tipo === "colegas")
       return <ResumoColegas resps={resps} pid={p.id} resolve={resolve} onPessoa={onPessoa} quem={quem} />;
-    if (["multipla_escolha", "caixas_selecao", "lista_suspensa", "escala"].includes(p.tipo)) {
+    if (["multipla_escolha", "caixas_selecao", "lista_suspensa", "escala", "escolha_complemento", "local_trabalho"].includes(p.tipo)) {
       const cont: Record<string, number> = {};
       let total = 0;
       valores.forEach(v => (Array.isArray(v) ? v : [v]).forEach(x => { cont[String(x)] = (cont[String(x)] || 0) + 1; total++; }));
