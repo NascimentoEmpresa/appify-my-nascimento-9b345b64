@@ -27,7 +27,7 @@
 // eles é só o valor/hora fixo. A I.A ainda devolve "horas" por perfil, mas
 // aí elas são ignoradas; sem horas gastas, vale a estimativa dela. A tela
 // refaz a mesma conta (src/lib/chamados/parecerHorasGastas.ts) e a mig
-// 20261030000200 recalculou os pareceres já gravados.
+// 20261030000300 recalculou os pareceres já gravados.
 //
 // COMPLEXIDADE PESA NO PREÇO (29/10/2026, Pablo: "tem coisa que o
 // desenvolvedor faz que leva 1h mas é de extrema importância e complexidade,
