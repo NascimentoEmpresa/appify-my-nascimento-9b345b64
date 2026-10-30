@@ -140,7 +140,11 @@ export interface PainelCentrosFluxo {
   aplicacoes: number;
   transferencias: number;
   saldoUtilizavel: number;
+  // SIS-2026-0747: "Contratos" é o MESMO valor do Total de custos da Lucratividade de Contratos (só o que a Lucratividade conta como custo).
   contratos: number;
+  // O restante das saídas de contrato, que a Lucratividade não conta: contrato de investimento/obra administrativa/estoque/movimentação financeira,
+  // classificação que não é custo (transferência, financiamento, distribuição…) e lançamento sem classificação. Continua distribuído em contrato.
+  contratosForaLucratividade: number;
   administrativo: number;
   socios: number;
   faltaDistribuir: number;
@@ -335,8 +339,10 @@ export function totaisCentrosFluxo(
   tipoPorClassificacao: Map<string, string | null>,
   responsaveisPorClassificacao: Map<string, string[]>,
   filtro: FiltroAuditoria,
+  // SIS-2026-0747: a saída de contrato conta em "Contratos" só se a Lucratividade a conta como custo; sem esta função vale tudo (como antes).
+  contaNaLucratividade: (l: LinhaFluxoAud) => boolean = () => true,
 ): PainelCentrosFluxo {
-  let saidaTotal = 0, aplicacoes = 0, transferencias = 0, contratos = 0, administrativo = 0, socios = 0;
+  let saidaTotal = 0, aplicacoes = 0, transferencias = 0, contratos = 0, contratosForaLucratividade = 0, administrativo = 0, socios = 0;
   const por = new Map<string, LancamentoFaltaDistribuir>();
   fluxo.forEach((l, i) => {
     if (l.tipo !== "saida" || ehSaldoAnterior(l) || !passaLinha(filtro, l)) return;
@@ -348,7 +354,8 @@ export function totaisCentrosFluxo(
       const t = tipoDoContrato(l.contrato_id);
       if (t === "socio") socios += v;
       else if (t === "administrativo") administrativo += v;
-      else contratos += v;
+      else if (contaNaLucratividade(l)) contratos += v;
+      else contratosForaLucratividade += v;
       return;
     }
     if (l.classificacao_id && tipoPorClassificacao.get(l.classificacao_id) === "administrativo") { administrativo += v; return; }
@@ -379,9 +386,10 @@ export function totaisCentrosFluxo(
     transferencias: r2(transferencias),
     saldoUtilizavel,
     contratos: r2(contratos),
+    contratosForaLucratividade: r2(contratosForaLucratividade),
     administrativo: r2(administrativo),
     socios: r2(socios),
-    faltaDistribuir: r2(saldoUtilizavel - contratos - administrativo - socios),
+    faltaDistribuir: r2(saldoUtilizavel - contratos - contratosForaLucratividade - administrativo - socios),
     lancamentos,
   };
 }
