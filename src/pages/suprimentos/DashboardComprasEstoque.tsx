@@ -1,16 +1,20 @@
 import { useEffect, useMemo, useState } from "react";
 import {
+  BadgeCheck,
   BarChart3,
   Boxes,
   Clock3,
+  CircleAlert,
   FileCheck2,
   FileText,
+  Mail,
   PackageCheck,
   PiggyBank,
   RefreshCw,
   Gauge,
   Repeat,
   ShoppingCart,
+  Truck,
   TrendingDown,
   TrendingUp,
 } from "lucide-react";
@@ -220,6 +224,133 @@ function GraficoCotacoesPorPessoa({
   );
 }
 
+function PainelExpedicoes({ dados }: { dados: DashboardComprasEstoqueDados }) {
+  const resumo = dados.entregas_resumo ?? {
+    total_despachado: 0,
+    correios: 0,
+    supervisores: 0,
+    confirmadas: 0,
+    sem_modalidade: 0,
+  };
+  const porResponsavel = dados.entregas_por_responsavel ?? [];
+  const recentes = dados.entregas_recentes ?? [];
+  const rotuloComprovacao = {
+    CONFIRMADA: "Confirmada",
+    PENDENTE: "Pendente",
+    LEGADO: "Legado",
+    SEM_REGISTRO: "Sem registro",
+  } as const;
+
+  return (
+    <div className="space-y-3">
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+        <CartaoIndicador
+          titulo="Despachados no período"
+          valor={formatarNumero(resumo.total_despachado)}
+          detalhe="pela data efetiva do despacho"
+          icone={<PackageCheck className="h-6 w-6" />}
+        />
+        <CartaoIndicador
+          titulo="Via Correios"
+          valor={formatarNumero(resumo.correios)}
+          detalhe="pedidos postados"
+          icone={<Mail className="h-6 w-6" />}
+          tom="green"
+        />
+        <CartaoIndicador
+          titulo="Via supervisor"
+          valor={formatarNumero(resumo.supervisores)}
+          detalhe="pedidos despachados nessa modalidade"
+          icone={<Truck className="h-6 w-6" />}
+          tom="violet"
+        />
+        <CartaoIndicador
+          titulo="Entregas comprovadas"
+          valor={formatarNumero(resumo.confirmadas)}
+          detalhe="com confirmação do destinatário"
+          icone={<BadgeCheck className="h-6 w-6" />}
+          tom="green"
+        />
+        <CartaoIndicador
+          titulo="Sem modalidade"
+          valor={formatarNumero(resumo.sem_modalidade)}
+          detalhe="histórico que precisa ser classificado"
+          icone={<CircleAlert className="h-6 w-6" />}
+          tom="red"
+        />
+      </div>
+      <div className="grid gap-3 xl:grid-cols-[0.9fr_1.6fr]">
+        <PainelGrafico
+          titulo="Despachos por Responsável"
+          subtitulo="Correios mostra quem registrou o despacho; Supervisor mostra quem retirou o romaneio. Quando não há retirada registrada, usa o operador do despacho."
+        >
+          {porResponsavel.length ? (
+            <div style={{ height: Math.max(300, porResponsavel.length * 48) }}>
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={porResponsavel} layout="vertical" margin={{ left: 10, right: 18 }}>
+                  <CartesianGrid strokeDasharray="3 3" horizontal={false} />
+                  <XAxis type="number" allowDecimals={false} />
+                  <YAxis type="category" dataKey="nome" width={185} interval={0} tick={<TickCategoriaQuebrado maximoLinha={28} />} />
+                  <Tooltip />
+                  <Legend />
+                  <Bar dataKey="correios" name="Correios" stackId="envio" fill="#10b981" />
+                  <Bar dataKey="supervisores" name="Supervisor" stackId="envio" fill="#7c3aed" />
+                  <Bar dataKey="sem_modalidade" name="Sem modalidade" stackId="envio" fill="#f59e0b" radius={[0, 4, 4, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          ) : <EstadoVazio texto="Nenhum despacho no período selecionado." />}
+        </PainelGrafico>
+        <PainelGrafico
+          titulo="Expedições do Período"
+          subtitulo="Lista auditável pela data do despacho. A confirmação só aparece quando o destinatário enviou a comprovação; registros anteriores à regra são identificados como legado."
+        >
+          <div className="max-h-[520px] overflow-auto">
+            <table className="w-full text-xs">
+              <thead className="sticky top-0 z-10 bg-white">
+                <tr>
+                  <CabecalhoTabela>Pedido</CabecalhoTabela>
+                  <CabecalhoTabela>Despacho</CabecalhoTabela>
+                  <CabecalhoTabela>Contrato / destino</CabecalhoTabela>
+                  <CabecalhoTabela>Modalidade</CabecalhoTabela>
+                  <CabecalhoTabela>Responsável</CabecalhoTabela>
+                  <CabecalhoTabela>Entrega</CabecalhoTabela>
+                  <CabecalhoTabela>Rastreio</CabecalhoTabela>
+                </tr>
+              </thead>
+              <tbody>
+                {recentes.map((linha) => (
+                  <tr key={`${linha.id}-${linha.data}`} className="border-b last:border-0 hover:bg-slate-50">
+                    <td className="whitespace-nowrap px-3 py-2 font-mono text-blue-700">{linha.id}</td>
+                    <td className="whitespace-nowrap px-3 py-2">{new Date(linha.data).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" })}</td>
+                    <td className="max-w-52 px-3 py-2">
+                      <p className="truncate font-medium" title={linha.contrato}>{linha.contrato}</p>
+                      <p className="truncate text-[10px] text-slate-500" title={linha.destino}>{linha.destino}</p>
+                    </td>
+                    <td className="px-3 py-2">
+                      <Badge variant="outline">
+                        {linha.modalidade === "CORREIO" ? "Correios" : linha.modalidade === "SUPERVISOR" ? "Supervisor" : "Não informada"}
+                      </Badge>
+                    </td>
+                    <td className="max-w-44 truncate px-3 py-2" title={linha.responsavel}>{linha.responsavel}</td>
+                    <td className="px-3 py-2">
+                      <span title={linha.recebedor ? `Recebido por ${linha.recebedor}` : undefined}>
+                        {rotuloComprovacao[linha.comprovacao]}
+                      </span>
+                    </td>
+                    <td className="whitespace-nowrap px-3 py-2 font-mono text-[11px]">{linha.rastreio ?? "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {!recentes.length && <EstadoVazio texto="Nenhuma expedição no período selecionado." />}
+          </div>
+        </PainelGrafico>
+      </div>
+    </div>
+  );
+}
+
 function GraficosSolicitacoes({ dados }: { dados: DashboardComprasEstoqueDados }) {
   const cotacoesMalote = dados.cotacoes_malote_por_comprador ?? [];
   const cotacoesLicitacao = dados.cotacoes_licitacao_por_comprador ?? [];
@@ -256,10 +387,14 @@ function GraficosSolicitacoes({ dados }: { dados: DashboardComprasEstoqueDados }
         <PainelGrafico titulo="Participação das Licitações nas Cotações">
           <div className="relative h-[260px]"><ResponsiveContainer width="100%" height="100%"><PieChart><Pie data={[{ nome: "Cotações de Licitações", valor: dados.resumo.licitacoes }, { nome: "Outras cotações", valor: Math.max(0, dados.resumo.cotacoes - dados.resumo.licitacoes) }]} dataKey="valor" nameKey="nome" innerRadius={63} outerRadius={92}><Cell fill="#2f8fea" /><Cell fill="#d9e1ea" /></Pie><Tooltip /><Legend /></PieChart></ResponsiveContainer><div className="pointer-events-none absolute inset-0 flex items-center justify-center"><div className="text-center"><p className="text-2xl font-extrabold text-blue-950">{formatarNumero(dados.resumo.participacao_licitacoes, 1)}%</p><p className="text-xs text-slate-500">Licitações</p></div></div></div>
         </PainelGrafico>
-        <PainelGrafico titulo="Evolução das Solicitações e Cotações">
-          {dados.evolucao.length ? <div className="h-[260px]"><ResponsiveContainer width="100%" height="100%"><LineChart data={dados.evolucao}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="rotulo" tick={{ fontSize: 10 }} /><YAxis allowDecimals={false} /><Tooltip /><Legend /><Line type="monotone" dataKey="solicitacoes" name="Solicitações" stroke="#0969da" strokeWidth={2.5} /><Line type="monotone" dataKey="cotacoes" name="Cotações" stroke="#159957" strokeWidth={2.5} /></LineChart></ResponsiveContainer></div> : <EstadoVazio texto="Sem evolução para exibir." />}
+        <PainelGrafico
+          titulo="Evolução das Solicitações e Cotações"
+          subtitulo="Solicitações são os Pedidos de Materiais pela data real da solicitação. O filtro de contrato é respeitado; em Todos, entram pedidos com e sem contrato."
+        >
+          {dados.evolucao.length ? <div className="h-[260px]"><ResponsiveContainer width="100%" height="100%"><LineChart data={dados.evolucao}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="rotulo" tick={{ fontSize: 10 }} /><YAxis allowDecimals={false} /><Tooltip /><Legend /><Line type="monotone" dataKey="solicitacoes" name="Pedidos de Materiais" stroke="#0969da" strokeWidth={2.5} /><Line type="monotone" dataKey="cotacoes" name="Cotações" stroke="#159957" strokeWidth={2.5} /></LineChart></ResponsiveContainer></div> : <EstadoVazio texto="Sem evolução para exibir." />}
         </PainelGrafico>
       </div>
+      <PainelExpedicoes dados={dados} />
     </>
   );
 }
