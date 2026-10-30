@@ -13,6 +13,7 @@ import { GateNotificacoes } from "@/components/notificacoes/GateNotificacoes";
 import { GateTermoCiencia } from "@/components/documentos/GateTermoCiencia";
 import { useModoExterno } from "@/hooks/useModoExterno";
 import { AlertaUrgenteAdmissao } from "@/components/recrutamento/AlertaUrgenteAdmissao";
+import { PainelOnline, LARGURA_PAINEL_ONLINE } from "./PainelOnline";
 
 export function AppShell() {
   // Encarregado externo (sessão anônima) não tem cadastro em EMPREGADOS para
@@ -22,6 +23,31 @@ export function AppShell() {
   const [mobileOpen, setMobileOpen] = useState(false);
   const location = useLocation();
   const desktopSidebarWidth = collapsed ? "172px" : "268px";
+  // Painel "quem está online" (30/10/2026): lembra aberto/recolhido por
+  // navegador; na primeira vez abre só em tela larga, onde não aperta tabela.
+  const [painelOnlineAberto, setPainelOnlineAberto] = useState<boolean>(() => {
+    try {
+      const salvo = localStorage.getItem("painel-online-aberto");
+      if (salvo !== null) return salvo === "1";
+    } catch {
+      /* storage bloqueado: segue o padrão */
+    }
+    return typeof window !== "undefined" && window.innerWidth >= 1536;
+  });
+  const alternarPainelOnline = () =>
+    setPainelOnlineAberto((a) => {
+      try {
+        localStorage.setItem("painel-online-aberto", a ? "0" : "1");
+      } catch {
+        /* idem */
+      }
+      return !a;
+    });
+  const larguraPainelOnline = externo
+    ? "0px"
+    : painelOnlineAberto
+      ? LARGURA_PAINEL_ONLINE.aberto
+      : LARGURA_PAINEL_ONLINE.recolhido;
 
   // Fecha drawer mobile ao mudar de rota
   useEffect(() => {
@@ -39,7 +65,10 @@ export function AppShell() {
   }, [mobileOpen]);
 
   return (
-    <div className="flex min-h-screen w-full max-w-full bg-background">
+    <div
+      style={{ "--painel-online-width": larguraPainelOnline } as React.CSSProperties}
+      className="flex min-h-screen w-full max-w-full bg-background"
+    >
       {/* Overlay mobile */}
       {mobileOpen && (
         <div
@@ -53,7 +82,7 @@ export function AppShell() {
 
       <div
         style={{ "--desktop-sidebar-width": desktopSidebarWidth } as React.CSSProperties}
-        className="flex min-w-0 flex-1 flex-col overflow-x-hidden transition-[margin,width] duration-300 lg:ml-[var(--desktop-sidebar-width)] lg:w-[calc(100%_-_var(--desktop-sidebar-width))] lg:flex-none"
+        className="flex min-w-0 flex-1 flex-col overflow-x-hidden transition-[margin,width] duration-300 lg:ml-[var(--desktop-sidebar-width)] lg:mr-[var(--painel-online-width)] lg:w-[calc(100%_-_var(--desktop-sidebar-width)_-_var(--painel-online-width))] lg:flex-none"
       >
         <DemoBanner />
         <Topbar onToggleSidebar={() => setCollapsed((c) => !c)} onOpenMobile={() => setMobileOpen(true)} />
@@ -99,6 +128,7 @@ export function AppShell() {
           </ErroDeTela>
         </main>
       </div>
+      {!externo && <PainelOnline aberto={painelOnlineAberto} onAlternar={alternarPainelOnline} />}
       {!externo && <ChamadoFab />}
       {/* Admissão urgente (14/10/2026): card tremendo pro SST e pro Compras, em qualquer tela. */}
       {!externo && <AlertaUrgenteAdmissao />}

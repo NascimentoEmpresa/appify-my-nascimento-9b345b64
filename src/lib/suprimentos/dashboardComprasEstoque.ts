@@ -52,6 +52,11 @@ export interface DashboardComprasEstoqueDados {
   saving_resumo: { total: number; implantacao: number; execucao: number };
   solicitacoes_por_contrato: (SerieNomeQuantidade & { despachadas: number; pendentes: number })[];
   motivos_pendencias: SerieNomeQuantidade[];
+  /** Envios feitos na rota Cotações do Malote, um processo por solicitação. */
+  cotacoes_malote_por_comprador?: SerieNomeQuantidade[];
+  /** Respostas enviadas no módulo de Cotações para Licitação. */
+  cotacoes_licitacao_por_comprador?: SerieNomeQuantidade[];
+  /** Série combinada legada; mantida no payload para compatibilidade. */
   cotacoes_por_comprador: SerieNomeQuantidade[];
   cotacoes_por_solicitacao: SerieNomeQuantidade[];
   evolucao: {
@@ -61,6 +66,31 @@ export interface DashboardComprasEstoqueDados {
     cotacoes: number;
     entradas: number;
     saidas: number;
+  }[];
+  entregas_resumo?: {
+    total_despachado: number;
+    correios: number;
+    supervisores: number;
+    confirmadas: number;
+    sem_modalidade: number;
+  };
+  entregas_por_responsavel?: {
+    nome: string;
+    correios: number;
+    supervisores: number;
+    sem_modalidade: number;
+    total: number;
+  }[];
+  entregas_recentes?: {
+    id: string;
+    data: string;
+    contrato: string;
+    destino: string;
+    modalidade: "CORREIO" | "SUPERVISOR" | "NAO_INFORMADO";
+    responsavel: string;
+    comprovacao: "CONFIRMADA" | "PENDENTE" | "LEGADO" | "SEM_REGISTRO";
+    recebedor: string | null;
+    rastreio: string | null;
   }[];
   solicitacoes_recentes: {
     id: string;
@@ -238,6 +268,23 @@ export function consolidarDashboardsCompras(
     }
   }
 
+  const entregasPorResponsavel = new Map<
+    string,
+    NonNullable<DashboardComprasEstoqueDados["entregas_por_responsavel"]>[number]
+  >();
+  for (const painel of paineis) {
+    for (const linha of painel.entregas_por_responsavel ?? []) {
+      const atual = entregasPorResponsavel.get(linha.nome) ?? {
+        nome: linha.nome, correios: 0, supervisores: 0, sem_modalidade: 0, total: 0,
+      };
+      atual.correios += Number(linha.correios);
+      atual.supervisores += Number(linha.supervisores);
+      atual.sem_modalidade += Number(linha.sem_modalidade);
+      atual.total += Number(linha.total);
+      entregasPorResponsavel.set(linha.nome, atual);
+    }
+  }
+
   const movimentados = (campo: "mais_movimentados" | "menos_movimentados", desc: boolean) => {
     const mapa = new Map<string, ItemMovimentado>();
     for (const painel of paineis) {
@@ -302,9 +349,29 @@ export function consolidarDashboardsCompras(
     solicitacoes_por_contrato: [...solicitacoesPorContrato.values()]
       .sort((a, b) => b.quantidade - a.quantidade).slice(0, 10),
     motivos_pendencias: agruparNomeQuantidade(paineis.map((p) => p.motivos_pendencias)),
+    cotacoes_malote_por_comprador: agruparNomeQuantidade(
+      paineis.map((p) => p.cotacoes_malote_por_comprador ?? []),
+      10,
+    ),
+    cotacoes_licitacao_por_comprador: agruparNomeQuantidade(
+      paineis.map((p) => p.cotacoes_licitacao_por_comprador ?? []),
+      10,
+    ),
     cotacoes_por_comprador: agruparNomeQuantidade(paineis.map((p) => p.cotacoes_por_comprador), 10),
     cotacoes_por_solicitacao: agruparNomeQuantidade(paineis.map((p) => p.cotacoes_por_solicitacao)),
     evolucao: [...evolucao.values()].sort((a, b) => a.mes.localeCompare(b.mes)),
+    entregas_resumo: {
+      total_despachado: soma((p) => p.entregas_resumo?.total_despachado ?? 0),
+      correios: soma((p) => p.entregas_resumo?.correios ?? 0),
+      supervisores: soma((p) => p.entregas_resumo?.supervisores ?? 0),
+      confirmadas: soma((p) => p.entregas_resumo?.confirmadas ?? 0),
+      sem_modalidade: soma((p) => p.entregas_resumo?.sem_modalidade ?? 0),
+    },
+    entregas_por_responsavel: [...entregasPorResponsavel.values()]
+      .sort((a, b) => b.total - a.total || a.nome.localeCompare(b.nome, "pt-BR"))
+      .slice(0, 15),
+    entregas_recentes: paineis.flatMap((p) => p.entregas_recentes ?? [])
+      .sort((a, b) => String(b.data).localeCompare(String(a.data))).slice(0, 50),
     solicitacoes_recentes: paineis.flatMap((p) => p.solicitacoes_recentes)
       .sort((a, b) => String(b.data).localeCompare(String(a.data))).slice(0, 8),
     cotacoes_recentes: paineis.flatMap((p) => p.cotacoes_recentes)
