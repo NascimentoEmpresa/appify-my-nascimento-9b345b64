@@ -1,7 +1,7 @@
 import { useHistoricoAjusteFluxo, type HistoricoAjusteFluxo as Evento } from "@/hooks/useFluxoCaixaMalote";
 
 // SIS-2026-0733: "Histórico de alterações" da linha no diálogo de edição do Fluxo.
-const ROTULO_CAMPO: Record<string, string> = {
+export const ROTULO_CAMPO_AJUSTE: Record<string, string> = {
   valor: "Valor",
   data_pagamento: "Data de pagamento",
   tipo: "Tipo",
@@ -15,7 +15,7 @@ const ROTULO_CAMPO: Record<string, string> = {
 
 const ROTULO_OPERACAO: Record<Evento["operacao"], string> = { criado: "Ajuste criado", alterado: "Ajuste alterado", desfeito: "Ajuste desfeito" };
 
-function formatar(campo: string, v: unknown): string {
+export function formatarCampoAjuste(campo: string, v: unknown): string {
   if (v === null || v === undefined || v === "") return "—";
   if (campo === "valor") return Number(v).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
   if ((campo === "data_pagamento" || campo === "competencia") && typeof v === "string") {
@@ -45,7 +45,7 @@ export function HistoricoAjusteFluxo({ linha }: { linha: { origem: string; despe
               <ul className="ml-3 text-muted-foreground">
                 {e.campos.map((c) => (
                   <li key={c}>
-                    {ROTULO_CAMPO[c] ?? c}: {formatar(c, e.antes?.[c])} → {formatar(c, e.depois?.[c])}
+                    {ROTULO_CAMPO_AJUSTE[c] ?? c}: {formatarCampoAjuste(c, e.antes?.[c])} → {formatarCampoAjuste(c, e.depois?.[c])}
                   </li>
                 ))}
               </ul>

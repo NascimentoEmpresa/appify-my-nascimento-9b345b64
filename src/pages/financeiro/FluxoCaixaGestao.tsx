@@ -22,7 +22,7 @@ import {
 } from "@/pages/financeiro/fluxo-caixa/abasFluxo";
 import { agruparKpi, explicacaoKpi, linhasDoKpi, totalKpi, type KpiFluxo } from "@/pages/financeiro/fluxo-caixa/kpiFluxo";
 import { useScreenAccess } from "@/hooks/useScreenAccess";
-import { TrendingDown, TrendingUp, Wallet, LineChart, X, Trash2, RotateCcw, Pencil, Eye, ChevronRight, ChevronDown, FileDown, FileUp, Split } from "lucide-react";
+import { TrendingDown, TrendingUp, Wallet, LineChart, X, Trash2, RotateCcw, Pencil, Eye, ChevronRight, ChevronDown, FileDown, FileUp, Split, History } from "lucide-react";
 import { toast } from "sonner";
 import { AcessoGate } from "@/components/auth/AcessoGate";
 import {
@@ -43,6 +43,7 @@ import { useClassificacoesOrcamentoAdmin } from "@/hooks/usePlanejamentoOrcament
 import { ExcluirPermanentementeButton } from "@/pages/malote/ExcluirPermanentementeButton";
 import { useExcluirLinhaImportada, useImportadaLixeira, useRestaurarLinhaImportada } from "@/hooks/useFluxoCaixaImportado";
 import { RatearImportadoDialog, type LinhaParaRatear } from "./fluxo-caixa/RatearImportadoDialog";
+import { HistoricoLinhaDialog } from "./fluxo-caixa/HistoricoLinhaDialog";
 import { acaoDeRateio } from "./fluxo-caixa/rateioImportado";
 import { linhasDoExport, linhaTemContrato } from "./fluxo-caixa/exportRateio";
 import { SearchableMultiSelect } from "@/components/ui/searchable-multi-select";
@@ -286,6 +287,8 @@ export default function FluxoCaixaGestao() {
   const [lixeiraAberta, setLixeiraAberta] = useState(false);
   const { data: importadasLixeira = [] } = useImportadaLixeira(lixeiraAberta);
   const [itemRatear, setItemRatear] = useState<{ linha: LinhaParaRatear; refazendo: boolean } | null>(null);
+  // SIS-2026-0712: histórico da linha (duplo clique na linha ou botão de histórico).
+  const [itemHistorico, setItemHistorico] = useState<FluxoCaixaMaloteLinha | null>(null);
 
   const [itemExcluir, setItemExcluir] = useState<FluxoCaixaMaloteLinha | null>(null);
   const [excluindo, setExcluindo] = useState(false);
@@ -1146,7 +1149,7 @@ export default function FluxoCaixaGestao() {
                   const situacaoLinha = situacaoFluxo(l, hoje);
                   return (
                   <>
-                  <TableRow key={chave}>
+                  <TableRow key={chave} onDoubleClick={() => setItemHistorico(l)}>
                     <TableCell className="text-center">
                       {temRateio && (
                         <button
@@ -1254,6 +1257,16 @@ export default function FluxoCaixaGestao() {
                       })()}
                     </TableCell>
                     <TableCell className="text-center">
+                      <div className="flex items-center justify-center gap-0.5">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7 text-muted-foreground hover:text-foreground"
+                        title="Ver histórico do lançamento"
+                        onClick={() => setItemHistorico(l)}
+                      >
+                        <History className="h-3.5 w-3.5" />
+                      </Button>
                       {l.fatura_cartao_id ? (
                         <Button
                           variant="link"
@@ -1318,10 +1331,12 @@ export default function FluxoCaixaGestao() {
                               <Pencil className="h-3.5 w-3.5" />
                             </Button>
                           </AcessoGate>
-                          {/* Importada da planilha: ratear (ou refazer/desfazer um rateio feito aqui) e excluir. */}
+                          {/* Importada da planilha: ratear (ou refazer/desfazer um rateio feito aqui) e excluir.
+                              SIS-2026-0712: Ratear é a ação "incluir" e Excluir é a ação "excluir" — cada uma com switch próprio na Administração. */}
                           {l.origem === "importacao_historica" && (
-                            <AcessoGate menu="financeiro-fluxo-caixa-gestao" acao="alterar">
+                            <>
                               {acaoDeRateio(l) && (
+                                <AcessoGate menu="financeiro-fluxo-caixa-gestao" acao="incluir">
                                 <Button
                                   variant="ghost"
                                   size="icon"
@@ -1343,17 +1358,20 @@ export default function FluxoCaixaGestao() {
                                 >
                                   <Split className="h-3.5 w-3.5" />
                                 </Button>
+                                </AcessoGate>
                               )}
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                className="h-7 w-7 text-muted-foreground hover:text-destructive"
-                                title="Excluir (vai para a lixeira)"
-                                onClick={() => setItemExcluir(l)}
-                              >
-                                <Trash2 className="h-3.5 w-3.5" />
-                              </Button>
-                            </AcessoGate>
+                              <AcessoGate menu="financeiro-fluxo-caixa-gestao" acao="excluir">
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-7 w-7 text-muted-foreground hover:text-destructive"
+                                  title="Excluir (vai para a lixeira)"
+                                  onClick={() => setItemExcluir(l)}
+                                >
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                </Button>
+                              </AcessoGate>
+                            </>
                           )}
                           {l.origem !== "importacao_historica" && (
                             <AcessoGate menu={MENU_POR_ORIGEM[l.origem]} acao="excluir">
@@ -1375,6 +1393,7 @@ export default function FluxoCaixaGestao() {
                           )}
                         </div>
                       )}
+                      </div>
                     </TableCell>
                   </TableRow>
                   {temRateio && expandida && l.fatura_cartao_id && l.rateioDetalhe!.map((c) => (
@@ -1661,6 +1680,7 @@ export default function FluxoCaixaGestao() {
       </Dialog>
 
       <RatearImportadoDialog linha={itemRatear?.linha ?? null} refazendo={!!itemRatear?.refazendo} onClose={() => setItemRatear(null)} />
+      <HistoricoLinhaDialog linha={itemHistorico} onClose={() => setItemHistorico(null)} />
 
       {/* Lixeira — itens excluídos das origens (inclusive importadas da planilha), cada um com Restaurar */}
       <Dialog open={lixeiraAberta} onOpenChange={setLixeiraAberta}>
@@ -1743,7 +1763,7 @@ export default function FluxoCaixaGestao() {
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
                       <span className="font-medium">{formatBRL(i.valor)}</span>
-                      <AcessoGate menu="financeiro-fluxo-caixa-gestao" acao="alterar">
+                      <AcessoGate menu="financeiro-fluxo-caixa-gestao" acao="excluir">
                         <Button variant="outline" size="icon" className="h-8 w-8" title="Restaurar" onClick={() => restaurar("importacao_historica", i.despesaId)}>
                           <RotateCcw className="h-3.5 w-3.5" />
                         </Button>
