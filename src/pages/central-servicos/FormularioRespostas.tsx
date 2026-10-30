@@ -9,6 +9,7 @@ import { Formulario, Pergunta, fmtDt, situacao, normalizaPerguntas } from "./For
 import EmpregadoDetalheModal, { normNome, carregarVinculos, prewarmFichas, invalidarFichas } from "./EmpregadoDetalheModal";
 import { gerarPdfRespostas, type BlocoPdf, type RespostaPdf } from "@/lib/formularios/respostasPdf";
 import { textoValorEspecial } from "@/components/formularios/PerguntasEspeciais";
+import MuralModeracao from "./MuralModeracao";
 
 // =====================================================================
 // NASCIMENTO FORMULÁRIOS - Respostas
@@ -411,6 +412,11 @@ export default function FormularioRespostas() {
   const [part, setPart] = useState<Participacao | null>(null);   // quem votou no mês (null = sem dado/sem permissão)
   const [verFaltantes, setVerFaltantes] = useState(false);
   const [hoverFaltam, setHoverFaltam] = useState(false);
+  // Mural do Início (30/10/2026): o botão só existe em formulário com pergunta
+  // "colegas" e para quem tem acesso às permissões dele — a mesma régua do
+  // botão "Acesso" (cs_form_pode(_, 'acesso')), que a RPC confere de novo.
+  const [podeMural, setPodeMural] = useState(false);
+  const [muralAberto, setMuralAberto] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -437,6 +443,16 @@ export default function FormularioRespostas() {
     }
   }, [id, nav]);
   useEffect(() => { load(); }, [load]);
+
+  const temColegas = pergsTodas.some(p => p.tipo === "colegas");
+  useEffect(() => {
+    setPodeMural(false);
+    if (!id || !temColegas) return;
+    let vivo = true;
+    sb.rpc("cs_form_pode", { _form: id, _cap: "acesso" })
+      .then(({ data, error }) => { if (vivo && !error) setPodeMural(data === true); });
+    return () => { vivo = false; };
+  }, [id, temColegas]);
 
   // Monta em segundo plano o índice que a ficha do empregado consome. Quem abre
   // esta tela vai clicar em nome — quando clicar, não deve haver nada a esperar.
@@ -691,6 +707,10 @@ export default function FormularioRespostas() {
             </button>
           ))}
         </div>
+        {podeMural && (
+          <button onClick={() => setMuralAberto(true)} title="Liberar os comentários positivos para o cartão de Reconhecimento do Início"
+            style={btn("linear-gradient(120deg,#f59e0b,#f97316)")}>🏆 Mural do Início</button>
+        )}
         <button onClick={exportCsv} disabled={!respsFiltradas.length} style={btn(respsFiltradas.length ? "#16a34a" : "#94a3b8")}>⬇ Exportar CSV</button>
         <div style={{ position: "relative" }}>
           <button onClick={() => setMenuPdf(v => !v)} disabled={!respsEscopo.length} style={btn(respsEscopo.length ? "#0f3171" : "#94a3b8")}>⬇ Exportar PDF ▾</button>
@@ -723,6 +743,8 @@ export default function FormularioRespostas() {
           barra, que só confunde. Vale também quando todas vieram anônimas.
           26/10/2026: o PERÍODO volta nesses formulários (soData) — pedido
           para ver os votos da Avaliação de Reconhecimento mês a mês. */}
+      {muralAberto && id && <MuralModeracao formId={id} onFechar={() => setMuralAberto(false)} />}
+
       {respsEscopo.length > 0 && (
         <FiltrosRespostas
           fResp={fResp} setFResp={setFResp} opcoesResp={opcoesResp}
