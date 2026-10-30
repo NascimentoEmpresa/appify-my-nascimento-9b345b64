@@ -95,6 +95,11 @@ verify_jwt = false
 [functions.chamado-concluir-pr]
 verify_jwt = false
 
+# SIS-2026-0786: chamada só pelo GitHub Actions (pr_registrar_painel.yml); a
+# function confere o CHAMADOS_CI_SECRET antes de gravar.
+[functions.dev-github-pr-registrar]
+verify_jwt = false
+
 # Consulta de PR pelo modal de Hora Extra. O gateway exige o JWT do usuário e
 # a function ainda confere a sessão e se ele é o dono da HE antes de usar o
 # GITHUB_TOKEN mantido como secret no Supabase.

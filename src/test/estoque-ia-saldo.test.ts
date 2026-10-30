@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  ehPerguntaQuantidadeAtual,
   itensRelacionados,
   respostaQuantidadeAtual,
   respostaResumoOperacional,
@@ -43,5 +44,43 @@ describe("Assistente do Estoque — consulta exata no catálogo completo", () =>
 
     expect(resposta).toContain("10.584 entradas registradas");
     expect(resposta).toContain("Estoque & Etiquetas");
+  });
+
+  it("não confunde um cadastro exato com a família de nome parecido", () => {
+    const resposta = respostaQuantidadeAtual(
+      "quanto temos de AVENTAL DE NAPA (BRANCO) em estoque atualmente?",
+      [
+        { codigo: "0000961", item: "AVENTAL DE NAPA", tamanho: null, fisico: 2, disponivel: 2, reservado: 0 },
+        { codigo: "0002573", item: "AVENTAL DE NAPA (BRANCO)", tamanho: null, fisico: 5, disponivel: 5, reservado: 0 },
+      ],
+    );
+
+    expect(resposta).toContain("AVENTAL DE NAPA (BRANCO) (único)");
+    expect(resposta).toContain("0002573");
+    expect(resposta).toContain("5 unidade(s) física(s)");
+    expect(resposta).not.toContain("0000961");
+    expect(resposta).not.toContain("2 unidade(s) física(s)");
+  });
+
+  it("recusa saldo aproximado quando falta o cadastro com todos os termos", () => {
+    const resposta = respostaQuantidadeAtual(
+      "quanto temos de AVENTAL DE NAPA (BRANCO) em estoque atualmente?",
+      [{ codigo: "0000961", item: "AVENTAL DE NAPA", tamanho: null, fisico: 2, disponivel: 2, reservado: 0 }],
+    );
+
+    expect(resposta).toContain("não usei o saldo dele");
+    expect(resposta).not.toContain("2 unidade(s) física(s)");
+  });
+
+  it("separa perguntas de saldo das perguntas de KPI e de dinheiro parado", () => {
+    expect(ehPerguntaQuantidadeAtual(
+      "quanto temos de AVENTAL DE NAPA (BRANCO) em estoque atualmente?",
+    )).toBe(true);
+    expect(ehPerguntaQuantidadeAtual(
+      "quantas entradas registradas tenho no meu estoque atualmente?",
+    )).toBe(false);
+    expect(ehPerguntaQuantidadeAtual(
+      "quanto dinheiro eu tenho parado no estoque hoje?",
+    )).toBe(false);
   });
 });
