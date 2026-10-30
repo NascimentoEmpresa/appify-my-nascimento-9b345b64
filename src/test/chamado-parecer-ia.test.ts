@@ -57,12 +57,22 @@ describe("parecer da I.A do chamado", () => {
     expect(critica.parecer.valor_medio).toBeGreaterThan(facil.parecer.valor_medio * 2);
   });
 
-  it("a equipe interna usa as horas reais informadas ao concluir, não a estimativa", () => {
-    const v = validarParecer(resposta(), "12.5");
+  it("com horas gastas, os três perfis e a média usam SÓ elas (SIS-2026-0787, 30/10/2026)", () => {
+    // A I.A estimou 10/15/8 h; o dev informou 8 h. Nível 4 = ×2.
+    const v = validarParecer(resposta({ complexidade_nivel: 4 }), "8");
     expect(v.ok).toBe(true);
     if (!v.ok) return;
-    expect(v.parecer.precos[2].horas).toBe(12.5);
-    expect(v.parecer.precos[0].horas).toBe(10); // freelancer segue a estimativa da I.A
+    expect(v.parecer.precos.map((p) => p.horas)).toEqual([8, 8, 8]);
+    expect(v.parecer.precos.map((p) => p.valor)).toEqual([3200, 5120, 2640]);
+    expect(v.parecer.valor_medio).toBe(3653.33);
+    expect(v.parecer.horas_estimadas).toBe(8);
+  });
+
+  it("sem horas gastas, vale a estimativa da I.A por perfil", () => {
+    const v = validarParecer(resposta(), null);
+    expect(v.ok).toBe(true);
+    if (!v.ok) return;
+    expect(v.parecer.precos.map((p) => p.horas)).toEqual([10, 15, 8]);
   });
 
   it("recusa resposta sem um dos perfis, sem nível ou sem justificativa", () => {

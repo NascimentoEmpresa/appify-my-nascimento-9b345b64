@@ -19,9 +19,15 @@
 //
 // SÓ DEPOIS DAS HORAS (29/10/2026, Pablo: "a i.a só pode dar parecer quando
 // o desenvolvedor concluir e informar as horas"): o parecer nasce na
-// conclusão, com as horas que o dev informou (mig 20261029002400). A "Equipe
-// interna" usa EXATAMENTE essas horas; freelancer e software house são
-// estimados pela I.A a partir delas.
+// conclusão, com as horas que o dev informou (mig 20261029002400).
+//
+// SÓ AS HORAS GASTAS (30/10/2026, Pablo, SIS-2026-0787: 8 h gastas e o
+// parecer cotando freelancer em 14 h e software house em 20 h): havendo
+// horas gastas, os TRÊS perfis usam essas horas — a diferença de preço entre
+// eles é só o valor/hora fixo. A I.A ainda devolve "horas" por perfil, mas
+// aí elas são ignoradas; sem horas gastas, vale a estimativa dela. A tela
+// refaz a mesma conta (src/lib/chamados/parecerHorasGastas.ts) e a mig
+// 20261030000200 recalculou os pareceres já gravados.
 //
 // COMPLEXIDADE PESA NO PREÇO (29/10/2026, Pablo: "tem coisa que o
 // desenvolvedor faz que leva 1h mas é de extrema importância e complexidade,
@@ -193,12 +199,13 @@ COMO ESTIMAR:
 1. Se vier a seção "ENTREGA REAL", ela manda: o preço é do que FOI ENTREGUE, não do texto de abertura (que costuma ser curto). Leia os títulos das PRs para entender o escopo verdadeiro e pense no PROJETO equivalente contratado do zero: descoberta, arquitetura, implementação, testes, migração de dados, infraestrutura, documentação/runbook, acompanhamento em produção, correções. Cada PR mergeada de infraestrutura, banco, segurança ou arquitetura costuma representar de 4 a 16 horas de especialista; PR pequena de tela, de 1 a 4 horas. Muitas PRs ao longo de semanas = projeto grande, não chamado pequeno.
 2. Sem entrega real (chamado novo), estime pelo pedido, incluindo entendimento, implementação, testes e publicação.
 3. Pense também no "produto equivalente": se o chamado entrega um módulo ou sistema inteiro (ex.: recrutamento e seleção completo, migração de infraestrutura com alta disponibilidade e failover), compare com quanto o mercado cobra por esse sistema/projeto e NÃO subestime — projetos assim custam dezenas a centenas de milhares de reais numa software house.
-4. Fornecedor externo precisa de mais horas que a equipe interna (curva de aprendizado de um ERP grande, reuniões, gestão de projeto).
+4. Sem horas reais informadas, fornecedor externo precisa de mais horas que a equipe interna (curva de aprendizado de um ERP grande, reuniões, gestão de projeto).
 
 Perfis (use EXATAMENTE estes códigos). Todos são de DESENVOLVEDOR SÊNIOR e o valor/hora de cada um é FIXO, definido pela empresa — você NÃO escolhe valor/hora, só estima as HORAS que cada perfil levaria:
 - "freelancer": freelancer PJ sênior;
 - "software_house": software house ou consultoria com time sênior;
-- "interno": desenvolvedor sênior interno CLT, que já conhece o ERP. Se vier "Horas reais informadas pelo desenvolvedor", as horas do interno SÃO essas (não estime outras); freelancer e software house partem delas e somam a curva de aprendizado de um ERP grande, reuniões e gestão.
+- "interno": desenvolvedor sênior interno CLT, que já conhece o ERP.
+Se vier "Horas reais informadas pelo desenvolvedor", os TRÊS perfis usam EXATAMENTE essas horas (repita esse número em "horas" nos três, não estime outras): a diferença de preço entre os perfis vem só do valor/hora fixo de cada um. Na "explicacao", diga o que essas horas cobrem para aquele perfil.
 
 Complexidade de 1 a 5 — mede DIFICULDADE TÉCNICA, RISCO e IMPORTÂNCIA para a empresa, NÃO a duração. Algo feito em 1 hora pode ser 5 (correção crítica em produção, regra de acesso/segurança, dado financeiro ou de folha, banco em produção, algo que parava a operação) e algo de 1 hora pode ser 1 (trocar um texto). A complexidade multiplica o preço, então avalie com cuidado:
 1 = muito baixa (texto, rótulo, ajuste trivial, sem risco), 2 = baixa (ajuste numa tela, filtro simples), 3 = média (tela ou regra nova, mexe no banco), 4 = alta (vários módulos, regras de acesso, integração, risco real de quebrar algo em uso), 5 = muito alta (infraestrutura, segurança, migração de dados, alta disponibilidade, correção crítica em produção, integração externa complexa, módulo ou sistema inteiro).
@@ -292,7 +299,7 @@ Como responder:
 - Os valores gravados são FIXOS e definitivos: explique e justifique ESSES números. Não proponha preço, horas ou valor/hora diferentes, não refaça a conta com outros números e não diga que "daria outro valor". Se a pessoa discordar, explique o raciocínio por trás das horas gravadas.
 - O valor/hora de cada perfil é a tabela fixa da empresa para DESENVOLVEDOR SÊNIOR (abaixo), não uma escolha sua: diga isso e mostre por que é coerente com o mercado de sênior no Brasil.
 - O preço não mede só o tempo: o fator de complexidade multiplica a conta. Se perguntarem por que algo de poucas horas custa caro (ou barato), explique pela dificuldade, pelo risco e pela importância do que foi feito.
-- As horas da equipe interna são as horas reais que o desenvolvedor informou ao concluir.
+- Havendo horas reais informadas pelo desenvolvedor ao concluir, os três perfis usam essas mesmas horas; a diferença entre eles é só o valor/hora fixo (o da software house já embute gestão, impostos e margem).
 - O preço é o de MERCADO para contratar o resultado com profissional sênior, não o tempo que a equipe interna levou. Se houver "ENTREGA REAL" abaixo, use as PRs para mostrar de onde vêm as horas.
 - Não invente fonte, pesquisa ou estatística com nome e número exato que você não tem. Pode citar as referências de mercado de forma geral (tabelas de freelancer, propostas de software house, custo CLT de dev pleno/sênior no Brasil em 2026).
 - O parecer gravado não muda — diga isso se pedirem para alterar.
@@ -352,8 +359,8 @@ export function validarParecer(bruto: unknown, horasReais?: number | string | nu
   for (const ref of PERFIS) {
     const item = lista.find((p) => p && String(p.perfil ?? "").trim() === ref.perfil);
     if (!item) return { ok: false, erro: `A I.A não estimou o perfil "${ref.rotulo}".` };
-    // Equipe interna = as horas que o dev informou, quando há.
-    const horasBrutas = ref.perfil === "interno" && reais > 0 ? reais : num(item.horas);
+    // Horas gastas informadas valem para os três perfis (30/10/2026).
+    const horasBrutas = reais > 0 ? reais : num(item.horas);
     if (!(horasBrutas > 0)) {
       return { ok: false, erro: `Horas inválidas para "${ref.rotulo}".` };
     }
