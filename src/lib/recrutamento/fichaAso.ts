@@ -2,6 +2,7 @@
 // 18/09/2026; mig 191). O banco monta a ficha (rec_ficha_aso): aqui ficam a
 // ordem dos campos, os rótulos, quais o Recrutamento pode preencher à mão
 // quando o automático não acha, e a conta do que falta.
+import { postoELocalDaVaga } from "@/lib/recrutamento/postoDaVaga";
 
 export interface FichaAso {
   candidato_id: number;
@@ -16,6 +17,8 @@ export interface FichaAso {
   pis: string | null;
   posto: string | null;
   local_cidade: string | null;
+  /** local_exato da vaga, cru (mig 20261030003400) — ver localExatoDaFicha. */
+  local_exato?: string | null;
   celular: string | null;
   email: string | null;
   empresa: string | null;
@@ -27,7 +30,16 @@ export interface FichaAso {
   faltando: string[];
 }
 
-export type CampoAso = Exclude<keyof FichaAso, "candidato_id" | "vaga_id" | "faltando" | "aso_posto" | "aso_empresa" | "aso_encarregado">;
+export type CampoAso = Exclude<keyof FichaAso, "candidato_id" | "vaga_id" | "faltando" | "aso_posto" | "aso_empresa" | "aso_encarregado" | "local_exato">;
+
+/**
+ * Endereço / local exato da vaga para o SST (30/10/2026, vaga #1418: "pro
+ * SST tá indo o nome do posto, mas precisa ir o local também"). Só quando
+ * diz algo além do posto — a vaga do encarregado grava em local_exato o
+ * próprio nome do posto. Opcional: não entra na conta do que falta.
+ */
+export const localExatoDaFicha = (f: Partial<FichaAso> | null | undefined): string =>
+  postoELocalDaVaga(f?.posto, f?.local_exato).local;
 
 /** A ordem do chamado. */
 export const CAMPOS_ASO: { key: CampoAso; label: string }[] = [
@@ -101,10 +113,11 @@ export function textoChecklistAso(f: Partial<FichaAso> | null | undefined): stri
     ["PIS", v(f?.pis)],
     ["Setor/Posto", v(f?.posto)],
     ["Local / Cidade", v(f?.local_cidade)],
+    ["Endereço / Local exato", localExatoDaFicha(f)],
     ["Celular", v(f?.celular)],
     ["Empresa", v(f?.empresa)],
     ["Contrato", v(f?.contrato)],
     ["Encarregado", v(f?.encarregado)],
-  ];
+  ].filter(([k, x]) => x || k !== "Endereço / Local exato") as [string, string][]; // endereço é opcional: sem ele, a linha nem aparece
   return ["ASO - ATESTADO DE SAÚDE OCUPACIONAL", ...linhas.map(([k, x]) => (x ? `${k}: ${x}` : `${k}:`))].join("\n");
 }
