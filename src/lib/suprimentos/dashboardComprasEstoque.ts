@@ -52,6 +52,11 @@ export interface DashboardComprasEstoqueDados {
   saving_resumo: { total: number; implantacao: number; execucao: number };
   solicitacoes_por_contrato: (SerieNomeQuantidade & { despachadas: number; pendentes: number })[];
   motivos_pendencias: SerieNomeQuantidade[];
+  /** Envios feitos na rota Cotações do Malote, um processo por solicitação. */
+  cotacoes_malote_por_comprador?: SerieNomeQuantidade[];
+  /** Respostas enviadas no módulo de Cotações para Licitação. */
+  cotacoes_licitacao_por_comprador?: SerieNomeQuantidade[];
+  /** Série combinada legada; mantida no payload para compatibilidade. */
   cotacoes_por_comprador: SerieNomeQuantidade[];
   cotacoes_por_solicitacao: SerieNomeQuantidade[];
   evolucao: {
@@ -302,6 +307,14 @@ export function consolidarDashboardsCompras(
     solicitacoes_por_contrato: [...solicitacoesPorContrato.values()]
       .sort((a, b) => b.quantidade - a.quantidade).slice(0, 10),
     motivos_pendencias: agruparNomeQuantidade(paineis.map((p) => p.motivos_pendencias)),
+    cotacoes_malote_por_comprador: agruparNomeQuantidade(
+      paineis.map((p) => p.cotacoes_malote_por_comprador ?? []),
+      10,
+    ),
+    cotacoes_licitacao_por_comprador: agruparNomeQuantidade(
+      paineis.map((p) => p.cotacoes_licitacao_por_comprador ?? []),
+      10,
+    ),
     cotacoes_por_comprador: agruparNomeQuantidade(paineis.map((p) => p.cotacoes_por_comprador), 10),
     cotacoes_por_solicitacao: agruparNomeQuantidade(paineis.map((p) => p.cotacoes_por_solicitacao)),
     evolucao: [...evolucao.values()].sort((a, b) => a.mes.localeCompare(b.mes)),

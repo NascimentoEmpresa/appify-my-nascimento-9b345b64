@@ -44,6 +44,8 @@ function painel(empresa: string, pedidos: number, disponivel: number): Dashboard
     saving_resumo: { total: 10, implantacao: 4, execucao: 6 },
     solicitacoes_por_contrato: [{ nome: `Contrato ${empresa}`, quantidade: pedidos, despachadas: pedidos - 2, pendentes: 1 }],
     motivos_pendencias: [{ nome: "Aguardando compra", quantidade: 1 }],
+    cotacoes_malote_por_comprador: [{ nome: `Comprador Malote ${empresa}`, quantidade: 1 }],
+    cotacoes_licitacao_por_comprador: [{ nome: `Comprador Licitação ${empresa}`, quantidade: 1 }],
     cotacoes_por_comprador: [{ nome: `Comprador ${empresa}`, quantidade: 2 }],
     cotacoes_por_solicitacao: [{ nome: "1 cotação", quantidade: 2 }],
     evolucao: [{ mes: "2026-10", rotulo: "out/26", solicitacoes: pedidos - 1, cotacoes: 2, entradas: 3, saidas: 2 }],
@@ -74,6 +76,14 @@ describe("dashboard de Suprimentos — consolidado de empresas", () => {
       expect.objectContaining({ mes: "2026-10", solicitacoes: 28, entradas: 6, saidas: 4 }),
     ]);
     expect(resultado.filtros.contratos).toHaveLength(2);
+    expect(resultado.cotacoes_malote_por_comprador).toEqual([
+      { nome: "Comprador Malote A", quantidade: 1 },
+      { nome: "Comprador Malote B", quantidade: 1 },
+    ]);
+    expect(resultado.cotacoes_licitacao_por_comprador).toEqual([
+      { nome: "Comprador Licitação A", quantidade: 1 },
+      { nome: "Comprador Licitação B", quantidade: 1 },
+    ]);
     expect(resultado.periodo_disponivel).toMatchObject({
       inicio: "2026-03-17",
       solicitacoes_inicio: "2026-03-17",
