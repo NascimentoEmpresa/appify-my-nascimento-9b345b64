@@ -49,6 +49,23 @@ function painel(empresa: string, pedidos: number, disponivel: number): Dashboard
     cotacoes_por_comprador: [{ nome: `Comprador ${empresa}`, quantidade: 2 }],
     cotacoes_por_solicitacao: [{ nome: "1 cotação", quantidade: 2 }],
     evolucao: [{ mes: "2026-10", rotulo: "out/26", solicitacoes: pedidos - 1, cotacoes: 2, entradas: 3, saidas: 2 }],
+    entregas_resumo: empresa === "A"
+      ? { total_despachado: 3, correios: 2, supervisores: 1, confirmadas: 1, sem_modalidade: 0 }
+      : { total_despachado: 2, correios: 0, supervisores: 1, confirmadas: 1, sem_modalidade: 1 },
+    entregas_por_responsavel: empresa === "A"
+      ? [{ nome: "João Supervisor", correios: 0, supervisores: 1, sem_modalidade: 0, total: 1 }]
+      : [{ nome: "João Supervisor", correios: 0, supervisores: 1, sem_modalidade: 0, total: 1 }],
+    entregas_recentes: [{
+      id: `PED-${empresa}`,
+      data: `2026-10-${empresa === "A" ? "27" : "28"}T12:00:00Z`,
+      contrato: `Contrato ${empresa}`,
+      destino: `Posto ${empresa}`,
+      modalidade: "SUPERVISOR",
+      responsavel: "João Supervisor",
+      comprovacao: "CONFIRMADA",
+      recebedor: `Recebedor ${empresa}`,
+      rastreio: null,
+    }],
     solicitacoes_recentes: [],
     cotacoes_recentes: [],
     estoque_por_categoria: [{ nome: "Uniformes", valor: disponivel * 10 }],
@@ -84,6 +101,17 @@ describe("dashboard de Suprimentos — consolidado de empresas", () => {
       { nome: "Comprador Licitação A", quantidade: 1 },
       { nome: "Comprador Licitação B", quantidade: 1 },
     ]);
+    expect(resultado.entregas_resumo).toEqual({
+      total_despachado: 5,
+      correios: 2,
+      supervisores: 2,
+      confirmadas: 2,
+      sem_modalidade: 1,
+    });
+    expect(resultado.entregas_por_responsavel).toEqual([
+      { nome: "João Supervisor", correios: 0, supervisores: 2, sem_modalidade: 0, total: 2 },
+    ]);
+    expect(resultado.entregas_recentes?.map((linha) => linha.id)).toEqual(["PED-B", "PED-A"]);
     expect(resultado.periodo_disponivel).toMatchObject({
       inicio: "2026-03-17",
       solicitacoes_inicio: "2026-03-17",
