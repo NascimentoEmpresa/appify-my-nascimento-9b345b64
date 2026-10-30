@@ -2,7 +2,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 
 // Fluxo de Caixa — linhas importadas da planilha: excluir (lixeira + restaurar) e ratear.
-// As regras moram nas RPCs (migration 20261015000010); permissão: financeiro-fluxo-caixa-gestao › alterar.
+// As regras moram nas RPCs (migrations 20261015000010 e 20261030002000); permissão em financeiro-fluxo-caixa-gestao:
+// ratear = incluir; excluir/restaurar = excluir (SIS-2026-0712 separou das de editar, que é alterar).
 const LIXEIRA_KEY = "fluxo_caixa_importado_lixeira";
 
 function invalidarFluxo(qc: ReturnType<typeof useQueryClient>) {
