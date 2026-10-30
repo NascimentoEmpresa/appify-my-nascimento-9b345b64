@@ -1665,6 +1665,9 @@ const CAPS: { papel: FormCap; rotulo: string; desc: string }[] = [
   { papel: "ver_lixeira",      rotulo: "Lixeira de formularios",   desc: "Ver e restaurar formularios apagados (30 dias)" },
   { papel: "diagnostico_feedback", rotulo: "Diagnóstico IA dos feedbacks", desc: "Gerar e ler o diagnóstico automático por setor" },
   { papel: "chat_ia_painel",   rotulo: "Chat IA do painel",          desc: "Perguntar à IA onde estão colaboradores e setores no Painel Gerencial" },
+  // mig 20261030001000 — nascem só com quem tinha a Pesquisa de Permanência no RH.
+  { papel: "assistente_ia",    rotulo: "Assistente de I.A",          desc: "Botão Assistente de I.A em todos os formulários (lê só as respostas que a pessoa já vê)" },
+  { papel: "rotatividade",     rotulo: "Rotatividade e plano de ação", desc: "Rotatividade por contrato/posto/função e plano de ação nos formulários com local de trabalho (Pesquisa de Permanência)" },
 ];
 
 // Lista de capacidades como linhas com Switch à direita (mesmo padrão dos menus).

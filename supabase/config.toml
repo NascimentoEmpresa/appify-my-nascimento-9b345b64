@@ -170,11 +170,11 @@ verify_jwt = true
 [functions.tvg-ia]
 verify_jwt = true
 
-# RH › Pesquisa de Permanência (mig 20261028001200): agente de I.A sobre
-# rotatividade. JWT do usuário — relê respostas e turnover pelas RPCs
-# pp_respostas/pp_turnover com a sessão dele (menu rh_pesquisa_permanencia);
+# Formulários › Assistente de I.A, em todos os formulários (mig 20261030001000;
+# nasceu como o agente da Pesquisa de Permanência, mig 20261028001200). JWT do
+# usuário — capacidade assistente_ia e as respostas que a RLS mostra a ele;
 # para a IA vai só o agregado, sem resposta individual.
-[functions.pesquisa-permanencia-ia]
+[functions.formulario-assistente-ia]
 verify_jwt = true
 
 # Suprimentos › Dashboard › Estoque Saudável (migs 20261020000020/21/22): a
