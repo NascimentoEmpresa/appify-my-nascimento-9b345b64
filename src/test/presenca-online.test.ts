@@ -1,5 +1,17 @@
 import { describe, expect, it } from "vitest";
 import {
+  alternarFavorito,
+  alternarRecolhido,
+  CHAVE_FAVORITOS,
+  montarGruposPresenca,
+  moverItem,
+  normalizarPreferencias,
+  ordenarSetores,
+  PREFERENCIAS_VAZIAS,
+  reordenarPessoa,
+  reordenarSetor,
+  SEM_SETOR,
+  type UsuarioElenco,
   estaAtivo,
   iniciais,
   INATIVIDADE_AUSENTE_MS,
@@ -88,5 +100,75 @@ describe("iniciais", () => {
     expect(iniciais("cálita")).toBe("C");
     expect(iniciais("  ")).toBe("?");
     expect(iniciais(null)).toBe("?");
+  });
+});
+
+describe("painel por setor com favoritos", () => {
+  const elenco: UsuarioElenco[] = [
+    { user_id: "a", nome: "Ana", avatar_url: null, setor: "RH" },
+    { user_id: "b", nome: "Bruno", avatar_url: null, setor: "RH" },
+    { user_id: "c", nome: "Carla", avatar_url: null, setor: "Financeiro" },
+    { user_id: "d", nome: "Érica", avatar_url: null, setor: null },
+    { user_id: "e", nome: "Zeca", avatar_url: null, setor: "RH" },
+  ];
+  const presencas: PresencaLinha[] = [
+    { user_id: "e", nome: "Zeca", avatar_url: null, setor: "RH", visto_em: antes(0), ativo_em: antes(0) },
+    { user_id: "b", nome: "Bruno", avatar_url: null, setor: "RH", visto_em: antes(0), ativo_em: antes(JANELA_ONLINE_MS + 1) },
+  ];
+  const resumo = (gs: ReturnType<typeof montarGruposPresenca>) =>
+    gs.map((g) => `${g.titulo}[${g.online}/${g.total}]:${g.pessoas.map((p) => `${p.nome}=${p.status}`).join(",")}`);
+
+  it("mostra todos, offline incluído; online > ausente > offline; Sem setor por último", () => {
+    expect(resumo(montarGruposPresenca(elenco, presencas, AGORA, PREFERENCIAS_VAZIAS))).toEqual([
+      "Financeiro[0/1]:Carla=offline",
+      "RH[1/3]:Zeca=online,Bruno=ausente,Ana=offline",
+      `${SEM_SETOR}[0/1]:Érica=offline`,
+    ]);
+  });
+
+  it("favorito sai do setor e vai para o grupo Favoritos no topo", () => {
+    const prefs = alternarFavorito(PREFERENCIAS_VAZIAS, "c");
+    const gs = montarGruposPresenca(elenco, presencas, AGORA, prefs);
+    expect(gs[0].chave).toBe(CHAVE_FAVORITOS);
+    expect(gs[0].pessoas.map((p) => p.user_id)).toEqual(["c"]);
+    expect(gs.some((g) => g.titulo === "Financeiro")).toBe(false);
+    expect(alternarFavorito(prefs, "c").favoritos).toEqual([]);
+  });
+
+  it("ordem arrastada vale; quem nunca foi arrastado vem depois", () => {
+    const prefs = reordenarPessoa(PREFERENCIAS_VAZIAS, "RH", ["e", "b", "a"], "a", "e");
+    expect(prefs.ordemPessoas.RH).toEqual(["a", "e", "b"]);
+    const comNovo = [...elenco, { user_id: "f", nome: "Fábio", avatar_url: null, setor: "RH" }];
+    const g = montarGruposPresenca(comNovo, presencas, AGORA, prefs).find((x) => x.chave === "RH")!;
+    expect(g.pessoas.map((p) => p.user_id)).toEqual(["a", "e", "b", "f"]);
+  });
+
+  it("setores arrastados ficam na ordem; Sem setor continua no fim", () => {
+    const prefs = reordenarSetor(PREFERENCIAS_VAZIAS, ["Financeiro", "RH"], "RH", "Financeiro");
+    expect(montarGruposPresenca(elenco, presencas, AGORA, prefs).map((g) => g.titulo)).toEqual([
+      "RH",
+      "Financeiro",
+      SEM_SETOR,
+    ]);
+    expect(ordenarSetores([SEM_SETOR, "B", "A"], [])).toEqual(["A", "B", SEM_SETOR]);
+  });
+
+  it("busca ignora acento/caixa, some com grupo vazio e abre os recolhidos", () => {
+    const prefs = alternarRecolhido(PREFERENCIAS_VAZIAS, SEM_SETOR);
+    expect(montarGruposPresenca(elenco, presencas, AGORA, prefs).at(-1)!.recolhido).toBe(true);
+    const gs = montarGruposPresenca(elenco, presencas, AGORA, prefs, "ERICA");
+    expect(gs.map((g) => `${g.titulo}:${g.recolhido}`)).toEqual([`${SEM_SETOR}:false`]);
+  });
+
+  it("normalizarPreferencias descarta lixo do jsonb", () => {
+    expect(normalizarPreferencias(null)).toEqual(PREFERENCIAS_VAZIAS);
+    expect(
+      normalizarPreferencias({ favoritos: ["a", "a", 3, ""], ordemPessoas: { RH: ["x"], X: "y" }, recolhidos: "RH" }),
+    ).toEqual({ favoritos: ["a"], ordemSetores: [], ordemPessoas: { RH: ["x"] }, recolhidos: [] });
+  });
+
+  it("moverItem não mexe quando o item não existe", () => {
+    const l = ["a", "b"];
+    expect(moverItem(l, "z", "a")).toBe(l);
   });
 });
