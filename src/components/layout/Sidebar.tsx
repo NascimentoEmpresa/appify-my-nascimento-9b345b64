@@ -69,7 +69,7 @@ import {
   UserMinus,
   UserPlus,
   CalendarCheck2,
-  AlertTriangle, WandSparkles, Clock, FileSpreadsheet } from "lucide-react";
+  AlertTriangle, WandSparkles, Clock, FileSpreadsheet, GitPullRequest } from "lucide-react";
 import { useTemAlcada } from "@/hooks/useTemAlcada";
 import { useAccessibleMenus, matchMenuCode } from "@/hooks/useAccessibleMenus";
 import { useModoExterno, rotaPermitidaExterno } from "@/hooks/useModoExterno";
@@ -407,6 +407,9 @@ const financeiroModule: ModuleDef = {
         // SIS-2026-0599: resumo financeiro do contrato que vai começar.
         { label: "Início de Contrato", to: "/app/financeiro/inicio-de-contrato", icon: Banknote },
         { label: "Conferência de Ponto", to: "/app/financeiro/conferencia-ponto", icon: ClipboardCheck },
+        // Ficha Financeira (29/10/2026, mig 20261029004700): tudo o que cada
+        // colaborador recebeu na Senior. Nasce sem ninguém liberado.
+        { label: "Ficha Financeira", to: "/app/financeiro/ficha-financeira", icon: Receipt },
         // Dashboard de Pontos (30/09/2026, mig 274): o painel do RH, com menu
         // próprio do Financeiro (financeiro_dashboard_pontos).
         { label: "Dashboard de Pontos", to: "/app/financeiro/dashboard-pontos", icon: BarChart3 },
@@ -949,6 +952,7 @@ const sistemasModule: ModuleDef = {
         { label: "Painel de Distribuição", to: "/app/sistemas/chamados/painel", icon: BarChart3 },
         { label: "Dashboard de Chamados", to: "/app/sistemas/chamados/dashboard-tv", icon: LayoutDashboard },
         { label: "Painel do Desenvolvedor", to: "/app/sistemas/chamados/dev", icon: ClipboardList, notif: "dev" },
+        { label: "Controle de Pull Requests (PR)", to: "/app/sistemas/chamados/pull-requests", icon: GitPullRequest },
       ],
     },
     {
