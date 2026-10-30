@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import { useParams, useNavigate, Navigate } from "react-router-dom";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -28,6 +28,8 @@ import {
   useSolicitarAjusteCotacao,
   useSouSupervisorMalote,
   souAprovadorSolicitacao,
+  souLancadorDespesa,
+  classificacaoTemLancadorConfigurado,
   uploadAnexosMalote,
   registrarEventoDespesa,
   STATUS_LABEL,
@@ -177,6 +179,18 @@ export default function SolicitacaoVisualizar() {
   const souAprovadorDaClassificacao = souAprovadorSolicitacao(despesa, user?.id);
   const souSupervisorMalote = !!souSupervisorMaloteRaw;
   const souAprovadorOuSupervisor = souAprovadorDaClassificacao || souSupervisorMalote;
+
+  // SIS-2026-0775: quem vai lançar a despesa (o lançador da Classificação; sem lançador, o solicitante) não deve parar aqui com a solicitação travada em
+  // "Cotação aprovada" — a tela dele é a Criar Despesa, onde ficam o lançamento e as ações Reprovar/Solicitar ajuste. Vale a mesma regra de Meus Itens
+  // (abrirItem). Quem também é aprovador/supervisor segue aqui, onde já tem Ajuste e Cancelar.
+  const vaiLancarDespesa =
+    despesa.status === "cotacao_aprovada" &&
+    despesa.origem === "solicitacao" &&
+    souSupervisorMaloteRaw !== undefined && // só decide depois de saber se é supervisor, para não redirecionar o aprovador por engano
+    !souAprovadorOuSupervisor &&
+    (classificacaoTemLancadorConfigurado(despesa) ? souLancadorDespesa(despesa, user?.id) : despesa.created_by === user?.id);
+  if (vaiLancarDespesa) return <Navigate to={`/app/malote/criar-despesa?solicitacaoId=${despesa.id}`} replace />;
+
   const aguardandoMinhaAprovacaoInicial = despesa.status === "aguardando_aprovacao_inicial" && souAprovadorOuSupervisor;
   const aguardandoCotacaoComoAprovador = despesa.status === "aguardando_cotacao" && souAprovadorOuSupervisor;
   const emAprovacaoInicial = aguardandoMinhaAprovacaoInicial || aguardandoCotacaoComoAprovador;
