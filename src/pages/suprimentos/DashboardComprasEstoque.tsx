@@ -69,6 +69,7 @@ import {
   type DashboardComprasEstoqueDados,
   type FiltroDashboardCompras,
   type ItemMovimentado,
+  type SerieNomeQuantidade,
 } from "@/lib/suprimentos/dashboardComprasEstoque";
 import { cn } from "@/lib/utils";
 
@@ -187,19 +188,66 @@ function CardsCotacoes({ dados }: { dados: DashboardComprasEstoqueDados }) {
   );
 }
 
+function GraficoCotacoesPorPessoa({
+  titulo,
+  subtitulo,
+  dados,
+  vazio,
+  cor,
+}: {
+  titulo: string;
+  subtitulo: string;
+  dados: SerieNomeQuantidade[];
+  vazio: string;
+  cor: string;
+}) {
+  return (
+    <PainelGrafico titulo={titulo} subtitulo={subtitulo}>
+      {dados.length ? (
+        <div style={{ height: Math.max(300, dados.length * 48) }}>
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart data={dados} layout="vertical" margin={{ left: 10, right: 18 }}>
+              <CartesianGrid strokeDasharray="3 3" horizontal={false} />
+              <XAxis type="number" allowDecimals={false} />
+              <YAxis type="category" dataKey="nome" width={220} interval={0} tick={<TickCategoriaQuebrado maximoLinha={34} />} />
+              <Tooltip />
+              <Bar dataKey="quantidade" name="Envios" fill={cor} radius={[0, 4, 4, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      ) : <EstadoVazio texto={vazio} />}
+    </PainelGrafico>
+  );
+}
+
 function GraficosSolicitacoes({ dados }: { dados: DashboardComprasEstoqueDados }) {
+  const cotacoesMalote = dados.cotacoes_malote_por_comprador ?? [];
+  const cotacoesLicitacao = dados.cotacoes_licitacao_por_comprador ?? [];
   return (
     <>
-      <div className="grid gap-3 xl:grid-cols-3">
+      <div className="grid gap-3 xl:grid-cols-2">
         <PainelGrafico titulo="Solicitações por Contrato (Quantidade)">
           {dados.solicitacoes_por_contrato.length ? <div style={{ height: Math.max(300, dados.solicitacoes_por_contrato.length * 48) }}><ResponsiveContainer width="100%" height="100%"><BarChart data={dados.solicitacoes_por_contrato} layout="vertical" margin={{ left: 10, right: 18 }}><CartesianGrid strokeDasharray="3 3" horizontal={false} /><XAxis type="number" allowDecimals={false} /><YAxis type="category" dataKey="nome" width={220} interval={0} tick={<TickCategoriaQuebrado maximoLinha={34} />} /><Tooltip /><Bar dataKey="quantidade" name="Solicitações" fill="#2f8fea" radius={[0, 4, 4, 0]} /></BarChart></ResponsiveContainer></div> : <EstadoVazio texto="Sem solicitações para exibir." />}
         </PainelGrafico>
         <PainelGrafico titulo="Motivos das Pendências">
           {dados.motivos_pendencias.length ? <div className="h-[260px]"><ResponsiveContainer width="100%" height="100%"><BarChart data={dados.motivos_pendencias} layout="vertical" margin={{ left: 25, right: 18 }}><CartesianGrid strokeDasharray="3 3" horizontal={false} /><XAxis type="number" allowDecimals={false} /><YAxis type="category" dataKey="nome" width={115} interval={0} tick={<TickCategoria maximo={24} />} /><Tooltip /><Bar dataKey="quantidade" name="Pendências" fill="#ef8888" radius={[0, 4, 4, 0]} /></BarChart></ResponsiveContainer></div> : <EstadoVazio texto="Nenhuma pendência no período." />}
         </PainelGrafico>
-          <PainelGrafico titulo="Cotações por Comprador">
-          {dados.cotacoes_por_comprador.length ? <div style={{ height: Math.max(300, dados.cotacoes_por_comprador.length * 48) }}><ResponsiveContainer width="100%" height="100%"><BarChart data={dados.cotacoes_por_comprador} layout="vertical" margin={{ left: 10, right: 18 }}><CartesianGrid strokeDasharray="3 3" horizontal={false} /><XAxis type="number" allowDecimals={false} /><YAxis type="category" dataKey="nome" width={220} interval={0} tick={<TickCategoriaQuebrado maximoLinha={34} />} /><Tooltip /><Bar dataKey="quantidade" name="Cotações" fill="#2f8fea" radius={[0, 4, 4, 0]} /></BarChart></ResponsiveContainer></div> : <EstadoVazio texto="Nenhum comprador no período." />}
-        </PainelGrafico>
+      </div>
+      <div className="grid gap-3 xl:grid-cols-2">
+        <GraficoCotacoesPorPessoa
+          titulo="Envios de Cotação do Malote por Pessoa"
+          subtitulo="Cada barra conta solicitações enviadas em /app/suprimentos/cotacoes-malote; as três propostas internas continuam sendo um único processo."
+          dados={cotacoesMalote}
+          vazio="Nenhuma cotação enviada pelo Malote no período."
+          cor="#2f8fea"
+        />
+        <GraficoCotacoesPorPessoa
+          titulo="Cotações de Licitações por Pessoa"
+          subtitulo="Respostas enviadas no módulo /app/suprimentos/cotacoes, sem misturar os registros do Malote."
+          dados={cotacoesLicitacao}
+          vazio="Nenhuma cotação de Licitação no período."
+          cor="#7c3aed"
+        />
       </div>
       <div className="grid gap-3 xl:grid-cols-3">
         <PainelGrafico titulo="Quantidade de Cotações por Solicitação">
