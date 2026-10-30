@@ -24,7 +24,9 @@ import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { fmtDataHora } from "./types";
 import { fmtHorasGastas } from "@/lib/chamados/horasGastas";
-import { precificarPorHorasGastas } from "@/lib/chamados/parecerHorasGastas";
+import {
+  precificarPorHorasGastas, valorMedioMercado, valorRealGasto, HORAS_MES_CLT, SALARIO_MENSAL_DEV,
+} from "@/lib/chamados/parecerHorasGastas";
 
 export interface PrecoParecerIa {
   perfil: string;
@@ -176,10 +178,14 @@ export function useResumosParecerIa(enabled = true) {
     queryFn: async () => {
       const { data, error } = await (supabase as any)
         .from("CHAMADO_SISTEMA_PARECER_IA")
-        .select("chamado_id, status, valor_medio, complexidade_nivel, complexidade_rotulo, erro");
+        .select("chamado_id, status, valor_medio, precos, complexidade_nivel, complexidade_rotulo, erro");
       if (error) throw error;
       const m: Record<string, ResumoParecerIa> = {};
-      ((data ?? []) as ResumoParecerIa[]).forEach((p) => { m[p.chamado_id] = p; });
+      // Mesma média da tela do chamado: sem a equipe interna quando o preço
+      // é pelas horas gastas (30/10/2026).
+      ((data ?? []) as (ResumoParecerIa & { precos: PrecoParecerIa[] | null })[]).forEach(({ precos, ...p }) => {
+        m[p.chamado_id] = { ...p, valor_medio: valorMedioMercado(precos, p.valor_medio) };
+      });
       return m;
     },
   });
@@ -233,6 +239,10 @@ export function ParecerIaChamado({ chamadoId, podeGerar, horasReais }: {
   const conta = parecer
     ? precificarPorHorasGastas(parecer.precos, parecer.valor_medio, parecer.horas_estimadas, reais)
     : null;
+  // Com horas gastas, o card "Equipe interna" vira o valor real gasto
+  // conosco: hora do salário × horas, sem complexidade (30/10/2026).
+  const real = valorRealGasto(reais);
+  const fmtCentavos = (v: number) => v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 
   const gerar = async () => {
     setGerando(true);
@@ -313,7 +323,21 @@ export function ParecerIaChamado({ chamadoId, podeGerar, horasReais }: {
           </div>
 
           <div className="grid gap-2 md:grid-cols-3">
-            {conta!.precos.map((p) => (
+            {conta!.precos.map((p) => p.perfil === "interno" && real ? (
+              <div key={p.perfil} className="rounded-lg border border-success/40 bg-success/10 p-3">
+                <p className="text-xs font-semibold text-success">Valor real gasto (equipe interna)</p>
+                <p className="mt-1 text-lg font-bold text-success">{fmtCentavos(real.valor)}</p>
+                <p className="text-[11px] font-medium text-muted-foreground">
+                  {fmtCentavos(real.valor_hora)}/h × {fmtHorasGastas(real.horas)} h
+                </p>
+                <p className="mt-1.5 text-[11px] leading-snug">
+                  O que o chamado custou de fato: as horas gastas pelo valor da hora do nosso salário, sem fator de complexidade.
+                </p>
+                <p className="mt-1 text-[11px] leading-snug text-muted-foreground">
+                  Hora = salário mensal de {fmtCentavos(SALARIO_MENSAL_DEV)} ÷ {HORAS_MES_CLT} h (jornada CLT de 44 h semanais).
+                </p>
+              </div>
+            ) : (
               <div key={p.perfil} className="rounded-lg border border-border p-3">
                 <p className="text-xs font-semibold">{p.rotulo}</p>
                 <p className="mt-1 text-lg font-bold">{fmtReais(p.valor)}</p>
@@ -335,7 +359,7 @@ export function ParecerIaChamado({ chamadoId, podeGerar, horasReais }: {
               <>
                 <p className="font-semibold">Calculado pelas {fmtHorasGastas(conta!.horas)} h gastas</p>
                 <p className="mt-0.5 text-muted-foreground">
-                  As três modalidades usam as horas informadas pelo desenvolvedor ao concluir; muda só o valor/hora de cada uma.
+                  Freelancer e software house usam as horas informadas pelo desenvolvedor ao concluir; muda só o valor/hora de cada um, e o valor médio de mercado é a média dos dois. O card verde é o custo real conosco.
                   {parecer.horas_estimadas != null && Number(parecer.horas_estimadas) !== conta!.horas
                     ? ` A I.A tinha estimado ~${fmtHorasGastas(parecer.horas_estimadas)} h em média, o que não entra na conta.` : ""}
                 </p>
