@@ -560,7 +560,7 @@ function AdicionarPessoa({ nos, arv, parentInicial, onFechar, onSalvo }: {
 
   return (
     <Dialog open onOpenChange={(v) => !v && onFechar()}>
-      <DialogContent className="max-h-[88vh] max-w-lg overflow-y-auto">
+      <DialogContent className="max-h-[88vh] max-w-lg grid-cols-[minmax(0,1fr)] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2"><UserPlus className="h-5 w-5 text-primary" /> Adicionar pessoa</DialogTitle>
           <DialogDescription>Escolha um usuário do ERP e a quem ele reporta.</DialogDescription>
@@ -692,9 +692,12 @@ function EditarPessoa({ no, nos, arv, descendentes, podeAlterar, podeExcluir, po
     onSalvo();
   };
 
+  // grid-cols-[minmax(0,1fr)] (30/10/2026): com a rolagem vertical do Windows
+  // (~17 px) a coluna do grid do DialogContent não encolhia, tudo vazava para
+  // a direita e o Salvar sumia atrás de uma rolagem horizontal.
   return (
     <Dialog open onOpenChange={(v) => !v && onFechar()}>
-      <DialogContent className="max-h-[90vh] max-w-lg overflow-y-auto">
+      <DialogContent className="max-h-[90vh] max-w-xl grid-cols-[minmax(0,1fr)] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Editar no organograma</DialogTitle>
           <DialogDescription>Foto e nome vêm do perfil do usuário; o cargo, do cadastro.</DialogDescription>
@@ -788,7 +791,7 @@ function EditarPessoa({ no, nos, arv, descendentes, podeAlterar, podeExcluir, po
             {podeExcluir && <Button variant="ghost" className="gap-1.5 text-destructive hover:bg-destructive/10 hover:text-destructive" onClick={remover}><Trash2 className="h-4 w-4" /> Tirar do organograma</Button>}
             {podeIncluir && <Button variant="outline" className="gap-1.5" onClick={onAdicionarAbaixo}><UserPlus className="h-4 w-4" /> Adicionar abaixo</Button>}
           </div>
-          <div className="flex gap-2">
+          <div className="ml-auto flex gap-2">
             <Button variant="outline" onClick={onFechar}>Fechar</Button>
             {podeAlterar && <Button onClick={salvar} disabled={salvando}>{salvando ? "Salvando…" : "Salvar"}</Button>}
           </div>
