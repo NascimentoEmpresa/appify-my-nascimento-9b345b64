@@ -6,7 +6,8 @@
 // de 1 a 5. O parecer é GERADO uma vez — SÓ quando o chamado é concluído
 // com as horas gastas informadas (29/10/2026, mig 20261029002400) — e
 // guardado em CHAMADO_SISTEMA_PARECER_IA: abrir a tela só lê de lá.
-// Preço = horas × valor/hora fixo de sênior × fator da complexidade.
+// Preço = horas × valor/hora fixo de sênior × fator da complexidade; com
+// horas gastas, as horas dos TRÊS perfis são elas (30/10/2026).
 //
 // Falha da I.A aparece NA TELA (status 'erro' + mensagem) — a memória do
 // projeto registra que, nas outras I.As, a falha era silenciosa e ninguém
@@ -23,6 +24,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { fmtDataHora } from "./types";
 import { fmtHorasGastas } from "@/lib/chamados/horasGastas";
+import { precificarPorHorasGastas } from "@/lib/chamados/parecerHorasGastas";
 
 export interface PrecoParecerIa {
   perfil: string;
@@ -226,6 +228,12 @@ export function ParecerIaChamado({ chamadoId, podeGerar, horasReais }: {
     refetchInterval: (q) => ((q.state.data as ParecerIa | null | undefined)?.status === "pendente" ? 8000 : false),
   });
 
+  // Havendo horas gastas, preço e média só por elas (30/10/2026) — mesmo
+  // num parecer gravado antes da regra, com a estimativa da I.A por perfil.
+  const conta = parecer
+    ? precificarPorHorasGastas(parecer.precos, parecer.valor_medio, parecer.horas_estimadas, reais)
+    : null;
+
   const gerar = async () => {
     setGerando(true);
     setErroBotao(null);
@@ -291,9 +299,11 @@ export function ParecerIaChamado({ chamadoId, podeGerar, horasReais }: {
           <div className="flex flex-wrap items-end gap-x-6 gap-y-2">
             <div>
               <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Valor médio de mercado</p>
-              <p className="text-2xl font-bold">{fmtReais(parecer.valor_medio)}</p>
-              {parecer.horas_estimadas != null && (
-                <p className="text-[11px] text-muted-foreground">~{parecer.horas_estimadas.toLocaleString("pt-BR")} h em média</p>
+              <p className="text-2xl font-bold">{fmtReais(conta!.valor_medio)}</p>
+              {conta!.horas != null && (
+                <p className="text-[11px] text-muted-foreground">
+                  {conta!.pelasHorasGastas ? `${fmtHorasGastas(conta!.horas)} h gastas` : `~${conta!.horas.toLocaleString("pt-BR")} h em média`}
+                </p>
               )}
             </div>
             <div>
@@ -303,7 +313,7 @@ export function ParecerIaChamado({ chamadoId, podeGerar, horasReais }: {
           </div>
 
           <div className="grid gap-2 md:grid-cols-3">
-            {(parecer.precos ?? []).map((p) => (
+            {conta!.precos.map((p) => (
               <div key={p.perfil} className="rounded-lg border border-border p-3">
                 <p className="text-xs font-semibold">{p.rotulo}</p>
                 <p className="mt-1 text-lg font-bold">{fmtReais(p.valor)}</p>
@@ -318,19 +328,23 @@ export function ParecerIaChamado({ chamadoId, podeGerar, horasReais }: {
             ))}
           </div>
 
-          {/* Estimado × real (mig 20261029002400): as horas que o dev
-              informou ao concluir, no mesmo valor/hora e fator de cada perfil. */}
+          {/* Com horas gastas, a conta toda é por elas (30/10/2026) — a
+              estimativa da I.A aparece só como referência, fora da conta. */}
           <div className="rounded-lg border border-border bg-muted/30 p-3 text-xs">
-            <p className="font-semibold">
-              Estimado {parecer.horas_estimadas != null ? `${fmtHorasGastas(parecer.horas_estimadas)} h` : "—"} × real {reais != null ? `${fmtHorasGastas(reais)} h` : "—"}
-            </p>
-            {reais != null ? (
-              <p className="mt-0.5 text-muted-foreground">
-                Valor das horas reais: {(parecer.precos ?? []).map((p) =>
-                  `${p.rotulo} ${fmtReais(reais * p.valor_hora * (p.fator_complexidade ?? 1))}`).join(" · ")}
-              </p>
+            {conta!.pelasHorasGastas ? (
+              <>
+                <p className="font-semibold">Calculado pelas {fmtHorasGastas(conta!.horas)} h gastas</p>
+                <p className="mt-0.5 text-muted-foreground">
+                  As três modalidades usam as horas informadas pelo desenvolvedor ao concluir; muda só o valor/hora de cada uma.
+                  {parecer.horas_estimadas != null && Number(parecer.horas_estimadas) !== conta!.horas
+                    ? ` A I.A tinha estimado ~${fmtHorasGastas(parecer.horas_estimadas)} h em média, o que não entra na conta.` : ""}
+                </p>
+              </>
             ) : (
-              <p className="mt-0.5 text-muted-foreground">Horas reais não informadas (concluído antes da regra ou pela PR).</p>
+              <>
+                <p className="font-semibold">Estimativa da I.A</p>
+                <p className="mt-0.5 text-muted-foreground">Horas reais não informadas (concluído antes da regra ou pela PR).</p>
+              </>
             )}
           </div>
 
