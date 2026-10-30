@@ -3,8 +3,10 @@
 //   Lucro dos Contratos = valor líquido faturado − custos dos contratos (mesma conta da Lucratividade de Contratos).
 //   Despesas Administrativas = saídas do Fluxo de Caixa SEM contrato e as dos contratos "ADMINISTRATIVO - …" (centros de custo da empresa,
 //                              pedido da Controladoria, 22/10/2026), nas mesmas rubricas dos contratos (transferência, aplicação, empréstimo, financiamento etc. não contam).
-//   Resultado Final = Lucro dos Contratos − Total de Despesas Administrativas.
-//   Margem Final = Resultado Final ÷ Lucro dos Contratos.
+//   Resultado Operacional = Lucro dos Contratos − Total de Despesas Administrativas (era "Resultado Final").
+//   Resultado Gerencial após Ajustes = Resultado Operacional − sócios − Investimentos − Obras Adm.     (SIS-2026-0749)
+//   Resultado Gerencial Líquido = Resultado Gerencial após Ajustes − Tributos sobre o Resultado (IRPJ e CSLL).
+//   Margem Final = Resultado Operacional ÷ Lucro dos Contratos.
 //
 // Meses até o atual são realizados (despesa e faturamento pela competência; SIS-2026-0708).
 // Meses futuros são PROJETADOS:
@@ -60,9 +62,40 @@ export function ehContratoInvestimento(nome: string | null | undefined): boolean
   return (nome ?? "").normalize("NFD").replace(/[̀-ͯ]/g, "").trim().toUpperCase().startsWith("INVESTIMENTO");
 }
 
-// Ordem das colunas da aba com sócios: os sócios em ordem alfabética e "Investimentos" por último (logo antes do Lucro Líquido Final).
+// SIS-2026-0749: contratos "OBRAS ADM - …" (tratamento "Obra administrativa") formam a coluna "Obras Adm", com a mesma regra dos investimentos.
+export const ROTULO_OBRAS_ADM = "Obras Adm";
+
+// Ordem das colunas da aba com sócios: os sócios em ordem alfabética, depois "Investimentos" e por último "Obras Adm" (logo antes do Resultado Gerencial após Ajustes).
+const pesoColuna = (nome: string) => (nome === ROTULO_OBRAS_ADM ? 2 : nome === ROTULO_INVESTIMENTOS ? 1 : 0);
 export function ordenarColunasSocios(nomes: string[]): string[] {
-  return [...nomes].sort((a, b) => Number(a === ROTULO_INVESTIMENTOS) - Number(b === ROTULO_INVESTIMENTOS) || a.localeCompare(b, "pt-BR"));
+  return [...nomes].sort((a, b) => pesoColuna(a) - pesoColuna(b) || a.localeCompare(b, "pt-BR"));
+}
+
+// SIS-2026-0749: Tributos sobre o Resultado = saídas das classificações IRPJ e CSLL. Saem das Despesas Administrativas (e do Resultado Operacional) e
+// são descontadas só depois do Resultado Gerencial após Ajustes. Casa pela palavra no nome da classificação, sem acento e sem caixa, para valer também
+// para variações ("IRPJ - ADICIONAL"). IMPOSTOS e TRIBUTOS ESTADUAIS continuam como despesa administrativa. A ligação manual "não é custo" vale antes.
+export function ehTributoSobreResultado(l: Pick<LinhaFluxoCusto, "classificacao_id" | "classificacao_nome">, ligacoes?: LigacoesRubrica): boolean {
+  if (l.classificacao_id && ligacoes?.get(l.classificacao_id) === "nao_custo") return false;
+  const nome = (l.classificacao_nome ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase();
+  return /\b(IRPJ|CSLL)\b/.test(nome);
+}
+
+// Rubrica de despesa ADMINISTRATIVA: a do Fluxo, exceto o que virou Tributo sobre o Resultado (null = fora da despesa administrativa).
+function rubricaAdm(l: Pick<LinhaFluxoCusto, "classificacao_id" | "classificacao_nome">, ligacoes?: LigacoesRubrica): RubricaCusto | null {
+  return ehTributoSobreResultado(l, ligacoes) ? null : rubricaDaLinha(l, ligacoes);
+}
+
+/** mês ("YYYY-MM") → total lançado em IRPJ/CSLL (saídas sem contrato, mesma seleção da despesa administrativa). */
+export function tributosPorMes(linhas: LinhaFluxoCusto[], ligacoes?: LigacoesRubrica, empresaId?: string | null): Map<string, number> {
+  const mapa = new Map<string, number>();
+  for (const l of linhas) {
+    const mes = mesDoCusto(l);
+    if (l.tipo !== "saida" || l.contrato_id || !mes) continue;
+    if (empresaId && l.empresa_id !== empresaId) continue;
+    if (!ehTributoSobreResultado(l, ligacoes)) continue;
+    mapa.set(mes, (mapa.get(mes) ?? 0) + (l.valor || 0));
+  }
+  return mapa;
 }
 
 /** sócio → mês ("YYYY-MM") → total de despesa lançada no Fluxo (todas as saídas do contrato do sócio, qualquer classificação). */
@@ -111,6 +144,8 @@ export interface EntradasMes {
   admPorMes: Map<string, CustosPorRubrica>;
   // SIS-2026-0709: sócio → mês → despesa. Sem isto o Lucro Líquido Final é igual ao Resultado Final.
   sociosPorMes?: Map<string, Map<string, number>>;
+  // SIS-2026-0749: IRPJ + CSLL por mês (Tributos sobre o Resultado).
+  tributosPorMes?: Map<string, number>;
 }
 
 export interface LinhaFechamento {
@@ -125,7 +160,11 @@ export interface LinhaFechamento {
   // SIS-2026-0709: despesas de cada sócio no mês, o total e o Lucro Líquido Final (resultado − sócios).
   socios: Record<string, number>;
   totalSocios: number;
+  // = Resultado Gerencial após Ajustes (resultado operacional − sócios − Investimentos − Obras Adm; os dois últimos vêm junto em `socios`).
   lucroLiquido: number;
+  // SIS-2026-0749: Tributos sobre o Resultado (IRPJ + CSLL) e o Resultado Gerencial Líquido (lucroLiquido − tributos). Margem e status são deste último.
+  tributos: number;
+  resultadoGerencialLiquido: number;
   margemLiquida: number | null;
   statusLiquido: StatusFechamento | null;
 }
@@ -152,6 +191,7 @@ export function montarFechamento(e: EntradasMes): LinhaFechamento[] {
   const somaExec = refs.reduce((s, m) => s + (e.executavelPorMes.get(m) ?? 0), 0);
   const proporcao = somaExec > 0 ? somaLiq / somaExec : 0;
   const mediaCustoContrato = media((m) => e.custosContratoPorMes.get(m) ?? 0);
+  const mediaTributos = media((m) => e.tributosPorMes?.get(m) ?? 0);
   const mediaAdm: CustosPorRubrica = custosVazios();
   for (const r of RUBRICAS) mediaAdm[r.id] = media((m) => (e.admPorMes.get(m) ?? custosVazios())[r.id]);
 
@@ -182,9 +222,14 @@ export function montarFechamento(e: EntradasMes): LinhaFechamento[] {
     }
     const totalSocios = r2(Object.values(socios).reduce((s, v) => s + v, 0));
     const lucroLiquido = r2(resultado - totalSocios);
+    // Tributos: nos meses projetados vale o lançado ou a média dos últimos meses, o maior (como as demais despesas).
+    const tributosLancados = e.tributosPorMes?.get(mes) ?? 0;
+    const tributos = r2(projetado ? Math.max(tributosLancados, mediaTributos) : tributosLancados);
+    const resultadoGerencialLiquido = r2(lucroLiquido - tributos);
     return {
       mes, projetado, lucroContratos, adm, totalAdm, resultado, margem: margemFinal(resultado, lucroContratos), status: statusDoFechamento(lucroContratos, resultado),
-      socios, totalSocios, lucroLiquido, margemLiquida: margemFinal(lucroLiquido, lucroContratos), statusLiquido: statusDoFechamento(lucroContratos, lucroLiquido),
+      socios, totalSocios, lucroLiquido, tributos, resultadoGerencialLiquido,
+      margemLiquida: margemFinal(resultadoGerencialLiquido, lucroContratos), statusLiquido: statusDoFechamento(lucroContratos, resultadoGerencialLiquido),
     };
   });
 }
@@ -202,15 +247,19 @@ export interface TotalFechamento {
   socios: Record<string, number>;
   totalSocios: number;
   lucroLiquido: number;
+  // SIS-2026-0749
+  tributos: number;
+  resultadoGerencialLiquido: number;
   margemLiquida: number | null;
   statusLiquido: StatusFechamento | null;
 }
 
 export function totalDoFechamento(linhas: LinhaFechamento[]): TotalFechamento {
   let adm = custosVazios();
-  let lucro = 0, lucroRealizado = 0, lucroProjetado = 0;
+  let lucro = 0, lucroRealizado = 0, lucroProjetado = 0, tributosSoma = 0;
   const socios: Record<string, number> = {};
   for (const l of linhas) {
+    tributosSoma += l.tributos;
     for (const [s, v] of Object.entries(l.socios)) socios[s] = (socios[s] ?? 0) + v;
     adm = somaRubricas(adm, l.adm);
     lucro += l.lucroContratos;
@@ -222,10 +271,13 @@ export function totalDoFechamento(linhas: LinhaFechamento[]): TotalFechamento {
   for (const s of Object.keys(socios)) socios[s] = r2(socios[s]);
   const totalSocios = r2(Object.values(socios).reduce((t, v) => t + v, 0));
   const lucroLiquido = r2(resultado - totalSocios);
+  const tributos = r2(tributosSoma);
+  const resultadoGerencialLiquido = r2(lucroLiquido - tributos);
   return {
     lucroContratos, adm, totalAdm, resultado, margem: margemFinal(resultado, lucroContratos), status: statusDoFechamento(lucroContratos, resultado),
     lucroRealizado: r2(lucroRealizado), lucroProjetado: r2(lucroProjetado),
-    socios, totalSocios, lucroLiquido, margemLiquida: margemFinal(lucroLiquido, lucroContratos), statusLiquido: statusDoFechamento(lucroContratos, lucroLiquido),
+    socios, totalSocios, lucroLiquido, tributos, resultadoGerencialLiquido,
+    margemLiquida: margemFinal(resultadoGerencialLiquido, lucroContratos), statusLiquido: statusDoFechamento(lucroContratos, resultadoGerencialLiquido),
   };
 }
 
@@ -237,7 +289,7 @@ export function admPorMesRubrica(linhas: LinhaFluxoCusto[], ligacoes?: LigacoesR
     const mes = mesDoCusto(l);
     if (l.tipo !== "saida" || l.contrato_id || !mes) continue;
     if (empresaId && l.empresa_id !== empresaId) continue;
-    const rubrica = rubricaDaLinha(l, ligacoes);
+    const rubrica = rubricaAdm(l, ligacoes);
     if (!rubrica) continue;
     const atual = mapa.get(mes) ?? custosVazios();
     atual[rubrica] += l.valor || 0;
@@ -260,7 +312,7 @@ export function admPorClassificacao(linhas: LinhaFluxoCusto[], meses: Set<string
     const mesDaLinha = mesDoCusto(l);
     if (l.tipo !== "saida" || l.contrato_id || !mesDaLinha || !meses.has(mesDaLinha)) continue;
     if (empresaId && l.empresa_id !== empresaId) continue;
-    const rubrica = rubricaDaLinha(l, ligacoes);
+    const rubrica = rubricaAdm(l, ligacoes);
     if (!rubrica) continue;
     const nome = (l.classificacao_nome ?? "").trim() || "(sem classificação)";
     const atual = mapa.get(nome) ?? { classificacao: nome, rubrica, valor: 0, lancamentos: 0 };
@@ -319,8 +371,19 @@ export function detalheAdmPorClassificacao(
     const mes = mesDoCusto(l);
     if (l.tipo !== "saida" || l.contrato_id || !mes || !meses.has(mes)) return false;
     if (empresaId && l.empresa_id !== empresaId) return false;
-    const rubrica = rubricaDaLinha(l, ligacoes);
+    const rubrica = rubricaAdm(l, ligacoes);
     return !!rubrica && (!rubricas || rubricas.includes(rubrica));
+  });
+  return agruparPorClassificacao(escolhidas);
+}
+
+/** IRPJ/CSLL lançados nos meses, por classificação (mesma seleção de tributosPorMes). */
+export function detalheTributosPorClassificacao(linhas: LinhaFluxoCusto[], meses: Set<string>, ligacoes?: LigacoesRubrica, empresaId?: string | null): ItemDetalheClassificacao[] {
+  const escolhidas = linhas.filter((l) => {
+    const mes = mesDoCusto(l);
+    if (l.tipo !== "saida" || l.contrato_id || !mes || !meses.has(mes)) return false;
+    if (empresaId && l.empresa_id !== empresaId) return false;
+    return ehTributoSobreResultado(l, ligacoes);
   });
   return agruparPorClassificacao(escolhidas);
 }

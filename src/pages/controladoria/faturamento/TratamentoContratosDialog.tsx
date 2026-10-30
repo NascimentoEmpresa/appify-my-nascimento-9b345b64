@@ -52,7 +52,7 @@ export function TratamentoContratosDialog({ aberto, onFechar }: { aberto: boolea
           <DialogDescription>
             Define como cada contrato conta no Faturamento da Empresa, na Lucratividade de Contratos e no Fechamento da Empresa. <strong>Contrato comum</strong>: o custo entra em
             Despesas e no lucro. <strong>Fora das despesas</strong>: não entra em Despesas nem no lucro. <strong>Investimento</strong>: fora das despesas e do lucro, e o valor aparece
-            na coluna Investimentos do Fechamento. "Padrão" usa a regra pelo nome do contrato. A mudança vale para todos os relatórios e meses.
+            na coluna Investimentos do Fechamento. <strong>Obra administrativa</strong>: idem, na coluna Obras Adm. "Padrão" usa a regra pelo nome do contrato. A mudança vale para todos os relatórios e meses.
           </DialogDescription>
         </DialogHeader>
 
