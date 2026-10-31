@@ -503,8 +503,8 @@ export function DebitoAutomaticoModal({
             <div className="flex items-start gap-2 rounded-md border bg-amber-50 p-2.5 text-xs text-amber-800 dark:bg-amber-950/20 dark:text-amber-300">
               <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
               <span>
-                Este cartão tem a fatura importada: a cobrança já vem nela. Este débito fica cadastrado aqui, mas não gera lançamento próprio
-                no Fluxo de Caixa para não contar duas vezes.
+                Este cartão tem fatura importada: quando a fatura do período já estiver importada, a cobrança vem nela e este débito fica só cadastrado aqui,
+                sem lançamento próprio no Fluxo de Caixa (para não contar duas vezes). Sem fatura importada no período, ele entra no Fluxo normalmente.
               </span>
             </div>
           )}
