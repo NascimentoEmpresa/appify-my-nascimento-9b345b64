@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
@@ -6,9 +6,14 @@ import {
   estaAtivo,
   INTERVALO_HEARTBEAT_MS,
   montarListaPresenca,
+  normalizarPreferencias,
+  PREFERENCIAS_VAZIAS,
+  type PreferenciasPresenca,
   type PresencaLinha,
+  type UsuarioElenco,
 } from "@/lib/presencaOnline";
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 const sb = supabase as any;
 
 /**
@@ -94,5 +99,81 @@ export function usePresencaOnline(habilitado: boolean) {
     () => (q.data ? montarListaPresenca(q.data.linhas, q.data.agora) : []),
     [q.data],
   );
-  return { pessoas, carregando: q.isLoading, erro: q.error };
+  return {
+    pessoas,
+    linhas: q.data?.linhas ?? [],
+    agora: q.data?.agora ?? null,
+    carregando: q.isLoading,
+    erro: q.error,
+  };
+}
+
+/**
+ * Elenco do painel: TODOS os usuários ativos (nome, foto, setor), via
+ * presenca_usuarios (20261030003600). Muda pouco e são centenas de linhas,
+ * então fica 10 min em cache e não refaz por intervalo — quem refaz por
+ * minuto é só a presença, que é pequena.
+ */
+export function useElencoPresenca(habilitado: boolean) {
+  const { user } = useAuth();
+  return useQuery({
+    queryKey: ["presenca-elenco"],
+    enabled: habilitado && !!user?.id,
+    staleTime: 10 * 60_000,
+    gcTime: 60 * 60_000,
+    refetchOnWindowFocus: false,
+    queryFn: async () => {
+      const { data, error } = await sb.rpc("presenca_usuarios");
+      if (error) throw error;
+      return (data ?? []) as UsuarioElenco[];
+    },
+  });
+}
+
+/**
+ * Favoritos, ordem arrastada e grupos recolhidos — por usuário, no banco
+ * (usuario_presenca_preferencia), para valer em qualquer máquina. A tela
+ * muda na hora (cache otimista) e a gravação sai 700 ms depois do último
+ * gesto: arrastar várias pessoas seguidas vira um upsert só.
+ */
+export function usePreferenciasPresenca(habilitado: boolean) {
+  const { user } = useAuth();
+  const qc = useQueryClient();
+  const chave = ["presenca-preferencias", user?.id];
+  const timer = useRef<number | undefined>(undefined);
+
+  const q = useQuery({
+    queryKey: chave,
+    enabled: habilitado && !!user?.id,
+    staleTime: Infinity,
+    queryFn: async () => {
+      const { data, error } = await sb
+        .from("usuario_presenca_preferencia")
+        .select("preferencias")
+        .eq("user_id", user!.id)
+        .maybeSingle();
+      if (error) throw error;
+      return normalizarPreferencias(data?.preferencias);
+    },
+  });
+
+  useEffect(() => () => window.clearTimeout(timer.current), []);
+
+  const salvar = useCallback(
+    (prefs: PreferenciasPresenca) => {
+      if (!user?.id) return;
+      qc.setQueryData(["presenca-preferencias", user.id], prefs);
+      window.clearTimeout(timer.current);
+      timer.current = window.setTimeout(() => {
+        sb.from("usuario_presenca_preferencia")
+          .upsert({ user_id: user.id, preferencias: prefs }, { onConflict: "user_id" })
+          .then(({ error }: { error: unknown }) => {
+            if (error) console.warn("[presenca] preferência não salva", error);
+          });
+      }, 700);
+    },
+    [qc, user?.id],
+  );
+
+  return { prefs: q.data ?? PREFERENCIAS_VAZIAS, salvar };
 }
