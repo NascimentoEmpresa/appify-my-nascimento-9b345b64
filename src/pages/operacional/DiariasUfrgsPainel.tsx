@@ -58,6 +58,7 @@ import {
   useRemoverTarifaUfrgs,
   useSalvarTarifaUfrgs,
   useSolicitarAjusteUfrgs,
+  useReabrirAjusteUfrgs,
   useTarifasUfrgs,
   useVisualizacoesUfrgs,
 } from "@/hooks/useDiariasUfrgs";
@@ -170,6 +171,7 @@ export function DiariasUfrgsPainel({
   const decidir = useDecidirDiariaUfrgs();
   const enviarMalote = useEnviarMaloteUfrgs();
   const pedirAjuste = useSolicitarAjusteUfrgs();
+  const reabrirAjuste = useReabrirAjusteUfrgs();
   const excluir = useExcluirDiariaUfrgs();
   const registrarVisualizacao = useRegistrarVisualizacaoUfrgs();
 
@@ -318,6 +320,7 @@ export function DiariasUfrgsPainel({
     decidir.isPending ||
     enviarMalote.isPending ||
     pedirAjuste.isPending ||
+    reabrirAjuste.isPending ||
     excluir.isPending;
 
   const exportar = (linhas: DiariaUfrgs[], sufixo: string) => {
@@ -870,6 +873,24 @@ export function DiariasUfrgsPainel({
               toast({
                 title: "Não foi possível devolver para ajuste",
                 description: mensagemErroDiaria(e, "Erro ao solicitar o ajuste."),
+                variant: "destructive",
+              });
+            }
+          }}
+          onReabrirAjuste={async (uuid, motivo) => {
+            try {
+              await reabrirAjuste.mutateAsync({ id: uuid, motivo });
+              setModal(null);
+              toast({
+                title: "Diária reaberta para ajuste",
+                description: `A despesa foi cancelada no Malote e ${
+                  modal.d?.solicitante ?? "quem lançou"
+                } foi notificado.`,
+              });
+            } catch (e: unknown) {
+              toast({
+                title: "Não foi possível reabrir a diária",
+                description: mensagemErroDiaria(e, "Erro ao reabrir para ajuste."),
                 variant: "destructive",
               });
             }
