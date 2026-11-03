@@ -82,6 +82,16 @@ export function useDecidirMural() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async ({ itens, status }: { itens: Pick<ItemModeracao, "resposta_id" | "pergunta_id" | "linha">[]; status: StatusMural }) => {
+      // Lote numa chamada e numa transação (mig 20261103001300). Enquanto a
+      // migration não estiver no banco (PGRST202), cai no laço de sempre.
+      if (itens.length > 1) {
+        const { error } = await sb.rpc("cs_form_mural_decidir_lote", {
+          _itens: itens.map(({ resposta_id, pergunta_id, linha }) => ({ resposta_id, pergunta_id, linha })),
+          _status: status,
+        });
+        if (!error) return;
+        if (error.code !== "PGRST202") throw error;
+      }
       for (const i of itens) {
         const { error } = await sb.rpc("cs_form_mural_decidir", {
           _resposta_id: i.resposta_id, _pergunta_id: i.pergunta_id, _linha: i.linha, _status: status,

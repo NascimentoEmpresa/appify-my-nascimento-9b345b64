@@ -7,6 +7,8 @@
 // Secrets: WHATSAPP_TOKEN, WHATSAPP_PHONE_NUMBER_ID (SUPABASE_URL / ANON já existem).
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
+import { descobrirWaba } from "../_shared/whatsapp-waba.ts";
+import { barradoPorMarketing, primeiroNome, statusNaMeta, utilityAprovado } from "../_shared/whatsapp-saudacao.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
@@ -40,6 +42,65 @@ const cors = {
 };
 const json = (b: unknown, status = 200) =>
   new Response(JSON.stringify(b), { status, headers: { ...cors, "Content-Type": "application/json" } });
+
+// Qual saudação sai fora da janela, e por qual function. modo: "utility" (a
+// Meta aprovou como utilidade — não tem limite por pessoa), "marketing" (só
+// havia marketing; pode tomar 131049), "barrada" (só havia marketing e o
+// contato já levou 131049 nas últimas 24h: não sai), "enviada" (sem como
+// consultar a Meta — o comportamento de antes).
+interface Saudacao {
+  modo: "utility" | "marketing" | "barrada" | "enviada";
+  via: "biblioteca" | "abertura";
+  codigo?: string;
+  template?: string | null;
+  valores?: string[];
+}
+
+const capitaliza = (t: string) => t.toLowerCase().replace(/(^|\s)\S/g, (x) => x.toUpperCase());
+
+/**
+ * A saudação de 03/11/2026 (ver _shared/whatsapp-saudacao.ts): UTILITY
+ * aprovado primeiro, e as ligadas à candidatura na frente — é o que a Meta
+ * aceita como utilidade. A saudacao_contato_util ("como você está?") foi
+ * reclassificada como MARKETING e levou 131049 todo dia no mesmo candidato.
+ */
+// deno-lint-ignore no-explicit-any
+async function escolherSaudacao(db: any, conversaId: string, waId: string): Promise<Saudacao> {
+  const padrao: Saudacao = { modo: "enviada", via: "biblioteca", codigo: "saudacao" };
+  const waba = await descobrirWaba(WA_TOKEN, PHONE_NUMBER_ID);
+  if (!waba.id) return padrao;
+  const [naMeta, { data: cand }, { data: tpls }, { data: cfg }] = await Promise.all([
+    statusNaMeta(WA_TOKEN, waba.id),
+    db.rpc("wa_candidato_do_contato", { p_wa_id: waId }),
+    db.from("WA_TEMPLATE").select("codigo, template_nome").in("codigo", ["saudacao_candidatura", "saudacao"]).eq("ativo", true),
+    db.from("WA_BOT_CONFIG").select("*").limit(1).maybeSingle(),
+  ]);
+  if (!Object.keys(naMeta).length) return padrao;
+
+  const vaga = capitaliza(String(cand?.cargo ?? "").trim());
+  const valores = [primeiroNome(String(cand?.nome ?? "")) || "candidato(a)", vaga];
+  const nomeNaBiblioteca = (codigo: string) =>
+    (tpls ?? []).find((t: { codigo: string }) => t.codigo === codigo)?.template_nome ?? null;
+
+  const opcoes: Saudacao[] = [];
+  if (vaga && nomeNaBiblioteca("saudacao_candidatura")) {
+    opcoes.push({ modo: "utility", via: "biblioteca", codigo: "saudacao_candidatura", template: nomeNaBiblioteca("saudacao_candidatura"), valores });
+  }
+  // A abertura do Nova conversa ligada à candidatura (mig 20261027000110).
+  if (vaga && cfg?.abertura_template) {
+    opcoes.push({ modo: "utility", via: "abertura", template: String(cfg.abertura_template), valores });
+  }
+  if (nomeNaBiblioteca("saudacao")) {
+    opcoes.push({ modo: "utility", via: "biblioteca", codigo: "saudacao", template: nomeNaBiblioteca("saudacao") });
+  }
+  const utility = opcoes.find((o) => o.template && utilityAprovado(naMeta[o.template]));
+  if (utility) return utility;
+
+  // Nenhum UTILITY aprovado: a saudação de sempre, que é marketing — mas não
+  // para quem a Meta já barrou hoje.
+  const marketing: Saudacao = { ...padrao, modo: "marketing", template: nomeNaBiblioteca("saudacao") };
+  return (await barradoPorMarketing(db, conversaId)) ? { ...marketing, modo: "barrada" } : marketing;
+}
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: cors });
@@ -164,33 +225,45 @@ Deno.serve(async (req) => {
         fora_da_janela: true,
       }, 400);
     }
-    // Saudação só uma vez por espera: se já há pendente das últimas 24h, ela já foi.
-    const { count: jaPendentes } = await db.from("WA_MENSAGEM")
-      .select("id", { count: "exact", head: true })
-      .eq("conversa_id", conversa.id).eq("status", "pendente").gt("criada_em", limiteJanela);
-    if ((jaPendentes ?? 0) === 0) {
-      const r = await fetch(`${SUPABASE_URL}/functions/v1/whatsapp-template-enviar`, {
-        method: "POST",
-        headers: { Authorization: authHeader, apikey: ANON_KEY, "Content-Type": "application/json" },
-        body: JSON.stringify({ conversa_id: conversa.id, codigo: "saudacao" }),
-      });
-      const rd = await r.json().catch(() => ({}));
-      if (!r.ok) {
-        return json({ error: `Fora da janela de 24h, e a mensagem de saudação (template) não saiu: ${rd?.error ?? "erro da Meta"}`, detalhe: rd, fora_da_janela: true }, 502);
+    // Saudação só uma vez por espera: se já há pendente das últimas 24h, ela já
+    // foi (ou já foi barrada) — esta herda o que aconteceu com ela.
+    const { data: pendenteAnterior } = await db.from("WA_MENSAGEM")
+      .select("payload").eq("conversa_id", conversa.id).eq("status", "pendente").gt("criada_em", limiteJanela)
+      .order("criada_em", { ascending: false }).limit(1).maybeSingle();
+    let saudacao: Saudacao = (pendenteAnterior?.payload as any)?.saudacao ?? { modo: "enviada", via: "biblioteca", template: null };
+    if (!pendenteAnterior) {
+      saudacao = await escolherSaudacao(db, conversa.id, contato.wa_id);
+      if (saudacao.modo !== "barrada") {
+        const r = await fetch(`${SUPABASE_URL}/functions/v1/${saudacao.via === "abertura" ? "whatsapp-abertura" : "whatsapp-template-enviar"}`, {
+          method: "POST",
+          headers: { Authorization: authHeader, apikey: ANON_KEY, "Content-Type": "application/json" },
+          body: JSON.stringify(saudacao.via === "abertura"
+            ? { conversa_id: conversa.id, nome: saudacao.valores?.[0] ?? "", vaga: saudacao.valores?.[1] ?? "" }
+            : { conversa_id: conversa.id, codigo: saudacao.codigo, ...(saudacao.valores ? { valores: saudacao.valores } : {}) }),
+        });
+        const rd = await r.json().catch(() => ({}));
+        // Barrada na hora pelo limite de marketing: a mensagem fica guardada
+        // do mesmo jeito (sai quando o contato escrever) e a tela explica.
+        if (rd?.limite_marketing) saudacao = { ...saudacao, modo: "barrada" };
+        else if (!r.ok) {
+          return json({ error: `Fora da janela de 24h, e a mensagem de saudação (template) não saiu: ${rd?.error ?? "erro da Meta"}`, detalhe: rd, fora_da_janela: true }, 502);
+        }
       }
     }
+    // Só o que a tela usa: modo e template (sem os valores).
+    const saudacaoGravada = { modo: saudacao.modo, template: saudacao.template ?? null };
     await db.from("WA_MENSAGEM").insert({
       conversa_id: conversa.id, contato_id: conversa.contato_id, direcao: "saida",
       tipo: temBotoes ? "interactive" : "text", texto: textoEnviado, status: "pendente",
       origem: "atendente", autor_id: userData.user.id,
-      payload: { pendente: true, ...(temBotoes ? { tipo: "button", botoes } : {}) },
+      payload: { pendente: true, saudacao: saudacaoGravada, ...(temBotoes ? { tipo: "button", botoes } : {}) },
     });
     await db.from("WA_CONVERSA").update({
       ultima_mensagem_em: new Date().toISOString(),
       ultima_mensagem_preview: `⏳ ${texto}`.slice(0, 120),
       ultima_direcao: "saida",
     }).eq("id", conversa.id);
-    return json({ ok: true, pendente: true });
+    return json({ ok: true, pendente: true, saudacao: saudacaoGravada });
   }
 
   // Anexo: o front já subiu o arquivo pro bucket; aqui a function baixa com

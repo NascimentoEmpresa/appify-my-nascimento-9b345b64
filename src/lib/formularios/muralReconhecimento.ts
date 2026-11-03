@@ -98,3 +98,102 @@ export function rotuloMes(ym: string): string {
   const [a, m] = ym.split("-").map(Number);
   return `${MESES[m - 1] ?? "?"} de ${a}`;
 }
+
+// ---------------------------------------------------------------------
+// RANKING E TRAVA DE LIBERAÇÃO (03/11/2026, pedido do Pablo)
+//
+// A moderação deixou de ser uma fila de 345 comentários soltos: cada pessoa
+// aparece uma vez, do 1º ao último, pela QUANTIDADE de comentários positivos
+// recebidos no mês; empate vai para a NOTA MÉDIA, e depois o nome (só para a
+// ordem não pular entre recargas — o nome não dá posição).
+//
+// E os votos de um mês só podem ser LIBERADOS a partir do dia 20 do mês
+// seguinte (outubro → 20/11): a votação precisa fechar e assentar antes de
+// virar mural. Quem trava de verdade é o banco (trigger
+// cs_form_mural_trava_liberacao, mig 20261103001300); isto aqui é o espelho
+// para a tela bloquear o botão e dizer quantos dias faltam.
+// ---------------------------------------------------------------------
+
+/** Dia do mês SEGUINTE ao do voto a partir do qual a liberação abre. */
+export const DIA_LIBERACAO = 20;
+
+/** "AAAA-MM-DD" em que os votos do mês "AAAA-MM" passam a poder ser liberados. */
+export function dataLiberacao(ym: string): string {
+  return `${somarMes(ym, 1)}-${String(DIA_LIBERACAO).padStart(2, "0")}`;
+}
+
+const FMT_DIA = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo", year: "numeric", month: "2-digit", day: "2-digit" });
+
+/** "AAAA-MM-DD" do instante, no relógio de Brasília. */
+export function diaDeBrasilia(instante: Date = new Date()): string {
+  return FMT_DIA.format(instante);
+}
+
+/** Dias corridos que faltam para liberar os votos de `ym` (0 = já pode). */
+export function diasParaLiberar(ym: string, hoje: Date = new Date()): number {
+  const ms = Date.parse(`${dataLiberacao(ym)}T00:00:00Z`) - Date.parse(`${diaDeBrasilia(hoje)}T00:00:00Z`);
+  return Math.max(0, Math.round(ms / 86_400_000));
+}
+
+/** Os votos de `ym` já podem ir para o mural? */
+export function podeLiberar(ym: string, hoje: Date = new Date()): boolean {
+  return diaDeBrasilia(hoje) >= dataLiberacao(ym);
+}
+
+/** "AAAA-MM-DD" → "DD/MM/AAAA". */
+export function dataBR(iso: string): string {
+  const [a, m, d] = iso.split("-");
+  return `${d}/${m}/${a}`;
+}
+
+export interface PessoaRanking<T> {
+  /** 1, 2, 3… — empate em quantidade E média divide a posição (1, 1, 3). */
+  posicao: number;
+  colaborador: string;
+  setor: string | null;
+  total: number;
+  /** Média das notas lidas; null se nenhuma nota for número. */
+  media: number | null;
+  itens: T[];
+}
+
+/**
+ * Agrupa os comentários por pessoa avaliada e ordena: mais comentários
+ * positivos primeiro, nota média como desempate. O nome é comparado sem
+ * caixa nem espaços nas pontas (a pergunta "colegas" grava o Nome do
+ * cadastro, mas uma resposta antiga pode vir digitada).
+ */
+export function rankingMural<T extends Pick<LinhaMural, "colaborador" | "setor" | "nota">>(linhas: T[]): PessoaRanking<T>[] {
+  const grupos = new Map<string, { colaborador: string; setores: Map<string, number>; itens: T[]; soma: number; notas: number }>();
+  for (const l of linhas) {
+    const chave = String(l.colaborador ?? "").trim().toUpperCase();
+    if (!chave) continue;
+    let g = grupos.get(chave);
+    if (!g) { g = { colaborador: String(l.colaborador).trim(), setores: new Map(), itens: [], soma: 0, notas: 0 }; grupos.set(chave, g); }
+    g.itens.push(l);
+    const s = String(l.setor ?? "").trim();
+    if (s) g.setores.set(s, (g.setores.get(s) ?? 0) + 1);
+    const n = lerNota(l.nota);
+    if (n != null) { g.soma += n; g.notas += 1; }
+  }
+
+  const lista = [...grupos.values()].map((g) => ({
+    colaborador: g.colaborador,
+    // Setor mais citado nos votos (cada votante escolhe o setor do colega).
+    setor: [...g.setores.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0]?.[0] ?? null,
+    total: g.itens.length,
+    media: g.notas ? g.soma / g.notas : null,
+    itens: g.itens,
+  }));
+  lista.sort((a, b) =>
+    b.total - a.total
+    || (b.media ?? -1) - (a.media ?? -1)
+    || a.colaborador.localeCompare(b.colaborador, "pt-BR"));
+
+  let posicao = 0;
+  return lista.map((p, i) => {
+    const ant = lista[i - 1];
+    if (!ant || ant.total !== p.total || (ant.media ?? -1) !== (p.media ?? -1)) posicao = i + 1;
+    return { ...p, posicao };
+  });
+}
