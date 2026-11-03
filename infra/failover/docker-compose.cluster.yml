@@ -99,6 +99,15 @@ services:
       PGRST_DB_ANON_ROLE: anon
       PGRST_JWT_SECRET: ${JWT_SECRET}
       PGRST_DB_USE_LEGACY_GUCS: "false"
+      # 03/11/2026 — pool de 10 (o padrão, nunca configurado) para 20.
+      # Medido no teste de carga daquela noite (docs/infra/capacidade-usuarios.md):
+      # 120 abas recarregando em 20 s deram 21,9 % de 5xx com a CPU do banco1
+      # a 65 % OCIOSA — o gargalo eram as 10 conexões (PGRST003 "Timed out
+      # acquiring connection from connection pool"), não o processador.
+      # 20, não 50: o que segura consulta pesada é o statement_timeout de 8 s
+      # por papel; pool grande demais só deixaria mais consultas pesadas
+      # disputando os 2 núcleos ao mesmo tempo. Dois nós x 20 = 40 de 200.
+      PGRST_DB_POOL: "20"
 
   storage:
     # A VERSAO AQUI E AMARRADA AO NIVEL DE MIGRATION DA PRODUCAO, nao e "pegar
