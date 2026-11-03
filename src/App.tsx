@@ -119,6 +119,7 @@ import EstoqueEtiquetas from "./pages/suprimentos/EstoqueEtiquetas";
 // Única tela carregada sob demanda: ela arrasta o three.js junto, e não faz
 // sentido pesar no carregamento de quem nunca abre o mapa 3D.
 const EstoqueMapa = lazy(() => import("./pages/suprimentos/EstoqueMapa"));
+const SaidasPorContrato = lazy(() => import("./pages/suprimentos/SaidasPorContrato"));
 // T.I (de volta da branch `ti`, 20/10/2026). As duas telas 3D entram por
 // lazy: puxam three + @react-three, que só deve descer para quem abre o mapa.
 const MapaTi = lazy(() => import("./pages/ti/MapaTi"));
@@ -872,6 +873,7 @@ const App = () => (
             <Route path="suprimentos/separacao" element={<SeparacaoMateriais />} />
             <Route path="suprimentos/estoque-etiquetas" element={<EstoqueEtiquetas />} />
             <Route path="suprimentos/estoque-mapa" element={<Suspense fallback={null}><EstoqueMapa /></Suspense>} />
+            <Route path="suprimentos/relatorios/saidas-por-contrato" element={<Suspense fallback={null}><SaidasPorContrato /></Suspense>} />
             <Route path="suprimentos/patrimonio" element={<Patrimonio />} />
             <Route path="suprimentos/manutencao" element={<PainelManutencoes />} />
             <Route path="suprimentos/solicitacoes-manutencoes" element={<SolicitacoesManutencoes />} />
